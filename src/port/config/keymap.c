@@ -64,6 +64,8 @@ static const char* get_button_name(KeymapButton button) {
     case KEYMAP_BUTTON_START:
         return "start";
     }
+
+    return "unknown";
 }
 
 static KeymapButton get_button(const char* name) {

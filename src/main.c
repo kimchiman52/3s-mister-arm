@@ -39,6 +39,7 @@
 #endif
 
 #include "port/io/afs.h"
+#include "port/linux/console_mode.h"
 #include "port/resources.h"
 
 #include "argparse/argparse.h"
@@ -77,10 +78,14 @@ void njUserMain();
 void cpLoopTask();
 void cpInitTask();
 
+#define EXIT_CODE_RUNTIME_ERROR 1
+#define EXIT_CODE_MISSING_RESOURCES 20
+
 static void read_args(int argc, const char* argv[]) {
     struct argparse_option options[] = {
         OPT_HELP(),
 
+#if defined(ENABLE_NETPLAY)
         OPT_GROUP("Netplay"),
         OPT_INTEGER(0,
                     "p2p-local-player",
@@ -93,6 +98,16 @@ static void read_args(int argc, const char* argv[]) {
         OPT_STRING(0, "matchmaking-ip", &configuration.netplay.matchmaking_ip, "Matchmaking server IP.", NULL, 0, 0),
         OPT_INTEGER(
             0, "matchmaking-port", &configuration.netplay.matchmaking_port, "Matchmaking server port.", NULL, 0, 0),
+#endif
+
+        OPT_GROUP("Diagnostics"),
+        OPT_BOOLEAN(0,
+                    "probe-renderer-only",
+                    &configuration.probe_renderer_only,
+                    "Probe SDL video/render backends and exit.",
+                    NULL,
+                    0,
+                    0),
 
 #if defined(DEBUG)
         OPT_GROUP("Test runner"),
@@ -108,12 +123,19 @@ static void read_args(int argc, const char* argv[]) {
     argparse_parse(&argparse, argc, argv);
 }
 
-static void error_out(const char* error) {
+static void error_out_with_code(const char* error, int code) {
     fprintf(stderr, "%s Exiting.\n", error);
-    exit(1);
+    exit(code);
 }
 
+#if defined(ENABLE_NETPLAY)
+static void error_out(const char* error) {
+    error_out_with_code(error, EXIT_CODE_RUNTIME_ERROR);
+}
+#endif
+
 static void verify_args() {
+#if defined(ENABLE_NETPLAY)
     const NetplayConfiguration* netplay = &configuration.netplay;
     const bool p2p_specified = netplay->p2p_local_player > 0 || netplay->p2p_remote_ip != NULL;
     const bool matchmaking_specified = netplay->matchmaking_ip != NULL || netplay->matchmaking_port != 0;
@@ -141,14 +163,33 @@ static void verify_args() {
             error_out("You must specify --matchmaking-port.");
         }
     }
+#endif
 }
 
 static void set_netplay_params() {
+#if defined(ENABLE_NETPLAY)
     if (configuration.netplay.p2p_remote_ip != NULL) {
         Netplay_SetParams(configuration.netplay.p2p_local_player, configuration.netplay.p2p_remote_ip);
     } else if (configuration.netplay.matchmaking_ip != NULL) {
         Netplay_SetMatchmakingParams(configuration.netplay.matchmaking_ip, configuration.netplay.matchmaking_port);
     }
+#endif
+}
+
+static void verify_required_resources_or_exit() {
+#if !defined(ENABLE_ISO_IMPORT)
+    are_resources_checked = Resources_CheckIfPresent();
+
+    if (!are_resources_checked) {
+        char* expected_path = Resources_GetPath("SF33RD.AFS");
+        char* message = NULL;
+        SDL_asprintf(&message,
+                     "Missing required resource file at '%s'. Copy SF33RD.AFS there and relaunch.",
+                     expected_path);
+        SDL_free(expected_path);
+        error_out_with_code(message, EXIT_CODE_MISSING_RESOURCES);
+    }
+#endif
 }
 
 /// @brief Makes sure resources are present.
@@ -211,9 +252,34 @@ static void step_1() {
 
 static int loop() {
     bool is_running = true;
+    bool console_mode_entered = false;
 
     init_windows_console();
-    SDLApp_Init();
+    if (!configuration.probe_renderer_only) {
+        verify_required_resources_or_exit();
+        console_mode_entered = ConsoleMode_Enter();
+#if defined(PORT_MISTER) && defined(__linux__)
+        if (!console_mode_entered) {
+            error_out_with_code(
+                "Failed to acquire Linux console (KD_GRAPHICS). Run from MiSTer OSD/local console, not over SSH.",
+                EXIT_CODE_RUNTIME_ERROR);
+        }
+#endif
+    }
+    const int sdl_init_result = SDLApp_Init();
+
+    if (sdl_init_result != 0) {
+        if (console_mode_entered) {
+            ConsoleMode_Exit();
+        }
+        return sdl_init_result;
+    }
+
+    if (configuration.probe_renderer_only) {
+        SDLApp_Quit();
+        return 0;
+    }
+
     set_netplay_params();
 
     while (is_running) {
@@ -226,6 +292,11 @@ static int loop() {
 
     AFS_Finish();
     SDLApp_Quit();
+
+    if (console_mode_entered) {
+        ConsoleMode_Exit();
+    }
+
     return 0;
 }
 

@@ -19,6 +19,7 @@ typedef struct TestRunnerConfiguration {
 typedef struct Configuration {
     NetplayConfiguration netplay;
     TestRunnerConfiguration test;
+    bool probe_renderer_only;
 } Configuration;
 
 typedef enum TaskID {

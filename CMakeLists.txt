@@ -8,6 +8,39 @@ project(3sx LANGUAGES C)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
+option(PORT_MISTER "Enable MiSTer-oriented build profile" OFF)
+option(ENABLE_PERF_TELEMETRY "Enable perf telemetry capture and perf-focused CLI surface" ON)
+
+set(_ENABLE_NETPLAY_DEFAULT ON)
+set(_ENABLE_ISO_IMPORT_DEFAULT ON)
+set(_ENABLE_FFMPEG_ADX_DEFAULT ON)
+set(_ENABLE_SDL_DIALOGS_DEFAULT ON)
+set(_ENABLE_MISTER_ARM_HARDENING_DEFAULT OFF)
+
+if(PORT_MISTER)
+    set(_ENABLE_NETPLAY_DEFAULT OFF)
+    set(_ENABLE_ISO_IMPORT_DEFAULT OFF)
+    set(_ENABLE_FFMPEG_ADX_DEFAULT OFF)
+    set(_ENABLE_SDL_DIALOGS_DEFAULT OFF)
+    set(_ENABLE_MISTER_ARM_HARDENING_DEFAULT ON)
+endif()
+
+option(ENABLE_NETPLAY "Enable netplay and networking dependencies" ${_ENABLE_NETPLAY_DEFAULT})
+option(ENABLE_ISO_IMPORT "Enable runtime ISO import flow via libcdio" ${_ENABLE_ISO_IMPORT_DEFAULT})
+option(ENABLE_FFMPEG_ADX "Enable FFmpeg-backed ADX decode backend" ${_ENABLE_FFMPEG_ADX_DEFAULT})
+option(ENABLE_SDL_DIALOGS "Enable SDL native dialogs and message boxes" ${_ENABLE_SDL_DIALOGS_DEFAULT})
+option(ENABLE_MISTER_ARM_HARDENING
+       "Enable conservative ARMv7 hard-float/NEON flags for MiSTer-target builds"
+       ${_ENABLE_MISTER_ARM_HARDENING_DEFAULT})
+
+message(STATUS "PORT_MISTER=${PORT_MISTER}")
+message(STATUS "ENABLE_PERF_TELEMETRY=${ENABLE_PERF_TELEMETRY}")
+message(STATUS "ENABLE_NETPLAY=${ENABLE_NETPLAY}")
+message(STATUS "ENABLE_ISO_IMPORT=${ENABLE_ISO_IMPORT}")
+message(STATUS "ENABLE_FFMPEG_ADX=${ENABLE_FFMPEG_ADX}")
+message(STATUS "ENABLE_SDL_DIALOGS=${ENABLE_SDL_DIALOGS}")
+message(STATUS "ENABLE_MISTER_ARM_HARDENING=${ENABLE_MISTER_ARM_HARDENING}")
+
 # ======================================
 # Include directories
 # ======================================
@@ -23,11 +56,30 @@ include_directories(
 # Source collection
 # ======================================
 
-file(GLOB_RECURSE GAME_SRC src/*.c)
-file(GLOB_RECURSE ZLIB_SRC zlib/*.c)
+file(GLOB_RECURSE GAME_SRC CONFIGURE_DEPENDS src/*.c)
+file(GLOB_RECURSE ZLIB_SRC CONFIGURE_DEPENDS zlib/*.c)
+list(FILTER GAME_SRC EXCLUDE REGEX "^.*/src/netplay/netplay_stub\\.c$")
+list(FILTER GAME_SRC EXCLUDE REGEX "^.*/src/netplay/matchmaking_stub\\.c$")
+
+if(NOT ENABLE_NETPLAY)
+    list(FILTER GAME_SRC EXCLUDE REGEX "^.*/src/netplay/.*\\.c$")
+    list(APPEND GAME_SRC
+        "${CMAKE_SOURCE_DIR}/src/netplay/netplay_stub.c"
+        "${CMAKE_SOURCE_DIR}/src/netplay/matchmaking_stub.c"
+    )
+endif()
 
 add_executable(3sx MACOSX_BUNDLE
     ${GAME_SRC} ${ZLIB_SRC}
+)
+
+configure_file(
+    "${CMAKE_SOURCE_DIR}/cmake/port_build_config.h.in"
+    "${CMAKE_BINARY_DIR}/generated/port/build_config.h"
+)
+
+target_include_directories(3sx PRIVATE
+    "${CMAKE_BINARY_DIR}/generated"
 )
 
 # ======================================
@@ -36,25 +88,35 @@ add_executable(3sx MACOSX_BUNDLE
 
 target_compile_definitions(3sx PRIVATE
     $<$<CONFIG:Debug>:DEBUG>
-    $<$<CONFIG:Debug>:NETPLAY_ENABLED>
     $<$<CONFIG:Release>:RELEASE>
     TARGET_SDL3
     _POSIX_C_SOURCE
-    # GekkoNet is a pre-built static lib; these were previously propagated by its cmake target
-    GEKKONET_STATIC
-    GEKKONET_NO_ASIO
+    MEMCARD_DISABLED
 )
 
-# Feature toggles
-target_compile_definitions(3sx PRIVATE
-    MEMCARD_DISABLED
-    # CPS3
-)
+if(PORT_MISTER)
+    target_compile_definitions(3sx PRIVATE PORT_MISTER)
+endif()
+
+if(ENABLE_NETPLAY)
+    target_compile_definitions(3sx PRIVATE NETPLAY_ENABLED GEKKONET_STATIC GEKKONET_NO_ASIO ENABLE_NETPLAY)
+endif()
+
+if(ENABLE_ISO_IMPORT)
+    target_compile_definitions(3sx PRIVATE ENABLE_ISO_IMPORT)
+endif()
+
+if(ENABLE_FFMPEG_ADX)
+    target_compile_definitions(3sx PRIVATE ENABLE_FFMPEG_ADX)
+endif()
+
+if(ENABLE_SDL_DIALOGS)
+    target_compile_definitions(3sx PRIVATE ENABLE_SDL_DIALOGS)
+endif()
 
 if(CMAKE_C_COMPILER_ID STREQUAL "Clang" OR CMAKE_C_COMPILER_ID STREQUAL "AppleClang")
     set(DISABLED_WARNINGS
         -Wpointer-to-int-cast
-        -Wno-deprecated-non-prototype
         -Wno-tautological-overlap-compare
         -Wno-c2x-extensions
         -Wno-incompatible-pointer-types
@@ -87,6 +149,42 @@ target_compile_options(3sx PRIVATE
     ${DISABLED_WARNINGS}
 )
 
+if(PORT_MISTER AND ENABLE_MISTER_ARM_HARDENING)
+    string(TOLOWER "${CMAKE_SYSTEM_PROCESSOR}" _mister_system_processor_lc)
+    string(TOLOWER "${CMAKE_C_COMPILER_TARGET}" _mister_compiler_target_lc)
+    set(_mister_armv7_target_detected OFF)
+
+    if((_mister_compiler_target_lc MATCHES "armv7") OR (_mister_compiler_target_lc MATCHES "arm-linux-gnueabihf"))
+        set(_mister_armv7_target_detected ON)
+    elseif((_mister_system_processor_lc MATCHES "armv7") OR (_mister_system_processor_lc MATCHES "armhf"))
+        set(_mister_armv7_target_detected ON)
+    endif()
+
+    if((CMAKE_C_COMPILER_ID STREQUAL "Clang") OR (CMAKE_C_COMPILER_ID STREQUAL "AppleClang") OR
+       (CMAKE_C_COMPILER_ID STREQUAL "GNU"))
+        if(_mister_armv7_target_detected)
+            target_compile_options(3sx PRIVATE
+                -mcpu=cortex-a9
+                -mfpu=neon-vfpv3
+                -mfloat-abi=hard
+            )
+            target_link_options(3sx PRIVATE
+                -mcpu=cortex-a9
+                -mfpu=neon-vfpv3
+                -mfloat-abi=hard
+            )
+            message(STATUS "MiSTer ARM hardening flags enabled: -mcpu=cortex-a9 -mfpu=neon-vfpv3 -mfloat-abi=hard")
+        else()
+            message(WARNING
+                    "PORT_MISTER hardening requested but ARMv7 hard-float target not detected "
+                    "(system='${CMAKE_SYSTEM_PROCESSOR}', "
+                    "compiler_target='${CMAKE_C_COMPILER_TARGET}'). Skipping ARM hardening flags.")
+        endif()
+    else()
+        message(WARNING "PORT_MISTER ARM hardening supports Clang/GNU compilers only. Skipping hardening flags.")
+    endif()
+endif()
+
 set_target_properties(3sx PROPERTIES
     MACOSX_BUNDLE_INFO_PLIST "${CMAKE_SOURCE_DIR}/cmake/Info.plist"
 )
@@ -115,54 +213,89 @@ set(LIBCDIO_ROOT   "${THIRD_PARTY_DIR}/libcdio/build")
 set(GEKKONET_ROOT  "${THIRD_PARTY_DIR}/GekkoNet/build")
 set(SDL3_NET_ROOT  "${THIRD_PARTY_DIR}/SDL_net/build")
 
-include_directories(
-    ${FFMPEG_ROOT}/include
-    ${SDL3_ROOT}/include
-    ${LIBCDIO_ROOT}/include
-    ${GEKKONET_ROOT}/include
-    ${SDL3_NET_ROOT}/include
-)
+include_directories(${SDL3_ROOT}/include)
+
+if(ENABLE_FFMPEG_ADX)
+    include_directories(${FFMPEG_ROOT}/include)
+endif()
+
+if(ENABLE_ISO_IMPORT)
+    include_directories(${LIBCDIO_ROOT}/include)
+endif()
+
+if(ENABLE_NETPLAY)
+    include_directories(
+        ${GEKKONET_ROOT}/include
+        ${SDL3_NET_ROOT}/include
+    )
+endif()
 
 target_link_libraries(3sx PRIVATE
     m
-    "${LIBCDIO_ROOT}/lib/libiso9660.a"
-    "${LIBCDIO_ROOT}/lib/libcdio.a"
-    "${GEKKONET_ROOT}/lib/libGekkoNet.a"
-    "${SDL3_NET_ROOT}/lib/libSDL3_net.a"
     stdc++
 )
 
-if(APPLE)
+if(ENABLE_ISO_IMPORT)
     target_link_libraries(3sx PRIVATE
-        ${FFMPEG_ROOT}/lib/libavcodec.dylib
-        ${FFMPEG_ROOT}/lib/libavformat.dylib
-        ${FFMPEG_ROOT}/lib/libavutil.dylib
-        ${FFMPEG_ROOT}/lib/libswresample.dylib
+        "${LIBCDIO_ROOT}/lib/libiso9660.a"
+        "${LIBCDIO_ROOT}/lib/libcdio.a"
+    )
+endif()
+
+if(ENABLE_NETPLAY)
+    target_link_libraries(3sx PRIVATE
+        "${GEKKONET_ROOT}/lib/libGekkoNet.a"
+        "${SDL3_NET_ROOT}/lib/libSDL3_net.a"
+    )
+endif()
+
+if(APPLE)
+    if(ENABLE_FFMPEG_ADX)
+        target_link_libraries(3sx PRIVATE
+            ${FFMPEG_ROOT}/lib/libavcodec.dylib
+            ${FFMPEG_ROOT}/lib/libavformat.dylib
+            ${FFMPEG_ROOT}/lib/libavutil.dylib
+            ${FFMPEG_ROOT}/lib/libswresample.dylib
+        )
+    endif()
+
+    target_link_libraries(3sx PRIVATE
         ${SDL3_ROOT}/lib/libSDL3.0.dylib
         iconv
     )
 elseif(WIN32)
+    if(ENABLE_FFMPEG_ADX)
+        target_link_libraries(3sx PRIVATE
+            ${FFMPEG_ROOT}/lib/libavcodec.dll.a
+            ${FFMPEG_ROOT}/lib/libavformat.dll.a
+            ${FFMPEG_ROOT}/lib/libavutil.dll.a
+            ${FFMPEG_ROOT}/lib/libswresample.dll.a
+        )
+    endif()
+
     target_link_libraries(3sx PRIVATE
-        ${FFMPEG_ROOT}/lib/libavcodec.dll.a
-        ${FFMPEG_ROOT}/lib/libavformat.dll.a
-        ${FFMPEG_ROOT}/lib/libavutil.dll.a
-        ${FFMPEG_ROOT}/lib/libswresample.dll.a
         ${SDL3_ROOT}/lib/libSDL3.dll.a
         iconv
-		dbghelp
+        dbghelp
         ws2_32
         iphlpapi
     )
+
     target_link_options(3sx PRIVATE
         --for-linker
         --pdb=3sx.pdb
     )
 elseif(UNIX)
+    if(ENABLE_FFMPEG_ADX)
+        target_link_libraries(3sx PRIVATE
+            ${FFMPEG_ROOT}/lib/libavcodec.so
+            ${FFMPEG_ROOT}/lib/libavformat.so
+            ${FFMPEG_ROOT}/lib/libavutil.so
+            ${FFMPEG_ROOT}/lib/libswresample.so
+        )
+    endif()
+
     target_link_libraries(3sx PRIVATE
-        ${FFMPEG_ROOT}/lib/libavcodec.so
-        ${FFMPEG_ROOT}/lib/libavformat.so
-        ${FFMPEG_ROOT}/lib/libavutil.so
-        ${FFMPEG_ROOT}/lib/libswresample.so
         ${SDL3_ROOT}/lib/libSDL3.so
     )
 endif()
@@ -182,10 +315,12 @@ if(APPLE)
         BUNDLE DESTINATION .
     )
 
-    file(GLOB FFMPEG_DYLIBS "${FFMPEG_ROOT}/lib/*.dylib")
+    if(ENABLE_FFMPEG_ADX)
+        file(GLOB FFMPEG_DYLIBS "${FFMPEG_ROOT}/lib/*.dylib")
+        install(FILES ${FFMPEG_DYLIBS} DESTINATION 3SX.app/Contents/Frameworks)
+    endif()
 
     install(FILES
-        ${FFMPEG_DYLIBS}
         ${SDL3_ROOT}/lib/libSDL3.0.dylib
         DESTINATION 3SX.app/Contents/Frameworks
     )
@@ -196,22 +331,26 @@ if(APPLE)
     )
 elseif(WIN32)
     install(TARGETS 3sx
-		RUNTIME_DEPENDENCY_SET deps
+        RUNTIME_DEPENDENCY_SET deps
         RUNTIME DESTINATION bin
     )
 
     execute_process(COMMAND cygpath -m /mingw64/bin
-		OUTPUT_VARIABLE binPath
-		OUTPUT_STRIP_TRAILING_WHITESPACE
-	)
+        OUTPUT_VARIABLE binPath
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+    )
 
-	# automatically copies all the dependent DLLS, and ignores the system ones because they aren't necessary
-	install(RUNTIME_DEPENDENCY_SET deps
-		DIRECTORIES ${binPath} "${FFMPEG_ROOT}/bin" "${SDL3_ROOT}/bin"
-		PRE_EXCLUDE_REGEXES "^api"
-		POST_EXCLUDE_REGEXES ".*system32/.*\\.dll"
-		DESTINATION bin
-	)
+    set(_runtime_dep_dirs ${binPath} "${SDL3_ROOT}/bin")
+    if(ENABLE_FFMPEG_ADX)
+        list(APPEND _runtime_dep_dirs "${FFMPEG_ROOT}/bin")
+    endif()
+
+    install(RUNTIME_DEPENDENCY_SET deps
+        DIRECTORIES ${_runtime_dep_dirs}
+        PRE_EXCLUDE_REGEXES "^api"
+        POST_EXCLUDE_REGEXES ".*system32/.*\\.dll"
+        DESTINATION bin
+    )
 
     install(FILES
         "build/3sx.pdb"
@@ -227,13 +366,13 @@ elseif(UNIX)
         RUNTIME DESTINATION bin
     )
 
-    file(GLOB FFMPEG_SO "${FFMPEG_ROOT}/lib/*.so*")
+    if(ENABLE_FFMPEG_ADX)
+        file(GLOB FFMPEG_SO "${FFMPEG_ROOT}/lib/*.so*")
+        install(FILES ${FFMPEG_SO} DESTINATION lib)
+    endif()
 
-    install(FILES
-        ${FFMPEG_SO}
-        ${SDL3_ROOT}/lib/libSDL3.so
-        DESTINATION lib
-    )
+    file(GLOB SDL3_SO "${SDL3_ROOT}/lib/libSDL3.so*")
+    install(FILES ${SDL3_SO} DESTINATION lib)
 
     install(FILES
         ${PROJECT_LICENSE_FILES}
@@ -253,7 +392,7 @@ if(WIN32)
     set(CPACK_GENERATOR "ZIP")
 elseif(APPLE)
     set(CPACK_GENERATOR "DragNDrop")
-else(UNIX)
+else()
     set(CPACK_GENERATOR "TGZ")
 endif()
 
