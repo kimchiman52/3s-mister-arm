@@ -267,7 +267,9 @@ void texture_cash_update() {
                 }
             }
 
-            search_texcash_free_area(num);
+            if (Debug_w[11]) {
+                search_texcash_free_area(num);
+            }
         }
     }
     disp_texcash_free_area();

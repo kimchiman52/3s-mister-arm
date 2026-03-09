@@ -80,6 +80,12 @@ int FBDevPresenter_GetFrameTilesCopied(void);
 /// True when the presenter skipped tile-diff and forced a full-copy update.
 bool FBDevPresenter_UsedFullCopyFallback(void);
 
+/// Enable or disable the on-screen FPS overlay.
+void FBDevPresenter_SetFPSOverlayEnabled(bool enabled);
+
+/// Update the on-screen FPS overlay label.
+void FBDevPresenter_SetFPSOverlayText(const char* text);
+
 /// Human-readable presenter path name for perf output.
 const char* FBDevPresenter_PathName(FBDevPresenterPath path);
 

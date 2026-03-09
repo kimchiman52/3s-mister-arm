@@ -1530,15 +1530,11 @@ void appSetupBasePriority() {
 }
 
 void appSetupTempPriority() {
-    s32 i;
-
-    for (i = 0; i < PRIO_BASE_SIZE; i++) {
-        PrioBase[i] = PrioBaseOriginal[i];
-    }
+    SDL_memcpy(PrioBase, PrioBaseOriginal, sizeof(PrioBase));
 }
 
 void appRenewTempPriority_1_Chip() {
-    njTranslate(NULL, 0, 0, 1.0f / 65536.0f); // 1 / 2^(-16)
+    njTranslateZ(NULL, 1.0f / 65536.0f); // 1 / 2^(-16)
 }
 
 void appRenewTempPriority(s32 z) {
@@ -1567,14 +1563,8 @@ u32 seqsGetUseMemorySize() {
 }
 
 void seqsBeforeProcess() {
-    s32 i;
-
     seqs_w.sprTotal = 0;
-
-    // FIXME: Extract 24 into a define
-    for (i = 0; i < 24; i++) {
-        seqs_w.up[i] = 0;
-    }
+    SDL_memset(seqs_w.up, 0, sizeof(seqs_w.up));
 }
 
 void seqsAfterProcess() {
@@ -1608,7 +1598,9 @@ void seqsAfterProcess() {
                     flSetRenderState(FLRENDER_TEXSTAGE0, val);
                 }
 
+                SDLGameRenderer_SetTaskSource(SDL_GAME_RENDERER_TASK_SOURCE_MTRANS);
                 SDLGameRenderer_DrawSprite2(&seqs_w.chip[i]);
+                SDLGameRenderer_SetTaskSource(SDL_GAME_RENDERER_TASK_SOURCE_UNKNOWN);
             }
         }
     }
@@ -1628,8 +1620,7 @@ s32 seqsStoreChip(f32 x, f32 y, s32 w, s32 h, s32 gix, s32 code, s32 attr, s32 a
     chip->v[1].x = x + w;
     chip->v[1].y = y - h;
     chip->v[0].z = chip->v[1].z = 0.0f;
-    njCalcPoint(NULL, &chip->v[0], &chip->v[0]);
-    njCalcPoint(NULL, &chip->v[1], &chip->v[1]);
+    njCalcPoints(NULL, &chip->v[0], &chip->v[0], 2);
 
     if ((chip->v[0].x >= 384.0f) || (chip->v[1].x < 0.0f) || (chip->v[0].y >= 224.0f) || (chip->v[1].y < 0.0f)) {
         return 1;

@@ -11,6 +11,7 @@ extern const struct _SAVE_W Game_Default_Data;
 void Switch_Screen_Init(s32 /* unused */);
 s32 Switch_Screen(u8 Wipe_Type);
 s32 Switch_Screen_Revival(u8 Wipe_Type);
+extern s8 Active_Wipe_Type;
 u16 Convert_User_Setting(s16 PL_id);
 void Clear_Personal_Data(s16 PL_id);
 s16 Check_Count_Cut(s16 PL_id, s16 Limit);

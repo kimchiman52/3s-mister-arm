@@ -2287,7 +2287,9 @@ void dispButtonImage(s32 px, s32 py, s32 pz, s32 sx, s32 sy, s32 cl, s32 ix) {
     prm.t[0].t = scrnAddTex1UV[ix][1] / 128.0f;
     prm.t[3].t = (scrnAddTex1UV[ix][1] + scrnAddTex1UV[ix][3]) / 128.0f;
     flSetRenderState(FLRENDER_TEXSTAGE0, prm.tex_code);
+    SDLGameRenderer_SetTaskSource(SDL_GAME_RENDERER_TASK_SOURCE_UI_DIRECT);
     SDLGameRenderer_DrawSprite(&prm, oricol.color);
+    SDLGameRenderer_SetTaskSource(SDL_GAME_RENDERER_TASK_SOURCE_UNKNOWN);
 }
 
 void dispButtonImage2(s32 px, s32 py, s32 pz, s32 sx, s32 sy, s32 cl, s32 ix) {
@@ -2311,7 +2313,9 @@ void dispButtonImage2(s32 px, s32 py, s32 pz, s32 sx, s32 sy, s32 cl, s32 ix) {
     prm.t[0].t = scrnAddTex1UV[ix][1] / 128.0f;
     prm.t[3].t = (scrnAddTex1UV[ix][1] + scrnAddTex1UV[ix][3]) / 128.0f;
     flSetRenderState(FLRENDER_TEXSTAGE0, prm.tex_code);
+    SDLGameRenderer_SetTaskSource(SDL_GAME_RENDERER_TASK_SOURCE_UI_DIRECT);
     SDLGameRenderer_DrawSprite(&prm, oricol.color);
+    SDLGameRenderer_SetTaskSource(SDL_GAME_RENDERER_TASK_SOURCE_UNKNOWN);
 }
 
 void dispSaveLoadTitle(void* ewk) {
@@ -2346,7 +2350,9 @@ void dispSaveLoadTitle(void* ewk) {
     for (i = 0; i < 3; i++) {
         njCalcPoint(NULL, (Vec3*)&pos[0], &prm.v[0]);
         njCalcPoint(NULL, (Vec3*)&pos[1], &prm.v[3]);
+        SDLGameRenderer_SetTaskSource(SDL_GAME_RENDERER_TASK_SOURCE_UI_DIRECT);
         SDLGameRenderer_DrawSprite(&prm, oricol.color);
+        SDLGameRenderer_SetTaskSource(SDL_GAME_RENDERER_TASK_SOURCE_UNKNOWN);
         step_t += 36.0f;
         prm.t[0].t = prm.t[3].t;
         prm.t[3].t = step_t / 128.0f;

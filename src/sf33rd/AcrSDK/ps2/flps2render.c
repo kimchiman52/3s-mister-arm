@@ -90,9 +90,15 @@ s32 flPS2SetTextureRegister(u32 th, u64* texA, u64* tex1, u64* tex0, u64* clamp,
 }
 
 f32 flPS2ConvScreenFZ(f32 z) {
-    z -= 1.0f;
-    z = z * -0.5f;
-    z *= flPs2State.ZBuffMax;
+    static f32 cached_zbuff_max = -1.0f;
+    static f32 z_scale = 0.0f;
+    static f32 z_bias = 0.0f;
 
-    return z;
+    if (cached_zbuff_max != flPs2State.ZBuffMax) {
+        cached_zbuff_max = flPs2State.ZBuffMax;
+        z_scale = -0.5f * cached_zbuff_max;
+        z_bias = 0.5f * cached_zbuff_max;
+    }
+
+    return (z * z_scale) + z_bias;
 }

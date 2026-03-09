@@ -146,12 +146,22 @@ const u8 BIC_SA_Data[2][4] = { { 3, 5, 7, 9 }, { 1, 1, 1, 1 } };
 
 const u32 Ball_Perfect_PTS[2][5] = { { 20000, 30000, 50000, 80000, 120000 }, { 10000, 20000, 40000, 80000, 160000 } };
 
-s32 Game_Management() {
-    void (*Management_Jmp_Tbl[13])() = { Game_Manage_1st, Game_Manage_2nd,  Game_Manage_3rd,  Game_Manage_4th,
-                                         Game_Manage_5th, Game_Manage_6th,  Game_Manage_7th,  Game_Manage_8th,
-                                         Game_Manage_9th, Game_Manage_10th, Game_Manage_11th, Game_Manage_12th,
-                                         Game_Manage_13th };
+static void (*const Management_Jmp_Tbl[13])() = { Game_Manage_1st, Game_Manage_2nd,  Game_Manage_3rd,  Game_Manage_4th,
+                                                   Game_Manage_5th, Game_Manage_6th,  Game_Manage_7th,  Game_Manage_8th,
+                                                   Game_Manage_9th, Game_Manage_10th, Game_Manage_11th, Game_Manage_12th,
+                                                   Game_Manage_13th };
+static void (*const SC2_Jmp_Tbl[5])() = { Game_Manage_2_0, Game_Manage_2_1, Game_Manage_2_2, Game_Manage_2_3, Game_Manage_2_4 };
+static void (*const SC5_Jmp_Tbl[8])() = { Game_Manage_5_0, Game_Manage_5_1, Game_Manage_5_2, Game_Manage_5_3,
+                                          Game_Manage_5_4, Game_Manage_5_5, Game_Manage_5_6, Game_Manage_5_7 };
+static void (*const SC7_Jmp_Tbl[10])() = { Game_Manage_7_0, Game_Manage_7_1, Game_Manage_7_2, Game_Manage_7_3, Game_Manage_7_4,
+                                           Game_Manage_7_5, Game_Manage_7_6, Game_Manage_7_7, Game_Manage_7_8, Game_Manage_7_9 };
+static void (*const SC8_Jmp_Tbl[4])() = { Game_Manage_8_0, Game_Manage_8_1, Game_Manage_8_2, Game_Manage_8_3 };
+static void (*const SC81_Jmp_Tbl[4])() = { Game_Manage_81_0, Game_Manage_81_1, Game_Manage_81_2, Game_Manage_81_3 };
+static void (*const SC12_Jmp_Tbl[10])() = { Game_Manage_12_0, Game_Manage_12_1, Game_Manage_12_2, Game_Manage_12_3,
+                                            Game_Manage_12_4, Game_Manage_12_5, Game_Manage_12_1, Game_Manage_12_7,
+                                            Game_Manage_12_8, Game_Manage_12_5 };
 
+s32 Game_Management() {
     if (Break_Into) {
         return 0;
     }
@@ -255,8 +265,6 @@ void Clear_1Stage_Work() {
 }
 
 void Game_Manage_2nd() {
-    void (*SC2_Jmp_Tbl[5])() = { Game_Manage_2_0, Game_Manage_2_1, Game_Manage_2_2, Game_Manage_2_3, Game_Manage_2_4 };
-
     SC2_Jmp_Tbl[C_No[1]]();
 }
 
@@ -601,9 +609,6 @@ void Game_Manage_4th() {
 }
 
 void Game_Manage_5th() {
-    void (*SC5_Jmp_Tbl[8])() = { Game_Manage_5_0, Game_Manage_5_1, Game_Manage_5_2, Game_Manage_5_3,
-                                 Game_Manage_5_4, Game_Manage_5_5, Game_Manage_5_6, Game_Manage_5_7 };
-
     SC5_Jmp_Tbl[C_No[1]]();
 }
 
@@ -745,9 +750,6 @@ void Game_Manage_6th() {
 }
 
 void Game_Manage_7th() {
-    void (*SC7_Jmp_Tbl[10])() = { Game_Manage_7_0, Game_Manage_7_1, Game_Manage_7_2, Game_Manage_7_3, Game_Manage_7_4,
-                                  Game_Manage_7_5, Game_Manage_7_6, Game_Manage_7_7, Game_Manage_7_8, Game_Manage_7_9 };
-
     SC7_Jmp_Tbl[C_No[1]]();
 }
 
@@ -889,8 +891,6 @@ void Game_Manage_7_9() {
 }
 
 void Game_Manage_8th() {
-    void (*SC8_Jmp_Tbl[4])() = { Game_Manage_8_0, Game_Manage_8_1, Game_Manage_8_2, Game_Manage_8_3 };
-
     SC8_Jmp_Tbl[C_No[1]]();
 }
 
@@ -926,8 +926,6 @@ void Game_Manage_8_0() {
 }
 
 void Game_Manage_8_1() {
-    void (*SC81_Jmp_Tbl[4])() = { Game_Manage_81_0, Game_Manage_81_1, Game_Manage_81_2, Game_Manage_81_3 };
-
     SC81_Jmp_Tbl[C_No[2]]();
 }
 
@@ -1926,10 +1924,6 @@ void Game_Manage_11th() {
 }
 
 void Game_Manage_12th() {
-    void (*SC12_Jmp_Tbl[10])() = { Game_Manage_12_0, Game_Manage_12_1, Game_Manage_12_2, Game_Manage_12_3,
-                                   Game_Manage_12_4, Game_Manage_12_5, Game_Manage_12_1, Game_Manage_12_7,
-                                   Game_Manage_12_8, Game_Manage_12_5 };
-
     SC12_Jmp_Tbl[C_No[1]]();
 
     if (Bonus_Type == 20) {

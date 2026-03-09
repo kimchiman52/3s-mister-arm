@@ -103,6 +103,17 @@ void njTranslate(MTX* mtx, f32 x, f32 y, f32 z) {
     matmul(mtx, &translation_matrix, mtx);
 }
 
+void njTranslateZ(MTX* mtx, f32 z) {
+    if (mtx == NULL) {
+        mtx = &cmtx;
+    }
+
+    mtx->a[3][0] += z * mtx->a[2][0];
+    mtx->a[3][1] += z * mtx->a[2][1];
+    mtx->a[3][2] += z * mtx->a[2][2];
+    mtx->a[3][3] += z * mtx->a[2][3];
+}
+
 void njSetBackColor(u32 c0, u32 c1, u32 c2) {
     c0 = c0 | c1 | c2;
     flSetRenderState(FLRENDER_BACKCOLOR, NTH_BYTE(c0, 3) | NTH_BYTE(c0, 2) | NTH_BYTE(c0, 1) | NTH_BYTE(c0, 0));
@@ -180,7 +191,9 @@ void njdp2d_draw() {
                 prm.v[j] = njdp2d_w.prim[i].v[j];
             }
 
+            SDLGameRenderer_SetTaskSource(SDL_GAME_RENDERER_TASK_SOURCE_SOLID);
             SDLGameRenderer_DrawSolidQuad(&prm, njdp2d_w.prim[i].col);
+            SDLGameRenderer_SetTaskSource(SDL_GAME_RENDERER_TASK_SOURCE_UNKNOWN);
             break;
 
         case 1:

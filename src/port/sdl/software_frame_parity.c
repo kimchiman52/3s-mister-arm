@@ -9,6 +9,7 @@ typedef struct SoftwareFrameParityTask {
     SDL_FRect src_uv_rect;
     SDL_FlipMode flip;
     Uint32 color;
+    bool opaque_destination;
 } SoftwareFrameParityTask;
 
 typedef struct SoftwareSourceRefreshParityMutation {
@@ -69,6 +70,20 @@ static Uint32 blend_argb8888(Uint32 dst_pixel, Uint32 src_pixel) {
     }
 
     const Uint32 dst_a = (dst_pixel >> 24) & 0xFFu;
+    if (dst_a == 255u) {
+        const Uint32 inv_src_a = 255u - src_a;
+        const Uint32 src_r = (src_pixel >> 16) & 0xFFu;
+        const Uint32 src_g = (src_pixel >> 8) & 0xFFu;
+        const Uint32 src_b = src_pixel & 0xFFu;
+        const Uint32 dst_r = (dst_pixel >> 16) & 0xFFu;
+        const Uint32 dst_g = (dst_pixel >> 8) & 0xFFu;
+        const Uint32 dst_b = dst_pixel & 0xFFu;
+        const Uint32 out_r = ((src_r * src_a) + (dst_r * inv_src_a) + 127u) / 255u;
+        const Uint32 out_g = ((src_g * src_a) + (dst_g * inv_src_a) + 127u) / 255u;
+        const Uint32 out_b = ((src_b * src_a) + (dst_b * inv_src_a) + 127u) / 255u;
+        return 0xFF000000u | (out_r << 16) | (out_g << 8) | out_b;
+    }
+
     const Uint32 out_a = src_a + ((dst_a * (255u - src_a) + 127u) / 255u);
     const Uint32 src_r = (src_pixel >> 16) & 0xFFu;
     const Uint32 src_g = (src_pixel >> 8) & 0xFFu;
@@ -98,13 +113,13 @@ static void fill_test_source(SDL_Surface* surface) {
     }
 }
 
-static void fill_test_destination(SDL_Surface* surface) {
+static void fill_test_destination(SDL_Surface* surface, bool opaque_destination) {
     Uint32* pixels = (Uint32*)surface->pixels;
     const int pitch = surface->pitch / (int)sizeof(Uint32);
 
     for (int y = 0; y < surface->h; y++) {
         for (int x = 0; x < surface->w; x++) {
-            const Uint32 a = (Uint32)((64 + ((x * 9 + y * 13) % 128)) & 0xFF);
+            const Uint32 a = opaque_destination ? 255u : (Uint32)((64 + ((x * 9 + y * 13) % 128)) & 0xFF);
             const Uint32 r = (Uint32)((x * 5 + y * 3) & 0xFF);
             const Uint32 g = (Uint32)((x * 17 + y * 7) & 0xFF);
             const Uint32 b = (Uint32)((x * 23 + y * 19) & 0xFF);
@@ -329,23 +344,25 @@ static bool run_software_source_refresh_parity_check(void) {
 bool SDLGameRenderer_RunSoftwareFrameParityCheck(void) {
     static const SoftwareFrameParityTask cases[] = {
         { "subpixel-upscale", { 3.25f, 2.50f, 17.50f, 11.75f }, { 0.10f, 0.12f, 0.48f, 0.53f }, SDL_FLIP_NONE,
-          0xFFFFFFFFu },
+          0xFFFFFFFFu, false },
         { "subpixel-downscale", { 7.75f, 4.25f, 9.40f, 6.60f }, { 0.05f, 0.07f, 0.81f, 0.74f }, SDL_FLIP_NONE,
-          0xFFFFFFFFu },
+          0xFFFFFFFFu, false },
         { "clip-top-left", { -4.50f, -2.75f, 18.40f, 14.10f }, { 0.00f, 0.00f, 0.64f, 0.61f }, SDL_FLIP_NONE,
-          0xFFFFFFFFu },
+          0xFFFFFFFFu, false },
         { "clip-bottom-right", { 31.25f, 19.10f, 17.20f, 14.60f }, { 0.18f, 0.20f, 0.72f, 0.70f }, SDL_FLIP_NONE,
-          0xFFFFFFFFu },
+          0xFFFFFFFFu, false },
         { "flip-horizontal", { 5.50f, 6.20f, 15.25f, 10.80f }, { 0.12f, 0.08f, 0.61f, 0.69f }, SDL_FLIP_HORIZONTAL,
-          0xFFFFFFFFu },
+          0xFFFFFFFFu, false },
         { "flip-vertical", { 8.40f, 5.75f, 14.60f, 12.35f }, { 0.04f, 0.10f, 0.58f, 0.67f }, SDL_FLIP_VERTICAL,
-          0xFFFFFFFFu },
+          0xFFFFFFFFu, false },
         { "flip-both", { 1.20f, 9.15f, 13.70f, 8.95f }, { 0.09f, 0.04f, 0.55f, 0.62f },
-          SDL_FLIP_HORIZONTAL_AND_VERTICAL, 0xFFFFFFFFu },
+          SDL_FLIP_HORIZONTAL_AND_VERTICAL, 0xFFFFFFFFu, false },
         { "color-mod", { 11.10f, 3.40f, 16.80f, 12.25f }, { 0.14f, 0.16f, 0.63f, 0.58f }, SDL_FLIP_NONE,
-          0xC0B06040u },
+          0xC0B06040u, false },
         { "clip-flip-color", { -2.20f, 12.60f, 18.90f, 11.40f }, { 0.07f, 0.09f, 0.68f, 0.63f }, SDL_FLIP_VERTICAL,
-          0x80E0FF60u },
+          0x80E0FF60u, false },
+        { "opaque-destination", { 6.35f, 7.40f, 18.25f, 10.60f }, { 0.11f, 0.18f, 0.66f, 0.57f }, SDL_FLIP_NONE,
+          0x90F080C0u, true },
     };
 
     SDL_Surface* source = SDL_CreateSurface(23, 19, SDL_PIXELFORMAT_ARGB8888);
@@ -361,8 +378,8 @@ bool SDLGameRenderer_RunSoftwareFrameParityCheck(void) {
 
     fill_test_source(source);
     for (int i = 0; i < SDL_arraysize(cases); i++) {
-        fill_test_destination(expected);
-        fill_test_destination(actual);
+        fill_test_destination(expected, cases[i].opaque_destination);
+        fill_test_destination(actual, cases[i].opaque_destination);
         raster_reference_non_integer_task(&cases[i], expected, source);
         if (!SDLSoftwareFrame_RasterNonIntegerLookupARGB8888(&cases[i].dst_rect,
                                                              &cases[i].src_uv_rect,

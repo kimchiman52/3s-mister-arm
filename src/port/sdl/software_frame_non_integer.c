@@ -52,6 +52,20 @@ static Uint32 blend_argb8888(Uint32 dst_pixel, Uint32 src_pixel) {
     }
 
     const Uint32 dst_a = (dst_pixel >> 24) & 0xFFu;
+    if (dst_a == 255u) {
+        const Uint32 inv_src_a = 255u - src_a;
+        const Uint32 src_r = (src_pixel >> 16) & 0xFFu;
+        const Uint32 src_g = (src_pixel >> 8) & 0xFFu;
+        const Uint32 src_b = src_pixel & 0xFFu;
+        const Uint32 dst_r = (dst_pixel >> 16) & 0xFFu;
+        const Uint32 dst_g = (dst_pixel >> 8) & 0xFFu;
+        const Uint32 dst_b = dst_pixel & 0xFFu;
+        const Uint32 out_r = ((src_r * src_a) + (dst_r * inv_src_a) + 127u) / 255u;
+        const Uint32 out_g = ((src_g * src_a) + (dst_g * inv_src_a) + 127u) / 255u;
+        const Uint32 out_b = ((src_b * src_a) + (dst_b * inv_src_a) + 127u) / 255u;
+        return 0xFF000000u | (out_r << 16) | (out_g << 8) | out_b;
+    }
+
     const Uint32 out_a = src_a + ((dst_a * (255u - src_a) + 127u) / 255u);
     const Uint32 src_r = (src_pixel >> 16) & 0xFFu;
     const Uint32 src_g = (src_pixel >> 8) & 0xFFu;

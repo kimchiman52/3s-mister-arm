@@ -65,12 +65,25 @@ SDL_Texture* cps3_canvas = NULL;
 
 static const int cps3_width = 384;
 static const int cps3_height = 224;
-static const Uint64 software_frame_non_integer_lookup_threshold_pixels = 1024u;
+static const int software_frame_full_height_diagonal_strip_max_width_pixels = 8;
+static const Uint64 software_frame_non_integer_lookup_threshold_pixels = 384u;
+static const Uint64 software_surface_refresh_blit_sample_period = 32u;
+static const Uint64 software_frame_raster_sample_periods[SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_COUNT] = {
+    32u,
+    8u,
+    1u,
+    1u,
+    8u,
+};
 enum {
     dirty_tile_size = 16,
     dirty_tile_cols = 24,
     dirty_tile_rows = 14,
     dirty_tile_total = dirty_tile_cols * dirty_tile_rows,
+    texture_unlock_multi_rect_max = 4,
+    perf_capture_renew_tile_size = 32,
+    perf_capture_renew_tile_grid_dim = 8,
+    perf_capture_renew_tile_count = perf_capture_renew_tile_grid_dim * perf_capture_renew_tile_grid_dim,
 };
 
 static SDL_Renderer* _renderer = NULL;
@@ -81,6 +94,7 @@ static bool software_frame_direct_present_requested = false;
 static bool software_frame_surface_ready = false;
 static bool software_frame_owned = false;
 static bool software_frame_uploaded = false;
+static bool perf_capture_logical_identity_enabled = false;
 static SDL_Surface* surfaces[FL_TEXTURE_MAX] = { NULL };
 static SDL_Palette* palettes[FL_PALETTE_MAX] = { NULL };
 typedef enum CacheDirtyReason {
@@ -89,10 +103,55 @@ typedef enum CacheDirtyReason {
     CACHE_DIRTY_REASON_PALETTE_UNLOCK,
 } CacheDirtyReason;
 
+typedef enum CacheDirtyDetail {
+    CACHE_DIRTY_DETAIL_NONE = 0,
+    CACHE_DIRTY_DETAIL_PALETTE_CHANGED,
+    CACHE_DIRTY_DETAIL_PALETTE_UNCHANGED,
+} CacheDirtyDetail;
+
 typedef struct CacheDirtyState {
     Uint32 generation;
     Uint8 reason;
+    Uint8 detail;
 } CacheDirtyState;
+
+typedef enum TextureUnlockRefreshDecision {
+    TEXTURE_UNLOCK_REFRESH_DECISION_PARTIAL = 0,
+    TEXTURE_UNLOCK_REFRESH_DECISION_FULL_NON_TEXTURE_DIRTY,
+    TEXTURE_UNLOCK_REFRESH_DECISION_FULL_INELIGIBLE_SOURCE,
+    TEXTURE_UNLOCK_REFRESH_DECISION_FULL_NO_USABLE_DIRTY_RECT,
+    TEXTURE_UNLOCK_REFRESH_DECISION_FULL_OVERSIZED_DIRTY_RECT,
+} TextureUnlockRefreshDecision;
+
+typedef enum TextureUnlockDirtyRectClearReason {
+    TEXTURE_UNLOCK_DIRTY_RECT_CLEAR_REASON_STALE_BEFORE_RECORD = 0,
+    TEXTURE_UNLOCK_DIRTY_RECT_CLEAR_REASON_UNLOCK_UNUSED,
+    TEXTURE_UNLOCK_DIRTY_RECT_CLEAR_REASON_ACCESS_UNUSED,
+    TEXTURE_UNLOCK_DIRTY_RECT_CLEAR_REASON_EXPLICIT,
+    TEXTURE_UNLOCK_DIRTY_RECT_CLEAR_REASON_NONE,
+} TextureUnlockDirtyRectClearReason;
+
+typedef struct TextureUnlockRefreshPlan {
+    SDL_Rect rects[texture_unlock_multi_rect_max];
+    int rect_count;
+} TextureUnlockRefreshPlan;
+
+typedef struct TextureLogicalIdentity {
+    SDLGameRenderer_TextureLogicalSourceKind source_kind;
+    bool valid;
+    int ix_num;
+    int ix_num_first;
+    int slot_index;
+    int chunk_index;
+    int texture_total;
+} TextureLogicalIdentity;
+
+typedef struct PerfCaptureTextureLogicalIdentity {
+    TextureLogicalIdentity identity;
+    bool mixed;
+    Uint32 registrations;
+    Uint32 last_seen_serial;
+} PerfCaptureTextureLogicalIdentity;
 
 static SDL_Surface* software_surface_cache[FL_TEXTURE_MAX][FL_PALETTE_MAX + 1] = { { NULL } };
 static CacheDirtyState texture_cache_dirty_state[FL_TEXTURE_MAX][FL_PALETTE_MAX + 1] = { { { 0 } } };
@@ -107,18 +166,82 @@ static SDLGameRenderer_PerfCaptureRefreshTelemetry perf_capture_refresh_telemetr
 static Uint64 perf_capture_refresh_attempts_by_texture[FL_TEXTURE_MAX] = { 0 };
 static Uint64 perf_capture_refresh_pixels_by_texture[FL_TEXTURE_MAX] = { 0 };
 static Uint16 perf_capture_refresh_fanout_max_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_refresh_partial_attempts_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_refresh_partial_pixels_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_refresh_full_attempts_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_refresh_full_pixels_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_refresh_full_non_texture_dirty_attempts_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_refresh_full_ineligible_source_attempts_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_refresh_full_no_usable_dirty_rect_attempts_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_refresh_full_oversized_dirty_rect_attempts_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_current_lifetime_refresh_attempts_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_current_lifetime_partial_refresh_attempts_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_current_lifetime_full_refresh_attempts_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_current_lifetime_full_no_usable_dirty_rect_attempts_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_refresh_blit_sample_counter = 0;
+static Uint64 perf_capture_refresh_blit_sample_calls_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_refresh_blit_sample_ns_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_refresh_full_blit_sample_calls_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_refresh_full_blit_sample_ns_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_refresh_partial_blit_sample_calls_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_refresh_partial_blit_sample_ns_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_refresh_full_non_texture_dirty_blit_sample_calls_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_refresh_full_non_texture_dirty_blit_sample_ns_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_refresh_full_ineligible_source_blit_sample_calls_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_refresh_full_ineligible_source_blit_sample_ns_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_refresh_full_no_usable_dirty_rect_blit_sample_calls_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_refresh_full_no_usable_dirty_rect_blit_sample_ns_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_refresh_full_oversized_dirty_rect_blit_sample_calls_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_refresh_full_oversized_dirty_rect_blit_sample_ns_by_texture[FL_TEXTURE_MAX] = { 0 };
 static Uint32 perf_capture_refresh_source_format_by_texture[FL_TEXTURE_MAX] = { 0 };
 static int perf_capture_refresh_width_by_texture[FL_TEXTURE_MAX] = { 0 };
 static int perf_capture_refresh_height_by_texture[FL_TEXTURE_MAX] = { 0 };
 static bool perf_capture_refresh_shape_mixed_by_texture[FL_TEXTURE_MAX] = { false };
+static Uint64 perf_capture_source_surface_destroy_calls_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_software_surface_access_dirty_texture_same_frame_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_software_surface_access_dirty_texture_carried_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_software_surface_access_dirty_palette_same_frame_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_software_surface_access_dirty_palette_carried_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_software_surface_access_dirty_palette_changed_same_frame_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_software_surface_access_dirty_palette_changed_carried_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_software_surface_access_dirty_palette_unchanged_same_frame_by_texture[FL_TEXTURE_MAX] = {
+    0
+};
+static Uint64 perf_capture_software_surface_access_dirty_palette_unchanged_carried_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_software_surface_access_cold_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_current_lifetime_software_surface_access_dirty_texture_same_frame_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_current_lifetime_software_surface_access_dirty_texture_carried_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_current_lifetime_software_surface_access_dirty_palette_same_frame_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_current_lifetime_software_surface_access_dirty_palette_carried_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_current_lifetime_software_surface_access_dirty_palette_changed_same_frame_by_texture
+    [FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_current_lifetime_software_surface_access_dirty_palette_changed_carried_by_texture
+    [FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_current_lifetime_software_surface_access_dirty_palette_unchanged_same_frame_by_texture
+    [FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_current_lifetime_software_surface_access_dirty_palette_unchanged_carried_by_texture
+    [FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_current_lifetime_software_surface_access_cold_by_texture[FL_TEXTURE_MAX] = { 0 };
+static TextureLogicalIdentity current_texture_logical_identity_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint32 current_texture_logical_identity_serial_by_texture[FL_TEXTURE_MAX] = { 0 };
+static PerfCaptureTextureLogicalIdentity perf_capture_texture_logical_identity_by_texture[FL_TEXTURE_MAX] = { 0 };
 static SDLGameRenderer_PerfCaptureUnlockLocalityTelemetry perf_capture_unlock_locality_telemetry = { 0 };
 static Uint64 perf_capture_unlock_locality_tracked_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_unlock_locality_zero_delta_by_texture[FL_TEXTURE_MAX] = { 0 };
 static Uint64 perf_capture_unlock_locality_baseline_skips_by_texture[FL_TEXTURE_MAX] = { 0 };
 static Uint64 perf_capture_unlock_locality_non_index8_skips_by_texture[FL_TEXTURE_MAX] = { 0 };
 static Uint64 perf_capture_unlock_locality_source_pixels_by_texture[FL_TEXTURE_MAX] = { 0 };
 static Uint64 perf_capture_unlock_locality_changed_pixels_by_texture[FL_TEXTURE_MAX] = { 0 };
 static Uint64 perf_capture_unlock_locality_changed_rows_by_texture[FL_TEXTURE_MAX] = { 0 };
 static Uint64 perf_capture_unlock_locality_changed_bbox_pixels_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_unlock_locality_whole_capture_tracked_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_unlock_locality_whole_capture_zero_delta_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_unlock_locality_whole_capture_baseline_skips_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_unlock_locality_whole_capture_non_index8_skips_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_unlock_locality_whole_capture_source_pixels_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_unlock_locality_whole_capture_changed_pixels_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_unlock_locality_whole_capture_changed_rows_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_unlock_locality_whole_capture_changed_bbox_pixels_by_texture[FL_TEXTURE_MAX] = { 0 };
 static Uint32 perf_capture_unlock_locality_source_format_by_texture[FL_TEXTURE_MAX] = { 0 };
 static int perf_capture_unlock_locality_width_by_texture[FL_TEXTURE_MAX] = { 0 };
 static int perf_capture_unlock_locality_height_by_texture[FL_TEXTURE_MAX] = { 0 };
@@ -128,6 +251,62 @@ static size_t perf_capture_unlock_locality_shadow_size[FL_TEXTURE_MAX] = { 0 };
 static bool perf_capture_unlock_locality_shadow_valid[FL_TEXTURE_MAX] = { false };
 static SDL_Rect texture_unlock_dirty_rects[FL_TEXTURE_MAX] = { { 0 } };
 static bool texture_unlock_dirty_rect_valid[FL_TEXTURE_MAX] = { false };
+static Uint64 texture_unlock_dirty_tile_masks[FL_TEXTURE_MAX] = { 0 };
+static bool texture_unlock_dirty_tile_mask_valid[FL_TEXTURE_MAX] = { false };
+static Uint64 perf_capture_dirty_rect_record_calls_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_dirty_rect_retained_after_unlock_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_dirty_rect_clear_stale_before_record_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_dirty_rect_clear_unlock_unused_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_dirty_rect_clear_access_unused_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_dirty_rect_clear_explicit_by_texture[FL_TEXTURE_MAX] = { 0 };
+static SDL_Rect perf_capture_compare_dirty_rect_pending_rects[FL_TEXTURE_MAX] = { { 0 } };
+static bool perf_capture_compare_dirty_rect_pending_valid[FL_TEXTURE_MAX] = { false };
+static Uint32 perf_capture_compare_dirty_rect_pending_unlock_counts[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_compare_dirty_rect_pending_tile_masks[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_compare_dirty_rect_refresh_attempts_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_compare_dirty_rect_partial_candidate_refresh_attempts_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_compare_dirty_rect_oversized_candidate_refresh_attempts_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_compare_dirty_rect_no_usable_candidate_refresh_attempts_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_compare_dirty_rect_refresh_bbox_pixels_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_compare_dirty_rect_refresh_max_bbox_pixels_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_compare_dirty_rect_refresh_pending_unlocks_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_compare_dirty_rect_refresh_max_pending_unlocks_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_compare_dirty_rect_refresh_32x32_covered_tiles_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_compare_dirty_rect_refresh_32x32_max_covered_tiles_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_compare_dirty_rect_refresh_32x32_component_count_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_compare_dirty_rect_refresh_32x32_max_component_count_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_compare_dirty_rect_refresh_32x32_multi_component_refresh_attempts_by_texture[FL_TEXTURE_MAX] = {
+    0
+};
+static Uint64 perf_capture_compare_dirty_rect_refresh_32x32_largest_component_tiles_by_texture[FL_TEXTURE_MAX] = {
+    0
+};
+static Uint64 perf_capture_compare_dirty_rect_refresh_32x32_max_largest_component_tiles_by_texture[FL_TEXTURE_MAX] = {
+    0
+};
+static SDL_Rect perf_capture_texture_renew_pending_rects[FL_TEXTURE_MAX] = { { 0 } };
+static bool perf_capture_texture_renew_pending_rect_valid[FL_TEXTURE_MAX] = { false };
+static Uint64 perf_capture_texture_renew_pending_tile_masks[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_texture_renew_chunk_calls_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_texture_renew_batches_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_texture_renew_batches_without_rect_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_texture_renew_chunk_pixels_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_texture_renew_batch_bbox_pixels_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_texture_renew_batch_max_bbox_pixels_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_texture_renew_chunk_8x8_calls_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_texture_renew_chunk_16x16_calls_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_texture_renew_chunk_32x32_calls_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_texture_renew_batch_32x32_covered_tiles_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_texture_renew_batch_32x32_max_covered_tiles_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_texture_renew_batch_32x32_component_count_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_texture_renew_batch_32x32_max_component_count_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_texture_renew_batch_32x32_multi_component_batches_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_texture_renew_batch_32x32_largest_component_tiles_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_texture_renew_batch_32x32_max_largest_component_tiles_by_texture[FL_TEXTURE_MAX] = { 0 };
+static Uint64 perf_capture_raster_sample_counters[SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_COUNT] = { 0 };
+static Uint64 perf_capture_raster_sample_calls[SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_COUNT] = { 0 };
+static Uint64 perf_capture_raster_sample_pixels[SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_COUNT] = { 0 };
+static Uint64 perf_capture_raster_sample_ns[SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_COUNT] = { 0 };
 static Uint16 software_surface_refresh_tracking_generation = 1;
 static Uint32 cache_dirty_generation = 1;
 static bool cache_dirty_tracking_active = false;
@@ -225,6 +404,14 @@ typedef struct SoftwareFrameFastCopyPlan {
     bool flipped;
 } SoftwareFrameFastCopyPlan;
 
+typedef struct SoftwareFrameSolidDiagonalStrip {
+    int top_y;
+    int bottom_y;
+    int top_left_x;
+    int top_right_x;
+    Uint32 color;
+} SoftwareFrameSolidDiagonalStrip;
+
 static int compare_render_tasks(const RenderTask* a, const RenderTask* b);
 static void insertion_sort_render_tasks(void);
 static void initialize_render_task_batch_indices(void);
@@ -247,6 +434,9 @@ static void begin_cache_dirty_tracking_frame(bool capture_extended_stats);
 static void note_texture_cache_miss_provenance(const CacheDirtyState* state);
 static void note_software_surface_cache_create_provenance(const CacheDirtyState* state);
 #endif
+static void mark_cache_dirty_state_with_detail(CacheDirtyState* state,
+                                               CacheDirtyReason reason,
+                                               CacheDirtyDetail detail);
 static void mark_cache_dirty_state(CacheDirtyState* state, CacheDirtyReason reason);
 static void note_software_surface_dirty_variant_fanout(CacheDirtyReason reason, int dirty_variant_count);
 static bool should_keep_dirty_cache_entries(CacheDirtyReason reason);
@@ -256,24 +446,74 @@ static void begin_software_surface_refresh_tracking_frame(bool capture_extended_
 #endif
 static void note_software_surface_refresh_attempt(unsigned int th);
 static void note_perf_capture_refresh_attempt(unsigned int th, const SDL_Surface* source_surface);
+static void note_perf_capture_refresh_path(unsigned int th,
+                                           const SDL_Surface* source_surface,
+                                           TextureUnlockRefreshDecision decision,
+                                           const TextureUnlockRefreshPlan* partial_plan);
+static bool should_sample_perf_capture_refresh_blit(void);
+static Uint64 perf_capture_counter_delta_to_ns(Uint64 start_counter, Uint64 end_counter);
+static void note_perf_capture_refresh_blit_sample(unsigned int th,
+                                                  TextureUnlockRefreshDecision decision,
+                                                  Uint64 elapsed_ns);
+static Uint64 begin_perf_capture_raster_bucket_sample(SDLGameRenderer_PerfCaptureRasterBucket bucket);
+static void note_perf_capture_raster_bucket_sample(SDLGameRenderer_PerfCaptureRasterBucket bucket,
+                                                   const RenderTask* task,
+                                                   Uint64 elapsed_ns);
 static void reset_perf_capture_unlock_locality_shadow_slot(int texture_index);
+static void reset_perf_capture_refresh_lifetime_slot(int texture_index);
 static void reset_perf_capture_unlock_locality_texture_slot(int texture_index);
+static void reset_perf_capture_texture_renew_slot(int texture_index);
+static Uint64 make_perf_capture_renew_tile_mask(int x, int y, int w, int h);
+static int count_perf_capture_renew_tile_components(Uint64 mask, int* out_largest_component_tiles);
+static Uint64 texture_unlock_refresh_plan_pixels(const TextureUnlockRefreshPlan* plan);
+static bool build_texture_unlock_refresh_plan_from_tile_mask(Uint64 tile_mask, TextureUnlockRefreshPlan* out_plan);
+static void clear_texture_logical_identity(TextureLogicalIdentity* identity);
+static void clear_current_texture_logical_identity_slot(int texture_index);
+static void reset_perf_capture_texture_logical_identity_slot(int texture_index);
+static bool texture_logical_identity_equals(const TextureLogicalIdentity* lhs, const TextureLogicalIdentity* rhs);
+static void note_perf_capture_texture_logical_identity(int texture_index);
+static void copy_perf_capture_texture_logical_identity(int texture_index,
+                                                       int* out_known,
+                                                       int* out_mixed,
+                                                       Uint32* out_registrations,
+                                                       SDLGameRenderer_TextureLogicalSourceKind* out_source_kind,
+                                                       int* out_ix_num,
+                                                       int* out_ix_num_first,
+                                                       int* out_slot_index,
+                                                       int* out_chunk_index,
+                                                       int* out_texture_total);
 static void note_perf_capture_texture_unlock_locality(int texture_handle, const SDL_Surface* source_surface);
-static void clear_texture_unlock_dirty_rect_index(int texture_index);
-static void clear_texture_unlock_dirty_rect_if_unused(int texture_index);
-static bool get_texture_unlock_partial_refresh_rect(unsigned int th,
-                                                    Uint8 dirty_reason,
-                                                    const SDL_Surface* source_surface,
-                                                    SDL_Rect* out_rect);
+static void note_perf_capture_compare_dirty_rect_candidate(int texture_index, const SDL_Rect* dirty_rect);
+static void note_perf_capture_dirty_rect_record(int texture_index);
+static void note_perf_capture_dirty_rect_retained_after_unlock(int texture_index);
+static void note_perf_capture_dirty_rect_clear(int texture_index, TextureUnlockDirtyRectClearReason reason);
+#if ENABLE_PERF_TELEMETRY
+static void note_perf_capture_software_surface_access_provenance(int texture_index, const CacheDirtyState* state);
+#endif
+static void clear_perf_capture_compare_dirty_rect_pending_index(int texture_index);
+static void clear_texture_unlock_dirty_rect_index(int texture_index, TextureUnlockDirtyRectClearReason reason);
+static void clear_texture_unlock_dirty_rect_if_unused(int texture_index, TextureUnlockDirtyRectClearReason reason);
+static void note_perf_capture_compare_dirty_rect_refresh_candidate(unsigned int th,
+                                                                   Uint8 dirty_reason,
+                                                                   const SDL_Surface* source_surface);
+static TextureUnlockRefreshDecision classify_texture_unlock_refresh_decision(unsigned int th,
+                                                                             Uint8 dirty_reason,
+                                                                             const SDL_Surface* source_surface,
+                                                                             TextureUnlockRefreshPlan* out_plan);
 static bool refresh_software_source_surface_in_place(unsigned int th, SDL_Surface* cached_surface, Uint8 dirty_reason);
 static bool refresh_texture_in_place(unsigned int th,
                                      SDL_Texture* texture,
                                      SDL_Surface** inout_software_source_surface);
 static int invalidate_texture_cache_for_texture_index(int texture_index, CacheDirtyReason reason);
-static int invalidate_texture_cache_for_palette_handle(int palette_handle, CacheDirtyReason reason);
+static int invalidate_texture_cache_for_palette_handle(int palette_handle,
+                                                       CacheDirtyReason reason,
+                                                       CacheDirtyDetail detail);
 static int invalidate_software_surface_cache_for_texture_index(int texture_index, CacheDirtyReason reason);
-static int invalidate_software_surface_cache_for_palette_handle(int palette_handle, CacheDirtyReason reason);
+static int invalidate_software_surface_cache_for_palette_handle(int palette_handle,
+                                                                CacheDirtyReason reason,
+                                                                CacheDirtyDetail detail);
 static void fill_palette_colors_from_fl_texture(const FLTexture* fl_palette, SDL_Color* colors, int* out_color_count);
+static bool palette_colors_equal(const SDL_Palette* palette, const SDL_Color* colors, int color_count);
 static void read_rgba32_color(Uint32 pixel, SDL_Color* color);
 static void read_rgba32_fcolor(Uint32 pixel, SDL_FColor* fcolor);
 static bool nearly_equal(float a, float b);
@@ -288,6 +528,8 @@ static HybridFallbackReason classify_hybrid_fallback_reason(const RenderTask* ta
 static void note_hybrid_eligibility(const RenderTask* task);
 static bool try_resolve_geometry_task_as_rect_copy(const RenderTask* task, RenderTask* out_rect_task);
 static bool try_resolve_solid_task_as_rect(const RenderTask* task, SDL_FRect* out_rect, Uint32* out_color);
+static bool try_resolve_solid_task_as_full_height_diagonal_strip(const RenderTask* task,
+                                                                 SoftwareFrameSolidDiagonalStrip* out_strip);
 static SoftwareFrameFallbackReason classify_software_frame_fallback_reason(const RenderTask* task);
 static void note_software_frame_eligibility(const RenderTask* task, SoftwareFrameFallbackReason reason);
 static SoftwareFrameFastCopyResult build_software_frame_fast_copy_plan(const RenderTask* task,
@@ -296,10 +538,13 @@ static SoftwareFrameFastCopyResult build_software_frame_fast_copy_plan(const Ren
                                                                        SoftwareFrameFastCopyPlan* out_plan);
 static void note_software_frame_fast_copy_result(const RenderTask* task,
                                                  SoftwareFrameFastCopyResult result,
-                                                 const SoftwareFrameFastCopyPlan* plan);
-static void note_software_frame_fast_non_integer(const RenderTask* task);
+                                                 const SoftwareFrameFastCopyPlan* plan,
+                                                 Uint64 non_integer_lookup_entries);
+static void note_software_frame_fast_non_integer(const RenderTask* task, Uint64 lookup_entries);
 static Uint32 modulate_argb8888(Uint32 pixel, Uint32 color);
 static Uint32 blend_argb8888(Uint32 dst_pixel, Uint32 src_pixel);
+static bool raster_full_height_diagonal_strip_to_software_frame(const SoftwareFrameSolidDiagonalStrip* strip,
+                                                                SDL_Surface* dst_surface);
 static SDL_Surface* get_or_create_software_source_surface(unsigned int th);
 static bool ensure_software_frame_upload_texture(void);
 static bool raster_textured_task_to_software_frame(const RenderTask* task);
@@ -491,7 +736,9 @@ static int invalidate_software_surface_cache_for_texture_index(int texture_index
     return evicted_count;
 }
 
-static int invalidate_texture_cache_for_palette_handle(int palette_handle, CacheDirtyReason reason) {
+static int invalidate_texture_cache_for_palette_handle(int palette_handle,
+                                                       CacheDirtyReason reason,
+                                                       CacheDirtyDetail detail) {
     const bool keep_dirty_entries = should_keep_dirty_cache_entries(reason);
     int evicted_count = 0;
 
@@ -514,14 +761,14 @@ static int invalidate_texture_cache_for_palette_handle(int palette_handle, Cache
         }
 
         if (keep_dirty_entries) {
-            mark_cache_dirty_state(dirty_state, reason);
+            mark_cache_dirty_state_with_detail(dirty_state, reason, detail);
             *runtime_dirty_reason_p = (Uint8)reason;
             continue;
         }
 
         push_texture_to_destroy(*texture_p);
         *texture_p = NULL;
-        mark_cache_dirty_state(dirty_state, reason);
+        mark_cache_dirty_state_with_detail(dirty_state, reason, detail);
         *runtime_dirty_reason_p = CACHE_DIRTY_REASON_NONE;
         texture_cache_refresh_pending[i][palette_handle] = false;
         evicted_count += 1;
@@ -530,7 +777,9 @@ static int invalidate_texture_cache_for_palette_handle(int palette_handle, Cache
     return evicted_count;
 }
 
-static int invalidate_software_surface_cache_for_palette_handle(int palette_handle, CacheDirtyReason reason) {
+static int invalidate_software_surface_cache_for_palette_handle(int palette_handle,
+                                                                CacheDirtyReason reason,
+                                                                CacheDirtyDetail detail) {
     const bool keep_dirty_entries = should_keep_dirty_cache_entries(reason);
     int evicted_count = 0;
     int dirty_variant_count = 0;
@@ -550,7 +799,7 @@ static int invalidate_software_surface_cache_for_palette_handle(int palette_hand
         }
 
         if (keep_dirty_entries) {
-            mark_cache_dirty_state(dirty_state, reason);
+            mark_cache_dirty_state_with_detail(dirty_state, reason, detail);
             *runtime_dirty_reason_p = (Uint8)reason;
             dirty_variant_count += 1;
             continue;
@@ -558,7 +807,7 @@ static int invalidate_software_surface_cache_for_palette_handle(int palette_hand
 
         push_software_surface_to_destroy(*surface_p);
         *surface_p = NULL;
-        mark_cache_dirty_state(dirty_state, reason);
+        mark_cache_dirty_state_with_detail(dirty_state, reason, detail);
         *runtime_dirty_reason_p = CACHE_DIRTY_REASON_NONE;
         evicted_count += 1;
     }
@@ -638,6 +887,7 @@ static void clear_cache_dirty_state(CacheDirtyState* state) {
 
     state->generation = 0;
     state->reason = CACHE_DIRTY_REASON_NONE;
+    state->detail = CACHE_DIRTY_DETAIL_NONE;
 }
 
 #if ENABLE_PERF_TELEMETRY
@@ -666,7 +916,9 @@ static void begin_cache_dirty_tracking_frame(bool capture_extended_stats) {
 }
 #endif
 
-static void mark_cache_dirty_state(CacheDirtyState* state, CacheDirtyReason reason) {
+static void mark_cache_dirty_state_with_detail(CacheDirtyState* state,
+                                               CacheDirtyReason reason,
+                                               CacheDirtyDetail detail) {
     if (state == NULL) {
         return;
     }
@@ -678,6 +930,11 @@ static void mark_cache_dirty_state(CacheDirtyState* state, CacheDirtyReason reas
 
     state->generation = cache_dirty_generation;
     state->reason = (Uint8)reason;
+    state->detail = (Uint8)detail;
+}
+
+static void mark_cache_dirty_state(CacheDirtyState* state, CacheDirtyReason reason) {
+    mark_cache_dirty_state_with_detail(state, reason, CACHE_DIRTY_DETAIL_NONE);
 }
 
 #if ENABLE_PERF_TELEMETRY
@@ -734,6 +991,58 @@ static void note_software_surface_cache_create_provenance(const CacheDirtyState*
         break;
     }
 }
+
+#if ENABLE_PERF_TELEMETRY
+static void note_perf_capture_software_surface_access_provenance(int texture_index, const CacheDirtyState* state) {
+    if (!frame_stats_extended_enabled || (state == NULL) || (texture_index < 0) || (texture_index >= FL_TEXTURE_MAX)) {
+        return;
+    }
+
+    switch ((CacheDirtyReason)state->reason) {
+    case CACHE_DIRTY_REASON_TEXTURE_UNLOCK:
+        if (state->generation == cache_dirty_generation) {
+            perf_capture_software_surface_access_dirty_texture_same_frame_by_texture[texture_index] += 1;
+            perf_capture_current_lifetime_software_surface_access_dirty_texture_same_frame_by_texture[texture_index] += 1;
+        } else {
+            perf_capture_software_surface_access_dirty_texture_carried_by_texture[texture_index] += 1;
+            perf_capture_current_lifetime_software_surface_access_dirty_texture_carried_by_texture[texture_index] += 1;
+        }
+        break;
+    case CACHE_DIRTY_REASON_PALETTE_UNLOCK:
+        if (state->generation == cache_dirty_generation) {
+            perf_capture_software_surface_access_dirty_palette_same_frame_by_texture[texture_index] += 1;
+            perf_capture_current_lifetime_software_surface_access_dirty_palette_same_frame_by_texture[texture_index] += 1;
+            if (state->detail == CACHE_DIRTY_DETAIL_PALETTE_UNCHANGED) {
+                perf_capture_software_surface_access_dirty_palette_unchanged_same_frame_by_texture[texture_index] += 1;
+                perf_capture_current_lifetime_software_surface_access_dirty_palette_unchanged_same_frame_by_texture
+                    [texture_index] += 1;
+            } else {
+                perf_capture_software_surface_access_dirty_palette_changed_same_frame_by_texture[texture_index] += 1;
+                perf_capture_current_lifetime_software_surface_access_dirty_palette_changed_same_frame_by_texture
+                    [texture_index] += 1;
+            }
+        } else {
+            perf_capture_software_surface_access_dirty_palette_carried_by_texture[texture_index] += 1;
+            perf_capture_current_lifetime_software_surface_access_dirty_palette_carried_by_texture[texture_index] += 1;
+            if (state->detail == CACHE_DIRTY_DETAIL_PALETTE_UNCHANGED) {
+                perf_capture_software_surface_access_dirty_palette_unchanged_carried_by_texture[texture_index] += 1;
+                perf_capture_current_lifetime_software_surface_access_dirty_palette_unchanged_carried_by_texture
+                    [texture_index] += 1;
+            } else {
+                perf_capture_software_surface_access_dirty_palette_changed_carried_by_texture[texture_index] += 1;
+                perf_capture_current_lifetime_software_surface_access_dirty_palette_changed_carried_by_texture
+                    [texture_index] += 1;
+            }
+        }
+        break;
+    case CACHE_DIRTY_REASON_NONE:
+    default:
+        perf_capture_software_surface_access_cold_by_texture[texture_index] += 1;
+        perf_capture_current_lifetime_software_surface_access_cold_by_texture[texture_index] += 1;
+        break;
+    }
+}
+#endif
 #endif
 
 static void note_software_surface_dirty_variant_fanout(CacheDirtyReason reason, int dirty_variant_count) {
@@ -787,6 +1096,7 @@ static void note_perf_capture_refresh_attempt(unsigned int th, const SDL_Surface
     }
 
     const int texture_index = texture_handle - 1;
+    note_perf_capture_texture_logical_identity(texture_index);
     const Uint64 refresh_pixels = (Uint64)source_surface->w * (Uint64)source_surface->h;
     switch (source_surface->format) {
     case SDL_PIXELFORMAT_INDEX4LSB:
@@ -808,6 +1118,7 @@ static void note_perf_capture_refresh_attempt(unsigned int th, const SDL_Surface
     }
 
     perf_capture_refresh_attempts_by_texture[texture_index] += 1;
+    perf_capture_current_lifetime_refresh_attempts_by_texture[texture_index] += 1;
     perf_capture_refresh_pixels_by_texture[texture_index] += refresh_pixels;
     if (perf_capture_refresh_attempts_by_texture[texture_index] > 1 &&
         ((perf_capture_refresh_source_format_by_texture[texture_index] != source_surface->format) ||
@@ -818,6 +1129,190 @@ static void note_perf_capture_refresh_attempt(unsigned int th, const SDL_Surface
     perf_capture_refresh_source_format_by_texture[texture_index] = source_surface->format;
     perf_capture_refresh_width_by_texture[texture_index] = source_surface->w;
     perf_capture_refresh_height_by_texture[texture_index] = source_surface->h;
+}
+
+static void note_perf_capture_refresh_path(unsigned int th,
+                                           const SDL_Surface* source_surface,
+                                           TextureUnlockRefreshDecision decision,
+                                           const TextureUnlockRefreshPlan* partial_plan) {
+    if (!frame_stats_extended_enabled || (source_surface == NULL)) {
+        return;
+    }
+
+    const int texture_handle = LO_16_BITS(th);
+    if ((texture_handle <= 0) || (texture_handle > FL_TEXTURE_MAX)) {
+        return;
+    }
+
+    const int texture_index = texture_handle - 1;
+    const Uint64 source_pixels = (Uint64)source_surface->w * (Uint64)source_surface->h;
+    const Uint64 partial_pixels = texture_unlock_refresh_plan_pixels(partial_plan);
+
+    if (decision == TEXTURE_UNLOCK_REFRESH_DECISION_PARTIAL) {
+        perf_capture_refresh_telemetry.partial_attempts += 1;
+        perf_capture_refresh_telemetry.partial_pixels += partial_pixels;
+        perf_capture_refresh_partial_attempts_by_texture[texture_index] += 1;
+        perf_capture_refresh_partial_pixels_by_texture[texture_index] += partial_pixels;
+        perf_capture_current_lifetime_partial_refresh_attempts_by_texture[texture_index] += 1;
+        return;
+    }
+
+    perf_capture_refresh_telemetry.full_attempts += 1;
+    perf_capture_refresh_telemetry.full_pixels += source_pixels;
+    perf_capture_refresh_full_attempts_by_texture[texture_index] += 1;
+    perf_capture_refresh_full_pixels_by_texture[texture_index] += source_pixels;
+    perf_capture_current_lifetime_full_refresh_attempts_by_texture[texture_index] += 1;
+
+    switch (decision) {
+    case TEXTURE_UNLOCK_REFRESH_DECISION_FULL_NON_TEXTURE_DIRTY:
+        perf_capture_refresh_telemetry.full_non_texture_dirty_attempts += 1;
+        perf_capture_refresh_full_non_texture_dirty_attempts_by_texture[texture_index] += 1;
+        break;
+    case TEXTURE_UNLOCK_REFRESH_DECISION_FULL_INELIGIBLE_SOURCE:
+        perf_capture_refresh_telemetry.full_ineligible_source_attempts += 1;
+        perf_capture_refresh_full_ineligible_source_attempts_by_texture[texture_index] += 1;
+        break;
+    case TEXTURE_UNLOCK_REFRESH_DECISION_FULL_NO_USABLE_DIRTY_RECT:
+        perf_capture_refresh_telemetry.full_no_usable_dirty_rect_attempts += 1;
+        perf_capture_refresh_full_no_usable_dirty_rect_attempts_by_texture[texture_index] += 1;
+        perf_capture_current_lifetime_full_no_usable_dirty_rect_attempts_by_texture[texture_index] += 1;
+        break;
+    case TEXTURE_UNLOCK_REFRESH_DECISION_FULL_OVERSIZED_DIRTY_RECT:
+        perf_capture_refresh_telemetry.full_oversized_dirty_rect_attempts += 1;
+        perf_capture_refresh_full_oversized_dirty_rect_attempts_by_texture[texture_index] += 1;
+        break;
+    case TEXTURE_UNLOCK_REFRESH_DECISION_PARTIAL:
+    default:
+        break;
+    }
+}
+
+static bool should_sample_perf_capture_refresh_blit(void) {
+    if (!frame_stats_extended_enabled || (software_surface_refresh_blit_sample_period == 0)) {
+        return false;
+    }
+
+    perf_capture_refresh_blit_sample_counter += 1;
+    return (perf_capture_refresh_blit_sample_counter % software_surface_refresh_blit_sample_period) == 0;
+}
+
+static Uint64 perf_capture_counter_delta_to_ns(Uint64 start_counter, Uint64 end_counter) {
+    if ((start_counter == 0) || (end_counter <= start_counter)) {
+        return 0;
+    }
+
+    const Uint64 frequency = SDL_GetPerformanceFrequency();
+    if (frequency == 0) {
+        return 0;
+    }
+
+    const Uint64 delta = end_counter - start_counter;
+    return (Uint64)(((double)delta * 1000000000.0) / (double)frequency);
+}
+
+static void note_perf_capture_refresh_blit_sample(unsigned int th,
+                                                  TextureUnlockRefreshDecision decision,
+                                                  Uint64 elapsed_ns) {
+    if (!frame_stats_extended_enabled) {
+        return;
+    }
+
+    perf_capture_refresh_telemetry.sampled_blit_period = software_surface_refresh_blit_sample_period;
+    perf_capture_refresh_telemetry.sampled_blit_calls += 1;
+    perf_capture_refresh_telemetry.sampled_blit_ns += elapsed_ns;
+    if (decision == TEXTURE_UNLOCK_REFRESH_DECISION_PARTIAL) {
+        perf_capture_refresh_telemetry.sampled_partial_blit_calls += 1;
+        perf_capture_refresh_telemetry.sampled_partial_blit_ns += elapsed_ns;
+    } else {
+        perf_capture_refresh_telemetry.sampled_full_blit_calls += 1;
+        perf_capture_refresh_telemetry.sampled_full_blit_ns += elapsed_ns;
+        switch (decision) {
+        case TEXTURE_UNLOCK_REFRESH_DECISION_FULL_NON_TEXTURE_DIRTY:
+            perf_capture_refresh_telemetry.sampled_full_non_texture_dirty_blit_calls += 1;
+            perf_capture_refresh_telemetry.sampled_full_non_texture_dirty_blit_ns += elapsed_ns;
+            break;
+        case TEXTURE_UNLOCK_REFRESH_DECISION_FULL_INELIGIBLE_SOURCE:
+            perf_capture_refresh_telemetry.sampled_full_ineligible_source_blit_calls += 1;
+            perf_capture_refresh_telemetry.sampled_full_ineligible_source_blit_ns += elapsed_ns;
+            break;
+        case TEXTURE_UNLOCK_REFRESH_DECISION_FULL_NO_USABLE_DIRTY_RECT:
+            perf_capture_refresh_telemetry.sampled_full_no_usable_dirty_rect_blit_calls += 1;
+            perf_capture_refresh_telemetry.sampled_full_no_usable_dirty_rect_blit_ns += elapsed_ns;
+            break;
+        case TEXTURE_UNLOCK_REFRESH_DECISION_FULL_OVERSIZED_DIRTY_RECT:
+            perf_capture_refresh_telemetry.sampled_full_oversized_dirty_rect_blit_calls += 1;
+            perf_capture_refresh_telemetry.sampled_full_oversized_dirty_rect_blit_ns += elapsed_ns;
+            break;
+        case TEXTURE_UNLOCK_REFRESH_DECISION_PARTIAL:
+        default:
+            break;
+        }
+    }
+
+    const int texture_handle = LO_16_BITS(th);
+    if ((texture_handle <= 0) || (texture_handle > FL_TEXTURE_MAX)) {
+        return;
+    }
+
+    const int texture_index = texture_handle - 1;
+    perf_capture_refresh_blit_sample_calls_by_texture[texture_index] += 1;
+    perf_capture_refresh_blit_sample_ns_by_texture[texture_index] += elapsed_ns;
+    if (decision == TEXTURE_UNLOCK_REFRESH_DECISION_PARTIAL) {
+        perf_capture_refresh_partial_blit_sample_calls_by_texture[texture_index] += 1;
+        perf_capture_refresh_partial_blit_sample_ns_by_texture[texture_index] += elapsed_ns;
+        return;
+    }
+
+    perf_capture_refresh_full_blit_sample_calls_by_texture[texture_index] += 1;
+    perf_capture_refresh_full_blit_sample_ns_by_texture[texture_index] += elapsed_ns;
+    switch (decision) {
+    case TEXTURE_UNLOCK_REFRESH_DECISION_FULL_NON_TEXTURE_DIRTY:
+        perf_capture_refresh_full_non_texture_dirty_blit_sample_calls_by_texture[texture_index] += 1;
+        perf_capture_refresh_full_non_texture_dirty_blit_sample_ns_by_texture[texture_index] += elapsed_ns;
+        break;
+    case TEXTURE_UNLOCK_REFRESH_DECISION_FULL_INELIGIBLE_SOURCE:
+        perf_capture_refresh_full_ineligible_source_blit_sample_calls_by_texture[texture_index] += 1;
+        perf_capture_refresh_full_ineligible_source_blit_sample_ns_by_texture[texture_index] += elapsed_ns;
+        break;
+    case TEXTURE_UNLOCK_REFRESH_DECISION_FULL_NO_USABLE_DIRTY_RECT:
+        perf_capture_refresh_full_no_usable_dirty_rect_blit_sample_calls_by_texture[texture_index] += 1;
+        perf_capture_refresh_full_no_usable_dirty_rect_blit_sample_ns_by_texture[texture_index] += elapsed_ns;
+        break;
+    case TEXTURE_UNLOCK_REFRESH_DECISION_FULL_OVERSIZED_DIRTY_RECT:
+        perf_capture_refresh_full_oversized_dirty_rect_blit_sample_calls_by_texture[texture_index] += 1;
+        perf_capture_refresh_full_oversized_dirty_rect_blit_sample_ns_by_texture[texture_index] += elapsed_ns;
+        break;
+    case TEXTURE_UNLOCK_REFRESH_DECISION_PARTIAL:
+    default:
+        break;
+    }
+}
+
+static Uint64 begin_perf_capture_raster_bucket_sample(SDLGameRenderer_PerfCaptureRasterBucket bucket) {
+    if (!frame_stats_extended_enabled || (bucket < 0) || (bucket >= SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_COUNT)) {
+        return 0;
+    }
+
+    const Uint64 sample_period = software_frame_raster_sample_periods[bucket];
+    if (sample_period == 0) {
+        return 0;
+    }
+
+    perf_capture_raster_sample_counters[bucket] += 1;
+    return (perf_capture_raster_sample_counters[bucket] % sample_period) == 0 ? SDL_GetPerformanceCounter() : 0;
+}
+
+static void note_perf_capture_raster_bucket_sample(SDLGameRenderer_PerfCaptureRasterBucket bucket,
+                                                   const RenderTask* task,
+                                                   Uint64 elapsed_ns) {
+    if (!frame_stats_extended_enabled || (bucket < 0) || (bucket >= SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_COUNT) ||
+        (task == NULL) || (elapsed_ns == 0)) {
+        return;
+    }
+
+    perf_capture_raster_sample_calls[bucket] += 1;
+    perf_capture_raster_sample_pixels[bucket] += render_task_submitted_pixels(task);
+    perf_capture_raster_sample_ns[bucket] += elapsed_ns;
 }
 
 static void reset_perf_capture_unlock_locality_shadow_slot(int texture_index) {
@@ -831,12 +1326,166 @@ static void reset_perf_capture_unlock_locality_shadow_slot(int texture_index) {
     perf_capture_unlock_locality_shadow_valid[texture_index] = false;
 }
 
+static void clear_texture_logical_identity(TextureLogicalIdentity* identity) {
+    if (identity == NULL) {
+        return;
+    }
+
+    *identity = (TextureLogicalIdentity){
+        .source_kind = SDL_GAME_RENDERER_TEXTURE_LOGICAL_SOURCE_UNKNOWN,
+        .valid = false,
+        .ix_num = -1,
+        .ix_num_first = -1,
+        .slot_index = -1,
+        .chunk_index = -1,
+        .texture_total = -1,
+    };
+}
+
+static void clear_current_texture_logical_identity_slot(int texture_index) {
+    if ((texture_index < 0) || (texture_index >= FL_TEXTURE_MAX)) {
+        return;
+    }
+
+    clear_texture_logical_identity(&current_texture_logical_identity_by_texture[texture_index]);
+}
+
+static void reset_perf_capture_texture_logical_identity_slot(int texture_index) {
+    if ((texture_index < 0) || (texture_index >= FL_TEXTURE_MAX)) {
+        return;
+    }
+
+    PerfCaptureTextureLogicalIdentity* capture_identity = &perf_capture_texture_logical_identity_by_texture[texture_index];
+    clear_texture_logical_identity(&capture_identity->identity);
+    capture_identity->mixed = false;
+    capture_identity->registrations = 0;
+    capture_identity->last_seen_serial = 0;
+}
+
+static bool texture_logical_identity_equals(const TextureLogicalIdentity* lhs, const TextureLogicalIdentity* rhs) {
+    if ((lhs == NULL) || (rhs == NULL)) {
+        return false;
+    }
+
+    if (lhs->valid != rhs->valid) {
+        return false;
+    }
+    if (!lhs->valid) {
+        return true;
+    }
+
+    return (lhs->source_kind == rhs->source_kind) && (lhs->ix_num == rhs->ix_num) &&
+           (lhs->ix_num_first == rhs->ix_num_first) && (lhs->slot_index == rhs->slot_index) &&
+           (lhs->chunk_index == rhs->chunk_index) && (lhs->texture_total == rhs->texture_total);
+}
+
+static void note_perf_capture_texture_logical_identity(int texture_index) {
+    if (!frame_stats_extended_enabled || (texture_index < 0) || (texture_index >= FL_TEXTURE_MAX)) {
+        return;
+    }
+
+    const TextureLogicalIdentity* current_identity = &current_texture_logical_identity_by_texture[texture_index];
+    const Uint32 current_serial = current_texture_logical_identity_serial_by_texture[texture_index];
+    if (!current_identity->valid || (current_serial == 0)) {
+        return;
+    }
+
+    PerfCaptureTextureLogicalIdentity* capture_identity = &perf_capture_texture_logical_identity_by_texture[texture_index];
+    if (capture_identity->last_seen_serial == current_serial) {
+        return;
+    }
+
+    capture_identity->last_seen_serial = current_serial;
+    capture_identity->registrations += 1;
+    if (capture_identity->mixed) {
+        return;
+    }
+
+    if (!capture_identity->identity.valid) {
+        capture_identity->identity = *current_identity;
+        return;
+    }
+
+    if (!texture_logical_identity_equals(&capture_identity->identity, current_identity)) {
+        capture_identity->mixed = true;
+        clear_texture_logical_identity(&capture_identity->identity);
+    }
+}
+
+static void copy_perf_capture_texture_logical_identity(int texture_index,
+                                                       int* out_known,
+                                                       int* out_mixed,
+                                                       Uint32* out_registrations,
+                                                       SDLGameRenderer_TextureLogicalSourceKind* out_source_kind,
+                                                       int* out_ix_num,
+                                                       int* out_ix_num_first,
+                                                       int* out_slot_index,
+                                                       int* out_chunk_index,
+                                                       int* out_texture_total) {
+    const bool valid_slot = (texture_index >= 0) && (texture_index < FL_TEXTURE_MAX);
+    const PerfCaptureTextureLogicalIdentity* capture_identity =
+        valid_slot ? &perf_capture_texture_logical_identity_by_texture[texture_index] : NULL;
+    const bool known = (capture_identity != NULL) && capture_identity->identity.valid;
+
+    if (out_known != NULL) {
+        *out_known = known ? 1 : 0;
+    }
+    if (out_mixed != NULL) {
+        *out_mixed = ((capture_identity != NULL) && capture_identity->mixed) ? 1 : 0;
+    }
+    if (out_registrations != NULL) {
+        *out_registrations = capture_identity != NULL ? capture_identity->registrations : 0;
+    }
+    if (out_source_kind != NULL) {
+        *out_source_kind =
+            known ? capture_identity->identity.source_kind : SDL_GAME_RENDERER_TEXTURE_LOGICAL_SOURCE_UNKNOWN;
+    }
+    if (out_ix_num != NULL) {
+        *out_ix_num = known ? capture_identity->identity.ix_num : -1;
+    }
+    if (out_ix_num_first != NULL) {
+        *out_ix_num_first = known ? capture_identity->identity.ix_num_first : -1;
+    }
+    if (out_slot_index != NULL) {
+        *out_slot_index = known ? capture_identity->identity.slot_index : -1;
+    }
+    if (out_chunk_index != NULL) {
+        *out_chunk_index = known ? capture_identity->identity.chunk_index : -1;
+    }
+    if (out_texture_total != NULL) {
+        *out_texture_total = known ? capture_identity->identity.texture_total : -1;
+    }
+}
+
+static void reset_perf_capture_refresh_lifetime_slot(int texture_index) {
+    if ((texture_index < 0) || (texture_index >= FL_TEXTURE_MAX)) {
+        return;
+    }
+
+    perf_capture_current_lifetime_refresh_attempts_by_texture[texture_index] = 0;
+    perf_capture_current_lifetime_partial_refresh_attempts_by_texture[texture_index] = 0;
+    perf_capture_current_lifetime_full_refresh_attempts_by_texture[texture_index] = 0;
+    perf_capture_current_lifetime_full_no_usable_dirty_rect_attempts_by_texture[texture_index] = 0;
+    perf_capture_current_lifetime_software_surface_access_dirty_texture_same_frame_by_texture[texture_index] = 0;
+    perf_capture_current_lifetime_software_surface_access_dirty_texture_carried_by_texture[texture_index] = 0;
+    perf_capture_current_lifetime_software_surface_access_dirty_palette_same_frame_by_texture[texture_index] = 0;
+    perf_capture_current_lifetime_software_surface_access_dirty_palette_carried_by_texture[texture_index] = 0;
+    perf_capture_current_lifetime_software_surface_access_dirty_palette_changed_same_frame_by_texture[texture_index] = 0;
+    perf_capture_current_lifetime_software_surface_access_dirty_palette_changed_carried_by_texture[texture_index] = 0;
+    perf_capture_current_lifetime_software_surface_access_dirty_palette_unchanged_same_frame_by_texture[texture_index] =
+        0;
+    perf_capture_current_lifetime_software_surface_access_dirty_palette_unchanged_carried_by_texture[texture_index] =
+        0;
+    perf_capture_current_lifetime_software_surface_access_cold_by_texture[texture_index] = 0;
+}
+
 static void reset_perf_capture_unlock_locality_texture_slot(int texture_index) {
     if ((texture_index < 0) || (texture_index >= FL_TEXTURE_MAX)) {
         return;
     }
 
     perf_capture_unlock_locality_tracked_by_texture[texture_index] = 0;
+    perf_capture_unlock_locality_zero_delta_by_texture[texture_index] = 0;
     perf_capture_unlock_locality_baseline_skips_by_texture[texture_index] = 0;
     perf_capture_unlock_locality_non_index8_skips_by_texture[texture_index] = 0;
     perf_capture_unlock_locality_source_pixels_by_texture[texture_index] = 0;
@@ -847,7 +1496,220 @@ static void reset_perf_capture_unlock_locality_texture_slot(int texture_index) {
     perf_capture_unlock_locality_width_by_texture[texture_index] = 0;
     perf_capture_unlock_locality_height_by_texture[texture_index] = 0;
     perf_capture_unlock_locality_shape_mixed_by_texture[texture_index] = false;
+    perf_capture_dirty_rect_record_calls_by_texture[texture_index] = 0;
+    perf_capture_dirty_rect_retained_after_unlock_by_texture[texture_index] = 0;
+    perf_capture_dirty_rect_clear_stale_before_record_by_texture[texture_index] = 0;
+    perf_capture_dirty_rect_clear_unlock_unused_by_texture[texture_index] = 0;
+    perf_capture_dirty_rect_clear_access_unused_by_texture[texture_index] = 0;
+    perf_capture_dirty_rect_clear_explicit_by_texture[texture_index] = 0;
+    clear_perf_capture_compare_dirty_rect_pending_index(texture_index);
     reset_perf_capture_unlock_locality_shadow_slot(texture_index);
+}
+
+static void reset_perf_capture_texture_renew_slot(int texture_index) {
+    if ((texture_index < 0) || (texture_index >= FL_TEXTURE_MAX)) {
+        return;
+    }
+
+    perf_capture_texture_renew_pending_rects[texture_index] = (SDL_Rect){ 0, 0, 0, 0 };
+    perf_capture_texture_renew_pending_rect_valid[texture_index] = false;
+    perf_capture_texture_renew_pending_tile_masks[texture_index] = 0;
+    perf_capture_texture_renew_chunk_calls_by_texture[texture_index] = 0;
+    perf_capture_texture_renew_batches_by_texture[texture_index] = 0;
+    perf_capture_texture_renew_batches_without_rect_by_texture[texture_index] = 0;
+    perf_capture_texture_renew_chunk_pixels_by_texture[texture_index] = 0;
+    perf_capture_texture_renew_batch_bbox_pixels_by_texture[texture_index] = 0;
+    perf_capture_texture_renew_batch_max_bbox_pixels_by_texture[texture_index] = 0;
+    perf_capture_texture_renew_chunk_8x8_calls_by_texture[texture_index] = 0;
+    perf_capture_texture_renew_chunk_16x16_calls_by_texture[texture_index] = 0;
+    perf_capture_texture_renew_chunk_32x32_calls_by_texture[texture_index] = 0;
+    perf_capture_texture_renew_batch_32x32_covered_tiles_by_texture[texture_index] = 0;
+    perf_capture_texture_renew_batch_32x32_max_covered_tiles_by_texture[texture_index] = 0;
+    perf_capture_texture_renew_batch_32x32_component_count_by_texture[texture_index] = 0;
+    perf_capture_texture_renew_batch_32x32_max_component_count_by_texture[texture_index] = 0;
+    perf_capture_texture_renew_batch_32x32_multi_component_batches_by_texture[texture_index] = 0;
+    perf_capture_texture_renew_batch_32x32_largest_component_tiles_by_texture[texture_index] = 0;
+    perf_capture_texture_renew_batch_32x32_max_largest_component_tiles_by_texture[texture_index] = 0;
+}
+
+static Uint64 make_perf_capture_renew_tile_mask(int x, int y, int w, int h) {
+    // The renew and compare-dirty candidates we measure here both stay on 256x256 source surfaces, so an 8x8 32px
+    // grid is enough for the coarse coverage/component telemetry.
+    const int tile_x0 = x / perf_capture_renew_tile_size;
+    const int tile_y0 = y / perf_capture_renew_tile_size;
+    const int tile_x1 = (x + w - 1) / perf_capture_renew_tile_size;
+    const int tile_y1 = (y + h - 1) / perf_capture_renew_tile_size;
+    if ((tile_x0 < 0) || (tile_y0 < 0) || (tile_x1 >= perf_capture_renew_tile_grid_dim) ||
+        (tile_y1 >= perf_capture_renew_tile_grid_dim)) {
+        return 0;
+    }
+
+    Uint64 mask = 0;
+    for (int tile_y = tile_y0; tile_y <= tile_y1; tile_y++) {
+        for (int tile_x = tile_x0; tile_x <= tile_x1; tile_x++) {
+            mask |= ((Uint64)1) << (tile_y * perf_capture_renew_tile_grid_dim + tile_x);
+        }
+    }
+
+    return mask;
+}
+
+static int count_perf_capture_renew_tile_components(Uint64 mask, int* out_largest_component_tiles) {
+    int component_count = 0;
+    int largest_component_tiles = 0;
+    bool visited[perf_capture_renew_tile_count] = { false };
+
+    for (int seed = 0; seed < perf_capture_renew_tile_count; seed++) {
+        if ((((mask >> seed) & ((Uint64)1)) == 0) || visited[seed]) {
+            continue;
+        }
+
+        component_count += 1;
+        int stack[perf_capture_renew_tile_count];
+        int stack_count = 0;
+        int component_tiles = 0;
+        stack[stack_count++] = seed;
+        visited[seed] = true;
+
+        while (stack_count > 0) {
+            const int tile_index = stack[--stack_count];
+            const int tile_x = tile_index % perf_capture_renew_tile_grid_dim;
+            const int tile_y = tile_index / perf_capture_renew_tile_grid_dim;
+            component_tiles += 1;
+
+            if (tile_x > 0) {
+                const int west = tile_index - 1;
+                if ((((mask >> west) & ((Uint64)1)) != 0) && !visited[west]) {
+                    visited[west] = true;
+                    stack[stack_count++] = west;
+                }
+            }
+            if ((tile_x + 1) < perf_capture_renew_tile_grid_dim) {
+                const int east = tile_index + 1;
+                if ((((mask >> east) & ((Uint64)1)) != 0) && !visited[east]) {
+                    visited[east] = true;
+                    stack[stack_count++] = east;
+                }
+            }
+            if (tile_y > 0) {
+                const int north = tile_index - perf_capture_renew_tile_grid_dim;
+                if ((((mask >> north) & ((Uint64)1)) != 0) && !visited[north]) {
+                    visited[north] = true;
+                    stack[stack_count++] = north;
+                }
+            }
+            if ((tile_y + 1) < perf_capture_renew_tile_grid_dim) {
+                const int south = tile_index + perf_capture_renew_tile_grid_dim;
+                if ((((mask >> south) & ((Uint64)1)) != 0) && !visited[south]) {
+                    visited[south] = true;
+                    stack[stack_count++] = south;
+                }
+            }
+        }
+
+        if (component_tiles > largest_component_tiles) {
+            largest_component_tiles = component_tiles;
+        }
+    }
+
+    if (out_largest_component_tiles != NULL) {
+        *out_largest_component_tiles = largest_component_tiles;
+    }
+    return component_count;
+}
+
+static Uint64 texture_unlock_refresh_plan_pixels(const TextureUnlockRefreshPlan* plan) {
+    Uint64 pixels = 0;
+
+    if (plan == NULL) {
+        return 0;
+    }
+
+    for (int rect_index = 0; rect_index < plan->rect_count; rect_index++) {
+        const SDL_Rect rect = plan->rects[rect_index];
+        if ((rect.w <= 0) || (rect.h <= 0)) {
+            continue;
+        }
+        pixels += (Uint64)rect.w * (Uint64)rect.h;
+    }
+
+    return pixels;
+}
+
+static bool build_texture_unlock_refresh_plan_from_tile_mask(Uint64 tile_mask, TextureUnlockRefreshPlan* out_plan) {
+    if ((tile_mask == 0) || (out_plan == NULL)) {
+        return false;
+    }
+
+    TextureUnlockRefreshPlan plan = { 0 };
+    bool visited[perf_capture_renew_tile_count] = { false };
+
+    for (int seed = 0; seed < perf_capture_renew_tile_count; seed++) {
+        if ((((tile_mask >> seed) & ((Uint64)1)) == 0) || visited[seed]) {
+            continue;
+        }
+        if (plan.rect_count >= texture_unlock_multi_rect_max) {
+            return false;
+        }
+
+        int stack[perf_capture_renew_tile_count];
+        int stack_count = 0;
+        int min_tile_x = perf_capture_renew_tile_grid_dim;
+        int min_tile_y = perf_capture_renew_tile_grid_dim;
+        int max_tile_x = 0;
+        int max_tile_y = 0;
+        stack[stack_count++] = seed;
+        visited[seed] = true;
+
+        while (stack_count > 0) {
+            const int tile_index = stack[--stack_count];
+            const int tile_x = tile_index % perf_capture_renew_tile_grid_dim;
+            const int tile_y = tile_index / perf_capture_renew_tile_grid_dim;
+            min_tile_x = SDL_min(min_tile_x, tile_x);
+            min_tile_y = SDL_min(min_tile_y, tile_y);
+            max_tile_x = SDL_max(max_tile_x, tile_x);
+            max_tile_y = SDL_max(max_tile_y, tile_y);
+
+            if (tile_x > 0) {
+                const int west = tile_index - 1;
+                if ((((tile_mask >> west) & ((Uint64)1)) != 0) && !visited[west]) {
+                    visited[west] = true;
+                    stack[stack_count++] = west;
+                }
+            }
+            if ((tile_x + 1) < perf_capture_renew_tile_grid_dim) {
+                const int east = tile_index + 1;
+                if ((((tile_mask >> east) & ((Uint64)1)) != 0) && !visited[east]) {
+                    visited[east] = true;
+                    stack[stack_count++] = east;
+                }
+            }
+            if (tile_y > 0) {
+                const int north = tile_index - perf_capture_renew_tile_grid_dim;
+                if ((((tile_mask >> north) & ((Uint64)1)) != 0) && !visited[north]) {
+                    visited[north] = true;
+                    stack[stack_count++] = north;
+                }
+            }
+            if ((tile_y + 1) < perf_capture_renew_tile_grid_dim) {
+                const int south = tile_index + perf_capture_renew_tile_grid_dim;
+                if ((((tile_mask >> south) & ((Uint64)1)) != 0) && !visited[south]) {
+                    visited[south] = true;
+                    stack[stack_count++] = south;
+                }
+            }
+        }
+
+        plan.rects[plan.rect_count++] = (SDL_Rect){
+            min_tile_x * perf_capture_renew_tile_size,
+            min_tile_y * perf_capture_renew_tile_size,
+            (max_tile_x - min_tile_x + 1) * perf_capture_renew_tile_size,
+            (max_tile_y - min_tile_y + 1) * perf_capture_renew_tile_size,
+        };
+    }
+
+    *out_plan = plan;
+    return plan.rect_count > 0;
 }
 
 static void note_perf_capture_texture_unlock_locality(int texture_handle, const SDL_Surface* source_surface) {
@@ -857,12 +1719,14 @@ static void note_perf_capture_texture_unlock_locality(int texture_handle, const 
     }
 
     const int texture_index = texture_handle - 1;
+    note_perf_capture_texture_logical_identity(texture_index);
     const bool have_index8_history = (perf_capture_unlock_locality_tracked_by_texture[texture_index] > 0) ||
                                      (perf_capture_unlock_locality_baseline_skips_by_texture[texture_index] > 0);
     if (source_surface->format != SDL_PIXELFORMAT_INDEX8) {
         frame_stats.texture_unlock_locality_index8_non_index8_skips += 1;
         perf_capture_unlock_locality_telemetry.index8_non_index8_skips += 1;
         perf_capture_unlock_locality_non_index8_skips_by_texture[texture_index] += 1;
+        perf_capture_unlock_locality_whole_capture_non_index8_skips_by_texture[texture_index] += 1;
         if (have_index8_history) {
             perf_capture_unlock_locality_shape_mixed_by_texture[texture_index] = true;
         }
@@ -916,6 +1780,7 @@ static void note_perf_capture_texture_unlock_locality(int texture_handle, const 
         frame_stats.texture_unlock_locality_index8_baseline_skips += 1;
         perf_capture_unlock_locality_telemetry.index8_baseline_skips += 1;
         perf_capture_unlock_locality_baseline_skips_by_texture[texture_index] += 1;
+        perf_capture_unlock_locality_whole_capture_baseline_skips_by_texture[texture_index] += 1;
         return;
     }
 
@@ -968,6 +1833,11 @@ static void note_perf_capture_texture_unlock_locality(int texture_handle, const 
     const Uint64 changed_bbox_pixels =
         changed_rows > 0 ? (Uint64)(max_x - min_x + 1) * (Uint64)(max_y - min_y + 1) : 0;
     frame_stats.texture_unlock_locality_index8_tracked += 1;
+    if (changed_pixels == 0) {
+        perf_capture_unlock_locality_telemetry.index8_zero_delta_unlocks += 1;
+        perf_capture_unlock_locality_zero_delta_by_texture[texture_index] += 1;
+        perf_capture_unlock_locality_whole_capture_zero_delta_by_texture[texture_index] += 1;
+    }
     frame_stats.texture_unlock_locality_index8_source_pixels += source_pixels;
     frame_stats.texture_unlock_locality_index8_changed_pixels += changed_pixels;
     frame_stats.texture_unlock_locality_index8_changed_rows += changed_rows;
@@ -982,6 +1852,44 @@ static void note_perf_capture_texture_unlock_locality(int texture_handle, const 
     perf_capture_unlock_locality_changed_pixels_by_texture[texture_index] += changed_pixels;
     perf_capture_unlock_locality_changed_rows_by_texture[texture_index] += changed_rows;
     perf_capture_unlock_locality_changed_bbox_pixels_by_texture[texture_index] += changed_bbox_pixels;
+    perf_capture_unlock_locality_whole_capture_tracked_by_texture[texture_index] += 1;
+    perf_capture_unlock_locality_whole_capture_source_pixels_by_texture[texture_index] += source_pixels;
+    perf_capture_unlock_locality_whole_capture_changed_pixels_by_texture[texture_index] += changed_pixels;
+    perf_capture_unlock_locality_whole_capture_changed_rows_by_texture[texture_index] += changed_rows;
+    perf_capture_unlock_locality_whole_capture_changed_bbox_pixels_by_texture[texture_index] += changed_bbox_pixels;
+
+    if ((width == 256) && (height == 256) && (changed_rows > 0)) {
+        const SDL_Rect dirty_rect = { min_x, min_y, max_x - min_x + 1, max_y - min_y + 1 };
+        note_perf_capture_compare_dirty_rect_candidate(texture_index, &dirty_rect);
+    }
+}
+
+static void note_perf_capture_compare_dirty_rect_candidate(int texture_index, const SDL_Rect* dirty_rect) {
+    if (!frame_stats_extended_enabled || (texture_index < 0) || (texture_index >= FL_TEXTURE_MAX) || (dirty_rect == NULL) ||
+        (dirty_rect->w <= 0) || (dirty_rect->h <= 0)) {
+        return;
+    }
+
+    perf_capture_compare_dirty_rect_pending_tile_masks[texture_index] |=
+        make_perf_capture_renew_tile_mask(dirty_rect->x, dirty_rect->y, dirty_rect->w, dirty_rect->h);
+
+    if (!perf_capture_compare_dirty_rect_pending_valid[texture_index]) {
+        perf_capture_compare_dirty_rect_pending_rects[texture_index] = *dirty_rect;
+        perf_capture_compare_dirty_rect_pending_valid[texture_index] = true;
+        perf_capture_compare_dirty_rect_pending_unlock_counts[texture_index] = 1;
+        return;
+    }
+
+    SDL_Rect* accumulated_rect = &perf_capture_compare_dirty_rect_pending_rects[texture_index];
+    const int union_x0 = SDL_min(accumulated_rect->x, dirty_rect->x);
+    const int union_y0 = SDL_min(accumulated_rect->y, dirty_rect->y);
+    const int union_x1 = SDL_max(accumulated_rect->x + accumulated_rect->w - 1, dirty_rect->x + dirty_rect->w - 1);
+    const int union_y1 = SDL_max(accumulated_rect->y + accumulated_rect->h - 1, dirty_rect->y + dirty_rect->h - 1);
+    accumulated_rect->x = union_x0;
+    accumulated_rect->y = union_y0;
+    accumulated_rect->w = union_x1 - union_x0 + 1;
+    accumulated_rect->h = union_y1 - union_y0 + 1;
+    perf_capture_compare_dirty_rect_pending_unlock_counts[texture_index] += 1;
 }
 
 static void note_software_surface_refresh_attempt(unsigned int th) {
@@ -1022,6 +1930,56 @@ static void note_software_surface_refresh_attempt(unsigned int th) {
     }
 }
 
+static void note_perf_capture_dirty_rect_record(int texture_index) {
+    if (!frame_stats_extended_enabled || (texture_index < 0) || (texture_index >= FL_TEXTURE_MAX)) {
+        return;
+    }
+
+    perf_capture_dirty_rect_record_calls_by_texture[texture_index] += 1;
+}
+
+static void note_perf_capture_dirty_rect_retained_after_unlock(int texture_index) {
+    if (!frame_stats_extended_enabled || (texture_index < 0) || (texture_index >= FL_TEXTURE_MAX)) {
+        return;
+    }
+
+    perf_capture_dirty_rect_retained_after_unlock_by_texture[texture_index] += 1;
+}
+
+static void note_perf_capture_dirty_rect_clear(int texture_index, TextureUnlockDirtyRectClearReason reason) {
+    if (!frame_stats_extended_enabled || (texture_index < 0) || (texture_index >= FL_TEXTURE_MAX)) {
+        return;
+    }
+
+    switch (reason) {
+    case TEXTURE_UNLOCK_DIRTY_RECT_CLEAR_REASON_STALE_BEFORE_RECORD:
+        perf_capture_dirty_rect_clear_stale_before_record_by_texture[texture_index] += 1;
+        break;
+    case TEXTURE_UNLOCK_DIRTY_RECT_CLEAR_REASON_UNLOCK_UNUSED:
+        perf_capture_dirty_rect_clear_unlock_unused_by_texture[texture_index] += 1;
+        break;
+    case TEXTURE_UNLOCK_DIRTY_RECT_CLEAR_REASON_ACCESS_UNUSED:
+        perf_capture_dirty_rect_clear_access_unused_by_texture[texture_index] += 1;
+        break;
+    case TEXTURE_UNLOCK_DIRTY_RECT_CLEAR_REASON_EXPLICIT:
+        perf_capture_dirty_rect_clear_explicit_by_texture[texture_index] += 1;
+        break;
+    default:
+        break;
+    }
+}
+
+static void clear_perf_capture_compare_dirty_rect_pending_index(int texture_index) {
+    if ((texture_index < 0) || (texture_index >= FL_TEXTURE_MAX)) {
+        return;
+    }
+
+    perf_capture_compare_dirty_rect_pending_rects[texture_index] = (SDL_Rect){ 0, 0, 0, 0 };
+    perf_capture_compare_dirty_rect_pending_valid[texture_index] = false;
+    perf_capture_compare_dirty_rect_pending_unlock_counts[texture_index] = 0;
+    perf_capture_compare_dirty_rect_pending_tile_masks[texture_index] = 0;
+}
+
 static bool should_keep_dirty_cache_entries(CacheDirtyReason reason) {
     return software_frame_mode_active &&
            ((reason == CACHE_DIRTY_REASON_TEXTURE_UNLOCK) || (reason == CACHE_DIRTY_REASON_PALETTE_UNLOCK));
@@ -1031,17 +1989,25 @@ static bool should_refresh_dirty_cache_entry(Uint8 dirty_reason) {
     return should_keep_dirty_cache_entries((CacheDirtyReason)dirty_reason);
 }
 
-static void clear_texture_unlock_dirty_rect_index(int texture_index) {
+static void clear_texture_unlock_dirty_rect_index(int texture_index, TextureUnlockDirtyRectClearReason reason) {
     if ((texture_index < 0) || (texture_index >= FL_TEXTURE_MAX)) {
         return;
     }
 
+    if (texture_unlock_dirty_rect_valid[texture_index] || texture_unlock_dirty_tile_mask_valid[texture_index]) {
+        note_perf_capture_dirty_rect_clear(texture_index, reason);
+    }
     texture_unlock_dirty_rects[texture_index] = (SDL_Rect){ 0, 0, 0, 0 };
     texture_unlock_dirty_rect_valid[texture_index] = false;
+    texture_unlock_dirty_tile_masks[texture_index] = 0;
+    texture_unlock_dirty_tile_mask_valid[texture_index] = false;
+    clear_perf_capture_compare_dirty_rect_pending_index(texture_index);
 }
 
-static void clear_texture_unlock_dirty_rect_if_unused(int texture_index) {
-    if ((texture_index < 0) || (texture_index >= FL_TEXTURE_MAX) || !texture_unlock_dirty_rect_valid[texture_index]) {
+static void clear_texture_unlock_dirty_rect_if_unused(int texture_index, TextureUnlockDirtyRectClearReason reason) {
+    if ((texture_index < 0) || (texture_index >= FL_TEXTURE_MAX) ||
+        (!texture_unlock_dirty_rect_valid[texture_index] && !texture_unlock_dirty_tile_mask_valid[texture_index] &&
+         !perf_capture_compare_dirty_rect_pending_valid[texture_index])) {
         return;
     }
 
@@ -1053,45 +2019,141 @@ static void clear_texture_unlock_dirty_rect_if_unused(int texture_index) {
         }
     }
 
-    clear_texture_unlock_dirty_rect_index(texture_index);
+    clear_texture_unlock_dirty_rect_index(texture_index, reason);
 }
 
-static bool get_texture_unlock_partial_refresh_rect(unsigned int th,
-                                                    Uint8 dirty_reason,
-                                                    const SDL_Surface* source_surface,
-                                                    SDL_Rect* out_rect) {
-    if ((dirty_reason != CACHE_DIRTY_REASON_TEXTURE_UNLOCK) || (source_surface == NULL) || (out_rect == NULL)) {
-        return false;
+static void note_perf_capture_compare_dirty_rect_refresh_candidate(unsigned int th,
+                                                                   Uint8 dirty_reason,
+                                                                   const SDL_Surface* source_surface) {
+    if (!frame_stats_extended_enabled || (source_surface == NULL) || (dirty_reason != CACHE_DIRTY_REASON_TEXTURE_UNLOCK)) {
+        return;
+    }
+
+    if ((source_surface->format != SDL_PIXELFORMAT_INDEX8) || (source_surface->w != 256) || (source_surface->h != 256)) {
+        return;
     }
 
     const int texture_handle = LO_16_BITS(th);
     if ((texture_handle <= 0) || (texture_handle > FL_TEXTURE_MAX)) {
-        return false;
+        return;
     }
 
     const int texture_index = texture_handle - 1;
-    if (!texture_unlock_dirty_rect_valid[texture_index]) {
-        return false;
+    perf_capture_compare_dirty_rect_refresh_attempts_by_texture[texture_index] += 1;
+
+    if (!perf_capture_compare_dirty_rect_pending_valid[texture_index]) {
+        perf_capture_compare_dirty_rect_no_usable_candidate_refresh_attempts_by_texture[texture_index] += 1;
+        return;
+    }
+
+    const SDL_Rect dirty_rect = perf_capture_compare_dirty_rect_pending_rects[texture_index];
+    if ((dirty_rect.w <= 0) || (dirty_rect.h <= 0) || (dirty_rect.x < 0) || (dirty_rect.y < 0) ||
+        (dirty_rect.x + dirty_rect.w > source_surface->w) || (dirty_rect.y + dirty_rect.h > source_surface->h)) {
+        perf_capture_compare_dirty_rect_no_usable_candidate_refresh_attempts_by_texture[texture_index] += 1;
+        return;
+    }
+
+    const Uint64 dirty_pixels = (Uint64)dirty_rect.w * (Uint64)dirty_rect.h;
+    const Uint64 max_partial_pixels = ((Uint64)source_surface->w * (Uint64)source_surface->h) / 4u;
+    perf_capture_compare_dirty_rect_refresh_bbox_pixels_by_texture[texture_index] += dirty_pixels;
+    perf_capture_compare_dirty_rect_refresh_pending_unlocks_by_texture[texture_index] +=
+        perf_capture_compare_dirty_rect_pending_unlock_counts[texture_index];
+    if (dirty_pixels > perf_capture_compare_dirty_rect_refresh_max_bbox_pixels_by_texture[texture_index]) {
+        perf_capture_compare_dirty_rect_refresh_max_bbox_pixels_by_texture[texture_index] = dirty_pixels;
+    }
+    if ((Uint64)perf_capture_compare_dirty_rect_pending_unlock_counts[texture_index] >
+        perf_capture_compare_dirty_rect_refresh_max_pending_unlocks_by_texture[texture_index]) {
+        perf_capture_compare_dirty_rect_refresh_max_pending_unlocks_by_texture[texture_index] =
+            (Uint64)perf_capture_compare_dirty_rect_pending_unlock_counts[texture_index];
+    }
+
+    const Uint64 pending_tile_mask = perf_capture_compare_dirty_rect_pending_tile_masks[texture_index];
+    const Uint64 covered_tiles = (Uint64)__builtin_popcountll((unsigned long long)pending_tile_mask);
+    int largest_component_tiles = 0;
+    const int component_count = count_perf_capture_renew_tile_components(pending_tile_mask, &largest_component_tiles);
+    perf_capture_compare_dirty_rect_refresh_32x32_covered_tiles_by_texture[texture_index] += covered_tiles;
+    if (covered_tiles > perf_capture_compare_dirty_rect_refresh_32x32_max_covered_tiles_by_texture[texture_index]) {
+        perf_capture_compare_dirty_rect_refresh_32x32_max_covered_tiles_by_texture[texture_index] = covered_tiles;
+    }
+    perf_capture_compare_dirty_rect_refresh_32x32_component_count_by_texture[texture_index] += (Uint64)component_count;
+    if ((Uint64)component_count >
+        perf_capture_compare_dirty_rect_refresh_32x32_max_component_count_by_texture[texture_index]) {
+        perf_capture_compare_dirty_rect_refresh_32x32_max_component_count_by_texture[texture_index] =
+            (Uint64)component_count;
+    }
+    if (component_count > 1) {
+        perf_capture_compare_dirty_rect_refresh_32x32_multi_component_refresh_attempts_by_texture[texture_index] += 1;
+    }
+    perf_capture_compare_dirty_rect_refresh_32x32_largest_component_tiles_by_texture[texture_index] +=
+        (Uint64)largest_component_tiles;
+    if ((Uint64)largest_component_tiles >
+        perf_capture_compare_dirty_rect_refresh_32x32_max_largest_component_tiles_by_texture[texture_index]) {
+        perf_capture_compare_dirty_rect_refresh_32x32_max_largest_component_tiles_by_texture[texture_index] =
+            (Uint64)largest_component_tiles;
+    }
+
+    if ((dirty_pixels > 0) && (dirty_pixels <= max_partial_pixels)) {
+        perf_capture_compare_dirty_rect_partial_candidate_refresh_attempts_by_texture[texture_index] += 1;
+        return;
+    }
+
+    perf_capture_compare_dirty_rect_oversized_candidate_refresh_attempts_by_texture[texture_index] += 1;
+}
+
+static TextureUnlockRefreshDecision classify_texture_unlock_refresh_decision(unsigned int th,
+                                                                             Uint8 dirty_reason,
+                                                                             const SDL_Surface* source_surface,
+                                                                             TextureUnlockRefreshPlan* out_plan) {
+    if ((source_surface == NULL) || (out_plan == NULL)) {
+        return TEXTURE_UNLOCK_REFRESH_DECISION_FULL_INELIGIBLE_SOURCE;
+    }
+    SDL_zero(*out_plan);
+
+    if (dirty_reason != CACHE_DIRTY_REASON_TEXTURE_UNLOCK) {
+        return TEXTURE_UNLOCK_REFRESH_DECISION_FULL_NON_TEXTURE_DIRTY;
+    }
+
+    const int texture_handle = LO_16_BITS(th);
+    if ((texture_handle <= 0) || (texture_handle > FL_TEXTURE_MAX)) {
+        return TEXTURE_UNLOCK_REFRESH_DECISION_FULL_INELIGIBLE_SOURCE;
     }
 
     if ((source_surface->format != SDL_PIXELFORMAT_INDEX8) || (source_surface->w != 256) || (source_surface->h != 256)) {
-        return false;
+        return TEXTURE_UNLOCK_REFRESH_DECISION_FULL_INELIGIBLE_SOURCE;
+    }
+
+    const int texture_index = texture_handle - 1;
+    const Uint64 max_partial_pixels = ((Uint64)source_surface->w * (Uint64)source_surface->h) / 4u;
+    if (texture_unlock_dirty_tile_mask_valid[texture_index]) {
+        TextureUnlockRefreshPlan multi_rect_plan = { 0 };
+        if (build_texture_unlock_refresh_plan_from_tile_mask(texture_unlock_dirty_tile_masks[texture_index],
+                                                             &multi_rect_plan)) {
+            const Uint64 multi_rect_pixels = texture_unlock_refresh_plan_pixels(&multi_rect_plan);
+            if ((multi_rect_pixels > 0) && (multi_rect_pixels <= max_partial_pixels)) {
+                *out_plan = multi_rect_plan;
+                return TEXTURE_UNLOCK_REFRESH_DECISION_PARTIAL;
+            }
+        }
+    }
+
+    if (!texture_unlock_dirty_rect_valid[texture_index]) {
+        return TEXTURE_UNLOCK_REFRESH_DECISION_FULL_NO_USABLE_DIRTY_RECT;
     }
 
     const SDL_Rect dirty_rect = texture_unlock_dirty_rects[texture_index];
     if ((dirty_rect.w <= 0) || (dirty_rect.h <= 0) || (dirty_rect.x < 0) || (dirty_rect.y < 0) ||
         (dirty_rect.x + dirty_rect.w > source_surface->w) || (dirty_rect.y + dirty_rect.h > source_surface->h)) {
-        return false;
+        return TEXTURE_UNLOCK_REFRESH_DECISION_FULL_NO_USABLE_DIRTY_RECT;
     }
 
     const Uint64 dirty_pixels = (Uint64)dirty_rect.w * (Uint64)dirty_rect.h;
-    const Uint64 max_partial_pixels = ((Uint64)source_surface->w * (Uint64)source_surface->h) / 4u;
     if ((dirty_pixels == 0) || (dirty_pixels > max_partial_pixels)) {
-        return false;
+        return TEXTURE_UNLOCK_REFRESH_DECISION_FULL_OVERSIZED_DIRTY_RECT;
     }
 
-    *out_rect = dirty_rect;
-    return true;
+    out_plan->rects[0] = dirty_rect;
+    out_plan->rect_count = 1;
+    return TEXTURE_UNLOCK_REFRESH_DECISION_PARTIAL;
 }
 
 static bool refresh_software_source_surface_in_place(unsigned int th, SDL_Surface* cached_surface, Uint8 dirty_reason) {
@@ -1133,18 +2195,49 @@ static bool refresh_software_source_surface_in_place(unsigned int th, SDL_Surfac
         }
     }
 
-    SDL_Rect partial_rect = { 0, 0, 0, 0 };
-    const bool use_partial_refresh = get_texture_unlock_partial_refresh_rect(th, dirty_reason, surface, &partial_rect);
+    TextureUnlockRefreshPlan partial_plan = { 0 };
+    note_perf_capture_compare_dirty_rect_refresh_candidate(th, dirty_reason, surface);
+    const TextureUnlockRefreshDecision refresh_decision =
+        classify_texture_unlock_refresh_decision(th, dirty_reason, surface, &partial_plan);
+    const bool use_partial_refresh = refresh_decision == TEXTURE_UNLOCK_REFRESH_DECISION_PARTIAL;
+    note_perf_capture_refresh_path(th, surface, refresh_decision, use_partial_refresh ? &partial_plan : NULL);
+    const bool sample_blit = should_sample_perf_capture_refresh_blit();
+    Uint64 sampled_blit_start_counter = 0;
 
     if (frame_stats_extended_enabled) {
         const Uint64 blit_start_ns = SDL_GetTicksNS();
+        sampled_blit_start_counter = sample_blit ? SDL_GetPerformanceCounter() : 0;
         frame_stats.software_surface_cache_refresh_blit_calls += 1;
-        success = use_partial_refresh ? SDL_BlitSurface(surface, &partial_rect, cached_surface, &partial_rect)
-                                      : SDL_BlitSurface(surface, NULL, cached_surface, NULL);
+        if (use_partial_refresh) {
+            success = true;
+            for (int rect_index = 0; rect_index < partial_plan.rect_count; rect_index++) {
+                const SDL_Rect* rect = &partial_plan.rects[rect_index];
+                if (!SDL_BlitSurface(surface, rect, cached_surface, rect)) {
+                    success = SDL_BlitSurface(surface, NULL, cached_surface, NULL);
+                    break;
+                }
+            }
+        } else {
+            success = SDL_BlitSurface(surface, NULL, cached_surface, NULL);
+        }
         frame_stats.software_surface_cache_refresh_blit_ns += SDL_GetTicksNS() - blit_start_ns;
     } else {
-        success = use_partial_refresh ? SDL_BlitSurface(surface, &partial_rect, cached_surface, &partial_rect)
-                                      : SDL_BlitSurface(surface, NULL, cached_surface, NULL);
+        if (use_partial_refresh) {
+            success = true;
+            for (int rect_index = 0; rect_index < partial_plan.rect_count; rect_index++) {
+                const SDL_Rect* rect = &partial_plan.rects[rect_index];
+                if (!SDL_BlitSurface(surface, rect, cached_surface, rect)) {
+                    success = SDL_BlitSurface(surface, NULL, cached_surface, NULL);
+                    break;
+                }
+            }
+        } else {
+            success = SDL_BlitSurface(surface, NULL, cached_surface, NULL);
+        }
+    }
+    if (sample_blit) {
+        note_perf_capture_refresh_blit_sample(
+            th, refresh_decision, perf_capture_counter_delta_to_ns(sampled_blit_start_counter, SDL_GetPerformanceCounter()));
     }
 
 done:
@@ -1333,11 +2426,13 @@ static SDL_Surface* get_or_create_software_source_surface(unsigned int th) {
                     if (frame_stats_extended_enabled) {
                         frame_stats.software_surface_cache_creates += 1;
                         note_software_surface_cache_create_provenance(dirty_state);
+                        note_perf_capture_software_surface_access_provenance(texture_handle - 1, dirty_state);
                     }
                 });
                 *runtime_dirty_reason_p = CACHE_DIRTY_REASON_NONE;
                 clear_cache_dirty_state(dirty_state);
-                clear_texture_unlock_dirty_rect_if_unused(texture_handle - 1);
+                clear_texture_unlock_dirty_rect_if_unused(
+                    texture_handle - 1, TEXTURE_UNLOCK_DIRTY_RECT_CLEAR_REASON_ACCESS_UNUSED);
                 return cached_surface;
             }
 
@@ -1345,13 +2440,15 @@ static SDL_Surface* get_or_create_software_source_surface(unsigned int th) {
             software_surface_cache[texture_handle - 1][palette_handle] = NULL;
             cached_surface = NULL;
             *runtime_dirty_reason_p = CACHE_DIRTY_REASON_NONE;
-            clear_texture_unlock_dirty_rect_if_unused(texture_handle - 1);
+            clear_texture_unlock_dirty_rect_if_unused(
+                texture_handle - 1, TEXTURE_UNLOCK_DIRTY_RECT_CLEAR_REASON_ACCESS_UNUSED);
         }
     }
 
     if (cached_surface != NULL) {
         clear_cache_dirty_state(dirty_state);
-        clear_texture_unlock_dirty_rect_if_unused(texture_handle - 1);
+        clear_texture_unlock_dirty_rect_if_unused(
+            texture_handle - 1, TEXTURE_UNLOCK_DIRTY_RECT_CLEAR_REASON_ACCESS_UNUSED);
         RENDERER_TELEMETRY({
             if (frame_stats_extended_enabled) {
                 frame_stats.software_surface_cache_hits += 1;
@@ -1379,6 +2476,7 @@ static SDL_Surface* get_or_create_software_source_surface(unsigned int th) {
         if (frame_stats_extended_enabled) {
             frame_stats.software_surface_cache_creates += 1;
             note_software_surface_cache_create_provenance(dirty_state);
+            note_perf_capture_software_surface_access_provenance(texture_handle - 1, dirty_state);
         }
     });
     software_surface_cache[texture_handle - 1][palette_handle] = cached_surface;
@@ -1576,6 +2674,100 @@ static bool try_resolve_solid_task_as_rect(const RenderTask* task, SDL_FRect* ou
     return true;
 }
 
+static bool try_resolve_solid_task_as_full_height_diagonal_strip(const RenderTask* task,
+                                                                 SoftwareFrameSolidDiagonalStrip* out_strip) {
+    if ((task == NULL) || (task->type != RENDER_TASK_TYPE_GEOMETRY) || (task->texture != NULL)) {
+        return false;
+    }
+
+    const SDL_FColor color0 = task->vertices[0].color;
+    for (int i = 1; i < 4; i++) {
+        const SDL_FColor color = task->vertices[i].color;
+        if ((color.r != color0.r) || (color.g != color0.g) || (color.b != color0.b) || (color.a != color0.a)) {
+            return false;
+        }
+    }
+
+    float min_y = task->vertices[0].position.y;
+    float max_y = min_y;
+    for (int i = 1; i < 4; i++) {
+        min_y = SDL_min(min_y, task->vertices[i].position.y);
+        max_y = SDL_max(max_y, task->vertices[i].position.y);
+    }
+
+    const int top_y = (int)SDL_roundf(min_y);
+    const int bottom_y = (int)SDL_roundf(max_y);
+    if (!nearly_equal(min_y, (float)top_y) || !nearly_equal(max_y, (float)bottom_y) || (top_y != 0) ||
+        (bottom_y != cps3_height)) {
+        return false;
+    }
+
+    float top_xs[2];
+    float bottom_xs[2];
+    int top_count = 0;
+    int bottom_count = 0;
+    for (int i = 0; i < 4; i++) {
+        const SDL_Vertex* vertex = &task->vertices[i];
+        if (nearly_equal(vertex->position.y, min_y)) {
+            if (top_count >= SDL_arraysize(top_xs)) {
+                return false;
+            }
+            top_xs[top_count++] = vertex->position.x;
+        } else if (nearly_equal(vertex->position.y, max_y)) {
+            if (bottom_count >= SDL_arraysize(bottom_xs)) {
+                return false;
+            }
+            bottom_xs[bottom_count++] = vertex->position.x;
+        } else {
+            return false;
+        }
+    }
+
+    if ((top_count != SDL_arraysize(top_xs)) || (bottom_count != SDL_arraysize(bottom_xs))) {
+        return false;
+    }
+
+    if (top_xs[0] > top_xs[1]) {
+        const float swap = top_xs[0];
+        top_xs[0] = top_xs[1];
+        top_xs[1] = swap;
+    }
+    if (bottom_xs[0] > bottom_xs[1]) {
+        const float swap = bottom_xs[0];
+        bottom_xs[0] = bottom_xs[1];
+        bottom_xs[1] = swap;
+    }
+
+    const int top_left_x = (int)SDL_roundf(top_xs[0]);
+    const int top_right_x = (int)SDL_roundf(top_xs[1]);
+    const int bottom_left_x = (int)SDL_roundf(bottom_xs[0]);
+    const int bottom_right_x = (int)SDL_roundf(bottom_xs[1]);
+    if (!nearly_equal(top_xs[0], (float)top_left_x) || !nearly_equal(top_xs[1], (float)top_right_x) ||
+        !nearly_equal(bottom_xs[0], (float)bottom_left_x) || !nearly_equal(bottom_xs[1], (float)bottom_right_x)) {
+        return false;
+    }
+
+    const int strip_height = bottom_y - top_y;
+    const int top_width = top_right_x - top_left_x;
+    const int bottom_width = bottom_right_x - bottom_left_x;
+    if ((strip_height != cps3_height) || (top_width <= 0) ||
+        (top_width > software_frame_full_height_diagonal_strip_max_width_pixels) || (bottom_width != top_width) ||
+        ((bottom_left_x - top_left_x) != strip_height) || ((bottom_right_x - top_right_x) != strip_height)) {
+        return false;
+    }
+
+    if (out_strip != NULL) {
+        out_strip->top_y = top_y;
+        out_strip->bottom_y = bottom_y;
+        out_strip->top_left_x = top_left_x;
+        out_strip->top_right_x = top_right_x;
+        out_strip->color = (((Uint32)SDL_roundf(color0.a * 255.0f)) << 24) |
+                           (((Uint32)SDL_roundf(color0.r * 255.0f)) << 16) |
+                           (((Uint32)SDL_roundf(color0.g * 255.0f)) << 8) | ((Uint32)SDL_roundf(color0.b * 255.0f));
+    }
+    return true;
+}
+
 static SoftwareFrameFallbackReason classify_software_frame_fallback_reason(const RenderTask* task) {
     if (task == NULL) {
         return SOFTWARE_FRAME_FALLBACK_REASON_GEOMETRY;
@@ -1589,11 +2781,22 @@ static SoftwareFrameFallbackReason classify_software_frame_fallback_reason(const
     if (task->texture == NULL) {
         SDL_FRect solid_rect;
         Uint32 solid_color = 0;
-        return try_resolve_solid_task_as_rect(task, &solid_rect, &solid_color) ? SOFTWARE_FRAME_FALLBACK_REASON_NONE
-                                                                                : SOFTWARE_FRAME_FALLBACK_REASON_SOLID;
+        if (try_resolve_solid_task_as_rect(task, &solid_rect, &solid_color) ||
+            try_resolve_solid_task_as_full_height_diagonal_strip(task, NULL)) {
+            return SOFTWARE_FRAME_FALLBACK_REASON_NONE;
+        }
+        return SOFTWARE_FRAME_FALLBACK_REASON_SOLID;
     }
 
     return SOFTWARE_FRAME_FALLBACK_REASON_GEOMETRY;
+}
+
+static bool software_frame_color_is_alpha_only(Uint32 color) {
+    return (((color >> 24) & 0xFFu) != 0xFFu) && ((color & 0x00FFFFFFu) == 0x00FFFFFFu);
+}
+
+static bool software_frame_color_has_rgb_mod(Uint32 color) {
+    return (color & 0x00FFFFFFu) != 0x00FFFFFFu;
 }
 
 #if ENABLE_PERF_TELEMETRY
@@ -1718,7 +2921,8 @@ static SoftwareFrameFastCopyResult build_software_frame_fast_copy_plan(const Ren
 #if ENABLE_PERF_TELEMETRY
 static void note_software_frame_fast_copy_result(const RenderTask* task,
                                                  SoftwareFrameFastCopyResult result,
-                                                 const SoftwareFrameFastCopyPlan* plan) {
+                                                 const SoftwareFrameFastCopyPlan* plan,
+                                                 Uint64 non_integer_lookup_entries) {
     if (!frame_stats_extended_enabled || (task == NULL)) {
         return;
     }
@@ -1747,15 +2951,24 @@ static void note_software_frame_fast_copy_result(const RenderTask* task,
 
     frame_stats.software_frame_generic_textured_tasks += 1;
     frame_stats.software_frame_generic_textured_pixels += submitted_pixels;
+    if (software_frame_color_is_alpha_only(task->color)) {
+        frame_stats.software_frame_generic_textured_alpha_only_tasks += 1;
+        frame_stats.software_frame_generic_textured_alpha_only_pixels += submitted_pixels;
+    } else if (software_frame_color_has_rgb_mod(task->color)) {
+        frame_stats.software_frame_generic_textured_rgb_mod_tasks += 1;
+        frame_stats.software_frame_generic_textured_rgb_mod_pixels += submitted_pixels;
+    }
     switch (result) {
     case SOFTWARE_FRAME_FAST_COPY_RESULT_COLOR_MOD:
         frame_stats.software_frame_fast_miss_color_mod += 1;
         break;
     case SOFTWARE_FRAME_FAST_COPY_RESULT_NON_INTEGER:
         frame_stats.software_frame_fast_miss_non_integer += 1;
+        frame_stats.software_frame_fast_miss_non_integer_lookup_entries += non_integer_lookup_entries;
         if (submitted_pixels >= 256u) {
             frame_stats.software_frame_fast_miss_non_integer_ge_256_tasks += 1;
             frame_stats.software_frame_fast_miss_non_integer_ge_256_pixels += submitted_pixels;
+            frame_stats.software_frame_fast_miss_non_integer_ge_256_lookup_entries += non_integer_lookup_entries;
         }
         if (submitted_pixels >= 1024u) {
             frame_stats.software_frame_fast_miss_non_integer_ge_1024_tasks += 1;
@@ -1780,15 +2993,17 @@ static void note_software_frame_fast_copy_result(const RenderTask* task,
 #else
 static void note_software_frame_fast_copy_result(const RenderTask* task,
                                                  SoftwareFrameFastCopyResult result,
-                                                 const SoftwareFrameFastCopyPlan* plan) {
+                                                 const SoftwareFrameFastCopyPlan* plan,
+                                                 Uint64 non_integer_lookup_entries) {
     (void)task;
     (void)result;
     (void)plan;
+    (void)non_integer_lookup_entries;
 }
 #endif
 
 #if ENABLE_PERF_TELEMETRY
-static void note_software_frame_fast_non_integer(const RenderTask* task) {
+static void note_software_frame_fast_non_integer(const RenderTask* task, Uint64 lookup_entries) {
     if (!frame_stats_extended_enabled || (task == NULL)) {
         return;
     }
@@ -1796,10 +3011,19 @@ static void note_software_frame_fast_non_integer(const RenderTask* task) {
     const Uint64 submitted_pixels = render_task_submitted_pixels(task);
     frame_stats.software_frame_fast_non_integer_tasks += 1;
     frame_stats.software_frame_fast_non_integer_pixels += submitted_pixels;
+    frame_stats.software_frame_fast_non_integer_lookup_entries += lookup_entries;
+    if (software_frame_color_is_alpha_only(task->color)) {
+        frame_stats.software_frame_fast_non_integer_alpha_only_tasks += 1;
+        frame_stats.software_frame_fast_non_integer_alpha_only_pixels += submitted_pixels;
+    } else if (software_frame_color_has_rgb_mod(task->color)) {
+        frame_stats.software_frame_fast_non_integer_rgb_mod_tasks += 1;
+        frame_stats.software_frame_fast_non_integer_rgb_mod_pixels += submitted_pixels;
+    }
 }
 #else
-static void note_software_frame_fast_non_integer(const RenderTask* task) {
+static void note_software_frame_fast_non_integer(const RenderTask* task, Uint64 lookup_entries) {
     (void)task;
+    (void)lookup_entries;
 }
 #endif
 
@@ -1960,6 +3184,20 @@ static Uint32 blend_argb8888(Uint32 dst_pixel, Uint32 src_pixel) {
     }
 
     const Uint32 dst_a = (dst_pixel >> 24) & 0xFFu;
+    if (dst_a == 255u) {
+        const Uint32 inv_src_a = 255u - src_a;
+        const Uint32 src_r = (src_pixel >> 16) & 0xFFu;
+        const Uint32 src_g = (src_pixel >> 8) & 0xFFu;
+        const Uint32 src_b = src_pixel & 0xFFu;
+        const Uint32 dst_r = (dst_pixel >> 16) & 0xFFu;
+        const Uint32 dst_g = (dst_pixel >> 8) & 0xFFu;
+        const Uint32 dst_b = dst_pixel & 0xFFu;
+        const Uint32 out_r = ((src_r * src_a) + (dst_r * inv_src_a) + 127u) / 255u;
+        const Uint32 out_g = ((src_g * src_a) + (dst_g * inv_src_a) + 127u) / 255u;
+        const Uint32 out_b = ((src_b * src_a) + (dst_b * inv_src_a) + 127u) / 255u;
+        return 0xFF000000u | (out_r << 16) | (out_g << 8) | out_b;
+    }
+
     const Uint32 out_a = src_a + ((dst_a * (255u - src_a) + 127u) / 255u);
     const Uint32 src_r = (src_pixel >> 16) & 0xFFu;
     const Uint32 src_g = (src_pixel >> 8) & 0xFFu;
@@ -2023,6 +3261,63 @@ static Uint32 blend_solid_argb8888(Uint32 dst_pixel,
     const Uint32 out_g = (out_g_premul + (out_a / 2u)) / out_a;
     const Uint32 out_b = (out_b_premul + (out_a / 2u)) / out_a;
     return (out_a << 24) | (out_r << 16) | (out_g << 8) | out_b;
+}
+
+static bool raster_full_height_diagonal_strip_to_software_frame(const SoftwareFrameSolidDiagonalStrip* strip,
+                                                                SDL_Surface* dst_surface) {
+    if ((strip == NULL) || (dst_surface == NULL) || (strip->bottom_y <= strip->top_y)) {
+        return false;
+    }
+
+    Uint32* dst_pixels = (Uint32*)dst_surface->pixels;
+    const int dst_pitch = dst_surface->pitch / (int)sizeof(Uint32);
+    const int dst_y0 = clamp_to_range(strip->top_y, 0, dst_surface->h);
+    const int dst_y1 = clamp_to_range(strip->bottom_y, 0, dst_surface->h);
+    if (dst_y1 <= dst_y0) {
+        return true;
+    }
+
+    const Uint32 src_a = (strip->color >> 24) & 0xFFu;
+    if (src_a == 0u) {
+        return true;
+    }
+
+    if (src_a == 255u) {
+        for (int y = dst_y0; y < dst_y1; y++) {
+            const int row_offset = y - strip->top_y;
+            const int dst_x0 = clamp_to_range(strip->top_left_x + row_offset, 0, dst_surface->w);
+            const int dst_x1 = clamp_to_range(strip->top_right_x + row_offset, 0, dst_surface->w);
+            if (dst_x1 <= dst_x0) {
+                continue;
+            }
+
+            Uint32* dst_row = dst_pixels + (y * dst_pitch) + dst_x0;
+            fill_argb8888_span(dst_row, dst_x1 - dst_x0, strip->color);
+        }
+        return true;
+    }
+
+    const Uint32 inv_src_a = 255u - src_a;
+    const Uint32 src_r = (strip->color >> 16) & 0xFFu;
+    const Uint32 src_g = (strip->color >> 8) & 0xFFu;
+    const Uint32 src_b = strip->color & 0xFFu;
+    const Uint32 src_r_premul = src_r * src_a;
+    const Uint32 src_g_premul = src_g * src_a;
+    const Uint32 src_b_premul = src_b * src_a;
+    for (int y = dst_y0; y < dst_y1; y++) {
+        const int row_offset = y - strip->top_y;
+        const int dst_x0 = clamp_to_range(strip->top_left_x + row_offset, 0, dst_surface->w);
+        const int dst_x1 = clamp_to_range(strip->top_right_x + row_offset, 0, dst_surface->w);
+        if (dst_x1 <= dst_x0) {
+            continue;
+        }
+
+        Uint32* dst_row = dst_pixels + (y * dst_pitch) + dst_x0;
+        for (int x = 0; x < (dst_x1 - dst_x0); x++) {
+            dst_row[x] = blend_solid_argb8888(dst_row[x], src_a, inv_src_a, src_r_premul, src_g_premul, src_b_premul);
+        }
+    }
+    return true;
 }
 
 static int compare_render_tasks(const RenderTask* a, const RenderTask* b) {
@@ -2355,14 +3650,22 @@ static bool raster_textured_task_to_software_frame(const RenderTask* task) {
         }
         return true;
     }
+    const Uint64 non_integer_lookup_entries = (Uint64)(dst_x1 - dst_x0) + (Uint64)(dst_y1 - dst_y0);
 
     SoftwareFrameFastCopyPlan fast_copy_plan = { 0 };
     const SoftwareFrameFastCopyResult fast_copy_result =
         build_software_frame_fast_copy_plan(task, dst_surface, src_surface, &fast_copy_plan);
     if ((fast_copy_result == SOFTWARE_FRAME_FAST_COPY_RESULT_EXACT) ||
         (fast_copy_result == SOFTWARE_FRAME_FAST_COPY_RESULT_SCALED)) {
+        const SDLGameRenderer_PerfCaptureRasterBucket raster_bucket =
+            fast_copy_result == SOFTWARE_FRAME_FAST_COPY_RESULT_EXACT
+                ? SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_FAST_EXACT
+                : SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_FAST_SCALED;
+        const Uint64 sample_start_counter = begin_perf_capture_raster_bucket_sample(raster_bucket);
         if (try_fast_copy_fast_textured_task_to_software_frame(task, &fast_copy_plan, dst_surface, src_surface)) {
-            note_software_frame_fast_copy_result(task, fast_copy_result, &fast_copy_plan);
+            note_perf_capture_raster_bucket_sample(
+                raster_bucket, task, perf_capture_counter_delta_to_ns(sample_start_counter, SDL_GetPerformanceCounter()));
+            note_software_frame_fast_copy_result(task, fast_copy_result, &fast_copy_plan, 0);
             if (src_locked) {
                 SDL_UnlockSurface(src_surface);
             }
@@ -2370,10 +3673,18 @@ static bool raster_textured_task_to_software_frame(const RenderTask* task) {
         }
     } else if (fast_copy_result == SOFTWARE_FRAME_FAST_COPY_RESULT_NON_INTEGER) {
         const Uint64 submitted_pixels = render_task_submitted_pixels(task);
+        const Uint64 sample_start_counter =
+            submitted_pixels >= software_frame_non_integer_lookup_threshold_pixels
+                ? begin_perf_capture_raster_bucket_sample(SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_FAST_NON_INTEGER)
+                : 0;
         if ((submitted_pixels >= software_frame_non_integer_lookup_threshold_pixels) &&
             SDLSoftwareFrame_RasterNonIntegerLookupARGB8888(
                 &task->dst_rect, &task->src_uv_rect, task->flip, task->color, dst_surface, src_surface)) {
-            note_software_frame_fast_non_integer(task);
+            note_perf_capture_raster_bucket_sample(
+                SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_FAST_NON_INTEGER,
+                task,
+                perf_capture_counter_delta_to_ns(sample_start_counter, SDL_GetPerformanceCounter()));
+            note_software_frame_fast_non_integer(task, non_integer_lookup_entries);
             if (src_locked) {
                 SDL_UnlockSurface(src_surface);
             }
@@ -2383,7 +3694,7 @@ static bool raster_textured_task_to_software_frame(const RenderTask* task) {
 
     if ((fast_copy_result != SOFTWARE_FRAME_FAST_COPY_RESULT_EXACT) &&
         (fast_copy_result != SOFTWARE_FRAME_FAST_COPY_RESULT_SCALED)) {
-        note_software_frame_fast_copy_result(task, fast_copy_result, NULL);
+        note_software_frame_fast_copy_result(task, fast_copy_result, NULL, non_integer_lookup_entries);
     }
 
     const float src_x_start = task->src_uv_rect.x * (float)src_surface->w;
@@ -2396,6 +3707,8 @@ static bool raster_textured_task_to_software_frame(const RenderTask* task) {
     const int dst_pitch = dst_surface->pitch / (int)sizeof(Uint32);
     const bool flip_h = (task->flip & SDL_FLIP_HORIZONTAL) != 0;
     const bool flip_v = (task->flip & SDL_FLIP_VERTICAL) != 0;
+    const Uint64 generic_sample_start_counter =
+        begin_perf_capture_raster_bucket_sample(SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_GENERIC_TEXTURED);
 
     for (int y = dst_y0; y < dst_y1; y++) {
         float v = (((float)y + 0.5f) - task->dst_rect.y) / task->dst_rect.h;
@@ -2425,6 +3738,10 @@ static bool raster_textured_task_to_software_frame(const RenderTask* task) {
             dst_row[x] = blend_argb8888(dst_row[x], src_pixel);
         }
     }
+    note_perf_capture_raster_bucket_sample(SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_GENERIC_TEXTURED,
+                                           task,
+                                           perf_capture_counter_delta_to_ns(
+                                               generic_sample_start_counter, SDL_GetPerformanceCounter()));
 
     if (src_locked) {
         SDL_UnlockSurface(src_surface);
@@ -2433,7 +3750,23 @@ static bool raster_textured_task_to_software_frame(const RenderTask* task) {
 }
 
 static bool raster_solid_task_to_software_frame(const RenderTask* task) {
-    if ((task == NULL) || (software_frame_surface == NULL) || (task->dst_rect.w <= 0.0f) || (task->dst_rect.h <= 0.0f)) {
+    if ((task == NULL) || (software_frame_surface == NULL)) {
+        return false;
+    }
+
+    SoftwareFrameSolidDiagonalStrip diagonal_strip;
+    if (try_resolve_solid_task_as_full_height_diagonal_strip(task, &diagonal_strip)) {
+        const Uint64 sample_start_counter =
+            begin_perf_capture_raster_bucket_sample(SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_SOLID);
+        const bool ok = raster_full_height_diagonal_strip_to_software_frame(&diagonal_strip, software_frame_surface);
+        note_perf_capture_raster_bucket_sample(SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_SOLID,
+                                               task,
+                                               perf_capture_counter_delta_to_ns(
+                                                   sample_start_counter, SDL_GetPerformanceCounter()));
+        return ok;
+    }
+
+    if ((task->dst_rect.w <= 0.0f) || (task->dst_rect.h <= 0.0f)) {
         return false;
     }
 
@@ -2452,12 +3785,18 @@ static bool raster_solid_task_to_software_frame(const RenderTask* task) {
         return true;
     }
 
+    const Uint64 sample_start_counter =
+        begin_perf_capture_raster_bucket_sample(SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_SOLID);
     const int fill_width = dst_x1 - dst_x0;
     if (src_a == 255u) {
         for (int y = dst_y0; y < dst_y1; y++) {
             Uint32* dst_row = dst_pixels + (y * dst_pitch) + dst_x0;
             fill_argb8888_span(dst_row, fill_width, task->color);
         }
+        note_perf_capture_raster_bucket_sample(SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_SOLID,
+                                               task,
+                                               perf_capture_counter_delta_to_ns(
+                                                   sample_start_counter, SDL_GetPerformanceCounter()));
         return true;
     }
 
@@ -2475,6 +3814,9 @@ static bool raster_solid_task_to_software_frame(const RenderTask* task) {
                 blend_solid_argb8888(dst_row[x], src_a, inv_src_a, src_r_premul, src_g_premul, src_b_premul);
         }
     }
+    note_perf_capture_raster_bucket_sample(SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_SOLID,
+                                           task,
+                                           perf_capture_counter_delta_to_ns(sample_start_counter, SDL_GetPerformanceCounter()));
     return true;
 }
 
@@ -2497,13 +3839,18 @@ static bool render_frame_to_software_surface(void) {
         } else if ((task->type == RENDER_TASK_TYPE_GEOMETRY) && (task->texture == NULL)) {
             SDL_FRect solid_rect;
             Uint32 solid_color = 0;
-            if (!try_resolve_solid_task_as_rect(task, &solid_rect, &solid_color)) {
-                note_software_frame_eligibility(task, SOFTWARE_FRAME_FALLBACK_REASON_SOLID);
-                frame_supported = false;
-                continue;
+            if (try_resolve_solid_task_as_rect(task, &solid_rect, &solid_color)) {
+                resolved_task.dst_rect = solid_rect;
+                resolved_task.color = solid_color;
+            } else {
+                SoftwareFrameSolidDiagonalStrip diagonal_strip;
+                if (!try_resolve_solid_task_as_full_height_diagonal_strip(task, &diagonal_strip)) {
+                    note_software_frame_eligibility(task, SOFTWARE_FRAME_FALLBACK_REASON_SOLID);
+                    frame_supported = false;
+                    continue;
+                }
+                resolved_task.color = diagonal_strip.color;
             }
-            resolved_task.dst_rect = solid_rect;
-            resolved_task.color = solid_color;
         }
 
         const SoftwareFrameFallbackReason reason = classify_software_frame_fallback_reason(&resolved_task);
@@ -3024,6 +4371,18 @@ static void read_color(void* pixels, int index, size_t color_size, SDL_Color* co
     }
 }
 
+static bool palette_colors_equal(const SDL_Palette* palette, const SDL_Color* colors, int color_count) {
+    if ((palette == NULL) || (colors == NULL) || (color_count <= 0) || (palette->colors == NULL)) {
+        return false;
+    }
+
+    if (palette->ncolors != color_count) {
+        return false;
+    }
+
+    return SDL_memcmp(palette->colors, colors, (size_t)color_count * sizeof(colors[0])) == 0;
+}
+
 static void fill_palette_colors_from_fl_texture(const FLTexture* fl_palette, SDL_Color* colors, int* out_color_count) {
     const void* pixels = flPS2GetSystemBuffAdrs(fl_palette->mem_handle);
     const int color_count = fl_palette->width * fl_palette->height;
@@ -3128,6 +4487,14 @@ void SDLGameRenderer_SetSoftwareFrameDirectPresentMode(bool enabled) {
 
 bool SDLGameRenderer_IsSoftwareFrameModeEnabled(void) {
     return software_frame_mode_active;
+}
+
+bool SDLGameRenderer_IsPerfCaptureExtendedStatsEnabled(void) {
+    return frame_stats_extended_enabled;
+}
+
+void SDLGameRenderer_SetPerfCaptureLogicalIdentityEnabled(bool enabled) {
+    perf_capture_logical_identity_enabled = enabled;
 }
 
 bool SDLGameRenderer_HasSoftwareOwnedFrame(void) {
@@ -3280,31 +4647,122 @@ void SDLGameRenderer_EndFrame() {
 
 void SDLGameRenderer_ResetPerfCaptureRefreshTelemetry(void) {
     SDL_zero(perf_capture_refresh_telemetry);
+    perf_capture_refresh_telemetry.sampled_blit_period = software_surface_refresh_blit_sample_period;
     SDL_zero(perf_capture_refresh_attempts_by_texture);
     SDL_zero(perf_capture_refresh_pixels_by_texture);
     SDL_zero(perf_capture_refresh_fanout_max_by_texture);
+    SDL_zero(perf_capture_refresh_partial_attempts_by_texture);
+    SDL_zero(perf_capture_refresh_partial_pixels_by_texture);
+    SDL_zero(perf_capture_refresh_full_attempts_by_texture);
+    SDL_zero(perf_capture_refresh_full_pixels_by_texture);
+    SDL_zero(perf_capture_refresh_full_non_texture_dirty_attempts_by_texture);
+    SDL_zero(perf_capture_refresh_full_ineligible_source_attempts_by_texture);
+    SDL_zero(perf_capture_refresh_full_no_usable_dirty_rect_attempts_by_texture);
+    SDL_zero(perf_capture_refresh_full_oversized_dirty_rect_attempts_by_texture);
+    perf_capture_refresh_blit_sample_counter = 0;
+    SDL_zero(perf_capture_refresh_blit_sample_calls_by_texture);
+    SDL_zero(perf_capture_refresh_blit_sample_ns_by_texture);
+    SDL_zero(perf_capture_refresh_full_blit_sample_calls_by_texture);
+    SDL_zero(perf_capture_refresh_full_blit_sample_ns_by_texture);
+    SDL_zero(perf_capture_refresh_partial_blit_sample_calls_by_texture);
+    SDL_zero(perf_capture_refresh_partial_blit_sample_ns_by_texture);
+    SDL_zero(perf_capture_refresh_full_non_texture_dirty_blit_sample_calls_by_texture);
+    SDL_zero(perf_capture_refresh_full_non_texture_dirty_blit_sample_ns_by_texture);
+    SDL_zero(perf_capture_refresh_full_ineligible_source_blit_sample_calls_by_texture);
+    SDL_zero(perf_capture_refresh_full_ineligible_source_blit_sample_ns_by_texture);
+    SDL_zero(perf_capture_refresh_full_no_usable_dirty_rect_blit_sample_calls_by_texture);
+    SDL_zero(perf_capture_refresh_full_no_usable_dirty_rect_blit_sample_ns_by_texture);
+    SDL_zero(perf_capture_refresh_full_oversized_dirty_rect_blit_sample_calls_by_texture);
+    SDL_zero(perf_capture_refresh_full_oversized_dirty_rect_blit_sample_ns_by_texture);
     SDL_zero(perf_capture_refresh_source_format_by_texture);
     SDL_zero(perf_capture_refresh_width_by_texture);
     SDL_zero(perf_capture_refresh_height_by_texture);
     SDL_zero(perf_capture_refresh_shape_mixed_by_texture);
+    SDL_zero(perf_capture_source_surface_destroy_calls_by_texture);
+    SDL_zero(perf_capture_software_surface_access_dirty_texture_same_frame_by_texture);
+    SDL_zero(perf_capture_software_surface_access_dirty_texture_carried_by_texture);
+    SDL_zero(perf_capture_software_surface_access_dirty_palette_same_frame_by_texture);
+    SDL_zero(perf_capture_software_surface_access_dirty_palette_carried_by_texture);
+    SDL_zero(perf_capture_software_surface_access_dirty_palette_changed_same_frame_by_texture);
+    SDL_zero(perf_capture_software_surface_access_dirty_palette_changed_carried_by_texture);
+    SDL_zero(perf_capture_software_surface_access_dirty_palette_unchanged_same_frame_by_texture);
+    SDL_zero(perf_capture_software_surface_access_dirty_palette_unchanged_carried_by_texture);
+    SDL_zero(perf_capture_software_surface_access_cold_by_texture);
+    SDL_zero(perf_capture_current_lifetime_refresh_attempts_by_texture);
+    SDL_zero(perf_capture_current_lifetime_partial_refresh_attempts_by_texture);
+    SDL_zero(perf_capture_current_lifetime_full_refresh_attempts_by_texture);
+    SDL_zero(perf_capture_current_lifetime_full_no_usable_dirty_rect_attempts_by_texture);
+    SDL_zero(perf_capture_current_lifetime_software_surface_access_dirty_texture_same_frame_by_texture);
+    SDL_zero(perf_capture_current_lifetime_software_surface_access_dirty_texture_carried_by_texture);
+    SDL_zero(perf_capture_current_lifetime_software_surface_access_dirty_palette_same_frame_by_texture);
+    SDL_zero(perf_capture_current_lifetime_software_surface_access_dirty_palette_carried_by_texture);
+    SDL_zero(perf_capture_current_lifetime_software_surface_access_dirty_palette_changed_same_frame_by_texture);
+    SDL_zero(perf_capture_current_lifetime_software_surface_access_dirty_palette_changed_carried_by_texture);
+    SDL_zero(perf_capture_current_lifetime_software_surface_access_dirty_palette_unchanged_same_frame_by_texture);
+    SDL_zero(perf_capture_current_lifetime_software_surface_access_dirty_palette_unchanged_carried_by_texture);
+    SDL_zero(perf_capture_current_lifetime_software_surface_access_cold_by_texture);
+    for (int texture_index = 0; texture_index < FL_TEXTURE_MAX; texture_index++) {
+        reset_perf_capture_texture_logical_identity_slot(texture_index);
+    }
 }
 
 void SDLGameRenderer_ResetPerfCaptureUnlockLocalityTelemetry(void) {
     SDL_zero(perf_capture_unlock_locality_telemetry);
     SDL_zero(perf_capture_unlock_locality_tracked_by_texture);
+    SDL_zero(perf_capture_unlock_locality_zero_delta_by_texture);
     SDL_zero(perf_capture_unlock_locality_baseline_skips_by_texture);
     SDL_zero(perf_capture_unlock_locality_non_index8_skips_by_texture);
     SDL_zero(perf_capture_unlock_locality_source_pixels_by_texture);
     SDL_zero(perf_capture_unlock_locality_changed_pixels_by_texture);
     SDL_zero(perf_capture_unlock_locality_changed_rows_by_texture);
     SDL_zero(perf_capture_unlock_locality_changed_bbox_pixels_by_texture);
+    SDL_zero(perf_capture_unlock_locality_whole_capture_tracked_by_texture);
+    SDL_zero(perf_capture_unlock_locality_whole_capture_zero_delta_by_texture);
+    SDL_zero(perf_capture_unlock_locality_whole_capture_baseline_skips_by_texture);
+    SDL_zero(perf_capture_unlock_locality_whole_capture_non_index8_skips_by_texture);
+    SDL_zero(perf_capture_unlock_locality_whole_capture_source_pixels_by_texture);
+    SDL_zero(perf_capture_unlock_locality_whole_capture_changed_pixels_by_texture);
+    SDL_zero(perf_capture_unlock_locality_whole_capture_changed_rows_by_texture);
+    SDL_zero(perf_capture_unlock_locality_whole_capture_changed_bbox_pixels_by_texture);
     SDL_zero(perf_capture_unlock_locality_source_format_by_texture);
     SDL_zero(perf_capture_unlock_locality_width_by_texture);
     SDL_zero(perf_capture_unlock_locality_height_by_texture);
     SDL_zero(perf_capture_unlock_locality_shape_mixed_by_texture);
+    SDL_zero(perf_capture_compare_dirty_rect_pending_rects);
+    SDL_zero(perf_capture_compare_dirty_rect_pending_valid);
+    SDL_zero(perf_capture_compare_dirty_rect_pending_unlock_counts);
+    SDL_zero(perf_capture_compare_dirty_rect_pending_tile_masks);
+    SDL_zero(perf_capture_compare_dirty_rect_refresh_attempts_by_texture);
+    SDL_zero(perf_capture_compare_dirty_rect_partial_candidate_refresh_attempts_by_texture);
+    SDL_zero(perf_capture_compare_dirty_rect_oversized_candidate_refresh_attempts_by_texture);
+    SDL_zero(perf_capture_compare_dirty_rect_no_usable_candidate_refresh_attempts_by_texture);
+    SDL_zero(perf_capture_compare_dirty_rect_refresh_bbox_pixels_by_texture);
+    SDL_zero(perf_capture_compare_dirty_rect_refresh_max_bbox_pixels_by_texture);
+    SDL_zero(perf_capture_compare_dirty_rect_refresh_pending_unlocks_by_texture);
+    SDL_zero(perf_capture_compare_dirty_rect_refresh_max_pending_unlocks_by_texture);
+    SDL_zero(perf_capture_compare_dirty_rect_refresh_32x32_covered_tiles_by_texture);
+    SDL_zero(perf_capture_compare_dirty_rect_refresh_32x32_max_covered_tiles_by_texture);
+    SDL_zero(perf_capture_compare_dirty_rect_refresh_32x32_component_count_by_texture);
+    SDL_zero(perf_capture_compare_dirty_rect_refresh_32x32_max_component_count_by_texture);
+    SDL_zero(perf_capture_compare_dirty_rect_refresh_32x32_multi_component_refresh_attempts_by_texture);
+    SDL_zero(perf_capture_compare_dirty_rect_refresh_32x32_largest_component_tiles_by_texture);
+    SDL_zero(perf_capture_compare_dirty_rect_refresh_32x32_max_largest_component_tiles_by_texture);
     for (int texture_index = 0; texture_index < FL_TEXTURE_MAX; texture_index++) {
         reset_perf_capture_unlock_locality_texture_slot(texture_index);
     }
+}
+
+void SDLGameRenderer_ResetPerfCaptureTextureRenewTelemetry(void) {
+    for (int texture_index = 0; texture_index < FL_TEXTURE_MAX; texture_index++) {
+        reset_perf_capture_texture_renew_slot(texture_index);
+    }
+}
+
+void SDLGameRenderer_ResetPerfCaptureRasterTimingTelemetry(void) {
+    SDL_zero(perf_capture_raster_sample_counters);
+    SDL_zero(perf_capture_raster_sample_calls);
+    SDL_zero(perf_capture_raster_sample_pixels);
+    SDL_zero(perf_capture_raster_sample_ns);
 }
 
 int SDLGameRenderer_GetPerfCaptureRefreshTelemetry(SDLGameRenderer_PerfCaptureRefreshTelemetry* out_telemetry,
@@ -3367,9 +4825,28 @@ int SDLGameRenderer_GetPerfCaptureRefreshTelemetry(SDLGameRenderer_PerfCaptureRe
             entry->source_shape_mixed ? SDL_PIXELFORMAT_UNKNOWN : perf_capture_refresh_source_format_by_texture[best_texture_index];
         entry->width = entry->source_shape_mixed ? 0 : (int)perf_capture_refresh_width_by_texture[best_texture_index];
         entry->height = entry->source_shape_mixed ? 0 : (int)perf_capture_refresh_height_by_texture[best_texture_index];
+        copy_perf_capture_texture_logical_identity(best_texture_index,
+                                                   &entry->logical_identity_known,
+                                                   &entry->logical_identity_mixed,
+                                                   &entry->logical_identity_registrations,
+                                                   &entry->logical_source_kind,
+                                                   &entry->logical_ix_num,
+                                                   &entry->logical_ix_num_first,
+                                                   &entry->logical_slot_index,
+                                                   &entry->logical_chunk_index,
+                                                   &entry->logical_texture_total);
+        entry->current_lifetime_refresh_attempts =
+            perf_capture_current_lifetime_refresh_attempts_by_texture[best_texture_index];
+        entry->current_lifetime_partial_refresh_attempts =
+            perf_capture_current_lifetime_partial_refresh_attempts_by_texture[best_texture_index];
+        entry->current_lifetime_full_refresh_attempts =
+            perf_capture_current_lifetime_full_refresh_attempts_by_texture[best_texture_index];
+        entry->current_lifetime_full_refresh_no_usable_dirty_rect_attempts =
+            perf_capture_current_lifetime_full_no_usable_dirty_rect_attempts_by_texture[best_texture_index];
         entry->refresh_attempts = perf_capture_refresh_attempts_by_texture[best_texture_index];
         entry->refresh_pixels = perf_capture_refresh_pixels_by_texture[best_texture_index];
         entry->max_fanout = (int)perf_capture_refresh_fanout_max_by_texture[best_texture_index];
+        entry->source_surface_destroy_calls = perf_capture_source_surface_destroy_calls_by_texture[best_texture_index];
         hot_texture_count += 1;
     }
 
@@ -3439,7 +4916,18 @@ int SDLGameRenderer_GetPerfCaptureUnlockLocalityTelemetry(
             entry->source_shape_mixed ? 0 : perf_capture_unlock_locality_width_by_texture[best_texture_index];
         entry->height =
             entry->source_shape_mixed ? 0 : perf_capture_unlock_locality_height_by_texture[best_texture_index];
+        copy_perf_capture_texture_logical_identity(best_texture_index,
+                                                   &entry->logical_identity_known,
+                                                   &entry->logical_identity_mixed,
+                                                   &entry->logical_identity_registrations,
+                                                   &entry->logical_source_kind,
+                                                   &entry->logical_ix_num,
+                                                   &entry->logical_ix_num_first,
+                                                   &entry->logical_slot_index,
+                                                   &entry->logical_chunk_index,
+                                                   &entry->logical_texture_total);
         entry->tracked_unlocks = perf_capture_unlock_locality_tracked_by_texture[best_texture_index];
+        entry->zero_delta_unlocks = perf_capture_unlock_locality_zero_delta_by_texture[best_texture_index];
         entry->baseline_skips = perf_capture_unlock_locality_baseline_skips_by_texture[best_texture_index];
         entry->non_index8_skips = perf_capture_unlock_locality_non_index8_skips_by_texture[best_texture_index];
         entry->source_pixels = perf_capture_unlock_locality_source_pixels_by_texture[best_texture_index];
@@ -3450,6 +4938,376 @@ int SDLGameRenderer_GetPerfCaptureUnlockLocalityTelemetry(
     }
 
     return hot_texture_count;
+}
+
+void SDLGameRenderer_GetPerfCaptureDirtyRectLifetimeTelemetry(
+    SDLGameRenderer_PerfCaptureDirtyRectLifetimeTelemetry* out_telemetry) {
+    if (out_telemetry == NULL) {
+        return;
+    }
+
+    SDL_zero(*out_telemetry);
+    for (int texture_index = 0; texture_index < FL_TEXTURE_MAX; texture_index++) {
+        out_telemetry->record_calls += perf_capture_dirty_rect_record_calls_by_texture[texture_index];
+        out_telemetry->retained_after_unlock += perf_capture_dirty_rect_retained_after_unlock_by_texture[texture_index];
+        out_telemetry->clear_stale_before_record +=
+            perf_capture_dirty_rect_clear_stale_before_record_by_texture[texture_index];
+        out_telemetry->clear_unlock_unused += perf_capture_dirty_rect_clear_unlock_unused_by_texture[texture_index];
+        out_telemetry->clear_access_unused += perf_capture_dirty_rect_clear_access_unused_by_texture[texture_index];
+        out_telemetry->clear_explicit += perf_capture_dirty_rect_clear_explicit_by_texture[texture_index];
+    }
+}
+
+void SDLGameRenderer_GetPerfCaptureTextureRenewTelemetry(
+    SDLGameRenderer_PerfCaptureTextureRenewTelemetry* out_telemetry) {
+    if (out_telemetry == NULL) {
+        return;
+    }
+
+    SDL_zero(*out_telemetry);
+    for (int texture_index = 0; texture_index < FL_TEXTURE_MAX; texture_index++) {
+        out_telemetry->renew_chunk_calls += perf_capture_texture_renew_chunk_calls_by_texture[texture_index];
+        out_telemetry->renew_batches += perf_capture_texture_renew_batches_by_texture[texture_index];
+        out_telemetry->renew_batches_without_rect += perf_capture_texture_renew_batches_without_rect_by_texture[texture_index];
+        out_telemetry->renew_chunk_pixels += perf_capture_texture_renew_chunk_pixels_by_texture[texture_index];
+        out_telemetry->renew_batch_bbox_pixels += perf_capture_texture_renew_batch_bbox_pixels_by_texture[texture_index];
+        if (perf_capture_texture_renew_batch_max_bbox_pixels_by_texture[texture_index] >
+            out_telemetry->renew_batch_max_bbox_pixels) {
+            out_telemetry->renew_batch_max_bbox_pixels =
+                perf_capture_texture_renew_batch_max_bbox_pixels_by_texture[texture_index];
+        }
+        out_telemetry->renew_chunk_8x8_calls += perf_capture_texture_renew_chunk_8x8_calls_by_texture[texture_index];
+        out_telemetry->renew_chunk_16x16_calls += perf_capture_texture_renew_chunk_16x16_calls_by_texture[texture_index];
+        out_telemetry->renew_chunk_32x32_calls += perf_capture_texture_renew_chunk_32x32_calls_by_texture[texture_index];
+        out_telemetry->renew_batch_32x32_covered_tiles +=
+            perf_capture_texture_renew_batch_32x32_covered_tiles_by_texture[texture_index];
+        if (perf_capture_texture_renew_batch_32x32_max_covered_tiles_by_texture[texture_index] >
+            out_telemetry->renew_batch_32x32_max_covered_tiles) {
+            out_telemetry->renew_batch_32x32_max_covered_tiles =
+                perf_capture_texture_renew_batch_32x32_max_covered_tiles_by_texture[texture_index];
+        }
+        out_telemetry->renew_batch_32x32_component_count +=
+            perf_capture_texture_renew_batch_32x32_component_count_by_texture[texture_index];
+        if (perf_capture_texture_renew_batch_32x32_max_component_count_by_texture[texture_index] >
+            out_telemetry->renew_batch_32x32_max_component_count) {
+            out_telemetry->renew_batch_32x32_max_component_count =
+                perf_capture_texture_renew_batch_32x32_max_component_count_by_texture[texture_index];
+        }
+        out_telemetry->renew_batch_32x32_multi_component_batches +=
+            perf_capture_texture_renew_batch_32x32_multi_component_batches_by_texture[texture_index];
+        out_telemetry->renew_batch_32x32_largest_component_tiles +=
+            perf_capture_texture_renew_batch_32x32_largest_component_tiles_by_texture[texture_index];
+        if (perf_capture_texture_renew_batch_32x32_max_largest_component_tiles_by_texture[texture_index] >
+            out_telemetry->renew_batch_32x32_max_largest_component_tiles) {
+            out_telemetry->renew_batch_32x32_max_largest_component_tiles =
+                perf_capture_texture_renew_batch_32x32_max_largest_component_tiles_by_texture[texture_index];
+        }
+    }
+}
+
+int SDLGameRenderer_GetPerfCaptureRasterBucketTimings(SDLGameRenderer_PerfCaptureRasterBucketTiming* out_timings,
+                                                      int max_timings) {
+    if ((out_timings == NULL) || (max_timings <= 0)) {
+        return 0;
+    }
+
+    const int timing_count = SDL_min(max_timings, SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_COUNT);
+    for (int bucket = 0; bucket < timing_count; bucket++) {
+        SDLGameRenderer_PerfCaptureRasterBucketTiming* entry = &out_timings[bucket];
+        entry->bucket = (SDLGameRenderer_PerfCaptureRasterBucket)bucket;
+        entry->sample_period = software_frame_raster_sample_periods[bucket];
+        entry->sampled_calls = perf_capture_raster_sample_calls[bucket];
+        entry->sampled_pixels = perf_capture_raster_sample_pixels[bucket];
+        entry->sampled_ns = perf_capture_raster_sample_ns[bucket];
+    }
+
+    return timing_count;
+}
+
+int SDLGameRenderer_GetPerfCaptureRefreshLocalityCandidates(
+    SDLGameRenderer_PerfCaptureRefreshLocalityCandidate* out_candidates,
+    int max_candidates) {
+    if ((out_candidates == NULL) || (max_candidates <= 0)) {
+        return 0;
+    }
+
+    int candidate_count = 0;
+    for (int slot = 0; slot < max_candidates; slot++) {
+        int best_texture_index = -1;
+        for (int texture_index = 0; texture_index < FL_TEXTURE_MAX; texture_index++) {
+            const Uint64 refresh_attempts = perf_capture_refresh_attempts_by_texture[texture_index];
+            const Uint64 tracked_unlocks = perf_capture_unlock_locality_tracked_by_texture[texture_index];
+            if ((refresh_attempts == 0) && (tracked_unlocks == 0)) {
+                continue;
+            }
+
+            bool already_selected = false;
+            for (int existing = 0; existing < candidate_count; existing++) {
+                if (out_candidates[existing].texture_handle == (texture_index + 1)) {
+                    already_selected = true;
+                    break;
+                }
+            }
+            if (already_selected) {
+                continue;
+            }
+
+            if (best_texture_index < 0) {
+                best_texture_index = texture_index;
+                continue;
+            }
+
+            const Uint64 best_refresh_attempts = perf_capture_refresh_attempts_by_texture[best_texture_index];
+            const Uint64 best_tracked_unlocks = perf_capture_unlock_locality_tracked_by_texture[best_texture_index];
+            if ((refresh_attempts > best_refresh_attempts) ||
+                ((refresh_attempts == best_refresh_attempts) && (tracked_unlocks > best_tracked_unlocks)) ||
+                ((refresh_attempts == best_refresh_attempts) && (tracked_unlocks == best_tracked_unlocks) &&
+                 (perf_capture_refresh_pixels_by_texture[texture_index] >
+                  perf_capture_refresh_pixels_by_texture[best_texture_index])) ||
+                ((refresh_attempts == best_refresh_attempts) && (tracked_unlocks == best_tracked_unlocks) &&
+                 (perf_capture_refresh_pixels_by_texture[texture_index] ==
+                  perf_capture_refresh_pixels_by_texture[best_texture_index]) &&
+                 (texture_index < best_texture_index))) {
+                best_texture_index = texture_index;
+            }
+        }
+
+        if (best_texture_index < 0) {
+            break;
+        }
+
+        const Uint64 refresh_attempts = perf_capture_refresh_attempts_by_texture[best_texture_index];
+        const Uint64 tracked_unlocks = perf_capture_unlock_locality_tracked_by_texture[best_texture_index];
+        const bool refresh_has_shape = refresh_attempts > 0;
+        const bool locality_has_shape = tracked_unlocks > 0;
+        const Uint32 refresh_source_format = perf_capture_refresh_source_format_by_texture[best_texture_index];
+        const Uint32 locality_source_format = perf_capture_unlock_locality_source_format_by_texture[best_texture_index];
+        const int refresh_width = perf_capture_refresh_width_by_texture[best_texture_index];
+        const int refresh_height = perf_capture_refresh_height_by_texture[best_texture_index];
+        const int locality_width = perf_capture_unlock_locality_width_by_texture[best_texture_index];
+        const int locality_height = perf_capture_unlock_locality_height_by_texture[best_texture_index];
+
+        bool source_shape_mixed = perf_capture_refresh_shape_mixed_by_texture[best_texture_index] ||
+                                  perf_capture_unlock_locality_shape_mixed_by_texture[best_texture_index];
+        Uint32 source_format = SDL_PIXELFORMAT_UNKNOWN;
+        int width = 0;
+        int height = 0;
+
+        if (refresh_has_shape) {
+            source_format = refresh_source_format;
+            width = refresh_width;
+            height = refresh_height;
+        }
+        if (locality_has_shape) {
+            if (!refresh_has_shape) {
+                source_format = locality_source_format;
+                width = locality_width;
+                height = locality_height;
+            } else if ((refresh_source_format != locality_source_format) || (refresh_width != locality_width) ||
+                       (refresh_height != locality_height)) {
+                source_shape_mixed = true;
+            }
+        }
+        if (source_shape_mixed) {
+            source_format = SDL_PIXELFORMAT_UNKNOWN;
+            width = 0;
+            height = 0;
+        }
+
+        SDLGameRenderer_PerfCaptureRefreshLocalityCandidate* entry = &out_candidates[candidate_count];
+        entry->texture_handle = best_texture_index + 1;
+        entry->source_format = source_format;
+        entry->width = width;
+        entry->height = height;
+        entry->source_shape_mixed = source_shape_mixed ? 1 : 0;
+        copy_perf_capture_texture_logical_identity(best_texture_index,
+                                                   &entry->logical_identity_known,
+                                                   &entry->logical_identity_mixed,
+                                                   &entry->logical_identity_registrations,
+                                                   &entry->logical_source_kind,
+                                                   &entry->logical_ix_num,
+                                                   &entry->logical_ix_num_first,
+                                                   &entry->logical_slot_index,
+                                                   &entry->logical_chunk_index,
+                                                   &entry->logical_texture_total);
+        entry->refresh_attempts = refresh_attempts;
+        entry->refresh_pixels = perf_capture_refresh_pixels_by_texture[best_texture_index];
+        entry->max_fanout = (int)perf_capture_refresh_fanout_max_by_texture[best_texture_index];
+        entry->source_surface_destroy_calls = perf_capture_source_surface_destroy_calls_by_texture[best_texture_index];
+        entry->current_lifetime_refresh_attempts =
+            perf_capture_current_lifetime_refresh_attempts_by_texture[best_texture_index];
+        entry->current_lifetime_partial_refresh_attempts =
+            perf_capture_current_lifetime_partial_refresh_attempts_by_texture[best_texture_index];
+        entry->current_lifetime_full_refresh_attempts =
+            perf_capture_current_lifetime_full_refresh_attempts_by_texture[best_texture_index];
+        entry->current_lifetime_full_refresh_no_usable_dirty_rect_attempts =
+            perf_capture_current_lifetime_full_no_usable_dirty_rect_attempts_by_texture[best_texture_index];
+        entry->partial_refresh_attempts = perf_capture_refresh_partial_attempts_by_texture[best_texture_index];
+        entry->partial_refresh_pixels = perf_capture_refresh_partial_pixels_by_texture[best_texture_index];
+        entry->full_refresh_attempts = perf_capture_refresh_full_attempts_by_texture[best_texture_index];
+        entry->full_refresh_pixels = perf_capture_refresh_full_pixels_by_texture[best_texture_index];
+        entry->full_refresh_non_texture_dirty_attempts =
+            perf_capture_refresh_full_non_texture_dirty_attempts_by_texture[best_texture_index];
+        entry->full_refresh_ineligible_source_attempts =
+            perf_capture_refresh_full_ineligible_source_attempts_by_texture[best_texture_index];
+        entry->full_refresh_no_usable_dirty_rect_attempts =
+            perf_capture_refresh_full_no_usable_dirty_rect_attempts_by_texture[best_texture_index];
+        entry->full_refresh_oversized_dirty_rect_attempts =
+            perf_capture_refresh_full_oversized_dirty_rect_attempts_by_texture[best_texture_index];
+        entry->sampled_blit_calls = perf_capture_refresh_blit_sample_calls_by_texture[best_texture_index];
+        entry->sampled_blit_ns = perf_capture_refresh_blit_sample_ns_by_texture[best_texture_index];
+        entry->sampled_full_blit_calls = perf_capture_refresh_full_blit_sample_calls_by_texture[best_texture_index];
+        entry->sampled_full_blit_ns = perf_capture_refresh_full_blit_sample_ns_by_texture[best_texture_index];
+        entry->sampled_partial_blit_calls =
+            perf_capture_refresh_partial_blit_sample_calls_by_texture[best_texture_index];
+        entry->sampled_partial_blit_ns = perf_capture_refresh_partial_blit_sample_ns_by_texture[best_texture_index];
+        entry->sampled_full_non_texture_dirty_blit_calls =
+            perf_capture_refresh_full_non_texture_dirty_blit_sample_calls_by_texture[best_texture_index];
+        entry->sampled_full_non_texture_dirty_blit_ns =
+            perf_capture_refresh_full_non_texture_dirty_blit_sample_ns_by_texture[best_texture_index];
+        entry->sampled_full_ineligible_source_blit_calls =
+            perf_capture_refresh_full_ineligible_source_blit_sample_calls_by_texture[best_texture_index];
+        entry->sampled_full_ineligible_source_blit_ns =
+            perf_capture_refresh_full_ineligible_source_blit_sample_ns_by_texture[best_texture_index];
+        entry->sampled_full_no_usable_dirty_rect_blit_calls =
+            perf_capture_refresh_full_no_usable_dirty_rect_blit_sample_calls_by_texture[best_texture_index];
+        entry->sampled_full_no_usable_dirty_rect_blit_ns =
+            perf_capture_refresh_full_no_usable_dirty_rect_blit_sample_ns_by_texture[best_texture_index];
+        entry->sampled_full_oversized_dirty_rect_blit_calls =
+            perf_capture_refresh_full_oversized_dirty_rect_blit_sample_calls_by_texture[best_texture_index];
+        entry->sampled_full_oversized_dirty_rect_blit_ns =
+            perf_capture_refresh_full_oversized_dirty_rect_blit_sample_ns_by_texture[best_texture_index];
+        entry->software_surface_access_dirty_texture_same_frame =
+            perf_capture_software_surface_access_dirty_texture_same_frame_by_texture[best_texture_index];
+        entry->software_surface_access_dirty_texture_carried =
+            perf_capture_software_surface_access_dirty_texture_carried_by_texture[best_texture_index];
+        entry->software_surface_access_dirty_palette_same_frame =
+            perf_capture_software_surface_access_dirty_palette_same_frame_by_texture[best_texture_index];
+        entry->software_surface_access_dirty_palette_carried =
+            perf_capture_software_surface_access_dirty_palette_carried_by_texture[best_texture_index];
+        entry->software_surface_access_dirty_palette_changed_same_frame =
+            perf_capture_software_surface_access_dirty_palette_changed_same_frame_by_texture[best_texture_index];
+        entry->software_surface_access_dirty_palette_changed_carried =
+            perf_capture_software_surface_access_dirty_palette_changed_carried_by_texture[best_texture_index];
+        entry->software_surface_access_dirty_palette_unchanged_same_frame =
+            perf_capture_software_surface_access_dirty_palette_unchanged_same_frame_by_texture[best_texture_index];
+        entry->software_surface_access_dirty_palette_unchanged_carried =
+            perf_capture_software_surface_access_dirty_palette_unchanged_carried_by_texture[best_texture_index];
+        entry->software_surface_access_cold = perf_capture_software_surface_access_cold_by_texture[best_texture_index];
+        entry->current_lifetime_software_surface_access_dirty_texture_same_frame =
+            perf_capture_current_lifetime_software_surface_access_dirty_texture_same_frame_by_texture[best_texture_index];
+        entry->current_lifetime_software_surface_access_dirty_texture_carried =
+            perf_capture_current_lifetime_software_surface_access_dirty_texture_carried_by_texture[best_texture_index];
+        entry->current_lifetime_software_surface_access_dirty_palette_same_frame =
+            perf_capture_current_lifetime_software_surface_access_dirty_palette_same_frame_by_texture[best_texture_index];
+        entry->current_lifetime_software_surface_access_dirty_palette_carried =
+            perf_capture_current_lifetime_software_surface_access_dirty_palette_carried_by_texture[best_texture_index];
+        entry->current_lifetime_software_surface_access_dirty_palette_changed_same_frame =
+            perf_capture_current_lifetime_software_surface_access_dirty_palette_changed_same_frame_by_texture
+                [best_texture_index];
+        entry->current_lifetime_software_surface_access_dirty_palette_changed_carried =
+            perf_capture_current_lifetime_software_surface_access_dirty_palette_changed_carried_by_texture
+                [best_texture_index];
+        entry->current_lifetime_software_surface_access_dirty_palette_unchanged_same_frame =
+            perf_capture_current_lifetime_software_surface_access_dirty_palette_unchanged_same_frame_by_texture
+                [best_texture_index];
+        entry->current_lifetime_software_surface_access_dirty_palette_unchanged_carried =
+            perf_capture_current_lifetime_software_surface_access_dirty_palette_unchanged_carried_by_texture
+                [best_texture_index];
+        entry->current_lifetime_software_surface_access_cold =
+            perf_capture_current_lifetime_software_surface_access_cold_by_texture[best_texture_index];
+        entry->tracked_unlocks = tracked_unlocks;
+        entry->zero_delta_unlocks = perf_capture_unlock_locality_zero_delta_by_texture[best_texture_index];
+        entry->baseline_skips = perf_capture_unlock_locality_baseline_skips_by_texture[best_texture_index];
+        entry->non_index8_skips = perf_capture_unlock_locality_non_index8_skips_by_texture[best_texture_index];
+        entry->source_pixels = perf_capture_unlock_locality_source_pixels_by_texture[best_texture_index];
+        entry->changed_pixels = perf_capture_unlock_locality_changed_pixels_by_texture[best_texture_index];
+        entry->changed_rows = perf_capture_unlock_locality_changed_rows_by_texture[best_texture_index];
+        entry->changed_bbox_pixels = perf_capture_unlock_locality_changed_bbox_pixels_by_texture[best_texture_index];
+        entry->whole_capture_tracked_unlocks =
+            perf_capture_unlock_locality_whole_capture_tracked_by_texture[best_texture_index];
+        entry->whole_capture_zero_delta_unlocks =
+            perf_capture_unlock_locality_whole_capture_zero_delta_by_texture[best_texture_index];
+        entry->whole_capture_baseline_skips =
+            perf_capture_unlock_locality_whole_capture_baseline_skips_by_texture[best_texture_index];
+        entry->whole_capture_non_index8_skips =
+            perf_capture_unlock_locality_whole_capture_non_index8_skips_by_texture[best_texture_index];
+        entry->whole_capture_source_pixels =
+            perf_capture_unlock_locality_whole_capture_source_pixels_by_texture[best_texture_index];
+        entry->whole_capture_changed_pixels =
+            perf_capture_unlock_locality_whole_capture_changed_pixels_by_texture[best_texture_index];
+        entry->whole_capture_changed_rows =
+            perf_capture_unlock_locality_whole_capture_changed_rows_by_texture[best_texture_index];
+        entry->whole_capture_changed_bbox_pixels =
+            perf_capture_unlock_locality_whole_capture_changed_bbox_pixels_by_texture[best_texture_index];
+        entry->dirty_rect_record_calls = perf_capture_dirty_rect_record_calls_by_texture[best_texture_index];
+        entry->dirty_rect_retained_after_unlock =
+            perf_capture_dirty_rect_retained_after_unlock_by_texture[best_texture_index];
+        entry->dirty_rect_clear_stale_before_record =
+            perf_capture_dirty_rect_clear_stale_before_record_by_texture[best_texture_index];
+        entry->dirty_rect_clear_unlock_unused =
+            perf_capture_dirty_rect_clear_unlock_unused_by_texture[best_texture_index];
+        entry->dirty_rect_clear_access_unused = perf_capture_dirty_rect_clear_access_unused_by_texture[best_texture_index];
+        entry->dirty_rect_clear_explicit = perf_capture_dirty_rect_clear_explicit_by_texture[best_texture_index];
+        entry->compare_dirty_rect_refresh_attempts =
+            perf_capture_compare_dirty_rect_refresh_attempts_by_texture[best_texture_index];
+        entry->compare_dirty_rect_partial_candidate_refresh_attempts =
+            perf_capture_compare_dirty_rect_partial_candidate_refresh_attempts_by_texture[best_texture_index];
+        entry->compare_dirty_rect_oversized_candidate_refresh_attempts =
+            perf_capture_compare_dirty_rect_oversized_candidate_refresh_attempts_by_texture[best_texture_index];
+        entry->compare_dirty_rect_no_usable_candidate_refresh_attempts =
+            perf_capture_compare_dirty_rect_no_usable_candidate_refresh_attempts_by_texture[best_texture_index];
+        entry->compare_dirty_rect_refresh_bbox_pixels =
+            perf_capture_compare_dirty_rect_refresh_bbox_pixels_by_texture[best_texture_index];
+        entry->compare_dirty_rect_refresh_max_bbox_pixels =
+            perf_capture_compare_dirty_rect_refresh_max_bbox_pixels_by_texture[best_texture_index];
+        entry->compare_dirty_rect_refresh_pending_unlocks =
+            perf_capture_compare_dirty_rect_refresh_pending_unlocks_by_texture[best_texture_index];
+        entry->compare_dirty_rect_refresh_max_pending_unlocks =
+            perf_capture_compare_dirty_rect_refresh_max_pending_unlocks_by_texture[best_texture_index];
+        entry->compare_dirty_rect_refresh_32x32_covered_tiles =
+            perf_capture_compare_dirty_rect_refresh_32x32_covered_tiles_by_texture[best_texture_index];
+        entry->compare_dirty_rect_refresh_32x32_max_covered_tiles =
+            perf_capture_compare_dirty_rect_refresh_32x32_max_covered_tiles_by_texture[best_texture_index];
+        entry->compare_dirty_rect_refresh_32x32_component_count =
+            perf_capture_compare_dirty_rect_refresh_32x32_component_count_by_texture[best_texture_index];
+        entry->compare_dirty_rect_refresh_32x32_max_component_count =
+            perf_capture_compare_dirty_rect_refresh_32x32_max_component_count_by_texture[best_texture_index];
+        entry->compare_dirty_rect_refresh_32x32_multi_component_refresh_attempts =
+            perf_capture_compare_dirty_rect_refresh_32x32_multi_component_refresh_attempts_by_texture[best_texture_index];
+        entry->compare_dirty_rect_refresh_32x32_largest_component_tiles =
+            perf_capture_compare_dirty_rect_refresh_32x32_largest_component_tiles_by_texture[best_texture_index];
+        entry->compare_dirty_rect_refresh_32x32_max_largest_component_tiles =
+            perf_capture_compare_dirty_rect_refresh_32x32_max_largest_component_tiles_by_texture[best_texture_index];
+        entry->renew_chunk_calls = perf_capture_texture_renew_chunk_calls_by_texture[best_texture_index];
+        entry->renew_batches = perf_capture_texture_renew_batches_by_texture[best_texture_index];
+        entry->renew_batches_without_rect =
+            perf_capture_texture_renew_batches_without_rect_by_texture[best_texture_index];
+        entry->renew_chunk_pixels = perf_capture_texture_renew_chunk_pixels_by_texture[best_texture_index];
+        entry->renew_batch_bbox_pixels = perf_capture_texture_renew_batch_bbox_pixels_by_texture[best_texture_index];
+        entry->renew_batch_max_bbox_pixels =
+            perf_capture_texture_renew_batch_max_bbox_pixels_by_texture[best_texture_index];
+        entry->renew_chunk_8x8_calls = perf_capture_texture_renew_chunk_8x8_calls_by_texture[best_texture_index];
+        entry->renew_chunk_16x16_calls = perf_capture_texture_renew_chunk_16x16_calls_by_texture[best_texture_index];
+        entry->renew_chunk_32x32_calls = perf_capture_texture_renew_chunk_32x32_calls_by_texture[best_texture_index];
+        entry->renew_batch_32x32_covered_tiles =
+            perf_capture_texture_renew_batch_32x32_covered_tiles_by_texture[best_texture_index];
+        entry->renew_batch_32x32_max_covered_tiles =
+            perf_capture_texture_renew_batch_32x32_max_covered_tiles_by_texture[best_texture_index];
+        entry->renew_batch_32x32_component_count =
+            perf_capture_texture_renew_batch_32x32_component_count_by_texture[best_texture_index];
+        entry->renew_batch_32x32_max_component_count =
+            perf_capture_texture_renew_batch_32x32_max_component_count_by_texture[best_texture_index];
+        entry->renew_batch_32x32_multi_component_batches =
+            perf_capture_texture_renew_batch_32x32_multi_component_batches_by_texture[best_texture_index];
+        entry->renew_batch_32x32_largest_component_tiles =
+            perf_capture_texture_renew_batch_32x32_largest_component_tiles_by_texture[best_texture_index];
+        entry->renew_batch_32x32_max_largest_component_tiles =
+            perf_capture_texture_renew_batch_32x32_max_largest_component_tiles_by_texture[best_texture_index];
+        candidate_count += 1;
+    }
+
+    return candidate_count;
 }
 
 int SDLGameRenderer_GetDirtyTileCount(void) {
@@ -3493,13 +5351,14 @@ void SDLGameRenderer_RecordTextureUnlockDirtyRect(unsigned int texture_handle,
     }
 
     const int texture_index = (int)texture_handle - 1;
-    clear_texture_unlock_dirty_rect_if_unused(texture_index);
+    clear_texture_unlock_dirty_rect_if_unused(texture_index, TEXTURE_UNLOCK_DIRTY_RECT_CLEAR_REASON_STALE_BEFORE_RECORD);
 
     SDL_Rect dirty_rect = { min_x, min_y, max_x - min_x + 1, max_y - min_y + 1 };
     if ((dirty_rect.w <= 0) || (dirty_rect.h <= 0)) {
         return;
     }
 
+    note_perf_capture_dirty_rect_record(texture_index);
     if (!texture_unlock_dirty_rect_valid[texture_index]) {
         texture_unlock_dirty_rects[texture_index] = dirty_rect;
         texture_unlock_dirty_rect_valid[texture_index] = true;
@@ -3517,12 +5376,109 @@ void SDLGameRenderer_RecordTextureUnlockDirtyRect(unsigned int texture_handle,
     accumulated_rect->h = union_y1 - union_y0 + 1;
 }
 
+void SDLGameRenderer_RecordTextureUnlockDirtyTileMask(unsigned int texture_handle, Uint64 tile_mask) {
+    if ((texture_handle == 0) || (texture_handle > FL_TEXTURE_MAX) || (tile_mask == 0)) {
+        return;
+    }
+
+    const int texture_index = (int)texture_handle - 1;
+    clear_texture_unlock_dirty_rect_if_unused(texture_index, TEXTURE_UNLOCK_DIRTY_RECT_CLEAR_REASON_STALE_BEFORE_RECORD);
+    texture_unlock_dirty_tile_masks[texture_index] = tile_mask;
+    texture_unlock_dirty_tile_mask_valid[texture_index] = true;
+}
+
+void SDLGameRenderer_RecordTextureRenewChunk(unsigned int texture_handle, int x, int y, int w, int h) {
+    if (!frame_stats_extended_enabled || (texture_handle == 0) || (texture_handle > FL_TEXTURE_MAX) || (w <= 0) ||
+        (h <= 0) || (x < 0) || (y < 0)) {
+        return;
+    }
+
+    const int texture_index = (int)texture_handle - 1;
+    const SDL_Surface* source_surface = surfaces[texture_index];
+    if ((source_surface != NULL) && ((x + w > source_surface->w) || (y + h > source_surface->h))) {
+        return;
+    }
+
+    perf_capture_texture_renew_chunk_calls_by_texture[texture_index] += 1;
+    perf_capture_texture_renew_chunk_pixels_by_texture[texture_index] += (Uint64)w * (Uint64)h;
+    if ((w == 8) && (h == 8)) {
+        perf_capture_texture_renew_chunk_8x8_calls_by_texture[texture_index] += 1;
+    } else if ((w == 16) && (h == 16)) {
+        perf_capture_texture_renew_chunk_16x16_calls_by_texture[texture_index] += 1;
+    } else if ((w == 32) && (h == 32)) {
+        perf_capture_texture_renew_chunk_32x32_calls_by_texture[texture_index] += 1;
+    }
+    perf_capture_texture_renew_pending_tile_masks[texture_index] |= make_perf_capture_renew_tile_mask(x, y, w, h);
+
+    const SDL_Rect chunk_rect = { x, y, w, h };
+    if (!perf_capture_texture_renew_pending_rect_valid[texture_index]) {
+        perf_capture_texture_renew_pending_rects[texture_index] = chunk_rect;
+        perf_capture_texture_renew_pending_rect_valid[texture_index] = true;
+        return;
+    }
+
+    SDL_Rect* pending_rect = &perf_capture_texture_renew_pending_rects[texture_index];
+    const int union_x0 = SDL_min(pending_rect->x, chunk_rect.x);
+    const int union_y0 = SDL_min(pending_rect->y, chunk_rect.y);
+    const int union_x1 = SDL_max(pending_rect->x + pending_rect->w - 1, chunk_rect.x + chunk_rect.w - 1);
+    const int union_y1 = SDL_max(pending_rect->y + pending_rect->h - 1, chunk_rect.y + chunk_rect.h - 1);
+    pending_rect->x = union_x0;
+    pending_rect->y = union_y0;
+    pending_rect->w = union_x1 - union_x0 + 1;
+    pending_rect->h = union_y1 - union_y0 + 1;
+}
+
+void SDLGameRenderer_RecordTextureRenewBatch(unsigned int texture_handle) {
+    if (!frame_stats_extended_enabled || (texture_handle == 0) || (texture_handle > FL_TEXTURE_MAX)) {
+        return;
+    }
+
+    const int texture_index = (int)texture_handle - 1;
+    perf_capture_texture_renew_batches_by_texture[texture_index] += 1;
+    if (!perf_capture_texture_renew_pending_rect_valid[texture_index]) {
+        perf_capture_texture_renew_batches_without_rect_by_texture[texture_index] += 1;
+        return;
+    }
+
+    const SDL_Rect pending_rect = perf_capture_texture_renew_pending_rects[texture_index];
+    const Uint64 bbox_pixels = (Uint64)pending_rect.w * (Uint64)pending_rect.h;
+    perf_capture_texture_renew_batch_bbox_pixels_by_texture[texture_index] += bbox_pixels;
+    if (bbox_pixels > perf_capture_texture_renew_batch_max_bbox_pixels_by_texture[texture_index]) {
+        perf_capture_texture_renew_batch_max_bbox_pixels_by_texture[texture_index] = bbox_pixels;
+    }
+    const Uint64 pending_tile_mask = perf_capture_texture_renew_pending_tile_masks[texture_index];
+    const Uint64 covered_tiles = (Uint64)__builtin_popcountll((unsigned long long)pending_tile_mask);
+    int largest_component_tiles = 0;
+    const int component_count = count_perf_capture_renew_tile_components(pending_tile_mask, &largest_component_tiles);
+    perf_capture_texture_renew_batch_32x32_covered_tiles_by_texture[texture_index] += covered_tiles;
+    if (covered_tiles > perf_capture_texture_renew_batch_32x32_max_covered_tiles_by_texture[texture_index]) {
+        perf_capture_texture_renew_batch_32x32_max_covered_tiles_by_texture[texture_index] = covered_tiles;
+    }
+    perf_capture_texture_renew_batch_32x32_component_count_by_texture[texture_index] += (Uint64)component_count;
+    if ((Uint64)component_count > perf_capture_texture_renew_batch_32x32_max_component_count_by_texture[texture_index]) {
+        perf_capture_texture_renew_batch_32x32_max_component_count_by_texture[texture_index] = (Uint64)component_count;
+    }
+    if (component_count > 1) {
+        perf_capture_texture_renew_batch_32x32_multi_component_batches_by_texture[texture_index] += 1;
+    }
+    perf_capture_texture_renew_batch_32x32_largest_component_tiles_by_texture[texture_index] +=
+        (Uint64)largest_component_tiles;
+    if ((Uint64)largest_component_tiles >
+        perf_capture_texture_renew_batch_32x32_max_largest_component_tiles_by_texture[texture_index]) {
+        perf_capture_texture_renew_batch_32x32_max_largest_component_tiles_by_texture[texture_index] =
+            (Uint64)largest_component_tiles;
+    }
+    perf_capture_texture_renew_pending_rects[texture_index] = (SDL_Rect){ 0, 0, 0, 0 };
+    perf_capture_texture_renew_pending_rect_valid[texture_index] = false;
+    perf_capture_texture_renew_pending_tile_masks[texture_index] = 0;
+}
+
 void SDLGameRenderer_ClearTextureUnlockDirtyRect(unsigned int texture_handle) {
     if ((texture_handle == 0) || (texture_handle > FL_TEXTURE_MAX)) {
         return;
     }
 
-    clear_texture_unlock_dirty_rect_index((int)texture_handle - 1);
+    clear_texture_unlock_dirty_rect_index((int)texture_handle - 1, TEXTURE_UNLOCK_DIRTY_RECT_CLEAR_REASON_EXPLICIT);
 }
 
 void SDLGameRenderer_UnlockPalette(unsigned int ph) {
@@ -3531,25 +5487,42 @@ void SDLGameRenderer_UnlockPalette(unsigned int ph) {
     const CacheDirtyReason dirty_reason = CACHE_DIRTY_REASON_PALETTE_UNLOCK;
 
     if ((palette_handle > 0) && (palette_handle <= FL_PALETTE_MAX)) {
+        SDL_Color colors[256];
+        int color_count = 0;
+        fill_palette_colors_from_fl_texture(&flPalette[palette_index], colors, &color_count);
+        const bool palette_changed =
+            (palettes[palette_index] == NULL) || !palette_colors_equal(palettes[palette_index], colors, color_count);
+        const CacheDirtyDetail dirty_detail =
+            palette_changed ? CACHE_DIRTY_DETAIL_PALETTE_CHANGED : CACHE_DIRTY_DETAIL_PALETTE_UNCHANGED;
+        // Unchanged palette colors keep existing cached pixels valid on the software-frame path, so avoid
+        // converting them into dirty refresh work when the resulting texture/surface contents would be identical.
+        const bool skip_cache_invalidation = software_frame_mode_active && !palette_changed;
+
         if (palettes[palette_index] == NULL) {
             SDLGameRenderer_CreatePalette(ph << 16);
         } else {
-            SDL_Color colors[256];
-            int color_count = 0;
-            fill_palette_colors_from_fl_texture(&flPalette[palette_index], colors, &color_count);
             SDL_SetPaletteColors(palettes[palette_index], colors, 0, color_count);
         }
         if (frame_stats_extended_enabled) {
             const Uint64 invalidation_start_ns = SDL_GetTicksNS();
             frame_stats.palette_unlock_calls += 1;
-            frame_stats.palette_cache_evictions +=
-                invalidate_texture_cache_for_palette_handle(palette_handle, dirty_reason);
-            frame_stats.software_surface_cache_palette_evictions +=
-                invalidate_software_surface_cache_for_palette_handle(palette_handle, dirty_reason);
+            if (palette_changed) {
+                frame_stats.palette_unlock_changed_calls += 1;
+            } else {
+                frame_stats.palette_unlock_unchanged_calls += 1;
+            }
+            if (!skip_cache_invalidation) {
+                frame_stats.palette_cache_evictions +=
+                    invalidate_texture_cache_for_palette_handle(palette_handle, dirty_reason, dirty_detail);
+                frame_stats.software_surface_cache_palette_evictions +=
+                    invalidate_software_surface_cache_for_palette_handle(palette_handle, dirty_reason, dirty_detail);
+            }
             frame_stats.palette_unlock_invalidation_ns += SDL_GetTicksNS() - invalidation_start_ns;
         } else {
-            invalidate_texture_cache_for_palette_handle(palette_handle, dirty_reason);
-            invalidate_software_surface_cache_for_palette_handle(palette_handle, dirty_reason);
+            if (!skip_cache_invalidation) {
+                invalidate_texture_cache_for_palette_handle(palette_handle, dirty_reason, dirty_detail);
+                invalidate_software_surface_cache_for_palette_handle(palette_handle, dirty_reason, dirty_detail);
+            }
         }
     }
 }
@@ -3579,7 +5552,10 @@ void SDLGameRenderer_UnlockTexture(unsigned int th) {
             invalidate_texture_cache_for_texture_index(texture_index, dirty_reason);
             invalidate_software_surface_cache_for_texture_index(texture_index, dirty_reason);
         }
-        clear_texture_unlock_dirty_rect_if_unused(texture_index);
+        clear_texture_unlock_dirty_rect_if_unused(texture_index, TEXTURE_UNLOCK_DIRTY_RECT_CLEAR_REASON_UNLOCK_UNUSED);
+        if (texture_unlock_dirty_rect_valid[texture_index] || texture_unlock_dirty_tile_mask_valid[texture_index]) {
+            note_perf_capture_dirty_rect_retained_after_unlock(texture_index);
+        }
     }
 }
 
@@ -3618,19 +5594,60 @@ void SDLGameRenderer_CreateTexture(unsigned int th) {
     const SDL_Surface* surface =
         SDL_CreateSurfaceFrom(fl_texture->width, fl_texture->height, pixel_format, pixels, pitch);
     surfaces[texture_index] = surface;
-    clear_texture_unlock_dirty_rect_index(texture_index);
+    clear_current_texture_logical_identity_slot(texture_index);
+    clear_texture_unlock_dirty_rect_index(texture_index, TEXTURE_UNLOCK_DIRTY_RECT_CLEAR_REASON_NONE);
+    reset_perf_capture_refresh_lifetime_slot(texture_index);
     reset_perf_capture_unlock_locality_texture_slot(texture_index);
+    reset_perf_capture_texture_renew_slot(texture_index);
 }
 
 void SDLGameRenderer_DestroyTexture(unsigned int texture_handle) {
     const int texture_index = texture_handle - 1;
+    if (frame_stats_extended_enabled) {
+        perf_capture_source_surface_destroy_calls_by_texture[texture_index] += 1;
+    }
     invalidate_texture_cache_for_texture_index(texture_index, CACHE_DIRTY_REASON_NONE);
     invalidate_software_surface_cache_for_texture_index(texture_index, CACHE_DIRTY_REASON_NONE);
-    clear_texture_unlock_dirty_rect_index(texture_index);
+    clear_current_texture_logical_identity_slot(texture_index);
+    clear_texture_unlock_dirty_rect_index(texture_index, TEXTURE_UNLOCK_DIRTY_RECT_CLEAR_REASON_NONE);
+    reset_perf_capture_refresh_lifetime_slot(texture_index);
     reset_perf_capture_unlock_locality_texture_slot(texture_index);
+    reset_perf_capture_texture_renew_slot(texture_index);
 
     SDL_DestroySurface(surfaces[texture_index]);
     surfaces[texture_index] = NULL;
+}
+
+void SDLGameRenderer_RecordTextureLogicalIdentity(unsigned int texture_handle,
+                                                  SDLGameRenderer_TextureLogicalSourceKind source_kind,
+                                                  int ix_num,
+                                                  int ix_num_first,
+                                                  int slot_index,
+                                                  int chunk_index,
+                                                  int texture_total) {
+    if ((texture_handle == 0) || (texture_handle > FL_TEXTURE_MAX)) {
+        return;
+    }
+    if (!perf_capture_logical_identity_enabled) {
+        return;
+    }
+
+    const int texture_index = (int)texture_handle - 1;
+    TextureLogicalIdentity* current_identity = &current_texture_logical_identity_by_texture[texture_index];
+    *current_identity = (TextureLogicalIdentity){
+        .source_kind = source_kind,
+        .valid = (source_kind != SDL_GAME_RENDERER_TEXTURE_LOGICAL_SOURCE_UNKNOWN),
+        .ix_num = ix_num,
+        .ix_num_first = ix_num_first,
+        .slot_index = slot_index,
+        .chunk_index = chunk_index,
+        .texture_total = texture_total,
+    };
+
+    current_texture_logical_identity_serial_by_texture[texture_index] += 1;
+    if (current_texture_logical_identity_serial_by_texture[texture_index] == 0) {
+        current_texture_logical_identity_serial_by_texture[texture_index] = 1;
+    }
 }
 
 void SDLGameRenderer_CreatePalette(unsigned int ph) {
@@ -3651,8 +5668,10 @@ void SDLGameRenderer_CreatePalette(unsigned int ph) {
 
 void SDLGameRenderer_DestroyPalette(unsigned int palette_handle) {
     const int palette_index = palette_handle - 1;
-    invalidate_texture_cache_for_palette_handle((int)palette_handle, CACHE_DIRTY_REASON_NONE);
-    invalidate_software_surface_cache_for_palette_handle((int)palette_handle, CACHE_DIRTY_REASON_NONE);
+    invalidate_texture_cache_for_palette_handle(
+        (int)palette_handle, CACHE_DIRTY_REASON_NONE, CACHE_DIRTY_DETAIL_NONE);
+    invalidate_software_surface_cache_for_palette_handle(
+        (int)palette_handle, CACHE_DIRTY_REASON_NONE, CACHE_DIRTY_DETAIL_NONE);
 
     SDL_DestroyPalette(palettes[palette_index]);
     palettes[palette_index] = NULL;

@@ -8,6 +8,7 @@
 #define CFG_KEY_WINDOW_HEIGHT "window-height"
 #define CFG_KEY_SCALEMODE "scale-mode"
 #define CFG_KEY_SOFTWARE_FRAME_MODE "software-frame-mode"
+#define CFG_KEY_SHOW_FPS "show-fps"
 #define CFG_KEY_VIDEO_DRIVER_ORDER "video-driver-order"
 #define CFG_KEY_RENDER_DRIVER_ORDER "render-driver-order"
 

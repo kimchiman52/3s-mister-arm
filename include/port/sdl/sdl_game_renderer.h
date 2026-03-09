@@ -73,12 +73,23 @@ typedef struct SDLGameRenderer_FrameStats {
     Uint64 software_frame_fast_scaled_pixels;
     int software_frame_fast_non_integer_tasks;
     Uint64 software_frame_fast_non_integer_pixels;
+    Uint64 software_frame_fast_non_integer_lookup_entries;
+    int software_frame_fast_non_integer_alpha_only_tasks;
+    Uint64 software_frame_fast_non_integer_alpha_only_pixels;
+    int software_frame_fast_non_integer_rgb_mod_tasks;
+    Uint64 software_frame_fast_non_integer_rgb_mod_pixels;
     int software_frame_generic_textured_tasks;
     Uint64 software_frame_generic_textured_pixels;
+    int software_frame_generic_textured_alpha_only_tasks;
+    Uint64 software_frame_generic_textured_alpha_only_pixels;
+    int software_frame_generic_textured_rgb_mod_tasks;
+    Uint64 software_frame_generic_textured_rgb_mod_pixels;
     int software_frame_fast_miss_color_mod;
     int software_frame_fast_miss_non_integer;
+    Uint64 software_frame_fast_miss_non_integer_lookup_entries;
     int software_frame_fast_miss_non_integer_ge_256_tasks;
     Uint64 software_frame_fast_miss_non_integer_ge_256_pixels;
+    Uint64 software_frame_fast_miss_non_integer_ge_256_lookup_entries;
     int software_frame_fast_miss_non_integer_ge_1024_tasks;
     Uint64 software_frame_fast_miss_non_integer_ge_1024_pixels;
     Uint64 software_frame_fast_miss_non_integer_max_pixels;
@@ -119,6 +130,8 @@ typedef struct SDLGameRenderer_FrameStats {
     int texture_creates;
     int texture_unlock_calls;
     int palette_unlock_calls;
+    int palette_unlock_changed_calls;
+    int palette_unlock_unchanged_calls;
     int texture_unlock_dirty_surface_variants;
     int texture_unlock_dirty_surface_variants_max;
     int palette_unlock_dirty_surface_variants;
@@ -182,7 +195,36 @@ typedef struct SDLGameRenderer_PerfCaptureRefreshTelemetry {
     Uint64 abgr1555_pixels;
     Uint64 other_attempts;
     Uint64 other_pixels;
+    Uint64 partial_attempts;
+    Uint64 partial_pixels;
+    Uint64 full_attempts;
+    Uint64 full_pixels;
+    Uint64 full_non_texture_dirty_attempts;
+    Uint64 full_ineligible_source_attempts;
+    Uint64 full_no_usable_dirty_rect_attempts;
+    Uint64 full_oversized_dirty_rect_attempts;
+    Uint64 sampled_blit_period;
+    Uint64 sampled_blit_calls;
+    Uint64 sampled_blit_ns;
+    Uint64 sampled_full_blit_calls;
+    Uint64 sampled_full_blit_ns;
+    Uint64 sampled_partial_blit_calls;
+    Uint64 sampled_partial_blit_ns;
+    Uint64 sampled_full_non_texture_dirty_blit_calls;
+    Uint64 sampled_full_non_texture_dirty_blit_ns;
+    Uint64 sampled_full_ineligible_source_blit_calls;
+    Uint64 sampled_full_ineligible_source_blit_ns;
+    Uint64 sampled_full_no_usable_dirty_rect_blit_calls;
+    Uint64 sampled_full_no_usable_dirty_rect_blit_ns;
+    Uint64 sampled_full_oversized_dirty_rect_blit_calls;
+    Uint64 sampled_full_oversized_dirty_rect_blit_ns;
 } SDLGameRenderer_PerfCaptureRefreshTelemetry;
+
+typedef enum SDLGameRenderer_TextureLogicalSourceKind {
+    SDL_GAME_RENDERER_TEXTURE_LOGICAL_SOURCE_UNKNOWN = 0,
+    SDL_GAME_RENDERER_TEXTURE_LOGICAL_SOURCE_PPG_SEQS,
+    SDL_GAME_RENDERER_TEXTURE_LOGICAL_SOURCE_PPG_CHUNK,
+} SDLGameRenderer_TextureLogicalSourceKind;
 
 typedef struct SDLGameRenderer_PerfCaptureRefreshHotTexture {
     int texture_handle;
@@ -190,6 +232,20 @@ typedef struct SDLGameRenderer_PerfCaptureRefreshHotTexture {
     int width;
     int height;
     int source_shape_mixed;
+    int logical_identity_known;
+    int logical_identity_mixed;
+    Uint32 logical_identity_registrations;
+    SDLGameRenderer_TextureLogicalSourceKind logical_source_kind;
+    int logical_ix_num;
+    int logical_ix_num_first;
+    int logical_slot_index;
+    int logical_chunk_index;
+    int logical_texture_total;
+    Uint64 source_surface_destroy_calls;
+    Uint64 current_lifetime_refresh_attempts;
+    Uint64 current_lifetime_partial_refresh_attempts;
+    Uint64 current_lifetime_full_refresh_attempts;
+    Uint64 current_lifetime_full_refresh_no_usable_dirty_rect_attempts;
     Uint64 refresh_attempts;
     Uint64 refresh_pixels;
     int max_fanout;
@@ -197,6 +253,7 @@ typedef struct SDLGameRenderer_PerfCaptureRefreshHotTexture {
 
 typedef struct SDLGameRenderer_PerfCaptureUnlockLocalityTelemetry {
     Uint64 index8_tracked_unlocks;
+    Uint64 index8_zero_delta_unlocks;
     Uint64 index8_baseline_skips;
     Uint64 index8_non_index8_skips;
     Uint64 index8_source_pixels;
@@ -211,7 +268,17 @@ typedef struct SDLGameRenderer_PerfCaptureUnlockLocalityHotTexture {
     int width;
     int height;
     int source_shape_mixed;
+    int logical_identity_known;
+    int logical_identity_mixed;
+    Uint32 logical_identity_registrations;
+    SDLGameRenderer_TextureLogicalSourceKind logical_source_kind;
+    int logical_ix_num;
+    int logical_ix_num_first;
+    int logical_slot_index;
+    int logical_chunk_index;
+    int logical_texture_total;
     Uint64 tracked_unlocks;
+    Uint64 zero_delta_unlocks;
     Uint64 baseline_skips;
     Uint64 non_index8_skips;
     Uint64 source_pixels;
@@ -220,20 +287,187 @@ typedef struct SDLGameRenderer_PerfCaptureUnlockLocalityHotTexture {
     Uint64 changed_bbox_pixels;
 } SDLGameRenderer_PerfCaptureUnlockLocalityHotTexture;
 
+typedef struct SDLGameRenderer_PerfCaptureDirtyRectLifetimeTelemetry {
+    Uint64 record_calls;
+    Uint64 retained_after_unlock;
+    Uint64 clear_stale_before_record;
+    Uint64 clear_unlock_unused;
+    Uint64 clear_access_unused;
+    Uint64 clear_explicit;
+} SDLGameRenderer_PerfCaptureDirtyRectLifetimeTelemetry;
+
+typedef struct SDLGameRenderer_PerfCaptureTextureRenewTelemetry {
+    Uint64 renew_chunk_calls;
+    Uint64 renew_batches;
+    Uint64 renew_batches_without_rect;
+    Uint64 renew_chunk_pixels;
+    Uint64 renew_batch_bbox_pixels;
+    Uint64 renew_batch_max_bbox_pixels;
+    Uint64 renew_chunk_8x8_calls;
+    Uint64 renew_chunk_16x16_calls;
+    Uint64 renew_chunk_32x32_calls;
+    Uint64 renew_batch_32x32_covered_tiles;
+    Uint64 renew_batch_32x32_max_covered_tiles;
+    Uint64 renew_batch_32x32_component_count;
+    Uint64 renew_batch_32x32_max_component_count;
+    Uint64 renew_batch_32x32_multi_component_batches;
+    Uint64 renew_batch_32x32_largest_component_tiles;
+    Uint64 renew_batch_32x32_max_largest_component_tiles;
+} SDLGameRenderer_PerfCaptureTextureRenewTelemetry;
+
+typedef enum SDLGameRenderer_PerfCaptureRasterBucket {
+    SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_FAST_EXACT = 0,
+    SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_FAST_SCALED,
+    SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_FAST_NON_INTEGER,
+    SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_GENERIC_TEXTURED,
+    SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_SOLID,
+    SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_COUNT,
+} SDLGameRenderer_PerfCaptureRasterBucket;
+
+typedef struct SDLGameRenderer_PerfCaptureRasterBucketTiming {
+    SDLGameRenderer_PerfCaptureRasterBucket bucket;
+    Uint64 sample_period;
+    Uint64 sampled_calls;
+    Uint64 sampled_pixels;
+    Uint64 sampled_ns;
+} SDLGameRenderer_PerfCaptureRasterBucketTiming;
+
+typedef struct SDLGameRenderer_PerfCaptureRefreshLocalityCandidate {
+    int texture_handle;
+    Uint32 source_format;
+    int width;
+    int height;
+    int source_shape_mixed;
+    int logical_identity_known;
+    int logical_identity_mixed;
+    Uint32 logical_identity_registrations;
+    SDLGameRenderer_TextureLogicalSourceKind logical_source_kind;
+    int logical_ix_num;
+    int logical_ix_num_first;
+    int logical_slot_index;
+    int logical_chunk_index;
+    int logical_texture_total;
+    Uint64 source_surface_destroy_calls;
+    Uint64 refresh_attempts;
+    Uint64 refresh_pixels;
+    int max_fanout;
+    Uint64 current_lifetime_refresh_attempts;
+    Uint64 current_lifetime_partial_refresh_attempts;
+    Uint64 current_lifetime_full_refresh_attempts;
+    Uint64 current_lifetime_full_refresh_no_usable_dirty_rect_attempts;
+    Uint64 partial_refresh_attempts;
+    Uint64 partial_refresh_pixels;
+    Uint64 full_refresh_attempts;
+    Uint64 full_refresh_pixels;
+    Uint64 full_refresh_non_texture_dirty_attempts;
+    Uint64 full_refresh_ineligible_source_attempts;
+    Uint64 full_refresh_no_usable_dirty_rect_attempts;
+    Uint64 full_refresh_oversized_dirty_rect_attempts;
+    Uint64 sampled_blit_calls;
+    Uint64 sampled_blit_ns;
+    Uint64 sampled_full_blit_calls;
+    Uint64 sampled_full_blit_ns;
+    Uint64 sampled_partial_blit_calls;
+    Uint64 sampled_partial_blit_ns;
+    Uint64 sampled_full_non_texture_dirty_blit_calls;
+    Uint64 sampled_full_non_texture_dirty_blit_ns;
+    Uint64 sampled_full_ineligible_source_blit_calls;
+    Uint64 sampled_full_ineligible_source_blit_ns;
+    Uint64 sampled_full_no_usable_dirty_rect_blit_calls;
+    Uint64 sampled_full_no_usable_dirty_rect_blit_ns;
+    Uint64 sampled_full_oversized_dirty_rect_blit_calls;
+    Uint64 sampled_full_oversized_dirty_rect_blit_ns;
+    Uint64 software_surface_access_dirty_texture_same_frame;
+    Uint64 software_surface_access_dirty_texture_carried;
+    Uint64 software_surface_access_dirty_palette_same_frame;
+    Uint64 software_surface_access_dirty_palette_carried;
+    Uint64 software_surface_access_dirty_palette_changed_same_frame;
+    Uint64 software_surface_access_dirty_palette_changed_carried;
+    Uint64 software_surface_access_dirty_palette_unchanged_same_frame;
+    Uint64 software_surface_access_dirty_palette_unchanged_carried;
+    Uint64 software_surface_access_cold;
+    Uint64 current_lifetime_software_surface_access_dirty_texture_same_frame;
+    Uint64 current_lifetime_software_surface_access_dirty_texture_carried;
+    Uint64 current_lifetime_software_surface_access_dirty_palette_same_frame;
+    Uint64 current_lifetime_software_surface_access_dirty_palette_carried;
+    Uint64 current_lifetime_software_surface_access_dirty_palette_changed_same_frame;
+    Uint64 current_lifetime_software_surface_access_dirty_palette_changed_carried;
+    Uint64 current_lifetime_software_surface_access_dirty_palette_unchanged_same_frame;
+    Uint64 current_lifetime_software_surface_access_dirty_palette_unchanged_carried;
+    Uint64 current_lifetime_software_surface_access_cold;
+    Uint64 tracked_unlocks;
+    Uint64 zero_delta_unlocks;
+    Uint64 baseline_skips;
+    Uint64 non_index8_skips;
+    Uint64 source_pixels;
+    Uint64 changed_pixels;
+    Uint64 changed_rows;
+    Uint64 changed_bbox_pixels;
+    Uint64 whole_capture_tracked_unlocks;
+    Uint64 whole_capture_zero_delta_unlocks;
+    Uint64 whole_capture_baseline_skips;
+    Uint64 whole_capture_non_index8_skips;
+    Uint64 whole_capture_source_pixels;
+    Uint64 whole_capture_changed_pixels;
+    Uint64 whole_capture_changed_rows;
+    Uint64 whole_capture_changed_bbox_pixels;
+    Uint64 dirty_rect_record_calls;
+    Uint64 dirty_rect_retained_after_unlock;
+    Uint64 dirty_rect_clear_stale_before_record;
+    Uint64 dirty_rect_clear_unlock_unused;
+    Uint64 dirty_rect_clear_access_unused;
+    Uint64 dirty_rect_clear_explicit;
+    Uint64 compare_dirty_rect_refresh_attempts;
+    Uint64 compare_dirty_rect_partial_candidate_refresh_attempts;
+    Uint64 compare_dirty_rect_oversized_candidate_refresh_attempts;
+    Uint64 compare_dirty_rect_no_usable_candidate_refresh_attempts;
+    Uint64 compare_dirty_rect_refresh_bbox_pixels;
+    Uint64 compare_dirty_rect_refresh_max_bbox_pixels;
+    Uint64 compare_dirty_rect_refresh_pending_unlocks;
+    Uint64 compare_dirty_rect_refresh_max_pending_unlocks;
+    Uint64 compare_dirty_rect_refresh_32x32_covered_tiles;
+    Uint64 compare_dirty_rect_refresh_32x32_max_covered_tiles;
+    Uint64 compare_dirty_rect_refresh_32x32_component_count;
+    Uint64 compare_dirty_rect_refresh_32x32_max_component_count;
+    Uint64 compare_dirty_rect_refresh_32x32_multi_component_refresh_attempts;
+    Uint64 compare_dirty_rect_refresh_32x32_largest_component_tiles;
+    Uint64 compare_dirty_rect_refresh_32x32_max_largest_component_tiles;
+    Uint64 renew_chunk_calls;
+    Uint64 renew_batches;
+    Uint64 renew_batches_without_rect;
+    Uint64 renew_chunk_pixels;
+    Uint64 renew_batch_bbox_pixels;
+    Uint64 renew_batch_max_bbox_pixels;
+    Uint64 renew_chunk_8x8_calls;
+    Uint64 renew_chunk_16x16_calls;
+    Uint64 renew_chunk_32x32_calls;
+    Uint64 renew_batch_32x32_covered_tiles;
+    Uint64 renew_batch_32x32_max_covered_tiles;
+    Uint64 renew_batch_32x32_component_count;
+    Uint64 renew_batch_32x32_max_component_count;
+    Uint64 renew_batch_32x32_multi_component_batches;
+    Uint64 renew_batch_32x32_largest_component_tiles;
+    Uint64 renew_batch_32x32_max_largest_component_tiles;
+} SDLGameRenderer_PerfCaptureRefreshLocalityCandidate;
+
 void SDLGameRenderer_Init(SDL_Renderer* renderer);
 void SDLGameRenderer_SetSoftwareFrameMode(bool enabled);
 void SDLGameRenderer_SetSoftwareFrameDirectPresentMode(bool enabled);
 bool SDLGameRenderer_IsSoftwareFrameModeEnabled(void);
+bool SDLGameRenderer_IsPerfCaptureExtendedStatsEnabled(void);
 bool SDLGameRenderer_HasSoftwareOwnedFrame(void);
 const SDL_Surface* SDLGameRenderer_GetSoftwareFrameSurface(void);
 bool SDLGameRenderer_EnsureSoftwareFrameCanvas(void);
 void SDLGameRenderer_NoteSoftwareFrameDirectPresent(void);
+void SDLGameRenderer_SetPerfCaptureLogicalIdentityEnabled(bool enabled);
 void SDLGameRenderer_BeginFrame(bool capture_extended_stats);
 void SDLGameRenderer_RenderFrame();
 void SDLGameRenderer_EndFrame();
 bool SDLGameRenderer_RunSoftwareFrameParityCheck(void);
 void SDLGameRenderer_ResetPerfCaptureRefreshTelemetry(void);
 void SDLGameRenderer_ResetPerfCaptureUnlockLocalityTelemetry(void);
+void SDLGameRenderer_ResetPerfCaptureTextureRenewTelemetry(void);
+void SDLGameRenderer_ResetPerfCaptureRasterTimingTelemetry(void);
 int SDLGameRenderer_GetPerfCaptureRefreshTelemetry(SDLGameRenderer_PerfCaptureRefreshTelemetry* out_telemetry,
                                                    SDLGameRenderer_PerfCaptureRefreshHotTexture* out_hot_textures,
                                                    int max_hot_textures);
@@ -241,6 +475,16 @@ int SDLGameRenderer_GetPerfCaptureUnlockLocalityTelemetry(
     SDLGameRenderer_PerfCaptureUnlockLocalityTelemetry* out_telemetry,
     SDLGameRenderer_PerfCaptureUnlockLocalityHotTexture* out_hot_textures,
     int max_hot_textures);
+void SDLGameRenderer_GetPerfCaptureDirtyRectLifetimeTelemetry(
+    SDLGameRenderer_PerfCaptureDirtyRectLifetimeTelemetry* out_telemetry);
+void SDLGameRenderer_GetPerfCaptureTextureRenewTelemetry(
+    SDLGameRenderer_PerfCaptureTextureRenewTelemetry* out_telemetry);
+int SDLGameRenderer_GetPerfCaptureRasterBucketTimings(
+    SDLGameRenderer_PerfCaptureRasterBucketTiming* out_timings,
+    int max_timings);
+int SDLGameRenderer_GetPerfCaptureRefreshLocalityCandidates(
+    SDLGameRenderer_PerfCaptureRefreshLocalityCandidate* out_candidates,
+    int max_candidates);
 
 int SDLGameRenderer_GetDirtyTileCount(void);
 int SDLGameRenderer_GetDirtyTileTotal(void);
@@ -250,11 +494,21 @@ void SDLGameRenderer_GetFrameStats(SDLGameRenderer_FrameStats* out_stats);
 void SDLGameRenderer_CreateTexture(unsigned int th);
 void SDLGameRenderer_DestroyTexture(unsigned int texture_handle);
 void SDLGameRenderer_UnlockTexture(unsigned int th);
+void SDLGameRenderer_RecordTextureLogicalIdentity(unsigned int texture_handle,
+                                                  SDLGameRenderer_TextureLogicalSourceKind source_kind,
+                                                  int ix_num,
+                                                  int ix_num_first,
+                                                  int slot_index,
+                                                  int chunk_index,
+                                                  int texture_total);
 void SDLGameRenderer_RecordTextureUnlockDirtyRect(unsigned int texture_handle,
                                                   int min_x,
                                                   int min_y,
                                                   int max_x,
                                                   int max_y);
+void SDLGameRenderer_RecordTextureUnlockDirtyTileMask(unsigned int texture_handle, Uint64 tile_mask);
+void SDLGameRenderer_RecordTextureRenewChunk(unsigned int texture_handle, int x, int y, int w, int h);
+void SDLGameRenderer_RecordTextureRenewBatch(unsigned int texture_handle);
 void SDLGameRenderer_ClearTextureUnlockDirtyRect(unsigned int texture_handle);
 void SDLGameRenderer_CreatePalette(unsigned int ph);
 void SDLGameRenderer_DestroyPalette(unsigned int palette_handle);

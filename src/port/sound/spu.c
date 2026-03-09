@@ -66,6 +66,20 @@ static u16 ram[(2 * 1024 * 1024) >> 1];
 static s16 adpcm_coefs[5][2] = {
     { 0, 0 }, { 60, 0 }, { 115, -52 }, { 98, -55 }, { 122, -60 },
 };
+static u64 active_voices = 0;
+
+static int SPU_Ctz64(u64 mask) {
+#if defined(__clang__) || defined(__GNUC__)
+    return __builtin_ctzll(mask);
+#else
+    int bit = 0;
+    while ((mask & 1) == 0) {
+        mask >>= 1;
+        bit++;
+    }
+    return bit;
+#endif
+}
 
 static s16 SPU_ApplyVolume(s16 sample, s32 volume) {
     return (sample * volume) >> 15;
@@ -153,6 +167,7 @@ static void SPU_VoiceRunADSR(struct SPU_Voice* v) {
 
     if (v->adsr_phase > ADSR_PHASE_RELEASE) {
         v->run = false;
+        active_voices &= ~((u64)1 << (u64)(v - voices));
     }
 }
 
@@ -204,6 +219,7 @@ static void SPU_VoiceDecode(struct SPU_Voice* v) {
                     v->envx = 0;
                     v->adsr_phase = ADSR_PHASE_STOPPED;
                     v->run = false;
+                    active_voices &= ~((u64)1 << (u64)(v - voices));
                 }
             }
         }
@@ -267,6 +283,7 @@ void SPU_VoiceStop(int vnum) {
     voices[vnum].envx = 0;
     voices[vnum].adsr_phase = ADSR_PHASE_STOPPED;
     voices[vnum].run = false;
+    active_voices &= ~((u64)1 << (u64)vnum);
 }
 
 void SPU_VoiceGetConf(int vnum, struct SPUVConf* conf) {
@@ -297,6 +314,7 @@ void SPU_VoiceStart(int vnum, u32 start_addr) {
     v->lsa = start_addr;
     v->nax = v->ssa;
     v->run = true;
+    active_voices |= ((u64)1 << (u64)vnum);
     v->envx = 0;
 
     v->adsr_counter = 0;
@@ -319,12 +337,15 @@ void SPU_SDL_CB(void* user, SDL_AudioStream* stream, int additional_amount, int 
     // 48000 / 250 = 192
     static int cb_timer = 192;
 
-    // TODO consider redesigning this whole system, emlshim and spu should probably run
-    // on the same thread, no locks would be needed in the SDL audio callback path
-    SDL_LockMutex(soundLock);
-
     while (samples_per_channel) {
-        u32 batch_count = min(samples_per_channel, 4096);
+        // Keep audio lock hold time bounded so gameplay-thread calls that take
+        // soundLock (voice setup/key-off) do not stall for long stretches.
+        u32 batch_count = min(samples_per_channel, 256);
+
+        // TODO consider redesigning this whole system; emlshim and spu should
+        // probably run on the same thread so this lock can be removed entirely.
+        SDL_LockMutex(soundLock);
+
         s16* p = outbuf;
         for (int i = 0; i < batch_count; i++) {
             SPU_Tick(p);
@@ -337,11 +358,10 @@ void SPU_SDL_CB(void* user, SDL_AudioStream* stream, int additional_amount, int 
             }
         }
 
+        SDL_UnlockMutex(soundLock);
         SDL_PutAudioStreamData(stream, outbuf, (batch_count * sizeof(s16)) << 1);
         samples_per_channel -= batch_count;
     }
-
-    SDL_UnlockMutex(soundLock);
 }
 
 static void nullcb() {}
@@ -355,6 +375,7 @@ void SPU_Init(void (*cb)()) {
     }
 
     memset(voices, 0, sizeof(voices));
+    active_voices = 0;
     soundLock = SDL_CreateMutex();
 
     spec.channels = 2;
@@ -364,6 +385,7 @@ void SPU_Init(void (*cb)()) {
     stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, SPU_SDL_CB, NULL);
     if (!stream) {
         SDL_Log("Couldn't create SDL audio stream: %s", SDL_GetError());
+        return;
     }
 
     SDL_ResumeAudioStreamDevice(stream);
@@ -378,19 +400,22 @@ void SPU_Upload(u32 dst, void* src, u32 size) {
 }
 
 void SPU_Tick(s16* output) {
-    struct SPU_Voice* v;
     s32 acc[2] = {};
     s32 vout[2] = {};
+    u64 mask = active_voices;
 
-    for (int i = 0; i < VOICE_COUNT; i++) {
-        v = &voices[i];
+    while (mask != 0) {
+        const int i = SPU_Ctz64(mask);
+        mask &= (mask - 1);
 
-        if (v->run) {
-            SPU_VoiceTick(v, vout);
-
-            acc[0] += vout[0];
-            acc[1] += vout[1];
+        struct SPU_Voice* v = &voices[i];
+        if (!v->run) {
+            continue;
         }
+
+        SPU_VoiceTick(v, vout);
+        acc[0] += vout[0];
+        acc[1] += vout[1];
     }
 
     output[0] = clamp(acc[0], INT16_MIN, INT16_MAX);

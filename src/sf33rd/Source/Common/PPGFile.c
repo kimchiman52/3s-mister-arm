@@ -33,6 +33,180 @@ typedef struct {
     TexCoord t;
 } _Vertex;
 
+typedef enum PPGRenewDirtyTileMaskState {
+    PPG_RENEW_DIRTY_TILE_MASK_STATE_EMPTY = 0,
+    PPG_RENEW_DIRTY_TILE_MASK_STATE_TRACKING,
+    PPG_RENEW_DIRTY_TILE_MASK_STATE_REJECTED,
+} PPGRenewDirtyTileMaskState;
+
+enum {
+    ppg_renew_dirty_tile_size = 32,
+    ppg_renew_dirty_tile_grid_dim = 8,
+};
+
+static bool ppgDecodeRenewChunkRect(u32 code, u32 size, SDL_Rect* out_rect) {
+    if (out_rect == NULL) {
+        return false;
+    }
+
+    int x = 0;
+    int y = 0;
+    int w = 0;
+    int h = 0;
+
+    switch (size) {
+    case 0x40:
+    case 0x80:
+        x = (int)(code & 0xF) * 16;
+        y = (int)((code >> 4) & 0xF) * 16;
+        w = 8;
+        h = 8;
+        break;
+
+    case 0x100:
+    case 0x200:
+        x = (int)(code & 0xF) * 16;
+        y = (int)((code >> 4) & 0xF) * 16;
+        w = 16;
+        h = 16;
+        break;
+
+    case 0x400:
+    case 0x800:
+        x = (int)(code & 0x7) * 32;
+        y = (int)((code >> 3) & 0x7) * 32;
+        w = 32;
+        h = 32;
+        break;
+
+    default:
+        return false;
+    }
+
+    *out_rect = (SDL_Rect){ x, y, w, h };
+    return true;
+}
+
+static bool ppgShouldKeepRenewDirtyRect(u32 texture_handle) {
+    switch (LO_16_BITS(texture_handle)) {
+    case 41:
+    case 50:
+    case 16:
+    case 18:
+    case 14:
+    case 47:
+    case 56:
+    case 57:
+    case 58:
+        return true;
+    default:
+        return false;
+    }
+}
+
+static SDL_Rect ppgRenewDirtyRects[FL_TEXTURE_MAX] = { { 0 } };
+static bool ppgRenewDirtyRectValid[FL_TEXTURE_MAX] = { false };
+static Uint64 ppgRenewDirtyTileMasks[FL_TEXTURE_MAX] = { 0 };
+static PPGRenewDirtyTileMaskState ppgRenewDirtyTileMaskStates[FL_TEXTURE_MAX] = { 0 };
+
+static bool ppgShouldTrackRenewDirtyTileMask(u32 texture_handle) {
+    switch (LO_16_BITS(texture_handle)) {
+    case 41:
+    case 50:
+        return true;
+    default:
+        return false;
+    }
+}
+
+static void ppgAccumulateRenewDirtyTileMask(u32 texture_handle, const SDL_Rect* renew_rect) {
+    const int texture_index = LO_16_BITS(texture_handle) - 1;
+
+    if (!ppgShouldTrackRenewDirtyTileMask(texture_handle) || (renew_rect == NULL) || (texture_index < 0) ||
+        (texture_index >= FL_TEXTURE_MAX)) {
+        return;
+    }
+
+    if (ppgRenewDirtyTileMaskStates[texture_index] == PPG_RENEW_DIRTY_TILE_MASK_STATE_REJECTED) {
+        return;
+    }
+
+    if ((renew_rect->w != ppg_renew_dirty_tile_size) || (renew_rect->h != ppg_renew_dirty_tile_size) ||
+        ((renew_rect->x % ppg_renew_dirty_tile_size) != 0) || ((renew_rect->y % ppg_renew_dirty_tile_size) != 0)) {
+        ppgRenewDirtyTileMasks[texture_index] = 0;
+        ppgRenewDirtyTileMaskStates[texture_index] = PPG_RENEW_DIRTY_TILE_MASK_STATE_REJECTED;
+        return;
+    }
+
+    const int tile_x = renew_rect->x / ppg_renew_dirty_tile_size;
+    const int tile_y = renew_rect->y / ppg_renew_dirty_tile_size;
+    if ((tile_x < 0) || (tile_y < 0) || (tile_x >= ppg_renew_dirty_tile_grid_dim) ||
+        (tile_y >= ppg_renew_dirty_tile_grid_dim)) {
+        ppgRenewDirtyTileMasks[texture_index] = 0;
+        ppgRenewDirtyTileMaskStates[texture_index] = PPG_RENEW_DIRTY_TILE_MASK_STATE_REJECTED;
+        return;
+    }
+
+    ppgRenewDirtyTileMasks[texture_index] |=
+        ((Uint64)1) << (tile_y * ppg_renew_dirty_tile_grid_dim + tile_x);
+    ppgRenewDirtyTileMaskStates[texture_index] = PPG_RENEW_DIRTY_TILE_MASK_STATE_TRACKING;
+}
+
+static void ppgAccumulateRenewDirtyRect(u32 texture_handle, const SDL_Rect* renew_rect) {
+    const int texture_index = LO_16_BITS(texture_handle) - 1;
+
+    if (!ppgShouldKeepRenewDirtyRect(texture_handle) || (renew_rect == NULL) || (texture_index < 0) ||
+        (texture_index >= FL_TEXTURE_MAX)) {
+        return;
+    }
+
+    if (!ppgRenewDirtyRectValid[texture_index]) {
+        ppgRenewDirtyRects[texture_index] = *renew_rect;
+        ppgRenewDirtyRectValid[texture_index] = true;
+        return;
+    }
+
+    SDL_Rect* accumulated_rect = &ppgRenewDirtyRects[texture_index];
+    const int union_x0 = SDL_min(accumulated_rect->x, renew_rect->x);
+    const int union_y0 = SDL_min(accumulated_rect->y, renew_rect->y);
+    const int union_x1 = SDL_max(accumulated_rect->x + accumulated_rect->w - 1, renew_rect->x + renew_rect->w - 1);
+    const int union_y1 = SDL_max(accumulated_rect->y + accumulated_rect->h - 1, renew_rect->y + renew_rect->h - 1);
+    accumulated_rect->x = union_x0;
+    accumulated_rect->y = union_y0;
+    accumulated_rect->w = union_x1 - union_x0 + 1;
+    accumulated_rect->h = union_y1 - union_y0 + 1;
+}
+
+static bool ppgConsumeRenewDirtyTileMask(u32 texture_handle, Uint64* out_tile_mask) {
+    const int texture_index = LO_16_BITS(texture_handle) - 1;
+
+    if ((out_tile_mask == NULL) || (texture_index < 0) || (texture_index >= FL_TEXTURE_MAX)) {
+        return false;
+    }
+
+    const bool have_tile_mask =
+        ppgRenewDirtyTileMaskStates[texture_index] == PPG_RENEW_DIRTY_TILE_MASK_STATE_TRACKING &&
+        ppgRenewDirtyTileMasks[texture_index] != 0;
+    *out_tile_mask = have_tile_mask ? ppgRenewDirtyTileMasks[texture_index] : 0;
+    ppgRenewDirtyTileMasks[texture_index] = 0;
+    ppgRenewDirtyTileMaskStates[texture_index] = PPG_RENEW_DIRTY_TILE_MASK_STATE_EMPTY;
+    return have_tile_mask;
+}
+
+static bool ppgConsumeRenewDirtyRect(u32 texture_handle, SDL_Rect* out_rect) {
+    const int texture_index = LO_16_BITS(texture_handle) - 1;
+
+    if ((out_rect == NULL) || (texture_index < 0) || (texture_index >= FL_TEXTURE_MAX) ||
+        !ppgRenewDirtyRectValid[texture_index]) {
+        return false;
+    }
+
+    *out_rect = ppgRenewDirtyRects[texture_index];
+    ppgRenewDirtyRects[texture_index] = (SDL_Rect){ 0, 0, 0, 0 };
+    ppgRenewDirtyRectValid[texture_index] = false;
+    return true;
+}
+
 const u8 pplColorModeWidth[4] = { 0xF, 0x3F, 0xFF, 0 };
 
 PPG_W ppg_w;
@@ -149,7 +323,9 @@ void ppgWriteQuadOnly(Vertex* pos, u32 col, u32 texCode) {
         prm.t[i].t = pos[i].t;
     }
 
+    SDLGameRenderer_SetTaskSource(SDL_GAME_RENDERER_TASK_SOURCE_PPG);
     SDLGameRenderer_DrawTexturedQuad(&prm, col);
+    SDLGameRenderer_SetTaskSource(SDL_GAME_RENDERER_TASK_SOURCE_UNKNOWN);
 }
 
 void ppgWriteQuadOnly2(Vertex* pos, u32 col, u32 texCode) {
@@ -168,7 +344,9 @@ void ppgWriteQuadOnly2(Vertex* pos, u32 col, u32 texCode) {
     prm.t[3].s = pos[3].s;
     prm.t[3].t = pos[3].t;
 
+    SDLGameRenderer_SetTaskSource(SDL_GAME_RENDERER_TASK_SOURCE_PPG);
     SDLGameRenderer_DrawSprite(&prm, col);
+    SDLGameRenderer_SetTaskSource(SDL_GAME_RENDERER_TASK_SOURCE_UNKNOWN);
 }
 
 s32 ppgWriteQuadWithST_B(Vertex* pos, u32 col, PPGDataList* tb, s32 tix, s32 cix) {
@@ -261,6 +439,10 @@ s32 ppgWriteQuadUseTrans(Vertex* pos, u32 col, PPGDataList* tb, s32 tix, s32 cix
     f32 tadd;
     f32 ppgwf;
     f32 ppghf;
+    f32 inv_ppgwf;
+    f32 inv_ppghf;
+    f32 pxs_over_ppgw;
+    f32 pys_over_ppgh;
     PPGFileHeader* ppg;
 
     if ((pos[0].x >= 384.0f) || (pos[3].x < 0.0f) || (pos[0].y >= 224.0f) || (pos[3].y < 0.0f)) {
@@ -301,17 +483,21 @@ s32 ppgWriteQuadUseTrans(Vertex* pos, u32 col, PPGDataList* tb, s32 tix, s32 cix
             ppgwf = ppg->width;
             ppgw = ppg->width;
             ppghf = ppg->height;
+            inv_ppgwf = 1.0f / ppgwf;
+            inv_ppghf = 1.0f / ppghf;
             pxs = pos[3].x - pos[0].x;
             pys = pos[3].y - pos[0].y;
+            pxs_over_ppgw = pxs * inv_ppgwf;
+            pys_over_ppgh = pys * inv_ppghf;
             sadd = 0.5f / pxs;
             tadd = 0.5f / pys;
 
-            if (sadd >= (1.0f / (16.0f * ppgwf))) {
-                sadd = 1.0f / (16.0f * ppgwf);
+            if (sadd >= (inv_ppgwf / 16.0f)) {
+                sadd = inv_ppgwf / 16.0f;
             }
 
-            if (tadd >= (1.0f / (16.0f * ppghf))) {
-                tadd = 1.0f / (16.0f * ppghf);
+            if (tadd >= (inv_ppghf / 16.0f)) {
+                tadd = inv_ppghf / 16.0f;
             }
 
 #if !defined(TARGET_PS2)
@@ -336,36 +522,36 @@ s32 ppgWriteQuadUseTrans(Vertex* pos, u32 col, PPGDataList* tb, s32 tix, s32 cix
                 sy = iPoint / ppgw;
 
                 if (flip & 1) {
-                    qvtx[3].x = pos->x + (pxs * (ppgw - sx) / ppgwf);
-                    qvtx[0].x = pos->x + (pxs * (ppgw - (sx + xs)) / ppgwf);
+                    qvtx[3].x = pos->x + ((ppgw - sx) * pxs_over_ppgw);
+                    qvtx[0].x = pos->x + ((ppgw - (sx + xs)) * pxs_over_ppgw);
                 } else {
-                    qvtx[0].x = pos->x + (sx * pxs / ppgwf);
-                    qvtx[3].x = pos->x + (pxs * (sx + xs) / ppgwf);
+                    qvtx[0].x = pos->x + (sx * pxs_over_ppgw);
+                    qvtx[3].x = pos->x + ((sx + xs) * pxs_over_ppgw);
                 }
 
                 if (flip & 2) {
-                    qvtx[3].y = pos->y + (pys * (ppgw - sy) / ppghf);
-                    qvtx[0].y = pos->y + (pys * (ppgw - (sy + ys)) / ppghf);
+                    qvtx[3].y = pos->y + ((ppgw - sy) * pys_over_ppgh);
+                    qvtx[0].y = pos->y + ((ppgw - (sy + ys)) * pys_over_ppgh);
                 } else {
-                    qvtx[0].y = pos->y + (sy * pys / ppghf);
-                    qvtx[3].y = pos->y + (pys * (sy + ys) / ppghf);
+                    qvtx[0].y = pos->y + (sy * pys_over_ppgh);
+                    qvtx[3].y = pos->y + ((sy + ys) * pys_over_ppgh);
                 }
 
                 if ((qvtx[0].x < 384.0f) && (qvtx[3].x >= 0.0f) && (qvtx[0].y < 224.0f) && (qvtx[3].y >= 0.0f)) {
                     if (flip & 1) {
-                        qvtx[3].s = (sx / ppgwf) - sadd;
-                        qvtx[0].s = ((sx + xs) / ppgwf) - sadd;
+                        qvtx[3].s = (sx * inv_ppgwf) - sadd;
+                        qvtx[0].s = ((sx + xs) * inv_ppgwf) - sadd;
                     } else {
-                        qvtx[0].s = sadd + (sx / ppgwf);
-                        qvtx[3].s = sadd + ((sx + xs) / ppgwf);
+                        qvtx[0].s = sadd + (sx * inv_ppgwf);
+                        qvtx[3].s = sadd + ((sx + xs) * inv_ppgwf);
                     }
 
                     if (flip & 2) {
-                        qvtx[3].t = (sy / ppghf) - tadd;
-                        qvtx[0].t = ((sy + ys) / ppghf) - tadd;
+                        qvtx[3].t = (sy * inv_ppghf) - tadd;
+                        qvtx[0].t = ((sy + ys) * inv_ppghf) - tadd;
                     } else {
-                        qvtx[0].t = tadd + (sy / ppghf);
-                        qvtx[3].t = tadd + ((sy + ys) / ppghf);
+                        qvtx[0].t = tadd + (sy * inv_ppghf);
+                        qvtx[3].t = tadd + ((sy + ys) * inv_ppghf);
                     }
 
                     ppgWriteQuadOnly2(qvtx, col, texhan | (palhan << 0x10));
@@ -776,6 +962,14 @@ s32 ppgSetupTexChunkSeqs(Texture* tch, PPGFileHeader* ppg, u8* adrs, s32 ixNum1s
             goto error_handler;
         }
 
+        SDLGameRenderer_RecordTextureLogicalIdentity(tch->handle[i].b16[0],
+                                                     SDL_GAME_RENDERER_TEXTURE_LOGICAL_SOURCE_PPG_SEQS,
+                                                     tch->ixNum1st + i,
+                                                     tch->ixNum1st,
+                                                     i,
+                                                     -1,
+                                                     tch->total);
+
         adrs += tch->srcSize;
     }
 
@@ -818,6 +1012,11 @@ void ppgRenewDotDataSeqs(Texture* tch, u32 gix, u32* srcRam, u32 code, u32 size)
 
         if (tch->handle[ix].b16[0] != 0) {
             tch->handle[ix].b16[1] |= 0x2000;
+            SDL_Rect renew_rect = { 0, 0, 0, 0 };
+            const bool have_renew_rect = ppgDecodeRenewChunkRect(code, size, &renew_rect);
+#if ENABLE_PERF_TELEMETRY
+            const bool capture_texture_renew = SDLGameRenderer_IsPerfCaptureExtendedStatsEnabled();
+#endif
 
             switch (size) {
             case 0x40:
@@ -906,6 +1105,18 @@ void ppgRenewDotDataSeqs(Texture* tch, u32 gix, u32* srcRam, u32 code, u32 size)
 
                 break;
             }
+
+            if (have_renew_rect) {
+                ppgAccumulateRenewDirtyRect(tch->handle[ix].b16[0], &renew_rect);
+                ppgAccumulateRenewDirtyTileMask(tch->handle[ix].b16[0], &renew_rect);
+            }
+
+#if ENABLE_PERF_TELEMETRY
+            if (capture_texture_renew && have_renew_rect) {
+                SDLGameRenderer_RecordTextureRenewChunk(
+                    tch->handle[ix].b16[0], renew_rect.x, renew_rect.y, renew_rect.w, renew_rect.h);
+            }
+#endif
         }
     }
 }
@@ -941,6 +1152,9 @@ s32 ppgRenewTexChunkSeqs(Texture* tch) {
     s32 i;
     s32* srcRam;
     s32* dstRam;
+#if ENABLE_PERF_TELEMETRY
+    const bool capture_texture_renew = SDLGameRenderer_IsPerfCaptureExtendedStatsEnabled();
+#endif
 
     if (tch == NULL) {
         tch = ppg_w.cur->tex;
@@ -956,12 +1170,35 @@ s32 ppgRenewTexChunkSeqs(Texture* tch) {
 
     for (i = 0; i < tch->total; i++) {
         if (tch->handle[i].b16[1] & 0x2000) {
+            const u32 texture_handle = tch->handle[i].b16[0];
+            SDL_Rect renew_dirty_rect = { 0, 0, 0, 0 };
+            const bool have_renew_dirty_rect = ppgConsumeRenewDirtyRect(texture_handle, &renew_dirty_rect);
+            Uint64 renew_dirty_tile_mask = 0;
+            const bool have_renew_dirty_tile_mask =
+                ppgConsumeRenewDirtyTileMask(texture_handle, &renew_dirty_tile_mask);
             tch->handle[i].b16[1] &= 0xDFFF;
-            flLockTexture(NULL, tch->handle[i].b16[0], &bits, 3);
+#if ENABLE_PERF_TELEMETRY
+            if (capture_texture_renew) {
+                SDLGameRenderer_RecordTextureRenewBatch(texture_handle);
+            }
+#endif
+            flLockTexture(NULL, texture_handle, &bits, 3);
             dstRam = bits.ptr;
             srcRam = (s32*)(tch->srcAdrs + tch->srcSize * i);
             SDL_memmove(dstRam, srcRam, tch->srcSize);
-            flUnlockTexture(tch->handle[i].b16[0]);
+            flUnlockTexture(texture_handle);
+            if (have_renew_dirty_rect) {
+                // Replace the pre-invalidation compare bbox with the exact direct-write renew bbox.
+                SDLGameRenderer_ClearTextureUnlockDirtyRect(texture_handle);
+                if (have_renew_dirty_tile_mask) {
+                    SDLGameRenderer_RecordTextureUnlockDirtyTileMask(texture_handle, renew_dirty_tile_mask);
+                }
+                SDLGameRenderer_RecordTextureUnlockDirtyRect(texture_handle,
+                                                            renew_dirty_rect.x,
+                                                            renew_dirty_rect.y,
+                                                            renew_dirty_rect.x + renew_dirty_rect.w - 1,
+                                                            renew_dirty_rect.y + renew_dirty_rect.h - 1);
+            }
         }
     }
 
@@ -1173,6 +1410,14 @@ s32 ppgSetupTexChunk_3rd(Texture* tch, s32 ixNum, u32 attribute) {
         flLogOut("テクスチャハンドルの取得に失敗しました。\n");
         while (1) {}
     }
+
+    SDLGameRenderer_RecordTextureLogicalIdentity(hnof->b16[0],
+                                                 SDL_GAME_RENDERER_TEXTURE_LOGICAL_SOURCE_PPG_CHUNK,
+                                                 ixNum,
+                                                 tch->ixNum1st,
+                                                 ixNum - tch->ixNum1st,
+                                                 hnof->b16[1] & 0xFFF,
+                                                 tch->total);
 
     return 1;
 }

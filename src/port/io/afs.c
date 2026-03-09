@@ -29,6 +29,7 @@ typedef struct AFS {
 
 typedef struct ReadRequest {
     bool initialized;
+    bool close_queued;
     int index;
     int file_num;
     int sector;
@@ -39,6 +40,7 @@ typedef struct ReadRequest {
 static AFS afs = { 0 };
 static SDL_AsyncIOQueue* asyncio_queue = NULL;
 static ReadRequest requests[AFS_MAX_READ_REQUESTS] = { { 0 } };
+static const int asyncio_completion_budget_per_tick = 32;
 
 static bool is_valid_attribute_data(Uint32 attributes_offset, Uint32 attributes_size, Sint64 file_size,
                                     Uint32 entries_end_offset, Uint32 entry_count) {
@@ -153,7 +155,7 @@ static bool init_afs(const char* file_path) {
     return true;
 }
 
-static bool init_asyncio(const char* file_path) {
+static bool init_asyncio() {
     asyncio_queue = SDL_CreateAsyncIOQueue();
     return asyncio_queue != NULL;
 }
@@ -163,15 +165,22 @@ bool AFS_Init(const char* file_path) {
         return false;
     }
 
-    return init_asyncio(file_path);
+    return init_asyncio();
 }
 
 void AFS_Finish() {
+    for (int i = 0; i < SDL_arraysize(requests); i++) {
+        if (requests[i].initialized) {
+            AFS_Close(i);
+        }
+    }
+
     SDL_free(afs.file_path);
     SDL_free(afs.entries);
     SDL_zero(afs);
     SDL_zeroa(requests);
     SDL_DestroyAsyncIOQueue(asyncio_queue);
+    asyncio_queue = NULL;
 }
 
 unsigned int AFS_GetFileCount() {
@@ -190,6 +199,9 @@ unsigned int AFS_GetSize(int file_num) {
 
 static void process_asyncio_outcome(const SDL_AsyncIOOutcome* outcome) {
     ReadRequest* request = (ReadRequest*)outcome->userdata;
+    if ((request == NULL) || !request->initialized) {
+        return;
+    }
 
 #if defined(AFS_DEBUG)
     printf("📂 %d: request complete (type = %d, result = %d, offset = 0x%llX, requested = 0x%llX, transferred = "
@@ -206,11 +218,11 @@ static void process_asyncio_outcome(const SDL_AsyncIOOutcome* outcome) {
     case SDL_ASYNCIO_TASK_READ:
         switch (outcome->result) {
         case SDL_ASYNCIO_COMPLETE:
-            request->state = AFS_READ_STATE_FINISHED;
+            request->state = request->close_queued ? AFS_READ_STATE_READING : AFS_READ_STATE_FINISHED;
             break;
 
         case SDL_ASYNCIO_CANCELED:
-            request->state = AFS_READ_STATE_IDLE;
+            request->state = request->close_queued ? AFS_READ_STATE_READING : AFS_READ_STATE_IDLE;
             break;
 
         case SDL_ASYNCIO_FAILURE:
@@ -221,6 +233,8 @@ static void process_asyncio_outcome(const SDL_AsyncIOOutcome* outcome) {
         break;
 
     case SDL_ASYNCIO_TASK_CLOSE:
+        request->close_queued = false;
+        request->asyncio = NULL;
         request->state = AFS_READ_STATE_IDLE;
         break;
 
@@ -232,15 +246,16 @@ static void process_asyncio_outcome(const SDL_AsyncIOOutcome* outcome) {
 #if defined(AFS_DEBUG)
     printf("📂 %d: new state = %d\n", request->index, request->state);
 #endif
-
-    request->asyncio = NULL;
 }
 
 void AFS_RunServer() {
     SDL_AsyncIOOutcome outcome;
+    int processed = 0;
 
-    while (SDL_GetAsyncIOResult(asyncio_queue, &outcome)) {
+    // Keep update latency bounded by draining async completions in chunks.
+    while ((processed < asyncio_completion_budget_per_tick) && SDL_GetAsyncIOResult(asyncio_queue, &outcome)) {
         process_asyncio_outcome(&outcome);
+        processed += 1;
     }
 }
 
@@ -278,14 +293,22 @@ void AFS_Read(AFSHandle handle, int sectors, void* buf) {
     ReadRequest* request = &requests[handle];
     const Uint64 offset = afs.entries[request->file_num].offset + request->sector * 2048;
 
-    request->state = AFS_READ_STATE_READING;
-    request->asyncio = SDL_AsyncIOFromFile(afs.file_path, "r");
+    if (request->close_queued) {
+        request->state = AFS_READ_STATE_ERROR;
+        return;
+    }
+
+    if (request->asyncio == NULL) {
+        request->asyncio = SDL_AsyncIOFromFile(afs.file_path, "r");
+    }
 
     if (request->asyncio == NULL) {
         printf("SDL_AsyncIOFromFile error: %s\n", SDL_GetError());
         request->state = AFS_READ_STATE_ERROR;
         return;
     }
+
+    request->state = AFS_READ_STATE_READING;
 
     const bool success = SDL_ReadAsyncIO(request->asyncio, buf, offset, sectors * 2048, asyncio_queue, request);
 
@@ -296,6 +319,25 @@ void AFS_Read(AFSHandle handle, int sectors, void* buf) {
     }
 
     request->sector += sectors;
+}
+
+static bool queue_request_close(ReadRequest* request) {
+    if (request->close_queued || (request->asyncio == NULL)) {
+        return true;
+    }
+
+    SDL_AsyncIO* asyncio = request->asyncio;
+    const bool close_queued = SDL_CloseAsyncIO(asyncio, false, asyncio_queue, request);
+    if (!close_queued) {
+        printf("SDL_CloseAsyncIO error: %s\n", SDL_GetError());
+        request->state = AFS_READ_STATE_ERROR;
+        return false;
+    }
+
+    request->asyncio = NULL;
+    request->close_queued = true;
+    request->state = AFS_READ_STATE_READING;
+    return true;
 }
 
 void AFS_ReadSync(AFSHandle handle, int sectors, void* buf) {
@@ -325,10 +367,11 @@ void AFS_Stop(AFSHandle handle) {
 
     ReadRequest* request = &requests[handle];
 
-    if (request->asyncio != NULL) {
-        SDL_CloseAsyncIO(request->asyncio, false, asyncio_queue, request);
-        request->asyncio = NULL;
+    if (!request->initialized) {
+        return;
     }
+
+    queue_request_close(request);
 }
 
 void AFS_Close(AFSHandle handle) {
@@ -337,7 +380,25 @@ void AFS_Close(AFSHandle handle) {
 #endif
 
     ReadRequest* request = &requests[handle];
-    AFS_Stop(handle);
+    if (!request->initialized) {
+        return;
+    }
+
+    if (!queue_request_close(request)) {
+        return;
+    }
+
+    while (request->close_queued) {
+        SDL_AsyncIOOutcome outcome;
+        if (!SDL_WaitAsyncIOResult(asyncio_queue, &outcome, -1)) {
+            printf("SDL_WaitAsyncIOResult error: %s\n", SDL_GetError());
+            request->state = AFS_READ_STATE_ERROR;
+            return;
+        }
+
+        process_asyncio_outcome(&outcome);
+    }
+
     SDL_zerop(request);
 }
 

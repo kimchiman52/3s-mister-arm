@@ -43,6 +43,8 @@ static int frame_tiles_total = 0;
 static int frame_tiles_copied = 0;
 static bool frame_full_copy_fallback = false;
 static FBDevPresenter_FrameStats frame_stats = { 0 };
+static bool fps_overlay_enabled = false;
+static char fps_overlay_text[16] = "";
 #if ENABLE_PERF_TELEMETRY
 static bool frame_stats_breakdown_enabled = false;
 #else
@@ -299,6 +301,42 @@ static void clear_fb_rect(int x, int y, int w, int h) {
     frame_copy_bytes += row_pixels * sizeof(Uint32) * (size_t)h;
 }
 
+static void fill_fb_rect(int x, int y, int w, int h, Uint32 color) {
+    if ((w <= 0) || (h <= 0)) {
+        return;
+    }
+
+    if (x < 0) {
+        w += x;
+        x = 0;
+    }
+    if (y < 0) {
+        h += y;
+        y = 0;
+    }
+    if ((x >= fb_width) || (y >= fb_height)) {
+        return;
+    }
+
+    if ((x + w) > fb_width) {
+        w = fb_width - x;
+    }
+    if ((y + h) > fb_height) {
+        h = fb_height - y;
+    }
+    if ((w <= 0) || (h <= 0)) {
+        return;
+    }
+
+    const size_t row_pixels = (size_t)w;
+    for (int row = 0; row < h; row++) {
+        Uint32* dst_row = (Uint32*)(fb_map + ((size_t)fb_stride * (size_t)(y + row)) + ((size_t)x * sizeof(Uint32)));
+        memset32(dst_row, color, row_pixels);
+    }
+
+    frame_copy_bytes += row_pixels * sizeof(Uint32) * (size_t)h;
+}
+
 static void clear_fb_outside_rect(int x0, int y0, int x1, int y1) {
     // Top and bottom bars.
     clear_fb_rect(0, 0, fb_width, y0);
@@ -307,6 +345,137 @@ static void clear_fb_outside_rect(int x0, int y0, int x1, int y1) {
     // Left and right bars in the active vertical span.
     clear_fb_rect(0, y0, x0, y1 - y0);
     clear_fb_rect(x1, y0, fb_width - x1, y1 - y0);
+}
+
+static Uint8 overlay_glyph_row(char ch, int row) {
+    static const Uint8 glyph_blank[5] = { 0, 0, 0, 0, 0 };
+    static const Uint8 glyph_0[5] = { 0x7, 0x5, 0x5, 0x5, 0x7 };
+    static const Uint8 glyph_1[5] = { 0x2, 0x6, 0x2, 0x2, 0x7 };
+    static const Uint8 glyph_2[5] = { 0x7, 0x1, 0x7, 0x4, 0x7 };
+    static const Uint8 glyph_3[5] = { 0x7, 0x1, 0x7, 0x1, 0x7 };
+    static const Uint8 glyph_4[5] = { 0x5, 0x5, 0x7, 0x1, 0x1 };
+    static const Uint8 glyph_5[5] = { 0x7, 0x4, 0x7, 0x1, 0x7 };
+    static const Uint8 glyph_6[5] = { 0x7, 0x4, 0x7, 0x5, 0x7 };
+    static const Uint8 glyph_7[5] = { 0x7, 0x1, 0x1, 0x1, 0x1 };
+    static const Uint8 glyph_8[5] = { 0x7, 0x5, 0x7, 0x5, 0x7 };
+    static const Uint8 glyph_9[5] = { 0x7, 0x5, 0x7, 0x1, 0x7 };
+    static const Uint8 glyph_F[5] = { 0x7, 0x4, 0x6, 0x4, 0x4 };
+    static const Uint8 glyph_P[5] = { 0x6, 0x5, 0x6, 0x4, 0x4 };
+    static const Uint8 glyph_S[5] = { 0x7, 0x4, 0x7, 0x1, 0x7 };
+
+    const Uint8* glyph = glyph_blank;
+    switch (ch) {
+    case '0':
+        glyph = glyph_0;
+        break;
+    case '1':
+        glyph = glyph_1;
+        break;
+    case '2':
+        glyph = glyph_2;
+        break;
+    case '3':
+        glyph = glyph_3;
+        break;
+    case '4':
+        glyph = glyph_4;
+        break;
+    case '5':
+        glyph = glyph_5;
+        break;
+    case '6':
+        glyph = glyph_6;
+        break;
+    case '7':
+        glyph = glyph_7;
+        break;
+    case '8':
+        glyph = glyph_8;
+        break;
+    case '9':
+        glyph = glyph_9;
+        break;
+    case 'F':
+        glyph = glyph_F;
+        break;
+    case 'P':
+        glyph = glyph_P;
+        break;
+    case 'S':
+        glyph = glyph_S;
+        break;
+    case ' ':
+    default:
+        glyph = glyph_blank;
+        break;
+    }
+
+    return glyph[row];
+}
+
+static void draw_overlay_glyph(int x, int y, int scale, char ch, Uint32 color) {
+    const int glyph_w = 3;
+    const int glyph_h = 5;
+
+    for (int row = 0; row < glyph_h; row++) {
+        const Uint8 bits = overlay_glyph_row(ch, row);
+        for (int col = 0; col < glyph_w; col++) {
+            if ((bits & (1u << (glyph_w - 1 - col))) == 0) {
+                continue;
+            }
+
+            fill_fb_rect(x + (col * scale), y + (row * scale), scale, scale, color);
+        }
+    }
+}
+
+static void maybe_draw_fps_overlay(const SDL_FRect* content_rect) {
+    if (!fps_overlay_enabled || (fps_overlay_text[0] == '\0') || !fbdev_active || (fb_map == NULL)) {
+        return;
+    }
+
+    int x0 = 0;
+    int y0 = 0;
+    int x1 = fb_width;
+    int y1 = fb_height;
+    if (!get_content_rect_bounds(content_rect, &x0, &y0, &x1, &y1)) {
+        x0 = 0;
+        y0 = 0;
+        x1 = fb_width;
+        y1 = fb_height;
+    }
+
+    const int content_w = x1 - x0;
+    const int content_h = y1 - y0;
+    if ((content_w <= 0) || (content_h <= 0)) {
+        return;
+    }
+
+    int scale = 2;
+    if (content_h >= 700) {
+        scale = 4;
+    } else if (content_h >= 420) {
+        scale = 3;
+    }
+
+    const int glyph_w = 3 * scale;
+    const int glyph_h = 5 * scale;
+    const int char_gap = scale;
+    const int text_len = (int)SDL_strlen(fps_overlay_text);
+    if (text_len <= 0) {
+        return;
+    }
+
+    const int text_w = (text_len * glyph_w) + ((text_len - 1) * char_gap);
+    const int safe_margin = SDL_max(10, scale * 4);
+    const int draw_x = x0 + ((content_w - text_w) / 2);
+    const int draw_y = y1 - glyph_h - safe_margin;
+
+    for (int i = 0; i < text_len; i++) {
+        const int glyph_x = draw_x + (i * (glyph_w + char_gap));
+        draw_overlay_glyph(glyph_x + 1, draw_y + 1, scale, fps_overlay_text[i], 0xFF000000u);
+        draw_overlay_glyph(glyph_x, draw_y, scale, fps_overlay_text[i], 0xFFFFFFFFu);
+    }
 }
 
 static void clear_previous_rect(int x, int y, int w, int h) {
@@ -684,6 +853,7 @@ bool FBDevPresenter_PresentCurrentTarget(SDL_Renderer* renderer, const SDL_FRect
     SDL_DestroySurface(src);
     if (copied) {
         previous_pixels_valid = false;
+        maybe_draw_fps_overlay(dst_rect);
     }
     return copied;
 }
@@ -716,6 +886,7 @@ bool FBDevPresenter_PresentSurface(const SDL_Surface* surface, const SDL_FRect* 
                                                                   FBDEV_PRESENTER_PATH_SOFTWARE_FRAME_MAPPED_SCALE);
     if (copied) {
         previous_pixels_valid = false;
+        maybe_draw_fps_overlay(dst_rect);
     }
     return copied;
 }
@@ -958,6 +1129,7 @@ void FBDevPresenter_Present(SDL_Renderer* renderer, const SDL_FRect* content_rec
 
     // Keep the targeted readback fast path for letterboxed content even when staging is available.
     if (fallback_rect_valid && !fallback_rect_is_full && present_readback_rect(renderer, content_rect)) {
+        maybe_draw_fps_overlay(content_rect);
         return;
     }
 
@@ -985,6 +1157,7 @@ void FBDevPresenter_Present(SDL_Renderer* renderer, const SDL_FRect* content_rec
                 sync_previous_outside_rect_clear(fallback_x0, fallback_y0, fallback_x1, fallback_y1);
                 mark_rect_bar_clear_cache(fallback_x0, fallback_y0, fallback_x1, fallback_y1);
             }
+            maybe_draw_fps_overlay(content_rect);
             return;
         }
 
@@ -1000,6 +1173,7 @@ void FBDevPresenter_Present(SDL_Renderer* renderer, const SDL_FRect* content_rec
                 frame_stats_add_duration(&frame_stats.clear_ns, clear_start_ns);
                 mark_rect_bar_clear_cache(fallback_x0, fallback_y0, fallback_x1, fallback_y1);
                 previous_pixels_valid = false;
+                maybe_draw_fps_overlay(content_rect);
                 return;
             }
         }
@@ -1017,6 +1191,7 @@ void FBDevPresenter_Present(SDL_Renderer* renderer, const SDL_FRect* content_rec
                 mark_rect_bar_clear_cache(fallback_x0, fallback_y0, fallback_x1, fallback_y1);
             }
             previous_pixels_valid = false;
+            maybe_draw_fps_overlay(content_rect);
             return;
         }
 
@@ -1041,6 +1216,7 @@ void FBDevPresenter_Present(SDL_Renderer* renderer, const SDL_FRect* content_rec
                 mark_rect_bar_clear_cache(fallback_x0, fallback_y0, fallback_x1, fallback_y1);
             }
             previous_pixels_valid = false;
+            maybe_draw_fps_overlay(content_rect);
             return;
         }
         frame_stats_add_duration(&frame_stats.convert_ns, convert_start_ns);
@@ -1063,6 +1239,7 @@ void FBDevPresenter_Present(SDL_Renderer* renderer, const SDL_FRect* content_rec
             mark_rect_bar_clear_cache(fallback_x0, fallback_y0, fallback_x1, fallback_y1);
         }
         previous_pixels_valid = false;
+        maybe_draw_fps_overlay(content_rect);
         return;
     }
 
@@ -1147,6 +1324,23 @@ void FBDevPresenter_Present(SDL_Renderer* renderer, const SDL_FRect* content_rec
         mark_rect_bar_clear_cache(fallback_x0, fallback_y0, fallback_x1, fallback_y1);
     }
     previous_pixels_valid = false;
+    maybe_draw_fps_overlay(content_rect);
+}
+
+void FBDevPresenter_SetFPSOverlayEnabled(bool enabled) {
+    fps_overlay_enabled = enabled;
+    if (!enabled) {
+        fps_overlay_text[0] = '\0';
+    }
+}
+
+void FBDevPresenter_SetFPSOverlayText(const char* text) {
+    if (text == NULL) {
+        fps_overlay_text[0] = '\0';
+        return;
+    }
+
+    SDL_snprintf(fps_overlay_text, sizeof(fps_overlay_text), "%s", text);
 }
 
 void FBDevPresenter_BeginFrameStats(bool capture_breakdown) {
@@ -1283,6 +1477,14 @@ int FBDevPresenter_GetFrameTilesCopied(void) {
 
 bool FBDevPresenter_UsedFullCopyFallback(void) {
     return false;
+}
+
+void FBDevPresenter_SetFPSOverlayEnabled(bool enabled) {
+    (void)enabled;
+}
+
+void FBDevPresenter_SetFPSOverlayText(const char* text) {
+    (void)text;
 }
 
 const char* FBDevPresenter_PathName(FBDevPresenterPath path) {
