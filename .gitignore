@@ -18,3 +18,7 @@ build
 temp
 third_party
 states
+artifacts/mister-port/logs/
+artifacts/mister-port/perf/*.json
+!artifacts/mister-port/perf/baseline.json
+artifacts/mister-port/perf/bolt-*.json

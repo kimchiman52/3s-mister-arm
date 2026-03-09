@@ -44,7 +44,7 @@ You should be able to build the project with just Xcode Command Line Tools.
 1. Build dependencies
 
     ```bash
-    sh build-deps.sh
+    sh build-deps.sh --profile desktop
     ```
 
 2. Build the game
@@ -56,3 +56,17 @@ You should be able to build the project with just Xcode Command Line Tools.
     ```
 
 3. Copy from build/application to the desired location
+
+## MiSTer profile (offline-first)
+
+For MiSTer-oriented builds (no netplay, no ISO import flow, no FFmpeg ADX backend):
+
+Important:
+- Use `clang`/`clang++` for MiSTer builds.
+- Do not use `gcc`/`g++` (for example `arm-linux-gnueabihf-gcc`) for this target.
+
+```bash
+sh build-deps.sh --profile mister
+CC=clang CXX=clang++ cmake -S . -B build/mister -DCMAKE_BUILD_TYPE=Release -DPORT_MISTER=ON
+cmake --build build/mister --parallel
+```

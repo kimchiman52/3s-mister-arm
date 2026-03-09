@@ -1,0 +1,2599 @@
+# MiSTer Performance Living Findings
+
+Purpose:
+- Preserve high-value optimization context across fresh loop sessions.
+- Reduce repeated rediscovery and duplicate failed attempts.
+
+Scope guardrails:
+- Performance/runtime optimizations only.
+- No gameplay, determinism, rules, input semantics, timing model, or content changes.
+
+## Current Snapshot
+
+- Branch: `ralph-manual-yun-transition-20260309`
+- Build target: `PORT_MISTER=ON` in Docker container `3sx-mister-build`
+- Device target: `root@192.168.1.171:/media/fat/games/3sx/`
+- Remote tooling rule: use `tools/mister/misterctl.sh` for deploy/probe/smoke and `tools/mister/perf-sampler.sh` for captures. They now share a local MiSTer lock and are the only approved remote entry points for Ralph loops; do not drift back to raw `ssh`/`scp`/`rsync`.
+- Build flavors: `telemetry` keeps perf/parity tooling and remains the loop/developer default; `clean` compiles that telemetry out and is the player-facing runtime/package
+- Core render path: SDL dummy/software + fbdev presenter
+- Native game buffer: `384x224`
+- CRT-oriented mode: `scale-mode = native`
+- Startup perf gate: 300-frame `training` capture from normal boot
+- Representative gameplay gate: 300-frame `gameplay-idle` capture via `tools/mister/perf-sampler.sh --gameplay-idle --gameplay-warmup 120`
+- Stage-aware anchors: Chunk 1 now keeps the no-override idle control on `stage_id=11`, names `stage_id=19` as the current `stage-heavy` gate, and keeps `stage_id=2` as the contrasting explicit override
+- Frozen stock-image scene matrix: `idle-control` = `stage 11 / Ryu-Ken / SA0-0`; `stage-heavy` = `stage 19 / Ryu-Ken / SA0-0`; `effect-heavy` = preset `effect-heavy` on `stage 19 / Ryu-Ken / SA0-0`; `super-heavy` = preset `super-heavy` on `stage 19 / Ryu-Ryu / SA0-0`
+- Historical hybrid note: the first-cut hybrid subset from `artifacts/mister-port/stock-image-architecture-loop-series/todo.md` remains closed at `65.64% / 56.86%` on `effect-heavy` and `66.85% / 58.19%` on `super-heavy`; do not reopen that track inside the active software-frame stream
+- Active software-frame stream: `artifacts/mister-port/stock-image-software-frame-loop-series/todo.md`
+- MiSTer default decision: `software-frame-mode` remains default-on for MiSTer builds; the user-facing default survived the earlier accepted `stock-soft-c21-*` gate, and the latest trusted on-device runtime baseline for new overnight work is now the kept `stock-soft-c97-*` gameplay subset together with the unchanged `stock-soft-c80-*` stage-heavy and transition references
+- Current trusted runtime baseline: `stock-soft-c104-control-post` = `89.6375 FPS` / `11.1560 / 3.5664 / 7.0383 / 0.5514 ms` on `stage_id=11`, `stock-soft-c80-stage-heavy-post` = `66.5197 FPS` / `15.0331 / 5.7282 / 8.7805 / 0.5244 ms` on `stage_id=19`, `stock-soft-c104-effect-heavy-rerun` = `62.2484 FPS` / `16.0647 / 6.8537 / 8.6688 / 0.5422 ms` on `stage_id=19`, `stock-soft-c104-super-heavy-post` = `60.8836 FPS` / `16.4248 / 7.0225 / 8.8541 / 0.5482 ms` on `stage_id=19`, and the new exact transition keep `stock-soft-c104-wipe-type1-preserved-post` = `59.9996 FPS` / `16.6668 / 7.6899 / 8.2007 / 0.7762 / 0.2043 ms` on the exact `WipeOut(type = 1)` gate; the kept type-`1` wipe-strip reland preserved `software_frame_mode = on`, kept gameplay direct-presented with `software_frame_reason_solid = 0`, and replaced the old `17`-frame `76`-solid readback collapse with the older `2/300` geometry fallback pattern
+- Perf-capture diagnostic note: `--perf-basic` is now the low-overhead MiSTer capture mode for gameplay triage. It still records `frame/update/render/present`, but disables the heavy per-frame renderer/presenter breakdown. On-device paired `HEAD` captures showed the recent apparent gameplay regression was instrumentation overhead, not a real runtime slowdown: idle `full -> basic` improved from `14.31 / 7.03 / 6.48 / 0.81 ms` to `13.62 / 6.50 / 6.33 / 0.79 ms`, `super-heavy full -> basic` improved from `27.01 / 18.10 / 8.36 / 0.55 ms` to `25.60 / 16.85 / 8.23 / 0.52 ms`, and the `basic` numbers slightly beat the earlier `c21` full captures on both gates
+- User-observed scene priorities: intro and menus feel effectively full speed; Remy's stage and Remy's super now feel full speed enough to drop out of first-line focus; the exact `Press Start -> main menu` type-`1` wipe now looks solved enough to drop out of first-line focus unless fresh reports contradict that; the main remaining visible lane is Yun SA3 Genei-Jin, especially the first activation/cold burst where FPS can dip to roughly `45` before later activations recover into the mid/upper `50s`. Overnight work should prioritize that first-activation Yun/effect gameplay burst ahead of any further transition cleanup.
+- Manual-capture evidence now supersedes the earlier scene-broadening ambiguity. Full manual telemetry on `2026-03-09` split the two remaining problems cleanly:
+  - `manual-yun-geneijin` reproduced a real gameplay burst slowdown, but not a presenter failure. The whole run averaged `85.68 FPS` / `11.6709 / 3.8613 / 7.3138 / 0.4958 ms`, while the repeated slow 60-frame windows during the active SA3 burst landed around `49-51 FPS` with roughly `20.20 / 5.16 / 14.59 / 0.46 ms`. Those windows stayed on direct present and were dominated by `software_frame_fast_non_integer_pixels ~= 286k-290k/frame` plus `software_frame_generic_textured_pixels ~= 23k-26k/frame`, with only a smaller refresh-blit tail (`~1.26-1.33 ms`).
+  - `manual-menu-transition` reproduced the catastrophic lane directly. The full run averaged `43.41 FPS` / `23.0371 / 3.0584 / 3.8073 / 16.1714 ms`, and the collapse arrived as repeated 8-frame bursts at roughly `3.5 FPS` with `software_frame_fallback = 1`, `software_frame_direct_present = 0`, `software_frame_reason_solid = 76`, and `present_readback ~= 273-316 ms` while the actual fb copy stayed around `0.44 ms`.
+  - Manual repro note: this transition is easy to trigger by hand. From boot, keep pressing `Start`: it skips the logo/intro, lands on the `Press Start` screen, and then the next `Start` triggers the `Press Start -> main menu` wipe that needs to stay fast.
+  - Operator retest after Loop 104: the exact `Press Start -> main menu` wipe now looks good enough to treat as solved for now.
+  - New operator note after Loop 105: the first visible Genei-Jin activation still dips harder than later ones. One manual retest saw the first activation drop to roughly `45 FPS`, while later activations stayed in the mid/upper `50s`.
+  - Immediate consequence: do not spend another loop on transition route-identification first. The transition problem is solved enough to de-prioritize, while the Yun problem is now a confirmed first-activation gameplay raster burst around SA3 startup/cold-effect windows.
+- FPS tracking note: every overnight gameplay capture should report `metrics.fps.mean` explicitly alongside frame/update/render/present so the logs preserve a direct player-facing speed signal instead of only millisecond buckets.
+- Clean-build status: the dual-flavor split is now validated. Docker build/install/package succeeds for both `build/mister-telemetry*` and `build/mister-clean*`; the clean package hides `--perf-*`, the telemetry package still passes `--headless --software-frame-parity-check`, and the clean package passed MiSTer redeploy, `/media/fat/games/3sx/run-3sx.sh --probe-renderer-only`, and bounded `launch-osd.sh` with `runtime_rc=124` / `exit=143`
+- Software-frame raster status: the kept software path now combines exact textured-copy fast paths for unflipped, flipped, clipped, exact color-mod, integer-scaled copies, and a shared lookup-table non-integer fast path for `>=512 px` tasks, plus the specialized solid-fill raster for opaque and translucent rects; against the fresh `stock-soft-c97-*` same-schema gameplay baselines, the narrower reland cut `software_frame_generic_textured_pixels.mean` from `485.57` to `211.64`, raised `software_frame_fast_non_integer_pixels.mean` from `540.81` to `814.74`, and improved control/effect-heavy while leaving `super-heavy` effectively flat
+- Long-window note: 600-frame `training` still carries the same `86/600` solid-fill transition pattern, but the specialized solid path reduced those frames from `12.34 ms` average render and `21.34 ms` max render to `4.32 ms` average render and `15.52 ms` max render; `training` remains the best transition-hitch diagnostic, while the remaining gameplay render residue is now the smaller non-integer `<512 px` lane plus the smaller generic-textured tail that survived the kept Loop 97 threshold rerank
+- Loop 15 runtime reland: kept runtime commit `c3e904f2` adds the shared `software_frame_non_integer` helper, routes the parity harness through it, and records `software_frame_fast_non_integer_pixels.mean = 540.81` on both gameplay gates while `software_frame_fast_miss_non_integer_ge_1024_pixels.mean` drops to `0.00`
+- Loop 97 runtime reland: kept runtime commit `0fc47868` lowers the shared lookup threshold from `>=1024` to `>=512` submitted pixels, shifts the repeated `512+ px` burst family onto the existing helper, and establishes the refreshed `stock-soft-c97-*` gameplay baseline without changing the direct-present/readback path
+- Update-churn status: the kept `stock-soft-c21-*` reland now combines in-place palette refresh from Loop 19 with deferred dirty SDL texture refresh on fully software-owned frames. Versus `stock-soft-c19-*`, total `frame/update` improved from `14.41 / 7.29 ms` to `13.65 / 6.53 ms` on idle control and from `28.23 / 19.48 ms` to `25.19 / 16.48 ms` on `super-heavy`, while the remaining heavy-scene stall stays concentrated in same-frame texture-dirty software-source-surface refresh work rather than SDL texture upkeep. Loop 23's kept measurement reland quantified that split on-device: `stock-soft-c23-super-heavy-post` averaged only `0.50 ms` in texture/palette invalidation against `12.08 ms` in software-surface refresh, so sparse invalidation is not the next runtime target now
+- Active implementation track: the stock-image-only `/dev/fb0` software-frame path is now the kept MiSTer default; custom-image/KMSDRM/GPU follow-up belongs in a separate future RFC, not in the active loop stream
+- Native direct-present fast path: only safe when the destination rect is exactly `384x224` and fully fits within the framebuffer
+
+## Active Execution Contract
+
+- New gameplay-performance work runs as isolated IVRFC loops, one item at a time.
+- Each item starts with a scoped plan, then a fresh-agent implementation loop.
+- Each loop starts with DEEP research grounded in current gameplay evidence, local code inspection, and primary-source documentation when external behavior matters.
+- Every completed loop ends in a real local commit on a clean tree.
+- If research rules out a runtime change or a runtime experiment fails verification, close the loop by rolling the runtime diff back and committing the docs/checklist closure instead of leaving the branch at `no-commit`.
+- The living findings doc and the active checklist must be updated at the end of every successful loop.
+- If telemetry is insufficient to evaluate a loop, measurement work is in scope for that loop.
+- The prior gameplay-loop series is complete; do not assume its candidate list is exhaustive, but do respect the existing rejected-idea record.
+
+## Known Good Verification Pattern
+
+1. Build/package in Docker.
+2. Deploy to MiSTer.
+3. Run:
+   - `/media/fat/games/3sx/run-3sx.sh --probe-renderer-only`
+   - short bounded runtime launch
+4. Pull and inspect:
+   - `/media/fat/games/3sx/logs/backend.log`
+   - `/media/fat/games/3sx/logs/last-run.log`
+5. For present-path changes, verify both the profiled high-resolution output mode and the live output mode on the device. Low-resolution framebuffers can invalidate native-present assumptions.
+6. When password auth is in use, force `ssh`/`rsync` to `-o PubkeyAuthentication=no -o PreferredAuthentications=password -o NumberOfPasswordPrompts=1`; plain client defaults now hit `Too many authentication failures` before the MiSTer password prompt.
+
+## Do Not Retry Now
+
+- Reintroducing render queue/offscreen guards from `3dedf4e2`; that experiment was reverted by `b250aa46`.
+- Reusing the pre-Loop-3 exact-fit current-target copy path when the native rect is clipped or scaled. That older shape caused the `320x240` black-screen regression before `02c56268`; only the mapped crop/nearest-scale presenter from Loop 3 is safe for clipped/scaled native-output rects.
+- Adding source-sized dirty diffing on top of the existing exact-fit `SDL_RenderReadPixels(renderer, NULL)` current-target path. Verified gameplay captures showed the extra staging compare/copy work made `present_ms` worse even though `copy_bytes` collapsed. Do not retry this shape unless readback cost itself is reduced first.
+- Re-adding the conservative source-pass sort proof from Loop 4 without stronger queue semantics. On the gameplay-idle gate it never activated once (`qsort=100%` over `300` frames), so keeping that code would just add inert complexity.
+- Replacing the current fbdev-only path with an SDL software renderer created directly on a surface that wraps `fb_map`. The prototype removed readback cost (`copy_bytes=0`) but moved the bottleneck into the renderer itself and made gameplay slower overall on MiSTer.
+- Swapping only `cps3_canvas` from `SDL_PIXELFORMAT_RGBA8888` to `SDL_PIXELFORMAT_ARGB8888` as a standalone native-present optimization. SDL docs plus the container probe made it plausible, but live MiSTer gameplay did not improve on the real native exact-fit bottleneck, so do not retry this one without new readback telemetry or a changed SDL/runtime path.
+- Treating the synthetic single-texture `RUN_LEN=3` "per-frame vertex generation + `SDL_RenderGeometry()`" benchmark from Loop 5 as evidence for replacing the real textured-rect `SDL_RenderTexture()` submission path. That matched `384x224` target + readback container shape was far slower (`2.699 ms` vs `26.547 ms`), but any real batching revisit still needs live run-length telemetry first; the reproduction lives in `tools/mister/bench-rect-batching.sh`.
+- Exact same-texture horizontal/vertical strip coalescing on the representative native `gameplay-idle` gate. Loop 7 added reviewed mergeability telemetry and still recorded zero exact strip candidates across all `300` frames, so do not spend a runtime loop on this shape unless a different gameplay capture proves non-zero candidates first.
+- Native exact-fit fbdev copy/format/bar-clear micro-optimizations on the kept current-target path, unless the readback floor changes first. Loop 4 telemetry showed `SDL_RenderReadPixels()` itself is the bottleneck (`present_readback ~= 54.47 ms`, `present_copy ~= 0.57 ms`, `present_convert = 0`) on the verified `ARGB8888 384x224` native path.
+- Cached preflipped SDL texture variants for flipped textured-rect tasks on the native exact-fit path, unless a future loop first produces a matched alternate-scene baseline and a narrower cache-cost hypothesis. Loop 10 showed the idea can lower the default control's present bucket, but the broadened `Sean/Elena` gameplay check still landed in the wrong direction for that cycle and the first `SDL_DuplicateSurface()` cache-build path also failed on indexed surfaces with `Blit combination not supported`.
+- Patching SDL 3.4.0 `PrepTextureForCopy()` to cache contiguous prepared-texture surface state on the current exact-fit native path, unless a future revisit first isolates MiSTer SDL dependencies from desktop/CI builds and produces new evidence that those setter calls are materially visible on-device. Loop 11 left the default control effectively flat (`61.05 / 1.39 / 55.82 ms` vs `60.17 / 1.36 / 55.04 ms`) and regressed the broadened `Sean/Elena` gate to `55.76 / 1.11 / 51.01 ms`.
+- Starting Chunk 4's runtime scaffold for the current narrow hybrid subset without a new plan that explicitly absorbs `flip` or materially changes the stock-image coverage evidence. Chunk 3's verified stop/go gate only reached `65.64% / 56.86%` on `effect-heavy` and `66.85% / 58.19%` on `super-heavy`, with `flip` dominating the remaining unsupported work.
+- Replacing only the software-frame non-integer generic textured loop with lookup-table sampling while leaving telemetry semantics and parity verification unchanged. Loop 10 slightly improved the `software_frame_fast_miss_non_integer > 0` subset but still regressed the full `stock-soft-c10` gameplay gates (`16.31 / 7.05 / 0.55 ms` vs `15.88 / 6.86 / 0.52 ms` on idle control; `35.47 / 8.75 / 0.55 ms` vs `34.40 / 8.39 / 0.53 ms` on `super-heavy`) and raised max frame/render time. Do not retry this lookup-only shape unless a future revisit first adds executed-path telemetry plus a lightweight deterministic parity check.
+- Cycling client-side OpenSSH KEX/cipher overrides against the current MiSTer host without device-side intervention. On `2026-03-07`, forcing `curve25519-sha256`, `curve25519-sha256@libssh.org`, `diffie-hellman-group14-sha256`, and `aes128-ctr` all still stalled before authentication at `expecting SSH2_MSG_KEX_ECDH_REPLY`, so do not spend another loop on local SSH option churn unless the device-side SSH state changes first.
+- Replacing eager texture/palette unlock invalidation with broad generation-based lazy cache invalidation on the kept `stock-soft-c15-*` software-frame baseline, unless a future revisit first adds finer per-handle churn telemetry or materially different raw-sample evidence. Loop 16's final rerun finished essentially flat on idle control but regressed the verified `super-heavy` gate (`34.39 / 25.61 / 8.24 / 0.53 ms` -> `34.95 / 26.02 / 8.36 / 0.56 ms`) while combined cache churn stayed effectively flat.
+- Replacing indexed software-source-surface refresh with a custom direct `SDL_PIXELFORMAT_INDEX8` / `SDL_PIXELFORMAT_INDEX4LSB` converter on the kept `stock-soft-c21-*` baseline. Loop 22 passed local parity but regressed both verified gameplay gates on-device (`13.65 / 6.53 / 6.59 / 0.53 ms` -> `14.42 / 7.18 / 6.69 / 0.54 ms` on idle control; `25.19 / 16.48 / 8.19 / 0.52 ms` -> `27.75 / 18.82 / 8.40 / 0.54 ms` on `super-heavy`) and worsened the `40/300` `texture_cache_misses >= 30` heavy subset from `29.48 ms` to `34.14 ms` average update. Do not retry this direct-converter shape now unless the device-side SDL/runtime path changes or fresh telemetry shows a materially different source-format mix. Loop 26's current-`HEAD` local replay confirmed the source-format/size mix is still not materially different: the deterministic control and `super-heavy` captures reproduced the kept `stock-soft-c24-*` refresh aggregates exactly enough while recording `100%` `SDL_PIXELFORMAT_INDEX8` `256x256` refresh work, so a format/size-gated reland would still be the same broad hypothesis under a narrower label.
+- Redundant shared-source `SDL_SetSurfacePalette(surface, palette)` guards as a standalone software-surface refresh optimization on the kept software-frame baseline. Loop 37 finally revalidated the pointer-equality guard on-device after the later refresh telemetry proved the map-invalidation hypothesis, and it still regressed both gameplay keep gates badly even while palette-set calls dropped (`stock-soft-c37-control-post`: `14.3324 / 7.0177 / 6.7785 / 0.5362 ms` -> `19.9613 / 9.9082 / 9.3501 / 0.7030 ms`; `stock-soft-c37-super-heavy-post`: `26.9904 / 17.9037 / 8.5180 / 0.5686 ms` -> `40.6154 / 26.9889 / 12.6964 / 0.9301 ms`). Do not retry this shared-source palette-guard shape now unless a future loop first explains why preserving or reducing SDL surface-map churn still slows the live MiSTer refresh lane, or materially changes the underlying source-surface topology.
+- Reopening the gameplay renew-bbox allowlist beyond the stable handle evidence from the kept `stock-soft-c68-*` baseline. Loops 61, 67, and 68 now prove handles `57`, `58`, and `18` are safe bounded relands under the existing oversized-dirty-rect fallback; future runtime work should re-rank the remaining full-refresh rows first instead of blindly widening further.
+- Reopening the current `software_frame_generic_textured` / `software_frame_fast_miss_non_integer_ge_256` runtime branch on the kept software-frame baseline before fresh on-device captures materially change the ranking. The kept `stock-soft-c52-*` plus `stock-soft-c53-*` evidence still leaves refresh-heavy update work as the next actionable bottleneck, while the remaining generic-textured residue is already covered by the existing fast-path telemetry and has not re-emerged as the dominant user-visible lane.
+- Reopening the stable slot-`57` reland or spending another repo loop on unchanged-tree transport-only retries while MiSTer password-auth sessions still cannot sustain both file transfer and bounded probe/log refresh. Loops 54-56 now show that even a transient container-side `sshpass ... true` success is not enough: until the same path can complete redeploy plus the standard remote checks without mid-session `Connection closed ... port 22` drops or bounded command timeouts, treat slot `57` as blocked by the device gate rather than a repo-side runtime question.
+- Reopening the exact same slot-`58` reland after Loop 67's keep. The bounded `14/47/56/57/58` allowlist is now verified on-device; future loops should start from `stock-soft-c67-*` and re-rank the remaining full-refresh rows instead of replaying the same one-line runtime change.
+- Preserving deferred full-capture unlock-locality / dirty-rect / renew history across capture start as a standalone explanation for menu-transition slots `1030` / `1031` / `1032`. Loop 58's local fallback rerun kept rows `9` / `10` / `11` at zero unlock, dirty-rect, and renew counts, so the remaining blind spot is not just capture-start timing; revisit only with a narrower lifecycle-or-origin measurement plan.
+
+## Open Queue
+
+- Future perf loops should build/deploy the `telemetry` flavor by default and reserve the `clean` package for player/runtime validation or handoff.
+- Serialized MiSTer verification is healthy again under `tools/mister/misterctl.sh` plus `tools/mister/perf-sampler.sh` with explicit password-auth env. Keep using that path, continue forcing `PubkeyAuthentication=no`, `PreferredAuthentications=password`, and `NumberOfPasswordPrompts=1`, and treat new device-gate failures as fresh evidence rather than as a reason to reopen the old slot-`58` transport stop note.
+- Preserved unverified work must be tested before new hypotheses. Loop 66's preserved current-lifetime telemetry diff has now been restored and verified on-device; there is no older preserved branch ahead of the next runtime candidate now.
+- Start the next software-frame runtime loop from the kept `stock-soft-c104-control-post`, `stock-soft-c104-effect-heavy-rerun`, and `stock-soft-c104-super-heavy-post` gameplay baseline plus the unchanged trusted `stock-soft-c80-stage-heavy-post` reference and the exact `stock-soft-c104-wipe-type1-preserved-post` transition keep, not from the older `stock-soft-c97-*`, `stock-soft-c88-*`, `stock-soft-c80-*`, `stock-soft-c79-*`, `stock-soft-c70-*`, `stock-soft-c69-*`, `stock-soft-c68-*`, `stock-soft-c67-*`, `stock-soft-c61-*`, `stock-soft-c52-*`, `stock-soft-c35-*`, `stock-soft-c32-*`, `stock-soft-c31-*`, `stock-soft-c30-*`, `stock-soft-c24-*`, `stock-soft-c23-*`, `stock-soft-c19-*`, `stock-soft-c18-*`, `stock-soft-c15-*`, `stock-soft-c12-*`, `stock-soft-c10-*`, or Loop 9 captures.
+- Best next runtime candidate: return to the confirmed Yun SA3 direct-present raster burst, with explicit bias toward the first-activation / cold-start window. The exact type-`1` menu-transition solid fallback/readback collapse is now cleared on-device, so the next runtime loop should re-rank the surviving Yun `software_frame_fast_non_integer_pixels` plus `software_frame_generic_textured_pixels` residue in that first visible activation window instead of reopening transition solids first.
+- Immediate follow-up candidate: only revisit transition work if fresh user-facing evidence says the menu wipe is still visibly slow. On the kept exact gate, the remaining `2/300` fallback frames stayed on the older geometry lane (`software_frame_reason_geometry`, not `software_frame_reason_solid`), so any future transition revisit should start from that narrower residual rather than from the already-fixed solid-strip family.
+- Rejected for now: do not reopen the landed palette invalidation keep or the landed handle-`16` allowlist reland, do not retry the rolled-back `handle 18` tile-mask reland, the exact helper-only fast-non-integer `src_a` early-out reland, the helper-only identity-color split from Loop 102, or the menu-transition compare-bbox runtime relands until fresh telemetry re-ranks them, do not widen to transition rows `9` / `10` / `11` without new measurement support, and do not spend the next runtime loop on generic textured residue unless fresh captures materially re-rank it.
+- Scene-broadening candidate: the next measurement broadening should only happen if a new runtime loop still fails to line up with the recovered exact gates. Right now the automated type-`1` wipe capture and the trusted Yun SA3 gameplay capture already reproduce the remaining user-priority failures closely enough, so the default next step is targeted runtime work, not more route hunting.
+- Historical hybrid track remains closed. Reopen Phase B only with a new stock-image-only plan that either includes `flip` in the first supported subset or produces materially different coverage evidence on the frozen scene matrix.
+- Live-check the Loop 3 clipped-native crop branch on a real low-resolution framebuffer when one is available. The current device output is `1280x720`, so the square-pixels scaling path is verified but the low-resolution crop branch is still only code-reviewed plus logic-checked.
+
+## Cycle Log
+
+- 2026-03-09T10:29:41-0400
+  - Commit hash:
+    - `pending`
+  - Bottleneck targeted:
+    - the remaining Yun SA3 medium non-integer miss family (`388-502 px`) inside the direct-present gameplay burst
+  - Change summary:
+    - lowered the shared `software_frame_non_integer_lookup_threshold_pixels` in `src/port/sdl/sdl_game_renderer.c` from `512` to `384`, intentionally reranking the Yun-priority `384-511 px` family onto the existing lookup helper
+    - left helper math, generic fallback routing, presenter behavior, and telemetry schema unchanged
+    - recorded the same-tree pre/post gameplay matrix plus the external diff-only review outcome in the active checklist
+  - Verification result summary:
+    - telemetry Docker build/install/package plus the packaged parity gate passed in `3sx-mister-build`, and serialized MiSTer `health` / `deploy` / `probe` / `smoke` plus remote log inspection all passed on the candidate tree
+    - decision-grade captures stayed `300/300` direct-present with `software_frame_fallback = 0` and `present_readback.mean_ms = 0.0000`: control `88.1380 -> 88.0028 FPS`, effect-heavy rerun `61.7257 -> 62.5186 FPS`, super-heavy rerun `61.1085 -> 60.8969 FPS`, and Yun `50.9530 -> 52.9547 FPS`
+  - Keep/rollback decision with reason:
+    - keep; the threshold change is global rather than Yun-only, but the standing gameplay gates stayed within noise while the targeted Yun lane improved materially and the recovered `>=384 px` generic-miss family disappeared from the accepted post captures
+  - Next best candidate optimization:
+    - target the remaining Yun sub-`384 px` non-integer plus generic textured residue before revisiting helper-only rewrites or transition work
+
+- 2026-03-09T13:51:00-0400
+  - Commit hash:
+    - `f9002f80`
+  - Bottleneck targeted:
+    - the exact `WipeOut/WipeIn(type = 1)` `software_frame_reason_solid = 76` fallback/readback collapse in the user-facing checkered menu transition
+  - Change summary:
+    - added a tightly-guarded full-height diagonal solid-strip resolver/raster in `src/port/sdl/sdl_game_renderer.c` for the exact `1-8 px` type-`1` wipe-strip family
+    - kept the existing rectangle fast path and all non-matching solid geometry fallback behavior unchanged
+    - rebuilt the telemetry package, redeployed through the serialized MiSTer tooling, and refreshed the exact transition gate plus the standing gameplay keep matrix
+  - Verification result summary:
+    - telemetry Docker build/install/package plus the packaged parity gate passed in `3sx-mister-build`, and serialized MiSTer `health` / `deploy` / `probe` / `smoke` plus remote log inspection all passed on the candidate tree
+    - the exact transition gate improved from `31.4245 FPS` / `31.8223 / 7.8273 / 16.6112 / 16.0584 ms` with `17` fallback frames and `software_frame_reason_solid.max = 76` to `59.9996 FPS` / `16.6668 / 8.2007 / 0.7762 / 0.2043 ms` with `2` fallback frames and `software_frame_reason_solid.max = 28`; gameplay reruns stayed effectively flat at `89.6375 FPS` on control, `62.2484 FPS` on effect-heavy, and `60.8836 FPS` on super-heavy
+  - Keep/rollback decision with reason:
+    - keep; the narrow wipe-strip specialization removed the proven solid/readback collapse on the exact user-facing transition lane while the decision-grade gameplay matrix stayed within noise of the trusted baseline
+  - Next best candidate optimization:
+    - return to the confirmed Yun SA3 direct-present raster burst and re-rank the remaining `fast_non_integer + generic_textured` residue from the new kept baseline
+
+- 2026-03-09T09:30:16-0400
+  - Commit hash:
+    - `b60f1732`
+  - Bottleneck targeted:
+    - missing automated exact `WipeOut(type = 1)` capture coverage for the catastrophic transition solid-task fallback/readback lane
+  - Change summary:
+    - exported the active wipe type, added a `wipe-transition-type1` test/perf wait gate, and logged the new wipe-state capture-start metadata
+    - extended perf `transition_state` with exact wipe-start and active-window counters, updated `tools/mister/perf-sampler.sh` to surface them, and bumped the perf schema to `45`
+    - rebuilt and redeployed the telemetry package, then recovered `stock-soft-c103-wipe-type1-preserved-post` on-device
+  - Verification result summary:
+    - `git diff --check`, `bash -n tools/mister/perf-sampler.sh`, telemetry Docker build/install/package in `3sx-mister-build`, the packaged parity gate, and MiSTer `health` / `deploy` / `probe` / bounded `smoke` all passed on the kept measurement tree
+    - `stock-soft-c103-wipe-type1-preserved-post` landed at `31.4245 FPS`; it started with `capture_start_exec_wipe = 1`, `capture_start_active_wipe_type = 1`, `capture_start_wipe_limit = 1`, captured `17` fallback frames with `software_frame_reason_solid.max = 76`, and reproduced the collapse as repeated `314-345 ms` frames with `308-331 ms` readback spikes
+  - Keep/rollback decision with reason:
+    - keep measurement-support only; the diff stayed behavior-neutral and recovered the exact catastrophic transition lane needed for the next runtime loop
+  - Next best candidate optimization:
+    - target the `software_frame_reason_solid = 76` fallback/readback collapse in `WipeOut(type = 1)` first, using the new exact `stock-soft-c103-wipe-type1-preserved-post` gate instead of spending another loop on transition route identification
+
+- 2026-03-09T08:47:27-0400
+  - Commit hash:
+    - `2961796e`
+  - Bottleneck targeted:
+    - helper-only identity-color branch overhead inside the recovered Yun SA3 fast-non-integer raster lane
+  - Change summary:
+    - tried the narrowest post-Loop-101 reland: split only `SDLSoftwareFrame_RasterNonIntegerLookupARGB8888(...)` into identity-color and modulated loops, leaving generic textured routing and thresholds unchanged
+    - verified the telemetry package locally and on-device, then refreshed `control`, `effect-heavy`, `super-heavy`, and the recovered Yun SA3 capture against the kept baselines
+    - fully rolled the helper change back after the same residue mix came back slower on both the standing gameplay gates and the user-priority Yun gate
+  - Verification result summary:
+    - telemetry Docker build/install/package plus the packaged parity gate passed in `3sx-mister-build`, and serialized MiSTer `health` / `deploy` / `probe` / `smoke` all passed on the candidate tree
+    - on-device gameplay captures stayed `300/300` direct-presented with `software_frame_fallback = 0` and `present_readback.mean_ms = 0.0000`, but all four gates regressed: control `89.9082 -> 89.5195 FPS`, effect-heavy `62.3706 -> 62.2368 FPS`, super-heavy `60.9675 -> 60.6213 FPS`, and Yun `51.8216 -> 50.6839 FPS`; the Yun worst `60`-frame window also fell from `38.63` to `35.90 FPS` while `software_frame_fast_non_integer_pixels` and `software_frame_generic_textured_pixels` stayed essentially unchanged
+  - Keep/rollback decision with reason:
+    - rollback; the helper-only split preserved parity and present routing but made the recovered Yun burst slower on the same raster workload, so it does not earn a runtime keep
+  - Next best candidate optimization:
+    - shift the next runtime loop to the confirmed menu-transition solid-task fallback/readback lane rather than retrying this exact helper-only identity split first
+
+- 2026-03-09T07:21:42-0400
+  - Commit hash:
+    - `b95b0f26`
+  - Bottleneck targeted:
+    - helper-side non-integer lookup/setup overhead inside the kept software-frame gameplay raster path
+  - Change summary:
+    - researched the kept `stock-soft-c97-*` heavy-scene bursts plus Loop 95 lookup-entry telemetry, then briefly tried to reduce helper setup work inside `populate_non_integer_lookup(...)`
+    - rejected a more aggressive reciprocal / linear-step rewrite immediately after the packaged parity gate failed the clipped `clip-top-left` case, then narrowed the on-device runtime attempt to in-range clamp elision only
+    - fully rolled the helper change back after the same-schema MiSTer gameplay matrix regressed on all three keep gates
+  - Verification result summary:
+    - telemetry Docker build/install/package plus the packaged parity gate passed in `3sx-mister-build` after the candidate was narrowed, and serialized MiSTer `health` / `deploy` / `probe` / `smoke` all passed on the candidate tree
+    - on-device gameplay captures stayed `300/300` direct-presented with `software_frame_fallback = 0` and `present_readback.mean_ms = 0.0000`, but the matrix regressed versus `stock-soft-c97-*`: control `89.9082 -> 89.1016 FPS`, effect-heavy `62.3706 -> 61.4530 FPS`, and super-heavy `60.9675 -> 60.4984 FPS`
+  - Keep/rollback decision with reason:
+    - rollback; the narrowed clamp-elision reland preserved parity and present routing but still made the trusted gameplay keep matrix worse, and the stronger reciprocal rewrite already failed local parity before device verification
+  - Next best candidate optimization:
+    - recover the narrowest trustworthy direct Yun SA3 burst capture on top of `stock-soft-c97-*` before another gameplay runtime retry, or switch to the already-proven menu-transition solid-fallback/readback lane if the next loop changes priority
+
+- 2026-03-09T06:58:33-0400
+  - Commit hash:
+    - `fb4e75f1`
+  - Bottleneck targeted:
+    - helper-side endpoint-alpha blend overhead inside the kept fast-non-integer gameplay raster lane
+  - Change summary:
+    - researched the kept `stock-soft-c97-*` burst frames plus the current helper implementation, then briefly added `src_a == 0` / `src_a == 255` early-outs only inside `SDLSoftwareFrame_RasterNonIntegerLookupARGB8888(...)`
+    - rebuilt the telemetry package, redeployed through the serialized tooling, and refreshed `control`, `effect-heavy`, and `super-heavy` captures against the kept `stock-soft-c97-*` baseline
+    - fully rolled the helper change back after the heavy gameplay keep matrix came back mixed and `super-heavy` regressed
+  - Verification result summary:
+    - telemetry Docker build/install/package plus the packaged parity gate passed in `3sx-mister-build`, and serialized MiSTer `health` / `deploy` / `probe` / `smoke` all passed on the candidate tree
+    - on-device gameplay captures stayed `300/300` direct-presented with `software_frame_fallback = 0` and `present_readback.mean_ms = 0.0000`, but the total matrix did not earn a keep: control `89.9082 -> 90.6405 FPS`, effect-heavy `62.3706 -> 62.4318 FPS`, and super-heavy `60.9675 -> 60.3278 FPS`
+  - Keep/rollback decision with reason:
+    - rollback; even though the sampled fast-non-integer bucket got cheaper, the full gameplay matrix still regressed on `super-heavy`, so the helper-only reland does not clear the runtime keep bar
+  - Next best candidate optimization:
+    - recover the narrowest trustworthy direct Yun SA3 burst capture on top of `stock-soft-c97-*` or add the smallest alpha-mix measurement support needed to prove whether a future blend/opaque-source specialization is worth another runtime attempt
+
+- 2026-03-09T06:45:14-0400
+  - Commit hash:
+    - `0fc47868`
+  - Bottleneck targeted:
+    - the repeated `512+ px` medium non-integer residue inside the confirmed Yun/effect direct-present gameplay raster burst
+  - Change summary:
+    - lowered `software_frame_non_integer_lookup_threshold_pixels` from `1024` to `512` in `src/port/sdl/sdl_game_renderer.c`, leaving the helper math, presenter path, and parity harness unchanged
+    - reranked the repeated burst-window `512+ px` workload from the generic textured float loop onto the existing lookup-based helper without pulling the steady-state `300 px` family onto that path
+    - refreshed the same-schema `stock-soft-c97-*` gameplay captures and kept the new threshold as the latest gameplay runtime baseline
+  - Verification result summary:
+    - telemetry Docker build/install/package plus `build/mister-telemetry-install/bin/3sx --headless --software-frame-parity-check` passed in `3sx-mister-build`, and serialized MiSTer `health` / `deploy` / `probe` / `smoke` all passed on the candidate tree
+    - refreshed gameplay captures stayed `300/300` direct-presented with `software_frame_fallback = 0` and `present_readback.mean_ms = 0.0000`: control `89.0708 -> 89.9082 FPS`, effect-heavy `60.9334 -> 62.3706 FPS`, and super-heavy `61.0548 -> 60.9675 FPS`
+  - Keep/rollback decision with reason:
+    - keep; the narrower threshold improved control and effect-heavy, left super-heavy within noise, and materially reduced the generic textured residue without changing the trusted present path
+  - Next best candidate optimization:
+    - start the next gameplay loop from `stock-soft-c97-*` and either recover the narrowest trustworthy direct Yun SA3 burst capture on top of it or return to the confirmed menu-transition solid-fallback/readback lane; do not lower the threshold again blindly
+
+- 2026-03-09T06:15:43-0400
+  - Commit hash:
+    - `ea12c63a`
+  - Bottleneck targeted:
+    - the remaining stocked Yun SA3 measurement blind spot, specifically whether the scripted harness ever reaches the super-command checker on-device before any further Yun runtime work
+  - Change summary:
+    - added capture-only stocked-super command counters around `check_super_arts_attack_dc(...)` in `pls03` plus per-frame `sa->ok == 1` ready-state sampling in `SDLApp`, then surfaced both through perf JSON schema `43` and `tools/mister/perf-sampler.sh`
+    - rebuilt the telemetry MiSTer package, redeployed through the serialized tooling, and refreshed the stocked Yun on-device capture with FPS and the new blocker counters called out together
+    - confirmed the stocked harness still never enters `check_super_arts_attack_dc(...)`, which narrows the next safe step to higher-level player-state or replay recovery rather than another blind Yun raster reland
+  - Verification result summary:
+    - `git diff --check`, `bash -n`, telemetry Docker build/install/package in `3sx-mister-build`, the packaged parity gate (`10` software-frame cases, `2` software-source refresh cases), and serialized MiSTer `health` / `deploy` / `probe` / `smoke` all passed on the candidate tree
+    - the on-device `stock-soft-c96-yun-stock-vs-ryu-post` capture landed at `73.7991 FPS` / `13.5503 / 5.0014 / 8.0066 / 0.5423 / 0.0000 ms` for `frame / update / render / present / present_readback`; P1 stayed stocked and ready for all `300` sampled frames, but every new command-path counter remained `0`
+  - Keep/rollback decision with reason:
+    - keep measurement-support only; the diff is telemetry-only, verification-clean, and proves the stocked automation misses the higher-level super-check path before command matching
+  - Next best candidate optimization:
+    - instrument the higher-level `check_super_arts_attack(...)` caller path or recover the stocked Yun replay/state so the scripted capture actually reaches the super-command pipeline before revisiting direct Yun raster work
+
+- 2026-03-09T06:52:00-0400
+  - Commit hash:
+    - `01454285`
+  - Bottleneck targeted:
+    - per-pixel task-constant color-mod decode overhead inside the confirmed Yun/effect textured software-frame raster lane
+  - Change summary:
+    - researched the kept manual Yun and `stock-soft-c88-*` heavy-scene evidence, then tried a narrow same-lane runtime hoist of constant color-mod channel decode out of the exact/scaled, generic textured, and shared non-integer loops
+    - built, parity-checked, deployed, and captured the candidate tree on MiSTer, then fully rolled the runtime code back after the gameplay keep matrix regressed
+    - ran a final isolated diff-only `codex exec` review on the docs closeout, accepted its two valid structural findings, and left the actual hash to be recorded by the closure commit
+  - Verification result summary:
+    - `git diff --check`, `bash -n`, telemetry Docker build/install/package in `3sx-mister-build`, the packaged parity gate (`10` software-frame cases, `2` software-source refresh cases), and serialized MiSTer `health` / `deploy` / `probe` / `smoke` all passed on the candidate tree
+    - on-device gameplay captures stayed `300/300` direct-presented with `0` fallback and `present_readback.mean_ms = 0.0000`, but all three regressed versus `stock-soft-c88-*`: control `89.0572 FPS` / `11.2287 / 3.6549 / 7.0273 / 0.5465 ms`, effect-heavy `61.7073 FPS` / `16.2055 / 6.9460 / 8.7003 / 0.5593 ms`, and super-heavy `60.0122 FPS` / `16.6633 / 7.1160 / 8.9738 / 0.5735 ms`
+  - Keep/rollback decision with reason:
+    - rollback; the constant color-mod hoist preserved parity and the direct-present path but did not change the residue mix and still regressed every tracked gameplay gate
+  - Next best candidate optimization:
+    - recover the narrowest trustworthy direct Yun SA3 burst capture or target a different optimization inside the existing kept `>=1024` fast path; do not retry this exact constant-hoisting reland first
+
+- 2026-03-09T06:24:00-0400
+  - Commit hash:
+    - `9af59a2f`
+  - Bottleneck targeted:
+    - the remaining `256-1023 px` non-integer software-frame residue inside the confirmed Yun/effect raster lane
+  - Change summary:
+    - broadened the existing non-integer lookup threshold from `>=1024` to `>=256` submitted pixels, then built, parity-checked, deployed, and captured the candidate tree on MiSTer
+    - confirmed the broader gate removed the entire `software_frame_fast_miss_non_integer_ge_256_*` bucket and collapsed `software_frame_generic_textured_pixels.mean` from `485.57` to `67.05`
+    - fully rolled the runtime code back after the gameplay keep gate regressed versus the trusted `stock-soft-c88-*` baseline
+  - Verification result summary:
+    - `git diff --check`, `bash -n`, telemetry Docker build/install/package in `3sx-mister-build`, the packaged parity gate (`10` software-frame cases, `2` software-source refresh cases), and serialized MiSTer `health` / `deploy` / `probe` / `smoke` all passed on the candidate tree
+    - on-device gameplay captures stayed `300/300` direct-presented with `present_readback.mean_ms = 0.0000`, but the broader gate still regressed or stayed flat against `stock-soft-c88-*`: control `89.2197 FPS` / `11.2083 / 3.6517 / 6.9787 / 0.5779 ms`, effect-heavy `61.6069 FPS` / `16.2319 / 6.9558 / 8.6935 / 0.5826 ms`, and super-heavy `60.6936 FPS` / `16.4762 / 7.0670 / 8.8691 / 0.5401 ms`
+  - Keep/rollback decision with reason:
+    - rollback; even though the `>=256 px` reland eliminated the intended generic residue, the broader lookup gate still cost overall gameplay frame time on the kept matrix and does not earn a runtime keep
+  - Next best candidate optimization:
+    - recover the narrowest trustworthy direct Yun burst capture or target a different optimization inside the existing kept `>=1024` fast path; do not reland this exact `>=256 px` threshold broadening first
+
+- 2026-03-09T05:57:00-0400
+  - Commit hash:
+    - `f1bd0d26`
+  - Bottleneck targeted:
+    - the confirmed Yun/effect software-frame raster burst, specifically a frame-level opaque-destination specialization across the existing textured software-frame blend helpers
+  - Change summary:
+    - briefly added a `software_frame_surface_opaque` flag plus an `opaque_destination` parameter for the non-integer helper and routed the fast exact/scaled, generic textured, and non-integer blend sites through the opaque-destination helper when that flag was set
+    - built, parity-checked, deployed, and captured the candidate tree on MiSTer, then fully rolled the runtime code back after the gameplay captures failed the keep gate
+    - recorded the rejected idea so future loops do not reopen this exact frame-level opaque specialization first
+  - Verification result summary:
+    - telemetry Docker build/install/package in `3sx-mister-build`, the packaged parity gate, and serialized MiSTer `health` / `deploy` / `probe` / `smoke` all passed on the candidate tree; remote output stayed clean apart from expected no-audio lines
+    - on-device gameplay captures regressed or stayed flat against the kept `stock-soft-c88-*` baseline while preserving `300/300` direct-present and `present_readback.mean_ms = 0.0000`: control `87.8818 FPS` / `11.3789 / 3.6912 / 7.1384 / 0.5493 ms`, `effect-heavy` `61.8882 FPS` / `16.1582 / 6.8632 / 8.7209 / 0.5740 ms`, and `super-heavy` `61.2509 FPS` / `16.3263 / 7.0252 / 8.7750 / 0.5261 ms`
+  - Keep/rollback decision with reason:
+    - rollback; the frame-level opaque specialization preserved the established present path but regressed the trusted gameplay keeps, so the runtime code was reverted and the loop closes docs-only
+  - Next best candidate optimization:
+    - recover or reuse the narrowest trustworthy direct Yun SA3 burst capture next, then choose a different same-lane non-integer optimization backed by that burst-level evidence rather than retrying this exact opaque-destination helper reshaping
+
+- 2026-03-09T04:29:43-0400
+  - Commit hash:
+    - recorded in the loop closure commit
+  - Bottleneck targeted:
+    - per-pixel identity-color branch overhead inside the confirmed Yun/effect textured software-frame raster lane, specifically the kept `>=1024 px` non-integer helper plus the renderer-side generic textured fallback
+  - Change summary:
+    - researched the manual Yun evidence, scripted `stock-soft-c88-*` residue, kept `stock-soft-c92-*` modulation counters, and current ARM disassembly, then briefly split the identity-color path out of the touched textured raster loops
+    - built, parity-checked, deployed, and captured the candidate tree on MiSTer, then fully rolled the runtime code back after all three gameplay keeps regressed while the present path stayed unchanged
+    - ran an isolated second-opinion review plus one debate round on the runtime diff; the only kept finding narrowed to extra unverified renderer-side duplication, which further supported rollback instead of rescue work
+  - Verification result summary:
+    - `git diff --check`, `bash -n`, telemetry Docker build/install/package in `3sx-mister-build`, the packaged parity gate (`10` software-frame cases, `2` software-source refresh cases), and serialized MiSTer `health` / `deploy` / `probe` / `smoke` all passed on the candidate tree
+    - on-device gameplay captures stayed `300/300` direct-presented with `0` fallback and `present_readback.mean_ms = 0.0000`, but all three still regressed versus `stock-soft-c88-*`: control `89.5241 FPS` / `11.1702 / 3.6130 / 6.9749 / 0.5822 ms`, effect-heavy `62.2543 FPS` / `16.0631 / 6.8367 / 8.6839 / 0.5426 ms`, and super-heavy `60.8166 FPS` / `16.4429 / 7.0828 / 8.8197 / 0.5403 ms`
+  - Keep/rollback decision with reason:
+    - rollback; hoisting the identity-color branch out of the touched loops did not improve the trusted gameplay keep matrix, and the review correctly flagged extra renderer-side duplication if the diff were kept
+  - Next best candidate optimization:
+    - return to deeper direct-Yun research inside the existing kept `>=1024 px` fast-non-integer helper and choose the next runtime attempt from that lane; do not retry this exact identity-color split or another generic textured fallback clone first
+
+- 2026-03-09T03:53:27-0400
+  - Commit hash:
+    - recorded in the loop closure commit
+  - Bottleneck targeted:
+    - the user-observed checkered menu-transition collapse, specifically solid-task fallback from uniform-color slanted wipe quads in the software-frame path
+  - Change summary:
+    - researched the kept manual menu evidence plus the local wipe generator, then briefly broadened the solid software-frame raster from rect-only fills to a uniform-color quad scanline fallback
+    - built, parity-checked, deployed, and captured the candidate tree on MiSTer, then fully rolled the runtime code back after the scripted transition guardrail stayed unchanged and the gameplay keeps regressed
+    - ran an isolated diff-only review on the runtime patch, accepted its rejection-level risk as additional evidence against keeping the experiment, and closed the loop as docs-only
+  - Verification result summary:
+    - `git diff --check`, `bash -n`, telemetry Docker build/install/package in `3sx-mister-build`, the packaged parity gate (`10` software-frame cases, `2` software-source refresh cases), and serialized MiSTer `health` / `deploy` / `probe` / `smoke` all passed on the candidate tree
+    - `stock-soft-c93-menu-transition-post` stayed flat versus `stock-soft-c80-menu-transition-post`: `61.4099 FPS` / `16.2840 / 7.2875 / 8.0948 / 0.9017 ms`, still `2/300` fallback frames, `298/300` direct present, and `software_frame_reason_solid.max = 28`; gameplay also regressed versus `stock-soft-c88-*` while staying direct-presented: control `87.3017 FPS`, effect-heavy `62.1306 FPS`, super-heavy `60.8280 FPS`
+  - Keep/rollback decision with reason:
+    - rollback; the solid-quad broadening neither improved the scripted transition guardrail nor preserved the trusted gameplay keep matrix, so it does not earn a runtime keep
+  - Next best candidate optimization:
+    - return to the confirmed Yun SA3 gameplay lane and research a safer optimization inside the kept `>=1024 px` fast-non-integer plus generic-textured residue; do not retry this exact solid-quad scanline broadening first
+
+- 2026-03-09T01:29:51-0400
+  - Commit hash:
+    - `b08ceafb`
+  - Bottleneck targeted:
+    - the confirmed Yun/effect software-frame raster burst, specifically the opaque-destination textured blend cost inside the already-hot non-integer helper path
+  - Change summary:
+    - added an exact `dst_a == 255` fast path to the textured `blend_argb8888(...)` helpers in `src/port/sdl/sdl_game_renderer.c` and `src/port/sdl/software_frame_non_integer.c`, leaving the old general path intact for non-opaque destinations
+    - mirrored the same branch in `src/port/sdl/software_frame_parity.c` and added one explicit opaque-destination parity case, raising the packaged software-frame parity gate from `9` to `10` cases
+    - left task classification, fast-path thresholds, presenter routing, and capture harnesses unchanged
+  - Verification result summary:
+    - `git diff --check`, `bash -n`, telemetry Docker build/install/package in `3sx-mister-build`, the packaged parity gate, and serialized MiSTer `health` / `deploy` / `probe` / `smoke` all passed on the kept tree; remote log tails stayed clean apart from expected no-audio lines
+    - refreshed gameplay captures improved all tracked keeps while preserving direct present: `stock-soft-c88-control-post` = `90.5519 FPS` / `11.0434 / 3.5190 / 6.9850 / 0.5394 ms`, `stock-soft-c88-effect-heavy-post` = `62.6821 FPS` / `15.9535 / 6.7785 / 8.6339 / 0.5411 ms`, and `stock-soft-c88-super-heavy-post` = `61.3067 FPS` / `16.3114 / 6.9960 / 8.7742 / 0.5413 ms`; all stayed `300/300` direct-presented with `0` fallback and `present_readback.mean_ms = 0.0000`
+  - Keep/rollback decision with reason:
+    - keep; the reland is parity-clean, device-verified, keeps the established MiSTer present path unchanged, and modestly lowers render/frame time on the trusted gameplay gates from the prior `stock-soft-c80-*` baseline
+  - Next best candidate optimization:
+    - stay on the confirmed Yun/effect raster lane by either specializing the same opaque-destination textured path further for the common unmodulated non-integer case or recovering the narrowest trustworthy direct Yun burst capture before attempting a broader residue or transition reland
+
+- 2026-03-09T00:43:33-0400
+  - Commit hash:
+    - `c87b0`
+  - Bottleneck targeted:
+    - whether the current scripted `menu-transition` and preserved `game-transition` captures ever enter the real `Break_Into` / `effect_A2` / `hnc_wipeout` checkered transition path
+  - Change summary:
+    - added capture-start `G_No`, `E_No`, and `task[TASK_MENU]` export plus per-capture `Break_Into` / `Hnc_Num` totals, first-frame indexes, and `hnc_max_num` to the perf log/JSON path
+    - surfaced the new transition-state block in `tools/mister/perf-sampler.sh` so the overnight summaries keep FPS and route-identification evidence together
+    - accepted one review-driven cleanup before closeout by removing the unstable scratch `ENTRY_X` field from the new telemetry
+  - Verification result summary:
+    - `git diff --check`, `bash -n`, telemetry Docker build/install/package in `3sx-mister-build`, the packaged parity gate, and serialized MiSTer `health` / `deploy` / `probe` / `smoke` all passed on the final reviewed tree
+    - `stock-soft-c87-menu-transition-state-review-post` landed at `63.0038 FPS` / `15.8721 / 7.1473 / 7.8624 / 0.8623 ms`, and `stock-soft-c87-game-transition-preserved-state-review-post` landed at `72.2168 FPS` / `13.8472 / 3.6811 / 9.2232 / 0.9429 ms`; both stayed at `start_break_into = 0`, `start_hnc = 0`, `break_into_frames = 0`, and `hnc_frames = 0`
+  - Keep/rollback decision with reason:
+    - keep measurement-support only; the new telemetry is runtime-safe and verification-clean, and it now proves the current scripted transition waits still miss the actual checkered break-in path
+  - Next best candidate optimization:
+    - broaden transition automation or wait support toward the real `Break_Into` / `effect_A2` / `hnc_wipeout` route instead of replaying the same two waits or reopening blind runtime relands
+
+- 2026-03-09T00:08:33-0400
+  - Commit hash:
+    - `deb57bfc`
+  - Bottleneck targeted:
+    - whether the test-runner's default `SWK_ATTACKS` skip was hiding the user-observed catastrophic pre-game checkered transition
+  - Change summary:
+    - added a test-only `--test-preserve-game-transition` flag through app config, the test runner, and `tools/mister/perf-sampler.sh` so captures can keep the full pre-game sequence instead of mashing through it
+    - caught and fixed one parser-storage bug during verification: this repo's `argparse` boolean handler writes through `int *`, so the new field had to be stored as `int` instead of `bool`
+    - reran the serialized telemetry path and captured the preserved transition on-device against the unchanged-tree `game-transition` baseline
+  - Verification result summary:
+    - `git diff --check`, `bash -n`, telemetry Docker build/install/package, the packaged parity gate, serialized MiSTer `deploy` / `probe` / `smoke`, and a bounded remote probe of `--test-preserve-game-transition` all passed on the final tree
+    - `stock-soft-c86-game-transition-preserved-post` landed at `72.7814 FPS` / `13.7398 / 3.7616 / 9.1022 / 0.8760 ms`; versus `research-transition-game-20260309`, the capture shifted work toward `mtrans` (`148.99 -> 222.50`) but still stayed far above the reported catastrophic lane
+  - Keep/rollback decision with reason:
+    - keep measurement-support only; the new flag is test-only and verification-clean, and it safely disproves the "default pre-game skip is the missing transition lane" hypothesis while remaining useful for future capture work
+  - Next best candidate optimization:
+    - move the next transition loop to deeper route-identification or source-cadence measurement for the real checkered effect, such as capture-start `G_No` / menu-task state export or a broader menu-route harness; do not reopen transition runtime relands or this exact no-skip hypothesis first
+
+- 2026-03-09T03:35:00-0400
+  - Commit hash:
+    - `8c8a398a`
+  - Bottleneck targeted:
+    - whether removing the stocked P1 Yun SA3 harness's dependency on the generic projectile loop is enough to enter active Genei-Jin on-device
+  - Change summary:
+    - reran current-tree research on-device with stocked `P1 = Yun SA3` against the unchanged `Ryu`-side `super-heavy` context and confirmed the existing harness still exports `0` active-super frames
+    - briefly added a test-only neutral-and-retry stocked Yun activation harness in `src/test/test_runner.c`, then fully rolled it back after the candidate capture still showed `0` active-super and `0` metamorphose frames
+    - recorded the failure as docs-only closure evidence so the next loop starts from deeper replay/state or transition work instead of another scripted-input reshaping
+  - Verification result summary:
+    - `git diff --check`, `bash -n`, telemetry Docker build/install/package, the packaged parity gate, and serialized MiSTer `health` / `deploy` / `probe` / `smoke` all passed on the attempted tree; remote log tails stayed clean apart from expected no-audio lines
+    - `research-yun-sa3-p1-stock-vs-ryu-basic` landed at `67.7006 FPS` / `14.7709 / 5.3552 / 8.8165 / 0.5992 ms`, and `stock-soft-c85-yun-sa3-p1-stocked-activation-post` improved to `70.5484 FPS` / `14.1747 / 5.1154 / 8.4996 / 0.5597 ms`, but both still exported `p1_super_active_frames = 0`
+  - Keep/rollback decision with reason:
+    - rollback; removing the projectile-loop overlap was not enough to activate stocked Genei-Jin, so keeping that harness would only add dead complexity without reproducing the user-priority lane
+  - Next best candidate optimization:
+    - move to deeper replay/state-driven Yun setup or direct input-state instrumentation next; if that path is still blocked, shift the next measurement loop back to transition source-cadence coverage instead of another shallow scripted-input tweak
+
+- 2026-03-09T03:15:13-0400
+  - Commit hash:
+    - `a11c0695`
+  - Bottleneck targeted:
+    - the missing proof of whether guaranteed initial stock, by itself, is enough for the current scripted Yun SA3 harness to enter active Genei-Jin on-device
+  - Change summary:
+    - added test-only `--test-p1-super-full` plumbing through app config and `tools/mister/perf-sampler.sh`, forcing `--test-enable` for that capture path
+    - reused `tr_spgauge_cont_init2(0)` from the early test-runner gameplay path so stocked P1 gauge/HUD state stays coherent without touching normal runtime
+    - kept the loop measurement-support only after the stocked Yun capture still showed `0` active-super frames
+  - Verification result summary:
+    - `git diff --check`, `bash -n`, telemetry Docker build/install/package, the packaged parity gate, serialized MiSTer `deploy` / `probe` / `smoke`, and remote log inspection all passed; `codex review --uncommitted` stalled again, so the loop used prompt-only independent diff review and rejected two non-issues after code inspection plus capture validation
+    - `stock-soft-c84-yun-sa3-p1-full-stock-post` landed at `71.1590 FPS` / `14.0530 / 5.2359 / 8.2540 / 0.5631 ms` on `stage_id = 19` with `Yun/Yun` + `SA3/SA3`; P1 stock stayed available for all `300` sampled frames from frame `0` with `1/1` max store, but active-super frames still stayed `0`
+  - Keep/rollback decision with reason:
+    - keep measurement-support only; the stocked proof cleanly shows that P1 meter starvation is no longer the blocker, so the next safe harness step should target replay/state/input setup rather than more meter work or a runtime edit
+  - Next best candidate optimization:
+    - add the narrowest replay/state-driven or Yun-specific input/state harness that can actually drive stocked Yun into active Genei-Jin; if that still cannot be measured safely, shift the next loop back to transition source-cadence coverage
+
+- 2026-03-09T02:40:00-0400
+  - Commit hash:
+    - `79feb43a`
+  - Bottleneck targeted:
+    - the missing proof of whether the current override-based Yun SA3 harness ever reaches spendable stock before the active-super wait question is reopened
+  - Change summary:
+    - added capture-only `test_state` telemetry for per-player stock-available totals, first-frame indexes, max store reached, and max gauge reach/capacity, and bumped the perf JSON schema to `39`
+    - surfaced the new stock-readiness fields in `tools/mister/perf-sampler.sh` summaries and reran the serialized MiSTer telemetry path on the unchanged gameplay/runtime tree
+    - validated the only review question (`sa->store > 0` semantics) directly against the super-gauge code and kept the loop measurement-support only
+  - Verification result summary:
+    - `git diff --check`, `bash -n`, telemetry Docker build/install/package, the packaged parity gate, serialized MiSTer `health` / `deploy` / `probe` / `smoke`, and remote log inspection all passed again; the built-in `codex exec review --uncommitted` path stalled, but a prompt-only diff review reduced to one semantics question that was rejected after code inspection
+    - `stock-soft-c83-yun-sa3-meter-proof-post` landed at `72.8787 FPS` / `13.7214 / 5.1442 / 8.0188 / 0.5584 ms` on `stage_id = 19` with `Yun/Yun` + `SA3/SA3`, while stock telemetry stayed `0` frames and `0/1` max store for both players; max gauge reach was only `8/72` for P1 and `34/72` for P2, and active-super frames still stayed `0`
+  - Keep/rollback decision with reason:
+    - keep measurement-support only; the new telemetry proves the current Yun harness fails before spendable stock exists, so the next safe step is setup/meter-build support rather than a wait-on-active-super or renderer/runtime change
+  - Next best candidate optimization:
+    - add the narrowest deterministic Yun meter-build or replay/state-driven setup next so the harness can actually reach `store > 0`; only then consider an active-super wait/retry gate. If Yun setup stays blocked, fall back to transition source-cadence measurement rather than another blind runtime or preset tweak
+
+- 2026-03-09T02:09:20-0400
+  - Commit hash:
+    - `d3cf5b11`
+  - Bottleneck targeted:
+    - the missing proof of whether the scripted Yun SA3 capture ever enters active Genei-Jin state on-device after Loop 81 still failed to reproduce that gameplay slowdown
+  - Change summary:
+    - added capture-only `test_state` telemetry in `SDLApp` for per-player `sa->ok == -1` totals, ratios, and first-frame indexes plus an auxiliary `metamorphose` cross-check, and bumped the perf JSON schema to `38`
+    - surfaced the new proof fields in `tools/mister/perf-sampler.sh` summaries and reran the serialized MiSTer telemetry path on the unchanged gameplay/runtime tree
+    - accepted one review-driven help-text clarification for `--perf-basic`, then kept the loop measurement-support only after the fresh Yun proof capture showed zero active-super frames for both players
+  - Verification result summary:
+    - `git diff --check`, `bash -n`, telemetry Docker build/install/package, the packaged parity gate, serialized MiSTer `health` / `deploy` / `probe` / `smoke`, and remote log inspection all passed; independent `codex exec --ephemeral` review rejected an `mpp_w.inGame` false positive, accepted a docs-only clarification that `metamorphose` is auxiliary rather than the trusted Yun SA3 proof signal, and accepted one `--perf-basic` help-text correction that was revalidated locally without another MiSTer redeploy
+    - `stock-soft-c82-yun-sa3-proof-post` landed at `71.2007 FPS` / `14.0448 / 5.2349 / 8.2607 / 0.5492 ms` on `stage_id = 19`, `test_scene_preset = super-heavy`, `software_frame_mode = on`, `capture_start_test_phase = game`, with `0` `super_art_active` frames for both players; the auxiliary `metamorphose` field also stayed `0`
+  - Keep/rollback decision with reason:
+    - keep measurement-support only; the added telemetry is behavior-neutral and proves the current scripted Yun harness never reaches the trusted `sa->ok == -1` active-super state during the sampled window, so the next step should fix capture setup rather than guess at runtime cost
+  - Next best candidate optimization:
+    - use the new proof telemetry to add the narrowest trustworthy Yun setup improvement next, preferably replay/state-driven setup or a capture wait gate tied to a state the harness can actually reach; do not retry another preset-only Yun timing tweak now
+
+- 2026-03-09T01:43:27-0400
+  - Commit hash:
+    - `a421bf12`
+  - Bottleneck targeted:
+    - the missing user-priority Yun SA3 Genei-Jin gameplay measurement lane after the kept `stock-soft-c80-*` runtime baseline still failed to reproduce that slowdown
+  - Change summary:
+    - rebuilt/deployed the telemetry flavor on current `HEAD` and revalidated serialized MiSTer `health` / `deploy` / `probe` / `smoke` before any new hypothesis work
+    - proved the existing override path still misses the lane (`research-yun-sa3-existing-basic`), then tried and fully rolled back a narrow `yun-genei-jin` preset broadening after its on-device capture stayed even faster
+    - closed the loop docs-only and marked the simple preset-only Yun scene-broadening shape as not worth retrying now
+  - Verification result summary:
+    - `git diff --check`, `bash -n`, telemetry Docker build/install/package, the packaged parity gate, serialized MiSTer `health` / `deploy` / `probe` / `smoke`, and remote log inspection all passed on the attempted tree; bounded `claude -p` review found only checklist-state issues, which were fixed
+    - `research-yun-sa3-existing-basic` landed at `71.7117 FPS` / `13.9447 / 5.1695 / 8.2298 / 0.5455 ms`, while the broadened `stock-soft-c81-yun-genei-jin-post` landed at `74.0266 FPS` / `13.5087 / 5.0205 / 7.9624 / 0.5258 ms`; both reached `stage_id = 19` with `Yun/Yun` + `SA3/SA3` metadata, so neither reproduced the observed slowdown
+  - Keep/rollback decision with reason:
+    - rollback; the attempted preset broadening remained deterministic and verification-clean, but it still failed to reproduce the Yun SA3 slowdown and would only leave dead harness complexity in the tree
+  - Next best candidate optimization:
+    - recover richer Yun capture support that can prove actual Genei-Jin activation/state progression or use replay/state-driven setup; if that remains blocked, shift the next measurement loop back to transition source-cadence coverage rather than another blind runtime or preset tweak
+
+- 2026-03-08T18:19:09-0400
+  - Commit hash:
+    - `8e69cde4`
+  - Bottleneck targeted:
+    - the dominant remaining gameplay `FULL_NO_USABLE_DIRTY_RECT` residue on stable `ppg-seqs` handle `16` (`logical_ix_num 1100`) after the loop-79 palette churn keep
+  - Change summary:
+    - kept a one-line `PPGFile.c` runtime reland that broadens `ppgShouldKeepRenewDirtyRect(...)` to preserve renew dirty rects for handle `16` on the existing partial-refresh path
+    - rebuilt the telemetry package in `3sx-mister-build`, reran the packaged parity gate, and revalidated serialized MiSTer `health` / `deploy` / `probe` / `smoke` plus remote logs on the candidate tree
+    - reviewed the final diff with a bounded `claude -p` second-opinion pass, which returned `No findings`
+  - Verification result summary:
+    - `git diff --check`, telemetry Docker build/install/package, the packaged parity gate, serialized MiSTer `health` / `deploy` / `probe` / `smoke`, and remote log inspection all passed; `probe` stayed on dummy/software + fbdev + native with `Software frame mode: on`
+    - the decision-grade full captures improved from `88.3422 / 65.9487 / 61.3455 / 59.5758 FPS` to `89.0989 / 66.5197 / 61.9178 / 61.0041 FPS` on `control`, `stage-heavy`, `effect-heavy`, and `super-heavy`; `stock-soft-c80-menu-transition-post` also stayed inside guardrail at `64.6263 FPS` with the same `298/300` direct-present plus `2` fallback pattern
+    - on the target row, handle `16` moved from `92 / 128` `full_refresh_no_usable_dirty_rect` attempts and `0` partial refreshes in `c79` to `92 / 128` partial refreshes and `0` no-usable attempts in `c80`, while sampled blit time fell from `2.8182 / 2.1216 ms` to `0.1670 / 0.1232 ms`
+  - Keep/rollback decision with reason:
+    - keep; the reland stays on the existing renew-dirty/fallback machinery, converts the targeted heavy-scene row cleanly into bounded partial refresh, improves player-facing FPS on the gameplay matrix, and does not regress the user-priority transition lane
+  - Next best candidate optimization:
+    - rerank the remaining `effect-heavy` / `super-heavy` residue from the kept `stock-soft-c80-*` telemetry, especially whether handle `18` oversized refreshes or a broader non-refresh update cost now dominate; if the scripted presets still miss the user-observed slow lane, broaden measurement support before another runtime reland
+
+- 2026-03-08T17:45:00-0400
+  - Commit hash:
+    - `11b2ebe3`
+  - Bottleneck targeted:
+    - unchanged-color palette unlock churn that was still forcing `FULL_NON_TEXTURE_DIRTY` refresh work on the stable gameplay hot rows
+  - Change summary:
+    - kept a narrow runtime change in `SDLGameRenderer_UnlockPalette(...)` that still applies `SDL_SetPaletteColors(...)`, but skips texture/software-surface cache invalidation when software-frame mode is active and the palette colors compare unchanged
+    - verified the candidate against same-tree telemetry pre/post captures on `control`, `stage-heavy`, `effect-heavy`, and `super-heavy`
+    - validated the only review concern manually: equal-palette skips cannot leave stale pixels because real palette deltas still invalidate on the old path
+  - Verification result summary:
+    - `git diff --check`, telemetry Docker build/install/package, the packaged parity gate, serialized MiSTer `health` / `deploy` / `probe` / `smoke`, and remote log inspection all passed; `probe` stayed on dummy/software + fbdev + native with `Software frame mode: on`
+    - same-tree post captures improved from `70.1383 / 55.0760 / 53.0458 / 51.8685 FPS` to `88.3422 / 65.9487 / 61.3455 / 59.5758 FPS` on `control`, `stage-heavy`, `effect-heavy`, and `super-heavy`; `texture_cache_miss_dirty_palette_same_frame.mean` and `software_surface_cache_create_dirty_palette_same_frame.mean` both fell to `0.00`, and the old hot rows `14 / 41 / 47 / 50` fell to zero `full_refresh_non_texture_dirty` attempts
+  - Keep/rollback decision with reason:
+    - keep; the change is behavior-preserving, removes the measured unchanged-palette dirty-cache churn directly, and improves player-facing FPS across the whole gameplay matrix without changing direct-present routing
+  - Next best candidate optimization:
+    - rerank the remaining `FULL_NO_USABLE_DIRTY_RECT` / oversized residue now that palette churn is gone, especially `texture_handle 16` (`logical_ix_num 1100`) and `18` (`logical_ix_num 1102`) on `effect-heavy` / `super-heavy`; do not reopen palette invalidation first
+
+- 2026-03-08T17:18:16-0400
+  - Commit hash:
+    - `ded1f0ab`
+  - Bottleneck targeted:
+    - the remaining gameplay `FULL_NON_TEXTURE_DIRTY` refresh ceiling on stable hot rows, specifically whether it is driven by real palette changes or by no-op palette unlock churn
+  - Change summary:
+    - kept capture-only schema-`37` telemetry that splits palette-dirty refresh provenance into changed versus unchanged palette buckets and exports aggregate changed/unchanged palette unlock counts
+    - rebuilt the telemetry package in `3sx-mister-build`, reran the packaged parity gate, and revalidated serialized MiSTer health/deploy/probe/smoke plus remote logs on the unchanged runtime path
+    - refreshed `control`, `stage-heavy`, `effect-heavy`, and `super-heavy` captures so the new gameplay evidence includes both FPS and millisecond summaries
+  - Verification result summary:
+    - `git diff --check`, telemetry Docker build/install/package, the packaged parity gate, and serialized MiSTer `health` / `deploy` / `probe` / `smoke` all passed; remote logs stayed clean apart from expected no-audio lines
+    - `stock-soft-c78-control-post` landed at `70.5407 FPS`, `stage-heavy` at `55.4356 FPS`, `effect-heavy` at `52.1501 FPS`, and `super-heavy` at `51.2916 FPS`; across all four captures, `palette_unlock_changed_calls.mean = 0.00` and `palette_unlock_unchanged_calls.mean = 2.00`
+  - Keep/rollback decision with reason:
+    - keep measurement-support only; the new provenance closes the last gameplay palette-dirty blind spot without changing runtime behavior and shows the remaining heavy-scene residue is unchanged-color palette invalidation churn
+  - Next best candidate optimization:
+    - test one bounded runtime candidate that preserves `SDL_SetPaletteColors(...)` but skips texture/software-surface invalidation when the palette colors are unchanged; do not reopen the older shared-source palette guard or another gameplay allowlist reland first
+
+- 2026-03-08T20:46:00-0400
+  - Commit hash:
+    - `645862ee`
+  - Bottleneck targeted:
+    - the missing attribution for remaining gameplay software-surface refresh blit time by `TextureUnlockRefreshDecision` after the rejected `handle 18` reland
+  - Change summary:
+    - kept capture-only schema-`36` telemetry so sampled refresh blit time is split by full-refresh reason both globally and on each exported locality-candidate row
+    - rebuilt the telemetry package in `3sx-mister-build`, reran the packaged parity gate, and revalidated serialized MiSTer health/deploy/probe/smoke plus remote logs on the unchanged runtime path
+    - refreshed `control`, `stage-heavy`, `effect-heavy`, and `super-heavy` captures to keep FPS visible while interpreting the new decision-reason split
+  - Verification result summary:
+    - `git diff --check`, telemetry Docker build/install/package, the packaged parity gate, and serialized MiSTer `health` / `deploy` / `probe` / `smoke` all passed; `probe` stayed on dummy/software + fbdev + native with `Software frame mode: on`, and remote logs stayed clean apart from expected no-audio lines
+    - `stock-soft-c77-control-post` landed at `70.5843 FPS`, `stage-heavy` at `55.8090 FPS`, `effect-heavy` at `52.4425 FPS`, and `super-heavy` at `51.4029 FPS`; the new telemetry shows sampled full-refresh blit time stays mostly `FULL_NON_TEXTURE_DIRTY`, with smaller `FULL_OVERSIZED_DIRTY_RECT` residue and an unmapped `FULL_NO_USABLE_DIRTY_RECT` bucket still present on `effect-heavy` / `super-heavy`
+  - Keep/rollback decision with reason:
+    - keep measurement-support only; the export closes the old full-vs-partial blind spot without touching runtime behavior, but the hidden no-usable bucket means another runtime optimization would still be under-researched
+  - Next best candidate optimization:
+    - add one more narrow measurement step to localize the heavy-scene `FULL_NO_USABLE_DIRTY_RECT` samples and any remaining sampled `FULL_NON_TEXTURE_DIRTY` residue outside the top-eight locality ranking before touching palette-dirty runtime code
+
+- 2026-03-08T16:03:34-0400
+  - Commit hash:
+    - `9c109102`
+  - Bottleneck targeted:
+    - the remaining large-effects/supers gameplay residue after the transition lane was ruled out, specifically whether extending the existing bounded `32x32` tile-mask path to `handle 18` could materially lift `effect-heavy` and `super-heavy`
+  - Change summary:
+    - refreshed the missing current-baseline `effect-heavy` lane on unchanged `HEAD`, which landed at `57.6210 FPS` / `17.3548 / 8.2514 / 8.5717 / 0.5317 ms` in `--perf-basic` mode and `52.5599 FPS` / `19.0259 / 9.6464 / 8.8055 / 0.5739 ms` in full telemetry
+    - briefly widened `ppgShouldTrackRenewDirtyTileMask(...)` so `handle 18` could use the already-kept bounded multi-rect planner, then reran local parity, serialized MiSTer deploy/probe/smoke, and the full control/stage/effect/super/menu capture matrix
+    - fully rolled the runtime code back after the scene-level captures failed to turn the row-level win into a convincing gameplay improvement
+  - Verification result summary:
+    - unchanged-tree and candidate `git diff --check`, telemetry Docker build/install/package, the packaged parity gate, serialized MiSTer `health` / `deploy` / `probe` / `smoke`, and remote log inspection all passed; the independent `codex exec --ephemeral` review on the runtime diff and the final bounded `claude -p` review on the docs-only closure diff both returned `No findings`
+    - the runtime candidate moved `handle 18` as intended: `effect-heavy` went from `107` partial / `26` oversized to `129` / `4`, and `super-heavy` from `143` / `46` to `169` / `20`
+    - the scene-level result stayed too weak: `stock-soft-c76-effect-heavy-candidate` was effectively flat at `52.5665 FPS` / `19.0235 / 9.5254 / 8.9218 / 0.5764 ms`, `stock-soft-c76-effect-heavy-basic-candidate` improved only to `58.1283 FPS` / `17.2033 / 8.1112 / 8.5622 / 0.5300 ms`, and the broader candidate matrix still stayed below the trusted `stock-soft-c70-*` keep baselines at `70.3303`, `55.8831`, `51.3515`, and `61.8286 FPS` for `control`, `stage-heavy`, `super-heavy`, and `menu-transition`
+  - Keep/rollback decision with reason:
+    - rollback; the handle-`18` tile-mask reland safely reduced oversized refreshes, but the verified gameplay/transition captures did not improve enough to justify a keep and the broader matrix still stayed below the trusted `stock-soft-c70-*` baselines
+  - Next best candidate optimization:
+    - do not retry the handle-`18` tile-mask reland now. Next time, measure where the remaining `effect-heavy` / `super-heavy` update time still goes after that partial conversion instead of assuming another bounded row reland will move FPS
+
+- 2026-03-08T15:36:39-0400
+  - Commit hash:
+    - `c60183fb`
+  - Bottleneck targeted:
+    - the last unresolved `menu-transition` decision gap after Loop 74: whether hot rows `1031` / `1032` stay spatially sparse before bbox union, or whether their compare-dirty work is already near-full and contiguous before refresh
+  - Change summary:
+    - kept a telemetry-only schema-`35` diff that accumulates the existing per-unlock compare dirty rects into a coarse `32x32` tile mask and exports covered-tile/component metrics per refresh-locality candidate
+    - reused the existing capture-only compare path and shared `32x32` component helper; the live refresh classifier and runtime policy stayed unchanged
+    - added a guard gameplay control capture after the target `menu-transition` run showed larger-than-usual capture overhead on the same scene
+  - Verification result summary:
+    - `git diff --check`, telemetry Docker build/install/package, and the packaged parity gate all passed again; serialized MiSTer `health` / `deploy` / `probe` / `smoke` plus remote log inspection also passed
+    - `stock-soft-c75-menu-transition-post` landed at `59.8316 FPS` / `16.7136 / 7.8978 / 7.9475 / 0.8683 ms`; the extra capture-only work made this lane slower than `c70/c74`, but `stock-soft-c75-control-post` still stayed close to baseline at `70.2606 FPS` / `14.2327 / 6.3847 / 7.3246 / 0.5235 ms`, which keeps the diff in the measurement-only bucket rather than indicating a live-runtime shift
+    - the new counters closed the question directly: row `1031` now averages `62.44 / 64` covered tiles and row `1032` `57.93 / 64`, both at `1.00` components with zero multi-component attempts, while row `1030` stays the narrow strip at `15.10` covered tiles and max `16`
+  - Keep/rollback decision with reason:
+    - keep measurement-support only; the new telemetry proves `1031` / `1032` are already near-full and contiguous before bbox union, so another compare-dirty multi-rect runtime reland would still be targeting the wrong shape
+  - Next best candidate optimization:
+    - do not retry compare-dirty runtime relands for `1031` / `1032` now, including a new multi-rect variant. If the transition lane is revisited, first measure the earlier source-side mutation origin/cadence that creates the near-full sweep, or rerank the remaining user-priority gameplay lanes instead
+- 2026-03-08T15:09:30-0400
+  - Commit hash:
+    - `2fb160cc`
+  - Bottleneck targeted:
+    - the remaining `menu-transition` blind spot on rows `1031` / `1030` / `1032`, specifically whether the failed compare-bbox relands were blocked by per-refresh union pressure rather than by bad per-unlock sizing
+  - Change summary:
+    - kept a telemetry-only schema-`34` diff that tracks pending compare-derived dirty rects between refreshes, including merged-unlock counts, refresh-time union bbox area, and whether the existing `<=25%` classifier would have called each attempt partial or oversized
+    - rebuilt/package-validated the telemetry flavor in `3sx-mister-build`, reran serialized MiSTer health/deploy/probe/smoke, and refreshed the `menu-transition` lane on-device
+    - confirmed the live runtime path stayed unchanged outside perf capture; the new counters only reuse the existing unlock-locality compare data and never feed the actual refresh classifier
+  - Verification result summary:
+    - `git diff --check`, telemetry Docker build/install/package, the packaged parity gate, serialized MiSTer `health` / `deploy` / `probe` / `smoke`, and remote log inspection all passed again
+    - `stock-soft-c74-menu-transition-post` landed at `61.7149 FPS` / `16.2035 / 7.6558 / 7.7436 / 0.8041 ms`; the lane stayed `298/300` direct-presented with `2` fallback frames and `present_readback.mean_ms = 0.2805`
+    - the new counters showed why Loop 72/73 failed: row `1031` now averages a `0.975674` refresh-time union bbox ratio with `44.1873` merged unlocks per refresh attempt, row `1032` averages `0.905029` with `20.6458`, while row `1030` stays at `0.221963` and remains fully partial-candidate
+  - Keep/rollback decision with reason:
+    - keep measurement-support only; the new telemetry safely closes the last transition-lane blind spot and proves the compare-bbox runtime relands on `1031` / `1032` were fundamentally post-union oversized rather than merely misidentified
+  - Next best candidate optimization:
+    - Do not retry menu-transition compare-bbox runtime relands now. If that lane is revisited, first measure or target the earlier source-side/pre-union mutation path for `1031` / `1032`, or rerank the remaining user-priority gameplay lanes instead of reopening the same post-unlock union hypothesis
+
+- 2026-03-08T14:45:44-0400
+  - Commit hash:
+    - `a217c79c`
+  - Bottleneck targeted:
+    - bounded compare-bbox partial refresh for the user-visible `menu-transition` rows `1031` / `1030` / `1032`, retried with a target-only `PPGFile.c` create-time identifier instead of the rolled-back global runtime identity path
+  - Change summary:
+    - tried a narrow runtime reland that marked only `ppg-seqs` rows `1030` / `1031` / `1032` at `PPGFile.c` create time and reused a small compare-shadow helper in `sdl_game_renderer.c` to feed the existing bounded partial-refresh classifier
+    - rebuilt/package-validated the telemetry flavor, reran serialized MiSTer health/deploy/probe/smoke, and refreshed `control`, `stage-heavy`, `super-heavy`, and `menu-transition`
+    - rolled the runtime code fully back after the device captures still failed the gameplay keep gates
+  - Verification result summary:
+    - `git diff --check`, telemetry Docker build/install/package, the packaged parity gate, serialized MiSTer health/deploy/probe/smoke, and backend/last-run log inspection all passed on the runtime experiment tree
+    - `stock-soft-c73-menu-transition-post` improved to `65.2979 FPS` / `15.3144 / 6.7870 / 7.7059 / 0.8215 ms`, but `stock-soft-c73-control-post`, `stock-soft-c73-stage-heavy-post`, and `stock-soft-c73-super-heavy-post` fell to `68.0611`, `56.0160`, and `51.7217 FPS`; gameplay still stayed `300/300` direct-presented with `0` upload/fallback frames
+    - row `1030` again moved fully into partial refresh, while rows `1031` / `1032` still landed mostly in `full_refresh_oversized_dirty_rect`
+  - Keep/rollback decision with reason:
+    - rollback; the cheaper target-only identifier still regressed gameplay guardrails and still failed to move all three menu rows into bounded partial refresh, so the runtime code was fully reverted
+  - Next best candidate optimization:
+    - Do not retry now: menu-transition compare-bbox runtime relands, including both the global logical-identity and target-only `PPGFile.c` identifier variants. If this lane is revisited, first find a cheaper identifier source outside the hot `sdl_game_renderer.c` unlock path or shift to a measurement-only Remy/user-lane reranking loop
+
+- 2026-03-08T14:16:13-0400
+  - Commit hash:
+    - `614c8c20`
+  - Bottleneck targeted:
+    - bounded compare-bbox partial refresh for the user-visible `menu-transition` rows `1031` / `1030` / `1032`
+  - Change summary:
+    - tried a narrow runtime compare-bbox partial-refresh path in `sdl_game_renderer.c` for those three `ppg-seqs` rows and briefly enabled the minimal always-on logical-identity write needed to recognize them outside perf capture
+    - separate review-agent attempts stalled again, but manual validation found and fixed one real issue by unioning repeated compare bboxes before refresh
+    - rolled the runtime code fully back after the corrected-tree captures still regressed the gameplay keep gates
+  - Verification result summary:
+    - telemetry Docker build/install/package, the packaged parity gate, serialized MiSTer deploy/probe/smoke, and backend/last-run log inspection all passed on the corrected tree
+    - `stock-soft-c72-menu-transition-post` improved to `66.3226 FPS` / `15.0778 / 6.6292 / 7.6253 / 0.8233 ms`, but `stock-soft-c72-control-post`, `stock-soft-c72-stage-heavy-post`, and `stock-soft-c72-super-heavy-post` fell to `68.5515`, `55.9499`, and `51.6020 FPS`; gameplay still stayed `300/300` direct-presented with `0` upload/fallback frames
+    - row `1030` moved cleanly into partial refresh, but rows `1031` / `1032` still landed mostly in `full_refresh_oversized_dirty_rect`
+  - Keep/rollback decision with reason:
+    - rollback; the hot-path cost of always-on identity plumbing plus compare-on-unlock outweighed the targeted transition-lane win and still failed to move all three menu rows into bounded partial refresh
+  - Next best candidate optimization:
+    - do not retry this exact compare-bbox/runtime-identification path now; either find a cheaper row-identification source for the transition strip or add narrow measurement support for the user-observed Remy-stage slowdown before another runtime change
+
+- 2026-03-08T13:35:53-0400
+  - Commit hash:
+    - `1a626ff8`
+  - Bottleneck targeted:
+    - the destroyed-lifetime unlock-locality blind spot on the user-visible `menu-transition` rows `1031` / `1030` / `1032`
+  - Change summary:
+    - kept a telemetry-only diff that preserves per-texture whole-capture unlock-locality totals across source-surface destroys and exports them through the joined refresh-locality candidate rows under schema `33`
+    - rebuilt the telemetry flavor in `3sx-mister-build`, redeployed through the serialized MiSTer tooling, and refreshed the `menu-transition` lane on-device
+    - separate review-agent attempts were run again; the broad debate runner stalled, and the narrower diff review surfaced only two telemetry-semantics concerns that were rejected against the actual `c71` capture
+  - Verification result summary:
+    - `git diff --check`, telemetry Docker build/install/package, the packaged parity gate, serialized MiSTer health/deploy/probe/smoke, and backend/last-run log inspection all passed again
+    - `stock-soft-c71-menu-transition-post` landed at `61.9188 FPS` / `16.1502 / 7.5758 / 7.7521 / 0.8223 ms`; the lane stayed `298/300` direct-presented with `2` fallback frames and `present_readback.mean_ms = 0.2916`
+    - rows `1031` / `1030` / `1032` now keep `whole_capture_tracked_unlocks_total = 63 / 77 / 38` and `whole_capture_changed_bbox_ratio = 0.067235 / 0.035225 / 0.079683` while current-lifetime refresh/unlock counts, dirty-rect records, and renew batches stay `0`
+  - Keep/rollback decision with reason:
+    - keep measurement-support only; the new export closes the remaining transition-lane sizing blind spot without changing runtime behavior and shows the missing input is retained unlock dirty rects, not hidden renew work
+  - Next best candidate optimization:
+    - design a bounded runtime experiment only for `menu-transition` rows `1031` / `1030` / `1032` that converts their compare-derived unlock bbox into the existing `<=25%` partial-refresh path while preserving full-refresh fallback for any mixed, oversized, or failed case
+
+- 2026-03-08T13:04:41-0400
+  - Commit hash:
+    - `8778ee36`
+  - Bottleneck targeted:
+    - the remaining refresh-heavy update cost on stable Remy-stage rows `41` and `50` after the kept handle-`18` reland and fragmentation telemetry
+  - Change summary:
+    - kept a bounded runtime diff that records exact `32x32` renew tile masks for rows `41` / `50` and converts them into at most `4` connected-component dirty rects under the existing `<=25%` partial-refresh area gate
+    - preserved the existing single-rect and full-refresh fallback behavior for every invalid, oversized, or failed partial-refresh case
+    - rebuilt the telemetry flavor in `3sx-mister-build`, redeployed through the serialized MiSTer tooling, and refreshed `control`, `stage-heavy`, `super-heavy`, and `menu-transition`
+  - Verification result summary:
+    - `git diff --check`, telemetry Docker build/install/package, the packaged parity gate, serialized MiSTer health/deploy/probe/smoke, and backend/last-run log inspection all passed again
+    - `stock-soft-c70-control-post` landed at `70.9319 FPS` / `14.0980 / 6.3455 / 7.1974 / 0.5551 ms`, `stock-soft-c70-stage-heavy-post` landed at `56.6461 FPS` / `17.6535 / 8.5442 / 8.5890 / 0.5203 ms`, `stock-soft-c70-super-heavy-post` landed at `52.1946 FPS` / `19.1591 / 9.7509 / 8.8925 / 0.5157 ms`, and `stock-soft-c70-menu-transition-post` landed at `62.4077 FPS` / `16.0237 / 7.5291 / 7.6849 / 0.8097 ms`; gameplay stayed `300/300` direct-presented with `present_readback.mean_ms = 0.0000`, and the transition lane stayed at `298/300` direct-present with `2` fallback frames
+  - Keep/rollback decision with reason:
+    - keep; the bounded multi-rect reland moved Remy rows `41` / `50` from `full_refresh_no_usable_dirty_rect` into bounded partial refresh on the gameplay lanes, improved the user-priority gameplay captures, and left the main menu-transition hotspot unchanged instead of regressing it
+  - Next best candidate optimization:
+    - rerank or measure the remaining menu-transition rows `9` / `10` / `11` before opening another runtime change; do not widen gameplay-side thresholds or allowlists again blindly now
+
+- 2026-03-08T12:27:01-0400
+  - Commit hash:
+    - `94151024`
+  - Bottleneck targeted:
+    - the remaining broad Remy-stage full-refresh rows `41` and `50`, specifically whether their renew work decomposes into a small enough cluster shape to justify a future bounded runtime experiment
+  - Change summary:
+    - kept a telemetry-only diff that adds per-batch 32x32 renew coverage, connected-component, largest-component, and multi-component counters to the aggregate direct-write renew export and the per-row locality candidates
+    - rebuilt the telemetry flavor in `3sx-mister-build`, redeployed through the serialized MiSTer tooling, and refreshed `stage-heavy`, `super-heavy`, and `menu-transition`
+    - recorded the stalled-review outcome explicitly and manually validated the one concrete telemetry-integrity concern before keeping the measurement support
+  - Verification result summary:
+    - `git diff --check`, telemetry Docker build/install/package, the packaged parity gate, serialized MiSTer health/deploy/probe/smoke, and backend/last-run log inspection all passed again
+    - `stock-soft-c69-stage-heavy-post` landed at `55.3325 FPS` / `18.0726 / 8.8110 / 8.7409 / 0.5207 ms`, `stock-soft-c69-super-heavy-post` landed at `51.0695 FPS` / `19.5812 / 10.0405 / 9.0197 / 0.5210 ms`, and `stock-soft-c69-menu-transition-post` landed at `62.4748 FPS` / `16.0064 / 7.5589 / 7.6245 / 0.8230 ms`; gameplay stayed `300/300` direct-presented with `present_readback.mean_ms = 0.0000`, and the transition lane stayed at `298/300` direct-present with `2` fallback frames
+  - Keep/rollback decision with reason:
+    - keep measurement-support only; the new telemetry shows Remy-stage rows `41` / `50` usually span about eight 32x32 tiles split into roughly two to three components per batch, which is enough new evidence to justify a bounded cluster-aware candidate later without changing runtime behavior in this loop
+  - Next best candidate optimization:
+    - if a new runtime step is opened, target only Remy-stage rows `41` / `50` with a bounded multi-rect or cluster-aware refresh experiment that preserves the current oversized/full-refresh fallback; do not retry another blind allowlist widen now
+
+- 2026-03-08T11:47:35-0400
+  - Commit hash:
+    - `92ae98cb`
+  - Bottleneck targeted:
+    - the remaining bounded super-heavy refresh residue on stable gameplay handle `18` after the kept slot-`58` reland
+  - Change summary:
+    - relanded the existing one-line `PPGFile.c` allowlist broadening so stable handle `18` now keeps renew dirty rects alongside `14` / `47` / `56` / `57` / `58`
+    - rebuilt the telemetry flavor in `3sx-mister-build`, redeployed through the serialized MiSTer tooling, and refreshed `control`, `stage-heavy`, `super-heavy`, and `menu-transition`
+    - accepted the review-driven docs clarification that handle `18` is the same unmixed logical row across control, stage-heavy, and super-heavy where it appears, while leaving the runtime code and fallback policy unchanged
+  - Verification result summary:
+    - `git diff --check`, telemetry Docker build/install/package, the packaged parity gate, serialized MiSTer health/deploy/probe/smoke, and backend/last-run log inspection all passed again
+    - `stock-soft-c68-control-post` landed at `68.9911 FPS` / `14.4946 / 6.6975 / 7.2766 / 0.5205 ms`, `stock-soft-c68-stage-heavy-post` landed at `53.6699 FPS` / `18.6324 / 9.0725 / 8.9913 / 0.5686 ms`, `stock-soft-c68-super-heavy-post` landed at `51.2675 FPS` / `19.5055 / 10.0677 / 8.9058 / 0.5320 ms`, and `stock-soft-c68-menu-transition-post` landed at `61.8311 FPS` / `16.1731 / 7.5457 / 7.7395 / 0.8879 ms`
+  - Keep/rollback decision with reason:
+    - keep; handle `18` moved from `189` `full_refresh_no_usable_dirty_rect` attempts to `143` partial-refresh attempts plus `46` oversized fallbacks on `super-heavy`, while control improved slightly, stage-heavy stayed within guardrail, and menu-transition stayed clean
+  - Next best candidate optimization:
+    - do not widen again blindly; measure the remaining broad Remy-stage rows `41` / `50` first if another bounded runtime step is pursued
+
+- 2026-03-08T15:20:00-0400
+  - Commit hash:
+    - `446a45a6`
+  - Bottleneck targeted:
+    - the remaining refresh-heavy gameplay update cost on stable hot slot `58` after the kept Loop 61 slot-`57` reland
+  - Change summary:
+    - relanded the existing one-line `PPGFile.c` allowlist broadening so stable `ppg-seqs` slot `58` now keeps renew dirty rects alongside `14` / `47` / `56` / `57`
+    - rebuilt the telemetry flavor in `3sx-mister-build`, redeployed through the serialized MiSTer tooling, and refreshed `control`, `stage-heavy`, `super-heavy`, and `menu-transition`
+    - confirmed the gameplay hot row moved into the existing bounded partial-refresh path without widening to broader gameplay or transition rows
+  - Verification result summary:
+    - `git diff --check`, telemetry Docker build/install/package, and the packaged parity gate all passed again with `Software-frame parity check passed: 9 cases` and `Software-source refresh parity check passed: 2 cases`
+    - serialized MiSTer deploy, probe, smoke, backend/last-run log inspection, and the four fresh captures all passed; `stock-soft-c67-control-post` landed at `68.7668 FPS` / `14.5419 / 6.7120 / 7.3013 / 0.5286 ms`, `stock-soft-c67-stage-heavy-post` landed at `54.5461 FPS` / `18.3331 / 8.9340 / 8.8550 / 0.5441 ms`, `stock-soft-c67-super-heavy-post` landed at `49.6519 FPS` / `20.1402 / 10.3953 / 9.1965 / 0.5483 ms`, and `stock-soft-c67-menu-transition-post` landed at `61.3401 FPS` / `16.3025 / 7.6277 / 7.8133 / 0.8615 ms`
+  - Keep/rollback decision with reason:
+    - keep; slot `58` moved from `742` `full_refresh_no_usable_dirty_rect` attempts to `718` partial-refresh attempts plus `24` oversized fallbacks on both heavy gameplay lanes, while control and transition stayed within guardrail
+  - Next best candidate optimization:
+    - re-rank the remaining full-refresh gameplay rows from the kept `stock-soft-c67-*` baseline before widening again; super-heavy row `18` is now the narrowest surviving out-of-scope row, while Remy-stage rows `41` and `50` remain too broad for a blind allowlist
+
+- 2026-03-08T10:54:57-0400
+  - Commit hash:
+    - `f221ee51`
+  - Bottleneck targeted:
+    - the remaining menu-transition measurement ambiguity, specifically whether logical ids `1030 / 1031 / 1032` were still doing current-lifetime same-frame dirty refresh work or whether the earlier contradiction was just mixed pre/post-destroy totals
+  - Change summary:
+    - restored the preserved Loop 66 schema-`31` telemetry diff that adds current-lifetime refresh and software-surface-access totals alongside the existing whole-capture rows
+    - rebuilt/package-validated the telemetry flavor, redeployed through the serialized MiSTer tooling, and captured `stock-soft-c66-menu-transition-post`
+    - proved the target rows stay unmixed with `source_surface_destroy_calls_total = 1` while every current-lifetime counter remains `0`, so the earlier large totals belonged to the destroyed lifetime rather than the current one
+  - Verification result summary:
+    - serialized MiSTer health, probe, smoke, deploy, and one-session perf capture all passed through `tools/mister/misterctl.sh` and `tools/mister/perf-sampler.sh`; the perf capture landed at `61.6907 FPS` and `16.2099 / 7.5899 / 7.7983 / 0.8217 ms` for `frame / update / render / present`
+    - Docker telemetry build/install/package and the packaged parity gate passed again with `Software-frame parity check passed: 9 cases` and `Software-source refresh parity check passed: 2 cases`
+  - Keep/rollback decision with reason:
+    - keep measurement-support telemetry; it resolved the ambiguity on-device without touching runtime policy or gameplay behavior
+  - Next best candidate optimization:
+    - with preserved work now verified and the MiSTer gate recovered under serialized tooling, return to the bounded slot-`58` reland from the kept `stock-soft-c61-*` baseline before inventing a broader new hypothesis
+
+- 2026-03-08T11:25:00-0400
+  - Commit hash:
+    - `ef942100`
+  - Bottleneck targeted:
+    - the remaining provenance blind spot on the user-visible `menu-transition` lane, specifically whether dominant refresh rows `9` / `10` / `11` were mostly same-frame texture dirties or carried dirty work while the MiSTer device gate stayed blocked
+  - Change summary:
+    - kept one narrow measurement-support diff that adds per-candidate software-surface dirty provenance totals to the refresh-locality export without changing refresh policy or gameplay behavior
+    - reran the telemetry Docker build/package plus parity gate, rebuilt the local fallback binary, and captured `stock-soft-c59-menu-transition-local`
+    - showed that logical ids `1030` / `1031` / `1032` are dominated by same-frame texture-dirty accesses with a smaller cold-create tail, not carried dirty work
+  - Verification result summary:
+    - `git diff --check`, telemetry Docker build/install/package in `3sx-mister-build`, the packaged telemetry parity gate, and the rebuilt local fallback binary all passed; the fallback capture landed at `10.4460 FPS` and `95.7304 / 1.9013 / 67.1782 / 26.6508 ms` for `frame/update/render/present`
+    - rows `9` / `10` / `11` stayed at zero tracked unlocks and zero renew batches, but now report `software_surface_access_dirty_texture_same_frame_total = 484 / 598 / 191`, `software_surface_access_dirty_texture_carried_total = 1 / 0 / 1`, and `software_surface_access_cold_total = 41 / 53 / 19`
+    - device verification was skipped because fresh host and container SSH probes to the unchanged tree both timed out before redeploy/probe/log refresh
+  - Keep/rollback decision with reason:
+    - keep measurement-support only; the new export closes the carried-versus-same-frame decision gap for the dominant transition rows without touching runtime behavior
+  - Next best candidate optimization:
+    - while MiSTer transport stays unhealthy, add the next narrow measurement around the origin of same-frame texture-dirty invalidation for `ppg-seqs` logical ids `1030` / `1031` / `1032` instead of retrying deferred-history preservation or reopening slot `57`
+
+- 2026-03-08T10:10:00-0400
+  - Commit hash:
+    - `000b819b`
+  - Bottleneck targeted:
+    - the remaining identity blind spot on the user-visible `menu-transition` lane, specifically whether dominant refresh rows `9` / `10` / `11` could be resolved safely enough to rank the next candidate while the MiSTer gate stayed unhealthy
+  - Change summary:
+    - reranked `menu-transition` locally with the existing fallback telemetry path and confirmed the unchanged tree still lost deferred-capture identities for the dominant rows
+    - kept one narrow measurement-support change so deferred full perf captures preserve pre-trigger logical-identity registrations without changing refresh policy or gameplay behavior
+    - resolved transition rows `9` / `10` / `11` to stable `ppg-seqs` slots `1030` / `1031` / `1032`
+  - Verification result summary:
+    - `git diff --check`, telemetry Docker build/install/package in `3sx-mister-build`, and the packaged telemetry parity gate all passed again; the fallback capture `stock-soft-c57-menu-transition-local.json` landed at `236.0100 FPS` and `4.2371 / 1.8902 / 1.7172 / 0.6296 ms`
+    - the dominant transition rows now report stable identities but still stay on full refresh with no renew coverage: handles `9` / `10` / `11` show `full_refresh_no_usable_dirty_rect_attempts_total = 485 / 598 / 192` and `renew_batches_total = 0`
+    - device verification was skipped because the final container-side short SSH probe still timed out before output (`EXIT=124`)
+  - Keep/rollback decision with reason:
+    - keep measurement-support only; deferred-capture identity preservation closed the ranking gap without touching refresh behavior, and the MiSTer gate was still not healthy enough for a trusted on-device follow-up
+  - Next best candidate optimization:
+    - keep gameplay slot `57` blocked on device-gate recovery; for the menu-transition lane, add the narrowest next measurement that explains why stable `ppg-seqs` slots `1030` / `1031` / `1032` still fall through to `full_refresh_no_usable_dirty_rect` with zero renew telemetry
+
+- 2026-03-08T09:28:06-0400
+  - Commit hash:
+    - `f04061e2`
+  - Bottleneck targeted:
+    - whether the next bounded gameplay runtime candidate, the stable slot-`58` renew-bbox reland, was eligible again or still blocked by the unchanged-tree MiSTer gate
+  - Change summary:
+    - kept the runtime tree unchanged and reran the telemetry Docker build/package plus packaged parity gate on the trusted slot-`57` baseline
+    - rechecked the kept `stock-soft-c61-stage-heavy-post` / `stock-soft-c61-super-heavy-post` evidence and confirmed slot `58` still ranks as the next bounded gameplay refresh candidate once device verification returns
+    - closed docs-only after fresh host/container password-auth probes and a host-side redeploy attempt still failed before any trustworthy remote command path
+  - Verification result summary:
+    - `git diff --check -- . ':(exclude)tools/mister/package.sh'`, telemetry Docker build/install/package in `3sx-mister-build`, and the packaged parity gate all passed again, with `Software-frame parity check passed: 9 cases` plus `Software-source refresh parity check passed: 2 cases`
+    - the unchanged-tree MiSTer recovery gate still failed: `ping -c 3 192.168.1.171` showed `33.3%` packet loss with `14.850-158.818 ms` RTT, a host-side password-auth `SF33RD.AFS` presence probe timed out after `25s`, a container-side `sshpass ... "echo __CONTAINER_SSH_OK__"` probe timed out after `20s`, and a host-side password-auth `rsync` redeploy never reached a prompt or transfer output before local abort
+    - redeploy, renderer probe, bounded smoke, remote log refresh, and any fresh on-device capture were skipped as untrustworthy
+  - Keep/rollback decision with reason:
+    - keep docs-only closure; slot `58` remains the right next runtime candidate, but the device gate never recovered far enough to verify any runtime or measurement change safely
+  - Next best candidate optimization:
+    - do not retry slot `58` until the unchanged-tree telemetry package can again complete redeploy, `SF33RD.AFS` verification, probe, bounded smoke, log refresh, and at least one full `300`-frame capture
+
+- 2026-03-08T05:21:06-0400
+  - Commit hash:
+    - `424b3222`
+  - Bottleneck targeted:
+    - the slot-`57` runtime retry gate itself, specifically whether the newly observed container-side SSH recovery was stable enough to trust container-driven MiSTer redeploy/probe/log refresh before reopening another runtime diff
+  - Change summary:
+    - rebuilt the unchanged telemetry package in `3sx-mister-build` and reran the packaged parity gate instead of reopening runtime code immediately
+    - validated that one verbose container-side `sshpass ... true` probe could authenticate and execute remotely, then retried container-driven redeploy plus bounded short command checks on the unchanged tree
+    - kept the runtime tree unchanged and closed docs-only when that partial recovery still could not sustain redeploy, probe, or log refresh reliably enough to trust on-device verification
+  - Verification result summary:
+    - `git diff --check`, telemetry Docker build/install/package, and the packaged parity gate all passed on the unchanged tree, with `Software-frame parity check passed: 9 cases` plus `Software-source refresh parity check passed: 2 cases`
+    - the MiSTer gate only recovered transiently: a container-side `timeout 20 sshpass -p 1 ssh -vv ... true` probe authenticated and exited `0`, but the next container `rsync` redeploy dropped with `Connection closed by 192.168.1.171 port 22`, later bounded short commands (`echo __SHORT_OK__` and remote `SF33RD.AFS` presence) both timed out after `20s`, and unbounded probe attempts later ended in the same remote-closure shape, so no trustworthy probe/log/capture refresh was accepted
+  - Keep/rollback decision with reason:
+    - keep docs-only closure; the slot-`57` runtime hypothesis is still sound, but the device gate never stayed healthy long enough to verify a runtime retry safely
+  - Next best candidate optimization:
+    - do not reopen slot `57` until the container-side path can complete unchanged-tree redeploy plus bounded probe/log refresh end to end; once that gate is stable again, retry the same bounded slot-`57` reland first
+
+- 2026-03-08T04:52:08-0400
+  - Commit hash:
+    - `5b66c9ee`
+  - Bottleneck targeted:
+    - the slot-`57` runtime retry gate itself, specifically whether the unchanged telemetry baseline could refresh a trustworthy MiSTer redeploy/probe/log path before reopening another runtime diff
+  - Change summary:
+    - rebuilt the unchanged telemetry package in `3sx-mister-build` and reran the packaged parity gate instead of reopening runtime code immediately
+    - retried password-auth redeploy on `build/mister-telemetry-package/`, then followed with bounded host-side and container-side SSH command probes after the transfer timed out
+    - kept the runtime tree unchanged and closed docs-only when the device gate still could not refresh remote logs or captures
+  - Verification result summary:
+    - `git diff --check`, telemetry Docker build/install/package, and the packaged parity gate all passed on the unchanged tree, with `Software-frame parity check passed: 9 cases` plus `Software-source refresh parity check passed: 2 cases`
+    - the MiSTer gate failed before trustworthy probe/log/capture recovery: password-auth `rsync` timed out with `ssh_dispatch_run_fatal ... Operation timed out` plus `rsync ... unexpected end of file`, `ping` still succeeded, the immediate host-side `expect` SSH probe ended in `EXPECT_TIMEOUT`, and the container-side `sshpass` probe timed out after `25s`
+  - Keep/rollback decision with reason:
+    - keep docs-only closure; repeating repo-side runtime or transport-only retries without device-side SSH recovery would only reproduce the same unverified stop condition
+  - Next best candidate optimization:
+    - recover MiSTer command execution outside this repo first, then restart from the kept `stock-soft-c52-*` runtime baseline plus `stock-soft-c53-*` stable-identity telemetry and retry the bounded slot-`57` reland
+
+- 2026-03-08T04:39:25-0400
+  - Commit hash:
+    - `d24917a0`
+  - Bottleneck targeted:
+    - the remaining refresh-heavy update cost on stable hot gameplay slot `57` after Loop 52's allowlisted renew-bbox reland and Loop 53's stable-identity telemetry
+  - Change summary:
+    - researched slot `57` as the next bounded runtime candidate from the kept `stock-soft-c52-*` plus `stock-soft-c53-*` telemetry and briefly widened `ppgShouldKeepRenewDirtyRect(...)` from `14/47/56` to `14/47/56/57`
+    - revalidated the candidate locally with telemetry Docker build/install/package in `3sx-mister-build` plus the packaged `--software-frame-parity-check`
+    - rolled the runtime code fully back when the required MiSTer redeploy/command gate failed before any trustworthy probe or capture could run
+  - Verification result summary:
+    - `git diff --check`, telemetry Docker build/install/package, and the packaged parity gate all passed on the candidate runtime diff, with `Software-frame parity check passed: 9 cases` plus `Software-source refresh parity check passed: 2 cases`
+    - the MiSTer gate failed before trustworthy runtime verification: password-auth `rsync` started and then dropped with `Connection closed by 192.168.1.171 port 22` / `rsync ... unexpected end of file`, `ping` still succeeded, and an immediate password-auth `expect` SSH probe to `true` ended in `EXPECT_TIMEOUT`, so probe/smoke/logs/captures were skipped
+  - Keep/rollback decision with reason:
+    - rollback; the slot-`57` reland never cleared the required MiSTer verification path, so keeping the runtime diff would have left unverified behavior in tree despite the strong local evidence
+  - Next best candidate optimization:
+    - recover stable MiSTer command execution first, then retry the same bounded slot-`57` allowlist reland against the kept `stock-soft-c52-*` runtime baseline plus `stock-soft-c53-*` stable-identity telemetry; keep slot `58` and broader rows out of scope for now
+
+- 2026-03-08T04:20:13-0400
+  - Commit hash:
+    - `6ab521e7`
+  - Bottleneck targeted:
+    - the stable slot-identity gap on residual hot full-refresh handles `58` and `57` after Loop 52's allowlisted renew-bbox reland
+  - Change summary:
+    - added schema-`28` capture-gated logical-identity telemetry from PPG texture creation into the refresh-hot, unlock-locality-hot, and refresh-locality candidate exports
+    - verified on-device that hot handles `56`, `57`, and `58` stayed stable and unmixed across `stage-heavy` and `super-heavy`, mapping to one `ppg-seqs` bank with `ixNum1st = 80`, slots `0/1/2`, and `texture_total = 5`
+    - kept runtime refresh behavior unchanged; this loop only closed the measurement gap needed to rank the next safe allowlist step
+  - Verification result summary:
+    - pre-review `git diff --check`, telemetry Docker build/install/package in `3sx-mister-build`, the packaged telemetry parity gate, MiSTer redeploy, `SF33RD.AFS` presence, renderer probe, bounded smoke, and backend/last-run log inspection all passed again
+    - `stock-soft-c53-stage-heavy-post` landed at `47.8260 FPS` / `20.9091 / 11.6734 / 8.7001 / 0.5356 ms`, and `stock-soft-c53-super-heavy-post` landed at `44.4258 FPS` / `22.5095 / 13.1508 / 8.8020 / 0.5566 ms`
+    - independent review found one valid issue: logical-identity registration was unconditional. The accepted fix gated `SDLGameRenderer_RecordTextureLogicalIdentity(...)` on `frame_stats_extended_enabled`, after which `git diff --check`, telemetry Docker build/install/package, and the packaged parity gate all passed again; the post-review MiSTer redeploy/probe attempt regressed to a pre-auth timeout while `ping` still succeeded, so no second on-device rerun was accepted
+  - Keep/rollback decision with reason:
+    - keep measurement-support only; the schema-`28` telemetry is capture-gated, passed pre-review on-device verification plus post-review local rebuild/parity checks, and proves the next runtime candidate can be ranked on stable PPG slots instead of raw handle guesses
+  - Next best candidate optimization:
+    - reland the existing bounded allowlist shape for stable slot `57` (`ppg-seqs`, `ixNum = 81`, `ixNum1st = 80`, `slot_index = 1`, `texture_total = 5`) first, then revisit slot `58` only if `57` lands cleanly
+
+- 2026-03-08T03:00:25-0400
+  - Commit hash:
+    - `de0436cd`
+  - Bottleneck targeted:
+    - the missing stage-19 idle rerank for the next refresh-runtime decision after Loop 49's transport-only rollback
+  - Change summary:
+    - kept the runtime tree unchanged, rebuilt the telemetry package in `3sx-mister-build`, and retried the validated password-auth redeploy path before deciding whether any runtime reland was even eligible
+    - refreshed the local fallback telemetry build in `build/linux-telemetry-fallback*` and captured `stock-soft-c51-stage-heavy-local` so the missing Remy-stage idle lane could still be ranked when the live MiSTer gate failed again
+    - recorded that the local stage-heavy lane still supports the same small gameplay allowlist (`47`, `14`, `56`) while broader rows (`41`, `50`) remain explicitly out of scope
+  - Verification result summary:
+    - `git diff --check -- . ':(exclude)tools/mister/package.sh'`, telemetry Docker build/install/package in `3sx-mister-build`, and the packaged telemetry parity gate all passed again on the unchanged runtime tree
+    - the live MiSTer gate failed before trustworthy command execution: the password-auth `rsync` redeploy dropped mid-transfer with `Connection closed by 192.168.1.171 port 22` / `unexpected end of file`, `ping` still succeeded, and the immediate password-auth `expect` probe timed out at `EXPECT_TIMEOUT`, so no on-device probe/smoke/log/capture result was accepted
+    - local fallback `stock-soft-c51-stage-heavy-local` landed at `151.4128 FPS` and `6.6045 / 3.8081 / 2.1562 / 0.6401 ms` for `frame/update/render/present`, with `software_surface_cache_refresh.mean_ms = 2.3842`, `partial_attempts_total = 0`, `full_no_usable_dirty_rect_attempts_mean = 12.0767`, and renew-bbox means/maxes of `1509.82/6656` (`47`), `2219.79/6144` (`14`), and `2927.78/17280` (`56`)
+  - Keep/rollback decision with reason:
+    - keep docs-only closure on the runtime tree; the new stage-heavy evidence preserves the allowlisted reland ranking, but the repeated mid-transfer deploy failure and post-failure command timeout still leave no trustworthy MiSTer verification path for reopening it safely
+  - Next best candidate optimization:
+    - recover stable MiSTer command execution, rerun `stage-heavy` on the telemetry package, and only then reopen the allowlisted renew-bbox reland for handles `47`, `14`, and `56` if the live capture still matches the local stage-heavy subset
+
+- 2026-03-07T23:59:46-0500
+  - Commit hash:
+    - `f64dc227`
+  - Bottleneck targeted:
+    - the missing direct measurement lane for the user-observed full-screen checkered menu transition
+  - Change summary:
+    - added `--perf-wait-test-phase` support through `src/main.{c,h}`, exposed named test-runner phase queries in `src/test/test_runner.{c,h}`, and taught `tools/mister/perf-sampler.sh` to export `capture_start_test_phase` / `perf_wait_test_phase`
+    - fixed the review-found wrapper gaps by switching to exact token parsing, rejecting the unreachable `init` wait phase, rejecting `--test-scene-preset` together with `--perf-wait-test-phase`, and defaulting phase waits to `--perf-warmup 0` unless the caller explicitly overrides it
+    - kept runtime/render behavior unchanged outside perf capture and non-game metadata now stays `null` instead of reporting fake gameplay defaults
+  - Verification result summary:
+    - `git diff --check`, `bash -n tools/mister/perf-sampler.sh`, the parser guard, the unreachable-`init` guard, telemetry Docker build/install/package in `3sx-mister-build`, and the packaged `--software-frame-parity-check` gate all passed; the attempted container-only local export smoke was explicitly skipped because the MiSTer telemetry binary still requires a Linux console (`KD_GRAPHICS`) there
+    - MiSTer redeploy, `SF33RD.AFS` presence check, `/media/fat/games/3sx/run-3sx.sh --probe-renderer-only`, bounded `launch-osd.sh`, and backend/last-run log inspection all passed again with dummy/software + fbdev + native + `Software frame mode: on`, `runtime_rc=124`, and `last-run.log` ending in `exit=143`
+    - final on-device capture `stock-soft-c47-menu-transition-post` landed at `56.2738 FPS` and `17.7703 / 10.4769 / 6.5612 / 0.7322 ms` for `frame/update/render/present`, with the default phase-wait warmup path now injecting `--perf-warmup 0`, `capture_start_test_phase = perf_wait_test_phase = character-select-transition`, all gameplay-only metadata fields `null`, `software_surface_cache_refresh.mean_ms = 6.6239`, `software_frame_fast_scaled_tasks.mean = 0.00`, and `software_frame_generic_textured_tasks.mean = 0.00`
+  - Keep/rollback decision with reason:
+    - keep measurement-support only; the new capture path safely measures the user-visible transition lane on device and shows the remaining stall is still refresh-heavy update work rather than uncovered generic textured residue
+  - Next best candidate optimization:
+    - use the new transition lane together with the trusted `stock-soft-c35-control-post` / `stock-soft-c35-super-heavy-post` gameplay captures to decide whether the next loop needs narrower refresh-lane telemetry or a bounded refresh reland; do not reopen generic textured or fast-miss residue now
+
+- 2026-03-07T14:29:13-0500
+  - Commit hash:
+    - `f6a69db2`
+  - Bottleneck targeted:
+    - the missing joined overlap view on the remaining software-surface refresh blit lane after the kept `stock-soft-c31-*` partial-refresh reland
+  - Change summary:
+    - kept capture-only schema-`22` telemetry support: `sdl_game_renderer` now exports joined `software_surface_cache_refresh_locality_candidates`, and `sdl_app` writes those rows plus coverage totals into perf JSON without touching runtime render/present behavior
+    - refreshed live MiSTer captures `stock-soft-c32-control-post` and `stock-soft-c32-super-heavy-post` on the telemetry package to validate the new export against the kept `stock-soft-c31-*` baseline
+    - review accepted only one docs fix for the schema wording; the reported fanout cast and tracked-unlock denominator concerns were rejected after code inspection
+  - Verification result summary:
+    - `git diff --check`, telemetry Docker build/install/package in `3sx-mister-build`, and the packaged `--software-frame-parity-check` gate all passed
+    - MiSTer redeploy, `/media/fat/games/3sx/run-3sx.sh --probe-renderer-only`, bounded `launch-osd.sh`, and backend/last-run log inspection all passed again with dummy/software + fbdev + native + `Software frame mode: on`, `runtime_rc=124`, and `last-run.log` ending in `exit=143`
+    - `stock-soft-c32-control-post` landed at `14.2981 / 7.0710 / 6.6621 / 0.5649 ms` with joined-candidate coverage at `100%` refresh / `100%` tracked; `stock-soft-c32-super-heavy-post` landed at `26.8058 / 17.8764 / 8.3914 / 0.5379 ms` with `93.34%` refresh / `81.04%` tracked coverage and sparse dominant handles `56/58/57/14/47`
+  - Keep/rollback decision with reason:
+    - keep measurement-support only; the new telemetry closes the overlap gap safely and shows the dominant heavy-scene handles already fit the current partial-refresh area gate, so another blind runtime broadening would still be guesswork
+  - Next best candidate optimization:
+    - measure actual partial-vs-full refresh usage and zero-delta indexed unlock frequency on `56/58/57/14/47` before attempting any runtime invalidation-skip or another refresh reland
+
+- 2026-03-07T18:55:00-0500
+  - Commit hash:
+    - `8593a233`
+  - Bottleneck targeted:
+    - the same-frame indexed software-surface refresh blit cost that still dominated `stock-soft-c30-*` update time after the kept `stock-soft-c21-*` refresh relands
+  - Change summary:
+    - kept a bounded indexed partial-refresh reland: `flPS2UnlockTexture(...)` now derives a unioned dirty bbox while copying single-level indexed `256x256` texture bytes back into system memory, and `refresh_software_source_surface_in_place(...)` reuses that bbox only for texture-unlock-driven cached-source refreshes whose accumulated area stays at or below `25%`
+    - left every palette-dirty path, non-indexed format, non-`256x256` source, missing/oversized bbox, generic textured raster path, and direct-present routing on the previous full-surface SDL blit behavior
+    - widened the local parity gate with two sparse software-source refresh cases, then accepted one review-driven safety fix that narrows the candidate further to `tex_num == 1` so multi-level textures still fall back to the original full memcpy path
+  - Verification result summary:
+    - `git diff --check`, telemetry Docker build/install/package in `3sx-mister-build`, and the packaged `--software-frame-parity-check` gate all passed both before and after the review-driven mipmap guard; the parity log now includes `Software-source refresh parity check passed: 2 cases`
+    - MiSTer redeploy, `/media/fat/games/3sx/run-3sx.sh --probe-renderer-only`, bounded `launch-osd.sh`, and backend/last-run log inspection all passed again on the kept tree with dummy/software + fbdev + native + `Software frame mode: on`, `runtime_rc=124`, and `last-run.log` ending in `exit=143`
+    - the first full post-capture pair landed as `stock-soft-c31-control-post` = `14.0982 / 6.9126 / 6.6667 / 0.5190 ms` and `stock-soft-c31-super-heavy-post` = `26.6316 / 17.8998 / 8.2105 / 0.5213 ms` for `frame/update/render/present`, both with `300/300` direct-presented frames, `0` upload/fallback frames, and `present_readback.mean_ms = 0.0000`
+    - after the review fix, the final control rerun still passed at `14.1501 / 6.9646 / 6.6350 / 0.5500 ms` with `software_surface_cache_refresh.mean_ms = 3.2517` and `software_surface_cache_refresh_blit.mean_ms = 3.1520`; the final super-heavy rerun was attempted but the MiSTer transport regressed to a pre-auth SSH stall before it could complete, so the earlier `stock-soft-c31-super-heavy-post` remains the best available heavy-scene measurement for this closeout
+  - Keep/rollback decision with reason:
+    - keep; the bounded SDL-blit partial-refresh reland improves the documented update bottleneck on both gameplay keep gates, preserves the direct-present/readback invariants, stays inside SDL's documented conversion path, and the accepted review fix only narrows eligibility for mipmapped textures rather than widening runtime behavior
+  - Next best candidate optimization:
+    - refresh live schema-`20` captures on top of the kept `stock-soft-c31-*` baseline once MiSTer SSH is stable again, then decide whether the next safe step is a tighter hot-handle partial-refresh expansion or a different update-lane bottleneck instead of reopening the rejected converter/palette branches
+
+- 2026-03-07T13:14:59-0500
+  - Commit hash:
+    - `5d431b1b`
+  - Bottleneck targeted:
+    - validate whether the live c30 locality-plus-refresh overlap was strong enough to justify a narrow indexed partial-refresh reland on the remaining software-surface refresh lane
+  - Change summary:
+    - captured fresh live MiSTer baselines `stock-soft-c30-control-pre` and `stock-soft-c30-super-heavy-pre`, which confirmed refresh blit time still dominates update and finally joined the refresh-hot and locality-hot handle sets on device
+    - briefly prototyped an unlock-copy-derived indexed dirty-bbox partial-refresh path plus two local software-source refresh parity cases, then rolled the runtime code fully back when the post-build MiSTer device gate failed before probe/capture
+    - left the final tree on the pre-loop runtime baseline and kept only docs/checklist/living-findings updates for closure
+  - Verification result summary:
+    - `git diff --check`, telemetry-flavor Docker build/install/package in `3sx-mister-build`, and the temporary packaged parity run all passed before rollback; the local parity extension logged `Software-source refresh parity check passed: 2 cases` alongside `Software-frame parity check passed: 9 cases`
+    - pre-implementation MiSTer redeploy, `/media/fat/games/3sx/run-3sx.sh --probe-renderer-only`, bounded `launch-osd.sh`, backend/last-run log inspection, and the fresh `stock-soft-c30-*` captures all passed; `stock-soft-c30-control-pre` landed at `24.0671 / 11.5979 / 11.4252 / 1.0440 ms` and `stock-soft-c30-super-heavy-pre` landed at `32.3523 / 21.2419 / 10.4084 / 0.7020 ms` for `frame/update/render/present`
+    - the live overlap proof narrowed the plausible partial-refresh win to sparse indexed hot handles: `super-heavy` overlap was only handle `58`, but it still carried `15.20%` of refresh attempts with `1.43%` changed pixels and `7.06%` bbox coverage; control overlap covered handles `41`, `47`, and `50`
+    - the candidate device gate failed before any post-build probe or capture: the redeploy timed out mid-rsync with `Read from remote host 192.168.1.171: Operation timed out` / `Broken pipe`, and follow-up password-auth SSH probes timed out before command execution even though `ping` still succeeded
+    - independent review: bounded `claude -p` review of the final docs-only diff found one audit-trail checkbox issue and one premature commit-hash completion marker; both were accepted and fixed before closure
+  - Keep/rollback decision with reason:
+    - rollback; the partial-refresh runtime diff never reached the required MiSTer post-build verification path, so keeping it would have left unverified runtime behavior in tree despite the encouraging c30 research
+  - Next best candidate optimization:
+    - recover stable MiSTer redeploy/SSH access, then retry the same bounded SDL-blit indexed partial-refresh reland against the existing `stock-soft-c30-*` baseline instead of spending another loop rediscovering the overlap proof
+
+- 2026-03-07T09:51:33-0500
+  - Commit hash:
+    - `177d032f`
+  - Bottleneck targeted:
+    - determine whether the remaining hot indexed refresh handles are sparse enough at unlock time to justify any later partial-refresh runtime experiment
+  - Change summary:
+    - kept perf-capture-only indexed unlock-locality telemetry in `sdl_game_renderer` / `sdl_app`, exporting schema-`20` aggregate metrics plus hot-texture rows for tracked unlocks, changed pixels/rows/bbox, and per-handle non-index8 skips
+    - accepted review-driven fixes for shadow-buffer lifetime, mixed-format skip attribution, and texture-slot reuse resets so perf capture data cannot leak across destroy/recreate cycles
+    - left runtime render/present behavior unchanged outside the existing extended perf-capture path
+  - Verification result summary:
+    - `git diff --check`, Docker MiSTer build/install/package in `3sx-mister-build`, and the packaged `--software-frame-parity-check` gate all passed after the final review fixes
+    - deterministic local fallback captures with a temporary `THREESX_HOME` plus local `SF33RD.AFS` succeeded; indexed unlock locality stayed sparse at `3.33%` changed pixels / `13.67%` bbox coverage on control, `2.27%` / `9.24%` on `super-heavy`, and `1.80%` / `7.84%` on the heavy `texture_cache_misses >= 30` subset
+    - refresh-hot versus locality-hot mismatch persisted: `super-heavy` refresh leaders stayed `56/58/57/14`, locality leaders were `41/50/18/58`, and the only overlap in the top four was handle `58`, which still measured sparse at `1.43%` changed pixels and `7.06%` bbox coverage
+    - device gate was skipped: earlier SSH debug still stalled before auth/KEX completed, and the final closeout probe regressed to `No route to host`, so deploy/probe/smoke/live captures were unavailable
+  - Keep/rollback decision with reason:
+    - keep measurement-support only; the telemetry proves sparse unlock locality exists, but it still does not justify a safe runtime partial-refresh reland without a joined locality/fanout view on live MiSTer captures
+  - Next best candidate optimization:
+    - once MiSTer SSH access returns, derive or capture a joined locality-plus-refresh-fanout ranking on live MiSTer runs and only then prototype a narrow partial-refresh path on overlapping sparse hot handles; do not retry the broad indexed converter or palette-centric branches now
+
+- 2026-03-07T08:55:38-0500
+  - Commit hash:
+    - recorded in the loop closure commit
+  - Bottleneck targeted:
+    - test whether redundant `SDL_SetSurfacePalette(...)` calls on already-matched indexed source surfaces were a safe remaining refresh win on the kept `stock-soft-c21-*` baseline
+  - Change summary:
+    - inherited an unverified runtime diff in `src/port/sdl/sdl_game_renderer.c` that added a pointer-equality guard around `SDL_SetSurfacePalette(...)` in the software-surface refresh/create helpers
+    - revalidated the candidate locally with `git diff --check`, Docker MiSTer build/install/package in `3sx-mister-build`, and the packaged `--software-frame-parity-check`, then rolled the runtime code fully back when the device gate still could not be satisfied
+    - closed the loop docs-only and recorded that the current evidence still does not justify another palette-centric refresh runtime pass
+  - Verification result summary:
+    - local Docker build/install/package and packaged parity check both passed on the inherited dirty runtime diff before rollback
+    - fresh `ping -c 1 192.168.1.171` still succeeded, but an authenticated SSH command through the password-auth flow timed out before remote command execution, so redeploy, probe, smoke, and `stock-soft-c28-*` device captures were skipped again for safety
+    - device gate remained unavailable, and the best current telemetry still bounds palette attachment as negligible next to refresh blit/conversion work (`0.0034 / 0.0118 ms` palette set versus `0.6259 / 2.4078 ms` blit on the local Loop 27 control / `super-heavy` fallback captures)
+    - independent review: `claude -p` flagged two valid docs-only issues on the closure diff (a stale SSH-success claim in the Loop 28 research bullets and an unchecked review-step box); both were accepted and fixed, and no other actionable findings were reported
+  - Keep/rollback decision with reason:
+    - rollback; keeping unverified runtime code would violate the device gate, and the current research still leaves the standalone palette-guard idea as a low-confidence retry of the palette-centric refresh branch
+  - Next best candidate optimization:
+    - once MiSTer SSH/device access is stable again, rerun live refresh captures from the kept `stock-soft-c21-*` runtime baseline plus the kept `stock-soft-c24-*` / Loop 27 telemetry support, then rank a materially different blit-side refresh strategy or a different update-lane bottleneck instead of reopening the no-op palette guard
+
+- 2026-03-07T07:28:56-0500
+  - Commit hash:
+    - recorded in the loop closure commit
+  - Bottleneck targeted:
+    - determine whether the remaining software-surface refresh lane is actually narrow enough to justify another runtime loop while the MiSTer SSH/device gate is still blocked
+  - Change summary:
+    - no runtime code was kept; the cycle revalidated that current MiSTer access still stalls before authentication on both direct SSH and the password-auth `expect` path, so a runtime diff could not satisfy the device gate
+    - rebuilt current `HEAD` for MiSTer in `3sx-mister-build`, reran the packaged `--software-frame-parity-check`, and used a research-only Linux fallback build plus local resources to run deterministic schema-`17` control and `super-heavy` captures without touching tracked runtime code
+    - the replay showed the open lane is still `100%` `SDL_PIXELFORMAT_INDEX8` `256x256` refresh work, with super-heavy handles `56`, `58`, and `57` accounting for `66.19%` of all refresh attempts/pixels (`72.34%` with handle `14`)
+  - Verification result summary:
+    - Docker MiSTer build/install/package and packaged parity check both passed on current `HEAD`
+    - device probe/smoke/capture were skipped because `ping 192.168.1.171` still succeeded while both direct SSH and password-auth `expect` probes timed out before authentication/command execution
+    - research-only local captures `stock-soft-c26-control-local` and `stock-soft-c26-super-heavy-local` succeeded; the heavy gate reproduced the kept `stock-soft-c24-*` aggregate refresh counters exactly enough for decision support (`16.27` refresh attempts, `6.14` unique texture handles, `7.51` max fan-out, and `40/300` heavy-subset frames at `32.53` refresh attempts / `8.05` handles / `12.65` fan-out)
+    - independent review: `codex review --uncommitted` and `claude -p` were both started against the docs diff; neither returned actionable findings before closure, and the only observed low-risk issue was the fixed list-format reinforcement note above
+  - Keep/rollback decision with reason:
+    - keep docs-only closure; the new evidence improves the decision record, but it still does not produce a materially narrower, device-verifiable runtime target than the already rejected Loop 22 indexed direct-converter shape
+  - Next best candidate optimization:
+    - restore MiSTer SSH access and only start another refresh runtime loop if live schema-`17` captures support a materially different handle-local strategy; otherwise search another update-lane target instead of retrying indexed `256x256` conversion
+
+- 2026-03-07T03:45:19-0500
+  - Commit hash:
+    - `989e5d81`
+  - Bottleneck targeted:
+    - the remaining palette-dirty cache churn on the kept `stock-soft-c18-*` software-frame baseline after the same-frame texture-dirty refresh reland
+  - Change summary:
+    - kept a narrow software-frame-only refresh policy in `src/port/sdl/sdl_game_renderer.c` so palette-dirty cached SDL textures and cached `ARGB8888` software-source surfaces stay resident, are marked dirty, and refresh in place on next access instead of being destroyed immediately
+    - reused the existing `SDL_UpdateTexture()` / `SDL_SetSurfacePalette()` + `SDL_BlitSurface()` refresh helpers rather than widening scope into lazy texture materialization or raster changes
+    - left non-software-frame behavior, cold creates, same-frame texture-dirty handling, draw ordering, and present routing on the prior policy
+  - Verification result summary:
+    - `git diff --check`, Docker build/install/package in `3sx-mister-build`, the packaged `build/mister-install/bin/3sx --headless --software-frame-parity-check` run, MiSTer redeploy, `/media/fat/games/3sx/run-3sx.sh --probe-renderer-only`, bounded `launch-osd.sh`, and backend/last-run log inspection all passed; `SF33RD.AFS` was already present and the smoke again ended with `runtime_rc=124` / `exit=143`
+    - accepted captures landed as `stock-soft-c19-control-post` = `14.41 / 7.29 / 6.59 / 0.53 ms` and `stock-soft-c19-super-heavy-post` = `28.23 / 19.48 / 8.20 / 0.54 ms` for `frame/update/render/present`; both remained `300/300` direct-present with `0` upload/fallback frames and `present_readback.mean_ms = 0.0000`
+    - versus `stock-soft-c18-*`, idle control improved by `-8.91%` on frame time and `-17.02%` on update, while `super-heavy` improved by `-5.64%` on frame time and `-7.87%` on update with render effectively flat
+    - the targeted churn collapsed as intended: `texture_creates.mean`, `palette_cache_evictions.mean`, `software_surface_cache_palette_evictions.mean`, and `textures_destroy_queued.mean` all fell to near-zero on both gameplay gates; the heavy-scene `40/300` `texture_cache_misses >= 30` subset improved from `37.44 ms` to `35.75 ms` average update with zero palette evictions left in that spike window
+    - independent review: bounded `codex review --uncommitted` and full-diff `claude -p` attempts both timed out; a final bounded code-only `claude -p` pass returned two findings, both rejected after code inspection because the refresh helpers already reapply the current palette before sampling and `CACHE_DIRTY_REASON_PALETTE_UNLOCK` never routes through the texture-index invalidators
+  - Keep/rollback decision with reason:
+    - keep; the narrow palette-refresh reland removes the remaining palette-eviction churn on both gameplay gates, improves total frame/update time on both keep gates, preserves the direct-present/readback invariants, and stays inside the performance-only scope without changing gameplay behavior
+  - Next best candidate optimization:
+    - return to fresh research on the still-dominant same-frame texture-dirty software-source-surface refresh lane from the new `stock-soft-c19-*` baseline; do not reopen broader lazy SDL-texture deferral until new evidence shows texture-object work is the remaining limiter
+
+- 2026-03-07T03:20:13-0500
+  - Commit hash:
+    - recorded in the loop closure commit
+  - Bottleneck targeted:
+    - the same-frame `UnlockTexture()` cache churn that still dominated `stock-soft-c17-super-heavy-post` update spikes after the prior provenance loop
+  - Change summary:
+    - kept a narrow software-frame-only refresh policy in `src/port/sdl/sdl_game_renderer.c` so same-frame texture-dirty cached SDL textures and cached `ARGB8888` software-source surfaces are marked dirty and refreshed in place on next access instead of being destroyed immediately
+    - left palette dirties, cold creates, destroy paths, direct-present routing, and non-software-frame behavior on the prior recreate policy
+    - preserved the existing fallback by dropping back to destroy-and-recreate whenever the cached object or format cannot be refreshed safely
+  - Verification result summary:
+    - `git diff --check`, Docker build/install/package in `3sx-mister-build`, MiSTer redeploy, `/media/fat/games/3sx/run-3sx.sh --probe-renderer-only`, bounded `launch-osd.sh`, and backend/last-run log inspection all passed; `SF33RD.AFS` was already present and `last-run.log` again ended in `exit=143`
+    - accepted captures landed as `stock-soft-c18-control-post` = `15.82 / 8.79 / 6.49 / 0.54 ms` and `stock-soft-c18-super-heavy-post` = `29.91 / 21.15 / 8.23 / 0.54 ms` for `frame/update/render/present`; both remained `300/300` direct-present with `0` upload/fallback frames and `present_readback.mean_ms = 0.0000`
+    - versus the kept `stock-soft-c15-*` baseline, idle control stayed within the keep guardrail at `+1.87%` frame time while `super-heavy` improved by `-13.01%` frame time and `-17.42%` update time
+    - versus `stock-soft-c17-super-heavy-post`, dirty-texture miss volume stayed essentially flat (`11.69 -> 11.99`) but `texture_creates.mean` fell from `16.47` to `4.38`, `texture_cache_evictions.mean` fell from `12.26` to `0.00`, `software_surface_cache_texture_evictions.mean` fell from `12.26` to `0.00`, and the `40/300` `texture_cache_misses >= 30` frames dropped from `49.79 ms` to `37.44 ms` average update
+    - independent review: one bounded `claude -p` diff review and one bounded `codex review --uncommitted` pass both timed out after `180s` without findings, so no review-driven code changes were applied after manual diff review
+  - Keep/rollback decision with reason:
+    - keep; the narrow refresh reland materially reduced the verified heavy-scene update bottleneck, preserved the direct-present/readback invariants, and kept idle control inside the documented frame-time guardrail without changing gameplay behavior
+  - Next best candidate optimization:
+    - research whether dirty SDL-texture refresh can be deferred entirely on fully software-owned frames before widening scope into palette-dirty refresh or the remaining non-integer residue
+
+- 2026-03-07T02:40:21-0500
+  - Commit hash:
+    - recorded in the loop closure commit
+  - Bottleneck targeted:
+    - determine whether the `stock-soft-c15-super-heavy-post` update spikes come from same-frame dirty texture/palette burst reuse, carried dirty variants, or cold cache creation before relanding another cache-refresh runtime change
+  - Change summary:
+    - added perf-capture-only provenance telemetry in `include/port/sdl/sdl_game_renderer.h`, `src/port/sdl/sdl_game_renderer.c`, and `src/port/sdl/sdl_app.c` for both SDL texture cache misses and software-source-surface cache creates
+    - bumped the perf schema to `14` and exported additive software-surface hit/create plus invalidation counters alongside the new dirty-texture, dirty-palette, carried, and cold buckets
+    - kept gameplay/runtime behavior unchanged outside the existing extended-stats capture path, leaving the verified `stock-soft-c15-*` runtime baseline intact
+  - Verification result summary:
+    - `git diff --check`, Docker build/install/package in `3sx-mister-build`, MiSTer redeploy, `/media/fat/games/3sx/run-3sx.sh --probe-renderer-only`, bounded `launch-osd.sh`, and backend/last-run log inspection all passed; `SF33RD.AFS` was already present and the smoke again ended with `runtime_rc=124` / `exit=143`
+    - accepted captures landed as `stock-soft-c17-control-post` = `15.87 / 8.76 / 6.57 / 0.54 ms` and `stock-soft-c17-super-heavy-post` = `34.70 / 25.88 / 8.27 / 0.54 ms` for `frame/update/render/present`; both remained `300/300` direct-present with `0` upload/fallback frames and `present_readback.mean_ms = 0.0000`
+    - on `stock-soft-c17-super-heavy-post`, mean misses split to `11.69` same-frame dirty texture, `2.88` same-frame dirty palette, `1.89` cold, and effectively zero carried dirty; the `40/300` `texture_cache_misses >= 30` frames were `84.43%` same-frame dirty texture
+    - software-source-surface cache creates mirrored texture misses and provenance `1:1` on every sampled frame in both gameplay captures
+    - independent review: three separate bounded `claude -p` review attempts stalled or timed out without findings, so no review-driven code changes were applied after manual diff review
+  - Keep/rollback decision with reason:
+    - keep; the telemetry-only diff survived Docker/device verification, preserved the direct-present/readback invariants, stayed inside the documented capture-only frame-time guardrail, and identified the real `super-heavy` bottleneck with decision-grade evidence
+  - Next best candidate optimization:
+    - prototype a narrow same-frame in-place refresh path for already-cached variants invalidated by `SDLGameRenderer_UnlockTexture()` on both the SDL texture cache and the software-source-surface cache, while leaving palette-driven and cold creates on the current recreate path
+
+- 2026-03-07T02:01:07-0500
+  - Commit hash:
+    - recorded in the loop closure commit
+  - Bottleneck targeted:
+    - the update-phase texture/palette cache churn that dominated the `stock-soft-c15-super-heavy-post` stalls even when the remaining software-frame generic textured residue was absent
+  - Change summary:
+    - temporarily replaced eager unlock-time cache invalidation in `src/port/sdl/sdl_game_renderer.c` with a generation-based lazy rebuild policy for cached SDL textures and software-frame source surfaces, while keeping `DestroyTexture()` / `DestroyPalette()` conservative
+    - added a tiny follow-up attribution tweak so the trial still reported `texture_cache_evictions` and `palette_cache_evictions` separately during the final on-device rerun
+    - rolled the runtime code fully back after the final `stock-soft-c16-*` keep gate failed, leaving the final tree on the verified `stock-soft-c15-*` runtime baseline and closing the loop docs-only
+  - Verification result summary:
+    - `git diff --check`, Docker build/install/package in `3sx-mister-build`, both MiSTer redeploys, both `/media/fat/games/3sx/run-3sx.sh --probe-renderer-only` runs, and both bounded `launch-osd.sh` smokes all passed; the device stayed on dummy/software + fbdev + native with `runtime_rc=124` and `last-run.log` ending in `exit=143`
+    - the final candidate captures landed as `stock-soft-c16-control-post` = `15.53 / 6.53 / 0.54 ms` and `stock-soft-c16-super-heavy-post` = `34.95 / 26.02 / 8.36 / 0.56 ms`; both remained `300/300` direct-present with `0` upload/fallback frames and `present_readback.mean_ms = 0.0000`
+    - compared with the kept `stock-soft-c15-*` baseline, idle control finished effectively flat on frame time but worse on render/present, while `super-heavy` regressed on frame (`+1.62%`), update (`+1.61%`), render (`+1.42%`), and present (`+5.52%`) and also worsened max frame/update (`70.47 -> 115.05 ms`, `61.08 -> 99.66 ms`)
+    - the cache-churn metrics did not justify the regression: `texture_cache_misses.mean` on `super-heavy` stayed flat at `16.47`, combined `texture_cache_evictions + palette_cache_evictions` only moved from `16.45` to `16.27`, and `textures_destroy_queued.mean` stayed effectively flat (`16.44 -> 16.27`)
+    - independent review: bounded `claude -p` review of the final docs-only diff returned one medium docs-format finding (missing `super-heavy` `update_ms`) and one low audit-trail finding (the still-open review checkbox); both were accepted and fixed, and no other actionable issues were reported
+  - Keep/rollback decision with reason:
+    - rollback; the lazy invalidation runtime experiment did not reduce the real heavy-scene bottleneck enough to survive the gameplay keep gates, and the final verified rerun regressed the representative `super-heavy` scene while leaving the direct-present/readback invariants unchanged
+  - Next best candidate optimization:
+    - add finer-grained churn telemetry that separates which texture/palette dirty bursts are actually reused on the heavy gate before revisiting cache-lifetime work; if that evidence stays weak, fall back to the smaller `256-1023 px` non-integer residue from the kept `stock-soft-c15-*` baseline instead
+
+- 2026-03-07T01:36:20-0500
+  - Commit hash:
+    - `c3e904f2`
+  - Bottleneck targeted:
+    - the `>=1024 px` non-integer textured gameplay spike subset that dominated the remaining software-frame render spikes from the kept `stock-soft-c14-*` baseline
+  - Change summary:
+    - added shared helper `include/port/sdl/software_frame_non_integer.h` and `src/port/sdl/software_frame_non_integer.c`, then routed `src/port/sdl/software_frame_parity.c` through the same lookup raster path the runtime now uses
+    - broadened `src/port/sdl/sdl_game_renderer.c` so only `SOFTWARE_FRAME_FAST_COPY_RESULT_NON_INTEGER` tasks with `render_task_submitted_pixels(task) >= 1024` use the lookup fast path, leaving smaller non-integer work on the generic raster loop unchanged
+    - exposed additive `software_frame_fast_non_integer_tasks/pixels` telemetry in `include/port/sdl/sdl_game_renderer.h` and `src/port/sdl/sdl_app.c`, with perf schema bumped to `13`
+  - Verification result summary:
+    - `git diff --check`, Docker build/install/package in `3sx-mister-build`, and the rebuilt parity self-check inside the container all passed; the parity harness still logged `Software-frame parity check passed: 9 cases`
+    - MiSTer redeploy, `/media/fat/games/3sx/run-3sx.sh --probe-renderer-only`, bounded `launch-osd.sh`, and backend/last-run log inspection all passed; the smoke stayed at the expected bounded timeout with `runtime_rc=124` and `last-run.log` ending in `exit=143`
+    - kept captures landed as `stock-soft-c15-control-post` = `15.53 / 6.48 / 0.52 ms` and `stock-soft-c15-super-heavy-post` = `34.39 / 8.24 / 0.53 ms`; both remained `300/300` direct-present, `0` upload/fallback, with `software_frame_fast_non_integer_pixels.mean = 540.81`, `software_frame_fast_miss_non_integer_ge_1024_pixels.mean = 0.00`, and `software_frame_generic_textured_pixels.mean = 485.57`
+    - independent review: both tool-driven `codex` and `claude` passes stalled again; bounded diff-only `claude` review returned one low telemetry edge-case that was rejected because the caller already exits before the helper on fully off-screen tasks, plus one informational duplicate-work note
+  - Keep/rollback decision with reason:
+    - keep; the narrow reland removed the exact `>=1024 px` spike bucket the research targeted, improved render on both gameplay keep gates, preserved the direct-present/readback invariants, and avoided the prior all-non-integer regression shape
+  - Next best candidate optimization:
+    - only consider a follow-up for the remaining `256-1023 px` non-integer residue from the new `stock-soft-c15-*` baseline; do not spend a loop on the `<256 px` small-only lane right now
+
+- 2026-03-07T01:04:49-0500
+  - Commit hash:
+    - `d26f9aa0`
+  - Bottleneck targeted:
+    - restore the deferred non-integer parity support and size-bucket telemetry on the kept `stock-soft-c12-*` gameplay baseline without relanding another runtime specialization yet
+  - Change summary:
+    - added a cold `--software-frame-parity-check` entry point in `src/main.{c,h}`, `include/port/sdl/sdl_app.h`, `src/port/sdl/sdl_app.c`, `include/port/sdl/sdl_game_renderer.h`, and new helper `src/port/sdl/software_frame_parity.c`
+    - restored perf-capture-only `software_frame_fast_miss_non_integer_ge_{256,1024}_*` plus `software_frame_fast_miss_non_integer_max_pixels` telemetry in `src/port/sdl/sdl_game_renderer.c` and `src/port/sdl/sdl_app.c`
+    - kept fresh `stock-soft-c14-control-post` and `stock-soft-c14-super-heavy-post` captures to confirm the re-landed workload split before the next runtime loop
+  - Verification result summary:
+    - `git diff --check`, Docker build/install/package in `3sx-mister-build`, and packaged/local `build/mister-install/bin/3sx --software-frame-parity-check` all passed; the parity harness logged `Software-frame parity check passed: 9 cases`
+    - MiSTer redeploy through the validated password-auth `expect`/`rsync` wrapper, `/media/fat/games/3sx/run-3sx.sh --probe-renderer-only`, bounded `launch-osd.sh`, and backend/last-run log inspection all passed; the smoke remained the expected bounded timeout with `last-run.log` ending in `exit=143`
+    - kept captures landed as `stock-soft-c14-control-post` = `15.68 / 6.63 / 0.53 ms` and `stock-soft-c14-super-heavy-post` = `34.33 / 8.33 / 0.54 ms`, both still `300/300` direct-present, `0` upload/fallback, `present_readback.mean_ms = 0.0000`, and with size buckets identical to the reverted `stock-soft-c13-*` evidence (`959.33 / 540.81 / 70.61`)
+    - independent review: the primary `codex review --uncommitted` runner stalled again without bounded output; fallback `claude` review returned only non-blocking notes about parity-case bounds, the pre-`loop()` SDL-init assumption, and the intentional schema-version bump
+  - Keep/rollback decision with reason:
+    - keep; the reland restores the missing decision-support telemetry and parity harness, preserved startup/direct-present/device invariants, and the measured perf-capture deltas versus `stock-soft-c12-*` stayed small (`+2.07%` idle frame time, `+1.07%` `super-heavy`) while normal gameplay runtime remains unaffected because the new counters are perf-capture-gated
+  - Next best candidate optimization:
+    - prototype a size-gated non-integer fast path for the large-task subset, starting at `>=256 px` and using the kept parity harness plus `stock-soft-c14-*` buckets to decide whether a narrower `>=1024 px` gate is safer
+
+- 2026-03-07T00:21:34-0500
+  - Commit hash:
+    - recorded in the loop closure commit
+  - Bottleneck targeted:
+    - recover the blocked MiSTer SSH verification path with client-side OpenSSH overrides only so the deferred non-integer telemetry/runtime loop could resume from the kept `stock-soft-c12-*` baseline
+  - Change summary:
+    - re-read the kept `stock-soft-c12-*` gameplay captures and confirmed the remaining runtime target is still the bursty non-integer textured `mtrans` lane, not present/readback or `training`
+    - reproduced the current device blocker with fresh local probes: the host still answered ping and exposed an `OpenSSH_8.6` banner, but every tested SSH path stalled before authentication at `expecting SSH2_MSG_KEX_ECDH_REPLY`
+    - tested the narrow client-side recovery matrix (`curve25519-sha256`, `curve25519-sha256@libssh.org`, `diffie-hellman-group14-sha256`, and `aes128-ctr`) and closed the loop docs-only when none restored MiSTer access
+  - Verification result summary:
+    - `git diff --check` and the unchanged-tree Docker build/install/package gate in `3sx-mister-build` both passed
+    - `ping -c 1 192.168.1.171` passed and the debug SSH probe still reached the remote banner (`OpenSSH_8.6`)
+    - default SSH plus all tested client-side overrides stalled during key exchange before authentication, so MiSTer redeploy/probe/smoke/device recaptures were skipped again for safety
+    - independent review: `codex review --uncommitted` on the final docs-only diff found no discrete correctness issues
+    - no runtime or measurement-support code was kept in this loop; the working tree stayed runtime-clean while the blocked verification state was documented
+  - Keep/rollback decision with reason:
+    - keep docs-only closure; research did not produce a safe, verified path back to device access, so forcing runtime or measurement code would have violated the on-device verification requirement
+  - Next best candidate optimization:
+    - recover MiSTer access through device-side intervention or an alternate transport outside this repo, then retry the deferred parity-and-size-telemetry loop from the kept `stock-soft-c12-*` baseline before any new non-integer runtime reland
+
+- 2026-03-07T00:20:00-0500
+  - Commit hash:
+    - recorded in the loop closure commit
+  - Bottleneck targeted:
+    - add deterministic parity support and size-bucket telemetry for the remaining non-integer textured residue on the kept `stock-soft-c12-*` gameplay baseline without relanding another runtime specialization yet
+  - Change summary:
+    - first added a local-only parity harness plus additive non-integer size telemetry, then used fresh `stock-soft-c13-*` captures to confirm that the workload shape stayed flat while overall gameplay frame time regressed versus `stock-soft-c12-*`
+    - narrowed the suspected regression cause to dormant parity/lookup code placement in `src/port/sdl/sdl_game_renderer.c` and locally refactored that cold code out of the hot renderer translation unit
+    - rolled the runtime diff fully back when the refactored build could no longer be re-verified on MiSTer because the target SSH path stopped completing key exchange
+  - Verification result summary:
+    - `git diff --check`, Docker build/install/package in `3sx-mister-build`, and the packaged local `--software-frame-parity-check` run all passed during the runtime attempt
+    - the first on-device captures landed as `stock-soft-c13-control-post` = `16.54 / 6.96 / 0.60 ms` and `stock-soft-c13-super-heavy-post` = `36.63 / 8.81 / 0.60 ms`; both kept direct-present active on all sampled frames and exposed the new non-integer size buckets, but both regressed total frame time by about `+7.7%` against the kept `stock-soft-c12-*` baseline while the measured non-integer workload stayed materially unchanged
+    - after the local cold-file refactor, MiSTer deploy/probe/smoke/recapture were skipped because the host still answered ping and exposed SSH but every fresh session stalled during key exchange at `expecting SSH2_MSG_KEX_ECDH_REPLY` before authentication
+    - independent review: `codex review --uncommitted` on the final docs-only closure diff found no actionable issues
+  - Keep/rollback decision with reason:
+    - rollback; the measurement-support/runtime diff could not be re-verified on-device after the hot-TU refactor, so keeping it would have left unverified runtime impact in tree
+  - Next best candidate optimization:
+    - restore the MiSTer SSH verification path, then retry the parity-and-size-telemetry loop from the kept `stock-soft-c12-*` baseline before considering any new non-integer runtime reland
+
+- 2026-03-06T23:19:21-0500
+  - Commit hash:
+    - recorded in the loop closure commit
+  - Bottleneck targeted:
+    - remove the persistent exact color-mod `mtrans` residue from the kept `stock-soft-c10-*` gameplay baseline by broadening the exact software-frame fast path instead of leaving those copies on the generic float/floor raster loop
+  - Change summary:
+    - broadened `src/port/sdl/sdl_game_renderer.c` so exact integer color-mod textured copies now stay on the existing exact pointer-stepping path while scaled/non-integer color-mod work still falls back unchanged
+    - accepted the independent review's telemetry finding by exporting `software_frame_fast_exact_color_mod_tasks/pixels` through `include/port/sdl/sdl_game_renderer.h`, `src/port/sdl/sdl_game_renderer.c`, and `src/port/sdl/sdl_app.c`
+    - reran the Docker build/package, MiSTer redeploy, probe/smoke, and both gameplay captures after the telemetry fix before keeping the loop
+  - Verification result summary:
+    - `git diff --check`, Docker build/install/package in `3sx-mister-build`, MiSTer redeploy, `/media/fat/games/3sx/run-3sx.sh --probe-renderer-only`, bounded `launch-osd.sh` smoke, and backend/last-run log inspection all passed before the keep gate and again after the review-driven telemetry fix
+    - accepted captures landed as `stock-soft-c12-control-post` = `15.36 / 6.33 / 0.52 ms` and `stock-soft-c12-super-heavy-post` = `33.97 / 8.02 / 0.52 ms`, both with `software_frame_mode = on`, direct-present on every sampled frame, `0` upload/fallback frames, and `present_readback.mean_ms = 0.0000`
+    - the targeted lane moved completely off the generic path: `software_frame_fast_miss_color_mod.mean` dropped from `10.00 / 10.37` to `0.00 / 0.00`, `software_frame_generic_textured_tasks.mean` dropped from `12.49 / 12.86` to `2.49 / 2.49`, and the new executed-path counters recorded `software_frame_fast_exact_color_mod_tasks.mean = 10.00 / 10.37`
+    - independent review: the default `codex` runner stalled again; fallback `claude` review returned two findings, of which the telemetry gap was accepted and fixed while the parity-harness ask was rejected as over-broad for this exact-copy reland
+  - Keep/rollback decision with reason:
+    - keep; the exact color-mod fast path removed the persistent gameplay floor the loop targeted, improved both tracked gameplay gates, restored explicit executed-path telemetry for the moved work, and preserved the direct-present/readback invariants
+  - Next best candidate optimization:
+    - revisit the remaining non-integer textured residue from the new `stock-soft-c12-*` baseline, but only with a lightweight deterministic parity check before relanding another generic-raster specialization
+
+- 2026-03-06T22:40:15-0500
+  - Commit hash:
+    - recorded in the loop closure commit
+  - Bottleneck targeted:
+    - reduce the remaining software-frame non-integer textured residue on `stock-soft-c10-*` by replacing the generic per-pixel float/divide loop with precomputed nearest-sample lookup tables
+  - Change summary:
+    - temporarily added a lookup-driven non-integer textured raster branch in `src/port/sdl/sdl_game_renderer.c`
+    - verified the candidate through Docker build/package, MiSTer redeploy, renderer probe, bounded `launch-osd.sh` smoke, and gameplay captures before deciding the keep gate
+    - rolled the runtime change fully back and recorded the rejection in the active checklist plus the living "Do Not Retry Now" list
+  - Verification result summary:
+    - `git diff --check`, Docker build/install/package in `3sx-mister-build`, MiSTer redeploy, `/media/fat/games/3sx/run-3sx.sh --probe-renderer-only`, bounded `launch-osd.sh` smoke, and backend/last-run log inspection all passed before the keep gate
+    - candidate captures landed as `stock-soft-c11-control-post` = `16.31 / 7.05 / 0.55 ms` and `stock-soft-c11-super-heavy-post` = `35.47 / 8.75 / 0.55 ms`, both still `software_frame_mode = on`, direct-present on every sampled frame, `0` upload/fallback frames, and `present_readback.mean_ms = 0.0000`
+    - the affected `software_frame_fast_miss_non_integer > 0` frames improved modestly (`render` `8.85 -> 7.89 ms` on idle control and `10.18 -> 9.53 ms` on `super-heavy`), but the overall gameplay gates regressed (`+2.73%` idle frame time and `+3.13%` `super-heavy` frame time) while max frame/render time also rose
+    - independent `debate-code-review` with a fresh `codex` reviewer returned two `modify` findings: stale telemetry semantics for a kept lookup branch and missing deterministic parity verification for any future reland
+  - Keep/rollback decision with reason:
+    - rollback; the lookup-only branch improved the narrow non-integer subwindow but failed the real gameplay keep gates and would need extra telemetry/parity work before any future reland
+  - Next best candidate optimization:
+    - return to fresh research on the persistent color-mod textured residue in `stock-soft-c10-*`; only revisit non-integer lookup work after adding executed-path telemetry and a lightweight parity check
+
+- 2026-03-06T22:26:11-0500
+  - Commit hash:
+    - recorded in the loop closure commit
+  - Bottleneck targeted:
+    - reduce the transition-heavy `training` hitch that remained after the scaled-copy loop by specializing the software solid-fill raster for constant-color rects instead of running the generic per-pixel blend helper on every solid pixel
+  - Change summary:
+    - kept the file scope narrow to `src/port/sdl/sdl_game_renderer.c`
+    - added a direct ARGB span fill for opaque solid rects and a constant-color source-over helper that hoists solid alpha/color math out of the inner pixel loop for translucent fills while preserving the existing blend semantics
+  - Verification result summary:
+    - `git diff --check`, Docker build/install/package in `3sx-mister-build`, MiSTer redeploy through the validated SSH compatibility wrapper, and `/media/fat/games/3sx/run-3sx.sh --probe-renderer-only` all passed before the keep gate
+    - the fresh automated review attempt via `codex review --uncommitted` stalled again after repo reads and was terminated, so the kept diff fell back to manual review; that review found no blocker because the new helpers only specialize the existing solid source-over math and do not alter textured paths or present routing
+    - post-review captures landed as `stock-soft-c10-training-post` = `3.78 / 1.57 / 0.57 ms`, `stock-soft-c10-control-post` = `15.88 / 6.86 / 0.52 ms` on `stage_id=11`, and `stock-soft-c10-super-heavy-post` = `34.40 / 8.39 / 0.53 ms` on `stage_id=19`
+    - all accepted `stock-soft-c10-*` captures recorded `software_frame_mode = on`, direct-present on every sampled frame, `0` upload/fallback frames, and `present_readback.mean_ms = 0.0000`
+    - within `training`, the persistent `86/600` solid-fill transition frames dropped from `12.34 ms` mean render and `21.34 ms` max render on `stock-soft-c9-training-post` to `4.32 ms` mean render and `15.52 ms` max render on `stock-soft-c10-training-post`
+  - Keep/rollback decision with reason:
+    - keep; the solid-fill specialization materially improved the target transition hitch and also reduced both tracked gameplay gates while leaving the direct-present/readback invariants unchanged
+  - Review result summary:
+    - automated `codex review --uncommitted` stalled again; fallback manual diff review found no correctness or scope blocker in the kept solid-fill specialization
+  - Next best candidate optimization:
+    - characterize and reduce the remaining non-integer textured residue on the `stock-soft-c10-*` gameplay baseline
+
+- 2026-03-06T22:07:16-0500
+  - Commit hash:
+    - recorded in the loop closure commit
+  - Bottleneck targeted:
+    - add exact-fast-path residue telemetry, then cut the dominant remaining software-frame raster cost by fast-pathing integer-scaled textured copies instead of leaving them on the generic nearest-sample loop
+  - Change summary:
+    - extended `include/port/sdl/sdl_game_renderer.h`, `src/port/sdl/sdl_game_renderer.c`, and `src/port/sdl/sdl_app.c` with additive telemetry for software-frame exact/scaled fast hits, generic textured residue, and miss reasons so the remaining headroom could be measured directly from on-device captures
+    - refactored the exact-copy helper into a shared fast-copy classifier/plan builder, then broadened the fast path in `src/port/sdl/sdl_game_renderer.c` so integer-aligned scaled textured copies use lookup-table-driven nearest sampling instead of the generic per-pixel float path
+  - Verification result summary:
+    - `git diff --check`, Docker build/install/package in `3sx-mister-build`, `tools/mister/package.sh build/mister-install build/mister-package`, MiSTer redeploy through the validated SSH compatibility wrapper, and `/media/fat/games/3sx/run-3sx.sh --probe-renderer-only` all passed before the keep gate
+    - telemetry captures landed first as `stock-soft-c8-control-post` = `20.47 / 9.96 / 0.64 ms`, `stock-soft-c8-super-heavy-post` = `39.94 / 11.44 / 0.58 ms`, and `stock-soft-c8-training-post` = `7.68 / 5.09 / 0.63 ms`; those showed the `training` path was dominated by `software_frame_fast_miss_scaled` while control and `super-heavy` still carried a smaller fixed mix of `software_frame_fast_miss_color_mod` and `software_frame_fast_miss_non_integer`
+    - the fresh automated review attempt via `codex review --uncommitted` stalled again after repo reads and was terminated, so the kept diff fell back to manual review; that review found no blocker because the shared classifier only broadens integer-scaled copies and leaves every non-fast case on the existing generic raster path
+    - post-review captures landed as `stock-soft-c9-control-post` = `17.62 / 8.42 / 0.54 ms` on `stage_id=11`, `stock-soft-c9-super-heavy-post` = `36.61 / 10.15 / 0.53 ms` on `stage_id=19`, and `stock-soft-c9-training-post` = `4.94 / 2.72 / 0.59 ms`
+    - all accepted `stock-soft-c9-*` captures recorded `software_frame_mode = on`, direct-present on every sampled frame, `0` upload/fallback frames, and `present_readback.mean_ms = 0.0000`; the new telemetry also showed `software_frame_fast_miss_scaled = 0` on all three accepted captures
+  - Keep/rollback decision with reason:
+    - keep; the telemetry identified a dominant scaled-texture residue in the transition-heavy path, the broadened fast path removed that residue completely, and all tracked scenes improved while the direct-present/readback invariants remained unchanged
+  - Review result summary:
+    - automated `codex review --uncommitted` stalled again; fallback manual diff review found no correctness or scope blocker in the kept telemetry plus integer-scaled fast-path change
+  - Next best candidate optimization:
+    - optimize software solid fills for the transition-heavy `training` path first, then revisit the smaller non-integer textured residue that remains on control and `super-heavy`
+
+- 2026-03-06T18:28:43-0500
+  - Commit hash:
+    - recorded in the loop closure commit
+  - Bottleneck targeted:
+    - cut the remaining software-frame raster cost on the Loop 6 baseline by extending exact integer fast copies to framebuffer-clipped textured work
+  - Change summary:
+    - broadened `try_fast_copy_exact_textured_task_to_software_frame(...)` in `src/port/sdl/sdl_game_renderer.c` so exact integer copies now remain on the fast path even when the destination rectangle is clipped by the framebuffer edges
+    - kept the helper narrow by adding only clipped destination bounds plus source-row/source-column start offsets derived from the visible destination region; scaled, modulated, non-integer, and otherwise unsupported shapes still stay on the generic raster path
+  - Verification result summary:
+    - `git diff --check`, Docker build/install/package in `3sx-mister-build`, MiSTer redeploy through the validated SSH compatibility wrapper, and `/media/fat/games/3sx/run-3sx.sh --probe-renderer-only` all passed before the on-device keep gate
+    - pre-review captures landed as `stock-soft-c7-control-pre` = `17.97 / 8.86 / 0.54 ms` and `stock-soft-c7-super-heavy-pre` = `37.02 / 10.83 / 0.53 ms`
+    - the fresh automated review attempt via `codex review --uncommitted` stalled during repo traversal again and was terminated after repeated repo reads, so the kept diff fell back to manual review; that review found no blocker because the helper still returns to the generic path for unsupported shapes and only changes source offsets for the already-exact clipped case
+    - post-review captures landed as `stock-soft-c7-control-post` = `17.98 / 8.92 / 0.53 ms` on `stage_id=11` and `stock-soft-c7-super-heavy-post` = `37.06 / 10.67 / 0.55 ms` on `stage_id=19`
+    - both accepted post captures recorded `software_frame_mode = on`, `software_frame_direct_present_frames.count = 300`, `software_frame_upload_frames.count = 0`, `software_frame_fallback_frames.count = 0`, and `present_readback.mean_ms = 0.0000`
+  - Keep/rollback decision with reason:
+    - keep; clipped exact-copy support delivered another large render-time reduction while leaving the direct-present/readback invariants unchanged
+  - Review result summary:
+    - automated `codex review --uncommitted` stalled again; fallback manual diff review found no correctness or scope blocker in the kept clipped-copy broadening
+  - Next best candidate optimization:
+    - add fast-path hit telemetry before broadening again so the next loop is driven by measured remaining coverage instead of guesswork
+
+- 2026-03-06T18:23:29-0500
+  - Commit hash:
+    - recorded in the loop closure commit
+  - Bottleneck targeted:
+    - cut the remaining software-frame raster cost on the Loop 5 baseline by extending exact integer 1:1 fast copies to flipped textured work
+  - Change summary:
+    - broadened `try_fast_copy_exact_textured_task_to_software_frame(...)` in `src/port/sdl/sdl_game_renderer.c` so the exact-copy helper now accepts `SDL_FLIP_HORIZONTAL`, `SDL_FLIP_VERTICAL`, and `SDL_FLIP_HORIZONTAL_AND_VERTICAL` in addition to `SDL_FLIP_NONE`
+    - kept the helper narrow by turning flip mode into row/column pointer steps while leaving clipped, modulated, scaled, non-integer, and otherwise unsupported shapes on the generic raster path unchanged
+  - Verification result summary:
+    - `git diff --check`, Docker build/install/package in `3sx-mister-build`, MiSTer redeploy through the validated SSH compatibility wrapper, and `/media/fat/games/3sx/run-3sx.sh --probe-renderer-only` all passed before the on-device keep gate
+    - pre-review captures landed as `stock-soft-c6-control-pre` = `23.18 / 14.15 / 0.52 ms` and `stock-soft-c6-super-heavy-pre` = `42.61 / 16.50 / 0.54 ms`
+    - the fresh automated review attempt via `codex review --uncommitted` stalled during repo traversal again and was terminated after repeated repo reads, so the kept diff fell back to manual review; that review found no blocker because the helper still rejects unsupported flip values and the generic path still owns every clipped/modulated/non-integer case
+    - post-review captures landed as `stock-soft-c6-control-post` = `23.14 / 14.03 / 0.53 ms` on `stage_id=11` and `stock-soft-c6-super-heavy-post` = `42.06 / 16.26 / 0.53 ms` on `stage_id=19`
+    - both accepted post captures recorded `software_frame_mode = on`, `software_frame_direct_present_frames.count = 300`, `software_frame_upload_frames.count = 0`, `software_frame_fallback_frames.count = 0`, and `present_readback.mean_ms = 0.0000`
+  - Keep/rollback decision with reason:
+    - keep; the broadened helper stayed behavior-preserving and improved both tracked gates while leaving the direct-present/readback invariants unchanged
+  - Review result summary:
+    - automated `codex review --uncommitted` stalled again; fallback manual diff review found no correctness or scope blocker in the kept flipped-copy broadening
+  - Next best candidate optimization:
+    - extend the exact-copy fast path to clipped integer copies only if the implementation can stay as narrow and independently revertable as the last two loops
+
+- 2026-03-06T18:14:26-0500
+  - Commit hash:
+    - recorded in the loop closure commit
+  - Bottleneck targeted:
+    - cut software-frame raster cost on the kept default-on baseline by fast-pathing exact integer 1:1 textured copies instead of always using the generic nearest-sample loop
+  - Change summary:
+    - added `try_fast_copy_exact_textured_task_to_software_frame(...)` in `src/port/sdl/sdl_game_renderer.c` and called it from `raster_textured_task_to_software_frame(...)` before the generic path
+    - kept the helper intentionally narrow: only exact integer-aligned, in-bounds, unmodulated, unflipped 1:1 copies use it; clipped, flipped, modulated, scaled, and non-integer cases still fall through to the existing generic raster path unchanged
+  - Verification result summary:
+    - `git diff --check`, Docker build/install/package in `3sx-mister-build`, and `tools/mister/package.sh build/mister-install build/mister-package` all passed before the on-device gate
+    - MiSTer redeploy through the validated SSH compatibility wrapper and `/media/fat/games/3sx/run-3sx.sh --probe-renderer-only` both passed with probe output still reporting dummy/software + fbdev + native and `Software frame mode: on`
+    - pre-review captures landed as `stock-soft-c5-control-pre` = `25.11 / 15.96 / 0.53 ms` and `stock-soft-c5-super-heavy-pre` = `44.36 / 18.35 / 0.52 ms`
+    - the fresh automated review attempt via `codex review --uncommitted` stalled during repo traversal again, so the kept diff fell back to manual review; that review found no blocker because the helper is strictly gated and the generic path still owns every clipped/flipped/modulated/non-integer case
+    - post-review captures landed as `stock-soft-c5-control-post` = `24.88 / 15.85 / 0.53 ms` on `stage_id=11` and `stock-soft-c5-super-heavy-post` = `45.02 / 18.41 / 0.56 ms` on `stage_id=19`
+    - both accepted post captures recorded `software_frame_mode = on`, `software_frame_direct_present_frames.count = 300`, `software_frame_upload_frames.count = 0`, `software_frame_fallback_frames.count = 0`, and `present_readback.mean_ms = 0.0000`
+  - Keep/rollback decision with reason:
+    - keep; render cost dropped materially while the present path stayed fully direct-present with zero readback or fallback regressions on the sampled gates
+  - Review result summary:
+    - automated `codex review --uncommitted` stalled again; fallback manual diff review found no correctness or scope blocker in the kept fast-path change
+  - Next best candidate optimization:
+    - extend the exact-copy fast path to flipped integer copies only if the implementation can stay as narrow and independently revertable as this loop
+
+- 2026-03-06T18:03:32-0500
+  - Commit hash:
+    - recorded in the loop closure commit
+  - Bottleneck targeted:
+    - decide whether the accepted direct-present software-frame path should become the MiSTer default or remain opt-in after a no-override rerun on the frozen gameplay matrix
+  - Change summary:
+    - promoted the MiSTer-only default in `src/port/config/config.c` from `software-frame-mode = off` to `on` while keeping non-MiSTer builds default-off
+    - updated `docs/config.md` so the setting now describes the kept software-owned gameplay frame path and the platform-specific defaults instead of the earlier dormant/experimental framing
+    - kept the runtime code from Chunk 3 unchanged and treated this loop as a pure default-decision gate plus docs closeout
+  - Verification result summary:
+    - Docker build/install/package in `3sx-mister-build` and `tools/mister/package.sh build/mister-install build/mister-package` both passed after the default flip
+    - MiSTer redeploy, `/media/fat/games/3sx/run-3sx.sh --probe-renderer-only`, and bounded `launch-osd.sh` smoke all passed with backend probe output still reporting dummy/software + fbdev + native at `1280x720` and `Software frame mode: on`
+    - required no-override reruns landed cleanly: `stock-soft-c4-control-default` = `36.88 / 27.94 / 0.52 ms` on `stage_id=11` and `stock-soft-c4-super-heavy-default` = `61.62 / 35.59 / 0.53 ms` on `stage_id=19`
+    - both no-override captures recorded `metadata.software_frame_mode = on`, `software_frame_active_frames.count = 300`, `software_frame_direct_present_frames.count = 300`, `software_frame_upload_frames.count = 0`, `software_frame_fallback_frames.count = 0`, and `present_readback.mean_ms = 0.0000`
+    - compared with the accepted Chunk 3 `on` captures, the no-override default-on reruns were slightly faster rather than worse: `-0.07%` on idle control and `-0.94%` on `super-heavy`
+  - Keep/rollback decision with reason:
+    - keep and promote default-on; the accepted direct-present path survives the startup smoke and the no-override gameplay reruns without regression, so leaving it opt-in would no longer match the measured MiSTer default behavior
+  - Review result summary:
+    - manual diff review of the config/docs-only change plus successful local build and on-device no-override verification found no blocker
+  - Next best candidate optimization:
+    - no immediate follow-up remains inside this checklist; future gameplay work should start from a fresh plan against the kept default-on software-frame baseline
+
+- 2026-03-06T17:50:10-0500
+  - Commit hash:
+    - recorded in the loop closure commit
+  - Bottleneck targeted:
+    - eliminate the remaining `SDL_RenderReadPixels()` present cost by presenting the software-owned `384x224` gameplay frame directly through fbdev on stock MiSTer when SDL composition is not required
+  - Change summary:
+    - extended `include/port/sdl/sdl_game_renderer.h`, `src/port/sdl/sdl_game_renderer.c`, and `src/port/sdl/sdl_app.c` with software-frame direct-present mode plumbing, deferred upload-to-`cps3_canvas` only when composition or screenshots still require it, and perf schema `9` counters for `software_frame_active_frames` and `software_frame_direct_present_frames`
+    - routed eligible software-owned frames directly to `FBDevPresenter_PresentSurface(...)`, kept upload fallback for screenshot/composition/current-target fallback cases, and recorded per-frame direct-present state in perf JSON and backend logs
+    - the first Chunk 3 attempt stayed upload-only because the current debug-only `force_full_fbdev_readback` guard also suppressed software-frame direct present; the accepted follow-up fix removed that suppression for the software-frame path, and only the corrected reruns count as the Chunk 3 acceptance set
+  - Verification result summary:
+    - `git diff --check`, Docker build/install/package in `3sx-mister-build`, and `tools/mister/package.sh build/mister-install build/mister-package` all passed before the on-device gate
+    - MiSTer redeploy, `/media/fat/games/3sx/run-3sx.sh --probe-renderer-only`, and bounded `launch-osd.sh` smoke all passed; backend logs still reported dummy/software + fbdev + native at `1280x720`, and `last-run.log` again ended in `exit=143`
+    - corrected accepted matrix: `stock-soft-c3-control-off` = `60.47 / 1.44 / 55.15 ms`, `stock-soft-c3-control-on` = `36.91 / 27.91 / 0.52 ms`, `stock-soft-c3-effect-heavy-on` = `59.26 / 35.30 / 0.53 ms`, and `stock-soft-c3-super-heavy-on` = `62.21 / 35.99 / 0.53 ms`
+    - all corrected `on` captures reported `software_frame_active_frames.count = 300`, `software_frame_direct_present_frames.count = 300`, `software_frame_upload_frames.count = 0`, `software_frame_fallback_frames.count = 0`, `present_readback.mean_ms = 0.0000`, and `software_frame_reason_geometry.mean = 0`
+    - additive invariants passed on the corrected `on` captures, including `render_task_count == software_frame_candidate_tasks + software_frame_fallback_tasks` and per-reason totals matching `software_frame_fallback_tasks`
+  - Keep/rollback decision with reason:
+    - keep; direct software-frame present removes readback entirely on the accepted scenes and improves total frame time by `38.96%` on idle control, `21.81%` on `effect-heavy`, and `18.09%` on `super-heavy`, with zero validated fallback in the accepted matrix
+  - Review result summary:
+    - no fresh automated review artifact was produced; fallback manual review of the kept runtime diff plus successful local build and on-device verification found no blocker
+  - Next best candidate optimization:
+    - run Chunk 4 and decide whether the software-frame path should become the MiSTer default or remain opt-in after no-override promotion checks
+
+- 2026-03-06T17:34:16-0500
+  - Commit hash:
+    - recorded in the loop closure commit
+  - Bottleneck targeted:
+    - move the frozen idle control onto a 3SX-owned software `384x224` gameplay canvas while preserving the existing stock-MiSTer upload/composition path and exposing additive fallback counters before direct fbdev present work starts
+  - Change summary:
+    - extended render-task bookkeeping in `include/port/sdl/sdl_game_renderer.h` and `src/port/sdl/sdl_game_renderer.c` so each task carries its texture binding and a cached ARGB software source surface, then added software-surface cache invalidation alongside the existing SDL texture cache invalidation paths
+    - added whole-frame software raster and upload plumbing in `src/port/sdl/sdl_game_renderer.c`: a `384x224` ARGB software frame surface, clipped/flipped textured-rect raster, resolved solid-fill raster, whole-frame eligibility accounting, and upload of software-owned frames back into `cps3_canvas` when direct fbdev present is not active yet
+    - surfaced the new software-frame counters in `src/port/sdl/sdl_app.c` as perf schema `8` metrics and per-frame samples for `software_frame_candidate_*`, `software_frame_fallback_*`, and the `alpha`, `color_mod`, `geometry`, and `solid` reason buckets
+  - Verification result summary:
+    - `git diff --check`, Docker build/install/package in `3sx-mister-build`, and `tools/mister/package.sh build/mister-install build/mister-package` all passed before the on-device gate
+    - a first macOS tar deploy was usable but left `._*` AppleDouble files on MiSTer; a clean `rsync --delete` redeploy removed those leftovers while preserving `resources/SF33RD.AFS`
+    - `/media/fat/games/3sx/run-3sx.sh --probe-renderer-only` and bounded `launch-osd.sh` smoke both passed after redeploy; backend logs still reported dummy/software + fbdev + native at `1280x720`, and `last-run.log` again ended in `exit=143`
+    - targeted mode-on control capture `stock-soft-c2-control-on` landed cleanly at `47.06 / 35.49 / 2.62 ms` with `present_readback=2.02 ms`, `software_frame_mode = on`, `stage_id = 11`, `software_frame_owned_frames.count = 120`, `software_frame_upload_frames.count = 120`, `software_frame_fallback_frames.count = 0`, `software_frame_candidate_tasks.mean = 319.48`, and every fallback/reason metric pinned to zero
+    - explicit additive `jq` invariants passed across the full sample array: every frame satisfied `render_task_count == software_frame_candidate_tasks + software_frame_fallback_tasks`, and the sum of the per-reason counters matched `software_frame_fallback_tasks`
+  - Keep/rollback decision with reason:
+    - keep; the control path now stays fully software-owned through raster and upload with no blank-screen regression, the fallback accounting is decision-grade, and the upload-only control already cuts total frame time sharply enough to justify pushing on to direct present instead of reverting
+  - Review result summary:
+    - attempted a fresh `codex exec review --uncommitted` pass, but the worker never returned a findings summary after prolonged repo traversal and did not emit a review file
+    - fallback manual diff review of the kept files found no blocking correctness issue after the successful local build and on-device capture; the next runtime loop still needs a fresh review pass before it closes
+  - Next best candidate optimization:
+    - move to Chunk 3 and route fully software-owned frames directly to fbdev, then rerun `idle-control`, `effect-heavy`, and `super-heavy` to decide whether the software-frame path is a keep or a rollback
+
+- 2026-03-06T15:50:06-0500
+  - Commit hash:
+    - recorded in the loop closure commit
+  - Bottleneck targeted:
+    - establish a new default-off software game-frame execution stream after the historical narrow hybrid plan closed, including deterministic MiSTer mode overrides and enough dormant runtime state to prove the mode toggles cleanly on device without changing default behavior
+  - Change summary:
+    - created the new canonical checklist `artifacts/mister-port/stock-image-software-frame-loop-series/todo.md` and moved the active stock-image stream onto the software-frame plan instead of reopening the closed hybrid checklist
+    - added `software-frame-mode` config plumbing in `src/port/config/config.{h,c}` and documented it in `docs/config.md`
+    - added a MiSTer perf-sampler `--software-frame-mode off|on` override that temporarily rewrites `/media/fat/games/3sx/config`, restores the previous config after capture, and injects `metadata.software_frame_mode` into the saved perf JSON
+    - added dormant software-frame state and metrics in `include/port/sdl/sdl_game_renderer.h`, `src/port/sdl/sdl_game_renderer.c`, `src/port/sdl/sdl_app.c`, and `src/port/sdl/fbdev_presenter.{h,c}`, including a future-use direct-surface fbdev present entry point and perf schema `7` counters for `software_frame_mode_enabled`, `software_frame_surface_ready`, `software_frame_owned_frames`, `software_frame_upload_frames`, and `software_frame_fallback_frames`
+  - Verification result summary:
+    - `bash -n tools/mister/perf-sampler.sh`, Docker build/install/package in `3sx-mister-build`, and `tools/mister/package.sh build/mister-install build/mister-package` all passed
+    - MiSTer deploy, `/media/fat/games/3sx/run-3sx.sh --probe-renderer-only`, and bounded `launch-osd.sh` smoke all passed; backend logs reported dummy/software + fbdev + native at `1280x720`, `Software frame mode: off`, and `last-run.log` ended in `exit=143`
+    - targeted on-device captures landed cleanly: `stock-soft-c1-control-off` = `64.29 / 1.57 / 58.46 ms` and `stock-soft-c1-control-on` = `64.52 / 1.60 / 58.46 ms`
+    - the `on` capture metadata recorded `software_frame_mode = on`, and the new dormant-state metrics matched the intended Chunk 1 scaffold signature: `software_frame_mode_enabled.count = 120`, `software_frame_surface_ready.count = 120`, `software_frame_owned_frames.count = 0`, `software_frame_upload_frames.count = 0`, and `software_frame_fallback_frames.count = 120`
+  - Keep/rollback decision with reason:
+    - keep; the default-off path stayed within noise of the accepted idle baseline, the explicit on/off mode override now works on device, and the new scaffold exposes the exact state transition evidence needed before real software raster work starts
+  - Review result summary:
+    - manual post-fix diff review found no additional correctness or scope issues in the kept Chunk 1 scaffold
+  - Next best candidate optimization:
+    - move to Chunk 2 and put the dominant clipped/flipped opaque textured-rect workload onto the software-owned `384x224` canvas while keeping the whole-frame fallback path intact
+
+- 2026-03-06T14:30:09-0500
+  - Commit hash:
+    - recorded in the loop closure commit
+  - Bottleneck targeted:
+    - whether a first-cut stock-image hybrid compositor is justified at all, by adding submit-path-accurate eligibility telemetry on the frozen `idle-control`, `stage-heavy`, `effect-heavy`, and `super-heavy` scene matrix without changing the runtime path
+  - Change summary:
+    - added Chunk 3 telemetry-only renderer accounting for `hybrid_candidate_*`, `hybrid_fallback_*`, and per-reason fallback counters in `include/port/sdl/sdl_game_renderer.h`, `src/port/sdl/sdl_game_renderer.c`, and `src/port/sdl/sdl_app.c`, then surfaced it in perf schema `6` summary JSON, per-frame samples, and backend perf log lines
+    - defined the first-cut subset as submitted textured-rect work that stays fully inside the native `384x224` frame, uses default opaque modulation, and does not request flip; counted submitted pixel area alongside task counts and classified unsupported work by one primary reason in priority order `solid -> geometry -> clip -> alpha -> color_mod -> flip`
+    - accepted the fresh `codex` review finding that the first implementation still mixed queue-time and submit-time truth sources, moved hybrid accounting so every task is classified exactly once from the final submit path, and tightened Chunk 3 verification with additive `jq` invariants on all four post-fix captures
+  - Verification result summary:
+    - Docker build/install/package succeeded three times in `3sx-mister-build`; the final MiSTer deploy, `/media/fat/games/3sx/run-3sx.sh --probe-renderer-only`, and bounded `launch-osd.sh` smoke run all passed with dummy/software + fbdev + native at `1280x720`, `runtime_rc=124`, and `last-run.log` ending in `exit=143`
+    - post-fix captures landed cleanly across the full frozen matrix with additive invariant checks passing on every sample array: `stock-arch-c3-control-postfix` = `61.47 / 1.44 / 56.09 ms`, `stock-arch-c3-stage-heavy-postfix` = `74.33 / 1.87 / 64.21 ms`, `stock-arch-c3-effect-heavy-postfix` = `76.45 / 1.90 / 66.18 ms`, `stock-arch-c3-super-heavy-postfix` = `76.00 / 1.90 / 65.43 ms`
+    - the two slowest scenes stayed `effect-heavy` and `super-heavy`, and the first-cut subset only covered `65.64% / 56.86%` and `66.85% / 58.19%` task/pixel share there; `flip` was the clearly dominant extra fallback reason at `68.42` and `67.72` tasks per frame versus `38.30` and `37.96` clip, `~10` alpha, `0` geometry, and `8` solid
+    - geometry recovery and rect-submit fallback remained unexercised on the frozen matrix (`textured_geometry_tasks = textured_geometry_rect_recovered_tasks = textured_geometry_fallback_tasks = hybrid_reason_geometry = 0` across the final captures), so the accepted invariants now protect the counting logic while that edge path stays outside this chunk's fixed scene set
+  - Keep/rollback decision with reason:
+    - keep the telemetry/docs change and close Chunk 3 as a verified stop/go no-go commit; the measurement is now correct and decision-grade, but the narrow first-cut subset misses the `70% tasks / 80% pixels` coverage threshold badly enough that forcing Chunk 4 runtime work would not match the current stock-image-only evidence
+  - Review result summary:
+    - fresh `codex` review produced two findings and the debate round agreed with both dispositions: `keep` on the submit-path accounting bug and `modify` on the weak verification gate
+    - accepted fix: remove queue-time hybrid accounting and classify exactly once from the final submit form inside `submit_render_tasks()`
+    - accepted checklist/docs fix: add additive invariant checks on the four frozen captures and record that geometry recovery stayed zero on this matrix instead of broadening Chunk 3 with a bespoke edge-path fixture
+  - Next best candidate optimization:
+    - do not start Chunk 4 under the current plan; if Phase B is ever reopened, begin from a fresh plan that explicitly includes `flip` in the first supported subset or otherwise changes the stock-image coverage evidence materially
+
+- 2026-03-06T13:46:08-0500
+  - Commit hash:
+    - recorded in the loop closure commit
+  - Bottleneck targeted:
+    - deterministic non-idle stock-image scene coverage beyond the default idle control and the new stage-only anchor, specifically by adding named `effect-heavy` and `super-heavy` presets on the existing test runner without touching gameplay logic
+  - Change summary:
+    - chose shape `B` after repo-first inspection: kept the work on the current test runner instead of reopening the deeper replay/demo path, because the replay machinery is coupled to `Replay_w`, `Demo_Flag`, `Play_Mode`, and replay/menu transitions while the current harness already owns deterministic versus entry and direct pad injection
+    - added dormant `--test-scene-preset` plumbing in `src/main.c`, `src/main.h`, `src/test/test_runner.c`, and `tools/mister/perf-sampler.sh`, including preset metadata for `scene`, `test_scene_preset`, `stage_id`, `p1_character`, `p2_character`, `p1_super_art`, and `p2_super_art`
+    - kept `effect-heavy` on `stage 19 / Ryu-Ken / SA0-0` with a narrow projectile script, then narrowed `super-heavy` to `stage 19 / Ryu-Ryu / SA0-0` plus a more deliberate mirrored double-quarter-circle script after the first `Ryu/Ken` attempt landed too close to the effect-heavy result to trust as a distinct final gate
+  - Verification result summary:
+    - Docker build/install/package succeeded twice in `3sx-mister-build`; both MiSTer deploy passes, `/media/fat/games/3sx/run-3sx.sh --probe-renderer-only`, and bounded `launch-osd.sh` smoke runs passed with dummy/software + fbdev + native at `1280x720`, `runtime_rc=124`, and `last-run.log` ending in `exit=143`
+    - post-fix default control `stock-arch-c2-control-postfix` stayed on `stage_id=11` at `60.27 / 1.41 / 54.97 ms` frame/render/present with `present_readback=54.36 ms`, which keeps the no-override idle gate within the accepted baseline shape
+    - accepted `effect-heavy` `stock-arch-c2-effect-heavy` resolved to preset `effect-heavy` on `stage_id=19`, `Ryu/Ken`, `SA0/0` at `75.79 / 1.81 / 65.74 ms` with `present_readback=65.11 ms`, `mtrans_tasks.mean=180.86`, and `ppg_tasks.mean=174.11`
+    - accepted `super-heavy` `stock-arch-c2-super-heavy-postfix` resolved to preset `super-heavy` on `stage_id=19`, `Ryu/Ryu`, `SA0/0` at `75.95 / 1.89 / 65.27 ms` with `present_readback=64.65 ms`, `mtrans_tasks.mean=190.01`, and `ppg_tasks.mean=175.57`
+    - the frozen scene ranking is now `super-heavy` (`75.95 ms`) > `effect-heavy` (`75.79 ms`) > Chunk 1 `stage-heavy` (`73.52 ms`) > idle control (`60.27 ms`) on the kept stock-image matrix
+    - inference from repo-local evidence: the final `super-heavy` label is based on the fixed mirrored double-quarter-circle script plus the resulting higher `mtrans` workload on the accepted `Ryu/Ryu` capture; move-execution is not directly instrumented in the current perf schema
+  - Keep/rollback decision with reason:
+    - keep; the preset path stays dormant unless `--test-scene-preset` is explicitly supplied, the default idle control remained stable after the post-fix recapture, and the stock-image matrix now has deterministic non-idle heavy scenes without reopening the riskier replay/demo path
+  - Review result summary:
+    - attempted the fresh second-opinion gate through `debate-code-review`; the first `codex` reviewer run never emitted a findings artifact after more than eight minutes of live repo traversal, so its raw `/tmp/3sx-c2-review.k1MMwA` materials were preserved and the run was abandoned
+    - fallback `claude` reviewer failed immediately with the exact quota error `You've hit your limit · resets 3pm (America/New_York)`
+    - manual post-fix diff review found no additional correctness, regression, or scope findings in the kept harness/metadata change set
+  - Next best candidate optimization:
+    - move to Chunk 3 and add telemetry-only hybrid eligibility counters across the frozen four-scene stock-image matrix before any runtime compositor work
+
+- 2026-03-06T12:48:35-0500
+  - Commit hash:
+    - recorded in the loop closure commit
+  - Bottleneck targeted:
+    - deterministic stage selection on the default MiSTer `gameplay-idle` harness so the stock-image architecture series can rank a real `stage-heavy` gate instead of only the default random-stage idle control
+  - Change summary:
+    - finished the Chunk 1 `--test-stage` plumbing in `src/main.c`, `src/main.h`, `src/test/test_runner.c`, and `tools/mister/perf-sampler.sh`, including perf metadata that records both the requested override and the actual `bg_w.stage`
+    - verified that pinning `VS_Stage` alone was insufficient, then kept the added transition-stage handoff override that forces `Battle_Country` / `bg_w.stage` when the default select flow does not land on the requested stage
+    - accepted the fresh-review finding that the first transition helper shape could redundantly requeue the same background load, narrowed that helper so it only calls `Push_LDREQ_Queue_BG()` when the stage handoff is actually wrong
+    - accepted the follow-up leakage fix that clears `Debug_w[DEBUG_STAGE_SELECT]` at test-runner init so a prior explicit stage override cannot bleed into a later no-override scripted run, then rebuilt/redeployed and re-ran the post-fix smoke/control/probe checks
+  - Verification result summary:
+    - Docker build/install/package succeeded in `3sx-mister-build`; MiSTer deploy, `/media/fat/games/3sx/run-3sx.sh --probe-renderer-only`, and bounded `launch-osd.sh` all passed after the accepted review fixes, with logs still showing dummy/software + fbdev + native at `1280x720` and `last-run.log` ending in `exit=143`
+    - final no-override control `stock-arch-c1-control-postfix` stayed on `stage_id=11` with `60.82 / 1.37 / 55.58 ms` frame/render/present and `present_readback=54.97 ms`, which stays within the accepted native idle baseline shape after the debug-reset fix
+    - final explicit override `stock-arch-c1-stage-heavy` resolved to `stage_id=19` with `73.52 / 1.76 / 63.77 ms`, `present_readback=63.16 ms`, and `mtrans_tasks.mean=181.64`, making it the current named `stage-heavy` gate
+    - final explicit override `stock-arch-c1-stage-alt` resolved to `stage_id=2` with `73.08 / 1.48 / 67.62 ms`, `present_readback=67.01 ms`, and `ppg_tasks.mean=212.00`, giving a second explicit stage with a meaningfully different telemetry shape from both control and `stage-heavy`
+    - post-fix override revalidation `stock-arch-c1-stage-19-postfix` still resolved to `stage_id=19` with `75.81 / 1.85 / 65.99 ms` over `120` frames, confirming the init-time debug reset did not break explicit stage selection
+  - Keep/rollback decision with reason:
+    - keep; the harness change stays dormant unless `--test-stage` is explicitly supplied, the default idle control remains stable after the stale-debug reset, the actual stage override now works on-device, and the accepted review fixes removed both the redundant-load risk and the only credible override-leak path
+  - Next best candidate optimization:
+    - move to Chunk 2 and add deterministic `effect-heavy` / `super-heavy` presets on top of the newly fixed stage-aware matrix
+
+- 2026-03-06T10:57:32-0500
+  - Commit hash:
+    - recorded in the loop closure commit
+  - Bottleneck targeted:
+    - whether repeated software-renderer surface prep inside SDL 3.4.0 `PrepTextureForCopy()` could be reduced safely on MiSTer by caching contiguous same-texture modulation/blend state
+  - Change summary:
+    - added a scoped SDL patch plus MiSTer build plumbing so `PrepTextureForCopy()` could early-return when consecutive copy commands reused the same texture and identical color/alpha/blend state
+    - forced a fresh SDL rebuild in `3sx-mister-build`, rebuilt and redeployed the patched MiSTer package, then verified the runtime through the normal probe + bounded-launch path before taking gameplay captures
+    - rolled the SDL/runtime plumbing back after the on-device gameplay evidence stayed flat-to-worse and the fresh review showed the shared SDL dependency path made the patch unsafe to keep even aside from perf
+  - Verification result summary:
+    - the patched runtime still passed MiSTer preflight: dummy/software + fbdev + native at `1280x720`, bounded launch `runtime_rc=124`, and `last-run.log` ending in `exit=143`
+    - default gameplay control `ralphpart2-loop11-control-native` measured `61.05 / 1.39 / 55.82 ms` versus the kept Loop 9 control `60.17 / 1.36 / 55.04 ms`, so the representative gate did not improve
+    - broadened `Sean/Elena` capture `ralphpart2-loop11-sean-elena` measured `55.76 / 1.11 / 51.01 ms` versus the kept Loop 9 reference `51.77 / 1.08 / 47.10 ms`, so total frame time and `present_readback` both regressed materially
+    - after rollback, the restored-stock control `ralphpart2-loop11-revert-control-native` measured `61.27 / 1.39 / 55.94 ms`, which matches the accepted baseline shape closely enough to confirm the rejected SDL patch is no longer active on the device
+  - Keep/rollback decision with reason:
+    - rollback; the SDL-internal cache did not help the primary gameplay gate, regressed the broadened scene, and the reviewed build plumbing would have widened a MiSTer-only runtime patch into unsafe shared dependency behavior
+  - Next best candidate optimization:
+    - return to a fresh DEEP research pass for the next loop, and do not reopen this SDL `PrepTextureForCopy()` cache path without profile-isolated dependency plumbing plus stronger gameplay-side evidence that the setter work matters
+
+- 2026-03-06T09:06:00-0500
+  - Commit hash:
+    - `no-commit`
+  - Bottleneck targeted:
+    - whether the remaining native exact-fit submission cost on MiSTer could be reduced safely by replacing flipped `SDL_RenderTextureRotated(... flip=...)` copies with cached preflipped texture variants submitted through plain `SDL_RenderTexture()`
+  - Change summary:
+    - added a scoped preflipped-texture cache experiment in `src/port/sdl/sdl_game_renderer.c`, first via `SDL_DuplicateSurface()` and then via `SDL_ConvertSurface(... ARGB8888)` plus `SDL_FlipSurface()` after the indexed-surface duplicate path failed on device
+    - verified the narrowed runtime path on MiSTer against both the default control and the broadened `Sean/Elena` matchup, then rolled the runtime code back when the alternate scene regressed badly despite a better control present bucket
+    - recorded the rejected idea in the living "Do Not Retry Now" list so future loops do not reopen the flip-cache path without a matched alternate-scene rerun or materially new evidence
+  - Verification result summary:
+    - Docker build/install/package succeeded in `3sx-mister-build`; MiSTer deploy, renderer probe, and bounded launch all passed before and after rollback, with logs still showing dummy/software + fbdev + native and `last-run.log` ending in `exit=143`
+    - the first duplicate-surface path aborted immediately on-device with `Blit combination not supported`; the narrowed convert+flip path measured `58.62 / 10.04 / 44.60 ms` on `ralphpart2-loop10-control-native`, and the broadened `Sean/Elena` check landed at `60.80 / 12.48 / 44.60 ms` versus an earlier non-matched Loop 9 reference capture of `51.77 / 1.08 / 47.10 ms`, so the rebuilt rollback control `ralphpart2-loop10-revert-control-native` was re-run and returned to `61.16 / 1.38 / 55.92 ms`
+  - Keep/rollback decision with reason:
+    - rollback; the broadened gameplay verification was strong enough to reject this runtime experiment for the current cycle, and the indexed-surface duplicate path was not robust enough for MiSTer asset formats
+  - Next best candidate optimization:
+    - choose a different gameplay-safe bottleneck than flip-path substitution on the native exact-fit software-renderer path, using the existing multi-scene evidence to rank the next research target
+
+- 2026-03-06T08:29:44-0500
+  - Commit hash:
+    - `no-commit`
+  - Bottleneck targeted:
+    - whether the current native `gameplay-idle` control is representative enough to rank the next safe MiSTer optimization, after the same-texture batching candidates were closed on a single scene
+  - Change summary:
+    - added measurement-only test-runner character / super-art overrides plus `tools/mister/perf-sampler.sh` support for deterministic matchup sweeps, while keeping the default Ryu/Ken path unchanged when overrides are absent
+    - accepted the independent `codex` review fixes: override flags now require `--gameplay-idle`, numeric ids are normalized to base-10 before forwarding, and the loop notes were narrowed from fighter+stage diversification to fighter/workload diversification on the current idle-versus harness
+    - swept the repo-local demo matchup pairs on-device and found the default control stayed slowest even though all tested scenes remained on the same native `current_target_exact` + `ARGB8888` readback path
+  - Verification result summary:
+    - Docker build/install/package succeeded in `3sx-mister-build`; MiSTer deploy, renderer probe, bounded launch, backend-log inspection, and override revalidation all passed, with logs still showing dummy/software + fbdev + native and `last-run.log` ending in `exit=143`
+    - default control `ralphpart2-loop9-control-native` measured `60.17 / 1.36 / 55.04 ms`, while the broadened matchup sweep measured `49.06 / 1.30 / 40.67` (`Chun-Li/Remy`), `49.54 / 1.04 / 45.05` (`Ken/Twelve`), `34.76 / 0.92 / 29.90` (`Ryu/Makoto`), and `51.77 / 1.08 / 47.10` (`Sean/Elena`); a 1-frame decimal-id check also succeeded with zero-padded inputs normalized to `10` and `9`
+  - Keep/rollback decision with reason:
+    - keep the measurement support and the broadened scene evidence, but close as `no-commit`; this cycle intentionally stopped at capture-infrastructure + research because the new data did not justify a runtime optimization strongly enough to checkpoint
+  - Next best candidate optimization:
+    - add explicit stage control (or move to a deterministic non-versus/demo capture path) before using scene diversity to justify another runtime loop, and rank the next native optimization against the new multi-scene evidence instead of the Ryu/Ken control alone
+
+- 2026-03-06T07:45:04-0500
+  - Commit hash:
+    - `1f891f00`
+  - Bottleneck targeted:
+    - whether the remaining native same-texture submission headroom on the representative gameplay-idle gate is actually being broken by color modulation, flip diversity, or textured geometry fallback
+  - Change summary:
+    - added perf-capture-only native renderer telemetry for same-texture run links, color/flip break links, flipped rect tasks, and textured geometry task counts, then surfaced it in MiSTer perf JSON/log output as schema `5`
+    - ran an independent `codex` review/debate pass and kept the one code fix: `backend_logf()` now uses dynamic formatting so the expanded perf lines no longer truncate in `backend.log`
+    - representative device capture showed `rect_color_breaks = 0` and textured geometry counts `= 0` across all `300` frames, with only modest flip diversity left (`rect_flip_breaks.mean = 12.29`, `rect_flipped_tasks.mean = 70.01`)
+  - Verification result summary:
+    - Docker build/install/package succeeded in `3sx-mister-build`; MiSTer deploy, renderer probe, bounded launch, and post-review recapture all passed, with backend logs still showing dummy/software + fbdev + native and `last-run.log` ending in `exit=143`
+    - final capture `ralphpart2-loop8-native-final` measured `60.48 / 1.39 / 55.27 ms` frame/render/present with `present_readback=54.64 ms`, and `backend.log` kept the full summary line through the remote perf-output path instead of truncating it
+  - Keep/rollback decision with reason:
+    - keep; the telemetry remains capture-gated, the accepted logging fix restores trustworthy MiSTer verification logs, and the current gameplay-idle gate now has high-confidence evidence that color / geometry diversity is not the next safe native batching win
+  - Next best candidate optimization:
+    - broaden the representative gameplay scene set before another submission-path optimization, or investigate a different bottleneck than exact-fit native same-texture micro-batching on the current gameplay-idle gate
+
+- 2026-03-06T07:03:48-0500
+  - Commit hash:
+    - `9acdf0bf`
+  - Bottleneck targeted:
+    - whether the remaining native exact-fit submission bottleneck contains any safe exact horizontal/vertical strip-merge headroom inside same-texture rect runs
+  - Change summary:
+    - added perf-capture-only h/v strip-merge telemetry for same-texture rect runs, threaded it into MiSTer perf JSON/log output as schema `4`, and kept the extra accounting capture-gated
+    - ran an independent `codex` review/debate pass and accepted both fixes: geometry tasks recovered by the rect-copy path now report against the normalized submitted rect, and source-edge adjacency now uses a texture-size-derived sub-half-texel threshold
+    - re-ran the representative 300-frame native gameplay gate and found zero exact strip candidates across every frame
+  - Verification result summary:
+    - Docker build/install/package succeeded in `3sx-mister-build` with `cmake --build ... --parallel 4`; MiSTer deploy, renderer probe, and bounded launch all passed before and after the review fixes, with backend logs still showing dummy/software + fbdev + native and `last-run.log` ending in `exit=143`
+    - final capture `ralphpart2-loop7-native-final` measured `59.44 / 1.38 / 54.20 ms` frame/render/present with `present_readback=53.59 ms` and `rect_hstrip_runs = rect_hstrip_tasks = rect_vstrip_runs = rect_vstrip_tasks = 0` over `300` frames
+  - Keep/rollback decision with reason:
+    - keep the telemetry-only change; it stays out of the normal runtime path and closes the exact strip-coalescing candidate with high-confidence device evidence that the current gameplay gate has no safe strip headroom to exploit
+  - Next best candidate optimization:
+    - stop spending runtime loops on exact strip batching for the native gameplay-idle gate and investigate what still breaks same-texture runs in the mtrans-heavy slow bucket, or broaden the gameplay scene set before another submission-path optimization
+
+- 2026-03-06T06:25:11-0500
+  - Commit hash:
+    - `72b1dcc1`
+  - Bottleneck targeted:
+    - remaining native exact-fit software-renderer cost hidden inside `present_readback`, specifically whether the real gameplay driver is textured-rect submission/run shape or unlock-driven texture/palette cache churn
+  - Change summary:
+    - added perf-capture-only renderer telemetry for same-texture rect runs, redundant texture-binding reuse, unlock counts, cache-invalidation fan-out, and queued texture destroys, then threaded the new fields into MiSTer perf logs/JSON as schema `3`
+    - ran an independent `codex` review pass and accepted the telemetry fix that only counts rect-run submissions when the rect path actually succeeds instead of falling back to geometry
+    - analyzed the resulting 300-frame capture and found the slow bucket tracks submission/run-shape metrics materially more than unlock or eviction churn
+  - Verification result summary:
+    - Docker build/install/package succeeded in `3sx-mister-build` after reducing the build step to `cmake --build ... --parallel 4` because the default parallel build was OOM-killed
+    - MiSTer deploy, renderer probe, and bounded launch all passed; backend logs still showed dummy/software + fbdev + native path, and the final capture `ralphpart2-loop6-native-final` measured `59.79 / 1.24 / 54.70 ms` frame/render/present with `present_readback=54.08 ms`
+  - Keep/rollback decision with reason:
+    - keep; the loop stayed telemetry-only, survived the required review-and-reverify gate, and produced higher-confidence evidence that the next safe optimization should target submission/run-shape rather than unlock churn
+  - Next best candidate optimization:
+    - add conservative mergeability telemetry inside the confirmed same-texture rect runs before attempting any runtime batching or rect-strip fast path; do not spend the next runtime loop on unlock-driven invalidation unless the run-shape evidence is exhausted
+
+- 2026-03-06T04:26:58-0500
+  - Commit hash:
+    - `no-commit`
+  - Bottleneck targeted:
+    - remaining native exact-fit software-renderer submission cost after the `current_target_exact` present bucket was attributed to SDL, specifically whether a tiny render-target-state change or contiguous rect batching could reduce the gameplay gate safely
+  - Change summary:
+    - refreshed the kept native telemetry, compared task-count versus texture-churn correlation on `ralphpart2-loop4-native-final`, and narrowed the next exact-path candidates to retarget-state versus rect-submission changes
+    - confirmed from official SDL docs/source that unchanged-target `SDL_SetRenderTarget()` is already a no-op, eliminating that micro-optimization without touching the runtime tree
+    - ran a synthetic single-texture `RUN_LEN=3` `3sx-mister-build` microbenchmark for the "per-frame vertex generation + `SDL_RenderGeometry()`" proxy and found it far slower than the current `SDL_RenderTexture()` path; the reproduction lives in `tools/mister/bench-rect-batching.sh`
+  - Verification result summary:
+    - fresh `PORT_MISTER=ON` build/install/package of current `HEAD` succeeded in `3sx-mister-build` via `build/mister-loop5research`
+    - no device deploy/run was taken because research eliminated both candidate runtime changes before implementation; the decisive container benchmark was `copy_ms=2.699` versus `geometry_run_ms=26.547`, and the hardened-script rerun stayed in the same shape (`2.703` versus `26.467`)
+  - Keep/rollback decision with reason:
+    - keep no runtime change; the retarget idea was disproved by primary-source review and the synthetic batching proxy lost badly in-container, so forcing a broader runtime change without live run telemetry would not be justified
+  - Next best candidate optimization:
+    - add targeted render-submission telemetry for contiguous texture runs and unlock-driven texture/palette invalidation before attempting another gameplay-safe submission optimization
+
+- 2026-03-06T04:10:00-0500
+  - Commit hash:
+    - `ce9c7110`
+  - Bottleneck targeted:
+    - native exact-fit present attribution on the kept `current_target_exact` MiSTer path, specifically separating SDL readback cost from conversion and fbdev copy assumptions
+  - Change summary:
+    - added perf-capture-only fbdev breakdown stats for readback, convert, copy, clear, present path, and readback surface format/size, then threaded them into the MiSTer perf JSON/log output as schema `2`
+    - ran the required independent `codex` review pass and accepted both telemetry-only fixes: staging `copy_ns` now times only actual writes, and fallback retries reset presenter stats before sampling the successful path
+    - rebuilt/redeployed after the review fixes and re-ran the native gameplay gate on device
+  - Verification result summary:
+    - Docker build/package succeeded in `3sx-mister-build`; MiSTer probe + bounded launch passed before and after the review fixes, with `last-run.log` still ending in `exit=143` and backend logs continuing to show dummy/software + fbdev + native at `1280x720`
+    - fresh native telemetry proved the bottleneck is SDL readback, not conversion or fbdev copy: pre-review `60.94 / 1.25 / 55.78 ms` with `present_readback=55.14`, `present_convert=0.00`, `present_copy=0.58`; final post-review `60.19 / 1.26 / 55.10 ms` with `present_readback=54.47`, `present_convert=0.00`, `present_copy=0.57`, `present_clear=0.00`, `path=current_target_exact`, `readback_surface=ARGB8888 384x224`
+  - Keep/rollback decision with reason:
+    - keep; the loop stayed telemetry-only, passed the review-and-reverify gate, and closes the measurement gap with high-confidence evidence that native exact-fit is overwhelmingly `SDL_RenderReadPixels()`-bound
+  - Next best candidate optimization:
+    - stop spending loops on native exact-fit fbdev copy/format micro-optimizations and look for a safe, primary-source-backed way to avoid or materially reduce `SDL_RenderReadPixels()` allocation/readback cost, or move to a different gameplay-safe bottleneck
+
+- 2026-03-06T03:26:58-0500
+  - Commit hash:
+    - `no-commit`
+  - Bottleneck targeted:
+    - native exact-fit `SDL_RenderReadPixels()` present cost, specifically the hypothesis that `cps3_canvas` format mismatch was forcing avoidable software-renderer readback conversion
+  - Change summary:
+    - refreshed current-tree MiSTer controls and device logs, then confirmed via SDL docs plus a container probe that the software renderer supports `SDL_PIXELFORMAT_ARGB8888` and readback surfaces come back as `ARGB8888`
+    - tried a one-line `cps3_canvas` target-format swap from `RGBA8888` to `ARGB8888`, ran the required separate review pass, and kept no review-driven code changes
+    - reverted the runtime change after the native gate failed to improve, then rebuilt/redeployed the reverted tree and re-verified rollback controls
+  - Verification result summary:
+    - Docker build/package succeeded before and after rollback; MiSTer probe + bounded launch passed each time, with `last-run.log` ending in `exit=143` and the device config restored to `scale-mode = native`
+    - native moved the wrong way with the change (`60.30 / 1.22 / 55.21 ms` pre -> `60.40 / 1.22 / 55.39 ms` post), while square-pixels improved only slightly (`74.25 / 1.27 / 69.17 ms` pre -> `73.33 / 1.30 / 68.24 ms` post); rollback confirmation recovered native on rerun (`60.27 / 1.23 / 55.18 ms`) and square-pixels returned near baseline (`74.53 / 1.30 / 69.39 ms`)
+  - Keep/rollback decision with reason:
+    - rollback; the standalone target-format swap did not improve the actual native gameplay bottleneck on MiSTer, so there is no reason to keep the runtime change
+  - Next best candidate optimization:
+    - add narrower native exact-fit readback telemetry so the next loop can separate `SDL_RenderReadPixels()` cost from surface-format and copy assumptions before another presenter experiment
+
+- 2026-03-06T07:50:00-0500
+  - Commit hash:
+    - `56b01376`
+  - Bottleneck targeted:
+    - square-pixels `384x224 -> 1152x672` current-target present cost on the live `1280x720` MiSTer framebuffer
+  - Change summary:
+    - refreshed stable native and square-pixels gameplay controls plus SDL doc evidence before editing, then scoped the runtime change to the exact integer-scale presenter path only
+    - added an integer-expand fast path in `fbdev_presenter.c` for unclipped integer-scaled mapped rects, with the prior generic scaled presenter kept as fallback for clipped/non-integer cases
+    - ran an independent `claude` review pass, accepted the one kept pointer-arithmetic widening fix, and rejected the low-value cleanup findings
+  - Verification result summary:
+    - Docker build/package succeeded; MiSTer probe + bounded launch passed, `last-run.log` ended with `exit=143`, and the device config was restored to `scale-mode = native`
+    - native control stayed flat (`60.54 / 1.22 / 55.50 ms` pre -> `60.19 / 1.21 / 55.16 ms` final), while square-pixels improved materially (`97.38 / 1.42 / 92.10 ms` pre -> `73.52 / 1.31 / 68.37 ms` final)
+  - Keep/rollback decision with reason:
+    - keep; the win is isolated to presenter math on the verified integer-scale square-pixels path, preserves copy volume/output placement, and does not disturb the native control gate
+  - Next best candidate optimization:
+    - investigate the remaining native exact-fit `SDL_RenderReadPixels()` cost with narrower readback-versus-copy telemetry or another primary-source-backed native presenter experiment
+
+- 2026-03-06T02:19:24-0500
+  - Commit hash:
+    - `e9299324`
+  - Bottleneck targeted:
+    - post-deploy native-control instability caused by leaked MiSTer `launch-osd.sh` child processes during bounded smoke runs
+  - Change summary:
+    - reproduced the bad native control on unmodified HEAD, then traced it to orphaned `3sx` processes left behind by bounded launches
+    - updated the generated MiSTer `launch-osd.sh` wrapper to trap `INT`/`HUP`/`TERM`, kill/wait the child `3sx`, and log the terminated exit code
+    - rejected a follow-up app-side signal-cleanup idea after validation showed the console-mode symptom was pre-existing and not introduced by this diff
+  - Verification result summary:
+    - Docker build/package succeeded; probe + bounded launch passed on the device with no lingering `3sx` process afterward and `last-run.log` showing `exit=143`
+    - failing control before the fix: `125.04 / 2.71 / 114.52 ms`; clean-state control after manual `killall 3sx`: `60.95 / 1.23 / 55.85 ms`; final post-fix control without manual cleanup: `60.74 / 1.26 / 55.51 ms`
+  - Keep/rollback decision with reason:
+    - keep; the launcher shutdown fix removes the orphan-process leak that was corrupting later MiSTer gameplay measurements, while leaving gameplay/render behavior unchanged
+  - Next best candidate optimization:
+    - resume presenter-focused research from the stabilized launcher sequence, starting with narrower readback-versus-copy telemetry or a new small presenter experiment backed by fresh native and square-pixels controls
+
+- 2026-03-06T01:35:52-05:00
+  - Commit hash:
+    - `no-commit`
+  - Bottleneck targeted:
+    - square-pixels / clipped scaled current-target presenter cost after the native exact-fit path was re-confirmed as SDL-readback-bound
+  - Change summary:
+    - refreshed native and square-pixels gameplay controls on the live MiSTer before editing
+    - tried a scoped `fbdev_presenter.c` mapped-scale LUT cache to remove per-pixel divisions from scaled direct-present
+    - reverted the runtime change after the native control gate regressed and remained unstable after redeploy
+  - Verification result summary:
+    - Docker Clang build/package succeeded; probe + bounded launch passed on the device
+    - native pre: `60.56 / 1.24 / 55.48 ms`; post with the change: `120.16 / 2.33 / 110.33 ms`; rerun post: `119.81 / 2.44 / 109.60 ms`
+    - reverted binary still did not return cleanly to baseline over the full gate (`105.91 / 2.29 / 97.00 ms`), though the late window improved toward `73.59 / 1.55 / 67.42 ms` over frames `241-300`
+  - Review:
+    - independent review on the remaining diff surfaced one wording overstatement in the todo around the verification sequence; accepted fix was to narrow that wording, with no additional high-confidence in-scope findings kept
+  - Keep/rollback decision with reason:
+    - rollback; do not keep any runtime change from this cycle because the native control gate failed twice and stayed unstable after revert, so the scaled-LUT idea could not be isolated safely
+  - Next best candidate optimization:
+    - stabilize post-deploy native control measurements or add narrower presenter readback-versus-copy telemetry before retrying presenter micro-optimizations
+
+- 2026-03-06T01:01:25-05:00
+  - Scope:
+    - Loop 5 broader presenter/readback architecture implementation attempt
+    - test whether fbdev-only mode can avoid per-frame SDL readback by rendering directly into an SDL software renderer backed by the mapped framebuffer
+  - Files:
+    - `src/port/sdl/fbdev_presenter.c` (temporary implementation only; reverted before commit)
+    - `src/port/sdl/fbdev_presenter.h` (temporary implementation only; reverted before commit)
+    - `src/port/sdl/sdl_app.c` (temporary implementation only; reverted before commit)
+  - Verification:
+    - native gameplay baseline before the attempt (`loop3-native-direct-post`):
+      - `59.91 / 1.24 / 54.78 ms` frame/render/present mean
+    - prototype probe:
+      - backend log reported `FBDEV surface renderer: enabled (software)`
+    - native gameplay attempt (`loop5-surface-renderer-post`):
+      - `81.86 / 54.87 / 23.20 ms` frame/render/present mean
+      - `copy_bytes.mean=0`
+  - Durable findings:
+    - Eliminating `SDL_RenderReadPixels()` is not enough on this workload if the replacement is SDL's software renderer drawing directly into the mapped framebuffer surface.
+    - The prototype did cut the present bucket heavily (`54.78 -> 23.20 ms`), but it pushed far more work into the render bucket (`1.24 -> 54.87 ms`), making total gameplay frame time materially worse.
+    - For this port, the current "render to SDL target, then present to fbdev" split is still faster than letting SDL's software renderer own the framebuffer end-to-end.
+  - Review:
+    - No fresh review findings were needed because the runtime change was reverted before commit.
+  - Decision:
+    - Reject the runtime change and revert it.
+    - Close the broader presenter/readback architecture item for this research round; any future revisit should be a narrower hybrid path, not a full surface-backed software renderer swap.
+  - Next candidate:
+    - No remaining unworked optimization items from this loop series. Only low-resolution live verification of the Loop 3 clipped-native branch remains open.
+
+- 2026-03-06T00:50:54-05:00
+  - Scope:
+    - Loop 4 broad layer-pass implementation attempt
+    - test a conservative source-pass sort fast path that only would replace global sort when gameplay frames were already grouped as `PPG -> mtrans -> solid` with strictly non-overlapping z ranges between passes
+  - Files:
+    - `src/port/sdl/sdl_game_renderer.c` (temporary implementation only; reverted before commit)
+    - `include/port/sdl/sdl_game_renderer.h` (temporary implementation only; reverted before commit)
+    - `src/port/sdl/sdl_app.c` (temporary telemetry plumbing only; reverted before commit)
+  - Verification:
+    - native gameplay baseline before the attempt (`loop3-native-direct-post`):
+      - `59.91 / 1.24 / 54.78 ms` frame/render/present mean
+    - native gameplay attempt (`loop4-layer-passes-post`):
+      - `60.26 / 1.27 / 54.99 ms` frame/render/present mean
+      - `sort_strategy.qsort=300/300`
+  - Durable findings:
+    - The first safe source-pass formulation never activated on the representative gameplay-idle gate, so it produced no useful change in renderer behavior.
+    - That means the gameplay queue does not satisfy the conservative proof as written; the likely blockers are overlapping cross-source z ranges or pass semantics that cannot be reduced to a simple `PPG -> mtrans -> solid` split.
+    - Because the fast path never fired, there is no reason to carry the code in the runtime path.
+  - Review:
+    - No fresh review findings were needed because the runtime change was reverted before commit.
+  - Decision:
+    - Reject the runtime change and revert it.
+    - Treat the layer-pass item as worked through for this research round: the reopened idea was tested with a safe implementation shape and did not clear the gameplay gate.
+  - Next candidate:
+    - Move to the broader presenter/readback architecture item, which is now the highest-upside remaining gameplay-performance path.
+
+- 2026-03-06T00:42:13-05:00
+  - Scope:
+    - Loop 3 clipped-native/square-pixels presenter path
+    - broaden the fbdev current-target presenter so native render modes can bypass the dummy-target composite step even when the destination rect is clipped or scaled
+  - Files:
+    - `src/port/sdl/fbdev_presenter.c`
+    - `src/port/sdl/fbdev_presenter.h`
+    - `src/port/sdl/sdl_app.c`
+  - Verification:
+    - high-resolution native control (`loop3-native-direct-post`):
+      - `59.91 / 1.24 / 54.78 ms` frame/render/present mean
+      - prior native baseline for comparison (`loop1-source-telemetry-target-fixed`): `60.22 / 1.24 / 55.13 ms`
+    - square-pixels baseline with the old composited-readback path (`loop3-square-pixels-pre`):
+      - `140.17 / 55.05 / 81.29 ms` frame/render/present mean
+      - `fps.mean=7.13`
+      - `copy_bytes.mean=3096576`
+    - square-pixels direct current-target path (`loop3-square-pixels-post`):
+      - `98.25 / 1.38 / 93.02 ms` frame/render/present mean
+      - `fps.mean=10.18`
+      - `copy_bytes.mean=3096576`
+  - Durable findings:
+    - For square-pixels, the dominant waste was the extra SDL native-output composite step, not framebuffer write volume. Removing that step collapses the render bucket from `55.05 ms` to `1.38 ms`.
+    - The broadened current-target presenter shifts more work into `present_ms` (`81.29 -> 93.02 ms`) because fbdev now performs the nearest-neighbor scale directly, but the net frame win is still large at about `41.93 ms/frame`.
+    - The same code path keeps the high-resolution native gate flat to slightly improved, so the broadened presenter did not destabilize the already-good exact-fit native case.
+    - The clipped-native crop branch is implemented with the same mapped-rect logic and reuses the existing `copy_surface_rect_to_fb_offset()` helper for the actual cropped blit, but the current device framebuffer is `1280x720`, so that branch still needs a real low-resolution target check.
+  - Review:
+    - Fresh-agent review was launched against the loop diff.
+    - No actionable gameplay/runtime finding was accepted from that pass; the one emerging concern was debug-overlay targeting, but `force_full_fbdev_readback = true` keeps the direct-present path disabled in `DEBUG`, so it is not a release-path regression.
+  - Decision:
+    - Keep the broadened current-target presenter.
+    - Treat the square-pixels presenter work as verified and land it with an explicit note that low-resolution clipped-output verification remains a live-device follow-up.
+  - Next candidate:
+    - Move to the broader layer-pass implementation loop, which is still the next gameplay-render optimization backed by gameplay telemetry.
+
+- 2026-03-06T00:18:13-05:00
+  - Scope:
+    - Loop 2 direct-native presenter experiment for the exact-fit `384x224` current-target path
+    - test whether source-sized dirty diffing can turn the native fbdev path into a gameplay win without changing output behavior
+  - Files:
+    - `src/port/sdl/fbdev_presenter.c` (temporary implementation only; reverted before commit)
+  - Verification:
+    - MiSTer gameplay baseline (`loop1-source-telemetry-target-fixed`):
+      - `60.22 / 1.24 / 55.13 ms` frame/render/present mean
+      - `copy_bytes.mean=344064`
+    - MiSTer experiment (`loop2-native-dirty-diff-post`):
+      - `61.73 / 1.25 / 56.69 ms` frame/render/present mean
+      - `copy_bytes.mean=30095.36`
+      - `dirty_hit_rate.mean=0.9125`
+      - `tiles_copied.mean=29.39`
+    - Late-window comparison after frame 120:
+      - baseline: `58.31 / 53.43 ms` frame/present mean
+      - experiment: `60.17 / 55.33 ms` frame/present mean
+  - Durable findings:
+    - The exact-fit native current-target path can avoid almost all framebuffer writes, but that does not matter enough while `SDL_RenderReadPixels(renderer, NULL)` still dominates present cost.
+    - In the representative gameplay gate, the renderer marks all `336/336` dirty tiles every frame, so there is no renderer-side dirty-map pruning available to offset the readback cost on this path.
+    - The added staging compare/copy work turns this into a net regression even when the visible frame contents stabilize and `copy_bytes` drops to zero on later frames.
+  - Review:
+    - Fresh-agent review was launched against the temporary diff and did not surface an actionable correctness issue before the session stalled.
+    - Accepted fixes: none.
+  - Decision:
+    - Reject the runtime change and revert it.
+    - Treat this item as worked through: the current-target dirty-diff idea is not worth keeping on top of the existing readback architecture.
+  - Next candidate:
+    - Move to the clipped-native presenter path, where the real opportunity is removing extra composite/readback work on low-resolution and square-pixels outputs rather than diffing after readback.
+
+- 2026-03-06T05:35:00-05:00
+  - Scope:
+    - Loop 1 telemetry/research pass for the reopened broad layer-pass item
+    - add per-task source counters so gameplay captures can show where render work actually comes from before changing ordering architecture
+  - Files:
+    - `include/port/sdl/sdl_game_renderer.h`
+    - `src/port/sdl/sdl_game_renderer.c`
+    - `src/port/sdl/sdl_app.c`
+    - `src/sf33rd/Source/Common/PPGFile.c`
+    - `src/sf33rd/Source/Game/rendering/mtrans.c`
+    - `src/sf33rd/Source/Game/rendering/dc_ghost.c`
+    - `src/sf33rd/Source/Game/ui/sc_sub.c`
+  - Verification:
+    - container fallback check (`loop1-source-telemetry-qemu`):
+      - `render_task_count.mean=291.47`
+      - `ppg_tasks.mean=197.00`
+      - `mtrans_tasks.mean=86.47`
+      - `solid_tasks.mean=8.00`
+      - `ui_direct_tasks.mean=0.00`
+      - `unknown_tasks.mean=0.00`
+    - MiSTer target gate (`loop1-source-telemetry-target-fixed`):
+      - `60.22 / 1.24 / 55.13 ms` frame/render/present mean
+      - `render_task_count.mean=291.47`
+      - `rect_copy_tasks.mean=283.47`
+      - `ppg_tasks.mean=197.00`
+      - `mtrans_tasks.mean=86.47`
+      - `solid_tasks.mean=8.00`
+      - `ui_direct_tasks.mean=0.00`
+      - `unknown_tasks.mean=0.00`
+      - `sort_strategy.qsort=100%`
+      - source-bucket invariant check passed on all 300 frames:
+        `ppg_tasks + mtrans_tasks + ui_direct_tasks + solid_tasks + unknown_tasks == render_task_count`
+  - Durable findings:
+    - Gameplay-idle render work is not a generic mixed queue. In the verified workload it is a stable split of `PPG` (`197` tasks/frame), `mtrans` (mean `86.47`, variable), and a small fixed solid pass (`8` tasks/frame), with no `unknown` tasks.
+    - The old startup-window argument against broad layer-pass work is fully dead. Gameplay still sits at `qsort=100%` with about `291` render tasks/frame.
+    - A safe next layer-pass implementation should target the verified source split first, not z-only partitioning. The likely first boundary is `PPG` versus `mtrans`, with solids handled explicitly.
+    - `ui_direct` did not appear in this gameplay-idle scenario, so it should be treated as an out-of-band edge case to preserve rather than a primary optimization target.
+    - The first target sample after the hung deploy copied an older binary and produced `null` source counters. An explicit redeploy plus remote binary string check fixed that before the final measurement was accepted.
+  - Review:
+    - Fresh-agent review (`codex exec`, read-only) reported no findings in the source-tagging diff.
+    - Accepted fixes: none.
+  - Decision:
+    - Keep this telemetry pass and use `loop1-source-telemetry-target-fixed` as the source-of-truth evidence for designing the actual broad layer-pass implementation loop.
+  - Next candidate:
+    - Implement the first broad layer-pass change around the verified gameplay split (`PPG`/`mtrans`/solid) and measure whether it reduces `qsort` pressure or total frame cost without changing draw order.
+
+- 2026-03-06T04:00:00-05:00
+  - Scope:
+    - Loop 0 measurement fixup for gameplay-representative MiSTer perf capture
+    - release-safe scripted idle-versus path plus delayed perf-capture start after gameplay warmup
+  - Files:
+    - `src/main.c`
+    - `src/main.h`
+    - `src/test/test_runner.c`
+    - `tools/mister/perf-sampler.sh`
+  - Verification:
+    - startup control gate:
+      - `loop0-startup-control`: `5.03 / 0.10 / 3.98 ms` frame/render/present mean
+      - `render_task_count.mean=1.81`
+      - `sort_strategy.none=100%`
+    - gameplay gate:
+      - `loop0-gameplay-idle-pre`: `60.59 / 1.28 / 55.42 ms` frame/render/present mean
+      - `render_task_count.mean=291.47`
+      - `sort_strategy.qsort=100%`
+      - backend log confirmed `PERF capture start: in_game=1 warmup_frames=120`
+    - post-review replay:
+      - `loop0-gameplay-idle-post`: `62.37 / 1.29 / 57.13 ms` frame/render/present mean
+      - `render_task_count.mean=291.47`
+      - `sort_strategy.qsort=100%`
+  - Durable findings:
+    - The previous startup-only `training` gate dramatically under-sampled gameplay renderer load.
+    - The new `--gameplay-idle` path reaches a real in-game match, waits for `mpp_w.inGame`, then starts capture after a configurable warmup.
+    - Broad layer-pass work is fully reopened: gameplay captures now show hundreds of render tasks per frame and persistent `qsort` instead of the old ~`1.81` tasks/frame startup path.
+    - Present cost dominates the representative gameplay-idle gate, but render ordering pressure is now proven to be materially higher during gameplay than during startup.
+  - Review:
+    - Separate `codex review --uncommitted` process was launched for the diff.
+    - No actionable finding was returned before the review session stalled; no fixes were accepted from that pass.
+  - Decision:
+    - Keep this loop and use `gameplay-idle` as the representative gameplay gate for subsequent optimization loops until a stronger scenario replaces it.
+  - Next candidate:
+    - Begin the broad layer-pass research pass against the new gameplay gate.
+
+- 2026-03-06
+  - Commits:
+    - `eebfacad` MiSTer render telemetry repair and counters
+    - `78c2764a` verified MiSTer Docker/runbook documentation
+    - `ee069c84` rect-like render task specialization
+    - `6487167c` equal-Z ordering fast path during enqueue
+    - `91b69f44` direct native fbdev present path
+    - `02c56268` low-resolution black-screen hotfix
+  - Scope check:
+    - Only renderer/presenter/runtime-path changes were applied.
+    - No gameplay rules/input/timing-model semantics were intentionally changed.
+  - Verification:
+    - `telemetry-loop-post`: `26.10 / 16.94 / 8.23 ms` frame/render/present mean
+    - `rect-loop-post`: `11.80 / 2.45 / 8.44 ms` frame/render/present mean
+    - `layer-loop-post`: `11.81 / 2.40 / 8.46 ms` frame/render/present mean
+    - `present-loop-direct-final`: `7.69 / 0.13 / 6.12 ms` frame/render/present mean
+    - `blackscreen-hotfix-320`: on `320x240`, the safe clipped readback path was restored (`copy_bytes` about `286720`) and the black screen regression cleared
+  - Durable findings:
+    - The best present-path win so far is reading back the current `cps3_canvas` target directly instead of first compositing to the dummy window target.
+    - That direct path must stay gated to the strict native case: destination rect exactly `384x224`, fully inside the framebuffer, and no message overlay active.
+    - Low-resolution or clipped outputs (for example `320x240`) must keep the older composite/readback path.
+    - The old decision to deprioritize broad deterministic layer-pass splitting is no longer trustworthy as a gameplay-wide conclusion.
+    - Reason: the current 300-frame `training` capture starts immediately from normal boot and uses `scene` only as metadata, so it likely overweights intro/menu behavior instead of real gameplay.
+    - Treat the prior `1.81` render-tasks/frame result as startup-window evidence only until a gameplay-representative capture path exists.
+  - Decision:
+    - Keep all of the commits above.
+  - Next candidate:
+    - Next series should establish gameplay-representative measurement, then iterate the remaining gameplay-performance queue one verified loop at a time.
+
+- 2026-03-05T14:32:00-05:00
+  - Commits:
+    - `c4803a98` Step 14 SPU active-voice bitmask
+    - `eb6c2ecd` Step 15 AFS async handle reuse
+    - `019709ef` Step 16 ADX stream-full early-out
+    - `b190d4af` Step 17 mtrans memcpy/memset + `njTranslateZ`
+    - `7a4d34af` Step 18 batched `njCalcPoints` in `seqsStoreChip`
+    - `02dab968` Step 19 PPG reciprocal precompute
+    - `39480ccb` Step 20 cached `flPS2ConvScreenFZ` coefficients
+    - `3f2a27ec` Step 21 `cmd_main` bulk memset
+    - `5faa8e2f` Step 22 bulk memory ops in `hitcheck`/`grade`/`color3rd`
+    - `fb71cbd2` Step 23 static const jump tables in `game`/`manage`
+  - Scope check:
+    - Only behavior-preserving performance changes were applied.
+    - No gameplay rules/input/timing-model semantics were intentionally changed.
+  - Verification (per-step 300-frame training captures on target):
+    - Stable short-run trend remained around ~35.8-36.2 FPS mean.
+    - Representative recent samples:
+      - `bolt-step21-v1`: `frame_time.mean_ms=27.6271`, `fps.mean=36.1963`
+      - `bolt-step22-v1`: `frame_time.mean_ms=27.8466`, `fps.mean=35.9110`
+      - `bolt-step23-v1`: `frame_time.mean_ms=27.6273`, `fps.mean=36.1961`
+  - Final sweep gate (600-frame training):
+    - `bolt-final` and `bolt-final-v2` both showed late-window update/render outliers.
+    - Means dropped to ~24.2 FPS due tail-heavy spikes; first 300 frames in the same captures stayed near ~27.9 ms frame time.
+    - Interpretation: long-window training scenario is not yet stable enough for a hard release gate; keep using 300-frame steady-state gate for iterative work, and add a deterministic long-window scenario before declaring final pass.
+  - Next candidate:
+    - Investigate long-window training outlier source (late-scene script/state transitions vs. runtime stalls) before final milestone sign-off.
+
+- 2026-03-05T08:54:00-05:00
+  - Commit: `98f0b63f`
+  - Bottleneck: redundant render-target work in frame loop
+  - Change summary:
+    - Reduced unnecessary target binds in game renderer path.
+    - Gated netplay overlay calls to netplay-enabled builds.
+  - Verification:
+    - Docker build/package passed.
+    - Device deploy/probe/runtime/log pull passed.
+  - Decision: keep
+  - Next candidate: continue trimming redundant present/compositing/copy work in SDL+fbdev path.
+
+- 2026-03-05T09:52:45-05:00
+  - Commit: `no-commit`
+  - Bottleneck: non-native present-path housekeeping and redundant target-cache invalidations
+  - Change summary:
+    - Cached non-native output letterbox rect/dimensions and recompute only on output changes.
+    - Removed redundant end-frame `SDLMessageRenderer` target-cache invalidations; frame-begin reset already invalidates.
+    - Reverted unsafe draw-color cache optimization after independent review (kept behavior-preserving path only).
+  - Verification:
+    - Docker build/package passed after review-driven fix.
+    - Device deploy/probe/runtime (bounded timeout) and backend/last-run log pull passed; remote `SF33RD.AFS` already present.
+  - Decision: keep (safe runtime-only reductions with no gameplay-path changes)
+  - Next candidate: trim fbdev readback/copy overhead further in `FBDevPresenter_Present` without changing compositing output.
+
+- 2026-03-05T10:20:26-05:00
+  - Commit: `no-commit`
+  - Bottleneck: fallback full-readback copying excess pixels in fbdev present path
+  - Change summary:
+    - Added a rect-scoped fbdev copy helper for ARGB and converted surfaces.
+    - In same-size fallback reads, copy only `content_rect` bounds when valid instead of always copying the full framebuffer.
+    - Kept existing per-frame bar clear behavior and full-copy fallback when rect-copy path cannot be used.
+  - Verification:
+    - Docker build/install/package passed in `3sx-mister-build` before and after review gate.
+    - Independent review pass (`review-20260305-101224`) reported no high-confidence in-scope correctness fixes.
+    - Post-review device deploy/probe/runtime/log pull passed; `SF33RD.AFS` present on target.
+  - Decision: keep (runtime-only copy reduction with preserved fallback output semantics)
+  - Next candidate: add fast-path memset for contiguous full-width fbdev bar clears to reduce fallback clear cost.
+
+- 2026-03-07T04:12:36-0500
+  - Commit hash:
+    - `224b9995`
+  - Bottleneck targeted:
+    - same-frame indexed software-source refresh churn on the kept `stock-soft-c19-*` gameplay baseline
+  - Change summary:
+    - re-ran deep local research on `stock-soft-c19-*` and confirmed the remaining heavy-scene stall still tracks same-frame dirty-texture palette-variant refreshes, not the residual generic textured raster lane or cold SDL texture creation
+    - prototyped a narrow indexed-only (`SDL_PIXELFORMAT_INDEX8` / `SDL_PIXELFORMAT_INDEX4LSB`) software-source refresh helper plus local parity coverage after local parity rejected broader `SDL_PIXELFORMAT_ABGR1555` and `SDL_PIXELFORMAT_ARGB8888` fast-refresh variants before any device use
+    - fully rolled the runtime code back when MiSTer deploy/SSH became unstable again before probe/smoke/perf-capture verification could complete
+  - Verification result summary:
+    - `git diff --check`, Docker build/install/package in `3sx-mister-build`, and the reverted-tree `build/mister-install/bin/3sx --headless --software-frame-parity-check` run all passed
+    - the temporary indexed helper also passed local parity before rollback, but MiSTer redeploy failed with `Connection closed by 192.168.1.171 port 22` / `rsync ... unexpected end of file`; follow-up checks still got a `ping` reply and `OpenSSH_8.6` banner, while a minimal password-auth SSH command stalled without reaching command execution
+    - independent review: `codex review --uncommitted` on the final docs-only diff found no discrete correctness issues
+  - Keep/rollback decision with reason:
+    - rollback; device verification failed before any runtime probe or gameplay capture could complete, so keeping the indexed refresh path would have left unverified runtime behavior in tree
+  - Next best candidate optimization:
+    - recover the MiSTer deploy/SSH path through device-side intervention or an alternate transport outside this repo, then retry the indexed-only software-source refresh candidate from the kept `stock-soft-c19-*` baseline instead of spending another loop on local transport churn
+
+- 2026-03-07T04:53:28-0500
+  - Commit hash:
+    - `3aff7e1e`
+  - Bottleneck targeted:
+    - redundant SDL texture refresh work on the same-frame dirty-texture software-frame path after the kept `stock-soft-c19-*` baseline moved the remaining heavy-scene stall into update
+  - Change summary:
+    - deferred refresh of already-cached dirty SDL textures in `src/port/sdl/sdl_game_renderer.c` while software-frame mode is active, leaving the software-source-surface refresh path unchanged and refreshing the SDL texture only if fallback submission later needs it
+    - added submit-time texture refresh/recreate helpers for the SDL submission path and a small pending-refresh bookkeeping fix so the existing dirty-miss telemetry semantics stay stable on the kept gameplay gates
+    - accepted one review-driven safety fix: mode-disable cleanup now destroys pending textures in place instead of enqueueing them through the fixed-size per-frame destroy list
+  - Verification result summary:
+    - `git diff --check`, repeated Docker build/install/package in `3sx-mister-build`, repeated packaged `build/mister-install/bin/3sx --headless --software-frame-parity-check`, MiSTer redeploy, `/media/fat/games/3sx/run-3sx.sh --probe-renderer-only`, bounded `launch-osd.sh`, and backend/last-run log inspection all passed; the smoke remained the expected bounded timeout with `runtime_rc=124` and `last-run.log` ending in `exit=143`
+    - accepted captures landed as `stock-soft-c21-control-post` = `13.65 / 6.53 / 6.59 / 0.53 ms` and `stock-soft-c21-super-heavy-post` = `25.19 / 16.48 / 8.19 / 0.52 ms` for `frame/update/render/present`; both stayed `300/300` direct-present with `0` upload/fallback frames and `present_readback.mean_ms = 0.0000`
+    - versus `stock-soft-c19-*`, idle control improved by `-5.23%` on frame time and `-10.50%` on update, while `super-heavy` improved by `-10.75%` on frame time and `-15.42%` on update; on the `40/300` `texture_cache_misses >= 30` `super-heavy` subset, average update improved from `35.75 ms` to `29.48 ms`
+    - independent review: separate `codex` review returned three findings; one medium safety issue about destroy-queue overflow was accepted and fixed, one high correctness claim about multi-unlock fallback semantics was rejected because the old eager path already updated the same cached texture object in place, and one low test-gap note was rejected as out-of-scope for this runtime loop
+  - Keep/rollback decision with reason:
+    - keep; the change removes redundant SDL texture upkeep from fully software-owned frames, materially improves both representative gameplay gates, preserves the direct-present/readback invariants, and keeps gameplay behavior unchanged
+  - Next best candidate optimization:
+    - revisit the narrow indexed-only software-source-surface refresh specialization from Loop 20 on top of the kept `stock-soft-c21-*` baseline; do not reopen broader lazy texture deferral unless new telemetry shows source-surface refresh is no longer the limiter
+
+- 2026-03-07T05:18:06-0500
+  - Commit hash:
+    - `c8554a41`
+  - Bottleneck targeted:
+    - same-frame indexed software-source-surface refresh cost on the kept `stock-soft-c21-*` gameplay baseline after the SDL-texture deferral reland
+  - Change summary:
+    - re-ran deep research on `stock-soft-c21-*` and confirmed the remaining `super-heavy` stall still tracked software-source refresh volume much more than generic textured residue or cold SDL texture creation
+    - prototyped a narrow indexed-only (`SDL_PIXELFORMAT_INDEX8` / `SDL_PIXELFORMAT_INDEX4LSB`) software-source refresh helper plus local parity coverage, while leaving all other formats on the existing `SDL_BlitSurface()` fallback
+    - fully rolled the runtime code back after the verified MiSTer keep gates regressed on both gameplay scenes
+  - Verification result summary:
+    - `git diff --check`, Docker build/install/package in `3sx-mister-build`, the temporary `Software-source refresh parity check passed: 2 cases`, the existing `Software-frame parity check passed: 9 cases`, MiSTer redeploy, `/media/fat/games/3sx/run-3sx.sh --probe-renderer-only`, bounded `launch-osd.sh`, and backend/last-run log inspection all passed; `SF33RD.AFS` was already present and the smoke again ended at `runtime_rc=124` / `exit=143`
+    - candidate captures landed as `stock-soft-c22-control-post` = `14.42 / 7.18 / 6.69 / 0.54 ms` and `stock-soft-c22-super-heavy-post` = `27.75 / 18.82 / 8.40 / 0.54 ms` for `frame/update/render/present`; both remained `300/300` direct-present with `0` upload/fallback frames and `present_readback.mean_ms = 0.0000`
+    - versus `stock-soft-c21-*`, idle control regressed by `+5.57%` on frame time and `+9.93%` on update, while `super-heavy` regressed by `+10.16%` on frame time and `+14.16%` on update; the `40/300` `texture_cache_misses >= 30` `super-heavy` subset also worsened from `29.48 ms` to `34.14 ms` average update with miss counts and refresh counts effectively flat
+  - Keep/rollback decision with reason:
+    - rollback; despite matching SDL locally under parity, the indexed direct-converter path is slower on the real MiSTer keep gates and worsens the targeted heavy-scene update subset without reducing the measured refresh workload
+  - Next best candidate optimization:
+    - add measurement for active indexed palette-variant fan-out and sparse cache invalidation cost on the kept `stock-soft-c21-*` baseline before revisiting the software-source refresh lane; do not retry the rejected indexed direct-converter shape now
+
+- 2026-03-07T05:51:18-0500
+  - Commit hash:
+    - `fcc78090`
+  - Bottleneck targeted:
+    - determine whether the remaining `super-heavy` update stall on the kept `stock-soft-c21-*` baseline is in sparse invalidation bookkeeping or in software-surface refresh work itself
+  - Change summary:
+    - added perf-capture-only dirty software-surface variant fan-out counters plus per-frame max fan-out for texture/palette unlocks in renderer stats and perf JSON schema `15`
+    - timed texture/palette invalidation separately from in-place software-source refresh attempts without changing cache policy, draw ordering, or normal gameplay/runtime behavior outside extended perf capture
+    - kept fresh `stock-soft-c23-control-post` and `stock-soft-c23-super-heavy-post` captures on MiSTer to rank the next safe runtime candidate from the measured heavy-scene update lane
+  - Verification result summary:
+    - `git diff --check`, Docker build/install/package in `3sx-mister-build`, MiSTer redeploy, `/media/fat/games/3sx/run-3sx.sh --probe-renderer-only`, bounded `launch-osd.sh`, backend/last-run log inspection, and both gameplay captures all passed; `SF33RD.AFS` stayed present and the smoke remained the expected `runtime_rc=124` / `exit=143`
+    - `stock-soft-c23-control-post` landed at `13.67 / 6.54 / 6.61 / 0.52 ms` and `stock-soft-c23-super-heavy-post` landed at `25.34 / 16.61 / 8.20 / 0.53 ms` for `frame/update/render/present`; both remained `300/300` direct-present with `0` upload/fallback frames and `present_readback.mean_ms = 0.0000`
+    - the new telemetry showed invalidation averaged only `0.50 ms` against `12.08 ms` of software-surface refresh on full `super-heavy`, and only `0.64 ms` against `24.42 ms` of refresh on the `40/300` `texture_cache_misses >= 30` heavy subset; the same subset still marked `55.5` dirty software-surface variants per frame but only attempted `32.5` refreshes
+    - independent review: `codex exec` and `claude -p` diff-only reviews returned documentation-only clarifications about refresh-attempt wording and the two `1089`-slot invalidation scans; those doc fixes were applied before closure, while a suggested local increment guard was rejected as not decision-grade for the next runtime loop
+  - Keep/rollback decision with reason:
+    - keep; the capture-gated telemetry survives device verification, keeps overall perf within noise versus `stock-soft-c21-*`, and shows sparse invalidation is a small fraction of the remaining heavy-scene update cost
+  - Next best candidate optimization:
+    - do not spend a runtime loop on sparse invalidation now; instead measure whether the remaining refresh cost is repeated same-frame handle churn or mostly unique refresh work before another refresh-path experiment
+
+- 2026-03-07T06:08:17-0500
+  - Commit hash:
+    - `82b9c00b`
+  - Bottleneck targeted:
+    - determine whether the remaining `super-heavy` software-surface refresh lane on the kept `stock-soft-c21-*` runtime baseline is duplicate same-binding churn or mostly unique palette-variant work on a smaller texture-handle set
+  - Change summary:
+    - added perf-capture-only refreshed-binding telemetry plus per-frame unique texture-handle and max handle-fanout counters in renderer stats and perf JSON schema `16`
+    - kept fresh `stock-soft-c24-control-post` and `stock-soft-c24-super-heavy-post` captures on MiSTer to rank the next runtime candidate from actual refresh attempts rather than unlock-side dirtied-variant counts
+    - verified one immediate `super-heavy` recapture under the same `stock-soft-c24-super-heavy-post` tag before closure so the accepted final measurement stayed within noise versus the kept `stock-soft-c23-*` baseline
+  - Verification result summary:
+    - `git diff --check`, Docker build/install/package in `3sx-mister-build`, the packaged `build/mister-install/bin/3sx --headless --software-frame-parity-check` run, MiSTer redeploy, `/media/fat/games/3sx/run-3sx.sh --probe-renderer-only`, bounded `launch-osd.sh`, backend/last-run log inspection, and both gameplay captures all passed; `SF33RD.AFS` stayed present and the smoke remained the expected `runtime_rc=124` / `exit=143`
+    - `stock-soft-c24-control-post` landed at `13.6550 / 6.5257 / 6.6005 / 0.5288 ms` and the accepted final `stock-soft-c24-super-heavy-post` landed at `25.4002 / 16.6652 / 8.2067 / 0.5283 ms` for `frame/update/render/present`; both remained `300/300` direct-present with `0` upload/fallback frames and `present_readback.mean_ms = 0.0000`
+    - versus `stock-soft-c23-*`, control stayed at `-0.09%` frame / `-0.24%` update and `super-heavy` stayed at `+0.25%` frame / `+0.35%` update, so the new counters stayed decision-grade without materially perturbing the measured gameplay gates
+    - independent review: bounded `debate-code-review` runner attempts with both `claude` and `codex` timed out; the `codex` salvage path returned only the unchanged prompt-template JSON skeleton rather than actionable findings, so no valid review findings were applied
+  - Keep/rollback decision with reason:
+    - keep; the capture-gated telemetry survives device verification, stays within noise on the tracked gameplay gates, and proves the remaining refresh lane is not duplicate same-binding churn
+  - Next best candidate optimization:
+    - target per-texture palette-variant software-surface refresh cost on the small hot handle set revealed by `stock-soft-c24-*` (`16.27` unique refreshed bindings over `6.14` texture handles full-scene; `32.53` over `8.05` and `12.65` max fan-out on the heavy subset)
+
+- 2026-03-07T06:59:15-0500
+  - Commit hash:
+    - `5ac5f0ed`
+  - Bottleneck targeted:
+    - identify the source-format and hot-handle shape of the remaining software-surface refresh lane before another format/size-gated runtime experiment
+  - Change summary:
+    - added capture-gated refresh source-format totals plus top refreshed texture-handle export in `include/port/sdl/sdl_game_renderer.h`, `src/port/sdl/sdl_game_renderer.c`, and `src/port/sdl/sdl_app.c`
+    - the new perf schema `17` reports per-format attempt/pixel totals and hot-handle attempt/pixel share, max fan-out, and `source_shape_mixed` guards for reused handles
+    - accepted review fixes keep the telemetry honest by counting attempts only after the cached-surface compatibility guard and by widening stored source dimensions to `int`
+  - Verification result summary:
+    - `git diff --check`, Docker build/install/package in `3sx-mister-build`, and the packaged `build/mister-install/bin/3sx --headless --software-frame-parity-check` run all passed after the review fixes
+    - MiSTer redeploy was attempted, but device probe/smoke/capture were skipped when fresh SSH sessions timed out before authentication; `tools/mister/perf-sampler.sh` failed with `ssh_dispatch_run_fatal: Connection to 192.168.1.171 port 22: Operation timed out`, and direct probes plus the bounded override matrix (`curve25519-sha256`, `curve25519-sha256@libssh.org`, `diffie-hellman-group14-sha256`, `aes128-ctr`) all stalled at `expecting SSH2_MSG_KEX_ECDH_REPLY`
+    - independent review: `codex review --uncommitted` returned three findings; the pre-guard overcount bug and width/height truncation were fixed, and the handle-shape fidelity concern was addressed with the `source_shape_mixed` export
+  - Keep/rollback decision with reason:
+    - keep; the diff is perf-capture-only, locally verified after review-driven fixes, and useful to preserve even though the MiSTer SSH transport blocked this cycle's on-device recaptures
+  - Next best candidate optimization:
+    - recover MiSTer SSH access, rerun the blocked `stock-soft-c25-*` captures, and use the hot-handle telemetry to decide whether a narrow format/size-gated refresh optimization is safe enough to prototype
+
+- 2026-03-07T08:11:48-0500
+  - Commit hash:
+    - `049b63c7`
+  - Bottleneck targeted:
+    - split the remaining software-surface refresh cost between palette attachment and SDL blit/conversion on the kept `stock-soft-c21-*` baseline
+  - Change summary:
+    - added perf-capture-only `software_surface_cache_refresh_palette_set_*` and `software_surface_cache_refresh_blit_*` counters/timers in renderer stats and perf JSON schema `18`
+    - kept the diff capture-gated only, with no refresh-policy or gameplay-behavior change outside extended perf capture
+    - used deterministic local fallback captures to answer the palette-versus-blit question when MiSTer SSH/auth still could not complete
+  - Verification result summary:
+    - `git diff --check`, Docker build/install/package in `3sx-mister-build`, and the packaged `build/mister-install/bin/3sx --headless --software-frame-parity-check` run all passed
+    - MiSTer device probe/smoke/capture stayed blocked because authenticated SSH still timed out after `ping` and TCP/banner success on `192.168.1.171`
+    - local fallback captures showed palette-set time is negligible next to blit time: control `0.0034 ms` palette set versus `0.6259 ms` blit, `super-heavy` `0.0118 ms` versus `2.4078 ms`, and the `40/300` heavy subset `0.0225 ms` versus `4.7807 ms`
+    - independent review: `claude -p` returned `No findings`, and the bounded `codex review --uncommitted` second opinion also found no concrete issues likely to break existing behavior
+  - Keep/rollback decision with reason:
+    - keep; the telemetry is capture-only, build/parity verified, and records decision-grade evidence that palette-centric refresh work is not the next safe runtime target
+  - Next best candidate optimization:
+    - do not spend the next runtime loop on palette-centric refresh ideas now; if device access returns, only revisit refresh with a materially different blit-side strategy than the rejected indexed direct-converter path, otherwise rank a different update-lane target
+
+- 2026-03-07T14:59:17-0500
+  - Commit hash:
+    - `6729f4fd`
+  - Bottleneck targeted:
+    - determine whether the kept partial-refresh reland is actually taking the partial path on live MiSTer, and whether zero-delta indexed unlocks are frequent enough to justify an invalidation skip before another runtime refresh loop
+  - Change summary:
+    - added capture-gated schema-`23` telemetry for actual partial-versus-full software-surface refresh work plus full-refresh miss reasons and zero-delta tracked unlock counts in `include/port/sdl/sdl_game_renderer.h`, `src/port/sdl/sdl_game_renderer.c`, and `src/port/sdl/sdl_app.c`
+    - kept fresh `stock-soft-c33-control-post` and `stock-soft-c33-super-heavy-post` captures on MiSTer so the new counters could rank the next runtime candidate from live device data rather than extrapolated bbox sparsity alone
+    - left runtime render/present behavior unchanged outside perf capture; the loop is measurement-support only
+  - Verification result summary:
+    - `git diff --check`, telemetry Docker build/install/package in `3sx-mister-build`, the packaged `build/mister-telemetry-install/bin/3sx --headless --software-frame-parity-check` gate, MiSTer redeploy, `/media/fat/games/3sx/run-3sx.sh --probe-renderer-only`, bounded `launch-osd.sh`, and backend/last-run log inspection all passed; `SF33RD.AFS` stayed present and the smoke again ended with `runtime_rc=124` / `exit=143`
+    - `stock-soft-c33-control-post` landed at `14.0769 / 7.0072 / 6.5473 / 0.5225 ms` and `stock-soft-c33-super-heavy-post` landed at `26.4788 / 17.8168 / 8.1324 / 0.5296 ms` for `frame/update/render/present`; both remained `300/300` direct-present with `0` upload/fallback frames and `present_readback.mean_ms = 0.0000`
+    - the new telemetry showed the current reland never takes the partial path on either gameplay keep gate: control and `super-heavy` both recorded `0` partial refresh attempts, zero oversized-bbox misses, and `100%` full refresh work, with `super-heavy` dominated by `full_no_usable_dirty_rect` (`4013` of `4880` full refreshes) rather than non-texture dirty reasons; zero-delta unlocks stayed modest (`37` control / `31` `super-heavy`) and were too sparse on the heavy hot handles to justify a zero-delta skip next
+    - independent review: `codex review --uncommitted` and a second diff-only `codex exec` pass were both started, but both stalled during repo traversal/file reads and were terminated without bounded findings; manual validation rechecked the new schema-`23` counters against the live `stock-soft-c33-*` JSON totals and found no additional correctness issues
+  - Keep/rollback decision with reason:
+    - keep; the telemetry is capture-only, fully build/device verified, and materially changes the next decision by disproving both partial-threshold broadening and zero-delta invalidation skips as the immediate next runtime loop
+  - Next best candidate optimization:
+    - audit the dirty-rect lifetime between `SDLGameRenderer_RecordTextureUnlockDirtyRect(...)`, `SDLGameRenderer_UnlockTexture(...)`, and `refresh_software_source_surface_in_place(...)` on the hot texture-unlock handles (`56`, `58`, `57`, `18`) to find why the kept partial-refresh reland records `0` actual partial refreshes on live MiSTer despite sparse joined bbox telemetry
+
+- 2026-03-07T15:19:43-0500
+  - Commit hash:
+    - `329da6a3`
+  - Bottleneck targeted:
+    - the hot `full_no_usable_dirty_rect` refresh misses on the kept `stock-soft-c33-*` baseline, specifically whether mip-backed `INDEX8 256x256` unlocks were the reason the partial-refresh path never engaged
+  - Change summary:
+    - briefly broadened `flPS2CopyIndex8TextureAndTrackDirtyRect(...)` so mip-backed `INDEX8 256x256` unlocks compared only the base plane, copied the mip tail verbatim, and still relied on the existing partial-refresh classifier and SDL blit path
+    - captured fresh MiSTer telemetry runs `stock-soft-c34-control-post` and `stock-soft-c34-super-heavy-post`, then rolled the runtime code fully back when the target refresh-path counters stayed unchanged and both keep scenes regressed materially
+    - left the final tree on the pre-loop runtime baseline and kept only docs/checklist/living-findings updates for closure
+  - Verification result summary:
+    - `git diff --check`, telemetry Docker build/install/package in `3sx-mister-build`, the packaged `build/mister-telemetry-install/bin/3sx --headless --software-frame-parity-check` gate, MiSTer redeploy, `/media/fat/games/3sx/run-3sx.sh --probe-renderer-only`, bounded `launch-osd.sh`, and backend/last-run log inspection all passed again; `SF33RD.AFS` stayed present and the smoke again ended with `runtime_rc=124` / `exit=143`
+    - `stock-soft-c34-control-post` landed at `25.9754 / 12.6240 / 12.1741 / 1.1773 ms` and `stock-soft-c34-super-heavy-post` landed at `33.7160 / 22.3378 / 10.6107 / 0.7676 ms` for `frame/update/render/present`, while `software_surface_cache_refresh_actual_work.partial_attempts_total` stayed `0` and `full_no_usable_dirty_rect_attempts_total` stayed exactly `351` / `4013`; the core joined candidate fields matched `stock-soft-c33-*`
+  - Keep/rollback decision with reason:
+    - rollback; the mip-backed dirty-rect reland did not change the intended refresh-path telemetry at all and regressed both gameplay keep scenes, so it is not a safe or useful runtime change to keep
+  - Next best candidate optimization:
+    - add capture-gated telemetry that exposes dirty-rect lifetime directly, such as record-call counts, clear-before-refresh paths, or source-shape exclusions on the hot `full_no_usable_dirty_rect` handles, before attempting another runtime refresh reland
+
+- 2026-03-07T15:51:30-0500
+  - Commit hash:
+    - `26685a7f`
+  - Bottleneck targeted:
+    - dirty-rect lifetime on the hot indexed refresh handles that still collapse into `full_no_usable_dirty_rect` on live MiSTer
+  - Change summary:
+    - added schema-`24` capture-only dirty-rect lifetime telemetry to the renderer/app perf export
+    - kept fresh sequential `stock-soft-c35-control-post` and `stock-soft-c35-super-heavy-post` captures on MiSTer with the new counters enabled
+    - local code audit tied the zero-record result to the direct-write `flLockTexture(..., flag = 3)` path reached from `ppgRenewTexChunkSeqs(...)`
+  - Verification result summary:
+    - `git diff --check`, telemetry Docker build/install/package in `3sx-mister-build`, the packaged telemetry parity gate, MiSTer redeploy, renderer probe, bounded smoke, backend/last-run log inspection, and final sequential c35 captures all passed
+    - `claude -p` returned one valid closeout finding that was accepted and revalidated locally; `codex review --uncommitted` and a bounded diff-only `codex exec` review both timed out during repo traversal/startup without bounded findings
+  - Keep/rollback decision with reason:
+    - keep measurement-support only; the new telemetry proved the recorder never fires on the hot path, so the next runtime candidate is the direct-write lock path rather than another refresh-classifier reland
+  - Next best candidate optimization:
+    - research and, only if safe, prototype dirty-rect preservation for the `flLockTexture(..., flag = 3)` / `flPS2UnlockTexture(...)` path reached from `ppgRenewTexChunkSeqs(...)`
+
+- 2026-03-07T16:16:58-0500
+  - Commit hash:
+    - `b79b04b3`
+  - Bottleneck targeted:
+    - preserve dirty-rect metadata on the direct-write `flLockTexture(..., flag = 3)` path used by `ppgRenewTexChunkSeqs(...)` so the existing partial-refresh classifier could finally engage on the hot indexed refresh handles
+  - Change summary:
+    - briefly replaced the direct-write `SDL_memmove(...)` in `src/sf33rd/Source/Common/PPGFile.c` with a bounded compare-and-copy helper that recorded dirty rects only for eligible `INDEX8` `256x256` one-plane updates
+    - fresh MiSTer captures showed the partial-refresh path did activate at scale (`251` control and `2376` `super-heavy` partial attempts), but both gameplay keep gates regressed badly
+    - rolled the runtime code fully back after the failed keep gate; the final tree keeps only checklist/living-findings closeout changes
+  - Verification result summary:
+    - telemetry Docker build/install/package, the packaged parity gate, MiSTer redeploy, `/media/fat/games/3sx/run-3sx.sh --probe-renderer-only`, bounded `launch-osd.sh`, and backend/last-run log inspection all passed again; the smoke ended with `runtime_rc=124` and `exit=143`
+    - `stock-soft-c36-control-post` landed at `26.0727 / 12.5068 / 12.4194 / 1.1465 ms` and `stock-soft-c36-super-heavy-post` landed at `42.9355 / 25.5849 / 16.4634 / 0.8873 ms` for `frame/update/render/present`; `software_surface_cache_refresh_blit.mean_ms` rose from `3.1833` to `4.6228` on control and from `11.9671` to `13.5262` on `super-heavy`
+    - independent review: `claude -p` returned two valid closeout findings that were accepted in docs (keep `tools/mister/package.sh` explicitly unstaged/out of scope and correct the derived control regression percentage), plus one rejected explanatory note; `codex review --uncommitted` raised a `tools/mister/package.sh` signal-forwarding concern that was rejected as out-of-scope because that inherited user-owned file stays unstaged in this loop
+  - Keep/rollback decision with reason:
+    - rollback; even though the runtime change finally produced real dirty-rect records and partial refresh work on-device, the resulting partial-blit path regressed both gameplay keep gates too severely to keep
+  - Next best candidate optimization:
+    - do not retry this direct-write dirty-rect-preservation shape now; start the next loop with research on why partial indexed `SDL_BlitSurface(..., &rect, ...)` refresh work regresses on MiSTer, or move to a different update-lane bottleneck instead of another dirty-rect runtime retry
+
+- 2026-03-07T16:49:34-0500
+  - Commit hash:
+    - `d52b6a51`
+  - Bottleneck targeted:
+    - the fixed-cost refresh setup work on the kept `stock-soft-c35-*` baseline, specifically whether skipping redundant shared-source palette reattachment could preserve SDL's indexed blit map and lower update-side software-surface refresh cost
+  - Change summary:
+    - briefly added a narrow pointer-equality guard in `src/port/sdl/sdl_game_renderer.c` so the shared indexed source surface skipped `SDL_SetSurfacePalette(...)` when the requested palette pointer already matched, then routed the refresh/create helpers through that guard
+    - fresh MiSTer captures showed the intended telemetry moved in the expected direction (`software_surface_cache_refresh_palette_set_calls.mean` fell from `4.32` to `0.00` on control and from `16.27` to `11.90` on `super-heavy`), but both gameplay keep gates regressed hard and the refresh blit lane got slower
+    - rolled the runtime code fully back after the failed keep gate; the final tree keeps only checklist/living-findings closeout changes
+  - Verification result summary:
+    - `git diff --check`, telemetry Docker build/install/package in `3sx-mister-build`, the packaged telemetry parity gate, MiSTer redeploy, `/media/fat/games/3sx/run-3sx.sh --probe-renderer-only`, bounded `launch-osd.sh`, backend/last-run log inspection, and the remote `SF33RD.AFS` presence check all passed; the smoke ended with `runtime_rc=124` and `last-run.log` `exit=143`
+    - `stock-soft-c37-control-post` landed at `19.9613 / 9.9082 / 9.3501 / 0.7030 ms` and `stock-soft-c37-super-heavy-post` landed at `40.6154 / 26.9889 / 12.6964 / 0.9301 ms` for `frame/update/render/present`, both still `300/300` direct-present with `0` upload/fallback frames and `present_readback.mean_ms = 0.0000`; `training` was skipped after the gameplay keep gates failed decisively
+    - independent review: the `debate-code-review` codex runner was started on the final docs-only diff but stalled during the initial pass and was terminated after heartbeat-only progress; fallback `claude -p` review on the docs diff returned `No findings`
+  - Keep/rollback decision with reason:
+    - rollback; the guard reduced redundant palette-attach calls but made the live refresh lane and both gameplay keep gates much slower, so this shared-source palette-reattach shape is not safe to keep in the runtime tree
+  - Next best candidate optimization:
+    - do not reland this shared-source palette guard now; start the next loop with deeper research on why preserving or reducing SDL surface-map churn still slows the MiSTer refresh lane, or move to a different update-lane bottleneck instead of retrying another palette-surface guard directly
+
+- 2026-03-07T17:14:41-0500
+  - Commit hash:
+    - `a4888262`
+  - Bottleneck targeted:
+    - whether capture-gated full-vs-partial indexed refresh blit timing could safely isolate the remaining update-side software-surface refresh cost on the kept `stock-soft-c35-*` baseline
+  - Change summary:
+    - briefly added capture-only schema-`25` telemetry to export aggregate and per-candidate full-vs-partial refresh blit timing, then fully rolled that code back after device verification
+    - refreshed MiSTer captures `stock-soft-c38-control-post` and `stock-soft-c38-super-heavy-post` on the telemetry package to validate the new export against the kept c35 baseline
+    - recorded the rollback because the new fields exported correctly but the resulting captures were not decision-grade
+  - Verification result summary:
+    - `git diff --check`, telemetry Docker build/install/package in `3sx-mister-build`, the packaged telemetry parity gate, MiSTer redeploy, `/media/fat/games/3sx/run-3sx.sh --probe-renderer-only`, bounded `launch-osd.sh`, backend/last-run log inspection, and the remote `SF33RD.AFS` presence check all passed; the device stayed on dummy/software + fbdev + native + `Software frame mode: on`, and the smoke ended with `runtime_rc=124` / `exit=143`
+    - `stock-soft-c38-control-post` landed at `21.8980 / 10.8759 / 10.3047 / 0.7173 ms` and `stock-soft-c38-super-heavy-post` landed at `52.1892 / 34.7440 / 16.3569 / 1.0883 ms` for `frame/update/render/present`; both preserved the exact c35 refresh-work totals and direct-present/readback invariants, but the exported full-refresh blit cost still jumped from `0.7374 -> 1.0567 ms/attempt` on control and `0.7357 -> 1.4495 ms/attempt` on `super-heavy`
+    - independent diff-only `codex exec` review found one valid structural closeout issue on the docs diff: Loop 38 still read partly open because the review checkbox and hash placeholders were pending; the review marker was fixed in the closure diff and the hash placeholders were resolved in the follow-up hash-record update
+  - Keep/rollback decision with reason:
+    - rollback; the temporary telemetry did write the intended blit-cost fields, but the resulting captures diverged too far from the kept c35 baseline to trust as decision-grade evidence, so keeping that instrumentation would risk steering the next runtime loop with polluted data
+  - Next best candidate optimization:
+    - do not retry this exact every-refresh blit-timing shape now; first refresh the kept `stock-soft-c35-*` baseline with no code change to determine whether the c38 slowdown was instrumentation-sensitive or transient device drift, then choose a lower-overhead sampled blit-cost telemetry pass or a different update-lane target
+
+- 2026-03-07T17:35:53-0500
+  - Commit hash:
+    - `b2c388bd`
+  - Bottleneck targeted:
+    - determine whether the unchanged MiSTer keep gates are stable enough to justify another runtime refresh optimization after the rejected c38 measurement branch
+  - Change summary:
+    - kept the runtime tree unchanged from `26685a7f` and rebuilt/redeployed the telemetry flavor only to refresh no-code MiSTer keep-gate evidence
+    - captured fresh full-telemetry `stock-soft-c39-control-pre` and `stock-soft-c39-super-heavy-pre` runs plus a paired `stock-soft-c39-control-basic-pre` control retry to separate lane ranking from capture-mode noise
+    - updated the checklist/living record only; this cycle keeps no runtime or telemetry code change
+  - Verification result summary:
+    - telemetry Docker build/install/package, the packaged parity gate, MiSTer redeploy, `/media/fat/games/3sx/run-3sx.sh --probe-renderer-only`, bounded `launch-osd.sh`, and backend/last-run log inspection all passed again with dummy/software + fbdev + native + `Software frame mode: on`
+    - the refreshed no-code full captures were materially slower than the last tracked baseline despite identical residue counters: control `17.0327 / 8.4432 / 7.9231 / 0.6664 ms` and `super-heavy` `31.6810 / 20.8082 / 10.2577 / 0.6152 ms`, both still `300/300` direct-present with `present_readback.mean_ms = 0.0000`
+    - the paired `--perf-basic` control retry did not collapse back toward the older baseline (`25.1594 / 11.9076 / 12.2226 / 1.0292 ms`), and its follow-up temp-log `scp` timed out after the JSON copy while the host still answered `ping`, so the device state is not stable enough for a trustworthy runtime keep/reject gate right now
+  - Keep/rollback decision with reason:
+    - keep docs-only closure; with unchanged runtime code and unstable no-code keep gates, another runtime experiment would not have a reliable pre/post comparison and could not be closed safely
+  - Next best candidate optimization:
+    - re-establish stable no-code MiSTer telemetry keep gates first, then revisit a lower-overhead sampled refresh-blit telemetry pass or another update-lane target; do not pivot to the tiny generic textured residue yet
+
+- 2026-03-07T18:03:19-0500
+  - Commit hash:
+    - `c7b41021`
+  - Bottleneck targeted:
+    - whether the unchanged telemetry keep-gate path is stable enough to support any new MiSTer runtime or measurement branch after Loop 39's no-code drift
+  - Change summary:
+    - kept the runtime/source tree unchanged from `26685a7f` and re-reviewed the kept `stock-soft-c35-*` versus `stock-soft-c39-*` captures, confirming the same refresh/residue work shape still dominates despite the later timing drift
+    - rebuilt the telemetry flavor and reran the packaged parity gate locally in `3sx-mister-build`
+    - attempted the validated password-auth redeploy/probe path again, but both the `rsync` deploy wrapper and a bounded renderer probe stalled before any remote command output, so no new device captures were accepted
+  - Verification result summary:
+    - `git diff --check`, telemetry Docker build/install/package, and the packaged telemetry parity gate all passed locally on the unchanged tree
+    - device gate failed before any trustworthy redeploy/probe/capture: `ping` still succeeded, but the password-auth `rsync` wrapper never reached transfer output and the bounded `/media/fat/games/3sx/run-3sx.sh --probe-renderer-only` attempt timed out with no remote command output; backend/last-run logs were therefore not refreshed this cycle
+    - bounded `claude -p` review of the final docs-only diff returned `No findings`
+  - Keep/rollback decision with reason:
+    - keep docs-only closure; no runtime or telemetry code changed, and the device gate regressed from noisy-but-usable captures to a pre-output transport stall, so another runtime branch would still lack a trustworthy on-device keep/reject path
+  - Next best candidate optimization:
+    - restore a reliable MiSTer deploy/probe path first, then rerun unchanged telemetry control and `super-heavy` keep gates before attempting lower-overhead refresh-blit telemetry or any new runtime optimization
+
+- 2026-03-07T18:57:00-0500
+  - Commit hash:
+    - `5502d816`
+  - Bottleneck targeted:
+    - restore trustworthy MiSTer measurement support by bringing `tools/mister/perf-sampler.sh` onto the required password-auth SSH/SCP path before another runtime or telemetry branch
+  - Change summary:
+    - kept the runtime tree unchanged and limited code changes to `tools/mister/perf-sampler.sh`, adding `PubkeyAuthentication=no`, `PreferredAuthentications=password`, and `NumberOfPasswordPrompts=1` to all three password-auth `expect` wrapper spawn commands
+    - added a deterministic local wrapper-contract check to the loop verification record after review flagged that `bash -n` alone did not prove the edited auth path was present on every wrapper
+    - left `tools/mister/package.sh` untouched as inherited user-owned dirty state outside the loop scope
+  - Verification result summary:
+    - `bash -n tools/mister/perf-sampler.sh`, `git diff --check`, telemetry Docker build/install/package in `3sx-mister-build`, the packaged telemetry parity gate, and the explicit three-wrapper `rg` contract check all passed locally
+    - a bounded direct password-auth `expect` probe using the corrected option bundle still timed out before any password prompt or remote command output, so redeploy/probe/smoke/capture were skipped and no fresh MiSTer logs were accepted this cycle
+    - independent review: the first `debate-code-review` pass only flagged inherited dirty `tools/mister/package.sh`, and that finding was debated to `drop`; a second clean `codex` review on the authored diff returned one valid verification-gap finding, which was accepted via the explicit local wrapper-contract check, plus one incorrect `expect`-dependency finding that was rejected because the script already gates password mode with `require_cmd expect`
+  - Keep/rollback decision with reason:
+    - keep measurement-support only; the sampler now matches the required password-auth contract for future loops, but the device-side SSH path is still blocked before authentication so no runtime or telemetry branch was safe to reland this cycle
+  - Next best candidate optimization:
+    - once MiSTer SSH starts reaching password prompt / command execution again, rerun unchanged telemetry control and `super-heavy` captures through the corrected sampler before attempting another refresh-lane measurement or runtime optimization
+
+- 2026-03-07T19:10:00-0500
+  - Commit hash:
+    - `a9216950`
+  - Bottleneck targeted:
+    - determine whether any safe repo-side SSH/support change still exists before attempting another MiSTer runtime or measurement branch
+  - Change summary:
+    - kept the runtime tree unchanged from `26685a7f` and revalidated that the real gameplay bottleneck is still update-side indexed software-surface refresh, not present or the remaining generic textured residue
+    - audited the remaining in-repo password-auth transport path and confirmed Loop 41 already fixed the only scripted wrapper mismatch in scope
+    - reproduced the live host-side SSH failure with bounded direct `ssh`/`scp` probes, including `ConnectTimeout` and legacy-KEX trials, before deciding against another repo-side transport tweak
+  - Verification result summary:
+    - `git diff --check`, telemetry Docker build/install/package in `3sx-mister-build`, and the packaged telemetry parity gate all passed locally on the unchanged tree
+    - `ping` still reached `192.168.1.171`, but direct `ssh -vvv` / `scp -v` probes continued to hang during key exchange at `expecting SSH2_MSG_KEX_ECDH_REPLY`; `ConnectTimeout=3` did not make the client fail fast, and the legacy-KEX/RSA retry still never reached authentication or command execution, so redeploy/probe/smoke/capture were skipped again
+    - independent review: a separate `codex exec` diff review found one valid closure inconsistency, namely that Loop 42 still said the review result was pending even though the review checkbox was already marked complete; that docs-only issue was accepted and fixed before closure
+  - Keep/rollback decision with reason:
+    - keep docs-only closure; no new repo-side option change was validated, and another runtime or telemetry branch would still lack trustworthy MiSTer verification
+  - Next best candidate optimization:
+    - recover the MiSTer SSH/device path outside this repo, then rerun unchanged telemetry `gameplay-idle` and `super-heavy` captures through the already-corrected sampler before attempting another refresh-lane measurement or runtime optimization
+
+- 2026-03-07T19:32:09-0500
+  - Commit hash:
+    - `da658c34`
+  - Bottleneck targeted:
+    - the remaining indexed software-surface refresh blit lane, specifically low-overhead attribution of full-refresh cost by decision and hot texture handle
+  - Change summary:
+    - added schema-`25` sampled refresh-blit telemetry that records every-32nd in-place refresh blit globally and per refresh-locality candidate, split into total/full/partial paths
+    - accepted one review fix so the sampled counter starts immediately before `SDL_BlitSurface(...)`, keeping the sample window focused on the blit itself rather than nearby timing overhead
+    - kept the change measurement-support only; no runtime refresh policy, dirty-rect, or generic-textured branch was reopened while MiSTer verification stayed blocked
+  - Verification result summary:
+    - `git diff --check`, telemetry Docker build/install/package in `3sx-mister-build`, and the packaged telemetry parity gate all passed after the accepted fix
+    - fallback local telemetry export checks succeeded: a local smoke capture confirmed the new schema-`25` fields serialize, and a fallback `super-heavy` run exercised non-zero sampled data (`25` sampled full-refresh blits at period `32`, with hot handles led by `56`, `58`, and `14`)
+    - device gate skipped after repeated host-side SSH stalls: direct password-auth `ssh -vvv` still hung during key exchange at `expecting SSH2_MSG_KEX_ECDH_REPLY`, so no redeploy, renderer probe, smoke, or MiSTer log refresh was accepted this cycle
+  - Keep/rollback decision with reason:
+    - keep measurement-support only; the new sampled telemetry is capture-gated, passed local safety checks, and provides the missing full-refresh attribution needed for the next safe runtime ranking once device transport is restored
+  - Next best candidate optimization:
+    - restore MiSTer command execution, rerun unchanged telemetry `gameplay-idle` and `super-heavy` captures on the telemetry package, then use the sampled full-refresh hot-handle data to choose the next safe refresh-lane runtime target instead of retrying the rejected direct-write or palette branches
+
+- 2026-03-07T20:14:54-0500
+  - Commit hash:
+    - `806c50cf`
+  - Bottleneck targeted:
+    - software-frame render-bucket attribution inside the kept covered raster lanes, specifically whether remaining render cost sits in fast exact, scaled, non-integer, generic textured, or solid work
+  - Change summary:
+    - added schema-`26` sampled raster-bucket telemetry for `fast_exact`, `fast_scaled`, `fast_non_integer`, `generic_textured`, and `solid`, with JSON/log export of sample period, sampled calls, sampled pixels, and sampled time
+    - accepted one review fix by changing `solid` from every-call timing to sample period `8`, keeping the bucket truly sampled
+    - kept the change measurement-support only; no runtime refresh policy or software-frame raster behavior changed outside extended perf capture
+  - Verification result summary:
+    - `git diff --check`, telemetry Docker build/install/package in `3sx-mister-build`, and the packaged telemetry parity gate all passed after the accepted fix
+    - fallback local `super-heavy` capture exported non-zero schema-`26` bucket data; `fast_exact` led sampled volume (`3305` samples at period `32`), `generic_textured` and `fast_non_integer` were highest per sample locally, and `solid` now sampled at period `8` with `300` samples instead of every call
+    - device gate skipped: fresh direct password-auth `ssh -vvv` still hung at `expecting SSH2_MSG_KEX_ECDH_REPLY`, so no redeploy/probe/smoke/log refresh was accepted this cycle
+  - Keep/rollback decision with reason:
+    - keep measurement-support only; the new capture-gated telemetry safely closes the remaining render-bucket attribution gap, but MiSTer transport is still blocked so the data cannot yet steer a trusted runtime reland
+  - Next best candidate optimization:
+    - restore MiSTer command execution, rerun unchanged telemetry `gameplay-idle` and `super-heavy` with schema-`26` bucket capture on the telemetry package, then choose between refresh-lane work and a render-side `generic_textured` / large non-integer target from on-device data
+
+- 2026-03-07T20:36:53-0500
+  - Commit hash:
+    - `80549e77`
+  - Bottleneck targeted:
+    - determine whether the current schema-`25` / `26` telemetry plus unchanged-tree fallback captures isolate any safe runtime branch while MiSTer command execution stays blocked before authentication
+  - Change summary:
+    - kept the runtime tree unchanged from `26685a7f` and reran the telemetry Docker build/package plus the packaged parity gate on the current baseline
+    - captured unchanged-tree fallback `stock-soft-c45-control-local` and `stock-soft-c45-super-heavy-local` telemetry to re-rank refresh versus render without a fresh MiSTer keep gate
+    - documented that render-side residue outside `fast_exact` remains too small to justify reopening the current `generic_textured` / large non-integer runtime branches
+  - Verification result summary:
+    - `git diff --check`, telemetry Docker build/install/package in `3sx-mister-build`, and the packaged telemetry parity gate all passed on the unchanged tree
+    - `ping` still reached `192.168.1.171`, but the fresh direct password-auth `ssh -vvv` probe stalled again at `expecting SSH2_MSG_KEX_ECDH_REPLY`, so no redeploy, renderer probe, smoke, or log refresh was accepted this cycle
+    - fallback captures still ranked refresh above render: control `4.2672 / 1.8358 / 1.7906 / 0.6408 ms` and `super-heavy` `6.7445 / 3.9884 / 2.1329 / 0.6232 ms` for `frame/update/render/present`, with `full_no_usable_dirty_rect` still dominating refresh work and only about `0.04-0.05 ms` estimated per frame in the remaining `generic_textured` and large non-integer residue
+    - independent diff-only `codex exec` review surfaced one valid docs closeout inconsistency: Loop 45 still said the review result was pending despite the completed review-step checkbox; that placeholder was fixed before closure
+  - Keep/rollback decision with reason:
+    - keep docs-only closure; the refreshed unchanged-tree evidence still points at the same blocked refresh lane, and MiSTer transport never recovered enough to validate another runtime reland safely
+  - Next best candidate optimization:
+    - restore MiSTer command execution, rerun unchanged telemetry `gameplay-idle` and `super-heavy` with schema-`25` / `26` on the telemetry package, then choose the next refresh-lane runtime target from on-device sampled full-refresh handle data instead of reopening the current render-side residue
+
+- 2026-03-07T21:02:03-0500
+  - Commit hash:
+    - `bd7ca5ab`
+  - Bottleneck targeted:
+    - determine whether either supported MiSTer command path had recovered enough to justify another refresh-lane runtime branch
+  - Change summary:
+    - kept the runtime tree unchanged and rechecked both supported MiSTer command paths from the host and from `3sx-mister-build`
+    - reran the unchanged telemetry Docker build/package plus the packaged parity gate to make sure the current optimization baseline still built cleanly while transport remained blocked
+    - documented a docs-only closure for the repeated pre-auth KEX stall instead of reopening another unverified runtime or measurement branch
+  - Verification result summary:
+    - `git diff --check`, telemetry Docker build/install/package in `3sx-mister-build`, and the packaged telemetry parity gate all passed on the unchanged tree
+    - host-side password-auth `ssh -vvv` still timed out after reaching only `expecting SSH2_MSG_KEX_ECDH_REPLY`, and container-side default plus explicit `curve25519-sha256`, `curve25519-sha256@libssh.org`, `ecdh-sha2-nistp256`, `diffie-hellman-group14-sha256`, and `diffie-hellman-group-exchange-sha256` retries all timed out before authentication as well
+    - independent diff-only review on the final docs change found no additional in-scope issues
+  - Keep/rollback decision with reason:
+    - keep docs-only closure; both supported MiSTer command paths still fail before authentication, so another runtime reland would again be unverified and unsafe to keep
+  - Next best candidate optimization:
+    - do not retry the current host/container KEX matrix from repo code right now; recover MiSTer command execution outside this repo first, then install the clean player build or rerun unchanged telemetry `gameplay-idle` and `super-heavy` before opening another refresh-lane branch
+
+- 2026-03-08T00:39:00-0500
+  - Commit hash:
+    - `9bb9007c`
+  - Bottleneck targeted:
+    - missing direct-write chunk/bbox evidence on the refresh hot handles that still dominate update time in gameplay and the menu-transition lane
+  - Change summary:
+    - added schema-`27` capture-gated telemetry for direct-write renew chunk calls, chunk-size mix, accumulated chunk pixels, and committed per-batch bbox area
+    - joined the new `renew_*` counters onto the existing refresh-locality candidate rows so hot handles now show refresh attempts, unlock locality, dirty-rect lifetime, and direct-write coverage together
+    - kept the loop measurement-support only; no runtime refresh policy or gameplay path changed outside extended perf capture
+  - Verification result summary:
+    - `git diff --check`, telemetry Docker build/install/package in `3sx-mister-build`, and the packaged telemetry parity gate all passed; the parity harness again logged `Software-frame parity check passed: 9 cases` plus `Software-source refresh parity check passed: 2 cases`
+    - MiSTer redeploy, remote `SF33RD.AFS` presence check, `/media/fat/games/3sx/run-3sx.sh --probe-renderer-only`, bounded `launch-osd.sh`, and backend/last-run log inspection all passed again with dummy/software + fbdev + native + `Software frame mode: on`, `runtime_rc=124`, and `last-run.log` `exit=143`
+    - refreshed device captures landed as `stock-soft-c48-control-post` `67.4604 FPS` / `14.8235 / 7.0307 / 7.2626 / 0.5303 ms`, `stock-soft-c48-super-heavy-post` `36.2619 FPS` / `27.5772 / 17.9693 / 9.0753 / 0.5325 ms`, and `stock-soft-c48-menu-transition-post` `57.5743 FPS` / `17.3689 / 10.2748 / 6.3797 / 0.7144 ms` for `frame/update/render/present`
+    - independent review produced no actionable findings: `codex review --uncommitted` stalled without bounded output, and fallback `claude` diff review surfaced no concrete in-scope issues
+  - Keep/rollback decision with reason:
+    - keep measurement-support only; the new telemetry closes the direct-write blind spot with `renew_batches_without_rect_total = 0` on all captured lanes and now shows a smaller safe-handle subset instead of just another broad full-refresh guess
+  - Next best candidate optimization:
+    - prototype a narrowly allowlisted direct-write partial-refresh reland for stable 256x256 gameplay handles `47`, `14`, and `56` first; keep full-refresh fallback for broader rows like `41`, `50`, `18`, and menu handle `10`, whose new batch bbox spikes still look too wide
+
+- 2026-03-08T01:09:25-0500
+  - Commit hash:
+    - `16a7a9c4`
+  - Bottleneck targeted:
+    - a narrow direct-write partial-refresh reland that reused exact renew bboxes for gameplay handles `47`, `14`, and `56` without reopening Loop 36's compare-and-copy path
+  - Change summary:
+    - briefly prototyped the allowlisted exact-renew-bbox reland while keeping the existing direct-write `SDL_memmove(...)` copy path and the existing `<=25%` refresh classifier
+    - local telemetry Docker build/install/package and the packaged parity gate both passed on the candidate tree
+    - fully rolled the runtime code back when MiSTer redeploy/probe never recovered, leaving the final tree docs-only
+  - Verification result summary:
+    - `git diff --check`, telemetry Docker build/install/package in `3sx-mister-build`, and the packaged telemetry parity gate all passed on the candidate diff
+    - MiSTer redeploy failed mid-transfer with `Connection closed by 192.168.1.171 port 22` plus `rsync ... unexpected end of file`; a follow-up host-side password-auth PTY probe timed out with `EXPECT_TIMEOUT` even while `ping` still succeeded
+    - device probe, smoke, logs, and post-change captures were skipped because the transport never recovered to a trustworthy remote session
+  - Keep/rollback decision with reason:
+    - rollback; the runtime candidate could not satisfy the required MiSTer verification gate, so it could not remain in tree unverified
+  - Next best candidate optimization:
+    - recover stable MiSTer command execution, then retry the same narrow exact-renew-bbox allowlist reland before revisiting broader refresh experiments
+
+- 2026-03-08T02:05:00-0500
+  - Commit hash:
+    - `67773765`
+  - Bottleneck targeted:
+    - the remaining decision gap around user-observed Remy-stage slowdown versus the already-measured super/effect and menu-transition lanes
+  - Change summary:
+    - kept the runtime tree unchanged after confirming the current software-frame loop still lacks a fresh stage-19 idle capture even though the `stage-heavy` / `--test-stage 19` harness support already exists in-tree
+    - reran the telemetry Docker build/package plus the packaged parity gate to revalidate the unchanged baseline before deciding against another blind runtime reland
+    - recorded that the next safe step is a no-code Remy-stage idle capture once transport recovers, not another immediate exact-renew-bbox retry
+  - Verification result summary:
+    - `git diff --check`, telemetry Docker build/install, the inherited local package step in `3sx-mister-build`, and the packaged telemetry parity gate all passed while the runtime source tree stayed unchanged
+    - a fresh host-side password-auth PTY `ssh` probe to `192.168.1.171` timed out at `EXPECT_TIMEOUT` before command output, so redeploy, renderer probe, smoke, log inspection, and the stage-19 idle capture were all skipped this cycle
+  - Keep/rollback decision with reason:
+    - keep docs-only closure; no new code was needed to support the missing stage-19 lane, and the MiSTer gate never recovered enough to validate either a measurement run or another runtime reland safely
+  - Next best candidate optimization:
+    - recover stable MiSTer command execution, then capture the stage-19 idle lane on the kept telemetry baseline through `--test-scene-preset stage-heavy` or `--gameplay-idle --test-stage 19` before reopening the narrow exact-renew-bbox allowlist reland
+
+- 2026-03-08T03:36:16-0400
+  - Commit hash:
+    - `3b112865`
+  - Bottleneck targeted:
+    - the refresh-heavy stage-19 idle / heavy-scene gameplay lane after the live MiSTer deploy and probe path recovered
+  - Change summary:
+    - recovered the live telemetry redeploy/probe loop, captured `stock-soft-c52-stage-heavy-pre`, and only reopened the runtime branch after the on-device lane again ranked refresh above render residue with the same hot subset led by `56`, `47`, and `14`
+    - kept a narrow `PPGFile.c` reland that preserves exact direct-write renew bboxes for handles `47`, `14`, and `56` across `flUnlockTexture(...)`, leaving the existing `SDL_memmove(...)` path, `<=25%` classifier, and all non-allowlisted handles unchanged
+    - left broader gameplay rows `58`, `57`, `41`, `50`, `18` plus menu rows `9`, `10`, and `11` on the previous full-refresh path
+  - Verification result summary:
+    - `git diff --check`, telemetry Docker build/install/package in `3sx-mister-build`, and the packaged telemetry parity gate all passed on the kept diff; MiSTer redeploy, `SF33RD.AFS` presence check, `/media/fat/games/3sx/run-3sx.sh --probe-renderer-only`, bounded startup smoke, and backend/last-run log inspection passed again
+    - `stage-heavy` improved from `39.4124 FPS` / `25.3727 ms` to `47.1152 FPS` / `21.2246 ms`, with update dropping from `16.2079 ms` to `11.8969 ms` and `software_surface_cache_refresh.mean_ms` dropping from `11.4479 ms` to `7.0140 ms`
+    - `super-heavy` improved from the trusted `stock-soft-c35-super-heavy-post` baseline `37.0503 FPS` / `26.9904 ms` to `43.6228 FPS` / `22.9238 ms`; `control` stayed within guardrail at `69.7721 FPS` / `14.3324 ms` to `68.7754 FPS` / `14.5401 ms`, and `menu-transition` improved from `56.2738 FPS` / `17.7703 ms` to `62.0911 FPS` / `16.1054 ms`
+    - independent review rejected the inherited `tools/mister/package.sh` finding as out of scope and rejected the slot-identity allowlist concern for this keep decision because the measured post-capture matrix showed only the intended subset activating with the existing bounded classifier envelope
+  - Keep/rollback decision with reason:
+    - keep; the measured reland materially reduced the dominant refresh lane on `stage-heavy`, `super-heavy`, and the user-visible menu transition while idle stayed inside the `<=3%` guardrail and gameplay direct-present/readback invariants held
+  - Next best candidate optimization:
+    - keep this reland as the new baseline and add stable-identity telemetry for remaining hot slots `58` and `57` before widening the allowlist beyond `47` / `14` / `56`
+
+- 2026-03-08T10:45:00-0400
+  - Commit hash:
+    - `a1f723d9`
+  - Bottleneck targeted:
+    - the missing explanation for why user-visible menu-transition slots `1030` / `1031` / `1032` stay `full_refresh_no_usable_dirty_rect` with zero unlock/renew evidence under deferred full captures while the MiSTer device gate remains blocked
+  - Change summary:
+    - researched the deferred-capture blind spot from the kept `stock-soft-c52-*` gameplay/menu baseline plus the kept `stock-soft-c57-menu-transition-local` logical-identity rerank and briefly prototyped capture-gated deferred texture-history preservation for unlock-locality, dirty-rect, and renew telemetry
+    - rebuilt telemetry in `3sx-mister-build`, reran the packaged parity gate, refreshed the `build/linux-telemetry-fallback*` build, and captured a corrected local `menu-transition` rerun on `software-frame-mode = on`
+    - rolled the measurement code fully back after the target rows stayed unchanged and independent review identified a deferred-capture aggregate-semantics risk on the kept shape; left the inherited user-owned `tools/mister/package.sh` diff untouched and out of scope
+  - Verification result summary:
+    - `git diff --check`, telemetry Docker build/install/package in `3sx-mister-build`, the packaged parity gate, and the rebuilt local fallback binary all passed on the candidate diff; the corrected local fallback capture landed at `10.4886 FPS` and `95.3413 / 1.9259 / 67.5520 / 25.8634 ms` for `frame/update/render/present` in the container's dummy/software path while reproducing the same workload shape as Loop 57 (`mtrans_tasks = 185.05`, `ppg_tasks = 44.85`, `software_frame_generic_textured_tasks = 0.89`)
+    - the target rows did not move: `texture_handle 9 / 10 / 11` still reported zero `tracked_unlocks_total`, zero dirty-rect record/clear totals, zero `renew_batches_total`, and only `full_refresh_no_usable_dirty_rect_attempts_total = 485 / 598 / 192`
+    - the MiSTer gate remained unavailable on the unchanged tree as well: container-side password-auth `ssh ... "echo __SHORT_OK__"` still timed out after `20s` with `EXIT=124`, so redeploy/probe/log refresh was skipped again
+  - Keep/rollback decision with reason:
+    - rollback; the measurement reland did not expose new evidence on the target menu rows and the review correctly flagged that preserving deferred pre-trigger counters would blur aggregate deferred-capture means/coverage semantics if kept
+  - Next best candidate optimization:
+    - keep gameplay slot `57` blocked on device recovery for runtime work; while the MiSTer gate stays unhealthy, the next valid transition-lane step is narrower measurement around how slots `1030` / `1031` / `1032` become texture-unlock dirty without recorded unlock/renew history, not another retry of the same deferred-history shape
+
+- 2026-03-08T11:30:00-0400
+  - Commit hash:
+    - `82dfb34e`
+  - Bottleneck targeted:
+    - whether the dominant `menu-transition` logical rows `ppg-seqs 1030 / 1031 / 1032` are being recreated or destroyed often enough to explain their missing unlock/renew history
+  - Change summary:
+    - kept capture-gated source-surface lifetime telemetry only on the destroy side in the joined refresh hot/locality exports and bumped the perf JSON schema to `30`
+    - accepted review-driven cleanup that removed the create-side lifetime counters because `logical_identity_registrations_total` already covered the current target rows
+    - refreshed the local `menu-transition` rerun and interpreted the result by logical ids `1030 / 1031 / 1032`, with an explicit note that the telemetry remains handle-slot keyed
+  - Verification result summary:
+    - `git diff --check`, telemetry Docker build/install/package in `3sx-mister-build`, the packaged parity gate, and the rebuilt local fallback binary all passed after the review fixes
+    - local `stock-soft-c60-menu-transition-local` rerun landed at `10.8266 FPS` and `92.3649 / 1.9116 / 67.1566 / 23.2968 ms` for `frame/update/render/present`; logical ids `1031`, `1030`, and `1032` each stayed `logical_identity_mixed = false`, `logical_identity_registrations_total = 1`, and `source_surface_destroy_calls_total = 1`
+    - device verification was skipped because the MiSTer redeploy/probe path was still not trusted enough for a safe runtime retry, and this loop remained measurement-support only
+  - Keep/rollback decision with reason:
+    - keep measurement-support only; the kept telemetry safely rejects repeated lifetime churn as the main explanation for the dominant final `menu-transition` rows without widening runtime behavior
+  - Next best candidate optimization:
+    - while the MiSTer gate remains unhealthy, add the next narrow measurement around where same-frame texture-dirty invalidation originates for logical ids `1030 / 1031 / 1032`; do not retry the lifetime-churn idea now unless a later capture shows migration-heavy ambiguity
+
+- 2026-03-08T08:30:50-0400
+  - Commit hash:
+    - `67e7f5e3`
+  - Bottleneck targeted:
+    - the remaining refresh-heavy gameplay update cost on stable hot slot `57` after Loop 52's allowlisted reland and Loop 53's stable-identity telemetry
+  - Change summary:
+    - relanded the existing one-line `PPGFile.c` allowlist broadening so stable `ppg-seqs` slot `57` keeps renew dirty rects alongside `14` / `47` / `56`
+    - kept the renderer-side `<=25%` classifier, `SDL_memmove(...)` refresh path, telemetry schema, and all non-allowlisted rows unchanged
+    - recorded the verified keep result in the active checklist after a clean diff-only independent review reported no actionable findings
+  - Verification result summary:
+    - `git diff --check`, telemetry Docker build/install/package in `3sx-mister-build`, the packaged parity gate, MiSTer redeploy, `SF33RD.AFS` presence check, `/media/fat/games/3sx/run-3sx.sh --probe-renderer-only`, bounded `launch-osd.sh`, and backend/last-run log inspection all passed again
+    - `stock-soft-c61-control-post` landed at `69.2588 FPS` / `14.4386 / 6.6363 / 7.2603 / 0.5420 ms`, `stock-soft-c61-stage-heavy-post` landed at `51.0731 FPS` / `19.5798 / 10.2674 / 8.7621 / 0.5503 ms`, `stock-soft-c61-super-heavy-post` landed at `47.0640 FPS` / `21.2477 / 11.8074 / 8.9095 / 0.5308 ms`, and `stock-soft-c61-menu-transition-post` landed at `61.7358 FPS` / `16.1981 / 7.6196 / 7.7338 / 0.8447 ms`
+    - slot `57` moved from `634` `full_refresh_no_usable_dirty_rect` attempts and `0` partial attempts in the prior `stock-soft-c53-*` gameplay captures to `623` partial-refresh attempts, `0` `full_refresh_no_usable_dirty_rect` attempts, and only `11` oversized fallbacks on both heavy gameplay lanes; gameplay stayed `300/300` direct-present with `0` upload/fallback frames, while `menu-transition` stayed at `298/300` direct-present with `2` fallback frames
+  - Keep/rollback decision with reason:
+    - keep; the reland materially improved the user-priority heavy gameplay lanes (`-7.75%` frame / `+8.40%` FPS on `stage-heavy`, `-7.31%` frame / `+7.89%` FPS on `super-heavy`), kept idle slightly better, and left the untouched transition lane within the established non-regression guardrail
+  - Next best candidate optimization:
+    - revisit stable slot `58` next with the same existing `<=25%` classifier and full-refresh fallback now that slot `57` landed cleanly; keep transition rows `9` / `10` / `11` and broader gameplay rows out of scope unless that narrower reland fails
+
+- 2026-03-08T08:52:18-0400
+  - Commit hash:
+    - `e61fe3f7`
+  - Bottleneck targeted:
+    - the remaining refresh-heavy gameplay update cost on stable hot slot `58` after the kept Loop 61 slot-`57` reland
+  - Change summary:
+    - researched the next bounded runtime candidate from the kept `stock-soft-c61-*` baseline and briefly widened `ppgShouldKeepRenewDirtyRect(...)` from `14/47/56/57` to `14/47/56/57/58`
+    - reran telemetry Docker build/install/package and the packaged parity gate, then redeployed to MiSTer and revalidated `SF33RD.AFS`, renderer probe, bounded smoke, and backend/last-run logs on the candidate tree
+    - rolled the runtime code fully back when the first required post-change gameplay capture dropped the SSH session before a trustworthy JSON could be collected
+  - Verification result summary:
+    - `git diff --check`, telemetry Docker build/install/package in `3sx-mister-build`, and the packaged telemetry parity gate all passed on the candidate runtime diff; MiSTer redeploy, `SF33RD.AFS` presence, `/media/fat/games/3sx/run-3sx.sh --probe-renderer-only`, bounded smoke (`runtime_rc=124`), and backend/last-run log inspection also passed before the capture step
+    - the first required `stock-soft-c62-control-post` capture failed mid-session with `Connection closed by 192.168.1.171 port 22` and never produced a local JSON; an immediate follow-up container-side `sshpass ... "echo __POST_DROP_OK__"` probe then timed out after `20s`
+    - the device still answered `ping`, but only with extreme latency (`1.62-3.62 s` RTT), so the post-change capture path was not trusted for a runtime keep decision
+  - Keep/rollback decision with reason:
+    - rollback; the slot-`58` reland still looks like the next safe runtime candidate, but this cycle never produced the required post-change capture matrix after the MiSTer transport regressed
+  - Next best candidate optimization:
+    - retry the exact same bounded slot-`58` reland once the unchanged-tree telemetry package can again complete redeploy, probe, smoke, and at least one full `300`-frame capture without mid-session SSH drops
+
+- 2026-03-08T09:09:13-0400
+  - Commit hash:
+    - `f7d1d842`
+  - Bottleneck targeted:
+    - the slot-`58` runtime retry gate itself, specifically whether the unchanged-tree telemetry path had recovered enough to justify reopening the next bounded renew-bbox reland
+  - Change summary:
+    - kept the runtime tree unchanged and reran the unchanged-tree telemetry Docker build/install/package plus the packaged parity gate in `3sx-mister-build`
+    - rechecked the MiSTer transport on the unchanged tree with both a host-side password-auth `expect` SSH probe and container-side `sshpass` SSH probes
+    - closed docs-only when neither transport path recovered enough to execute even a bounded remote command, and added a stronger stop note for slot `58`
+  - Verification result summary:
+    - `git diff --check`, telemetry Docker build/install/package in `3sx-mister-build`, and the packaged telemetry parity gate all passed again on the unchanged runtime tree
+    - `ping -c 3 192.168.1.171` succeeded at `8.361-95.234 ms` RTT, but the host-side password-auth `expect` SSH probe still ended in `EXPECT_TIMEOUT`, and the container-side `sshpass` SSH probes for both `echo __SSH_OK__` and remote `SF33RD.AFS` presence timed out after `20s`
+    - device redeploy, probe, smoke, logs, and captures were skipped because the unchanged-tree transport still could not reach trustworthy remote command execution
+  - Keep/rollback decision with reason:
+    - keep docs-only closure; the runtime slot-`58` hypothesis remains unchanged, but reopening it before the device gate can sustain unchanged-tree command execution would only repeat the same unverified stop condition
+  - Next best candidate optimization:
+    - do not retry slot `58` now; first recover the unchanged-tree MiSTer path far enough to complete bounded redeploy/probe/log checks and at least one full `300`-frame capture, then retry the exact same one-line slot-`58` reland from the kept `stock-soft-c61-*` baseline
+
+- 2026-03-08T09:45:57-0400
+  - Commit hash:
+    - `3fc15191`
+  - Bottleneck targeted:
+    - the slot-`58` runtime retry gate itself, specifically whether the unchanged-tree MiSTer command path had recovered enough to make any new runtime or measurement work eligible
+  - Change summary:
+    - kept the runtime tree unchanged and reran the unchanged-tree telemetry Docker build/install/package plus the packaged parity gate in `3sx-mister-build`
+    - revalidated the `stock-soft-c61-*` evidence directly from the committed refresh/locality exports and confirmed stable unmixed gameplay handle `58` still ranks ahead of broader rows `41` / `50` / `18`
+    - closed docs-only again when bounded host-side and container-side password-auth command probes still timed out before any trustworthy remote output
+  - Verification result summary:
+    - `git diff --check`, telemetry Docker build/install/package in `3sx-mister-build`, and the packaged telemetry parity gate all passed again on the unchanged runtime tree
+    - `ping -c 3 192.168.1.171` recovered with `0%` packet loss but high jitter (`6.211-558.413 ms` RTT), while the host-side password-auth `expect` probe for `echo __EXPECT_SSH_OK__` ended in `EXPECT_TIMEOUT` and bounded container-side password-auth probes for `echo __CONTAINER_SSH_OK__` plus remote `SF33RD.AFS` presence both hit local timeouts before any output
+    - device redeploy, probe, smoke, logs, and captures were skipped because the unchanged-tree transport still could not execute even a bounded remote command path reliably
+  - Keep/rollback decision with reason:
+    - keep docs-only closure; slot `58` remains the right next bounded runtime candidate, but reopening it again before the MiSTer command path can execute a simple unchanged-tree password-auth command would only repeat the same unverified stop condition
+  - Next best candidate optimization:
+    - recover unchanged-tree MiSTer command execution outside this repo first, then retry the exact same one-line slot-`58` reland from the kept `stock-soft-c61-*` baseline; do not spend another repo loop on slot-`58` gate rechecks until that remote command path succeeds
+
+- 2026-03-09T03:22:07-0400
+  - Commit hash:
+    - `6b766eba`
+  - Bottleneck targeted:
+    - whether the remaining scripted Yun/effect software-frame gameplay residue is actually concentrated in `alpha-only` or RGB-modulated textured work before another gameplay runtime edit
+  - Change summary:
+    - added telemetry-only alpha-only versus RGB-mod counters for `software_frame_fast_non_integer_*` and `software_frame_generic_textured_*`
+    - exported the new counters through the perf summary JSON, per-sample JSON, and `tools/mister/perf-sampler.sh`
+    - kept runtime raster math, routing, thresholds, and presenter behavior unchanged while capturing a fresh `stock-soft-c92-*` gameplay matrix
+  - Verification result summary:
+    - `git diff --check`, `bash -n tools/mister/perf-sampler.sh`, telemetry Docker build/install/package in `3sx-mister-build`, the packaged parity gate, and MiSTer `health` / `deploy` / `probe` / bounded `smoke` all passed on the kept telemetry tree
+    - `stock-soft-c92-control-post` landed at `88.6971 FPS`, `stock-soft-c92-effect-heavy-post` at `61.5348 FPS`, and `stock-soft-c92-super-heavy-post` at `60.7727 FPS`; all three kept `present_readback.mean_ms = 0.0000`, preserved the old `540.81` fast-non-integer plus `485.57` generic-textured residue means, and reported zero alpha-only or RGB-mod buckets in both the summary and every per-sample row
+  - Keep/rollback decision with reason:
+    - keep measurement-support only; the new telemetry safely rejects alpha-only/RGB modulation as the scripted gameplay bottleneck without changing behavior
+  - Next best candidate optimization:
+    - recover the narrowest trustworthy direct Yun SA3 burst capture with the new modulation counters; if it also shows zero modulation buckets, stop chasing modulation-specialized math and target a different cost inside the kept non-integer plus generic-textured residue
+
+- 2026-03-09T05:35:38-0400
+  - Commit hash:
+    - `c073eec8`
+  - Bottleneck targeted:
+    - whether the remaining scripted Yun/effect software-frame residue is setup-heavy inside the non-integer lane, especially the medium `ge_256` miss bucket, before another gameplay runtime reland
+  - Change summary:
+    - added telemetry-only lookup-entry counters for `software_frame_fast_non_integer_*`, `software_frame_fast_miss_non_integer_*`, and `software_frame_fast_miss_non_integer_ge_256_*`
+    - exported the new counters through perf summary/per-sample JSON and backend perf logging, and bumped the perf JSON schema to `42`
+    - refreshed `stock-soft-c95-effect-heavy-post` and `stock-soft-c95-super-heavy-post` on MiSTer without changing raster routing, thresholds, or present policy
+  - Verification result summary:
+    - `git diff --check`, `bash -n tools/mister/perf-sampler.sh`, telemetry Docker build/install/package in `3sx-mister-build`, and the packaged parity gate all passed
+    - MiSTer `health` / `deploy` / `probe` / bounded `smoke` all passed; `stock-soft-c95-effect-heavy-post` landed at `62.8544 FPS` and `stock-soft-c95-super-heavy-post` at `61.0786 FPS`, both `300/300` direct-present with `present_readback.mean_ms = 0.0000`
+    - independent `codex` and `claude` review subprocess attempts timed out without artifacts; manual inspection found no blocker in the telemetry-only diff
+  - Keep/rollback decision with reason:
+    - keep measurement-support only; the new ratios show the `ge_256` miss bucket is much more setup-heavy than the kept fast path (`10.88` vs `21.85 px/lookup-entry`), which explains the earlier blanket `>=256 px` regression and narrows the next safe runtime step
+  - Next best candidate optimization:
+    - capture the direct Yun SA3 burst with the new lookup-entry counters if possible; otherwise target setup/strip reduction for the medium `ge_256` miss bucket instead of another blanket threshold broadening or generic textured split
+
+- 2026-03-09T07:50:46-0400
+  - Commit hash:
+    - `849682a9`
+  - Bottleneck targeted:
+    - whether the stocked Yun SA3 harness ever reaches the higher-level super-check path, or instead stays in an earlier ready-state player routine family while Genei-Jin remains inactive
+  - Change summary:
+    - added telemetry-only `check_super_arts_attack(...)` entry counters for total, cmd-select, cmd-select-not-ready, and direct-path reachability
+    - added ready-frame `routine_no[1]` histograms plus first/last ready routine snapshots and exported them through perf JSON and `tools/mister/perf-sampler.sh`
+    - refreshed `stock-soft-c100-yun-stock-vs-ryu-post` on MiSTer without changing raster routing, gameplay logic, or presenter policy
+  - Verification result summary:
+    - `git diff --check`, `bash -n tools/mister/perf-sampler.sh`, telemetry Docker build/install/package in `3sx-mister-build`, the packaged parity gate, and MiSTer `health` / `deploy` / `probe` / bounded `smoke` all passed; the independent diff-only review returned `{"findings":[]}`
+    - `stock-soft-c100-yun-stock-vs-ryu-post` landed at `73.0136 FPS`; P1 stayed ready for `300/300` sampled frames but recorded `0` higher-level super-check entries, with ready `routine_no[1]` histogram `271/29/0/0/0/0` and first/last ready routines `[0,0,1]` and `[0,7,1]`
+  - Keep/rollback decision with reason:
+    - keep measurement-support only; the new telemetry proves the stocked harness is blocked before `check_super_arts_attack(...)`, so deeper matcher-internal work would still miss the real Yun capture gate
+  - Next best candidate optimization:
+    - gate the stocked/scripted Yun SA3 capture on true gameplay/input-active player state, likely `routine_no[0] == 4`, then rerun the burst capture before attempting another gameplay raster reland
+
+- 2026-03-09T08:30:08-0400
+  - Commit hash:
+    - `cac98c67`
+  - Bottleneck targeted:
+    - the missing stocked Yun SA3 measurement lane, specifically whether delaying scripted inputs until true gameplay/input-active state would recover the real direct-present slowdown burst
+  - Change summary:
+    - added an opt-in `--test-delay-gameplay-inputs-until-active` harness flag and `game-input-active` wait condition keyed to both players reaching `routine_no[0] == 4`
+    - delayed scene-preset scripted inputs plus the `--test-p1-super-full` bootstrap until that state and started the test-runner `game_frame` from the same point
+    - updated `tools/mister/perf-sampler.sh` to pass the new flag, support explicit `game-input-active` waits with scripted presets, and export corrected capture-start metadata
+  - Verification result summary:
+    - `git diff --check`, `bash -n tools/mister/perf-sampler.sh`, telemetry Docker build/install/package in `3sx-mister-build`, and the packaged parity gate all passed again on the kept measurement tree
+    - MiSTer `health` / `deploy` / `probe` / bounded `smoke` plus backend and last-run log inspection all passed; `health` reported `__MISTER_HEALTH_OK__` plus `__AFS_OK__`, `probe` stayed dummy/software + fbdev + native + `Software frame mode: on`, and `smoke` again ended at `__RUNTIME_RC__=124` / `exit=143`
+    - on-device capture `stock-soft-c101-yun-stock-vs-ryu-post` landed at `51.8216 FPS` and `19.2970 / 7.9090 / 10.8185 / 0.5695 ms` for `frame/update/render/present`, reached `121` active-super frames starting at frame `179`, stayed `300/300` direct present, and its worst `60`-frame window fell to `38.6278 FPS` while remaining dominated by `software_frame_fast_non_integer_pixels` plus smaller `software_frame_generic_textured_pixels`
+  - Keep/rollback decision with reason:
+    - keep measurement-support only; the diff stayed out of gameplay logic and recovered a trustworthy Yun slowdown lane that now matches the manual direct-present bottleneck shape closely enough to resume targeted runtime work
+  - Next best candidate optimization:
+    - use the kept `stock-soft-c101-yun-stock-vs-ryu-post` burst to reland one narrow fast-non-integer runtime optimization first, with generic-textured residue as the secondary follow-up lane

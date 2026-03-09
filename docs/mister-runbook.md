@@ -1,0 +1,318 @@
+# MiSTer Runbook (Offline-First)
+
+## Scope
+
+This runbook targets stock MiSTer Linux with the 3SX MiSTer profile:
+
+- no netplay
+- no runtime ISO import
+- no FFmpeg runtime dependency
+
+## Build
+
+Toolchain note:
+
+- Use `clang` for MiSTer builds. GCC toolchains (for example Debian `arm-linux-gnueabihf-gcc` 10.x) fail on legacy unnamed-parameter definitions in upstream sources.
+- This repo requires CMake `>= 3.24`. Debian 11 `bullseye` main only ships `3.18.4`, so the validated Docker flow below installs `cmake 3.25.1` from `bullseye-backports`.
+
+Verified host-side Docker build (validated on March 5, 2026):
+
+```bash
+docker rm -f 3sx-mister-build 2>/dev/null || true
+docker run -d --name 3sx-mister-build --platform linux/arm/v7 -v "$PWD":/src -w /src debian:11 sleep infinity
+
+docker exec 3sx-mister-build bash -lc '
+set -eux
+cat >/etc/apt/sources.list <<'"'"'EOF'"'"'
+deb http://deb.debian.org/debian bullseye main contrib non-free
+deb http://deb.debian.org/debian bullseye-updates main contrib non-free
+deb http://security.debian.org/debian-security bullseye-security main
+deb http://archive.debian.org/debian bullseye-backports main contrib non-free
+EOF
+apt-get update
+apt-get install -y build-essential ca-certificates clang cmake curl git make pkg-config
+cmake --version
+clang --version | head -n 1
+'
+```
+
+Important:
+
+- Set `JOBS=2` for this container. Letting the ARMv7 container auto-detect `10` jobs caused emulated clean builds to be OOM-killed around the halfway mark.
+- The validated package set in this container was: `build-essential 12.9`, `ca-certificates 20230311+deb12u1~deb11u1`, `clang 1:11.0-51+nmu5`, `cmake 3.25.1-1~bpo11+1`, `curl 7.74.0-1.3+deb11u16`, `git 1:2.30.2-1+deb11u5`, `make 4.3-4.1`, and `pkg-config 0.29.2-1`.
+
+Validated Docker build command:
+
+```bash
+docker exec 3sx-mister-build bash -lc '
+set -euxo pipefail
+cd /src
+JOBS=2 bash build-deps.sh --profile mister
+CC=clang CXX=clang++ cmake -S . -B build/mister -DCMAKE_BUILD_TYPE=Release -DPORT_MISTER=ON
+cmake --build build/mister --parallel 2
+cmake --install build/mister --prefix build/mister-install
+'
+```
+
+Build flavors:
+
+- `telemetry` is the developer/default flavor. It keeps `--perf-*`, `--software-frame-parity-check`, renderer/presenter breakdown capture, and the optimization workflow.
+- `clean` is the player-facing flavor. It compiles out perf capture CLI/plumbing and the always-on renderer/presenter telemetry bookkeeping used only for measurement.
+
+Validated dual-flavor Docker build/package commands:
+
+```bash
+docker exec 3sx-mister-build bash -lc '
+set -euxo pipefail
+cd /src
+CC=clang CXX=clang++ cmake -S . -B build/mister-telemetry -DCMAKE_BUILD_TYPE=Release -DPORT_MISTER=ON -DENABLE_PERF_TELEMETRY=ON
+cmake --build build/mister-telemetry --parallel 2
+cmake --install build/mister-telemetry --prefix build/mister-telemetry-install
+tools/mister/package.sh build/mister-telemetry-install build/mister-telemetry-package
+
+CC=clang CXX=clang++ cmake -S . -B build/mister-clean -DCMAKE_BUILD_TYPE=Release -DPORT_MISTER=ON -DENABLE_PERF_TELEMETRY=OFF
+cmake --build build/mister-clean --parallel 2
+cmake --install build/mister-clean --prefix build/mister-clean-install
+tools/mister/package.sh build/mister-clean-install build/mister-clean-package
+'
+```
+
+Native ARM Linux build:
+
+```bash
+bash build-deps.sh --profile mister
+CC=clang CXX=clang++ cmake -S . -B build/mister -DCMAKE_BUILD_TYPE=Release -DPORT_MISTER=ON
+cmake --build build/mister --parallel
+cmake --install build/mister --prefix build/mister-install
+```
+
+Cross-build from x86_64/arm64 host (Docker/VM):
+
+```bash
+bash build-deps.sh --profile mister
+CC=clang CXX=clang++ \
+  CFLAGS="--target=arm-linux-gnueabihf" \
+  CXXFLAGS="--target=arm-linux-gnueabihf" \
+  LDFLAGS="--target=arm-linux-gnueabihf" \
+  cmake -S . -B build/mister -DCMAKE_BUILD_TYPE=Release -DPORT_MISTER=ON -DENABLE_MISTER_ARM_HARDENING=ON
+cmake --build build/mister --parallel
+cmake --install build/mister --prefix build/mister-install
+```
+
+Verify ARM hard-float/NEON codegen in the final binary:
+
+```bash
+readelf -A build/mister/bin/3sx | rg -i "Tag_CPU_name|Tag_ABI_VFP_args|Tag_Advanced_SIMD_arch"
+```
+
+## Package
+
+Telemetry package:
+
+```bash
+tools/mister/package.sh build/mister-telemetry-install build/mister-telemetry-package
+```
+
+Clean package:
+
+```bash
+tools/mister/package.sh build/mister-clean-install build/mister-clean-package
+```
+
+Output layout:
+
+- `build/mister-telemetry-package/bin/3sx`
+- `build/mister-clean-package/bin/3sx`
+- `build/mister-telemetry-package/lib/*`
+- `build/mister-clean-package/lib/*`
+- `build/mister-telemetry-package/run-3sx.sh`
+- `build/mister-clean-package/run-3sx.sh`
+
+## Deploy To MiSTer
+
+Copy package contents to:
+
+- `/media/fat/games/3sx/`
+
+Preferred remote entry point:
+
+- `tools/mister/misterctl.sh`
+
+The MiSTer SSH path is fragile on this target. Use `tools/mister/misterctl.sh` for deploy, probe, smoke, and ad hoc remote commands, and use `tools/mister/perf-sampler.sh` for captures. Both tools take a shared local lock so only one MiSTer remote workflow runs at a time.
+
+Recommended sync command (preserves staged `SF33RD.AFS`):
+
+```bash
+MISTER_HOST=192.168.1.171 MISTER_USER=root MISTER_PASSWORD=1 \
+  tools/mister/misterctl.sh deploy --src build/mister-clean-package
+```
+
+Use `build/mister-clean-package/` for normal play and `build/mister-telemetry-package/` when you need perf capture or parity tooling on the device.
+
+Low-level `rsync` still works, but do not prefer it in automation now that `misterctl.sh` exists:
+
+```bash
+rsync -av --delete --omit-dir-times --no-perms --no-owner --no-group \
+  --exclude 'resources/SF33RD.AFS' \
+  --filter 'P resources/SF33RD.AFS' \
+  build/mister-clean-package/ root@192.168.1.171:/media/fat/games/3sx/
+```
+
+Required game data:
+
+- `/media/fat/games/3sx/resources/SF33RD.AFS`
+
+If `SF33RD.AFS` is missing, 3SX exits with code `20` and prints the expected path.
+
+## Probe Backends
+
+```bash
+MISTER_HOST=192.168.1.171 MISTER_USER=root MISTER_PASSWORD=1 \
+  tools/mister/misterctl.sh probe
+```
+
+Probe log path:
+
+- `/media/fat/games/3sx/logs/backend.log`
+
+## Run
+
+```bash
+/media/fat/games/3sx/run-3sx.sh
+```
+
+For OSD launchers (`/media/fat/Scripts/*.sh`), call:
+
+```bash
+/media/fat/games/3sx/launch-osd.sh
+```
+
+This keeps stdout/stderr out of the text console and writes logs to `/media/fat/games/3sx/logs/last-run.log`.
+`launch-osd.sh` also forces SDL dummy video + software renderer for stable stock-MiSTer OSD startup; fbdev presenter handles on-screen output.
+
+Recommended OSD wrapper:
+
+```sh
+#!/bin/sh
+set -eu
+exec /media/fat/games/3sx/launch-osd.sh "$@"
+```
+
+Do not wrap `launch-osd.sh` in `openvt`, `chvt`, or another manual VT hop. On this MiSTer target that path can hang before `launch-osd.sh` starts, leaving the OSD frozen and producing no fresh `last-run.log`.
+
+## Performance Sampling
+
+Preferred quick steady-state gate:
+
+```bash
+MISTER_HOST=192.168.1.171 MISTER_USER=root MISTER_PASSWORD=1 \
+  tools/mister/perf-sampler.sh --scene training --frames 300 --tag quick-gate
+```
+
+`tools/mister/perf-sampler.sh` now keeps one shared MiSTer lock for the whole capture workflow and returns the JSON plus remote log over the same SSH session that ran the capture. That keeps each perf sample to one remote command session instead of SSH plus separate SCP round-trips.
+
+Perf sampling requires the `telemetry` flavor on the device. Deploy `build/mister-telemetry-package/` before running `tools/mister/perf-sampler.sh`.
+
+Long-window gate (diagnostic, currently noisy):
+
+```bash
+MISTER_HOST=192.168.1.171 MISTER_USER=root MISTER_PASSWORD=1 \
+  tools/mister/perf-sampler.sh --scene training --frames 600 --tag long-gate
+```
+
+Current behavior on `training`: first ~300 frames are typically steady, while late-window outliers can appear. Use the 300-frame gate for iteration and track long-window outliers separately.
+
+## Troubleshooting
+
+### GCC toolchain errors during configure/build
+
+Symptoms:
+
+- parser/legacy-definition errors while using `gcc`/`g++`
+
+Fix:
+
+```bash
+CC=clang CXX=clang++ cmake -S . -B build/mister -DCMAKE_BUILD_TYPE=Release -DPORT_MISTER=ON
+cmake --build build/mister --parallel
+```
+
+### Missing resources
+
+Symptom:
+
+- app exits immediately with code `20`
+
+Fix:
+
+- ensure `SF33RD.AFS` exists at `/media/fat/games/3sx/resources/SF33RD.AFS`
+
+### macOS tar deploy leaves `._*` files or ownership errors on MiSTer
+
+Symptoms:
+
+- remote `tar` extraction prints `Cannot change ownership`
+- remote `tar` extraction prints `Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.*'`
+- unexpected `._*` files appear under `/media/fat/games/3sx/`
+
+Fix:
+
+- prefer the `rsync` deploy path above on macOS hosts
+- avoid packaging MiSTer deploy tarballs with default macOS metadata unless you explicitly disable AppleDouble/xattr output
+
+### No renderer/video backend
+
+Symptoms:
+
+- startup fails while creating SDL window/renderer
+
+Fix:
+
+1. Run `--probe-renderer-only`
+2. Inspect `logs/backend.log`
+3. Adjust config keys in `/media/fat/games/3sx/config`:
+
+```text
+scale-mode = native
+video-driver-order = dummy
+render-driver-order = software
+```
+
+Use `launch-osd.sh` as-is for OSD boot. If you write a custom wrapper, mirror its `SDL_VIDEODRIVER`/`SDL_VIDEO_DRIVER`/`SDL_RENDER_DRIVER` exports.
+
+### Frozen OSD after selecting 3SX
+
+Symptoms:
+
+- the OSD stays on screen and stops responding normally after launching 3SX
+- no new `/media/fat/games/3sx/logs/last-run.log` appears
+- stuck `openvt` processes may remain on the MiSTer
+
+Cause:
+
+- the OSD wrapper is trying to launch 3SX through `openvt` or another explicit VT switch, and the handoff wedges before `launch-osd.sh` starts
+
+Fix:
+
+1. Use a direct wrapper that only execs `/media/fat/games/3sx/launch-osd.sh "$@"`.
+2. Do not add `openvt`, `chvt`, or backgrounding around the launcher.
+3. If you need to confirm the wrapper path ran, inspect `/media/fat/games/3sx/logs/osd-wrapper.log` and `/media/fat/games/3sx/logs/last-run.log`.
+
+### Input not responding
+
+1. Verify controller is recognized by MiSTer Linux.
+2. Relaunch 3SX after controller is connected.
+3. Check 3SX config/keymap files under `THREESX_HOME`.
+
+### Console still receiving input / terminal cursor visible
+
+Symptoms:
+
+- button presses produce terminal glyphs
+- blinking shell cursor is visible between frames
+
+Fix:
+
+1. Launch through `/media/fat/games/3sx/launch-osd.sh` (or an OSD wrapper that calls it).
+2. Use `/media/fat/games/3sx/launch-osd.sh` (or match its SDL env exports exactly) so video/backend selection is deterministic.
+3. If startup says it failed to acquire Linux console/KD_GRAPHICS, run from MiSTer OSD/local console, not SSH.
