@@ -54,6 +54,8 @@ cmake --install build/mister --prefix build/mister-install
 '
 ```
 
+If this repo was previously used for a macOS or other non-Linux build, remove `third_party/sdl3/build` before the Docker build. `build-deps.sh` only checks whether that directory exists, so Docker can otherwise reuse a host-built SDL tree and fail near the final link step while looking for Linux `libSDL3.so`.
+
 Build flavors:
 
 - `telemetry` is the developer/default flavor. It keeps `--perf-*`, `--software-frame-parity-check`, renderer/presenter breakdown capture, and the optimization workflow.
@@ -235,6 +237,31 @@ Fix:
 ```bash
 CC=clang CXX=clang++ cmake -S . -B build/mister -DCMAKE_BUILD_TYPE=Release -DPORT_MISTER=ON
 cmake --build build/mister --parallel
+```
+
+### Docker build reuses host-built SDL artifacts
+
+Symptoms:
+
+- Docker build reaches the final link step and fails with `No rule to make target ... third_party/sdl3/build/lib/libSDL3.so`
+- `third_party/sdl3/build/lib/` contains a host artifact such as `libSDL3.0.dylib`
+
+Cause:
+
+- `build-deps.sh` treats any existing `third_party/sdl3/build` directory as a completed SDL build, even if it was produced on another OS
+
+Fix:
+
+```bash
+rm -rf third_party/sdl3/build
+docker exec 3sx-mister-build bash -lc '
+set -euxo pipefail
+cd /src
+JOBS=2 bash build-deps.sh --profile mister
+CC=clang CXX=clang++ cmake -S . -B build/mister -DCMAKE_BUILD_TYPE=Release -DPORT_MISTER=ON
+cmake --build build/mister --parallel 2
+cmake --install build/mister --prefix build/mister-install
+'
 ```
 
 ### Missing resources
