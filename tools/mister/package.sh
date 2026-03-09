@@ -47,6 +47,8 @@ SELF_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 
 export THREESX_HOME="${THREESX_HOME:-/media/fat/games/3sx}"
 export LD_LIBRARY_PATH="$SELF_DIR/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export SDL_AUDIO_DRIVER="${SDL_AUDIO_DRIVER:-alsa}"
+export SDL_AUDIODRIVER="${SDL_AUDIODRIVER:-$SDL_AUDIO_DRIVER}"
 
 exec "$SELF_DIR/bin/3sx" "$@"
 LAUNCHER
@@ -81,6 +83,8 @@ export SDL_RENDER_DRIVER="${SDL_RENDER_DRIVER:-software}"
     echo "SDL_VIDEODRIVER=$SDL_VIDEODRIVER"
     echo "SDL_VIDEO_DRIVER=$SDL_VIDEO_DRIVER"
     echo "SDL_RENDER_DRIVER=$SDL_RENDER_DRIVER"
+    echo "SDL_AUDIO_DRIVER=${SDL_AUDIO_DRIVER:-}"
+    echo "SDL_AUDIODRIVER=${SDL_AUDIODRIVER:-}"
 } >>"$LOG_PATH"
 
 restore_console() {

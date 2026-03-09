@@ -434,6 +434,7 @@ static PerfFrameSample* perf_samples = NULL;
 #if defined(PORT_MISTER)
 static const char* legacy_mister_video_driver_order = "kmsdrm,offscreen,dummy";
 static const char* recommended_mister_video_driver_order = "evdev,dummy,offscreen";
+static const char* recommended_mister_audio_driver = "alsa";
 #endif
 
 #if ENABLE_PERF_TELEMETRY
@@ -5277,10 +5278,34 @@ static const char* get_effective_video_driver_order(const char* configured_order
     return configured_order;
 }
 
+static const char* get_effective_audio_driver(void) {
+    const char* configured_driver = SDL_getenv("SDL_AUDIO_DRIVER");
+    if (configured_driver != NULL && configured_driver[0] != '\0') {
+        return configured_driver;
+    }
+
+    configured_driver = SDL_getenv("SDL_AUDIODRIVER");
+    if (configured_driver != NULL && configured_driver[0] != '\0') {
+        return configured_driver;
+    }
+
+    configured_driver = SDL_GetHint(SDL_HINT_AUDIO_DRIVER);
+    if (configured_driver != NULL && configured_driver[0] != '\0') {
+        return configured_driver;
+    }
+
+#if defined(PORT_MISTER)
+    return recommended_mister_audio_driver;
+#else
+    return NULL;
+#endif
+}
+
 static void apply_backend_hints() {
     const char* configured_video_driver_order = Config_GetString(CFG_KEY_VIDEO_DRIVER_ORDER);
     const char* video_driver_order = get_effective_video_driver_order(configured_video_driver_order);
     const char* render_driver_order = Config_GetString(CFG_KEY_RENDER_DRIVER_ORDER);
+    const char* audio_driver = get_effective_audio_driver();
 
     if (video_driver_order != NULL && video_driver_order[0] != '\0') {
         SDL_SetHint(SDL_HINT_VIDEO_DRIVER, video_driver_order);
@@ -5289,18 +5314,26 @@ static void apply_backend_hints() {
     if (render_driver_order != NULL && render_driver_order[0] != '\0') {
         SDL_SetHint(SDL_HINT_RENDER_DRIVER, render_driver_order);
     }
+
+    if (audio_driver != NULL && audio_driver[0] != '\0') {
+        SDL_SetHint(SDL_HINT_AUDIO_DRIVER, audio_driver);
+    }
 }
 
 static void log_backend_diagnostics() {
     const char* configured_video_order = Config_GetString(CFG_KEY_VIDEO_DRIVER_ORDER);
     const char* effective_video_order = get_effective_video_driver_order(configured_video_order);
     const char* render_order = Config_GetString(CFG_KEY_RENDER_DRIVER_ORDER);
+    const char* requested_audio_driver = get_effective_audio_driver();
+    const char* current_audio_driver = SDL_GetCurrentAudioDriver();
 
     backend_logf("===== SDL backend probe start =====");
     backend_logf("Platform: %s", SDL_GetPlatform());
     backend_logf("Config video-driver-order: %s", configured_video_order != NULL ? configured_video_order : "(null)");
     backend_logf("Effective video-driver-order: %s", effective_video_order != NULL ? effective_video_order : "(null)");
     backend_logf("Config render-driver-order: %s", render_order != NULL ? render_order : "(null)");
+    backend_logf("Requested audio-driver: %s", requested_audio_driver != NULL ? requested_audio_driver : "(auto)");
+    backend_logf("Current audio-driver: %s", current_audio_driver != NULL ? current_audio_driver : "(null)");
 
     const int video_driver_count = SDL_GetNumVideoDrivers();
     backend_logf("Available video drivers (%d):", video_driver_count);
@@ -5314,6 +5347,13 @@ static void log_backend_diagnostics() {
     for (int i = 0; i < render_driver_count; i++) {
         const char* name = SDL_GetRenderDriver(i);
         backend_logf("  render[%d]=%s", i, name != NULL ? name : "(null)");
+    }
+
+    const int audio_driver_count = SDL_GetNumAudioDrivers();
+    backend_logf("Available audio drivers (%d):", audio_driver_count);
+    for (int i = 0; i < audio_driver_count; i++) {
+        const char* name = SDL_GetAudioDriver(i);
+        backend_logf("  audio[%d]=%s", i, name != NULL ? name : "(null)");
     }
 }
 

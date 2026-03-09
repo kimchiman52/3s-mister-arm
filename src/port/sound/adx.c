@@ -128,6 +128,12 @@ static void create_audio_stream(int sample_rate) {
     output_sample_rate = sample_rate;
     const SDL_AudioSpec spec = { .format = SDL_AUDIO_S16, .channels = N_CHANNELS, .freq = output_sample_rate };
     stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, NULL, NULL);
+    if (stream == NULL) {
+        SDL_Log("Couldn't create ADX audio stream: %s", SDL_GetError());
+        return;
+    }
+
+    SDL_ResumeAudioStreamDevice(stream);
 }
 
 #if defined(ENABLE_FFMPEG_ADX)
