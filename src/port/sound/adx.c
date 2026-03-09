@@ -684,6 +684,7 @@ void ADX_StartMem(void* buf, size_t size) {
 
     ADXTrack* track = alloc_track();
     track_init(track, -1, buf, size, true);
+    ADX_Pause(false);
 }
 
 int ADX_GetNumFiles() {
@@ -707,6 +708,7 @@ void ADX_StartAfs(int file_id) {
 
     ADXTrack* track = alloc_track();
     track_init(track, file_id, NULL, 0, true);
+    ADX_Pause(false);
 }
 
 void ADX_SetOutVol(int volume) {
