@@ -433,9 +433,9 @@ void Mode_Select(struct _TASK* task_ptr) {
                 Netplay_BeginMatchmaking();
                 Netplay_BeginDirectP2P();
                 break;
+#else
+                break;
 #endif
-                /* fallthrough */
-
             case 2:
             case 3:
             case 5:

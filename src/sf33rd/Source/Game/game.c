@@ -101,6 +101,13 @@ static s16 Bonus_Sub();
 s16 Ck_Coin();
 void Loop_Demo_Sub();
 void Before_Select_Sub();
+static void (*const Main_Jmp_Tbl[3])(struct _TASK*) = { Wait_Auto_Load, Loop_Demo, Game };
+static void (*const Game_Jmp_Tbl[13])() = { Game00, Game01, Game02, Game03, Game04, Game05, Game06,
+                                            Game07, Game08, Game09, Game10, Game11, Game12 };
+static void (*const Game00_Jmp_Tbl[3])() = { Game0_0, Game0_1, Game0_2 };
+static void (*const Game12_Jmp_Tbl[3])() = { Game12_0, Game12_1, Game12_2 };
+static void (*const Game02_Jmp_Tbl[8])() = { Game2_0, Game2_1, Game2_2, Game2_3, Game2_4, Game2_5, Game2_6, Game2_7 };
+
 static void Set_Appear_Type_For_Mode() {
     appear_type = Is_Training_Mode(Mode_Type) ? APPEAR_TYPE_NON_ANIMATED : APPEAR_TYPE_ANIMATED;
 }
@@ -108,8 +115,6 @@ static void Set_Appear_Type_For_Mode() {
 void Game_Task(struct _TASK* task_ptr) {
     s16 ix;
     s16 ff;
-
-    void (*Main_Jmp_Tbl[3])(struct _TASK*) = { Wait_Auto_Load, Loop_Demo, Game };
 
     if (!No_Trans) {
         init_color_trans_req();
@@ -151,9 +156,6 @@ void Game_Task(struct _TASK* task_ptr) {
 }
 
 void Game() {
-    void (*Game_Jmp_Tbl[13])() = { Game00, Game01, Game02, Game03, Game04, Game05, Game06,
-                                   Game07, Game08, Game09, Game10, Game11, Game12 };
-
     if (G_No[1] == 2 || G_No[1] == 9) {
         Play_Game = 1;
     } else if (G_No[1] == 8) {
@@ -164,8 +166,6 @@ void Game() {
 }
 
 void Game00() {
-    void (*Game00_Jmp_Tbl[3])() = { Game0_0, Game0_1, Game0_2 };
-
     Game00_Jmp_Tbl[G_No[2]]();
     njSetBackColor(0, 0, 0);
     BG_Draw_System();
@@ -255,8 +255,6 @@ void Check_Back_Demo() {
 
 /// Screen transition to character select
 void Game12() {
-    void (*Game12_Jmp_Tbl[3])() = { Game12_0, Game12_1, Game12_2 };
-
     Game12_Jmp_Tbl[G_No[2]]();
     BG_Draw_System();
     Basic_Sub();
@@ -407,8 +405,6 @@ void Game01() {
 }
 
 void Game02() {
-    void (*Game02_Jmp_Tbl[8])() = { Game2_0, Game2_1, Game2_2, Game2_3, Game2_4, Game2_5, Game2_6, Game2_7 };
-
     Scene_Cut = Cut_Cut_Cut();
     Game02_Jmp_Tbl[G_No[2]]();
     BG_move_Ex(3);

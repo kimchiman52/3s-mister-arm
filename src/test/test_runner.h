@@ -1,7 +1,12 @@
 #ifndef TEST_RUNNER_H
 #define TEST_RUNNER_H
 
+#include <stdbool.h>
+
 void TestRunner_Prologue();
 void TestRunner_Epilogue();
+const char* TestRunner_GetPhaseName(void);
+bool TestRunner_IsSupportedPhaseName(const char* phase_name);
+bool TestRunner_IsPhaseActive(const char* phase_name);
 
 #endif
