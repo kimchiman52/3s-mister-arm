@@ -33,12 +33,14 @@ typedef struct ConfigEntry {
 #define DEFAULT_WINDOW_WIDTH 320
 #define DEFAULT_WINDOW_HEIGHT 240
 #define DEFAULT_SCALE_MODE "native"
+#define DEFAULT_SOFTWARE_FRAME_MODE "on"
 #else
 #define DEFAULT_VIDEO_DRIVER_ORDER ""
 #define DEFAULT_RENDER_DRIVER_ORDER ""
 #define DEFAULT_WINDOW_WIDTH 640
 #define DEFAULT_WINDOW_HEIGHT 480
 #define DEFAULT_SCALE_MODE "soft-linear"
+#define DEFAULT_SOFTWARE_FRAME_MODE "off"
 #endif
 
 static const ConfigEntry default_entries[] = {
@@ -46,6 +48,7 @@ static const ConfigEntry default_entries[] = {
     { .key = CFG_KEY_WINDOW_WIDTH, .type = CFG_INT, .value.i = DEFAULT_WINDOW_WIDTH },
     { .key = CFG_KEY_WINDOW_HEIGHT, .type = CFG_INT, .value.i = DEFAULT_WINDOW_HEIGHT },
     { .key = CFG_KEY_SCALEMODE, .type = CFG_STRING, .value.s = DEFAULT_SCALE_MODE },
+    { .key = CFG_KEY_SOFTWARE_FRAME_MODE, .type = CFG_STRING, .value.s = DEFAULT_SOFTWARE_FRAME_MODE },
     { .key = CFG_KEY_VIDEO_DRIVER_ORDER, .type = CFG_STRING, .value.s = DEFAULT_VIDEO_DRIVER_ORDER },
     { .key = CFG_KEY_RENDER_DRIVER_ORDER, .type = CFG_STRING, .value.s = DEFAULT_RENDER_DRIVER_ORDER },
 };

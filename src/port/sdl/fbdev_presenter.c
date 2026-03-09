@@ -43,7 +43,11 @@ static int frame_tiles_total = 0;
 static int frame_tiles_copied = 0;
 static bool frame_full_copy_fallback = false;
 static FBDevPresenter_FrameStats frame_stats = { 0 };
+#if ENABLE_PERF_TELEMETRY
 static bool frame_stats_breakdown_enabled = false;
+#else
+static const bool frame_stats_breakdown_enabled = false;
+#endif
 
 enum {
     staging_tile_size = 16,
@@ -92,7 +96,11 @@ static void frame_stats_note_readback_surface(const SDL_Surface* surface) {
 }
 
 static void frame_stats_note_path(FBDevPresenterPath path) {
+#if ENABLE_PERF_TELEMETRY
     frame_stats.path = path;
+#else
+    (void)path;
+#endif
 }
 
 static void reset_scale_lut() {
@@ -534,7 +542,11 @@ static bool copy_argb_surface_integer_scaled_to_fb_rect(const SDL_Surface* argb,
     return true;
 }
 
-static bool copy_surface_to_fb_mapped_rect(const SDL_Surface* src, const SDL_FRect* dst_rect) {
+static bool copy_surface_to_fb_mapped_rect_with_paths(const SDL_Surface* src,
+                                                      const SDL_FRect* dst_rect,
+                                                      FBDevPresenterPath exact_path,
+                                                      FBDevPresenterPath integer_scale_path,
+                                                      FBDevPresenterPath mapped_scale_path) {
     if ((src == NULL) || (dst_rect == NULL) || (src->w <= 0) || (src->h <= 0)) {
         return false;
     }
@@ -560,7 +572,7 @@ static bool copy_surface_to_fb_mapped_rect(const SDL_Surface* src, const SDL_FRe
     if ((raw_w == src->w) && (raw_h == src->h)) {
         const int src_x = clip_x0 - raw_x0;
         const int src_y = clip_y0 - raw_y0;
-        frame_stats_note_path(FBDEV_PRESENTER_PATH_CURRENT_TARGET_EXACT);
+        frame_stats_note_path(exact_path);
         return copy_surface_rect_to_fb_offset(
             src, src_x, src_y, clip_x1 - clip_x0, clip_y1 - clip_y0, clip_x0, clip_y0);
     }
@@ -580,9 +592,9 @@ static bool copy_surface_to_fb_mapped_rect(const SDL_Surface* src, const SDL_FRe
     bool copied = false;
     if ((raw_x0 == clip_x0) && (raw_y0 == clip_y0) && ((raw_x0 + raw_w) == clip_x1) && ((raw_y0 + raw_h) == clip_y1) &&
         ((raw_w % argb->w) == 0) && ((raw_h % argb->h) == 0)) {
-        frame_stats_note_path(FBDEV_PRESENTER_PATH_CURRENT_TARGET_INTEGER_SCALE);
+        frame_stats_note_path(integer_scale_path);
     } else {
-        frame_stats_note_path(FBDEV_PRESENTER_PATH_CURRENT_TARGET_MAPPED_SCALE);
+        frame_stats_note_path(mapped_scale_path);
     }
     Uint64 copy_start_ns = frame_stats_now();
     copied =
@@ -594,6 +606,14 @@ static bool copy_surface_to_fb_mapped_rect(const SDL_Surface* src, const SDL_FRe
     frame_stats_add_duration(&frame_stats.copy_ns, copy_start_ns);
     SDL_DestroySurface(converted);
     return copied;
+}
+
+static bool copy_surface_to_fb_mapped_rect(const SDL_Surface* src, const SDL_FRect* dst_rect) {
+    return copy_surface_to_fb_mapped_rect_with_paths(src,
+                                                     dst_rect,
+                                                     FBDEV_PRESENTER_PATH_CURRENT_TARGET_EXACT,
+                                                     FBDEV_PRESENTER_PATH_CURRENT_TARGET_INTEGER_SCALE,
+                                                     FBDEV_PRESENTER_PATH_CURRENT_TARGET_MAPPED_SCALE);
 }
 
 static bool present_readback_rect(SDL_Renderer* renderer, const SDL_FRect* content_rect) {
@@ -662,6 +682,38 @@ bool FBDevPresenter_PresentCurrentTarget(SDL_Renderer* renderer, const SDL_FRect
 
     const bool copied = copy_surface_to_fb_mapped_rect(src, dst_rect);
     SDL_DestroySurface(src);
+    if (copied) {
+        previous_pixels_valid = false;
+    }
+    return copied;
+}
+
+bool FBDevPresenter_PresentSurface(const SDL_Surface* surface, const SDL_FRect* dst_rect) {
+    if (!fbdev_active || (surface == NULL) || (dst_rect == NULL)) {
+        return false;
+    }
+
+    int x0 = 0;
+    int y0 = 0;
+    int x1 = 0;
+    int y1 = 0;
+    if (!get_content_rect_bounds(dst_rect, &x0, &y0, &x1, &y1)) {
+        return false;
+    }
+
+    if (!rect_bar_clear_valid || (rect_bar_clear_x0 != x0) || (rect_bar_clear_y0 != y0) || (rect_bar_clear_x1 != x1) ||
+        (rect_bar_clear_y1 != y1)) {
+        const Uint64 clear_start_ns = frame_stats_now();
+        clear_fb_outside_rect(x0, y0, x1, y1);
+        frame_stats_add_duration(&frame_stats.clear_ns, clear_start_ns);
+        mark_rect_bar_clear_cache(x0, y0, x1, y1);
+    }
+
+    const bool copied = copy_surface_to_fb_mapped_rect_with_paths(surface,
+                                                                  dst_rect,
+                                                                  FBDEV_PRESENTER_PATH_SOFTWARE_FRAME_EXACT,
+                                                                  FBDEV_PRESENTER_PATH_SOFTWARE_FRAME_INTEGER_SCALE,
+                                                                  FBDEV_PRESENTER_PATH_SOFTWARE_FRAME_MAPPED_SCALE);
     if (copied) {
         previous_pixels_valid = false;
     }
@@ -1102,8 +1154,12 @@ void FBDevPresenter_BeginFrameStats(bool capture_breakdown) {
     frame_tiles_total = 0;
     frame_tiles_copied = 0;
     frame_full_copy_fallback = false;
+#if ENABLE_PERF_TELEMETRY
     SDL_memset(&frame_stats, 0, sizeof(frame_stats));
     frame_stats_breakdown_enabled = capture_breakdown;
+#else
+    (void)capture_breakdown;
+#endif
 }
 
 size_t FBDevPresenter_GetFrameCopyBytes(void) {
@@ -1142,6 +1198,12 @@ const char* FBDevPresenter_PathName(FBDevPresenterPath path) {
         return "current_target_integer_scale";
     case FBDEV_PRESENTER_PATH_CURRENT_TARGET_MAPPED_SCALE:
         return "current_target_mapped_scale";
+    case FBDEV_PRESENTER_PATH_SOFTWARE_FRAME_EXACT:
+        return "software_frame_exact";
+    case FBDEV_PRESENTER_PATH_SOFTWARE_FRAME_INTEGER_SCALE:
+        return "software_frame_integer_scale";
+    case FBDEV_PRESENTER_PATH_SOFTWARE_FRAME_MAPPED_SCALE:
+        return "software_frame_mapped_scale";
     case FBDEV_PRESENTER_PATH_FULLSCREEN_STAGING:
         return "fullscreen_staging";
     case FBDEV_PRESENTER_PATH_FULLSCREEN_DIRECT_COPY:
@@ -1187,6 +1249,12 @@ void FBDevPresenter_Present(SDL_Renderer* renderer, const SDL_FRect* content_rec
 
 bool FBDevPresenter_PresentCurrentTarget(SDL_Renderer* renderer, const SDL_FRect* dst_rect) {
     (void)renderer;
+    (void)dst_rect;
+    return false;
+}
+
+bool FBDevPresenter_PresentSurface(const SDL_Surface* surface, const SDL_FRect* dst_rect) {
+    (void)surface;
     (void)dst_rect;
     return false;
 }

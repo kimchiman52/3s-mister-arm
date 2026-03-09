@@ -12,6 +12,9 @@ typedef enum FBDevPresenterPath {
     FBDEV_PRESENTER_PATH_CURRENT_TARGET_EXACT,
     FBDEV_PRESENTER_PATH_CURRENT_TARGET_INTEGER_SCALE,
     FBDEV_PRESENTER_PATH_CURRENT_TARGET_MAPPED_SCALE,
+    FBDEV_PRESENTER_PATH_SOFTWARE_FRAME_EXACT,
+    FBDEV_PRESENTER_PATH_SOFTWARE_FRAME_INTEGER_SCALE,
+    FBDEV_PRESENTER_PATH_SOFTWARE_FRAME_MAPPED_SCALE,
     FBDEV_PRESENTER_PATH_FULLSCREEN_STAGING,
     FBDEV_PRESENTER_PATH_FULLSCREEN_DIRECT_COPY,
     FBDEV_PRESENTER_PATH_FULLSCREEN_SCALED_LUT,
@@ -53,6 +56,11 @@ void FBDevPresenter_Present(SDL_Renderer* renderer, const SDL_FRect* content_rec
 /// already contains the game buffer and the presenter can crop or nearest-scale
 /// it directly into the framebuffer.
 bool FBDevPresenter_PresentCurrentTarget(SDL_Renderer* renderer, const SDL_FRect* dst_rect);
+
+/// Copy a caller-owned surface directly to /dev/fb0 at `dst_rect`.
+/// Intended for future software-owned game-frame presentation without
+/// requiring an SDL render-target readback first.
+bool FBDevPresenter_PresentSurface(const SDL_Surface* surface, const SDL_FRect* dst_rect);
 
 /// Reset per-frame presenter stats.
 void FBDevPresenter_BeginFrameStats(bool capture_breakdown);

@@ -71,8 +71,11 @@ static const int mouse_hide_delay_ms = 2000; // 2 seconds
 static bool fbdev_presenter_enabled = false;
 static bool use_fbdev_only_present = false;
 static bool use_native_render_path = false;
+static bool software_frame_mode_enabled = false;
+#if ENABLE_PERF_TELEMETRY
 static bool perf_capture_enabled = false;
 static bool perf_capture_completed = false;
+static bool perf_capture_basic_mode = false;
 static int perf_capture_target_frames = 0;
 static int perf_capture_recorded_frames = 0;
 static char* perf_capture_output_path = NULL;
@@ -114,11 +117,49 @@ static Uint64 perf_set_texture_calls_total = 0;
 static Uint64 perf_texture_binding_reuse_hits_total = 0;
 static Uint64 perf_texture_cache_hits_total = 0;
 static Uint64 perf_texture_cache_misses_total = 0;
+static Uint64 perf_texture_cache_miss_dirty_texture_same_frame_total = 0;
+static Uint64 perf_texture_cache_miss_dirty_texture_carried_total = 0;
+static Uint64 perf_texture_cache_miss_dirty_palette_same_frame_total = 0;
+static Uint64 perf_texture_cache_miss_dirty_palette_carried_total = 0;
+static Uint64 perf_texture_cache_miss_cold_total = 0;
 static Uint64 perf_texture_creates_total = 0;
 static Uint64 perf_texture_unlock_calls_total = 0;
 static Uint64 perf_palette_unlock_calls_total = 0;
+static Uint64 perf_texture_unlock_dirty_surface_variants_total = 0;
+static Uint64 perf_texture_unlock_dirty_surface_variants_max_total = 0;
+static Uint64 perf_palette_unlock_dirty_surface_variants_total = 0;
+static Uint64 perf_palette_unlock_dirty_surface_variants_max_total = 0;
+static Uint64 perf_texture_unlock_locality_index8_tracked_total = 0;
+static Uint64 perf_texture_unlock_locality_index8_baseline_skips_total = 0;
+static Uint64 perf_texture_unlock_locality_index8_non_index8_skips_total = 0;
+static Uint64 perf_texture_unlock_locality_index8_source_pixels_total = 0;
+static Uint64 perf_texture_unlock_locality_index8_changed_pixels_total = 0;
+static Uint64 perf_texture_unlock_locality_index8_changed_rows_total = 0;
+static Uint64 perf_texture_unlock_locality_index8_changed_bbox_pixels_total = 0;
+static Uint64 perf_texture_unlock_invalidation_ns_total = 0;
+static Uint64 perf_palette_unlock_invalidation_ns_total = 0;
 static Uint64 perf_texture_cache_evictions_total = 0;
 static Uint64 perf_palette_cache_evictions_total = 0;
+static Uint64 perf_software_surface_cache_hits_total = 0;
+static Uint64 perf_software_surface_cache_creates_total = 0;
+static Uint64 perf_software_surface_cache_refresh_attempts_total = 0;
+static Uint64 perf_software_surface_cache_refresh_unique_bindings_total = 0;
+static Uint64 perf_software_surface_cache_refresh_repeat_binding_attempts_total = 0;
+static Uint64 perf_software_surface_cache_refresh_unique_texture_handles_total = 0;
+static Uint64 perf_software_surface_cache_refresh_texture_handle_fanout_max_total = 0;
+static Uint64 perf_software_surface_cache_refresh_failures_total = 0;
+static Uint64 perf_software_surface_cache_refresh_ns_total = 0;
+static Uint64 perf_software_surface_cache_refresh_palette_set_calls_total = 0;
+static Uint64 perf_software_surface_cache_refresh_palette_set_ns_total = 0;
+static Uint64 perf_software_surface_cache_refresh_blit_calls_total = 0;
+static Uint64 perf_software_surface_cache_refresh_blit_ns_total = 0;
+static Uint64 perf_software_surface_cache_create_dirty_texture_same_frame_total = 0;
+static Uint64 perf_software_surface_cache_create_dirty_texture_carried_total = 0;
+static Uint64 perf_software_surface_cache_create_dirty_palette_same_frame_total = 0;
+static Uint64 perf_software_surface_cache_create_dirty_palette_carried_total = 0;
+static Uint64 perf_software_surface_cache_create_cold_total = 0;
+static Uint64 perf_software_surface_cache_texture_evictions_total = 0;
+static Uint64 perf_software_surface_cache_palette_evictions_total = 0;
 static Uint64 perf_textures_destroy_queued_total = 0;
 static Uint64 perf_unknown_tasks_total = 0;
 static Uint64 perf_ppg_tasks_total = 0;
@@ -135,6 +176,42 @@ static Uint64 perf_hybrid_reason_color_mod_total = 0;
 static Uint64 perf_hybrid_reason_flip_total = 0;
 static Uint64 perf_hybrid_reason_geometry_total = 0;
 static Uint64 perf_hybrid_reason_solid_total = 0;
+static Uint64 perf_software_frame_mode_enabled_frames = 0;
+static Uint64 perf_software_frame_surface_ready_frames = 0;
+static Uint64 perf_software_frame_owned_frames = 0;
+static Uint64 perf_software_frame_direct_present_frames = 0;
+static Uint64 perf_software_frame_uploaded_frames = 0;
+static Uint64 perf_software_frame_fallback_frames = 0;
+static Uint64 perf_software_frame_candidate_tasks_total = 0;
+static Uint64 perf_software_frame_candidate_pixels_total = 0;
+static Uint64 perf_software_frame_fallback_tasks_total = 0;
+static Uint64 perf_software_frame_fallback_pixels_total = 0;
+static Uint64 perf_software_frame_fast_exact_tasks_total = 0;
+static Uint64 perf_software_frame_fast_exact_pixels_total = 0;
+static Uint64 perf_software_frame_fast_exact_clipped_tasks_total = 0;
+static Uint64 perf_software_frame_fast_exact_flipped_tasks_total = 0;
+static Uint64 perf_software_frame_fast_exact_color_mod_tasks_total = 0;
+static Uint64 perf_software_frame_fast_exact_color_mod_pixels_total = 0;
+static Uint64 perf_software_frame_fast_scaled_tasks_total = 0;
+static Uint64 perf_software_frame_fast_scaled_pixels_total = 0;
+static Uint64 perf_software_frame_fast_non_integer_tasks_total = 0;
+static Uint64 perf_software_frame_fast_non_integer_pixels_total = 0;
+static Uint64 perf_software_frame_generic_textured_tasks_total = 0;
+static Uint64 perf_software_frame_generic_textured_pixels_total = 0;
+static Uint64 perf_software_frame_fast_miss_color_mod_total = 0;
+static Uint64 perf_software_frame_fast_miss_non_integer_total = 0;
+static Uint64 perf_software_frame_fast_miss_non_integer_ge_256_tasks_total = 0;
+static Uint64 perf_software_frame_fast_miss_non_integer_ge_256_pixels_total = 0;
+static Uint64 perf_software_frame_fast_miss_non_integer_ge_1024_tasks_total = 0;
+static Uint64 perf_software_frame_fast_miss_non_integer_ge_1024_pixels_total = 0;
+static Uint64 perf_software_frame_fast_miss_non_integer_max_pixels_total = 0;
+static Uint64 perf_software_frame_fast_miss_scaled_total = 0;
+static Uint64 perf_software_frame_fast_miss_unsupported_flip_total = 0;
+static Uint64 perf_software_frame_fast_miss_source_bounds_total = 0;
+static Uint64 perf_software_frame_reason_alpha_total = 0;
+static Uint64 perf_software_frame_reason_color_mod_total = 0;
+static Uint64 perf_software_frame_reason_geometry_total = 0;
+static Uint64 perf_software_frame_reason_solid_total = 0;
 static Uint64 perf_sort_strategy_frames[SDL_GAME_RENDERER_SORT_QSORT + 1] = { 0 };
 static Uint64 perf_fbdev_path_frames[FBDEV_PRESENTER_PATH_COUNT] = { 0 };
 
@@ -177,17 +254,91 @@ typedef struct PerfFrameSample {
     int texture_binding_reuse_hits;
     int texture_cache_hits;
     int texture_cache_misses;
+    int texture_cache_miss_dirty_texture_same_frame;
+    int texture_cache_miss_dirty_texture_carried;
+    int texture_cache_miss_dirty_palette_same_frame;
+    int texture_cache_miss_dirty_palette_carried;
+    int texture_cache_miss_cold;
     int texture_creates;
     int texture_unlock_calls;
     int palette_unlock_calls;
+    int texture_unlock_dirty_surface_variants;
+    int texture_unlock_dirty_surface_variants_max;
+    int palette_unlock_dirty_surface_variants;
+    int palette_unlock_dirty_surface_variants_max;
+    int texture_unlock_locality_index8_tracked;
+    int texture_unlock_locality_index8_baseline_skips;
+    int texture_unlock_locality_index8_non_index8_skips;
+    Uint64 texture_unlock_locality_index8_source_pixels;
+    Uint64 texture_unlock_locality_index8_changed_pixels;
+    Uint64 texture_unlock_locality_index8_changed_rows;
+    Uint64 texture_unlock_locality_index8_changed_bbox_pixels;
+    double texture_unlock_invalidation_ms;
+    double palette_unlock_invalidation_ms;
     int texture_cache_evictions;
     int palette_cache_evictions;
+    int software_surface_cache_hits;
+    int software_surface_cache_creates;
+    int software_surface_cache_refresh_attempts;
+    int software_surface_cache_refresh_unique_bindings;
+    int software_surface_cache_refresh_repeat_binding_attempts;
+    int software_surface_cache_refresh_unique_texture_handles;
+    int software_surface_cache_refresh_texture_handle_fanout_max;
+    int software_surface_cache_refresh_failures;
+    double software_surface_cache_refresh_ms;
+    int software_surface_cache_refresh_palette_set_calls;
+    double software_surface_cache_refresh_palette_set_ms;
+    int software_surface_cache_refresh_blit_calls;
+    double software_surface_cache_refresh_blit_ms;
+    int software_surface_cache_create_dirty_texture_same_frame;
+    int software_surface_cache_create_dirty_texture_carried;
+    int software_surface_cache_create_dirty_palette_same_frame;
+    int software_surface_cache_create_dirty_palette_carried;
+    int software_surface_cache_create_cold;
+    int software_surface_cache_texture_evictions;
+    int software_surface_cache_palette_evictions;
     int textures_destroy_queued;
     int unknown_tasks;
     int ppg_tasks;
     int mtrans_tasks;
     int ui_direct_tasks;
     int solid_tasks;
+    int software_frame_mode_enabled;
+    int software_frame_surface_ready;
+    int software_frame_owned;
+    int software_frame_direct_present;
+    int software_frame_uploaded;
+    int software_frame_fallback;
+    int software_frame_candidate_tasks;
+    Uint64 software_frame_candidate_pixels;
+    int software_frame_fallback_tasks;
+    Uint64 software_frame_fallback_pixels;
+    int software_frame_fast_exact_tasks;
+    Uint64 software_frame_fast_exact_pixels;
+    int software_frame_fast_exact_clipped_tasks;
+    int software_frame_fast_exact_flipped_tasks;
+    int software_frame_fast_exact_color_mod_tasks;
+    Uint64 software_frame_fast_exact_color_mod_pixels;
+    int software_frame_fast_scaled_tasks;
+    Uint64 software_frame_fast_scaled_pixels;
+    int software_frame_fast_non_integer_tasks;
+    Uint64 software_frame_fast_non_integer_pixels;
+    int software_frame_generic_textured_tasks;
+    Uint64 software_frame_generic_textured_pixels;
+    int software_frame_fast_miss_color_mod;
+    int software_frame_fast_miss_non_integer;
+    int software_frame_fast_miss_non_integer_ge_256_tasks;
+    Uint64 software_frame_fast_miss_non_integer_ge_256_pixels;
+    int software_frame_fast_miss_non_integer_ge_1024_tasks;
+    Uint64 software_frame_fast_miss_non_integer_ge_1024_pixels;
+    Uint64 software_frame_fast_miss_non_integer_max_pixels;
+    int software_frame_fast_miss_scaled;
+    int software_frame_fast_miss_unsupported_flip;
+    int software_frame_fast_miss_source_bounds;
+    int software_frame_reason_alpha;
+    int software_frame_reason_color_mod;
+    int software_frame_reason_geometry;
+    int software_frame_reason_solid;
     int hybrid_candidate_tasks;
     Uint64 hybrid_candidate_pixels;
     int hybrid_fallback_tasks;
@@ -206,15 +357,20 @@ typedef struct PerfFrameSample {
 } PerfFrameSample;
 
 static PerfFrameSample* perf_samples = NULL;
+#endif
 
 #if defined(PORT_MISTER)
 static const char* legacy_mister_video_driver_order = "kmsdrm,offscreen,dummy";
 static const char* recommended_mister_video_driver_order = "evdev,dummy,offscreen";
 #endif
 
+#if ENABLE_PERF_TELEMETRY
 static void perf_capture_reset_storage(void);
 static void perf_capture_write_summary(void);
+#endif
+static const char* software_frame_mode_name(void);
 
+#if ENABLE_PERF_TELEMETRY
 static const char* render_sort_strategy_name(SDLGameRenderer_SortStrategy strategy) {
     switch (strategy) {
     case SDL_GAME_RENDERER_SORT_NONE:
@@ -260,6 +416,7 @@ static FBDevPresenterPath dominant_fbdev_present_path(void) {
 
     return best_path;
 }
+#endif
 
 static void append_backend_log_line(const char* line) {
     const char* pref_path = Paths_GetPrefPath();
@@ -297,6 +454,11 @@ static void backend_logf(const char* fmt, ...) {
     SDL_free(buf);
 }
 
+#if ENABLE_PERF_TELEMETRY
+bool SDLApp_RunSoftwareFrameParityCheck(void) {
+    return SDLGameRenderer_RunSoftwareFrameParityCheck();
+}
+
 static void perf_capture_reset_storage(void) {
     if (perf_samples != NULL) {
         SDL_free(perf_samples);
@@ -315,6 +477,7 @@ static void perf_capture_reset_storage(void) {
 
     perf_capture_enabled = false;
     perf_capture_completed = false;
+    perf_capture_basic_mode = false;
     perf_capture_target_frames = 0;
     perf_capture_recorded_frames = 0;
     perf_frame_start_ns = 0;
@@ -354,11 +517,49 @@ static void perf_capture_reset_storage(void) {
     perf_texture_binding_reuse_hits_total = 0;
     perf_texture_cache_hits_total = 0;
     perf_texture_cache_misses_total = 0;
+    perf_texture_cache_miss_dirty_texture_same_frame_total = 0;
+    perf_texture_cache_miss_dirty_texture_carried_total = 0;
+    perf_texture_cache_miss_dirty_palette_same_frame_total = 0;
+    perf_texture_cache_miss_dirty_palette_carried_total = 0;
+    perf_texture_cache_miss_cold_total = 0;
     perf_texture_creates_total = 0;
     perf_texture_unlock_calls_total = 0;
     perf_palette_unlock_calls_total = 0;
+    perf_texture_unlock_dirty_surface_variants_total = 0;
+    perf_texture_unlock_dirty_surface_variants_max_total = 0;
+    perf_palette_unlock_dirty_surface_variants_total = 0;
+    perf_palette_unlock_dirty_surface_variants_max_total = 0;
+    perf_texture_unlock_locality_index8_tracked_total = 0;
+    perf_texture_unlock_locality_index8_baseline_skips_total = 0;
+    perf_texture_unlock_locality_index8_non_index8_skips_total = 0;
+    perf_texture_unlock_locality_index8_source_pixels_total = 0;
+    perf_texture_unlock_locality_index8_changed_pixels_total = 0;
+    perf_texture_unlock_locality_index8_changed_rows_total = 0;
+    perf_texture_unlock_locality_index8_changed_bbox_pixels_total = 0;
+    perf_texture_unlock_invalidation_ns_total = 0;
+    perf_palette_unlock_invalidation_ns_total = 0;
     perf_texture_cache_evictions_total = 0;
     perf_palette_cache_evictions_total = 0;
+    perf_software_surface_cache_hits_total = 0;
+    perf_software_surface_cache_creates_total = 0;
+    perf_software_surface_cache_refresh_attempts_total = 0;
+    perf_software_surface_cache_refresh_unique_bindings_total = 0;
+    perf_software_surface_cache_refresh_repeat_binding_attempts_total = 0;
+    perf_software_surface_cache_refresh_unique_texture_handles_total = 0;
+    perf_software_surface_cache_refresh_texture_handle_fanout_max_total = 0;
+    perf_software_surface_cache_refresh_failures_total = 0;
+    perf_software_surface_cache_refresh_ns_total = 0;
+    perf_software_surface_cache_refresh_palette_set_calls_total = 0;
+    perf_software_surface_cache_refresh_palette_set_ns_total = 0;
+    perf_software_surface_cache_refresh_blit_calls_total = 0;
+    perf_software_surface_cache_refresh_blit_ns_total = 0;
+    perf_software_surface_cache_create_dirty_texture_same_frame_total = 0;
+    perf_software_surface_cache_create_dirty_texture_carried_total = 0;
+    perf_software_surface_cache_create_dirty_palette_same_frame_total = 0;
+    perf_software_surface_cache_create_dirty_palette_carried_total = 0;
+    perf_software_surface_cache_create_cold_total = 0;
+    perf_software_surface_cache_texture_evictions_total = 0;
+    perf_software_surface_cache_palette_evictions_total = 0;
     perf_textures_destroy_queued_total = 0;
     perf_unknown_tasks_total = 0;
     perf_ppg_tasks_total = 0;
@@ -375,11 +576,53 @@ static void perf_capture_reset_storage(void) {
     perf_hybrid_reason_flip_total = 0;
     perf_hybrid_reason_geometry_total = 0;
     perf_hybrid_reason_solid_total = 0;
+    perf_software_frame_mode_enabled_frames = 0;
+    perf_software_frame_surface_ready_frames = 0;
+    perf_software_frame_owned_frames = 0;
+    perf_software_frame_direct_present_frames = 0;
+    perf_software_frame_uploaded_frames = 0;
+    perf_software_frame_fallback_frames = 0;
+    perf_software_frame_candidate_tasks_total = 0;
+    perf_software_frame_candidate_pixels_total = 0;
+    perf_software_frame_fallback_tasks_total = 0;
+    perf_software_frame_fallback_pixels_total = 0;
+    perf_software_frame_fast_exact_tasks_total = 0;
+    perf_software_frame_fast_exact_pixels_total = 0;
+    perf_software_frame_fast_exact_clipped_tasks_total = 0;
+    perf_software_frame_fast_exact_flipped_tasks_total = 0;
+    perf_software_frame_fast_exact_color_mod_tasks_total = 0;
+    perf_software_frame_fast_exact_color_mod_pixels_total = 0;
+    perf_software_frame_fast_scaled_tasks_total = 0;
+    perf_software_frame_fast_scaled_pixels_total = 0;
+    perf_software_frame_fast_non_integer_tasks_total = 0;
+    perf_software_frame_fast_non_integer_pixels_total = 0;
+    perf_software_frame_generic_textured_tasks_total = 0;
+    perf_software_frame_generic_textured_pixels_total = 0;
+    perf_software_frame_fast_miss_color_mod_total = 0;
+    perf_software_frame_fast_miss_non_integer_total = 0;
+    perf_software_frame_fast_miss_non_integer_ge_256_tasks_total = 0;
+    perf_software_frame_fast_miss_non_integer_ge_256_pixels_total = 0;
+    perf_software_frame_fast_miss_non_integer_ge_1024_tasks_total = 0;
+    perf_software_frame_fast_miss_non_integer_ge_1024_pixels_total = 0;
+    perf_software_frame_fast_miss_non_integer_max_pixels_total = 0;
+    perf_software_frame_fast_miss_scaled_total = 0;
+    perf_software_frame_fast_miss_unsupported_flip_total = 0;
+    perf_software_frame_fast_miss_source_bounds_total = 0;
+    perf_software_frame_reason_alpha_total = 0;
+    perf_software_frame_reason_color_mod_total = 0;
+    perf_software_frame_reason_geometry_total = 0;
+    perf_software_frame_reason_solid_total = 0;
     SDL_memset(perf_sort_strategy_frames, 0, sizeof(perf_sort_strategy_frames));
     SDL_memset(perf_fbdev_path_frames, 0, sizeof(perf_fbdev_path_frames));
+    SDLGameRenderer_ResetPerfCaptureRefreshTelemetry();
+    SDLGameRenderer_ResetPerfCaptureUnlockLocalityTelemetry();
 }
 
-void SDLApp_ConfigurePerfCapture(int frame_count, const char* output_path, const char* scene_name) {
+static bool perf_capture_collect_extended_stats(void) {
+    return perf_capture_enabled && !perf_capture_completed && !perf_capture_basic_mode;
+}
+
+void SDLApp_ConfigurePerfCapture(int frame_count, const char* output_path, const char* scene_name, bool basic_mode) {
     if (frame_count <= 0) {
         perf_capture_reset_storage();
         return;
@@ -404,6 +647,7 @@ void SDLApp_ConfigurePerfCapture(int frame_count, const char* output_path, const
     perf_capture_recorded_frames = 0;
     perf_capture_completed = false;
     perf_capture_enabled = true;
+    perf_capture_basic_mode = basic_mode;
     perf_frame_start_ns = 0;
     perf_update_start_ns = 0;
     perf_update_ns_total = 0;
@@ -441,11 +685,49 @@ void SDLApp_ConfigurePerfCapture(int frame_count, const char* output_path, const
     perf_texture_binding_reuse_hits_total = 0;
     perf_texture_cache_hits_total = 0;
     perf_texture_cache_misses_total = 0;
+    perf_texture_cache_miss_dirty_texture_same_frame_total = 0;
+    perf_texture_cache_miss_dirty_texture_carried_total = 0;
+    perf_texture_cache_miss_dirty_palette_same_frame_total = 0;
+    perf_texture_cache_miss_dirty_palette_carried_total = 0;
+    perf_texture_cache_miss_cold_total = 0;
     perf_texture_creates_total = 0;
     perf_texture_unlock_calls_total = 0;
     perf_palette_unlock_calls_total = 0;
+    perf_texture_unlock_dirty_surface_variants_total = 0;
+    perf_texture_unlock_dirty_surface_variants_max_total = 0;
+    perf_palette_unlock_dirty_surface_variants_total = 0;
+    perf_palette_unlock_dirty_surface_variants_max_total = 0;
+    perf_texture_unlock_locality_index8_tracked_total = 0;
+    perf_texture_unlock_locality_index8_baseline_skips_total = 0;
+    perf_texture_unlock_locality_index8_non_index8_skips_total = 0;
+    perf_texture_unlock_locality_index8_source_pixels_total = 0;
+    perf_texture_unlock_locality_index8_changed_pixels_total = 0;
+    perf_texture_unlock_locality_index8_changed_rows_total = 0;
+    perf_texture_unlock_locality_index8_changed_bbox_pixels_total = 0;
+    perf_texture_unlock_invalidation_ns_total = 0;
+    perf_palette_unlock_invalidation_ns_total = 0;
     perf_texture_cache_evictions_total = 0;
     perf_palette_cache_evictions_total = 0;
+    perf_software_surface_cache_hits_total = 0;
+    perf_software_surface_cache_creates_total = 0;
+    perf_software_surface_cache_refresh_attempts_total = 0;
+    perf_software_surface_cache_refresh_unique_bindings_total = 0;
+    perf_software_surface_cache_refresh_repeat_binding_attempts_total = 0;
+    perf_software_surface_cache_refresh_unique_texture_handles_total = 0;
+    perf_software_surface_cache_refresh_texture_handle_fanout_max_total = 0;
+    perf_software_surface_cache_refresh_failures_total = 0;
+    perf_software_surface_cache_refresh_ns_total = 0;
+    perf_software_surface_cache_refresh_palette_set_calls_total = 0;
+    perf_software_surface_cache_refresh_palette_set_ns_total = 0;
+    perf_software_surface_cache_refresh_blit_calls_total = 0;
+    perf_software_surface_cache_refresh_blit_ns_total = 0;
+    perf_software_surface_cache_create_dirty_texture_same_frame_total = 0;
+    perf_software_surface_cache_create_dirty_texture_carried_total = 0;
+    perf_software_surface_cache_create_dirty_palette_same_frame_total = 0;
+    perf_software_surface_cache_create_dirty_palette_carried_total = 0;
+    perf_software_surface_cache_create_cold_total = 0;
+    perf_software_surface_cache_texture_evictions_total = 0;
+    perf_software_surface_cache_palette_evictions_total = 0;
     perf_textures_destroy_queued_total = 0;
     perf_unknown_tasks_total = 0;
     perf_ppg_tasks_total = 0;
@@ -462,8 +744,46 @@ void SDLApp_ConfigurePerfCapture(int frame_count, const char* output_path, const
     perf_hybrid_reason_flip_total = 0;
     perf_hybrid_reason_geometry_total = 0;
     perf_hybrid_reason_solid_total = 0;
+    perf_software_frame_mode_enabled_frames = 0;
+    perf_software_frame_surface_ready_frames = 0;
+    perf_software_frame_owned_frames = 0;
+    perf_software_frame_direct_present_frames = 0;
+    perf_software_frame_uploaded_frames = 0;
+    perf_software_frame_fallback_frames = 0;
+    perf_software_frame_candidate_tasks_total = 0;
+    perf_software_frame_candidate_pixels_total = 0;
+    perf_software_frame_fallback_tasks_total = 0;
+    perf_software_frame_fallback_pixels_total = 0;
+    perf_software_frame_fast_exact_tasks_total = 0;
+    perf_software_frame_fast_exact_pixels_total = 0;
+    perf_software_frame_fast_exact_clipped_tasks_total = 0;
+    perf_software_frame_fast_exact_flipped_tasks_total = 0;
+    perf_software_frame_fast_exact_color_mod_tasks_total = 0;
+    perf_software_frame_fast_exact_color_mod_pixels_total = 0;
+    perf_software_frame_fast_scaled_tasks_total = 0;
+    perf_software_frame_fast_scaled_pixels_total = 0;
+    perf_software_frame_fast_non_integer_tasks_total = 0;
+    perf_software_frame_fast_non_integer_pixels_total = 0;
+    perf_software_frame_generic_textured_tasks_total = 0;
+    perf_software_frame_generic_textured_pixels_total = 0;
+    perf_software_frame_fast_miss_color_mod_total = 0;
+    perf_software_frame_fast_miss_non_integer_total = 0;
+    perf_software_frame_fast_miss_non_integer_ge_256_tasks_total = 0;
+    perf_software_frame_fast_miss_non_integer_ge_256_pixels_total = 0;
+    perf_software_frame_fast_miss_non_integer_ge_1024_tasks_total = 0;
+    perf_software_frame_fast_miss_non_integer_ge_1024_pixels_total = 0;
+    perf_software_frame_fast_miss_non_integer_max_pixels_total = 0;
+    perf_software_frame_fast_miss_scaled_total = 0;
+    perf_software_frame_fast_miss_unsupported_flip_total = 0;
+    perf_software_frame_fast_miss_source_bounds_total = 0;
+    perf_software_frame_reason_alpha_total = 0;
+    perf_software_frame_reason_color_mod_total = 0;
+    perf_software_frame_reason_geometry_total = 0;
+    perf_software_frame_reason_solid_total = 0;
     SDL_memset(perf_sort_strategy_frames, 0, sizeof(perf_sort_strategy_frames));
     SDL_memset(perf_fbdev_path_frames, 0, sizeof(perf_fbdev_path_frames));
+    SDLGameRenderer_ResetPerfCaptureRefreshTelemetry();
+    SDLGameRenderer_ResetPerfCaptureUnlockLocalityTelemetry();
     perf_capture_output_path = output_path != NULL ? SDL_strdup(output_path) : NULL;
     perf_capture_scene_name = scene_name != NULL ? SDL_strdup(scene_name) : NULL;
     perf_samples = (PerfFrameSample*)SDL_calloc((size_t)frame_count, sizeof(PerfFrameSample));
@@ -474,10 +794,12 @@ void SDLApp_ConfigurePerfCapture(int frame_count, const char* output_path, const
         return;
     }
 
-    backend_logf("PERF capture enabled: frames=%d output=%s scene=%s",
+    backend_logf("PERF capture enabled: frames=%d output=%s scene=%s detail_mode=%s software_frame_mode=%s",
                  perf_capture_target_frames,
                  perf_capture_output_path != NULL ? perf_capture_output_path : "(auto)",
-                 perf_capture_scene_name != NULL ? perf_capture_scene_name : "(none)");
+                 perf_capture_scene_name != NULL ? perf_capture_scene_name : "(none)",
+                 perf_capture_basic_mode ? "basic" : "full",
+                 software_frame_mode_name());
 }
 
 static void io_write_json_escaped_string(SDL_IOStream* io, const char* value) {
@@ -541,6 +863,18 @@ static void perf_capture_write_summary(void) {
         return;
     }
 
+    SDLGameRenderer_PerfCaptureRefreshTelemetry refresh_telemetry = { 0 };
+    SDLGameRenderer_PerfCaptureRefreshHotTexture refresh_hot_textures[4] = { 0 };
+    const int refresh_hot_texture_count = SDLGameRenderer_GetPerfCaptureRefreshTelemetry(
+        &refresh_telemetry, refresh_hot_textures, SDL_arraysize(refresh_hot_textures));
+    SDLGameRenderer_PerfCaptureUnlockLocalityTelemetry unlock_locality_telemetry = { 0 };
+    SDLGameRenderer_PerfCaptureUnlockLocalityHotTexture unlock_locality_hot_textures[4] = { 0 };
+    const int unlock_locality_hot_texture_count = SDLGameRenderer_GetPerfCaptureUnlockLocalityTelemetry(
+        &unlock_locality_telemetry, unlock_locality_hot_textures, SDL_arraysize(unlock_locality_hot_textures));
+    const Uint64 refresh_attempts_total = refresh_telemetry.index4_attempts + refresh_telemetry.index8_attempts +
+                                          refresh_telemetry.abgr1555_attempts + refresh_telemetry.other_attempts;
+    const Uint64 refresh_pixels_total = refresh_telemetry.index4_pixels + refresh_telemetry.index8_pixels +
+                                        refresh_telemetry.abgr1555_pixels + refresh_telemetry.other_pixels;
     const double frame_count = (double)perf_capture_recorded_frames;
     const double avg_frame_ms = ((double)perf_frame_work_ns_total / frame_count) / 1e6;
     const double avg_update_ms = ((double)perf_update_ns_total / frame_count) / 1e6;
@@ -576,11 +910,84 @@ static void perf_capture_write_summary(void) {
     const double avg_texture_binding_reuse_hits = (double)perf_texture_binding_reuse_hits_total / frame_count;
     const double avg_texture_cache_hits = (double)perf_texture_cache_hits_total / frame_count;
     const double avg_texture_cache_misses = (double)perf_texture_cache_misses_total / frame_count;
+    const double avg_texture_cache_miss_dirty_texture_same_frame =
+        (double)perf_texture_cache_miss_dirty_texture_same_frame_total / frame_count;
+    const double avg_texture_cache_miss_dirty_texture_carried =
+        (double)perf_texture_cache_miss_dirty_texture_carried_total / frame_count;
+    const double avg_texture_cache_miss_dirty_palette_same_frame =
+        (double)perf_texture_cache_miss_dirty_palette_same_frame_total / frame_count;
+    const double avg_texture_cache_miss_dirty_palette_carried =
+        (double)perf_texture_cache_miss_dirty_palette_carried_total / frame_count;
+    const double avg_texture_cache_miss_cold = (double)perf_texture_cache_miss_cold_total / frame_count;
     const double avg_texture_creates = (double)perf_texture_creates_total / frame_count;
     const double avg_texture_unlock_calls = (double)perf_texture_unlock_calls_total / frame_count;
     const double avg_palette_unlock_calls = (double)perf_palette_unlock_calls_total / frame_count;
+    const double avg_texture_unlock_dirty_surface_variants =
+        (double)perf_texture_unlock_dirty_surface_variants_total / frame_count;
+    const double avg_texture_unlock_dirty_surface_variants_max =
+        (double)perf_texture_unlock_dirty_surface_variants_max_total / frame_count;
+    const double avg_palette_unlock_dirty_surface_variants =
+        (double)perf_palette_unlock_dirty_surface_variants_total / frame_count;
+    const double avg_palette_unlock_dirty_surface_variants_max =
+        (double)perf_palette_unlock_dirty_surface_variants_max_total / frame_count;
+    const double avg_texture_unlock_locality_index8_tracked =
+        (double)perf_texture_unlock_locality_index8_tracked_total / frame_count;
+    const double avg_texture_unlock_locality_index8_baseline_skips =
+        (double)perf_texture_unlock_locality_index8_baseline_skips_total / frame_count;
+    const double avg_texture_unlock_locality_index8_non_index8_skips =
+        (double)perf_texture_unlock_locality_index8_non_index8_skips_total / frame_count;
+    const double avg_texture_unlock_locality_index8_source_pixels =
+        (double)perf_texture_unlock_locality_index8_source_pixels_total / frame_count;
+    const double avg_texture_unlock_locality_index8_changed_pixels =
+        (double)perf_texture_unlock_locality_index8_changed_pixels_total / frame_count;
+    const double avg_texture_unlock_locality_index8_changed_rows =
+        (double)perf_texture_unlock_locality_index8_changed_rows_total / frame_count;
+    const double avg_texture_unlock_locality_index8_changed_bbox_pixels =
+        (double)perf_texture_unlock_locality_index8_changed_bbox_pixels_total / frame_count;
+    const double avg_texture_unlock_invalidation_ms =
+        ((double)perf_texture_unlock_invalidation_ns_total / frame_count) / 1e6;
+    const double avg_palette_unlock_invalidation_ms =
+        ((double)perf_palette_unlock_invalidation_ns_total / frame_count) / 1e6;
     const double avg_texture_cache_evictions = (double)perf_texture_cache_evictions_total / frame_count;
     const double avg_palette_cache_evictions = (double)perf_palette_cache_evictions_total / frame_count;
+    const double avg_software_surface_cache_hits = (double)perf_software_surface_cache_hits_total / frame_count;
+    const double avg_software_surface_cache_creates = (double)perf_software_surface_cache_creates_total / frame_count;
+    const double avg_software_surface_cache_refresh_attempts =
+        (double)perf_software_surface_cache_refresh_attempts_total / frame_count;
+    const double avg_software_surface_cache_refresh_unique_bindings =
+        (double)perf_software_surface_cache_refresh_unique_bindings_total / frame_count;
+    const double avg_software_surface_cache_refresh_repeat_binding_attempts =
+        (double)perf_software_surface_cache_refresh_repeat_binding_attempts_total / frame_count;
+    const double avg_software_surface_cache_refresh_unique_texture_handles =
+        (double)perf_software_surface_cache_refresh_unique_texture_handles_total / frame_count;
+    const double avg_software_surface_cache_refresh_texture_handle_fanout_max =
+        (double)perf_software_surface_cache_refresh_texture_handle_fanout_max_total / frame_count;
+    const double avg_software_surface_cache_refresh_failures =
+        (double)perf_software_surface_cache_refresh_failures_total / frame_count;
+    const double avg_software_surface_cache_refresh_ms =
+        ((double)perf_software_surface_cache_refresh_ns_total / frame_count) / 1e6;
+    const double avg_software_surface_cache_refresh_palette_set_calls =
+        (double)perf_software_surface_cache_refresh_palette_set_calls_total / frame_count;
+    const double avg_software_surface_cache_refresh_palette_set_ms =
+        ((double)perf_software_surface_cache_refresh_palette_set_ns_total / frame_count) / 1e6;
+    const double avg_software_surface_cache_refresh_blit_calls =
+        (double)perf_software_surface_cache_refresh_blit_calls_total / frame_count;
+    const double avg_software_surface_cache_refresh_blit_ms =
+        ((double)perf_software_surface_cache_refresh_blit_ns_total / frame_count) / 1e6;
+    const double avg_software_surface_cache_create_dirty_texture_same_frame =
+        (double)perf_software_surface_cache_create_dirty_texture_same_frame_total / frame_count;
+    const double avg_software_surface_cache_create_dirty_texture_carried =
+        (double)perf_software_surface_cache_create_dirty_texture_carried_total / frame_count;
+    const double avg_software_surface_cache_create_dirty_palette_same_frame =
+        (double)perf_software_surface_cache_create_dirty_palette_same_frame_total / frame_count;
+    const double avg_software_surface_cache_create_dirty_palette_carried =
+        (double)perf_software_surface_cache_create_dirty_palette_carried_total / frame_count;
+    const double avg_software_surface_cache_create_cold =
+        (double)perf_software_surface_cache_create_cold_total / frame_count;
+    const double avg_software_surface_cache_texture_evictions =
+        (double)perf_software_surface_cache_texture_evictions_total / frame_count;
+    const double avg_software_surface_cache_palette_evictions =
+        (double)perf_software_surface_cache_palette_evictions_total / frame_count;
     const double avg_textures_destroy_queued = (double)perf_textures_destroy_queued_total / frame_count;
     const double avg_unknown_tasks = (double)perf_unknown_tasks_total / frame_count;
     const double avg_ppg_tasks = (double)perf_ppg_tasks_total / frame_count;
@@ -597,6 +1004,62 @@ static void perf_capture_write_summary(void) {
     const double avg_hybrid_reason_flip = (double)perf_hybrid_reason_flip_total / frame_count;
     const double avg_hybrid_reason_geometry = (double)perf_hybrid_reason_geometry_total / frame_count;
     const double avg_hybrid_reason_solid = (double)perf_hybrid_reason_solid_total / frame_count;
+    const double software_frame_mode_enabled_ratio = (double)perf_software_frame_mode_enabled_frames / frame_count;
+    const double software_frame_surface_ready_ratio = (double)perf_software_frame_surface_ready_frames / frame_count;
+    const double software_frame_owned_ratio = (double)perf_software_frame_owned_frames / frame_count;
+    const double software_frame_direct_present_ratio = (double)perf_software_frame_direct_present_frames / frame_count;
+    const double software_frame_uploaded_ratio = (double)perf_software_frame_uploaded_frames / frame_count;
+    const double software_frame_fallback_ratio = (double)perf_software_frame_fallback_frames / frame_count;
+    const double avg_software_frame_candidate_tasks = (double)perf_software_frame_candidate_tasks_total / frame_count;
+    const double avg_software_frame_candidate_pixels = (double)perf_software_frame_candidate_pixels_total / frame_count;
+    const double avg_software_frame_fallback_tasks = (double)perf_software_frame_fallback_tasks_total / frame_count;
+    const double avg_software_frame_fallback_pixels = (double)perf_software_frame_fallback_pixels_total / frame_count;
+    const double avg_software_frame_fast_exact_tasks = (double)perf_software_frame_fast_exact_tasks_total / frame_count;
+    const double avg_software_frame_fast_exact_pixels =
+        (double)perf_software_frame_fast_exact_pixels_total / frame_count;
+    const double avg_software_frame_fast_exact_clipped_tasks =
+        (double)perf_software_frame_fast_exact_clipped_tasks_total / frame_count;
+    const double avg_software_frame_fast_exact_flipped_tasks =
+        (double)perf_software_frame_fast_exact_flipped_tasks_total / frame_count;
+    const double avg_software_frame_fast_exact_color_mod_tasks =
+        (double)perf_software_frame_fast_exact_color_mod_tasks_total / frame_count;
+    const double avg_software_frame_fast_exact_color_mod_pixels =
+        (double)perf_software_frame_fast_exact_color_mod_pixels_total / frame_count;
+    const double avg_software_frame_fast_scaled_tasks =
+        (double)perf_software_frame_fast_scaled_tasks_total / frame_count;
+    const double avg_software_frame_fast_scaled_pixels =
+        (double)perf_software_frame_fast_scaled_pixels_total / frame_count;
+    const double avg_software_frame_fast_non_integer_tasks =
+        (double)perf_software_frame_fast_non_integer_tasks_total / frame_count;
+    const double avg_software_frame_fast_non_integer_pixels =
+        (double)perf_software_frame_fast_non_integer_pixels_total / frame_count;
+    const double avg_software_frame_generic_textured_tasks =
+        (double)perf_software_frame_generic_textured_tasks_total / frame_count;
+    const double avg_software_frame_generic_textured_pixels =
+        (double)perf_software_frame_generic_textured_pixels_total / frame_count;
+    const double avg_software_frame_fast_miss_color_mod =
+        (double)perf_software_frame_fast_miss_color_mod_total / frame_count;
+    const double avg_software_frame_fast_miss_non_integer =
+        (double)perf_software_frame_fast_miss_non_integer_total / frame_count;
+    const double avg_software_frame_fast_miss_non_integer_ge_256_tasks =
+        (double)perf_software_frame_fast_miss_non_integer_ge_256_tasks_total / frame_count;
+    const double avg_software_frame_fast_miss_non_integer_ge_256_pixels =
+        (double)perf_software_frame_fast_miss_non_integer_ge_256_pixels_total / frame_count;
+    const double avg_software_frame_fast_miss_non_integer_ge_1024_tasks =
+        (double)perf_software_frame_fast_miss_non_integer_ge_1024_tasks_total / frame_count;
+    const double avg_software_frame_fast_miss_non_integer_ge_1024_pixels =
+        (double)perf_software_frame_fast_miss_non_integer_ge_1024_pixels_total / frame_count;
+    const double avg_software_frame_fast_miss_non_integer_max_pixels =
+        (double)perf_software_frame_fast_miss_non_integer_max_pixels_total / frame_count;
+    const double avg_software_frame_fast_miss_scaled = (double)perf_software_frame_fast_miss_scaled_total / frame_count;
+    const double avg_software_frame_fast_miss_unsupported_flip =
+        (double)perf_software_frame_fast_miss_unsupported_flip_total / frame_count;
+    const double avg_software_frame_fast_miss_source_bounds =
+        (double)perf_software_frame_fast_miss_source_bounds_total / frame_count;
+    const double avg_software_frame_reason_alpha = (double)perf_software_frame_reason_alpha_total / frame_count;
+    const double avg_software_frame_reason_color_mod = (double)perf_software_frame_reason_color_mod_total / frame_count;
+    const double avg_software_frame_reason_geometry = (double)perf_software_frame_reason_geometry_total / frame_count;
+    const double avg_software_frame_reason_solid = (double)perf_software_frame_reason_solid_total / frame_count;
     const int dirty_tile_total = SDLGameRenderer_GetDirtyTileTotal();
     const double avg_dirty_ratio = dirty_tile_total > 0 ? avg_dirty_tiles / (double)dirty_tile_total : 0.0;
     const double avg_dirty_hit_rate = perf_dirty_hit_rate_total / frame_count;
@@ -669,16 +1132,124 @@ static void perf_capture_write_summary(void) {
     int max_texture_cache_hits = perf_samples[0].texture_cache_hits;
     int min_texture_cache_misses = perf_samples[0].texture_cache_misses;
     int max_texture_cache_misses = perf_samples[0].texture_cache_misses;
+    int min_texture_cache_miss_dirty_texture_same_frame = perf_samples[0].texture_cache_miss_dirty_texture_same_frame;
+    int max_texture_cache_miss_dirty_texture_same_frame = perf_samples[0].texture_cache_miss_dirty_texture_same_frame;
+    int min_texture_cache_miss_dirty_texture_carried = perf_samples[0].texture_cache_miss_dirty_texture_carried;
+    int max_texture_cache_miss_dirty_texture_carried = perf_samples[0].texture_cache_miss_dirty_texture_carried;
+    int min_texture_cache_miss_dirty_palette_same_frame = perf_samples[0].texture_cache_miss_dirty_palette_same_frame;
+    int max_texture_cache_miss_dirty_palette_same_frame = perf_samples[0].texture_cache_miss_dirty_palette_same_frame;
+    int min_texture_cache_miss_dirty_palette_carried = perf_samples[0].texture_cache_miss_dirty_palette_carried;
+    int max_texture_cache_miss_dirty_palette_carried = perf_samples[0].texture_cache_miss_dirty_palette_carried;
+    int min_texture_cache_miss_cold = perf_samples[0].texture_cache_miss_cold;
+    int max_texture_cache_miss_cold = perf_samples[0].texture_cache_miss_cold;
     int min_texture_creates = perf_samples[0].texture_creates;
     int max_texture_creates = perf_samples[0].texture_creates;
     int min_texture_unlock_calls = perf_samples[0].texture_unlock_calls;
     int max_texture_unlock_calls = perf_samples[0].texture_unlock_calls;
     int min_palette_unlock_calls = perf_samples[0].palette_unlock_calls;
     int max_palette_unlock_calls = perf_samples[0].palette_unlock_calls;
+    int min_texture_unlock_dirty_surface_variants = perf_samples[0].texture_unlock_dirty_surface_variants;
+    int max_texture_unlock_dirty_surface_variants = perf_samples[0].texture_unlock_dirty_surface_variants;
+    int min_texture_unlock_dirty_surface_variants_max = perf_samples[0].texture_unlock_dirty_surface_variants_max;
+    int max_texture_unlock_dirty_surface_variants_max = perf_samples[0].texture_unlock_dirty_surface_variants_max;
+    int min_palette_unlock_dirty_surface_variants = perf_samples[0].palette_unlock_dirty_surface_variants;
+    int max_palette_unlock_dirty_surface_variants = perf_samples[0].palette_unlock_dirty_surface_variants;
+    int min_palette_unlock_dirty_surface_variants_max = perf_samples[0].palette_unlock_dirty_surface_variants_max;
+    int max_palette_unlock_dirty_surface_variants_max = perf_samples[0].palette_unlock_dirty_surface_variants_max;
+    int min_texture_unlock_locality_index8_tracked = perf_samples[0].texture_unlock_locality_index8_tracked;
+    int max_texture_unlock_locality_index8_tracked = perf_samples[0].texture_unlock_locality_index8_tracked;
+    int min_texture_unlock_locality_index8_baseline_skips =
+        perf_samples[0].texture_unlock_locality_index8_baseline_skips;
+    int max_texture_unlock_locality_index8_baseline_skips =
+        perf_samples[0].texture_unlock_locality_index8_baseline_skips;
+    int min_texture_unlock_locality_index8_non_index8_skips =
+        perf_samples[0].texture_unlock_locality_index8_non_index8_skips;
+    int max_texture_unlock_locality_index8_non_index8_skips =
+        perf_samples[0].texture_unlock_locality_index8_non_index8_skips;
+    Uint64 min_texture_unlock_locality_index8_source_pixels =
+        perf_samples[0].texture_unlock_locality_index8_source_pixels;
+    Uint64 max_texture_unlock_locality_index8_source_pixels =
+        perf_samples[0].texture_unlock_locality_index8_source_pixels;
+    Uint64 min_texture_unlock_locality_index8_changed_pixels =
+        perf_samples[0].texture_unlock_locality_index8_changed_pixels;
+    Uint64 max_texture_unlock_locality_index8_changed_pixels =
+        perf_samples[0].texture_unlock_locality_index8_changed_pixels;
+    Uint64 min_texture_unlock_locality_index8_changed_rows =
+        perf_samples[0].texture_unlock_locality_index8_changed_rows;
+    Uint64 max_texture_unlock_locality_index8_changed_rows =
+        perf_samples[0].texture_unlock_locality_index8_changed_rows;
+    Uint64 min_texture_unlock_locality_index8_changed_bbox_pixels =
+        perf_samples[0].texture_unlock_locality_index8_changed_bbox_pixels;
+    Uint64 max_texture_unlock_locality_index8_changed_bbox_pixels =
+        perf_samples[0].texture_unlock_locality_index8_changed_bbox_pixels;
+    double min_texture_unlock_invalidation_ms = perf_samples[0].texture_unlock_invalidation_ms;
+    double max_texture_unlock_invalidation_ms = perf_samples[0].texture_unlock_invalidation_ms;
+    double min_palette_unlock_invalidation_ms = perf_samples[0].palette_unlock_invalidation_ms;
+    double max_palette_unlock_invalidation_ms = perf_samples[0].palette_unlock_invalidation_ms;
     int min_texture_cache_evictions = perf_samples[0].texture_cache_evictions;
     int max_texture_cache_evictions = perf_samples[0].texture_cache_evictions;
     int min_palette_cache_evictions = perf_samples[0].palette_cache_evictions;
     int max_palette_cache_evictions = perf_samples[0].palette_cache_evictions;
+    int min_software_surface_cache_hits = perf_samples[0].software_surface_cache_hits;
+    int max_software_surface_cache_hits = perf_samples[0].software_surface_cache_hits;
+    int min_software_surface_cache_creates = perf_samples[0].software_surface_cache_creates;
+    int max_software_surface_cache_creates = perf_samples[0].software_surface_cache_creates;
+    int min_software_surface_cache_refresh_attempts = perf_samples[0].software_surface_cache_refresh_attempts;
+    int max_software_surface_cache_refresh_attempts = perf_samples[0].software_surface_cache_refresh_attempts;
+    int min_software_surface_cache_refresh_unique_bindings =
+        perf_samples[0].software_surface_cache_refresh_unique_bindings;
+    int max_software_surface_cache_refresh_unique_bindings =
+        perf_samples[0].software_surface_cache_refresh_unique_bindings;
+    int min_software_surface_cache_refresh_repeat_binding_attempts =
+        perf_samples[0].software_surface_cache_refresh_repeat_binding_attempts;
+    int max_software_surface_cache_refresh_repeat_binding_attempts =
+        perf_samples[0].software_surface_cache_refresh_repeat_binding_attempts;
+    int min_software_surface_cache_refresh_unique_texture_handles =
+        perf_samples[0].software_surface_cache_refresh_unique_texture_handles;
+    int max_software_surface_cache_refresh_unique_texture_handles =
+        perf_samples[0].software_surface_cache_refresh_unique_texture_handles;
+    int min_software_surface_cache_refresh_texture_handle_fanout_max =
+        perf_samples[0].software_surface_cache_refresh_texture_handle_fanout_max;
+    int max_software_surface_cache_refresh_texture_handle_fanout_max =
+        perf_samples[0].software_surface_cache_refresh_texture_handle_fanout_max;
+    int min_software_surface_cache_refresh_failures = perf_samples[0].software_surface_cache_refresh_failures;
+    int max_software_surface_cache_refresh_failures = perf_samples[0].software_surface_cache_refresh_failures;
+    double min_software_surface_cache_refresh_ms = perf_samples[0].software_surface_cache_refresh_ms;
+    double max_software_surface_cache_refresh_ms = perf_samples[0].software_surface_cache_refresh_ms;
+    int min_software_surface_cache_refresh_palette_set_calls =
+        perf_samples[0].software_surface_cache_refresh_palette_set_calls;
+    int max_software_surface_cache_refresh_palette_set_calls =
+        perf_samples[0].software_surface_cache_refresh_palette_set_calls;
+    double min_software_surface_cache_refresh_palette_set_ms =
+        perf_samples[0].software_surface_cache_refresh_palette_set_ms;
+    double max_software_surface_cache_refresh_palette_set_ms =
+        perf_samples[0].software_surface_cache_refresh_palette_set_ms;
+    int min_software_surface_cache_refresh_blit_calls = perf_samples[0].software_surface_cache_refresh_blit_calls;
+    int max_software_surface_cache_refresh_blit_calls = perf_samples[0].software_surface_cache_refresh_blit_calls;
+    double min_software_surface_cache_refresh_blit_ms = perf_samples[0].software_surface_cache_refresh_blit_ms;
+    double max_software_surface_cache_refresh_blit_ms = perf_samples[0].software_surface_cache_refresh_blit_ms;
+    int min_software_surface_cache_create_dirty_texture_same_frame =
+        perf_samples[0].software_surface_cache_create_dirty_texture_same_frame;
+    int max_software_surface_cache_create_dirty_texture_same_frame =
+        perf_samples[0].software_surface_cache_create_dirty_texture_same_frame;
+    int min_software_surface_cache_create_dirty_texture_carried =
+        perf_samples[0].software_surface_cache_create_dirty_texture_carried;
+    int max_software_surface_cache_create_dirty_texture_carried =
+        perf_samples[0].software_surface_cache_create_dirty_texture_carried;
+    int min_software_surface_cache_create_dirty_palette_same_frame =
+        perf_samples[0].software_surface_cache_create_dirty_palette_same_frame;
+    int max_software_surface_cache_create_dirty_palette_same_frame =
+        perf_samples[0].software_surface_cache_create_dirty_palette_same_frame;
+    int min_software_surface_cache_create_dirty_palette_carried =
+        perf_samples[0].software_surface_cache_create_dirty_palette_carried;
+    int max_software_surface_cache_create_dirty_palette_carried =
+        perf_samples[0].software_surface_cache_create_dirty_palette_carried;
+    int min_software_surface_cache_create_cold = perf_samples[0].software_surface_cache_create_cold;
+    int max_software_surface_cache_create_cold = perf_samples[0].software_surface_cache_create_cold;
+    int min_software_surface_cache_texture_evictions = perf_samples[0].software_surface_cache_texture_evictions;
+    int max_software_surface_cache_texture_evictions = perf_samples[0].software_surface_cache_texture_evictions;
+    int min_software_surface_cache_palette_evictions = perf_samples[0].software_surface_cache_palette_evictions;
+    int max_software_surface_cache_palette_evictions = perf_samples[0].software_surface_cache_palette_evictions;
     int min_textures_destroy_queued = perf_samples[0].textures_destroy_queued;
     int max_textures_destroy_queued = perf_samples[0].textures_destroy_queued;
     int min_unknown_tasks = perf_samples[0].unknown_tasks;
@@ -691,6 +1262,76 @@ static void perf_capture_write_summary(void) {
     int max_ui_direct_tasks = perf_samples[0].ui_direct_tasks;
     int min_solid_tasks = perf_samples[0].solid_tasks;
     int max_solid_tasks = perf_samples[0].solid_tasks;
+    int min_software_frame_candidate_tasks = perf_samples[0].software_frame_candidate_tasks;
+    int max_software_frame_candidate_tasks = perf_samples[0].software_frame_candidate_tasks;
+    Uint64 min_software_frame_candidate_pixels = perf_samples[0].software_frame_candidate_pixels;
+    Uint64 max_software_frame_candidate_pixels = perf_samples[0].software_frame_candidate_pixels;
+    int min_software_frame_fallback_tasks = perf_samples[0].software_frame_fallback_tasks;
+    int max_software_frame_fallback_tasks = perf_samples[0].software_frame_fallback_tasks;
+    Uint64 min_software_frame_fallback_pixels = perf_samples[0].software_frame_fallback_pixels;
+    Uint64 max_software_frame_fallback_pixels = perf_samples[0].software_frame_fallback_pixels;
+    int min_software_frame_fast_exact_tasks = perf_samples[0].software_frame_fast_exact_tasks;
+    int max_software_frame_fast_exact_tasks = perf_samples[0].software_frame_fast_exact_tasks;
+    Uint64 min_software_frame_fast_exact_pixels = perf_samples[0].software_frame_fast_exact_pixels;
+    Uint64 max_software_frame_fast_exact_pixels = perf_samples[0].software_frame_fast_exact_pixels;
+    int min_software_frame_fast_exact_clipped_tasks = perf_samples[0].software_frame_fast_exact_clipped_tasks;
+    int max_software_frame_fast_exact_clipped_tasks = perf_samples[0].software_frame_fast_exact_clipped_tasks;
+    int min_software_frame_fast_exact_flipped_tasks = perf_samples[0].software_frame_fast_exact_flipped_tasks;
+    int max_software_frame_fast_exact_flipped_tasks = perf_samples[0].software_frame_fast_exact_flipped_tasks;
+    int min_software_frame_fast_exact_color_mod_tasks = perf_samples[0].software_frame_fast_exact_color_mod_tasks;
+    int max_software_frame_fast_exact_color_mod_tasks = perf_samples[0].software_frame_fast_exact_color_mod_tasks;
+    Uint64 min_software_frame_fast_exact_color_mod_pixels = perf_samples[0].software_frame_fast_exact_color_mod_pixels;
+    Uint64 max_software_frame_fast_exact_color_mod_pixels = perf_samples[0].software_frame_fast_exact_color_mod_pixels;
+    int min_software_frame_fast_scaled_tasks = perf_samples[0].software_frame_fast_scaled_tasks;
+    int max_software_frame_fast_scaled_tasks = perf_samples[0].software_frame_fast_scaled_tasks;
+    Uint64 min_software_frame_fast_scaled_pixels = perf_samples[0].software_frame_fast_scaled_pixels;
+    Uint64 max_software_frame_fast_scaled_pixels = perf_samples[0].software_frame_fast_scaled_pixels;
+    int min_software_frame_fast_non_integer_tasks = perf_samples[0].software_frame_fast_non_integer_tasks;
+    int max_software_frame_fast_non_integer_tasks = perf_samples[0].software_frame_fast_non_integer_tasks;
+    Uint64 min_software_frame_fast_non_integer_pixels = perf_samples[0].software_frame_fast_non_integer_pixels;
+    Uint64 max_software_frame_fast_non_integer_pixels = perf_samples[0].software_frame_fast_non_integer_pixels;
+    int min_software_frame_generic_textured_tasks = perf_samples[0].software_frame_generic_textured_tasks;
+    int max_software_frame_generic_textured_tasks = perf_samples[0].software_frame_generic_textured_tasks;
+    Uint64 min_software_frame_generic_textured_pixels = perf_samples[0].software_frame_generic_textured_pixels;
+    Uint64 max_software_frame_generic_textured_pixels = perf_samples[0].software_frame_generic_textured_pixels;
+    int min_software_frame_fast_miss_color_mod = perf_samples[0].software_frame_fast_miss_color_mod;
+    int max_software_frame_fast_miss_color_mod = perf_samples[0].software_frame_fast_miss_color_mod;
+    int min_software_frame_fast_miss_non_integer = perf_samples[0].software_frame_fast_miss_non_integer;
+    int max_software_frame_fast_miss_non_integer = perf_samples[0].software_frame_fast_miss_non_integer;
+    int min_software_frame_fast_miss_non_integer_ge_256_tasks =
+        perf_samples[0].software_frame_fast_miss_non_integer_ge_256_tasks;
+    int max_software_frame_fast_miss_non_integer_ge_256_tasks =
+        perf_samples[0].software_frame_fast_miss_non_integer_ge_256_tasks;
+    Uint64 min_software_frame_fast_miss_non_integer_ge_256_pixels =
+        perf_samples[0].software_frame_fast_miss_non_integer_ge_256_pixels;
+    Uint64 max_software_frame_fast_miss_non_integer_ge_256_pixels =
+        perf_samples[0].software_frame_fast_miss_non_integer_ge_256_pixels;
+    int min_software_frame_fast_miss_non_integer_ge_1024_tasks =
+        perf_samples[0].software_frame_fast_miss_non_integer_ge_1024_tasks;
+    int max_software_frame_fast_miss_non_integer_ge_1024_tasks =
+        perf_samples[0].software_frame_fast_miss_non_integer_ge_1024_tasks;
+    Uint64 min_software_frame_fast_miss_non_integer_ge_1024_pixels =
+        perf_samples[0].software_frame_fast_miss_non_integer_ge_1024_pixels;
+    Uint64 max_software_frame_fast_miss_non_integer_ge_1024_pixels =
+        perf_samples[0].software_frame_fast_miss_non_integer_ge_1024_pixels;
+    Uint64 min_software_frame_fast_miss_non_integer_max_pixels =
+        perf_samples[0].software_frame_fast_miss_non_integer_max_pixels;
+    Uint64 max_software_frame_fast_miss_non_integer_max_pixels =
+        perf_samples[0].software_frame_fast_miss_non_integer_max_pixels;
+    int min_software_frame_fast_miss_scaled = perf_samples[0].software_frame_fast_miss_scaled;
+    int max_software_frame_fast_miss_scaled = perf_samples[0].software_frame_fast_miss_scaled;
+    int min_software_frame_fast_miss_unsupported_flip = perf_samples[0].software_frame_fast_miss_unsupported_flip;
+    int max_software_frame_fast_miss_unsupported_flip = perf_samples[0].software_frame_fast_miss_unsupported_flip;
+    int min_software_frame_fast_miss_source_bounds = perf_samples[0].software_frame_fast_miss_source_bounds;
+    int max_software_frame_fast_miss_source_bounds = perf_samples[0].software_frame_fast_miss_source_bounds;
+    int min_software_frame_reason_alpha = perf_samples[0].software_frame_reason_alpha;
+    int max_software_frame_reason_alpha = perf_samples[0].software_frame_reason_alpha;
+    int min_software_frame_reason_color_mod = perf_samples[0].software_frame_reason_color_mod;
+    int max_software_frame_reason_color_mod = perf_samples[0].software_frame_reason_color_mod;
+    int min_software_frame_reason_geometry = perf_samples[0].software_frame_reason_geometry;
+    int max_software_frame_reason_geometry = perf_samples[0].software_frame_reason_geometry;
+    int min_software_frame_reason_solid = perf_samples[0].software_frame_reason_solid;
+    int max_software_frame_reason_solid = perf_samples[0].software_frame_reason_solid;
     int min_hybrid_candidate_tasks = perf_samples[0].hybrid_candidate_tasks;
     int max_hybrid_candidate_tasks = perf_samples[0].hybrid_candidate_tasks;
     Uint64 min_hybrid_candidate_pixels = perf_samples[0].hybrid_candidate_pixels;
@@ -921,6 +1562,36 @@ static void perf_capture_write_summary(void) {
         if (sample->texture_cache_misses > max_texture_cache_misses) {
             max_texture_cache_misses = sample->texture_cache_misses;
         }
+        if (sample->texture_cache_miss_dirty_texture_same_frame < min_texture_cache_miss_dirty_texture_same_frame) {
+            min_texture_cache_miss_dirty_texture_same_frame = sample->texture_cache_miss_dirty_texture_same_frame;
+        }
+        if (sample->texture_cache_miss_dirty_texture_same_frame > max_texture_cache_miss_dirty_texture_same_frame) {
+            max_texture_cache_miss_dirty_texture_same_frame = sample->texture_cache_miss_dirty_texture_same_frame;
+        }
+        if (sample->texture_cache_miss_dirty_texture_carried < min_texture_cache_miss_dirty_texture_carried) {
+            min_texture_cache_miss_dirty_texture_carried = sample->texture_cache_miss_dirty_texture_carried;
+        }
+        if (sample->texture_cache_miss_dirty_texture_carried > max_texture_cache_miss_dirty_texture_carried) {
+            max_texture_cache_miss_dirty_texture_carried = sample->texture_cache_miss_dirty_texture_carried;
+        }
+        if (sample->texture_cache_miss_dirty_palette_same_frame < min_texture_cache_miss_dirty_palette_same_frame) {
+            min_texture_cache_miss_dirty_palette_same_frame = sample->texture_cache_miss_dirty_palette_same_frame;
+        }
+        if (sample->texture_cache_miss_dirty_palette_same_frame > max_texture_cache_miss_dirty_palette_same_frame) {
+            max_texture_cache_miss_dirty_palette_same_frame = sample->texture_cache_miss_dirty_palette_same_frame;
+        }
+        if (sample->texture_cache_miss_dirty_palette_carried < min_texture_cache_miss_dirty_palette_carried) {
+            min_texture_cache_miss_dirty_palette_carried = sample->texture_cache_miss_dirty_palette_carried;
+        }
+        if (sample->texture_cache_miss_dirty_palette_carried > max_texture_cache_miss_dirty_palette_carried) {
+            max_texture_cache_miss_dirty_palette_carried = sample->texture_cache_miss_dirty_palette_carried;
+        }
+        if (sample->texture_cache_miss_cold < min_texture_cache_miss_cold) {
+            min_texture_cache_miss_cold = sample->texture_cache_miss_cold;
+        }
+        if (sample->texture_cache_miss_cold > max_texture_cache_miss_cold) {
+            max_texture_cache_miss_cold = sample->texture_cache_miss_cold;
+        }
         if (sample->texture_creates < min_texture_creates) {
             min_texture_creates = sample->texture_creates;
         }
@@ -939,6 +1610,98 @@ static void perf_capture_write_summary(void) {
         if (sample->palette_unlock_calls > max_palette_unlock_calls) {
             max_palette_unlock_calls = sample->palette_unlock_calls;
         }
+        if (sample->texture_unlock_dirty_surface_variants < min_texture_unlock_dirty_surface_variants) {
+            min_texture_unlock_dirty_surface_variants = sample->texture_unlock_dirty_surface_variants;
+        }
+        if (sample->texture_unlock_dirty_surface_variants > max_texture_unlock_dirty_surface_variants) {
+            max_texture_unlock_dirty_surface_variants = sample->texture_unlock_dirty_surface_variants;
+        }
+        if (sample->texture_unlock_dirty_surface_variants_max < min_texture_unlock_dirty_surface_variants_max) {
+            min_texture_unlock_dirty_surface_variants_max = sample->texture_unlock_dirty_surface_variants_max;
+        }
+        if (sample->texture_unlock_dirty_surface_variants_max > max_texture_unlock_dirty_surface_variants_max) {
+            max_texture_unlock_dirty_surface_variants_max = sample->texture_unlock_dirty_surface_variants_max;
+        }
+        if (sample->palette_unlock_dirty_surface_variants < min_palette_unlock_dirty_surface_variants) {
+            min_palette_unlock_dirty_surface_variants = sample->palette_unlock_dirty_surface_variants;
+        }
+        if (sample->palette_unlock_dirty_surface_variants > max_palette_unlock_dirty_surface_variants) {
+            max_palette_unlock_dirty_surface_variants = sample->palette_unlock_dirty_surface_variants;
+        }
+        if (sample->palette_unlock_dirty_surface_variants_max < min_palette_unlock_dirty_surface_variants_max) {
+            min_palette_unlock_dirty_surface_variants_max = sample->palette_unlock_dirty_surface_variants_max;
+        }
+        if (sample->palette_unlock_dirty_surface_variants_max > max_palette_unlock_dirty_surface_variants_max) {
+            max_palette_unlock_dirty_surface_variants_max = sample->palette_unlock_dirty_surface_variants_max;
+        }
+        if (sample->texture_unlock_locality_index8_tracked < min_texture_unlock_locality_index8_tracked) {
+            min_texture_unlock_locality_index8_tracked = sample->texture_unlock_locality_index8_tracked;
+        }
+        if (sample->texture_unlock_locality_index8_tracked > max_texture_unlock_locality_index8_tracked) {
+            max_texture_unlock_locality_index8_tracked = sample->texture_unlock_locality_index8_tracked;
+        }
+        if (sample->texture_unlock_locality_index8_baseline_skips <
+            min_texture_unlock_locality_index8_baseline_skips) {
+            min_texture_unlock_locality_index8_baseline_skips = sample->texture_unlock_locality_index8_baseline_skips;
+        }
+        if (sample->texture_unlock_locality_index8_baseline_skips >
+            max_texture_unlock_locality_index8_baseline_skips) {
+            max_texture_unlock_locality_index8_baseline_skips = sample->texture_unlock_locality_index8_baseline_skips;
+        }
+        if (sample->texture_unlock_locality_index8_non_index8_skips <
+            min_texture_unlock_locality_index8_non_index8_skips) {
+            min_texture_unlock_locality_index8_non_index8_skips =
+                sample->texture_unlock_locality_index8_non_index8_skips;
+        }
+        if (sample->texture_unlock_locality_index8_non_index8_skips >
+            max_texture_unlock_locality_index8_non_index8_skips) {
+            max_texture_unlock_locality_index8_non_index8_skips =
+                sample->texture_unlock_locality_index8_non_index8_skips;
+        }
+        if (sample->texture_unlock_locality_index8_source_pixels <
+            min_texture_unlock_locality_index8_source_pixels) {
+            min_texture_unlock_locality_index8_source_pixels = sample->texture_unlock_locality_index8_source_pixels;
+        }
+        if (sample->texture_unlock_locality_index8_source_pixels >
+            max_texture_unlock_locality_index8_source_pixels) {
+            max_texture_unlock_locality_index8_source_pixels = sample->texture_unlock_locality_index8_source_pixels;
+        }
+        if (sample->texture_unlock_locality_index8_changed_pixels <
+            min_texture_unlock_locality_index8_changed_pixels) {
+            min_texture_unlock_locality_index8_changed_pixels = sample->texture_unlock_locality_index8_changed_pixels;
+        }
+        if (sample->texture_unlock_locality_index8_changed_pixels >
+            max_texture_unlock_locality_index8_changed_pixels) {
+            max_texture_unlock_locality_index8_changed_pixels = sample->texture_unlock_locality_index8_changed_pixels;
+        }
+        if (sample->texture_unlock_locality_index8_changed_rows < min_texture_unlock_locality_index8_changed_rows) {
+            min_texture_unlock_locality_index8_changed_rows = sample->texture_unlock_locality_index8_changed_rows;
+        }
+        if (sample->texture_unlock_locality_index8_changed_rows > max_texture_unlock_locality_index8_changed_rows) {
+            max_texture_unlock_locality_index8_changed_rows = sample->texture_unlock_locality_index8_changed_rows;
+        }
+        if (sample->texture_unlock_locality_index8_changed_bbox_pixels <
+            min_texture_unlock_locality_index8_changed_bbox_pixels) {
+            min_texture_unlock_locality_index8_changed_bbox_pixels =
+                sample->texture_unlock_locality_index8_changed_bbox_pixels;
+        }
+        if (sample->texture_unlock_locality_index8_changed_bbox_pixels >
+            max_texture_unlock_locality_index8_changed_bbox_pixels) {
+            max_texture_unlock_locality_index8_changed_bbox_pixels =
+                sample->texture_unlock_locality_index8_changed_bbox_pixels;
+        }
+        if (sample->texture_unlock_invalidation_ms < min_texture_unlock_invalidation_ms) {
+            min_texture_unlock_invalidation_ms = sample->texture_unlock_invalidation_ms;
+        }
+        if (sample->texture_unlock_invalidation_ms > max_texture_unlock_invalidation_ms) {
+            max_texture_unlock_invalidation_ms = sample->texture_unlock_invalidation_ms;
+        }
+        if (sample->palette_unlock_invalidation_ms < min_palette_unlock_invalidation_ms) {
+            min_palette_unlock_invalidation_ms = sample->palette_unlock_invalidation_ms;
+        }
+        if (sample->palette_unlock_invalidation_ms > max_palette_unlock_invalidation_ms) {
+            max_palette_unlock_invalidation_ms = sample->palette_unlock_invalidation_ms;
+        }
         if (sample->texture_cache_evictions < min_texture_cache_evictions) {
             min_texture_cache_evictions = sample->texture_cache_evictions;
         }
@@ -950,6 +1713,162 @@ static void perf_capture_write_summary(void) {
         }
         if (sample->palette_cache_evictions > max_palette_cache_evictions) {
             max_palette_cache_evictions = sample->palette_cache_evictions;
+        }
+        if (sample->software_surface_cache_hits < min_software_surface_cache_hits) {
+            min_software_surface_cache_hits = sample->software_surface_cache_hits;
+        }
+        if (sample->software_surface_cache_hits > max_software_surface_cache_hits) {
+            max_software_surface_cache_hits = sample->software_surface_cache_hits;
+        }
+        if (sample->software_surface_cache_creates < min_software_surface_cache_creates) {
+            min_software_surface_cache_creates = sample->software_surface_cache_creates;
+        }
+        if (sample->software_surface_cache_creates > max_software_surface_cache_creates) {
+            max_software_surface_cache_creates = sample->software_surface_cache_creates;
+        }
+        if (sample->software_surface_cache_refresh_attempts < min_software_surface_cache_refresh_attempts) {
+            min_software_surface_cache_refresh_attempts = sample->software_surface_cache_refresh_attempts;
+        }
+        if (sample->software_surface_cache_refresh_attempts > max_software_surface_cache_refresh_attempts) {
+            max_software_surface_cache_refresh_attempts = sample->software_surface_cache_refresh_attempts;
+        }
+        if (sample->software_surface_cache_refresh_unique_bindings <
+            min_software_surface_cache_refresh_unique_bindings) {
+            min_software_surface_cache_refresh_unique_bindings = sample->software_surface_cache_refresh_unique_bindings;
+        }
+        if (sample->software_surface_cache_refresh_unique_bindings >
+            max_software_surface_cache_refresh_unique_bindings) {
+            max_software_surface_cache_refresh_unique_bindings = sample->software_surface_cache_refresh_unique_bindings;
+        }
+        if (sample->software_surface_cache_refresh_repeat_binding_attempts <
+            min_software_surface_cache_refresh_repeat_binding_attempts) {
+            min_software_surface_cache_refresh_repeat_binding_attempts =
+                sample->software_surface_cache_refresh_repeat_binding_attempts;
+        }
+        if (sample->software_surface_cache_refresh_repeat_binding_attempts >
+            max_software_surface_cache_refresh_repeat_binding_attempts) {
+            max_software_surface_cache_refresh_repeat_binding_attempts =
+                sample->software_surface_cache_refresh_repeat_binding_attempts;
+        }
+        if (sample->software_surface_cache_refresh_unique_texture_handles <
+            min_software_surface_cache_refresh_unique_texture_handles) {
+            min_software_surface_cache_refresh_unique_texture_handles =
+                sample->software_surface_cache_refresh_unique_texture_handles;
+        }
+        if (sample->software_surface_cache_refresh_unique_texture_handles >
+            max_software_surface_cache_refresh_unique_texture_handles) {
+            max_software_surface_cache_refresh_unique_texture_handles =
+                sample->software_surface_cache_refresh_unique_texture_handles;
+        }
+        if (sample->software_surface_cache_refresh_texture_handle_fanout_max <
+            min_software_surface_cache_refresh_texture_handle_fanout_max) {
+            min_software_surface_cache_refresh_texture_handle_fanout_max =
+                sample->software_surface_cache_refresh_texture_handle_fanout_max;
+        }
+        if (sample->software_surface_cache_refresh_texture_handle_fanout_max >
+            max_software_surface_cache_refresh_texture_handle_fanout_max) {
+            max_software_surface_cache_refresh_texture_handle_fanout_max =
+                sample->software_surface_cache_refresh_texture_handle_fanout_max;
+        }
+        if (sample->software_surface_cache_refresh_failures < min_software_surface_cache_refresh_failures) {
+            min_software_surface_cache_refresh_failures = sample->software_surface_cache_refresh_failures;
+        }
+        if (sample->software_surface_cache_refresh_failures > max_software_surface_cache_refresh_failures) {
+            max_software_surface_cache_refresh_failures = sample->software_surface_cache_refresh_failures;
+        }
+        if (sample->software_surface_cache_refresh_ms < min_software_surface_cache_refresh_ms) {
+            min_software_surface_cache_refresh_ms = sample->software_surface_cache_refresh_ms;
+        }
+        if (sample->software_surface_cache_refresh_ms > max_software_surface_cache_refresh_ms) {
+            max_software_surface_cache_refresh_ms = sample->software_surface_cache_refresh_ms;
+        }
+        if (sample->software_surface_cache_refresh_palette_set_calls <
+            min_software_surface_cache_refresh_palette_set_calls) {
+            min_software_surface_cache_refresh_palette_set_calls =
+                sample->software_surface_cache_refresh_palette_set_calls;
+        }
+        if (sample->software_surface_cache_refresh_palette_set_calls >
+            max_software_surface_cache_refresh_palette_set_calls) {
+            max_software_surface_cache_refresh_palette_set_calls =
+                sample->software_surface_cache_refresh_palette_set_calls;
+        }
+        if (sample->software_surface_cache_refresh_palette_set_ms <
+            min_software_surface_cache_refresh_palette_set_ms) {
+            min_software_surface_cache_refresh_palette_set_ms = sample->software_surface_cache_refresh_palette_set_ms;
+        }
+        if (sample->software_surface_cache_refresh_palette_set_ms >
+            max_software_surface_cache_refresh_palette_set_ms) {
+            max_software_surface_cache_refresh_palette_set_ms = sample->software_surface_cache_refresh_palette_set_ms;
+        }
+        if (sample->software_surface_cache_refresh_blit_calls < min_software_surface_cache_refresh_blit_calls) {
+            min_software_surface_cache_refresh_blit_calls = sample->software_surface_cache_refresh_blit_calls;
+        }
+        if (sample->software_surface_cache_refresh_blit_calls > max_software_surface_cache_refresh_blit_calls) {
+            max_software_surface_cache_refresh_blit_calls = sample->software_surface_cache_refresh_blit_calls;
+        }
+        if (sample->software_surface_cache_refresh_blit_ms < min_software_surface_cache_refresh_blit_ms) {
+            min_software_surface_cache_refresh_blit_ms = sample->software_surface_cache_refresh_blit_ms;
+        }
+        if (sample->software_surface_cache_refresh_blit_ms > max_software_surface_cache_refresh_blit_ms) {
+            max_software_surface_cache_refresh_blit_ms = sample->software_surface_cache_refresh_blit_ms;
+        }
+        if (sample->software_surface_cache_create_dirty_texture_same_frame <
+            min_software_surface_cache_create_dirty_texture_same_frame) {
+            min_software_surface_cache_create_dirty_texture_same_frame =
+                sample->software_surface_cache_create_dirty_texture_same_frame;
+        }
+        if (sample->software_surface_cache_create_dirty_texture_same_frame >
+            max_software_surface_cache_create_dirty_texture_same_frame) {
+            max_software_surface_cache_create_dirty_texture_same_frame =
+                sample->software_surface_cache_create_dirty_texture_same_frame;
+        }
+        if (sample->software_surface_cache_create_dirty_texture_carried <
+            min_software_surface_cache_create_dirty_texture_carried) {
+            min_software_surface_cache_create_dirty_texture_carried =
+                sample->software_surface_cache_create_dirty_texture_carried;
+        }
+        if (sample->software_surface_cache_create_dirty_texture_carried >
+            max_software_surface_cache_create_dirty_texture_carried) {
+            max_software_surface_cache_create_dirty_texture_carried =
+                sample->software_surface_cache_create_dirty_texture_carried;
+        }
+        if (sample->software_surface_cache_create_dirty_palette_same_frame <
+            min_software_surface_cache_create_dirty_palette_same_frame) {
+            min_software_surface_cache_create_dirty_palette_same_frame =
+                sample->software_surface_cache_create_dirty_palette_same_frame;
+        }
+        if (sample->software_surface_cache_create_dirty_palette_same_frame >
+            max_software_surface_cache_create_dirty_palette_same_frame) {
+            max_software_surface_cache_create_dirty_palette_same_frame =
+                sample->software_surface_cache_create_dirty_palette_same_frame;
+        }
+        if (sample->software_surface_cache_create_dirty_palette_carried <
+            min_software_surface_cache_create_dirty_palette_carried) {
+            min_software_surface_cache_create_dirty_palette_carried =
+                sample->software_surface_cache_create_dirty_palette_carried;
+        }
+        if (sample->software_surface_cache_create_dirty_palette_carried >
+            max_software_surface_cache_create_dirty_palette_carried) {
+            max_software_surface_cache_create_dirty_palette_carried =
+                sample->software_surface_cache_create_dirty_palette_carried;
+        }
+        if (sample->software_surface_cache_create_cold < min_software_surface_cache_create_cold) {
+            min_software_surface_cache_create_cold = sample->software_surface_cache_create_cold;
+        }
+        if (sample->software_surface_cache_create_cold > max_software_surface_cache_create_cold) {
+            max_software_surface_cache_create_cold = sample->software_surface_cache_create_cold;
+        }
+        if (sample->software_surface_cache_texture_evictions < min_software_surface_cache_texture_evictions) {
+            min_software_surface_cache_texture_evictions = sample->software_surface_cache_texture_evictions;
+        }
+        if (sample->software_surface_cache_texture_evictions > max_software_surface_cache_texture_evictions) {
+            max_software_surface_cache_texture_evictions = sample->software_surface_cache_texture_evictions;
+        }
+        if (sample->software_surface_cache_palette_evictions < min_software_surface_cache_palette_evictions) {
+            min_software_surface_cache_palette_evictions = sample->software_surface_cache_palette_evictions;
+        }
+        if (sample->software_surface_cache_palette_evictions > max_software_surface_cache_palette_evictions) {
+            max_software_surface_cache_palette_evictions = sample->software_surface_cache_palette_evictions;
         }
         if (sample->textures_destroy_queued < min_textures_destroy_queued) {
             min_textures_destroy_queued = sample->textures_destroy_queued;
@@ -986,6 +1905,206 @@ static void perf_capture_write_summary(void) {
         }
         if (sample->solid_tasks > max_solid_tasks) {
             max_solid_tasks = sample->solid_tasks;
+        }
+        if (sample->software_frame_candidate_tasks < min_software_frame_candidate_tasks) {
+            min_software_frame_candidate_tasks = sample->software_frame_candidate_tasks;
+        }
+        if (sample->software_frame_candidate_tasks > max_software_frame_candidate_tasks) {
+            max_software_frame_candidate_tasks = sample->software_frame_candidate_tasks;
+        }
+        if (sample->software_frame_candidate_pixels < min_software_frame_candidate_pixels) {
+            min_software_frame_candidate_pixels = sample->software_frame_candidate_pixels;
+        }
+        if (sample->software_frame_candidate_pixels > max_software_frame_candidate_pixels) {
+            max_software_frame_candidate_pixels = sample->software_frame_candidate_pixels;
+        }
+        if (sample->software_frame_fallback_tasks < min_software_frame_fallback_tasks) {
+            min_software_frame_fallback_tasks = sample->software_frame_fallback_tasks;
+        }
+        if (sample->software_frame_fallback_tasks > max_software_frame_fallback_tasks) {
+            max_software_frame_fallback_tasks = sample->software_frame_fallback_tasks;
+        }
+        if (sample->software_frame_fallback_pixels < min_software_frame_fallback_pixels) {
+            min_software_frame_fallback_pixels = sample->software_frame_fallback_pixels;
+        }
+        if (sample->software_frame_fallback_pixels > max_software_frame_fallback_pixels) {
+            max_software_frame_fallback_pixels = sample->software_frame_fallback_pixels;
+        }
+        if (sample->software_frame_fast_exact_tasks < min_software_frame_fast_exact_tasks) {
+            min_software_frame_fast_exact_tasks = sample->software_frame_fast_exact_tasks;
+        }
+        if (sample->software_frame_fast_exact_tasks > max_software_frame_fast_exact_tasks) {
+            max_software_frame_fast_exact_tasks = sample->software_frame_fast_exact_tasks;
+        }
+        if (sample->software_frame_fast_exact_pixels < min_software_frame_fast_exact_pixels) {
+            min_software_frame_fast_exact_pixels = sample->software_frame_fast_exact_pixels;
+        }
+        if (sample->software_frame_fast_exact_pixels > max_software_frame_fast_exact_pixels) {
+            max_software_frame_fast_exact_pixels = sample->software_frame_fast_exact_pixels;
+        }
+        if (sample->software_frame_fast_exact_clipped_tasks < min_software_frame_fast_exact_clipped_tasks) {
+            min_software_frame_fast_exact_clipped_tasks = sample->software_frame_fast_exact_clipped_tasks;
+        }
+        if (sample->software_frame_fast_exact_clipped_tasks > max_software_frame_fast_exact_clipped_tasks) {
+            max_software_frame_fast_exact_clipped_tasks = sample->software_frame_fast_exact_clipped_tasks;
+        }
+        if (sample->software_frame_fast_exact_flipped_tasks < min_software_frame_fast_exact_flipped_tasks) {
+            min_software_frame_fast_exact_flipped_tasks = sample->software_frame_fast_exact_flipped_tasks;
+        }
+        if (sample->software_frame_fast_exact_flipped_tasks > max_software_frame_fast_exact_flipped_tasks) {
+            max_software_frame_fast_exact_flipped_tasks = sample->software_frame_fast_exact_flipped_tasks;
+        }
+        if (sample->software_frame_fast_exact_color_mod_tasks < min_software_frame_fast_exact_color_mod_tasks) {
+            min_software_frame_fast_exact_color_mod_tasks = sample->software_frame_fast_exact_color_mod_tasks;
+        }
+        if (sample->software_frame_fast_exact_color_mod_tasks > max_software_frame_fast_exact_color_mod_tasks) {
+            max_software_frame_fast_exact_color_mod_tasks = sample->software_frame_fast_exact_color_mod_tasks;
+        }
+        if (sample->software_frame_fast_exact_color_mod_pixels < min_software_frame_fast_exact_color_mod_pixels) {
+            min_software_frame_fast_exact_color_mod_pixels = sample->software_frame_fast_exact_color_mod_pixels;
+        }
+        if (sample->software_frame_fast_exact_color_mod_pixels > max_software_frame_fast_exact_color_mod_pixels) {
+            max_software_frame_fast_exact_color_mod_pixels = sample->software_frame_fast_exact_color_mod_pixels;
+        }
+        if (sample->software_frame_fast_scaled_tasks < min_software_frame_fast_scaled_tasks) {
+            min_software_frame_fast_scaled_tasks = sample->software_frame_fast_scaled_tasks;
+        }
+        if (sample->software_frame_fast_scaled_tasks > max_software_frame_fast_scaled_tasks) {
+            max_software_frame_fast_scaled_tasks = sample->software_frame_fast_scaled_tasks;
+        }
+        if (sample->software_frame_fast_scaled_pixels < min_software_frame_fast_scaled_pixels) {
+            min_software_frame_fast_scaled_pixels = sample->software_frame_fast_scaled_pixels;
+        }
+        if (sample->software_frame_fast_scaled_pixels > max_software_frame_fast_scaled_pixels) {
+            max_software_frame_fast_scaled_pixels = sample->software_frame_fast_scaled_pixels;
+        }
+        if (sample->software_frame_fast_non_integer_tasks < min_software_frame_fast_non_integer_tasks) {
+            min_software_frame_fast_non_integer_tasks = sample->software_frame_fast_non_integer_tasks;
+        }
+        if (sample->software_frame_fast_non_integer_tasks > max_software_frame_fast_non_integer_tasks) {
+            max_software_frame_fast_non_integer_tasks = sample->software_frame_fast_non_integer_tasks;
+        }
+        if (sample->software_frame_fast_non_integer_pixels < min_software_frame_fast_non_integer_pixels) {
+            min_software_frame_fast_non_integer_pixels = sample->software_frame_fast_non_integer_pixels;
+        }
+        if (sample->software_frame_fast_non_integer_pixels > max_software_frame_fast_non_integer_pixels) {
+            max_software_frame_fast_non_integer_pixels = sample->software_frame_fast_non_integer_pixels;
+        }
+        if (sample->software_frame_generic_textured_tasks < min_software_frame_generic_textured_tasks) {
+            min_software_frame_generic_textured_tasks = sample->software_frame_generic_textured_tasks;
+        }
+        if (sample->software_frame_generic_textured_tasks > max_software_frame_generic_textured_tasks) {
+            max_software_frame_generic_textured_tasks = sample->software_frame_generic_textured_tasks;
+        }
+        if (sample->software_frame_generic_textured_pixels < min_software_frame_generic_textured_pixels) {
+            min_software_frame_generic_textured_pixels = sample->software_frame_generic_textured_pixels;
+        }
+        if (sample->software_frame_generic_textured_pixels > max_software_frame_generic_textured_pixels) {
+            max_software_frame_generic_textured_pixels = sample->software_frame_generic_textured_pixels;
+        }
+        if (sample->software_frame_fast_miss_color_mod < min_software_frame_fast_miss_color_mod) {
+            min_software_frame_fast_miss_color_mod = sample->software_frame_fast_miss_color_mod;
+        }
+        if (sample->software_frame_fast_miss_color_mod > max_software_frame_fast_miss_color_mod) {
+            max_software_frame_fast_miss_color_mod = sample->software_frame_fast_miss_color_mod;
+        }
+        if (sample->software_frame_fast_miss_non_integer < min_software_frame_fast_miss_non_integer) {
+            min_software_frame_fast_miss_non_integer = sample->software_frame_fast_miss_non_integer;
+        }
+        if (sample->software_frame_fast_miss_non_integer > max_software_frame_fast_miss_non_integer) {
+            max_software_frame_fast_miss_non_integer = sample->software_frame_fast_miss_non_integer;
+        }
+        if (sample->software_frame_fast_miss_non_integer_ge_256_tasks <
+            min_software_frame_fast_miss_non_integer_ge_256_tasks) {
+            min_software_frame_fast_miss_non_integer_ge_256_tasks =
+                sample->software_frame_fast_miss_non_integer_ge_256_tasks;
+        }
+        if (sample->software_frame_fast_miss_non_integer_ge_256_tasks >
+            max_software_frame_fast_miss_non_integer_ge_256_tasks) {
+            max_software_frame_fast_miss_non_integer_ge_256_tasks =
+                sample->software_frame_fast_miss_non_integer_ge_256_tasks;
+        }
+        if (sample->software_frame_fast_miss_non_integer_ge_256_pixels <
+            min_software_frame_fast_miss_non_integer_ge_256_pixels) {
+            min_software_frame_fast_miss_non_integer_ge_256_pixels =
+                sample->software_frame_fast_miss_non_integer_ge_256_pixels;
+        }
+        if (sample->software_frame_fast_miss_non_integer_ge_256_pixels >
+            max_software_frame_fast_miss_non_integer_ge_256_pixels) {
+            max_software_frame_fast_miss_non_integer_ge_256_pixels =
+                sample->software_frame_fast_miss_non_integer_ge_256_pixels;
+        }
+        if (sample->software_frame_fast_miss_non_integer_ge_1024_tasks <
+            min_software_frame_fast_miss_non_integer_ge_1024_tasks) {
+            min_software_frame_fast_miss_non_integer_ge_1024_tasks =
+                sample->software_frame_fast_miss_non_integer_ge_1024_tasks;
+        }
+        if (sample->software_frame_fast_miss_non_integer_ge_1024_tasks >
+            max_software_frame_fast_miss_non_integer_ge_1024_tasks) {
+            max_software_frame_fast_miss_non_integer_ge_1024_tasks =
+                sample->software_frame_fast_miss_non_integer_ge_1024_tasks;
+        }
+        if (sample->software_frame_fast_miss_non_integer_ge_1024_pixels <
+            min_software_frame_fast_miss_non_integer_ge_1024_pixels) {
+            min_software_frame_fast_miss_non_integer_ge_1024_pixels =
+                sample->software_frame_fast_miss_non_integer_ge_1024_pixels;
+        }
+        if (sample->software_frame_fast_miss_non_integer_ge_1024_pixels >
+            max_software_frame_fast_miss_non_integer_ge_1024_pixels) {
+            max_software_frame_fast_miss_non_integer_ge_1024_pixels =
+                sample->software_frame_fast_miss_non_integer_ge_1024_pixels;
+        }
+        if (sample->software_frame_fast_miss_non_integer_max_pixels <
+            min_software_frame_fast_miss_non_integer_max_pixels) {
+            min_software_frame_fast_miss_non_integer_max_pixels =
+                sample->software_frame_fast_miss_non_integer_max_pixels;
+        }
+        if (sample->software_frame_fast_miss_non_integer_max_pixels >
+            max_software_frame_fast_miss_non_integer_max_pixels) {
+            max_software_frame_fast_miss_non_integer_max_pixels =
+                sample->software_frame_fast_miss_non_integer_max_pixels;
+        }
+        if (sample->software_frame_fast_miss_scaled < min_software_frame_fast_miss_scaled) {
+            min_software_frame_fast_miss_scaled = sample->software_frame_fast_miss_scaled;
+        }
+        if (sample->software_frame_fast_miss_scaled > max_software_frame_fast_miss_scaled) {
+            max_software_frame_fast_miss_scaled = sample->software_frame_fast_miss_scaled;
+        }
+        if (sample->software_frame_fast_miss_unsupported_flip < min_software_frame_fast_miss_unsupported_flip) {
+            min_software_frame_fast_miss_unsupported_flip = sample->software_frame_fast_miss_unsupported_flip;
+        }
+        if (sample->software_frame_fast_miss_unsupported_flip > max_software_frame_fast_miss_unsupported_flip) {
+            max_software_frame_fast_miss_unsupported_flip = sample->software_frame_fast_miss_unsupported_flip;
+        }
+        if (sample->software_frame_fast_miss_source_bounds < min_software_frame_fast_miss_source_bounds) {
+            min_software_frame_fast_miss_source_bounds = sample->software_frame_fast_miss_source_bounds;
+        }
+        if (sample->software_frame_fast_miss_source_bounds > max_software_frame_fast_miss_source_bounds) {
+            max_software_frame_fast_miss_source_bounds = sample->software_frame_fast_miss_source_bounds;
+        }
+        if (sample->software_frame_reason_alpha < min_software_frame_reason_alpha) {
+            min_software_frame_reason_alpha = sample->software_frame_reason_alpha;
+        }
+        if (sample->software_frame_reason_alpha > max_software_frame_reason_alpha) {
+            max_software_frame_reason_alpha = sample->software_frame_reason_alpha;
+        }
+        if (sample->software_frame_reason_color_mod < min_software_frame_reason_color_mod) {
+            min_software_frame_reason_color_mod = sample->software_frame_reason_color_mod;
+        }
+        if (sample->software_frame_reason_color_mod > max_software_frame_reason_color_mod) {
+            max_software_frame_reason_color_mod = sample->software_frame_reason_color_mod;
+        }
+        if (sample->software_frame_reason_geometry < min_software_frame_reason_geometry) {
+            min_software_frame_reason_geometry = sample->software_frame_reason_geometry;
+        }
+        if (sample->software_frame_reason_geometry > max_software_frame_reason_geometry) {
+            max_software_frame_reason_geometry = sample->software_frame_reason_geometry;
+        }
+        if (sample->software_frame_reason_solid < min_software_frame_reason_solid) {
+            min_software_frame_reason_solid = sample->software_frame_reason_solid;
+        }
+        if (sample->software_frame_reason_solid > max_software_frame_reason_solid) {
+            max_software_frame_reason_solid = sample->software_frame_reason_solid;
         }
         if (sample->hybrid_candidate_tasks < min_hybrid_candidate_tasks) {
             min_hybrid_candidate_tasks = sample->hybrid_candidate_tasks;
@@ -1068,10 +2187,11 @@ static void perf_capture_write_summary(void) {
     }
 
     io_printf(io, "{\n");
-    io_printf(io, "  \"schema_version\": 6,\n");
+    io_printf(io, "  \"schema_version\": 21,\n");
     io_printf(io, "  \"scene\": \"");
     io_write_json_escaped_string(io, perf_capture_scene_name);
     io_printf(io, "\",\n");
+    io_printf(io, "  \"detail_mode\": \"%s\",\n", perf_capture_basic_mode ? "basic" : "full");
     io_printf(io, "  \"frames\": %d,\n", perf_capture_recorded_frames);
     io_printf(io, "  \"metrics\": {\n");
     io_printf(io, "    \"frame_time\": {\"mean_ms\": %.4f, \"min_ms\": %.4f, \"max_ms\": %.4f},\n",
@@ -1206,6 +2326,26 @@ static void perf_capture_write_summary(void) {
               avg_texture_cache_misses,
               min_texture_cache_misses,
               max_texture_cache_misses);
+    io_printf(io, "    \"texture_cache_miss_dirty_texture_same_frame\": {\"mean\": %.2f, \"min\": %d, \"max\": %d},\n",
+              avg_texture_cache_miss_dirty_texture_same_frame,
+              min_texture_cache_miss_dirty_texture_same_frame,
+              max_texture_cache_miss_dirty_texture_same_frame);
+    io_printf(io, "    \"texture_cache_miss_dirty_texture_carried\": {\"mean\": %.2f, \"min\": %d, \"max\": %d},\n",
+              avg_texture_cache_miss_dirty_texture_carried,
+              min_texture_cache_miss_dirty_texture_carried,
+              max_texture_cache_miss_dirty_texture_carried);
+    io_printf(io, "    \"texture_cache_miss_dirty_palette_same_frame\": {\"mean\": %.2f, \"min\": %d, \"max\": %d},\n",
+              avg_texture_cache_miss_dirty_palette_same_frame,
+              min_texture_cache_miss_dirty_palette_same_frame,
+              max_texture_cache_miss_dirty_palette_same_frame);
+    io_printf(io, "    \"texture_cache_miss_dirty_palette_carried\": {\"mean\": %.2f, \"min\": %d, \"max\": %d},\n",
+              avg_texture_cache_miss_dirty_palette_carried,
+              min_texture_cache_miss_dirty_palette_carried,
+              max_texture_cache_miss_dirty_palette_carried);
+    io_printf(io, "    \"texture_cache_miss_cold\": {\"mean\": %.2f, \"min\": %d, \"max\": %d},\n",
+              avg_texture_cache_miss_cold,
+              min_texture_cache_miss_cold,
+              max_texture_cache_miss_cold);
     io_printf(io, "    \"texture_creates\": {\"mean\": %.2f, \"min\": %d, \"max\": %d},\n",
               avg_texture_creates,
               min_texture_creates,
@@ -1218,6 +2358,68 @@ static void perf_capture_write_summary(void) {
               avg_palette_unlock_calls,
               min_palette_unlock_calls,
               max_palette_unlock_calls);
+    io_printf(io, "    \"texture_unlock_dirty_surface_variants\": {\"mean\": %.2f, \"min\": %d, \"max\": %d},\n",
+              avg_texture_unlock_dirty_surface_variants,
+              min_texture_unlock_dirty_surface_variants,
+              max_texture_unlock_dirty_surface_variants);
+    io_printf(io,
+              "    \"texture_unlock_dirty_surface_variants_max\": {\"mean\": %.2f, \"min\": %d, \"max\": %d},\n",
+              avg_texture_unlock_dirty_surface_variants_max,
+              min_texture_unlock_dirty_surface_variants_max,
+              max_texture_unlock_dirty_surface_variants_max);
+    io_printf(io, "    \"palette_unlock_dirty_surface_variants\": {\"mean\": %.2f, \"min\": %d, \"max\": %d},\n",
+              avg_palette_unlock_dirty_surface_variants,
+              min_palette_unlock_dirty_surface_variants,
+              max_palette_unlock_dirty_surface_variants);
+    io_printf(io,
+              "    \"palette_unlock_dirty_surface_variants_max\": {\"mean\": %.2f, \"min\": %d, \"max\": %d},\n",
+              avg_palette_unlock_dirty_surface_variants_max,
+              min_palette_unlock_dirty_surface_variants_max,
+              max_palette_unlock_dirty_surface_variants_max);
+    io_printf(io,
+              "    \"texture_unlock_locality_index8_tracked\": {\"mean\": %.2f, \"min\": %d, \"max\": %d},\n",
+              avg_texture_unlock_locality_index8_tracked,
+              min_texture_unlock_locality_index8_tracked,
+              max_texture_unlock_locality_index8_tracked);
+    io_printf(io,
+              "    \"texture_unlock_locality_index8_baseline_skips\": {\"mean\": %.2f, \"min\": %d, \"max\": %d},\n",
+              avg_texture_unlock_locality_index8_baseline_skips,
+              min_texture_unlock_locality_index8_baseline_skips,
+              max_texture_unlock_locality_index8_baseline_skips);
+    io_printf(io,
+              "    \"texture_unlock_locality_index8_non_index8_skips\": {\"mean\": %.2f, \"min\": %d, \"max\": %d},\n",
+              avg_texture_unlock_locality_index8_non_index8_skips,
+              min_texture_unlock_locality_index8_non_index8_skips,
+              max_texture_unlock_locality_index8_non_index8_skips);
+    io_printf(io,
+              "    \"texture_unlock_locality_index8_source_pixels\": {\"mean\": %.2f, \"min\": %llu, \"max\": %llu},\n",
+              avg_texture_unlock_locality_index8_source_pixels,
+              (unsigned long long)min_texture_unlock_locality_index8_source_pixels,
+              (unsigned long long)max_texture_unlock_locality_index8_source_pixels);
+    io_printf(io,
+              "    \"texture_unlock_locality_index8_changed_pixels\": {\"mean\": %.2f, \"min\": %llu, \"max\": %llu},\n",
+              avg_texture_unlock_locality_index8_changed_pixels,
+              (unsigned long long)min_texture_unlock_locality_index8_changed_pixels,
+              (unsigned long long)max_texture_unlock_locality_index8_changed_pixels);
+    io_printf(io,
+              "    \"texture_unlock_locality_index8_changed_rows\": {\"mean\": %.2f, \"min\": %llu, \"max\": %llu},\n",
+              avg_texture_unlock_locality_index8_changed_rows,
+              (unsigned long long)min_texture_unlock_locality_index8_changed_rows,
+              (unsigned long long)max_texture_unlock_locality_index8_changed_rows);
+    io_printf(
+        io,
+        "    \"texture_unlock_locality_index8_changed_bbox_pixels\": {\"mean\": %.2f, \"min\": %llu, \"max\": %llu},\n",
+        avg_texture_unlock_locality_index8_changed_bbox_pixels,
+        (unsigned long long)min_texture_unlock_locality_index8_changed_bbox_pixels,
+        (unsigned long long)max_texture_unlock_locality_index8_changed_bbox_pixels);
+    io_printf(io, "    \"texture_unlock_invalidation\": {\"mean_ms\": %.4f, \"min_ms\": %.4f, \"max_ms\": %.4f},\n",
+              avg_texture_unlock_invalidation_ms,
+              min_texture_unlock_invalidation_ms,
+              max_texture_unlock_invalidation_ms);
+    io_printf(io, "    \"palette_unlock_invalidation\": {\"mean_ms\": %.4f, \"min_ms\": %.4f, \"max_ms\": %.4f},\n",
+              avg_palette_unlock_invalidation_ms,
+              min_palette_unlock_invalidation_ms,
+              max_palette_unlock_invalidation_ms);
     io_printf(io, "    \"texture_cache_evictions\": {\"mean\": %.2f, \"min\": %d, \"max\": %d},\n",
               avg_texture_cache_evictions,
               min_texture_cache_evictions,
@@ -1226,6 +2428,101 @@ static void perf_capture_write_summary(void) {
               avg_palette_cache_evictions,
               min_palette_cache_evictions,
               max_palette_cache_evictions);
+    io_printf(io, "    \"software_surface_cache_hits\": {\"mean\": %.2f, \"min\": %d, \"max\": %d},\n",
+              avg_software_surface_cache_hits,
+              min_software_surface_cache_hits,
+              max_software_surface_cache_hits);
+    io_printf(io, "    \"software_surface_cache_creates\": {\"mean\": %.2f, \"min\": %d, \"max\": %d},\n",
+              avg_software_surface_cache_creates,
+              min_software_surface_cache_creates,
+              max_software_surface_cache_creates);
+    io_printf(io,
+              "    \"software_surface_cache_refresh_attempts\": {\"mean\": %.2f, \"min\": %d, \"max\": %d},\n",
+              avg_software_surface_cache_refresh_attempts,
+              min_software_surface_cache_refresh_attempts,
+              max_software_surface_cache_refresh_attempts);
+    io_printf(io,
+              "    \"software_surface_cache_refresh_unique_bindings\": {\"mean\": %.2f, \"min\": %d, \"max\": %d},\n",
+              avg_software_surface_cache_refresh_unique_bindings,
+              min_software_surface_cache_refresh_unique_bindings,
+              max_software_surface_cache_refresh_unique_bindings);
+    io_printf(io,
+              "    \"software_surface_cache_refresh_repeat_binding_attempts\": {\"mean\": %.2f, \"min\": %d, \"max\": %d},\n",
+              avg_software_surface_cache_refresh_repeat_binding_attempts,
+              min_software_surface_cache_refresh_repeat_binding_attempts,
+              max_software_surface_cache_refresh_repeat_binding_attempts);
+    io_printf(io,
+              "    \"software_surface_cache_refresh_unique_texture_handles\": {\"mean\": %.2f, \"min\": %d, \"max\": %d},\n",
+              avg_software_surface_cache_refresh_unique_texture_handles,
+              min_software_surface_cache_refresh_unique_texture_handles,
+              max_software_surface_cache_refresh_unique_texture_handles);
+    io_printf(
+        io,
+        "    \"software_surface_cache_refresh_texture_handle_fanout_max\": {\"mean\": %.2f, \"min\": %d, \"max\": %d},\n",
+        avg_software_surface_cache_refresh_texture_handle_fanout_max,
+        min_software_surface_cache_refresh_texture_handle_fanout_max,
+        max_software_surface_cache_refresh_texture_handle_fanout_max);
+    io_printf(io,
+              "    \"software_surface_cache_refresh_failures\": {\"mean\": %.2f, \"min\": %d, \"max\": %d},\n",
+              avg_software_surface_cache_refresh_failures,
+              min_software_surface_cache_refresh_failures,
+              max_software_surface_cache_refresh_failures);
+    io_printf(io, "    \"software_surface_cache_refresh\": {\"mean_ms\": %.4f, \"min_ms\": %.4f, \"max_ms\": %.4f},\n",
+              avg_software_surface_cache_refresh_ms,
+              min_software_surface_cache_refresh_ms,
+              max_software_surface_cache_refresh_ms);
+    io_printf(io,
+              "    \"software_surface_cache_refresh_palette_set_calls\": {\"mean\": %.2f, \"min\": %d, \"max\": %d},\n",
+              avg_software_surface_cache_refresh_palette_set_calls,
+              min_software_surface_cache_refresh_palette_set_calls,
+              max_software_surface_cache_refresh_palette_set_calls);
+    io_printf(io,
+              "    \"software_surface_cache_refresh_palette_set\": {\"mean_ms\": %.4f, \"min_ms\": %.4f, \"max_ms\": %.4f},\n",
+              avg_software_surface_cache_refresh_palette_set_ms,
+              min_software_surface_cache_refresh_palette_set_ms,
+              max_software_surface_cache_refresh_palette_set_ms);
+    io_printf(io,
+              "    \"software_surface_cache_refresh_blit_calls\": {\"mean\": %.2f, \"min\": %d, \"max\": %d},\n",
+              avg_software_surface_cache_refresh_blit_calls,
+              min_software_surface_cache_refresh_blit_calls,
+              max_software_surface_cache_refresh_blit_calls);
+    io_printf(io,
+              "    \"software_surface_cache_refresh_blit\": {\"mean_ms\": %.4f, \"min_ms\": %.4f, \"max_ms\": %.4f},\n",
+              avg_software_surface_cache_refresh_blit_ms,
+              min_software_surface_cache_refresh_blit_ms,
+              max_software_surface_cache_refresh_blit_ms);
+    io_printf(io,
+              "    \"software_surface_cache_create_dirty_texture_same_frame\": {\"mean\": %.2f, \"min\": %d, \"max\": %d},\n",
+              avg_software_surface_cache_create_dirty_texture_same_frame,
+              min_software_surface_cache_create_dirty_texture_same_frame,
+              max_software_surface_cache_create_dirty_texture_same_frame);
+    io_printf(io,
+              "    \"software_surface_cache_create_dirty_texture_carried\": {\"mean\": %.2f, \"min\": %d, \"max\": %d},\n",
+              avg_software_surface_cache_create_dirty_texture_carried,
+              min_software_surface_cache_create_dirty_texture_carried,
+              max_software_surface_cache_create_dirty_texture_carried);
+    io_printf(io,
+              "    \"software_surface_cache_create_dirty_palette_same_frame\": {\"mean\": %.2f, \"min\": %d, \"max\": %d},\n",
+              avg_software_surface_cache_create_dirty_palette_same_frame,
+              min_software_surface_cache_create_dirty_palette_same_frame,
+              max_software_surface_cache_create_dirty_palette_same_frame);
+    io_printf(io,
+              "    \"software_surface_cache_create_dirty_palette_carried\": {\"mean\": %.2f, \"min\": %d, \"max\": %d},\n",
+              avg_software_surface_cache_create_dirty_palette_carried,
+              min_software_surface_cache_create_dirty_palette_carried,
+              max_software_surface_cache_create_dirty_palette_carried);
+    io_printf(io, "    \"software_surface_cache_create_cold\": {\"mean\": %.2f, \"min\": %d, \"max\": %d},\n",
+              avg_software_surface_cache_create_cold,
+              min_software_surface_cache_create_cold,
+              max_software_surface_cache_create_cold);
+    io_printf(io, "    \"software_surface_cache_texture_evictions\": {\"mean\": %.2f, \"min\": %d, \"max\": %d},\n",
+              avg_software_surface_cache_texture_evictions,
+              min_software_surface_cache_texture_evictions,
+              max_software_surface_cache_texture_evictions);
+    io_printf(io, "    \"software_surface_cache_palette_evictions\": {\"mean\": %.2f, \"min\": %d, \"max\": %d},\n",
+              avg_software_surface_cache_palette_evictions,
+              min_software_surface_cache_palette_evictions,
+              max_software_surface_cache_palette_evictions);
     io_printf(io, "    \"textures_destroy_queued\": {\"mean\": %.2f, \"min\": %d, \"max\": %d},\n",
               avg_textures_destroy_queued,
               min_textures_destroy_queued,
@@ -1250,6 +2547,162 @@ static void perf_capture_write_summary(void) {
               avg_solid_tasks,
               min_solid_tasks,
               max_solid_tasks);
+    io_printf(io, "    \"software_frame_mode_enabled\": {\"count\": %llu, \"ratio\": %.6f},\n",
+              (unsigned long long)perf_software_frame_mode_enabled_frames,
+              software_frame_mode_enabled_ratio);
+    io_printf(io, "    \"software_frame_surface_ready\": {\"count\": %llu, \"ratio\": %.6f},\n",
+              (unsigned long long)perf_software_frame_surface_ready_frames,
+              software_frame_surface_ready_ratio);
+    io_printf(io, "    \"software_frame_active_frames\": {\"count\": %llu, \"ratio\": %.6f},\n",
+              (unsigned long long)perf_software_frame_owned_frames,
+              software_frame_owned_ratio);
+    io_printf(io, "    \"software_frame_owned_frames\": {\"count\": %llu, \"ratio\": %.6f},\n",
+              (unsigned long long)perf_software_frame_owned_frames,
+              software_frame_owned_ratio);
+    io_printf(io, "    \"software_frame_direct_present_frames\": {\"count\": %llu, \"ratio\": %.6f},\n",
+              (unsigned long long)perf_software_frame_direct_present_frames,
+              software_frame_direct_present_ratio);
+    io_printf(io, "    \"software_frame_upload_frames\": {\"count\": %llu, \"ratio\": %.6f},\n",
+              (unsigned long long)perf_software_frame_uploaded_frames,
+              software_frame_uploaded_ratio);
+    io_printf(io, "    \"software_frame_fallback_frames\": {\"count\": %llu, \"ratio\": %.6f},\n",
+              (unsigned long long)perf_software_frame_fallback_frames,
+              software_frame_fallback_ratio);
+    io_printf(io, "    \"software_frame_candidate_tasks\": {\"mean\": %.2f, \"min\": %d, \"max\": %d},\n",
+              avg_software_frame_candidate_tasks,
+              min_software_frame_candidate_tasks,
+              max_software_frame_candidate_tasks);
+    io_printf(io, "    \"software_frame_candidate_pixels\": {\"mean\": %.2f, \"min\": %llu, \"max\": %llu},\n",
+              avg_software_frame_candidate_pixels,
+              (unsigned long long)min_software_frame_candidate_pixels,
+              (unsigned long long)max_software_frame_candidate_pixels);
+    io_printf(io, "    \"software_frame_fallback_tasks\": {\"mean\": %.2f, \"min\": %d, \"max\": %d},\n",
+              avg_software_frame_fallback_tasks,
+              min_software_frame_fallback_tasks,
+              max_software_frame_fallback_tasks);
+    io_printf(io, "    \"software_frame_fallback_pixels\": {\"mean\": %.2f, \"min\": %llu, \"max\": %llu},\n",
+              avg_software_frame_fallback_pixels,
+              (unsigned long long)min_software_frame_fallback_pixels,
+              (unsigned long long)max_software_frame_fallback_pixels);
+    io_printf(io, "    \"software_frame_fast_exact_tasks\": {\"mean\": %.2f, \"min\": %d, \"max\": %d},\n",
+              avg_software_frame_fast_exact_tasks,
+              min_software_frame_fast_exact_tasks,
+              max_software_frame_fast_exact_tasks);
+    io_printf(io, "    \"software_frame_fast_exact_pixels\": {\"mean\": %.2f, \"min\": %llu, \"max\": %llu},\n",
+              avg_software_frame_fast_exact_pixels,
+              (unsigned long long)min_software_frame_fast_exact_pixels,
+              (unsigned long long)max_software_frame_fast_exact_pixels);
+    io_printf(io,
+              "    \"software_frame_fast_exact_clipped_tasks\": {\"mean\": %.2f, \"min\": %d, \"max\": %d},\n",
+              avg_software_frame_fast_exact_clipped_tasks,
+              min_software_frame_fast_exact_clipped_tasks,
+              max_software_frame_fast_exact_clipped_tasks);
+    io_printf(io,
+              "    \"software_frame_fast_exact_flipped_tasks\": {\"mean\": %.2f, \"min\": %d, \"max\": %d},\n",
+              avg_software_frame_fast_exact_flipped_tasks,
+              min_software_frame_fast_exact_flipped_tasks,
+              max_software_frame_fast_exact_flipped_tasks);
+    io_printf(io,
+              "    \"software_frame_fast_exact_color_mod_tasks\": {\"mean\": %.2f, \"min\": %d, \"max\": %d},\n",
+              avg_software_frame_fast_exact_color_mod_tasks,
+              min_software_frame_fast_exact_color_mod_tasks,
+              max_software_frame_fast_exact_color_mod_tasks);
+    io_printf(io,
+              "    \"software_frame_fast_exact_color_mod_pixels\": {\"mean\": %.2f, \"min\": %llu, \"max\": %llu},\n",
+              avg_software_frame_fast_exact_color_mod_pixels,
+              (unsigned long long)min_software_frame_fast_exact_color_mod_pixels,
+              (unsigned long long)max_software_frame_fast_exact_color_mod_pixels);
+    io_printf(io, "    \"software_frame_fast_scaled_tasks\": {\"mean\": %.2f, \"min\": %d, \"max\": %d},\n",
+              avg_software_frame_fast_scaled_tasks,
+              min_software_frame_fast_scaled_tasks,
+              max_software_frame_fast_scaled_tasks);
+    io_printf(io, "    \"software_frame_fast_scaled_pixels\": {\"mean\": %.2f, \"min\": %llu, \"max\": %llu},\n",
+              avg_software_frame_fast_scaled_pixels,
+              (unsigned long long)min_software_frame_fast_scaled_pixels,
+              (unsigned long long)max_software_frame_fast_scaled_pixels);
+    io_printf(io,
+              "    \"software_frame_fast_non_integer_tasks\": {\"mean\": %.2f, \"min\": %d, \"max\": %d},\n",
+              avg_software_frame_fast_non_integer_tasks,
+              min_software_frame_fast_non_integer_tasks,
+              max_software_frame_fast_non_integer_tasks);
+    io_printf(io,
+              "    \"software_frame_fast_non_integer_pixels\": {\"mean\": %.2f, \"min\": %llu, \"max\": %llu},\n",
+              avg_software_frame_fast_non_integer_pixels,
+              (unsigned long long)min_software_frame_fast_non_integer_pixels,
+              (unsigned long long)max_software_frame_fast_non_integer_pixels);
+    io_printf(io,
+              "    \"software_frame_generic_textured_tasks\": {\"mean\": %.2f, \"min\": %d, \"max\": %d},\n",
+              avg_software_frame_generic_textured_tasks,
+              min_software_frame_generic_textured_tasks,
+              max_software_frame_generic_textured_tasks);
+    io_printf(io,
+              "    \"software_frame_generic_textured_pixels\": {\"mean\": %.2f, \"min\": %llu, \"max\": %llu},\n",
+              avg_software_frame_generic_textured_pixels,
+              (unsigned long long)min_software_frame_generic_textured_pixels,
+              (unsigned long long)max_software_frame_generic_textured_pixels);
+    io_printf(io, "    \"software_frame_fast_miss_color_mod\": {\"mean\": %.2f, \"min\": %d, \"max\": %d},\n",
+              avg_software_frame_fast_miss_color_mod,
+              min_software_frame_fast_miss_color_mod,
+              max_software_frame_fast_miss_color_mod);
+    io_printf(io, "    \"software_frame_fast_miss_non_integer\": {\"mean\": %.2f, \"min\": %d, \"max\": %d},\n",
+              avg_software_frame_fast_miss_non_integer,
+              min_software_frame_fast_miss_non_integer,
+              max_software_frame_fast_miss_non_integer);
+    io_printf(io,
+              "    \"software_frame_fast_miss_non_integer_ge_256_tasks\": {\"mean\": %.2f, \"min\": %d, \"max\": %d},\n",
+              avg_software_frame_fast_miss_non_integer_ge_256_tasks,
+              min_software_frame_fast_miss_non_integer_ge_256_tasks,
+              max_software_frame_fast_miss_non_integer_ge_256_tasks);
+    io_printf(io,
+              "    \"software_frame_fast_miss_non_integer_ge_256_pixels\": {\"mean\": %.2f, \"min\": %llu, \"max\": %llu},\n",
+              avg_software_frame_fast_miss_non_integer_ge_256_pixels,
+              (unsigned long long)min_software_frame_fast_miss_non_integer_ge_256_pixels,
+              (unsigned long long)max_software_frame_fast_miss_non_integer_ge_256_pixels);
+    io_printf(io,
+              "    \"software_frame_fast_miss_non_integer_ge_1024_tasks\": {\"mean\": %.2f, \"min\": %d, \"max\": %d},\n",
+              avg_software_frame_fast_miss_non_integer_ge_1024_tasks,
+              min_software_frame_fast_miss_non_integer_ge_1024_tasks,
+              max_software_frame_fast_miss_non_integer_ge_1024_tasks);
+    io_printf(io,
+              "    \"software_frame_fast_miss_non_integer_ge_1024_pixels\": {\"mean\": %.2f, \"min\": %llu, \"max\": %llu},\n",
+              avg_software_frame_fast_miss_non_integer_ge_1024_pixels,
+              (unsigned long long)min_software_frame_fast_miss_non_integer_ge_1024_pixels,
+              (unsigned long long)max_software_frame_fast_miss_non_integer_ge_1024_pixels);
+    io_printf(io,
+              "    \"software_frame_fast_miss_non_integer_max_pixels\": {\"mean\": %.2f, \"min\": %llu, \"max\": %llu},\n",
+              avg_software_frame_fast_miss_non_integer_max_pixels,
+              (unsigned long long)min_software_frame_fast_miss_non_integer_max_pixels,
+              (unsigned long long)max_software_frame_fast_miss_non_integer_max_pixels);
+    io_printf(io, "    \"software_frame_fast_miss_scaled\": {\"mean\": %.2f, \"min\": %d, \"max\": %d},\n",
+              avg_software_frame_fast_miss_scaled,
+              min_software_frame_fast_miss_scaled,
+              max_software_frame_fast_miss_scaled);
+    io_printf(io,
+              "    \"software_frame_fast_miss_unsupported_flip\": {\"mean\": %.2f, \"min\": %d, \"max\": %d},\n",
+              avg_software_frame_fast_miss_unsupported_flip,
+              min_software_frame_fast_miss_unsupported_flip,
+              max_software_frame_fast_miss_unsupported_flip);
+    io_printf(io,
+              "    \"software_frame_fast_miss_source_bounds\": {\"mean\": %.2f, \"min\": %d, \"max\": %d},\n",
+              avg_software_frame_fast_miss_source_bounds,
+              min_software_frame_fast_miss_source_bounds,
+              max_software_frame_fast_miss_source_bounds);
+    io_printf(io, "    \"software_frame_reason_alpha\": {\"mean\": %.2f, \"min\": %d, \"max\": %d},\n",
+              avg_software_frame_reason_alpha,
+              min_software_frame_reason_alpha,
+              max_software_frame_reason_alpha);
+    io_printf(io, "    \"software_frame_reason_color_mod\": {\"mean\": %.2f, \"min\": %d, \"max\": %d},\n",
+              avg_software_frame_reason_color_mod,
+              min_software_frame_reason_color_mod,
+              max_software_frame_reason_color_mod);
+    io_printf(io, "    \"software_frame_reason_geometry\": {\"mean\": %.2f, \"min\": %d, \"max\": %d},\n",
+              avg_software_frame_reason_geometry,
+              min_software_frame_reason_geometry,
+              max_software_frame_reason_geometry);
+    io_printf(io, "    \"software_frame_reason_solid\": {\"mean\": %.2f, \"min\": %d, \"max\": %d},\n",
+              avg_software_frame_reason_solid,
+              min_software_frame_reason_solid,
+              max_software_frame_reason_solid);
     io_printf(io, "    \"hybrid_candidate_tasks\": {\"mean\": %.2f, \"min\": %d, \"max\": %d},\n",
               avg_hybrid_candidate_tasks,
               min_hybrid_candidate_tasks,
@@ -1320,6 +2773,9 @@ static void perf_capture_write_summary(void) {
               "\"current_target_exact\": {\"count\": %llu, \"ratio\": %.6f}, "
               "\"current_target_integer_scale\": {\"count\": %llu, \"ratio\": %.6f}, "
               "\"current_target_mapped_scale\": {\"count\": %llu, \"ratio\": %.6f}, "
+              "\"software_frame_exact\": {\"count\": %llu, \"ratio\": %.6f}, "
+              "\"software_frame_integer_scale\": {\"count\": %llu, \"ratio\": %.6f}, "
+              "\"software_frame_mapped_scale\": {\"count\": %llu, \"ratio\": %.6f}, "
               "\"fullscreen_staging\": {\"count\": %llu, \"ratio\": %.6f}, "
               "\"fullscreen_direct_copy\": {\"count\": %llu, \"ratio\": %.6f}, "
               "\"fullscreen_scaled_lut\": {\"count\": %llu, \"ratio\": %.6f}, "
@@ -1334,6 +2790,12 @@ static void perf_capture_write_summary(void) {
               (double)perf_fbdev_path_frames[FBDEV_PRESENTER_PATH_CURRENT_TARGET_INTEGER_SCALE] / frame_count,
               (unsigned long long)perf_fbdev_path_frames[FBDEV_PRESENTER_PATH_CURRENT_TARGET_MAPPED_SCALE],
               (double)perf_fbdev_path_frames[FBDEV_PRESENTER_PATH_CURRENT_TARGET_MAPPED_SCALE] / frame_count,
+              (unsigned long long)perf_fbdev_path_frames[FBDEV_PRESENTER_PATH_SOFTWARE_FRAME_EXACT],
+              (double)perf_fbdev_path_frames[FBDEV_PRESENTER_PATH_SOFTWARE_FRAME_EXACT] / frame_count,
+              (unsigned long long)perf_fbdev_path_frames[FBDEV_PRESENTER_PATH_SOFTWARE_FRAME_INTEGER_SCALE],
+              (double)perf_fbdev_path_frames[FBDEV_PRESENTER_PATH_SOFTWARE_FRAME_INTEGER_SCALE] / frame_count,
+              (unsigned long long)perf_fbdev_path_frames[FBDEV_PRESENTER_PATH_SOFTWARE_FRAME_MAPPED_SCALE],
+              (double)perf_fbdev_path_frames[FBDEV_PRESENTER_PATH_SOFTWARE_FRAME_MAPPED_SCALE] / frame_count,
               (unsigned long long)perf_fbdev_path_frames[FBDEV_PRESENTER_PATH_FULLSCREEN_STAGING],
               (double)perf_fbdev_path_frames[FBDEV_PRESENTER_PATH_FULLSCREEN_STAGING] / frame_count,
               (unsigned long long)perf_fbdev_path_frames[FBDEV_PRESENTER_PATH_FULLSCREEN_DIRECT_COPY],
@@ -1350,6 +2812,117 @@ static void perf_capture_write_summary(void) {
               summary_readback_width,
               summary_readback_height,
               mixed_readback_size ? "true" : "false");
+    io_printf(io,
+              "    \"software_surface_cache_refresh_source_formats\": {"
+              "\"index4lsb\": {\"attempts_total\": %llu, \"attempts_mean\": %.4f, \"pixels_total\": %llu, "
+              "\"pixels_mean\": %.2f}, "
+              "\"index8\": {\"attempts_total\": %llu, \"attempts_mean\": %.4f, \"pixels_total\": %llu, "
+              "\"pixels_mean\": %.2f}, "
+              "\"abgr1555\": {\"attempts_total\": %llu, \"attempts_mean\": %.4f, \"pixels_total\": %llu, "
+              "\"pixels_mean\": %.2f}, "
+              "\"other\": {\"attempts_total\": %llu, \"attempts_mean\": %.4f, \"pixels_total\": %llu, "
+              "\"pixels_mean\": %.2f}},\n",
+              (unsigned long long)refresh_telemetry.index4_attempts,
+              (double)refresh_telemetry.index4_attempts / frame_count,
+              (unsigned long long)refresh_telemetry.index4_pixels,
+              (double)refresh_telemetry.index4_pixels / frame_count,
+              (unsigned long long)refresh_telemetry.index8_attempts,
+              (double)refresh_telemetry.index8_attempts / frame_count,
+              (unsigned long long)refresh_telemetry.index8_pixels,
+              (double)refresh_telemetry.index8_pixels / frame_count,
+              (unsigned long long)refresh_telemetry.abgr1555_attempts,
+              (double)refresh_telemetry.abgr1555_attempts / frame_count,
+              (unsigned long long)refresh_telemetry.abgr1555_pixels,
+              (double)refresh_telemetry.abgr1555_pixels / frame_count,
+              (unsigned long long)refresh_telemetry.other_attempts,
+              (double)refresh_telemetry.other_attempts / frame_count,
+              (unsigned long long)refresh_telemetry.other_pixels,
+              (double)refresh_telemetry.other_pixels / frame_count);
+    io_printf(io, "    \"software_surface_cache_refresh_hot_textures\": [");
+    if (refresh_hot_texture_count > 0) {
+        io_printf(io, "\n");
+        for (int i = 0; i < refresh_hot_texture_count; i++) {
+            const SDLGameRenderer_PerfCaptureRefreshHotTexture* entry = &refresh_hot_textures[i];
+            const double refresh_attempt_ratio =
+                refresh_attempts_total > 0 ? (double)entry->refresh_attempts / (double)refresh_attempts_total : 0.0;
+            const double refresh_pixel_ratio =
+                refresh_pixels_total > 0 ? (double)entry->refresh_pixels / (double)refresh_pixels_total : 0.0;
+            io_printf(io,
+                      "      {\"texture_handle\": %d, \"source_format\": \"%s\", \"width\": %d, \"height\": %d, "
+                      "\"source_shape_mixed\": %s, "
+                      "\"refresh_attempts_total\": %llu, \"refresh_attempts_mean\": %.4f, "
+                      "\"refresh_attempt_ratio\": %.6f, \"refresh_pixels_total\": %llu, "
+                      "\"refresh_pixels_mean\": %.2f, \"refresh_pixel_ratio\": %.6f, "
+                      "\"max_fanout\": %d}%s\n",
+                      entry->texture_handle,
+                      pixel_format_name_safe(entry->source_format),
+                      entry->width,
+                      entry->height,
+                      entry->source_shape_mixed ? "true" : "false",
+                      (unsigned long long)entry->refresh_attempts,
+                      (double)entry->refresh_attempts / frame_count,
+                      refresh_attempt_ratio,
+                      (unsigned long long)entry->refresh_pixels,
+                      (double)entry->refresh_pixels / frame_count,
+                      refresh_pixel_ratio,
+                      entry->max_fanout,
+                      (i + 1) < refresh_hot_texture_count ? "," : "");
+        }
+        io_printf(io, "    ],\n");
+    } else {
+        io_printf(io, "],\n");
+    }
+    io_printf(io, "    \"texture_unlock_locality_hot_textures\": [");
+    if (unlock_locality_hot_texture_count > 0) {
+        io_printf(io, "\n");
+        for (int i = 0; i < unlock_locality_hot_texture_count; i++) {
+            const SDLGameRenderer_PerfCaptureUnlockLocalityHotTexture* entry = &unlock_locality_hot_textures[i];
+            const double tracked_unlock_ratio = unlock_locality_telemetry.index8_tracked_unlocks > 0
+                                                    ? (double)entry->tracked_unlocks /
+                                                          (double)unlock_locality_telemetry.index8_tracked_unlocks
+                                                    : 0.0;
+            const double changed_pixel_ratio =
+                entry->source_pixels > 0 ? (double)entry->changed_pixels / (double)entry->source_pixels : 0.0;
+            const double changed_bbox_ratio = entry->source_pixels > 0
+                                                  ? (double)entry->changed_bbox_pixels / (double)entry->source_pixels
+                                                  : 0.0;
+            io_printf(io,
+                      "      {\"texture_handle\": %d, \"source_format\": \"%s\", \"width\": %d, \"height\": %d, "
+                      "\"source_shape_mixed\": %s, "
+                      "\"tracked_unlocks_total\": %llu, \"tracked_unlocks_mean\": %.4f, "
+                      "\"tracked_unlock_ratio\": %.6f, \"baseline_skips_total\": %llu, "
+                      "\"non_index8_skips_total\": %llu, "
+                      "\"source_pixels_total\": %llu, \"source_pixels_mean\": %.2f, "
+                      "\"changed_pixels_total\": %llu, \"changed_pixels_mean\": %.2f, "
+                      "\"changed_pixel_ratio\": %.6f, \"changed_rows_total\": %llu, "
+                      "\"changed_rows_mean\": %.2f, \"changed_bbox_pixels_total\": %llu, "
+                      "\"changed_bbox_pixels_mean\": %.2f, \"changed_bbox_ratio\": %.6f}%s\n",
+                      entry->texture_handle,
+                      pixel_format_name_safe(entry->source_format),
+                      entry->width,
+                      entry->height,
+                      entry->source_shape_mixed ? "true" : "false",
+                      (unsigned long long)entry->tracked_unlocks,
+                      (double)entry->tracked_unlocks / frame_count,
+                      tracked_unlock_ratio,
+                      (unsigned long long)entry->baseline_skips,
+                      (unsigned long long)entry->non_index8_skips,
+                      (unsigned long long)entry->source_pixels,
+                      (double)entry->source_pixels / frame_count,
+                      (unsigned long long)entry->changed_pixels,
+                      (double)entry->changed_pixels / frame_count,
+                      changed_pixel_ratio,
+                      (unsigned long long)entry->changed_rows,
+                      (double)entry->changed_rows / frame_count,
+                      (unsigned long long)entry->changed_bbox_pixels,
+                      (double)entry->changed_bbox_pixels / frame_count,
+                      changed_bbox_ratio,
+                      (i + 1) < unlock_locality_hot_texture_count ? "," : "");
+        }
+        io_printf(io, "    ],\n");
+    } else {
+        io_printf(io, "],\n");
+    }
     io_printf(io, "    \"fps\": {\"mean\": %.4f}\n", fps);
     io_printf(io, "  },\n");
     io_printf(io, "  \"samples\": [\n");
@@ -1371,11 +2944,77 @@ static void perf_capture_write_summary(void) {
                   "\"rect_texture_flipped_tasks\": %d, \"textured_geometry_tasks\": %d, "
                   "\"textured_geometry_rect_recovered_tasks\": %d, \"textured_geometry_fallback_tasks\": %d, "
                   "\"set_texture_calls\": %d, \"texture_binding_reuse_hits\": %d, "
-                  "\"texture_cache_hits\": %d, \"texture_cache_misses\": %d, \"texture_creates\": %d, "
+                  "\"texture_cache_hits\": %d, \"texture_cache_misses\": %d, "
+                  "\"texture_cache_miss_dirty_texture_same_frame\": %d, "
+                  "\"texture_cache_miss_dirty_texture_carried\": %d, "
+                  "\"texture_cache_miss_dirty_palette_same_frame\": %d, "
+                  "\"texture_cache_miss_dirty_palette_carried\": %d, "
+                  "\"texture_cache_miss_cold\": %d, \"texture_creates\": %d, "
                   "\"texture_unlock_calls\": %d, \"palette_unlock_calls\": %d, "
-                  "\"texture_cache_evictions\": %d, \"palette_cache_evictions\": %d, \"textures_destroy_queued\": %d, "
+                  "\"texture_unlock_dirty_surface_variants\": %d, "
+                  "\"texture_unlock_dirty_surface_variants_max\": %d, "
+                  "\"palette_unlock_dirty_surface_variants\": %d, "
+                  "\"palette_unlock_dirty_surface_variants_max\": %d, "
+                  "\"texture_unlock_locality_index8_tracked\": %d, "
+                  "\"texture_unlock_locality_index8_baseline_skips\": %d, "
+                  "\"texture_unlock_locality_index8_non_index8_skips\": %d, "
+                  "\"texture_unlock_locality_index8_source_pixels\": %llu, "
+                  "\"texture_unlock_locality_index8_changed_pixels\": %llu, "
+                  "\"texture_unlock_locality_index8_changed_rows\": %llu, "
+                  "\"texture_unlock_locality_index8_changed_bbox_pixels\": %llu, "
+                  "\"texture_unlock_invalidation_ms\": %.4f, "
+                  "\"palette_unlock_invalidation_ms\": %.4f, "
+                  "\"texture_cache_evictions\": %d, \"palette_cache_evictions\": %d, "
+                  "\"software_surface_cache_hits\": %d, \"software_surface_cache_creates\": %d, "
+                  "\"software_surface_cache_refresh_attempts\": %d, "
+                  "\"software_surface_cache_refresh_unique_bindings\": %d, "
+                  "\"software_surface_cache_refresh_repeat_binding_attempts\": %d, "
+                  "\"software_surface_cache_refresh_unique_texture_handles\": %d, "
+                  "\"software_surface_cache_refresh_texture_handle_fanout_max\": %d, "
+                  "\"software_surface_cache_refresh_failures\": %d, "
+                  "\"software_surface_cache_refresh_ms\": %.4f, "
+                  "\"software_surface_cache_refresh_palette_set_calls\": %d, "
+                  "\"software_surface_cache_refresh_palette_set_ms\": %.4f, "
+                  "\"software_surface_cache_refresh_blit_calls\": %d, "
+                  "\"software_surface_cache_refresh_blit_ms\": %.4f, "
+                  "\"software_surface_cache_create_dirty_texture_same_frame\": %d, "
+                  "\"software_surface_cache_create_dirty_texture_carried\": %d, "
+                  "\"software_surface_cache_create_dirty_palette_same_frame\": %d, "
+                  "\"software_surface_cache_create_dirty_palette_carried\": %d, "
+                  "\"software_surface_cache_create_cold\": %d, "
+                  "\"software_surface_cache_texture_evictions\": %d, "
+                  "\"software_surface_cache_palette_evictions\": %d, \"textures_destroy_queued\": %d, "
                   "\"unknown_tasks\": %d, \"ppg_tasks\": %d, \"mtrans_tasks\": %d, "
                   "\"ui_direct_tasks\": %d, \"solid_tasks\": %d, "
+                  "\"software_frame_mode_enabled\": %d, \"software_frame_surface_ready\": %d, "
+                  "\"software_frame_active\": %d, \"software_frame_owned\": %d, "
+                  "\"software_frame_direct_present\": %d, \"software_frame_uploaded\": %d, "
+                  "\"software_frame_fallback\": %d, "
+                  "\"software_frame_candidate_tasks\": %d, \"software_frame_candidate_pixels\": %llu, "
+                  "\"software_frame_fallback_tasks\": %d, \"software_frame_fallback_pixels\": %llu, "
+                  "\"software_frame_fast_exact_tasks\": %d, \"software_frame_fast_exact_pixels\": %llu, "
+                  "\"software_frame_fast_exact_clipped_tasks\": %d, "
+                  "\"software_frame_fast_exact_flipped_tasks\": %d, "
+                  "\"software_frame_fast_exact_color_mod_tasks\": %d, "
+                  "\"software_frame_fast_exact_color_mod_pixels\": %llu, "
+                  "\"software_frame_fast_scaled_tasks\": %d, "
+                  "\"software_frame_fast_scaled_pixels\": %llu, "
+                  "\"software_frame_fast_non_integer_tasks\": %d, "
+                  "\"software_frame_fast_non_integer_pixels\": %llu, "
+                  "\"software_frame_generic_textured_tasks\": %d, "
+                  "\"software_frame_generic_textured_pixels\": %llu, "
+                  "\"software_frame_fast_miss_color_mod\": %d, "
+                  "\"software_frame_fast_miss_non_integer\": %d, "
+                  "\"software_frame_fast_miss_non_integer_ge_256_tasks\": %d, "
+                  "\"software_frame_fast_miss_non_integer_ge_256_pixels\": %llu, "
+                  "\"software_frame_fast_miss_non_integer_ge_1024_tasks\": %d, "
+                  "\"software_frame_fast_miss_non_integer_ge_1024_pixels\": %llu, "
+                  "\"software_frame_fast_miss_non_integer_max_pixels\": %llu, "
+                  "\"software_frame_fast_miss_scaled\": %d, "
+                  "\"software_frame_fast_miss_unsupported_flip\": %d, "
+                  "\"software_frame_fast_miss_source_bounds\": %d, "
+                  "\"software_frame_reason_alpha\": %d, \"software_frame_reason_color_mod\": %d, "
+                  "\"software_frame_reason_geometry\": %d, \"software_frame_reason_solid\": %d, "
                   "\"hybrid_candidate_tasks\": %d, \"hybrid_candidate_pixels\": %llu, "
                   "\"hybrid_fallback_tasks\": %d, \"hybrid_fallback_pixels\": %llu, "
                   "\"hybrid_reason_clip\": %d, \"hybrid_reason_alpha\": %d, "
@@ -1425,17 +3064,92 @@ static void perf_capture_write_summary(void) {
                   sample->texture_binding_reuse_hits,
                   sample->texture_cache_hits,
                   sample->texture_cache_misses,
+                  sample->texture_cache_miss_dirty_texture_same_frame,
+                  sample->texture_cache_miss_dirty_texture_carried,
+                  sample->texture_cache_miss_dirty_palette_same_frame,
+                  sample->texture_cache_miss_dirty_palette_carried,
+                  sample->texture_cache_miss_cold,
                   sample->texture_creates,
                   sample->texture_unlock_calls,
                   sample->palette_unlock_calls,
+                  sample->texture_unlock_dirty_surface_variants,
+                  sample->texture_unlock_dirty_surface_variants_max,
+                  sample->palette_unlock_dirty_surface_variants,
+                  sample->palette_unlock_dirty_surface_variants_max,
+                  sample->texture_unlock_locality_index8_tracked,
+                  sample->texture_unlock_locality_index8_baseline_skips,
+                  sample->texture_unlock_locality_index8_non_index8_skips,
+                  (unsigned long long)sample->texture_unlock_locality_index8_source_pixels,
+                  (unsigned long long)sample->texture_unlock_locality_index8_changed_pixels,
+                  (unsigned long long)sample->texture_unlock_locality_index8_changed_rows,
+                  (unsigned long long)sample->texture_unlock_locality_index8_changed_bbox_pixels,
+                  sample->texture_unlock_invalidation_ms,
+                  sample->palette_unlock_invalidation_ms,
                   sample->texture_cache_evictions,
                   sample->palette_cache_evictions,
+                  sample->software_surface_cache_hits,
+                  sample->software_surface_cache_creates,
+                  sample->software_surface_cache_refresh_attempts,
+                  sample->software_surface_cache_refresh_unique_bindings,
+                  sample->software_surface_cache_refresh_repeat_binding_attempts,
+                  sample->software_surface_cache_refresh_unique_texture_handles,
+                  sample->software_surface_cache_refresh_texture_handle_fanout_max,
+                  sample->software_surface_cache_refresh_failures,
+                  sample->software_surface_cache_refresh_ms,
+                  sample->software_surface_cache_refresh_palette_set_calls,
+                  sample->software_surface_cache_refresh_palette_set_ms,
+                  sample->software_surface_cache_refresh_blit_calls,
+                  sample->software_surface_cache_refresh_blit_ms,
+                  sample->software_surface_cache_create_dirty_texture_same_frame,
+                  sample->software_surface_cache_create_dirty_texture_carried,
+                  sample->software_surface_cache_create_dirty_palette_same_frame,
+                  sample->software_surface_cache_create_dirty_palette_carried,
+                  sample->software_surface_cache_create_cold,
+                  sample->software_surface_cache_texture_evictions,
+                  sample->software_surface_cache_palette_evictions,
                   sample->textures_destroy_queued,
                   sample->unknown_tasks,
                   sample->ppg_tasks,
                   sample->mtrans_tasks,
                   sample->ui_direct_tasks,
                   sample->solid_tasks,
+                  sample->software_frame_mode_enabled,
+                  sample->software_frame_surface_ready,
+                  sample->software_frame_owned,
+                  sample->software_frame_owned,
+                  sample->software_frame_direct_present,
+                  sample->software_frame_uploaded,
+                  sample->software_frame_fallback,
+                  sample->software_frame_candidate_tasks,
+                  (unsigned long long)sample->software_frame_candidate_pixels,
+                  sample->software_frame_fallback_tasks,
+                  (unsigned long long)sample->software_frame_fallback_pixels,
+                  sample->software_frame_fast_exact_tasks,
+                  (unsigned long long)sample->software_frame_fast_exact_pixels,
+                  sample->software_frame_fast_exact_clipped_tasks,
+                  sample->software_frame_fast_exact_flipped_tasks,
+                  sample->software_frame_fast_exact_color_mod_tasks,
+                  (unsigned long long)sample->software_frame_fast_exact_color_mod_pixels,
+                  sample->software_frame_fast_scaled_tasks,
+                  (unsigned long long)sample->software_frame_fast_scaled_pixels,
+                  sample->software_frame_fast_non_integer_tasks,
+                  (unsigned long long)sample->software_frame_fast_non_integer_pixels,
+                  sample->software_frame_generic_textured_tasks,
+                  (unsigned long long)sample->software_frame_generic_textured_pixels,
+                  sample->software_frame_fast_miss_color_mod,
+                  sample->software_frame_fast_miss_non_integer,
+                  sample->software_frame_fast_miss_non_integer_ge_256_tasks,
+                  (unsigned long long)sample->software_frame_fast_miss_non_integer_ge_256_pixels,
+                  sample->software_frame_fast_miss_non_integer_ge_1024_tasks,
+                  (unsigned long long)sample->software_frame_fast_miss_non_integer_ge_1024_pixels,
+                  (unsigned long long)sample->software_frame_fast_miss_non_integer_max_pixels,
+                  sample->software_frame_fast_miss_scaled,
+                  sample->software_frame_fast_miss_unsupported_flip,
+                  sample->software_frame_fast_miss_source_bounds,
+                  sample->software_frame_reason_alpha,
+                  sample->software_frame_reason_color_mod,
+                  sample->software_frame_reason_geometry,
+                  sample->software_frame_reason_solid,
                   sample->hybrid_candidate_tasks,
                   (unsigned long long)sample->hybrid_candidate_pixels,
                   sample->hybrid_fallback_tasks,
@@ -1453,7 +3167,7 @@ static void perf_capture_write_summary(void) {
     io_printf(io, "}\n");
     SDL_CloseIO(io);
 
-    backend_logf("PERF capture complete: frames=%d frame_time_ms=%.3f render_ms=%.3f present_ms=%.3f present_readback_ms=%.3f present_convert_ms=%.3f present_copy_ms=%.3f present_clear_ms=%.3f dominant_present_path=%s readback_format=%s readback_size=%dx%d copy_bytes=%.2f dirty_ratio=%.4f dirty_hit_rate=%.4f full_copy_fallback_ratio=%.4f rect_runs=%.2f rect_multi_runs=%.2f rect_multi_run_tasks=%.2f rect_max_run=%.2f rect_hstrip_runs=%.2f rect_hstrip_tasks=%.2f rect_vstrip_runs=%.2f rect_vstrip_tasks=%.2f rect_run_links=%.2f rect_color_breaks=%.2f rect_flip_breaks=%.2f rect_flipped_tasks=%.2f textured_geometry_tasks=%.2f textured_geometry_recovered=%.2f textured_geometry_fallback=%.2f set_texture_calls=%.2f binding_reuse=%.2f texture_unlocks=%.2f palette_unlocks=%.2f texture_evictions=%.2f palette_evictions=%.2f destroy_queue=%.2f source_ppg=%.2f source_mtrans=%.2f source_ui=%.2f source_solid=%.2f source_unknown=%.2f hybrid_candidate_tasks=%.2f hybrid_candidate_pixels=%.2f hybrid_fallback_tasks=%.2f hybrid_fallback_pixels=%.2f hybrid_reason_clip=%.2f hybrid_reason_alpha=%.2f hybrid_reason_color_mod=%.2f hybrid_reason_flip=%.2f hybrid_reason_geometry=%.2f hybrid_reason_solid=%.2f fps=%.2f output=%s",
+    backend_logf("PERF capture complete: frames=%d frame_time_ms=%.3f render_ms=%.3f present_ms=%.3f present_readback_ms=%.3f present_convert_ms=%.3f present_copy_ms=%.3f present_clear_ms=%.3f dominant_present_path=%s readback_format=%s readback_size=%dx%d copy_bytes=%.2f dirty_ratio=%.4f dirty_hit_rate=%.4f full_copy_fallback_ratio=%.4f rect_runs=%.2f rect_multi_runs=%.2f rect_multi_run_tasks=%.2f rect_max_run=%.2f rect_hstrip_runs=%.2f rect_hstrip_tasks=%.2f rect_vstrip_runs=%.2f rect_vstrip_tasks=%.2f rect_run_links=%.2f rect_color_breaks=%.2f rect_flip_breaks=%.2f rect_flipped_tasks=%.2f textured_geometry_tasks=%.2f textured_geometry_recovered=%.2f textured_geometry_fallback=%.2f set_texture_calls=%.2f binding_reuse=%.2f texture_unlocks=%.2f palette_unlocks=%.2f texture_evictions=%.2f palette_evictions=%.2f destroy_queue=%.2f source_ppg=%.2f source_mtrans=%.2f source_ui=%.2f source_solid=%.2f source_unknown=%.2f software_frame_mode_enabled_ratio=%.4f software_frame_surface_ready_ratio=%.4f software_frame_active_ratio=%.4f software_frame_owned_ratio=%.4f software_frame_direct_present_ratio=%.4f software_frame_uploaded_ratio=%.4f software_frame_fallback_ratio=%.4f software_frame_candidate_tasks=%.2f software_frame_candidate_pixels=%.2f software_frame_fallback_tasks=%.2f software_frame_fallback_pixels=%.2f software_frame_fast_exact_tasks=%.2f software_frame_fast_exact_pixels=%.2f software_frame_fast_exact_clipped_tasks=%.2f software_frame_fast_exact_flipped_tasks=%.2f software_frame_fast_exact_color_mod_tasks=%.2f software_frame_fast_exact_color_mod_pixels=%.2f software_frame_fast_scaled_tasks=%.2f software_frame_fast_scaled_pixels=%.2f software_frame_fast_non_integer_tasks=%.2f software_frame_fast_non_integer_pixels=%.2f software_frame_generic_textured_tasks=%.2f software_frame_generic_textured_pixels=%.2f software_frame_fast_miss_color_mod=%.2f software_frame_fast_miss_non_integer=%.2f software_frame_fast_miss_non_integer_ge_256_tasks=%.2f software_frame_fast_miss_non_integer_ge_256_pixels=%.2f software_frame_fast_miss_non_integer_ge_1024_tasks=%.2f software_frame_fast_miss_non_integer_ge_1024_pixels=%.2f software_frame_fast_miss_non_integer_max_pixels=%.2f software_frame_fast_miss_scaled=%.2f software_frame_fast_miss_unsupported_flip=%.2f software_frame_fast_miss_source_bounds=%.2f software_frame_reason_alpha=%.2f software_frame_reason_color_mod=%.2f software_frame_reason_geometry=%.2f software_frame_reason_solid=%.2f hybrid_candidate_tasks=%.2f hybrid_candidate_pixels=%.2f hybrid_fallback_tasks=%.2f hybrid_fallback_pixels=%.2f hybrid_reason_clip=%.2f hybrid_reason_alpha=%.2f hybrid_reason_color_mod=%.2f hybrid_reason_flip=%.2f hybrid_reason_geometry=%.2f hybrid_reason_solid=%.2f fps=%.2f output=%s",
                  perf_capture_recorded_frames,
                  avg_frame_ms,
                  avg_render_ms,
@@ -1497,6 +3211,43 @@ static void perf_capture_write_summary(void) {
                  avg_ui_direct_tasks,
                  avg_solid_tasks,
                  avg_unknown_tasks,
+                 software_frame_mode_enabled_ratio,
+                 software_frame_surface_ready_ratio,
+                 software_frame_owned_ratio,
+                 software_frame_owned_ratio,
+                 software_frame_direct_present_ratio,
+                 software_frame_uploaded_ratio,
+                 software_frame_fallback_ratio,
+                 avg_software_frame_candidate_tasks,
+                 avg_software_frame_candidate_pixels,
+                 avg_software_frame_fallback_tasks,
+                 avg_software_frame_fallback_pixels,
+                 avg_software_frame_fast_exact_tasks,
+                 avg_software_frame_fast_exact_pixels,
+                 avg_software_frame_fast_exact_clipped_tasks,
+                 avg_software_frame_fast_exact_flipped_tasks,
+                 avg_software_frame_fast_exact_color_mod_tasks,
+                 avg_software_frame_fast_exact_color_mod_pixels,
+                 avg_software_frame_fast_scaled_tasks,
+                 avg_software_frame_fast_scaled_pixels,
+                 avg_software_frame_fast_non_integer_tasks,
+                 avg_software_frame_fast_non_integer_pixels,
+                 avg_software_frame_generic_textured_tasks,
+                 avg_software_frame_generic_textured_pixels,
+                 avg_software_frame_fast_miss_color_mod,
+                 avg_software_frame_fast_miss_non_integer,
+                 avg_software_frame_fast_miss_non_integer_ge_256_tasks,
+                 avg_software_frame_fast_miss_non_integer_ge_256_pixels,
+                 avg_software_frame_fast_miss_non_integer_ge_1024_tasks,
+                 avg_software_frame_fast_miss_non_integer_ge_1024_pixels,
+                 avg_software_frame_fast_miss_non_integer_max_pixels,
+                 avg_software_frame_fast_miss_scaled,
+                 avg_software_frame_fast_miss_unsupported_flip,
+                 avg_software_frame_fast_miss_source_bounds,
+                 avg_software_frame_reason_alpha,
+                 avg_software_frame_reason_color_mod,
+                 avg_software_frame_reason_geometry,
+                 avg_software_frame_reason_solid,
                  avg_hybrid_candidate_tasks,
                  avg_hybrid_candidate_pixels,
                  avg_hybrid_fallback_tasks,
@@ -1511,6 +3262,11 @@ static void perf_capture_write_summary(void) {
                  output_path);
     SDL_free(output_path);
 }
+#else
+static bool perf_capture_collect_extended_stats(void) {
+    return false;
+}
+#endif
 
 static const char* get_effective_video_driver_order(const char* configured_order) {
 #if defined(PORT_MISTER)
@@ -1652,10 +3408,28 @@ static void init_scalemode() {
 #endif
 }
 
+static const char* software_frame_mode_name(void) {
+    return software_frame_mode_enabled ? "on" : "off";
+}
+
+static void init_software_frame_mode(void) {
+    const char* raw_mode = Config_GetString(CFG_KEY_SOFTWARE_FRAME_MODE);
+    software_frame_mode_enabled = false;
+
+    if ((raw_mode == NULL) || (raw_mode[0] == '\0')) {
+        return;
+    }
+
+    if ((SDL_strcasecmp(raw_mode, "on") == 0) || (SDL_strcasecmp(raw_mode, "true") == 0)) {
+        software_frame_mode_enabled = true;
+    }
+}
+
 int SDLApp_Init() {
     Config_Init();
     Keymap_Init();
     init_scalemode();
+    init_software_frame_mode();
 
     SDL_SetAppMetadata(app_name, "0.1", NULL);
     SDL_SetHint(SDL_HINT_VIDEO_WAYLAND_PREFER_LIBDECOR, "1");
@@ -1741,6 +3515,8 @@ int SDLApp_Init() {
     // Initialize rendering subsystems
     SDLMessageRenderer_Initialize(renderer);
     SDLGameRenderer_Init(renderer);
+    SDLGameRenderer_SetSoftwareFrameMode(software_frame_mode_enabled);
+    backend_logf("Software frame mode: %s", software_frame_mode_name());
 
 #if defined(DEBUG)
     SDLDebugText_Initialize(renderer);
@@ -1761,7 +3537,9 @@ void SDLApp_Quit() {
     SDL_DestroyTexture(screen_texture);
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
+#if ENABLE_PERF_TELEMETRY
     perf_capture_reset_storage();
+#endif
     SDL_Quit();
 }
 
@@ -1841,15 +3619,17 @@ bool SDLApp_PollEvents() {
 }
 
 void SDLApp_BeginFrame() {
+#if ENABLE_PERF_TELEMETRY
     perf_frame_start_ns = SDL_GetTicksNS();
     perf_update_start_ns = perf_frame_start_ns;
+#endif
 
     if (fbdev_presenter_enabled) {
-        FBDevPresenter_BeginFrameStats(perf_capture_enabled && !perf_capture_completed);
+        FBDevPresenter_BeginFrameStats(perf_capture_collect_extended_stats());
     }
 
     SDLMessageRenderer_BeginFrame();
-    SDLGameRenderer_BeginFrame(perf_capture_enabled && !perf_capture_completed);
+    SDLGameRenderer_BeginFrame(perf_capture_collect_extended_stats());
 }
 
 static void center_rect(SDL_FRect* rect, int win_w, int win_h) {
@@ -2042,8 +3822,10 @@ static void save_texture(SDL_Texture* texture, const char* filename) {
 }
 
 void SDLApp_EndFrame() {
+#if ENABLE_PERF_TELEMETRY
     const Uint64 render_start_ns = SDL_GetTicksNS();
     const Uint64 update_ns = render_start_ns > perf_update_start_ns ? (render_start_ns - perf_update_start_ns) : 0;
+#endif
 
     // Run sound processing
     ADX_ProcessTracks();
@@ -2056,37 +3838,55 @@ void SDLApp_EndFrame() {
     NetplayScreen_Render();
     NetstatsRenderer_Render();
 #endif
-    SDLGameRenderer_RenderFrame();
-
-    if (should_save_screenshot) {
-        save_texture(cps3_canvas, "screenshot_cps3.bmp");
-    }
-
     const bool has_message_content = SDLMessageRenderer_HasContent();
-    const SDL_FRect* fbdev_readback_rect = NULL;
-    SDL_FRect fbdev_readback_rect_value = { 0 };
-    bool fbdev_present_current_target = false;
 #if defined(DEBUG)
     const bool force_full_fbdev_readback = true;
 #else
     const bool force_full_fbdev_readback = false;
 #endif
+    const bool prefer_software_frame_direct_present =
+        use_native_render_path && fbdev_presenter_enabled && use_fbdev_only_present && !has_message_content &&
+        !should_save_screenshot;
+    SDLGameRenderer_SetSoftwareFrameDirectPresentMode(prefer_software_frame_direct_present);
+    SDLGameRenderer_RenderFrame();
+
+    if (should_save_screenshot && SDLGameRenderer_HasSoftwareOwnedFrame()) {
+        SDLGameRenderer_EnsureSoftwareFrameCanvas();
+    }
+    if (should_save_screenshot) {
+        save_texture(cps3_canvas, "screenshot_cps3.bmp");
+    }
+
+    const SDL_FRect* fbdev_readback_rect = NULL;
+    SDL_FRect fbdev_readback_rect_value = { 0 };
+    bool fbdev_present_current_target = false;
+    bool fbdev_present_software_frame = false;
+    const SDL_Surface* fbdev_software_frame_surface = NULL;
 
     if (use_native_render_path) {
         refresh_native_output_rect();
+        const bool use_fbdev_software_frame_direct =
+            prefer_software_frame_direct_present && SDLGameRenderer_HasSoftwareOwnedFrame();
         const bool use_fbdev_native_direct_target =
-            fbdev_presenter_enabled && use_fbdev_only_present && !has_message_content && !force_full_fbdev_readback;
+            fbdev_presenter_enabled && use_fbdev_only_present && !has_message_content && !force_full_fbdev_readback &&
+            !use_fbdev_software_frame_direct;
         const bool use_fbdev_native_readback_rect =
             fbdev_presenter_enabled && use_fbdev_only_present && native_output_has_bars && !force_full_fbdev_readback &&
             !use_fbdev_native_direct_target;
-        if (use_fbdev_native_direct_target) {
+        if (use_fbdev_software_frame_direct) {
+            fbdev_present_software_frame = true;
+            fbdev_software_frame_surface = SDLGameRenderer_GetSoftwareFrameSurface();
+        } else if (use_fbdev_native_direct_target) {
             fbdev_present_current_target = true;
         } else if (use_fbdev_native_readback_rect) {
             fbdev_readback_rect_value = native_output_rect;
             fbdev_readback_rect = &fbdev_readback_rect_value;
         }
 
-        if (!fbdev_present_current_target) {
+        if (!fbdev_present_current_target && !fbdev_present_software_frame) {
+            if (SDLGameRenderer_HasSoftwareOwnedFrame()) {
+                SDLGameRenderer_EnsureSoftwareFrameCanvas();
+            }
             render_native_output_to_present_target(has_message_content, native_output_has_bars && !use_fbdev_native_readback_rect);
         }
     } else {
@@ -2138,10 +3938,33 @@ void SDLApp_EndFrame() {
     // SDL_SetRenderScale(renderer, 1, 1);
 #endif
 
+#if ENABLE_PERF_TELEMETRY
     const Uint64 present_start_ns = SDL_GetTicksNS();
+#endif
 
     if (fbdev_presenter_enabled) {
-        if (fbdev_present_current_target) {
+        if (fbdev_present_software_frame) {
+            if (!FBDevPresenter_PresentSurface(fbdev_software_frame_surface, &native_output_rect)) {
+                backend_logf("FBDEV direct software-frame present failed; falling back to current-target/readback");
+                fbdev_present_software_frame = false;
+                SDLGameRenderer_EnsureSoftwareFrameCanvas();
+                SDL_SetRenderTarget(renderer, cps3_canvas);
+                if (!FBDevPresenter_PresentCurrentTarget(renderer, &native_output_rect)) {
+                    backend_logf("FBDEV direct current-target present failed after software-frame fallback; falling back to composited readback");
+                    if (native_output_has_bars) {
+                        fbdev_readback_rect_value = native_output_rect;
+                        fbdev_readback_rect = &fbdev_readback_rect_value;
+                    } else {
+                        fbdev_readback_rect = NULL;
+                    }
+                    render_native_output_to_present_target(false, native_output_has_bars && (fbdev_readback_rect == NULL));
+                    FBDevPresenter_BeginFrameStats(perf_capture_collect_extended_stats());
+                    FBDevPresenter_Present(renderer, fbdev_readback_rect);
+                }
+            } else {
+                SDLGameRenderer_NoteSoftwareFrameDirectPresent();
+            }
+        } else if (fbdev_present_current_target) {
             SDL_SetRenderTarget(renderer, cps3_canvas);
             if (!FBDevPresenter_PresentCurrentTarget(renderer, &native_output_rect)) {
                 backend_logf("FBDEV direct current-target present failed; falling back to composited readback");
@@ -2153,7 +3976,7 @@ void SDLApp_EndFrame() {
                     fbdev_readback_rect = NULL;
                 }
                 render_native_output_to_present_target(false, native_output_has_bars && (fbdev_readback_rect == NULL));
-                FBDevPresenter_BeginFrameStats(perf_capture_enabled && !perf_capture_completed);
+                FBDevPresenter_BeginFrameStats(perf_capture_collect_extended_stats());
                 FBDevPresenter_Present(renderer, fbdev_readback_rect);
             }
         } else {
@@ -2164,6 +3987,7 @@ void SDLApp_EndFrame() {
     if (!use_fbdev_only_present) {
         SDL_RenderPresent(renderer);
     }
+#if ENABLE_PERF_TELEMETRY
     const Uint64 present_end_ns = SDL_GetTicksNS();
     const Uint64 render_ns = present_start_ns > render_start_ns ? (present_start_ns - render_start_ns) : 0;
     const Uint64 present_ns = present_end_ns > present_start_ns ? (present_end_ns - present_start_ns) : 0;
@@ -2183,6 +4007,7 @@ void SDLApp_EndFrame() {
     const bool full_copy_fallback = fbdev_presenter_enabled ? FBDevPresenter_UsedFullCopyFallback() : false;
     const double dirty_hit_rate =
         presenter_tiles_total > 0 ? 1.0 - ((double)presenter_tiles_copied / (double)presenter_tiles_total) : 0.0;
+#endif
 
     // Cleanup
     SDLGameRenderer_EndFrame();
@@ -2216,6 +4041,7 @@ void SDLApp_EndFrame() {
     note_frame_end_time();
     update_fps();
 
+#if ENABLE_PERF_TELEMETRY
     if (perf_capture_enabled && !perf_capture_completed && perf_capture_recorded_frames < perf_capture_target_frames) {
         PerfFrameSample* sample = &perf_samples[perf_capture_recorded_frames];
         sample->frame_time_ms = (double)frame_work_ns / 1e6;
@@ -2256,17 +4082,113 @@ void SDLApp_EndFrame() {
         sample->texture_binding_reuse_hits = render_stats.texture_binding_reuse_hits;
         sample->texture_cache_hits = render_stats.texture_cache_hits;
         sample->texture_cache_misses = render_stats.texture_cache_misses;
+        sample->texture_cache_miss_dirty_texture_same_frame = render_stats.texture_cache_miss_dirty_texture_same_frame;
+        sample->texture_cache_miss_dirty_texture_carried = render_stats.texture_cache_miss_dirty_texture_carried;
+        sample->texture_cache_miss_dirty_palette_same_frame = render_stats.texture_cache_miss_dirty_palette_same_frame;
+        sample->texture_cache_miss_dirty_palette_carried = render_stats.texture_cache_miss_dirty_palette_carried;
+        sample->texture_cache_miss_cold = render_stats.texture_cache_miss_cold;
         sample->texture_creates = render_stats.texture_creates;
         sample->texture_unlock_calls = render_stats.texture_unlock_calls;
         sample->palette_unlock_calls = render_stats.palette_unlock_calls;
+        sample->texture_unlock_dirty_surface_variants = render_stats.texture_unlock_dirty_surface_variants;
+        sample->texture_unlock_dirty_surface_variants_max = render_stats.texture_unlock_dirty_surface_variants_max;
+        sample->palette_unlock_dirty_surface_variants = render_stats.palette_unlock_dirty_surface_variants;
+        sample->palette_unlock_dirty_surface_variants_max = render_stats.palette_unlock_dirty_surface_variants_max;
+        sample->texture_unlock_locality_index8_tracked = render_stats.texture_unlock_locality_index8_tracked;
+        sample->texture_unlock_locality_index8_baseline_skips =
+            render_stats.texture_unlock_locality_index8_baseline_skips;
+        sample->texture_unlock_locality_index8_non_index8_skips =
+            render_stats.texture_unlock_locality_index8_non_index8_skips;
+        sample->texture_unlock_locality_index8_source_pixels =
+            render_stats.texture_unlock_locality_index8_source_pixels;
+        sample->texture_unlock_locality_index8_changed_pixels =
+            render_stats.texture_unlock_locality_index8_changed_pixels;
+        sample->texture_unlock_locality_index8_changed_rows =
+            render_stats.texture_unlock_locality_index8_changed_rows;
+        sample->texture_unlock_locality_index8_changed_bbox_pixels =
+            render_stats.texture_unlock_locality_index8_changed_bbox_pixels;
+        sample->texture_unlock_invalidation_ms = (double)render_stats.texture_unlock_invalidation_ns / 1e6;
+        sample->palette_unlock_invalidation_ms = (double)render_stats.palette_unlock_invalidation_ns / 1e6;
         sample->texture_cache_evictions = render_stats.texture_cache_evictions;
         sample->palette_cache_evictions = render_stats.palette_cache_evictions;
+        sample->software_surface_cache_hits = render_stats.software_surface_cache_hits;
+        sample->software_surface_cache_creates = render_stats.software_surface_cache_creates;
+        sample->software_surface_cache_refresh_attempts = render_stats.software_surface_cache_refresh_attempts;
+        sample->software_surface_cache_refresh_unique_bindings =
+            render_stats.software_surface_cache_refresh_unique_bindings;
+        sample->software_surface_cache_refresh_repeat_binding_attempts =
+            render_stats.software_surface_cache_refresh_repeat_binding_attempts;
+        sample->software_surface_cache_refresh_unique_texture_handles =
+            render_stats.software_surface_cache_refresh_unique_texture_handles;
+        sample->software_surface_cache_refresh_texture_handle_fanout_max =
+            render_stats.software_surface_cache_refresh_texture_handle_fanout_max;
+        sample->software_surface_cache_refresh_failures = render_stats.software_surface_cache_refresh_failures;
+        sample->software_surface_cache_refresh_ms = (double)render_stats.software_surface_cache_refresh_ns / 1e6;
+        sample->software_surface_cache_refresh_palette_set_calls =
+            render_stats.software_surface_cache_refresh_palette_set_calls;
+        sample->software_surface_cache_refresh_palette_set_ms =
+            (double)render_stats.software_surface_cache_refresh_palette_set_ns / 1e6;
+        sample->software_surface_cache_refresh_blit_calls = render_stats.software_surface_cache_refresh_blit_calls;
+        sample->software_surface_cache_refresh_blit_ms =
+            (double)render_stats.software_surface_cache_refresh_blit_ns / 1e6;
+        sample->software_surface_cache_create_dirty_texture_same_frame =
+            render_stats.software_surface_cache_create_dirty_texture_same_frame;
+        sample->software_surface_cache_create_dirty_texture_carried =
+            render_stats.software_surface_cache_create_dirty_texture_carried;
+        sample->software_surface_cache_create_dirty_palette_same_frame =
+            render_stats.software_surface_cache_create_dirty_palette_same_frame;
+        sample->software_surface_cache_create_dirty_palette_carried =
+            render_stats.software_surface_cache_create_dirty_palette_carried;
+        sample->software_surface_cache_create_cold = render_stats.software_surface_cache_create_cold;
+        sample->software_surface_cache_texture_evictions = render_stats.software_surface_cache_texture_evictions;
+        sample->software_surface_cache_palette_evictions = render_stats.software_surface_cache_palette_evictions;
         sample->textures_destroy_queued = render_stats.textures_destroy_queued;
         sample->unknown_tasks = render_stats.unknown_tasks;
         sample->ppg_tasks = render_stats.ppg_tasks;
         sample->mtrans_tasks = render_stats.mtrans_tasks;
         sample->ui_direct_tasks = render_stats.ui_direct_tasks;
         sample->solid_tasks = render_stats.solid_tasks;
+        sample->software_frame_mode_enabled = render_stats.software_frame_mode_enabled;
+        sample->software_frame_surface_ready = render_stats.software_frame_surface_ready;
+        sample->software_frame_owned = render_stats.software_frame_owned;
+        sample->software_frame_direct_present = render_stats.software_frame_direct_present;
+        sample->software_frame_uploaded = render_stats.software_frame_uploaded;
+        sample->software_frame_fallback = render_stats.software_frame_fallback;
+        sample->software_frame_candidate_tasks = render_stats.software_frame_candidate_tasks;
+        sample->software_frame_candidate_pixels = render_stats.software_frame_candidate_pixels;
+        sample->software_frame_fallback_tasks = render_stats.software_frame_fallback_tasks;
+        sample->software_frame_fallback_pixels = render_stats.software_frame_fallback_pixels;
+        sample->software_frame_fast_exact_tasks = render_stats.software_frame_fast_exact_tasks;
+        sample->software_frame_fast_exact_pixels = render_stats.software_frame_fast_exact_pixels;
+        sample->software_frame_fast_exact_clipped_tasks = render_stats.software_frame_fast_exact_clipped_tasks;
+        sample->software_frame_fast_exact_flipped_tasks = render_stats.software_frame_fast_exact_flipped_tasks;
+        sample->software_frame_fast_exact_color_mod_tasks = render_stats.software_frame_fast_exact_color_mod_tasks;
+        sample->software_frame_fast_exact_color_mod_pixels = render_stats.software_frame_fast_exact_color_mod_pixels;
+        sample->software_frame_fast_scaled_tasks = render_stats.software_frame_fast_scaled_tasks;
+        sample->software_frame_fast_scaled_pixels = render_stats.software_frame_fast_scaled_pixels;
+        sample->software_frame_fast_non_integer_tasks = render_stats.software_frame_fast_non_integer_tasks;
+        sample->software_frame_fast_non_integer_pixels = render_stats.software_frame_fast_non_integer_pixels;
+        sample->software_frame_generic_textured_tasks = render_stats.software_frame_generic_textured_tasks;
+        sample->software_frame_generic_textured_pixels = render_stats.software_frame_generic_textured_pixels;
+        sample->software_frame_fast_miss_color_mod = render_stats.software_frame_fast_miss_color_mod;
+        sample->software_frame_fast_miss_non_integer = render_stats.software_frame_fast_miss_non_integer;
+        sample->software_frame_fast_miss_non_integer_ge_256_tasks =
+            render_stats.software_frame_fast_miss_non_integer_ge_256_tasks;
+        sample->software_frame_fast_miss_non_integer_ge_256_pixels =
+            render_stats.software_frame_fast_miss_non_integer_ge_256_pixels;
+        sample->software_frame_fast_miss_non_integer_ge_1024_tasks =
+            render_stats.software_frame_fast_miss_non_integer_ge_1024_tasks;
+        sample->software_frame_fast_miss_non_integer_ge_1024_pixels =
+            render_stats.software_frame_fast_miss_non_integer_ge_1024_pixels;
+        sample->software_frame_fast_miss_non_integer_max_pixels =
+            render_stats.software_frame_fast_miss_non_integer_max_pixels;
+        sample->software_frame_fast_miss_scaled = render_stats.software_frame_fast_miss_scaled;
+        sample->software_frame_fast_miss_unsupported_flip = render_stats.software_frame_fast_miss_unsupported_flip;
+        sample->software_frame_fast_miss_source_bounds = render_stats.software_frame_fast_miss_source_bounds;
+        sample->software_frame_reason_alpha = render_stats.software_frame_reason_alpha;
+        sample->software_frame_reason_color_mod = render_stats.software_frame_reason_color_mod;
+        sample->software_frame_reason_geometry = render_stats.software_frame_reason_geometry;
+        sample->software_frame_reason_solid = render_stats.software_frame_reason_solid;
         sample->hybrid_candidate_tasks = render_stats.hybrid_candidate_tasks;
         sample->hybrid_candidate_pixels = render_stats.hybrid_candidate_pixels;
         sample->hybrid_fallback_tasks = render_stats.hybrid_fallback_tasks;
@@ -2317,17 +4239,135 @@ void SDLApp_EndFrame() {
         perf_texture_binding_reuse_hits_total += (Uint64)render_stats.texture_binding_reuse_hits;
         perf_texture_cache_hits_total += (Uint64)render_stats.texture_cache_hits;
         perf_texture_cache_misses_total += (Uint64)render_stats.texture_cache_misses;
+        perf_texture_cache_miss_dirty_texture_same_frame_total +=
+            (Uint64)render_stats.texture_cache_miss_dirty_texture_same_frame;
+        perf_texture_cache_miss_dirty_texture_carried_total +=
+            (Uint64)render_stats.texture_cache_miss_dirty_texture_carried;
+        perf_texture_cache_miss_dirty_palette_same_frame_total +=
+            (Uint64)render_stats.texture_cache_miss_dirty_palette_same_frame;
+        perf_texture_cache_miss_dirty_palette_carried_total +=
+            (Uint64)render_stats.texture_cache_miss_dirty_palette_carried;
+        perf_texture_cache_miss_cold_total += (Uint64)render_stats.texture_cache_miss_cold;
         perf_texture_creates_total += (Uint64)render_stats.texture_creates;
         perf_texture_unlock_calls_total += (Uint64)render_stats.texture_unlock_calls;
         perf_palette_unlock_calls_total += (Uint64)render_stats.palette_unlock_calls;
+        perf_texture_unlock_dirty_surface_variants_total +=
+            (Uint64)render_stats.texture_unlock_dirty_surface_variants;
+        perf_texture_unlock_dirty_surface_variants_max_total +=
+            (Uint64)render_stats.texture_unlock_dirty_surface_variants_max;
+        perf_palette_unlock_dirty_surface_variants_total +=
+            (Uint64)render_stats.palette_unlock_dirty_surface_variants;
+        perf_palette_unlock_dirty_surface_variants_max_total +=
+            (Uint64)render_stats.palette_unlock_dirty_surface_variants_max;
+        perf_texture_unlock_locality_index8_tracked_total +=
+            (Uint64)render_stats.texture_unlock_locality_index8_tracked;
+        perf_texture_unlock_locality_index8_baseline_skips_total +=
+            (Uint64)render_stats.texture_unlock_locality_index8_baseline_skips;
+        perf_texture_unlock_locality_index8_non_index8_skips_total +=
+            (Uint64)render_stats.texture_unlock_locality_index8_non_index8_skips;
+        perf_texture_unlock_locality_index8_source_pixels_total +=
+            render_stats.texture_unlock_locality_index8_source_pixels;
+        perf_texture_unlock_locality_index8_changed_pixels_total +=
+            render_stats.texture_unlock_locality_index8_changed_pixels;
+        perf_texture_unlock_locality_index8_changed_rows_total +=
+            render_stats.texture_unlock_locality_index8_changed_rows;
+        perf_texture_unlock_locality_index8_changed_bbox_pixels_total +=
+            render_stats.texture_unlock_locality_index8_changed_bbox_pixels;
+        perf_texture_unlock_invalidation_ns_total += render_stats.texture_unlock_invalidation_ns;
+        perf_palette_unlock_invalidation_ns_total += render_stats.palette_unlock_invalidation_ns;
         perf_texture_cache_evictions_total += (Uint64)render_stats.texture_cache_evictions;
         perf_palette_cache_evictions_total += (Uint64)render_stats.palette_cache_evictions;
+        perf_software_surface_cache_hits_total += (Uint64)render_stats.software_surface_cache_hits;
+        perf_software_surface_cache_creates_total += (Uint64)render_stats.software_surface_cache_creates;
+        perf_software_surface_cache_refresh_attempts_total +=
+            (Uint64)render_stats.software_surface_cache_refresh_attempts;
+        perf_software_surface_cache_refresh_unique_bindings_total +=
+            (Uint64)render_stats.software_surface_cache_refresh_unique_bindings;
+        perf_software_surface_cache_refresh_repeat_binding_attempts_total +=
+            (Uint64)render_stats.software_surface_cache_refresh_repeat_binding_attempts;
+        perf_software_surface_cache_refresh_unique_texture_handles_total +=
+            (Uint64)render_stats.software_surface_cache_refresh_unique_texture_handles;
+        perf_software_surface_cache_refresh_texture_handle_fanout_max_total +=
+            (Uint64)render_stats.software_surface_cache_refresh_texture_handle_fanout_max;
+        perf_software_surface_cache_refresh_failures_total +=
+            (Uint64)render_stats.software_surface_cache_refresh_failures;
+        perf_software_surface_cache_refresh_ns_total += render_stats.software_surface_cache_refresh_ns;
+        perf_software_surface_cache_refresh_palette_set_calls_total +=
+            (Uint64)render_stats.software_surface_cache_refresh_palette_set_calls;
+        perf_software_surface_cache_refresh_palette_set_ns_total +=
+            render_stats.software_surface_cache_refresh_palette_set_ns;
+        perf_software_surface_cache_refresh_blit_calls_total +=
+            (Uint64)render_stats.software_surface_cache_refresh_blit_calls;
+        perf_software_surface_cache_refresh_blit_ns_total += render_stats.software_surface_cache_refresh_blit_ns;
+        perf_software_surface_cache_create_dirty_texture_same_frame_total +=
+            (Uint64)render_stats.software_surface_cache_create_dirty_texture_same_frame;
+        perf_software_surface_cache_create_dirty_texture_carried_total +=
+            (Uint64)render_stats.software_surface_cache_create_dirty_texture_carried;
+        perf_software_surface_cache_create_dirty_palette_same_frame_total +=
+            (Uint64)render_stats.software_surface_cache_create_dirty_palette_same_frame;
+        perf_software_surface_cache_create_dirty_palette_carried_total +=
+            (Uint64)render_stats.software_surface_cache_create_dirty_palette_carried;
+        perf_software_surface_cache_create_cold_total += (Uint64)render_stats.software_surface_cache_create_cold;
+        perf_software_surface_cache_texture_evictions_total +=
+            (Uint64)render_stats.software_surface_cache_texture_evictions;
+        perf_software_surface_cache_palette_evictions_total +=
+            (Uint64)render_stats.software_surface_cache_palette_evictions;
         perf_textures_destroy_queued_total += (Uint64)render_stats.textures_destroy_queued;
         perf_unknown_tasks_total += (Uint64)render_stats.unknown_tasks;
         perf_ppg_tasks_total += (Uint64)render_stats.ppg_tasks;
         perf_mtrans_tasks_total += (Uint64)render_stats.mtrans_tasks;
         perf_ui_direct_tasks_total += (Uint64)render_stats.ui_direct_tasks;
         perf_solid_tasks_total += (Uint64)render_stats.solid_tasks;
+        perf_software_frame_mode_enabled_frames += (Uint64)render_stats.software_frame_mode_enabled;
+        perf_software_frame_surface_ready_frames += (Uint64)render_stats.software_frame_surface_ready;
+        perf_software_frame_owned_frames += (Uint64)render_stats.software_frame_owned;
+        perf_software_frame_direct_present_frames += (Uint64)render_stats.software_frame_direct_present;
+        perf_software_frame_uploaded_frames += (Uint64)render_stats.software_frame_uploaded;
+        perf_software_frame_fallback_frames += (Uint64)render_stats.software_frame_fallback;
+        perf_software_frame_candidate_tasks_total += (Uint64)render_stats.software_frame_candidate_tasks;
+        perf_software_frame_candidate_pixels_total += render_stats.software_frame_candidate_pixels;
+        perf_software_frame_fallback_tasks_total += (Uint64)render_stats.software_frame_fallback_tasks;
+        perf_software_frame_fallback_pixels_total += render_stats.software_frame_fallback_pixels;
+        perf_software_frame_fast_exact_tasks_total += (Uint64)render_stats.software_frame_fast_exact_tasks;
+        perf_software_frame_fast_exact_pixels_total += render_stats.software_frame_fast_exact_pixels;
+        perf_software_frame_fast_exact_clipped_tasks_total +=
+            (Uint64)render_stats.software_frame_fast_exact_clipped_tasks;
+        perf_software_frame_fast_exact_flipped_tasks_total +=
+            (Uint64)render_stats.software_frame_fast_exact_flipped_tasks;
+        perf_software_frame_fast_exact_color_mod_tasks_total +=
+            (Uint64)render_stats.software_frame_fast_exact_color_mod_tasks;
+        perf_software_frame_fast_exact_color_mod_pixels_total +=
+            render_stats.software_frame_fast_exact_color_mod_pixels;
+        perf_software_frame_fast_scaled_tasks_total += (Uint64)render_stats.software_frame_fast_scaled_tasks;
+        perf_software_frame_fast_scaled_pixels_total += render_stats.software_frame_fast_scaled_pixels;
+        perf_software_frame_fast_non_integer_tasks_total +=
+            (Uint64)render_stats.software_frame_fast_non_integer_tasks;
+        perf_software_frame_fast_non_integer_pixels_total += render_stats.software_frame_fast_non_integer_pixels;
+        perf_software_frame_generic_textured_tasks_total +=
+            (Uint64)render_stats.software_frame_generic_textured_tasks;
+        perf_software_frame_generic_textured_pixels_total += render_stats.software_frame_generic_textured_pixels;
+        perf_software_frame_fast_miss_color_mod_total += (Uint64)render_stats.software_frame_fast_miss_color_mod;
+        perf_software_frame_fast_miss_non_integer_total +=
+            (Uint64)render_stats.software_frame_fast_miss_non_integer;
+        perf_software_frame_fast_miss_non_integer_ge_256_tasks_total +=
+            (Uint64)render_stats.software_frame_fast_miss_non_integer_ge_256_tasks;
+        perf_software_frame_fast_miss_non_integer_ge_256_pixels_total +=
+            render_stats.software_frame_fast_miss_non_integer_ge_256_pixels;
+        perf_software_frame_fast_miss_non_integer_ge_1024_tasks_total +=
+            (Uint64)render_stats.software_frame_fast_miss_non_integer_ge_1024_tasks;
+        perf_software_frame_fast_miss_non_integer_ge_1024_pixels_total +=
+            render_stats.software_frame_fast_miss_non_integer_ge_1024_pixels;
+        perf_software_frame_fast_miss_non_integer_max_pixels_total +=
+            render_stats.software_frame_fast_miss_non_integer_max_pixels;
+        perf_software_frame_fast_miss_scaled_total += (Uint64)render_stats.software_frame_fast_miss_scaled;
+        perf_software_frame_fast_miss_unsupported_flip_total +=
+            (Uint64)render_stats.software_frame_fast_miss_unsupported_flip;
+        perf_software_frame_fast_miss_source_bounds_total +=
+            (Uint64)render_stats.software_frame_fast_miss_source_bounds;
+        perf_software_frame_reason_alpha_total += (Uint64)render_stats.software_frame_reason_alpha;
+        perf_software_frame_reason_color_mod_total += (Uint64)render_stats.software_frame_reason_color_mod;
+        perf_software_frame_reason_geometry_total += (Uint64)render_stats.software_frame_reason_geometry;
+        perf_software_frame_reason_solid_total += (Uint64)render_stats.software_frame_reason_solid;
         perf_hybrid_candidate_tasks_total += (Uint64)render_stats.hybrid_candidate_tasks;
         perf_hybrid_candidate_pixels_total += render_stats.hybrid_candidate_pixels;
         perf_hybrid_fallback_tasks_total += (Uint64)render_stats.hybrid_fallback_tasks;
@@ -2352,7 +4392,7 @@ void SDLApp_EndFrame() {
         perf_capture_recorded_frames += 1;
 
         if ((perf_capture_recorded_frames % 60) == 0 || (perf_capture_recorded_frames == perf_capture_target_frames)) {
-            backend_logf("PERF frame=%d frame_time_ms=%.3f update_ms=%.3f render_ms=%.3f present_ms=%.3f present_readback_ms=%.3f present_convert_ms=%.3f present_copy_ms=%.3f present_clear_ms=%.3f present_path=%s readback_format=%s readback_size=%dx%d copy_bytes=%llu dirty_tiles=%d dirty_ratio=%.4f dirty_hit_rate=%.4f full_copy_fallback=%s render_tasks=%d rect_tasks=%d batch_runs=%d rect_runs=%d rect_multi_runs=%d rect_multi_run_tasks=%d rect_max_run=%d rect_hstrip_runs=%d rect_hstrip_tasks=%d rect_vstrip_runs=%d rect_vstrip_tasks=%d rect_run_links=%d rect_color_breaks=%d rect_flip_breaks=%d rect_flipped_tasks=%d textured_geometry_tasks=%d textured_geometry_recovered=%d textured_geometry_fallback=%d set_texture_calls=%d binding_reuse=%d cache_hits=%d cache_misses=%d cache_creates=%d texture_unlocks=%d palette_unlocks=%d texture_evictions=%d palette_evictions=%d destroy_queue=%d source_ppg=%d source_mtrans=%d source_ui=%d source_solid=%d source_unknown=%d hybrid_candidate_tasks=%d hybrid_candidate_pixels=%llu hybrid_fallback_tasks=%d hybrid_fallback_pixels=%llu hybrid_reason_clip=%d hybrid_reason_alpha=%d hybrid_reason_color_mod=%d hybrid_reason_flip=%d hybrid_reason_geometry=%d hybrid_reason_solid=%d sort=%s",
+            backend_logf("PERF frame=%d frame_time_ms=%.3f update_ms=%.3f render_ms=%.3f present_ms=%.3f present_readback_ms=%.3f present_convert_ms=%.3f present_copy_ms=%.3f present_clear_ms=%.3f present_path=%s readback_format=%s readback_size=%dx%d copy_bytes=%llu dirty_tiles=%d dirty_ratio=%.4f dirty_hit_rate=%.4f full_copy_fallback=%s render_tasks=%d rect_tasks=%d batch_runs=%d rect_runs=%d rect_multi_runs=%d rect_multi_run_tasks=%d rect_max_run=%d rect_hstrip_runs=%d rect_hstrip_tasks=%d rect_vstrip_runs=%d rect_vstrip_tasks=%d rect_run_links=%d rect_color_breaks=%d rect_flip_breaks=%d rect_flipped_tasks=%d textured_geometry_tasks=%d textured_geometry_recovered=%d textured_geometry_fallback=%d set_texture_calls=%d binding_reuse=%d cache_hits=%d cache_misses=%d cache_creates=%d texture_unlocks=%d palette_unlocks=%d texture_evictions=%d palette_evictions=%d destroy_queue=%d source_ppg=%d source_mtrans=%d source_ui=%d source_solid=%d source_unknown=%d software_frame_mode_enabled=%d software_frame_surface_ready=%d software_frame_active=%d software_frame_owned=%d software_frame_direct_present=%d software_frame_uploaded=%d software_frame_fallback=%d software_frame_candidate_tasks=%d software_frame_candidate_pixels=%llu software_frame_fallback_tasks=%d software_frame_fallback_pixels=%llu software_frame_fast_exact_tasks=%d software_frame_fast_exact_pixels=%llu software_frame_fast_exact_clipped_tasks=%d software_frame_fast_exact_flipped_tasks=%d software_frame_fast_exact_color_mod_tasks=%d software_frame_fast_exact_color_mod_pixels=%llu software_frame_fast_scaled_tasks=%d software_frame_fast_scaled_pixels=%llu software_frame_fast_non_integer_tasks=%d software_frame_fast_non_integer_pixels=%llu software_frame_generic_textured_tasks=%d software_frame_generic_textured_pixels=%llu software_frame_fast_miss_color_mod=%d software_frame_fast_miss_non_integer=%d software_frame_fast_miss_non_integer_ge_256_tasks=%d software_frame_fast_miss_non_integer_ge_256_pixels=%llu software_frame_fast_miss_non_integer_ge_1024_tasks=%d software_frame_fast_miss_non_integer_ge_1024_pixels=%llu software_frame_fast_miss_non_integer_max_pixels=%llu software_frame_fast_miss_scaled=%d software_frame_fast_miss_unsupported_flip=%d software_frame_fast_miss_source_bounds=%d software_frame_reason_alpha=%d software_frame_reason_color_mod=%d software_frame_reason_geometry=%d software_frame_reason_solid=%d hybrid_candidate_tasks=%d hybrid_candidate_pixels=%llu hybrid_fallback_tasks=%d hybrid_fallback_pixels=%llu hybrid_reason_clip=%d hybrid_reason_alpha=%d hybrid_reason_color_mod=%d hybrid_reason_flip=%d hybrid_reason_geometry=%d hybrid_reason_solid=%d sort=%s",
                          perf_capture_recorded_frames,
                          sample->frame_time_ms,
                          sample->update_ms,
@@ -2404,6 +4444,43 @@ void SDLApp_EndFrame() {
                          sample->ui_direct_tasks,
                          sample->solid_tasks,
                          sample->unknown_tasks,
+                         sample->software_frame_mode_enabled,
+                         sample->software_frame_surface_ready,
+                         sample->software_frame_owned,
+                         sample->software_frame_owned,
+                         sample->software_frame_direct_present,
+                         sample->software_frame_uploaded,
+                         sample->software_frame_fallback,
+                         sample->software_frame_candidate_tasks,
+                         (unsigned long long)sample->software_frame_candidate_pixels,
+                         sample->software_frame_fallback_tasks,
+                         (unsigned long long)sample->software_frame_fallback_pixels,
+                         sample->software_frame_fast_exact_tasks,
+                         (unsigned long long)sample->software_frame_fast_exact_pixels,
+                         sample->software_frame_fast_exact_clipped_tasks,
+                         sample->software_frame_fast_exact_flipped_tasks,
+                         sample->software_frame_fast_exact_color_mod_tasks,
+                         (unsigned long long)sample->software_frame_fast_exact_color_mod_pixels,
+                         sample->software_frame_fast_scaled_tasks,
+                         (unsigned long long)sample->software_frame_fast_scaled_pixels,
+                         sample->software_frame_fast_non_integer_tasks,
+                         (unsigned long long)sample->software_frame_fast_non_integer_pixels,
+                         sample->software_frame_generic_textured_tasks,
+                         (unsigned long long)sample->software_frame_generic_textured_pixels,
+                         sample->software_frame_fast_miss_color_mod,
+                         sample->software_frame_fast_miss_non_integer,
+                         sample->software_frame_fast_miss_non_integer_ge_256_tasks,
+                         (unsigned long long)sample->software_frame_fast_miss_non_integer_ge_256_pixels,
+                         sample->software_frame_fast_miss_non_integer_ge_1024_tasks,
+                         (unsigned long long)sample->software_frame_fast_miss_non_integer_ge_1024_pixels,
+                         (unsigned long long)sample->software_frame_fast_miss_non_integer_max_pixels,
+                         sample->software_frame_fast_miss_scaled,
+                         sample->software_frame_fast_miss_unsupported_flip,
+                         sample->software_frame_fast_miss_source_bounds,
+                         sample->software_frame_reason_alpha,
+                         sample->software_frame_reason_color_mod,
+                         sample->software_frame_reason_geometry,
+                         sample->software_frame_reason_solid,
                          sample->hybrid_candidate_tasks,
                          (unsigned long long)sample->hybrid_candidate_pixels,
                          sample->hybrid_fallback_tasks,
@@ -2423,6 +4500,7 @@ void SDLApp_EndFrame() {
             SDLApp_Exit();
         }
     }
+#endif
 }
 
 void SDLApp_Exit() {
