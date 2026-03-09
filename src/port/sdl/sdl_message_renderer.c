@@ -10,6 +10,14 @@ static const int canvas_height = 448;
 static SDL_Renderer* _renderer = NULL;
 static SDL_Texture* knjsub_texture = NULL;
 static SDL_Palette* knjsub_palette = NULL;
+static Uint8 knjsub_mod_r = 0;
+static Uint8 knjsub_mod_g = 0;
+static Uint8 knjsub_mod_b = 0;
+static Uint8 knjsub_mod_a = 0;
+static bool knjsub_mod_valid = false;
+static bool message_target_bound = false;
+static bool has_content = false;
+static bool canvas_needs_clear = true;
 
 static const SDL_Color knjsub_palette_colors[4] = {
     { .r = 255, .g = 255, .b = 255, .a = 0 },
@@ -29,13 +37,28 @@ void SDLMessageRenderer_Initialize(SDL_Renderer* renderer) {
     // Initialize knjsub palette
     knjsub_palette = SDL_CreatePalette(4);
     SDL_SetPaletteColors(knjsub_palette, knjsub_palette_colors, 0, 4);
+    knjsub_mod_valid = false;
+    message_target_bound = false;
+    has_content = false;
+    canvas_needs_clear = true;
 }
 
 void SDLMessageRenderer_BeginFrame() {
-    // Clear canvas
-    SDL_SetRenderDrawColor(_renderer, 0, 0, 0, SDL_ALPHA_TRANSPARENT);
-    SDL_SetRenderTarget(_renderer, message_canvas);
-    SDL_RenderClear(_renderer);
+    if (has_content) {
+        canvas_needs_clear = true;
+    }
+
+    // SDLGameRenderer_BeginFrame switches to the game canvas once per frame.
+    message_target_bound = false;
+    has_content = false;
+}
+
+bool SDLMessageRenderer_HasContent(void) {
+    return has_content;
+}
+
+void SDLMessageRenderer_InvalidateTargetBindCache(void) {
+    message_target_bound = false;
 }
 
 void SDLMessageRenderer_CreateTexture(int width, int height, void* pixels, int format) {
@@ -50,6 +73,7 @@ void SDLMessageRenderer_CreateTexture(int width, int height, void* pixels, int f
 
     SDL_SetTextureScaleMode(knjsub_texture, SDL_SCALEMODE_NEAREST);
     SDL_SetTextureBlendMode(knjsub_texture, SDL_BLENDMODE_BLEND);
+    knjsub_mod_valid = false;
 }
 
 static int adjust_coordinate(int coordinate, bool is_x, bool is_uv) {
@@ -103,9 +127,28 @@ void SDLMessageRenderer_DrawTexture(int x0, int y0, int x1, int y1, int u0, int 
     const Uint8 b = scale_color_value((color >> 16) & 0xFF);
     const Uint8 a = scale_color_value(color >> 24);
 
-    SDL_SetTextureColorMod(knjsub_texture, r, g, b);
-    SDL_SetTextureAlphaMod(knjsub_texture, a);
+    if (!knjsub_mod_valid || (knjsub_mod_r != r) || (knjsub_mod_g != g) || (knjsub_mod_b != b)) {
+        SDL_SetTextureColorMod(knjsub_texture, r, g, b);
+        knjsub_mod_r = r;
+        knjsub_mod_g = g;
+        knjsub_mod_b = b;
+    }
+    if (!knjsub_mod_valid || (knjsub_mod_a != a)) {
+        SDL_SetTextureAlphaMod(knjsub_texture, a);
+        knjsub_mod_a = a;
+    }
+    knjsub_mod_valid = true;
 
-    SDL_SetRenderTarget(_renderer, message_canvas);
+    if (!message_target_bound) {
+        message_target_bound = SDL_SetRenderTarget(_renderer, message_canvas);
+    }
+
+    if (canvas_needs_clear) {
+        SDL_SetRenderDrawColor(_renderer, 0, 0, 0, SDL_ALPHA_TRANSPARENT);
+        SDL_RenderClear(_renderer);
+        canvas_needs_clear = false;
+    }
+
     SDL_RenderTexture(_renderer, knjsub_texture, &src_rect, &dst_rect);
+    has_content = true;
 }

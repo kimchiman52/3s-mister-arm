@@ -79,15 +79,27 @@ static void remove_keyboard() {
     }
 }
 
-static void handle_gamepad_added_event(SDL_GamepadDeviceEvent* event) {
+static bool add_gamepad_by_id(SDL_JoystickID id) {
+    if (input_source_index_from_joystick_id(id) >= 0) {
+        return false;
+    }
+
     // Remove keyboard to potentially make space for the new gamepad
     remove_keyboard();
 
     if (connected_input_sources >= INPUT_SOURCES_MAX) {
-        return;
+        setup_keyboard();
+        return false;
     }
 
-    const SDL_Gamepad* gamepad = SDL_OpenGamepad(event->which);
+    SDL_Gamepad* gamepad = SDL_OpenGamepad(id);
+
+    if (gamepad == NULL) {
+        setup_keyboard();
+        return false;
+    }
+
+    int assigned_index = -1;
 
     for (int i = 0; i < INPUT_SOURCES_MAX; i++) {
         SDLPad_InputSource* input_source = &input_sources[i];
@@ -98,13 +110,27 @@ static void handle_gamepad_added_event(SDL_GamepadDeviceEvent* event) {
 
         input_source->type = SDLPAD_INPUT_GAMEPAD;
         input_source->gamepad.gamepad = gamepad;
+        assigned_index = i;
         break;
+    }
+
+    if (assigned_index < 0) {
+        SDL_CloseGamepad(gamepad);
+        setup_keyboard();
+        return false;
     }
 
     connected_input_sources += 1;
 
+    SDL_Log("SDLPad: gamepad added id=%d index=%d name=%s", id, assigned_index, SDL_GetGamepadName(gamepad));
+
     // Setup keyboard again, if there's a free slot
     setup_keyboard();
+    return true;
+}
+
+static void handle_gamepad_added_event(SDL_GamepadDeviceEvent* event) {
+    add_gamepad_by_id(event->which);
 }
 
 static void handle_gamepad_removed_event(SDL_GamepadDeviceEvent* event) {
@@ -195,6 +221,19 @@ static void get_gamepad_state(int id, SDLPad_ButtonState* state) {
 
 void SDLPad_Init() {
     setup_keyboard();
+
+    int gamepad_count = 0;
+    SDL_JoystickID* gamepad_ids = SDL_GetGamepads(&gamepad_count);
+
+    if (gamepad_ids == NULL) {
+        return;
+    }
+
+    for (int i = 0; i < gamepad_count; i++) {
+        add_gamepad_by_id(gamepad_ids[i]);
+    }
+
+    SDL_free(gamepad_ids);
 }
 
 void SDLPad_HandleGamepadDeviceEvent(SDL_GamepadDeviceEvent* event) {

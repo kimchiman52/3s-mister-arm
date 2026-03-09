@@ -10,6 +10,10 @@ extern SDL_Window* window;
 int SDLApp_Init();
 void SDLApp_Quit();
 
+/// Configure optional frame-stage perf capture.
+/// `frame_count` <= 0 disables capture.
+void SDLApp_ConfigurePerfCapture(int frame_count, const char* output_path, const char* scene_name);
+
 /// @brief Poll SDL events.
 /// @return `true` if the main loop should continue running, `false` otherwise.
 bool SDLApp_PollEvents();

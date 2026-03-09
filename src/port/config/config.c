@@ -28,18 +28,24 @@ typedef struct ConfigEntry {
 } ConfigEntry;
 
 #if defined(PORT_MISTER)
-#define DEFAULT_VIDEO_DRIVER_ORDER "evdev"
+#define DEFAULT_VIDEO_DRIVER_ORDER "dummy"
 #define DEFAULT_RENDER_DRIVER_ORDER "software"
+#define DEFAULT_WINDOW_WIDTH 320
+#define DEFAULT_WINDOW_HEIGHT 240
+#define DEFAULT_SCALE_MODE "native"
 #else
 #define DEFAULT_VIDEO_DRIVER_ORDER ""
 #define DEFAULT_RENDER_DRIVER_ORDER ""
+#define DEFAULT_WINDOW_WIDTH 640
+#define DEFAULT_WINDOW_HEIGHT 480
+#define DEFAULT_SCALE_MODE "soft-linear"
 #endif
 
 static const ConfigEntry default_entries[] = {
     { .key = CFG_KEY_FULLSCREEN, .type = CFG_BOOL, .value.b = true },
-    { .key = CFG_KEY_WINDOW_WIDTH, .type = CFG_INT, .value.i = 640 },
-    { .key = CFG_KEY_WINDOW_HEIGHT, .type = CFG_INT, .value.i = 480 },
-    { .key = CFG_KEY_SCALEMODE, .type = CFG_STRING, .value.s = "soft-linear" },
+    { .key = CFG_KEY_WINDOW_WIDTH, .type = CFG_INT, .value.i = DEFAULT_WINDOW_WIDTH },
+    { .key = CFG_KEY_WINDOW_HEIGHT, .type = CFG_INT, .value.i = DEFAULT_WINDOW_HEIGHT },
+    { .key = CFG_KEY_SCALEMODE, .type = CFG_STRING, .value.s = DEFAULT_SCALE_MODE },
     { .key = CFG_KEY_VIDEO_DRIVER_ORDER, .type = CFG_STRING, .value.s = DEFAULT_VIDEO_DRIVER_ORDER },
     { .key = CFG_KEY_RENDER_DRIVER_ORDER, .type = CFG_STRING, .value.s = DEFAULT_RENDER_DRIVER_ORDER },
 };
