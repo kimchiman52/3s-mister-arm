@@ -66,6 +66,7 @@ SDL_Texture* cps3_canvas = NULL;
 static const int cps3_width = 384;
 static const int cps3_height = 224;
 static const int software_frame_full_height_diagonal_strip_max_width_pixels = 8;
+static const Uint64 software_frame_affine_quad_max_submitted_pixels = 4096u;
 static const Uint64 software_frame_non_integer_lookup_threshold_pixels = 384u;
 static const Uint64 software_surface_refresh_blit_sample_period = 32u;
 static const Uint64 software_frame_raster_sample_periods[SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_COUNT] = {
@@ -423,6 +424,26 @@ typedef struct SoftwareFrameTexturedParallelogram {
     int src_h;
 } SoftwareFrameTexturedParallelogram;
 
+typedef struct SoftwareFrameTexturedAffineQuad {
+    int dst_x[4];
+    int dst_y[4];
+    float src_u[4];
+    float src_v[4];
+} SoftwareFrameTexturedAffineQuad;
+
+typedef struct SoftwareFrameTexturedTranslatedQuad {
+    int dst_x[4];
+    int dst_y[4];
+    int src_dx;
+    int src_dy;
+} SoftwareFrameTexturedTranslatedQuad;
+
+typedef enum SoftwareFrameRectStripMergeAxis {
+    SOFTWARE_FRAME_RECT_STRIP_MERGE_AXIS_NONE = 0,
+    SOFTWARE_FRAME_RECT_STRIP_MERGE_AXIS_HORIZONTAL,
+    SOFTWARE_FRAME_RECT_STRIP_MERGE_AXIS_VERTICAL,
+} SoftwareFrameRectStripMergeAxis;
+
 typedef struct TexturedGeometryFallbackFamilyProfile {
     int texture_handle;
     int palette_handle;
@@ -457,10 +478,8 @@ static bool try_submit_geometry_task_as_rect_copy(const RenderTask* task,
                                                   bool* out_used_rect_path,
                                                   RenderTask* out_submitted_rect_task);
 static void flush_rect_texture_run_stats(RectRunTelemetryState* state);
-#if ENABLE_PERF_TELEMETRY
 static bool can_merge_rect_tasks_horizontally(const RenderTask* prev, const RenderTask* next);
 static bool can_merge_rect_tasks_vertically(const RenderTask* prev, const RenderTask* next);
-#endif
 static void mark_dirty_tiles_for_task(const RenderTask* task);
 static void clear_cache_dirty_state(CacheDirtyState* state);
 #if ENABLE_PERF_TELEMETRY
@@ -494,6 +513,14 @@ static Uint64 begin_perf_capture_raster_bucket_sample(SDLGameRenderer_PerfCaptur
 static void note_perf_capture_raster_bucket_sample(SDLGameRenderer_PerfCaptureRasterBucket bucket,
                                                    const RenderTask* task,
                                                    Uint64 elapsed_ns);
+#if ENABLE_PERF_TELEMETRY
+static void note_perf_capture_textured_geometry_fallback_family(const RenderTask* task);
+#endif
+static bool textured_geometry_task_has_rect_uv(const RenderTask* task,
+                                               float min_u,
+                                               float max_u,
+                                               float min_v,
+                                               float max_v);
 static void reset_perf_capture_unlock_locality_shadow_slot(int texture_index);
 static void reset_perf_capture_refresh_lifetime_slot(int texture_index);
 static void reset_perf_capture_unlock_locality_texture_slot(int texture_index);
@@ -567,6 +594,10 @@ static bool try_resolve_solid_task_as_full_height_diagonal_strip(const RenderTas
                                                                  SoftwareFrameSolidDiagonalStrip* out_strip);
 static bool try_resolve_geometry_task_as_software_frame_parallelogram(
     const RenderTask* task, SoftwareFrameTexturedParallelogram* out_parallelogram);
+static bool try_resolve_geometry_task_as_software_frame_translated_quad(
+    const RenderTask* task, SoftwareFrameTexturedTranslatedQuad* out_quad);
+static bool try_resolve_geometry_task_as_software_frame_affine_quad(
+    const RenderTask* task, SoftwareFrameTexturedAffineQuad* out_quad);
 static SoftwareFrameFallbackReason classify_software_frame_fallback_reason(const RenderTask* task);
 static void note_software_frame_eligibility(const RenderTask* task, SoftwareFrameFallbackReason reason);
 static SoftwareFrameFastCopyResult build_software_frame_fast_copy_plan(const RenderTask* task,
@@ -583,6 +614,8 @@ static Uint32 blend_argb8888(Uint32 dst_pixel, Uint32 src_pixel);
 static bool raster_full_height_diagonal_strip_to_software_frame(const SoftwareFrameSolidDiagonalStrip* strip,
                                                                 SDL_Surface* dst_surface);
 static bool raster_textured_parallelogram_to_software_frame(const RenderTask* task);
+static bool raster_textured_translated_quad_to_software_frame(const RenderTask* task);
+static bool raster_textured_affine_quad_to_software_frame(const RenderTask* task);
 static SDL_Surface* get_or_create_software_source_surface(unsigned int th);
 static bool ensure_software_frame_upload_texture(void);
 static bool raster_textured_task_to_software_frame(const RenderTask* task);
@@ -594,6 +627,10 @@ static bool try_fast_copy_fast_textured_task_to_software_frame(const RenderTask*
                                                                const SoftwareFrameFastCopyPlan* plan,
                                                                SDL_Surface* dst_surface,
                                                                SDL_Surface* src_surface);
+static bool try_merge_software_frame_rect_tasks(RenderTask* merged_task,
+                                                const RenderTask* next_task,
+                                                const SDL_Surface* dst_surface,
+                                                SoftwareFrameRectStripMergeAxis* inout_axis);
 static bool try_setup_textured_rect_task(RenderTask* task,
                                          float x0,
                                          float y0,
@@ -1353,6 +1390,304 @@ static void note_perf_capture_raster_bucket_sample(SDLGameRenderer_PerfCaptureRa
     perf_capture_raster_sample_ns[bucket] += elapsed_ns;
 }
 
+#if ENABLE_PERF_TELEMETRY
+static void update_textured_geometry_fallback_range(int* min_value, int* max_value, int value) {
+    if ((min_value == NULL) || (max_value == NULL)) {
+        return;
+    }
+    if (*min_value > value) {
+        *min_value = value;
+    }
+    if (*max_value < value) {
+        *max_value = value;
+    }
+}
+#endif
+
+static bool textured_geometry_task_has_rect_uv(const RenderTask* task,
+                                               float min_u,
+                                               float max_u,
+                                               float min_v,
+                                               float max_v) {
+    if (task == NULL) {
+        return false;
+    }
+
+    bool has_min_u = false;
+    bool has_max_u = false;
+    bool has_min_v = false;
+    bool has_max_v = false;
+    for (int vertex_index = 0; vertex_index < 4; vertex_index++) {
+        const SDL_Vertex* vertex = &task->vertices[vertex_index];
+        const bool at_min_u = nearly_equal(vertex->tex_coord.x, min_u);
+        const bool at_max_u = nearly_equal(vertex->tex_coord.x, max_u);
+        const bool at_min_v = nearly_equal(vertex->tex_coord.y, min_v);
+        const bool at_max_v = nearly_equal(vertex->tex_coord.y, max_v);
+        if (!((at_min_u || at_max_u) && (at_min_v || at_max_v))) {
+            return false;
+        }
+        has_min_u |= at_min_u;
+        has_max_u |= at_max_u;
+        has_min_v |= at_min_v;
+        has_max_v |= at_max_v;
+    }
+
+    return has_min_u && has_max_u && has_min_v && has_max_v;
+}
+
+static bool analyze_textured_geometry_fallback_task(const RenderTask* task,
+                                                    TexturedGeometryFallbackFamilyProfile* out_profile) {
+    if ((task == NULL) || (out_profile == NULL) || (task->type != RENDER_TASK_TYPE_GEOMETRY) || (task->texture == NULL)) {
+        return false;
+    }
+
+    SDL_zero(*out_profile);
+    out_profile->texture_handle = LO_16_BITS(task->texture_binding);
+    out_profile->palette_handle = HI_16_BITS(task->texture_binding);
+    out_profile->family_kind = SDL_GAME_RENDERER_TEXTURED_GEOMETRY_FALLBACK_FAMILY_OTHER;
+    out_profile->source_x = -1;
+    out_profile->source_y = -1;
+    out_profile->source_w = -1;
+    out_profile->source_h = -1;
+    out_profile->dst_height = -1;
+    out_profile->dst_top_width = -1;
+    out_profile->dst_bottom_width = -1;
+    out_profile->dst_left_dx = -1;
+    out_profile->dst_right_dx = -1;
+    out_profile->submitted_pixels = render_task_submitted_pixels(task);
+
+    const int texture_index = out_profile->texture_handle - 1;
+    if ((texture_index >= 0) && (texture_index < FL_TEXTURE_MAX) && (surfaces[texture_index] != NULL)) {
+        out_profile->source_format = surfaces[texture_index]->format;
+        out_profile->source_width = surfaces[texture_index]->w;
+        out_profile->source_height = surfaces[texture_index]->h;
+    } else {
+        out_profile->source_format = SDL_PIXELFORMAT_UNKNOWN;
+    }
+
+    const SDL_FColor color0 = task->vertices[0].color;
+    out_profile->uniform_color = true;
+    out_profile->opaque_color = nearly_equal(color0.a, 1.0f);
+    out_profile->rgb_mod = !(nearly_equal(color0.r, 1.0f) && nearly_equal(color0.g, 1.0f) && nearly_equal(color0.b, 1.0f));
+    out_profile->integer_positions = true;
+    for (int i = 1; i < 4; i++) {
+        const SDL_FColor color = task->vertices[i].color;
+        if (!nearly_equal(color.r, color0.r) || !nearly_equal(color.g, color0.g) || !nearly_equal(color.b, color0.b) ||
+            !nearly_equal(color.a, color0.a)) {
+            out_profile->uniform_color = false;
+        }
+        if (!nearly_equal(color.a, 1.0f)) {
+            out_profile->opaque_color = false;
+        }
+        if (!nearly_equal(color.r, 1.0f) || !nearly_equal(color.g, 1.0f) || !nearly_equal(color.b, 1.0f)) {
+            out_profile->rgb_mod = true;
+        }
+    }
+
+    float min_y = task->vertices[0].position.y;
+    float max_y = min_y;
+    float min_u = task->vertices[0].tex_coord.x;
+    float max_u = min_u;
+    float min_v = task->vertices[0].tex_coord.y;
+    float max_v = min_v;
+    for (int i = 0; i < 4; i++) {
+        const SDL_Vertex* vertex = &task->vertices[i];
+        const int px = (int)SDL_roundf(vertex->position.x);
+        const int py = (int)SDL_roundf(vertex->position.y);
+        if (!nearly_equal(vertex->position.x, (float)px) || !nearly_equal(vertex->position.y, (float)py)) {
+            out_profile->integer_positions = false;
+        }
+        min_y = SDL_min(min_y, vertex->position.y);
+        max_y = SDL_max(max_y, vertex->position.y);
+        min_u = SDL_min(min_u, vertex->tex_coord.x);
+        max_u = SDL_max(max_u, vertex->tex_coord.x);
+        min_v = SDL_min(min_v, vertex->tex_coord.y);
+        max_v = SDL_max(max_v, vertex->tex_coord.y);
+    }
+
+    const bool has_source_shape = (out_profile->source_width > 0) && (out_profile->source_height > 0);
+    if (has_source_shape) {
+        const float src_x_f = min_u * (float)out_profile->source_width;
+        const float src_y_f = min_v * (float)out_profile->source_height;
+        const float src_w_f = (max_u - min_u) * (float)out_profile->source_width;
+        const float src_h_f = (max_v - min_v) * (float)out_profile->source_height;
+        const int src_x = (int)SDL_roundf(src_x_f);
+        const int src_y = (int)SDL_roundf(src_y_f);
+        const int src_w = (int)SDL_roundf(src_w_f);
+        const int src_h = (int)SDL_roundf(src_h_f);
+        out_profile->integer_source_rect =
+            nearly_equal(src_x_f, (float)src_x) && nearly_equal(src_y_f, (float)src_y) &&
+            nearly_equal(src_w_f, (float)src_w) && nearly_equal(src_h_f, (float)src_h) && (src_w > 0) && (src_h > 0);
+        if (out_profile->integer_source_rect) {
+            out_profile->source_x = src_x;
+            out_profile->source_y = src_y;
+            out_profile->source_w = src_w;
+            out_profile->source_h = src_h;
+            out_profile->full_texture_source_rect =
+                (src_x == 0) && (src_y == 0) && (src_w == out_profile->source_width) &&
+                (src_h == out_profile->source_height);
+        }
+    }
+
+    const bool rect_uv = textured_geometry_task_has_rect_uv(task, min_u, max_u, min_v, max_v);
+
+    float top_xs[2] = { 0.0f, 0.0f };
+    float bottom_xs[2] = { 0.0f, 0.0f };
+    int top_count = 0;
+    int bottom_count = 0;
+    for (int i = 0; i < 4; i++) {
+        const SDL_Vertex* vertex = &task->vertices[i];
+        if (nearly_equal(vertex->position.y, min_y)) {
+            if (top_count < SDL_arraysize(top_xs)) {
+                top_xs[top_count++] = vertex->position.x;
+            }
+        } else if (nearly_equal(vertex->position.y, max_y)) {
+            if (bottom_count < SDL_arraysize(bottom_xs)) {
+                bottom_xs[bottom_count++] = vertex->position.x;
+            }
+        }
+    }
+
+    if (rect_uv) {
+        out_profile->family_kind = SDL_GAME_RENDERER_TEXTURED_GEOMETRY_FALLBACK_FAMILY_RECT_UV_OTHER;
+    }
+
+    if ((top_count != SDL_arraysize(top_xs)) || (bottom_count != SDL_arraysize(bottom_xs))) {
+        return true;
+    }
+
+    if (!out_profile->integer_positions) {
+        return true;
+    }
+
+    if (top_xs[0] > top_xs[1]) {
+        const float swap = top_xs[0];
+        top_xs[0] = top_xs[1];
+        top_xs[1] = swap;
+    }
+    if (bottom_xs[0] > bottom_xs[1]) {
+        const float swap = bottom_xs[0];
+        bottom_xs[0] = bottom_xs[1];
+        bottom_xs[1] = swap;
+    }
+
+    const int top_y = (int)SDL_roundf(min_y);
+    const int bottom_y = (int)SDL_roundf(max_y);
+    const int top_left_x = (int)SDL_roundf(top_xs[0]);
+    const int top_right_x = (int)SDL_roundf(top_xs[1]);
+    const int bottom_left_x = (int)SDL_roundf(bottom_xs[0]);
+    const int bottom_right_x = (int)SDL_roundf(bottom_xs[1]);
+    if (!nearly_equal(min_y, (float)top_y) || !nearly_equal(max_y, (float)bottom_y) ||
+        !nearly_equal(top_xs[0], (float)top_left_x) || !nearly_equal(top_xs[1], (float)top_right_x) ||
+        !nearly_equal(bottom_xs[0], (float)bottom_left_x) || !nearly_equal(bottom_xs[1], (float)bottom_right_x)) {
+        return true;
+    }
+
+    out_profile->dst_height = bottom_y - top_y;
+    out_profile->dst_top_width = top_right_x - top_left_x;
+    out_profile->dst_bottom_width = bottom_right_x - bottom_left_x;
+    out_profile->dst_left_dx = bottom_left_x - top_left_x;
+    out_profile->dst_right_dx = bottom_right_x - top_right_x;
+
+    if (!rect_uv || (out_profile->dst_height <= 0) || (out_profile->dst_top_width <= 0) ||
+        (out_profile->dst_bottom_width <= 0)) {
+        return true;
+    }
+
+    if (out_profile->dst_left_dx == out_profile->dst_right_dx) {
+        out_profile->family_kind = SDL_GAME_RENDERER_TEXTURED_GEOMETRY_FALLBACK_FAMILY_RECT_UV_PARALLELOGRAM;
+    } else {
+        out_profile->family_kind = SDL_GAME_RENDERER_TEXTURED_GEOMETRY_FALLBACK_FAMILY_RECT_UV_TRAPEZOID;
+    }
+
+    return true;
+}
+
+#if ENABLE_PERF_TELEMETRY
+static bool textured_geometry_fallback_family_matches(
+    const SDLGameRenderer_PerfCaptureTexturedGeometryFallbackFamily* entry,
+    const TexturedGeometryFallbackFamilyProfile* profile) {
+    if ((entry == NULL) || (profile == NULL)) {
+        return false;
+    }
+
+    return (entry->texture_handle == profile->texture_handle) && (entry->palette_handle == profile->palette_handle) &&
+           (entry->source_format == profile->source_format) && (entry->source_width == profile->source_width) &&
+           (entry->source_height == profile->source_height) && (entry->family_kind == profile->family_kind) &&
+           (entry->uniform_color == (profile->uniform_color ? 1 : 0)) &&
+           (entry->opaque_color == (profile->opaque_color ? 1 : 0)) &&
+           (entry->rgb_mod == (profile->rgb_mod ? 1 : 0)) &&
+           (entry->integer_positions == (profile->integer_positions ? 1 : 0)) &&
+           (entry->integer_source_rect == (profile->integer_source_rect ? 1 : 0)) &&
+           (entry->full_texture_source_rect == (profile->full_texture_source_rect ? 1 : 0));
+}
+#endif
+
+#if ENABLE_PERF_TELEMETRY
+static void note_perf_capture_textured_geometry_fallback_family(const RenderTask* task) {
+    if (!frame_stats_extended_enabled || (task == NULL)) {
+        return;
+    }
+
+    TexturedGeometryFallbackFamilyProfile profile;
+    if (!analyze_textured_geometry_fallback_task(task, &profile)) {
+        return;
+    }
+
+    SDLGameRenderer_PerfCaptureTexturedGeometryFallbackFamily* entry = NULL;
+    for (int i = 0; i < perf_capture_textured_geometry_fallback_family_count; i++) {
+        if (textured_geometry_fallback_family_matches(&perf_capture_textured_geometry_fallback_families[i], &profile)) {
+            entry = &perf_capture_textured_geometry_fallback_families[i];
+            break;
+        }
+    }
+
+    if ((entry == NULL) &&
+        (perf_capture_textured_geometry_fallback_family_count <
+         (int)SDL_arraysize(perf_capture_textured_geometry_fallback_families))) {
+        entry = &perf_capture_textured_geometry_fallback_families[perf_capture_textured_geometry_fallback_family_count++];
+        SDL_zero(*entry);
+        entry->texture_handle = profile.texture_handle;
+        entry->palette_handle = profile.palette_handle;
+        entry->source_format = profile.source_format;
+        entry->source_width = profile.source_width;
+        entry->source_height = profile.source_height;
+        entry->family_kind = profile.family_kind;
+        entry->uniform_color = profile.uniform_color ? 1 : 0;
+        entry->opaque_color = profile.opaque_color ? 1 : 0;
+        entry->rgb_mod = profile.rgb_mod ? 1 : 0;
+        entry->integer_positions = profile.integer_positions ? 1 : 0;
+        entry->integer_source_rect = profile.integer_source_rect ? 1 : 0;
+        entry->full_texture_source_rect = profile.full_texture_source_rect ? 1 : 0;
+        entry->source_x_min = entry->source_x_max = profile.source_x;
+        entry->source_y_min = entry->source_y_max = profile.source_y;
+        entry->source_w_min = entry->source_w_max = profile.source_w;
+        entry->source_h_min = entry->source_h_max = profile.source_h;
+        entry->dst_height_min = entry->dst_height_max = profile.dst_height;
+        entry->dst_top_width_min = entry->dst_top_width_max = profile.dst_top_width;
+        entry->dst_bottom_width_min = entry->dst_bottom_width_max = profile.dst_bottom_width;
+        entry->dst_left_dx_min = entry->dst_left_dx_max = profile.dst_left_dx;
+        entry->dst_right_dx_min = entry->dst_right_dx_max = profile.dst_right_dx;
+    }
+
+    if (entry == NULL) {
+        return;
+    }
+
+    entry->task_count += 1;
+    entry->submitted_pixels += profile.submitted_pixels;
+    update_textured_geometry_fallback_range(&entry->source_x_min, &entry->source_x_max, profile.source_x);
+    update_textured_geometry_fallback_range(&entry->source_y_min, &entry->source_y_max, profile.source_y);
+    update_textured_geometry_fallback_range(&entry->source_w_min, &entry->source_w_max, profile.source_w);
+    update_textured_geometry_fallback_range(&entry->source_h_min, &entry->source_h_max, profile.source_h);
+    update_textured_geometry_fallback_range(&entry->dst_height_min, &entry->dst_height_max, profile.dst_height);
+    update_textured_geometry_fallback_range(&entry->dst_top_width_min, &entry->dst_top_width_max, profile.dst_top_width);
+    update_textured_geometry_fallback_range(
+        &entry->dst_bottom_width_min, &entry->dst_bottom_width_max, profile.dst_bottom_width);
+    update_textured_geometry_fallback_range(&entry->dst_left_dx_min, &entry->dst_left_dx_max, profile.dst_left_dx);
+    update_textured_geometry_fallback_range(&entry->dst_right_dx_min, &entry->dst_right_dx_max, profile.dst_right_dx);
+}
+#endif
 static void reset_perf_capture_unlock_locality_shadow_slot(int texture_index) {
     if ((texture_index < 0) || (texture_index >= FL_TEXTURE_MAX)) {
         return;
@@ -2926,6 +3261,71 @@ static bool try_resolve_geometry_task_as_software_frame_parallelogram(
     return true;
 }
 
+static bool try_resolve_geometry_task_as_software_frame_affine_quad(
+    const RenderTask* task, SoftwareFrameTexturedAffineQuad* out_quad) {
+    if ((task == NULL) || (task->type != RENDER_TASK_TYPE_GEOMETRY) || (task->texture == NULL) ||
+        (task->software_source_surface == NULL) ||
+        (render_task_submitted_pixels(task) > software_frame_affine_quad_max_submitted_pixels)) {
+        return false;
+    }
+
+    TexturedGeometryFallbackFamilyProfile profile;
+    if (!analyze_textured_geometry_fallback_task(task, &profile) || !profile.uniform_color || !profile.opaque_color ||
+        profile.rgb_mod || !profile.integer_positions) {
+        return false;
+    }
+
+    const SDL_Surface* src_surface = task->software_source_surface;
+    for (int i = 0; i < 4; i++) {
+        const SDL_Vertex* vertex = &task->vertices[i];
+        const int dst_x = (int)SDL_roundf(vertex->position.x);
+        const int dst_y = (int)SDL_roundf(vertex->position.y);
+        const float src_u = vertex->tex_coord.x * (float)src_surface->w;
+        const float src_v = vertex->tex_coord.y * (float)src_surface->h;
+        const int src_u_int = (int)SDL_roundf(src_u);
+        const int src_v_int = (int)SDL_roundf(src_v);
+        if (!nearly_equal(vertex->position.x, (float)dst_x) || !nearly_equal(vertex->position.y, (float)dst_y) ||
+            !nearly_equal(src_u, (float)src_u_int) || !nearly_equal(src_v, (float)src_v_int) || (src_u < 0.0f) ||
+            (src_v < 0.0f) || (src_u > (float)src_surface->w) || (src_v > (float)src_surface->h)) {
+            return false;
+        }
+        if (out_quad != NULL) {
+            out_quad->dst_x[i] = dst_x;
+            out_quad->dst_y[i] = dst_y;
+            out_quad->src_u[i] = src_u;
+            out_quad->src_v[i] = src_v;
+        }
+    }
+
+    return true;
+}
+
+static bool try_resolve_geometry_task_as_software_frame_translated_quad(
+    const RenderTask* task, SoftwareFrameTexturedTranslatedQuad* out_quad) {
+    SoftwareFrameTexturedAffineQuad affine_quad;
+    if (!try_resolve_geometry_task_as_software_frame_affine_quad(task, &affine_quad)) {
+        return false;
+    }
+
+    const int src_dx = (int)SDL_roundf(affine_quad.src_u[0]) - affine_quad.dst_x[0];
+    const int src_dy = (int)SDL_roundf(affine_quad.src_v[0]) - affine_quad.dst_y[0];
+    for (int i = 1; i < 4; i++) {
+        if (((int)SDL_roundf(affine_quad.src_u[i]) - affine_quad.dst_x[i]) != src_dx ||
+            ((int)SDL_roundf(affine_quad.src_v[i]) - affine_quad.dst_y[i]) != src_dy) {
+            return false;
+        }
+    }
+
+    if (out_quad != NULL) {
+        SDL_memcpy(out_quad->dst_x, affine_quad.dst_x, sizeof(out_quad->dst_x));
+        SDL_memcpy(out_quad->dst_y, affine_quad.dst_y, sizeof(out_quad->dst_y));
+        out_quad->src_dx = src_dx;
+        out_quad->src_dy = src_dy;
+    }
+
+    return true;
+}
+
 static SoftwareFrameFallbackReason classify_software_frame_fallback_reason(const RenderTask* task) {
     if (task == NULL) {
         return SOFTWARE_FRAME_FALLBACK_REASON_GEOMETRY;
@@ -2937,7 +3337,9 @@ static SoftwareFrameFallbackReason classify_software_frame_fallback_reason(const
     }
 
     if ((task->type == RENDER_TASK_TYPE_GEOMETRY) && (task->texture != NULL)) {
-        return try_resolve_geometry_task_as_software_frame_parallelogram(task, NULL)
+        return (try_resolve_geometry_task_as_software_frame_parallelogram(task, NULL) ||
+                try_resolve_geometry_task_as_software_frame_translated_quad(task, NULL) ||
+                try_resolve_geometry_task_as_software_frame_affine_quad(task, NULL))
                    ? SOFTWARE_FRAME_FALLBACK_REASON_NONE
                    : SOFTWARE_FRAME_FALLBACK_REASON_GEOMETRY;
     }
@@ -2955,6 +3357,7 @@ static SoftwareFrameFallbackReason classify_software_frame_fallback_reason(const
     return SOFTWARE_FRAME_FALLBACK_REASON_GEOMETRY;
 }
 
+#if ENABLE_PERF_TELEMETRY
 static bool software_frame_color_is_alpha_only(Uint32 color) {
     return (((color >> 24) & 0xFFu) != 0xFFu) && ((color & 0x00FFFFFFu) == 0x00FFFFFFu);
 }
@@ -2963,7 +3366,6 @@ static bool software_frame_color_has_rgb_mod(Uint32 color) {
     return (color & 0x00FFFFFFu) != 0x00FFFFFFu;
 }
 
-#if ENABLE_PERF_TELEMETRY
 static void note_software_frame_eligibility(const RenderTask* task, SoftwareFrameFallbackReason reason) {
     if (!frame_stats_extended_enabled || (task == NULL)) {
         return;
@@ -3204,6 +3606,65 @@ static void populate_scaled_lookup_table(int* out_lookup,
         const int src_offset = (((dst_offset * 2) + 1) * src_span) / (dst_span * 2);
         out_lookup[i] = flip ? (src_origin + src_span - 1 - src_offset) : (src_origin + src_offset);
     }
+}
+
+static bool try_merge_software_frame_rect_tasks(RenderTask* merged_task,
+                                                const RenderTask* next_task,
+                                                const SDL_Surface* dst_surface,
+                                                SoftwareFrameRectStripMergeAxis* inout_axis) {
+    if ((merged_task == NULL) || (next_task == NULL) || (inout_axis == NULL) ||
+        (dst_surface == NULL) ||
+        (merged_task->type != RENDER_TASK_TYPE_TEXTURED_RECT) || (next_task->type != RENDER_TASK_TYPE_TEXTURED_RECT) ||
+        (merged_task->texture == NULL) || (next_task->texture == NULL) ||
+        (merged_task->software_source_surface != next_task->software_source_surface) ||
+        (merged_task->flip != SDL_FLIP_NONE) || (next_task->flip != SDL_FLIP_NONE)) {
+        return false;
+    }
+
+    SoftwareFrameRectStripMergeAxis axis = *inout_axis;
+    const SoftwareFrameFastCopyResult merged_result =
+        build_software_frame_fast_copy_plan(merged_task, dst_surface, merged_task->software_source_surface, NULL);
+    if ((axis == SOFTWARE_FRAME_RECT_STRIP_MERGE_AXIS_NONE) && (merged_result != SOFTWARE_FRAME_FAST_COPY_RESULT_EXACT)) {
+        return false;
+    }
+    const SoftwareFrameFastCopyResult next_result =
+        build_software_frame_fast_copy_plan(next_task, dst_surface, next_task->software_source_surface, NULL);
+    if (next_result != SOFTWARE_FRAME_FAST_COPY_RESULT_EXACT) {
+        return false;
+    }
+
+    if (axis == SOFTWARE_FRAME_RECT_STRIP_MERGE_AXIS_NONE) {
+        if (can_merge_rect_tasks_horizontally(merged_task, next_task)) {
+            axis = SOFTWARE_FRAME_RECT_STRIP_MERGE_AXIS_HORIZONTAL;
+        } else if (can_merge_rect_tasks_vertically(merged_task, next_task)) {
+            axis = SOFTWARE_FRAME_RECT_STRIP_MERGE_AXIS_VERTICAL;
+        } else {
+            return false;
+        }
+    } else if ((axis == SOFTWARE_FRAME_RECT_STRIP_MERGE_AXIS_HORIZONTAL)
+               ? !can_merge_rect_tasks_horizontally(merged_task, next_task)
+               : !can_merge_rect_tasks_vertically(merged_task, next_task)) {
+        return false;
+    }
+
+    RenderTask candidate_task = *merged_task;
+    if (axis == SOFTWARE_FRAME_RECT_STRIP_MERGE_AXIS_HORIZONTAL) {
+        candidate_task.dst_rect.w = (next_task->dst_rect.x + next_task->dst_rect.w) - candidate_task.dst_rect.x;
+        candidate_task.src_uv_rect.w = (next_task->src_uv_rect.x + next_task->src_uv_rect.w) - candidate_task.src_uv_rect.x;
+    } else {
+        candidate_task.dst_rect.h = (next_task->dst_rect.y + next_task->dst_rect.h) - candidate_task.dst_rect.y;
+        candidate_task.src_uv_rect.h = (next_task->src_uv_rect.y + next_task->src_uv_rect.h) - candidate_task.src_uv_rect.y;
+    }
+
+    const SoftwareFrameFastCopyResult candidate_result = build_software_frame_fast_copy_plan(
+        &candidate_task, dst_surface, candidate_task.software_source_surface, NULL);
+    if (candidate_result != SOFTWARE_FRAME_FAST_COPY_RESULT_EXACT) {
+        return false;
+    }
+
+    *merged_task = candidate_task;
+    *inout_axis = axis;
+    return true;
 }
 
 static bool try_fast_copy_fast_textured_task_to_software_frame(const RenderTask* task,
@@ -3986,6 +4447,235 @@ static bool raster_textured_parallelogram_to_software_frame(const RenderTask* ta
     return true;
 }
 
+static bool raster_textured_triangle_to_software_frame(const SDL_Surface* src_surface,
+                                                       const SoftwareFrameTexturedAffineQuad* quad,
+                                                       int i0,
+                                                       int i1,
+                                                       int i2) {
+    if ((src_surface == NULL) || (software_frame_surface == NULL) || (quad == NULL)) {
+        return false;
+    }
+
+    const float x0 = (float)quad->dst_x[i0];
+    const float y0 = (float)quad->dst_y[i0];
+    const float x1 = (float)quad->dst_x[i1];
+    const float y1 = (float)quad->dst_y[i1];
+    const float x2 = (float)quad->dst_x[i2];
+    const float y2 = (float)quad->dst_y[i2];
+    const float area = ((x1 - x0) * (y2 - y0)) - ((y1 - y0) * (x2 - x0));
+    if (SDL_fabsf(area) <= rect_task_epsilon) {
+        return true;
+    }
+
+    const int min_x = clamp_to_range(SDL_min(SDL_min(quad->dst_x[i0], quad->dst_x[i1]), quad->dst_x[i2]), 0, cps3_width);
+    const int max_x =
+        clamp_to_range(SDL_max(SDL_max(quad->dst_x[i0], quad->dst_x[i1]), quad->dst_x[i2]), 0, cps3_width - 1);
+    const int min_y = clamp_to_range(SDL_min(SDL_min(quad->dst_y[i0], quad->dst_y[i1]), quad->dst_y[i2]), 0, cps3_height);
+    const int max_y =
+        clamp_to_range(SDL_max(SDL_max(quad->dst_y[i0], quad->dst_y[i1]), quad->dst_y[i2]), 0, cps3_height - 1);
+    if ((max_x < min_x) || (max_y < min_y)) {
+        return true;
+    }
+
+    const float inv_area = 1.0f / area;
+    const Uint32* src_pixels = (const Uint32*)src_surface->pixels;
+    Uint32* dst_pixels = (Uint32*)software_frame_surface->pixels;
+    const int src_pitch = src_surface->pitch / (int)sizeof(Uint32);
+    const int dst_pitch = software_frame_surface->pitch / (int)sizeof(Uint32);
+    for (int y = min_y; y <= max_y; y++) {
+        Uint32* dst_row = dst_pixels + (y * dst_pitch);
+        const float py = (float)y + 0.5f;
+        for (int x = min_x; x <= max_x; x++) {
+            const float px = (float)x + 0.5f;
+            const float w0 = ((x1 - px) * (y2 - py)) - ((y1 - py) * (x2 - px));
+            const float w1 = ((x2 - px) * (y0 - py)) - ((y2 - py) * (x0 - px));
+            const float w2 = ((x0 - px) * (y1 - py)) - ((y0 - py) * (x1 - px));
+            if (((area > 0.0f) && ((w0 < 0.0f) || (w1 < 0.0f) || (w2 < 0.0f))) ||
+                ((area < 0.0f) && ((w0 > 0.0f) || (w1 > 0.0f) || (w2 > 0.0f)))) {
+                continue;
+            }
+
+            const float alpha0 = w0 * inv_area;
+            const float alpha1 = w1 * inv_area;
+            const float alpha2 = w2 * inv_area;
+            const int src_x = clamp_to_range((int)SDL_floorf((alpha0 * quad->src_u[i0]) + (alpha1 * quad->src_u[i1]) +
+                                                             (alpha2 * quad->src_u[i2])),
+                                             0,
+                                             src_surface->w - 1);
+            const int src_y = clamp_to_range((int)SDL_floorf((alpha0 * quad->src_v[i0]) + (alpha1 * quad->src_v[i1]) +
+                                                             (alpha2 * quad->src_v[i2])),
+                                             0,
+                                             src_surface->h - 1);
+            const Uint32 src_pixel = src_pixels[(src_y * src_pitch) + src_x];
+            const Uint32 src_a = (src_pixel >> 24) & 0xFFu;
+            if (src_a == 0u) {
+                continue;
+            }
+            if (src_a == 0xFFu) {
+                dst_row[x] = src_pixel;
+                continue;
+            }
+            dst_row[x] = blend_argb8888(dst_row[x], src_pixel);
+        }
+    }
+
+    return true;
+}
+
+static bool raster_textured_translated_triangle_to_software_frame(const SDL_Surface* src_surface,
+                                                                  const SoftwareFrameTexturedTranslatedQuad* quad,
+                                                                  int i0,
+                                                                  int i1,
+                                                                  int i2) {
+    if ((src_surface == NULL) || (software_frame_surface == NULL) || (quad == NULL)) {
+        return false;
+    }
+
+    const int min_y = clamp_to_range(
+        SDL_min(SDL_min(quad->dst_y[i0], quad->dst_y[i1]), quad->dst_y[i2]), 0, cps3_height - 1);
+    const int max_y = clamp_to_range(
+        SDL_max(SDL_max(quad->dst_y[i0], quad->dst_y[i1]), quad->dst_y[i2]), 0, cps3_height - 1);
+    if (max_y < min_y) {
+        return true;
+    }
+
+    const Uint32* src_pixels = (const Uint32*)src_surface->pixels;
+    Uint32* dst_pixels = (Uint32*)software_frame_surface->pixels;
+    const int src_pitch = src_surface->pitch / (int)sizeof(Uint32);
+    const int dst_pitch = software_frame_surface->pitch / (int)sizeof(Uint32);
+    const int indices[3] = { i0, i1, i2 };
+    for (int y = min_y; y <= max_y; y++) {
+        const float py = (float)y + 0.5f;
+        float intersections[2] = { 0.0f, 0.0f };
+        int intersection_count = 0;
+        for (int edge_index = 0; edge_index < 3; edge_index++) {
+            const int start = indices[edge_index];
+            const int end = indices[(edge_index + 1) % 3];
+            const float y0 = (float)quad->dst_y[start];
+            const float y1 = (float)quad->dst_y[end];
+            if (nearly_equal(y0, y1)) {
+                continue;
+            }
+            const float edge_min_y = SDL_min(y0, y1);
+            const float edge_max_y = SDL_max(y0, y1);
+            if ((py < edge_min_y) || (py >= edge_max_y)) {
+                continue;
+            }
+            const float t = (py - y0) / (y1 - y0);
+            intersections[intersection_count++] =
+                (float)quad->dst_x[start] + (t * (float)(quad->dst_x[end] - quad->dst_x[start]));
+            if (intersection_count == 2) {
+                break;
+            }
+        }
+        if (intersection_count < 2) {
+            continue;
+        }
+        if (intersections[0] > intersections[1]) {
+            const float swap = intersections[0];
+            intersections[0] = intersections[1];
+            intersections[1] = swap;
+        }
+
+        const int dst_x0 = clamp_to_range((int)SDL_ceilf(intersections[0] - 0.5f), 0, cps3_width);
+        const int dst_x1 = clamp_to_range((int)SDL_floorf(intersections[1] - 0.5f) + 1, 0, cps3_width);
+        if (dst_x1 <= dst_x0) {
+            continue;
+        }
+
+        const int src_y = y + quad->src_dy;
+        if ((src_y < 0) || (src_y >= src_surface->h)) {
+            continue;
+        }
+        const Uint32* src_row = src_pixels + (src_y * src_pitch);
+        Uint32* dst_row = dst_pixels + (y * dst_pitch);
+        for (int x = dst_x0; x < dst_x1; x++) {
+            const int src_x = x + quad->src_dx;
+            if ((src_x < 0) || (src_x >= src_surface->w)) {
+                continue;
+            }
+            const Uint32 src_pixel = src_row[src_x];
+            const Uint32 src_a = (src_pixel >> 24) & 0xFFu;
+            if (src_a == 0u) {
+                continue;
+            }
+            if (src_a == 0xFFu) {
+                dst_row[x] = src_pixel;
+                continue;
+            }
+            dst_row[x] = blend_argb8888(dst_row[x], src_pixel);
+        }
+    }
+
+    return true;
+}
+
+static bool raster_textured_translated_quad_to_software_frame(const RenderTask* task) {
+    if ((task == NULL) || (software_frame_surface == NULL) || (task->software_source_surface == NULL)) {
+        return false;
+    }
+
+    SoftwareFrameTexturedTranslatedQuad quad;
+    if (!try_resolve_geometry_task_as_software_frame_translated_quad(task, &quad)) {
+        return false;
+    }
+
+    SDL_Surface* src_surface = task->software_source_surface;
+    bool src_locked = false;
+    if (SDL_MUSTLOCK(src_surface)) {
+        if (!SDL_LockSurface(src_surface)) {
+            return false;
+        }
+        src_locked = true;
+    }
+
+    const Uint64 sample_start_counter =
+        begin_perf_capture_raster_bucket_sample(SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_GENERIC_TEXTURED);
+    const bool ok = raster_textured_translated_triangle_to_software_frame(src_surface, &quad, 0, 1, 2) &&
+                    raster_textured_translated_triangle_to_software_frame(src_surface, &quad, 1, 2, 3);
+    note_perf_capture_raster_bucket_sample(SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_GENERIC_TEXTURED,
+                                           task,
+                                           perf_capture_counter_delta_to_ns(
+                                               sample_start_counter, SDL_GetPerformanceCounter()));
+    if (src_locked) {
+        SDL_UnlockSurface(src_surface);
+    }
+    return ok;
+}
+
+static bool raster_textured_affine_quad_to_software_frame(const RenderTask* task) {
+    if ((task == NULL) || (software_frame_surface == NULL) || (task->software_source_surface == NULL)) {
+        return false;
+    }
+
+    SoftwareFrameTexturedAffineQuad quad;
+    if (!try_resolve_geometry_task_as_software_frame_affine_quad(task, &quad)) {
+        return false;
+    }
+
+    SDL_Surface* src_surface = task->software_source_surface;
+    bool src_locked = false;
+    if (SDL_MUSTLOCK(src_surface)) {
+        if (!SDL_LockSurface(src_surface)) {
+            return false;
+        }
+        src_locked = true;
+    }
+
+    const Uint64 sample_start_counter =
+        begin_perf_capture_raster_bucket_sample(SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_GENERIC_TEXTURED);
+    const bool ok = raster_textured_triangle_to_software_frame(src_surface, &quad, 0, 1, 2) &&
+                    raster_textured_triangle_to_software_frame(src_surface, &quad, 1, 2, 3);
+    note_perf_capture_raster_bucket_sample(SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_GENERIC_TEXTURED,
+                                           task,
+                                           perf_capture_counter_delta_to_ns(
+                                               sample_start_counter, SDL_GetPerformanceCounter()));
+    if (src_locked) {
+        SDL_UnlockSurface(src_surface);
+    }
+    return ok;
+}
+
 static bool raster_solid_task_to_software_frame(const RenderTask* task) {
     if ((task == NULL) || (software_frame_surface == NULL)) {
         return false;
@@ -4071,7 +4761,9 @@ static bool render_frame_to_software_surface(void) {
             RenderTask rect_task;
             if (try_resolve_geometry_task_as_rect_copy(task, &rect_task)) {
                 resolved_task = rect_task;
-            } else if (!try_resolve_geometry_task_as_software_frame_parallelogram(task, NULL)) {
+            } else if (!try_resolve_geometry_task_as_software_frame_parallelogram(task, NULL) &&
+                       !try_resolve_geometry_task_as_software_frame_translated_quad(task, NULL) &&
+                       !try_resolve_geometry_task_as_software_frame_affine_quad(task, NULL)) {
                 note_software_frame_eligibility(task, SOFTWARE_FRAME_FALLBACK_REASON_GEOMETRY);
                 frame_supported = false;
                 continue;
@@ -4113,18 +4805,35 @@ static bool render_frame_to_software_surface(void) {
         dst_locked = true;
     }
 
-    for (int i = 0; i < render_task_count; i++) {
-        const RenderTask* task = &software_frame_resolved_tasks[i];
+    for (int i = 0; i < render_task_count;) {
+        RenderTask merged_task = software_frame_resolved_tasks[i];
+        SoftwareFrameRectStripMergeAxis merge_axis = SOFTWARE_FRAME_RECT_STRIP_MERGE_AXIS_NONE;
+        int next_task_index = i + 1;
+
+        if ((merged_task.type == RENDER_TASK_TYPE_TEXTURED_RECT) && (merged_task.texture != NULL)) {
+            while ((next_task_index < render_task_count) &&
+                   try_merge_software_frame_rect_tasks(
+                       &merged_task, &software_frame_resolved_tasks[next_task_index], software_frame_surface, &merge_axis)) {
+                next_task_index += 1;
+            }
+        }
+
+        const RenderTask* task = &merged_task;
         const bool ok = (task->type == RENDER_TASK_TYPE_TEXTURED_RECT)
                             ? raster_textured_task_to_software_frame(task)
-                            : ((task->texture != NULL) ? raster_textured_parallelogram_to_software_frame(task)
-                                                       : raster_solid_task_to_software_frame(task));
+                            : ((task->texture != NULL)
+                                   ? (raster_textured_parallelogram_to_software_frame(task) ||
+                                      raster_textured_translated_quad_to_software_frame(task) ||
+                                      raster_textured_affine_quad_to_software_frame(task))
+                                   : raster_solid_task_to_software_frame(task));
         if (!ok) {
             if (dst_locked) {
                 SDL_UnlockSurface(software_frame_surface);
             }
             return false;
         }
+
+        i = next_task_index;
     }
 
     if (dst_locked) {
@@ -4197,6 +4906,7 @@ static void flush_rect_texture_strip_group_stats(int* strip_length, int* strip_r
 
     *strip_length = 0;
 }
+#endif
 
 static bool rect_tasks_have_matching_strip_basics(const RenderTask* prev, const RenderTask* next) {
     return (prev != NULL) && (next != NULL) && (prev->type == RENDER_TASK_TYPE_TEXTURED_RECT) &&
@@ -4267,7 +4977,6 @@ static bool can_merge_rect_tasks_vertically(const RenderTask* prev, const Render
            nearly_equal(prev->dst_rect.y + prev->dst_rect.h, next->dst_rect.y) &&
            rect_task_source_edges_touch(prev, next, false);
 }
-#endif
 
 #if ENABLE_PERF_TELEMETRY
 static void flush_rect_texture_run_stats(RectRunTelemetryState* state) {
