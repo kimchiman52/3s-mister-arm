@@ -21,6 +21,9 @@ Options:
   --perf-wait-test-phase <name>
                          Delay capture until the test runner reaches the named phase
                          (title, menu, character-select-transition, character-select, game-transition, game, game-input-active, wipe-transition-type1).
+  --perf-wait-runtime-state <name>
+                         Delay capture until the runtime reaches the named state
+                         (attract-demo-logo).
   --test-scene-preset <name>
                          Named scripted gameplay preset (stage-heavy, effect-heavy, super-heavy).
   --test-p1-character <name-or-id>
@@ -120,6 +123,11 @@ is_supported_perf_wait_test_phase() {
         [ "$value" = "character-select-transition" ] || [ "$value" = "character-select" ] ||
         [ "$value" = "game-transition" ] || [ "$value" = "game" ] || [ "$value" = "game-input-active" ] ||
         [ "$value" = "wipe-transition-type1" ]
+}
+
+is_supported_perf_wait_runtime_state() {
+    local value="$1"
+    [ "$value" = "attract-demo-logo" ]
 }
 
 apply_test_scene_preset_defaults() {
@@ -238,6 +246,7 @@ gameplay_warmup=120
 gameplay_warmup_explicit=0
 perf_basic=0
 perf_wait_test_phase=""
+perf_wait_runtime_state=""
 test_scene_preset=""
 test_p1_character=""
 test_p2_character=""
@@ -279,6 +288,10 @@ while [ "$#" -gt 0 ]; do
         ;;
     --perf-wait-test-phase)
         perf_wait_test_phase="$2"
+        shift 2
+        ;;
+    --perf-wait-runtime-state)
+        perf_wait_runtime_state="$2"
         shift 2
         ;;
     --test-scene-preset)
@@ -381,8 +394,18 @@ if [ -n "$perf_wait_test_phase" ] && ! is_supported_perf_wait_test_phase "$perf_
     exit 2
 fi
 
+if [ -n "$perf_wait_runtime_state" ] && ! is_supported_perf_wait_runtime_state "$perf_wait_runtime_state"; then
+    echo "error: --perf-wait-runtime-state must be attract-demo-logo." >&2
+    exit 2
+fi
+
 if [ -n "$test_scene_preset" ] && ! is_supported_test_scene_preset "$test_scene_preset"; then
     echo "error: --test-scene-preset must be one of stage-heavy, effect-heavy, or super-heavy." >&2
+    exit 2
+fi
+
+if [ -n "$perf_wait_test_phase" ] && [ -n "$perf_wait_runtime_state" ]; then
+    echo "error: --perf-wait-test-phase cannot be combined with --perf-wait-runtime-state." >&2
     exit 2
 fi
 
@@ -393,13 +416,19 @@ if [ "$test_preserve_game_transition" -eq 1 ] &&
     exit 2
 fi
 
-if [ "$gameplay_idle" -eq 1 ] && [ -n "$perf_wait_test_phase" ]; then
-    echo "error: --gameplay-idle cannot be combined with --perf-wait-test-phase." >&2
+if [ "$gameplay_idle" -eq 1 ] && { [ -n "$perf_wait_test_phase" ] || [ -n "$perf_wait_runtime_state" ]; }; then
+    echo "error: --gameplay-idle cannot be combined with --perf-wait-test-phase or --perf-wait-runtime-state." >&2
     exit 2
 fi
 
-if [ -n "$perf_wait_test_phase" ] && [ "$gameplay_warmup_explicit" -eq 0 ]; then
+if { [ -n "$perf_wait_test_phase" ] || [ -n "$perf_wait_runtime_state" ]; } && [ "$gameplay_warmup_explicit" -eq 0 ]; then
     gameplay_warmup=0
+fi
+
+if [ -n "$perf_wait_runtime_state" ] &&
+    { [ "$have_test_overrides" -eq 1 ] || [ -n "$test_scene_preset" ] || [ "$test_preserve_game_transition" -eq 1 ]; }; then
+    echo "error: --perf-wait-runtime-state cannot be combined with test-runner scene overrides or preserved transitions." >&2
+    exit 2
 fi
 
 if [ "$have_test_overrides" -eq 1 ] && [ "$gameplay_idle" -ne 1 ] && [ -z "$test_scene_preset" ]; then
@@ -493,6 +522,10 @@ fi
 
 if [ -n "$perf_wait_test_phase" ]; then
     extra_app_args="${extra_app_args} --perf-wait-test-phase '${perf_wait_test_phase}' --perf-warmup '${gameplay_warmup}'"
+fi
+
+if [ -n "$perf_wait_runtime_state" ]; then
+    extra_app_args="${extra_app_args} --perf-wait-runtime-state '${perf_wait_runtime_state}' --perf-warmup '${gameplay_warmup}'"
 fi
 
 if [ -n "$test_scene_preset" ]; then
@@ -630,6 +663,7 @@ captured_p2_super_art=""
 captured_software_frame_mode=""
 captured_test_phase=""
 captured_wait_test_phase=""
+captured_wait_runtime_state=""
 if [ -n "$capture_log_line" ]; then
     captured_stage_id="$(extract_perf_log_field "stage_id" "$capture_log_line")"
     captured_test_stage_override="$(extract_perf_log_field "test_stage_override" "$capture_log_line")"
@@ -639,6 +673,7 @@ if [ -n "$capture_log_line" ]; then
     captured_p2_super_art="$(extract_perf_log_field "p2_super_art" "$capture_log_line")"
     captured_test_phase="$(extract_perf_log_string_field "test_phase" "$capture_log_line")"
     captured_wait_test_phase="$(extract_perf_log_string_field "wait_test_phase" "$capture_log_line")"
+    captured_wait_runtime_state="$(extract_perf_log_string_field "wait_runtime_state" "$capture_log_line")"
 fi
 if [ -n "$mode_log_line" ]; then
     captured_software_frame_mode="$(extract_perf_log_string_field "software_frame_mode" "$mode_log_line")"
@@ -654,6 +689,7 @@ if command -v jq >/dev/null 2>&1; then
     metadata_software_frame_mode="$captured_software_frame_mode"
     metadata_capture_start_test_phase="$captured_test_phase"
     metadata_perf_wait_test_phase="$captured_wait_test_phase"
+    metadata_perf_wait_runtime_state="$captured_wait_runtime_state"
     if [ -n "$captured_stage_id" ] && [ "$captured_stage_id" -ge 0 ]; then
         metadata_stage_id="$captured_stage_id"
     fi
@@ -688,6 +724,9 @@ if command -v jq >/dev/null 2>&1; then
     if [ -z "$metadata_perf_wait_test_phase" ] && [ -n "$perf_wait_test_phase" ]; then
         metadata_perf_wait_test_phase="$perf_wait_test_phase"
     fi
+    if [ -z "$metadata_perf_wait_runtime_state" ] && [ -n "$perf_wait_runtime_state" ]; then
+        metadata_perf_wait_runtime_state="$perf_wait_runtime_state"
+    fi
     if [ "$metadata_perf_wait_test_phase" = "game-input-active" ] &&
         { [ -z "$metadata_capture_start_test_phase" ] || [ "$metadata_capture_start_test_phase" = "game" ]; }; then
         metadata_capture_start_test_phase="game-input-active"
@@ -700,6 +739,7 @@ if command -v jq >/dev/null 2>&1; then
         --arg software_frame_mode "$metadata_software_frame_mode" \
         --arg capture_start_test_phase "$metadata_capture_start_test_phase" \
         --arg perf_wait_test_phase "$metadata_perf_wait_test_phase" \
+        --arg perf_wait_runtime_state "$metadata_perf_wait_runtime_state" \
         --argjson stage_id "$metadata_stage_id" \
         --argjson test_stage_override "$metadata_test_stage_override" \
         --argjson p1_character "$metadata_p1_character" \
@@ -709,7 +749,7 @@ if command -v jq >/dev/null 2>&1; then
         --argjson p1_super_full "$(if [ "$test_p1_super_full" -eq 1 ]; then printf 'true'; else printf 'false'; fi)" \
         --argjson preserve_game_transition "$(if [ "$test_preserve_game_transition" -eq 1 ]; then printf 'true'; else printf 'false'; fi)" \
         --argjson delay_gameplay_inputs_until_active "$(if [ "$test_delay_gameplay_inputs_until_active" -eq 1 ]; then printf 'true'; else printf 'false'; fi)" \
-        '.metadata = ((.metadata // {}) + {scene: $scene, test_scene_preset: (if ($test_scene_preset | length) > 0 then $test_scene_preset else null end), software_frame_mode: (if ($software_frame_mode | length) > 0 then $software_frame_mode else null end), capture_start_test_phase: (if ($capture_start_test_phase | length) > 0 and $capture_start_test_phase != "(none)" then $capture_start_test_phase else null end), perf_wait_test_phase: (if ($perf_wait_test_phase | length) > 0 and $perf_wait_test_phase != "(none)" then $perf_wait_test_phase else null end), stage_id: $stage_id, test_stage_override: $test_stage_override, p1_character: $p1_character, p2_character: $p2_character, p1_super_art: $p1_super_art, p2_super_art: $p2_super_art, test_p1_super_full: $p1_super_full, test_preserve_game_transition: $preserve_game_transition, test_delay_gameplay_inputs_until_active: $delay_gameplay_inputs_until_active})' \
+        '.metadata = ((.metadata // {}) + {scene: $scene, test_scene_preset: (if ($test_scene_preset | length) > 0 then $test_scene_preset else null end), software_frame_mode: (if ($software_frame_mode | length) > 0 then $software_frame_mode else null end), capture_start_test_phase: (if ($capture_start_test_phase | length) > 0 and $capture_start_test_phase != "(none)" then $capture_start_test_phase else null end), perf_wait_test_phase: (if ($perf_wait_test_phase | length) > 0 and $perf_wait_test_phase != "(none)" then $perf_wait_test_phase else null end), perf_wait_runtime_state: (if ($perf_wait_runtime_state | length) > 0 and $perf_wait_runtime_state != "(none)" then $perf_wait_runtime_state else null end), stage_id: $stage_id, test_stage_override: $test_stage_override, p1_character: $p1_character, p2_character: $p2_character, p1_super_art: $p1_super_art, p2_super_art: $p2_super_art, test_p1_super_full: $p1_super_full, test_preserve_game_transition: $preserve_game_transition, test_delay_gameplay_inputs_until_active: $delay_gameplay_inputs_until_active})' \
         "${local_output_path}" >"${temp_output_path}"
     mv "${temp_output_path}" "${local_output_path}"
 fi
@@ -730,12 +770,13 @@ if command -v jq >/dev/null 2>&1; then
     metadata_preset="$(jq -r '.metadata.test_scene_preset // empty' "${local_output_path}")"
     metadata_mode="$(jq -r '.metadata.software_frame_mode // empty' "${local_output_path}")"
     metadata_test_phase="$(jq -r '.metadata.capture_start_test_phase // empty' "${local_output_path}")"
+    metadata_runtime_state="$(jq -r '.metadata.perf_wait_runtime_state // empty' "${local_output_path}")"
 
-    printf 'Perf summary: tag=%s scene=%s fps=%s frame_mean_ms=%s frame_max_ms=%s update_mean_ms=%s render_mean_ms=%s present_mean_ms=%s stage_id=%s preset=%s software_frame_mode=%s test_phase=%s\n' \
+    printf 'Perf summary: tag=%s scene=%s fps=%s frame_mean_ms=%s frame_max_ms=%s update_mean_ms=%s render_mean_ms=%s present_mean_ms=%s stage_id=%s preset=%s software_frame_mode=%s test_phase=%s runtime_state=%s\n' \
         "$tag" "$scene" "${fps_mean:-unknown}" "${frame_mean_ms:-unknown}" "${frame_max_ms:-unknown}" \
         "${update_mean_ms:-unknown}" "${render_mean_ms:-unknown}" "${present_mean_ms:-unknown}" \
         "${metadata_stage_id:-unknown}" "${metadata_preset:-none}" "${metadata_mode:-unknown}" \
-        "${metadata_test_phase:-unknown}"
+        "${metadata_test_phase:-unknown}" "${metadata_runtime_state:-none}"
 
     software_frame_modulation_summary="$(jq -r '
         if (.metrics.software_frame_fast_non_integer_alpha_only_pixels.mean // null) == null then
@@ -905,5 +946,24 @@ if command -v jq >/dev/null 2>&1; then
     ' "${local_output_path}")"
     if [ -n "$title_state_summary" ]; then
         printf '%s\n' "$title_state_summary"
+    fi
+
+    attract_demo_logo_summary="$(jq -r '
+        if (.attract_demo_logo_state // null) == null then
+            empty
+        else
+            "Attract demo logo: " +
+            "start_demo_flag=\(.attract_demo_logo_state.capture_start_demo_flag // 0) " +
+            "start_effect_index=\((.attract_demo_logo_state.capture_start_effect_index // "none") | tostring) " +
+            "start_routine2=\((.attract_demo_logo_state.capture_start_routine2 // "none") | tostring) " +
+            "start_direction=\((.attract_demo_logo_state.capture_start_direction // "none") | tostring) " +
+            "start_dir_timer=\((.attract_demo_logo_state.capture_start_dir_timer // "none") | tostring) " +
+            "active_frames=\(.attract_demo_logo_state.active_frames_total // 0) " +
+            "active_first=\((.attract_demo_logo_state.active_first_frame // "none") | tostring) " +
+            "max_direction=\((.attract_demo_logo_state.max_direction // "none") | tostring)"
+        end
+    ' "${local_output_path}")"
+    if [ -n "$attract_demo_logo_summary" ]; then
+        printf '%s\n' "$attract_demo_logo_summary"
     fi
 fi

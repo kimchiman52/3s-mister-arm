@@ -14,6 +14,7 @@
 #include "port/sdl/sdl_pad.h"
 #include "port/sound/adx.h"
 #include "sf33rd/AcrSDK/ps2/foundaps2.h"
+#include "sf33rd/Source/Game/effect/effect.h"
 #include "sf33rd/Source/Game/engine/plcnt.h"
 #include "sf33rd/Source/Game/engine/pls03.h"
 #include "sf33rd/Source/Game/engine/workuser.h"
@@ -79,6 +80,13 @@ static bool use_fbdev_only_present = false;
 static bool use_native_render_path = false;
 static bool software_frame_mode_enabled = false;
 #if ENABLE_PERF_TELEMETRY
+typedef struct PerfCaptureDemoLogoState {
+    int effect_index;
+    int routine2;
+    int direction;
+    int dir_timer;
+} PerfCaptureDemoLogoState;
+
 static bool perf_capture_enabled = false;
 static bool perf_capture_completed = false;
 static bool perf_capture_basic_mode = false;
@@ -223,6 +231,11 @@ static int perf_capture_start_opening_r_no_0 = 0;
 static int perf_capture_start_opening_r_no_1 = 0;
 static int perf_capture_start_opening_r_no_2 = 0;
 static int perf_capture_start_opening_free_work = 0;
+static int perf_capture_start_demo_flag = 0;
+static int perf_capture_start_demo_logo_effect_index = -1;
+static int perf_capture_start_demo_logo_routine2 = -1;
+static int perf_capture_start_demo_logo_direction = -1;
+static int perf_capture_start_demo_logo_dir_timer = -1;
 static Uint64 perf_break_into_frames_total = 0;
 static int perf_break_into_first_frame = -1;
 static Uint64 perf_hnc_active_frames_total = 0;
@@ -233,6 +246,9 @@ static int perf_wipe_type1_active_first_frame = -1;
 static int perf_wipe_type1_max_limit = 0;
 static Uint64 perf_title_logo_active_frames_total = 0;
 static int perf_title_logo_active_first_frame = -1;
+static Uint64 perf_demo_logo_active_frames_total = 0;
+static int perf_demo_logo_active_first_frame = -1;
+static int perf_demo_logo_max_direction = -1;
 static Uint64 perf_software_frame_mode_enabled_frames = 0;
 static Uint64 perf_software_frame_surface_ready_frames = 0;
 static Uint64 perf_software_frame_owned_frames = 0;
@@ -640,12 +656,60 @@ static int classify_perf_capture_ready_routine1_bucket(int routine1) {
     return PERF_SUPER_ART_READY_ROUTINE1_BUCKET_OTHER;
 }
 
+static bool get_perf_capture_demo_logo_state(PerfCaptureDemoLogoState* state) {
+    if (state != NULL) {
+        state->effect_index = -1;
+        state->routine2 = -1;
+        state->direction = -1;
+        state->dir_timer = -1;
+    }
+
+    for (int i = 0; i < EFFECT_MAX; i++) {
+        const WORK* work = (const WORK*)frw[i];
+        if (work->be_flag == 0 || work->dead_f != 0) {
+            continue;
+        }
+        if (work->id != 58 || work->work_id != 16 || work->routine_no[1] != 10) {
+            continue;
+        }
+
+        const WORK_Other* effect = (const WORK_Other*)work;
+        if (effect->wu.direction <= 0) {
+            continue;
+        }
+
+        if (state != NULL) {
+            state->effect_index = i;
+            state->routine2 = effect->wu.routine_no[2];
+            state->direction = effect->wu.direction;
+            state->dir_timer = effect->wu.dir_timer;
+        }
+        return true;
+    }
+
+    return false;
+}
+
 static bool perf_capture_title_logo_active(void) {
     return title_tex_flag != 0;
 }
 
+bool SDLApp_IsPerfRuntimeStateActive(const char* runtime_state_name) {
+    if (runtime_state_name == NULL) {
+        return false;
+    }
+
+    if (SDL_strcmp(runtime_state_name, "attract-demo-logo") == 0) {
+        return get_perf_capture_demo_logo_state(NULL);
+    }
+
+    return false;
+}
+
 static void snapshot_perf_capture_transition_start_state(void) {
     const struct _TASK* menu_task = &task[TASK_MENU];
+    PerfCaptureDemoLogoState demo_logo_state;
+    const bool demo_logo_active = get_perf_capture_demo_logo_state(&demo_logo_state);
 
     for (int i = 0; i < 4; i++) {
         perf_capture_start_g_no[i] = G_No[i];
@@ -665,6 +729,11 @@ static void snapshot_perf_capture_transition_start_state(void) {
     perf_capture_start_opening_r_no_1 = op_w.r_no_1;
     perf_capture_start_opening_r_no_2 = op_w.r_no_2;
     perf_capture_start_opening_free_work = op_w.free_work;
+    perf_capture_start_demo_flag = Demo_Flag;
+    perf_capture_start_demo_logo_effect_index = demo_logo_active ? demo_logo_state.effect_index : -1;
+    perf_capture_start_demo_logo_routine2 = demo_logo_active ? demo_logo_state.routine2 : -1;
+    perf_capture_start_demo_logo_direction = demo_logo_active ? demo_logo_state.direction : -1;
+    perf_capture_start_demo_logo_dir_timer = demo_logo_active ? demo_logo_state.dir_timer : -1;
 }
 
 static void note_perf_capture_transition_state(int frame_index) {
@@ -706,9 +775,25 @@ static void note_perf_capture_title_state(int frame_index) {
     }
 }
 
+static void note_perf_capture_demo_logo_state(int frame_index) {
+    PerfCaptureDemoLogoState demo_logo_state;
+    if (!get_perf_capture_demo_logo_state(&demo_logo_state)) {
+        return;
+    }
+
+    perf_demo_logo_active_frames_total += 1;
+    if (perf_demo_logo_active_first_frame < 0) {
+        perf_demo_logo_active_first_frame = frame_index;
+    }
+    if (demo_logo_state.direction > perf_demo_logo_max_direction) {
+        perf_demo_logo_max_direction = demo_logo_state.direction;
+    }
+}
+
 static void note_perf_capture_test_state(int frame_index) {
     note_perf_capture_transition_state(frame_index);
     note_perf_capture_title_state(frame_index);
+    note_perf_capture_demo_logo_state(frame_index);
 
     for (int player = 0; player < 2; player++) {
         const int super_art_stock = get_perf_capture_super_art_stock(player);
@@ -930,6 +1015,11 @@ static void perf_capture_reset_storage(void) {
     perf_capture_start_opening_r_no_1 = 0;
     perf_capture_start_opening_r_no_2 = 0;
     perf_capture_start_opening_free_work = 0;
+    perf_capture_start_demo_flag = 0;
+    perf_capture_start_demo_logo_effect_index = -1;
+    perf_capture_start_demo_logo_routine2 = -1;
+    perf_capture_start_demo_logo_direction = -1;
+    perf_capture_start_demo_logo_dir_timer = -1;
     perf_break_into_frames_total = 0;
     perf_break_into_first_frame = -1;
     perf_hnc_active_frames_total = 0;
@@ -940,6 +1030,9 @@ static void perf_capture_reset_storage(void) {
     perf_wipe_type1_max_limit = 0;
     perf_title_logo_active_frames_total = 0;
     perf_title_logo_active_first_frame = -1;
+    perf_demo_logo_active_frames_total = 0;
+    perf_demo_logo_active_first_frame = -1;
+    perf_demo_logo_max_direction = -1;
     perf_software_frame_mode_enabled_frames = 0;
     perf_software_frame_surface_ready_frames = 0;
     perf_software_frame_owned_frames = 0;
@@ -3158,6 +3251,50 @@ static void perf_capture_write_summary(void) {
         io_printf(io, "    \"title_logo_active_first_frame\": %d\n", perf_title_logo_active_first_frame);
     } else {
         io_printf(io, "    \"title_logo_active_first_frame\": null\n");
+    }
+    io_printf(io, "  },\n");
+    io_printf(io,
+              "  \"attract_demo_logo_state\": {\n"
+              "    \"capture_start_demo_flag\": %d,\n"
+              "    \"capture_start_effect_index\": ",
+              perf_capture_start_demo_flag);
+    if (perf_capture_start_demo_logo_effect_index >= 0) {
+        io_printf(io, "%d,\n", perf_capture_start_demo_logo_effect_index);
+    } else {
+        io_printf(io, "null,\n");
+    }
+    io_printf(io, "    \"capture_start_routine2\": ");
+    if (perf_capture_start_demo_logo_routine2 >= 0) {
+        io_printf(io, "%d,\n", perf_capture_start_demo_logo_routine2);
+    } else {
+        io_printf(io, "null,\n");
+    }
+    io_printf(io, "    \"capture_start_direction\": ");
+    if (perf_capture_start_demo_logo_direction >= 0) {
+        io_printf(io, "%d,\n", perf_capture_start_demo_logo_direction);
+    } else {
+        io_printf(io, "null,\n");
+    }
+    io_printf(io, "    \"capture_start_dir_timer\": ");
+    if (perf_capture_start_demo_logo_dir_timer >= 0) {
+        io_printf(io, "%d,\n", perf_capture_start_demo_logo_dir_timer);
+    } else {
+        io_printf(io, "null,\n");
+    }
+    io_printf(io,
+              "    \"active_frames_total\": %llu,\n",
+              (unsigned long long)perf_demo_logo_active_frames_total);
+    io_printf(io, "    \"active_first_frame\": ");
+    if (perf_demo_logo_active_first_frame >= 0) {
+        io_printf(io, "%d,\n", perf_demo_logo_active_first_frame);
+    } else {
+        io_printf(io, "null,\n");
+    }
+    io_printf(io, "    \"max_direction\": ");
+    if (perf_demo_logo_max_direction >= 0) {
+        io_printf(io, "%d\n", perf_demo_logo_max_direction);
+    } else {
+        io_printf(io, "null\n");
     }
     io_printf(io, "  },\n");
     io_printf(io, "  \"metrics\": {\n");

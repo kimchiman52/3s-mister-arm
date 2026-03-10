@@ -186,6 +186,13 @@ static void read_args(int argc, const char* argv[]) {
                    NULL,
                    0,
                    0),
+        OPT_STRING(0,
+                   "perf-wait-runtime-state",
+                   &configuration.perf.wait_for_runtime_state,
+                   "Delay perf capture until the runtime reaches the named state.",
+                   NULL,
+                   0,
+                   0),
         OPT_INTEGER(0,
                     "perf-warmup",
                     &configuration.perf.gameplay_warmup_frames,
@@ -301,6 +308,10 @@ static bool is_supported_perf_wait_test_phase(const char* phase_name) {
     return phase_name == NULL ||
            (TestRunner_IsSupportedPhaseName(phase_name) && SDL_strcmp(phase_name, "init") != 0);
 }
+
+static bool is_supported_perf_wait_runtime_state(const char* state_name) {
+    return state_name == NULL || SDL_strcmp(state_name, "attract-demo-logo") == 0;
+}
 #endif
 
 #if defined(ENABLE_NETPLAY)
@@ -324,8 +335,14 @@ static void verify_args() {
                             EXIT_CODE_RUNTIME_ERROR);
     }
 
-    if (configuration.perf.wait_for_gameplay && configuration.perf.wait_for_test_phase != NULL) {
-        error_out_with_code("--perf-wait-in-game cannot be combined with --perf-wait-test-phase.",
+    if (!is_supported_perf_wait_runtime_state(configuration.perf.wait_for_runtime_state)) {
+        error_out_with_code("--perf-wait-runtime-state must be attract-demo-logo.", EXIT_CODE_RUNTIME_ERROR);
+    }
+
+    if ((configuration.perf.wait_for_gameplay ? 1 : 0) + (configuration.perf.wait_for_test_phase != NULL ? 1 : 0) +
+            (configuration.perf.wait_for_runtime_state != NULL ? 1 : 0) >
+        1) {
+        error_out_with_code("--perf-wait-in-game, --perf-wait-test-phase, and --perf-wait-runtime-state are mutually exclusive.",
                             EXIT_CODE_RUNTIME_ERROR);
     }
 
@@ -543,12 +560,13 @@ static int loop() {
 
 #if ENABLE_PERF_TELEMETRY
     if ((configuration.perf.frame_count > 0) && !configuration.perf.basic_mode &&
-        (configuration.perf.wait_for_gameplay || configuration.perf.wait_for_test_phase != NULL)) {
+        (configuration.perf.wait_for_gameplay || configuration.perf.wait_for_test_phase != NULL ||
+         configuration.perf.wait_for_runtime_state != NULL)) {
         // Deferred full captures need pre-trigger registrations to preserve stable texture identities.
         SDLGameRenderer_SetPerfCaptureLogicalIdentityEnabled(true);
     }
     if (configuration.perf.frame_count > 0 && !configuration.perf.wait_for_gameplay &&
-        configuration.perf.wait_for_test_phase == NULL) {
+        configuration.perf.wait_for_test_phase == NULL && configuration.perf.wait_for_runtime_state == NULL) {
         SDLApp_ConfigurePerfCapture(configuration.perf.frame_count,
                                     configuration.perf.output_path,
                                     configuration.perf.scene,
@@ -568,10 +586,14 @@ static int loop() {
 
 #if ENABLE_PERF_TELEMETRY
         if (!perf_capture_started && configuration.perf.frame_count > 0 &&
-            (configuration.perf.wait_for_gameplay || configuration.perf.wait_for_test_phase != NULL)) {
-            const bool wait_condition_met = configuration.perf.wait_for_gameplay
-                                                ? mpp_w.inGame
-                                                : TestRunner_IsPhaseActive(configuration.perf.wait_for_test_phase);
+            (configuration.perf.wait_for_gameplay || configuration.perf.wait_for_test_phase != NULL ||
+             configuration.perf.wait_for_runtime_state != NULL)) {
+            const bool wait_condition_met =
+                configuration.perf.wait_for_gameplay
+                    ? mpp_w.inGame
+                    : ((configuration.perf.wait_for_test_phase != NULL)
+                           ? TestRunner_IsPhaseActive(configuration.perf.wait_for_test_phase)
+                           : SDLApp_IsPerfRuntimeStateActive(configuration.perf.wait_for_runtime_state));
 
             if (wait_condition_met) {
                 if (perf_wait_warmup_remaining > 0) {
@@ -584,7 +606,7 @@ static int loop() {
                     const int perf_p2_super_art = mpp_w.inGame ? Super_Arts[1] : -1;
                     SDL_Log("PERF capture start: in_game=%d warmup_frames=%d scene=%s detail_mode=%s stage_id=%d "
                             "test_stage_override=%d test_scene_preset=%s p1_character=%d p2_character=%d "
-                            "p1_super_art=%d p2_super_art=%d test_phase=%s wait_test_phase=%s "
+                            "p1_super_art=%d p2_super_art=%d test_phase=%s wait_test_phase=%s wait_runtime_state=%s "
                             "g_no=%d/%d/%d/%d e_no=%d/%d/%d/%d menu_task_condition=%d menu_r_no=%d/%d/%d/%d "
                             "break_into=%d hnc_num=%d exec_wipe=%d active_wipe_type=%d wipe_limit=%d",
                             mpp_w.inGame ? 1 : 0,
@@ -601,6 +623,8 @@ static int loop() {
                             TestRunner_GetPhaseName(),
                             configuration.perf.wait_for_test_phase != NULL ? configuration.perf.wait_for_test_phase
                                                                            : "(none)",
+                            configuration.perf.wait_for_runtime_state != NULL ? configuration.perf.wait_for_runtime_state
+                                                                              : "(none)",
                             G_No[0],
                             G_No[1],
                             G_No[2],

@@ -32,6 +32,7 @@ typedef struct PerfCaptureConfiguration {
     bool basic_mode;
     bool wait_for_gameplay;
     const char* wait_for_test_phase;
+    const char* wait_for_runtime_state;
     int gameplay_warmup_frames;
     bool software_frame_parity_check;
 } PerfCaptureConfiguration;
