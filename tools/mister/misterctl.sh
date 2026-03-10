@@ -19,9 +19,9 @@ Global options:
 Commands:
   exec --command <sh>        Run one remote shell command
   exec --script-file <path>  Run a local shell script remotely
-  deploy --src <path>        Rsync a package tree to the remote root
-  probe                      Run run-3sx.sh --probe-renderer-only
-  smoke                      Run a bounded launch-osd.sh smoke and tail logs
+  deploy --src <path>        Rsync a package tree to the remote root and refresh /media/fat/Scripts/3SX.sh
+  probe                      Run scripts/run-3sx.sh --probe-renderer-only
+  smoke                      Run a bounded scripts/launch-osd.sh smoke and tail logs
   health                     Run a short remote health command and verify SF33RD.AFS
 EOF
 }
@@ -138,17 +138,44 @@ deploy)
     mister_require_cmd rsync
     mister_lock_acquire
     mister_rsync_deploy "${src_path%/}/" "${host}" "${user}" "${password}" "${remote_root}/"
+    wrapper_cmd=$(cat <<EOF
+set -e
+mkdir -p /media/fat/Scripts '${remote_root}/logs'
+cat > /media/fat/Scripts/3SX.sh <<'SCRIPT_WRAPPER'
+#!/bin/sh
+set -eu
+
+LOG_DIR="/media/fat/games/3sx/logs"
+LOG_PATH="\${LOG_DIR}/osd-wrapper.log"
+
+mkdir -p "\${LOG_DIR}"
+
+{
+    echo "==== 3SX OSD wrapper ===="
+    date 2>/dev/null || true
+    echo "pid=\$\$ ppid=\$PPID"
+    echo "tty=\$(tty 2>&1 || true)"
+    echo "args=\$*"
+    echo "-------------------------"
+} >"\${LOG_PATH}"
+
+exec /media/fat/games/3sx/scripts/launch-osd.sh "\$@" >>"\${LOG_PATH}" 2>&1
+SCRIPT_WRAPPER
+chmod +x /media/fat/Scripts/3SX.sh
+EOF
+)
+    mister_ssh_exec "${host}" "${user}" "${password}" "${wrapper_cmd}"
     ;;
 probe)
     mister_lock_acquire
-    mister_ssh_exec "${host}" "${user}" "${password}" "'${remote_root}/run-3sx.sh' --probe-renderer-only"
+    mister_ssh_exec "${host}" "${user}" "${password}" "'${remote_root}/scripts/run-3sx.sh' --probe-renderer-only"
     ;;
 smoke)
     smoke_cmd=$(cat <<EOF
 set -e
 cd '${remote_root}'
 rm -f logs/last-run.log
-timeout 20 ./launch-osd.sh || rc=\$?
+timeout 20 ./scripts/launch-osd.sh || rc=\$?
 printf '__RUNTIME_RC__=%s\n' "\${rc:-0}"
 tail -n 40 logs/backend.log || true
 tail -n 40 logs/last-run.log || true

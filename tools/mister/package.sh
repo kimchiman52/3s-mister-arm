@@ -15,7 +15,7 @@ if [ ! -d "$INSTALL_PREFIX" ]; then
 fi
 
 rm -rf "$OUTPUT_DIR"
-mkdir -p "$OUTPUT_DIR/bin" "$OUTPUT_DIR/lib" "$OUTPUT_DIR/licenses" "$OUTPUT_DIR/resources"
+mkdir -p "$OUTPUT_DIR/bin" "$OUTPUT_DIR/lib" "$OUTPUT_DIR/licenses" "$OUTPUT_DIR/resources" "$OUTPUT_DIR/scripts"
 
 if [ -f "$INSTALL_PREFIX/bin/3sx" ]; then
     cp "$INSTALL_PREFIX/bin/3sx" "$OUTPUT_DIR/bin/3sx"
@@ -39,26 +39,28 @@ elif [ -d "$INSTALL_PREFIX/3SX.app/Contents/Resources/licenses" ]; then
     cp -a "$INSTALL_PREFIX/3SX.app/Contents/Resources/licenses/." "$OUTPUT_DIR/licenses/"
 fi
 
-cat > "$OUTPUT_DIR/run-3sx.sh" <<'LAUNCHER'
+cat > "$OUTPUT_DIR/scripts/run-3sx.sh" <<'LAUNCHER'
 #!/bin/sh
 set -eu
 
 SELF_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+APP_DIR="$(CDPATH= cd -- "${SELF_DIR}/.." && pwd)"
 
-export THREESX_HOME="${THREESX_HOME:-/media/fat/games/3sx}"
-export LD_LIBRARY_PATH="$SELF_DIR/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export THREESX_HOME="${THREESX_HOME:-$APP_DIR}"
+export LD_LIBRARY_PATH="$APP_DIR/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 export SDL_AUDIO_DRIVER="${SDL_AUDIO_DRIVER:-alsa}"
 export SDL_AUDIODRIVER="${SDL_AUDIODRIVER:-$SDL_AUDIO_DRIVER}"
 
-exec "$SELF_DIR/bin/3sx" "$@"
+exec "$APP_DIR/bin/3sx" "$@"
 LAUNCHER
 
-cat > "$OUTPUT_DIR/launch-osd.sh" <<'OSD_LAUNCHER'
+cat > "$OUTPUT_DIR/scripts/launch-osd.sh" <<'OSD_LAUNCHER'
 #!/bin/sh
 set -eu
 
 SELF_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
-LOG_DIR="$SELF_DIR/logs"
+APP_DIR="$(CDPATH= cd -- "${SELF_DIR}/.." && pwd)"
+LOG_DIR="$APP_DIR/logs"
 LOG_PATH="$LOG_DIR/last-run.log"
 
 mkdir -p "$LOG_DIR"
@@ -132,6 +134,23 @@ else
 fi
 OSD_LAUNCHER
 
-chmod +x "$OUTPUT_DIR/run-3sx.sh" "$OUTPUT_DIR/launch-osd.sh" "$OUTPUT_DIR/bin/3sx"
+cat > "$OUTPUT_DIR/run-3sx.sh" <<'RUN_WRAPPER'
+#!/bin/sh
+set -eu
+
+SELF_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+exec "$SELF_DIR/scripts/run-3sx.sh" "$@"
+RUN_WRAPPER
+
+cat > "$OUTPUT_DIR/launch-osd.sh" <<'OSD_WRAPPER'
+#!/bin/sh
+set -eu
+
+SELF_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+exec "$SELF_DIR/scripts/launch-osd.sh" "$@"
+OSD_WRAPPER
+
+chmod +x "$OUTPUT_DIR/run-3sx.sh" "$OUTPUT_DIR/launch-osd.sh" \
+    "$OUTPUT_DIR/scripts/run-3sx.sh" "$OUTPUT_DIR/scripts/launch-osd.sh" "$OUTPUT_DIR/bin/3sx"
 
 echo "MiSTer package created at: $OUTPUT_DIR"

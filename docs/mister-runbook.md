@@ -195,8 +195,12 @@ Output layout:
 - `build/mister-clean-package/bin/3sx`
 - `build/mister-telemetry-package/lib/*`
 - `build/mister-clean-package/lib/*`
-- `build/mister-telemetry-package/run-3sx.sh`
-- `build/mister-clean-package/run-3sx.sh`
+- `build/mister-telemetry-package/scripts/run-3sx.sh`
+- `build/mister-clean-package/scripts/run-3sx.sh`
+- `build/mister-telemetry-package/scripts/launch-osd.sh`
+- `build/mister-clean-package/scripts/launch-osd.sh`
+- `build/mister-telemetry-package/run-3sx.sh` and `build/mister-telemetry-package/launch-osd.sh` are compatibility wrappers
+- `build/mister-clean-package/run-3sx.sh` and `build/mister-clean-package/launch-osd.sh` are compatibility wrappers
 
 ## Deploy To MiSTer
 
@@ -209,6 +213,7 @@ Preferred remote entry point:
 - `tools/mister/misterctl.sh`
 
 The MiSTer SSH path is fragile on this target. Use `tools/mister/misterctl.sh` for deploy, probe, smoke, and ad hoc remote commands, and use `tools/mister/perf-sampler.sh` for captures. Both tools take a shared local lock so only one MiSTer remote workflow runs at a time.
+`misterctl.sh deploy` also refreshes the visible MiSTer OSD wrapper at `/media/fat/Scripts/3SX.sh`.
 
 Recommended sync command (preserves staged `SF33RD.AFS`):
 
@@ -254,21 +259,21 @@ Probe log path:
 For OSD launchers (`/media/fat/Scripts/*.sh`), call:
 
 ```bash
-/media/fat/games/3sx/launch-osd.sh
+/media/fat/Scripts/3SX.sh
 ```
 
 This keeps stdout/stderr out of the text console and writes logs to `/media/fat/games/3sx/logs/last-run.log`.
-`launch-osd.sh` also forces SDL dummy video + software renderer for stable stock-MiSTer OSD startup; fbdev presenter handles on-screen output.
+`/media/fat/Scripts/3SX.sh` delegates to the packaged OSD launcher, which forces SDL dummy video + software renderer for stable stock-MiSTer OSD startup; fbdev presenter handles on-screen output. The top-level `run-3sx.sh` and `launch-osd.sh` remain the user-facing app-local wrappers.
 
-Recommended OSD wrapper:
+Generated OSD wrapper:
 
 ```sh
 #!/bin/sh
 set -eu
-exec /media/fat/games/3sx/launch-osd.sh "$@"
+exec /media/fat/Scripts/3SX.sh "$@"
 ```
 
-Do not wrap `launch-osd.sh` in `openvt`, `chvt`, or another manual VT hop. On this MiSTer target that path can hang before `launch-osd.sh` starts, leaving the OSD frozen and producing no fresh `last-run.log`.
+Do not wrap `/media/fat/Scripts/3SX.sh` in `openvt`, `chvt`, or another manual VT hop. On this MiSTer target that path can hang before the launcher starts, leaving the OSD frozen and producing no fresh `last-run.log`.
 
 ## Performance Sampling
 
@@ -373,7 +378,7 @@ video-driver-order = dummy
 render-driver-order = software
 ```
 
-Use `launch-osd.sh` as-is for OSD boot. If you write a custom wrapper, mirror its `SDL_VIDEODRIVER`/`SDL_VIDEO_DRIVER`/`SDL_RENDER_DRIVER` exports.
+Use `/media/fat/Scripts/3SX.sh` as-is for OSD boot. If you write a custom wrapper, mirror its `SDL_VIDEODRIVER`/`SDL_VIDEO_DRIVER`/`SDL_RENDER_DRIVER` exports.
 
 ### Frozen OSD after selecting 3SX
 
@@ -385,11 +390,11 @@ Symptoms:
 
 Cause:
 
-- the OSD wrapper is trying to launch 3SX through `openvt` or another explicit VT switch, and the handoff wedges before `launch-osd.sh` starts
+- the OSD wrapper is trying to launch 3SX through `openvt` or another explicit VT switch, and the handoff wedges before `/media/fat/Scripts/3SX.sh` starts
 
 Fix:
 
-1. Use a direct wrapper that only execs `/media/fat/games/3sx/launch-osd.sh "$@"`.
+1. Use `/media/fat/Scripts/3SX.sh` directly, or a wrapper that only execs `/media/fat/Scripts/3SX.sh "$@"`.
 2. Do not add `openvt`, `chvt`, or backgrounding around the launcher.
 3. If you need to confirm the wrapper path ran, inspect `/media/fat/games/3sx/logs/osd-wrapper.log` and `/media/fat/games/3sx/logs/last-run.log`.
 
@@ -408,6 +413,6 @@ Symptoms:
 
 Fix:
 
-1. Launch through `/media/fat/games/3sx/launch-osd.sh` (or an OSD wrapper that calls it).
-2. Use `/media/fat/games/3sx/launch-osd.sh` (or match its SDL env exports exactly) so video/backend selection is deterministic.
+1. Launch through `/media/fat/Scripts/3SX.sh` (or an OSD wrapper that calls it).
+2. Use `/media/fat/Scripts/3SX.sh` (or match its SDL env exports exactly) so video/backend selection is deterministic.
 3. If startup says it failed to acquire Linux console/KD_GRAPHICS, run from MiSTer OSD/local console, not SSH.
