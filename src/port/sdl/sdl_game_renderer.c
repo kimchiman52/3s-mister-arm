@@ -67,6 +67,7 @@ static const int cps3_width = 384;
 static const int cps3_height = 224;
 static const int software_frame_full_height_diagonal_strip_max_width_pixels = 8;
 static const Uint64 software_frame_affine_quad_max_submitted_pixels = 4096u;
+static const Uint64 software_frame_full_texture_affine_quad_max_submitted_pixels = 196608u;
 static const Uint64 software_frame_non_integer_lookup_threshold_pixels = 384u;
 static const Uint64 software_surface_refresh_blit_sample_period = 32u;
 static const Uint64 software_frame_raster_sample_periods[SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_COUNT] = {
@@ -431,6 +432,13 @@ typedef struct SoftwareFrameTexturedAffineQuad {
     float src_v[4];
 } SoftwareFrameTexturedAffineQuad;
 
+typedef struct SoftwareFrameTexturedFloatAffineQuad {
+    float dst_x[4];
+    float dst_y[4];
+    float src_u[4];
+    float src_v[4];
+} SoftwareFrameTexturedFloatAffineQuad;
+
 typedef struct SoftwareFrameTexturedTranslatedQuad {
     int dst_x[4];
     int dst_y[4];
@@ -594,6 +602,8 @@ static bool try_resolve_solid_task_as_full_height_diagonal_strip(const RenderTas
                                                                  SoftwareFrameSolidDiagonalStrip* out_strip);
 static bool try_resolve_geometry_task_as_software_frame_parallelogram(
     const RenderTask* task, SoftwareFrameTexturedParallelogram* out_parallelogram);
+static bool try_resolve_geometry_task_as_software_frame_full_texture_affine_quad(
+    const RenderTask* task, SoftwareFrameTexturedFloatAffineQuad* out_quad);
 static bool try_resolve_geometry_task_as_software_frame_translated_quad(
     const RenderTask* task, SoftwareFrameTexturedTranslatedQuad* out_quad);
 static bool try_resolve_geometry_task_as_software_frame_affine_quad(
@@ -614,6 +624,7 @@ static Uint32 blend_argb8888(Uint32 dst_pixel, Uint32 src_pixel);
 static bool raster_full_height_diagonal_strip_to_software_frame(const SoftwareFrameSolidDiagonalStrip* strip,
                                                                 SDL_Surface* dst_surface);
 static bool raster_textured_parallelogram_to_software_frame(const RenderTask* task);
+static bool raster_textured_full_texture_affine_quad_to_software_frame(const RenderTask* task);
 static bool raster_textured_translated_quad_to_software_frame(const RenderTask* task);
 static bool raster_textured_affine_quad_to_software_frame(const RenderTask* task);
 static SDL_Surface* get_or_create_software_source_surface(unsigned int th);
@@ -3261,6 +3272,56 @@ static bool try_resolve_geometry_task_as_software_frame_parallelogram(
     return true;
 }
 
+static bool try_resolve_geometry_task_as_software_frame_full_texture_affine_quad(
+    const RenderTask* task, SoftwareFrameTexturedFloatAffineQuad* out_quad) {
+    if ((task == NULL) || (task->type != RENDER_TASK_TYPE_GEOMETRY) || (task->texture == NULL) ||
+        (task->software_source_surface == NULL) ||
+        (render_task_submitted_pixels(task) > software_frame_full_texture_affine_quad_max_submitted_pixels)) {
+        return false;
+    }
+
+    TexturedGeometryFallbackFamilyProfile profile;
+    if (!analyze_textured_geometry_fallback_task(task, &profile) || !profile.uniform_color || !profile.opaque_color ||
+        profile.rgb_mod || !profile.integer_source_rect || !profile.full_texture_source_rect ||
+        (profile.source_format != SDL_PIXELFORMAT_INDEX8) || (profile.source_x != 0) || (profile.source_y != 0) ||
+        (profile.source_w != 256) || (profile.source_h != 256)) {
+        return false;
+    }
+
+    const SDL_Surface* src_surface = task->software_source_surface;
+    if ((src_surface->w != profile.source_w) || (src_surface->h != profile.source_h)) {
+        return false;
+    }
+
+    // The Ibuki stage Genei-Jin regression is the same full-texture background family as the
+    // earlier stage-7 shear fix, but with fractional vertex positions that miss the exact row-copy
+    // path. Keep this admission narrow instead of opening generic geometry.
+    float min_u = task->vertices[0].tex_coord.x;
+    float max_u = min_u;
+    float min_v = task->vertices[0].tex_coord.y;
+    float max_v = min_v;
+    for (int i = 1; i < 4; i++) {
+        min_u = SDL_min(min_u, task->vertices[i].tex_coord.x);
+        max_u = SDL_max(max_u, task->vertices[i].tex_coord.x);
+        min_v = SDL_min(min_v, task->vertices[i].tex_coord.y);
+        max_v = SDL_max(max_v, task->vertices[i].tex_coord.y);
+    }
+    if (!textured_geometry_task_has_rect_uv(task, min_u, max_u, min_v, max_v)) {
+        return false;
+    }
+
+    if (out_quad != NULL) {
+        for (int i = 0; i < 4; i++) {
+            out_quad->dst_x[i] = task->vertices[i].position.x;
+            out_quad->dst_y[i] = task->vertices[i].position.y;
+            out_quad->src_u[i] = task->vertices[i].tex_coord.x * (float)src_surface->w;
+            out_quad->src_v[i] = task->vertices[i].tex_coord.y * (float)src_surface->h;
+        }
+    }
+
+    return true;
+}
+
 static bool try_resolve_geometry_task_as_software_frame_affine_quad(
     const RenderTask* task, SoftwareFrameTexturedAffineQuad* out_quad) {
     if ((task == NULL) || (task->type != RENDER_TASK_TYPE_GEOMETRY) || (task->texture == NULL) ||
@@ -3338,6 +3399,7 @@ static SoftwareFrameFallbackReason classify_software_frame_fallback_reason(const
 
     if ((task->type == RENDER_TASK_TYPE_GEOMETRY) && (task->texture != NULL)) {
         return (try_resolve_geometry_task_as_software_frame_parallelogram(task, NULL) ||
+                try_resolve_geometry_task_as_software_frame_full_texture_affine_quad(task, NULL) ||
                 try_resolve_geometry_task_as_software_frame_translated_quad(task, NULL) ||
                 try_resolve_geometry_task_as_software_frame_affine_quad(task, NULL))
                    ? SOFTWARE_FRAME_FALLBACK_REASON_NONE
@@ -4447,6 +4509,79 @@ static bool raster_textured_parallelogram_to_software_frame(const RenderTask* ta
     return true;
 }
 
+static bool raster_textured_float_triangle_to_software_frame(const SDL_Surface* src_surface,
+                                                             const SoftwareFrameTexturedFloatAffineQuad* quad,
+                                                             int i0,
+                                                             int i1,
+                                                             int i2) {
+    if ((src_surface == NULL) || (software_frame_surface == NULL) || (quad == NULL)) {
+        return false;
+    }
+
+    const float x0 = quad->dst_x[i0];
+    const float y0 = quad->dst_y[i0];
+    const float x1 = quad->dst_x[i1];
+    const float y1 = quad->dst_y[i1];
+    const float x2 = quad->dst_x[i2];
+    const float y2 = quad->dst_y[i2];
+    const float area = ((x1 - x0) * (y2 - y0)) - ((y1 - y0) * (x2 - x0));
+    if (SDL_fabsf(area) <= rect_task_epsilon) {
+        return true;
+    }
+
+    const int min_x = clamp_to_range((int)SDL_floorf(SDL_min(SDL_min(x0, x1), x2)), 0, cps3_width - 1);
+    const int max_x = clamp_to_range((int)SDL_ceilf(SDL_max(SDL_max(x0, x1), x2)) - 1, 0, cps3_width - 1);
+    const int min_y = clamp_to_range((int)SDL_floorf(SDL_min(SDL_min(y0, y1), y2)), 0, cps3_height - 1);
+    const int max_y = clamp_to_range((int)SDL_ceilf(SDL_max(SDL_max(y0, y1), y2)) - 1, 0, cps3_height - 1);
+    if ((max_x < min_x) || (max_y < min_y)) {
+        return true;
+    }
+
+    const float inv_area = 1.0f / area;
+    const Uint32* src_pixels = (const Uint32*)src_surface->pixels;
+    Uint32* dst_pixels = (Uint32*)software_frame_surface->pixels;
+    const int src_pitch = src_surface->pitch / (int)sizeof(Uint32);
+    const int dst_pitch = software_frame_surface->pitch / (int)sizeof(Uint32);
+    for (int y = min_y; y <= max_y; y++) {
+        Uint32* dst_row = dst_pixels + (y * dst_pitch);
+        const float py = (float)y + 0.5f;
+        for (int x = min_x; x <= max_x; x++) {
+            const float px = (float)x + 0.5f;
+            const float w0 = ((x1 - px) * (y2 - py)) - ((y1 - py) * (x2 - px));
+            const float w1 = ((x2 - px) * (y0 - py)) - ((y2 - py) * (x0 - px));
+            const float w2 = ((x0 - px) * (y1 - py)) - ((y0 - py) * (x1 - px));
+            if (((area > 0.0f) && ((w0 < 0.0f) || (w1 < 0.0f) || (w2 < 0.0f))) ||
+                ((area < 0.0f) && ((w0 > 0.0f) || (w1 > 0.0f) || (w2 > 0.0f)))) {
+                continue;
+            }
+
+            const float alpha0 = w0 * inv_area;
+            const float alpha1 = w1 * inv_area;
+            const float alpha2 = w2 * inv_area;
+            const int src_x = clamp_to_range((int)SDL_floorf((alpha0 * quad->src_u[i0]) + (alpha1 * quad->src_u[i1]) +
+                                                             (alpha2 * quad->src_u[i2])),
+                                             0,
+                                             src_surface->w - 1);
+            const int src_y = clamp_to_range((int)SDL_floorf((alpha0 * quad->src_v[i0]) + (alpha1 * quad->src_v[i1]) +
+                                                             (alpha2 * quad->src_v[i2])),
+                                             0,
+                                             src_surface->h - 1);
+            const Uint32 src_pixel = src_pixels[(src_y * src_pitch) + src_x];
+            const Uint32 src_a = (src_pixel >> 24) & 0xFFu;
+            if (src_a == 0u) {
+                continue;
+            }
+            if (src_a == 0xFFu) {
+                dst_row[x] = src_pixel;
+                continue;
+            }
+            dst_row[x] = blend_argb8888(dst_row[x], src_pixel);
+        }
+    }
+
+    return true;
+}
+
 static bool raster_textured_triangle_to_software_frame(const SDL_Surface* src_surface,
                                                        const SoftwareFrameTexturedAffineQuad* quad,
                                                        int i0,
@@ -4643,6 +4778,39 @@ static bool raster_textured_translated_quad_to_software_frame(const RenderTask* 
     return ok;
 }
 
+static bool raster_textured_full_texture_affine_quad_to_software_frame(const RenderTask* task) {
+    if ((task == NULL) || (software_frame_surface == NULL) || (task->software_source_surface == NULL)) {
+        return false;
+    }
+
+    SoftwareFrameTexturedFloatAffineQuad quad;
+    if (!try_resolve_geometry_task_as_software_frame_full_texture_affine_quad(task, &quad)) {
+        return false;
+    }
+
+    SDL_Surface* src_surface = task->software_source_surface;
+    bool src_locked = false;
+    if (SDL_MUSTLOCK(src_surface)) {
+        if (!SDL_LockSurface(src_surface)) {
+            return false;
+        }
+        src_locked = true;
+    }
+
+    const Uint64 sample_start_counter =
+        begin_perf_capture_raster_bucket_sample(SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_GENERIC_TEXTURED);
+    const bool ok = raster_textured_float_triangle_to_software_frame(src_surface, &quad, 0, 1, 2) &&
+                    raster_textured_float_triangle_to_software_frame(src_surface, &quad, 1, 2, 3);
+    note_perf_capture_raster_bucket_sample(SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_GENERIC_TEXTURED,
+                                           task,
+                                           perf_capture_counter_delta_to_ns(
+                                               sample_start_counter, SDL_GetPerformanceCounter()));
+    if (src_locked) {
+        SDL_UnlockSurface(src_surface);
+    }
+    return ok;
+}
+
 static bool raster_textured_affine_quad_to_software_frame(const RenderTask* task) {
     if ((task == NULL) || (software_frame_surface == NULL) || (task->software_source_surface == NULL)) {
         return false;
@@ -4762,6 +4930,7 @@ static bool render_frame_to_software_surface(void) {
             if (try_resolve_geometry_task_as_rect_copy(task, &rect_task)) {
                 resolved_task = rect_task;
             } else if (!try_resolve_geometry_task_as_software_frame_parallelogram(task, NULL) &&
+                       !try_resolve_geometry_task_as_software_frame_full_texture_affine_quad(task, NULL) &&
                        !try_resolve_geometry_task_as_software_frame_translated_quad(task, NULL) &&
                        !try_resolve_geometry_task_as_software_frame_affine_quad(task, NULL)) {
                 note_software_frame_eligibility(task, SOFTWARE_FRAME_FALLBACK_REASON_GEOMETRY);
@@ -4823,6 +4992,7 @@ static bool render_frame_to_software_surface(void) {
                             ? raster_textured_task_to_software_frame(task)
                             : ((task->texture != NULL)
                                    ? (raster_textured_parallelogram_to_software_frame(task) ||
+                                      raster_textured_full_texture_affine_quad_to_software_frame(task) ||
                                       raster_textured_translated_quad_to_software_frame(task) ||
                                       raster_textured_affine_quad_to_software_frame(task))
                                    : raster_solid_task_to_software_frame(task));
