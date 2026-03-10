@@ -318,8 +318,9 @@ static void verify_args() {
     }
 
     if (!is_supported_perf_wait_test_phase(configuration.perf.wait_for_test_phase)) {
-        error_out_with_code("--perf-wait-test-phase must be one of title, menu, character-select-transition, "
-                            "character-select, game-transition, game, game-input-active, or wipe-transition-type1.",
+        error_out_with_code("--perf-wait-test-phase must be one of title, menu, "
+                            "character-select-transition, character-select, game-transition, game, "
+                            "game-input-active, or wipe-transition-type1.",
                             EXIT_CODE_RUNTIME_ERROR);
     }
 

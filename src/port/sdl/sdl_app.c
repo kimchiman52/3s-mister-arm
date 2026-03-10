@@ -17,6 +17,7 @@
 #include "sf33rd/Source/Game/engine/plcnt.h"
 #include "sf33rd/Source/Game/engine/pls03.h"
 #include "sf33rd/Source/Game/engine/workuser.h"
+#include "sf33rd/Source/Game/opening/opening.h"
 #include "sf33rd/Source/Game/system/sys_sub.h"
 #include "sf33rd/Source/Game/system/work_sys.h"
 #include "sf33rd/Source/Game/ui/sc_sub.h"
@@ -209,6 +210,7 @@ static Uint64 perf_metamorphose_active_frames[2] = { 0 };
 static int perf_metamorphose_active_first_frame[2] = { -1, -1 };
 static int perf_capture_start_g_no[4] = { 0, 0, 0, 0 };
 static int perf_capture_start_e_no[4] = { 0, 0, 0, 0 };
+static int perf_capture_start_d_no[4] = { 0, 0, 0, 0 };
 static int perf_capture_start_menu_task_condition = 0;
 static int perf_capture_start_menu_task_r_no[4] = { 0, 0, 0, 0 };
 static int perf_capture_start_break_into = 0;
@@ -216,6 +218,11 @@ static int perf_capture_start_hnc_num = 0;
 static int perf_capture_start_exec_wipe = 0;
 static int perf_capture_start_active_wipe_type = -1;
 static int perf_capture_start_wipe_limit = 0;
+static int perf_capture_start_title_tex_flag = 0;
+static int perf_capture_start_opening_r_no_0 = 0;
+static int perf_capture_start_opening_r_no_1 = 0;
+static int perf_capture_start_opening_r_no_2 = 0;
+static int perf_capture_start_opening_free_work = 0;
 static Uint64 perf_break_into_frames_total = 0;
 static int perf_break_into_first_frame = -1;
 static Uint64 perf_hnc_active_frames_total = 0;
@@ -224,6 +231,8 @@ static int perf_hnc_max_num = 0;
 static Uint64 perf_wipe_type1_active_frames_total = 0;
 static int perf_wipe_type1_active_first_frame = -1;
 static int perf_wipe_type1_max_limit = 0;
+static Uint64 perf_title_logo_active_frames_total = 0;
+static int perf_title_logo_active_first_frame = -1;
 static Uint64 perf_software_frame_mode_enabled_frames = 0;
 static Uint64 perf_software_frame_surface_ready_frames = 0;
 static Uint64 perf_software_frame_owned_frames = 0;
@@ -631,12 +640,17 @@ static int classify_perf_capture_ready_routine1_bucket(int routine1) {
     return PERF_SUPER_ART_READY_ROUTINE1_BUCKET_OTHER;
 }
 
+static bool perf_capture_title_logo_active(void) {
+    return title_tex_flag != 0;
+}
+
 static void snapshot_perf_capture_transition_start_state(void) {
     const struct _TASK* menu_task = &task[TASK_MENU];
 
     for (int i = 0; i < 4; i++) {
         perf_capture_start_g_no[i] = G_No[i];
         perf_capture_start_e_no[i] = E_No[i];
+        perf_capture_start_d_no[i] = D_No[i];
         perf_capture_start_menu_task_r_no[i] = menu_task->r_no[i];
     }
 
@@ -646,6 +660,11 @@ static void snapshot_perf_capture_transition_start_state(void) {
     perf_capture_start_exec_wipe = Exec_Wipe;
     perf_capture_start_active_wipe_type = Active_Wipe_Type;
     perf_capture_start_wipe_limit = WipeLimit;
+    perf_capture_start_title_tex_flag = title_tex_flag;
+    perf_capture_start_opening_r_no_0 = op_w.r_no_0;
+    perf_capture_start_opening_r_no_1 = op_w.r_no_1;
+    perf_capture_start_opening_r_no_2 = op_w.r_no_2;
+    perf_capture_start_opening_free_work = op_w.free_work;
 }
 
 static void note_perf_capture_transition_state(int frame_index) {
@@ -678,8 +697,18 @@ static void note_perf_capture_transition_state(int frame_index) {
     }
 }
 
+static void note_perf_capture_title_state(int frame_index) {
+    if (perf_capture_title_logo_active()) {
+        perf_title_logo_active_frames_total += 1;
+        if (perf_title_logo_active_first_frame < 0) {
+            perf_title_logo_active_first_frame = frame_index;
+        }
+    }
+}
+
 static void note_perf_capture_test_state(int frame_index) {
     note_perf_capture_transition_state(frame_index);
+    note_perf_capture_title_state(frame_index);
 
     for (int player = 0; player < 2; player++) {
         const int super_art_stock = get_perf_capture_super_art_stock(player);
@@ -888,6 +917,7 @@ static void perf_capture_reset_storage(void) {
     }
     SDL_zero(perf_capture_start_g_no);
     SDL_zero(perf_capture_start_e_no);
+    SDL_zero(perf_capture_start_d_no);
     perf_capture_start_menu_task_condition = 0;
     SDL_zero(perf_capture_start_menu_task_r_no);
     perf_capture_start_break_into = 0;
@@ -895,6 +925,11 @@ static void perf_capture_reset_storage(void) {
     perf_capture_start_exec_wipe = 0;
     perf_capture_start_active_wipe_type = -1;
     perf_capture_start_wipe_limit = 0;
+    perf_capture_start_title_tex_flag = 0;
+    perf_capture_start_opening_r_no_0 = 0;
+    perf_capture_start_opening_r_no_1 = 0;
+    perf_capture_start_opening_r_no_2 = 0;
+    perf_capture_start_opening_free_work = 0;
     perf_break_into_frames_total = 0;
     perf_break_into_first_frame = -1;
     perf_hnc_active_frames_total = 0;
@@ -903,6 +938,8 @@ static void perf_capture_reset_storage(void) {
     perf_wipe_type1_active_frames_total = 0;
     perf_wipe_type1_active_first_frame = -1;
     perf_wipe_type1_max_limit = 0;
+    perf_title_logo_active_frames_total = 0;
+    perf_title_logo_active_first_frame = -1;
     perf_software_frame_mode_enabled_frames = 0;
     perf_software_frame_surface_ready_frames = 0;
     perf_software_frame_owned_frames = 0;
@@ -3097,6 +3134,31 @@ static void perf_capture_write_summary(void) {
         io_printf(io, "    \"wipe_type1_active_first_frame\": null,\n");
     }
     io_printf(io, "    \"wipe_type1_max_limit\": %d\n", perf_wipe_type1_max_limit);
+    io_printf(io, "  },\n");
+    io_printf(io,
+              "  \"title_state\": {\n"
+              "    \"capture_start_d_no\": [%d, %d, %d, %d],\n"
+              "    \"capture_start_title_tex_flag\": %d,\n"
+              "    \"capture_start_opening_r_no_0\": %d,\n"
+              "    \"capture_start_opening_r_no_1\": %d,\n"
+              "    \"capture_start_opening_r_no_2\": %d,\n"
+              "    \"capture_start_opening_free_work\": %d,\n"
+              "    \"title_logo_active_frames_total\": %llu,\n",
+              perf_capture_start_d_no[0],
+              perf_capture_start_d_no[1],
+              perf_capture_start_d_no[2],
+              perf_capture_start_d_no[3],
+              perf_capture_start_title_tex_flag,
+              perf_capture_start_opening_r_no_0,
+              perf_capture_start_opening_r_no_1,
+              perf_capture_start_opening_r_no_2,
+              perf_capture_start_opening_free_work,
+              (unsigned long long)perf_title_logo_active_frames_total);
+    if (perf_title_logo_active_first_frame >= 0) {
+        io_printf(io, "    \"title_logo_active_first_frame\": %d\n", perf_title_logo_active_first_frame);
+    } else {
+        io_printf(io, "    \"title_logo_active_first_frame\": null\n");
+    }
     io_printf(io, "  },\n");
     io_printf(io, "  \"metrics\": {\n");
     io_printf(io, "    \"frame_time\": {\"mean_ms\": %.4f, \"min_ms\": %.4f, \"max_ms\": %.4f},\n",

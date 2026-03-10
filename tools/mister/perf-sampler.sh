@@ -888,4 +888,22 @@ if command -v jq >/dev/null 2>&1; then
     if [ -n "$transition_state_summary" ]; then
         printf '%s\n' "$transition_state_summary"
     fi
+
+    title_state_summary="$(jq -r '
+        if (.title_state // null) == null then
+            empty
+        else
+            "Title state: start_d_no=\((.title_state.capture_start_d_no // []) | map(tostring) | join("/")) " +
+            "start_title_tex=\(.title_state.capture_start_title_tex_flag // 0) " +
+            "start_opening_r_no=\(.title_state.capture_start_opening_r_no_0 // 0)/" +
+            "\(.title_state.capture_start_opening_r_no_1 // 0)/" +
+            "\(.title_state.capture_start_opening_r_no_2 // 0) " +
+            "start_opening_free_work=\(.title_state.capture_start_opening_free_work // 0) " +
+            "title_logo_frames=\(.title_state.title_logo_active_frames_total // 0) " +
+            "title_logo_first=\((.title_state.title_logo_active_first_frame // "none") | tostring)"
+        end
+    ' "${local_output_path}")"
+    if [ -n "$title_state_summary" ]; then
+        printf '%s\n' "$title_state_summary"
+    fi
 fi
