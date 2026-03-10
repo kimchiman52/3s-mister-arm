@@ -412,6 +412,41 @@ typedef struct SoftwareFrameSolidDiagonalStrip {
     Uint32 color;
 } SoftwareFrameSolidDiagonalStrip;
 
+typedef struct SoftwareFrameTexturedParallelogram {
+    int top_y;
+    int bottom_y;
+    int top_left_x;
+    int bottom_left_x;
+    int src_x;
+    int src_y;
+    int src_w;
+    int src_h;
+} SoftwareFrameTexturedParallelogram;
+
+typedef struct TexturedGeometryFallbackFamilyProfile {
+    int texture_handle;
+    int palette_handle;
+    Uint32 source_format;
+    int source_width;
+    int source_height;
+    SDLGameRenderer_TexturedGeometryFallbackFamilyKind family_kind;
+    bool uniform_color;
+    bool opaque_color;
+    bool rgb_mod;
+    bool integer_positions;
+    bool integer_source_rect;
+    bool full_texture_source_rect;
+    int source_x;
+    int source_y;
+    int source_w;
+    int source_h;
+    int dst_height;
+    int dst_top_width;
+    int dst_bottom_width;
+    int dst_left_dx;
+    int dst_right_dx;
+    Uint64 submitted_pixels;
+} TexturedGeometryFallbackFamilyProfile;
 static int compare_render_tasks(const RenderTask* a, const RenderTask* b);
 static void insertion_sort_render_tasks(void);
 static void initialize_render_task_batch_indices(void);
@@ -530,6 +565,8 @@ static bool try_resolve_geometry_task_as_rect_copy(const RenderTask* task, Rende
 static bool try_resolve_solid_task_as_rect(const RenderTask* task, SDL_FRect* out_rect, Uint32* out_color);
 static bool try_resolve_solid_task_as_full_height_diagonal_strip(const RenderTask* task,
                                                                  SoftwareFrameSolidDiagonalStrip* out_strip);
+static bool try_resolve_geometry_task_as_software_frame_parallelogram(
+    const RenderTask* task, SoftwareFrameTexturedParallelogram* out_parallelogram);
 static SoftwareFrameFallbackReason classify_software_frame_fallback_reason(const RenderTask* task);
 static void note_software_frame_eligibility(const RenderTask* task, SoftwareFrameFallbackReason reason);
 static SoftwareFrameFastCopyResult build_software_frame_fast_copy_plan(const RenderTask* task,
@@ -545,6 +582,7 @@ static Uint32 modulate_argb8888(Uint32 pixel, Uint32 color);
 static Uint32 blend_argb8888(Uint32 dst_pixel, Uint32 src_pixel);
 static bool raster_full_height_diagonal_strip_to_software_frame(const SoftwareFrameSolidDiagonalStrip* strip,
                                                                 SDL_Surface* dst_surface);
+static bool raster_textured_parallelogram_to_software_frame(const RenderTask* task);
 static SDL_Surface* get_or_create_software_source_surface(unsigned int th);
 static bool ensure_software_frame_upload_texture(void);
 static bool raster_textured_task_to_software_frame(const RenderTask* task);
@@ -2768,6 +2806,126 @@ static bool try_resolve_solid_task_as_full_height_diagonal_strip(const RenderTas
     return true;
 }
 
+static bool try_resolve_geometry_task_as_software_frame_parallelogram(
+    const RenderTask* task, SoftwareFrameTexturedParallelogram* out_parallelogram) {
+    if ((task == NULL) || (task->type != RENDER_TASK_TYPE_GEOMETRY) || (task->texture == NULL) ||
+        (task->software_source_surface == NULL)) {
+        return false;
+    }
+
+    TexturedGeometryFallbackFamilyProfile profile;
+    if (!analyze_textured_geometry_fallback_task(task, &profile)) {
+        return false;
+    }
+
+    if ((profile.family_kind != SDL_GAME_RENDERER_TEXTURED_GEOMETRY_FALLBACK_FAMILY_RECT_UV_PARALLELOGRAM) ||
+        !profile.uniform_color || !profile.opaque_color || profile.rgb_mod || !profile.integer_positions ||
+        !profile.integer_source_rect || !profile.full_texture_source_rect || (profile.source_x != 0) ||
+        (profile.source_y != 0) || (profile.source_w != 256) || (profile.source_h != 256) ||
+        (profile.dst_height != 256) || (profile.dst_top_width != 256) || (profile.dst_bottom_width != 256) ||
+        (profile.dst_left_dx != profile.dst_right_dx)) {
+        return false;
+    }
+
+    const SDL_Surface* src_surface = task->software_source_surface;
+    if ((src_surface->w != profile.source_w) || (src_surface->h != profile.source_h)) {
+        return false;
+    }
+
+    float min_u = task->vertices[0].tex_coord.x;
+    float max_u = min_u;
+    float min_v = task->vertices[0].tex_coord.y;
+    float max_v = min_v;
+    float min_y = task->vertices[0].position.y;
+    float max_y = min_y;
+    const SDL_Vertex* top_vertices[2] = { NULL, NULL };
+    const SDL_Vertex* bottom_vertices[2] = { NULL, NULL };
+    int top_count = 0;
+    int bottom_count = 0;
+
+    for (int i = 0; i < 4; i++) {
+        const SDL_Vertex* vertex = &task->vertices[i];
+        min_u = SDL_min(min_u, vertex->tex_coord.x);
+        max_u = SDL_max(max_u, vertex->tex_coord.x);
+        min_v = SDL_min(min_v, vertex->tex_coord.y);
+        max_v = SDL_max(max_v, vertex->tex_coord.y);
+        min_y = SDL_min(min_y, vertex->position.y);
+        max_y = SDL_max(max_y, vertex->position.y);
+    }
+
+    for (int i = 0; i < 4; i++) {
+        const SDL_Vertex* vertex = &task->vertices[i];
+        if (nearly_equal(vertex->position.y, min_y)) {
+            if (top_count >= SDL_arraysize(top_vertices)) {
+                return false;
+            }
+            top_vertices[top_count++] = vertex;
+        } else if (nearly_equal(vertex->position.y, max_y)) {
+            if (bottom_count >= SDL_arraysize(bottom_vertices)) {
+                return false;
+            }
+            bottom_vertices[bottom_count++] = vertex;
+        } else {
+            return false;
+        }
+    }
+
+    if ((top_count != SDL_arraysize(top_vertices)) || (bottom_count != SDL_arraysize(bottom_vertices))) {
+        return false;
+    }
+
+    if (top_vertices[0]->position.x > top_vertices[1]->position.x) {
+        const SDL_Vertex* swap = top_vertices[0];
+        top_vertices[0] = top_vertices[1];
+        top_vertices[1] = swap;
+    }
+    if (bottom_vertices[0]->position.x > bottom_vertices[1]->position.x) {
+        const SDL_Vertex* swap = bottom_vertices[0];
+        bottom_vertices[0] = bottom_vertices[1];
+        bottom_vertices[1] = swap;
+    }
+
+    const int top_y = (int)SDL_roundf(min_y);
+    const int bottom_y = (int)SDL_roundf(max_y);
+    const int top_left_x = (int)SDL_roundf(top_vertices[0]->position.x);
+    const int top_right_x = (int)SDL_roundf(top_vertices[1]->position.x);
+    const int bottom_left_x = (int)SDL_roundf(bottom_vertices[0]->position.x);
+    const int bottom_right_x = (int)SDL_roundf(bottom_vertices[1]->position.x);
+    if (!nearly_equal(min_y, (float)top_y) || !nearly_equal(max_y, (float)bottom_y) ||
+        !nearly_equal(top_vertices[0]->position.x, (float)top_left_x) ||
+        !nearly_equal(top_vertices[1]->position.x, (float)top_right_x) ||
+        !nearly_equal(bottom_vertices[0]->position.x, (float)bottom_left_x) ||
+        !nearly_equal(bottom_vertices[1]->position.x, (float)bottom_right_x)) {
+        return false;
+    }
+
+    if (!nearly_equal(top_vertices[0]->tex_coord.x, min_u) || !nearly_equal(top_vertices[0]->tex_coord.y, min_v) ||
+        !nearly_equal(top_vertices[1]->tex_coord.x, max_u) || !nearly_equal(top_vertices[1]->tex_coord.y, min_v) ||
+        !nearly_equal(bottom_vertices[0]->tex_coord.x, min_u) ||
+        !nearly_equal(bottom_vertices[0]->tex_coord.y, max_v) ||
+        !nearly_equal(bottom_vertices[1]->tex_coord.x, max_u) ||
+        !nearly_equal(bottom_vertices[1]->tex_coord.y, max_v)) {
+        return false;
+    }
+
+    if ((bottom_y - top_y) != profile.source_h || (top_right_x - top_left_x) != profile.source_w ||
+        (bottom_right_x - bottom_left_x) != profile.source_w) {
+        return false;
+    }
+
+    if (out_parallelogram != NULL) {
+        out_parallelogram->top_y = top_y;
+        out_parallelogram->bottom_y = bottom_y;
+        out_parallelogram->top_left_x = top_left_x;
+        out_parallelogram->bottom_left_x = bottom_left_x;
+        out_parallelogram->src_x = profile.source_x;
+        out_parallelogram->src_y = profile.source_y;
+        out_parallelogram->src_w = profile.source_w;
+        out_parallelogram->src_h = profile.source_h;
+    }
+    return true;
+}
+
 static SoftwareFrameFallbackReason classify_software_frame_fallback_reason(const RenderTask* task) {
     if (task == NULL) {
         return SOFTWARE_FRAME_FALLBACK_REASON_GEOMETRY;
@@ -2776,6 +2934,12 @@ static SoftwareFrameFallbackReason classify_software_frame_fallback_reason(const
     if (task->type == RENDER_TASK_TYPE_TEXTURED_RECT) {
         return task->software_source_surface != NULL ? SOFTWARE_FRAME_FALLBACK_REASON_NONE
                                                      : SOFTWARE_FRAME_FALLBACK_REASON_GEOMETRY;
+    }
+
+    if ((task->type == RENDER_TASK_TYPE_GEOMETRY) && (task->texture != NULL)) {
+        return try_resolve_geometry_task_as_software_frame_parallelogram(task, NULL)
+                   ? SOFTWARE_FRAME_FALLBACK_REASON_NONE
+                   : SOFTWARE_FRAME_FALLBACK_REASON_GEOMETRY;
     }
 
     if (task->texture == NULL) {
@@ -3749,6 +3913,79 @@ static bool raster_textured_task_to_software_frame(const RenderTask* task) {
     return true;
 }
 
+static bool raster_textured_parallelogram_to_software_frame(const RenderTask* task) {
+    if ((task == NULL) || (software_frame_surface == NULL) || (task->software_source_surface == NULL)) {
+        return false;
+    }
+
+    SoftwareFrameTexturedParallelogram parallelogram;
+    if (!try_resolve_geometry_task_as_software_frame_parallelogram(task, &parallelogram)) {
+        return false;
+    }
+
+    SDL_Surface* src_surface = task->software_source_surface;
+    bool src_locked = false;
+    if (SDL_MUSTLOCK(src_surface)) {
+        if (!SDL_LockSurface(src_surface)) {
+            return false;
+        }
+        src_locked = true;
+    }
+
+    const Uint32* src_pixels = (const Uint32*)src_surface->pixels;
+    Uint32* dst_pixels = (Uint32*)software_frame_surface->pixels;
+    const int src_pitch = src_surface->pitch / (int)sizeof(Uint32);
+    const int dst_pitch = software_frame_surface->pitch / (int)sizeof(Uint32);
+    const int shear_dx_total = parallelogram.bottom_left_x - parallelogram.top_left_x;
+    const Uint64 sample_start_counter =
+        begin_perf_capture_raster_bucket_sample(SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_GENERIC_TEXTURED);
+
+    // The recovered Kyoto stage family is a same-size full-texture shear, so each visible row can
+    // reuse the cached ARGB source row directly and only adjust the destination x offset.
+    for (int row = 0; row < parallelogram.src_h; row++) {
+        const int dst_y = parallelogram.top_y + row;
+        if ((dst_y < 0) || (dst_y >= software_frame_surface->h)) {
+            continue;
+        }
+
+        const float row_start_f = (float)parallelogram.top_left_x +
+                                  ((((float)row + 0.5f) * (float)shear_dx_total) / (float)parallelogram.src_h);
+        const int unclipped_dst_x0 = (int)SDL_roundf(row_start_f);
+        const int unclipped_dst_x1 = unclipped_dst_x0 + parallelogram.src_w;
+        const int dst_x0 = clamp_to_range(unclipped_dst_x0, 0, software_frame_surface->w);
+        const int dst_x1 = clamp_to_range(unclipped_dst_x1, 0, software_frame_surface->w);
+        if (dst_x1 <= dst_x0) {
+            continue;
+        }
+
+        const int src_x0 = parallelogram.src_x + (dst_x0 - unclipped_dst_x0);
+        const int visible_w = dst_x1 - dst_x0;
+        const Uint32* src_row = src_pixels + ((parallelogram.src_y + row) * src_pitch) + src_x0;
+        Uint32* dst_row = dst_pixels + (dst_y * dst_pitch) + dst_x0;
+        for (int col = 0; col < visible_w; col++) {
+            const Uint32 src_pixel = src_row[col];
+            const Uint32 src_a = (src_pixel >> 24) & 0xFFu;
+            if (src_a == 0u) {
+                continue;
+            }
+            if (src_a == 0xFFu) {
+                dst_row[col] = src_pixel;
+                continue;
+            }
+            dst_row[col] = blend_argb8888(dst_row[col], src_pixel);
+        }
+    }
+
+    note_perf_capture_raster_bucket_sample(SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_GENERIC_TEXTURED,
+                                           task,
+                                           perf_capture_counter_delta_to_ns(
+                                               sample_start_counter, SDL_GetPerformanceCounter()));
+    if (src_locked) {
+        SDL_UnlockSurface(src_surface);
+    }
+    return true;
+}
+
 static bool raster_solid_task_to_software_frame(const RenderTask* task) {
     if ((task == NULL) || (software_frame_surface == NULL)) {
         return false;
@@ -3831,7 +4068,10 @@ static bool render_frame_to_software_surface(void) {
         RenderTask resolved_task = *task;
 
         if ((task->type == RENDER_TASK_TYPE_GEOMETRY) && (task->texture != NULL)) {
-            if (!try_resolve_geometry_task_as_rect_copy(task, &resolved_task)) {
+            RenderTask rect_task;
+            if (try_resolve_geometry_task_as_rect_copy(task, &rect_task)) {
+                resolved_task = rect_task;
+            } else if (!try_resolve_geometry_task_as_software_frame_parallelogram(task, NULL)) {
                 note_software_frame_eligibility(task, SOFTWARE_FRAME_FALLBACK_REASON_GEOMETRY);
                 frame_supported = false;
                 continue;
@@ -3875,8 +4115,10 @@ static bool render_frame_to_software_surface(void) {
 
     for (int i = 0; i < render_task_count; i++) {
         const RenderTask* task = &software_frame_resolved_tasks[i];
-        const bool ok = (task->type == RENDER_TASK_TYPE_TEXTURED_RECT) ? raster_textured_task_to_software_frame(task)
-                                                                       : raster_solid_task_to_software_frame(task);
+        const bool ok = (task->type == RENDER_TASK_TYPE_TEXTURED_RECT)
+                            ? raster_textured_task_to_software_frame(task)
+                            : ((task->texture != NULL) ? raster_textured_parallelogram_to_software_frame(task)
+                                                       : raster_solid_task_to_software_frame(task));
         if (!ok) {
             if (dst_locked) {
                 SDL_UnlockSurface(software_frame_surface);
