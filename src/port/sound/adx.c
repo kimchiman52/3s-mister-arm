@@ -185,12 +185,30 @@ static int clip_int16(int v) {
     return v;
 }
 
+static bool decoder_calculate_coefficients(ADXBuiltinDecoder* decoder, int cutoff_frequency) {
+    if (cutoff_frequency <= 0 || decoder->sample_rate <= 0) {
+        return false;
+    }
+
+    const double sqrt2 = sqrt(2.0);
+    const double angle = (2.0 * 3.14159265358979323846 * (double)cutoff_frequency) / (double)decoder->sample_rate;
+    const double a = sqrt2 - cos(angle);
+    const double b = sqrt2 - 1.0;
+    const double c = (a - sqrt((a + b) * (a - b))) / b;
+
+    decoder->coeff1 = (int)lround(c * 2.0 * (double)(1 << 12));
+    decoder->coeff2 = (int)lround(-(c * c) * (double)(1 << 12));
+    return true;
+}
+
 static bool decoder_init(ADXBuiltinDecoder* decoder, const uint8_t* data, int size) {
     if (size < 0x40) {
         return false;
     }
 
     const int header_size = (int)read_be16(data + 2) + 4;
+    const int sample_size = data[6];
+    const int cutoff_frequency = (int)read_be16(data + 16);
 
     decoder->encoding_type = data[4];
     decoder->frame_size = data[5];
@@ -200,13 +218,17 @@ static bool decoder_init(ADXBuiltinDecoder* decoder, const uint8_t* data, int si
     decoder->data_offset = header_size;
     decoder->data_pos = header_size;
     decoder->decoded_samples = 0;
-    decoder->coeff1 = 0x7298;
-    decoder->coeff2 = -0x3350;
+    decoder->coeff1 = 0;
+    decoder->coeff2 = 0;
     decoder->finished = false;
     SDL_zeroa(decoder->hist1);
     SDL_zeroa(decoder->hist2);
 
     if (decoder->frame_size <= 2) {
+        return false;
+    }
+
+    if (sample_size != 4) {
         return false;
     }
 
@@ -218,11 +240,15 @@ static bool decoder_init(ADXBuiltinDecoder* decoder, const uint8_t* data, int si
         return false;
     }
 
+    if (decoder->encoding_type != 3 && decoder->encoding_type != 4) {
+        return false;
+    }
+
     if (decoder->data_offset >= size) {
         return false;
     }
 
-    return true;
+    return decoder_calculate_coefficients(decoder, cutoff_frequency);
 }
 
 static int decode_channel_frame(ADXBuiltinDecoder* decoder, int channel, const uint8_t* frame_data, int16_t* out) {
@@ -235,7 +261,13 @@ static int decode_channel_frame(ADXBuiltinDecoder* decoder, int channel, const u
 
     int coeff1 = decoder->coeff1;
     int coeff2 = decoder->coeff2;
-    int scale = (int)read_be16(frame_data);
+    const int frame_header = (int)read_be16(frame_data);
+    int scale = frame_header;
+
+    if ((frame_header & 0x8000) != 0) {
+        decoder->finished = true;
+        return 0;
+    }
 
     if (decoder->encoding_type == 4) {
         const int predictor = frame_data[0] >> 5;
@@ -282,10 +314,18 @@ static int decode_samples(ADXBuiltinDecoder* decoder, const uint8_t* data, int d
         }
 
         int16_t channel_samples[2][ADX_SAMPLES_PER_FRAME] = { 0 };
+        bool reached_eof = false;
 
         for (int channel = 0; channel < decoder->channels; channel++) {
             const uint8_t* frame_data = data + decoder->data_pos + (channel * decoder->frame_size);
-            decode_channel_frame(decoder, channel, frame_data, channel_samples[channel]);
+            if (decode_channel_frame(decoder, channel, frame_data, channel_samples[channel]) <= 0) {
+                reached_eof = true;
+                break;
+            }
+        }
+
+        if (reached_eof) {
+            break;
         }
 
         int samples_to_emit = ADX_SAMPLES_PER_FRAME;
@@ -391,9 +431,13 @@ static int track_add_samples_to_loop(ADXTrack* track, uint8_t* buf, int num_samp
 
 static void loop_info_init(ADXLoopInfo* info, const uint8_t* data) {
     const uint8_t version = data[0x12];
+    const int header_size = (int)read_be16(data + 2) + 4;
 
     switch (version) {
     case 3: {
+        if (header_size < 0x28) {
+            break;
+        }
         const uint16_t loop_enabled_16 = read_be16(data + 0x16);
 
         if (loop_enabled_16 == 1) {
@@ -406,6 +450,9 @@ static void loop_info_init(ADXLoopInfo* info, const uint8_t* data) {
     }
 
     case 4: {
+        if (header_size < 0x34) {
+            break;
+        }
         const uint32_t loop_enabled_32 = read_be32(data + 0x24);
 
         if (loop_enabled_32 == 1) {
