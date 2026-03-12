@@ -224,6 +224,11 @@ MISTER_HOST=192.168.1.171 MISTER_USER=root MISTER_PASSWORD=1 \
 
 Use `build/mister-clean-package/` for normal play and `build/mister-telemetry-package/` when you need perf capture or parity tooling on the device.
 
+Scale-mode guidance on stock MiSTer fbdev:
+
+- `scale-mode = native` remains the CRT-oriented path.
+- `scale-mode = nearest` is the validated modern-display path. It now stays on the direct fbdev/native presentation route instead of the older SDL `fullscreen_staging` path.
+
 Low-level `rsync` still works, but do not prefer it in automation now that `misterctl.sh` exists:
 
 ```bash
@@ -287,6 +292,16 @@ MISTER_HOST=192.168.1.171 MISTER_USER=root MISTER_PASSWORD=1 \
 `tools/mister/perf-sampler.sh` now keeps one shared MiSTer lock for the whole capture workflow and returns the JSON plus remote log over the same SSH session that ran the capture. That keeps each perf sample to one remote command session instead of SSH plus separate SCP round-trips.
 
 Perf sampling requires the `telemetry` flavor on the device. Deploy `build/mister-telemetry-package/` before running `tools/mister/perf-sampler.sh`.
+
+To compare scale modes without hand-editing the remote config, use `--scale-mode <mode>`. The sampler writes the requested mode into the temporary remote config, records the effective runtime-reported `scale_mode`, forces `show-fps = false` for measurement, and restores the prior config after the capture.
+
+Example nearest modern-display capture:
+
+```bash
+MISTER_HOST=192.168.1.171 MISTER_USER=root MISTER_PASSWORD=1 \
+  tools/mister/perf-sampler.sh --scene gameplay-idle --frames 300 --tag nearest-check \
+  --gameplay-idle --gameplay-warmup 120 --software-frame-mode on --scale-mode nearest --perf-basic
+```
 
 Long-window gate (diagnostic, currently noisy):
 
