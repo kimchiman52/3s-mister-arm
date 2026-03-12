@@ -7069,6 +7069,44 @@ void SDLGameRenderer_DestroyTexture(unsigned int texture_handle) {
     surfaces[texture_index] = NULL;
 }
 
+bool SDLGameRenderer_QueryTextureLogicalIdentity(unsigned int texture_handle,
+                                                 SDLGameRenderer_TextureLogicalSourceKind* out_source_kind,
+                                                 int* out_ix_num,
+                                                 int* out_ix_num_first,
+                                                 int* out_slot_index,
+                                                 int* out_chunk_index,
+                                                 int* out_texture_total) {
+    if ((texture_handle == 0) || (texture_handle > FL_TEXTURE_MAX)) {
+        return false;
+    }
+
+    const TextureLogicalIdentity* identity = &current_texture_logical_identity_by_texture[texture_handle - 1];
+    if (!identity->valid) {
+        return false;
+    }
+
+    if (out_source_kind != NULL) {
+        *out_source_kind = identity->source_kind;
+    }
+    if (out_ix_num != NULL) {
+        *out_ix_num = identity->ix_num;
+    }
+    if (out_ix_num_first != NULL) {
+        *out_ix_num_first = identity->ix_num_first;
+    }
+    if (out_slot_index != NULL) {
+        *out_slot_index = identity->slot_index;
+    }
+    if (out_chunk_index != NULL) {
+        *out_chunk_index = identity->chunk_index;
+    }
+    if (out_texture_total != NULL) {
+        *out_texture_total = identity->texture_total;
+    }
+
+    return true;
+}
+
 void SDLGameRenderer_RecordTextureLogicalIdentity(unsigned int texture_handle,
                                                   SDLGameRenderer_TextureLogicalSourceKind source_kind,
                                                   int ix_num,
@@ -7077,9 +7115,6 @@ void SDLGameRenderer_RecordTextureLogicalIdentity(unsigned int texture_handle,
                                                   int chunk_index,
                                                   int texture_total) {
     if ((texture_handle == 0) || (texture_handle > FL_TEXTURE_MAX)) {
-        return;
-    }
-    if (!perf_capture_logical_identity_enabled) {
         return;
     }
 

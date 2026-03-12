@@ -87,7 +87,45 @@ static bool ppgDecodeRenewChunkRect(u32 code, u32 size, SDL_Rect* out_rect) {
     return true;
 }
 
+static bool ppgIsChooserHotSeqTexture(u32 texture_handle) {
+    SDLGameRenderer_TextureLogicalSourceKind source_kind = SDL_GAME_RENDERER_TEXTURE_LOGICAL_SOURCE_UNKNOWN;
+    int ix_num = -1;
+    int ix_num_first = -1;
+    int chunk_index = -1;
+    int texture_total = -1;
+
+    if (!SDLGameRenderer_QueryTextureLogicalIdentity(texture_handle,
+                                                     &source_kind,
+                                                     &ix_num,
+                                                     &ix_num_first,
+                                                     NULL,
+                                                     &chunk_index,
+                                                     &texture_total)) {
+        return false;
+    }
+
+    if ((source_kind != SDL_GAME_RENDERER_TEXTURE_LOGICAL_SOURCE_PPG_SEQS) || (ix_num_first != 1030) ||
+        (texture_total != 7) || (chunk_index != -1)) {
+        return false;
+    }
+
+    switch (ix_num) {
+    case 1030:
+    case 1031:
+    case 1032:
+    case 1034:
+        return true;
+    default:
+        return false;
+    }
+}
+
 static bool ppgShouldKeepRenewDirtyRect(u32 texture_handle) {
+    if (ppgIsChooserHotSeqTexture(texture_handle)) {
+        // The exact chooser keep is keyed on stable seq logical identity, not transient runtime handle numbers.
+        return true;
+    }
+
     switch (LO_16_BITS(texture_handle)) {
     case 41:
     case 50:
@@ -205,6 +243,19 @@ static bool ppgConsumeRenewDirtyRect(u32 texture_handle, SDL_Rect* out_rect) {
     ppgRenewDirtyRects[texture_index] = (SDL_Rect){ 0, 0, 0, 0 };
     ppgRenewDirtyRectValid[texture_index] = false;
     return true;
+}
+
+static void ppgClearRenewDirtyState(u32 texture_handle) {
+    const int texture_index = LO_16_BITS(texture_handle) - 1;
+
+    if ((texture_index < 0) || (texture_index >= FL_TEXTURE_MAX)) {
+        return;
+    }
+
+    ppgRenewDirtyRects[texture_index] = (SDL_Rect){ 0, 0, 0, 0 };
+    ppgRenewDirtyRectValid[texture_index] = false;
+    ppgRenewDirtyTileMasks[texture_index] = 0;
+    ppgRenewDirtyTileMaskStates[texture_index] = PPG_RENEW_DIRTY_TILE_MASK_STATE_EMPTY;
 }
 
 const u8 pplColorModeWidth[4] = { 0xF, 0x3F, 0xFF, 0 };
@@ -1672,6 +1723,7 @@ s32 ppgReleaseTextureHandle(Texture* tch, s32 ixNum) {
             han = tch->handle[i].b16[0];
 
             if (han) {
+                ppgClearRenewDirtyState(han);
                 flReleaseTextureHandle(han);
             }
 
@@ -1688,6 +1740,7 @@ s32 ppgReleaseTextureHandle(Texture* tch, s32 ixNum) {
             han = tch->handle[ix].b16[0];
 
             if (han) {
+                ppgClearRenewDirtyState(han);
                 flReleaseTextureHandle(han);
             }
 

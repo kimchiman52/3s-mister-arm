@@ -552,6 +552,13 @@ void SDLGameRenderer_GetFrameStats(SDLGameRenderer_FrameStats* out_stats);
 void SDLGameRenderer_CreateTexture(unsigned int th);
 void SDLGameRenderer_DestroyTexture(unsigned int texture_handle);
 void SDLGameRenderer_UnlockTexture(unsigned int th);
+bool SDLGameRenderer_QueryTextureLogicalIdentity(unsigned int texture_handle,
+                                                 SDLGameRenderer_TextureLogicalSourceKind* out_source_kind,
+                                                 int* out_ix_num,
+                                                 int* out_ix_num_first,
+                                                 int* out_slot_index,
+                                                 int* out_chunk_index,
+                                                 int* out_texture_total);
 void SDLGameRenderer_RecordTextureLogicalIdentity(unsigned int texture_handle,
                                                   SDLGameRenderer_TextureLogicalSourceKind source_kind,
                                                   int ix_num,
