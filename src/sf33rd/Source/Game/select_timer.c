@@ -1,3 +1,4 @@
+#include "main.h"
 #include "sf33rd/Source/Game/select_timer.h"
 #include "constants.h"
 #include "sf33rd/Source/Game/debug/Debug.h"
@@ -49,15 +50,28 @@ void SelectTimer_Finish() {
 }
 
 void SelectTimer_Run() {
+    const bool perf_update_breakdown_enabled = PerfUpdateBreakdown_IsEnabled();
+    const uint64_t perf_scope_start_ns =
+        perf_update_breakdown_enabled ? PerfUpdateBreakdown_Begin(PERF_UPDATE_SCOPE_SELECT_TIMER) : 0;
+
     if (Present_Mode == 4 || Present_Mode == 5) {
+        if (perf_update_breakdown_enabled) {
+            PerfUpdateBreakdown_End(PERF_UPDATE_SCOPE_SELECT_TIMER, perf_scope_start_ns);
+        }
         return;
     }
 
     if (Debug_w[24]) {
+        if (perf_update_breakdown_enabled) {
+            PerfUpdateBreakdown_End(PERF_UPDATE_SCOPE_SELECT_TIMER, perf_scope_start_ns);
+        }
         return;
     }
 
     if (Break_Into) {
+        if (perf_update_breakdown_enabled) {
+            PerfUpdateBreakdown_End(PERF_UPDATE_SCOPE_SELECT_TIMER, perf_scope_start_ns);
+        }
         return;
     }
 
@@ -118,5 +132,9 @@ void SelectTimer_Run() {
     default:
         select_timer_state.is_running = false;
         break;
+    }
+
+    if (perf_update_breakdown_enabled) {
+        PerfUpdateBreakdown_End(PERF_UPDATE_SCOPE_SELECT_TIMER, perf_scope_start_ns);
     }
 }

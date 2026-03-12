@@ -866,13 +866,43 @@ void BG_move_Ex(u8 ix) {
 }
 
 void Basic_Sub() {
+    const bool perf_update_breakdown_enabled = PerfUpdateBreakdown_IsEnabled();
+    uint64_t perf_scope_start_ns = 0;
+
     bg_w.bgw[0].old_pos_x = bg_w.bgw[0].xy[0].disp.pos;
+
+    if (perf_update_breakdown_enabled) {
+        perf_scope_start_ns = PerfUpdateBreakdown_Begin(PERF_UPDATE_SCOPE_BASIC_SUB_EFFECT_LIST_0);
+    }
     move_effect_work(0);
+    if (perf_update_breakdown_enabled) {
+        PerfUpdateBreakdown_End(PERF_UPDATE_SCOPE_BASIC_SUB_EFFECT_LIST_0, perf_scope_start_ns);
+        perf_scope_start_ns = PerfUpdateBreakdown_Begin(PERF_UPDATE_SCOPE_BASIC_SUB_EFFECT_LIST_1);
+    }
     move_effect_work(1);
+    if (perf_update_breakdown_enabled) {
+        PerfUpdateBreakdown_End(PERF_UPDATE_SCOPE_BASIC_SUB_EFFECT_LIST_1, perf_scope_start_ns);
+        perf_scope_start_ns = PerfUpdateBreakdown_Begin(PERF_UPDATE_SCOPE_BASIC_SUB_EFFECT_LIST_2);
+    }
     move_effect_work(2);
+    if (perf_update_breakdown_enabled) {
+        PerfUpdateBreakdown_End(PERF_UPDATE_SCOPE_BASIC_SUB_EFFECT_LIST_2, perf_scope_start_ns);
+        perf_scope_start_ns = PerfUpdateBreakdown_Begin(PERF_UPDATE_SCOPE_BASIC_SUB_EFFECT_LIST_3);
+    }
     move_effect_work(3);
+    if (perf_update_breakdown_enabled) {
+        PerfUpdateBreakdown_End(PERF_UPDATE_SCOPE_BASIC_SUB_EFFECT_LIST_3, perf_scope_start_ns);
+        perf_scope_start_ns = PerfUpdateBreakdown_Begin(PERF_UPDATE_SCOPE_BASIC_SUB_EFFECT_LIST_4);
+    }
     move_effect_work(4);
+    if (perf_update_breakdown_enabled) {
+        PerfUpdateBreakdown_End(PERF_UPDATE_SCOPE_BASIC_SUB_EFFECT_LIST_4, perf_scope_start_ns);
+        perf_scope_start_ns = PerfUpdateBreakdown_Begin(PERF_UPDATE_SCOPE_BASIC_SUB_EFFECT_LIST_5);
+    }
     move_effect_work(5);
+    if (perf_update_breakdown_enabled) {
+        PerfUpdateBreakdown_End(PERF_UPDATE_SCOPE_BASIC_SUB_EFFECT_LIST_5, perf_scope_start_ns);
+    }
 }
 
 void Basic_Sub_Ex() {

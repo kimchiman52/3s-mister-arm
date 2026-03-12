@@ -79,6 +79,50 @@ static bool are_resources_checked = false;
 static bool is_running_resource_flow = false;
 static volatile sig_atomic_t shutdown_signal = 0;
 
+#if ENABLE_PERF_TELEMETRY
+bool perf_update_breakdown_enabled = false;
+static bool perf_update_breakdown_game_task_seqs_after_active = false;
+static PerfUpdateBreakdownCapture perf_update_breakdown_capture = { 0 };
+static const char* const perf_update_scope_names[PERF_UPDATE_SCOPE_COUNT] = {
+    "select-timer",
+    "select-player",
+    "sel-pl-control",
+    "player-select-control",
+    "sel-arts-sub",
+    "task-entry",
+    "task-menu",
+    "task-game",
+    "task-debug",
+    "game-task-main-dispatch",
+    "game-task-init-texcash-before-process",
+    "game-task-seqs-before-process",
+    "game-task-seqs-after-process",
+    "game-task-seqs-after-renew",
+    "game-task-seqs-after-submit",
+    "game-task-seqs-after-submit-state-change",
+    "game-task-seqs-after-submit-enqueue",
+    "game-task-texture-cash-update",
+    "game-task-move-pulpul-work",
+    "game-task-check-ldreq-queue",
+    "game-task-post-frame-hooks",
+    "game01-total",
+    "game01-bg-draw-system",
+    "game01-setup-play-type",
+    "basic-sub-effect-list-0",
+    "basic-sub-effect-list-1",
+    "basic-sub-effect-list-2",
+    "basic-sub-effect-list-3",
+    "basic-sub-effect-list-4",
+    "basic-sub-effect-list-5",
+    "effect-d8-cursor-circle",
+    "effect-38-portrait",
+    "effect-39-name",
+    "effect-52-name-border",
+    "effect-79-super-art-plate",
+    "effect-80-super-art-command-name",
+};
+#endif
+
 // forward decls
 static void game_init();
 static void game_step_0();
@@ -118,6 +162,66 @@ static void restore_shutdown_signal_handlers() {
     signal(SIGHUP, SIG_DFL);
     signal(SIGTERM, SIG_DFL);
 }
+
+#if ENABLE_PERF_TELEMETRY
+void PerfUpdateBreakdown_SetEnabled(bool enabled) {
+    perf_update_breakdown_enabled = enabled;
+    if (!enabled) {
+        perf_update_breakdown_game_task_seqs_after_active = false;
+    }
+}
+
+void PerfUpdateBreakdown_ResetCapture(void) {
+    SDL_zero(perf_update_breakdown_capture);
+    perf_update_breakdown_game_task_seqs_after_active = false;
+}
+
+uint64_t PerfUpdateBreakdown_Begin(PerfUpdateScope scope) {
+    if (!perf_update_breakdown_enabled || scope >= PERF_UPDATE_SCOPE_COUNT) {
+        return 0;
+    }
+
+    return (uint64_t)SDL_GetTicksNS();
+}
+
+void PerfUpdateBreakdown_End(PerfUpdateScope scope, uint64_t start_ns) {
+    if (!perf_update_breakdown_enabled || start_ns == 0 || scope >= PERF_UPDATE_SCOPE_COUNT) {
+        return;
+    }
+
+    const uint64_t end_ns = (uint64_t)SDL_GetTicksNS();
+    if (end_ns < start_ns) {
+        return;
+    }
+
+    perf_update_breakdown_capture.total_ns[scope] += end_ns - start_ns;
+    perf_update_breakdown_capture.total_calls[scope] += 1;
+}
+
+bool PerfUpdateBreakdown_IsGameTaskSeqsAfterActive(void) {
+    return perf_update_breakdown_game_task_seqs_after_active;
+}
+
+void PerfUpdateBreakdown_SetGameTaskSeqsAfterActive(bool active) {
+    perf_update_breakdown_game_task_seqs_after_active = active;
+}
+
+void PerfUpdateBreakdown_GetCapture(PerfUpdateBreakdownCapture* out_capture) {
+    if (out_capture == NULL) {
+        return;
+    }
+
+    *out_capture = perf_update_breakdown_capture;
+}
+
+const char* PerfUpdateBreakdown_ScopeName(PerfUpdateScope scope) {
+    if (scope >= PERF_UPDATE_SCOPE_COUNT) {
+        return "unknown";
+    }
+
+    return perf_update_scope_names[scope];
+}
+#endif
 
 static void read_args(int argc, const char* argv[]) {
     struct argparse_option options[] = {
@@ -310,7 +414,8 @@ static bool is_supported_perf_wait_test_phase(const char* phase_name) {
 }
 
 static bool is_supported_perf_wait_runtime_state(const char* state_name) {
-    return state_name == NULL || SDL_strcmp(state_name, "attract-demo-logo") == 0;
+    return state_name == NULL || SDL_strcmp(state_name, "attract-demo-logo") == 0 ||
+           SDL_strcmp(state_name, "character-select-super-art") == 0;
 }
 #endif
 
@@ -336,7 +441,15 @@ static void verify_args() {
     }
 
     if (!is_supported_perf_wait_runtime_state(configuration.perf.wait_for_runtime_state)) {
-        error_out_with_code("--perf-wait-runtime-state must be attract-demo-logo.", EXIT_CODE_RUNTIME_ERROR);
+        error_out_with_code("--perf-wait-runtime-state must be attract-demo-logo or character-select-super-art.",
+                            EXIT_CODE_RUNTIME_ERROR);
+    }
+
+    if (configuration.perf.wait_for_runtime_state != NULL &&
+        SDL_strcmp(configuration.perf.wait_for_runtime_state, "character-select-super-art") == 0 &&
+        !configuration.test.enabled) {
+        error_out_with_code("--perf-wait-runtime-state character-select-super-art requires --test-enable.",
+                            EXIT_CODE_RUNTIME_ERROR);
     }
 
     if ((configuration.perf.wait_for_gameplay ? 1 : 0) + (configuration.perf.wait_for_test_phase != NULL ? 1 : 0) +
@@ -962,6 +1075,33 @@ void cpLoopTask() {
 
         switch (task_ptr->condition) {
         case 1:
+            if (PerfUpdateBreakdown_IsEnabled()) {
+                PerfUpdateScope perf_scope = PERF_UPDATE_SCOPE_COUNT;
+                switch (i) {
+                case TASK_ENTRY:
+                    perf_scope = PERF_UPDATE_SCOPE_TASK_ENTRY;
+                    break;
+                case TASK_MENU:
+                    perf_scope = PERF_UPDATE_SCOPE_TASK_MENU;
+                    break;
+                case TASK_GAME:
+                    perf_scope = PERF_UPDATE_SCOPE_TASK_GAME;
+                    break;
+                case TASK_DEBUG:
+                    perf_scope = PERF_UPDATE_SCOPE_TASK_DEBUG;
+                    break;
+                default:
+                    break;
+                }
+
+                if (perf_scope < PERF_UPDATE_SCOPE_COUNT) {
+                    const uint64_t perf_scope_start_ns = PerfUpdateBreakdown_Begin(perf_scope);
+                    task_ptr->func_adrs(task_ptr);
+                    PerfUpdateBreakdown_End(perf_scope, perf_scope_start_ns);
+                    break;
+                }
+            }
+
             task_ptr->func_adrs(task_ptr);
             break;
 
@@ -979,7 +1119,7 @@ void cpInitTask() {
     memset(&task, 0, sizeof(task));
 }
 
-void cpReadyTask(TaskID num, void* func_adrs) {
+void cpReadyTask(TaskID num, void (*func_adrs)(struct _TASK* task_ptr)) {
     struct _TASK* task_ptr = &task[num];
 
     memset(task_ptr, 0, sizeof(struct _TASK));

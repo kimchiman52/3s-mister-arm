@@ -5,6 +5,7 @@
 
 #include "sf33rd/Source/Game/rendering/mtrans.h"
 #include "common.h"
+#include "main.h"
 #include "port/sdl/sdl_game_renderer.h"
 #include "sf33rd/AcrSDK/ps2/flps2render.h"
 #include "sf33rd/AcrSDK/ps2/foundaps2.h"
@@ -1571,8 +1572,14 @@ void seqsAfterProcess() {
     s32 i;
     u32 keep = 0;
     u32 val = 0;
+    const bool perf_update_breakdown_enabled =
+        PerfUpdateBreakdown_IsEnabled() && PerfUpdateBreakdown_IsGameTaskSeqsAfterActive();
+    uint64_t perf_scope_start_ns = 0;
 
     if ((Debug_w[0x27] != 3) && (seqs_w.sprTotal != 0)) {
+        if (perf_update_breakdown_enabled) {
+            perf_scope_start_ns = PerfUpdateBreakdown_Begin(PERF_UPDATE_SCOPE_GAME_TASK_SEQS_AFTER_RENEW);
+        }
         for (i = 0; i < 24; i++) {
             if (seqs_w.up[i]) {
                 if (Debug_w[0x22]) {
@@ -1584,6 +1591,10 @@ void seqsAfterProcess() {
                 }
             }
         }
+        if (perf_update_breakdown_enabled) {
+            PerfUpdateBreakdown_End(PERF_UPDATE_SCOPE_GAME_TASK_SEQS_AFTER_RENEW, perf_scope_start_ns);
+            perf_scope_start_ns = PerfUpdateBreakdown_Begin(PERF_UPDATE_SCOPE_GAME_TASK_SEQS_AFTER_SUBMIT);
+        }
 
         if (seqs_w.sprMax < seqs_w.sprTotal) {
             seqs_w.sprMax = seqs_w.sprTotal;
@@ -1594,14 +1605,33 @@ void seqsAfterProcess() {
                 val = seqs_w.chip[i].tex_code;
 
                 if (keep != val) {
+                    const uint64_t perf_submit_state_start_ns = perf_update_breakdown_enabled
+                                                                    ? PerfUpdateBreakdown_Begin(
+                                                                          PERF_UPDATE_SCOPE_GAME_TASK_SEQS_AFTER_SUBMIT_STATE_CHANGE)
+                                                                    : 0;
                     keep = val;
                     flSetRenderState(FLRENDER_TEXSTAGE0, val);
+                    if (perf_update_breakdown_enabled) {
+                        PerfUpdateBreakdown_End(PERF_UPDATE_SCOPE_GAME_TASK_SEQS_AFTER_SUBMIT_STATE_CHANGE,
+                                                perf_submit_state_start_ns);
+                    }
                 }
 
+                const uint64_t perf_submit_enqueue_start_ns = perf_update_breakdown_enabled
+                                                                  ? PerfUpdateBreakdown_Begin(
+                                                                        PERF_UPDATE_SCOPE_GAME_TASK_SEQS_AFTER_SUBMIT_ENQUEUE)
+                                                                  : 0;
                 SDLGameRenderer_SetTaskSource(SDL_GAME_RENDERER_TASK_SOURCE_MTRANS);
                 SDLGameRenderer_DrawSprite2(&seqs_w.chip[i]);
                 SDLGameRenderer_SetTaskSource(SDL_GAME_RENDERER_TASK_SOURCE_UNKNOWN);
+                if (perf_update_breakdown_enabled) {
+                    PerfUpdateBreakdown_End(
+                        PERF_UPDATE_SCOPE_GAME_TASK_SEQS_AFTER_SUBMIT_ENQUEUE, perf_submit_enqueue_start_ns);
+                }
             }
+        }
+        if (perf_update_breakdown_enabled) {
+            PerfUpdateBreakdown_End(PERF_UPDATE_SCOPE_GAME_TASK_SEQS_AFTER_SUBMIT, perf_scope_start_ns);
         }
     }
 }

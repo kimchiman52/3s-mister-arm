@@ -90,6 +90,18 @@ typedef struct PerfCaptureDemoLogoState {
     int dir_timer;
 } PerfCaptureDemoLogoState;
 
+typedef struct PerfCaptureCharacterSelectSuperArtState {
+    int select_status[2];
+    int sel_pl_complete[2];
+    int sel_arts_complete[2];
+    int select_arts[2];
+    int moving_plate[2];
+    int moving_plate_counter[2];
+    int super_arts[2];
+    int arts_y[2];
+    int disp_command_name_mask[2];
+} PerfCaptureCharacterSelectSuperArtState;
+
 static bool perf_capture_enabled = false;
 static bool perf_capture_completed = false;
 static bool perf_capture_basic_mode = false;
@@ -239,6 +251,8 @@ static int perf_capture_start_demo_logo_effect_index = -1;
 static int perf_capture_start_demo_logo_routine2 = -1;
 static int perf_capture_start_demo_logo_direction = -1;
 static int perf_capture_start_demo_logo_dir_timer = -1;
+static bool perf_capture_start_character_select_super_art_active = false;
+static PerfCaptureCharacterSelectSuperArtState perf_capture_start_character_select_super_art_state = { 0 };
 static Uint64 perf_break_into_frames_total = 0;
 static int perf_break_into_first_frame = -1;
 static Uint64 perf_hnc_active_frames_total = 0;
@@ -252,6 +266,8 @@ static int perf_title_logo_active_first_frame = -1;
 static Uint64 perf_demo_logo_active_frames_total = 0;
 static int perf_demo_logo_active_first_frame = -1;
 static int perf_demo_logo_max_direction = -1;
+static Uint64 perf_character_select_super_art_active_frames_total = 0;
+static int perf_character_select_super_art_active_first_frame = -1;
 static Uint64 perf_software_frame_mode_enabled_frames = 0;
 static Uint64 perf_software_frame_surface_ready_frames = 0;
 static Uint64 perf_software_frame_owned_frames = 0;
@@ -469,6 +485,7 @@ static const char* recommended_mister_audio_driver = "alsa";
 static void perf_capture_reset_storage(void);
 static void perf_capture_write_summary(void);
 #endif
+static const char* scale_mode_name(void);
 static const char* software_frame_mode_name(void);
 
 #if ENABLE_PERF_TELEMETRY
@@ -708,6 +725,52 @@ static bool get_perf_capture_demo_logo_state(PerfCaptureDemoLogoState* state) {
     return false;
 }
 
+static int get_perf_capture_disp_command_name_mask(int player) {
+    int mask = 0;
+
+    if (player < 0 || player >= 2) {
+        return 0;
+    }
+
+    for (int plate = 0; plate < 3; plate++) {
+        if (Disp_Command_Name[player][plate] != 0) {
+            mask |= (1 << plate);
+        }
+    }
+
+    return mask;
+}
+
+static bool get_perf_capture_character_select_super_art_state(PerfCaptureCharacterSelectSuperArtState* state) {
+    PerfCaptureCharacterSelectSuperArtState local_state = { 0 };
+    PerfCaptureCharacterSelectSuperArtState* snapshot = state != NULL ? state : &local_state;
+
+    for (int player = 0; player < 2; player++) {
+        snapshot->select_status[player] = Select_Status[player];
+        snapshot->sel_pl_complete[player] = Sel_PL_Complete[player];
+        snapshot->sel_arts_complete[player] = Sel_Arts_Complete[player];
+        snapshot->select_arts[player] = Select_Arts[player];
+        snapshot->moving_plate[player] = Moving_Plate[player];
+        snapshot->moving_plate_counter[player] = Moving_Plate_Counter[player];
+        snapshot->super_arts[player] = Super_Arts[player];
+        snapshot->arts_y[player] = Arts_Y[player];
+        snapshot->disp_command_name_mask[player] = get_perf_capture_disp_command_name_mask(player);
+    }
+
+    if (!(G_No[1] == 1 && G_No[2] == 2 && Select_Status[0] == 3 && Select_Status[1] == 3)) {
+        return false;
+    }
+
+    for (int player = 0; player < 2; player++) {
+        if (snapshot->sel_pl_complete[player] == 0 || snapshot->sel_arts_complete[player] != 0 ||
+            snapshot->select_arts[player] < 0 || snapshot->disp_command_name_mask[player] == 0) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
 static bool perf_capture_title_logo_active(void) {
     return title_tex_flag != 0;
 }
@@ -720,6 +783,9 @@ bool SDLApp_IsPerfRuntimeStateActive(const char* runtime_state_name) {
     if (SDL_strcmp(runtime_state_name, "attract-demo-logo") == 0) {
         return get_perf_capture_demo_logo_state(NULL);
     }
+    if (SDL_strcmp(runtime_state_name, "character-select-super-art") == 0) {
+        return get_perf_capture_character_select_super_art_state(NULL);
+    }
 
     return false;
 }
@@ -727,7 +793,10 @@ bool SDLApp_IsPerfRuntimeStateActive(const char* runtime_state_name) {
 static void snapshot_perf_capture_transition_start_state(void) {
     const struct _TASK* menu_task = &task[TASK_MENU];
     PerfCaptureDemoLogoState demo_logo_state;
+    PerfCaptureCharacterSelectSuperArtState character_select_super_art_state;
     const bool demo_logo_active = get_perf_capture_demo_logo_state(&demo_logo_state);
+    const bool character_select_super_art_active =
+        get_perf_capture_character_select_super_art_state(&character_select_super_art_state);
 
     for (int i = 0; i < 4; i++) {
         perf_capture_start_g_no[i] = G_No[i];
@@ -752,6 +821,8 @@ static void snapshot_perf_capture_transition_start_state(void) {
     perf_capture_start_demo_logo_routine2 = demo_logo_active ? demo_logo_state.routine2 : -1;
     perf_capture_start_demo_logo_direction = demo_logo_active ? demo_logo_state.direction : -1;
     perf_capture_start_demo_logo_dir_timer = demo_logo_active ? demo_logo_state.dir_timer : -1;
+    perf_capture_start_character_select_super_art_active = character_select_super_art_active;
+    perf_capture_start_character_select_super_art_state = character_select_super_art_state;
 }
 
 static void note_perf_capture_transition_state(int frame_index) {
@@ -812,6 +883,12 @@ static void note_perf_capture_test_state(int frame_index) {
     note_perf_capture_transition_state(frame_index);
     note_perf_capture_title_state(frame_index);
     note_perf_capture_demo_logo_state(frame_index);
+    if (get_perf_capture_character_select_super_art_state(NULL)) {
+        perf_character_select_super_art_active_frames_total += 1;
+        if (perf_character_select_super_art_active_first_frame < 0) {
+            perf_character_select_super_art_active_first_frame = frame_index;
+        }
+    }
 
     for (int player = 0; player < 2; player++) {
         const int super_art_stock = get_perf_capture_super_art_stock(player);
@@ -877,6 +954,20 @@ bool SDLApp_RunSoftwareFrameParityCheck(void) {
     return SDLGameRenderer_RunSoftwareFrameParityCheck();
 }
 
+static bool perf_capture_should_enable_update_breakdown(bool basic_mode) {
+    if (basic_mode) {
+        return false;
+    }
+
+    if (configuration.perf.wait_for_runtime_state != NULL &&
+        SDL_strcmp(configuration.perf.wait_for_runtime_state, "character-select-super-art") == 0) {
+        return true;
+    }
+
+    return configuration.perf.wait_for_test_phase != NULL &&
+           SDL_strcmp(configuration.perf.wait_for_test_phase, "character-select") == 0;
+}
+
 static void perf_capture_reset_storage(void) {
     if (perf_samples != NULL) {
         SDL_free(perf_samples);
@@ -897,6 +988,8 @@ static void perf_capture_reset_storage(void) {
     perf_capture_completed = false;
     perf_capture_basic_mode = false;
     SDLGameRenderer_SetPerfCaptureLogicalIdentityEnabled(false);
+    PerfUpdateBreakdown_SetEnabled(false);
+    PerfUpdateBreakdown_ResetCapture();
     perf_capture_target_frames = 0;
     perf_capture_recorded_frames = 0;
     perf_frame_start_ns = 0;
@@ -1038,6 +1131,8 @@ static void perf_capture_reset_storage(void) {
     perf_capture_start_demo_logo_routine2 = -1;
     perf_capture_start_demo_logo_direction = -1;
     perf_capture_start_demo_logo_dir_timer = -1;
+    perf_capture_start_character_select_super_art_active = false;
+    SDL_zero(perf_capture_start_character_select_super_art_state);
     perf_break_into_frames_total = 0;
     perf_break_into_first_frame = -1;
     perf_hnc_active_frames_total = 0;
@@ -1051,6 +1146,8 @@ static void perf_capture_reset_storage(void) {
     perf_demo_logo_active_frames_total = 0;
     perf_demo_logo_active_first_frame = -1;
     perf_demo_logo_max_direction = -1;
+    perf_character_select_super_art_active_frames_total = 0;
+    perf_character_select_super_art_active_first_frame = -1;
     perf_software_frame_mode_enabled_frames = 0;
     perf_software_frame_surface_ready_frames = 0;
     perf_software_frame_owned_frames = 0;
@@ -1139,6 +1236,8 @@ void SDLApp_ConfigurePerfCapture(int frame_count, const char* output_path, const
     perf_capture_enabled = true;
     perf_capture_basic_mode = basic_mode;
     SDLGameRenderer_SetPerfCaptureLogicalIdentityEnabled(!basic_mode);
+    PerfUpdateBreakdown_ResetCapture();
+    PerfUpdateBreakdown_SetEnabled(perf_capture_should_enable_update_breakdown(basic_mode));
     perf_frame_start_ns = 0;
     perf_update_start_ns = 0;
     perf_update_ns_total = 0;
@@ -1317,11 +1416,12 @@ void SDLApp_ConfigurePerfCapture(int frame_count, const char* output_path, const
     }
 
     snapshot_perf_capture_transition_start_state();
-    backend_logf("PERF capture enabled: frames=%d output=%s scene=%s detail_mode=%s software_frame_mode=%s",
+    backend_logf("PERF capture enabled: frames=%d output=%s scene=%s detail_mode=%s scale_mode=%s software_frame_mode=%s",
                  perf_capture_target_frames,
                  perf_capture_output_path != NULL ? perf_capture_output_path : "(auto)",
                  perf_capture_scene_name != NULL ? perf_capture_scene_name : "(none)",
                  perf_capture_basic_mode ? "basic" : "full",
+                 scale_mode_name(),
                  software_frame_mode_name());
 }
 
@@ -1503,6 +1603,8 @@ static void perf_capture_write_summary(void) {
         refresh_locality_candidate_renew_chunk_calls += refresh_locality_candidates[i].renew_chunk_calls;
     }
     const double frame_count = (double)perf_capture_recorded_frames;
+    PerfUpdateBreakdownCapture update_breakdown_capture = { 0 };
+    PerfUpdateBreakdown_GetCapture(&update_breakdown_capture);
     PLS03_SuperArtCommandTelemetry super_art_command_telemetry[2] = { 0 };
     for (int player = 0; player < 2; player++) {
         PLS03_GetSuperArtCommandTelemetry((s16)player, &super_art_command_telemetry[player]);
@@ -3005,7 +3107,7 @@ static void perf_capture_write_summary(void) {
     }
 
     io_printf(io, "{\n");
-    io_printf(io, "  \"schema_version\": 46,\n");
+    io_printf(io, "  \"schema_version\": 48,\n");
     io_printf(io, "  \"scene\": \"");
     io_write_json_escaped_string(io, perf_capture_scene_name);
     io_printf(io, "\",\n");
@@ -3194,9 +3296,55 @@ static void perf_capture_write_summary(void) {
               (unsigned long long)perf_metamorphose_active_frames[1],
               frame_count > 0 ? (double)perf_metamorphose_active_frames[1] / frame_count : 0.0);
     if (perf_metamorphose_active_first_frame[1] >= 0) {
-        io_printf(io, "    \"p2_metamorphose_first_frame\": %d\n", perf_metamorphose_active_first_frame[1]);
+        io_printf(io, "    \"p2_metamorphose_first_frame\": %d,\n", perf_metamorphose_active_first_frame[1]);
     } else {
-        io_printf(io, "    \"p2_metamorphose_first_frame\": null\n");
+        io_printf(io, "    \"p2_metamorphose_first_frame\": null,\n");
+    }
+    io_printf(io,
+              "    \"character_select_super_art_active_frames_total\": %llu,\n"
+              "    \"character_select_super_art_active_ratio\": %.6f,\n",
+              (unsigned long long)perf_character_select_super_art_active_frames_total,
+              frame_count > 0 ? (double)perf_character_select_super_art_active_frames_total / frame_count : 0.0);
+    if (perf_character_select_super_art_active_first_frame >= 0) {
+        io_printf(io, "    \"character_select_super_art_active_first_frame\": %d,\n",
+                  perf_character_select_super_art_active_first_frame);
+    } else {
+        io_printf(io, "    \"character_select_super_art_active_first_frame\": null,\n");
+    }
+    io_printf(io, "    \"character_select_super_art_start_active\": %s,\n",
+              perf_capture_start_character_select_super_art_active ? "true" : "false");
+    io_printf(io, "    \"character_select_super_art_start_state\": ");
+    if (perf_capture_start_character_select_super_art_active) {
+        io_printf(io, "{\n");
+        io_printf(io, "      \"select_status\": ");
+        io_write_json_int_array(io, perf_capture_start_character_select_super_art_state.select_status, 2);
+        io_printf(io, ",\n");
+        io_printf(io, "      \"sel_pl_complete\": ");
+        io_write_json_int_array(io, perf_capture_start_character_select_super_art_state.sel_pl_complete, 2);
+        io_printf(io, ",\n");
+        io_printf(io, "      \"sel_arts_complete\": ");
+        io_write_json_int_array(io, perf_capture_start_character_select_super_art_state.sel_arts_complete, 2);
+        io_printf(io, ",\n");
+        io_printf(io, "      \"select_arts\": ");
+        io_write_json_int_array(io, perf_capture_start_character_select_super_art_state.select_arts, 2);
+        io_printf(io, ",\n");
+        io_printf(io, "      \"moving_plate\": ");
+        io_write_json_int_array(io, perf_capture_start_character_select_super_art_state.moving_plate, 2);
+        io_printf(io, ",\n");
+        io_printf(io, "      \"moving_plate_counter\": ");
+        io_write_json_int_array(io, perf_capture_start_character_select_super_art_state.moving_plate_counter, 2);
+        io_printf(io, ",\n");
+        io_printf(io, "      \"super_arts\": ");
+        io_write_json_int_array(io, perf_capture_start_character_select_super_art_state.super_arts, 2);
+        io_printf(io, ",\n");
+        io_printf(io, "      \"arts_y\": ");
+        io_write_json_int_array(io, perf_capture_start_character_select_super_art_state.arts_y, 2);
+        io_printf(io, ",\n");
+        io_printf(io, "      \"disp_command_name_mask\": ");
+        io_write_json_int_array(io, perf_capture_start_character_select_super_art_state.disp_command_name_mask, 2);
+        io_printf(io, "\n    }\n");
+    } else {
+        io_printf(io, "null\n");
     }
     io_printf(io, "  },\n");
     io_printf(io,
@@ -3323,6 +3471,27 @@ static void perf_capture_write_summary(void) {
     } else {
         io_printf(io, "null\n");
     }
+    io_printf(io, "  },\n");
+    io_printf(io, "  \"update_breakdown\": {\n");
+    io_printf(io, "    \"inclusive\": true,\n");
+    io_printf(io, "    \"scopes\": [\n");
+    for (int scope = 0; scope < PERF_UPDATE_SCOPE_COUNT; scope++) {
+        const uint64_t total_ns = update_breakdown_capture.total_ns[scope];
+        const uint64_t total_calls = update_breakdown_capture.total_calls[scope];
+        const double total_ms = (double)total_ns / 1e6;
+        const double mean_ms = frame_count > 0.0 ? total_ms / frame_count : 0.0;
+        const double calls_per_frame = frame_count > 0.0 ? (double)total_calls / frame_count : 0.0;
+        io_printf(io,
+                  "      {\"name\": \"%s\", \"total_ms\": %.4f, \"mean_ms\": %.4f, \"total_calls\": %llu, "
+                  "\"calls_per_frame\": %.4f}%s\n",
+                  PerfUpdateBreakdown_ScopeName((PerfUpdateScope)scope),
+                  total_ms,
+                  mean_ms,
+                  (unsigned long long)total_calls,
+                  calls_per_frame,
+                  (scope + 1) < PERF_UPDATE_SCOPE_COUNT ? "," : "");
+    }
+    io_printf(io, "    ]\n");
     io_printf(io, "  },\n");
     io_printf(io, "  \"metrics\": {\n");
     io_printf(io, "    \"frame_time\": {\"mean_ms\": %.4f, \"min_ms\": %.4f, \"max_ms\": %.4f},\n",
@@ -5807,6 +5976,25 @@ static void init_scalemode() {
 #endif
 }
 
+static const char* scale_mode_name(void) {
+    switch (scale_mode) {
+    case SCALEMODE_NATIVE:
+        return "native";
+    case SCALEMODE_NEAREST:
+        return "nearest";
+    case SCALEMODE_LINEAR:
+        return "linear";
+    case SCALEMODE_SOFT_LINEAR:
+        return "soft-linear";
+    case SCALEMODE_SQUARE_PIXELS:
+        return "square-pixels";
+    case SCALEMODE_INTEGER:
+        return "integer";
+    }
+
+    return "unknown";
+}
+
 static const char* software_frame_mode_name(void) {
     return software_frame_mode_enabled ? "on" : "off";
 }
@@ -5981,6 +6169,7 @@ int SDLApp_Init() {
     SDLMessageRenderer_Initialize(renderer);
     SDLGameRenderer_Init(renderer);
     SDLGameRenderer_SetSoftwareFrameMode(software_frame_mode_enabled);
+    backend_logf("Scale mode: %s", scale_mode_name());
     backend_logf("Software frame mode: %s", software_frame_mode_name());
 
 #if defined(DEBUG)
