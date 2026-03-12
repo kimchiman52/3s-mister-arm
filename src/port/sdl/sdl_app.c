@@ -52,12 +52,15 @@ static const Uint64 target_frame_time_ns = 1000000000.0 / TARGET_FPS;
 SDL_Window* window = NULL;
 static SDL_Renderer* renderer = NULL;
 static SDL_Texture* screen_texture = NULL;
+static SDL_Texture* native_screenshot_texture = NULL;
 static ScaleMode scale_mode = SCALEMODE_SOFT_LINEAR;
 static SDL_FRect native_output_rect = { 0 };
 static bool native_output_rect_dirty = true;
 static bool native_output_has_bars = true;
 static int native_output_width = 0;
 static int native_output_height = 0;
+static int native_screenshot_width = 0;
+static int native_screenshot_height = 0;
 static SDL_FRect screen_output_rect = { 0 };
 static bool screen_output_rect_dirty = true;
 static bool screen_output_has_letterbox = true;
@@ -5689,6 +5692,18 @@ static SDL_ScaleMode screen_texture_scale_mode() {
     return SDL_SCALEMODE_NEAREST;
 }
 
+static bool get_native_output_size(int* out_w, int* out_h);
+
+static void destroy_native_screenshot_texture(void) {
+    if (native_screenshot_texture != NULL) {
+        SDL_DestroyTexture(native_screenshot_texture);
+        native_screenshot_texture = NULL;
+    }
+
+    native_screenshot_width = 0;
+    native_screenshot_height = 0;
+}
+
 static SDL_Point screen_texture_size() {
     SDL_Point size;
     SDL_GetRenderOutputSize(renderer, &size.x, &size.y);
@@ -5699,6 +5714,34 @@ static SDL_Point screen_texture_size() {
     }
 
     return size;
+}
+
+static SDL_Texture* ensure_native_screenshot_texture(void) {
+    int texture_width = native_output_width;
+    int texture_height = native_output_height;
+    if ((texture_width <= 0) || (texture_height <= 0)) {
+        if (!get_native_output_size(&texture_width, &texture_height)) {
+            return NULL;
+        }
+    }
+
+    if ((native_screenshot_texture != NULL) && (native_screenshot_width == texture_width) &&
+        (native_screenshot_height == texture_height)) {
+        return native_screenshot_texture;
+    }
+
+    destroy_native_screenshot_texture();
+
+    native_screenshot_texture =
+        SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB32, SDL_TEXTUREACCESS_TARGET, texture_width, texture_height);
+    if (native_screenshot_texture == NULL) {
+        return NULL;
+    }
+
+    SDL_SetTextureScaleMode(native_screenshot_texture, screen_texture_scale_mode());
+    native_screenshot_width = texture_width;
+    native_screenshot_height = texture_height;
+    return native_screenshot_texture;
 }
 
 static void create_screen_texture() {
@@ -5766,6 +5809,16 @@ static void init_scalemode() {
 
 static const char* software_frame_mode_name(void) {
     return software_frame_mode_enabled ? "on" : "off";
+}
+
+static bool scale_mode_uses_native_render_path(void) {
+#if defined(PORT_MISTER)
+    if ((scale_mode == SCALEMODE_NEAREST) && fbdev_presenter_enabled && use_fbdev_only_present) {
+        return true;
+    }
+#endif
+
+    return (scale_mode == SCALEMODE_NATIVE) || (scale_mode == SCALEMODE_SQUARE_PIXELS);
 }
 
 static void init_software_frame_mode(void) {
@@ -5917,9 +5970,9 @@ int SDLApp_Init() {
     }
 #endif
 
-    if ((scale_mode == SCALEMODE_NATIVE) || (scale_mode == SCALEMODE_SQUARE_PIXELS)) {
+    if (scale_mode_uses_native_render_path()) {
         use_native_render_path = true;
-        backend_logf("Native render path: enabled (scale-mode=%s)", scale_mode == SCALEMODE_NATIVE ? "native" : "square-pixels");
+        backend_logf("Native render path: enabled (scale-mode=%s)", scale_mode_name());
     }
 
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
@@ -5946,6 +5999,7 @@ int SDLApp_Init() {
 void SDLApp_Quit() {
     Config_Destroy();
     FBDevPresenter_Quit();
+    destroy_native_screenshot_texture();
     SDL_DestroyTexture(screen_texture);
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
@@ -6210,8 +6264,8 @@ static void refresh_screen_output_rect() {
     screen_output_rect_dirty = false;
 }
 
-static void render_native_output_to_present_target(bool has_message_content, bool clear_bars) {
-    SDL_SetRenderTarget(renderer, NULL);
+static void render_native_output_to_target(SDL_Texture* target, bool has_message_content, bool clear_bars) {
+    SDL_SetRenderTarget(renderer, target);
     if (clear_bars) {
         SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255); // black bars
         SDL_RenderClear(renderer);
@@ -6221,6 +6275,10 @@ static void render_native_output_to_present_target(bool has_message_content, boo
     if (has_message_content) {
         SDL_RenderTexture(renderer, message_canvas, NULL, &native_output_rect);
     }
+}
+
+static void render_native_output_to_present_target(bool has_message_content, bool clear_bars) {
+    render_native_output_to_target(NULL, has_message_content, clear_bars);
 }
 
 static void save_texture(SDL_Texture* texture, const char* filename) {
@@ -6276,6 +6334,15 @@ void SDLApp_EndFrame() {
     if (use_native_render_path) {
         refresh_native_output_rect();
         onscreen_content_rect = &native_output_rect;
+        if (should_save_screenshot) {
+            SDL_Texture* screenshot_target = ensure_native_screenshot_texture();
+            if (screenshot_target != NULL) {
+                render_native_output_to_target(screenshot_target, has_message_content, native_output_has_bars);
+                save_texture(screenshot_target, "screenshot_screen.bmp");
+            } else {
+                backend_logf("Native-path screen screenshot skipped: unable to create screenshot target");
+            }
+        }
         const bool use_fbdev_software_frame_direct =
             prefer_software_frame_direct_present && SDLGameRenderer_HasSoftwareOwnedFrame();
         const bool use_fbdev_native_direct_target =
@@ -6333,7 +6400,7 @@ void SDLApp_EndFrame() {
         }
     }
 
-    if (should_save_screenshot && screen_texture != NULL) {
+    if (should_save_screenshot && !use_native_render_path && screen_texture != NULL) {
         save_texture(screen_texture, "screenshot_screen.bmp");
     }
 
