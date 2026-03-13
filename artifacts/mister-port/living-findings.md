@@ -10,7 +10,7 @@ Scope guardrails:
 
 ## Current Snapshot
 
-- Branch: `ralph-manual-yun-transition-20260309`
+- Branch: `mister-perf`
 - Build target: `PORT_MISTER=ON` in Docker container `3sx-mister-build`
 - Device target: `root@192.168.1.171:/media/fat/games/3sx/`
 - Remote tooling rule: use `tools/mister/misterctl.sh` for deploy/probe/smoke and `tools/mister/perf-sampler.sh` for captures. They now share a local MiSTer lock and are the only approved remote entry points for Ralph loops; do not drift back to raw `ssh`/`scp`/`rsync`.
@@ -23,11 +23,15 @@ Scope guardrails:
 - Stage-aware anchors: Chunk 1 now keeps the no-override idle control on `stage_id=11`, names `stage_id=19` as the current `stage-heavy` gate, and keeps `stage_id=2` as the contrasting explicit override
 - Frozen stock-image scene matrix: `idle-control` = `stage 11 / Ryu-Ken / SA0-0`; `stage-heavy` = `stage 19 / Ryu-Ken / SA0-0`; `effect-heavy` = preset `effect-heavy` on `stage 19 / Ryu-Ken / SA0-0`; `super-heavy` = preset `super-heavy` on `stage 19 / Ryu-Ryu / SA0-0`
 - Historical hybrid note: the first-cut hybrid subset from `artifacts/mister-port/stock-image-architecture-loop-series/todo.md` remains closed at `65.64% / 56.86%` on `effect-heavy` and `66.85% / 58.19%` on `super-heavy`; do not reopen that track inside the active software-frame stream
-- Active software-frame stream: `artifacts/mister-port/stock-image-software-frame-loop-series/todo.md`
+- Active checklist: `artifacts/mister-port/2p-menu-performance/todo.md` is now the canonical runtime checklist for this branch. Keep `artifacts/mister-port/scaled-present-path/todo.md` as the closed nearest-mode record, and run the active stream from the user-priority 2P character-select / super-art selection lane rather than reopening older stock-image history
 - MiSTer default decision: `software-frame-mode` remains default-on for MiSTer builds; the user-facing default survived the earlier accepted `stock-soft-c21-*` gate, and the latest trusted on-device runtime baseline for new overnight work is now the kept `stock-soft-c97-*` gameplay subset together with the unchanged `stock-soft-c80-*` stage-heavy and transition references
 - Current trusted runtime baseline: `stock-soft-c104-control-post` = `89.6375 FPS` / `11.1560 / 3.5664 / 7.0383 / 0.5514 ms` on `stage_id=11`, `stock-soft-c80-stage-heavy-post` = `66.5197 FPS` / `15.0331 / 5.7282 / 8.7805 / 0.5244 ms` on `stage_id=19`, `stock-soft-c104-effect-heavy-rerun` = `62.2484 FPS` / `16.0647 / 6.8537 / 8.6688 / 0.5422 ms` on `stage_id=19`, `stock-soft-c104-super-heavy-post` = `60.8836 FPS` / `16.4248 / 7.0225 / 8.8541 / 0.5482 ms` on `stage_id=19`, and the new exact transition keep `stock-soft-c104-wipe-type1-preserved-post` = `59.9996 FPS` / `16.6668 / 7.6899 / 8.2007 / 0.7762 / 0.2043 ms` on the exact `WipeOut(type = 1)` gate; the kept type-`1` wipe-strip reland preserved `software_frame_mode = on`, kept gameplay direct-presented with `software_frame_reason_solid = 0`, and replaced the old `17`-frame `76`-solid readback collapse with the older `2/300` geometry fallback pattern
 - Perf-capture diagnostic note: `--perf-basic` is now the low-overhead MiSTer capture mode for gameplay triage. It still records `frame/update/render/present`, but disables the heavy per-frame renderer/presenter breakdown. On-device paired `HEAD` captures showed the recent apparent gameplay regression was instrumentation overhead, not a real runtime slowdown: idle `full -> basic` improved from `14.31 / 7.03 / 6.48 / 0.81 ms` to `13.62 / 6.50 / 6.33 / 0.79 ms`, `super-heavy full -> basic` improved from `27.01 / 18.10 / 8.36 / 0.55 ms` to `25.60 / 16.85 / 8.23 / 0.52 ms`, and the `basic` numbers slightly beat the earlier `c21` full captures on both gates
-- User-observed scene priorities: intro and menus feel effectively full speed; Remy's stage and Remy's super now feel full speed enough to drop out of first-line focus; the exact `Press Start -> main menu` type-`1` wipe now looks solved enough to drop out of first-line focus unless fresh reports contradict that; the main remaining visible lane is Yun SA3 Genei-Jin, especially the first activation/cold burst where FPS can dip to roughly `45` before later activations recover into the mid/upper `50s`. Overnight work should prioritize that first-activation Yun/effect gameplay burst ahead of any further transition cleanup.
+- User-observed scene priorities after nearest closeout: 2P character select overall is now first-line, the immediate slowdown after character select when the super-art selection UI appears is second-line, and the circle/highlight animation around the super-art name is the first visual hotspot to measure inside that lane. Keep the older Ibuki/attract/Yun notes as historical context only unless fresh captures re-rank them against these menu-lane repros.
+- Current menu-attribution status: the `2026-03-12` chooser follow-up split now shows the hotspot inside `seqsAfterProcess` is overwhelmingly submit work, not renew work. On `menu-m3r-super-art-selection-exact-full`, `task-game` averaged `17.8224 ms/frame`, `game-task-seqs-after-process` `16.3403 ms/frame`, `game-task-seqs-after-submit` `15.5704 ms/frame`, and `game-task-seqs-after-renew` only `0.7624 ms/frame`; on `menu-m3r-char-select-overall-full`, `seqsAfterProcess` `4.9636 ms/frame` likewise splits to `submit 4.5567` versus `renew 0.3993`. Treat the submit lane as the next runtime target inside the chooser path; texture renew is not the first measured win.
+- First chooser-submit runtime rejection: the `2026-03-12` normalized-UV `SDLGameRenderer_DrawSprite2` fast-path reland slightly improved broad character select (`menu-m4-char-select-overall-full` = `59.2159 FPS`, `game-task-seqs-after-submit = 4.4100 ms/frame`) but regressed the user-priority exact chooser gate (`menu-m4-super-art-selection-exact-full` = `34.8510 FPS`, `game-task-seqs-after-submit = 15.7101 ms/frame`). The runtime diff was rolled back fully and MiSTer was restored to the prior baseline; do not retry this helper shape blindly.
+- Chooser submit sub-split status: the `2026-03-12` telemetry-only `m5` split now shows the remaining submit hotspot is overwhelmingly texture/state-change cost, not sprite enqueue. On `menu-m5-super-art-selection-exact-full`, `game-task-seqs-after-submit` averaged `17.0030 ms/frame`, with `game-task-seqs-after-submit-state-change = 14.8377 ms/frame` over `105.9750` calls/frame versus `game-task-seqs-after-submit-enqueue = 1.2710 ms/frame` over `269.8500` calls/frame; on `menu-m5-char-select-overall-full`, submit `5.5394 ms/frame` likewise splits to `state-change 4.2823` versus `enqueue 0.7152`. Keep the next runtime loop on repeated `FLRENDER_TEXSTAGE0` / `SDLGameRenderer_SetTexture` churn, not `DrawSprite2`.
+- Kept chooser dirty-rect runtime reland: the `2026-03-12` retained renew-bbox reland now keys on stable logical `ppg-seqs` identities `1030/1031/1032/1034` in the `ix_num_first = 1030`, `texture_total = 7` chooser group, not transient runtime handles. That converted the exact chooser refresh lane from almost all full no-rect work into almost all partial refreshes. `menu-m6rr-super-art-selection-exact-full` improved to `59.1152 FPS` / `16.9161 / 6.9430 / 9.4159 / 0.5573 ms`, with `game-task-seqs-after-submit-state-change` down to `2.1851 ms/frame` and `software_surface_cache_refresh` down to `1.3913 ms/frame`; actual refresh work flipped from `17.2250` full no-usable-dirty-rect attempts/frame on `m5` to `17.0750` partial attempts/frame on `m6rr`, leaving only `0.1500` oversized full-refresh attempts/frame. Broad character select improved with it as well: `menu-m6rr-char-select-overall-full` reached `65.6915 FPS` / `15.2227 / 5.5326 / 8.9545 / 0.7356 ms`, with `game-task-seqs-after-submit-state-change` down to `1.5743 ms/frame`. The exact chooser state-change lane no longer looks like the next obvious measured win; widen back out to the broader 2P character-select lane next.
 - Manual-capture evidence now supersedes the earlier scene-broadening ambiguity. Full manual telemetry on `2026-03-09` split the two remaining problems cleanly:
   - `manual-yun-geneijin` reproduced a real gameplay burst slowdown, but not a presenter failure. The whole run averaged `85.68 FPS` / `11.6709 / 3.8613 / 7.3138 / 0.4958 ms`, while the repeated slow 60-frame windows during the active SA3 burst landed around `49-51 FPS` with roughly `20.20 / 5.16 / 14.59 / 0.46 ms`. Those windows stayed on direct present and were dominated by `software_frame_fast_non_integer_pixels ~= 286k-290k/frame` plus `software_frame_generic_textured_pixels ~= 23k-26k/frame`, with only a smaller refresh-blit tail (`~1.26-1.33 ms`).
   - `manual-menu-transition` reproduced the catastrophic lane directly. The full run averaged `43.41 FPS` / `23.0371 / 3.0584 / 3.8073 / 16.1714 ms`, and the collapse arrived as repeated 8-frame bursts at roughly `3.5 FPS` with `software_frame_fallback = 1`, `software_frame_direct_present = 0`, `software_frame_reason_solid = 76`, and `present_readback ~= 273-316 ms` while the actual fb copy stayed around `0.44 ms`.
@@ -36,7 +40,7 @@ Scope guardrails:
   - New operator note after Loop 105: the first visible Genei-Jin activation still dips harder than later ones. One manual retest saw the first activation drop to roughly `45 FPS`, while later activations stayed in the mid/upper `50s`.
   - Immediate consequence: do not spend another loop on transition route-identification first. The transition problem is solved enough to de-prioritize, while the Yun problem is now a confirmed first-activation gameplay raster burst around SA3 startup/cold-effect windows.
 - FPS tracking note: every overnight gameplay capture should report `metrics.fps.mean` explicitly alongside frame/update/render/present so the logs preserve a direct player-facing speed signal instead of only millisecond buckets.
-- Clean-build status: the dual-flavor split is now validated. Docker build/install/package succeeds for both `build/mister-telemetry*` and `build/mister-clean*`; the clean package hides `--perf-*`, the telemetry package still passes `--headless --software-frame-parity-check`, and the clean package passed MiSTer redeploy, `/media/fat/games/3sx/run-3sx.sh --probe-renderer-only`, and bounded `launch-osd.sh` with `runtime_rc=124` / `exit=143`
+- Clean-build status: the dual-flavor split is now validated. Docker build/install/package succeeds for both `build/mister-telemetry*` and `build/mister-clean*`; the clean package hides `--perf-*`, the telemetry package still passes `--headless --software-frame-parity-check`, and the clean package passed MiSTer redeploy, `/media/fat/games/3sx/run-3sx.sh --probe-renderer-only`, bounded `launch-osd.sh` at the default native path, and a temporary nearest-mode launch with `Native render path: enabled (scale-mode=nearest)` before the device config was restored to `scale-mode = native`
 - Software-frame raster status: the kept software path now combines exact textured-copy fast paths for unflipped, flipped, clipped, exact color-mod, integer-scaled copies, and a shared lookup-table non-integer fast path for `>=512 px` tasks, plus the specialized solid-fill raster for opaque and translucent rects; against the fresh `stock-soft-c97-*` same-schema gameplay baselines, the narrower reland cut `software_frame_generic_textured_pixels.mean` from `485.57` to `211.64`, raised `software_frame_fast_non_integer_pixels.mean` from `540.81` to `814.74`, and improved control/effect-heavy while leaving `super-heavy` effectively flat
 - Long-window note: 600-frame `training` still carries the same `86/600` solid-fill transition pattern, but the specialized solid path reduced those frames from `12.34 ms` average render and `21.34 ms` max render to `4.32 ms` average render and `15.52 ms` max render; `training` remains the best transition-hitch diagnostic, while the remaining gameplay render residue is now the smaller non-integer `<512 px` lane plus the smaller generic-textured tail that survived the kept Loop 97 threshold rerank
 - Loop 15 runtime reland: kept runtime commit `c3e904f2` adds the shared `software_frame_non_integer` helper, routes the parity harness through it, and records `software_frame_fast_non_integer_pixels.mean = 540.81` on both gameplay gates while `software_frame_fast_miss_non_integer_ge_1024_pixels.mean` drops to `0.00`
@@ -96,18 +100,223 @@ Scope guardrails:
 
 ## Open Queue
 
+- The nearest scaled-present checklist is closed. Keep the next runtime loop on the active 2P menu stream, starting from the measured `seqsAfterProcess` hotspot in the exact super-art chooser lane before widening back out to broader character-select or other gameplay wins.
 - Future perf loops should build/deploy the `telemetry` flavor by default and reserve the `clean` package for player/runtime validation or handoff.
 - Serialized MiSTer verification is healthy again under `tools/mister/misterctl.sh` plus `tools/mister/perf-sampler.sh` with explicit password-auth env. Keep using that path, continue forcing `PubkeyAuthentication=no`, `PreferredAuthentications=password`, and `NumberOfPasswordPrompts=1`, and treat new device-gate failures as fresh evidence rather than as a reason to reopen the old slot-`58` transport stop note.
 - Preserved unverified work must be tested before new hypotheses. Loop 66's preserved current-lifetime telemetry diff has now been restored and verified on-device; there is no older preserved branch ahead of the next runtime candidate now.
 - Start the next software-frame runtime loop from the kept `stock-soft-c104-control-post`, `stock-soft-c104-effect-heavy-rerun`, and `stock-soft-c104-super-heavy-post` gameplay baseline plus the unchanged trusted `stock-soft-c80-stage-heavy-post` reference and the exact `stock-soft-c104-wipe-type1-preserved-post` transition keep, not from the older `stock-soft-c97-*`, `stock-soft-c88-*`, `stock-soft-c80-*`, `stock-soft-c79-*`, `stock-soft-c70-*`, `stock-soft-c69-*`, `stock-soft-c68-*`, `stock-soft-c67-*`, `stock-soft-c61-*`, `stock-soft-c52-*`, `stock-soft-c35-*`, `stock-soft-c32-*`, `stock-soft-c31-*`, `stock-soft-c30-*`, `stock-soft-c24-*`, `stock-soft-c23-*`, `stock-soft-c19-*`, `stock-soft-c18-*`, `stock-soft-c15-*`, `stock-soft-c12-*`, `stock-soft-c10-*`, or Loop 9 captures.
-- Best next runtime candidate: return to the confirmed Yun SA3 direct-present raster burst, with explicit bias toward the first-activation / cold-start window. The exact type-`1` menu-transition solid fallback/readback collapse is now cleared on-device, so the next runtime loop should re-rank the surviving Yun `software_frame_fast_non_integer_pixels` plus `software_frame_generic_textured_pixels` residue in that first visible activation window instead of reopening transition solids first.
-- Immediate follow-up candidate: only revisit transition work if fresh user-facing evidence says the menu wipe is still visibly slow. On the kept exact gate, the remaining `2/300` fallback frames stayed on the older geometry lane (`software_frame_reason_geometry`, not `software_frame_reason_solid`), so any future transition revisit should start from that narrower residual rather than from the already-fixed solid-strip family.
+- Best next runtime candidate: stay on the active 2P menu stream, but widen back out to the rest of full 2P character select; the exact chooser dirty-rect lane is now materially improved and no longer has the clearest measured next win.
+- Immediate follow-up candidate: once the broader 2P character-select lane no longer shows an obvious measured win, move on to the next broad user-visible MiSTer hotspot rather than reopening the solved chooser refresh lane.
 - Rejected for now: do not reopen the landed palette invalidation keep or the landed handle-`16` allowlist reland, do not retry the rolled-back `handle 18` tile-mask reland, the exact helper-only fast-non-integer `src_a` early-out reland, the helper-only identity-color split from Loop 102, or the menu-transition compare-bbox runtime relands until fresh telemetry re-ranks them, do not widen to transition rows `9` / `10` / `11` without new measurement support, and do not spend the next runtime loop on generic textured residue unless fresh captures materially re-rank it.
 - Scene-broadening candidate: the next measurement broadening should only happen if a new runtime loop still fails to line up with the recovered exact gates. Right now the automated type-`1` wipe capture and the trusted Yun SA3 gameplay capture already reproduce the remaining user-priority failures closely enough, so the default next step is targeted runtime work, not more route hunting.
 - Historical hybrid track remains closed. Reopen Phase B only with a new stock-image-only plan that either includes `flip` in the first supported subset or produces materially different coverage evidence on the frozen scene matrix.
 - Live-check the Loop 3 clipped-native crop branch on a real low-resolution framebuffer when one is available. The current device output is `1280x720`, so the square-pixels scaling path is verified but the low-resolution crop branch is still only code-reviewed plus logic-checked.
 
 ## Cycle Log
+
+- 2026-03-12T19:46:00-0400
+  - Commit hash:
+    - `606cddd1` (`perf: keep chooser renew rects on stable seq ids`)
+  - Bottleneck targeted:
+    - the measured chooser submit state-change hotspot inside `seqsAfterProcess`, specifically the hot chooser `ppg-seqs` textures still forcing repeated full software-surface refreshes across palette variants
+  - Change summary:
+    - added `SDLGameRenderer_QueryTextureLogicalIdentity(...)` in `src/port/sdl/sdl_game_renderer.c` and kept current logical identities registered for active textures so runtime code can target stable chooser texture identities outside perf-capture mode
+    - expanded `ppgShouldKeepRenewDirtyRect(...)` in `src/sf33rd/Source/Common/PPGFile.c` to retain renew dirty rects for chooser hot logical `ppg-seqs` identities `1030/1031/1032/1034` in the `ix_num_first = 1030`, `texture_total = 7` group, without widening to unrelated menu textures
+    - cleared retained renew dirty state on `ppgReleaseTextureHandle(...)` so recycled texture slots cannot inherit chooser dirty-rect history from a prior lifetime
+  - Verification result summary:
+    - `git diff --check` passed; the `/work-arm` telemetry rebuild/install/package succeeded in `3sx-mister-build`, `readelf -h build/mister-telemetry-package/bin/3sx` still reported `ELF32 ARM` with hard-float ABI, and the deployable package exported cleanly to `build/mister-telemetry-package-arm-menu-m6rr-export2`
+    - MiSTer `health`, `deploy`, `probe`, and bounded `smoke` all passed on the exported ARM telemetry package
+    - `menu-m6rr-char-select-overall-full` landed at `65.6915 FPS` with `15.2227 / 5.5326 / 8.9545 / 0.7356 ms`; `game-task-seqs-after-submit-state-change` fell from `4.2823` to `1.5743 ms/frame`, `game-task-seqs-after-submit-enqueue` from `0.7152` to `0.6767 ms/frame`, and `software_surface_cache_refresh` from `3.0894` to `0.4412 ms/frame`
+    - `menu-m6rr-super-art-selection-exact-full` landed at `59.1152 FPS` with `16.9161 / 6.9430 / 9.4159 / 0.5573 ms`; `game-task-seqs-after-submit-state-change` fell from `14.8377` to `2.1851 ms/frame`, `game-task-seqs-after-submit-enqueue` from `1.2710` to `0.9915 ms/frame`, and `software_surface_cache_refresh` from `13.8838` to `1.3913 ms/frame`
+    - exact chooser refresh work flipped from `17.2250` full no-usable-dirty-rect attempts/frame and `1128857.60` refreshed pixels/frame on `menu-m5-super-art-selection-exact-full` to `17.0750` partial attempts/frame and `39328.00` partial pixels/frame on `menu-m6rr-super-art-selection-exact-full`, with only `0.1500` oversized full-refresh attempts/frame left
+  - Keep/rollback decision with reason:
+    - keep; the reland directly addresses the measured chooser state-change bottleneck, preserves the existing software-frame/direct-present behavior, and removes the catastrophic exact chooser update stall without creating a new obvious regression in the broader menu lane
+  - Next best candidate optimization:
+    - stay on the active 2P menu stream, but re-rank the broader full character-select lane next; the exact chooser refresh lane is materially improved and no longer has the clearest measured residue
+
+- 2026-03-12T19:30:00-0400
+  - Commit hash:
+    - recorded in the loop closure commit
+  - Bottleneck targeted:
+    - the remaining chooser `seqsAfterProcess -> submit` hotspot, split more narrowly into texture/state-change work versus sprite enqueue work before another runtime reland
+  - Change summary:
+    - added telemetry-only nested scopes for `game-task-seqs-after-submit-state-change` and `game-task-seqs-after-submit-enqueue` in `src/main.c`, `src/main.h`, and `src/sf33rd/Source/Game/rendering/mtrans.c`
+    - rebuilt the ARM telemetry package through `/work-arm` in `3sx-mister-build`, exported it back to the host, redeployed it with `tools/mister/misterctl.sh`, reran bounded `probe`/`smoke`, and reran the broad character-select plus exact chooser captures on MiSTer
+    - completed an independent read-only `codex review --uncommitted` pass on the scoped diff; the review found no issues, so the verified tree stayed unchanged
+  - Verification result summary:
+    - `git diff --check` passed; the `/work-arm` telemetry build/install/package succeeded, `readelf -h build/mister-telemetry-package/bin/3sx` still reported `ELF32` `ARM` with hard-float ABI, and the deployable package exported cleanly to `build/mister-telemetry-package-arm-menu-m5-export`
+    - MiSTer `health`, `deploy`, `probe`, and bounded `smoke` all passed on the exported ARM telemetry package
+    - `menu-m5-char-select-overall-full` landed at `55.7454 FPS` with `17.9387 / 8.2650 / 8.9851 / 0.6886 ms`; inside submit, `game-task-seqs-after-submit-state-change` averaged `4.2823 ms/frame` over `77.3167` calls/frame versus `game-task-seqs-after-submit-enqueue` `0.7152 ms/frame` over `176.8900` calls/frame
+    - `menu-m5-super-art-selection-exact-full` landed at `33.0544 FPS` with `30.2532 / 20.2577 / 9.5474 / 0.4480 ms`; inside submit, `game-task-seqs-after-submit-state-change` averaged `14.8377 ms/frame` over `105.9750` calls/frame versus `game-task-seqs-after-submit-enqueue` `1.2710 ms/frame` over `269.8500` calls/frame
+  - Keep/rollback decision with reason:
+    - keep measurement-support only; the chooser submit hotspot is now decisively the texture/state-change lane, so the next runtime reland should target `flSetRenderState` / `SDLGameRenderer_SetTexture` behavior instead of retrying sprite enqueue changes
+  - Next best candidate optimization:
+    - keep the next runtime loop on the chooser submit lane and instrument or reduce the repeated `FLRENDER_TEXSTAGE0` / `SDLGameRenderer_SetTexture` churn first, then widen back out to the rest of full 2P character select once that lane no longer has a clearer win
+
+- 2026-03-12T15:03:52-0400
+  - Commit hash:
+    - `643bc991`
+  - Bottleneck targeted:
+    - the first runtime reland inside the measured 2P chooser `seqsAfterProcess -> submit` hotspot, specifically the generic normalized-UV `Sprite2` submit path in `SDLGameRenderer_DrawSprite2`
+  - Change summary:
+    - attempted a runtime reland in `src/port/sdl/sdl_game_renderer.c` that bypassed the heavier generic rect setup for normalized-UV `Sprite2` submissions
+    - completed an independent read-only `codex review --uncommitted` pass on the candidate diff; the review found no correctness regression, but the runtime keep gate failed on the exact chooser capture
+    - rolled the runtime diff back fully, rebuilt the restored ARM telemetry package in `3sx-mister-build`, redeployed it, and reran bounded `probe` plus `smoke` so the device returned to the prior baseline
+  - Verification result summary:
+    - candidate and rollback telemetry rebuild/install/package both passed in `3sx-mister-build`, and `readelf` confirmed `ELF32 ARM` with hard-float ABI on both packages
+    - MiSTer `health`, candidate `deploy`, `probe`, and bounded `smoke` passed before the keep gate; `menu-m4-char-select-overall-full` improved slightly to `59.2159 FPS` / `16.8873 / 7.1585 / 9.0596 / 0.6693 ms`, with `game-task-seqs-after-submit = 4.4100 ms/frame`
+    - the exact chooser keep gate failed: `menu-m4-super-art-selection-exact-full` regressed to `34.8510 FPS` / `28.6936 / 18.6046 / 9.6051 / 0.4840 ms`, and `game-task-seqs-after-submit` worsened from `15.5704` to `15.7101 ms/frame`
+    - after rollback, MiSTer `deploy`, `probe`, and bounded `smoke` passed again on the restored baseline package
+  - Keep/rollback decision with reason:
+    - rollback; the candidate did not improve the user-priority exact chooser hotspot, so this `Sprite2` normalized-UV helper shape is not the first measured win in the submit lane
+  - Next best candidate optimization:
+    - keep the next loop on the chooser submit lane, but instrument it more narrowly before touching runtime again, starting with texture-bind/state work versus sprite enqueue work inside `seqsAfterProcess`
+
+- 2026-03-11T07:21:00-0400
+  - Commit hash:
+    - `29168767`
+  - Bottleneck targeted:
+    - Chunk 4 closeout for the MiSTer nearest scaled-present stream: validate the accepted runtime in the player-facing `clean` package and hand the branch back to the next measured menu-performance lane
+  - Change summary:
+    - rebuilt the ARM hard-float `clean` package from `/work-arm` in `3sx-mister-build`, exported it back to the host as `build/mister-clean-package-arm` with `docker cp`, redeployed it, and validated both the default clean startup path and a temporary nearest-mode launch using the approved `misterctl.sh` entry points
+    - updated the runbook, config docs, agent memory, and the active checklist so the modern-display `nearest` guidance and the `telemetry` versus `clean` split are now recorded in the branch-local canonical docs
+    - independent `codex exec` review flagged one valid checklist issue, and the fix was accepted: the canonical deploy flow now includes the explicit host-side `docker cp` export step instead of pointing at an ad hoc cycle-local package directory; the post-fix rerun returned `No findings`
+  - Verification result summary:
+    - clean build/install/package passed in Docker, `docker cp` exported the package to `build/mister-clean-package-arm`, `readelf` confirmed `Machine: ARM` plus hard-float ABI, and MiSTer `deploy`, `probe`, and bounded `smoke` all passed on the clean package with `runtime_rc=124` / `exit=143`
+    - temporary nearest clean validation also passed: the remote config override set `scale-mode = nearest`, `run-3sx.sh --probe-renderer-only` and bounded `launch-osd.sh` both logged `Native render path: enabled (scale-mode=nearest)`, and the config restored to `scale-mode = native` / `software-frame-mode = on` after the check
+    - final nearest keep matrix remains the accepted handoff summary from Chunk 3: control `84.1389 FPS`, stage-heavy `65.1989 FPS`, Ibuki stage 7 `81.6454 FPS`, attract/logo `60.1424 FPS`, native guard `96.0766 FPS`, square guard `95.9970 FPS`
+  - Keep/rollback decision with reason:
+    - keep; no further nearest runtime edits are needed before moving on, and the clean package now validates the player-facing nearest path on-device
+  - Next best candidate optimization:
+    - start a measurement-first loop on 2P character select overall, then the immediate post-select super-art selection slowdown with extra attention on the circle/highlight animation around the super-art name
+
+- 2026-03-11T06:56:00-0400
+  - Commit hash:
+    - `6a971ea3`
+  - Bottleneck targeted:
+    - the remaining MiSTer nearest-mode mapped-scaler copy tax inside `software_frame_mapped_scale` after Chunk 2 had already removed the old `fullscreen_staging` route
+  - Change summary:
+    - generalized the fbdev scale LUT cache in `src/port/sdl/fbdev_presenter.c` to key on source dimensions plus mapped destination geometry, then reused that cache in `copy_argb_surface_scaled_to_fb_mapped_rect(...)` so the mapped nearest path no longer rebuilds source coordinates with per-pixel divides
+    - kept the existing exact and integer-scale paths unchanged and preserved the repeated-row memcpy reuse already present in the mapped scaler
+    - independent `codex exec` review on the scoped diff returned `No findings`, so the verified runtime tree is the authored reland
+  - Verification result summary:
+    - local `git diff --check`, host telemetry build/install, host `--headless --software-frame-parity-check`, deployable `/work-arm` ARM telemetry package, MiSTer `health`, `deploy`, `probe`, and bounded `smoke` all passed
+    - the full control route check `nearest-c3-control-full` held `software_frame_mapped_scale = 1.0000` while improving from `53.7597 FPS` / `18.6013 / 7.5018 / 7.4874 ms` to `77.3658 FPS` / `12.9256 / 1.9336 / 1.9207 ms` (`frame / present / presenter-copy`) against `nearest-c2-control-full`
+    - the basic keep matrix stayed fully direct-presented and cleared Chunk 3 widely versus Chunk 1: control `84.1389 FPS` / `11.8851 ms`, stage-heavy `65.1989 FPS` / `15.3377 ms`, Ibuki stage 7 `81.6454 FPS` / `12.2481 ms`, and attract/logo `60.1424 FPS` / `16.6272 ms`; native improved slightly to `96.0766 FPS` / `10.4084 ms`, and the square-pixels guard stayed on `software_frame_exact = 1.0000` at `95.9970 FPS` / `10.4170 ms`
+  - Keep/rollback decision with reason:
+    - keep; the reland materially cuts mapped nearest present cost without reopening readback/upload fallback or disturbing native/square behavior
+  - Next best candidate optimization:
+    - move the next runtime-measurement loop to the user-priority 2P character-select and immediate super-art selection slowdown lanes now that the nearest scaled-present path is no longer first-line
+
+- 2026-03-11T02:30:59-0400
+  - Commit hash:
+    - recorded in the loop closure commit
+  - Bottleneck targeted:
+    - MiSTer nearest-mode present-path routing, specifically removing the `screen_texture` / `fullscreen_staging` tax from normal `scale-mode = nearest` gameplay before any mapped-scaler micro-optimization
+  - Change summary:
+    - enabled the MiSTer fbdev-only native render path for `scale-mode = nearest` in `src/port/sdl/sdl_app.c`, so nearest gameplay can direct-present the software-owned frame via `native_output_rect` and `software_frame_mapped_scale`
+    - added a dedicated native-path screenshot render target so `screenshot_screen.bmp` still works when `screen_texture` is absent on the native path
+    - independent `codex` review surfaced two items: the broader nearest-path switch was rejected as the explicit Chunk 2 objective after on-device validation, while the silent screenshot-failure note was accepted and fixed by logging when the native screenshot target cannot be created; the follow-up debate runner timed out but only salvaged a schema skeleton, so it produced no extra actionable finding beyond that accepted low-risk fix
+  - Verification result summary:
+    - `git diff --check`, incremental telemetry ARM rebuild/package in `/work-arm`, incremental host telemetry rebuild, and host `--headless --software-frame-parity-check` all passed after the final review fix; parity stayed `10` software-frame cases plus `2` software-source refresh cases
+    - MiSTer `health`, deploy, probe, bounded smoke, and the routed nearest capture matrix all passed on the ARM package; the current device gate is `FBDEV: active (320x240 ...)`, so the decision compares against the same-device `nearest-c1-*` baselines rather than the older `1280x720` native baseline
+    - the full route check `nearest-c2-control-full` landed at `53.7597 FPS` / `18.6013 / 3.7660 / 7.3335 / 7.5018 ms` with dominant path `software_frame_mapped_scale`, `software_frame_direct_present_ratio = 1.0000`, `software_frame_uploaded_ratio = 0.0000`, and `present_readback.mean_ms = 0.0000`
+    - the basic keep matrix shows the routed nearest path is materially better on every measured gate while staying fully direct-presented: control `47.5056 -> 57.1255 FPS` (`21.0501 -> 17.5053 ms`), stage-heavy `40.0243 -> 47.5627 FPS` (`24.9849 -> 21.0249 ms`), and attract-logo `38.3566 -> 45.1744 FPS` (`26.0711 -> 22.1364 ms`), each moving from `fullscreen_staging = 1.0` to `software_frame_mapped_scale = 1.0`
+    - the current-output native guard stayed safe at `94.8017 FPS` / `10.5483 / 3.1422 / 6.8732 / 0.5330 ms` with `software_frame_exact = 1.0000`, and the post-fix rerun `nearest-c2-control-postfix` stayed aligned at `57.1437 FPS` / `17.4997 / 3.1451 / 6.8084 / 7.5463 ms`
+  - Keep/rollback decision with reason:
+    - keep; the routed nearest reland is the intended checklist objective, it clears the proven `fullscreen_staging` tax without introducing readback or upload fallback on the measured gates, and the only valid review issue was a small diagnosability gap that is now fixed
+  - Next best candidate optimization:
+    - move to Chunk 3 and reduce `software_frame_mapped_scale` copy cost inside `src/port/sdl/fbdev_presenter.c`; nearest is now on the right route, so the remaining safe win is the mapped nearest scaler itself
+
+- 2026-03-11T01:37:02-0400
+  - Commit hash:
+    - `5f9b3566`
+  - Bottleneck targeted:
+    - nearest-mode MiSTer measurement support plus the first decision-grade nearest baseline needed before any present-path routing reland
+  - Change summary:
+    - added `--scale-mode` capture override plus `metadata.scale_mode` and dominant-present-path summary reporting in `tools/mister/perf-sampler.sh`
+    - logged the applied runtime scale mode from `src/port/sdl/sdl_app.c`, then accepted the independent review fix to keep the runtime-reported mode authoritative when MiSTer coerces `soft-linear` to `nearest`
+    - rebuilt the deployable telemetry package through the validated `/work-arm` ARM cross-build after the host-mounted `/src` package probe exposed an `x86_64` binary mismatch on MiSTer
+  - Verification result summary:
+    - `git diff --check` and `bash -n tools/mister/perf-sampler.sh` passed; the `/work-arm` telemetry package was confirmed as ARM hard-float by `readelf`, and MiSTer `health` / `deploy` / `probe` / bounded `smoke` all passed after the ARM redeploy
+    - the recovered nearest baseline matrix is consistent across all four gates: `nearest-c1-control` = `47.5056 FPS` / `21.0501 / 3.2656 / 8.3920 / 9.3925 ms`, `nearest-c1-stage-heavy` = `40.0243 FPS` / `24.9849 / 5.1238 / 10.3195 / 9.5416 ms`, `nearest-c1-ibuki-stage7` = `45.6766 FPS` / `21.8930 / 3.8760 / 8.4970 / 9.5200 ms`, and `nearest-c1-attract-logo` = `38.3566 FPS` / `26.0711 / 4.6631 / 11.8956 / 9.5125 ms`; every gate reported `scale_mode = nearest`, `dominant_present_path = fullscreen_staging`, and `present_readback.mean_ms = 0.0000`
+    - trusted native control remains far ahead: `47.5056 FPS` nearest versus `89.6375 FPS` native on the same `stage_id=11` idle gate, with frame time `21.0501 ms` versus `11.1560 ms`
+    - the quick review-fix capture `nearest-c1-softlinear-coerce-check` confirmed the summary now reports effective `scale_mode = nearest` even when the sampler is invoked with `--scale-mode soft-linear`
+  - Keep/rollback decision with reason:
+    - keep measurement-support only; the new tooling is behavior-neutral and the baseline proves nearest is blocked by the `fullscreen_staging` present route rather than by readback, so the next runtime loop should spend its budget on path routing instead of more capture plumbing
+  - Next best candidate optimization:
+    - start Chunk 2 and route nearest gameplay onto `native_output_rect` plus fbdev presentation, then rerun the nearest control/stage-heavy/attract guardrails before touching mapped-scaler micro-optimizations
+
+- 2026-03-09T21:24:12-0400
+  - Commit hash:
+    - `6f775f0a`
+  - Bottleneck targeted:
+    - the remaining user-visible attract/demo logo slowdown, specifically recovering trustworthy title/opening capture support before any new runtime reland
+  - Change summary:
+    - added title/opening capture-start export in perf JSON: `D_No[*]`, `title_tex_flag`, `op_w.r_no_0/1/2`, and `op_w.free_work`
+    - taught `tools/mister/perf-sampler.sh` to print the new `Title state:` summary inline for overnight attract/title captures
+    - rejected and rolled back the attempted `title-logo` wait phase after both on-device exact-gate tries failed before any trustworthy capture start
+  - Verification result summary:
+    - `git diff --check`, `bash -n tools/mister/perf-sampler.sh`, telemetry Docker build/install/parity, and the refreshed ARM telemetry package build all passed
+    - MiSTer `health` / `deploy` / `probe` / bounded `smoke` passed; `stock-soft-c109-attract-title-basic-r1` landed at `111.7631 FPS` / `8.9475 / 4.6740 / 3.1368 / 1.1367 ms` and `stock-soft-c109-attract-title-basic-r2` at `47.2376 FPS` / `21.1696 / 11.2400 / 8.7338 / 1.1958 ms`, with both exports still showing `start_d_no = 0/0/0/0`, `start_title_tex = 0`, `start_opening_r_no = 0/0/0`, and `title_logo_frames = 0`
+  - Keep/rollback decision with reason:
+    - keep measurement-support only; the title/opening export is verified and useful, but the guessed exact `title-logo` wait gate was not trustworthy on-device and was removed before closeout
+  - Next best candidate optimization:
+    - stay on the attract/logo lane for one more measurement-first loop and recover a narrower opening/demo gate from real `op_w` progress or equivalent state before spending runtime budget there; Yun first-activation remains immediately after that
+
+- 2026-03-09T20:24:02-0400
+  - Commit hash:
+    - `775f5606`
+  - Bottleneck targeted:
+    - the exact stage-7 Kyoto/Ibuki software-frame fallback/readback collapse caused by the recovered `256x256` textured `rect_uv_parallelogram` family
+  - Change summary:
+    - added a narrow software-frame admission/raster path for the exact recovered stage-7 `rect_uv_parallelogram` family in `src/port/sdl/sdl_game_renderer.c`
+    - fixed the software-frame pre-scan so failed rect-copy resolution no longer zeroes the original geometry task before the parallelogram path reuses it
+    - kept non-matching geometry on the old fallback route and left gameplay/stage logic, presenter policy, and scene data untouched
+  - Verification result summary:
+    - telemetry Docker build/install/package, parity, refreshed ARM `/work-arm` package build, MiSTer `health` / `deploy` / `probe` / bounded `smoke`, and remote log inspection all passed
+    - `stock-soft-c108-stage7-basic-r1` landed at `54.8992 FPS` / `18.2152 / 5.9805 / 11.3577 / 0.8770 ms` with `software_frame_fallback_ratio = 0.0000`, and `stock-soft-c108-stage7-full-r1` landed at `51.6235 FPS` / `19.3710 / 7.3225 / 11.3369 / 0.7116 ms` with `present_readback.mean_ms = 0.0000` and `textured_geometry_fallback = 0.00`
+    - quick spot checks stayed safe: `stock-soft-c108-control-basic-r1` landed at `55.9376 FPS`, effectively flat versus the current baseline, and `stock-soft-c108-attract-title-basic-r1` landed at `53.2910 FPS` while staying `99.33%` direct-present and mostly update-heavy
+  - Keep/rollback decision with reason:
+    - keep; the corrected runtime diff clears the exact recovered stage-7 fallback/readback lane and restores full software-frame direct present on that user-priority stage without introducing a new control/title presenter regression
+  - Next best candidate optimization:
+    - re-rank the still-open attract/title logo slowdown next with a full-telemetry capture and narrow update-heavy `mtrans` attribution before returning to Yun SA3 first-activation work
+
+- 2026-03-09T19:27:36-0400
+  - Commit hash:
+    - `c1d73014`
+  - Bottleneck targeted:
+    - exact topology recovery for the Ibuki/Kyoto stage-7 textured-geometry fallback lane during the effect-heavy gameplay repro
+  - Change summary:
+    - kept the loop capture-only by adding stage-7 textured-geometry fallback-family telemetry in `include/port/sdl/sdl_game_renderer.h`, `src/port/sdl/sdl_game_renderer.c`, and `src/port/sdl/sdl_app.c`, then surfaced the top families through perf JSON schema `46`
+    - taught `tools/mister/perf-sampler.sh` to print the first three family summaries inline so overnight logs expose the recovered stage-7 family without manual JSON archaeology
+    - accepted two valid review fixes before the final rerun: negative shear is now recorded correctly, and family ratios now normalize against full stored totals instead of only the truncated top-`N` list
+  - Verification result summary:
+    - telemetry Docker build/install/parity passed in `3sx-mister-build`; the ARM hard-float telemetry package rebuilt successfully through `/work-arm`, and serialized MiSTer `deploy`, `probe`, and bounded `smoke` all passed on the reviewed diff
+    - the decision-grade low-overhead route check `stock-soft-c107-stage7-basic-spot` stayed aligned with the trusted baseline at `16.5982 FPS` / `60.2475 / 4.9567 / 7.5345 / 47.7563 ms`, with `software_frame_active_ratio = 0.5433` and `software_frame_fallback_ratio = 0.4567`
+    - the reviewed full capture `stock-soft-c107-stage7-full-postreview` landed at `14.0374 FPS` / `71.2385 / 6.9482 / 8.8210 / 55.4693 ms` with `present_readback.mean_ms = 54.5354` and collapsed the entire geometry lane to three identical families except for handle/palette pair: `97/823`, `98/824`, and `99/825`, each contributing `137` tasks and one third of fallback pixels
+  - Keep/rollback decision with reason:
+    - keep; the diff is capture-only, the low-overhead stage-7 route stayed aligned with the trusted baseline, and the new telemetry finally isolated the exact family that needs the next runtime reland
+  - Next best candidate optimization:
+    - return to stage `7` runtime work and target the exact recovered family first: three `256x256` full-texture, uniform-color, integer `rect_uv_parallelogram` quads with `shear dx = 1..23`; only if that fails should the next first-line loop move back to attract/logo before Yun first-activation
+
+- 2026-03-09T18:45:29-0400
+  - Commit hash:
+    - recorded in the loop closure commit
+  - Bottleneck targeted:
+    - the recovered Ibuki/Kyoto stage-7 software-frame geometry fallback lane during the effect-heavy gameplay repro
+  - Change summary:
+    - tried a narrow uniform-color textured-parallelogram software raster reland in `src/port/sdl/sdl_game_renderer.c` so the sheared stage-7 `njDrawTexture` family could stay inside the software frame without touching stage/gameplay code
+    - validated the authored runtime diff locally with the telemetry flavor in `3sx-mister-build`; the packaged parity gate passed with `Software-frame parity check passed: 10 cases` and `Software-source refresh parity check passed: 2 cases`
+    - rejected the runtime diff after the on-device keep gate failed, then rebuilt and redeployed the reverted ARM baseline through the `/work-arm` cross-build cache so the device returned to a known-good runtime state
+  - Verification result summary:
+    - local `git diff --check`, telemetry build/install/package, and packaged parity all passed; the straight `/src/build/mister-telemetry*` package was `x86_64`, so the actual MiSTer deploy used the validated ARM hard-float cross-build cache under `/work-arm/build/mister*`
+    - serialized MiSTer `health`, candidate deploy, `probe`, and bounded `smoke` all passed before the keep gate; the decision capture `stock-soft-c106-stage7-post` then failed at `10.5723 FPS` / `94.5866 / 7.1807 / 9.6111 / 77.7948 ms`, worse than the recovered pre-change basic baseline `15.4154 FPS` / `64.8702 / 5.3008 / 7.6393 / 51.9301 ms`, while `software_frame_active_ratio` stayed `0.5433` and `software_frame_fallback_ratio` stayed `0.4567`
+    - after rollback, the reverted ARM baseline redeployed cleanly and `misterctl.sh probe` plus bounded `misterctl.sh smoke` passed again with dummy/software + fbdev + `Software frame mode: on`
+  - Keep/rollback decision with reason:
+    - rollback; the stage-7 raster reland passed local parity but did not clear the proven fallback share on-device and materially worsened the user-priority Ibuki gate, so this exact parallelogram helper shape should not be retried blindly
+  - Next best candidate optimization:
+    - keep Ibuki stage slowdown at priority `1`, but make the next loop measurement-first: recover the exact task topology for the failing stage-7 geometry frames before attempting another runtime reland; title/logo remains the secondary lane only if that narrower stage-7 measurement stalls
 
 - 2026-03-09T10:29:41-0400
   - Commit hash:
@@ -2597,3 +2806,89 @@ Scope guardrails:
     - keep measurement-support only; the diff stayed out of gameplay logic and recovered a trustworthy Yun slowdown lane that now matches the manual direct-present bottleneck shape closely enough to resume targeted runtime work
   - Next best candidate optimization:
     - use the kept `stock-soft-c101-yun-stock-vs-ryu-post` burst to reland one narrow fast-non-integer runtime optimization first, with generic-textured residue as the secondary follow-up lane
+
+- 2026-03-11T08:47:00-0400
+  - Bottleneck targeted:
+    - exact measurement support for the user-priority 2P character-select super-art chooser slowdown without regressing the older attract/logo runtime-state workflow
+  - Change summary:
+    - added a new `character-select-super-art` runtime-state option plus low-overhead start-state telemetry for the chooser in `src/main.c`, `src/port/sdl/sdl_app.c`, and `tools/mister/perf-sampler.sh`
+    - fixed the harness so `--perf-wait-runtime-state` only enables the test runner for `character-select-super-art`; `attract-demo-logo` now stays on the idle title/demo path
+    - accepted the independent review findings about the blanket test-runner regression, the too-early chooser gate, and raw CLI misuse; the kept runtime-state definition now requires chooser-instantiated signals (`Select_Arts >= 0` plus visible command-name state), and raw `character-select-super-art` waits now fail fast unless `--test-enable` is present
+  - Verification result summary:
+    - `git diff --check` and `bash -n tools/mister/perf-sampler.sh` passed; telemetry ARM rebuild/install/package in `3sx-mister-build`, MiSTer deploy, and probe all passed on the kept tree
+    - `menu-c111e-super-art-selection-exact-basic` landed at `37.3927 FPS` with `26.7432 / 16.8619 / 9.3454 / 0.5358 ms` for `frame/update/render/present`, `runtime_state=character-select-super-art`, `active_frames=40`, and start state `Sel_PL_Complete=1/1`, `Sel_Arts_Complete=0/0`, `Select_Arts=3/3`, `Moving_Plate=0/0`, `Moving_Plate_Counter=0/0`, `Disp_Command_Name=1/1`
+    - `menu-c111-attract-demo-logo-check` landed at `63.1002 FPS` with `runtime_state=attract-demo-logo` and `active_frames=60`, confirming the idle attract/logo path still arms after the harness fix
+  - Keep/rollback decision with reason:
+    - keep the measurement-support changes; they recover an exact, bounded chooser-instantiation capture and preserve the pre-existing attract/logo lane, while the super-art slowdown remains clearly update-bound rather than presenter-bound
+  - Next best candidate optimization:
+    - attribute the `~16.5 ms` chooser update cost inside the select-screen path itself, starting with the circle/highlight and related menu-effect update routines before spending time on other safe wins
+
+- 2026-03-11T09:15:20-0400
+  - Commit hash:
+    - `b54dc230`
+  - Bottleneck targeted:
+    - first update-path attribution pass for the user-priority 2P character-select overall lane and the exact super-art chooser slowdown, especially the suspected circle/highlight animation
+  - Change summary:
+    - added telemetry-only update-breakdown scopes for select-screen control routines plus targeted menu effects, exported them through perf JSON, and surfaced the top menu scopes in `tools/mister/perf-sampler.sh`
+    - accepted and fixed the independent `codex` review findings by removing the raw `<stdint.h>` dependency from `main.h` and gating the probes behind a cheap enabled check; the parallel `claude` review attempt stalled without an artifact
+  - Verification result summary:
+    - `git diff --check`, `bash -n tools/mister/perf-sampler.sh`, host telemetry rebuild/install plus parity, `/work-arm` telemetry rebuild/install, and MiSTer `health` / `deploy` / `probe` / bounded `smoke` all passed
+    - `menu-c112r-char-select-overall-full` landed at `44.7572 FPS` with `11.3586 ms update`; `menu-c112r-super-art-selection-exact-full` landed at `35.2220 FPS` with `18.3873 ms update`; the biggest exact-lane scoped slices were still only `effect-38-portrait 0.2329 ms`, `effect-79-super-art-plate 0.1065 ms`, and `effect-d8-cursor-circle 0.0493 ms`
+  - Keep/rollback decision with reason:
+    - keep measurement-support only; the accepted review fixes removed avoidable telemetry overhead, but the new scope data still rejects the circle/highlight animation as the dominant chooser slowdown
+  - Next best candidate optimization:
+    - instrument broader character-select/menu task dispatch above the targeted effects so the remaining `~18 ms` chooser update cost can be attributed before any runtime reland
+
+- 2026-03-12T14:19:08-0400
+  - Commit hash:
+    - `f8dc1d73`
+  - Bottleneck targeted:
+    - task-level and outer `Game_Task` attribution for the remaining 2P chooser update time above the earlier `Game01` / `Basic_Sub` scopes
+  - Change summary:
+    - added telemetry-only update scopes for `TASK_ENTRY`, `TASK_MENU`, `TASK_GAME`, `TASK_DEBUG`, the major `Game_Task` phases, and inclusive `Game01` total timing
+    - rebuilt the ARM telemetry package through `/work-arm` in `3sx-mister-build`, redeployed it with `misterctl.sh`, reran both the overall character-select and exact chooser captures, and completed an independent read-only `codex exec` review with `No findings.`
+  - Verification result summary:
+    - `git diff --check` passed before the build; the `/work-arm` telemetry build/install/package succeeded, and `readelf -h build/mister-telemetry-package/bin/3sx` still reported `ELF32` `ARM` with hard-float ABI
+    - MiSTer `health`, `deploy`, `probe`, and bounded `smoke` all passed on `build/mister-telemetry-package-arm-menu-m2-export`
+    - `menu-m2-char-select-overall-full` landed at `58.8112 FPS` with `17.0036 / 7.2484 / 9.0560 / 0.6991 ms`, where the dominant outer scopes were `task-game 6.8318 ms`, `game-task-seqs-after-process 4.8561 ms`, `game-task-main-dispatch 1.6148 ms`, and only `game01-total 0.8204 ms`
+    - `menu-m2-super-art-selection-exact-full` landed at `35.0328 FPS` with `28.5447 / 18.2807 / 9.7936 / 0.4704 ms`, where the dominant outer scopes were `task-game 17.8048 ms`, `game-task-seqs-after-process 16.5495 ms`, `game-task-main-dispatch 0.8364 ms`, `game01-total 0.8308 ms`, and `basic-sub-effect-list-4 0.6826 ms`
+  - Keep/rollback decision with reason:
+    - keep measurement-support only; the chooser slowdown is now clearly assigned to `seqsAfterProcess`, so the next runtime reland can target the real hotspot instead of the earlier effect-list guess
+  - Next best candidate optimization:
+    - instrument and then optimize the exact `seqsAfterProcess` work that spikes in the chooser lane, especially the mtrans/sprite submission work that explodes when the super-art chooser appears
+
+- 2026-03-12T14:44:09-0400
+  - Commit hash:
+    - `a56ee484`
+  - Bottleneck targeted:
+    - exact renew-versus-submit attribution inside the measured 2P chooser `seqsAfterProcess` hotspot before the first runtime reland
+  - Change summary:
+    - added telemetry-only nested scopes for `game-task-seqs-after-renew` and `game-task-seqs-after-submit`
+    - accepted one valid independent-review finding and gated the new scopes so they only record while `Game_Task` owns the parent `seqsAfterProcess` scope
+    - rebuilt the ARM telemetry package through `/work-arm`, redeployed with `misterctl.sh`, and reran the overall character-select plus exact chooser captures on MiSTer
+  - Verification result summary:
+    - `git diff --check` passed; the `/work-arm` telemetry build/install/package succeeded, and `readelf -h build/mister-telemetry-package/bin/3sx` still reported `ELF32` `ARM` with hard-float ABI
+    - MiSTer `deploy`, `probe`, and bounded `smoke` passed on `build/mister-telemetry-package-arm-menu-m3-export`
+    - `menu-m3r-char-select-overall-full` landed at `58.7372 FPS` with `17.0250 / 7.3297 / 8.9932 / 0.7021 ms`, where `task-game` averaged `6.9062 ms/frame`, `game-task-seqs-after-process` `4.9636 ms/frame`, `game-task-seqs-after-submit` `4.5567 ms/frame`, and `game-task-seqs-after-renew` `0.3993 ms/frame`
+    - `menu-m3r-super-art-selection-exact-full` landed at `35.1536 FPS` with `28.4466 / 18.2558 / 9.7102 / 0.4806 ms`, where `task-game` averaged `17.8224 ms/frame`, `game-task-seqs-after-process` `16.3403 ms/frame`, `game-task-seqs-after-submit` `15.5704 ms/frame`, and `game-task-seqs-after-renew` `0.7624 ms/frame`
+  - Keep/rollback decision with reason:
+    - keep measurement-support only; the chooser hotspot is now decisively the submit lane, and the review-fixed gating keeps the attribution clean
+  - Next best candidate optimization:
+    - stay on the chooser lane and target `seqsAfterProcess` submit work first, starting with the mtrans/render-task submission path rather than texture-renew handling
+
+- 2026-03-12T17:56:00-0400
+  - Bottleneck targeted:
+    - broader chooser attribution above the earlier targeted select/effect scopes, specifically whether the missing chooser update time lives inside `Game01`/`Basic_Sub` or above them
+  - Change summary:
+    - created `artifacts/mister-port/2p-menu-performance/todo.md` as the canonical checklist for the active 2P menu stream and updated the living findings snapshot to point at it
+    - added telemetry-only update scopes for `Game01` `BG_Draw_System`, `Game01` `Setup_Play_Type`, and each `Basic_Sub` effect-list dispatch
+    - rebuilt a fresh ARM telemetry package through `/work-arm` in `3sx-mister-build`, redeployed it to MiSTer, reran the overall and exact chooser captures, and completed an independent `codex review --uncommitted` pass with no findings
+  - Verification result summary:
+    - `git diff --check` and `bash -n tools/mister/perf-sampler.sh` passed; the `/work-arm` telemetry build/install/package succeeded, and `readelf` inside the container confirmed an `ELF32` `ARM` hard-float package
+    - MiSTer `health`, `deploy`, `probe`, and bounded `smoke` all passed on the rebuilt telemetry package
+    - `menu-m1-char-select-overall-full` landed at `58.6687 FPS` with `17.0449 / 7.2955 / 9.0756 / 0.6738 ms`, where the largest exported scopes were `basic-sub-effect-list-4 0.3473 ms` and `game01-bg-draw-system 0.2967 ms`, but the total exported scope mean was only `0.8487 ms`
+    - `menu-m1-super-art-selection-exact-full` landed at `34.9233 FPS` with `28.6342 / 18.7385 / 9.3934 / 0.5022 ms`, where the largest exported scopes were `basic-sub-effect-list-4 0.7380 ms`, `effect-38-portrait 0.1592 ms`, `effect-79-super-art-plate 0.1367 ms`, and `game01-bg-draw-system 0.1321 ms`, but the total exported scope mean was only `1.3091 ms`
+  - Keep/rollback decision with reason:
+    - keep measurement-support only; the widened scopes produce a real in-lane signal on `Basic_Sub` list `4`, but they still leave most chooser update time unattributed, so a runtime reland would still be guesswork
+  - Next best candidate optimization:
+    - instrument task-level or outer update-loop scopes above `Game01` so the remaining chooser update cost is attributed before choosing between deeper list-`4` work and a higher-level menu/task hotspot
