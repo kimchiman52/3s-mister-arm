@@ -1,6 +1,6 @@
 # MiSTer Performance Memory
 
-Last curated: 2026-03-11
+Last curated: 2026-03-10
 
 ## Purpose
 
@@ -28,7 +28,6 @@ Last curated: 2026-03-11
 
 - MiSTer keeps `software-frame-mode = on` by default because validated direct fbdev present outperformed the old readback path without accepted gameplay regressions.
 - Keep both package flavors. `telemetry` preserves perf tooling and parity checks; `clean` strips those paths out for player validation.
-- The nearest scaled-present checklist is closed on this branch: `scale-mode = nearest` now uses the validated fbdev/native route for modern displays, while `scale-mode = native` remains the CRT-oriented mode.
 - Prefer `tools/mister/misterctl.sh` for deploy, probe, and smoke checks, and prefer `tools/mister/perf-sampler.sh` for captures. They are the canonical MiSTer entry points.
 - Treat `--perf-basic` as the default gameplay metric. Full per-frame telemetry is measurably intrusive on MiSTer and can create fake regressions.
 - Keep the attract/demo runtime wait-state telemetry in tree. It is measurement support for the logo-overlay lane, not gameplay logic.

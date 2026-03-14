@@ -23,7 +23,7 @@ The way the internal 384x224 buffer is scaled.
 
 Possible values:
 - `native`: No scaling. Keeps the internal `384x224` image size and centers it (recommended for CRT workflows)
-- `nearest`: Recommended for modern-display MiSTer use after the validated fbdev scaled-present-path work; keeps sharp pixels while staying on the fast direct fbdev/native present route
+- `nearest`
 - `linear`
 - `soft-linear`: Produces an image with a balance of sharpness and sizing consistency
 - `integer`: Produces a pixel-perfect image, but requires a 4K display (⚠️ WARNING: the image is gonna be cropped if your display resolution is smaller than 2688x2016)

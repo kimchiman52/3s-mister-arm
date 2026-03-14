@@ -189,6 +189,12 @@ Clean package:
 tools/mister/package.sh build/mister-clean-install build/mister-clean-package
 ```
 
+Player-facing runtime package:
+
+```bash
+tools/mister/build-runtime-package.sh
+```
+
 Output layout:
 
 - `build/mister-telemetry-package/bin/3sx`
@@ -201,6 +207,56 @@ Output layout:
 - `build/mister-clean-package/scripts/launch-osd.sh`
 - `build/mister-telemetry-package/run-3sx.sh` and `build/mister-telemetry-package/launch-osd.sh` are compatibility wrappers
 - `build/mister-clean-package/run-3sx.sh` and `build/mister-clean-package/launch-osd.sh` are compatibility wrappers
+
+## Player Release Zip
+
+Build the player-facing FAT-rooted MiSTer release zip after the clean runtime install, HPS wrapper,
+and wrapper core artifacts already exist:
+
+```bash
+tools/mister-wrapper/build-release.sh
+```
+
+Default inputs:
+
+- `build/mister-clean-install`
+- `build/mister-wrapper-hps/MiSTer_3SX`
+- `build/mister-wrapper-core/3SX.rbf`
+
+Default outputs:
+
+- staged FAT root: `build/mister-release/stage`
+- release zip: `build/mister-release/3SX-mister-rolling-pre-release.zip`
+
+The release zip is ready to extract directly onto a MiSTer SD card root. The build fails if the
+staged release contains any of the player-local or excluded content below:
+
+- `games/3sx/resources/SF33RD.AFS`
+- `games/3sx/config`
+- `games/3sx/keymap`
+- `games/3sx/logs`
+
+The staged ZIP root always includes `README-3SX-INSTALL.txt`, and the archive intentionally leaves
+`games/3sx/resources/SF33RD.AFS` empty so end users must add their own copy manually after install.
+
+## Publish Rolling Pre-Release
+
+After `tools/mister-wrapper/build-release.sh` succeeds, publish the MiSTer zip to the existing
+rolling pre-release tag with:
+
+```bash
+tools/mister-wrapper/publish-release.sh
+```
+
+Current behavior:
+
+- move `rolling-pre-release` to the current `HEAD`
+- keep the release marked as a pre-release
+- update the release title to the current short SHA
+- replace only existing `3SX-mister-*.zip` assets on that release, leaving other platform assets alone
+
+This remains a local maintainer flow. GitHub-hosted CI does not build or publish the MiSTer release
+zip yet.
 
 ## Deploy To MiSTer
 
@@ -215,7 +271,32 @@ Preferred remote entry point:
 The MiSTer SSH path is fragile on this target. Use `tools/mister/misterctl.sh` for deploy, probe, smoke, and ad hoc remote commands, and use `tools/mister/perf-sampler.sh` for captures. Both tools take a shared local lock so only one MiSTer remote workflow runs at a time.
 `misterctl.sh deploy` also refreshes the visible MiSTer OSD wrapper at `/media/fat/Scripts/3SX.sh`.
 
-Recommended sync command (preserves staged `SF33RD.AFS`):
+When multiple agents/worktrees are active on the same machine, inspect the shared lock before starting a remote step:
+
+```bash
+tools/mister/misterctl.sh lock-status
+```
+
+The lock lives under `/tmp` by default, so repo-driven MiSTer operations in sibling worktrees will serialize as long as they go through `misterctl.sh` or `perf-sampler.sh`.
+
+Before any deploy/probe/smoke step that could collide with another workflow, inspect the remote side too:
+
+```bash
+tools/mister/misterctl.sh busy-status
+```
+
+`misterctl.sh` now runs that busy preflight automatically before `deploy`, `deploy-wrapper`, `probe`, `smoke`, `probe-wrapper`, `smoke-wrapper`, and `run-wrapper`. If the target already shows an active `3sx`, `MiSTer_3SX`, `launch-osd.sh`, `run-3sx.sh`, `rsync`, `scp`, or `sftp-server` process, the command aborts unless `MISTER_ALLOW_BUSY_TARGET=1` is set deliberately.
+
+Remote mutation safety:
+
+- Delete-capable syncs are only safe inside `/media/fat/games/3sx/`.
+- Never retarget a `--delete` sync at `/media/fat/`, `/media/`, or `/`.
+- `misterctl.sh` now rejects nonstandard remote roots unless both `MISTER_UNSAFE_ALLOW_ANY_REMOTE_ROOT=1` and `MISTER_UNSAFE_CONFIRM_REMOTE_ROOT=<exact-path>` are set deliberately.
+- Raw `misterctl.sh exec` is disabled by default; set `MISTER_ALLOW_REMOTE_EXEC=1` only for intentional one-off maintenance.
+- `tools/mister/perf-sampler.sh --copy-afs` now restores the previous remote `SF33RD.AFS` on exit instead of leaving a replacement behind.
+- `tools/mister/perf-sampler.sh --tag` now accepts only safe basenames; do not use path-like tags.
+
+Recommended sync command (preserves staged `SF33RD.AFS` plus on-device `config`/`keymap`):
 
 ```bash
 MISTER_HOST=192.168.1.171 MISTER_USER=root MISTER_PASSWORD=1 \
@@ -224,19 +305,20 @@ MISTER_HOST=192.168.1.171 MISTER_USER=root MISTER_PASSWORD=1 \
 
 Use `build/mister-clean-package/` for normal play and `build/mister-telemetry-package/` when you need perf capture or parity tooling on the device.
 
-Scale-mode guidance on stock MiSTer fbdev:
-
-- `scale-mode = native` remains the CRT-oriented path.
-- `scale-mode = nearest` is the validated modern-display path. It now stays on the direct fbdev/native presentation route instead of the older SDL `fullscreen_staging` path.
-
-Low-level `rsync` still works, but do not prefer it in automation now that `misterctl.sh` exists:
+Low-level `rsync` still works, but do not prefer it in automation now that `misterctl.sh` exists. If you bypass `misterctl.sh`, dry-run first and keep the destination exactly `/media/fat/games/3sx/`:
 
 ```bash
-rsync -av --delete --omit-dir-times --no-perms --no-owner --no-group \
+rsync -avn --itemize-changes --delete --omit-dir-times --no-perms --no-owner --no-group \
   --exclude 'resources/SF33RD.AFS' \
   --filter 'P resources/SF33RD.AFS' \
+  --exclude 'config' \
+  --filter 'P config' \
+  --exclude 'keymap' \
+  --filter 'P keymap' \
   build/mister-clean-package/ root@192.168.1.171:/media/fat/games/3sx/
 ```
+
+Remove `-n` only after reviewing the itemized path list and confirming every changed file belongs to `games/3sx`.
 
 Required game data:
 
@@ -292,16 +374,6 @@ MISTER_HOST=192.168.1.171 MISTER_USER=root MISTER_PASSWORD=1 \
 `tools/mister/perf-sampler.sh` now keeps one shared MiSTer lock for the whole capture workflow and returns the JSON plus remote log over the same SSH session that ran the capture. That keeps each perf sample to one remote command session instead of SSH plus separate SCP round-trips.
 
 Perf sampling requires the `telemetry` flavor on the device. Deploy `build/mister-telemetry-package/` before running `tools/mister/perf-sampler.sh`.
-
-To compare scale modes without hand-editing the remote config, use `--scale-mode <mode>`. The sampler writes the requested mode into the temporary remote config, records the effective runtime-reported `scale_mode`, forces `show-fps = false` for measurement, and restores the prior config after the capture.
-
-Example nearest modern-display capture:
-
-```bash
-MISTER_HOST=192.168.1.171 MISTER_USER=root MISTER_PASSWORD=1 \
-  tools/mister/perf-sampler.sh --scene gameplay-idle --frames 300 --tag nearest-check \
-  --gameplay-idle --gameplay-warmup 120 --software-frame-mode on --scale-mode nearest --perf-basic
-```
 
 Long-window gate (diagnostic, currently noisy):
 
