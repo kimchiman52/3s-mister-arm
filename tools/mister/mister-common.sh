@@ -28,9 +28,280 @@ mister_transfer_timeout() {
     printf '%s\n' "${MISTER_TRANSFER_TIMEOUT:-1200}"
 }
 
+mister_normalize_remote_path() {
+    local path="${1:-}"
+
+    if [ -z "${path}" ]; then
+        printf '\n'
+        return 0
+    fi
+
+    while [ "${path}" != "/" ] && [ "${path%/}" != "${path}" ]; do
+        path="${path%/}"
+    done
+
+    printf '%s\n' "${path}"
+}
+
+mister_allow_unsafe_remote_paths() {
+    [ "${MISTER_UNSAFE_ALLOW_ANY_REMOTE_ROOT:-0}" = "1" ]
+}
+
+mister_remote_path_has_unsafe_segments() {
+    local path="$1"
+
+    case "${path}" in
+    *'//'*) return 0 ;;
+    *'/./'*|*'/../'*|*/.|*/..) return 0 ;;
+    esac
+
+    return 1
+}
+
+mister_require_confirmed_remote_override() {
+    local path="$1"
+    local label="$2"
+
+    if ! mister_allow_unsafe_remote_paths; then
+        echo "refusing nonstandard ${label}: ${path}" >&2
+        echo "set MISTER_UNSAFE_ALLOW_ANY_REMOTE_ROOT=1 and MISTER_UNSAFE_CONFIRM_REMOTE_ROOT=${path} to override deliberately" >&2
+        return 2
+    fi
+
+    if [ "${MISTER_UNSAFE_CONFIRM_REMOTE_ROOT:-}" != "${path}" ]; then
+        echo "refusing nonstandard ${label}: ${path}" >&2
+        echo "typed confirmation mismatch; set MISTER_UNSAFE_CONFIRM_REMOTE_ROOT=${path} to override deliberately" >&2
+        return 2
+    fi
+
+    return 0
+}
+
+mister_require_safe_runtime_root() {
+    local path normalized
+    path="${1:-}"
+    normalized="$(mister_normalize_remote_path "${path}")"
+
+    case "${normalized}" in
+    "")
+        echo "refusing empty remote runtime root" >&2
+        return 2
+        ;;
+    /*)
+        ;;
+    *)
+        echo "refusing non-absolute remote runtime root: ${path}" >&2
+        return 2
+        ;;
+    esac
+
+    if mister_remote_path_has_unsafe_segments "${normalized}"; then
+        echo "refusing remote runtime root with ambiguous path segments: ${normalized}" >&2
+        return 2
+    fi
+
+    if [ "${normalized}" = "/media/fat/games/3sx" ]; then
+        return 0
+    fi
+
+    case "${normalized}" in
+    /|/media|/media/fat|/media/fat/games)
+        echo "refusing dangerous remote runtime root: ${normalized}" >&2
+        echo "expected the exact runtime root /media/fat/games/3sx" >&2
+        return 2
+        ;;
+    *)
+        case "${normalized}" in
+        */games/3sx)
+            mister_require_confirmed_remote_override "${normalized}" "remote runtime root"
+            ;;
+        *)
+            echo "refusing nonstandard remote runtime root: ${normalized}" >&2
+            echo "expected the exact runtime root /media/fat/games/3sx" >&2
+            return 2
+            ;;
+        esac
+        ;;
+    esac
+}
+
+mister_require_safe_fat_root() {
+    local path normalized
+    path="${1:-}"
+    normalized="$(mister_normalize_remote_path "${path}")"
+
+    case "${normalized}" in
+    "")
+        echo "refusing empty remote /media/fat root" >&2
+        return 2
+        ;;
+    /*)
+        ;;
+    *)
+        echo "refusing non-absolute remote /media/fat root: ${path}" >&2
+        return 2
+        ;;
+    esac
+
+    if mister_remote_path_has_unsafe_segments "${normalized}"; then
+        echo "refusing remote /media/fat root with ambiguous path segments: ${normalized}" >&2
+        return 2
+    fi
+
+    if [ "${normalized}" = "/media/fat" ]; then
+        return 0
+    fi
+
+    case "${normalized}" in
+    /|/media)
+        echo "refusing dangerous remote /media/fat root: ${normalized}" >&2
+        echo "expected the exact wrapper root /media/fat" >&2
+        return 2
+        ;;
+    *)
+        mister_require_confirmed_remote_override "${normalized}" "remote /media/fat root"
+        ;;
+    esac
+}
+
+mister_require_safe_ini_path() {
+    local path normalized
+    path="${1:-}"
+    normalized="$(mister_normalize_remote_path "${path}")"
+
+    case "${normalized}" in
+    "")
+        echo "refusing empty remote MiSTer.ini path" >&2
+        return 2
+        ;;
+    /*)
+        ;;
+    *)
+        echo "refusing non-absolute remote MiSTer.ini path: ${path}" >&2
+        return 2
+        ;;
+    esac
+
+    if mister_remote_path_has_unsafe_segments "${normalized}"; then
+        echo "refusing remote MiSTer.ini path with ambiguous path segments: ${normalized}" >&2
+        return 2
+    fi
+
+    case "${normalized}" in
+    /media/fat/MiSTer.ini|/media/fat/MiSTer_*.ini)
+        return 0
+        ;;
+    /|/media|/media/fat)
+        echo "refusing dangerous remote MiSTer.ini path: ${normalized}" >&2
+        echo "expected /media/fat/MiSTer.ini or /media/fat/MiSTer_*.ini" >&2
+        return 2
+        ;;
+    *)
+        mister_require_confirmed_remote_override "${normalized}" "remote MiSTer.ini path"
+        ;;
+    esac
+}
+
+mister_require_remote_exec_opt_in() {
+    if [ "${MISTER_ALLOW_REMOTE_EXEC:-0}" = "1" ]; then
+        return 0
+    fi
+
+    echo "remote exec is disabled by default; set MISTER_ALLOW_REMOTE_EXEC=1 to opt in" >&2
+    return 2
+}
+
+mister_shell_quote() {
+    printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\"'\"'/g")"
+}
+
+mister_allow_busy_target() {
+    [ "${MISTER_ALLOW_BUSY_TARGET:-0}" = "1" ]
+}
+
+mister_remote_busy_regex() {
+    printf '%s\n' "${MISTER_REMOTE_BUSY_REGEX:-(^|/)(3sx|launch-osd\\.sh|run-3sx\\.sh|perf-sampler\\.sh)( |$)|MiSTer_3SX|(^| )rsync( |$)|(^| )scp( |$)|sftp-server}"
+}
+
+mister_target_busy_status_script() {
+    local regex
+    regex="$(mister_remote_busy_regex)"
+
+    cat <<EOF
+set -e
+busy_output=\$(ps | grep -E $(mister_shell_quote "${regex}") | grep -v grep || true)
+if [ -n "\${busy_output}" ]; then
+  echo __MISTER_TARGET_BUSY__
+  printf '%s\n' "\${busy_output}"
+  exit 24
+else
+  echo __MISTER_TARGET_IDLE__
+fi
+EOF
+}
+
+mister_require_target_idle() {
+    local host="$1"
+    local user="$2"
+    local password="$3"
+    local command_label="$4"
+    local status_script
+    local rc=0
+
+    if mister_allow_busy_target; then
+        return 0
+    fi
+
+    status_script="$(mister_target_busy_status_script)"
+    mister_ssh_exec "${host}" "${user}" "${password}" "${status_script}"
+    rc=$?
+
+    if [ "${rc}" -eq 0 ]; then
+        return 0
+    fi
+
+    if [ "${rc}" -eq 24 ]; then
+        echo "refusing ${command_label}: MiSTer target appears busy" >&2
+        echo "rerun with MISTER_ALLOW_BUSY_TARGET=1 only if you intentionally accept the collision risk" >&2
+        return 2
+    fi
+
+    return "${rc}"
+}
+
 MISTER_LOCK_HELD=0
 MISTER_LOCK_OWNER_FILE=""
 MISTER_LOCK_DIR_VALUE=""
+
+mister_lock_status() {
+    local lock_dir owner_file owner_pid owner_live
+    lock_dir="$(mister_lock_dir)"
+    owner_file="${lock_dir}/owner"
+    owner_pid=""
+    owner_live=0
+
+    if [ ! -d "${lock_dir}" ]; then
+        printf 'lock_state=free\n'
+        printf 'lock_dir=%s\n' "${lock_dir}"
+        return 0
+    fi
+
+    if [ -f "${lock_dir}/pid" ]; then
+        owner_pid="$(cat "${lock_dir}/pid" 2>/dev/null || true)"
+        if [ -n "${owner_pid}" ] && kill -0 "${owner_pid}" 2>/dev/null; then
+            owner_live=1
+        fi
+    fi
+
+    printf 'lock_state=held\n'
+    printf 'lock_dir=%s\n' "${lock_dir}"
+    printf 'owner_pid=%s\n' "${owner_pid}"
+    printf 'owner_live=%s\n' "${owner_live}"
+
+    if [ -f "${owner_file}" ]; then
+        cat "${owner_file}"
+    fi
+}
 
 mister_lock_release() {
     if [ "${MISTER_LOCK_HELD}" -ne 1 ]; then
@@ -222,7 +493,34 @@ set user $env(EXPECT_USER)
 set pw $env(EXPECT_PASSWORD)
 set src_path $env(EXPECT_SRC)
 set dst_path $env(EXPECT_DST)
-spawn rsync -av --delete --omit-dir-times --no-perms --no-owner --no-group --exclude resources/SF33RD.AFS --filter {P resources/SF33RD.AFS} -e {ssh -o StrictHostKeyChecking=no -o PubkeyAuthentication=no -o PreferredAuthentications=password -o NumberOfPasswordPrompts=1} "$src_path" ${user}@${host}:${dst_path}
+spawn rsync -av --delete --omit-dir-times --no-perms --no-owner --no-group --exclude resources/SF33RD.AFS --filter {P resources/SF33RD.AFS} --exclude config --filter {P config} --exclude keymap --filter {P keymap} -e {ssh -o StrictHostKeyChecking=no -o PubkeyAuthentication=no -o PreferredAuthentications=password -o NumberOfPasswordPrompts=1} "$src_path" ${user}@${host}:${dst_path}
+expect {
+  -re {[Pp]assword:} { send -- "$pw\r"; exp_continue }
+  eof
+}
+set status [lindex [wait] 3]
+exit $status
+EOF
+}
+
+mister_rsync_expect_copy() {
+    local src_path="$1"
+    local host="$2"
+    local user="$3"
+    local password="$4"
+    local dst_path="$5"
+
+    local timeout_seconds
+    timeout_seconds="$(mister_transfer_timeout)"
+
+    EXPECT_HOST="$host" EXPECT_USER="$user" EXPECT_PASSWORD="$password" EXPECT_SRC="$src_path" EXPECT_DST="$dst_path" EXPECT_TIMEOUT="$timeout_seconds" expect <<'EOF'
+set timeout $env(EXPECT_TIMEOUT)
+set host $env(EXPECT_HOST)
+set user $env(EXPECT_USER)
+set pw $env(EXPECT_PASSWORD)
+set src_path $env(EXPECT_SRC)
+set dst_path $env(EXPECT_DST)
+spawn rsync -av --omit-dir-times --no-perms --no-owner --no-group -e {ssh -o StrictHostKeyChecking=no -o PubkeyAuthentication=no -o PreferredAuthentications=password -o NumberOfPasswordPrompts=1} "$src_path" ${user}@${host}:${dst_path}
 expect {
   -re {[Pp]assword:} { send -- "$pw\r"; exp_continue }
   eof
@@ -239,6 +537,8 @@ mister_rsync_deploy() {
     local password="$4"
     local dst_path="$5"
 
+    mister_require_safe_runtime_root "${dst_path}" || return $?
+
     if [ -n "${password}" ]; then
         mister_require_cmd expect || return $?
         mister_rsync_expect "${src_path}" "${host}" "${user}" "${password}" "${dst_path}"
@@ -246,6 +546,73 @@ mister_rsync_deploy() {
         rsync -av --delete --omit-dir-times --no-perms --no-owner --no-group \
             --exclude 'resources/SF33RD.AFS' \
             --filter 'P resources/SF33RD.AFS' \
+            --exclude 'config' \
+            --filter 'P config' \
+            --exclude 'keymap' \
+            --filter 'P keymap' \
             "${src_path}" "${user}@${host}:${dst_path}"
+    fi
+}
+
+mister_rsync_deploy_wrapper() {
+    local src_path="$1"
+    local host="$2"
+    local user="$3"
+    local password="$4"
+    local dst_path="$5"
+    local deploy_mode="${6:-full}"
+
+    local wrapper_root="${src_path%/}"
+    local runtime_src="${wrapper_root}/games/3sx/"
+    local core_src="${wrapper_root}/_Other/3SX.rbf"
+    local hps_src="${wrapper_root}/MiSTer_3SX"
+
+    [ -f "${hps_src}" ] || { echo "wrapper HPS binary not found in package: ${hps_src}" >&2; return 1; }
+    [ -f "${core_src}" ] || { echo "wrapper core RBF not found in package: ${core_src}" >&2; return 1; }
+
+    case "${deploy_mode}" in
+    full|artifacts-only)
+        ;;
+    *)
+        echo "unknown wrapper deploy mode: ${deploy_mode}" >&2
+        return 1
+        ;;
+    esac
+
+    if [ "${deploy_mode}" = "full" ]; then
+        [ -d "${runtime_src}" ] || { echo "wrapper runtime tree not found in package: ${runtime_src}" >&2; return 1; }
+    fi
+
+    mister_require_safe_fat_root "${dst_path}" || return $?
+    mister_require_safe_runtime_root "${dst_path%/}/games/3sx/" || return $?
+
+    if [ "${deploy_mode}" = "full" ]; then
+        mister_ssh_exec "${host}" "${user}" "${password}" "mkdir -p '${dst_path%/}/_Other' '${dst_path%/}/games/3sx'"
+    else
+        mister_ssh_exec "${host}" "${user}" "${password}" "mkdir -p '${dst_path%/}/_Other'"
+    fi
+
+    if [ -n "${password}" ]; then
+        mister_require_cmd expect || return $?
+        mister_rsync_expect_copy "${hps_src}" "${host}" "${user}" "${password}" "${dst_path%/}/"
+        mister_rsync_expect_copy "${core_src}" "${host}" "${user}" "${password}" "${dst_path%/}/_Other/"
+        if [ "${deploy_mode}" = "full" ]; then
+            mister_rsync_expect "${runtime_src}" "${host}" "${user}" "${password}" "${dst_path%/}/games/3sx/"
+        fi
+    else
+        rsync -av --omit-dir-times --no-perms --no-owner --no-group \
+            "${hps_src}" "${user}@${host}:${dst_path%/}/"
+        rsync -av --omit-dir-times --no-perms --no-owner --no-group \
+            "${core_src}" "${user}@${host}:${dst_path%/}/_Other/"
+        if [ "${deploy_mode}" = "full" ]; then
+            rsync -av --delete --omit-dir-times --no-perms --no-owner --no-group \
+                --exclude 'resources/SF33RD.AFS' \
+                --filter 'P resources/SF33RD.AFS' \
+                --exclude 'config' \
+                --filter 'P config' \
+                --exclude 'keymap' \
+                --filter 'P keymap' \
+                "${runtime_src}" "${user}@${host}:${dst_path%/}/games/3sx/"
+        fi
     fi
 }

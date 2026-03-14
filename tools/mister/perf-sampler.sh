@@ -12,7 +12,7 @@ Usage: tools/mister/perf-sampler.sh --scene <name> --frames <count> --tag <name>
 Options:
   --scene <name>         Scene label for perf metadata.
   --frames <count>       Number of frames to capture.
-  --tag <name>           Output tag; writes artifacts/mister-port/perf/<tag>.json.
+  --tag <name>           Output tag; safe basename only (`[A-Za-z0-9][A-Za-z0-9._-]*`).
   --gameplay-idle        Use the built-in scripted idle-versus path and wait for gameplay before capture.
   --gameplay-warmup <n>  Warmup frames to skip after gameplay or the selected wait condition becomes active
                          (default: 120 for gameplay waits, 0 for test-phase waits).
@@ -23,7 +23,7 @@ Options:
                          (title, menu, character-select-transition, character-select, game-transition, game, game-input-active, wipe-transition-type1).
   --perf-wait-runtime-state <name>
                          Delay capture until the runtime reaches the named state
-                         (attract-demo-logo, character-select-super-art).
+                         (attract-demo-logo).
   --test-scene-preset <name>
                          Named scripted gameplay preset (stage-heavy, effect-heavy, super-heavy).
   --test-p1-character <name-or-id>
@@ -43,8 +43,6 @@ Options:
                          Optional test-runner flag that delays scripted gameplay inputs and
                          first-frame super bootstrap until both players reach gameplay/input-active state.
   --test-stage <id>      Optional test-runner stage override (0-19, excluding 17); requires --gameplay-idle or --test-scene-preset.
-  --scale-mode <mode>    Optional config override for `scale-mode` during capture
-                         (nearest, native, linear, soft-linear, square-pixels, integer).
   --software-frame-mode <off|on>
                          Optional config override for `software-frame-mode` during capture.
                          Perf captures always force `show-fps = false` temporarily so the
@@ -53,11 +51,13 @@ Options:
   --user <name>          SSH user (default: $MISTER_USER or root).
   --password <value>     SSH password (default: $MISTER_PASSWORD).
   --remote-root <path>   Remote 3SX root (default: $MISTER_ROOT or /media/fat/games/3sx).
-  --copy-afs <path>      Optional local SF33RD.AFS path to stage before capture.
+  --copy-afs <path>      Optional local SF33RD.AFS path to stage temporarily before capture.
   --help                 Show this message.
 
 Environment:
   MISTER_HOST, MISTER_USER, MISTER_PASSWORD, MISTER_ROOT
+  MISTER_UNSAFE_ALLOW_ANY_REMOTE_ROOT=1 and MISTER_UNSAFE_CONFIRM_REMOTE_ROOT=<exact-path>
+    only for deliberate nonstandard remote test trees
   MISTER_LOCK_DIR, MISTER_LOCK_TIMEOUT, MISTER_CMD_TIMEOUT, MISTER_TRANSFER_TIMEOUT
 EOF
 }
@@ -119,12 +119,6 @@ is_supported_software_frame_mode() {
     [ "$value" = "off" ] || [ "$value" = "on" ]
 }
 
-is_supported_scale_mode() {
-    local value="$1"
-    [ "$value" = "nearest" ] || [ "$value" = "native" ] || [ "$value" = "linear" ] ||
-        [ "$value" = "soft-linear" ] || [ "$value" = "square-pixels" ] || [ "$value" = "integer" ]
-}
-
 is_supported_perf_wait_test_phase() {
     local value="$1"
     [ "$value" = "title" ] || [ "$value" = "menu" ] ||
@@ -135,7 +129,12 @@ is_supported_perf_wait_test_phase() {
 
 is_supported_perf_wait_runtime_state() {
     local value="$1"
-    [ "$value" = "attract-demo-logo" ] || [ "$value" = "character-select-super-art" ]
+    [ "$value" = "attract-demo-logo" ]
+}
+
+is_safe_perf_tag() {
+    local value="$1"
+    [[ "$value" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]
 }
 
 apply_test_scene_preset_defaults() {
@@ -264,7 +263,6 @@ test_p1_super_full=0
 test_preserve_game_transition=0
 test_delay_gameplay_inputs_until_active=0
 test_stage=""
-scale_mode=""
 software_frame_mode=""
 have_test_overrides=0
 
@@ -346,10 +344,6 @@ while [ "$#" -gt 0 ]; do
         have_test_overrides=1
         shift 2
         ;;
-    --scale-mode)
-        scale_mode="$2"
-        shift 2
-        ;;
     --software-frame-mode)
         software_frame_mode="$2"
         shift 2
@@ -392,6 +386,11 @@ if [ -z "$scene" ] || [ -z "$frames" ] || [ -z "$tag" ]; then
     exit 2
 fi
 
+if ! is_safe_perf_tag "$tag"; then
+    echo "error: --tag must match [A-Za-z0-9][A-Za-z0-9._-]*." >&2
+    exit 2
+fi
+
 if ! [[ "$frames" =~ ^[0-9]+$ ]] || [ "$frames" -le 0 ]; then
     echo "error: --frames must be a positive integer." >&2
     exit 2
@@ -408,7 +407,7 @@ if [ -n "$perf_wait_test_phase" ] && ! is_supported_perf_wait_test_phase "$perf_
 fi
 
 if [ -n "$perf_wait_runtime_state" ] && ! is_supported_perf_wait_runtime_state "$perf_wait_runtime_state"; then
-    echo "error: --perf-wait-runtime-state must be attract-demo-logo or character-select-super-art." >&2
+    echo "error: --perf-wait-runtime-state must be attract-demo-logo." >&2
     exit 2
 fi
 
@@ -507,14 +506,11 @@ if [ -n "$software_frame_mode" ] && ! is_supported_software_frame_mode "$softwar
     exit 2
 fi
 
-if [ -n "$scale_mode" ] && ! is_supported_scale_mode "$scale_mode"; then
-    echo "error: --scale-mode must be one of nearest, native, linear, soft-linear, square-pixels, or integer." >&2
-    exit 2
-fi
-
 if [ -n "$password" ]; then
     require_cmd expect
 fi
+
+mister_require_safe_runtime_root "$remote_root" || exit 1
 
 local_perf_dir="artifacts/mister-port/perf"
 local_output_path="${local_perf_dir}/${tag}.json"
@@ -522,16 +518,50 @@ remote_output_path="${remote_root}/logs/perf-${tag}.json"
 remote_log_path="/tmp/3sx-perf-${tag}.log"
 remote_config_path="${remote_root}/config"
 remote_resources_afs="${remote_root}/resources/SF33RD.AFS"
+remote_afs_backup_path="/tmp/3sx-afs-${tag}.bak"
+remote_afs_missing_marker="/tmp/3sx-afs-${tag}.missing"
+remote_afs_restore_needed=0
 extra_app_args=""
-runtime_state_needs_test_enable=0
+remote_stdout_path=""
+remote_json_b64_path=""
+remote_log_b64_path=""
+local_remote_log_path=""
 
-if [ "$perf_wait_runtime_state" = "character-select-super-art" ]; then
-    runtime_state_needs_test_enable=1
+cleanup_local() {
+    local status="${1:-$?}"
+    local cleanup_path=""
+    trap - EXIT INT TERM HUP
+
+    if [ "${remote_afs_restore_needed}" -eq 1 ]; then
+        mister_ssh_exec "$host" "$user" "$password" "
+set -e
+if [ -f '${remote_afs_backup_path}' ]; then
+  cp '${remote_afs_backup_path}' '${remote_resources_afs}'
+  rm -f '${remote_afs_backup_path}'
+elif [ -f '${remote_afs_missing_marker}' ]; then
+  rm -f '${remote_resources_afs}' '${remote_afs_missing_marker}'
 fi
+        " || echo "warning: failed to restore remote SF33RD.AFS after perf capture" >&2
+        remote_afs_restore_needed=0
+    fi
+
+    for cleanup_path in \
+        "${local_remote_log_path}" \
+        "${remote_stdout_path}" \
+        "${remote_json_b64_path}" \
+        "${remote_log_b64_path}"; do
+        if [ -n "${cleanup_path}" ]; then
+            rm -f "${cleanup_path}"
+        fi
+    done
+
+    mister_lock_release || true
+    exit "${status}"
+}
 
 if [ "$gameplay_idle" -eq 1 ] || [ "$have_test_overrides" -eq 1 ] || [ -n "$test_scene_preset" ] ||
     [ "$test_preserve_game_transition" -eq 1 ] ||
-    [ -n "$perf_wait_test_phase" ] || [ "$runtime_state_needs_test_enable" -eq 1 ]; then
+    [ -n "$perf_wait_test_phase" ]; then
     extra_app_args="--test-enable"
 fi
 
@@ -589,6 +619,10 @@ fi
 
 mkdir -p "$local_perf_dir"
 mister_lock_acquire
+trap 'cleanup_local $?' EXIT
+trap 'cleanup_local 130' INT
+trap 'cleanup_local 129' HUP
+trap 'cleanup_local 143' TERM
 
 if [ -n "$copy_afs_path" ]; then
     if [ ! -f "$copy_afs_path" ]; then
@@ -596,7 +630,17 @@ if [ -n "$copy_afs_path" ]; then
         exit 2
     fi
 
-    mister_ssh_exec "$host" "$user" "$password" "mkdir -p '${remote_root}/resources'"
+    mister_ssh_exec "$host" "$user" "$password" "
+set -e
+mkdir -p '${remote_root}/resources'
+rm -f '${remote_afs_backup_path}' '${remote_afs_missing_marker}'
+if [ -f '${remote_resources_afs}' ]; then
+  cp '${remote_resources_afs}' '${remote_afs_backup_path}'
+else
+  : >'${remote_afs_missing_marker}'
+fi
+"
+    remote_afs_restore_needed=1
     mister_scp_upload "$copy_afs_path" "$host" "$user" "$password" "$remote_resources_afs"
 fi
 
@@ -631,11 +675,6 @@ if [ -f '${remote_config_path}' ]; then
 else
   : >"\$remote_config_missing_marker"
   : >'${remote_config_path}.tmp'
-fi
-if [ -n '${scale_mode}' ]; then
-  grep -v '^[[:space:]]*scale-mode[[:space:]]*=' '${remote_config_path}.tmp' >'${remote_config_path}.tmp.scale' || true
-  mv '${remote_config_path}.tmp.scale' '${remote_config_path}.tmp'
-  printf '%s\n' 'scale-mode = ${scale_mode}' >>'${remote_config_path}.tmp'
 fi
 if [ -n '${software_frame_mode}' ]; then
   grep -v '^[[:space:]]*software-frame-mode[[:space:]]*=' '${remote_config_path}.tmp' >'${remote_config_path}.tmp.mode' || true
@@ -688,7 +727,6 @@ captured_p1_character=""
 captured_p2_character=""
 captured_p1_super_art=""
 captured_p2_super_art=""
-captured_scale_mode=""
 captured_software_frame_mode=""
 captured_test_phase=""
 captured_wait_test_phase=""
@@ -705,7 +743,6 @@ if [ -n "$capture_log_line" ]; then
     captured_wait_runtime_state="$(extract_perf_log_string_field "wait_runtime_state" "$capture_log_line")"
 fi
 if [ -n "$mode_log_line" ]; then
-    captured_scale_mode="$(extract_perf_log_string_field "scale_mode" "$mode_log_line")"
     captured_software_frame_mode="$(extract_perf_log_string_field "software_frame_mode" "$mode_log_line")"
 fi
 
@@ -716,7 +753,6 @@ if command -v jq >/dev/null 2>&1; then
     metadata_p2_character="null"
     metadata_p1_super_art="null"
     metadata_p2_super_art="null"
-    metadata_scale_mode="$captured_scale_mode"
     metadata_software_frame_mode="$captured_software_frame_mode"
     metadata_capture_start_test_phase="$captured_test_phase"
     metadata_perf_wait_test_phase="$captured_wait_test_phase"
@@ -749,9 +785,6 @@ if command -v jq >/dev/null 2>&1; then
     elif [ -n "$test_p2_super_art" ]; then
         metadata_p2_super_art="$test_p2_super_art"
     fi
-    if [ -z "$metadata_scale_mode" ] && [ -n "$scale_mode" ]; then
-        metadata_scale_mode="$scale_mode"
-    fi
     if [ -n "$software_frame_mode" ]; then
         metadata_software_frame_mode="$software_frame_mode"
     fi
@@ -770,7 +803,6 @@ if command -v jq >/dev/null 2>&1; then
     jq \
         --arg scene "$scene" \
         --arg test_scene_preset "$test_scene_preset" \
-        --arg scale_mode "$metadata_scale_mode" \
         --arg software_frame_mode "$metadata_software_frame_mode" \
         --arg capture_start_test_phase "$metadata_capture_start_test_phase" \
         --arg perf_wait_test_phase "$metadata_perf_wait_test_phase" \
@@ -784,13 +816,10 @@ if command -v jq >/dev/null 2>&1; then
         --argjson p1_super_full "$(if [ "$test_p1_super_full" -eq 1 ]; then printf 'true'; else printf 'false'; fi)" \
         --argjson preserve_game_transition "$(if [ "$test_preserve_game_transition" -eq 1 ]; then printf 'true'; else printf 'false'; fi)" \
         --argjson delay_gameplay_inputs_until_active "$(if [ "$test_delay_gameplay_inputs_until_active" -eq 1 ]; then printf 'true'; else printf 'false'; fi)" \
-        '.metadata = ((.metadata // {}) + {scene: $scene, test_scene_preset: (if ($test_scene_preset | length) > 0 then $test_scene_preset else null end), scale_mode: (if ($scale_mode | length) > 0 then $scale_mode else null end), software_frame_mode: (if ($software_frame_mode | length) > 0 then $software_frame_mode else null end), capture_start_test_phase: (if ($capture_start_test_phase | length) > 0 and $capture_start_test_phase != "(none)" then $capture_start_test_phase else null end), perf_wait_test_phase: (if ($perf_wait_test_phase | length) > 0 and $perf_wait_test_phase != "(none)" then $perf_wait_test_phase else null end), perf_wait_runtime_state: (if ($perf_wait_runtime_state | length) > 0 and $perf_wait_runtime_state != "(none)" then $perf_wait_runtime_state else null end), stage_id: $stage_id, test_stage_override: $test_stage_override, p1_character: $p1_character, p2_character: $p2_character, p1_super_art: $p1_super_art, p2_super_art: $p2_super_art, test_p1_super_full: $p1_super_full, test_preserve_game_transition: $preserve_game_transition, test_delay_gameplay_inputs_until_active: $delay_gameplay_inputs_until_active})' \
+        '.metadata = ((.metadata // {}) + {scene: $scene, test_scene_preset: (if ($test_scene_preset | length) > 0 then $test_scene_preset else null end), software_frame_mode: (if ($software_frame_mode | length) > 0 then $software_frame_mode else null end), capture_start_test_phase: (if ($capture_start_test_phase | length) > 0 and $capture_start_test_phase != "(none)" then $capture_start_test_phase else null end), perf_wait_test_phase: (if ($perf_wait_test_phase | length) > 0 and $perf_wait_test_phase != "(none)" then $perf_wait_test_phase else null end), perf_wait_runtime_state: (if ($perf_wait_runtime_state | length) > 0 and $perf_wait_runtime_state != "(none)" then $perf_wait_runtime_state else null end), stage_id: $stage_id, test_stage_override: $test_stage_override, p1_character: $p1_character, p2_character: $p2_character, p1_super_art: $p1_super_art, p2_super_art: $p2_super_art, test_p1_super_full: $p1_super_full, test_preserve_game_transition: $preserve_game_transition, test_delay_gameplay_inputs_until_active: $delay_gameplay_inputs_until_active})' \
         "${local_output_path}" >"${temp_output_path}"
     mv "${temp_output_path}" "${local_output_path}"
 fi
-
-rm -f "${local_remote_log_path}"
-rm -f "${remote_stdout_path}" "${remote_json_b64_path}" "${remote_log_b64_path}"
 
 echo "Saved perf JSON to ${local_output_path}"
 
@@ -801,24 +830,16 @@ if command -v jq >/dev/null 2>&1; then
     update_mean_ms="$(jq -r '.metrics.update.mean_ms // empty' "${local_output_path}")"
     render_mean_ms="$(jq -r '.metrics.render.mean_ms // empty' "${local_output_path}")"
     present_mean_ms="$(jq -r '.metrics.present.mean_ms // empty' "${local_output_path}")"
-    dominant_present_path="$(jq -r '
-        (.metrics.fbdev_present_path // {})
-        | to_entries
-        | map(select((.value.ratio // null) != null))
-        | if length == 0 then empty else max_by(.value.ratio).key end
-    ' "${local_output_path}")"
     metadata_stage_id="$(jq -r '.metadata.stage_id // empty' "${local_output_path}")"
     metadata_preset="$(jq -r '.metadata.test_scene_preset // empty' "${local_output_path}")"
-    metadata_scale_mode="$(jq -r '.metadata.scale_mode // empty' "${local_output_path}")"
-    metadata_software_frame_mode="$(jq -r '.metadata.software_frame_mode // empty' "${local_output_path}")"
+    metadata_mode="$(jq -r '.metadata.software_frame_mode // empty' "${local_output_path}")"
     metadata_test_phase="$(jq -r '.metadata.capture_start_test_phase // empty' "${local_output_path}")"
     metadata_runtime_state="$(jq -r '.metadata.perf_wait_runtime_state // empty' "${local_output_path}")"
 
-    printf 'Perf summary: tag=%s scene=%s fps=%s frame_mean_ms=%s frame_max_ms=%s update_mean_ms=%s render_mean_ms=%s present_mean_ms=%s dominant_present_path=%s stage_id=%s preset=%s scale_mode=%s software_frame_mode=%s test_phase=%s runtime_state=%s\n' \
+    printf 'Perf summary: tag=%s scene=%s fps=%s frame_mean_ms=%s frame_max_ms=%s update_mean_ms=%s render_mean_ms=%s present_mean_ms=%s stage_id=%s preset=%s software_frame_mode=%s test_phase=%s runtime_state=%s\n' \
         "$tag" "$scene" "${fps_mean:-unknown}" "${frame_mean_ms:-unknown}" "${frame_max_ms:-unknown}" \
         "${update_mean_ms:-unknown}" "${render_mean_ms:-unknown}" "${present_mean_ms:-unknown}" \
-        "${dominant_present_path:-unknown}" "${metadata_stage_id:-unknown}" "${metadata_preset:-none}" \
-        "${metadata_scale_mode:-unknown}" "${metadata_software_frame_mode:-unknown}" \
+        "${metadata_stage_id:-unknown}" "${metadata_preset:-none}" "${metadata_mode:-unknown}" \
         "${metadata_test_phase:-unknown}" "${metadata_runtime_state:-none}"
 
     software_frame_modulation_summary="$(jq -r '
@@ -943,46 +964,6 @@ if command -v jq >/dev/null 2>&1; then
     ' "${local_output_path}")"
     if [ -n "$test_state_summary" ]; then
         printf '%s\n' "$test_state_summary"
-    fi
-
-    character_select_super_art_summary="$(jq -r '
-        if (.test_state.character_select_super_art_active_frames_total // null) == null then
-            empty
-        else
-            "Character select super art: " +
-            "active_frames=\(.test_state.character_select_super_art_active_frames_total // 0) " +
-            "active_first=\((.test_state.character_select_super_art_active_first_frame // "none") | tostring) " +
-            "start_active=\(.test_state.character_select_super_art_start_active // false) " +
-            "start_sel_pl=\(if (.test_state.character_select_super_art_start_state // null) == null then "none" else (.test_state.character_select_super_art_start_state.sel_pl_complete | map(tostring) | join("/")) end) " +
-            "start_sel_arts=\(if (.test_state.character_select_super_art_start_state // null) == null then "none" else (.test_state.character_select_super_art_start_state.sel_arts_complete | map(tostring) | join("/")) end) " +
-            "start_select_arts=\(if (.test_state.character_select_super_art_start_state // null) == null then "none" else (.test_state.character_select_super_art_start_state.select_arts | map(tostring) | join("/")) end) " +
-            "start_moving_plate=\(if (.test_state.character_select_super_art_start_state // null) == null then "none" else (.test_state.character_select_super_art_start_state.moving_plate | map(tostring) | join("/")) end) " +
-            "start_moving_plate_counter=\(if (.test_state.character_select_super_art_start_state // null) == null then "none" else (.test_state.character_select_super_art_start_state.moving_plate_counter | map(tostring) | join("/")) end) " +
-            "start_super_art=\(if (.test_state.character_select_super_art_start_state // null) == null then "none" else (.test_state.character_select_super_art_start_state.super_arts | map(tostring) | join("/")) end) " +
-            "start_arts_y=\(if (.test_state.character_select_super_art_start_state // null) == null then "none" else (.test_state.character_select_super_art_start_state.arts_y | map(tostring) | join("/")) end) " +
-            "start_disp_mask=\(if (.test_state.character_select_super_art_start_state // null) == null then "none" else (.test_state.character_select_super_art_start_state.disp_command_name_mask | map(tostring) | join("/")) end)"
-        end
-    ' "${local_output_path}")"
-    if [ -n "$character_select_super_art_summary" ]; then
-        printf '%s\n' "$character_select_super_art_summary"
-    fi
-
-    update_breakdown_summary="$(jq -r '
-        if (.update_breakdown.scopes // null) == null then
-            empty
-        else
-            (.update_breakdown.scopes
-                | map(select((.total_calls // 0) > 0))
-                | sort_by(-(.mean_ms // 0))
-                | .[:5]
-                | map(
-                    "\(.name)=\((.mean_ms // 0) | tostring)ms/\((.calls_per_frame // 0) | tostring) calls"
-                  )
-                | if length == 0 then empty else "Menu update scopes: " + join(" ") end)
-        end
-    ' "${local_output_path}")"
-    if [ -n "$update_breakdown_summary" ]; then
-        printf '%s\n' "$update_breakdown_summary"
     fi
 
     super_command_summary="$(jq -r '
