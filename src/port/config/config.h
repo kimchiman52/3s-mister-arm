@@ -30,4 +30,7 @@ int Config_GetInt(const char* key);
 /// @return The value associated with `key` if `key` is among entries and the value's type is `string`, `NULL` otherwise
 const char* Config_GetString(const char* key);
 
+/// Check whether the config file explicitly provided the given key
+bool Config_HasExplicitKey(const char* key);
+
 #endif

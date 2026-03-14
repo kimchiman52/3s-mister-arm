@@ -101,6 +101,10 @@ static ConfigEntry* find_entry(const char* key) {
     }
 }
 
+bool Config_HasExplicitKey(const char* key) {
+    return find_entry_in_array(key, entries, entry_count) != NULL;
+}
+
 static void print_config_entry_to_io(SDL_IOStream* io, const ConfigEntry* entry) {
     io_printf(io, "%s = ", entry->key);
 

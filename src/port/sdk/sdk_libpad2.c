@@ -5,6 +5,22 @@
 
 #include <string.h>
 
+#define SDLPAD_TRIGGER_PRESS_THRESHOLD 4096
+
+static unsigned char trigger_pressure(Sint16 raw_trigger) {
+    if (raw_trigger <= SDLPAD_TRIGGER_PRESS_THRESHOLD) {
+        return 0;
+    }
+
+    const int adjusted = (int)raw_trigger - SDLPAD_TRIGGER_PRESS_THRESHOLD;
+    const int range = 32767 - SDLPAD_TRIGGER_PRESS_THRESHOLD;
+    return (unsigned char)((adjusted * 255 + (range / 2)) / range);
+}
+
+static bool trigger_pressed(Sint16 raw_trigger) {
+    return raw_trigger > SDLPAD_TRIGGER_PRESS_THRESHOLD;
+}
+
 int scePad2GetState(int socket_number) {
     return SDLPad_IsGamepadConnected(socket_number) ? scePad2StateStable : scePad2StateNoLink;
 }
@@ -30,6 +46,8 @@ int scePad2Read(int socket_number, scePad2ButtonState* data) {
 
     SDLPad_ButtonState button_state;
     SDLPad_GetButtonState(socket_number, &button_state);
+    const unsigned char left_trigger_pressure = trigger_pressure(button_state.left_trigger);
+    const unsigned char right_trigger_pressure = trigger_pressure(button_state.right_trigger);
 
     // sw0 and sw1 store the pressed state of each button as bits.
     // 0 = pressed, 1 = released
@@ -48,8 +66,8 @@ int scePad2Read(int socket_number, scePad2ButtonState* data) {
 
     data->sw1.bits.l1 = !button_state.left_shoulder;
     data->sw1.bits.r1 = !button_state.right_shoulder;
-    data->sw1.bits.l2 = button_state.left_trigger == 0;
-    data->sw1.bits.r2 = button_state.right_trigger == 0;
+    data->sw1.bits.l2 = !trigger_pressed(button_state.left_trigger);
+    data->sw1.bits.r2 = !trigger_pressed(button_state.right_trigger);
     data->sw1.bits.cross = !button_state.south;
     data->sw1.bits.circle = !button_state.east;
     data->sw1.bits.square = !button_state.west;
@@ -71,6 +89,10 @@ int scePad2Read(int socket_number, scePad2ButtonState* data) {
     data->downP = button_state.dpad_down ? 0xFF : 0;
     data->leftP = button_state.dpad_left ? 0xFF : 0;
     data->rightP = button_state.dpad_right ? 0xFF : 0;
+    data->l1P = button_state.left_shoulder ? 0xFF : 0;
+    data->r1P = button_state.right_shoulder ? 0xFF : 0;
+    data->l2P = left_trigger_pressure;
+    data->r2P = right_trigger_pressure;
 
     return sizeof(scePad2ButtonState);
 }

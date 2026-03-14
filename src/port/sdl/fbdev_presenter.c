@@ -29,10 +29,6 @@ static int* scale_x_lut = NULL;
 static int* scale_y_lut = NULL;
 static int scale_lut_src_w = 0;
 static int scale_lut_src_h = 0;
-static int scale_lut_raw_x0 = 0;
-static int scale_lut_raw_y0 = 0;
-static int scale_lut_raw_w = 0;
-static int scale_lut_raw_h = 0;
 static bool rect_bar_clear_valid = false;
 static int rect_bar_clear_x0 = 0;
 static int rect_bar_clear_y0 = 0;
@@ -116,10 +112,6 @@ static void reset_scale_lut() {
     scale_y_lut = NULL;
     scale_lut_src_w = 0;
     scale_lut_src_h = 0;
-    scale_lut_raw_x0 = 0;
-    scale_lut_raw_y0 = 0;
-    scale_lut_raw_w = 0;
-    scale_lut_raw_h = 0;
 }
 
 static void invalidate_rect_bar_clear_cache() {
@@ -224,14 +216,12 @@ static void close_fb() {
     }
 }
 
-static bool ensure_scale_lut(int src_w, int src_h, int raw_x0, int raw_y0, int raw_w, int raw_h) {
-    if ((src_w <= 0) || (src_h <= 0) || (raw_w <= 0) || (raw_h <= 0) || (fb_width <= 0) || (fb_height <= 0)) {
+static bool ensure_scale_lut(int src_w, int src_h) {
+    if ((src_w <= 0) || (src_h <= 0) || (fb_width <= 0) || (fb_height <= 0)) {
         return false;
     }
 
-    if ((scale_x_lut != NULL) && (scale_y_lut != NULL) && (scale_lut_src_w == src_w) && (scale_lut_src_h == src_h) &&
-        (scale_lut_raw_x0 == raw_x0) && (scale_lut_raw_y0 == raw_y0) && (scale_lut_raw_w == raw_w) &&
-        (scale_lut_raw_h == raw_h)) {
+    if ((scale_x_lut != NULL) && (scale_y_lut != NULL) && (scale_lut_src_w == src_w) && (scale_lut_src_h == src_h)) {
         return true;
     }
 
@@ -249,24 +239,16 @@ static bool ensure_scale_lut(int src_w, int src_h, int raw_x0, int raw_y0, int r
         }
     }
 
-    const int lut_x0 = clamp_to_range(raw_x0, 0, fb_width);
-    const int lut_x1 = clamp_to_range(raw_x0 + raw_w, 0, fb_width);
-    for (int x = lut_x0; x < lut_x1; x++) {
-        scale_x_lut[x] = (int)(((Sint64)(x - raw_x0) * (Sint64)src_w) / (Sint64)raw_w);
+    for (int x = 0; x < fb_width; x++) {
+        scale_x_lut[x] = (x * src_w) / fb_width;
     }
 
-    const int lut_y0 = clamp_to_range(raw_y0, 0, fb_height);
-    const int lut_y1 = clamp_to_range(raw_y0 + raw_h, 0, fb_height);
-    for (int y = lut_y0; y < lut_y1; y++) {
-        scale_y_lut[y] = (int)(((Sint64)(y - raw_y0) * (Sint64)src_h) / (Sint64)raw_h);
+    for (int y = 0; y < fb_height; y++) {
+        scale_y_lut[y] = (y * src_h) / fb_height;
     }
 
     scale_lut_src_w = src_w;
     scale_lut_src_h = src_h;
-    scale_lut_raw_x0 = raw_x0;
-    scale_lut_raw_y0 = raw_y0;
-    scale_lut_raw_w = raw_w;
-    scale_lut_raw_h = raw_h;
     return true;
 }
 
@@ -641,12 +623,11 @@ static bool copy_argb_surface_scaled_to_fb_mapped_rect(const SDL_Surface* argb,
     }
 
     const size_t row_bytes = (size_t)(clip_x1 - clip_x0) * sizeof(Uint32);
-    const bool have_lut = ensure_scale_lut(argb->w, argb->h, raw_x0, raw_y0, raw_w, raw_h);
     int prev_src_y = -1;
     Uint8* prev_dst_row = NULL;
 
     for (int y = clip_y0; y < clip_y1; y++) {
-        int src_y = have_lut ? scale_y_lut[y] : (int)(((Sint64)(y - raw_y0) * (Sint64)argb->h) / (Sint64)raw_h);
+        int src_y = ((y - raw_y0) * argb->h) / raw_h;
         src_y = clamp_to_range(src_y, 0, argb->h - 1);
 
         Uint8* dst_row_bytes = fb_map + ((size_t)fb_stride * (size_t)y) + ((size_t)clip_x0 * sizeof(Uint32));
@@ -660,7 +641,7 @@ static bool copy_argb_surface_scaled_to_fb_mapped_rect(const SDL_Surface* argb,
         Uint32* dst_row = (Uint32*)dst_row_bytes;
 
         for (int x = clip_x0; x < clip_x1; x++) {
-            int src_x = have_lut ? scale_x_lut[x] : (int)(((Sint64)(x - raw_x0) * (Sint64)argb->w) / (Sint64)raw_w);
+            int src_x = ((x - raw_x0) * argb->w) / raw_w;
             src_x = clamp_to_range(src_x, 0, argb->w - 1);
             dst_row[x - clip_x0] = src_row[src_x];
         }
@@ -1277,7 +1258,7 @@ void FBDevPresenter_Present(SDL_Renderer* renderer, const SDL_FRect* content_rec
     const size_t row_bytes = (size_t)fb_width * sizeof(Uint32);
 
     const Uint64 copy_start_ns = frame_stats_now();
-    if (ensure_scale_lut(argb->w, argb->h, 0, 0, fb_width, fb_height)) {
+    if (ensure_scale_lut(argb->w, argb->h)) {
         frame_stats_note_path(FBDEV_PRESENTER_PATH_FULLSCREEN_SCALED_LUT);
         int prev_src_y = -1;
         Uint8* prev_dst_row = NULL;

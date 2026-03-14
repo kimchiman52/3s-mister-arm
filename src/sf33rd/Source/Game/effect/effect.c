@@ -5,7 +5,6 @@
 
 #include "sf33rd/Source/Game/effect/effect.h"
 #include "common.h"
-#include "main.h"
 #include "sf33rd/AcrSDK/ps2/flps2debug.h"
 #include "sf33rd/Source/Game/debug/Debug.h"
 #include "sf33rd/Source/Game/effect/effxx.h"
@@ -24,36 +23,10 @@ s16 exec_tm[8];
 uintptr_t frw[EFFECT_MAX][448];
 s16 frwque[EFFECT_MAX];
 
-static PerfUpdateScope perf_update_scope_for_effect_id(s16 effect_id) {
-    switch (effect_id) {
-    case 38:
-        return PERF_UPDATE_SCOPE_EFFECT_38;
-
-    case 39:
-        return PERF_UPDATE_SCOPE_EFFECT_39;
-
-    case 52:
-        return PERF_UPDATE_SCOPE_EFFECT_52;
-
-    case 79:
-        return PERF_UPDATE_SCOPE_EFFECT_79;
-
-    case 80:
-        return PERF_UPDATE_SCOPE_EFFECT_80;
-
-    case 0x8A:
-        return PERF_UPDATE_SCOPE_EFFECT_D8;
-
-    default:
-        return PERF_UPDATE_SCOPE_COUNT;
-    }
-}
-
 void move_effect_work(s16 index) {
     WORK* c_addr;
     s16 curr_ix;
     s16 next_ix;
-    const bool perf_update_breakdown_enabled = PerfUpdateBreakdown_IsEnabled();
 
     if (Debug_w[0x28]) {
         return;
@@ -66,19 +39,8 @@ void move_effect_work(s16 index) {
         next_ix = c_addr->behind;
 
         if (c_addr->timing != exec_tm[index]) {
-            PerfUpdateScope perf_scope = PERF_UPDATE_SCOPE_COUNT;
-            uint64_t perf_scope_start_ns = 0;
-            if (perf_update_breakdown_enabled) {
-                perf_scope = perf_update_scope_for_effect_id(c_addr->id);
-                if (perf_scope < PERF_UPDATE_SCOPE_COUNT) {
-                    perf_scope_start_ns = PerfUpdateBreakdown_Begin(perf_scope);
-                }
-            }
             c_addr->timing = exec_tm[index];
             effmovejptbl[c_addr->id](c_addr);
-            if (perf_scope < PERF_UPDATE_SCOPE_COUNT) {
-                PerfUpdateBreakdown_End(perf_scope, perf_scope_start_ns);
-            }
         }
     }
 }

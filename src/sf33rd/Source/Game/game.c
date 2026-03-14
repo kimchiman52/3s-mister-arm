@@ -115,7 +115,6 @@ static void Set_Appear_Type_For_Mode() {
 void Game_Task(struct _TASK* task_ptr) {
     s16 ix;
     s16 ff;
-    const bool perf_update_breakdown_enabled = PerfUpdateBreakdown_IsEnabled();
 
     if (!No_Trans) {
         init_color_trans_req();
@@ -138,67 +137,22 @@ void Game_Task(struct _TASK* task_ptr) {
             system_timer += 1;
         }
 
-        uint64_t perf_scope_start_ns = 0;
-
-        if (perf_update_breakdown_enabled) {
-            perf_scope_start_ns = PerfUpdateBreakdown_Begin(PERF_UPDATE_SCOPE_GAME_TASK_INIT_TEXCASH_BEFORE_PROCESS);
-        }
         init_texcash_before_process();
-        if (perf_update_breakdown_enabled) {
-            PerfUpdateBreakdown_End(PERF_UPDATE_SCOPE_GAME_TASK_INIT_TEXCASH_BEFORE_PROCESS, perf_scope_start_ns);
-            perf_scope_start_ns = PerfUpdateBreakdown_Begin(PERF_UPDATE_SCOPE_GAME_TASK_SEQS_BEFORE_PROCESS);
-        }
         seqsBeforeProcess();
-        if (perf_update_breakdown_enabled) {
-            PerfUpdateBreakdown_End(PERF_UPDATE_SCOPE_GAME_TASK_SEQS_BEFORE_PROCESS, perf_scope_start_ns);
-        }
 
         if (nowSoftReset() == 0) {
-            if (perf_update_breakdown_enabled) {
-                perf_scope_start_ns = PerfUpdateBreakdown_Begin(PERF_UPDATE_SCOPE_GAME_TASK_MAIN_DISPATCH);
-            }
             Main_Jmp_Tbl[G_No[0]](task_ptr);
-            if (perf_update_breakdown_enabled) {
-                PerfUpdateBreakdown_End(PERF_UPDATE_SCOPE_GAME_TASK_MAIN_DISPATCH, perf_scope_start_ns);
-            }
         }
 
-        if (perf_update_breakdown_enabled) {
-            perf_scope_start_ns = PerfUpdateBreakdown_Begin(PERF_UPDATE_SCOPE_GAME_TASK_SEQS_AFTER_PROCESS);
-            PerfUpdateBreakdown_SetGameTaskSeqsAfterActive(true);
-        }
         seqsAfterProcess();
-        if (perf_update_breakdown_enabled) {
-            PerfUpdateBreakdown_SetGameTaskSeqsAfterActive(false);
-            PerfUpdateBreakdown_End(PERF_UPDATE_SCOPE_GAME_TASK_SEQS_AFTER_PROCESS, perf_scope_start_ns);
-            perf_scope_start_ns = PerfUpdateBreakdown_Begin(PERF_UPDATE_SCOPE_GAME_TASK_TEXTURE_CASH_UPDATE);
-        }
         texture_cash_update();
-        if (perf_update_breakdown_enabled) {
-            PerfUpdateBreakdown_End(PERF_UPDATE_SCOPE_GAME_TASK_TEXTURE_CASH_UPDATE, perf_scope_start_ns);
-            perf_scope_start_ns = PerfUpdateBreakdown_Begin(PERF_UPDATE_SCOPE_GAME_TASK_MOVE_PULPUL_WORK);
-        }
         move_pulpul_work();
-        if (perf_update_breakdown_enabled) {
-            PerfUpdateBreakdown_End(PERF_UPDATE_SCOPE_GAME_TASK_MOVE_PULPUL_WORK, perf_scope_start_ns);
-            perf_scope_start_ns = PerfUpdateBreakdown_Begin(PERF_UPDATE_SCOPE_GAME_TASK_CHECK_LDREQ_QUEUE);
-        }
         Check_LDREQ_Queue();
-        if (perf_update_breakdown_enabled) {
-            PerfUpdateBreakdown_End(PERF_UPDATE_SCOPE_GAME_TASK_CHECK_LDREQ_QUEUE, perf_scope_start_ns);
-        }
     }
 
-    uint64_t perf_scope_start_ns = 0;
-    if (perf_update_breakdown_enabled) {
-        perf_scope_start_ns = PerfUpdateBreakdown_Begin(PERF_UPDATE_SCOPE_GAME_TASK_POST_FRAME_HOOKS);
-    }
     Check_Check_Screen();
     Check_Pos_BG();
     Disp_Sound_Code();
-    if (perf_update_breakdown_enabled) {
-        PerfUpdateBreakdown_End(PERF_UPDATE_SCOPE_GAME_TASK_POST_FRAME_HOOKS, perf_scope_start_ns);
-    }
 }
 
 void Game() {
@@ -341,29 +295,9 @@ void Game12_2() {
 
 /// Character select
 void Game01() {
-    const bool perf_update_breakdown_enabled = PerfUpdateBreakdown_IsEnabled();
-    uint64_t perf_scope_start_ns =
-        perf_update_breakdown_enabled ? PerfUpdateBreakdown_Begin(PERF_UPDATE_SCOPE_GAME01_TOTAL) : 0;
-    uint64_t perf_nested_scope_start_ns = 0;
-
-    if (perf_update_breakdown_enabled) {
-        perf_nested_scope_start_ns = PerfUpdateBreakdown_Begin(PERF_UPDATE_SCOPE_GAME01_BG_DRAW_SYSTEM);
-    }
     BG_Draw_System();
-    if (perf_update_breakdown_enabled) {
-        PerfUpdateBreakdown_End(PERF_UPDATE_SCOPE_GAME01_BG_DRAW_SYSTEM, perf_nested_scope_start_ns);
-    }
-
     Basic_Sub();
-
-    if (perf_update_breakdown_enabled) {
-        perf_nested_scope_start_ns = PerfUpdateBreakdown_Begin(PERF_UPDATE_SCOPE_GAME01_SETUP_PLAY_TYPE);
-    }
     Setup_Play_Type();
-    if (perf_update_breakdown_enabled) {
-        PerfUpdateBreakdown_End(PERF_UPDATE_SCOPE_GAME01_SETUP_PLAY_TYPE, perf_nested_scope_start_ns);
-    }
-
     SelectTimer_Run();
 
     switch (G_No[2]) {
@@ -468,10 +402,6 @@ void Game01() {
     }
 
     BG_move();
-
-    if (perf_update_breakdown_enabled) {
-        PerfUpdateBreakdown_End(PERF_UPDATE_SCOPE_GAME01_TOTAL, perf_scope_start_ns);
-    }
 }
 
 void Game02() {

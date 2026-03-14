@@ -6,7 +6,6 @@
 #include "sf33rd/Source/Game/screen/sel_pl.h"
 #include "common.h"
 #include "constants.h"
-#include "main.h"
 #include "sf33rd/AcrSDK/common/pad.h"
 #include "sf33rd/Source/Game/com/com_data.h"
 #include "sf33rd/Source/Game/debug/Debug.h"
@@ -145,16 +144,9 @@ const u8 Repeat_Time_Data[3] = { 26, 9, 7 };
 const u8 Repeat_Time_Data_Wife[3] = { 1, 1, 1 };
 
 s16 Select_Player() {
-    const bool perf_update_breakdown_enabled = PerfUpdateBreakdown_IsEnabled();
-    const uint64_t perf_scope_start_ns =
-        perf_update_breakdown_enabled ? PerfUpdateBreakdown_Begin(PERF_UPDATE_SCOPE_SELECT_PLAYER) : 0;
-
     SEL_PL_X = 0;
 
     if (Break_Into) {
-        if (perf_update_breakdown_enabled) {
-            PerfUpdateBreakdown_End(PERF_UPDATE_SCOPE_SELECT_PLAYER, perf_scope_start_ns);
-        }
         return 0;
     }
 
@@ -171,9 +163,6 @@ s16 Select_Player() {
         SEL_PL_X = 0;
     }
 
-    if (perf_update_breakdown_enabled) {
-        PerfUpdateBreakdown_End(PERF_UPDATE_SCOPE_SELECT_PLAYER, perf_scope_start_ns);
-    }
     return SEL_PL_X;
 }
 
@@ -222,9 +211,6 @@ void Switch_Work() {
 }
 
 void Sel_PL_Control() {
-    const bool perf_update_breakdown_enabled = PerfUpdateBreakdown_IsEnabled();
-    const uint64_t perf_scope_start_ns =
-        perf_update_breakdown_enabled ? PerfUpdateBreakdown_Begin(PERF_UPDATE_SCOPE_SEL_PL_CONTROL) : 0;
     void (*Sel_PL_Cont_Tbl[4])() = { Sel_PL_Cont_1st, Sel_PL_Cont_2nd, Sel_PL_Cont_3rd, Sel_PL_Cont_4th };
     Setup_Select_Status();
     Sel_PL_Cont_Tbl[S_No[0]]();
@@ -235,9 +221,6 @@ void Sel_PL_Control() {
     ID2 = 1;
     Player_Select_Control();
     Check_Exit();
-    if (perf_update_breakdown_enabled) {
-        PerfUpdateBreakdown_End(PERF_UPDATE_SCOPE_SEL_PL_CONTROL, perf_scope_start_ns);
-    }
 }
 
 void Sel_PL_Cont_1st() {
@@ -773,17 +756,10 @@ void Go_Away_Red_Lines() {
 }
 
 void Player_Select_Control() {
-    const bool perf_update_breakdown_enabled = PerfUpdateBreakdown_IsEnabled();
-    const uint64_t perf_scope_start_ns =
-        perf_update_breakdown_enabled ? PerfUpdateBreakdown_Begin(PERF_UPDATE_SCOPE_PLAYER_SELECT_CONTROL) : 0;
     void (*PL_Sel_Jmp_Tbl[5])() = { PL_Sel_1st, PL_Sel_2nd, PL_Sel_3rd, PL_Sel_4th, PL_Sel_5th };
 
     if (plw[ID2].wu.operator != 0) {
         PL_Sel_Jmp_Tbl[SP_No[ID2][1]]();
-    }
-
-    if (perf_update_breakdown_enabled) {
-        PerfUpdateBreakdown_End(PERF_UPDATE_SCOPE_PLAYER_SELECT_CONTROL, perf_scope_start_ns);
     }
 }
 
@@ -1486,36 +1462,21 @@ u16 Auto_Repeat_Sub_Wife(s16 PL_id) {
 }
 
 void Sel_Arts_Sub(s16 PL_id, u16 sw, u16 /* unused */) {
-    const bool perf_update_breakdown_enabled = PerfUpdateBreakdown_IsEnabled();
-    const uint64_t perf_scope_start_ns =
-        perf_update_breakdown_enabled ? PerfUpdateBreakdown_Begin(PERF_UPDATE_SCOPE_SEL_ARTS_SUB) : 0;
     u16 lever_sw;
 
     if (Sel_Arts_Complete[PL_id]) {
-        if (perf_update_breakdown_enabled) {
-            PerfUpdateBreakdown_End(PERF_UPDATE_SCOPE_SEL_ARTS_SUB, perf_scope_start_ns);
-        }
         return;
     }
 
     if (Moving_Plate_Counter[PL_id]) {
-        if (perf_update_breakdown_enabled) {
-            PerfUpdateBreakdown_End(PERF_UPDATE_SCOPE_SEL_ARTS_SUB, perf_scope_start_ns);
-        }
         return;
     }
 
     if (Moving_Plate[PL_id]) {
-        if (perf_update_breakdown_enabled) {
-            PerfUpdateBreakdown_End(PERF_UPDATE_SCOPE_SEL_ARTS_SUB, perf_scope_start_ns);
-        }
         return;
     }
 
     if (Plate_Disposal_No[PL_id][0] != 0 || Plate_Disposal_No[PL_id][1] != 0 || Plate_Disposal_No[PL_id][2] != 0) {
-        if (perf_update_breakdown_enabled) {
-            PerfUpdateBreakdown_End(PERF_UPDATE_SCOPE_SEL_ARTS_SUB, perf_scope_start_ns);
-        }
         return;
     }
 
@@ -1565,10 +1526,6 @@ void Sel_Arts_Sub(s16 PL_id, u16 sw, u16 /* unused */) {
         }
 
         Used_char[PL_id] = My_char[PL_id];
-    }
-
-    if (perf_update_breakdown_enabled) {
-        PerfUpdateBreakdown_End(PERF_UPDATE_SCOPE_SEL_ARTS_SUB, perf_scope_start_ns);
     }
 }
 

@@ -10,6 +10,7 @@ extern SDL_Window* window;
 
 int SDLApp_Init();
 void SDLApp_Quit();
+void SDLApp_ToggleFPSOverlay(void);
 
 static inline bool SDLApp_HasPerfTelemetry(void) {
     return ENABLE_PERF_TELEMETRY != 0;

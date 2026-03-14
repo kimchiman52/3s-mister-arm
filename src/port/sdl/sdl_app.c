@@ -52,15 +52,15 @@ static const Uint64 target_frame_time_ns = 1000000000.0 / TARGET_FPS;
 SDL_Window* window = NULL;
 static SDL_Renderer* renderer = NULL;
 static SDL_Texture* screen_texture = NULL;
-static SDL_Texture* native_screenshot_texture = NULL;
 static ScaleMode scale_mode = SCALEMODE_SOFT_LINEAR;
+static const char* mister_scale_mode_override_env = "THREESX_SCALE_MODE_STARTUP_OVERRIDE";
+static char scale_mode_startup_source[32] = "default";
+static char scale_mode_requested_value[32] = "";
 static SDL_FRect native_output_rect = { 0 };
 static bool native_output_rect_dirty = true;
 static bool native_output_has_bars = true;
 static int native_output_width = 0;
 static int native_output_height = 0;
-static int native_screenshot_width = 0;
-static int native_screenshot_height = 0;
 static SDL_FRect screen_output_rect = { 0 };
 static bool screen_output_rect_dirty = true;
 static bool screen_output_has_letterbox = true;
@@ -89,18 +89,6 @@ typedef struct PerfCaptureDemoLogoState {
     int direction;
     int dir_timer;
 } PerfCaptureDemoLogoState;
-
-typedef struct PerfCaptureCharacterSelectSuperArtState {
-    int select_status[2];
-    int sel_pl_complete[2];
-    int sel_arts_complete[2];
-    int select_arts[2];
-    int moving_plate[2];
-    int moving_plate_counter[2];
-    int super_arts[2];
-    int arts_y[2];
-    int disp_command_name_mask[2];
-} PerfCaptureCharacterSelectSuperArtState;
 
 static bool perf_capture_enabled = false;
 static bool perf_capture_completed = false;
@@ -251,8 +239,6 @@ static int perf_capture_start_demo_logo_effect_index = -1;
 static int perf_capture_start_demo_logo_routine2 = -1;
 static int perf_capture_start_demo_logo_direction = -1;
 static int perf_capture_start_demo_logo_dir_timer = -1;
-static bool perf_capture_start_character_select_super_art_active = false;
-static PerfCaptureCharacterSelectSuperArtState perf_capture_start_character_select_super_art_state = { 0 };
 static Uint64 perf_break_into_frames_total = 0;
 static int perf_break_into_first_frame = -1;
 static Uint64 perf_hnc_active_frames_total = 0;
@@ -266,8 +252,6 @@ static int perf_title_logo_active_first_frame = -1;
 static Uint64 perf_demo_logo_active_frames_total = 0;
 static int perf_demo_logo_active_first_frame = -1;
 static int perf_demo_logo_max_direction = -1;
-static Uint64 perf_character_select_super_art_active_frames_total = 0;
-static int perf_character_select_super_art_active_first_frame = -1;
 static Uint64 perf_software_frame_mode_enabled_frames = 0;
 static Uint64 perf_software_frame_surface_ready_frames = 0;
 static Uint64 perf_software_frame_owned_frames = 0;
@@ -485,7 +469,6 @@ static const char* recommended_mister_audio_driver = "alsa";
 static void perf_capture_reset_storage(void);
 static void perf_capture_write_summary(void);
 #endif
-static const char* scale_mode_name(void);
 static const char* software_frame_mode_name(void);
 
 #if ENABLE_PERF_TELEMETRY
@@ -725,52 +708,6 @@ static bool get_perf_capture_demo_logo_state(PerfCaptureDemoLogoState* state) {
     return false;
 }
 
-static int get_perf_capture_disp_command_name_mask(int player) {
-    int mask = 0;
-
-    if (player < 0 || player >= 2) {
-        return 0;
-    }
-
-    for (int plate = 0; plate < 3; plate++) {
-        if (Disp_Command_Name[player][plate] != 0) {
-            mask |= (1 << plate);
-        }
-    }
-
-    return mask;
-}
-
-static bool get_perf_capture_character_select_super_art_state(PerfCaptureCharacterSelectSuperArtState* state) {
-    PerfCaptureCharacterSelectSuperArtState local_state = { 0 };
-    PerfCaptureCharacterSelectSuperArtState* snapshot = state != NULL ? state : &local_state;
-
-    for (int player = 0; player < 2; player++) {
-        snapshot->select_status[player] = Select_Status[player];
-        snapshot->sel_pl_complete[player] = Sel_PL_Complete[player];
-        snapshot->sel_arts_complete[player] = Sel_Arts_Complete[player];
-        snapshot->select_arts[player] = Select_Arts[player];
-        snapshot->moving_plate[player] = Moving_Plate[player];
-        snapshot->moving_plate_counter[player] = Moving_Plate_Counter[player];
-        snapshot->super_arts[player] = Super_Arts[player];
-        snapshot->arts_y[player] = Arts_Y[player];
-        snapshot->disp_command_name_mask[player] = get_perf_capture_disp_command_name_mask(player);
-    }
-
-    if (!(G_No[1] == 1 && G_No[2] == 2 && Select_Status[0] == 3 && Select_Status[1] == 3)) {
-        return false;
-    }
-
-    for (int player = 0; player < 2; player++) {
-        if (snapshot->sel_pl_complete[player] == 0 || snapshot->sel_arts_complete[player] != 0 ||
-            snapshot->select_arts[player] < 0 || snapshot->disp_command_name_mask[player] == 0) {
-            return false;
-        }
-    }
-
-    return true;
-}
-
 static bool perf_capture_title_logo_active(void) {
     return title_tex_flag != 0;
 }
@@ -783,9 +720,6 @@ bool SDLApp_IsPerfRuntimeStateActive(const char* runtime_state_name) {
     if (SDL_strcmp(runtime_state_name, "attract-demo-logo") == 0) {
         return get_perf_capture_demo_logo_state(NULL);
     }
-    if (SDL_strcmp(runtime_state_name, "character-select-super-art") == 0) {
-        return get_perf_capture_character_select_super_art_state(NULL);
-    }
 
     return false;
 }
@@ -793,10 +727,7 @@ bool SDLApp_IsPerfRuntimeStateActive(const char* runtime_state_name) {
 static void snapshot_perf_capture_transition_start_state(void) {
     const struct _TASK* menu_task = &task[TASK_MENU];
     PerfCaptureDemoLogoState demo_logo_state;
-    PerfCaptureCharacterSelectSuperArtState character_select_super_art_state;
     const bool demo_logo_active = get_perf_capture_demo_logo_state(&demo_logo_state);
-    const bool character_select_super_art_active =
-        get_perf_capture_character_select_super_art_state(&character_select_super_art_state);
 
     for (int i = 0; i < 4; i++) {
         perf_capture_start_g_no[i] = G_No[i];
@@ -821,8 +752,6 @@ static void snapshot_perf_capture_transition_start_state(void) {
     perf_capture_start_demo_logo_routine2 = demo_logo_active ? demo_logo_state.routine2 : -1;
     perf_capture_start_demo_logo_direction = demo_logo_active ? demo_logo_state.direction : -1;
     perf_capture_start_demo_logo_dir_timer = demo_logo_active ? demo_logo_state.dir_timer : -1;
-    perf_capture_start_character_select_super_art_active = character_select_super_art_active;
-    perf_capture_start_character_select_super_art_state = character_select_super_art_state;
 }
 
 static void note_perf_capture_transition_state(int frame_index) {
@@ -883,12 +812,6 @@ static void note_perf_capture_test_state(int frame_index) {
     note_perf_capture_transition_state(frame_index);
     note_perf_capture_title_state(frame_index);
     note_perf_capture_demo_logo_state(frame_index);
-    if (get_perf_capture_character_select_super_art_state(NULL)) {
-        perf_character_select_super_art_active_frames_total += 1;
-        if (perf_character_select_super_art_active_first_frame < 0) {
-            perf_character_select_super_art_active_first_frame = frame_index;
-        }
-    }
 
     for (int player = 0; player < 2; player++) {
         const int super_art_stock = get_perf_capture_super_art_stock(player);
@@ -954,20 +877,6 @@ bool SDLApp_RunSoftwareFrameParityCheck(void) {
     return SDLGameRenderer_RunSoftwareFrameParityCheck();
 }
 
-static bool perf_capture_should_enable_update_breakdown(bool basic_mode) {
-    if (basic_mode) {
-        return false;
-    }
-
-    if (configuration.perf.wait_for_runtime_state != NULL &&
-        SDL_strcmp(configuration.perf.wait_for_runtime_state, "character-select-super-art") == 0) {
-        return true;
-    }
-
-    return configuration.perf.wait_for_test_phase != NULL &&
-           SDL_strcmp(configuration.perf.wait_for_test_phase, "character-select") == 0;
-}
-
 static void perf_capture_reset_storage(void) {
     if (perf_samples != NULL) {
         SDL_free(perf_samples);
@@ -988,8 +897,6 @@ static void perf_capture_reset_storage(void) {
     perf_capture_completed = false;
     perf_capture_basic_mode = false;
     SDLGameRenderer_SetPerfCaptureLogicalIdentityEnabled(false);
-    PerfUpdateBreakdown_SetEnabled(false);
-    PerfUpdateBreakdown_ResetCapture();
     perf_capture_target_frames = 0;
     perf_capture_recorded_frames = 0;
     perf_frame_start_ns = 0;
@@ -1131,8 +1038,6 @@ static void perf_capture_reset_storage(void) {
     perf_capture_start_demo_logo_routine2 = -1;
     perf_capture_start_demo_logo_direction = -1;
     perf_capture_start_demo_logo_dir_timer = -1;
-    perf_capture_start_character_select_super_art_active = false;
-    SDL_zero(perf_capture_start_character_select_super_art_state);
     perf_break_into_frames_total = 0;
     perf_break_into_first_frame = -1;
     perf_hnc_active_frames_total = 0;
@@ -1146,8 +1051,6 @@ static void perf_capture_reset_storage(void) {
     perf_demo_logo_active_frames_total = 0;
     perf_demo_logo_active_first_frame = -1;
     perf_demo_logo_max_direction = -1;
-    perf_character_select_super_art_active_frames_total = 0;
-    perf_character_select_super_art_active_first_frame = -1;
     perf_software_frame_mode_enabled_frames = 0;
     perf_software_frame_surface_ready_frames = 0;
     perf_software_frame_owned_frames = 0;
@@ -1236,8 +1139,6 @@ void SDLApp_ConfigurePerfCapture(int frame_count, const char* output_path, const
     perf_capture_enabled = true;
     perf_capture_basic_mode = basic_mode;
     SDLGameRenderer_SetPerfCaptureLogicalIdentityEnabled(!basic_mode);
-    PerfUpdateBreakdown_ResetCapture();
-    PerfUpdateBreakdown_SetEnabled(perf_capture_should_enable_update_breakdown(basic_mode));
     perf_frame_start_ns = 0;
     perf_update_start_ns = 0;
     perf_update_ns_total = 0;
@@ -1416,12 +1317,11 @@ void SDLApp_ConfigurePerfCapture(int frame_count, const char* output_path, const
     }
 
     snapshot_perf_capture_transition_start_state();
-    backend_logf("PERF capture enabled: frames=%d output=%s scene=%s detail_mode=%s scale_mode=%s software_frame_mode=%s",
+    backend_logf("PERF capture enabled: frames=%d output=%s scene=%s detail_mode=%s software_frame_mode=%s",
                  perf_capture_target_frames,
                  perf_capture_output_path != NULL ? perf_capture_output_path : "(auto)",
                  perf_capture_scene_name != NULL ? perf_capture_scene_name : "(none)",
                  perf_capture_basic_mode ? "basic" : "full",
-                 scale_mode_name(),
                  software_frame_mode_name());
 }
 
@@ -1603,8 +1503,6 @@ static void perf_capture_write_summary(void) {
         refresh_locality_candidate_renew_chunk_calls += refresh_locality_candidates[i].renew_chunk_calls;
     }
     const double frame_count = (double)perf_capture_recorded_frames;
-    PerfUpdateBreakdownCapture update_breakdown_capture = { 0 };
-    PerfUpdateBreakdown_GetCapture(&update_breakdown_capture);
     PLS03_SuperArtCommandTelemetry super_art_command_telemetry[2] = { 0 };
     for (int player = 0; player < 2; player++) {
         PLS03_GetSuperArtCommandTelemetry((s16)player, &super_art_command_telemetry[player]);
@@ -3107,7 +3005,7 @@ static void perf_capture_write_summary(void) {
     }
 
     io_printf(io, "{\n");
-    io_printf(io, "  \"schema_version\": 48,\n");
+    io_printf(io, "  \"schema_version\": 46,\n");
     io_printf(io, "  \"scene\": \"");
     io_write_json_escaped_string(io, perf_capture_scene_name);
     io_printf(io, "\",\n");
@@ -3296,55 +3194,9 @@ static void perf_capture_write_summary(void) {
               (unsigned long long)perf_metamorphose_active_frames[1],
               frame_count > 0 ? (double)perf_metamorphose_active_frames[1] / frame_count : 0.0);
     if (perf_metamorphose_active_first_frame[1] >= 0) {
-        io_printf(io, "    \"p2_metamorphose_first_frame\": %d,\n", perf_metamorphose_active_first_frame[1]);
+        io_printf(io, "    \"p2_metamorphose_first_frame\": %d\n", perf_metamorphose_active_first_frame[1]);
     } else {
-        io_printf(io, "    \"p2_metamorphose_first_frame\": null,\n");
-    }
-    io_printf(io,
-              "    \"character_select_super_art_active_frames_total\": %llu,\n"
-              "    \"character_select_super_art_active_ratio\": %.6f,\n",
-              (unsigned long long)perf_character_select_super_art_active_frames_total,
-              frame_count > 0 ? (double)perf_character_select_super_art_active_frames_total / frame_count : 0.0);
-    if (perf_character_select_super_art_active_first_frame >= 0) {
-        io_printf(io, "    \"character_select_super_art_active_first_frame\": %d,\n",
-                  perf_character_select_super_art_active_first_frame);
-    } else {
-        io_printf(io, "    \"character_select_super_art_active_first_frame\": null,\n");
-    }
-    io_printf(io, "    \"character_select_super_art_start_active\": %s,\n",
-              perf_capture_start_character_select_super_art_active ? "true" : "false");
-    io_printf(io, "    \"character_select_super_art_start_state\": ");
-    if (perf_capture_start_character_select_super_art_active) {
-        io_printf(io, "{\n");
-        io_printf(io, "      \"select_status\": ");
-        io_write_json_int_array(io, perf_capture_start_character_select_super_art_state.select_status, 2);
-        io_printf(io, ",\n");
-        io_printf(io, "      \"sel_pl_complete\": ");
-        io_write_json_int_array(io, perf_capture_start_character_select_super_art_state.sel_pl_complete, 2);
-        io_printf(io, ",\n");
-        io_printf(io, "      \"sel_arts_complete\": ");
-        io_write_json_int_array(io, perf_capture_start_character_select_super_art_state.sel_arts_complete, 2);
-        io_printf(io, ",\n");
-        io_printf(io, "      \"select_arts\": ");
-        io_write_json_int_array(io, perf_capture_start_character_select_super_art_state.select_arts, 2);
-        io_printf(io, ",\n");
-        io_printf(io, "      \"moving_plate\": ");
-        io_write_json_int_array(io, perf_capture_start_character_select_super_art_state.moving_plate, 2);
-        io_printf(io, ",\n");
-        io_printf(io, "      \"moving_plate_counter\": ");
-        io_write_json_int_array(io, perf_capture_start_character_select_super_art_state.moving_plate_counter, 2);
-        io_printf(io, ",\n");
-        io_printf(io, "      \"super_arts\": ");
-        io_write_json_int_array(io, perf_capture_start_character_select_super_art_state.super_arts, 2);
-        io_printf(io, ",\n");
-        io_printf(io, "      \"arts_y\": ");
-        io_write_json_int_array(io, perf_capture_start_character_select_super_art_state.arts_y, 2);
-        io_printf(io, ",\n");
-        io_printf(io, "      \"disp_command_name_mask\": ");
-        io_write_json_int_array(io, perf_capture_start_character_select_super_art_state.disp_command_name_mask, 2);
-        io_printf(io, "\n    }\n");
-    } else {
-        io_printf(io, "null\n");
+        io_printf(io, "    \"p2_metamorphose_first_frame\": null\n");
     }
     io_printf(io, "  },\n");
     io_printf(io,
@@ -3471,27 +3323,6 @@ static void perf_capture_write_summary(void) {
     } else {
         io_printf(io, "null\n");
     }
-    io_printf(io, "  },\n");
-    io_printf(io, "  \"update_breakdown\": {\n");
-    io_printf(io, "    \"inclusive\": true,\n");
-    io_printf(io, "    \"scopes\": [\n");
-    for (int scope = 0; scope < PERF_UPDATE_SCOPE_COUNT; scope++) {
-        const uint64_t total_ns = update_breakdown_capture.total_ns[scope];
-        const uint64_t total_calls = update_breakdown_capture.total_calls[scope];
-        const double total_ms = (double)total_ns / 1e6;
-        const double mean_ms = frame_count > 0.0 ? total_ms / frame_count : 0.0;
-        const double calls_per_frame = frame_count > 0.0 ? (double)total_calls / frame_count : 0.0;
-        io_printf(io,
-                  "      {\"name\": \"%s\", \"total_ms\": %.4f, \"mean_ms\": %.4f, \"total_calls\": %llu, "
-                  "\"calls_per_frame\": %.4f}%s\n",
-                  PerfUpdateBreakdown_ScopeName((PerfUpdateScope)scope),
-                  total_ms,
-                  mean_ms,
-                  (unsigned long long)total_calls,
-                  calls_per_frame,
-                  (scope + 1) < PERF_UPDATE_SCOPE_COUNT ? "," : "");
-    }
-    io_printf(io, "    ]\n");
     io_printf(io, "  },\n");
     io_printf(io, "  \"metrics\": {\n");
     io_printf(io, "    \"frame_time\": {\"mean_ms\": %.4f, \"min_ms\": %.4f, \"max_ms\": %.4f},\n",
@@ -5845,6 +5676,49 @@ static void log_backend_diagnostics() {
     }
 }
 
+static const char* scale_mode_name(ScaleMode mode) {
+    switch (mode) {
+    case SCALEMODE_NATIVE:
+        return "native";
+    case SCALEMODE_NEAREST:
+        return "nearest";
+    case SCALEMODE_LINEAR:
+        return "linear";
+    case SCALEMODE_SOFT_LINEAR:
+        return "soft-linear";
+    case SCALEMODE_SQUARE_PIXELS:
+        return "square-pixels";
+    case SCALEMODE_INTEGER:
+        return "integer";
+    }
+
+    return "nearest";
+}
+
+static bool parse_scale_mode(const char* raw_scalemode, ScaleMode* out_mode) {
+    if (raw_scalemode == NULL || raw_scalemode[0] == '\0' || out_mode == NULL) {
+        return false;
+    }
+
+    if (SDL_strcmp(raw_scalemode, "nearest") == 0) {
+        *out_mode = SCALEMODE_NEAREST;
+    } else if (SDL_strcmp(raw_scalemode, "native") == 0) {
+        *out_mode = SCALEMODE_NATIVE;
+    } else if (SDL_strcmp(raw_scalemode, "linear") == 0) {
+        *out_mode = SCALEMODE_LINEAR;
+    } else if (SDL_strcmp(raw_scalemode, "soft-linear") == 0) {
+        *out_mode = SCALEMODE_SOFT_LINEAR;
+    } else if (SDL_strcmp(raw_scalemode, "square-pixels") == 0) {
+        *out_mode = SCALEMODE_SQUARE_PIXELS;
+    } else if (SDL_strcmp(raw_scalemode, "integer") == 0) {
+        *out_mode = SCALEMODE_INTEGER;
+    } else {
+        return false;
+    }
+
+    return true;
+}
+
 static SDL_ScaleMode screen_texture_scale_mode() {
     switch (scale_mode) {
     case SCALEMODE_LINEAR:
@@ -5861,18 +5735,6 @@ static SDL_ScaleMode screen_texture_scale_mode() {
     return SDL_SCALEMODE_NEAREST;
 }
 
-static bool get_native_output_size(int* out_w, int* out_h);
-
-static void destroy_native_screenshot_texture(void) {
-    if (native_screenshot_texture != NULL) {
-        SDL_DestroyTexture(native_screenshot_texture);
-        native_screenshot_texture = NULL;
-    }
-
-    native_screenshot_width = 0;
-    native_screenshot_height = 0;
-}
-
 static SDL_Point screen_texture_size() {
     SDL_Point size;
     SDL_GetRenderOutputSize(renderer, &size.x, &size.y);
@@ -5883,34 +5745,6 @@ static SDL_Point screen_texture_size() {
     }
 
     return size;
-}
-
-static SDL_Texture* ensure_native_screenshot_texture(void) {
-    int texture_width = native_output_width;
-    int texture_height = native_output_height;
-    if ((texture_width <= 0) || (texture_height <= 0)) {
-        if (!get_native_output_size(&texture_width, &texture_height)) {
-            return NULL;
-        }
-    }
-
-    if ((native_screenshot_texture != NULL) && (native_screenshot_width == texture_width) &&
-        (native_screenshot_height == texture_height)) {
-        return native_screenshot_texture;
-    }
-
-    destroy_native_screenshot_texture();
-
-    native_screenshot_texture =
-        SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB32, SDL_TEXTUREACCESS_TARGET, texture_width, texture_height);
-    if (native_screenshot_texture == NULL) {
-        return NULL;
-    }
-
-    SDL_SetTextureScaleMode(native_screenshot_texture, screen_texture_scale_mode());
-    native_screenshot_width = texture_width;
-    native_screenshot_height = texture_height;
-    return native_screenshot_texture;
 }
 
 static void create_screen_texture() {
@@ -5948,24 +5782,20 @@ static void create_screen_texture() {
 }
 
 static void init_scalemode() {
-    const char* raw_scalemode = Config_GetString(CFG_KEY_SCALEMODE);
+    const bool has_explicit_scale_mode = Config_HasExplicitKey(CFG_KEY_SCALEMODE);
+    const char* configured_scale_mode = Config_GetString(CFG_KEY_SCALEMODE);
+    const char* env_scale_mode = SDL_getenv(mister_scale_mode_override_env);
+    const char* requested_scale_mode = configured_scale_mode;
+    const char* startup_source = has_explicit_scale_mode ? "config" : "default";
 
-    if (raw_scalemode == NULL) {
-        return;
+    if (!has_explicit_scale_mode && env_scale_mode != NULL && env_scale_mode[0] != '\0') {
+        requested_scale_mode = env_scale_mode;
+        startup_source = "env";
     }
 
-    if (SDL_strcmp(raw_scalemode, "nearest") == 0) {
-        scale_mode = SCALEMODE_NEAREST;
-    } else if (SDL_strcmp(raw_scalemode, "native") == 0) {
-        scale_mode = SCALEMODE_NATIVE;
-    } else if (SDL_strcmp(raw_scalemode, "linear") == 0) {
-        scale_mode = SCALEMODE_LINEAR;
-    } else if (SDL_strcmp(raw_scalemode, "soft-linear") == 0) {
-        scale_mode = SCALEMODE_SOFT_LINEAR;
-    } else if (SDL_strcmp(raw_scalemode, "square-pixels") == 0) {
-        scale_mode = SCALEMODE_SQUARE_PIXELS;
-    } else if (SDL_strcmp(raw_scalemode, "integer") == 0) {
-        scale_mode = SCALEMODE_INTEGER;
+    ScaleMode parsed_scale_mode = scale_mode;
+    if (parse_scale_mode(requested_scale_mode, &parsed_scale_mode)) {
+        scale_mode = parsed_scale_mode;
     }
 
 #if defined(PORT_MISTER)
@@ -5974,39 +5804,16 @@ static void init_scalemode() {
         scale_mode = SCALEMODE_NEAREST;
     }
 #endif
-}
 
-static const char* scale_mode_name(void) {
-    switch (scale_mode) {
-    case SCALEMODE_NATIVE:
-        return "native";
-    case SCALEMODE_NEAREST:
-        return "nearest";
-    case SCALEMODE_LINEAR:
-        return "linear";
-    case SCALEMODE_SOFT_LINEAR:
-        return "soft-linear";
-    case SCALEMODE_SQUARE_PIXELS:
-        return "square-pixels";
-    case SCALEMODE_INTEGER:
-        return "integer";
-    }
-
-    return "unknown";
+    SDL_snprintf(scale_mode_startup_source, sizeof(scale_mode_startup_source), "%s", startup_source);
+    SDL_snprintf(scale_mode_requested_value,
+                 sizeof(scale_mode_requested_value),
+                 "%s",
+                 requested_scale_mode != NULL ? requested_scale_mode : "");
 }
 
 static const char* software_frame_mode_name(void) {
     return software_frame_mode_enabled ? "on" : "off";
-}
-
-static bool scale_mode_uses_native_render_path(void) {
-#if defined(PORT_MISTER)
-    if ((scale_mode == SCALEMODE_NEAREST) && fbdev_presenter_enabled && use_fbdev_only_present) {
-        return true;
-    }
-#endif
-
-    return (scale_mode == SCALEMODE_NATIVE) || (scale_mode == SCALEMODE_SQUARE_PIXELS);
 }
 
 static void init_software_frame_mode(void) {
@@ -6075,6 +5882,28 @@ static void update_fps_overlay(Uint64 frame_end_ns) {
     publish_fps_overlay_label();
 }
 
+static void reset_fps_overlay_state(void) {
+    fps_overlay_window_start_ns = 0;
+    fps_overlay_window_frames = 0;
+    fps_overlay_value = 0;
+    fps_overlay_label[0] = '\0';
+
+    if (fbdev_presenter_enabled) {
+        FBDevPresenter_SetFPSOverlayText(NULL);
+    }
+}
+
+void SDLApp_ToggleFPSOverlay(void) {
+    show_fps_overlay = !show_fps_overlay;
+    reset_fps_overlay_state();
+
+    if (fbdev_presenter_enabled) {
+        FBDevPresenter_SetFPSOverlayEnabled(show_fps_overlay);
+    }
+
+    backend_logf("FPS overlay: %s", show_fps_overlay ? "enabled" : "disabled");
+}
+
 int SDLApp_Init() {
     Config_Init();
     Keymap_Init();
@@ -6138,6 +5967,10 @@ int SDLApp_Init() {
     const char* selected_renderer = SDL_GetRendererName(renderer);
     backend_logf("Selected video driver: %s", selected_video_driver != NULL ? selected_video_driver : "(null)");
     backend_logf("Selected renderer: %s", selected_renderer != NULL ? selected_renderer : "(null)");
+    backend_logf("Scale mode startup: source=%s requested=%s resolved=%s",
+                 scale_mode_startup_source,
+                 scale_mode_requested_value[0] != '\0' ? scale_mode_requested_value : "(null)",
+                 scale_mode_name(scale_mode));
 
 #if defined(PORT_MISTER)
     fbdev_presenter_enabled = FBDevPresenter_Init();
@@ -6158,9 +5991,9 @@ int SDLApp_Init() {
     }
 #endif
 
-    if (scale_mode_uses_native_render_path()) {
+    if ((scale_mode == SCALEMODE_NATIVE) || (scale_mode == SCALEMODE_SQUARE_PIXELS)) {
         use_native_render_path = true;
-        backend_logf("Native render path: enabled (scale-mode=%s)", scale_mode_name());
+        backend_logf("Native render path: enabled (scale-mode=%s)", scale_mode == SCALEMODE_NATIVE ? "native" : "square-pixels");
     }
 
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
@@ -6169,7 +6002,6 @@ int SDLApp_Init() {
     SDLMessageRenderer_Initialize(renderer);
     SDLGameRenderer_Init(renderer);
     SDLGameRenderer_SetSoftwareFrameMode(software_frame_mode_enabled);
-    backend_logf("Scale mode: %s", scale_mode_name());
     backend_logf("Software frame mode: %s", software_frame_mode_name());
 
 #if defined(DEBUG)
@@ -6188,7 +6020,6 @@ int SDLApp_Init() {
 void SDLApp_Quit() {
     Config_Destroy();
     FBDevPresenter_Quit();
-    destroy_native_screenshot_texture();
     SDL_DestroyTexture(screen_texture);
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
@@ -6453,8 +6284,8 @@ static void refresh_screen_output_rect() {
     screen_output_rect_dirty = false;
 }
 
-static void render_native_output_to_target(SDL_Texture* target, bool has_message_content, bool clear_bars) {
-    SDL_SetRenderTarget(renderer, target);
+static void render_native_output_to_present_target(bool has_message_content, bool clear_bars) {
+    SDL_SetRenderTarget(renderer, NULL);
     if (clear_bars) {
         SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255); // black bars
         SDL_RenderClear(renderer);
@@ -6464,10 +6295,6 @@ static void render_native_output_to_target(SDL_Texture* target, bool has_message
     if (has_message_content) {
         SDL_RenderTexture(renderer, message_canvas, NULL, &native_output_rect);
     }
-}
-
-static void render_native_output_to_present_target(bool has_message_content, bool clear_bars) {
-    render_native_output_to_target(NULL, has_message_content, clear_bars);
 }
 
 static void save_texture(SDL_Texture* texture, const char* filename) {
@@ -6523,15 +6350,6 @@ void SDLApp_EndFrame() {
     if (use_native_render_path) {
         refresh_native_output_rect();
         onscreen_content_rect = &native_output_rect;
-        if (should_save_screenshot) {
-            SDL_Texture* screenshot_target = ensure_native_screenshot_texture();
-            if (screenshot_target != NULL) {
-                render_native_output_to_target(screenshot_target, has_message_content, native_output_has_bars);
-                save_texture(screenshot_target, "screenshot_screen.bmp");
-            } else {
-                backend_logf("Native-path screen screenshot skipped: unable to create screenshot target");
-            }
-        }
         const bool use_fbdev_software_frame_direct =
             prefer_software_frame_direct_present && SDLGameRenderer_HasSoftwareOwnedFrame();
         const bool use_fbdev_native_direct_target =
@@ -6589,7 +6407,7 @@ void SDLApp_EndFrame() {
         }
     }
 
-    if (should_save_screenshot && !use_native_render_path && screen_texture != NULL) {
+    if (should_save_screenshot && screen_texture != NULL) {
         save_texture(screen_texture, "screenshot_screen.bmp");
     }
 
