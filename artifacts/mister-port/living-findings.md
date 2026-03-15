@@ -2956,6 +2956,17 @@ Scope guardrails:
   - Next best candidate optimization:
     - use the kept `stock-soft-c101-yun-stock-vs-ryu-post` burst to reland one narrow fast-non-integer runtime optimization first, with generic-textured residue as the secondary follow-up lane
 
+- 2026-03-15T10:04:00-0400
+  - Bottleneck targeted:
+    - fill-style-only mapped nearest expansion on the kept HDMI direct path, specifically replacing per-destination-pixel `scale_x_lut` writes with source-pixel span fills via the existing inverse LUT and `memset32`
+  - Outcome:
+    - fresh `1920x1080` reruns confirmed no route regression: control and stage-heavy stayed on `software_frame_mapped_scale` with zero readback, while the expanded nearest pool showed the worst remaining present cost on the same route in `2p-character-select` (`35.9005 FPS`, `11.7768 / 11.5627 ms` `present / present_copy`) and `menu-transition` (`36.2892 FPS`, `12.5527 ms` present) rather than on a slower fallback path
+    - the source-span-fill candidate changed fill style only, not copied-byte volume, and that was not enough to help: control stayed essentially flat at `70.8497 -> 71.1515 FPS` with `3.2253 -> 3.2328 ms` present and identical `183059.04` copied bytes/frame, stage-heavy regressed `52.6621 -> 51.7873 FPS` with `4.1816 -> 4.3216 ms` present at the same `262170.55` copied bytes/frame, and 2P character-select stayed flat `35.9005 -> 35.9681 FPS` while `present / present_copy` rose `11.7768 / 11.5627 -> 11.9005 / 11.6845 ms` at the same `1513777.01` copied bytes/frame; native guard improved slightly to `93.3664 FPS / 10.7105 / 0.5305 ms`
+  - Keep/rollback decision with reason:
+    - rollback; on this nearest HDMI path, changing the mapped-fill style without lowering dirty bytes is not a real win and can slightly regress heavy/menu present cost
+  - Next best candidate:
+    - keep route selection closed, focus the next loop on byte-reducing sparsity work or another measured low-overhead follow-up, and remember that `misterctl.sh deploy` expects `build/mister-share-20260314-112734/stage/games/3sx`, not the FAT-root `stage/`
+
 - 2026-03-11T08:47:00-0400
   - Bottleneck targeted:
     - exact measurement support for the user-priority 2P character-select super-art chooser slowdown without regressing the older attract/logo runtime-state workflow

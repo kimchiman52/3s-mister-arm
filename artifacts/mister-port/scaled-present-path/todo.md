@@ -531,6 +531,23 @@
   - Next best candidate optimization:
     - keep route selection closed and do not retry this higher-fanout disjoint-run shape blindly; if another nearest HDMI loop is needed, stay on lower-overhead mapped-present sparsity follow-up or move to a newly reproduced player-visible nearest gate
 
+- 2026-03-15T10:04:00-0400
+  - Research target:
+    - fresh nearest-HDMI validation on the kept direct path, then test whether replacing the mapped nearest path's per-destination-pixel `scale_x_lut` expansion with source-pixel span fills via the existing inverse LUT plus `memset32` could improve the user-visible menu hotspot without reopening route selection
+  - Change summary:
+    - recovered fresh `1920x1080` nearest control, stage-heavy, Ibuki stage 7, 2P character-select, menu-transition, and native guard baselines; control and stage-heavy still matched the kept direct `software_frame_mapped_scale` path with zero readback, while the expanded pool showed the worst remaining nearest lanes were the menu/transition bursts on that same direct route rather than a routing regression
+    - tried a single-file runtime reland in `src/port/sdl/fbdev_presenter.c` that filled mapped nearest output from source-pixel spans with the existing inverse LUT plus `memset32` instead of walking every destination pixel through `scale_x_lut`
+    - completed a manual scoped review of the candidate diff with focus on run coverage, row-reuse semantics, and mapped/native isolation; no correctness issue was found, but the runtime change was rejected on measured performance and rolled back locally and on device
+  - Verification evidence:
+    - `git diff --check` passed before and after the attempted reland; the telemetry ARM rebuild/install/package succeeded in `3sx-mister-build-nearest-hdmi-perf`, exported cleanly to `build/mister-telemetry-package-arm-nearest-r15-spanfill`, and `readelf -h` still reported `ELF32` `ARM` with hard-float ABI
+    - MiSTer `health`, candidate `deploy`, `probe`, and bounded `smoke` all passed on the attempted runtime change; after rollback, the live runtime was restored with `tools/mister/misterctl.sh deploy --src build/mister-share-20260314-112734/stage/games/3sx` plus a final `probe` because the FAT-root `stage/` package is not a valid direct input to `misterctl.sh deploy`
+    - fresh baseline on the kept direct path: control stayed around `70.85 FPS / 14.11 / 3.23 / 3.21 ms` (`frame / present / present_copy`), stage-heavy `52.66 FPS / 18.99 / 4.18 / 4.17 ms`, 2P character-select `35.90 FPS / 27.85 / 11.78 / 11.56 ms`, and menu-transition `36.29 FPS / 27.56 / 12.55 ms`, all on `software_frame_mapped_scale` with zero readback; native guard held `92.65 FPS / 10.79 / 0.54 ms`
+    - the source-span-fill candidate left copied bytes unchanged on the compared gates and failed to reduce present cost: control moved `70.8497 -> 71.1515 FPS` with `3.2253 -> 3.2328 ms` present and the same `183059.04` copied bytes/frame, stage-heavy regressed `52.6621 -> 51.7873 FPS` with `4.1816 -> 4.3216 ms` present at the same `262170.55` copied bytes/frame, and 2P character-select stayed flat `35.9005 -> 35.9681 FPS` while `present / present_copy` rose `11.7768 / 11.5627 -> 11.9005 / 11.6845 ms` at the same `1513777.01` copied bytes/frame; native guard improved slightly to `93.3664 FPS / 10.7105 / 0.5305 ms`
+  - Keep/rollback decision with reason:
+    - rollback; changing mapped nearest fill style without reducing dirty-byte volume did not buy back the HDMI hotspot and slightly worsened the heavy gameplay keep gate plus the user-priority menu lane's present cost
+  - Next best candidate optimization:
+    - keep route selection closed and do not retry this fill-style-only source-span shape blindly; the next nearest-HDMI loop should stay on byte-reducing sparsity work or another measured low-overhead follow-up, ideally against the menu/transition bursts and/or Ibuki stage 7
+
 - 2026-03-15T01:36:38-0400
   - Research target:
     - modern-display HDMI nearest on the kept `r9` direct path: test whether the mapped-source `16`-pixel compare/run size is still too coarse on bursty `1920x1080` nearest frames without perturbing the older staging-diff path
