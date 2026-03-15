@@ -2956,6 +2956,17 @@ Scope guardrails:
   - Next best candidate optimization:
     - use the kept `stock-soft-c101-yun-stock-vs-ryu-post` burst to reland one narrow fast-non-integer runtime optimization first, with generic-textured residue as the secondary follow-up lane
 
+- 2026-03-15T17:27:37-0400
+  - Bottleneck targeted:
+    - blanket `8 -> 4` tightening of `mapped_source_compare_tile_size` on the kept HDMI direct path, trying to lower mapped nearest overcopy without changing route selection or fill style
+  - Outcome:
+    - fresh `r16` reruns confirmed no route regression on the live `1920x1080` target: control, stage-heavy, Ibuki stage 7, 2P character-select, and menu-transition all stayed on direct `software_frame_mapped_scale`, native stayed on `software_frame_exact`, and the worst remaining nearest lanes were still `2p-character-select` (`35.9836 FPS`, `11.7840 / 11.5564 ms`, `1513777.01` copied bytes/frame) and `menu-transition` (`36.3634 FPS`, `12.4373 ms`, `1575586.49` copied bytes/frame)
+    - the `4`-pixel compare-tile candidate did lower copied bytes, but inference from the worse timings is that the extra compare/run overhead outweighed those byte savings: control regressed `70.8252 -> 69.2206 FPS` with `3.2027 / 3.1887 -> 3.4535 / 3.4390 ms` `present / present_copy` while copied bytes fell `183059.04 -> 171606.19`; stage-heavy regressed `52.0083 -> 50.4430 FPS` with `4.2775 / 4.2632 -> 4.7301 / 4.7154 ms` while copied bytes fell `262170.55 -> 242407.79`; and 2P character-select regressed `35.9836 -> 34.8866 FPS` with `11.7840 / 11.5564 -> 12.5879 / 12.3676 ms` while copied bytes fell `1513777.01 -> 1497124.49`; native guard stayed healthy at `93.0007 FPS / 10.7526 / 0.5256 ms`
+  - Keep/rollback decision with reason:
+    - rollback; global `4`-pixel mapped compare tiles are too fine for this nearest HDMI path and lose more to added sparse-diff overhead than they gain from the saved bytes
+  - Next best candidate:
+    - stop shrinking mapped compare tiles globally and keep route selection closed; the next follow-up should be a lower-overhead sparse-shape experiment aimed at the menu bursts, not another blanket compare-granularity reland
+
 - 2026-03-15T10:04:00-0400
   - Bottleneck targeted:
     - fill-style-only mapped nearest expansion on the kept HDMI direct path, specifically replacing per-destination-pixel `scale_x_lut` writes with source-pixel span fills via the existing inverse LUT and `memset32`

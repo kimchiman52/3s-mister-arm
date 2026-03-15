@@ -531,6 +531,23 @@
   - Next best candidate optimization:
     - keep route selection closed and do not retry this higher-fanout disjoint-run shape blindly; if another nearest HDMI loop is needed, stay on lower-overhead mapped-present sparsity follow-up or move to a newly reproduced player-visible nearest gate
 
+- 2026-03-15T17:27:37-0400
+  - Research target:
+    - fresh nearest HDMI repro on the kept `r16` direct path, then test whether tightening the mapped-source compare tile from `8` to `4` source pixels can cut the remaining modern-display overcopy on `1920x1080` menu-heavy nearest frames without reopening route selection
+  - Change summary:
+    - redeployed the kept `r13` telemetry runtime, recovered fresh `r16` control, stage-heavy, Ibuki stage 7, 2P character-select, menu-transition, and native guard baselines, and confirmed the current branch still matched the preserved direct `software_frame_mapped_scale` path with the worst nearest lanes on the same route in `2p-character-select` and `menu-transition`
+    - tried a one-line runtime reland in `src/port/sdl/fbdev_presenter.c` that tightened `mapped_source_compare_tile_size` from `8` to `4` source pixels for the mapped nearest path only
+    - completed a manual scoped review of the single-file diff with focus on mapped-cache bounds, run-count implications, and route isolation; no correctness issue was found, but the runtime change was rejected on measured performance
+  - Verification evidence:
+    - `git diff --check` passed before the reland; the telemetry ARM rebuild/install/package succeeded in the prepared `/work-arm` tree inside `3sx-mister-build-nearest-hdmi-perf`, exported cleanly to `build/mister-telemetry-package-arm-nearest-r16-subtile4-20260315b`, and `readelf -h` still reported `ELF32` `ARM` with hard-float ABI
+    - MiSTer candidate `deploy`, `probe`, and bounded `smoke` all passed; probe and smoke kept `FBDEV: active (1920x1080 ...)`, `Native render path: enabled (scale-mode=nearest)`, and `Software frame mode: on`; after rollback, the live runtime was restored with `tools/mister/misterctl.sh deploy --src build/mister-telemetry-package-arm-nearest-r13-edgetrim-20260315a` plus a final `probe`
+    - fresh baseline confirmed no route drift: `nearest-hdmi-r16-control-full = 70.8252 FPS / 14.1193 / 3.2027 / 3.1887 ms` with `183059.04` copied bytes/frame, `nearest-hdmi-r16-stage-heavy-full = 52.0083 FPS / 19.2277 / 4.2775 / 4.2632 ms` with `262170.55` copied bytes/frame, `nearest-hdmi-r16-2p-character-select-full = 35.9836 FPS / 27.7904 / 11.7840 / 11.5564 ms` with `1513777.01` copied bytes/frame, `nearest-hdmi-r16-menu-transition-basic = 36.3634 FPS / 27.5002 / 12.4373 ms` with `1575586.49` copied bytes/frame, `nearest-hdmi-r16-ibuki-stage7-basic = 56.7475 FPS / 17.6219 / 7.2012 ms` with `651778.15` copied bytes/frame, and `native-hdmi-r16-control-basic = 92.9184 FPS / 10.7621 / 0.5399 ms`
+    - the `4`-pixel compare-tile candidate lowered copied bytes while staying on `software_frame_mapped_scale`, but it still regressed every checked nearest lane: control moved `70.8252 -> 69.2206 FPS` with `3.2027 / 3.1887 -> 3.4535 / 3.4390 ms` `present / present_copy` while copied bytes fell `183059.04 -> 171606.19`; stage-heavy moved `52.0083 -> 50.4430 FPS` with `4.2775 / 4.2632 -> 4.7301 / 4.7154 ms` while copied bytes fell `262170.55 -> 242407.79`; and 2P character-select moved `35.9836 -> 34.8866 FPS` with `11.7840 / 11.5564 -> 12.5879 / 12.3676 ms` while copied bytes fell `1513777.01 -> 1497124.49`; native guard stayed flat-to-better at `93.0007 FPS / 10.7526 / 0.5256 ms`
+  - Keep/rollback decision with reason:
+    - rollback; on this nearest HDMI path, tightening mapped compare granularity to `4` source pixels lowers dirty bytes but increases compare/run overhead enough to regress control, stage-heavy, and the user-priority 2P character-select lane
+  - Next best candidate optimization:
+    - keep route selection closed and stop shrinking compare tiles globally; the next byte-focused follow-up should target a lower-overhead sparse shape than blanket `8 -> 4` compare granularity, likely something selective around menu-lane burst rows rather than another global finer-tile reland
+
 - 2026-03-15T10:04:00-0400
   - Research target:
     - fresh nearest-HDMI validation on the kept direct path, then test whether replacing the mapped nearest path's per-destination-pixel `scale_x_lut` expansion with source-pixel span fills via the existing inverse LUT plus `memset32` could improve the user-visible menu hotspot without reopening route selection
