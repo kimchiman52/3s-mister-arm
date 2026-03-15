@@ -24,16 +24,17 @@
 ## Active Hotspot Matrix
 
 - [x] Nearest-HDMI loops should no longer rely on only `control` and `stage-heavy` for decision-grade validation.
-- [x] Automated nearest gates that are available on this branch today:
+- [x] Primary gameplay gates that should drive optimization priority on this branch:
   - `control` via `--gameplay-idle`
   - `stage-heavy` via `--test-scene-preset stage-heavy`
   - `ibuki-stage7` via `--test-scene-preset effect-heavy --test-stage 7`
+- [x] Secondary guardrails that still matter, but should not outrank gameplay FPS:
   - `2p-character-select` via `--perf-wait-test-phase character-select`
   - `menu-transition` via `--perf-wait-test-phase character-select-transition`
-- [x] Manual or measurement-only hotspot that still matters:
-  - `genei-jin-first-activation` remains a known user-visible lane, but there is still no trusted unattended capture on this branch; do not blindly reland the historically rejected `yun-genei-jin` preset and call it coverage
+- [x] Gameplay-first measurement-support gap that should be recovered next:
+  - `genei-jin-first-activation` is now the top missing automated gameplay lane. The existing helper path on this branch (`--test-p1-super-full`, `--test-delay-gameplay-inputs-until-active`, `--perf-wait-test-phase game-input-active`) should be the starting point, but no scripted capture counts as coverage until it proves nonzero `p1_super_art_active_frames_total` and lands the first activation inside the sampled window
 - [x] Follow-on rule:
-  - when a nearest HDMI runtime change is large enough to justify expanded validation, sample at least one menu lane and one stage-specific lane in addition to `control` and `stage-heavy`
+  - when a nearest HDMI runtime change is large enough to justify expanded validation, prioritize `control` plus at least one gameplay-heavy lane first; use `2p-character-select` or `menu-transition` as secondary guardrails only after gameplay gates are covered, or when a change explicitly targets those menu lanes
 
 ## Scope and Constraints
 
