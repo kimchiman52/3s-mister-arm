@@ -28,13 +28,13 @@
   - `control` via `--gameplay-idle`
   - `stage-heavy` via `--test-scene-preset stage-heavy`
   - `ibuki-stage7` via `--test-scene-preset effect-heavy --test-stage 7`
+- [x] Recovered gameplay-heavy gate that should now participate in keep/reject decisions:
+  - `genei-jin-first-activation` is now trustworthy on this branch with the existing Yun helper path (`--test-p1-super-full`, `--test-delay-gameplay-inputs-until-active`, `--perf-wait-test-phase game-input-active`) plus Yun-vs-Ryu `super-heavy` setup; the recovered `nearest-hdmi-r19-genei-jin-first-activation` capture proved `p1_super_art_active_frames_total = 121` and `p1_super_art_active_first_frame = 179` inside the sampled window
 - [x] Secondary guardrails that still matter, but should not outrank gameplay FPS:
   - `2p-character-select` via `--perf-wait-test-phase character-select`
   - `menu-transition` via `--perf-wait-test-phase character-select-transition`
-- [x] Gameplay-first measurement-support gap that should be recovered next:
-  - `genei-jin-first-activation` is now the top missing automated gameplay lane. The existing helper path on this branch (`--test-p1-super-full`, `--test-delay-gameplay-inputs-until-active`, `--perf-wait-test-phase game-input-active`) should be the starting point, but no scripted capture counts as coverage until it proves nonzero `p1_super_art_active_frames_total` and lands the first activation inside the sampled window
 - [x] Follow-on rule:
-  - when a nearest HDMI runtime change is large enough to justify expanded validation, prioritize `control` plus at least one gameplay-heavy lane first; use `2p-character-select` or `menu-transition` as secondary guardrails only after gameplay gates are covered, or when a change explicitly targets those menu lanes
+  - when a nearest HDMI runtime change is large enough to justify expanded validation, prioritize `control` plus at least one gameplay-heavy lane first; prefer `genei-jin-first-activation`, `stage-heavy`, or `ibuki-stage7` before spending capture budget on `2p-character-select` or `menu-transition` unless the change explicitly targets those menu lanes
 
 ## Scope and Constraints
 
@@ -316,6 +316,26 @@
   - if Chunk 3 still leaves nearest clearly bandwidth-bound after path routing and LUT work, start a separate follow-up stream for dirty-row or tile-aware scaled software-frame present instead of overloading this checklist
 
 ## Cycle Log
+
+- 2026-03-15T18:38:50-0400
+  - Research target:
+    - verify that the live nearest HDMI slowdown with `scale-mode = nearest` was still on the kept direct fbdev path, recover trustworthy automated `genei-jin-first-activation` coverage on this branch, and then test one dense-row mapped-present hypothesis against that gameplay-first hotspot before reopening broader experiments
+  - Change summary:
+    - recovered fresh `r19` nearest control, stage-heavy, Ibuki stage 7, Genei-Jin first activation, and native guard captures on the live `1920x1080` MiSTer output; the current branch/package still matched the kept direct `software_frame_mapped_scale` route rather than regressing to `fullscreen_staging` or readback
+    - proved the old Yun helper path is now trustworthy gameplay coverage on this branch: `nearest-hdmi-r19-genei-jin-first-activation` used the existing `--test-p1-super-full`, `--test-delay-gameplay-inputs-until-active`, and `--perf-wait-test-phase game-input-active` path to capture the first active Genei-Jin burst with `p1_super_art_active_frames_total = 121` and `p1_super_art_active_first_frame = 179`
+    - tried a single-file runtime reland in `src/port/sdl/fbdev_presenter.c` that collapses fragmented changed mapped rows into one dirty span when changed coverage is dense enough to avoid excessive row-run fanout; completed a manual scoped review of that diff and then rejected it on measured performance
+  - Verification evidence:
+    - `git diff --check` passed before and after the attempted reland; the telemetry ARM rebuild/install/package succeeded in `/work-arm-r20-dense-rows-20260315a`, exported cleanly to `build/mister-telemetry-package-arm-nearest-r20-dense-rows-20260315b`, and `readelf -h` still reported `ELF32` `ARM` with hard-float ABI
+    - MiSTer baseline/candidate `deploy`, `probe`, and bounded candidate `smoke` all passed; after rollback, the live runtime was restored with `tools/mister/misterctl.sh --password 1 deploy --src build/mister-share-20260314-112734/stage/games/3sx` plus a final `probe`, and the probes in this cycle still reported `FBDEV: active (1920x1080 ...)` and `Software frame mode: on`
+    - fresh baseline confirmed no route regression on the current branch: `nearest-hdmi-r19-control-full = 71.2908 FPS / 14.0271 / 3.0144 / 3.0005 ms` (`frame / present / present_copy`) with `183059.04` copied bytes/frame, `nearest-hdmi-r19-stage-heavy-full = 52.2327 FPS / 19.1451 / 4.0471 / 4.0327 ms` with `262170.55` copied bytes/frame, `nearest-hdmi-r19-ibuki-stage7-basic = 57.2269 FPS / 17.4743 / 6.8739 ms`, and `native-hdmi-r19-control-basic = 92.7239 FPS / 10.7847 / 0.5450 ms`, all on the expected direct/native routes
+    - the recovered gameplay-first Genei lane exposed the real hotspot directly on the kept route: `nearest-hdmi-r19-genei-jin-first-activation = 29.7032 FPS / 33.6664 / 15.0383 / 15.0204 ms` with `1881327.65` copied bytes/frame, while the active Genei window averaged `43.1364 ms` frame, `21.4637 ms` present, `21.4403 ms` `present_copy`, and `2887184.23` copied bytes/frame across the `121` active frames
+    - the dense-row-collapse candidate stayed on the same direct path and slightly improved control plus overall Genei average, but it was not decision-grade: `nearest-hdmi-r20-control-full = 72.5593 FPS / 13.7818 / 2.9732 / 2.9587 ms`, `nearest-hdmi-r20-stage-heavy-full = 52.2985 FPS / 19.1210 / 4.1125 / 4.0980 ms`, `nearest-hdmi-r20-genei-jin-first-activation = 30.0413 FPS / 33.2875 / 14.5323 / 14.5180 ms` with copied bytes rising to `2078135.63`; inside the active Genei window, frame time only moved `43.1364 -> 42.5247 ms` and present `21.4637 -> 20.8053 ms`, while copied bytes rose `2887184.23 -> 3165249.62` and worst-case tails worsened
+  - Keep/rollback decision with reason:
+    - rollback; the live user symptom is still a direct-path mapped-copy hotspot, not a route regression, and dense row collapse buys too little on the recovered first-activation gameplay lane while increasing copied bytes and failing to improve `stage-heavy` meaningfully
+  - Final commit hash:
+    - recorded in the cycle closeout commit
+  - Next best candidate optimization:
+    - use the recovered trustworthy `genei-jin-first-activation` lane together with `control` plus one of `stage-heavy` or `ibuki-stage7` to rank a different presenter or raster hotspot; do not retry this dense-row-collapse shape blindly and do not let menu-only lanes outrank gameplay-first nearest validation
 
 - 2026-03-15T00:05:20-0400
   - Commit hash:
