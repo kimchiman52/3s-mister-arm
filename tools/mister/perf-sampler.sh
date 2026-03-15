@@ -43,6 +43,8 @@ Options:
                          Optional test-runner flag that delays scripted gameplay inputs and
                          first-frame super bootstrap until both players reach gameplay/input-active state.
   --test-stage <id>      Optional test-runner stage override (0-19, excluding 17); requires --gameplay-idle or --test-scene-preset.
+  --scale-mode <mode>    Optional config override for `scale-mode` during capture
+                         (nearest, native, linear, soft-linear, square-pixels, integer).
   --software-frame-mode <off|on>
                          Optional config override for `software-frame-mode` during capture.
                          Perf captures always force `show-fps = false` temporarily so the
@@ -117,6 +119,12 @@ is_supported_test_scene_preset() {
 is_supported_software_frame_mode() {
     local value="$1"
     [ "$value" = "off" ] || [ "$value" = "on" ]
+}
+
+is_supported_scale_mode() {
+    local value="$1"
+    [ "$value" = "nearest" ] || [ "$value" = "native" ] || [ "$value" = "linear" ] ||
+        [ "$value" = "soft-linear" ] || [ "$value" = "square-pixels" ] || [ "$value" = "integer" ]
 }
 
 is_supported_perf_wait_test_phase() {
@@ -263,6 +271,7 @@ test_p1_super_full=0
 test_preserve_game_transition=0
 test_delay_gameplay_inputs_until_active=0
 test_stage=""
+scale_mode=""
 software_frame_mode=""
 have_test_overrides=0
 
@@ -342,6 +351,10 @@ while [ "$#" -gt 0 ]; do
     --test-stage)
         test_stage="$2"
         have_test_overrides=1
+        shift 2
+        ;;
+    --scale-mode)
+        scale_mode="$2"
         shift 2
         ;;
     --software-frame-mode)
@@ -503,6 +516,11 @@ fi
 
 if [ -n "$software_frame_mode" ] && ! is_supported_software_frame_mode "$software_frame_mode"; then
     echo "error: --software-frame-mode must be 'off' or 'on'." >&2
+    exit 2
+fi
+
+if [ -n "$scale_mode" ] && ! is_supported_scale_mode "$scale_mode"; then
+    echo "error: --scale-mode must be one of nearest, native, linear, soft-linear, square-pixels, or integer." >&2
     exit 2
 fi
 
@@ -676,6 +694,11 @@ else
   : >"\$remote_config_missing_marker"
   : >'${remote_config_path}.tmp'
 fi
+if [ -n '${scale_mode}' ]; then
+  grep -v '^[[:space:]]*scale-mode[[:space:]]*=' '${remote_config_path}.tmp' >'${remote_config_path}.tmp.scale' || true
+  mv '${remote_config_path}.tmp.scale' '${remote_config_path}.tmp'
+  printf '%s\n' 'scale-mode = ${scale_mode}' >>'${remote_config_path}.tmp'
+fi
 if [ -n '${software_frame_mode}' ]; then
   grep -v '^[[:space:]]*software-frame-mode[[:space:]]*=' '${remote_config_path}.tmp' >'${remote_config_path}.tmp.mode' || true
   mv '${remote_config_path}.tmp.mode' '${remote_config_path}.tmp'
@@ -727,6 +750,7 @@ captured_p1_character=""
 captured_p2_character=""
 captured_p1_super_art=""
 captured_p2_super_art=""
+captured_scale_mode=""
 captured_software_frame_mode=""
 captured_test_phase=""
 captured_wait_test_phase=""
@@ -743,6 +767,7 @@ if [ -n "$capture_log_line" ]; then
     captured_wait_runtime_state="$(extract_perf_log_string_field "wait_runtime_state" "$capture_log_line")"
 fi
 if [ -n "$mode_log_line" ]; then
+    captured_scale_mode="$(extract_perf_log_string_field "scale_mode" "$mode_log_line")"
     captured_software_frame_mode="$(extract_perf_log_string_field "software_frame_mode" "$mode_log_line")"
 fi
 
@@ -753,6 +778,7 @@ if command -v jq >/dev/null 2>&1; then
     metadata_p2_character="null"
     metadata_p1_super_art="null"
     metadata_p2_super_art="null"
+    metadata_scale_mode="$captured_scale_mode"
     metadata_software_frame_mode="$captured_software_frame_mode"
     metadata_capture_start_test_phase="$captured_test_phase"
     metadata_perf_wait_test_phase="$captured_wait_test_phase"
@@ -785,6 +811,9 @@ if command -v jq >/dev/null 2>&1; then
     elif [ -n "$test_p2_super_art" ]; then
         metadata_p2_super_art="$test_p2_super_art"
     fi
+    if [ -z "$metadata_scale_mode" ] && [ -n "$scale_mode" ]; then
+        metadata_scale_mode="$scale_mode"
+    fi
     if [ -n "$software_frame_mode" ]; then
         metadata_software_frame_mode="$software_frame_mode"
     fi
@@ -803,6 +832,7 @@ if command -v jq >/dev/null 2>&1; then
     jq \
         --arg scene "$scene" \
         --arg test_scene_preset "$test_scene_preset" \
+        --arg scale_mode "$metadata_scale_mode" \
         --arg software_frame_mode "$metadata_software_frame_mode" \
         --arg capture_start_test_phase "$metadata_capture_start_test_phase" \
         --arg perf_wait_test_phase "$metadata_perf_wait_test_phase" \
@@ -816,7 +846,7 @@ if command -v jq >/dev/null 2>&1; then
         --argjson p1_super_full "$(if [ "$test_p1_super_full" -eq 1 ]; then printf 'true'; else printf 'false'; fi)" \
         --argjson preserve_game_transition "$(if [ "$test_preserve_game_transition" -eq 1 ]; then printf 'true'; else printf 'false'; fi)" \
         --argjson delay_gameplay_inputs_until_active "$(if [ "$test_delay_gameplay_inputs_until_active" -eq 1 ]; then printf 'true'; else printf 'false'; fi)" \
-        '.metadata = ((.metadata // {}) + {scene: $scene, test_scene_preset: (if ($test_scene_preset | length) > 0 then $test_scene_preset else null end), software_frame_mode: (if ($software_frame_mode | length) > 0 then $software_frame_mode else null end), capture_start_test_phase: (if ($capture_start_test_phase | length) > 0 and $capture_start_test_phase != "(none)" then $capture_start_test_phase else null end), perf_wait_test_phase: (if ($perf_wait_test_phase | length) > 0 and $perf_wait_test_phase != "(none)" then $perf_wait_test_phase else null end), perf_wait_runtime_state: (if ($perf_wait_runtime_state | length) > 0 and $perf_wait_runtime_state != "(none)" then $perf_wait_runtime_state else null end), stage_id: $stage_id, test_stage_override: $test_stage_override, p1_character: $p1_character, p2_character: $p2_character, p1_super_art: $p1_super_art, p2_super_art: $p2_super_art, test_p1_super_full: $p1_super_full, test_preserve_game_transition: $preserve_game_transition, test_delay_gameplay_inputs_until_active: $delay_gameplay_inputs_until_active})' \
+        '.metadata = ((.metadata // {}) + {scene: $scene, test_scene_preset: (if ($test_scene_preset | length) > 0 then $test_scene_preset else null end), scale_mode: (if ($scale_mode | length) > 0 then $scale_mode else null end), software_frame_mode: (if ($software_frame_mode | length) > 0 then $software_frame_mode else null end), capture_start_test_phase: (if ($capture_start_test_phase | length) > 0 and $capture_start_test_phase != "(none)" then $capture_start_test_phase else null end), perf_wait_test_phase: (if ($perf_wait_test_phase | length) > 0 and $perf_wait_test_phase != "(none)" then $perf_wait_test_phase else null end), perf_wait_runtime_state: (if ($perf_wait_runtime_state | length) > 0 and $perf_wait_runtime_state != "(none)" then $perf_wait_runtime_state else null end), stage_id: $stage_id, test_stage_override: $test_stage_override, p1_character: $p1_character, p2_character: $p2_character, p1_super_art: $p1_super_art, p2_super_art: $p2_super_art, test_p1_super_full: $p1_super_full, test_preserve_game_transition: $preserve_game_transition, test_delay_gameplay_inputs_until_active: $delay_gameplay_inputs_until_active})' \
         "${local_output_path}" >"${temp_output_path}"
     mv "${temp_output_path}" "${local_output_path}"
 fi
@@ -830,16 +860,24 @@ if command -v jq >/dev/null 2>&1; then
     update_mean_ms="$(jq -r '.metrics.update.mean_ms // empty' "${local_output_path}")"
     render_mean_ms="$(jq -r '.metrics.render.mean_ms // empty' "${local_output_path}")"
     present_mean_ms="$(jq -r '.metrics.present.mean_ms // empty' "${local_output_path}")"
+    dominant_present_path="$(jq -r '
+        (.metrics.fbdev_present_path // {})
+        | to_entries
+        | map(select((.value.ratio // null) != null))
+        | if length == 0 then empty else max_by(.value.ratio).key end
+    ' "${local_output_path}")"
     metadata_stage_id="$(jq -r '.metadata.stage_id // empty' "${local_output_path}")"
     metadata_preset="$(jq -r '.metadata.test_scene_preset // empty' "${local_output_path}")"
-    metadata_mode="$(jq -r '.metadata.software_frame_mode // empty' "${local_output_path}")"
+    metadata_scale_mode="$(jq -r '.metadata.scale_mode // empty' "${local_output_path}")"
+    metadata_software_frame_mode="$(jq -r '.metadata.software_frame_mode // empty' "${local_output_path}")"
     metadata_test_phase="$(jq -r '.metadata.capture_start_test_phase // empty' "${local_output_path}")"
     metadata_runtime_state="$(jq -r '.metadata.perf_wait_runtime_state // empty' "${local_output_path}")"
 
-    printf 'Perf summary: tag=%s scene=%s fps=%s frame_mean_ms=%s frame_max_ms=%s update_mean_ms=%s render_mean_ms=%s present_mean_ms=%s stage_id=%s preset=%s software_frame_mode=%s test_phase=%s runtime_state=%s\n' \
+    printf 'Perf summary: tag=%s scene=%s fps=%s frame_mean_ms=%s frame_max_ms=%s update_mean_ms=%s render_mean_ms=%s present_mean_ms=%s dominant_present_path=%s stage_id=%s preset=%s scale_mode=%s software_frame_mode=%s test_phase=%s runtime_state=%s\n' \
         "$tag" "$scene" "${fps_mean:-unknown}" "${frame_mean_ms:-unknown}" "${frame_max_ms:-unknown}" \
         "${update_mean_ms:-unknown}" "${render_mean_ms:-unknown}" "${present_mean_ms:-unknown}" \
-        "${metadata_stage_id:-unknown}" "${metadata_preset:-none}" "${metadata_mode:-unknown}" \
+        "${dominant_present_path:-unknown}" "${metadata_stage_id:-unknown}" "${metadata_preset:-none}" \
+        "${metadata_scale_mode:-unknown}" "${metadata_software_frame_mode:-unknown}" \
         "${metadata_test_phase:-unknown}" "${metadata_runtime_state:-none}"
 
     software_frame_modulation_summary="$(jq -r '

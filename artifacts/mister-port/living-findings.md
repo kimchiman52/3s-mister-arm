@@ -23,7 +23,8 @@ Scope guardrails:
 - Stage-aware anchors: Chunk 1 now keeps the no-override idle control on `stage_id=11`, names `stage_id=19` as the current `stage-heavy` gate, and keeps `stage_id=2` as the contrasting explicit override
 - Frozen stock-image scene matrix: `idle-control` = `stage 11 / Ryu-Ken / SA0-0`; `stage-heavy` = `stage 19 / Ryu-Ken / SA0-0`; `effect-heavy` = preset `effect-heavy` on `stage 19 / Ryu-Ken / SA0-0`; `super-heavy` = preset `super-heavy` on `stage 19 / Ryu-Ryu / SA0-0`
 - Historical hybrid note: the first-cut hybrid subset from `artifacts/mister-port/stock-image-architecture-loop-series/todo.md` remains closed at `65.64% / 56.86%` on `effect-heavy` and `66.85% / 58.19%` on `super-heavy`; do not reopen that track inside the active software-frame stream
-- Active checklist: `artifacts/mister-port/2p-menu-performance/todo.md` is now the canonical runtime checklist for this branch. Keep `artifacts/mister-port/scaled-present-path/todo.md` as the closed nearest-mode record, and run the active stream from the user-priority 2P character-select / super-art selection lane rather than reopening older stock-image history
+- Active checklist: `artifacts/mister-port/scaled-present-path/todo.md` is the active recovery checklist on `nearest-hdmi-perf`. The wrapper-era branch drift dropped the accepted nearest direct-path reland on the current branch, so keep `artifacts/mister-port/2p-menu-performance/todo.md` as historical context only until the modern-display nearest path is re-closed here
+- Nearest HDMI recovery snapshot: on the current `1920x1080` framebuffer, `nearest-hdmi-r0-control-full` collapsed to `5.7141 FPS` / `175.0050 ms` with `dominant_present_path = readback_rect` and `present_readback.mean_ms = 152.5426`; the restored `nearest-hdmi-r1-control-full` is back on `software_frame_mapped_scale` at `14.2285 FPS` / `70.2816 ms` with zero readback, so the remaining hotspot is mapped nearest scaling cost rather than route selection
 - MiSTer default decision: `software-frame-mode` remains default-on for MiSTer builds; the user-facing default survived the earlier accepted `stock-soft-c21-*` gate, and the latest trusted on-device runtime baseline for new overnight work is now the kept `stock-soft-c97-*` gameplay subset together with the unchanged `stock-soft-c80-*` stage-heavy and transition references
 - Current trusted runtime baseline: `stock-soft-c104-control-post` = `89.6375 FPS` / `11.1560 / 3.5664 / 7.0383 / 0.5514 ms` on `stage_id=11`, `stock-soft-c80-stage-heavy-post` = `66.5197 FPS` / `15.0331 / 5.7282 / 8.7805 / 0.5244 ms` on `stage_id=19`, `stock-soft-c104-effect-heavy-rerun` = `62.2484 FPS` / `16.0647 / 6.8537 / 8.6688 / 0.5422 ms` on `stage_id=19`, `stock-soft-c104-super-heavy-post` = `60.8836 FPS` / `16.4248 / 7.0225 / 8.8541 / 0.5482 ms` on `stage_id=19`, and the new exact transition keep `stock-soft-c104-wipe-type1-preserved-post` = `59.9996 FPS` / `16.6668 / 7.6899 / 8.2007 / 0.7762 / 0.2043 ms` on the exact `WipeOut(type = 1)` gate; the kept type-`1` wipe-strip reland preserved `software_frame_mode = on`, kept gameplay direct-presented with `software_frame_reason_solid = 0`, and replaced the old `17`-frame `76`-solid readback collapse with the older `2/300` geometry fallback pattern
 - Perf-capture diagnostic note: `--perf-basic` is now the low-overhead MiSTer capture mode for gameplay triage. It still records `frame/update/render/present`, but disables the heavy per-frame renderer/presenter breakdown. On-device paired `HEAD` captures showed the recent apparent gameplay regression was instrumentation overhead, not a real runtime slowdown: idle `full -> basic` improved from `14.31 / 7.03 / 6.48 / 0.81 ms` to `13.62 / 6.50 / 6.33 / 0.79 ms`, `super-heavy full -> basic` improved from `27.01 / 18.10 / 8.36 / 0.55 ms` to `25.60 / 16.85 / 8.23 / 0.52 ms`, and the `basic` numbers slightly beat the earlier `c21` full captures on both gates
@@ -100,7 +101,7 @@ Scope guardrails:
 
 ## Open Queue
 
-- The nearest scaled-present checklist is closed. Keep the next runtime loop on the active 2P menu stream, starting from the measured `seqsAfterProcess` hotspot in the exact super-art chooser lane before widening back out to broader character-select or other gameplay wins.
+- On `nearest-hdmi-perf`, the nearest scaled-present checklist is temporarily reopened. The direct fbdev/native route on modern `1920x1080` HDMI is restored, but the remaining measured hotspot is `software_frame_mapped_scale` present cost; resume from `artifacts/mister-port/scaled-present-path/todo.md` before widening back out to the older 2P menu stream on this branch.
 - Future perf loops should build/deploy the `telemetry` flavor by default and reserve the `clean` package for player/runtime validation or handoff.
 - Serialized MiSTer verification is healthy again under `tools/mister/misterctl.sh` plus `tools/mister/perf-sampler.sh` with explicit password-auth env. Keep using that path, continue forcing `PubkeyAuthentication=no`, `PreferredAuthentications=password`, and `NumberOfPasswordPrompts=1`, and treat new device-gate failures as fresh evidence rather than as a reason to reopen the old slot-`58` transport stop note.
 - Preserved unverified work must be tested before new hypotheses. Loop 66's preserved current-lifetime telemetry diff has now been restored and verified on-device; there is no older preserved branch ahead of the next runtime candidate now.
@@ -113,6 +114,24 @@ Scope guardrails:
 - Live-check the Loop 3 clipped-native crop branch on a real low-resolution framebuffer when one is available. The current device output is `1280x720`, so the square-pixels scaling path is verified but the low-resolution crop branch is still only code-reviewed plus logic-checked.
 
 ## Cycle Log
+
+- 2026-03-14T22:50:00-0400
+  - Commit hash:
+    - recorded in the loop closure commit
+  - Bottleneck targeted:
+    - modern-display HDMI `scale-mode = nearest` regression on `nearest-hdmi-perf`, specifically whether the accepted direct fbdev/native path had fallen back to a slower readback path on the current `1920x1080` device output
+  - Change summary:
+    - restored the lost nearest direct-path reland in `src/port/sdl/sdl_app.c`, including the native-path screenshot target used when `screen_texture` is absent
+    - restored `--scale-mode` capture overrides plus runtime `scale_mode` / dominant-present-path reporting in `tools/mister/perf-sampler.sh` so nearest versus native guardrails are again reproducible without hand-editing the remote config
+    - completed the required scoped review pass after verification; the standalone `codex review --uncommitted` helper stalled during read-only inspection, so the kept tree closed on a manual review with no additional findings
+  - Verification result summary:
+    - reproduced the regression first: `nearest-hdmi-r0-control-full` landed at `5.7141 FPS` with `175.0050 / 9.7776 / 161.5944 ms` for `frame/render/present`, `dominant_present_path = readback_rect`, and `present_readback.mean_ms = 152.5426`
+    - after the reland, `misterctl.sh probe` again logged `Native render path: enabled (scale-mode=nearest)`, `nearest-hdmi-r1-control-full` moved to `14.2285 FPS` with `70.2816 / 7.4068 / 59.3430 ms`, `dominant_present_path = software_frame_mapped_scale`, and `present_readback.mean_ms = 0.0000`, while `nearest-hdmi-r1-stage-heavy-basic` stayed on the same routed path at `13.2139 FPS`
+    - native guard `native-hdmi-r1-control-basic` held `92.9996 FPS` with `10.7527 / 7.0311 / 0.5480 ms` and `dominant_present_path = software_frame_exact`; `git diff --check`, `bash -n tools/mister/perf-sampler.sh`, telemetry ARM rebuild/package, deploy, probe, and bounded smoke all passed on the kept tree
+  - Keep/rollback decision with reason:
+    - keep; the catastrophic modern-display nearest regression is back on the intended direct path and no longer readback-bound, but the remaining HDMI slowdown is still dominated by mapped-scale presenter cost rather than by upload or composited fallback
+  - Next best candidate optimization:
+    - stay on the reopened nearest stream and reduce `software_frame_mapped_scale` copy cost on `1920x1080` HDMI without disturbing native exact routing or gameplay behavior
 
 - 2026-03-12T19:46:00-0400
   - Commit hash:

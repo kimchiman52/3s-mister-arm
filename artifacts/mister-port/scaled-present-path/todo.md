@@ -302,6 +302,25 @@
 
 ## Cycle Log
 
+- 2026-03-14T22:50:00-0400
+  - Research target:
+    - modern-display HDMI regression recovery for `scale-mode = nearest`: verify whether the accepted direct fbdev/native path had fallen out on `nearest-hdmi-perf`, recover a fresh on-device baseline at `1920x1080`, and restore the routed nearest path before opening a new scaler hypothesis
+  - Change summary:
+    - deep rechecked the current branch against the preserved nearest findings and confirmed the reland had drifted out: probe no longer reported `Native render path: enabled (scale-mode=nearest)`, and the preserved `--scale-mode` capture plumbing had also fallen out of `tools/mister/perf-sampler.sh`
+    - restored the nearest native/fbdev route and native-path screenshot target support in `src/port/sdl/sdl_app.c`, then restored `--scale-mode` override, runtime scale-mode capture, and dominant-present-path summary support in `tools/mister/perf-sampler.sh`
+    - completed the required review pass on the scoped diff after verification; the standalone `codex review --uncommitted` helper stalled during read-only inspection, so the kept tree closed on a manual scoped review with no additional correctness findings
+  - Verification evidence:
+    - remote lock and busy checks were clear before every device step; `git diff --check`, `bash -n tools/mister/perf-sampler.sh`, and the telemetry ARM rebuild/install/package through `/work-arm` in `3sx-mister-build-nearest-hdmi-perf` all passed on the kept tree
+    - reproduced the live HDMI regression first: `nearest-hdmi-r0-control-full` landed at `5.7141 FPS` with `175.0050 / 9.7776 / 161.5944 ms` for `frame/render/present`, `dominant_present_path = readback_rect`, and `present_readback.mean_ms = 152.5426`; the probe log likewise lacked the nearest native-path line
+    - after the reland, `misterctl.sh probe` again logged `Native render path: enabled (scale-mode=nearest)`, bounded smoke passed, and `nearest-hdmi-r1-control-full` moved to `14.2285 FPS` with `70.2816 / 7.4068 / 59.3430 ms`, `dominant_present_path = software_frame_mapped_scale`, `software_frame_direct_present_ratio = 1.0000`, and `present_readback.mean_ms = 0.0000`
+    - the heavy nearest rerun `nearest-hdmi-r1-stage-heavy-basic` stayed on the same direct path at `13.2139 FPS` with `75.6779 / 9.1134 / 61.5909 ms`; native guard `native-hdmi-r1-control-basic` held `92.9996 FPS` with `10.7527 / 7.0311 / 0.5480 ms` and `dominant_present_path = software_frame_exact`
+  - Keep/rollback decision:
+    - keep the routing and sampler restoration; they remove the catastrophic `readback_rect` regression on `1920x1080` HDMI nearest without disturbing native exact presentation, but the remaining modern-display nearest cost is still dominated by mapped-scale presenter work rather than by readback or upload fallback
+  - Final commit hash:
+    - recorded in the loop closure commit
+  - Next best candidate:
+    - stay on the reopened modern-display nearest stream and attack the remaining `software_frame_mapped_scale` copy cost on `1920x1080` output without reopening gameplay logic, native exact routing, or the older closed menu stream
+
 - 2026-03-11T09:15:20-0400
   - Research target:
     - first attribution pass on the user-priority menu lane: measure which select-screen update scopes dominate 2P character select overall and the exact super-art chooser slowdown, especially the suspected circle/highlight animation
