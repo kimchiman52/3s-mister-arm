@@ -302,6 +302,26 @@
 
 ## Cycle Log
 
+- 2026-03-14T23:40:54-0400
+  - Research target:
+    - modern-display HDMI nearest on the restored direct path: confirm the fresh `r4` baseline still matches the preserved `r3` state, then test a single partial-present hypothesis that avoids rewriting unchanged mapped rows to the `1920x1080` framebuffer
+  - Change summary:
+    - recovered fresh `r4` nearest and native baselines on the live device and confirmed there was no route regression: nearest still direct-presented on `software_frame_mapped_scale`, while native remained on `software_frame_exact`
+    - updated `src/port/sdl/fbdev_presenter.c` to cache the prior `384x224` source rows for mapped nearest present and only rescale/write destination rows whose source rows changed; invalidated that cache on non-mapped presenter paths so fallback/readback frames still force a safe refresh
+    - attempted `codex review --uncommitted` for the required review pass, but the helper stalled again; completed a manual scoped review of the kept diff and found no additional correctness issues
+  - Verification evidence:
+    - `git diff --check` passed; the ARM telemetry rebuild/install/package through `/work-arm` in `3sx-mister-build-nearest-hdmi-perf` succeeded, `readelf -h build/mister-package/bin/3sx` still reported `ELF32` `ARM` with hard-float ABI inside the container, and the package exported cleanly to `build/mister-telemetry-package-arm-nearest-r5-rowcache`
+    - MiSTer `deploy`, `probe`, and bounded `smoke` all passed on the candidate package, with probe and smoke still reporting `FBDEV: active (1920x1080 ...)`, `Native render path: enabled (scale-mode=nearest)`, and `Software frame mode: on`
+    - control keep gate: `nearest-hdmi-r4-control-full` = `21.3593 FPS` / `46.8180 / 35.8808 / 35.8674 ms` (`frame / present / present_copy`) with `6220800` copied bytes/frame; `nearest-hdmi-r5-control-full` improved to `48.3931 FPS` / `20.6641 / 9.7551 / 9.7403 ms` with `1490016` copied bytes/frame and the dominant path unchanged at `software_frame_mapped_scale = 1.0000`
+    - heavy nearest keep gate: `nearest-hdmi-r4-stage-heavy-basic` = `20.0642 FPS` / `49.8400 / 35.9736 ms` with `6220800` copied bytes/frame; `nearest-hdmi-r5-stage-heavy-basic` improved to `34.9093 FPS` / `28.6457 / 15.0385 ms` with `2588697.60` copied bytes/frame, again staying fully on `software_frame_mapped_scale`
+    - native guard held: `native-hdmi-r4-control-basic` = `93.4393 FPS` / `10.7021 / 0.5452 ms`; `native-hdmi-r5-control-basic` stayed effectively flat at `92.9181 FPS` / `10.7622 / 0.5390 ms` on `software_frame_exact = 1.0000`
+  - Keep/rollback decision:
+    - keep the mapped-present source-row cache reland; on the live `1920x1080` HDMI path it preserves the intended direct presenter route, cuts the remaining nearest present/copy cost by more than half on both measured gates, and leaves native exact presentation flat
+  - Final commit hash:
+    - recorded in the loop closure commit
+  - Next best candidate:
+    - if modern-display nearest still needs another loop after this reland, keep the branch on partial mapped-present follow-up and widen from row-only updates to narrower dirty spans or source-tile-guided copies before reopening route-selection work
+
 - 2026-03-14T23:15:00-0400
   - Research target:
     - modern-display HDMI `scale-mode = nearest` slowdown on the restored direct path: verify the current branch against the preserved `r1` recovery at `1920x1080`, confirm whether the older mapped-LUT reland was missing, and test that single hypothesis before widening to a more invasive scaled-present rewrite

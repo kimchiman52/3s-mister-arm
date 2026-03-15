@@ -43,6 +43,15 @@ static Uint32* previous_pixels = NULL;
 static int staging_width = 0;
 static int staging_height = 0;
 static bool previous_pixels_valid = false;
+static Uint32* mapped_source_pixels = NULL;
+static Uint8* mapped_source_row_changed = NULL;
+static int mapped_source_width = 0;
+static int mapped_source_height = 0;
+static int mapped_source_raw_x0 = 0;
+static int mapped_source_raw_y0 = 0;
+static int mapped_source_raw_w = 0;
+static int mapped_source_raw_h = 0;
+static bool mapped_source_cache_valid = false;
 static int frame_tiles_total = 0;
 static int frame_tiles_copied = 0;
 static bool frame_full_copy_fallback = false;
@@ -144,6 +153,49 @@ static void reset_staging_buffers() {
     previous_pixels_valid = false;
 }
 
+static void reset_mapped_source_cache() {
+    SDL_free(mapped_source_pixels);
+    SDL_free(mapped_source_row_changed);
+    mapped_source_pixels = NULL;
+    mapped_source_row_changed = NULL;
+    mapped_source_width = 0;
+    mapped_source_height = 0;
+    mapped_source_raw_x0 = 0;
+    mapped_source_raw_y0 = 0;
+    mapped_source_raw_w = 0;
+    mapped_source_raw_h = 0;
+    mapped_source_cache_valid = false;
+}
+
+static void invalidate_mapped_source_cache() {
+    mapped_source_cache_valid = false;
+}
+
+static bool ensure_mapped_source_cache(int src_w, int src_h) {
+    if ((src_w <= 0) || (src_h <= 0)) {
+        return false;
+    }
+
+    if ((mapped_source_pixels != NULL) && (mapped_source_row_changed != NULL) && (mapped_source_width == src_w) &&
+        (mapped_source_height == src_h)) {
+        return true;
+    }
+
+    reset_mapped_source_cache();
+
+    const size_t pixel_count = (size_t)src_w * (size_t)src_h;
+    mapped_source_pixels = (Uint32*)SDL_malloc(pixel_count * sizeof(Uint32));
+    mapped_source_row_changed = (Uint8*)SDL_malloc((size_t)src_h);
+    if ((mapped_source_pixels == NULL) || (mapped_source_row_changed == NULL)) {
+        reset_mapped_source_cache();
+        return false;
+    }
+
+    mapped_source_width = src_w;
+    mapped_source_height = src_h;
+    return true;
+}
+
 static bool ensure_staging_buffers(int width, int height) {
     if ((width <= 0) || (height <= 0)) {
         return false;
@@ -211,6 +263,7 @@ static void close_fb() {
     reset_scale_lut();
     invalidate_rect_bar_clear_cache();
     reset_staging_buffers();
+    reset_mapped_source_cache();
 
     if (fb_map != NULL) {
         munmap(fb_map, fb_map_len);
@@ -642,12 +695,57 @@ static bool copy_argb_surface_scaled_to_fb_mapped_rect(const SDL_Surface* argb,
 
     const size_t row_bytes = (size_t)(clip_x1 - clip_x0) * sizeof(Uint32);
     const bool have_lut = ensure_scale_lut(argb->w, argb->h, raw_x0, raw_y0, raw_w, raw_h);
+    const size_t src_row_bytes = (size_t)argb->w * sizeof(Uint32);
+    const bool cache_ready = ensure_mapped_source_cache(argb->w, argb->h);
+    bool can_skip_unchanged_rows = false;
+    if (cache_ready) {
+        can_skip_unchanged_rows = mapped_source_cache_valid && (mapped_source_raw_x0 == raw_x0) &&
+                                  (mapped_source_raw_y0 == raw_y0) && (mapped_source_raw_w == raw_w) &&
+                                  (mapped_source_raw_h == raw_h);
+        bool any_row_changed = !can_skip_unchanged_rows;
+
+        // The mapped nearest path is write-bound on HDMI, so skip rows whose 384x224 source data did not change.
+        for (int src_y = 0; src_y < argb->h; src_y++) {
+            const Uint8* src_row_bytes_ptr = ((const Uint8*)argb->pixels) + ((size_t)argb->pitch * (size_t)src_y);
+            Uint32* cached_row = mapped_source_pixels + ((size_t)mapped_source_width * (size_t)src_y);
+            if (!can_skip_unchanged_rows) {
+                SDL_memcpy(cached_row, src_row_bytes_ptr, src_row_bytes);
+                mapped_source_row_changed[src_y] = 1;
+                continue;
+            }
+
+            if (SDL_memcmp(src_row_bytes_ptr, cached_row, src_row_bytes) == 0) {
+                mapped_source_row_changed[src_y] = 0;
+                continue;
+            }
+
+            SDL_memcpy(cached_row, src_row_bytes_ptr, src_row_bytes);
+            mapped_source_row_changed[src_y] = 1;
+            any_row_changed = true;
+        }
+
+        mapped_source_raw_x0 = raw_x0;
+        mapped_source_raw_y0 = raw_y0;
+        mapped_source_raw_w = raw_w;
+        mapped_source_raw_h = raw_h;
+        mapped_source_cache_valid = true;
+
+        if (can_skip_unchanged_rows && !any_row_changed) {
+            return true;
+        }
+    }
+
     int prev_src_y = -1;
     Uint8* prev_dst_row = NULL;
 
     for (int y = clip_y0; y < clip_y1; y++) {
         int src_y = have_lut ? scale_y_lut[y] : (int)(((Sint64)(y - raw_y0) * (Sint64)argb->h) / (Sint64)raw_h);
         src_y = clamp_to_range(src_y, 0, argb->h - 1);
+        if (can_skip_unchanged_rows && !mapped_source_row_changed[src_y]) {
+            prev_src_y = -1;
+            prev_dst_row = NULL;
+            continue;
+        }
 
         Uint8* dst_row_bytes = fb_map + ((size_t)fb_stride * (size_t)y) + ((size_t)clip_x0 * sizeof(Uint32));
         if ((src_y == prev_src_y) && (prev_dst_row != NULL)) {
@@ -734,9 +832,14 @@ static bool copy_surface_to_fb_mapped_rect_with_paths(const SDL_Surface* src,
                                                       const SDL_FRect* dst_rect,
                                                       FBDevPresenterPath exact_path,
                                                       FBDevPresenterPath integer_scale_path,
-                                                      FBDevPresenterPath mapped_scale_path) {
+                                                      FBDevPresenterPath mapped_scale_path,
+                                                      FBDevPresenterPath* out_path_used) {
     if ((src == NULL) || (dst_rect == NULL) || (src->w <= 0) || (src->h <= 0)) {
         return false;
+    }
+
+    if (out_path_used != NULL) {
+        *out_path_used = FBDEV_PRESENTER_PATH_NONE;
     }
 
     const int raw_x0 = (int)SDL_floorf(dst_rect->x);
@@ -761,6 +864,9 @@ static bool copy_surface_to_fb_mapped_rect_with_paths(const SDL_Surface* src,
         const int src_x = clip_x0 - raw_x0;
         const int src_y = clip_y0 - raw_y0;
         frame_stats_note_path(exact_path);
+        if (out_path_used != NULL) {
+            *out_path_used = exact_path;
+        }
         return copy_surface_rect_to_fb_offset(
             src, src_x, src_y, clip_x1 - clip_x0, clip_y1 - clip_y0, clip_x0, clip_y0);
     }
@@ -778,11 +884,13 @@ static bool copy_surface_to_fb_mapped_rect_with_paths(const SDL_Surface* src,
     }
 
     bool copied = false;
-    if ((raw_x0 == clip_x0) && (raw_y0 == clip_y0) && ((raw_x0 + raw_w) == clip_x1) && ((raw_y0 + raw_h) == clip_y1) &&
-        ((raw_w % argb->w) == 0) && ((raw_h % argb->h) == 0)) {
-        frame_stats_note_path(integer_scale_path);
-    } else {
-        frame_stats_note_path(mapped_scale_path);
+    const bool use_integer_scale = (raw_x0 == clip_x0) && (raw_y0 == clip_y0) && ((raw_x0 + raw_w) == clip_x1) &&
+                                   ((raw_y0 + raw_h) == clip_y1) && ((raw_w % argb->w) == 0) &&
+                                   ((raw_h % argb->h) == 0);
+    const FBDevPresenterPath selected_path = use_integer_scale ? integer_scale_path : mapped_scale_path;
+    frame_stats_note_path(selected_path);
+    if (out_path_used != NULL) {
+        *out_path_used = selected_path;
     }
     Uint64 copy_start_ns = frame_stats_now();
     copied =
@@ -796,12 +904,15 @@ static bool copy_surface_to_fb_mapped_rect_with_paths(const SDL_Surface* src,
     return copied;
 }
 
-static bool copy_surface_to_fb_mapped_rect(const SDL_Surface* src, const SDL_FRect* dst_rect) {
+static bool copy_surface_to_fb_mapped_rect(const SDL_Surface* src,
+                                           const SDL_FRect* dst_rect,
+                                           FBDevPresenterPath* out_path_used) {
     return copy_surface_to_fb_mapped_rect_with_paths(src,
                                                      dst_rect,
                                                      FBDEV_PRESENTER_PATH_CURRENT_TARGET_EXACT,
                                                      FBDEV_PRESENTER_PATH_CURRENT_TARGET_INTEGER_SCALE,
-                                                     FBDEV_PRESENTER_PATH_CURRENT_TARGET_MAPPED_SCALE);
+                                                     FBDEV_PRESENTER_PATH_CURRENT_TARGET_MAPPED_SCALE,
+                                                     out_path_used);
 }
 
 static bool present_readback_rect(SDL_Renderer* renderer, const SDL_FRect* content_rect) {
@@ -835,6 +946,7 @@ static bool present_readback_rect(SDL_Renderer* renderer, const SDL_FRect* conte
     SDL_DestroySurface(src);
     if (copied) {
         previous_pixels_valid = false;
+        invalidate_mapped_source_cache();
     }
     return copied;
 }
@@ -868,10 +980,14 @@ bool FBDevPresenter_PresentCurrentTarget(SDL_Renderer* renderer, const SDL_FRect
         mark_rect_bar_clear_cache(x0, y0, x1, y1);
     }
 
-    const bool copied = copy_surface_to_fb_mapped_rect(src, dst_rect);
+    FBDevPresenterPath present_path = FBDEV_PRESENTER_PATH_NONE;
+    const bool copied = copy_surface_to_fb_mapped_rect(src, dst_rect, &present_path);
     SDL_DestroySurface(src);
     if (copied) {
         previous_pixels_valid = false;
+        if (present_path != FBDEV_PRESENTER_PATH_CURRENT_TARGET_MAPPED_SCALE) {
+            invalidate_mapped_source_cache();
+        }
         maybe_draw_fps_overlay(dst_rect);
     }
     return copied;
@@ -898,13 +1014,18 @@ bool FBDevPresenter_PresentSurface(const SDL_Surface* surface, const SDL_FRect* 
         mark_rect_bar_clear_cache(x0, y0, x1, y1);
     }
 
+    FBDevPresenterPath present_path = FBDEV_PRESENTER_PATH_NONE;
     const bool copied = copy_surface_to_fb_mapped_rect_with_paths(surface,
                                                                   dst_rect,
                                                                   FBDEV_PRESENTER_PATH_SOFTWARE_FRAME_EXACT,
                                                                   FBDEV_PRESENTER_PATH_SOFTWARE_FRAME_INTEGER_SCALE,
-                                                                  FBDEV_PRESENTER_PATH_SOFTWARE_FRAME_MAPPED_SCALE);
+                                                                  FBDEV_PRESENTER_PATH_SOFTWARE_FRAME_MAPPED_SCALE,
+                                                                  &present_path);
     if (copied) {
         previous_pixels_valid = false;
+        if (present_path != FBDEV_PRESENTER_PATH_SOFTWARE_FRAME_MAPPED_SCALE) {
+            invalidate_mapped_source_cache();
+        }
         maybe_draw_fps_overlay(dst_rect);
     }
     return copied;
@@ -1176,6 +1297,7 @@ void FBDevPresenter_Present(SDL_Renderer* renderer, const SDL_FRect* content_rec
                 sync_previous_outside_rect_clear(fallback_x0, fallback_y0, fallback_x1, fallback_y1);
                 mark_rect_bar_clear_cache(fallback_x0, fallback_y0, fallback_x1, fallback_y1);
             }
+            invalidate_mapped_source_cache();
             maybe_draw_fps_overlay(content_rect);
             return;
         }
@@ -1192,6 +1314,7 @@ void FBDevPresenter_Present(SDL_Renderer* renderer, const SDL_FRect* content_rec
                 frame_stats_add_duration(&frame_stats.clear_ns, clear_start_ns);
                 mark_rect_bar_clear_cache(fallback_x0, fallback_y0, fallback_x1, fallback_y1);
                 previous_pixels_valid = false;
+                invalidate_mapped_source_cache();
                 maybe_draw_fps_overlay(content_rect);
                 return;
             }
@@ -1210,6 +1333,7 @@ void FBDevPresenter_Present(SDL_Renderer* renderer, const SDL_FRect* content_rec
                 mark_rect_bar_clear_cache(fallback_x0, fallback_y0, fallback_x1, fallback_y1);
             }
             previous_pixels_valid = false;
+            invalidate_mapped_source_cache();
             maybe_draw_fps_overlay(content_rect);
             return;
         }
@@ -1235,6 +1359,7 @@ void FBDevPresenter_Present(SDL_Renderer* renderer, const SDL_FRect* content_rec
                 mark_rect_bar_clear_cache(fallback_x0, fallback_y0, fallback_x1, fallback_y1);
             }
             previous_pixels_valid = false;
+            invalidate_mapped_source_cache();
             maybe_draw_fps_overlay(content_rect);
             return;
         }
@@ -1258,6 +1383,7 @@ void FBDevPresenter_Present(SDL_Renderer* renderer, const SDL_FRect* content_rec
             mark_rect_bar_clear_cache(fallback_x0, fallback_y0, fallback_x1, fallback_y1);
         }
         previous_pixels_valid = false;
+        invalidate_mapped_source_cache();
         maybe_draw_fps_overlay(content_rect);
         return;
     }
@@ -1343,6 +1469,7 @@ void FBDevPresenter_Present(SDL_Renderer* renderer, const SDL_FRect* content_rec
         mark_rect_bar_clear_cache(fallback_x0, fallback_y0, fallback_x1, fallback_y1);
     }
     previous_pixels_valid = false;
+    invalidate_mapped_source_cache();
     maybe_draw_fps_overlay(content_rect);
 }
 
