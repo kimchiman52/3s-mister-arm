@@ -21,6 +21,20 @@
   - validated `native` controls do not regress by more than `3%`
   - gameplay behavior, aspect ratio, message composition, screenshots, and FPS overlay placement remain correct
 
+## Active Hotspot Matrix
+
+- [x] Nearest-HDMI loops should no longer rely on only `control` and `stage-heavy` for decision-grade validation.
+- [x] Automated nearest gates that are available on this branch today:
+  - `control` via `--gameplay-idle`
+  - `stage-heavy` via `--test-scene-preset stage-heavy`
+  - `ibuki-stage7` via `--test-scene-preset effect-heavy --test-stage 7`
+  - `2p-character-select` via `--perf-wait-test-phase character-select`
+  - `menu-transition` via `--perf-wait-test-phase character-select-transition`
+- [x] Manual or measurement-only hotspot that still matters:
+  - `genei-jin-first-activation` remains a known user-visible lane, but there is still no trusted unattended capture on this branch; do not blindly reland the historically rejected `yun-genei-jin` preset and call it coverage
+- [x] Follow-on rule:
+  - when a nearest HDMI runtime change is large enough to justify expanded validation, sample at least one menu lane and one stage-specific lane in addition to `control` and `stage-heavy`
+
 ## Scope and Constraints
 
 - [x] In scope:
