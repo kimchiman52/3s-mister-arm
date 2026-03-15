@@ -302,6 +302,26 @@
 
 ## Cycle Log
 
+- 2026-03-15T00:05:20-0400
+  - Commit hash:
+    - recorded in the loop closure commit
+  - Bottleneck targeted:
+    - the remaining row-granular `software_frame_mapped_scale` copy tax on the restored nearest HDMI direct path at `1920x1080`, specifically whether tightening changed mapped rows to their changed source-column span could cut bandwidth without touching route selection or native exact behavior
+  - Change summary:
+    - recovered fresh `r6` nearest and native baselines on the live device and confirmed there was still no route regression: nearest stayed on `software_frame_mapped_scale`, native stayed on `software_frame_exact`, and the preserved `r5` row-cache baseline still described the current branch accurately
+    - updated `src/port/sdl/fbdev_presenter.c` to record first/last changed source columns for each cached `384x224` mapped-present row and remap only that destination span through the existing nearest LUT, while preserving the current whole-row fallback whenever the mapped cache or LUT is unavailable
+    - attempted `codex review --uncommitted` for the required review pass, but the helper stalled again; completed a manual scoped review of the kept diff and found no additional correctness issues
+  - Verification result summary:
+    - `git diff --check`, ARM telemetry rebuild/install/package in `3sx-mister-build-nearest-hdmi-perf`, and non-destructive `docker cp` export to `build/mister-telemetry-package-arm-nearest-r7-spans` all passed, with `readelf` still reporting `ELF32 ARM` and hard-float ABI inside the container package
+    - MiSTer `deploy`, `probe`, and bounded `smoke` all passed on the candidate package; probe and smoke still reported `FBDEV: active (1920x1080 ...)`, `Native render path: enabled (scale-mode=nearest)`, and `Software frame mode: on`
+    - `nearest-hdmi-r7-control-full` improved from the fresh `r6` baseline `48.3212 FPS / 20.6948 / 9.7569 / 9.7423 ms` (`frame / present / present_copy`) and `1490016` copied bytes/frame to `65.4989 FPS / 15.2674 / 4.4119 / 4.3974 ms` and `443678.77` copied bytes/frame, while staying on `software_frame_mapped_scale = 1.0000`
+    - `nearest-hdmi-r7-stage-heavy-basic` improved from `33.4123 FPS / 29.9291 / 16.1042 ms` and `2588697.60` copied bytes/frame to `46.3955 FPS / 21.5538 / 7.8331 ms` and `935399.44` copied bytes/frame, again staying fully on `software_frame_mapped_scale`
+    - the first native guard `native-hdmi-r7-control-basic` landed outside the `3%` budget, so the guard was rerun immediately; the accepted rerun `native-hdmi-r7-control-basic-rerun` held `93.0101 FPS / 10.7515 / 0.5518 ms` versus the fresh `r6` guard `94.6604 FPS / 10.5641 / 0.5473 ms`, keeping native exact presentation inside the allowed drift on `software_frame_exact = 1.0000`
+  - Keep/rollback decision with reason:
+    - keep; the dirty-span reland preserves the intended direct nearest HDMI presenter route, cuts mapped present bandwidth materially on both measured gates, and the accepted native rerun stays within guardrail
+  - Next best candidate optimization:
+    - if modern-display nearest still needs another loop after this reland, stay inside partial mapped-present follow-up by moving from coarse row spans to source-tile-guided copies or another sparse-span reuse shape rather than reopening route selection
+
 - 2026-03-14T23:40:54-0400
   - Research target:
     - modern-display HDMI nearest on the restored direct path: confirm the fresh `r4` baseline still matches the preserved `r3` state, then test a single partial-present hypothesis that avoids rewriting unchanged mapped rows to the `1920x1080` framebuffer

@@ -27,12 +27,15 @@ static bool fbdev_active = false;
 static size_t frame_copy_bytes = 0;
 static int* scale_x_lut = NULL;
 static int* scale_y_lut = NULL;
+static int* scale_x_first_dst_for_src = NULL;
+static int* scale_x_last_dst_for_src = NULL;
 static int scale_lut_src_w = 0;
 static int scale_lut_src_h = 0;
 static int scale_lut_raw_x0 = 0;
 static int scale_lut_raw_y0 = 0;
 static int scale_lut_raw_w = 0;
 static int scale_lut_raw_h = 0;
+static int scale_lut_inverse_src_w = 0;
 static bool rect_bar_clear_valid = false;
 static int rect_bar_clear_x0 = 0;
 static int rect_bar_clear_y0 = 0;
@@ -45,6 +48,8 @@ static int staging_height = 0;
 static bool previous_pixels_valid = false;
 static Uint32* mapped_source_pixels = NULL;
 static Uint8* mapped_source_row_changed = NULL;
+static int* mapped_source_row_dirty_x0 = NULL;
+static int* mapped_source_row_dirty_x1 = NULL;
 static int mapped_source_width = 0;
 static int mapped_source_height = 0;
 static int mapped_source_raw_x0 = 0;
@@ -121,14 +126,19 @@ static void frame_stats_note_path(FBDevPresenterPath path) {
 static void reset_scale_lut() {
     SDL_free(scale_x_lut);
     SDL_free(scale_y_lut);
+    SDL_free(scale_x_first_dst_for_src);
+    SDL_free(scale_x_last_dst_for_src);
     scale_x_lut = NULL;
     scale_y_lut = NULL;
+    scale_x_first_dst_for_src = NULL;
+    scale_x_last_dst_for_src = NULL;
     scale_lut_src_w = 0;
     scale_lut_src_h = 0;
     scale_lut_raw_x0 = 0;
     scale_lut_raw_y0 = 0;
     scale_lut_raw_w = 0;
     scale_lut_raw_h = 0;
+    scale_lut_inverse_src_w = 0;
 }
 
 static void invalidate_rect_bar_clear_cache() {
@@ -156,8 +166,12 @@ static void reset_staging_buffers() {
 static void reset_mapped_source_cache() {
     SDL_free(mapped_source_pixels);
     SDL_free(mapped_source_row_changed);
+    SDL_free(mapped_source_row_dirty_x0);
+    SDL_free(mapped_source_row_dirty_x1);
     mapped_source_pixels = NULL;
     mapped_source_row_changed = NULL;
+    mapped_source_row_dirty_x0 = NULL;
+    mapped_source_row_dirty_x1 = NULL;
     mapped_source_width = 0;
     mapped_source_height = 0;
     mapped_source_raw_x0 = 0;
@@ -186,7 +200,10 @@ static bool ensure_mapped_source_cache(int src_w, int src_h) {
     const size_t pixel_count = (size_t)src_w * (size_t)src_h;
     mapped_source_pixels = (Uint32*)SDL_malloc(pixel_count * sizeof(Uint32));
     mapped_source_row_changed = (Uint8*)SDL_malloc((size_t)src_h);
-    if ((mapped_source_pixels == NULL) || (mapped_source_row_changed == NULL)) {
+    mapped_source_row_dirty_x0 = (int*)SDL_malloc(sizeof(int) * (size_t)src_h);
+    mapped_source_row_dirty_x1 = (int*)SDL_malloc(sizeof(int) * (size_t)src_h);
+    if ((mapped_source_pixels == NULL) || (mapped_source_row_changed == NULL) || (mapped_source_row_dirty_x0 == NULL) ||
+        (mapped_source_row_dirty_x1 == NULL)) {
         reset_mapped_source_cache();
         return false;
     }
@@ -302,16 +319,42 @@ static bool ensure_scale_lut(int src_w, int src_h, int raw_x0, int raw_y0, int r
         }
     }
 
+    if ((scale_x_first_dst_for_src == NULL) || (scale_x_last_dst_for_src == NULL) || (scale_lut_inverse_src_w != src_w)) {
+        SDL_free(scale_x_first_dst_for_src);
+        SDL_free(scale_x_last_dst_for_src);
+        scale_x_first_dst_for_src = (int*)SDL_malloc(sizeof(int) * (size_t)src_w);
+        scale_x_last_dst_for_src = (int*)SDL_malloc(sizeof(int) * (size_t)src_w);
+        if ((scale_x_first_dst_for_src == NULL) || (scale_x_last_dst_for_src == NULL)) {
+            SDL_free(scale_x_first_dst_for_src);
+            SDL_free(scale_x_last_dst_for_src);
+            scale_x_first_dst_for_src = NULL;
+            scale_x_last_dst_for_src = NULL;
+            scale_lut_inverse_src_w = 0;
+            return false;
+        }
+        scale_lut_inverse_src_w = src_w;
+    }
+
+    for (int src_x = 0; src_x < src_w; src_x++) {
+        scale_x_first_dst_for_src[src_x] = -1;
+        scale_x_last_dst_for_src[src_x] = -1;
+    }
+
     const int lut_x0 = clamp_to_range(raw_x0, 0, fb_width);
     const int lut_x1 = clamp_to_range(raw_x0 + raw_w, 0, fb_width);
     for (int x = lut_x0; x < lut_x1; x++) {
-        scale_x_lut[x] = (int)(((Sint64)(x - raw_x0) * (Sint64)src_w) / (Sint64)raw_w);
+        const int src_x = clamp_to_range((int)(((Sint64)(x - raw_x0) * (Sint64)src_w) / (Sint64)raw_w), 0, src_w - 1);
+        scale_x_lut[x] = src_x;
+        if (scale_x_first_dst_for_src[src_x] < 0) {
+            scale_x_first_dst_for_src[src_x] = x;
+        }
+        scale_x_last_dst_for_src[src_x] = x + 1;
     }
 
     const int lut_y0 = clamp_to_range(raw_y0, 0, fb_height);
     const int lut_y1 = clamp_to_range(raw_y0 + raw_h, 0, fb_height);
     for (int y = lut_y0; y < lut_y1; y++) {
-        scale_y_lut[y] = (int)(((Sint64)(y - raw_y0) * (Sint64)src_h) / (Sint64)raw_h);
+        scale_y_lut[y] = clamp_to_range((int)(((Sint64)(y - raw_y0) * (Sint64)src_h) / (Sint64)raw_h), 0, src_h - 1);
     }
 
     scale_lut_src_w = src_w;
@@ -320,6 +363,50 @@ static bool ensure_scale_lut(int src_w, int src_h, int raw_x0, int raw_y0, int r
     scale_lut_raw_y0 = raw_y0;
     scale_lut_raw_w = raw_w;
     scale_lut_raw_h = raw_h;
+    return true;
+}
+
+static bool map_source_span_to_dst_span(int clip_x0, int clip_x1, int src_x0, int src_x1, int* out_dst_x0, int* out_dst_x1) {
+    if ((out_dst_x0 == NULL) || (out_dst_x1 == NULL) || (clip_x1 <= clip_x0) || (src_x1 <= src_x0) ||
+        (scale_x_first_dst_for_src == NULL) || (scale_x_last_dst_for_src == NULL) || (scale_lut_inverse_src_w <= 0)) {
+        return false;
+    }
+
+    const int clamped_src_x0 = clamp_to_range(src_x0, 0, scale_lut_inverse_src_w);
+    const int clamped_src_x1 = clamp_to_range(src_x1, 0, scale_lut_inverse_src_w);
+    if (clamped_src_x1 <= clamped_src_x0) {
+        return false;
+    }
+
+    int dst_x0 = clip_x1;
+    int dst_x1 = clip_x0;
+    for (int src_x = clamped_src_x0; src_x < clamped_src_x1; src_x++) {
+        const int first_dst = scale_x_first_dst_for_src[src_x];
+        const int last_dst = scale_x_last_dst_for_src[src_x];
+        if ((first_dst < 0) || (last_dst <= first_dst)) {
+            continue;
+        }
+
+        const int clipped_first_dst = clamp_to_range(first_dst, clip_x0, clip_x1);
+        const int clipped_last_dst = clamp_to_range(last_dst, clip_x0, clip_x1);
+        if (clipped_last_dst <= clipped_first_dst) {
+            continue;
+        }
+
+        if (clipped_first_dst < dst_x0) {
+            dst_x0 = clipped_first_dst;
+        }
+        if (clipped_last_dst > dst_x1) {
+            dst_x1 = clipped_last_dst;
+        }
+    }
+
+    if (dst_x1 <= dst_x0) {
+        return false;
+    }
+
+    *out_dst_x0 = dst_x0;
+    *out_dst_x1 = dst_x1;
     return true;
 }
 
@@ -693,7 +780,6 @@ static bool copy_argb_surface_scaled_to_fb_mapped_rect(const SDL_Surface* argb,
         return false;
     }
 
-    const size_t row_bytes = (size_t)(clip_x1 - clip_x0) * sizeof(Uint32);
     const bool have_lut = ensure_scale_lut(argb->w, argb->h, raw_x0, raw_y0, raw_w, raw_h);
     const size_t src_row_bytes = (size_t)argb->w * sizeof(Uint32);
     const bool cache_ready = ensure_mapped_source_cache(argb->w, argb->h);
@@ -706,21 +792,37 @@ static bool copy_argb_surface_scaled_to_fb_mapped_rect(const SDL_Surface* argb,
 
         // The mapped nearest path is write-bound on HDMI, so skip rows whose 384x224 source data did not change.
         for (int src_y = 0; src_y < argb->h; src_y++) {
-            const Uint8* src_row_bytes_ptr = ((const Uint8*)argb->pixels) + ((size_t)argb->pitch * (size_t)src_y);
+            const Uint32* src_row = (const Uint32*)(((const Uint8*)argb->pixels) + ((size_t)argb->pitch * (size_t)src_y));
             Uint32* cached_row = mapped_source_pixels + ((size_t)mapped_source_width * (size_t)src_y);
             if (!can_skip_unchanged_rows) {
-                SDL_memcpy(cached_row, src_row_bytes_ptr, src_row_bytes);
+                SDL_memcpy(cached_row, src_row, src_row_bytes);
                 mapped_source_row_changed[src_y] = 1;
+                mapped_source_row_dirty_x0[src_y] = 0;
+                mapped_source_row_dirty_x1[src_y] = argb->w;
                 continue;
             }
 
-            if (SDL_memcmp(src_row_bytes_ptr, cached_row, src_row_bytes) == 0) {
+            if (SDL_memcmp(src_row, cached_row, src_row_bytes) == 0) {
                 mapped_source_row_changed[src_y] = 0;
+                mapped_source_row_dirty_x0[src_y] = 0;
+                mapped_source_row_dirty_x1[src_y] = 0;
                 continue;
             }
 
-            SDL_memcpy(cached_row, src_row_bytes_ptr, src_row_bytes);
+            int dirty_x0 = 0;
+            while ((dirty_x0 < argb->w) && (src_row[dirty_x0] == cached_row[dirty_x0])) {
+                dirty_x0 += 1;
+            }
+
+            int dirty_x1 = argb->w;
+            while ((dirty_x1 > dirty_x0) && (src_row[dirty_x1 - 1] == cached_row[dirty_x1 - 1])) {
+                dirty_x1 -= 1;
+            }
+
+            SDL_memcpy(cached_row + dirty_x0, src_row + dirty_x0, (size_t)(dirty_x1 - dirty_x0) * sizeof(Uint32));
             mapped_source_row_changed[src_y] = 1;
+            mapped_source_row_dirty_x0[src_y] = dirty_x0;
+            mapped_source_row_dirty_x1[src_y] = dirty_x1;
             any_row_changed = true;
         }
 
@@ -737,6 +839,8 @@ static bool copy_argb_surface_scaled_to_fb_mapped_rect(const SDL_Surface* argb,
 
     int prev_src_y = -1;
     Uint8* prev_dst_row = NULL;
+    int prev_dst_x0 = 0;
+    int prev_dst_x1 = 0;
 
     for (int y = clip_y0; y < clip_y1; y++) {
         int src_y = have_lut ? scale_y_lut[y] : (int)(((Sint64)(y - raw_y0) * (Sint64)argb->h) / (Sint64)raw_h);
@@ -747,9 +851,20 @@ static bool copy_argb_surface_scaled_to_fb_mapped_rect(const SDL_Surface* argb,
             continue;
         }
 
-        Uint8* dst_row_bytes = fb_map + ((size_t)fb_stride * (size_t)y) + ((size_t)clip_x0 * sizeof(Uint32));
-        if ((src_y == prev_src_y) && (prev_dst_row != NULL)) {
-            SDL_memcpy(dst_row_bytes, prev_dst_row, row_bytes);
+        int dst_x0 = clip_x0;
+        int dst_x1 = clip_x1;
+        if (have_lut && cache_ready &&
+            !map_source_span_to_dst_span(
+                clip_x0, clip_x1, mapped_source_row_dirty_x0[src_y], mapped_source_row_dirty_x1[src_y], &dst_x0, &dst_x1)) {
+            prev_src_y = -1;
+            prev_dst_row = NULL;
+            continue;
+        }
+
+        const size_t row_bytes = (size_t)(dst_x1 - dst_x0) * sizeof(Uint32);
+        Uint8* dst_row_bytes = fb_map + ((size_t)fb_stride * (size_t)y) + ((size_t)dst_x0 * sizeof(Uint32));
+        if ((src_y == prev_src_y) && (prev_dst_row != NULL) && (dst_x0 == prev_dst_x0) && (dst_x1 == prev_dst_x1)) {
+            SDL_memcpy(dst_row_bytes, prev_dst_row + ((size_t)dst_x0 * sizeof(Uint32)), row_bytes);
             frame_copy_bytes += row_bytes;
             continue;
         }
@@ -757,15 +872,17 @@ static bool copy_argb_surface_scaled_to_fb_mapped_rect(const SDL_Surface* argb,
         const Uint32* src_row = (const Uint32*)(((const Uint8*)argb->pixels) + ((size_t)argb->pitch * (size_t)src_y));
         Uint32* dst_row = (Uint32*)dst_row_bytes;
 
-        for (int x = clip_x0; x < clip_x1; x++) {
+        for (int x = dst_x0; x < dst_x1; x++) {
             int src_x = have_lut ? scale_x_lut[x] : (int)(((Sint64)(x - raw_x0) * (Sint64)argb->w) / (Sint64)raw_w);
             src_x = clamp_to_range(src_x, 0, argb->w - 1);
-            dst_row[x - clip_x0] = src_row[src_x];
+            dst_row[x - dst_x0] = src_row[src_x];
         }
 
         frame_copy_bytes += row_bytes;
         prev_src_y = src_y;
-        prev_dst_row = dst_row_bytes;
+        prev_dst_row = fb_map + ((size_t)fb_stride * (size_t)y);
+        prev_dst_x0 = dst_x0;
+        prev_dst_x1 = dst_x1;
     }
 
     return true;
