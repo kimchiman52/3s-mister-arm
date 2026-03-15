@@ -10,8 +10,8 @@ Scope guardrails:
 
 ## Current Snapshot
 
-- Branch: `mister-perf`
-- Build target: `PORT_MISTER=ON` in Docker container `3sx-mister-build`
+- Branch: `nearest-hdmi-perf`
+- Build target: `PORT_MISTER=ON` in Docker container `3sx-mister-build-nearest-hdmi-perf`
 - Device target: `root@192.168.1.171:/media/fat/games/3sx/`
 - Remote tooling rule: use `tools/mister/misterctl.sh` for deploy/probe/smoke and `tools/mister/perf-sampler.sh` for captures. They now share a local MiSTer lock and are the only approved remote entry points for Ralph loops; do not drift back to raw `ssh`/`scp`/`rsync`.
 - Build flavors: `telemetry` keeps perf/parity tooling and remains the loop/developer default; `clean` compiles that telemetry out and is the player-facing runtime/package
@@ -25,6 +25,7 @@ Scope guardrails:
 - Historical hybrid note: the first-cut hybrid subset from `artifacts/mister-port/stock-image-architecture-loop-series/todo.md` remains closed at `65.64% / 56.86%` on `effect-heavy` and `66.85% / 58.19%` on `super-heavy`; do not reopen that track inside the active software-frame stream
 - Active checklist: `artifacts/mister-port/scaled-present-path/todo.md` is the active recovery checklist on `nearest-hdmi-perf`. The wrapper-era branch drift dropped the accepted nearest direct-path reland on the current branch, so keep `artifacts/mister-port/2p-menu-performance/todo.md` as historical context only until the modern-display nearest path is re-closed here
 - Nearest HDMI recovery snapshot: on the current `1920x1080` framebuffer, `nearest-hdmi-r0-control-full` collapsed to `5.7141 FPS` / `175.0050 ms` with `dominant_present_path = readback_rect` and `present_readback.mean_ms = 152.5426`; the restored `nearest-hdmi-r1-control-full` is back on `software_frame_mapped_scale` at `14.2285 FPS` / `70.2816 ms` with zero readback, so the remaining hotspot is mapped nearest scaling cost rather than route selection
+- Nearest HDMI mapped-LUT reland status: the fresh branch-local baseline on the same `1920x1080` output stayed on `software_frame_mapped_scale` but reproduced the high mapped-copy tax at `nearest-hdmi-r2-control-full = 13.7570 FPS / 72.6901 ms / 61.6330 ms present_copy` and `nearest-hdmi-r2-stage-heavy-basic = 13.2111 FPS / 75.6939 ms`; relanding the cached mapped nearest indices in `src/port/sdl/fbdev_presenter.c` improved `nearest-hdmi-r3-control-full` to `21.2800 FPS / 46.9925 ms / 36.0379 ms present_copy` and `nearest-hdmi-r3-stage-heavy-basic` to `20.2745 FPS / 49.3231 ms`, while `native-hdmi-r3-control-basic` stayed effectively flat at `92.7909 FPS`
 - MiSTer default decision: `software-frame-mode` remains default-on for MiSTer builds; the user-facing default survived the earlier accepted `stock-soft-c21-*` gate, and the latest trusted on-device runtime baseline for new overnight work is now the kept `stock-soft-c97-*` gameplay subset together with the unchanged `stock-soft-c80-*` stage-heavy and transition references
 - Current trusted runtime baseline: `stock-soft-c104-control-post` = `89.6375 FPS` / `11.1560 / 3.5664 / 7.0383 / 0.5514 ms` on `stage_id=11`, `stock-soft-c80-stage-heavy-post` = `66.5197 FPS` / `15.0331 / 5.7282 / 8.7805 / 0.5244 ms` on `stage_id=19`, `stock-soft-c104-effect-heavy-rerun` = `62.2484 FPS` / `16.0647 / 6.8537 / 8.6688 / 0.5422 ms` on `stage_id=19`, `stock-soft-c104-super-heavy-post` = `60.8836 FPS` / `16.4248 / 7.0225 / 8.8541 / 0.5482 ms` on `stage_id=19`, and the new exact transition keep `stock-soft-c104-wipe-type1-preserved-post` = `59.9996 FPS` / `16.6668 / 7.6899 / 8.2007 / 0.7762 / 0.2043 ms` on the exact `WipeOut(type = 1)` gate; the kept type-`1` wipe-strip reland preserved `software_frame_mode = on`, kept gameplay direct-presented with `software_frame_reason_solid = 0`, and replaced the old `17`-frame `76`-solid readback collapse with the older `2/300` geometry fallback pattern
 - Perf-capture diagnostic note: `--perf-basic` is now the low-overhead MiSTer capture mode for gameplay triage. It still records `frame/update/render/present`, but disables the heavy per-frame renderer/presenter breakdown. On-device paired `HEAD` captures showed the recent apparent gameplay regression was instrumentation overhead, not a real runtime slowdown: idle `full -> basic` improved from `14.31 / 7.03 / 6.48 / 0.81 ms` to `13.62 / 6.50 / 6.33 / 0.79 ms`, `super-heavy full -> basic` improved from `27.01 / 18.10 / 8.36 / 0.55 ms` to `25.60 / 16.85 / 8.23 / 0.52 ms`, and the `basic` numbers slightly beat the earlier `c21` full captures on both gates
@@ -114,6 +115,25 @@ Scope guardrails:
 - Live-check the Loop 3 clipped-native crop branch on a real low-resolution framebuffer when one is available. The current device output is `1280x720`, so the square-pixels scaling path is verified but the low-resolution crop branch is still only code-reviewed plus logic-checked.
 
 ## Cycle Log
+
+- 2026-03-14T23:15:00-0400
+  - Commit hash:
+    - recorded in the loop closure commit
+  - Bottleneck targeted:
+    - the remaining `software_frame_mapped_scale` copy cost on the restored direct nearest HDMI path at `1920x1080`, specifically the missing mapped-LUT reland that left `copy_argb_surface_scaled_to_fb_mapped_rect(...)` doing per-pixel divides again
+  - Change summary:
+    - revalidated the live branch against the preserved direct-path recovery and confirmed the current code still matched `r1`: nearest HDMI was routed correctly with zero readback, but `nearest-hdmi-r2-control-full` still paid `61.6330 ms` of mapped present-copy at `6220800` copied bytes per frame
+    - relanded the cached mapped nearest scale indices in `src/port/sdl/fbdev_presenter.c`, keying the shared LUT cache on source dimensions plus mapped destination geometry and reusing it for both mapped software-frame present and fullscreen scaled copies
+    - attempted `codex review --uncommitted` for the required review pass, but it stalled during read-only inspection; the kept tree closed on a manual scoped review with no additional correctness findings
+  - Verification result summary:
+    - `git diff --check`, ARM telemetry rebuild/install/package in `3sx-mister-build-nearest-hdmi-perf`, `docker cp` export, MiSTer `deploy`, `probe`, and bounded `smoke` all passed on the candidate package
+    - `nearest-hdmi-r3-control-full` improved from `13.7570 FPS` / `72.6901 / 61.6472 / 61.6330 ms` (`frame / present / present_copy`) to `21.2800 FPS` / `46.9925 / 36.0514 / 36.0379 ms`, while staying on `software_frame_mapped_scale = 1.0000`
+    - `nearest-hdmi-r3-stage-heavy-basic` improved from `13.2111 FPS` / `75.6939 / 61.6070 ms` to `20.2745 FPS` / `49.3231 / 35.4778 ms`, also staying fully on `software_frame_mapped_scale`
+    - `native-hdmi-r3-control-basic` held the guardrail at `92.7909 FPS` / `10.7769 / 0.5601 ms` versus the pre-change `92.9890 FPS` / `10.7540 / 0.5549 ms`, with `software_frame_exact = 1.0000`
+  - Keep/rollback decision with reason:
+    - keep; the current branch regains the previously accepted mapped-LUT reland on the live HDMI path, materially lowers mapped nearest copy cost without reopening readback or upload fallback, and leaves native exact presentation effectively unchanged
+  - Next best candidate optimization:
+    - if nearest HDMI still needs another performance loop after this reland, shift to partial scaled-present / dirty-row style investigation rather than more route-selection work
 
 - 2026-03-14T22:50:00-0400
   - Commit hash:
