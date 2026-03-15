@@ -224,23 +224,6 @@ extract_perf_log_string_field() {
     extract_perf_log_token "$field_name" "$log_line"
 }
 
-extract_marker_block() {
-    local begin_marker="$1"
-    local end_marker="$2"
-    local src_path="$3"
-    local dst_path="$4"
-
-    awk -v begin="$begin_marker" -v end="$end_marker" '
-        {
-            line = $0
-            sub(/\r$/, "", line)
-        }
-        line == begin { capture=1; next }
-        line == end { capture=0; exit }
-        capture { print line }
-    ' "$src_path" >"$dst_path"
-}
-
 if ! command -v jq >/dev/null 2>&1; then
     echo "warning: jq not found locally; summary output will be minimal." >&2
 fi
@@ -541,9 +524,8 @@ remote_afs_missing_marker="/tmp/3sx-afs-${tag}.missing"
 remote_afs_restore_needed=0
 extra_app_args=""
 remote_stdout_path=""
-remote_json_b64_path=""
-remote_log_b64_path=""
 local_remote_log_path=""
+local_downloaded_output_path=""
 
 cleanup_local() {
     local status="${1:-$?}"
@@ -564,10 +546,9 @@ fi
     fi
 
     for cleanup_path in \
+        "${local_downloaded_output_path}" \
         "${local_remote_log_path}" \
-        "${remote_stdout_path}" \
-        "${remote_json_b64_path}" \
-        "${remote_log_b64_path}"; do
+        "${remote_stdout_path}"; do
         if [ -n "${cleanup_path}" ]; then
             rm -f "${cleanup_path}"
         fi
@@ -662,23 +643,22 @@ fi
     mister_scp_upload "$copy_afs_path" "$host" "$user" "$password" "$remote_resources_afs"
 fi
 
-json_begin_marker="__3SX_JSON_BEGIN__"
-json_end_marker="__3SX_JSON_END__"
-log_begin_marker="__3SX_LOG_BEGIN__"
-log_end_marker="__3SX_LOG_END__"
-
 remote_run_cmd=$(cat <<EOF
 set -e
 remote_config_backup='/tmp/3sx-config-${tag}.bak'
 remote_config_missing_marker='/tmp/3sx-config-${tag}.missing'
 cleanup() {
+  status=\$?
   if [ -f "\$remote_config_backup" ]; then
     cp "\$remote_config_backup" '${remote_config_path}'
     rm -f "\$remote_config_backup"
   elif [ -f "\$remote_config_missing_marker" ]; then
     rm -f '${remote_config_path}' "\$remote_config_missing_marker"
   fi
-  rm -f '${remote_output_path}' '${remote_log_path}'
+  if [ "\$status" -ne 0 ]; then
+    rm -f '${remote_output_path}' '${remote_log_path}'
+  fi
+  exit "\$status"
 }
 trap cleanup EXIT
 if [ ! -f '${remote_resources_afs}' ]; then
@@ -712,12 +692,6 @@ SDL_VIDEODRIVER=dummy SDL_VIDEO_DRIVER=dummy SDL_RENDER_DRIVER=software SDL_AUDI
   '${remote_root}/scripts/run-3sx.sh' --perf-capture '${frames}' --scene '${scene}' --perf-output '${remote_output_path}' \
   ${extra_app_args} \
   >'${remote_log_path}' 2>&1
-printf '%s\n' '${json_begin_marker}'
-base64 '${remote_output_path}'
-printf '%s\n' '${json_end_marker}'
-printf '%s\n' '${log_begin_marker}'
-base64 '${remote_log_path}'
-printf '%s\n' '${log_end_marker}'
 EOF
 )
 
@@ -725,21 +699,33 @@ echo "Running perf sample on ${user}@${host} (scene=${scene}, frames=${frames}, 
 
 remote_stdout_path="$(mktemp "${TMPDIR:-/tmp}/3sx-perf-stdout.XXXXXX")"
 mister_ssh_exec "$host" "$user" "$password" "$remote_run_cmd" >"${remote_stdout_path}"
-
-remote_json_b64_path="$(mktemp "${TMPDIR:-/tmp}/3sx-perf-json-b64.XXXXXX")"
-remote_log_b64_path="$(mktemp "${TMPDIR:-/tmp}/3sx-perf-log-b64.XXXXXX")"
-extract_marker_block "${json_begin_marker}" "${json_end_marker}" "${remote_stdout_path}" "${remote_json_b64_path}"
-extract_marker_block "${log_begin_marker}" "${log_end_marker}" "${remote_stdout_path}" "${remote_log_b64_path}"
-
-if [ ! -s "${remote_json_b64_path}" ] || [ ! -s "${remote_log_b64_path}" ]; then
-    echo "error: remote perf capture did not return a structured payload" >&2
+if [ ! -f "${remote_stdout_path}" ]; then
+    echo "error: remote perf capture did not produce a host-side command log" >&2
     cat "${remote_stdout_path}" >&2
     exit 1
 fi
 
-mister_base64_decode_file "${remote_json_b64_path}" "${local_output_path}"
+local_downloaded_output_path="$(mktemp "${TMPDIR:-/tmp}/3sx-perf-json.XXXXXX")"
 local_remote_log_path="$(mktemp "${TMPDIR:-/tmp}/3sx-perf-log.XXXXXX")"
-mister_base64_decode_file "${remote_log_b64_path}" "${local_remote_log_path}"
+
+mister_scp_download "$host" "$user" "$password" "${remote_output_path}" "${local_downloaded_output_path}" || {
+    echo "error: failed to download remote perf JSON from ${remote_output_path}" >&2
+    cat "${remote_stdout_path}" >&2
+    exit 1
+}
+
+mister_scp_download "$host" "$user" "$password" "${remote_log_path}" "${local_remote_log_path}" || {
+    echo "error: failed to download remote perf log from ${remote_log_path}" >&2
+    cat "${remote_stdout_path}" >&2
+    exit 1
+}
+
+mv "${local_downloaded_output_path}" "${local_output_path}"
+local_downloaded_output_path=""
+
+mister_ssh_exec "$host" "$user" "$password" "rm -f '${remote_output_path}' '${remote_log_path}'" >/dev/null || \
+    echo "warning: failed to remove remote perf artifacts ${remote_output_path} and ${remote_log_path}" >&2
+
 tail -n 40 "${local_remote_log_path}" || true
 
 capture_log_line="$(grep 'PERF capture start:' "${local_remote_log_path}" | tail -n 1 || true)"

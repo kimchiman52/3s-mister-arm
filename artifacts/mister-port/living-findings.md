@@ -118,6 +118,24 @@ Scope guardrails:
 
 ## Cycle Log
 
+- 2026-03-15T04:40:00-0400
+  - Commit hash:
+    - recorded in the cycle closeout commit
+  - Bottleneck targeted:
+    - revalidate the modern-display `scale-mode = nearest` symptom on the current canonical package and recover the blocked full-capture transport in `tools/mister/perf-sampler.sh`
+  - Change summary:
+    - verified on the live `1920x1080` HDMI target that the current branch/package still probes as dummy/software + fbdev with `Native render path: enabled (scale-mode=nearest)` and that the preserved nearest runtime has not drifted off `software_frame_mapped_scale`
+    - replaced `perf-sampler.sh`'s large base64-over-SSH artifact return path with serialized `scp` downloads through a new `mister_scp_download(...)` helper, while preserving remote config restore and failure cleanup
+  - Verification result summary:
+    - fresh nearest/runtime guardrails did not reproduce the user-reported slowdown: `nearest-hdmi-r8-control-full` landed at `65.1470 FPS` / `15.3499 / 4.3903 / 4.3758 ms` with `copy_bytes = 443678.77`, `nearest-hdmi-r8-stage-heavy-basic` landed at `46.0352 FPS` / `21.7225 / 7.7571 ms` with `copy_bytes = 935399.44`, and `native-hdmi-r8-control-basic` held `93.4249 FPS` / `10.7038 / 0.5076 ms`
+    - compared with the kept `r7` references, the fresh control and stage-heavy deltas stayed within noise, so the live nearest HDMI path already matches the accepted direct-route + dirty-span state rather than the old regression
+    - `git diff --check` and `bash -n tools/mister/mister-common.sh tools/mister/perf-sampler.sh` passed, and the rerun `nearest-hdmi-r8-control-full` plus post-fix `nearest-hdmi-r8-tooling-smoke` both saved local JSON successfully after the transport change
+    - attempted `codex review --uncommitted` twice for the scoped tooling diff, but the CLI stalled/timed out in this environment before returning findings; the keep decision used manual diff review plus the successful post-fix rerun
+  - Keep/rollback decision with reason:
+    - keep the tooling change; runtime behavior is unchanged, the current HDMI nearest path is already at the kept `r7` performance level, and future nearest loops once again have a reliable full-capture path
+  - Next best candidate optimization:
+    - do not reopen nearest HDMI runtime work until a fresh on-device repro actually falls below the kept `r7` baseline; if a new regression does appear, start from `r8` and target only a newly measured mapped-scale hotspot rather than route recovery
+
 - 2026-03-15T00:05:20-0400
   - Bottleneck targeted:
     - the remaining mapped nearest bandwidth tax on the kept `r5` direct path at `1920x1080`, specifically whether narrowing changed mapped rows to changed source-column spans could cut HDMI writes without changing route selection or native exact behavior

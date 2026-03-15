@@ -439,6 +439,28 @@
   - Next best candidate:
     - start the next measurement-first runtime loop on 2P character select overall, then the immediate post-select super-art selection slowdown, especially the circle/highlight animation around the super-art name, before spending time on lower-priority safe wins
 
+- 2026-03-15T04:40:00-0400
+  - Research target:
+    - revalidate the modern-display `scale-mode = nearest` symptom on the current canonical package and recover the blocked full-capture transport in `tools/mister/perf-sampler.sh`
+  - Change summary:
+    - verified on the live `1920x1080` HDMI target that the current branch/package still probes as dummy/software + fbdev with `Native render path: enabled (scale-mode=nearest)` and that the preserved nearest runtime has not drifted off `software_frame_mapped_scale`
+    - replaced `perf-sampler.sh`'s large base64-over-SSH artifact return path with serialized `scp` downloads through a new `mister_scp_download(...)` helper, while preserving remote config restore and failure cleanup
+  - Verification evidence:
+    - `tools/mister/misterctl.sh lock-status`, `busy-status`, `health`, and `probe` all passed before sampling; the live device still matched `scale-mode = nearest`, `software-frame-mode = on`, and `FBDEV: active (1920x1080 ...)`
+    - fresh nearest/runtime guardrails did not reproduce the user-reported slowdown:
+      - `nearest-hdmi-r8-control-full` landed at `65.1470 FPS` / `15.3499 / 7.3049 / 4.3903 / 4.3758 ms` for `frame/render/present/present_copy`, with `dominant_present_path = software_frame_mapped_scale` and `copy_bytes = 443678.77`
+      - `nearest-hdmi-r8-stage-heavy-basic` landed at `46.0352 FPS` / `21.7225 / 8.8949 / 7.7571 ms`, with `dominant_present_path = software_frame_mapped_scale` and `copy_bytes = 935399.44`
+      - `native-hdmi-r8-control-basic` held `93.4249 FPS` / `10.7038 / 7.0115 / 0.5076 ms`, with `dominant_present_path = software_frame_exact`
+    - compared with the kept `r7` references, control stayed at `65.4989 -> 65.1470 FPS`, `15.2674 -> 15.3499 ms`, `4.3974 -> 4.3758 ms present_copy`; `stage-heavy` stayed at `46.3955 -> 46.0352 FPS`, `21.5538 -> 21.7225 ms`; native improved slightly to `93.4249 FPS`
+    - `git diff --check` plus `bash -n tools/mister/mister-common.sh tools/mister/perf-sampler.sh` passed, the rerun `nearest-hdmi-r8-control-full` saved local JSON successfully after the transport fix, and the post-fix smoke `nearest-hdmi-r8-tooling-smoke` also completed through the new download path
+    - attempted `codex review --uncommitted` twice for the tooling diff, but the review CLI stalled/timed out in this environment before returning findings; final keep used manual diff review plus the successful post-fix rerun above
+  - Keep/rollback decision:
+    - keep the tooling fix; the reported nearest HDMI slowdown does not reproduce on the current branch/package, and the only real regression recovered this cycle was the full-capture transport in `perf-sampler.sh`
+  - Final commit hash:
+    - recorded in the cycle closeout commit
+  - Next best candidate:
+    - do not spend another runtime loop on route recovery unless a fresh on-device nearest repro falls materially below the kept `r7` baseline; if nearest HDMI work resumes, start from the verified `r8` baseline and target only a newly measured mapped-scale hotspot
+
 - 2026-03-11T06:56:00-0400
   - Research target:
     - Chunk 3 mapped-scaler reland: remove the remaining `software_frame_mapped_scale` divide-heavy copy cost in `copy_argb_surface_scaled_to_fb_mapped_rect(...)` now that nearest-mode is on the correct fbdev route

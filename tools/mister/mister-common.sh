@@ -373,27 +373,6 @@ mister_base64_encode_inline() {
     printf '%s' "$1" | base64 | tr -d '\n'
 }
 
-mister_base64_decode_file() {
-    local src_path="$1"
-    local dst_path="$2"
-
-    if base64 --decode <"${src_path}" >"${dst_path}" 2>/dev/null; then
-        return 0
-    fi
-
-    if base64 -D <"${src_path}" >"${dst_path}" 2>/dev/null; then
-        return 0
-    fi
-
-    if command -v openssl >/dev/null 2>&1; then
-        openssl base64 -d -A -in "${src_path}" -out "${dst_path}"
-        return $?
-    fi
-
-    echo "unable to decode base64 payload: no supported decoder found" >&2
-    return 1
-}
-
 mister_ssh_expect() {
     local host="$1"
     local user="$2"
@@ -473,6 +452,48 @@ mister_scp_upload() {
         mister_scp_expect "${src_path}" "${host}" "${user}" "${password}" "${dst_path}"
     else
         scp -o StrictHostKeyChecking=no "${src_path}" "${user}@${host}:${dst_path}"
+    fi
+}
+
+mister_scp_download_expect() {
+    local host="$1"
+    local user="$2"
+    local password="$3"
+    local src_path="$4"
+    local dst_path="$5"
+
+    local timeout_seconds
+    timeout_seconds="$(mister_transfer_timeout)"
+
+    EXPECT_HOST="$host" EXPECT_USER="$user" EXPECT_PASSWORD="$password" EXPECT_SRC="$src_path" EXPECT_DST="$dst_path" EXPECT_TIMEOUT="$timeout_seconds" expect <<'EOF'
+set timeout $env(EXPECT_TIMEOUT)
+set host $env(EXPECT_HOST)
+set user $env(EXPECT_USER)
+set pw $env(EXPECT_PASSWORD)
+set src_path $env(EXPECT_SRC)
+set dst_path $env(EXPECT_DST)
+spawn scp -o StrictHostKeyChecking=no -o PubkeyAuthentication=no -o PreferredAuthentications=password -o NumberOfPasswordPrompts=1 ${user}@${host}:${src_path} "$dst_path"
+expect {
+  -re {[Pp]assword:} { send -- "$pw\r"; exp_continue }
+  eof
+}
+set status [lindex [wait] 3]
+exit $status
+EOF
+}
+
+mister_scp_download() {
+    local host="$1"
+    local user="$2"
+    local password="$3"
+    local src_path="$4"
+    local dst_path="$5"
+
+    if [ -n "${password}" ]; then
+        mister_require_cmd expect || return $?
+        mister_scp_download_expect "${host}" "${user}" "${password}" "${src_path}" "${dst_path}"
+    else
+        scp -o StrictHostKeyChecking=no "${user}@${host}:${src_path}" "${dst_path}"
     fi
 }
 
