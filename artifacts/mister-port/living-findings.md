@@ -121,6 +121,11 @@ Scope guardrails:
 - Historical hybrid track remains closed. Reopen Phase B only with a new stock-image-only plan that either includes `flip` in the first supported subset or produces materially different coverage evidence on the frozen scene matrix.
 - Live-check the Loop 3 clipped-native crop branch on a real low-resolution framebuffer when one is available. The active device output for the current nearest-HDMI loops is `1920x1080`, so the square-pixels scaling path is verified but the low-resolution crop branch is still only code-reviewed plus logic-checked.
 
+- 2026-03-15T19:36:56-0400
+  - Fresh `r23` reruns confirmed the live `1920x1080` nearest HDMI symptom still matches the kept direct path rather than a route regression: control stayed `71.3611 FPS`, stage-heavy `53.1773 FPS`, Genei first activation `29.7460 FPS`, and native control `92.9223 FPS`, all on `software_frame_mapped_scale` or `software_frame_exact`.
+  - A new native Genei comparison showed the remaining modern-display slowdown is still predominantly nearest-present cost, not generic gameplay cost: active Genei frames averaged `42.9206 ms` with `21.2298 ms present_copy` on nearest versus `20.3424 ms` with `0.5519 ms` present on native.
+  - Rejected a clustered repeated-row gap-merge follow-up in `src/port/sdl/fbdev_presenter.c`: it trimmed active Genei `present_copy` `21.2298 -> 20.6406 ms` and worst `present.max_ms` `43.2985 -> 40.4740`, but copied bytes rose, `stage-heavy` regressed `53.1773 -> 51.9476 FPS`, and the result still did not beat the kept `r22` gameplay baseline decisively enough to land. Keep `r22` and target a different presenter-side hotspot next.
+
 - 2026-03-15T19:10:58-0400
   - Fresh `r21` telemetry repro on the live `1920x1080` device confirmed the current branch/package still matches the expected direct path: `control`, `stage-heavy`, `genei-jin-first-activation`, and the native guard all stayed on `software_frame_mapped_scale` or `software_frame_exact`, so the renewed nearest HDMI symptom is still a direct presenter hotspot rather than a route regression.
   - Kept the `r22` repeated-row-only dense-copy reland in `src/port/sdl/fbdev_presenter.c`: only repeated mapped rows whose cached destination runs cover a dense span collapse to one contiguous `memcpy`, while first-row rendering and sparse repeated rows stay on the existing run-copy path.

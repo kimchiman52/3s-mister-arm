@@ -317,6 +317,28 @@
 
 ## Cycle Log
 
+- 2026-03-15T19:36:56-0400
+  - Research target:
+    - revalidate the live `scale-mode = nearest` HDMI slowdown on the kept `r22` branch/runtime, quantify how much of the remaining Genei-Jin first-activation cost is still nearest-present-specific versus general gameplay cost, and test whether conservatively clustering nearby repeated-row dst runs could lower repeated-row memcpy fanout without replaying the rejected broad dense-row shape
+  - Change summary:
+    - redeployed the kept `r22` telemetry runtime to the live `1920x1080` MiSTer output, reverified that nearest still probed as `dummy/software` plus `FBDEV: active`, `Native render path: enabled (scale-mode=nearest)`, and `software_frame_mapped_scale`, and recovered a fresh `r23` gameplay-first baseline on the direct path
+    - added a narrow `src/port/sdl/fbdev_presenter.c` candidate that only merged near-adjacent repeated-row destination runs into a few bounded-overcopy memcpy clusters after the existing dense repeated-row fast path declined, then rebuilt/exported a fresh ARM telemetry package for on-device validation
+    - attempted `codex review --uncommitted` for the scoped presenter diff, but the helper stalled after read-only diff inspection; completed a manual scoped review of the rejected runtime diff and found no additional correctness issue beyond the measured performance tradeoff
+  - Verification evidence:
+    - `git diff --check` passed on the runtime diff before the build; the telemetry ARM rebuild/install/package succeeded inside `3sx-mister-build-nearest-hdmi-perf`, exported cleanly to `build/mister-telemetry-package-arm-nearest-r24-repeatcluster-20260315b`, and `readelf -h` still reported `ELF32` `ARM` with hard-float ABI
+    - MiSTer baseline and candidate `deploy`, `probe`, and bounded `smoke` all passed; both the `r23` baseline and `r24` candidate probes continued to report `FBDEV: active (1920x1080 ...)`, `Native render path: enabled (scale-mode=nearest)`, and `Software frame mode: on`
+    - fresh `r23` baseline confirmed the live user symptom still matched the kept direct path rather than a route regression: `nearest-hdmi-r23-control-full = 71.3611 FPS / 14.0132 / 3.0390 ms` (`frame / present_copy`), `nearest-hdmi-r23-stage-heavy-full = 53.1773 FPS / 18.8050 / 3.9644 ms`, `nearest-hdmi-r23-genei-jin-first-activation = 29.7460 FPS / 33.6180 / 14.9784 ms`, and `native-hdmi-r23-control-basic = 92.9223 FPS / 10.7617 / 0.5233 ms`
+    - the native comparison proved the remaining Genei slowdown is still overwhelmingly nearest-present-specific on modern HDMI: active Genei frames on `nearest` averaged `42.9206 ms` frame, `21.2449 ms` present, and `21.2298 ms` `present_copy`, while the same active window on `native` averaged `20.3424 ms` frame and only `0.5519 ms` present
+    - the clustered repeated-row candidate improved the targeted Genei lane modestly but at the expense of another gameplay-heavy gate: `nearest-hdmi-r24-control-full` stayed essentially flat at `71.5397 FPS / 13.9783 / 3.0649 ms` with copied bytes `183105.60 -> 184730.69`; `nearest-hdmi-r24-genei-jin-first-activation` improved slightly to `29.9211 FPS / 33.4212 / 14.5497 ms` with active Genei frames moving `42.9206 -> 42.6233 ms`, `21.2298 -> 20.6406 ms` `present_copy`, and worst `present.max_ms` `43.2985 -> 40.4740`, but copied bytes rose `1895206.84 -> 1924316.51` overall and `2910410.41 -> 2947542.41` active-window mean
+    - the same candidate regressed `stage-heavy` and slightly weakened the native guard: `nearest-hdmi-r24-stage-heavy-full` fell to `51.9476 FPS / 19.2502 / 4.1152 ms` with copied bytes `262209.65 -> 265298.17`, and `native-hdmi-r24-control-basic` slipped to `92.0948 FPS / 10.8584 / 0.5197 ms`; both stayed on the expected direct/native routes with zero readback
+    - after rollback, the live runtime was restored with `tools/mister/misterctl.sh --password 1 deploy --src build/mister-telemetry-package-arm-nearest-r22-repeatdense-20260315a` plus a final `probe`, returning the device to the kept `r22` branch runtime
+  - Keep/rollback decision with reason:
+    - rollback; the clustered repeated-row gap-merge shape does reduce active Genei present tails, but the gain is too small relative to the `stage-heavy` regression and copied-byte growth, and it still fails to beat the kept `r22` gameplay-first baseline decisively enough to justify landing another repeated-row overcopy tradeoff
+  - Final commit hash:
+    - recorded in the loop closure commit
+  - Next best candidate:
+    - keep `r22` as the active nearest baseline and use the fresh nearest-vs-native Genei delta to target a different present-copy hotspot; do not retry this clustered repeated-row gap-merge shape blindly, and prefer another measurement-backed presenter-side step before widening to menu-only work
+
 - 2026-03-15T19:10:58-0400
   - Research target:
     - verify the live `scale-mode = nearest` HDMI slowdown again on the current branch/package with a fresh telemetry baseline, then test whether collapsing only dense repeated mapped rows could lower the first-activation Genei-Jin present hotspot without replaying the rejected all-row dense-span shape
