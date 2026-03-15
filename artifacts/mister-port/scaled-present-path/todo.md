@@ -479,6 +479,25 @@
   - Next best candidate:
     - do not spend another runtime loop on route recovery unless a fresh on-device nearest repro falls materially below the kept `r7` baseline; if nearest HDMI work resumes, start from the verified `r8` baseline and target only a newly measured mapped-scale hotspot
 
+- 2026-03-15T02:07:09-0400
+  - Research target:
+    - modern-display HDMI nearest on the kept `r11` direct path: test whether trimming each dirty mapped run down to the actual changed source-pixel edges can cut the remaining nearest overcopy without reopening route selection
+  - Change summary:
+    - recovered fresh `r12` nearest control, stage-heavy, and native guard baselines on the live `1920x1080` HDMI target and confirmed there was still no route regression: nearest stayed on `software_frame_mapped_scale`, native stayed on `software_frame_exact`, and the branch still matched the kept `r11` state
+    - updated `src/port/sdl/fbdev_presenter.c` so the mapped nearest path keeps the existing `8`-pixel tile comparisons but trims each dirty run to the actual changed source-pixel edges before mapping/copying it, while preserving the current cache, LUT, and non-mapped fallback behavior
+    - completed a manual scoped review of the single-file diff with focus on cached-row coherence, merged-run bounds, and row-stride limits; no correctness issues were found
+  - Verification evidence:
+    - `git diff --check` passed; the telemetry ARM rebuild/install/package succeeded in fresh `/work-arm-nearest-r13-edgetrim-20260315a` on `3sx-mister-build-nearest-hdmi-perf`, `readelf -h` still reported `ELF32` `ARM` with hard-float ABI, and the package exported cleanly to `build/mister-telemetry-package-arm-nearest-r13-edgetrim-20260315a`
+    - MiSTer `deploy`, `probe`, and bounded `smoke` all passed on the candidate package; probe and smoke still reported `FBDEV: active (1920x1080 ...)`, `Native render path: enabled (scale-mode=nearest)`, and `Software frame mode: on`
+    - control keep gate: `nearest-hdmi-r12-control-full` = `70.7016 FPS` / `14.1440 / 3.4697 / 3.4559 ms` (`frame / present / present_copy`) with `290150.00` copied bytes/frame; `nearest-hdmi-r13-control-full` improved to `71.2450 FPS` / `14.0361 / 3.2068 / 3.1925 ms` with `183059.04` copied bytes/frame, while staying on `software_frame_mapped_scale = 1.0000`
+    - stage-heavy keep gates: `nearest-hdmi-r12-stage-heavy-basic` = `53.2120 FPS` / `18.7928 / 4.8743 ms` with `425478.80` copied bytes/frame; `nearest-hdmi-r13-stage-heavy-basic` improved to `55.4209 FPS` / `18.0437 / 4.2385 ms` with `262170.55` copied bytes/frame. Attribution rerun `nearest-hdmi-r12-stage-heavy-full` = `50.3031 FPS` / `19.8795 / 4.8516 / 4.8369 ms` (`frame / present / present_copy`) improved to `nearest-hdmi-r13-stage-heavy-full` = `52.4355 FPS` / `19.0711 / 4.1679 / 4.1539 ms`, again with the dominant path unchanged at `software_frame_mapped_scale = 1.0000`
+    - bursty tails tightened too: control p95/p99 copied bytes `1134360 / 1355880 -> 908148 / 1098980` with p95/p99 `present_copy` `9.8481 / 11.0254 -> 8.6670 / 10.7886 ms`; stage-heavy p95/p99 copied bytes `1283160 / 1420800 -> 930496 / 1120004` with p95/p99 `present_copy` `10.6873 / 13.1460 -> 9.3520 / 10.6897 ms`
+    - native guard held: `native-hdmi-r12-control-basic` = `92.3190 FPS` / `10.8320 / 0.5340 ms`; `native-hdmi-r13-control-basic` stayed within the `3%` budget at `92.5885 FPS` / `10.8005 / 0.5240 ms` on `software_frame_exact = 1.0000`
+  - Keep/rollback decision with reason:
+    - keep; trimming mapped dirty runs to the actual changed source-pixel edges materially lowers nearest HDMI copy traffic and presenter time on both measured gates without reopening route selection or regressing native exact presentation
+  - Next best candidate optimization:
+    - if modern-display nearest still needs another loop after this reland, stay inside mapped-present sparsity follow-up by testing interior disjoint-run splitting or other finer source-pixel-guided runs on a freshly reproduced HDMI hotspot rather than revisiting route selection
+
 - 2026-03-15T01:36:38-0400
   - Research target:
     - modern-display HDMI nearest on the kept `r9` direct path: test whether the mapped-source `16`-pixel compare/run size is still too coarse on bursty `1920x1080` nearest frames without perturbing the older staging-diff path

@@ -836,34 +836,47 @@ static bool copy_argb_surface_scaled_to_fb_mapped_rect(const SDL_Surface* argb,
             int dirty_x0 = argb->w;
             int dirty_x1 = 0;
             int row_tile_run_count = 0;
-            int run_x0 = -1;
             for (int tile_x0 = 0; tile_x0 < argb->w; tile_x0 += mapped_source_compare_tile_size) {
                 const int tile_x1 = SDL_min(tile_x0 + mapped_source_compare_tile_size, argb->w);
                 const size_t tile_bytes = (size_t)(tile_x1 - tile_x0) * sizeof(Uint32);
                 if (SDL_memcmp(src_row + tile_x0, cached_row + tile_x0, tile_bytes) == 0) {
-                    if (run_x0 >= 0) {
-                        mapped_source_row_tile_run_x0[row_tile_run_base + row_tile_run_count] = run_x0;
-                        mapped_source_row_tile_run_x1[row_tile_run_base + row_tile_run_count] = tile_x0;
-                        row_tile_run_count += 1;
-                        run_x0 = -1;
-                    }
                     continue;
                 }
 
-                SDL_memcpy(cached_row + tile_x0, src_row + tile_x0, tile_bytes);
-                if (run_x0 < 0) {
-                    run_x0 = tile_x0;
+                int changed_x0 = tile_x0;
+                while ((changed_x0 < tile_x1) && (src_row[changed_x0] == cached_row[changed_x0])) {
+                    changed_x0 += 1;
                 }
-                if (tile_x0 < dirty_x0) {
-                    dirty_x0 = tile_x0;
+                int changed_x1 = tile_x1;
+                while ((changed_x1 > changed_x0) && (src_row[changed_x1 - 1] == cached_row[changed_x1 - 1])) {
+                    changed_x1 -= 1;
                 }
-                dirty_x1 = tile_x1;
-            }
+                if (changed_x1 <= changed_x0) {
+                    continue;
+                }
 
-            if (run_x0 >= 0) {
-                mapped_source_row_tile_run_x0[row_tile_run_base + row_tile_run_count] = run_x0;
-                mapped_source_row_tile_run_x1[row_tile_run_base + row_tile_run_count] = argb->w;
-                row_tile_run_count += 1;
+                // Keep tile comparisons coarse, but trim the copied span to the actual changed pixels.
+                SDL_memcpy(cached_row + changed_x0,
+                           src_row + changed_x0,
+                           (size_t)(changed_x1 - changed_x0) * sizeof(Uint32));
+
+                if ((row_tile_run_count > 0) &&
+                    (mapped_source_row_tile_run_x1[row_tile_run_base + row_tile_run_count - 1] >= changed_x0)) {
+                    if (changed_x1 > mapped_source_row_tile_run_x1[row_tile_run_base + row_tile_run_count - 1]) {
+                        mapped_source_row_tile_run_x1[row_tile_run_base + row_tile_run_count - 1] = changed_x1;
+                    }
+                } else {
+                    mapped_source_row_tile_run_x0[row_tile_run_base + row_tile_run_count] = changed_x0;
+                    mapped_source_row_tile_run_x1[row_tile_run_base + row_tile_run_count] = changed_x1;
+                    row_tile_run_count += 1;
+                }
+
+                if (changed_x0 < dirty_x0) {
+                    dirty_x0 = changed_x0;
+                }
+                if (changed_x1 > dirty_x1) {
+                    dirty_x1 = changed_x1;
+                }
             }
 
             mapped_source_row_tile_run_count[src_y] = row_tile_run_count;
