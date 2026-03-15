@@ -439,6 +439,24 @@
   - Next best candidate:
     - start the next measurement-first runtime loop on 2P character select overall, then the immediate post-select super-art selection slowdown, especially the circle/highlight animation around the super-art name, before spending time on lower-priority safe wins
 
+- 2026-03-15T01:04:55-0400
+  - Research target:
+    - modern-display HDMI nearest on the verified `r8` direct path: test whether source-tile-guided dirty runs can cut mapped-copy waste beyond the kept dirty-span reland without reopening route selection
+  - Change summary:
+    - recovered fresh `r8` nearest control, stage-heavy, and native guard baselines on the live `1920x1080` HDMI target and confirmed there was still no route regression: nearest stayed on `software_frame_mapped_scale`, native stayed on `software_frame_exact`, and the preserved `r7` direct-path runtime still described the branch accurately
+    - updated `src/port/sdl/fbdev_presenter.c` to cache per-row `16`-pixel source-tile runs for mapped nearest present and only remap/copy those runs, while preserving the current coarse-span fallback whenever the mapped cache or LUT is unavailable
+    - attempted `codex review --uncommitted` for the required review pass, but the helper stalled again after read-only inspection; completed a manual scoped review of the kept diff and found no additional correctness issues
+  - Verification evidence:
+    - `git diff --check` passed; the ARM telemetry rebuild/install/package through `/work-arm` in `3sx-mister-build-nearest-hdmi-perf` succeeded, `readelf -h build/mister-telemetry-package/bin/3sx` inside the container still reported `ELF32` `ARM` with hard-float ABI, and the package exported cleanly to `build/mister-telemetry-package-arm-nearest-r9-tileruns-export1`
+    - MiSTer `deploy`, `probe`, and bounded `smoke` all passed on the candidate package; probe and smoke still reported `FBDEV: active (1920x1080 ...)`, `Native render path: enabled (scale-mode=nearest)`, and `Software frame mode: on`
+    - control keep gate: `nearest-hdmi-r8-control-full` = `65.1655 FPS` / `15.3455 / 3.8646 / 4.3349 ms` (`frame / present / present_copy`) with `443678.77` copied bytes/frame; `nearest-hdmi-r9-control-full` improved to `67.3417 FPS` / `14.8496 / 3.8646 / 3.8498 ms` with `376378.40` copied bytes/frame, while staying on `software_frame_mapped_scale = 1.0000`
+    - stage-heavy keep gates: `nearest-hdmi-r8-stage-heavy-basic` = `47.0640 FPS` / `21.2476 / 5.3031 ms` with `935399.44` copied bytes/frame; `nearest-hdmi-r9-stage-heavy-basic` improved to `51.9519 FPS` / `19.2486 / 5.3031 ms` with `544665.60` copied bytes/frame. Attribution rerun `nearest-hdmi-r8-stage-heavy-full` = `43.4044 FPS` / `23.0391 / 7.7996 / 7.7855 ms` (`frame / present / present_copy`) improved to `nearest-hdmi-r9-stage-heavy-full` = `48.7243 FPS` / `20.5236 / 5.3149 / 5.2997 ms`, again with `544665.60` copied bytes/frame and the dominant path unchanged at `software_frame_mapped_scale = 1.0000`
+    - native guard held: `native-hdmi-r8-control-basic` = `92.2942 FPS` / `10.8349 / 0.5355 ms`; `native-hdmi-r9-control-basic` stayed within the `3%` budget at `91.5832 FPS` / `10.9190 / 0.5368 ms` on `software_frame_exact = 1.0000`
+  - Keep/rollback decision with reason:
+    - keep; the source-tile reland preserves the intended direct nearest HDMI presenter route, materially cuts mapped-copy cost on both the control and heavy gates, and leaves native exact presentation effectively flat
+  - Next best candidate optimization:
+    - if modern-display nearest needs another loop after this reland, stay on mapped-present sparsity follow-up by testing finer sparse-span merging or a newly reproduced player-visible HDMI gate before reopening route selection
+
 - 2026-03-15T04:40:00-0400
   - Research target:
     - revalidate the modern-display `scale-mode = nearest` symptom on the current canonical package and recover the blocked full-capture transport in `tools/mister/perf-sampler.sh`
