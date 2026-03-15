@@ -479,6 +479,25 @@
   - Next best candidate:
     - do not spend another runtime loop on route recovery unless a fresh on-device nearest repro falls materially below the kept `r7` baseline; if nearest HDMI work resumes, start from the verified `r8` baseline and target only a newly measured mapped-scale hotspot
 
+- 2026-03-15T01:36:38-0400
+  - Research target:
+    - modern-display HDMI nearest on the kept `r9` direct path: test whether the mapped-source `16`-pixel compare/run size is still too coarse on bursty `1920x1080` nearest frames without perturbing the older staging-diff path
+  - Change summary:
+    - recovered fresh `r10` nearest control, stage-heavy, and native guard baselines on the live `1920x1080` HDMI target and confirmed there was still no route regression: nearest stayed on `software_frame_mapped_scale`, native stayed on `software_frame_exact`, and the live device still matched the kept `r9` state
+    - updated `src/port/sdl/fbdev_presenter.c` to split mapped-source compare/run granularity from `staging_tile_size` and tighten only the mapped nearest path to `8`-pixel source tiles
+    - completed a manual scoped review of the single-file diff with focus on mapped-row stride sizing, run-count bounds, and non-nearest staging isolation; no correctness issues were found
+  - Verification evidence:
+    - `git diff --check` passed; the telemetry ARM rebuild/install/package succeeded in a fresh `/work-arm-nearest-r11-subtile8-20260315a` tree, `readelf -h` still reported `ELF32` `ARM` with hard-float ABI, and the package exported cleanly to `build/mister-telemetry-package-arm-nearest-r11-subtile8-20260315a`
+    - MiSTer `deploy`, `probe`, and bounded `smoke` all passed on the candidate package; probe and smoke still reported `FBDEV: active (1920x1080 ...)`, `Native render path: enabled (scale-mode=nearest)`, and `Software frame mode: on`
+    - control keep gate: `nearest-hdmi-r10-control-full` = `67.3534 FPS` / `14.8471 / 3.8729 / 3.8585 ms` (`frame / present / present_copy`) with `376378.40` copied bytes/frame; `nearest-hdmi-r11-control-full` improved to `69.0655 FPS` / `14.4790 / 3.5510 / 3.5371 ms` with `290150.00` copied bytes/frame, while staying on `software_frame_mapped_scale = 1.0000`
+    - stage-heavy keep gate: `nearest-hdmi-r10-stage-heavy-basic` = `52.1437 FPS` / `19.1778 / 5.3019 ms` with `544665.60` copied bytes/frame; `nearest-hdmi-r11-stage-heavy-basic` improved to `53.4607 FPS` / `18.7053 / 4.8880 ms` with `425478.80` copied bytes/frame, again staying on `software_frame_mapped_scale = 1.0000`
+    - bursty control frames tightened too: `nearest-hdmi-r10-control-full` p95/p99 copied bytes `1423200 / 1615920` and p95/p99 `present_copy` `10.6263 / 11.9710 ms` improved to `1080840 / 1350360` bytes and `9.2925 / 11.3529 ms` on `nearest-hdmi-r11-control-full`
+    - native guard held: `native-hdmi-r10-control-basic` = `93.8539 FPS / 10.6549 / 0.5217 ms`; `native-hdmi-r11-control-basic` stayed within the `3%` budget at `93.2606 FPS / 10.7226 / 0.5371 ms` on `software_frame_exact = 1.0000`
+  - Keep/rollback decision with reason:
+    - keep; the narrower mapped-source run granularity trims nearest HDMI copy traffic on both measured gates, improves bursty present cost, and leaves native exact presentation within guardrail while keeping the older staging-diff path untouched
+  - Next best candidate optimization:
+    - if modern-display nearest still needs another loop after this reland, stay inside mapped-present sparsity follow-up by testing even finer edge trimming or source-pixel-guided runs on a freshly reproduced HDMI hotspot rather than reopening route selection
+
 - 2026-03-11T06:56:00-0400
   - Research target:
     - Chunk 3 mapped-scaler reland: remove the remaining `software_frame_mapped_scale` divide-heavy copy cost in `copy_argb_surface_scaled_to_fb_mapped_rect(...)` now that nearest-mode is on the correct fbdev route

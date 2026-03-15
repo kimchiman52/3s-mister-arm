@@ -75,6 +75,7 @@ static const bool frame_stats_breakdown_enabled = false;
 
 enum {
     staging_tile_size = 16,
+    mapped_source_compare_tile_size = 8,
     staging_full_copy_guardrail_percent = 80,
 };
 
@@ -209,7 +210,8 @@ static bool ensure_mapped_source_cache(int src_w, int src_h) {
     reset_mapped_source_cache();
 
     const size_t pixel_count = (size_t)src_w * (size_t)src_h;
-    const int tile_run_stride = (src_w + (staging_tile_size - 1)) / staging_tile_size;
+    const int tile_run_stride =
+        (src_w + (mapped_source_compare_tile_size - 1)) / mapped_source_compare_tile_size;
     mapped_source_pixels = (Uint32*)SDL_malloc(pixel_count * sizeof(Uint32));
     mapped_source_row_changed = (Uint8*)SDL_malloc((size_t)src_h);
     mapped_source_row_dirty_x0 = (int*)SDL_malloc(sizeof(int) * (size_t)src_h);
@@ -835,8 +837,8 @@ static bool copy_argb_surface_scaled_to_fb_mapped_rect(const SDL_Surface* argb,
             int dirty_x1 = 0;
             int row_tile_run_count = 0;
             int run_x0 = -1;
-            for (int tile_x0 = 0; tile_x0 < argb->w; tile_x0 += staging_tile_size) {
-                const int tile_x1 = SDL_min(tile_x0 + staging_tile_size, argb->w);
+            for (int tile_x0 = 0; tile_x0 < argb->w; tile_x0 += mapped_source_compare_tile_size) {
+                const int tile_x1 = SDL_min(tile_x0 + mapped_source_compare_tile_size, argb->w);
                 const size_t tile_bytes = (size_t)(tile_x1 - tile_x0) * sizeof(Uint32);
                 if (SDL_memcmp(src_row + tile_x0, cached_row + tile_x0, tile_bytes) == 0) {
                     if (run_x0 >= 0) {

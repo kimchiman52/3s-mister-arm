@@ -137,6 +137,24 @@ Scope guardrails:
   - Next best candidate optimization:
     - do not reopen nearest HDMI runtime work until a fresh on-device repro actually falls below the kept `r7` baseline; if a new regression does appear, start from `r8` and target only a newly measured mapped-scale hotspot rather than route recovery
 
+- 2026-03-15T01:36:38-0400
+  - Commit hash:
+    - recorded in the cycle closeout commit
+  - Bottleneck targeted:
+    - remaining mapped-present overcopy on the kept nearest HDMI direct path, specifically whether the mapped-source `16`-pixel compare/run size was still too coarse on bursty `1920x1080` nearest frames
+  - Change summary:
+    - recovered fresh `r10` nearest and native baselines and confirmed the live device still matched the kept `r9` direct-path state on `software_frame_mapped_scale`
+    - split the mapped-source compare/run size from the staging diff tile size in `src/port/sdl/fbdev_presenter.c` and tightened only the mapped nearest path to `8`-pixel source tiles
+    - completed a manual scoped review of the single-file diff; no correctness issues were found
+  - Verification result summary:
+    - `nearest-hdmi-r11-control-full` improved from `67.3534 FPS / 14.8471 / 3.8729 / 3.8585 ms` (`frame / present / present_copy`) and `376378.40` copied bytes/frame to `69.0655 FPS / 14.4790 / 3.5510 / 3.5371 ms` and `290150.00` copied bytes/frame
+    - `nearest-hdmi-r11-stage-heavy-basic` improved from `52.1437 FPS / 19.1778 / 5.3019 ms` and `544665.60` copied bytes/frame to `53.4607 FPS / 18.7053 / 4.8880 ms` and `425478.80` copied bytes/frame
+    - bursty control frames tightened too: p95/p99 copied bytes fell `1423200 / 1615920 -> 1080840 / 1350360`, while the native guard `native-hdmi-r11-control-basic` stayed within budget at `93.2606 FPS / 10.7226 / 0.5371 ms` versus `93.8539 / 10.6549 / 0.5217`
+  - Keep/rollback decision with reason:
+    - keep; the narrower mapped-source run size trims nearest HDMI copy traffic on both measured gates, improves bursty present cost, and leaves native exact presentation within guardrail
+  - Next best candidate optimization:
+    - if nearest HDMI still needs another loop, stay inside mapped-present sparsity follow-up and test even finer edge trimming or source-pixel-guided runs on a freshly reproduced HDMI hotspot rather than reopening route selection
+
 - 2026-03-15T01:04:55-0400
   - Commit hash:
     - recorded in the cycle closeout commit
