@@ -124,6 +124,10 @@ Scope guardrails:
   - Fresh `r14` nearest HDMI repro confirmed the live branch still matches the kept `r13` direct path on `1920x1080`: `nearest-hdmi-r14-control-full = 70.8695 FPS / 14.1104 ms / 3.1499 ms present_copy`, `nearest-hdmi-r14-stage-heavy-basic = 55.3620 FPS / 18.0629 ms / 4.2224 ms present`, and `native-hdmi-r14-control-basic = 92.3879 FPS / 10.8239 ms`
   - Rejected the `r15` interior disjoint-run split inside changed `8`-pixel mapped compare tiles in `src/port/sdl/fbdev_presenter.c`: it lowered copy bytes (`183059.04 -> 166429.97` control, `262170.55 -> 233904.96` stage-heavy) but regressed nearest presenter time and FPS (`present_copy 3.1499 -> 3.3083 ms` on control, `4.2960 -> 4.5633 ms` on stage-heavy full, `55.3620 -> 54.5137 FPS` on stage-heavy basic). Keep the `r13` baseline and do not retry this higher-fanout run shape blindly.
 
+- 2026-03-15T18:02:21-0400
+  - Fresh `r17` nearest HDMI repro on `1920x1080` confirmed the current branch still matched the kept direct path: control, stage-heavy, and Ibuki stayed on `software_frame_mapped_scale = 1.0000`, while `2p-character-select` and `menu-transition` kept only the same tiny `0.0033` and `0.0067` fallback incidence as the baseline.
+  - Kept the `r18` cached row-run destination-span reland in `src/port/sdl/fbdev_presenter.c`: it left copied bytes unchanged but improved the heavier or more user-visible lanes on the real device (`stage-heavy 51.9464 -> 52.6269 FPS`, `ibuki-stage7 55.5333 -> 57.3638`, `2p-character-select 36.1584 -> 37.0479`, `menu-transition 36.4438 -> 37.6084`, native guard `92.9887 -> 93.6382`) while only slightly regressing control (`72.2987 -> 71.7994`). Recover trustworthy automated `genei-jin-first-activation` coverage before another menu-specific nearest experiment.
+
 ## Cycle Log
 
 - 2026-03-15T04:40:00-0400

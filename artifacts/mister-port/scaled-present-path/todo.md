@@ -532,6 +532,25 @@
   - Next best candidate optimization:
     - keep route selection closed and do not retry this higher-fanout disjoint-run shape blindly; if another nearest HDMI loop is needed, stay on lower-overhead mapped-present sparsity follow-up or move to a newly reproduced player-visible nearest gate
 
+- 2026-03-15T18:02:21-0400
+  - Research target:
+    - verify the live nearest HDMI slowdown was still on the kept direct fbdev route with the current branch/package, then test whether caching per-row-run destination spans in `copy_argb_surface_scaled_to_fb_mapped_rect(...)` could cut repeated span-mapping overhead on the modern-display nearest path without changing copy coverage
+  - Change summary:
+    - rebuilt and redeployed a fresh telemetry ARM baseline from the current branch in `/work-arm-r17-baseline-20260315a`, recovered `r17` nearest control, stage-heavy, Ibuki stage 7, 2P character-select, menu-transition, and native guard captures, and confirmed the live device still matched the preserved direct `software_frame_mapped_scale` path on `1920x1080`
+    - updated `src/port/sdl/fbdev_presenter.c` so mapped nearest row runs cache their destination `x` spans alongside the existing source-run cache and reuse those cached spans for both row reuse and per-pixel expansion instead of remapping each run on every copied row
+    - attempted the independent `codex review --uncommitted` pass twice, but the helper stalled without returning findings; completed a manual scoped review of the single-file diff with focus on clip invariants, cached-run coherence, and mapped/native isolation and found no correctness issue
+  - Verification evidence:
+    - `git diff --check` passed; the telemetry ARM rebuild/install/package succeeded in `/work-arm-r17-baseline-20260315a`, exported cleanly to `build/mister-telemetry-package-arm-nearest-r17-baseline-20260315a` and `build/mister-telemetry-package-arm-nearest-r18-runspan-20260315a`, and `readelf -h` still reported `ELF32` `ARM` with hard-float ABI
+    - MiSTer `deploy`, `probe`, and bounded `smoke` all passed on the baseline and candidate packages; every probe still reported `FBDEV: active (1920x1080 ...)`, `Native render path: enabled (scale-mode=nearest)`, and `Software frame mode: on`
+    - fresh baseline confirmed there was no route regression on the current branch: `nearest-hdmi-r17-control-full = 72.2987 FPS / 13.8315 / 3.0743 / 3.0601 ms` (`frame / present / present_copy`) with `183059.04` copied bytes/frame, `nearest-hdmi-r17-stage-heavy-full = 51.9464 FPS / 19.2506 / 4.2805 / 4.2666 ms` with `262170.55` copied bytes/frame, `nearest-hdmi-r17-ibuki-stage7-basic = 55.5333 FPS / 18.0072 / 7.3953 ms`, `nearest-hdmi-r17-2p-character-select-full = 36.1584 FPS / 27.6561 / 11.7866 / 11.5624 ms`, `nearest-hdmi-r17-menu-transition-basic = 36.4438 FPS / 27.4395 / 12.4014 ms`, and `native-hdmi-r17-control-basic = 92.9887 FPS / 10.7540 / 0.5357 ms`; nearest gameplay lanes stayed on `software_frame_mapped_scale = 1.0000`, with menu guardrails still at only `0.9967/0.0033` and `0.9933/0.0067` direct/fallback ratios
+    - the cached-run-span candidate kept the same route and improved the heavier or more user-visible lanes: `nearest-hdmi-r18-control-full` moved slightly down to `71.7994 FPS / 13.9277 / 3.0785 / 3.0633 ms`, but `nearest-hdmi-r18-stage-heavy-full` improved to `52.6269 FPS / 19.0017 / 4.0178 / 4.0000 ms`, `nearest-hdmi-r18-ibuki-stage7-basic` to `57.3638 FPS / 17.4326 / 6.8850 ms`, `nearest-hdmi-r18-2p-character-select-full` to `37.0479 FPS / 26.9921 / 10.8882 / 10.6609 ms` with `software_frame_direct_present_ratio = 0.9967`, `nearest-hdmi-r18-menu-transition-basic` to `37.6084 FPS / 26.5898 / 11.5579 ms` with `software_frame_direct_present_ratio = 0.9933`, and `native-hdmi-r18-control-basic` improved slightly to `93.6382 FPS / 10.6794 / 0.5219 ms`
+  - Keep/rollback decision with reason:
+    - keep; despite a small control regression, the cached destination-span reland preserves the direct nearest HDMI route, improves both gameplay-heavy keep gates plus the user-visible 2P/menu guardrails, and slightly improves the native exact guard without reopening route selection
+  - Final commit hash:
+    - recorded in the cycle closeout commit
+  - Next best candidate optimization:
+    - recover a trustworthy automated `genei-jin-first-activation` gameplay lane on this branch using the existing Yun helper flags before another menu-specific nearest experiment, and do not count coverage until the capture proves nonzero `p1_super_art_active_frames_total` with the first activation inside the sampled window
+
 - 2026-03-15T17:27:37-0400
   - Research target:
     - fresh nearest HDMI repro on the kept `r16` direct path, then test whether tightening the mapped-source compare tile from `8` to `4` source pixels can cut the remaining modern-display overcopy on `1920x1080` menu-heavy nearest frames without reopening route selection

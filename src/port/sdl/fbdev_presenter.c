@@ -53,6 +53,8 @@ static int* mapped_source_row_dirty_x1 = NULL;
 static int* mapped_source_row_tile_run_count = NULL;
 static int* mapped_source_row_tile_run_x0 = NULL;
 static int* mapped_source_row_tile_run_x1 = NULL;
+static int* mapped_source_row_tile_run_dst_x0 = NULL;
+static int* mapped_source_row_tile_run_dst_x1 = NULL;
 static int mapped_source_width = 0;
 static int mapped_source_height = 0;
 static int mapped_source_raw_x0 = 0;
@@ -176,6 +178,8 @@ static void reset_mapped_source_cache() {
     SDL_free(mapped_source_row_tile_run_count);
     SDL_free(mapped_source_row_tile_run_x0);
     SDL_free(mapped_source_row_tile_run_x1);
+    SDL_free(mapped_source_row_tile_run_dst_x0);
+    SDL_free(mapped_source_row_tile_run_dst_x1);
     mapped_source_pixels = NULL;
     mapped_source_row_changed = NULL;
     mapped_source_row_dirty_x0 = NULL;
@@ -183,6 +187,8 @@ static void reset_mapped_source_cache() {
     mapped_source_row_tile_run_count = NULL;
     mapped_source_row_tile_run_x0 = NULL;
     mapped_source_row_tile_run_x1 = NULL;
+    mapped_source_row_tile_run_dst_x0 = NULL;
+    mapped_source_row_tile_run_dst_x1 = NULL;
     mapped_source_width = 0;
     mapped_source_height = 0;
     mapped_source_raw_x0 = 0;
@@ -219,9 +225,12 @@ static bool ensure_mapped_source_cache(int src_w, int src_h) {
     mapped_source_row_tile_run_count = (int*)SDL_malloc(sizeof(int) * (size_t)src_h);
     mapped_source_row_tile_run_x0 = (int*)SDL_malloc(sizeof(int) * (size_t)src_h * (size_t)tile_run_stride);
     mapped_source_row_tile_run_x1 = (int*)SDL_malloc(sizeof(int) * (size_t)src_h * (size_t)tile_run_stride);
+    mapped_source_row_tile_run_dst_x0 = (int*)SDL_malloc(sizeof(int) * (size_t)src_h * (size_t)tile_run_stride);
+    mapped_source_row_tile_run_dst_x1 = (int*)SDL_malloc(sizeof(int) * (size_t)src_h * (size_t)tile_run_stride);
     if ((mapped_source_pixels == NULL) || (mapped_source_row_changed == NULL) || (mapped_source_row_dirty_x0 == NULL) ||
         (mapped_source_row_dirty_x1 == NULL) || (mapped_source_row_tile_run_count == NULL) ||
-        (mapped_source_row_tile_run_x0 == NULL) || (mapped_source_row_tile_run_x1 == NULL)) {
+        (mapped_source_row_tile_run_x0 == NULL) || (mapped_source_row_tile_run_x1 == NULL) ||
+        (mapped_source_row_tile_run_dst_x0 == NULL) || (mapped_source_row_tile_run_dst_x1 == NULL)) {
         reset_mapped_source_cache();
         return false;
     }
@@ -822,6 +831,16 @@ static bool copy_argb_surface_scaled_to_fb_mapped_rect(const SDL_Surface* argb,
                 mapped_source_row_tile_run_count[src_y] = 1;
                 mapped_source_row_tile_run_x0[row_tile_run_base] = 0;
                 mapped_source_row_tile_run_x1[row_tile_run_base] = argb->w;
+                if (have_lut && (mapped_source_row_tile_run_dst_x0 != NULL) && (mapped_source_row_tile_run_dst_x1 != NULL)) {
+                    int dst_x0 = 0;
+                    int dst_x1 = 0;
+                    if (!map_source_span_to_dst_span(clip_x0, clip_x1, 0, argb->w, &dst_x0, &dst_x1)) {
+                        dst_x0 = 0;
+                        dst_x1 = 0;
+                    }
+                    mapped_source_row_tile_run_dst_x0[row_tile_run_base] = dst_x0;
+                    mapped_source_row_tile_run_dst_x1[row_tile_run_base] = dst_x1;
+                }
                 continue;
             }
 
@@ -883,6 +902,24 @@ static bool copy_argb_surface_scaled_to_fb_mapped_rect(const SDL_Surface* argb,
             mapped_source_row_changed[src_y] = row_tile_run_count > 0 ? 1 : 0;
             mapped_source_row_dirty_x0[src_y] = row_tile_run_count > 0 ? dirty_x0 : 0;
             mapped_source_row_dirty_x1[src_y] = row_tile_run_count > 0 ? dirty_x1 : 0;
+            if (have_lut && (mapped_source_row_tile_run_dst_x0 != NULL) && (mapped_source_row_tile_run_dst_x1 != NULL)) {
+                for (int run_index = 0; run_index < row_tile_run_count; run_index++) {
+                    int dst_x0 = 0;
+                    int dst_x1 = 0;
+                    if (!map_source_span_to_dst_span(clip_x0,
+                                                     clip_x1,
+                                                     mapped_source_row_tile_run_x0[row_tile_run_base + run_index],
+                                                     mapped_source_row_tile_run_x1[row_tile_run_base + run_index],
+                                                     &dst_x0,
+                                                     &dst_x1)) {
+                        dst_x0 = 0;
+                        dst_x1 = 0;
+                    }
+
+                    mapped_source_row_tile_run_dst_x0[row_tile_run_base + run_index] = dst_x0;
+                    mapped_source_row_tile_run_dst_x1[row_tile_run_base + run_index] = dst_x1;
+                }
+            }
             any_row_changed = any_row_changed || (row_tile_run_count > 0);
         }
 
@@ -921,14 +958,9 @@ static bool copy_argb_surface_scaled_to_fb_mapped_rect(const SDL_Surface* argb,
 
             if ((src_y == prev_src_y) && (prev_dst_row != NULL) && prev_row_used_tile_runs) {
                 for (int run_index = 0; run_index < row_tile_run_count; run_index++) {
-                    int dst_x0 = 0;
-                    int dst_x1 = 0;
-                    if (!map_source_span_to_dst_span(clip_x0,
-                                                     clip_x1,
-                                                     mapped_source_row_tile_run_x0[row_tile_run_base + run_index],
-                                                     mapped_source_row_tile_run_x1[row_tile_run_base + run_index],
-                                                     &dst_x0,
-                                                     &dst_x1)) {
+                    const int dst_x0 = mapped_source_row_tile_run_dst_x0[row_tile_run_base + run_index];
+                    const int dst_x1 = mapped_source_row_tile_run_dst_x1[row_tile_run_base + run_index];
+                    if (dst_x1 <= dst_x0) {
                         continue;
                     }
 
@@ -949,11 +981,9 @@ static bool copy_argb_surface_scaled_to_fb_mapped_rect(const SDL_Surface* argb,
             } else {
                 const Uint32* src_row = (const Uint32*)(((const Uint8*)argb->pixels) + ((size_t)argb->pitch * (size_t)src_y));
                 for (int run_index = 0; run_index < row_tile_run_count; run_index++) {
-                    const int src_x0 = mapped_source_row_tile_run_x0[row_tile_run_base + run_index];
-                    const int src_x1 = mapped_source_row_tile_run_x1[row_tile_run_base + run_index];
-                    int dst_x0 = 0;
-                    int dst_x1 = 0;
-                    if (!map_source_span_to_dst_span(clip_x0, clip_x1, src_x0, src_x1, &dst_x0, &dst_x1)) {
+                    const int dst_x0 = mapped_source_row_tile_run_dst_x0[row_tile_run_base + run_index];
+                    const int dst_x1 = mapped_source_row_tile_run_dst_x1[row_tile_run_base + run_index];
+                    if (dst_x1 <= dst_x0) {
                         continue;
                     }
 
