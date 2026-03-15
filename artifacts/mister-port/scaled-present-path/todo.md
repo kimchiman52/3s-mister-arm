@@ -317,6 +317,27 @@
 
 ## Cycle Log
 
+- 2026-03-15T19:10:58-0400
+  - Research target:
+    - verify the live `scale-mode = nearest` HDMI slowdown again on the current branch/package with a fresh telemetry baseline, then test whether collapsing only dense repeated mapped rows could lower the first-activation Genei-Jin present hotspot without replaying the rejected all-row dense-span shape
+  - Change summary:
+    - reverified the live `1920x1080` MiSTer output against the current branch/package and then recovered a fresh telemetry baseline with the direct fbdev route intact; the nearest HDMI path was still `dummy/software` plus `FBDEV: active`, `Native render path: enabled (scale-mode=nearest)`, and `software_frame_mapped_scale` rather than `fullscreen_staging` or readback fallback
+    - updated `src/port/sdl/fbdev_presenter.c` so repeated mapped rows can collapse to one contiguous `memcpy` only when they already reuse the prior destination row and their cached destination tile runs cover a dense enough span; first-row rendering and sparse repeated rows stay on the existing run-copy path
+    - completed a manual scoped review of the kept presenter diff and found no additional correctness issues
+  - Verification evidence:
+    - `git diff --check` passed before the deploy step; the telemetry ARM rebuild/install/package succeeded inside `/work-arm` in `3sx-mister-build-nearest-hdmi-perf`, exported cleanly to `build/mister-telemetry-package-arm-nearest-r22-repeatdense-20260315a`, and `readelf -h` still reported `ELF32` `ARM` with hard-float ABI
+    - MiSTer baseline/candidate `deploy`, `probe`, and bounded `smoke` all passed on the telemetry package, with probe continuing to report `FBDEV: active (1920x1080 ...)`, `Native render path: enabled (scale-mode=nearest)`, and `Software frame mode: on`
+    - fresh `r21` gameplay baseline confirmed the user-visible slowdown is still direct-path mapped present cost rather than route drift: `nearest-hdmi-r21-control-full = 71.5297 FPS / 13.9802 / 3.0152 / 3.0004 ms` (`frame / present / present_copy`), `nearest-hdmi-r21-stage-heavy-full = 52.2461 FPS / 19.1402 / 4.0302 / 4.0156 ms`, and `nearest-hdmi-r21-genei-jin-first-activation = 29.6182 FPS / 33.7630 / 14.9579 / 14.9399 ms` with `p1_super_art_active_frames_total = 121` and `p1_super_art_active_first_frame = 179`
+    - the kept `r22` repeated-row-only dense-copy reland stayed on the same direct route and improved the primary Genei hotspot without hurting the gameplay guardrails: `nearest-hdmi-r22-control-full = 71.9975 FPS / 13.8894 / 3.0095 / 2.9949 ms`, `nearest-hdmi-r22-stage-heavy-full = 52.2905 FPS / 19.1239 / 4.0317 / 4.0170 ms`, and `nearest-hdmi-r22-genei-jin-first-activation = 30.1628 FPS / 33.1534 / 14.5952 / 14.5817 ms`
+    - inside the active Genei window, the kept reland moved `frame_time.mean` from `43.1074` to `41.9121 ms`, `present.mean_ms` from `21.2856` to `20.3522`, `present_copy.mean_ms` from `21.2610` to `20.3386`, and worst-case `present.max_ms` from `42.3779` to `39.1904`, while copied bytes only nudged `2887272.36 -> 2910410.41` instead of reproducing the rejected `r20` byte explosion
+    - native guard stayed flat on the present-path change: `native-hdmi-r22-control-basic = 92.6996 FPS / 10.7875 / 0.5453 ms` versus the trusted `native-hdmi-r19-control-basic = 92.7239 FPS / 10.7847 / 0.5450 ms`
+  - Keep/rollback decision with reason:
+    - keep; this repeated-row-only dense-span collapse improves the gameplay-first Genei hotspot and trims worst present tails while leaving `control`, `stage-heavy`, and the native guard effectively flat, and it avoids the broad copied-byte regression that invalidated `r20`
+  - Final commit hash:
+    - recorded in the loop closure commit
+  - Next best candidate:
+    - stay on gameplay-first nearest HDMI validation and rerank the remaining Genei hotspot between presenter copy fanout and the still-material renderer cost; do not reopen the broader dense-row-collapse shape or let menu-only lanes outrank gameplay gates
+
 - 2026-03-15T18:38:50-0400
   - Research target:
     - verify that the live nearest HDMI slowdown with `scale-mode = nearest` was still on the kept direct fbdev path, recover trustworthy automated `genei-jin-first-activation` coverage on this branch, and then test one dense-row mapped-present hypothesis against that gameplay-first hotspot before reopening broader experiments

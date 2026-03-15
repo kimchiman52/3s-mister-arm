@@ -79,6 +79,9 @@ enum {
     staging_tile_size = 16,
     mapped_source_compare_tile_size = 8,
     staging_full_copy_guardrail_percent = 80,
+    mapped_repeat_dense_row_min_runs = 4,
+    mapped_repeat_dense_row_min_span_pixels = 256,
+    mapped_repeat_dense_row_min_coverage_percent = 94,
 };
 
 static int clamp_to_range(int value, int min, int max) {
@@ -435,6 +438,55 @@ static bool map_source_span_to_dst_span(int clip_x0, int clip_x1, int src_x0, in
 
     *out_dst_x0 = dst_x0;
     *out_dst_x1 = dst_x1;
+    return true;
+}
+
+static bool get_dense_repeated_row_copy_span(int row_tile_run_base,
+                                             int row_tile_run_count,
+                                             int* out_dst_x0,
+                                             int* out_dst_x1) {
+    if ((row_tile_run_count < mapped_repeat_dense_row_min_runs) || (out_dst_x0 == NULL) || (out_dst_x1 == NULL) ||
+        (mapped_source_row_tile_run_dst_x0 == NULL) || (mapped_source_row_tile_run_dst_x1 == NULL)) {
+        return false;
+    }
+
+    int dense_dst_x0 = fb_width;
+    int dense_dst_x1 = 0;
+    size_t sparse_pixels = 0;
+    int valid_runs = 0;
+
+    for (int run_index = 0; run_index < row_tile_run_count; run_index++) {
+        const int dst_x0 = mapped_source_row_tile_run_dst_x0[row_tile_run_base + run_index];
+        const int dst_x1 = mapped_source_row_tile_run_dst_x1[row_tile_run_base + run_index];
+        if (dst_x1 <= dst_x0) {
+            continue;
+        }
+
+        if (dst_x0 < dense_dst_x0) {
+            dense_dst_x0 = dst_x0;
+        }
+        if (dst_x1 > dense_dst_x1) {
+            dense_dst_x1 = dst_x1;
+        }
+        sparse_pixels += (size_t)(dst_x1 - dst_x0);
+        valid_runs += 1;
+    }
+
+    if (valid_runs < mapped_repeat_dense_row_min_runs) {
+        return false;
+    }
+
+    const int dense_pixels = dense_dst_x1 - dense_dst_x0;
+    if (dense_pixels < mapped_repeat_dense_row_min_span_pixels) {
+        return false;
+    }
+
+    if ((sparse_pixels * 100u) < ((size_t)dense_pixels * mapped_repeat_dense_row_min_coverage_percent)) {
+        return false;
+    }
+
+    *out_dst_x0 = dense_dst_x0;
+    *out_dst_x1 = dense_dst_x1;
     return true;
 }
 
@@ -957,19 +1009,30 @@ static bool copy_argb_surface_scaled_to_fb_mapped_rect(const SDL_Surface* argb,
             bool copied_any_tile_run = false;
 
             if ((src_y == prev_src_y) && (prev_dst_row != NULL) && prev_row_used_tile_runs) {
-                for (int run_index = 0; run_index < row_tile_run_count; run_index++) {
-                    const int dst_x0 = mapped_source_row_tile_run_dst_x0[row_tile_run_base + run_index];
-                    const int dst_x1 = mapped_source_row_tile_run_dst_x1[row_tile_run_base + run_index];
-                    if (dst_x1 <= dst_x0) {
-                        continue;
-                    }
-
-                    const size_t row_bytes = (size_t)(dst_x1 - dst_x0) * sizeof(Uint32);
-                    SDL_memcpy(dst_row_base + ((size_t)dst_x0 * sizeof(Uint32)),
-                               prev_dst_row + ((size_t)dst_x0 * sizeof(Uint32)),
+                int dense_dst_x0 = 0;
+                int dense_dst_x1 = 0;
+                if (get_dense_repeated_row_copy_span(row_tile_run_base, row_tile_run_count, &dense_dst_x0, &dense_dst_x1)) {
+                    const size_t row_bytes = (size_t)(dense_dst_x1 - dense_dst_x0) * sizeof(Uint32);
+                    SDL_memcpy(dst_row_base + ((size_t)dense_dst_x0 * sizeof(Uint32)),
+                               prev_dst_row + ((size_t)dense_dst_x0 * sizeof(Uint32)),
                                row_bytes);
                     frame_copy_bytes += row_bytes;
                     copied_any_tile_run = true;
+                } else {
+                    for (int run_index = 0; run_index < row_tile_run_count; run_index++) {
+                        const int dst_x0 = mapped_source_row_tile_run_dst_x0[row_tile_run_base + run_index];
+                        const int dst_x1 = mapped_source_row_tile_run_dst_x1[row_tile_run_base + run_index];
+                        if (dst_x1 <= dst_x0) {
+                            continue;
+                        }
+
+                        const size_t row_bytes = (size_t)(dst_x1 - dst_x0) * sizeof(Uint32);
+                        SDL_memcpy(dst_row_base + ((size_t)dst_x0 * sizeof(Uint32)),
+                                   prev_dst_row + ((size_t)dst_x0 * sizeof(Uint32)),
+                                   row_bytes);
+                        frame_copy_bytes += row_bytes;
+                        copied_any_tile_run = true;
+                    }
                 }
 
                 if (copied_any_tile_run) {
