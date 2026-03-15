@@ -118,6 +118,10 @@ Scope guardrails:
 - Historical hybrid track remains closed. Reopen Phase B only with a new stock-image-only plan that either includes `flip` in the first supported subset or produces materially different coverage evidence on the frozen scene matrix.
 - Live-check the Loop 3 clipped-native crop branch on a real low-resolution framebuffer when one is available. The current device output is `1280x720`, so the square-pixels scaling path is verified but the low-resolution crop branch is still only code-reviewed plus logic-checked.
 
+- 2026-03-15T02:40:25-0400
+  - Fresh `r14` nearest HDMI repro confirmed the live branch still matches the kept `r13` direct path on `1920x1080`: `nearest-hdmi-r14-control-full = 70.8695 FPS / 14.1104 ms / 3.1499 ms present_copy`, `nearest-hdmi-r14-stage-heavy-basic = 55.3620 FPS / 18.0629 ms / 4.2224 ms present`, and `native-hdmi-r14-control-basic = 92.3879 FPS / 10.8239 ms`
+  - Rejected the `r15` interior disjoint-run split inside changed `8`-pixel mapped compare tiles in `src/port/sdl/fbdev_presenter.c`: it lowered copy bytes (`183059.04 -> 166429.97` control, `262170.55 -> 233904.96` stage-heavy) but regressed nearest presenter time and FPS (`present_copy 3.1499 -> 3.3083 ms` on control, `4.2960 -> 4.5633 ms` on stage-heavy full, `55.3620 -> 54.5137 FPS` on stage-heavy basic). Keep the `r13` baseline and do not retry this higher-fanout run shape blindly.
+
 ## Cycle Log
 
 - 2026-03-15T04:40:00-0400

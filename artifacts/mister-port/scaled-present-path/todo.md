@@ -498,6 +498,25 @@
   - Next best candidate optimization:
     - if modern-display nearest still needs another loop after this reland, stay inside mapped-present sparsity follow-up by testing interior disjoint-run splitting or other finer source-pixel-guided runs on a freshly reproduced HDMI hotspot rather than revisiting route selection
 
+- 2026-03-15T02:40:25-0400
+  - Research target:
+    - fresh modern-display HDMI nearest repro on the kept `r13` direct path, then test whether splitting changed `8`-pixel compare tiles into interior disjoint source runs can cut the remaining mapped-present overcopy without reopening route selection
+  - Change summary:
+    - rebuilt the current branch as a telemetry ARM package in fresh `/work-arm-r14b`, redeployed it to MiSTer, and recovered fresh `r14` nearest control, stage-heavy, and native guard baselines; the live branch still matched the kept `r13` state with `software_frame_mapped_scale` on `1920x1080`, zero readback, and no route drift
+    - tried a single-file runtime reland in `src/port/sdl/fbdev_presenter.c` that split changed mapped compare tiles into disjoint source-pixel runs instead of copying each changed tile as one trimmed span
+    - completed a manual scoped review of the candidate diff with focus on run-count bounds, cached-row coherence, and fallback coverage; no correctness issue was found, but the runtime change was rejected on measured performance
+  - Verification evidence:
+    - `git diff --check` passed before and after the attempted runtime reland; the telemetry ARM rebuild/install/package succeeded in `/work-arm-r14b`, exported cleanly to `build/mister-telemetry-package-arm-nearest-r14-baseline-20260315a` and `build/mister-telemetry-package-arm-nearest-r15-disjointruns-20260315a`, and `readelf -h` still reported `ELF32` `ARM` with hard-float ABI
+    - MiSTer `deploy`, `probe`, and bounded `smoke` all passed on the candidate package, and baseline restore `deploy` plus final `probe` passed after rollback; every probe in the cycle still reported `FBDEV: active (1920x1080 ...)`, `Native render path: enabled (scale-mode=nearest)`, and `Software frame mode: on`
+    - fresh baseline confirmed the current branch/package still matches the kept direct nearest path: `nearest-hdmi-r14-control-full = 70.8695 FPS / 14.1104 / 3.1638 / 3.1499 ms` (`frame / present / present_copy`) with `183059.04` copied bytes/frame, `nearest-hdmi-r14-stage-heavy-full = 51.8518 FPS / 19.2857 / 4.3133 / 4.2960 ms` with `262170.55` copied bytes/frame, `nearest-hdmi-r14-stage-heavy-basic = 55.3620 FPS / 18.0629 / 4.2224 ms`, and `native-hdmi-r14-control-basic = 92.3879 FPS / 10.8239 / 0.5306 ms`
+    - the disjoint-run candidate lowered copied bytes but still regressed nearest timing: `nearest-hdmi-r15-control-full` moved to `70.6957 FPS / 14.1451 / 3.3252 / 3.3083 ms` with `166429.97` copied bytes/frame, `nearest-hdmi-r15-stage-heavy-full` to `50.7895 FPS / 19.6891 / 4.5776 / 4.5633 ms` with `233904.96` copied bytes/frame, and `nearest-hdmi-r15-stage-heavy-basic` to `54.5137 FPS / 18.3440 / 4.5521 ms`; native guard `native-hdmi-r15-control-basic` stayed flat at `92.5896 FPS / 10.8004 / 0.5433 ms`
+  - Keep/rollback decision with reason:
+    - rollback; splitting changed compare tiles into disjoint source runs does reduce mapped-copy bytes, but the extra run fanout raises `present` / `present_copy` enough to regress both nearest HDMI keep gates, so the branch and live device were restored to the kept baseline package
+  - Final commit hash:
+    - recorded in the cycle closeout commit
+  - Next best candidate optimization:
+    - keep route selection closed and do not retry this higher-fanout disjoint-run shape blindly; if another nearest HDMI loop is needed, stay on lower-overhead mapped-present sparsity follow-up or move to a newly reproduced player-visible nearest gate
+
 - 2026-03-15T01:36:38-0400
   - Research target:
     - modern-display HDMI nearest on the kept `r9` direct path: test whether the mapped-source `16`-pixel compare/run size is still too coarse on bursty `1920x1080` nearest frames without perturbing the older staging-diff path
