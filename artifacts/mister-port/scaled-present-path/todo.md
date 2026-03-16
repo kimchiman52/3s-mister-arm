@@ -333,6 +333,26 @@
 
 ## Cycle Log
 
+- 2026-03-16T23:10:18-0400
+  - Research target:
+    - test whether a cheaper nearest presenter repeat-row-body cut can now land on the current accepted runtime by caching per-source-row repeat metadata once during mapped-row cache build instead of rescanning run spans on every repeated row
+  - Change summary:
+    - reopened the older metadata-only presenter lane in `src/port/sdl/fbdev_presenter.c` and cached each changed source row's dense-repeat destination span plus repeat-gap pixels alongside the existing mapped-row cache, then reused that metadata in repeat-work prediction and repeated-row replay without changing copy policy, copied bytes, or template gating
+    - rebuilt/exported `build/mister-telemetry-package-arm-nearest-r47-repeat-metadata-20260316a` through the validated `/work-arm` ARM telemetry path in `3sx-mister-build-nearest-hdmi-perf`, redeployed the accepted `build/mister-telemetry-package-arm-nearest-r41-sparse-shape-20260316a` first for same-session baselines, then deployed/probed/smoked the candidate and reran the matched nearest matrix on-device
+    - completed the required review pass as a manual scoped review of the single-file presenter diff with focus on cache lifetime, per-row reset correctness on changed/unchanged rows, and preserving identical repeat-row copy policy and copy-byte shape; no actionable correctness issue survived review, so no post-review code fix was needed
+  - Verification evidence:
+    - `git diff --check` passed before the build; the `/work-arm` ARM telemetry rebuild/install/package succeeded in `3sx-mister-build-nearest-hdmi-perf`, `readelf -h` still reported `ELF32` `ARM` with hard-float ABI, and the exported candidate package was `build/mister-telemetry-package-arm-nearest-r47-repeat-metadata-20260316a`
+    - accepted-runtime baseline `deploy`, candidate `deploy`, both `probe` runs, and candidate `smoke` all passed through `tools/mister/misterctl.sh`; every capture stayed on `dummy/software` with `FBDEV: active (1920x1080 ...)`, `Native render path: enabled`, and direct `software_frame_mapped_scale` or `software_frame_exact`
+    - nearest control stayed effectively flat while present trimmed slightly at unchanged bytes: `nearest-r47-base-control-basic = 75.8209 FPS / 13.1890 / 7.0366 / 2.9559 ms` versus `nearest-r47-post-control-basic = 75.8121 / 13.1905 / 7.0711 / 2.9021` (`frame / render / present`) with `copy_bytes 183105.60` on both runs
+    - the recovered ordinary gameplay lane improved on the first post run and held the rerun: `nearest-r47-base-basic-exchange-basic = 62.9061 FPS / 15.8967 / 7.0937 / 4.5755 ms`, `nearest-r47-post-basic-exchange-basic = 63.5992 / 15.7235 / 6.9766 / 4.4106`, and `nearest-r47-post-basic-exchange-basic-rerun = 63.7713 / 15.6810 / 6.9691 / 4.4799` with unchanged `copy_bytes 495530.19`
+    - trusted `genei-jin-first-activation` basic improved on the player-visible lane at unchanged bytes and activation timing: `nearest-r47-base-genei-basic = 41.0823 FPS / 24.3414 / 10.1720 / 7.6478 ms` versus `nearest-r47-post-genei-basic = 41.5436 / 24.0711 / 10.1232 / 7.3896`, with `copy_bytes 1895206.84` and `p1_super_first = 179` on both runs
+    - matched full Genei improved at unchanged workload shape: `nearest-r47-base-genei-full = 34.3606 FPS / 29.1031 / 10.5423 / 10.5761 / 10.5587 ms` versus `nearest-r47-post-genei-full = 34.6926 / 28.8246 / 10.4810 / 10.3374 / 10.3246` (`frame / render / present / present_copy`), while `copy_bytes` stayed fixed `1895206.84`, `mapped_repeat_row.mean_ms` fell `3.8285 -> 3.7508`, and the active Genei window moved `34.7153 / 12.6057 / 13.6240 / 13.6011 ms` to `34.2553 / 12.6017 / 13.2370 / 13.2237` with `mapped_repeat_row.mean_ms 4.7842 -> 4.6858`
+    - the native guard improved instead of regressing: `native-r47-base-control-basic = 92.4684 FPS / 10.8145 / 7.0246 / 0.5622 ms` versus `native-r47-post-control-basic = 93.8077 / 10.6601 / 6.9357 / 0.5119`
+  - Keep/rollback decision with reason:
+    - keep; on the current accepted runtime, caching repeat-row metadata once per changed source row is finally a real nearest-HDMI win instead of a bookkeeping-only micro-move. It leaves bytes and routing unchanged, stays flat on `control`, improves the recovered ordinary `basic-exchange` lane on both post runs, improves trusted Genei basic and full, and improves the native guard
+  - Next best candidate:
+    - if presenter work continues, stay on the repeat-row body and target a tighter tail-gated cut that can move more than the remaining ~`0.1 ms` repeat-row slice without reintroducing the previously rejected dense-overcopy or template-gap shapes; otherwise re-rank this improved presenter baseline against broader gameplay raster residue again before spending the next loop on `sdl_game_renderer.c`
+
 - 2026-03-16T19:32:24-0400
   - Research target:
     - recover a separate ordinary nearest gameplay gate with attacks, jumps, and non-super exchanges that actually exercises software-frame raster residue before another broader `sdl_game_renderer.c` reland

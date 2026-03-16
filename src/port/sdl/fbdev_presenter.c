@@ -55,6 +55,9 @@ static int* mapped_source_row_tile_run_x0 = NULL;
 static int* mapped_source_row_tile_run_x1 = NULL;
 static int* mapped_source_row_tile_run_dst_x0 = NULL;
 static int* mapped_source_row_tile_run_dst_x1 = NULL;
+static int* mapped_source_row_dense_dst_x0 = NULL;
+static int* mapped_source_row_dense_dst_x1 = NULL;
+static size_t* mapped_source_row_repeat_gap_pixels = NULL;
 static Uint32* mapped_repeat_row_template_pixels = NULL;
 static int mapped_repeat_row_template_width = 0;
 static int mapped_source_width = 0;
@@ -198,6 +201,9 @@ static void reset_mapped_source_cache() {
     SDL_free(mapped_source_row_tile_run_x1);
     SDL_free(mapped_source_row_tile_run_dst_x0);
     SDL_free(mapped_source_row_tile_run_dst_x1);
+    SDL_free(mapped_source_row_dense_dst_x0);
+    SDL_free(mapped_source_row_dense_dst_x1);
+    SDL_free(mapped_source_row_repeat_gap_pixels);
     mapped_source_pixels = NULL;
     mapped_source_row_changed = NULL;
     mapped_source_row_dirty_x0 = NULL;
@@ -207,6 +213,9 @@ static void reset_mapped_source_cache() {
     mapped_source_row_tile_run_x1 = NULL;
     mapped_source_row_tile_run_dst_x0 = NULL;
     mapped_source_row_tile_run_dst_x1 = NULL;
+    mapped_source_row_dense_dst_x0 = NULL;
+    mapped_source_row_dense_dst_x1 = NULL;
+    mapped_source_row_repeat_gap_pixels = NULL;
     mapped_source_width = 0;
     mapped_source_height = 0;
     mapped_source_raw_x0 = 0;
@@ -251,10 +260,15 @@ static bool ensure_mapped_source_cache(int src_w, int src_h) {
     mapped_source_row_tile_run_x1 = (int*)SDL_malloc(sizeof(int) * (size_t)src_h * (size_t)tile_run_stride);
     mapped_source_row_tile_run_dst_x0 = (int*)SDL_malloc(sizeof(int) * (size_t)src_h * (size_t)tile_run_stride);
     mapped_source_row_tile_run_dst_x1 = (int*)SDL_malloc(sizeof(int) * (size_t)src_h * (size_t)tile_run_stride);
+    mapped_source_row_dense_dst_x0 = (int*)SDL_malloc(sizeof(int) * (size_t)src_h);
+    mapped_source_row_dense_dst_x1 = (int*)SDL_malloc(sizeof(int) * (size_t)src_h);
+    mapped_source_row_repeat_gap_pixels = (size_t*)SDL_malloc(sizeof(size_t) * (size_t)src_h);
     if ((mapped_source_pixels == NULL) || (mapped_source_row_changed == NULL) || (mapped_source_row_dirty_x0 == NULL) ||
         (mapped_source_row_dirty_x1 == NULL) || (mapped_source_row_tile_run_count == NULL) ||
         (mapped_source_row_tile_run_x0 == NULL) || (mapped_source_row_tile_run_x1 == NULL) ||
-        (mapped_source_row_tile_run_dst_x0 == NULL) || (mapped_source_row_tile_run_dst_x1 == NULL)) {
+        (mapped_source_row_tile_run_dst_x0 == NULL) || (mapped_source_row_tile_run_dst_x1 == NULL) ||
+        (mapped_source_row_dense_dst_x0 == NULL) || (mapped_source_row_dense_dst_x1 == NULL) ||
+        (mapped_source_row_repeat_gap_pixels == NULL)) {
         reset_mapped_source_cache();
         return false;
     }
@@ -569,8 +583,10 @@ static MappedRepeatRowWorkEstimate estimate_mapped_repeat_row_work_for_clip(int 
         if (scale_y_lut[y + 1] == src_y) {
             estimate.repeat_rows += 1;
             estimate.run_copies += (Uint64)mapped_source_row_tile_run_count[src_y];
-            if ((mapped_source_row_tile_run_dst_x0 != NULL) && (mapped_source_row_tile_run_dst_x1 != NULL) &&
-                (mapped_source_row_tile_run_stride > 0)) {
+            if (mapped_source_row_repeat_gap_pixels != NULL) {
+                estimate.gap_pixels += mapped_source_row_repeat_gap_pixels[src_y];
+            } else if ((mapped_source_row_tile_run_dst_x0 != NULL) && (mapped_source_row_tile_run_dst_x1 != NULL) &&
+                       (mapped_source_row_tile_run_stride > 0)) {
                 const int row_tile_run_base = src_y * mapped_source_row_tile_run_stride;
                 estimate.gap_pixels += get_row_tile_run_gap_pixels(row_tile_run_base, mapped_source_row_tile_run_count[src_y]);
             }
@@ -1045,6 +1061,15 @@ static bool copy_argb_surface_scaled_to_fb_mapped_rect(const SDL_Surface* argb,
                 mapped_source_row_dirty_x0[src_y] = 0;
                 mapped_source_row_dirty_x1[src_y] = argb->w;
                 mapped_source_row_tile_run_count[src_y] = 1;
+                if (mapped_source_row_dense_dst_x0 != NULL) {
+                    mapped_source_row_dense_dst_x0[src_y] = 0;
+                }
+                if (mapped_source_row_dense_dst_x1 != NULL) {
+                    mapped_source_row_dense_dst_x1[src_y] = 0;
+                }
+                if (mapped_source_row_repeat_gap_pixels != NULL) {
+                    mapped_source_row_repeat_gap_pixels[src_y] = 0;
+                }
                 mapped_source_row_tile_run_x0[row_tile_run_base] = 0;
                 mapped_source_row_tile_run_x1[row_tile_run_base] = argb->w;
                 if (have_lut && (mapped_source_row_tile_run_dst_x0 != NULL) && (mapped_source_row_tile_run_dst_x1 != NULL)) {
@@ -1065,6 +1090,15 @@ static bool copy_argb_surface_scaled_to_fb_mapped_rect(const SDL_Surface* argb,
                 mapped_source_row_dirty_x0[src_y] = 0;
                 mapped_source_row_dirty_x1[src_y] = 0;
                 mapped_source_row_tile_run_count[src_y] = 0;
+                if (mapped_source_row_dense_dst_x0 != NULL) {
+                    mapped_source_row_dense_dst_x0[src_y] = 0;
+                }
+                if (mapped_source_row_dense_dst_x1 != NULL) {
+                    mapped_source_row_dense_dst_x1[src_y] = 0;
+                }
+                if (mapped_source_row_repeat_gap_pixels != NULL) {
+                    mapped_source_row_repeat_gap_pixels[src_y] = 0;
+                }
                 continue;
             }
 
@@ -1118,6 +1152,15 @@ static bool copy_argb_surface_scaled_to_fb_mapped_rect(const SDL_Surface* argb,
             mapped_source_row_changed[src_y] = row_tile_run_count > 0 ? 1 : 0;
             mapped_source_row_dirty_x0[src_y] = row_tile_run_count > 0 ? dirty_x0 : 0;
             mapped_source_row_dirty_x1[src_y] = row_tile_run_count > 0 ? dirty_x1 : 0;
+            if (mapped_source_row_dense_dst_x0 != NULL) {
+                mapped_source_row_dense_dst_x0[src_y] = 0;
+            }
+            if (mapped_source_row_dense_dst_x1 != NULL) {
+                mapped_source_row_dense_dst_x1[src_y] = 0;
+            }
+            if (mapped_source_row_repeat_gap_pixels != NULL) {
+                mapped_source_row_repeat_gap_pixels[src_y] = 0;
+            }
             if (row_tile_run_count > 0) {
                 frame_stats.mapped_changed_rows += 1;
                 frame_stats.mapped_row_runs += (Uint64)row_tile_run_count;
@@ -1141,6 +1184,20 @@ static bool copy_argb_surface_scaled_to_fb_mapped_rect(const SDL_Surface* argb,
 
                     mapped_source_row_tile_run_dst_x0[row_tile_run_base + run_index] = dst_x0;
                     mapped_source_row_tile_run_dst_x1[row_tile_run_base + run_index] = dst_x1;
+                }
+
+                if ((mapped_source_row_dense_dst_x0 != NULL) && (mapped_source_row_dense_dst_x1 != NULL)) {
+                    int dense_dst_x0 = 0;
+                    int dense_dst_x1 = 0;
+                    if (get_dense_repeated_row_copy_span(
+                            row_tile_run_base, row_tile_run_count, &dense_dst_x0, &dense_dst_x1)) {
+                        mapped_source_row_dense_dst_x0[src_y] = dense_dst_x0;
+                        mapped_source_row_dense_dst_x1[src_y] = dense_dst_x1;
+                    }
+                }
+                if (mapped_source_row_repeat_gap_pixels != NULL) {
+                    mapped_source_row_repeat_gap_pixels[src_y] =
+                        get_row_tile_run_gap_pixels(row_tile_run_base, row_tile_run_count);
                 }
             }
             any_row_changed = any_row_changed || (row_tile_run_count > 0);
@@ -1195,10 +1252,9 @@ static bool copy_argb_surface_scaled_to_fb_mapped_rect(const SDL_Surface* argb,
             const int row_tile_run_base = src_y * mapped_source_row_tile_run_stride;
             Uint8* dst_row_base = fb_map + ((size_t)fb_stride * (size_t)y);
             bool copied_any_tile_run = false;
-            int dense_dst_x0 = 0;
-            int dense_dst_x1 = 0;
-            const bool have_dense_copy_span =
-                get_dense_repeated_row_copy_span(row_tile_run_base, row_tile_run_count, &dense_dst_x0, &dense_dst_x1);
+            const int dense_dst_x0 = mapped_source_row_dense_dst_x0 != NULL ? mapped_source_row_dense_dst_x0[src_y] : 0;
+            const int dense_dst_x1 = mapped_source_row_dense_dst_x1 != NULL ? mapped_source_row_dense_dst_x1[src_y] : 0;
+            const bool have_dense_copy_span = dense_dst_x1 > dense_dst_x0;
             const bool next_row_repeats_src =
                 (repeat_row_template_bytes != NULL) && ((y + 1) < clip_y1) && (scale_y_lut[y + 1] == src_y);
             // Sparse repeated rows are the expensive tail; raster them into RAM first so replay stays off fb reads.
@@ -1207,7 +1263,10 @@ static bool copy_argb_surface_scaled_to_fb_mapped_rect(const SDL_Surface* argb,
             if ((src_y == prev_src_y) && (prev_dst_row != NULL) && prev_row_used_tile_runs) {
                 const Uint64 repeat_row_start_ns = frame_stats_now();
                 frame_stats.mapped_repeat_rows += 1;
-                frame_stats.mapped_repeat_gap_pixels += (Uint64)get_row_tile_run_gap_pixels(row_tile_run_base, row_tile_run_count);
+                frame_stats.mapped_repeat_gap_pixels += mapped_source_row_repeat_gap_pixels != NULL
+                                                            ? (Uint64)mapped_source_row_repeat_gap_pixels[src_y]
+                                                            : (Uint64)get_row_tile_run_gap_pixels(
+                                                                  row_tile_run_base, row_tile_run_count);
                 const Uint8* repeat_src_row_base =
                     prev_repeat_row_template_valid ? repeat_row_template_bytes : (const Uint8*)prev_dst_row;
                 const bool repeat_from_template = prev_repeat_row_template_valid && (repeat_row_template_bytes != NULL);
