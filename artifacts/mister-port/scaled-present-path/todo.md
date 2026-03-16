@@ -330,6 +330,25 @@
 
 ## Cycle Log
 
+- 2026-03-16T17:48:52-0400
+  - Research target:
+    - test whether a narrow nearest-presenter replay-body change can cut repeat-row fanout on template-backed sparse rows by merging tiny gaps, while using recovered ordinary `basic-exchange` plus trusted full `genei-jin-first-activation` as the player-visible keep/reject gates instead of Genei alone
+  - Change summary:
+    - tried a narrow single-file reland in `src/port/sdl/fbdev_presenter.c` that seeded sparse template rows with tiny-gap spans and replayed merged template-backed spans on repeated rows to reduce very small `memcpy` fanout in the nearest direct-present path
+    - rebuilt/exported `build/mister-telemetry-package-arm-nearest-r42-gap-merge-20260316a` through the documented `/work-arm` ARM telemetry path in `3sx-mister-build-nearest-hdmi-perf`, captured a fresh accepted-runtime baseline matrix, deployed the candidate with `tools/mister/misterctl.sh`, reran the same nearest gameplay matrix plus native guard, then rolled the source diff back and restored `build/mister-telemetry-package-arm-nearest-r41-sparse-shape-20260316a` on-device after the keep gates failed
+    - completed the required review pass as a manual scoped review of the rejected single-file presenter diff with focus on template validity across merged tiny gaps, repeat-row accounting, and no gameplay-affecting behavior changes; no actionable correctness issue survived review, so the rejection stayed purely performance-based
+  - Verification evidence:
+    - `git diff --check` passed before the build; the `/work-arm` ARM telemetry rebuild/install/package succeeded, `readelf -h` still reported `ELF32` `ARM` with hard-float ABI, and the exported candidate package was `build/mister-telemetry-package-arm-nearest-r42-gap-merge-20260316a`
+    - candidate `deploy`, `probe`, and bounded `smoke` passed through `tools/mister/misterctl.sh`; after rollback, redeploy/probe of `build/mister-telemetry-package-arm-nearest-r41-sparse-shape-20260316a` also passed with the same nearest direct-present probe state
+    - nearest control stayed within noise: `loop42-base-control = 66.5771 FPS / 15.0202 / 7.3397 / 3.9765 ms` versus `loop42-post-control = 66.8798 / 14.9522 / 7.2582 / 4.0205` (`frame / render / present`)
+    - the recovered ordinary gameplay lane regressed: `loop42-base-basic-exchange = 54.5951 FPS / 18.3167 / 6.9451 / 6.3159 ms` versus `loop42-post-basic-exchange = 53.4093 / 18.7233 / 7.0474 / 6.7022`
+    - trusted full Genei regressed materially: `loop42-base-genei = 34.4320 FPS / 29.0428 / 10.4789 / 10.5709 ms` versus `loop42-post-genei = 32.9101 / 30.3858 / 10.5393 / 11.9203`
+    - native guard stayed essentially flat: `loop42-base-native-control = 86.7814 FPS / 11.5232 / 7.3310 / 0.5217 ms` versus `loop42-post-native-control = 86.8836 / 11.5097 / 7.2583 / 0.5633`
+  - Keep/rollback decision with reason:
+    - rollback; the tiny-gap merged sparse-template replay shape increased player-visible present cost on both the recovered ordinary exchange lane and trusted full Genei, so it is not a decision-grade win for nearest HDMI gameplay
+  - Next best candidate:
+    - do not reopen this tiny-gap merged sparse-template replay shape without new telemetry proving a materially different repeat-row gap distribution; if presenter work continues, prefer a cheaper repeat-row-body cut that does not add first-row/template seeding work, otherwise re-rank broader gameplay raster residue against presenter work using `basic-exchange` first
+
 - 2026-03-16T17:15:53-0400
   - Research target:
     - test whether the next nearest-presenter keep should be a tighter RAM-template gate for sparse repeated-row work, using the recovered ordinary `basic-exchange` lane as the primary proof target instead of widening the old Genei-only repeat-row threshold blindly
