@@ -324,6 +324,26 @@
 
 ## Cycle Log
 
+- 2026-03-16T13:19:14-0400
+  - Research target:
+    - test whether the remaining trusted-Genei raster residue can be narrowed into an exact-size non-integer subpixel-translation fast path for `src/port/sdl/sdl_game_renderer.c`, instead of another threshold gate
+  - Change summary:
+    - tried a four-file candidate in `src/port/sdl/sdl_game_renderer.c`, `src/port/sdl/software_frame_non_integer.{c,h}`, and `src/port/sdl/software_frame_parity.c` that recognized exact-size, unmodulated, unflipped non-integer copies and routed them through a shifted `1:1` helper path
+    - rebuilt/exported `build/mister-telemetry-package-arm-raster-r35-exact-phase-20260316b`, deployed it with `tools/mister/misterctl.sh`, captured the required nearest gameplay-first matrix plus a matched trusted full Genei pass, and then rolled both source and MiSTer runtime back after the reject to restore `build/mister-telemetry-package-arm-nearest-r30-row-template-20260315a`
+    - the local ARM telemetry build/install/package path succeeded, but parity could not be executed locally because the validated cross-build path produced an ARM binary and the available host fallbacks were blocked by missing desktop dependencies or MiSTer-only headers
+    - completed a manual scoped review of the candidate diff and found no correctness issues beyond the measured keep-bar tradeoff
+  - Verification evidence:
+    - `git diff --check` passed before the build; the `/work-arm` ARM telemetry rebuild/install/package succeeded in `3sx-mister-build-nearest-hdmi-perf`, exported cleanly to `build/mister-telemetry-package-arm-raster-r35-exact-phase-20260316b`, and `readelf -h` still reported `ELF32` `ARM` with hard-float ABI
+    - candidate `deploy`, `probe`, and bounded `smoke` passed through `tools/mister/misterctl.sh`; after the reject, restored `r30` `deploy`, `probe`, and bounded `smoke` also passed and returned to the normal timeout-backed success pattern
+    - nearest `control` slipped slightly versus the standing raster-lane baseline: `nearest-raster-r31-control-basic-pre = 74.1686 FPS` versus `nearest-raster-r35-control-basic-post = 73.9947 FPS`
+    - trusted low-overhead Genei failed clearly on the player-visible lane: `nearest-raster-r31-genei-basic-pre = 36.2138 FPS` versus `nearest-raster-r35-genei-basic-post = 35.1001 FPS`
+    - matched full Genei also regressed: `nearest-raster-r35-genei-full-pre = 30.4726 FPS / 32.8163 / 10.9970 / 13.8789 ms` versus `nearest-raster-r35-genei-full-post = 29.9113 FPS / 33.4322 / 11.4809 / 13.9364 ms` (`frame / render / present`), while the workload counters stayed unchanged at `software_frame_fast_non_integer_pixels.mean = 58399.05`, `software_frame_generic_textured_pixels.mean = 1991.68`, and `software_frame_fast_miss_non_integer_ge_256_pixels.mean = 860.94`
+    - the native guard stayed within tolerance at `native-raster-r35-control-basic-post = 90.9652 FPS`
+  - Keep/rollback decision with reason:
+    - rollback; the exact-size subpixel-copy fast path did not materially engage on the measured trusted-Genei workload, added overhead without changing the remaining non-integer or generic-textured residue, and regressed both trusted Genei basic and matched full Genei
+  - Next best candidate:
+    - keep the broader gameplay-raster lane open, but do not retry this exact subpixel-translation shape blindly; the next runtime attempt needs tighter task-shape attribution inside the remaining small non-integer and generic-textured Genei residue before another reland
+
 - 2026-03-16T16:08:12-0400
   - Research target:
     - test whether the rejected global `256` lookup reland can be narrowed into a frame-local medium-miss burst gate, so `256-383 px` non-integer tasks only shift onto the existing helper after a heavy Genei frame has already shown repeated medium-miss traffic
