@@ -3092,3 +3092,16 @@ Scope guardrails:
     - keep measurement-support only; the widened scopes produce a real in-lane signal on `Basic_Sub` list `4`, but they still leave most chooser update time unattributed, so a runtime reland would still be guesswork
   - Next best candidate optimization:
     - instrument task-level or outer update-loop scopes above `Game01` so the remaining chooser update cost is attributed before choosing between deeper list-`4` work and a higher-level menu/task hotspot
+
+- 2026-03-15T23:46:12-0400
+  - Bottleneck targeted:
+    - nearest-HDMI first-Genei repeated-row tail cost in `src/port/sdl/fbdev_presenter.c`, with the March memo’s requested RAM row-template replay source plus first-row-vs-repeat-row telemetry split
+  - Change summary:
+    - kept the `r30` presenter reland that replays extreme repeated mapped rows from a one-row RAM template instead of rereading fbdev memory, and exported schema-`48` counters for template-backed repeat rows plus first-row/repeat-row timing
+  - Verification result summary:
+    - decision-grade `basic` captures stayed flat on `control` (`74.5375 -> 74.5795 FPS`) and `stage-heavy` (`55.0339 -> 55.2604 FPS`) while trusted `genei-jin-first-activation` improved from `31.1225 -> 36.3845 FPS` with `present.mean_ms 15.0369 -> 10.4537`; the native guard remained inside tolerance at `91.5672 FPS / 0.5348 ms present`
+    - the new counters proved the reland only engaged on the intended tail: `control` and `stage-heavy` both recorded `mapped_repeat_template_rows = 0`, while trusted full Genei telemetry averaged `199.73` template-backed repeat rows, `2131.33` template-backed sparse repeat copies, `47.90` template-backed dense repeat rows, and `mapped_first_row.mean_ms = 3.0381` versus `mapped_repeat_row.mean_ms = 6.4401`
+  - Keep/rollback decision with reason:
+    - keep; the row-template replay is a real player-visible nearest-HDMI win on the trusted first-Genei lane, stays dormant on the non-tail gameplay gates, and closes the nearest memo’s requested telemetry split without touching gameplay behavior
+  - Next best candidate optimization:
+    - broaden from presenter-tail work to gameplay-wide software-frame raster residue in `src/port/sdl/sdl_game_renderer.c`, using `effect-heavy`, `super-heavy`, or trusted first-Genei direct-present scenes before menu-only churn

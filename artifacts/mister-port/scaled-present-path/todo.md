@@ -324,6 +324,26 @@
 
 ## Cycle Log
 
+- 2026-03-15T23:46:12-0400
+  - Research target:
+    - test the highest-value nearest-HDMI lane from the new March research by tail-gating a RAM row-template replay source for repeated mapped rows, adding first-row-vs-repeat-row presenter telemetry, and validating on gameplay-first MiSTer gates before widening to broader raster or menu work
+  - Change summary:
+    - added an `r30` presenter reland in `src/port/sdl/fbdev_presenter.{c,h}` that allocates a one-row RAM template for extreme mapped-repeat tails, seeds it from the first materialized row only when the next dst row reuses the same source row, replays repeated rows from that RAM template instead of rereading fbdev memory, and exports the new template/timing counters through schema-`48` perf JSON in `src/port/sdl/sdl_app.c`
+    - rebuilt/exported `build/mister-telemetry-package-arm-nearest-r30-row-template-20260315a`, redeployed it with `tools/mister/misterctl.sh`, and completed a manual scoped review of the accepted runtime diff with focus on repeat-row validity, mapped/native isolation, and telemetry wiring; no correctness findings survived review
+    - recovered the trustworthy first-Genei automation detail for this branch by explicitly forcing Yun `super art 2`, then used that same harness for both baseline and candidate `--perf-basic` captures plus one trusted `full` Genei telemetry pass
+  - Verification evidence:
+    - `git diff --check` passed before the build; the ARM telemetry rebuild/install/package succeeded in the `/work-arm` container worktree, exported cleanly to `build/mister-telemetry-package-arm-nearest-r30-row-template-20260315a`, and still reported `ELF32` `ARM` with hard-float ABI
+    - candidate `deploy`, `probe`, and bounded `smoke` passed through `tools/mister/misterctl.sh`, and the candidate probe stayed on `dummy/software` with `FBDEV: active (1920x1080 ...)`, `Native render path: enabled (scale-mode=nearest)`, and `Software frame mode: on`
+    - decision-grade nearest `basic` captures kept the gameplay guardrails flat while materially improving the player-visible hotspot: `nearest-hdmi-r28-control-basic -> r30` moved `74.5375 -> 74.5795 FPS` with `present.mean_ms 3.0818 -> 3.0964`; `nearest-hdmi-r28-stage-heavy-basic -> r30` moved `55.0339 -> 55.2604 FPS` with `present.mean_ms 4.1339 -> 4.2014`; trusted `nearest-hdmi-r28-genei-jin-first-activation-basic -> r30` moved `31.1225 -> 36.3845 FPS` with `frame.mean_ms 32.1311 -> 27.4843` and `present.mean_ms 15.0369 -> 10.4537`; the native guard stayed inside tolerance at `native-hdmi-r30-control-basic = 91.5672 FPS / 10.9209 / 0.5348 ms`, still within `3%` of the kept `r28` native control
+    - the new counters showed the reland stayed dormant on non-tail lanes and only engaged on the intended hotspot: `nearest-hdmi-r30-control-basic` and `nearest-hdmi-r30-stage-heavy-basic` both recorded `mapped_repeat_template_rows = 0`, while trusted `nearest-hdmi-r30-genei-jin-first-activation-basic` averaged `199.73` template-backed repeat rows, `2131.33` template-backed sparse run copies, and `47.90` template-backed dense repeat rows; the trusted `nearest-hdmi-r30-genei-jin-first-activation-full` telemetry split then measured `mapped_first_row.mean_ms = 3.0381` versus `mapped_repeat_row.mean_ms = 6.4401`
+    - paired `full` control and stage-heavy captures did regress, but only because the new per-row timing split is expensive when enabled; their matching `basic` captures stayed flat and the template counters remained zero there, so the runtime keep decision stays tied to the low-overhead gameplay measurements
+  - Keep/rollback decision with reason:
+    - keep; the tail-gated RAM row-template replay materially improves the trusted first-Genei nearest-HDMI hotspot on the real device, stays inert on `control` and `stage-heavy`, preserves the native guardrail, and leaves behind the requested first-row-vs-repeat-row telemetry for the next presenter or gameplay-raster decision
+  - Final commit hash:
+    - recorded in the loop closure commit
+  - Next best candidate:
+    - treat this presenter-tail keep as closed and move the next runtime loop to the broader gameplay raster lane in `src/port/sdl/sdl_game_renderer.c`, prioritizing `effect-heavy`, `super-heavy`, or trusted first-Genei direct-present residue before reopening menu-only churn
+
 - 2026-03-15T21:12:40-0400
   - Research target:
     - verify the live `scale-mode = nearest` HDMI slowdown on the current branch/package again, add row-gap/fanout telemetry to the kept direct presenter path, and test whether a narrow sparse repeated-row copy-primitive change helps the gameplay-first hotspot without replaying the overcopy regressions
