@@ -333,6 +333,26 @@
 
 ## Cycle Log
 
+- 2026-03-16T19:10:21-0400
+  - Research target:
+    - test whether extreme nearest presenter tail frames can trade a little extra repeated-row overcopy for materially lower replay fanout by relaxing dense repeated-row coverage only on the heavy tail, while keeping ordinary gameplay and native guardrails stable
+  - Change summary:
+    - tried a narrow single-file reland in `src/port/sdl/fbdev_presenter.c` that added a tail-only dense-repeat helper and let the repeat-row body collapse near-dense sparse rows to one span copy only when the predicted repeat workload hit the extreme Genei-style tail
+    - rebuilt/exported `build/mister-telemetry-package-arm-nearest-r45-tail-dense-20260316a` through the validated `/work-arm` ARM telemetry path in `3sx-mister-build-nearest-hdmi-perf`, captured fresh pre-change nearest `control`, `basic-exchange`, `pressure-exchange`, trusted full `genei-jin-first-activation`, and native guard baselines on the current runtime, deployed the candidate, reran the same matrix, then rolled the source diff back and restored `build/mister-telemetry-package-arm-nearest-r41-sparse-shape-20260316a` on-device after the keep gates failed
+    - completed the required review pass as a manual scoped review of the reverted single-file presenter diff with focus on repeat-row source correctness, tail-gate dormancy on non-tail frames, and no gameplay-affecting behavior changes; no actionable correctness issue survived review, so the rejection stayed purely performance-based
+  - Verification evidence:
+    - `git diff --check` passed before the candidate build; the `/work-arm` ARM telemetry rebuild/install/package succeeded in `3sx-mister-build-nearest-hdmi-perf`, `readelf -h` still reported `ELF32` `ARM` with hard-float ABI, and the exported candidate package was `build/mister-telemetry-package-arm-nearest-r45-tail-dense-20260316a`
+    - candidate `deploy`, `probe`, and bounded `smoke` passed through `tools/mister/misterctl.sh`; after rollback, redeploy/probe/smoke of `build/mister-telemetry-package-arm-nearest-r41-sparse-shape-20260316a` also passed with the same `dummy/software` + `FBDEV` nearest direct-present probe state
+    - nearest control stayed flat: `loop45-pre-control = 75.5199 FPS / 13.2415 / 7.0337 / 2.9538 ms` versus `loop45-post-control = 75.5437 / 13.2374 / 7.0036 / 2.9756` (`frame / render / present`)
+    - ordinary `basic-exchange` improved only slightly: `loop45-pre-basic-exchange = 63.4216 FPS / 15.7675 / 6.8730 / 4.6287 ms` versus `loop45-post-basic-exchange = 63.9611 / 15.6345 / 6.8632 / 4.5710`
+    - the recovered ordinary pressure lane failed decisively: `loop45-pre-pressure-exchange = 43.7485 FPS / 22.8579 / 8.0290 / 9.6639 ms` versus `loop45-post-pressure-exchange = 38.3089 / 26.1036 / 8.0340 / 12.9883`, with `copy_bytes` worsening `2865058.71 -> 2912658.05`
+    - trusted full Genei also regressed materially: `loop45-pre-genei = 33.3181 FPS / 30.0137 / 10.5492 / 11.5892 ms` versus `loop45-post-genei = 31.5105 / 31.7354 / 10.4295 / 13.4203`, while the trusted active-super window stayed present (`p1_super_active_frames = 181`, `p1_super_first = 119`) on both runs
+    - native guard stayed inside tolerance but still dipped slightly: `loop45-pre-native-control = 93.2605 FPS / 10.7227 / 6.9912 / 0.5134 ms` versus `loop45-post-native-control = 92.4653 / 10.8149 / 7.0078 / 0.5376`
+  - Keep/rollback decision with reason:
+    - rollback; even though `control` stayed flat and `basic-exchange` nudged up, the tail-only near-dense replay overcopy regressed the player-visible heavy lanes that matter more on modern HDMI, especially `pressure-exchange` and trusted full Genei, so it is not a decision-grade nearest-HDMI win
+  - Next best candidate:
+    - do not reopen this tail-only dense-repeat relaxation without telemetry that shows the heavy nearest lanes can absorb the added copied bytes; if presenter work continues, prefer a repeat-row body cut that reduces fanout without broadening span overcopy on `pressure-exchange` or trusted Genei
+
 - 2026-03-16T18:40:56-0400
   - Research target:
     - recover a repeatable ordinary gameplay nearest gate with attacks, hitsparks, jumps, and short exchanges that is heavier than idle or `basic-exchange` and can validate player-visible slowdown outside Genei-only captures
