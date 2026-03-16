@@ -324,6 +324,25 @@
 
 ## Cycle Log
 
+- 2026-03-16T18:09:13-0400
+  - Research target:
+    - test whether the broader gameplay-raster lane can clear a real nearest-HDMI keep by hoisting the exact/scaled path's transparent/opaque alpha short-circuit into the remaining non-integer and generic textured raster loops, without changing routing or thresholds
+  - Change summary:
+    - updated `src/port/sdl/software_frame_non_integer.c` and `src/port/sdl/sdl_game_renderer.c` so the non-integer lookup helper and the generic textured fallback loop now skip zero-alpha samples and directly store fully opaque samples before calling `blend_argb8888(...)`
+    - rebuilt/exported `build/mister-telemetry-package-arm-raster-r37-alpha-shortcut-20260316a`, captured a fresh on-device baseline on the accepted `r36` runtime, redeployed the candidate through `tools/mister/misterctl.sh`, and reran the same nearest gameplay matrix plus the native control guard
+    - completed the required review pass with `codex review --uncommitted`; it found no correctness regressions in the two-file diff
+  - Verification evidence:
+    - `git diff --check` passed before the build; the `/work-arm` ARM telemetry rebuild/install/package succeeded in `3sx-mister-build-nearest-hdmi-perf`, exported cleanly to `build/mister-telemetry-package-arm-raster-r37-alpha-shortcut-20260316a`, and `readelf -h` still reported `ELF32` `ARM` with hard-float ABI
+    - candidate `deploy`, `probe`, and bounded `smoke` passed through `tools/mister/misterctl.sh`, and both the baseline and candidate probes stayed on `dummy/software` with `FBDEV: active (1920x1080 ...)`, `Native render path: enabled (scale-mode=nearest)`, and `Software frame mode: on`
+    - nearest non-targeted gameplay stayed flat-to-better: `nearest-raster-r37-control-basic-pre = 74.7067 FPS / 13.3857 / 7.1395 / 3.0261 ms` versus `nearest-raster-r37-control-basic-post = 75.3628 FPS / 13.2691 / 7.0475 / 3.0263 ms`, and `nearest-raster-r37-effect-basic-pre = 47.1435 FPS / 21.2118 / 9.1606 / 6.3580 ms` versus `nearest-raster-r37-effect-basic-post = 47.1534 FPS / 21.2074 / 9.1096 / 6.4157 ms` (`frame / render / present`)
+    - the trusted low-overhead Genei keep gate improved instead of regressing: `nearest-raster-r37-genei-basic-pre = 37.0040 FPS / 27.0241 / 11.0216 / 9.4980 ms` versus `nearest-raster-r37-genei-basic-post = 37.8456 FPS / 26.4231 / 10.4987 / 9.4818 ms`
+    - matched full Genei improved overall with the same workload shape: `nearest-raster-r37-genei-full-pre = 31.3787 FPS / 31.8688 / 11.4339 / 12.3624 / 12.3445 ms` versus `nearest-raster-r37-genei-full-post = 32.1814 FPS / 31.0738 / 10.6168 / 12.4346 / 12.4218 ms` (`frame / render / present / present_copy`), while active-Genei frames moved `39.1254 / 14.6698 / 15.9808 / 15.9671 ms` to `37.3766 / 12.8269 / 16.1511 / 16.1383 ms` and sampled raster time fell inside both surviving buckets (`fast_non_integer.mean_ms 0.075734 -> 0.059115`, `generic_textured.mean_ms 0.044350 -> 0.037172`) without changing `software_frame_fast_non_integer_pixels.mean` or `software_frame_generic_textured_pixels.mean`
+    - the native guard stayed within tolerance at `native-raster-r37-control-basic-pre = 91.2322 FPS / 10.9610 / 7.1519 / 0.5400 ms` versus `native-raster-r37-control-basic-post = 91.1642 FPS / 10.9692 / 7.1643 / 0.5481 ms`
+  - Keep/rollback decision with reason:
+    - keep; the alpha short-circuit is a behavior-preserving raster-only win that improves the trusted first-Genei nearest gameplay lane and full Genei render cost without reopening rejected threshold/routing changes, while `effect-heavy` stays flat and native remains inside guardrail
+  - Next best candidate:
+    - do not reopen the shared non-integer threshold gate blindly; this keep shows the remaining broad raster value is in cheaper per-pixel math on the existing non-integer/generic paths, but active Genei is now split between improved render cost and still-heavy present time, so the next loop should re-rank raster versus presenter work from fresh telemetry instead of guessing
+
 - 2026-03-16T13:44:47-0400
   - Research target:
     - test whether the kept nearest row-template presenter should trigger on the missed first-Genei repeat-row tail counted by repeated mapped rows, not just the existing `mapped_row_runs >= 2000` gate

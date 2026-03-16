@@ -4561,6 +4561,14 @@ static bool raster_textured_task_to_software_frame(const RenderTask* task) {
             if (task->color != 0xFFFFFFFFu) {
                 src_pixel = modulate_argb8888(src_pixel, task->color);
             }
+            const Uint32 src_a = (src_pixel >> 24) & 0xFFu;
+            if (src_a == 0u) {
+                continue;
+            }
+            if (src_a == 0xFFu) {
+                dst_row[x] = src_pixel;
+                continue;
+            }
             dst_row[x] = blend_argb8888(dst_row[x], src_pixel);
         }
     }

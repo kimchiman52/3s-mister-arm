@@ -158,6 +158,14 @@ bool SDLSoftwareFrame_RasterNonIntegerLookupARGB8888(const SDL_FRect* dst_rect,
             if (color != 0xFFFFFFFFu) {
                 src_pixel = modulate_argb8888(src_pixel, color);
             }
+            const Uint32 src_a = (src_pixel >> 24) & 0xFFu;
+            if (src_a == 0u) {
+                continue;
+            }
+            if (src_a == 0xFFu) {
+                dst_row[col] = src_pixel;
+                continue;
+            }
             dst_row[col] = blend_argb8888(dst_row[col], src_pixel);
         }
     }
