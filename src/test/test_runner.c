@@ -63,11 +63,13 @@ typedef enum TestScenePreset {
     TEST_SCENE_PRESET_STAGE_HEAVY,
     TEST_SCENE_PRESET_EFFECT_HEAVY,
     TEST_SCENE_PRESET_SUPER_HEAVY,
+    TEST_SCENE_PRESET_BASIC_EXCHANGE,
 } TestScenePreset;
 
 static const Uint8 character_to_cursor[20][2] = { { 7, 1 }, { 1, 0 }, { 5, 2 }, { 6, 1 }, { 3, 2 }, { 4, 0 }, { 1, 2 },
                                                   { 3, 0 }, { 2, 2 }, { 4, 2 }, { 0, 1 }, { 0, 2 }, { 2, 0 }, { 5, 0 },
                                                   { 6, 0 }, { 3, 1 }, { 2, 1 }, { 4, 1 }, { 1, 1 }, { 5, 1 } };
+static const Sint8 scene_preset_basic_exchange_stage = 11;
 static const Sint8 scene_preset_stage_heavy_stage = 19;
 
 static Uint64 frame = 0;
@@ -125,6 +127,9 @@ static TestScenePreset resolve_scene_preset(const char* preset_name) {
     }
     if (SDL_strcmp(preset_name, "super-heavy") == 0) {
         return TEST_SCENE_PRESET_SUPER_HEAVY;
+    }
+    if (SDL_strcmp(preset_name, "basic-exchange") == 0) {
+        return TEST_SCENE_PRESET_BASIC_EXCHANGE;
     }
 
     return TEST_SCENE_PRESET_NONE;
@@ -235,6 +240,80 @@ static u16 super_script_input(int player, int local_frame) {
     }
 }
 
+static u16 basic_exchange_script_input(int player, int local_frame) {
+    const SWKey forward = player_forward_button(player);
+    const SWKey backward = player ? SWK_RIGHT : SWK_LEFT;
+    const int cycle_frame = local_frame % 96;
+
+    switch (cycle_frame) {
+    case 0:
+    case 1:
+    case 2:
+    case 3:
+    case 4:
+    case 5:
+    case 6:
+    case 7:
+    case 8:
+    case 9:
+    case 10:
+    case 11:
+    case 12:
+    case 13:
+    case 14:
+    case 15:
+        return forward;
+    case 16:
+    case 17:
+    case 18:
+    case 19:
+        return (u16)(SWK_DOWN | backward);
+    case 20:
+    case 21:
+        return SWK_SOUTH;
+    case 28:
+    case 29:
+    case 30:
+    case 31:
+    case 32:
+    case 33:
+    case 34:
+    case 35:
+        return (u16)(SWK_UP | forward);
+    case 36:
+    case 37:
+        return (u16)(SWK_UP | forward | SWK_SOUTH);
+    case 42:
+    case 43:
+    case 44:
+    case 45:
+        return (u16)(SWK_DOWN | SWK_WEST);
+    case 56:
+    case 57:
+    case 58:
+    case 59:
+    case 60:
+    case 61:
+    case 62:
+    case 63:
+        return backward;
+    case 64:
+    case 65:
+    case 66:
+    case 67:
+    case 68:
+    case 69:
+    case 70:
+    case 71:
+        return forward;
+    case 72:
+    case 73:
+        return SWK_WEST;
+    default:
+        return 0;
+    }
+}
+
 static void apply_scene_preset_defaults() {
     scene_preset = resolve_scene_preset(configuration.test.scene_preset);
 
@@ -259,6 +338,14 @@ static void apply_scene_preset_defaults() {
         stage = scene_preset_stage_heavy_stage;
         break;
 
+    case TEST_SCENE_PRESET_BASIC_EXCHANGE:
+        characters[0] = CHAR_RYU;
+        characters[1] = CHAR_KEN;
+        selected_super_arts[0] = 0;
+        selected_super_arts[1] = 0;
+        stage = scene_preset_basic_exchange_stage;
+        break;
+
     case TEST_SCENE_PRESET_NONE:
         break;
     }
@@ -275,6 +362,12 @@ static void apply_scene_preset_inputs() {
         const int cycle_length = 48;
         p1sw_buff = projectile_script_input(0, game_frame % cycle_length);
         p2sw_buff = projectile_script_input(1, (game_frame + 24) % cycle_length);
+        return;
+    }
+
+    if (scene_preset == TEST_SCENE_PRESET_BASIC_EXCHANGE) {
+        p1sw_buff = basic_exchange_script_input(0, game_frame);
+        p2sw_buff = basic_exchange_script_input(1, game_frame);
         return;
     }
 

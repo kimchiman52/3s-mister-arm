@@ -228,7 +228,7 @@ static void read_args(int argc, const char* argv[]) {
         OPT_STRING(0,
                    "test-scene-preset",
                    &configuration.test.scene_preset,
-                   "Optional named scripted gameplay preset (stage-heavy, effect-heavy, super-heavy).",
+                   "Optional named scripted gameplay preset (stage-heavy, effect-heavy, super-heavy, basic-exchange).",
                    NULL,
                    0,
                    0),
@@ -308,7 +308,7 @@ static bool is_supported_test_stage(int stage) {
 
 static bool is_supported_test_scene_preset(const char* preset) {
     return preset == NULL || SDL_strcmp(preset, "stage-heavy") == 0 || SDL_strcmp(preset, "effect-heavy") == 0 ||
-           SDL_strcmp(preset, "super-heavy") == 0;
+           SDL_strcmp(preset, "super-heavy") == 0 || SDL_strcmp(preset, "basic-exchange") == 0;
 }
 
 #if ENABLE_PERF_TELEMETRY
@@ -375,7 +375,8 @@ static void verify_args() {
 
     if (!is_supported_test_scene_preset(test->scene_preset)) {
         error_out_with_code(
-            "--test-scene-preset must be one of stage-heavy, effect-heavy, or super-heavy.", EXIT_CODE_RUNTIME_ERROR);
+            "--test-scene-preset must be one of stage-heavy, effect-heavy, super-heavy, or basic-exchange.",
+            EXIT_CODE_RUNTIME_ERROR);
     }
 
     if (test->scene_preset != NULL && !test->enabled) {

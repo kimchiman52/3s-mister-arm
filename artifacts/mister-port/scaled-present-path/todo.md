@@ -30,11 +30,14 @@
   - `ibuki-stage7` via `--test-scene-preset effect-heavy --test-stage 7`
 - [x] Recovered gameplay-heavy gate that should now participate in keep/reject decisions:
   - `genei-jin-first-activation` is now trustworthy on this branch with the existing Yun helper path (`--test-p1-super-full`, `--test-delay-gameplay-inputs-until-active`, `--perf-wait-test-phase game-input-active`) plus Yun-vs-Ryu `super-heavy` setup; the recovered `nearest-hdmi-r19-genei-jin-first-activation` capture proved `p1_super_art_active_frames_total = 121` and `p1_super_art_active_first_frame = 179` inside the sampled window
+- [x] Recovered ordinary-gameplay pressure gate for non-super exchanges:
+  - `basic-exchange` now exists as a scripted nearest capture via `--test-scene-preset basic-exchange --perf-wait-test-phase game-input-active --test-delay-gameplay-inputs-until-active --gameplay-warmup 60`
+  - the first on-device nearest validation on `2026-03-16` stayed on `software_frame_mapped_scale` at `57.6342 FPS / 17.3508 / 4.2225 / 7.0262 / 6.1022 ms` (`frame / update / render / present`) on `stage 11 / Ryu-Ken / SA0-0`, versus matched nearest idle control `74.9833 FPS / 13.3363 / 3.1994 / 6.9908 / 3.1461 ms`; use this lane to rank future gameplay work before another Genei-only micro-optimization
 - [x] Secondary guardrails that still matter, but should not outrank gameplay FPS:
   - `2p-character-select` via `--perf-wait-test-phase character-select`
   - `menu-transition` via `--perf-wait-test-phase character-select-transition`
 - [x] Follow-on rule:
-  - when a nearest HDMI runtime change is large enough to justify expanded validation, prioritize `control` plus at least one gameplay-heavy lane first; prefer `genei-jin-first-activation`, `stage-heavy`, or `ibuki-stage7` before spending capture budget on `2p-character-select` or `menu-transition` unless the change explicitly targets those menu lanes
+  - when a nearest HDMI runtime change is large enough to justify expanded validation, prioritize `control` plus at least one gameplay-heavy lane first; prefer `basic-exchange`, `genei-jin-first-activation`, `stage-heavy`, or `ibuki-stage7` before spending capture budget on `2p-character-select` or `menu-transition` unless the change explicitly targets those menu lanes
 - [x] Combined research steering:
   - the `2026-03-15` nearest-specific memo plus the broad all-scenes memo now say the branch has three realistic next runtime directions, not one: `(1)` nearest presenter tail work in `src/port/sdl/fbdev_presenter.c` for the first-Genei repeated-row hotspot; `(2)` broader software-frame gameplay raster residue in `src/port/sdl/sdl_game_renderer.c` for `effect-heavy` / `super-heavy` / trusted first-Genei direct-present scenes; `(3)` broader 2P character-select submit/state churn after the kept chooser refresh reland. Attract/logo is still measurement-first, and the exact type-`1` wipe stays a guardrail only.
 - [x] Combined experiment order for Ralph:
