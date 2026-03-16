@@ -324,6 +324,25 @@
 
 ## Cycle Log
 
+- 2026-03-16T11:20:37-0400
+  - Research target:
+    - test the next narrow gameplay-raster hypothesis after the kept `r30` presenter reland by lowering the shared software-frame non-integer lookup threshold from `384` to `256`, then validate it on nearest-HDMI gameplay-first gates before reopening presenter or menu work
+  - Change summary:
+    - rebuilt the current branch telemetry package in `/work-arm`, recovered fresh nearest baselines on the kept `r30` runtime for `control`, `effect-heavy`, and trusted `genei-jin-first-activation`, then tried a one-line `src/port/sdl/sdl_game_renderer.c` reland that lowered `software_frame_non_integer_lookup_threshold_pixels` from `384u` to `256u`
+    - manually staged `libSDL3.so*` into the telemetry install/package during this loop because the fresh cross-build install tree did not populate `build/mister-telemetry-install/lib` on its own; deploy/probe/smoke then succeeded on the candidate package
+    - completed a manual scoped review of the one-line runtime diff with focus on software-frame eligibility scope and gameplay-safety risk; no correctness or behavior issues were found beyond the measured keep-bar tradeoff
+  - Verification evidence:
+    - `git diff --check` and `bash -n tools/mister/perf-sampler.sh` passed before the runtime build; the `/work-arm` ARM telemetry rebuild/install/package succeeded, the staged package exported cleanly to `build/mister-telemetry-package-arm-raster-r31-threshold256-20260316a`, and `readelf -h` still reported `ELF32` `ARM` with hard-float ABI
+    - baseline and candidate `deploy`, `probe`, and bounded `smoke` passed through `tools/mister/misterctl.sh`, and both probes stayed on `dummy/software` with `FBDEV: active (1920x1080 ...)`, `Native render path: enabled (scale-mode=nearest)`, and `Software frame mode: on`
+    - fresh low-overhead nearest baselines on the kept runtime were `nearest-raster-r31-control-basic-pre = 74.1685 FPS / 13.4828 / 7.1283 / 3.1003 ms`, `nearest-raster-r31-effect-basic-pre = 46.2053 FPS / 21.6425 / 8.9866 / 6.8966 ms`, and `nearest-raster-r31-genei-basic-pre = 36.2137 FPS / 27.6138 / 10.5481 / 10.6002 ms` (`frame / render / present`)
+    - the candidate kept the guardrails flat-to-better on the non-targeted lanes: `nearest-raster-r31-control-basic-post = 74.5395 FPS / 13.4157 / 7.0417 / 3.1491 ms` and `nearest-raster-r31-effect-basic-post = 46.4155 FPS / 21.5445 / 8.9955 / 6.8818 ms`
+    - the user-priority trusted Genei basic lane failed the keep bar twice on the candidate: `nearest-raster-r31-genei-basic-post = 35.9753 FPS / 27.7968 / 10.4580 / 10.8578 ms`, and rerun `nearest-raster-r31-genei-basic-post-rerun = 35.4434 FPS / 28.2140 / 10.6222 / 11.0265 ms`, both below the fresh `36.2137 FPS` baseline
+    - matched full telemetry did prove the threshold moved the intended workload on active Genei frames: active-window means improved from `41.5591 / 13.4276 / 19.5902 / 19.5685 ms` (`frame / render / present / present_copy`) with `4938.04` generic-textured pixels and `2134.57` `>=256 px` miss pixels per frame to `40.8176 / 13.2801 / 19.1742 / 19.1548 ms` with `2803.47` generic-textured pixels and zero `>=256 px` miss pixels, but that did not survive into the repeated low-overhead FPS gate
+  - Keep/rollback decision with reason:
+    - rollback; the `256` threshold does rerank the expected `256-383 px` Genei residue onto the fast non-integer helper, but two trusted low-overhead Genei reruns still landed below the fresh nearest baseline, so the change does not clear the player-visible keep bar on the highest-value lane
+  - Next best candidate:
+    - keep the broader gameplay-raster lane open, but do not lower the shared threshold further without a tighter admission rule; the next runtime attempt should target a narrower Genei-heavy subset than a global `256` threshold reland, or re-rank another measured raster residue before reopening presenter or menu churn
+
 - 2026-03-15T23:46:12-0400
   - Research target:
     - test the highest-value nearest-HDMI lane from the new March research by tail-gating a RAM row-template replay source for repeated mapped rows, adding first-row-vs-repeat-row presenter telemetry, and validating on gameplay-first MiSTer gates before widening to broader raster or menu work
