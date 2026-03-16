@@ -324,6 +324,24 @@
 
 ## Cycle Log
 
+- 2026-03-16T15:10:04-0400
+  - Research target:
+    - test whether the kept `r30` RAM row-template presenter path can convert more extreme tail rows from sparse template replay to bounded dense replay, while staying inert on non-tail nearest gameplay gates
+  - Change summary:
+    - tried a single-file `src/port/sdl/fbdev_presenter.c` candidate that keeps the existing `mapped_row_runs >= 2000` frame gate but relaxes dense-span eligibility only for template-backed repeat rows to `>=12` runs, `>=384` pixels, and `85%` coverage
+    - rebuilt/exported `build/mister-telemetry-package-arm-nearest-r32-template-dense-20260316a`, deployed it with `tools/mister/misterctl.sh`, and then restored the accepted `build/mister-telemetry-package-arm-nearest-r30-row-template-20260315a` runtime after the reject
+    - attempted `codex review --uncommitted` for the required review pass, but the helper stalled without returning findings; completed a manual scoped review of the presenter diff instead and found no correctness issues beyond the measured keep-bar tradeoff
+  - Verification evidence:
+    - `git diff --check` passed before the build; the `/work-arm` ARM telemetry rebuild/install/package succeeded, exported cleanly to `build/mister-telemetry-package-arm-nearest-r32-template-dense-20260316a`, and `readelf -h` still reported `ELF32` `ARM` with hard-float ABI
+    - candidate `deploy`, `probe`, and bounded `smoke` passed through `tools/mister/misterctl.sh`; both candidate and restored probes stayed on `dummy/software` with `FBDEV: active (1920x1080 ...)`, `Native render path: enabled (scale-mode=nearest)`, and `Software frame mode: on`
+    - nearest guardrails stayed effectively flat: `nearest-hdmi-r32-control-basic-pre = 74.1630 FPS / 13.4838 / 7.1258 / 3.0887 ms` versus `nearest-hdmi-r32-control-basic-post = 74.1116 FPS / 13.4932 / 7.1914 / 3.1217 ms`, `nearest-hdmi-r32-stage-heavy-basic-pre = 55.0392 FPS / 18.1689 / 8.9145 / 4.2073 ms` versus `nearest-hdmi-r32-stage-heavy-basic-post = 55.0859 FPS / 18.1535 / 8.8759 / 4.1951 ms`, and the native guard stayed within tolerance at `native-hdmi-r32-control-basic-pre = 91.3777 FPS / 10.9436 / 7.1928 / 0.5308 ms` versus `native-hdmi-r32-control-basic-post = 91.9130 FPS / 10.8798 / 7.0963 / 0.5490 ms`
+    - the trusted low-overhead Genei keep gate did not clear a player-visible win: `nearest-hdmi-r32-genei-jin-first-activation-basic-pre = 39.4083 FPS / 25.3754 / 10.0368 / 8.6281 ms`, `nearest-hdmi-r32-genei-jin-first-activation-basic-post = 39.4010 FPS / 25.3800 / 10.0716 / 8.5987 ms`, and rerun `nearest-hdmi-r32-genei-jin-first-activation-basic-post-rerun = 39.4451 FPS / 25.3517 / 10.0903 / 8.5622 ms`
+    - matched full telemetry did prove the policy change moved work the intended way inside the active Genei window: overall `nearest-hdmi-r32-genei-jin-first-activation-full` improved `33.3078 -> 33.9982 FPS` and active-window means moved `34.1329 / 14.2531 / 11.0644 / 11.0489 ms` to `33.3886 / 13.9557 / 10.7617 / 10.7493 ms` (`frame / render / present / present_copy`), while template-backed sparse run copies fell `1363.30 -> 963.43` and template-backed dense rows rose `22.28 -> 46.76`; copied bytes also rose slightly `1103224.78 -> 1118607.04` per active frame
+  - Keep/rollback decision with reason:
+    - rollback; the template-only dense replay policy does reduce repeat-row fanout and active Genei presenter time on full telemetry, but the trusted low-overhead Genei keep gate stayed effectively flat across two post runs, so this does not clear the real player-visible FPS bar
+  - Next best candidate:
+    - keep the nearest presenter lane open, but do not spend another loop on denser template replay without a stronger low-overhead gain signal; the better next nearest-specific move is likely cheaper repeat-row bookkeeping such as cached per-row dense/gap metadata, or else a fresh re-rank against broader gameplay raster work before reopening presenter micro-policy changes
+
 - 2026-03-16T11:20:37-0400
   - Research target:
     - test the next narrow gameplay-raster hypothesis after the kept `r30` presenter reland by lowering the shared software-frame non-integer lookup threshold from `384` to `256`, then validate it on nearest-HDMI gameplay-first gates before reopening presenter or menu work
