@@ -64,6 +64,7 @@ typedef enum TestScenePreset {
     TEST_SCENE_PRESET_EFFECT_HEAVY,
     TEST_SCENE_PRESET_SUPER_HEAVY,
     TEST_SCENE_PRESET_BASIC_EXCHANGE,
+    TEST_SCENE_PRESET_PRESSURE_EXCHANGE,
 } TestScenePreset;
 
 static const Uint8 character_to_cursor[20][2] = { { 7, 1 }, { 1, 0 }, { 5, 2 }, { 6, 1 }, { 3, 2 }, { 4, 0 }, { 1, 2 },
@@ -130,6 +131,9 @@ static TestScenePreset resolve_scene_preset(const char* preset_name) {
     }
     if (SDL_strcmp(preset_name, "basic-exchange") == 0) {
         return TEST_SCENE_PRESET_BASIC_EXCHANGE;
+    }
+    if (SDL_strcmp(preset_name, "pressure-exchange") == 0) {
+        return TEST_SCENE_PRESET_PRESSURE_EXCHANGE;
     }
 
     return TEST_SCENE_PRESET_NONE;
@@ -314,6 +318,147 @@ static u16 basic_exchange_script_input(int player, int local_frame) {
     }
 }
 
+static u16 pressure_exchange_attack_input(int player, int local_frame) {
+    const SWKey forward = player_forward_button(player);
+
+    switch (local_frame) {
+    case 0:
+    case 1:
+    case 2:
+    case 3:
+    case 4:
+    case 5:
+    case 6:
+    case 7:
+    case 8:
+    case 9:
+    case 10:
+    case 11:
+        return forward;
+    case 12:
+    case 13:
+        return SWK_SOUTH;
+    case 20:
+    case 21:
+    case 22:
+    case 23:
+        return (u16)(SWK_DOWN | SWK_WEST);
+    case 30:
+    case 31:
+    case 32:
+    case 33:
+    case 34:
+    case 35:
+    case 36:
+    case 37:
+        return (u16)(SWK_UP | forward);
+    case 38:
+    case 39:
+        return (u16)(SWK_UP | forward | SWK_SOUTH);
+    case 48:
+    case 49:
+        return SWK_WEST;
+    case 58:
+    case 59:
+    case 60:
+    case 61:
+    case 62:
+    case 63:
+        return forward;
+    case 64:
+    case 65:
+    case 66:
+    case 67:
+        return (u16)(SWK_DOWN | SWK_WEST);
+    default:
+        return 0;
+    }
+}
+
+static u16 pressure_exchange_defend_input(int player, int local_frame) {
+    const SWKey forward = player_forward_button(player);
+    const SWKey backward = player ? SWK_RIGHT : SWK_LEFT;
+
+    switch (local_frame) {
+    case 0:
+    case 1:
+    case 2:
+    case 3:
+    case 4:
+    case 5:
+        return forward;
+    case 6:
+    case 7:
+    case 8:
+    case 9:
+    case 10:
+    case 11:
+    case 12:
+    case 13:
+    case 14:
+    case 15:
+    case 16:
+    case 17:
+    case 18:
+    case 19:
+    case 20:
+    case 21:
+    case 22:
+    case 23:
+    case 24:
+    case 25:
+    case 26:
+    case 27:
+        return (u16)(SWK_DOWN | backward);
+    case 30:
+    case 31:
+    case 32:
+    case 33:
+    case 34:
+    case 35:
+    case 36:
+    case 37:
+        return backward;
+    case 38:
+    case 39:
+    case 40:
+    case 41:
+    case 42:
+    case 43:
+    case 44:
+    case 45:
+        return (u16)(SWK_UP | backward);
+    case 52:
+    case 53:
+    case 54:
+    case 55:
+        return backward;
+    case 60:
+    case 61:
+        return SWK_SOUTH;
+    case 66:
+    case 67:
+    case 68:
+    case 69:
+        return (u16)(SWK_DOWN | backward);
+    default:
+        return 0;
+    }
+}
+
+static u16 pressure_exchange_script_input(int player, int local_frame) {
+    const int cycle_frame = local_frame % 144;
+    const bool p1_pressure_turn = cycle_frame < 72;
+    const int turn_frame = p1_pressure_turn ? cycle_frame : (cycle_frame - 72);
+    const bool is_attacker = (player == 0) ? p1_pressure_turn : !p1_pressure_turn;
+
+    if (is_attacker) {
+        return pressure_exchange_attack_input(player, turn_frame);
+    }
+
+    return pressure_exchange_defend_input(player, turn_frame);
+}
+
 static void apply_scene_preset_defaults() {
     scene_preset = resolve_scene_preset(configuration.test.scene_preset);
 
@@ -346,6 +491,14 @@ static void apply_scene_preset_defaults() {
         stage = scene_preset_basic_exchange_stage;
         break;
 
+    case TEST_SCENE_PRESET_PRESSURE_EXCHANGE:
+        characters[0] = CHAR_RYU;
+        characters[1] = CHAR_KEN;
+        selected_super_arts[0] = 0;
+        selected_super_arts[1] = 0;
+        stage = scene_preset_stage_heavy_stage;
+        break;
+
     case TEST_SCENE_PRESET_NONE:
         break;
     }
@@ -368,6 +521,12 @@ static void apply_scene_preset_inputs() {
     if (scene_preset == TEST_SCENE_PRESET_BASIC_EXCHANGE) {
         p1sw_buff = basic_exchange_script_input(0, game_frame);
         p2sw_buff = basic_exchange_script_input(1, game_frame);
+        return;
+    }
+
+    if (scene_preset == TEST_SCENE_PRESET_PRESSURE_EXCHANGE) {
+        p1sw_buff = pressure_exchange_script_input(0, game_frame);
+        p2sw_buff = pressure_exchange_script_input(1, game_frame);
         return;
     }
 

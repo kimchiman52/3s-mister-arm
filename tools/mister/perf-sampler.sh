@@ -25,7 +25,7 @@ Options:
                          Delay capture until the runtime reaches the named state
                          (attract-demo-logo).
   --test-scene-preset <name>
-                         Named scripted gameplay preset (stage-heavy, effect-heavy, super-heavy, basic-exchange).
+                         Named scripted gameplay preset (stage-heavy, effect-heavy, super-heavy, basic-exchange, pressure-exchange).
   --test-p1-character <name-or-id>
                          Optional test-runner player 1 character override for scripted gameplay capture; requires --gameplay-idle or --test-scene-preset.
   --test-p2-character <name-or-id>
@@ -114,7 +114,7 @@ is_supported_stage_id() {
 is_supported_test_scene_preset() {
     local value="$1"
     [ "$value" = "stage-heavy" ] || [ "$value" = "effect-heavy" ] || [ "$value" = "super-heavy" ] ||
-        [ "$value" = "basic-exchange" ]
+        [ "$value" = "basic-exchange" ] || [ "$value" = "pressure-exchange" ]
 }
 
 is_supported_software_frame_mode() {
@@ -204,6 +204,23 @@ apply_test_scene_preset_defaults() {
         fi
         if [ -z "$test_stage" ]; then
             test_stage="11"
+        fi
+        ;;
+    pressure-exchange)
+        if [ -z "$test_p1_character" ]; then
+            test_p1_character="2"
+        fi
+        if [ -z "$test_p2_character" ]; then
+            test_p2_character="11"
+        fi
+        if [ -z "$test_p1_super_art" ]; then
+            test_p1_super_art="0"
+        fi
+        if [ -z "$test_p2_super_art" ]; then
+            test_p2_super_art="0"
+        fi
+        if [ -z "$test_stage" ]; then
+            test_stage="19"
         fi
         ;;
     esac
@@ -426,7 +443,7 @@ if [ -n "$perf_wait_runtime_state" ] && ! is_supported_perf_wait_runtime_state "
 fi
 
 if [ -n "$test_scene_preset" ] && ! is_supported_test_scene_preset "$test_scene_preset"; then
-    echo "error: --test-scene-preset must be one of stage-heavy, effect-heavy, super-heavy, or basic-exchange." >&2
+    echo "error: --test-scene-preset must be one of stage-heavy, effect-heavy, super-heavy, basic-exchange, or pressure-exchange." >&2
     exit 2
 fi
 

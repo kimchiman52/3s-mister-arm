@@ -33,11 +33,14 @@
 - [x] Recovered ordinary-gameplay pressure gate for non-super exchanges:
   - `basic-exchange` now exists as a scripted nearest capture via `--test-scene-preset basic-exchange --perf-wait-test-phase game-input-active --test-delay-gameplay-inputs-until-active --gameplay-warmup 60`
   - the first on-device nearest validation on `2026-03-16` stayed on `software_frame_mapped_scale` at `57.6342 FPS / 17.3508 / 4.2225 / 7.0262 / 6.1022 ms` (`frame / update / render / present`) on `stage 11 / Ryu-Ken / SA0-0`, versus matched nearest idle control `74.9833 FPS / 13.3363 / 3.1994 / 6.9908 / 3.1461 ms`; use this lane to rank future gameplay work before another Genei-only micro-optimization
+  - `pressure-exchange` now exists as a scripted nearest capture via `--test-scene-preset pressure-exchange --perf-wait-test-phase game-input-active --test-delay-gameplay-inputs-until-active --gameplay-warmup 60`
+  - the first on-device nearest validation on `2026-03-16` stayed on direct `software_frame_mapped_scale` at `43.6910 FPS / 22.8880 / 5.1055 / 8.0664 / 9.7161 ms` (`frame / update / render / present`) on `stage 19 / Ryu-Ken / SA0-0`, versus matched nearest idle control `76.1958 FPS / 13.1241 / 3.2130 / 6.9518 / 2.9593 ms`; use this lane as an ordinary nearest presenter/copy-pressure guardrail before another Genei-only presenter micro-optimization
+  - do not treat `pressure-exchange` as an ordinary raster-residue lane by itself: the first full telemetry run landed at `36.2125 FPS / 27.6148 / 8.2157 / 13.0790 ms` with `copy_bytes 2865058.71`, `software_frame_mapped_scale = 1.0`, `software_frame_fast_exact_tasks.mean = 300.27`, `software_frame_fast_scaled_tasks.mean = 4.79`, `software_frame_fast_non_integer_tasks.mean = 0.00`, and `software_frame_generic_textured_tasks.mean = 0.00`
 - [x] Secondary guardrails that still matter, but should not outrank gameplay FPS:
   - `2p-character-select` via `--perf-wait-test-phase character-select`
   - `menu-transition` via `--perf-wait-test-phase character-select-transition`
 - [x] Follow-on rule:
-  - when a nearest HDMI runtime change is large enough to justify expanded validation, prioritize `control` plus at least one gameplay-heavy lane first; prefer `basic-exchange`, `genei-jin-first-activation`, `stage-heavy`, or `ibuki-stage7` before spending capture budget on `2p-character-select` or `menu-transition` unless the change explicitly targets those menu lanes
+  - when a nearest HDMI runtime change is large enough to justify expanded validation, prioritize `control` plus at least one gameplay-heavy lane first; prefer `pressure-exchange`, `basic-exchange`, `genei-jin-first-activation`, `stage-heavy`, or `ibuki-stage7` before spending capture budget on `2p-character-select` or `menu-transition` unless the change explicitly targets those menu lanes
 - [x] Combined research steering:
   - the `2026-03-15` nearest-specific memo plus the broad all-scenes memo now say the branch has three realistic next runtime directions, not one: `(1)` nearest presenter tail work in `src/port/sdl/fbdev_presenter.c` for the first-Genei repeated-row hotspot; `(2)` broader software-frame gameplay raster residue in `src/port/sdl/sdl_game_renderer.c` for `effect-heavy` / `super-heavy` / trusted first-Genei direct-present scenes; `(3)` broader 2P character-select submit/state churn after the kept chooser refresh reland. Attract/logo is still measurement-first, and the exact type-`1` wipe stays a guardrail only.
 - [x] Combined experiment order for Ralph:
@@ -329,6 +332,24 @@
   - if Chunk 3 still leaves nearest clearly bandwidth-bound after path routing and LUT work, start a separate follow-up stream for dirty-row or tile-aware scaled software-frame present instead of overloading this checklist
 
 ## Cycle Log
+
+- 2026-03-16T18:40:56-0400
+  - Research target:
+    - recover a repeatable ordinary gameplay nearest gate with attacks, hitsparks, jumps, and short exchanges that is heavier than idle or `basic-exchange` and can validate player-visible slowdown outside Genei-only captures
+  - Change summary:
+    - added a scripted `pressure-exchange` preset in `src/test/test_runner.c`, exposed it through `src/main.c`, and taught `tools/mister/perf-sampler.sh` the new preset defaults so nearest captures can start at `game-input-active` on `stage 19 / Ryu-Ken / SA0-0` without supers
+    - rebuilt/exported `build/mister-telemetry-package-arm-pressure-exchange-20260316b` through the validated `/work-arm` ARM telemetry path in `3sx-mister-build-nearest-hdmi-perf`, then deployed, probed, and smoked it through `tools/mister/misterctl.sh`
+    - the required automated review helper stalled again, so the review pass closed as a manual scoped review of the three-file measurement-support diff with no actionable correctness issues
+  - Verification evidence:
+    - `git diff --check` and `bash -n tools/mister/perf-sampler.sh` passed; after refreshing `/work-arm` with `build-deps.sh --profile mister`, the ARM telemetry rebuild/install/package succeeded and `readelf -h` still reported `ELF32` `ARM` with hard-float ABI
+    - candidate `deploy`, `probe`, and bounded `smoke` passed through `tools/mister/misterctl.sh`, keeping the same `dummy/software` + `FBDEV` nearest direct-present probe state
+    - full telemetry established the new ordinary gameplay lane and its current limit: `pressure-exchange-c44-full = 36.2125 FPS / 27.6148 / 8.2157 / 13.0790 ms` (`frame / render / present`) with `copy_bytes 2865058.71`, `software_frame_mapped_scale = 1.0`, `software_frame_fast_exact_tasks.mean = 300.27`, `software_frame_fast_scaled_tasks.mean = 4.79`, `software_frame_fast_non_integer_tasks.mean = 0.00`, and `software_frame_generic_textured_tasks.mean = 0.00`
+    - the decision-grade nearest gameplay capture landed at `pressure-exchange-c44-basic = 43.6910 FPS / 22.8880 / 5.1055 / 8.0664 / 9.7161 ms` (`frame / update / render / present`)
+    - matched nearest idle control landed at `pressure-exchange-c44-control-basic = 76.1958 FPS / 13.1241 / 3.2130 / 6.9518 / 2.9593 ms` with `copy_bytes 183105.60`
+  - Keep/rollback decision with reason:
+    - keep as measurement support only; `pressure-exchange` is a valid ordinary nearest gameplay pressure lane for presenter/copy-heavy validation, but it does not yet cover the broader ordinary raster-residue lane because the first verified full run stayed entirely in `fast_exact` plus a small `fast_scaled` tail
+  - Next best candidate:
+    - use `pressure-exchange` alongside `control` before another nearest presenter loop, but if the next runtime loop targets broader gameplay raster residue, recover or define a separate ordinary raster-aware gate instead of assuming this preset already covers it
 
 - 2026-03-16T21:22:40-0400
   - Research target:
