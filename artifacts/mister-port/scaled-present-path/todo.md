@@ -317,6 +317,28 @@
 
 ## Cycle Log
 
+- 2026-03-15T20:05:31-0400
+  - Research target:
+    - refresh the gameplay-first nearest HDMI baseline on the live `1920x1080` direct path, then test whether splitting only tiles with a large interior mapped gap could reduce copied bytes without replaying the broad disjoint-run fanout loss
+  - Change summary:
+    - revalidated the live device on `scale-mode = nearest` with a fresh `probe`, then recovered fresh `r25` gameplay-first baselines on the expected direct path: `control`, `stage-heavy`, and a trustworthy `genei-jin-first-activation` rerun with `p1_super_art_active_frames_total = 121` and `p1_super_art_active_first_frame = 179`, plus a native control and native Genei comparison
+    - tried a single-file runtime reland in `src/port/sdl/fbdev_presenter.c` that let the mapped nearest cache keep up to two runs per `8`-pixel compare tile, but only split a tile when the unchanged middle mapped to at least `16` destination pixels, aiming to cut dirty bytes with less run fanout than the rejected broad disjoint-run shape
+    - rebuilt the ARM telemetry package in `3sx-mister-build-nearest-hdmi-perf`, exported it to `build/mister-telemetry-package-arm-nearest-r26-selective-gap-20260315b`, deployed it through `tools/mister/misterctl.sh`, and completed a manual scoped review of the rejected runtime diff with focus on run-capacity fallback, cached-row coherence, and mapped/native isolation
+  - Verification evidence:
+    - `git diff --check` passed on the runtime diff before the build; the telemetry ARM rebuild/install/package succeeded in `/work-arm`, `readelf -h build/mister-telemetry-package/bin/3sx` still reported `ELF32` `ARM` with hard-float ABI, and the package exported cleanly to `build/mister-telemetry-package-arm-nearest-r26-selective-gap-20260315b`
+    - candidate MiSTer `deploy`, `probe`, and bounded `smoke` all passed on the serialized tooling path; the candidate probe stayed on `dummy/software` with `FBDEV: active (1920x1080 ...)`, `Native render path: enabled (scale-mode=nearest)`, and `Software frame mode: on`
+    - fresh `r25` repro confirmed the live user symptom still matched the kept direct path rather than a route regression: `nearest-hdmi-r25-control-full = 71.7315 FPS / 13.9409 / 3.0252 ms` (`frame / present_copy`), `nearest-hdmi-r25-stage-heavy-full = 52.5588 FPS / 19.0263 / 4.0765 ms`, `nearest-hdmi-r25-genei-jin-first-activation = 30.7881 FPS / 32.4801 / 14.1000 ms`, `native-hdmi-r25-control-basic = 93.6009 FPS / 10.6837 / 0.5648 ms`, and the native Genei comparison kept the same trusted active window at `121` frames starting at frame `179`
+    - the selective-gap candidate lowered copied bytes slightly but regressed every gameplay-first nearest lane anyway: `nearest-hdmi-r26-control-full` fell to `71.2994 FPS / 14.0254 / 3.1573 ms` while copied bytes only moved `183105.60 -> 181038.00`; `nearest-hdmi-r26-stage-heavy-full` fell to `51.7740 FPS / 19.3147 / 4.2576 ms` while copied bytes moved `262209.65 -> 258637.51`; and `nearest-hdmi-r26-genei-jin-first-activation` fell to `28.9341 FPS / 34.5614 / 15.8215 ms` while copied bytes only moved `1895206.84 -> 1885953.79`
+    - the trustworthy active Genei window proved the failure mode directly: active Genei frames stayed at `121`, but worsened from `41.4055 ms frame / 19.9769 ms present / 19.9625 ms present_copy / 2910410.41 bytes` on `r25` to `44.3926 / 22.5737 / 22.5593 / 2899249.65` on `r26`, and worst active `present.max_ms` worsened `37.3016 -> 44.7242`
+    - the native guard stayed flat-to-better, confirming the regression was isolated to the nearest mapped path: `native-hdmi-r26-control-basic = 93.6425 FPS / 10.6789 / 0.5289 ms`
+    - after rollback, the live runtime was restored with `tools/mister/misterctl.sh --password 1 deploy --src build/mister-share-20260314-112734/stage/games/3sx` plus a final `probe`
+  - Keep/rollback decision with reason:
+    - rollback; this selective large-gap tile split does trim dirty bytes, but the extra mapped-run fanout and bookkeeping still make the direct nearest presenter slower on `control`, `stage-heavy`, and especially the gameplay-priority Genei burst, so it does not beat the kept baseline on the real device
+  - Final commit hash:
+    - recorded in the loop closure commit
+  - Next best candidate:
+    - keep the live baseline on the current direct nearest path and do not retry per-tile sparse splitting blindly; the next presenter-side loop should add row-gap/fanout measurement or target a different hotspot than tile-level split/merge, because small dirty-byte wins are still backfiring on gameplay-first gates
+
 - 2026-03-15T19:36:56-0400
   - Research target:
     - revalidate the live `scale-mode = nearest` HDMI slowdown on the kept `r22` branch/runtime, quantify how much of the remaining Genei-Jin first-activation cost is still nearest-present-specific versus general gameplay cost, and test whether conservatively clustering nearby repeated-row dst runs could lower repeated-row memcpy fanout without replaying the rejected broad dense-row shape
