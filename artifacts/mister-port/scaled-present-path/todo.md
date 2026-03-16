@@ -330,6 +330,26 @@
 
 ## Cycle Log
 
+- 2026-03-16T21:22:40-0400
+  - Research target:
+    - test whether nearest presenter work can recover more ordinary nearest-HDMI FPS by sourcing the remaining non-tile full-span repeated mapped rows from the existing RAM row template instead of rereading `fb_map`, while validating with recovered ordinary `basic-exchange`, `effect-heavy`, trusted full `genei-jin-first-activation`, `control`, and a native guard
+  - Change summary:
+    - tried a narrow single-file reland in `src/port/sdl/fbdev_presenter.c` that seeded `mapped_repeat_row_template_pixels` from already-rasterized non-tile mapped rows only when the same `src_y` would replay at least two more times, then let later full-span repeats copy from RAM instead of from the previous framebuffer row
+    - rebuilt/exported `build/mister-telemetry-package-arm-nearest-r43-fullspan-template-20260316a` through the validated `/work-arm` ARM telemetry path in `3sx-mister-build-nearest-hdmi-perf`, captured fresh accepted-runtime baselines, deployed the candidate with `tools/mister/misterctl.sh`, reran the same nearest gameplay matrix plus native guard, then rolled the source diff back and restored `build/mister-telemetry-package-arm-nearest-r41-sparse-shape-20260316a` on-device after the keep gates failed
+    - completed the required review pass as a manual scoped review of the reverted single-file presenter diff with focus on repeat-group template lifetime, no gameplay-affecting behavior changes, and parity with the accepted non-template row path; no actionable correctness issue survived review, so the rejection stayed purely performance-based
+  - Verification evidence:
+    - `git diff --check` passed before the candidate build; the `/work-arm` ARM telemetry rebuild/install/package succeeded, `readelf -h` still reported `ELF32` `ARM` with hard-float ABI, and the exported candidate package was `build/mister-telemetry-package-arm-nearest-r43-fullspan-template-20260316a`
+    - candidate `deploy`, `probe`, and bounded `smoke` passed through `tools/mister/misterctl.sh`; after rollback, redeploy/probe of `build/mister-telemetry-package-arm-nearest-r41-sparse-shape-20260316a` also passed with the same `dummy/software` + `FBDEV` nearest direct-present probe state
+    - nearest control improved modestly: `loop43-base-control = 75.5803 FPS / 13.2310 / 7.0105 / 3.0080 ms` versus `loop43-post-control = 76.5113 / 13.0700 / 6.9981 / 2.9114` (`frame / render / present`)
+    - the recovered ordinary gameplay lane stayed effectively flat and did not show the intended workload move: `loop43-base-basic-exchange = 53.4554 FPS / 18.7072 / 7.1284 / 6.4707 ms` versus `loop43-post-basic-exchange = 53.4706 / 18.7019 / 7.1758 / 6.4693`, while `mapped_repeat_rows`, `mapped_repeat_template_rows`, `mapped_repeat_run_copies`, `mapped_repeat_template_run_copies`, and `copy_bytes` all stayed unchanged at `355.06`, `177.33`, `2447.34`, `1409.89`, and `495530.19`
+    - ordinary gameplay pressure outside the exact exchange regressed: `loop43-base-effect-heavy = 42.0501 FPS / 23.7812 / 9.2433 / 7.5742 ms` versus `loop43-post-effect-heavy = 41.8057 / 23.9202 / 9.3690 / 7.5838`, with `copy_bytes` unchanged `838947.17` and `mapped_repeat_row.mean_ms` worsening `2.7996 -> 2.8402`
+    - trusted full Genei regressed materially at unchanged workload shape: `loop43-base-genei = 34.8065 FPS / 28.7303 / 10.4274 / 10.4344 ms` versus `loop43-post-genei = 34.3127 / 29.1437 / 10.4747 / 10.6738`, while `mapped_repeat_rows`, `mapped_repeat_template_rows`, `mapped_repeat_run_copies`, `mapped_repeat_template_run_copies`, and `copy_bytes` stayed fixed at `599.25`, `397.81`, `3732.92`, `3054.79`, and `1895206.84`
+    - native guard stayed close but slightly down: `loop43-base-native-control = 92.2672 FPS / 10.8381 / 7.0411 / 0.5433 ms` versus `loop43-post-native-control = 91.9275 / 10.8781 / 7.1150 / 0.5323`
+  - Keep/rollback decision with reason:
+    - rollback; seeding the existing RAM template from already-rasterized non-tile full-span rows did not change the measured repeat-row workload shape or copied bytes on the ordinary or trusted heavy gates, left `basic-exchange` flat, and regressed both `effect-heavy` and trusted full Genei, so it is not a decision-grade nearest-HDMI win
+  - Next best candidate:
+    - do not reopen this non-tile full-span RAM-seeding shape without fresh telemetry that explicitly proves the remaining non-template repeated rows are a large source-side hotspot; re-rank broader gameplay raster residue against another nearest presenter body cut using `basic-exchange` plus an ordinary effect lane before another RAM-source reland
+
 - 2026-03-16T17:48:52-0400
   - Research target:
     - test whether a narrow nearest-presenter replay-body change can cut repeat-row fanout on template-backed sparse rows by merging tiny gaps, while using recovered ordinary `basic-exchange` plus trusted full `genei-jin-first-activation` as the player-visible keep/reject gates instead of Genei alone
