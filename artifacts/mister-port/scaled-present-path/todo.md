@@ -342,6 +342,24 @@
   - Next best candidate:
     - keep the broader gameplay-raster lane open, but do not reopen threshold-style medium-miss gating without tighter task-shape attribution; the next runtime attempt should target a narrower measured raster family than a frame-local burst budget, or re-rank the broader menu lane if fresh gameplay evidence stops pointing here
 
+- 2026-03-16T12:43:30-0400
+  - Research target:
+    - test whether the next cheapest nearest-presenter follow-up after the kept `r30` RAM row-template reland is cached per-row repeat metadata in `src/port/sdl/fbdev_presenter.c`, specifically dense-span eligibility plus repeated-row gap pixels, before reopening broader raster or menu lanes
+  - Change summary:
+    - tried a single-file `src/port/sdl/fbdev_presenter.c` candidate that precomputed per-source-row dense repeated-row dst spans and repeated-row gap pixels while building the mapped-row cache, then reused that metadata inside the repeated-row hot path instead of recomputing it on each replayed row
+    - rebuilt/exported `build/mister-telemetry-package-arm-nearest-r34-repeat-row-meta-20260316a`, deployed it with `tools/mister/misterctl.sh`, captured the required nearest gameplay-first matrix plus a matched trusted full Genei pass, and then rolled the source change back after the keep bar failed
+    - attempted `codex review --uncommitted` for the required review pass, but the helper stalled again after read-only inspection; completed a manual scoped review of the presenter diff instead and found no correctness issues beyond the measured keep-bar tradeoff
+    - restored the MiSTer to the accepted `build/mister-telemetry-package-arm-nearest-r30-row-template-20260315a` runtime after first discovering that `build/mister-telemetry-package-arm-raster-baseline-20260316b` was missing `libSDL3` on-device and failed `probe` / `smoke` with loader errors
+  - Verification evidence:
+    - `git diff --check` passed before the candidate build; the `/work-arm-r34` ARM telemetry rebuild/install/package succeeded in `3sx-mister-build-nearest-hdmi-perf`, exported cleanly to `build/mister-telemetry-package-arm-nearest-r34-repeat-row-meta-20260316a`, and container `readelf -h` still reported `ELF32` `ARM` with hard-float ABI
+    - candidate `deploy`, `probe`, and bounded `smoke` passed through `tools/mister/misterctl.sh`; after the restore detour, the accepted `r30` runtime again probed as `dummy/software` with `FBDEV: active (1920x1080 ...)`, `Native render path: enabled (scale-mode=nearest)`, and `Software frame mode: on`, and bounded `smoke` returned to the normal timeout-backed success pattern
+    - the player-facing low-overhead gates all regressed slightly on the candidate: `nearest-hdmi-r34-control-basic-pre = 74.5582 FPS / 13.4123 / 7.0732 / 3.0986 ms` versus `nearest-hdmi-r34-control-basic-post = 74.3434 FPS / 13.4511 / 7.0910 / 3.1095 ms`, `nearest-hdmi-r34-stage-heavy-basic-pre = 55.1345 FPS / 18.1375 / 8.9956 / 4.1080 ms` versus `nearest-hdmi-r34-stage-heavy-basic-post = 54.7728 FPS / 18.2572 / 9.0419 / 4.1617 ms`, and trusted `nearest-hdmi-r34-genei-jin-first-activation-basic-pre = 35.9375 FPS / 27.8261 / 10.6039 / 10.8295 ms` versus `nearest-hdmi-r34-genei-jin-first-activation-basic-post = 35.8705 FPS / 27.8780 / 10.6869 / 10.6717 ms`; the native guard stayed effectively flat at `native-hdmi-r34-control-basic-pre = 91.7484 FPS` versus `native-hdmi-r34-control-basic-post = 91.7074 FPS`
+    - matched full telemetry did prove the bookkeeping cache moved the intended hotspot inside trusted Genei: `nearest-hdmi-r34-genei-jin-first-activation-full` improved `30.4962 -> 30.7053 FPS`, `mapped_repeat_row.mean_ms` fell `6.4982 -> 6.2847`, and `present.mean_ms` fell `13.7873 -> 13.6653`, while the workload shape itself stayed unchanged (`mapped_repeat_gap_pixels = 175109.84`, `mapped_repeat_run_copies = 3732.92`, `mapped_repeat_dense_rows = 68.41`)
+  - Keep/rollback decision with reason:
+    - rollback; caching per-row repeat metadata trims a little repeated-row presenter bookkeeping on the trusted full Genei hotspot, but the low-overhead `control`, `stage-heavy`, and trusted Genei basic gates all landed slightly below baseline, so it does not clear the real player-visible FPS bar
+  - Next best candidate:
+    - do not spend another nearest-presenter loop on bookkeeping-only metadata caches unless fresh telemetry shows a larger first-row versus repeated-row compute gap; re-rank the broader gameplay-raster lane before reopening presenter micro-optimizations
+
 - 2026-03-16T15:10:04-0400
   - Research target:
     - test whether the kept `r30` RAM row-template presenter path can convert more extreme tail rows from sparse template replay to bounded dense replay, while staying inert on non-tail nearest gameplay gates
