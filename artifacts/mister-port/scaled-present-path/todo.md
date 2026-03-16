@@ -324,6 +324,24 @@
 
 ## Cycle Log
 
+- 2026-03-16T16:08:12-0400
+  - Research target:
+    - test whether the rejected global `256` lookup reland can be narrowed into a frame-local medium-miss burst gate, so `256-383 px` non-integer tasks only shift onto the existing helper after a heavy Genei frame has already shown repeated medium-miss traffic
+  - Change summary:
+    - tried a single-file `src/port/sdl/sdl_game_renderer.c` candidate that kept the shared `>=384 px` lookup threshold but enabled `256-383 px` tasks only after the frame accumulated `>=1024` submitted pixels from that medium-miss family
+    - rebuilt/exported `build/mister-telemetry-package-arm-r33-burst-gated-20260316a`, deployed it with `tools/mister/misterctl.sh`, captured the gameplay-first nearest matrix on-device, and then restored the accepted `build/mister-telemetry-package-arm-nearest-r30-row-template-20260315a` runtime after the reject
+    - attempted `codex review --uncommitted` for the required review pass, but the helper stalled again after read-only inspection; completed a manual scoped review of the diff instead and found no correctness issues beyond the measured keep-bar tradeoff
+  - Verification evidence:
+    - `git diff --check` passed before the build; the `/work-arm` ARM telemetry rebuild/install/package succeeded in `3sx-mister-build-nearest-hdmi-perf`, exported cleanly to `build/mister-telemetry-package-arm-r33-burst-gated-20260316a`, and container `readelf -h` still reported `ELF32` `ARM` with hard-float ABI
+    - candidate `deploy`, `probe`, and bounded `smoke` passed through `tools/mister/misterctl.sh`; both candidate and restored probes stayed on `dummy/software` with `FBDEV: active (1920x1080 ...)`, `Native render path: enabled (scale-mode=nearest)`, and `Software frame mode: on`
+    - non-targeted gameplay guardrails improved on the candidate: `nearest-raster-r31-control-basic-pre = 74.1686 FPS / 13.4828 / 7.1283 / 3.1003 ms` versus `nearest-raster-r33-control-basic-post = 74.5218 FPS / 13.4189 / 7.0852 / 3.0820 ms`, and `nearest-raster-r31-effect-basic-pre = 46.2054 FPS / 21.6425 / 8.9866 / 6.8966 ms` versus `nearest-raster-r33-effect-basic-post = 47.2536 FPS / 21.1624 / 8.8765 / 6.6095 ms`
+    - the trusted low-overhead Genei keep gate still failed twice on the candidate: `nearest-raster-r31-genei-basic-pre = 36.2138 FPS / 27.6138 / 10.5481 / 10.6002 ms`, `nearest-raster-r33-genei-basic-post = 36.0394 FPS / 27.7474 / 10.3897 / 10.8412 ms`, and rerun `nearest-raster-r33-genei-basic-post-rerun = 35.9517 FPS / 27.8151 / 10.4282 / 10.7396 ms`
+    - matched full telemetry still proved the burst gate moved the intended active workload: overall `nearest-raster-r31-genei-full-pre -> nearest-raster-r33-genei-full-post` improved `30.4967 -> 30.7605 FPS`, active-window means moved `41.4480 / 13.3896 / 19.5017 / 19.4801 ms` to `40.8022 / 13.2910 / 19.1296 / 19.1166 ms` (`frame / render / present / present_copy`), active `>=256 px` miss pixels fell `2117.07 -> 328.66`, active `>=256 px` miss tasks fell `6.76 -> 1.03`, and active generic-textured pixels fell `4897.57 -> 3109.15`
+  - Keep/rollback decision with reason:
+    - rollback; the frame-local medium-miss burst gate does improve the full active Genei hotspot and stays friendly on `control` plus `effect-heavy`, but the trusted low-overhead Genei keep gate still landed below baseline twice, so this does not clear the real player-visible FPS bar
+  - Next best candidate:
+    - keep the broader gameplay-raster lane open, but do not reopen threshold-style medium-miss gating without tighter task-shape attribution; the next runtime attempt should target a narrower measured raster family than a frame-local burst budget, or re-rank the broader menu lane if fresh gameplay evidence stops pointing here
+
 - 2026-03-16T15:10:04-0400
   - Research target:
     - test whether the kept `r30` RAM row-template presenter path can convert more extreme tail rows from sparse template replay to bounded dense replay, while staying inert on non-tail nearest gameplay gates
