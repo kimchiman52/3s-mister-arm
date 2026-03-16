@@ -85,10 +85,19 @@ enum {
     mapped_repeat_dense_row_min_span_pixels = 256,
     mapped_repeat_dense_row_min_coverage_percent = 94,
     mapped_repeat_row_template_tail_min_row_runs = 2000,
+    mapped_repeat_row_template_sparse_work_min_changed_rows = 110,
+    mapped_repeat_row_template_sparse_work_min_gap_pixels = 150000,
+    mapped_repeat_row_template_sparse_work_min_run_copies = 2200,
     // The current trusted control/stage-heavy captures stay below this row-repeat count,
     // while the missed worst first-Genei frames cross it repeatedly.
     mapped_repeat_row_template_tail_min_repeat_rows = 750,
 };
+
+typedef struct MappedRepeatRowWorkEstimate {
+    int repeat_rows;
+    size_t gap_pixels;
+    Uint64 run_copies;
+} MappedRepeatRowWorkEstimate;
 
 static int clamp_to_range(int value, int min, int max) {
     if (value < min) {
@@ -545,24 +554,30 @@ static size_t get_row_tile_run_gap_pixels(int row_tile_run_base, int row_tile_ru
     return gap_pixels;
 }
 
-static int estimate_mapped_repeat_rows_for_clip(int clip_y0, int clip_y1) {
+static MappedRepeatRowWorkEstimate estimate_mapped_repeat_row_work_for_clip(int clip_y0, int clip_y1) {
+    MappedRepeatRowWorkEstimate estimate = { 0 };
     if ((scale_y_lut == NULL) || (mapped_source_row_changed == NULL) || (mapped_source_row_tile_run_count == NULL) ||
         (clip_y1 <= (clip_y0 + 1))) {
-        return 0;
+        return estimate;
     }
 
-    int repeat_rows = 0;
     for (int y = clip_y0; y < (clip_y1 - 1); y++) {
         const int src_y = scale_y_lut[y];
         if (!mapped_source_row_changed[src_y] || (mapped_source_row_tile_run_count[src_y] <= 0)) {
             continue;
         }
         if (scale_y_lut[y + 1] == src_y) {
-            repeat_rows += 1;
+            estimate.repeat_rows += 1;
+            estimate.run_copies += (Uint64)mapped_source_row_tile_run_count[src_y];
+            if ((mapped_source_row_tile_run_dst_x0 != NULL) && (mapped_source_row_tile_run_dst_x1 != NULL) &&
+                (mapped_source_row_tile_run_stride > 0)) {
+                const int row_tile_run_base = src_y * mapped_source_row_tile_run_stride;
+                estimate.gap_pixels += get_row_tile_run_gap_pixels(row_tile_run_base, mapped_source_row_tile_run_count[src_y]);
+            }
         }
     }
 
-    return repeat_rows;
+    return estimate;
 }
 
 static size_t copy_row_span_between_rows(Uint8* dst_row_base, const Uint8* src_row_base, int dst_x0, int dst_x1) {
@@ -1142,12 +1157,17 @@ static bool copy_argb_surface_scaled_to_fb_mapped_rect(const SDL_Surface* argb,
         }
     }
 
-    const int predicted_repeat_rows =
-        (have_lut && cache_ready) ? estimate_mapped_repeat_rows_for_clip(clip_y0, clip_y1) : 0;
+    const MappedRepeatRowWorkEstimate predicted_repeat_work =
+        (have_lut && cache_ready) ? estimate_mapped_repeat_row_work_for_clip(clip_y0, clip_y1) :
+                                    (MappedRepeatRowWorkEstimate){ 0 };
     bool use_repeat_row_template = false;
+    // Catch the ordinary sparse-repeat workload by gating on predicted repeat-row copy work, not just the Genei tail count.
     if (have_lut && cache_ready &&
         ((frame_stats.mapped_row_runs >= mapped_repeat_row_template_tail_min_row_runs) ||
-         (predicted_repeat_rows >= mapped_repeat_row_template_tail_min_repeat_rows))) {
+         (predicted_repeat_work.repeat_rows >= mapped_repeat_row_template_tail_min_repeat_rows) ||
+         ((frame_stats.mapped_changed_rows >= mapped_repeat_row_template_sparse_work_min_changed_rows) &&
+          (predicted_repeat_work.gap_pixels >= mapped_repeat_row_template_sparse_work_min_gap_pixels) &&
+          (predicted_repeat_work.run_copies >= mapped_repeat_row_template_sparse_work_min_run_copies)))) {
         use_repeat_row_template = ensure_mapped_repeat_row_template(fb_width);
     }
     Uint8* repeat_row_template_bytes = use_repeat_row_template ? (Uint8*)mapped_repeat_row_template_pixels : NULL;
