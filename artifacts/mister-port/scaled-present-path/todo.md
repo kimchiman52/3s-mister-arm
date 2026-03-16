@@ -44,6 +44,7 @@
   - if the chosen loop is nearest-specific, start with a tail-gated repeated-row candidate and add one telemetry split that separates first-row materialization from repeated-row replay
   - if the chosen loop is broader than nearest, prefer gameplay-wide raster residue before reopening menu or title work
   - rejected `2026-03-16` broader raster follow-up: admitting scaled color-mod textured rects to the existing lookup fast path in `src/port/sdl/sdl_game_renderer.c` produced only noise-level movement on matched nearest `control` / `ibuki-stage7` / trusted `genei-jin-first-activation` plus a native guard, while `software_frame_fast_miss_color_mod` stayed `0.00` and `generic_textured_rgb_mod` stayed effectively flat on the compared gates; do not reopen this lane without a gameplay-first capture that proves real color-mod fallback or RGB-mod residue
+  - rejected `2026-03-16` broader raster follow-up: a palette-opaque exact-copy `SDL_memcpy` shortcut for exact unmodulated software-source blits in `src/port/sdl/sdl_game_renderer.c` did not produce a stable ordinary-gameplay win. Matched nearest `basic-exchange` moved `49.7951 -> 50.7135 FPS` on the first post run but fell to `49.3554 FPS` on the rerun, trusted full `genei-jin-first-activation` stayed effectively flat `33.7726 -> 33.7062 FPS`, and nearest/native control stayed within tolerance; do not reopen this lane without telemetry that proves a large stable palette-opaque exact-copy family or a narrower source-surface cohort
   - if the chosen loop explicitly targets menu residue, work from the broader `2p-character-select` lane and `SDLGameRenderer_SetTexture` / submit-state churn, not the already-rejected `DrawSprite2` fast-path guess
   - do not spend a runtime loop on attract/logo until a trustworthy exact opening/title capture boundary exists
 
@@ -327,6 +328,24 @@
   - if Chunk 3 still leaves nearest clearly bandwidth-bound after path routing and LUT work, start a separate follow-up stream for dirty-row or tile-aware scaled software-frame present instead of overloading this checklist
 
 ## Cycle Log
+
+- 2026-03-16T16:43:53-0400
+  - Research target:
+    - test whether the broader gameplay-raster lane can recover real nearest-HDMI FPS on ordinary exchanges by recognizing palette-opaque software-source surfaces and replacing the exact unmodulated copy path with a direct `SDL_memcpy` fast path inside `src/port/sdl/sdl_game_renderer.c`
+  - Change summary:
+    - tried a narrow single-file reland in `src/port/sdl/sdl_game_renderer.c` that cached whether each software-source surface was palette-opaque and then used `SDL_memcpy` for exact unmodulated non-flipped copies; fixed the first build break by switching the opacity check to `SDL_GetSurfacePalette(source_surface)` for SDL3
+    - rebuilt/exported `build/mister-telemetry-package-arm-raster-r40-opaque-exact-20260316a`, captured fresh on-device baselines on the accepted `build/mister-telemetry-package-arm-r39a` runtime, deployed the candidate through `tools/mister/misterctl.sh`, reran the nearest gameplay matrix plus the native guard, then rolled the source diff back and restored `build/mister-telemetry-package-arm-r39a` on-device after the keep gates failed
+    - completed the required review pass as a manual scoped review of the rejected single-file raster diff with focus on palette-opacity classification, cache-slot/source-surface correctness, and exact-copy semantics; no actionable correctness issue survived review, so the rejection stayed purely performance-based
+  - Verification evidence:
+    - `git diff --check` passed before the build; the `/work-arm` ARM telemetry rebuild/install/package succeeded in `3sx-mister-build-nearest-hdmi-perf`, exported cleanly to `build/mister-telemetry-package-arm-raster-r40-opaque-exact-20260316a`, and `readelf -h` still reported `ELF32` `ARM` with hard-float ABI
+    - candidate `deploy`, `probe`, and bounded `smoke` passed through `tools/mister/misterctl.sh`; the post-deploy probe stayed on `dummy/software` with `FBDEV: active (1920x1080 ...)`, `Native render path: enabled (scale-mode=nearest)`, and `Software frame mode: on`. After rollback, redeploy/probe/smoke of `build/mister-telemetry-package-arm-r39a` also passed with the same nearest direct-present probe state
+    - nearest control and native guardrails stayed within tolerance: `nearest-raster-r40-control-basic-pre = 74.3032 FPS / 13.4584 / 7.0714 / 3.1271 ms` versus `nearest-raster-r40-control-basic-post = 73.4055 FPS / 13.6230 / 7.1559 / 3.2415 ms`, and `native-raster-r40-control-basic-pre = 91.3281 FPS / 10.9495 / 7.1839 / 0.5429 ms` versus `native-raster-r40-control-basic-post = 91.1903 FPS / 10.9661 / 7.2103 / 0.5481 ms` (`frame / render / present`)
+    - the recovered ordinary gameplay gate did not hold a repeatable win: `nearest-raster-r40-basic-exchange-full-pre = 49.7951 FPS / 20.0823 / 5.0975 / 7.2294 / 7.7554 ms`, first post `nearest-raster-r40-basic-exchange-full-post = 50.7135 FPS / 19.7186 / 4.9259 / 7.1518 / 7.6410 ms`, and rerun `nearest-raster-r40-basic-exchange-full-post-rerun = 49.3554 FPS / 20.2612 / 5.0453 / 7.3732 / 7.8426 ms` (`frame / update / render / present`)
+    - trusted full Genei stayed effectively flat to slightly worse on the candidate: `nearest-raster-r40-genei-full-pre = 33.7726 FPS / 29.6098 / 7.9582 / 10.4819 / 11.1697 ms` versus `nearest-raster-r40-genei-full-post = 33.7062 FPS / 29.6681 / 7.9703 / 10.5111 / 11.1867 ms`
+  - Keep/rollback decision with reason:
+    - rollback; the only visible gain was a one-run `basic-exchange` bump that disappeared on the immediate rerun, while the trusted heavy gate stayed flat/slightly worse. This exact palette-opaque memcpy shortcut is not decision-grade evidence of a player-visible FPS improvement
+  - Next best candidate:
+    - do not reopen this exact raster shortcut without telemetry that proves a large stable palette-opaque exact-copy family or a narrower source-surface cohort; re-rank the next loop between nearest presenter tail work and broader gameplay raster residue using the recovered ordinary `basic-exchange` lane first
 
 - 2026-03-16T16:16:31-0400
   - Research target:
