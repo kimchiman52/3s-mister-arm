@@ -149,15 +149,29 @@ bool SDLSoftwareFrame_RasterNonIntegerLookupARGB8888(const SDL_FRect* dst_rect,
     Uint32* dst_pixels = (Uint32*)dst_surface->pixels;
     const int src_pitch = src_surface->pitch / (int)sizeof(Uint32);
     const int dst_pitch = dst_surface->pitch / (int)sizeof(Uint32);
+    const bool apply_color_mod = color != 0xFFFFFFFFu;
 
     for (int row = 0; row < visible_h; row++) {
         const Uint32* src_row = src_pixels + (src_y_lookup[row] * src_pitch);
         Uint32* dst_row = dst_pixels + ((dst_y0 + row) * dst_pitch) + dst_x0;
-        for (int col = 0; col < visible_w; col++) {
-            Uint32 src_pixel = src_row[src_x_lookup[col]];
-            if (color != 0xFFFFFFFFu) {
-                src_pixel = modulate_argb8888(src_pixel, color);
+        if (!apply_color_mod) {
+            for (int col = 0; col < visible_w; col++) {
+                const Uint32 src_pixel = src_row[src_x_lookup[col]];
+                const Uint32 src_a = (src_pixel >> 24) & 0xFFu;
+                if (src_a == 0u) {
+                    continue;
+                }
+                if (src_a == 0xFFu) {
+                    dst_row[col] = src_pixel;
+                    continue;
+                }
+                dst_row[col] = blend_argb8888(dst_row[col], src_pixel);
             }
+            continue;
+        }
+
+        for (int col = 0; col < visible_w; col++) {
+            Uint32 src_pixel = modulate_argb8888(src_row[src_x_lookup[col]], color);
             const Uint32 src_a = (src_pixel >> 24) & 0xFFu;
             if (src_a == 0u) {
                 continue;

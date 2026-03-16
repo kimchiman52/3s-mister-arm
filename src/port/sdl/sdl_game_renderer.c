@@ -4533,6 +4533,7 @@ static bool raster_textured_task_to_software_frame(const RenderTask* task) {
     const int dst_pitch = dst_surface->pitch / (int)sizeof(Uint32);
     const bool flip_h = (task->flip & SDL_FLIP_HORIZONTAL) != 0;
     const bool flip_v = (task->flip & SDL_FLIP_VERTICAL) != 0;
+    const bool apply_color_mod = task->color != 0xFFFFFFFFu;
     const Uint64 generic_sample_start_counter =
         begin_perf_capture_raster_bucket_sample(SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_GENERIC_TEXTURED);
 
@@ -4547,6 +4548,31 @@ static bool raster_textured_task_to_software_frame(const RenderTask* task) {
         const int src_y = clamp_to_range((int)SDL_floorf(src_y_start + (v * src_y_span)), 0, src_surface->h - 1);
         const Uint32* src_row = src_pixels + (src_y * src_pitch);
         Uint32* dst_row = dst_pixels + (y * dst_pitch);
+        if (!apply_color_mod) {
+            for (int x = dst_x0; x < dst_x1; x++) {
+                float u = (((float)x + 0.5f) - task->dst_rect.x) / task->dst_rect.w;
+                u = SDL_max(0.0f, SDL_min(u, 0.999999f));
+                if (flip_h) {
+                    u = 1.0f - u;
+                    u = SDL_max(0.0f, SDL_min(u, 0.999999f));
+                }
+
+                const int src_x =
+                    clamp_to_range((int)SDL_floorf(src_x_start + (u * src_x_span)), 0, src_surface->w - 1);
+                const Uint32 src_pixel = src_row[src_x];
+                const Uint32 src_a = (src_pixel >> 24) & 0xFFu;
+                if (src_a == 0u) {
+                    continue;
+                }
+                if (src_a == 0xFFu) {
+                    dst_row[x] = src_pixel;
+                    continue;
+                }
+                dst_row[x] = blend_argb8888(dst_row[x], src_pixel);
+            }
+            continue;
+        }
+
         for (int x = dst_x0; x < dst_x1; x++) {
             float u = (((float)x + 0.5f) - task->dst_rect.x) / task->dst_rect.w;
             u = SDL_max(0.0f, SDL_min(u, 0.999999f));
@@ -4557,10 +4583,7 @@ static bool raster_textured_task_to_software_frame(const RenderTask* task) {
 
             const int src_x =
                 clamp_to_range((int)SDL_floorf(src_x_start + (u * src_x_span)), 0, src_surface->w - 1);
-            Uint32 src_pixel = src_row[src_x];
-            if (task->color != 0xFFFFFFFFu) {
-                src_pixel = modulate_argb8888(src_pixel, task->color);
-            }
+            Uint32 src_pixel = modulate_argb8888(src_row[src_x], task->color);
             const Uint32 src_a = (src_pixel >> 24) & 0xFFu;
             if (src_a == 0u) {
                 continue;

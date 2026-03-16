@@ -324,6 +324,25 @@
 
 ## Cycle Log
 
+- 2026-03-16T18:34:30-0400
+  - Research target:
+    - test whether the broader gameplay-raster lane can clear another real nearest-HDMI keep by splitting the common unmodulated case out of the remaining non-integer and generic textured software-frame loops, so those inner loops stop branching on `color == 0xFFFFFFFFu` per pixel
+  - Change summary:
+    - updated `src/port/sdl/software_frame_non_integer.c` and `src/port/sdl/sdl_game_renderer.c` so the surviving non-integer lookup helper and generic textured fallback now choose the unmodulated path once per task/row, while preserving the existing alpha short-circuit and modulation behavior for non-white colors
+    - rebuilt/exported `build/mister-telemetry-package-arm-raster-r38-unmod-fastpath-20260316a`, captured a fresh baseline on the accepted `r37` runtime, deployed the candidate through `tools/mister/misterctl.sh`, and reran the same nearest gameplay matrix plus the native control guard
+    - attempted the required review pass with `codex review --uncommitted`; it stalled after repeated read-only inspection, so the cycle closed on a manual scoped review of the two-file diff with focus on color-mod semantics, alpha handling, and parity with the existing modulated path
+  - Verification evidence:
+    - `git diff --check` passed before the build; the `/work-arm` ARM telemetry rebuild/install/package succeeded in `3sx-mister-build-nearest-hdmi-perf`, exported cleanly to `build/mister-telemetry-package-arm-raster-r38-unmod-fastpath-20260316a`, and `readelf -h` still reported `ELF32` `ARM` with hard-float ABI
+    - candidate `deploy`, `probe`, and bounded `smoke` passed through `tools/mister/misterctl.sh`; both the pre and post probes stayed on `dummy/software` with `FBDEV: active (1920x1080 ...)`, `Native render path: enabled (scale-mode=nearest)`, and `Software frame mode: on`
+    - nearest non-targeted gameplay stayed effectively flat: `nearest-raster-r38-control-basic-pre = 74.2699 FPS / 13.4644 / 7.0305 / 3.1837 ms` versus `nearest-raster-r38-control-basic-post = 73.9789 FPS / 13.5174 / 7.1178 / 3.1440 ms`, and `nearest-raster-r38-effect-basic-pre = 47.4315 FPS / 21.0830 / 9.1074 / 6.3232 ms` versus `nearest-raster-r38-effect-basic-post = 47.4699 FPS / 21.0660 / 9.0152 / 6.3724 ms` (`frame / render / present`)
+    - the trusted low-overhead Genei keep gate improved materially on the player-visible lane: `nearest-raster-r38-genei-basic-pre = 38.0155 FPS / 26.3051 / 10.3647 / 9.4643 ms` versus `nearest-raster-r38-genei-basic-post = 38.9914 FPS / 25.6467 / 10.1585 / 9.1462 ms`
+    - matched full Genei improved overall with the same workload shape: `nearest-raster-r38-genei-full-pre = 32.2303 FPS / 31.0268 / 10.5982 / 12.4119 / 12.3950 ms` versus `nearest-raster-r38-genei-full-post = 32.4328 FPS / 30.8329 / 10.4653 / 12.3702 / 12.3574 ms` (`frame / render / present / present_copy`), while active-Genei frames moved `37.3094 / 12.8914 / 16.0868 / 16.0654 ms` to `36.9395 / 12.3936 / 16.0476 / 16.0349 ms` and sampled raster time fell in both targeted buckets (`fast_non_integer.mean_ms 0.059224 -> 0.055206`, `generic_textured.mean_ms 0.038166 -> 0.037813`) without changing `software_frame_fast_non_integer_pixels.mean` or `software_frame_generic_textured_pixels.mean`
+    - the native guard stayed within tolerance at `native-raster-r38-control-basic-pre = 91.9464 FPS / 10.8759 / 7.0895 / 0.5393 ms` versus `native-raster-r38-control-basic-post = 91.1028 FPS / 10.9766 / 7.1355 / 0.5398 ms`
+  - Keep/rollback decision with reason:
+    - keep; the unmodulated branch split is a behavior-preserving common-case raster win that improves both trusted nearest Genei gates and full active-Genei render cost, keeps `effect-heavy` flat-to-better, and stays inside the native tolerance despite a small `control` dip that remained well below the Genei gain
+  - Next best candidate:
+    - do not keep cloning branch splits blindly; this reland says there is still value in cheaper common-case per-pixel math on the surviving raster paths, but the remaining active nearest cost is now split between modest raster gains and stubborn present time, so the next loop should re-rank raster versus presenter work from fresh telemetry again
+
 - 2026-03-16T18:09:13-0400
   - Research target:
     - test whether the broader gameplay-raster lane can clear a real nearest-HDMI keep by hoisting the exact/scaled path's transparent/opaque alpha short-circuit into the remaining non-integer and generic textured raster loops, without changing routing or thresholds
