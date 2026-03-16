@@ -40,6 +40,7 @@
 - [x] Combined experiment order for Ralph:
   - if the chosen loop is nearest-specific, start with a tail-gated repeated-row candidate and add one telemetry split that separates first-row materialization from repeated-row replay
   - if the chosen loop is broader than nearest, prefer gameplay-wide raster residue before reopening menu or title work
+  - rejected `2026-03-16` broader raster follow-up: admitting scaled color-mod textured rects to the existing lookup fast path in `src/port/sdl/sdl_game_renderer.c` produced only noise-level movement on matched nearest `control` / `ibuki-stage7` / trusted `genei-jin-first-activation` plus a native guard, while `software_frame_fast_miss_color_mod` stayed `0.00` and `generic_textured_rgb_mod` stayed effectively flat on the compared gates; do not reopen this lane without a gameplay-first capture that proves real color-mod fallback or RGB-mod residue
   - if the chosen loop explicitly targets menu residue, work from the broader `2p-character-select` lane and `SDLGameRenderer_SetTexture` / submit-state churn, not the already-rejected `DrawSprite2` fast-path guess
   - do not spend a runtime loop on attract/logo until a trustworthy exact opening/title capture boundary exists
 
