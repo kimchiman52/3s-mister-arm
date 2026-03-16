@@ -317,6 +317,28 @@
 
 ## Cycle Log
 
+- 2026-03-15T21:12:40-0400
+  - Research target:
+    - verify the live `scale-mode = nearest` HDMI slowdown on the current branch/package again, add row-gap/fanout telemetry to the kept direct presenter path, and test whether a narrow sparse repeated-row copy-primitive change helps the gameplay-first hotspot without replaying the overcopy regressions
+  - Change summary:
+    - rebuilt and redeployed the current branch as a telemetry ARM package, revalidated that nearest still probed as `dummy/software` plus `FBDEV: active`, `Native render path: enabled (scale-mode=nearest)`, and `software_frame_mapped_scale`, and recovered fresh gameplay-first nearest captures on the live `1920x1080` device before changing runtime behavior
+    - added schema-`47` telemetry-only plumbing in `src/port/sdl/fbdev_presenter.{c,h}` and `src/port/sdl/sdl_app.c` so perf JSON now exports `mapped_changed_rows`, `mapped_row_runs`, `mapped_row_runs_max`, `mapped_repeat_rows`, `mapped_repeat_run_copies`, `mapped_repeat_dense_rows`, and `mapped_repeat_gap_pixels` in both the summary metrics and per-frame samples
+    - tried a single-file `r29` presenter candidate that replaced sparse repeated-row `SDL_memcpy` calls with an inline aligned word-copy helper, rebuilt/exported it incrementally from the existing ARM worktree, and rolled it back immediately after the first gameplay gate regressed on the real device
+    - attempted `codex review --uncommitted` for the kept telemetry diff, but the helper stalled after repeated read-only diff inspection; completed a manual scoped review of the accepted measurement-support change and found no additional correctness issue
+  - Verification evidence:
+    - `git diff --check` passed before both builds; the full telemetry ARM rebuild/install/package succeeded in `3sx-mister-build-nearest-hdmi-perf`, exported cleanly to `build/mister-telemetry-package-arm-nearest-r28-fanout-20260315a`, and the incremental `r29` rebuild/install/package also succeeded from the same ARM worktree and exported cleanly to `build/mister-telemetry-package-arm-nearest-r29-smallcopy-20260315a`; both packages still reported `ELF32` `ARM` with hard-float ABI
+    - candidate and rollback `deploy`, `probe`, and bounded `smoke` all passed through `tools/mister/misterctl.sh`; after the reject, the live runtime was restored with `tools/mister/misterctl.sh --password 1 deploy --src build/mister-telemetry-package-arm-nearest-r28-fanout-20260315a` plus a final `probe`
+    - the accepted schema-`47` telemetry tree stayed route-correct and close to the preserved direct-path baseline: `nearest-hdmi-r28-control-full = 71.2582 FPS / 14.0335 / 3.0903 / 3.0757 ms` (`frame / present / present_copy`), `nearest-hdmi-r28-stage-heavy-full = 52.0238 FPS / 19.2220 / 4.0953 / 4.0801 ms`, `nearest-hdmi-r28-genei-jin-first-activation = 29.7295 FPS / 33.6367 / 14.9453 / 14.9236 ms` with trusted `p1_super_art_active_frames_total = 121` and `p1_super_art_active_first_frame = 179`, and `native-hdmi-r28-control-basic = 92.6854 FPS / 10.7892 / 0.5367 ms`
+    - the new telemetry exposed the remaining hotspot shape directly: active Genei frames averaged `194.57` changed source rows, `1395.37` mapped row runs, `15.86` max runs on the busiest source row, `743.60` repeated mapped rows, `4415.81` sparse repeated-row copy calls, `117.50` dense repeated rows, and `205927.85` repeated-row gap pixels while still averaging `42.8552 ms` frame / `21.2190 ms` `present_copy`; the active Genei tail peaked at `4852` total row runs, `18547` sparse repeated-row copies, `499290` gap pixels, and `5444412` copied bytes
+    - the new counters also showed why the next runtime reland should stay tightly gated: `control` and `stage-heavy` never exceeded `mapped_row_runs = 1753`, while active Genei exceeded `2000` row runs on `38/121` frames and `8000` sparse repeated-row copies on `16/121` frames
+    - the `r29` inline-copy candidate failed the first keep gate immediately even though bytes and routing stayed flat: `nearest-hdmi-r29-control-full` fell to `66.5394 FPS / 15.0287 / 4.0357 / 4.0200 ms` with the same `183105.60` copied bytes/frame and the same direct `software_frame_mapped_scale` path, so the primitive change itself made the control lane slower
+  - Keep/rollback decision with reason:
+    - keep the schema-`47` telemetry-only reland and rollback the inline sparse-copy primitive; the accepted change gives the branch the missing fanout/gap evidence for the real HDMI nearest hotspot, while the first primitive experiment regressed `control` badly enough that wider capture budget was not justified
+  - Final commit hash:
+    - recorded in the loop closure commit
+  - Next best candidate:
+    - use the new row-fanout telemetry to gate any future repeated-row cluster or alternate-copy experiment behind truly extreme frames only; `control` and `stage-heavy` stayed below `mapped_row_runs = 2000`, so the next runtime loop should target the active Genei tail (`mapped_row_runs >= 2000` or `mapped_repeat_run_copies >= 8000`) instead of broad small-copy rewrites or another byte-only split/merge attempt
+
 - 2026-03-15T20:05:31-0400
   - Research target:
     - refresh the gameplay-first nearest HDMI baseline on the live `1920x1080` direct path, then test whether splitting only tiles with a large interior mapped gap could reduce copied bytes without replaying the broad disjoint-run fanout loss

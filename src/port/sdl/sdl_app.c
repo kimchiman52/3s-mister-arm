@@ -111,6 +111,13 @@ static Uint64 perf_present_convert_ns_total = 0;
 static Uint64 perf_present_copy_ns_total = 0;
 static Uint64 perf_present_clear_ns_total = 0;
 static size_t perf_copy_bytes_total = 0;
+static Uint64 perf_mapped_changed_rows_total = 0;
+static Uint64 perf_mapped_row_runs_total = 0;
+static Uint64 perf_mapped_row_runs_max_total = 0;
+static Uint64 perf_mapped_repeat_rows_total = 0;
+static Uint64 perf_mapped_repeat_run_copies_total = 0;
+static Uint64 perf_mapped_repeat_dense_rows_total = 0;
+static Uint64 perf_mapped_repeat_gap_pixels_total = 0;
 static Uint64 perf_dirty_tiles_total = 0;
 static double perf_dirty_hit_rate_total = 0.0;
 static int perf_full_copy_fallback_frames = 0;
@@ -315,6 +322,13 @@ typedef struct PerfFrameSample {
     double present_copy_ms;
     double present_clear_ms;
     size_t copy_bytes;
+    int mapped_changed_rows;
+    int mapped_row_runs;
+    int mapped_row_runs_max;
+    int mapped_repeat_rows;
+    int mapped_repeat_run_copies;
+    int mapped_repeat_dense_rows;
+    Uint64 mapped_repeat_gap_pixels;
     int dirty_tiles;
     double dirty_ratio;
     int presenter_tiles_total;
@@ -914,6 +928,13 @@ static void perf_capture_reset_storage(void) {
     perf_present_copy_ns_total = 0;
     perf_present_clear_ns_total = 0;
     perf_copy_bytes_total = 0;
+    perf_mapped_changed_rows_total = 0;
+    perf_mapped_row_runs_total = 0;
+    perf_mapped_row_runs_max_total = 0;
+    perf_mapped_repeat_rows_total = 0;
+    perf_mapped_repeat_run_copies_total = 0;
+    perf_mapped_repeat_dense_rows_total = 0;
+    perf_mapped_repeat_gap_pixels_total = 0;
     perf_dirty_tiles_total = 0;
     perf_dirty_hit_rate_total = 0.0;
     perf_full_copy_fallback_frames = 0;
@@ -1154,6 +1175,13 @@ void SDLApp_ConfigurePerfCapture(int frame_count, const char* output_path, const
     perf_present_copy_ns_total = 0;
     perf_present_clear_ns_total = 0;
     perf_copy_bytes_total = 0;
+    perf_mapped_changed_rows_total = 0;
+    perf_mapped_row_runs_total = 0;
+    perf_mapped_row_runs_max_total = 0;
+    perf_mapped_repeat_rows_total = 0;
+    perf_mapped_repeat_run_copies_total = 0;
+    perf_mapped_repeat_dense_rows_total = 0;
+    perf_mapped_repeat_gap_pixels_total = 0;
     perf_dirty_tiles_total = 0;
     perf_dirty_hit_rate_total = 0.0;
     perf_full_copy_fallback_frames = 0;
@@ -1521,6 +1549,13 @@ static void perf_capture_write_summary(void) {
     const double avg_present_copy_ms = ((double)perf_present_copy_ns_total / frame_count) / 1e6;
     const double avg_present_clear_ms = ((double)perf_present_clear_ns_total / frame_count) / 1e6;
     const double avg_copy_bytes = (double)perf_copy_bytes_total / frame_count;
+    const double avg_mapped_changed_rows = (double)perf_mapped_changed_rows_total / frame_count;
+    const double avg_mapped_row_runs = (double)perf_mapped_row_runs_total / frame_count;
+    const double avg_mapped_row_runs_max = (double)perf_mapped_row_runs_max_total / frame_count;
+    const double avg_mapped_repeat_rows = (double)perf_mapped_repeat_rows_total / frame_count;
+    const double avg_mapped_repeat_run_copies = (double)perf_mapped_repeat_run_copies_total / frame_count;
+    const double avg_mapped_repeat_dense_rows = (double)perf_mapped_repeat_dense_rows_total / frame_count;
+    const double avg_mapped_repeat_gap_pixels = (double)perf_mapped_repeat_gap_pixels_total / frame_count;
     const double avg_dirty_tiles = (double)perf_dirty_tiles_total / frame_count;
     const double avg_render_task_count = (double)perf_render_task_count_total / frame_count;
     const double avg_rect_copy_tasks = (double)perf_rect_copy_tasks_total / frame_count;
@@ -1745,6 +1780,20 @@ static void perf_capture_write_summary(void) {
     double max_present_clear_ms = perf_samples[0].present_clear_ms;
     size_t min_copy_bytes = perf_samples[0].copy_bytes;
     size_t max_copy_bytes = perf_samples[0].copy_bytes;
+    int min_mapped_changed_rows = perf_samples[0].mapped_changed_rows;
+    int max_mapped_changed_rows = perf_samples[0].mapped_changed_rows;
+    int min_mapped_row_runs = perf_samples[0].mapped_row_runs;
+    int max_mapped_row_runs = perf_samples[0].mapped_row_runs;
+    int min_mapped_row_runs_max = perf_samples[0].mapped_row_runs_max;
+    int max_mapped_row_runs_max = perf_samples[0].mapped_row_runs_max;
+    int min_mapped_repeat_rows = perf_samples[0].mapped_repeat_rows;
+    int max_mapped_repeat_rows = perf_samples[0].mapped_repeat_rows;
+    int min_mapped_repeat_run_copies = perf_samples[0].mapped_repeat_run_copies;
+    int max_mapped_repeat_run_copies = perf_samples[0].mapped_repeat_run_copies;
+    int min_mapped_repeat_dense_rows = perf_samples[0].mapped_repeat_dense_rows;
+    int max_mapped_repeat_dense_rows = perf_samples[0].mapped_repeat_dense_rows;
+    Uint64 min_mapped_repeat_gap_pixels = perf_samples[0].mapped_repeat_gap_pixels;
+    Uint64 max_mapped_repeat_gap_pixels = perf_samples[0].mapped_repeat_gap_pixels;
     int min_dirty_tiles = perf_samples[0].dirty_tiles;
     int max_dirty_tiles = perf_samples[0].dirty_tiles;
     int min_render_task_count = perf_samples[0].render_task_count;
@@ -2126,6 +2175,48 @@ static void perf_capture_write_summary(void) {
         }
         if (sample->copy_bytes > max_copy_bytes) {
             max_copy_bytes = sample->copy_bytes;
+        }
+        if (sample->mapped_changed_rows < min_mapped_changed_rows) {
+            min_mapped_changed_rows = sample->mapped_changed_rows;
+        }
+        if (sample->mapped_changed_rows > max_mapped_changed_rows) {
+            max_mapped_changed_rows = sample->mapped_changed_rows;
+        }
+        if (sample->mapped_row_runs < min_mapped_row_runs) {
+            min_mapped_row_runs = sample->mapped_row_runs;
+        }
+        if (sample->mapped_row_runs > max_mapped_row_runs) {
+            max_mapped_row_runs = sample->mapped_row_runs;
+        }
+        if (sample->mapped_row_runs_max < min_mapped_row_runs_max) {
+            min_mapped_row_runs_max = sample->mapped_row_runs_max;
+        }
+        if (sample->mapped_row_runs_max > max_mapped_row_runs_max) {
+            max_mapped_row_runs_max = sample->mapped_row_runs_max;
+        }
+        if (sample->mapped_repeat_rows < min_mapped_repeat_rows) {
+            min_mapped_repeat_rows = sample->mapped_repeat_rows;
+        }
+        if (sample->mapped_repeat_rows > max_mapped_repeat_rows) {
+            max_mapped_repeat_rows = sample->mapped_repeat_rows;
+        }
+        if (sample->mapped_repeat_run_copies < min_mapped_repeat_run_copies) {
+            min_mapped_repeat_run_copies = sample->mapped_repeat_run_copies;
+        }
+        if (sample->mapped_repeat_run_copies > max_mapped_repeat_run_copies) {
+            max_mapped_repeat_run_copies = sample->mapped_repeat_run_copies;
+        }
+        if (sample->mapped_repeat_dense_rows < min_mapped_repeat_dense_rows) {
+            min_mapped_repeat_dense_rows = sample->mapped_repeat_dense_rows;
+        }
+        if (sample->mapped_repeat_dense_rows > max_mapped_repeat_dense_rows) {
+            max_mapped_repeat_dense_rows = sample->mapped_repeat_dense_rows;
+        }
+        if (sample->mapped_repeat_gap_pixels < min_mapped_repeat_gap_pixels) {
+            min_mapped_repeat_gap_pixels = sample->mapped_repeat_gap_pixels;
+        }
+        if (sample->mapped_repeat_gap_pixels > max_mapped_repeat_gap_pixels) {
+            max_mapped_repeat_gap_pixels = sample->mapped_repeat_gap_pixels;
         }
         if (sample->dirty_tiles < min_dirty_tiles) {
             min_dirty_tiles = sample->dirty_tiles;
@@ -3010,7 +3101,7 @@ static void perf_capture_write_summary(void) {
     }
 
     io_printf(io, "{\n");
-    io_printf(io, "  \"schema_version\": 46,\n");
+    io_printf(io, "  \"schema_version\": 47,\n");
     io_printf(io, "  \"scene\": \"");
     io_write_json_escaped_string(io, perf_capture_scene_name);
     io_printf(io, "\",\n");
@@ -3366,6 +3457,34 @@ static void perf_capture_write_summary(void) {
               avg_copy_bytes,
               (unsigned long long)min_copy_bytes,
               (unsigned long long)max_copy_bytes);
+    io_printf(io, "    \"mapped_changed_rows\": {\"mean\": %.2f, \"min\": %d, \"max\": %d},\n",
+              avg_mapped_changed_rows,
+              min_mapped_changed_rows,
+              max_mapped_changed_rows);
+    io_printf(io, "    \"mapped_row_runs\": {\"mean\": %.2f, \"min\": %d, \"max\": %d},\n",
+              avg_mapped_row_runs,
+              min_mapped_row_runs,
+              max_mapped_row_runs);
+    io_printf(io, "    \"mapped_row_runs_max\": {\"mean\": %.2f, \"min\": %d, \"max\": %d},\n",
+              avg_mapped_row_runs_max,
+              min_mapped_row_runs_max,
+              max_mapped_row_runs_max);
+    io_printf(io, "    \"mapped_repeat_rows\": {\"mean\": %.2f, \"min\": %d, \"max\": %d},\n",
+              avg_mapped_repeat_rows,
+              min_mapped_repeat_rows,
+              max_mapped_repeat_rows);
+    io_printf(io, "    \"mapped_repeat_run_copies\": {\"mean\": %.2f, \"min\": %d, \"max\": %d},\n",
+              avg_mapped_repeat_run_copies,
+              min_mapped_repeat_run_copies,
+              max_mapped_repeat_run_copies);
+    io_printf(io, "    \"mapped_repeat_dense_rows\": {\"mean\": %.2f, \"min\": %d, \"max\": %d},\n",
+              avg_mapped_repeat_dense_rows,
+              min_mapped_repeat_dense_rows,
+              max_mapped_repeat_dense_rows);
+    io_printf(io, "    \"mapped_repeat_gap_pixels\": {\"mean\": %.2f, \"min\": %llu, \"max\": %llu},\n",
+              avg_mapped_repeat_gap_pixels,
+              (unsigned long long)min_mapped_repeat_gap_pixels,
+              (unsigned long long)max_mapped_repeat_gap_pixels);
     io_printf(io, "    \"dirty_tiles\": {\"mean\": %.2f, \"min\": %d, \"max\": %d},\n",
               avg_dirty_tiles,
               min_dirty_tiles,
@@ -5220,7 +5339,10 @@ static void perf_capture_write_summary(void) {
                   "\"present_ms\": %.4f, \"present_readback_ms\": %.4f, \"present_convert_ms\": %.4f, "
                   "\"present_copy_ms\": %.4f, \"present_clear_ms\": %.4f, \"fbdev_present_path\": \"%s\", "
                   "\"readback_format\": \"%s\", \"readback_width\": %d, \"readback_height\": %d, "
-                  "\"copy_bytes\": %llu, \"dirty_tiles\": %d, \"dirty_ratio\": %.6f, "
+                  "\"copy_bytes\": %llu, \"mapped_changed_rows\": %d, \"mapped_row_runs\": %d, "
+                  "\"mapped_row_runs_max\": %d, \"mapped_repeat_rows\": %d, "
+                  "\"mapped_repeat_run_copies\": %d, \"mapped_repeat_dense_rows\": %d, "
+                  "\"mapped_repeat_gap_pixels\": %llu, \"dirty_tiles\": %d, \"dirty_ratio\": %.6f, "
                   "\"tiles_total\": %d, \"tiles_copied\": %d, \"dirty_hit_rate\": %.6f, \"full_copy_fallback\": %s, "
                   "\"render_task_count\": %d, \"rect_copy_tasks\": %d, \"batch_runs\": %d, \"batched_task_count\": %d, "
                   "\"rect_texture_runs\": %d, \"rect_texture_multi_runs\": %d, \"rect_texture_multi_run_tasks\": %d, "
@@ -5333,6 +5455,13 @@ static void perf_capture_write_summary(void) {
                   sample->readback_width,
                   sample->readback_height,
                   (unsigned long long)sample->copy_bytes,
+                  sample->mapped_changed_rows,
+                  sample->mapped_row_runs,
+                  sample->mapped_row_runs_max,
+                  sample->mapped_repeat_rows,
+                  sample->mapped_repeat_run_copies,
+                  sample->mapped_repeat_dense_rows,
+                  (unsigned long long)sample->mapped_repeat_gap_pixels,
                   sample->dirty_tiles,
                   sample->dirty_ratio,
                   sample->presenter_tiles_total,
@@ -6601,6 +6730,13 @@ void SDLApp_EndFrame() {
         sample->present_copy_ms = (double)presenter_stats.copy_ns / 1e6;
         sample->present_clear_ms = (double)presenter_stats.clear_ns / 1e6;
         sample->copy_bytes = copy_bytes;
+        sample->mapped_changed_rows = (int)presenter_stats.mapped_changed_rows;
+        sample->mapped_row_runs = (int)presenter_stats.mapped_row_runs;
+        sample->mapped_row_runs_max = (int)presenter_stats.mapped_row_runs_max;
+        sample->mapped_repeat_rows = (int)presenter_stats.mapped_repeat_rows;
+        sample->mapped_repeat_run_copies = (int)presenter_stats.mapped_repeat_run_copies;
+        sample->mapped_repeat_dense_rows = (int)presenter_stats.mapped_repeat_dense_rows;
+        sample->mapped_repeat_gap_pixels = presenter_stats.mapped_repeat_gap_pixels;
         sample->dirty_tiles = dirty_tiles;
         sample->dirty_ratio = dirty_ratio;
         sample->presenter_tiles_total = presenter_tiles_total;
@@ -6786,6 +6922,13 @@ void SDLApp_EndFrame() {
         perf_present_copy_ns_total += presenter_stats.copy_ns;
         perf_present_clear_ns_total += presenter_stats.clear_ns;
         perf_copy_bytes_total += copy_bytes;
+        perf_mapped_changed_rows_total += presenter_stats.mapped_changed_rows;
+        perf_mapped_row_runs_total += presenter_stats.mapped_row_runs;
+        perf_mapped_row_runs_max_total += presenter_stats.mapped_row_runs_max;
+        perf_mapped_repeat_rows_total += presenter_stats.mapped_repeat_rows;
+        perf_mapped_repeat_run_copies_total += presenter_stats.mapped_repeat_run_copies;
+        perf_mapped_repeat_dense_rows_total += presenter_stats.mapped_repeat_dense_rows;
+        perf_mapped_repeat_gap_pixels_total += presenter_stats.mapped_repeat_gap_pixels;
         perf_dirty_tiles_total += (Uint64)dirty_tiles;
         perf_render_task_count_total += (Uint64)render_stats.render_task_count;
         perf_rect_copy_tasks_total += (Uint64)render_stats.rect_copy_tasks;

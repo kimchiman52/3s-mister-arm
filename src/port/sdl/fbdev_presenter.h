@@ -27,6 +27,13 @@ typedef struct FBDevPresenter_FrameStats {
     Uint64 convert_ns;
     Uint64 copy_ns;
     Uint64 clear_ns;
+    Uint64 mapped_changed_rows;
+    Uint64 mapped_row_runs;
+    Uint64 mapped_row_runs_max;
+    Uint64 mapped_repeat_rows;
+    Uint64 mapped_repeat_run_copies;
+    Uint64 mapped_repeat_dense_rows;
+    Uint64 mapped_repeat_gap_pixels;
     Uint32 readback_format;
     int readback_width;
     int readback_height;

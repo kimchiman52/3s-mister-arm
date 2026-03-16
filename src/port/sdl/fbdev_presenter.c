@@ -490,6 +490,29 @@ static bool get_dense_repeated_row_copy_span(int row_tile_run_base,
     return true;
 }
 
+static size_t get_row_tile_run_gap_pixels(int row_tile_run_base, int row_tile_run_count) {
+    if ((row_tile_run_count <= 1) || (mapped_source_row_tile_run_dst_x0 == NULL) || (mapped_source_row_tile_run_dst_x1 == NULL)) {
+        return 0;
+    }
+
+    size_t gap_pixels = 0;
+    int prev_dst_x1 = -1;
+    for (int run_index = 0; run_index < row_tile_run_count; run_index++) {
+        const int dst_x0 = mapped_source_row_tile_run_dst_x0[row_tile_run_base + run_index];
+        const int dst_x1 = mapped_source_row_tile_run_dst_x1[row_tile_run_base + run_index];
+        if (dst_x1 <= dst_x0) {
+            continue;
+        }
+
+        if ((prev_dst_x1 >= 0) && (dst_x0 > prev_dst_x1)) {
+            gap_pixels += (size_t)(dst_x0 - prev_dst_x1);
+        }
+        prev_dst_x1 = dst_x1;
+    }
+
+    return gap_pixels;
+}
+
 static void copy_argb_surface_rect_to_fb_offset(const SDL_Surface* argb,
                                                 int src_x,
                                                 int src_y,
@@ -954,6 +977,13 @@ static bool copy_argb_surface_scaled_to_fb_mapped_rect(const SDL_Surface* argb,
             mapped_source_row_changed[src_y] = row_tile_run_count > 0 ? 1 : 0;
             mapped_source_row_dirty_x0[src_y] = row_tile_run_count > 0 ? dirty_x0 : 0;
             mapped_source_row_dirty_x1[src_y] = row_tile_run_count > 0 ? dirty_x1 : 0;
+            if (row_tile_run_count > 0) {
+                frame_stats.mapped_changed_rows += 1;
+                frame_stats.mapped_row_runs += (Uint64)row_tile_run_count;
+                if ((Uint64)row_tile_run_count > frame_stats.mapped_row_runs_max) {
+                    frame_stats.mapped_row_runs_max = (Uint64)row_tile_run_count;
+                }
+            }
             if (have_lut && (mapped_source_row_tile_run_dst_x0 != NULL) && (mapped_source_row_tile_run_dst_x1 != NULL)) {
                 for (int run_index = 0; run_index < row_tile_run_count; run_index++) {
                     int dst_x0 = 0;
@@ -1009,6 +1039,8 @@ static bool copy_argb_surface_scaled_to_fb_mapped_rect(const SDL_Surface* argb,
             bool copied_any_tile_run = false;
 
             if ((src_y == prev_src_y) && (prev_dst_row != NULL) && prev_row_used_tile_runs) {
+                frame_stats.mapped_repeat_rows += 1;
+                frame_stats.mapped_repeat_gap_pixels += (Uint64)get_row_tile_run_gap_pixels(row_tile_run_base, row_tile_run_count);
                 int dense_dst_x0 = 0;
                 int dense_dst_x1 = 0;
                 if (get_dense_repeated_row_copy_span(row_tile_run_base, row_tile_run_count, &dense_dst_x0, &dense_dst_x1)) {
@@ -1017,8 +1049,10 @@ static bool copy_argb_surface_scaled_to_fb_mapped_rect(const SDL_Surface* argb,
                                prev_dst_row + ((size_t)dense_dst_x0 * sizeof(Uint32)),
                                row_bytes);
                     frame_copy_bytes += row_bytes;
+                    frame_stats.mapped_repeat_dense_rows += 1;
                     copied_any_tile_run = true;
                 } else {
+                    Uint64 copied_run_count = 0;
                     for (int run_index = 0; run_index < row_tile_run_count; run_index++) {
                         const int dst_x0 = mapped_source_row_tile_run_dst_x0[row_tile_run_base + run_index];
                         const int dst_x1 = mapped_source_row_tile_run_dst_x1[row_tile_run_base + run_index];
@@ -1031,8 +1065,10 @@ static bool copy_argb_surface_scaled_to_fb_mapped_rect(const SDL_Surface* argb,
                                    prev_dst_row + ((size_t)dst_x0 * sizeof(Uint32)),
                                    row_bytes);
                         frame_copy_bytes += row_bytes;
+                        copied_run_count += 1;
                         copied_any_tile_run = true;
                     }
+                    frame_stats.mapped_repeat_run_copies += copied_run_count;
                 }
 
                 if (copied_any_tile_run) {
