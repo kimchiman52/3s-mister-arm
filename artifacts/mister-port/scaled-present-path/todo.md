@@ -333,6 +333,24 @@
 
 ## Cycle Log
 
+- 2026-03-16T19:32:24-0400
+  - Research target:
+    - recover a separate ordinary nearest gameplay gate with attacks, jumps, and non-super exchanges that actually exercises software-frame raster residue before another broader `sdl_game_renderer.c` reland
+  - Change summary:
+    - tried a narrow three-file measurement-support reland in `src/test/test_runner.c`, `src/main.c`, and `tools/mister/perf-sampler.sh` that added a scripted `raster-exchange` preset for `stage 19 / Ryu-Ken / SA0-0`, first as a mixed projectile-plus-basic cycle and then as a reordered basic-first cycle so the projectile window landed after the `60`-frame warmup
+    - rebuilt/exported telemetry packages `build/mister-telemetry-package-arm-raster-exchange-20260316b` and `build/mister-telemetry-package-arm-raster-exchange-20260316d` through the validated `/work-arm` ARM path in `3sx-mister-build-nearest-hdmi-perf`, deployed/probed the candidate on MiSTer, captured matched nearest `control`, `raster-exchange` basic, and `raster-exchange` full telemetry, then rolled the source diff back and restored `build/mister-telemetry-package-arm-nearest-r41-sparse-shape-20260316a` on-device after the new lane never crossed into raster-residue work
+    - completed the required review pass as a manual scoped review of the reverted three-file harness diff with focus on test-runner isolation, preset-only behavior changes, and no gameplay/runtime effect outside test mode; no actionable correctness issue survived review, so the rejection stayed purely measurement-based
+  - Verification evidence:
+    - `git diff --check` and `bash -n tools/mister/perf-sampler.sh` passed before the candidate build and again after rollback; the `/work-arm` telemetry rebuild/install/package succeeded in `3sx-mister-build-nearest-hdmi-perf`, and `readelf -h` inside the container still reported `ELF32` `ARM` with hard-float ABI
+    - candidate `deploy` and `probe` passed through `tools/mister/misterctl.sh`; after rollback, redeploy/probe/smoke of `build/mister-telemetry-package-arm-nearest-r41-sparse-shape-20260316a` also passed with the same `dummy/software` + `FBDEV` nearest direct-present probe state
+    - matched nearest control stayed on the accepted runtime shape: `raster-exchange-c46-control-basic = 75.5802 FPS / 13.2310 / 6.9972 / 2.9868 ms` (`frame / render / present`) with `copy_bytes 183105.60`
+    - the first candidate lane was heavier but still not raster-aware: `raster-exchange-c46-basic = 44.3361 FPS / 22.5550 / 8.0310 / 8.9806 ms` and `raster-exchange-c46-full = 36.5886 FPS / 27.3309 / 8.3003 / 12.2577 ms`, yet full telemetry stayed at `software_frame_fast_exact_tasks.mean = 303.00`, `software_frame_fast_scaled_tasks.mean = 6.38`, `software_frame_fast_non_integer_tasks.mean = 0.00`, and `software_frame_generic_textured_tasks.mean = 0.00`
+    - reordering the script so the projectile burst fell after warmup improved the lane but still failed the real gate: `raster-exchange-c46r-basic = 48.0098 FPS / 20.8291 / 8.2685 / 6.9329 ms` and `raster-exchange-c46r-full = 38.9051 FPS / 25.7036 / 8.6974 / 10.0231 ms`, while full telemetry still stayed entirely on `software_frame_fast_exact_tasks.mean = 318.71` plus `software_frame_fast_scaled_tasks.mean = 6.36` with zero `software_frame_fast_non_integer_*` and zero `software_frame_generic_textured_*`
+  - Keep/rollback decision with reason:
+    - rollback; the new lane is reproducible, heavy, and player-visible, but it is still only a presenter/copy-heavy direct-present workload and does not recover the missing ordinary raster-aware gate needed before another broader `sdl_game_renderer.c` runtime reland
+  - Next best candidate:
+    - do not reopen this mixed ordinary-plus-projectile Ryu/Ken stage-19 harness without telemetry proving real `fast_non_integer` or `generic_textured` work inside the sampled window; the next measurement-support loop should start from a different ordinary gameplay family whose full telemetry already shows non-zero raster residue instead of trying to force it out of the current `fast_exact` lane
+
 - 2026-03-16T19:10:21-0400
   - Research target:
     - test whether extreme nearest presenter tail frames can trade a little extra repeated-row overcopy for materially lower replay fanout by relaxing dense repeated-row coverage only on the heavy tail, while keeping ordinary gameplay and native guardrails stable
