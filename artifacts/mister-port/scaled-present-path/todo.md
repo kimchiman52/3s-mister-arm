@@ -324,6 +324,26 @@
 
 ## Cycle Log
 
+- 2026-03-16T13:44:47-0400
+  - Research target:
+    - test whether the kept nearest row-template presenter should trigger on the missed first-Genei repeat-row tail counted by repeated mapped rows, not just the existing `mapped_row_runs >= 2000` gate
+  - Change summary:
+    - updated `src/port/sdl/fbdev_presenter.c` so nearest template replay also arms when the current clip predicts `>=750` repeated mapped rows, while keeping the existing `>=2000` row-run gate unchanged
+    - rebuilt/exported `build/mister-telemetry-package-arm-nearest-r36-repeat-rows-20260316a`, deployed it with `tools/mister/misterctl.sh`, and captured the required nearest `control`, `stage-heavy`, trusted `genei-jin-first-activation` basic + full, plus the native control guard on-device
+    - attempted `codex review --uncommitted` for the required review pass, but the helper stalled again after repeated read-only source inspection; completed a manual scoped review of the presenter diff instead and found no actionable correctness issues
+  - Verification evidence:
+    - `git diff --check` passed before the build; the `/work-arm` ARM telemetry rebuild/install/package succeeded in `3sx-mister-build-nearest-hdmi-perf`, exported cleanly to `build/mister-telemetry-package-arm-nearest-r36-repeat-rows-20260316a`, and `readelf -h` still reported `ELF32` `ARM` with hard-float ABI
+    - candidate `health`, `deploy`, `probe`, and bounded `smoke` passed through `tools/mister/misterctl.sh`; the candidate probe stayed on `dummy/software` with `FBDEV: active (1920x1080 ...)`, `Native render path: enabled (scale-mode=nearest)`, and `Software frame mode: on`
+    - nearest non-targeted guardrails dipped slightly, but the new gate stayed off on both: `nearest-hdmi-r30-control-basic = 74.5795 FPS` versus `nearest-hdmi-r36-control-basic-post = 73.9428 FPS`, `nearest-hdmi-r30-stage-heavy-basic = 55.2604 FPS` versus `nearest-hdmi-r36-stage-heavy-basic-post = 54.7535 FPS`, and both captures still recorded `mapped_repeat_template_rows = 0`
+    - the trusted low-overhead Genei keep gate improved while template engagement widened: `nearest-hdmi-r30-genei-jin-first-activation-basic = 36.3845 FPS / 27.4843 / 10.4537 ms` versus `nearest-hdmi-r36-genei-jin-first-activation-basic-post = 36.8849 FPS / 27.1114 / 9.5594 ms` (`frame / present`), and `mapped_repeat_template_rows.mean` rose from `199.73` to `309.16`
+    - matched full Genei improved materially overall: `nearest-hdmi-r30-genei-jin-first-activation-full = 30.5859 FPS / 13.8154 / 13.8025 ms` versus `nearest-hdmi-r36-genei-jin-first-activation-full-post = 31.6392 FPS / 12.2227 / 12.2099 ms` (`present / present_copy`), while the active Genei window moved `41.1821 / 19.2458 / 19.2329 ms` to `38.5663 / 15.6302 / 15.6169 ms` (`frame / present / present_copy`), `mapped_repeat_row.mean_ms` fell `9.9363 -> 5.1537`, and active template-backed repeat rows rose `266.62 -> 528.70`
+    - the new repeat-row-count gate caught the missed Genei tail directly: active Genei frames with `mapped_repeat_template_rows > 0` rose from `38` to `77`, and the candidate now template-replays previously missed `mapped_row_runs < 2000` frames such as `180-184` and `201-217`
+    - the native guard stayed within tolerance at `native-hdmi-r30-control-basic = 91.5672 FPS` versus `native-hdmi-r36-control-basic-post = 91.1617 FPS`
+  - Keep/rollback decision with reason:
+    - keep; the repeat-row-count gate catches the previously missed first-Genei repeated-row tail, materially cuts active repeat-row replay cost on the player-visible nearest lane, stays dormant on the non-targeted gameplay guards, and preserves the native control tolerance
+  - Next best candidate:
+    - do not lower the new repeat-row threshold blindly below `750`; the remaining `657-738` repeat-row Genei family is still visible, but the slight `control` and `stage-heavy` dips mean any follow-up should use a tighter shape signal than another raw threshold widen, or else re-rank the broader gameplay-raster lane again
+
 - 2026-03-16T13:19:14-0400
   - Research target:
     - test whether the remaining trusted-Genei raster residue can be narrowed into an exact-size non-integer subpixel-translation fast path for `src/port/sdl/sdl_game_renderer.c`, instead of another threshold gate
