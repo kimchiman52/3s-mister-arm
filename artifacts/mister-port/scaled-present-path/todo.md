@@ -328,6 +328,24 @@
 
 ## Cycle Log
 
+- 2026-03-16T16:16:31-0400
+  - Research target:
+    - test whether the next nearest-presenter follow-up after the kept repeat-row-count gate is to stop materializing sparse template-backed first rows through `fb_map`, by rasterizing those rows into RAM and then copying the changed runs into the framebuffer once
+  - Change summary:
+    - updated `src/port/sdl/fbdev_presenter.c` so sparse template-backed first rows now rasterize into `mapped_repeat_row_template_pixels` first and then copy just the changed runs into fbdev, while dense-gap rows keep the existing destination-first path
+    - rebuilt/exported `build/mister-telemetry-package-arm-r39a` from a container-local `/tmp/3sx-r39-copy` snapshot after discovering the shared `3sx-mister-build` container was mounted to a different worktree, then deployed it with `tools/mister/misterctl.sh` and reran the matched nearest/full plus guardrail captures on-device
+    - completed the required review pass as a manual scoped review of the single-file presenter diff with focus on sparse-run gap correctness, template validity, and framebuffer-write accounting; no actionable correctness issues survived review
+  - Verification evidence:
+    - `git diff --check` passed before the build; the ARM telemetry rebuild/install/package succeeded, exported cleanly to `build/mister-telemetry-package-arm-r39a`, and `readelf -h` still reported `ELF32` `ARM` with hard-float ABI
+    - candidate `deploy`, `probe`, and bounded `smoke` passed through `tools/mister/misterctl.sh`; the post-deploy probe stayed on `dummy/software` with `FBDEV: active (1920x1080 ...)`, `Native render path: enabled (scale-mode=nearest)`, and `Software frame mode: on`
+    - nearest guardrails stayed within tolerance: `nearest-hdmi-r39-control-full-pre = 66.5466 FPS / 15.0271 / 7.3158 / 4.0608 / 4.0465 ms` versus `nearest-hdmi-r39-control-full-post = 66.1617 FPS / 15.1145 / 7.3057 / 4.1329 / 4.1183 ms`, `nearest-hdmi-r39-stage-heavy-basic-pre = 55.4460 FPS / 18.0356 / 8.8404 / 4.1415 ms` versus `nearest-hdmi-r39-stage-heavy-basic-post = 55.0769 FPS / 18.1564 / 8.9305 / 4.1911 ms`, and the native guard stayed inside tolerance at `native-hdmi-r39-control-basic-pre = 92.2942 FPS / 10.8349 / 7.0502 / 0.5494 ms` versus `native-hdmi-r39-control-basic-post = 91.8090 FPS / 10.8922 / 7.1177 / 0.5360 ms` (`frame / render / present`)
+    - recovered ordinary gameplay stayed effectively flat across two post runs: `nearest-hdmi-r39-basic-exchange-full-pre = 50.0449 FPS / 19.9820 / 7.7078 ms`, `nearest-hdmi-r39-basic-exchange-full-post = 49.8206 FPS / 20.0720 / 7.7643 ms`, and rerun `nearest-hdmi-r39-basic-exchange-full-post-rerun = 49.9624 FPS / 20.0151 / 7.7286 ms`, while `mapped_first_row.mean_ms` improved `0.6137 -> 0.5727 -> 0.5564` and `mapped_repeat_row.mean_ms` stayed effectively flat `4.1655 -> 4.2333 -> 4.1588`
+    - matched full trusted Genei improved materially at unchanged workload shape: `nearest-hdmi-r39-genei-jin-first-activation-full-pre = 32.3896 FPS / 30.8742 / 10.6160 / 12.3447 / 12.3316 ms` versus `nearest-hdmi-r39-genei-jin-first-activation-full-post = 33.5997 FPS / 29.7622 / 10.5177 / 11.2654 / 11.2515 ms` (`frame / render / present / present_copy`), with `mapped_first_row.mean_ms` dropping `3.5975 -> 2.2608` while `mapped_repeat_row.mean_ms` stayed effectively flat `4.4247 -> 4.4884` and template counters were unchanged
+  - Keep/rollback decision with reason:
+    - keep; RAM-sourcing sparse template-backed first rows cuts the measured first-row Genei tail materially without reopening dense-gap correctness risk, while `basic-exchange`, `stage-heavy`, `control`, and the native guard all stay within a noise-level envelope
+  - Next best candidate:
+    - keep dense-gap template rows on the old path for now; if the next nearest presenter loop stays here, measure whether the remaining cost lives in dense repeat rows or in the repeat-row replay body before widening the RAM-first source path
+
 - 2026-03-16T18:34:30-0400
   - Research target:
     - test whether the broader gameplay-raster lane can clear another real nearest-HDMI keep by splitting the common unmodulated case out of the remaining non-integer and generic textured software-frame loops, so those inner loops stop branching on `color == 0xFFFFFFFFu` per pixel
