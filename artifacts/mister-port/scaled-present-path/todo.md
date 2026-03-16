@@ -35,6 +35,13 @@
   - `menu-transition` via `--perf-wait-test-phase character-select-transition`
 - [x] Follow-on rule:
   - when a nearest HDMI runtime change is large enough to justify expanded validation, prioritize `control` plus at least one gameplay-heavy lane first; prefer `genei-jin-first-activation`, `stage-heavy`, or `ibuki-stage7` before spending capture budget on `2p-character-select` or `menu-transition` unless the change explicitly targets those menu lanes
+- [x] Combined research steering:
+  - the `2026-03-15` nearest-specific memo plus the broad all-scenes memo now say the branch has three realistic next runtime directions, not one: `(1)` nearest presenter tail work in `src/port/sdl/fbdev_presenter.c` for the first-Genei repeated-row hotspot; `(2)` broader software-frame gameplay raster residue in `src/port/sdl/sdl_game_renderer.c` for `effect-heavy` / `super-heavy` / trusted first-Genei direct-present scenes; `(3)` broader 2P character-select submit/state churn after the kept chooser refresh reland. Attract/logo is still measurement-first, and the exact type-`1` wipe stays a guardrail only.
+- [x] Combined experiment order for Ralph:
+  - if the chosen loop is nearest-specific, start with a tail-gated repeated-row candidate and add one telemetry split that separates first-row materialization from repeated-row replay
+  - if the chosen loop is broader than nearest, prefer gameplay-wide raster residue before reopening menu or title work
+  - if the chosen loop explicitly targets menu residue, work from the broader `2p-character-select` lane and `SDLGameRenderer_SetTexture` / submit-state churn, not the already-rejected `DrawSprite2` fast-path guess
+  - do not spend a runtime loop on attract/logo until a trustworthy exact opening/title capture boundary exists
 
 ## Scope and Constraints
 
