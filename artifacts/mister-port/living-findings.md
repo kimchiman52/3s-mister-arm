@@ -3193,3 +3193,19 @@ Scope guardrails:
     - keep; this is a player-visible nearest presenter win on idle, ordinary gameplay, and trusted Genei without touching gameplay behavior, and the counter split cleanly attributes the gain to repeated-row replay rather than first-row work or raster changes
   - Next best candidate optimization:
     - if the next loop stays nearest-specific, keep ranking repeated-row replay-source/body work ahead of first-row materialization; otherwise re-compare this presenter baseline against the broader ordinary gameplay raster lane before reopening menu-specific work
+
+- 2026-03-17T03:20:54-0400
+  - Bottleneck targeted:
+    - nearest-HDMI template-backed mapped-repeat-row replay body overhead after the kept same-`src_y` band reland in `src/port/sdl/fbdev_presenter.c`
+  - Change summary:
+    - tried a narrower presenter replay-body specialization that replays template-backed sparse and dense repeat bands as `run/span -> repeated rows` instead of walking each repeated row and re-reading the run metadata on every pass
+    - rebuilt/exported `build/mister-telemetry-package-arm-loop-20260317c`, redeployed it with `tools/mister/misterctl.sh`, reran nearest `control`, recovered ordinary `training-yun-ryu-ryu-stage`, trusted `genei-jin-first-activation`, and a native basic guard, then manually reviewed the scoped diff for correctness/stats issues and found no code-level bugs
+  - Verification result summary:
+    - nearest `control` only nudged `69.8019 -> 69.9146 FPS`, with `present.mean_ms 3.3384 -> 3.3207`, `present_copy.mean_ms 3.3237 -> 3.3055`, `mapped_repeat_row.mean_ms 1.2862 -> 1.2799`, but `mapped_first_row.mean_ms` rose `0.2628 -> 0.2696`
+    - recovered ordinary `training-yun-ryu-ryu-stage` slipped `56.1823 -> 56.0356 FPS`, with `present.mean_ms 5.8229 -> 5.8320`, `present_copy.mean_ms 5.8085 -> 5.8186`, `mapped_repeat_row.mean_ms 2.0307 -> 2.0039`, and `mapped_first_row.mean_ms 1.0359 -> 1.0593`
+    - trusted `genei-jin-first-activation` only nudged `36.7661 -> 36.8324 FPS`, with `present.mean_ms 8.5776 -> 8.5452`, `present_copy.mean_ms 8.5634 -> 8.5315`, `mapped_repeat_row.mean_ms 2.9049 -> 2.8218`, and `mapped_first_row.mean_ms 2.2536 -> 2.2791`; the native basic guard stayed inside budget but moved down `93.2786 -> 92.4668 FPS`
+    - all compared nearest captures kept identical repeat-row workload counters (`mapped_repeat_rows`, `mapped_repeat_run_copies`, `mapped_repeat_template_rows`, `mapped_repeat_template_run_copies`, and `mapped_repeat_template_dense_rows` unchanged), so this attempt only traded replay-body control time against extra first-row overhead
+  - Keep/rollback decision with reason:
+    - reject and revert; the replay-body specialization is not a clear player-visible win on the ordinary gameplay guardrail, and the first-row spillback cancels the modest repeat-row savings
+  - Next best candidate optimization:
+    - keep the accepted same-`src_y` band replay reland, but do not reopen this template-backed loop-order rewrite without telemetry that proves a future body-only change can keep `mapped_first_row` flat on `training-yun-ryu-ryu-stage` as well as trusted Genei
