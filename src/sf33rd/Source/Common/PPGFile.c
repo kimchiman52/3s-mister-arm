@@ -87,43 +87,64 @@ static bool ppgDecodeRenewChunkRect(u32 code, u32 size, SDL_Rect* out_rect) {
     return true;
 }
 
-static bool ppgShouldKeepRenewDirtyRect(u32 texture_handle) {
-    switch (LO_16_BITS(texture_handle)) {
-    case 41:
-    case 50:
-    case 16:
-    case 18:
-    case 14:
-    case 47:
-    case 56:
-    case 57:
-    case 58:
-        return true;
-    default:
-        return false;
-    }
-}
-
 static SDL_Rect ppgRenewDirtyRects[FL_TEXTURE_MAX] = { { 0 } };
 static bool ppgRenewDirtyRectValid[FL_TEXTURE_MAX] = { false };
 static Uint64 ppgRenewDirtyTileMasks[FL_TEXTURE_MAX] = { 0 };
 static PPGRenewDirtyTileMaskState ppgRenewDirtyTileMaskStates[FL_TEXTURE_MAX] = { 0 };
+static bool ppgKeepRenewDirtyRectByTextureHandle[FL_TEXTURE_MAX] = { false };
+static bool ppgTrackRenewDirtyTileMaskByTextureHandle[FL_TEXTURE_MAX] = { false };
 
-static bool ppgShouldTrackRenewDirtyTileMask(u32 texture_handle) {
-    switch (LO_16_BITS(texture_handle)) {
-    case 41:
-    case 50:
-        return true;
-    default:
-        return false;
+static bool ppgShouldKeepRenewDirtyRectForSeqs(s32 ix_num_first, s32 slot_index, s32 texture_total) {
+    if ((ix_num_first == 1030) && (texture_total == 7)) {
+        return (slot_index == 0) || (slot_index == 1) || (slot_index == 2) || (slot_index == 4);
     }
+
+    if ((ix_num_first == 40) && (texture_total == 9)) {
+        return (slot_index == 0) || (slot_index == 3);
+    }
+
+    if ((ix_num_first == 50) && (texture_total == 9)) {
+        return (slot_index == 0) || (slot_index == 3);
+    }
+
+    if ((ix_num_first == 80) && (texture_total == 5)) {
+        return (slot_index == 0) || (slot_index == 1) || (slot_index == 2);
+    }
+
+    if ((ix_num_first == 1100) && (texture_total == 8)) {
+        return (slot_index == 0) || (slot_index == 2);
+    }
+
+    return false;
+}
+
+static bool ppgShouldTrackRenewDirtyTileMaskForSeqs(s32 ix_num_first, s32 slot_index, s32 texture_total) {
+    return ((ix_num_first == 40) && (texture_total == 9) && (slot_index == 3)) ||
+           ((ix_num_first == 50) && (texture_total == 9) && (slot_index == 3));
+}
+
+static void ppgConfigureRenewDirtyTracking(u32 texture_handle, s32 ix_num_first, s32 slot_index, s32 texture_total) {
+    const int texture_index = LO_16_BITS(texture_handle) - 1;
+
+    if ((texture_index < 0) || (texture_index >= FL_TEXTURE_MAX)) {
+        return;
+    }
+
+    ppgKeepRenewDirtyRectByTextureHandle[texture_index] =
+        ppgShouldKeepRenewDirtyRectForSeqs(ix_num_first, slot_index, texture_total);
+    ppgTrackRenewDirtyTileMaskByTextureHandle[texture_index] =
+        ppgShouldTrackRenewDirtyTileMaskForSeqs(ix_num_first, slot_index, texture_total);
+    ppgRenewDirtyRects[texture_index] = (SDL_Rect){ 0, 0, 0, 0 };
+    ppgRenewDirtyRectValid[texture_index] = false;
+    ppgRenewDirtyTileMasks[texture_index] = 0;
+    ppgRenewDirtyTileMaskStates[texture_index] = PPG_RENEW_DIRTY_TILE_MASK_STATE_EMPTY;
 }
 
 static void ppgAccumulateRenewDirtyTileMask(u32 texture_handle, const SDL_Rect* renew_rect) {
     const int texture_index = LO_16_BITS(texture_handle) - 1;
 
-    if (!ppgShouldTrackRenewDirtyTileMask(texture_handle) || (renew_rect == NULL) || (texture_index < 0) ||
-        (texture_index >= FL_TEXTURE_MAX)) {
+    if ((renew_rect == NULL) || (texture_index < 0) || (texture_index >= FL_TEXTURE_MAX) ||
+        !ppgTrackRenewDirtyTileMaskByTextureHandle[texture_index]) {
         return;
     }
 
@@ -155,8 +176,8 @@ static void ppgAccumulateRenewDirtyTileMask(u32 texture_handle, const SDL_Rect* 
 static void ppgAccumulateRenewDirtyRect(u32 texture_handle, const SDL_Rect* renew_rect) {
     const int texture_index = LO_16_BITS(texture_handle) - 1;
 
-    if (!ppgShouldKeepRenewDirtyRect(texture_handle) || (renew_rect == NULL) || (texture_index < 0) ||
-        (texture_index >= FL_TEXTURE_MAX)) {
+    if ((renew_rect == NULL) || (texture_index < 0) || (texture_index >= FL_TEXTURE_MAX) ||
+        !ppgKeepRenewDirtyRectByTextureHandle[texture_index]) {
         return;
     }
 
@@ -969,6 +990,7 @@ s32 ppgSetupTexChunkSeqs(Texture* tch, PPGFileHeader* ppg, u8* adrs, s32 ixNum1s
                                                      i,
                                                      -1,
                                                      tch->total);
+        ppgConfigureRenewDirtyTracking(tch->handle[i].b16[0], tch->ixNum1st, i, tch->total);
 
         adrs += tch->srcSize;
     }
@@ -1418,6 +1440,7 @@ s32 ppgSetupTexChunk_3rd(Texture* tch, s32 ixNum, u32 attribute) {
                                                  ixNum - tch->ixNum1st,
                                                  hnof->b16[1] & 0xFFF,
                                                  tch->total);
+    ppgConfigureRenewDirtyTracking(hnof->b16[0], tch->ixNum1st, ixNum - tch->ixNum1st, tch->total);
 
     return 1;
 }

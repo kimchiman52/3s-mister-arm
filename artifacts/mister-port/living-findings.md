@@ -3330,3 +3330,21 @@ Scope guardrails:
     - keep; this reland restores a required exact menu validation lane on the current tree without changing player-facing runtime behavior, and it also updates the perf JSON so future menu loops can prove they started on the real chooser-instantiation window rather than a broader character-select proxy
   - Next best candidate optimization:
     - use the recovered exact chooser lane plus the fresh `45.7 FPS` broad `2p-character-select` baseline to re-rank one small menu runtime reland from current-tree evidence; start with the measured `mtrans` / `seqsAfterProcess` submit-state bookkeeping residue before reopening `DrawSprite2` or older chooser-renew guesses
+
+- 2026-03-17T11:02:28-0400
+  - Bottleneck targeted:
+    - the user-priority 2P menu runtime lane, specifically whether the current branch's chooser slowdown was coming from stale renew-dirty tracking in `src/sf33rd/Source/Common/PPGFile.c` after the exact `character-select-super-art` capture was recovered
+  - Change summary:
+    - replaced the old transient-handle renew-dirty checks with per-texture flags configured from stable `ppg-seqs` logical identities at texture creation time, then widened the first chooser-only whitelist after independent review showed it dropped previously-kept non-chooser groups
+    - kept the reviewed identity map: chooser `1030/{0,1,2,4}` plus historical `40/{0,3}`, `50/{0,3}`, `80/{0,1,2}`, and `1100/{0,2}` retain renew dirty rects, while tile-mask tracking stays limited to `40/3` and `50/3`
+  - Verification result summary:
+    - rebuilt/exported `build/mister-telemetry-package-arm-menu-mts14-r2-20260317`, redeployed it with `tools/mister/misterctl.sh`, and reran `probe`, bounded `smoke`, broad `2p-character-select`, and exact `character-select-super-art`; the kept package stayed on direct nearest `software_frame_mapped_scale`
+    - broad menu full telemetry improved from `menu-mts14-pre-char-select-full` `45.5494 FPS / 21.9542 / 7.2665 / 8.9603 / 5.7274 ms` to `menu-mts14-post-char-select-r2` `53.0181 FPS / 18.8615 / 4.5053 / 8.7199 / 5.6363 ms`, with `software_surface_cache_refresh.mean_ms 3.1969 -> 0.5057` while `source_mtrans` stayed flat at `180.70`
+    - exact chooser full telemetry improved from `menu-mts14-pre-super-art-full` `33.0015 FPS / 30.3016 / 17.9937 / 9.7048 / 2.6030 ms` to `menu-mts14-post-super-art-r2` `55.0565 FPS / 18.1632 / 5.9678 / 9.6075 / 2.5878 ms`, with `software_surface_cache_refresh.mean_ms 13.5856 -> 1.7878` while `source_mtrans` stayed flat at `277.25`
+    - refresh attribution flipped from full-no-rect uploads to partial refreshes on both required menu gates: broad `partial/full/full-no-rect = 0.3367/3.8600/3.8567 -> 4.0667/0.1300/0.0067`, chooser `0.0000/16.7500/16.7500 -> 16.6000/0.1500/0.0000`
+    - chooser dirty-rect retention reactivated exactly where expected: `texture_unlock_dirty_rect_lifetime.retained_after_unlock_record_ratio = 0.971429`, and the hot chooser textures in logical group `1030` (handles `9/10/11/13`) now refresh almost entirely through partial uploads instead of `full_no_rect`
+    - the exact chooser capture still starts on the intended state (`Sel_PL_Complete=[1,1]`, `Sel_Arts_Complete=[0,0]`, `Select_Arts=[3,3]`, `Moving_Plate=[0,0]`, `Moving_Plate_Counter=[0,0]`, `Command_Name_Visible=[1,1]`)
+  - Keep/rollback decision with reason:
+    - keep; this is a large player-visible menu win on the current branch, and the reviewed stable-identity mapping fixes the real regression source without reopening the rejected circle/highlight hypothesis
+  - Next best candidate optimization:
+    - keep this renew-dirty reland as the current menu baseline, and if menu work continues return to the measured `seqsAfterProcess` / submit-state churn above it rather than another dirty-rect identity chase
