@@ -161,6 +161,7 @@ static CacheDirtyState texture_cache_dirty_state[FL_TEXTURE_MAX][FL_PALETTE_MAX 
 static CacheDirtyState software_surface_cache_dirty_state[FL_TEXTURE_MAX][FL_PALETTE_MAX + 1] = { { { 0 } } };
 static Uint8 texture_cache_runtime_dirty_reason[FL_TEXTURE_MAX][FL_PALETTE_MAX + 1] = { { 0 } };
 static Uint8 software_surface_cache_runtime_dirty_reason[FL_TEXTURE_MAX][FL_PALETTE_MAX + 1] = { { 0 } };
+static Uint16 software_surface_cache_texture_unlock_dirty_variant_counts[FL_TEXTURE_MAX] = { 0 };
 static bool texture_cache_refresh_pending[FL_TEXTURE_MAX][FL_PALETTE_MAX + 1] = { { false } };
 static Uint64 software_surface_full_opaque_row_masks[FL_TEXTURE_MAX][FL_PALETTE_MAX + 1]
                                                     [software_source_surface_row_mask_words] = { { { 0 } } };
@@ -589,6 +590,11 @@ static void note_perf_capture_dirty_rect_clear(int texture_index, TextureUnlockD
 static void note_perf_capture_software_surface_access_provenance(int texture_index, const CacheDirtyState* state);
 #endif
 static void clear_perf_capture_compare_dirty_rect_pending_index(int texture_index);
+static bool software_surface_cache_slot_has_texture_unlock_dirty_reason(int texture_index, int palette_handle);
+static void set_software_surface_cache_slot_state(int texture_index,
+                                                  int palette_handle,
+                                                  SDL_Surface* surface,
+                                                  Uint8 runtime_dirty_reason);
 static void clear_texture_unlock_dirty_rect_index(int texture_index, TextureUnlockDirtyRectClearReason reason);
 static void clear_texture_unlock_dirty_rect_if_unused(int texture_index, TextureUnlockDirtyRectClearReason reason);
 static void note_perf_capture_compare_dirty_rect_refresh_candidate(unsigned int th,
@@ -830,27 +836,25 @@ static int invalidate_software_surface_cache_for_texture_index(int texture_index
     for (int i = 0; i < FL_PALETTE_MAX + 1; i++) {
         SDL_Surface** surface_p = &software_surface_cache[texture_index][i];
         CacheDirtyState* dirty_state = &software_surface_cache_dirty_state[texture_index][i];
-        Uint8* runtime_dirty_reason_p = &software_surface_cache_runtime_dirty_reason[texture_index][i];
         if (*surface_p == NULL) {
             clear_software_surface_full_opaque_row_mask(texture_index, i);
             clear_cache_dirty_state(dirty_state);
-            *runtime_dirty_reason_p = CACHE_DIRTY_REASON_NONE;
+            set_software_surface_cache_slot_state(texture_index, i, NULL, CACHE_DIRTY_REASON_NONE);
             continue;
         }
 
         if (keep_dirty_entries) {
             clear_software_surface_full_opaque_row_mask(texture_index, i);
             mark_cache_dirty_state(dirty_state, reason);
-            *runtime_dirty_reason_p = (Uint8)reason;
+            set_software_surface_cache_slot_state(texture_index, i, *surface_p, (Uint8)reason);
             dirty_variant_count += 1;
             continue;
         }
 
         push_software_surface_to_destroy(*surface_p);
-        *surface_p = NULL;
         clear_software_surface_full_opaque_row_mask(texture_index, i);
         mark_cache_dirty_state(dirty_state, reason);
-        *runtime_dirty_reason_p = CACHE_DIRTY_REASON_NONE;
+        set_software_surface_cache_slot_state(texture_index, i, NULL, CACHE_DIRTY_REASON_NONE);
         evicted_count += 1;
     }
 
@@ -913,27 +917,25 @@ static int invalidate_software_surface_cache_for_palette_handle(int palette_hand
     for (int i = 0; i < FL_TEXTURE_MAX; i++) {
         SDL_Surface** surface_p = &software_surface_cache[i][palette_handle];
         CacheDirtyState* dirty_state = &software_surface_cache_dirty_state[i][palette_handle];
-        Uint8* runtime_dirty_reason_p = &software_surface_cache_runtime_dirty_reason[i][palette_handle];
         if (*surface_p == NULL) {
             clear_software_surface_full_opaque_row_mask(i, palette_handle);
             clear_cache_dirty_state(dirty_state);
-            *runtime_dirty_reason_p = CACHE_DIRTY_REASON_NONE;
+            set_software_surface_cache_slot_state(i, palette_handle, NULL, CACHE_DIRTY_REASON_NONE);
             continue;
         }
 
         if (keep_dirty_entries) {
             clear_software_surface_full_opaque_row_mask(i, palette_handle);
             mark_cache_dirty_state_with_detail(dirty_state, reason, detail);
-            *runtime_dirty_reason_p = (Uint8)reason;
+            set_software_surface_cache_slot_state(i, palette_handle, *surface_p, (Uint8)reason);
             dirty_variant_count += 1;
             continue;
         }
 
         push_software_surface_to_destroy(*surface_p);
-        *surface_p = NULL;
         clear_software_surface_full_opaque_row_mask(i, palette_handle);
         mark_cache_dirty_state_with_detail(dirty_state, reason, detail);
-        *runtime_dirty_reason_p = CACHE_DIRTY_REASON_NONE;
+        set_software_surface_cache_slot_state(i, palette_handle, NULL, CACHE_DIRTY_REASON_NONE);
         evicted_count += 1;
     }
 
@@ -2416,6 +2418,39 @@ static void clear_perf_capture_compare_dirty_rect_pending_index(int texture_inde
     perf_capture_compare_dirty_rect_pending_tile_masks[texture_index] = 0;
 }
 
+static bool software_surface_cache_slot_has_texture_unlock_dirty_reason(int texture_index, int palette_handle) {
+    return (texture_index >= 0) && (texture_index < FL_TEXTURE_MAX) && (palette_handle >= 0) &&
+           (palette_handle <= FL_PALETTE_MAX) && (software_surface_cache[texture_index][palette_handle] != NULL) &&
+           (software_surface_cache_runtime_dirty_reason[texture_index][palette_handle] == CACHE_DIRTY_REASON_TEXTURE_UNLOCK);
+}
+
+static void set_software_surface_cache_slot_state(int texture_index,
+                                                  int palette_handle,
+                                                  SDL_Surface* surface,
+                                                  Uint8 runtime_dirty_reason) {
+    if ((texture_index < 0) || (texture_index >= FL_TEXTURE_MAX) || (palette_handle < 0) ||
+        (palette_handle > FL_PALETTE_MAX)) {
+        return;
+    }
+
+    const bool was_texture_unlock_dirty =
+        software_surface_cache_slot_has_texture_unlock_dirty_reason(texture_index, palette_handle);
+    software_surface_cache[texture_index][palette_handle] = surface;
+    software_surface_cache_runtime_dirty_reason[texture_index][palette_handle] = runtime_dirty_reason;
+    const bool is_texture_unlock_dirty =
+        (surface != NULL) && (runtime_dirty_reason == CACHE_DIRTY_REASON_TEXTURE_UNLOCK);
+
+    if (was_texture_unlock_dirty == is_texture_unlock_dirty) {
+        return;
+    }
+
+    if (is_texture_unlock_dirty) {
+        software_surface_cache_texture_unlock_dirty_variant_counts[texture_index] += 1;
+    } else if (software_surface_cache_texture_unlock_dirty_variant_counts[texture_index] > 0) {
+        software_surface_cache_texture_unlock_dirty_variant_counts[texture_index] -= 1;
+    }
+}
+
 static bool should_keep_dirty_cache_entries(CacheDirtyReason reason) {
     return software_frame_mode_active &&
            ((reason == CACHE_DIRTY_REASON_TEXTURE_UNLOCK) || (reason == CACHE_DIRTY_REASON_PALETTE_UNLOCK));
@@ -2491,12 +2526,8 @@ static void clear_texture_unlock_dirty_rect_if_unused(int texture_index, Texture
         return;
     }
 
-    for (int palette_handle = 0; palette_handle < FL_PALETTE_MAX + 1; palette_handle++) {
-        if ((software_surface_cache[texture_index][palette_handle] != NULL) &&
-            (software_surface_cache_runtime_dirty_reason[texture_index][palette_handle] ==
-             CACHE_DIRTY_REASON_TEXTURE_UNLOCK)) {
-            return;
-        }
+    if (software_surface_cache_texture_unlock_dirty_variant_counts[texture_index] > 0) {
+        return;
     }
 
     clear_texture_unlock_dirty_rect_index(texture_index, reason);
@@ -2912,7 +2943,8 @@ static SDL_Surface* get_or_create_software_source_surface(unsigned int th) {
                         note_perf_capture_software_surface_access_provenance(texture_handle - 1, dirty_state);
                     }
                 });
-                *runtime_dirty_reason_p = CACHE_DIRTY_REASON_NONE;
+                set_software_surface_cache_slot_state(
+                    texture_handle - 1, palette_handle, cached_surface, CACHE_DIRTY_REASON_NONE);
                 clear_cache_dirty_state(dirty_state);
                 clear_texture_unlock_dirty_rect_if_unused(
                     texture_handle - 1, TEXTURE_UNLOCK_DIRTY_RECT_CLEAR_REASON_ACCESS_UNUSED);
@@ -2920,10 +2952,9 @@ static SDL_Surface* get_or_create_software_source_surface(unsigned int th) {
             }
 
             push_software_surface_to_destroy(cached_surface);
-            software_surface_cache[texture_handle - 1][palette_handle] = NULL;
             clear_software_surface_full_opaque_row_mask(texture_handle - 1, palette_handle);
             cached_surface = NULL;
-            *runtime_dirty_reason_p = CACHE_DIRTY_REASON_NONE;
+            set_software_surface_cache_slot_state(texture_handle - 1, palette_handle, NULL, CACHE_DIRTY_REASON_NONE);
             clear_texture_unlock_dirty_rect_if_unused(
                 texture_handle - 1, TEXTURE_UNLOCK_DIRTY_RECT_CLEAR_REASON_ACCESS_UNUSED);
         }
@@ -2963,9 +2994,9 @@ static SDL_Surface* get_or_create_software_source_surface(unsigned int th) {
             note_perf_capture_software_surface_access_provenance(texture_handle - 1, dirty_state);
         }
     });
-    software_surface_cache[texture_handle - 1][palette_handle] = cached_surface;
     clear_software_surface_full_opaque_row_mask(texture_handle - 1, palette_handle);
-    *runtime_dirty_reason_p = CACHE_DIRTY_REASON_NONE;
+    set_software_surface_cache_slot_state(
+        texture_handle - 1, palette_handle, cached_surface, CACHE_DIRTY_REASON_NONE);
     clear_cache_dirty_state(dirty_state);
     return cached_surface;
 }

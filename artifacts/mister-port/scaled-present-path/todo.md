@@ -1274,6 +1274,23 @@
   - Next best candidate optimization:
     - do not reopen broad software-frame lazy SDL texture deferral blindly; stay on the 2P menu lane, but prefer a menu-local submit/state churn cut that wins on exact `character-select-super-art` before another renderer-wide deferral experiment
 
+- 2026-03-17T12:58:06-0400
+  - Bottleneck targeted:
+    - broader 2P character-select submit/state churn after the kept chooser renew-rect reland, specifically the retained dirty-rect cleanup scan in `src/port/sdl/sdl_game_renderer.c` that still walked all `FL_PALETTE_MAX + 1` palette variants on hot chooser texture access
+  - Change summary:
+    - kept a narrow runtime reland in `src/port/sdl/sdl_game_renderer.c` that tracks per-texture counts of cached software-surface variants still dirty from `CACHE_DIRTY_REASON_TEXTURE_UNLOCK`, then uses that count instead of rescanning every palette slot in `clear_texture_unlock_dirty_rect_if_unused(...)`
+    - rebuilt/exported both a pristine committed-`HEAD` baseline package and the candidate package through the validated `/work-arm` ARM telemetry path in `3sx-mister-build`, redeployed the baseline to recover a trustworthy exact chooser gate, then deployed the candidate and reran the same menu pair plus the recovered ordinary `training-yun-ryu-ryu-stage` guardrail on MiSTer
+    - completed the required review as a manual scoped review of the single-file renderer diff with focus on count lifetime, palette-unlock transitions, and early/late dirty-rect clears; no actionable correctness issue survived review
+  - Verification result summary:
+    - fresh same-source baseline `menu-dirtycount-base-char-select-full-r2` landed at `52.1162 FPS / 19.1879 / 4.5560 / 8.8700 / 5.7619 ms` (`frame / update / render / present`); candidate `menu-dirtycount-c1-char-select-full-r1` improved to `52.9285 FPS / 18.8934 / 4.3900 / 8.8588 / 5.6446 ms`
+    - fresh same-source baseline `menu-dirtycount-base-super-art-full-r2` landed at `55.1760 FPS / 18.1238 / 6.0911 / 9.5563 / 2.4764 ms`; candidate `menu-dirtycount-c1-super-art-full-r1` improved to `55.6812 FPS / 17.9594 / 5.7147 / 9.7780 / 2.4667 ms`, and the exact rerun `menu-dirtycount-c1-super-art-full-r2` held the gain at `55.3707 FPS / 18.0601 / 6.0077 / 9.6022 / 2.4502 ms`
+    - the recovered ordinary gameplay guardrail stayed within noise: `menu-dirtycount-base-training-yun-basic-r1` was `61.8180 FPS / 16.1765 / 3.5670 / 7.6796 / 4.9300 ms` versus `menu-dirtycount-c1-training-yun-basic-r1` at `61.3221 FPS / 16.3073 / 3.5756 / 7.7817 / 4.9500 ms`
+    - baseline and candidate MiSTer `deploy`, `probe`, and bounded `smoke` all passed through `tools/mister/misterctl.sh`
+  - Keep/rollback decision with reason:
+    - keep; the counted fast path clears the user-priority exact chooser lane on both candidate runs, improves broad `2p-character-select`, and leaves the recovered ordinary gameplay guardrail effectively flat while preserving the same direct `software_frame_mapped_scale` route
+  - Next best candidate optimization:
+    - keep this counted dirty-variant fast path; if the next fresh loop stays on menus, re-rank the remaining non-consecutive submit/state churn inside `seqsAfterProcess` before reopening any broader renderer-wide texture-deferral idea
+
 - 2026-03-17T05:01:00-0400
   - Bottleneck targeted:
     - possible remaining stage-`7` exact-family raster residue beyond the kept full-opaque row mask, specifically fully transparent rows inside the recovered `256x256` `rect_uv_parallelogram` sources
