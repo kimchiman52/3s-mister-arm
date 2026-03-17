@@ -530,7 +530,6 @@ static void note_software_surface_dirty_variant_fanout(CacheDirtyReason reason, 
 static bool should_keep_dirty_cache_entries(CacheDirtyReason reason);
 static bool should_refresh_dirty_cache_entry(Uint8 dirty_reason);
 static void clear_software_surface_full_opaque_row_mask(int texture_index, int palette_handle);
-static const Uint64* get_software_surface_full_opaque_row_mask(unsigned int th, const SDL_Surface* surface);
 #if ENABLE_PERF_TELEMETRY
 static void begin_software_surface_refresh_tracking_frame(bool capture_extended_stats);
 #endif
@@ -2433,40 +2432,6 @@ static void clear_software_surface_full_opaque_row_mask(int texture_index, int p
 
     SDL_zero(software_surface_full_opaque_row_masks[texture_index][palette_handle]);
     software_surface_full_opaque_row_masks_valid[texture_index][palette_handle] = false;
-}
-
-static const Uint64* get_software_surface_full_opaque_row_mask(unsigned int th, const SDL_Surface* surface) {
-    const int texture_handle = LO_16_BITS(th);
-    const int palette_handle = HI_16_BITS(th);
-    if ((texture_handle <= 0) || (texture_handle > FL_TEXTURE_MAX) || (palette_handle < 0) ||
-        (palette_handle > FL_PALETTE_MAX) || (surface == NULL) || (surface->format != SDL_PIXELFORMAT_ARGB8888) ||
-        (surface->w != 256) || (surface->h != 256)) {
-        return NULL;
-    }
-
-    const int texture_index = texture_handle - 1;
-    Uint64* row_mask = software_surface_full_opaque_row_masks[texture_index][palette_handle];
-    if (!software_surface_full_opaque_row_masks_valid[texture_index][palette_handle]) {
-        SDL_memset(row_mask, 0, sizeof(software_surface_full_opaque_row_masks[texture_index][palette_handle]));
-        const Uint32* src_pixels = (const Uint32*)surface->pixels;
-        const int src_pitch = surface->pitch / (int)sizeof(Uint32);
-        for (int row = 0; row < surface->h; row++) {
-            const Uint32* src_row = src_pixels + (row * src_pitch);
-            bool full_opaque = true;
-            for (int col = 0; col < surface->w; col++) {
-                if (((src_row[col] >> 24) & 0xFFu) != 0xFFu) {
-                    full_opaque = false;
-                    break;
-                }
-            }
-            if (full_opaque) {
-                row_mask[row >> 6] |= ((Uint64)1) << (row & 63);
-            }
-        }
-        software_surface_full_opaque_row_masks_valid[texture_index][palette_handle] = true;
-    }
-
-    return row_mask;
 }
 
 static void clear_texture_unlock_dirty_rect_index(int texture_index, TextureUnlockDirtyRectClearReason reason) {
@@ -4707,7 +4672,6 @@ static bool raster_textured_parallelogram_to_software_frame(const RenderTask* ta
     const int src_pitch = src_surface->pitch / (int)sizeof(Uint32);
     const int dst_pitch = software_frame_surface->pitch / (int)sizeof(Uint32);
     const int shear_dx_total = parallelogram.bottom_left_x - parallelogram.top_left_x;
-    const Uint64* full_opaque_row_mask = get_software_surface_full_opaque_row_mask(task->texture_binding, src_surface);
     const Uint64 sample_start_counter =
         begin_perf_capture_raster_bucket_sample(SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_GENERIC_TEXTURED);
 
@@ -4733,11 +4697,6 @@ static bool raster_textured_parallelogram_to_software_frame(const RenderTask* ta
         const int visible_w = dst_x1 - dst_x0;
         const Uint32* src_row = src_pixels + ((parallelogram.src_y + row) * src_pitch) + src_x0;
         Uint32* dst_row = dst_pixels + (dst_y * dst_pitch) + dst_x0;
-        if ((full_opaque_row_mask != NULL) &&
-            (((full_opaque_row_mask[row >> 6] >> (row & 63)) & ((Uint64)1)) != 0)) {
-            SDL_memcpy(dst_row, src_row, (size_t)visible_w * sizeof(Uint32));
-            continue;
-        }
         for (int col = 0; col < visible_w; col++) {
             const Uint32 src_pixel = src_row[col];
             const Uint32 src_a = (src_pixel >> 24) & 0xFFu;
