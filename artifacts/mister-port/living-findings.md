@@ -3294,3 +3294,21 @@ Scope guardrails:
     - reject and revert; trimming transparent edge columns is not a player-visible gameplay win on the current branch because the broader raster lane and trusted Genei both stayed flat-to-down even though control/basic snapshots improved
   - Next best candidate optimization:
     - keep the accepted full-row opaque mask only, and if broader raster work continues prefer telemetry that splits the recovered stage-`7` family by a more meaningful cost source than transparent edge trimming before reopening another `sdl_game_renderer.c` micro-cache
+
+- 2026-03-17T09:35:11-0400
+  - Bottleneck targeted:
+    - broader ordinary-gameplay raster residue in `src/port/sdl/sdl_game_renderer.c`, specifically whether eligible `256x256 INDEX8` software-source refreshes could recover player-visible FPS by deriving compare-dirty partial refresh plans when refresh locality fell back to `no_usable_dirty_rect`
+  - Change summary:
+    - tried a narrow single-file runtime reland that compared the current indexed source surface against a cached shadow surface and converted some full refreshes into partial refresh plans before uploading the software-source cache
+    - rebuilt/exported same-session baseline and candidate telemetry packages, redeployed the candidate with `tools/mister/misterctl.sh`, reran nearest `control`, recovered ordinary `training-yun-ryu-ryu-stage` full telemetry, ordinary `basic-exchange --test-stage 7` full telemetry, and a native control guard, then reverted the runtime diff locally and restored the reverted baseline package on-device after the keep gates failed
+  - Verification result summary:
+    - nearest `control` regressed `76.3972 -> 73.9700 FPS`, with `frame.mean_ms 13.0895 -> 13.5190`, `render.mean_ms 6.9317 -> 6.9170`, and `present.mean_ms 2.8949 -> 2.8870`, so there was no broad nearest win to justify extra refresh work
+    - recovered ordinary `training-yun-ryu-ryu-stage` full telemetry regressed `56.2981 -> 53.9858 FPS`, with `frame.mean_ms 17.7626 -> 18.5234`, `update.mean_ms 4.1713 -> 4.7876`, `render.mean_ms 7.8036 -> 7.8498`, and `present.mean_ms 5.7877 -> 5.8860`
+    - ordinary `basic-exchange --test-stage 7` full telemetry also regressed `59.2503 -> 57.5467 FPS`; sampled `generic_textured.mean_ms` improved `0.273219 -> 0.237732`, but `update.mean_ms` worsened `4.8831 -> 5.7621`, so the fallback lowered one sampled raster bucket while still hurting total frame time
+    - the native control guard regressed materially `94.0211 -> 89.3922 FPS`, which is enough to reject the reland even before considering the ordinary gameplay loss
+    - the required review pass also found a real correctness hazard: the compare shadow was shared per `texture_index` even though software-source caches are keyed per `(texture, palette)`, so one palette refresh could advance the baseline seen by another palette and leave stale pixels behind after a later partial blit
+    - the review found two more reasons not to reuse this draft: unlock-locality telemetry mutates the same shadow buffer before refresh when extended stats are enabled, and the fallback paid a full-surface compare even when an existing unlock dirty rect was already usable
+  - Keep/rollback decision with reason:
+    - reject and revert; this compare-dirty refresh fallback is neither a player-visible FPS win nor a safe partial-refresh implementation, because it regresses nearest control, ordinary gameplay, and native control while also mixing palette baselines and profiling state in the compare shadow
+  - Next best candidate optimization:
+    - do not reopen compare-dirty refresh fallback without a cache-keyed shadow source and a telemetry split that isolates refresh-locality wins from compare overhead; rank the next broader raster loop toward a family whose ordinary gameplay evidence stays strong on `training-yun-ryu-ryu-stage` or `basic-exchange --test-stage 7`, or return to nearest presenter tail work if that matrix is stronger
