@@ -189,6 +189,24 @@ Scope guardrails:
 
 ## Cycle Log
 
+- 2026-03-17T19:12:24-0400
+  - Commit hash:
+    - recorded in the cycle closeout commit
+  - Bottleneck targeted:
+    - Yun SA3 first-visible activation on the stock MiSTer software-frame path, specifically whether the remaining `320-383 px` non-integer miss band should be reranked onto the existing lookup helper
+  - Change summary:
+    - recovered same-source stock baselines on the current tree: `loop110-control-pre = 70.7160 FPS`, `loop110-super-pre = 44.8966 FPS`, and `loop110-yun-baseline-full = 37.7746 FPS`
+    - tried a narrow `src/port/sdl/sdl_game_renderer.c` runtime reland that admitted only unmodulated `320-383 px` non-integer textured rects onto the kept lookup helper, then rebuilt/deployed a telemetry ARM package from a corrected `/work-arm-cross` Docker workspace after confirming SDL had to be cross-built before link
+    - rolled the runtime change back locally after the candidate package cleared probe/smoke but failed the Yun keep gate
+  - Verification result summary:
+    - Docker ARM telemetry build/package succeeded in `3sx-mister-build`, MiSTer `deploy`, `probe`, and bounded `smoke` passed, and the candidate stayed on dummy/software + fbdev + `Software frame mode: on`
+    - the reland moved the intended residue: Yun `software_frame_fast_miss_non_integer_ge_256_pixels.mean` fell `860.94 -> 452.89`, `software_frame_generic_textured_pixels.mean` fell `1991.68 -> 1583.62`, and frames with `software_frame_fast_miss_non_integer_max_pixels >= 320` fell `43 -> 10`
+    - but the player-visible lane still regressed: `loop110-yun-post` landed at `37.2767 FPS` versus `37.7746 FPS` baseline, the full active window slipped `31.9356 -> 31.4552 FPS`, and the first `10` active frames slipped `28.4679 -> 28.1932 FPS`; control only moved `70.7160 -> 70.2470 FPS` and super-heavy stayed flat `44.8966 -> 44.8949`
+  - Keep/rollback decision with reason:
+    - reject and revert; this exact `320-383 px` threshold reland does reduce the targeted medium miss residue, but it still makes the real Yun gameplay slowdown slightly worse on the current tree
+  - Next best candidate optimization:
+    - do not reopen threshold relands first; target helper-internal cost work or narrower task-shape attribution inside the existing kept `>=384 px` non-integer path, because the remaining Yun ceiling is not solved by another medium-band admission tweak
+
 - 2026-03-15T04:40:00-0400
   - Commit hash:
     - recorded in the cycle closeout commit

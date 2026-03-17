@@ -5060,3 +5060,43 @@
   - [x] `6f775f0a`
 - [x] next best candidate:
   - [x] stay on the attract/logo lane for one more measurement-first loop and recover a trustworthy exact opening/demo gate from real opening state, most likely by exporting or keying on narrower `op_w` progress (`index` / `r_no_*`) rather than broad title/menu phase names; only return to Yun first-activation work once that user-visible attract lane is either narrowed or explicitly deprioritized with evidence
+
+### Follow-On Loop 110: Narrow Yun First-Burst Medium Non-Integer Rerank
+
+- [x] Value target: test the narrowest threshold-only runtime reland still backed by the fresh manual + same-tree Yun evidence by reranking only the `320-383 px` unmodulated non-integer miss band onto the existing lookup helper
+- [x] Scope boundary: `src/port/sdl/sdl_game_renderer.c` for the runtime change, plus the required checklist/living-findings closeout; do not touch gameplay logic, presenter policy, scene/test logic, telemetry schema, or `tools/mister/package.sh`
+- [x] Dependencies: clean `nearest-hdmi-perf` tip `c3534f16`; fresh same-tree captures `loop110-yun-baseline-full`, `loop110-control-pre`, and `loop110-super-pre`; telemetry build/package flow in `build/mister-telemetry*`; the validated `/work-arm` ARM hard-float cache; serialized MiSTer tooling; and the standing user-owned `tools/mister/package.sh` exception
+- [x] Research evidence gathered on `2026-03-17` before implementation:
+  - [x] preserved-branch verification debt does not block this loop. `git for-each-ref --sort=creatordate --format='%(refname:short)' refs/heads/preserve-*` returned no pending preserved refs
+  - [x] fresh same-tree Yun full telemetry reproduces the real user-priority gameplay lane directly on the kept stock-MiSTer path. `loop110-yun-baseline-full` landed at `37.7746 FPS` / `26.4728 / 10.2397 / 8.4542 ms` (`frame / render / present`) with `software_frame_direct_present_ratio = 1.0000` and `software_frame_fallback_ratio = 0.0000`
+  - [x] that same-tree Yun capture weakens the cold-cache hypothesis. Pre-active versus active windows kept software-surface cache work in roughly the same range (`14.97 -> 14.42` creates/frame and `2.0730 -> 2.4350 ms` refresh), while the real first-visible activation dip came from raster residue jumping to `143604.22` fast-non-integer pixels/frame plus `4897.57` generic-textured pixels/frame
+  - [x] the first-visible burst now points at one medium miss band just below the kept `>=384 px` threshold. In the first `10` active frames, `software_frame_fast_miss_non_integer_ge_256_tasks` averaged `29.6` and `software_frame_fast_miss_non_integer_max_pixels` ramped through `264, 273, 282, 291, 301, 312, 323, 334, 347`
+  - [x] the current same-source keep gates show that band exists outside Yun, but far less often. `loop110-control-pre` landed at `70.7160 FPS` and `loop110-super-pre` landed at `44.8966 FPS`; each only hit `software_frame_fast_miss_non_integer_max_pixels >= 320` on `6/300` frames, versus `43/300` frames in `loop110-yun-baseline-full`
+  - [x] this is materially narrower than the rejected Loop 90 blanket `>=256 px` reland. The new attempt only targets the `320-383 px` band, leaving the previously rejected `256-319 px` residue and the already-kept `>=384 px` family unchanged
+- [x] Research-backed hypothesis and scoped runtime plan for this cycle:
+  - [x] lower the non-integer lookup admission only for the uncovered medium band by admitting unmodulated `320-383 px` non-integer textured rects onto the existing lookup helper while leaving the shared `>=384 px` threshold, helper math, generic fallback loop, presenter path, and telemetry schema otherwise unchanged
+  - [x] rebuild/package the telemetry flavor in Docker, rebuild/package the ARM telemetry payload in `/work-arm`, redeploy through the serialized MiSTer tooling, rerun `probe`/`smoke`, and verify with the current same-source keep matrix: `gameplay-idle`, `gameplay-super-heavy`, and the gated Yun SA3 full capture with FPS called out explicitly
+  - [x] reject immediately if the current-tree control or super-heavy keep gates regress materially, if Yun fails to improve on the first-activation lane, or if the diff broadens beyond the scoped `320-383 px` unmodulated medium band
+- [x] Implementation summary:
+  - [x] tried the narrow runtime reland in `src/port/sdl/sdl_game_renderer.c` by admitting only unmodulated `320-383 px` non-integer textured rects onto the existing lookup helper, with no helper-math, presenter, or telemetry changes
+  - [x] rebuilt the telemetry ARM package in Docker using a fresh `/work-arm-cross` workspace after confirming the dependency build had to export the ARM target before `build-deps.sh --profile mister`; the earlier `/work-arm` attempt silently rebuilt `libSDL3.so` for x86_64 and failed link, while the corrected rerun produced an `ELF32 / ARM / hard-float` SDL via `readelf -h`
+  - [x] deployed `build/mister-telemetry-package-arm-loop110-candidate-v1/mister-package`, reran `probe` and bounded `smoke`, then captured `loop110-control-post`, `loop110-super-post`, and `loop110-yun-post` on the same package before rolling the runtime edit back locally after the keep gate failed
+- [x] Evidence captured:
+  - [x] the candidate package did reach the intended lane. On Yun, `software_frame_fast_miss_non_integer_ge_256_pixels.mean` fell `860.94 -> 452.89`, `software_frame_generic_textured_pixels.mean` fell `1991.68 -> 1583.62`, and frames with `software_frame_fast_miss_non_integer_max_pixels >= 320` fell `43 -> 10`
+  - [x] but the player-visible Yun lane still regressed. `loop110-yun-post` landed at `37.2767 FPS` / `26.8264 / 10.3838 / 8.5086 ms` versus `loop110-yun-baseline-full` at `37.7746 FPS` / `26.4728 / 10.2397 / 8.4542 ms`, a `-1.32%` overall FPS slip while direct present stayed intact
+  - [x] the first visible activation also failed to improve enough to justify the reland. The first `10` active frames moved from `28.4679 FPS` / `35.1273 / 13.9385 / 13.4080 ms` to `28.1932 FPS` / `35.4695 / 14.1092 / 13.4891 ms`, and the full active window moved from `31.9356 FPS` / `31.3130 / 12.2073 / 10.9064 ms` to `31.4552 FPS` / `31.7912 / 12.3371 / 11.0873 ms`
+  - [x] the keep gates stayed essentially flat but did not buy back the Yun loss. `loop110-control-post` landed at `70.2470 FPS` versus `70.7160 FPS` pre (`-0.66%`), and `loop110-super-post` landed at `44.8949 FPS` versus `44.8966 FPS` pre (`-0.00%`); both kept `software_frame_direct_present_ratio = 1.0000` and did move their tiny background `ge_256` residue down from `88.59` to `39.84` pixels/frame
+  - [x] local code rollback is complete. `src/port/sdl/sdl_game_renderer.c` is back to the kept `>=384 px` admission gate, so the final tree for this loop is docs-only
+- [x] Review outcome:
+  - [x] a separate `explorer` review agent (`Helmholtz`) reviewed the docs-only closeout diff against the local `loop110-*` perf artifacts
+  - [x] that review found two valid closeout issues and no factual telemetry mistakes: the `Review outcome`/`final commit hash` fields were still left as placeholders in this checklist, and the new `living-findings.md` entry still needed the real closeout commit hash recorded after commit
+  - [x] no additional high-confidence inconsistencies were found in the rejection rationale or in the documented FPS/regression numbers
+- [x] Rejected and closed in this loop:
+  - [x] do not reopen this exact `320-383 px` threshold reland now. The same-tree telemetry proves it moves the intended medium miss band, but the user-priority Yun lane still regresses in both the full active window and the first visible activation
+  - [x] do not infer from the residue drop alone that the bottleneck is solved. This loop shows the remaining ceiling is not just “more medium tasks need the lookup helper”; the current helper/routing mix can lower the residue counters and still hurt total frame time
+- [x] Keep/rollback decision:
+  - [x] reject and roll back the runtime change. The scoped threshold reland is behaving as designed, but it still makes the real Yun gameplay target slower, so the loop closes as a docs-only rejection instead of keeping a misleading partial win
+- [ ] final commit hash:
+  - [ ] record after the docs-only closure commit is created
+- [x] next best candidate:
+  - [x] stay off threshold relands and target the still-dominant Yun fast-non-integer lane directly. The next safe gameplay-first step should be helper-internal cost work or narrower task-shape attribution inside the existing kept `>=384 px` path, not another medium-band admission tweak
