@@ -1291,6 +1291,23 @@
   - Next best candidate optimization:
     - keep this counted dirty-variant fast path; if the next fresh loop stays on menus, re-rank the remaining non-consecutive submit/state churn inside `seqsAfterProcess` before reopening any broader renderer-wide texture-deferral idea
 
+- 2026-03-17T13:35:15-0400
+  - Bottleneck targeted:
+    - broader 2P character-select submit/state churn after the kept dirty-variant count reland, specifically whether the hot `ppg-seqs` chooser textures could turn the remaining partial `INDEX8 -> ARGB8888` software-surface refresh work into a real menu-local win by bypassing SDL palette+blit refresh in `src/port/sdl/sdl_game_renderer.c`
+  - Change summary:
+    - tried a narrow runtime reland in `src/port/sdl/sdl_game_renderer.c` that replaced only the partial software-surface refresh path for indexed textures with a direct palette-conversion loop into the cached `ARGB8888` surface while leaving the full refresh and fallback paths unchanged
+    - rebuilt/exported `build/mister-telemetry-package-arm-menu-index8partial` through the validated `/work-arm` ARM telemetry path in `3sx-mister-build-nearest-hdmi-perf`, deployed the candidate with `tools/mister/misterctl.sh`, captured full nearest `2p-character-select`, exact `character-select-super-art`, and the recovered ordinary `training-yun-ryu-ryu-stage` guardrail, then reverted the runtime diff locally and restored `build/mister-telemetry-package-arm-menu-dirtycount-c1-20260317a` on-device after the menu gates failed
+    - completed the required review pass with a scoped explorer second opinion after the revert; it reported `No findings`, so the closure stays performance-only rather than correctness-driven
+  - Verification result summary:
+    - accepted baseline `menu-dirtycount-c1-char-select-full-r1` was `52.9285 FPS / 18.8934 / 4.3900 / 8.8588 / 5.6446 ms` (`frame / update / render / present`); candidate `menu-index8partial-c1-char-select-full` regressed to `52.4002 FPS / 19.0839 / 4.4895 / 8.8822 / 5.7122 ms`
+    - accepted baseline `menu-dirtycount-c1-super-art-full-r2` was `55.3707 FPS / 18.0601 / 6.0077 / 9.6022 / 2.4502 ms`; candidate `menu-index8partial-c1-super-art-full` regressed to `54.6496 FPS / 18.2984 / 4.0930 / 8.7889 / 5.4165 ms`
+    - recovered ordinary gameplay guardrail improved, but not enough to offset the menu regression: `menu-dirtycount-c1-training-yun-basic-r1` was `61.3221 FPS / 16.3073 / 3.5756 / 7.7817 / 4.9500 ms` versus `menu-index8partial-c1-training-basic` at `62.9063 FPS / 15.8967 / 3.4989 / 7.5669 / 4.8309 ms`
+    - candidate `deploy`, `probe`, and bounded `smoke` passed before capture; after rejection, the restored accepted package redeployed successfully and passed `probe`
+  - Keep/rollback decision with reason:
+    - reject and revert; both user-priority menu lanes lost FPS on-device, and the exact chooser lane turned the attempted refresh shortcut into a major present-cost regression, so this partial-refresh rewrite is not a viable follow-up to the kept dirty-variant count win
+  - Next best candidate optimization:
+    - leave the current SDL partial-refresh path intact and keep the next fresh menu loop on measured `seqsAfterProcess` submit/state churn rather than another generic software-surface refresh rewrite
+
 - 2026-03-17T05:01:00-0400
   - Bottleneck targeted:
     - possible remaining stage-`7` exact-family raster residue beyond the kept full-opaque row mask, specifically fully transparent rows inside the recovered `256x256` `rect_uv_parallelogram` sources
