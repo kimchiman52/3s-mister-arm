@@ -189,6 +189,23 @@ Scope guardrails:
 
 ## Cycle Log
 
+- 2026-03-17T19:54:22-0400
+  - Commit hash:
+    - pending docs-only closeout commit
+  - Bottleneck targeted:
+    - Yun SA3 first-visible activation on the stock MiSTer software-frame path, specifically whether cached fully opaque source rows could make the kept fast non-integer helper cheaper without changing routing
+  - Change summary:
+    - tried a narrow helper-only reland in `software_frame_non_integer` plus the matching call-site/parity plumbing so unmodulated rows marked fully opaque could skip per-pixel alpha/blend work
+    - accepted two review-driven fixes before the final candidate run: keep the row-mask lookup behind the existing threshold gate, and make the new parity case use mixed-alpha rows so the opaque-row branch is actually exercised
+    - rolled the runtime/parity code back completely after the reviewed candidate package failed the Yun keep gate; only the docs closeout remains for this loop
+  - Verification result summary:
+    - Docker ARM telemetry build/package in `3sx-mister-build`, native parity rerun, and serialized MiSTer `health` / `deploy` / `probe` / bounded `smoke` all passed on the reviewed candidate before rollback
+    - the candidate failed the gameplay keeps: `loop111-control-post` slipped `70.7160 -> 70.4957 FPS`, `loop111-super-post` stayed flat `44.8966 -> 44.9581 FPS`, and `loop111-yun-post` regressed `37.7746 -> 36.6168 FPS`; the active-super window also regressed `31.9087 -> 30.5741 FPS`, with the first `10` active frames slipping `28.4679 -> 26.8754 FPS`
+  - Keep/rollback decision with reason:
+    - reject and revert; the opaque-row specialization keeps the same workload mix but raises total Yun cost, so this helper branch is overhead rather than a useful player-visible optimization on the current tree
+  - Next best candidate optimization:
+    - do not retry full-row opaque specialization now; first prove a real opaque-row hit rate inside the hot non-integer workload, or shift the next Yun loop to a different measured first-activation cost source
+
 - 2026-03-17T19:12:24-0400
   - Commit hash:
     - `01181a5e`
