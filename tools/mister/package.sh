@@ -162,16 +162,7 @@ SELF_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 exec "$SELF_DIR/scripts/launch-osd.sh" "$@"
 OSD_WRAPPER
 
-cat > "$OUTPUT_DIR/launch-training-yun-ryu-ryu-stage.sh" <<'TRAINING_WRAPPER'
-#!/bin/sh
-set -eu
-
-SELF_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
-exec "$SELF_DIR/scripts/launch-training-yun-ryu-ryu-stage.sh" "$@"
-TRAINING_WRAPPER
-
 chmod +x "$OUTPUT_DIR/run-3sx.sh" "$OUTPUT_DIR/launch-osd.sh" \
-    "$OUTPUT_DIR/launch-training-yun-ryu-ryu-stage.sh" \
     "$OUTPUT_DIR/scripts/run-3sx.sh" "$OUTPUT_DIR/scripts/launch-osd.sh" \
     "$OUTPUT_DIR/scripts/launch-training-yun-ryu-ryu-stage.sh" "$OUTPUT_DIR/bin/3sx"
 
