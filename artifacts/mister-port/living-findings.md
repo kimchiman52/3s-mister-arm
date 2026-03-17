@@ -3245,3 +3245,18 @@ Scope guardrails:
     - reject and revert; the endpoint lookup is too mixed to justify keeping, because it does not improve both ordinary nearest gameplay and trusted Genei together, and flat-to-worse nearest control leaves no broad player-visible FPS gain to offset the regression risk
   - Next best candidate optimization:
     - do not reopen source-span endpoint lookup without telemetry that isolates first-row versus repeated-row clipped-span/setup cost; if nearest presenter work continues, prefer the memo-backed first-row vs repeated-row telemetry split before another mapped-row rewrite
+
+- 2026-03-17T06:50:22-0400
+  - Bottleneck targeted:
+    - broader unmodulated software-frame raster work in `src/port/sdl/sdl_game_renderer.c`, specifically whether the kept opaque-row cache could be widened across exact, scaled, non-integer, and generic textured loops for player-visible nearest gameplay
+  - Change summary:
+    - tried a runtime reland that cached per-binding `all_opaque` state plus the full-opaque row mask once, then reused that metadata to bypass per-pixel alpha/blend work across the shared software-frame raster paths and extended the parity cases to cover opaque-source non-integer lookup rows
+    - rebuilt/exported `build/mister-telemetry-package-arm-cycle-opaque-rows-20260317`, verified probe/smoke plus Linux-container `--software-frame-parity-check`, reran nearest `control`, recovered `training-yun-ryu-ryu-stage`, ordinary `basic-exchange --test-stage 7`, `effect-heavy`, trusted `genei-jin-first-activation`, and a native guard, then reverted the runtime diff locally after the gameplay matrix failed
+  - Verification result summary:
+    - nearest `control` improved `75.6622 -> 79.5335 FPS`, recovered `training-yun-ryu-ryu-stage` improved `61.9006 -> 62.9260 FPS`, and the native guard improved `92.3470 -> 95.4592 FPS`
+    - broader gameplay rejected the reland anyway: ordinary `basic-exchange --test-stage 7` fell `60.4355 -> 58.0674 FPS` with `render.mean_ms 6.6063 -> 7.0603` and `generic_textured.sampled_mean_ms 0.237190 -> 0.242578`, `effect-heavy` fell `44.6596 -> 41.9880 FPS` with `render.mean_ms 9.2284 -> 10.5724`, and trusted `genei-jin-first-activation` fell `36.6507 -> 34.8713 FPS` with `render.mean_ms 10.4267 -> 11.8903`
+    - the rejected stress captures kept the same high-level workload mix (`effect-heavy` still averaged `341.74` `fast_exact` tasks plus small `fast_non_integer`/`generic_textured`, and Genei still averaged `273.85` `fast_exact`, `35.26` `fast_non_integer`, and `11.19` `generic_textured` tasks), so the added opacity-cache plumbing raised raster cost instead of exposing a new cheaper family
+  - Keep/rollback decision with reason:
+    - reject and revert; this is not a player-visible gameplay win, because the wider opacity-cache bypass helps idle/control-style lanes but slows the ordinary and heavy gameplay scenes that now decide broader raster work
+  - Next best candidate optimization:
+    - keep the accepted narrow row-mask relands only and re-rank the next loop between nearest presenter tail work and a more tightly isolated ordinary-gameplay raster family rather than another cache-wide opacity shortcut
