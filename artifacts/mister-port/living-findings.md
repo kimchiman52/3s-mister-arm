@@ -3278,3 +3278,18 @@ Scope guardrails:
     - reject and revert; the integer midpoint rewrite is not a player-visible win, because it regresses the ordinary stage-`7` gameplay lane, slightly hurts trusted Genei/control, loses the native guard, and also fails the exactness bar across zero-crossing placements
   - Next best candidate optimization:
     - keep the accepted stage-`7` row-mask relands as the only current gameplay-wide raster keep in this family, and if broader raster work continues prefer a telemetry-backed family split that isolates more meaningful ordinary gameplay residue before another row-start/setup micro-optimization
+
+- 2026-03-17T08:32:00-0400
+  - Bottleneck targeted:
+    - broader ordinary-gameplay raster residue in `src/port/sdl/sdl_game_renderer.c`, specifically whether the recovered stage-`7` `256x256` ARGB `rect_uv_parallelogram` family could skip transparent edge columns by caching per-row visible bounds and trimming leading/trailing transparent pixels before the existing blend loop
+  - Change summary:
+    - tried a single-file runtime reland that cached per-binding visible `x0/x1` bounds for each source row, invalidated that cache alongside the kept full-opaque row mask state, and used the cached bounds only for full-texture stage-`7` rows inside `raster_textured_parallelogram_to_software_frame()`
+    - rebuilt/exported same-session baseline and candidate telemetry packages, redeployed the candidate with `tools/mister/misterctl.sh`, reran nearest `control`, ordinary `basic-exchange --test-stage 7` basic plus full telemetry, `effect-heavy --test-stage 7`, trusted `genei-jin-first-activation`, and a native control guard, then reverted the runtime diff locally after the keep gates failed
+  - Verification result summary:
+    - nearest `control` improved `76.0419 -> 77.0989 FPS`, ordinary `basic-exchange --test-stage 7` basic improved `66.2211 -> 67.0400 FPS`, and the native guard stayed slightly better `93.1700 -> 93.5016 FPS`
+    - the deciding gameplay lanes still rejected the reland: matched full stage-`7` telemetry slipped `59.3574 -> 59.1520 FPS` with `render.mean_ms 6.7619 -> 6.6283`, `present.mean_ms 5.2064 -> 5.2102`, and `generic_textured.sampled_mean_ms 0.264341 -> 0.274044`; `effect-heavy --test-stage 7` basic fell `71.5959 -> 71.3100 FPS`; and trusted `genei-jin-first-activation` basic fell `40.2153 -> 40.1161 FPS`
+    - the required review pass found no correctness blocker in the row-bounds trim itself, so the failure is measured value rather than exactness: the candidate improves easier lanes while making the decisive ordinary/heavy raster evidence flat-to-worse
+  - Keep/rollback decision with reason:
+    - reject and revert; trimming transparent edge columns is not a player-visible gameplay win on the current branch because the broader raster lane and trusted Genei both stayed flat-to-down even though control/basic snapshots improved
+  - Next best candidate optimization:
+    - keep the accepted full-row opaque mask only, and if broader raster work continues prefer telemetry that splits the recovered stage-`7` family by a more meaningful cost source than transparent edge trimming before reopening another `sdl_game_renderer.c` micro-cache
