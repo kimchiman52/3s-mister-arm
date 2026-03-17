@@ -333,6 +333,26 @@
 
 ## Cycle Log
 
+- 2026-03-16T20:17:33-0400
+  - Research target:
+    - test whether caching sparse repeated-row destination byte spans and per-row sparse copy totals can trim nearest HDMI repeat-row replay overhead without changing copied-byte shape or template gating
+  - Change summary:
+    - tried a narrow single-file reland in `src/port/sdl/fbdev_presenter.c` that cached each mapped run's destination byte offset/span plus each changed source row's sparse copied-byte total and valid sparse run count, then reused that metadata inside sparse repeated-row replay instead of rebuilding offsets and copy counts on every repeated row
+    - rebuilt/exported `build/mister-telemetry-package-arm-nearest-r48-repeat-byte-spans-20260316a` through the validated `/work-arm` ARM telemetry path in `3sx-mister-build-nearest-hdmi-perf`, redeployed the accepted `build/mister-telemetry-package-arm-nearest-r47-repeat-metadata-20260316a` first for same-session baselines, then deployed/probed/smoked the candidate, captured the bounded nearest gameplay matrix plus native guard, rolled the source diff back locally, and restored the accepted `r47` package on-device after the keep gates failed
+    - completed the required review pass as a manual scoped review of the rejected single-file diff with focus on cached-byte-span reset correctness, row/run count coherence, and preserving identical copied-byte coverage; no actionable correctness issue survived review, so the rejection stayed purely performance-based
+  - Verification evidence:
+    - `git diff --check` passed before the build; the `/work-arm` ARM telemetry rebuild/install/package succeeded in `3sx-mister-build-nearest-hdmi-perf`, `readelf -h` still reported `ELF32` `ARM` with hard-float ABI, and the exported candidate package was `build/mister-telemetry-package-arm-nearest-r48-repeat-byte-spans-20260316a`
+    - accepted-runtime baseline `deploy` and `probe`, candidate `deploy` / `probe` / `smoke`, and final rollback `deploy` / `probe` back to `build/mister-telemetry-package-arm-nearest-r47-repeat-metadata-20260316a` all passed through `tools/mister/misterctl.sh`; every probe stayed on `dummy/software` with `FBDEV: active (1920x1080 ...)`, `Native render path: enabled`, and direct `software_frame_mapped_scale` or `software_frame_exact`
+    - nearest control only improved within noise at unchanged workload shape: `nearest-r48-base-control-basic = 75.9844 FPS / 13.1606 / 7.0027 / 2.9301 ms` versus `nearest-r48-post-control-basic = 76.0840 / 13.1434 / 6.9214 / 2.9959` (`frame / render / present`) with identical `mapped_repeat_rows 205.02`, `mapped_repeat_run_copies 1020.43`, and `copy_bytes 183105.60`
+    - the recovered ordinary gameplay lane drifted slightly the wrong way: `nearest-r48-base-basic-exchange-basic = 63.6727 FPS / 15.7053 / 6.9811 / 4.5370 ms` versus `nearest-r48-post-basic-exchange-basic = 63.5574 / 15.7338 / 6.9401 / 4.5591` with unchanged `mapped_repeat_rows 355.06`, `mapped_repeat_run_copies 2447.34`, and `copy_bytes 495530.19`
+    - the recovered ordinary pressure lane also regressed at identical copy workload: `nearest-r48-base-pressure-exchange-basic = 44.4815 FPS / 22.4813 / 8.0136 / 9.3520 ms` versus `nearest-r48-post-pressure-exchange-basic = 44.0971 / 22.6772 / 8.0096 / 9.5538`, again with unchanged `mapped_repeat_rows 691.03`, `mapped_repeat_run_copies 4674.51`, and `copy_bytes 2865058.71`
+    - trusted full Genei regressed at identical workload shape, including the explicit replay timing split: `nearest-r48-base-genei-full = 34.8339 FPS / 28.7077 / 10.4071 / 10.3481 / 10.3350 ms` versus `nearest-r48-post-genei-full = 34.6409 / 28.8676 / 10.4330 / 10.5142 / 10.5000` (`frame / render / present / present_copy`), while `mapped_first_row.mean_ms` rose `2.2685 -> 2.3316`, `mapped_repeat_row.mean_ms` rose `3.7693 -> 3.8095`, and `copy_bytes` plus repeat-run counts stayed fixed
+    - the native guard improved rather than regressed: `native-r48-base-control-basic = 93.1338 FPS / 10.7372 / 6.9632 / 0.5285 ms` versus `native-r48-post-control-basic = 94.5027 / 10.5817 / 6.8789 / 0.5205`
+  - Keep/rollback decision with reason:
+    - rollback; caching sparse repeated-row byte spans and row totals did not move the actual repeated-row workload, left the player-visible ordinary nearest lanes flat-to-worse, and regressed trusted full Genei on identical copied bytes, so it is not a decision-grade nearest HDMI win
+  - Next best candidate:
+    - do not reopen this cached-byte-span replay-body shape without telemetry proving the remaining sparse repeated-row overhead is dominated by offset/byte-count arithmetic rather than the `memcpy` traffic itself; if presenter work continues, prefer a different tail-gated repeat-row body cut, otherwise re-rank broader gameplay raster residue against the restored `r47` baseline
+
 - 2026-03-16T23:10:18-0400
   - Research target:
     - test whether a cheaper nearest presenter repeat-row-body cut can now land on the current accepted runtime by caching per-source-row repeat metadata once during mapped-row cache build instead of rescanning run spans on every repeated row
