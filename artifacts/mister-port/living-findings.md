@@ -191,7 +191,7 @@ Scope guardrails:
 
 - 2026-03-17T19:54:22-0400
   - Commit hash:
-    - pending docs-only closeout commit
+    - `b6f84e51`
   - Bottleneck targeted:
     - Yun SA3 first-visible activation on the stock MiSTer software-frame path, specifically whether cached fully opaque source rows could make the kept fast non-integer helper cheaper without changing routing
   - Change summary:

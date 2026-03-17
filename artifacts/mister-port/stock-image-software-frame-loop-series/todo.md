@@ -5129,6 +5129,6 @@
 - [x] Keep/rollback decision:
   - [x] reject and roll back the runtime change. This opaque-row specialization does not buy player-visible Genei-Jin speed on the current tree; it makes the real Yun lane slower even though the raster workload counters are effectively unchanged, which means the extra helper work is pure overhead rather than a useful fast path
 - [x] final commit hash:
-  - [x] pending docs-only closeout commit for Loop 111; record it in the immediate follow-up hash note commit after this rollback/docs closeout lands
+  - [x] `b6f84e51`
 - [x] next best candidate:
   - [x] do not retry full-row opaque specialization now. Any future Yun helper-internal reland should first prove an actual opaque-row hit rate inside the hot non-integer workload, or else shift to a different measured first-activation cost source instead of adding more branch/cache logic to the current helper
