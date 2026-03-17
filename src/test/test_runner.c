@@ -592,6 +592,51 @@ static bool training_mode_gameplay_started(void) {
            Pause_Down == 0;
 }
 
+static void maybe_force_training_scene_character_and_super_state(void) {
+    if (scene_preset != TEST_SCENE_PRESET_TRAINING_YUN_RYU_RYU_STAGE) {
+        return;
+    }
+
+    for (int player = 0; player < 2; player++) {
+        if (Sel_Arts_Complete[player] != 0) {
+            continue;
+        }
+
+        if (My_char[player] != characters[player]) {
+            My_char[player] = characters[player];
+            Last_My_char2[player] = characters[player];
+        }
+
+        if (selected_super_arts[player] >= 0 && Arts_Y[player] != selected_super_arts[player]) {
+            Arts_Y[player] = selected_super_arts[player];
+            Super_Arts[player] = selected_super_arts[player];
+            Last_Super_Arts[player] = selected_super_arts[player];
+        }
+    }
+}
+
+static void maybe_force_training_scene_super_confirm(void) {
+    if (scene_preset != TEST_SCENE_PRESET_TRAINING_YUN_RYU_RYU_STAGE) {
+        return;
+    }
+
+    for (int player = 0; player < 2; player++) {
+        if (Sel_Arts_Complete[player] != 0 || My_char[player] != characters[player]) {
+            continue;
+        }
+
+        Slide_Type = player;
+        Sel_Arts_Complete[player] = 1;
+        Last_Super_Arts[player] = Arts_Y[player];
+        Super_Arts[player] = Arts_Y[player];
+        if (Used_char[player] != My_char[player]) {
+            Last_Player_id = player;
+        }
+        Used_char[player] = My_char[player];
+        Setup_ID();
+    }
+}
+
 static void apply_scene_preset_defaults() {
     scene_preset = resolve_scene_preset(configuration.test.scene_preset);
 
@@ -635,7 +680,7 @@ static void apply_scene_preset_defaults() {
     case TEST_SCENE_PRESET_TRAINING_YUN_RYU_RYU_STAGE:
         characters[0] = CHAR_YUN;
         characters[1] = CHAR_RYU;
-        selected_super_arts[0] = 0;
+        selected_super_arts[0] = 2;
         selected_super_arts[1] = 0;
         stage = scene_preset_training_yun_ryu_ryu_stage;
         break;
@@ -940,37 +985,53 @@ void TestRunner_Prologue() {
 
     case PHASE_CHARACTER_SELECT:
         apply_stage_override();
+        maybe_force_training_scene_character_and_super_state();
         switch (char_select_phase) {
         case 0:
             set_cursor(characters[0], 0);
             set_cursor(characters[1], 1);
             tap_button(SWK_START, 1);
-            wait_timer = 20;
             char_select_phase = 1;
             break;
 
         case 1:
-            wait_timer -= 1;
-
-            if (wait_timer <= 0) {
+            set_cursor(characters[0], 0);
+            set_cursor(characters[1], 1);
+            if (Select_Start[1] >= 2) {
                 char_select_phase = 2;
             }
 
             break;
 
         case 2:
-            tap_button(SWK_SOUTH, 0);
-            tap_button(SWK_SOUTH, 1);
-            wait_timer = 45;
-            char_select_phase = 3;
+            set_cursor(characters[0], 0);
+            set_cursor(characters[1], 1);
+
+            if (My_char[0] != characters[0] || Sel_Arts_Complete[0] < 0) {
+                mash_button(SWK_SOUTH, 0);
+            }
+
+            if (My_char[1] != characters[1] || Sel_Arts_Complete[1] < 0) {
+                mash_button(SWK_SOUTH, 1);
+            }
+
+            if (My_char[0] == characters[0] && My_char[1] == characters[1] && Sel_Arts_Complete[0] >= 0 &&
+                Sel_Arts_Complete[1] >= 0) {
+                char_select_phase = 3;
+            }
             break;
 
         case 3:
-            wait_timer -= 1;
+            maybe_force_training_scene_super_confirm();
+            if (Sel_Arts_Complete[0] == 0) {
+                mash_button(SWK_SOUTH, 0);
+            }
 
-            if (wait_timer <= 0) {
-                tap_button(SWK_SOUTH, 0);
-                tap_button(SWK_SOUTH, 1);
+            if (Sel_Arts_Complete[1] == 0) {
+                mash_button(SWK_SOUTH, 1);
+            }
+
+            if (Sel_Arts_Complete[0] > 0 && Sel_Arts_Complete[1] > 0) {
                 phase = PHASE_GAME_TRANSITION;
             }
 
@@ -995,6 +1056,9 @@ void TestRunner_Prologue() {
                 game_frame = 0;
                 break;
             }
+
+            mash_button(SWK_ATTACKS, 0);
+            break;
         } else if (G_No[1] == 2) {
             phase = PHASE_GAME;
             game_frame = 0;

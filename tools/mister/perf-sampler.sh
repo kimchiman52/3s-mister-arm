@@ -232,7 +232,7 @@ apply_test_scene_preset_defaults() {
             test_p2_character="2"
         fi
         if [ -z "$test_p1_super_art" ]; then
-            test_p1_super_art="0"
+            test_p1_super_art="2"
         fi
         if [ -z "$test_p2_super_art" ]; then
             test_p2_super_art="0"
