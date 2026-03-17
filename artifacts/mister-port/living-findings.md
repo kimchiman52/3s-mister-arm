@@ -191,7 +191,7 @@ Scope guardrails:
 
 - 2026-03-17T19:12:24-0400
   - Commit hash:
-    - recorded in the cycle closeout commit
+    - `01181a5e`
   - Bottleneck targeted:
     - Yun SA3 first-visible activation on the stock MiSTer software-frame path, specifically whether the remaining `320-383 px` non-integer miss band should be reranked onto the existing lookup helper
   - Change summary:

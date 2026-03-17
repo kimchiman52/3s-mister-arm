@@ -5096,7 +5096,7 @@
   - [x] do not infer from the residue drop alone that the bottleneck is solved. This loop shows the remaining ceiling is not just “more medium tasks need the lookup helper”; the current helper/routing mix can lower the residue counters and still hurt total frame time
 - [x] Keep/rollback decision:
   - [x] reject and roll back the runtime change. The scoped threshold reland is behaving as designed, but it still makes the real Yun gameplay target slower, so the loop closes as a docs-only rejection instead of keeping a misleading partial win
-- [ ] final commit hash:
-  - [ ] record after the docs-only closure commit is created
+- [x] final commit hash:
+  - [x] `01181a5e`
 - [x] next best candidate:
   - [x] stay off threshold relands and target the still-dominant Yun fast-non-integer lane directly. The next safe gameplay-first step should be helper-internal cost work or narrower task-shape attribution inside the existing kept `>=384 px` path, not another medium-band admission tweak
