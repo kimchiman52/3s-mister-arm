@@ -888,6 +888,15 @@ static void maybe_draw_fps_overlay(const SDL_FRect* content_rect) {
     const int safe_margin = SDL_max(10, scale * 4);
     const int draw_x = x0 + ((content_w - text_w) / 2);
     const int draw_y = y1 - glyph_h - safe_margin;
+    const int bg_pad = SDL_max(2, scale);
+    const int bg_x = clamp_to_range(draw_x - bg_pad, 0, fb_width);
+    const int bg_y = clamp_to_range(draw_y - bg_pad, 0, fb_height);
+    const int bg_x1 = clamp_to_range(draw_x + text_w + bg_pad, 0, fb_width);
+    const int bg_y1 = clamp_to_range(draw_y + glyph_h + bg_pad, 0, fb_height);
+
+    if ((bg_x1 > bg_x) && (bg_y1 > bg_y)) {
+        fill_fb_rect(bg_x, bg_y, bg_x1 - bg_x, bg_y1 - bg_y, 0xFF000000u);
+    }
 
     for (int i = 0; i < text_len; i++) {
         const int glyph_x = draw_x + (i * (glyph_w + char_gap));
