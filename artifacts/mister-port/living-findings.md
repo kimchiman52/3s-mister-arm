@@ -3213,3 +3213,19 @@ Scope guardrails:
     - reject and revert; the replay-body specialization is not a clear player-visible win on the ordinary gameplay guardrail, and the first-row spillback cancels the modest repeat-row savings
   - Next best candidate optimization:
     - keep the accepted same-`src_y` band replay reland, but do not reopen this template-backed loop-order rewrite without telemetry that proves a future body-only change can keep `mapped_first_row` flat on `training-yun-ryu-ryu-stage` as well as trusted Genei
+
+- 2026-03-17T05:13:39-0400
+  - Bottleneck targeted:
+    - nearest-HDMI dense repeated-row replay source cost in `src/port/sdl/fbdev_presenter.c`, with ordinary gameplay guarded by `training-yun-ryu-ryu-stage` and dense-tail stress checked by trusted first-Genei
+  - Change summary:
+    - tried trimming dense-band RAM-template seeding so only sparse repeat bands replay from `repeat_row_template_bytes`, leaving dense repeat bands to chain from the just-written mapped framebuffer row
+    - rebuilt/exported `build/mister-telemetry-package-arm-cycle`, redeployed it with `tools/mister/misterctl.sh`, reran nearest `control`, recovered ordinary `training-yun-ryu-ryu-stage`, trusted `genei-jin-first-activation`, and a native basic guard, then completed a scoped review that flagged the dense-band source-locality regression
+  - Verification result summary:
+    - nearest `control` stayed flat `75.8691 -> 75.8478 FPS` with `present.mean_ms 2.9270 -> 2.8712`, so there is no broad idle win to offset gameplay risk
+    - recovered ordinary `training-yun-ryu-ryu-stage` stayed flat-to-down: `--perf-basic` slipped `61.9399 -> 61.8833 FPS` and full telemetry slipped `55.9407 -> 55.6316 FPS`, with `mapped_first_row.mean_ms 1.0127 -> 0.9971` but `mapped_repeat_row.mean_ms 2.0562 -> 2.1533`
+    - trusted `genei-jin-first-activation` regressed materially: `--perf-basic` fell `41.4507 -> 39.8446 FPS` and full telemetry fell `36.7847 -> 34.8925 FPS`, while `mapped_first_row.mean_ms` improved `2.2393 -> 1.7840` but `mapped_repeat_row.mean_ms` worsened `2.9206 -> 4.9136` after template-backed dense rows collapsed `67.24 -> 0.00`; the native guard slightly improved `92.1104 -> 92.3841 FPS`
+    - the compared full captures kept identical repeat-row copy counts (`mapped_repeat_run_copies 3666.14` on training, `3732.92` on Genei), so the loss came from replay source locality rather than more work; dense bands reverted to mapped-fb rereads
+  - Keep/rollback decision with reason:
+    - reject and revert; trimming dense template seeding buys a small first-row win, but dense repeat-row replay dominates the trusted gameplay-heavy tail and still needs the RAM template as its source
+  - Next best candidate optimization:
+    - keep the accepted same-`src_y` band replay reland and rank future nearest presenter work toward a win that preserves RAM-backed dense replay while cutting either sparse-tail control overhead or dense-band source setup cost
