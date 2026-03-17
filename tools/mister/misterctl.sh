@@ -283,13 +283,14 @@ mkdir -p "\${LOG_DIR}"
 exec /media/fat/games/3sx/scripts/launch-osd.sh "\$@" >>"\${LOG_PATH}" 2>&1
 SCRIPT_WRAPPER
 chmod +x /media/fat/Scripts/3SX.sh
-cat > '/media/fat/Scripts/3SX Training Yun Ryu Ryu Stage.sh' <<'TRAINING_SCRIPT_WRAPPER'
+rm -f '/media/fat/Scripts/3SX Training Yun Ryu Ryu Stage.sh'
+cat > '/media/fat/Scripts/3SX_Training_Yun_Ryu_Ryu_Stage.sh' <<'TRAINING_SCRIPT_WRAPPER'
 #!/bin/sh
 set -eu
 
 exec /media/fat/games/3sx/scripts/launch-training-yun-ryu-ryu-stage.sh "\$@"
 TRAINING_SCRIPT_WRAPPER
-chmod +x '/media/fat/Scripts/3SX Training Yun Ryu Ryu Stage.sh'
+chmod +x '/media/fat/Scripts/3SX_Training_Yun_Ryu_Ryu_Stage.sh'
 EOF
 )
     mister_ssh_exec "${host}" "${user}" "${password}" "${wrapper_cmd}"
