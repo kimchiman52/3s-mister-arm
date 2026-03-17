@@ -3126,3 +3126,20 @@ Scope guardrails:
     - keep; the row-template replay is a real player-visible nearest-HDMI win on the trusted first-Genei lane, stays dormant on the non-tail gameplay gates, and closes the nearest memo’s requested telemetry split without touching gameplay behavior
   - Next best candidate optimization:
     - broaden from presenter-tail work to gameplay-wide software-frame raster residue in `src/port/sdl/sdl_game_renderer.c`, using `effect-heavy`, `super-heavy`, or trusted first-Genei direct-present scenes before menu-only churn
+
+- 2026-03-16T16:05:00-0400
+  - Bottleneck targeted:
+    - missing ordinary-gameplay raster attribution on the recovered `basic-exchange --test-stage 7` nearest lane, where bucket sampling showed real `generic_textured` cost but the exported per-frame counters still looked like zero
+  - Change summary:
+    - added telemetry-only recovered textured-geometry family export in `src/port/sdl/sdl_game_renderer.c` and `src/port/sdl/sdl_app.c`, plus top-family summary printing in `tools/mister/perf-sampler.sh`
+    - rebuilt a fresh ARM telemetry package through `/work-arm` in `3sx-mister-build-nearest-hdmi-perf`, redeployed it with `misterctl.sh`, reran the stage-`7` ordinary raster lane plus nearest idle control, and completed a manual scoped review with no findings
+  - Verification result summary:
+    - `git diff --check` and `bash -n tools/mister/perf-sampler.sh` passed; the `/work-arm` telemetry build/install/package succeeded, and `readelf -h build/mister-telemetry-install/bin/3sx` reported `ELF32` `ARM` with hard-float ABI
+    - MiSTer `deploy`, `probe`, and bounded `smoke` all passed on `build/mister-telemetry-package-arm-loop-20260316c`
+    - pre-change `loop-20260316c-basic-exchange-stage7-full-pre` stayed at `55.4801 FPS` and had no `software_frame_textured_geometry_recovered_families` field even though the stage-`7` lane already sampled real `generic_textured` work
+    - post-change `loop-20260316c-basic-exchange-stage7-full-post` stayed effectively flat at `55.5278 FPS / 18.0090 / 7.0167 / 6.2198 / 6.2071 ms` (`frame / render / present / present_copy`) and exported three stable `rect_uv_parallelogram` recovered families, each with `task_count_total = 270`, `submitted_pixels_total = 17694720`, and `task_ratio = submitted_pixel_ratio = 0.333333`
+    - matched nearest idle control `loop-20260316c-control-full-post` stayed on direct `software_frame_mapped_scale` at `67.0215 FPS / 14.9206 / 7.2566 / 3.9358 / 3.9173 ms` and exported zero recovered families, which confirms the new signal is lane-specific instead of always-on noise
+  - Keep/rollback decision with reason:
+    - keep measurement-support only; the loop closes a real ordinary-gameplay attribution gap without changing gameplay or measured FPS, and it turns the stage-`7` raster lane into a family-specific decision tool instead of a bucket-only hint
+  - Next best candidate optimization:
+    - use the new stage-`7` recovered-family export to choose the next `sdl_game_renderer.c` runtime reland, starting from the concrete `rect_uv_parallelogram` cohort rather than reopening another generic textured or non-integer fast path blindly

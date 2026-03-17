@@ -1144,6 +1144,7 @@ static void perf_capture_reset_storage(void) {
     SDLGameRenderer_ResetPerfCaptureUnlockLocalityTelemetry();
     SDLGameRenderer_ResetPerfCaptureTextureRenewTelemetry();
     SDLGameRenderer_ResetPerfCaptureRasterTimingTelemetry();
+    SDLGameRenderer_ResetPerfCaptureTexturedGeometryRecoveredTelemetry();
     SDLGameRenderer_ResetPerfCaptureTexturedGeometryFallbackTelemetry();
     PLS03_ResetSuperArtCommandTelemetry();
 }
@@ -1487,6 +1488,14 @@ static void perf_capture_write_summary(void) {
     };
     const int raster_bucket_timing_count = SDLGameRenderer_GetPerfCaptureRasterBucketTimings(
         raster_bucket_timings, SDL_arraysize(raster_bucket_timings));
+    SDLGameRenderer_PerfCaptureTexturedGeometryFallbackFamily textured_geometry_recovered_families[8] = { 0 };
+    const int textured_geometry_recovered_family_count = SDLGameRenderer_GetPerfCaptureTexturedGeometryRecoveredFamilies(
+        textured_geometry_recovered_families, SDL_arraysize(textured_geometry_recovered_families));
+    Uint64 textured_geometry_recovered_family_tasks_total = 0;
+    Uint64 textured_geometry_recovered_family_pixels_total = 0;
+    SDLGameRenderer_GetPerfCaptureTexturedGeometryRecoveredTotals(&textured_geometry_recovered_family_tasks_total,
+                                                                  &textured_geometry_recovered_family_pixels_total,
+                                                                  NULL);
     SDLGameRenderer_PerfCaptureTexturedGeometryFallbackFamily textured_geometry_fallback_families[8] = { 0 };
     const int textured_geometry_fallback_family_count = SDLGameRenderer_GetPerfCaptureTexturedGeometryFallbackFamilies(
         textured_geometry_fallback_families, SDL_arraysize(textured_geometry_fallback_families));
@@ -4380,6 +4389,99 @@ static void perf_capture_write_summary(void) {
                       sampled_total_ms,
                       sampled_mean_ms,
                       (i + 1) < raster_bucket_timing_count ? "," : "");
+        }
+        io_printf(io, "    ],\n");
+    } else {
+        io_printf(io, "],\n");
+    }
+    io_printf(io, "    \"software_frame_textured_geometry_recovered_families\": [");
+    if (textured_geometry_recovered_family_count > 0) {
+        io_printf(io, "\n");
+        for (int i = 0; i < textured_geometry_recovered_family_count; i++) {
+            const SDLGameRenderer_PerfCaptureTexturedGeometryFallbackFamily* entry =
+                &textured_geometry_recovered_families[i];
+            const double task_ratio = textured_geometry_recovered_family_tasks_total > 0
+                                          ? (double)entry->task_count /
+                                                (double)textured_geometry_recovered_family_tasks_total
+                                          : 0.0;
+            const double pixel_ratio = textured_geometry_recovered_family_pixels_total > 0
+                                           ? (double)entry->submitted_pixels /
+                                                 (double)textured_geometry_recovered_family_pixels_total
+                                           : 0.0;
+            io_printf(io,
+                      "      {\"texture_handle\": %d, \"palette_handle\": %d, "
+                      "\"source_format\": \"%s\", \"source_width\": %d, \"source_height\": %d, "
+                      "\"logical_identity_known\": %s, "
+                      "\"logical_identity_mixed\": %s, "
+                      "\"logical_identity_registrations_total\": %u, "
+                      "\"logical_source_kind\": \"%s\", "
+                      "\"logical_ix_num\": %d, "
+                      "\"logical_ix_num_first\": %d, "
+                      "\"logical_slot_index\": %d, "
+                      "\"logical_chunk_index\": %d, "
+                      "\"logical_texture_total\": %d, "
+                      "\"family_kind\": \"%s\", "
+                      "\"uniform_color\": %s, \"opaque_color\": %s, \"rgb_mod\": %s, "
+                      "\"integer_positions\": %s, \"integer_source_rect\": %s, "
+                      "\"full_texture_source_rect\": %s, "
+                      "\"task_count_total\": %llu, \"task_count_mean\": %.4f, \"task_ratio\": %.6f, "
+                      "\"submitted_pixels_total\": %llu, \"submitted_pixels_mean\": %.2f, "
+                      "\"submitted_pixel_ratio\": %.6f, "
+                      "\"source_rect_x_min\": %d, \"source_rect_x_max\": %d, "
+                      "\"source_rect_y_min\": %d, \"source_rect_y_max\": %d, "
+                      "\"source_rect_w_min\": %d, \"source_rect_w_max\": %d, "
+                      "\"source_rect_h_min\": %d, \"source_rect_h_max\": %d, "
+                      "\"dst_height_min\": %d, \"dst_height_max\": %d, "
+                      "\"dst_top_width_min\": %d, \"dst_top_width_max\": %d, "
+                      "\"dst_bottom_width_min\": %d, \"dst_bottom_width_max\": %d, "
+                      "\"dst_left_dx_min\": %d, \"dst_left_dx_max\": %d, "
+                      "\"dst_right_dx_min\": %d, \"dst_right_dx_max\": %d}%s\n",
+                      entry->texture_handle,
+                      entry->palette_handle,
+                      pixel_format_name_safe(entry->source_format),
+                      entry->source_width,
+                      entry->source_height,
+                      entry->logical_identity_known ? "true" : "false",
+                      entry->logical_identity_mixed ? "true" : "false",
+                      entry->logical_identity_registrations,
+                      texture_logical_source_kind_name(entry->logical_source_kind),
+                      entry->logical_ix_num,
+                      entry->logical_ix_num_first,
+                      entry->logical_slot_index,
+                      entry->logical_chunk_index,
+                      entry->logical_texture_total,
+                      textured_geometry_fallback_family_kind_name(entry->family_kind),
+                      entry->uniform_color ? "true" : "false",
+                      entry->opaque_color ? "true" : "false",
+                      entry->rgb_mod ? "true" : "false",
+                      entry->integer_positions ? "true" : "false",
+                      entry->integer_source_rect ? "true" : "false",
+                      entry->full_texture_source_rect ? "true" : "false",
+                      (unsigned long long)entry->task_count,
+                      (double)entry->task_count / frame_count,
+                      task_ratio,
+                      (unsigned long long)entry->submitted_pixels,
+                      (double)entry->submitted_pixels / frame_count,
+                      pixel_ratio,
+                      entry->source_x_min,
+                      entry->source_x_max,
+                      entry->source_y_min,
+                      entry->source_y_max,
+                      entry->source_w_min,
+                      entry->source_w_max,
+                      entry->source_h_min,
+                      entry->source_h_max,
+                      entry->dst_height_min,
+                      entry->dst_height_max,
+                      entry->dst_top_width_min,
+                      entry->dst_top_width_max,
+                      entry->dst_bottom_width_min,
+                      entry->dst_bottom_width_max,
+                      entry->dst_left_dx_min,
+                      entry->dst_left_dx_max,
+                      entry->dst_right_dx_min,
+                      entry->dst_right_dx_max,
+                      (i + 1) < textured_geometry_recovered_family_count ? "," : "");
         }
         io_printf(io, "    ],\n");
     } else {

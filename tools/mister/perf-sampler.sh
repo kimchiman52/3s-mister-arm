@@ -920,6 +920,36 @@ if command -v jq >/dev/null 2>&1; then
         printf '%s\n' "$software_frame_modulation_summary"
     fi
 
+    textured_geometry_recovered_summary="$(jq -r '
+        (.metrics.software_frame_textured_geometry_recovered_families // [])
+        | .[:3]
+        | map(
+            "Geometry recovered family: " +
+            "kind=\(.family_kind) " +
+            "texture_handle=\(.texture_handle) " +
+            "palette_handle=\(.palette_handle) " +
+            "logical=\(.logical_source_kind):\(.logical_ix_num) " +
+            "tasks_total=\(.task_count_total) " +
+            "task_ratio=\(.task_ratio) " +
+            "pixels_total=\(.submitted_pixels_total) " +
+            "pixel_ratio=\(.submitted_pixel_ratio) " +
+            "source=\(.source_width)x\(.source_height) " +
+            "src_rect_x=\(.source_rect_x_min)-\(.source_rect_x_max) " +
+            "src_rect_y=\(.source_rect_y_min)-\(.source_rect_y_max) " +
+            "src_rect_w=\(.source_rect_w_min)-\(.source_rect_w_max) " +
+            "src_rect_h=\(.source_rect_h_min)-\(.source_rect_h_max) " +
+            "dst_height=\(.dst_height_min)-\(.dst_height_max) " +
+            "dst_top_width=\(.dst_top_width_min)-\(.dst_top_width_max) " +
+            "dst_bottom_width=\(.dst_bottom_width_min)-\(.dst_bottom_width_max) " +
+            "dst_left_dx=\(.dst_left_dx_min)-\(.dst_left_dx_max) " +
+            "dst_right_dx=\(.dst_right_dx_min)-\(.dst_right_dx_max)"
+          )
+        | join("\n")
+    ' "${local_output_path}")"
+    if [ -n "$textured_geometry_recovered_summary" ]; then
+        printf '%s\n' "$textured_geometry_recovered_summary"
+    fi
+
     textured_geometry_fallback_summary="$(jq -r '
         (.metrics.software_frame_textured_geometry_fallback_families // [])
         | .[:3]

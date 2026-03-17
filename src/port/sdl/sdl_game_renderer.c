@@ -309,6 +309,10 @@ static Uint64 perf_capture_raster_sample_counters[SDL_GAME_RENDERER_PERF_CAPTURE
 static Uint64 perf_capture_raster_sample_calls[SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_COUNT] = { 0 };
 static Uint64 perf_capture_raster_sample_pixels[SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_COUNT] = { 0 };
 static Uint64 perf_capture_raster_sample_ns[SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_COUNT] = { 0 };
+static SDLGameRenderer_PerfCaptureTexturedGeometryFallbackFamily perf_capture_textured_geometry_recovered_families[16] = {
+    0
+};
+static int perf_capture_textured_geometry_recovered_family_count = 0;
 static SDLGameRenderer_PerfCaptureTexturedGeometryFallbackFamily perf_capture_textured_geometry_fallback_families[16] = {
     0
 };
@@ -1658,8 +1662,11 @@ static bool textured_geometry_fallback_family_matches(
 #endif
 
 #if ENABLE_PERF_TELEMETRY
-static void note_perf_capture_textured_geometry_fallback_family(const RenderTask* task) {
-    if (!frame_stats_extended_enabled || (task == NULL)) {
+static void note_perf_capture_textured_geometry_family(
+    const RenderTask* task,
+    SDLGameRenderer_PerfCaptureTexturedGeometryFallbackFamily* families,
+    int* family_count) {
+    if (!frame_stats_extended_enabled || (task == NULL) || (families == NULL) || (family_count == NULL)) {
         return;
     }
 
@@ -1669,17 +1676,16 @@ static void note_perf_capture_textured_geometry_fallback_family(const RenderTask
     }
 
     SDLGameRenderer_PerfCaptureTexturedGeometryFallbackFamily* entry = NULL;
-    for (int i = 0; i < perf_capture_textured_geometry_fallback_family_count; i++) {
-        if (textured_geometry_fallback_family_matches(&perf_capture_textured_geometry_fallback_families[i], &profile)) {
-            entry = &perf_capture_textured_geometry_fallback_families[i];
+    for (int i = 0; i < *family_count; i++) {
+        if (textured_geometry_fallback_family_matches(&families[i], &profile)) {
+            entry = &families[i];
             break;
         }
     }
 
-    if ((entry == NULL) &&
-        (perf_capture_textured_geometry_fallback_family_count <
-         (int)SDL_arraysize(perf_capture_textured_geometry_fallback_families))) {
-        entry = &perf_capture_textured_geometry_fallback_families[perf_capture_textured_geometry_fallback_family_count++];
+    if ((entry == NULL) && (*family_count < (int)SDL_arraysize(perf_capture_textured_geometry_recovered_families))) {
+        entry = &families[*family_count];
+        *family_count += 1;
         SDL_zero(*entry);
         entry->texture_handle = profile.texture_handle;
         entry->palette_handle = profile.palette_handle;
@@ -1720,6 +1726,16 @@ static void note_perf_capture_textured_geometry_fallback_family(const RenderTask
         &entry->dst_bottom_width_min, &entry->dst_bottom_width_max, profile.dst_bottom_width);
     update_textured_geometry_fallback_range(&entry->dst_left_dx_min, &entry->dst_left_dx_max, profile.dst_left_dx);
     update_textured_geometry_fallback_range(&entry->dst_right_dx_min, &entry->dst_right_dx_max, profile.dst_right_dx);
+}
+
+static void note_perf_capture_textured_geometry_recovered_family(const RenderTask* task) {
+    note_perf_capture_textured_geometry_family(
+        task, perf_capture_textured_geometry_recovered_families, &perf_capture_textured_geometry_recovered_family_count);
+}
+
+static void note_perf_capture_textured_geometry_fallback_family(const RenderTask* task) {
+    note_perf_capture_textured_geometry_family(
+        task, perf_capture_textured_geometry_fallback_families, &perf_capture_textured_geometry_fallback_family_count);
 }
 #endif
 
@@ -5211,6 +5227,10 @@ static bool render_frame_to_software_surface(void) {
 
         const SoftwareFrameFallbackReason reason = classify_software_frame_fallback_reason(&resolved_task);
         note_software_frame_eligibility(&resolved_task, reason);
+        if ((reason == SOFTWARE_FRAME_FALLBACK_REASON_NONE) && (task->type == RENDER_TASK_TYPE_GEOMETRY) &&
+            (task->texture != NULL) && (resolved_task.type == RENDER_TASK_TYPE_GEOMETRY)) {
+            note_perf_capture_textured_geometry_recovered_family(task);
+        }
         software_frame_resolved_tasks[i] = resolved_task;
         if (reason != SOFTWARE_FRAME_FALLBACK_REASON_NONE) {
             frame_supported = false;
@@ -6142,24 +6162,20 @@ void SDLGameRenderer_ResetPerfCaptureRasterTimingTelemetry(void) {
     SDL_zero(perf_capture_raster_sample_ns);
 }
 
-void SDLGameRenderer_ResetPerfCaptureTexturedGeometryFallbackTelemetry(void) {
-    SDL_zero(perf_capture_textured_geometry_fallback_families);
-    perf_capture_textured_geometry_fallback_family_count = 0;
-}
-
-int SDLGameRenderer_GetPerfCaptureTexturedGeometryFallbackFamilies(
+static int get_perf_capture_textured_geometry_families(
+    const SDLGameRenderer_PerfCaptureTexturedGeometryFallbackFamily* families,
+    int family_count,
     SDLGameRenderer_PerfCaptureTexturedGeometryFallbackFamily* out_families,
     int max_families) {
-    if ((out_families == NULL) || (max_families <= 0)) {
+    if ((out_families == NULL) || (max_families <= 0) || (families == NULL) || (family_count <= 0)) {
         return 0;
     }
 
     int selected_count = 0;
     for (int slot = 0; slot < max_families; slot++) {
         int best_index = -1;
-        for (int i = 0; i < perf_capture_textured_geometry_fallback_family_count; i++) {
-            const SDLGameRenderer_PerfCaptureTexturedGeometryFallbackFamily* candidate =
-                &perf_capture_textured_geometry_fallback_families[i];
+        for (int i = 0; i < family_count; i++) {
+            const SDLGameRenderer_PerfCaptureTexturedGeometryFallbackFamily* candidate = &families[i];
             if (candidate->task_count == 0) {
                 continue;
             }
@@ -6191,8 +6207,7 @@ int SDLGameRenderer_GetPerfCaptureTexturedGeometryFallbackFamilies(
                 continue;
             }
 
-            const SDLGameRenderer_PerfCaptureTexturedGeometryFallbackFamily* best =
-                &perf_capture_textured_geometry_fallback_families[best_index];
+            const SDLGameRenderer_PerfCaptureTexturedGeometryFallbackFamily* best = &families[best_index];
             if ((candidate->task_count > best->task_count) ||
                 ((candidate->task_count == best->task_count) && (candidate->submitted_pixels > best->submitted_pixels)) ||
                 ((candidate->task_count == best->task_count) && (candidate->submitted_pixels == best->submitted_pixels) &&
@@ -6206,7 +6221,7 @@ int SDLGameRenderer_GetPerfCaptureTexturedGeometryFallbackFamilies(
         }
 
         SDLGameRenderer_PerfCaptureTexturedGeometryFallbackFamily* entry = &out_families[selected_count];
-        *entry = perf_capture_textured_geometry_fallback_families[best_index];
+        *entry = families[best_index];
         const int texture_index = entry->texture_handle - 1;
         if ((texture_index >= 0) && (texture_index < FL_TEXTURE_MAX)) {
             copy_perf_capture_texture_logical_identity(texture_index,
@@ -6226,14 +6241,17 @@ int SDLGameRenderer_GetPerfCaptureTexturedGeometryFallbackFamilies(
     return selected_count;
 }
 
-void SDLGameRenderer_GetPerfCaptureTexturedGeometryFallbackTotals(Uint64* out_task_total,
-                                                                  Uint64* out_pixel_total,
-                                                                  int* out_family_count) {
+static void get_perf_capture_textured_geometry_family_totals(
+    const SDLGameRenderer_PerfCaptureTexturedGeometryFallbackFamily* families,
+    int family_count,
+    Uint64* out_task_total,
+    Uint64* out_pixel_total,
+    int* out_family_count) {
     Uint64 task_total = 0;
     Uint64 pixel_total = 0;
-    for (int i = 0; i < perf_capture_textured_geometry_fallback_family_count; i++) {
-        task_total += perf_capture_textured_geometry_fallback_families[i].task_count;
-        pixel_total += perf_capture_textured_geometry_fallback_families[i].submitted_pixels;
+    for (int i = 0; i < family_count; i++) {
+        task_total += families[i].task_count;
+        pixel_total += families[i].submitted_pixels;
     }
 
     if (out_task_total != NULL) {
@@ -6243,8 +6261,56 @@ void SDLGameRenderer_GetPerfCaptureTexturedGeometryFallbackTotals(Uint64* out_ta
         *out_pixel_total = pixel_total;
     }
     if (out_family_count != NULL) {
-        *out_family_count = perf_capture_textured_geometry_fallback_family_count;
+        *out_family_count = family_count;
     }
+}
+
+void SDLGameRenderer_ResetPerfCaptureTexturedGeometryRecoveredTelemetry(void) {
+    SDL_zero(perf_capture_textured_geometry_recovered_families);
+    perf_capture_textured_geometry_recovered_family_count = 0;
+}
+
+void SDLGameRenderer_ResetPerfCaptureTexturedGeometryFallbackTelemetry(void) {
+    SDL_zero(perf_capture_textured_geometry_fallback_families);
+    perf_capture_textured_geometry_fallback_family_count = 0;
+}
+
+int SDLGameRenderer_GetPerfCaptureTexturedGeometryRecoveredFamilies(
+    SDLGameRenderer_PerfCaptureTexturedGeometryFallbackFamily* out_families,
+    int max_families) {
+    return get_perf_capture_textured_geometry_families(perf_capture_textured_geometry_recovered_families,
+                                                       perf_capture_textured_geometry_recovered_family_count,
+                                                       out_families,
+                                                       max_families);
+}
+
+int SDLGameRenderer_GetPerfCaptureTexturedGeometryFallbackFamilies(
+    SDLGameRenderer_PerfCaptureTexturedGeometryFallbackFamily* out_families,
+    int max_families) {
+    return get_perf_capture_textured_geometry_families(perf_capture_textured_geometry_fallback_families,
+                                                       perf_capture_textured_geometry_fallback_family_count,
+                                                       out_families,
+                                                       max_families);
+}
+
+void SDLGameRenderer_GetPerfCaptureTexturedGeometryRecoveredTotals(Uint64* out_task_total,
+                                                                   Uint64* out_pixel_total,
+                                                                   int* out_family_count) {
+    get_perf_capture_textured_geometry_family_totals(perf_capture_textured_geometry_recovered_families,
+                                                     perf_capture_textured_geometry_recovered_family_count,
+                                                     out_task_total,
+                                                     out_pixel_total,
+                                                     out_family_count);
+}
+
+void SDLGameRenderer_GetPerfCaptureTexturedGeometryFallbackTotals(Uint64* out_task_total,
+                                                                  Uint64* out_pixel_total,
+                                                                  int* out_family_count) {
+    get_perf_capture_textured_geometry_family_totals(perf_capture_textured_geometry_fallback_families,
+                                                     perf_capture_textured_geometry_fallback_family_count,
+                                                     out_task_total,
+                                                     out_pixel_total,
+                                                     out_family_count);
 }
 
 int SDLGameRenderer_GetPerfCaptureRefreshTelemetry(SDLGameRenderer_PerfCaptureRefreshTelemetry* out_telemetry,
