@@ -3158,3 +3158,18 @@ Scope guardrails:
     - keep; this is the first accepted ordinary gameplay raster reland from the recovered family export, it makes the hot stage-`7` family materially cheaper on-device, and it improves the rerun-validated ordinary gameplay FPS without touching gameplay behavior
   - Next best candidate optimization:
     - use the kept stage-`7` baseline to re-rank the next loop between remaining nearest presenter tail work and broader software-frame raster residue before spending another cycle on menu-specific churn
+
+- 2026-03-16T23:38:00-0400
+  - Bottleneck targeted:
+    - possible remaining ordinary stage-`7` `rect_uv_parallelogram` raster residue beyond the kept full-row opaque-mask shortcut, specifically rows with one opaque span surrounded by transparent pixels
+  - Change summary:
+    - tried a runtime reland in `src/port/sdl/sdl_game_renderer.c` that cached single-opaque-span row metadata for the recovered `256x256` ARGB sources and copied only the opaque span on the stage-`7` shear path
+    - rebuilt a fresh ARM telemetry package through `/work-arm`, redeployed it with `tools/mister/misterctl.sh`, reran nearest `control`, `basic-exchange --test-stage 7`, and `effect-heavy --test-stage 7`, then reverted the runtime diff and closed the cycle with docs only
+  - Verification result summary:
+    - nearest idle control regressed from the kept baseline `74.8844 -> 66.7720 FPS` while `present.mean_ms` stayed effectively flat (`2.9299 -> 2.9180`), which rules this out as a gameplay-only win
+    - ordinary gameplay regressed sharply: `basic-exchange --test-stage 7` fell `56.5357 -> 47.7482 FPS` (`render.mean_ms 4.9094 -> 6.8040`) and `effect-heavy --test-stage 7` fell `55.6217 -> 47.4526 FPS` (`render.mean_ms 6.8919 -> 7.0684`)
+    - sampled `generic_textured` work stayed effectively flat on the compared gameplay runs (`0.249783 -> 0.246526 ms/sample` and `0.127398 -> 0.126540 ms/sample`), so the added span metadata/copy path did not buy a measurable raster win
+  - Keep/rollback decision with reason:
+    - reject and revert; the single-opaque-span reland is a global nearest regression, not a player-visible win, and the measured cost does not line up with a real reduction in the targeted raster bucket
+  - Next best candidate optimization:
+    - return to either nearest presenter tail work or a different gameplay raster lane backed by telemetry that explains the remaining cost before changing the kept stage-`7` row-mask path again
