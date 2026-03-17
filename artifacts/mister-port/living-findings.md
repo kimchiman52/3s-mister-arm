@@ -3260,3 +3260,20 @@ Scope guardrails:
     - reject and revert; this is not a player-visible gameplay win, because the wider opacity-cache bypass helps idle/control-style lanes but slows the ordinary and heavy gameplay scenes that now decide broader raster work
   - Next best candidate optimization:
     - keep the accepted narrow row-mask relands only and re-rank the next loop between nearest presenter tail work and a more tightly isolated ordinary-gameplay raster family rather than another cache-wide opacity shortcut
+
+- 2026-03-17T07:16:58-0400
+  - Bottleneck targeted:
+    - exact stage-`7` `rect_uv_parallelogram` row-start/setup cost in `src/port/sdl/sdl_game_renderer.c`, specifically whether the midpoint `SDL_roundf` row-start calculation inside `raster_textured_parallelogram_to_software_frame()` could be replaced with cheaper integer math without changing placement
+  - Change summary:
+    - tried a single-file runtime reland that replaced the float midpoint row-start calculation with exact integer midpoint division for the recovered same-height stage-`7` shear family
+    - rebuilt/exported same-session baseline and candidate telemetry packages, redeployed the candidate with `tools/mister/misterctl.sh`, reran nearest `control`, ordinary `basic-exchange --test-stage 7` basic plus full telemetry, `effect-heavy --test-stage 7`, trusted `genei-jin-first-activation`, and a native control guard, then reverted the runtime diff locally after the keep gates failed
+  - Verification result summary:
+    - nearest `control` regressed `76.0618 -> 75.2604 FPS`, with `frame.mean_ms 13.1472 -> 13.2872`, `render.mean_ms 6.9909 -> 7.0579`, and `present.mean_ms 2.8622 -> 2.9250`
+    - ordinary `basic-exchange --test-stage 7` basic regressed `66.6613 -> 66.0437 FPS`, while matched full telemetry regressed `59.3007 -> 58.8685 FPS` with `render.mean_ms 6.6601 -> 6.7576`, `present.mean_ms 5.2134 -> 5.2942`, `present_copy.mean_ms 5.2007 -> 5.2756`, and `generic_textured.sampled_mean_ms 0.267892 -> 0.269332`
+    - `effect-heavy --test-stage 7` basic only improved modestly `65.7194 -> 66.1783 FPS`, but trusted `genei-jin-first-activation` basic still slipped `41.4735 -> 41.2344 FPS`
+    - the native control guard regressed materially `94.0451 -> 91.4704 FPS`, which is enough to rule out this rewrite as a safe exact-family setup win even before considering the broader ordinary gameplay loss
+    - the required independent review also found a real correctness bug in the candidate math: `top_left_x + round(offset)` is not equivalent to `SDL_roundf(top_left_x + offset)` when the final midpoint crosses zero, so some rows can shift by `1` pixel (`top_left_x = -8`, `src_h = 1`, `shear_dx_total = 1`, `row = 0` changed `-8` to `-7`)
+  - Keep/rollback decision with reason:
+    - reject and revert; the integer midpoint rewrite is not a player-visible win, because it regresses the ordinary stage-`7` gameplay lane, slightly hurts trusted Genei/control, loses the native guard, and also fails the exactness bar across zero-crossing placements
+  - Next best candidate optimization:
+    - keep the accepted stage-`7` row-mask relands as the only current gameplay-wide raster keep in this family, and if broader raster work continues prefer a telemetry-backed family split that isolates more meaningful ordinary gameplay residue before another row-start/setup micro-optimization
