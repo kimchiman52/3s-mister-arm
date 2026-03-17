@@ -1215,6 +1215,22 @@
   - Next best candidate:
     - start Chunk 2 and route nearest onto `native_output_rect` plus fbdev presentation so normal nearest gameplay stops paying the `screen_texture`/`fullscreen_staging` tax while preserving message-content and screenshot fallback behavior
 
+- 2026-03-17T05:56:00-0400
+  - Bottleneck targeted:
+    - nearest-HDMI clipped source-span setup cost in `src/port/sdl/fbdev_presenter.c`, specifically the per-source scan inside `map_source_span_to_dst_span(...)` on ordinary gameplay plus trusted first-Genei
+  - Change summary:
+    - tried a narrow presenter reland that precomputed next/previous mapped-source LUTs and switched clipped span mapping to endpoint lookup instead of rescanning every source column for each run
+    - completed the required review pass before finalizing: the reviewer found a real clip-edge widening bug in the first draft, I fixed it, rebuilt/exported `build/mister-telemetry-package-arm-opt-spanmap-rfix-20260317`, redeployed it with `tools/mister/misterctl.sh`, reran nearest `control`, recovered ordinary `training-yun-ryu-ryu-stage`, trusted `genei-jin-first-activation`, and a native basic guard, then reverted the runtime diff locally and restored `build/mister-telemetry-package-arm-baseline-spanmap-20260317` on-device after the keep gates failed
+  - Verification result summary:
+    - nearest `control` stayed flat-to-down `70.0416 -> 69.9988 FPS`, with `present.mean_ms 3.3047 -> 3.3350` and `present_copy.mean_ms 3.2899 -> 3.3127`
+    - recovered ordinary `training-yun-ryu-ryu-stage` improved modestly `55.9565 -> 56.3237 FPS`, with `present.mean_ms 5.8912 -> 5.7337` and `present_copy.mean_ms 5.8769 -> 5.7209`
+    - trusted `genei-jin-first-activation` regressed `37.2477 -> 36.9871 FPS`; `present.mean_ms` improved `8.4986 -> 8.3584`, but `render.mean_ms` and total frame time worsened `10.2651 -> 10.3761` and `26.8473 -> 27.0364`
+    - the native basic guard improved `91.9722 -> 92.7198 FPS`, so the lookup itself is not globally harmful, but it still failed to produce a consistent nearest gameplay win
+  - Keep/rollback decision with reason:
+    - reject and revert; the endpoint lookup is too mixed to justify keeping, because it does not improve both ordinary nearest gameplay and trusted Genei together, and flat-to-worse nearest control leaves no broad player-visible FPS gain to offset the regression risk
+  - Next best candidate optimization:
+    - do not reopen source-span endpoint lookup without telemetry that isolates first-row versus repeated-row clipped-span/setup cost; if nearest presenter work continues, prefer the memo-backed first-row vs repeated-row telemetry split before another mapped-row rewrite
+
 - 2026-03-17T05:01:00-0400
   - Bottleneck targeted:
     - possible remaining stage-`7` exact-family raster residue beyond the kept full-opaque row mask, specifically fully transparent rows inside the recovered `256x256` `rect_uv_parallelogram` sources
