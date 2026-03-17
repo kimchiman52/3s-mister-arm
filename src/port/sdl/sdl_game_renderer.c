@@ -69,6 +69,7 @@ static const int software_frame_full_height_diagonal_strip_max_width_pixels = 8;
 static const Uint64 software_frame_affine_quad_max_submitted_pixels = 4096u;
 static const Uint64 software_frame_full_texture_affine_quad_max_submitted_pixels = 196608u;
 static const Uint64 software_frame_non_integer_lookup_threshold_pixels = 384u;
+static const int software_source_surface_row_mask_words = 4;
 static const Uint64 software_surface_refresh_blit_sample_period = 32u;
 static const Uint64 software_frame_raster_sample_periods[SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_COUNT] = {
     32u,
@@ -161,6 +162,9 @@ static CacheDirtyState software_surface_cache_dirty_state[FL_TEXTURE_MAX][FL_PAL
 static Uint8 texture_cache_runtime_dirty_reason[FL_TEXTURE_MAX][FL_PALETTE_MAX + 1] = { { 0 } };
 static Uint8 software_surface_cache_runtime_dirty_reason[FL_TEXTURE_MAX][FL_PALETTE_MAX + 1] = { { 0 } };
 static bool texture_cache_refresh_pending[FL_TEXTURE_MAX][FL_PALETTE_MAX + 1] = { { false } };
+static Uint64 software_surface_full_opaque_row_masks[FL_TEXTURE_MAX][FL_PALETTE_MAX + 1]
+                                                    [software_source_surface_row_mask_words] = { { { 0 } } };
+static bool software_surface_full_opaque_row_masks_valid[FL_TEXTURE_MAX][FL_PALETTE_MAX + 1] = { { false } };
 static Uint16 software_surface_refresh_binding_generation[FL_TEXTURE_MAX][FL_PALETTE_MAX + 1] = { { 0 } };
 static Uint16 software_surface_refresh_texture_generation[FL_TEXTURE_MAX] = { 0 };
 static Uint16 software_surface_refresh_texture_variant_counts[FL_TEXTURE_MAX] = { 0 };
@@ -525,6 +529,8 @@ static void mark_cache_dirty_state(CacheDirtyState* state, CacheDirtyReason reas
 static void note_software_surface_dirty_variant_fanout(CacheDirtyReason reason, int dirty_variant_count);
 static bool should_keep_dirty_cache_entries(CacheDirtyReason reason);
 static bool should_refresh_dirty_cache_entry(Uint8 dirty_reason);
+static void clear_software_surface_full_opaque_row_mask(int texture_index, int palette_handle);
+static const Uint64* get_software_surface_full_opaque_row_mask(unsigned int th, const SDL_Surface* surface);
 #if ENABLE_PERF_TELEMETRY
 static void begin_software_surface_refresh_tracking_frame(bool capture_extended_stats);
 #endif
@@ -826,12 +832,14 @@ static int invalidate_software_surface_cache_for_texture_index(int texture_index
         CacheDirtyState* dirty_state = &software_surface_cache_dirty_state[texture_index][i];
         Uint8* runtime_dirty_reason_p = &software_surface_cache_runtime_dirty_reason[texture_index][i];
         if (*surface_p == NULL) {
+            clear_software_surface_full_opaque_row_mask(texture_index, i);
             clear_cache_dirty_state(dirty_state);
             *runtime_dirty_reason_p = CACHE_DIRTY_REASON_NONE;
             continue;
         }
 
         if (keep_dirty_entries) {
+            clear_software_surface_full_opaque_row_mask(texture_index, i);
             mark_cache_dirty_state(dirty_state, reason);
             *runtime_dirty_reason_p = (Uint8)reason;
             dirty_variant_count += 1;
@@ -840,6 +848,7 @@ static int invalidate_software_surface_cache_for_texture_index(int texture_index
 
         push_software_surface_to_destroy(*surface_p);
         *surface_p = NULL;
+        clear_software_surface_full_opaque_row_mask(texture_index, i);
         mark_cache_dirty_state(dirty_state, reason);
         *runtime_dirty_reason_p = CACHE_DIRTY_REASON_NONE;
         evicted_count += 1;
@@ -906,12 +915,14 @@ static int invalidate_software_surface_cache_for_palette_handle(int palette_hand
         CacheDirtyState* dirty_state = &software_surface_cache_dirty_state[i][palette_handle];
         Uint8* runtime_dirty_reason_p = &software_surface_cache_runtime_dirty_reason[i][palette_handle];
         if (*surface_p == NULL) {
+            clear_software_surface_full_opaque_row_mask(i, palette_handle);
             clear_cache_dirty_state(dirty_state);
             *runtime_dirty_reason_p = CACHE_DIRTY_REASON_NONE;
             continue;
         }
 
         if (keep_dirty_entries) {
+            clear_software_surface_full_opaque_row_mask(i, palette_handle);
             mark_cache_dirty_state_with_detail(dirty_state, reason, detail);
             *runtime_dirty_reason_p = (Uint8)reason;
             dirty_variant_count += 1;
@@ -920,6 +931,7 @@ static int invalidate_software_surface_cache_for_palette_handle(int palette_hand
 
         push_software_surface_to_destroy(*surface_p);
         *surface_p = NULL;
+        clear_software_surface_full_opaque_row_mask(i, palette_handle);
         mark_cache_dirty_state_with_detail(dirty_state, reason, detail);
         *runtime_dirty_reason_p = CACHE_DIRTY_REASON_NONE;
         evicted_count += 1;
@@ -2413,6 +2425,50 @@ static bool should_refresh_dirty_cache_entry(Uint8 dirty_reason) {
     return should_keep_dirty_cache_entries((CacheDirtyReason)dirty_reason);
 }
 
+static void clear_software_surface_full_opaque_row_mask(int texture_index, int palette_handle) {
+    if ((texture_index < 0) || (texture_index >= FL_TEXTURE_MAX) || (palette_handle < 0) ||
+        (palette_handle > FL_PALETTE_MAX)) {
+        return;
+    }
+
+    SDL_zero(software_surface_full_opaque_row_masks[texture_index][palette_handle]);
+    software_surface_full_opaque_row_masks_valid[texture_index][palette_handle] = false;
+}
+
+static const Uint64* get_software_surface_full_opaque_row_mask(unsigned int th, const SDL_Surface* surface) {
+    const int texture_handle = LO_16_BITS(th);
+    const int palette_handle = HI_16_BITS(th);
+    if ((texture_handle <= 0) || (texture_handle > FL_TEXTURE_MAX) || (palette_handle < 0) ||
+        (palette_handle > FL_PALETTE_MAX) || (surface == NULL) || (surface->format != SDL_PIXELFORMAT_ARGB8888) ||
+        (surface->w != 256) || (surface->h != 256)) {
+        return NULL;
+    }
+
+    const int texture_index = texture_handle - 1;
+    Uint64* row_mask = software_surface_full_opaque_row_masks[texture_index][palette_handle];
+    if (!software_surface_full_opaque_row_masks_valid[texture_index][palette_handle]) {
+        SDL_memset(row_mask, 0, sizeof(software_surface_full_opaque_row_masks[texture_index][palette_handle]));
+        const Uint32* src_pixels = (const Uint32*)surface->pixels;
+        const int src_pitch = surface->pitch / (int)sizeof(Uint32);
+        for (int row = 0; row < surface->h; row++) {
+            const Uint32* src_row = src_pixels + (row * src_pitch);
+            bool full_opaque = true;
+            for (int col = 0; col < surface->w; col++) {
+                if (((src_row[col] >> 24) & 0xFFu) != 0xFFu) {
+                    full_opaque = false;
+                    break;
+                }
+            }
+            if (full_opaque) {
+                row_mask[row >> 6] |= ((Uint64)1) << (row & 63);
+            }
+        }
+        software_surface_full_opaque_row_masks_valid[texture_index][palette_handle] = true;
+    }
+
+    return row_mask;
+}
+
 static void clear_texture_unlock_dirty_rect_index(int texture_index, TextureUnlockDirtyRectClearReason reason) {
     if ((texture_index < 0) || (texture_index >= FL_TEXTURE_MAX)) {
         return;
@@ -2665,6 +2721,9 @@ static bool refresh_software_source_surface_in_place(unsigned int th, SDL_Surfac
     }
 
 done:
+    if (success) {
+        clear_software_surface_full_opaque_row_mask(texture_handle - 1, palette_handle);
+    }
     if (frame_stats_extended_enabled) {
         frame_stats.software_surface_cache_refresh_attempts += 1;
         frame_stats.software_surface_cache_refresh_ns += SDL_GetTicksNS() - refresh_start_ns;
@@ -2862,6 +2921,7 @@ static SDL_Surface* get_or_create_software_source_surface(unsigned int th) {
 
             push_software_surface_to_destroy(cached_surface);
             software_surface_cache[texture_handle - 1][palette_handle] = NULL;
+            clear_software_surface_full_opaque_row_mask(texture_handle - 1, palette_handle);
             cached_surface = NULL;
             *runtime_dirty_reason_p = CACHE_DIRTY_REASON_NONE;
             clear_texture_unlock_dirty_rect_if_unused(
@@ -2904,6 +2964,7 @@ static SDL_Surface* get_or_create_software_source_surface(unsigned int th) {
         }
     });
     software_surface_cache[texture_handle - 1][palette_handle] = cached_surface;
+    clear_software_surface_full_opaque_row_mask(texture_handle - 1, palette_handle);
     *runtime_dirty_reason_p = CACHE_DIRTY_REASON_NONE;
     clear_cache_dirty_state(dirty_state);
     return cached_surface;
@@ -4646,6 +4707,7 @@ static bool raster_textured_parallelogram_to_software_frame(const RenderTask* ta
     const int src_pitch = src_surface->pitch / (int)sizeof(Uint32);
     const int dst_pitch = software_frame_surface->pitch / (int)sizeof(Uint32);
     const int shear_dx_total = parallelogram.bottom_left_x - parallelogram.top_left_x;
+    const Uint64* full_opaque_row_mask = get_software_surface_full_opaque_row_mask(task->texture_binding, src_surface);
     const Uint64 sample_start_counter =
         begin_perf_capture_raster_bucket_sample(SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_GENERIC_TEXTURED);
 
@@ -4671,6 +4733,11 @@ static bool raster_textured_parallelogram_to_software_frame(const RenderTask* ta
         const int visible_w = dst_x1 - dst_x0;
         const Uint32* src_row = src_pixels + ((parallelogram.src_y + row) * src_pitch) + src_x0;
         Uint32* dst_row = dst_pixels + (dst_y * dst_pitch) + dst_x0;
+        if ((full_opaque_row_mask != NULL) &&
+            (((full_opaque_row_mask[row >> 6] >> (row & 63)) & ((Uint64)1)) != 0)) {
+            SDL_memcpy(dst_row, src_row, (size_t)visible_w * sizeof(Uint32));
+            continue;
+        }
         for (int col = 0; col < visible_w; col++) {
             const Uint32 src_pixel = src_row[col];
             const Uint32 src_a = (src_pixel >> 24) & 0xFFu;

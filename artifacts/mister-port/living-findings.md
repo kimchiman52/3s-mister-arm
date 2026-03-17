@@ -3143,3 +3143,18 @@ Scope guardrails:
     - keep measurement-support only; the loop closes a real ordinary-gameplay attribution gap without changing gameplay or measured FPS, and it turns the stage-`7` raster lane into a family-specific decision tool instead of a bucket-only hint
   - Next best candidate optimization:
     - use the new stage-`7` recovered-family export to choose the next `sdl_game_renderer.c` runtime reland, starting from the concrete `rect_uv_parallelogram` cohort rather than reopening another generic textured or non-integer fast path blindly
+
+- 2026-03-16T22:12:52-0400
+  - Bottleneck targeted:
+    - ordinary stage-`7` `rect_uv_parallelogram` generic-textured residue on the broader nearest-HDMI gameplay raster lane
+  - Change summary:
+    - cached a per-binding full-opaque row mask for `256x256` ARGB software-source surfaces in `src/port/sdl/sdl_game_renderer.c` and let the recovered shear path `SDL_memcpy` fully opaque rows instead of rechecking alpha per pixel
+    - rebuilt/exported `build/mister-telemetry-package-arm-post-20260316d`, redeployed it with `tools/mister/misterctl.sh`, reran nearest `control`, `basic-exchange --test-stage 7`, and `effect-heavy --test-stage 7`, and closed review with a manual scoped pass after `codex review --uncommitted` stalled
+  - Verification result summary:
+    - nearest idle control stayed on direct `software_frame_mapped_scale` with zero generic-textured work and only noise-level movement (`75.6460 -> 74.8844 FPS`, `present.mean_ms 2.9482 -> 2.9299`)
+    - `effect-heavy --test-stage 7` improved `55.4679 -> 55.6217 FPS`, `render.mean_ms 7.0637 -> 6.8919`, and `generic_textured 0.173154 -> 0.127398 ms/sample`
+    - `basic-exchange --test-stage 7` had one update-noisy first post run (`56.1222 -> 55.5662 FPS`) even though `generic_textured` already improved `0.353114 -> 0.268434 ms/sample`; the immediate rerun recovered the representative player-visible win at `56.5357 FPS / 17.6879 / 4.9094 / 6.6099 / 6.1686 ms` with `generic_textured 0.249783 ms/sample`
+  - Keep/rollback decision with reason:
+    - keep; this is the first accepted ordinary gameplay raster reland from the recovered family export, it makes the hot stage-`7` family materially cheaper on-device, and it improves the rerun-validated ordinary gameplay FPS without touching gameplay behavior
+  - Next best candidate optimization:
+    - use the kept stage-`7` baseline to re-rank the next loop between remaining nearest presenter tail work and broader software-frame raster residue before spending another cycle on menu-specific churn
