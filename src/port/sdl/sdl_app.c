@@ -244,6 +244,12 @@ static int perf_capture_start_hnc_num = 0;
 static int perf_capture_start_exec_wipe = 0;
 static int perf_capture_start_active_wipe_type = -1;
 static int perf_capture_start_wipe_limit = 0;
+static int perf_capture_start_sel_pl_complete[2] = { 0, 0 };
+static int perf_capture_start_sel_arts_complete[2] = { 0, 0 };
+static int perf_capture_start_select_arts[2] = { 0, 0 };
+static int perf_capture_start_moving_plate[2] = { 0, 0 };
+static int perf_capture_start_moving_plate_counter[2] = { 0, 0 };
+static int perf_capture_start_command_name_visible[2] = { 0, 0 };
 static int perf_capture_start_title_tex_flag = 0;
 static int perf_capture_start_opening_r_no_0 = 0;
 static int perf_capture_start_opening_r_no_1 = 0;
@@ -740,6 +746,25 @@ static bool perf_capture_title_logo_active(void) {
     return title_tex_flag != 0;
 }
 
+static int get_perf_capture_command_name_visible(int player_index) {
+    return (Disp_Command_Name[player_index][0] != 0) || (Disp_Command_Name[player_index][1] != 0) ||
+                   (Disp_Command_Name[player_index][2] != 0)
+               ? 1
+               : 0;
+}
+
+static bool perf_capture_character_select_super_art_active(void) {
+    for (int player = 0; player < 2; player++) {
+        if (Sel_PL_Complete[player] != 1 || Sel_Arts_Complete[player] != 0 || Select_Arts[player] != 3 ||
+            Moving_Plate[player] != 0 || Moving_Plate_Counter[player] != 0 ||
+            !get_perf_capture_command_name_visible(player)) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
 bool SDLApp_IsPerfRuntimeStateActive(const char* runtime_state_name) {
     if (runtime_state_name == NULL) {
         return false;
@@ -747,6 +772,10 @@ bool SDLApp_IsPerfRuntimeStateActive(const char* runtime_state_name) {
 
     if (SDL_strcmp(runtime_state_name, "attract-demo-logo") == 0) {
         return get_perf_capture_demo_logo_state(NULL);
+    }
+
+    if (SDL_strcmp(runtime_state_name, "character-select-super-art") == 0) {
+        return perf_capture_character_select_super_art_active();
     }
 
     return false;
@@ -770,6 +799,14 @@ static void snapshot_perf_capture_transition_start_state(void) {
     perf_capture_start_exec_wipe = Exec_Wipe;
     perf_capture_start_active_wipe_type = Active_Wipe_Type;
     perf_capture_start_wipe_limit = WipeLimit;
+    for (int player = 0; player < 2; player++) {
+        perf_capture_start_sel_pl_complete[player] = Sel_PL_Complete[player];
+        perf_capture_start_sel_arts_complete[player] = Sel_Arts_Complete[player];
+        perf_capture_start_select_arts[player] = Select_Arts[player];
+        perf_capture_start_moving_plate[player] = Moving_Plate[player];
+        perf_capture_start_moving_plate_counter[player] = Moving_Plate_Counter[player];
+        perf_capture_start_command_name_visible[player] = get_perf_capture_command_name_visible(player);
+    }
     perf_capture_start_title_tex_flag = title_tex_flag;
     perf_capture_start_opening_r_no_0 = op_w.r_no_0;
     perf_capture_start_opening_r_no_1 = op_w.r_no_1;
@@ -1068,6 +1105,12 @@ static void perf_capture_reset_storage(void) {
     perf_capture_start_exec_wipe = 0;
     perf_capture_start_active_wipe_type = -1;
     perf_capture_start_wipe_limit = 0;
+    SDL_zero(perf_capture_start_sel_pl_complete);
+    SDL_zero(perf_capture_start_sel_arts_complete);
+    SDL_zero(perf_capture_start_select_arts);
+    SDL_zero(perf_capture_start_moving_plate);
+    SDL_zero(perf_capture_start_moving_plate_counter);
+    SDL_zero(perf_capture_start_command_name_visible);
     perf_capture_start_title_tex_flag = 0;
     perf_capture_start_opening_r_no_0 = 0;
     perf_capture_start_opening_r_no_1 = 0;
@@ -3426,6 +3469,26 @@ static void perf_capture_write_summary(void) {
         io_printf(io, "    \"wipe_type1_active_first_frame\": null,\n");
     }
     io_printf(io, "    \"wipe_type1_max_limit\": %d\n", perf_wipe_type1_max_limit);
+    io_printf(io, "  },\n");
+    io_printf(io, "  \"character_select_state\": {\n");
+    io_printf(io, "    \"capture_start_sel_pl_complete\": ");
+    io_write_json_int_array(io, perf_capture_start_sel_pl_complete, 2);
+    io_printf(io, ",\n");
+    io_printf(io, "    \"capture_start_sel_arts_complete\": ");
+    io_write_json_int_array(io, perf_capture_start_sel_arts_complete, 2);
+    io_printf(io, ",\n");
+    io_printf(io, "    \"capture_start_select_arts\": ");
+    io_write_json_int_array(io, perf_capture_start_select_arts, 2);
+    io_printf(io, ",\n");
+    io_printf(io, "    \"capture_start_moving_plate\": ");
+    io_write_json_int_array(io, perf_capture_start_moving_plate, 2);
+    io_printf(io, ",\n");
+    io_printf(io, "    \"capture_start_moving_plate_counter\": ");
+    io_write_json_int_array(io, perf_capture_start_moving_plate_counter, 2);
+    io_printf(io, ",\n");
+    io_printf(io, "    \"capture_start_command_name_visible\": ");
+    io_write_json_int_array(io, perf_capture_start_command_name_visible, 2);
+    io_printf(io, "\n");
     io_printf(io, "  },\n");
     io_printf(io,
               "  \"title_state\": {\n"

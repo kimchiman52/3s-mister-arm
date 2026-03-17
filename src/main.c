@@ -320,7 +320,8 @@ static bool is_supported_perf_wait_test_phase(const char* phase_name) {
 }
 
 static bool is_supported_perf_wait_runtime_state(const char* state_name) {
-    return state_name == NULL || SDL_strcmp(state_name, "attract-demo-logo") == 0;
+    return state_name == NULL || SDL_strcmp(state_name, "attract-demo-logo") == 0 ||
+           SDL_strcmp(state_name, "character-select-super-art") == 0;
 }
 #endif
 
@@ -346,7 +347,8 @@ static void verify_args() {
     }
 
     if (!is_supported_perf_wait_runtime_state(configuration.perf.wait_for_runtime_state)) {
-        error_out_with_code("--perf-wait-runtime-state must be attract-demo-logo.", EXIT_CODE_RUNTIME_ERROR);
+        error_out_with_code("--perf-wait-runtime-state must be attract-demo-logo or character-select-super-art.",
+                            EXIT_CODE_RUNTIME_ERROR);
     }
 
     if ((configuration.perf.wait_for_gameplay ? 1 : 0) + (configuration.perf.wait_for_test_phase != NULL ? 1 : 0) +

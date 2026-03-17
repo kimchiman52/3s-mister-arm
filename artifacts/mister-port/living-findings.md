@@ -3312,3 +3312,21 @@ Scope guardrails:
     - reject and revert; this compare-dirty refresh fallback is neither a player-visible FPS win nor a safe partial-refresh implementation, because it regresses nearest control, ordinary gameplay, and native control while also mixing palette baselines and profiling state in the compare shadow
   - Next best candidate optimization:
     - do not reopen compare-dirty refresh fallback without a cache-keyed shadow source and a telemetry split that isolates refresh-locality wins from compare overhead; rank the next broader raster loop toward a family whose ordinary gameplay evidence stays strong on `training-yun-ryu-ryu-stage` or `basic-exchange --test-stage 7`, or return to nearest presenter tail work if that matrix is stronger
+
+- 2026-03-17T10:20:00-0400
+  - Bottleneck targeted:
+    - measurement support for the user-priority 2P menu lane, specifically restoring the exact `character-select-super-art` chooser-instantiation capture on the current tree before another menu runtime reland
+  - Change summary:
+    - re-enabled `character-select-super-art` as a supported `--perf-wait-runtime-state` in `src/main.c` and `tools/mister/perf-sampler.sh`
+    - fixed the sampler so that exact chooser runtime-state captures once again auto-enable the test runner, matching the older menu harness behavior instead of hanging in the normal attract path
+    - defined the chooser-instantiated runtime-state in `src/port/sdl/sdl_app.c` with the intended exact signals (`Sel_PL_Complete=1/1`, `Sel_Arts_Complete=0/0`, `Select_Arts=3/3`, `Moving_Plate=0/0`, `Moving_Plate_Counter=0/0`, command-name visible for both players) and exported those start-state arrays into perf JSON under `character_select_state`
+  - Verification result summary:
+    - rebuilt the telemetry ARM package in `/work-arm`, redeployed it with `tools/mister/misterctl.sh`, and reran `probe` plus bounded `smoke`; the deployed candidate stayed on direct nearest `software_frame_mapped_scale`
+    - fresh current-tree broad menu telemetry `menu-mts13-pre-char-select` landed at `45.6920 FPS / 21.8857 / 7.3056 / 8.7992 / 5.7809 ms`, which is materially slower than the older `m6rr` record and confirms the menu lane still deserves loop budget on this branch
+    - the capture-support patch kept broad character select effectively flat on the same package (`menu-mts13-post-char-select` = `45.7366 FPS / 21.8643 / 7.3146 / 8.8630 / 5.6867 ms`), which is the expected result for a measurement-only reland
+    - the recovered exact lane `menu-mts13-post-super-art-rerun` now triggers cleanly and lands at `32.7465 FPS / 30.5376 / 18.3392 / 9.8073 / 2.3911 ms` with `wait_runtime_state=character-select-super-art`, `test_phase=character-select`, direct nearest present ratio `1.0`, and `source_mtrans = 277.25 tasks/frame`
+    - `artifacts/mister-port/perf/menu-mts13-post-super-art-rerun.json` now proves the capture starts on the intended chooser state: `character_select_state.capture_start_sel_pl_complete = [1,1]`, `capture_start_sel_arts_complete = [0,0]`, `capture_start_select_arts = [3,3]`, `capture_start_moving_plate = [0,0]`, `capture_start_moving_plate_counter = [0,0]`, and `capture_start_command_name_visible = [1,1]`
+  - Keep/rollback decision with reason:
+    - keep; this reland restores a required exact menu validation lane on the current tree without changing player-facing runtime behavior, and it also updates the perf JSON so future menu loops can prove they started on the real chooser-instantiation window rather than a broader character-select proxy
+  - Next best candidate optimization:
+    - use the recovered exact chooser lane plus the fresh `45.7 FPS` broad `2p-character-select` baseline to re-rank one small menu runtime reland from current-tree evidence; start with the measured `mtrans` / `seqsAfterProcess` submit-state bookkeeping residue before reopening `DrawSprite2` or older chooser-renew guesses

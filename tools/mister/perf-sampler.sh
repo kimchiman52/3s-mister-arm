@@ -23,7 +23,7 @@ Options:
                          (title, menu, character-select-transition, character-select, game-transition, game, game-input-active, wipe-transition-type1).
   --perf-wait-runtime-state <name>
                          Delay capture until the runtime reaches the named state
-                         (attract-demo-logo).
+                         (attract-demo-logo, character-select-super-art).
   --test-scene-preset <name>
                          Named scripted gameplay preset (stage-heavy, effect-heavy, super-heavy, basic-exchange, pressure-exchange, training-yun-ryu-ryu-stage).
   --test-p1-character <name-or-id>
@@ -139,7 +139,7 @@ is_supported_perf_wait_test_phase() {
 
 is_supported_perf_wait_runtime_state() {
     local value="$1"
-    [ "$value" = "attract-demo-logo" ]
+    [ "$value" = "attract-demo-logo" ] || [ "$value" = "character-select-super-art" ]
 }
 
 is_safe_perf_tag() {
@@ -456,7 +456,7 @@ if [ -n "$perf_wait_test_phase" ] && ! is_supported_perf_wait_test_phase "$perf_
 fi
 
 if [ -n "$perf_wait_runtime_state" ] && ! is_supported_perf_wait_runtime_state "$perf_wait_runtime_state"; then
-    echo "error: --perf-wait-runtime-state must be attract-demo-logo." >&2
+    echo "error: --perf-wait-runtime-state must be attract-demo-logo or character-select-super-art." >&2
     exit 2
 fi
 
@@ -613,6 +613,7 @@ fi
 
 if [ "$gameplay_idle" -eq 1 ] || [ "$have_test_overrides" -eq 1 ] || [ -n "$test_scene_preset" ] ||
     [ "$test_preserve_game_transition" -eq 1 ] ||
+    [ "$perf_wait_runtime_state" = "character-select-super-art" ] ||
     [ -n "$perf_wait_test_phase" ]; then
     extra_app_args="--test-enable"
 fi
