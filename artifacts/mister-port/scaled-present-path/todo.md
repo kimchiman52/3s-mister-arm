@@ -64,6 +64,7 @@
   - rejected `2026-03-16` broader raster follow-up: admitting scaled color-mod textured rects to the existing lookup fast path in `src/port/sdl/sdl_game_renderer.c` produced only noise-level movement on matched nearest `control` / `ibuki-stage7` / trusted `genei-jin-first-activation` plus a native guard, while `software_frame_fast_miss_color_mod` stayed `0.00` and `generic_textured_rgb_mod` stayed effectively flat on the compared gates; do not reopen this lane without a gameplay-first capture that proves real color-mod fallback or RGB-mod residue
   - rejected `2026-03-16` broader raster follow-up: a palette-opaque exact-copy `SDL_memcpy` shortcut for exact unmodulated software-source blits in `src/port/sdl/sdl_game_renderer.c` did not produce a stable ordinary-gameplay win. Matched nearest `basic-exchange` moved `49.7951 -> 50.7135 FPS` on the first post run but fell to `49.3554 FPS` on the rerun, trusted full `genei-jin-first-activation` stayed effectively flat `33.7726 -> 33.7062 FPS`, and nearest/native control stayed within tolerance; do not reopen this lane without telemetry that proves a large stable palette-opaque exact-copy family or a narrower source-surface cohort
   - rejected `2026-03-16` broader raster follow-up: a stage-`7` single-opaque-span row-copy reland on top of the kept full-row mask shortcut regressed both the nearest guardrail and ordinary gameplay (`control 74.8844 -> 66.7720 FPS`, `basic-exchange --test-stage 7 56.5357 -> 47.7482 FPS`, `effect-heavy --test-stage 7 55.6217 -> 47.4526 FPS`) without a real `generic_textured` win. Do not reopen this broader row-span lane until a future telemetry pass explains why the span metadata path drags even idle nearest control
+  - rejected `2026-03-17` broader raster follow-up: extending the kept stage-`7` row-alpha cache so the exact `rect_uv_parallelogram` family also skips fully transparent rows did not survive gameplay validation. Same-package reruns improved nearest `control 75.0442 -> 76.3640 FPS`, but `basic-exchange --test-stage 7` full fell `59.1771 -> 55.4642 FPS` with `generic_textured.mean_ms 0.273164 -> 0.280230`, `effect-heavy --test-stage 7` basic fell `66.2084 -> 64.7712 FPS`, and the native guard stayed within budget at `91.4189 FPS`. Reject; keep only the accepted full-opaque row mask and do not reopen transparent-row skipping without evidence that this recovered exact family has a meaningful full-transparent row cohort
   - if the chosen loop explicitly targets menu residue, work from the broader `2p-character-select` lane and `SDLGameRenderer_SetTexture` / submit-state churn, not the already-rejected `DrawSprite2` fast-path guess
   - do not spend a runtime loop on attract/logo until a trustworthy exact opening/title capture boundary exists
 
@@ -1210,3 +1211,19 @@
     - `5f9b3566`
   - Next best candidate:
     - start Chunk 2 and route nearest onto `native_output_rect` plus fbdev presentation so normal nearest gameplay stops paying the `screen_texture`/`fullscreen_staging` tax while preserving message-content and screenshot fallback behavior
+
+- 2026-03-17T05:01:00-0400
+  - Bottleneck targeted:
+    - possible remaining stage-`7` exact-family raster residue beyond the kept full-opaque row mask, specifically fully transparent rows inside the recovered `256x256` `rect_uv_parallelogram` sources
+  - Change summary:
+    - tried a narrow `src/port/sdl/sdl_game_renderer.c` reland that extended the kept row-alpha cache so the exact stage-`7` shear path could skip fully transparent rows as well as fully opaque rows
+    - rebuilt/exported `build/mister-telemetry-package-arm-stage7-transparent-row-skip-20260317c`, redeployed it with `tools/mister/misterctl.sh`, reran nearest `control`, `basic-exchange --test-stage 7` full telemetry, `effect-heavy --test-stage 7`, and a native control guard, then reverted the runtime diff locally and restored `build/mister-telemetry-package-arm-opt1-20260317b` on-device after the keep gates failed
+    - completed the required review pass as a manual scoped review plus an explorer second opinion focused on row-alpha cache lifetime, exact-family isolation, and whether the transparent-row hypothesis was better founded than cheaper row-start setup; no correctness issue survived review, so the rejection stayed purely performance-based
+  - Verification result summary:
+    - nearest `control` improved `75.0442 -> 76.3640 FPS` with `present.mean_ms 2.9365 -> 2.8617`
+    - ordinary raster validation regressed: `basic-exchange --test-stage 7` full fell `59.1771 -> 55.4642 FPS`, `present.mean_ms 5.1497 -> 6.1983`, `present_copy.mean_ms 5.1364 -> 6.1823`, and sampled `generic_textured.mean_ms 0.273164 -> 0.280230`
+    - matched `effect-heavy --test-stage 7` basic also regressed `66.2084 -> 64.7712 FPS` with `present.mean_ms 4.5976 -> 4.7609`, while the native control guard stayed within budget at `91.4189 FPS`
+  - Keep/rollback decision with reason:
+    - reject and revert; the transparent-row extension helps idle nearest control but makes the real stage-`7` gameplay lanes worse, so it is not a player-visible win
+  - Next best candidate optimization:
+    - keep the accepted full-opaque row mask only; if stage-`7` raster work resumes, prefer a cheaper exact-family row-start/setup cut or fresh measurement that proves a strong fully transparent row cohort before broadening the row-alpha metadata again
