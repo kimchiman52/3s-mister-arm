@@ -1239,6 +1239,24 @@
   - Next best candidate optimization:
     - do not reopen source-span endpoint lookup without telemetry that isolates first-row versus repeated-row clipped-span/setup cost; if nearest presenter work continues, prefer the memo-backed first-row vs repeated-row telemetry split before another mapped-row rewrite
 
+- 2026-03-17T11:40:00-0400
+  - Bottleneck targeted:
+    - broader 2P character-select submit/state churn, specifically whether hoisting the existing live-binding guard above `SDLGameRenderer_SetTexture()` can turn repeated `FLRENDER_TEXSTAGE0` work into a real menu FPS win
+  - Change summary:
+    - tried a narrow runtime reland in `src/sf33rd/AcrSDK/ps2/flps2render.c`, `src/port/sdl/sdl_game_renderer.c`, and `include/port/sdl/sdl_game_renderer.h` that added `SDLGameRenderer_IsTextureBindingLive()` and returned early from `flPS2SetTextureRegister()` when the requested texture binding was already live
+    - rebuilt an ARM hard-float telemetry package through `/work-arm` in `3sx-mister-build`, deployed the candidate to MiSTer with `tools/mister/misterctl.sh`, captured full nearest `2p-character-select` plus exact `character-select-super-art` and the recovered ordinary `training-yun-ryu-ryu-stage` guardrail, then reverted the runtime diff locally and restored `build/mister-telemetry-package-arm-rollback` on-device after the same-source keep gates failed
+    - completed the required review as a manual scoped review of the three touched files before finalizing; the delayed explorer second-opinion follow-up also returned no runtime correctness findings, so the reject stays performance-only
+  - Verification result summary:
+    - same-source rollback baseline `menu-rstateguard-baseline-char-select-full` landed at `52.0801 FPS / 19.2012 / 4.4952 / 9.0380 / 5.6679 ms` (`frame / update / render / present`) with `set_texture_calls 154.93`, `texture_binding_reuse_hits 35.97`, and direct-present ratio `0.9967`
+    - candidate `menu-rstateguard-char-select-full` slipped slightly to `51.8208 FPS / 19.2973 / 4.5984 / 8.9514 / 5.7475 ms` while `set_texture_calls` fell to `118.96` and `texture_binding_reuse_hits` to `0.00`, so the hoist removed duplicate bind work but still worsened total frame time and present cost
+    - same-source rollback baseline `menu-rstateguard-baseline-super-art-full` landed at `55.8883 FPS / 17.8928 / 5.8393 / 9.6396 / 2.4140 ms`; candidate `menu-rstateguard-super-art-full` also slipped to `55.4878 FPS / 18.0220 / 6.1175 / 9.4144 / 2.4901 ms`, with zero reuse on both captures
+    - recovered ordinary gameplay guardrail only nudged up on the candidate: `menu-rstateguard-baseline-training-yun-basic 61.6344 FPS / 16.2247 / 3.5913 / 7.7221 / 4.9114 ms` versus `menu-rstateguard-training-yun-basic 61.9855 FPS / 16.1328 / 3.5728 / 7.5718 / 4.9882 ms`
+    - MiSTer `health`, candidate `deploy`, `probe`, and bounded `smoke` passed before the keep gate; after rejection, the restored rollback package redeployed successfully and passed `probe` plus bounded `smoke`
+  - Keep/rollback decision with reason:
+    - reject and revert; the live-binding hoist does reduce repeated broad character-select bind work, but it still makes both user-priority menu lanes slightly slower overall and provides no chooser win to justify keeping a global render-state-path change
+  - Next best candidate optimization:
+    - do not reopen this `FLRENDER_TEXSTAGE0` live-binding hoist blindly; the next fresh menu loop should stay on the broader 2P character-select lane, but target non-consecutive submit/state churn or another newly measured menu residue instead of moving the existing duplicate-bind guard above `SDLGameRenderer_SetTexture()`
+
 - 2026-03-17T05:01:00-0400
   - Bottleneck targeted:
     - possible remaining stage-`7` exact-family raster residue beyond the kept full-opaque row mask, specifically fully transparent rows inside the recovered `256x256` `rect_uv_parallelogram` sources
