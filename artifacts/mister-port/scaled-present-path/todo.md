@@ -1257,6 +1257,23 @@
   - Next best candidate optimization:
     - do not reopen this `FLRENDER_TEXSTAGE0` live-binding hoist blindly; the next fresh menu loop should stay on the broader 2P character-select lane, but target non-consecutive submit/state churn or another newly measured menu residue instead of moving the existing duplicate-bind guard above `SDLGameRenderer_SetTexture()`
 
+- 2026-03-17T12:22:19-0400
+  - Bottleneck targeted:
+    - broader 2P character-select submit/state churn, specifically whether deferring SDL texture materialization during software-frame submit can convert repeated menu texture/state setup into a real player-visible win, including the exact post-lock super-art chooser appearance lane
+  - Change summary:
+    - tried a narrow runtime reland in `src/port/sdl/sdl_game_renderer.c` that treated `texture_binding` plus `software_source_surface` as enough for software-frame submit and deferred SDL texture creation until fallback submit actually needed it
+    - rebuilt/exported `build/mister-telemetry-package-arm-menu-lazytexture-c1` through the validated `/work-arm` ARM telemetry path, deployed the candidate with `tools/mister/misterctl.sh`, captured full nearest `2p-character-select`, exact `character-select-super-art` twice, and the recovered ordinary `training-yun-ryu-ryu-stage` guardrail, then reverted the runtime diff locally and restored `build/mister-telemetry-package-arm-menu-baseline` on-device after the exact chooser rerun failed the keep bar
+    - completed the required review as a manual scoped review of the single-file renderer diff before rollback; the delayed explorer second opinion returned no findings because the runtime diff had already been reverted, so the closure stays performance-only
+  - Verification result summary:
+    - same-source baseline `menu-rstateguard-baseline-char-select-full` landed at `52.0801 FPS / 19.2012 / 4.4952 / 9.0380 / 5.6679 ms` (`frame / update / render / present`); candidate `menu-lazytexture-c1-char-select-full` improved to `52.8637 FPS / 18.9166 / 4.1951 / 9.0277 / 5.6937 ms`
+    - same-source baseline `menu-rstateguard-baseline-super-art-full` landed at `55.8883 FPS / 17.8928 / 5.8393 / 9.6396 / 2.4140 ms`; candidate `menu-lazytexture-c1-super-art-full` only matched noise at `55.8716 FPS / 17.8982 / 5.7361 / 9.5717 / 2.5904 ms`, and the exact rerun `menu-lazytexture-c1-super-art-r2` fell to `54.5721 FPS / 18.3244 / 5.9347 / 9.9580 / 2.4317 ms`
+    - recovered ordinary gameplay guardrail only nudged up: `menu-rstateguard-baseline-training-yun-basic 61.6344 FPS / 16.2247 / 3.5913 / 7.7221 / 4.9114 ms` versus `menu-lazytexture-c1-training-yun-basic 61.7117 FPS / 16.2044 / 3.5730 / 7.6856 / 4.9458 ms`
+    - MiSTer `health`, candidate `deploy`, `probe`, and bounded `smoke` passed before the keep gate; after rejection, the restored baseline package redeployed successfully and passed `probe` plus bounded `smoke`
+  - Keep/rollback decision with reason:
+    - reject and revert; the broad character-select lane improved, but the user-priority exact chooser-instantiation lane did not survive rerun variance, so this global software-frame texture-deferral change does not clear the menu keep bar
+  - Next best candidate optimization:
+    - do not reopen broad software-frame lazy SDL texture deferral blindly; stay on the 2P menu lane, but prefer a menu-local submit/state churn cut that wins on exact `character-select-super-art` before another renderer-wide deferral experiment
+
 - 2026-03-17T05:01:00-0400
   - Bottleneck targeted:
     - possible remaining stage-`7` exact-family raster residue beyond the kept full-opaque row mask, specifically fully transparent rows inside the recovered `256x256` `rect_uv_parallelogram` sources
