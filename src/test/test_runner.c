@@ -65,6 +65,7 @@ typedef enum TestScenePreset {
     TEST_SCENE_PRESET_SUPER_HEAVY,
     TEST_SCENE_PRESET_BASIC_EXCHANGE,
     TEST_SCENE_PRESET_PRESSURE_EXCHANGE,
+    TEST_SCENE_PRESET_TRAINING_YUN_RYU_RYU_STAGE,
 } TestScenePreset;
 
 static const Uint8 character_to_cursor[20][2] = { { 7, 1 }, { 1, 0 }, { 5, 2 }, { 6, 1 }, { 3, 2 }, { 4, 0 }, { 1, 2 },
@@ -72,6 +73,7 @@ static const Uint8 character_to_cursor[20][2] = { { 7, 1 }, { 1, 0 }, { 5, 2 }, 
                                                   { 6, 0 }, { 3, 1 }, { 2, 1 }, { 4, 1 }, { 1, 1 }, { 5, 1 } };
 static const Sint8 scene_preset_basic_exchange_stage = 11;
 static const Sint8 scene_preset_stage_heavy_stage = 19;
+static const Sint8 scene_preset_training_yun_ryu_ryu_stage = 2;
 
 static Uint64 frame = 0;
 static Phase phase = PHASE_INIT;
@@ -134,6 +136,9 @@ static TestScenePreset resolve_scene_preset(const char* preset_name) {
     }
     if (SDL_strcmp(preset_name, "pressure-exchange") == 0) {
         return TEST_SCENE_PRESET_PRESSURE_EXCHANGE;
+    }
+    if (SDL_strcmp(preset_name, "training-yun-ryu-ryu-stage") == 0) {
+        return TEST_SCENE_PRESET_TRAINING_YUN_RYU_RYU_STAGE;
     }
 
     return TEST_SCENE_PRESET_NONE;
@@ -459,6 +464,134 @@ static u16 pressure_exchange_script_input(int player, int local_frame) {
     return pressure_exchange_defend_input(player, turn_frame);
 }
 
+static u16 training_yun_ryu_ryu_stage_script_input(int player, int local_frame) {
+    if (player != 0) {
+        return 0;
+    }
+
+    switch (local_frame % 192) {
+    case 0:
+    case 1:
+    case 2:
+    case 3:
+    case 4:
+    case 5:
+    case 6:
+    case 7:
+    case 8:
+    case 9:
+    case 10:
+    case 11:
+    case 12:
+    case 13:
+    case 14:
+    case 15:
+    case 16:
+    case 17:
+    case 18:
+    case 19:
+    case 20:
+    case 21:
+    case 22:
+    case 23:
+    case 24:
+    case 25:
+    case 26:
+    case 27:
+    case 28:
+    case 29:
+    case 30:
+    case 31:
+    case 32:
+    case 33:
+    case 34:
+    case 35:
+        return SWK_RIGHT;
+    case 36:
+    case 37:
+        return SWK_SOUTH;
+    case 44:
+    case 45:
+        return SWK_WEST;
+    case 56:
+    case 57:
+    case 58:
+    case 59:
+    case 60:
+    case 61:
+    case 62:
+    case 63:
+        return SWK_RIGHT;
+    case 64:
+    case 65:
+        return (u16)(SWK_RIGHT | SWK_SOUTH);
+    case 72:
+    case 73:
+    case 74:
+    case 75:
+    case 76:
+    case 77:
+        return (u16)(SWK_UP | SWK_RIGHT);
+    case 78:
+    case 79:
+        return (u16)(SWK_UP | SWK_RIGHT | SWK_SOUTH);
+    case 92:
+    case 93:
+        return SWK_WEST;
+    case 108:
+    case 109:
+    case 110:
+    case 111:
+    case 112:
+    case 113:
+    case 114:
+    case 115:
+    case 116:
+    case 117:
+    case 118:
+    case 119:
+        return SWK_RIGHT;
+    case 120:
+    case 121:
+        return (u16)(SWK_DOWN | SWK_WEST);
+    case 130:
+    case 131:
+        return SWK_SOUTH;
+    case 142:
+    case 143:
+    case 144:
+    case 145:
+    case 146:
+    case 147:
+    case 148:
+    case 149:
+        return SWK_LEFT;
+    case 156:
+    case 157:
+    case 158:
+    case 159:
+    case 160:
+    case 161:
+    case 162:
+    case 163:
+        return SWK_RIGHT;
+    case 164:
+    case 165:
+        return SWK_WEST;
+    default:
+        return 0;
+    }
+}
+
+static bool scene_preset_uses_training_mode(void) {
+    return scene_preset == TEST_SCENE_PRESET_TRAINING_YUN_RYU_RYU_STAGE;
+}
+
+static bool training_mode_gameplay_started(void) {
+    return scene_preset_uses_training_mode() && Mode_Type == MODE_NORMAL_TRAINING && Allow_a_battle_f != 0 && Game_pause == 0 &&
+           Pause_Down == 0;
+}
+
 static void apply_scene_preset_defaults() {
     scene_preset = resolve_scene_preset(configuration.test.scene_preset);
 
@@ -499,6 +632,14 @@ static void apply_scene_preset_defaults() {
         stage = scene_preset_stage_heavy_stage;
         break;
 
+    case TEST_SCENE_PRESET_TRAINING_YUN_RYU_RYU_STAGE:
+        characters[0] = CHAR_YUN;
+        characters[1] = CHAR_RYU;
+        selected_super_arts[0] = 0;
+        selected_super_arts[1] = 0;
+        stage = scene_preset_training_yun_ryu_ryu_stage;
+        break;
+
     case TEST_SCENE_PRESET_NONE:
         break;
     }
@@ -527,6 +668,12 @@ static void apply_scene_preset_inputs() {
     if (scene_preset == TEST_SCENE_PRESET_PRESSURE_EXCHANGE) {
         p1sw_buff = pressure_exchange_script_input(0, game_frame);
         p2sw_buff = pressure_exchange_script_input(1, game_frame);
+        return;
+    }
+
+    if (scene_preset == TEST_SCENE_PRESET_TRAINING_YUN_RYU_RYU_STAGE) {
+        p1sw_buff = training_yun_ryu_ryu_stage_script_input(0, game_frame);
+        p2sw_buff = training_yun_ryu_ryu_stage_script_input(1, game_frame);
         return;
     }
 
@@ -752,7 +899,7 @@ void TestRunner_Prologue() {
     case PHASE_MENU:
         apply_stage_override();
 
-        if (G_No[1] == 1 && G_No[2] == 2) {
+        if (G_No[1] == 1 && G_No[2] == 2 && (!scene_preset_uses_training_mode() || Mode_Type == MODE_NORMAL_TRAINING)) {
             Last_My_char2[0] = characters[0];
             Last_My_char2[1] = characters[1];
             Last_Super_Arts[0] = selected_super_arts[0];
@@ -760,6 +907,22 @@ void TestRunner_Prologue() {
             phase = PHASE_CHARACTER_SELECT_TRANSITION;
             wait_timer = 60;
             break;
+        }
+
+        if (scene_preset_uses_training_mode()) {
+            const struct _TASK* menu_task = &task[TASK_MENU];
+
+            if (menu_task->r_no[1] == 1 && menu_task->r_no[2] == 3) {
+                Menu_Cursor_Y[0] = 2;
+                mash_button(SWK_SOUTH, 0);
+                break;
+            }
+
+            if (menu_task->r_no[1] == 4 && menu_task->r_no[2] == 3) {
+                Menu_Cursor_Y[0] = 0;
+                mash_button(SWK_SOUTH, 0);
+                break;
+            }
         }
 
         mash_button(SWK_SOUTH, 0);
@@ -818,7 +981,21 @@ void TestRunner_Prologue() {
 
     case PHASE_GAME_TRANSITION:
         force_stage_transition_override();
-        if (G_No[1] == 2) {
+        if (scene_preset_uses_training_mode()) {
+            const struct _TASK* menu_task = &task[TASK_MENU];
+
+            if (menu_task->r_no[0] == 7 && menu_task->r_no[1] == 1 && menu_task->r_no[2] == 1) {
+                Menu_Cursor_Y[0] = 0;
+                mash_button(SWK_SOUTH, 0);
+                break;
+            }
+
+            if (training_mode_gameplay_started()) {
+                phase = PHASE_GAME;
+                game_frame = 0;
+                break;
+            }
+        } else if (G_No[1] == 2) {
             phase = PHASE_GAME;
             game_frame = 0;
         } else {
