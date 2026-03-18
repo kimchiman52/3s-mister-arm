@@ -95,32 +95,20 @@ static bool ppgKeepRenewDirtyRectByTextureHandle[FL_TEXTURE_MAX] = { false };
 static bool ppgTrackRenewDirtyTileMaskByTextureHandle[FL_TEXTURE_MAX] = { false };
 
 static bool ppgShouldKeepRenewDirtyRectForSeqs(s32 ix_num_first, s32 slot_index, s32 texture_total) {
-    if ((ix_num_first == 1030) && (texture_total == 7)) {
-        return (slot_index == 0) || (slot_index == 1) || (slot_index == 2) || (slot_index == 4);
-    }
-
-    if ((ix_num_first == 40) && (texture_total == 9)) {
-        return (slot_index == 0) || (slot_index == 3);
-    }
-
-    if ((ix_num_first == 50) && (texture_total == 9)) {
-        return (slot_index == 0) || (slot_index == 3);
-    }
-
-    if ((ix_num_first == 80) && (texture_total == 5)) {
-        return (slot_index == 0) || (slot_index == 1) || (slot_index == 2);
-    }
-
-    if ((ix_num_first == 1100) && (texture_total == 8)) {
-        return (slot_index == 0) || (slot_index == 2);
-    }
-
+    // The seq-specific renew-dirty fast path is currently causing visible corruption
+    // in submenu fonts and HUD counters on real MiSTer hardware. Keep the tracking
+    // scaffold in place, but fall back to the safer full-refresh behavior for now.
+    (void)ix_num_first;
+    (void)slot_index;
+    (void)texture_total;
     return false;
 }
 
 static bool ppgShouldTrackRenewDirtyTileMaskForSeqs(s32 ix_num_first, s32 slot_index, s32 texture_total) {
-    return ((ix_num_first == 40) && (texture_total == 9) && (slot_index == 3)) ||
-           ((ix_num_first == 50) && (texture_total == 9) && (slot_index == 3));
+    (void)ix_num_first;
+    (void)slot_index;
+    (void)texture_total;
+    return false;
 }
 
 static void ppgConfigureRenewDirtyTracking(u32 texture_handle, s32 ix_num_first, s32 slot_index, s32 texture_total) {
