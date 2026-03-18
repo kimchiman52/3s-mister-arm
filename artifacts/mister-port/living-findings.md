@@ -3479,3 +3479,20 @@ Scope guardrails:
     - keep; this is measurement-support-only telemetry that preserves gameplay behavior and finally ranks the real Yun burst families instead of forcing another guess
   - Next best candidate optimization:
     - target the dominant Yun fast-non-integer families directly: `ppg-seqs 81/slot 1`, `ppg-seqs 82/slot 2`, and the still-unidentified clipped `128x48` family, with `ppg-seqs 80/slot 0` generic-textured residue as the secondary lane
+
+- 2026-03-18T17:18:03-0400
+  - Final commit hash:
+    - `d76db87a`
+  - Bottleneck targeted:
+    - native steady-gameplay enqueue bookkeeping in `src/port/sdl/sdl_game_renderer.c`, specifically whether deferring equal-Z queue reversal could cut cost on the `software_frame_exact` path without changing draw order
+  - Change summary:
+    - tried a single-file runtime reland that stopped per-push equal-Z `SDL_memmove` work, tracked equal-Z runs, and revived the deferred `equal_z_reverse` sorter path
+    - rebuilt the telemetry flavor in Docker `3sx-mister-build`, reran headless parity locally, redeployed the ARM telemetry package with serialized MiSTer tooling, and then reverted the runtime diff after the native keep gates failed
+  - Verification result summary:
+    - Docker telemetry builds, package steps, and local parity passed; serialized MiSTer `health`, `deploy`, `probe`, and bounded `smoke` all passed on the reviewed candidate package
+    - the candidate never activated the intended new sort path on-device: every deciding native capture stayed on direct `software_frame_exact` with `sort_strategy.qsort = 300/300` and `equal_z_reverse = 0/300`
+    - the deciding native gameplay lanes regressed instead of improving, most sharply `gameplay-remy-stage` `42.5296 -> 40.7471 FPS` and `gameplay-ibuki-stage` `81.9628 -> 59.8941 FPS`, while `gameplay-idle` stayed effectively flat at `86.6628 -> 86.6177 FPS`
+  - Keep/rollback decision with reason:
+    - reject and revert; the deferred equal-Z bookkeeping never became the active on-device sort path, so it added overhead while the native keep lanes moved the wrong way
+  - Next best candidate optimization:
+    - do not retry native enqueue-order micro-optimizations in `src/port/sdl/sdl_game_renderer.c` for now. Rank the next loop toward dirty-tile/full-copy bookkeeping on direct native exact frames, where the deciding captures still show `dirty_ratio = 1.0000`, `dirty_hit_rate = 0.0000`, and full-frame `copy_bytes = 344064`
