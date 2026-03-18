@@ -3387,3 +3387,20 @@ Scope guardrails:
     - keep; this is a large player-visible menu win on the current branch, and the reviewed stable-identity mapping fixes the real regression source without reopening the rejected circle/highlight hypothesis
   - Next best candidate optimization:
     - keep this renew-dirty reland as the current menu baseline, and if menu work continues return to the measured `seqsAfterProcess` / submit-state churn above it rather than another dirty-rect identity chase
+
+- 2026-03-17T20:50:10-0400
+  - Final commit hash:
+    - `2cb6d27b`
+  - Bottleneck targeted:
+    - measurement support for the user-priority Yun SA3 first visible activation, specifically identifying which software-frame textured-rect families dominate the fast-non-integer and generic-textured residue during the burst
+  - Change summary:
+    - added perf-only family capture/export for software-frame `fast_non_integer` and `generic_textured` textured-rect lanes, including logical identity, shape ranges, submitted pixels, and lookup-entry totals
+    - exported the new family arrays in perf JSON and bumped `schema_version` to `49`
+    - refreshed logical-identity metadata at export time after review so later registrations cannot leave stale family labels in the capture
+  - Verification result summary:
+    - Docker telemetry ARM rebuild/package in `3sx-mister-build` passed, `readelf` confirmed `ELF32 / ARM / hard-float`, and serialized MiSTer `health` / `deploy` / `probe` / bounded `smoke` all passed on the reviewed package
+    - on-device keep gates stayed close enough for telemetry flavor while producing the missing data: `loop112-control-post` `69.9380 FPS`, `loop112-super-post` `44.4885 FPS`, `loop112-yun-post` `36.8622 FPS`, all with direct nearest `software_frame_mapped_scale`
+  - Keep/rollback decision with reason:
+    - keep; this is measurement-support-only telemetry that preserves gameplay behavior and finally ranks the real Yun burst families instead of forcing another guess
+  - Next best candidate optimization:
+    - target the dominant Yun fast-non-integer families directly: `ppg-seqs 81/slot 1`, `ppg-seqs 82/slot 2`, and the still-unidentified clipped `128x48` family, with `ppg-seqs 80/slot 0` generic-textured residue as the secondary lane
