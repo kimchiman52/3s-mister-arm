@@ -3496,3 +3496,19 @@ Scope guardrails:
     - reject and revert; the deferred equal-Z bookkeeping never became the active on-device sort path, so it added overhead while the native keep lanes moved the wrong way
   - Next best candidate optimization:
     - do not retry native enqueue-order micro-optimizations in `src/port/sdl/sdl_game_renderer.c` for now. Rank the next loop toward dirty-tile/full-copy bookkeeping on direct native exact frames, where the deciding captures still show `dirty_ratio = 1.0000`, `dirty_hit_rate = 0.0000`, and full-frame `copy_bytes = 344064`
+
+- 2026-03-18T20:05:00-0400
+  - Final commit hash:
+    - `pending`
+  - Bottleneck targeted:
+    - native steady-gameplay dirty-tile bookkeeping in `src/port/sdl/sdl_game_renderer.c`, specifically whether skipping work after full-frame coverage saturation could reduce `software_frame_exact` update cost
+  - Change summary:
+    - tried a single-file runtime reland that saturated the dirty/coverage tile maps for full-frame bounds and skipped later dirty-tile marking once both maps hit the full `24 * 14 = 336` tile grid
+    - rebuilt the telemetry flavor in Docker `3sx-mister-build`, reran headless parity locally, redeployed the ARM telemetry package with serialized MiSTer tooling, and then reverted the runtime diff after the native keep gates failed
+  - Verification result summary:
+    - Docker telemetry builds, package steps, and local parity passed; serialized MiSTer `health`, `deploy`, `probe`, and bounded `smoke` all passed on the reviewed candidate package
+    - the candidate stayed on direct native `software_frame_exact` with the same full-copy picture, but every deciding lane regressed instead of improving: `gameplay-idle` `86.6628 -> 81.2530 FPS`, `gameplay-remy-stage` `42.5296 -> 39.6121 FPS`, `left-corner-ryu-stage` `87.6806 -> 82.2856 FPS`, and `gameplay-ibuki-stage` `81.9628 -> 75.6917 FPS`
+  - Keep/rollback decision with reason:
+    - reject and revert; short-circuiting dirty-tile bookkeeping on already-saturated native exact frames increased update cost broadly without changing present routing or the full-copy behavior
+  - Next best candidate optimization:
+    - do not retry native dirty-tile/full-coverage bookkeeping micro-optimizations now. Re-rank the next native gameplay loop toward measured `mtrans` / `ppg` setup-submit work on ordinary gameplay lanes instead
