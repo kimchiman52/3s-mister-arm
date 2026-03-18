@@ -5170,3 +5170,38 @@
   - [x] `2cb6d27b`
 - [x] next best candidate:
   - [x] stay on the Yun first-activation gameplay lane and target the measured families directly instead of reopening threshold or opaque-row ideas. The next safe runtime research step should focus on the dominant fast-non-integer `ppg-seqs 81/82` cluster and the still-unidentified clipped `128x48` family, with `ppg-seqs 80` generic-textured residue as the secondary cleanup lane
+
+### Follow-On Loop 113: Exact Non-Integer Lookup Reuse For Yun Families
+
+- [x] Value target: test whether exact axis-lookup reuse can cut helper-side setup overhead on the kept Yun SA3 fast non-integer path without changing raster eligibility, sampling math, or presenter behavior
+- [x] Scope boundary: `src/port/sdl/software_frame_non_integer.c` for the runtime experiment, plus the required checklist/living-findings closeout docs; do not change thresholds, generic-textured routing, test scenes, gameplay logic, presenter policy, or `tools/mister/package.sh`
+- [x] Dependencies: clean `nearest-hdmi-perf` tip `c26d36eb`; trusted Yun family telemetry `loop112-yun-post`; standing keep gates `loop110-control-pre` and `loop110-super-pre`; Docker container `3sx-mister-build`; telemetry build/package flow in `build/mister-telemetry*`; serialized MiSTer tooling; and the standing user-owned `tools/mister/package.sh` exception
+- [x] Research evidence gathered on `2026-03-17` before implementation:
+  - [x] preserved-branch verification debt still did not block a new loop. `git for-each-ref --sort=creatordate --format='%(refname:short)' 'refs/heads/preserve-*'` returned no pending preserved refs, and `git status --short` was clean at loop start
+  - [x] Loop 112's family export kept the Yun hotspot narrow enough to try a helper-internal experiment instead of another threshold guess. `loop112-yun-post` stayed on direct present at `36.8622 FPS` with the fast non-integer lane dominated by repeated unmodulated `ppg-seqs 81/slot 1` and `ppg-seqs 82/slot 2` families plus one clipped `128x48` family; the secondary generic residue remained mostly small `ppg-seqs 80/slot 0` tasks below the kept helper threshold
+  - [x] the standing keep gates do not show those Yun families. `loop112-control-post` and `loop112-super-post` exported only unrelated `ppg-seqs 1100/1102` fast-non-integer and generic families, which made a narrowly shaped non-integer helper experiment lower risk than another global rerank
+  - [x] prior helper-side rewrites already ruled out the unsafe shapes to avoid. Loop 99 rejected lookup-algebra changes after parity/device regressions, and Loops 102/111 rejected extra branch/specialization work inside the helper, so this cycle only tried exact output reuse rather than new lookup math
+  - [x] local code inspection still showed repeated per-task lookup rebuild work in the hot helper. `SDLSoftwareFrame_RasterNonIntegerLookupARGB8888(...)` repopulates both axis lookup tables for every non-integer task even when the same unclipped Yun family shape recurs many times in one burst
+- [x] Research-backed runtime plan for this cycle:
+  - [x] keep raster routing and sample selection unchanged, and try a tiny exact lookup cache inside `SDLSoftwareFrame_RasterNonIntegerLookupARGB8888(...)` keyed by the existing axis-mapping inputs so repeated Yun family shapes can reuse identical lookup arrays instead of rebuilding them
+  - [x] keep the cache generic and behavior-preserving: key off exact mapping inputs, reuse the current lookup output verbatim, and fall back to the existing rebuild path on every miss; do not change thresholds, clamp rules, blending, or generic-textured handling
+  - [x] verify with the telemetry flavor in Docker `3sx-mister-build`, redeploy through serialized MiSTer tooling, and compare fresh `gameplay-idle`, `gameplay-super-heavy`, and gated Yun SA3 full captures with FPS called out explicitly
+- [x] Implementation summary:
+  - [x] tried a small exact-key lookup cache inside `src/port/sdl/software_frame_non_integer.c` for the X/Y non-integer axis tables, then removed it completely after corrected same-tree device verification showed it did not improve the real Yun workload
+  - [x] discarded an initial stale `/work-arm-cross` candidate after discovering it had been built from a partially copied workspace; only the later full-tree overlay sync plus rebuild was treated as authoritative for keep/rollback
+- [x] Verification result summary:
+  - [x] corrected same-tree telemetry verification used a full source overlay into `/work-arm-cross`, then rebuilt/package-copied the ARM hard-float telemetry binary in Docker `3sx-mister-build`; `readelf -h /work-arm-cross/build/mister-telemetry-install/bin/3sx` confirmed `ELF32 / ARM / hard-float`
+  - [x] host-side runnable parity stayed unavailable in this container because the existing SDL build outputs in `/src` and `/work-arm` were stale/wrong-arch, so only the corrected ARM telemetry package plus MiSTer verification was trustworthy for this loop
+  - [x] serialized MiSTer verification passed on the corrected package: `tools/mister/misterctl.sh health`, `deploy --src build/mister-telemetry-package-arm-loop113-synced-candidate/mister-package`, `probe`, and bounded `smoke` all succeeded; the deployed runtime stayed on direct nearest `software_frame_mapped_scale`
+  - [x] the exact lookup-cache did not move the measured Yun workload at all. The corrected same-tree captures kept identical Yun lane counts versus `loop110-yun-baseline-full` for `software_frame_fast_non_integer_tasks.mean` (`35.26`), lookup entries (`2552.61`), and generic-textured tasks (`11.19`), which means the cache changed overhead, not workload shape
+  - [x] the cache lost on the user-priority lane and on both active windows. `loop113-yun-post` landed at `36.9011 FPS` versus the trusted `37.7746 FPS` baseline, the first `10` active frames slipped `27.7917 -> 27.1602 FPS`, the next `50` active frames slipped `32.9099 -> 31.7375 FPS`, and sampled `fast_non_integer` mean cost rose `0.054254 -> 0.055181 ms` while `generic_textured` also rose `0.037975 -> 0.038579 ms`
+  - [x] the standing keep gates did not justify a keep either. `loop113-control-post` landed at `69.7549 FPS` versus `70.7160` baseline while `loop113-super-post` landed at `45.2714 FPS` versus `44.8966`; both stayed on direct present with no fallback, but the Yun regression made the runtime experiment a clear reject
+- [x] Review outcome:
+  - [x] an independent `explorer` review agent (`Descartes`) reviewed the final docs-only rollback diff and found two valid doc issues: the review section still used future tense and the closeout still lacked a concrete closure hash
+  - [x] the review-placeholder issue is fixed in this closeout, and the concrete rollback hash will be backfilled immediately after creating the docs-only closure commit so the checklist and living-memory entry can point at the real rejected-experiment closeout commit
+- [x] Keep/rollback decision:
+  - [x] reject and revert. Exact lookup reuse adds overhead without reducing Yun workload counts, so it makes both the first visible Genei-Jin burst and the longer active run slower on corrected same-tree hardware telemetry
+- [x] final commit hash:
+  - [x] recorded in the cycle closeout commit
+- [x] next best candidate:
+  - [x] do not retry exact lookup reuse now. The next safe runtime loop should either reduce inner-loop cost on the existing kept `ppg-seqs 81/82` fast path without adding per-task cache probes, or target the still-generic clipped `128x48` SA-sign family (`texture_handle 77`) because lookup-table setup is not the remaining ceiling

@@ -224,6 +224,24 @@ Scope guardrails:
   - Next best candidate optimization:
     - do not reopen threshold relands first; target helper-internal cost work or narrower task-shape attribution inside the existing kept `>=384 px` non-integer path, because the remaining Yun ceiling is not solved by another medium-band admission tweak
 
+- 2026-03-17T23:15:00-0400
+  - Commit hash:
+    - recorded in the cycle closeout commit
+  - Bottleneck targeted:
+    - Yun SA3 first-visible activation on the stock MiSTer software-frame path, specifically whether exact X/Y lookup reuse can lower the dominant `ppg-seqs 81/82` fast-non-integer helper cost without changing workload routing
+  - Change summary:
+    - tried a tiny exact-key X/Y lookup cache in `src/port/sdl/software_frame_non_integer.c`, then removed it completely after corrected same-tree device telemetry showed the cache changed overhead but not workload counts
+    - discarded an initial stale `/work-arm-cross` candidate after discovering it had been built from a partially copied workspace; only the later full-tree overlay sync plus rebuild was used for keep/rollback
+    - refreshed the active checklist with the corrected same-tree gate results and marked exact lookup reuse as a rejected idea for now
+  - Verification result summary:
+    - Docker ARM telemetry build/package succeeded in `3sx-mister-build` after a full source overlay into `/work-arm-cross`; host-side runnable parity remained unavailable because `/src` and `/work-arm` still carried stale/wrong-arch SDL build outputs
+    - corrected serialized MiSTer verification passed: `health`, `deploy`, `probe`, and bounded `smoke` all succeeded, and the candidate stayed on direct `software_frame_mapped_scale` with no fallback
+    - corrected same-tree captures rejected the cache: `loop113-control-post = 69.7549 FPS`, `loop113-super-post = 45.2714 FPS`, and `loop113-yun-post = 36.9011 FPS` versus trusted `loop110` baselines `70.7160 / 44.8966 / 37.7746 FPS`; Yun first `10` active frames slipped `27.7917 -> 27.1602 FPS`, the next `50` active frames slipped `32.9099 -> 31.7375 FPS`, and sampled `fast_non_integer` mean cost rose `0.054254 -> 0.055181 ms` while lookup-entry counts stayed identical
+  - Keep/rollback decision with reason:
+    - reject and revert; exact lookup reuse does not reduce the real Yun workload and adds enough overhead to make both the cold burst and the longer active run slower
+  - Next best candidate optimization:
+    - do not retry exact lookup reuse now; target either a lower-overhead inner-loop optimization on the existing `ppg-seqs 81/82` fast path or a safe clipped-helper path for the persistent `128x48` `texture_handle 77` residue, because lookup-table setup is not the remaining ceiling
+
 - 2026-03-15T04:40:00-0400
   - Commit hash:
     - recorded in the cycle closeout commit
