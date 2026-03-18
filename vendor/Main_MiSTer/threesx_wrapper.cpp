@@ -53,8 +53,18 @@ enum WrapperMenuItem
 {
 	kMenuResume = 0,
 	kMenuFpsToggle,
+	kMenuScaleMode,
+	kMenuRestart,
 	kMenuQuit,
 	kMenuItemCount
+};
+
+enum RuntimeScaleModeMenu
+{
+	kScaleModeAuto = 0,
+	kScaleModeNative,
+	kScaleModeNearest,
+	kScaleModeMenuCount
 };
 
 volatile sig_atomic_t g_wrapper_signal = 0;
@@ -62,6 +72,8 @@ volatile sig_atomic_t g_child_pid = -1;
 int g_wrapper_menu_visible = 0;
 int g_wrapper_menu_selected = kMenuResume;
 int g_wrapper_fps_enabled = 0;
+int g_wrapper_scale_mode = kScaleModeAuto;
+int g_wrapper_restart_requested = 0;
 int g_wrapper_used_full_user_io_init = 0;
 
 struct StartupScaleModeSelection
@@ -309,6 +321,107 @@ bool read_runtime_config_value(const char *wanted_key, char *value, size_t value
 	return false;
 }
 
+int read_runtime_scale_mode_default()
+{
+	char value[64] = {};
+	if (!read_runtime_config_value("scale-mode", value, sizeof(value))) return kScaleModeAuto;
+
+	if (!strcasecmp(value, "native")) return kScaleModeNative;
+	if (!strcasecmp(value, "nearest")) return kScaleModeNearest;
+	return kScaleModeAuto;
+}
+
+const char *runtime_scale_mode_label(int mode)
+{
+	switch (mode)
+	{
+	case kScaleModeNative: return "Native";
+	case kScaleModeNearest: return "Nearest";
+	default: return "Auto";
+	}
+}
+
+bool write_runtime_scale_mode_default(int mode)
+{
+	char path[PATH_MAX] = {};
+	char temp_path[PATH_MAX] = {};
+	snprintf(path, sizeof(path), "%s/config", kRuntimeHome);
+	snprintf(temp_path, sizeof(temp_path), "%s/config.tmp", kRuntimeHome);
+
+	FILE *in = fopen(path, "r");
+	FILE *out = fopen(temp_path, "w");
+	if (!out)
+	{
+		if (in) fclose(in);
+		return false;
+	}
+
+	bool wrote_scale_mode = false;
+	char line[256] = {};
+	if (in)
+	{
+		while (fgets(line, sizeof(line), in))
+		{
+			char inspect[256] = {};
+			snprintf(inspect, sizeof(inspect), "%s", line);
+
+			char *cursor = inspect;
+			while (*cursor && isspace((unsigned char)*cursor)) cursor++;
+			if (*cursor == '#')
+			{
+				fputs(line, out);
+				continue;
+			}
+
+			char *equals = strchr(cursor, '=');
+			if (equals)
+			{
+				*equals = 0;
+				trim_in_place(cursor);
+				if (!strcasecmp(cursor, "scale-mode"))
+				{
+					if (mode == kScaleModeNative)
+					{
+						fputs("scale-mode = native\n", out);
+						wrote_scale_mode = true;
+					}
+					else if (mode == kScaleModeNearest)
+					{
+						fputs("scale-mode = nearest\n", out);
+						wrote_scale_mode = true;
+					}
+					continue;
+				}
+			}
+
+			fputs(line, out);
+		}
+
+		fclose(in);
+	}
+
+	if (!wrote_scale_mode)
+	{
+		if (mode == kScaleModeNative)
+		{
+			fputs("\nscale-mode = native\n", out);
+		}
+		else if (mode == kScaleModeNearest)
+		{
+			fputs("\nscale-mode = nearest\n", out);
+		}
+	}
+
+	if (fclose(out) != 0) return false;
+	if (rename(temp_path, path) != 0)
+	{
+		remove(temp_path);
+		return false;
+	}
+
+	return true;
+}
+
 StartupScaleModeSelection resolve_startup_scale_mode()
 {
 	StartupScaleModeSelection selection = {};
@@ -424,16 +537,20 @@ bool read_runtime_fps_default()
 void draw_wrapper_menu(int selected)
 {
 	char fps_line[33] = {};
+	char scale_line[33] = {};
 	snprintf(fps_line, sizeof(fps_line), " FPS Counter: %s", g_wrapper_fps_enabled ? "On" : "Off");
+	snprintf(scale_line, sizeof(scale_line), " Scale: %s", runtime_scale_mode_label(g_wrapper_scale_mode));
 
-	OsdSetSize(6);
+	OsdSetSize(8);
 	OsdSetTitle(kCoreName, 0);
 	OsdClear();
 	OsdWrite(0, " Menu");
 	OsdWrite(1, "");
 	OsdWrite(2, " Resume 3SX", selected == kMenuResume);
 	OsdWrite(3, fps_line, selected == kMenuFpsToggle);
-	OsdWrite(4, " Quit To MiSTer", selected == kMenuQuit);
+	OsdWrite(4, scale_line, selected == kMenuScaleMode);
+	OsdWrite(5, " Restart 3SX", selected == kMenuRestart);
+	OsdWrite(6, " Quit To MiSTer", selected == kMenuQuit);
 	threesx_wrapper_menu_set_visible(1);
 	OsdMenuCtl(1);
 	OsdEnable(DISABLE_KEYBOARD);
@@ -497,6 +614,26 @@ void service_wrapper_menu(pid_t child)
 				g_wrapper_fps_enabled = !g_wrapper_fps_enabled;
 				draw_wrapper_menu(g_wrapper_menu_selected);
 			}
+			return;
+		}
+
+		if (g_wrapper_menu_selected == kMenuScaleMode)
+		{
+			const int next_mode = (g_wrapper_scale_mode + 1) % kScaleModeMenuCount;
+			if (write_runtime_scale_mode_default(next_mode))
+			{
+				g_wrapper_scale_mode = next_mode;
+				draw_wrapper_menu(g_wrapper_menu_selected);
+			}
+			return;
+		}
+
+		if (g_wrapper_menu_selected == kMenuRestart)
+		{
+			g_wrapper_restart_requested = 1;
+			g_wrapper_menu_visible = 0;
+			disable_wrapper_osd();
+			kill(child, SIGTERM);
 			return;
 		}
 
@@ -676,6 +813,9 @@ int threesx_wrapper_run(int argc, char *argv[])
 	g_wrapper_menu_visible = 0;
 	g_wrapper_menu_selected = kMenuResume;
 	g_wrapper_fps_enabled = read_runtime_fps_default() ? 1 : 0;
+	g_wrapper_scale_mode = read_runtime_scale_mode_default();
+	g_wrapper_restart_requested = 0;
+	g_wrapper_signal = 0;
 
 	(void)mkdir(kLogDir, 0755);
 
@@ -736,144 +876,156 @@ int threesx_wrapper_run(int argc, char *argv[])
 	               runtime_tty2_requested() ? "set" : "unset",
 	               active_vt);
 
-	const StartupScaleModeSelection startup_scale_mode = resolve_startup_scale_mode();
-	write_log_line(wrapper_log,
-	               "startup_scale_mode source=%s value=%s env=%s direct_video=%d vga_scaler=%d io_type=%d",
-	               startup_scale_mode.source,
-	               startup_scale_mode.value,
-	               startup_scale_mode.set_env ? kRuntimeScaleModeEnv : "unset",
-	               startup_scale_mode.direct_video,
-	               startup_scale_mode.vga_scaler,
-	               startup_scale_mode.io_type);
-
-	set_runtime_environment(startup_scale_mode);
-
-	int last_run_fd = open(kLastRunLogPath, O_WRONLY | O_CREAT | O_TRUNC | O_APPEND | O_CLOEXEC, 0644);
-	if (last_run_fd < 0)
+	for (;;)
 	{
-		return show_error_and_return("Cannot open /media/fat/games/3sx/logs/last-run.log", wrapper_log, active_vt, saved_stdout, saved_stderr);
-	}
+		const StartupScaleModeSelection startup_scale_mode = resolve_startup_scale_mode();
+		write_log_line(wrapper_log,
+		               "startup_scale_mode source=%s value=%s env=%s direct_video=%d vga_scaler=%d io_type=%d",
+		               startup_scale_mode.source,
+		               startup_scale_mode.value,
+		               startup_scale_mode.set_env ? kRuntimeScaleModeEnv : "unset",
+		               startup_scale_mode.direct_video,
+		               startup_scale_mode.vga_scaler,
+		               startup_scale_mode.io_type);
 
-	write_fd_line(last_run_fd, "==== 3SX wrapper launch ====");
-	write_fd_line(last_run_fd, "pid=%d ppid=%d", getpid(), getppid());
-	write_fd_line(last_run_fd, "cwd=%s", cwd_buffer);
-	write_fd_line(last_run_fd, "pgrp=%d sid=%d", getpgrp(), getsid(0));
-	write_fd_line(last_run_fd, "active_vt=tty%d", active_vt);
-	write_fd_line(last_run_fd,
-	              "startup_scale_mode source=%s value=%s env=%s direct_video=%d vga_scaler=%d io_type=%d",
-	              startup_scale_mode.source,
-	              startup_scale_mode.value,
-	              startup_scale_mode.set_env ? kRuntimeScaleModeEnv : "unset",
-	              startup_scale_mode.direct_video,
-	              startup_scale_mode.vga_scaler,
-	              startup_scale_mode.io_type);
+		set_runtime_environment(startup_scale_mode);
 
-	int err_pipe[2];
-	if (pipe2(err_pipe, O_CLOEXEC) < 0)
-	{
-		close(last_run_fd);
-		return show_error_and_return("Cannot create 3SX launch pipe", wrapper_log, active_vt, saved_stdout, saved_stderr);
-	}
-
-	struct sigaction old_int = {}, old_hup = {}, old_term = {};
-	install_signal_handlers(&old_int, &old_hup, &old_term);
-
-	pid_t child = fork();
-	if (child < 0)
-	{
-		restore_signal_handlers(&old_int, &old_hup, &old_term);
-		close(err_pipe[0]);
-		close(err_pipe[1]);
-		close(last_run_fd);
-		return show_error_and_return("Cannot fork 3SX runtime", wrapper_log, active_vt, saved_stdout, saved_stderr);
-	}
-
-	if (child == 0)
-	{
-		close(err_pipe[0]);
-
-		int stdin_fd = open("/dev/null", O_RDONLY | O_CLOEXEC);
-		if (stdin_fd >= 0)
+		int last_run_fd = open(kLastRunLogPath, O_WRONLY | O_CREAT | O_TRUNC | O_APPEND | O_CLOEXEC, 0644);
+		if (last_run_fd < 0)
 		{
-			dup2(stdin_fd, STDIN_FILENO);
-			close(stdin_fd);
+			return show_error_and_return("Cannot open /media/fat/games/3sx/logs/last-run.log", wrapper_log, active_vt, saved_stdout, saved_stderr);
 		}
 
-		dup2(last_run_fd, STDOUT_FILENO);
-		dup2(last_run_fd, STDERR_FILENO);
-		if (last_run_fd > STDERR_FILENO) close(last_run_fd);
+		write_fd_line(last_run_fd, "==== 3SX wrapper launch ====");
+		write_fd_line(last_run_fd, "pid=%d ppid=%d", getpid(), getppid());
+		write_fd_line(last_run_fd, "cwd=%s", cwd_buffer);
+		write_fd_line(last_run_fd, "pgrp=%d sid=%d", getpgrp(), getsid(0));
+		write_fd_line(last_run_fd, "active_vt=tty%d", active_vt);
+		write_fd_line(last_run_fd,
+		              "startup_scale_mode source=%s value=%s env=%s direct_video=%d vga_scaler=%d io_type=%d",
+		              startup_scale_mode.source,
+		              startup_scale_mode.value,
+		              startup_scale_mode.set_env ? kRuntimeScaleModeEnv : "unset",
+		              startup_scale_mode.direct_video,
+		              startup_scale_mode.vga_scaler,
+		              startup_scale_mode.io_type);
 
-		std::vector<char *> child_argv;
-		child_argv.push_back(const_cast<char *>(kRuntimeBinary));
-		for (int i = 2; i < argc; ++i) child_argv.push_back(argv[i]);
-		child_argv.push_back(nullptr);
+		int err_pipe[2];
+		if (pipe2(err_pipe, O_CLOEXEC) < 0)
+		{
+			close(last_run_fd);
+			return show_error_and_return("Cannot create 3SX launch pipe", wrapper_log, active_vt, saved_stdout, saved_stderr);
+		}
 
-		execve(kRuntimeBinary, child_argv.data(), environ);
+		struct sigaction old_int = {}, old_hup = {}, old_term = {};
+		install_signal_handlers(&old_int, &old_hup, &old_term);
 
-		int exec_errno = errno;
-		(void)write(err_pipe[1], &exec_errno, sizeof(exec_errno));
-		_exit(127);
-	}
+		pid_t child = fork();
+		if (child < 0)
+		{
+			restore_signal_handlers(&old_int, &old_hup, &old_term);
+			close(err_pipe[0]);
+			close(err_pipe[1]);
+			close(last_run_fd);
+			return show_error_and_return("Cannot fork 3SX runtime", wrapper_log, active_vt, saved_stdout, saved_stderr);
+		}
 
-	g_child_pid = child;
-	close(err_pipe[1]);
+		if (child == 0)
+		{
+			close(err_pipe[0]);
 
-	int exec_errno = 0;
-	ssize_t exec_read = read(err_pipe[0], &exec_errno, sizeof(exec_errno));
-	close(err_pipe[0]);
+			int stdin_fd = open("/dev/null", O_RDONLY | O_CLOEXEC);
+			if (stdin_fd >= 0)
+			{
+				dup2(stdin_fd, STDIN_FILENO);
+				close(stdin_fd);
+			}
 
-	write_log_line(wrapper_log, "child_pid=%d", child);
-	write_log_line(wrapper_log, "runtime=%s", kRuntimeBinary);
-	write_log_line(wrapper_log, "THREESX_HOME=%s", kRuntimeHome);
-	write_log_line(wrapper_log, "LD_LIBRARY_PATH=%s", getenv("LD_LIBRARY_PATH") ? getenv("LD_LIBRARY_PATH") : "");
-	write_log_line(wrapper_log, "SDL_VIDEODRIVER=%s", getenv("SDL_VIDEODRIVER") ? getenv("SDL_VIDEODRIVER") : "");
-	write_log_line(wrapper_log, "SDL_VIDEO_DRIVER=%s", getenv("SDL_VIDEO_DRIVER") ? getenv("SDL_VIDEO_DRIVER") : "");
-	write_log_line(wrapper_log, "SDL_RENDER_DRIVER=%s", getenv("SDL_RENDER_DRIVER") ? getenv("SDL_RENDER_DRIVER") : "");
-	write_log_line(wrapper_log,
-	               "%s=%s",
-	               kRuntimeScaleModeEnv,
-	               getenv(kRuntimeScaleModeEnv) ? getenv(kRuntimeScaleModeEnv) : "");
+			dup2(last_run_fd, STDOUT_FILENO);
+			dup2(last_run_fd, STDERR_FILENO);
+			if (last_run_fd > STDERR_FILENO) close(last_run_fd);
 
-	if (!forced)
-	{
-		// Keep the wrapper's polling/menu loop off the runtime's CPU.
-		pin_current_thread_to_cpu(wrapper_log, "wrapper_ui", 0);
-	}
+			std::vector<char *> child_argv;
+			child_argv.push_back(const_cast<char *>(kRuntimeBinary));
+			for (int i = 2; i < argc; ++i) child_argv.push_back(argv[i]);
+			child_argv.push_back(nullptr);
 
-	int exit_code = wait_for_child(child, !forced);
-	restore_signal_handlers(&old_int, &old_hup, &old_term);
-	g_child_pid = -1;
+			execve(kRuntimeBinary, child_argv.data(), environ);
 
-	write_fd_line(last_run_fd, "exit=%d", exit_code);
-	write_log_line(wrapper_log, "child_exit=%d", exit_code);
+			int exec_errno = errno;
+			(void)write(err_pipe[1], &exec_errno, sizeof(exec_errno));
+			_exit(127);
+		}
 
-	close(last_run_fd);
+		g_child_pid = child;
+		close(err_pipe[1]);
 
-	if (exec_read > 0)
-	{
-		char error_message[512] = {};
-		snprintf(error_message, sizeof(error_message), "Failed to launch 3SX (%s)", strerror(exec_errno));
-		return show_error_and_return(error_message, wrapper_log, active_vt, saved_stdout, saved_stderr);
-	}
+		int exec_errno = 0;
+		ssize_t exec_read = read(err_pipe[0], &exec_errno, sizeof(exec_errno));
+		close(err_pipe[0]);
 
-	if (g_wrapper_signal)
-	{
-		int signal_exit = 128 + g_wrapper_signal;
-		write_log_line(wrapper_log, "wrapper_signal=%d", g_wrapper_signal);
-		restore_console(active_vt);
-		restore_stdio(saved_stdout, saved_stderr);
-		fclose(wrapper_log);
-		return signal_exit;
-	}
+		write_log_line(wrapper_log, "child_pid=%d", child);
+		write_log_line(wrapper_log, "runtime=%s", kRuntimeBinary);
+		write_log_line(wrapper_log, "THREESX_HOME=%s", kRuntimeHome);
+		write_log_line(wrapper_log, "LD_LIBRARY_PATH=%s", getenv("LD_LIBRARY_PATH") ? getenv("LD_LIBRARY_PATH") : "");
+		write_log_line(wrapper_log, "SDL_VIDEODRIVER=%s", getenv("SDL_VIDEODRIVER") ? getenv("SDL_VIDEODRIVER") : "");
+		write_log_line(wrapper_log, "SDL_VIDEO_DRIVER=%s", getenv("SDL_VIDEO_DRIVER") ? getenv("SDL_VIDEO_DRIVER") : "");
+		write_log_line(wrapper_log, "SDL_RENDER_DRIVER=%s", getenv("SDL_RENDER_DRIVER") ? getenv("SDL_RENDER_DRIVER") : "");
+		write_log_line(wrapper_log,
+		               "%s=%s",
+		               kRuntimeScaleModeEnv,
+		               getenv(kRuntimeScaleModeEnv) ? getenv(kRuntimeScaleModeEnv) : "");
 
-	if (forced)
-	{
-		restore_console(active_vt);
-		restore_stdio(saved_stdout, saved_stderr);
-		fclose(wrapper_log);
+		if (!forced)
+		{
+			// Keep the wrapper's polling/menu loop off the runtime's CPU.
+			pin_current_thread_to_cpu(wrapper_log, "wrapper_ui", 0);
+		}
+
+		int exit_code = wait_for_child(child, !forced);
+		restore_signal_handlers(&old_int, &old_hup, &old_term);
+		g_child_pid = -1;
+
+		write_fd_line(last_run_fd, "exit=%d", exit_code);
+		write_log_line(wrapper_log, "child_exit=%d", exit_code);
+
+		close(last_run_fd);
+
+		if (exec_read > 0)
+		{
+			char error_message[512] = {};
+			snprintf(error_message, sizeof(error_message), "Failed to launch 3SX (%s)", strerror(exec_errno));
+			return show_error_and_return(error_message, wrapper_log, active_vt, saved_stdout, saved_stderr);
+		}
+
+		if (g_wrapper_signal)
+		{
+			int signal_exit = 128 + g_wrapper_signal;
+			write_log_line(wrapper_log, "wrapper_signal=%d", g_wrapper_signal);
+			restore_console(active_vt);
+			restore_stdio(saved_stdout, saved_stderr);
+			fclose(wrapper_log);
+			return signal_exit;
+		}
+
+		if (forced)
+		{
+			restore_console(active_vt);
+			restore_stdio(saved_stdout, saved_stderr);
+			fclose(wrapper_log);
+			return exit_code;
+		}
+
+		if (g_wrapper_restart_requested)
+		{
+			write_log_line(wrapper_log, "restart_runtime=1");
+			g_wrapper_restart_requested = 0;
+			g_wrapper_menu_visible = 0;
+			g_wrapper_menu_selected = kMenuResume;
+			continue;
+		}
+
+		restart_to_menu(wrapper_log, saved_stdout, saved_stderr, runtime_vt);
 		return exit_code;
 	}
-
-	restart_to_menu(wrapper_log, saved_stdout, saved_stderr, runtime_vt);
-	return exit_code;
 }
