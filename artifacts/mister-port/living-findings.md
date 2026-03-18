@@ -193,7 +193,7 @@ Scope guardrails:
 
 - 2026-03-18T19:29:45-0400
   - Final commit hash:
-    - pending docs-only closure commit
+    - `9dbc1460`
   - Bottleneck targeted:
     - native ordinary-gameplay exact-copy raster cost on the `software_frame_exact` path, specifically whether fully opaque cached ARGB rows could make the dominant exact textured-copy helper cheaper without changing routing or blending semantics
   - Change summary:

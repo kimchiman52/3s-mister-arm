@@ -5410,7 +5410,7 @@
   - [x] both findings are fixed in this diff; no runtime follow-up survived review because the candidate had already been fully reverted after the native keep lane failed
 - [x] Keep/rollback decision:
   - [x] reject and revert. This exact-copy opaque-row reland made the deciding native Remy lane slower while leaving the ordinary gameplay guards effectively flat, so it is not a credible runtime keep on the current native gameplay tree
-- [ ] final commit hash:
-  - [ ] pending docs-only closure commit
+- [x] final commit hash:
+  - [x] `9dbc1460`
 - [x] next best candidate:
   - [x] do not retry exact-copy opaque-row fast paths blindly. The next native gameplay loop should stay off the blocked partial-refresh reland but re-rank a different measured ordinary-gameplay bottleneck instead of another unproven exact-copy micro-optimization
