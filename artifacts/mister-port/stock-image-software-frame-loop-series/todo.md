@@ -5198,10 +5198,10 @@
   - [x] the standing keep gates did not justify a keep either. `loop113-control-post` landed at `69.7549 FPS` versus `70.7160` baseline while `loop113-super-post` landed at `45.2714 FPS` versus `44.8966`; both stayed on direct present with no fallback, but the Yun regression made the runtime experiment a clear reject
 - [x] Review outcome:
   - [x] an independent `explorer` review agent (`Descartes`) reviewed the final docs-only rollback diff and found two valid doc issues: the review section still used future tense and the closeout still lacked a concrete closure hash
-  - [x] the review-placeholder issue is fixed in this closeout, and the concrete rollback hash will be backfilled immediately after creating the docs-only closure commit so the checklist and living-memory entry can point at the real rejected-experiment closeout commit
+  - [x] both valid review findings are now fixed in the docs: this section records the completed review result and the checklist/living-memory closeout points at the real rejected-experiment rollback commit `e32de440`
 - [x] Keep/rollback decision:
   - [x] reject and revert. Exact lookup reuse adds overhead without reducing Yun workload counts, so it makes both the first visible Genei-Jin burst and the longer active run slower on corrected same-tree hardware telemetry
 - [x] final commit hash:
-  - [x] recorded in the cycle closeout commit
+  - [x] `e32de440`
 - [x] next best candidate:
   - [x] do not retry exact lookup reuse now. The next safe runtime loop should either reduce inner-loop cost on the existing kept `ppg-seqs 81/82` fast path without adding per-task cache probes, or target the still-generic clipped `128x48` SA-sign family (`texture_handle 77`) because lookup-table setup is not the remaining ceiling

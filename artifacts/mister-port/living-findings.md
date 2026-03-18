@@ -226,7 +226,7 @@ Scope guardrails:
 
 - 2026-03-17T23:15:00-0400
   - Commit hash:
-    - recorded in the cycle closeout commit
+    - `e32de440`
   - Bottleneck targeted:
     - Yun SA3 first-visible activation on the stock MiSTer software-frame path, specifically whether exact X/Y lookup reuse can lower the dominant `ppg-seqs 81/82` fast-non-integer helper cost without changing workload routing
   - Change summary:
