@@ -1187,6 +1187,8 @@ static void perf_capture_reset_storage(void) {
     SDLGameRenderer_ResetPerfCaptureUnlockLocalityTelemetry();
     SDLGameRenderer_ResetPerfCaptureTextureRenewTelemetry();
     SDLGameRenderer_ResetPerfCaptureRasterTimingTelemetry();
+    SDLGameRenderer_ResetPerfCaptureFastNonIntegerFamilyTelemetry();
+    SDLGameRenderer_ResetPerfCaptureGenericTexturedFamilyTelemetry();
     SDLGameRenderer_ResetPerfCaptureTexturedGeometryRecoveredTelemetry();
     SDLGameRenderer_ResetPerfCaptureTexturedGeometryFallbackTelemetry();
     PLS03_ResetSuperArtCommandTelemetry();
@@ -1401,6 +1403,8 @@ void SDLApp_ConfigurePerfCapture(int frame_count, const char* output_path, const
     SDLGameRenderer_ResetPerfCaptureUnlockLocalityTelemetry();
     SDLGameRenderer_ResetPerfCaptureTextureRenewTelemetry();
     SDLGameRenderer_ResetPerfCaptureRasterTimingTelemetry();
+    SDLGameRenderer_ResetPerfCaptureFastNonIntegerFamilyTelemetry();
+    SDLGameRenderer_ResetPerfCaptureGenericTexturedFamilyTelemetry();
     PLS03_ResetSuperArtCommandTelemetry();
     perf_capture_output_path = output_path != NULL ? SDL_strdup(output_path) : NULL;
     perf_capture_scene_name = scene_name != NULL ? SDL_strdup(scene_name) : NULL;
@@ -1531,6 +1535,26 @@ static void perf_capture_write_summary(void) {
     };
     const int raster_bucket_timing_count = SDLGameRenderer_GetPerfCaptureRasterBucketTimings(
         raster_bucket_timings, SDL_arraysize(raster_bucket_timings));
+    SDLGameRenderer_PerfCaptureTexturedRectFamily fast_non_integer_families[8] = { 0 };
+    const int fast_non_integer_family_count = SDLGameRenderer_GetPerfCaptureFastNonIntegerFamilies(
+        fast_non_integer_families, SDL_arraysize(fast_non_integer_families));
+    Uint64 fast_non_integer_family_tasks_total = 0;
+    Uint64 fast_non_integer_family_pixels_total = 0;
+    Uint64 fast_non_integer_family_lookup_entries_total = 0;
+    SDLGameRenderer_GetPerfCaptureFastNonIntegerFamilyTotals(&fast_non_integer_family_tasks_total,
+                                                             &fast_non_integer_family_pixels_total,
+                                                             &fast_non_integer_family_lookup_entries_total,
+                                                             NULL);
+    SDLGameRenderer_PerfCaptureTexturedRectFamily generic_textured_families[8] = { 0 };
+    const int generic_textured_family_count = SDLGameRenderer_GetPerfCaptureGenericTexturedFamilies(
+        generic_textured_families, SDL_arraysize(generic_textured_families));
+    Uint64 generic_textured_family_tasks_total = 0;
+    Uint64 generic_textured_family_pixels_total = 0;
+    Uint64 generic_textured_family_lookup_entries_total = 0;
+    SDLGameRenderer_GetPerfCaptureGenericTexturedFamilyTotals(&generic_textured_family_tasks_total,
+                                                              &generic_textured_family_pixels_total,
+                                                              &generic_textured_family_lookup_entries_total,
+                                                              NULL);
     SDLGameRenderer_PerfCaptureTexturedGeometryFallbackFamily textured_geometry_recovered_families[8] = { 0 };
     const int textured_geometry_recovered_family_count = SDLGameRenderer_GetPerfCaptureTexturedGeometryRecoveredFamilies(
         textured_geometry_recovered_families, SDL_arraysize(textured_geometry_recovered_families));
@@ -3220,7 +3244,7 @@ static void perf_capture_write_summary(void) {
     }
 
     io_printf(io, "{\n");
-    io_printf(io, "  \"schema_version\": 48,\n");
+    io_printf(io, "  \"schema_version\": 49,\n");
     io_printf(io, "  \"scene\": \"");
     io_write_json_escaped_string(io, perf_capture_scene_name);
     io_printf(io, "\",\n");
@@ -4452,6 +4476,216 @@ static void perf_capture_write_summary(void) {
                       sampled_total_ms,
                       sampled_mean_ms,
                       (i + 1) < raster_bucket_timing_count ? "," : "");
+        }
+        io_printf(io, "    ],\n");
+    } else {
+        io_printf(io, "],\n");
+    }
+    io_printf(io, "    \"software_frame_fast_non_integer_families\": [");
+    if (fast_non_integer_family_count > 0) {
+        io_printf(io, "\n");
+        for (int i = 0; i < fast_non_integer_family_count; i++) {
+            const SDLGameRenderer_PerfCaptureTexturedRectFamily* entry = &fast_non_integer_families[i];
+            const double task_ratio = fast_non_integer_family_tasks_total > 0
+                                          ? (double)entry->task_count / (double)fast_non_integer_family_tasks_total
+                                          : 0.0;
+            const double pixel_ratio = fast_non_integer_family_pixels_total > 0
+                                           ? (double)entry->submitted_pixels /
+                                                 (double)fast_non_integer_family_pixels_total
+                                           : 0.0;
+            const double lookup_ratio = fast_non_integer_family_lookup_entries_total > 0
+                                            ? (double)entry->lookup_entries /
+                                                  (double)fast_non_integer_family_lookup_entries_total
+                                            : 0.0;
+            io_printf(io,
+                      "      {\"texture_handle\": %d, \"palette_handle\": %d, "
+                      "\"source_format\": \"%s\", \"source_width\": %d, \"source_height\": %d, "
+                      "\"logical_identity_known\": %s, "
+                      "\"logical_identity_mixed\": %s, "
+                      "\"logical_identity_registrations_total\": %u, "
+                      "\"logical_source_kind\": \"%s\", "
+                      "\"logical_ix_num\": %d, "
+                      "\"logical_ix_num_first\": %d, "
+                      "\"logical_slot_index\": %d, "
+                      "\"logical_chunk_index\": %d, "
+                      "\"logical_texture_total\": %d, "
+                      "\"alpha_only\": %s, \"rgb_mod\": %s, \"opaque_color\": %s, "
+                      "\"integer_positions\": %s, \"integer_source_rect\": %s, "
+                      "\"full_texture_source_rect\": %s, "
+                      "\"clipped\": %s, \"flip_h\": %s, \"flip_v\": %s, "
+                      "\"task_count_total\": %llu, \"task_count_mean\": %.4f, \"task_ratio\": %.6f, "
+                      "\"submitted_pixels_total\": %llu, \"submitted_pixels_mean\": %.2f, "
+                      "\"submitted_pixel_ratio\": %.6f, "
+                      "\"lookup_entries_total\": %llu, \"lookup_entries_mean\": %.2f, "
+                      "\"lookup_entry_ratio\": %.6f, "
+                      "\"source_rect_x_min\": %d, \"source_rect_x_max\": %d, "
+                      "\"source_rect_y_min\": %d, \"source_rect_y_max\": %d, "
+                      "\"source_rect_w_min\": %d, \"source_rect_w_max\": %d, "
+                      "\"source_rect_h_min\": %d, \"source_rect_h_max\": %d, "
+                      "\"dst_rect_x_min\": %d, \"dst_rect_x_max\": %d, "
+                      "\"dst_rect_y_min\": %d, \"dst_rect_y_max\": %d, "
+                      "\"dst_rect_w_min\": %d, \"dst_rect_w_max\": %d, "
+                      "\"dst_rect_h_min\": %d, \"dst_rect_h_max\": %d, "
+                      "\"visible_w_min\": %d, \"visible_w_max\": %d, "
+                      "\"visible_h_min\": %d, \"visible_h_max\": %d}%s\n",
+                      entry->texture_handle,
+                      entry->palette_handle,
+                      pixel_format_name_safe(entry->source_format),
+                      entry->source_width,
+                      entry->source_height,
+                      entry->logical_identity_known ? "true" : "false",
+                      entry->logical_identity_mixed ? "true" : "false",
+                      entry->logical_identity_registrations,
+                      texture_logical_source_kind_name(entry->logical_source_kind),
+                      entry->logical_ix_num,
+                      entry->logical_ix_num_first,
+                      entry->logical_slot_index,
+                      entry->logical_chunk_index,
+                      entry->logical_texture_total,
+                      entry->alpha_only ? "true" : "false",
+                      entry->rgb_mod ? "true" : "false",
+                      entry->opaque_color ? "true" : "false",
+                      entry->integer_positions ? "true" : "false",
+                      entry->integer_source_rect ? "true" : "false",
+                      entry->full_texture_source_rect ? "true" : "false",
+                      entry->clipped ? "true" : "false",
+                      entry->flip_h ? "true" : "false",
+                      entry->flip_v ? "true" : "false",
+                      (unsigned long long)entry->task_count,
+                      (double)entry->task_count / frame_count,
+                      task_ratio,
+                      (unsigned long long)entry->submitted_pixels,
+                      (double)entry->submitted_pixels / frame_count,
+                      pixel_ratio,
+                      (unsigned long long)entry->lookup_entries,
+                      (double)entry->lookup_entries / frame_count,
+                      lookup_ratio,
+                      entry->source_x_min,
+                      entry->source_x_max,
+                      entry->source_y_min,
+                      entry->source_y_max,
+                      entry->source_w_min,
+                      entry->source_w_max,
+                      entry->source_h_min,
+                      entry->source_h_max,
+                      entry->dst_x_min,
+                      entry->dst_x_max,
+                      entry->dst_y_min,
+                      entry->dst_y_max,
+                      entry->dst_w_min,
+                      entry->dst_w_max,
+                      entry->dst_h_min,
+                      entry->dst_h_max,
+                      entry->visible_w_min,
+                      entry->visible_w_max,
+                      entry->visible_h_min,
+                      entry->visible_h_max,
+                      (i + 1) < fast_non_integer_family_count ? "," : "");
+        }
+        io_printf(io, "    ],\n");
+    } else {
+        io_printf(io, "],\n");
+    }
+    io_printf(io, "    \"software_frame_generic_textured_families\": [");
+    if (generic_textured_family_count > 0) {
+        io_printf(io, "\n");
+        for (int i = 0; i < generic_textured_family_count; i++) {
+            const SDLGameRenderer_PerfCaptureTexturedRectFamily* entry = &generic_textured_families[i];
+            const double task_ratio = generic_textured_family_tasks_total > 0
+                                          ? (double)entry->task_count / (double)generic_textured_family_tasks_total
+                                          : 0.0;
+            const double pixel_ratio = generic_textured_family_pixels_total > 0
+                                           ? (double)entry->submitted_pixels /
+                                                 (double)generic_textured_family_pixels_total
+                                           : 0.0;
+            const double lookup_ratio = generic_textured_family_lookup_entries_total > 0
+                                            ? (double)entry->lookup_entries /
+                                                  (double)generic_textured_family_lookup_entries_total
+                                            : 0.0;
+            io_printf(io,
+                      "      {\"texture_handle\": %d, \"palette_handle\": %d, "
+                      "\"source_format\": \"%s\", \"source_width\": %d, \"source_height\": %d, "
+                      "\"logical_identity_known\": %s, "
+                      "\"logical_identity_mixed\": %s, "
+                      "\"logical_identity_registrations_total\": %u, "
+                      "\"logical_source_kind\": \"%s\", "
+                      "\"logical_ix_num\": %d, "
+                      "\"logical_ix_num_first\": %d, "
+                      "\"logical_slot_index\": %d, "
+                      "\"logical_chunk_index\": %d, "
+                      "\"logical_texture_total\": %d, "
+                      "\"alpha_only\": %s, \"rgb_mod\": %s, \"opaque_color\": %s, "
+                      "\"integer_positions\": %s, \"integer_source_rect\": %s, "
+                      "\"full_texture_source_rect\": %s, "
+                      "\"clipped\": %s, \"flip_h\": %s, \"flip_v\": %s, "
+                      "\"task_count_total\": %llu, \"task_count_mean\": %.4f, \"task_ratio\": %.6f, "
+                      "\"submitted_pixels_total\": %llu, \"submitted_pixels_mean\": %.2f, "
+                      "\"submitted_pixel_ratio\": %.6f, "
+                      "\"lookup_entries_total\": %llu, \"lookup_entries_mean\": %.2f, "
+                      "\"lookup_entry_ratio\": %.6f, "
+                      "\"source_rect_x_min\": %d, \"source_rect_x_max\": %d, "
+                      "\"source_rect_y_min\": %d, \"source_rect_y_max\": %d, "
+                      "\"source_rect_w_min\": %d, \"source_rect_w_max\": %d, "
+                      "\"source_rect_h_min\": %d, \"source_rect_h_max\": %d, "
+                      "\"dst_rect_x_min\": %d, \"dst_rect_x_max\": %d, "
+                      "\"dst_rect_y_min\": %d, \"dst_rect_y_max\": %d, "
+                      "\"dst_rect_w_min\": %d, \"dst_rect_w_max\": %d, "
+                      "\"dst_rect_h_min\": %d, \"dst_rect_h_max\": %d, "
+                      "\"visible_w_min\": %d, \"visible_w_max\": %d, "
+                      "\"visible_h_min\": %d, \"visible_h_max\": %d}%s\n",
+                      entry->texture_handle,
+                      entry->palette_handle,
+                      pixel_format_name_safe(entry->source_format),
+                      entry->source_width,
+                      entry->source_height,
+                      entry->logical_identity_known ? "true" : "false",
+                      entry->logical_identity_mixed ? "true" : "false",
+                      entry->logical_identity_registrations,
+                      texture_logical_source_kind_name(entry->logical_source_kind),
+                      entry->logical_ix_num,
+                      entry->logical_ix_num_first,
+                      entry->logical_slot_index,
+                      entry->logical_chunk_index,
+                      entry->logical_texture_total,
+                      entry->alpha_only ? "true" : "false",
+                      entry->rgb_mod ? "true" : "false",
+                      entry->opaque_color ? "true" : "false",
+                      entry->integer_positions ? "true" : "false",
+                      entry->integer_source_rect ? "true" : "false",
+                      entry->full_texture_source_rect ? "true" : "false",
+                      entry->clipped ? "true" : "false",
+                      entry->flip_h ? "true" : "false",
+                      entry->flip_v ? "true" : "false",
+                      (unsigned long long)entry->task_count,
+                      (double)entry->task_count / frame_count,
+                      task_ratio,
+                      (unsigned long long)entry->submitted_pixels,
+                      (double)entry->submitted_pixels / frame_count,
+                      pixel_ratio,
+                      (unsigned long long)entry->lookup_entries,
+                      (double)entry->lookup_entries / frame_count,
+                      lookup_ratio,
+                      entry->source_x_min,
+                      entry->source_x_max,
+                      entry->source_y_min,
+                      entry->source_y_max,
+                      entry->source_w_min,
+                      entry->source_w_max,
+                      entry->source_h_min,
+                      entry->source_h_max,
+                      entry->dst_x_min,
+                      entry->dst_x_max,
+                      entry->dst_y_min,
+                      entry->dst_y_max,
+                      entry->dst_w_min,
+                      entry->dst_w_max,
+                      entry->dst_h_min,
+                      entry->dst_h_max,
+                      entry->visible_w_min,
+                      entry->visible_w_max,
+                      entry->visible_h_min,
+                      entry->visible_h_max,
+                      (i + 1) < generic_textured_family_count ? "," : "");
         }
         io_printf(io, "    ],\n");
     } else {

@@ -314,6 +314,10 @@ static Uint64 perf_capture_raster_sample_counters[SDL_GAME_RENDERER_PERF_CAPTURE
 static Uint64 perf_capture_raster_sample_calls[SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_COUNT] = { 0 };
 static Uint64 perf_capture_raster_sample_pixels[SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_COUNT] = { 0 };
 static Uint64 perf_capture_raster_sample_ns[SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_COUNT] = { 0 };
+static SDLGameRenderer_PerfCaptureTexturedRectFamily perf_capture_fast_non_integer_families[16] = { 0 };
+static int perf_capture_fast_non_integer_family_count = 0;
+static SDLGameRenderer_PerfCaptureTexturedRectFamily perf_capture_generic_textured_families[16] = { 0 };
+static int perf_capture_generic_textured_family_count = 0;
 static SDLGameRenderer_PerfCaptureTexturedGeometryFallbackFamily perf_capture_textured_geometry_recovered_families[16] = {
     0
 };
@@ -503,6 +507,34 @@ typedef struct TexturedGeometryFallbackFamilyProfile {
     Uint64 submitted_pixels;
 } TexturedGeometryFallbackFamilyProfile;
 
+typedef struct TexturedRectFamilyProfile {
+    int texture_handle;
+    int palette_handle;
+    Uint32 source_format;
+    int source_width;
+    int source_height;
+    bool alpha_only;
+    bool rgb_mod;
+    bool opaque_color;
+    bool integer_positions;
+    bool integer_source_rect;
+    bool full_texture_source_rect;
+    bool clipped;
+    bool flip_h;
+    bool flip_v;
+    int source_x;
+    int source_y;
+    int source_w;
+    int source_h;
+    int dst_x;
+    int dst_y;
+    int dst_w;
+    int dst_h;
+    int visible_w;
+    int visible_h;
+    Uint64 submitted_pixels;
+} TexturedRectFamilyProfile;
+
 static int compare_render_tasks(const RenderTask* a, const RenderTask* b);
 static void insertion_sort_render_tasks(void);
 static void initialize_render_task_batch_indices(void);
@@ -631,6 +663,9 @@ static HybridFallbackReason classify_hybrid_fallback_reason(const RenderTask* ta
 #endif
 static bool analyze_textured_geometry_fallback_task(const RenderTask* task,
                                                     TexturedGeometryFallbackFamilyProfile* out_profile);
+static bool analyze_textured_rect_family_task(const RenderTask* task,
+                                              const SDL_Surface* dst_surface,
+                                              TexturedRectFamilyProfile* out_profile);
 static void note_hybrid_eligibility(const RenderTask* task);
 static bool try_resolve_geometry_task_as_rect_copy(const RenderTask* task, RenderTask* out_rect_task);
 static bool try_resolve_solid_task_as_rect(const RenderTask* task, SDL_FRect* out_rect, Uint32* out_color);
@@ -655,8 +690,11 @@ static SoftwareFrameFastCopyResult build_software_frame_fast_copy_plan(const Ren
 static void note_software_frame_fast_copy_result(const RenderTask* task,
                                                  SoftwareFrameFastCopyResult result,
                                                  const SoftwareFrameFastCopyPlan* plan,
+                                                 const SDL_Surface* dst_surface,
                                                  Uint64 non_integer_lookup_entries);
-static void note_software_frame_fast_non_integer(const RenderTask* task, Uint64 lookup_entries);
+static void note_software_frame_fast_non_integer(const RenderTask* task,
+                                                 const SDL_Surface* dst_surface,
+                                                 Uint64 lookup_entries);
 static Uint32 modulate_argb8888(Uint32 pixel, Uint32 color);
 static Uint32 blend_argb8888(Uint32 dst_pixel, Uint32 src_pixel);
 static bool raster_full_height_diagonal_strip_to_software_frame(const SoftwareFrameSolidDiagonalStrip* strip,
@@ -3672,6 +3710,221 @@ static bool software_frame_color_has_rgb_mod(Uint32 color) {
     return (color & 0x00FFFFFFu) != 0x00FFFFFFu;
 }
 
+static bool analyze_textured_rect_family_task(const RenderTask* task,
+                                              const SDL_Surface* dst_surface,
+                                              TexturedRectFamilyProfile* out_profile) {
+    if ((task == NULL) || (dst_surface == NULL) || (out_profile == NULL) ||
+        (task->type != RENDER_TASK_TYPE_TEXTURED_RECT) || (task->texture == NULL)) {
+        return false;
+    }
+
+    SDL_zero(*out_profile);
+    out_profile->texture_handle = LO_16_BITS(task->texture_binding);
+    out_profile->palette_handle = HI_16_BITS(task->texture_binding);
+    out_profile->alpha_only = software_frame_color_is_alpha_only(task->color);
+    out_profile->rgb_mod = software_frame_color_has_rgb_mod(task->color);
+    out_profile->opaque_color = ((task->color >> 24) & 0xFFu) == 0xFFu;
+    out_profile->flip_h = (task->flip & SDL_FLIP_HORIZONTAL) != 0;
+    out_profile->flip_v = (task->flip & SDL_FLIP_VERTICAL) != 0;
+    out_profile->submitted_pixels = render_task_submitted_pixels(task);
+
+    const int texture_index = out_profile->texture_handle - 1;
+    const SDL_Surface* src_surface = task->software_source_surface;
+    if ((src_surface == NULL) && (texture_index >= 0) && (texture_index < FL_TEXTURE_MAX)) {
+        src_surface = surfaces[texture_index];
+    }
+    if (src_surface != NULL) {
+        out_profile->source_format = src_surface->format;
+        out_profile->source_width = src_surface->w;
+        out_profile->source_height = src_surface->h;
+    } else {
+        out_profile->source_format = SDL_PIXELFORMAT_UNKNOWN;
+        out_profile->source_width = 0;
+        out_profile->source_height = 0;
+    }
+
+    const int dst_x = (int)SDL_roundf(task->dst_rect.x);
+    const int dst_y = (int)SDL_roundf(task->dst_rect.y);
+    const int dst_w = (int)SDL_roundf(task->dst_rect.w);
+    const int dst_h = (int)SDL_roundf(task->dst_rect.h);
+    out_profile->integer_positions =
+        nearly_equal(task->dst_rect.x, (float)dst_x) && nearly_equal(task->dst_rect.y, (float)dst_y) &&
+        nearly_equal(task->dst_rect.w, (float)dst_w) && nearly_equal(task->dst_rect.h, (float)dst_h) && (dst_w > 0) &&
+        (dst_h > 0);
+    if (out_profile->integer_positions) {
+        out_profile->dst_x = dst_x;
+        out_profile->dst_y = dst_y;
+        out_profile->dst_w = dst_w;
+        out_profile->dst_h = dst_h;
+    } else {
+        out_profile->dst_x = -1;
+        out_profile->dst_y = -1;
+        out_profile->dst_w = -1;
+        out_profile->dst_h = -1;
+    }
+
+    if ((out_profile->source_width > 0) && (out_profile->source_height > 0)) {
+        const float src_x_f = task->src_uv_rect.x * (float)out_profile->source_width;
+        const float src_y_f = task->src_uv_rect.y * (float)out_profile->source_height;
+        const float src_w_f = task->src_uv_rect.w * (float)out_profile->source_width;
+        const float src_h_f = task->src_uv_rect.h * (float)out_profile->source_height;
+        const int src_x = (int)SDL_roundf(src_x_f);
+        const int src_y = (int)SDL_roundf(src_y_f);
+        const int src_w = (int)SDL_roundf(src_w_f);
+        const int src_h = (int)SDL_roundf(src_h_f);
+        out_profile->integer_source_rect =
+            nearly_equal(src_x_f, (float)src_x) && nearly_equal(src_y_f, (float)src_y) &&
+            nearly_equal(src_w_f, (float)src_w) && nearly_equal(src_h_f, (float)src_h) && (src_w > 0) && (src_h > 0);
+        if (out_profile->integer_source_rect) {
+            out_profile->source_x = src_x;
+            out_profile->source_y = src_y;
+            out_profile->source_w = src_w;
+            out_profile->source_h = src_h;
+            out_profile->full_texture_source_rect =
+                (src_x == 0) && (src_y == 0) && (src_w == out_profile->source_width) &&
+                (src_h == out_profile->source_height);
+        } else {
+            out_profile->source_x = -1;
+            out_profile->source_y = -1;
+            out_profile->source_w = -1;
+            out_profile->source_h = -1;
+        }
+    } else {
+        out_profile->source_x = -1;
+        out_profile->source_y = -1;
+        out_profile->source_w = -1;
+        out_profile->source_h = -1;
+    }
+
+    const int unclamped_x0 = (int)SDL_floorf(task->dst_rect.x);
+    const int unclamped_y0 = (int)SDL_floorf(task->dst_rect.y);
+    const int unclamped_x1 = (int)SDL_ceilf(task->dst_rect.x + task->dst_rect.w);
+    const int unclamped_y1 = (int)SDL_ceilf(task->dst_rect.y + task->dst_rect.h);
+    const int dst_x0 = clamp_to_range(unclamped_x0, 0, dst_surface->w);
+    const int dst_y0 = clamp_to_range(unclamped_y0, 0, dst_surface->h);
+    const int dst_x1 = clamp_to_range(unclamped_x1, 0, dst_surface->w);
+    const int dst_y1 = clamp_to_range(unclamped_y1, 0, dst_surface->h);
+    out_profile->visible_w = dst_x1 - dst_x0;
+    out_profile->visible_h = dst_y1 - dst_y0;
+    out_profile->clipped = (dst_x0 != unclamped_x0) || (dst_y0 != unclamped_y0) || (dst_x1 != unclamped_x1) ||
+                           (dst_y1 != unclamped_y1);
+    return true;
+}
+
+static bool textured_rect_family_matches(const SDLGameRenderer_PerfCaptureTexturedRectFamily* entry,
+                                         const TexturedRectFamilyProfile* profile) {
+    if ((entry == NULL) || (profile == NULL)) {
+        return false;
+    }
+
+    return (entry->texture_handle == profile->texture_handle) && (entry->palette_handle == profile->palette_handle) &&
+           (entry->source_format == profile->source_format) && (entry->source_width == profile->source_width) &&
+           (entry->source_height == profile->source_height) && (entry->alpha_only == (profile->alpha_only ? 1 : 0)) &&
+           (entry->rgb_mod == (profile->rgb_mod ? 1 : 0)) &&
+           (entry->opaque_color == (profile->opaque_color ? 1 : 0)) &&
+           (entry->integer_positions == (profile->integer_positions ? 1 : 0)) &&
+           (entry->integer_source_rect == (profile->integer_source_rect ? 1 : 0)) &&
+           (entry->full_texture_source_rect == (profile->full_texture_source_rect ? 1 : 0)) &&
+           (entry->clipped == (profile->clipped ? 1 : 0)) && (entry->flip_h == (profile->flip_h ? 1 : 0)) &&
+           (entry->flip_v == (profile->flip_v ? 1 : 0));
+}
+
+static void note_perf_capture_textured_rect_family(const RenderTask* task,
+                                                   const SDL_Surface* dst_surface,
+                                                   Uint64 lookup_entries,
+                                                   SDLGameRenderer_PerfCaptureTexturedRectFamily* families,
+                                                   int* family_count) {
+    if (!frame_stats_extended_enabled || (task == NULL) || (dst_surface == NULL) || (families == NULL) ||
+        (family_count == NULL)) {
+        return;
+    }
+
+    TexturedRectFamilyProfile profile;
+    if (!analyze_textured_rect_family_task(task, dst_surface, &profile)) {
+        return;
+    }
+
+    SDLGameRenderer_PerfCaptureTexturedRectFamily* entry = NULL;
+    for (int i = 0; i < *family_count; i++) {
+        if (textured_rect_family_matches(&families[i], &profile)) {
+            entry = &families[i];
+            break;
+        }
+    }
+
+    if ((entry == NULL) && (*family_count < (int)SDL_arraysize(perf_capture_fast_non_integer_families))) {
+        entry = &families[*family_count];
+        *family_count += 1;
+        SDL_zero(*entry);
+        entry->texture_handle = profile.texture_handle;
+        entry->palette_handle = profile.palette_handle;
+        entry->source_format = profile.source_format;
+        entry->source_width = profile.source_width;
+        entry->source_height = profile.source_height;
+        entry->alpha_only = profile.alpha_only ? 1 : 0;
+        entry->rgb_mod = profile.rgb_mod ? 1 : 0;
+        entry->opaque_color = profile.opaque_color ? 1 : 0;
+        entry->integer_positions = profile.integer_positions ? 1 : 0;
+        entry->integer_source_rect = profile.integer_source_rect ? 1 : 0;
+        entry->full_texture_source_rect = profile.full_texture_source_rect ? 1 : 0;
+        entry->clipped = profile.clipped ? 1 : 0;
+        entry->flip_h = profile.flip_h ? 1 : 0;
+        entry->flip_v = profile.flip_v ? 1 : 0;
+        entry->source_x_min = entry->source_x_max = profile.source_x;
+        entry->source_y_min = entry->source_y_max = profile.source_y;
+        entry->source_w_min = entry->source_w_max = profile.source_w;
+        entry->source_h_min = entry->source_h_max = profile.source_h;
+        entry->dst_x_min = entry->dst_x_max = profile.dst_x;
+        entry->dst_y_min = entry->dst_y_max = profile.dst_y;
+        entry->dst_w_min = entry->dst_w_max = profile.dst_w;
+        entry->dst_h_min = entry->dst_h_max = profile.dst_h;
+        entry->visible_w_min = entry->visible_w_max = profile.visible_w;
+        entry->visible_h_min = entry->visible_h_max = profile.visible_h;
+        copy_perf_capture_texture_logical_identity(profile.texture_handle - 1,
+                                                   &entry->logical_identity_known,
+                                                   &entry->logical_identity_mixed,
+                                                   &entry->logical_identity_registrations,
+                                                   &entry->logical_source_kind,
+                                                   &entry->logical_ix_num,
+                                                   &entry->logical_ix_num_first,
+                                                   &entry->logical_slot_index,
+                                                   &entry->logical_chunk_index,
+                                                   &entry->logical_texture_total);
+    }
+
+    if (entry == NULL) {
+        return;
+    }
+
+    entry->task_count += 1;
+    entry->submitted_pixels += profile.submitted_pixels;
+    entry->lookup_entries += lookup_entries;
+    update_textured_geometry_fallback_range(&entry->source_x_min, &entry->source_x_max, profile.source_x);
+    update_textured_geometry_fallback_range(&entry->source_y_min, &entry->source_y_max, profile.source_y);
+    update_textured_geometry_fallback_range(&entry->source_w_min, &entry->source_w_max, profile.source_w);
+    update_textured_geometry_fallback_range(&entry->source_h_min, &entry->source_h_max, profile.source_h);
+    update_textured_geometry_fallback_range(&entry->dst_x_min, &entry->dst_x_max, profile.dst_x);
+    update_textured_geometry_fallback_range(&entry->dst_y_min, &entry->dst_y_max, profile.dst_y);
+    update_textured_geometry_fallback_range(&entry->dst_w_min, &entry->dst_w_max, profile.dst_w);
+    update_textured_geometry_fallback_range(&entry->dst_h_min, &entry->dst_h_max, profile.dst_h);
+    update_textured_geometry_fallback_range(&entry->visible_w_min, &entry->visible_w_max, profile.visible_w);
+    update_textured_geometry_fallback_range(&entry->visible_h_min, &entry->visible_h_max, profile.visible_h);
+}
+
+static void note_perf_capture_fast_non_integer_family(const RenderTask* task,
+                                                      const SDL_Surface* dst_surface,
+                                                      Uint64 lookup_entries) {
+    note_perf_capture_textured_rect_family(
+        task, dst_surface, lookup_entries, perf_capture_fast_non_integer_families, &perf_capture_fast_non_integer_family_count);
+}
+
+static void note_perf_capture_generic_textured_family(const RenderTask* task,
+                                                      const SDL_Surface* dst_surface,
+                                                      Uint64 lookup_entries) {
+    note_perf_capture_textured_rect_family(
+        task, dst_surface, lookup_entries, perf_capture_generic_textured_families, &perf_capture_generic_textured_family_count);
+}
+
 static void note_software_frame_eligibility(const RenderTask* task, SoftwareFrameFallbackReason reason) {
     if (!frame_stats_extended_enabled || (task == NULL)) {
         return;
@@ -3797,6 +4050,7 @@ static SoftwareFrameFastCopyResult build_software_frame_fast_copy_plan(const Ren
 static void note_software_frame_fast_copy_result(const RenderTask* task,
                                                  SoftwareFrameFastCopyResult result,
                                                  const SoftwareFrameFastCopyPlan* plan,
+                                                 const SDL_Surface* dst_surface,
                                                  Uint64 non_integer_lookup_entries) {
     if (!frame_stats_extended_enabled || (task == NULL)) {
         return;
@@ -3826,6 +4080,10 @@ static void note_software_frame_fast_copy_result(const RenderTask* task,
 
     frame_stats.software_frame_generic_textured_tasks += 1;
     frame_stats.software_frame_generic_textured_pixels += submitted_pixels;
+    note_perf_capture_generic_textured_family(
+        task,
+        dst_surface,
+        result == SOFTWARE_FRAME_FAST_COPY_RESULT_NON_INTEGER ? non_integer_lookup_entries : 0);
     if (software_frame_color_is_alpha_only(task->color)) {
         frame_stats.software_frame_generic_textured_alpha_only_tasks += 1;
         frame_stats.software_frame_generic_textured_alpha_only_pixels += submitted_pixels;
@@ -3869,16 +4127,20 @@ static void note_software_frame_fast_copy_result(const RenderTask* task,
 static void note_software_frame_fast_copy_result(const RenderTask* task,
                                                  SoftwareFrameFastCopyResult result,
                                                  const SoftwareFrameFastCopyPlan* plan,
+                                                 const SDL_Surface* dst_surface,
                                                  Uint64 non_integer_lookup_entries) {
     (void)task;
     (void)result;
     (void)plan;
+    (void)dst_surface;
     (void)non_integer_lookup_entries;
 }
 #endif
 
 #if ENABLE_PERF_TELEMETRY
-static void note_software_frame_fast_non_integer(const RenderTask* task, Uint64 lookup_entries) {
+static void note_software_frame_fast_non_integer(const RenderTask* task,
+                                                 const SDL_Surface* dst_surface,
+                                                 Uint64 lookup_entries) {
     if (!frame_stats_extended_enabled || (task == NULL)) {
         return;
     }
@@ -3887,6 +4149,7 @@ static void note_software_frame_fast_non_integer(const RenderTask* task, Uint64 
     frame_stats.software_frame_fast_non_integer_tasks += 1;
     frame_stats.software_frame_fast_non_integer_pixels += submitted_pixels;
     frame_stats.software_frame_fast_non_integer_lookup_entries += lookup_entries;
+    note_perf_capture_fast_non_integer_family(task, dst_surface, lookup_entries);
     if (software_frame_color_is_alpha_only(task->color)) {
         frame_stats.software_frame_fast_non_integer_alpha_only_tasks += 1;
         frame_stats.software_frame_fast_non_integer_alpha_only_pixels += submitted_pixels;
@@ -3896,8 +4159,11 @@ static void note_software_frame_fast_non_integer(const RenderTask* task, Uint64 
     }
 }
 #else
-static void note_software_frame_fast_non_integer(const RenderTask* task, Uint64 lookup_entries) {
+static void note_software_frame_fast_non_integer(const RenderTask* task,
+                                                 const SDL_Surface* dst_surface,
+                                                 Uint64 lookup_entries) {
     (void)task;
+    (void)dst_surface;
     (void)lookup_entries;
 }
 #endif
@@ -4599,7 +4865,7 @@ static bool raster_textured_task_to_software_frame(const RenderTask* task) {
         if (try_fast_copy_fast_textured_task_to_software_frame(task, &fast_copy_plan, dst_surface, src_surface)) {
             note_perf_capture_raster_bucket_sample(
                 raster_bucket, task, perf_capture_counter_delta_to_ns(sample_start_counter, SDL_GetPerformanceCounter()));
-            note_software_frame_fast_copy_result(task, fast_copy_result, &fast_copy_plan, 0);
+            note_software_frame_fast_copy_result(task, fast_copy_result, &fast_copy_plan, dst_surface, 0);
             if (src_locked) {
                 SDL_UnlockSurface(src_surface);
             }
@@ -4618,7 +4884,7 @@ static bool raster_textured_task_to_software_frame(const RenderTask* task) {
                 SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_FAST_NON_INTEGER,
                 task,
                 perf_capture_counter_delta_to_ns(sample_start_counter, SDL_GetPerformanceCounter()));
-            note_software_frame_fast_non_integer(task, non_integer_lookup_entries);
+            note_software_frame_fast_non_integer(task, dst_surface, non_integer_lookup_entries);
             if (src_locked) {
                 SDL_UnlockSurface(src_surface);
             }
@@ -4628,7 +4894,7 @@ static bool raster_textured_task_to_software_frame(const RenderTask* task) {
 
     if ((fast_copy_result != SOFTWARE_FRAME_FAST_COPY_RESULT_EXACT) &&
         (fast_copy_result != SOFTWARE_FRAME_FAST_COPY_RESULT_SCALED)) {
-        note_software_frame_fast_copy_result(task, fast_copy_result, NULL, non_integer_lookup_entries);
+        note_software_frame_fast_copy_result(task, fast_copy_result, NULL, dst_surface, non_integer_lookup_entries);
     }
 
     const float src_x_start = task->src_uv_rect.x * (float)src_surface->w;
@@ -6260,6 +6526,16 @@ void SDLGameRenderer_ResetPerfCaptureRasterTimingTelemetry(void) {
     SDL_zero(perf_capture_raster_sample_ns);
 }
 
+void SDLGameRenderer_ResetPerfCaptureFastNonIntegerFamilyTelemetry(void) {
+    SDL_zero(perf_capture_fast_non_integer_families);
+    perf_capture_fast_non_integer_family_count = 0;
+}
+
+void SDLGameRenderer_ResetPerfCaptureGenericTexturedFamilyTelemetry(void) {
+    SDL_zero(perf_capture_generic_textured_families);
+    perf_capture_generic_textured_family_count = 0;
+}
+
 static int get_perf_capture_textured_geometry_families(
     const SDLGameRenderer_PerfCaptureTexturedGeometryFallbackFamily* families,
     int family_count,
@@ -6668,6 +6944,157 @@ int SDLGameRenderer_GetPerfCaptureRasterBucketTimings(SDLGameRenderer_PerfCaptur
     }
 
     return timing_count;
+}
+
+static int get_perf_capture_textured_rect_families(const SDLGameRenderer_PerfCaptureTexturedRectFamily* families,
+                                                   int family_count,
+                                                   SDLGameRenderer_PerfCaptureTexturedRectFamily* out_families,
+                                                   int max_families) {
+    if ((out_families == NULL) || (max_families <= 0) || (families == NULL) || (family_count <= 0)) {
+        return 0;
+    }
+
+    int selected_count = 0;
+    for (int slot = 0; slot < max_families; slot++) {
+        int best_index = -1;
+        for (int i = 0; i < family_count; i++) {
+            const SDLGameRenderer_PerfCaptureTexturedRectFamily* candidate = &families[i];
+            if (candidate->task_count == 0) {
+                continue;
+            }
+
+            bool already_selected = false;
+            for (int existing = 0; existing < selected_count; existing++) {
+                const SDLGameRenderer_PerfCaptureTexturedRectFamily* existing_entry = &out_families[existing];
+                if ((existing_entry->texture_handle == candidate->texture_handle) &&
+                    (existing_entry->palette_handle == candidate->palette_handle) &&
+                    (existing_entry->source_format == candidate->source_format) &&
+                    (existing_entry->source_width == candidate->source_width) &&
+                    (existing_entry->source_height == candidate->source_height) &&
+                    (existing_entry->alpha_only == candidate->alpha_only) &&
+                    (existing_entry->rgb_mod == candidate->rgb_mod) &&
+                    (existing_entry->opaque_color == candidate->opaque_color) &&
+                    (existing_entry->integer_positions == candidate->integer_positions) &&
+                    (existing_entry->integer_source_rect == candidate->integer_source_rect) &&
+                    (existing_entry->full_texture_source_rect == candidate->full_texture_source_rect) &&
+                    (existing_entry->clipped == candidate->clipped) &&
+                    (existing_entry->flip_h == candidate->flip_h) && (existing_entry->flip_v == candidate->flip_v)) {
+                    already_selected = true;
+                    break;
+                }
+            }
+            if (already_selected) {
+                continue;
+            }
+
+            if (best_index < 0) {
+                best_index = i;
+                continue;
+            }
+
+            const SDLGameRenderer_PerfCaptureTexturedRectFamily* best = &families[best_index];
+            if ((candidate->task_count > best->task_count) ||
+                ((candidate->task_count == best->task_count) &&
+                 (candidate->submitted_pixels > best->submitted_pixels)) ||
+                ((candidate->task_count == best->task_count) &&
+                 (candidate->submitted_pixels == best->submitted_pixels) &&
+                 (candidate->lookup_entries > best->lookup_entries)) ||
+                ((candidate->task_count == best->task_count) &&
+                 (candidate->submitted_pixels == best->submitted_pixels) &&
+                 (candidate->lookup_entries == best->lookup_entries) &&
+                 (candidate->texture_handle < best->texture_handle))) {
+                best_index = i;
+            }
+        }
+
+        if (best_index < 0) {
+            break;
+        }
+
+        SDLGameRenderer_PerfCaptureTexturedRectFamily* entry = &out_families[selected_count];
+        *entry = families[best_index];
+        const int texture_index = entry->texture_handle - 1;
+        if ((texture_index >= 0) && (texture_index < FL_TEXTURE_MAX)) {
+            copy_perf_capture_texture_logical_identity(texture_index,
+                                                       &entry->logical_identity_known,
+                                                       &entry->logical_identity_mixed,
+                                                       &entry->logical_identity_registrations,
+                                                       &entry->logical_source_kind,
+                                                       &entry->logical_ix_num,
+                                                       &entry->logical_ix_num_first,
+                                                       &entry->logical_slot_index,
+                                                       &entry->logical_chunk_index,
+                                                       &entry->logical_texture_total);
+        }
+        selected_count += 1;
+    }
+
+    return selected_count;
+}
+
+static void get_perf_capture_textured_rect_family_totals(const SDLGameRenderer_PerfCaptureTexturedRectFamily* families,
+                                                         int family_count,
+                                                         Uint64* out_task_total,
+                                                         Uint64* out_pixel_total,
+                                                         Uint64* out_lookup_entry_total,
+                                                         int* out_family_count) {
+    Uint64 task_total = 0;
+    Uint64 pixel_total = 0;
+    Uint64 lookup_entry_total = 0;
+    for (int i = 0; i < family_count; i++) {
+        task_total += families[i].task_count;
+        pixel_total += families[i].submitted_pixels;
+        lookup_entry_total += families[i].lookup_entries;
+    }
+
+    if (out_task_total != NULL) {
+        *out_task_total = task_total;
+    }
+    if (out_pixel_total != NULL) {
+        *out_pixel_total = pixel_total;
+    }
+    if (out_lookup_entry_total != NULL) {
+        *out_lookup_entry_total = lookup_entry_total;
+    }
+    if (out_family_count != NULL) {
+        *out_family_count = family_count;
+    }
+}
+
+int SDLGameRenderer_GetPerfCaptureFastNonIntegerFamilies(SDLGameRenderer_PerfCaptureTexturedRectFamily* out_families,
+                                                         int max_families) {
+    return get_perf_capture_textured_rect_families(
+        perf_capture_fast_non_integer_families, perf_capture_fast_non_integer_family_count, out_families, max_families);
+}
+
+void SDLGameRenderer_GetPerfCaptureFastNonIntegerFamilyTotals(Uint64* out_task_total,
+                                                              Uint64* out_pixel_total,
+                                                              Uint64* out_lookup_entry_total,
+                                                              int* out_family_count) {
+    get_perf_capture_textured_rect_family_totals(perf_capture_fast_non_integer_families,
+                                                 perf_capture_fast_non_integer_family_count,
+                                                 out_task_total,
+                                                 out_pixel_total,
+                                                 out_lookup_entry_total,
+                                                 out_family_count);
+}
+
+int SDLGameRenderer_GetPerfCaptureGenericTexturedFamilies(SDLGameRenderer_PerfCaptureTexturedRectFamily* out_families,
+                                                          int max_families) {
+    return get_perf_capture_textured_rect_families(
+        perf_capture_generic_textured_families, perf_capture_generic_textured_family_count, out_families, max_families);
+}
+
+void SDLGameRenderer_GetPerfCaptureGenericTexturedFamilyTotals(Uint64* out_task_total,
+                                                               Uint64* out_pixel_total,
+                                                               Uint64* out_lookup_entry_total,
+                                                               int* out_family_count) {
+    get_perf_capture_textured_rect_family_totals(perf_capture_generic_textured_families,
+                                                 perf_capture_generic_textured_family_count,
+                                                 out_task_total,
+                                                 out_pixel_total,
+                                                 out_lookup_entry_total,
+                                                 out_family_count);
 }
 
 int SDLGameRenderer_GetPerfCaptureRefreshLocalityCandidates(

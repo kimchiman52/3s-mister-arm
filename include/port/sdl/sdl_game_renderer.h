@@ -383,6 +383,55 @@ typedef struct SDLGameRenderer_PerfCaptureTexturedGeometryFallbackFamily {
     int dst_right_dx_max;
 } SDLGameRenderer_PerfCaptureTexturedGeometryFallbackFamily;
 
+typedef struct SDLGameRenderer_PerfCaptureTexturedRectFamily {
+    int texture_handle;
+    int palette_handle;
+    Uint32 source_format;
+    int source_width;
+    int source_height;
+    int logical_identity_known;
+    int logical_identity_mixed;
+    Uint32 logical_identity_registrations;
+    SDLGameRenderer_TextureLogicalSourceKind logical_source_kind;
+    int logical_ix_num;
+    int logical_ix_num_first;
+    int logical_slot_index;
+    int logical_chunk_index;
+    int logical_texture_total;
+    int alpha_only;
+    int rgb_mod;
+    int opaque_color;
+    int integer_positions;
+    int integer_source_rect;
+    int full_texture_source_rect;
+    int clipped;
+    int flip_h;
+    int flip_v;
+    Uint64 task_count;
+    Uint64 submitted_pixels;
+    Uint64 lookup_entries;
+    int source_x_min;
+    int source_x_max;
+    int source_y_min;
+    int source_y_max;
+    int source_w_min;
+    int source_w_max;
+    int source_h_min;
+    int source_h_max;
+    int dst_x_min;
+    int dst_x_max;
+    int dst_y_min;
+    int dst_y_max;
+    int dst_w_min;
+    int dst_w_max;
+    int dst_h_min;
+    int dst_h_max;
+    int visible_w_min;
+    int visible_w_max;
+    int visible_h_min;
+    int visible_h_max;
+} SDLGameRenderer_PerfCaptureTexturedRectFamily;
+
 typedef struct SDLGameRenderer_PerfCaptureRefreshLocalityCandidate {
     int texture_handle;
     Uint32 source_format;
@@ -519,6 +568,8 @@ void SDLGameRenderer_ResetPerfCaptureRefreshTelemetry(void);
 void SDLGameRenderer_ResetPerfCaptureUnlockLocalityTelemetry(void);
 void SDLGameRenderer_ResetPerfCaptureTextureRenewTelemetry(void);
 void SDLGameRenderer_ResetPerfCaptureRasterTimingTelemetry(void);
+void SDLGameRenderer_ResetPerfCaptureFastNonIntegerFamilyTelemetry(void);
+void SDLGameRenderer_ResetPerfCaptureGenericTexturedFamilyTelemetry(void);
 void SDLGameRenderer_ResetPerfCaptureTexturedGeometryRecoveredTelemetry(void);
 void SDLGameRenderer_ResetPerfCaptureTexturedGeometryFallbackTelemetry(void);
 int SDLGameRenderer_GetPerfCaptureRefreshTelemetry(SDLGameRenderer_PerfCaptureRefreshTelemetry* out_telemetry,
@@ -535,6 +586,18 @@ void SDLGameRenderer_GetPerfCaptureTextureRenewTelemetry(
 int SDLGameRenderer_GetPerfCaptureRasterBucketTimings(
     SDLGameRenderer_PerfCaptureRasterBucketTiming* out_timings,
     int max_timings);
+int SDLGameRenderer_GetPerfCaptureFastNonIntegerFamilies(SDLGameRenderer_PerfCaptureTexturedRectFamily* out_families,
+                                                         int max_families);
+void SDLGameRenderer_GetPerfCaptureFastNonIntegerFamilyTotals(Uint64* out_task_total,
+                                                              Uint64* out_pixel_total,
+                                                              Uint64* out_lookup_entry_total,
+                                                              int* out_family_count);
+int SDLGameRenderer_GetPerfCaptureGenericTexturedFamilies(SDLGameRenderer_PerfCaptureTexturedRectFamily* out_families,
+                                                          int max_families);
+void SDLGameRenderer_GetPerfCaptureGenericTexturedFamilyTotals(Uint64* out_task_total,
+                                                               Uint64* out_pixel_total,
+                                                               Uint64* out_lookup_entry_total,
+                                                               int* out_family_count);
 int SDLGameRenderer_GetPerfCaptureTexturedGeometryRecoveredFamilies(
     SDLGameRenderer_PerfCaptureTexturedGeometryFallbackFamily* out_families,
     int max_families);
