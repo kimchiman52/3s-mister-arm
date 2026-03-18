@@ -191,6 +191,23 @@ Scope guardrails:
 
 ## Cycle Log
 
+- 2026-03-18T19:29:45-0400
+  - Final commit hash:
+    - pending docs-only closure commit
+  - Bottleneck targeted:
+    - native ordinary-gameplay exact-copy raster cost on the `software_frame_exact` path, specifically whether fully opaque cached ARGB rows could make the dominant exact textured-copy helper cheaper without changing routing or blending semantics
+  - Change summary:
+    - tried a narrow `src/port/sdl/sdl_game_renderer.c` reland that reused the existing full-opaque row-mask helper so exact unmodulated, unflipped rows could short-circuit to row-wide `SDL_memcpy(...)`
+    - rebuilt/install-packaged the telemetry MiSTer flavor through Docker `3sx-mister-build`, redeployed with serialized MiSTer tooling, and then removed the runtime change completely after the native keep lane failed
+    - kept only the docs closeout: the idea is now recorded as tried and rejected instead of remaining an open native gameplay candidate
+  - Verification result summary:
+    - Docker telemetry ARM build/install/package, `readelf`, and serialized `lock-status`, `busy-status`, `health`, `deploy`, `probe`, and bounded `smoke` all passed on the candidate package; the runtime stayed on direct native `software_frame_exact`
+    - the deciding native matrix rejected the reland: `gameplay-remy-stage` fell `42.5296 -> 40.3037 FPS`, while `gameplay-idle` only nudged `86.6628 -> 87.3214 FPS`, `left-corner-ryu-stage` stayed effectively flat `87.6806 -> 87.3770 FPS`, and `gameplay-ibuki-stage` stayed effectively flat `81.9628 -> 81.6241 FPS`
+  - Keep/rollback decision with reason:
+    - reject and revert; exact-copy opaque-row `SDL_memcpy(...)` short-circuiting adds overhead on the real native Remy lane instead of reducing the current ordinary-gameplay bottleneck
+  - Next best candidate optimization:
+    - do not retry exact-copy opaque-row fast paths blindly. Re-rank the next native regular-gameplay loop from a different measured bottleneck rather than another unproven exact-copy micro-optimization
+
 - 2026-03-18T21:45:00-0400
   - Commit hash:
     - `9717015a`
