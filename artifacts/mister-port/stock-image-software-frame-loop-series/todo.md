@@ -5232,10 +5232,10 @@
   - [x] both native guard lanes regressed too: `artifacts/mister-port/perf/loop114-control-post.json` landed at `82.2899 FPS / 12.1522 / 4.4468 / 7.2351 / 0.4703 ms` versus `86.1860 FPS / 11.6028 / 4.0297 / 7.0874 / 0.4856 ms`, and `artifacts/mister-port/perf/loop114-left-corner-post.json` landed at `82.2206 FPS / 12.1624 / 5.3798 / 6.2933 / 0.4894 ms` versus `87.6806 FPS / 11.4050 / 4.6678 / 6.2511 / 0.4862 ms`
   - [x] the regression pattern was broad rather than a present-route issue: all deciding captures stayed on direct native `software_frame_exact`, but `update` and `render` both moved the wrong way on the corrected Remy lane and on both guardrails
 - [x] Review outcome:
-  - [x] independent review agent `Ohm` completed on the working diff before closeout and found no runtime/code blocker in the rejected experiment itself; the only valid findings were doc-closeout gaps around recording the completed review result and backfilling the real closure hash
+  - [x] independent review agent `Ohm` completed on the working diff before closeout and found no runtime/code blocker in the rejected experiment itself; the only valid findings were doc-closeout gaps around recording the completed review result and backfilling the real closure hash, and both are now fixed
 - [x] Keep/rollback decision:
   - [x] reject and revert. This direct `Sprite2`-to-`RENDER_TASK_TYPE_TEXTURED_RECT` fast enqueue path made the real native Remy lane slower and also regressed both native gameplay guards, so the extra enqueue specialization is overhead on the current tree rather than a safe runtime win
 - [x] final commit hash:
-  - [x] pending docs-only closure commit; backfill immediately after the rollback closeout commit lands
+  - [x] `9717015a`
 - [x] next best candidate:
   - [x] do not retry generic `SDLGameRenderer_DrawSprite2()` enqueue narrowing now. The next native gameplay loop should start from a measured family that still dominates Remy stage after this rejection, rather than another broad submit-path rewrite

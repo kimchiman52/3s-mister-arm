@@ -193,7 +193,7 @@ Scope guardrails:
 
 - 2026-03-18T21:45:00-0400
   - Commit hash:
-    - pending docs-only closure commit; backfill immediately after the rollback closeout commit lands
+    - `9717015a`
   - Bottleneck targeted:
     - native regular-gameplay slowdown on Remy stage, specifically whether a narrower `SDLGameRenderer_DrawSprite2()` enqueue path could cut the heavy `mtrans` submit cost without changing routing or raster behavior
   - Change summary:
