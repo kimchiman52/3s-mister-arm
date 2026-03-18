@@ -3563,3 +3563,20 @@ Scope guardrails:
     - reject runtime work for now. The likely performance win is partial refresh, but re-enabling it today would reopen the same software-surface correctness risk that already caused real MiSTer menu/HUD corruption and flicker
   - Next best candidate optimization:
     - either prove a narrower correctness guard for compare-dirty partial refresh on the hot `ppg-seqs 80/81/82` textures, or re-rank a different native regular-gameplay hotspot before touching runtime again
+
+- 2026-03-18T19:58:18-0400
+  - Final commit hash:
+    - pending docs-only closure commit
+  - Bottleneck targeted:
+    - native full `INDEX8 -> ARGB8888` software-surface refresh blit overhead on the direct `software_frame_exact` path during ordinary gameplay
+  - Change summary:
+    - tried a narrow `SDL_BlitSurfaceUnchecked(...)` helper only for full software-surface refreshes in `src/port/sdl/sdl_game_renderer.c`
+    - rebuilt the telemetry ARM package in Docker `3sx-mister-build`, redeployed it through serialized MiSTer tooling, and then fully reverted the runtime change after the native keep matrix failed
+    - kept only the docs closeout; the unchecked full-refresh API-swap idea is now recorded as rejected
+  - Verification result summary:
+    - Docker telemetry ARM build/install/package and `readelf` passed; local parity could not run in this cross-build container because the ARM binary returned `Exec format error`
+    - serialized `lock-status`, `busy-status`, `health`, `deploy`, `probe`, and bounded `smoke` all passed; on-device native captures rejected the trial: Remy `42.5296 -> 39.5375 FPS`, control `86.6628 -> 81.6497 FPS`, left-corner `87.6806 -> 81.8961 FPS`, and Ibuki `81.9628 -> 74.3405 FPS`
+  - Keep/rollback decision with reason:
+    - reject and revert; unchecked full-refresh SDL blits made every deciding native lane slower while the exact direct-present route stayed unchanged
+  - Next best candidate optimization:
+    - do not retry unchecked full-refresh SDL blit relands or similar full-refresh API swaps now. Unless a future loop can prove a correctness-safe partial-refresh guard for hot `ppg-seqs 80/81/82`, re-rank a different measured native gameplay bottleneck instead
