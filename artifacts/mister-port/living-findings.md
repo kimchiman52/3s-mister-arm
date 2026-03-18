@@ -191,6 +191,23 @@ Scope guardrails:
 
 ## Cycle Log
 
+- 2026-03-18T21:45:00-0400
+  - Commit hash:
+    - pending docs-only closure commit; backfill immediately after the rollback closeout commit lands
+  - Bottleneck targeted:
+    - native regular-gameplay slowdown on Remy stage, specifically whether a narrower `SDLGameRenderer_DrawSprite2()` enqueue path could cut the heavy `mtrans` submit cost without changing routing or raster behavior
+  - Change summary:
+    - tried a narrow `src/port/sdl/sdl_game_renderer.c` reland that wrote `Sprite2` tasks straight into `RENDER_TASK_TYPE_TEXTURED_RECT`, then removed it completely after the native keep matrix failed
+    - rebuilt/install-packaged the telemetry MiSTer flavor through Docker `3sx-mister-build` and the validated `/work-arm` flow, then redeployed and reran the native gameplay gates on-device
+    - recorded the discarded stage-mismatch false start so future loops do not compare `gameplay-remy-stage` against an accidental `stage_id=7` capture
+  - Verification result summary:
+    - serialized `health`, `deploy`, `probe`, and bounded `smoke` all passed on the candidate package; the runtime stayed on direct native `software_frame_exact`
+    - corrected native gameplay captures rejected the reland: Remy fell `42.3038 -> 39.9396 FPS`, control fell `86.1860 -> 82.2899 FPS`, and left-corner Ryu stage fell `87.6806 -> 82.2206 FPS`; the discarded first post run used the wrong stage and was not used for the decision
+  - Keep/rollback decision with reason:
+    - reject and revert; generic `DrawSprite2` enqueue narrowing adds overhead on the current native gameplay tree instead of reducing the real Remy-stage bottleneck
+  - Next best candidate optimization:
+    - do not retry direct `Sprite2` textured-rect enqueue narrowing now; re-rank the next native loop from measured stage-specific family cost rather than another broad submit-path specialization
+
 - 2026-03-18T17:05:00-0400
   - Commit hash:
     - uncommitted local lane addition
