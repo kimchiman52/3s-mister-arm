@@ -3532,7 +3532,7 @@ Scope guardrails:
 
 - 2026-03-18T19:02:41-0400
   - Final commit hash:
-    - pending docs-only closure commit
+    - `f51f87b5`
   - Bottleneck targeted:
     - native ordinary-gameplay Remy-stage refresh fanout, specifically whether the next safe win is to reopen partial software-surface refresh on the hot `ppg-seqs` textures behind the exact-path slowdown
   - Change summary:

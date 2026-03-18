@@ -5377,6 +5377,6 @@
 - [x] Keep/rollback decision:
   - [x] reject runtime work for now and close as research-only. The only credible native Remy win in the current evidence set is a partial-refresh reland, and reopening that path now would ignore the standing real-hardware correctness rollback
 - [x] final commit hash:
-  - [x] pending docs-only closure commit
+  - [x] `f51f87b5`
 - [x] next best candidate:
   - [x] do not retry generic native enqueue, dirty-tile, or copy-primitive micro-optimizations now; the next native loop should either prove a narrower correctness guard for compare-dirty partial refresh on the hot `ppg-seqs 80/81/82` textures or re-rank a different measured native gameplay bottleneck entirely
