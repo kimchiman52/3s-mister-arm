@@ -4908,7 +4908,7 @@
   - [x] do not retry this exact uniform-color textured-parallelogram software raster reland now. It passed local parity but did not reduce the stage-7 fallback share on-device and made the recovered Ibuki gate materially slower
 - [x] Keep/rollback decision:
   - [x] rollback. The stage-7 candidate neither recovered the proven fallback lane nor held the user-priority gate flat: the same basic capture shape stayed fallback-heavy while total frame and present time regressed badly, so the runtime diff does not earn another on-device retry
-- [ ] final commit hash:
+- [x] final commit hash:
   - [x] `75efaa23`
 - [x] next best candidate:
   - [x] keep Ibuki stage slowdown at the top of the queue, but switch the next loop back to measurement-first support for the exact stage-7 geometry family instead of another blind raster reland. The most useful next step is a narrow topology/task-shape capture for the failing frames so the next runtime attempt can target the real unsupported geometry rather than guessing from aggregate counters alone
@@ -5445,6 +5445,6 @@
 - [x] Keep/rollback decision:
   - [x] reject and revert. This full-refresh unchecked SDL blit reland made every deciding native gameplay lane slower while leaving the same direct native exact path in place, so it is not a credible runtime keep on the current native gameplay tree
 - [ ] final commit hash:
-  - [ ] pending docs-only closure commit
+  - [x] `0890f7b4`
 - [x] next best candidate:
   - [x] do not retry unchecked full-refresh SDL blit relands or similar full-refresh API swaps now. Unless a future loop can prove a correctness-safe partial-refresh guard for the hot `ppg-seqs 80/81/82` textures, re-rank a different measured native gameplay bottleneck instead of spending more loop budget on this blocked refresh lane

@@ -3566,7 +3566,7 @@ Scope guardrails:
 
 - 2026-03-18T19:58:18-0400
   - Final commit hash:
-    - pending docs-only closure commit
+    - `0890f7b4`
   - Bottleneck targeted:
     - native full `INDEX8 -> ARGB8888` software-surface refresh blit overhead on the direct `software_frame_exact` path during ordinary gameplay
   - Change summary:
