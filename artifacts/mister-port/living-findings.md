@@ -3512,3 +3512,20 @@ Scope guardrails:
     - reject and revert; short-circuiting dirty-tile bookkeeping on already-saturated native exact frames increased update cost broadly without changing present routing or the full-copy behavior
   - Next best candidate optimization:
     - do not retry native dirty-tile/full-coverage bookkeeping micro-optimizations now. Re-rank the next native gameplay loop toward measured `mtrans` / `ppg` setup-submit work on ordinary gameplay lanes instead
+
+- 2026-03-18T18:55:00-0400
+  - Final commit hash:
+    - pending docs-only closure commit
+  - Bottleneck targeted:
+    - native ordinary-gameplay full-refresh copy cost in `src/sf33rd/Source/Common/PPGFile.c`, specifically whether the hot `ppgRenewTexChunkSeqs(...)` `SDL_memmove(...)` call was adding avoidable overhead on the direct `software_frame_exact` path
+  - Change summary:
+    - tried a one-line runtime reland that swapped `SDL_memmove(...)` to `SDL_memcpy(...)` on the `flLockTexture(..., 3)` full-refresh path, then rebuilt the telemetry flavor in Docker `3sx-mister-build`, redeployed it with serialized MiSTer tooling, and rolled the runtime line back after verification
+    - kept the research evidence instead of the runtime diff: full telemetry still points at same-frame full refresh blits in the Remy/native lane, but the copy-primitive swap itself did not buy a measurable win
+  - Verification result summary:
+    - Docker telemetry ARM build/install/package passed, `readelf` confirmed `ELF32 / ARM / hard-float`, and serialized `lock-status`, `busy-status`, `health`, `deploy`, `probe`, and bounded `smoke` all passed on the candidate package
+    - native keep gates stayed effectively flat on the deciding matrix: `gameplay-idle` `86.6628 -> 86.4035 FPS`, `gameplay-remy-stage` `42.5296 -> 42.5330 FPS`, `left-corner-ryu-stage` `87.6806 -> 88.4805 FPS`, and corrected stage-`7` `gameplay-ibuki-stage` `81.9628 -> 81.8168 FPS`; the first Ibuki rerun was discarded because it accidentally used the preset default `stage_id = 19`
+    - read-only remote log inspection found no new runtime fault signature beyond the standing ALSA noise; `backend.log` captured the perf-run native/direct-present state, while `last-run.log` remained the earlier bounded smoke log with the expected exit
+  - Keep/rollback decision with reason:
+    - reject and revert; the raw copy-primitive swap does not move the deciding Remy/native lane, so it is not a strong enough performance keep for this branch
+  - Next best candidate optimization:
+    - do not retry `memmove`/`memcpy` narrowing now. If native gameplay work continues, measure a larger piece of the same full-refresh burst such as the `flLockTexture(..., 3)` refresh path or the refresh-attempt fanout around those Remy same-frame creates before another micro-optimization
