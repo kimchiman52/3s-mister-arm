@@ -663,9 +663,11 @@ static HybridFallbackReason classify_hybrid_fallback_reason(const RenderTask* ta
 #endif
 static bool analyze_textured_geometry_fallback_task(const RenderTask* task,
                                                     TexturedGeometryFallbackFamilyProfile* out_profile);
+#if ENABLE_PERF_TELEMETRY
 static bool analyze_textured_rect_family_task(const RenderTask* task,
                                               const SDL_Surface* dst_surface,
                                               TexturedRectFamilyProfile* out_profile);
+#endif
 static void note_hybrid_eligibility(const RenderTask* task);
 static bool try_resolve_geometry_task_as_rect_copy(const RenderTask* task, RenderTask* out_rect_task);
 static bool try_resolve_solid_task_as_rect(const RenderTask* task, SDL_FRect* out_rect, Uint32* out_color);
@@ -5593,7 +5595,9 @@ static bool render_frame_to_software_surface(void) {
         note_software_frame_eligibility(&resolved_task, reason);
         if ((reason == SOFTWARE_FRAME_FALLBACK_REASON_NONE) && (task->type == RENDER_TASK_TYPE_GEOMETRY) &&
             (task->texture != NULL) && (resolved_task.type == RENDER_TASK_TYPE_GEOMETRY)) {
+#if ENABLE_PERF_TELEMETRY
             note_perf_capture_textured_geometry_recovered_family(task);
+#endif
         }
         software_frame_resolved_tasks[i] = resolved_task;
         if (reason != SOFTWARE_FRAME_FALLBACK_REASON_NONE) {

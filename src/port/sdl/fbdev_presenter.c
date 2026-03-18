@@ -74,6 +74,16 @@ static bool frame_full_copy_fallback = false;
 static FBDevPresenter_FrameStats frame_stats = { 0 };
 static bool fps_overlay_enabled = false;
 static char fps_overlay_text[16] = "";
+static Uint32* fps_overlay_pixels = NULL;
+static int fps_overlay_width = 0;
+static int fps_overlay_height = 0;
+static int fps_overlay_cached_draw_x = 0;
+static int fps_overlay_cached_draw_y = 0;
+static int fps_overlay_cached_text_x = 0;
+static int fps_overlay_cached_text_y = 0;
+static int fps_overlay_cached_scale = 0;
+static char fps_overlay_cached_text[16] = "";
+static bool fps_overlay_cache_valid = false;
 #if ENABLE_PERF_TELEMETRY
 static bool frame_stats_breakdown_enabled = false;
 #else
@@ -101,6 +111,25 @@ typedef struct MappedRepeatRowWorkEstimate {
     size_t gap_pixels;
     Uint64 run_copies;
 } MappedRepeatRowWorkEstimate;
+
+typedef struct FpsOverlayLayout {
+    int draw_x;
+    int draw_y;
+    int width;
+    int height;
+    int text_x;
+    int text_y;
+    int scale;
+} FpsOverlayLayout;
+
+static FpsOverlayLayout fps_overlay_frame_layout = { 0 };
+static bool fps_overlay_frame_active = false;
+static bool fps_overlay_frame_changed = false;
+
+static bool fps_overlay_frame_intersects_rect(int x, int y, int w, int h);
+static void maybe_apply_fps_overlay_to_fb_row(Uint8* dst_row_base, int y, int row_x0, int row_x1);
+static void apply_rasterized_fps_overlay_to_argb_buffer(Uint32* pixels, int width, int height, int stride_pixels);
+static void begin_fps_overlay_frame(const SDL_FRect* content_rect);
 
 static int clamp_to_range(int value, int min, int max) {
     if (value < min) {
@@ -189,6 +218,23 @@ static void reset_staging_buffers() {
     staging_width = 0;
     staging_height = 0;
     previous_pixels_valid = false;
+}
+
+static void reset_fps_overlay_cache() {
+    SDL_free(fps_overlay_pixels);
+    fps_overlay_pixels = NULL;
+    fps_overlay_width = 0;
+    fps_overlay_height = 0;
+    fps_overlay_cached_draw_x = 0;
+    fps_overlay_cached_draw_y = 0;
+    fps_overlay_cached_text_x = 0;
+    fps_overlay_cached_text_y = 0;
+    fps_overlay_cached_scale = 0;
+    fps_overlay_cached_text[0] = '\0';
+    fps_overlay_cache_valid = false;
+    fps_overlay_frame_layout = (FpsOverlayLayout){ 0 };
+    fps_overlay_frame_active = false;
+    fps_overlay_frame_changed = false;
 }
 
 static void reset_mapped_source_cache() {
@@ -365,6 +411,7 @@ static void close_fb() {
     reset_scale_lut();
     invalidate_rect_bar_clear_cache();
     reset_staging_buffers();
+    reset_fps_overlay_cache();
     reset_mapped_source_cache();
     reset_mapped_repeat_row_template();
 
@@ -679,10 +726,11 @@ static void copy_argb_surface_rect_to_fb_offset(const SDL_Surface* argb,
                                                 int dst_y) {
     const size_t row_bytes = (size_t)width * sizeof(Uint32);
     const Uint8* src = ((const Uint8*)argb->pixels) + ((size_t)argb->pitch * (size_t)src_y) + ((size_t)src_x * sizeof(Uint32));
-    Uint8* dst = fb_map + ((size_t)fb_stride * (size_t)dst_y) + ((size_t)dst_x * sizeof(Uint32));
+    const bool overlay_intersects = fps_overlay_frame_intersects_rect(dst_x, dst_y, width, height);
 
-    if ((src_x == 0) && (dst_x == 0) && (width == fb_width) &&
+    if (!overlay_intersects && (src_x == 0) && (dst_x == 0) && (width == fb_width) &&
         (argb->pitch == (int)row_bytes) && (fb_stride == (int)row_bytes)) {
+        Uint8* dst = fb_map + ((size_t)fb_stride * (size_t)dst_y);
         SDL_memcpy(dst, src, row_bytes * (size_t)height);
         frame_copy_bytes += row_bytes * (size_t)height;
         return;
@@ -690,8 +738,11 @@ static void copy_argb_surface_rect_to_fb_offset(const SDL_Surface* argb,
 
     for (int y = 0; y < height; y++) {
         const Uint8* src_row = src + ((size_t)argb->pitch * (size_t)y);
-        Uint8* dst_row = dst + ((size_t)fb_stride * (size_t)y);
-        SDL_memcpy(dst_row, src_row, row_bytes);
+        Uint8* dst_row_base = fb_map + ((size_t)fb_stride * (size_t)(dst_y + y));
+        SDL_memcpy(dst_row_base + ((size_t)dst_x * sizeof(Uint32)), src_row, row_bytes);
+        if (overlay_intersects) {
+            maybe_apply_fps_overlay_to_fb_row(dst_row_base, dst_y + y, dst_x, dst_x + width);
+        }
     }
 
     frame_copy_bytes += row_bytes * (size_t)height;
@@ -719,7 +770,11 @@ static void clear_fb_rect(int x, int y, int w, int h) {
     frame_copy_bytes += row_pixels * sizeof(Uint32) * (size_t)h;
 }
 
-static void fill_fb_rect(int x, int y, int w, int h, Uint32 color) {
+static void fill_argb_rect(Uint32* pixels, int width, int height, int stride_pixels, int x, int y, int w, int h, Uint32 color) {
+    if ((pixels == NULL) || (width <= 0) || (height <= 0) || (stride_pixels < width) || (w <= 0) || (h <= 0)) {
+        return;
+    }
+
     if ((w <= 0) || (h <= 0)) {
         return;
     }
@@ -732,15 +787,15 @@ static void fill_fb_rect(int x, int y, int w, int h, Uint32 color) {
         h += y;
         y = 0;
     }
-    if ((x >= fb_width) || (y >= fb_height)) {
+    if ((x >= width) || (y >= height)) {
         return;
     }
 
-    if ((x + w) > fb_width) {
-        w = fb_width - x;
+    if ((x + w) > width) {
+        w = width - x;
     }
-    if ((y + h) > fb_height) {
-        h = fb_height - y;
+    if ((y + h) > height) {
+        h = height - y;
     }
     if ((w <= 0) || (h <= 0)) {
         return;
@@ -748,11 +803,9 @@ static void fill_fb_rect(int x, int y, int w, int h, Uint32 color) {
 
     const size_t row_pixels = (size_t)w;
     for (int row = 0; row < h; row++) {
-        Uint32* dst_row = (Uint32*)(fb_map + ((size_t)fb_stride * (size_t)(y + row)) + ((size_t)x * sizeof(Uint32)));
+        Uint32* dst_row = pixels + ((size_t)stride_pixels * (size_t)(y + row)) + (size_t)x;
         memset32(dst_row, color, row_pixels);
     }
-
-    frame_copy_bytes += row_pixels * sizeof(Uint32) * (size_t)h;
 }
 
 static void clear_fb_outside_rect(int x0, int y0, int x1, int y1) {
@@ -831,7 +884,15 @@ static Uint8 overlay_glyph_row(char ch, int row) {
     return glyph[row];
 }
 
-static void draw_overlay_glyph(int x, int y, int scale, char ch, Uint32 color) {
+static void draw_overlay_glyph(Uint32* pixels,
+                               int width,
+                               int height,
+                               int stride_pixels,
+                               int x,
+                               int y,
+                               int scale,
+                               char ch,
+                               Uint32 color) {
     const int glyph_w = 3;
     const int glyph_h = 5;
 
@@ -842,16 +903,18 @@ static void draw_overlay_glyph(int x, int y, int scale, char ch, Uint32 color) {
                 continue;
             }
 
-            fill_fb_rect(x + (col * scale), y + (row * scale), scale, scale, color);
+            fill_argb_rect(
+                pixels, width, height, stride_pixels, x + (col * scale), y + (row * scale), scale, scale, color);
         }
     }
 }
 
-static void maybe_draw_fps_overlay(const SDL_FRect* content_rect) {
-    if (!fps_overlay_enabled || (fps_overlay_text[0] == '\0') || !fbdev_active || (fb_map == NULL)) {
-        return;
+static bool compute_fps_overlay_layout(const SDL_FRect* content_rect, FpsOverlayLayout* out_layout) {
+    if ((out_layout == NULL) || !fps_overlay_enabled || (fps_overlay_text[0] == '\0') || !fbdev_active || (fb_map == NULL)) {
+        return false;
     }
 
+    SDL_zero(*out_layout);
     int x0 = 0;
     int y0 = 0;
     int x1 = fb_width;
@@ -866,7 +929,7 @@ static void maybe_draw_fps_overlay(const SDL_FRect* content_rect) {
     const int content_w = x1 - x0;
     const int content_h = y1 - y0;
     if ((content_w <= 0) || (content_h <= 0)) {
-        return;
+        return false;
     }
 
     int scale = 2;
@@ -881,7 +944,7 @@ static void maybe_draw_fps_overlay(const SDL_FRect* content_rect) {
     const int char_gap = scale;
     const int text_len = (int)SDL_strlen(fps_overlay_text);
     if (text_len <= 0) {
-        return;
+        return false;
     }
 
     const int text_w = (text_len * glyph_w) + ((text_len - 1) * char_gap);
@@ -894,15 +957,176 @@ static void maybe_draw_fps_overlay(const SDL_FRect* content_rect) {
     const int bg_x1 = clamp_to_range(draw_x + text_w + bg_pad, 0, fb_width);
     const int bg_y1 = clamp_to_range(draw_y + glyph_h + bg_pad, 0, fb_height);
 
-    if ((bg_x1 > bg_x) && (bg_y1 > bg_y)) {
-        fill_fb_rect(bg_x, bg_y, bg_x1 - bg_x, bg_y1 - bg_y, 0xFF000000u);
+    if ((bg_x1 <= bg_x) || (bg_y1 <= bg_y)) {
+        return false;
     }
 
-    for (int i = 0; i < text_len; i++) {
-        const int glyph_x = draw_x + (i * (glyph_w + char_gap));
-        draw_overlay_glyph(glyph_x + 1, draw_y + 1, scale, fps_overlay_text[i], 0xFF000000u);
-        draw_overlay_glyph(glyph_x, draw_y, scale, fps_overlay_text[i], 0xFFFFFFFFu);
+    out_layout->draw_x = bg_x;
+    out_layout->draw_y = bg_y;
+    out_layout->width = bg_x1 - bg_x;
+    out_layout->height = bg_y1 - bg_y;
+    out_layout->text_x = draw_x - bg_x;
+    out_layout->text_y = draw_y - bg_y;
+    out_layout->scale = scale;
+    return true;
+}
+
+static bool ensure_fps_overlay_buffer(int width, int height) {
+    if ((width <= 0) || (height <= 0)) {
+        return false;
     }
+
+    if ((fps_overlay_pixels != NULL) && (fps_overlay_width == width) && (fps_overlay_height == height)) {
+        return true;
+    }
+
+    SDL_free(fps_overlay_pixels);
+    fps_overlay_pixels = (Uint32*)SDL_malloc(sizeof(Uint32) * (size_t)width * (size_t)height);
+    if (fps_overlay_pixels == NULL) {
+        fps_overlay_width = 0;
+        fps_overlay_height = 0;
+        fps_overlay_cache_valid = false;
+        return false;
+    }
+
+    fps_overlay_width = width;
+    fps_overlay_height = height;
+    fps_overlay_cache_valid = false;
+    return true;
+}
+
+static bool ensure_rasterized_fps_overlay(const FpsOverlayLayout* layout, bool* out_changed) {
+    if (out_changed != NULL) {
+        *out_changed = false;
+    }
+    if ((layout == NULL) || !ensure_fps_overlay_buffer(layout->width, layout->height)) {
+        return false;
+    }
+
+    const bool layout_changed = !fps_overlay_cache_valid || (fps_overlay_cached_draw_x != layout->draw_x) ||
+                                (fps_overlay_cached_draw_y != layout->draw_y) || (fps_overlay_cached_text_x != layout->text_x) ||
+                                (fps_overlay_cached_text_y != layout->text_y) || (fps_overlay_cached_scale != layout->scale) ||
+                                (SDL_strcmp(fps_overlay_cached_text, fps_overlay_text) != 0);
+    if (!layout_changed) {
+        return true;
+    }
+    if (out_changed != NULL) {
+        *out_changed = true;
+    }
+
+    fill_argb_rect(
+        fps_overlay_pixels, fps_overlay_width, fps_overlay_height, fps_overlay_width, 0, 0, fps_overlay_width, fps_overlay_height, 0xFF000000u);
+
+    const int glyph_w = 3 * layout->scale;
+    const int char_gap = layout->scale;
+    const int text_len = (int)SDL_strlen(fps_overlay_text);
+    for (int i = 0; i < text_len; i++) {
+        const int glyph_x = layout->text_x + (i * (glyph_w + char_gap));
+        draw_overlay_glyph(fps_overlay_pixels,
+                           fps_overlay_width,
+                           fps_overlay_height,
+                           fps_overlay_width,
+                           glyph_x + 1,
+                           layout->text_y + 1,
+                           layout->scale,
+                           fps_overlay_text[i],
+                           0xFF000000u);
+        draw_overlay_glyph(fps_overlay_pixels,
+                           fps_overlay_width,
+                           fps_overlay_height,
+                           fps_overlay_width,
+                           glyph_x,
+                           layout->text_y,
+                           layout->scale,
+                           fps_overlay_text[i],
+                           0xFFFFFFFFu);
+    }
+
+    fps_overlay_cached_draw_x = layout->draw_x;
+    fps_overlay_cached_draw_y = layout->draw_y;
+    fps_overlay_cached_text_x = layout->text_x;
+    fps_overlay_cached_text_y = layout->text_y;
+    fps_overlay_cached_scale = layout->scale;
+    SDL_snprintf(fps_overlay_cached_text, sizeof(fps_overlay_cached_text), "%s", fps_overlay_text);
+    fps_overlay_cache_valid = true;
+    return true;
+}
+
+static bool fps_overlay_frame_intersects_rect(int x, int y, int w, int h) {
+    if (!fps_overlay_frame_active || (w <= 0) || (h <= 0)) {
+        return false;
+    }
+
+    const int overlay_x0 = fps_overlay_frame_layout.draw_x;
+    const int overlay_y0 = fps_overlay_frame_layout.draw_y;
+    const int overlay_x1 = overlay_x0 + fps_overlay_frame_layout.width;
+    const int overlay_y1 = overlay_y0 + fps_overlay_frame_layout.height;
+    const int rect_x1 = x + w;
+    const int rect_y1 = y + h;
+    return (x < overlay_x1) && (rect_x1 > overlay_x0) && (y < overlay_y1) && (rect_y1 > overlay_y0);
+}
+
+static void apply_rasterized_fps_overlay_to_argb_buffer(Uint32* pixels, int width, int height, int stride_pixels) {
+    if (!fps_overlay_frame_active || (pixels == NULL) || (fps_overlay_pixels == NULL) || (stride_pixels < width)) {
+        return;
+    }
+
+    const FpsOverlayLayout* layout = &fps_overlay_frame_layout;
+    const size_t row_bytes = (size_t)layout->width * sizeof(Uint32);
+    for (int row = 0; row < layout->height; row++) {
+        const int dst_y = layout->draw_y + row;
+        if ((dst_y < 0) || (dst_y >= height)) {
+            continue;
+        }
+
+        const Uint8* src_row = (const Uint8*)(fps_overlay_pixels + ((size_t)fps_overlay_width * (size_t)row));
+        Uint8* dst_row = (Uint8*)(pixels + ((size_t)stride_pixels * (size_t)dst_y)) + ((size_t)layout->draw_x * sizeof(Uint32));
+        SDL_memcpy(dst_row, src_row, row_bytes);
+    }
+}
+
+static void maybe_apply_fps_overlay_to_fb_row(Uint8* dst_row_base, int y, int row_x0, int row_x1) {
+    if (!fps_overlay_frame_active || (dst_row_base == NULL) || (fps_overlay_pixels == NULL) || (row_x1 <= row_x0)) {
+        return;
+    }
+
+    const FpsOverlayLayout* layout = &fps_overlay_frame_layout;
+    if ((y < layout->draw_y) || (y >= (layout->draw_y + layout->height))) {
+        return;
+    }
+
+    const int copy_x0 = SDL_max(row_x0, layout->draw_x);
+    const int copy_x1 = SDL_min(row_x1, layout->draw_x + layout->width);
+    if (copy_x1 <= copy_x0) {
+        return;
+    }
+
+    const int overlay_row = y - layout->draw_y;
+    const Uint8* src_row =
+        (const Uint8*)(fps_overlay_pixels + ((size_t)fps_overlay_width * (size_t)overlay_row)) +
+        ((size_t)(copy_x0 - layout->draw_x) * sizeof(Uint32));
+    SDL_memcpy(dst_row_base + ((size_t)copy_x0 * sizeof(Uint32)), src_row, (size_t)(copy_x1 - copy_x0) * sizeof(Uint32));
+    frame_copy_bytes += (size_t)(copy_x1 - copy_x0) * sizeof(Uint32);
+}
+
+static void begin_fps_overlay_frame(const SDL_FRect* content_rect) {
+    fps_overlay_frame_layout = (FpsOverlayLayout){ 0 };
+    fps_overlay_frame_active = false;
+    fps_overlay_frame_changed = false;
+
+    FpsOverlayLayout layout;
+    if (!compute_fps_overlay_layout(content_rect, &layout)) {
+        return;
+    }
+
+    bool changed = false;
+    if (!ensure_rasterized_fps_overlay(&layout, &changed)) {
+        return;
+    }
+
+    fps_overlay_frame_layout = layout;
+    fps_overlay_frame_active = true;
+    fps_overlay_frame_changed = changed;
 }
 
 static void clear_previous_rect(int x, int y, int w, int h) {
@@ -943,23 +1167,25 @@ static bool copy_surface_to_fb_offset(const SDL_Surface* src, int dst_x, int dst
         return true;
     }
 
-    Uint8* dst = fb_map + ((size_t)fb_stride * (size_t)dst_y) + ((size_t)dst_x * sizeof(Uint32));
-    Uint64 convert_start_ns = frame_stats_now();
-    if (SDL_ConvertPixels(src->w,
-                          src->h,
-                          src->format,
-                          src->pixels,
-                          src->pitch,
-                          SDL_PIXELFORMAT_ARGB8888,
-                          dst,
-                          fb_stride)) {
+    if (!fps_overlay_frame_intersects_rect(dst_x, dst_y, src->w, src->h)) {
+        Uint8* dst = fb_map + ((size_t)fb_stride * (size_t)dst_y) + ((size_t)dst_x * sizeof(Uint32));
+        Uint64 convert_start_ns = frame_stats_now();
+        if (SDL_ConvertPixels(src->w,
+                              src->h,
+                              src->format,
+                              src->pixels,
+                              src->pitch,
+                              SDL_PIXELFORMAT_ARGB8888,
+                              dst,
+                              fb_stride)) {
+            frame_stats_add_duration(&frame_stats.convert_ns, convert_start_ns);
+            frame_copy_bytes += ((size_t)src->w * (size_t)src->h) * sizeof(Uint32);
+            return true;
+        }
         frame_stats_add_duration(&frame_stats.convert_ns, convert_start_ns);
-        frame_copy_bytes += ((size_t)src->w * (size_t)src->h) * sizeof(Uint32);
-        return true;
     }
-    frame_stats_add_duration(&frame_stats.convert_ns, convert_start_ns);
 
-    convert_start_ns = frame_stats_now();
+    Uint64 convert_start_ns = frame_stats_now();
     SDL_Surface* argb = SDL_ConvertSurface(src, SDL_PIXELFORMAT_ARGB8888);
     frame_stats_add_duration(&frame_stats.convert_ns, convert_start_ns);
     if (argb == NULL) {
@@ -999,7 +1225,7 @@ static bool copy_surface_rect_to_fb_offset(const SDL_Surface* src,
         return true;
     }
 
-    if (!SDL_ISPIXELFORMAT_FOURCC(src->format)) {
+    if (!fps_overlay_frame_intersects_rect(dst_x, dst_y, width, height) && !SDL_ISPIXELFORMAT_FOURCC(src->format)) {
         const int src_bpp = SDL_BYTESPERPIXEL(src->format);
         if (src_bpp > 0) {
             const Uint8* src_pixels =
@@ -1257,6 +1483,14 @@ static bool copy_argb_surface_scaled_to_fb_mapped_rect(const SDL_Surface* argb,
         }
 
         if (can_skip_unchanged_rows && !mapped_source_row_changed[src_y]) {
+            if (fps_overlay_frame_changed && fps_overlay_frame_active &&
+                ((band_y0 < (fps_overlay_frame_layout.draw_y + fps_overlay_frame_layout.height)) &&
+                 (band_y1 > fps_overlay_frame_layout.draw_y))) {
+                for (int overlay_y = band_y0; overlay_y < band_y1; overlay_y++) {
+                    Uint8* dst_row_base = fb_map + ((size_t)fb_stride * (size_t)overlay_y);
+                    maybe_apply_fps_overlay_to_fb_row(dst_row_base, overlay_y, clip_x0, clip_x1);
+                }
+            }
             y = band_y1;
             continue;
         }
@@ -1304,6 +1538,9 @@ static bool copy_argb_surface_scaled_to_fb_mapped_rect(const SDL_Surface* argb,
                 }
             }
             frame_stats_add_duration(&frame_stats.mapped_first_row_ns, first_row_start_ns);
+            if (copied_first_row && (first_dst_row_base >= fb_map) && (first_dst_row_base < (fb_map + fb_map_len))) {
+                maybe_apply_fps_overlay_to_fb_row(first_dst_row_base, band_y0, clip_x0, clip_x1);
+            }
 
             if (copied_first_row && band_has_repeats) {
                 const Uint64 repeat_row_start_ns = frame_stats_now();
@@ -1348,6 +1585,9 @@ static bool copy_argb_surface_scaled_to_fb_mapped_rect(const SDL_Surface* argb,
                     if (!repeat_from_template) {
                         repeat_src_row_base = (const Uint8*)dst_row_base;
                     }
+                    if (copied_repeat_row) {
+                        maybe_apply_fps_overlay_to_fb_row(dst_row_base, repeat_y, clip_x0, clip_x1);
+                    }
                 }
                 frame_stats_add_duration(&frame_stats.mapped_repeat_row_ns, repeat_row_start_ns);
             }
@@ -1378,12 +1618,14 @@ static bool copy_argb_surface_scaled_to_fb_mapped_rect(const SDL_Surface* argb,
         }
 
         frame_copy_bytes += row_bytes;
+        maybe_apply_fps_overlay_to_fb_row(fb_map + ((size_t)fb_stride * (size_t)band_y0), band_y0, dst_x0, dst_x1);
         const Uint8* repeat_src_row_bytes = first_dst_row_bytes;
         for (int repeat_y = band_y0 + 1; repeat_y < band_y1; repeat_y++) {
             Uint8* dst_row_bytes =
                 fb_map + ((size_t)fb_stride * (size_t)repeat_y) + ((size_t)dst_x0 * sizeof(Uint32));
             SDL_memcpy(dst_row_bytes, repeat_src_row_bytes, row_bytes);
             frame_copy_bytes += row_bytes;
+            maybe_apply_fps_overlay_to_fb_row(fb_map + ((size_t)fb_stride * (size_t)repeat_y), repeat_y, dst_x0, dst_x1);
             repeat_src_row_bytes = dst_row_bytes;
         }
         y = band_y1;
@@ -1438,11 +1680,19 @@ static bool copy_argb_surface_integer_scaled_to_fb_rect(const SDL_Surface* argb,
         }
 
         frame_copy_bytes += row_bytes;
+        maybe_apply_fps_overlay_to_fb_row(fb_map + ((size_t)fb_stride * ((size_t)raw_y0 + ((size_t)src_y * (size_t)scale_y))),
+                                          raw_y0 + (src_y * scale_y),
+                                          raw_x0,
+                                          raw_x0 + raw_w);
 
         for (int repeat_y = 1; repeat_y < scale_y; repeat_y++) {
             Uint8* repeated_row = dst_row_bytes + ((size_t)fb_stride * (size_t)repeat_y);
             SDL_memcpy(repeated_row, dst_row_bytes, row_bytes);
             frame_copy_bytes += row_bytes;
+            maybe_apply_fps_overlay_to_fb_row(fb_map + ((size_t)fb_stride * ((size_t)raw_y0 + ((size_t)src_y * (size_t)scale_y) + (size_t)repeat_y)),
+                                              raw_y0 + (src_y * scale_y) + repeat_y,
+                                              raw_x0,
+                                              raw_x0 + raw_w);
         }
     }
 
@@ -1577,6 +1827,8 @@ bool FBDevPresenter_PresentCurrentTarget(SDL_Renderer* renderer, const SDL_FRect
         return false;
     }
 
+    begin_fps_overlay_frame(dst_rect);
+
     int x0 = 0;
     int y0 = 0;
     int x1 = 0;
@@ -1609,7 +1861,6 @@ bool FBDevPresenter_PresentCurrentTarget(SDL_Renderer* renderer, const SDL_FRect
         if (present_path != FBDEV_PRESENTER_PATH_CURRENT_TARGET_MAPPED_SCALE) {
             invalidate_mapped_source_cache();
         }
-        maybe_draw_fps_overlay(dst_rect);
     }
     return copied;
 }
@@ -1618,6 +1869,8 @@ bool FBDevPresenter_PresentSurface(const SDL_Surface* surface, const SDL_FRect* 
     if (!fbdev_active || (surface == NULL) || (dst_rect == NULL)) {
         return false;
     }
+
+    begin_fps_overlay_frame(dst_rect);
 
     int x0 = 0;
     int y0 = 0;
@@ -1647,7 +1900,6 @@ bool FBDevPresenter_PresentSurface(const SDL_Surface* surface, const SDL_FRect* 
         if (present_path != FBDEV_PRESENTER_PATH_SOFTWARE_FRAME_MAPPED_SCALE) {
             invalidate_mapped_source_cache();
         }
-        maybe_draw_fps_overlay(dst_rect);
     }
     return copied;
 }
@@ -1658,6 +1910,7 @@ static bool convert_surface_to_staging(const SDL_Surface* src) {
         const Uint64 copy_start_ns = frame_stats_now();
         SDL_memcpy(staging_pixels, src->pixels, (size_t)staging_pitch * (size_t)staging_height);
         frame_stats_add_duration(&frame_stats.copy_ns, copy_start_ns);
+        apply_rasterized_fps_overlay_to_argb_buffer(staging_pixels, staging_width, staging_height, staging_width);
         return true;
     }
 
@@ -1671,6 +1924,7 @@ static bool convert_surface_to_staging(const SDL_Surface* src) {
                           staging_pixels,
                           staging_pitch)) {
         frame_stats_add_duration(&frame_stats.convert_ns, convert_start_ns);
+        apply_rasterized_fps_overlay_to_argb_buffer(staging_pixels, staging_width, staging_height, staging_width);
         return true;
     }
     frame_stats_add_duration(&frame_stats.convert_ns, convert_start_ns);
@@ -1697,6 +1951,7 @@ static bool convert_surface_to_staging(const SDL_Surface* src) {
     }
 
     SDL_DestroySurface(argb);
+    apply_rasterized_fps_overlay_to_argb_buffer(staging_pixels, staging_width, staging_height, staging_width);
     return true;
 }
 
@@ -1878,6 +2133,8 @@ void FBDevPresenter_Present(SDL_Renderer* renderer, const SDL_FRect* content_rec
         return;
     }
 
+    begin_fps_overlay_frame(content_rect);
+
     int fallback_x0 = 0;
     int fallback_y0 = 0;
     int fallback_x1 = 0;
@@ -1890,7 +2147,6 @@ void FBDevPresenter_Present(SDL_Renderer* renderer, const SDL_FRect* content_rec
 
     // Keep the targeted readback fast path for letterboxed content even when staging is available.
     if (fallback_rect_valid && !fallback_rect_is_full && present_readback_rect(renderer, content_rect)) {
-        maybe_draw_fps_overlay(content_rect);
         return;
     }
 
@@ -1919,7 +2175,6 @@ void FBDevPresenter_Present(SDL_Renderer* renderer, const SDL_FRect* content_rec
                 mark_rect_bar_clear_cache(fallback_x0, fallback_y0, fallback_x1, fallback_y1);
             }
             invalidate_mapped_source_cache();
-            maybe_draw_fps_overlay(content_rect);
             return;
         }
 
@@ -1936,7 +2191,6 @@ void FBDevPresenter_Present(SDL_Renderer* renderer, const SDL_FRect* content_rec
                 mark_rect_bar_clear_cache(fallback_x0, fallback_y0, fallback_x1, fallback_y1);
                 previous_pixels_valid = false;
                 invalidate_mapped_source_cache();
-                maybe_draw_fps_overlay(content_rect);
                 return;
             }
         }
@@ -1955,13 +2209,13 @@ void FBDevPresenter_Present(SDL_Renderer* renderer, const SDL_FRect* content_rec
             }
             previous_pixels_valid = false;
             invalidate_mapped_source_cache();
-            maybe_draw_fps_overlay(content_rect);
             return;
         }
 
         frame_stats_note_path(FBDEV_PRESENTER_PATH_FULLSCREEN_DIRECT_COPY);
         Uint64 convert_start_ns = frame_stats_now();
-        if (SDL_ConvertPixels(src->w,
+        if (!fps_overlay_frame_intersects_rect(0, 0, fb_width, fb_height) &&
+            SDL_ConvertPixels(src->w,
                               src->h,
                               src->format,
                               src->pixels,
@@ -1981,7 +2235,6 @@ void FBDevPresenter_Present(SDL_Renderer* renderer, const SDL_FRect* content_rec
             }
             previous_pixels_valid = false;
             invalidate_mapped_source_cache();
-            maybe_draw_fps_overlay(content_rect);
             return;
         }
         frame_stats_add_duration(&frame_stats.convert_ns, convert_start_ns);
@@ -2005,7 +2258,6 @@ void FBDevPresenter_Present(SDL_Renderer* renderer, const SDL_FRect* content_rec
         }
         previous_pixels_valid = false;
         invalidate_mapped_source_cache();
-        maybe_draw_fps_overlay(content_rect);
         return;
     }
 
@@ -2036,6 +2288,7 @@ void FBDevPresenter_Present(SDL_Renderer* renderer, const SDL_FRect* content_rec
             if ((src_y == prev_src_y) && (prev_dst_row != NULL)) {
                 SDL_memcpy(dst_row_bytes, prev_dst_row, row_bytes);
                 frame_copy_bytes += row_bytes;
+                maybe_apply_fps_overlay_to_fb_row(fb_map + ((size_t)fb_stride * (size_t)y), y, 0, fb_width);
                 continue;
             }
 
@@ -2047,6 +2300,7 @@ void FBDevPresenter_Present(SDL_Renderer* renderer, const SDL_FRect* content_rec
             }
 
             frame_copy_bytes += row_bytes;
+            maybe_apply_fps_overlay_to_fb_row(fb_map + ((size_t)fb_stride * (size_t)y), y, 0, fb_width);
 
             prev_src_y = src_y;
             prev_dst_row = dst_row_bytes;
@@ -2064,6 +2318,7 @@ void FBDevPresenter_Present(SDL_Renderer* renderer, const SDL_FRect* content_rec
             if ((src_y == prev_src_y) && (prev_dst_row != NULL)) {
                 SDL_memcpy(dst_row_bytes, prev_dst_row, row_bytes);
                 frame_copy_bytes += row_bytes;
+                maybe_apply_fps_overlay_to_fb_row(fb_map + ((size_t)fb_stride * (size_t)y), y, 0, fb_width);
                 continue;
             }
 
@@ -2075,6 +2330,7 @@ void FBDevPresenter_Present(SDL_Renderer* renderer, const SDL_FRect* content_rec
             }
 
             frame_copy_bytes += row_bytes;
+            maybe_apply_fps_overlay_to_fb_row(fb_map + ((size_t)fb_stride * (size_t)y), y, 0, fb_width);
 
             prev_src_y = src_y;
             prev_dst_row = dst_row_bytes;
@@ -2091,7 +2347,6 @@ void FBDevPresenter_Present(SDL_Renderer* renderer, const SDL_FRect* content_rec
     }
     previous_pixels_valid = false;
     invalidate_mapped_source_cache();
-    maybe_draw_fps_overlay(content_rect);
 }
 
 void FBDevPresenter_SetFPSOverlayEnabled(bool enabled) {
