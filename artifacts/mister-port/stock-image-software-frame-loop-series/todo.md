@@ -5310,8 +5310,8 @@
   - [x] independent `codex review --uncommitted` completed on the final reverted/docs-only diff and found no functional, factual, or loop-closeout issues to fix before commit
 - [x] Keep/rollback decision:
   - [x] reject and revert. This dirty-tile saturation skip made every deciding native gameplay lane slower while leaving the same exact present route, full-copy behavior, and broad sort path in place, so it is not a safe runtime keep
-- [ ] final commit hash:
-  - [ ] pending
+- [x] final commit hash:
+  - [x] `31ad44f5`
 - [x] next best candidate:
   - [x] do not retry native dirty-tile/full-coverage bookkeeping micro-optimizations in `src/port/sdl/sdl_game_renderer.c` for now; this loop showed that even obviously saturated exact frames still regress when the tile-marking path is short-circuited directly
   - [x] the next native gameplay loop should re-rank a measured setup/submit family under the same ordinary gameplay lanes, especially the still-dominant `mtrans` and `ppg` task producers on Remy/native exact captures, instead of another dirty-map shortcut

@@ -3499,7 +3499,7 @@ Scope guardrails:
 
 - 2026-03-18T20:05:00-0400
   - Final commit hash:
-    - `pending`
+    - `31ad44f5`
   - Bottleneck targeted:
     - native steady-gameplay dirty-tile bookkeeping in `src/port/sdl/sdl_game_renderer.c`, specifically whether skipping work after full-frame coverage saturation could reduce `software_frame_exact` update cost
   - Change summary:
