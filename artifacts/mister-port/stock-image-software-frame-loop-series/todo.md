@@ -5349,3 +5349,34 @@
   - [x] `4e698fd4`
 - [x] next best candidate:
   - [x] do not retry `memmove`/`memcpy`-style copy-primitive swaps on `ppgRenewTexChunkSeqs(...)` now. The next native gameplay loop should stay on measured full-refresh cost, but it needs a larger proof point than the raw copy primitive itself, such as narrower evidence around the `flLockTexture(..., 3)` refresh path or the same-frame refresh-attempt burst that still dominates Remy/full telemetry
+
+### Follow-On Loop 118: Native Remy Partial-Refresh Safety Re-rank
+
+- [x] Value target: decide whether the next native regular-gameplay loop should reopen partial software-surface refresh on the hot Remy `ppg-seqs` lane, or close that idea as not safe enough yet
+- [x] Scope boundary: docs/checklist/living-findings only unless deep research uncovers a safer runtime change than re-enabling partial refresh on live native gameplay; do not change runtime code, dirty-rect policy, or MiSTer tooling unless the safety case is clear
+- [x] Dependencies: clean `nearest-hdmi-perf` tip `a19f20a9`; existing native regular-gameplay baselines from `d578da15`; full-detail refresh telemetry in `artifacts/mister-port/perf/loop117-remy-refresh-research.json`; Docker container `3sx-mister-build`; serialized MiSTer tooling; and the standing real-hardware rollback of the seq-specific renew-dirty fast path
+- [x] Research evidence gathered on `2026-03-18` before implementation:
+  - [x] preserved-branch verification debt still does not block this loop. `git for-each-ref --sort=creatordate --format='%(refname:short)' 'refs/heads/preserve-*'` returned no pending preserved refs, and the worktree was clean at loop start
+  - [x] the native Remy slowdown is still a same-frame software-surface refresh problem on the exact path, not a presenter or gameplay-route regression. `gameplay-remy-stage` remains the native outlier at `42.5296 FPS / 23.5130 / 14.2434 / 8.7980 / 0.4717 ms` (`frame / update / render / present`) versus `gameplay-idle` `86.6628 FPS`, `gameplay-ibuki-stage` `81.9628 FPS`, and `left-corner-ryu-stage` `87.6806 FPS`, all on `software_frame_exact`
+  - [x] the existing full-detail refresh telemetry resolves the hot textures precisely enough to rank the next idea. `loop117-remy-refresh-research.json` shows the worst frames spending `22-30 ms` inside `software_surface_cache_refresh_blit` while only `3-8` unique texture handles drive up to `fanout 14`; the dominant hot textures are stable `ppg-seqs` logical identities `80/slot 0`, `81/slot 1`, and `82/slot 2` (`texture_handle = 56/57/58`)
+  - [x] the likely performance win is partial refresh, but the current runtime never reaches it. Those hot textures report `partial_refresh_attempts_total = 0` and `full_refresh_no_usable_dirty_rect_attempts_total = refresh_attempts_total`, while compare-dirty telemetry says the opportunity is real but uneven: `texture 56` is the strongest partial candidate at `0.864380`, `texture 57` is still meaningful at `0.309816`, and `texture 58` is mostly oversized at `0.026042`; their `compare_dirty_rect_refresh_bbox_mean_ratio` values are `0.144467`, `0.305707`, and `0.605745` respectively
+  - [x] the block is correctness, not missing evidence. The same hot textures still show `dirty_rect_record_calls_total = 0` / `dirty_rect_retained_after_unlock_total = 0` because `ppgShouldKeepRenewDirtyRectForSeqs(...)` and `ppgShouldTrackRenewDirtyTileMaskForSeqs(...)` were intentionally disabled in `src/sf33rd/Source/Common/PPGFile.c` after real MiSTer validation found submenu label corruption and FPS-counter flicker from the broader partial-refresh stack
+  - [x] local code inspection does not reveal a smaller safe runtime reland than partial refresh itself. The current full-refresh path in `refresh_software_source_surface_in_place(...)` already shows palette-set time as negligible and full-blit time as dominant, while the prior native queue bookkeeping and copy-primitive micro-optimizations are now explicitly closed by Loops `114-117`
+- [x] Research-backed hypothesis and scoped plan for this cycle:
+  - [x] hypothesis: the next measurable native Remy win would come from restoring partial refresh for the hot `ppg-seqs 80/81/82` textures, but doing that now would reopen the still-untrusted software-surface partial-refresh correctness path on real MiSTer hardware
+  - [x] scoped plan: do not force a runtime reland this cycle. Record the measured hotspot, reject a partial-refresh reland for now on safety grounds, and close with docs-only updates so the next loop can either prove a narrower correctness guard or choose a different native bottleneck
+  - [x] reject immediately if research fails to identify a safe runtime change that stays clear of the previously rolled-back partial-refresh correctness risk
+- [x] Implementation summary:
+  - [x] no runtime change this cycle; only the checklist and living record are updated to capture the measured Remy/native refresh hotspot, the partial-refresh evidence, and the reason that runtime work is deferred
+- [x] Verification result summary:
+  - [x] no new Docker build or MiSTer deploy was run because the loop intentionally landed no runtime or tooling diff
+  - [x] the closure is based on committed telemetry and current-tree code inspection: `loop117-remy-refresh-research.json` already shows the deciding hot textures, their refresh fanout, their compare-dirty candidate ratios, and the still-disabled dirty-rect retention path
+- [x] Review outcome:
+  - [x] independent review agent `Aquinas` found two valid doc issues and no runtime-scope blockers: one compare-dirty ratio for `texture 57` was misstated, and the branch snapshot still described this checklist as historical-only despite the explicit run override
+  - [x] both doc issues are corrected in this diff; the review suggestion to drop the stock-image checklist entirely is rejected because the user-level run override explicitly requires keeping this file as the active checklist for this cycle
+- [x] Keep/rollback decision:
+  - [x] reject runtime work for now and close as research-only. The only credible native Remy win in the current evidence set is a partial-refresh reland, and reopening that path now would ignore the standing real-hardware correctness rollback
+- [x] final commit hash:
+  - [x] pending docs-only closure commit
+- [x] next best candidate:
+  - [x] do not retry generic native enqueue, dirty-tile, or copy-primitive micro-optimizations now; the next native loop should either prove a narrower correctness guard for compare-dirty partial refresh on the hot `ppg-seqs 80/81/82` textures or re-rank a different measured native gameplay bottleneck entirely
