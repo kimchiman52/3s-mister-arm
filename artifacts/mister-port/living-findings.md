@@ -3515,7 +3515,7 @@ Scope guardrails:
 
 - 2026-03-18T18:55:00-0400
   - Final commit hash:
-    - pending docs-only closure commit
+    - `4e698fd4`
   - Bottleneck targeted:
     - native ordinary-gameplay full-refresh copy cost in `src/sf33rd/Source/Common/PPGFile.c`, specifically whether the hot `ppgRenewTexChunkSeqs(...)` `SDL_memmove(...)` call was adding avoidable overhead on the direct `software_frame_exact` path
   - Change summary:

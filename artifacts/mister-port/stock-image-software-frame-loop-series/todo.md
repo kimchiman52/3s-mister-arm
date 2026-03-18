@@ -5345,7 +5345,7 @@
   - [x] the log wording is fixed in this diff, and the remaining hash placeholders will be backfilled immediately after the docs-only closure commit so the final recorded loop state is complete
 - [x] Keep/rollback decision:
   - [x] reject and revert. This full-refresh copy-primitive swap does not move the deciding native Remy lane, leaves the ordinary gameplay matrix effectively flat apart from one modest left-corner uptick, and therefore is not a credible runtime keep
-- [ ] final commit hash:
-  - [ ] pending docs-only closure commit after the review gate
+- [x] final commit hash:
+  - [x] `4e698fd4`
 - [x] next best candidate:
   - [x] do not retry `memmove`/`memcpy`-style copy-primitive swaps on `ppgRenewTexChunkSeqs(...)` now. The next native gameplay loop should stay on measured full-refresh cost, but it needs a larger proof point than the raw copy primitive itself, such as narrower evidence around the `flLockTexture(..., 3)` refresh path or the same-frame refresh-attempt burst that still dominates Remy/full telemetry
