@@ -65,6 +65,7 @@ typedef enum TestScenePreset {
     TEST_SCENE_PRESET_SUPER_HEAVY,
     TEST_SCENE_PRESET_BASIC_EXCHANGE,
     TEST_SCENE_PRESET_PRESSURE_EXCHANGE,
+    TEST_SCENE_PRESET_LEFT_CORNER_RYU_STAGE,
     TEST_SCENE_PRESET_TRAINING_YUN_RYU_RYU_STAGE,
 } TestScenePreset;
 
@@ -136,6 +137,9 @@ static TestScenePreset resolve_scene_preset(const char* preset_name) {
     }
     if (SDL_strcmp(preset_name, "pressure-exchange") == 0) {
         return TEST_SCENE_PRESET_PRESSURE_EXCHANGE;
+    }
+    if (SDL_strcmp(preset_name, "left-corner-ryu-stage") == 0) {
+        return TEST_SCENE_PRESET_LEFT_CORNER_RYU_STAGE;
     }
     if (SDL_strcmp(preset_name, "training-yun-ryu-ryu-stage") == 0) {
         return TEST_SCENE_PRESET_TRAINING_YUN_RYU_RYU_STAGE;
@@ -464,6 +468,33 @@ static u16 pressure_exchange_script_input(int player, int local_frame) {
     return pressure_exchange_defend_input(player, turn_frame);
 }
 
+static u16 left_corner_ryu_stage_reanchor_input(int player) {
+    return player == 0 ? SWK_LEFT : SWK_LEFT;
+}
+
+static bool left_corner_ryu_stage_needs_reanchor(void) {
+    const int p1_x = plw[0].wu.position_x;
+    const int p2_x = plw[1].wu.position_x;
+
+    return p1_x > 144 || p2_x > 224 || (p2_x - p1_x) > 96;
+}
+
+static u16 left_corner_ryu_stage_script_input(int player, int local_frame) {
+    const int cycle_frame = local_frame % 192;
+
+    // Keep the fight biased into the left corner, then reuse the existing exchange script
+    // so both players still trade attacks once they get there.
+    if (cycle_frame < 48 || left_corner_ryu_stage_needs_reanchor()) {
+        return left_corner_ryu_stage_reanchor_input(player);
+    }
+
+    if (cycle_frame < 64) {
+        return (u16)(left_corner_ryu_stage_reanchor_input(player) | (player == 0 ? SWK_DOWN : 0));
+    }
+
+    return pressure_exchange_script_input(player, cycle_frame - 64);
+}
+
 static u16 training_yun_ryu_ryu_stage_script_input(int player, int local_frame) {
     if (player != 0) {
         return 0;
@@ -677,6 +708,14 @@ static void apply_scene_preset_defaults() {
         stage = scene_preset_stage_heavy_stage;
         break;
 
+    case TEST_SCENE_PRESET_LEFT_CORNER_RYU_STAGE:
+        characters[0] = CHAR_RYU;
+        characters[1] = CHAR_KEN;
+        selected_super_arts[0] = 0;
+        selected_super_arts[1] = 0;
+        stage = scene_preset_basic_exchange_stage;
+        break;
+
     case TEST_SCENE_PRESET_TRAINING_YUN_RYU_RYU_STAGE:
         characters[0] = CHAR_YUN;
         characters[1] = CHAR_RYU;
@@ -713,6 +752,12 @@ static void apply_scene_preset_inputs() {
     if (scene_preset == TEST_SCENE_PRESET_PRESSURE_EXCHANGE) {
         p1sw_buff = pressure_exchange_script_input(0, game_frame);
         p2sw_buff = pressure_exchange_script_input(1, game_frame);
+        return;
+    }
+
+    if (scene_preset == TEST_SCENE_PRESET_LEFT_CORNER_RYU_STAGE) {
+        p1sw_buff = left_corner_ryu_stage_script_input(0, game_frame);
+        p2sw_buff = left_corner_ryu_stage_script_input(1, game_frame);
         return;
     }
 
