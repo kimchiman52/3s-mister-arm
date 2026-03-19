@@ -3621,13 +3621,13 @@ Scope guardrails:
   - Bottleneck targeted:
     - native regular-gameplay software-surface refresh cost on the hot Remy `ppg-seqs 80/81/82` family, specifically whether compare-dirty partial refresh can recover that lane without reopening the proven-bad seq-specific renew-dirty path
   - Change summary:
-    - promoted the existing compare-dirty `INDEX8 256x256` unlock tracking into the retained software-surface refresh path in `src/port/sdl/sdl_game_renderer.c`, but only while software-frame mode is active and software-surface cache variants already exist
+    - promoted the existing compare-dirty `INDEX8 256x256` unlock tracking into the retained software-surface refresh path in `src/port/sdl/sdl_game_renderer.c`
     - added a narrow `classify_compare_dirty_rect_refresh_decision(...)` fallback so retained refreshes can use pending compare-dirty tile masks / bboxes only when explicit renew-dirty metadata is absent, while keeping the quarter-surface partial cap and full-refresh fallbacks unchanged
-    - rebuilt the telemetry ARM package in Docker `3sx-mister-build`, redeployed it with serialized MiSTer tooling, and reran the native gameplay matrix on-device
+    - accepted and fixed one review finding before final verification by gating runtime compare-dirty scanning on textures that already have live software-surface cache variants, then rebuilt the telemetry ARM package in Docker `3sx-mister-build`, redeployed it with serialized MiSTer tooling, and reran the native gameplay matrix on-device
   - Verification result summary:
-    - Docker telemetry ARM build/install/package plus serialized `lock-status`, `busy-status`, `health`, `deploy`, `probe`, and bounded `smoke` all passed on the kept package
-    - native gameplay captures all improved while staying on the direct exact route: control `78.9890 -> 83.5068 FPS`, Remy `38.9423 -> 47.8881 FPS`, left-corner `76.8938 -> 81.4362 FPS`, and Ibuki `72.1626 -> 77.7926 FPS`; Remy refresh cost dropped from `10.4455` to `5.5408 ms`
+    - Docker telemetry ARM build/install/package plus serialized `lock-status`, `busy-status`, `health`, `deploy`, `probe`, and bounded `smoke` all passed on the reviewed package
+    - reviewed native gameplay captures all improved while staying on the direct exact route: control `78.9890 -> 88.8868 FPS`, Remy `38.9423 -> 52.2588 FPS`, left-corner `76.8938 -> 87.3631 FPS`, and Ibuki `72.1626 -> 86.0363 FPS`; Remy refresh cost dropped from `10.4455` to `5.0890 ms` with `partial_ratio = 0.591300`
   - Keep/rollback decision with reason:
     - keep; the reland stays within retained refresh bookkeeping, avoids the earlier seq-specific correctness regression, and materially improves the deciding native gameplay hotspot plus the supporting native lanes
   - Next best candidate optimization:
-    - re-rank the remaining native ceiling from the kept Loop 123 telemetry, with first attention on the remaining oversized/full compare-dirty residue in Remy `ppg-seqs 81/82` before another broader native gameplay hypothesis
+    - re-rank the remaining native ceiling from the kept Loop 123 reviewed telemetry, with first attention on the remaining oversized/full compare-dirty residue in Remy `ppg-seqs 81/82` before another broader native gameplay hypothesis
