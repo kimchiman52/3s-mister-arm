@@ -33,6 +33,7 @@ Commands:
   run-wrapper                Run MiSTer_3SX with explicit runtime args and tail wrapper logs
   wrapper-status             Show installed wrapper artifacts, matching processes, and wrapper logs
   capture-wrapper            Capture detailed live wrapper/runtime state without mutating the target
+  yc-log                     Print the persistent YC debug log from the remote 3SX logs dir
   health                     Run a short remote health command and verify SF33RD.AFS
 
 Safety:
@@ -514,6 +515,52 @@ EOF
 )
     mister_lock_acquire
     mister_ssh_exec "${host}" "${user}" "${password}" "${wrapper_capture_cmd}"
+    ;;
+yc-log)
+    tail_lines="80"
+    show_all=0
+    yc_log_path="/media/fat/games/3sx/logs/yc-debug.log"
+
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+        --tail)
+            tail_lines="$2"
+            shift 2
+            ;;
+        --all)
+            show_all=1
+            shift
+            ;;
+        *)
+            echo "unknown yc-log option: $1" >&2
+            exit 2
+            ;;
+        esac
+    done
+
+    if ! [[ "${tail_lines}" =~ ^[0-9]+$ ]]; then
+        echo "yc-log --tail must be a non-negative integer" >&2
+        exit 2
+    fi
+
+    yc_log_cmd=$(cat <<EOF
+set -e
+log_path='${yc_log_path}'
+if [ ! -f "\${log_path}" ]; then
+  echo __YC_LOG_MISSING__
+  exit 0
+fi
+echo __YC_LOG_BEGIN__
+if [ "${show_all}" -eq 1 ]; then
+  cat "\${log_path}"
+else
+  tail -n ${tail_lines} "\${log_path}"
+fi
+echo __YC_LOG_END__
+EOF
+)
+    mister_lock_acquire
+    mister_ssh_exec "${host}" "${user}" "${password}" "${yc_log_cmd}"
     ;;
 health)
     mister_require_safe_runtime_root "${remote_root}"

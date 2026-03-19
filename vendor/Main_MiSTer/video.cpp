@@ -2513,6 +2513,31 @@ static bool should_use_threesx_native_analog_yc_fallback()
 	return !strcasecmp(user_io_get_core_name(1), "3SX");
 }
 
+static const char *YC_DEBUG_LOG_DIR = "/media/fat/games/3sx/logs";
+static const char *YC_DEBUG_LOG_PATH = "/media/fat/games/3sx/logs/yc-debug.log";
+
+static void append_yc_debug_log(const char *line)
+{
+	struct stat st = {};
+	if (stat("/media/fat/games/3sx", &st) != 0 || !S_ISDIR(st.st_mode)) return;
+
+	if (stat(YC_DEBUG_LOG_DIR, &st) != 0)
+	{
+		if ((mkdir(YC_DEBUG_LOG_DIR, 0777) != 0) && (errno != EEXIST)) return;
+	}
+	else if (!S_ISDIR(st.st_mode))
+	{
+		return;
+	}
+
+	FILE *fp = fopen(YC_DEBUG_LOG_PATH, "a");
+	if (!fp) return;
+
+	fputs(line, fp);
+	fputc('\n', fp);
+	fclose(fp);
+}
+
 static bool apply_threesx_native_analog_yc_fallback(int pal, int64_t *phase_inc, const char **phase_key)
 {
 	if (!should_use_threesx_native_analog_yc_fallback()) return false;
@@ -2969,6 +2994,8 @@ static void set_yc_mode()
 	// Enable YC for S-Video/CVBS modes, or subcarrier for CXA2075 encoders
 	if (cfg.vga_mode_int >= 2)
 	{
+		const char *core_name = user_io_get_core_name();
+		const char *core_name_orig = user_io_get_core_name(1);
 		const float core_fps = current_video_info.vtime ? (100000000.f / current_video_info.vtime) : 0.f;
 		float output_fps = core_fps;
 		const float override_key_fps = core_fps;
@@ -3004,9 +3031,11 @@ static void set_yc_mode()
 
 		char yc_key[64];
 		char yc_key_expand[64];
+		const char *override_source = "generic";
+		const char *override_match = "";
 		sprintf(yc_key,
 		        "%s_%.1f%s%s",
-		        user_io_get_core_name(1),
+		        core_name_orig,
 		        override_key_fps,
 		        current_video_info.interlaced ? "i" : "",
 		        (pal || !cfg.ntsc_mode) ? "" : (cfg.ntsc_mode == 1) ? "s" : "m");
@@ -3021,6 +3050,8 @@ static void set_yc_mode()
 					printf("Override YC PHASE_INC with value: %lld\n", yc_modes[i].phase_inc);
 					PHASE_INC = yc_modes[i].phase_inc;
 					used_explicit_override = true;
+					override_source = "explicit";
+					override_match = yc_modes[i].key;
 					break;
 				}
 			}
@@ -3033,10 +3064,10 @@ static void set_yc_mode()
 					       yc_key,
 					       fallback_key,
 					       PHASE_INC);
+					override_source = "fallback";
+					override_match = fallback_key;
 				}
 			}
-
-			spi_uio_cmd_cont(UIO_SET_YC_PAR);
 		// For traditional S-Video/CVBS modes, enable YC processing
 		// For subcarrier-only modes (RGB+subcarrier or direct video), keep yc_en=0
 		bool is_subcarrier_only = (cfg.vga_mode_int == 4);
@@ -3048,6 +3079,56 @@ static void set_yc_mode()
 			// Traditional YC modes: enable YC processing
 			yc_config = ((pal || cfg.ntsc_mode) ? 4 : 0) | ((cfg.vga_mode_int == 3) ? 3 : 1);
 		}
+		uint16_t subcarrier_enable = (cfg.vga_mode_int == 4) ? 1 : 0;
+		char yc_debug_line[2048];
+		snprintf(yc_debug_line,
+		         sizeof(yc_debug_line),
+		         "yc_packet core=%s core_orig=%s vga_mode=%s vga_mode_int=%d vga_scaler=%d direct_video=%d ntsc_mode=%d vi_width=%" PRIu32 " vi_height=%" PRIu32 " vi_vtime=%" PRIu32 " vi_ctime=%" PRIu32 " vi_ptime=%" PRIu32 " vi_interlaced=%d vcur_mode=%" PRIu32 " vcur_hact=%" PRIu32 " vcur_hfp=%" PRIu32 " vcur_hs=%" PRIu32 " vcur_hbp=%" PRIu32 " vcur_vact=%" PRIu32 " vcur_vfp=%" PRIu32 " vcur_vs=%" PRIu32 " vcur_vbp=%" PRIu32 " vcur_hpol=%" PRIu32 " vcur_vpol=%" PRIu32 " vcur_vic=%" PRIu32 " vcur_rb=%" PRIu32 " vcur_pr=%" PRIu32 " vcur_fpix=%.6f core_fps=%.6f output_fps=%.6f clk_video=%.6f clk_ref=%.8f yc_key=%s yc_key_expand=%s override_source=%s override_match=%s phase_inc=%" PRId64 " colorburst_start=%d colorburst_end=%d colorburst_range=%d yc_config=%u subcarrier_enable=%u",
+		         core_name,
+		         core_name_orig,
+		         cfg.vga_mode,
+		         cfg.vga_mode_int,
+		         cfg.vga_scaler,
+		         cfg.direct_video,
+		         cfg.ntsc_mode,
+		         current_video_info.width,
+		         current_video_info.height,
+		         current_video_info.vtime,
+		         current_video_info.ctime,
+		         current_video_info.ptime,
+		         current_video_info.interlaced ? 1 : 0,
+		         v_cur.param.mode,
+		         v_cur.param.hact,
+		         v_cur.param.hfp,
+		         v_cur.param.hs,
+		         v_cur.param.hbp,
+		         v_cur.param.vact,
+		         v_cur.param.vfp,
+		         v_cur.param.vs,
+		         v_cur.param.vbp,
+		         v_cur.param.hpol,
+		         v_cur.param.vpol,
+		         v_cur.param.vic,
+		         v_cur.param.rb,
+		         v_cur.param.pr,
+		         v_cur.Fpix,
+		         core_fps,
+		         output_fps,
+		         CLK_VIDEO,
+		         CLK_REF,
+		         yc_key,
+		         yc_key_expand,
+		         override_source,
+		         override_match,
+		         PHASE_INC,
+		         COLORBURST_START,
+		         COLORBURST_END,
+		         COLORBURST_RANGE,
+		         yc_config,
+		         subcarrier_enable);
+		append_yc_debug_log(yc_debug_line);
+
+			spi_uio_cmd_cont(UIO_SET_YC_PAR);
 		printf("Sending YC config to FPGA: 0x%02X (pal_en=%d, cvbs=%d, yc_en=%d)\n", yc_config, (yc_config >> 2) & 1, (yc_config >> 1) & 1, yc_config & 1);
 		spi_w(yc_config);
 		spi_w(PHASE_INC);
@@ -3056,7 +3137,6 @@ static void set_yc_mode()
 		spi_w(COLORBURST_RANGE);
 		spi_w(COLORBURST_RANGE >> 16);
 		// Case 6: Send subcarrier enable flag
-		uint16_t subcarrier_enable = (cfg.vga_mode_int == 4) ? 1 : 0;
 		printf("Sending subcarrier enable to FPGA: %d\n", subcarrier_enable);
 		spi_w(subcarrier_enable);
 		DisableIO();
