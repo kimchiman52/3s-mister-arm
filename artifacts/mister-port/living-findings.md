@@ -3583,7 +3583,7 @@ Scope guardrails:
 
 - 2026-03-18T20:08:41-0400
   - Final commit hash:
-    - pending docs-only closure commit
+    - `9e6f86ac`
   - Bottleneck targeted:
     - native Remy-stage ordinary-gameplay slowdown on the direct `software_frame_exact` path, specifically whether any safe runtime win remains outside the blocked seq-specific partial-refresh path
   - Change summary:

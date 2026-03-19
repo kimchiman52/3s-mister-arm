@@ -5476,6 +5476,6 @@
 - [x] Keep/rollback decision:
   - [x] reject runtime work for now and close as research-only. The best-supported native Remy win still routes through seq-specific partial refresh, and reopening that path without a narrower correctness proof would ignore the standing real-hardware corruption rollback
 - [ ] final commit hash:
-  - [ ] pending docs-only closure commit
+  - [x] `9e6f86ac`
 - [x] next best candidate:
   - [x] do not spend the next native regular-gameplay loop on more non-partial Remy full-refresh micro-optimizations unless fresh evidence materially changes their ranking. Either prove a narrower correctness guard for `ppg-seqs 80/81/82`, or re-rank a different ordinary native gameplay bottleneck before touching runtime again
