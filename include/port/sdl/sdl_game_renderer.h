@@ -568,6 +568,7 @@ void SDLGameRenderer_ResetPerfCaptureRefreshTelemetry(void);
 void SDLGameRenderer_ResetPerfCaptureUnlockLocalityTelemetry(void);
 void SDLGameRenderer_ResetPerfCaptureTextureRenewTelemetry(void);
 void SDLGameRenderer_ResetPerfCaptureRasterTimingTelemetry(void);
+void SDLGameRenderer_ResetPerfCaptureFastExactFamilyTelemetry(void);
 void SDLGameRenderer_ResetPerfCaptureFastNonIntegerFamilyTelemetry(void);
 void SDLGameRenderer_ResetPerfCaptureGenericTexturedFamilyTelemetry(void);
 void SDLGameRenderer_ResetPerfCaptureTexturedGeometryRecoveredTelemetry(void);
@@ -586,6 +587,12 @@ void SDLGameRenderer_GetPerfCaptureTextureRenewTelemetry(
 int SDLGameRenderer_GetPerfCaptureRasterBucketTimings(
     SDLGameRenderer_PerfCaptureRasterBucketTiming* out_timings,
     int max_timings);
+int SDLGameRenderer_GetPerfCaptureFastExactFamilies(SDLGameRenderer_PerfCaptureTexturedRectFamily* out_families,
+                                                    int max_families);
+void SDLGameRenderer_GetPerfCaptureFastExactFamilyTotals(Uint64* out_task_total,
+                                                         Uint64* out_pixel_total,
+                                                         Uint64* out_lookup_entry_total,
+                                                         int* out_family_count);
 int SDLGameRenderer_GetPerfCaptureFastNonIntegerFamilies(SDLGameRenderer_PerfCaptureTexturedRectFamily* out_families,
                                                          int max_families);
 void SDLGameRenderer_GetPerfCaptureFastNonIntegerFamilyTotals(Uint64* out_task_total,

@@ -3597,3 +3597,20 @@ Scope guardrails:
     - reject runtime work for now and close research-only; the best-supported current win still requires seq-specific partial refresh, and that path remains blocked by earlier real-hardware submenu/HUD corruption and flicker
   - Next best candidate optimization:
     - either prove a narrower correctness guard for seq-specific partial refresh on `ppg-seqs 80/81/82`, or re-rank a different ordinary native gameplay hotspot before attempting more Remy full-refresh work
+
+- 2026-03-18T20:44:51-0400
+  - Final commit hash:
+    - `pending`
+  - Bottleneck targeted:
+    - native ordinary-gameplay `software_frame_exact` hotspot attribution, specifically which exact textured-rect families dominate the current Remy-stage slowdown on the direct native path
+  - Change summary:
+    - added perf-capture-only `software_frame_fast_exact` family tracking/reset/accessors in `include/port/sdl/sdl_game_renderer.h` and `src/port/sdl/sdl_game_renderer.c`
+    - exported the new `metrics.software_frame_fast_exact_families` array from `src/port/sdl/sdl_app.c` and bumped the perf JSON `schema_version` from `49` to `50`
+    - rebuilt the telemetry ARM package in Docker `3sx-mister-build`, redeployed it through serialized MiSTer tooling, and captured fresh native full telemetry for control, Remy, left-corner Ryu, and Ibuki
+  - Verification result summary:
+    - Docker telemetry ARM build/install/package plus serialized `health`, `deploy`, `probe`, and bounded `smoke` all passed on the kept measurement-support package
+    - native captures stayed on the same direct exact route while exposing the bottleneck in FPS-visible terms: control `78.9890 FPS`, Remy `38.9423 FPS`, left-corner `76.8938 FPS`, and Ibuki `72.1626 FPS`
+  - Keep/rollback decision with reason:
+    - keep; this measurement-support loop exposed actionable exact-family attribution without changing runtime behavior, and the new Remy hotspot data now points at `ppg-seqs 80/81/82` exact families rather than presenter cost
+  - Next best candidate optimization:
+    - inspect the Remy-stage `ppg-seqs 80/81/82` exact-family path next and determine whether a correctness-safe partial-refresh or renew/submit reduction exists before trying more generic exact-path micro-optimizations

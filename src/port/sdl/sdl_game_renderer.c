@@ -314,6 +314,8 @@ static Uint64 perf_capture_raster_sample_counters[SDL_GAME_RENDERER_PERF_CAPTURE
 static Uint64 perf_capture_raster_sample_calls[SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_COUNT] = { 0 };
 static Uint64 perf_capture_raster_sample_pixels[SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_COUNT] = { 0 };
 static Uint64 perf_capture_raster_sample_ns[SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_COUNT] = { 0 };
+static SDLGameRenderer_PerfCaptureTexturedRectFamily perf_capture_fast_exact_families[16] = { 0 };
+static int perf_capture_fast_exact_family_count = 0;
 static SDLGameRenderer_PerfCaptureTexturedRectFamily perf_capture_fast_non_integer_families[16] = { 0 };
 static int perf_capture_fast_non_integer_family_count = 0;
 static SDLGameRenderer_PerfCaptureTexturedRectFamily perf_capture_generic_textured_families[16] = { 0 };
@@ -694,6 +696,9 @@ static void note_software_frame_fast_copy_result(const RenderTask* task,
                                                  const SoftwareFrameFastCopyPlan* plan,
                                                  const SDL_Surface* dst_surface,
                                                  Uint64 non_integer_lookup_entries);
+static void note_perf_capture_fast_exact_family(const RenderTask* task,
+                                                const SDL_Surface* dst_surface,
+                                                Uint64 lookup_entries);
 static void note_software_frame_fast_non_integer(const RenderTask* task,
                                                  const SDL_Surface* dst_surface,
                                                  Uint64 lookup_entries);
@@ -3913,6 +3918,13 @@ static void note_perf_capture_textured_rect_family(const RenderTask* task,
     update_textured_geometry_fallback_range(&entry->visible_h_min, &entry->visible_h_max, profile.visible_h);
 }
 
+static void note_perf_capture_fast_exact_family(const RenderTask* task,
+                                                const SDL_Surface* dst_surface,
+                                                Uint64 lookup_entries) {
+    note_perf_capture_textured_rect_family(
+        task, dst_surface, lookup_entries, perf_capture_fast_exact_families, &perf_capture_fast_exact_family_count);
+}
+
 static void note_perf_capture_fast_non_integer_family(const RenderTask* task,
                                                       const SDL_Surface* dst_surface,
                                                       Uint64 lookup_entries) {
@@ -4062,6 +4074,7 @@ static void note_software_frame_fast_copy_result(const RenderTask* task,
     if (result == SOFTWARE_FRAME_FAST_COPY_RESULT_EXACT) {
         frame_stats.software_frame_fast_exact_tasks += 1;
         frame_stats.software_frame_fast_exact_pixels += submitted_pixels;
+        note_perf_capture_fast_exact_family(task, dst_surface, 0);
         if ((plan != NULL) && plan->clipped) {
             frame_stats.software_frame_fast_exact_clipped_tasks += 1;
         }
@@ -6530,6 +6543,11 @@ void SDLGameRenderer_ResetPerfCaptureRasterTimingTelemetry(void) {
     SDL_zero(perf_capture_raster_sample_ns);
 }
 
+void SDLGameRenderer_ResetPerfCaptureFastExactFamilyTelemetry(void) {
+    SDL_zero(perf_capture_fast_exact_families);
+    perf_capture_fast_exact_family_count = 0;
+}
+
 void SDLGameRenderer_ResetPerfCaptureFastNonIntegerFamilyTelemetry(void) {
     SDL_zero(perf_capture_fast_non_integer_families);
     perf_capture_fast_non_integer_family_count = 0;
@@ -7069,6 +7087,24 @@ int SDLGameRenderer_GetPerfCaptureFastNonIntegerFamilies(SDLGameRenderer_PerfCap
                                                          int max_families) {
     return get_perf_capture_textured_rect_families(
         perf_capture_fast_non_integer_families, perf_capture_fast_non_integer_family_count, out_families, max_families);
+}
+
+int SDLGameRenderer_GetPerfCaptureFastExactFamilies(SDLGameRenderer_PerfCaptureTexturedRectFamily* out_families,
+                                                    int max_families) {
+    return get_perf_capture_textured_rect_families(
+        perf_capture_fast_exact_families, perf_capture_fast_exact_family_count, out_families, max_families);
+}
+
+void SDLGameRenderer_GetPerfCaptureFastExactFamilyTotals(Uint64* out_task_total,
+                                                         Uint64* out_pixel_total,
+                                                         Uint64* out_lookup_entry_total,
+                                                         int* out_family_count) {
+    get_perf_capture_textured_rect_family_totals(perf_capture_fast_exact_families,
+                                                 perf_capture_fast_exact_family_count,
+                                                 out_task_total,
+                                                 out_pixel_total,
+                                                 out_lookup_entry_total,
+                                                 out_family_count);
 }
 
 void SDLGameRenderer_GetPerfCaptureFastNonIntegerFamilyTotals(Uint64* out_task_total,
