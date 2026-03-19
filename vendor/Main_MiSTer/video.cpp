@@ -2953,8 +2953,9 @@ static void set_yc_mode()
 	// Enable YC for S-Video/CVBS modes, or subcarrier for CXA2075 encoders
 	if (cfg.vga_mode_int >= 2)
 	{
-		float output_fps = current_video_info.vtime ? (100000000.f / current_video_info.vtime) : 0.f;
-		const float override_key_fps = output_fps;
+		const float core_fps = current_video_info.vtime ? (100000000.f / current_video_info.vtime) : 0.f;
+		float output_fps = core_fps;
+		const float override_key_fps = core_fps;
 		double CLK_VIDEO = current_video_info.ctime * 100.f / current_video_info.ptime;
 
 		float prate = current_video_info.width * 100.f;
@@ -2967,12 +2968,12 @@ static void set_yc_mode()
 			if (htotal && vtotal && (v_cur.Fpix > 0.0))
 			{
 				output_fps = (float)((v_cur.Fpix * 1000000.0) / ((double)htotal * (double)vtotal));
-				CLK_VIDEO = v_cur.Fpix;
-				printf("set_yc_mode: using selected output timing for native analog TV mode: %ux%u pixel_clock=%.6fMHz fps=%.6f\n",
+				printf("set_yc_mode: using selected output timing to choose native analog TV family: %ux%u pixel_clock=%.6fMHz fps=%.6f (phase clock remains %.6fMHz)\n",
 				       v_cur.item[1],
 				       v_cur.item[5],
-				       CLK_VIDEO,
-				       output_fps);
+				       v_cur.Fpix,
+				       output_fps,
+				       CLK_VIDEO);
 			}
 		}
 
