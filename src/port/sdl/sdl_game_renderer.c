@@ -697,9 +697,11 @@ static void note_software_frame_fast_copy_result(const RenderTask* task,
                                                  const SoftwareFrameFastCopyPlan* plan,
                                                  const SDL_Surface* dst_surface,
                                                  Uint64 non_integer_lookup_entries);
+#if ENABLE_PERF_TELEMETRY
 static void note_perf_capture_fast_exact_family(const RenderTask* task,
                                                 const SDL_Surface* dst_surface,
                                                 Uint64 lookup_entries);
+#endif
 static void note_software_frame_fast_non_integer(const RenderTask* task,
                                                  const SDL_Surface* dst_surface,
                                                  Uint64 lookup_entries);
