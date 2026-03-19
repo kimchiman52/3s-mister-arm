@@ -2507,6 +2507,22 @@ static bool should_use_output_timing_for_yc_mode()
 	return (cfg.vga_mode_int == 2) || (cfg.vga_mode_int == 3);
 }
 
+static bool should_use_threesx_native_analog_yc_fallback()
+{
+	if (!should_use_native_analog_tv_mode()) return false;
+	return !strcasecmp(user_io_get_core_name(1), "3SX");
+}
+
+static bool apply_threesx_native_analog_yc_fallback(int pal, int64_t *phase_inc, const char **phase_key)
+{
+	if (!should_use_threesx_native_analog_yc_fallback()) return false;
+	if ((cfg.ntsc_mode == 1) || (cfg.ntsc_mode == 2)) return false;
+
+	*phase_inc = pal ? 243746729900LL : 196786767482LL;
+	if (phase_key) *phase_key = pal ? "MENU_50.2" : "MENU_59.8";
+	return true;
+}
+
 static void set_default_tv_video_mode()
 {
 	const int mode = default_tv_mode_index();
@@ -2994,20 +3010,33 @@ static void set_yc_mode()
 		        override_key_fps,
 		        current_video_info.interlaced ? "i" : "",
 		        (pal || !cfg.ntsc_mode) ? "" : (cfg.ntsc_mode == 1) ? "s" : "m");
-		snprintf(yc_key_expand, sizeof(yc_key_expand), "%s_%.2f", yc_key, prate);
-		printf("Calculated YC parameters for '%s': %s PHASE_INC=%lld, COLORBURST_START=%d, COLORBURST_END=%d\n", yc_key, pal ? "PAL" : (cfg.ntsc_mode == 1) ? "PAL60" : (cfg.ntsc_mode == 2) ? "PAL-M" : "NTSC", PHASE_INC, COLORBURST_START, COLORBURST_END);
+			snprintf(yc_key_expand, sizeof(yc_key_expand), "%s_%.2f", yc_key, prate);
+			printf("Calculated YC parameters for '%s': %s PHASE_INC=%lld, COLORBURST_START=%d, COLORBURST_END=%d\n", yc_key, pal ? "PAL" : (cfg.ntsc_mode == 1) ? "PAL60" : (cfg.ntsc_mode == 2) ? "PAL-M" : "NTSC", PHASE_INC, COLORBURST_START, COLORBURST_END);
 
-		for (uint i = 0; i < sizeof(yc_modes) / sizeof(yc_modes[0]); i++)
-		{
-		if (!strcasecmp(yc_modes[i].key, yc_key) || !strcasecmp(yc_modes[i].key, yc_key_expand))
+			bool used_explicit_override = false;
+			for (uint i = 0; i < sizeof(yc_modes) / sizeof(yc_modes[0]); i++)
 			{
-				printf("Override YC PHASE_INC with value: %lld\n", yc_modes[i].phase_inc);
-				PHASE_INC = yc_modes[i].phase_inc;
-				break;
+				if (!strcasecmp(yc_modes[i].key, yc_key) || !strcasecmp(yc_modes[i].key, yc_key_expand))
+				{
+					printf("Override YC PHASE_INC with value: %lld\n", yc_modes[i].phase_inc);
+					PHASE_INC = yc_modes[i].phase_inc;
+					used_explicit_override = true;
+					break;
+				}
 			}
-		}
+			if (!used_explicit_override)
+			{
+				const char *fallback_key = 0;
+				if (apply_threesx_native_analog_yc_fallback(pal, &PHASE_INC, &fallback_key))
+				{
+					printf("No explicit YC override for '%s'; using 3SX native analog fallback '%s' PHASE_INC=%lld\n",
+					       yc_key,
+					       fallback_key,
+					       PHASE_INC);
+				}
+			}
 
-		spi_uio_cmd_cont(UIO_SET_YC_PAR);
+			spi_uio_cmd_cont(UIO_SET_YC_PAR);
 		// For traditional S-Video/CVBS modes, enable YC processing
 		// For subcarrier-only modes (RGB+subcarrier or direct video), keep yc_en=0
 		bool is_subcarrier_only = (cfg.vga_mode_int == 4);
