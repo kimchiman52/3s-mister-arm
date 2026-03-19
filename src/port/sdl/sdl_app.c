@@ -7110,6 +7110,31 @@ static SDL_FRect fit_4_by_3_rect(int win_w, int win_h) {
     return rect;
 }
 
+static bool is_native_analog_tv_framebuffer_size(int win_w, int win_h) {
+#if defined(PORT_MISTER)
+    if (win_w != 640) {
+        return false;
+    }
+
+    return (win_h == 240) || (win_h == 288) || (win_h == 480) || (win_h == 576);
+#else
+    (void)win_w;
+    (void)win_h;
+    return false;
+#endif
+}
+
+static SDL_FRect fit_crt_4x3_rect(int win_w, int win_h) {
+    // MiSTer's native TV mode family uses non-square analog pixels. Filling the
+    // full 640-wide raster is the intended 4:3 CRT presentation on those modes.
+    if (is_native_analog_tv_framebuffer_size(win_w, win_h)) {
+        SDL_FRect rect = { 0.0f, 0.0f, (float)win_w, (float)win_h };
+        return rect;
+    }
+
+    return fit_4_by_3_rect(win_w, win_h);
+}
+
 static SDL_FRect fit_native_rect(int win_w, int win_h) {
     SDL_FRect rect;
     rect.w = native_game_width;
@@ -7143,6 +7168,8 @@ static SDL_FRect get_letterbox_rect(int win_w, int win_h) {
         return fit_native_rect(win_w, win_h);
 
     case SCALEMODE_CRT_4X3:
+        return fit_crt_4x3_rect(win_w, win_h);
+
     case SCALEMODE_NEAREST:
     case SCALEMODE_LINEAR:
     case SCALEMODE_SOFT_LINEAR:

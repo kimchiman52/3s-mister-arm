@@ -2500,6 +2500,13 @@ static bool should_use_native_analog_tv_mode()
 	return (cfg.vga_mode_int == 2) || (cfg.vga_mode_int == 3);
 }
 
+static bool should_use_output_timing_for_yc_mode()
+{
+	if (cfg.direct_video) return false;
+	if (cfg.vga_scaler) return false;
+	return (cfg.vga_mode_int == 2) || (cfg.vga_mode_int == 3);
+}
+
 static void set_default_tv_video_mode()
 {
 	const int mode = default_tv_mode_index();
@@ -2946,13 +2953,31 @@ static void set_yc_mode()
 	// Enable YC for S-Video/CVBS modes, or subcarrier for CXA2075 encoders
 	if (cfg.vga_mode_int >= 2)
 	{
-		float fps = current_video_info.vtime ? (100000000.f / current_video_info.vtime) : 0.f;
-		int pal = fps < 55.f;
-		double CLK_REF = (pal || (cfg.ntsc_mode == 1)) ? 4.43361875f : (cfg.ntsc_mode == 2) ? 3.575611f : 3.579545f;
+		float output_fps = current_video_info.vtime ? (100000000.f / current_video_info.vtime) : 0.f;
+		const float override_key_fps = output_fps;
 		double CLK_VIDEO = current_video_info.ctime * 100.f / current_video_info.ptime;
 
 		float prate = current_video_info.width * 100.f;
 		prate /= current_video_info.ptime;
+
+		if (should_use_output_timing_for_yc_mode())
+		{
+			const uint32_t htotal = v_cur.item[1] + v_cur.item[2] + v_cur.item[3] + v_cur.item[4];
+			const uint32_t vtotal = v_cur.item[5] + v_cur.item[6] + v_cur.item[7] + v_cur.item[8];
+			if (htotal && vtotal && (v_cur.Fpix > 0.0))
+			{
+				output_fps = (float)((v_cur.Fpix * 1000000.0) / ((double)htotal * (double)vtotal));
+				CLK_VIDEO = v_cur.Fpix;
+				printf("set_yc_mode: using selected output timing for native analog TV mode: %ux%u pixel_clock=%.6fMHz fps=%.6f\n",
+				       v_cur.item[1],
+				       v_cur.item[5],
+				       CLK_VIDEO,
+				       output_fps);
+			}
+		}
+
+		int pal = output_fps < 55.f;
+		double CLK_REF = (pal || (cfg.ntsc_mode == 1)) ? 4.43361875f : (cfg.ntsc_mode == 2) ? 3.575611f : 3.579545f;
 
 		int64_t PHASE_INC = ((int64_t)((CLK_REF / CLK_VIDEO) * 1099511627776LL)) & 0xFFFFFFFFFFLL;
 
@@ -2962,7 +2987,12 @@ static void set_yc_mode()
 
 		char yc_key[64];
 		char yc_key_expand[64];
-		sprintf(yc_key, "%s_%.1f%s%s", user_io_get_core_name(1), fps, current_video_info.interlaced ? "i" : "", (pal || !cfg.ntsc_mode) ? "" : (cfg.ntsc_mode == 1) ? "s" : "m");
+		sprintf(yc_key,
+		        "%s_%.1f%s%s",
+		        user_io_get_core_name(1),
+		        override_key_fps,
+		        current_video_info.interlaced ? "i" : "",
+		        (pal || !cfg.ntsc_mode) ? "" : (cfg.ntsc_mode == 1) ? "s" : "m");
 		snprintf(yc_key_expand, sizeof(yc_key_expand), "%s_%.2f", yc_key, prate);
 		printf("Calculated YC parameters for '%s': %s PHASE_INC=%lld, COLORBURST_START=%d, COLORBURST_END=%d\n", yc_key, pal ? "PAL" : (cfg.ntsc_mode == 1) ? "PAL60" : (cfg.ntsc_mode == 2) ? "PAL-M" : "NTSC", PHASE_INC, COLORBURST_START, COLORBURST_END);
 
