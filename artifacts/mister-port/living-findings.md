@@ -3580,3 +3580,20 @@ Scope guardrails:
     - reject and revert; unchecked full-refresh SDL blits made every deciding native lane slower while the exact direct-present route stayed unchanged
   - Next best candidate optimization:
     - do not retry unchecked full-refresh SDL blit relands or similar full-refresh API swaps now. Unless a future loop can prove a correctness-safe partial-refresh guard for hot `ppg-seqs 80/81/82`, re-rank a different measured native gameplay bottleneck instead
+
+- 2026-03-18T20:08:41-0400
+  - Final commit hash:
+    - pending docs-only closure commit
+  - Bottleneck targeted:
+    - native Remy-stage ordinary-gameplay slowdown on the direct `software_frame_exact` path, specifically whether any safe runtime win remains outside the blocked seq-specific partial-refresh path
+  - Change summary:
+    - deep research re-read the trusted native baseline captures, the full-detail Remy refresh telemetry, and the current seq-specific renew-dirty guard in `src/sf33rd/Source/Common/PPGFile.c`
+    - no runtime or tooling diff was kept because the best-supported measured win still depends on the real-hardware-blocked partial-refresh path for `ppg-seqs 80/81/82`
+    - kept only the docs closeout so future loops do not waste more native budget on non-partial Remy refresh micro-optimizations that the current evidence no longer supports
+  - Verification result summary:
+    - no new build or device run; this closure is based on committed same-tree telemetry and current-tree code inspection
+    - the deciding evidence remains `native-reg-20260318-remy-stage` at `42.5296 FPS` against native guards in the `80-87 FPS` range, plus `loop117-remy-refresh-research.json` showing `software_surface_cache_refresh.mean_ms = 10.3873`, `software_surface_cache_refresh_blit.mean_ms = 9.9064`, and `ppg-seqs 80/81/82` accounting for `3315/3839` full refresh attempts with zero partial refreshes
+  - Keep/rollback decision with reason:
+    - reject runtime work for now and close research-only; the best-supported current win still requires seq-specific partial refresh, and that path remains blocked by earlier real-hardware submenu/HUD corruption and flicker
+  - Next best candidate optimization:
+    - either prove a narrower correctness guard for seq-specific partial refresh on `ppg-seqs 80/81/82`, or re-rank a different ordinary native gameplay hotspot before attempting more Remy full-refresh work
