@@ -625,6 +625,7 @@ static void note_perf_capture_software_surface_access_provenance(int texture_ind
 #endif
 static void clear_perf_capture_compare_dirty_rect_pending_index(int texture_index);
 static bool software_surface_cache_slot_has_texture_unlock_dirty_reason(int texture_index, int palette_handle);
+static bool texture_index_has_software_surface_cache_variants(int texture_index);
 static void set_software_surface_cache_slot_state(int texture_index,
                                                   int palette_handle,
                                                   SDL_Surface* surface,
@@ -2196,22 +2197,26 @@ static bool build_texture_unlock_refresh_plan_from_tile_mask(Uint64 tile_mask, T
 }
 
 static void note_perf_capture_texture_unlock_locality(int texture_handle, const SDL_Surface* source_surface) {
-    if (!frame_stats_extended_enabled || (source_surface == NULL) || (texture_handle <= 0) ||
-        (texture_handle > FL_TEXTURE_MAX)) {
+    if ((source_surface == NULL) || (texture_handle <= 0) || (texture_handle > FL_TEXTURE_MAX)) {
         return;
     }
 
+    const bool capture = frame_stats_extended_enabled;
     const int texture_index = texture_handle - 1;
-    note_perf_capture_texture_logical_identity(texture_index);
-    const bool have_index8_history = (perf_capture_unlock_locality_tracked_by_texture[texture_index] > 0) ||
-                                     (perf_capture_unlock_locality_baseline_skips_by_texture[texture_index] > 0);
+    if (capture) {
+        note_perf_capture_texture_logical_identity(texture_index);
+    }
     if (source_surface->format != SDL_PIXELFORMAT_INDEX8) {
-        frame_stats.texture_unlock_locality_index8_non_index8_skips += 1;
-        perf_capture_unlock_locality_telemetry.index8_non_index8_skips += 1;
-        perf_capture_unlock_locality_non_index8_skips_by_texture[texture_index] += 1;
-        perf_capture_unlock_locality_whole_capture_non_index8_skips_by_texture[texture_index] += 1;
-        if (have_index8_history) {
-            perf_capture_unlock_locality_shape_mixed_by_texture[texture_index] = true;
+        if (capture) {
+            const bool have_index8_history = (perf_capture_unlock_locality_tracked_by_texture[texture_index] > 0) ||
+                                             (perf_capture_unlock_locality_baseline_skips_by_texture[texture_index] > 0);
+            frame_stats.texture_unlock_locality_index8_non_index8_skips += 1;
+            perf_capture_unlock_locality_telemetry.index8_non_index8_skips += 1;
+            perf_capture_unlock_locality_non_index8_skips_by_texture[texture_index] += 1;
+            perf_capture_unlock_locality_whole_capture_non_index8_skips_by_texture[texture_index] += 1;
+            if (have_index8_history) {
+                perf_capture_unlock_locality_shape_mixed_by_texture[texture_index] = true;
+            }
         }
         perf_capture_unlock_locality_shadow_valid[texture_index] = false;
         return;
@@ -2223,19 +2228,30 @@ static void note_perf_capture_texture_unlock_locality(int texture_handle, const 
         return;
     }
 
+    const bool track_runtime_compare_dirty =
+        software_frame_mode_active && (width == 256) && (height == 256) &&
+        texture_index_has_software_surface_cache_variants(texture_index);
+    if (!capture && !track_runtime_compare_dirty) {
+        return;
+    }
+
     const size_t row_bytes = (size_t)width;
     const size_t shadow_size = row_bytes * (size_t)height;
-    const bool have_existing_shape = have_index8_history ||
-                                     (perf_capture_unlock_locality_non_index8_skips_by_texture[texture_index] > 0);
-    if (have_existing_shape &&
-        ((perf_capture_unlock_locality_source_format_by_texture[texture_index] != source_surface->format) ||
-         (perf_capture_unlock_locality_width_by_texture[texture_index] != width) ||
-         (perf_capture_unlock_locality_height_by_texture[texture_index] != height))) {
-        perf_capture_unlock_locality_shape_mixed_by_texture[texture_index] = true;
+    if (capture) {
+        const bool have_existing_shape =
+            (perf_capture_unlock_locality_tracked_by_texture[texture_index] > 0) ||
+            (perf_capture_unlock_locality_baseline_skips_by_texture[texture_index] > 0) ||
+            (perf_capture_unlock_locality_non_index8_skips_by_texture[texture_index] > 0);
+        if (have_existing_shape &&
+            ((perf_capture_unlock_locality_source_format_by_texture[texture_index] != source_surface->format) ||
+             (perf_capture_unlock_locality_width_by_texture[texture_index] != width) ||
+             (perf_capture_unlock_locality_height_by_texture[texture_index] != height))) {
+            perf_capture_unlock_locality_shape_mixed_by_texture[texture_index] = true;
+        }
+        perf_capture_unlock_locality_source_format_by_texture[texture_index] = source_surface->format;
+        perf_capture_unlock_locality_width_by_texture[texture_index] = width;
+        perf_capture_unlock_locality_height_by_texture[texture_index] = height;
     }
-    perf_capture_unlock_locality_source_format_by_texture[texture_index] = source_surface->format;
-    perf_capture_unlock_locality_width_by_texture[texture_index] = width;
-    perf_capture_unlock_locality_height_by_texture[texture_index] = height;
 
     if (perf_capture_unlock_locality_shadow_size[texture_index] != shadow_size) {
         Uint8* resized_shadow = (Uint8*)SDL_realloc(perf_capture_unlock_locality_shadow_pixels[texture_index], shadow_size);
@@ -2260,10 +2276,12 @@ static void note_perf_capture_texture_unlock_locality(int texture_handle, const 
             source_row += source_surface->pitch;
         }
         perf_capture_unlock_locality_shadow_valid[texture_index] = true;
-        frame_stats.texture_unlock_locality_index8_baseline_skips += 1;
-        perf_capture_unlock_locality_telemetry.index8_baseline_skips += 1;
-        perf_capture_unlock_locality_baseline_skips_by_texture[texture_index] += 1;
-        perf_capture_unlock_locality_whole_capture_baseline_skips_by_texture[texture_index] += 1;
+        if (capture) {
+            frame_stats.texture_unlock_locality_index8_baseline_skips += 1;
+            perf_capture_unlock_locality_telemetry.index8_baseline_skips += 1;
+            perf_capture_unlock_locality_baseline_skips_by_texture[texture_index] += 1;
+            perf_capture_unlock_locality_whole_capture_baseline_skips_by_texture[texture_index] += 1;
+        }
         return;
     }
 
@@ -2315,41 +2333,43 @@ static void note_perf_capture_texture_unlock_locality(int texture_handle, const 
     const Uint64 source_pixels = (Uint64)width * (Uint64)height;
     const Uint64 changed_bbox_pixels =
         changed_rows > 0 ? (Uint64)(max_x - min_x + 1) * (Uint64)(max_y - min_y + 1) : 0;
-    frame_stats.texture_unlock_locality_index8_tracked += 1;
-    if (changed_pixels == 0) {
-        perf_capture_unlock_locality_telemetry.index8_zero_delta_unlocks += 1;
-        perf_capture_unlock_locality_zero_delta_by_texture[texture_index] += 1;
-        perf_capture_unlock_locality_whole_capture_zero_delta_by_texture[texture_index] += 1;
+    if (capture) {
+        frame_stats.texture_unlock_locality_index8_tracked += 1;
+        if (changed_pixels == 0) {
+            perf_capture_unlock_locality_telemetry.index8_zero_delta_unlocks += 1;
+            perf_capture_unlock_locality_zero_delta_by_texture[texture_index] += 1;
+            perf_capture_unlock_locality_whole_capture_zero_delta_by_texture[texture_index] += 1;
+        }
+        frame_stats.texture_unlock_locality_index8_source_pixels += source_pixels;
+        frame_stats.texture_unlock_locality_index8_changed_pixels += changed_pixels;
+        frame_stats.texture_unlock_locality_index8_changed_rows += changed_rows;
+        frame_stats.texture_unlock_locality_index8_changed_bbox_pixels += changed_bbox_pixels;
+        perf_capture_unlock_locality_telemetry.index8_tracked_unlocks += 1;
+        perf_capture_unlock_locality_telemetry.index8_source_pixels += source_pixels;
+        perf_capture_unlock_locality_telemetry.index8_changed_pixels += changed_pixels;
+        perf_capture_unlock_locality_telemetry.index8_changed_rows += changed_rows;
+        perf_capture_unlock_locality_telemetry.index8_changed_bbox_pixels += changed_bbox_pixels;
+        perf_capture_unlock_locality_tracked_by_texture[texture_index] += 1;
+        perf_capture_unlock_locality_source_pixels_by_texture[texture_index] += source_pixels;
+        perf_capture_unlock_locality_changed_pixels_by_texture[texture_index] += changed_pixels;
+        perf_capture_unlock_locality_changed_rows_by_texture[texture_index] += changed_rows;
+        perf_capture_unlock_locality_changed_bbox_pixels_by_texture[texture_index] += changed_bbox_pixels;
+        perf_capture_unlock_locality_whole_capture_tracked_by_texture[texture_index] += 1;
+        perf_capture_unlock_locality_whole_capture_source_pixels_by_texture[texture_index] += source_pixels;
+        perf_capture_unlock_locality_whole_capture_changed_pixels_by_texture[texture_index] += changed_pixels;
+        perf_capture_unlock_locality_whole_capture_changed_rows_by_texture[texture_index] += changed_rows;
+        perf_capture_unlock_locality_whole_capture_changed_bbox_pixels_by_texture[texture_index] += changed_bbox_pixels;
     }
-    frame_stats.texture_unlock_locality_index8_source_pixels += source_pixels;
-    frame_stats.texture_unlock_locality_index8_changed_pixels += changed_pixels;
-    frame_stats.texture_unlock_locality_index8_changed_rows += changed_rows;
-    frame_stats.texture_unlock_locality_index8_changed_bbox_pixels += changed_bbox_pixels;
-    perf_capture_unlock_locality_telemetry.index8_tracked_unlocks += 1;
-    perf_capture_unlock_locality_telemetry.index8_source_pixels += source_pixels;
-    perf_capture_unlock_locality_telemetry.index8_changed_pixels += changed_pixels;
-    perf_capture_unlock_locality_telemetry.index8_changed_rows += changed_rows;
-    perf_capture_unlock_locality_telemetry.index8_changed_bbox_pixels += changed_bbox_pixels;
-    perf_capture_unlock_locality_tracked_by_texture[texture_index] += 1;
-    perf_capture_unlock_locality_source_pixels_by_texture[texture_index] += source_pixels;
-    perf_capture_unlock_locality_changed_pixels_by_texture[texture_index] += changed_pixels;
-    perf_capture_unlock_locality_changed_rows_by_texture[texture_index] += changed_rows;
-    perf_capture_unlock_locality_changed_bbox_pixels_by_texture[texture_index] += changed_bbox_pixels;
-    perf_capture_unlock_locality_whole_capture_tracked_by_texture[texture_index] += 1;
-    perf_capture_unlock_locality_whole_capture_source_pixels_by_texture[texture_index] += source_pixels;
-    perf_capture_unlock_locality_whole_capture_changed_pixels_by_texture[texture_index] += changed_pixels;
-    perf_capture_unlock_locality_whole_capture_changed_rows_by_texture[texture_index] += changed_rows;
-    perf_capture_unlock_locality_whole_capture_changed_bbox_pixels_by_texture[texture_index] += changed_bbox_pixels;
 
-    if ((width == 256) && (height == 256) && (changed_rows > 0)) {
+    if (track_runtime_compare_dirty && (changed_rows > 0)) {
         const SDL_Rect dirty_rect = { min_x, min_y, max_x - min_x + 1, max_y - min_y + 1 };
         note_perf_capture_compare_dirty_rect_candidate(texture_index, &dirty_rect);
     }
 }
 
 static void note_perf_capture_compare_dirty_rect_candidate(int texture_index, const SDL_Rect* dirty_rect) {
-    if (!frame_stats_extended_enabled || (texture_index < 0) || (texture_index >= FL_TEXTURE_MAX) || (dirty_rect == NULL) ||
-        (dirty_rect->w <= 0) || (dirty_rect->h <= 0)) {
+    if ((texture_index < 0) || (texture_index >= FL_TEXTURE_MAX) || (dirty_rect == NULL) || (dirty_rect->w <= 0) ||
+        (dirty_rect->h <= 0)) {
         return;
     }
 
@@ -2467,6 +2487,20 @@ static bool software_surface_cache_slot_has_texture_unlock_dirty_reason(int text
     return (texture_index >= 0) && (texture_index < FL_TEXTURE_MAX) && (palette_handle >= 0) &&
            (palette_handle <= FL_PALETTE_MAX) && (software_surface_cache[texture_index][palette_handle] != NULL) &&
            (software_surface_cache_runtime_dirty_reason[texture_index][palette_handle] == CACHE_DIRTY_REASON_TEXTURE_UNLOCK);
+}
+
+static bool texture_index_has_software_surface_cache_variants(int texture_index) {
+    if ((texture_index < 0) || (texture_index >= FL_TEXTURE_MAX)) {
+        return false;
+    }
+
+    for (int palette_handle = 0; palette_handle <= FL_PALETTE_MAX; palette_handle++) {
+        if (software_surface_cache[texture_index][palette_handle] != NULL) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 static void set_software_surface_cache_slot_state(int texture_index,
@@ -2656,6 +2690,47 @@ static void note_perf_capture_compare_dirty_rect_refresh_candidate(unsigned int 
     perf_capture_compare_dirty_rect_oversized_candidate_refresh_attempts_by_texture[texture_index] += 1;
 }
 
+static TextureUnlockRefreshDecision classify_compare_dirty_rect_refresh_decision(int texture_index,
+                                                                                 const SDL_Surface* source_surface,
+                                                                                 TextureUnlockRefreshPlan* out_plan) {
+    if ((source_surface == NULL) || (out_plan == NULL) || (texture_index < 0) || (texture_index >= FL_TEXTURE_MAX)) {
+        return TEXTURE_UNLOCK_REFRESH_DECISION_FULL_NO_USABLE_DIRTY_RECT;
+    }
+
+    SDL_zero(*out_plan);
+    const Uint64 max_partial_pixels = ((Uint64)source_surface->w * (Uint64)source_surface->h) / 4u;
+    if (perf_capture_compare_dirty_rect_pending_tile_masks[texture_index] != 0) {
+        TextureUnlockRefreshPlan multi_rect_plan = { 0 };
+        if (build_texture_unlock_refresh_plan_from_tile_mask(perf_capture_compare_dirty_rect_pending_tile_masks[texture_index],
+                                                             &multi_rect_plan)) {
+            const Uint64 multi_rect_pixels = texture_unlock_refresh_plan_pixels(&multi_rect_plan);
+            if ((multi_rect_pixels > 0) && (multi_rect_pixels <= max_partial_pixels)) {
+                *out_plan = multi_rect_plan;
+                return TEXTURE_UNLOCK_REFRESH_DECISION_PARTIAL;
+            }
+        }
+    }
+
+    if (!perf_capture_compare_dirty_rect_pending_valid[texture_index]) {
+        return TEXTURE_UNLOCK_REFRESH_DECISION_FULL_NO_USABLE_DIRTY_RECT;
+    }
+
+    const SDL_Rect dirty_rect = perf_capture_compare_dirty_rect_pending_rects[texture_index];
+    if ((dirty_rect.w <= 0) || (dirty_rect.h <= 0) || (dirty_rect.x < 0) || (dirty_rect.y < 0) ||
+        (dirty_rect.x + dirty_rect.w > source_surface->w) || (dirty_rect.y + dirty_rect.h > source_surface->h)) {
+        return TEXTURE_UNLOCK_REFRESH_DECISION_FULL_NO_USABLE_DIRTY_RECT;
+    }
+
+    const Uint64 dirty_pixels = (Uint64)dirty_rect.w * (Uint64)dirty_rect.h;
+    if ((dirty_pixels == 0) || (dirty_pixels > max_partial_pixels)) {
+        return TEXTURE_UNLOCK_REFRESH_DECISION_FULL_OVERSIZED_DIRTY_RECT;
+    }
+
+    out_plan->rects[0] = dirty_rect;
+    out_plan->rect_count = 1;
+    return TEXTURE_UNLOCK_REFRESH_DECISION_PARTIAL;
+}
+
 static TextureUnlockRefreshDecision classify_texture_unlock_refresh_decision(unsigned int th,
                                                                              Uint8 dirty_reason,
                                                                              const SDL_Surface* source_surface,
@@ -2692,24 +2767,24 @@ static TextureUnlockRefreshDecision classify_texture_unlock_refresh_decision(uns
         }
     }
 
-    if (!texture_unlock_dirty_rect_valid[texture_index]) {
-        return TEXTURE_UNLOCK_REFRESH_DECISION_FULL_NO_USABLE_DIRTY_RECT;
+    if (texture_unlock_dirty_rect_valid[texture_index]) {
+        const SDL_Rect dirty_rect = texture_unlock_dirty_rects[texture_index];
+        if ((dirty_rect.w <= 0) || (dirty_rect.h <= 0) || (dirty_rect.x < 0) || (dirty_rect.y < 0) ||
+            (dirty_rect.x + dirty_rect.w > source_surface->w) || (dirty_rect.y + dirty_rect.h > source_surface->h)) {
+            return TEXTURE_UNLOCK_REFRESH_DECISION_FULL_NO_USABLE_DIRTY_RECT;
+        }
+
+        const Uint64 dirty_pixels = (Uint64)dirty_rect.w * (Uint64)dirty_rect.h;
+        if ((dirty_pixels == 0) || (dirty_pixels > max_partial_pixels)) {
+            return TEXTURE_UNLOCK_REFRESH_DECISION_FULL_OVERSIZED_DIRTY_RECT;
+        }
+
+        out_plan->rects[0] = dirty_rect;
+        out_plan->rect_count = 1;
+        return TEXTURE_UNLOCK_REFRESH_DECISION_PARTIAL;
     }
 
-    const SDL_Rect dirty_rect = texture_unlock_dirty_rects[texture_index];
-    if ((dirty_rect.w <= 0) || (dirty_rect.h <= 0) || (dirty_rect.x < 0) || (dirty_rect.y < 0) ||
-        (dirty_rect.x + dirty_rect.w > source_surface->w) || (dirty_rect.y + dirty_rect.h > source_surface->h)) {
-        return TEXTURE_UNLOCK_REFRESH_DECISION_FULL_NO_USABLE_DIRTY_RECT;
-    }
-
-    const Uint64 dirty_pixels = (Uint64)dirty_rect.w * (Uint64)dirty_rect.h;
-    if ((dirty_pixels == 0) || (dirty_pixels > max_partial_pixels)) {
-        return TEXTURE_UNLOCK_REFRESH_DECISION_FULL_OVERSIZED_DIRTY_RECT;
-    }
-
-    out_plan->rects[0] = dirty_rect;
-    out_plan->rect_count = 1;
-    return TEXTURE_UNLOCK_REFRESH_DECISION_PARTIAL;
+    return classify_compare_dirty_rect_refresh_decision(texture_index, source_surface, out_plan);
 }
 
 static bool refresh_software_source_surface_in_place(unsigned int th, SDL_Surface* cached_surface, Uint8 dirty_reason) {
