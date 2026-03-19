@@ -3614,3 +3614,20 @@ Scope guardrails:
     - keep; this measurement-support loop exposed actionable exact-family attribution without changing runtime behavior, and the new Remy hotspot data now points at `ppg-seqs 80/81/82` exact families rather than presenter cost
   - Next best candidate optimization:
     - inspect the Remy-stage `ppg-seqs 80/81/82` exact-family path next and determine whether a correctness-safe partial-refresh or renew/submit reduction exists before trying more generic exact-path micro-optimizations
+
+- 2026-03-19T01:26:00-0400
+  - Final commit hash:
+    - `719a9861`
+  - Bottleneck targeted:
+    - native regular-gameplay software-surface refresh cost on the hot Remy `ppg-seqs 80/81/82` family, specifically whether compare-dirty partial refresh can recover that lane without reopening the proven-bad seq-specific renew-dirty path
+  - Change summary:
+    - promoted the existing compare-dirty `INDEX8 256x256` unlock tracking into the retained software-surface refresh path in `src/port/sdl/sdl_game_renderer.c`, but only while software-frame mode is active and software-surface cache variants already exist
+    - added a narrow `classify_compare_dirty_rect_refresh_decision(...)` fallback so retained refreshes can use pending compare-dirty tile masks / bboxes only when explicit renew-dirty metadata is absent, while keeping the quarter-surface partial cap and full-refresh fallbacks unchanged
+    - rebuilt the telemetry ARM package in Docker `3sx-mister-build`, redeployed it with serialized MiSTer tooling, and reran the native gameplay matrix on-device
+  - Verification result summary:
+    - Docker telemetry ARM build/install/package plus serialized `lock-status`, `busy-status`, `health`, `deploy`, `probe`, and bounded `smoke` all passed on the kept package
+    - native gameplay captures all improved while staying on the direct exact route: control `78.9890 -> 83.5068 FPS`, Remy `38.9423 -> 47.8881 FPS`, left-corner `76.8938 -> 81.4362 FPS`, and Ibuki `72.1626 -> 77.7926 FPS`; Remy refresh cost dropped from `10.4455` to `5.5408 ms`
+  - Keep/rollback decision with reason:
+    - keep; the reland stays within retained refresh bookkeeping, avoids the earlier seq-specific correctness regression, and materially improves the deciding native gameplay hotspot plus the supporting native lanes
+  - Next best candidate optimization:
+    - re-rank the remaining native ceiling from the kept Loop 123 telemetry, with first attention on the remaining oversized/full compare-dirty residue in Remy `ppg-seqs 81/82` before another broader native gameplay hypothesis
