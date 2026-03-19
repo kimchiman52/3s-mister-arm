@@ -3600,7 +3600,7 @@ Scope guardrails:
 
 - 2026-03-18T20:44:51-0400
   - Final commit hash:
-    - `pending`
+    - `96597905`
   - Bottleneck targeted:
     - native ordinary-gameplay `software_frame_exact` hotspot attribution, specifically which exact textured-rect families dominate the current Remy-stage slowdown on the direct native path
   - Change summary:
