@@ -2,7 +2,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <inttypes.h>
-#include <stdarg.h>
 #include <linux/fb.h>
 #include <errno.h>
 #include <sys/ioctl.h>
@@ -81,19 +80,6 @@ VideoInfo current_video_info;
 static int support_FHD = 0;
 
 yc_mode yc_modes[20];
-
-static void yc_trace_log(const char *fmt, ...)
-{
-	FILE *file = fopen("/media/fat/games/3sx/logs/yc-debug.log", "a");
-	if (!file) return;
-
-	va_list args;
-	va_start(args, fmt);
-	vfprintf(file, fmt, args);
-	va_end(args);
-	fputc('\n', file);
-	fclose(file);
-}
 
 struct vrr_cap_t
 {
@@ -2972,11 +2958,9 @@ static void set_yc_mode()
 		const bool fb_native_analog_auto = output_clock_available
 			&& vga_fb_enabled
 			&& native_analog_tv_mode;
-		const char *clock_source_name = "core";
 		if (fb_native_analog_auto)
 		{
 			CLK_VIDEO = output_CLK_VIDEO;
-			clock_source_name = "output-fb-auto";
 		}
 
 		// When in fb-auto mode the game hasn't started yet so vtime=0, which causes
@@ -3007,33 +2991,10 @@ static void set_yc_mode()
 		char yc_key_expand[64];
 		sprintf(yc_key, "%s_%.1f%s%s", user_io_get_core_name(1), fps, current_video_info.interlaced ? "i" : "", (pal || !cfg.ntsc_mode) ? "" : (cfg.ntsc_mode == 1) ? "s" : "m");
 		snprintf(yc_key_expand, sizeof(yc_key_expand), "%s_%.2f", yc_key, prate);
-		yc_trace_log("YC_TRACE set_yc_mode pid=%d key=%s vga_mode_int=%d direct_video=%d vga_scaler=%d vga_fb=%d native_tv=%d output_clock_available=%d core_clk=%.6f output_clk=%.6f selected_clock=%s selected_clk=%.6f",
-		             getpid(),
-		             yc_key,
-		             cfg.vga_mode_int,
-		             cfg.direct_video,
-		             cfg.vga_scaler,
-		             vga_fb_enabled,
-		             native_analog_tv_mode,
-		             output_clock_available,
-		             core_CLK_VIDEO,
-		             output_CLK_VIDEO,
-		             clock_source_name,
-		             CLK_VIDEO);
-		printf("Calculated YC parameters for '%s': %s clock_source=%s CLK_VIDEO=%.6fMHz PHASE_INC=%lld, COLORBURST_START=%d, COLORBURST_END=%d\n",
-		       yc_key,
-		       pal ? "PAL" : (cfg.ntsc_mode == 1) ? "PAL60" : (cfg.ntsc_mode == 2) ? "PAL-M" : "NTSC",
-		       clock_source_name,
-		       CLK_VIDEO,
-		       PHASE_INC,
-		       COLORBURST_START,
-		       COLORBURST_END);
-
 		for (uint i = 0; i < sizeof(yc_modes) / sizeof(yc_modes[0]); i++)
 		{
 		if (!strcasecmp(yc_modes[i].key, yc_key) || !strcasecmp(yc_modes[i].key, yc_key_expand))
 			{
-				printf("Override YC PHASE_INC with value: %lld\n", yc_modes[i].phase_inc);
 				PHASE_INC = yc_modes[i].phase_inc;
 				break;
 			}
@@ -3051,7 +3012,6 @@ static void set_yc_mode()
 			// Traditional YC modes: enable YC processing
 			yc_config = ((pal || cfg.ntsc_mode) ? 4 : 0) | ((cfg.vga_mode_int == 3) ? 3 : 1);
 		}
-		printf("Sending YC config to FPGA: 0x%02X (pal_en=%d, cvbs=%d, yc_en=%d)\n", yc_config, (yc_config >> 2) & 1, (yc_config >> 1) & 1, yc_config & 1);
 		spi_w(yc_config);
 		spi_w(PHASE_INC);
 		spi_w(PHASE_INC >> 16);
@@ -3060,17 +3020,7 @@ static void set_yc_mode()
 		spi_w(COLORBURST_RANGE >> 16);
 		// Case 6: Send subcarrier enable flag
 		uint16_t subcarrier_enable = (cfg.vga_mode_int == 4) ? 1 : 0;
-		printf("Sending subcarrier enable to FPGA: %d\n", subcarrier_enable);
 		spi_w(subcarrier_enable);
-		yc_trace_log("YC_TRACE yc_packet pid=%d key=%s clock_source=%s phase_inc=%lld colorburst_start=%d colorburst_end=%d yc_config=0x%X subcarrier_enable=%u",
-		             getpid(),
-		             yc_key,
-		             clock_source_name,
-		             PHASE_INC,
-		             COLORBURST_START,
-		             COLORBURST_END,
-		             yc_config,
-		             subcarrier_enable);
 		DisableIO();
 	}
 	else

@@ -81,13 +81,11 @@ Confirmed working log values after all three fixes:
 
 These commits are the primary candidates to review/revert if the native-analog branch is unwound later.
 
-## Current Branch Diagnostics
+## Current Branch Cleanup State
 
-This branch currently carries two kinds of native-analog investigation scaffolding:
-- committed `yc_trace` logging and wrapper-side YC refresh hooks in `vendor/Main_MiSTer/video.cpp` and `vendor/Main_MiSTer/threesx_wrapper.cpp`
-- temporary packet-override config experiments such as `/media/fat/games/3sx/yc-debug.conf`, which should remain local to hardware investigation and not become default runtime behavior
+The branch now keeps only the functional native-analog fixes in the shipping code path.
 
-If this branch is later cleaned up or upstreamed, re-evaluate whether the trace logging should stay as durable diagnostics or be removed once the YC path is considered stable.
+Any temporary packet-override config experiments such as `/media/fat/games/3sx/yc-debug.conf` should remain local to hardware investigation and should not become default runtime behavior.
 
 ## Real-Hardware Attempt Log
 
@@ -391,10 +389,6 @@ MISTER_PASSWORD=1 tools/mister/misterctl.sh yc-log --all
 If abandoning this track, unwind in this order:
 
 1. Remove any temporary `/media/fat/games/3sx/yc-debug.conf` file or debug-only keys written there.
-2. Drop branch-local diagnostics/experiments in:
-   - `vendor/Main_MiSTer/video.cpp`
-   - `vendor/Main_MiSTer/user_io.cpp`
-   - `vendor/Main_MiSTer/threesx_wrapper.cpp`
-3. Re-evaluate whether the committed native-analog branch commits listed above should be reverted wholesale or split into:
+2. Re-evaluate whether the committed native-analog branch commits listed above should be reverted wholesale or split into:
    - keepable geometry/startup work
    - discardable YC/debug experiments
