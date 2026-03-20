@@ -7133,7 +7133,7 @@ static SDL_FRect fit_crt_4x3_rect(int win_w, int win_h) {
     if (is_native_analog_tv_framebuffer_size(win_w, win_h)) {
         float y = (native_game_height < win_h) ? (float)((win_h - native_game_height) / 2 + 2) : 0.0f;
         float h = (native_game_height < win_h) ? (float)native_game_height : (float)win_h;
-        SDL_FRect rect = { 4.0f, y, (float)(win_w - 8), h };
+        SDL_FRect rect = { 0.0f, y, (float)win_w, h };
         return rect;
     }
 
