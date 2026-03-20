@@ -858,6 +858,7 @@ void restart_to_menu(FILE *wrapper_log, int saved_stdout, int saved_stderr, int 
 	write_log_line(wrapper_log, "return_to_menu=1");
 	set_vga_fb(0);
 	video_fb_enable(0);
+	video_refresh_yc_mode();
 	restore_runtime_console_mode(wrapper_log, runtime_vt);
 	restore_console(1);
 	const char *menu_exec = getFullPath(kMenuExec);
@@ -911,6 +912,7 @@ int show_error_and_return(const char *message, FILE *wrapper_log, int active_vt,
 
 	set_vga_fb(0);
 	video_fb_enable(0);
+	video_refresh_yc_mode();
 	show_wrapper_message(kCoreName, message);
 	usleep(1500 * 1000);
 	disable_wrapper_osd();
@@ -1070,6 +1072,7 @@ int threesx_wrapper_run(int argc, char *argv[])
 		set_vga_fb(1);
 		if (runtime_vt != active_vt) video_chvt(runtime_vt);
 		video_fb_enable(1);
+		video_refresh_yc_mode();
 	}
 
 	write_log_line(wrapper_log,
