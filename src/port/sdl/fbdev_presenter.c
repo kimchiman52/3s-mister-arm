@@ -27,9 +27,6 @@ static bool fbdev_active = false;
 static size_t frame_copy_bytes = 0;
 static int* scale_x_lut = NULL;
 static int* scale_y_lut = NULL;
-static int* scale_x_filter_src0_lut = NULL;
-static int* scale_x_filter_src1_lut = NULL;
-static Uint8* scale_x_filter_frac_lut = NULL;
 static int* scale_x_first_dst_for_src = NULL;
 static int* scale_x_last_dst_for_src = NULL;
 static int scale_lut_src_w = 0;
@@ -146,95 +143,6 @@ static int clamp_to_range(int value, int min, int max) {
     return value;
 }
 
-static bool is_native_analog_tv_framebuffer_family(void) {
-    return (fb_width == 640) && ((fb_height == 240) || (fb_height == 288) || (fb_height == 480) || (fb_height == 576));
-}
-
-static bool should_use_crt_tv_horizontal_filter(int src_w, int src_h, int raw_x0, int raw_y0, int raw_w, int raw_h) {
-    return is_native_analog_tv_framebuffer_family() && (src_w == 384) && (src_h == 224) && (raw_x0 == 0) &&
-           (raw_y0 == 0) && (raw_w == fb_width) && (raw_h == fb_height);
-}
-
-static Uint32 lerp_argb8888(Uint32 left, Uint32 right, Uint8 frac) {
-    if ((frac == 0) || (left == right)) {
-        return left;
-    }
-
-    const unsigned inv = 256u - (unsigned)frac;
-    const unsigned a = ((((left >> 24) & 0xFFu) * inv) + (((right >> 24) & 0xFFu) * (unsigned)frac) + 128u) >> 8;
-    const unsigned r = ((((left >> 16) & 0xFFu) * inv) + (((right >> 16) & 0xFFu) * (unsigned)frac) + 128u) >> 8;
-    const unsigned g = ((((left >> 8) & 0xFFu) * inv) + (((right >> 8) & 0xFFu) * (unsigned)frac) + 128u) >> 8;
-    const unsigned b = (((left & 0xFFu) * inv) + ((right & 0xFFu) * (unsigned)frac) + 128u) >> 8;
-    return (Uint32)((a << 24) | (r << 16) | (g << 8) | b);
-}
-
-static void sample_crt_tv_horizontal_filter(int x,
-                                            int raw_x0,
-                                            int raw_w,
-                                            int src_w,
-                                            int* out_src0,
-                                            int* out_src1,
-                                            Uint8* out_frac) {
-    const double sample = ((((double)(x - raw_x0) + 0.5) * (double)src_w) / (double)raw_w) - 0.5;
-    int src0 = (int)SDL_floor(sample);
-    double frac = sample - (double)src0;
-
-    if (src0 < 0) {
-        src0 = 0;
-        frac = 0.0;
-    }
-
-    int src1 = src0 + 1;
-    if (src1 >= src_w) {
-        src1 = src_w - 1;
-        frac = 0.0;
-    }
-
-    int frac256 = (int)SDL_round(frac * 256.0);
-    frac256 = clamp_to_range(frac256, 0, 255);
-    if (src1 <= src0) {
-        frac256 = 0;
-        src1 = src0;
-    }
-
-    *out_src0 = src0;
-    *out_src1 = src1;
-    *out_frac = (Uint8)frac256;
-}
-
-static void write_scaled_argb_row(Uint32* dst_row,
-                                  const Uint32* src_row,
-                                  int dst_x0,
-                                  int dst_x1,
-                                  int raw_x0,
-                                  int raw_w,
-                                  int src_w,
-                                  bool use_crt_tv_horizontal_filter) {
-    for (int x = dst_x0; x < dst_x1; x++) {
-        if (use_crt_tv_horizontal_filter) {
-            int src0 = 0;
-            int src1 = 0;
-            Uint8 frac = 0;
-            if ((scale_x_filter_src0_lut != NULL) && (scale_x_filter_src1_lut != NULL) && (scale_x_filter_frac_lut != NULL)) {
-                src0 = scale_x_filter_src0_lut[x];
-                src1 = scale_x_filter_src1_lut[x];
-                frac = scale_x_filter_frac_lut[x];
-            } else {
-                sample_crt_tv_horizontal_filter(x, raw_x0, raw_w, src_w, &src0, &src1, &frac);
-            }
-
-            src0 = clamp_to_range(src0, 0, src_w - 1);
-            src1 = clamp_to_range(src1, src0, src_w - 1);
-            dst_row[x - dst_x0] = lerp_argb8888(src_row[src0], src_row[src1], frac);
-            continue;
-        }
-
-        int src_x = (scale_x_lut != NULL) ? scale_x_lut[x] : (int)(((Sint64)(x - raw_x0) * (Sint64)src_w) / (Sint64)raw_w);
-        src_x = clamp_to_range(src_x, 0, src_w - 1);
-        dst_row[x - dst_x0] = src_row[src_x];
-    }
-}
-
 static Uint64 frame_stats_now(void) {
     if (!frame_stats_breakdown_enabled) {
         return 0;
@@ -275,16 +183,10 @@ static void frame_stats_note_path(FBDevPresenterPath path) {
 static void reset_scale_lut() {
     SDL_free(scale_x_lut);
     SDL_free(scale_y_lut);
-    SDL_free(scale_x_filter_src0_lut);
-    SDL_free(scale_x_filter_src1_lut);
-    SDL_free(scale_x_filter_frac_lut);
     SDL_free(scale_x_first_dst_for_src);
     SDL_free(scale_x_last_dst_for_src);
     scale_x_lut = NULL;
     scale_y_lut = NULL;
-    scale_x_filter_src0_lut = NULL;
-    scale_x_filter_src1_lut = NULL;
-    scale_x_filter_frac_lut = NULL;
     scale_x_first_dst_for_src = NULL;
     scale_x_last_dst_for_src = NULL;
     scale_lut_src_w = 0;
@@ -530,12 +432,9 @@ static bool ensure_scale_lut(int src_w, int src_h, int raw_x0, int raw_y0, int r
         return false;
     }
 
-    const bool need_crt_tv_filter = should_use_crt_tv_horizontal_filter(src_w, src_h, raw_x0, raw_y0, raw_w, raw_h);
     if ((scale_x_lut != NULL) && (scale_y_lut != NULL) && (scale_lut_src_w == src_w) && (scale_lut_src_h == src_h) &&
         (scale_lut_raw_x0 == raw_x0) && (scale_lut_raw_y0 == raw_y0) && (scale_lut_raw_w == raw_w) &&
-        (scale_lut_raw_h == raw_h) &&
-        (!need_crt_tv_filter || ((scale_x_filter_src0_lut != NULL) && (scale_x_filter_src1_lut != NULL) &&
-                                 (scale_x_filter_frac_lut != NULL)))) {
+        (scale_lut_raw_h == raw_h)) {
         return true;
     }
 
@@ -550,45 +449,6 @@ static bool ensure_scale_lut(int src_w, int src_h, int raw_x0, int raw_y0, int r
         scale_y_lut = (int*)SDL_malloc(sizeof(int) * (size_t)fb_height);
         if (scale_y_lut == NULL) {
             return false;
-        }
-    }
-
-    bool allocated_filter_src0 = false;
-    bool allocated_filter_src1 = false;
-    if (need_crt_tv_filter) {
-        if (scale_x_filter_src0_lut == NULL) {
-            scale_x_filter_src0_lut = (int*)SDL_malloc(sizeof(int) * (size_t)fb_width);
-            if (scale_x_filter_src0_lut == NULL) {
-                return false;
-            }
-            allocated_filter_src0 = true;
-        }
-
-        if (scale_x_filter_src1_lut == NULL) {
-            scale_x_filter_src1_lut = (int*)SDL_malloc(sizeof(int) * (size_t)fb_width);
-            if (scale_x_filter_src1_lut == NULL) {
-                if (allocated_filter_src0) {
-                    SDL_free(scale_x_filter_src0_lut);
-                    scale_x_filter_src0_lut = NULL;
-                }
-                return false;
-            }
-            allocated_filter_src1 = true;
-        }
-
-        if (scale_x_filter_frac_lut == NULL) {
-            scale_x_filter_frac_lut = (Uint8*)SDL_malloc(sizeof(Uint8) * (size_t)fb_width);
-            if (scale_x_filter_frac_lut == NULL) {
-                if (allocated_filter_src1) {
-                    SDL_free(scale_x_filter_src1_lut);
-                    scale_x_filter_src1_lut = NULL;
-                }
-                if (allocated_filter_src0) {
-                    SDL_free(scale_x_filter_src0_lut);
-                    scale_x_filter_src0_lut = NULL;
-                }
-                return false;
-            }
         }
     }
 
@@ -618,10 +478,6 @@ static bool ensure_scale_lut(int src_w, int src_h, int raw_x0, int raw_y0, int r
     for (int x = lut_x0; x < lut_x1; x++) {
         const int src_x = clamp_to_range((int)(((Sint64)(x - raw_x0) * (Sint64)src_w) / (Sint64)raw_w), 0, src_w - 1);
         scale_x_lut[x] = src_x;
-        if (need_crt_tv_filter) {
-            sample_crt_tv_horizontal_filter(
-                x, raw_x0, raw_w, src_w, &scale_x_filter_src0_lut[x], &scale_x_filter_src1_lut[x], &scale_x_filter_frac_lut[x]);
-        }
         if (scale_x_first_dst_for_src[src_x] < 0) {
             scale_x_first_dst_for_src[src_x] = x;
         }
@@ -1420,7 +1276,6 @@ static bool copy_argb_surface_scaled_to_fb_mapped_rect(const SDL_Surface* argb,
     }
 
     const bool have_lut = ensure_scale_lut(argb->w, argb->h, raw_x0, raw_y0, raw_w, raw_h);
-    const bool use_crt_tv_filter = should_use_crt_tv_horizontal_filter(argb->w, argb->h, raw_x0, raw_y0, raw_w, raw_h);
     const size_t src_row_bytes = (size_t)argb->w * sizeof(Uint32);
     const bool cache_ready = ensure_mapped_source_cache(argb->w, argb->h);
     bool can_skip_unchanged_rows = false;
@@ -1643,8 +1498,7 @@ static bool copy_argb_surface_scaled_to_fb_mapped_rect(const SDL_Surface* argb,
         const int repeat_row_count = band_y1 - band_y0 - 1;
         const bool band_has_repeats = repeat_row_count > 0;
         const int row_tile_run_count = (have_lut && cache_ready) ? mapped_source_row_tile_run_count[src_y] : 0;
-        if (!use_crt_tv_filter && (row_tile_run_count > 0) && (mapped_source_row_tile_run_x0 != NULL) &&
-            (mapped_source_row_tile_run_x1 != NULL)) {
+        if ((row_tile_run_count > 0) && (mapped_source_row_tile_run_x0 != NULL) && (mapped_source_row_tile_run_x1 != NULL)) {
             const int row_tile_run_base = src_y * mapped_source_row_tile_run_stride;
             Uint8* first_dst_row_base = fb_map + ((size_t)fb_stride * (size_t)band_y0);
             bool copied_first_row = false;
@@ -1744,7 +1598,7 @@ static bool copy_argb_surface_scaled_to_fb_mapped_rect(const SDL_Surface* argb,
 
         int dst_x0 = clip_x0;
         int dst_x1 = clip_x1;
-        if (!use_crt_tv_filter && have_lut && cache_ready &&
+        if (have_lut && cache_ready &&
             !map_source_span_to_dst_span(
                 clip_x0, clip_x1, mapped_source_row_dirty_x0[src_y], mapped_source_row_dirty_x1[src_y], &dst_x0, &dst_x1)) {
             y = band_y1;
@@ -1757,7 +1611,11 @@ static bool copy_argb_surface_scaled_to_fb_mapped_rect(const SDL_Surface* argb,
         const Uint32* src_row = (const Uint32*)(((const Uint8*)argb->pixels) + ((size_t)argb->pitch * (size_t)src_y));
         Uint32* dst_row = (Uint32*)first_dst_row_bytes;
 
-        write_scaled_argb_row(dst_row, src_row, dst_x0, dst_x1, raw_x0, raw_w, argb->w, use_crt_tv_filter);
+        for (int x = dst_x0; x < dst_x1; x++) {
+            int src_x = have_lut ? scale_x_lut[x] : (int)(((Sint64)(x - raw_x0) * (Sint64)argb->w) / (Sint64)raw_w);
+            src_x = clamp_to_range(src_x, 0, argb->w - 1);
+            dst_row[x - dst_x0] = src_row[src_x];
+        }
 
         frame_copy_bytes += row_bytes;
         maybe_apply_fps_overlay_to_fb_row(fb_map + ((size_t)fb_stride * (size_t)band_y0), band_y0, dst_x0, dst_x1);
@@ -2418,9 +2276,7 @@ void FBDevPresenter_Present(SDL_Renderer* renderer, const SDL_FRect* content_rec
     const size_t row_bytes = (size_t)fb_width * sizeof(Uint32);
 
     const Uint64 copy_start_ns = frame_stats_now();
-    const bool have_lut = ensure_scale_lut(argb->w, argb->h, 0, 0, fb_width, fb_height);
-    const bool use_crt_tv_filter = should_use_crt_tv_horizontal_filter(argb->w, argb->h, 0, 0, fb_width, fb_height);
-    if (have_lut) {
+    if (ensure_scale_lut(argb->w, argb->h, 0, 0, fb_width, fb_height)) {
         frame_stats_note_path(FBDEV_PRESENTER_PATH_FULLSCREEN_SCALED_LUT);
         int prev_src_y = -1;
         Uint8* prev_dst_row = NULL;
@@ -2439,7 +2295,9 @@ void FBDevPresenter_Present(SDL_Renderer* renderer, const SDL_FRect* content_rec
             const Uint32* src_row = (const Uint32*)(((const Uint8*)argb->pixels) + (argb->pitch * src_y));
             Uint32* dst_row = (Uint32*)dst_row_bytes;
 
-            write_scaled_argb_row(dst_row, src_row, 0, fb_width, 0, fb_width, argb->w, use_crt_tv_filter);
+            for (int x = 0; x < fb_width; x++) {
+                dst_row[x] = src_row[scale_x_lut[x]];
+            }
 
             frame_copy_bytes += row_bytes;
             maybe_apply_fps_overlay_to_fb_row(fb_map + ((size_t)fb_stride * (size_t)y), y, 0, fb_width);
@@ -2466,7 +2324,10 @@ void FBDevPresenter_Present(SDL_Renderer* renderer, const SDL_FRect* content_rec
 
             Uint32* dst_row = (Uint32*)dst_row_bytes;
 
-            write_scaled_argb_row(dst_row, src_row, 0, fb_width, 0, fb_width, argb->w, use_crt_tv_filter);
+            for (int x = 0; x < fb_width; x++) {
+                const int src_x = (x * argb->w) / fb_width;
+                dst_row[x] = src_row[src_x];
+            }
 
             frame_copy_bytes += row_bytes;
             maybe_apply_fps_overlay_to_fb_row(fb_map + ((size_t)fb_stride * (size_t)y), y, 0, fb_width);
