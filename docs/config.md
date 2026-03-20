@@ -22,7 +22,8 @@ Window dimensions to use when `fullscreen` is set to `false`.
 The way the internal 384x224 buffer is scaled.
 
 Possible values:
-- `native`: No scaling. Keeps the internal `384x224` image size and centers it (recommended for CRT workflows)
+- `native`: No scaling. Keeps the internal `384x224` image size and centers it.
+- `crt-4x3`: MiSTer-oriented CRT policy. Keeps the native analog/fbdev path while fitting the image as a 4:3 CRT presentation.
 - `nearest`
 - `linear`
 - `soft-linear`: Produces an image with a balance of sharpness and sizing consistency

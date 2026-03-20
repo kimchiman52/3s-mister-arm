@@ -26,9 +26,11 @@
 #include <SDL3/SDL.h>
 
 #include <stdarg.h>
+#include <stdio.h>
 
 typedef enum ScaleMode {
     SCALEMODE_NATIVE,
+    SCALEMODE_CRT_4X3,
     SCALEMODE_NEAREST,
     SCALEMODE_LINEAR,
     SCALEMODE_SOFT_LINEAR,
@@ -55,6 +57,8 @@ static SDL_Texture* screen_texture = NULL;
 static SDL_Texture* native_screenshot_texture = NULL;
 static ScaleMode scale_mode = SCALEMODE_SOFT_LINEAR;
 static const char* mister_scale_mode_override_env = "THREESX_SCALE_MODE_STARTUP_OVERRIDE";
+static const char* wrapper_scale_mode_explicit_marker = "# threesx-wrapper-scale-mode-explicit";
+static const char* wrapper_scale_mode_auto_marker = "# threesx-wrapper-scale-mode-auto";
 static char scale_mode_startup_source[32] = "default";
 static char scale_mode_requested_value[32] = "";
 static SDL_FRect native_output_rect = { 0 };
@@ -6424,6 +6428,8 @@ static const char* scale_mode_name(ScaleMode mode) {
     switch (mode) {
     case SCALEMODE_NATIVE:
         return "native";
+    case SCALEMODE_CRT_4X3:
+        return "crt-4x3";
     case SCALEMODE_NEAREST:
         return "nearest";
     case SCALEMODE_LINEAR:
@@ -6446,6 +6452,8 @@ static bool parse_scale_mode(const char* raw_scalemode, ScaleMode* out_mode) {
 
     if (SDL_strcmp(raw_scalemode, "nearest") == 0) {
         *out_mode = SCALEMODE_NEAREST;
+    } else if (SDL_strcmp(raw_scalemode, "crt-4x3") == 0) {
+        *out_mode = SCALEMODE_CRT_4X3;
     } else if (SDL_strcmp(raw_scalemode, "native") == 0) {
         *out_mode = SCALEMODE_NATIVE;
     } else if (SDL_strcmp(raw_scalemode, "linear") == 0) {
@@ -6470,6 +6478,7 @@ static SDL_ScaleMode screen_texture_scale_mode() {
         return SDL_SCALEMODE_LINEAR;
 
     case SCALEMODE_NATIVE:
+    case SCALEMODE_CRT_4X3:
     case SCALEMODE_NEAREST:
     case SCALEMODE_SQUARE_PIXELS:
     case SCALEMODE_INTEGER:
@@ -6480,6 +6489,168 @@ static SDL_ScaleMode screen_texture_scale_mode() {
 }
 
 static bool get_native_output_size(int* out_w, int* out_h);
+
+typedef struct StartupConfigDefaultEntry {
+    const char* key;
+    const char* value;
+} StartupConfigDefaultEntry;
+
+static const StartupConfigDefaultEntry startup_generated_defaults[] = {
+    { CFG_KEY_FULLSCREEN, "true" },
+    { CFG_KEY_WINDOW_WIDTH, "320" },
+    { CFG_KEY_WINDOW_HEIGHT, "240" },
+    { CFG_KEY_SCALEMODE, "native" },
+    { CFG_KEY_SOFTWARE_FRAME_MODE, "on" },
+    { CFG_KEY_SHOW_FPS, "false" },
+    { CFG_KEY_VIDEO_DRIVER_ORDER, "dummy" },
+    { CFG_KEY_RENDER_DRIVER_ORDER, "software" },
+};
+
+static bool runtime_scale_mode_has_explicit_wrapper_marker(void) {
+    const char* pref_path = Paths_GetPrefPath();
+    char* config_path = NULL;
+    SDL_asprintf(&config_path, "%sconfig", pref_path);
+
+    FILE* file = fopen(config_path, "r");
+    SDL_free(config_path);
+    if (file == NULL) {
+        return false;
+    }
+
+    char line[256] = { 0 };
+    while (fgets(line, sizeof(line), file) != NULL) {
+        char* cursor = line;
+        while ((*cursor != '\0') && SDL_isspace(*cursor)) {
+            cursor++;
+        }
+
+        size_t len = SDL_strlen(cursor);
+        while ((len > 0) && SDL_isspace(cursor[len - 1])) {
+            cursor[--len] = '\0';
+        }
+
+        if (SDL_strcmp(cursor, wrapper_scale_mode_explicit_marker) == 0) {
+            fclose(file);
+            return true;
+        }
+    }
+
+    fclose(file);
+    return false;
+}
+
+static bool runtime_scale_mode_has_auto_wrapper_marker(void) {
+    const char* pref_path = Paths_GetPrefPath();
+    char* config_path = NULL;
+    SDL_asprintf(&config_path, "%sconfig", pref_path);
+
+    FILE* file = fopen(config_path, "r");
+    SDL_free(config_path);
+    if (file == NULL) {
+        return false;
+    }
+
+    char line[256] = { 0 };
+    while (fgets(line, sizeof(line), file) != NULL) {
+        char* cursor = line;
+        while ((*cursor != '\0') && SDL_isspace(*cursor)) {
+            cursor++;
+        }
+
+        size_t len = SDL_strlen(cursor);
+        while ((len > 0) && SDL_isspace(cursor[len - 1])) {
+            cursor[--len] = '\0';
+        }
+
+        if (SDL_strcmp(cursor, wrapper_scale_mode_auto_marker) == 0) {
+            fclose(file);
+            return true;
+        }
+    }
+
+    fclose(file);
+    return false;
+}
+
+static bool runtime_config_matches_generated_defaults(void) {
+    const char* pref_path = Paths_GetPrefPath();
+    char* config_path = NULL;
+    SDL_asprintf(&config_path, "%sconfig", pref_path);
+
+    FILE* file = fopen(config_path, "r");
+    SDL_free(config_path);
+    if (file == NULL) {
+        return false;
+    }
+
+    bool seen[SDL_arraysize(startup_generated_defaults)] = { false };
+    char line[256] = { 0 };
+    while (fgets(line, sizeof(line), file) != NULL) {
+        char* cursor = line;
+        while ((*cursor != '\0') && SDL_isspace(*cursor)) {
+            cursor++;
+        }
+        if ((*cursor == '\0') || (*cursor == '#')) {
+            continue;
+        }
+
+        char* equals = SDL_strchr(cursor, '=');
+        if (equals == NULL) {
+            fclose(file);
+            return false;
+        }
+
+        *equals = '\0';
+        char* key = cursor;
+        char* raw_value = equals + 1;
+
+        while ((*key != '\0') && SDL_isspace(*key)) {
+            key++;
+        }
+        size_t key_len = SDL_strlen(key);
+        while ((key_len > 0) && SDL_isspace(key[key_len - 1])) {
+            key[--key_len] = '\0';
+        }
+
+        while ((*raw_value != '\0') && SDL_isspace(*raw_value)) {
+            raw_value++;
+        }
+        size_t value_len = SDL_strlen(raw_value);
+        while ((value_len > 0) && SDL_isspace(raw_value[value_len - 1])) {
+            raw_value[--value_len] = '\0';
+        }
+
+        bool matched = false;
+        for (int i = 0; i < SDL_arraysize(startup_generated_defaults); i++) {
+            if (SDL_strcasecmp(key, startup_generated_defaults[i].key) != 0) {
+                continue;
+            }
+            if (SDL_strcasecmp(raw_value, startup_generated_defaults[i].value) != 0) {
+                fclose(file);
+                return false;
+            }
+
+            seen[i] = true;
+            matched = true;
+            break;
+        }
+
+        if (!matched) {
+            fclose(file);
+            return false;
+        }
+    }
+
+    fclose(file);
+
+    for (int i = 0; i < SDL_arraysize(startup_generated_defaults); i++) {
+        if (!seen[i]) {
+            return false;
+        }
+    }
+
+    return true;
+}
 
 static void destroy_native_screenshot_texture(void) {
     if (native_screenshot_texture != NULL) {
@@ -6571,8 +6742,14 @@ static void init_scalemode() {
     const char* env_scale_mode = SDL_getenv(mister_scale_mode_override_env);
     const char* requested_scale_mode = configured_scale_mode;
     const char* startup_source = has_explicit_scale_mode ? "config" : "default";
+    const bool generated_default_native = has_explicit_scale_mode && (configured_scale_mode != NULL) &&
+                                          (SDL_strcasecmp(configured_scale_mode, "native") == 0) &&
+                                          (env_scale_mode != NULL) && (env_scale_mode[0] != '\0') &&
+                                          !runtime_scale_mode_has_explicit_wrapper_marker() &&
+                                          (runtime_scale_mode_has_auto_wrapper_marker() ||
+                                           runtime_config_matches_generated_defaults());
 
-    if (!has_explicit_scale_mode && env_scale_mode != NULL && env_scale_mode[0] != '\0') {
+    if ((!has_explicit_scale_mode || generated_default_native) && env_scale_mode != NULL && env_scale_mode[0] != '\0') {
         requested_scale_mode = env_scale_mode;
         startup_source = "env";
     }
@@ -6602,7 +6779,8 @@ static const char* software_frame_mode_name(void) {
 
 static bool scale_mode_uses_native_render_path(void) {
 #if defined(PORT_MISTER)
-    if ((scale_mode == SCALEMODE_NEAREST) && fbdev_presenter_enabled && use_fbdev_only_present) {
+    if (((scale_mode == SCALEMODE_NEAREST) || (scale_mode == SCALEMODE_CRT_4X3)) && fbdev_presenter_enabled &&
+        use_fbdev_only_present) {
         return true;
     }
 #endif
@@ -6932,6 +7110,31 @@ static SDL_FRect fit_4_by_3_rect(int win_w, int win_h) {
     return rect;
 }
 
+static bool is_native_analog_tv_framebuffer_size(int win_w, int win_h) {
+#if defined(PORT_MISTER)
+    if (win_w != 640) {
+        return false;
+    }
+
+    return (win_h == 240) || (win_h == 288) || (win_h == 480) || (win_h == 576);
+#else
+    (void)win_w;
+    (void)win_h;
+    return false;
+#endif
+}
+
+static SDL_FRect fit_crt_4x3_rect(int win_w, int win_h) {
+    // MiSTer's native TV mode family uses non-square analog pixels. Filling the
+    // full 640-wide raster is the intended 4:3 CRT presentation on those modes.
+    if (is_native_analog_tv_framebuffer_size(win_w, win_h)) {
+        SDL_FRect rect = { 0.0f, 0.0f, (float)win_w, (float)win_h };
+        return rect;
+    }
+
+    return fit_4_by_3_rect(win_w, win_h);
+}
+
 static SDL_FRect fit_native_rect(int win_w, int win_h) {
     SDL_FRect rect;
     rect.w = native_game_width;
@@ -6963,6 +7166,9 @@ static SDL_FRect get_letterbox_rect(int win_w, int win_h) {
     switch (scale_mode) {
     case SCALEMODE_NATIVE:
         return fit_native_rect(win_w, win_h);
+
+    case SCALEMODE_CRT_4X3:
+        return fit_crt_4x3_rect(win_w, win_h);
 
     case SCALEMODE_NEAREST:
     case SCALEMODE_LINEAR:

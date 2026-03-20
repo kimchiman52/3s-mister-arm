@@ -44,6 +44,8 @@ constexpr const char *kLogDir = "/media/fat/games/3sx/logs";
 constexpr const char *kWrapperLogPath = "/media/fat/games/3sx/logs/osd-wrapper.log";
 constexpr const char *kLastRunLogPath = "/media/fat/games/3sx/logs/last-run.log";
 constexpr const char *kRuntimeScaleModeEnv = "THREESX_SCALE_MODE_STARTUP_OVERRIDE";
+constexpr const char *kRuntimeScaleModeExplicitMarker = "# threesx-wrapper-scale-mode-explicit";
+constexpr const char *kRuntimeScaleModeAutoMarker = "# threesx-wrapper-scale-mode-auto";
 constexpr const char *kMenuCore = "menu.rbf";
 constexpr const char *kMenuExec = "MiSTer";
 constexpr const char *kRuntimeTtySwitchEnv = "THREESX_WRAPPER_USE_TTY2";
@@ -62,6 +64,7 @@ enum WrapperMenuItem
 enum RuntimeScaleModeMenu
 {
 	kScaleModeAuto = 0,
+	kScaleModeCrt4x3,
 	kScaleModeNative,
 	kScaleModeNearest,
 	kScaleModeMenuCount
@@ -81,9 +84,29 @@ struct StartupScaleModeSelection
 	int set_env = 0;
 	int direct_video = 0;
 	int vga_scaler = 0;
+	int forced_scandoubler = 0;
 	int io_type = 0;
+	int vga_mode_int = 0;
 	char source[32] = {};
 	char value[32] = {};
+	char vga_mode[16] = {};
+};
+
+struct RuntimeConfigDefaultEntry
+{
+	const char *key;
+	const char *value;
+};
+
+static const RuntimeConfigDefaultEntry kRuntimeGeneratedDefaults[] = {
+	{ "fullscreen", "true" },
+	{ "window-width", "320" },
+	{ "window-height", "240" },
+	{ "scale-mode", "native" },
+	{ "software-frame-mode", "on" },
+	{ "show-fps", "false" },
+	{ "video-driver-order", "dummy" },
+	{ "render-driver-order", "software" },
 };
 
 void write_log_line(FILE *file, const char *fmt, ...);
@@ -321,11 +344,136 @@ bool read_runtime_config_value(const char *wanted_key, char *value, size_t value
 	return false;
 }
 
+static bool runtime_scale_mode_has_explicit_marker()
+{
+	char path[PATH_MAX] = {};
+	snprintf(path, sizeof(path), "%s/config", kRuntimeHome);
+
+	FILE *file = fopen(path, "r");
+	if (!file) return false;
+
+	char line[256] = {};
+	while (fgets(line, sizeof(line), file))
+	{
+		char *cursor = line;
+		while (*cursor && isspace((unsigned char)*cursor)) cursor++;
+		trim_in_place(cursor);
+		if (!strcmp(cursor, kRuntimeScaleModeExplicitMarker))
+		{
+			fclose(file);
+			return true;
+		}
+	}
+
+	fclose(file);
+	return false;
+}
+
+static bool runtime_scale_mode_has_auto_marker()
+{
+	char path[PATH_MAX] = {};
+	snprintf(path, sizeof(path), "%s/config", kRuntimeHome);
+
+	FILE *file = fopen(path, "r");
+	if (!file) return false;
+
+	char line[256] = {};
+	while (fgets(line, sizeof(line), file))
+	{
+		char *cursor = line;
+		while (*cursor && isspace((unsigned char)*cursor)) cursor++;
+		trim_in_place(cursor);
+		if (!strcmp(cursor, kRuntimeScaleModeAutoMarker))
+		{
+			fclose(file);
+			return true;
+		}
+	}
+
+	fclose(file);
+	return false;
+}
+
+static bool runtime_config_matches_generated_defaults()
+{
+	char path[PATH_MAX] = {};
+	snprintf(path, sizeof(path), "%s/config", kRuntimeHome);
+
+	FILE *file = fopen(path, "r");
+	if (!file) return false;
+
+	bool seen[sizeof(kRuntimeGeneratedDefaults) / sizeof(kRuntimeGeneratedDefaults[0])] = {};
+	char line[256] = {};
+	while (fgets(line, sizeof(line), file))
+	{
+		char *cursor = line;
+		while (*cursor && isspace((unsigned char)*cursor)) cursor++;
+		if (!*cursor || *cursor == '#') continue;
+
+		char *equals = strchr(cursor, '=');
+		if (!equals)
+		{
+			fclose(file);
+			return false;
+		}
+
+		*equals = 0;
+		char *key = cursor;
+		char *raw_value = equals + 1;
+		trim_in_place(key);
+		trim_in_place(raw_value);
+
+		bool matched = false;
+		for (size_t i = 0; i < (sizeof(kRuntimeGeneratedDefaults) / sizeof(kRuntimeGeneratedDefaults[0])); ++i)
+		{
+			if (strcasecmp(key, kRuntimeGeneratedDefaults[i].key) != 0) continue;
+			if (strcasecmp(raw_value, kRuntimeGeneratedDefaults[i].value) != 0)
+			{
+				fclose(file);
+				return false;
+			}
+
+			seen[i] = true;
+			matched = true;
+			break;
+		}
+
+		if (!matched)
+		{
+			fclose(file);
+			return false;
+		}
+	}
+
+	fclose(file);
+
+	for (size_t i = 0; i < (sizeof(kRuntimeGeneratedDefaults) / sizeof(kRuntimeGeneratedDefaults[0])); ++i)
+	{
+		if (!seen[i]) return false;
+	}
+
+	return true;
+}
+
+static bool runtime_scale_mode_is_generated_default(const char *value)
+{
+	return value && !strcasecmp(value, "native") && !runtime_scale_mode_has_explicit_marker() &&
+	       runtime_config_matches_generated_defaults();
+}
+
+static bool runtime_scale_mode_is_auto_default(const char *value)
+{
+	if (!value || strcasecmp(value, "native") != 0 || runtime_scale_mode_has_explicit_marker()) return false;
+	return runtime_scale_mode_has_auto_marker() || runtime_scale_mode_is_generated_default(value);
+}
+
 int read_runtime_scale_mode_default()
 {
 	char value[64] = {};
 	if (!read_runtime_config_value("scale-mode", value, sizeof(value))) return kScaleModeAuto;
+	if (runtime_scale_mode_is_auto_default(value)) return kScaleModeAuto;
 
+	if (!strcasecmp(value, "crt-4x3")) return kScaleModeCrt4x3;
 	if (!strcasecmp(value, "native")) return kScaleModeNative;
 	if (!strcasecmp(value, "nearest")) return kScaleModeNearest;
 	return kScaleModeAuto;
@@ -335,10 +483,27 @@ const char *runtime_scale_mode_label(int mode)
 {
 	switch (mode)
 	{
+	case kScaleModeCrt4x3: return "CRT 4:3";
 	case kScaleModeNative: return "Native";
 	case kScaleModeNearest: return "Nearest";
 	default: return "Auto";
 	}
+}
+
+static const char *runtime_scale_mode_config_value(int mode)
+{
+	switch (mode)
+	{
+	case kScaleModeCrt4x3: return "crt-4x3";
+	case kScaleModeNative: return "native";
+	case kScaleModeNearest: return "nearest";
+	default: return nullptr;
+	}
+}
+
+static bool is_native_analog_tv_output_mode(int vga_mode_int)
+{
+	return vga_mode_int == 1 || vga_mode_int == 2 || vga_mode_int == 3;
 }
 
 bool write_runtime_scale_mode_default(int mode)
@@ -357,6 +522,8 @@ bool write_runtime_scale_mode_default(int mode)
 	}
 
 	bool wrote_scale_mode = false;
+	bool wrote_scale_mode_marker = false;
+	bool wrote_scale_mode_auto_marker = false;
 	char line[256] = {};
 	if (in)
 	{
@@ -367,10 +534,31 @@ bool write_runtime_scale_mode_default(int mode)
 
 			char *cursor = inspect;
 			while (*cursor && isspace((unsigned char)*cursor)) cursor++;
-			if (*cursor == '#')
-			{
-				fputs(line, out);
-				continue;
+			trim_in_place(cursor);
+				if (*cursor == '#')
+				{
+					if (!strcmp(cursor, kRuntimeScaleModeExplicitMarker))
+					{
+					if (mode != kScaleModeAuto)
+					{
+						fprintf(out, "%s\n", kRuntimeScaleModeExplicitMarker);
+						wrote_scale_mode_marker = true;
+						}
+						continue;
+					}
+
+					if (!strcmp(cursor, kRuntimeScaleModeAutoMarker))
+					{
+						if (mode == kScaleModeAuto)
+						{
+							fprintf(out, "%s\n", kRuntimeScaleModeAutoMarker);
+							wrote_scale_mode_auto_marker = true;
+						}
+						continue;
+					}
+
+					fputs(line, out);
+					continue;
 			}
 
 			char *equals = strchr(cursor, '=');
@@ -380,14 +568,10 @@ bool write_runtime_scale_mode_default(int mode)
 				trim_in_place(cursor);
 				if (!strcasecmp(cursor, "scale-mode"))
 				{
-					if (mode == kScaleModeNative)
+					const char *config_value = runtime_scale_mode_config_value(mode);
+					if (config_value != nullptr)
 					{
-						fputs("scale-mode = native\n", out);
-						wrote_scale_mode = true;
-					}
-					else if (mode == kScaleModeNearest)
-					{
-						fputs("scale-mode = nearest\n", out);
+						fprintf(out, "scale-mode = %s\n", config_value);
 						wrote_scale_mode = true;
 					}
 					continue;
@@ -402,14 +586,20 @@ bool write_runtime_scale_mode_default(int mode)
 
 	if (!wrote_scale_mode)
 	{
-		if (mode == kScaleModeNative)
+		const char *config_value = runtime_scale_mode_config_value(mode);
+		if (config_value != nullptr)
 		{
-			fputs("\nscale-mode = native\n", out);
+			fprintf(out, "\nscale-mode = %s\n", config_value);
 		}
-		else if (mode == kScaleModeNearest)
-		{
-			fputs("\nscale-mode = nearest\n", out);
-		}
+	}
+
+	if ((mode != kScaleModeAuto) && !wrote_scale_mode_marker)
+	{
+		fprintf(out, "%s\n", kRuntimeScaleModeExplicitMarker);
+	}
+	else if ((mode == kScaleModeAuto) && !wrote_scale_mode_auto_marker)
+	{
+		fprintf(out, "%s\n", kRuntimeScaleModeAutoMarker);
 	}
 
 	if (fclose(out) != 0) return false;
@@ -427,14 +617,20 @@ StartupScaleModeSelection resolve_startup_scale_mode()
 	StartupScaleModeSelection selection = {};
 	selection.direct_video = cfg.direct_video;
 	selection.vga_scaler = cfg.vga_scaler;
+	selection.forced_scandoubler = cfg.forced_scandoubler;
 	selection.io_type = fpga_get_io_type();
+	selection.vga_mode_int = cfg.vga_mode_int;
+	snprintf(selection.vga_mode, sizeof(selection.vga_mode), "%s", cfg.vga_mode[0] ? cfg.vga_mode : "rgb");
 
 	char configured_value[sizeof(selection.value)] = {};
 	if (read_runtime_config_value("scale-mode", configured_value, sizeof(configured_value)))
 	{
-		snprintf(selection.source, sizeof(selection.source), "config-explicit");
-		snprintf(selection.value, sizeof(selection.value), "%s", configured_value);
-		return selection;
+		if (!runtime_scale_mode_is_auto_default(configured_value))
+		{
+			snprintf(selection.source, sizeof(selection.source), "config-explicit");
+			snprintf(selection.value, sizeof(selection.value), "%s", configured_value);
+			return selection;
+		}
 	}
 
 	selection.set_env = 1;
@@ -442,6 +638,12 @@ StartupScaleModeSelection resolve_startup_scale_mode()
 	{
 		snprintf(selection.source, sizeof(selection.source), "auto-direct-video");
 		snprintf(selection.value, sizeof(selection.value), "native");
+	}
+	else if ((selection.io_type == 0) && (selection.vga_scaler == 0) && (selection.forced_scandoubler == 0) &&
+	         is_native_analog_tv_output_mode(selection.vga_mode_int))
+	{
+		snprintf(selection.source, sizeof(selection.source), "auto-native-analog-tv");
+		snprintf(selection.value, sizeof(selection.value), "crt-4x3");
 	}
 	else if (selection.io_type == 0)
 	{
@@ -880,13 +1082,16 @@ int threesx_wrapper_run(int argc, char *argv[])
 	{
 		const StartupScaleModeSelection startup_scale_mode = resolve_startup_scale_mode();
 		write_log_line(wrapper_log,
-		               "startup_scale_mode source=%s value=%s env=%s direct_video=%d vga_scaler=%d io_type=%d",
+		               "startup_scale_mode source=%s value=%s env=%s direct_video=%d vga_scaler=%d forced_scandoubler=%d io_type=%d vga_mode=%s vga_mode_int=%d",
 		               startup_scale_mode.source,
 		               startup_scale_mode.value,
 		               startup_scale_mode.set_env ? kRuntimeScaleModeEnv : "unset",
 		               startup_scale_mode.direct_video,
 		               startup_scale_mode.vga_scaler,
-		               startup_scale_mode.io_type);
+		               startup_scale_mode.forced_scandoubler,
+		               startup_scale_mode.io_type,
+		               startup_scale_mode.vga_mode,
+		               startup_scale_mode.vga_mode_int);
 
 		set_runtime_environment(startup_scale_mode);
 
@@ -902,13 +1107,16 @@ int threesx_wrapper_run(int argc, char *argv[])
 		write_fd_line(last_run_fd, "pgrp=%d sid=%d", getpgrp(), getsid(0));
 		write_fd_line(last_run_fd, "active_vt=tty%d", active_vt);
 		write_fd_line(last_run_fd,
-		              "startup_scale_mode source=%s value=%s env=%s direct_video=%d vga_scaler=%d io_type=%d",
+		              "startup_scale_mode source=%s value=%s env=%s direct_video=%d vga_scaler=%d forced_scandoubler=%d io_type=%d vga_mode=%s vga_mode_int=%d",
 		              startup_scale_mode.source,
 		              startup_scale_mode.value,
 		              startup_scale_mode.set_env ? kRuntimeScaleModeEnv : "unset",
 		              startup_scale_mode.direct_video,
 		              startup_scale_mode.vga_scaler,
-		              startup_scale_mode.io_type);
+		              startup_scale_mode.forced_scandoubler,
+		              startup_scale_mode.io_type,
+		              startup_scale_mode.vga_mode,
+		              startup_scale_mode.vga_mode_int);
 
 		int err_pipe[2];
 		if (pipe2(err_pipe, O_CLOEXEC) < 0)

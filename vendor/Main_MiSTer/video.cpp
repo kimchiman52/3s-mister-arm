@@ -2481,6 +2481,39 @@ static int should_auto_enable_direct_video()
 	return 0;
 }
 
+static int default_tv_mode_index()
+{
+	int mode = cfg.menu_pal ? 2 : 0;
+	if (cfg.forced_scandoubler) mode++;
+	return mode;
+}
+
+static bool has_explicit_video_mode_override()
+{
+	return strlen(cfg.video_conf) || strlen(cfg.video_conf_pal) || strlen(cfg.video_conf_ntsc);
+}
+
+static bool should_use_native_analog_tv_mode()
+{
+	if (cfg.direct_video) return false;
+	if (cfg.vga_scaler) return false;
+	return (cfg.vga_mode_int == 2) || (cfg.vga_mode_int == 3);
+}
+
+static void set_default_tv_video_mode()
+{
+	const int mode = default_tv_mode_index();
+
+	memset(&v_def, 0, sizeof(v_def));
+	v_def.item[0] = mode;
+	for (int i = 0; i < 8; i++) v_def.item[i + 1] = tvmodes[mode].vpar[i];
+	setPLL(tvmodes[mode].Fpix, &v_def);
+
+	vmode_def = 1;
+	vmode_pal = 0;
+	vmode_ntsc = 0;
+}
+
 static void video_mode_load()
 {
 	// Auto-detect and enable direct video if configured
@@ -2506,23 +2539,20 @@ static void video_mode_load()
 
 	if (cfg.direct_video)
 	{
-		int mode = cfg.menu_pal ? 2 : 0;
-		if (cfg.forced_scandoubler) mode++;
-
-		memset(&v_def, 0, sizeof(v_def));
-
-		v_def.item[0] = mode;
-		for (int i = 0; i < 8; i++) v_def.item[i + 1] = tvmodes[mode].vpar[i];
-		setPLL(tvmodes[mode].Fpix, &v_def);
-
-		vmode_def = 1;
-		vmode_pal = 0;
-		vmode_ntsc = 0;
+		printf("video_mode_load: using direct-video TV mode family (mode=%d)\n", default_tv_mode_index());
+		set_default_tv_video_mode();
+	}
+	else if (should_use_native_analog_tv_mode() && !has_explicit_video_mode_override())
+	{
+		printf("video_mode_load: using native analog TV mode family for vga_mode=%s (mode=%d)\n",
+		       cfg.vga_mode,
+		       default_tv_mode_index());
+		set_default_tv_video_mode();
 	}
 	else
 	{
 		vmode_def = 0;
-		if (!strlen(cfg.video_conf) && !strlen(cfg.video_conf_pal) && !strlen(cfg.video_conf_ntsc))
+		if (!has_explicit_video_mode_override())
 		{
 			vmode_def = get_edid_vmode(&v_def);
 		}
