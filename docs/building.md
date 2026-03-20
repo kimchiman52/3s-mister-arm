@@ -64,6 +64,7 @@ For MiSTer-oriented builds (no netplay, no ISO import flow, no FFmpeg ADX backen
 Important:
 - Use `clang`/`clang++` for MiSTer builds.
 - Do not use `gcc`/`g++` (for example `arm-linux-gnueabihf-gcc`) for this target.
+- For Docker-based MiSTer builds, prefer the pinned LLVM repo setup in [docs/mister-runbook.md](mister-runbook.md); as of March 20, 2026 that flow installs `clang-20` from `apt.llvm.org` instead of Debian 11's system `clang` 11.
 
 ```bash
 sh build-deps.sh --profile mister

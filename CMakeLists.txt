@@ -117,7 +117,9 @@ endif()
 if(CMAKE_C_COMPILER_ID STREQUAL "Clang" OR CMAKE_C_COMPILER_ID STREQUAL "AppleClang")
     set(DISABLED_WARNINGS
         -Wpointer-to-int-cast
+        -Wno-deprecated-non-prototype
         -Wno-tautological-overlap-compare
+        -Wno-gnu-folding-constant
         -Wno-c2x-extensions
         -Wno-incompatible-pointer-types
         -Wno-pointer-sign

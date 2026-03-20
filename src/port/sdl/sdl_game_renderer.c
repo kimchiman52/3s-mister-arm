@@ -69,7 +69,6 @@ static const int software_frame_full_height_diagonal_strip_max_width_pixels = 8;
 static const Uint64 software_frame_affine_quad_max_submitted_pixels = 4096u;
 static const Uint64 software_frame_full_texture_affine_quad_max_submitted_pixels = 196608u;
 static const Uint64 software_frame_non_integer_lookup_threshold_pixels = 384u;
-static const int software_source_surface_row_mask_words = 4;
 static const Uint64 software_surface_refresh_blit_sample_period = 32u;
 static const Uint64 software_frame_raster_sample_periods[SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_COUNT] = {
     32u,
@@ -83,6 +82,7 @@ enum {
     dirty_tile_cols = 24,
     dirty_tile_rows = 14,
     dirty_tile_total = dirty_tile_cols * dirty_tile_rows,
+    software_source_surface_row_mask_words = 4,
     texture_unlock_multi_rect_max = 4,
     perf_capture_renew_tile_size = 32,
     perf_capture_renew_tile_grid_dim = 8,

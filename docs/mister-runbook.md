@@ -14,30 +14,12 @@ Toolchain note:
 
 - Use `clang` for MiSTer builds. GCC toolchains (for example Debian `arm-linux-gnueabihf-gcc` 10.x) fail on legacy unnamed-parameter definitions in upstream sources.
 - This repo requires CMake `>= 3.24`. Debian 11 `bullseye` main only ships `3.18.4`, so the validated Docker flow below installs `cmake 3.25.1` from `bullseye-backports`.
+- As of March 20, 2026, the practical Bullseye LLVM repo pin is `clang-20`; the older `clang-15`/`clang-17` packages are no longer the dependable path on `apt.llvm.org` for this distro.
 
-Validated Docker build on hosts with `linux/arm/v7` container support (validated on March 5, 2026):
+Validated Docker bootstrap on hosts with `linux/arm/v7` container support (validated with `clang-20` on March 20, 2026):
 
 ```bash
-if docker ps -a --format '{{.Names}}' | grep -qx '3sx-mister-build'; then
-  docker start 3sx-mister-build
-else
-  docker run -d --name 3sx-mister-build --platform linux/arm/v7 -v "$PWD":/src -w /src debian:11 sleep infinity
-fi
-
-docker exec 3sx-mister-build bash -lc '
-set -eux
-cat >/etc/apt/sources.list <<'"'"'EOF'"'"'
-deb http://deb.debian.org/debian bullseye main contrib non-free
-deb http://deb.debian.org/debian bullseye-updates main contrib non-free
-deb http://security.debian.org/debian-security bullseye-security main
-deb http://archive.debian.org/debian bullseye-backports main contrib non-free
-EOF
-apt-get update
-apt-get install -y build-essential ca-certificates clang curl git libasound2-dev make pkg-config
-apt-get install -y -t bullseye-backports cmake
-cmake --version
-clang --version | head -n 1
-'
+tools/mister/setup-build-container.sh --platform linux/arm/v7
 ```
 
 Important:
@@ -45,8 +27,9 @@ Important:
 - Set `JOBS=2` for this container. Letting the ARMv7 container auto-detect `10` jobs caused emulated clean builds to be OOM-killed around the halfway mark.
 - Before creating a new Docker container, check whether `3sx-mister-build` already exists and reuse it. Only recreate it if the container is broken or its `/src` bind mount points at the wrong checkout.
 - This path requires host `binfmt_misc`/QEMU support. If `docker run --platform linux/arm/v7 ...` fails immediately with `exec format error`, use the cross-build Docker path below instead.
+- `tools/mister/setup-build-container.sh` installs the official LLVM Bullseye repo key, pins `clang-20`, and keeps CMake on `bullseye-backports`.
 - Install `libasound2-dev` in the container. Without it SDL3 builds only `disk` and `dummy` audio backends, and MiSTer audio will not come up as `alsa`.
-- The validated package set in this container was: `build-essential 12.9`, `ca-certificates 20230311+deb12u1~deb11u1`, `clang 1:11.0-51+nmu5`, `cmake 3.25.1-1~bpo11+1`, `curl 7.74.0-1.3+deb11u16`, `git 1:2.30.2-1+deb11u5`, `libasound2-dev 1.2.4-1.1+deb11u1`, `make 4.3-4.1`, and `pkg-config 0.29.2-1`.
+- The validated package set in this container now includes `clang-20 1:20.1.8~++20250708103407+25bcf1145fd7-1~exp1~20250708223526.135` from `apt.llvm.org`, plus `cmake 3.25.1-1~bpo11+1` from `bullseye-backports`.
 
 Quick mount check for an existing container:
 
@@ -61,7 +44,7 @@ docker exec 3sx-mister-build bash -lc '
 set -euxo pipefail
 cd /src
 JOBS=2 bash build-deps.sh --profile mister
-CC=clang CXX=clang++ cmake -S . -B build/mister -DCMAKE_BUILD_TYPE=Release -DPORT_MISTER=ON
+CC=clang-20 CXX=clang++-20 cmake -S . -B build/mister -DCMAKE_BUILD_TYPE=Release -DPORT_MISTER=ON
 cmake --build build/mister --parallel 2
 cmake --install build/mister --prefix build/mister-install
 '
@@ -92,12 +75,12 @@ Validated dual-flavor Docker build/package commands:
 docker exec 3sx-mister-build bash -lc '
 set -euxo pipefail
 cd /src
-CC=clang CXX=clang++ cmake -S . -B build/mister-telemetry -DCMAKE_BUILD_TYPE=Release -DPORT_MISTER=ON -DENABLE_PERF_TELEMETRY=ON
+CC=clang-20 CXX=clang++-20 cmake -S . -B build/mister-telemetry -DCMAKE_BUILD_TYPE=Release -DPORT_MISTER=ON -DENABLE_PERF_TELEMETRY=ON
 cmake --build build/mister-telemetry --parallel 2
 cmake --install build/mister-telemetry --prefix build/mister-telemetry-install
 tools/mister/package.sh build/mister-telemetry-install build/mister-telemetry-package
 
-CC=clang CXX=clang++ cmake -S . -B build/mister-clean -DCMAKE_BUILD_TYPE=Release -DPORT_MISTER=ON -DENABLE_PERF_TELEMETRY=OFF
+CC=clang-20 CXX=clang++-20 cmake -S . -B build/mister-clean -DCMAKE_BUILD_TYPE=Release -DPORT_MISTER=ON -DENABLE_PERF_TELEMETRY=OFF
 cmake --build build/mister-clean --parallel 2
 cmake --install build/mister-clean --prefix build/mister-clean-install
 tools/mister/package.sh build/mister-clean-install build/mister-clean-package
@@ -115,31 +98,10 @@ cmake --install build/mister --prefix build/mister-install
 
 Cross-build from x86_64/arm64 host (Docker/VM):
 
-This fallback was validated on March 9, 2026 from an x86_64 Docker host that could not execute `linux/arm/v7` containers. It produces an ARM hard-float package that deploys and probes successfully on MiSTer.
+This fallback was revalidated with `clang-20` on March 20, 2026 from an x86_64 Docker host that could not execute `linux/arm/v7` containers locally (`exec format error`). It produces an ARM hard-float package that deploys and probes successfully on MiSTer.
 
 ```bash
-if docker ps -a --format '{{.Names}}' | grep -qx '3sx-mister-build'; then
-  docker start 3sx-mister-build
-else
-  docker run -d --name 3sx-mister-build --platform linux/amd64 -v "$PWD":/src -w /src debian:11 sleep infinity
-fi
-
-docker exec 3sx-mister-build bash -lc '
-set -eux
-cat >/etc/apt/sources.list <<'"'"'EOF'"'"'
-deb http://deb.debian.org/debian bullseye main contrib non-free
-deb http://deb.debian.org/debian bullseye-updates main contrib non-free
-deb http://security.debian.org/debian-security bullseye-security main
-deb http://archive.debian.org/debian bullseye-backports main contrib non-free
-EOF
-apt-get update
-apt-get install -y build-essential ca-certificates clang curl git libasound2-dev make pkg-config
-apt-get install -y -t bullseye-backports cmake
-dpkg --add-architecture armhf
-apt-get update
-apt-get install -y gcc-arm-linux-gnueabihf binutils-arm-linux-gnueabihf libc6-dev-armhf-cross \
-  libstdc++-10-dev-armhf-cross libasound2-dev:armhf
-'
+tools/mister/setup-build-container.sh --platform linux/amd64
 
 docker exec 3sx-mister-build bash -lc '
 set -euxo pipefail
@@ -149,8 +111,8 @@ cd /src
 tar --exclude=.git --exclude=build --exclude=third_party/sdl3/build -cf - . | tar --no-same-owner -xf - -C /work-arm
 cd /work-arm
 
-export CC=clang
-export CXX=clang++
+export CC=clang-20
+export CXX=clang++-20
 export PKG_CONFIG_LIBDIR=/usr/lib/arm-linux-gnueabihf/pkgconfig:/usr/share/pkgconfig
 export CFLAGS="--target=arm-linux-gnueabihf --gcc-toolchain=/usr -isystem /usr/arm-linux-gnueabihf/include"
 export CXXFLAGS="--target=arm-linux-gnueabihf --gcc-toolchain=/usr -isystem /usr/arm-linux-gnueabihf/include"
@@ -395,7 +357,7 @@ Symptoms:
 Fix:
 
 ```bash
-CC=clang CXX=clang++ cmake -S . -B build/mister -DCMAKE_BUILD_TYPE=Release -DPORT_MISTER=ON
+CC=clang-20 CXX=clang++-20 cmake -S . -B build/mister -DCMAKE_BUILD_TYPE=Release -DPORT_MISTER=ON
 cmake --build build/mister --parallel
 ```
 
@@ -418,7 +380,7 @@ docker exec 3sx-mister-build bash -lc '
 set -euxo pipefail
 cd /src
 JOBS=2 bash build-deps.sh --profile mister
-CC=clang CXX=clang++ cmake -S . -B build/mister -DCMAKE_BUILD_TYPE=Release -DPORT_MISTER=ON
+CC=clang-20 CXX=clang++-20 cmake -S . -B build/mister -DCMAKE_BUILD_TYPE=Release -DPORT_MISTER=ON
 cmake --build build/mister --parallel 2
 cmake --install build/mister --prefix build/mister-install
 '
