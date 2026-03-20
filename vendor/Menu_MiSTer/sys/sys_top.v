@@ -1419,6 +1419,9 @@ csync csync_vga(clk_vid, vga_hs_osd, vga_vs_osd, vga_cs_osd);
 	reg  [16:0] ColorBurst_Range;
 	wire [23:0] yc_o;
 	wire        yc_hs, yc_vs, yc_cs, yc_de;
+	wire [23:0] yc_fb_o;
+	wire        yc_fb_hs, yc_fb_vs, yc_fb_cs, yc_fb_de;
+	wire        vga_fb_yc_en = vga_fb & ~vga_scaler & yc_en;
 
 	yc_out yc_out
 	(
@@ -1438,6 +1441,25 @@ csync csync_vga(clk_vid, vga_hs_osd, vga_vs_osd, vga_cs_osd);
 		.csync_o(yc_cs),
 		.de_o(yc_de)
 	);
+
+	yc_out yc_out_fb
+	(
+		.clk(clk_hdmi),
+		.PAL_EN(pal_en),
+		.CVBS(cvbs),
+		.PHASE_INC(PhaseInc),
+		.COLORBURST_RANGE(ColorBurst_Range),
+		.hsync(hdmi_hs_osd),
+		.vsync(hdmi_vs_osd),
+		.csync(hdmi_cs_osd),
+		.de(hdmi_de_osd),
+		.dout(yc_fb_o),
+		.din({24{hdmi_de_osd}} & hdmi_data_osd),
+		.hsync_o(yc_fb_hs),
+		.vsync_o(yc_fb_vs),
+		.csync_o(yc_fb_cs),
+		.de_o(yc_fb_de)
+	);
 `endif
 
 reg  [39:0] PhaseInc;
@@ -1445,13 +1467,18 @@ reg  [39:0] PhaseInc;
 `ifndef MISTER_DUAL_SDRAM
 	// Subcarrier generation for external encoders (independent of YC module)
 	reg         subcarrier;
+	wire        vgas_en = vga_fb | vga_scaler;
 
 	reg  [39:0] sub_accum;
 	always @(posedge clk_vid) sub_accum <= sub_accum + PhaseInc;
 
 	// 1-bit output for positive/negative of wave, no LUT required. Output 1 if disabled for further logic
 	reg subcarrier_out;
+`ifndef MISTER_DISABLE_YC
+	always @(posedge clk_vid) subcarrier_out <= ~(subcarrier & csync_en & ~ypbpr_en & ~forced_scandoubler & ~(vgas_en & ~vga_fb_yc_en)) | sub_accum[39];
+`else
 	always @(posedge clk_vid) subcarrier_out <= ~(subcarrier & csync_en & ~ypbpr_en & ~forced_scandoubler & ~vgas_en) | sub_accum[39];
+`endif
 
 
 	wire VGA_DISABLE;
@@ -1501,11 +1528,20 @@ reg  [39:0] PhaseInc;
 		assign {vga_o, vga_hs, vga_vs, vga_cs, vga_de } =  {vga_o_t, vga_hs_t, vga_vs_t, vga_cs_t, vga_de_t } ;
 	`endif
 
-	wire vgas_en = vga_fb | vga_scaler;
-
 	wire cs1 = vgas_en ? vgas_cs : vga_cs;
 	wire de1 = vgas_en ? vgas_de : vga_de;
 
+`ifndef MISTER_DISABLE_YC
+	assign VGA_VS = av_dis ? 1'bZ      :(((vga_fb_yc_en ? (~yc_fb_vs ^ VS[12]) : vgas_en ? (~vgas_vs ^ VS[12])                         : VGA_DISABLE ? 1'd1 : ~vga_vs) | csync_en) & subcarrier_out);
+	assign VGA_HS = av_dis ? 1'bZ      :  (vga_fb_yc_en ? ((csync_en ? ~yc_fb_cs : ~yc_fb_hs) ^ HS[12]) : vgas_en ? ((csync_en ? ~vgas_cs : ~vgas_hs) ^ HS[12]) : VGA_DISABLE ? 1'd1 : (csync_en ? ~vga_cs : ~vga_hs));
+	assign VGA_R  = av_dis ? 6'bZZZZZZ :   vga_fb_yc_en ? yc_fb_o[23:18] : vgas_en ? vgas_o[23:18]                               : VGA_DISABLE ? 6'd0 : vga_o[23:18];
+	assign VGA_G  = av_dis ? 6'bZZZZZZ :   vga_fb_yc_en ? yc_fb_o[15:10] : vgas_en ? vgas_o[15:10]                               : VGA_DISABLE ? 6'd0 : vga_o[15:10];
+	assign VGA_B  = av_dis ? 6'bZZZZZZ :   vga_fb_yc_en ? yc_fb_o[7:2]   : vgas_en ? vgas_o[7:2]                                 : VGA_DISABLE ? 6'd0 : vga_o[7:2]  ;
+
+	wire [1:0] vga_r  = vga_fb_yc_en ? yc_fb_o[17:16] : vgas_en ? vgas_o[17:16] : VGA_DISABLE ? 2'd0 : vga_o[17:16];
+	wire [1:0] vga_g  = vga_fb_yc_en ? yc_fb_o[9:8]   : vgas_en ? vgas_o[9:8]   : VGA_DISABLE ? 2'd0 : vga_o[9:8];
+	wire [1:0] vga_b  = vga_fb_yc_en ? yc_fb_o[1:0]   : vgas_en ? vgas_o[1:0]   : VGA_DISABLE ? 2'd0 : vga_o[1:0];
+`else
 	assign VGA_VS = av_dis ? 1'bZ      :(((vgas_en ? (~vgas_vs ^ VS[12])                         : VGA_DISABLE ? 1'd1 : ~vga_vs) | csync_en) & subcarrier_out);
 	assign VGA_HS = av_dis ? 1'bZ      :  (vgas_en ? ((csync_en ? ~vgas_cs : ~vgas_hs) ^ HS[12]) : VGA_DISABLE ? 1'd1 : (csync_en ? ~vga_cs : ~vga_hs));
 	assign VGA_R  = av_dis ? 6'bZZZZZZ :   vgas_en ? vgas_o[23:18]                               : VGA_DISABLE ? 6'd0 : vga_o[23:18];
@@ -1515,6 +1551,7 @@ reg  [39:0] PhaseInc;
 	wire [1:0] vga_r  = vgas_en ? vgas_o[17:16] : VGA_DISABLE ? 2'd0 : vga_o[17:16];
 	wire [1:0] vga_g  = vgas_en ? vgas_o[9:8]   : VGA_DISABLE ? 2'd0 : vga_o[9:8];
 	wire [1:0] vga_b  = vgas_en ? vgas_o[1:0]   : VGA_DISABLE ? 2'd0 : vga_o[1:0];
+`endif
 `endif
 
 reg video_sync = 0;

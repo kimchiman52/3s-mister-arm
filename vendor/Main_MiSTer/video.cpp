@@ -2950,6 +2950,17 @@ static void set_yc_mode()
 		int pal = fps < 55.f;
 		double CLK_REF = (pal || (cfg.ntsc_mode == 1)) ? 4.43361875f : (cfg.ntsc_mode == 2) ? 3.575611f : 3.579545f;
 		double CLK_VIDEO = current_video_info.ctime * 100.f / current_video_info.ptime;
+		const double output_CLK_VIDEO = v_cur.Fpix;
+		const bool output_clock_available = output_CLK_VIDEO > 0.0;
+		const bool fb_native_analog_auto = output_clock_available
+			&& get_vga_fb()
+			&& should_use_native_analog_tv_mode();
+		const char *clock_source_name = "core";
+		if (fb_native_analog_auto)
+		{
+			CLK_VIDEO = output_CLK_VIDEO;
+			clock_source_name = "output-fb-auto";
+		}
 
 		float prate = current_video_info.width * 100.f;
 		prate /= current_video_info.ptime;
@@ -2964,7 +2975,14 @@ static void set_yc_mode()
 		char yc_key_expand[64];
 		sprintf(yc_key, "%s_%.1f%s%s", user_io_get_core_name(1), fps, current_video_info.interlaced ? "i" : "", (pal || !cfg.ntsc_mode) ? "" : (cfg.ntsc_mode == 1) ? "s" : "m");
 		snprintf(yc_key_expand, sizeof(yc_key_expand), "%s_%.2f", yc_key, prate);
-		printf("Calculated YC parameters for '%s': %s PHASE_INC=%lld, COLORBURST_START=%d, COLORBURST_END=%d\n", yc_key, pal ? "PAL" : (cfg.ntsc_mode == 1) ? "PAL60" : (cfg.ntsc_mode == 2) ? "PAL-M" : "NTSC", PHASE_INC, COLORBURST_START, COLORBURST_END);
+		printf("Calculated YC parameters for '%s': %s clock_source=%s CLK_VIDEO=%.6fMHz PHASE_INC=%lld, COLORBURST_START=%d, COLORBURST_END=%d\n",
+		       yc_key,
+		       pal ? "PAL" : (cfg.ntsc_mode == 1) ? "PAL60" : (cfg.ntsc_mode == 2) ? "PAL-M" : "NTSC",
+		       clock_source_name,
+		       CLK_VIDEO,
+		       PHASE_INC,
+		       COLORBURST_START,
+		       COLORBURST_END);
 
 		for (uint i = 0; i < sizeof(yc_modes) / sizeof(yc_modes[0]); i++)
 		{
