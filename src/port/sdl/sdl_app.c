@@ -7127,8 +7127,13 @@ static bool is_native_analog_tv_framebuffer_size(int win_w, int win_h) {
 static SDL_FRect fit_crt_4x3_rect(int win_w, int win_h) {
     // MiSTer's native TV mode family uses non-square analog pixels. Filling the
     // full 640-wide raster is the intended 4:3 CRT presentation on those modes.
+    // Center game content vertically so the CRT's top overscan hits blank rows
+    // rather than game content. The blank border rows are pre-cleared to black
+    // by video_fb_clear() before launch and are never written by the presenter.
     if (is_native_analog_tv_framebuffer_size(win_w, win_h)) {
-        SDL_FRect rect = { 0.0f, 0.0f, (float)win_w, (float)win_h };
+        float y = (native_game_height < win_h) ? (float)((win_h - native_game_height) / 2 + 2) : 0.0f;
+        float h = (native_game_height < win_h) ? (float)native_game_height : (float)win_h;
+        SDL_FRect rect = { 4.0f, y, (float)(win_w - 8), h };
         return rect;
     }
 
