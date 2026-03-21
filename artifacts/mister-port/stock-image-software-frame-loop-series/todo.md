@@ -5952,6 +5952,6 @@
 - [x] Keep/rollback decision:
   - [x] reject and revert. This small sub-`384` micro-lookup admission does reduce the intended `generic_textured` residue, but it makes the deciding Yun first-visible Genei-Jin lane slower overall and slower in the first active burst, so it is not a safe runtime keep
 - [x] final commit hash:
-  - [x] `TBD (backfill after closure commit)`
+  - [x] `99674945` (`mister: close loop 134 micro-lookup audit`)
 - [x] next best candidate:
   - [x] do not retry this sub-`384` micro-lookup admission now. Move to the next research-backed Yun runtime candidate: one careful scalar `4x` unroll in the hot non-integer row-walk gather loop while preserving the kept pair-only reuse fast path, with Remy-left staying on the separate compare-dirty residue track

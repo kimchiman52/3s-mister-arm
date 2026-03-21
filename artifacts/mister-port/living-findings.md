@@ -3813,7 +3813,7 @@ Scope guardrails:
 
 - 2026-03-21T11:46:57-0400
   - Final commit hash:
-    - `TBD (backfill after closure commit)`
+    - `99674945`
   - Bottleneck targeted:
     - native Yun SA3 first-visible activation on the direct `software_frame_exact` path, specifically the small `ppg-seqs ix 80 / texture 56` generic-textured residue just below the shared `384`-pixel non-integer lookup gate
   - Change summary:
