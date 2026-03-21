@@ -1,8 +1,106 @@
 # MiSTer Performance: Remaining Opportunities
 
-Last updated: 2026-03-20
+Last updated: 2026-03-21
 Sources: Full code review (software_frame_non_integer.c, fbdev_presenter.c, sdl_game_renderer.c),
 complete living-findings.md search, 130+ loop git history, two research sessions.
+
+---
+
+## March 21 Native Current Truth
+
+- Native presentation is no longer the first-line bottleneck on the trusted March `2026-03-21`
+  lanes: `loop132-yun-family-time-r2` recorded `present.mean_ms = 0.5300`, and
+  `loop132-remy-left-family-time` recorded `0.5409`.
+- Genei / first-visible Yun SA3 is still the dominant current native failure:
+  `41.3682 FPS / 24.1731 / 11.0128 / 12.6304 / 0.5300 ms` with sampled
+  `fast_non_integer = 1280.0776 ms` and only secondary sampled
+  `generic_textured = 120.9596 ms`.
+- Remy-left is a different problem from Genei: `54.5717 FPS / 18.3245 / 9.4081 / 8.3755 / 0.5409 ms`,
+  `fast_non_integer = 0`, `generic_textured = 0`, `fast_exact_tasks = 309.21`, and
+  `refresh.mean_ms = 4.3868`, so the remaining work is exact/refresh compare-dirty residue around
+  `ppg-seqs 81/82`.
+- Loop 132/133 plus later March `2026-03-21` review synthesis supersede the older
+  clipped-family-first / broad run-batching-first read. The current native order is:
+  `(1)` targeted `ix 80 / texture 56` generic-residue audit with a narrow micro-lookup admission,
+  `(2)` careful scalar `4x` unroll in the non-integer row-walk gather loop preserving the kept
+  pair path, `(3)` separate Remy compare-dirty residue work.
+- Do not spend the next native loop on presenter-side work, broader same-source run batching beyond
+  pairs, dual-core raster threading, or runtime row dedup before measurement.
+
+---
+
+## March 21 Research Synthesis / Debate Amendments
+
+This section preserves the later March `2026-03-21` debate-style review of the new research ideas,
+so future loops inherit not just the final ranking but also the reasons some proposals were
+accepted, narrowed, or demoted.
+
+### Accepted From The New Research
+
+- **Scalar row-walk unroll is a real next-step candidate.** The most durable new idea from the later
+  research/review pass is a careful scalar `4x` unroll in the hot non-integer gather loop. This is
+  now preferred over more lookup/pair setup work because Loop 133 showed the meaningful helper cost
+  is in row-walk gather time, not in lookup generation or pair-bitmap setup.
+
+- **The small `ix 80 / texture 56` generic residue is worth a bounded audit.** Loop 132 family-time
+  telemetry showed the remaining generic lane is secondary but real, and the hot families sit just
+  below the current shared `384`-pixel non-integer threshold. That supports a narrow micro-lookup
+  admission audit, not another broad threshold-style reland.
+
+- **Remy-left must stay on its own track.** The newer debate clarified that Remy-left and Genei are
+  no longer the same bottleneck family. Remy-left is still exact/refresh-bound compare-dirty
+  residue around `ppg-seqs 81/82`, so native Genei raster experiments should not be expected to
+  move it materially.
+
+### Demoted Or Corrected After Review
+
+- **Row dedup was over-claimed.** The earlier research treated duplicate-`src_y` rows as a likely
+  high-confidence win, but the later review corrected that assumption: the trusted Yun families do
+  not show a simple uniform vertical-scale pattern, and the safe-copy condition is not guaranteed on
+  enough rows to justify calling it a likely runtime win. Keep this as measurement-only until a real
+  duplicate-row cohort is proven on a trusted capture.
+
+- **Broader same-source run batching beyond pairs is stale on this tree.** Loop 128 already kept the
+  pair-only reuse path, the hot families top out at `same_source_max_run_length = 2`, and the later
+  debate agreed that the more ambitious "multiplicative" run-batching framing was no longer
+  evidence-backed here.
+
+- **Dual-core raster splitting is not a near-term candidate.** The new research correctly noted the
+  second A9 core is idle, but the review also pointed out that the current hot tasks are too small
+  and too memory-latency-heavy to justify threading complexity yet. Keep threading ideas off the
+  immediate native queue unless a later measurement pass re-ranks CPU work outside this raster loop.
+
+- **Presenter-side native work is not the current lever.** The research review closed this cleanly:
+  native present is already near the floor on the deciding March `2026-03-21` captures, so
+  presenter-side NEON/unroll work belongs to nearest-HDMI follow-up, not the current native queue.
+
+- **Cold-cache and first-activation one-off stories are secondary, not the root cause.** The later
+  debate did not find enough evidence to treat cold creation or one-time setup as the dominant
+  sustained explanation for the Genei slowdown. Keep those as possible contributors, not as the main
+  ranking signal.
+
+### Quantitative Corrections Worth Remembering
+
+- The later review corrected one ROI estimate for the generic lane: `120.9596 ms` sampled generic
+  time over `300` frames is about `0.40 ms/frame`, not `0.10 ms/frame`. That is still secondary to
+  the non-integer hotspot, but it is large enough to justify a bounded audit before the heavier
+  unroll work.
+
+- The debate also clarified that a global threshold drop is not "free" just because the hot residue
+  sits under `384` pixels. Earlier threshold-style expansions have already regressed gameplay on this
+  tree, so future work should prefer targeted admission over policy-wide threshold movement.
+
+### Durable Native Queue After Synthesis
+
+Use this order unless newer trusted captures contradict it:
+
+1. Audit the `ppg-seqs ix 80 / texture 56` generic residue and, if justified, try a narrow
+   micro-lookup admission instead of another global threshold change.
+2. If the generic audit does not clear the deciding Genei lane, test one careful scalar `4x`
+   unroll in the non-integer row-walk gather loop while preserving the kept pair-only reuse path.
+3. Keep Remy-left on separate compare-dirty `ppg-seqs 81/82` residue work.
+4. Keep row-dedup ideas measurement-only, and leave presenter-native, dual-core, and broader
+   run-batching ideas off the immediate queue.
 
 ---
 
@@ -14,13 +112,15 @@ complete living-findings.md search, 130+ loop git history, two research sessions
 **NEON usage:** Only `memset32` in `fbdev_presenter.c:373`. Every other hot path — the non-integer
 gather loop, the mapped nearest scaler, the integer scale expansion — is scalar.
 
-**Baselines (native, scale-mode = native):**
-- Control: **89.64 FPS** ✓
-- Stage-heavy: **66.52 FPS** ✓
-- Effect-heavy: **62.25 FPS** (barely above 59.6 target)
-- Super-heavy: **60.88 FPS** (barely above 59.6 target)
-- Remy's stage: **~42.5 FPS** ✗ — root cause unknown, two loops failed without isolating it
-- Genei-Jin first activation: **~49-51 FPS** ✗ — dominant player-visible failure
+**Baselines (native, scale-mode = native, March `2026-03-21` trusted anchors):**
+- The accepted native software-frame baseline still keeps the ordinary control / heavy frozen matrix
+  around or above target; the remaining native outliers are Yun first-visible Genei and Remy-left.
+- Remy-left: **54.57 FPS** ✗ — improved materially from the older `~42.5 FPS` state; the remaining
+  work is compare-dirty residue in `ppg-seqs 81/82`, not an unknown root cause
+- Genei-Jin first visible activation: **41.37 FPS** ✗ — dominant current player-visible native
+  failure on the trusted lane
+- Native present overhead on both deciding lanes: **~0.53-0.54 ms** — no longer the first-line
+  native target
 
 **Present overhead:** Negligible on native/crt-4x3 (direct memcpy, <1ms). Moderate on nearest
 (mapped scaler, present.mean_ms ~3-7ms depending on scene).
@@ -79,6 +179,8 @@ version as a lever.
 
 Confirmed absent from living-findings after exhaustive keyword search (`NEON`, `gather`, `prefetch`,
 `unroll`, `lto`, `LTO`, `ffast`, `two-pass`, `run batch`, `BGM`, `pthread`, `second core`).
+This section is historical to the memo's first draft; use the March `2026-03-21` current-truth
+section above plus the validation addendum below when it disagrees with later loop evidence.
 
 ---
 
@@ -469,13 +571,18 @@ Use it as the current truth when the original text and this addendum disagree.
 
 If future work is ranked from the validated state above, the strongest sequence is:
 
-1. Complete the remaining Remy compare-dirty `ppg-seqs 81/82` residue work.
-2. Add run-length measurement support for repeated `src_x_lookup` hits, then test horizontal
-   same-source run batching.
-3. Add per-pixel source-alpha split telemetry before any two-pass NEON blend work.
-4. Test a presenter-side manual unroll on `rasterize_mapped_row_tile_runs`, with scalar and
-   NEON-assisted variants measured separately.
-5. Treat ThinLTO as a lower-priority build experiment after runtime measurement-backed work.
+1. Treat Loop 133 as attribution support only and do not spend more native loop budget on
+   lookup-generation or pair-bitmap setup work.
+2. Audit the small `generic_textured` `ppg-seqs ix 80 / texture 56` residue that sits just under
+   the current shared `384`-pixel non-integer gate, and prefer a narrow micro-lookup admission over
+   another broad threshold drop.
+3. Test a careful scalar `4x` unroll in the hot non-integer row-walk gather loop, preserving the
+   kept pair-only reuse fast path.
+4. Keep Remy-left on a separate compare-dirty `ppg-seqs 81/82` residue track rather than assuming
+   the Genei runtime candidates will help it.
+5. Keep row-dedup ideas measurement-only until a trusted Yun capture proves a real duplicate-`src_y`
+   cohort, and do not spend the next native loop on presenter-side work, dual-core threading, or
+   broader run batching beyond the kept pair path.
 
 ### Primary Sources Consulted For This Addendum
 

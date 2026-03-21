@@ -27,16 +27,19 @@
 
 ## Current Operator Priorities
 
-- [x] Manual retest: Remy's stage and Remy's super now feel full speed enough that they are no longer first-line optimization targets unless fresh on-device telemetry contradicts that.
-- [x] Current unattended priority order: recover and optimize the real Ibuki/Kyoto stage slowdown first, recover and optimize the attract/demo logo slowdown second, and keep Yun SA3 Genei-Jin first-activation work third.
-- [x] Transition status after Loop 104: the exact `Press Start -> main menu` type-`1` wipe looks solved enough to drop out of first-line focus unless fresh testing contradicts that.
-- [x] Manual full-telemetry captures on `2026-03-09` now reproduce both remaining failures:
-  - `manual-yun-geneijin` shows the real gameplay slowdown is the SA3 startup/effect burst, not the presenter. The bad 60-frame windows land around `49-51 FPS` and are dominated by `software_frame_fast_non_integer_pixels` plus a smaller `software_frame_generic_textured_pixels` residue while direct present stays intact.
-  - `manual-menu-transition` shows the catastrophic transition collapse is a repeated solid-task fallback/readback path: 8-frame bursts near `3.5 FPS` with `software_frame_fallback = 1`, `software_frame_reason_solid = 76`, and `present_readback ~= 273-316 ms`.
-- [x] Easy manual repro note: from boot, keep pressing `Start`. It skips the logo/intro, lands on the `Press Start` screen, and the next `Start` triggers the same `Press Start -> main menu` wipe. That is an acceptable quick manual verification path.
-- [x] New operator note after Loop 105: the first visible Genei-Jin activation still dips harder than later ones. One manual retest saw the first activation drop to roughly `45 FPS`, while later activations stayed in the mid/upper `50s`.
-- [x] New loops should use those manual findings as ranked evidence, not as the old default order: the exact stage-7 fallback/readback collapse is the first-line runtime target now that Loop 107 has isolated its geometry family, attract/logo stays next as the secondary user-priority lane, and Yun first-activation remains the first-class gameplay target immediately after those two lanes.
-- [x] Loop 104 keep note: the exact `WipeOut/WipeIn(type = 1)` solid fallback lane is now back to near-full-speed direct present on-device, so transition work stays de-prioritized unless fresh reports or telemetry say it regressed.
+- [x] Native override re-rank on `2026-03-21`: stop spending first-line Ralph loop budget on native presentation work. The trusted current-tree native captures now keep `present.mean_ms` near the floor on both deciding lanes: `loop132-yun-family-time-r2 = 0.5300 ms` and `loop132-remy-left-family-time = 0.5409 ms`.
+- [x] Split the remaining native work into two separate queues instead of one shared queue:
+  - Genei-Jin / first-visible activation remains the first-line native gameplay ceiling. `loop132-yun-family-time-r2` stayed at `41.3682 FPS / 24.1731 / 11.0128 / 12.6304 / 0.5300 ms` with sampled `software_frame_fast_non_integer = 1280.0776 ms` and only secondary sampled `software_frame_generic_textured = 120.9596 ms`.
+  - Remy-left is now a different bottleneck family, not another non-integer/native-present problem. `loop132-remy-left-family-time` stayed at `54.5717 FPS / 18.3245 / 9.4081 / 8.3755 / 0.5409 ms` with `fast_non_integer = 0`, `generic_textured = 0`, `fast_exact_tasks = 309.21`, and `refresh.mean_ms = 4.3868`.
+- [x] Native Genei priority order after the March `2026-03-21` research/review synthesis:
+  - treat Loop 133 as attribution support only and do not spend more runtime budget on lookup-generation or pair-bitmap micro-optimizations
+  - first audit the small `generic_textured` `ppg-seqs ix 80 / texture 56` residue just below the current shared `384`-pixel lookup gate, and prefer a narrow micro-lookup admission over another broad threshold drop
+  - then test one careful scalar `4x` unroll in the hot non-integer row-walk gather loop while preserving the kept pair-only reuse fast path
+  - keep duplicate-row ideas measurement-only until a trusted Yun capture proves a real duplicate-`src_y` cohort worth code
+- [x] Native Remy priority order after the March `2026-03-21` research/review synthesis:
+  - keep Remy-left on its own compare-dirty residue track around `ppg-seqs 81/82`, especially the remaining `82` full/oversized refresh tail
+  - do not expect the Genei non-integer runtime candidates to move this lane materially unless fresh telemetry shows `fast_non_integer` reappearing
+- [x] Do not spend the next native Ralph loops on stale or demoted ideas unless fresh telemetry re-ranks them: presenter-side native micro-opts, broader same-source run batching beyond the kept pair path, dual-core raster threading, broad threshold drops, or runtime row-dedup before measurement.
 
 ## Active Ralph Loop Intake
 
@@ -5911,4 +5914,37 @@
 - [x] final commit hash:
   - [x] `2d698441` (`mister: add non-integer phase timing telemetry`)
 - [x] next best candidate:
-  - [x] do not spend more loop budget on lookup generation or pair-bitmap micro-optimizations now. Return to `docs/agent-memory/mister-perf-opportunities.md` opportunity `2` against the dominant unclipped `ppg-seqs 82 / 58 / 393` and `81 / 57 / 391` row-walk lanes, and treat Loop 133 captures as attribution support rather than apples-to-apples FPS baselines
+  - [x] do not spend more loop budget on lookup generation or pair-bitmap micro-optimizations now. Later March `2026-03-21` review/research synthesis narrows the next runtime queue further than the original broad opportunity-`2` label:
+    - [x] first audit the small `ppg-seqs ix 80 / texture 56` generic residue below the shared `384`-pixel gate and prefer a narrow micro-lookup admission over a global threshold drop
+    - [x] then test one careful scalar `4x` row-walk unroll in `software_frame_non_integer.c`, preserving the kept pair-only reuse fast path
+    - [x] keep Remy-left on separate compare-dirty `ppg-seqs 81/82` residue work, and treat duplicate-row ideas as measurement-only until the trusted Yun lane proves a worthwhile cohort
+
+### Follow-On Loop 134: Native Yun Generic Residue Micro-Lookup Audit
+
+- [ ] Value target: decide whether the small `generic_textured` `ppg-seqs ix 80 / texture 56` residue on the trusted native Yun first-visible Genei lane can be safely promoted onto a narrow lookup-based path below the current shared `384`-pixel gate without reopening the rejected global-threshold branch
+- [ ] Scope boundary: `src/port/sdl/sdl_game_renderer.c` and the smallest matching helper/header support only if required, plus the required checklist/living-findings closeout docs; do not touch presenter routing, global threshold policy, gameplay logic, or Remy compare-dirty code in this loop
+- [ ] Dependencies: kept Loop 132 family-time telemetry `454365e4`; kept Loop 133 phase-split telemetry `2d698441`; current trusted native captures `artifacts/mister-port/perf/loop132-yun-family-time-r2.json` and `artifacts/mister-port/perf/loop132-remy-left-family-time.json`; current living findings; `docs/agent-memory/mister-perf-opportunities.md`; telemetry Docker container `3sx-mister-build`; serialized MiSTer tooling; and a clean kickoff tree on `mister-dev`
+- [ ] Research evidence gathered on `2026-03-21` before implementation:
+  - [ ] `loop132-yun-family-time-r2` keeps native present near the floor and shows the remaining generic residue is secondary but real: sampled `software_frame_generic_textured = 120.9596 ms`, led by `ppg-seqs ix 80 / texture 56 / palette 393 = 9.6318 ms` and `palette 329 = 7.9652 ms`
+  - [ ] the hot generic families sit just below the current shared `384`-pixel non-integer gate (`software_frame_fast_miss_non_integer_max_pixels.max = 373`), so a targeted admission path is better motivated than another global threshold drop
+  - [ ] Loop 133 shows lookup/pair setup is not the meaningful remaining cost on the hot non-integer families, so the safest low-risk runtime attempt is the bounded generic residue first, not another lookup/pair micro-opt or presenter change
+  - [ ] later March `2026-03-21` review/research synthesis demotes broader same-source run batching, row-dedup runtime changes, and dual-core ideas on this native tree until measurement re-ranks them
+- [ ] Research-backed hypothesis and scoped plan for this cycle:
+  - [ ] hypothesis: a narrow micro-lookup admission for the sub-`384` `ix 80 / texture 56` family can shave a measurable part of the remaining generic residue without reopening the rejected global threshold branch or changing unrelated routing
+  - [ ] scoped plan: first export or log the exact fallback/admission reason for the hot `ix 80` families if the current telemetry still leaves that ambiguous; if the miss is simply the shared `384`-pixel cutoff, prototype the smallest family/task-shape-gated lookup admission or micro-lookup helper and verify it only changes the intended residue
+  - [ ] reject immediately if the change expands routing broadly, materially changes non-target families, or fails parity/review/device verification
+- [ ] Success metric and verification plan for the attempted loop:
+  - [ ] rerun the trusted native Yun lane first as the apples-to-apples baseline, then capture the candidate with the same route and compare `software_frame_generic_textured_*`, total `render.mean_ms`, and FPS
+  - [ ] run `left-corner-ryu-stage` or another exact-path native guard to ensure exact-only gameplay lanes stay neutral
+  - [ ] keep only if the change measurably reduces the targeted generic residue without regressing the deciding Yun lane or the exact-path guardrails
+- [ ] Rejected before implementation this cycle:
+  - [ ] do not drop the global non-integer threshold again, do not start with the scalar row-walk unroll before this bounded generic audit finishes, and do not mix Remy compare-dirty work into this loop
+- [ ] Loop-end verification commands:
+  - [ ] `git diff --check`
+  - [ ] Docker telemetry build/install/package through the validated `3sx-mister-build` runbook
+  - [ ] serialized `tools/mister/misterctl.sh lock-status`, `busy-status`, `health`, `deploy`, `probe`, and bounded `smoke`
+  - [ ] rerun the trusted native Yun SA3 first-visible activation capture with the same Yun-vs-Ryu automation path used for `loop132-yun-family-time-r2`
+  - [ ] rerun one exact-path native guard such as `left-corner-ryu-stage`
+  - [ ] fresh independent review pass on the kept diff before commit
+- [ ] Evidence to capture in progress log:
+  - [ ] baseline/candidate Yun generic-residue totals, any exact fallback-reason findings for the `ix 80 / texture 56` families, guardrail result, review outcome, keep/rollback decision, final commit hash, and the next best candidate from the updated ranking

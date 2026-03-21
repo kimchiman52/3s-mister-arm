@@ -23,7 +23,7 @@ Rules:
   - intro and menus feel full speed
   - this loop series is about native gameplay performance first, not nearest-only presenter work unless fresh evidence proves a native issue is actually present-bound
   - Yun SA3 Genei-Jin still causes obvious gameplay slowdown and remains the first-class gameplay target, especially the first visible activation/cold burst
-  - heavy native gameplay stages still matter; Remy's stage is back on the active priority list, especially the left-side / left-camera lane where slowdown is still noticeable
+  - Remy-left still matters, but it is now a separate exact/refresh compare-dirty residue track rather than another non-integer/native-present bottleneck
   - the exact `Press Start -> main menu` type-`1` wipe now looks solved enough to treat as de-prioritized unless fresh evidence contradicts that
   - gameplay in most stages still feels near full speed until large effects/supers
 - Fresh manual full-telemetry captures from `2026-03-09` now resolve the remaining ambiguity and should override stale scene-broadening guesses:
@@ -32,7 +32,7 @@ Rules:
   - Easy manual repro note: from boot, keep pressing `Start`. It skips the logo/intro, lands on the `Press Start` screen, and the next `Start` triggers the real user-facing `Press Start -> main menu` wipe. Treat that as a valid quick manual spot-check even when a narrower harness capture also exists.
   - Operator retest after Loop 104 says that exact type-`1` wipe now looks good enough to treat as solved for now.
   - Operator retest after Loop 105 says the first visible Genei-Jin activation still dips harder than later ones: roughly `45 FPS` on the first activation, then mid/upper `50s` on later activations.
-  - Therefore the next gameplay loop should target native gameplay bursts first: Yun/effect raster cost with explicit attention to first-activation/cold-start behavior, plus fresh Remy-stage measurement when the left-side slowdown is not already covered by trusted telemetry. Transition work should stay de-prioritized unless fresh evidence says it regressed.
+  - Therefore the next gameplay loop should target native gameplay bursts first: Yun/effect raster cost with explicit attention to first-activation/cold-start behavior. Keep Remy-left on a separate compare-dirty residue track unless fresh telemetry proves `fast_non_integer` has reappeared there. Transition work should stay de-prioritized unless fresh evidence says it regressed.
 - Track gameplay speed explicitly in FPS as well as milliseconds:
   - every gameplay capture should record and cite `metrics.fps.mean`
   - use `tools/mister/perf-sampler.sh` summaries plus the JSON to keep FPS visible in the loop log and checklist
@@ -48,9 +48,11 @@ Rules:
   - challenge whether the remaining ceiling is refresh/update, stage-specific game work, effect bursts, or measurement blind spots before editing runtime code
   - prefer new evidence over intuition when deciding whether the hardware is near a hard limit
 - Candidate ordering for this loop series:
-  - first verify whether the current native bottleneck is still non-integer raster work during Genei-Jin and/or a distinct Remy-left-side stage lane rather than a stale or already-solved route
-  - if the evidence points back at non-integer horizontal duplication, prioritize opportunity `2` from `docs/agent-memory/mister-perf-opportunities.md` (`Horizontal Same-Source-Pixel Run Batching in Non-Integer Raster`) before higher-risk changes
-  - treat manual unrolling, NEON work, and LTO as secondary candidates only after current telemetry shows they touch the active native bottleneck and the safer batching idea is disproven, exhausted, or clearly inapplicable
+  - treat Loop 133 as attribution support only; do not spend more runtime budget on lookup-generation or pair-bitmap micro-optimizations
+  - first audit the small `generic_textured` `ppg-seqs ix 80 / texture 56` residue under the shared `384`-pixel gate and prefer a narrow micro-lookup admission over a global threshold drop
+  - then test one careful scalar `4x` unroll in the hot non-integer row-walk gather loop while preserving the kept pair-only reuse path
+  - keep Remy-left on a separate compare-dirty `ppg-seqs 81/82` residue track rather than assuming the Yun runtime candidates will help it
+  - treat manual unrolling beyond that scalar `4x` row-walk step, NEON work, LTO, row-dedup runtime changes, and dual-core ideas as secondary or deferred candidates unless fresh telemetry re-ranks them
   - do not spend first-line loop budget on nearest-only presenter work when the target is native gameplay unless current captures show a real native present bottleneck
 - Only implement optimizations that are backed by that cycle's DEEP research. If the research does not support a safe/high-confidence change, record the result and move to the next candidate instead of forcing an implementation.
 - Never leave the branch dirty between loops. If the repo is dirty at cycle start, do not block; instead treat the first part of that cycle as mandatory closure work:
