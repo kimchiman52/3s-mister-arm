@@ -3955,3 +3955,21 @@ Scope guardrails:
     - keep; this is measurement-support only, it passed Docker plus on-device verification, and it closes the remaining first-visible onset attribution gap without changing gameplay behavior
   - Next best candidate optimization:
     - do not reopen Loop `134` or Loop `135` unchanged; the next runtime audit should target the shared fast-non-integer `ix 81 / ix 82` onset lane first, with `ix 80` generic residue still treated as secondary
+
+- 2026-03-21T17:12:11-0400
+  - Final commit hash:
+    - `pending`
+  - Bottleneck targeted:
+    - helper-local low-density pair gating on the native Yun SA3 first-visible activation burst, specifically whether declining the pair-only inner loop below the new `3/20` duplicate threshold improves the deciding onset lane without changing routing
+  - Change summary:
+    - trialed the bounded pair-density gate in `src/port/sdl/software_frame_non_integer.c`, then fully reverted the helper after on-device verification failed the keep bar
+    - rebuilt/deployed the telemetry ARM package in Docker `3sx-mister-build`, captured corrected Yun reruns `loop142-yun-pair-density-r2` / `loop142-yun-pair-density-r3`, and took non-target guard `loop142-remy-left-guard-r1`
+    - discarded invalid capture `loop142-yun-pair-density-r1` and used one-off `misterctl.sh exec` cleanup only because the bad launch had started the wrong `Ryu/Ryu/SA0` lane and left an orphaned plain perf process with no purpose-built cleanup subcommand
+  - Verification result summary:
+    - Docker telemetry ARM build/install/package plus `readelf` passed; serialized `busy-status`, `health`, `deploy`, `probe`, and bounded `smoke` all passed on `192.168.1.171` with the same dummy/software + fbdev + native route and expected bounded `__RUNTIME_RC__=124` / `exit=143`
+    - the deciding Yun reruns both lost to kept baseline `loop141-yun-first8-window-r1`: overall `25.9865 / 25.9548 FPS` versus `26.1464`, and first `8` frames `21.7106 / 21.7938 FPS` versus `22.0308`, while staying on direct present with `software_frame_fallback_ratio = 0.0000` and `present_readback.mean_ms = 0.0000`
+    - the same onset families stayed slower or no better under the gate (`ix 81 / 391 = 14.6950 / 15.0981 ms` versus `14.7326`, `ix 82 / 393 = 15.1891 / 16.3179 ms` versus `14.8395`, `ix 81 / 394 = 10.2277 / 10.0215 ms` versus `9.6668`); non-target `loop142-remy-left-guard-r1` stayed exact/direct with zero `fast_non_integer` and zero `generic_textured`
+  - Keep/rollback decision with reason:
+    - rollback; the gate reduced some pair-lookup work but did not produce a total-time win on the deciding onset families, so the final tree returns to the kept pair path
+  - Next best candidate optimization:
+    - do not retry the low-density pair gate now; the next Yun runtime attempt should target `ix 81 / 82` onset cost with a different lever than helper-internal pair control flow and prove a total-time win instead of shifting cost into reuse bookkeeping
