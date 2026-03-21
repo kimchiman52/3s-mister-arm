@@ -20,7 +20,7 @@ Options:
                         test-state metadata may still be exported when available.
   --perf-wait-test-phase <name>
                          Delay capture until the test runner reaches the named phase
-                         (title, menu, character-select-transition, character-select, game-transition, game, game-input-active, wipe-transition-type1).
+                         (title, menu, character-select-transition, character-select, game-transition, game, game-input-active, p1-super-art-active, wipe-transition-type1).
   --perf-wait-runtime-state <name>
                          Delay capture until the runtime reaches the named state
                          (attract-demo-logo, character-select-super-art).
@@ -135,6 +135,7 @@ is_supported_perf_wait_test_phase() {
     [ "$value" = "title" ] || [ "$value" = "menu" ] ||
         [ "$value" = "character-select-transition" ] || [ "$value" = "character-select" ] ||
         [ "$value" = "game-transition" ] || [ "$value" = "game" ] || [ "$value" = "game-input-active" ] ||
+        [ "$value" = "p1-super-art-active" ] ||
         [ "$value" = "wipe-transition-type1" ]
 }
 
@@ -469,7 +470,7 @@ if ! [[ "$gameplay_warmup" =~ ^[0-9]+$ ]]; then
 fi
 
 if [ -n "$perf_wait_test_phase" ] && ! is_supported_perf_wait_test_phase "$perf_wait_test_phase"; then
-    echo "error: --perf-wait-test-phase must be one of title, menu, character-select-transition, character-select, game-transition, game, game-input-active, or wipe-transition-type1." >&2
+    echo "error: --perf-wait-test-phase must be one of title, menu, character-select-transition, character-select, game-transition, game, game-input-active, p1-super-art-active, or wipe-transition-type1." >&2
     exit 2
 fi
 
@@ -881,9 +882,10 @@ if command -v jq >/dev/null 2>&1; then
     if [ -z "$metadata_perf_wait_runtime_state" ] && [ -n "$perf_wait_runtime_state" ]; then
         metadata_perf_wait_runtime_state="$perf_wait_runtime_state"
     fi
-    if [ "$metadata_perf_wait_test_phase" = "game-input-active" ] &&
-        { [ -z "$metadata_capture_start_test_phase" ] || [ "$metadata_capture_start_test_phase" = "game" ]; }; then
-        metadata_capture_start_test_phase="game-input-active"
+    if { [ -z "$metadata_capture_start_test_phase" ] || [ "$metadata_capture_start_test_phase" = "game" ]; } &&
+        { [ "$metadata_perf_wait_test_phase" = "game-input-active" ] ||
+          [ "$metadata_perf_wait_test_phase" = "p1-super-art-active" ]; }; then
+        metadata_capture_start_test_phase="$metadata_perf_wait_test_phase"
     fi
 
     temp_output_path="$(mktemp "${TMPDIR:-/tmp}/3sx-perf-json.XXXXXX")"

@@ -114,6 +114,10 @@ static bool gameplay_input_active(void) {
     return phase == PHASE_GAME && plw[0].wu.routine_no[0] == 4 && plw[1].wu.routine_no[0] == 4;
 }
 
+static bool player_super_art_active(int player) {
+    return phase == PHASE_GAME && player >= 0 && player < 2 && plw[player].sa != NULL && plw[player].sa->ok == -1;
+}
+
 static bool wipe_transition_type1_active(void) {
     return Exec_Wipe != 0 && Active_Wipe_Type == 1 && WipeLimit < 8;
 }
@@ -159,6 +163,7 @@ bool TestRunner_IsSupportedPhaseName(const char* phase_name_value) {
            SDL_strcmp(phase_name_value, "character-select") == 0 ||
            SDL_strcmp(phase_name_value, "game-transition") == 0 || SDL_strcmp(phase_name_value, "game") == 0 ||
            SDL_strcmp(phase_name_value, "game-input-active") == 0 ||
+           SDL_strcmp(phase_name_value, "p1-super-art-active") == 0 ||
            SDL_strcmp(phase_name_value, "wipe-transition-type1") == 0;
 }
 
@@ -177,6 +182,10 @@ bool TestRunner_IsPhaseActive(const char* phase_name_value) {
 
     if (SDL_strcmp(phase_name_value, "game-input-active") == 0) {
         return gameplay_input_active();
+    }
+
+    if (SDL_strcmp(phase_name_value, "p1-super-art-active") == 0) {
+        return player_super_art_active(0);
     }
 
     if (SDL_strcmp(phase_name_value, "wipe-transition-type1") == 0) {
