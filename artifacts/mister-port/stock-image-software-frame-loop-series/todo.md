@@ -6163,6 +6163,6 @@
 - [x] Keep/rollback decision:
   - [x] keep. The final diff is measurement-support only, device-verified after the review fix, and it closes the stable first-window family-attribution gap without changing gameplay behavior
 - [x] final commit hash:
-  - [x] `PENDING_LOOP140_COMMIT`
+  - [x] `04a58c1a` (`mister: export loop 140 first-window telemetry`)
 - [x] next best candidate:
   - [x] do not reopen the rejected Loop `134` generic `ix 80 / texture 56` admission or Loop `135` scalar `4x` unroll unchanged. Use the new first-window family export to audit a shared fast-non-integer runtime candidate across the now-confirmed `ix 81` / `ix 82` / `ix 43` / `ix 1102` cluster, with the remaining `unknown` share treated as an existing identity-coverage ceiling rather than evidence that `generic_textured` has become the main lane again

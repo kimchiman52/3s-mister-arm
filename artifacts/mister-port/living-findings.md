@@ -3922,7 +3922,7 @@ Scope guardrails:
 
 - 2026-03-21T22:03:00-0400
   - Final commit hash:
-    - `PENDING_LOOP140_COMMIT`
+    - `04a58c1a`
   - Bottleneck targeted:
     - stable first-window family attribution for the native Yun SA3 first-visible activation burst, specifically whether the trusted `120`-frame `p1-super-art-active` path can export frame-`60` family ownership cleanly enough to re-rank the remaining gameplay hotspot
   - Change summary:
