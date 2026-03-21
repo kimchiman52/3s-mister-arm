@@ -3684,3 +3684,20 @@ Scope guardrails:
     - keep; this measurement-support diff exposed the missing executed-path evidence without changing gameplay behavior, and it shows the current Yun duplication is only moderate and overwhelmingly short-run rather than strong evidence for another broad batching reland
   - Next best candidate optimization:
     - add per-pixel source-alpha split telemetry for fast non-integer pixels before reopening helper-internal runtime work; if a later runtime retry is still warranted, bias toward a minimal pair-only or endpoint-aware specialization instead of the rejected broad run-batching shape
+
+- 2026-03-21T06:01:07-0400
+  - Final commit hash:
+    - `44d3ce92`
+  - Bottleneck targeted:
+    - native Yun SA3 first-visible activation on the direct `software_frame_exact` path, specifically whether the remaining fast-non-integer hotspot is still opaque/transparent-heavy or materially blend-heavy
+  - Change summary:
+    - added capture-only source-alpha split telemetry for fast non-integer pixels in `software_frame_non_integer.c` plus the required family/frame export plumbing in `sdl_game_renderer.*` and `sdl_app.c`
+    - accepted one review finding from `Pasteur`, fixed the family-level alpha-ratio denominator bug in `sdl_app.c`, and bumped the perf JSON schema from `52` to `53` before final verification
+    - rebuilt the telemetry ARM package in Docker `3sx-mister-build`, redeployed it through serialized MiSTer tooling, and reran the deciding native Yun capture with the reviewed export
+  - Verification result summary:
+    - Docker telemetry ARM build/install/package plus `readelf` passed; serialized `busy-status`, `health`, `deploy`, `probe`, and remote log inspection all passed on `192.168.1.171`, and the reviewed capture stayed on the same dummy/software + fbdev + native + `Software frame mode: on` route with zero fallback/readback
+    - reviewed `loop127-yun-source-alpha-reviewed` landed at `41.2496 FPS / 24.2427 / 10.9975 / 12.7109 / 0.5343 ms`; `software_frame_fast_non_integer` stayed the hot lane at `58,399.05` pixels/frame, with `40,157.52` opaque, `8,552.46` transparent, and only `416.45` blended source-alpha pixels, while the corrected family export no longer emits alpha ratios above `1.0`
+  - Keep/rollback decision with reason:
+    - keep; this reviewed measurement-support diff closes the missing source-alpha evidence gap without changing gameplay behavior, and it shows the remaining Yun hotspot is overwhelmingly opaque/transparent rather than a blend-heavy candidate
+  - Next best candidate optimization:
+    - if another helper-internal runtime loop is justified, target a narrow pair-only or endpoint-aware fast-non-integer specialization for the opaque/transparent-heavy `ppg-seqs 81/82` families first; do not prioritize blend-focused NEON/two-pass work now
