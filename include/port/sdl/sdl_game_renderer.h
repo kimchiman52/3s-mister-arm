@@ -430,8 +430,8 @@ typedef struct SDLGameRenderer_PerfCaptureTexturedRectFamily {
     Uint64 same_source_transparent_reused_pixels;
     Uint64 same_source_blended_reused_pixels;
     Uint64 same_source_pair_runs;
-    Uint64 same_source_pair_leading_singleton_pixels;
-    Uint64 same_source_pair_trailing_singleton_pixels;
+    Uint64 same_source_pair_leading_non_pair_pixels;
+    Uint64 same_source_pair_trailing_non_pair_pixels;
     Uint64 same_source_pair_gap_0_runs;
     Uint64 same_source_pair_gap_1_runs;
     Uint64 same_source_pair_gap_2_runs;

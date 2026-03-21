@@ -131,31 +131,33 @@ static void note_non_integer_row_reuse_telemetry(const int* src_x_lookup,
             }
         }
 
-        if (run_length == 2) {
+        const int pair_count = run_length / 2;
+        for (int pair_index = 0; pair_index < pair_count; pair_index++) {
+            const int pair_start = col + (pair_index * 2);
             telemetry->same_source_pair_runs += 1u;
             if (!saw_pair) {
-                telemetry->same_source_pair_leading_singleton_pixels += (Uint64)col;
+                telemetry->same_source_pair_leading_non_pair_pixels += (Uint64)pair_start;
                 saw_pair = true;
             } else {
-                const int singleton_gap = col - previous_pair_end;
-                if (singleton_gap <= 0) {
+                const int inter_pair_columns = pair_start - previous_pair_end;
+                if (inter_pair_columns <= 0) {
                     telemetry->same_source_pair_gap_0_runs += 1u;
-                } else if (singleton_gap == 1) {
+                } else if (inter_pair_columns == 1) {
                     telemetry->same_source_pair_gap_1_runs += 1u;
-                } else if (singleton_gap == 2) {
+                } else if (inter_pair_columns == 2) {
                     telemetry->same_source_pair_gap_2_runs += 1u;
                 } else {
                     telemetry->same_source_pair_gap_3_plus_runs += 1u;
                 }
             }
-            previous_pair_end = run_end;
+            previous_pair_end = pair_start + 2;
         }
 
         col = run_end;
     }
 
     if (saw_pair && (previous_pair_end < visible_w)) {
-        telemetry->same_source_pair_trailing_singleton_pixels += (Uint64)(visible_w - previous_pair_end);
+        telemetry->same_source_pair_trailing_non_pair_pixels += (Uint64)(visible_w - previous_pair_end);
     }
 }
 

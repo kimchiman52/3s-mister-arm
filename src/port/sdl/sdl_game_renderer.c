@@ -4014,10 +4014,10 @@ static void note_perf_capture_textured_rect_family(const RenderTask* task,
         entry->same_source_transparent_reused_pixels += non_integer_telemetry->same_source_transparent_reused_pixels;
         entry->same_source_blended_reused_pixels += non_integer_telemetry->same_source_blended_reused_pixels;
         entry->same_source_pair_runs += non_integer_telemetry->same_source_pair_runs;
-        entry->same_source_pair_leading_singleton_pixels +=
-            non_integer_telemetry->same_source_pair_leading_singleton_pixels;
-        entry->same_source_pair_trailing_singleton_pixels +=
-            non_integer_telemetry->same_source_pair_trailing_singleton_pixels;
+        entry->same_source_pair_leading_non_pair_pixels +=
+            non_integer_telemetry->same_source_pair_leading_non_pair_pixels;
+        entry->same_source_pair_trailing_non_pair_pixels +=
+            non_integer_telemetry->same_source_pair_trailing_non_pair_pixels;
         entry->same_source_pair_gap_0_runs += non_integer_telemetry->same_source_pair_gap_0_runs;
         entry->same_source_pair_gap_1_runs += non_integer_telemetry->same_source_pair_gap_1_runs;
         entry->same_source_pair_gap_2_runs += non_integer_telemetry->same_source_pair_gap_2_runs;
