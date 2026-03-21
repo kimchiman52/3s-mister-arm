@@ -4,7 +4,7 @@
 
 - [x] Canonical todo path: `artifacts/mister-port/stock-image-software-frame-loop-series/todo.md`
 - [x] Active feature/phase: stock-image-only MiSTer software game-frame loop series
-- [x] Branch: `ralphpart2`
+- [x] Branch: `mister-dev`
 - [x] Living record: `artifacts/mister-port/living-findings.md`
 - [x] Historical predecessor checklist: `artifacts/mister-port/stock-image-architecture-loop-series/todo.md`
 - [x] Stale todo files to retire:
@@ -27,18 +27,17 @@
 
 ## Current Operator Priorities
 
-- [x] Native override re-rank on `2026-03-21`: stop spending first-line Ralph loop budget on native presentation work. The trusted current-tree native captures now keep `present.mean_ms` near the floor on both deciding lanes: `loop132-yun-family-time-r2 = 0.5300 ms` and `loop132-remy-left-family-time = 0.5409 ms`.
+- [x] Native override re-rank on `2026-03-21`: stop spending first-line Ralph loop budget on native presentation work. The trusted current-tree native captures keep `present.mean_ms` near the floor on both deciding lanes: `loop145-yun-shared-shapes-repro-r1 capture_windows.first_8_frames = 0.5093 ms` and `loop146-remy-rerank-r2 = 0.5255 ms`.
 - [x] Split the remaining native work into two separate queues instead of one shared queue:
-  - Genei-Jin / first-visible activation remains the first-line native gameplay ceiling. `loop132-yun-family-time-r2` stayed at `41.3682 FPS / 24.1731 / 11.0128 / 12.6304 / 0.5300 ms` with sampled `software_frame_fast_non_integer = 1280.0776 ms` and only secondary sampled `software_frame_generic_textured = 120.9596 ms`.
-  - Remy-left is now a different bottleneck family, not another non-integer/native-present problem. `loop132-remy-left-family-time` stayed at `54.5717 FPS / 18.3245 / 9.4081 / 8.3755 / 0.5409 ms` with `fast_non_integer = 0`, `generic_textured = 0`, `fast_exact_tasks = 309.21`, and `refresh.mean_ms = 4.3868`.
-- [x] Native Genei priority order after the March `2026-03-21` research/review synthesis:
-  - treat Loop 133 as attribution support only and do not spend more runtime budget on lookup-generation or pair-bitmap micro-optimizations
-  - first audit the small `generic_textured` `ppg-seqs ix 80 / texture 56` residue just below the current shared `384`-pixel lookup gate, and prefer a narrow micro-lookup admission over another broad threshold drop
-  - then test one careful scalar `4x` unroll in the hot non-integer row-walk gather loop while preserving the kept pair-only reuse fast path
-  - keep duplicate-row ideas measurement-only until a trusted Yun capture proves a real duplicate-`src_y` cohort worth code
-- [x] Native Remy priority order after the March `2026-03-21` research/review synthesis:
-  - keep Remy-left on its own compare-dirty residue track around `ppg-seqs 81/82`, especially the remaining `82` full/oversized refresh tail
-  - do not expect the Genei non-integer runtime candidates to move this lane materially unless fresh telemetry shows `fast_non_integer` reappearing
+  - Genei-Jin / first-visible activation remains the first-line native gameplay ceiling. The latest trusted schema-`62` onset repro `loop145-yun-shared-shapes-repro-r1` stayed at `25.0873 FPS / 39.8609 / 9.5879 / 29.7127 / 0.5603 ms` overall and `20.9510 FPS / 47.7304 / 11.2303 / 35.9909 / 0.5093 ms` for `capture_windows.first_8_frames`, still on direct native present with zero fallback/readback.
+  - Remy-left remains a separate exact/refresh residue track, not another non-integer/native-present problem. The fresh aligned rerank `loop146-remy-rerank-r2` stayed at `58.0531 FPS / 17.2256 / 8.4721 / 8.2280 / 0.5255 ms` with `fast_non_integer = 0`, `generic_textured = 0`, and the same hot compare-dirty full-refresh tail already kept in Loop `137`.
+- [x] Native Genei priority order after the Loop `145` schema-`62` rerank:
+  - treat Loops `133` / `134` / `135` / `142` as closed evidence, not as a live runtime queue. Loop `134` rejected the bounded `ix 80 / texture 56` micro-admission, Loop `135` rejected the scalar `4x` row-walk unroll, and Loop `142` rejected the low-density pair gate on the deciding onset lane.
+  - keep duplicate-row and other broader row-walk ideas measurement-only until the current schema-`62` shared-shape data proves one safe clustered specialization worth code. Loop `145` showed the top shared shape covers only `6.33%` of first-`8` sampled fast-non-integer time and the top ten cover only `28.27%`, so another helper-local reland would still be guessing.
+  - do not spend a fresh runtime loop on Yun unless new evidence either proves a broader clustered row-walk specialization on the current data or identifies a different measured gameplay bottleneck that clearly outranks this lane.
+- [x] Native Remy priority order after the fresh Loop `146` current-tree rerank:
+  - keep Remy-left on its own compare-dirty residue track around `ppg-seqs 80/81/82`, but treat the remaining tail as too small for another broad policy reland on current evidence. The deciding rerun `loop146-remy-rerank-r2` exactly matched Loop `137` on hot refresh counts: `ix 80 = 13/1992` full, `ix 81 = 10/700`, and `ix 82 = 6/614`.
+  - do not expect the Yun non-integer runtime candidates to move this lane materially, and do not broaden compare-dirty caps again unless fresh telemetry shows the remaining full-refresh tail is materially larger or the lane stops staying exact/direct.
 - [x] Do not spend the next native Ralph loops on stale or demoted ideas unless fresh telemetry re-ranks them: presenter-side native micro-opts, broader same-source run batching beyond the kept pair path, dual-core raster threading, broad threshold drops, or runtime row-dedup before measurement.
 
 ## Active Ralph Loop Intake
@@ -6347,3 +6346,39 @@
   - [x] `a19d768c` (`docs: close loop 145 shared-shape rerank`)
 - [x] next best candidate:
   - [x] do not reopen the rejected Loop `134` admission, Loop `135` scalar unroll, or Loop `142` pair-density gate. Unless a concrete broader row-walk specialization for the clustered opaque/unclipped `256x256`-source Yun onset shapes is proven from the current schema-`62` data before any code lands, pivot to the separate Remy compare-dirty residue track instead of guessing at another one-shape reland
+
+### Follow-On Loop 146: Native Queue Rerank And Docs Closeout
+
+- [x] Value target: verify whether any safe incremental native runtime change still exists on the current tree after Loop `145`, or whether the honest next step is a docs-only rerank that retires the stale March queue and records the fresh Remy current-tree evidence
+- [x] Scope boundary: no runtime or measurement-support code edits unless fresh current-tree research plus on-device verification surface one narrow, high-confidence MiSTer performance lever; otherwise update only the active checklist, living findings, and backlog docs, and do not touch gameplay logic, raster routing, MiSTer tooling, or `tools/mister/package.sh`
+- [x] Dependencies: clean kickoff tree on `mister-dev` at `a19d768c`; current living findings; current active checklist; `docs/agent-memory/mister-perf-opportunities.md`; current `src/port/sdl/sdl_game_renderer.c`, `src/port/sdl/software_frame_non_integer.c`, and `tools/mister/perf-sampler.sh`; telemetry Docker container `3sx-mister-build`; serialized MiSTer tooling; and the preserved-branch gate from the user instructions
+- [x] Research evidence gathered on `2026-03-21` before implementation:
+  - [x] preserved-branch verification debt still does not block a new loop. `preserve-native-analog-yc-crt-filter` and `preserve-yc-packet-logging` are already integrated on `HEAD`, and the oldest gameplay-runtime ref `preserve-loop124-compare-dirty-cap-3o8` is functionally superseded by kept compare-dirty runtime `018461c3`
+  - [x] the stale March queue at the top of this checklist and in `docs/agent-memory/mister-perf-opportunities.md` is no longer actionable on the current tree. Loop `134` rejected the bounded Yun generic-residue admission, Loop `135` rejected the scalar row-walk unroll, Loop `142` rejected the low-density pair gate, and Loop `145` closed docs-only because the recovered schema-`62` shared-shape data still does not isolate a safe helper-local Yun reland
+  - [x] current code plus kept telemetry already show that Remy-left is mostly exhausted as a safe compare-dirty admission lever. Loop `137` moved the hot `ppg-seqs 80/81/82` textures to near-total partial admission, leaving only low-count full-refresh tails on each hot texture
+  - [x] fresh current-tree rerun `loop146-remy-rerank-r1` proved the lane still needs apples-to-apples capture boundaries before re-ranking. It landed at `58.2600 FPS / 17.1644 / 7.8161 / 8.8270 / 0.5213 ms`, but it started at `capture_start_test_phase = game` rather than `game-input-active` and pulled in small transient `ix 1102 / 1100` non-integer + generic-textured residue that is not part of the trusted compare-dirty lane
+  - [x] aligned deciding rerun `loop146-remy-rerank-r2` restored the trusted lane shape on untouched `HEAD`: `58.0531 FPS / 17.2256 / 8.4721 / 8.2280 / 0.5255 ms`, `software_frame_direct_present_ratio = 1.0000`, `software_frame_fallback_ratio = 0.0000`, `fast_non_integer = 0`, `generic_textured = 0`, and the hot full-refresh tail exactly matched Loop `137` (`ix 80 = 13/1992`, `ix 81 = 10/700`, `ix 82 = 6/614`)
+  - [x] the latest trusted Yun evidence still does not justify another bounded runtime reland. Loop `145` kept the runtime tree unchanged after the recovered schema-`62` onset repro showed the top shared shape covers only `6.33%` of first-`8` sampled fast-non-integer time and the top ten shapes cover only `28.27%`, which still implies a broader clustered row-walk redesign rather than a safe incremental helper tweak
+- [x] Research-backed hypothesis and scoped plan for this cycle:
+  - [x] hypothesis: if a fresh aligned stage-`19` Remy rerun on untouched `HEAD` matches the kept Loop `137` exact/direct profile and the kept Loop `145` Yun shared-shape data still does not isolate a safe row-walk lever, then the correct closeout is docs-only reranking rather than another speculative runtime patch
+  - [x] scoped plan: rebuild/package the telemetry flavor in Docker `3sx-mister-build`, redeploy the current tree, rerun `probe` / bounded `smoke`, capture the deciding Remy lane twice if needed to align the wait boundary, and update the active docs to retire the stale March queue if the aligned rerun still shows only the tiny compare-dirty tail
+  - [x] reject immediately if the current tree stops reproducing the trusted Remy shape, if the device gate fails twice before a trustworthy remote command completes, or if any proposed runtime follow-up depends on reopening the already-rejected Yun admission/unroll/pair ideas without new evidence
+- [x] Implementation summary:
+  - [x] no runtime or measurement-support code changes landed in this loop; the series work is the fresh Docker rebuild, serialized MiSTer redeploy/probe/smoke, the current-tree Remy reruns `loop146-remy-rerank-r1` and deciding `loop146-remy-rerank-r2`, and the documentation rerank
+  - [x] rebuilt/install-packaged the telemetry ARM flavor in Docker `3sx-mister-build`, copied the package back to the host as `build/mister-telemetry-package-loop146`, and redeployed it with serialized `misterctl.sh` tooling before the deciding capture
+  - [x] updated the canonical checklist, living findings snapshot, and `docs/agent-memory/mister-perf-opportunities.md` so the stale March native queue no longer tells future loops to retry already-rejected runtime ideas
+- [x] Verification summary:
+  - [x] local validation passed before docs closeout: the telemetry ARM build/install/package succeeded in Docker `3sx-mister-build`, and the final Docker-side `readelf -h` check still reported `ELF32` `ARM` hard-float output
+  - [x] serialized MiSTer verification on `192.168.1.171` passed: credentialed `health`, `deploy --src build/mister-telemetry-package-loop146`, `probe`, and bounded `smoke`, with logs staying on the expected dummy/software + fbdev + native + `software-frame on` route and the usual bounded `__RUNTIME_RC__=124` / `exit=143`
+  - [x] first rerun `loop146-remy-rerank-r1` is kept only as boundary-noise evidence: it started at `capture_start_test_phase = game`, landed at `58.2600 FPS`, and showed small temporary `ix 1102 / 1100` non-integer + generic residue, so it is not the deciding apples-to-apples compare-dirty citation
+  - [x] deciding rerun `loop146-remy-rerank-r2` restored the trusted shape on untouched `HEAD`: `58.0531 FPS / 17.2256 / 8.4721 / 8.2280 / 0.5255 ms`, `software_frame_direct_present_ratio = 1.0000`, `software_frame_fallback_ratio = 0.0000`, `software_surface_cache_refresh.mean_ms = 3.4553`, and zero `fast_non_integer` / `generic_textured`
+  - [x] the aligned rerun confirms there is no new safe Remy admission lever on current evidence. Hot refresh counts exactly match the kept Loop `137` state, so another compare-dirty broadening now would spend risk on the same `13/10/6` full-refresh tail rather than a newly recovered bottleneck
+- [x] Review outcome:
+  - [x] independent review agent `Arendt` found one medium docs-consistency issue and two low issues: the top living-findings snapshot still mixed active `mister-dev` status with nearest-branch wording, one Loop `137` sentence incorrectly said every hot texture tail was single-digit, and the new living-findings timestamp was ahead of the checked host clock. All three findings were accepted and fixed before commit.
+  - [x] no other actionable accuracy, rules, or citation issues remained; the review spot-check matched the new Loop `145` / `146` capture names and recorded metrics against the checked-in perf JSON
+- [x] Keep/rollback decision:
+  - [x] keep the runtime tree unchanged and close the loop as docs-only research. The fresh Remy rerun confirms the compare-dirty residue is stable and tiny, while the kept Loop `145` Yun data still does not justify another bounded row-walk reland
+- [ ] final commit hash:
+  - [ ] pending local commit
+- [x] next best candidate:
+  - [x] do not reopen the rejected Loop `134` admission, Loop `135` scalar unroll, Loop `142` pair-density gate, or another broad compare-dirty cap reland unchanged. Only revisit native runtime code after either a broader clustered row-walk specialization is proven from current schema-`62` Yun data or a newly measured gameplay lane clearly outranks both current queues

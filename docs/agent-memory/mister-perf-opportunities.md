@@ -8,22 +8,28 @@ complete living-findings.md search, 130+ loop git history, two research sessions
 
 ## March 21 Native Current Truth
 
-- Native presentation is no longer the first-line bottleneck on the trusted March `2026-03-21`
+- Native presentation is still not the first-line bottleneck on the trusted March `2026-03-21`
   lanes: `loop132-yun-family-time-r2` recorded `present.mean_ms = 0.5300`, and
-  `loop132-remy-left-family-time` recorded `0.5409`.
-- Genei / first-visible Yun SA3 is still the dominant current native failure:
-  `41.3682 FPS / 24.1731 / 11.0128 / 12.6304 / 0.5300 ms` with sampled
-  `fast_non_integer = 1280.0776 ms` and only secondary sampled
-  `generic_textured = 120.9596 ms`.
-- Remy-left is a different problem from Genei: `54.5717 FPS / 18.3245 / 9.4081 / 8.3755 / 0.5409 ms`,
-  `fast_non_integer = 0`, `generic_textured = 0`, `fast_exact_tasks = 309.21`, and
-  `refresh.mean_ms = 4.3868`, so the remaining work is exact/refresh compare-dirty residue around
-  `ppg-seqs 81/82`.
-- Loop 132/133 plus later March `2026-03-21` review synthesis supersede the older
-  clipped-family-first / broad run-batching-first read. The current native order is:
-  `(1)` targeted `ix 80 / texture 56` generic-residue audit with a narrow micro-lookup admission,
-  `(2)` careful scalar `4x` unroll in the non-integer row-walk gather loop preserving the kept
-  pair path, `(3)` separate Remy compare-dirty residue work.
+  fresh aligned Remy rerun `loop146-remy-rerank-r2` recorded `0.5255`.
+- Genei / first-visible Yun SA3 remains the dominant current native failure, but the immediate
+  runtime queue is no longer the older micro-admission/unroll list. The latest trusted schema-`62`
+  onset repro `loop145-yun-shared-shapes-repro-r1` stayed at `25.0873 FPS / 39.8609 / 9.5879 /
+  29.7127 / 0.5603 ms` overall and `20.9510 FPS / 47.7304 / 11.2303 / 35.9909 / 0.5093 ms` for
+  `capture_windows.first_8_frames`, still with direct present and zero fallback/readback.
+- Remy-left remains a different problem from Genei. The fresh deciding rerun
+  `loop146-remy-rerank-r2` stayed at `58.0531 FPS / 17.2256 / 8.4721 / 8.2280 / 0.5255 ms`, with
+  `fast_non_integer = 0`, `generic_textured = 0`, and the same tiny compare-dirty full-refresh
+  tail already kept in Loop `137` (`ix 80 = 13/1992`, `ix 81 = 10/700`, `ix 82 = 6/614`).
+- The older March queue is now stale on the current tree. Loop `134` rejected the bounded
+  `ix 80 / texture 56` generic admission, Loop `135` rejected the scalar `4x` row-walk unroll,
+  Loop `142` rejected the low-density pair gate, and Loop `145` closed docs-only because the
+  recovered schema-`62` shared-shape export still does not isolate a safe helper-local Yun reland.
+- Current native order after Loops `145` / `146`:
+  `(1)` do not reopen the rejected Yun admission/unroll/pair ideas unchanged,
+  `(2)` do not broaden compare-dirty caps again on Remy without new evidence that the tiny tail has
+  grown or that the lane stopped staying exact/direct, `(3)` only start another native runtime edit
+  after either a broader clustered row-walk specialization is proven from the current schema-`62`
+  Yun data or a newly measured gameplay bottleneck clearly outranks both current queues.
 - Do not spend the next native loop on presenter-side work, broader same-source run batching beyond
   pairs, dual-core raster threading, or runtime row dedup before measurement.
 
