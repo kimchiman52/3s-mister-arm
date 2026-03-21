@@ -3810,3 +3810,21 @@ Scope guardrails:
     - keep; this telemetry-only diff closes the setup-vs-row-walk blind spot without changing routing or gameplay behavior, but its sampled FPS is attribution-only because the new capture-time reuse/per-phase bookkeeping itself dominates part of the measured cost
   - Next best candidate optimization:
     - stop retrying lookup/pair-setup reductions for this Yun lane, but do not treat the older broad opportunity-`2` label as the next automatic reland anymore. The March `2026-03-21` native queue is now: first audit the small `ix 80 / texture 56` generic residue below the shared `384`-pixel gate, then test one careful scalar `4x` row-walk unroll that preserves the kept pair-only reuse path, while Remy-left stays on separate compare-dirty `81/82` residue work and duplicate-row ideas remain measurement-only
+
+- 2026-03-21T11:46:57-0400
+  - Final commit hash:
+    - `TBD (backfill after closure commit)`
+  - Bottleneck targeted:
+    - native Yun SA3 first-visible activation on the direct `software_frame_exact` path, specifically the small `ppg-seqs ix 80 / texture 56` generic-textured residue just below the shared `384`-pixel non-integer lookup gate
+  - Change summary:
+    - verified the oldest preserved runtime branch was already superseded by keep `018461c3`, then narrowed the surviving Yun generic residue to the small opaque/unclipped `ix 80 / texture 56` family that misses only the shared size gate
+    - tried a narrow renderer-side micro-lookup admission in `src/port/sdl/sdl_game_renderer.c`, rebuilt baseline and candidate telemetry packages in Docker `3sx-mister-build`, and captured fresh native Yun SA3 baseline/candidate telemetry as `loop134-yun-baseline` and `loop134-yun-micro-lookup`
+    - fully rolled the runtime patch back after verification; this loop closes as evidence-only with the new capture pair and updated checklist/living-notes
+  - Verification result summary:
+    - Docker telemetry ARM build/install/package plus `readelf` passed for both baseline and candidate packages; serialized `lock-status`, `busy-status`, `health`, `deploy`, `probe`, bounded `smoke`, and remote log inspection all passed on `192.168.1.171` with the same dummy/software + fbdev + native route and the expected bounded smoke exit
+    - baseline `loop134-yun-baseline` stayed direct-presented at `35.2116 FPS / 28.3997 / 11.1308 / 16.7332 / 0.5357 ms`; candidate `loop134-yun-micro-lookup` also stayed direct-presented but slipped to `34.9941 FPS / 28.5762 / 10.9052 / 17.1483 / 0.5227 ms`
+    - the patch reduced the targeted residue (`software_frame_generic_textured_tasks/pixels = 11.19 / 1991.68 -> 3.58 / 684.48`) but worsened the user-priority first active burst (`first8 active = 21.1288 -> 20.2274 FPS`, `first60 active = 20.6240 -> 20.1983 FPS`), so no exact-path guard rerun was kept once the target lane already failed
+  - Keep/rollback decision with reason:
+    - reject and revert; the micro-lookup admission narrows the intended generic residue, but it shifts more work into the fast non-integer helper and makes the deciding Yun cold burst slower, so it is not a safe runtime keep
+  - Next best candidate optimization:
+    - do not retry this sub-`384` micro-lookup idea now; move to one careful scalar `4x` unroll in the hot non-integer row-walk gather loop while preserving the kept pair-only reuse path, with Remy-left still on the separate compare-dirty track
