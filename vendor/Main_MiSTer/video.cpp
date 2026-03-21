@@ -135,6 +135,8 @@ vmode_t tvmodes[] =
 	{{ 640, 16, 96, 48, 480,  8, 4, 33 }, 25.175, 0, 0 }, //NTSC 31K
 	{{ 640, 30, 60, 70, 288,  6, 4, 14 }, 12.587, 0, 0 }, //PAL 15K
 	{{ 640, 16, 96, 48, 576,  2, 4, 42 }, 25.175, 0, 0 }, //PAL 31K
+	{{ 384, 18, 36, 42, 240,  6, 4, 14 },  7.552446593, 0, 0 }, //NTSC 15K 384-native (fsc=3.579545×480/227.5)
+	{{ 384, 18, 36, 42, 288,  6, 4, 14 },  7.5,         0, 0 }, //PAL  15K 384-native (line_rate=15625 Hz)
 };
 
 // named aliases for vmode_custom_t items
@@ -2488,6 +2490,11 @@ static int default_tv_mode_index()
 	return mode;
 }
 
+static int native_analog_tv_mode_index()
+{
+	return cfg.menu_pal ? 5 : 4;
+}
+
 static bool has_explicit_video_mode_override()
 {
 	return strlen(cfg.video_conf) || strlen(cfg.video_conf_pal) || strlen(cfg.video_conf_ntsc);
@@ -2497,12 +2504,27 @@ static bool should_use_native_analog_tv_mode()
 {
 	if (cfg.direct_video) return false;
 	if (cfg.vga_scaler) return false;
-	return (cfg.vga_mode_int == 2) || (cfg.vga_mode_int == 3);
+	if (cfg.forced_scandoubler) return false;
+	return (cfg.vga_mode_int == 1) || (cfg.vga_mode_int == 2) || (cfg.vga_mode_int == 3);
 }
 
 static void set_default_tv_video_mode()
 {
 	const int mode = default_tv_mode_index();
+
+	memset(&v_def, 0, sizeof(v_def));
+	v_def.item[0] = mode;
+	for (int i = 0; i < 8; i++) v_def.item[i + 1] = tvmodes[mode].vpar[i];
+	setPLL(tvmodes[mode].Fpix, &v_def);
+
+	vmode_def = 1;
+	vmode_pal = 0;
+	vmode_ntsc = 0;
+}
+
+static void set_native_analog_tv_video_mode()
+{
+	const int mode = native_analog_tv_mode_index();
 
 	memset(&v_def, 0, sizeof(v_def));
 	v_def.item[0] = mode;
@@ -2542,12 +2564,22 @@ static void video_mode_load()
 		printf("video_mode_load: using direct-video TV mode family (mode=%d)\n", default_tv_mode_index());
 		set_default_tv_video_mode();
 	}
-	else if (should_use_native_analog_tv_mode() && !has_explicit_video_mode_override())
+	else if (!has_explicit_video_mode_override() &&
+	         !cfg.vga_scaler &&
+	         ((cfg.vga_mode_int == 1) || (cfg.vga_mode_int == 2) || (cfg.vga_mode_int == 3)) &&
+	         cfg.forced_scandoubler)
 	{
-		printf("video_mode_load: using native analog TV mode family for vga_mode=%s (mode=%d)\n",
+		printf("video_mode_load: using scandoubled TV mode family for vga_mode=%s (mode=%d)\n",
 		       cfg.vga_mode,
 		       default_tv_mode_index());
 		set_default_tv_video_mode();
+	}
+	else if (should_use_native_analog_tv_mode() && !has_explicit_video_mode_override())
+	{
+		printf("video_mode_load: using 384-native analog TV mode for vga_mode=%s (mode=%d)\n",
+		       cfg.vga_mode,
+		       native_analog_tv_mode_index());
+		set_native_analog_tv_video_mode();
 	}
 	else
 	{

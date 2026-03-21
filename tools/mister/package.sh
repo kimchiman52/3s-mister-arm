@@ -9,6 +9,19 @@ fi
 INSTALL_PREFIX="$1"
 OUTPUT_DIR="$2"
 
+copy_tree_contents() {
+    local src_dir="$1"
+    local dst_dir="$2"
+
+    if command -v rsync >/dev/null 2>&1; then
+        rsync -a --no-owner --no-group "${src_dir}/" "${dst_dir}/"
+    elif cp --help 2>/dev/null | grep -q -- '--no-preserve'; then
+        cp -RP "${src_dir}/." "${dst_dir}/"
+    else
+        cp -RP "${src_dir}/." "${dst_dir}/"
+    fi
+}
+
 if [ ! -d "$INSTALL_PREFIX" ]; then
     echo "Install prefix not found: $INSTALL_PREFIX"
     exit 1
@@ -28,15 +41,15 @@ else
 fi
 
 if [ -d "$INSTALL_PREFIX/lib" ]; then
-    cp -a "$INSTALL_PREFIX/lib/." "$OUTPUT_DIR/lib/"
+    copy_tree_contents "$INSTALL_PREFIX/lib" "$OUTPUT_DIR/lib"
 elif [ -d "$INSTALL_PREFIX/3SX.app/Contents/Frameworks" ]; then
-    cp -a "$INSTALL_PREFIX/3SX.app/Contents/Frameworks/." "$OUTPUT_DIR/lib/"
+    copy_tree_contents "$INSTALL_PREFIX/3SX.app/Contents/Frameworks" "$OUTPUT_DIR/lib"
 fi
 
 if [ -d "$INSTALL_PREFIX/share/3sx/licenses" ]; then
-    cp -a "$INSTALL_PREFIX/share/3sx/licenses/." "$OUTPUT_DIR/licenses/"
+    copy_tree_contents "$INSTALL_PREFIX/share/3sx/licenses" "$OUTPUT_DIR/licenses"
 elif [ -d "$INSTALL_PREFIX/3SX.app/Contents/Resources/licenses" ]; then
-    cp -a "$INSTALL_PREFIX/3SX.app/Contents/Resources/licenses/." "$OUTPUT_DIR/licenses/"
+    copy_tree_contents "$INSTALL_PREFIX/3SX.app/Contents/Resources/licenses" "$OUTPUT_DIR/licenses"
 fi
 
 cat > "$OUTPUT_DIR/scripts/run-3sx.sh" <<'LAUNCHER'

@@ -64,7 +64,6 @@ enum WrapperMenuItem
 enum RuntimeScaleModeMenu
 {
 	kScaleModeAuto = 0,
-	kScaleModeCrt4x3,
 	kScaleModeNative,
 	kScaleModeNearest,
 	kScaleModeMenuCount
@@ -473,7 +472,6 @@ int read_runtime_scale_mode_default()
 	if (!read_runtime_config_value("scale-mode", value, sizeof(value))) return kScaleModeAuto;
 	if (runtime_scale_mode_is_auto_default(value)) return kScaleModeAuto;
 
-	if (!strcasecmp(value, "crt-4x3")) return kScaleModeCrt4x3;
 	if (!strcasecmp(value, "native")) return kScaleModeNative;
 	if (!strcasecmp(value, "nearest")) return kScaleModeNearest;
 	return kScaleModeAuto;
@@ -483,7 +481,6 @@ const char *runtime_scale_mode_label(int mode)
 {
 	switch (mode)
 	{
-	case kScaleModeCrt4x3: return "CRT 4:3";
 	case kScaleModeNative: return "Native";
 	case kScaleModeNearest: return "Nearest";
 	default: return "Auto";
@@ -494,7 +491,6 @@ static const char *runtime_scale_mode_config_value(int mode)
 {
 	switch (mode)
 	{
-	case kScaleModeCrt4x3: return "crt-4x3";
 	case kScaleModeNative: return "native";
 	case kScaleModeNearest: return "nearest";
 	default: return nullptr;
@@ -642,8 +638,8 @@ StartupScaleModeSelection resolve_startup_scale_mode()
 	else if ((selection.io_type == 0) && (selection.vga_scaler == 0) && (selection.forced_scandoubler == 0) &&
 	         is_native_analog_tv_output_mode(selection.vga_mode_int))
 	{
-		snprintf(selection.source, sizeof(selection.source), "auto-native-analog-tv");
-		snprintf(selection.value, sizeof(selection.value), "crt-4x3");
+		snprintf(selection.source, sizeof(selection.source), "auto-native-analog");
+		snprintf(selection.value, sizeof(selection.value), "native");
 	}
 	else if (selection.io_type == 0)
 	{

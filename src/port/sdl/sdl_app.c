@@ -30,7 +30,6 @@
 
 typedef enum ScaleMode {
     SCALEMODE_NATIVE,
-    SCALEMODE_CRT_4X3,
     SCALEMODE_NEAREST,
     SCALEMODE_LINEAR,
     SCALEMODE_SOFT_LINEAR,
@@ -6428,8 +6427,6 @@ static const char* scale_mode_name(ScaleMode mode) {
     switch (mode) {
     case SCALEMODE_NATIVE:
         return "native";
-    case SCALEMODE_CRT_4X3:
-        return "crt-4x3";
     case SCALEMODE_NEAREST:
         return "nearest";
     case SCALEMODE_LINEAR:
@@ -6452,8 +6449,6 @@ static bool parse_scale_mode(const char* raw_scalemode, ScaleMode* out_mode) {
 
     if (SDL_strcmp(raw_scalemode, "nearest") == 0) {
         *out_mode = SCALEMODE_NEAREST;
-    } else if (SDL_strcmp(raw_scalemode, "crt-4x3") == 0) {
-        *out_mode = SCALEMODE_CRT_4X3;
     } else if (SDL_strcmp(raw_scalemode, "native") == 0) {
         *out_mode = SCALEMODE_NATIVE;
     } else if (SDL_strcmp(raw_scalemode, "linear") == 0) {
@@ -6478,7 +6473,6 @@ static SDL_ScaleMode screen_texture_scale_mode() {
         return SDL_SCALEMODE_LINEAR;
 
     case SCALEMODE_NATIVE:
-    case SCALEMODE_CRT_4X3:
     case SCALEMODE_NEAREST:
     case SCALEMODE_SQUARE_PIXELS:
     case SCALEMODE_INTEGER:
@@ -6749,7 +6743,8 @@ static void init_scalemode() {
                                           (runtime_scale_mode_has_auto_wrapper_marker() ||
                                            runtime_config_matches_generated_defaults());
 
-    if ((!has_explicit_scale_mode || generated_default_native) && env_scale_mode != NULL && env_scale_mode[0] != '\0') {
+    if ((!has_explicit_scale_mode || generated_default_native) &&
+        env_scale_mode != NULL && env_scale_mode[0] != '\0') {
         requested_scale_mode = env_scale_mode;
         startup_source = "env";
     }
@@ -6779,8 +6774,7 @@ static const char* software_frame_mode_name(void) {
 
 static bool scale_mode_uses_native_render_path(void) {
 #if defined(PORT_MISTER)
-    if (((scale_mode == SCALEMODE_NEAREST) || (scale_mode == SCALEMODE_CRT_4X3)) && fbdev_presenter_enabled &&
-        use_fbdev_only_present) {
+    if ((scale_mode == SCALEMODE_NEAREST) && fbdev_presenter_enabled && use_fbdev_only_present) {
         return true;
     }
 #endif
@@ -7110,36 +7104,6 @@ static SDL_FRect fit_4_by_3_rect(int win_w, int win_h) {
     return rect;
 }
 
-static bool is_native_analog_tv_framebuffer_size(int win_w, int win_h) {
-#if defined(PORT_MISTER)
-    if (win_w != 640) {
-        return false;
-    }
-
-    return (win_h == 240) || (win_h == 288) || (win_h == 480) || (win_h == 576);
-#else
-    (void)win_w;
-    (void)win_h;
-    return false;
-#endif
-}
-
-static SDL_FRect fit_crt_4x3_rect(int win_w, int win_h) {
-    // MiSTer's native TV mode family uses non-square analog pixels. Filling the
-    // full 640-wide raster is the intended 4:3 CRT presentation on those modes.
-    // Center game content vertically so the CRT's top overscan hits blank rows
-    // rather than game content. The blank border rows are pre-cleared to black
-    // by video_fb_clear() before launch and are never written by the presenter.
-    if (is_native_analog_tv_framebuffer_size(win_w, win_h)) {
-        float y = (native_game_height < win_h) ? (float)((win_h - native_game_height) / 2 + 2) : 0.0f;
-        float h = (native_game_height < win_h) ? (float)native_game_height : (float)win_h;
-        SDL_FRect rect = { 0.0f, y, (float)win_w, h };
-        return rect;
-    }
-
-    return fit_4_by_3_rect(win_w, win_h);
-}
-
 static SDL_FRect fit_native_rect(int win_w, int win_h) {
     SDL_FRect rect;
     rect.w = native_game_width;
@@ -7171,9 +7135,6 @@ static SDL_FRect get_letterbox_rect(int win_w, int win_h) {
     switch (scale_mode) {
     case SCALEMODE_NATIVE:
         return fit_native_rect(win_w, win_h);
-
-    case SCALEMODE_CRT_4X3:
-        return fit_crt_4x3_rect(win_w, win_h);
 
     case SCALEMODE_NEAREST:
     case SCALEMODE_LINEAR:
