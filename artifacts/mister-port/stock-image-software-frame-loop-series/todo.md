@@ -6412,6 +6412,6 @@
 - [x] Keep/rollback decision:
   - [x] keep the runtime tree unchanged and close the loop as docs-only research. Another native runtime edit on the current evidence would only reopen already-rejected levers without a new measured reason to spend gameplay risk
 - [ ] final commit hash:
-  - [x] pending
+  - [x] `5a1d51be` (`docs: close loop 147 native queue audit`)
 - [x] next best candidate:
   - [x] if another native loop is required, add or recover only the narrowest measurement that can prove a broader clustered row-walk specialization across the adjacent `32x32 -> 34/35/36/37` Yun onset cohort while separating extended-stats overhead from player-runtime cost; otherwise re-rank a different gameplay lane before touching renderer code again
