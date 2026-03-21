@@ -3649,3 +3649,21 @@ Scope guardrails:
     - keep; the preserved `3/8` compare-dirty cap materially reduces measured native gameplay refresh cost on the current tree without a route change, review finding, or new device fault signature
   - Next best candidate optimization:
     - re-rank the remaining native gameplay ceiling on top of the kept `3/8` baseline, starting with fresh full telemetry on Yun first-activation and Remy left-camera lanes; if the residue is now dominated by non-integer raster duplication, prioritize horizontal same-source-pixel run batching next instead of another compare-dirty cap change
+
+- 2026-03-21T04:44:01-0400
+  - Final commit hash:
+    - recorded in the cycle closeout commit
+  - Bottleneck targeted:
+    - native Yun SA3 first-visible activation on the direct `software_frame_exact` path, specifically whether unmodulated same-source horizontal run batching inside the kept non-integer lookup helper could lower the remaining raster cost without changing routing
+  - Change summary:
+    - rebuilt the current-tree telemetry package in Docker `3sx-mister-build`, redeployed it with serialized MiSTer tooling, and re-ranked the user-priority native lanes with fresh full captures `loop125-base-yun` and `loop125-base-remy-left`
+    - tried a narrow unmodulated same-source run-batching reland only in `src/port/sdl/software_frame_non_integer.c`, then rebuilt/redeployed the candidate package and reran the deciding Yun first-activation capture
+    - fully reverted the runtime code after the candidate failed; only the docs closeout remains for this loop
+  - Verification result summary:
+    - Docker telemetry ARM rebuild/install/package plus `readelf` passed; serialized `busy-status`, `health`, `deploy`, `probe`, and bounded `smoke` all passed on `192.168.1.171` with the same native dummy/software + fbdev path and expected bounded `exit=143`
+    - fresh baseline re-rank kept Yun as the first-line native hotspot: `loop125-base-yun` landed at `45.8868 FPS`, with the active Genei window at `42.8774 FPS` and the worst `60`-frame window at `41.7623 FPS`, while `loop125-base-remy-left` landed at `54.2003 FPS` on pure `fast_exact` work
+    - the candidate failed the keep gate: `loop125-post-yun` slipped to `45.6025 FPS`, the active Genei window fell to `41.6911 FPS`, the worst `60`-frame window fell to `39.4619 FPS`, and sampled `fast_non_integer` time rose `483.1065 -> 595.8709 ms` with identical `fast_non_integer` and `generic_textured` pixel counts
+  - Keep/rollback decision with reason:
+    - reject and revert; this same-source run-batching shape adds overhead on the real Yun hotspot without changing the measured workload mix or improving the player-visible first-activation slowdown
+  - Next best candidate optimization:
+    - do not retry this unmodulated run-batching shape now; if Yun remains the top native lane, add capture-only run-length/reuse telemetry inside the non-integer helper or otherwise gather tighter executed-path evidence before another helper-internal optimization
