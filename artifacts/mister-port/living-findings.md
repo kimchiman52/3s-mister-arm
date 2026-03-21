@@ -3849,7 +3849,7 @@ Scope guardrails:
 
 - 2026-03-21T13:03:26-0400
   - Final commit hash:
-    - `pending`
+    - `2e2ea51c`
   - Bottleneck targeted:
     - native Remy-left exact/refresh residue, specifically whether hot compare-dirty family `ppg-seqs ix 82 / texture 58` stays oversized because the current pending-mask geometry is too coarse or because the kept `3/8` total-plan budget is already the real blocker
   - Change summary:

@@ -6022,7 +6022,7 @@
   - [x] independent review agent `Kuhn` found no actionable correctness, schema/export, hidden-runtime, or telemetry-pollution issues in the kept diff; the row-mask additions remain capture-only and the runtime compare-dirty classifier still uses the existing policy path
 - [x] Keep/rollback decision:
   - [x] keep. This telemetry-only diff closes the remaining Remy compare-dirty shape blind spot without changing gameplay or refresh policy, and it shows that a geometry-only reland under the kept `3/8` total cap is unlikely to unlock much of the seq-`82` oversized tail
-- [ ] final commit hash:
-  - [ ] pending
+- [x] final commit hash:
+  - [x] `2e2ea51c` (`mister: add compare-dirty row-mask telemetry`)
 - [x] next best candidate:
   - [x] do not spend a runtime loop on row-shape-only compare-dirty tightening now. If the Remy-left exact/refresh residue is revisited, start with a narrowly bounded row-mask plus component-aware compare-dirty admission audit for seq `82`, because the blocking excess sits in the combined multi-rect total while each single row-mask component already stays below the kept `3/8` budget
