@@ -3667,3 +3667,20 @@ Scope guardrails:
     - reject and revert; this same-source run-batching shape adds overhead on the real Yun hotspot without changing the measured workload mix or improving the player-visible first-activation slowdown
   - Next best candidate optimization:
     - do not retry this unmodulated run-batching shape now; if Yun remains the top native lane, add capture-only run-length/reuse telemetry inside the non-integer helper or otherwise gather tighter executed-path evidence before another helper-internal optimization
+
+- 2026-03-21T05:28:39-0400
+  - Final commit hash:
+    - `beef1f11`
+  - Bottleneck targeted:
+    - native Yun SA3 first-visible activation on the direct `software_frame_exact` path, specifically whether the kept non-integer helper still has enough same-source horizontal reuse to justify another safe helper-internal optimization
+  - Change summary:
+    - added capture-only same-source reuse telemetry to `software_frame_non_integer.c` plus the required export plumbing in `sdl_game_renderer.*` and `sdl_app.c`, then bumped the perf JSON schema to `51`
+    - rebuilt the telemetry ARM package in Docker `3sx-mister-build`, redeployed it with serialized MiSTer tooling, and captured fresh full telemetry for the deciding Yun first-activation lane plus a native control guard
+    - independent review agent `Hilbert` found no correctness or schema/export bug; the only accepted notes were that schema-`51` Yun FPS now includes extra capture cost and that the new alpha buckets are post-modulation executed-path buckets rather than a pure source-alpha histogram
+  - Verification result summary:
+    - Docker telemetry ARM build/install/package plus `readelf` passed; serialized `busy-status`, `health`, `deploy`, `probe`, bounded `smoke`, and remote log inspection all passed on `192.168.1.171` with the same dummy/software + fbdev + native + `Software frame mode: on` path and expected bounded `exit=143`
+    - `loop126-yun-reuse-telemetry` stayed `300/300` direct-presented with `present_readback.mean_ms = 0.0000` and landed at `43.3536 FPS / 23.0661 / 11.0043 / 11.5139 / 0.5480 ms`; `loop126-control-guard` also stayed direct-presented with zero fallback/readback and landed at `84.4699 FPS / 11.8385 / 3.9279 / 7.3620 / 0.5486 ms`
+  - Keep/rollback decision with reason:
+    - keep; this measurement-support diff exposed the missing executed-path evidence without changing gameplay behavior, and it shows the current Yun duplication is only moderate and overwhelmingly short-run rather than strong evidence for another broad batching reland
+  - Next best candidate optimization:
+    - add per-pixel source-alpha split telemetry for fast non-integer pixels before reopening helper-internal runtime work; if a later runtime retry is still warranted, bias toward a minimal pair-only or endpoint-aware specialization instead of the rejected broad run-batching shape
