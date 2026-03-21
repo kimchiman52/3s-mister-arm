@@ -79,6 +79,53 @@ static Uint32 blend_argb8888(Uint32 dst_pixel, Uint32 src_pixel) {
     return (out_a << 24) | ((Uint32)out_r << 16) | ((Uint32)out_g << 8) | (Uint32)out_b;
 }
 
+static void note_non_integer_row_reuse_telemetry(const int* src_x_lookup,
+                                                 int visible_w,
+                                                 const Uint32* src_row,
+                                                 Uint32 color,
+                                                 bool apply_color_mod,
+                                                 SDLSoftwareFrame_NonIntegerTelemetry* telemetry) {
+    if ((src_x_lookup == NULL) || (src_row == NULL) || (telemetry == NULL) || (visible_w <= 0)) {
+        return;
+    }
+
+    for (int col = 0; col < visible_w;) {
+        const int src_col = src_x_lookup[col];
+        int run_end = col + 1;
+        while ((run_end < visible_w) && (src_x_lookup[run_end] == src_col)) {
+            run_end += 1;
+        }
+
+        const int run_length = run_end - col;
+        telemetry->same_source_runs += 1u;
+        if (run_length > telemetry->same_source_max_run_length) {
+            telemetry->same_source_max_run_length = run_length;
+        }
+
+        if (run_length > 1) {
+            const Uint64 reused_pixels = (Uint64)(run_length - 1);
+            Uint32 src_pixel = src_row[src_col];
+            if (apply_color_mod) {
+                src_pixel = modulate_argb8888(src_pixel, color);
+            }
+
+            telemetry->same_source_reuse_runs += 1u;
+            telemetry->same_source_reused_pixels += reused_pixels;
+
+            const Uint32 src_a = (src_pixel >> 24) & 0xFFu;
+            if (src_a == 0u) {
+                telemetry->same_source_transparent_reused_pixels += reused_pixels;
+            } else if (src_a == 0xFFu) {
+                telemetry->same_source_opaque_reused_pixels += reused_pixels;
+            } else {
+                telemetry->same_source_blended_reused_pixels += reused_pixels;
+            }
+        }
+
+        col = run_end;
+    }
+}
+
 static void populate_non_integer_lookup(int* out_lookup,
                                         int visible_count,
                                         int visible_start,
@@ -105,10 +152,14 @@ bool SDLSoftwareFrame_RasterNonIntegerLookupARGB8888(const SDL_FRect* dst_rect,
                                                      SDL_FlipMode flip,
                                                      Uint32 color,
                                                      SDL_Surface* dst_surface,
-                                                     const SDL_Surface* src_surface) {
+                                                     const SDL_Surface* src_surface,
+                                                     SDLSoftwareFrame_NonIntegerTelemetry* out_telemetry) {
     if ((dst_rect == NULL) || (src_uv_rect == NULL) || (dst_surface == NULL) || (src_surface == NULL) ||
         (dst_rect->w <= 0.0f) || (dst_rect->h <= 0.0f) || (src_surface->w <= 0) || (src_surface->h <= 0)) {
         return false;
+    }
+    if (out_telemetry != NULL) {
+        SDL_zero(*out_telemetry);
     }
 
     const int dst_x0 = clamp_to_range((int)SDL_floorf(dst_rect->x), 0, dst_surface->w);
@@ -154,6 +205,10 @@ bool SDLSoftwareFrame_RasterNonIntegerLookupARGB8888(const SDL_FRect* dst_rect,
     for (int row = 0; row < visible_h; row++) {
         const Uint32* src_row = src_pixels + (src_y_lookup[row] * src_pitch);
         Uint32* dst_row = dst_pixels + ((dst_y0 + row) * dst_pitch) + dst_x0;
+        if (out_telemetry != NULL) {
+            note_non_integer_row_reuse_telemetry(
+                src_x_lookup, visible_w, src_row, color, apply_color_mod, out_telemetry);
+        }
         if (!apply_color_mod) {
             for (int col = 0; col < visible_w; col++) {
                 const Uint32 src_pixel = src_row[src_x_lookup[col]];

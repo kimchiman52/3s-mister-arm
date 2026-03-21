@@ -297,6 +297,13 @@ static Uint64 perf_software_frame_fast_scaled_pixels_total = 0;
 static Uint64 perf_software_frame_fast_non_integer_tasks_total = 0;
 static Uint64 perf_software_frame_fast_non_integer_pixels_total = 0;
 static Uint64 perf_software_frame_fast_non_integer_lookup_entries_total = 0;
+static Uint64 perf_software_frame_fast_non_integer_same_source_runs_total = 0;
+static Uint64 perf_software_frame_fast_non_integer_same_source_reuse_runs_total = 0;
+static Uint64 perf_software_frame_fast_non_integer_same_source_reused_pixels_total = 0;
+static Uint64 perf_software_frame_fast_non_integer_same_source_opaque_reused_pixels_total = 0;
+static Uint64 perf_software_frame_fast_non_integer_same_source_transparent_reused_pixels_total = 0;
+static Uint64 perf_software_frame_fast_non_integer_same_source_blended_reused_pixels_total = 0;
+static Uint64 perf_software_frame_fast_non_integer_same_source_max_run_length_total = 0;
 static Uint64 perf_software_frame_fast_non_integer_alpha_only_tasks_total = 0;
 static Uint64 perf_software_frame_fast_non_integer_alpha_only_pixels_total = 0;
 static Uint64 perf_software_frame_fast_non_integer_rgb_mod_tasks_total = 0;
@@ -449,6 +456,13 @@ typedef struct PerfFrameSample {
     int software_frame_fast_non_integer_tasks;
     Uint64 software_frame_fast_non_integer_pixels;
     Uint64 software_frame_fast_non_integer_lookup_entries;
+    Uint64 software_frame_fast_non_integer_same_source_runs;
+    Uint64 software_frame_fast_non_integer_same_source_reuse_runs;
+    Uint64 software_frame_fast_non_integer_same_source_reused_pixels;
+    Uint64 software_frame_fast_non_integer_same_source_opaque_reused_pixels;
+    Uint64 software_frame_fast_non_integer_same_source_transparent_reused_pixels;
+    Uint64 software_frame_fast_non_integer_same_source_blended_reused_pixels;
+    int software_frame_fast_non_integer_same_source_max_run_length;
     int software_frame_fast_non_integer_alpha_only_tasks;
     Uint64 software_frame_fast_non_integer_alpha_only_pixels;
     int software_frame_fast_non_integer_rgb_mod_tasks;
@@ -1158,6 +1172,13 @@ static void perf_capture_reset_storage(void) {
     perf_software_frame_fast_non_integer_tasks_total = 0;
     perf_software_frame_fast_non_integer_pixels_total = 0;
     perf_software_frame_fast_non_integer_lookup_entries_total = 0;
+    perf_software_frame_fast_non_integer_same_source_runs_total = 0;
+    perf_software_frame_fast_non_integer_same_source_reuse_runs_total = 0;
+    perf_software_frame_fast_non_integer_same_source_reused_pixels_total = 0;
+    perf_software_frame_fast_non_integer_same_source_opaque_reused_pixels_total = 0;
+    perf_software_frame_fast_non_integer_same_source_transparent_reused_pixels_total = 0;
+    perf_software_frame_fast_non_integer_same_source_blended_reused_pixels_total = 0;
+    perf_software_frame_fast_non_integer_same_source_max_run_length_total = 0;
     perf_software_frame_fast_non_integer_alpha_only_tasks_total = 0;
     perf_software_frame_fast_non_integer_alpha_only_pixels_total = 0;
     perf_software_frame_fast_non_integer_rgb_mod_tasks_total = 0;
@@ -1375,6 +1396,13 @@ void SDLApp_ConfigurePerfCapture(int frame_count, const char* output_path, const
     perf_software_frame_fast_non_integer_tasks_total = 0;
     perf_software_frame_fast_non_integer_pixels_total = 0;
     perf_software_frame_fast_non_integer_lookup_entries_total = 0;
+    perf_software_frame_fast_non_integer_same_source_runs_total = 0;
+    perf_software_frame_fast_non_integer_same_source_reuse_runs_total = 0;
+    perf_software_frame_fast_non_integer_same_source_reused_pixels_total = 0;
+    perf_software_frame_fast_non_integer_same_source_opaque_reused_pixels_total = 0;
+    perf_software_frame_fast_non_integer_same_source_transparent_reused_pixels_total = 0;
+    perf_software_frame_fast_non_integer_same_source_blended_reused_pixels_total = 0;
+    perf_software_frame_fast_non_integer_same_source_max_run_length_total = 0;
     perf_software_frame_fast_non_integer_alpha_only_tasks_total = 0;
     perf_software_frame_fast_non_integer_alpha_only_pixels_total = 0;
     perf_software_frame_fast_non_integer_rgb_mod_tasks_total = 0;
@@ -1827,6 +1855,20 @@ static void perf_capture_write_summary(void) {
         (double)perf_software_frame_fast_non_integer_pixels_total / frame_count;
     const double avg_software_frame_fast_non_integer_lookup_entries =
         (double)perf_software_frame_fast_non_integer_lookup_entries_total / frame_count;
+    const double avg_software_frame_fast_non_integer_same_source_runs =
+        (double)perf_software_frame_fast_non_integer_same_source_runs_total / frame_count;
+    const double avg_software_frame_fast_non_integer_same_source_reuse_runs =
+        (double)perf_software_frame_fast_non_integer_same_source_reuse_runs_total / frame_count;
+    const double avg_software_frame_fast_non_integer_same_source_reused_pixels =
+        (double)perf_software_frame_fast_non_integer_same_source_reused_pixels_total / frame_count;
+    const double avg_software_frame_fast_non_integer_same_source_opaque_reused_pixels =
+        (double)perf_software_frame_fast_non_integer_same_source_opaque_reused_pixels_total / frame_count;
+    const double avg_software_frame_fast_non_integer_same_source_transparent_reused_pixels =
+        (double)perf_software_frame_fast_non_integer_same_source_transparent_reused_pixels_total / frame_count;
+    const double avg_software_frame_fast_non_integer_same_source_blended_reused_pixels =
+        (double)perf_software_frame_fast_non_integer_same_source_blended_reused_pixels_total / frame_count;
+    const double avg_software_frame_fast_non_integer_same_source_max_run_length =
+        (double)perf_software_frame_fast_non_integer_same_source_max_run_length_total / frame_count;
     const double avg_software_frame_fast_non_integer_alpha_only_tasks =
         (double)perf_software_frame_fast_non_integer_alpha_only_tasks_total / frame_count;
     const double avg_software_frame_fast_non_integer_alpha_only_pixels =
@@ -2136,6 +2178,34 @@ static void perf_capture_write_summary(void) {
         perf_samples[0].software_frame_fast_non_integer_lookup_entries;
     Uint64 max_software_frame_fast_non_integer_lookup_entries =
         perf_samples[0].software_frame_fast_non_integer_lookup_entries;
+    Uint64 min_software_frame_fast_non_integer_same_source_runs =
+        perf_samples[0].software_frame_fast_non_integer_same_source_runs;
+    Uint64 max_software_frame_fast_non_integer_same_source_runs =
+        perf_samples[0].software_frame_fast_non_integer_same_source_runs;
+    Uint64 min_software_frame_fast_non_integer_same_source_reuse_runs =
+        perf_samples[0].software_frame_fast_non_integer_same_source_reuse_runs;
+    Uint64 max_software_frame_fast_non_integer_same_source_reuse_runs =
+        perf_samples[0].software_frame_fast_non_integer_same_source_reuse_runs;
+    Uint64 min_software_frame_fast_non_integer_same_source_reused_pixels =
+        perf_samples[0].software_frame_fast_non_integer_same_source_reused_pixels;
+    Uint64 max_software_frame_fast_non_integer_same_source_reused_pixels =
+        perf_samples[0].software_frame_fast_non_integer_same_source_reused_pixels;
+    Uint64 min_software_frame_fast_non_integer_same_source_opaque_reused_pixels =
+        perf_samples[0].software_frame_fast_non_integer_same_source_opaque_reused_pixels;
+    Uint64 max_software_frame_fast_non_integer_same_source_opaque_reused_pixels =
+        perf_samples[0].software_frame_fast_non_integer_same_source_opaque_reused_pixels;
+    Uint64 min_software_frame_fast_non_integer_same_source_transparent_reused_pixels =
+        perf_samples[0].software_frame_fast_non_integer_same_source_transparent_reused_pixels;
+    Uint64 max_software_frame_fast_non_integer_same_source_transparent_reused_pixels =
+        perf_samples[0].software_frame_fast_non_integer_same_source_transparent_reused_pixels;
+    Uint64 min_software_frame_fast_non_integer_same_source_blended_reused_pixels =
+        perf_samples[0].software_frame_fast_non_integer_same_source_blended_reused_pixels;
+    Uint64 max_software_frame_fast_non_integer_same_source_blended_reused_pixels =
+        perf_samples[0].software_frame_fast_non_integer_same_source_blended_reused_pixels;
+    int min_software_frame_fast_non_integer_same_source_max_run_length =
+        perf_samples[0].software_frame_fast_non_integer_same_source_max_run_length;
+    int max_software_frame_fast_non_integer_same_source_max_run_length =
+        perf_samples[0].software_frame_fast_non_integer_same_source_max_run_length;
     int min_software_frame_fast_non_integer_alpha_only_tasks =
         perf_samples[0].software_frame_fast_non_integer_alpha_only_tasks;
     int max_software_frame_fast_non_integer_alpha_only_tasks =
@@ -2970,6 +3040,76 @@ static void perf_capture_write_summary(void) {
             max_software_frame_fast_non_integer_lookup_entries =
                 sample->software_frame_fast_non_integer_lookup_entries;
         }
+        if (sample->software_frame_fast_non_integer_same_source_runs <
+            min_software_frame_fast_non_integer_same_source_runs) {
+            min_software_frame_fast_non_integer_same_source_runs =
+                sample->software_frame_fast_non_integer_same_source_runs;
+        }
+        if (sample->software_frame_fast_non_integer_same_source_runs >
+            max_software_frame_fast_non_integer_same_source_runs) {
+            max_software_frame_fast_non_integer_same_source_runs =
+                sample->software_frame_fast_non_integer_same_source_runs;
+        }
+        if (sample->software_frame_fast_non_integer_same_source_reuse_runs <
+            min_software_frame_fast_non_integer_same_source_reuse_runs) {
+            min_software_frame_fast_non_integer_same_source_reuse_runs =
+                sample->software_frame_fast_non_integer_same_source_reuse_runs;
+        }
+        if (sample->software_frame_fast_non_integer_same_source_reuse_runs >
+            max_software_frame_fast_non_integer_same_source_reuse_runs) {
+            max_software_frame_fast_non_integer_same_source_reuse_runs =
+                sample->software_frame_fast_non_integer_same_source_reuse_runs;
+        }
+        if (sample->software_frame_fast_non_integer_same_source_reused_pixels <
+            min_software_frame_fast_non_integer_same_source_reused_pixels) {
+            min_software_frame_fast_non_integer_same_source_reused_pixels =
+                sample->software_frame_fast_non_integer_same_source_reused_pixels;
+        }
+        if (sample->software_frame_fast_non_integer_same_source_reused_pixels >
+            max_software_frame_fast_non_integer_same_source_reused_pixels) {
+            max_software_frame_fast_non_integer_same_source_reused_pixels =
+                sample->software_frame_fast_non_integer_same_source_reused_pixels;
+        }
+        if (sample->software_frame_fast_non_integer_same_source_opaque_reused_pixels <
+            min_software_frame_fast_non_integer_same_source_opaque_reused_pixels) {
+            min_software_frame_fast_non_integer_same_source_opaque_reused_pixels =
+                sample->software_frame_fast_non_integer_same_source_opaque_reused_pixels;
+        }
+        if (sample->software_frame_fast_non_integer_same_source_opaque_reused_pixels >
+            max_software_frame_fast_non_integer_same_source_opaque_reused_pixels) {
+            max_software_frame_fast_non_integer_same_source_opaque_reused_pixels =
+                sample->software_frame_fast_non_integer_same_source_opaque_reused_pixels;
+        }
+        if (sample->software_frame_fast_non_integer_same_source_transparent_reused_pixels <
+            min_software_frame_fast_non_integer_same_source_transparent_reused_pixels) {
+            min_software_frame_fast_non_integer_same_source_transparent_reused_pixels =
+                sample->software_frame_fast_non_integer_same_source_transparent_reused_pixels;
+        }
+        if (sample->software_frame_fast_non_integer_same_source_transparent_reused_pixels >
+            max_software_frame_fast_non_integer_same_source_transparent_reused_pixels) {
+            max_software_frame_fast_non_integer_same_source_transparent_reused_pixels =
+                sample->software_frame_fast_non_integer_same_source_transparent_reused_pixels;
+        }
+        if (sample->software_frame_fast_non_integer_same_source_blended_reused_pixels <
+            min_software_frame_fast_non_integer_same_source_blended_reused_pixels) {
+            min_software_frame_fast_non_integer_same_source_blended_reused_pixels =
+                sample->software_frame_fast_non_integer_same_source_blended_reused_pixels;
+        }
+        if (sample->software_frame_fast_non_integer_same_source_blended_reused_pixels >
+            max_software_frame_fast_non_integer_same_source_blended_reused_pixels) {
+            max_software_frame_fast_non_integer_same_source_blended_reused_pixels =
+                sample->software_frame_fast_non_integer_same_source_blended_reused_pixels;
+        }
+        if (sample->software_frame_fast_non_integer_same_source_max_run_length <
+            min_software_frame_fast_non_integer_same_source_max_run_length) {
+            min_software_frame_fast_non_integer_same_source_max_run_length =
+                sample->software_frame_fast_non_integer_same_source_max_run_length;
+        }
+        if (sample->software_frame_fast_non_integer_same_source_max_run_length >
+            max_software_frame_fast_non_integer_same_source_max_run_length) {
+            max_software_frame_fast_non_integer_same_source_max_run_length =
+                sample->software_frame_fast_non_integer_same_source_max_run_length;
+        }
         if (sample->software_frame_fast_non_integer_alpha_only_tasks <
             min_software_frame_fast_non_integer_alpha_only_tasks) {
             min_software_frame_fast_non_integer_alpha_only_tasks =
@@ -3259,7 +3399,7 @@ static void perf_capture_write_summary(void) {
     }
 
     io_printf(io, "{\n");
-    io_printf(io, "  \"schema_version\": 50,\n");
+    io_printf(io, "  \"schema_version\": 51,\n");
     io_printf(io, "  \"scene\": \"");
     io_write_json_escaped_string(io, perf_capture_scene_name);
     io_printf(io, "\",\n");
@@ -4097,6 +4237,42 @@ static void perf_capture_write_summary(void) {
               (unsigned long long)min_software_frame_fast_non_integer_lookup_entries,
               (unsigned long long)max_software_frame_fast_non_integer_lookup_entries);
     io_printf(io,
+              "    \"software_frame_fast_non_integer_same_source_runs\": {\"mean\": %.2f, \"min\": %llu, \"max\": %llu},\n",
+              avg_software_frame_fast_non_integer_same_source_runs,
+              (unsigned long long)min_software_frame_fast_non_integer_same_source_runs,
+              (unsigned long long)max_software_frame_fast_non_integer_same_source_runs);
+    io_printf(io,
+              "    \"software_frame_fast_non_integer_same_source_reuse_runs\": {\"mean\": %.2f, \"min\": %llu, \"max\": %llu},\n",
+              avg_software_frame_fast_non_integer_same_source_reuse_runs,
+              (unsigned long long)min_software_frame_fast_non_integer_same_source_reuse_runs,
+              (unsigned long long)max_software_frame_fast_non_integer_same_source_reuse_runs);
+    io_printf(io,
+              "    \"software_frame_fast_non_integer_same_source_reused_pixels\": {\"mean\": %.2f, \"min\": %llu, \"max\": %llu},\n",
+              avg_software_frame_fast_non_integer_same_source_reused_pixels,
+              (unsigned long long)min_software_frame_fast_non_integer_same_source_reused_pixels,
+              (unsigned long long)max_software_frame_fast_non_integer_same_source_reused_pixels);
+    io_printf(io,
+              "    \"software_frame_fast_non_integer_same_source_opaque_reused_pixels\": {\"mean\": %.2f, \"min\": %llu, \"max\": %llu},\n",
+              avg_software_frame_fast_non_integer_same_source_opaque_reused_pixels,
+              (unsigned long long)min_software_frame_fast_non_integer_same_source_opaque_reused_pixels,
+              (unsigned long long)max_software_frame_fast_non_integer_same_source_opaque_reused_pixels);
+    io_printf(
+        io,
+        "    \"software_frame_fast_non_integer_same_source_transparent_reused_pixels\": {\"mean\": %.2f, \"min\": %llu, \"max\": %llu},\n",
+        avg_software_frame_fast_non_integer_same_source_transparent_reused_pixels,
+        (unsigned long long)min_software_frame_fast_non_integer_same_source_transparent_reused_pixels,
+        (unsigned long long)max_software_frame_fast_non_integer_same_source_transparent_reused_pixels);
+    io_printf(io,
+              "    \"software_frame_fast_non_integer_same_source_blended_reused_pixels\": {\"mean\": %.2f, \"min\": %llu, \"max\": %llu},\n",
+              avg_software_frame_fast_non_integer_same_source_blended_reused_pixels,
+              (unsigned long long)min_software_frame_fast_non_integer_same_source_blended_reused_pixels,
+              (unsigned long long)max_software_frame_fast_non_integer_same_source_blended_reused_pixels);
+    io_printf(io,
+              "    \"software_frame_fast_non_integer_same_source_max_run_length\": {\"mean\": %.2f, \"min\": %d, \"max\": %d},\n",
+              avg_software_frame_fast_non_integer_same_source_max_run_length,
+              min_software_frame_fast_non_integer_same_source_max_run_length,
+              max_software_frame_fast_non_integer_same_source_max_run_length);
+    io_printf(io,
               "    \"software_frame_fast_non_integer_alpha_only_tasks\": {\"mean\": %.2f, \"min\": %d, \"max\": %d},\n",
               avg_software_frame_fast_non_integer_alpha_only_tasks,
               min_software_frame_fast_non_integer_alpha_only_tasks,
@@ -4616,6 +4792,9 @@ static void perf_capture_write_summary(void) {
                                             ? (double)entry->lookup_entries /
                                                   (double)fast_non_integer_family_lookup_entries_total
                                             : 0.0;
+            const double same_source_reused_pixel_ratio =
+                entry->submitted_pixels > 0 ? (double)entry->same_source_reused_pixels / (double)entry->submitted_pixels
+                                            : 0.0;
             io_printf(io,
                       "      {\"texture_handle\": %d, \"palette_handle\": %d, "
                       "\"source_format\": \"%s\", \"source_width\": %d, \"source_height\": %d, "
@@ -4637,6 +4816,17 @@ static void perf_capture_write_summary(void) {
                       "\"submitted_pixel_ratio\": %.6f, "
                       "\"lookup_entries_total\": %llu, \"lookup_entries_mean\": %.2f, "
                       "\"lookup_entry_ratio\": %.6f, "
+                      "\"same_source_runs_total\": %llu, \"same_source_runs_mean\": %.2f, "
+                      "\"same_source_reuse_runs_total\": %llu, \"same_source_reuse_runs_mean\": %.2f, "
+                      "\"same_source_reused_pixels_total\": %llu, \"same_source_reused_pixels_mean\": %.2f, "
+                      "\"same_source_reused_pixel_ratio\": %.6f, "
+                      "\"same_source_opaque_reused_pixels_total\": %llu, "
+                      "\"same_source_opaque_reused_pixels_mean\": %.2f, "
+                      "\"same_source_transparent_reused_pixels_total\": %llu, "
+                      "\"same_source_transparent_reused_pixels_mean\": %.2f, "
+                      "\"same_source_blended_reused_pixels_total\": %llu, "
+                      "\"same_source_blended_reused_pixels_mean\": %.2f, "
+                      "\"same_source_max_run_length\": %d, "
                       "\"source_rect_x_min\": %d, \"source_rect_x_max\": %d, "
                       "\"source_rect_y_min\": %d, \"source_rect_y_max\": %d, "
                       "\"source_rect_w_min\": %d, \"source_rect_w_max\": %d, "
@@ -4679,6 +4869,20 @@ static void perf_capture_write_summary(void) {
                       (unsigned long long)entry->lookup_entries,
                       (double)entry->lookup_entries / frame_count,
                       lookup_ratio,
+                      (unsigned long long)entry->same_source_runs,
+                      (double)entry->same_source_runs / frame_count,
+                      (unsigned long long)entry->same_source_reuse_runs,
+                      (double)entry->same_source_reuse_runs / frame_count,
+                      (unsigned long long)entry->same_source_reused_pixels,
+                      (double)entry->same_source_reused_pixels / frame_count,
+                      same_source_reused_pixel_ratio,
+                      (unsigned long long)entry->same_source_opaque_reused_pixels,
+                      (double)entry->same_source_opaque_reused_pixels / frame_count,
+                      (unsigned long long)entry->same_source_transparent_reused_pixels,
+                      (double)entry->same_source_transparent_reused_pixels / frame_count,
+                      (unsigned long long)entry->same_source_blended_reused_pixels,
+                      (double)entry->same_source_blended_reused_pixels / frame_count,
+                      entry->same_source_max_run_length,
                       entry->source_x_min,
                       entry->source_x_max,
                       entry->source_y_min,
@@ -6019,6 +6223,13 @@ static void perf_capture_write_summary(void) {
                   "\"software_frame_fast_non_integer_tasks\": %d, "
                   "\"software_frame_fast_non_integer_pixels\": %llu, "
                   "\"software_frame_fast_non_integer_lookup_entries\": %llu, "
+                  "\"software_frame_fast_non_integer_same_source_runs\": %llu, "
+                  "\"software_frame_fast_non_integer_same_source_reuse_runs\": %llu, "
+                  "\"software_frame_fast_non_integer_same_source_reused_pixels\": %llu, "
+                  "\"software_frame_fast_non_integer_same_source_opaque_reused_pixels\": %llu, "
+                  "\"software_frame_fast_non_integer_same_source_transparent_reused_pixels\": %llu, "
+                  "\"software_frame_fast_non_integer_same_source_blended_reused_pixels\": %llu, "
+                  "\"software_frame_fast_non_integer_same_source_max_run_length\": %d, "
                   "\"software_frame_fast_non_integer_alpha_only_tasks\": %d, "
                   "\"software_frame_fast_non_integer_alpha_only_pixels\": %llu, "
                   "\"software_frame_fast_non_integer_rgb_mod_tasks\": %d, "
@@ -6175,6 +6386,13 @@ static void perf_capture_write_summary(void) {
                   sample->software_frame_fast_non_integer_tasks,
                   (unsigned long long)sample->software_frame_fast_non_integer_pixels,
                   (unsigned long long)sample->software_frame_fast_non_integer_lookup_entries,
+                  (unsigned long long)sample->software_frame_fast_non_integer_same_source_runs,
+                  (unsigned long long)sample->software_frame_fast_non_integer_same_source_reuse_runs,
+                  (unsigned long long)sample->software_frame_fast_non_integer_same_source_reused_pixels,
+                  (unsigned long long)sample->software_frame_fast_non_integer_same_source_opaque_reused_pixels,
+                  (unsigned long long)sample->software_frame_fast_non_integer_same_source_transparent_reused_pixels,
+                  (unsigned long long)sample->software_frame_fast_non_integer_same_source_blended_reused_pixels,
+                  sample->software_frame_fast_non_integer_same_source_max_run_length,
                   sample->software_frame_fast_non_integer_alpha_only_tasks,
                   (unsigned long long)sample->software_frame_fast_non_integer_alpha_only_pixels,
                   sample->software_frame_fast_non_integer_rgb_mod_tasks,
@@ -7643,6 +7861,20 @@ void SDLApp_EndFrame() {
         sample->software_frame_fast_non_integer_pixels = render_stats.software_frame_fast_non_integer_pixels;
         sample->software_frame_fast_non_integer_lookup_entries =
             render_stats.software_frame_fast_non_integer_lookup_entries;
+        sample->software_frame_fast_non_integer_same_source_runs =
+            render_stats.software_frame_fast_non_integer_same_source_runs;
+        sample->software_frame_fast_non_integer_same_source_reuse_runs =
+            render_stats.software_frame_fast_non_integer_same_source_reuse_runs;
+        sample->software_frame_fast_non_integer_same_source_reused_pixels =
+            render_stats.software_frame_fast_non_integer_same_source_reused_pixels;
+        sample->software_frame_fast_non_integer_same_source_opaque_reused_pixels =
+            render_stats.software_frame_fast_non_integer_same_source_opaque_reused_pixels;
+        sample->software_frame_fast_non_integer_same_source_transparent_reused_pixels =
+            render_stats.software_frame_fast_non_integer_same_source_transparent_reused_pixels;
+        sample->software_frame_fast_non_integer_same_source_blended_reused_pixels =
+            render_stats.software_frame_fast_non_integer_same_source_blended_reused_pixels;
+        sample->software_frame_fast_non_integer_same_source_max_run_length =
+            render_stats.software_frame_fast_non_integer_same_source_max_run_length;
         sample->software_frame_fast_non_integer_alpha_only_tasks =
             render_stats.software_frame_fast_non_integer_alpha_only_tasks;
         sample->software_frame_fast_non_integer_alpha_only_pixels =
@@ -7854,6 +8086,20 @@ void SDLApp_EndFrame() {
         perf_software_frame_fast_non_integer_pixels_total += render_stats.software_frame_fast_non_integer_pixels;
         perf_software_frame_fast_non_integer_lookup_entries_total +=
             render_stats.software_frame_fast_non_integer_lookup_entries;
+        perf_software_frame_fast_non_integer_same_source_runs_total +=
+            render_stats.software_frame_fast_non_integer_same_source_runs;
+        perf_software_frame_fast_non_integer_same_source_reuse_runs_total +=
+            render_stats.software_frame_fast_non_integer_same_source_reuse_runs;
+        perf_software_frame_fast_non_integer_same_source_reused_pixels_total +=
+            render_stats.software_frame_fast_non_integer_same_source_reused_pixels;
+        perf_software_frame_fast_non_integer_same_source_opaque_reused_pixels_total +=
+            render_stats.software_frame_fast_non_integer_same_source_opaque_reused_pixels;
+        perf_software_frame_fast_non_integer_same_source_transparent_reused_pixels_total +=
+            render_stats.software_frame_fast_non_integer_same_source_transparent_reused_pixels;
+        perf_software_frame_fast_non_integer_same_source_blended_reused_pixels_total +=
+            render_stats.software_frame_fast_non_integer_same_source_blended_reused_pixels;
+        perf_software_frame_fast_non_integer_same_source_max_run_length_total +=
+            (Uint64)render_stats.software_frame_fast_non_integer_same_source_max_run_length;
         perf_software_frame_fast_non_integer_alpha_only_tasks_total +=
             (Uint64)render_stats.software_frame_fast_non_integer_alpha_only_tasks;
         perf_software_frame_fast_non_integer_alpha_only_pixels_total +=

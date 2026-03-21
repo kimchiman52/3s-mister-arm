@@ -74,6 +74,13 @@ typedef struct SDLGameRenderer_FrameStats {
     int software_frame_fast_non_integer_tasks;
     Uint64 software_frame_fast_non_integer_pixels;
     Uint64 software_frame_fast_non_integer_lookup_entries;
+    Uint64 software_frame_fast_non_integer_same_source_runs;
+    Uint64 software_frame_fast_non_integer_same_source_reuse_runs;
+    Uint64 software_frame_fast_non_integer_same_source_reused_pixels;
+    Uint64 software_frame_fast_non_integer_same_source_opaque_reused_pixels;
+    Uint64 software_frame_fast_non_integer_same_source_transparent_reused_pixels;
+    Uint64 software_frame_fast_non_integer_same_source_blended_reused_pixels;
+    int software_frame_fast_non_integer_same_source_max_run_length;
     int software_frame_fast_non_integer_alpha_only_tasks;
     Uint64 software_frame_fast_non_integer_alpha_only_pixels;
     int software_frame_fast_non_integer_rgb_mod_tasks;
@@ -410,6 +417,13 @@ typedef struct SDLGameRenderer_PerfCaptureTexturedRectFamily {
     Uint64 task_count;
     Uint64 submitted_pixels;
     Uint64 lookup_entries;
+    Uint64 same_source_runs;
+    Uint64 same_source_reuse_runs;
+    Uint64 same_source_reused_pixels;
+    Uint64 same_source_opaque_reused_pixels;
+    Uint64 same_source_transparent_reused_pixels;
+    Uint64 same_source_blended_reused_pixels;
+    int same_source_max_run_length;
     int source_x_min;
     int source_x_max;
     int source_y_min;

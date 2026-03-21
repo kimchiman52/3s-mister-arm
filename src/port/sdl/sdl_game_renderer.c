@@ -704,7 +704,8 @@ static void note_perf_capture_fast_exact_family(const RenderTask* task,
 #endif
 static void note_software_frame_fast_non_integer(const RenderTask* task,
                                                  const SDL_Surface* dst_surface,
-                                                 Uint64 lookup_entries);
+                                                 Uint64 lookup_entries,
+                                                 const SDLSoftwareFrame_NonIntegerTelemetry* non_integer_telemetry);
 static Uint32 modulate_argb8888(Uint32 pixel, Uint32 color);
 static Uint32 blend_argb8888(Uint32 dst_pixel, Uint32 src_pixel);
 static bool raster_full_height_diagonal_strip_to_software_frame(const SoftwareFrameSolidDiagonalStrip* strip,
@@ -3934,6 +3935,7 @@ static bool textured_rect_family_matches(const SDLGameRenderer_PerfCaptureTextur
 static void note_perf_capture_textured_rect_family(const RenderTask* task,
                                                    const SDL_Surface* dst_surface,
                                                    Uint64 lookup_entries,
+                                                   const SDLSoftwareFrame_NonIntegerTelemetry* non_integer_telemetry,
                                                    SDLGameRenderer_PerfCaptureTexturedRectFamily* families,
                                                    int* family_count) {
     if (!frame_stats_extended_enabled || (task == NULL) || (dst_surface == NULL) || (families == NULL) ||
@@ -4001,6 +4003,17 @@ static void note_perf_capture_textured_rect_family(const RenderTask* task,
     entry->task_count += 1;
     entry->submitted_pixels += profile.submitted_pixels;
     entry->lookup_entries += lookup_entries;
+    if (non_integer_telemetry != NULL) {
+        entry->same_source_runs += non_integer_telemetry->same_source_runs;
+        entry->same_source_reuse_runs += non_integer_telemetry->same_source_reuse_runs;
+        entry->same_source_reused_pixels += non_integer_telemetry->same_source_reused_pixels;
+        entry->same_source_opaque_reused_pixels += non_integer_telemetry->same_source_opaque_reused_pixels;
+        entry->same_source_transparent_reused_pixels += non_integer_telemetry->same_source_transparent_reused_pixels;
+        entry->same_source_blended_reused_pixels += non_integer_telemetry->same_source_blended_reused_pixels;
+        if (non_integer_telemetry->same_source_max_run_length > entry->same_source_max_run_length) {
+            entry->same_source_max_run_length = non_integer_telemetry->same_source_max_run_length;
+        }
+    }
     update_textured_geometry_fallback_range(&entry->source_x_min, &entry->source_x_max, profile.source_x);
     update_textured_geometry_fallback_range(&entry->source_y_min, &entry->source_y_max, profile.source_y);
     update_textured_geometry_fallback_range(&entry->source_w_min, &entry->source_w_max, profile.source_w);
@@ -4017,21 +4030,32 @@ static void note_perf_capture_fast_exact_family(const RenderTask* task,
                                                 const SDL_Surface* dst_surface,
                                                 Uint64 lookup_entries) {
     note_perf_capture_textured_rect_family(
-        task, dst_surface, lookup_entries, perf_capture_fast_exact_families, &perf_capture_fast_exact_family_count);
+        task, dst_surface, lookup_entries, NULL, perf_capture_fast_exact_families, &perf_capture_fast_exact_family_count);
 }
 
 static void note_perf_capture_fast_non_integer_family(const RenderTask* task,
                                                       const SDL_Surface* dst_surface,
-                                                      Uint64 lookup_entries) {
+                                                      Uint64 lookup_entries,
+                                                      const SDLSoftwareFrame_NonIntegerTelemetry* non_integer_telemetry) {
     note_perf_capture_textured_rect_family(
-        task, dst_surface, lookup_entries, perf_capture_fast_non_integer_families, &perf_capture_fast_non_integer_family_count);
+        task,
+        dst_surface,
+        lookup_entries,
+        non_integer_telemetry,
+        perf_capture_fast_non_integer_families,
+        &perf_capture_fast_non_integer_family_count);
 }
 
 static void note_perf_capture_generic_textured_family(const RenderTask* task,
                                                       const SDL_Surface* dst_surface,
                                                       Uint64 lookup_entries) {
     note_perf_capture_textured_rect_family(
-        task, dst_surface, lookup_entries, perf_capture_generic_textured_families, &perf_capture_generic_textured_family_count);
+        task,
+        dst_surface,
+        lookup_entries,
+        NULL,
+        perf_capture_generic_textured_families,
+        &perf_capture_generic_textured_family_count);
 }
 
 static void note_software_frame_eligibility(const RenderTask* task, SoftwareFrameFallbackReason reason) {
@@ -4250,7 +4274,8 @@ static void note_software_frame_fast_copy_result(const RenderTask* task,
 #if ENABLE_PERF_TELEMETRY
 static void note_software_frame_fast_non_integer(const RenderTask* task,
                                                  const SDL_Surface* dst_surface,
-                                                 Uint64 lookup_entries) {
+                                                 Uint64 lookup_entries,
+                                                 const SDLSoftwareFrame_NonIntegerTelemetry* non_integer_telemetry) {
     if (!frame_stats_extended_enabled || (task == NULL)) {
         return;
     }
@@ -4259,7 +4284,25 @@ static void note_software_frame_fast_non_integer(const RenderTask* task,
     frame_stats.software_frame_fast_non_integer_tasks += 1;
     frame_stats.software_frame_fast_non_integer_pixels += submitted_pixels;
     frame_stats.software_frame_fast_non_integer_lookup_entries += lookup_entries;
-    note_perf_capture_fast_non_integer_family(task, dst_surface, lookup_entries);
+    if (non_integer_telemetry != NULL) {
+        frame_stats.software_frame_fast_non_integer_same_source_runs += non_integer_telemetry->same_source_runs;
+        frame_stats.software_frame_fast_non_integer_same_source_reuse_runs +=
+            non_integer_telemetry->same_source_reuse_runs;
+        frame_stats.software_frame_fast_non_integer_same_source_reused_pixels +=
+            non_integer_telemetry->same_source_reused_pixels;
+        frame_stats.software_frame_fast_non_integer_same_source_opaque_reused_pixels +=
+            non_integer_telemetry->same_source_opaque_reused_pixels;
+        frame_stats.software_frame_fast_non_integer_same_source_transparent_reused_pixels +=
+            non_integer_telemetry->same_source_transparent_reused_pixels;
+        frame_stats.software_frame_fast_non_integer_same_source_blended_reused_pixels +=
+            non_integer_telemetry->same_source_blended_reused_pixels;
+        if (non_integer_telemetry->same_source_max_run_length >
+            frame_stats.software_frame_fast_non_integer_same_source_max_run_length) {
+            frame_stats.software_frame_fast_non_integer_same_source_max_run_length =
+                non_integer_telemetry->same_source_max_run_length;
+        }
+    }
+    note_perf_capture_fast_non_integer_family(task, dst_surface, lookup_entries, non_integer_telemetry);
     if (software_frame_color_is_alpha_only(task->color)) {
         frame_stats.software_frame_fast_non_integer_alpha_only_tasks += 1;
         frame_stats.software_frame_fast_non_integer_alpha_only_pixels += submitted_pixels;
@@ -4271,10 +4314,12 @@ static void note_software_frame_fast_non_integer(const RenderTask* task,
 #else
 static void note_software_frame_fast_non_integer(const RenderTask* task,
                                                  const SDL_Surface* dst_surface,
-                                                 Uint64 lookup_entries) {
+                                                 Uint64 lookup_entries,
+                                                 const SDLSoftwareFrame_NonIntegerTelemetry* non_integer_telemetry) {
     (void)task;
     (void)dst_surface;
     (void)lookup_entries;
+    (void)non_integer_telemetry;
 }
 #endif
 
@@ -4987,14 +5032,24 @@ static bool raster_textured_task_to_software_frame(const RenderTask* task) {
             submitted_pixels >= software_frame_non_integer_lookup_threshold_pixels
                 ? begin_perf_capture_raster_bucket_sample(SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_FAST_NON_INTEGER)
                 : 0;
+        SDLSoftwareFrame_NonIntegerTelemetry non_integer_telemetry;
+        SDLSoftwareFrame_NonIntegerTelemetry* non_integer_telemetry_ptr =
+            frame_stats_extended_enabled ? &non_integer_telemetry : NULL;
         if ((submitted_pixels >= software_frame_non_integer_lookup_threshold_pixels) &&
             SDLSoftwareFrame_RasterNonIntegerLookupARGB8888(
-                &task->dst_rect, &task->src_uv_rect, task->flip, task->color, dst_surface, src_surface)) {
+                &task->dst_rect,
+                &task->src_uv_rect,
+                task->flip,
+                task->color,
+                dst_surface,
+                src_surface,
+                non_integer_telemetry_ptr)) {
             note_perf_capture_raster_bucket_sample(
                 SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_FAST_NON_INTEGER,
                 task,
                 perf_capture_counter_delta_to_ns(sample_start_counter, SDL_GetPerformanceCounter()));
-            note_software_frame_fast_non_integer(task, dst_surface, non_integer_lookup_entries);
+            note_software_frame_fast_non_integer(
+                task, dst_surface, non_integer_lookup_entries, non_integer_telemetry_ptr);
             if (src_locked) {
                 SDL_UnlockSurface(src_surface);
             }
