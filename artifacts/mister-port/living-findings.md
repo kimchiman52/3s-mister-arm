@@ -3958,7 +3958,7 @@ Scope guardrails:
 
 - 2026-03-21T17:12:11-0400
   - Final commit hash:
-    - `pending`
+    - `88785b05`
   - Bottleneck targeted:
     - helper-local low-density pair gating on the native Yun SA3 first-visible activation burst, specifically whether declining the pair-only inner loop below the new `3/20` duplicate threshold improves the deciding onset lane without changing routing
   - Change summary:

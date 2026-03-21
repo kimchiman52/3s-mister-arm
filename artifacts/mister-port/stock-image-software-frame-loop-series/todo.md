@@ -6237,6 +6237,6 @@
 - [x] Keep/rollback decision:
   - [x] rollback. Two exact-lane Yun reruns both came in slower than the kept Loop `141` onset baseline, so the low-density pair gate does not justify reopening helper-internal pair control flow on this lane; the runtime code is fully reverted on the final tree
 - [ ] final commit hash:
-  - [ ] pending
+  - [x] `88785b05` (`mister: close loop 142 pair-density rollback`)
 - [x] next best candidate:
   - [x] do not retry the low-density pair gate now. Any future Yun runtime attempt should move away from helper-internal pair control flow and prove a total-time win on the `ix 81 / 82` onset families instead of only trading pair-lookup cost for reuse-bookkeeping overhead
