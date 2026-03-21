@@ -3632,3 +3632,20 @@ Scope guardrails:
     - keep; the reland stays within retained refresh bookkeeping, avoids the earlier seq-specific correctness regression, and materially improves the deciding native gameplay hotspot plus the supporting native lanes
   - Next best candidate optimization:
     - re-rank the remaining native ceiling from the kept Loop 123 reviewed telemetry, with first attention on the remaining oversized/full compare-dirty residue in Remy `ppg-seqs 81/82` before another broader native gameplay hypothesis
+
+- 2026-03-21T04:18:08-0400
+  - Final commit hash:
+    - `018461c3`
+  - Bottleneck targeted:
+    - preserved compare-dirty partial-refresh cap verification on the native gameplay tree, specifically whether widening compare-dirty fallback from `1/4` to `3/8` would reduce the remaining full/oversized refresh residue without changing routing
+  - Change summary:
+    - verified the oldest preserved branch first, restored only its `src/port/sdl/sdl_game_renderer.c` runtime logic, and kept the reland after same-tree baseline-vs-candidate A/B favored the wider compare-dirty cap
+    - left explicit dirty metadata at `1/4` while widening only compare-dirty fallback to `3/8`, then rebuilt the telemetry flavor in Docker `3sx-mister-build`, redeployed it with serialized MiSTer tooling, and reran probe/smoke plus a fresh Remy confirmation capture
+    - independent review agent `Boyle` found no actionable issues in the runtime diff
+  - Verification result summary:
+    - Docker telemetry ARM build/install/package plus `readelf` passed; serialized `busy-status`, `health`, `deploy`, `probe`, bounded `smoke`, and remote log inspection all passed on `192.168.1.171` with the same native dummy/software + fbdev path and expected bounded `exit=143`
+    - the deciding same-tree native matrix improved every measured lane: control `83.5628 -> 84.1420 FPS`, Remy `50.3500 -> 53.1859 FPS`, left-corner `82.4206 -> 83.2823 FPS`, and Ibuki `50.4029 -> 52.9553 FPS`; Remy refresh cost fell `5.3665 -> 4.2163 ms` with `partial_ratio = 0.781714`, and a fresh rebuilt-package confirmation run `loop124-remy-final` landed at `57.3459 FPS`
+  - Keep/rollback decision with reason:
+    - keep; the preserved `3/8` compare-dirty cap materially reduces measured native gameplay refresh cost on the current tree without a route change, review finding, or new device fault signature
+  - Next best candidate optimization:
+    - re-rank the remaining native gameplay ceiling on top of the kept `3/8` baseline, starting with fresh full telemetry on Yun first-activation and Remy left-camera lanes; if the residue is now dominated by non-integer raster duplication, prioritize horizontal same-source-pixel run batching next instead of another compare-dirty cap change
