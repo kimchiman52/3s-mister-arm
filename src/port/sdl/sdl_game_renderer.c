@@ -7523,6 +7523,29 @@ void SDLGameRenderer_GetPerfCaptureGenericTexturedFamilyTotals(Uint64* out_task_
                                                  out_family_count);
 }
 
+void SDLGameRenderer_RefreshPerfCaptureTexturedRectFamilyLogicalIdentity(
+    SDLGameRenderer_PerfCaptureTexturedRectFamily* families,
+    int family_count) {
+    if ((families == NULL) || (family_count <= 0)) {
+        return;
+    }
+
+    for (int i = 0; i < family_count; i++) {
+        SDLGameRenderer_PerfCaptureTexturedRectFamily* entry = &families[i];
+        const int texture_index = entry->texture_handle - 1;
+        copy_perf_capture_texture_logical_identity(texture_index,
+                                                   &entry->logical_identity_known,
+                                                   &entry->logical_identity_mixed,
+                                                   &entry->logical_identity_registrations,
+                                                   &entry->logical_source_kind,
+                                                   &entry->logical_ix_num,
+                                                   &entry->logical_ix_num_first,
+                                                   &entry->logical_slot_index,
+                                                   &entry->logical_chunk_index,
+                                                   &entry->logical_texture_total);
+    }
+}
+
 int SDLGameRenderer_GetPerfCaptureRefreshLocalityCandidates(
     SDLGameRenderer_PerfCaptureRefreshLocalityCandidate* out_candidates,
     int max_candidates) {

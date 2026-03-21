@@ -335,6 +335,11 @@ static Uint64 perf_software_frame_reason_geometry_total = 0;
 static Uint64 perf_software_frame_reason_solid_total = 0;
 static Uint64 perf_sort_strategy_frames[SDL_GAME_RENDERER_SORT_QSORT + 1] = { 0 };
 static Uint64 perf_fbdev_path_frames[FBDEV_PRESENTER_PATH_COUNT] = { 0 };
+enum {
+    perf_capture_first_window_frame_limit = 60,
+    perf_capture_first_window_fast_non_integer_family_capacity = 64,
+    perf_capture_first_window_generic_textured_family_capacity = 8,
+};
 
 typedef struct PerfFrameSample {
     double frame_time_ms;
@@ -513,6 +518,36 @@ typedef struct PerfFrameSample {
 } PerfFrameSample;
 
 static PerfFrameSample* perf_samples = NULL;
+
+typedef struct PerfCaptureWindowSummary {
+    int frame_count;
+    double fps;
+    double frame_time_ms;
+    double update_ms;
+    double render_ms;
+    double present_ms;
+    double software_frame_fast_non_integer_pixels;
+    double software_frame_generic_textured_pixels;
+} PerfCaptureWindowSummary;
+
+typedef struct PerfCaptureFirstWindowFamilySnapshot {
+    bool valid;
+    int frame_count;
+    SDLGameRenderer_PerfCaptureTexturedRectFamily
+        fast_non_integer_families[perf_capture_first_window_fast_non_integer_family_capacity];
+    int fast_non_integer_family_count;
+    Uint64 fast_non_integer_task_total;
+    Uint64 fast_non_integer_pixel_total;
+    Uint64 fast_non_integer_lookup_entry_total;
+    SDLGameRenderer_PerfCaptureTexturedRectFamily
+        generic_textured_families[perf_capture_first_window_generic_textured_family_capacity];
+    int generic_textured_family_count;
+    Uint64 generic_textured_task_total;
+    Uint64 generic_textured_pixel_total;
+    Uint64 generic_textured_lookup_entry_total;
+} PerfCaptureFirstWindowFamilySnapshot;
+
+static PerfCaptureFirstWindowFamilySnapshot perf_capture_first_window_snapshot = { 0 };
 #endif
 
 #if defined(PORT_MISTER)
@@ -524,6 +559,8 @@ static const char* recommended_mister_audio_driver = "alsa";
 #if ENABLE_PERF_TELEMETRY
 static void perf_capture_reset_storage(void);
 static void perf_capture_write_summary(void);
+static void perf_capture_reset_first_window_snapshot(void);
+static void perf_capture_snapshot_first_window_families_if_needed(void);
 #endif
 static const char* scale_mode_name(ScaleMode mode);
 static const char* software_frame_mode_name(void);
@@ -987,6 +1024,7 @@ static void perf_capture_reset_storage(void) {
     SDLGameRenderer_SetPerfCaptureLogicalIdentityEnabled(false);
     perf_capture_target_frames = 0;
     perf_capture_recorded_frames = 0;
+    perf_capture_reset_first_window_snapshot();
     perf_frame_start_ns = 0;
     perf_update_start_ns = 0;
     perf_update_ns_total = 0;
@@ -1258,6 +1296,7 @@ void SDLApp_ConfigurePerfCapture(int frame_count, const char* output_path, const
     perf_capture_completed = false;
     perf_capture_enabled = true;
     perf_capture_basic_mode = basic_mode;
+    perf_capture_reset_first_window_snapshot();
     SDLGameRenderer_SetPerfCaptureLogicalIdentityEnabled(!basic_mode);
     perf_frame_start_ns = 0;
     perf_update_start_ns = 0;
@@ -1532,6 +1571,214 @@ static void io_write_json_super_art_ready_routine_or_null(SDL_IOStream* io, cons
     }
 
     io_write_json_int_array(io, routine, 3);
+}
+
+static void perf_capture_reset_first_window_snapshot(void) {
+    SDL_zero(perf_capture_first_window_snapshot);
+}
+
+static void perf_capture_refresh_first_window_snapshot_logical_identity(void) {
+    if (!perf_capture_first_window_snapshot.valid) {
+        return;
+    }
+
+    SDLGameRenderer_RefreshPerfCaptureTexturedRectFamilyLogicalIdentity(
+        perf_capture_first_window_snapshot.fast_non_integer_families,
+        perf_capture_first_window_snapshot.fast_non_integer_family_count);
+    SDLGameRenderer_RefreshPerfCaptureTexturedRectFamilyLogicalIdentity(
+        perf_capture_first_window_snapshot.generic_textured_families,
+        perf_capture_first_window_snapshot.generic_textured_family_count);
+}
+
+static void perf_capture_snapshot_first_window_families_if_needed(void) {
+    if (perf_capture_basic_mode || perf_capture_first_window_snapshot.valid || (perf_capture_recorded_frames <= 0) ||
+        (perf_capture_target_frames <= 0)) {
+        return;
+    }
+
+    const int snapshot_frame_count =
+        perf_capture_target_frames < perf_capture_first_window_frame_limit ? perf_capture_target_frames
+                                                                          : perf_capture_first_window_frame_limit;
+    if (perf_capture_recorded_frames != snapshot_frame_count) {
+        return;
+    }
+
+    perf_capture_reset_first_window_snapshot();
+    perf_capture_first_window_snapshot.valid = true;
+    perf_capture_first_window_snapshot.frame_count = snapshot_frame_count;
+    perf_capture_first_window_snapshot.fast_non_integer_family_count = SDLGameRenderer_GetPerfCaptureFastNonIntegerFamilies(
+        perf_capture_first_window_snapshot.fast_non_integer_families,
+        SDL_arraysize(perf_capture_first_window_snapshot.fast_non_integer_families));
+    SDLGameRenderer_GetPerfCaptureFastNonIntegerFamilyTotals(
+        &perf_capture_first_window_snapshot.fast_non_integer_task_total,
+        &perf_capture_first_window_snapshot.fast_non_integer_pixel_total,
+        &perf_capture_first_window_snapshot.fast_non_integer_lookup_entry_total,
+        NULL);
+    perf_capture_first_window_snapshot.generic_textured_family_count = SDLGameRenderer_GetPerfCaptureGenericTexturedFamilies(
+        perf_capture_first_window_snapshot.generic_textured_families,
+        SDL_arraysize(perf_capture_first_window_snapshot.generic_textured_families));
+    SDLGameRenderer_GetPerfCaptureGenericTexturedFamilyTotals(
+        &perf_capture_first_window_snapshot.generic_textured_task_total,
+        &perf_capture_first_window_snapshot.generic_textured_pixel_total,
+        &perf_capture_first_window_snapshot.generic_textured_lookup_entry_total,
+        NULL);
+}
+
+static bool summarize_perf_capture_window(int start_frame,
+                                          int requested_frame_count,
+                                          PerfCaptureWindowSummary* out_summary) {
+    if ((out_summary == NULL) || (perf_samples == NULL) || (requested_frame_count <= 0) || (start_frame < 0) ||
+        (start_frame >= perf_capture_recorded_frames)) {
+        return false;
+    }
+
+    const int end_frame =
+        (start_frame + requested_frame_count) < perf_capture_recorded_frames ? (start_frame + requested_frame_count)
+                                                                             : perf_capture_recorded_frames;
+    const int frame_count = end_frame - start_frame;
+    if (frame_count <= 0) {
+        return false;
+    }
+
+    SDL_zero(*out_summary);
+    out_summary->frame_count = frame_count;
+    for (int i = start_frame; i < end_frame; i++) {
+        const PerfFrameSample* sample = &perf_samples[i];
+        out_summary->frame_time_ms += sample->frame_time_ms;
+        out_summary->update_ms += sample->update_ms;
+        out_summary->render_ms += sample->render_ms;
+        out_summary->present_ms += sample->present_ms;
+        out_summary->software_frame_fast_non_integer_pixels +=
+            (double)sample->software_frame_fast_non_integer_pixels;
+        out_summary->software_frame_generic_textured_pixels +=
+            (double)sample->software_frame_generic_textured_pixels;
+    }
+
+    const double divisor = (double)frame_count;
+    out_summary->frame_time_ms /= divisor;
+    out_summary->update_ms /= divisor;
+    out_summary->render_ms /= divisor;
+    out_summary->present_ms /= divisor;
+    out_summary->software_frame_fast_non_integer_pixels /= divisor;
+    out_summary->software_frame_generic_textured_pixels /= divisor;
+    out_summary->fps = out_summary->frame_time_ms > 0.0 ? 1000.0 / out_summary->frame_time_ms : 0.0;
+    return true;
+}
+
+static void io_write_perf_capture_window_textured_rect_families(
+    SDL_IOStream* io,
+    const SDLGameRenderer_PerfCaptureTexturedRectFamily* families,
+    int family_count,
+    Uint64 task_total,
+    Uint64 pixel_total,
+    Uint64 lookup_entry_total,
+    double frame_count,
+    bool include_non_integer_phase_fields) {
+    io_printf(io, "[");
+    if (family_count <= 0) {
+        io_printf(io, "]");
+        return;
+    }
+
+    io_printf(io, "\n");
+    for (int i = 0; i < family_count; i++) {
+        const SDLGameRenderer_PerfCaptureTexturedRectFamily* entry = &families[i];
+        const double task_ratio = task_total > 0 ? (double)entry->task_count / (double)task_total : 0.0;
+        const double pixel_ratio = pixel_total > 0 ? (double)entry->submitted_pixels / (double)pixel_total : 0.0;
+        const double lookup_ratio =
+            lookup_entry_total > 0 ? (double)entry->lookup_entries / (double)lookup_entry_total : 0.0;
+        const double sampled_total_ms = (double)entry->sampled_ns / 1e6;
+        const double sampled_mean_ms = entry->sampled_calls > 0 ? sampled_total_ms / (double)entry->sampled_calls : 0.0;
+        const double sampled_ns_per_pixel =
+            entry->sampled_pixels > 0 ? (double)entry->sampled_ns / (double)entry->sampled_pixels : 0.0;
+        const double same_source_reused_pixel_ratio =
+            entry->submitted_pixels > 0 ? (double)entry->same_source_reused_pixels / (double)entry->submitted_pixels
+                                        : 0.0;
+
+        io_printf(io,
+                  "      {\"texture_handle\": %d, \"palette_handle\": %d, \"source_format\": \"%s\", "
+                  "\"source_width\": %d, \"source_height\": %d, \"logical_identity_known\": %s, "
+                  "\"logical_identity_mixed\": %s, \"logical_identity_registrations_total\": %u, "
+                  "\"logical_source_kind\": \"%s\", \"logical_ix_num\": %d, \"logical_ix_num_first\": %d, "
+                  "\"logical_slot_index\": %d, \"logical_chunk_index\": %d, \"logical_texture_total\": %d, "
+                  "\"alpha_only\": %s, \"rgb_mod\": %s, \"opaque_color\": %s, \"integer_positions\": %s, "
+                  "\"integer_source_rect\": %s, \"full_texture_source_rect\": %s, \"clipped\": %s, "
+                  "\"flip_h\": %s, \"flip_v\": %s, \"task_count_total\": %llu, \"task_count_mean\": %.4f, "
+                  "\"task_ratio\": %.6f, \"submitted_pixels_total\": %llu, \"submitted_pixels_mean\": %.2f, "
+                  "\"submitted_pixel_ratio\": %.6f, \"lookup_entries_total\": %llu, \"lookup_entries_mean\": %.2f, "
+                  "\"lookup_entry_ratio\": %.6f, \"sampled_calls_total\": %llu, \"sampled_total_ms\": %.4f, "
+                  "\"sampled_mean_ms\": %.6f, \"sampled_ns_per_pixel\": %.4f",
+                  entry->texture_handle,
+                  entry->palette_handle,
+                  pixel_format_name_safe(entry->source_format),
+                  entry->source_width,
+                  entry->source_height,
+                  entry->logical_identity_known ? "true" : "false",
+                  entry->logical_identity_mixed ? "true" : "false",
+                  entry->logical_identity_registrations,
+                  texture_logical_source_kind_name(entry->logical_source_kind),
+                  entry->logical_ix_num,
+                  entry->logical_ix_num_first,
+                  entry->logical_slot_index,
+                  entry->logical_chunk_index,
+                  entry->logical_texture_total,
+                  entry->alpha_only ? "true" : "false",
+                  entry->rgb_mod ? "true" : "false",
+                  entry->opaque_color ? "true" : "false",
+                  entry->integer_positions ? "true" : "false",
+                  entry->integer_source_rect ? "true" : "false",
+                  entry->full_texture_source_rect ? "true" : "false",
+                  entry->clipped ? "true" : "false",
+                  entry->flip_h ? "true" : "false",
+                  entry->flip_v ? "true" : "false",
+                  (unsigned long long)entry->task_count,
+                  frame_count > 0.0 ? (double)entry->task_count / frame_count : 0.0,
+                  task_ratio,
+                  (unsigned long long)entry->submitted_pixels,
+                  frame_count > 0.0 ? (double)entry->submitted_pixels / frame_count : 0.0,
+                  pixel_ratio,
+                  (unsigned long long)entry->lookup_entries,
+                  frame_count > 0.0 ? (double)entry->lookup_entries / frame_count : 0.0,
+                  lookup_ratio,
+                  (unsigned long long)entry->sampled_calls,
+                  sampled_total_ms,
+                  sampled_mean_ms,
+                  sampled_ns_per_pixel);
+        if (include_non_integer_phase_fields) {
+            io_printf(io,
+                      ", \"sampled_lookup_x_total_ms\": %.4f, \"sampled_lookup_y_total_ms\": %.4f, "
+                      "\"sampled_pair_lookup_total_ms\": %.4f, \"sampled_reuse_telemetry_total_ms\": %.4f, "
+                      "\"sampled_row_raster_total_ms\": %.4f, \"same_source_reused_pixels_total\": %llu, "
+                      "\"same_source_reused_pixel_ratio\": %.6f, \"same_source_max_run_length\": %d",
+                      (double)entry->sampled_lookup_x_ns / 1e6,
+                      (double)entry->sampled_lookup_y_ns / 1e6,
+                      (double)entry->sampled_pair_lookup_ns / 1e6,
+                      (double)entry->sampled_reuse_telemetry_ns / 1e6,
+                      (double)entry->sampled_row_raster_ns / 1e6,
+                      (unsigned long long)entry->same_source_reused_pixels,
+                      same_source_reused_pixel_ratio,
+                      entry->same_source_max_run_length);
+        }
+        io_printf(io,
+                  ", \"source_rect_x_min\": %d, \"source_rect_x_max\": %d, \"source_rect_y_min\": %d, "
+                  "\"source_rect_y_max\": %d, \"source_rect_w_min\": %d, \"source_rect_w_max\": %d, "
+                  "\"source_rect_h_min\": %d, \"source_rect_h_max\": %d, \"visible_w_min\": %d, "
+                  "\"visible_w_max\": %d, \"visible_h_min\": %d, \"visible_h_max\": %d}%s\n",
+                  entry->source_x_min,
+                  entry->source_x_max,
+                  entry->source_y_min,
+                  entry->source_y_max,
+                  entry->source_w_min,
+                  entry->source_w_max,
+                  entry->source_h_min,
+                  entry->source_h_max,
+                  entry->visible_w_min,
+                  entry->visible_w_max,
+                  entry->visible_h_min,
+                  entry->visible_h_max,
+                  (i + 1) < family_count ? "," : "");
+    }
+    io_printf(io, "    ]");
 }
 
 static void perf_capture_write_summary(void) {
@@ -1956,6 +2203,13 @@ static void perf_capture_write_summary(void) {
     const double avg_dirty_hit_rate = perf_dirty_hit_rate_total / frame_count;
     const double full_copy_fallback_ratio = (double)perf_full_copy_fallback_frames / frame_count;
     const double fps = avg_frame_ms > 0.0 ? 1000.0 / avg_frame_ms : 0.0;
+    PerfCaptureWindowSummary first_window_summary = { 0 };
+    const int first_window_requested_frames =
+        perf_capture_recorded_frames < perf_capture_first_window_frame_limit ? perf_capture_recorded_frames
+                                                                             : perf_capture_first_window_frame_limit;
+    const bool have_first_window_summary =
+        summarize_perf_capture_window(0, first_window_requested_frames, &first_window_summary);
+    perf_capture_refresh_first_window_snapshot_logical_identity();
 
     double min_frame_ms = perf_samples[0].frame_time_ms;
     double max_frame_ms = perf_samples[0].frame_time_ms;
@@ -3476,7 +3730,7 @@ static void perf_capture_write_summary(void) {
     }
 
     io_printf(io, "{\n");
-    io_printf(io, "  \"schema_version\": 58,\n");
+    io_printf(io, "  \"schema_version\": 59,\n");
     io_printf(io, "  \"scene\": \"");
     io_write_json_escaped_string(io, perf_capture_scene_name);
     io_printf(io, "\",\n");
@@ -6630,6 +6884,49 @@ static void perf_capture_write_summary(void) {
     }
     io_printf(io, "    \"fps\": {\"mean\": %.4f}\n", fps);
     io_printf(io, "  },\n");
+    io_printf(io, "  \"capture_windows\": {\n");
+    io_printf(io, "    \"first_60_frames\": ");
+    if (have_first_window_summary) {
+        io_printf(io,
+                  "{\"frame_start\": 0, \"frame_count\": %d, \"fps\": {\"mean\": %.4f}, "
+                  "\"frame_time\": {\"mean_ms\": %.4f}, \"update\": {\"mean_ms\": %.4f}, "
+                  "\"render\": {\"mean_ms\": %.4f}, \"present\": {\"mean_ms\": %.4f}, "
+                  "\"software_frame_fast_non_integer_pixels\": {\"mean\": %.2f}, "
+                  "\"software_frame_generic_textured_pixels\": {\"mean\": %.2f}, "
+                  "\"software_frame_fast_non_integer_families\": ",
+                  first_window_summary.frame_count,
+                  first_window_summary.fps,
+                  first_window_summary.frame_time_ms,
+                  first_window_summary.update_ms,
+                  first_window_summary.render_ms,
+                  first_window_summary.present_ms,
+                  first_window_summary.software_frame_fast_non_integer_pixels,
+                  first_window_summary.software_frame_generic_textured_pixels);
+        io_write_perf_capture_window_textured_rect_families(
+            io,
+            perf_capture_first_window_snapshot.fast_non_integer_families,
+            perf_capture_first_window_snapshot.valid ? perf_capture_first_window_snapshot.fast_non_integer_family_count : 0,
+            perf_capture_first_window_snapshot.fast_non_integer_task_total,
+            perf_capture_first_window_snapshot.fast_non_integer_pixel_total,
+            perf_capture_first_window_snapshot.fast_non_integer_lookup_entry_total,
+            (double)first_window_summary.frame_count,
+            true);
+        io_printf(io, ",\n      \"software_frame_generic_textured_families\": ");
+        io_write_perf_capture_window_textured_rect_families(
+            io,
+            perf_capture_first_window_snapshot.generic_textured_families,
+            perf_capture_first_window_snapshot.valid ? perf_capture_first_window_snapshot.generic_textured_family_count
+                                                     : 0,
+            perf_capture_first_window_snapshot.generic_textured_task_total,
+            perf_capture_first_window_snapshot.generic_textured_pixel_total,
+            perf_capture_first_window_snapshot.generic_textured_lookup_entry_total,
+            (double)first_window_summary.frame_count,
+            false);
+        io_printf(io, "\n    }\n");
+    } else {
+        io_printf(io, "null\n");
+    }
+    io_printf(io, "  },\n");
     io_printf(io, "  \"samples\": [\n");
     for (int i = 0; i < perf_capture_recorded_frames; i++) {
         const PerfFrameSample* sample = &perf_samples[i];
@@ -8675,6 +8972,7 @@ void SDLApp_EndFrame() {
             perf_fbdev_path_frames[presenter_stats.path] += 1;
         }
         perf_capture_recorded_frames += 1;
+        perf_capture_snapshot_first_window_families_if_needed();
 
         if ((perf_capture_recorded_frames % 60) == 0 || (perf_capture_recorded_frames == perf_capture_target_frames)) {
             backend_logf("PERF frame=%d frame_time_ms=%.3f update_ms=%.3f render_ms=%.3f present_ms=%.3f present_readback_ms=%.3f present_convert_ms=%.3f present_copy_ms=%.3f present_clear_ms=%.3f present_path=%s readback_format=%s readback_size=%dx%d copy_bytes=%llu dirty_tiles=%d dirty_ratio=%.4f dirty_hit_rate=%.4f full_copy_fallback=%s render_tasks=%d rect_tasks=%d batch_runs=%d rect_runs=%d rect_multi_runs=%d rect_multi_run_tasks=%d rect_max_run=%d rect_hstrip_runs=%d rect_hstrip_tasks=%d rect_vstrip_runs=%d rect_vstrip_tasks=%d rect_run_links=%d rect_color_breaks=%d rect_flip_breaks=%d rect_flipped_tasks=%d textured_geometry_tasks=%d textured_geometry_recovered=%d textured_geometry_fallback=%d set_texture_calls=%d binding_reuse=%d cache_hits=%d cache_misses=%d cache_creates=%d texture_unlocks=%d palette_unlocks=%d texture_evictions=%d palette_evictions=%d destroy_queue=%d source_ppg=%d source_mtrans=%d source_ui=%d source_solid=%d source_unknown=%d software_frame_mode_enabled=%d software_frame_surface_ready=%d software_frame_active=%d software_frame_owned=%d software_frame_direct_present=%d software_frame_uploaded=%d software_frame_fallback=%d software_frame_candidate_tasks=%d software_frame_candidate_pixels=%llu software_frame_fallback_tasks=%d software_frame_fallback_pixels=%llu software_frame_fast_exact_tasks=%d software_frame_fast_exact_pixels=%llu software_frame_fast_exact_clipped_tasks=%d software_frame_fast_exact_flipped_tasks=%d software_frame_fast_exact_color_mod_tasks=%d software_frame_fast_exact_color_mod_pixels=%llu software_frame_fast_scaled_tasks=%d software_frame_fast_scaled_pixels=%llu software_frame_fast_non_integer_tasks=%d software_frame_fast_non_integer_pixels=%llu software_frame_fast_non_integer_lookup_entries=%llu software_frame_generic_textured_tasks=%d software_frame_generic_textured_pixels=%llu software_frame_fast_miss_color_mod=%d software_frame_fast_miss_non_integer=%d software_frame_fast_miss_non_integer_lookup_entries=%llu software_frame_fast_miss_non_integer_ge_256_tasks=%d software_frame_fast_miss_non_integer_ge_256_pixels=%llu software_frame_fast_miss_non_integer_ge_256_lookup_entries=%llu software_frame_fast_miss_non_integer_ge_1024_tasks=%d software_frame_fast_miss_non_integer_ge_1024_pixels=%llu software_frame_fast_miss_non_integer_max_pixels=%llu software_frame_fast_miss_scaled=%d software_frame_fast_miss_unsupported_flip=%d software_frame_fast_miss_source_bounds=%d software_frame_reason_alpha=%d software_frame_reason_color_mod=%d software_frame_reason_geometry=%d software_frame_reason_solid=%d hybrid_candidate_tasks=%d hybrid_candidate_pixels=%llu hybrid_fallback_tasks=%d hybrid_fallback_pixels=%llu hybrid_reason_clip=%d hybrid_reason_alpha=%d hybrid_reason_color_mod=%d hybrid_reason_flip=%d hybrid_reason_geometry=%d hybrid_reason_solid=%d sort=%s",

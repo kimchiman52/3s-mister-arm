@@ -652,6 +652,9 @@ void SDLGameRenderer_GetPerfCaptureGenericTexturedFamilyTotals(Uint64* out_task_
                                                                Uint64* out_pixel_total,
                                                                Uint64* out_lookup_entry_total,
                                                                int* out_family_count);
+void SDLGameRenderer_RefreshPerfCaptureTexturedRectFamilyLogicalIdentity(
+    SDLGameRenderer_PerfCaptureTexturedRectFamily* families,
+    int family_count);
 int SDLGameRenderer_GetPerfCaptureTexturedGeometryRecoveredFamilies(
     SDLGameRenderer_PerfCaptureTexturedGeometryFallbackFamily* out_families,
     int max_families);

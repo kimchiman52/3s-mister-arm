@@ -3919,3 +3919,21 @@ Scope guardrails:
     - close docs-only; the surviving trusted telemetry still points at broad fast-non-integer raster cost, and the fresh rerun path failed as measurement reliability rather than revealing a new safe runtime candidate
   - Next best candidate optimization:
     - do not reopen Loop `134` or Loop `135` unchanged; recover a reliable narrow first-activation family-attribution capture path, or equivalent first-`60` attribution evidence, before spending another runtime loop on Yun fast-non-integer work
+
+- 2026-03-21T22:03:00-0400
+  - Final commit hash:
+    - `PENDING_LOOP140_COMMIT`
+  - Bottleneck targeted:
+    - stable first-window family attribution for the native Yun SA3 first-visible activation burst, specifically whether the trusted `120`-frame `p1-super-art-active` path can export frame-`60` family ownership cleanly enough to re-rank the remaining gameplay hotspot
+  - Change summary:
+    - added schema `59` first-window capture export in `src/port/sdl/sdl_app.c`, including `capture_windows.first_60_frames` timing/pixel summaries plus first-window fast-non-integer and generic-textured family arrays
+    - accepted `Parfit`'s review finding that the frozen snapshot kept stale `logical_identity_*` metadata, then added a write-time logical-identity refresh helper in `src/port/sdl/sdl_game_renderer.c` / `include/port/sdl/sdl_game_renderer.h`
+    - rebuilt the telemetry ARM package in Docker `3sx-mister-build`, redeployed it through serialized MiSTer tooling, reran `probe` / bounded `smoke`, captured `loop140-yun-first-window-r2`, and inspected the remote backend/last-run logs
+  - Verification result summary:
+    - Docker telemetry ARM build/install/package plus `readelf` passed before and after the review fix; serialized `deploy`, `probe`, bounded `smoke`, and remote log inspection all passed on `192.168.1.171` with the same dummy/software + fbdev + native route and expected bounded `__RUNTIME_RC__=124` / `exit=143`
+    - `loop140-yun-first-window-r2` kept the trusted lane at `26.2401 FPS / 38.1096 / 9.6167 / 27.9516 / 0.5413 ms` overall and `21.4079 FPS / 46.7116 / 8.9094 / 37.2590 / 0.5433 ms` for the exported first `60` frames, with `software_frame_direct_present_ratio = 1.0000`, `software_frame_fallback_ratio = 0.0000`, and `present_readback.mean_ms = 0.0000`
+    - the first-window export now names the previously stale entries correctly (`texture_handle 65 / palette 528 -> ix 1141`, `texture_handle 50 / palette 9 -> ix 53`); the known first-window fast-non-integer leaders are `ix 81`, `ix 82`, `ix 43`, and `ix 1102`, while generic residue remains limited to `ix 80`
+  - Keep/rollback decision with reason:
+    - keep; the final diff is measurement-support only, the review-found telemetry bug was fixed and reverified on-device, and the stable first-window capture now exports the cold-burst family evidence this series was missing
+  - Next best candidate optimization:
+    - use the new first-window family export to audit a shared fast-non-integer runtime candidate across `ix 81` / `ix 82` / `ix 43` / `ix 1102`, and continue to treat the surviving `ix 80` generic residue as secondary on the Yun lane
