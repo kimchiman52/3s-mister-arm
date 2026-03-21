@@ -3701,3 +3701,21 @@ Scope guardrails:
     - keep; this reviewed measurement-support diff closes the missing source-alpha evidence gap without changing gameplay behavior, and it shows the remaining Yun hotspot is overwhelmingly opaque/transparent rather than a blend-heavy candidate
   - Next best candidate optimization:
     - if another helper-internal runtime loop is justified, target a narrow pair-only or endpoint-aware fast-non-integer specialization for the opaque/transparent-heavy `ppg-seqs 81/82` families first; do not prioritize blend-focused NEON/two-pass work now
+
+- 2026-03-21T11:35:00-0400
+  - Final commit hash:
+    - pending runtime commit for Loop 128; record it in the immediate follow-up docs hash pass
+  - Bottleneck targeted:
+    - native Yun SA3 first-visible activation on the direct `software_frame_exact` path, specifically whether a pair-only same-source duplicate specialization in the unmodulated non-integer helper can lower the hot `ppg-seqs 81/82` raster cost without reopening the rejected broader run-walk shape
+  - Change summary:
+    - added a narrow pair-only duplicate prepass in `src/port/sdl/software_frame_non_integer.c`: precompute one-step duplicate adjacency from `src_x_lookup` once per task, then let only the unmodulated non-integer loop consume adjacent duplicate pairs directly while singleton and odd-tail pixels stay on the original scalar path
+    - rebuilt the telemetry ARM package through the validated `/work-arm` Docker flow, redeployed it with serialized MiSTer tooling, and reran the deciding same-schema Yun capture twice plus an untouched Remy-left sanity lane
+    - independent review agent `Mendel` found no correctness or gameplay-risk issue; the only accepted caveat was to require a second same-schema Yun rerun before treating the gain as a keep
+  - Verification result summary:
+    - Docker telemetry ARM build/install/package plus `readelf` passed after switching away from the rejected wrong-target `/src` configure, and serialized `busy-status`, `health`, `deploy`, `probe`, and bounded `smoke` all passed on `192.168.1.171`
+    - same-schema Yun improved on both reruns versus reviewed baseline `loop127-yun-source-alpha-reviewed` (`41.2496 FPS / 24.2427 / 10.9975 / 12.7109 / 0.5343 ms`): `loop128-yun-pair-post` landed `42.0008 FPS / 23.8091 / 10.8791 / 12.3971 / 0.5328 ms`, and `loop128-yun-pair-rerun` landed `41.8043 FPS / 23.9210 / 10.9528 / 12.4499 / 0.5182 ms`; the active Genei window improved from `33.0254` to `34.3078` and `34.4432 FPS`, and the worst `60`-frame window improved from `28.9492` to `29.8469` and `30.4665 FPS`
+    - untouched native Remy-left sanity also stayed safe on pure `fast_exact` work at `55.5065 FPS / 18.0159 / 9.3398 / 8.1500 / 0.5261 ms`, with zero `fast_non_integer` and zero `generic_textured`
+  - Keep/rollback decision with reason:
+    - keep; the reland stayed route-identical, cleared review, and improved the user-priority Yun activation windows on two same-schema reruns without showing a guard-lane regression
+  - Next best candidate optimization:
+    - re-rank from this kept pair-only baseline before editing again; if the hotspot still centers on opaque `ppg-seqs 81/82`, try a similarly narrow endpoint-aware duplicate specialization next, otherwise pivot to the clipped `128x48` fast-non-integer family or the small `ix 80` generic-textured residue

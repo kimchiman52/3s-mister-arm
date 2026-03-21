@@ -154,6 +154,23 @@ static void populate_non_integer_lookup(int* out_lookup,
     }
 }
 
+static bool populate_same_source_pair_lookup(Uint8* out_pair_lookup, const int* src_x_lookup, int visible_w) {
+    if ((out_pair_lookup == NULL) || (src_x_lookup == NULL) || (visible_w <= 1)) {
+        return false;
+    }
+
+    SDL_memset(out_pair_lookup, 0, sizeof(*out_pair_lookup) * (size_t)visible_w);
+    bool has_pairs = false;
+    for (int col = 0; col < (visible_w - 1); col++) {
+        if (src_x_lookup[col] != src_x_lookup[col + 1]) {
+            continue;
+        }
+        out_pair_lookup[col] = 1u;
+        has_pairs = true;
+    }
+    return has_pairs;
+}
+
 bool SDLSoftwareFrame_RasterNonIntegerLookupARGB8888(const SDL_FRect* dst_rect,
                                                      const SDL_FRect* src_uv_rect,
                                                      SDL_FlipMode flip,
@@ -184,6 +201,7 @@ bool SDLSoftwareFrame_RasterNonIntegerLookupARGB8888(const SDL_FRect* dst_rect,
 
     int src_x_lookup[software_frame_lookup_max_width];
     int src_y_lookup[software_frame_lookup_max_height];
+    Uint8 same_source_pair_lookup[software_frame_lookup_max_width];
     populate_non_integer_lookup(src_x_lookup,
                                 visible_w,
                                 dst_x0,
@@ -202,6 +220,7 @@ bool SDLSoftwareFrame_RasterNonIntegerLookupARGB8888(const SDL_FRect* dst_rect,
                                 src_uv_rect->h * (float)src_surface->h,
                                 src_surface->h - 1,
                                 (flip & SDL_FLIP_VERTICAL) != 0);
+    const bool has_same_source_pairs = populate_same_source_pair_lookup(same_source_pair_lookup, src_x_lookup, visible_w);
 
     const Uint32* src_pixels = (const Uint32*)src_surface->pixels;
     Uint32* dst_pixels = (Uint32*)dst_surface->pixels;
@@ -217,17 +236,53 @@ bool SDLSoftwareFrame_RasterNonIntegerLookupARGB8888(const SDL_FRect* dst_rect,
                 src_x_lookup, visible_w, src_row, color, apply_color_mod, out_telemetry);
         }
         if (!apply_color_mod) {
-            for (int col = 0; col < visible_w; col++) {
+            if (!has_same_source_pairs) {
+                for (int col = 0; col < visible_w; col++) {
+                    const Uint32 src_pixel = src_row[src_x_lookup[col]];
+                    const Uint32 src_a = (src_pixel >> 24) & 0xFFu;
+                    if (src_a == 0u) {
+                        continue;
+                    }
+                    if (src_a == 0xFFu) {
+                        dst_row[col] = src_pixel;
+                        continue;
+                    }
+                    dst_row[col] = blend_argb8888(dst_row[col], src_pixel);
+                }
+                continue;
+            }
+
+            for (int col = 0; col < visible_w;) {
                 const Uint32 src_pixel = src_row[src_x_lookup[col]];
                 const Uint32 src_a = (src_pixel >> 24) & 0xFFu;
+                if (((col + 1) < visible_w) && same_source_pair_lookup[col]) {
+                    if (src_a == 0u) {
+                        col += 2;
+                        continue;
+                    }
+                    if (src_a == 0xFFu) {
+                        dst_row[col] = src_pixel;
+                        dst_row[col + 1] = src_pixel;
+                        col += 2;
+                        continue;
+                    }
+                    dst_row[col] = blend_argb8888(dst_row[col], src_pixel);
+                    dst_row[col + 1] = blend_argb8888(dst_row[col + 1], src_pixel);
+                    col += 2;
+                    continue;
+                }
+
                 if (src_a == 0u) {
+                    col += 1;
                     continue;
                 }
                 if (src_a == 0xFFu) {
                     dst_row[col] = src_pixel;
+                    col += 1;
                     continue;
                 }
                 dst_row[col] = blend_argb8888(dst_row[col], src_pixel);
+                col += 1;
             }
             continue;
         }
