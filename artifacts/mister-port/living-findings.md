@@ -3883,3 +3883,21 @@ Scope guardrails:
     - keep; the narrow row-mask-first reland materially improves the deciding Remy lane without reopening a broad compare-dirty cap bump, and the rerun native guard stayed inside the standing non-regression budget
   - Next best candidate optimization:
     - do not reopen broad compare-dirty cap bumps or treat the discarded stage-`11` false start as evidence. If the Remy track is revisited, add one more non-Remy compare-dirty validation lane first; otherwise move the next runtime slot back to a genuinely new Yun/effect gameplay candidate rather than retrying Loop 134 / 135 unchanged
+
+- 2026-03-21T14:13:26-0400
+  - Final commit hash:
+    - `73cbf8a3`
+  - Bottleneck targeted:
+    - native Yun SA3 first-visible activation attribution, specifically whether the automation can start capture exactly on `P1` super-active so the next gameplay loop ranks the cold burst from clean telemetry instead of pre-activation averages
+  - Change summary:
+    - added `p1-super-art-active` scripted wait support in `src/test/test_runner.c` and wired it through CLI validation/help in `src/main.c` and `tools/mister/perf-sampler.sh`
+    - extended `tools/mister/perf-sampler.sh` metadata normalization so `capture_start_test_phase` resolves to `p1-super-art-active` when the wait boundary would otherwise export the generic `game` phase
+    - rebuilt/deployed the telemetry package in Docker `3sx-mister-build`, reran serialized MiSTer gates, captured `loop138-yun-first-activation-r2`, and ran independent review agent `Carver`
+  - Verification result summary:
+    - Docker telemetry ARM build/install/package plus `readelf` passed; serialized `health`, `deploy`, `probe`, bounded `smoke`, and remote log inspection all passed on `192.168.1.171` with the same dummy/software + fbdev + native route and expected bounded `__RUNTIME_RC__=124` / `exit=143`
+    - `loop138-yun-first-activation-r2` verified the new boundary at `25.9696 FPS / 38.5065 / 9.7103 / 28.2512 / 0.5450 ms`, with `capture_start_test_phase = p1-super-art-active`, `p1_super_active_frames = 120`, `p1_super_first = 0`, `software_frame_direct_present_ratio = 1.0000`, `software_frame_fallback_ratio = 0.0000`, and `present_readback.mean_ms = 0.0000`
+    - the new first `60` frames landed at `21.0610 FPS / 47.4811 / 8.9466 / 37.9940 / 0.5406 ms` versus `29.7973 FPS / 33.5601 / 9.8838 / 23.1394 / 0.5369 ms` from the recovered `loop132` active window, while the last `60` recovered to `33.8618 FPS / 29.5318 / 10.4741 / 18.5083 / 0.5494 ms`; fast-non-integer pixels still dominate (`144324.93` vs `4871.39` generic)
+  - Keep/rollback decision with reason:
+    - keep; this is measurement-support only, it preserves gameplay/runtime behavior outside explicit perf-wait tooling, and it closes the first-activation blind spot the next native gameplay loop needs
+  - Next best candidate optimization:
+    - use the new cold-burst baseline to re-audit the small `generic_textured` `ppg-seqs ix 80 / texture 56` residue under the shared `384`-pixel gate before retrying any fast-non-integer unroll work
