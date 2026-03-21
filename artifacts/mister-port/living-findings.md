@@ -3901,3 +3901,21 @@ Scope guardrails:
     - keep; this is measurement-support only, it preserves gameplay/runtime behavior outside explicit perf-wait tooling, and it closes the first-activation blind spot the next native gameplay loop needs
   - Next best candidate optimization:
     - use the new cold-burst baseline to re-audit the small `generic_textured` `ppg-seqs ix 80 / texture 56` residue under the shared `384`-pixel gate before retrying any fast-non-integer unroll work
+
+- 2026-03-21T15:01:39-0400
+  - Final commit hash:
+    - pending
+  - Bottleneck targeted:
+    - native Yun SA3 first-visible activation rerank, specifically whether a fresh on-device `60`-frame `p1-super-art-active` capture exposes a new safe runtime target beyond the already-rejected Loop `134` generic admission and Loop `135` scalar unroll ideas
+  - Change summary:
+    - kept the runtime tree unchanged and closed this loop docs-only after current-tree research plus device verification failed to surface a new safe high-confidence Yun implementation
+    - rebuilt and redeployed the telemetry ARM package in Docker `3sx-mister-build`, then attempted two bounded native first-activation reruns (`loop139-yun-first60-head` and `loop139-yun-first60-head-r2`) through `tools/mister/perf-sampler.sh`
+    - used one-off `misterctl.sh exec` inspection/cleanup only because no purpose-built subcommand exists to tail the stuck plain runtime perf log or terminate the orphaned `--perf-capture` process safely
+  - Verification result summary:
+    - Docker telemetry ARM build/install/package plus `readelf` passed; serialized `busy-status`, `health`, `deploy`, `probe`, and bounded `smoke` all passed on `192.168.1.171` with the same dummy/software + fbdev + native route and expected bounded `__RUNTIME_RC__=124` / `exit=143`
+    - both fresh first-activation reruns failed before usable telemetry: neither produced a perf JSON nor any `PERF capture start` marker, and each left a stuck remote `3sx --perf-capture 60 ... --perf-wait-test-phase p1-super-art-active` process that required cleanup
+    - the target recovered cleanly after cleanup, so the reliable deciding evidence remains `loop138-yun-first-activation-r2`: first `60` frames at `21.0610 FPS / 47.4811 / 8.9466 / 37.9940 / 0.5406 ms` with `software_frame_fast_non_integer_pixels` still outweighing `generic_textured_pixels` by `32.6:1`
+  - Keep/rollback decision with reason:
+    - close docs-only; the surviving trusted telemetry still points at broad fast-non-integer raster cost, and the fresh rerun path failed as measurement reliability rather than revealing a new safe runtime candidate
+  - Next best candidate optimization:
+    - do not reopen Loop `134` or Loop `135` unchanged; recover a reliable narrow first-activation family-attribution capture path, or equivalent first-`60` attribution evidence, before spending another runtime loop on Yun fast-non-integer work
