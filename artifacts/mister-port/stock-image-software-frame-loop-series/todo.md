@@ -5871,7 +5871,7 @@
   - [x] that residual risk was already closed by the validated Docker rebuild plus on-device deploy/probe/smoke/capture flow above, so no additional code changes were required after review
 - [x] Keep/rollback decision:
   - [x] keep. This telemetry-only diff fixes the missing family-level sampled-time evidence without changing routing or gameplay behavior, and it disproves the clipped-family-first hypothesis that was still driving the next-runtime ambiguity
-- [ ] final commit hash:
-  - [ ] pending keep commit, then record the exact hash in the follow-up docs stamp commit for this loop
+- [x] final commit hash:
+  - [x] `454365e4` (`mister: add family sampled-time telemetry`)
 - [x] next best candidate:
   - [x] stop treating the clipped `57/394` and `77/320` residue as the default first-line runtime target. The next runtime loop should return to `docs/agent-memory/mister-perf-opportunities.md` opportunity `2` (`Horizontal Same-Source-Pixel Run Batching in Non-Integer Raster`) against the dominant unclipped `ppg-seqs 82/58/393` and `81/57/391` fast-non-integer families first, with clipped residue and `ix 80` generic families kept as secondary follow-ups if that safer batching idea is disproven

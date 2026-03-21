@@ -3771,3 +3771,21 @@ Scope guardrails:
     - reject and revert; this edge-only scalar partition preserves route/workload identity but does not reduce the real Yun bottleneck and adds slight deciding-lane cost
   - Next best candidate optimization:
     - do not retry this edge-partition helper shape now; return to the clipped Loop 129 residue, starting with `texture 57 / palette 394 / ix 81` and `texture 77 / palette 320`
+
+- 2026-03-21T09:06:34-0400
+  - Final commit hash:
+    - `454365e4`
+  - Bottleneck targeted:
+    - native Yun SA3 first-visible activation on the direct `software_frame_exact` path, specifically the missing family-level sampled-time attribution inside the remaining `fast_non_integer` and `generic_textured` software-frame residue
+  - Change summary:
+    - added per-family sampled-call, sampled-pixel, and sampled-time counters to the textured-rect family telemetry/export path and bumped the perf JSON schema to `56`
+    - fixed a same-cycle generic-textured bookkeeping bug by deferring generic family attribution until the generic raster sample completed, then rebuilt the telemetry ARM package with the validated cross-build Docker flow
+    - redeployed the reviewed telemetry package, reran the deciding Yun capture, and used the fixed export to re-rank the real family hotspots
+  - Verification result summary:
+    - Docker cross-build/install/package plus `readelf` passed in `3sx-mister-build`; serialized `busy-status`, `health`, `deploy`, `probe`, and bounded `smoke` all passed on `192.168.1.171`
+    - final deciding capture `loop132-yun-family-time-r2` stayed direct-presented at `41.3682 FPS / 24.1731 / 11.0128 / 12.6304 / 0.5300 ms`, with sampled `fast_non_integer = 1280.0776 ms` and sampled `generic_textured = 120.9596 ms`
+    - the fixed family export now reports nonzero generic sampled time and shows the dominant fast-non-integer sampled families are still unclipped `ppg-seqs ix 82 texture 58 / palette 393 = 59.9031 ms` and unclipped `ppg-seqs ix 81 texture 57 / palette 391 = 56.6173 ms`, ahead of clipped `77 / 320 = 21.0560 ms` and the `57 / 394` variants
+  - Keep/rollback decision with reason:
+    - keep; this telemetry-only diff closes the missing family-time evidence gap without changing routing or gameplay behavior, and it disproves the clipped-family-first guess that was still steering the next runtime hypothesis
+  - Next best candidate optimization:
+    - return to opportunity `2` from `docs/agent-memory/mister-perf-opportunities.md` against the dominant unclipped `ppg-seqs 82/58/393` and `81/57/391` fast-non-integer families before retrying clipped-residue-first or generic-textured work
