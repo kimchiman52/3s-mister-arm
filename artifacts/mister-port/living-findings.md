@@ -3864,3 +3864,22 @@ Scope guardrails:
     - keep; this telemetry-only diff closes the remaining Remy compare-dirty shape blind spot without changing gameplay or refresh policy, and it shows that geometry tightening alone is unlikely to unlock the seq-`82` oversized tail under the kept `3/8` total-plan cap
   - Next best candidate optimization:
     - do not spend a runtime loop on row-shape-only compare-dirty tightening or a global cap bump now; if Remy-left is revisited, start with a narrowly bounded row-mask plus component-aware compare-dirty admission audit for seq `82`, because the blocking excess lives in the combined multi-rect total while each single component already stays below the kept `3/8` budget
+
+- 2026-03-21T13:40:47-0400
+  - Final commit hash:
+    - `bd5b9161`
+  - Bottleneck targeted:
+    - native Remy-left exact/refresh residue, specifically whether hot compare-dirty family `ppg-seqs ix 82 / texture 58` can safely switch from the coarse bbox-derived admission test to the already-proven row-mask plan plus a one-tile combined-budget slack for the measured two-component tail
+  - Change summary:
+    - re-enabled runtime row-mask accumulation on the compare-dirty path and made `classify_compare_dirty_rect_refresh_decision(...)` try the row-mask plan first, keeping only the narrow relaxed exception (`2` rects, each under the kept cap, total plan <= `3/8 + 1024`)
+    - rebuilt and redeployed the telemetry ARM package in Docker `3sx-mister-build`, discarded one invalid stage-`11` false start (`loop137-remy-row-mask-admit`), and kept the real stage-`19` deciding capture `loop137-remy-row-mask-admit-r2` plus idle guard rerun `loop137-control-guard-r2`
+    - independent review agent `Euler` returned no actionable findings; only a non-blocking note that future broadening should add another non-Remy compare-dirty guard lane
+  - Verification result summary:
+    - Docker telemetry ARM build/install/package plus `readelf` passed; serialized `busy-status`, `health`, `deploy`, `probe`, and bounded `smoke` all passed on `192.168.1.171` with the same dummy/software + fbdev + native route and expected bounded `exit=143`
+    - discard `loop137-remy-row-mask-admit` as a false start: it accidentally used the preset default `stage_id = 11`, so it is not comparable to the trusted stage-`19` Remy lane
+    - deciding stage-`19` Remy capture `loop137-remy-row-mask-admit-r2` improved `54.5195 -> 57.9870 FPS`, with `frame.mean_ms 18.3421 -> 17.2452`, `update.mean_ms 9.6167 -> 8.4096`, and `software_surface_cache_refresh.mean_ms 4.4981 -> 3.4062`; hot seq-`82` partial admission moved `124/614 -> 608/614` (`0.201954 -> 0.990228`) and `full_refresh_oversized_dirty_rect_attempts_total` fell `484 -> 0`
+    - exact-path guard rerun `loop137-control-guard-r2` stayed on direct `software_frame_exact` at `83.8892 FPS / 11.9205 / 3.8684 / 7.5028 / 0.5493 ms`, a `-0.96%` drift versus `loop136-control-guard` at `84.7060 FPS / 11.8055 / 3.8895 / 7.4087 / 0.5073 ms`
+  - Keep/rollback decision with reason:
+    - keep; the narrow row-mask-first reland materially improves the deciding Remy lane without reopening a broad compare-dirty cap bump, and the rerun native guard stayed inside the standing non-regression budget
+  - Next best candidate optimization:
+    - do not reopen broad compare-dirty cap bumps or treat the discarded stage-`11` false start as evidence. If the Remy track is revisited, add one more non-Remy compare-dirty validation lane first; otherwise move the next runtime slot back to a genuinely new Yun/effect gameplay candidate rather than retrying Loop 134 / 135 unchanged
