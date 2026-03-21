@@ -195,7 +195,7 @@ always_ff @(posedge clk) begin
 
 			// Divide U*sin(wt) and V*cos(wt) to fit results to 8 bit
 			phase[3].u <= $signed(phase[2].u[20:9]) + $signed(phase[2].u[20:10]) + $signed(phase[2].u[20:14]);
-			phase[3].v <= $signed(phase[2].v[20:9]) + $signed(phase[2].v[20:10]) + $signed(phase[2].u[20:14]);
+			phase[3].v <= $signed(phase[2].v[20:9]) + $signed(phase[2].v[20:10]) + $signed(phase[2].v[20:14]);
 		end
 
 		// Stop the colorburst timer as its only needed for the initial pulse
@@ -230,4 +230,3 @@ end
 assign dout = {C, Y, 8'd0};
 
 endmodule
-
