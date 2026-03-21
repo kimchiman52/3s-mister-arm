@@ -3994,7 +3994,7 @@ Scope guardrails:
 
 - 2026-03-21T18:31:04-0400
   - Final commit hash:
-    - `PENDING`
+    - `dbaf1df8`
   - Bottleneck targeted:
     - missing cross-family shared-shape attribution for the trusted native Yun SA3 onset families, specifically whether fragmented `ix 81 / 82 / 43 / 1102` work collapses into a small runtime-relevant shared-shape set once texture/palette identity is ignored
   - Change summary:

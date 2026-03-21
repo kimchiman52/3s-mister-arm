@@ -5447,7 +5447,7 @@
   - [x] no runtime follow-up survived review because the candidate had already been fully reverted after the native keep matrix failed
 - [x] Keep/rollback decision:
   - [x] reject and revert. This full-refresh unchecked SDL blit reland made every deciding native gameplay lane slower while leaving the same direct native exact path in place, so it is not a credible runtime keep on the current native gameplay tree
-- [ ] final commit hash:
+- [x] final commit hash:
   - [x] `0890f7b4`
 - [x] next best candidate:
   - [x] do not retry unchecked full-refresh SDL blit relands or similar full-refresh API swaps now. Unless a future loop can prove a correctness-safe partial-refresh guard for the hot `ppg-seqs 80/81/82` textures, re-rank a different measured native gameplay bottleneck instead of spending more loop budget on this blocked refresh lane
@@ -6309,6 +6309,6 @@
 - [x] Keep/rollback decision:
   - [x] keep. The diff is measurement-support only, it built cleanly, probe/smoke plus two on-device captures verified schema `62` on the current tree, and the failed deciding attempt hung before `PERF capture start:` in the untouched perf-wait harness rather than inside the new export path; keep the shared-shape telemetry so the next loop can reuse it once a reliable non-integer Yun onset capture is recovered, while treating this loop's on-device export verification as partial rather than complete
 - [ ] final commit hash:
-  - [ ] pending
+  - [x] `dbaf1df8` (`mister: add loop 144 shared-shape telemetry`)
 - [x] next best candidate:
   - [x] do not spend the next Yun gameplay loop on another runtime reland yet; first recover a reliable `p1-super-art-active` or equivalent first-visible Yun capture that actually reaches `software_frame_fast_non_integer > 0` under `schema_version = 62`, then use the new shared-shape export to decide whether any broader cross-family helper specialization is evidence-backed
