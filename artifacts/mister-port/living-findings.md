@@ -4031,7 +4031,7 @@ Scope guardrails:
 
 - 2026-03-21T19:34:17-0400
   - Final commit hash:
-    - pending local commit
+    - `61b78ff9`
   - Bottleneck targeted:
     - deciding whether the fresh current-tree Remy rerun exposes any new safe compare-dirty runtime lever, or whether the correct closeout is a docs-only rerank after retiring the stale March native queue
   - Change summary:

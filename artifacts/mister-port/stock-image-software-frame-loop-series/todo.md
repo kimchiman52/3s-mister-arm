@@ -6378,7 +6378,7 @@
   - [x] no other actionable accuracy, rules, or citation issues remained; the review spot-check matched the new Loop `145` / `146` capture names and recorded metrics against the checked-in perf JSON
 - [x] Keep/rollback decision:
   - [x] keep the runtime tree unchanged and close the loop as docs-only research. The fresh Remy rerun confirms the compare-dirty residue is stable and tiny, while the kept Loop `145` Yun data still does not justify another bounded row-walk reland
-- [ ] final commit hash:
-  - [ ] pending local commit
+- [x] final commit hash:
+  - [x] `61b78ff9` (`docs: close loop 146 native rerank`)
 - [x] next best candidate:
   - [x] do not reopen the rejected Loop `134` admission, Loop `135` scalar unroll, Loop `142` pair-density gate, or another broad compare-dirty cap reland unchanged. Only revisit native runtime code after either a broader clustered row-walk specialization is proven from current schema-`62` Yun data or a newly measured gameplay lane clearly outranks both current queues
