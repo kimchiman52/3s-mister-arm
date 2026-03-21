@@ -6308,7 +6308,7 @@
   - [x] independent diff review found no concrete code defect in the new aggregation/export path; the only surviving concern was the already-recorded verification gap that the successful on-device captures never reached a non-zero shared-shape lane
 - [x] Keep/rollback decision:
   - [x] keep. The diff is measurement-support only, it built cleanly, probe/smoke plus two on-device captures verified schema `62` on the current tree, and the failed deciding attempt hung before `PERF capture start:` in the untouched perf-wait harness rather than inside the new export path; keep the shared-shape telemetry so the next loop can reuse it once a reliable non-integer Yun onset capture is recovered, while treating this loop's on-device export verification as partial rather than complete
-- [ ] final commit hash:
+- [x] final commit hash:
   - [x] `dbaf1df8` (`mister: add loop 144 shared-shape telemetry`)
 - [x] next best candidate:
   - [x] do not spend the next Yun gameplay loop on another runtime reland yet; first recover a reliable `p1-super-art-active` or equivalent first-visible Yun capture that actually reaches `software_frame_fast_non_integer > 0` under `schema_version = 62`, then use the new shared-shape export to decide whether any broader cross-family helper specialization is evidence-backed
