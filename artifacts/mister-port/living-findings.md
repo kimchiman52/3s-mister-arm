@@ -3754,3 +3754,20 @@ Scope guardrails:
     - reject and revert; this prepass-removal shape preserves route/workload identity but raises the deciding Yun raster cost instead of lowering it
   - Next best candidate optimization:
     - do not retry pair-prepass removal now; return to the measured clipped residue from Loop 129, starting with the clipped `texture 57 / palette 394 / ix 81` family and the clipped `128x48` `texture 77 / palette 320` family before reopening helper-internal duplicate control-flow work
+
+- 2026-03-21T08:12:07-0400
+  - Final commit hash:
+    - pending current loop closure commit
+  - Bottleneck targeted:
+    - native Yun SA3 first-visible activation on the direct `software_frame_exact` path, specifically whether the kept pair-only helper can gain anything by skipping duplicate-pair checks on leading and trailing known-non-pair columns
+  - Change summary:
+    - tried a narrow runtime reland only in `src/port/sdl/software_frame_non_integer.c`, partitioning leading/trailing scalar spans around the existing pair-bitmap interior loop
+    - rebuilt the telemetry ARM package in Docker `3sx-mister-build`, redeployed it with serialized MiSTer tooling, reran the deciding Yun lane plus an exact-path guard, and reviewed the diff with independent agent `Linnaeus`
+    - fully reverted the runtime file after verification, leaving the final tree docs-only for this loop closure
+  - Verification result summary:
+    - Docker telemetry ARM build/install/package plus `readelf` passed; serialized `health`, `deploy`, `probe`, bounded `smoke`, and remote log inspection all passed on `192.168.1.171` with the same dummy/software + fbdev + native route and expected bounded `exit=143`
+    - deciding Yun capture `loop131-yun-edge-partition` regressed slightly versus `loop129-base-yun` (`41.9787` vs `42.0508 FPS`, `23.8216` vs `23.7808 ms`, `12.4922` vs `12.3832 render ms`) while `software_frame_fast_non_integer` and `generic_textured` means stayed flat; guard `loop131-remy-left-guard` stayed safe on pure `software_frame_exact` at `88.4789 FPS`
+  - Keep/rollback decision with reason:
+    - reject and revert; this edge-only scalar partition preserves route/workload identity but does not reduce the real Yun bottleneck and adds slight deciding-lane cost
+  - Next best candidate optimization:
+    - do not retry this edge-partition helper shape now; return to the clipped Loop 129 residue, starting with `texture 57 / palette 394 / ix 81` and `texture 77 / palette 320`
