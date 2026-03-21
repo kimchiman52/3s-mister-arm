@@ -4009,3 +4009,21 @@ Scope guardrails:
     - keep; the diff is measurement-support only and the successful device runs verified the schema `62` tree around it, while the failed deciding attempt hung before the untouched perf-wait harness ever started capture, so the new export remains worth keeping despite only partial on-device exercise this cycle
   - Next best candidate optimization:
     - recover a reliable `p1-super-art-active` or equivalent first-visible Yun capture that actually reaches non-zero `software_frame_fast_non_integer` under schema `62`, then use the kept shared-shape export to decide whether any broader cross-family helper specialization is evidence-backed
+
+- 2026-03-21T20:55:00-0400
+  - Final commit hash:
+    - `TBD_AFTER_LOOP145_DOCS_COMMIT`
+  - Bottleneck targeted:
+    - deciding whether the recovered schema-`62` native Yun SA3 first-visible onset capture now isolates any safe incremental shared-shape reland, or whether the surviving fast-non-integer work remains too diffuse for another helper-local runtime change
+  - Change summary:
+    - rebuilt/install-packaged the telemetry ARM flavor in Docker `3sx-mister-build`, redeployed untouched `HEAD`, and recovered the deciding on-device shared-shape capture as `loop145-yun-shared-shapes-repro-r1`
+    - revalidated the exact/native control lane with `loop145-remy-left-guard-r1`, confirming zero `fast_non_integer` and zero `generic_textured` on the same schema-`62` tree
+    - closed the loop as docs-only research because the new shared-shape export shows a clustered onset cohort, not a single narrow helper lever worth relanding safely
+  - Verification result summary:
+    - Docker telemetry ARM build/install/package plus `readelf` passed, and serialized `lock-status`, `busy-status`, `health`, `deploy`, `probe`, and bounded `smoke` all passed on `192.168.1.171`
+    - `loop145-yun-shared-shapes-repro-r1` succeeded at `25.0873 FPS / 39.8609 / 9.5879 / 29.7127 / 0.5603 ms` overall and `20.9510 FPS / 47.7304 / 11.2303 / 35.9909 / 0.5093 ms` for the first `8` frames, with direct present, zero fallback/readback, and non-zero shared-shape export
+    - `loop145-remy-left-guard-r1` stayed exact/direct at `89.4683 FPS / 11.1771 / 4.1851 / 6.4658 / 0.5262 ms`, while the top shared-shape bucket on the deciding lane (`32x32 -> 34x34`) covered only `9.3113 ms` (`6.33%`) and the top ten covered `41.6015 ms` (`28.27%`) of first-`8` fast-non-integer sampled time
+  - Keep/rollback decision with reason:
+    - keep the runtime tree unchanged and close docs-only; the recovered capture removes the Loop `144` verification gap, but the surviving onset work is still spread across adjacent shared-shape buckets inside the existing row-walk helper rather than a new safe incremental reland target
+  - Next best candidate optimization:
+    - do not retry the rejected Yun micro-admission/unroll/pair-gate ideas; unless a broader clustered row-walk specialization is proven from the current schema-`62` data before runtime edits begin, pivot to the separate Remy compare-dirty residue track instead
