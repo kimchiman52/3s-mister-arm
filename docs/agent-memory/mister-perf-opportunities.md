@@ -108,6 +108,45 @@ Use this order unless newer trusted captures contradict it:
 4. Keep row-dedup ideas measurement-only, and leave presenter-native, dual-core, and broader
    run-batching ideas off the immediate queue.
 
+## Post-Loop-146 Validation Addendum
+
+This addendum overrides the older idea-ranking sections below for the current `mister-dev` native
+queue. Those sections remain useful as historical research context, but they should not be treated
+as the active next-step list without fresh validation.
+
+- The `ix 80 / texture 56` generic-residue idea is still the same already-rejected family, not a
+  new narrower admission target. On the recovered trusted onset repro
+  `loop145-yun-shared-shapes-repro-r1`, the first-`8` generic families stay on
+  `texture_handle = 56 / logical_ix_num = 80` with the same `8x8..16x16` or `16x16` source-rect
+  shapes expanding to only `9..20` or `17..20` visible spans. That is the same family shape Loop
+  `134` already rejected, so do not reland it unchanged.
+
+- The current `384`-pixel gate is still exactly where the surviving generic residue sits. Current
+  code keeps `software_frame_non_integer_lookup_threshold_pixels = 384`, and the trusted onset
+  capture still shows the same small under-threshold `ix 80` cohort rather than a new isolated miss
+  that would justify another policy change or helper-local admission reland.
+
+- The full-telemetry phase split does not revive the old lookup-generation or pair-bitmap queue.
+  On `loop145-yun-shared-shapes-repro-r1`, `software_frame_fast_non_integer_phase_sampling`
+  reports only `82.7123 ms` total for `lookup_x + lookup_y + pair_lookup` across
+  `1319.9161 ms` family-sampled fast-non-integer time. `row_raster` contributes `468.5720 ms`,
+  and the largest measured slice (`737.9976 ms`) is the extended-stats reuse-telemetry
+  instrumentation itself, not player-runtime work. Do not use that capture-only phase split to
+  justify same-source batching, lookup-generation, or pair-setup runtime edits without a lower-
+  overhead proof.
+
+- Remy-left root-cause measurement is closed on the current tree. The aligned deciding rerun
+  `loop146-remy-rerank-r2` stayed exact/direct at `58.0531 FPS / 17.2256 / 8.4721 / 8.2280 /
+  0.5255 ms`, with zero `fast_non_integer`, zero `generic_textured`, and only the tiny stable
+  `13 / 10 / 6` full-refresh tail on `ix 80 / 81 / 82`. Do not reopen compare-dirty caps without
+  new evidence that this tail grew or the lane stopped staying exact/direct.
+
+- The current Yun onset cluster still points at a broader row-walk specialization problem, not a
+  safe bounded reland. The top shared shape on `loop145` still covers only `6.33%` of first-`8`
+  sampled fast-non-integer time, the top four adjacent `32x32 -> 34/35/36/37` buckets only
+  `17.96%`, and the top ten only `28.27%`. Another helper-local reland would still be guessing at
+  a broader clustered redesign rather than acting on a new measured narrow lever.
+
 ---
 
 ## Current State
@@ -577,18 +616,21 @@ Use it as the current truth when the original text and this addendum disagree.
 
 If future work is ranked from the validated state above, the strongest sequence is:
 
-1. Treat Loop 133 as attribution support only and do not spend more native loop budget on
-   lookup-generation or pair-bitmap setup work.
-2. Audit the small `generic_textured` `ppg-seqs ix 80 / texture 56` residue that sits just under
-   the current shared `384`-pixel non-integer gate, and prefer a narrow micro-lookup admission over
-   another broad threshold drop.
-3. Test a careful scalar `4x` unroll in the hot non-integer row-walk gather loop, preserving the
-   kept pair-only reuse fast path.
-4. Keep Remy-left on a separate compare-dirty `ppg-seqs 81/82` residue track rather than assuming
-   the Genei runtime candidates will help it.
-5. Keep row-dedup ideas measurement-only until a trusted Yun capture proves a real duplicate-`src_y`
-   cohort, and do not spend the next native loop on presenter-side work, dual-core threading, or
-   broader run batching beyond the kept pair path.
+1. Do not start a new native runtime reland on current `mister-dev` without new evidence. The old
+   micro-admission, scalar-unroll, pair-density, and broad compare-dirty-cap ideas are all already
+   rejected or superseded on the current tree.
+2. If another native loop is required, first add or recover only the narrowest measurement that can
+   prove a broader clustered row-walk specialization across the adjacent `32x32 -> 34/35/36/37`
+   Yun onset cohort while separating extended-stats overhead from player-runtime cost.
+3. Keep the small `ix 80 / texture 56` generic residue closed unless fresh trusted captures
+   materially diverge from the Loop `132` / `145` family shape or isolate a genuinely narrower
+   cohort than the already-rejected Loop `134` admission.
+4. Keep Remy-left on compare-dirty residue watch only, and do not broaden caps again unless new
+   telemetry shows the remaining full-refresh tail is materially larger or the lane stops staying
+   exact/direct.
+5. Leave presenter-native work, broader same-source batching beyond pairs, dual-core threading,
+   ThinLTO, NEON blend work, and row-dedup relands off the immediate native queue until a new
+   measurement pass re-ranks them.
 
 ### Primary Sources Consulted For This Addendum
 

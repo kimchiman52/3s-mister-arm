@@ -4046,3 +4046,20 @@ Scope guardrails:
     - keep the runtime tree unchanged and close docs-only; the aligned Remy rerun confirms the remaining compare-dirty tail is stable and tiny, while the kept Loop `145` Yun shared-shape data still does not justify a new bounded row-walk reland
   - Next best candidate optimization:
     - do not reopen the rejected Loop `134` admission, Loop `135` scalar unroll, Loop `142` pair-density gate, or another broad compare-dirty cap reland unchanged; only revisit native runtime code after either a broader clustered row-walk specialization is proven from current schema-`62` Yun data or a newly measured gameplay lane clearly outranks both current queues
+
+- 2026-03-21T19:48:00-0400
+  - Final commit hash:
+    - `TBD`
+  - Bottleneck targeted:
+    - deciding whether the remaining native Yun / Remy backlog on current `mister-dev` still supports any safe runtime reland, or whether the honest closeout is to retire the stale March queue and stop treating already-rejected ideas as active
+  - Change summary:
+    - audited the current non-integer and compare-dirty code paths against trusted `loop145` / `loop146` telemetry instead of opening another runtime branch
+    - recorded that the surviving `ix 80 / texture 56` generic residue still matches the already-rejected Loop `134` admission family, while the shared-shape onset cohort still spreads across adjacent `32x32 -> 34/35/36/37` buckets rather than a new bounded helper lever
+    - updated the checklist and backlog memo so future native loops treat the stale March micro-admission / scalar-unroll queue as historical and pivot to narrower measurement before more runtime code
+  - Verification result summary:
+    - no new Docker build or MiSTer run; this closeout is docs-only and relies on committed trusted telemetry (`loop145-yun-shared-shapes-repro-r1`, `loop146-remy-rerank-r2`, and `loop132-yun-family-time-r2`) plus current code inspection of `src/port/sdl/sdl_game_renderer.c` and `src/port/sdl/software_frame_non_integer.c`
+    - current-tree audit confirms the active native queue still lacks a safe runtime lever: lookup/pair setup remains a small slice of sampled non-integer time, the largest sampled phase slice is extended-stats reuse telemetry rather than player-runtime work, and Remy remains exact/direct with only the tiny stable `13 / 10 / 6` full-refresh tail
+  - Keep/rollback decision with reason:
+    - keep the runtime tree unchanged and close docs-only; another native runtime reland would reopen unchanged rejected ideas without new evidence that they now beat the current tree
+  - Next best candidate optimization:
+    - if the native queue is revisited, first prove a broader clustered row-walk specialization with narrower measurement that separates extended-stats overhead from runtime cost, or re-rank a different gameplay lane before changing renderer code
