@@ -6198,5 +6198,7 @@
   - [x] the only residual review risk was runtime confirmation that the device would actually emit `schema_version = 60` plus a populated `capture_windows.first_8_frames` object; that risk is now closed by the kept `loop141-yun-first8-window-r1` capture
 - [x] Keep/rollback decision:
   - [x] keep. The final diff is measurement-support only, it passed Docker plus on-device verification, and it materially narrows the first-visible Yun onset family ownership without changing gameplay behavior
+- [x] final commit hash:
+  - [x] `e94a57d3` (`mister: export loop 141 first-burst telemetry`)
 - [x] next best candidate:
   - [x] do not reopen the rejected Loop `134` generic `ix 80 / texture 56` admission or Loop `135` scalar `4x` unroll unchanged. The next runtime audit should target the shared fast-non-integer `ppg-seqs ix 81 / ix 82` onset lane first, because those two families alone account for about `73.2862 ms` of the first-`8` sampled fast time while `ix 80` generic residue remains secondary and the larger unknown share does not outrank the now-confirmed `ix 81 / 82` lead

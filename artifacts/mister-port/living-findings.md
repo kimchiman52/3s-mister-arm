@@ -3937,3 +3937,21 @@ Scope guardrails:
     - keep; the final diff is measurement-support only, the review-found telemetry bug was fixed and reverified on-device, and the stable first-window capture now exports the cold-burst family evidence this series was missing
   - Next best candidate optimization:
     - use the new first-window family export to audit a shared fast-non-integer runtime candidate across `ix 81` / `ix 82` / `ix 43` / `ix 1102`, and continue to treat the surviving `ix 80` generic residue as secondary on the Yun lane
+
+- 2026-03-21T16:29:25-0400
+  - Final commit hash:
+    - `e94a57d3`
+  - Bottleneck targeted:
+    - frame-`8` onset attribution for the native Yun SA3 first-visible activation burst, specifically whether the trusted `120`-frame `p1-super-art-active` path can rank the real first-visible families more narrowly than the broader first-`60` export
+  - Change summary:
+    - added schema `60` onset-window telemetry in `src/port/sdl/sdl_app.c`, exporting `capture_windows.first_8_frames` alongside the existing `first_60_frames` family snapshot and summary data
+    - fixed one refactor slip before the kept build by switching the frame-end hook to the renamed `perf_capture_snapshot_window_families_if_needed()` helper
+    - rebuilt the telemetry ARM package in Docker `3sx-mister-build`, redeployed it through serialized MiSTer tooling, reran `busy-status` / `health` / `probe` / bounded `smoke`, captured `loop141-yun-first8-window-r1`, and completed an independent review pass with no findings
+  - Verification result summary:
+    - Docker telemetry ARM build/install/package plus `readelf` passed; serialized `busy-status`, `health`, `deploy`, `probe`, and bounded `smoke` all passed on `192.168.1.171` with the same dummy/software + fbdev + native route and expected bounded `__RUNTIME_RC__=124` / `exit=143`
+    - `loop141-yun-first8-window-r1` verified `schema_version = 60` and a populated `capture_windows.first_8_frames` object on the trusted lane at `26.1464 FPS / 38.2462 / 9.5054 / 28.2127 / 0.5280 ms` overall and `22.0308 FPS / 45.3910 / 10.5527 / 34.3348 / 0.5034 ms` for the first `8` frames, with `software_frame_direct_present_ratio = 1.0000`, `software_frame_fallback_ratio = 0.0000`, and `present_readback.mean_ms = 0.0000`
+    - the new onset export is narrower than the old first-`60` mix: aggregated first-`8` fast-non-integer time is led by `ix 81 = 49.9220 ms` and `ix 82 = 23.3642 ms`, while generic residue stays secondary at `ix 80 = 9.1457 ms`; the broader first-`60` window remains slightly slower overall (`21.2699 FPS`), so the cold slowdown extends beyond frame `8`
+  - Keep/rollback decision with reason:
+    - keep; this is measurement-support only, it passed Docker plus on-device verification, and it closes the remaining first-visible onset attribution gap without changing gameplay behavior
+  - Next best candidate optimization:
+    - do not reopen Loop `134` or Loop `135` unchanged; the next runtime audit should target the shared fast-non-integer `ix 81 / ix 82` onset lane first, with `ix 80` generic residue still treated as secondary
