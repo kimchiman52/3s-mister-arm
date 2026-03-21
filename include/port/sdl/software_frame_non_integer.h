@@ -14,6 +14,13 @@ typedef struct SDLSoftwareFrame_NonIntegerTelemetry {
     Uint64 same_source_opaque_reused_pixels;
     Uint64 same_source_transparent_reused_pixels;
     Uint64 same_source_blended_reused_pixels;
+    Uint64 same_source_pair_runs;
+    Uint64 same_source_pair_leading_singleton_pixels;
+    Uint64 same_source_pair_trailing_singleton_pixels;
+    Uint64 same_source_pair_gap_0_runs;
+    Uint64 same_source_pair_gap_1_runs;
+    Uint64 same_source_pair_gap_2_runs;
+    Uint64 same_source_pair_gap_3_plus_runs;
     int same_source_max_run_length;
 } SDLSoftwareFrame_NonIntegerTelemetry;
 

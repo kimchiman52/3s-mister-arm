@@ -89,6 +89,8 @@ static void note_non_integer_row_reuse_telemetry(const int* src_x_lookup,
         return;
     }
 
+    bool saw_pair = false;
+    int previous_pair_end = 0;
     for (int col = 0; col < visible_w;) {
         const int src_col = src_x_lookup[col];
         int run_end = col + 1;
@@ -129,7 +131,31 @@ static void note_non_integer_row_reuse_telemetry(const int* src_x_lookup,
             }
         }
 
+        if (run_length == 2) {
+            telemetry->same_source_pair_runs += 1u;
+            if (!saw_pair) {
+                telemetry->same_source_pair_leading_singleton_pixels += (Uint64)col;
+                saw_pair = true;
+            } else {
+                const int singleton_gap = col - previous_pair_end;
+                if (singleton_gap <= 0) {
+                    telemetry->same_source_pair_gap_0_runs += 1u;
+                } else if (singleton_gap == 1) {
+                    telemetry->same_source_pair_gap_1_runs += 1u;
+                } else if (singleton_gap == 2) {
+                    telemetry->same_source_pair_gap_2_runs += 1u;
+                } else {
+                    telemetry->same_source_pair_gap_3_plus_runs += 1u;
+                }
+            }
+            previous_pair_end = run_end;
+        }
+
         col = run_end;
+    }
+
+    if (saw_pair && (previous_pair_end < visible_w)) {
+        telemetry->same_source_pair_trailing_singleton_pixels += (Uint64)(visible_w - previous_pair_end);
     }
 }
 

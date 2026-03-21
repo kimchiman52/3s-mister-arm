@@ -3459,7 +3459,7 @@ static void perf_capture_write_summary(void) {
     }
 
     io_printf(io, "{\n");
-    io_printf(io, "  \"schema_version\": 53,\n");
+    io_printf(io, "  \"schema_version\": 54,\n");
     io_printf(io, "  \"scene\": \"");
     io_write_json_escaped_string(io, perf_capture_scene_name);
     io_printf(io, "\",\n");
@@ -4886,6 +4886,10 @@ static void perf_capture_write_summary(void) {
             const double same_source_reused_pixel_ratio =
                 entry->submitted_pixels > 0 ? (double)entry->same_source_reused_pixels / (double)entry->submitted_pixels
                                             : 0.0;
+            const double same_source_pair_leading_singleton_pixels_mean =
+                (double)entry->same_source_pair_leading_singleton_pixels / frame_count;
+            const double same_source_pair_trailing_singleton_pixels_mean =
+                (double)entry->same_source_pair_trailing_singleton_pixels / frame_count;
             io_printf(io,
                       "      {\"texture_handle\": %d, \"palette_handle\": %d, "
                       "\"source_format\": \"%s\", \"source_width\": %d, \"source_height\": %d, "
@@ -4926,6 +4930,20 @@ static void perf_capture_write_summary(void) {
                       "\"same_source_transparent_reused_pixels_mean\": %.2f, "
                       "\"same_source_blended_reused_pixels_total\": %llu, "
                       "\"same_source_blended_reused_pixels_mean\": %.2f, "
+                      "\"same_source_pair_runs_total\": %llu, "
+                      "\"same_source_pair_runs_mean\": %.2f, "
+                      "\"same_source_pair_leading_singleton_pixels_total\": %llu, "
+                      "\"same_source_pair_leading_singleton_pixels_mean\": %.2f, "
+                      "\"same_source_pair_trailing_singleton_pixels_total\": %llu, "
+                      "\"same_source_pair_trailing_singleton_pixels_mean\": %.2f, "
+                      "\"same_source_pair_gap_0_runs_total\": %llu, "
+                      "\"same_source_pair_gap_0_runs_mean\": %.2f, "
+                      "\"same_source_pair_gap_1_runs_total\": %llu, "
+                      "\"same_source_pair_gap_1_runs_mean\": %.2f, "
+                      "\"same_source_pair_gap_2_runs_total\": %llu, "
+                      "\"same_source_pair_gap_2_runs_mean\": %.2f, "
+                      "\"same_source_pair_gap_3_plus_runs_total\": %llu, "
+                      "\"same_source_pair_gap_3_plus_runs_mean\": %.2f, "
                       "\"same_source_max_run_length\": %d, "
                       "\"source_rect_x_min\": %d, \"source_rect_x_max\": %d, "
                       "\"source_rect_y_min\": %d, \"source_rect_y_max\": %d, "
@@ -4991,6 +5009,20 @@ static void perf_capture_write_summary(void) {
                       (double)entry->same_source_transparent_reused_pixels / frame_count,
                       (unsigned long long)entry->same_source_blended_reused_pixels,
                       (double)entry->same_source_blended_reused_pixels / frame_count,
+                      (unsigned long long)entry->same_source_pair_runs,
+                      (double)entry->same_source_pair_runs / frame_count,
+                      (unsigned long long)entry->same_source_pair_leading_singleton_pixels,
+                      same_source_pair_leading_singleton_pixels_mean,
+                      (unsigned long long)entry->same_source_pair_trailing_singleton_pixels,
+                      same_source_pair_trailing_singleton_pixels_mean,
+                      (unsigned long long)entry->same_source_pair_gap_0_runs,
+                      (double)entry->same_source_pair_gap_0_runs / frame_count,
+                      (unsigned long long)entry->same_source_pair_gap_1_runs,
+                      (double)entry->same_source_pair_gap_1_runs / frame_count,
+                      (unsigned long long)entry->same_source_pair_gap_2_runs,
+                      (double)entry->same_source_pair_gap_2_runs / frame_count,
+                      (unsigned long long)entry->same_source_pair_gap_3_plus_runs,
+                      (double)entry->same_source_pair_gap_3_plus_runs / frame_count,
                       entry->same_source_max_run_length,
                       entry->source_x_min,
                       entry->source_x_max,
