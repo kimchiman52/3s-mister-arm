@@ -5736,6 +5736,6 @@
 - [x] Keep/rollback decision:
   - [x] keep. The pair-only duplicate specialization stays bounded to the live unmodulated fast-non-integer path, preserved route/workload identity, cleared review, and improved the user-priority Genei activation windows on two same-schema reruns without a guard-lane regression
 - [x] final commit hash:
-  - [x] pending runtime commit for this loop; record it in the follow-up docs hash pass immediately after commit
+  - [x] `33d9c45f`
 - [x] next best candidate:
   - [x] re-rank the remaining Yun ceiling from the kept pair-only baseline before another runtime edit. If the same-schema hotspot still centers on opaque `ppg-seqs 81/82`, consider a similarly narrow endpoint-aware duplicate specialization next; otherwise shift to the remaining secondary residue such as the clipped `128x48` fast-non-integer family or the small `ix 80` generic-textured lane instead of reopening broader run-walk or blend-focused work

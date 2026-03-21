@@ -3704,7 +3704,7 @@ Scope guardrails:
 
 - 2026-03-21T11:35:00-0400
   - Final commit hash:
-    - pending runtime commit for Loop 128; record it in the immediate follow-up docs hash pass
+    - `33d9c45f`
   - Bottleneck targeted:
     - native Yun SA3 first-visible activation on the direct `software_frame_exact` path, specifically whether a pair-only same-source duplicate specialization in the unmodulated non-integer helper can lower the hot `ppg-seqs 81/82` raster cost without reopening the rejected broader run-walk shape
   - Change summary:
