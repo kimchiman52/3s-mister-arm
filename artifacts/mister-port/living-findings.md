@@ -4012,7 +4012,7 @@ Scope guardrails:
 
 - 2026-03-21T20:55:00-0400
   - Final commit hash:
-    - `TBD_AFTER_LOOP145_DOCS_COMMIT`
+    - `a19d768c`
   - Bottleneck targeted:
     - deciding whether the recovered schema-`62` native Yun SA3 first-visible onset capture now isolates any safe incremental shared-shape reland, or whether the surviving fast-non-integer work remains too diffuse for another helper-local runtime change
   - Change summary:

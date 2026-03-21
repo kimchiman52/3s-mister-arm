@@ -6344,6 +6344,6 @@
 - [x] Keep/rollback decision:
   - [x] keep the current runtime tree unchanged and close the loop as docs-only research. The deciding schema-`62` capture is now recovered on `HEAD`, but the evidence still does not support another safe helper-local Yun reland without broadening into a larger row-walk redesign
 - [x] final commit hash:
-  - [x] `TBD_AFTER_LOOP145_DOCS_COMMIT`
+  - [x] `a19d768c` (`docs: close loop 145 shared-shape rerank`)
 - [x] next best candidate:
   - [x] do not reopen the rejected Loop `134` admission, Loop `135` scalar unroll, or Loop `142` pair-density gate. Unless a concrete broader row-walk specialization for the clustered opaque/unclipped `256x256`-source Yun onset shapes is proven from the current schema-`62` data before any code lands, pivot to the separate Remy compare-dirty residue track instead of guessing at another one-shape reland
