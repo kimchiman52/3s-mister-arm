@@ -3789,3 +3789,21 @@ Scope guardrails:
     - keep; this telemetry-only diff closes the missing family-time evidence gap without changing routing or gameplay behavior, and it disproves the clipped-family-first guess that was still steering the next runtime hypothesis
   - Next best candidate optimization:
     - return to opportunity `2` from `docs/agent-memory/mister-perf-opportunities.md` against the dominant unclipped `ppg-seqs 82/58/393` and `81/57/391` fast-non-integer families before retrying clipped-residue-first or generic-textured work
+
+- 2026-03-21T10:39:20-0400
+  - Final commit hash:
+    - `2d698441`
+  - Bottleneck targeted:
+    - native Yun SA3 first-visible activation on the direct `software_frame_exact` path, specifically phase attribution inside the remaining fast-non-integer helper
+  - Change summary:
+    - added capture-only non-integer phase timing/export for lookup-x, lookup-y, pair-lookup, reuse-telemetry, and row-raster time, and bumped the perf JSON schema to `57`
+    - expanded fast-non-integer family export capacity to `64` so one capture preserves the full current hot-family set
+    - corrected an initial deploy-source mistake and based the loop decision only on the reviewed `loop133-*-r2` captures
+  - Verification result summary:
+    - Docker telemetry ARM build/install/package plus `readelf` passed; serialized `lock-status`, `busy-status`, `health`, corrected `deploy`, `probe`, bounded `smoke`, and remote log inspection all passed on `192.168.1.171` with the same dummy/software + fbdev + native route and expected bounded `exit=143`
+    - deciding Yun capture `loop133-yun-phase-split-r2` stayed direct-presented at `35.4116 FPS / 28.2393 / 10.9020 / 16.8232 / 0.5141 ms`; exact-path guard `loop133-left-corner-guard-r2` stayed safe at `90.1139 FPS / 11.0971 / 4.2018 / 6.3535 / 0.5418 ms` with zero `fast_non_integer` and zero `generic_textured`
+    - family-covered sampled fast-non-integer time split to `2.7517%` lookup-x, `2.4342%` lookup-y, `0.8310%` pair-lookup, `55.9045%` reuse-telemetry, and `35.8174%` row-raster; the dominant hot families remained `ppg-seqs ix 82 / tex 58 / pal 393 = 119.4059 ms` and `ix 81 / tex 57 / pal 391 = 117.8471 ms`
+  - Keep/rollback decision with reason:
+    - keep; this telemetry-only diff closes the setup-vs-row-walk blind spot without changing routing or gameplay behavior, but its sampled FPS is attribution-only because the new capture-time reuse/per-phase bookkeeping itself dominates part of the measured cost
+  - Next best candidate optimization:
+    - stop retrying lookup/pair-setup reductions for this Yun lane; return to opportunity `2` on the dominant unclipped `82/58/393` and `81/57/391` row-walk families, using Loop 133 only as attribution support
