@@ -3991,3 +3991,21 @@ Scope guardrails:
     - keep; this is measurement-support only, it preserved the verified native/direct gameplay route, and it closes the dominant-shape blind spot without changing gameplay behavior
   - Next best candidate optimization:
     - do not spend the next Yun gameplay loop on another one-shape helper reland first; use the new dominant-shape data to look for a broader shared fast-non-integer lever or a different attribution cut across the fragmented `ix 81 / 82` onset families
+
+- 2026-03-21T18:31:04-0400
+  - Final commit hash:
+    - `PENDING`
+  - Bottleneck targeted:
+    - missing cross-family shared-shape attribution for the trusted native Yun SA3 onset families, specifically whether fragmented `ix 81 / 82 / 43 / 1102` work collapses into a small runtime-relevant shared-shape set once texture/palette identity is ignored
+  - Change summary:
+    - added capture-only shared fast-non-integer shape aggregation/getters in `src/port/sdl/sdl_game_renderer.c` plus the matching export type in `include/port/sdl/sdl_game_renderer.h`
+    - exported top-level and `capture_windows.first_*` shared-shape arrays/totals from `src/port/sdl/sdl_app.c` and bumped perf JSON `schema_version` from `61` to `62`
+    - rebuilt/deployed the telemetry ARM package in Docker `3sx-mister-build`, verified `probe` / bounded `smoke`, hit a hung `p1-super-art-active` Yun onset capture that required one explicit `misterctl.sh exec` cleanup, then revalidated on-device with `loop144-remy-left-guard-r1` and `loop144-yun-shared-shapes-fallback-r1`
+  - Verification result summary:
+    - `git diff --check` plus Docker telemetry ARM build/install/package and `readelf` passed; serialized `lock-status`, `busy-status`, `health`, `deploy`, `probe`, bounded `smoke`, and post-cleanup `busy-status` all passed on `192.168.1.171`
+    - deciding onset attempt `loop144-yun-shared-shapes-r1` failed before any `PERF capture start:` marker, produced no JSON, and left an orphaned remote perf process; the tailed `/tmp/3sx-perf-loop144-yun-shared-shapes-r1.log` contained only repeated ALSA noise before cleanup
+    - successful schema `62` captures stayed healthy but partial for the new export: guard `loop144-remy-left-guard-r1` finished at `89.5916 FPS / 11.1618 / 4.2158 / 6.4019 / 0.5441 ms` and fallback `loop144-yun-shared-shapes-fallback-r1` finished at `54.5467 FPS / 18.3329 / 8.7761 / 9.0302 / 0.5266 ms`, yet both remained exact/direct with zero `fast_non_integer`, zero `generic_textured`, and therefore zero shared-shape entries
+  - Keep/rollback decision with reason:
+    - keep; the diff is measurement-support only and the successful device runs verified the schema `62` tree around it, while the failed deciding attempt hung before the untouched perf-wait harness ever started capture, so the new export remains worth keeping despite only partial on-device exercise this cycle
+  - Next best candidate optimization:
+    - recover a reliable `p1-super-art-active` or equivalent first-visible Yun capture that actually reaches non-zero `software_frame_fast_non_integer` under schema `62`, then use the kept shared-shape export to decide whether any broader cross-family helper specialization is evidence-backed

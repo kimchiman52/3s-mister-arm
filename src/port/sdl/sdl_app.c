@@ -339,6 +339,7 @@ enum {
     perf_capture_first_burst_frame_limit = 8,
     perf_capture_first_window_frame_limit = 60,
     perf_capture_first_window_fast_non_integer_family_capacity = 64,
+    perf_capture_first_window_fast_non_integer_shared_shape_capacity = 32,
     perf_capture_first_window_generic_textured_family_capacity = 8,
 };
 
@@ -540,6 +541,12 @@ typedef struct PerfCaptureFirstWindowFamilySnapshot {
     Uint64 fast_non_integer_task_total;
     Uint64 fast_non_integer_pixel_total;
     Uint64 fast_non_integer_lookup_entry_total;
+    SDLGameRenderer_PerfCaptureFastNonIntegerSharedShape
+        fast_non_integer_shared_shapes[perf_capture_first_window_fast_non_integer_shared_shape_capacity];
+    int fast_non_integer_shared_shape_count;
+    Uint64 fast_non_integer_shared_shape_task_total;
+    Uint64 fast_non_integer_shared_shape_pixel_total;
+    Uint64 fast_non_integer_shared_shape_sampled_ns_total;
     SDLGameRenderer_PerfCaptureTexturedRectFamily
         generic_textured_families[perf_capture_first_window_generic_textured_family_capacity];
     int generic_textured_family_count;
@@ -1619,6 +1626,14 @@ static void perf_capture_snapshot_window_families(PerfCaptureFirstWindowFamilySn
         &snapshot->fast_non_integer_pixel_total,
         &snapshot->fast_non_integer_lookup_entry_total,
         NULL);
+    snapshot->fast_non_integer_shared_shape_count = SDLGameRenderer_GetPerfCaptureFastNonIntegerSharedShapes(
+        snapshot->fast_non_integer_shared_shapes,
+        SDL_arraysize(snapshot->fast_non_integer_shared_shapes));
+    SDLGameRenderer_GetPerfCaptureFastNonIntegerSharedShapeTotals(
+        &snapshot->fast_non_integer_shared_shape_task_total,
+        &snapshot->fast_non_integer_shared_shape_pixel_total,
+        &snapshot->fast_non_integer_shared_shape_sampled_ns_total,
+        NULL);
     snapshot->generic_textured_family_count = SDLGameRenderer_GetPerfCaptureGenericTexturedFamilies(
         snapshot->generic_textured_families,
         SDL_arraysize(snapshot->generic_textured_families));
@@ -1827,6 +1842,77 @@ static void io_write_perf_capture_window_textured_rect_families(
     io_printf(io, "    ]");
 }
 
+static void io_write_perf_capture_window_fast_non_integer_shared_shapes(
+    SDL_IOStream* io,
+    const SDLGameRenderer_PerfCaptureFastNonIntegerSharedShape* shapes,
+    int shape_count,
+    Uint64 task_total,
+    Uint64 pixel_total,
+    Uint64 sampled_ns_total,
+    double frame_count) {
+    io_printf(io, "[");
+    if ((shapes == NULL) || (shape_count <= 0)) {
+        io_printf(io, "]");
+        return;
+    }
+
+    io_printf(io, "\n");
+    for (int i = 0; i < shape_count; i++) {
+        const SDLGameRenderer_PerfCaptureFastNonIntegerSharedShape* entry = &shapes[i];
+        const double task_ratio = task_total > 0 ? (double)entry->task_count / (double)task_total : 0.0;
+        const double pixel_ratio = pixel_total > 0 ? (double)entry->submitted_pixels / (double)pixel_total : 0.0;
+        const double sampled_ratio =
+            sampled_ns_total > 0 ? (double)entry->sampled_ns / (double)sampled_ns_total : 0.0;
+        const double sampled_total_ms = (double)entry->sampled_ns / 1e6;
+        const double sampled_mean_ms = entry->task_count > 0 ? sampled_total_ms / (double)entry->task_count : 0.0;
+        const double sampled_ns_per_pixel =
+            entry->submitted_pixels > 0 ? (double)entry->sampled_ns / (double)entry->submitted_pixels : 0.0;
+
+        io_printf(io,
+                  "      {\"source_format\": \"%s\", \"source_width\": %d, \"source_height\": %d, "
+                  "\"alpha_only\": %s, \"rgb_mod\": %s, \"opaque_color\": %s, "
+                  "\"integer_positions\": %s, \"integer_source_rect\": %s, "
+                  "\"full_texture_source_rect\": %s, \"clipped\": %s, \"flip_h\": %s, \"flip_v\": %s, "
+                  "\"source_rect_w\": %d, \"source_rect_h\": %d, "
+                  "\"visible_w\": %d, \"visible_h\": %d, "
+                  "\"contributing_family_count\": %d, "
+                  "\"task_count_total\": %llu, \"task_count_mean\": %.4f, \"task_ratio\": %.6f, "
+                  "\"submitted_pixels_total\": %llu, \"submitted_pixels_mean\": %.2f, "
+                  "\"submitted_pixel_ratio\": %.6f, "
+                  "\"sampled_total_ms\": %.4f, \"sampled_mean_ms\": %.6f, "
+                  "\"sampled_ns_per_pixel\": %.4f, \"sampled_ratio\": %.6f}%s\n",
+                  pixel_format_name_safe(entry->source_format),
+                  entry->source_width,
+                  entry->source_height,
+                  entry->alpha_only ? "true" : "false",
+                  entry->rgb_mod ? "true" : "false",
+                  entry->opaque_color ? "true" : "false",
+                  entry->integer_positions ? "true" : "false",
+                  entry->integer_source_rect ? "true" : "false",
+                  entry->full_texture_source_rect ? "true" : "false",
+                  entry->clipped ? "true" : "false",
+                  entry->flip_h ? "true" : "false",
+                  entry->flip_v ? "true" : "false",
+                  entry->source_w,
+                  entry->source_h,
+                  entry->visible_w,
+                  entry->visible_h,
+                  entry->contributing_family_count,
+                  (unsigned long long)entry->task_count,
+                  frame_count > 0.0 ? (double)entry->task_count / frame_count : 0.0,
+                  task_ratio,
+                  (unsigned long long)entry->submitted_pixels,
+                  frame_count > 0.0 ? (double)entry->submitted_pixels / frame_count : 0.0,
+                  pixel_ratio,
+                  sampled_total_ms,
+                  sampled_mean_ms,
+                  sampled_ns_per_pixel,
+                  sampled_ratio,
+                  (i + 1) < shape_count ? "," : "");
+    }
+    io_printf(io, "    ]");
+}
+
 static void io_write_perf_capture_window_summary(SDL_IOStream* io,
                                                  const char* window_name,
                                                  const PerfCaptureWindowSummary* summary,
@@ -1866,6 +1952,15 @@ static void io_write_perf_capture_window_summary(SDL_IOStream* io,
         snapshot != NULL ? snapshot->fast_non_integer_lookup_entry_total : 0,
         (double)summary->frame_count,
         true);
+    io_printf(io, ",\n      \"software_frame_fast_non_integer_shared_shapes\": ");
+    io_write_perf_capture_window_fast_non_integer_shared_shapes(
+        io,
+        snapshot != NULL ? snapshot->fast_non_integer_shared_shapes : NULL,
+        (snapshot != NULL && snapshot->valid) ? snapshot->fast_non_integer_shared_shape_count : 0,
+        snapshot != NULL ? snapshot->fast_non_integer_shared_shape_task_total : 0,
+        snapshot != NULL ? snapshot->fast_non_integer_shared_shape_pixel_total : 0,
+        snapshot != NULL ? snapshot->fast_non_integer_shared_shape_sampled_ns_total : 0,
+        (double)summary->frame_count);
     io_printf(io, ",\n      \"software_frame_generic_textured_families\": ");
     io_write_perf_capture_window_textured_rect_families(
         io,
@@ -1945,6 +2040,16 @@ static void perf_capture_write_summary(void) {
                                                              &fast_non_integer_family_pixels_total,
                                                              &fast_non_integer_family_lookup_entries_total,
                                                              NULL);
+    SDLGameRenderer_PerfCaptureFastNonIntegerSharedShape fast_non_integer_shared_shapes[32] = { 0 };
+    const int fast_non_integer_shared_shape_count = SDLGameRenderer_GetPerfCaptureFastNonIntegerSharedShapes(
+        fast_non_integer_shared_shapes, SDL_arraysize(fast_non_integer_shared_shapes));
+    Uint64 fast_non_integer_shared_shape_tasks_total = 0;
+    Uint64 fast_non_integer_shared_shape_pixels_total = 0;
+    Uint64 fast_non_integer_shared_shape_sampled_ns_total = 0;
+    SDLGameRenderer_GetPerfCaptureFastNonIntegerSharedShapeTotals(&fast_non_integer_shared_shape_tasks_total,
+                                                                  &fast_non_integer_shared_shape_pixels_total,
+                                                                  &fast_non_integer_shared_shape_sampled_ns_total,
+                                                                  NULL);
     Uint64 fast_non_integer_family_sampled_lookup_x_ns_total = 0;
     Uint64 fast_non_integer_family_sampled_lookup_y_ns_total = 0;
     Uint64 fast_non_integer_family_sampled_pair_lookup_ns_total = 0;
@@ -3835,7 +3940,7 @@ static void perf_capture_write_summary(void) {
     }
 
     io_printf(io, "{\n");
-    io_printf(io, "  \"schema_version\": 61,\n");
+    io_printf(io, "  \"schema_version\": 62,\n");
     io_printf(io, "  \"scene\": \"");
     io_write_json_escaped_string(io, perf_capture_scene_name);
     io_printf(io, "\",\n");
@@ -5642,6 +5747,15 @@ static void perf_capture_write_summary(void) {
     } else {
         io_printf(io, "],\n");
     }
+    io_printf(io, "    \"software_frame_fast_non_integer_shared_shapes\": ");
+    io_write_perf_capture_window_fast_non_integer_shared_shapes(io,
+                                                                fast_non_integer_shared_shapes,
+                                                                fast_non_integer_shared_shape_count,
+                                                                fast_non_integer_shared_shape_tasks_total,
+                                                                fast_non_integer_shared_shape_pixels_total,
+                                                                fast_non_integer_shared_shape_sampled_ns_total,
+                                                                frame_count);
+    io_printf(io, ",\n");
     io_printf(io, "    \"software_frame_generic_textured_families\": [");
     if (generic_textured_family_count > 0) {
         io_printf(io, "\n");

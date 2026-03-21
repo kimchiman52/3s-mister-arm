@@ -4243,6 +4243,187 @@ static bool textured_rect_exact_shape_matches_profile(const SDLGameRenderer_Perf
            (entry->visible_h == profile->visible_h);
 }
 
+static bool fast_non_integer_shared_shape_matches_exact_shape(
+    const SDLGameRenderer_PerfCaptureFastNonIntegerSharedShape* entry,
+    const SDLGameRenderer_PerfCaptureTexturedRectExactShape* shape) {
+    if ((entry == NULL) || (shape == NULL)) {
+        return false;
+    }
+
+    return (entry->source_format == shape->source_format) && (entry->source_width == shape->source_width) &&
+           (entry->source_height == shape->source_height) && (entry->alpha_only == shape->alpha_only) &&
+           (entry->rgb_mod == shape->rgb_mod) && (entry->opaque_color == shape->opaque_color) &&
+           (entry->integer_positions == shape->integer_positions) &&
+           (entry->integer_source_rect == shape->integer_source_rect) &&
+           (entry->full_texture_source_rect == shape->full_texture_source_rect) &&
+           (entry->clipped == shape->clipped) && (entry->flip_h == shape->flip_h) &&
+           (entry->flip_v == shape->flip_v) && (entry->source_w == shape->source_w) &&
+           (entry->source_h == shape->source_h) && (entry->visible_w == shape->visible_w) &&
+           (entry->visible_h == shape->visible_h);
+}
+
+static bool fast_non_integer_shared_shape_matches_profile(
+    const SDLGameRenderer_PerfCaptureFastNonIntegerSharedShape* a,
+    const SDLGameRenderer_PerfCaptureFastNonIntegerSharedShape* b) {
+    if ((a == NULL) || (b == NULL)) {
+        return false;
+    }
+
+    return (a->source_format == b->source_format) && (a->source_width == b->source_width) &&
+           (a->source_height == b->source_height) && (a->alpha_only == b->alpha_only) &&
+           (a->rgb_mod == b->rgb_mod) && (a->opaque_color == b->opaque_color) &&
+           (a->integer_positions == b->integer_positions) &&
+           (a->integer_source_rect == b->integer_source_rect) &&
+           (a->full_texture_source_rect == b->full_texture_source_rect) && (a->clipped == b->clipped) &&
+           (a->flip_h == b->flip_h) && (a->flip_v == b->flip_v) && (a->source_w == b->source_w) &&
+           (a->source_h == b->source_h) && (a->visible_w == b->visible_w) && (a->visible_h == b->visible_h);
+}
+
+static int get_perf_capture_fast_non_integer_shared_shapes_from_exact_shapes(
+    const SDLGameRenderer_PerfCaptureTexturedRectExactShape* shapes,
+    int shape_count,
+    SDLGameRenderer_PerfCaptureFastNonIntegerSharedShape* out_shapes,
+    int max_shapes,
+    Uint64* out_task_total,
+    Uint64* out_pixel_total,
+    Uint64* out_sampled_ns_total,
+    int* out_shape_count) {
+    SDLGameRenderer_PerfCaptureFastNonIntegerSharedShape aggregated[SDL_arraysize(perf_capture_fast_non_integer_shapes)] = {
+        0
+    };
+    int aggregated_count = 0;
+    Uint64 task_total = 0;
+    Uint64 pixel_total = 0;
+    Uint64 sampled_ns_total = 0;
+
+    for (int i = 0; i < shape_count; i++) {
+        const SDLGameRenderer_PerfCaptureTexturedRectExactShape* shape = &shapes[i];
+        if (shape->task_count == 0) {
+            continue;
+        }
+
+        task_total += shape->task_count;
+        pixel_total += shape->submitted_pixels;
+        sampled_ns_total += shape->sampled_ns;
+
+        SDLGameRenderer_PerfCaptureFastNonIntegerSharedShape* entry = NULL;
+        for (int existing = 0; existing < aggregated_count; existing++) {
+            if (fast_non_integer_shared_shape_matches_exact_shape(&aggregated[existing], shape)) {
+                entry = &aggregated[existing];
+                break;
+            }
+        }
+
+        if ((entry == NULL) && (aggregated_count < (int)SDL_arraysize(aggregated))) {
+            entry = &aggregated[aggregated_count];
+            aggregated_count += 1;
+            SDL_zero(*entry);
+            entry->source_format = shape->source_format;
+            entry->source_width = shape->source_width;
+            entry->source_height = shape->source_height;
+            entry->alpha_only = shape->alpha_only;
+            entry->rgb_mod = shape->rgb_mod;
+            entry->opaque_color = shape->opaque_color;
+            entry->integer_positions = shape->integer_positions;
+            entry->integer_source_rect = shape->integer_source_rect;
+            entry->full_texture_source_rect = shape->full_texture_source_rect;
+            entry->clipped = shape->clipped;
+            entry->flip_h = shape->flip_h;
+            entry->flip_v = shape->flip_v;
+            entry->source_w = shape->source_w;
+            entry->source_h = shape->source_h;
+            entry->visible_w = shape->visible_w;
+            entry->visible_h = shape->visible_h;
+        }
+
+        if (entry == NULL) {
+            continue;
+        }
+
+        entry->contributing_family_count += 1;
+        entry->task_count += shape->task_count;
+        entry->submitted_pixels += shape->submitted_pixels;
+        entry->sampled_ns += shape->sampled_ns;
+    }
+
+    if (out_task_total != NULL) {
+        *out_task_total = task_total;
+    }
+    if (out_pixel_total != NULL) {
+        *out_pixel_total = pixel_total;
+    }
+    if (out_sampled_ns_total != NULL) {
+        *out_sampled_ns_total = sampled_ns_total;
+    }
+    if (out_shape_count != NULL) {
+        *out_shape_count = aggregated_count;
+    }
+
+    if ((out_shapes == NULL) || (max_shapes <= 0)) {
+        return 0;
+    }
+
+    int selected_count = 0;
+    for (int slot = 0; slot < max_shapes; slot++) {
+        int best_index = -1;
+        for (int i = 0; i < aggregated_count; i++) {
+            const SDLGameRenderer_PerfCaptureFastNonIntegerSharedShape* candidate = &aggregated[i];
+            if (candidate->task_count == 0) {
+                continue;
+            }
+
+            bool already_selected = false;
+            for (int existing = 0; existing < selected_count; existing++) {
+                if (fast_non_integer_shared_shape_matches_profile(&out_shapes[existing], candidate)) {
+                    already_selected = true;
+                    break;
+                }
+            }
+            if (already_selected) {
+                continue;
+            }
+
+            if (best_index < 0) {
+                best_index = i;
+                continue;
+            }
+
+            const SDLGameRenderer_PerfCaptureFastNonIntegerSharedShape* best = &aggregated[best_index];
+            if ((candidate->sampled_ns > best->sampled_ns) ||
+                ((candidate->sampled_ns == best->sampled_ns) &&
+                 (candidate->submitted_pixels > best->submitted_pixels)) ||
+                ((candidate->sampled_ns == best->sampled_ns) &&
+                 (candidate->submitted_pixels == best->submitted_pixels) &&
+                 (candidate->task_count > best->task_count)) ||
+                ((candidate->sampled_ns == best->sampled_ns) &&
+                 (candidate->submitted_pixels == best->submitted_pixels) &&
+                 (candidate->task_count == best->task_count) &&
+                 (candidate->contributing_family_count > best->contributing_family_count)) ||
+                ((candidate->sampled_ns == best->sampled_ns) &&
+                 (candidate->submitted_pixels == best->submitted_pixels) &&
+                 (candidate->task_count == best->task_count) &&
+                 (candidate->contributing_family_count == best->contributing_family_count) &&
+                 (candidate->source_w > best->source_w)) ||
+                ((candidate->sampled_ns == best->sampled_ns) &&
+                 (candidate->submitted_pixels == best->submitted_pixels) &&
+                 (candidate->task_count == best->task_count) &&
+                 (candidate->contributing_family_count == best->contributing_family_count) &&
+                 (candidate->source_w == best->source_w) && (candidate->source_h > best->source_h))) {
+                best_index = i;
+            }
+        }
+
+        if (best_index < 0) {
+            break;
+        }
+
+        out_shapes[selected_count] = aggregated[best_index];
+        selected_count += 1;
+    }
+
+    return selected_count;
+}
+
 static void note_perf_capture_fast_non_integer_shape(const TexturedRectFamilyProfile* profile, Uint64 sampled_ns) {
     if (!frame_stats_extended_enabled || (profile == NULL)) {
         return;
@@ -7662,6 +7843,34 @@ void SDLGameRenderer_GetPerfCaptureFastNonIntegerFamilyTotals(Uint64* out_task_t
                                                  out_pixel_total,
                                                  out_lookup_entry_total,
                                                  out_family_count);
+}
+
+int SDLGameRenderer_GetPerfCaptureFastNonIntegerSharedShapes(
+    SDLGameRenderer_PerfCaptureFastNonIntegerSharedShape* out_shapes,
+    int max_shapes) {
+    return get_perf_capture_fast_non_integer_shared_shapes_from_exact_shapes(
+        perf_capture_fast_non_integer_shapes,
+        perf_capture_fast_non_integer_shape_count,
+        out_shapes,
+        max_shapes,
+        NULL,
+        NULL,
+        NULL,
+        NULL);
+}
+
+void SDLGameRenderer_GetPerfCaptureFastNonIntegerSharedShapeTotals(Uint64* out_task_total,
+                                                                   Uint64* out_pixel_total,
+                                                                   Uint64* out_sampled_ns_total,
+                                                                   int* out_shape_count) {
+    get_perf_capture_fast_non_integer_shared_shapes_from_exact_shapes(perf_capture_fast_non_integer_shapes,
+                                                                      perf_capture_fast_non_integer_shape_count,
+                                                                      NULL,
+                                                                      0,
+                                                                      out_task_total,
+                                                                      out_pixel_total,
+                                                                      out_sampled_ns_total,
+                                                                      out_shape_count);
 }
 
 int SDLGameRenderer_GetPerfCaptureGenericTexturedFamilies(SDLGameRenderer_PerfCaptureTexturedRectFamily* out_families,

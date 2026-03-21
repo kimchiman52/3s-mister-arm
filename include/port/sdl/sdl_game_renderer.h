@@ -499,6 +499,29 @@ typedef struct SDLGameRenderer_PerfCaptureTexturedRectExactShape {
     Uint64 sampled_ns;
 } SDLGameRenderer_PerfCaptureTexturedRectExactShape;
 
+typedef struct SDLGameRenderer_PerfCaptureFastNonIntegerSharedShape {
+    Uint32 source_format;
+    int source_width;
+    int source_height;
+    int alpha_only;
+    int rgb_mod;
+    int opaque_color;
+    int integer_positions;
+    int integer_source_rect;
+    int full_texture_source_rect;
+    int clipped;
+    int flip_h;
+    int flip_v;
+    int source_w;
+    int source_h;
+    int visible_w;
+    int visible_h;
+    int contributing_family_count;
+    Uint64 task_count;
+    Uint64 submitted_pixels;
+    Uint64 sampled_ns;
+} SDLGameRenderer_PerfCaptureFastNonIntegerSharedShape;
+
 typedef struct SDLGameRenderer_PerfCaptureRefreshLocalityCandidate {
     int texture_handle;
     Uint32 source_format;
@@ -678,6 +701,13 @@ void SDLGameRenderer_GetPerfCaptureFastNonIntegerFamilyTotals(Uint64* out_task_t
                                                               Uint64* out_pixel_total,
                                                               Uint64* out_lookup_entry_total,
                                                               int* out_family_count);
+int SDLGameRenderer_GetPerfCaptureFastNonIntegerSharedShapes(
+    SDLGameRenderer_PerfCaptureFastNonIntegerSharedShape* out_shapes,
+    int max_shapes);
+void SDLGameRenderer_GetPerfCaptureFastNonIntegerSharedShapeTotals(Uint64* out_task_total,
+                                                                   Uint64* out_pixel_total,
+                                                                   Uint64* out_sampled_ns_total,
+                                                                   int* out_shape_count);
 int SDLGameRenderer_GetPerfCaptureGenericTexturedFamilies(SDLGameRenderer_PerfCaptureTexturedRectFamily* out_families,
                                                           int max_families);
 void SDLGameRenderer_GetPerfCaptureGenericTexturedFamilyTotals(Uint64* out_task_total,
