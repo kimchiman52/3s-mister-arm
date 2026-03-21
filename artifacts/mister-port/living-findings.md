@@ -3904,7 +3904,7 @@ Scope guardrails:
 
 - 2026-03-21T15:01:39-0400
   - Final commit hash:
-    - pending
+    - `7c3a6035`
   - Bottleneck targeted:
     - native Yun SA3 first-visible activation rerank, specifically whether a fresh on-device `60`-frame `p1-super-art-active` capture exposes a new safe runtime target beyond the already-rejected Loop `134` generic admission and Loop `135` scalar unroll ideas
   - Change summary:

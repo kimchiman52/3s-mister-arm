@@ -6125,6 +6125,6 @@
 - [x] Keep/rollback decision:
   - [x] close docs-only. Current evidence does not justify another safe runtime implementation, and the failed rerun path is a measurement reliability issue rather than proof for a new optimization
 - [x] final commit hash:
-  - [x] pending
+  - [x] `7c3a6035` (`mister: close loop 139 cold-burst rerank`)
 - [x] next best candidate:
   - [x] do not reopen the rejected Loop `134` generic micro-admission or Loop `135` scalar `4x` unroll now. Recover a reliable narrow first-activation family-attribution capture path first, or otherwise obtain equivalent first-`60` attribution evidence, before spending another runtime loop on Yun fast-non-integer work
