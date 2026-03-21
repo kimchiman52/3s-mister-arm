@@ -420,6 +420,9 @@ typedef struct SDLGameRenderer_PerfCaptureTexturedRectFamily {
     Uint64 task_count;
     Uint64 submitted_pixels;
     Uint64 lookup_entries;
+    Uint64 sampled_calls;
+    Uint64 sampled_pixels;
+    Uint64 sampled_ns;
     Uint64 source_alpha_opaque_pixels;
     Uint64 source_alpha_transparent_pixels;
     Uint64 source_alpha_blended_pixels;

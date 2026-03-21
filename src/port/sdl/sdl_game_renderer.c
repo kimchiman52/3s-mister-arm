@@ -696,16 +696,19 @@ static void note_software_frame_fast_copy_result(const RenderTask* task,
                                                  SoftwareFrameFastCopyResult result,
                                                  const SoftwareFrameFastCopyPlan* plan,
                                                  const SDL_Surface* dst_surface,
-                                                 Uint64 non_integer_lookup_entries);
+                                                 Uint64 non_integer_lookup_entries,
+                                                 Uint64 sampled_ns);
 #if ENABLE_PERF_TELEMETRY
 static void note_perf_capture_fast_exact_family(const RenderTask* task,
                                                 const SDL_Surface* dst_surface,
-                                                Uint64 lookup_entries);
+                                                Uint64 lookup_entries,
+                                                Uint64 sampled_ns);
 #endif
 static void note_software_frame_fast_non_integer(const RenderTask* task,
                                                  const SDL_Surface* dst_surface,
                                                  Uint64 lookup_entries,
-                                                 const SDLSoftwareFrame_NonIntegerTelemetry* non_integer_telemetry);
+                                                 const SDLSoftwareFrame_NonIntegerTelemetry* non_integer_telemetry,
+                                                 Uint64 sampled_ns);
 static Uint32 modulate_argb8888(Uint32 pixel, Uint32 color);
 static Uint32 blend_argb8888(Uint32 dst_pixel, Uint32 src_pixel);
 static bool raster_full_height_diagonal_strip_to_software_frame(const SoftwareFrameSolidDiagonalStrip* strip,
@@ -3936,6 +3939,7 @@ static void note_perf_capture_textured_rect_family(const RenderTask* task,
                                                    const SDL_Surface* dst_surface,
                                                    Uint64 lookup_entries,
                                                    const SDLSoftwareFrame_NonIntegerTelemetry* non_integer_telemetry,
+                                                   Uint64 sampled_ns,
                                                    SDLGameRenderer_PerfCaptureTexturedRectFamily* families,
                                                    int* family_count) {
     if (!frame_stats_extended_enabled || (task == NULL) || (dst_surface == NULL) || (families == NULL) ||
@@ -4003,6 +4007,11 @@ static void note_perf_capture_textured_rect_family(const RenderTask* task,
     entry->task_count += 1;
     entry->submitted_pixels += profile.submitted_pixels;
     entry->lookup_entries += lookup_entries;
+    if (sampled_ns > 0) {
+        entry->sampled_calls += 1;
+        entry->sampled_pixels += profile.submitted_pixels;
+        entry->sampled_ns += sampled_ns;
+    }
     if (non_integer_telemetry != NULL) {
         entry->source_alpha_opaque_pixels += non_integer_telemetry->source_alpha_opaque_pixels;
         entry->source_alpha_transparent_pixels += non_integer_telemetry->source_alpha_transparent_pixels;
@@ -4040,32 +4049,43 @@ static void note_perf_capture_textured_rect_family(const RenderTask* task,
 
 static void note_perf_capture_fast_exact_family(const RenderTask* task,
                                                 const SDL_Surface* dst_surface,
-                                                Uint64 lookup_entries) {
+                                                Uint64 lookup_entries,
+                                                Uint64 sampled_ns) {
     note_perf_capture_textured_rect_family(
-        task, dst_surface, lookup_entries, NULL, perf_capture_fast_exact_families, &perf_capture_fast_exact_family_count);
+        task,
+        dst_surface,
+        lookup_entries,
+        NULL,
+        sampled_ns,
+        perf_capture_fast_exact_families,
+        &perf_capture_fast_exact_family_count);
 }
 
 static void note_perf_capture_fast_non_integer_family(const RenderTask* task,
                                                       const SDL_Surface* dst_surface,
                                                       Uint64 lookup_entries,
-                                                      const SDLSoftwareFrame_NonIntegerTelemetry* non_integer_telemetry) {
+                                                      const SDLSoftwareFrame_NonIntegerTelemetry* non_integer_telemetry,
+                                                      Uint64 sampled_ns) {
     note_perf_capture_textured_rect_family(
         task,
         dst_surface,
         lookup_entries,
         non_integer_telemetry,
+        sampled_ns,
         perf_capture_fast_non_integer_families,
         &perf_capture_fast_non_integer_family_count);
 }
 
 static void note_perf_capture_generic_textured_family(const RenderTask* task,
                                                       const SDL_Surface* dst_surface,
-                                                      Uint64 lookup_entries) {
+                                                      Uint64 lookup_entries,
+                                                      Uint64 sampled_ns) {
     note_perf_capture_textured_rect_family(
         task,
         dst_surface,
         lookup_entries,
         NULL,
+        sampled_ns,
         perf_capture_generic_textured_families,
         &perf_capture_generic_textured_family_count);
 }
@@ -4196,7 +4216,8 @@ static void note_software_frame_fast_copy_result(const RenderTask* task,
                                                  SoftwareFrameFastCopyResult result,
                                                  const SoftwareFrameFastCopyPlan* plan,
                                                  const SDL_Surface* dst_surface,
-                                                 Uint64 non_integer_lookup_entries) {
+                                                 Uint64 non_integer_lookup_entries,
+                                                 Uint64 sampled_ns) {
     if (!frame_stats_extended_enabled || (task == NULL)) {
         return;
     }
@@ -4205,7 +4226,7 @@ static void note_software_frame_fast_copy_result(const RenderTask* task,
     if (result == SOFTWARE_FRAME_FAST_COPY_RESULT_EXACT) {
         frame_stats.software_frame_fast_exact_tasks += 1;
         frame_stats.software_frame_fast_exact_pixels += submitted_pixels;
-        note_perf_capture_fast_exact_family(task, dst_surface, 0);
+        note_perf_capture_fast_exact_family(task, dst_surface, 0, sampled_ns);
         if ((plan != NULL) && plan->clipped) {
             frame_stats.software_frame_fast_exact_clipped_tasks += 1;
         }
@@ -4229,7 +4250,8 @@ static void note_software_frame_fast_copy_result(const RenderTask* task,
     note_perf_capture_generic_textured_family(
         task,
         dst_surface,
-        result == SOFTWARE_FRAME_FAST_COPY_RESULT_NON_INTEGER ? non_integer_lookup_entries : 0);
+        result == SOFTWARE_FRAME_FAST_COPY_RESULT_NON_INTEGER ? non_integer_lookup_entries : 0,
+        sampled_ns);
     if (software_frame_color_is_alpha_only(task->color)) {
         frame_stats.software_frame_generic_textured_alpha_only_tasks += 1;
         frame_stats.software_frame_generic_textured_alpha_only_pixels += submitted_pixels;
@@ -4274,12 +4296,14 @@ static void note_software_frame_fast_copy_result(const RenderTask* task,
                                                  SoftwareFrameFastCopyResult result,
                                                  const SoftwareFrameFastCopyPlan* plan,
                                                  const SDL_Surface* dst_surface,
-                                                 Uint64 non_integer_lookup_entries) {
+                                                 Uint64 non_integer_lookup_entries,
+                                                 Uint64 sampled_ns) {
     (void)task;
     (void)result;
     (void)plan;
     (void)dst_surface;
     (void)non_integer_lookup_entries;
+    (void)sampled_ns;
 }
 #endif
 
@@ -4287,7 +4311,8 @@ static void note_software_frame_fast_copy_result(const RenderTask* task,
 static void note_software_frame_fast_non_integer(const RenderTask* task,
                                                  const SDL_Surface* dst_surface,
                                                  Uint64 lookup_entries,
-                                                 const SDLSoftwareFrame_NonIntegerTelemetry* non_integer_telemetry) {
+                                                 const SDLSoftwareFrame_NonIntegerTelemetry* non_integer_telemetry,
+                                                 Uint64 sampled_ns) {
     if (!frame_stats_extended_enabled || (task == NULL)) {
         return;
     }
@@ -4320,7 +4345,7 @@ static void note_software_frame_fast_non_integer(const RenderTask* task,
                 non_integer_telemetry->same_source_max_run_length;
         }
     }
-    note_perf_capture_fast_non_integer_family(task, dst_surface, lookup_entries, non_integer_telemetry);
+    note_perf_capture_fast_non_integer_family(task, dst_surface, lookup_entries, non_integer_telemetry, sampled_ns);
     if (software_frame_color_is_alpha_only(task->color)) {
         frame_stats.software_frame_fast_non_integer_alpha_only_tasks += 1;
         frame_stats.software_frame_fast_non_integer_alpha_only_pixels += submitted_pixels;
@@ -4333,11 +4358,13 @@ static void note_software_frame_fast_non_integer(const RenderTask* task,
 static void note_software_frame_fast_non_integer(const RenderTask* task,
                                                  const SDL_Surface* dst_surface,
                                                  Uint64 lookup_entries,
-                                                 const SDLSoftwareFrame_NonIntegerTelemetry* non_integer_telemetry) {
+                                                 const SDLSoftwareFrame_NonIntegerTelemetry* non_integer_telemetry,
+                                                 Uint64 sampled_ns) {
     (void)task;
     (void)dst_surface;
     (void)lookup_entries;
     (void)non_integer_telemetry;
+    (void)sampled_ns;
 }
 #endif
 
@@ -5036,9 +5063,11 @@ static bool raster_textured_task_to_software_frame(const RenderTask* task) {
                 : SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_FAST_SCALED;
         const Uint64 sample_start_counter = begin_perf_capture_raster_bucket_sample(raster_bucket);
         if (try_fast_copy_fast_textured_task_to_software_frame(task, &fast_copy_plan, dst_surface, src_surface)) {
+            const Uint64 sampled_ns =
+                perf_capture_counter_delta_to_ns(sample_start_counter, SDL_GetPerformanceCounter());
             note_perf_capture_raster_bucket_sample(
-                raster_bucket, task, perf_capture_counter_delta_to_ns(sample_start_counter, SDL_GetPerformanceCounter()));
-            note_software_frame_fast_copy_result(task, fast_copy_result, &fast_copy_plan, dst_surface, 0);
+                raster_bucket, task, sampled_ns);
+            note_software_frame_fast_copy_result(task, fast_copy_result, &fast_copy_plan, dst_surface, 0, sampled_ns);
             if (src_locked) {
                 SDL_UnlockSurface(src_surface);
             }
@@ -5062,22 +5091,19 @@ static bool raster_textured_task_to_software_frame(const RenderTask* task) {
                 dst_surface,
                 src_surface,
                 non_integer_telemetry_ptr)) {
+            const Uint64 sampled_ns =
+                perf_capture_counter_delta_to_ns(sample_start_counter, SDL_GetPerformanceCounter());
             note_perf_capture_raster_bucket_sample(
                 SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_FAST_NON_INTEGER,
                 task,
-                perf_capture_counter_delta_to_ns(sample_start_counter, SDL_GetPerformanceCounter()));
+                sampled_ns);
             note_software_frame_fast_non_integer(
-                task, dst_surface, non_integer_lookup_entries, non_integer_telemetry_ptr);
+                task, dst_surface, non_integer_lookup_entries, non_integer_telemetry_ptr, sampled_ns);
             if (src_locked) {
                 SDL_UnlockSurface(src_surface);
             }
             return true;
         }
-    }
-
-    if ((fast_copy_result != SOFTWARE_FRAME_FAST_COPY_RESULT_EXACT) &&
-        (fast_copy_result != SOFTWARE_FRAME_FAST_COPY_RESULT_SCALED)) {
-        note_software_frame_fast_copy_result(task, fast_copy_result, NULL, dst_surface, non_integer_lookup_entries);
     }
 
     const float src_x_start = task->src_uv_rect.x * (float)src_surface->w;
@@ -5152,10 +5178,15 @@ static bool raster_textured_task_to_software_frame(const RenderTask* task) {
             dst_row[x] = blend_argb8888(dst_row[x], src_pixel);
         }
     }
-    note_perf_capture_raster_bucket_sample(SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_GENERIC_TEXTURED,
-                                           task,
-                                           perf_capture_counter_delta_to_ns(
-                                               generic_sample_start_counter, SDL_GetPerformanceCounter()));
+    const Uint64 generic_sampled_ns = perf_capture_counter_delta_to_ns(
+        generic_sample_start_counter, SDL_GetPerformanceCounter());
+    note_perf_capture_raster_bucket_sample(
+        SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_GENERIC_TEXTURED, task, generic_sampled_ns);
+    if ((fast_copy_result != SOFTWARE_FRAME_FAST_COPY_RESULT_EXACT) &&
+        (fast_copy_result != SOFTWARE_FRAME_FAST_COPY_RESULT_SCALED)) {
+        note_software_frame_fast_copy_result(
+            task, fast_copy_result, NULL, dst_surface, non_integer_lookup_entries, generic_sampled_ns);
+    }
 
     if (src_locked) {
         SDL_UnlockSurface(src_surface);

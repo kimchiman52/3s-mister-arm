@@ -3459,7 +3459,7 @@ static void perf_capture_write_summary(void) {
     }
 
     io_printf(io, "{\n");
-    io_printf(io, "  \"schema_version\": 55,\n");
+    io_printf(io, "  \"schema_version\": 56,\n");
     io_printf(io, "  \"scene\": \"");
     io_write_json_escaped_string(io, perf_capture_scene_name);
     io_printf(io, "\",\n");
@@ -4763,6 +4763,15 @@ static void perf_capture_write_summary(void) {
                                             ? (double)entry->lookup_entries /
                                                   (double)fast_exact_family_lookup_entries_total
                                             : 0.0;
+            const double sampled_call_ratio =
+                entry->task_count > 0 ? (double)entry->sampled_calls / (double)entry->task_count : 0.0;
+            const double sampled_total_ms = (double)entry->sampled_ns / 1e6;
+            const double sampled_mean_ms =
+                entry->sampled_calls > 0 ? sampled_total_ms / (double)entry->sampled_calls : 0.0;
+            const double sampled_pixels_mean =
+                entry->sampled_calls > 0 ? (double)entry->sampled_pixels / (double)entry->sampled_calls : 0.0;
+            const double sampled_ns_per_pixel =
+                entry->sampled_pixels > 0 ? (double)entry->sampled_ns / (double)entry->sampled_pixels : 0.0;
             io_printf(io,
                       "      {\"texture_handle\": %d, \"palette_handle\": %d, "
                       "\"source_format\": \"%s\", \"source_width\": %d, \"source_height\": %d, "
@@ -4784,6 +4793,10 @@ static void perf_capture_write_summary(void) {
                       "\"submitted_pixel_ratio\": %.6f, "
                       "\"lookup_entries_total\": %llu, \"lookup_entries_mean\": %.2f, "
                       "\"lookup_entry_ratio\": %.6f, "
+                      "\"sampled_calls_total\": %llu, \"sampled_calls_ratio\": %.6f, "
+                      "\"sampled_pixels_total\": %llu, \"sampled_pixels_mean\": %.2f, "
+                      "\"sampled_ns_total\": %llu, \"sampled_total_ms\": %.4f, "
+                      "\"sampled_mean_ms\": %.6f, \"sampled_ns_per_pixel\": %.4f, "
                       "\"source_rect_x_min\": %d, \"source_rect_x_max\": %d, "
                       "\"source_rect_y_min\": %d, \"source_rect_y_max\": %d, "
                       "\"source_rect_w_min\": %d, \"source_rect_w_max\": %d, "
@@ -4826,6 +4839,14 @@ static void perf_capture_write_summary(void) {
                       (unsigned long long)entry->lookup_entries,
                       (double)entry->lookup_entries / frame_count,
                       lookup_ratio,
+                      (unsigned long long)entry->sampled_calls,
+                      sampled_call_ratio,
+                      (unsigned long long)entry->sampled_pixels,
+                      sampled_pixels_mean,
+                      (unsigned long long)entry->sampled_ns,
+                      sampled_total_ms,
+                      sampled_mean_ms,
+                      sampled_ns_per_pixel,
                       entry->source_x_min,
                       entry->source_x_max,
                       entry->source_y_min,
@@ -4886,6 +4907,15 @@ static void perf_capture_write_summary(void) {
             const double same_source_reused_pixel_ratio =
                 entry->submitted_pixels > 0 ? (double)entry->same_source_reused_pixels / (double)entry->submitted_pixels
                                             : 0.0;
+            const double sampled_call_ratio =
+                entry->task_count > 0 ? (double)entry->sampled_calls / (double)entry->task_count : 0.0;
+            const double sampled_total_ms = (double)entry->sampled_ns / 1e6;
+            const double sampled_mean_ms =
+                entry->sampled_calls > 0 ? sampled_total_ms / (double)entry->sampled_calls : 0.0;
+            const double sampled_pixels_mean =
+                entry->sampled_calls > 0 ? (double)entry->sampled_pixels / (double)entry->sampled_calls : 0.0;
+            const double sampled_ns_per_pixel =
+                entry->sampled_pixels > 0 ? (double)entry->sampled_ns / (double)entry->sampled_pixels : 0.0;
             const double same_source_pair_leading_non_pair_pixels_mean =
                 (double)entry->same_source_pair_leading_non_pair_pixels / frame_count;
             const double same_source_pair_trailing_non_pair_pixels_mean =
@@ -4911,6 +4941,10 @@ static void perf_capture_write_summary(void) {
                       "\"submitted_pixel_ratio\": %.6f, "
                       "\"lookup_entries_total\": %llu, \"lookup_entries_mean\": %.2f, "
                       "\"lookup_entry_ratio\": %.6f, "
+                      "\"sampled_calls_total\": %llu, \"sampled_calls_ratio\": %.6f, "
+                      "\"sampled_pixels_total\": %llu, \"sampled_pixels_mean\": %.2f, "
+                      "\"sampled_ns_total\": %llu, \"sampled_total_ms\": %.4f, "
+                      "\"sampled_mean_ms\": %.6f, \"sampled_ns_per_pixel\": %.4f, "
                       "\"source_alpha_opaque_pixels_total\": %llu, "
                       "\"source_alpha_opaque_pixels_mean\": %.2f, "
                       "\"source_alpha_opaque_pixel_ratio\": %.6f, "
@@ -4987,6 +5021,14 @@ static void perf_capture_write_summary(void) {
                       (unsigned long long)entry->lookup_entries,
                       (double)entry->lookup_entries / frame_count,
                       lookup_ratio,
+                      (unsigned long long)entry->sampled_calls,
+                      sampled_call_ratio,
+                      (unsigned long long)entry->sampled_pixels,
+                      sampled_pixels_mean,
+                      (unsigned long long)entry->sampled_ns,
+                      sampled_total_ms,
+                      sampled_mean_ms,
+                      sampled_ns_per_pixel,
                       (unsigned long long)entry->source_alpha_opaque_pixels,
                       (double)entry->source_alpha_opaque_pixels / frame_count,
                       source_alpha_opaque_pixel_ratio,
@@ -5066,6 +5108,15 @@ static void perf_capture_write_summary(void) {
                                             ? (double)entry->lookup_entries /
                                                   (double)generic_textured_family_lookup_entries_total
                                             : 0.0;
+            const double sampled_call_ratio =
+                entry->task_count > 0 ? (double)entry->sampled_calls / (double)entry->task_count : 0.0;
+            const double sampled_total_ms = (double)entry->sampled_ns / 1e6;
+            const double sampled_mean_ms =
+                entry->sampled_calls > 0 ? sampled_total_ms / (double)entry->sampled_calls : 0.0;
+            const double sampled_pixels_mean =
+                entry->sampled_calls > 0 ? (double)entry->sampled_pixels / (double)entry->sampled_calls : 0.0;
+            const double sampled_ns_per_pixel =
+                entry->sampled_pixels > 0 ? (double)entry->sampled_ns / (double)entry->sampled_pixels : 0.0;
             io_printf(io,
                       "      {\"texture_handle\": %d, \"palette_handle\": %d, "
                       "\"source_format\": \"%s\", \"source_width\": %d, \"source_height\": %d, "
@@ -5087,6 +5138,10 @@ static void perf_capture_write_summary(void) {
                       "\"submitted_pixel_ratio\": %.6f, "
                       "\"lookup_entries_total\": %llu, \"lookup_entries_mean\": %.2f, "
                       "\"lookup_entry_ratio\": %.6f, "
+                      "\"sampled_calls_total\": %llu, \"sampled_calls_ratio\": %.6f, "
+                      "\"sampled_pixels_total\": %llu, \"sampled_pixels_mean\": %.2f, "
+                      "\"sampled_ns_total\": %llu, \"sampled_total_ms\": %.4f, "
+                      "\"sampled_mean_ms\": %.6f, \"sampled_ns_per_pixel\": %.4f, "
                       "\"source_rect_x_min\": %d, \"source_rect_x_max\": %d, "
                       "\"source_rect_y_min\": %d, \"source_rect_y_max\": %d, "
                       "\"source_rect_w_min\": %d, \"source_rect_w_max\": %d, "
@@ -5129,6 +5184,14 @@ static void perf_capture_write_summary(void) {
                       (unsigned long long)entry->lookup_entries,
                       (double)entry->lookup_entries / frame_count,
                       lookup_ratio,
+                      (unsigned long long)entry->sampled_calls,
+                      sampled_call_ratio,
+                      (unsigned long long)entry->sampled_pixels,
+                      sampled_pixels_mean,
+                      (unsigned long long)entry->sampled_ns,
+                      sampled_total_ms,
+                      sampled_mean_ms,
+                      sampled_ns_per_pixel,
                       entry->source_x_min,
                       entry->source_x_max,
                       entry->source_y_min,
