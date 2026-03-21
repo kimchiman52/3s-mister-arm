@@ -102,17 +102,24 @@ static void note_non_integer_row_reuse_telemetry(const int* src_x_lookup,
             telemetry->same_source_max_run_length = run_length;
         }
 
+        Uint32 src_pixel = src_row[src_col];
+        if (apply_color_mod) {
+            src_pixel = modulate_argb8888(src_pixel, color);
+        }
+
+        const Uint32 src_a = (src_pixel >> 24) & 0xFFu;
+        if (src_a == 0u) {
+            telemetry->source_alpha_transparent_pixels += (Uint64)run_length;
+        } else if (src_a == 0xFFu) {
+            telemetry->source_alpha_opaque_pixels += (Uint64)run_length;
+        } else {
+            telemetry->source_alpha_blended_pixels += (Uint64)run_length;
+        }
+
         if (run_length > 1) {
             const Uint64 reused_pixels = (Uint64)(run_length - 1);
-            Uint32 src_pixel = src_row[src_col];
-            if (apply_color_mod) {
-                src_pixel = modulate_argb8888(src_pixel, color);
-            }
-
             telemetry->same_source_reuse_runs += 1u;
             telemetry->same_source_reused_pixels += reused_pixels;
-
-            const Uint32 src_a = (src_pixel >> 24) & 0xFFu;
             if (src_a == 0u) {
                 telemetry->same_source_transparent_reused_pixels += reused_pixels;
             } else if (src_a == 0xFFu) {

@@ -4004,6 +4004,9 @@ static void note_perf_capture_textured_rect_family(const RenderTask* task,
     entry->submitted_pixels += profile.submitted_pixels;
     entry->lookup_entries += lookup_entries;
     if (non_integer_telemetry != NULL) {
+        entry->source_alpha_opaque_pixels += non_integer_telemetry->source_alpha_opaque_pixels;
+        entry->source_alpha_transparent_pixels += non_integer_telemetry->source_alpha_transparent_pixels;
+        entry->source_alpha_blended_pixels += non_integer_telemetry->source_alpha_blended_pixels;
         entry->same_source_runs += non_integer_telemetry->same_source_runs;
         entry->same_source_reuse_runs += non_integer_telemetry->same_source_reuse_runs;
         entry->same_source_reused_pixels += non_integer_telemetry->same_source_reused_pixels;
@@ -4285,6 +4288,12 @@ static void note_software_frame_fast_non_integer(const RenderTask* task,
     frame_stats.software_frame_fast_non_integer_pixels += submitted_pixels;
     frame_stats.software_frame_fast_non_integer_lookup_entries += lookup_entries;
     if (non_integer_telemetry != NULL) {
+        frame_stats.software_frame_fast_non_integer_source_alpha_opaque_pixels +=
+            non_integer_telemetry->source_alpha_opaque_pixels;
+        frame_stats.software_frame_fast_non_integer_source_alpha_transparent_pixels +=
+            non_integer_telemetry->source_alpha_transparent_pixels;
+        frame_stats.software_frame_fast_non_integer_source_alpha_blended_pixels +=
+            non_integer_telemetry->source_alpha_blended_pixels;
         frame_stats.software_frame_fast_non_integer_same_source_runs += non_integer_telemetry->same_source_runs;
         frame_stats.software_frame_fast_non_integer_same_source_reuse_runs +=
             non_integer_telemetry->same_source_reuse_runs;

@@ -74,6 +74,9 @@ typedef struct SDLGameRenderer_FrameStats {
     int software_frame_fast_non_integer_tasks;
     Uint64 software_frame_fast_non_integer_pixels;
     Uint64 software_frame_fast_non_integer_lookup_entries;
+    Uint64 software_frame_fast_non_integer_source_alpha_opaque_pixels;
+    Uint64 software_frame_fast_non_integer_source_alpha_transparent_pixels;
+    Uint64 software_frame_fast_non_integer_source_alpha_blended_pixels;
     Uint64 software_frame_fast_non_integer_same_source_runs;
     Uint64 software_frame_fast_non_integer_same_source_reuse_runs;
     Uint64 software_frame_fast_non_integer_same_source_reused_pixels;
@@ -417,6 +420,9 @@ typedef struct SDLGameRenderer_PerfCaptureTexturedRectFamily {
     Uint64 task_count;
     Uint64 submitted_pixels;
     Uint64 lookup_entries;
+    Uint64 source_alpha_opaque_pixels;
+    Uint64 source_alpha_transparent_pixels;
+    Uint64 source_alpha_blended_pixels;
     Uint64 same_source_runs;
     Uint64 same_source_reuse_runs;
     Uint64 same_source_reused_pixels;

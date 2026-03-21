@@ -5,6 +5,9 @@
 #include <stdbool.h>
 
 typedef struct SDLSoftwareFrame_NonIntegerTelemetry {
+    Uint64 source_alpha_opaque_pixels;
+    Uint64 source_alpha_transparent_pixels;
+    Uint64 source_alpha_blended_pixels;
     Uint64 same_source_runs;
     Uint64 same_source_reuse_runs;
     Uint64 same_source_reused_pixels;
