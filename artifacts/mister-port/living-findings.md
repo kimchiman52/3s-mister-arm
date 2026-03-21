@@ -3831,7 +3831,7 @@ Scope guardrails:
 
 - 2026-03-21T12:18:55-0400
   - Final commit hash:
-    - `pending closeout commit`
+    - `d3a9f9de`
   - Bottleneck targeted:
     - native Yun SA3 first-visible activation on the direct `software_frame_exact` path, specifically whether a careful scalar `4x` unroll in the non-color-mod non-integer row-walk gather path could lower the remaining hot-family raster cost without weakening the kept pair-only reuse fast path
   - Change summary:

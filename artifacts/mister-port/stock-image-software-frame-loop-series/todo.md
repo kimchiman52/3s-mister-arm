@@ -5987,6 +5987,6 @@
 - [x] Keep/rollback decision:
   - [x] reject and revert. This scalar `4x` row-walk unroll preserves route/workload identity and the kept pair-only semantics, but it makes the deciding Yun lane slower overall (`35.2116 -> 34.6360 FPS`, `16.7332 -> 17.3713 render ms`) while the exact-path guard stays flat-to-better, so it is not a safe runtime keep
 - [x] final commit hash:
-  - [x] `pending closeout commit`
+  - [x] `d3a9f9de` (`mister: close loop 135 row-walk unroll audit`)
 - [x] next best candidate:
   - [x] do not retry this scalar `4x` row-walk unroll now. Move to the separate Remy-left compare-dirty residue track around `ppg-seqs 81/82`, especially the remaining seq-`82` full/oversized refresh tail, unless fresh Yun evidence re-ranks another safe native gameplay bottleneck first
