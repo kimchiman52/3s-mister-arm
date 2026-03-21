@@ -567,6 +567,18 @@ typedef struct SDLGameRenderer_PerfCaptureRefreshLocalityCandidate {
     Uint64 compare_dirty_rect_refresh_32x32_multi_component_refresh_attempts;
     Uint64 compare_dirty_rect_refresh_32x32_largest_component_tiles;
     Uint64 compare_dirty_rect_refresh_32x32_max_largest_component_tiles;
+    Uint64 compare_dirty_row_mask_no_usable_candidate_refresh_attempts;
+    Uint64 compare_dirty_row_mask_partial_candidate_refresh_attempts;
+    Uint64 compare_dirty_row_mask_half_cap_partial_candidate_refresh_attempts;
+    Uint64 compare_dirty_row_mask_plan_pixels;
+    Uint64 compare_dirty_row_mask_max_plan_pixels;
+    Uint64 compare_dirty_row_mask_32x32_covered_tiles;
+    Uint64 compare_dirty_row_mask_32x32_max_covered_tiles;
+    Uint64 compare_dirty_row_mask_32x32_component_count;
+    Uint64 compare_dirty_row_mask_32x32_max_component_count;
+    Uint64 compare_dirty_row_mask_32x32_multi_component_refresh_attempts;
+    Uint64 compare_dirty_row_mask_32x32_largest_component_tiles;
+    Uint64 compare_dirty_row_mask_32x32_max_largest_component_tiles;
     Uint64 renew_chunk_calls;
     Uint64 renew_batches;
     Uint64 renew_batches_without_rect;

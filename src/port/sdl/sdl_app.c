@@ -3476,7 +3476,7 @@ static void perf_capture_write_summary(void) {
     }
 
     io_printf(io, "{\n");
-    io_printf(io, "  \"schema_version\": 57,\n");
+    io_printf(io, "  \"schema_version\": 58,\n");
     io_printf(io, "  \"scene\": \"");
     io_write_json_escaped_string(io, perf_capture_scene_name);
     io_printf(io, "\",\n");
@@ -6073,6 +6073,46 @@ static void perf_capture_write_summary(void) {
                     ? (double)entry->compare_dirty_rect_refresh_32x32_largest_component_tiles /
                           (double)entry->compare_dirty_rect_refresh_attempts
                     : 0.0;
+            const double compare_dirty_row_mask_no_usable_candidate_refresh_attempt_ratio =
+                entry->compare_dirty_rect_refresh_attempts > 0
+                    ? (double)entry->compare_dirty_row_mask_no_usable_candidate_refresh_attempts /
+                          (double)entry->compare_dirty_rect_refresh_attempts
+                    : 0.0;
+            const double compare_dirty_row_mask_partial_candidate_refresh_attempt_ratio =
+                entry->compare_dirty_rect_refresh_attempts > 0
+                    ? (double)entry->compare_dirty_row_mask_partial_candidate_refresh_attempts /
+                          (double)entry->compare_dirty_rect_refresh_attempts
+                    : 0.0;
+            const double compare_dirty_row_mask_half_cap_partial_candidate_refresh_attempt_ratio =
+                entry->compare_dirty_rect_refresh_attempts > 0
+                    ? (double)entry->compare_dirty_row_mask_half_cap_partial_candidate_refresh_attempts /
+                          (double)entry->compare_dirty_rect_refresh_attempts
+                    : 0.0;
+            const double compare_dirty_row_mask_plan_pixels_mean_per_attempt =
+                entry->compare_dirty_rect_refresh_attempts > 0
+                    ? (double)entry->compare_dirty_row_mask_plan_pixels /
+                          (double)entry->compare_dirty_rect_refresh_attempts
+                    : 0.0;
+            const double compare_dirty_row_mask_32x32_covered_tiles_mean_per_attempt =
+                entry->compare_dirty_rect_refresh_attempts > 0
+                    ? (double)entry->compare_dirty_row_mask_32x32_covered_tiles /
+                          (double)entry->compare_dirty_rect_refresh_attempts
+                    : 0.0;
+            const double compare_dirty_row_mask_32x32_component_count_mean_per_attempt =
+                entry->compare_dirty_rect_refresh_attempts > 0
+                    ? (double)entry->compare_dirty_row_mask_32x32_component_count /
+                          (double)entry->compare_dirty_rect_refresh_attempts
+                    : 0.0;
+            const double compare_dirty_row_mask_32x32_multi_component_refresh_attempt_ratio =
+                entry->compare_dirty_rect_refresh_attempts > 0
+                    ? (double)entry->compare_dirty_row_mask_32x32_multi_component_refresh_attempts /
+                          (double)entry->compare_dirty_rect_refresh_attempts
+                    : 0.0;
+            const double compare_dirty_row_mask_32x32_largest_component_tiles_mean_per_attempt =
+                entry->compare_dirty_rect_refresh_attempts > 0
+                    ? (double)entry->compare_dirty_row_mask_32x32_largest_component_tiles /
+                          (double)entry->compare_dirty_rect_refresh_attempts
+                    : 0.0;
             const double renew_batches_without_rect_ratio =
                 entry->renew_batches > 0 ? (double)entry->renew_batches_without_rect / (double)entry->renew_batches : 0.0;
             const double renew_batch_bbox_mean_pixels =
@@ -6127,6 +6167,17 @@ static void perf_capture_write_summary(void) {
             const double compare_dirty_rect_refresh_max_bbox_ratio =
                 compare_dirty_rect_source_pixels > 0
                     ? (double)entry->compare_dirty_rect_refresh_max_bbox_pixels /
+                          (double)compare_dirty_rect_source_pixels
+                    : 0.0;
+            const double compare_dirty_row_mask_plan_mean_ratio =
+                (compare_dirty_rect_source_pixels > 0) && (entry->compare_dirty_rect_refresh_attempts > 0)
+                    ? (double)entry->compare_dirty_row_mask_plan_pixels /
+                          ((double)compare_dirty_rect_source_pixels *
+                           (double)entry->compare_dirty_rect_refresh_attempts)
+                    : 0.0;
+            const double compare_dirty_row_mask_max_plan_ratio =
+                compare_dirty_rect_source_pixels > 0
+                    ? (double)entry->compare_dirty_row_mask_max_plan_pixels /
                           (double)compare_dirty_rect_source_pixels
                     : 0.0;
             io_printf(io,
@@ -6276,6 +6327,28 @@ static void perf_capture_write_summary(void) {
                       "\"compare_dirty_rect_refresh_32x32_largest_component_tiles_total\": %llu, "
                       "\"compare_dirty_rect_refresh_32x32_largest_component_tiles_mean_per_attempt\": %.2f, "
                       "\"compare_dirty_rect_refresh_32x32_max_largest_component_tiles\": %llu, "
+                      "\"compare_dirty_row_mask_no_usable_candidate_refresh_attempts_total\": %llu, "
+                      "\"compare_dirty_row_mask_no_usable_candidate_refresh_attempt_ratio\": %.6f, "
+                      "\"compare_dirty_row_mask_partial_candidate_refresh_attempts_total\": %llu, "
+                      "\"compare_dirty_row_mask_partial_candidate_refresh_attempt_ratio\": %.6f, "
+                      "\"compare_dirty_row_mask_half_cap_partial_candidate_refresh_attempts_total\": %llu, "
+                      "\"compare_dirty_row_mask_half_cap_partial_candidate_refresh_attempt_ratio\": %.6f, "
+                      "\"compare_dirty_row_mask_plan_pixels_total\": %llu, "
+                      "\"compare_dirty_row_mask_plan_pixels_mean_per_attempt\": %.2f, "
+                      "\"compare_dirty_row_mask_max_plan_pixels\": %llu, "
+                      "\"compare_dirty_row_mask_plan_mean_ratio\": %.6f, "
+                      "\"compare_dirty_row_mask_max_plan_ratio\": %.6f, "
+                      "\"compare_dirty_row_mask_32x32_covered_tiles_total\": %llu, "
+                      "\"compare_dirty_row_mask_32x32_covered_tiles_mean_per_attempt\": %.2f, "
+                      "\"compare_dirty_row_mask_32x32_max_covered_tiles\": %llu, "
+                      "\"compare_dirty_row_mask_32x32_component_count_total\": %llu, "
+                      "\"compare_dirty_row_mask_32x32_component_count_mean_per_attempt\": %.2f, "
+                      "\"compare_dirty_row_mask_32x32_max_component_count\": %llu, "
+                      "\"compare_dirty_row_mask_32x32_multi_component_refresh_attempts_total\": %llu, "
+                      "\"compare_dirty_row_mask_32x32_multi_component_refresh_attempt_ratio\": %.6f, "
+                      "\"compare_dirty_row_mask_32x32_largest_component_tiles_total\": %llu, "
+                      "\"compare_dirty_row_mask_32x32_largest_component_tiles_mean_per_attempt\": %.2f, "
+                      "\"compare_dirty_row_mask_32x32_max_largest_component_tiles\": %llu, "
                       "\"renew_chunk_calls_total\": %llu, "
                       "\"renew_chunk_calls_mean\": %.4f, "
                       "\"renew_batches_total\": %llu, "
@@ -6477,6 +6550,28 @@ static void perf_capture_write_summary(void) {
                       (unsigned long long)entry->compare_dirty_rect_refresh_32x32_largest_component_tiles,
                       compare_dirty_rect_refresh_32x32_largest_component_tiles_mean_per_attempt,
                       (unsigned long long)entry->compare_dirty_rect_refresh_32x32_max_largest_component_tiles,
+                      (unsigned long long)entry->compare_dirty_row_mask_no_usable_candidate_refresh_attempts,
+                      compare_dirty_row_mask_no_usable_candidate_refresh_attempt_ratio,
+                      (unsigned long long)entry->compare_dirty_row_mask_partial_candidate_refresh_attempts,
+                      compare_dirty_row_mask_partial_candidate_refresh_attempt_ratio,
+                      (unsigned long long)entry->compare_dirty_row_mask_half_cap_partial_candidate_refresh_attempts,
+                      compare_dirty_row_mask_half_cap_partial_candidate_refresh_attempt_ratio,
+                      (unsigned long long)entry->compare_dirty_row_mask_plan_pixels,
+                      compare_dirty_row_mask_plan_pixels_mean_per_attempt,
+                      (unsigned long long)entry->compare_dirty_row_mask_max_plan_pixels,
+                      compare_dirty_row_mask_plan_mean_ratio,
+                      compare_dirty_row_mask_max_plan_ratio,
+                      (unsigned long long)entry->compare_dirty_row_mask_32x32_covered_tiles,
+                      compare_dirty_row_mask_32x32_covered_tiles_mean_per_attempt,
+                      (unsigned long long)entry->compare_dirty_row_mask_32x32_max_covered_tiles,
+                      (unsigned long long)entry->compare_dirty_row_mask_32x32_component_count,
+                      compare_dirty_row_mask_32x32_component_count_mean_per_attempt,
+                      (unsigned long long)entry->compare_dirty_row_mask_32x32_max_component_count,
+                      (unsigned long long)entry->compare_dirty_row_mask_32x32_multi_component_refresh_attempts,
+                      compare_dirty_row_mask_32x32_multi_component_refresh_attempt_ratio,
+                      (unsigned long long)entry->compare_dirty_row_mask_32x32_largest_component_tiles,
+                      compare_dirty_row_mask_32x32_largest_component_tiles_mean_per_attempt,
+                      (unsigned long long)entry->compare_dirty_row_mask_32x32_max_largest_component_tiles,
                       (unsigned long long)entry->renew_chunk_calls,
                       (double)entry->renew_chunk_calls / frame_count,
                       (unsigned long long)entry->renew_batches,

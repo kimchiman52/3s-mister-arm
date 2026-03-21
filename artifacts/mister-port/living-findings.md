@@ -3846,3 +3846,21 @@ Scope guardrails:
     - reject and revert; this scalar `4x` row-walk unroll preserves route/workload identity but adds overhead on the deciding Yun lane instead of reducing it
   - Next best candidate optimization:
     - do not retry this scalar `4x` row-walk unroll now; move to separate Remy-left compare-dirty `ppg-seqs 81/82` residue work, especially the remaining seq-`82` full/oversized refresh tail, unless fresh Yun evidence re-ranks another safe gameplay lane first
+
+- 2026-03-21T13:03:26-0400
+  - Final commit hash:
+    - `pending`
+  - Bottleneck targeted:
+    - native Remy-left exact/refresh residue, specifically whether hot compare-dirty family `ppg-seqs ix 82 / texture 58` stays oversized because the current pending-mask geometry is too coarse or because the kept `3/8` total-plan budget is already the real blocker
+  - Change summary:
+    - added capture-only row-mask compare-dirty attribution and export plumbing in `src/port/sdl/sdl_game_renderer.c`, `include/port/sdl/sdl_game_renderer.h`, and `src/port/sdl/sdl_app.c`, bumping the perf JSON schema to `58`
+    - rebuilt and redeployed the telemetry ARM package in Docker `3sx-mister-build`, then captured `loop136-remy-row-mask` plus native guard `loop136-control-guard`
+    - the new telemetry showed that row-shaped plans shrink the hot seq-`82` candidate area materially, but current-cap admission stays flat while a broader audit cap would admit almost all attempts
+  - Verification result summary:
+    - Docker telemetry ARM build/install/package plus `readelf` passed; serialized `lock-status`, passworded `busy-status`, `health`, `deploy`, `probe`, and bounded `smoke` all passed on `192.168.1.171` with the same dummy/software + fbdev + native route and expected bounded `exit=143`
+    - deciding Remy capture `loop136-remy-row-mask` stayed effectively flat versus `loop132-remy-left-family-time` at `54.5195` vs `54.5717 FPS`, with `18.3421 / 9.6167 / 8.1870 / 0.5384 ms` vs `18.3245 / 9.4081 / 8.3755 / 0.5409 ms` (`frame / update / render / present`)
+    - exact-path guard `loop136-control-guard` stayed on direct `software_frame_exact` at `84.7060 FPS / 11.8055 / 3.8895 / 7.4087 / 0.5073 ms`
+  - Keep/rollback decision with reason:
+    - keep; this telemetry-only diff closes the remaining Remy compare-dirty shape blind spot without changing gameplay or refresh policy, and it shows that geometry tightening alone is unlikely to unlock the seq-`82` oversized tail under the kept `3/8` total-plan cap
+  - Next best candidate optimization:
+    - do not spend a runtime loop on row-shape-only compare-dirty tightening or a global cap bump now; if Remy-left is revisited, start with a narrowly bounded row-mask plus component-aware compare-dirty admission audit for seq `82`, because the blocking excess lives in the combined multi-rect total while each single component already stays below the kept `3/8` budget
