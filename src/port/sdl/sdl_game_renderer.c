@@ -2122,6 +2122,24 @@ static Uint64 texture_unlock_refresh_plan_pixels(const TextureUnlockRefreshPlan*
     return pixels;
 }
 
+static Uint64 texture_unlock_partial_refresh_max_pixels(const SDL_Surface* source_surface) {
+    if (source_surface == NULL) {
+        return 0;
+    }
+
+    return ((Uint64)source_surface->w * (Uint64)source_surface->h) / 4u;
+}
+
+static Uint64 compare_dirty_rect_partial_refresh_max_pixels(const SDL_Surface* source_surface) {
+    if (source_surface == NULL) {
+        return 0;
+    }
+
+    // Keep compare-dirty fallback slightly broader than explicit renew metadata: current native Remy telemetry leaves
+    // seq 81 inside 3/8 while the still-riskier seq 82 residue remains above it.
+    return ((Uint64)source_surface->w * (Uint64)source_surface->h * 3u) / 8u;
+}
+
 static bool build_texture_unlock_refresh_plan_from_tile_mask(Uint64 tile_mask, TextureUnlockRefreshPlan* out_plan) {
     if ((tile_mask == 0) || (out_plan == NULL)) {
         return false;
@@ -2646,7 +2664,7 @@ static void note_perf_capture_compare_dirty_rect_refresh_candidate(unsigned int 
     }
 
     const Uint64 dirty_pixels = (Uint64)dirty_rect.w * (Uint64)dirty_rect.h;
-    const Uint64 max_partial_pixels = ((Uint64)source_surface->w * (Uint64)source_surface->h) / 4u;
+    const Uint64 max_partial_pixels = compare_dirty_rect_partial_refresh_max_pixels(source_surface);
     perf_capture_compare_dirty_rect_refresh_bbox_pixels_by_texture[texture_index] += dirty_pixels;
     perf_capture_compare_dirty_rect_refresh_pending_unlocks_by_texture[texture_index] +=
         perf_capture_compare_dirty_rect_pending_unlock_counts[texture_index];
@@ -2700,7 +2718,7 @@ static TextureUnlockRefreshDecision classify_compare_dirty_rect_refresh_decision
     }
 
     SDL_zero(*out_plan);
-    const Uint64 max_partial_pixels = ((Uint64)source_surface->w * (Uint64)source_surface->h) / 4u;
+    const Uint64 max_partial_pixels = compare_dirty_rect_partial_refresh_max_pixels(source_surface);
     if (perf_capture_compare_dirty_rect_pending_tile_masks[texture_index] != 0) {
         TextureUnlockRefreshPlan multi_rect_plan = { 0 };
         if (build_texture_unlock_refresh_plan_from_tile_mask(perf_capture_compare_dirty_rect_pending_tile_masks[texture_index],
@@ -2756,7 +2774,7 @@ static TextureUnlockRefreshDecision classify_texture_unlock_refresh_decision(uns
     }
 
     const int texture_index = texture_handle - 1;
-    const Uint64 max_partial_pixels = ((Uint64)source_surface->w * (Uint64)source_surface->h) / 4u;
+    const Uint64 max_partial_pixels = texture_unlock_partial_refresh_max_pixels(source_surface);
     if (texture_unlock_dirty_tile_mask_valid[texture_index]) {
         TextureUnlockRefreshPlan multi_rect_plan = { 0 };
         if (build_texture_unlock_refresh_plan_from_tile_mask(texture_unlock_dirty_tile_masks[texture_index],
