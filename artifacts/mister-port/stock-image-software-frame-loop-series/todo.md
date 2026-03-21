@@ -4506,7 +4506,7 @@
 - [x] Keep/rollback decision:
   - [x] rollback. The helper-side lookup-setup reland stayed parity-clean only after being narrowed, and the final on-device gameplay matrix still regressed relative to the kept `stock-soft-c97-*` baseline
 - [x] final commit hash:
-  - [x] recorded in the loop closure commit
+  - [x] `56e6d07f`
 - [x] next best candidate:
   - [x] recover the narrowest trustworthy direct Yun SA3 burst capture on top of the kept `stock-soft-c97-*` baseline, or add only the smallest replay/state recovery needed to reach that real burst on-device before another gameplay runtime retry. If the user wants the non-gameplay lane instead, return to the already-proven menu-transition solid-fallback/readback failure next rather than reopening this helper setup idea
 

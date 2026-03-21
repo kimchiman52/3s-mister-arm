@@ -3652,7 +3652,7 @@ Scope guardrails:
 
 - 2026-03-21T04:44:01-0400
   - Final commit hash:
-    - recorded in the cycle closeout commit
+    - `56e6d07f`
   - Bottleneck targeted:
     - native Yun SA3 first-visible activation on the direct `software_frame_exact` path, specifically whether unmodulated same-source horizontal run batching inside the kept non-integer lookup helper could lower the remaining raster cost without changing routing
   - Change summary:
