@@ -5838,6 +5838,6 @@
 - [x] Keep/rollback decision:
   - [x] reject and revert. The edge-only scalar partition preserves route/workload identity and guard-lane safety, but it does not reduce the real Yun bottleneck and slightly worsens the deciding native gameplay lane
 - [x] final commit hash:
-  - [ ] pending current loop closure commit
+  - [x] `fdf440a2` (`mister: close loop 131 edge partition rollback`)
 - [x] next best candidate:
   - [x] do not retry this edge-partition helper shape now. Return to the measured clipped native residue from Loop 129, starting with the clipped `texture 57 / palette 394 / ix 81` family and the clipped `128x48` `texture 77 / palette 320` family before reopening helper-internal pair-control-flow work

@@ -3757,7 +3757,7 @@ Scope guardrails:
 
 - 2026-03-21T08:12:07-0400
   - Final commit hash:
-    - pending current loop closure commit
+    - `fdf440a2`
   - Bottleneck targeted:
     - native Yun SA3 first-visible activation on the direct `software_frame_exact` path, specifically whether the kept pair-only helper can gain anything by skipping duplicate-pair checks on leading and trailing known-non-pair columns
   - Change summary:
