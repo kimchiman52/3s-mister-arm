@@ -3828,3 +3828,21 @@ Scope guardrails:
     - reject and revert; the micro-lookup admission narrows the intended generic residue, but it shifts more work into the fast non-integer helper and makes the deciding Yun cold burst slower, so it is not a safe runtime keep
   - Next best candidate optimization:
     - do not retry this sub-`384` micro-lookup idea now; move to one careful scalar `4x` unroll in the hot non-integer row-walk gather loop while preserving the kept pair-only reuse path, with Remy-left still on the separate compare-dirty track
+
+- 2026-03-21T12:18:55-0400
+  - Final commit hash:
+    - `pending closeout commit`
+  - Bottleneck targeted:
+    - native Yun SA3 first-visible activation on the direct `software_frame_exact` path, specifically whether a careful scalar `4x` unroll in the non-color-mod non-integer row-walk gather path could lower the remaining hot-family raster cost without weakening the kept pair-only reuse fast path
+  - Change summary:
+    - tried a narrow runtime patch in `src/port/sdl/software_frame_non_integer.c` that added scalar `4x` unrolled single-span processing around the preserved pair-hit path for unmodulated non-integer rows
+    - rebuilt the telemetry ARM package in Docker `3sx-mister-build`, redeployed it with serialized MiSTer tooling, captured deciding-lane telemetry as `loop135-yun-unroll` and exact-path guard telemetry as `loop135-remy-left-guard`, and ran independent review agent `Hooke`
+    - fully reverted the runtime file after the deciding Yun capture regressed, leaving the final tree docs-only for this loop closure
+  - Verification result summary:
+    - Docker telemetry ARM build/install/package plus `readelf` passed; serialized `lock-status`, `busy-status`, `health`, `deploy`, `probe`, bounded `smoke`, and remote log inspection all passed on `192.168.1.171` with the same dummy/software + fbdev + native route and expected bounded `exit=143`
+    - deciding Yun capture `loop135-yun-unroll` stayed direct-presented but regressed versus `loop134-yun-baseline` (`35.2116 -> 34.6360 FPS`, `28.3997 -> 28.8717 ms`, `16.7332 -> 17.3713 render ms`) while fast-non-integer/generic task and pixel means stayed flat; the first active `60` frames also regressed `20.7295 -> 20.0095 FPS` even though the first active `8` frames nudged `22.4219 -> 22.7842 FPS`
+    - exact-path guard `loop135-remy-left-guard` stayed safe on pure `software_frame_exact` at `55.2208 FPS / 18.1091 / 9.2896 / 8.2865 / 0.5330 ms`, with zero `fast_non_integer` and zero `generic_textured`
+  - Keep/rollback decision with reason:
+    - reject and revert; this scalar `4x` row-walk unroll preserves route/workload identity but adds overhead on the deciding Yun lane instead of reducing it
+  - Next best candidate optimization:
+    - do not retry this scalar `4x` row-walk unroll now; move to separate Remy-left compare-dirty `ppg-seqs 81/82` residue work, especially the remaining seq-`82` full/oversized refresh tail, unless fresh Yun evidence re-ranks another safe gameplay lane first
