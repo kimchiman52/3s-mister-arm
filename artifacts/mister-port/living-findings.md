@@ -3719,3 +3719,20 @@ Scope guardrails:
     - keep; the reland stayed route-identical, cleared review, and improved the user-priority Yun activation windows on two same-schema reruns without showing a guard-lane regression
   - Next best candidate optimization:
     - re-rank from this kept pair-only baseline before editing again; if the hotspot still centers on opaque `ppg-seqs 81/82`, try a similarly narrow endpoint-aware duplicate specialization next, otherwise pivot to the clipped `128x48` fast-non-integer family or the small `ix 80` generic-textured residue
+
+- 2026-03-21T07:14:44-0400
+  - Final commit hash:
+    - `960e5c55`
+  - Bottleneck targeted:
+    - native Yun SA3 first-visible activation on the direct `software_frame_exact` path, specifically whether the kept `ppg-seqs 81/82` hotspot is still pair-clean enough to justify a narrow endpoint-aware duplicate specialization
+  - Change summary:
+    - added capture-only fast-non-integer pair-topology telemetry, then accepted a review finding that `leading/trailing singleton` mislabeled general non-pair columns and relabeled the family export accordingly
+    - bumped the perf JSON schema to `55`, kept the patch trimmed to family-level export only, and synchronized the reviewed host edits into the container's `/work-arm` source tree before the final rebuild
+    - reran the reviewed Docker telemetry build, serialized MiSTer deploy/probe/smoke, and final Yun plus Remy-left captures on the corrected schema
+  - Verification result summary:
+    - Docker telemetry ARM rebuild/install/package passed on the reviewed tree; serialized `deploy`, `probe`, and bounded `smoke` all passed on `192.168.1.171` with the same dummy/software + fbdev + native route and expected bounded `exit=143`
+    - final schema-`55` Yun capture `loop129-yun-pair-topology-final` stayed direct-presented at `41.2081 FPS / 24.2671 / 11.0407 / 12.7010 / 0.5254 ms`, with the hot `ppg-seqs 82/81` families still only about `42-44%` pair pixels and dominated by `gap_2` plus `gap_3+` runs; final guard `loop129-remy-left-pair-topology-final` stayed pure `fast_exact` at `54.6954 FPS / 18.2831 / 9.4910 / 8.2722 / 0.5199 ms`
+  - Keep/rollback decision with reason:
+    - keep; this telemetry-only diff now has accurate field names, survived review plus on-device re-verification, and shows the remaining Yun residue is too fragmented for a simple endpoint-aware duplicate reland to be the default next step
+  - Next best candidate optimization:
+    - pivot away from simple endpoint-aware pair batching for now and re-rank the clipped native residue instead, starting with the clipped `ppg-seqs ix 81` family (`texture 57 / palette 394`) and the clipped `128x48` `texture 77 / palette 320` family
