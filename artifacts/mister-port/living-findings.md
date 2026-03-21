@@ -3736,3 +3736,21 @@ Scope guardrails:
     - keep; this telemetry-only diff now has accurate field names, survived review plus on-device re-verification, and shows the remaining Yun residue is too fragmented for a simple endpoint-aware duplicate reland to be the default next step
   - Next best candidate optimization:
     - pivot away from simple endpoint-aware pair batching for now and re-rank the clipped native residue instead, starting with the clipped `ppg-seqs ix 81` family (`texture 57 / palette 394`) and the clipped `128x48` `texture 77 / palette 320` family
+
+- 2026-03-21T07:44:12-0400
+  - Final commit hash:
+    - recorded in the loop closure commit
+  - Bottleneck targeted:
+    - native Yun SA3 first-visible activation on the direct `software_frame_exact` path, specifically whether removing the kept pair-only helper prepass can lower the hot `ppg-seqs 81/82` raster cost without changing routing
+  - Change summary:
+    - tried a narrow runtime reland only in `src/port/sdl/software_frame_non_integer.c`, replacing the per-task `same_source_pair_lookup[]` prepass with inline adjacent duplicate checks while preserving the existing pair-only duplicate semantics
+    - rebuilt the telemetry ARM package through the validated `/work-arm` Docker flow, redeployed it with serialized MiSTer tooling, and reran the deciding Yun first-activation lane plus a known exact-path gameplay guard
+    - fully reverted the runtime file after the deciding Yun capture failed, leaving the final tree docs-only for this loop closure
+  - Verification result summary:
+    - Docker telemetry ARM build/install/package plus `readelf` passed; serialized `health`, `deploy`, `probe`, and bounded `smoke` all passed on `192.168.1.171` with the same dummy/software + fbdev + native route and expected bounded `exit=143`
+    - `loop130-yun-inline-pair-post` stayed `300/300` on direct `software_frame_exact` with zero fallback/readback but fell from baseline `42.0508 -> 41.2349 FPS` (`23.7808 -> 24.2513 ms`), with `render.mean_ms` rising `12.3832 -> 12.7257` and sampled `fast_non_integer` time worsening `1192.6865 -> 1300.9404 ms` while `fast_non_integer` pixels/tasks stayed flat
+    - exact-path gameplay guard `loop130-left-corner-guard-post` stayed pure `software_frame_exact` at `88.1339 FPS / 11.3464 / 4.2668 / 6.5457 / 0.5339 ms`, with zero `fast_non_integer` and zero `generic_textured`
+  - Keep/rollback decision with reason:
+    - reject and revert; this prepass-removal shape preserves route/workload identity but raises the deciding Yun raster cost instead of lowering it
+  - Next best candidate optimization:
+    - do not retry pair-prepass removal now; return to the measured clipped residue from Loop 129, starting with the clipped `texture 57 / palette 394 / ix 81` family and the clipped `128x48` `texture 77 / palette 320` family before reopening helper-internal duplicate control-flow work
