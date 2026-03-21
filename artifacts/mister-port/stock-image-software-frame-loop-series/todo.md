@@ -6271,6 +6271,6 @@
 - [x] Keep/rollback decision:
   - [x] keep. This loop is measurement-support only, it preserved the native/direct runtime route on device, and it closed the exact-shape concentration blind spot without changing gameplay behavior
 - [ ] final commit hash:
-  - [ ] pending keep-commit backfill
+  - [x] `8e375059` (`mister: export loop 143 dominant-shape telemetry`)
 - [x] next best candidate:
   - [x] do not spend the next Yun gameplay loop on another helper-local exact-shape specialization reland first; the new dominant-shape export says the onset-heavy `ix 81 / 82` families remain too fragmented for a high-confidence one-shape helper rewrite, so the next safe candidate should look for a broader fast-non-integer lever or a different shared attribution cut

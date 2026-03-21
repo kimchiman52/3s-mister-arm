@@ -3976,7 +3976,7 @@ Scope guardrails:
 
 - 2026-03-21T22:05:00-0400
   - Final commit hash:
-    - pending keep-commit backfill
+    - `8e375059`
   - Bottleneck targeted:
     - missing exact-shape concentration attribution inside the trusted native Yun SA3 first-visible onset families, specifically whether the `ix 81 / 82` hotspot is concentrated enough to justify a later shape-specific runtime specialization
   - Change summary:
