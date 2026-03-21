@@ -445,6 +445,14 @@ typedef struct SDLGameRenderer_PerfCaptureTexturedRectFamily {
     Uint64 same_source_pair_gap_2_runs;
     Uint64 same_source_pair_gap_3_plus_runs;
     int same_source_max_run_length;
+    int exact_shape_variant_count;
+    int dominant_shape_source_w;
+    int dominant_shape_source_h;
+    int dominant_shape_visible_w;
+    int dominant_shape_visible_h;
+    Uint64 dominant_shape_task_count;
+    Uint64 dominant_shape_submitted_pixels;
+    Uint64 dominant_shape_sampled_ns;
     int source_x_min;
     int source_x_max;
     int source_y_min;
@@ -466,6 +474,30 @@ typedef struct SDLGameRenderer_PerfCaptureTexturedRectFamily {
     int visible_h_min;
     int visible_h_max;
 } SDLGameRenderer_PerfCaptureTexturedRectFamily;
+
+typedef struct SDLGameRenderer_PerfCaptureTexturedRectExactShape {
+    int texture_handle;
+    int palette_handle;
+    Uint32 source_format;
+    int source_width;
+    int source_height;
+    int alpha_only;
+    int rgb_mod;
+    int opaque_color;
+    int integer_positions;
+    int integer_source_rect;
+    int full_texture_source_rect;
+    int clipped;
+    int flip_h;
+    int flip_v;
+    int source_w;
+    int source_h;
+    int visible_w;
+    int visible_h;
+    Uint64 task_count;
+    Uint64 submitted_pixels;
+    Uint64 sampled_ns;
+} SDLGameRenderer_PerfCaptureTexturedRectExactShape;
 
 typedef struct SDLGameRenderer_PerfCaptureRefreshLocalityCandidate {
     int texture_handle;

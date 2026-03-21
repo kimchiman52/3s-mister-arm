@@ -3973,3 +3973,21 @@ Scope guardrails:
     - rollback; the gate reduced some pair-lookup work but did not produce a total-time win on the deciding onset families, so the final tree returns to the kept pair path
   - Next best candidate optimization:
     - do not retry the low-density pair gate now; the next Yun runtime attempt should target `ix 81 / 82` onset cost with a different lever than helper-internal pair control flow and prove a total-time win instead of shifting cost into reuse bookkeeping
+
+- 2026-03-21T22:05:00-0400
+  - Final commit hash:
+    - pending keep-commit backfill
+  - Bottleneck targeted:
+    - missing exact-shape concentration attribution inside the trusted native Yun SA3 first-visible onset families, specifically whether the `ix 81 / 82` hotspot is concentrated enough to justify a later shape-specific runtime specialization
+  - Change summary:
+    - added capture-only fast-non-integer exact-shape aggregation in `src/port/sdl/sdl_game_renderer.c` plus new dominant-shape export fields in `include/port/sdl/sdl_game_renderer.h`
+    - exported the dominant-shape counts, dims, and task/pixel/sample shares from `src/port/sdl/sdl_app.c` and bumped perf JSON `schema_version` from `60` to `61`
+    - rebuilt the telemetry ARM package in Docker `3sx-mister-build`, redeployed with serialized MiSTer tooling, reran `probe` / bounded `smoke`, and captured both `loop143-yun-onset-shape-r1` and `loop143-remy-left-guard-r1`
+  - Verification result summary:
+    - Docker telemetry ARM build/install/package plus `readelf` passed; serialized `busy-status`, `health`, `deploy`, `probe`, bounded `smoke`, and remote log inspection all passed on `192.168.1.171` with the same dummy/software + fbdev + native route and expected bounded `__RUNTIME_RC__=124` / `exit=143`
+    - `loop143-yun-onset-shape-r1` verified `schema_version = 61` on the trusted lane at `25.1504 FPS / 39.7608 / 9.5455 / 29.7135 / 0.5018 ms` overall and `21.3981 FPS / 46.7328 / 10.8989 / 35.8339 / 0.4950 ms` for `capture_windows.first_8_frames`, still with direct present, zero fallback, and zero `present_readback`
+    - the new first-burst export shows the onset-heavy families remain fragmented rather than single-shape dominated: `ix 81 / 57 / 391` reports `32` exact-shape variants with only `10.67%` task share on the dominant shape, `ix 82 / 58 / 393` reports `18` variants with `15.49%`, and `ix 81 / 57 / 394` reports `17` variants with `15.63%`; guard `loop143-remy-left-guard-r1` stayed exact/direct at `88.6314 FPS` with zero `fast_non_integer` and zero `generic_textured`
+  - Keep/rollback decision with reason:
+    - keep; this is measurement-support only, it preserved the verified native/direct gameplay route, and it closes the dominant-shape blind spot without changing gameplay behavior
+  - Next best candidate optimization:
+    - do not spend the next Yun gameplay loop on another one-shape helper reland first; use the new dominant-shape data to look for a broader shared fast-non-integer lever or a different attribution cut across the fragmented `ix 81 / 82` onset families

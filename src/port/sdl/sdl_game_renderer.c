@@ -339,6 +339,8 @@ static SDLGameRenderer_PerfCaptureTexturedRectFamily perf_capture_fast_exact_fam
 static int perf_capture_fast_exact_family_count = 0;
 static SDLGameRenderer_PerfCaptureTexturedRectFamily perf_capture_fast_non_integer_families[64] = { 0 };
 static int perf_capture_fast_non_integer_family_count = 0;
+static SDLGameRenderer_PerfCaptureTexturedRectExactShape perf_capture_fast_non_integer_shapes[512] = { 0 };
+static int perf_capture_fast_non_integer_shape_count = 0;
 static SDLGameRenderer_PerfCaptureTexturedRectFamily perf_capture_generic_textured_families[16] = { 0 };
 static int perf_capture_generic_textured_family_count = 0;
 static SDLGameRenderer_PerfCaptureTexturedGeometryFallbackFamily perf_capture_textured_geometry_recovered_families[16] = {
@@ -4106,7 +4108,8 @@ static void note_perf_capture_textured_rect_family(const RenderTask* task,
                                                    Uint64 sampled_ns,
                                                    SDLGameRenderer_PerfCaptureTexturedRectFamily* families,
                                                    int* family_count,
-                                                   int family_capacity) {
+                                                   int family_capacity,
+                                                   TexturedRectFamilyProfile* out_profile) {
     if (!frame_stats_extended_enabled || (task == NULL) || (dst_surface == NULL) || (families == NULL) ||
         (family_count == NULL) || (family_capacity <= 0)) {
         return;
@@ -4115,6 +4118,9 @@ static void note_perf_capture_textured_rect_family(const RenderTask* task,
     TexturedRectFamilyProfile profile;
     if (!analyze_textured_rect_family_task(task, dst_surface, &profile)) {
         return;
+    }
+    if (out_profile != NULL) {
+        *out_profile = profile;
     }
 
     SDLGameRenderer_PerfCaptureTexturedRectFamily* entry = NULL;
@@ -4217,6 +4223,73 @@ static void note_perf_capture_textured_rect_family(const RenderTask* task,
     update_textured_geometry_fallback_range(&entry->visible_h_min, &entry->visible_h_max, profile.visible_h);
 }
 
+static bool textured_rect_exact_shape_matches_profile(const SDLGameRenderer_PerfCaptureTexturedRectExactShape* entry,
+                                                      const TexturedRectFamilyProfile* profile) {
+    if ((entry == NULL) || (profile == NULL)) {
+        return false;
+    }
+
+    return (entry->texture_handle == profile->texture_handle) && (entry->palette_handle == profile->palette_handle) &&
+           (entry->source_format == profile->source_format) && (entry->source_width == profile->source_width) &&
+           (entry->source_height == profile->source_height) && (entry->alpha_only == (profile->alpha_only ? 1 : 0)) &&
+           (entry->rgb_mod == (profile->rgb_mod ? 1 : 0)) &&
+           (entry->opaque_color == (profile->opaque_color ? 1 : 0)) &&
+           (entry->integer_positions == (profile->integer_positions ? 1 : 0)) &&
+           (entry->integer_source_rect == (profile->integer_source_rect ? 1 : 0)) &&
+           (entry->full_texture_source_rect == (profile->full_texture_source_rect ? 1 : 0)) &&
+           (entry->clipped == (profile->clipped ? 1 : 0)) && (entry->flip_h == (profile->flip_h ? 1 : 0)) &&
+           (entry->flip_v == (profile->flip_v ? 1 : 0)) && (entry->source_w == profile->source_w) &&
+           (entry->source_h == profile->source_h) && (entry->visible_w == profile->visible_w) &&
+           (entry->visible_h == profile->visible_h);
+}
+
+static void note_perf_capture_fast_non_integer_shape(const TexturedRectFamilyProfile* profile, Uint64 sampled_ns) {
+    if (!frame_stats_extended_enabled || (profile == NULL)) {
+        return;
+    }
+
+    SDLGameRenderer_PerfCaptureTexturedRectExactShape* entry = NULL;
+    for (int i = 0; i < perf_capture_fast_non_integer_shape_count; i++) {
+        if (textured_rect_exact_shape_matches_profile(&perf_capture_fast_non_integer_shapes[i], profile)) {
+            entry = &perf_capture_fast_non_integer_shapes[i];
+            break;
+        }
+    }
+
+    if ((entry == NULL) &&
+        (perf_capture_fast_non_integer_shape_count < (int)SDL_arraysize(perf_capture_fast_non_integer_shapes))) {
+        entry = &perf_capture_fast_non_integer_shapes[perf_capture_fast_non_integer_shape_count];
+        perf_capture_fast_non_integer_shape_count += 1;
+        SDL_zero(*entry);
+        entry->texture_handle = profile->texture_handle;
+        entry->palette_handle = profile->palette_handle;
+        entry->source_format = profile->source_format;
+        entry->source_width = profile->source_width;
+        entry->source_height = profile->source_height;
+        entry->alpha_only = profile->alpha_only ? 1 : 0;
+        entry->rgb_mod = profile->rgb_mod ? 1 : 0;
+        entry->opaque_color = profile->opaque_color ? 1 : 0;
+        entry->integer_positions = profile->integer_positions ? 1 : 0;
+        entry->integer_source_rect = profile->integer_source_rect ? 1 : 0;
+        entry->full_texture_source_rect = profile->full_texture_source_rect ? 1 : 0;
+        entry->clipped = profile->clipped ? 1 : 0;
+        entry->flip_h = profile->flip_h ? 1 : 0;
+        entry->flip_v = profile->flip_v ? 1 : 0;
+        entry->source_w = profile->source_w;
+        entry->source_h = profile->source_h;
+        entry->visible_w = profile->visible_w;
+        entry->visible_h = profile->visible_h;
+    }
+
+    if (entry == NULL) {
+        return;
+    }
+
+    entry->task_count += 1;
+    entry->submitted_pixels += profile->submitted_pixels;
+    entry->sampled_ns += sampled_ns;
+}
+
 static void note_perf_capture_fast_exact_family(const RenderTask* task,
                                                 const SDL_Surface* dst_surface,
                                                 Uint64 lookup_entries,
@@ -4229,7 +4302,8 @@ static void note_perf_capture_fast_exact_family(const RenderTask* task,
         sampled_ns,
         perf_capture_fast_exact_families,
         &perf_capture_fast_exact_family_count,
-        (int)SDL_arraysize(perf_capture_fast_exact_families));
+        (int)SDL_arraysize(perf_capture_fast_exact_families),
+        NULL);
 }
 
 static void note_perf_capture_fast_non_integer_family(const RenderTask* task,
@@ -4237,6 +4311,8 @@ static void note_perf_capture_fast_non_integer_family(const RenderTask* task,
                                                       Uint64 lookup_entries,
                                                       const SDLSoftwareFrame_NonIntegerTelemetry* non_integer_telemetry,
                                                       Uint64 sampled_ns) {
+    TexturedRectFamilyProfile profile = { 0 };
+    profile.texture_handle = -1;
     note_perf_capture_textured_rect_family(
         task,
         dst_surface,
@@ -4245,7 +4321,11 @@ static void note_perf_capture_fast_non_integer_family(const RenderTask* task,
         sampled_ns,
         perf_capture_fast_non_integer_families,
         &perf_capture_fast_non_integer_family_count,
-        (int)SDL_arraysize(perf_capture_fast_non_integer_families));
+        (int)SDL_arraysize(perf_capture_fast_non_integer_families),
+        &profile);
+    if (profile.texture_handle >= 0) {
+        note_perf_capture_fast_non_integer_shape(&profile, sampled_ns);
+    }
 }
 
 static void note_perf_capture_generic_textured_family(const RenderTask* task,
@@ -4260,7 +4340,8 @@ static void note_perf_capture_generic_textured_family(const RenderTask* task,
         sampled_ns,
         perf_capture_generic_textured_families,
         &perf_capture_generic_textured_family_count,
-        (int)SDL_arraysize(perf_capture_generic_textured_families));
+        (int)SDL_arraysize(perf_capture_generic_textured_families),
+        NULL);
 }
 
 static void note_software_frame_eligibility(const RenderTask* task, SoftwareFrameFallbackReason reason) {
@@ -6937,6 +7018,8 @@ void SDLGameRenderer_ResetPerfCaptureFastExactFamilyTelemetry(void) {
 void SDLGameRenderer_ResetPerfCaptureFastNonIntegerFamilyTelemetry(void) {
     SDL_zero(perf_capture_fast_non_integer_families);
     perf_capture_fast_non_integer_family_count = 0;
+    SDL_zero(perf_capture_fast_non_integer_shapes);
+    perf_capture_fast_non_integer_shape_count = 0;
 }
 
 void SDLGameRenderer_ResetPerfCaptureGenericTexturedFamilyTelemetry(void) {
@@ -7469,10 +7552,86 @@ static void get_perf_capture_textured_rect_family_totals(const SDLGameRenderer_P
     }
 }
 
+static bool perf_capture_fast_non_integer_shape_matches_family(
+    const SDLGameRenderer_PerfCaptureTexturedRectExactShape* shape,
+    const SDLGameRenderer_PerfCaptureTexturedRectFamily* family) {
+    if ((shape == NULL) || (family == NULL)) {
+        return false;
+    }
+
+    return (shape->texture_handle == family->texture_handle) && (shape->palette_handle == family->palette_handle) &&
+           (shape->source_format == family->source_format) && (shape->source_width == family->source_width) &&
+           (shape->source_height == family->source_height) && (shape->alpha_only == family->alpha_only) &&
+           (shape->rgb_mod == family->rgb_mod) && (shape->opaque_color == family->opaque_color) &&
+           (shape->integer_positions == family->integer_positions) &&
+           (shape->integer_source_rect == family->integer_source_rect) &&
+           (shape->full_texture_source_rect == family->full_texture_source_rect) &&
+           (shape->clipped == family->clipped) && (shape->flip_h == family->flip_h) &&
+           (shape->flip_v == family->flip_v);
+}
+
+static void annotate_fast_non_integer_family_dominant_shape(SDLGameRenderer_PerfCaptureTexturedRectFamily* family) {
+    if (family == NULL) {
+        return;
+    }
+
+    family->exact_shape_variant_count = 0;
+    family->dominant_shape_source_w = -1;
+    family->dominant_shape_source_h = -1;
+    family->dominant_shape_visible_w = -1;
+    family->dominant_shape_visible_h = -1;
+    family->dominant_shape_task_count = 0;
+    family->dominant_shape_submitted_pixels = 0;
+    family->dominant_shape_sampled_ns = 0;
+
+    const SDLGameRenderer_PerfCaptureTexturedRectExactShape* dominant_shape = NULL;
+    for (int i = 0; i < perf_capture_fast_non_integer_shape_count; i++) {
+        const SDLGameRenderer_PerfCaptureTexturedRectExactShape* candidate = &perf_capture_fast_non_integer_shapes[i];
+        if (!perf_capture_fast_non_integer_shape_matches_family(candidate, family)) {
+            continue;
+        }
+
+        family->exact_shape_variant_count += 1;
+        if ((dominant_shape == NULL) || (candidate->task_count > dominant_shape->task_count) ||
+            ((candidate->task_count == dominant_shape->task_count) &&
+             (candidate->submitted_pixels > dominant_shape->submitted_pixels)) ||
+            ((candidate->task_count == dominant_shape->task_count) &&
+             (candidate->submitted_pixels == dominant_shape->submitted_pixels) &&
+             (candidate->sampled_ns > dominant_shape->sampled_ns)) ||
+            ((candidate->task_count == dominant_shape->task_count) &&
+             (candidate->submitted_pixels == dominant_shape->submitted_pixels) &&
+             (candidate->sampled_ns == dominant_shape->sampled_ns) &&
+             (candidate->source_w > dominant_shape->source_w)) ||
+            ((candidate->task_count == dominant_shape->task_count) &&
+             (candidate->submitted_pixels == dominant_shape->submitted_pixels) &&
+             (candidate->sampled_ns == dominant_shape->sampled_ns) &&
+             (candidate->source_w == dominant_shape->source_w) &&
+             (candidate->source_h > dominant_shape->source_h))) {
+            dominant_shape = candidate;
+        }
+    }
+
+    if (dominant_shape == NULL) {
+        return;
+    }
+
+    family->dominant_shape_source_w = dominant_shape->source_w;
+    family->dominant_shape_source_h = dominant_shape->source_h;
+    family->dominant_shape_visible_w = dominant_shape->visible_w;
+    family->dominant_shape_visible_h = dominant_shape->visible_h;
+    family->dominant_shape_task_count = dominant_shape->task_count;
+    family->dominant_shape_submitted_pixels = dominant_shape->submitted_pixels;
+    family->dominant_shape_sampled_ns = dominant_shape->sampled_ns;
+}
+
 int SDLGameRenderer_GetPerfCaptureFastNonIntegerFamilies(SDLGameRenderer_PerfCaptureTexturedRectFamily* out_families,
                                                          int max_families) {
-    return get_perf_capture_textured_rect_families(
+    const int family_count = get_perf_capture_textured_rect_families(
         perf_capture_fast_non_integer_families, perf_capture_fast_non_integer_family_count, out_families, max_families);
+    for (int i = 0; i < family_count; i++) {
+        annotate_fast_non_integer_family_dominant_shape(&out_families[i]);
+    }
+    return family_count;
 }
 
 int SDLGameRenderer_GetPerfCaptureFastExactFamilies(SDLGameRenderer_PerfCaptureTexturedRectFamily* out_families,

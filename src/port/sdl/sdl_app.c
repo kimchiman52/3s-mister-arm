@@ -1715,6 +1715,14 @@ static void io_write_perf_capture_window_textured_rect_families(
         const double same_source_reused_pixel_ratio =
             entry->submitted_pixels > 0 ? (double)entry->same_source_reused_pixels / (double)entry->submitted_pixels
                                         : 0.0;
+        const double dominant_shape_task_ratio =
+            entry->task_count > 0 ? (double)entry->dominant_shape_task_count / (double)entry->task_count : 0.0;
+        const double dominant_shape_pixel_ratio =
+            entry->submitted_pixels > 0
+                ? (double)entry->dominant_shape_submitted_pixels / (double)entry->submitted_pixels
+                : 0.0;
+        const double dominant_shape_sampled_ratio =
+            entry->sampled_ns > 0 ? (double)entry->dominant_shape_sampled_ns / (double)entry->sampled_ns : 0.0;
 
         io_printf(io,
                   "      {\"texture_handle\": %d, \"palette_handle\": %d, \"source_format\": \"%s\", "
@@ -1770,7 +1778,13 @@ static void io_write_perf_capture_window_textured_rect_families(
                       ", \"sampled_lookup_x_total_ms\": %.4f, \"sampled_lookup_y_total_ms\": %.4f, "
                       "\"sampled_pair_lookup_total_ms\": %.4f, \"sampled_reuse_telemetry_total_ms\": %.4f, "
                       "\"sampled_row_raster_total_ms\": %.4f, \"same_source_reused_pixels_total\": %llu, "
-                      "\"same_source_reused_pixel_ratio\": %.6f, \"same_source_max_run_length\": %d",
+                      "\"same_source_reused_pixel_ratio\": %.6f, \"same_source_max_run_length\": %d, "
+                      "\"exact_shape_variant_count\": %d, \"dominant_shape_source_rect_w\": %d, "
+                      "\"dominant_shape_source_rect_h\": %d, \"dominant_shape_visible_w\": %d, "
+                      "\"dominant_shape_visible_h\": %d, \"dominant_shape_task_count_total\": %llu, "
+                      "\"dominant_shape_task_ratio\": %.6f, \"dominant_shape_submitted_pixels_total\": %llu, "
+                      "\"dominant_shape_submitted_pixel_ratio\": %.6f, \"dominant_shape_sampled_total_ms\": %.4f, "
+                      "\"dominant_shape_sampled_ratio\": %.6f",
                       (double)entry->sampled_lookup_x_ns / 1e6,
                       (double)entry->sampled_lookup_y_ns / 1e6,
                       (double)entry->sampled_pair_lookup_ns / 1e6,
@@ -1778,7 +1792,18 @@ static void io_write_perf_capture_window_textured_rect_families(
                       (double)entry->sampled_row_raster_ns / 1e6,
                       (unsigned long long)entry->same_source_reused_pixels,
                       same_source_reused_pixel_ratio,
-                      entry->same_source_max_run_length);
+                      entry->same_source_max_run_length,
+                      entry->exact_shape_variant_count,
+                      entry->dominant_shape_source_w,
+                      entry->dominant_shape_source_h,
+                      entry->dominant_shape_visible_w,
+                      entry->dominant_shape_visible_h,
+                      (unsigned long long)entry->dominant_shape_task_count,
+                      dominant_shape_task_ratio,
+                      (unsigned long long)entry->dominant_shape_submitted_pixels,
+                      dominant_shape_pixel_ratio,
+                      (double)entry->dominant_shape_sampled_ns / 1e6,
+                      dominant_shape_sampled_ratio);
         }
         io_printf(io,
                   ", \"source_rect_x_min\": %d, \"source_rect_x_max\": %d, \"source_rect_y_min\": %d, "
@@ -3810,7 +3835,7 @@ static void perf_capture_write_summary(void) {
     }
 
     io_printf(io, "{\n");
-    io_printf(io, "  \"schema_version\": 60,\n");
+    io_printf(io, "  \"schema_version\": 61,\n");
     io_printf(io, "  \"scene\": \"");
     io_write_json_escaped_string(io, perf_capture_scene_name);
     io_printf(io, "\",\n");
