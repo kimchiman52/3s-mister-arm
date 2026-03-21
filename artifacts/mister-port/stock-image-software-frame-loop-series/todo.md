@@ -5799,10 +5799,10 @@
   - [x] the untouched exact-path gameplay guard stayed safe. `loop130-left-corner-guard-post` landed at `88.1339 FPS / 11.3464 / 4.2668 / 6.5457 / 0.5339 ms` on pure `software_frame_exact`, with zero `fast_non_integer`, zero `generic_textured`, and `fbdev_present_path.software_frame_exact = 300/300`
 - [x] Review outcome:
   - [x] independent review agent `Volta` found two valid closure-bookkeeping issues on the docs-only rollback diff: the missing Loop 130 living-findings entry and the placeholder `final commit hash` field in this checklist section
-  - [x] both findings were accepted. The living-memory entry was appended immediately, and the closure hash is being recorded explicitly through the follow-up bookkeeping step so the rejected loop stays auditable without reopening the reverted runtime code
+  - [x] both findings were accepted. The living-memory entry was appended immediately, and the rejected loop closure is now recorded explicitly under commit `72b21015` without reopening the reverted runtime code
 - [x] Keep/rollback decision:
   - [x] reject and revert. The inline-adjacent duplicate check reland keeps the same route and workload mix but raises the deciding Yun raster cost instead of lowering it
 - [x] final commit hash:
-  - [x] recorded in the loop closure commit
+  - [x] `72b21015` (`mister: close loop 130 prepass rollback`)
 - [x] next best candidate:
   - [x] do not retry this pair-prepass removal shape now. Return to the measured clipped residue from Loop 129 instead, starting with the clipped `texture 57 / palette 394 / ix 81` fast-non-integer family and the clipped `128x48` `texture 77 / palette 320` family before reopening helper-internal duplicate control-flow work

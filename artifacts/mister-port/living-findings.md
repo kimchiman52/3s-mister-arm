@@ -3739,7 +3739,7 @@ Scope guardrails:
 
 - 2026-03-21T07:44:12-0400
   - Final commit hash:
-    - recorded in the loop closure commit
+    - `72b21015`
   - Bottleneck targeted:
     - native Yun SA3 first-visible activation on the direct `software_frame_exact` path, specifically whether removing the kept pair-only helper prepass can lower the hot `ppg-seqs 81/82` raster cost without changing routing
   - Change summary:
