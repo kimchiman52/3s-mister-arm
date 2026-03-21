@@ -1590,7 +1590,7 @@ static void perf_capture_write_summary(void) {
                                                         &fast_exact_family_pixels_total,
                                                         &fast_exact_family_lookup_entries_total,
                                                         NULL);
-    SDLGameRenderer_PerfCaptureTexturedRectFamily fast_non_integer_families[8] = { 0 };
+    SDLGameRenderer_PerfCaptureTexturedRectFamily fast_non_integer_families[64] = { 0 };
     const int fast_non_integer_family_count = SDLGameRenderer_GetPerfCaptureFastNonIntegerFamilies(
         fast_non_integer_families, SDL_arraysize(fast_non_integer_families));
     Uint64 fast_non_integer_family_tasks_total = 0;
@@ -1600,6 +1600,23 @@ static void perf_capture_write_summary(void) {
                                                              &fast_non_integer_family_pixels_total,
                                                              &fast_non_integer_family_lookup_entries_total,
                                                              NULL);
+    Uint64 fast_non_integer_family_sampled_lookup_x_ns_total = 0;
+    Uint64 fast_non_integer_family_sampled_lookup_y_ns_total = 0;
+    Uint64 fast_non_integer_family_sampled_pair_lookup_ns_total = 0;
+    Uint64 fast_non_integer_family_sampled_reuse_telemetry_ns_total = 0;
+    Uint64 fast_non_integer_family_sampled_row_raster_ns_total = 0;
+    Uint64 fast_non_integer_family_sampled_calls_total = 0;
+    Uint64 fast_non_integer_family_sampled_ns_total = 0;
+    for (int i = 0; i < fast_non_integer_family_count; i++) {
+        fast_non_integer_family_sampled_calls_total += fast_non_integer_families[i].sampled_calls;
+        fast_non_integer_family_sampled_ns_total += fast_non_integer_families[i].sampled_ns;
+        fast_non_integer_family_sampled_lookup_x_ns_total += fast_non_integer_families[i].sampled_lookup_x_ns;
+        fast_non_integer_family_sampled_lookup_y_ns_total += fast_non_integer_families[i].sampled_lookup_y_ns;
+        fast_non_integer_family_sampled_pair_lookup_ns_total += fast_non_integer_families[i].sampled_pair_lookup_ns;
+        fast_non_integer_family_sampled_reuse_telemetry_ns_total +=
+            fast_non_integer_families[i].sampled_reuse_telemetry_ns;
+        fast_non_integer_family_sampled_row_raster_ns_total += fast_non_integer_families[i].sampled_row_raster_ns;
+    }
     SDLGameRenderer_PerfCaptureTexturedRectFamily generic_textured_families[8] = { 0 };
     const int generic_textured_family_count = SDLGameRenderer_GetPerfCaptureGenericTexturedFamilies(
         generic_textured_families, SDL_arraysize(generic_textured_families));
@@ -3459,7 +3476,7 @@ static void perf_capture_write_summary(void) {
     }
 
     io_printf(io, "{\n");
-    io_printf(io, "  \"schema_version\": 56,\n");
+    io_printf(io, "  \"schema_version\": 57,\n");
     io_printf(io, "  \"scene\": \"");
     io_write_json_escaped_string(io, perf_capture_scene_name);
     io_printf(io, "\",\n");
@@ -4748,6 +4765,123 @@ static void perf_capture_write_summary(void) {
     } else {
         io_printf(io, "],\n");
     }
+    {
+        Uint64 fast_non_integer_sampled_ns_total = 0;
+        Uint64 fast_non_integer_sampled_calls_total = 0;
+        for (int i = 0; i < raster_bucket_timing_count; i++) {
+            if (raster_bucket_timings[i].bucket != SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_FAST_NON_INTEGER) {
+                continue;
+            }
+            fast_non_integer_sampled_ns_total = raster_bucket_timings[i].sampled_ns;
+            fast_non_integer_sampled_calls_total = raster_bucket_timings[i].sampled_calls;
+            break;
+        }
+        const Uint64 fast_non_integer_accounted_phase_ns_total =
+            fast_non_integer_family_sampled_lookup_x_ns_total + fast_non_integer_family_sampled_lookup_y_ns_total +
+            fast_non_integer_family_sampled_pair_lookup_ns_total +
+            fast_non_integer_family_sampled_reuse_telemetry_ns_total +
+            fast_non_integer_family_sampled_row_raster_ns_total;
+        io_printf(io,
+                  "    \"software_frame_fast_non_integer_phase_sampling\": "
+                  "{\"sampled_calls_total\": %llu, "
+                  "\"sampled_calls_mean\": %.4f, "
+                  "\"sampled_ns_total\": %llu, "
+                  "\"sampled_total_ms\": %.4f, "
+                  "\"family_sampled_calls_total\": %llu, "
+                  "\"family_sampled_calls_mean\": %.4f, "
+                  "\"family_sampled_ns_total\": %llu, "
+                  "\"family_sampled_total_ms\": %.4f, "
+                  "\"family_sampled_call_coverage_ratio\": %.6f, "
+                  "\"family_sampled_coverage_ratio\": %.6f, "
+                  "\"lookup_x_ns_total\": %llu, \"lookup_x_total_ms\": %.4f, "
+                  "\"lookup_x_family_sampled_ratio\": %.6f, "
+                  "\"lookup_x_mean_ms_per_sample\": %.6f, "
+                  "\"lookup_y_ns_total\": %llu, \"lookup_y_total_ms\": %.4f, "
+                  "\"lookup_y_family_sampled_ratio\": %.6f, "
+                  "\"lookup_y_mean_ms_per_sample\": %.6f, "
+                  "\"pair_lookup_ns_total\": %llu, \"pair_lookup_total_ms\": %.4f, "
+                  "\"pair_lookup_family_sampled_ratio\": %.6f, "
+                  "\"pair_lookup_mean_ms_per_sample\": %.6f, "
+                  "\"reuse_telemetry_ns_total\": %llu, \"reuse_telemetry_total_ms\": %.4f, "
+                  "\"reuse_telemetry_family_sampled_ratio\": %.6f, "
+                  "\"reuse_telemetry_mean_ms_per_sample\": %.6f, "
+                  "\"row_raster_ns_total\": %llu, \"row_raster_total_ms\": %.4f, "
+                  "\"row_raster_family_sampled_ratio\": %.6f, "
+                  "\"row_raster_mean_ms_per_sample\": %.6f, "
+                  "\"accounted_phase_ns_total\": %llu, \"accounted_phase_total_ms\": %.4f, "
+                  "\"accounted_phase_family_sampled_ratio\": %.6f},\n",
+                  (unsigned long long)fast_non_integer_sampled_calls_total,
+                  frame_count > 0.0 ? (double)fast_non_integer_sampled_calls_total / frame_count : 0.0,
+                  (unsigned long long)fast_non_integer_sampled_ns_total,
+                  (double)fast_non_integer_sampled_ns_total / 1e6,
+                  (unsigned long long)fast_non_integer_family_sampled_calls_total,
+                  frame_count > 0.0 ? (double)fast_non_integer_family_sampled_calls_total / frame_count : 0.0,
+                  (unsigned long long)fast_non_integer_family_sampled_ns_total,
+                  (double)fast_non_integer_family_sampled_ns_total / 1e6,
+                  fast_non_integer_sampled_calls_total > 0
+                      ? (double)fast_non_integer_family_sampled_calls_total /
+                            (double)fast_non_integer_sampled_calls_total
+                      : 0.0,
+                  fast_non_integer_sampled_ns_total > 0
+                      ? (double)fast_non_integer_family_sampled_ns_total / (double)fast_non_integer_sampled_ns_total
+                      : 0.0,
+                  (unsigned long long)fast_non_integer_family_sampled_lookup_x_ns_total,
+                  (double)fast_non_integer_family_sampled_lookup_x_ns_total / 1e6,
+                  fast_non_integer_family_sampled_ns_total > 0
+                      ? (double)fast_non_integer_family_sampled_lookup_x_ns_total /
+                            (double)fast_non_integer_family_sampled_ns_total
+                      : 0.0,
+                  fast_non_integer_family_sampled_calls_total > 0
+                      ? ((double)fast_non_integer_family_sampled_lookup_x_ns_total / 1e6) /
+                            (double)fast_non_integer_family_sampled_calls_total
+                      : 0.0,
+                  (unsigned long long)fast_non_integer_family_sampled_lookup_y_ns_total,
+                  (double)fast_non_integer_family_sampled_lookup_y_ns_total / 1e6,
+                  fast_non_integer_family_sampled_ns_total > 0
+                      ? (double)fast_non_integer_family_sampled_lookup_y_ns_total /
+                            (double)fast_non_integer_family_sampled_ns_total
+                      : 0.0,
+                  fast_non_integer_family_sampled_calls_total > 0
+                      ? ((double)fast_non_integer_family_sampled_lookup_y_ns_total / 1e6) /
+                            (double)fast_non_integer_family_sampled_calls_total
+                      : 0.0,
+                  (unsigned long long)fast_non_integer_family_sampled_pair_lookup_ns_total,
+                  (double)fast_non_integer_family_sampled_pair_lookup_ns_total / 1e6,
+                  fast_non_integer_family_sampled_ns_total > 0
+                      ? (double)fast_non_integer_family_sampled_pair_lookup_ns_total /
+                            (double)fast_non_integer_family_sampled_ns_total
+                      : 0.0,
+                  fast_non_integer_family_sampled_calls_total > 0
+                      ? ((double)fast_non_integer_family_sampled_pair_lookup_ns_total / 1e6) /
+                            (double)fast_non_integer_family_sampled_calls_total
+                      : 0.0,
+                  (unsigned long long)fast_non_integer_family_sampled_reuse_telemetry_ns_total,
+                  (double)fast_non_integer_family_sampled_reuse_telemetry_ns_total / 1e6,
+                  fast_non_integer_family_sampled_ns_total > 0
+                      ? (double)fast_non_integer_family_sampled_reuse_telemetry_ns_total /
+                            (double)fast_non_integer_family_sampled_ns_total
+                      : 0.0,
+                  fast_non_integer_family_sampled_calls_total > 0
+                      ? ((double)fast_non_integer_family_sampled_reuse_telemetry_ns_total / 1e6) /
+                            (double)fast_non_integer_family_sampled_calls_total
+                      : 0.0,
+                  (unsigned long long)fast_non_integer_family_sampled_row_raster_ns_total,
+                  (double)fast_non_integer_family_sampled_row_raster_ns_total / 1e6,
+                  fast_non_integer_family_sampled_ns_total > 0
+                      ? (double)fast_non_integer_family_sampled_row_raster_ns_total /
+                            (double)fast_non_integer_family_sampled_ns_total
+                      : 0.0,
+                  fast_non_integer_family_sampled_calls_total > 0
+                      ? ((double)fast_non_integer_family_sampled_row_raster_ns_total / 1e6) /
+                            (double)fast_non_integer_family_sampled_calls_total
+                      : 0.0,
+                  (unsigned long long)fast_non_integer_accounted_phase_ns_total,
+                  (double)fast_non_integer_accounted_phase_ns_total / 1e6,
+                  fast_non_integer_family_sampled_ns_total > 0
+                      ? (double)fast_non_integer_accounted_phase_ns_total /
+                            (double)fast_non_integer_family_sampled_ns_total
+                      : 0.0);
+    }
     io_printf(io, "    \"software_frame_fast_exact_families\": [");
     if (fast_exact_family_count > 0) {
         io_printf(io, "\n");
@@ -4916,6 +5050,15 @@ static void perf_capture_write_summary(void) {
                 entry->sampled_calls > 0 ? (double)entry->sampled_pixels / (double)entry->sampled_calls : 0.0;
             const double sampled_ns_per_pixel =
                 entry->sampled_pixels > 0 ? (double)entry->sampled_ns / (double)entry->sampled_pixels : 0.0;
+            const double sampled_lookup_x_total_ms = (double)entry->sampled_lookup_x_ns / 1e6;
+            const double sampled_lookup_y_total_ms = (double)entry->sampled_lookup_y_ns / 1e6;
+            const double sampled_pair_lookup_total_ms = (double)entry->sampled_pair_lookup_ns / 1e6;
+            const double sampled_reuse_telemetry_total_ms = (double)entry->sampled_reuse_telemetry_ns / 1e6;
+            const double sampled_row_raster_total_ms = (double)entry->sampled_row_raster_ns / 1e6;
+            const Uint64 sampled_accounted_phase_ns =
+                entry->sampled_lookup_x_ns + entry->sampled_lookup_y_ns + entry->sampled_pair_lookup_ns +
+                entry->sampled_reuse_telemetry_ns + entry->sampled_row_raster_ns;
+            const double sampled_accounted_phase_total_ms = (double)sampled_accounted_phase_ns / 1e6;
             const double same_source_pair_leading_non_pair_pixels_mean =
                 (double)entry->same_source_pair_leading_non_pair_pixels / frame_count;
             const double same_source_pair_trailing_non_pair_pixels_mean =
@@ -4945,6 +5088,27 @@ static void perf_capture_write_summary(void) {
                       "\"sampled_pixels_total\": %llu, \"sampled_pixels_mean\": %.2f, "
                       "\"sampled_ns_total\": %llu, \"sampled_total_ms\": %.4f, "
                       "\"sampled_mean_ms\": %.6f, \"sampled_ns_per_pixel\": %.4f, "
+                      "\"sampled_lookup_x_ns_total\": %llu, \"sampled_lookup_x_total_ms\": %.4f, "
+                      "\"sampled_lookup_x_ratio\": %.6f, "
+                      "\"sampled_lookup_x_mean_ms\": %.6f, "
+                      "\"sampled_lookup_y_ns_total\": %llu, \"sampled_lookup_y_total_ms\": %.4f, "
+                      "\"sampled_lookup_y_ratio\": %.6f, "
+                      "\"sampled_lookup_y_mean_ms\": %.6f, "
+                      "\"sampled_pair_lookup_ns_total\": %llu, "
+                      "\"sampled_pair_lookup_total_ms\": %.4f, "
+                      "\"sampled_pair_lookup_ratio\": %.6f, "
+                      "\"sampled_pair_lookup_mean_ms\": %.6f, "
+                      "\"sampled_reuse_telemetry_ns_total\": %llu, "
+                      "\"sampled_reuse_telemetry_total_ms\": %.4f, "
+                      "\"sampled_reuse_telemetry_ratio\": %.6f, "
+                      "\"sampled_reuse_telemetry_mean_ms\": %.6f, "
+                      "\"sampled_row_raster_ns_total\": %llu, "
+                      "\"sampled_row_raster_total_ms\": %.4f, "
+                      "\"sampled_row_raster_ratio\": %.6f, "
+                      "\"sampled_row_raster_mean_ms\": %.6f, "
+                      "\"sampled_accounted_phase_ns_total\": %llu, "
+                      "\"sampled_accounted_phase_total_ms\": %.4f, "
+                      "\"sampled_accounted_phase_ratio\": %.6f, "
                       "\"source_alpha_opaque_pixels_total\": %llu, "
                       "\"source_alpha_opaque_pixels_mean\": %.2f, "
                       "\"source_alpha_opaque_pixel_ratio\": %.6f, "
@@ -5029,6 +5193,33 @@ static void perf_capture_write_summary(void) {
                       sampled_total_ms,
                       sampled_mean_ms,
                       sampled_ns_per_pixel,
+                      (unsigned long long)entry->sampled_lookup_x_ns,
+                      sampled_lookup_x_total_ms,
+                      entry->sampled_ns > 0 ? (double)entry->sampled_lookup_x_ns / (double)entry->sampled_ns : 0.0,
+                      entry->sampled_calls > 0 ? sampled_lookup_x_total_ms / (double)entry->sampled_calls : 0.0,
+                      (unsigned long long)entry->sampled_lookup_y_ns,
+                      sampled_lookup_y_total_ms,
+                      entry->sampled_ns > 0 ? (double)entry->sampled_lookup_y_ns / (double)entry->sampled_ns : 0.0,
+                      entry->sampled_calls > 0 ? sampled_lookup_y_total_ms / (double)entry->sampled_calls : 0.0,
+                      (unsigned long long)entry->sampled_pair_lookup_ns,
+                      sampled_pair_lookup_total_ms,
+                      entry->sampled_ns > 0 ? (double)entry->sampled_pair_lookup_ns / (double)entry->sampled_ns
+                                            : 0.0,
+                      entry->sampled_calls > 0 ? sampled_pair_lookup_total_ms / (double)entry->sampled_calls : 0.0,
+                      (unsigned long long)entry->sampled_reuse_telemetry_ns,
+                      sampled_reuse_telemetry_total_ms,
+                      entry->sampled_ns > 0 ? (double)entry->sampled_reuse_telemetry_ns / (double)entry->sampled_ns
+                                            : 0.0,
+                      entry->sampled_calls > 0 ? sampled_reuse_telemetry_total_ms / (double)entry->sampled_calls
+                                               : 0.0,
+                      (unsigned long long)entry->sampled_row_raster_ns,
+                      sampled_row_raster_total_ms,
+                      entry->sampled_ns > 0 ? (double)entry->sampled_row_raster_ns / (double)entry->sampled_ns
+                                            : 0.0,
+                      entry->sampled_calls > 0 ? sampled_row_raster_total_ms / (double)entry->sampled_calls : 0.0,
+                      (unsigned long long)sampled_accounted_phase_ns,
+                      sampled_accounted_phase_total_ms,
+                      entry->sampled_ns > 0 ? (double)sampled_accounted_phase_ns / (double)entry->sampled_ns : 0.0,
                       (unsigned long long)entry->source_alpha_opaque_pixels,
                       (double)entry->source_alpha_opaque_pixels / frame_count,
                       source_alpha_opaque_pixel_ratio,

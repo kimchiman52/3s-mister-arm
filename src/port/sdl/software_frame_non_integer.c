@@ -5,6 +5,13 @@ enum {
     software_frame_lookup_max_height = 224,
 };
 
+static Uint64 performance_counter_delta_to_ns(Uint64 start, Uint64 end, Uint64 frequency) {
+    if ((end <= start) || (frequency == 0u)) {
+        return 0;
+    }
+    return ((end - start) * 1000000000ull) / frequency;
+}
+
 static int clamp_to_range(int value, int min_value, int max_value) {
     if (value < min_value) {
         return min_value;
@@ -205,7 +212,8 @@ bool SDLSoftwareFrame_RasterNonIntegerLookupARGB8888(const SDL_FRect* dst_rect,
                                                      Uint32 color,
                                                      SDL_Surface* dst_surface,
                                                      const SDL_Surface* src_surface,
-                                                     SDLSoftwareFrame_NonIntegerTelemetry* out_telemetry) {
+                                                     SDLSoftwareFrame_NonIntegerTelemetry* out_telemetry,
+                                                     bool sample_phase_timing) {
     if ((dst_rect == NULL) || (src_uv_rect == NULL) || (dst_surface == NULL) || (src_surface == NULL) ||
         (dst_rect->w <= 0.0f) || (dst_rect->h <= 0.0f) || (src_surface->w <= 0) || (src_surface->h <= 0)) {
         return false;
@@ -230,6 +238,8 @@ bool SDLSoftwareFrame_RasterNonIntegerLookupARGB8888(const SDL_FRect* dst_rect,
     int src_x_lookup[software_frame_lookup_max_width];
     int src_y_lookup[software_frame_lookup_max_height];
     Uint8 same_source_pair_lookup[software_frame_lookup_max_width];
+    const Uint64 perf_frequency = sample_phase_timing ? SDL_GetPerformanceFrequency() : 0u;
+    Uint64 phase_start_counter = sample_phase_timing ? SDL_GetPerformanceCounter() : 0u;
     populate_non_integer_lookup(src_x_lookup,
                                 visible_w,
                                 dst_x0,
@@ -239,6 +249,12 @@ bool SDLSoftwareFrame_RasterNonIntegerLookupARGB8888(const SDL_FRect* dst_rect,
                                 src_uv_rect->w * (float)src_surface->w,
                                 src_surface->w - 1,
                                 (flip & SDL_FLIP_HORIZONTAL) != 0);
+    if (sample_phase_timing && (out_telemetry != NULL)) {
+        const Uint64 phase_end_counter = SDL_GetPerformanceCounter();
+        out_telemetry->sampled_lookup_x_ns =
+            performance_counter_delta_to_ns(phase_start_counter, phase_end_counter, perf_frequency);
+        phase_start_counter = phase_end_counter;
+    }
     populate_non_integer_lookup(src_y_lookup,
                                 visible_h,
                                 dst_y0,
@@ -248,20 +264,38 @@ bool SDLSoftwareFrame_RasterNonIntegerLookupARGB8888(const SDL_FRect* dst_rect,
                                 src_uv_rect->h * (float)src_surface->h,
                                 src_surface->h - 1,
                                 (flip & SDL_FLIP_VERTICAL) != 0);
+    if (sample_phase_timing && (out_telemetry != NULL)) {
+        const Uint64 phase_end_counter = SDL_GetPerformanceCounter();
+        out_telemetry->sampled_lookup_y_ns =
+            performance_counter_delta_to_ns(phase_start_counter, phase_end_counter, perf_frequency);
+        phase_start_counter = phase_end_counter;
+    }
     const bool has_same_source_pairs = populate_same_source_pair_lookup(same_source_pair_lookup, src_x_lookup, visible_w);
+    if (sample_phase_timing && (out_telemetry != NULL)) {
+        const Uint64 phase_end_counter = SDL_GetPerformanceCounter();
+        out_telemetry->sampled_pair_lookup_ns =
+            performance_counter_delta_to_ns(phase_start_counter, phase_end_counter, perf_frequency);
+    }
 
     const Uint32* src_pixels = (const Uint32*)src_surface->pixels;
     Uint32* dst_pixels = (Uint32*)dst_surface->pixels;
     const int src_pitch = src_surface->pitch / (int)sizeof(Uint32);
     const int dst_pitch = dst_surface->pitch / (int)sizeof(Uint32);
     const bool apply_color_mod = color != 0xFFFFFFFFu;
+    const Uint64 row_phase_start_counter = sample_phase_timing ? SDL_GetPerformanceCounter() : 0u;
 
     for (int row = 0; row < visible_h; row++) {
         const Uint32* src_row = src_pixels + (src_y_lookup[row] * src_pitch);
         Uint32* dst_row = dst_pixels + ((dst_y0 + row) * dst_pitch) + dst_x0;
         if (out_telemetry != NULL) {
+            const Uint64 telemetry_start_counter = sample_phase_timing ? SDL_GetPerformanceCounter() : 0u;
             note_non_integer_row_reuse_telemetry(
                 src_x_lookup, visible_w, src_row, color, apply_color_mod, out_telemetry);
+            if (sample_phase_timing) {
+                const Uint64 telemetry_end_counter = SDL_GetPerformanceCounter();
+                out_telemetry->sampled_reuse_telemetry_ns +=
+                    performance_counter_delta_to_ns(telemetry_start_counter, telemetry_end_counter, perf_frequency);
+            }
         }
         if (!apply_color_mod) {
             if (!has_same_source_pairs) {
@@ -327,6 +361,16 @@ bool SDLSoftwareFrame_RasterNonIntegerLookupARGB8888(const SDL_FRect* dst_rect,
             }
             dst_row[col] = blend_argb8888(dst_row[col], src_pixel);
         }
+    }
+
+    if (sample_phase_timing && (out_telemetry != NULL)) {
+        const Uint64 row_phase_end_counter = SDL_GetPerformanceCounter();
+        const Uint64 row_phase_total_ns =
+            performance_counter_delta_to_ns(row_phase_start_counter, row_phase_end_counter, perf_frequency);
+        out_telemetry->sampled_row_raster_ns =
+            row_phase_total_ns > out_telemetry->sampled_reuse_telemetry_ns
+                ? row_phase_total_ns - out_telemetry->sampled_reuse_telemetry_ns
+                : 0u;
     }
 
     return true;

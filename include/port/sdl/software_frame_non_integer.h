@@ -5,6 +5,11 @@
 #include <stdbool.h>
 
 typedef struct SDLSoftwareFrame_NonIntegerTelemetry {
+    Uint64 sampled_lookup_x_ns;
+    Uint64 sampled_lookup_y_ns;
+    Uint64 sampled_pair_lookup_ns;
+    Uint64 sampled_reuse_telemetry_ns;
+    Uint64 sampled_row_raster_ns;
     Uint64 source_alpha_opaque_pixels;
     Uint64 source_alpha_transparent_pixels;
     Uint64 source_alpha_blended_pixels;
@@ -30,6 +35,7 @@ bool SDLSoftwareFrame_RasterNonIntegerLookupARGB8888(const SDL_FRect* dst_rect,
                                                      Uint32 color,
                                                      SDL_Surface* dst_surface,
                                                      const SDL_Surface* src_surface,
-                                                     SDLSoftwareFrame_NonIntegerTelemetry* out_telemetry);
+                                                     SDLSoftwareFrame_NonIntegerTelemetry* out_telemetry,
+                                                     bool sample_phase_timing);
 
 #endif

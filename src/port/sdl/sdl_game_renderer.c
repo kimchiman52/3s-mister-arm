@@ -316,7 +316,7 @@ static Uint64 perf_capture_raster_sample_pixels[SDL_GAME_RENDERER_PERF_CAPTURE_R
 static Uint64 perf_capture_raster_sample_ns[SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_COUNT] = { 0 };
 static SDLGameRenderer_PerfCaptureTexturedRectFamily perf_capture_fast_exact_families[16] = { 0 };
 static int perf_capture_fast_exact_family_count = 0;
-static SDLGameRenderer_PerfCaptureTexturedRectFamily perf_capture_fast_non_integer_families[16] = { 0 };
+static SDLGameRenderer_PerfCaptureTexturedRectFamily perf_capture_fast_non_integer_families[64] = { 0 };
 static int perf_capture_fast_non_integer_family_count = 0;
 static SDLGameRenderer_PerfCaptureTexturedRectFamily perf_capture_generic_textured_families[16] = { 0 };
 static int perf_capture_generic_textured_family_count = 0;
@@ -3941,9 +3941,10 @@ static void note_perf_capture_textured_rect_family(const RenderTask* task,
                                                    const SDLSoftwareFrame_NonIntegerTelemetry* non_integer_telemetry,
                                                    Uint64 sampled_ns,
                                                    SDLGameRenderer_PerfCaptureTexturedRectFamily* families,
-                                                   int* family_count) {
+                                                   int* family_count,
+                                                   int family_capacity) {
     if (!frame_stats_extended_enabled || (task == NULL) || (dst_surface == NULL) || (families == NULL) ||
-        (family_count == NULL)) {
+        (family_count == NULL) || (family_capacity <= 0)) {
         return;
     }
 
@@ -3960,7 +3961,7 @@ static void note_perf_capture_textured_rect_family(const RenderTask* task,
         }
     }
 
-    if ((entry == NULL) && (*family_count < (int)SDL_arraysize(perf_capture_fast_non_integer_families))) {
+    if ((entry == NULL) && (*family_count < family_capacity)) {
         entry = &families[*family_count];
         *family_count += 1;
         SDL_zero(*entry);
@@ -4013,6 +4014,11 @@ static void note_perf_capture_textured_rect_family(const RenderTask* task,
         entry->sampled_ns += sampled_ns;
     }
     if (non_integer_telemetry != NULL) {
+        entry->sampled_lookup_x_ns += non_integer_telemetry->sampled_lookup_x_ns;
+        entry->sampled_lookup_y_ns += non_integer_telemetry->sampled_lookup_y_ns;
+        entry->sampled_pair_lookup_ns += non_integer_telemetry->sampled_pair_lookup_ns;
+        entry->sampled_reuse_telemetry_ns += non_integer_telemetry->sampled_reuse_telemetry_ns;
+        entry->sampled_row_raster_ns += non_integer_telemetry->sampled_row_raster_ns;
         entry->source_alpha_opaque_pixels += non_integer_telemetry->source_alpha_opaque_pixels;
         entry->source_alpha_transparent_pixels += non_integer_telemetry->source_alpha_transparent_pixels;
         entry->source_alpha_blended_pixels += non_integer_telemetry->source_alpha_blended_pixels;
@@ -4058,7 +4064,8 @@ static void note_perf_capture_fast_exact_family(const RenderTask* task,
         NULL,
         sampled_ns,
         perf_capture_fast_exact_families,
-        &perf_capture_fast_exact_family_count);
+        &perf_capture_fast_exact_family_count,
+        (int)SDL_arraysize(perf_capture_fast_exact_families));
 }
 
 static void note_perf_capture_fast_non_integer_family(const RenderTask* task,
@@ -4073,7 +4080,8 @@ static void note_perf_capture_fast_non_integer_family(const RenderTask* task,
         non_integer_telemetry,
         sampled_ns,
         perf_capture_fast_non_integer_families,
-        &perf_capture_fast_non_integer_family_count);
+        &perf_capture_fast_non_integer_family_count,
+        (int)SDL_arraysize(perf_capture_fast_non_integer_families));
 }
 
 static void note_perf_capture_generic_textured_family(const RenderTask* task,
@@ -4087,7 +4095,8 @@ static void note_perf_capture_generic_textured_family(const RenderTask* task,
         NULL,
         sampled_ns,
         perf_capture_generic_textured_families,
-        &perf_capture_generic_textured_family_count);
+        &perf_capture_generic_textured_family_count,
+        (int)SDL_arraysize(perf_capture_generic_textured_families));
 }
 
 static void note_software_frame_eligibility(const RenderTask* task, SoftwareFrameFallbackReason reason) {
@@ -5090,7 +5099,8 @@ static bool raster_textured_task_to_software_frame(const RenderTask* task) {
                 task->color,
                 dst_surface,
                 src_surface,
-                non_integer_telemetry_ptr)) {
+                non_integer_telemetry_ptr,
+                sample_start_counter != 0)) {
             const Uint64 sampled_ns =
                 perf_capture_counter_delta_to_ns(sample_start_counter, SDL_GetPerformanceCounter());
             note_perf_capture_raster_bucket_sample(
