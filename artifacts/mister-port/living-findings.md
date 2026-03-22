@@ -4063,3 +4063,21 @@ Scope guardrails:
     - keep the runtime tree unchanged and close docs-only; another native runtime reland would reopen unchanged rejected ideas without new evidence that they now beat the current tree
   - Next best candidate optimization:
     - if the native queue is revisited, first prove a broader clustered row-walk specialization with narrower measurement that separates extended-stats overhead from runtime cost, or re-rank a different gameplay lane before changing renderer code
+
+- 2026-03-21T20:29:59-0400
+  - Final commit hash:
+    - `d0b14d86`
+  - Bottleneck targeted:
+    - missing lookup-signature concentration attribution inside the trusted native Yun SA3 first-visible onset cluster, specifically whether the broad `32x32`-led row-walk hotspot collapses into a small bounded set of real x/y lookup patterns
+  - Change summary:
+    - added capture-only x/y lookup signature hashing in `src/port/sdl/software_frame_non_integer.c` and lookup-profile aggregation/export in `src/port/sdl/sdl_game_renderer.c` / `src/port/sdl/sdl_app.c`, bumping perf JSON to schema `63`
+    - rebuilt/deployed the telemetry ARM package in Docker `3sx-mister-build`, verified serialized `deploy` / `probe` / bounded `smoke`, and captured corrected Yun run `loop148-yun-lookup-signatures-r2` plus exact/native guard `loop148-remy-guard-r1`
+    - independent review agent `Ohm` found no actionable issues
+  - Verification result summary:
+    - Docker telemetry ARM build/install/package plus `readelf` passed; serialized `busy-status`, `health`, `deploy`, `probe`, and bounded `smoke` all passed on `192.168.1.171`
+    - invalid starter `loop148-yun-lookup-signatures-r1` stayed startup-only at `204.2276 FPS`, so it was rejected; corrected `loop148-yun-lookup-signatures-r2` landed at `22.9950 FPS / 43.4878 / 9.7566 / 33.2103 / 0.5209 ms` overall and `18.7629 FPS / 53.2967 / 11.2937 / 41.3736 / 0.6294 ms` for the first `8` frames, still direct-present with zero fallback/readback
+    - first-`8` fast-non-integer families summed `162.2505 ms`, but the top `32` lookup profiles covered only `22.8604 ms` (`14.09%`) and the biggest signature pair only `1.5186 ms` (`6.64%`); generic residue stayed small at `9.9682 ms` and concentrated on `ppg-seqs ix 80 / texture 56`, while `loop148-remy-guard-r1` stayed exact/direct at `60.1348 FPS` with zero `fast_non_integer` / `generic_textured`
+  - Keep/rollback decision with reason:
+    - keep; measurement-support only, verified locally and on-device, and the new export is enough to close the broader row-walk reland for now because the deciding onset work remains lookup-pattern diffuse
+  - Next best candidate optimization:
+    - do not reopen a broader shared row-walk reland yet; if the native queue stays open, first audit whether the tiny `ppg-seqs ix 80 / texture 56` generic residue exposes a materially narrower micro-lookup admission than rejected Loop `134`, otherwise re-rank away from this native lane

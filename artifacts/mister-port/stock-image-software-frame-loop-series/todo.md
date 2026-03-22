@@ -6449,7 +6449,7 @@
 - [x] Keep/rollback decision:
   - [x] keep; this is measurement-support only, it passed Docker plus on-device verification, and it closes the lookup-pattern blind spot without changing gameplay behavior or runtime routing
   - [x] the measured result also closes the immediate broader-row-walk runtime candidate: the trusted Yun onset hotspot does not collapse into a small enough lookup-signature set to justify another safe clustered reland on current evidence
-- [ ] final commit hash:
-  - [ ] pending runtime closeout commit
+- [x] final commit hash:
+  - [x] `d0b14d86` (`telemetry: add loop 148 lookup signature export`)
 - [x] next best candidate:
   - [x] do not reland a broader shared row-walk specialization from the new lookup-signature data now; if the native queue stays open, first audit whether the remaining tiny `ppg-seqs ix 80 / texture 56` generic residue hides a materially narrower micro-lookup admission than the already-rejected Loop `134` family, otherwise re-rank away from this native lane
