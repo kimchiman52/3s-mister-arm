@@ -29,6 +29,7 @@ void SDLApp_ConfigurePerfCapture(
     bool basic_first_window_family_snapshots,
     bool basic_first_window_render_subphases,
     bool basic_first_window_exact_hot_family_alpha_offpath,
+    bool basic_first_window_onset_exact_hot_family_alpha_offpath,
     bool disable_reuse_telemetry,
     bool enable_subrect_alpha_telemetry);
 bool SDLApp_IsPerfRuntimeStateActive(const char* runtime_state_name);
@@ -45,6 +46,7 @@ SDLApp_ConfigurePerfCapture(int frame_count,
                             bool basic_first_window_family_snapshots,
                             bool basic_first_window_render_subphases,
                             bool basic_first_window_exact_hot_family_alpha_offpath,
+                            bool basic_first_window_onset_exact_hot_family_alpha_offpath,
                             bool disable_reuse_telemetry,
                             bool enable_subrect_alpha_telemetry) {
     (void)frame_count;
@@ -54,6 +56,7 @@ SDLApp_ConfigurePerfCapture(int frame_count,
     (void)basic_first_window_family_snapshots;
     (void)basic_first_window_render_subphases;
     (void)basic_first_window_exact_hot_family_alpha_offpath;
+    (void)basic_first_window_onset_exact_hot_family_alpha_offpath;
     (void)disable_reuse_telemetry;
     (void)enable_subrect_alpha_telemetry;
 }

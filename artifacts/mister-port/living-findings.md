@@ -4374,7 +4374,7 @@ Scope guardrails:
 
 - 2026-03-22T09:24:48-0400
   - Final commit hash:
-    - pending
+    - `4fec67a5`
   - Bottleneck targeted:
     - recovering lower-distortion first-visible Yun onset alpha structure off the hot raster path without reopening the heavier full-capture collectors
   - Change summary:
@@ -4388,3 +4388,21 @@ Scope guardrails:
     - reject and revert; the off-path replay answers the alpha question, but it is too distortive on the deciding onset lane and review confirmed the new selector was broader than the scoped onset cohort
   - Next best candidate optimization:
     - if onset alpha needs another rerank later, require exact proven family-ID gating or a lighter off-path sidecar/export path that proves Loop `164`-class FPS fidelity before another on-device rerun
+
+- 2026-03-22T10:12:59-0400
+  - Final commit hash:
+    - pending post-commit fill
+  - Bottleneck targeted:
+    - recovering lower-distortion binary-alpha structure for the exact first-visible Yun onset hot-family cohort so the next native runtime attempt can target opaque-copy versus transparent-skip work on the real deciding lane
+  - Change summary:
+    - added one kept measurement-support flag, `--perf-basic-first-window-onset-exact-hot-family-alpha-offpath`, across the perf CLI, SDL app/renderer plumbing, off-path onset-family replay helper, and `tools/mister/perf-sampler.sh`
+    - reused the kept exact-family off-path replay design, but narrowed the matcher to the trusted onset IDs `57/391`, `58/393`, `57/394`, `18/37`, `57/393`, and `57/329` instead of the broader Loop `165` cohort
+    - accepted the review-driven robustness fix that widened the exact-shape census cap from `256` to `512`, then reran the deciding Yun onset capture to replace the invalid `r1` sample
+  - Verification result summary:
+    - local `git diff --check`, `bash -n tools/mister/perf-sampler.sh`, Docker telemetry ARM rebuild/install/package in `3sx-mister-build`, and `readelf` all passed; serialized MiSTer `lock-status`, `busy-status`, `health`, `deploy`, `probe`, bounded `smoke`, and a post-capture remote log inspection also passed on `192.168.1.171`
+    - trusted capture `loop166-yun-onset-basic-onset-exact-alpha-r2` stayed `software_frame_exact` direct/native with zero fallback/readback at `43.7658 FPS / 22.8489 / 9.1664 / 13.1854 / 0.4971 ms` overall, `36.0347 FPS / 27.7510 / 10.0260 / 17.2516 / 0.4735 ms` for the first `8`, and `39.4118 FPS / 25.3731 / 8.2341 / 16.6662 / 0.4728 ms` for the first `60`; versus kept Loop `164`, first-`8` improved and first-`60` stayed close, while both windows clearly beat rejected Loop `165`
+    - the trusted `r2` replay kept exact selector fidelity: exactly six families carried nonzero `exact_shape_variant_count`, the total census rose from the invalidating `256` in `r1` to `320`, and all six families stayed binary-alpha-only with zero blended pixels
+  - Keep/rollback decision with reason:
+    - keep; this lower-distortion onset sidecar finally delivers the exact-family alpha/subrect structure the backlog called for without reopening Loop `165`-class drift or changing runtime behavior
+  - Next best candidate optimization:
+    - use the exact six-family onset evidence to test one narrowly scoped native runtime candidate that separates fully opaque families (`58/393`, `57/394`, `57/393`) from binary opaque/transparent families (`57/391`, `18/37`, `57/329`) and measures whether that exact hot-family path can beat the kept Loop `164` onset render window without broadening the route

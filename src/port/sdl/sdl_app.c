@@ -102,6 +102,7 @@ static bool perf_capture_basic_mode = false;
 static bool perf_capture_basic_first_window_family_snapshots_enabled = false;
 static bool perf_capture_basic_first_window_render_subphases_enabled = false;
 static bool perf_capture_basic_first_window_exact_hot_family_alpha_offpath_enabled = false;
+static bool perf_capture_basic_first_window_onset_exact_hot_family_alpha_offpath_enabled = false;
 static bool perf_capture_fast_non_integer_reuse_telemetry_enabled = true;
 static bool perf_capture_fast_non_integer_subrect_alpha_telemetry_enabled = false;
 static int perf_capture_target_frames = 0;
@@ -1058,12 +1059,14 @@ static void perf_capture_reset_storage(void) {
     perf_capture_basic_first_window_family_snapshots_enabled = false;
     perf_capture_basic_first_window_render_subphases_enabled = false;
     perf_capture_basic_first_window_exact_hot_family_alpha_offpath_enabled = false;
+    perf_capture_basic_first_window_onset_exact_hot_family_alpha_offpath_enabled = false;
     perf_capture_fast_non_integer_reuse_telemetry_enabled = true;
     perf_capture_fast_non_integer_subrect_alpha_telemetry_enabled = false;
     SDLGameRenderer_SetPerfCaptureLogicalIdentityEnabled(false);
     SDLGameRenderer_SetPerfCaptureBasicFirstWindowFamilySnapshotsEnabled(false);
     SDLGameRenderer_SetPerfCaptureBasicFirstWindowRenderSubphasesEnabled(false);
     SDLGameRenderer_SetPerfCaptureBasicFirstWindowExactHotFamilyAlphaOffpathEnabled(false);
+    SDLGameRenderer_SetPerfCaptureBasicFirstWindowOnsetExactHotFamilyAlphaOffpathEnabled(false);
     SDLGameRenderer_SetPerfCaptureFastNonIntegerReuseTelemetryEnabled(true);
     SDLGameRenderer_SetPerfCaptureFastNonIntegerSubrectAlphaTelemetryEnabled(false);
     perf_capture_target_frames = 0;
@@ -1332,6 +1335,7 @@ void SDLApp_ConfigurePerfCapture(int frame_count,
                                  bool basic_first_window_family_snapshots,
                                  bool basic_first_window_render_subphases,
                                  bool basic_first_window_exact_hot_family_alpha_offpath,
+                                 bool basic_first_window_onset_exact_hot_family_alpha_offpath,
                                  bool disable_reuse_telemetry,
                                  bool enable_subrect_alpha_telemetry) {
     if (frame_count <= 0) {
@@ -1365,6 +1369,9 @@ void SDLApp_ConfigurePerfCapture(int frame_count,
     perf_capture_basic_first_window_exact_hot_family_alpha_offpath_enabled =
         perf_capture_basic_first_window_family_snapshots_enabled &&
         basic_first_window_exact_hot_family_alpha_offpath;
+    perf_capture_basic_first_window_onset_exact_hot_family_alpha_offpath_enabled =
+        perf_capture_basic_first_window_family_snapshots_enabled &&
+        basic_first_window_onset_exact_hot_family_alpha_offpath;
     perf_capture_fast_non_integer_reuse_telemetry_enabled = !disable_reuse_telemetry;
     perf_capture_fast_non_integer_subrect_alpha_telemetry_enabled = !basic_mode && enable_subrect_alpha_telemetry;
     perf_capture_reset_window_snapshot(&perf_capture_first_window_snapshot);
@@ -1376,6 +1383,8 @@ void SDLApp_ConfigurePerfCapture(int frame_count,
         perf_capture_basic_first_window_render_subphases_enabled);
     SDLGameRenderer_SetPerfCaptureBasicFirstWindowExactHotFamilyAlphaOffpathEnabled(
         perf_capture_basic_first_window_exact_hot_family_alpha_offpath_enabled);
+    SDLGameRenderer_SetPerfCaptureBasicFirstWindowOnsetExactHotFamilyAlphaOffpathEnabled(
+        perf_capture_basic_first_window_onset_exact_hot_family_alpha_offpath_enabled);
     SDLGameRenderer_SetPerfCaptureFastNonIntegerReuseTelemetryEnabled(
         perf_capture_fast_non_integer_reuse_telemetry_enabled);
     SDLGameRenderer_SetPerfCaptureFastNonIntegerSubrectAlphaTelemetryEnabled(
@@ -1585,7 +1594,7 @@ void SDLApp_ConfigurePerfCapture(int frame_count,
     }
 
     snapshot_perf_capture_transition_start_state();
-    backend_logf("PERF capture enabled: frames=%d output=%s scene=%s detail_mode=%s scale_mode=%s software_frame_mode=%s fast_non_integer_reuse_telemetry=%s basic_first_window_family_snapshots=%s basic_first_window_render_subphases=%s basic_first_window_exact_hot_family_alpha_offpath=%s fast_non_integer_subrect_alpha_telemetry=%s",
+    backend_logf("PERF capture enabled: frames=%d output=%s scene=%s detail_mode=%s scale_mode=%s software_frame_mode=%s fast_non_integer_reuse_telemetry=%s basic_first_window_family_snapshots=%s basic_first_window_render_subphases=%s basic_first_window_exact_hot_family_alpha_offpath=%s basic_first_window_onset_exact_hot_family_alpha_offpath=%s fast_non_integer_subrect_alpha_telemetry=%s",
                  perf_capture_target_frames,
                  perf_capture_output_path != NULL ? perf_capture_output_path : "(auto)",
                  perf_capture_scene_name != NULL ? perf_capture_scene_name : "(none)",
@@ -1596,6 +1605,7 @@ void SDLApp_ConfigurePerfCapture(int frame_count,
                  perf_capture_basic_first_window_family_snapshots_enabled ? "on" : "off",
                  perf_capture_basic_first_window_render_subphases_enabled ? "on" : "off",
                  perf_capture_basic_first_window_exact_hot_family_alpha_offpath_enabled ? "on" : "off",
+                 perf_capture_basic_first_window_onset_exact_hot_family_alpha_offpath_enabled ? "on" : "off",
                  perf_capture_fast_non_integer_subrect_alpha_telemetry_enabled ? "on" : "off");
 }
 
@@ -1704,6 +1714,11 @@ static void perf_capture_snapshot_window_families(PerfCaptureFirstWindowFamilySn
         SDL_arraysize(snapshot->fast_non_integer_families));
     if (perf_capture_basic_mode && perf_capture_basic_first_window_exact_hot_family_alpha_offpath_enabled) {
         SDLGameRenderer_ApplyPerfCaptureBasicFirstWindowExactHotFamilyAlphaOffpath(
+            snapshot->fast_non_integer_families,
+            snapshot->fast_non_integer_family_count);
+    } else if (perf_capture_basic_mode &&
+               perf_capture_basic_first_window_onset_exact_hot_family_alpha_offpath_enabled) {
+        SDLGameRenderer_ApplyPerfCaptureBasicFirstWindowOnsetExactHotFamilyAlphaOffpath(
             snapshot->fast_non_integer_families,
             snapshot->fast_non_integer_family_count);
     }
