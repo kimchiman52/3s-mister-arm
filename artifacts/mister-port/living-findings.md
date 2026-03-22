@@ -4320,7 +4320,7 @@ Scope guardrails:
 
 - 2026-03-22T07:05:42-0400
   - Final commit hash:
-    - pending
+    - `a7bd023d`
   - Bottleneck targeted:
     - testing whether exact proven `57/58` + `391-394` family-ID gating could recover repeat-pressure subrect-alpha structure on Yun without exceeding the kept Loop `160` distortion budget
   - Change summary:

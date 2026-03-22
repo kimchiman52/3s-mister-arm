@@ -6981,6 +6981,6 @@
 - [x] Rejected and closed in this loop:
   - [x] do not retry this exact in-band `--perf-basic-first-window-exact-hot-family-alpha` design unchanged now; it is more distortive than rejected Loop `161` and the recovered alpha structure is effectively the same binary-alpha mix already proven by the earlier onset capture
 - [x] final commit hash:
-  - [x] pending
+  - [x] `a7bd023d` (`docs: close loop 162 exact-family alpha rejection`)
 - [x] next best candidate:
   - [x] do not spend another loop on any in-band repeat-pressure alpha collector now. If repeat-pressure hot-family alpha still needs another rerank later, require an off-path sidecar or other design that proves Loop `160`-class FPS fidelity before remeasurement; otherwise leave Yun runtime work parked until a different measured bottleneck outranks this queue
