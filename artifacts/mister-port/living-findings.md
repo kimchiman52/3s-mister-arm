@@ -197,6 +197,24 @@ Scope guardrails:
 
 ## Cycle Log
 
+- 2026-03-22T17:37:57-0400
+  - Final commit hash:
+    - `pending`
+  - Bottleneck targeted:
+    - reranking whether the remaining first-visible Yun Genei dip is mostly cold-start/setup cost by reusing the kept gameplay-real `yun-sa3-repeat-pressure` lane with current first-window family and render-subphase tooling
+  - Change summary:
+    - kept runtime behavior unchanged and rebuilt/repackaged the telemetry ARM flavor in Docker `3sx-mister-build`, then redeployed `build/mister-telemetry-package-loop176-arm-r1`
+    - captured matched first/second repeat-pressure reruns `loop176-yun-first-activation-pressure-basic-subphases-r1` and `loop176-yun-second-activation-pressure-basic-subphases-r1` with `--perf-basic-first-window-families --perf-basic-first-window-render-subphases`
+    - closed the loop docs-only after the current in-band collector proved too distortive to serve as a trustworthy cold-start comparator
+  - Verification result summary:
+    - `git diff --check`, Docker telemetry ARM rebuild/install/package, container-side `readelf` / `readelf -A`, and serialized MiSTer `lock-status` / `busy-status` / `health` / `deploy` / `probe` / bounded `smoke` all passed on `192.168.1.171`
+    - both deciding captures stayed `software_frame_exact` direct/native with zero fallback/readback, but first activation collapsed from kept Loop `160` `48.6067 FPS / 20.5733 / 12.3749 ms render` to `29.5702 FPS / 33.8178 / 25.5572 ms render`, while second activation collapsed from `47.3741 FPS / 21.1086 / 12.1234 ms render` to `29.5914 FPS / 33.7936 / 25.0411 ms render`; first-`60` windows fell to `19.7669` and `19.6646 FPS`
+    - the recovered phase totals show why the mode is unusable on this lane: first-`60` fast-non-integer phase sampling spent about `1110.7910/1105.5624 ms` in `reuse_telemetry` versus only `749.7916/747.9369 ms` in `row_raster`, so the collector's own in-band accounting overwhelms the cold-vs-warm signal it was meant to measure
+  - Keep/rollback decision with reason:
+    - reject the collector for this lane and keep runtime unchanged; the current family-plus-render-subphase mode more than doubles repeat-pressure render cost and cannot guide another native renderer decision safely
+  - Next best candidate optimization:
+    - do not retry this in-band repeat-pressure render-subphase mode unchanged now; because the queue has now logged two straight docs-only closeouts without a kept runtime/build win, the next unblocked cycle should prefer one bounded helper-local clustered row-walk runtime or build-level experiment on the trusted first-visible onset lane that adds no renderer-side whole-surface metadata and no new in-band repeat-pressure telemetry
+
 - 2026-03-23T00:05:00-0400
   - Final commit hash:
     - `a4f3f2ff`
