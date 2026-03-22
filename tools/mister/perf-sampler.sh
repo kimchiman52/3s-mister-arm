@@ -21,6 +21,9 @@ Options:
   --perf-fast-non-integer-no-reuse-telemetry
                         Keep full perf capture enabled but skip fast non-integer row-reuse
                         bookkeeping to reduce capture distortion while preserving family/shape exports.
+  --perf-fast-non-integer-subrect-alpha-telemetry
+                        Keep full perf capture enabled and classify fast non-integer sampled
+                        subrect alpha rows/spans in-band during raster for family exports.
   --perf-wait-test-phase <name>
                          Delay capture until the test runner reaches the named phase
                          (title, menu, character-select-transition, character-select, game-transition, game, game-input-active, p1-super-art-active, p1-super-art-active-2, wipe-transition-type1).
@@ -336,6 +339,7 @@ gameplay_warmup=120
 gameplay_warmup_explicit=0
 perf_basic=0
 perf_fast_non_integer_no_reuse_telemetry=0
+perf_fast_non_integer_subrect_alpha_telemetry=0
 perf_wait_test_phase=""
 perf_wait_runtime_state=""
 test_scene_preset=""
@@ -380,6 +384,10 @@ while [ "$#" -gt 0 ]; do
         ;;
     --perf-fast-non-integer-no-reuse-telemetry)
         perf_fast_non_integer_no_reuse_telemetry=1
+        shift
+        ;;
+    --perf-fast-non-integer-subrect-alpha-telemetry)
+        perf_fast_non_integer_subrect_alpha_telemetry=1
         shift
         ;;
     --perf-wait-test-phase)
@@ -670,6 +678,10 @@ if [ "$perf_fast_non_integer_no_reuse_telemetry" -eq 1 ]; then
     extra_app_args="${extra_app_args} --perf-fast-non-integer-no-reuse-telemetry"
 fi
 
+if [ "$perf_fast_non_integer_subrect_alpha_telemetry" -eq 1 ]; then
+    extra_app_args="${extra_app_args} --perf-fast-non-integer-subrect-alpha-telemetry"
+fi
+
 if { [ "$gameplay_idle" -eq 1 ] || [ -n "$test_scene_preset" ]; } && [ -z "$perf_wait_test_phase" ]; then
     extra_app_args="${extra_app_args} --perf-wait-in-game --perf-warmup '${gameplay_warmup}'"
 fi
@@ -872,6 +884,7 @@ if command -v jq >/dev/null 2>&1; then
     metadata_perf_wait_test_phase="$captured_wait_test_phase"
     metadata_perf_wait_runtime_state="$captured_wait_runtime_state"
     metadata_fast_non_integer_reuse_telemetry="$(if [ "$perf_basic" -eq 1 ] || [ "$perf_fast_non_integer_no_reuse_telemetry" -eq 0 ]; then printf 'true'; else printf 'false'; fi)"
+    metadata_fast_non_integer_subrect_alpha_telemetry="$(if [ "$perf_basic" -eq 0 ] && [ "$perf_fast_non_integer_subrect_alpha_telemetry" -eq 1 ]; then printf 'true'; else printf 'false'; fi)"
     if [ -n "$captured_stage_id" ] && [ "$captured_stage_id" -ge 0 ]; then
         metadata_stage_id="$captured_stage_id"
     fi
@@ -938,7 +951,8 @@ if command -v jq >/dev/null 2>&1; then
         --argjson preserve_game_transition "$(if [ "$test_preserve_game_transition" -eq 1 ]; then printf 'true'; else printf 'false'; fi)" \
         --argjson delay_gameplay_inputs_until_active "$(if [ "$test_delay_gameplay_inputs_until_active" -eq 1 ]; then printf 'true'; else printf 'false'; fi)" \
         --argjson fast_non_integer_reuse_telemetry "$metadata_fast_non_integer_reuse_telemetry" \
-        '.metadata = ((.metadata // {}) + {scene: $scene, test_scene_preset: (if ($test_scene_preset | length) > 0 then $test_scene_preset else null end), scale_mode: (if ($scale_mode | length) > 0 then $scale_mode else null end), software_frame_mode: (if ($software_frame_mode | length) > 0 then $software_frame_mode else null end), capture_start_test_phase: (if ($capture_start_test_phase | length) > 0 and $capture_start_test_phase != "(none)" then $capture_start_test_phase else null end), perf_wait_test_phase: (if ($perf_wait_test_phase | length) > 0 and $perf_wait_test_phase != "(none)" then $perf_wait_test_phase else null end), perf_wait_runtime_state: (if ($perf_wait_runtime_state | length) > 0 and $perf_wait_runtime_state != "(none)" then $perf_wait_runtime_state else null end), stage_id: $stage_id, test_stage_override: $test_stage_override, p1_character: $p1_character, p2_character: $p2_character, p1_super_art: $p1_super_art, p2_super_art: $p2_super_art, test_p1_super_full: $p1_super_full, test_preserve_game_transition: $preserve_game_transition, test_delay_gameplay_inputs_until_active: $delay_gameplay_inputs_until_active, fast_non_integer_reuse_telemetry: $fast_non_integer_reuse_telemetry})' \
+        --argjson fast_non_integer_subrect_alpha_telemetry "$metadata_fast_non_integer_subrect_alpha_telemetry" \
+        '.metadata = ((.metadata // {}) + {scene: $scene, test_scene_preset: (if ($test_scene_preset | length) > 0 then $test_scene_preset else null end), scale_mode: (if ($scale_mode | length) > 0 then $scale_mode else null end), software_frame_mode: (if ($software_frame_mode | length) > 0 then $software_frame_mode else null end), capture_start_test_phase: (if ($capture_start_test_phase | length) > 0 and $capture_start_test_phase != "(none)" then $capture_start_test_phase else null end), perf_wait_test_phase: (if ($perf_wait_test_phase | length) > 0 and $perf_wait_test_phase != "(none)" then $perf_wait_test_phase else null end), perf_wait_runtime_state: (if ($perf_wait_runtime_state | length) > 0 and $perf_wait_runtime_state != "(none)" then $perf_wait_runtime_state else null end), stage_id: $stage_id, test_stage_override: $test_stage_override, p1_character: $p1_character, p2_character: $p2_character, p1_super_art: $p1_super_art, p2_super_art: $p2_super_art, test_p1_super_full: $p1_super_full, test_preserve_game_transition: $preserve_game_transition, test_delay_gameplay_inputs_until_active: $delay_gameplay_inputs_until_active, fast_non_integer_reuse_telemetry: $fast_non_integer_reuse_telemetry, fast_non_integer_subrect_alpha_telemetry: $fast_non_integer_subrect_alpha_telemetry})' \
         "${local_output_path}" >"${temp_output_path}"
     mv "${temp_output_path}" "${local_output_path}"
 fi

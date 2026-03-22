@@ -15,6 +15,18 @@ typedef struct SDLSoftwareFrame_NonIntegerTelemetry {
     Uint64 source_alpha_opaque_pixels;
     Uint64 source_alpha_transparent_pixels;
     Uint64 source_alpha_blended_pixels;
+    Uint64 subrect_rows_total;
+    Uint64 subrect_rows_all_opaque;
+    Uint64 subrect_rows_all_transparent;
+    Uint64 subrect_rows_binary_alpha_only;
+    Uint64 subrect_rows_binary_mixed;
+    Uint64 subrect_rows_with_blended;
+    Uint64 source_alpha_opaque_spans;
+    Uint64 source_alpha_transparent_spans;
+    Uint64 source_alpha_blended_spans;
+    int source_alpha_opaque_span_max;
+    int source_alpha_transparent_span_max;
+    int source_alpha_blended_span_max;
     Uint64 same_source_runs;
     Uint64 same_source_reuse_runs;
     Uint64 same_source_reused_pixels;
@@ -39,6 +51,7 @@ bool SDLSoftwareFrame_RasterNonIntegerLookupARGB8888(const SDL_FRect* dst_rect,
                                                      const SDL_Surface* src_surface,
                                                      SDLSoftwareFrame_NonIntegerTelemetry* out_telemetry,
                                                      bool sample_phase_timing,
-                                                     bool collect_reuse_telemetry);
+                                                     bool collect_reuse_telemetry,
+                                                     bool collect_subrect_alpha_telemetry);
 
 #endif

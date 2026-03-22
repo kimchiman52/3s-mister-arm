@@ -100,6 +100,7 @@ static bool perf_capture_enabled = false;
 static bool perf_capture_completed = false;
 static bool perf_capture_basic_mode = false;
 static bool perf_capture_fast_non_integer_reuse_telemetry_enabled = true;
+static bool perf_capture_fast_non_integer_subrect_alpha_telemetry_enabled = false;
 static int perf_capture_target_frames = 0;
 static int perf_capture_recorded_frames = 0;
 static char* perf_capture_output_path = NULL;
@@ -1047,8 +1048,10 @@ static void perf_capture_reset_storage(void) {
     perf_capture_completed = false;
     perf_capture_basic_mode = false;
     perf_capture_fast_non_integer_reuse_telemetry_enabled = true;
+    perf_capture_fast_non_integer_subrect_alpha_telemetry_enabled = false;
     SDLGameRenderer_SetPerfCaptureLogicalIdentityEnabled(false);
     SDLGameRenderer_SetPerfCaptureFastNonIntegerReuseTelemetryEnabled(true);
+    SDLGameRenderer_SetPerfCaptureFastNonIntegerSubrectAlphaTelemetryEnabled(false);
     perf_capture_target_frames = 0;
     perf_capture_recorded_frames = 0;
     perf_capture_reset_window_snapshot(&perf_capture_first_window_snapshot);
@@ -1304,7 +1307,8 @@ void SDLApp_ConfigurePerfCapture(int frame_count,
                                  const char* output_path,
                                  const char* scene_name,
                                  bool basic_mode,
-                                 bool disable_reuse_telemetry) {
+                                 bool disable_reuse_telemetry,
+                                 bool enable_subrect_alpha_telemetry) {
     if (frame_count <= 0) {
         perf_capture_reset_storage();
         return;
@@ -1331,11 +1335,14 @@ void SDLApp_ConfigurePerfCapture(int frame_count,
     perf_capture_enabled = true;
     perf_capture_basic_mode = basic_mode;
     perf_capture_fast_non_integer_reuse_telemetry_enabled = basic_mode || !disable_reuse_telemetry;
+    perf_capture_fast_non_integer_subrect_alpha_telemetry_enabled = !basic_mode && enable_subrect_alpha_telemetry;
     perf_capture_reset_window_snapshot(&perf_capture_first_window_snapshot);
     perf_capture_reset_window_snapshot(&perf_capture_first_burst_snapshot);
     SDLGameRenderer_SetPerfCaptureLogicalIdentityEnabled(!basic_mode);
     SDLGameRenderer_SetPerfCaptureFastNonIntegerReuseTelemetryEnabled(
         perf_capture_fast_non_integer_reuse_telemetry_enabled);
+    SDLGameRenderer_SetPerfCaptureFastNonIntegerSubrectAlphaTelemetryEnabled(
+        perf_capture_fast_non_integer_subrect_alpha_telemetry_enabled);
     perf_frame_start_ns = 0;
     perf_update_start_ns = 0;
     perf_update_ns_total = 0;
@@ -1541,14 +1548,15 @@ void SDLApp_ConfigurePerfCapture(int frame_count,
     }
 
     snapshot_perf_capture_transition_start_state();
-    backend_logf("PERF capture enabled: frames=%d output=%s scene=%s detail_mode=%s scale_mode=%s software_frame_mode=%s fast_non_integer_reuse_telemetry=%s",
+    backend_logf("PERF capture enabled: frames=%d output=%s scene=%s detail_mode=%s scale_mode=%s software_frame_mode=%s fast_non_integer_reuse_telemetry=%s fast_non_integer_subrect_alpha_telemetry=%s",
                  perf_capture_target_frames,
                  perf_capture_output_path != NULL ? perf_capture_output_path : "(auto)",
                  perf_capture_scene_name != NULL ? perf_capture_scene_name : "(none)",
                  perf_capture_basic_mode ? "basic" : "full",
                  scale_mode_name(scale_mode),
                  software_frame_mode_name(),
-                 perf_capture_fast_non_integer_reuse_telemetry_enabled ? "on" : "off");
+                 perf_capture_fast_non_integer_reuse_telemetry_enabled ? "on" : "off",
+                 perf_capture_fast_non_integer_subrect_alpha_telemetry_enabled ? "on" : "off");
 }
 
 static void io_write_json_escaped_string(SDL_IOStream* io, const char* value) {
@@ -1765,6 +1773,37 @@ static void io_write_perf_capture_window_textured_rect_families(
         const double sampled_mean_ms = entry->sampled_calls > 0 ? sampled_total_ms / (double)entry->sampled_calls : 0.0;
         const double sampled_ns_per_pixel =
             entry->sampled_pixels > 0 ? (double)entry->sampled_ns / (double)entry->sampled_pixels : 0.0;
+        const Uint64 source_alpha_classified_pixels =
+            entry->source_alpha_opaque_pixels + entry->source_alpha_transparent_pixels + entry->source_alpha_blended_pixels;
+        const double source_alpha_opaque_pixel_ratio =
+            source_alpha_classified_pixels > 0
+                ? (double)entry->source_alpha_opaque_pixels / (double)source_alpha_classified_pixels
+                : 0.0;
+        const double source_alpha_transparent_pixel_ratio =
+            source_alpha_classified_pixels > 0
+                ? (double)entry->source_alpha_transparent_pixels / (double)source_alpha_classified_pixels
+                : 0.0;
+        const double source_alpha_blended_pixel_ratio =
+            source_alpha_classified_pixels > 0
+                ? (double)entry->source_alpha_blended_pixels / (double)source_alpha_classified_pixels
+                : 0.0;
+        const double subrect_rows_all_opaque_ratio =
+            entry->subrect_rows_total > 0 ? (double)entry->subrect_rows_all_opaque / (double)entry->subrect_rows_total
+                                          : 0.0;
+        const double subrect_rows_all_transparent_ratio =
+            entry->subrect_rows_total > 0
+                ? (double)entry->subrect_rows_all_transparent / (double)entry->subrect_rows_total
+                : 0.0;
+        const double subrect_rows_binary_alpha_only_ratio =
+            entry->subrect_rows_total > 0
+                ? (double)entry->subrect_rows_binary_alpha_only / (double)entry->subrect_rows_total
+                : 0.0;
+        const double subrect_rows_binary_mixed_ratio =
+            entry->subrect_rows_total > 0 ? (double)entry->subrect_rows_binary_mixed / (double)entry->subrect_rows_total
+                                          : 0.0;
+        const double subrect_rows_with_blended_ratio =
+            entry->subrect_rows_total > 0 ? (double)entry->subrect_rows_with_blended / (double)entry->subrect_rows_total
+                                          : 0.0;
         const double same_source_reused_pixel_ratio =
             entry->submitted_pixels > 0 ? (double)entry->same_source_reused_pixels / (double)entry->submitted_pixels
                                         : 0.0;
@@ -1832,6 +1871,26 @@ static void io_write_perf_capture_window_textured_rect_families(
                       "\"sampled_pair_lookup_total_ms\": %.4f, \"sampled_reuse_telemetry_total_ms\": %.4f, "
                       "\"sampled_row_raster_total_ms\": %.4f, \"same_source_reused_pixels_total\": %llu, "
                       "\"same_source_reused_pixel_ratio\": %.6f, \"same_source_max_run_length\": %d, "
+                      "\"source_alpha_opaque_pixels_total\": %llu, \"source_alpha_opaque_pixel_ratio\": %.6f, "
+                      "\"source_alpha_transparent_pixels_total\": %llu, "
+                      "\"source_alpha_transparent_pixel_ratio\": %.6f, "
+                      "\"source_alpha_blended_pixels_total\": %llu, \"source_alpha_blended_pixel_ratio\": %.6f, "
+                      "\"subrect_rows_total\": %llu, \"subrect_rows_all_opaque_total\": %llu, "
+                      "\"subrect_rows_all_opaque_ratio\": %.6f, "
+                      "\"subrect_rows_all_transparent_total\": %llu, "
+                      "\"subrect_rows_all_transparent_ratio\": %.6f, "
+                      "\"subrect_rows_binary_alpha_only_total\": %llu, "
+                      "\"subrect_rows_binary_alpha_only_ratio\": %.6f, "
+                      "\"subrect_rows_binary_mixed_total\": %llu, "
+                      "\"subrect_rows_binary_mixed_ratio\": %.6f, "
+                      "\"subrect_rows_with_blended_total\": %llu, "
+                      "\"subrect_rows_with_blended_ratio\": %.6f, "
+                      "\"source_alpha_opaque_spans_total\": %llu, "
+                      "\"source_alpha_transparent_spans_total\": %llu, "
+                      "\"source_alpha_blended_spans_total\": %llu, "
+                      "\"source_alpha_opaque_span_max\": %d, "
+                      "\"source_alpha_transparent_span_max\": %d, "
+                      "\"source_alpha_blended_span_max\": %d, "
                       "\"exact_shape_variant_count\": %d, \"dominant_shape_source_rect_w\": %d, "
                       "\"dominant_shape_source_rect_h\": %d, \"dominant_shape_visible_w\": %d, "
                       "\"dominant_shape_visible_h\": %d, \"dominant_shape_task_count_total\": %llu, "
@@ -1846,6 +1905,29 @@ static void io_write_perf_capture_window_textured_rect_families(
                       (unsigned long long)entry->same_source_reused_pixels,
                       same_source_reused_pixel_ratio,
                       entry->same_source_max_run_length,
+                      (unsigned long long)entry->source_alpha_opaque_pixels,
+                      source_alpha_opaque_pixel_ratio,
+                      (unsigned long long)entry->source_alpha_transparent_pixels,
+                      source_alpha_transparent_pixel_ratio,
+                      (unsigned long long)entry->source_alpha_blended_pixels,
+                      source_alpha_blended_pixel_ratio,
+                      (unsigned long long)entry->subrect_rows_total,
+                      (unsigned long long)entry->subrect_rows_all_opaque,
+                      subrect_rows_all_opaque_ratio,
+                      (unsigned long long)entry->subrect_rows_all_transparent,
+                      subrect_rows_all_transparent_ratio,
+                      (unsigned long long)entry->subrect_rows_binary_alpha_only,
+                      subrect_rows_binary_alpha_only_ratio,
+                      (unsigned long long)entry->subrect_rows_binary_mixed,
+                      subrect_rows_binary_mixed_ratio,
+                      (unsigned long long)entry->subrect_rows_with_blended,
+                      subrect_rows_with_blended_ratio,
+                      (unsigned long long)entry->source_alpha_opaque_spans,
+                      (unsigned long long)entry->source_alpha_transparent_spans,
+                      (unsigned long long)entry->source_alpha_blended_spans,
+                      entry->source_alpha_opaque_span_max,
+                      entry->source_alpha_transparent_span_max,
+                      entry->source_alpha_blended_span_max,
                       entry->exact_shape_variant_count,
                       entry->dominant_shape_source_w,
                       entry->dominant_shape_source_h,
@@ -5637,6 +5719,26 @@ static void perf_capture_write_summary(void) {
                 source_alpha_classified_pixels > 0
                     ? (double)entry->source_alpha_blended_pixels / (double)source_alpha_classified_pixels
                     : 0.0;
+            const double subrect_rows_all_opaque_ratio =
+                entry->subrect_rows_total > 0
+                    ? (double)entry->subrect_rows_all_opaque / (double)entry->subrect_rows_total
+                    : 0.0;
+            const double subrect_rows_all_transparent_ratio =
+                entry->subrect_rows_total > 0
+                    ? (double)entry->subrect_rows_all_transparent / (double)entry->subrect_rows_total
+                    : 0.0;
+            const double subrect_rows_binary_alpha_only_ratio =
+                entry->subrect_rows_total > 0
+                    ? (double)entry->subrect_rows_binary_alpha_only / (double)entry->subrect_rows_total
+                    : 0.0;
+            const double subrect_rows_binary_mixed_ratio =
+                entry->subrect_rows_total > 0
+                    ? (double)entry->subrect_rows_binary_mixed / (double)entry->subrect_rows_total
+                    : 0.0;
+            const double subrect_rows_with_blended_ratio =
+                entry->subrect_rows_total > 0
+                    ? (double)entry->subrect_rows_with_blended / (double)entry->subrect_rows_total
+                    : 0.0;
             const double same_source_reused_pixel_ratio =
                 entry->submitted_pixels > 0 ? (double)entry->same_source_reused_pixels / (double)entry->submitted_pixels
                                             : 0.0;
@@ -5717,6 +5819,27 @@ static void perf_capture_write_summary(void) {
                       "\"source_alpha_blended_pixels_total\": %llu, "
                       "\"source_alpha_blended_pixels_mean\": %.2f, "
                       "\"source_alpha_blended_pixel_ratio\": %.6f, "
+                      "\"subrect_rows_total\": %llu, "
+                      "\"subrect_rows_mean\": %.2f, "
+                      "\"subrect_rows_all_opaque_total\": %llu, "
+                      "\"subrect_rows_all_opaque_ratio\": %.6f, "
+                      "\"subrect_rows_all_transparent_total\": %llu, "
+                      "\"subrect_rows_all_transparent_ratio\": %.6f, "
+                      "\"subrect_rows_binary_alpha_only_total\": %llu, "
+                      "\"subrect_rows_binary_alpha_only_ratio\": %.6f, "
+                      "\"subrect_rows_binary_mixed_total\": %llu, "
+                      "\"subrect_rows_binary_mixed_ratio\": %.6f, "
+                      "\"subrect_rows_with_blended_total\": %llu, "
+                      "\"subrect_rows_with_blended_ratio\": %.6f, "
+                      "\"source_alpha_opaque_spans_total\": %llu, "
+                      "\"source_alpha_opaque_spans_mean\": %.2f, "
+                      "\"source_alpha_transparent_spans_total\": %llu, "
+                      "\"source_alpha_transparent_spans_mean\": %.2f, "
+                      "\"source_alpha_blended_spans_total\": %llu, "
+                      "\"source_alpha_blended_spans_mean\": %.2f, "
+                      "\"source_alpha_opaque_span_max\": %d, "
+                      "\"source_alpha_transparent_span_max\": %d, "
+                      "\"source_alpha_blended_span_max\": %d, "
                       "\"same_source_runs_total\": %llu, \"same_source_runs_mean\": %.2f, "
                       "\"same_source_reuse_runs_total\": %llu, \"same_source_reuse_runs_mean\": %.2f, "
                       "\"same_source_reused_pixels_total\": %llu, \"same_source_reused_pixels_mean\": %.2f, "
@@ -5828,6 +5951,27 @@ static void perf_capture_write_summary(void) {
                       (unsigned long long)entry->source_alpha_blended_pixels,
                       (double)entry->source_alpha_blended_pixels / frame_count,
                       source_alpha_blended_pixel_ratio,
+                      (unsigned long long)entry->subrect_rows_total,
+                      (double)entry->subrect_rows_total / frame_count,
+                      (unsigned long long)entry->subrect_rows_all_opaque,
+                      subrect_rows_all_opaque_ratio,
+                      (unsigned long long)entry->subrect_rows_all_transparent,
+                      subrect_rows_all_transparent_ratio,
+                      (unsigned long long)entry->subrect_rows_binary_alpha_only,
+                      subrect_rows_binary_alpha_only_ratio,
+                      (unsigned long long)entry->subrect_rows_binary_mixed,
+                      subrect_rows_binary_mixed_ratio,
+                      (unsigned long long)entry->subrect_rows_with_blended,
+                      subrect_rows_with_blended_ratio,
+                      (unsigned long long)entry->source_alpha_opaque_spans,
+                      (double)entry->source_alpha_opaque_spans / frame_count,
+                      (unsigned long long)entry->source_alpha_transparent_spans,
+                      (double)entry->source_alpha_transparent_spans / frame_count,
+                      (unsigned long long)entry->source_alpha_blended_spans,
+                      (double)entry->source_alpha_blended_spans / frame_count,
+                      entry->source_alpha_opaque_span_max,
+                      entry->source_alpha_transparent_span_max,
+                      entry->source_alpha_blended_span_max,
                       (unsigned long long)entry->same_source_runs,
                       (double)entry->same_source_runs / frame_count,
                       (unsigned long long)entry->same_source_reuse_runs,

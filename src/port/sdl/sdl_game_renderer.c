@@ -99,6 +99,7 @@ static bool software_frame_owned = false;
 static bool software_frame_uploaded = false;
 static bool perf_capture_logical_identity_enabled = false;
 static bool perf_capture_fast_non_integer_reuse_telemetry_enabled = true;
+static bool perf_capture_fast_non_integer_subrect_alpha_telemetry_enabled = false;
 static SDL_Surface* surfaces[FL_TEXTURE_MAX] = { NULL };
 static SDL_Palette* palettes[FL_PALETTE_MAX] = { NULL };
 typedef enum CacheDirtyReason {
@@ -4220,6 +4221,24 @@ static void note_perf_capture_textured_rect_family(const RenderTask* task,
         entry->source_alpha_opaque_pixels += non_integer_telemetry->source_alpha_opaque_pixels;
         entry->source_alpha_transparent_pixels += non_integer_telemetry->source_alpha_transparent_pixels;
         entry->source_alpha_blended_pixels += non_integer_telemetry->source_alpha_blended_pixels;
+        entry->subrect_rows_total += non_integer_telemetry->subrect_rows_total;
+        entry->subrect_rows_all_opaque += non_integer_telemetry->subrect_rows_all_opaque;
+        entry->subrect_rows_all_transparent += non_integer_telemetry->subrect_rows_all_transparent;
+        entry->subrect_rows_binary_alpha_only += non_integer_telemetry->subrect_rows_binary_alpha_only;
+        entry->subrect_rows_binary_mixed += non_integer_telemetry->subrect_rows_binary_mixed;
+        entry->subrect_rows_with_blended += non_integer_telemetry->subrect_rows_with_blended;
+        entry->source_alpha_opaque_spans += non_integer_telemetry->source_alpha_opaque_spans;
+        entry->source_alpha_transparent_spans += non_integer_telemetry->source_alpha_transparent_spans;
+        entry->source_alpha_blended_spans += non_integer_telemetry->source_alpha_blended_spans;
+        if (non_integer_telemetry->source_alpha_opaque_span_max > entry->source_alpha_opaque_span_max) {
+            entry->source_alpha_opaque_span_max = non_integer_telemetry->source_alpha_opaque_span_max;
+        }
+        if (non_integer_telemetry->source_alpha_transparent_span_max > entry->source_alpha_transparent_span_max) {
+            entry->source_alpha_transparent_span_max = non_integer_telemetry->source_alpha_transparent_span_max;
+        }
+        if (non_integer_telemetry->source_alpha_blended_span_max > entry->source_alpha_blended_span_max) {
+            entry->source_alpha_blended_span_max = non_integer_telemetry->source_alpha_blended_span_max;
+        }
         entry->same_source_runs += non_integer_telemetry->same_source_runs;
         entry->same_source_reuse_runs += non_integer_telemetry->same_source_reuse_runs;
         entry->same_source_reused_pixels += non_integer_telemetry->same_source_reused_pixels;
@@ -5836,7 +5855,8 @@ static bool raster_textured_task_to_software_frame(const RenderTask* task) {
                 src_surface,
                 non_integer_telemetry_ptr,
                 sample_start_counter != 0,
-                perf_capture_fast_non_integer_reuse_telemetry_enabled)) {
+                perf_capture_fast_non_integer_reuse_telemetry_enabled,
+                perf_capture_fast_non_integer_subrect_alpha_telemetry_enabled)) {
             const Uint64 sampled_ns =
                 perf_capture_counter_delta_to_ns(sample_start_counter, SDL_GetPerformanceCounter());
             note_perf_capture_raster_bucket_sample(
@@ -7222,6 +7242,10 @@ void SDLGameRenderer_SetPerfCaptureLogicalIdentityEnabled(bool enabled) {
 
 void SDLGameRenderer_SetPerfCaptureFastNonIntegerReuseTelemetryEnabled(bool enabled) {
     perf_capture_fast_non_integer_reuse_telemetry_enabled = enabled;
+}
+
+void SDLGameRenderer_SetPerfCaptureFastNonIntegerSubrectAlphaTelemetryEnabled(bool enabled) {
+    perf_capture_fast_non_integer_subrect_alpha_telemetry_enabled = enabled;
 }
 
 bool SDLGameRenderer_HasSoftwareOwnedFrame(void) {

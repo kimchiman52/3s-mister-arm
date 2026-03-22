@@ -364,6 +364,7 @@ bool SDLGameRenderer_RunSoftwareFrameParityCheck(void) {
         { "opaque-destination", { 6.35f, 7.40f, 18.25f, 10.60f }, { 0.11f, 0.18f, 0.66f, 0.57f }, SDL_FLIP_NONE,
           0x90F080C0u, true },
     };
+    static const bool subrect_alpha_modes[] = { false, true };
 
     SDL_Surface* source = SDL_CreateSurface(23, 19, SDL_PIXELFORMAT_ARGB8888);
     SDL_Surface* expected = SDL_CreateSurface(48, 32, SDL_PIXELFORMAT_ARGB8888);
@@ -378,29 +379,42 @@ bool SDLGameRenderer_RunSoftwareFrameParityCheck(void) {
 
     fill_test_source(source);
     for (int i = 0; i < SDL_arraysize(cases); i++) {
-        fill_test_destination(expected, cases[i].opaque_destination);
-        fill_test_destination(actual, cases[i].opaque_destination);
-        raster_reference_non_integer_task(&cases[i], expected, source);
-        if (!SDLSoftwareFrame_RasterNonIntegerLookupARGB8888(&cases[i].dst_rect,
-                                                             &cases[i].src_uv_rect,
-                                                             cases[i].flip,
-                                                             cases[i].color,
-                                                             actual,
-                                                             source,
-                                                             NULL,
-                                                             false,
-                                                             false)) {
-            SDL_Log("Software-frame parity lookup helper rejected case: %s", cases[i].name);
-            SDL_DestroySurface(actual);
-            SDL_DestroySurface(expected);
-            SDL_DestroySurface(source);
-            return false;
-        }
-        if (!surfaces_match(cases[i].name, expected, actual)) {
-            SDL_DestroySurface(actual);
-            SDL_DestroySurface(expected);
-            SDL_DestroySurface(source);
-            return false;
+        for (int mode_index = 0; mode_index < SDL_arraysize(subrect_alpha_modes); mode_index++) {
+            SDLSoftwareFrame_NonIntegerTelemetry telemetry;
+            char case_label[96];
+            const bool collect_subrect_alpha_telemetry = subrect_alpha_modes[mode_index];
+
+            fill_test_destination(expected, cases[i].opaque_destination);
+            fill_test_destination(actual, cases[i].opaque_destination);
+            raster_reference_non_integer_task(&cases[i], expected, source);
+            if (!SDLSoftwareFrame_RasterNonIntegerLookupARGB8888(&cases[i].dst_rect,
+                                                                 &cases[i].src_uv_rect,
+                                                                 cases[i].flip,
+                                                                 cases[i].color,
+                                                                 actual,
+                                                                 source,
+                                                                 &telemetry,
+                                                                 false,
+                                                                 false,
+                                                                 collect_subrect_alpha_telemetry)) {
+                SDL_Log("Software-frame parity lookup helper rejected case: %s", cases[i].name);
+                SDL_DestroySurface(actual);
+                SDL_DestroySurface(expected);
+                SDL_DestroySurface(source);
+                return false;
+            }
+
+            SDL_snprintf(case_label,
+                         sizeof(case_label),
+                         "%s%s",
+                         cases[i].name,
+                         collect_subrect_alpha_telemetry ? " [subrect-alpha]" : "");
+            if (!surfaces_match(case_label, expected, actual)) {
+                SDL_DestroySurface(actual);
+                SDL_DestroySurface(expected);
+                SDL_DestroySurface(source);
+                return false;
+            }
         }
     }
 
