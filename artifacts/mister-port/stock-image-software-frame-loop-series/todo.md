@@ -7600,6 +7600,7 @@
 - [x] Rejected and closed in this loop:
   - [x] do not retry this `__builtin_expect` branch-hint reland unchanged now. On this tree it is materially worse than both the unchanged baseline and the rejected Loop `177` opaque-first reorder, which means the surviving onset win was not captured safely by this codegen-hint shape
   - [x] do not spend another immediate Yun runtime loop on alpha-branch layout tweaks alone. Two consecutive alpha-branch-layout experiments now fail in opposite ways: Loop `177` helps onset but regresses idle, while Loop `178` preserves source order but catastrophically regresses onset itself
-- [ ] final commit hash:
+- [x] final commit hash:
+  - [x] `e998b560` (`docs: close loop 178 branch-hint rejection`)
 - [x] next best candidate:
   - [x] rerank away from alpha-branch-layout experiments before another native runtime edit. If the Yun queue stays open, require a different measured helper-local or codegen hypothesis that does not depend on reordering or hinting the hot alpha branch tests; otherwise close the runtime queue temporarily and revisit only after fresh evidence identifies a different safe lever

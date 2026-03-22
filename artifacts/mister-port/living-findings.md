@@ -199,7 +199,7 @@ Scope guardrails:
 
 - 2026-03-22T18:47:06-0400
   - Final commit hash:
-    - `TBD`
+    - `e998b560`
   - Bottleneck targeted:
     - testing whether a transparent-first `__builtin_expect` reland could recover Loop `177`'s narrow Yun onset win as a safer codegen/layout effect without changing helper semantics
   - Change summary:
