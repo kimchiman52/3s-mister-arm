@@ -10,6 +10,8 @@ typedef struct SDLSoftwareFrame_NonIntegerTelemetry {
     Uint64 sampled_pair_lookup_ns;
     Uint64 sampled_reuse_telemetry_ns;
     Uint64 sampled_row_raster_ns;
+    Uint64 x_lookup_signature;
+    Uint64 y_lookup_signature;
     Uint64 source_alpha_opaque_pixels;
     Uint64 source_alpha_transparent_pixels;
     Uint64 source_alpha_blended_pixels;

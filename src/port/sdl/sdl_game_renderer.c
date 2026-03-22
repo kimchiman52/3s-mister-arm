@@ -341,6 +341,33 @@ static SDLGameRenderer_PerfCaptureTexturedRectFamily perf_capture_fast_non_integ
 static int perf_capture_fast_non_integer_family_count = 0;
 static SDLGameRenderer_PerfCaptureTexturedRectExactShape perf_capture_fast_non_integer_shapes[512] = { 0 };
 static int perf_capture_fast_non_integer_shape_count = 0;
+typedef struct PerfCaptureFastNonIntegerLookupPatternExactProfile {
+    int texture_handle;
+    int palette_handle;
+    Uint32 source_format;
+    int source_width;
+    int source_height;
+    int alpha_only;
+    int rgb_mod;
+    int opaque_color;
+    int integer_positions;
+    int integer_source_rect;
+    int full_texture_source_rect;
+    int clipped;
+    int flip_h;
+    int flip_v;
+    int source_w;
+    int source_h;
+    int visible_w;
+    int visible_h;
+    Uint64 x_lookup_signature;
+    Uint64 y_lookup_signature;
+    Uint64 task_count;
+    Uint64 submitted_pixels;
+    Uint64 sampled_ns;
+} PerfCaptureFastNonIntegerLookupPatternExactProfile;
+static PerfCaptureFastNonIntegerLookupPatternExactProfile perf_capture_fast_non_integer_lookup_patterns[512] = { 0 };
+static int perf_capture_fast_non_integer_lookup_pattern_count = 0;
 static SDLGameRenderer_PerfCaptureTexturedRectFamily perf_capture_generic_textured_families[16] = { 0 };
 static int perf_capture_generic_textured_family_count = 0;
 static SDLGameRenderer_PerfCaptureTexturedGeometryFallbackFamily perf_capture_textured_geometry_recovered_families[16] = {
@@ -4279,6 +4306,68 @@ static bool fast_non_integer_shared_shape_matches_profile(
            (a->source_h == b->source_h) && (a->visible_w == b->visible_w) && (a->visible_h == b->visible_h);
 }
 
+static bool perf_capture_fast_non_integer_lookup_pattern_matches_profile(
+    const PerfCaptureFastNonIntegerLookupPatternExactProfile* entry,
+    const TexturedRectFamilyProfile* profile,
+    Uint64 x_lookup_signature,
+    Uint64 y_lookup_signature) {
+    if ((entry == NULL) || (profile == NULL)) {
+        return false;
+    }
+
+    return (entry->texture_handle == profile->texture_handle) && (entry->palette_handle == profile->palette_handle) &&
+           (entry->source_format == profile->source_format) && (entry->source_width == profile->source_width) &&
+           (entry->source_height == profile->source_height) && (entry->alpha_only == (profile->alpha_only ? 1 : 0)) &&
+           (entry->rgb_mod == (profile->rgb_mod ? 1 : 0)) &&
+           (entry->opaque_color == (profile->opaque_color ? 1 : 0)) &&
+           (entry->integer_positions == (profile->integer_positions ? 1 : 0)) &&
+           (entry->integer_source_rect == (profile->integer_source_rect ? 1 : 0)) &&
+           (entry->full_texture_source_rect == (profile->full_texture_source_rect ? 1 : 0)) &&
+           (entry->clipped == (profile->clipped ? 1 : 0)) && (entry->flip_h == (profile->flip_h ? 1 : 0)) &&
+           (entry->flip_v == (profile->flip_v ? 1 : 0)) && (entry->source_w == profile->source_w) &&
+           (entry->source_h == profile->source_h) && (entry->visible_w == profile->visible_w) &&
+           (entry->visible_h == profile->visible_h) && (entry->x_lookup_signature == x_lookup_signature) &&
+           (entry->y_lookup_signature == y_lookup_signature);
+}
+
+static bool fast_non_integer_lookup_profile_matches_pattern(
+    const SDLGameRenderer_PerfCaptureFastNonIntegerLookupProfile* entry,
+    const PerfCaptureFastNonIntegerLookupPatternExactProfile* pattern) {
+    if ((entry == NULL) || (pattern == NULL)) {
+        return false;
+    }
+
+    return (entry->source_format == pattern->source_format) && (entry->source_width == pattern->source_width) &&
+           (entry->source_height == pattern->source_height) && (entry->alpha_only == pattern->alpha_only) &&
+           (entry->rgb_mod == pattern->rgb_mod) && (entry->opaque_color == pattern->opaque_color) &&
+           (entry->integer_positions == pattern->integer_positions) &&
+           (entry->integer_source_rect == pattern->integer_source_rect) &&
+           (entry->full_texture_source_rect == pattern->full_texture_source_rect) &&
+           (entry->clipped == pattern->clipped) && (entry->flip_h == pattern->flip_h) &&
+           (entry->flip_v == pattern->flip_v) && (entry->source_w == pattern->source_w) &&
+           (entry->source_h == pattern->source_h) && (entry->visible_w == pattern->visible_w) &&
+           (entry->visible_h == pattern->visible_h) && (entry->x_lookup_signature == pattern->x_lookup_signature) &&
+           (entry->y_lookup_signature == pattern->y_lookup_signature);
+}
+
+static bool fast_non_integer_lookup_profile_matches_profile(
+    const SDLGameRenderer_PerfCaptureFastNonIntegerLookupProfile* a,
+    const SDLGameRenderer_PerfCaptureFastNonIntegerLookupProfile* b) {
+    if ((a == NULL) || (b == NULL)) {
+        return false;
+    }
+
+    return (a->source_format == b->source_format) && (a->source_width == b->source_width) &&
+           (a->source_height == b->source_height) && (a->alpha_only == b->alpha_only) &&
+           (a->rgb_mod == b->rgb_mod) && (a->opaque_color == b->opaque_color) &&
+           (a->integer_positions == b->integer_positions) &&
+           (a->integer_source_rect == b->integer_source_rect) &&
+           (a->full_texture_source_rect == b->full_texture_source_rect) && (a->clipped == b->clipped) &&
+           (a->flip_h == b->flip_h) && (a->flip_v == b->flip_v) && (a->source_w == b->source_w) &&
+           (a->source_h == b->source_h) && (a->visible_w == b->visible_w) && (a->visible_h == b->visible_h) &&
+           (a->x_lookup_signature == b->x_lookup_signature) && (a->y_lookup_signature == b->y_lookup_signature);
+}
+
 static int get_perf_capture_fast_non_integer_shared_shapes_from_exact_shapes(
     const SDLGameRenderer_PerfCaptureTexturedRectExactShape* shapes,
     int shape_count,
@@ -4424,6 +4513,168 @@ static int get_perf_capture_fast_non_integer_shared_shapes_from_exact_shapes(
     return selected_count;
 }
 
+static int get_perf_capture_fast_non_integer_lookup_profiles_from_patterns(
+    const PerfCaptureFastNonIntegerLookupPatternExactProfile* patterns,
+    int pattern_count,
+    SDLGameRenderer_PerfCaptureFastNonIntegerLookupProfile* out_profiles,
+    int max_profiles,
+    Uint64* out_task_total,
+    Uint64* out_pixel_total,
+    Uint64* out_sampled_ns_total,
+    int* out_profile_count) {
+    SDLGameRenderer_PerfCaptureFastNonIntegerLookupProfile
+        aggregated[SDL_arraysize(perf_capture_fast_non_integer_lookup_patterns)] = { 0 };
+    int aggregated_count = 0;
+    Uint64 task_total = 0;
+    Uint64 pixel_total = 0;
+    Uint64 sampled_ns_total = 0;
+
+    for (int i = 0; i < pattern_count; i++) {
+        const PerfCaptureFastNonIntegerLookupPatternExactProfile* pattern = &patterns[i];
+        int existing = -1;
+        for (int j = 0; j < aggregated_count; j++) {
+            if (fast_non_integer_lookup_profile_matches_pattern(&aggregated[j], pattern)) {
+                existing = j;
+                break;
+            }
+        }
+
+        if (existing < 0) {
+            if (aggregated_count >= (int)SDL_arraysize(aggregated)) {
+                continue;
+            }
+
+            existing = aggregated_count++;
+            SDLGameRenderer_PerfCaptureFastNonIntegerLookupProfile* entry = &aggregated[existing];
+            SDL_zero(*entry);
+            entry->source_format = pattern->source_format;
+            entry->source_width = pattern->source_width;
+            entry->source_height = pattern->source_height;
+            entry->alpha_only = pattern->alpha_only;
+            entry->rgb_mod = pattern->rgb_mod;
+            entry->opaque_color = pattern->opaque_color;
+            entry->integer_positions = pattern->integer_positions;
+            entry->integer_source_rect = pattern->integer_source_rect;
+            entry->full_texture_source_rect = pattern->full_texture_source_rect;
+            entry->clipped = pattern->clipped;
+            entry->flip_h = pattern->flip_h;
+            entry->flip_v = pattern->flip_v;
+            entry->source_w = pattern->source_w;
+            entry->source_h = pattern->source_h;
+            entry->visible_w = pattern->visible_w;
+            entry->visible_h = pattern->visible_h;
+            entry->x_lookup_signature = pattern->x_lookup_signature;
+            entry->y_lookup_signature = pattern->y_lookup_signature;
+        }
+
+        SDLGameRenderer_PerfCaptureFastNonIntegerLookupProfile* entry = &aggregated[existing];
+        entry->task_count += pattern->task_count;
+        entry->submitted_pixels += pattern->submitted_pixels;
+        entry->sampled_ns += pattern->sampled_ns;
+        task_total += pattern->task_count;
+        pixel_total += pattern->submitted_pixels;
+        sampled_ns_total += pattern->sampled_ns;
+    }
+
+    for (int i = 0; i < aggregated_count; i++) {
+        for (int j = 0; j < pattern_count; j++) {
+            const PerfCaptureFastNonIntegerLookupPatternExactProfile* pattern = &patterns[j];
+            if (!fast_non_integer_lookup_profile_matches_pattern(&aggregated[i], pattern)) {
+                continue;
+            }
+
+            bool already_counted = false;
+            for (int k = 0; k < j; k++) {
+                const PerfCaptureFastNonIntegerLookupPatternExactProfile* prior = &patterns[k];
+                if (!fast_non_integer_lookup_profile_matches_pattern(&aggregated[i], prior)) {
+                    continue;
+                }
+                if ((prior->texture_handle == pattern->texture_handle) &&
+                    (prior->palette_handle == pattern->palette_handle)) {
+                    already_counted = true;
+                    break;
+                }
+            }
+            if (!already_counted) {
+                aggregated[i].contributing_family_count += 1;
+            }
+        }
+    }
+
+    if (out_task_total != NULL) {
+        *out_task_total = task_total;
+    }
+    if (out_pixel_total != NULL) {
+        *out_pixel_total = pixel_total;
+    }
+    if (out_sampled_ns_total != NULL) {
+        *out_sampled_ns_total = sampled_ns_total;
+    }
+    if (out_profile_count != NULL) {
+        *out_profile_count = aggregated_count;
+    }
+    if ((out_profiles == NULL) || (max_profiles <= 0) || (aggregated_count <= 0)) {
+        return 0;
+    }
+
+    int selected_count = 0;
+    while ((selected_count < max_profiles) && (selected_count < aggregated_count)) {
+        int best_index = -1;
+        for (int i = 0; i < aggregated_count; i++) {
+            const SDLGameRenderer_PerfCaptureFastNonIntegerLookupProfile* candidate = &aggregated[i];
+
+            bool already_selected = false;
+            for (int j = 0; j < selected_count; j++) {
+                if (fast_non_integer_lookup_profile_matches_profile(candidate, &out_profiles[j])) {
+                    already_selected = true;
+                    break;
+                }
+            }
+            if (already_selected) {
+                continue;
+            }
+
+            if (best_index < 0) {
+                best_index = i;
+                continue;
+            }
+
+            const SDLGameRenderer_PerfCaptureFastNonIntegerLookupProfile* best = &aggregated[best_index];
+            if ((candidate->sampled_ns > best->sampled_ns) ||
+                ((candidate->sampled_ns == best->sampled_ns) &&
+                 (candidate->submitted_pixels > best->submitted_pixels)) ||
+                ((candidate->sampled_ns == best->sampled_ns) &&
+                 (candidate->submitted_pixels == best->submitted_pixels) &&
+                 (candidate->task_count > best->task_count)) ||
+                ((candidate->sampled_ns == best->sampled_ns) &&
+                 (candidate->submitted_pixels == best->submitted_pixels) &&
+                 (candidate->task_count == best->task_count) &&
+                 (candidate->contributing_family_count > best->contributing_family_count)) ||
+                ((candidate->sampled_ns == best->sampled_ns) &&
+                 (candidate->submitted_pixels == best->submitted_pixels) &&
+                 (candidate->task_count == best->task_count) &&
+                 (candidate->contributing_family_count == best->contributing_family_count) &&
+                 (candidate->source_w > best->source_w)) ||
+                ((candidate->sampled_ns == best->sampled_ns) &&
+                 (candidate->submitted_pixels == best->submitted_pixels) &&
+                 (candidate->task_count == best->task_count) &&
+                 (candidate->contributing_family_count == best->contributing_family_count) &&
+                 (candidate->source_w == best->source_w) && (candidate->source_h > best->source_h))) {
+                best_index = i;
+            }
+        }
+
+        if (best_index < 0) {
+            break;
+        }
+
+        out_profiles[selected_count] = aggregated[best_index];
+        selected_count += 1;
+    }
+
+    return selected_count;
+}
+
 static void note_perf_capture_fast_non_integer_shape(const TexturedRectFamilyProfile* profile, Uint64 sampled_ns) {
     if (!frame_stats_extended_enabled || (profile == NULL)) {
         return;
@@ -4471,6 +4722,62 @@ static void note_perf_capture_fast_non_integer_shape(const TexturedRectFamilyPro
     entry->sampled_ns += sampled_ns;
 }
 
+static void note_perf_capture_fast_non_integer_lookup_pattern(
+    const TexturedRectFamilyProfile* profile,
+    const SDLSoftwareFrame_NonIntegerTelemetry* non_integer_telemetry,
+    Uint64 sampled_ns) {
+    if (!frame_stats_extended_enabled || (profile == NULL) || (non_integer_telemetry == NULL)) {
+        return;
+    }
+
+    PerfCaptureFastNonIntegerLookupPatternExactProfile* entry = NULL;
+    for (int i = 0; i < perf_capture_fast_non_integer_lookup_pattern_count; i++) {
+        if (perf_capture_fast_non_integer_lookup_pattern_matches_profile(&perf_capture_fast_non_integer_lookup_patterns[i],
+                                                                         profile,
+                                                                         non_integer_telemetry->x_lookup_signature,
+                                                                         non_integer_telemetry->y_lookup_signature)) {
+            entry = &perf_capture_fast_non_integer_lookup_patterns[i];
+            break;
+        }
+    }
+
+    if ((entry == NULL) &&
+        (perf_capture_fast_non_integer_lookup_pattern_count <
+         (int)SDL_arraysize(perf_capture_fast_non_integer_lookup_patterns))) {
+        entry = &perf_capture_fast_non_integer_lookup_patterns[perf_capture_fast_non_integer_lookup_pattern_count];
+        perf_capture_fast_non_integer_lookup_pattern_count += 1;
+        SDL_zero(*entry);
+        entry->texture_handle = profile->texture_handle;
+        entry->palette_handle = profile->palette_handle;
+        entry->source_format = profile->source_format;
+        entry->source_width = profile->source_width;
+        entry->source_height = profile->source_height;
+        entry->alpha_only = profile->alpha_only ? 1 : 0;
+        entry->rgb_mod = profile->rgb_mod ? 1 : 0;
+        entry->opaque_color = profile->opaque_color ? 1 : 0;
+        entry->integer_positions = profile->integer_positions ? 1 : 0;
+        entry->integer_source_rect = profile->integer_source_rect ? 1 : 0;
+        entry->full_texture_source_rect = profile->full_texture_source_rect ? 1 : 0;
+        entry->clipped = profile->clipped ? 1 : 0;
+        entry->flip_h = profile->flip_h ? 1 : 0;
+        entry->flip_v = profile->flip_v ? 1 : 0;
+        entry->source_w = profile->source_w;
+        entry->source_h = profile->source_h;
+        entry->visible_w = profile->visible_w;
+        entry->visible_h = profile->visible_h;
+        entry->x_lookup_signature = non_integer_telemetry->x_lookup_signature;
+        entry->y_lookup_signature = non_integer_telemetry->y_lookup_signature;
+    }
+
+    if (entry == NULL) {
+        return;
+    }
+
+    entry->task_count += 1;
+    entry->submitted_pixels += profile->submitted_pixels;
+    entry->sampled_ns += sampled_ns;
+}
+
 static void note_perf_capture_fast_exact_family(const RenderTask* task,
                                                 const SDL_Surface* dst_surface,
                                                 Uint64 lookup_entries,
@@ -4506,6 +4813,7 @@ static void note_perf_capture_fast_non_integer_family(const RenderTask* task,
         &profile);
     if (profile.texture_handle >= 0) {
         note_perf_capture_fast_non_integer_shape(&profile, sampled_ns);
+        note_perf_capture_fast_non_integer_lookup_pattern(&profile, non_integer_telemetry, sampled_ns);
     }
 }
 
@@ -7201,6 +7509,8 @@ void SDLGameRenderer_ResetPerfCaptureFastNonIntegerFamilyTelemetry(void) {
     perf_capture_fast_non_integer_family_count = 0;
     SDL_zero(perf_capture_fast_non_integer_shapes);
     perf_capture_fast_non_integer_shape_count = 0;
+    SDL_zero(perf_capture_fast_non_integer_lookup_patterns);
+    perf_capture_fast_non_integer_lookup_pattern_count = 0;
 }
 
 void SDLGameRenderer_ResetPerfCaptureGenericTexturedFamilyTelemetry(void) {
@@ -7871,6 +8181,35 @@ void SDLGameRenderer_GetPerfCaptureFastNonIntegerSharedShapeTotals(Uint64* out_t
                                                                       out_pixel_total,
                                                                       out_sampled_ns_total,
                                                                       out_shape_count);
+}
+
+int SDLGameRenderer_GetPerfCaptureFastNonIntegerLookupProfiles(
+    SDLGameRenderer_PerfCaptureFastNonIntegerLookupProfile* out_profiles,
+    int max_profiles) {
+    return get_perf_capture_fast_non_integer_lookup_profiles_from_patterns(
+        perf_capture_fast_non_integer_lookup_patterns,
+        perf_capture_fast_non_integer_lookup_pattern_count,
+        out_profiles,
+        max_profiles,
+        NULL,
+        NULL,
+        NULL,
+        NULL);
+}
+
+void SDLGameRenderer_GetPerfCaptureFastNonIntegerLookupProfileTotals(Uint64* out_task_total,
+                                                                     Uint64* out_pixel_total,
+                                                                     Uint64* out_sampled_ns_total,
+                                                                     int* out_profile_count) {
+    get_perf_capture_fast_non_integer_lookup_profiles_from_patterns(
+        perf_capture_fast_non_integer_lookup_patterns,
+        perf_capture_fast_non_integer_lookup_pattern_count,
+        NULL,
+        0,
+        out_task_total,
+        out_pixel_total,
+        out_sampled_ns_total,
+        out_profile_count);
 }
 
 int SDLGameRenderer_GetPerfCaptureGenericTexturedFamilies(SDLGameRenderer_PerfCaptureTexturedRectFamily* out_families,

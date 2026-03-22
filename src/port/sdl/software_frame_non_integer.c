@@ -22,6 +22,22 @@ static int clamp_to_range(int value, int min_value, int max_value) {
     return value;
 }
 
+static Uint64 hash_non_integer_lookup_signature(const int* lookup, int count) {
+    if ((lookup == NULL) || (count <= 0)) {
+        return 0u;
+    }
+
+    Uint64 hash = 1469598103934665603ull;
+    hash ^= (Uint64)(Uint32)count;
+    hash *= 1099511628211ull;
+    for (int i = 0; i < count; i++) {
+        hash ^= (Uint64)(Uint32)lookup[i];
+        hash *= 1099511628211ull;
+    }
+
+    return hash;
+}
+
 static Uint32 modulate_argb8888(Uint32 pixel, Uint32 color) {
     const Uint32 src_a = (pixel >> 24) & 0xFFu;
     const Uint32 src_r = (pixel >> 16) & 0xFFu;
@@ -269,6 +285,10 @@ bool SDLSoftwareFrame_RasterNonIntegerLookupARGB8888(const SDL_FRect* dst_rect,
         out_telemetry->sampled_lookup_y_ns =
             performance_counter_delta_to_ns(phase_start_counter, phase_end_counter, perf_frequency);
         phase_start_counter = phase_end_counter;
+    }
+    if (out_telemetry != NULL) {
+        out_telemetry->x_lookup_signature = hash_non_integer_lookup_signature(src_x_lookup, visible_w);
+        out_telemetry->y_lookup_signature = hash_non_integer_lookup_signature(src_y_lookup, visible_h);
     }
     const bool has_same_source_pairs = populate_same_source_pair_lookup(same_source_pair_lookup, src_x_lookup, visible_w);
     if (sample_phase_timing && (out_telemetry != NULL)) {
