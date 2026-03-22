@@ -7519,6 +7519,7 @@
   - [x] do not retry this repeat-pressure family-plus-render-subphase mode unchanged now. It is substantially more distortive than the kept Loop `160` family-only collector and does not produce trustworthy cold-vs-warm evidence
 - [x] Rejected and closed in this loop:
   - [x] do not spend another loop on this in-band repeat-pressure render-subphase collector. Any future cold-start rerank on the gameplay-real repeat lane needs an off-path or external design that proves Loop `160`-class fidelity first
-- [ ] final commit hash:
+- [x] final commit hash:
+  - [x] `cd2da83a` (`docs: close loop 176 repeat-pressure collector rejection`)
 - [x] next best candidate:
   - [x] because the queue has now logged two straight docs-only closeouts without a kept runtime/build win, the next unblocked cycle should prefer one bounded helper-local clustered row-walk runtime or build-level experiment on the trusted first-visible onset lane that adds no renderer-side whole-surface metadata and no in-band repeat-pressure telemetry, rather than inventing another repeat-pressure collector

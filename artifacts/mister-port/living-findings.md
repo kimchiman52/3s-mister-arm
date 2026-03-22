@@ -199,7 +199,7 @@ Scope guardrails:
 
 - 2026-03-22T17:37:57-0400
   - Final commit hash:
-    - `pending`
+    - `cd2da83a`
   - Bottleneck targeted:
     - reranking whether the remaining first-visible Yun Genei dip is mostly cold-start/setup cost by reusing the kept gameplay-real `yun-sa3-repeat-pressure` lane with current first-window family and render-subphase tooling
   - Change summary:
