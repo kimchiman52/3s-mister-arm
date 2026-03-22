@@ -197,6 +197,24 @@ Scope guardrails:
 
 ## Cycle Log
 
+- 2026-03-22T08:44:20-0400
+  - Final commit hash:
+    - `d266371e`
+  - Bottleneck targeted:
+    - trusted first-visible Yun Genei-Jin onset slowdown on native/direct present, specifically whether a lower-distortion first-window capture could recover decisive render-subphase attribution without reopening the heavier full-export onset telemetry stack
+  - Change summary:
+    - added one measurement-support-only flag, `--perf-basic-first-window-render-subphases`, so basic first-window onset captures can snapshot raster-bucket totals plus fast-non-integer phase totals at frames `8` and `60`
+    - kept the runtime path unchanged while basic-mode onset captures now collect phase timing without re-enabling lookup-signature hashing, shared-shape/lookup-profile export, logical-identity registration, or in-band alpha bookkeeping
+    - confirmed during review that `--perf-fast-non-integer-no-reuse-telemetry` now applies in basic mode intentionally; no further review-driven code changes were needed
+  - Verification result summary:
+    - Docker telemetry ARM build/install/package, `readelf`, and serialized MiSTer `lock-status`, credentialed `busy-status`, `health`, `deploy`, `probe`, and bounded `smoke` all passed; the on-device route stayed dummy/software + fbdev + native + `software_frame_exact`
+    - unchanged-runtime capture `loop164-yun-onset-basic-render-subphases-r1` stayed direct/native with zero fallback/readback/upload at `44.6144 FPS / 22.4143 / 8.9592 / 12.9688 / 0.4864 ms` overall, `35.0021 FPS / 28.5697 / 10.2701 / 17.8222 / 0.4775 ms` for the first `8`, and `39.9094 FPS / 25.0567 / 8.2944 / 16.2651 / 0.4973 ms` for the first `60`
+    - the lower-distortion rerun preserved the trusted onset workload shape from `loop153` while showing that first-window sampled work is still dominated by `fast_non_integer`, and that inside that family the phase leader is `row_raster` (`46.5311 ms`, `77.5250%` of family-local sampled work for the first `8`; `361.4051 ms`, `76.4004%` for the first `60`)
+  - Keep/rollback decision with reason:
+    - keep the measurement-support diff; it recovered decision-grade onset subphase attribution on the trusted native lane with materially less measurement drag and no routing or gameplay-behavior change
+  - Next best candidate optimization:
+    - keep runtime behavior unchanged and add lower-distortion subrect alpha-structure telemetry for the hot first-visible Yun onset families so the now-confirmed row-raster-heavy helper cost can be reranked by measured alpha structure before any new runtime reland
+
 - 2026-03-18T19:29:45-0400
   - Final commit hash:
     - `9dbc1460`
