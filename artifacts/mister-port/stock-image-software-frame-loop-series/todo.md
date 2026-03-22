@@ -7221,6 +7221,6 @@
 - [x] Rejected and closed in this loop:
   - [x] do not retry this MiSTer ThinLTO/gold reland unchanged now. Local build success is not enough when the trusted on-device onset lane no longer reaches its deterministic super-art phase under the experiment
 - [x] final commit hash:
-  - [ ] pending
+  - [x] `fe3db03e` (`docs: close loop 168 thinlto rejection`)
 - [x] next best candidate:
   - [x] do not spend another loop on generic MiSTer IPO/LTO guesses right away. Return to a safer non-selector-specific experiment only after the unchanged baseline again proves the trusted first-visible Yun onset lane is reachable end-to-end on device, or choose a different bounded runtime/build bet that does not perturb that lane's automation behavior

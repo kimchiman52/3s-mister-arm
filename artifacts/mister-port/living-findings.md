@@ -199,7 +199,7 @@ Scope guardrails:
 
 - 2026-03-22T11:47:57-0400
   - Final commit hash:
-    - `pending`
+    - `fe3db03e`
   - Bottleneck targeted:
     - bounded MiSTer-only ThinLTO/gold build-level experiment after the recent Yun onset alpha/runtime rerank, judged first on the trusted first-visible Yun SA3 onset lane
   - Change summary:
