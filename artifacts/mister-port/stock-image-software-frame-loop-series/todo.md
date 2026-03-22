@@ -6715,6 +6715,6 @@
 - [x] Keep/rollback decision:
   - [x] reject and revert. The runtime path is fully rolled back, and this cycle closes docs-only with committed telemetry because the candidate failed both the deciding Yun onset lane and the required gameplay keep gates
 - [x] final commit hash:
-  - [ ] pending; record the docs-only Loop `155` closure commit hash in the follow-up docs pass after this closeout commit lands
+  - [x] `7e20c936` (`docs: close loop 155 binary-alpha rejection`)
 - [x] next best candidate:
   - [x] do not open another helper-local Yun runtime reland first. Use the next loop on gameplay-real repeated Yun activation/cold-vs-warm measurement support so a future runtime attempt can distinguish first-visible cold-start cost from steady repeated activations before touching the renderer again

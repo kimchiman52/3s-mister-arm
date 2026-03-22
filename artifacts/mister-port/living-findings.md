@@ -4194,7 +4194,7 @@ Scope guardrails:
 
 - 2026-03-22T02:26:07-0400
   - Final commit hash:
-    - pending; stamp after the docs-only Loop `155` closure commit lands
+    - `7e20c936`
   - Bottleneck targeted:
     - testing whether a narrow binary-alpha sidecar reland for hot Yun first-visible native non-integer clustered shapes can reduce the measured row-raster cost without changing route or gameplay behavior
   - Change summary:
