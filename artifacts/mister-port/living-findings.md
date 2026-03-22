@@ -4228,3 +4228,20 @@ Scope guardrails:
     - do not treat the new lane as a replacement for the manual report yet; it proves two starts under live exchange, but it still does not show a decisive “later activation is faster” gap on its own
   - Next best candidate optimization:
     - use the kept `yun-sa3-repeat-pressure` lane to rerank cold-vs-warm Yun SA3 behavior before any fresh renderer reland; if more automation support is still needed, prefer a lighter scene/spacing-specific repeat lane over another helper-local runtime guess
+
+- 2026-03-22T03:17:09-0400
+  - Final commit hash:
+    - pending docs closeout commit
+  - Bottleneck targeted:
+    - deciding whether the kept gameplay-real `yun-sa3-repeat-pressure` lane already exposes a trustworthy first-vs-later Yun SA3 cold-start gap on current `HEAD` when measured with lower-overhead user-visible FPS capture
+  - Change summary:
+    - kept runtime behavior unchanged and rebuilt/redeployed untouched `HEAD` telemetry through Docker `3sx-mister-build`
+    - captured lower-overhead reruns `loop157-yun-first-activation-pressure-basic-r1` and `loop157-yun-second-activation-pressure-basic-r1` on the verified native/direct repeat-pressure lane
+    - closed the loop docs-only because the rerank narrowed the cold-vs-warm ambiguity without justifying a fresh native renderer reland
+  - Verification result summary:
+    - Docker telemetry ARM build/install/package plus `readelf` passed, and serialized `lock-status`, `busy-status`, `health`, `deploy`, `probe`, and bounded `smoke` all passed on `192.168.1.171`
+    - both deciding captures stayed direct/native with zero fallback/readback: first activation `48.9801 FPS / 20.4165 / 12.1583 / 0.4729 ms` overall and `39.0610 FPS / 25.6010 / 16.1288 / 0.4658 ms` for the first `8`; second activation `48.1011 FPS / 20.7895 / 11.9455 / 0.4542 ms` overall and `40.8551 FPS / 24.4767 / 15.7928 / 0.4396 ms` for the first `8`
+  - Keep/rollback decision with reason:
+    - keep the runtime unchanged and close docs-only; the later activation is only modestly better in the first `8` frames and slightly worse over the full `120`-frame window, which is enough to block another blind renderer reland but not enough to replace the trusted manual report
+  - Next best candidate optimization:
+    - if a closer automated match is still needed, add one lighter scene/spacing-specific repeat lane before any fresh renderer work; otherwise leave native Yun runtime changes parked until a new measured bottleneck outranks this queue
