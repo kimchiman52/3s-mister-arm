@@ -197,6 +197,23 @@ Scope guardrails:
 
 ## Cycle Log
 
+- 2026-03-22T11:47:57-0400
+  - Final commit hash:
+    - `pending`
+  - Bottleneck targeted:
+    - bounded MiSTer-only ThinLTO/gold build-level experiment after the recent Yun onset alpha/runtime rerank, judged first on the trusted first-visible Yun SA3 onset lane
+  - Change summary:
+    - tried a guarded MiSTer-only CMake ThinLTO/IPO path that relied on `CheckIPOSupported` and forced the Clang link through `ld.gold`
+    - proved the local build shape end-to-end: scratch `/work-arm-ipo-probe` reproduced the default-linker ThinLTO crash and then linked successfully with `-fuse-ld=gold`, and fresh `/work-arm-loop168` telemetry build/install/package passed in Docker `3sx-mister-build`
+    - rolled the build-system diff back completely after the on-device user-priority onset gate failed twice, keeping only the docs closeout
+  - Verification result summary:
+    - Docker telemetry ARM build/install/package and `readelf` passed, and serialized MiSTer `health`, `deploy`, `probe`, and bounded `smoke` all passed on the candidate package
+    - the trusted lower-distortion Yun onset capture never produced a decision-grade JSON: both `loop168-yun-onset-thinlto-r1` and `r2` hung waiting for `p1-super-art-active`, each left an orphaned remote `3sx` PID that required bounded cleanup, and remote logs showed only startup/backend-probe lines ending at `McInit() = 0.` before cleanup forced `exit=143`
+  - Keep/rollback decision with reason:
+    - reject and revert; local build viability is not enough when the trusted on-device Yun onset lane no longer reaches its deterministic super-art phase under the experiment
+  - Next best candidate optimization:
+    - do not retry MiSTer ThinLTO/gold unchanged now; rerank toward a safer non-selector-specific runtime/build bet only after the unchanged baseline again proves the trusted Yun onset lane is reachable end-to-end on device
+
 - 2026-03-22T08:44:20-0400
   - Final commit hash:
     - `d266371e`
