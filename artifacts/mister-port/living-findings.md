@@ -4263,3 +4263,21 @@ Scope guardrails:
     - reject and revert; once the stage-drift confounder was removed, the spacing preset no longer provided a stronger or cleaner cold-vs-warm signal than the kept repeat-pressure lane
   - Next best candidate optimization:
     - keep using the committed `yun-sa3-repeat-pressure` lane as the Yun repeat comparator, and if cold-vs-warm ambiguity still matters, spend the next loop on a narrow workload-shape telemetry pass there instead of another spacing-script rewrite
+
+- 2026-03-22T04:58:40-0400
+  - Final commit hash:
+    - `PENDING`
+  - Bottleneck targeted:
+    - testing whether one new `--perf-basic` first-window workload-shape snapshot mode could recover decision-grade Yun first-activation family/shape evidence on the kept `yun-sa3-repeat-pressure` lane without reintroducing unacceptable capture distortion
+  - Change summary:
+    - attempted one measurement-support-only reland for `--perf-basic-first-window-workload-shapes`, then corrected an initial stale `/work-arm` Docker package by rebuilding from a fresh `/src -> /work-arm-loop159` sync before on-device validation
+    - verified one successful first-activation capture on the corrected build, which exported non-zero first-window fast/generic family arrays plus shared-shape objects on the trusted native/direct lane
+    - rolled the entire measurement-support diff back after the new mode proved too distortive and the later-activation wait hung twice before capture start
+  - Verification result summary:
+    - local `git diff --check`, `bash -n`, corrected Docker telemetry ARM build/install/package, and `readelf` all passed; serialized `lock-status`, `busy-status`, `health`, corrected `deploy`, `probe`, bounded `smoke`, and post-cleanup `busy-status` all passed on `192.168.1.171`
+    - successful first activation `loop159-yun-first-activation-pressure-basic-shapes-r1` stayed direct/native with zero fallback/readback, but the first `60` frames regressed materially versus the kept `loop157` baseline (`42.7803 -> 35.7972 FPS`, `23.3753 -> 27.9351 ms`, `14.6418 -> 18.3271 ms`) even though it recovered `64` fast-non-integer families, `8` generic families, and `32` shared shapes in `capture_windows.first_8_frames`
+    - both later-activation retries (`loop159-yun-second-activation-pressure-basic-shapes-r1` and `-r2`) hung before any `PERF capture start:` marker, tailed only repeated ALSA noise, and required explicit raw `misterctl.sh exec` cleanup to kill orphaned remote perf processes and return the target to idle
+  - Keep/rollback decision with reason:
+    - reject and revert; the new lightweight snapshot mode is not low-distortion enough to replace the kept `loop157` comparator, and the repeated `p1-super-art-active-2` hangs leave it without the matched first-vs-later pair the loop required
+  - Next best candidate optimization:
+    - do not retry this exact basic-window-shape mode now; recover a lower-distortion repeated-activation comparator first, then revisit Yun workload-shape attribution only with a design that preserves the trusted `--perf-basic` FPS fidelity
