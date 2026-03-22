@@ -4299,3 +4299,21 @@ Scope guardrails:
     - keep; this narrower collector preserves the trusted repeated-activation comparator well enough to retain, and it confirms that the same dominant Yun family mix still leads both first and later activations on the automated lane
   - Next best candidate optimization:
     - use the kept family-only mode to add one narrower hot-family subrect-alpha/helper-local measurement step if the next rerank still points inside the same Yun family mix, rather than retrying the broader Loop `159` design or jumping to another blind runtime reland
+
+- 2026-03-22T06:11:32-0400
+  - Final commit hash:
+    - `TBD`
+  - Bottleneck targeted:
+    - testing whether one narrower in-band hot-family alpha collector could recover repeat-pressure subrect-alpha structure on the kept Yun first/later activation lane without exceeding the Loop `160` distortion budget
+  - Change summary:
+    - attempted one measurement-support-only `--perf-basic-first-window-hot-family-alpha` path across the app, SDL perf-capture plumbing, and `tools/mister/perf-sampler.sh`, then rolled it back after verification
+    - rebuilt/redeployed the telemetry ARM package from fresh `/work-arm-loop161` output and captured matched first/second activation telemetry as `loop161-yun-first-activation-pressure-basic-hot-alpha-r1` and `loop161-yun-second-activation-pressure-basic-hot-alpha-r1`
+    - recovered the expected binary-alpha structure for the hot `57/58` + `391-394` cohort, but only with materially worse FPS/render timings than the kept Loop `160` family-only mode
+  - Verification result summary:
+    - local validation passed before rollback: `git diff --check`, `bash -n`, Docker telemetry ARM rebuild/install/package, `readelf`, and host-side binary-string confirmation for the new flag
+    - serialized `lock-status`, credentialed `busy-status`, `health`, `deploy`, `probe`, and bounded `smoke` all passed on `192.168.1.171`, keeping the same dummy/software + fbdev + native + `software-frame on` route
+    - first activation fell from Loop `160` first-`60` `41.7814 FPS / 15.3576 ms render` to `37.3538 FPS / 17.9618 ms`, and second activation fell from `39.6625 FPS / 15.3652 ms` to `35.8506 FPS / 18.2298 ms`, even though the exported alpha rows stayed binary-only with zero blended spans on the dominant cohort
+  - Keep/rollback decision with reason:
+    - reject and revert; the collector is too distortive for the kept repeat-pressure comparator, and review also found the attempted selector was broader than the stated exact hot-family hypothesis because it did not gate on the proven texture/palette IDs
+  - Next best candidate optimization:
+    - if this measurement lane is revisited, first tighten it to exact proven family IDs or move alpha classification into a lighter off-path sidecar before remeasuring; do not reopen native runtime work from this rejected collector
