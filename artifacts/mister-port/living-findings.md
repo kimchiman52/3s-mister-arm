@@ -4481,7 +4481,7 @@ Scope guardrails:
 
 - 2026-03-22T20:05:00-0400
   - Final commit hash:
-    - `PENDING`
+    - `5be3927b`
   - Bottleneck targeted:
     - testing whether a hint-only source-row prefetch inside the unmodulated non-integer helper could reduce the first-visible Yun onset row-raster cost without adding new metadata overhead
   - Change summary:

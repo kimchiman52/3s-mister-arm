@@ -6270,7 +6270,7 @@
   - [x] ran separate Codex review-process passes on the uncommitted diff; no concrete actionable findings survived validation against the touched telemetry/export paths
 - [x] Keep/rollback decision:
   - [x] keep. This loop is measurement-support only, it preserved the native/direct runtime route on device, and it closed the exact-shape concentration blind spot without changing gameplay behavior
-- [ ] final commit hash:
+- [x] final commit hash:
   - [x] `8e375059` (`mister: export loop 143 dominant-shape telemetry`)
 - [x] next best candidate:
   - [x] do not spend the next Yun gameplay loop on another helper-local exact-shape specialization reland first; the new dominant-shape export says the onset-heavy `ix 81 / 82` families remain too fragmented for a high-confidence one-shape helper rewrite, so the next safe candidate should look for a broader fast-non-integer lever or a different shared attribution cut
@@ -7334,6 +7334,6 @@
 - [x] Rejected and closed in this loop:
   - [x] do not retry this `__builtin_prefetch` reland unchanged now. On the current tree it increases, rather than hides, the hot unmodulated non-integer helper cost on the trusted first-visible Yun onset lane
 - [ ] final commit hash:
-  - [ ] `PENDING`
+  - [x] `5be3927b` (`docs: close loop 171 prefetch rejection`)
 - [x] next best candidate:
   - [x] before another native runtime reland, recover the narrowest measurement that can prove whether a broader clustered row-walk specialization across the adjacent `32x32 -> 34/35/36/37` Yun onset cohort is real while separating extended-stats overhead from player-runtime cost
