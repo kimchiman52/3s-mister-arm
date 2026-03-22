@@ -6483,7 +6483,7 @@
   - [x] no other actionable findings remained. The review matched the checked-in Loop `134` / `145` / `146` / `148` citations and agreed that the docs-only closeout is supported by the current code paths plus trusted telemetry
 - [x] Keep/rollback decision:
   - [x] keep the runtime tree unchanged and close the loop as docs-only research. Another palette-specific or otherwise narrower sub-`384` admission would only retry the same already-rejected family with even less upside than Loop `134`
-- [ ] final commit hash:
-  - [ ] pending docs closeout commit
+- [x] final commit hash:
+  - [x] `7cf38254` (`docs: close loop 149 ix80 audit`)
 - [x] next best candidate:
   - [x] rerank away from this native Yun renderer lane until a different measured gameplay bottleneck clearly outranks it. Do not reopen the `ix 80 / texture 56` residue, the broader shared row-walk reland, or Remy compare-dirty caps unchanged without genuinely new trusted telemetry
