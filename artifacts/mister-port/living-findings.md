@@ -4406,3 +4406,21 @@ Scope guardrails:
     - keep; this lower-distortion onset sidecar finally delivers the exact-family alpha/subrect structure the backlog called for without reopening Loop `165`-class drift or changing runtime behavior
   - Next best candidate optimization:
     - use the exact six-family onset evidence to test one narrowly scoped native runtime candidate that separates fully opaque families (`58/393`, `57/394`, `57/393`) from binary opaque/transparent families (`57/391`, `18/37`, `57/329`) and measures whether that exact hot-family path can beat the kept Loop `164` onset render window without broadening the route
+
+- 2026-03-22T11:03:04-0400
+  - Final commit hash:
+    - `TBD`
+  - Bottleneck targeted:
+    - testing whether a narrow opaque-only non-integer fast path for the exact first-visible Yun onset families could improve the cold Genei-Jin burst without reopening the rejected broad binary-alpha design
+  - Change summary:
+    - attempted one runtime reland that routed only exact onset families `58/393`, `57/394`, and `57/393` into an opaque-only non-integer helper, with one added parity case for an opaque source surface
+    - rebuilt/redeployed the telemetry ARM package from fresh `/work-arm-loop167-cross-r1` output and recorded deciding onset evidence as `loop167-yun-onset-opaque-r3` plus broad keep gates `loop167-gameplay-idle-r1` and `loop167-gameplay-super-heavy-r1`
+    - rolled the runtime/parity code fully back after verification; only docs closeout remains in the final tree
+  - Verification result summary:
+    - local `git diff --check`, Docker host parity, telemetry ARM rebuild/install/package, and `readelf` all passed; serialized MiSTer `lock-status`, `busy-status`, `health`, `deploy`, `probe`, and bounded `smoke` also passed on `192.168.1.171`
+    - the first onset attempt hung because it omitted the proven Yun/SA3 overrides and had to be cleaned up by killing orphaned remote PID `21458`; the second onset attempt stayed direct/native but was invalidated because it accidentally re-enabled reuse telemetry and collapsed the lower-distortion comparator
+    - corrected deciding capture `loop167-yun-onset-opaque-r3` preserved the trusted first-window workload shape and stayed direct/native with zero readback at `45.2806 FPS / 22.0845 / 8.7445 / 12.9068 / 0.4332 ms` overall, `34.1777 FPS / 29.2588 / 10.1632 / 18.6326 / 0.4629 ms` for the first `8`, and `40.5277 FPS / 24.6745 / 8.1252 / 16.1120 / 0.4372 ms` for the first `60`; gameplay keep gates regressed to `83.7952 FPS` on idle and `54.2641 FPS` on `super-heavy`
+  - Keep/rollback decision with reason:
+    - reject and revert; despite matching the trusted onset workload and staying on direct/native present, the cold first-`8` window regressed versus Loop `166`, the broad gameplay keep gates were materially down, and review found the selector still relied on unproven opacity heuristics
+  - Next best candidate optimization:
+    - do not retry this exact opaque-family reland unchanged now; if Yun runtime work continues, require a different reversible bet that proves opacity from actual source data or rerank toward a safer non-selector-specific experiment first
