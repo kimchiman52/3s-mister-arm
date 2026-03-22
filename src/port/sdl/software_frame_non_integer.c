@@ -229,7 +229,8 @@ bool SDLSoftwareFrame_RasterNonIntegerLookupARGB8888(const SDL_FRect* dst_rect,
                                                      SDL_Surface* dst_surface,
                                                      const SDL_Surface* src_surface,
                                                      SDLSoftwareFrame_NonIntegerTelemetry* out_telemetry,
-                                                     bool sample_phase_timing) {
+                                                     bool sample_phase_timing,
+                                                     bool collect_reuse_telemetry) {
     if ((dst_rect == NULL) || (src_uv_rect == NULL) || (dst_surface == NULL) || (src_surface == NULL) ||
         (dst_rect->w <= 0.0f) || (dst_rect->h <= 0.0f) || (src_surface->w <= 0) || (src_surface->h <= 0)) {
         return false;
@@ -307,7 +308,7 @@ bool SDLSoftwareFrame_RasterNonIntegerLookupARGB8888(const SDL_FRect* dst_rect,
     for (int row = 0; row < visible_h; row++) {
         const Uint32* src_row = src_pixels + (src_y_lookup[row] * src_pitch);
         Uint32* dst_row = dst_pixels + ((dst_y0 + row) * dst_pitch) + dst_x0;
-        if (out_telemetry != NULL) {
+        if (collect_reuse_telemetry && (out_telemetry != NULL)) {
             const Uint64 telemetry_start_counter = sample_phase_timing ? SDL_GetPerformanceCounter() : 0u;
             note_non_integer_row_reuse_telemetry(
                 src_x_lookup, visible_w, src_row, color, apply_color_mod, out_telemetry);

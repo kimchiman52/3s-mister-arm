@@ -171,6 +171,13 @@ static void read_args(int argc, const char* argv[]) {
                     NULL,
                     0,
                     0),
+        OPT_BOOLEAN(0,
+                    "perf-fast-non-integer-no-reuse-telemetry",
+                    &configuration.perf.fast_non_integer_disable_reuse_telemetry,
+                    "Keep full perf capture enabled but skip fast non-integer row-reuse bookkeeping to reduce capture distortion.",
+                    NULL,
+                    0,
+                    0),
         OPT_STRING(0,
                    "perf-output",
                    &configuration.perf.output_path,
@@ -585,7 +592,8 @@ static int loop() {
         SDLApp_ConfigurePerfCapture(configuration.perf.frame_count,
                                     configuration.perf.output_path,
                                     configuration.perf.scene,
-                                    configuration.perf.basic_mode);
+                                    configuration.perf.basic_mode,
+                                    configuration.perf.fast_non_integer_disable_reuse_telemetry);
         perf_capture_started = true;
     }
 #endif
@@ -627,6 +635,7 @@ static int loop() {
                     SDL_Log("PERF capture start: in_game=%d warmup_frames=%d scene=%s detail_mode=%s stage_id=%d "
                             "test_stage_override=%d test_scene_preset=%s p1_character=%d p2_character=%d "
                             "p1_super_art=%d p2_super_art=%d test_phase=%s wait_test_phase=%s wait_runtime_state=%s "
+                            "fast_non_integer_reuse_telemetry=%s "
                             "g_no=%d/%d/%d/%d e_no=%d/%d/%d/%d menu_task_condition=%d menu_r_no=%d/%d/%d/%d "
                             "break_into=%d hnc_num=%d exec_wipe=%d active_wipe_type=%d wipe_limit=%d",
                             mpp_w.inGame ? 1 : 0,
@@ -644,7 +653,11 @@ static int loop() {
                             configuration.perf.wait_for_test_phase != NULL ? configuration.perf.wait_for_test_phase
                                                                            : "(none)",
                             configuration.perf.wait_for_runtime_state != NULL ? configuration.perf.wait_for_runtime_state
-                                                                              : "(none)",
+                                                                             : "(none)",
+                            (configuration.perf.basic_mode ||
+                             !configuration.perf.fast_non_integer_disable_reuse_telemetry)
+                                ? "on"
+                                : "off",
                             G_No[0],
                             G_No[1],
                             G_No[2],
@@ -666,7 +679,8 @@ static int loop() {
                     SDLApp_ConfigurePerfCapture(configuration.perf.frame_count,
                                                 configuration.perf.output_path,
                                                 configuration.perf.scene,
-                                                configuration.perf.basic_mode);
+                                                configuration.perf.basic_mode,
+                                                configuration.perf.fast_non_integer_disable_reuse_telemetry);
                     perf_capture_started = true;
                 }
             } else {

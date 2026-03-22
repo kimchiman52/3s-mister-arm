@@ -99,6 +99,7 @@ typedef struct PerfCaptureDemoLogoState {
 static bool perf_capture_enabled = false;
 static bool perf_capture_completed = false;
 static bool perf_capture_basic_mode = false;
+static bool perf_capture_fast_non_integer_reuse_telemetry_enabled = true;
 static int perf_capture_target_frames = 0;
 static int perf_capture_recorded_frames = 0;
 static char* perf_capture_output_path = NULL;
@@ -1045,7 +1046,9 @@ static void perf_capture_reset_storage(void) {
     perf_capture_enabled = false;
     perf_capture_completed = false;
     perf_capture_basic_mode = false;
+    perf_capture_fast_non_integer_reuse_telemetry_enabled = true;
     SDLGameRenderer_SetPerfCaptureLogicalIdentityEnabled(false);
+    SDLGameRenderer_SetPerfCaptureFastNonIntegerReuseTelemetryEnabled(true);
     perf_capture_target_frames = 0;
     perf_capture_recorded_frames = 0;
     perf_capture_reset_window_snapshot(&perf_capture_first_window_snapshot);
@@ -1297,7 +1300,11 @@ static bool perf_capture_collect_extended_stats(void) {
     return perf_capture_enabled && !perf_capture_completed && !perf_capture_basic_mode;
 }
 
-void SDLApp_ConfigurePerfCapture(int frame_count, const char* output_path, const char* scene_name, bool basic_mode) {
+void SDLApp_ConfigurePerfCapture(int frame_count,
+                                 const char* output_path,
+                                 const char* scene_name,
+                                 bool basic_mode,
+                                 bool disable_reuse_telemetry) {
     if (frame_count <= 0) {
         perf_capture_reset_storage();
         return;
@@ -1323,9 +1330,12 @@ void SDLApp_ConfigurePerfCapture(int frame_count, const char* output_path, const
     perf_capture_completed = false;
     perf_capture_enabled = true;
     perf_capture_basic_mode = basic_mode;
+    perf_capture_fast_non_integer_reuse_telemetry_enabled = basic_mode || !disable_reuse_telemetry;
     perf_capture_reset_window_snapshot(&perf_capture_first_window_snapshot);
     perf_capture_reset_window_snapshot(&perf_capture_first_burst_snapshot);
     SDLGameRenderer_SetPerfCaptureLogicalIdentityEnabled(!basic_mode);
+    SDLGameRenderer_SetPerfCaptureFastNonIntegerReuseTelemetryEnabled(
+        perf_capture_fast_non_integer_reuse_telemetry_enabled);
     perf_frame_start_ns = 0;
     perf_update_start_ns = 0;
     perf_update_ns_total = 0;
@@ -1531,13 +1541,14 @@ void SDLApp_ConfigurePerfCapture(int frame_count, const char* output_path, const
     }
 
     snapshot_perf_capture_transition_start_state();
-    backend_logf("PERF capture enabled: frames=%d output=%s scene=%s detail_mode=%s scale_mode=%s software_frame_mode=%s",
+    backend_logf("PERF capture enabled: frames=%d output=%s scene=%s detail_mode=%s scale_mode=%s software_frame_mode=%s fast_non_integer_reuse_telemetry=%s",
                  perf_capture_target_frames,
                  perf_capture_output_path != NULL ? perf_capture_output_path : "(auto)",
                  perf_capture_scene_name != NULL ? perf_capture_scene_name : "(none)",
                  perf_capture_basic_mode ? "basic" : "full",
                  scale_mode_name(scale_mode),
-                 software_frame_mode_name());
+                 software_frame_mode_name(),
+                 perf_capture_fast_non_integer_reuse_telemetry_enabled ? "on" : "off");
 }
 
 static void io_write_json_escaped_string(SDL_IOStream* io, const char* value) {

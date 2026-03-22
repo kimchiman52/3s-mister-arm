@@ -98,6 +98,7 @@ static bool software_frame_surface_ready = false;
 static bool software_frame_owned = false;
 static bool software_frame_uploaded = false;
 static bool perf_capture_logical_identity_enabled = false;
+static bool perf_capture_fast_non_integer_reuse_telemetry_enabled = true;
 static SDL_Surface* surfaces[FL_TEXTURE_MAX] = { NULL };
 static SDL_Palette* palettes[FL_PALETTE_MAX] = { NULL };
 typedef enum CacheDirtyReason {
@@ -5834,7 +5835,8 @@ static bool raster_textured_task_to_software_frame(const RenderTask* task) {
                 dst_surface,
                 src_surface,
                 non_integer_telemetry_ptr,
-                sample_start_counter != 0)) {
+                sample_start_counter != 0,
+                perf_capture_fast_non_integer_reuse_telemetry_enabled)) {
             const Uint64 sampled_ns =
                 perf_capture_counter_delta_to_ns(sample_start_counter, SDL_GetPerformanceCounter());
             note_perf_capture_raster_bucket_sample(
@@ -7216,6 +7218,10 @@ bool SDLGameRenderer_IsPerfCaptureExtendedStatsEnabled(void) {
 
 void SDLGameRenderer_SetPerfCaptureLogicalIdentityEnabled(bool enabled) {
     perf_capture_logical_identity_enabled = enabled;
+}
+
+void SDLGameRenderer_SetPerfCaptureFastNonIntegerReuseTelemetryEnabled(bool enabled) {
+    perf_capture_fast_non_integer_reuse_telemetry_enabled = enabled;
 }
 
 bool SDLGameRenderer_HasSoftwareOwnedFrame(void) {
