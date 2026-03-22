@@ -7444,6 +7444,6 @@
   - [x] do not use `loop174-yun-onset-cluster-alpha-r1` as decision evidence; it accidentally re-enabled reuse telemetry and is only a setup artifact now
   - [x] do not retry the shape-only cluster selector without onset-family identity pinning; review proved that version can over-annotate unrelated families and the final kept tree closes that gap
 - [ ] final commit hash:
-  - [ ] pending
+  - [x] `a4f3f2ff` (`perf: add Yun onset cluster alpha collector`)
 - [x] next best candidate:
   - [x] spend the next bounded runtime loop on a helper-local clustered binary-alpha reland for the six measured onset families, explicitly targeting all-opaque / all-transparent row skips and binary-mixed row handling inside the proven `57/391`, `58/393`, `57/394`, `18/37`, `57/329`, and `57/393` cohort rather than any blended-alpha or broader width-only kernel guess

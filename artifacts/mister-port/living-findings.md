@@ -199,7 +199,7 @@ Scope guardrails:
 
 - 2026-03-23T00:05:00-0400
   - Final commit hash:
-    - `PENDING_COMMIT`
+    - `a4f3f2ff`
   - Bottleneck targeted:
     - recovering low-distortion source-alpha structure for the proven first-visible Yun onset cluster before another native helper reland
   - Change summary:
