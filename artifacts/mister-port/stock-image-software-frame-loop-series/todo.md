@@ -6591,6 +6591,6 @@
   - [x] reject the preserved measurement-support diff. Even after the corrected on-device run, `yun-sa3-repeat-heavy` still cannot reach a second visible P1 Genei start, so it does not justify keeping extra preset/plumbing code on the active branch
   - [x] no runtime or measurement-support code changes land from Loop `152`; only the docs closeout remains on `mister-dev`
 - [x] final commit hash:
-  - [ ] pending; record the docs-only Loop `152` closure commit hash in the follow-up docs pass after this closeout commit lands
+  - [x] `ea9b4804` (`docs: close loop 152 heavy yun repeat rejection`)
 - [x] next best candidate:
   - [x] design a different gameplay-real repeated-activation Yun lane that proves two starts before reopening native renderer runtime work; keep Remy compare-dirty and transition work on their separate lower-priority tracks unless fresh telemetry reranks them

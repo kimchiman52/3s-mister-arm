@@ -4139,7 +4139,7 @@ Scope guardrails:
 
 - 2026-03-22T00:10:01-0400
   - Final commit hash:
-    - pending; stamp after the docs-only Loop `152` closure commit lands
+    - `ea9b4804`
   - Bottleneck targeted:
     - verifying whether preserved measurement-support branch `preserve-loop152-yun-repeat-heavy` can actually produce a gameplay-real second visible Yun SA3 activation on-device before any fresh native runtime work resumes
   - Change summary:
