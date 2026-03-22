@@ -4172,3 +4172,22 @@ Scope guardrails:
     - keep measurement-support only; the new flag materially improves telemetry clarity without changing the deciding Yun onset workload mix or direct/native route, so the higher captured FPS is instrumentation relief rather than a player-runtime improvement
   - Next best candidate optimization:
     - add subrect alpha-structure telemetry for the hot Yun fast-non-integer families before any new runtime reland, because the lower-distortion rerun now proves helper-local row-raster work still dominates while the generic `ix 80` residue remains too small to justify reopening that lane
+
+- 2026-03-22T01:28:53-0400
+  - Final commit hash:
+    - `c9d7c7e4`
+  - Bottleneck targeted:
+    - measuring subrect alpha structure on the trusted native Yun SA3 first-visible onset lane so the next runtime choice can distinguish binary-alpha clustered-shape work from blend-heavy or generic residue guesses
+  - Change summary:
+    - added perf-capture-only `--perf-fast-non-integer-subrect-alpha-telemetry` plumbing from `src/main.c` through `SDLApp`, `SDLGameRenderer`, and `SDLSoftwareFrame_RasterNonIntegerLookupARGB8888(...)`
+    - exported per-family subrect row buckets, source-alpha span counts, and span maxima in perf JSON, then exposed the new mode through `tools/mister/perf-sampler.sh`
+    - rebuilt/install-packaged the telemetry ARM flavor in Docker `3sx-mister-build`, redeployed with serialized MiSTer tooling, captured `artifacts/mister-port/perf/loop154-yun-onset-subrect-alpha-r1.json`, and extended parity coverage for the telemetry-enabled raster branch during the review gate
+  - Verification result summary:
+    - local validation passed: `git diff --check`, `bash -n tools/mister/perf-sampler.sh`, telemetry ARM rebuild/install/package, and `readelf` still reported `ELF32` / `ARM` hard-float output
+    - serialized `lock-status`, `busy-status`, `health`, `deploy`, `probe`, bounded `smoke`, and the deciding Yun onset capture all passed on `192.168.1.171`; the kept capture stayed direct/native at `31.5286 FPS / 31.7172 / 9.7076 / 21.4760 / 0.5335 ms` overall and `25.2749 FPS / 39.5650 / 11.1156 / 27.8054 / 0.6439 ms` for the first `8` frames, with zero fallback/readback
+    - the post-review on-device parity run also passed after redeploying the copied ARM package `build/mister-telemetry-package-loop154-arm-r2`, which corrected an intermediate host-side x86_64 package deploy that had failed with wrapper `Exec format error`
+    - the new first-`8` alpha telemetry now reranks the next idea cleanly: weighted sampled fast-non-integer pixels stayed `81.39%` opaque, `16.69%` transparent, and only `1.92%` blended, while sampled subrect rows stayed `97.26%` binary-alpha-only with just `2.74%` blend-bearing rows; the remaining generic `ix 80 / tex 56` residue still topped out at only `3.0670 ms`
+  - Keep/rollback decision with reason:
+    - keep measurement-support only; the new telemetry is verification-clean, does not alter runtime behavior, and proves the hot Yun onset families are dominated by binary alpha plus transparent spans rather than blend-heavy work
+  - Next best candidate optimization:
+    - if a runtime reland is attempted next, make it a narrowly measured clustered-shape binary-alpha sidecar or transparent-skip candidate for the hot Yun families; do not reopen generic `ix 80` or blend-specialized work from this evidence
