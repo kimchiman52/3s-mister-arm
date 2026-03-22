@@ -5546,7 +5546,7 @@
   - [x] that finding was accepted and fixed before final verification by gating the runtime compare-dirty scan on `texture_index_has_software_surface_cache_variants(...)`; no other high-confidence correctness or gameplay-regression findings remained
 - [x] Keep/rollback decision:
   - [x] keep. The compare-dirty reland stays inside retained software-surface refresh logic, avoids reopening the proven-bad seq-specific renew path, and materially improves every sampled native gameplay lane with the largest gain on the deciding Remy hotspot (`38.9423 -> 52.2588 FPS`)
-- [ ] final commit hash:
+- [x] final commit hash:
   - [x] `719a9861`
 - [x] next best candidate:
   - [x] use the kept Loop 123 reviewed baseline to re-rank the remaining native regular-gameplay ceiling from measured residue, not from another blind refresh rewrite. The best-supported next target is the remaining oversized/full compare-dirty residue on the hot Remy `ppg-seqs 81/82` family, or another ordinary native lane if fresh telemetry says Remy is no longer the worst outlier
@@ -6865,7 +6865,7 @@
   - [x] reject and revert. The new mode did recover first-window workload-shape exports, but it materially distorted the trusted repeat-pressure comparator and never produced a trustworthy second-activation pair on-device, so keeping it would mis-rank the next Yun decision
 - [x] Rejected and closed in this loop:
   - [x] do not retry this exact `--perf-basic-first-window-workload-shapes` design now; it is not low-distortion enough on the kept first-activation lane, and the repeated `p1-super-art-active-2` hangs make it a poor overnight decision tool
-- [ ] final commit hash:
+- [x] final commit hash:
   - [x] `b8832961` (`docs: close loop 159 basic-shapes rejection`)
 - [x] next best candidate:
   - [x] recover a lower-distortion repeated-activation comparator before adding more live workload bookkeeping; the next measurement attempt should keep the trusted `loop157` FPS fidelity or narrower and should not re-land this exact basic-window family collector unchanged
