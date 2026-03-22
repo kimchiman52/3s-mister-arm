@@ -6559,6 +6559,6 @@
   - [x] keep measurement-support only. The new second-activation wait/export path and stripped repeat preset are verified locally and on-device, preserve direct/native present behavior, and close the missing later-activation capture gap without changing gameplay or renderer runtime behavior
   - [x] the kept support does not reproduce the manual “later activations are faster” effect by itself. On the stripped repeat lane, the second activation was slightly worse than the first (`21.4213 -> 20.3685 FPS`, `46.6825 -> 49.0954 ms`), so the next loop should stay on measurement/reranking instead of reopening renderer runtime code from this evidence alone
 - [x] final commit hash:
-  - [ ] pending; record the kept Loop `151` measurement-support commit hash in the follow-up docs pass after the runtime/telemetry commit lands
+  - [x] `25c8c62f` (`perf: add yun second-activation capture support`)
 - [x] next best candidate:
   - [x] use the kept `p1-super-art-active-2` plus `yun-sa3-repeat` support to build a more gameplay-real repeated-activation Yun lane before reopening native runtime work; keep Remy compare-dirty on its separate exact/direct track, and keep transition work deprioritized unless fresh telemetry regresses

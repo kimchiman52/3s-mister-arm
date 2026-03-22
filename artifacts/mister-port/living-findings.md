@@ -4120,7 +4120,7 @@ Scope guardrails:
 
 - 2026-03-21T23:40:00-0400
   - Final commit hash:
-    - pending; stamp after the kept Loop `151` measurement-support commit lands
+    - `25c8c62f`
   - Bottleneck targeted:
     - missing second-activation capture support for the user-observed Yun SA3 cold-vs-warm gameplay gap, specifically whether a later visible activation can now be measured on-device without reopening renderer runtime code
   - Change summary:
