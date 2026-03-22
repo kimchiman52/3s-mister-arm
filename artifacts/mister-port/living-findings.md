@@ -4548,3 +4548,21 @@ Scope guardrails:
     - reject and revert; the collector answered the cluster question, but its own exact-shape / lookup-profile aggregation adds too much overhead to remain the trusted low-distortion onset lane
   - Next best candidate optimization:
     - do not retry this cluster collector unchanged now; use the confirmed broad onset cohort to move next toward narrower hot-family subrect alpha-structure telemetry instead
+
+- 2026-03-22T23:55:00-0400
+  - Final commit hash:
+    - `PENDING`
+  - Bottleneck targeted:
+    - testing whether one runtime-proven whole-surface binary-alpha proof could cut the first-visible Yun onset non-integer row-raster cost without reopening the rejected family-heuristic or sidecar designs
+  - Change summary:
+    - attempted one runtime reland that cached a whole-surface `binary-alpha-only` proof for `256x256` `ARGB8888` software surfaces and used it to route the unmodulated non-integer helper through a narrower binary-alpha inner loop
+    - rebuilt host telemetry/parity in Docker `/work`, corrected the MiSTer package back to an `ELF32` `ARM` telemetry build in `/work-arm` after one discarded x86-only package attempt, redeployed through serialized tooling, and captured deciding onset run `loop175-binary-alpha-yun-onset-r1`
+    - rolled the runtime/parity code fully back after verification; only docs closeout and the forced-added deciding onset JSON remain
+  - Verification result summary:
+    - local `git diff --check`, host parity, corrected telemetry ARM rebuild/install/package, `readelf`, and serialized MiSTer `lock-status` / `health` / `deploy` / `probe` / bounded `smoke` all passed on `192.168.1.171`
+    - deciding onset capture stayed direct/native with zero fallback/readback but regressed hard versus unchanged `loop169-head-baseline-yun-onset-r1`: overall `44.6234 -> 36.0286 FPS` and first `8` `34.8878 -> 27.6712 FPS`; sampled fast-non-integer and generic-textured buckets improved, which points the loss at the new whole-surface source-proof setup cost rather than at the hot helper body itself
+  - Keep/rollback decision with reason:
+    - reject and revert; the whole-surface runtime proof is the wrong first-use cost shape for the user-priority Yun onset lane even though the sampled helper-local row walk got cheaper
+  - Next best candidate optimization:
+    - do not retry now: renderer-side whole-surface binary-alpha proofs on hot Yun onset surfaces
+    - use the kept `yun-sa3-repeat-pressure` lane to rerank first-visible cold-start cost before another renderer reland, and keep any future runtime bet helper-local without new whole-surface source-alpha metadata
