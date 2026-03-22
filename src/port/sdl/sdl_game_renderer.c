@@ -338,7 +338,9 @@ static Uint64 perf_capture_raster_sample_calls[SDL_GAME_RENDERER_PERF_CAPTURE_RA
 static Uint64 perf_capture_raster_sample_pixels[SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_COUNT] = { 0 };
 static Uint64 perf_capture_raster_sample_ns[SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_COUNT] = { 0 };
 static bool perf_capture_basic_first_window_family_snapshots_enabled = false;
+static bool perf_capture_basic_first_window_render_subphases_enabled = false;
 static bool perf_capture_basic_first_window_exact_hot_family_alpha_offpath_enabled = false;
+static SDLGameRenderer_PerfCaptureFastNonIntegerPhaseTotals perf_capture_fast_non_integer_phase_totals = { 0 };
 typedef struct PerfCaptureBasicFirstWindowExactHotFamilyShape {
     int texture_handle;
     int palette_handle;
@@ -1558,7 +1560,8 @@ static void note_perf_capture_refresh_blit_sample(unsigned int th,
 }
 
 static Uint64 begin_perf_capture_raster_bucket_sample(SDLGameRenderer_PerfCaptureRasterBucket bucket) {
-    if (!frame_stats_extended_enabled || (bucket < 0) || (bucket >= SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_COUNT)) {
+    if ((!frame_stats_extended_enabled && !perf_capture_basic_first_window_render_subphases_enabled) ||
+        (bucket < 0) || (bucket >= SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_COUNT)) {
         return 0;
     }
 
@@ -1574,8 +1577,9 @@ static Uint64 begin_perf_capture_raster_bucket_sample(SDLGameRenderer_PerfCaptur
 static void note_perf_capture_raster_bucket_sample(SDLGameRenderer_PerfCaptureRasterBucket bucket,
                                                    const RenderTask* task,
                                                    Uint64 elapsed_ns) {
-    if (!frame_stats_extended_enabled || (bucket < 0) || (bucket >= SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_COUNT) ||
-        (task == NULL) || (elapsed_ns == 0)) {
+    if ((!frame_stats_extended_enabled && !perf_capture_basic_first_window_render_subphases_enabled) ||
+        (bucket < 0) || (bucket >= SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_COUNT) || (task == NULL) ||
+        (elapsed_ns == 0)) {
         return;
     }
 
@@ -5222,6 +5226,16 @@ static void note_software_frame_fast_non_integer(const RenderTask* task,
             }
         }
     }
+    if (perf_capture_basic_first_window_render_subphases_enabled && (non_integer_telemetry != NULL) &&
+        (sampled_ns > 0)) {
+        perf_capture_fast_non_integer_phase_totals.sampled_calls += 1u;
+        perf_capture_fast_non_integer_phase_totals.lookup_x_ns += non_integer_telemetry->sampled_lookup_x_ns;
+        perf_capture_fast_non_integer_phase_totals.lookup_y_ns += non_integer_telemetry->sampled_lookup_y_ns;
+        perf_capture_fast_non_integer_phase_totals.pair_lookup_ns += non_integer_telemetry->sampled_pair_lookup_ns;
+        perf_capture_fast_non_integer_phase_totals.reuse_telemetry_ns +=
+            non_integer_telemetry->sampled_reuse_telemetry_ns;
+        perf_capture_fast_non_integer_phase_totals.row_raster_ns += non_integer_telemetry->sampled_row_raster_ns;
+    }
     note_perf_capture_fast_non_integer_family(task, dst_surface, lookup_entries, non_integer_telemetry, sampled_ns);
     if (!frame_stats_extended_enabled) {
         return;
@@ -5955,13 +5969,15 @@ static bool raster_textured_task_to_software_frame(const RenderTask* task) {
         }
     } else if (fast_copy_result == SOFTWARE_FRAME_FAST_COPY_RESULT_NON_INTEGER) {
         const Uint64 submitted_pixels = render_task_submitted_pixels(task);
+        const bool collect_phase_timing =
+            frame_stats_extended_enabled || perf_capture_basic_first_window_render_subphases_enabled;
         const Uint64 sample_start_counter =
             submitted_pixels >= software_frame_non_integer_lookup_threshold_pixels
                 ? begin_perf_capture_raster_bucket_sample(SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_FAST_NON_INTEGER)
                 : 0;
         SDLSoftwareFrame_NonIntegerTelemetry non_integer_telemetry;
         SDLSoftwareFrame_NonIntegerTelemetry* non_integer_telemetry_ptr =
-            frame_stats_extended_enabled ? &non_integer_telemetry : NULL;
+            collect_phase_timing ? &non_integer_telemetry : NULL;
         if ((submitted_pixels >= software_frame_non_integer_lookup_threshold_pixels) &&
             SDLSoftwareFrame_RasterNonIntegerLookupARGB8888(
                 &task->dst_rect,
@@ -5971,7 +5987,8 @@ static bool raster_textured_task_to_software_frame(const RenderTask* task) {
                 dst_surface,
                 src_surface,
                 non_integer_telemetry_ptr,
-                sample_start_counter != 0,
+                collect_phase_timing && (sample_start_counter != 0),
+                frame_stats_extended_enabled,
                 perf_capture_fast_non_integer_reuse_telemetry_enabled,
                 perf_capture_fast_non_integer_subrect_alpha_telemetry_enabled)) {
             const Uint64 sampled_ns =
@@ -7361,6 +7378,10 @@ void SDLGameRenderer_SetPerfCaptureBasicFirstWindowFamilySnapshotsEnabled(bool e
     perf_capture_basic_first_window_family_snapshots_enabled = enabled;
 }
 
+void SDLGameRenderer_SetPerfCaptureBasicFirstWindowRenderSubphasesEnabled(bool enabled) {
+    perf_capture_basic_first_window_render_subphases_enabled = enabled;
+}
+
 void SDLGameRenderer_SetPerfCaptureBasicFirstWindowExactHotFamilyAlphaOffpathEnabled(bool enabled) {
     perf_capture_basic_first_window_exact_hot_family_alpha_offpath_enabled = enabled;
 }
@@ -7652,6 +7673,7 @@ void SDLGameRenderer_ResetPerfCaptureRasterTimingTelemetry(void) {
     SDL_zero(perf_capture_raster_sample_calls);
     SDL_zero(perf_capture_raster_sample_pixels);
     SDL_zero(perf_capture_raster_sample_ns);
+    SDL_zero(perf_capture_fast_non_integer_phase_totals);
 }
 
 void SDLGameRenderer_ResetPerfCaptureFastExactFamilyTelemetry(void) {
@@ -8083,6 +8105,15 @@ int SDLGameRenderer_GetPerfCaptureRasterBucketTimings(SDLGameRenderer_PerfCaptur
     }
 
     return timing_count;
+}
+
+void SDLGameRenderer_GetPerfCaptureFastNonIntegerPhaseTotals(
+    SDLGameRenderer_PerfCaptureFastNonIntegerPhaseTotals* out_totals) {
+    if (out_totals == NULL) {
+        return;
+    }
+
+    *out_totals = perf_capture_fast_non_integer_phase_totals;
 }
 
 static int get_perf_capture_textured_rect_families(const SDLGameRenderer_PerfCaptureTexturedRectFamily* families,

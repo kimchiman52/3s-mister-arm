@@ -51,6 +51,7 @@ bool SDLSoftwareFrame_RasterNonIntegerLookupARGB8888(const SDL_FRect* dst_rect,
                                                      const SDL_Surface* src_surface,
                                                      SDLSoftwareFrame_NonIntegerTelemetry* out_telemetry,
                                                      bool sample_phase_timing,
+                                                     bool collect_lookup_signatures,
                                                      bool collect_reuse_telemetry,
                                                      bool collect_subrect_alpha_telemetry);
 

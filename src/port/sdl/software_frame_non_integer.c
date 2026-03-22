@@ -457,6 +457,7 @@ bool SDLSoftwareFrame_RasterNonIntegerLookupARGB8888(const SDL_FRect* dst_rect,
                                                      const SDL_Surface* src_surface,
                                                      SDLSoftwareFrame_NonIntegerTelemetry* out_telemetry,
                                                      bool sample_phase_timing,
+                                                     bool collect_lookup_signatures,
                                                      bool collect_reuse_telemetry,
                                                      bool collect_subrect_alpha_telemetry) {
     if ((dst_rect == NULL) || (src_uv_rect == NULL) || (dst_surface == NULL) || (src_surface == NULL) ||
@@ -515,7 +516,7 @@ bool SDLSoftwareFrame_RasterNonIntegerLookupARGB8888(const SDL_FRect* dst_rect,
             performance_counter_delta_to_ns(phase_start_counter, phase_end_counter, perf_frequency);
         phase_start_counter = phase_end_counter;
     }
-    if (out_telemetry != NULL) {
+    if ((out_telemetry != NULL) && collect_lookup_signatures) {
         out_telemetry->x_lookup_signature = hash_non_integer_lookup_signature(src_x_lookup, visible_w);
         out_telemetry->y_lookup_signature = hash_non_integer_lookup_signature(src_y_lookup, visible_h);
     }

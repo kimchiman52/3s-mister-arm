@@ -342,6 +342,15 @@ typedef struct SDLGameRenderer_PerfCaptureRasterBucketTiming {
     Uint64 sampled_ns;
 } SDLGameRenderer_PerfCaptureRasterBucketTiming;
 
+typedef struct SDLGameRenderer_PerfCaptureFastNonIntegerPhaseTotals {
+    Uint64 sampled_calls;
+    Uint64 lookup_x_ns;
+    Uint64 lookup_y_ns;
+    Uint64 pair_lookup_ns;
+    Uint64 reuse_telemetry_ns;
+    Uint64 row_raster_ns;
+} SDLGameRenderer_PerfCaptureFastNonIntegerPhaseTotals;
+
 typedef enum SDLGameRenderer_TexturedGeometryFallbackFamilyKind {
     SDL_GAME_RENDERER_TEXTURED_GEOMETRY_FALLBACK_FAMILY_OTHER = 0,
     SDL_GAME_RENDERER_TEXTURED_GEOMETRY_FALLBACK_FAMILY_RECT_UV_OTHER,
@@ -700,6 +709,7 @@ bool SDLGameRenderer_EnsureSoftwareFrameCanvas(void);
 void SDLGameRenderer_NoteSoftwareFrameDirectPresent(void);
 void SDLGameRenderer_SetPerfCaptureLogicalIdentityEnabled(bool enabled);
 void SDLGameRenderer_SetPerfCaptureBasicFirstWindowFamilySnapshotsEnabled(bool enabled);
+void SDLGameRenderer_SetPerfCaptureBasicFirstWindowRenderSubphasesEnabled(bool enabled);
 void SDLGameRenderer_SetPerfCaptureBasicFirstWindowExactHotFamilyAlphaOffpathEnabled(bool enabled);
 void SDLGameRenderer_SetPerfCaptureFastNonIntegerReuseTelemetryEnabled(bool enabled);
 void SDLGameRenderer_SetPerfCaptureFastNonIntegerSubrectAlphaTelemetryEnabled(bool enabled);
@@ -730,6 +740,8 @@ void SDLGameRenderer_GetPerfCaptureTextureRenewTelemetry(
 int SDLGameRenderer_GetPerfCaptureRasterBucketTimings(
     SDLGameRenderer_PerfCaptureRasterBucketTiming* out_timings,
     int max_timings);
+void SDLGameRenderer_GetPerfCaptureFastNonIntegerPhaseTotals(
+    SDLGameRenderer_PerfCaptureFastNonIntegerPhaseTotals* out_totals);
 int SDLGameRenderer_GetPerfCaptureFastExactFamilies(SDLGameRenderer_PerfCaptureTexturedRectFamily* out_families,
                                                     int max_families);
 void SDLGameRenderer_GetPerfCaptureFastExactFamilyTotals(Uint64* out_task_total,

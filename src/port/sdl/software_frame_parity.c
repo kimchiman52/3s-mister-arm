@@ -396,6 +396,7 @@ bool SDLGameRenderer_RunSoftwareFrameParityCheck(void) {
                                                                  &telemetry,
                                                                  false,
                                                                  false,
+                                                                 false,
                                                                  collect_subrect_alpha_telemetry)) {
                 SDL_Log("Software-frame parity lookup helper rejected case: %s", cases[i].name);
                 SDL_DestroySurface(actual);

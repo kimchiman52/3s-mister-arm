@@ -100,6 +100,7 @@ static bool perf_capture_enabled = false;
 static bool perf_capture_completed = false;
 static bool perf_capture_basic_mode = false;
 static bool perf_capture_basic_first_window_family_snapshots_enabled = false;
+static bool perf_capture_basic_first_window_render_subphases_enabled = false;
 static bool perf_capture_basic_first_window_exact_hot_family_alpha_offpath_enabled = false;
 static bool perf_capture_fast_non_integer_reuse_telemetry_enabled = true;
 static bool perf_capture_fast_non_integer_subrect_alpha_telemetry_enabled = false;
@@ -566,6 +567,11 @@ typedef struct PerfCaptureFirstWindowFamilySnapshot {
     Uint64 generic_textured_task_total;
     Uint64 generic_textured_pixel_total;
     Uint64 generic_textured_lookup_entry_total;
+    bool render_subphases_valid;
+    SDLGameRenderer_PerfCaptureRasterBucketTiming
+        raster_bucket_timings[SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_COUNT];
+    int raster_bucket_timing_count;
+    SDLGameRenderer_PerfCaptureFastNonIntegerPhaseTotals fast_non_integer_phase_totals;
 } PerfCaptureFirstWindowFamilySnapshot;
 
 static PerfCaptureFirstWindowFamilySnapshot perf_capture_first_window_snapshot = { 0 };
@@ -1050,11 +1056,13 @@ static void perf_capture_reset_storage(void) {
     perf_capture_completed = false;
     perf_capture_basic_mode = false;
     perf_capture_basic_first_window_family_snapshots_enabled = false;
+    perf_capture_basic_first_window_render_subphases_enabled = false;
     perf_capture_basic_first_window_exact_hot_family_alpha_offpath_enabled = false;
     perf_capture_fast_non_integer_reuse_telemetry_enabled = true;
     perf_capture_fast_non_integer_subrect_alpha_telemetry_enabled = false;
     SDLGameRenderer_SetPerfCaptureLogicalIdentityEnabled(false);
     SDLGameRenderer_SetPerfCaptureBasicFirstWindowFamilySnapshotsEnabled(false);
+    SDLGameRenderer_SetPerfCaptureBasicFirstWindowRenderSubphasesEnabled(false);
     SDLGameRenderer_SetPerfCaptureBasicFirstWindowExactHotFamilyAlphaOffpathEnabled(false);
     SDLGameRenderer_SetPerfCaptureFastNonIntegerReuseTelemetryEnabled(true);
     SDLGameRenderer_SetPerfCaptureFastNonIntegerSubrectAlphaTelemetryEnabled(false);
@@ -1322,6 +1330,7 @@ void SDLApp_ConfigurePerfCapture(int frame_count,
                                  const char* scene_name,
                                  bool basic_mode,
                                  bool basic_first_window_family_snapshots,
+                                 bool basic_first_window_render_subphases,
                                  bool basic_first_window_exact_hot_family_alpha_offpath,
                                  bool disable_reuse_telemetry,
                                  bool enable_subrect_alpha_telemetry) {
@@ -1351,16 +1360,20 @@ void SDLApp_ConfigurePerfCapture(int frame_count,
     perf_capture_enabled = true;
     perf_capture_basic_mode = basic_mode;
     perf_capture_basic_first_window_family_snapshots_enabled = basic_mode && basic_first_window_family_snapshots;
+    perf_capture_basic_first_window_render_subphases_enabled =
+        perf_capture_basic_first_window_family_snapshots_enabled && basic_first_window_render_subphases;
     perf_capture_basic_first_window_exact_hot_family_alpha_offpath_enabled =
         perf_capture_basic_first_window_family_snapshots_enabled &&
         basic_first_window_exact_hot_family_alpha_offpath;
-    perf_capture_fast_non_integer_reuse_telemetry_enabled = basic_mode || !disable_reuse_telemetry;
+    perf_capture_fast_non_integer_reuse_telemetry_enabled = !disable_reuse_telemetry;
     perf_capture_fast_non_integer_subrect_alpha_telemetry_enabled = !basic_mode && enable_subrect_alpha_telemetry;
     perf_capture_reset_window_snapshot(&perf_capture_first_window_snapshot);
     perf_capture_reset_window_snapshot(&perf_capture_first_burst_snapshot);
     SDLGameRenderer_SetPerfCaptureLogicalIdentityEnabled(!basic_mode);
     SDLGameRenderer_SetPerfCaptureBasicFirstWindowFamilySnapshotsEnabled(
         perf_capture_basic_first_window_family_snapshots_enabled);
+    SDLGameRenderer_SetPerfCaptureBasicFirstWindowRenderSubphasesEnabled(
+        perf_capture_basic_first_window_render_subphases_enabled);
     SDLGameRenderer_SetPerfCaptureBasicFirstWindowExactHotFamilyAlphaOffpathEnabled(
         perf_capture_basic_first_window_exact_hot_family_alpha_offpath_enabled);
     SDLGameRenderer_SetPerfCaptureFastNonIntegerReuseTelemetryEnabled(
@@ -1572,7 +1585,7 @@ void SDLApp_ConfigurePerfCapture(int frame_count,
     }
 
     snapshot_perf_capture_transition_start_state();
-    backend_logf("PERF capture enabled: frames=%d output=%s scene=%s detail_mode=%s scale_mode=%s software_frame_mode=%s fast_non_integer_reuse_telemetry=%s basic_first_window_family_snapshots=%s basic_first_window_exact_hot_family_alpha_offpath=%s fast_non_integer_subrect_alpha_telemetry=%s",
+    backend_logf("PERF capture enabled: frames=%d output=%s scene=%s detail_mode=%s scale_mode=%s software_frame_mode=%s fast_non_integer_reuse_telemetry=%s basic_first_window_family_snapshots=%s basic_first_window_render_subphases=%s basic_first_window_exact_hot_family_alpha_offpath=%s fast_non_integer_subrect_alpha_telemetry=%s",
                  perf_capture_target_frames,
                  perf_capture_output_path != NULL ? perf_capture_output_path : "(auto)",
                  perf_capture_scene_name != NULL ? perf_capture_scene_name : "(none)",
@@ -1581,6 +1594,7 @@ void SDLApp_ConfigurePerfCapture(int frame_count,
                  software_frame_mode_name(),
                  perf_capture_fast_non_integer_reuse_telemetry_enabled ? "on" : "off",
                  perf_capture_basic_first_window_family_snapshots_enabled ? "on" : "off",
+                 perf_capture_basic_first_window_render_subphases_enabled ? "on" : "off",
                  perf_capture_basic_first_window_exact_hot_family_alpha_offpath_enabled ? "on" : "off",
                  perf_capture_fast_non_integer_subrect_alpha_telemetry_enabled ? "on" : "off");
 }
@@ -1698,6 +1712,12 @@ static void perf_capture_snapshot_window_families(PerfCaptureFirstWindowFamilySn
         &snapshot->fast_non_integer_pixel_total,
         &snapshot->fast_non_integer_lookup_entry_total,
         NULL);
+    if (perf_capture_basic_mode && perf_capture_basic_first_window_render_subphases_enabled) {
+        snapshot->render_subphases_valid = true;
+        snapshot->raster_bucket_timing_count = SDLGameRenderer_GetPerfCaptureRasterBucketTimings(
+            snapshot->raster_bucket_timings, SDL_arraysize(snapshot->raster_bucket_timings));
+        SDLGameRenderer_GetPerfCaptureFastNonIntegerPhaseTotals(&snapshot->fast_non_integer_phase_totals);
+    }
     if (!perf_capture_basic_mode) {
         snapshot->fast_non_integer_shared_shape_count = SDLGameRenderer_GetPerfCaptureFastNonIntegerSharedShapes(
             snapshot->fast_non_integer_shared_shapes,
@@ -1746,6 +1766,9 @@ static void perf_capture_snapshot_window_families_if_needed(void) {
     if (perf_capture_basic_mode && perf_capture_basic_first_window_family_snapshots_enabled &&
         perf_capture_first_window_snapshot.valid) {
         SDLGameRenderer_SetPerfCaptureBasicFirstWindowFamilySnapshotsEnabled(false);
+        if (perf_capture_basic_first_window_render_subphases_enabled) {
+            SDLGameRenderer_SetPerfCaptureBasicFirstWindowRenderSubphasesEnabled(false);
+        }
     }
 }
 
@@ -2150,6 +2173,160 @@ static void io_write_perf_capture_window_fast_non_integer_lookup_profiles(
     io_printf(io, "    ]");
 }
 
+static void io_write_perf_capture_window_raster_bucket_sampling(
+    SDL_IOStream* io,
+    const PerfCaptureFirstWindowFamilySnapshot* snapshot,
+    double frame_count) {
+    io_printf(io, "[");
+    if ((snapshot == NULL) || !snapshot->valid || !snapshot->render_subphases_valid ||
+        (snapshot->raster_bucket_timing_count <= 0)) {
+        io_printf(io, "]");
+        return;
+    }
+
+    io_printf(io, "\n");
+    for (int i = 0; i < snapshot->raster_bucket_timing_count; i++) {
+        const SDLGameRenderer_PerfCaptureRasterBucketTiming* entry = &snapshot->raster_bucket_timings[i];
+        const double sampled_total_ms = (double)entry->sampled_ns / 1e6;
+        const double sampled_mean_pixels =
+            frame_count > 0.0 ? (double)entry->sampled_pixels / frame_count : 0.0;
+        const double sampled_mean_ms =
+            entry->sampled_calls > 0 ? sampled_total_ms / (double)entry->sampled_calls : 0.0;
+        io_printf(io,
+                  "      {\"bucket\": \"%s\", \"sample_period\": %llu, \"sampled_calls_total\": %llu, "
+                  "\"sampled_calls_mean\": %.4f, \"sampled_pixels_total\": %llu, "
+                  "\"sampled_pixels_mean\": %.2f, \"sampled_total_ms\": %.4f, "
+                  "\"sampled_mean_ms_per_sample\": %.6f}%s\n",
+                  software_frame_raster_bucket_name(entry->bucket),
+                  (unsigned long long)entry->sample_period,
+                  (unsigned long long)entry->sampled_calls,
+                  frame_count > 0.0 ? (double)entry->sampled_calls / frame_count : 0.0,
+                  (unsigned long long)entry->sampled_pixels,
+                  sampled_mean_pixels,
+                  sampled_total_ms,
+                  sampled_mean_ms,
+                  (i + 1) < snapshot->raster_bucket_timing_count ? "," : "");
+    }
+    io_printf(io, "    ]");
+}
+
+static void io_write_perf_capture_window_fast_non_integer_phase_sampling(
+    SDL_IOStream* io,
+    const PerfCaptureFirstWindowFamilySnapshot* snapshot,
+    double frame_count) {
+    if ((snapshot == NULL) || !snapshot->valid || !snapshot->render_subphases_valid) {
+        io_printf(io, "null");
+        return;
+    }
+
+    Uint64 fast_non_integer_sampled_calls_total = 0;
+    Uint64 fast_non_integer_sampled_ns_total = 0;
+    for (int i = 0; i < snapshot->raster_bucket_timing_count; i++) {
+        const SDLGameRenderer_PerfCaptureRasterBucketTiming* entry = &snapshot->raster_bucket_timings[i];
+        if (entry->bucket != SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_FAST_NON_INTEGER) {
+            continue;
+        }
+        fast_non_integer_sampled_calls_total = entry->sampled_calls;
+        fast_non_integer_sampled_ns_total = entry->sampled_ns;
+        break;
+    }
+
+    const Uint64 family_sampled_calls_total = snapshot->fast_non_integer_phase_totals.sampled_calls;
+    const Uint64 family_sampled_lookup_x_ns_total = snapshot->fast_non_integer_phase_totals.lookup_x_ns;
+    const Uint64 family_sampled_lookup_y_ns_total = snapshot->fast_non_integer_phase_totals.lookup_y_ns;
+    const Uint64 family_sampled_pair_lookup_ns_total = snapshot->fast_non_integer_phase_totals.pair_lookup_ns;
+    const Uint64 family_sampled_reuse_telemetry_ns_total =
+        snapshot->fast_non_integer_phase_totals.reuse_telemetry_ns;
+    const Uint64 family_sampled_row_raster_ns_total = snapshot->fast_non_integer_phase_totals.row_raster_ns;
+    const Uint64 family_sampled_ns_total =
+        family_sampled_lookup_x_ns_total + family_sampled_lookup_y_ns_total + family_sampled_pair_lookup_ns_total +
+        family_sampled_reuse_telemetry_ns_total + family_sampled_row_raster_ns_total;
+
+    io_printf(io,
+              "{\"sampled_calls_total\": %llu, "
+              "\"sampled_calls_mean\": %.4f, "
+              "\"sampled_ns_total\": %llu, "
+              "\"sampled_total_ms\": %.4f, "
+              "\"family_sampled_calls_total\": %llu, "
+              "\"family_sampled_calls_mean\": %.4f, "
+              "\"family_sampled_ns_total\": %llu, "
+              "\"family_sampled_total_ms\": %.4f, "
+              "\"family_sampled_call_coverage_ratio\": %.6f, "
+              "\"family_sampled_coverage_ratio\": %.6f, "
+              "\"lookup_x_ns_total\": %llu, \"lookup_x_total_ms\": %.4f, "
+              "\"lookup_x_family_sampled_ratio\": %.6f, "
+              "\"lookup_x_mean_ms_per_sample\": %.6f, "
+              "\"lookup_y_ns_total\": %llu, \"lookup_y_total_ms\": %.4f, "
+              "\"lookup_y_family_sampled_ratio\": %.6f, "
+              "\"lookup_y_mean_ms_per_sample\": %.6f, "
+              "\"pair_lookup_ns_total\": %llu, \"pair_lookup_total_ms\": %.4f, "
+              "\"pair_lookup_family_sampled_ratio\": %.6f, "
+              "\"pair_lookup_mean_ms_per_sample\": %.6f, "
+              "\"reuse_telemetry_ns_total\": %llu, \"reuse_telemetry_total_ms\": %.4f, "
+              "\"reuse_telemetry_family_sampled_ratio\": %.6f, "
+              "\"reuse_telemetry_mean_ms_per_sample\": %.6f, "
+              "\"row_raster_ns_total\": %llu, \"row_raster_total_ms\": %.4f, "
+              "\"row_raster_family_sampled_ratio\": %.6f, "
+              "\"row_raster_mean_ms_per_sample\": %.6f, "
+              "\"accounted_phase_ns_total\": %llu, \"accounted_phase_total_ms\": %.4f, "
+              "\"accounted_phase_family_sampled_ratio\": %.6f}",
+              (unsigned long long)fast_non_integer_sampled_calls_total,
+              frame_count > 0.0 ? (double)fast_non_integer_sampled_calls_total / frame_count : 0.0,
+              (unsigned long long)fast_non_integer_sampled_ns_total,
+              (double)fast_non_integer_sampled_ns_total / 1e6,
+              (unsigned long long)family_sampled_calls_total,
+              frame_count > 0.0 ? (double)family_sampled_calls_total / frame_count : 0.0,
+              (unsigned long long)family_sampled_ns_total,
+              (double)family_sampled_ns_total / 1e6,
+              fast_non_integer_sampled_calls_total > 0
+                  ? (double)family_sampled_calls_total / (double)fast_non_integer_sampled_calls_total
+                  : 0.0,
+              fast_non_integer_sampled_ns_total > 0
+                  ? (double)family_sampled_ns_total / (double)fast_non_integer_sampled_ns_total
+                  : 0.0,
+              (unsigned long long)family_sampled_lookup_x_ns_total,
+              (double)family_sampled_lookup_x_ns_total / 1e6,
+              family_sampled_ns_total > 0 ? (double)family_sampled_lookup_x_ns_total / (double)family_sampled_ns_total
+                                          : 0.0,
+              family_sampled_calls_total > 0
+                  ? ((double)family_sampled_lookup_x_ns_total / 1e6) / (double)family_sampled_calls_total
+                  : 0.0,
+              (unsigned long long)family_sampled_lookup_y_ns_total,
+              (double)family_sampled_lookup_y_ns_total / 1e6,
+              family_sampled_ns_total > 0 ? (double)family_sampled_lookup_y_ns_total / (double)family_sampled_ns_total
+                                          : 0.0,
+              family_sampled_calls_total > 0
+                  ? ((double)family_sampled_lookup_y_ns_total / 1e6) / (double)family_sampled_calls_total
+                  : 0.0,
+              (unsigned long long)family_sampled_pair_lookup_ns_total,
+              (double)family_sampled_pair_lookup_ns_total / 1e6,
+              family_sampled_ns_total > 0
+                  ? (double)family_sampled_pair_lookup_ns_total / (double)family_sampled_ns_total
+                  : 0.0,
+              family_sampled_calls_total > 0
+                  ? ((double)family_sampled_pair_lookup_ns_total / 1e6) / (double)family_sampled_calls_total
+                  : 0.0,
+              (unsigned long long)family_sampled_reuse_telemetry_ns_total,
+              (double)family_sampled_reuse_telemetry_ns_total / 1e6,
+              family_sampled_ns_total > 0
+                  ? (double)family_sampled_reuse_telemetry_ns_total / (double)family_sampled_ns_total
+                  : 0.0,
+              family_sampled_calls_total > 0
+                  ? ((double)family_sampled_reuse_telemetry_ns_total / 1e6) / (double)family_sampled_calls_total
+                  : 0.0,
+              (unsigned long long)family_sampled_row_raster_ns_total,
+              (double)family_sampled_row_raster_ns_total / 1e6,
+              family_sampled_ns_total > 0
+                  ? (double)family_sampled_row_raster_ns_total / (double)family_sampled_ns_total
+                  : 0.0,
+              family_sampled_calls_total > 0
+                  ? ((double)family_sampled_row_raster_ns_total / 1e6) / (double)family_sampled_calls_total
+                  : 0.0,
+              (unsigned long long)family_sampled_ns_total,
+              (double)family_sampled_ns_total / 1e6,
+              family_sampled_ns_total > 0 ? 1.0 : 0.0);
+}
+
 static void io_write_perf_capture_window_summary(SDL_IOStream* io,
                                                  const char* window_name,
                                                  const PerfCaptureWindowSummary* summary,
@@ -2165,6 +2342,19 @@ static void io_write_perf_capture_window_summary(SDL_IOStream* io,
         return;
     }
 
+    double fast_non_integer_pixels_mean = summary->software_frame_fast_non_integer_pixels;
+    double generic_textured_pixels_mean = summary->software_frame_generic_textured_pixels;
+    if ((snapshot != NULL) && snapshot->valid && (snapshot->frame_count > 0)) {
+        if ((fast_non_integer_pixels_mean == 0.0) && (snapshot->fast_non_integer_pixel_total > 0)) {
+            fast_non_integer_pixels_mean =
+                (double)snapshot->fast_non_integer_pixel_total / (double)snapshot->frame_count;
+        }
+        if ((generic_textured_pixels_mean == 0.0) && (snapshot->generic_textured_pixel_total > 0)) {
+            generic_textured_pixels_mean =
+                (double)snapshot->generic_textured_pixel_total / (double)snapshot->frame_count;
+        }
+    }
+
     io_printf(io,
               "{\"frame_start\": 0, \"frame_count\": %d, \"fps\": {\"mean\": %.4f}, "
               "\"frame_time\": {\"mean_ms\": %.4f}, \"update\": {\"mean_ms\": %.4f}, "
@@ -2178,8 +2368,8 @@ static void io_write_perf_capture_window_summary(SDL_IOStream* io,
               summary->update_ms,
               summary->render_ms,
               summary->present_ms,
-              summary->software_frame_fast_non_integer_pixels,
-              summary->software_frame_generic_textured_pixels);
+              fast_non_integer_pixels_mean,
+              generic_textured_pixels_mean);
     io_write_perf_capture_window_textured_rect_families(
         io,
         snapshot != NULL ? snapshot->fast_non_integer_families : NULL,
@@ -2207,6 +2397,10 @@ static void io_write_perf_capture_window_summary(SDL_IOStream* io,
         snapshot != NULL ? snapshot->fast_non_integer_lookup_profile_pixel_total : 0,
         snapshot != NULL ? snapshot->fast_non_integer_lookup_profile_sampled_ns_total : 0,
         (double)summary->frame_count);
+    io_printf(io, ",\n      \"software_frame_raster_bucket_sampling\": ");
+    io_write_perf_capture_window_raster_bucket_sampling(io, snapshot, (double)summary->frame_count);
+    io_printf(io, ",\n      \"software_frame_fast_non_integer_phase_sampling\": ");
+    io_write_perf_capture_window_fast_non_integer_phase_sampling(io, snapshot, (double)summary->frame_count);
     io_printf(io, ",\n      \"software_frame_generic_textured_families\": ");
     io_write_perf_capture_window_textured_rect_families(
         io,

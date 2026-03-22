@@ -21,6 +21,9 @@ Options:
   --perf-basic-first-window-families
                         When used with --perf-basic, also export first-window fast/generic
                         family summaries without full shape/lookup telemetry.
+  --perf-basic-first-window-render-subphases
+                        When used with --perf-basic-first-window-families, also export
+                        first-window raster-bucket timing plus fast non-integer phase totals.
   --perf-basic-first-window-exact-hot-family-alpha-offpath
                         When used with --perf-basic-first-window-families, analyze the proven
                         57/58 + 391-394 hot-family alpha structure off the raster hot path after
@@ -346,6 +349,7 @@ gameplay_warmup=120
 gameplay_warmup_explicit=0
 perf_basic=0
 perf_basic_first_window_families=0
+perf_basic_first_window_render_subphases=0
 perf_basic_first_window_exact_hot_family_alpha_offpath=0
 perf_fast_non_integer_no_reuse_telemetry=0
 perf_fast_non_integer_subrect_alpha_telemetry=0
@@ -393,6 +397,10 @@ while [ "$#" -gt 0 ]; do
         ;;
     --perf-basic-first-window-families)
         perf_basic_first_window_families=1
+        shift
+        ;;
+    --perf-basic-first-window-render-subphases)
+        perf_basic_first_window_render_subphases=1
         shift
         ;;
     --perf-basic-first-window-exact-hot-family-alpha-offpath)
@@ -521,6 +529,12 @@ fi
 
 if [ "$perf_basic_first_window_families" -eq 1 ] && [ "$perf_basic" -eq 0 ]; then
     echo "error: --perf-basic-first-window-families requires --perf-basic." >&2
+    exit 2
+fi
+
+if [ "$perf_basic_first_window_render_subphases" -eq 1 ] &&
+    [ "$perf_basic_first_window_families" -eq 0 ]; then
+    echo "error: --perf-basic-first-window-render-subphases requires --perf-basic-first-window-families." >&2
     exit 2
 fi
 
@@ -704,6 +718,10 @@ fi
 
 if [ "$perf_basic_first_window_families" -eq 1 ]; then
     extra_app_args="${extra_app_args} --perf-basic-first-window-families"
+fi
+
+if [ "$perf_basic_first_window_render_subphases" -eq 1 ]; then
+    extra_app_args="${extra_app_args} --perf-basic-first-window-render-subphases"
 fi
 
 if [ "$perf_basic_first_window_exact_hot_family_alpha_offpath" -eq 1 ]; then
@@ -919,8 +937,9 @@ if command -v jq >/dev/null 2>&1; then
     metadata_capture_start_test_phase="$captured_test_phase"
     metadata_perf_wait_test_phase="$captured_wait_test_phase"
     metadata_perf_wait_runtime_state="$captured_wait_runtime_state"
-    metadata_fast_non_integer_reuse_telemetry="$(if [ "$perf_basic" -eq 1 ] || [ "$perf_fast_non_integer_no_reuse_telemetry" -eq 0 ]; then printf 'true'; else printf 'false'; fi)"
+    metadata_fast_non_integer_reuse_telemetry="$(if [ "$perf_fast_non_integer_no_reuse_telemetry" -eq 0 ]; then printf 'true'; else printf 'false'; fi)"
     metadata_basic_first_window_families="$(if [ "$perf_basic" -eq 1 ] && [ "$perf_basic_first_window_families" -eq 1 ]; then printf 'true'; else printf 'false'; fi)"
+    metadata_basic_first_window_render_subphases="$(if [ "$perf_basic" -eq 1 ] && [ "$perf_basic_first_window_render_subphases" -eq 1 ]; then printf 'true'; else printf 'false'; fi)"
     metadata_basic_first_window_exact_hot_family_alpha_offpath="$(if [ "$perf_basic" -eq 1 ] && [ "$perf_basic_first_window_exact_hot_family_alpha_offpath" -eq 1 ]; then printf 'true'; else printf 'false'; fi)"
     metadata_fast_non_integer_subrect_alpha_telemetry="$(if [ "$perf_basic" -eq 0 ] && [ "$perf_fast_non_integer_subrect_alpha_telemetry" -eq 1 ]; then printf 'true'; else printf 'false'; fi)"
     if [ -n "$captured_stage_id" ] && [ "$captured_stage_id" -ge 0 ]; then
@@ -990,9 +1009,10 @@ if command -v jq >/dev/null 2>&1; then
         --argjson delay_gameplay_inputs_until_active "$(if [ "$test_delay_gameplay_inputs_until_active" -eq 1 ]; then printf 'true'; else printf 'false'; fi)" \
         --argjson fast_non_integer_reuse_telemetry "$metadata_fast_non_integer_reuse_telemetry" \
         --argjson basic_first_window_families "$metadata_basic_first_window_families" \
+        --argjson basic_first_window_render_subphases "$metadata_basic_first_window_render_subphases" \
         --argjson basic_first_window_exact_hot_family_alpha_offpath "$metadata_basic_first_window_exact_hot_family_alpha_offpath" \
         --argjson fast_non_integer_subrect_alpha_telemetry "$metadata_fast_non_integer_subrect_alpha_telemetry" \
-        '.metadata = ((.metadata // {}) + {scene: $scene, test_scene_preset: (if ($test_scene_preset | length) > 0 then $test_scene_preset else null end), scale_mode: (if ($scale_mode | length) > 0 then $scale_mode else null end), software_frame_mode: (if ($software_frame_mode | length) > 0 then $software_frame_mode else null end), capture_start_test_phase: (if ($capture_start_test_phase | length) > 0 and $capture_start_test_phase != "(none)" then $capture_start_test_phase else null end), perf_wait_test_phase: (if ($perf_wait_test_phase | length) > 0 and $perf_wait_test_phase != "(none)" then $perf_wait_test_phase else null end), perf_wait_runtime_state: (if ($perf_wait_runtime_state | length) > 0 and $perf_wait_runtime_state != "(none)" then $perf_wait_runtime_state else null end), stage_id: $stage_id, test_stage_override: $test_stage_override, p1_character: $p1_character, p2_character: $p2_character, p1_super_art: $p1_super_art, p2_super_art: $p2_super_art, test_p1_super_full: $p1_super_full, test_preserve_game_transition: $preserve_game_transition, test_delay_gameplay_inputs_until_active: $delay_gameplay_inputs_until_active, fast_non_integer_reuse_telemetry: $fast_non_integer_reuse_telemetry, basic_first_window_families: $basic_first_window_families, basic_first_window_exact_hot_family_alpha_offpath: $basic_first_window_exact_hot_family_alpha_offpath, fast_non_integer_subrect_alpha_telemetry: $fast_non_integer_subrect_alpha_telemetry})' \
+        '.metadata = ((.metadata // {}) + {scene: $scene, test_scene_preset: (if ($test_scene_preset | length) > 0 then $test_scene_preset else null end), scale_mode: (if ($scale_mode | length) > 0 then $scale_mode else null end), software_frame_mode: (if ($software_frame_mode | length) > 0 then $software_frame_mode else null end), capture_start_test_phase: (if ($capture_start_test_phase | length) > 0 and $capture_start_test_phase != "(none)" then $capture_start_test_phase else null end), perf_wait_test_phase: (if ($perf_wait_test_phase | length) > 0 and $perf_wait_test_phase != "(none)" then $perf_wait_test_phase else null end), perf_wait_runtime_state: (if ($perf_wait_runtime_state | length) > 0 and $perf_wait_runtime_state != "(none)" then $perf_wait_runtime_state else null end), stage_id: $stage_id, test_stage_override: $test_stage_override, p1_character: $p1_character, p2_character: $p2_character, p1_super_art: $p1_super_art, p2_super_art: $p2_super_art, test_p1_super_full: $p1_super_full, test_preserve_game_transition: $preserve_game_transition, test_delay_gameplay_inputs_until_active: $delay_gameplay_inputs_until_active, fast_non_integer_reuse_telemetry: $fast_non_integer_reuse_telemetry, basic_first_window_families: $basic_first_window_families, basic_first_window_render_subphases: $basic_first_window_render_subphases, basic_first_window_exact_hot_family_alpha_offpath: $basic_first_window_exact_hot_family_alpha_offpath, fast_non_integer_subrect_alpha_telemetry: $fast_non_integer_subrect_alpha_telemetry})' \
         "${local_output_path}" >"${temp_output_path}"
     mv "${temp_output_path}" "${local_output_path}"
 fi
