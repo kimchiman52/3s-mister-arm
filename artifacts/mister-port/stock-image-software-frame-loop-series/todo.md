@@ -7297,6 +7297,6 @@
 - [x] Rejected and closed in this loop:
   - [x] do not retry this source-proven mixed-family row-class reland unchanged now. The exact onset alpha structure stayed identical while sampled total and row-raster time both increased on the deciding lane
 - [x] final commit hash:
-  - [ ] pending docs-only closure commit
+  - [x] `c5b70938` (`docs: close loop 170 row-class rejection`)
 - [x] next best candidate:
   - [x] do not spend the next Yun runtime loop on another source-alpha-classification reland; rerank toward a different bounded runtime/build bet that does not add per-row source-alpha bookkeeping to the hot non-integer helper

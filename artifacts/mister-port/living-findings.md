@@ -4462,7 +4462,7 @@ Scope guardrails:
 
 - 2026-03-22T17:30:00-0400
   - Final commit hash:
-    - pending docs-only closure commit
+    - `c5b70938`
   - Bottleneck targeted:
     - testing whether source-proven row/subrect classification on the exact mixed binary-alpha Yun onset families could trim hot non-integer row-raster cost without reopening Loop `169`'s per-pixel sidecar overhead
   - Change summary:
