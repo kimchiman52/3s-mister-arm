@@ -4371,3 +4371,20 @@ Scope guardrails:
     - keep; the off-path sidecar stays materially closer to the kept Loop `160` distortion budget than rejected Loops `161` / `162` while recovering the exact-family alpha structure with correct fractional lookup geometry
   - Next best candidate optimization:
     - do not spend another loop on repeat-pressure alpha collection now; return to lower-distortion render-subphase telemetry on the trusted first-visible Yun onset lane so the remaining gameplay render gap can be reranked from measured evidence
+
+- 2026-03-22T09:24:48-0400
+  - Final commit hash:
+    - pending
+  - Bottleneck targeted:
+    - recovering lower-distortion first-visible Yun onset alpha structure off the hot raster path without reopening the heavier full-capture collectors
+  - Change summary:
+    - attempted one measurement-support-only `--perf-basic-first-window-onset-hot-family-alpha-offpath` path, then rolled the entire code path back after verification
+    - rebuilt/redeployed the telemetry ARM package from fresh `/work-arm-loop165` output and captured `loop165-yun-onset-basic-onset-alpha-r1`
+    - recovered binary-alpha-only onset-family structure for the leading families, but the replay gate broadened beyond the intended cohort
+  - Verification result summary:
+    - local `git diff --check`, `bash -n`, Docker telemetry ARM rebuild/install/package, `readelf`, and serialized MiSTer `lock-status` / `busy-status` / `health` / `deploy` / `probe` / bounded `smoke` all passed on `192.168.1.171`
+    - deciding capture `loop165-yun-onset-basic-onset-alpha-r1` stayed direct/native with zero fallback/readback at `43.4580 FPS / 23.0107 / 8.8707 / 13.6520 / 0.4880 ms` overall, but regressed from kept Loop `164` on both deciding windows: `33.9544 FPS / 19.0064 ms render` versus `35.0021 FPS / 17.8222 ms` for the first `8`, and `37.6989 FPS / 17.7931 ms` versus `39.9094 FPS / 16.2651 ms` for the first `60`
+  - Keep/rollback decision with reason:
+    - reject and revert; the off-path replay answers the alpha question, but it is too distortive on the deciding onset lane and review confirmed the new selector was broader than the scoped onset cohort
+  - Next best candidate optimization:
+    - if onset alpha needs another rerank later, require exact proven family-ID gating or a lighter off-path sidecar/export path that proves Loop `164`-class FPS fidelity before another on-device rerun
