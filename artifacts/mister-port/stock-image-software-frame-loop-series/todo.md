@@ -7182,7 +7182,7 @@
   - [x] the final tree rolls back all runtime/parity code and keeps only the checklist/living-findings closeout plus the captured telemetry artifacts outside the default git diff
 - [x] Rejected and closed in this loop:
   - [x] do not retry this exact onset opaque-family reland unchanged now. It misses the user-priority cold-burst window, regresses the broad gameplay keep gates, and review confirms the selector still relied on unproven runtime opacity assumptions
-- [ ] final commit hash:
-  - [ ] pending docs-only closeout commit
+- [x] final commit hash:
+  - [x] `ab15ec33` (`docs: close loop 167 opaque runtime rejection`)
 - [x] next best candidate:
   - [x] if Yun runtime work continues, require a different reversible bet than this family-heuristic opaque fast path: either prove opacity from actual source data at runtime without broadening the hot path, or rerank the remaining onset gap toward a safer non-selector-specific experiment instead of reopening this exact reland

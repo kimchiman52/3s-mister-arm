@@ -4409,7 +4409,7 @@ Scope guardrails:
 
 - 2026-03-22T11:03:04-0400
   - Final commit hash:
-    - `TBD`
+    - `ab15ec33`
   - Bottleneck targeted:
     - testing whether a narrow opaque-only non-integer fast path for the exact first-visible Yun onset families could improve the cold Genei-Jin burst without reopening the rejected broad binary-alpha design
   - Change summary:
