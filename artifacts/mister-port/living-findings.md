@@ -4441,3 +4441,21 @@ Scope guardrails:
     - reject and revert; despite matching the trusted onset workload and staying on direct/native present, the cold first-`8` window regressed versus Loop `166`, the broad gameplay keep gates were materially down, and review found the selector still relied on unproven opacity heuristics
   - Next best candidate optimization:
     - do not retry this exact opaque-family reland unchanged now; if Yun runtime work continues, require a different reversible bet that proves opacity from actual source data or rerank toward a safer non-selector-specific experiment first
+
+- 2026-03-22T17:00:00-0400
+  - Final commit hash:
+    - pending docs-only closure commit
+  - Bottleneck targeted:
+    - testing whether cached source-proven binary-alpha sidecar metadata could reduce the first-visible Yun onset non-integer row-raster cost without selector heuristics
+  - Change summary:
+    - attempted one runtime reland that cached opaque/transparent `256x256` ARGB source masks, routed a narrow small-source cohort through an alpha-plan non-integer helper path, and added matching parity coverage
+    - rebuilt host telemetry + parity and telemetry ARM packages in Docker `3sx-mister-build`, redeployed to MiSTer, and captured `loop169-alpha-sidecar-yun-onset-r1`, `loop169-alpha-sidecar-gameplay-idle-r1`, and `loop169-alpha-sidecar-gameplay-super-heavy-r1`
+    - rolled the runtime/parity code fully back after verification; only docs closeout remains in the final tree
+  - Verification result summary:
+    - local `git diff --check`, Docker host telemetry rebuild/package, host-side parity (`Software-frame parity check passed: 10 cases`, `Software-source refresh parity check passed: 2 cases`), telemetry ARM rebuild/install/package, and `readelf` all passed; serialized MiSTer `lock-status`, `busy-status`, `health`, `deploy`, `probe`, and bounded `smoke` also passed on `192.168.1.171`
+    - deciding onset capture stayed direct/native with zero fallback/readback but regressed from unchanged `44.6234 FPS / 22.4098 / 13.1553 ms render` to `27.1258 FPS / 36.8652 / 27.4288 ms render`; the first `8` collapsed from `34.8878 FPS / 28.6633 ms` to `17.6686 FPS / 56.5976 ms`, and the first `60` collapsed from `39.3687 FPS / 25.4009 ms` to `22.0973 FPS / 45.2544 ms`
+    - gameplay keep guards also failed overall: idle regressed from `85.6886 FPS / 11.6702 / 7.4390 ms render` to `75.2912 FPS / 13.2818 / 8.4685 ms render`, while `super-heavy` improved only slightly from `54.3739 FPS / 18.3912 / 9.5023 ms render` to `55.3501 FPS / 18.0668 / 10.1908 ms render`
+  - Keep/rollback decision with reason:
+    - reject and revert; the exact onset alpha mix stayed the same, but the sidecar path made the hot cohort substantially slower, so the added source-mask bookkeeping is the wrong cost shape for the current helper
+  - Next best candidate optimization:
+    - do not retry this per-pixel binary-alpha sidecar unchanged now; if Yun runtime work continues, rerank toward a lighter-weight source-proven row/subrect proof for the exact hot families or another bounded non-selector-specific experiment
