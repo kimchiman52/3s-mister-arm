@@ -4335,3 +4335,21 @@ Scope guardrails:
   - Next best candidate optimization:
     - Do not retry now: any in-band repeat-pressure alpha collector on the kept basic-family lane
     - if repeat-pressure hot-family alpha still needs reranking later, require an off-path sidecar or another design that proves Loop `160`-class FPS fidelity before remeasurement; otherwise leave Yun runtime work parked until a different measured bottleneck outranks this queue
+
+- 2026-03-22T07:59:12-0400
+  - Final commit hash:
+    - `ab806b76`
+  - Bottleneck targeted:
+    - recovering exact repeat-pressure hot-family alpha structure off the raster hot path so Yun repeat-pressure alpha can be reranked without reopening the rejected in-band collectors
+  - Change summary:
+    - added one kept measurement-support flag, `--perf-basic-first-window-exact-hot-family-alpha-offpath`, across the CLI, SDL perf-capture path, off-path non-integer alpha analyzer, and `tools/mister/perf-sampler.sh`
+    - recorded a bounded exact-shape census for the proven `57/58` + `391-394` cohort during the first window, then replayed alpha classification after the snapshot closed instead of inside the hot raster loop
+    - accepted review-driven fixes before the final keep: replay now uses the live fractional destination geometry, the exact-shape census cap grew from `64` to `256`, and total replay failure no longer zeroes family telemetry
+  - Verification result summary:
+    - local `git diff --check`, `bash -n`, Docker telemetry ARM rebuild/install/package in `3sx-mister-build`, and `readelf` all passed; serialized MiSTer `health`, `deploy`, `probe`, and bounded `smoke` also passed on `192.168.1.171` after the review-fixed rebuild
+    - corrected first/second captures `loop163-yun-first-activation-pressure-basic-families-offpath-alpha-r2` and `loop163-yun-second-activation-pressure-basic-families-offpath-alpha-r2` both stayed `software_frame_exact` direct/native with zero fallback/readback at `47.0670 FPS` and `46.8307 FPS` overall, with first-`60` windows at `39.9226 FPS / 15.9931 ms render` and `39.8597 FPS / 15.6235 ms render`
+    - the recovered hot-family alpha stayed binary-only with zero blended pixels on both starts, so the corrected repeat-pressure alpha data does not show a meaningful cold-vs-warm structural difference inside the dominant cohort
+  - Keep/rollback decision with reason:
+    - keep; the off-path sidecar stays materially closer to the kept Loop `160` distortion budget than rejected Loops `161` / `162` while recovering the exact-family alpha structure with correct fractional lookup geometry
+  - Next best candidate optimization:
+    - do not spend another loop on repeat-pressure alpha collection now; return to lower-distortion render-subphase telemetry on the trusted first-visible Yun onset lane so the remaining gameplay render gap can be reranked from measured evidence
