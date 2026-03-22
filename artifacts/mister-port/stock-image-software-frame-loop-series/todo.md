@@ -5478,7 +5478,7 @@
   - [x] the valid fix is documentation-only: this section now records the completed review result, and the hypothesis/closure wording now frames the blocked partial-refresh direction as the best-supported current inference rather than a universal proof about every possible non-partial idea
 - [x] Keep/rollback decision:
   - [x] reject runtime work for now and close as research-only. The best-supported native Remy win still routes through seq-specific partial refresh, and reopening that path without a narrower correctness proof would ignore the standing real-hardware corruption rollback
-- [ ] final commit hash:
+- [x] final commit hash:
   - [x] `9e6f86ac`
 - [x] next best candidate:
   - [x] do not spend the next native regular-gameplay loop on more non-partial Remy full-refresh micro-optimizations unless fresh evidence materially changes their ranking. Either prove a narrower correctness guard for `ppg-seqs 80/81/82`, or re-rank a different ordinary native gameplay bottleneck before touching runtime again
@@ -6860,12 +6860,12 @@
   - [x] the capture failed the low-distortion goal that justified this loop. Against the kept `loop157-yun-first-activation-pressure-basic-r1` baseline, the first `60` frames regressed from `42.7803 FPS / 23.3753 / 14.6418 ms` to `35.7972 FPS / 27.9351 / 18.3271 ms`, so the new mode is too heavy to use as the next decision-grade cold-start comparator
   - [x] the later-activation gate remained unreliable on this device state: two bounded `p1-super-art-active-2` attempts (`loop159-yun-second-activation-pressure-basic-shapes-r1` and `-r2`) hung before any `PERF capture start:` marker, tailed only repeated ALSA noise, and required explicit `MISTER_ALLOW_REMOTE_EXEC=1 tools/mister/misterctl.sh exec --command ...` cleanup to kill orphaned remote `3sx` processes and return the target to idle
 - [x] Review outcome:
-  - [x] pending independent review findings on the final docs-only rollback diff before commit; accept only corrections that are accurate and still in scope for a docs-only closeout
+  - [x] independent review on the final docs-only rollback diff found no factual issues in the closeout claims; the only findings were that the loop record still needed the actual closeout hash and a non-pending review note, and both were resolved in the stamp pass
 - [x] Keep/rollback decision:
   - [x] reject and revert. The new mode did recover first-window workload-shape exports, but it materially distorted the trusted repeat-pressure comparator and never produced a trustworthy second-activation pair on-device, so keeping it would mis-rank the next Yun decision
 - [x] Rejected and closed in this loop:
   - [x] do not retry this exact `--perf-basic-first-window-workload-shapes` design now; it is not low-distortion enough on the kept first-activation lane, and the repeated `p1-super-art-active-2` hangs make it a poor overnight decision tool
 - [ ] final commit hash:
-  - [ ] pending docs-only closeout commit
+  - [x] `b8832961` (`docs: close loop 159 basic-shapes rejection`)
 - [x] next best candidate:
   - [x] recover a lower-distortion repeated-activation comparator before adding more live workload bookkeeping; the next measurement attempt should keep the trusted `loop157` FPS fidelity or narrower and should not re-land this exact basic-window family collector unchanged

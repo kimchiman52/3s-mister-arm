@@ -4266,7 +4266,7 @@ Scope guardrails:
 
 - 2026-03-22T04:58:40-0400
   - Final commit hash:
-    - `PENDING`
+    - `b8832961`
   - Bottleneck targeted:
     - testing whether one new `--perf-basic` first-window workload-shape snapshot mode could recover decision-grade Yun first-activation family/shape evidence on the kept `yun-sa3-repeat-pressure` lane without reintroducing unacceptable capture distortion
   - Change summary:
