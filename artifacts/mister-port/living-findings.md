@@ -4478,3 +4478,20 @@ Scope guardrails:
   - Next best candidate optimization:
     - Do not retry now: source-proven onset row-class relands on the mixed binary-alpha families
     - rerank toward a different bounded runtime/build experiment that does not add per-row source-alpha bookkeeping to the hot non-integer helper
+
+- 2026-03-22T20:05:00-0400
+  - Final commit hash:
+    - `PENDING`
+  - Bottleneck targeted:
+    - testing whether a hint-only source-row prefetch inside the unmodulated non-integer helper could reduce the first-visible Yun onset row-raster cost without adding new metadata overhead
+  - Change summary:
+    - attempted one helper-local runtime reland in `software_frame_non_integer.c` that issued a guarded `__builtin_prefetch` on upcoming source-row pixels in the unmodulated non-integer row walk
+    - rebuilt and deployed the telemetry ARM package from Docker `3sx-mister-build`, then recorded deciding capture `loop171-prefetch-yun-onset-r1`
+    - rolled the runtime code fully back after verification; only docs closeout remains in the final tree
+  - Verification result summary:
+    - `git diff --check`, Docker telemetry ARM rebuild/install/package, `readelf`, and serialized MiSTer `lock-status` / `busy-status` / `health` / `deploy` / `probe` / bounded `smoke` all passed on `192.168.1.171`; host parity was attempted but abandoned after the mounted `/src` tree exposed incompatible host-side SDL artifacts and a clean-room native rebuild would have required a full dependency rebuild
+    - deciding onset capture stayed direct/native with zero fallback/readback, but regressed from unchanged `44.6234 FPS / 22.4098 / 13.1553 ms render` to `43.1573 FPS / 23.1711 / 13.7755 ms render`; first `8` fell from `34.8878 FPS / 28.6633 / 18.1705 ms render` to `33.6772 FPS / 29.6937 / 19.0116 ms render`, first `60` fell from `39.3687 FPS / 25.4009 / 16.8378 ms render` to `37.4803 FPS / 26.6807 / 17.8187 ms render`, and sampled row-raster rose from `44.4851 -> 53.4571 ms` on the first `8` and `359.0623 -> 409.8360 ms` on the first `60`
+  - Keep/rollback decision with reason:
+    - reject and revert; the hint-only prefetch raised hot-helper sampled cost on the trusted route, so there was no reason to spend more device time on broad keep guards for this candidate
+  - Next best candidate optimization:
+    - before another native runtime reland, recover the narrowest measurement that can prove whether a broader clustered row-walk specialization across the adjacent `32x32 -> 34/35/36/37` Yun onset cohort is real while separating extended-stats overhead from player-runtime cost
