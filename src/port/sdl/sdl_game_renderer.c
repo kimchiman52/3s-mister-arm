@@ -341,6 +341,7 @@ static bool perf_capture_basic_first_window_family_snapshots_enabled = false;
 static bool perf_capture_basic_first_window_render_subphases_enabled = false;
 static bool perf_capture_basic_first_window_exact_hot_family_alpha_offpath_enabled = false;
 static bool perf_capture_basic_first_window_onset_exact_hot_family_alpha_offpath_enabled = false;
+static bool perf_capture_basic_first_window_onset_cluster_alpha_offpath_enabled = false;
 static SDLGameRenderer_PerfCaptureFastNonIntegerPhaseTotals perf_capture_fast_non_integer_phase_totals = { 0 };
 typedef struct PerfCaptureBasicFirstWindowAlphaOffpathShape {
     int texture_handle;
@@ -4193,7 +4194,8 @@ static void note_perf_capture_textured_rect_family(const RenderTask* task,
     }
     if (!frame_stats_extended_enabled &&
         (perf_capture_basic_first_window_exact_hot_family_alpha_offpath_enabled ||
-         perf_capture_basic_first_window_onset_exact_hot_family_alpha_offpath_enabled)) {
+         perf_capture_basic_first_window_onset_exact_hot_family_alpha_offpath_enabled ||
+         perf_capture_basic_first_window_onset_cluster_alpha_offpath_enabled)) {
         note_perf_capture_basic_first_window_alpha_offpath_shape(&profile);
     }
 
@@ -4347,6 +4349,31 @@ static bool perf_capture_basic_first_window_onset_exact_hot_family_matches_profi
            (profile->source_h > 0) && (profile->visible_w > 0) && (profile->visible_h > 0);
 }
 
+static bool perf_capture_basic_first_window_onset_cluster_shape_matches_dimensions(int source_w,
+                                                                                   int source_h,
+                                                                                   int visible_w,
+                                                                                   int visible_h) {
+    return ((source_w == 32) && (source_h == 32) && (visible_w == visible_h) &&
+            ((visible_w == 34) || (visible_w == 35) || (visible_w == 36) || (visible_w == 37))) ||
+           ((source_w == 32) && (source_h == 16) &&
+            (((visible_w == 35) && (visible_h == 18)) || ((visible_w == 37) && (visible_h == 19)))) ||
+           ((source_w == 16) && (source_h == 32) && (visible_w == 18) && (visible_h == 35));
+}
+
+static bool perf_capture_basic_first_window_onset_cluster_alpha_offpath_matches_profile(
+    const TexturedRectFamilyProfile* profile) {
+    if (profile == NULL) {
+        return false;
+    }
+
+    return perf_capture_basic_first_window_onset_exact_hot_family_matches_profile(profile) &&
+           perf_capture_basic_first_window_onset_cluster_shape_matches_dimensions(
+               profile->source_w,
+               profile->source_h,
+               profile->visible_w,
+               profile->visible_h);
+}
+
 static void note_perf_capture_basic_first_window_alpha_offpath_shape(const TexturedRectFamilyProfile* profile) {
     if (profile == NULL) {
         return;
@@ -4358,7 +4385,10 @@ static void note_perf_capture_basic_first_window_alpha_offpath_shape(const Textu
     const bool matches_onset =
         perf_capture_basic_first_window_onset_exact_hot_family_alpha_offpath_enabled &&
         perf_capture_basic_first_window_onset_exact_hot_family_matches_profile(profile);
-    if (!matches_exact && !matches_onset) {
+    const bool matches_onset_cluster =
+        perf_capture_basic_first_window_onset_cluster_alpha_offpath_enabled &&
+        perf_capture_basic_first_window_onset_cluster_alpha_offpath_matches_profile(profile);
+    if (!matches_exact && !matches_onset && !matches_onset_cluster) {
         return;
     }
 
@@ -7420,6 +7450,10 @@ void SDLGameRenderer_SetPerfCaptureBasicFirstWindowOnsetExactHotFamilyAlphaOffpa
     perf_capture_basic_first_window_onset_exact_hot_family_alpha_offpath_enabled = enabled;
 }
 
+void SDLGameRenderer_SetPerfCaptureBasicFirstWindowOnsetClusterAlphaOffpathEnabled(bool enabled) {
+    perf_capture_basic_first_window_onset_cluster_alpha_offpath_enabled = enabled;
+}
+
 void SDLGameRenderer_SetPerfCaptureFastNonIntegerReuseTelemetryEnabled(bool enabled) {
     perf_capture_fast_non_integer_reuse_telemetry_enabled = enabled;
 }
@@ -8409,6 +8443,15 @@ static bool perf_capture_basic_first_window_onset_exact_hot_family_matches_famil
            !family->flip_v;
 }
 
+static bool perf_capture_basic_first_window_onset_cluster_alpha_offpath_matches_family(
+    const SDLGameRenderer_PerfCaptureTexturedRectFamily* family) {
+    if (family == NULL) {
+        return false;
+    }
+
+    return perf_capture_basic_first_window_onset_exact_hot_family_matches_family(family);
+}
+
 typedef bool (*PerfCaptureBasicFirstWindowAlphaOffpathFamilyMatcher)(
     const SDLGameRenderer_PerfCaptureTexturedRectFamily* family);
 
@@ -8544,6 +8587,17 @@ void SDLGameRenderer_ApplyPerfCaptureBasicFirstWindowOnsetExactHotFamilyAlphaOff
 
     apply_perf_capture_basic_first_window_alpha_offpath(
         families, family_count, perf_capture_basic_first_window_onset_exact_hot_family_matches_family);
+}
+
+void SDLGameRenderer_ApplyPerfCaptureBasicFirstWindowOnsetClusterAlphaOffpath(
+    SDLGameRenderer_PerfCaptureTexturedRectFamily* families,
+    int family_count) {
+    if (!perf_capture_basic_first_window_onset_cluster_alpha_offpath_enabled) {
+        return;
+    }
+
+    apply_perf_capture_basic_first_window_alpha_offpath(
+        families, family_count, perf_capture_basic_first_window_onset_cluster_alpha_offpath_matches_family);
 }
 
 int SDLGameRenderer_GetPerfCaptureFastExactFamilies(SDLGameRenderer_PerfCaptureTexturedRectFamily* out_families,

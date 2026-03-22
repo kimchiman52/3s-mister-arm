@@ -712,6 +712,7 @@ void SDLGameRenderer_SetPerfCaptureBasicFirstWindowFamilySnapshotsEnabled(bool e
 void SDLGameRenderer_SetPerfCaptureBasicFirstWindowRenderSubphasesEnabled(bool enabled);
 void SDLGameRenderer_SetPerfCaptureBasicFirstWindowExactHotFamilyAlphaOffpathEnabled(bool enabled);
 void SDLGameRenderer_SetPerfCaptureBasicFirstWindowOnsetExactHotFamilyAlphaOffpathEnabled(bool enabled);
+void SDLGameRenderer_SetPerfCaptureBasicFirstWindowOnsetClusterAlphaOffpathEnabled(bool enabled);
 void SDLGameRenderer_SetPerfCaptureFastNonIntegerReuseTelemetryEnabled(bool enabled);
 void SDLGameRenderer_SetPerfCaptureFastNonIntegerSubrectAlphaTelemetryEnabled(bool enabled);
 void SDLGameRenderer_BeginFrame(bool capture_extended_stats);
@@ -759,6 +760,9 @@ void SDLGameRenderer_ApplyPerfCaptureBasicFirstWindowExactHotFamilyAlphaOffpath(
     SDLGameRenderer_PerfCaptureTexturedRectFamily* families,
     int family_count);
 void SDLGameRenderer_ApplyPerfCaptureBasicFirstWindowOnsetExactHotFamilyAlphaOffpath(
+    SDLGameRenderer_PerfCaptureTexturedRectFamily* families,
+    int family_count);
+void SDLGameRenderer_ApplyPerfCaptureBasicFirstWindowOnsetClusterAlphaOffpath(
     SDLGameRenderer_PerfCaptureTexturedRectFamily* families,
     int family_count);
 int SDLGameRenderer_GetPerfCaptureFastNonIntegerSharedShapes(

@@ -197,6 +197,24 @@ Scope guardrails:
 
 ## Cycle Log
 
+- 2026-03-23T00:05:00-0400
+  - Final commit hash:
+    - `PENDING_COMMIT`
+  - Bottleneck targeted:
+    - recovering low-distortion source-alpha structure for the proven first-visible Yun onset cluster before another native helper reland
+  - Change summary:
+    - kept one measurement-support diff that added `--perf-basic-first-window-onset-cluster-alpha-offpath` through the perf CLI, app plumbing, renderer selector, and `tools/mister/perf-sampler.sh`
+    - tightened the initial review-flagged shape-only selector to the existing onset-exact family IDs plus the trusted seven Loop `172` shapes, then rebuilt, redeployed, and reran the deciding onset capture
+    - preserved runtime behavior and exported new off-path alpha structure for the real onset cohort instead of the earlier broader shape match
+  - Verification result summary:
+    - `git diff --check`, `bash -n tools/mister/perf-sampler.sh`, Docker telemetry ARM rebuild/install/package in `3sx-mister-build`, and final `readelf` / `readelf -A` all passed; the kept package is `ELF32` `ARM` with hard-float ABI and NEON
+    - serialized MiSTer `lock-status` / `busy-status` / `health` / `deploy --src build/mister-telemetry-package-loop174-arm` / `probe` / bounded `smoke` all passed on `192.168.1.171`, and corrected deciding capture `loop174-yun-onset-cluster-alpha-r3` stayed direct/native at `49.8244 FPS / 20.0705 / 10.0388 / 0.4971 ms`, with `29.2119 / 18.2609 ms` for the first `8` and `24.9485 / 16.2369 ms` for the first `60`
+    - the corrected collector narrowed to six onset families and proved the sampled first-`8` hotspot is entirely binary-alpha: `19.4502 ms` targeted family time, `138099` opaque pixels, `17824` transparent, `0` blended, `3614` all-opaque rows, `176` all-transparent rows, and `872` binary-mixed rows
+  - Keep/rollback decision with reason:
+    - keep; the final selector is review-correct, the diff remains perf-capture-only, the deciding rerun stayed on the trusted low-distortion onset route, and the new telemetry materially narrows the next runtime target to binary-alpha row handling rather than blended-alpha guesses
+  - Next best candidate optimization:
+    - run one bounded helper-local clustered binary-alpha experiment for onset families `57/391`, `58/393`, `57/394`, `18/37`, `57/329`, and `57/393`, prioritizing all-opaque / all-transparent row skips and binary-mixed row handling over any broader width-only or blended-alpha reland
+
 - 2026-03-22T15:19:59-0400
   - Final commit hash:
     - `fa08b0f2`
