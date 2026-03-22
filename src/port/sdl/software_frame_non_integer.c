@@ -363,6 +363,92 @@ static bool populate_same_source_pair_lookup(Uint8* out_pair_lookup, const int* 
     return has_pairs;
 }
 
+bool SDLSoftwareFrame_AnalyzeNonIntegerSourceAlphaARGB8888(const SDL_FRect* dst_rect,
+                                                           const SDL_Rect* src_rect,
+                                                           SDL_FlipMode flip,
+                                                           Uint32 color,
+                                                           const SDL_Surface* src_surface,
+                                                           SDLSoftwareFrame_NonIntegerTelemetry* out_telemetry) {
+    if ((dst_rect == NULL) || (src_rect == NULL) || (src_surface == NULL) || (out_telemetry == NULL) ||
+        (dst_rect->w <= 0.0f) || (dst_rect->h <= 0.0f) || (src_rect->w <= 0) || (src_rect->h <= 0) ||
+        (src_rect->x < 0) || (src_rect->y < 0) ||
+        ((src_rect->x + src_rect->w) > src_surface->w) || ((src_rect->y + src_rect->h) > src_surface->h) ||
+        (src_surface->w <= 0) || (src_surface->h <= 0)) {
+        return false;
+    }
+
+    const int dst_x0 = (int)SDL_floorf(dst_rect->x);
+    const int dst_y0 = (int)SDL_floorf(dst_rect->y);
+    const int dst_x1 = (int)SDL_ceilf(dst_rect->x + dst_rect->w);
+    const int dst_y1 = (int)SDL_ceilf(dst_rect->y + dst_rect->h);
+    const int visible_w = dst_x1 - dst_x0;
+    const int visible_h = dst_y1 - dst_y0;
+    if ((visible_w <= 0) || (visible_h <= 0)) {
+        return false;
+    }
+    if ((visible_w > software_frame_lookup_max_width) || (visible_h > software_frame_lookup_max_height)) {
+        return false;
+    }
+
+    SDL_zero(*out_telemetry);
+
+    int src_x_lookup[software_frame_lookup_max_width];
+    int src_y_lookup[software_frame_lookup_max_height];
+    Uint8 same_source_pair_lookup[software_frame_lookup_max_width];
+    populate_non_integer_lookup(src_x_lookup,
+                                visible_w,
+                                dst_x0,
+                                dst_rect->x,
+                                dst_rect->w,
+                                (float)src_rect->x,
+                                (float)src_rect->w,
+                                src_surface->w - 1,
+                                (flip & SDL_FLIP_HORIZONTAL) != 0);
+    populate_non_integer_lookup(src_y_lookup,
+                                visible_h,
+                                dst_y0,
+                                dst_rect->y,
+                                dst_rect->h,
+                                (float)src_rect->y,
+                                (float)src_rect->h,
+                                src_surface->h - 1,
+                                (flip & SDL_FLIP_VERTICAL) != 0);
+    const bool has_same_source_pairs = populate_same_source_pair_lookup(same_source_pair_lookup, src_x_lookup, visible_w);
+    const Uint32* src_pixels = (const Uint32*)src_surface->pixels;
+    const int src_pitch = src_surface->pitch / (int)sizeof(Uint32);
+    const bool apply_color_mod = color != 0xFFFFFFFFu;
+
+    for (int row = 0; row < visible_h; row++) {
+        const Uint32* src_row = src_pixels + (src_y_lookup[row] * src_pitch);
+        NonIntegerSubrectAlphaRowTelemetry row_telemetry;
+        SDL_zero(row_telemetry);
+        row_telemetry.current_class = NON_INTEGER_SOURCE_ALPHA_CLASS_NONE;
+
+        if (!apply_color_mod && has_same_source_pairs) {
+            for (int col = 0; col < visible_w;) {
+                const Uint32 src_pixel = src_row[src_x_lookup[col]];
+                const Uint32 src_a = (src_pixel >> 24) & 0xFFu;
+                const int run_length = (((col + 1) < visible_w) && same_source_pair_lookup[col]) ? 2 : 1;
+                note_non_integer_subrect_alpha_run(&row_telemetry, src_a, run_length);
+                col += run_length;
+            }
+            finish_non_integer_subrect_alpha_row(&row_telemetry, out_telemetry);
+            continue;
+        }
+
+        for (int col = 0; col < visible_w; col++) {
+            Uint32 src_pixel = src_row[src_x_lookup[col]];
+            if (apply_color_mod) {
+                src_pixel = modulate_argb8888(src_pixel, color);
+            }
+            note_non_integer_subrect_alpha_run(&row_telemetry, (src_pixel >> 24) & 0xFFu, 1);
+        }
+        finish_non_integer_subrect_alpha_row(&row_telemetry, out_telemetry);
+    }
+
+    return true;
+}
+
 bool SDLSoftwareFrame_RasterNonIntegerLookupARGB8888(const SDL_FRect* dst_rect,
                                                      const SDL_FRect* src_uv_rect,
                                                      SDL_FlipMode flip,

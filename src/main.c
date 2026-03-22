@@ -179,6 +179,13 @@ static void read_args(int argc, const char* argv[]) {
                     0,
                     0),
         OPT_BOOLEAN(0,
+                    "perf-basic-first-window-exact-hot-family-alpha-offpath",
+                    &configuration.perf.basic_first_window_exact_hot_family_alpha_offpath,
+                    "When used with --perf-basic-first-window-families, analyze the proven 57/58 + 391-394 hot-family alpha structure off the hot raster path after the first window snapshot.",
+                    NULL,
+                    0,
+                    0),
+        OPT_BOOLEAN(0,
                     "perf-fast-non-integer-no-reuse-telemetry",
                     &configuration.perf.fast_non_integer_disable_reuse_telemetry,
                     "Keep full perf capture enabled but skip fast non-integer row-reuse bookkeeping to reduce capture distortion.",
@@ -363,6 +370,12 @@ static void verify_args() {
 
     if (configuration.perf.basic_first_window_family_snapshots && !configuration.perf.basic_mode) {
         error_out_with_code("--perf-basic-first-window-families requires --perf-basic.",
+                            EXIT_CODE_RUNTIME_ERROR);
+    }
+
+    if (configuration.perf.basic_first_window_exact_hot_family_alpha_offpath &&
+        (!configuration.perf.basic_mode || !configuration.perf.basic_first_window_family_snapshots)) {
+        error_out_with_code("--perf-basic-first-window-exact-hot-family-alpha-offpath requires --perf-basic-first-window-families.",
                             EXIT_CODE_RUNTIME_ERROR);
     }
 
@@ -614,6 +627,7 @@ static int loop() {
                                     configuration.perf.scene,
                                     configuration.perf.basic_mode,
                                     configuration.perf.basic_first_window_family_snapshots,
+                                    configuration.perf.basic_first_window_exact_hot_family_alpha_offpath,
                                     configuration.perf.fast_non_integer_disable_reuse_telemetry,
                                     configuration.perf.fast_non_integer_enable_subrect_alpha_telemetry);
         perf_capture_started = true;
@@ -658,6 +672,7 @@ static int loop() {
                             "test_stage_override=%d test_scene_preset=%s p1_character=%d p2_character=%d "
                             "p1_super_art=%d p2_super_art=%d test_phase=%s wait_test_phase=%s wait_runtime_state=%s "
                             "fast_non_integer_reuse_telemetry=%s basic_first_window_family_snapshots=%s "
+                            "basic_first_window_exact_hot_family_alpha_offpath=%s "
                             "fast_non_integer_subrect_alpha_telemetry=%s "
                             "g_no=%d/%d/%d/%d e_no=%d/%d/%d/%d menu_task_condition=%d menu_r_no=%d/%d/%d/%d "
                             "break_into=%d hnc_num=%d exec_wipe=%d active_wipe_type=%d wipe_limit=%d",
@@ -689,6 +704,10 @@ static int loop() {
                              configuration.perf.basic_first_window_family_snapshots)
                                 ? "on"
                                 : "off",
+                            (configuration.perf.basic_mode &&
+                             configuration.perf.basic_first_window_exact_hot_family_alpha_offpath)
+                                ? "on"
+                                : "off",
                             (!configuration.perf.basic_mode &&
                              configuration.perf.fast_non_integer_enable_subrect_alpha_telemetry)
                                 ? "on"
@@ -716,6 +735,7 @@ static int loop() {
                                                 configuration.perf.scene,
                                                 configuration.perf.basic_mode,
                                                 configuration.perf.basic_first_window_family_snapshots,
+                                                configuration.perf.basic_first_window_exact_hot_family_alpha_offpath,
                                                 configuration.perf.fast_non_integer_disable_reuse_telemetry,
                                                 configuration.perf.fast_non_integer_enable_subrect_alpha_telemetry);
                     perf_capture_started = true;

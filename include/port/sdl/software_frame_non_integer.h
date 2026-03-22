@@ -54,4 +54,11 @@ bool SDLSoftwareFrame_RasterNonIntegerLookupARGB8888(const SDL_FRect* dst_rect,
                                                      bool collect_reuse_telemetry,
                                                      bool collect_subrect_alpha_telemetry);
 
+bool SDLSoftwareFrame_AnalyzeNonIntegerSourceAlphaARGB8888(const SDL_FRect* dst_rect,
+                                                           const SDL_Rect* src_rect,
+                                                           SDL_FlipMode flip,
+                                                           Uint32 color,
+                                                           const SDL_Surface* src_surface,
+                                                           SDLSoftwareFrame_NonIntegerTelemetry* out_telemetry);
+
 #endif
