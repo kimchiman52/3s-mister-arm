@@ -197,6 +197,25 @@ Scope guardrails:
 
 ## Cycle Log
 
+- 2026-03-22T18:47:06-0400
+  - Final commit hash:
+    - `TBD`
+  - Bottleneck targeted:
+    - testing whether a transparent-first `__builtin_expect` reland could recover Loop `177`'s narrow Yun onset win as a safer codegen/layout effect without changing helper semantics
+  - Change summary:
+    - tried one helper-local runtime reland in `src/port/sdl/software_frame_non_integer.c` that added branch-prediction hints to the unmodulated singleton/pair alpha checks while preserving the original transparent-first source order
+    - the direct `/src` ARM rebuild hit the known bind-mount SDL trap (`libSDL3.so: file format not recognized`), so the loop recovered the validated `/work-arm-loop177` cross-build path, rebuilt/packaged there, copied back `build/mister-telemetry-package-loop178-arm-r1`, and redeployed that package
+    - rolled the runtime code fully back after the deciding onset capture failed hard; the final tree for this loop is docs-only
+  - Verification result summary:
+    - `git diff --check`, official GCC/Clang builtin docs, a local ARMv7 `clang-20 -O3` micro-compile, recovered `/work-arm-loop177` telemetry ARM rebuild/install/package, container-side `readelf` / `readelf -A`, and serialized MiSTer `lock-status` / `busy-status` / `health` / `deploy` / `probe` / bounded `smoke` all passed on `192.168.1.171`
+    - deciding capture `loop178-branch-hint-yun-onset-r1` stayed `software_frame_exact` direct/native with zero fallback/readback, but regressed from unchanged `44.6234 FPS / 22.4098 / 13.1553 ms render` to `29.6798 FPS / 33.6929 / 24.0756 ms render`; first `8` collapsed from `34.8878 FPS / 28.6633 / 18.1705 ms render` to `21.2775 FPS / 46.9979 / 36.4238 ms render`, and first `60` from `39.3687 FPS / 25.4009 / 16.8378 ms render` to `21.1553 FPS / 47.2694 / 38.3827 ms render`
+    - no idle/super-heavy guards were run after that onset failure because the user-priority lane had already failed decisively; further capture time could not rescue the keep decision
+  - Keep/rollback decision with reason:
+    - reject and revert; the transparent-first branch-hint shape keeps the right route but catastrophically slows the deciding Yun onset lane, so it is not a safe runtime win
+    - Do not retry now: alpha-branch-layout/codegen experiments on this helper. Loop `177` and Loop `178` are consecutive failures on the same idea family, one hurting idle and the other crushing onset itself
+  - Next best candidate optimization:
+    - rerank away from alpha-branch-layout experiments before another native runtime edit; require a different measured helper-local or codegen hypothesis, or pause Yun runtime bets until a new safe lever is evidenced
+
 - 2026-03-22T17:37:57-0400
   - Final commit hash:
     - `cd2da83a`
