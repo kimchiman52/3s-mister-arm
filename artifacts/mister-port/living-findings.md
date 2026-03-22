@@ -4209,3 +4209,22 @@ Scope guardrails:
     - reject and revert; the reland slowed the deciding Yun onset lane while preserving workload identity and catastrophically regressed both gameplay keep gates, so it is not a safe runtime win
   - Next best candidate optimization:
     - do not retry this binary-alpha sidecar reland unchanged now; prioritize gameplay-real repeated Yun activation and cold-vs-warm measurement support before another helper-local runtime attempt
+
+- 2026-03-22T02:55:45-0400
+  - Final commit hash:
+    - `f1c7eb6f`
+  - Bottleneck targeted:
+    - closing the gameplay-real repeated-Yun measurement gap by adding a native/direct lane that can prove two visible P1 Genei starts on-device without touching renderer runtime behavior
+  - Change summary:
+    - added one new test-mode preset, `yun-sa3-repeat-pressure`, plus the matching CLI/sampler validation and help plumbing in `src/test/test_runner.c`, `src/main.c`, and `tools/mister/perf-sampler.sh`
+    - reused the kept repeat-support wait/export/refill path from Loop `151`, but switched the gameplay script to pressure exchange outside two guarded Yun SA3 windows so the second start remains reachable on-device
+    - captured and kept new telemetry artifacts: `loop156-yun-sa3-repeat-pressure-reachability-r1`, `loop156-yun-first-activation-pressure-r1`, and `loop156-yun-second-activation-pressure-r1`
+  - Verification result summary:
+    - local validation passed: `git diff --check`, `bash -n tools/mister/perf-sampler.sh`, Docker telemetry ARM rebuild/install/package in `3sx-mister-build` via `/work-arm-loop156`, and `readelf` again reported `ELF32` / `ARM` / hard-float output
+    - serialized `busy-status`, `health`, `deploy`, `probe`, and bounded `smoke` all passed on `192.168.1.171`, keeping the same dummy/software + fbdev + native + `software-frame on` route
+    - reachability passed at `60.7655 FPS` with `p1_super_active_starts=2`; matched full captures then stayed effectively flat across starts instead of reproducing a clear warm-speedup: first `36.4725 FPS / 27.4179 / 18.7888 / 0.4684 ms`, second `36.2196 FPS / 27.6093 / 18.2893 / 0.5004 ms`, with only a small first-`8` improvement (`31.7624 -> 32.6802 FPS`)
+  - Keep/rollback decision with reason:
+    - keep; measurement-support only, verified locally and on-device, and now sufficient to compare first vs later activations on a gameplay-real automated lane without changing shipped runtime behavior
+    - do not treat the new lane as a replacement for the manual report yet; it proves two starts under live exchange, but it still does not show a decisive “later activation is faster” gap on its own
+  - Next best candidate optimization:
+    - use the kept `yun-sa3-repeat-pressure` lane to rerank cold-vs-warm Yun SA3 behavior before any fresh renderer reland; if more automation support is still needed, prefer a lighter scene/spacing-specific repeat lane over another helper-local runtime guess
