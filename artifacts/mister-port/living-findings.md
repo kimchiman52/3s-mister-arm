@@ -4231,7 +4231,7 @@ Scope guardrails:
 
 - 2026-03-22T03:17:09-0400
   - Final commit hash:
-    - pending docs closeout commit
+    - `41de97b7`
   - Bottleneck targeted:
     - deciding whether the kept gameplay-real `yun-sa3-repeat-pressure` lane already exposes a trustworthy first-vs-later Yun SA3 cold-start gap on current `HEAD` when measured with lower-overhead user-visible FPS capture
   - Change summary:

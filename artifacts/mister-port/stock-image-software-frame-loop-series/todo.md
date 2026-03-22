@@ -6788,7 +6788,7 @@
   - [x] do not treat this loop as closure on the manual report. It narrows the ambiguity: the existing gameplay-real lane is good enough to rule out another blind renderer reland, but not good enough to replace the trusted manual “first visible activation dips harder” observation
 - [x] Rejected and closed in this loop:
   - [x] do not reopen helper-local native-Yun runtime work from this rerank alone. The modest first-`8` improvement on later activation is smaller than the manual gap and the overall `120`-frame rerun stays slightly worse, so the next automation step should improve measurement fidelity rather than mutate renderer code
-- [ ] final commit hash:
-  - [ ] pending docs closeout commit
+- [x] final commit hash:
+  - [x] `41de97b7` (`docs: close loop 157 repeat-pressure rerank`)
 - [x] next best candidate:
   - [x] if future automation still needs a closer match to the trusted manual “later activations are faster” report, add one lighter scene/spacing-specific repeat lane before another renderer reland; otherwise keep native runtime work parked until a new measured bottleneck outranks this queue
