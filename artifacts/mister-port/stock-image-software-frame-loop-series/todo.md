@@ -5511,7 +5511,7 @@
   - [x] independent review agent `Kierkegaard` reported no actionable findings on the final kept diff
 - [x] Keep/rollback decision:
   - [x] keep. This loop intentionally added measurement-support code only, and the kept telemetry directly exposed the remaining native regular-gameplay hotspot at exact-family granularity without changing runtime behavior
-- [ ] final commit hash:
+- [x] final commit hash:
   - [x] `96597905`
 - [x] next best candidate:
   - [x] use the new exact-family evidence to inspect the native Remy-stage `ppg-seqs 80/81/82` path next. The best-supported next runtime loop is now a narrowly targeted investigation of whether those exact families admit a correctness-safe partial-refresh or renew/submit reduction, not another blind full-refresh or presenter micro-optimization
