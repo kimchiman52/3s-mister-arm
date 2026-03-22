@@ -4495,3 +4495,21 @@ Scope guardrails:
     - reject and revert; the hint-only prefetch raised hot-helper sampled cost on the trusted route, so there was no reason to spend more device time on broad keep guards for this candidate
   - Next best candidate optimization:
     - before another native runtime reland, recover the narrowest measurement that can prove whether a broader clustered row-walk specialization across the adjacent `32x32 -> 34/35/36/37` Yun onset cohort is real while separating extended-stats overhead from player-runtime cost
+
+- 2026-03-22T23:05:00-0400
+  - Final commit hash:
+    - `pending`
+  - Bottleneck targeted:
+    - testing whether one basic first-window cluster-snapshot collector could recover decision-grade shared-shape and lookup-profile evidence on the trusted Yun onset lane without reintroducing unacceptable capture distortion
+  - Change summary:
+    - attempted one measurement-support-only reland that added `--perf-basic-first-window-cluster-snapshots` through the perf CLI, app plumbing, renderer telemetry gates, and `tools/mister/perf-sampler.sh`
+    - rebuilt/deployed the telemetry ARM package from Docker `3sx-mister-build`, then captured `loop172-yun-onset-clusters-r1`, corrected deciding rerun `loop172-yun-onset-clusters-r2`, and same-build control `loop172-yun-onset-baseline-r3`
+    - rolled the measurement-support code fully back after verification; only docs closeout remains in the final tree
+  - Verification result summary:
+    - `git diff --check`, Docker telemetry ARM rebuild/install/package, `readelf`, and serialized MiSTer `lock-status` / `busy-status` / `health` / `deploy` / `probe` / bounded `smoke` all passed on `192.168.1.171`; the deciding cluster rerun stayed direct/native with zero fallback/readback and exported `32` first-`8` shared shapes plus `32` lookup profiles
+    - the rejected cluster rerun confirmed the expected onset cohort on the trusted lane: `32x32 -> 34x34 = 2.9142 ms`, `32x32 -> 35x35 = 2.2789 ms`, `32x32 -> 36x36 = 1.6477 ms`, and `32x32 -> 37x37 = 1.4066 ms`, with adjacent `32x16` shapes following
+    - same-build A/B proved the collector is still too distortive: versus `loop172-yun-onset-baseline-r3`, enabling cluster snapshots dropped first-`8` speed from `34.7404 FPS / 28.7849 / 18.2290 ms render` to `32.0001 FPS / 31.2499 / 21.1653 ms render` and first-`60` from `39.2182 FPS / 25.4984 / 16.7342 ms render` to `31.9848 FPS / 31.2649 / 22.7163 ms render`
+  - Keep/rollback decision with reason:
+    - reject and revert; the collector answered the cluster question, but its own exact-shape / lookup-profile aggregation adds too much overhead to remain the trusted low-distortion onset lane
+  - Next best candidate optimization:
+    - do not retry this cluster collector unchanged now; use the confirmed broad onset cohort to move next toward narrower hot-family subrect alpha-structure telemetry instead
