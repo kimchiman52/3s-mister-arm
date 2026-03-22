@@ -4191,3 +4191,21 @@ Scope guardrails:
     - keep measurement-support only; the new telemetry is verification-clean, does not alter runtime behavior, and proves the hot Yun onset families are dominated by binary alpha plus transparent spans rather than blend-heavy work
   - Next best candidate optimization:
     - if a runtime reland is attempted next, make it a narrowly measured clustered-shape binary-alpha sidecar or transparent-skip candidate for the hot Yun families; do not reopen generic `ix 80` or blend-specialized work from this evidence
+
+- 2026-03-22T02:26:07-0400
+  - Final commit hash:
+    - pending; stamp after the docs-only Loop `155` closure commit lands
+  - Bottleneck targeted:
+    - testing whether a narrow binary-alpha sidecar reland for hot Yun first-visible native non-integer clustered shapes can reduce the measured row-raster cost without changing route or gameplay behavior
+  - Change summary:
+    - attempted one narrow runtime reland: a lazily built per-surface binary-alpha sidecar plus a binary-alpha-only non-integer row path gated to small unflipped unclipped `256x256` ARGB clustered subrect tasks
+    - validated the candidate locally in Docker `3sx-mister-build`, rebuilt/install-packaged the telemetry ARM flavor in `/work-arm-loop155`, and redeployed with serialized MiSTer tooling for parity plus deciding gameplay captures
+    - fully rolled the runtime code back after the deciding capture and both gameplay keep gates regressed; this cycle closes docs-only with committed telemetry artifacts
+  - Verification result summary:
+    - local validation passed: host-runnable Docker parity reported `Software-frame parity check passed: 11 cases` plus `Software-source refresh parity check passed: 2 cases`, and the ARM telemetry package again built as `ELF32` / `ARM` / hard-float output
+    - serialized `lock-status`, `busy-status`, `health`, `deploy`, `probe`, bounded `smoke`, and wrapper parity all passed on `192.168.1.171`, keeping the same dummy/software + fbdev + native + `software-frame on` route with zero fallback/readback
+    - the deciding capture `loop155-yun-onset-r1` regressed to `22.6416 FPS / 44.1665 / 9.6560 / 34.0458 / 0.4647 ms` overall and `17.8408 FPS / 56.0514 / 11.0075 / 44.5899 / 0.4540 ms` for the first `8` frames versus trusted baseline `loop150-yun-onset-r1` at `23.0476 FPS / 43.3885 / 9.6383 / 33.2248 / 0.5253 ms` overall and `19.2290 FPS / 52.0047 / 10.8829 / 40.5975 / 0.5243 ms`, despite matching route and first-`8` pixel mix; the guard captures failed too at `loop155-gameplay-idle-r1 = 83.5588 FPS / 11.9676 / 3.7707 / 7.7363 / 0.4607 ms` and `loop155-gameplay-super-heavy-r1 = 28.6920 FPS / 34.8529 / 7.9894 / 26.3978 / 0.4657 ms`
+  - Keep/rollback decision with reason:
+    - reject and revert; the reland slowed the deciding Yun onset lane while preserving workload identity and catastrophically regressed both gameplay keep gates, so it is not a safe runtime win
+  - Next best candidate optimization:
+    - do not retry this binary-alpha sidecar reland unchanged now; prioritize gameplay-real repeated Yun activation and cold-vs-warm measurement support before another helper-local runtime attempt
