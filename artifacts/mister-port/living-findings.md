@@ -197,6 +197,23 @@ Scope guardrails:
 
 ## Cycle Log
 
+- 2026-03-22T15:19:59-0400
+  - Final commit hash:
+    - pending closeout commit
+  - Bottleneck targeted:
+    - deciding whether the newly confirmed `32x32 -> 34/35/36/37` Yun onset cluster is strong enough to justify a width-only fixed-pattern non-integer row kernel on the native/direct first-visible Genei lane
+  - Change summary:
+    - performed a deeper no-code runtime-candidate audit against current `HEAD`, the trusted onset baselines, and the new Loop `172` cluster data before editing
+    - confirmed the hot shape buckets are real, but rejected the intended runtime gate because `populate_non_integer_lookup(...)` depends on fractional destination origin/span and the trusted lookup-profile evidence still does not collapse the cluster into a small safe plan set
+    - kept runtime behavior unchanged and closed the loop docs-only rather than forcing another helper-local reland not supported by this cycle's evidence
+  - Verification result summary:
+    - no build or device run; the candidate was rejected during the pre-edit research gate, so there was no runtime diff to verify
+    - the deciding evidence is existing trusted telemetry plus current code-path review: `loop169-head-baseline-yun-onset-r1`, `loop166-yun-onset-basic-onset-exact-alpha-r2`, and `loop172-yun-onset-clusters-r2` still show row-raster-heavy clustered shapes, but not a width-only lookup-plan concentration safe enough for code
+  - Keep/rollback decision with reason:
+    - reject without implementation; shared-shape clustering alone is not enough when the lookup math inside those buckets still varies with fractional geometry
+  - Next best candidate optimization:
+    - do not retry a width-only Yun cluster kernel unchanged now; if this queue stays open, first prove a lower-distortion concentrated lookup-plan cohort inside the trusted onset cluster, or rerank toward a different gameplay bottleneck
+
 - 2026-03-22T11:47:57-0400
   - Final commit hash:
     - `fe3db03e`
