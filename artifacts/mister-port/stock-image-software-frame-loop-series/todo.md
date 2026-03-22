@@ -6829,6 +6829,7 @@
 - [x] Rejected and closed in this loop:
   - [x] do not retry `yun-sa3-repeat-spacing` unchanged now. The accepted stage-drift finding means the apparent `r1` improvement is confounded, and the corrected anchored rerun still does not beat the kept `loop157` comparator
   - [x] do not spend another loop on lighter scripted-spacing rewrites before new evidence re-ranks them. This branch of the measurement queue is now lower-confidence than a narrow workload-shape telemetry pass on a kept lane
-- [ ] final commit hash:
+- [x] final commit hash:
+  - [x] `fad36ec9` (`docs: close loop 158 spacing preset rejection`)
 - [x] next best candidate:
   - [x] keep using the committed `yun-sa3-repeat-pressure` lane as the first-vs-later Yun comparator, and if cold-vs-warm ambiguity still matters, make the next step a narrow workload-shape telemetry pass on that kept lane before any fresh renderer reland or another scripting rewrite

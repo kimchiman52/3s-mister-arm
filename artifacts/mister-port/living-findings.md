@@ -4248,7 +4248,7 @@ Scope guardrails:
 
 - 2026-03-22T03:57:37-0400
   - Final commit hash:
-    - pending stamp commit
+    - `fad36ec9`
   - Bottleneck targeted:
     - testing whether a lighter spacing-controlled Yun repeat preset could produce a cleaner first-vs-later Genei-Jin comparator than the kept `yun-sa3-repeat-pressure` lane without touching runtime code
   - Change summary:
