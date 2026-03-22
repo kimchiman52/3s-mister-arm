@@ -2,7 +2,7 @@ Continue MiSTer performance optimization work in this repo.
 
 Rules:
 - Focus only on performance/runtime improvements for MiSTer.
-- Prefer safer, incremental changes if possible.
+- Prefer the highest expected-value candidate that is rollback-safe within one loop. When two options look comparable, prefer the simpler or more incremental one.
 - Build/validate in Docker container `3sx-mister-build`.
 - At cycle start, read and use `artifacts/mister-port/living-findings.md` as prior context.
 - At cycle start, also read and maintain `artifacts/mister-port/stock-image-software-frame-loop-series/todo.md` as the active checklist for this automation series.
@@ -48,9 +48,15 @@ Rules:
   - if existing automated captures do not cover the user-observed transition/effect/stage-specific stalls, first add or recover the narrowest safe capture support needed to measure them
   - when external behavior or APIs matter, consult primary sources or official docs and rely on those findings
   - write a short research-backed hypothesis and scoped plan into the active checklist before implementing
-- Bias toward deeper research now that the obvious software-frame wins have already landed:
+- Bias toward enough research to bound risk now that the obvious software-frame wins have already landed:
   - challenge whether the remaining ceiling is refresh/update, stage-specific game work, effect bursts, or measurement blind spots before editing runtime code
   - prefer new evidence over intuition when deciding whether the hardware is near a hard limit
+  - do not let repeated measurement-only loops crowd out reversible runtime/build experiments once the surviving candidate set is narrow
+- Selection policy when the queue stalls:
+  - keep gameplay/determinism safety, rollback discipline, device verification, and review strict
+  - but relax candidate conservatism: after `2` consecutive completed loops on the active queue that land only measurement support or docs-only closeouts without a kept runtime/build win, the next unblocked cycle should prefer one bounded rollback-safe runtime or build-level experiment from the strongest surviving hypotheses instead of inventing another new collector
+  - acceptable forced-experiment classes include narrowly scoped helper-local relands, build-flag/codegen trials such as ThinLTO or compiler-hint patches, and other reversible changes that can be fully verified and rolled back within one loop
+  - if a forced experiment regresses or fails verification, roll it back normally, record the evidence, and continue reranking from that result
 - Candidate ordering for this loop series:
   - treat the old `ix 80 / texture 56` audit and scalar `4x` row-walk unroll ideas as closed by the March `2026-03-21` evidence; do not reopen them unchanged
   - first add lower-distortion capture support plus render-subphase telemetry on the trusted first-visible Yun onset lane so the current `~20.9 ms/frame` dark-render gap can be reranked from measured evidence
@@ -61,6 +67,7 @@ Rules:
   - keep Remy-left on a separate compare-dirty `ppg-seqs 81/82` residue track rather than assuming Yun-targeted work will help it
   - treat fixed-point lookup generation, persistent lookup buffers, task-level Y lookup sharing, compiler hints, LTO, PMU/prefetch, NEON, row-dedup runtime changes, and dual-core ideas as secondary or deferred unless the new telemetry materially re-ranks them
   - do not spend first-line loop budget on nearest-only presenter work when the target is native gameplay unless current captures show a real native present bottleneck
+- When the top surviving queue has already consumed multiple measurement-only passes, prefer a bounded runtime/build bet over another collector if the experiment is reversible within one loop and the current evidence is already good enough to reject or keep it cleanly.
 - Only implement optimizations that are backed by that cycle's DEEP research. If the research does not support a safe/high-confidence change, record the result and move to the next candidate instead of forcing an implementation.
 - Never leave the branch dirty between loops. If the repo is dirty at cycle start, do not block; instead treat the first part of that cycle as mandatory closure work:
   - inspect the dirty state
