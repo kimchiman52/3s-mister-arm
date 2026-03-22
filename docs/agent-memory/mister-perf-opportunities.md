@@ -52,15 +52,15 @@ accepted, narrowed, or demoted.
 
 ### Accepted From The New Research
 
-- **Scalar row-walk unroll is a real next-step candidate.** The most durable new idea from the later
-  research/review pass is a careful scalar `4x` unroll in the hot non-integer gather loop. This is
-  now preferred over more lookup/pair setup work because Loop 133 showed the meaningful helper cost
-  is in row-walk gather time, not in lookup generation or pair-bitmap setup.
+- **Scalar row-walk unroll looked like a real next-step candidate in the earlier debate, but later
+  March `2026-03-21` current-tree validation closed it.** Preserve this as historical debate
+  context only: Loop `135` already rejected the scalar `4x` reland, and the later March reruns did
+  not expose a new reason to reopen it on the current tree.
 
-- **The small `ix 80 / texture 56` generic residue is worth a bounded audit.** Loop 132 family-time
-  telemetry showed the remaining generic lane is secondary but real, and the hot families sit just
-  below the current shared `384`-pixel non-integer threshold. That supports a narrow micro-lookup
-  admission audit, not another broad threshold-style reland.
+- **The small `ix 80 / texture 56` generic residue looked worth a bounded audit in the earlier
+  debate, but later March `2026-03-21` validation closed that audit too.** Preserve this as
+  historical debate context only: Loops `134`, `149`, and `150` do not support reopening that
+  residue unchanged on the current tree.
 
 - **Remy-left must stay on its own track.** The newer debate clarified that Remy-left and Genei are
   no longer the same bottleneck family. Remy-left is still exact/refresh-bound compare-dirty
@@ -97,25 +97,27 @@ accepted, narrowed, or demoted.
 ### Quantitative Corrections Worth Remembering
 
 - The later review corrected one ROI estimate for the generic lane: `120.9596 ms` sampled generic
-  time over `300` frames is about `0.40 ms/frame`, not `0.10 ms/frame`. That is still secondary to
-  the non-integer hotspot, but it is large enough to justify a bounded audit before the heavier
-  unroll work.
+  time over `300` frames is about `0.40 ms/frame`, not `0.10 ms/frame`. That was large enough to
+  justify the now-closed bounded audit before the later March `2026-03-21` current-tree validation
+  disproved it as an active next-step lane.
 
 - The debate also clarified that a global threshold drop is not "free" just because the hot residue
   sits under `384` pixels. Earlier threshold-style expansions have already regressed gameplay on this
   tree, so future work should prefer targeted admission over policy-wide threshold movement.
 
-### Durable Native Queue After Synthesis
+### Durable Native Queue After Current-Tree Validation
 
 Use this order unless newer trusted captures contradict it:
 
-1. Audit the `ppg-seqs ix 80 / texture 56` generic residue and, if justified, try a narrow
-   micro-lookup admission instead of another global threshold change.
-2. If the generic audit does not clear the deciding Genei lane, test one careful scalar `4x`
-   unroll in the non-integer row-walk gather loop while preserving the kept pair-only reuse path.
-3. Keep Remy-left on separate compare-dirty `ppg-seqs 81/82` residue work.
+1. Do not reopen helper-local Yun admission/unroll/pair or one-cluster shared-shape ideas
+   unchanged on the current tree.
+2. Keep Remy-left on separate compare-dirty `ppg-seqs 81/82` residue work rather than assuming
+   Yun-targeted raster work will help it.
+3. Prefer measurement-first reranking before another native runtime reland: lower-overhead helper
+   capture, render-subphase profiling, and any gameplay-real repeated-activation lane support
+   needed to test the user-observed first-vs-later activation claim.
 4. Keep row-dedup ideas measurement-only, and leave presenter-native, dual-core, and broader
-   run-batching ideas off the immediate queue.
+   run-batching ideas off the immediate queue unless fresh trusted captures materially re-rank them.
 
 ## Post-Loop-146 Validation Addendum
 

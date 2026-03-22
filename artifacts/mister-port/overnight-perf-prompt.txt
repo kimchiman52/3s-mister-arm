@@ -36,6 +36,10 @@ Rules:
 - Track gameplay speed explicitly in FPS as well as milliseconds:
   - every gameplay capture should record and cite `metrics.fps.mean`
   - use `tools/mister/perf-sampler.sh` summaries plus the JSON to keep FPS visible in the loop log and checklist
+- One-time bootstrap note for the next unattended run:
+  - if the kickoff tree is dirty only in `artifacts/mister-port/stock-image-software-frame-loop-series/todo.md`, `src/main.c`, `src/test/test_runner.c`, and `tools/mister/perf-sampler.sh`, treat that state as unfinished Follow-On Loop `152` measurement support for the gameplay-real repeated Yun activation lane
+  - close that unfinished Loop `152` work first by verifying whether the new `yun-sa3-repeat-heavy` preset is worth keeping, then commit/preserve/revert it according to the normal dirty-tree rules before starting any fresh post-Loop-152 research or implementation
+  - do not mix new render-subphase telemetry work into the same cycle unless Loop `152` has first been returned to a clean committed or reverted state
 - Only broaden measurement or route-identification again if a new runtime attempt fails to match the already-proven manual evidence. The current default should be targeted runtime work against those confirmed lanes, not more generic capture support.
 - Every cycle must begin with DEEP research before any code changes:
   - inspect the current living findings, active checklist, relevant local code paths, and existing gameplay telemetry/logs
@@ -48,11 +52,14 @@ Rules:
   - challenge whether the remaining ceiling is refresh/update, stage-specific game work, effect bursts, or measurement blind spots before editing runtime code
   - prefer new evidence over intuition when deciding whether the hardware is near a hard limit
 - Candidate ordering for this loop series:
-  - treat Loop 133 as attribution support only; do not spend more runtime budget on lookup-generation or pair-bitmap micro-optimizations
-  - first audit the small `generic_textured` `ppg-seqs ix 80 / texture 56` residue under the shared `384`-pixel gate and prefer a narrow micro-lookup admission over a global threshold drop
-  - then test one careful scalar `4x` unroll in the hot non-integer row-walk gather loop while preserving the kept pair-only reuse path
-  - keep Remy-left on a separate compare-dirty `ppg-seqs 81/82` residue track rather than assuming the Yun runtime candidates will help it
-  - treat manual unrolling beyond that scalar `4x` row-walk step, NEON work, LTO, row-dedup runtime changes, and dual-core ideas as secondary or deferred candidates unless fresh telemetry re-ranks them
+  - treat the old `ix 80 / texture 56` audit and scalar `4x` row-walk unroll ideas as closed by the March `2026-03-21` evidence; do not reopen them unchanged
+  - first add lower-distortion capture support plus render-subphase telemetry on the trusted first-visible Yun onset lane so the current `~20.9 ms/frame` dark-render gap can be reranked from measured evidence
+  - then rerun the deciding first-visible Yun onset capture on unchanged runtime behavior and use that new telemetry to identify the largest measured render sub-phase
+  - if the lower-distortion rerun still says helper-local work dominates, next add subrect alpha-structure telemetry for the hot Yun families instead of jumping to another helper-local runtime reland
+  - if cold-vs-warm activation ambiguity still matters after that rerun, prioritize gameplay-real repeated-activation support over the older stripped-repeat lane before attempting a new runtime optimization
+  - keep any future subrect alpha sidecar or clustered-shape runtime reland conditional on the new measurement proving ROI; do not treat them as first-line overnight work ahead of the reranking step
+  - keep Remy-left on a separate compare-dirty `ppg-seqs 81/82` residue track rather than assuming Yun-targeted work will help it
+  - treat fixed-point lookup generation, persistent lookup buffers, task-level Y lookup sharing, compiler hints, LTO, PMU/prefetch, NEON, row-dedup runtime changes, and dual-core ideas as secondary or deferred unless the new telemetry materially re-ranks them
   - do not spend first-line loop budget on nearest-only presenter work when the target is native gameplay unless current captures show a real native present bottleneck
 - Only implement optimizations that are backed by that cycle's DEEP research. If the research does not support a safe/high-confidence change, record the result and move to the next candidate instead of forcing an implementation.
 - Never leave the branch dirty between loops. If the repo is dirty at cycle start, do not block; instead treat the first part of that cycle as mandatory closure work:
