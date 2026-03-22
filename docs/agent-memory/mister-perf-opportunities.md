@@ -16,20 +16,29 @@ complete living-findings.md search, 130+ loop git history, two research sessions
   onset repro `loop145-yun-shared-shapes-repro-r1` stayed at `25.0873 FPS / 39.8609 / 9.5879 /
   29.7127 / 0.5603 ms` overall and `20.9510 FPS / 47.7304 / 11.2303 / 35.9909 / 0.5093 ms` for
   `capture_windows.first_8_frames`, still with direct present and zero fallback/readback.
+- Fresh current-tree replay `loop150-yun-onset-r1` made the native no-retry guidance stricter, not
+  looser: it landed at `23.0476 FPS / 43.3885 / 9.6383 / 33.2248 / 0.5253 ms` overall and
+  `19.2290 FPS / 52.0047 / 10.8829 / 40.5975 / 0.5243 ms` for the first `8` frames, still direct
+  present with zero fallback/readback. The first-`8` generic lane remained only `9.6129 ms` on the
+  same `ppg-seqs ix 80 / texture 56` family, the top four shared-shape buckets were still just the
+  adjacent `32x32 -> 34/35/36/37` cluster at `28.4546 ms` out of `74.8340 ms`, and the top eight
+  lookup profiles covered only `5.3071 ms`. That is still not a safe helper-local reland target on
+  the current tree.
 - Remy-left remains a different problem from Genei. The fresh deciding rerun
   `loop146-remy-rerank-r2` stayed at `58.0531 FPS / 17.2256 / 8.4721 / 8.2280 / 0.5255 ms`, with
   `fast_non_integer = 0`, `generic_textured = 0`, and the same tiny compare-dirty full-refresh
   tail already kept in Loop `137` (`ix 80 = 13/1992`, `ix 81 = 10/700`, `ix 82 = 6/614`).
 - The older March queue is now stale on the current tree. Loop `134` rejected the bounded
   `ix 80 / texture 56` generic admission, Loop `135` rejected the scalar `4x` row-walk unroll,
-  Loop `142` rejected the low-density pair gate, and Loop `145` closed docs-only because the
-  recovered schema-`62` shared-shape export still does not isolate a safe helper-local Yun reland.
-- Current native order after Loops `145` / `146`:
-  `(1)` do not reopen the rejected Yun admission/unroll/pair ideas unchanged,
-  `(2)` do not broaden compare-dirty caps again on Remy without new evidence that the tiny tail has
-  grown or that the lane stopped staying exact/direct, `(3)` only start another native runtime edit
-  after either a broader clustered row-walk specialization is proven from the current schema-`62`
-  Yun data or a newly measured gameplay bottleneck clearly outranks both current queues.
+  Loop `142` rejected the low-density pair gate, Loop `149` closed the narrower palette-specific
+  `ix 80` retry angle, and Loop `150` reran the deciding current-tree Yun burst without finding a
+  new safe helper-local reland.
+- Current native order after Loops `149` / `150`:
+  `(1)` do not reopen helper-local Yun admission/unroll/pair or one-cluster shared-shape ideas
+  unchanged, `(2)` do not broaden compare-dirty caps again on Remy without new evidence that the
+  tiny tail has grown or that the lane stopped staying exact/direct, `(3)` only start another
+  native runtime edit after either a broader row-walk redesign is proven with lower-overhead
+  measurement or a newly measured gameplay bottleneck clearly outranks both current queues.
 - Do not spend the next native loop on presenter-side work, broader same-source run batching beyond
   pairs, dual-core raster threading, or runtime row dedup before measurement.
 

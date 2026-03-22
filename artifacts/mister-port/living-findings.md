@@ -4099,3 +4099,21 @@ Scope guardrails:
     - keep the runtime tree unchanged and close docs-only; another palette-specific or otherwise narrower sub-`384` admission would spend risk on the same rejected family with even less upside than Loop `134`
   - Next best candidate optimization:
     - rerank away from this native Yun renderer lane until a different measured gameplay bottleneck clearly outranks it; do not reopen the `ix 80` residue or broader shared row-walk relands without genuinely new trusted telemetry
+
+- 2026-03-21T23:15:00-0400
+  - Final commit hash:
+    - `pending local commit`
+  - Bottleneck targeted:
+    - fresh current-tree rerun of the native Yun SA3 first-visible activation burst to test whether any helper-local runtime lever still exists after the Loop `149` native rerank
+  - Change summary:
+    - rebuilt/install-packaged the telemetry ARM flavor in Docker `3sx-mister-build`, redeployed untouched `HEAD`, and captured committed deciding telemetry as `artifacts/mister-port/perf/loop150-yun-onset-r1.json`
+    - updated the checklist, living findings, and backlog memo; no runtime or measurement-support code changes landed in this cycle
+    - Do not retry now: helper-local native-Yun relands such as narrower `ix 80` admissions, scalar `4x` row-walk unroll, low-density pair gating, or one-cluster shared-shape specializations unless genuinely new trusted telemetry changes the ranking
+  - Verification result summary:
+    - Docker telemetry ARM build/install/package plus `readelf` passed, and serialized `health`, `deploy`, `probe`, and bounded `smoke` all passed on `192.168.1.171` with the same dummy/software + fbdev + native route and expected bounded `__RUNTIME_RC__=124` / `exit=143`
+    - `loop150-yun-onset-r1` landed at `23.0476 FPS / 43.3885 / 9.6383 / 33.2248 / 0.5253 ms` overall and `19.2290 FPS / 52.0047 / 10.8829 / 40.5975 / 0.5243 ms` for the first `8` frames, still direct/native with zero fallback/readback
+    - the first-`8` generic lane remained only `9.6129 ms` on `ppg-seqs ix 80 / texture 56`, while the top shared-shape cluster still spread across adjacent `32x32 -> 34/35/36/37` buckets (`28.4546 ms` of `74.8340 ms`) and the top eight lookup profiles covered only `5.3071 ms`, so the current tree still does not expose a new narrow helper-local reland
+  - Keep/rollback decision with reason:
+    - keep the runtime tree unchanged and close docs-only with committed telemetry; the fresh current-tree replay still does not isolate a safe narrow reland for the user-priority Yun burst
+  - Next best candidate optimization:
+    - rerank away from helper-local Yun runtime edits until either a broader row-walk redesign is proven with lower-overhead measurement or a different gameplay bottleneck clearly outranks this queue
