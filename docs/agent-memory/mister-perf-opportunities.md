@@ -126,6 +126,14 @@ as the active next-step list without fresh validation.
   capture still shows the same small under-threshold `ix 80` cohort rather than a new isolated miss
   that would justify another policy change or helper-local admission reland.
 
+- Loop `149` closes the narrower “palette-specific `ix 80` retry” angle too. On the trusted
+  schema-`63` `loop148-yun-lookup-signatures-r2` capture, first-`8` generic residue totals only
+  `9.9682 ms` across eight `ppg-seqs ix 80 / texture 56` palette families, and the largest slice
+  is only `palette 393 = 3.0456 ms` (`30.55%` of the generic lane). Loop `134` already made the
+  deciding Yun lane slower while admitting a broader superset of that same under-`384` family, so
+  do not reopen palette-specific or otherwise narrower sub-`384` admissions without genuinely new
+  measured separation.
+
 - The full-telemetry phase split does not revive the old lookup-generation or pair-bitmap queue.
   On `loop145-yun-shared-shapes-repro-r1`, `software_frame_fast_non_integer_phase_sampling`
   reports only `82.7123 ms` total for `lookup_x + lookup_y + pair_lookup` across
