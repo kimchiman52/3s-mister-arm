@@ -4498,7 +4498,7 @@ Scope guardrails:
 
 - 2026-03-22T23:05:00-0400
   - Final commit hash:
-    - `pending`
+    - `4c99facc`
   - Bottleneck targeted:
     - testing whether one basic first-window cluster-snapshot collector could recover decision-grade shared-shape and lookup-profile evidence on the trusted Yun onset lane without reintroducing unacceptable capture distortion
   - Change summary:

@@ -7369,7 +7369,7 @@
 - [x] Keep/rollback decision:
   - [x] reject and revert. The collector answered the cluster question, but the same-build A/B shows it is still too distortive for the trusted low-distortion onset lane
 - [x] final commit hash:
-  - [x] pending
+  - [x] `4c99facc` (`docs: close loop 172 cluster collector rejection`)
 - [x] next best candidate:
   - [x] do not retry this basic first-window cluster collector unchanged now
   - [x] because the rejected run still reconfirmed the broad `32x32 -> 34/35/36/37` onset cohort, the next measurement candidate should move to narrower hot-family subrect alpha-structure telemetry on the trusted onset lane instead of spending another loop on exact-shape / lookup-profile aggregation
