@@ -26,6 +26,7 @@ void SDLApp_ConfigurePerfCapture(
     const char* output_path,
     const char* scene_name,
     bool basic_mode,
+    bool basic_first_window_family_snapshots,
     bool disable_reuse_telemetry,
     bool enable_subrect_alpha_telemetry);
 bool SDLApp_IsPerfRuntimeStateActive(const char* runtime_state_name);
@@ -39,12 +40,14 @@ SDLApp_ConfigurePerfCapture(int frame_count,
                             const char* output_path,
                             const char* scene_name,
                             bool basic_mode,
+                            bool basic_first_window_family_snapshots,
                             bool disable_reuse_telemetry,
                             bool enable_subrect_alpha_telemetry) {
     (void)frame_count;
     (void)output_path;
     (void)scene_name;
     (void)basic_mode;
+    (void)basic_first_window_family_snapshots;
     (void)disable_reuse_telemetry;
     (void)enable_subrect_alpha_telemetry;
 }

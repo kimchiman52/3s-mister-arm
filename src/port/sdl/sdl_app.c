@@ -99,6 +99,7 @@ typedef struct PerfCaptureDemoLogoState {
 static bool perf_capture_enabled = false;
 static bool perf_capture_completed = false;
 static bool perf_capture_basic_mode = false;
+static bool perf_capture_basic_first_window_family_snapshots_enabled = false;
 static bool perf_capture_fast_non_integer_reuse_telemetry_enabled = true;
 static bool perf_capture_fast_non_integer_subrect_alpha_telemetry_enabled = false;
 static int perf_capture_target_frames = 0;
@@ -1047,9 +1048,11 @@ static void perf_capture_reset_storage(void) {
     perf_capture_enabled = false;
     perf_capture_completed = false;
     perf_capture_basic_mode = false;
+    perf_capture_basic_first_window_family_snapshots_enabled = false;
     perf_capture_fast_non_integer_reuse_telemetry_enabled = true;
     perf_capture_fast_non_integer_subrect_alpha_telemetry_enabled = false;
     SDLGameRenderer_SetPerfCaptureLogicalIdentityEnabled(false);
+    SDLGameRenderer_SetPerfCaptureBasicFirstWindowFamilySnapshotsEnabled(false);
     SDLGameRenderer_SetPerfCaptureFastNonIntegerReuseTelemetryEnabled(true);
     SDLGameRenderer_SetPerfCaptureFastNonIntegerSubrectAlphaTelemetryEnabled(false);
     perf_capture_target_frames = 0;
@@ -1303,10 +1306,19 @@ static bool perf_capture_collect_extended_stats(void) {
     return perf_capture_enabled && !perf_capture_completed && !perf_capture_basic_mode;
 }
 
+static const char* perf_capture_detail_mode_name(void) {
+    if (!perf_capture_basic_mode) {
+        return "full";
+    }
+
+    return perf_capture_basic_first_window_family_snapshots_enabled ? "basic-first-window-families" : "basic";
+}
+
 void SDLApp_ConfigurePerfCapture(int frame_count,
                                  const char* output_path,
                                  const char* scene_name,
                                  bool basic_mode,
+                                 bool basic_first_window_family_snapshots,
                                  bool disable_reuse_telemetry,
                                  bool enable_subrect_alpha_telemetry) {
     if (frame_count <= 0) {
@@ -1334,11 +1346,14 @@ void SDLApp_ConfigurePerfCapture(int frame_count,
     perf_capture_completed = false;
     perf_capture_enabled = true;
     perf_capture_basic_mode = basic_mode;
+    perf_capture_basic_first_window_family_snapshots_enabled = basic_mode && basic_first_window_family_snapshots;
     perf_capture_fast_non_integer_reuse_telemetry_enabled = basic_mode || !disable_reuse_telemetry;
     perf_capture_fast_non_integer_subrect_alpha_telemetry_enabled = !basic_mode && enable_subrect_alpha_telemetry;
     perf_capture_reset_window_snapshot(&perf_capture_first_window_snapshot);
     perf_capture_reset_window_snapshot(&perf_capture_first_burst_snapshot);
     SDLGameRenderer_SetPerfCaptureLogicalIdentityEnabled(!basic_mode);
+    SDLGameRenderer_SetPerfCaptureBasicFirstWindowFamilySnapshotsEnabled(
+        perf_capture_basic_first_window_family_snapshots_enabled);
     SDLGameRenderer_SetPerfCaptureFastNonIntegerReuseTelemetryEnabled(
         perf_capture_fast_non_integer_reuse_telemetry_enabled);
     SDLGameRenderer_SetPerfCaptureFastNonIntegerSubrectAlphaTelemetryEnabled(
@@ -1548,14 +1563,15 @@ void SDLApp_ConfigurePerfCapture(int frame_count,
     }
 
     snapshot_perf_capture_transition_start_state();
-    backend_logf("PERF capture enabled: frames=%d output=%s scene=%s detail_mode=%s scale_mode=%s software_frame_mode=%s fast_non_integer_reuse_telemetry=%s fast_non_integer_subrect_alpha_telemetry=%s",
+    backend_logf("PERF capture enabled: frames=%d output=%s scene=%s detail_mode=%s scale_mode=%s software_frame_mode=%s fast_non_integer_reuse_telemetry=%s basic_first_window_family_snapshots=%s fast_non_integer_subrect_alpha_telemetry=%s",
                  perf_capture_target_frames,
                  perf_capture_output_path != NULL ? perf_capture_output_path : "(auto)",
                  perf_capture_scene_name != NULL ? perf_capture_scene_name : "(none)",
-                 perf_capture_basic_mode ? "basic" : "full",
+                 perf_capture_detail_mode_name(),
                  scale_mode_name(scale_mode),
                  software_frame_mode_name(),
                  perf_capture_fast_non_integer_reuse_telemetry_enabled ? "on" : "off",
+                 perf_capture_basic_first_window_family_snapshots_enabled ? "on" : "off",
                  perf_capture_fast_non_integer_subrect_alpha_telemetry_enabled ? "on" : "off");
 }
 
@@ -1645,8 +1661,11 @@ static void perf_capture_refresh_window_snapshot_logical_identity(PerfCaptureFir
 
 static void perf_capture_snapshot_window_families(PerfCaptureFirstWindowFamilySnapshot* snapshot,
                                                   int snapshot_frame_count) {
-    if ((snapshot == NULL) || perf_capture_basic_mode || snapshot->valid || (perf_capture_recorded_frames <= 0) ||
+    if ((snapshot == NULL) || snapshot->valid || (perf_capture_recorded_frames <= 0) ||
         (perf_capture_target_frames <= 0) || (snapshot_frame_count <= 0)) {
+        return;
+    }
+    if (perf_capture_basic_mode && !perf_capture_basic_first_window_family_snapshots_enabled) {
         return;
     }
     if (perf_capture_recorded_frames != snapshot_frame_count) {
@@ -1664,22 +1683,24 @@ static void perf_capture_snapshot_window_families(PerfCaptureFirstWindowFamilySn
         &snapshot->fast_non_integer_pixel_total,
         &snapshot->fast_non_integer_lookup_entry_total,
         NULL);
-    snapshot->fast_non_integer_shared_shape_count = SDLGameRenderer_GetPerfCaptureFastNonIntegerSharedShapes(
-        snapshot->fast_non_integer_shared_shapes,
-        SDL_arraysize(snapshot->fast_non_integer_shared_shapes));
-    SDLGameRenderer_GetPerfCaptureFastNonIntegerSharedShapeTotals(
-        &snapshot->fast_non_integer_shared_shape_task_total,
-        &snapshot->fast_non_integer_shared_shape_pixel_total,
-        &snapshot->fast_non_integer_shared_shape_sampled_ns_total,
-        NULL);
-    snapshot->fast_non_integer_lookup_profile_count = SDLGameRenderer_GetPerfCaptureFastNonIntegerLookupProfiles(
-        snapshot->fast_non_integer_lookup_profiles,
-        SDL_arraysize(snapshot->fast_non_integer_lookup_profiles));
-    SDLGameRenderer_GetPerfCaptureFastNonIntegerLookupProfileTotals(
-        &snapshot->fast_non_integer_lookup_profile_task_total,
-        &snapshot->fast_non_integer_lookup_profile_pixel_total,
-        &snapshot->fast_non_integer_lookup_profile_sampled_ns_total,
-        NULL);
+    if (!perf_capture_basic_mode) {
+        snapshot->fast_non_integer_shared_shape_count = SDLGameRenderer_GetPerfCaptureFastNonIntegerSharedShapes(
+            snapshot->fast_non_integer_shared_shapes,
+            SDL_arraysize(snapshot->fast_non_integer_shared_shapes));
+        SDLGameRenderer_GetPerfCaptureFastNonIntegerSharedShapeTotals(
+            &snapshot->fast_non_integer_shared_shape_task_total,
+            &snapshot->fast_non_integer_shared_shape_pixel_total,
+            &snapshot->fast_non_integer_shared_shape_sampled_ns_total,
+            NULL);
+        snapshot->fast_non_integer_lookup_profile_count = SDLGameRenderer_GetPerfCaptureFastNonIntegerLookupProfiles(
+            snapshot->fast_non_integer_lookup_profiles,
+            SDL_arraysize(snapshot->fast_non_integer_lookup_profiles));
+        SDLGameRenderer_GetPerfCaptureFastNonIntegerLookupProfileTotals(
+            &snapshot->fast_non_integer_lookup_profile_task_total,
+            &snapshot->fast_non_integer_lookup_profile_pixel_total,
+            &snapshot->fast_non_integer_lookup_profile_sampled_ns_total,
+            NULL);
+    }
     snapshot->generic_textured_family_count = SDLGameRenderer_GetPerfCaptureGenericTexturedFamilies(
         snapshot->generic_textured_families,
         SDL_arraysize(snapshot->generic_textured_families));
@@ -1691,7 +1712,10 @@ static void perf_capture_snapshot_window_families(PerfCaptureFirstWindowFamilySn
 }
 
 static void perf_capture_snapshot_window_families_if_needed(void) {
-    if (perf_capture_basic_mode || (perf_capture_recorded_frames <= 0) || (perf_capture_target_frames <= 0)) {
+    if ((perf_capture_recorded_frames <= 0) || (perf_capture_target_frames <= 0)) {
+        return;
+    }
+    if (perf_capture_basic_mode && !perf_capture_basic_first_window_family_snapshots_enabled) {
         return;
     }
 
@@ -1704,6 +1728,10 @@ static void perf_capture_snapshot_window_families_if_needed(void) {
 
     perf_capture_snapshot_window_families(&perf_capture_first_burst_snapshot, first_burst_snapshot_frame_count);
     perf_capture_snapshot_window_families(&perf_capture_first_window_snapshot, first_window_snapshot_frame_count);
+    if (perf_capture_basic_mode && perf_capture_basic_first_window_family_snapshots_enabled &&
+        perf_capture_first_window_snapshot.valid) {
+        SDLGameRenderer_SetPerfCaptureBasicFirstWindowFamilySnapshotsEnabled(false);
+    }
 }
 
 static bool summarize_perf_capture_window(int start_frame,
@@ -4157,7 +4185,7 @@ static void perf_capture_write_summary(void) {
     io_printf(io, "  \"scene\": \"");
     io_write_json_escaped_string(io, perf_capture_scene_name);
     io_printf(io, "\",\n");
-    io_printf(io, "  \"detail_mode\": \"%s\",\n", perf_capture_basic_mode ? "basic" : "full");
+    io_printf(io, "  \"detail_mode\": \"%s\",\n", perf_capture_detail_mode_name());
     io_printf(io, "  \"frames\": %d,\n", perf_capture_recorded_frames);
     io_printf(io,
               "  \"test_state\": {\n"

@@ -30,6 +30,7 @@ typedef struct PerfCaptureConfiguration {
     const char* output_path;
     const char* scene;
     bool basic_mode;
+    bool basic_first_window_family_snapshots;
     bool fast_non_integer_disable_reuse_telemetry;
     bool fast_non_integer_enable_subrect_alpha_telemetry;
     bool wait_for_gameplay;

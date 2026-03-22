@@ -337,6 +337,7 @@ static Uint64 perf_capture_raster_sample_counters[SDL_GAME_RENDERER_PERF_CAPTURE
 static Uint64 perf_capture_raster_sample_calls[SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_COUNT] = { 0 };
 static Uint64 perf_capture_raster_sample_pixels[SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_COUNT] = { 0 };
 static Uint64 perf_capture_raster_sample_ns[SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_COUNT] = { 0 };
+static bool perf_capture_basic_first_window_family_snapshots_enabled = false;
 static SDLGameRenderer_PerfCaptureTexturedRectFamily perf_capture_fast_exact_families[16] = { 0 };
 static int perf_capture_fast_exact_family_count = 0;
 static SDLGameRenderer_PerfCaptureTexturedRectFamily perf_capture_fast_non_integer_families[64] = { 0 };
@@ -4139,8 +4140,9 @@ static void note_perf_capture_textured_rect_family(const RenderTask* task,
                                                    int* family_count,
                                                    int family_capacity,
                                                    TexturedRectFamilyProfile* out_profile) {
-    if (!frame_stats_extended_enabled || (task == NULL) || (dst_surface == NULL) || (families == NULL) ||
-        (family_count == NULL) || (family_capacity <= 0)) {
+    if ((task == NULL) || (dst_surface == NULL) || (families == NULL) || (family_count == NULL) ||
+        (family_capacity <= 0) ||
+        (!frame_stats_extended_enabled && !perf_capture_basic_first_window_family_snapshots_enabled)) {
         return;
     }
 
@@ -4831,7 +4833,7 @@ static void note_perf_capture_fast_non_integer_family(const RenderTask* task,
         &perf_capture_fast_non_integer_family_count,
         (int)SDL_arraysize(perf_capture_fast_non_integer_families),
         &profile);
-    if (profile.texture_handle >= 0) {
+    if (frame_stats_extended_enabled && (profile.texture_handle >= 0)) {
         note_perf_capture_fast_non_integer_shape(&profile, sampled_ns);
         note_perf_capture_fast_non_integer_lookup_pattern(&profile, non_integer_telemetry, sampled_ns);
     }
@@ -4981,12 +4983,16 @@ static void note_software_frame_fast_copy_result(const RenderTask* task,
                                                  const SDL_Surface* dst_surface,
                                                  Uint64 non_integer_lookup_entries,
                                                  Uint64 sampled_ns) {
-    if (!frame_stats_extended_enabled || (task == NULL)) {
+    if ((task == NULL) ||
+        (!frame_stats_extended_enabled && !perf_capture_basic_first_window_family_snapshots_enabled)) {
         return;
     }
 
     const Uint64 submitted_pixels = render_task_submitted_pixels(task);
     if (result == SOFTWARE_FRAME_FAST_COPY_RESULT_EXACT) {
+        if (!frame_stats_extended_enabled) {
+            return;
+        }
         frame_stats.software_frame_fast_exact_tasks += 1;
         frame_stats.software_frame_fast_exact_pixels += submitted_pixels;
         note_perf_capture_fast_exact_family(task, dst_surface, 0, sampled_ns);
@@ -5003,18 +5009,24 @@ static void note_software_frame_fast_copy_result(const RenderTask* task,
         return;
     }
     if (result == SOFTWARE_FRAME_FAST_COPY_RESULT_SCALED) {
+        if (!frame_stats_extended_enabled) {
+            return;
+        }
         frame_stats.software_frame_fast_scaled_tasks += 1;
         frame_stats.software_frame_fast_scaled_pixels += submitted_pixels;
         return;
     }
 
-    frame_stats.software_frame_generic_textured_tasks += 1;
-    frame_stats.software_frame_generic_textured_pixels += submitted_pixels;
     note_perf_capture_generic_textured_family(
         task,
         dst_surface,
         result == SOFTWARE_FRAME_FAST_COPY_RESULT_NON_INTEGER ? non_integer_lookup_entries : 0,
         sampled_ns);
+    if (!frame_stats_extended_enabled) {
+        return;
+    }
+    frame_stats.software_frame_generic_textured_tasks += 1;
+    frame_stats.software_frame_generic_textured_pixels += submitted_pixels;
     if (software_frame_color_is_alpha_only(task->color)) {
         frame_stats.software_frame_generic_textured_alpha_only_tasks += 1;
         frame_stats.software_frame_generic_textured_alpha_only_pixels += submitted_pixels;
@@ -5076,39 +5088,45 @@ static void note_software_frame_fast_non_integer(const RenderTask* task,
                                                  Uint64 lookup_entries,
                                                  const SDLSoftwareFrame_NonIntegerTelemetry* non_integer_telemetry,
                                                  Uint64 sampled_ns) {
-    if (!frame_stats_extended_enabled || (task == NULL)) {
+    if ((task == NULL) ||
+        (!frame_stats_extended_enabled && !perf_capture_basic_first_window_family_snapshots_enabled)) {
         return;
     }
 
     const Uint64 submitted_pixels = render_task_submitted_pixels(task);
-    frame_stats.software_frame_fast_non_integer_tasks += 1;
-    frame_stats.software_frame_fast_non_integer_pixels += submitted_pixels;
-    frame_stats.software_frame_fast_non_integer_lookup_entries += lookup_entries;
-    if (non_integer_telemetry != NULL) {
-        frame_stats.software_frame_fast_non_integer_source_alpha_opaque_pixels +=
-            non_integer_telemetry->source_alpha_opaque_pixels;
-        frame_stats.software_frame_fast_non_integer_source_alpha_transparent_pixels +=
-            non_integer_telemetry->source_alpha_transparent_pixels;
-        frame_stats.software_frame_fast_non_integer_source_alpha_blended_pixels +=
-            non_integer_telemetry->source_alpha_blended_pixels;
-        frame_stats.software_frame_fast_non_integer_same_source_runs += non_integer_telemetry->same_source_runs;
-        frame_stats.software_frame_fast_non_integer_same_source_reuse_runs +=
-            non_integer_telemetry->same_source_reuse_runs;
-        frame_stats.software_frame_fast_non_integer_same_source_reused_pixels +=
-            non_integer_telemetry->same_source_reused_pixels;
-        frame_stats.software_frame_fast_non_integer_same_source_opaque_reused_pixels +=
-            non_integer_telemetry->same_source_opaque_reused_pixels;
-        frame_stats.software_frame_fast_non_integer_same_source_transparent_reused_pixels +=
-            non_integer_telemetry->same_source_transparent_reused_pixels;
-        frame_stats.software_frame_fast_non_integer_same_source_blended_reused_pixels +=
-            non_integer_telemetry->same_source_blended_reused_pixels;
-        if (non_integer_telemetry->same_source_max_run_length >
-            frame_stats.software_frame_fast_non_integer_same_source_max_run_length) {
-            frame_stats.software_frame_fast_non_integer_same_source_max_run_length =
-                non_integer_telemetry->same_source_max_run_length;
+    if (frame_stats_extended_enabled) {
+        frame_stats.software_frame_fast_non_integer_tasks += 1;
+        frame_stats.software_frame_fast_non_integer_pixels += submitted_pixels;
+        frame_stats.software_frame_fast_non_integer_lookup_entries += lookup_entries;
+        if (non_integer_telemetry != NULL) {
+            frame_stats.software_frame_fast_non_integer_source_alpha_opaque_pixels +=
+                non_integer_telemetry->source_alpha_opaque_pixels;
+            frame_stats.software_frame_fast_non_integer_source_alpha_transparent_pixels +=
+                non_integer_telemetry->source_alpha_transparent_pixels;
+            frame_stats.software_frame_fast_non_integer_source_alpha_blended_pixels +=
+                non_integer_telemetry->source_alpha_blended_pixels;
+            frame_stats.software_frame_fast_non_integer_same_source_runs += non_integer_telemetry->same_source_runs;
+            frame_stats.software_frame_fast_non_integer_same_source_reuse_runs +=
+                non_integer_telemetry->same_source_reuse_runs;
+            frame_stats.software_frame_fast_non_integer_same_source_reused_pixels +=
+                non_integer_telemetry->same_source_reused_pixels;
+            frame_stats.software_frame_fast_non_integer_same_source_opaque_reused_pixels +=
+                non_integer_telemetry->same_source_opaque_reused_pixels;
+            frame_stats.software_frame_fast_non_integer_same_source_transparent_reused_pixels +=
+                non_integer_telemetry->same_source_transparent_reused_pixels;
+            frame_stats.software_frame_fast_non_integer_same_source_blended_reused_pixels +=
+                non_integer_telemetry->same_source_blended_reused_pixels;
+            if (non_integer_telemetry->same_source_max_run_length >
+                frame_stats.software_frame_fast_non_integer_same_source_max_run_length) {
+                frame_stats.software_frame_fast_non_integer_same_source_max_run_length =
+                    non_integer_telemetry->same_source_max_run_length;
+            }
         }
     }
     note_perf_capture_fast_non_integer_family(task, dst_surface, lookup_entries, non_integer_telemetry, sampled_ns);
+    if (!frame_stats_extended_enabled) {
+        return;
+    }
     if (software_frame_color_is_alpha_only(task->color)) {
         frame_stats.software_frame_fast_non_integer_alpha_only_tasks += 1;
         frame_stats.software_frame_fast_non_integer_alpha_only_pixels += submitted_pixels;
@@ -7238,6 +7256,10 @@ bool SDLGameRenderer_IsPerfCaptureExtendedStatsEnabled(void) {
 
 void SDLGameRenderer_SetPerfCaptureLogicalIdentityEnabled(bool enabled) {
     perf_capture_logical_identity_enabled = enabled;
+}
+
+void SDLGameRenderer_SetPerfCaptureBasicFirstWindowFamilySnapshotsEnabled(bool enabled) {
+    perf_capture_basic_first_window_family_snapshots_enabled = enabled;
 }
 
 void SDLGameRenderer_SetPerfCaptureFastNonIntegerReuseTelemetryEnabled(bool enabled) {

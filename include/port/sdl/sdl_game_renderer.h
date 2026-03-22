@@ -699,6 +699,7 @@ const SDL_Surface* SDLGameRenderer_GetSoftwareFrameSurface(void);
 bool SDLGameRenderer_EnsureSoftwareFrameCanvas(void);
 void SDLGameRenderer_NoteSoftwareFrameDirectPresent(void);
 void SDLGameRenderer_SetPerfCaptureLogicalIdentityEnabled(bool enabled);
+void SDLGameRenderer_SetPerfCaptureBasicFirstWindowFamilySnapshotsEnabled(bool enabled);
 void SDLGameRenderer_SetPerfCaptureFastNonIntegerReuseTelemetryEnabled(bool enabled);
 void SDLGameRenderer_SetPerfCaptureFastNonIntegerSubrectAlphaTelemetryEnabled(bool enabled);
 void SDLGameRenderer_BeginFrame(bool capture_extended_stats);

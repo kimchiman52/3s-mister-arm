@@ -172,6 +172,13 @@ static void read_args(int argc, const char* argv[]) {
                     0,
                     0),
         OPT_BOOLEAN(0,
+                    "perf-basic-first-window-families",
+                    &configuration.perf.basic_first_window_family_snapshots,
+                    "When used with --perf-basic, also export first-window fast/generic family summaries without full shape/lookup telemetry.",
+                    NULL,
+                    0,
+                    0),
+        OPT_BOOLEAN(0,
                     "perf-fast-non-integer-no-reuse-telemetry",
                     &configuration.perf.fast_non_integer_disable_reuse_telemetry,
                     "Keep full perf capture enabled but skip fast non-integer row-reuse bookkeeping to reduce capture distortion.",
@@ -352,6 +359,11 @@ static void verify_args() {
 #if ENABLE_PERF_TELEMETRY
     if (configuration.perf.frame_count < 0) {
         error_out_with_code("--perf-capture must be >= 0.", EXIT_CODE_RUNTIME_ERROR);
+    }
+
+    if (configuration.perf.basic_first_window_family_snapshots && !configuration.perf.basic_mode) {
+        error_out_with_code("--perf-basic-first-window-families requires --perf-basic.",
+                            EXIT_CODE_RUNTIME_ERROR);
     }
 
     if (!is_supported_perf_wait_test_phase(configuration.perf.wait_for_test_phase)) {
@@ -601,6 +613,7 @@ static int loop() {
                                     configuration.perf.output_path,
                                     configuration.perf.scene,
                                     configuration.perf.basic_mode,
+                                    configuration.perf.basic_first_window_family_snapshots,
                                     configuration.perf.fast_non_integer_disable_reuse_telemetry,
                                     configuration.perf.fast_non_integer_enable_subrect_alpha_telemetry);
         perf_capture_started = true;
@@ -644,13 +657,18 @@ static int loop() {
                     SDL_Log("PERF capture start: in_game=%d warmup_frames=%d scene=%s detail_mode=%s stage_id=%d "
                             "test_stage_override=%d test_scene_preset=%s p1_character=%d p2_character=%d "
                             "p1_super_art=%d p2_super_art=%d test_phase=%s wait_test_phase=%s wait_runtime_state=%s "
-                            "fast_non_integer_reuse_telemetry=%s fast_non_integer_subrect_alpha_telemetry=%s "
+                            "fast_non_integer_reuse_telemetry=%s basic_first_window_family_snapshots=%s "
+                            "fast_non_integer_subrect_alpha_telemetry=%s "
                             "g_no=%d/%d/%d/%d e_no=%d/%d/%d/%d menu_task_condition=%d menu_r_no=%d/%d/%d/%d "
                             "break_into=%d hnc_num=%d exec_wipe=%d active_wipe_type=%d wipe_limit=%d",
                             mpp_w.inGame ? 1 : 0,
                             configuration.perf.gameplay_warmup_frames,
                             configuration.perf.scene != NULL ? configuration.perf.scene : "(none)",
-                            configuration.perf.basic_mode ? "basic" : "full",
+                            configuration.perf.basic_mode
+                                ? (configuration.perf.basic_first_window_family_snapshots
+                                       ? "basic-first-window-families"
+                                       : "basic")
+                                : "full",
                             perf_stage_id,
                             configuration.test.stage,
                             configuration.test.scene_preset != NULL ? configuration.test.scene_preset : "(none)",
@@ -665,6 +683,10 @@ static int loop() {
                                                                              : "(none)",
                             (configuration.perf.basic_mode ||
                              !configuration.perf.fast_non_integer_disable_reuse_telemetry)
+                                ? "on"
+                                : "off",
+                            (configuration.perf.basic_mode &&
+                             configuration.perf.basic_first_window_family_snapshots)
                                 ? "on"
                                 : "off",
                             (!configuration.perf.basic_mode &&
@@ -693,6 +715,7 @@ static int loop() {
                                                 configuration.perf.output_path,
                                                 configuration.perf.scene,
                                                 configuration.perf.basic_mode,
+                                                configuration.perf.basic_first_window_family_snapshots,
                                                 configuration.perf.fast_non_integer_disable_reuse_telemetry,
                                                 configuration.perf.fast_non_integer_enable_subrect_alpha_telemetry);
                     perf_capture_started = true;
