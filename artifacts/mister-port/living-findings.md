@@ -4245,3 +4245,21 @@ Scope guardrails:
     - keep the runtime unchanged and close docs-only; the later activation is only modestly better in the first `8` frames and slightly worse over the full `120`-frame window, which is enough to block another blind renderer reland but not enough to replace the trusted manual report
   - Next best candidate optimization:
     - if a closer automated match is still needed, add one lighter scene/spacing-specific repeat lane before any fresh renderer work; otherwise leave native Yun runtime changes parked until a new measured bottleneck outranks this queue
+
+- 2026-03-22T03:57:37-0400
+  - Final commit hash:
+    - pending stamp commit
+  - Bottleneck targeted:
+    - testing whether a lighter spacing-controlled Yun repeat preset could produce a cleaner first-vs-later Genei-Jin comparator than the kept `yun-sa3-repeat-pressure` lane without touching runtime code
+  - Change summary:
+    - added and verified one measurement-only preset, `yun-sa3-repeat-spacing`, then accepted review feedback that the first draft could drift stage position and confound the apparent later-activation win
+    - reran the deciding reachability and matched first/second activation captures with midpoint anchoring, then rolled the entire preset back after the anchored results failed the keep rationale
+    - kept only the closeout docs plus the captured `loop158` perf JSONs for the rejected experiment
+  - Verification result summary:
+    - local validation passed on both iterations: `git diff --check`, `bash -n tools/mister/perf-sampler.sh`, telemetry ARM rebuild/install/package in Docker `3sx-mister-build`, and `readelf` still reported `ELF32` / `ARM` / hard-float output
+    - serialized `lock-status`, `busy-status`, `health`, `deploy`, `probe`, and bounded `smoke` all passed on `192.168.1.171`; both `r1` and anchored `r2` reachability scouts stayed direct/native and proved `p1_super_art_active_starts_total=2`
+    - the accepted review fix erased the original keep signal: anchored `r2` first/second captures landed at `50.6734 -> 46.9149 FPS` overall and only `40.7804 -> 40.8927 FPS` over the first `8` frames, so the spacing lane no longer beat the kept `loop157` comparator
+  - Keep/rollback decision with reason:
+    - reject and revert; once the stage-drift confounder was removed, the spacing preset no longer provided a stronger or cleaner cold-vs-warm signal than the kept repeat-pressure lane
+  - Next best candidate optimization:
+    - keep using the committed `yun-sa3-repeat-pressure` lane as the Yun repeat comparator, and if cold-vs-warm ambiguity still matters, spend the next loop on a narrow workload-shape telemetry pass there instead of another spacing-script rewrite
