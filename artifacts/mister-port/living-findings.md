@@ -4587,7 +4587,7 @@ Scope guardrails:
 
 - 2026-03-22T23:59:00-0400
   - Final commit hash:
-    - `PENDING`
+    - `721fa501`
   - Bottleneck targeted:
     - testing whether a helper-local opaque-first alpha branch order in the unmodulated non-integer helper could reduce the first-visible Yun onset row-raster cost without adding new metadata or changing routing
   - Change summary:
