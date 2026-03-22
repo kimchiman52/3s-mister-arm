@@ -64,6 +64,7 @@ typedef enum TestScenePreset {
     TEST_SCENE_PRESET_EFFECT_HEAVY,
     TEST_SCENE_PRESET_SUPER_HEAVY,
     TEST_SCENE_PRESET_YUN_SA3_REPEAT,
+    TEST_SCENE_PRESET_YUN_SA3_REPEAT_PRESSURE,
     TEST_SCENE_PRESET_BASIC_EXCHANGE,
     TEST_SCENE_PRESET_PRESSURE_EXCHANGE,
     TEST_SCENE_PRESET_LEFT_CORNER_RYU_STAGE,
@@ -76,6 +77,11 @@ static const Uint8 character_to_cursor[20][2] = { { 7, 1 }, { 1, 0 }, { 5, 2 }, 
 static const Sint8 scene_preset_basic_exchange_stage = 11;
 static const Sint8 scene_preset_stage_heavy_stage = 19;
 static const Sint8 scene_preset_training_yun_ryu_ryu_stage = 2;
+static const int scene_preset_yun_sa3_first_super_frame = 150;
+static const int scene_preset_yun_sa3_second_super_frame = 620;
+static const int scene_preset_yun_sa3_super_input_frames = 40;
+static const int scene_preset_yun_sa3_super_prep_frames = 32;
+static const int scene_preset_yun_sa3_second_super_refill_frame = 560;
 
 static Uint64 frame = 0;
 static Phase phase = PHASE_INIT;
@@ -88,7 +94,7 @@ static Sint8 stage = -1;
 static TestScenePreset scene_preset = TEST_SCENE_PRESET_NONE;
 static int player_super_art_activation_starts[2] = { 0, 0 };
 static bool player_super_art_was_active[2] = { false, false };
-static bool scene_preset_yun_sa3_repeat_second_super_ready = false;
+static bool scene_preset_repeat_second_super_ready = false;
 static u16 inputs[REPLAY_FRAMES_MAX][2] = { 0 };
 static int inputs_index = 0;
 static int inputs_total = 0;
@@ -142,6 +148,9 @@ static TestScenePreset resolve_scene_preset(const char* preset_name) {
     }
     if (SDL_strcmp(preset_name, "yun-sa3-repeat") == 0) {
         return TEST_SCENE_PRESET_YUN_SA3_REPEAT;
+    }
+    if (SDL_strcmp(preset_name, "yun-sa3-repeat-pressure") == 0) {
+        return TEST_SCENE_PRESET_YUN_SA3_REPEAT_PRESSURE;
     }
     if (SDL_strcmp(preset_name, "basic-exchange") == 0) {
         return TEST_SCENE_PRESET_BASIC_EXCHANGE;
@@ -489,6 +498,21 @@ static u16 pressure_exchange_script_input(int player, int local_frame) {
     return pressure_exchange_defend_input(player, turn_frame);
 }
 
+static bool scene_preset_uses_repeat_second_super(void) {
+    return scene_preset == TEST_SCENE_PRESET_YUN_SA3_REPEAT ||
+           scene_preset == TEST_SCENE_PRESET_YUN_SA3_REPEAT_PRESSURE;
+}
+
+static bool scene_preset_yun_sa3_super_input_active(int start_frame) {
+    return game_frame >= start_frame && game_frame < (start_frame + scene_preset_yun_sa3_super_input_frames);
+}
+
+static bool scene_preset_yun_sa3_super_prep_active(int start_frame) {
+    const int prep_start = start_frame - scene_preset_yun_sa3_super_prep_frames;
+
+    return game_frame >= prep_start && game_frame < start_frame;
+}
+
 static u16 left_corner_ryu_stage_reanchor_input(int player) {
     return player == 0 ? SWK_LEFT : SWK_LEFT;
 }
@@ -714,6 +738,7 @@ static void apply_scene_preset_defaults() {
         break;
 
     case TEST_SCENE_PRESET_YUN_SA3_REPEAT:
+    case TEST_SCENE_PRESET_YUN_SA3_REPEAT_PRESSURE:
         characters[0] = CHAR_YUN;
         characters[1] = CHAR_RYU;
         selected_super_arts[0] = 2;
@@ -776,13 +801,48 @@ static void apply_scene_preset_inputs() {
         p1sw_buff = 0;
         p2sw_buff = 0;
 
-        if (game_frame >= 150 && game_frame < 190) {
-            p1sw_buff = super_script_input(0, game_frame - 150);
+        if (scene_preset_yun_sa3_super_input_active(scene_preset_yun_sa3_first_super_frame)) {
+            p1sw_buff = super_script_input(0, game_frame - scene_preset_yun_sa3_first_super_frame);
         }
 
-        if (game_frame >= 620 && game_frame < 660) {
-            p1sw_buff = super_script_input(0, game_frame - 620);
+        if (scene_preset_yun_sa3_super_input_active(scene_preset_yun_sa3_second_super_frame)) {
+            p1sw_buff = super_script_input(0, game_frame - scene_preset_yun_sa3_second_super_frame);
         }
+        return;
+    }
+
+    if (scene_preset == TEST_SCENE_PRESET_YUN_SA3_REPEAT_PRESSURE) {
+        p1sw_buff = pressure_exchange_script_input(0, game_frame);
+        p2sw_buff = pressure_exchange_script_input(1, game_frame);
+
+        if (scene_preset_yun_sa3_super_prep_active(scene_preset_yun_sa3_first_super_frame)) {
+            p1sw_buff = 0;
+            p2sw_buff = pressure_exchange_defend_input(
+                1, game_frame - (scene_preset_yun_sa3_first_super_frame - scene_preset_yun_sa3_super_prep_frames));
+            return;
+        }
+
+        if (scene_preset_yun_sa3_super_input_active(scene_preset_yun_sa3_first_super_frame)) {
+            p1sw_buff = super_script_input(0, game_frame - scene_preset_yun_sa3_first_super_frame);
+            p2sw_buff = pressure_exchange_defend_input(
+                1, game_frame - (scene_preset_yun_sa3_first_super_frame - scene_preset_yun_sa3_super_prep_frames));
+            return;
+        }
+
+        if (scene_preset_yun_sa3_super_prep_active(scene_preset_yun_sa3_second_super_frame)) {
+            p1sw_buff = 0;
+            p2sw_buff = pressure_exchange_defend_input(
+                1, game_frame - (scene_preset_yun_sa3_second_super_frame - scene_preset_yun_sa3_super_prep_frames));
+            return;
+        }
+
+        if (scene_preset_yun_sa3_super_input_active(scene_preset_yun_sa3_second_super_frame)) {
+            p1sw_buff = super_script_input(0, game_frame - scene_preset_yun_sa3_second_super_frame);
+            p2sw_buff = pressure_exchange_defend_input(
+                1, game_frame - (scene_preset_yun_sa3_second_super_frame - scene_preset_yun_sa3_super_prep_frames));
+            return;
+        }
+
         return;
     }
 
@@ -841,18 +901,18 @@ static void apply_initial_super_full_overrides() {
 }
 
 static void apply_scene_preset_super_refill_overrides() {
-    if (scene_preset != TEST_SCENE_PRESET_YUN_SA3_REPEAT || scene_preset_yun_sa3_repeat_second_super_ready) {
+    if (!scene_preset_uses_repeat_second_super() || scene_preset_repeat_second_super_ready) {
         return;
     }
 
-    if (game_frame < 560 || plw[0].sa == NULL || player_super_art_active(0)) {
+    if (game_frame < scene_preset_yun_sa3_second_super_refill_frame || plw[0].sa == NULL || player_super_art_active(0)) {
         return;
     }
 
     if (plw[0].sa->store == 0 && My_char[0] >= 0 && Super_Arts[0] >= 0) {
         tr_spgauge_cont_init2(0);
     }
-    scene_preset_yun_sa3_repeat_second_super_ready = true;
+    scene_preset_repeat_second_super_ready = true;
 }
 
 static void initialize_default_data() {
@@ -868,7 +928,7 @@ static void initialize_default_data() {
     player_super_art_activation_starts[1] = 0;
     player_super_art_was_active[0] = false;
     player_super_art_was_active[1] = false;
-    scene_preset_yun_sa3_repeat_second_super_ready = false;
+    scene_preset_repeat_second_super_ready = false;
 
     apply_scene_preset_defaults();
 

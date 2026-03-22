@@ -31,7 +31,7 @@ Options:
                          Delay capture until the runtime reaches the named state
                          (attract-demo-logo, character-select-super-art).
   --test-scene-preset <name>
-                         Named scripted gameplay preset (stage-heavy, effect-heavy, super-heavy, yun-sa3-repeat, basic-exchange, pressure-exchange, left-corner-ryu-stage, training-yun-ryu-ryu-stage).
+                         Named scripted gameplay preset (stage-heavy, effect-heavy, super-heavy, yun-sa3-repeat, yun-sa3-repeat-pressure, basic-exchange, pressure-exchange, left-corner-ryu-stage, training-yun-ryu-ryu-stage).
   --test-p1-character <name-or-id>
                          Optional test-runner player 1 character override for scripted gameplay capture; requires --gameplay-idle or --test-scene-preset.
   --test-p2-character <name-or-id>
@@ -120,9 +120,9 @@ is_supported_stage_id() {
 is_supported_test_scene_preset() {
     local value="$1"
     [ "$value" = "stage-heavy" ] || [ "$value" = "effect-heavy" ] || [ "$value" = "super-heavy" ] ||
-        [ "$value" = "yun-sa3-repeat" ] || [ "$value" = "basic-exchange" ] || [ "$value" = "pressure-exchange" ] ||
-        [ "$value" = "left-corner-ryu-stage" ] ||
-        [ "$value" = "training-yun-ryu-ryu-stage" ]
+        [ "$value" = "yun-sa3-repeat" ] || [ "$value" = "yun-sa3-repeat-pressure" ] ||
+        [ "$value" = "basic-exchange" ] || [ "$value" = "pressure-exchange" ] ||
+        [ "$value" = "left-corner-ryu-stage" ] || [ "$value" = "training-yun-ryu-ryu-stage" ]
 }
 
 is_supported_software_frame_mode() {
@@ -198,7 +198,7 @@ apply_test_scene_preset_defaults() {
             test_stage="19"
         fi
         ;;
-    yun-sa3-repeat)
+    yun-sa3-repeat|yun-sa3-repeat-pressure)
         if [ -z "$test_p1_character" ]; then
             test_p1_character="3"
         fi
@@ -513,7 +513,7 @@ if [ -n "$perf_wait_runtime_state" ] && ! is_supported_perf_wait_runtime_state "
 fi
 
 if [ -n "$test_scene_preset" ] && ! is_supported_test_scene_preset "$test_scene_preset"; then
-    echo "error: --test-scene-preset must be one of stage-heavy, effect-heavy, super-heavy, yun-sa3-repeat, basic-exchange, pressure-exchange, left-corner-ryu-stage, or training-yun-ryu-ryu-stage." >&2
+    echo "error: --test-scene-preset must be one of stage-heavy, effect-heavy, super-heavy, yun-sa3-repeat, yun-sa3-repeat-pressure, basic-exchange, pressure-exchange, left-corner-ryu-stage, or training-yun-ryu-ryu-stage." >&2
     exit 2
 fi
 
