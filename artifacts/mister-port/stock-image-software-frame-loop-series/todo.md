@@ -6237,7 +6237,6 @@
 - [x] Keep/rollback decision:
   - [x] rollback. Two exact-lane Yun reruns both came in slower than the kept Loop `141` onset baseline, so the low-density pair gate does not justify reopening helper-internal pair control flow on this lane; the runtime code is fully reverted on the final tree
 - [x] final commit hash:
-  - [x] `09db5e30` (`perf: capture exact Yun onset alpha census`)
   - [x] `88785b05` (`mister: close loop 142 pair-density rollback`)
 - [x] next best candidate:
   - [x] do not retry the low-density pair gate now. Any future Yun runtime attempt should move away from helper-internal pair control flow and prove a total-time win on the `ix 81 / 82` onset families instead of only trading pair-lookup cost for reuse-bookkeeping overhead
@@ -7141,6 +7140,7 @@
   - [x] this loop keeps the measurement-support code in-tree because it now produces decision-grade onset telemetry that the backlog explicitly called for before another native runtime reland
 - [x] Rejected and closed in this loop:
   - [x] do not use `loop166 ... r1` as a decision baseline; the exact-shape census capped at `256`, so only `loop166-yun-onset-basic-onset-exact-alpha-r2` is trusted for onset-family alpha reranking
-- [ ] final commit hash:
+- [x] final commit hash:
+  - [x] `09db5e30` (`perf: capture exact Yun onset alpha census`)
 - [x] next best candidate:
   - [x] use the new exact onset evidence to scope one runtime candidate around the proven six-family cohort only: the `58/393`, `57/394`, and `57/393` families are fully opaque, while `57/391`, `18/37`, and `57/329` stay binary opaque/transparent with zero blended pixels, so the next loop should test a narrow hot-family native path that exploits opaque-copy versus transparent-skip structure without broadening beyond these IDs
