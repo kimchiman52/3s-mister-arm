@@ -6562,3 +6562,35 @@
   - [x] `25c8c62f` (`perf: add yun second-activation capture support`)
 - [x] next best candidate:
   - [x] use the kept `p1-super-art-active-2` plus `yun-sa3-repeat` support to build a more gameplay-real repeated-activation Yun lane before reopening native runtime work; keep Remy compare-dirty on its separate exact/direct track, and keep transition work deprioritized unless fresh telemetry regresses
+
+### Follow-On Loop 152: Heavy Yun Repeat Verification Closure
+
+- [x] Value target: verify the preserved `preserve-loop152-yun-repeat-heavy` measurement-support branch before starting any fresh runtime or telemetry hypothesis work, and keep it only if it actually reaches a second visible P1 Genei start on-device
+- [x] Scope boundary: docs-only closure on `mister-dev` after verifying preserved branch `cc87c540`; no new runtime or measurement-support code changes land unless the preserved branch passes its reachability gate
+- [x] Dependencies: clean kickoff tree on `mister-dev`; current living findings; current active checklist; `docs/agent-memory/mister-perf-opportunities.md`; preserved branch `preserve-loop152-yun-repeat-heavy` at `cc87c540`; Docker `3sx-mister-build`; serialized MiSTer tooling; and trusted Loop `151` second-activation support already kept in `25c8c62f`
+- [x] Research evidence gathered on `2026-03-22` before implementation:
+  - [x] preserved-branch verification was mandatory before new work. The older refs `preserve-native-analog-yc-crt-filter` and `preserve-yc-packet-logging` are already ancestors of `HEAD`, and `preserve-loop124-compare-dirty-cap-3o8` is already superseded by kept runtime `018461c3`, leaving `preserve-loop152-yun-repeat-heavy` as the oldest unresolved verification target
+  - [x] current living findings plus `docs/agent-memory/mister-perf-opportunities.md` still rank “more gameplay-real repeated Yun activation support” ahead of any fresh renderer runtime reland, so verifying the preserved heavy repeat preset is the only plausible first step on the current tree
+  - [x] preserved branch `cc87c540` only adds measurement-support plumbing for one heavier repeat preset (`yun-sa3-repeat-heavy`) in `src/test/test_runner.c`, `src/main.c`, and `tools/mister/perf-sampler.sh`; it does not change shipped renderer/runtime behavior
+  - [x] the reachability gate is strict: reject immediately if the heavy preset cannot prove `p1_super_active_starts >= 2` on-device, because without two starts it still cannot answer the user-observed first-vs-later activation question
+- [x] Research-backed hypothesis and scoped plan for this cycle:
+  - [x] hypothesis: if `yun-sa3-repeat-heavy` keeps enough gameplay-real burden from the `super-heavy` lane while still reaching a later visible P1 Genei start, it is worth keeping as the next measurement lane; if it still tops out at one start, the preserved branch should be rejected and the next loop should design a different repeated-activation lane instead of reopening runtime code
+  - [x] scoped plan: verify preserved branch `cc87c540` directly, rebuild/package the telemetry flavor in Docker `3sx-mister-build`, redeploy with serialized MiSTer tooling, run bounded reachability captures on the heavy preset, and keep no code unless the corrected capture proves a second start
+- [x] Implementation summary:
+  - [x] verified preserved branch `cc87c540` directly instead of inventing new code, then rebuilt/install-packaged the telemetry ARM flavor in Docker `3sx-mister-build` using the validated `/work-arm` flow because `/src` hit the known stale-SDL bind-mount traps
+  - [x] redeployed the preserved package with serialized MiSTer tooling and ran bounded reachability attempts for `yun-sa3-repeat-heavy`
+  - [x] rejected the preserved diff and returned `mister-dev` to a docs-only closeout because the corrected on-device capture still reached only one P1 Genei start
+- [x] Verification summary:
+  - [x] local validation passed on the preserved branch: telemetry ARM rebuild/install/package in Docker `3sx-mister-build` via `/work-arm`, `readelf -h /work-arm/build/mister-telemetry-install/bin/3sx` still reported `ELF32` / `ARM` / hard-float output, and the package was copied back as `build/mister-telemetry-package-loop152-arm-r3`
+  - [x] serialized MiSTer validation passed on `192.168.1.171`: `lock-status`, credentialed `busy-status`, `health`, `deploy --src build/mister-telemetry-package-loop152-arm-r3`, `probe`, and bounded `smoke`, with logs staying on the expected dummy/software + fbdev + native + `software-frame on` route
+  - [x] the first reachability attempt, `loop152-yun-sa3-repeat-heavy-reachability-r1`, was invalid and did not drive the decision because the command accidentally omitted `--test-p1-super-full`, so it never triggered a P1 super input window
+  - [x] the corrected deciding reachability capture, `loop152-yun-sa3-repeat-heavy-reachability-r2`, still failed the keep gate: it stayed direct/native at `51.8610 FPS / 19.2823 / 9.9290 / 8.8370 / 0.5163 ms` (`frame / update / render / present`) but only reached `p1_super_active_starts=1`, `p1_super_active_frames=353`, and `p1_super_active_first_frame=179`, with `software_frame_direct_present_ratio = 1.0` and `software_frame_fallback_ratio = 0.0`
+- [x] Review outcome:
+  - [x] independent review agent `Bernoulli` returned `No findings` on the docs-only closeout diff after checking factual consistency, formatting, and constraints against the current workspace state
+- [x] Keep/rollback decision:
+  - [x] reject the preserved measurement-support diff. Even after the corrected on-device run, `yun-sa3-repeat-heavy` still cannot reach a second visible P1 Genei start, so it does not justify keeping extra preset/plumbing code on the active branch
+  - [x] no runtime or measurement-support code changes land from Loop `152`; only the docs closeout remains on `mister-dev`
+- [x] final commit hash:
+  - [ ] pending; record the docs-only Loop `152` closure commit hash in the follow-up docs pass after this closeout commit lands
+- [x] next best candidate:
+  - [x] design a different gameplay-real repeated-activation Yun lane that proves two starts before reopening native renderer runtime work; keep Remy compare-dirty and transition work on their separate lower-priority tracks unless fresh telemetry reranks them

@@ -4136,3 +4136,21 @@ Scope guardrails:
     - the stripped repeat lane did not reproduce the manual “later activations are faster” gap, so this loop closes the missing measurement support but does not justify reopening native runtime code yet
   - Next best candidate optimization:
     - use the kept second-activation support on a more gameplay-real repeated-Yun activation lane before changing renderer runtime code again; keep Remy compare-dirty and transition work on their separate lower-priority tracks unless fresh telemetry reranks them
+
+- 2026-03-22T00:10:01-0400
+  - Final commit hash:
+    - pending; stamp after the docs-only Loop `152` closure commit lands
+  - Bottleneck targeted:
+    - verifying whether preserved measurement-support branch `preserve-loop152-yun-repeat-heavy` can actually produce a gameplay-real second visible Yun SA3 activation on-device before any fresh native runtime work resumes
+  - Change summary:
+    - verified preserved branch `cc87c540` directly instead of opening a new runtime or telemetry branch
+    - rebuilt/install-packaged the telemetry ARM flavor in Docker `3sx-mister-build` via the validated `/work-arm` flow, redeployed with serialized MiSTer tooling, and ran bounded heavy-repeat reachability captures
+    - kept no code changes on `mister-dev`; this cycle closes docs-only because the preserved heavy preset failed its two-start gate
+  - Verification result summary:
+    - Docker telemetry ARM build/install/package plus `readelf` passed on the preserved branch, and serialized `lock-status`, `busy-status`, `health`, `deploy`, `probe`, and bounded `smoke` all passed on `192.168.1.171` with the same dummy/software + fbdev + native route
+    - the first reachability attempt, `loop152-yun-sa3-repeat-heavy-reachability-r1`, was invalid because it omitted `--test-p1-super-full` and therefore did not trigger a P1 super
+    - the corrected deciding capture, `loop152-yun-sa3-repeat-heavy-reachability-r2`, stayed direct/native at `51.8610 FPS / 19.2823 / 9.9290 / 8.8370 / 0.5163 ms` but still reached only `p1_super_active_starts=1`, `p1_super_active_frames=353`, and `p1_super_active_first_frame=179`
+  - Keep/rollback decision with reason:
+    - reject and leave `mister-dev` unchanged apart from docs; the heavier repeat preset still does not reach a second visible activation, so it cannot answer the user-priority first-vs-later Genei question and is not worth keeping as active measurement support
+  - Next best candidate optimization:
+    - design a different gameplay-real repeated-activation Yun lane that proves two starts before reopening native renderer runtime work; do not retry `yun-sa3-repeat-heavy` unchanged now
