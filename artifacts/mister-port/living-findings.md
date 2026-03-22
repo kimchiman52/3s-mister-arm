@@ -4584,3 +4584,22 @@ Scope guardrails:
   - Next best candidate optimization:
     - do not retry now: renderer-side whole-surface binary-alpha proofs on hot Yun onset surfaces
     - use the kept `yun-sa3-repeat-pressure` lane to rerank first-visible cold-start cost before another renderer reland, and keep any future runtime bet helper-local without new whole-surface source-alpha metadata
+
+- 2026-03-22T23:59:00-0400
+  - Final commit hash:
+    - `PENDING`
+  - Bottleneck targeted:
+    - testing whether a helper-local opaque-first alpha branch order in the unmodulated non-integer helper could reduce the first-visible Yun onset row-raster cost without adding new metadata or changing routing
+  - Change summary:
+    - attempted one runtime reland in `software_frame_non_integer.c` that reordered the unmodulated singleton/pair alpha tests from transparent-first to opaque-first
+    - rebuilt/install-packaged the telemetry ARM flavor in Docker `3sx-mister-build`, redeployed on MiSTer, and captured `loop177-opaque-first-yun-onset-r1`, `loop177-opaque-first-gameplay-idle-r1`, `loop177-opaque-first-gameplay-super-heavy-r1`, plus confirmatory `loop177-opaque-first-gameplay-idle-r2`
+    - rolled the runtime code fully back after device verification; only docs closeout remains in the final tree
+  - Verification result summary:
+    - `git diff --check`, Docker telemetry ARM rebuild/install/package, container-side ABI `readelf`, and serialized MiSTer `lock-status` / `busy-status` / `health` / `deploy` / `probe` / bounded `smoke` all passed on `192.168.1.171`
+    - deciding onset capture stayed direct/native with zero fallback/readback and improved slightly versus unchanged `loop169-head-baseline-yun-onset-r1`: overall `44.6234 -> 44.6829 FPS`, first `8` `34.8878 -> 37.4539 FPS`, first `60` `39.3687 -> 40.4857 FPS`, with first-`8` sampled row-raster dropping `44.4851 -> 41.1258 ms`
+    - gameplay keep guards failed the keep gate: idle regressed from `85.6886 FPS / 11.6702 / 7.4390 ms render` to `75.9275 FPS / 13.1705 / 8.3716 ms render` and confirmatory `76.6597 FPS / 13.0447 / 8.2898 ms render`, while `super-heavy` improved only to `55.8289 FPS / 17.9119 / 10.1824 ms render`
+  - Keep/rollback decision with reason:
+    - reject and revert; the branch-order change helps the narrow Yun onset lane but repeatedly regresses `gameplay-idle`, so it is not safe to keep
+  - Next best candidate optimization:
+    - do not retry this global opaque-first branch reorder unchanged now
+    - if native Yun work continues, prefer a bounded compiler-hint or other codegen-level experiment that preserves the original transparent-first control flow while testing whether the onset win was branch-prediction/layout related
