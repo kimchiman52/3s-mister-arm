@@ -4154,3 +4154,21 @@ Scope guardrails:
     - reject and leave `mister-dev` unchanged apart from docs; the heavier repeat preset still does not reach a second visible activation, so it cannot answer the user-priority first-vs-later Genei question and is not worth keeping as active measurement support
   - Next best candidate optimization:
     - design a different gameplay-real repeated-activation Yun lane that proves two starts before reopening native renderer runtime work; do not retry `yun-sa3-repeat-heavy` unchanged now
+
+- 2026-03-22T01:35:00-0400
+  - Final commit hash:
+    - `d702b940`
+  - Bottleneck targeted:
+    - lowering fast-non-integer telemetry distortion on the trusted native Yun SA3 first-visible onset lane so the next rerank can use measured helper-local row-raster cost instead of reuse-bookkeeping-heavy phase totals
+  - Change summary:
+    - added one perf-capture-only toggle, `--perf-fast-non-integer-no-reuse-telemetry`, from `src/main.c` / `src/main.h` through `SDLApp`, `SDLGameRenderer`, and the non-integer helper so full captures can skip row-reuse bookkeeping without changing runtime raster behavior
+    - updated `tools/mister/perf-sampler.sh` to expose the new flag and export `metadata.fast_non_integer_reuse_telemetry`, then rebuilt/install-packaged the telemetry ARM flavor in Docker `3sx-mister-build` via the validated `/work-arm` flow
+    - captured committed deciding telemetry as `artifacts/mister-port/perf/loop153-yun-onset-low-distortion-r1.json` and ran independent review agent `Anscombe`
+  - Verification result summary:
+    - local validation passed: `git diff --check`, `bash -n tools/mister/perf-sampler.sh`, Docker telemetry ARM rebuild/install/package, and `readelf` still reported `ELF32` / `ARM` hard-float output
+    - serialized `health`, `deploy`, `probe`, bounded `smoke`, and the deciding Yun onset capture all passed on `192.168.1.171`; one invalid first attempt was discarded after it omitted the trusted Yun-specific test overrides and left a stray remote perf PID that was cleaned through gated `misterctl.sh exec`
+    - `loop153-yun-onset-low-distortion-r1` stayed direct/native with zero fallback/readback and identical first-`8` onset pixels to `loop150`, while `software_frame_fast_non_integer_phase_sampling` dropped from `1385.7176 ms` family-sampled time to `402.4971 ms`; `reuse_telemetry_total_ms` fell from `779.3031 ms` to `0.0000 ms`, and `row_raster_total_ms` now leads at `274.8716 ms` (`68.2916%`) versus `93.7200 ms` for `lookup_x + lookup_y + pair_lookup`
+  - Keep/rollback decision with reason:
+    - keep measurement-support only; the new flag materially improves telemetry clarity without changing the deciding Yun onset workload mix or direct/native route, so the higher captured FPS is instrumentation relief rather than a player-runtime improvement
+  - Next best candidate optimization:
+    - add subrect alpha-structure telemetry for the hot Yun fast-non-integer families before any new runtime reland, because the lower-distortion rerun now proves helper-local row-raster work still dominates while the generic `ix 80` residue remains too small to justify reopening that lane

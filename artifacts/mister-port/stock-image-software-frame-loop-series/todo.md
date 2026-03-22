@@ -6627,6 +6627,7 @@
 - [x] Keep/rollback decision:
   - [x] keep measurement-support only. The new flag is verified locally and on-device, preserves the deciding Yun onset workload mix and direct/native route, and materially improves telemetry clarity without changing gameplay or renderer runtime behavior
   - [x] do not treat the higher FPS in `loop153` as a player-runtime win. That lift comes from removing heavy capture-only reuse bookkeeping while leaving the measured onset pixel mix unchanged, so this loop closes as a telemetry-clarity keep rather than a shipping performance improvement
-- [ ] final commit hash:
+- [x] final commit hash:
+  - [x] `d702b940` (`perf: add low-distortion yun onset capture mode`)
 - [x] next best candidate:
   - [x] add subrect alpha-structure telemetry for the hot Yun fast-non-integer families before any new runtime reland; the lower-distortion rerun now proves helper-local row-raster work still dominates, while the generic `ix 80` residue remains too small and the shared-shape cluster remains too broad to justify another narrow helper specialization yet
