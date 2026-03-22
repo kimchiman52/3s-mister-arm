@@ -6512,12 +6512,13 @@
   - [x] deciding Yun onset verification succeeded on untouched `HEAD`: `loop150-yun-onset-r1` landed at `23.0476 FPS / 43.3885 / 9.6383 / 33.2248 / 0.5253 ms` overall and `19.2290 FPS / 52.0047 / 10.8829 / 40.5975 / 0.5243 ms` for the first `8` frames, staying direct-present/native with zero fallback/readback
   - [x] the fresh rerun still matches the already-reranked native lane rather than exposing a new safe lever: first-`8` generic residue remained only `9.6129 ms` on the same `ppg-seqs ix 80 / texture 56` family, the top four shared-shape buckets are still only the adjacent `32x32 -> 34/35/36/37` cluster at `28.4546 ms` out of `74.8340 ms` sampled shared-shape time, the top eight lookup profiles cover only `5.3071 ms`, and the fast helper still shows `same_source_max_run_length = 2` on the dominant families
   - [x] full-telemetry phase sampling still does not justify reopening lookup/pair micro-work on the player runtime: `lookup_x + lookup_y + pair_lookup = 89.3463 ms`, `row_raster = 484.6090 ms`, and `reuse_telemetry = 779.3031 ms` across `1385.7176 ms` family-sampled fast-non-integer time, so another helper-local reland would still be guessing at a broader redesign rather than acting on a new bounded current-tree bottleneck
-- [ ] Review outcome:
-  - [ ] independent review agent pending on the final docs + committed-telemetry diff
+- [x] Review outcome:
+  - [x] independent review agent `Boole` found one high closure issue: the staged diff still carried unresolved review/hash placeholders, so the loop could not be finalized as-is. That finding was accepted and fixed by recording the real closure commit hash and final review disposition in the follow-up docs pass
+  - [x] no other actionable findings remained. The review matched the `loop150-yun-onset-r1` evidence against the committed JSON and confirmed that the current code still supports the cited shared `384` gate and pair-only reuse-path framing
 - [x] Keep/rollback decision:
   - [x] keep the runtime tree unchanged and close the loop as docs-only research with committed telemetry. The fresh current-tree replay still does not isolate a safe narrow reland for the user-priority Yun burst
   - [x] do not retry now: helper-local native-Yun relands such as narrower `ix 80` admissions, scalar `4x` row-walk unroll, low-density pair gating, or one-cluster shared-shape specializations unless genuinely new trusted telemetry changes the ranking
-- [ ] final commit hash:
-  - [ ] pending local commit
+- [x] final commit hash:
+  - [x] `e5ad9895` (`docs: close loop 150 yun onset rerank`)
 - [x] next best candidate:
   - [x] rerank away from helper-local Yun runtime edits until either a broader row-walk redesign is proven with lower-overhead measurement or a different gameplay bottleneck clearly outranks this queue; keep Remy compare-dirty and presenter-side work de-prioritized unless fresh exact/native or present telemetry regresses
