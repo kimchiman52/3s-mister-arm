@@ -4551,7 +4551,7 @@ Scope guardrails:
 
 - 2026-03-22T23:55:00-0400
   - Final commit hash:
-    - `PENDING`
+    - `e6963716`
   - Bottleneck targeted:
     - testing whether one runtime-proven whole-surface binary-alpha proof could cut the first-visible Yun onset non-integer row-raster cost without reopening the rejected family-heuristic or sidecar designs
   - Change summary:

@@ -7481,7 +7481,7 @@
   - [x] do not retry this whole-surface runtime-proven binary-alpha proof unchanged now. The measured failure is specifically about the metadata cost shape, not about direct/native routing or the binary-alpha hypothesis itself
 - [x] Rejected and closed in this loop:
   - [x] do not retry now: renderer-level whole-surface binary-alpha proofs on hot Yun onset surfaces. This loop shows that even a reversible runtime-proven proof can still sink the user-priority lane if it scans or classifies too much source data on first use
-- [ ] final commit hash:
-  - [ ] PENDING
+- [x] final commit hash:
+  - [x] `e6963716` (`docs: close loop 175 binary-alpha rollback`)
 - [x] next best candidate:
   - [x] use the kept gameplay-real `yun-sa3-repeat-pressure` lane to rerank whether the remaining first-visible Genei dip is mostly cold-start/setup cost before another renderer reland, and if a fresh runtime bet is later forced, keep it helper-local without any renderer-side whole-surface source-alpha metadata
