@@ -4281,3 +4281,21 @@ Scope guardrails:
     - reject and revert; the new lightweight snapshot mode is not low-distortion enough to replace the kept `loop157` comparator, and the repeated `p1-super-art-active-2` hangs leave it without the matched first-vs-later pair the loop required
   - Next best candidate optimization:
     - do not retry this exact basic-window-shape mode now; recover a lower-distortion repeated-activation comparator first, then revisit Yun workload-shape attribution only with a design that preserves the trusted `--perf-basic` FPS fidelity
+
+- 2026-03-22T05:33:41-0400
+  - Final commit hash:
+    - `4fe05473`
+  - Bottleneck targeted:
+    - recovering low-distortion first-window Yun family identity on the kept repeated-activation lane so the next cold-vs-warm decision can rank within-family cost instead of guessing from empty basic-mode arrays
+  - Change summary:
+    - added one measurement-support-only flag, `--perf-basic-first-window-families`, across the app, SDL perf-capture plumbing, and `tools/mister/perf-sampler.sh`
+    - kept runtime behavior unchanged while basic mode now exports first-window fast non-integer and generic textured family arrays without relanding exact-shape/shared-shape or lookup-profile bookkeeping
+    - captured and kept matched first/second activation telemetry artifacts: `loop160-yun-first-activation-pressure-basic-families-r1` and `loop160-yun-second-activation-pressure-basic-families-r1`
+  - Verification result summary:
+    - local `git diff --check`, `bash -n`, Docker telemetry ARM rebuild/install/package in `3sx-mister-build`, and `readelf` all passed; serialized `lock-status`, `busy-status`, `health`, `deploy`, `probe`, and bounded `smoke` also passed on `192.168.1.171`
+    - both deciding captures stayed direct/native with zero fallback/readback and recovered populated first-window family arrays (`64` fast + `8` generic families in both first-window captures)
+    - distortion stayed modest versus the kept `loop157` basic baseline: first-activation first `60` moved `42.7803 -> 41.7814 FPS` and `14.6418 -> 15.3576 ms render`, while second-activation first `60` moved `40.5338 -> 39.6625 FPS` and `14.9035 -> 15.3652 ms render`
+  - Keep/rollback decision with reason:
+    - keep; this narrower collector preserves the trusted repeated-activation comparator well enough to retain, and it confirms that the same dominant Yun family mix still leads both first and later activations on the automated lane
+  - Next best candidate optimization:
+    - use the kept family-only mode to add one narrower hot-family subrect-alpha/helper-local measurement step if the next rerank still points inside the same Yun family mix, rather than retrying the broader Loop `159` design or jumping to another blind runtime reland
