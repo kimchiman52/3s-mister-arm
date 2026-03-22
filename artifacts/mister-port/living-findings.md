@@ -4317,3 +4317,21 @@ Scope guardrails:
     - reject and revert; the collector is too distortive for the kept repeat-pressure comparator, and review also found the attempted selector was broader than the stated exact hot-family hypothesis because it did not gate on the proven texture/palette IDs
   - Next best candidate optimization:
     - if this measurement lane is revisited, first tighten it to exact proven family IDs or move alpha classification into a lighter off-path sidecar before remeasuring; do not reopen native runtime work from this rejected collector
+
+- 2026-03-22T07:05:42-0400
+  - Final commit hash:
+    - pending
+  - Bottleneck targeted:
+    - testing whether exact proven `57/58` + `391-394` family-ID gating could recover repeat-pressure subrect-alpha structure on Yun without exceeding the kept Loop `160` distortion budget
+  - Change summary:
+    - attempted one narrower measurement-support-only `--perf-basic-first-window-exact-hot-family-alpha` path, then rolled the entire code path back after verification
+    - rebuilt/redeployed the telemetry ARM package from fresh `/work-arm-loop162` output and captured matched first/second activation telemetry as `loop162-yun-first-activation-pressure-basic-exact-hot-alpha-r1` and `loop162-yun-second-activation-pressure-basic-exact-hot-alpha-r1`
+    - confirmed the dominant `(57,391)` repeat-pressure family stays binary-alpha-only with effectively identical cold/warm alpha structure, but only with worse distortion than Loop `161`
+  - Verification result summary:
+    - local `git diff --check`, `bash -n`, Docker telemetry ARM rebuild/install/package, host-side ARM binary validation, and serialized `lock-status`, credentialed `busy-status`, `health`, `deploy`, `probe`, and bounded `smoke` all passed on `192.168.1.171`
+    - both deciding captures stayed direct/native with zero fallback/readback, but first activation regressed from kept Loop `160` first-`60` `41.7814 FPS / 15.3576 ms render` to `35.0081 FPS / 19.9694 ms`, and second activation regressed from `39.6625 FPS / 15.3652 ms` to `33.3235 FPS / 20.5214 ms`
+  - Keep/rollback decision with reason:
+    - reject and revert; exact-family gating still breaks the repeat-pressure distortion budget and does not expose a meaningful cold-vs-warm alpha difference beyond the earlier binary-alpha finding
+  - Next best candidate optimization:
+    - Do not retry now: any in-band repeat-pressure alpha collector on the kept basic-family lane
+    - if repeat-pressure hot-family alpha still needs reranking later, require an off-path sidecar or another design that proves Loop `160`-class FPS fidelity before remeasurement; otherwise leave Yun runtime work parked until a different measured bottleneck outranks this queue
