@@ -6943,6 +6943,6 @@
 - [x] Rejected and closed in this loop:
   - [x] do not retry this exact in-band `--perf-basic-first-window-hot-family-alpha` design unchanged now; it is too distortive for the kept repeat-pressure comparator and the selector was broader than the stated hot-family hypothesis
 - [x] final commit hash:
-  - [x] `TBD`
+  - [x] `badfd478` (`docs: close loop 161 hot-alpha rejection`)
 - [x] next best candidate:
   - [x] if repeat-pressure hot-family alpha still needs another rerank later, start with exact proven family-ID gating (`57/58` with palettes `391-394`) or an off-path sidecar exporter before remeasuring; do not reopen native runtime work from this rejected collector

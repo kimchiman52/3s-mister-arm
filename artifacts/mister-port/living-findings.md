@@ -4302,7 +4302,7 @@ Scope guardrails:
 
 - 2026-03-22T06:11:32-0400
   - Final commit hash:
-    - `TBD`
+    - `badfd478`
   - Bottleneck targeted:
     - testing whether one narrower in-band hot-family alpha collector could recover repeat-pressure subrect-alpha structure on the kept Yun first/later activation lane without exceeding the Loop `160` distortion budget
   - Change summary:
