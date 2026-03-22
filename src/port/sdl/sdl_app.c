@@ -235,6 +235,8 @@ static int perf_super_art_ready_first_routine[2][3] = { { -1, -1, -1 }, { -1, -1
 static int perf_super_art_ready_last_routine[2][3] = { { -1, -1, -1 }, { -1, -1, -1 } };
 static Uint64 perf_super_art_active_frames[2] = { 0 };
 static int perf_super_art_active_first_frame[2] = { -1, -1 };
+static Uint64 perf_super_art_active_starts[2] = { 0 };
+static bool perf_super_art_active_was_active[2] = { false, false };
 static Uint64 perf_metamorphose_active_frames[2] = { 0 };
 static int perf_metamorphose_active_first_frame[2] = { -1, -1 };
 static int perf_capture_start_g_no[4] = { 0, 0, 0, 0 };
@@ -999,10 +1001,16 @@ static void note_perf_capture_test_state(int frame_index) {
         }
 
         if (get_perf_capture_super_art_active(player)) {
+            if (!perf_super_art_active_was_active[player]) {
+                perf_super_art_active_starts[player] += 1;
+            }
             perf_super_art_active_frames[player] += 1;
             if (perf_super_art_active_first_frame[player] < 0) {
                 perf_super_art_active_first_frame[player] = frame_index;
             }
+            perf_super_art_active_was_active[player] = true;
+        } else {
+            perf_super_art_active_was_active[player] = false;
         }
 
         if (get_perf_capture_metamorphose_active(player)) {
@@ -1170,6 +1178,8 @@ static void perf_capture_reset_storage(void) {
         perf_super_art_ready_last_routine[player][2] = -1;
         perf_super_art_active_frames[player] = 0;
         perf_super_art_active_first_frame[player] = -1;
+        perf_super_art_active_starts[player] = 0;
+        perf_super_art_active_was_active[player] = false;
         perf_metamorphose_active_frames[player] = 0;
         perf_metamorphose_active_first_frame[player] = -1;
     }
@@ -1438,6 +1448,8 @@ void SDLApp_ConfigurePerfCapture(int frame_count, const char* output_path, const
         perf_super_art_ready_last_routine[player][2] = -1;
         perf_super_art_active_frames[player] = 0;
         perf_super_art_active_first_frame[player] = -1;
+        perf_super_art_active_starts[player] = 0;
+        perf_super_art_active_was_active[player] = false;
         perf_metamorphose_active_frames[player] = 0;
         perf_metamorphose_active_first_frame[player] = -1;
     }
@@ -4048,7 +4060,7 @@ static void perf_capture_write_summary(void) {
     }
 
     io_printf(io, "{\n");
-    io_printf(io, "  \"schema_version\": 63,\n");
+    io_printf(io, "  \"schema_version\": 64,\n");
     io_printf(io, "  \"scene\": \"");
     io_write_json_escaped_string(io, perf_capture_scene_name);
     io_printf(io, "\",\n");
@@ -4130,8 +4142,10 @@ static void perf_capture_write_summary(void) {
               (unsigned long long)super_art_command_telemetry[0].command_matches_total);
     io_printf(io,
               "    \"p1_super_art_active_frames_total\": %llu,\n"
+              "    \"p1_super_art_active_starts_total\": %llu,\n"
               "    \"p1_super_art_active_ratio\": %.6f,\n",
               (unsigned long long)perf_super_art_active_frames[0],
+              (unsigned long long)perf_super_art_active_starts[0],
               frame_count > 0 ? (double)perf_super_art_active_frames[0] / frame_count : 0.0);
     if (perf_super_art_active_first_frame[0] >= 0) {
         io_printf(io, "    \"p1_super_art_active_first_frame\": %d,\n", perf_super_art_active_first_frame[0]);
@@ -4223,8 +4237,10 @@ static void perf_capture_write_summary(void) {
               (unsigned long long)super_art_command_telemetry[1].command_matches_total);
     io_printf(io,
               "    \"p2_super_art_active_frames_total\": %llu,\n"
+              "    \"p2_super_art_active_starts_total\": %llu,\n"
               "    \"p2_super_art_active_ratio\": %.6f,\n",
               (unsigned long long)perf_super_art_active_frames[1],
+              (unsigned long long)perf_super_art_active_starts[1],
               frame_count > 0 ? (double)perf_super_art_active_frames[1] / frame_count : 0.0);
     if (perf_super_art_active_first_frame[1] >= 0) {
         io_printf(io, "    \"p2_super_art_active_first_frame\": %d,\n", perf_super_art_active_first_frame[1]);

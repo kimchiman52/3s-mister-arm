@@ -4117,3 +4117,22 @@ Scope guardrails:
     - keep the runtime tree unchanged and close docs-only with committed telemetry; the fresh current-tree replay still does not isolate a safe narrow reland for the user-priority Yun burst
   - Next best candidate optimization:
     - rerank away from helper-local Yun runtime edits until either a broader row-walk redesign is proven with lower-overhead measurement or a different gameplay bottleneck clearly outranks this queue
+
+- 2026-03-21T23:40:00-0400
+  - Final commit hash:
+    - pending; stamp after the kept Loop `151` measurement-support commit lands
+  - Bottleneck targeted:
+    - missing second-activation capture support for the user-observed Yun SA3 cold-vs-warm gameplay gap, specifically whether a later visible activation can now be measured on-device without reopening renderer runtime code
+  - Change summary:
+    - added `p1-super-art-active-2` wait support plus activation-start tracking/export in `src/test/test_runner.c`, `src/main.c`, `src/port/sdl/sdl_app.c`, and `tools/mister/perf-sampler.sh`, bumping perf JSON to schema `64`
+    - added and iterated a dedicated `yun-sa3-repeat` scripted preset until it reliably reached two visible P1 Genei starts on-device, including one deterministic later super refill for the second activation
+    - normalized `capture_start_test_phase` in the sampler for `p1-super-art-active-2` so later-activation captures no longer collapse to generic `game` metadata
+  - Verification result summary:
+    - Docker telemetry ARM build/install/package plus `readelf` passed; serialized `lock-status`, `busy-status`, `health`, `deploy`, `probe`, and bounded `smoke` all passed on `192.168.1.171` with the same dummy/software + fbdev + native route and expected bounded `__RUNTIME_RC__=124` / `exit=143`
+    - `loop151-yun-training-second-activation-scout-r1` proved the old training lane never fires Yun SA3, while `loop151-yun-sa3-repeat-reachability-r3` proved the stripped repeat lane reaches two starts on-device at `56.6121 FPS / 17.6641 / 7.6758 / 9.4519 / 0.5364 ms`
+    - matched full captures now exist on the same lane: first activation `loop151-yun-first-activation-stripped-r1` = `21.4213 FPS / 46.6825 / 8.1819 / 37.9864 / 0.5143 ms`; second activation `loop151-yun-second-activation-r2` = `20.3685 FPS / 49.0954 / 9.4912 / 39.0707 / 0.5335 ms`; both stayed direct/native with zero fallback/readback
+  - Keep/rollback decision with reason:
+    - keep; measurement-support only, verified locally and on-device, and now sufficient to prove a true later activation on-device without changing runtime behavior
+    - the stripped repeat lane did not reproduce the manual “later activations are faster” gap, so this loop closes the missing measurement support but does not justify reopening native runtime code yet
+  - Next best candidate optimization:
+    - use the kept second-activation support on a more gameplay-real repeated-Yun activation lane before changing renderer runtime code again; keep Remy compare-dirty and transition work on their separate lower-priority tracks unless fresh telemetry reranks them

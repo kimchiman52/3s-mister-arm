@@ -63,6 +63,7 @@ typedef enum TestScenePreset {
     TEST_SCENE_PRESET_STAGE_HEAVY,
     TEST_SCENE_PRESET_EFFECT_HEAVY,
     TEST_SCENE_PRESET_SUPER_HEAVY,
+    TEST_SCENE_PRESET_YUN_SA3_REPEAT,
     TEST_SCENE_PRESET_BASIC_EXCHANGE,
     TEST_SCENE_PRESET_PRESSURE_EXCHANGE,
     TEST_SCENE_PRESET_LEFT_CORNER_RYU_STAGE,
@@ -85,6 +86,9 @@ static Sint8 characters[2] = { -1, -1 };
 static Sint8 selected_super_arts[2] = { -1, -1 };
 static Sint8 stage = -1;
 static TestScenePreset scene_preset = TEST_SCENE_PRESET_NONE;
+static int player_super_art_activation_starts[2] = { 0, 0 };
+static bool player_super_art_was_active[2] = { false, false };
+static bool scene_preset_yun_sa3_repeat_second_super_ready = false;
 static u16 inputs[REPLAY_FRAMES_MAX][2] = { 0 };
 static int inputs_index = 0;
 static int inputs_total = 0;
@@ -136,6 +140,9 @@ static TestScenePreset resolve_scene_preset(const char* preset_name) {
     if (SDL_strcmp(preset_name, "super-heavy") == 0) {
         return TEST_SCENE_PRESET_SUPER_HEAVY;
     }
+    if (SDL_strcmp(preset_name, "yun-sa3-repeat") == 0) {
+        return TEST_SCENE_PRESET_YUN_SA3_REPEAT;
+    }
     if (SDL_strcmp(preset_name, "basic-exchange") == 0) {
         return TEST_SCENE_PRESET_BASIC_EXCHANGE;
     }
@@ -164,6 +171,7 @@ bool TestRunner_IsSupportedPhaseName(const char* phase_name_value) {
            SDL_strcmp(phase_name_value, "game-transition") == 0 || SDL_strcmp(phase_name_value, "game") == 0 ||
            SDL_strcmp(phase_name_value, "game-input-active") == 0 ||
            SDL_strcmp(phase_name_value, "p1-super-art-active") == 0 ||
+           SDL_strcmp(phase_name_value, "p1-super-art-active-2") == 0 ||
            SDL_strcmp(phase_name_value, "wipe-transition-type1") == 0;
 }
 
@@ -186,6 +194,10 @@ bool TestRunner_IsPhaseActive(const char* phase_name_value) {
 
     if (SDL_strcmp(phase_name_value, "p1-super-art-active") == 0) {
         return player_super_art_active(0);
+    }
+
+    if (SDL_strcmp(phase_name_value, "p1-super-art-active-2") == 0) {
+        return player_super_art_active(0) && player_super_art_activation_starts[0] >= 2;
     }
 
     if (SDL_strcmp(phase_name_value, "wipe-transition-type1") == 0) {
@@ -701,6 +713,14 @@ static void apply_scene_preset_defaults() {
         stage = scene_preset_stage_heavy_stage;
         break;
 
+    case TEST_SCENE_PRESET_YUN_SA3_REPEAT:
+        characters[0] = CHAR_YUN;
+        characters[1] = CHAR_RYU;
+        selected_super_arts[0] = 2;
+        selected_super_arts[1] = 0;
+        stage = scene_preset_stage_heavy_stage;
+        break;
+
     case TEST_SCENE_PRESET_BASIC_EXCHANGE:
         characters[0] = CHAR_RYU;
         characters[1] = CHAR_KEN;
@@ -749,6 +769,20 @@ static void apply_scene_preset_inputs() {
         const int cycle_length = 48;
         p1sw_buff = projectile_script_input(0, game_frame % cycle_length);
         p2sw_buff = projectile_script_input(1, (game_frame + 24) % cycle_length);
+        return;
+    }
+
+    if (scene_preset == TEST_SCENE_PRESET_YUN_SA3_REPEAT) {
+        p1sw_buff = 0;
+        p2sw_buff = 0;
+
+        if (game_frame >= 150 && game_frame < 190) {
+            p1sw_buff = super_script_input(0, game_frame - 150);
+        }
+
+        if (game_frame >= 620 && game_frame < 660) {
+            p1sw_buff = super_script_input(0, game_frame - 620);
+        }
         return;
     }
 
@@ -806,6 +840,21 @@ static void apply_initial_super_full_overrides() {
     }
 }
 
+static void apply_scene_preset_super_refill_overrides() {
+    if (scene_preset != TEST_SCENE_PRESET_YUN_SA3_REPEAT || scene_preset_yun_sa3_repeat_second_super_ready) {
+        return;
+    }
+
+    if (game_frame < 560 || plw[0].sa == NULL || player_super_art_active(0)) {
+        return;
+    }
+
+    if (plw[0].sa->store == 0 && My_char[0] >= 0 && Super_Arts[0] >= 0) {
+        tr_spgauge_cont_init2(0);
+    }
+    scene_preset_yun_sa3_repeat_second_super_ready = true;
+}
+
 static void initialize_default_data() {
     characters[0] = CHAR_RYU;
     characters[1] = CHAR_KEN;
@@ -815,6 +864,11 @@ static void initialize_default_data() {
     scene_preset = TEST_SCENE_PRESET_NONE;
     Debug_w[DEBUG_STAGE_SELECT] = 0;
     game_frame = 0;
+    player_super_art_activation_starts[0] = 0;
+    player_super_art_activation_starts[1] = 0;
+    player_super_art_was_active[0] = false;
+    player_super_art_was_active[1] = false;
+    scene_preset_yun_sa3_repeat_second_super_ready = false;
 
     apply_scene_preset_defaults();
 
@@ -971,6 +1025,16 @@ static void initialize_data() {
 
     inputs_total = inputs_index;
     inputs_index = 0;
+}
+
+static void update_player_super_art_activation_state(void) {
+    for (int player = 0; player < 2; player++) {
+        const bool is_active = player_super_art_active(player);
+        if (is_active && !player_super_art_was_active[player]) {
+            player_super_art_activation_starts[player] += 1;
+        }
+        player_super_art_was_active[player] = is_active;
+    }
 }
 
 void TestRunner_Prologue() {
@@ -1134,6 +1198,7 @@ void TestRunner_Prologue() {
         }
 
         apply_initial_super_full_overrides();
+        apply_scene_preset_super_refill_overrides();
         if (inputs_index < inputs_total) {
             p1sw_buff = inputs[inputs_index][0];
             p2sw_buff = inputs[inputs_index][1];
@@ -1150,6 +1215,7 @@ void TestRunner_Prologue() {
 
 void TestRunner_Epilogue() {
     frame += 1;
+    update_player_super_art_activation_state();
 
     if (phase == PHASE_GAME) {
         if (configuration.test.delay_gameplay_inputs_until_active && !gameplay_input_active()) {

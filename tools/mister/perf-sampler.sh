@@ -20,12 +20,12 @@ Options:
                         test-state metadata may still be exported when available.
   --perf-wait-test-phase <name>
                          Delay capture until the test runner reaches the named phase
-                         (title, menu, character-select-transition, character-select, game-transition, game, game-input-active, p1-super-art-active, wipe-transition-type1).
+                         (title, menu, character-select-transition, character-select, game-transition, game, game-input-active, p1-super-art-active, p1-super-art-active-2, wipe-transition-type1).
   --perf-wait-runtime-state <name>
                          Delay capture until the runtime reaches the named state
                          (attract-demo-logo, character-select-super-art).
   --test-scene-preset <name>
-                         Named scripted gameplay preset (stage-heavy, effect-heavy, super-heavy, basic-exchange, pressure-exchange, left-corner-ryu-stage, training-yun-ryu-ryu-stage).
+                         Named scripted gameplay preset (stage-heavy, effect-heavy, super-heavy, yun-sa3-repeat, basic-exchange, pressure-exchange, left-corner-ryu-stage, training-yun-ryu-ryu-stage).
   --test-p1-character <name-or-id>
                          Optional test-runner player 1 character override for scripted gameplay capture; requires --gameplay-idle or --test-scene-preset.
   --test-p2-character <name-or-id>
@@ -114,7 +114,7 @@ is_supported_stage_id() {
 is_supported_test_scene_preset() {
     local value="$1"
     [ "$value" = "stage-heavy" ] || [ "$value" = "effect-heavy" ] || [ "$value" = "super-heavy" ] ||
-        [ "$value" = "basic-exchange" ] || [ "$value" = "pressure-exchange" ] ||
+        [ "$value" = "yun-sa3-repeat" ] || [ "$value" = "basic-exchange" ] || [ "$value" = "pressure-exchange" ] ||
         [ "$value" = "left-corner-ryu-stage" ] ||
         [ "$value" = "training-yun-ryu-ryu-stage" ]
 }
@@ -135,7 +135,7 @@ is_supported_perf_wait_test_phase() {
     [ "$value" = "title" ] || [ "$value" = "menu" ] ||
         [ "$value" = "character-select-transition" ] || [ "$value" = "character-select" ] ||
         [ "$value" = "game-transition" ] || [ "$value" = "game" ] || [ "$value" = "game-input-active" ] ||
-        [ "$value" = "p1-super-art-active" ] ||
+        [ "$value" = "p1-super-art-active" ] || [ "$value" = "p1-super-art-active-2" ] ||
         [ "$value" = "wipe-transition-type1" ]
 }
 
@@ -184,6 +184,23 @@ apply_test_scene_preset_defaults() {
         fi
         if [ -z "$test_p1_super_art" ]; then
             test_p1_super_art="0"
+        fi
+        if [ -z "$test_p2_super_art" ]; then
+            test_p2_super_art="0"
+        fi
+        if [ -z "$test_stage" ]; then
+            test_stage="19"
+        fi
+        ;;
+    yun-sa3-repeat)
+        if [ -z "$test_p1_character" ]; then
+            test_p1_character="3"
+        fi
+        if [ -z "$test_p2_character" ]; then
+            test_p2_character="2"
+        fi
+        if [ -z "$test_p1_super_art" ]; then
+            test_p1_super_art="2"
         fi
         if [ -z "$test_p2_super_art" ]; then
             test_p2_super_art="0"
@@ -470,7 +487,7 @@ if ! [[ "$gameplay_warmup" =~ ^[0-9]+$ ]]; then
 fi
 
 if [ -n "$perf_wait_test_phase" ] && ! is_supported_perf_wait_test_phase "$perf_wait_test_phase"; then
-    echo "error: --perf-wait-test-phase must be one of title, menu, character-select-transition, character-select, game-transition, game, game-input-active, p1-super-art-active, or wipe-transition-type1." >&2
+    echo "error: --perf-wait-test-phase must be one of title, menu, character-select-transition, character-select, game-transition, game, game-input-active, p1-super-art-active, p1-super-art-active-2, or wipe-transition-type1." >&2
     exit 2
 fi
 
@@ -480,7 +497,7 @@ if [ -n "$perf_wait_runtime_state" ] && ! is_supported_perf_wait_runtime_state "
 fi
 
 if [ -n "$test_scene_preset" ] && ! is_supported_test_scene_preset "$test_scene_preset"; then
-    echo "error: --test-scene-preset must be one of stage-heavy, effect-heavy, super-heavy, basic-exchange, pressure-exchange, left-corner-ryu-stage, or training-yun-ryu-ryu-stage." >&2
+    echo "error: --test-scene-preset must be one of stage-heavy, effect-heavy, super-heavy, yun-sa3-repeat, basic-exchange, pressure-exchange, left-corner-ryu-stage, or training-yun-ryu-ryu-stage." >&2
     exit 2
 fi
 
@@ -884,7 +901,8 @@ if command -v jq >/dev/null 2>&1; then
     fi
     if { [ -z "$metadata_capture_start_test_phase" ] || [ "$metadata_capture_start_test_phase" = "game" ]; } &&
         { [ "$metadata_perf_wait_test_phase" = "game-input-active" ] ||
-          [ "$metadata_perf_wait_test_phase" = "p1-super-art-active" ]; }; then
+          [ "$metadata_perf_wait_test_phase" = "p1-super-art-active" ] ||
+          [ "$metadata_perf_wait_test_phase" = "p1-super-art-active-2" ]; }; then
         metadata_capture_start_test_phase="$metadata_perf_wait_test_phase"
     fi
 
@@ -1081,10 +1099,12 @@ if command -v jq >/dev/null 2>&1; then
             empty
         else
             "Test state: p1_super_active_frames=\(.test_state.p1_super_art_active_frames_total // 0) " +
+            "p1_super_active_starts=\(.test_state.p1_super_art_active_starts_total // 0) " +
             "p1_super_first=\((.test_state.p1_super_art_active_first_frame // "none") | tostring) " +
             "p1_metamorphose_frames=\(.test_state.p1_metamorphose_frames_total // 0) " +
             "p1_metamorphose_first=\((.test_state.p1_metamorphose_first_frame // "none") | tostring) " +
             "p2_super_active_frames=\(.test_state.p2_super_art_active_frames_total // 0) " +
+            "p2_super_active_starts=\(.test_state.p2_super_art_active_starts_total // 0) " +
             "p2_super_first=\((.test_state.p2_super_art_active_first_frame // "none") | tostring) " +
             "p2_metamorphose_frames=\(.test_state.p2_metamorphose_frames_total // 0) " +
             "p2_metamorphose_first=\((.test_state.p2_metamorphose_first_frame // "none") | tostring)"
