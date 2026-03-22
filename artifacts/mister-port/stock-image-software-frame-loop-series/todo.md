@@ -7404,7 +7404,7 @@
   - [x] the final tree keeps runtime behavior unchanged and closes the loop docs-only rather than forcing another unverified helper rewrite
 - [x] Rejected and closed in this loop:
   - [x] do not retry this width-only fixed-pattern cluster kernel unchanged now; if the native Yun queue stays open, first prove a low-distortion lookup-plan concentration strong enough to define a safe runtime gate, or rerank toward a different gameplay bottleneck instead
-- [ ] final commit hash:
-  - [ ] pending closeout commit
+- [x] final commit hash:
+  - [x] `fa08b0f2` (`docs: close loop 173 cluster-kernel rejection`)
 - [x] next best candidate:
   - [x] do not spend the next loop on another width-only or size-bucket Yun kernel guess. If native Yun work continues, first recover a lower-distortion way to prove a concentrated lookup-plan cohort inside the trusted onset cluster; otherwise rerank toward the separate gameplay-real bottleneck queue instead of reopening this helper lane blindly

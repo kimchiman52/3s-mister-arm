@@ -199,7 +199,7 @@ Scope guardrails:
 
 - 2026-03-22T15:19:59-0400
   - Final commit hash:
-    - pending closeout commit
+    - `fa08b0f2`
   - Bottleneck targeted:
     - deciding whether the newly confirmed `32x32 -> 34/35/36/37` Yun onset cluster is strong enough to justify a width-only fixed-pattern non-integer row kernel on the native/direct first-visible Genei lane
   - Change summary:
