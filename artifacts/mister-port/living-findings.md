@@ -4444,7 +4444,7 @@ Scope guardrails:
 
 - 2026-03-22T17:00:00-0400
   - Final commit hash:
-    - pending docs-only closure commit
+    - `0276bb5a`
   - Bottleneck targeted:
     - testing whether cached source-proven binary-alpha sidecar metadata could reduce the first-visible Yun onset non-integer row-raster cost without selector heuristics
   - Change summary:

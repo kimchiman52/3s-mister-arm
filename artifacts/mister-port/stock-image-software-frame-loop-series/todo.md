@@ -7260,6 +7260,6 @@
 - [x] Rejected and closed in this loop:
   - [x] do not retry this cached per-pixel binary-alpha sidecar unchanged now. The exact same onset family mix became substantially slower, so the added source-mask bookkeeping is the wrong cost shape for the current hot helper
 - [x] final commit hash:
-  - [ ] pending docs-only closure commit
+  - [x] `0276bb5a` (`docs: close loop 169 sidecar rejection`)
 - [x] next best candidate:
   - [x] if Yun runtime work continues, require a different reversible bet than this per-pixel source-mask sidecar: either rerank toward a lighter-weight source-proven row/subrect proof for the exact hot families, or move to another bounded non-selector-specific experiment instead of reopening this exact design
