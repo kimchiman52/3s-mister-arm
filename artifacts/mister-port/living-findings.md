@@ -4391,7 +4391,7 @@ Scope guardrails:
 
 - 2026-03-22T10:12:59-0400
   - Final commit hash:
-    - pending post-commit fill
+    - `09db5e30`
   - Bottleneck targeted:
     - recovering lower-distortion binary-alpha structure for the exact first-visible Yun onset hot-family cohort so the next native runtime attempt can target opaque-copy versus transparent-skip work on the real deciding lane
   - Change summary:
