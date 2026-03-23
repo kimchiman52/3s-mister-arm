@@ -193,7 +193,7 @@ Scope guardrails:
 ## Archive Queue Pointer
 
 - Active queue details now live in `docs/agent-memory/mister-ralph-working-brief.md`; keep that brief current after each meaningful keep, reject, or pivot.
-- The current first-line queue keeps the Yun-only `frame-skip` validation as the new baseline and extends or retimes its trusted reuse window on the deciding Yun SA3 lane before reopening weaker cadence-only thinning.
+- The current first-line queue keeps the full-window Yun-only `frame-skip` extension as the new baseline and stays on the same user-approved burst-fidelity family with broader burst-only cohort or super-specific thinning follow-up before reopening unrelated helper/codegen work.
 - Keep `full|simplified|minimal|frame-skip` available for Yun-first automated comparisons, and use Q/Ken/Chun-Li as secondary route/regression sweeps until the runtime gate broadens beyond Yun-only behavior.
 - Native Yun deep measurement is still a secondary queue, but only if it uses lower-distortion or external evidence rather than another in-band hot-path collector.
 - Nearest-HDMI presenter work remains secondary while the super-activation queue is open.
@@ -243,6 +243,24 @@ Scope guardrails:
   - Kept the `r18` cached row-run destination-span reland in `src/port/sdl/fbdev_presenter.c`: it left copied bytes unchanged but improved the heavier or more user-visible lanes on the real device (`stage-heavy 51.9464 -> 52.6269 FPS`, `ibuki-stage7 55.5333 -> 57.3638`, `2p-character-select 36.1584 -> 37.0479`, `menu-transition 36.4438 -> 37.6084`, native guard `92.9887 -> 93.6382`) while only slightly regressing control (`72.2987 -> 71.7994`). Recover trustworthy automated `genei-jin-first-activation` coverage before another menu-specific nearest experiment.
 
 ## Cycle Log
+
+- 2026-03-23T04:55:32-0400
+  - Final commit hash:
+    - recorded in the closing commit for this cycle; the exact self-hash is reported in the loop closeout message because this workflow does not amend a commit just to embed its own ID
+  - Bottleneck targeted:
+    - extending the trusted Yun-only `frame-skip` reuse window so the already-kept super-fidelity path covers the previously untouched post-`82` active tail on `yun-sa3-repeat-pressure`
+  - Change summary:
+    - changed only `src/port/sdl/sdl_app.c` so the trusted Yun slowdown cap now matches the recovered `124` active-frame window
+    - tightened the trusted Yun state machine so the longer countdown only advances while the actual trusted Yun active state remains true, preventing intentional post-super overrun if a later activation is shorter
+    - rebuilt the telemetry package in Docker `3sx-mister-build`, redeployed through serialized MiSTer tooling, and captured same-build `full` versus `frame-skip` on Yun SA3, Q SA1, and `gameplay-idle`
+  - Verification result summary:
+    - local `git diff --check` plus `tools/mister/build-game.sh --flavor telemetry` passed, and serialized MiSTer `lock-status`, `busy-status`, `health`, `deploy`, `probe`, and bounded `smoke` all passed on `192.168.1.171`
+    - same-build deciding Yun stayed on direct/native software-frame present with zero readback and `p1_super_art_active_frames_total = 124`; `full -> frame-skip` improved `39.5247 -> 51.4887 FPS` on the first `82` active frames, `44.2897 -> 53.6886` on the formerly uncovered post-`82` tail, and `41.0195 -> 52.2134` across the full active window, with `62/62` scheduled/applied frame skips
+    - Q SA1 remained effectively flat and never armed Yun-only reuse (`31.5266 -> 31.3746 FPS` across its active window, `0/0` scheduled/applied), and `gameplay-idle` stayed flat (`67.0709 -> 67.0746 FPS`)
+  - Keep/rollback decision with reason:
+    - keep; the longer trusted Yun cap materially improves the previously uncovered active tail and the whole active window on the same direct/native route, without broad guard regression
+  - Next best candidate optimization:
+    - keep the full-window Yun-only `frame-skip` keep as the new baseline, then test one bounded stronger follow-up on the same render-only path: broaden the trusted burst-only cohort on rendered frames or add super-specific thinning on top of the kept full-window reuse
 
 - 2026-03-23T04:27:30-0400
   - Final commit hash:

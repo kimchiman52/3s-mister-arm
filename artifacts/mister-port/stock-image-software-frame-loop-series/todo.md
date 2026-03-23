@@ -7805,3 +7805,39 @@
 - [x] next best candidate:
   - [x] keep the Yun-only `frame-skip` keep as the new baseline, then test a bounded extension or retiming of the trusted Yun slowdown window beyond the provisional `82` frames so the same render-only reuse path covers more of the still-slow active tail without widening beyond MiSTer-only burst visuals
   - [x] keep `q-sa1-repeat-pressure` and `gameplay-idle` as the immediate guards on that follow-up, and keep Ken/Chun harness repair as a separate setup queue rather than stacking it into the next Yun runtime reland
+
+### Follow-On Loop 184: Extend Yun Frame-Skip Tail Coverage
+
+- [x] Value target: extend the trusted Yun-only `frame-skip` reuse window just enough to cover the still-slow post-`82` active tail recovered in Loop `183`, and verify that the same render-only MiSTer path converts that tail into a real whole-window gain without broad guard regressions
+- [x] Scope boundary: `src/port/sdl/sdl_app.c` only for the runtime change, plus the required checklist / working-brief / living-findings closeout after verification; no harness repair, no selector broadening beyond the trusted Yun identity gate, no gameplay-state edits, and no return to dark-render/helper-local runtime guesses
+- [x] Research checkpoint:
+  - [x] Loop `183` already closed the dark-render memo as a docs/process correction and promoted Yun-only `frame-skip` to the active super-fidelity baseline; current code inspection confirmed the live runtime lever was still a single hard-coded `TRUSTED_YUN_SA3_SLOWDOWN_WINDOW_FRAMES = 82` gate in `src/port/sdl/sdl_app.c`
+  - [x] Fresh trigger-inclusive Loop `183` JSON re-analysis showed the uncovered tail was real and untouched by reuse. On same-build `loop183-yun-sa3-repeat-pressure-{full,minimal,frame-skip}-r1`, the trusted trigger landed at frame `296`, `p1_super_art_active_frames_total = 124`, and the post-`82` active tail (`42` frames) stayed essentially identical across all three modes: `35.3058 FPS / 14.2215 ms render` on `full`, `35.3615 / 14.0141` on `minimal`, and `35.2380 / 13.8747` on `frame-skip`
+  - [x] The already-kept `frame-skip` benefit was therefore bounded by the current cap, not by route failure. The same Loop `183` capture still showed zero readback, direct/native software-frame present throughout, and large gains inside the covered window (`first82 = 18.5097 FPS full` vs `30.9530 FPS frame-skip`)
+  - [x] The simplest measured next bet was to extend the existing trusted Yun slowdown cap from `82` toward the observed `124`-frame active window while stopping the window cleanly when the trusted Yun active state ends, so the change does not intentionally overrun into non-super gameplay if a later activation is shorter
+- [x] Hypothesis:
+  - [x] if the existing Yun-only `frame-skip` path covers the full measured `124`-frame trusted active window instead of stopping at `82`, then the previously untouched post-`82` tail should improve materially on `yun-sa3-repeat-pressure` while the route remains direct/native with zero readback; `q-sa1-repeat-pressure` and `gameplay-idle` should remain effectively flat because the identity gate still limits the behavior to trusted P1 Yun SA3 only
+- [x] Scoped plan:
+  - [x] patch only `src/port/sdl/sdl_app.c` so the trusted Yun slowdown window matches the recovered `124`-frame active span and resets immediately once the trusted active state ends
+  - [x] rebuild/package the `telemetry` flavor in Docker container `3sx-mister-build`, redeploy through serialized MiSTer tooling, and verify with `health`, `deploy`, `probe`, and bounded `smoke`
+  - [x] capture same-build `full` versus candidate `frame-skip` on `yun-sa3-repeat-pressure`, `q-sa1-repeat-pressure`, and `gameplay-idle`; judge Yun on first `8`, first `60`, first `82`, the post-`82` active tail, and the full active window using the saved JSON plus sampler summaries
+- [x] Implementation summary:
+  - [x] updated `src/port/sdl/sdl_app.c` so the trusted Yun slowdown cap now matches the recovered `124` active-frame window, and tightened the state machine so the countdown only advances while the trusted Yun active state remains true
+  - [x] this kept the change inside the existing MiSTer-only Yun selector and prevented the longer cap from intentionally leaking past the actual super-active state if a later activation is shorter than the trusted repeat-pressure lane
+- [x] Verification summary:
+  - [x] local `git diff --check` passed, and `tools/mister/build-game.sh --flavor telemetry` rebuilt the canonical Docker telemetry outputs in `3sx-mister-build`
+  - [x] serialized MiSTer `lock-status`, `busy-status`, `health`, `deploy --src build/mister-telemetry-package`, `probe`, and bounded `smoke` all passed on `192.168.1.171`
+  - [x] captured same-build `loop184-yun-sa3-repeat-pressure-{full,frame-skip}-r1`, `loop184-q-sa1-repeat-pressure-{full,frame-skip}-r1`, and `loop184-gameplay-idle-{full,frame-skip}-r1`
+  - [x] on the deciding lane, the trusted trigger stayed at frame `296`, `p1_super_art_active_frames_total` stayed `124`, and the route stayed direct/native with zero readback. Same-build `full -> frame-skip` improved Yun from `46.9374 -> 50.4138 FPS` overall, `39.9817 -> 50.9294` first `8`, `38.2801 -> 49.8172` first `60`, `39.5247 -> 51.4887` first `82`, `44.2897 -> 53.6886` on the post-`82` active tail, and `41.0195 -> 52.2134` across the full `124` active frames; render time fell from `8.9552 -> 6.1393 ms` on the previously uncovered post-`82` tail and from `11.1995 -> 7.2839 ms` across the full active window
+  - [x] the longer cap armed the newly covered tail exactly as intended: `trusted_yun_sa3_frame_skip_scheduled_total = trusted_yun_sa3_frame_skip_applied_total = 62`, up from the previous `41/41` keep
+  - [x] guard lanes stayed flat enough to keep. Q SA1 never armed Yun-only reuse (`0/0` scheduled/applied) and moved only from `31.5266 -> 31.3746 FPS` across its `44` active frames; `gameplay-idle` stayed effectively identical at `67.0709 -> 67.0746 FPS`
+- [x] Review gate:
+  - [x] independent review found no concrete issues; the only residual note was selector tuning risk, and the new `burst_active` stop already bounds that risk to the actual trusted Yun active state
+- [x] Keep/rollback decision:
+  - [x] keep. Extending the trusted Yun cap to the measured `124` active frames materially improved both the previously uncovered post-`82` tail and the whole active window on the same direct/native route, without meaningful Q SA1 or `gameplay-idle` regression
+  - [x] this is still not the terminal answer for the queue. Even after the longer cap, trusted Yun remains around `52.2134 FPS` across the full active window rather than stable `60`, so the next runtime pass should stay on the same user-approved burst-fidelity family instead of opening a different hypothesis queue
+- [ ] final commit hash:
+  - [ ] recorded in Git history by the closing commit that lands this section; the exact self-hash is reported in the loop closeout message because this workflow does not amend a commit just to embed its own ID
+- [x] next best candidate:
+  - [x] keep the full-window Yun-only `frame-skip` keep as the new baseline, then test one bounded stronger follow-up on the same render-only path: broaden the trusted burst-only cohort on rendered frames or add super-specific thinning on top of the kept full-window reuse, while preserving the same Q SA1 and `gameplay-idle` guards
+  - [x] keep Ken/Chun harness repair as a separate setup queue until a later loop needs broader matrix confidence; do not spend the next runtime pass on another window-length tweak now that the full trusted `124`-frame active span is already covered

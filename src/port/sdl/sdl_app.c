@@ -91,7 +91,8 @@ static bool software_frame_mode_enabled = false;
 static SDLGameRenderer_SuperEffectQualityMode super_effect_quality_mode =
     SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_FULL;
 #if defined(PORT_MISTER)
-static const int TRUSTED_YUN_SA3_SLOWDOWN_WINDOW_FRAMES = 82;
+// Trigger-inclusive repeat-pressure captures keep the trusted Yun SA3 active burst at 124 frames.
+static const int TRUSTED_YUN_SA3_SLOWDOWN_WINDOW_FRAMES = 124;
 static int trusted_yun_sa3_burst_frames_remaining = 0;
 static int trusted_yun_sa3_active_frame_index = 0;
 static bool trusted_yun_sa3_burst_triggered_this_frame = false;
@@ -8709,7 +8710,7 @@ static void update_trusted_yun_sa3_burst_state_for_frame(void) {
                          trusted_yun_sa3_active_frame_index,
                          TRUSTED_YUN_SA3_SLOWDOWN_WINDOW_FRAMES);
         }
-    } else if (trusted_yun_sa3_burst_frames_remaining > 0) {
+    } else if (burst_active && (trusted_yun_sa3_burst_frames_remaining > 0)) {
         trusted_yun_sa3_burst_frames_remaining -= 1;
         trusted_yun_sa3_active_frame_index += 1;
     } else {
