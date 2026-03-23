@@ -266,7 +266,7 @@ static u16 projectile_script_input(int player, int local_frame) {
     }
 }
 
-static u16 super_script_input(int player, int local_frame) {
+static u16 super_script_input_with_button(int player, int local_frame, SWKey attack_button) {
     const SWKey forward = player_forward_button(player);
 
     switch (local_frame) {
@@ -301,10 +301,14 @@ static u16 super_script_input(int player, int local_frame) {
     case 27:
         return forward;
     case 30:
-        return (u16)(forward | SWK_WEST);
+        return (u16)(forward | attack_button);
     default:
         return 0;
     }
+}
+
+static u16 super_script_input(int player, int local_frame) {
+    return super_script_input_with_button(player, local_frame, SWK_WEST);
 }
 
 static u16 basic_exchange_script_input(int player, int local_frame) {
@@ -558,6 +562,18 @@ static bool scene_preset_repeat_super_prep_active(int start_frame) {
     const int prep_start = start_frame - scene_preset_repeat_super_prep_frames;
 
     return game_frame >= prep_start && game_frame < start_frame;
+}
+
+static SWKey scene_preset_repeat_super_attack_button(void) {
+    switch (scene_preset) {
+    case TEST_SCENE_PRESET_KEN_SA3_REPEAT:
+    case TEST_SCENE_PRESET_KEN_SA3_REPEAT_PRESSURE:
+    case TEST_SCENE_PRESET_CHUNLI_SA2_REPEAT:
+    case TEST_SCENE_PRESET_CHUNLI_SA2_REPEAT_PRESSURE:
+        return SWK_SOUTH;
+    default:
+        return SWK_WEST;
+    }
 }
 
 static u16 left_corner_ryu_stage_reanchor_input(int player) {
@@ -868,11 +884,13 @@ static void apply_scene_preset_inputs() {
         p2sw_buff = 0;
 
         if (scene_preset_repeat_super_input_active(scene_preset_repeat_first_super_frame)) {
-            p1sw_buff = super_script_input(0, game_frame - scene_preset_repeat_first_super_frame);
+            p1sw_buff = super_script_input_with_button(
+                0, game_frame - scene_preset_repeat_first_super_frame, scene_preset_repeat_super_attack_button());
         }
 
         if (scene_preset_repeat_super_input_active(scene_preset_repeat_second_super_frame)) {
-            p1sw_buff = super_script_input(0, game_frame - scene_preset_repeat_second_super_frame);
+            p1sw_buff = super_script_input_with_button(
+                0, game_frame - scene_preset_repeat_second_super_frame, scene_preset_repeat_super_attack_button());
         }
         return;
     }
@@ -889,7 +907,8 @@ static void apply_scene_preset_inputs() {
         }
 
         if (scene_preset_repeat_super_input_active(scene_preset_repeat_first_super_frame)) {
-            p1sw_buff = super_script_input(0, game_frame - scene_preset_repeat_first_super_frame);
+            p1sw_buff = super_script_input_with_button(
+                0, game_frame - scene_preset_repeat_first_super_frame, scene_preset_repeat_super_attack_button());
             p2sw_buff = pressure_exchange_defend_input(
                 1, game_frame - (scene_preset_repeat_first_super_frame - scene_preset_repeat_super_prep_frames));
             return;
@@ -903,7 +922,8 @@ static void apply_scene_preset_inputs() {
         }
 
         if (scene_preset_repeat_super_input_active(scene_preset_repeat_second_super_frame)) {
-            p1sw_buff = super_script_input(0, game_frame - scene_preset_repeat_second_super_frame);
+            p1sw_buff = super_script_input_with_button(
+                0, game_frame - scene_preset_repeat_second_super_frame, scene_preset_repeat_super_attack_button());
             p2sw_buff = pressure_exchange_defend_input(
                 1, game_frame - (scene_preset_repeat_second_super_frame - scene_preset_repeat_super_prep_frames));
             return;

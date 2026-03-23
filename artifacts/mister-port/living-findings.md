@@ -244,6 +244,25 @@ Scope guardrails:
 
 ## Cycle Log
 
+- 2026-03-23T06:06:26-0400
+  - Final commit hash:
+    - recorded in the closing commit for this cycle; the exact self-hash is reported in the loop closeout message because this workflow does not amend a commit just to embed its own ID
+  - Bottleneck targeted:
+    - testing whether broadening the rendered `frame-skip` cohort to the next measured safe-shape non-flipped `256x256` Yun families could beat kept Loop `184`, while repairing the Ken/Chun repeat-super harness so broader matrix lanes stop reporting zero activations
+  - Change summary:
+    - temporarily broadened the trusted Yun selector to include families `57/317`, `57/328`, `58/327`, and `58/344`, then fully rolled that renderer reland back after device rejection
+    - kept the narrow repeat-preset button repair in `src/test/test_runner.c` so Ken SA3 and Chun-Li SA2 repeat-pressure presets finish on `SWK_SOUTH` while Yun SA3 and Q SA1 keep `SWK_WEST`
+    - rebuilt the telemetry package in Docker `3sx-mister-build`, redeployed through serialized MiSTer tooling, and captured same-build Yun `full` / `frame-skip` plus Ken/Chun `full` validation runs
+  - Verification result summary:
+    - local `git diff --check` plus `tools/mister/build-game.sh --flavor telemetry` passed; serialized MiSTer `lock-status`, env-backed `busy-status`, `health`, `deploy`, `probe`, and bounded `smoke` all passed on `192.168.1.171`
+    - deciding Yun stayed on the intended direct/native route with zero readback, triggered at frame `179`, and remained active for `241` frames. The broadened candidate improved versus same-build `full` to `33.6987 / 28.2044 / 29.2213 / 34.2497 / 40.4766 FPS` across the deciding first-`8` / first-`60` / first-`82` / first-`124` / full-active windows with `62/62` scheduled/applied skips, but it still trailed kept Loop `184` badly (`50.9294 / 49.8172 / 51.4887 / 52.2134` on the main first-`8` / first-`60` / first-`82` / full-active windows)
+    - `loop186-ken-sa3-repeat-pressure-full-r1` and `loop186-chunli-sa2-repeat-pressure-full-r1` now both record `p1_super_art_active_starts_total = 1`, `p1_super_art_active_first_frame = 179`, and `44` active frames at `47.8670 FPS` and `38.7726 FPS`
+  - Keep/rollback decision with reason:
+    - reject and roll back the broader non-flipped `256x256` renderer reland because it does not come close to beating kept Loop `184`; keep the repeat-preset attack-button repair because it is narrow measurement support and fixes the Ken/Chun false-guard problem
+  - Next best candidate optimization:
+    - do not retry now: this exact non-flipped `256x256` selector broadening on rendered `frame-skip` ticks
+    - keep Loop `184` Yun-only full-window `frame-skip` as the runtime baseline, use the now-live Ken/Chun lanes as real guards, and rerank toward one materially different burst-only follow-up, most likely a bounded treatment for the remaining dominant flipped `41/1` family or an equivalent super-specific rendered-tick lever
+
 - 2026-03-23T05:27:03-0400
   - Final commit hash:
     - recorded in the docs-only closeout commit for this cycle; the exact self-hash is reported in the loop closeout message because this workflow does not amend a commit just to embed its own ID
