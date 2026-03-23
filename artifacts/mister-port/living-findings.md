@@ -244,6 +244,23 @@ Scope guardrails:
 
 ## Cycle Log
 
+- 2026-03-23T16:45:00-0400
+  - Final commit hash:
+    - `d9056280`
+  - Bottleneck targeted:
+    - stronger MiSTer-only whole-window Yun SA3 burst thinning on the active `super-effect-quality = minimal` path
+  - Change summary:
+    - changed `src/port/sdl/sdl_game_renderer.c` so `minimal` now preserves one of every three qualifying trusted hot-family tasks after final sort instead of one of every two
+    - updated `docs/config.md`, the active Ralph working brief, and the active checklist to record the stronger kept cadence and the next-loop contract
+  - Verification result summary:
+    - local `git diff --check` and the canonical telemetry Docker build `tools/mister/build-game.sh --flavor telemetry` passed in `3sx-mister-build`
+    - serialized MiSTer `lock-status`, recovered `busy-status` after bounded stale-Loop-179 PID cleanup, `health`, `deploy`, `probe`, and bounded `smoke` all passed on `192.168.1.171`
+    - same-build deciding Yun captures stayed direct/native with zero fallback/readback and improved from `39.3740 -> 41.2826 FPS` overall, `32.8357 -> 36.1390` first `8`, `36.0593 -> 38.4651` first `60`, and `37.8760 -> 40.1395` over the first `82`; Q SA1 stayed effectively flat (`36.9132 -> 37.0119 FPS` overall) and `gameplay-idle` only slipped slightly (`67.7388 -> 67.3300 FPS`)
+  - Keep/rollback decision with reason:
+    - keep; this is the first stronger `minimal` reland that produces a clear whole-window Yun SA3 gain on the trusted route without a material non-super regression, so it becomes the new super-fidelity baseline
+  - Next best candidate optimization:
+    - stay on the same user-approved burst-fidelity path with one more bounded stronger/broader cut on the trusted Yun cohort, while keeping Ken/Chun harness repair as a separate setup loop and `frame-skip` as the fallback if another stronger thinning step stalls
+
 - 2026-03-23T02:12:53-0400
   - Final commit hash:
     - `3c2e6576`

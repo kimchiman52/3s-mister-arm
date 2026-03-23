@@ -7694,7 +7694,7 @@
   - [x] keep. This is the first stronger `minimal` follow-up that clearly beats the same-build `full` comparator on the deciding whole-window Yun lane while preserving the trusted direct/native route and avoiding any material non-super regression
   - [x] the idle guard did slip slightly (`67.7388 -> 67.3300 FPS`, about `-0.6%`), so the next loop should treat this kept cadence as the new baseline and keep broad non-super guardrails in the matrix instead of assuming more thinning is free
 - [x] final commit hash:
-  - [ ] pending runtime commit
+  - [x] `d9056280` (`perf: strengthen minimal super-effect thinning`)
 - [x] next best candidate:
   - [x] keep iterating on the same user-approved burst-fidelity path before reopening helper-local queues: either lower the per-family survivor count again or broaden the trusted burst-only candidate cohort while preserving the same MiSTer-only render-only scope
   - [x] keep `frame-skip` as the next fallback only if another stronger/broader thinning step fails to clear Loop `180` materially, and keep the Ken/Chun harness repair as a separate setup loop rather than stacking it into the next runtime reland
