@@ -246,7 +246,7 @@ Scope guardrails:
 
 - 2026-03-23T02:12:53-0400
   - Final commit hash:
-    - `PENDING_FINAL_COMMIT_HASH`
+    - `3c2e6576`
   - Bottleneck targeted:
     - closing the first MiSTer-only `super-effect-quality = full|simplified|minimal` validation loop on the deciding whole-window Yun SA3 slowdown, while checking whether Q/Ken/Chun scripted super lanes are trustworthy matrix guards
   - Change summary:

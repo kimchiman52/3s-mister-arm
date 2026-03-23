@@ -7656,6 +7656,7 @@
 - [ ] Keep/rollback decision:
   - [x] reject Loop 179 as a keep candidate and close it docs-only. The currently committed `full|simplified|minimal` validation run proved the first-pass burst-fidelity cuts are real but too weak on the deciding Yun whole-window slowdown, so this loop should not pretend the current shape is sufficient
   - [x] keep the previously committed runtime under test in history as rejected evidence rather than reopening or rolling back code inside this closeout loop; this cycle itself adds only docs/memory updates on top of the already-committed super-fidelity branch state
+  - [x] final docs-only closeout commit: `3c2e6576`
 - [ ] next best candidate:
   - [x] next runtime loop should stay on the same user-approved path with a stronger burst-only workload cut on trusted Yun SA3, preferably deeper post-sort thinning / lower survivor caps / broader burst-only cohort before reopening any alpha-branch-layout or generic helper-local queue
   - [x] keep the committed Yun-only `frame-skip` mode visible as a secondary follow-up, but do not let it displace the stronger-thinning rerank unless new review or measurement evidence says the simpler burst-shedding lever is blocked
