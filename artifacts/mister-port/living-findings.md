@@ -244,6 +244,24 @@ Scope guardrails:
 
 ## Cycle Log
 
+- 2026-03-23T02:12:53-0400
+  - Final commit hash:
+    - `PENDING_FINAL_COMMIT_HASH`
+  - Bottleneck targeted:
+    - closing the first MiSTer-only `super-effect-quality = full|simplified|minimal` validation loop on the deciding whole-window Yun SA3 slowdown, while checking whether Q/Ken/Chun scripted super lanes are trustworthy matrix guards
+  - Change summary:
+    - kept runtime code unchanged and closed the queue from fresh on-device evidence after re-auditing the dark-render memo as a docs/process correction
+    - rebuilt/deployed the telemetry ARM package in Docker `3sx-mister-build`, then captured `full/simplified/minimal` on `yun-sa3-repeat-pressure`, `q-sa1-repeat-pressure`, fallback `ken-sa3-repeat`, fallback `chunli-sa2-repeat`, and `gameplay-idle full|minimal`
+    - recorded that Ken and Chun-Li repeat families remain harness-invalid on the current tree because both pressure and fallback repeat presets stayed super-ready with zero super-active starts
+  - Verification result summary:
+    - local `git diff --check`, `bash -n tools/mister/perf-sampler.sh`, Docker telemetry build/install/package, and serialized MiSTer `busy-status`, `health`, `deploy`, `probe`, and bounded `smoke` all passed on `192.168.1.171`
+    - deciding Yun captures stayed direct/native with zero fallback/readback but improved only modestly: `full = 39.6129 FPS / first8 33.5959 / first60 36.7774 / 82 38.5460`, `simplified = 40.5174 / 34.7276 / 37.1470 / 39.2013`, `minimal = 40.7258 / 35.6718 / 37.1007 / 39.2917`; Q SA1 moved only slightly too (`36.6427 -> 37.1461 FPS`, `82 34.5386 -> 34.9779`)
+    - fallback Ken/Chun captures and the earlier pressure captures all stayed direct/native with zero fallback/readback, but both characters remained `p1_super_active_starts = 0`, so those lanes are not valid super-matrix evidence; `gameplay-idle` stayed acceptable with `full = 22.7993 FPS` and `minimal = 24.0863 FPS`
+  - Keep/rollback decision with reason:
+    - reject as a keep candidate and close docs-only; the first-pass `simplified` / `minimal` cuts are real but too weak on the deciding whole-window Yun slowdown, and the broader Ken/Chun matrix is still partially blocked by harness invalidity
+  - Next best candidate optimization:
+    - stay on the same user-approved burst-fidelity path with stronger post-sort thinning / lower survivor caps / broader burst-only admission on trusted Yun SA3, while opening a narrow harness-fix follow-up for `ken-sa3-repeat*` and `chunli-sa2-repeat*` before relying on them again
+
 - 2026-03-22T18:47:06-0400
   - Final commit hash:
     - `e998b560`
