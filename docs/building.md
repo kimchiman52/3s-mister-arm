@@ -61,13 +61,29 @@ You should be able to build the project with just Xcode Command Line Tools.
 
 For MiSTer-oriented builds (no netplay, no ISO import flow, no FFmpeg ADX backend):
 
+Default Docker path for fresh agents and common host setups:
+
+```bash
+tools/mister/build-game.sh --flavor telemetry
+```
+
+Notes:
+- This is the canonical MiSTer Docker build entry point.
+- It defaults to the validated `linux/amd64` Docker cross-build flow, which still produces a real ARM hard-float MiSTer package on the host.
+- Use `--flavor clean` for the player-facing package or `--flavor both` when you need both outputs.
+- Use the manual runbook flow in [docs/mister-runbook.md](mister-runbook.md) only when debugging the Docker environment or intentionally choosing a different container platform.
+
 Important:
 - Use `clang`/`clang++` for MiSTer builds.
 - Do not use `gcc`/`g++` (for example `arm-linux-gnueabihf-gcc`) for this target.
 - For Docker-based MiSTer builds, prefer the pinned LLVM repo setup in [docs/mister-runbook.md](mister-runbook.md); as of March 20, 2026 that flow installs `clang-20` from `apt.llvm.org` instead of Debian 11's system `clang` 11.
+- `PORT_MISTER=ON` alone does not guarantee an ARM MiSTer binary. On non-ARM hosts, the plain `cmake -B build/mister` snippet below will still build a host-arch binary unless you use the Docker helper or the explicit cross-build flags from the runbook.
+
+Native ARM Linux only:
 
 ```bash
-sh build-deps.sh --profile mister
+bash build-deps.sh --profile mister
 CC=clang CXX=clang++ cmake -S . -B build/mister -DCMAKE_BUILD_TYPE=Release -DPORT_MISTER=ON
 cmake --build build/mister --parallel
+cmake --install build/mister --prefix build/mister-install
 ```

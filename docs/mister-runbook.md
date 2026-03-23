@@ -8,6 +8,35 @@ This runbook targets stock MiSTer Linux with the 3SX MiSTer profile:
 - no runtime ISO import
 - no FFmpeg runtime dependency
 
+## Canonical Docker Quick Start
+
+Default command for fresh agents and most host machines:
+
+```bash
+tools/mister/build-game.sh --flavor telemetry
+```
+
+Common variants:
+
+```bash
+tools/mister/build-game.sh --flavor clean
+tools/mister/build-game.sh --flavor both
+```
+
+Why this is the default:
+
+- It is the canonical MiSTer Docker build entry point for this repo.
+- It defaults to the validated `linux/amd64` Docker cross-build path, so it still produces a real ARM MiSTer package on hosts that cannot execute `linux/arm/v7` containers locally.
+- It builds in a container-local workdir, which avoids the stale host SDL and bind-mount ownership traps described later in this runbook.
+- It copies the finished host-side outputs back to the standard paths under `build/`.
+
+Expected outputs:
+
+- `build/mister-telemetry-install` and `build/mister-telemetry-package`
+- `build/mister-clean-install` and `build/mister-clean-package`
+
+Use the manual Docker commands below only when debugging the Docker environment, validating a different container platform, or extending the build flow itself.
+
 ## Build
 
 Toolchain note:

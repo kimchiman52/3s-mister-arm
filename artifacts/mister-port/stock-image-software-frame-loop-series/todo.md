@@ -3,8 +3,9 @@
 ## Todo Metadata
 
 - [x] Canonical todo path: `artifacts/mister-port/stock-image-software-frame-loop-series/todo.md`
-- [x] Active feature/phase: stock-image-only MiSTer software game-frame loop series
+- [x] Active feature/phase: MiSTer software-frame follow-on Ralph loop series on top of the kept stock-image path
 - [x] Branch: `mister-dev`
+- [x] Working brief: `docs/agent-memory/mister-ralph-working-brief.md`
 - [x] Living record: `artifacts/mister-port/living-findings.md`
 - [x] Historical predecessor checklist: `artifacts/mister-port/stock-image-architecture-loop-series/todo.md`
 - [x] Stale todo files to retire:
@@ -16,14 +17,15 @@
 
 ## Goal and Success Criteria
 
-- [x] Goal: replace the stock-MiSTer gameplay bottleneck around `SDL_RenderReadPixels()` with a 3SX-owned software game-frame path that stays on stock MiSTer Linux and survives on-device IVRFC verification
+- [x] Goal: close the remaining MiSTer gameplay bottlenecks on top of the kept stock-image software-frame path, starting with super-activation slowdown under the Ralph v2 loop contract
+- [x] Historical milestone note: the original stock-MiSTer `SDL_RenderReadPixels()` replacement goal is already closed evidence in this file and should not be treated as the active loop target anymore
 - [x] Success criteria:
   - every checklist chunk is one fresh-agent IVRFC loop with one scoped objective and one verified closing commit
+  - each active Ralph loop closes with an explicit keep, reject, or pivot outcome on a clean tree; do not leave the queue parked on an open dirty implementation
   - the active stream stays on stock MiSTer Linux with SDL dummy/software + fbdev presenter; no custom image, `/dev/dri`, KMSDRM, or GPU-stack work enters this checklist
-  - the runtime path keeps the main `384x224` gameplay frame in 3SX-owned software memory when the mode is enabled and only uploads back to `cps3_canvas` when SDL composition is still required
-  - the accepted path improves total gameplay `frame_time.mean` by at least `5%` on the idle control and at least one frozen heavy scene, with no validated scene regressing by more than `3%`
-  - the final user-facing mode decision for MiSTer is recorded explicitly: either promoted to default-on after verification or kept opt-in with the stop reason documented
-  - every successful loop updates `artifacts/mister-port/living-findings.md` and this checklist before commit
+  - active follow-on work keeps gameplay timing, logic, determinism, and input semantics unchanged unless the user explicitly approves a MiSTer-only visual-fidelity tradeoff
+  - the kept stock-image software-frame path remains the baseline; new loops should improve or protect user-priority gameplay lanes rather than reopen already-closed bring-up milestones by default
+  - every closed keep, reject, or pivot loop updates `docs/agent-memory/mister-ralph-working-brief.md`, `artifacts/mister-port/living-findings.md`, and this checklist before commit
 
 ## Current Operator Priorities
 
@@ -40,6 +42,17 @@
   - keep Remy-left on its own compare-dirty residue track around `ppg-seqs 80/81/82`, but treat the remaining tail as too small for another broad policy reland on current evidence. The deciding rerun `loop146-remy-rerank-r2` exactly matched Loop `137` on hot refresh counts: `ix 80 = 13/1992` full, `ix 81 = 10/700`, and `ix 82 = 6/614`.
   - do not expect the Yun non-integer runtime candidates to move this lane materially, and do not broaden compare-dirty caps again unless fresh telemetry shows the remaining full-refresh tail is materially larger or the lane stops staying exact/direct.
 - [x] Do not spend the next native Ralph loops on stale or demoted ideas unless fresh telemetry re-ranks them: presenter-side native micro-opts, broader same-source run batching beyond the kept pair path, dual-core raster threading, broad threshold drops, or runtime row-dedup before measurement.
+
+## Ralph Update Checklist
+
+- [x] Treat `docs/agent-memory/mister-ralph-working-brief.md` as the default working set for the active queue and `artifacts/mister-port/living-findings.md` as the archive/evidence log.
+- [x] At loop kickoff, record the loop type (`runtime`, `measurement`, or `workload-fidelity`) plus the deciding lane in the loop plan or closeout.
+- [x] If a dirty runtime diff already exists at kickoff, either adopt it explicitly as the sole diff under test for that loop or revert it before new work.
+- [x] After each meaningful keep, reject, or pivot, refresh the working brief's current queue, banned families, top candidates, and next-loop contract.
+- [x] If a loop closes docs-only because a collector is too distortive or a queue is exhausted, record that pivot in the working brief as well as the archive log.
+- [x] If a documented runtime sweep prerequisite is missing, close or pivot the loop as a setup gap instead of improvising more runtime work inside the same loop.
+- [x] Before commit, update the working brief, the living findings archive, and this checklist together.
+- [x] When a detail only matters for historical lookup or exact citations, keep it in `living-findings.md` instead of expanding the working brief.
 
 ## Active Ralph Loop Intake
 
@@ -122,7 +135,7 @@
   - Tier 1 every chunk: Docker build/install/package, package, deploy, `run-3sx.sh --probe-renderer-only`, bounded `launch-osd.sh`, backend-log inspection, and `last-run.log` inspection
   - Tier 2 every 1-2 chunks: on-device gameplay captures for the current control and relevant frozen scenes using explicit software-frame on/off overrides, with `jq` checks on any new metrics
   - use `tools/mister/perf-sampler.sh --perf-basic` first when a fresh MiSTer gameplay complaint only reproduces under perf capture; that mode preserves `frame/update/render/present` while removing the heavy per-frame breakdown so capture overhead can be separated from real runtime regressions
-  - Tier 3 phase gates: fresh review, post-fix rebuild/redeploy/recapture, `living-findings.md` update, checklist update, and closing commit
+  - Tier 3 phase gates: fresh review, post-fix rebuild/redeploy/recapture, working-brief update, `living-findings.md` update, checklist update, and closing commit
 - [x] Rollout considerations:
   - each chunk must stay independently revertable
   - never mix harness/config override plumbing and the final default-on decision in the same loop
@@ -7607,29 +7620,30 @@
 
 ### Follow-On Loop 179: Super-Activation Fidelity Reduction Matrix
 
-- [ ] Value target: validate and iterate the new MiSTer-only `super-effect-quality = full|simplified|minimal` path as the first-class answer to super-activation slowdown, with the explicit goal of trading burst visual fidelity for stable gameplay speed before reopening another helper micro-optimization queue
-- [ ] Scope boundary: current dirty-tree burst-quality/runtime work in `src/port/config/*`, `src/port/sdl/sdl_app.c`, `src/port/sdl/sdl_game_renderer.c`, plus scripted capture support in `src/test/test_runner.c` and `tools/mister/perf-sampler.sh`; no gameplay-rule changes, no frame-hold, no skipped update, no emitter/resource edits, and no new repeat-pressure family/subphase collectors
-- [ ] Dependencies: clean kickoff tree on `mister-dev` plus the current dirty super-quality implementation; current living findings; current active checklist; `docs/agent-memory/mister-perf-deep-research-2026-03-21.md`; Docker `3sx-mister-build`; serialized MiSTer tooling; and the trusted existing Yun onset/repeat lanes
+- [ ] Value target: close one bounded validation loop for the already-implemented MiSTer-only `super-effect-quality = full|simplified|minimal` path as the first-class answer to super-activation slowdown on trusted Yun SA3; use Q/Ken/Chun-Li only as secondary route/regression sweeps for this first pass, and keep the Yun-only `frame-skip` mode visible as a separate follow-up candidate
+- [ ] Scope boundary: validate the existing burst-quality/runtime diff in `docs/config.md`, `include/port/sdl/sdl_game_renderer.h`, `src/main.c`, `src/port/config/*`, `src/port/sdl/sdl_app.c`, `src/port/sdl/sdl_game_renderer.c`, `src/test/test_runner.c`, and `tools/mister/perf-sampler.sh`, then close the loop from that evidence; no additional runtime behavior changes inside Loop 179, no gameplay-rule changes, no frame-hold, no skipped update, no emitter/resource edits, and no new repeat-pressure family/subphase collectors
+- [ ] Dependencies: clean `mister-dev` base state plus explicit adoption of the existing super-quality diff as the sole Loop 179 diff under test; current working brief; current living findings archive; current active checklist; `docs/agent-memory/mister-perf-deep-research-2026-03-21.md`; Docker `3sx-mister-build`; serialized MiSTer tooling; and the trusted existing Yun onset/repeat lanes
 - [ ] Research evidence gathered on `2026-03-22` before implementation:
   - [ ] the user still sees obvious slowdown after the first burst-quality reland, so the queue should stay on fidelity reduction rather than declaring victory from compile-time parity/build success alone
   - [ ] the recent alpha-branch/layout experiments are now a weak queue. Loop `177` helped the narrow onset lane but hurt idle, and Loop `178` catastrophically regressed onset itself, so another branch-order/codegen-only retry is lower expected value than iterating the user-approved burst-fidelity path
   - [ ] the strongest current gameplay evidence still says super activation is a workload problem, not just a helper inner-loop problem. The deciding Yun onset lane remains far from stable 60, and the user has now explicitly approved bounded MiSTer-only visual degradation during super activation if that is what it takes to reach stable speed
-  - [ ] future validation should not stay overfit to Yun alone. The scripted super matrix now needs at least Yun SA3, Q SA1, Ken SA3, and Chun-Li SA2 so the next fidelity decisions can be ranked across multiple real supers instead of one exact cohort
-  - [ ] the current dirty implementation already contains a concrete first pass, not just a plan. It adds public config `super-effect-quality = full|simplified|minimal`, a clean-build-visible P1 Yun SA3 8-frame burst countdown, renderer-side `simplified` quantization on the trusted hot-family cohort, renderer-side `minimal` post-sort every-other thinning, plus sampler/preset support needed to sweep those modes on Yun, Q, Ken, and Chun-Li
+  - [ ] future validation should not stay overfit to Yun alone, but the first pass must stay honest about current scope. The scripted super matrix already provides Q SA1, Ken SA3, and Chun-Li SA2 as secondary route/regression sweeps, while real non-`full` behavior still only activates on trusted P1 Yun SA3 today
+  - [ ] the current diff under test already contains a concrete first pass, not just a plan. It adds public config `super-effect-quality = full|simplified|minimal` while the broader runtime surface still recognizes Yun-only `frame-skip`; it also carries the scripted Yun/Q/Ken/Chun-Li preset support and `--super-effect-quality` sampler override needed for Yun-first automated validation plus non-Yun guard sweeps
 - [ ] Research-backed hypothesis and scoped plan:
-  - [ ] hypothesis: if the current `simplified` / `minimal` burst-fidelity modes are validated on-device and then iterated against an expanded super matrix, then at least one mode should produce materially better first-visible activation speed than `full`; if the current thinning/quantization is too weak, the next safe lever is more aggressive post-sort burst-task shedding rather than another alpha-branch/layout reland
-  - [ ] scoped plan: first close the current dirty burst-quality diff with clean and telemetry builds plus on-device MiSTer capture sweeps; the first matrix is `full/simplified/minimal` on `yun-sa3-repeat-pressure`, `q-sa1-repeat-pressure`, `ken-sa3-repeat-pressure`, and `chunli-sa2-repeat-pressure`, with `gameplay-idle` as the non-super guard; then use the simpler repeat lanes only when a pressure lane proves ambiguous; if the current modes are too weak, iterate inside the same branch with stronger post-sort thinning, lower per-family survivor caps, or broader burst-only candidate admission before reopening a different optimization queue
+  - [ ] hypothesis: if the current `simplified` / `minimal` burst-fidelity modes are validated on-device on trusted Yun SA3 while secondary non-Yun super lanes stay stable as route/regression checks, then at least one Yun mode should produce materially better first-visible activation speed than `full`; if the first-pass Yun modes are too weak, the next safe lever is a new follow-on loop for stronger post-sort burst-task shedding or an explicit Yun-only `frame-skip` evaluation, not more alpha-branch/layout work
+  - [ ] scoped plan: close the current adopted burst-quality diff with clean and telemetry builds plus on-device MiSTer capture sweeps; the first effect matrix is `full/simplified/minimal` on `yun-sa3-repeat-pressure`, with `gameplay-idle` as the non-super guard; use `q-sa1-repeat-pressure`, `ken-sa3-repeat-pressure`, and `chunli-sa2-repeat-pressure` as secondary route/regression sweeps under the current Yun-only gate, and use the simpler repeat lanes only when a pressure lane proves ambiguous; if the current Yun modes are too weak, close Loop 179 as reject/pivot and open the stronger follow-up as a new loop instead of extending this loop in place
   - [ ] reject immediately if the current burst-quality diff changes gameplay timing/logic, drifts off the direct/native route unexpectedly, or causes unacceptable non-super regressions on `gameplay-idle`
 - [ ] Implementation summary:
-  - [ ] keep the existing burst-quality runtime/config diff as the active implementation under test; do not roll back to another alpha-branch/layout experiment until it has been verified or rejected on device
-  - [ ] extend scripted presets and sampler support so the loop can capture `q-sa1-repeat`, `q-sa1-repeat-pressure`, `ken-sa3-repeat`, `ken-sa3-repeat-pressure`, `chunli-sa2-repeat`, and `chunli-sa2-repeat-pressure`
-  - [ ] add `--super-effect-quality <full|simplified|minimal>` to `tools/mister/perf-sampler.sh` so automated loops can sweep the new config without manual remote edits
+  - [ ] keep the existing burst-quality runtime/config diff as the sole active implementation under test for Loop 179; do not stack stronger thinning, `frame-skip`, or another alpha-branch/layout experiment on top of it before the first device sweep closes
+  - [ ] verify that the scripted presets and sampler support already present in the tree can capture `q-sa1-repeat`, `q-sa1-repeat-pressure`, `ken-sa3-repeat`, `ken-sa3-repeat-pressure`, `chunli-sa2-repeat`, and `chunli-sa2-repeat-pressure` exactly as documented
+  - [ ] treat any missing sweep support as a setup-gap closeout or pivot, not as permission to expand Loop 179 with fresh runtime behavior changes
+  - [ ] remember that the current non-`full` runtime gate is Yun SA3-only; do not interpret unchanged Q/Ken/Chun-Li results as proof that their supers were actively optimized in this loop
 - [ ] Verification summary:
   - [ ] local gates: `git diff --check`, Docker telemetry build/install/package, host-side `--software-frame-parity-check`, Docker clean build/install/package, `bash -n tools/mister/perf-sampler.sh`
-  - [ ] device gates: serialized `misterctl.sh lock-status`, `busy-status`, `health`, `deploy`, `probe`, `smoke`, then targeted captures for `full/simplified/minimal` on `yun-sa3-repeat-pressure`, `q-sa1-repeat-pressure`, `ken-sa3-repeat-pressure`, and `chunli-sa2-repeat-pressure`; keep `gameplay-idle` as the non-super guard and rerun the simpler repeat lanes when a pressure lane proves ambiguous
-  - [ ] capture tags should make the quality mode explicit, for example `loop179-yun-sa3-full`, `loop179-yun-sa3-simplified`, `loop179-yun-sa3-minimal`, then parallel naming for Q/Ken/Chun-Li
-  - [ ] if `minimal` remains far from stable 60 on Yun after the first sweep, do not end the loop with “needs more research” by default; the next immediate action should be a stronger fidelity-cut reland inside the same branch unless the sweep proves the current concept itself is invalid
+  - [ ] device gates: serialized `misterctl.sh lock-status`, `busy-status`, `health`, `deploy`, `probe`, `smoke`, then targeted captures for `full/simplified/minimal` on `yun-sa3-repeat-pressure`; keep `gameplay-idle` as the non-super guard; use `q-sa1-repeat-pressure`, `ken-sa3-repeat-pressure`, and `chunli-sa2-repeat-pressure` as secondary route/regression sweeps, and rerun the simpler repeat lanes only when a pressure lane proves ambiguous
+  - [ ] capture tags should make the meaning explicit, for example `loop179-yun-sa3-full`, `loop179-yun-sa3-simplified`, `loop179-yun-sa3-minimal`, plus `loop179-q-sa1-guard`, `loop179-ken-sa3-guard`, and `loop179-chunli-sa2-guard` for the secondary non-Yun sweeps
+  - [ ] if `minimal` remains far from stable 60 on Yun after the first sweep, do not end the loop with “needs more research” by default; close Loop 179 with a clear reject/pivot and queue the stronger fidelity-cut or explicit `frame-skip` follow-up as Loop 180 rather than extending the same dirty branch
 - [ ] Keep/rollback decision:
   - [ ] pending; this loop should only close after the current burst-quality diff is either verified and committed or fully rolled back and recorded as another rejected fidelity shape
 - [ ] next best candidate:
-  - [ ] if `minimal` still cannot get the deciding super lanes close to stable 60, continue deeper down the same user-approved path by cutting more burst-only secondary visuals after final sort rather than reopening alpha-branch-layout or metadata experiments; if the expanded matrix shows the current idea only helps Yun, narrow the next fidelity cut to the supers that actually benefit instead of pretending one rule fits all
+  - [ ] if `minimal` still cannot get the deciding super lanes close to stable 60, open the next loop on the same user-approved path with stronger burst-only secondary-visual cuts after final sort or an explicit Yun-only `frame-skip` evaluation rather than reopening alpha-branch-layout or metadata experiments; if the expanded matrix shows the current idea only helps Yun, narrow the next fidelity cut to the supers that actually benefit instead of pretending one rule fits all

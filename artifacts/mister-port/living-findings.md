@@ -3,13 +3,48 @@
 Purpose:
 - Preserve high-value optimization context across fresh loop sessions.
 - Reduce repeated rediscovery and duplicate failed attempts.
+- Keep the full Ralph evidence trail in one archive file even after the working brief moves elsewhere.
 
 Scope guardrails:
 - Performance/runtime optimizations only.
 - User-approved exception on `2026-03-22`: MiSTer-only visual fidelity reductions during super activation are now in scope when they do not change gameplay timing, logic, determinism, or input semantics.
 - No gameplay, determinism, rules, input semantics, timing model, or content changes.
 
-## Current Snapshot
+## How To Use This File
+
+- Load `docs/agent-memory/mister-ralph-working-brief.md` first for the active queue.
+- Load `docs/agent-memory/mister-ralph-loop-v2.md` when choosing the next loop type or reranking the Ralph process itself.
+- Use this file for archived loop evidence, exact rejection history, and old closeout details.
+- Do not treat this file as the default working brief for new Ralph loops.
+
+## Archive Snapshot
+
+- Branch: `mister-dev`
+- Build target: `PORT_MISTER=ON` in Docker container `3sx-mister-build`
+- Device target: `root@192.168.1.171:/media/fat/games/3sx/`
+- Remote tooling rule: use `tools/mister/misterctl.sh` for deploy/probe/smoke and `tools/mister/perf-sampler.sh` for captures; do not drift back to raw `ssh`/`scp`/`rsync`.
+- Build flavors: `telemetry` is the loop/developer default; `clean` is the player-facing runtime package.
+- Core render path: SDL dummy/software + fbdev presenter
+- Native game buffer: `384x224`
+- CRT-oriented mode: `scale-mode = native`
+- Default gameplay guard: 300-frame `gameplay-idle` capture via `tools/mister/perf-sampler.sh --gameplay-idle --gameplay-warmup 120`
+- Frozen scene matrix anchor: `idle-control` = `stage 11 / Ryu-Ken / SA0-0`; `stage-heavy` = `stage 19 / Ryu-Ken / SA0-0`; `effect-heavy` = preset `effect-heavy`; `super-heavy` = preset `super-heavy`
+- Expanded super-validation matrix: scripted `Yun SA3`, `Q SA1`, `Ken SA3`, and `Chun-Li SA2` presets exist, but current non-`full` runtime behavior still activates only on the trusted P1 Yun SA3 burst. Use `full|simplified|minimal` for real first-pass effect validation on Yun, and use Q/Ken/Chun-Li as secondary route/regression sweeps until the runtime gate broadens. The Yun-only `frame-skip` mode stays outside that first automated matrix because it reuses prior rendered frames and is not yet part of the sampler sweep surface.
+- Toolchain note: the validated MiSTer Docker path now uses `clang-20`; this host still cannot execute `linux/arm/v7` containers locally, so local proof remains cross-build plus `readelf` and on-device verification.
+- Active checklist: `artifacts/mister-port/stock-image-software-frame-loop-series/todo.md`
+- Active working brief: `docs/agent-memory/mister-ralph-working-brief.md`
+- Authoritative active queue state now lives in the working brief; treat this snapshot as archive convenience, not as the live loop contract.
+
+## Archive Index
+
+- Active queue summary: `docs/agent-memory/mister-ralph-working-brief.md`
+- Ralph process rules: `docs/agent-memory/mister-ralph-loop-v2.md`
+- Active implementation checklist: `artifacts/mister-port/stock-image-software-frame-loop-series/todo.md`
+- Native Yun deep research: `docs/agent-memory/mister-perf-deep-research-2026-03-21.md`
+- Broader MiSTer perf memory: `docs/agent-memory/mister-performance.md`
+- Full historical evidence: `## Cycle Log` below
+
+## Legacy Snapshot Archive
 
 - Branch: `mister-dev`
 - Build target: `PORT_MISTER=ON` in Docker container `3sx-mister-build`
@@ -105,15 +140,16 @@ Scope guardrails:
 - Native direct-present fast path: only safe when the destination rect is exactly `384x224` and fully fits within the framebuffer
 - 2026-03-15 nearest fanout telemetry status: fresh `r28` repro on the live `1920x1080` target stayed on direct `software_frame_mapped_scale` (`control 71.2582 FPS`, `stage-heavy 52.0238 FPS`, trusted `genei-jin-first-activation` `29.7295 FPS` with `121` active frames starting at frame `179`, native guard `92.6854 FPS` on `software_frame_exact`), so the current slowdown is not a route regression. New schema-`47` counters show the remaining hotspot is an extreme repeated-row fanout subset during active Genei frames (`194.57` changed rows, `1395.37` row runs mean, `4415.81` sparse repeated-row copies mean, peaks `4852` row runs / `18547` repeated-row copies / `5444412` copied bytes, with `38/121` active frames above `2000` row runs). A broad inline sparse-copy primitive reland was rejected immediately because `r29` regressed `control` to `66.5394 FPS / 4.0200 ms present_copy` at unchanged bytes and the same direct path. Keep the telemetry reland; the next runtime candidate should target only the extreme active-Genei fanout tail, not another broad small-copy rewrite.
 
-## Active Execution Contract
+## Legacy Execution Contract (Archive Reference)
 
+- Current live loop rules now live in `docs/agent-memory/mister-ralph-loop-v2.md` plus the active working brief. Keep the bullets below only as archived continuity notes.
 - New gameplay-performance work runs as isolated IVRFC loops, one item at a time.
 - Each item starts with a scoped plan, then a fresh-agent implementation loop.
 - Each loop starts with DEEP research grounded in current gameplay evidence, local code inspection, and primary-source documentation when external behavior matters.
 - Every completed loop ends in a real local commit on a clean tree.
 - If research rules out a runtime change or a runtime experiment fails verification, close the loop by rolling the runtime diff back and committing the docs/checklist closure instead of leaving the branch at `no-commit`.
-- The living findings doc and the active checklist must be updated at the end of every successful loop.
-- If telemetry is insufficient to evaluate a loop, measurement work is in scope for that loop.
+- The working brief, the living findings archive, and the active checklist must be updated at the end of every closed keep/reject/pivot loop.
+- If telemetry is insufficient to evaluate a `runtime` loop, close or pivot into a separate `measurement` loop instead of widening the runtime loop in place.
 - The prior gameplay-loop series is complete; do not assume its candidate list is exhaustive, but do respect the existing rejected-idea record.
 
 ## Known Good Verification Pattern
@@ -154,7 +190,16 @@ Scope guardrails:
 - Reopening the exact same slot-`58` reland after Loop 67's keep. The bounded `14/47/56/57/58` allowlist is now verified on-device; future loops should start from `stock-soft-c67-*` and re-rank the remaining full-refresh rows instead of replaying the same one-line runtime change.
 - Preserving deferred full-capture unlock-locality / dirty-rect / renew history across capture start as a standalone explanation for menu-transition slots `1030` / `1031` / `1032`. Loop 58's local fallback rerun kept rows `9` / `10` / `11` at zero unlock, dirty-rect, and renew counts, so the remaining blind spot is not just capture-start timing; revisit only with a narrower lifecycle-or-origin measurement plan.
 
-## Open Queue
+## Archive Queue Pointer
+
+- Active queue details now live in `docs/agent-memory/mister-ralph-working-brief.md`; keep that brief current after each meaningful keep, reject, or pivot.
+- The current first-line queue is one bounded automated `super-effect-quality` validation loop: real `full|simplified|minimal` effect ranking on trusted Yun SA3 first, then secondary Q/Ken/Chun-Li route/regression sweeps.
+- The Yun-only `frame-skip` mode remains an explicit follow-up candidate, but not part of that first automated matrix.
+- Native Yun deep measurement is still a secondary queue, but only if it uses lower-distortion or external evidence rather than another in-band hot-path collector.
+- Nearest-HDMI presenter work remains secondary while the super-activation queue is open.
+- Future runtime loops should still start from trusted current-tree baselines and use the `telemetry` flavor by default.
+
+## Legacy Queue Notes
 
 - Native override queue for the current Ralph automation run: use `artifacts/mister-port/stock-image-software-frame-loop-series/todo.md` and the trusted native baselines `loop132-yun-family-time-r2`, `loop145-yun-shared-shapes-repro-r1`, `loop146-remy-rerank-r2`, and `loop150-yun-onset-r1`, not the nearest-HDMI ranking below. The old `ix 80 / texture 56` audit and scalar `4x` row-walk unroll ideas are closed by the March `2026-03-21` evidence; the native next-step order is now measurement-first reranking on the deciding first-visible Yun lane, with Remy-left staying on its separate exact/direct compare-dirty residue track.
 - On `nearest-hdmi-perf`, the nearest scaled-present checklist stays active for modern HDMI follow-up. The kept dirty-row plus dirty-span relands remove most of the old mapped-copy tax, but nearest still trails native on `1920x1080`; if another loop is needed, stay inside partial mapped-present follow-up (source-tile-guided copies or other sparse-span reuse) rather than route recovery.

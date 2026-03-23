@@ -14,16 +14,21 @@
 
 - For MiSTer implementation/iteration work, prefer [`mister-ivrfc-loop`](/Users/sb/.codex/skills/mister-ivrfc-loop/SKILL.md) over the generic [`start-implementation`](/Users/sb/.codex/skills/start-implementation/SKILL.md) flow when the MiSTer-specific loop fits the task.
 - Use [`start-implementation`](/Users/sb/.codex/skills/start-implementation/SKILL.md) for non-MiSTer work or for MiSTer tasks that clearly fall outside the `mister-ivrfc-loop` scope.
+- For mature MiSTer perf queues, use [docs/agent-memory/mister-ralph-loop-v2.md](/Users/sb/Developer/3sx-mister/docs/agent-memory/mister-ralph-loop-v2.md) to choose the right loop type (`runtime`, `measurement`, or `workload-fidelity`) before starting another Ralph pass.
 
 ## Memory Index
 
 - Load [docs/building.md](/Users/sb/Developer/3sx-mister/docs/building.md) when you need baseline host build commands, MiSTer profile setup, or the desktop-vs-MiSTer build split.
 - Load [docs/mister-runbook.md](/Users/sb/Developer/3sx-mister/docs/mister-runbook.md) when building, packaging, deploying, probing, or perf-sampling the MiSTer runtime on device.
+- For MiSTer Docker runtime builds, default immediately to `tools/mister/build-game.sh --flavor telemetry` unless the task explicitly needs the player-facing clean package. That helper is the canonical path for fresh agents because it produces real ARM MiSTer outputs on common host setups instead of a host-arch `PORT_MISTER=ON` build.
 - Load [docs/mister-wrapper.md](/Users/sb/Developer/3sx-mister/docs/mister-wrapper.md) when working on the `3SX.rbf` + `MiSTer_3SX` wrapper-core path, wrapper packaging, or wrapper deploy/smoke commands.
 - Load [docs/agent-memory/mister-remote-safety.md](/Users/sb/Developer/3sx-mister/docs/agent-memory/mister-remote-safety.md) when touching MiSTer deploy helpers, remote command wrappers, or docs that show remote file mutation.
 - Load [docs/agent-memory/mister-wrapper-quartus.md](/Users/sb/Developer/3sx-mister/docs/agent-memory/mister-wrapper-quartus.md) when touching `3SX.rbf`, Quartus setup, Apple Silicon host strategy, or wrapper-core build failures.
 - Load [docs/agent-memory/mister-native-analog-crt.md](/Users/sb/Developer/3sx-mister/docs/agent-memory/mister-native-analog-crt.md) when revisiting scaler-off analog CRT output, `svideo`/`cvbs` color loss, or native analog wrapper/video-path cleanup.
+- Load [docs/agent-memory/mister-ralph-loop-v2.md](/Users/sb/Developer/3sx-mister/docs/agent-memory/mister-ralph-loop-v2.md) when planning, reranking, or repairing the Ralph perf process itself.
+- Load [docs/agent-memory/mister-ralph-working-brief.md](/Users/sb/Developer/3sx-mister/docs/agent-memory/mister-ralph-working-brief.md) first when starting a new Ralph perf loop on the active queue.
+- Load [docs/agent-memory/mister-ralph-working-brief-template.md](/Users/sb/Developer/3sx-mister/docs/agent-memory/mister-ralph-working-brief-template.md) when creating or refreshing the small working brief for the active Ralph queue.
 - Load [docs/agent-memory/mister-perf-deep-research-2026-03-21.md](/Users/sb/Developer/3sx-mister/docs/agent-memory/mister-perf-deep-research-2026-03-21.md) when reranking native super-art/Yun/Genei Ralph loops, validating whether a candidate is actually new, or revisiting the post-loop-149 deep-research claims.
 - Load [docs/config.md](/Users/sb/Developer/3sx-mister/docs/config.md) when changing config keys, defaults, or user-facing scale/software-frame behavior.
-- Load [artifacts/mister-port/living-findings.md](/Users/sb/Developer/3sx-mister/artifacts/mister-port/living-findings.md) when doing MiSTer performance work or revisiting previously-tested optimization ideas; skip it for non-performance feature work.
+- Load [artifacts/mister-port/living-findings.md](/Users/sb/Developer/3sx-mister/artifacts/mister-port/living-findings.md) when you need archived Ralph loop evidence, exact rejection history, or old closeout details; do not treat it as the default working brief for new perf loops.
 - Load [docs/mister-port-plan.md](/Users/sb/Developer/3sx-mister/docs/mister-port-plan.md) when re-evaluating stock MiSTer platform constraints, dependency strategy, or custom-image vs stock-image architecture decisions.

@@ -52,9 +52,11 @@ Possible values:
 - `full`: Keep current behavior
 - `simplified`: Snap the hottest Yun SA3 burst sprites to integer destination geometry so more work can use the cheaper exact/scaled software-frame paths
 - `minimal`: Apply `simplified` and thin every other hot burst sprite after final sort so only the first visible instance per family is always preserved
+- `frame-skip`: Keep gameplay/update cadence, but on alternating trusted Yun SA3 burst frames reuse the previous rendered frame instead of drawing a fresh one when a safe previous frame is available
 
 Notes:
 - This setting is only active on MiSTer builds.
+- The current Ralph first-pass automated matrix intentionally sweeps only `full`, `simplified`, and `minimal`. Treat `frame-skip` as a separate higher-risk follow-up because it reuses a previous rendered frame during trusted Yun SA3 burst frames.
 - Current v1 scope is intentionally narrow: player 1 Yun SA3 onset only.
 - On non-MiSTer builds the config key is parsed but behaves like `full`.
 
