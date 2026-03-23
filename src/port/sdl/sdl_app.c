@@ -91,9 +91,15 @@ static bool software_frame_mode_enabled = false;
 static SDLGameRenderer_SuperEffectQualityMode super_effect_quality_mode =
     SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_FULL;
 #if defined(PORT_MISTER)
+static const int TRUSTED_YUN_SA3_SLOWDOWN_WINDOW_FRAMES = 82;
 static int trusted_yun_sa3_burst_frames_remaining = 0;
+static int trusted_yun_sa3_active_frame_index = 0;
 static bool trusted_yun_sa3_burst_triggered_this_frame = false;
 static bool trusted_yun_sa3_burst_was_active = false;
+static bool trusted_yun_sa3_previous_frame_surface_valid = false;
+static bool trusted_yun_sa3_previous_frame_canvas_valid = false;
+static bool trusted_yun_sa3_frame_skip_scheduled_this_frame = false;
+static bool trusted_yun_sa3_frame_skip_applied_this_frame = false;
 #endif
 #if ENABLE_PERF_TELEMETRY
 typedef struct PerfCaptureDemoLogoState {
@@ -253,6 +259,10 @@ static Uint64 perf_super_art_active_starts[2] = { 0 };
 static bool perf_super_art_active_was_active[2] = { false, false };
 static Uint64 perf_trusted_yun_sa3_burst_triggers_total = 0;
 static int perf_trusted_yun_sa3_burst_first_trigger_frame = -1;
+static Uint64 perf_trusted_yun_sa3_frame_skip_scheduled_total = 0;
+static int perf_trusted_yun_sa3_frame_skip_first_scheduled_frame = -1;
+static Uint64 perf_trusted_yun_sa3_frame_skip_applied_total = 0;
+static int perf_trusted_yun_sa3_frame_skip_first_applied_frame = -1;
 static Uint64 perf_metamorphose_active_frames[2] = { 0 };
 static int perf_metamorphose_active_first_frame[2] = { -1, -1 };
 static int perf_capture_start_g_no[4] = { 0, 0, 0, 0 };
@@ -984,6 +994,18 @@ static void note_perf_capture_test_state(int frame_index) {
             perf_trusted_yun_sa3_burst_first_trigger_frame = frame_index;
         }
     }
+    if (trusted_yun_sa3_frame_skip_scheduled_this_frame) {
+        perf_trusted_yun_sa3_frame_skip_scheduled_total += 1;
+        if (perf_trusted_yun_sa3_frame_skip_first_scheduled_frame < 0) {
+            perf_trusted_yun_sa3_frame_skip_first_scheduled_frame = frame_index;
+        }
+    }
+    if (trusted_yun_sa3_frame_skip_applied_this_frame) {
+        perf_trusted_yun_sa3_frame_skip_applied_total += 1;
+        if (perf_trusted_yun_sa3_frame_skip_first_applied_frame < 0) {
+            perf_trusted_yun_sa3_frame_skip_first_applied_frame = frame_index;
+        }
+    }
 #endif
 
     for (int player = 0; player < 2; player++) {
@@ -1229,6 +1251,10 @@ static void perf_capture_reset_storage(void) {
     }
     perf_trusted_yun_sa3_burst_triggers_total = 0;
     perf_trusted_yun_sa3_burst_first_trigger_frame = -1;
+    perf_trusted_yun_sa3_frame_skip_scheduled_total = 0;
+    perf_trusted_yun_sa3_frame_skip_first_scheduled_frame = -1;
+    perf_trusted_yun_sa3_frame_skip_applied_total = 0;
+    perf_trusted_yun_sa3_frame_skip_first_applied_frame = -1;
     SDL_zero(perf_capture_start_g_no);
     SDL_zero(perf_capture_start_e_no);
     SDL_zero(perf_capture_start_d_no);
@@ -1547,6 +1573,10 @@ void SDLApp_ConfigurePerfCapture(int frame_count,
     }
     perf_trusted_yun_sa3_burst_triggers_total = 0;
     perf_trusted_yun_sa3_burst_first_trigger_frame = -1;
+    perf_trusted_yun_sa3_frame_skip_scheduled_total = 0;
+    perf_trusted_yun_sa3_frame_skip_first_scheduled_frame = -1;
+    perf_trusted_yun_sa3_frame_skip_applied_total = 0;
+    perf_trusted_yun_sa3_frame_skip_first_applied_frame = -1;
     perf_software_frame_mode_enabled_frames = 0;
     perf_software_frame_surface_ready_frames = 0;
     perf_software_frame_owned_frames = 0;
@@ -4543,6 +4573,26 @@ static void perf_capture_write_summary(void) {
                   perf_trusted_yun_sa3_burst_first_trigger_frame);
     } else {
         io_printf(io, "    \"trusted_yun_sa3_burst_first_trigger_frame\": null,\n");
+    }
+    io_printf(io,
+              "    \"trusted_yun_sa3_frame_skip_scheduled_total\": %llu,\n",
+              (unsigned long long)perf_trusted_yun_sa3_frame_skip_scheduled_total);
+    if (perf_trusted_yun_sa3_frame_skip_first_scheduled_frame >= 0) {
+        io_printf(io,
+                  "    \"trusted_yun_sa3_frame_skip_first_scheduled_frame\": %d,\n",
+                  perf_trusted_yun_sa3_frame_skip_first_scheduled_frame);
+    } else {
+        io_printf(io, "    \"trusted_yun_sa3_frame_skip_first_scheduled_frame\": null,\n");
+    }
+    io_printf(io,
+              "    \"trusted_yun_sa3_frame_skip_applied_total\": %llu,\n",
+              (unsigned long long)perf_trusted_yun_sa3_frame_skip_applied_total);
+    if (perf_trusted_yun_sa3_frame_skip_first_applied_frame >= 0) {
+        io_printf(io,
+                  "    \"trusted_yun_sa3_frame_skip_first_applied_frame\": %d,\n",
+                  perf_trusted_yun_sa3_frame_skip_first_applied_frame);
+    } else {
+        io_printf(io, "    \"trusted_yun_sa3_frame_skip_first_applied_frame\": null,\n");
     }
     io_printf(io,
               "    \"p1_metamorphose_frames_total\": %llu,\n"
@@ -8560,6 +8610,8 @@ static const char* super_effect_quality_mode_name(SDLGameRenderer_SuperEffectQua
         return "simplified";
     case SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_MINIMAL:
         return "minimal";
+    case SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_FRAME_SKIP:
+        return "frame-skip";
     case SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_FULL:
     default:
         return "full";
@@ -8593,6 +8645,9 @@ static SDLGameRenderer_SuperEffectQualityMode parse_super_effect_quality_mode(co
     if (raw_mode == NULL) {
         return SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_FULL;
     }
+    if (SDL_strcasecmp(raw_mode, "frame-skip") == 0) {
+        return SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_FRAME_SKIP;
+    }
     if (SDL_strcasecmp(raw_mode, "simplified") == 0) {
         return SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_SIMPLIFIED;
     }
@@ -8608,8 +8663,13 @@ static void init_super_effect_quality_mode(void) {
 #if defined(PORT_MISTER)
     super_effect_quality_mode = configured_mode;
     trusted_yun_sa3_burst_frames_remaining = 0;
+    trusted_yun_sa3_active_frame_index = 0;
     trusted_yun_sa3_burst_triggered_this_frame = false;
     trusted_yun_sa3_burst_was_active = false;
+    trusted_yun_sa3_previous_frame_surface_valid = false;
+    trusted_yun_sa3_previous_frame_canvas_valid = false;
+    trusted_yun_sa3_frame_skip_scheduled_this_frame = false;
+    trusted_yun_sa3_frame_skip_applied_this_frame = false;
 #else
     (void)configured_mode;
     super_effect_quality_mode = SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_FULL;
@@ -8617,24 +8677,97 @@ static void init_super_effect_quality_mode(void) {
 }
 
 #if defined(PORT_MISTER)
+static bool trusted_yun_sa3_frame_skip_mode_enabled(void);
+
+static bool trusted_yun_sa3_identity_active(void) {
+    return mpp_w.inGame && (My_char[0] == 3) && (Super_Arts[0] == 2);
+}
+
 static bool trusted_yun_sa3_burst_active_now(void) {
-    return mpp_w.inGame && (My_char[0] == 3) && (Super_Arts[0] == 2) && (plw[0].sa != NULL) &&
-           (plw[0].sa->ok == -1);
+    if (!trusted_yun_sa3_identity_active()) {
+        return false;
+    }
+
+    const bool super_art_active = (plw[0].sa != NULL) && (plw[0].sa->ok == -1);
+    const bool metamorphose_active = plw[0].metamorphose != 0;
+    return super_art_active || metamorphose_active;
 }
 
 static void update_trusted_yun_sa3_burst_state_for_frame(void) {
     trusted_yun_sa3_burst_triggered_this_frame = false;
+    trusted_yun_sa3_frame_skip_scheduled_this_frame = false;
+    trusted_yun_sa3_frame_skip_applied_this_frame = false;
     const bool burst_active = trusted_yun_sa3_burst_active_now();
     if (burst_active && !trusted_yun_sa3_burst_was_active) {
-        trusted_yun_sa3_burst_frames_remaining = 8;
+        trusted_yun_sa3_burst_frames_remaining = TRUSTED_YUN_SA3_SLOWDOWN_WINDOW_FRAMES;
+        trusted_yun_sa3_active_frame_index = 1;
         trusted_yun_sa3_burst_triggered_this_frame = true;
+        if (trusted_yun_sa3_frame_skip_mode_enabled()) {
+            backend_logf("Trusted Yun SA3 burst trigger: sa_ok=%d metamorphose=%d active_frame=%d window=%d",
+                         (plw[0].sa != NULL) ? plw[0].sa->ok : 0,
+                         plw[0].metamorphose,
+                         trusted_yun_sa3_active_frame_index,
+                         TRUSTED_YUN_SA3_SLOWDOWN_WINDOW_FRAMES);
+        }
     } else if (trusted_yun_sa3_burst_frames_remaining > 0) {
         trusted_yun_sa3_burst_frames_remaining -= 1;
+        trusted_yun_sa3_active_frame_index += 1;
+    } else {
+        trusted_yun_sa3_burst_frames_remaining = 0;
+        trusted_yun_sa3_active_frame_index = 0;
     }
     trusted_yun_sa3_burst_was_active = burst_active;
 }
 #else
 static void update_trusted_yun_sa3_burst_state_for_frame(void) {
+}
+#endif
+
+#if defined(PORT_MISTER)
+static bool trusted_yun_sa3_frame_skip_mode_enabled(void) {
+    return super_effect_quality_mode == SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_FRAME_SKIP;
+}
+
+static bool trusted_yun_sa3_frame_skip_scheduled_for_frame(void) {
+    return trusted_yun_sa3_frame_skip_mode_enabled() && (trusted_yun_sa3_burst_frames_remaining > 0) &&
+           !trusted_yun_sa3_burst_triggered_this_frame && (trusted_yun_sa3_active_frame_index > 1) &&
+           ((trusted_yun_sa3_active_frame_index & 1) == 0);
+}
+
+static SDLGameRenderer_SuperEffectQualityMode current_renderer_super_effect_quality_mode(void) {
+    return trusted_yun_sa3_frame_skip_mode_enabled() ? SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_MINIMAL
+                                                     : super_effect_quality_mode;
+}
+
+static bool can_reuse_previous_frame_for_trusted_yun_sa3_frame_skip(bool prefer_software_frame_direct_present,
+                                                                    bool has_message_content) {
+    if (!trusted_yun_sa3_frame_skip_mode_enabled() || should_save_screenshot) {
+        return false;
+    }
+
+    if (use_native_render_path) {
+        if (prefer_software_frame_direct_present && trusted_yun_sa3_previous_frame_surface_valid && !has_message_content) {
+            return true;
+        }
+        return trusted_yun_sa3_previous_frame_canvas_valid;
+    }
+
+    return trusted_yun_sa3_previous_frame_canvas_valid;
+}
+#else
+static SDLGameRenderer_SuperEffectQualityMode current_renderer_super_effect_quality_mode(void) {
+    return super_effect_quality_mode;
+}
+
+static bool trusted_yun_sa3_frame_skip_scheduled_for_frame(void) {
+    return false;
+}
+
+static bool can_reuse_previous_frame_for_trusted_yun_sa3_frame_skip(bool prefer_software_frame_direct_present,
+                                                                    bool has_message_content) {
+    (void)prefer_software_frame_direct_present;
+    (void)has_message_content;
+    return false;
 }
 #endif
 
@@ -9098,21 +9231,24 @@ static void refresh_screen_output_rect() {
     screen_output_rect_dirty = false;
 }
 
-static void render_native_output_to_target(SDL_Texture* target, bool has_message_content, bool clear_bars) {
+static void render_native_output_to_target(SDL_Texture* target,
+                                           SDL_Texture* game_canvas,
+                                           bool has_message_content,
+                                           bool clear_bars) {
     SDL_SetRenderTarget(renderer, target);
     if (clear_bars) {
         SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255); // black bars
         SDL_RenderClear(renderer);
     }
 
-    SDL_RenderTexture(renderer, cps3_canvas, NULL, &native_output_rect);
+    SDL_RenderTexture(renderer, game_canvas != NULL ? game_canvas : cps3_canvas, NULL, &native_output_rect);
     if (has_message_content) {
         SDL_RenderTexture(renderer, message_canvas, NULL, &native_output_rect);
     }
 }
 
-static void render_native_output_to_present_target(bool has_message_content, bool clear_bars) {
-    render_native_output_to_target(NULL, has_message_content, clear_bars);
+static void render_native_output_to_present_target(SDL_Texture* game_canvas, bool has_message_content, bool clear_bars) {
+    render_native_output_to_target(NULL, game_canvas, has_message_content, clear_bars);
 }
 
 static void save_texture(SDL_Texture* texture, const char* filename) {
@@ -9148,21 +9284,56 @@ void SDLApp_EndFrame() {
     const bool prefer_software_frame_direct_present =
         use_native_render_path && fbdev_presenter_enabled && use_fbdev_only_present && !has_message_content &&
         !should_save_screenshot;
+    bool current_frame_surface_valid = false;
+    bool current_frame_canvas_valid = false;
     update_trusted_yun_sa3_burst_state_for_frame();
-    SDLGameRenderer_SetSuperEffectQualityMode(super_effect_quality_mode);
+    const bool frame_skip_scheduled = trusted_yun_sa3_frame_skip_scheduled_for_frame();
+    const bool skip_burst_render =
+        frame_skip_scheduled &&
+        can_reuse_previous_frame_for_trusted_yun_sa3_frame_skip(prefer_software_frame_direct_present, has_message_content);
+#if defined(PORT_MISTER)
+    trusted_yun_sa3_frame_skip_scheduled_this_frame = frame_skip_scheduled;
+    trusted_yun_sa3_frame_skip_applied_this_frame = skip_burst_render;
+    if (frame_skip_scheduled && trusted_yun_sa3_frame_skip_mode_enabled()) {
+        backend_logf("Trusted Yun SA3 frame-skip: scheduled frame=%llu active_frame=%d apply=%d direct_present=%d prev_surface=%d prev_canvas=%d message=%d screenshot=%d",
+                     (unsigned long long)frame_counter,
+                     trusted_yun_sa3_active_frame_index,
+                     skip_burst_render ? 1 : 0,
+                     prefer_software_frame_direct_present ? 1 : 0,
+                     trusted_yun_sa3_previous_frame_surface_valid ? 1 : 0,
+                     trusted_yun_sa3_previous_frame_canvas_valid ? 1 : 0,
+                     has_message_content ? 1 : 0,
+                     should_save_screenshot ? 1 : 0);
+    }
+#endif
+    SDLGameRenderer_SetSuperEffectQualityMode(current_renderer_super_effect_quality_mode());
 #if defined(PORT_MISTER)
     SDLGameRenderer_SetTrustedYunSA3BurstFramesRemaining(trusted_yun_sa3_burst_frames_remaining);
 #else
     SDLGameRenderer_SetTrustedYunSA3BurstFramesRemaining(0);
 #endif
     SDLGameRenderer_SetSoftwareFrameDirectPresentMode(prefer_software_frame_direct_present);
-    SDLGameRenderer_RenderFrame();
-
-    if (should_save_screenshot && SDLGameRenderer_HasSoftwareOwnedFrame()) {
-        SDLGameRenderer_EnsureSoftwareFrameCanvas();
+    const SDL_Surface* reusable_software_frame_surface = NULL;
+    SDL_Texture* reusable_game_canvas = cps3_canvas;
+    if (skip_burst_render) {
+        reusable_software_frame_surface = SDLGameRenderer_GetPreviousFrameSurfaceSnapshot();
+        SDL_Texture* previous_canvas = SDLGameRenderer_GetPreviousFrameCanvasSnapshot();
+        if (previous_canvas != NULL) {
+            reusable_game_canvas = previous_canvas;
+        }
     }
-    if (should_save_screenshot) {
-        save_texture(cps3_canvas, "screenshot_cps3.bmp");
+    if (!skip_burst_render) {
+        SDLGameRenderer_RenderFrame();
+        current_frame_surface_valid = SDLGameRenderer_HasSoftwareOwnedFrame();
+        current_frame_canvas_valid = !current_frame_surface_valid || !prefer_software_frame_direct_present;
+
+        if (should_save_screenshot && SDLGameRenderer_HasSoftwareOwnedFrame()) {
+            SDLGameRenderer_EnsureSoftwareFrameCanvas();
+            current_frame_canvas_valid = true;
+        }
+        if (should_save_screenshot) {
+            save_texture(cps3_canvas, "screenshot_cps3.bmp");
+        }
     }
 
     const SDL_FRect* fbdev_readback_rect = NULL;
@@ -9178,23 +9349,26 @@ void SDLApp_EndFrame() {
         if (should_save_screenshot) {
             SDL_Texture* screenshot_target = ensure_native_screenshot_texture();
             if (screenshot_target != NULL) {
-                render_native_output_to_target(screenshot_target, has_message_content, native_output_has_bars);
+                render_native_output_to_target(
+                    screenshot_target, cps3_canvas, has_message_content, native_output_has_bars);
                 save_texture(screenshot_target, "screenshot_screen.bmp");
             } else {
                 backend_logf("Native-path screen screenshot skipped: unable to create screenshot target");
             }
         }
         const bool use_fbdev_software_frame_direct =
-            prefer_software_frame_direct_present && SDLGameRenderer_HasSoftwareOwnedFrame();
+            prefer_software_frame_direct_present &&
+            (skip_burst_render ? trusted_yun_sa3_previous_frame_surface_valid : SDLGameRenderer_HasSoftwareOwnedFrame());
         const bool use_fbdev_native_direct_target =
             fbdev_presenter_enabled && use_fbdev_only_present && !has_message_content && !force_full_fbdev_readback &&
-            !use_fbdev_software_frame_direct;
+            !use_fbdev_software_frame_direct && !skip_burst_render;
         const bool use_fbdev_native_readback_rect =
             fbdev_presenter_enabled && use_fbdev_only_present && native_output_has_bars && !force_full_fbdev_readback &&
             !use_fbdev_native_direct_target;
         if (use_fbdev_software_frame_direct) {
             fbdev_present_software_frame = true;
-            fbdev_software_frame_surface = SDLGameRenderer_GetSoftwareFrameSurface();
+            fbdev_software_frame_surface =
+                skip_burst_render ? reusable_software_frame_surface : SDLGameRenderer_GetSoftwareFrameSurface();
         } else if (use_fbdev_native_direct_target) {
             fbdev_present_current_target = true;
         } else if (use_fbdev_native_readback_rect) {
@@ -9203,10 +9377,15 @@ void SDLApp_EndFrame() {
         }
 
         if (!fbdev_present_current_target && !fbdev_present_software_frame) {
-            if (SDLGameRenderer_HasSoftwareOwnedFrame()) {
+            if (!skip_burst_render && SDLGameRenderer_HasSoftwareOwnedFrame()) {
                 SDLGameRenderer_EnsureSoftwareFrameCanvas();
+                current_frame_canvas_valid = true;
             }
-            render_native_output_to_present_target(has_message_content, native_output_has_bars && !use_fbdev_native_readback_rect);
+            render_native_output_to_present_target(
+                reusable_game_canvas, has_message_content, native_output_has_bars && !use_fbdev_native_readback_rect);
+            if (!skip_burst_render) {
+                current_frame_canvas_valid = true;
+            }
         }
     } else {
         SDL_SetRenderTarget(renderer, screen_texture);
@@ -9229,9 +9408,12 @@ void SDLApp_EndFrame() {
         }
 
         // Render content
-        SDL_RenderTexture(renderer, cps3_canvas, NULL, dst_rect);
+        SDL_RenderTexture(renderer, reusable_game_canvas, NULL, dst_rect);
         if (has_message_content) {
             SDL_RenderTexture(renderer, message_canvas, NULL, dst_rect);
+        }
+        if (!skip_burst_render) {
+            current_frame_canvas_valid = true;
         }
 
         if (!use_fbdev_only_present) {
@@ -9260,17 +9442,31 @@ void SDLApp_EndFrame() {
             if (!FBDevPresenter_PresentSurface(fbdev_software_frame_surface, &native_output_rect)) {
                 backend_logf("FBDEV direct software-frame present failed; falling back to current-target/readback");
                 fbdev_present_software_frame = false;
-                SDLGameRenderer_EnsureSoftwareFrameCanvas();
-                SDL_SetRenderTarget(renderer, cps3_canvas);
-                if (!FBDevPresenter_PresentCurrentTarget(renderer, &native_output_rect)) {
-                    backend_logf("FBDEV direct current-target present failed after software-frame fallback; falling back to composited readback");
+                if (!skip_burst_render) {
+                    SDLGameRenderer_EnsureSoftwareFrameCanvas();
+                    SDL_SetRenderTarget(renderer, cps3_canvas);
+                    if (!FBDevPresenter_PresentCurrentTarget(renderer, &native_output_rect)) {
+                        backend_logf("FBDEV direct current-target present failed after software-frame fallback; falling back to composited readback");
+                        if (native_output_has_bars) {
+                            fbdev_readback_rect_value = native_output_rect;
+                            fbdev_readback_rect = &fbdev_readback_rect_value;
+                        } else {
+                            fbdev_readback_rect = NULL;
+                        }
+                        render_native_output_to_present_target(
+                            reusable_game_canvas, false, native_output_has_bars && (fbdev_readback_rect == NULL));
+                        FBDevPresenter_BeginFrameStats(perf_capture_collect_extended_stats());
+                        FBDevPresenter_Present(renderer, fbdev_readback_rect);
+                    }
+                } else {
                     if (native_output_has_bars) {
                         fbdev_readback_rect_value = native_output_rect;
                         fbdev_readback_rect = &fbdev_readback_rect_value;
                     } else {
                         fbdev_readback_rect = NULL;
                     }
-                    render_native_output_to_present_target(false, native_output_has_bars && (fbdev_readback_rect == NULL));
+                    render_native_output_to_present_target(
+                        reusable_game_canvas, false, native_output_has_bars && (fbdev_readback_rect == NULL));
                     FBDevPresenter_BeginFrameStats(perf_capture_collect_extended_stats());
                     FBDevPresenter_Present(renderer, fbdev_readback_rect);
                 }
@@ -9288,7 +9484,8 @@ void SDLApp_EndFrame() {
                 } else {
                     fbdev_readback_rect = NULL;
                 }
-                render_native_output_to_present_target(false, native_output_has_bars && (fbdev_readback_rect == NULL));
+                render_native_output_to_present_target(
+                    reusable_game_canvas, false, native_output_has_bars && (fbdev_readback_rect == NULL));
                 FBDevPresenter_BeginFrameStats(perf_capture_collect_extended_stats());
                 FBDevPresenter_Present(renderer, fbdev_readback_rect);
             }
@@ -9300,6 +9497,18 @@ void SDLApp_EndFrame() {
     if (!use_fbdev_only_present) {
         SDL_RenderPresent(renderer);
     }
+#if defined(PORT_MISTER)
+    if (!skip_burst_render) {
+        SDLGameRenderer_UpdatePreviousFrameSnapshot(current_frame_surface_valid,
+                                                   current_frame_canvas_valid,
+                                                   &trusted_yun_sa3_previous_frame_surface_valid,
+                                                   &trusted_yun_sa3_previous_frame_canvas_valid);
+    }
+#else
+    (void)current_frame_surface_valid;
+    (void)current_frame_canvas_valid;
+    (void)skip_burst_render;
+#endif
 #if ENABLE_PERF_TELEMETRY
     const Uint64 present_end_ns = SDL_GetTicksNS();
     const Uint64 render_ns = present_start_ns > render_start_ns ? (present_start_ns - render_start_ns) : 0;

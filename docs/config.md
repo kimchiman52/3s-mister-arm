@@ -50,13 +50,15 @@ Defaults:
 
 Possible values:
 - `full`: Keep current behavior
-- `simplified`: Snap the hottest Yun SA3 burst sprites to integer destination geometry so more work can use the cheaper exact/scaled software-frame paths
-- `minimal`: Apply `simplified` and thin every other hot burst sprite after final sort so only the first visible instance per family is always preserved
-- `frame-skip`: Keep gameplay/update cadence, but on alternating trusted Yun SA3 burst frames reuse the previous rendered frame instead of drawing a fresh one when a safe previous frame is available
+- `simplified`: Snap the hottest trusted Yun SA3 slowdown-window sprites to integer destination geometry so more work can use the cheaper exact/scaled software-frame paths
+- `minimal`: Apply `simplified` and thin every other hot trusted Yun SA3 slowdown-window sprite after final sort so only the first visible instance per family is always preserved
+- `frame-skip`: Keep gameplay/update cadence, render trusted Yun SA3 slowdown-window frames with `minimal` quality, and reuse the previous rendered frame on every other slowdown-window frame after the trigger frame when a primed previous frame is available
 
 Notes:
 - This setting is only active on MiSTer builds.
-- The current Ralph first-pass automated matrix intentionally sweeps only `full`, `simplified`, and `minimal`. Treat `frame-skip` as a separate higher-risk follow-up because it reuses a previous rendered frame during trusted Yun SA3 burst frames.
+- The current trusted slowdown window is a bounded 82-frame post-trigger window, not the full Yun SA3 duration.
+- This 82-frame window is a temporary proxy chosen from current testing; we still need to find the exact runtime entry/exit for the real super-activation slowdown instead of relying on a fixed constant.
+- The current Ralph first-pass automated matrix intentionally sweeps only `full`, `simplified`, and `minimal`. Treat `frame-skip` as a separate higher-risk follow-up because it reuses a previous rendered frame during the trusted Yun SA3 slowdown window.
 - Current v1 scope is intentionally narrow: player 1 Yun SA3 onset only.
 - On non-MiSTer builds the config key is parsed but behaves like `full`.
 

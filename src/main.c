@@ -277,7 +277,7 @@ static void read_args(int argc, const char* argv[]) {
         OPT_STRING(0,
                    "test-scene-preset",
                    &configuration.test.scene_preset,
-                   "Optional named scripted gameplay preset (stage-heavy, effect-heavy, super-heavy, yun-sa3-repeat, yun-sa3-repeat-pressure, basic-exchange, pressure-exchange, left-corner-ryu-stage, training-yun-ryu-ryu-stage).",
+                   "Optional named scripted gameplay preset (stage-heavy, effect-heavy, super-heavy, yun-sa3-repeat, yun-sa3-repeat-pressure, q-sa1-repeat, q-sa1-repeat-pressure, ken-sa3-repeat, ken-sa3-repeat-pressure, chunli-sa2-repeat, chunli-sa2-repeat-pressure, basic-exchange, pressure-exchange, left-corner-ryu-stage, training-yun-ryu-ryu-stage).",
                    NULL,
                    0,
                    0),
@@ -358,7 +358,11 @@ static bool is_supported_test_stage(int stage) {
 static bool is_supported_test_scene_preset(const char* preset) {
     return preset == NULL || SDL_strcmp(preset, "stage-heavy") == 0 || SDL_strcmp(preset, "effect-heavy") == 0 ||
            SDL_strcmp(preset, "super-heavy") == 0 || SDL_strcmp(preset, "yun-sa3-repeat") == 0 ||
-           SDL_strcmp(preset, "yun-sa3-repeat-pressure") == 0 ||
+           SDL_strcmp(preset, "yun-sa3-repeat-pressure") == 0 || SDL_strcmp(preset, "q-sa1-repeat") == 0 ||
+           SDL_strcmp(preset, "q-sa1-repeat-pressure") == 0 || SDL_strcmp(preset, "ken-sa3-repeat") == 0 ||
+           SDL_strcmp(preset, "ken-sa3-repeat-pressure") == 0 ||
+           SDL_strcmp(preset, "chunli-sa2-repeat") == 0 ||
+           SDL_strcmp(preset, "chunli-sa2-repeat-pressure") == 0 ||
            SDL_strcmp(preset, "basic-exchange") == 0 || SDL_strcmp(preset, "pressure-exchange") == 0 ||
            SDL_strcmp(preset, "left-corner-ryu-stage") == 0 || SDL_strcmp(preset, "training-yun-ryu-ryu-stage") == 0;
 }
@@ -464,7 +468,7 @@ static void verify_args() {
 
     if (!is_supported_test_scene_preset(test->scene_preset)) {
         error_out_with_code(
-            "--test-scene-preset must be one of stage-heavy, effect-heavy, super-heavy, yun-sa3-repeat, yun-sa3-repeat-pressure, basic-exchange, pressure-exchange, left-corner-ryu-stage, or training-yun-ryu-ryu-stage.",
+            "--test-scene-preset must be one of stage-heavy, effect-heavy, super-heavy, yun-sa3-repeat, yun-sa3-repeat-pressure, q-sa1-repeat, q-sa1-repeat-pressure, ken-sa3-repeat, ken-sa3-repeat-pressure, chunli-sa2-repeat, chunli-sa2-repeat-pressure, basic-exchange, pressure-exchange, left-corner-ryu-stage, or training-yun-ryu-ryu-stage.",
             EXIT_CODE_RUNTIME_ERROR);
     }
 
