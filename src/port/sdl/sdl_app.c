@@ -615,6 +615,8 @@ static void perf_capture_snapshot_window_families_if_needed(void);
 static const char* scale_mode_name(ScaleMode mode);
 static const char* software_frame_mode_name(void);
 static const char* super_effect_quality_mode_name(SDLGameRenderer_SuperEffectQualityMode mode);
+static SDLGameRenderer_SuperEffectQualityMode current_renderer_super_effect_quality_mode(void);
+static void reset_super_effect_quality_runtime_state(void);
 
 #if ENABLE_PERF_TELEMETRY
 static const char* render_sort_strategy_name(SDLGameRenderer_SortStrategy strategy) {
@@ -8658,11 +8660,8 @@ static SDLGameRenderer_SuperEffectQualityMode parse_super_effect_quality_mode(co
     return SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_FULL;
 }
 
-static void init_super_effect_quality_mode(void) {
-    const char* raw_mode = Config_GetString(CFG_KEY_SUPER_EFFECT_QUALITY);
-    const SDLGameRenderer_SuperEffectQualityMode configured_mode = parse_super_effect_quality_mode(raw_mode);
+static void reset_super_effect_quality_runtime_state(void) {
 #if defined(PORT_MISTER)
-    super_effect_quality_mode = configured_mode;
     trusted_yun_sa3_burst_frames_remaining = 0;
     trusted_yun_sa3_active_frame_index = 0;
     trusted_yun_sa3_burst_triggered_this_frame = false;
@@ -8671,10 +8670,14 @@ static void init_super_effect_quality_mode(void) {
     trusted_yun_sa3_previous_frame_canvas_valid = false;
     trusted_yun_sa3_frame_skip_scheduled_this_frame = false;
     trusted_yun_sa3_frame_skip_applied_this_frame = false;
-#else
-    (void)configured_mode;
-    super_effect_quality_mode = SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_FULL;
 #endif
+}
+
+static void init_super_effect_quality_mode(void) {
+    const char* raw_mode = Config_GetString(CFG_KEY_SUPER_EFFECT_QUALITY);
+    const SDLGameRenderer_SuperEffectQualityMode configured_mode = parse_super_effect_quality_mode(raw_mode);
+    super_effect_quality_mode = configured_mode;
+    reset_super_effect_quality_runtime_state();
 }
 
 #if defined(PORT_MISTER)
@@ -8847,6 +8850,39 @@ void SDLApp_ToggleFPSOverlay(void) {
     backend_logf("FPS overlay: %s", show_fps_overlay ? "enabled" : "disabled");
 }
 
+SDLGameRenderer_SuperEffectQualityMode SDLApp_GetSuperEffectQualityMode(void) {
+    return super_effect_quality_mode;
+}
+
+void SDLApp_SetSuperEffectQualityMode(SDLGameRenderer_SuperEffectQualityMode mode) {
+    super_effect_quality_mode = mode;
+    reset_super_effect_quality_runtime_state();
+    SDLGameRenderer_SetSuperEffectQualityMode(current_renderer_super_effect_quality_mode());
+    backend_logf("Super effect quality: %s", super_effect_quality_mode_name(super_effect_quality_mode));
+}
+
+void SDLApp_CycleSuperEffectQualityMode(void) {
+    SDLGameRenderer_SuperEffectQualityMode next_mode = SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_FULL;
+
+    switch (super_effect_quality_mode) {
+    case SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_FULL:
+        next_mode = SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_SIMPLIFIED;
+        break;
+    case SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_SIMPLIFIED:
+        next_mode = SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_MINIMAL;
+        break;
+    case SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_MINIMAL:
+        next_mode = SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_FRAME_SKIP;
+        break;
+    case SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_FRAME_SKIP:
+    default:
+        next_mode = SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_FULL;
+        break;
+    }
+
+    SDLApp_SetSuperEffectQualityMode(next_mode);
+}
+
 int SDLApp_Init() {
     Config_Init();
     Keymap_Init();
@@ -8946,7 +8982,7 @@ int SDLApp_Init() {
     SDLMessageRenderer_Initialize(renderer);
     SDLGameRenderer_Init(renderer);
     SDLGameRenderer_SetSoftwareFrameMode(software_frame_mode_enabled);
-    SDLGameRenderer_SetSuperEffectQualityMode(super_effect_quality_mode);
+    SDLGameRenderer_SetSuperEffectQualityMode(current_renderer_super_effect_quality_mode());
     SDLGameRenderer_SetTrustedYunSA3BurstFramesRemaining(0);
     backend_logf("Software frame mode: %s", software_frame_mode_name());
     backend_logf("Super effect quality: %s", super_effect_quality_mode_name(super_effect_quality_mode));

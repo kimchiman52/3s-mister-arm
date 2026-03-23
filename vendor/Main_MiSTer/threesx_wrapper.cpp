@@ -50,12 +50,14 @@ constexpr const char *kMenuCore = "menu.rbf";
 constexpr const char *kMenuExec = "MiSTer";
 constexpr const char *kRuntimeTtySwitchEnv = "THREESX_WRAPPER_USE_TTY2";
 constexpr int kRuntimeFpsToggleSignal = SIGUSR1;
+constexpr int kRuntimeSuperEffectQualityCycleSignal = SIGUSR2;
 
 enum WrapperMenuItem
 {
 	kMenuResume = 0,
 	kMenuFpsToggle,
 	kMenuScaleMode,
+	kMenuSuperEffectQuality,
 	kMenuRestart,
 	kMenuQuit,
 	kMenuItemCount
@@ -69,12 +71,22 @@ enum RuntimeScaleModeMenu
 	kScaleModeMenuCount
 };
 
+enum RuntimeSuperEffectQualityMenu
+{
+	kSuperEffectQualityFull = 0,
+	kSuperEffectQualitySimplified,
+	kSuperEffectQualityMinimal,
+	kSuperEffectQualityFrameSkip,
+	kSuperEffectQualityMenuCount
+};
+
 volatile sig_atomic_t g_wrapper_signal = 0;
 volatile sig_atomic_t g_child_pid = -1;
 int g_wrapper_menu_visible = 0;
 int g_wrapper_menu_selected = kMenuResume;
 int g_wrapper_fps_enabled = 0;
 int g_wrapper_scale_mode = kScaleModeAuto;
+int g_wrapper_super_effect_quality = kSuperEffectQualityFull;
 int g_wrapper_restart_requested = 0;
 int g_wrapper_used_full_user_io_init = 0;
 
@@ -103,6 +115,7 @@ static const RuntimeConfigDefaultEntry kRuntimeGeneratedDefaults[] = {
 	{ "window-height", "240" },
 	{ "scale-mode", "native" },
 	{ "software-frame-mode", "on" },
+	{ "super-effect-quality", "full" },
 	{ "show-fps", "false" },
 	{ "video-driver-order", "dummy" },
 	{ "render-driver-order", "software" },
@@ -497,6 +510,39 @@ static const char *runtime_scale_mode_config_value(int mode)
 	}
 }
 
+int read_runtime_super_effect_quality_default()
+{
+	char value[64] = {};
+	if (!read_runtime_config_value("super-effect-quality", value, sizeof(value))) return kSuperEffectQualityFull;
+
+	if (!strcasecmp(value, "simplified")) return kSuperEffectQualitySimplified;
+	if (!strcasecmp(value, "minimal")) return kSuperEffectQualityMinimal;
+	if (!strcasecmp(value, "frame-skip")) return kSuperEffectQualityFrameSkip;
+	return kSuperEffectQualityFull;
+}
+
+const char *runtime_super_effect_quality_label(int mode)
+{
+	switch (mode)
+	{
+	case kSuperEffectQualitySimplified: return "Simplified";
+	case kSuperEffectQualityMinimal: return "Minimal";
+	case kSuperEffectQualityFrameSkip: return "Frame Skip";
+	default: return "Full";
+	}
+}
+
+static const char *runtime_super_effect_quality_config_value(int mode)
+{
+	switch (mode)
+	{
+	case kSuperEffectQualitySimplified: return "simplified";
+	case kSuperEffectQualityMinimal: return "minimal";
+	case kSuperEffectQualityFrameSkip: return "frame-skip";
+	default: return "full";
+	}
+}
+
 static bool is_native_analog_tv_output_mode(int vga_mode_int)
 {
 	return vga_mode_int == 1 || vga_mode_int == 2 || vga_mode_int == 3;
@@ -596,6 +642,72 @@ bool write_runtime_scale_mode_default(int mode)
 	else if ((mode == kScaleModeAuto) && !wrote_scale_mode_auto_marker)
 	{
 		fprintf(out, "%s\n", kRuntimeScaleModeAutoMarker);
+	}
+
+	if (fclose(out) != 0) return false;
+	if (rename(temp_path, path) != 0)
+	{
+		remove(temp_path);
+		return false;
+	}
+
+	return true;
+}
+
+bool write_runtime_super_effect_quality_default(int mode)
+{
+	char path[PATH_MAX] = {};
+	char temp_path[PATH_MAX] = {};
+	snprintf(path, sizeof(path), "%s/config", kRuntimeHome);
+	snprintf(temp_path, sizeof(temp_path), "%s/config.tmp", kRuntimeHome);
+
+	FILE *in = fopen(path, "r");
+	FILE *out = fopen(temp_path, "w");
+	if (!out)
+	{
+		if (in) fclose(in);
+		return false;
+	}
+
+	bool wrote_value = false;
+	char line[256] = {};
+	if (in)
+	{
+		while (fgets(line, sizeof(line), in))
+		{
+			char inspect[256] = {};
+			snprintf(inspect, sizeof(inspect), "%s", line);
+
+			char *cursor = inspect;
+			while (*cursor && isspace((unsigned char)*cursor)) cursor++;
+			if (*cursor == '#')
+			{
+				fputs(line, out);
+				continue;
+			}
+
+			char *equals = strchr(cursor, '=');
+			if (equals)
+			{
+				*equals = 0;
+				trim_in_place(cursor);
+				if (!strcasecmp(cursor, "super-effect-quality"))
+				{
+					fprintf(out, "super-effect-quality = %s\n", runtime_super_effect_quality_config_value(mode));
+					wrote_value = true;
+					continue;
+				}
+			}
+
+			fputs(line, out);
+		}
+
+		fclose(in);
+	}
+
+	if (!wrote_value)
+	{
+		fprintf(out, "\nsuper-effect-quality = %s\n", runtime_super_effect_quality_config_value(mode));
 	}
 
 	if (fclose(out) != 0) return false;
@@ -732,23 +844,35 @@ bool read_runtime_fps_default()
 	return !strcasecmp(value, "true") || !strcasecmp(value, "on") || !strcmp(value, "1");
 }
 
+void format_wrapper_value_line(char *line, size_t line_size, const char *label, const char *value)
+{
+	if (!line || !line_size) return;
+	snprintf(line, line_size, " %-8s %s", label ? label : "", value ? value : "");
+}
+
 void draw_wrapper_menu(int selected)
 {
 	char fps_line[33] = {};
 	char scale_line[33] = {};
-	snprintf(fps_line, sizeof(fps_line), " FPS Counter: %s", g_wrapper_fps_enabled ? "On" : "Off");
-	snprintf(scale_line, sizeof(scale_line), " Scale: %s", runtime_scale_mode_label(g_wrapper_scale_mode));
+	char super_effect_quality_line[33] = {};
+	format_wrapper_value_line(fps_line, sizeof(fps_line), "FPS", g_wrapper_fps_enabled ? "On" : "Off");
+	format_wrapper_value_line(scale_line, sizeof(scale_line), "Scale", runtime_scale_mode_label(g_wrapper_scale_mode));
+	format_wrapper_value_line(super_effect_quality_line,
+	                          sizeof(super_effect_quality_line),
+	                          "SA Perf",
+	                          runtime_super_effect_quality_label(g_wrapper_super_effect_quality));
 
 	OsdSetSize(8);
-	OsdSetTitle(kCoreName, 0);
+	OsdSetTitle("3SX Menu", 0);
 	OsdClear();
-	OsdWrite(0, " Menu");
-	OsdWrite(1, "");
-	OsdWrite(2, " Resume 3SX", selected == kMenuResume);
-	OsdWrite(3, fps_line, selected == kMenuFpsToggle);
-	OsdWrite(4, scale_line, selected == kMenuScaleMode);
-	OsdWrite(5, " Restart 3SX", selected == kMenuRestart);
-	OsdWrite(6, " Quit To MiSTer", selected == kMenuQuit);
+	OsdWrite(0, "");
+	OsdWrite(1, " Resume", selected == kMenuResume);
+	OsdWrite(2, fps_line, selected == kMenuFpsToggle);
+	OsdWrite(3, scale_line, selected == kMenuScaleMode);
+	OsdWrite(4, super_effect_quality_line, selected == kMenuSuperEffectQuality);
+	OsdWrite(5, " Restart", selected == kMenuRestart);
+	OsdWrite(6, " Quit to MiSTer", selected == kMenuQuit);
+	OsdWrite(7, "");
 	threesx_wrapper_menu_set_visible(1);
 	OsdMenuCtl(1);
 	OsdEnable(DISABLE_KEYBOARD);
@@ -821,6 +945,18 @@ void service_wrapper_menu(pid_t child)
 			if (write_runtime_scale_mode_default(next_mode))
 			{
 				g_wrapper_scale_mode = next_mode;
+				draw_wrapper_menu(g_wrapper_menu_selected);
+			}
+			return;
+		}
+
+		if (g_wrapper_menu_selected == kMenuSuperEffectQuality)
+		{
+			const int next_mode = (g_wrapper_super_effect_quality + 1) % kSuperEffectQualityMenuCount;
+			if (write_runtime_super_effect_quality_default(next_mode))
+			{
+				g_wrapper_super_effect_quality = next_mode;
+				(void)kill(child, kRuntimeSuperEffectQualityCycleSignal);
 				draw_wrapper_menu(g_wrapper_menu_selected);
 			}
 			return;
@@ -1014,6 +1150,7 @@ int threesx_wrapper_run(int argc, char *argv[])
 	g_wrapper_menu_selected = kMenuResume;
 	g_wrapper_fps_enabled = read_runtime_fps_default() ? 1 : 0;
 	g_wrapper_scale_mode = read_runtime_scale_mode_default();
+	g_wrapper_super_effect_quality = read_runtime_super_effect_quality_default();
 	g_wrapper_restart_requested = 0;
 	g_wrapper_signal = 0;
 

@@ -79,6 +79,7 @@ static bool are_resources_checked = false;
 static bool is_running_resource_flow = false;
 static volatile sig_atomic_t shutdown_signal = 0;
 static volatile sig_atomic_t fps_toggle_requested = 0;
+static volatile sig_atomic_t super_effect_quality_cycle_requested = 0;
 
 // forward decls
 static void game_init();
@@ -105,6 +106,11 @@ static void on_shutdown_signal(int signo) {
         return;
     }
 
+    if (signo == SIGUSR2) {
+        super_effect_quality_cycle_requested = 1;
+        return;
+    }
+
     shutdown_signal = signo;
 }
 
@@ -118,6 +124,7 @@ static void install_shutdown_signal_handlers() {
     sigaction(SIGHUP, &action, NULL);
     sigaction(SIGTERM, &action, NULL);
     sigaction(SIGUSR1, &action, NULL);
+    sigaction(SIGUSR2, &action, NULL);
 }
 
 static void restore_shutdown_signal_handlers() {
@@ -125,6 +132,7 @@ static void restore_shutdown_signal_handlers() {
     signal(SIGHUP, SIG_DFL);
     signal(SIGTERM, SIG_DFL);
     signal(SIGUSR1, SIG_DFL);
+    signal(SIGUSR2, SIG_DFL);
 }
 
 static void read_args(int argc, const char* argv[]) {
@@ -623,6 +631,7 @@ static int loop() {
 
     shutdown_signal = 0;
     fps_toggle_requested = 0;
+    super_effect_quality_cycle_requested = 0;
 
 #if ENABLE_PERF_TELEMETRY
     if (configuration.perf.software_frame_parity_check) {
@@ -691,6 +700,10 @@ static int loop() {
         if (fps_toggle_requested != 0) {
             fps_toggle_requested = 0;
             SDLApp_ToggleFPSOverlay();
+        }
+        if (super_effect_quality_cycle_requested != 0) {
+            super_effect_quality_cycle_requested = 0;
+            SDLApp_CycleSuperEffectQualityMode();
         }
 
         is_running = SDLApp_PollEvents();

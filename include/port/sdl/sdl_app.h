@@ -2,6 +2,7 @@
 #define SDL_APP_H
 
 #include "port/build_config.h"
+#include "port/sdl/sdl_game_renderer.h"
 #include <SDL3/SDL.h>
 
 #define TARGET_FPS 59.59949
@@ -11,6 +12,9 @@ extern SDL_Window* window;
 int SDLApp_Init();
 void SDLApp_Quit();
 void SDLApp_ToggleFPSOverlay(void);
+SDLGameRenderer_SuperEffectQualityMode SDLApp_GetSuperEffectQualityMode(void);
+void SDLApp_SetSuperEffectQualityMode(SDLGameRenderer_SuperEffectQualityMode mode);
+void SDLApp_CycleSuperEffectQualityMode(void);
 
 static inline bool SDLApp_HasPerfTelemetry(void) {
     return ENABLE_PERF_TELEMETRY != 0;
