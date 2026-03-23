@@ -9,7 +9,7 @@
 
 - Last updated: `2026-03-23`
 - Active branch: `super-fidelity-ralph-loop`
-- Active queue: close Loop 181 as a runtime keep, then stay on the MiSTer-only super-activation burst-fidelity path with one more bounded stronger/broader whole-window Yun SA3 workload cut ahead of `frame-skip`, while leaving the Ken/Chun matrix harness repair as a separate setup queue
+- Active queue: close Loop 182 as a docs-only rejection, then validate the already-implemented Yun-only `frame-skip` mode as the next bounded whole-window burst-fidelity experiment, while leaving Ken/Chun matrix harness repair as a separate setup queue
 - Default loop type: `workload-fidelity`
 - Deciding lane: `yun-sa3-repeat-pressure` judged on first `8`, first `60`, and the trusted `82`-frame slowdown proxy
 - Primary guard lane: `gameplay-idle`
@@ -18,9 +18,10 @@
 
 - Stabilize super-activation performance on MiSTer by reducing burst-only visual workload across the real slowdown window before spending more loop budget on helper-local alpha branch or codegen relands.
 - Loop 181 kept the next stronger `minimal` survivor cut. On the current same-build direct/native comparator, Yun improved materially again (`18.4086 -> 21.4300 FPS` overall, `17.8616 -> 21.1999` first `8`, `16.0917 -> 19.0680` first `60`, `16.6563 -> 19.7434` first `82`) while `software_frame_fast_non_integer_pixels` fell `187541.84 -> 150210.59`; Q SA1 stayed slightly positive (`20.3827 -> 20.6169 FPS`) and `gameplay-idle` stayed effectively flat (`63.0761 -> 62.9730 FPS`)
+- Loop 182 rejected the next cadence-only survivor cut. Lowering `minimal` again from one-in-four to one-in-five improved same-build Yun versus `full` (`18.2874 -> 21.5878 FPS` overall, `17.4398 -> 21.2644` first `8`, `15.9636 -> 19.2180` first `60`, `16.5149 -> 19.9153` first `82`), but that only beat kept Loop 181 `minimal` by noise-level deltas (`+0.1578 / +0.0645 / +0.1500 / +0.1719 FPS` overall / first `8` / first `60` / first `82`) and slightly regressed Q SA1 (`20.5462 -> 20.3877 FPS` overall). Treat simple cadence-only thinning as saturated for now.
 - The absolute full-mode baseline on the live device is lower than the earlier Loop 180 artifact family, so Loop 181 is judged on same-build `full` versus `minimal` deltas rather than on stale cross-loop absolute FPS. The route truth still matches the trusted direct/native software-frame path.
 - Current working assumption from manual observation still stands: Yun SA3 slowdown likely lasts roughly `80+` frames, not just the first `8`, and any next runtime loop should continue to judge candidates on that broader window.
-- Immediate queue gate now shifts from the second stronger keep to reranking the next bounded cut: either one more stronger/broader burst-only thinning step on the same trusted cohort or, if that stalls, the already-implemented Yun-only `frame-skip` validation; repair or replace the invalid Ken/Chun super harness lanes before treating them as meaningful matrix gates.
+- Immediate queue gate now shifts away from cadence-only thinning and onto the already-implemented Yun-only `frame-skip` validation; repair or replace the invalid Ken/Chun super harness lanes before treating them as meaningful matrix gates.
 
 ## Trusted Baselines
 
@@ -33,12 +34,12 @@
 
 ## Current Queue
 
-- Stronger super-effect-quality follow-up
-- Why it is still live: Loop 181 kept the one-in-four `minimal` cadence change, but trusted Yun is still far from stable speed on the current same-build comparator and Q remains only slightly positive, so another bounded stronger or broader burst-only cut still outranks unrelated helper/codegen ideas.
+- Yun-only `frame-skip` follow-up
+- Why it is still live: Loop 182 says simple cadence-only thinning has probably exhausted its safe headroom, but the already-implemented Yun-only `frame-skip` mode is still the next stronger bounded burst-fidelity lever on the same trusted whole-window lane.
 - Ken/Chun super-harness repair
 - Why it is still live: both `ken-sa3-repeat*` and `chunli-sa2-repeat*` stayed super-ready with zero super entries/active frames, which means the broader matrix is partially blocked by harness invalidity rather than by meaningful runtime evidence.
-- Yun-only `frame-skip` follow-up
-- Why it is still live: it remains an already-implemented higher-impact burst-fidelity lever if the next stronger/broader thinning step stalls or review says the simpler remaining bounded experiment is to validate the cadence-sensitive mode already in tree.
+- Broader burst-only cohort or super-specific thinning follow-up
+- Why it is still live: if `frame-skip` also stalls, the remaining runtime path is still the same user-approved burst-fidelity family, but it should broaden by cohort/rule shape rather than by blindly tightening the same cadence dial again.
 - Native Yun deep measurement
 - Why it is still live: PMU or other lower-distortion external evidence could still clarify whether the remaining full-window slowdown is memory-latency, setup, or row-walk dominated, but it is now secondary to the stronger burst-fidelity rerank.
 
@@ -52,6 +53,8 @@
 - Why it is banned or demoted: it is a real keep, but it still leaves trusted Yun far from stable speed and Q essentially flat, so it should be treated as the next baseline rather than as the end of the queue.
 - Loop 181 stronger `minimal` one-in-four cadence as a terminal answer
 - Why it is banned or demoted: it is another real keep, but trusted Yun still remains well below stable speed on the current same-build comparator and the queue has not yet proved that simple thinning has exhausted its safe headroom.
+- Loop 182 stronger `minimal` one-in-five cadence retry
+- Why it is banned or demoted: it only improved kept Loop 181 `minimal` by noise-level Yun deltas and slightly regressed Q SA1, so do not spend another loop on the same cadence-only dial without genuinely new evidence.
 - In-band repeat-pressure family-plus-render-subphase collectors
 - Why it is banned or demoted: Loop `176` more than doubled render cost on the deciding comparator and is not decision-grade.
 - Narrower `ix 80` or palette-split native Yun retries
@@ -59,22 +62,22 @@
 
 ## Top Candidates
 
-- Strengthen burst-only thinning or broaden the trusted burst-only cohort on Yun SA3 after Loop 181's second stronger keep
+- Validate the already-implemented Yun-only `frame-skip` mode on the trusted whole-window SA3 lane
 - Lever class: `workload-fidelity`
-- Expected upside: larger whole-window gains are still most likely to come from the same user-approved burst-fidelity path, with lower risk than reopening another helper-local or codegen family
-- Main risk: the idle guard remains close to flat, but another stronger cut still needs careful guardrails to stay burst-scoped and to avoid broad non-super drag
+- Expected upside: it is the next stronger burst-fidelity lever already in tree, so it can answer quickly whether the active MiSTer-only visual-reduction path still has enough headroom to matter after cadence-only thinning stalled.
+- Main risk: it is cadence-sensitive because it reuses the previous rendered frame on alternating trusted burst frames, so it needs the same whole-window Yun judgment plus idle/route guards.
 - Repair or replace `ken-sa3-repeat*` / `chunli-sa2-repeat*` as decision-grade super-matrix lanes
 - Lever class: `measurement`
 - Expected upside: restores the broader matrix so future fidelity wins are not judged on Yun/Q alone or on zero-activation false guards
 - Main risk: the harness fix could take a loop without producing a player-facing runtime win, so it should stay narrow and should not crowd out the stronger Yun runtime rerank
+- Broaden the trusted burst-only cohort or add super-specific thinning after `frame-skip` if the current Yun-only mode is still too weak
+- Lever class: `workload-fidelity`
+- Expected upside: keeps the queue on the same user-approved render-only super-fidelity track without reopening unrelated helper/codegen families
+- Main risk: broadening the cohort or adding super-specific rules raises selector-scope risk and should wait until the simpler in-tree `frame-skip` lever is either kept or rejected
 - Research and plan expansion from Yun-only gating to all supers across the full roster once a stronger mode gets trusted Yun SA3 close to stable speed
 - Lever class: `measurement`
 - Expected upside: turns a single-lane super-fidelity win into a roadmap for broader player-visible benefit instead of stopping at Yun-only success
 - Main risk: expanding too early without a stable Yun proof could spread the queue too wide, so this must stay sequenced after the first clear Yun keep
-- `frame-skip` follow-up on trusted Yun SA3 only, after the first automated matrix closes
-- Lever class: `workload-fidelity`
-- Expected upside: larger full-window relief remains possible if the current raster-thinning modes are still too weak
-- Main risk: it reuses the previous rendered frame on alternating trusted Yun SA3 burst frames, so it is cadence-sensitive and intentionally excluded from Loop 179's first automated sweep
 - External or off-path PMU-backed measurement on the native Yun super lane
 - Lever class: `measurement`
 - Expected upside: could finally distinguish setup cost from persistent row-walk cost and establish the true slowdown span before another runtime specialization
@@ -103,12 +106,12 @@
 ## Next Loop Contract
 
 - Loop type: `workload-fidelity`
-- Existing diff under test: the kept Loop 180 stronger-`minimal` baseline
-- One scoped change: either implement one more bounded stronger/broader burst-only thinning step for trusted Yun SA3 or, if the runtime rerank stalls, spend one bounded setup loop fixing the invalid Ken/Chun repeat harness so the broader matrix becomes trustworthy again
+- Existing diff under test: the kept Loop 181 stronger-`minimal` one-in-four baseline plus the already-implemented Yun-only `frame-skip` mode that is still dormant behind config/runtime selection
+- One scoped change: validate the already-implemented Yun-only `frame-skip` mode on trusted `yun-sa3-repeat-pressure`; keep Q SA1 and `gameplay-idle` as guards; do not broaden the runtime gate or repair the Ken/Chun harness in the same loop
 - Stop immediately if: the candidate widens beyond burst-scoped MiSTer-only render degradation, changes gameplay timing/logic/determinism, or tries to relitigate alpha-branch/layout or dark-render memo ideas without genuinely new evidence
 - Capture plan: keep `yun-sa3-repeat-pressure` as the deciding lane and continue judging first `8`, first `60`, and trusted `82`; rerun Q SA1 as the secondary live guard; do not trust Ken/Chun matrix outcomes again until the harness proves `p1_super_active_starts > 0`
-- Keep if: the next stronger cut moves trusted Yun SA3 materially beyond Loop 180's kept `41.2826 FPS` / `36.1390 first8` / `38.4651 first60` / `40.1395 first82` without broad idle regression, or the harness loop restores decision-grade non-Yun super starts
-- Reject if: the next stronger cut fails to beat Loop 180 meaningfully, pushes `gameplay-idle` beyond the current slight `-0.6%` slip, or the harness work still leaves zero-activation super lanes
+- Keep if: `frame-skip` moves trusted Yun SA3 materially beyond kept Loop 181 / rejected Loop 182 `minimal` on the whole-window comparator without broad idle regression or route drift
+- Reject if: `frame-skip` fails to beat kept Loop 181 meaningfully, introduces visible route/guard drift, or still leaves Yun far enough below stable speed that the cadence-sensitive reuse trade is not worth broadening
 - Post-Yun success note: if a later super-fidelity loop gets trusted Yun SA3 close enough to stable speed, do not stop at the Yun-only keep. Open a bounded research-and-planning loop next to map how the same burst-fidelity surface could expand to all supers for all characters, including gating strategy, likely grouping, measurement matrix, and rollout order before implementation broadens.
 
 ## Recent Decisive Evidence
@@ -123,6 +126,8 @@
 - Why it mattered: it delivered the first keep-worthy whole-window Yun SA3 gain on the active super-fidelity queue while preserving the direct/native route and only slightly slipping the idle guard
 - Keep: Loop 181 stronger `minimal` one-in-four cadence change
 - Why it mattered: it proved that simple post-sort survivor cuts still have meaningful same-build whole-window Yun headroom after Loop 180, with Q still slightly positive and `gameplay-idle` still within noise on the trusted route
+- Reject: Loop 182 stronger `minimal` one-in-five cadence retry
+- Why it mattered: it showed the same cadence-only dial has now flattened into noise-level Yun gains with a slight Q SA1 regression, so the next runtime rerank should move to `frame-skip` rather than another stronger cadence keep
 
 ## Archive Pointers
 

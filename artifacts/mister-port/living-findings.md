@@ -244,6 +244,24 @@ Scope guardrails:
 
 ## Cycle Log
 
+- 2026-03-23T02:10:00-0400
+  - Final commit hash:
+    - recorded in the docs-only closeout commit for this cycle; the exact self-hash is reported in the loop closeout message because this workflow does not amend a commit just to embed its own ID
+  - Bottleneck targeted:
+    - testing whether one more bounded MiSTer-only `super-effect-quality = minimal` survivor cut, from one-in-four to one-in-five, still bought meaningful whole-window Yun SA3 speed on the trusted direct/native route
+  - Change summary:
+    - temporarily lowered `super_effect_minimal_keep_cadence` in `src/port/sdl/sdl_game_renderer.c` from `4` to `5`, rebuilt the telemetry package in Docker `3sx-mister-build`, and redeployed through serialized MiSTer tooling
+    - captured same-build `loop182-yun-sa3-repeat-pressure-{full,minimal}-r1`, `loop182-q-sa1-repeat-pressure-{full,minimal}-r1`, and `loop182-gameplay-idle-{full,minimal}-r1`
+    - fully rolled the runtime code back after the rejection and kept only the docs closeout
+  - Verification result summary:
+    - local `git diff --check`, Docker telemetry build/package, and serialized MiSTer `lock-status`, `busy-status`, `health`, `deploy`, `probe`, and bounded `smoke` all passed on `192.168.1.171`
+    - deciding Yun stayed direct/native with zero fallback/readback and improved versus same-build `full`, but only to noise-level deltas over kept Loop 181 `minimal`: Loop 182 `full -> minimal` was `18.2874 -> 21.5878 FPS` overall, `17.4398 -> 21.2644` first `8`, `15.9636 -> 19.2180` first `60`, and `16.5149 -> 19.9153` first `82`, which is only `+0.1578 / +0.0645 / +0.1500 / +0.1719 FPS` over kept Loop 181 `minimal`; Q SA1 also slipped slightly (`20.5462 -> 20.3877 FPS`) while `gameplay-idle` stayed effectively flat-to-positive (`62.5796 -> 63.1125 FPS`)
+  - Keep/rollback decision with reason:
+    - reject and revert; one more cadence-only survivor cut does not beat the kept Loop 181 baseline meaningfully and slightly regresses Q SA1, so simple cadence tightening is saturated for now
+  - Next best candidate optimization:
+    - do not retry now: stronger `minimal` cadence-only survivor cuts on the same Yun-only six-family gate
+    - validate the already-implemented Yun-only `frame-skip` mode next on the same trusted whole-window Yun lane, while keeping Ken/Chun harness repair separate
+
 - 2026-03-23T18:40:00-0400
   - Final commit hash:
     - `8d0b4d92`
