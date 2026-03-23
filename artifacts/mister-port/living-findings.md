@@ -244,6 +244,24 @@ Scope guardrails:
 
 ## Cycle Log
 
+- 2026-03-23T18:40:00-0400
+  - Final commit hash:
+    - runtime keep commit pending; fill this in the post-commit docs closeout without amending the runtime commit
+  - Bottleneck targeted:
+    - one more stronger MiSTer-only whole-window Yun SA3 burst thinning step on the active `super-effect-quality = minimal` path
+  - Change summary:
+    - changed `src/port/sdl/sdl_game_renderer.c` so `minimal` now preserves one of every four qualifying trusted hot-family tasks after final sort instead of one of every three
+    - rebuilt/deployed the telemetry ARM package from Docker `3sx-mister-build` and captured same-build Yun/Q/idle `full` versus `minimal` comparisons on the live device
+    - updated the active checklist and Ralph working brief to record the second stronger keep and the next-loop contract
+  - Verification result summary:
+    - local `git diff --check`, Docker telemetry build/package, and serialized MiSTer `busy-status`, `health`, `deploy`, `probe`, and bounded `smoke` all passed on `192.168.1.171`
+    - same-build deciding Yun captures stayed direct/native with zero fallback/readback and improved from `18.4086 -> 21.4300 FPS` overall, `17.8616 -> 21.1999` first `8`, `16.0917 -> 19.0680` first `60`, and `16.6563 -> 19.7434` over the first `82`, while `software_frame_fast_non_integer_pixels` fell `187541.84 -> 150210.59`
+    - Q SA1 stayed slightly positive (`20.3827 -> 20.6169 FPS` overall) and `gameplay-idle` stayed effectively flat (`63.0761 -> 62.9730 FPS`)
+  - Keep/rollback decision with reason:
+    - keep; the one-in-four survivor cut produces another material same-build whole-window Yun win on the trusted route without a meaningful non-super regression, so the active burst-fidelity queue still has safe thinning headroom
+  - Next best candidate optimization:
+    - stay on the same user-approved burst-fidelity path with one more bounded stronger/broader Yun cut before falling back to the already-implemented Yun-only `frame-skip` mode, while keeping Ken/Chun harness repair as a separate setup loop
+
 - 2026-03-23T16:45:00-0400
   - Final commit hash:
     - `d9056280`

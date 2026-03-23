@@ -891,7 +891,7 @@ static bool ensure_software_frame_surface(void);
 
 static bool draw_rect_borders = false;
 static bool dump_textures = false;
-static const int super_effect_minimal_keep_cadence = 3;
+static const int super_effect_minimal_keep_cadence = 4;
 
 static int texture_index = 0;
 
