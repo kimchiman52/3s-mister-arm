@@ -244,6 +244,23 @@ Scope guardrails:
 
 ## Cycle Log
 
+- 2026-03-23T08:26:00-0400
+  - Final commit hash:
+    - recorded in the docs-only closeout commit for this cycle; the exact self-hash is reported in the loop closeout message because this workflow does not amend a commit just to embed its own ID
+  - Bottleneck targeted:
+    - rechecking whether preserved branch `preserve-loop187-flipped-41-1-frame-skip` could finally clear the device gate and become the next on-device super-fidelity verification target
+  - Change summary:
+    - re-audited the current queue state, dark-render memo, preserved-branch set, and preserved loop `187` diff before opening any new runtime hypothesis
+    - confirmed only `preserve-loop187-flipped-41-1-frame-skip` still contains unresolved perf work relative to `HEAD`; the other preserved branches have no unique commits to verify for this queue
+    - kept the active-branch outcome docs-only after the serial device-gate recheck failed again, leaving the preserved flipped `41/1` runtime diff untouched
+  - Verification result summary:
+    - serial bounded `misterctl.sh health` and `misterctl.sh probe` attempts were rerun with `MISTER_CMD_TIMEOUT=20` and an outer `25s` watchdog, and both timed out before any trustworthy remote command completed
+    - because the gate never produced a trustworthy remote command, deploy/probe/smoke/capture work was skipped and no local-only runtime rerank was attempted
+  - Keep/rollback decision with reason:
+    - preserve and defer; the oldest unresolved runtime diff remains on `preserve-loop187-flipped-41-1-frame-skip`, but this cycle still cannot judge it because the MiSTer gate stayed unhealthy
+  - Next best candidate optimization:
+    - recover the device gate first, then verify `preserve-loop187-flipped-41-1-frame-skip` before any new burst-fidelity runtime experiment
+
 - 2026-03-23T08:03:18-0400
   - Final commit hash:
     - recorded in the docs-only closeout commit for this cycle; the exact self-hash is reported in the loop closeout message because this workflow does not amend a commit just to embed its own ID

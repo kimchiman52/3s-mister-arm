@@ -31,6 +31,7 @@
 ## Current Operator Priorities
 
 - [x] Queue gate on `2026-03-23`: re-audit the dark-render memo before another helper-local/runtime reland. Loop `164+` lower-distortion onset captures stayed on `software-frame on` + direct/native present, but basic-mode zeroed several software-frame workload counters because extended stats were disabled; treat that as an accounting caveat, not a renderer-path swap.
+- [x] Queue gate on `2026-03-23` follow-up: the preserved-branch-first rule is still active and the device gate is still the blocker. Serial bounded `misterctl.sh health` and `probe` rechecks under an outer watchdog both timed out before any trustworthy remote command completed, so `preserve-loop187-flipped-41-1-frame-skip` remains the next verification target and no new runtime hypothesis was opened this cycle.
 - [x] Native override re-rank on `2026-03-21`: stop spending first-line Ralph loop budget on native presentation work. The trusted current-tree native captures keep `present.mean_ms` near the floor on both deciding lanes: `loop145-yun-shared-shapes-repro-r1 capture_windows.first_8_frames = 0.5093 ms` and `loop146-remy-rerank-r2 = 0.5255 ms`.
 - [x] Split the remaining native work into two separate queues instead of one shared queue:
   - Genei-Jin / first-visible activation remains the first-line native gameplay ceiling. The latest trusted schema-`62` onset repro `loop145-yun-shared-shapes-repro-r1` stayed at `25.0873 FPS / 39.8609 / 9.5879 / 29.7127 / 0.5603 ms` overall and `20.9510 FPS / 47.7304 / 11.2303 / 35.9909 / 0.5093 ms` for `capture_windows.first_8_frames`, still on direct native present with zero fallback/readback.
@@ -56,6 +57,26 @@
 - [x] If a documented runtime sweep prerequisite is missing, close or pivot the loop as a setup gap instead of improvising more runtime work inside the same loop.
 - [x] Before commit, update the working brief, the living findings archive, and this checklist together.
 - [x] When a detail only matters for historical lookup or exact citations, keep it in `living-findings.md` instead of expanding the working brief.
+
+## Latest Loop Closeout
+
+- [x] Loop `188` type / deciding lane:
+  - `workload-fidelity` on `yun-sa3-repeat-pressure`, but this cycle remained a device-gate recheck because the oldest unresolved preserved runtime diff still lives on `preserve-loop187-flipped-41-1-frame-skip`
+- [x] Research target and scoped plan:
+  - verify that only `preserve-loop187-flipped-41-1-frame-skip` still contains unresolved perf work, re-audit the dark-render memo against the current queue, then run bounded serial `health` / `probe` before touching any new runtime code
+- [x] Implementation summary:
+  - no new runtime or measurement diff was authored on `HEAD`
+  - confirmed the other preserved branches have no unique commits relative to `HEAD`, so the only unresolved preserved performance branch remains `preserve-loop187-flipped-41-1-frame-skip`
+  - closed the cycle docs-only after the serial device recheck failed again, keeping that preserved branch as the next verification target
+- [x] Verification evidence:
+  - serial bounded `misterctl.sh health` and `misterctl.sh probe` attempts were rerun with `MISTER_CMD_TIMEOUT=20` and an outer `25s` watchdog
+  - both checks timed out before any trustworthy remote command completed, so deploy/probe/smoke/capture work did not proceed and no local-only runtime rerank was attempted
+- [x] Keep/rollback decision:
+  - preserve and defer; do not treat this as runtime rejection because the preserved diff was not reverified on-device
+- [x] Final commit hash:
+  - recorded in the closing commit for this cycle; the exact self-hash is reported in the loop closeout message because this workflow does not amend a commit just to embed its own ID
+- [x] Next best candidate:
+  - rerun bounded serial `health` / `probe` first once the MiSTer gate recovers, then verify `preserve-loop187-flipped-41-1-frame-skip` before inventing any new burst-fidelity or native-runtime hypothesis
 
 ## Active Ralph Loop Intake
 
