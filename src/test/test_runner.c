@@ -65,6 +65,12 @@ typedef enum TestScenePreset {
     TEST_SCENE_PRESET_SUPER_HEAVY,
     TEST_SCENE_PRESET_YUN_SA3_REPEAT,
     TEST_SCENE_PRESET_YUN_SA3_REPEAT_PRESSURE,
+    TEST_SCENE_PRESET_Q_SA1_REPEAT,
+    TEST_SCENE_PRESET_Q_SA1_REPEAT_PRESSURE,
+    TEST_SCENE_PRESET_KEN_SA3_REPEAT,
+    TEST_SCENE_PRESET_KEN_SA3_REPEAT_PRESSURE,
+    TEST_SCENE_PRESET_CHUNLI_SA2_REPEAT,
+    TEST_SCENE_PRESET_CHUNLI_SA2_REPEAT_PRESSURE,
     TEST_SCENE_PRESET_BASIC_EXCHANGE,
     TEST_SCENE_PRESET_PRESSURE_EXCHANGE,
     TEST_SCENE_PRESET_LEFT_CORNER_RYU_STAGE,
@@ -77,11 +83,11 @@ static const Uint8 character_to_cursor[20][2] = { { 7, 1 }, { 1, 0 }, { 5, 2 }, 
 static const Sint8 scene_preset_basic_exchange_stage = 11;
 static const Sint8 scene_preset_stage_heavy_stage = 19;
 static const Sint8 scene_preset_training_yun_ryu_ryu_stage = 2;
-static const int scene_preset_yun_sa3_first_super_frame = 150;
-static const int scene_preset_yun_sa3_second_super_frame = 620;
-static const int scene_preset_yun_sa3_super_input_frames = 40;
-static const int scene_preset_yun_sa3_super_prep_frames = 32;
-static const int scene_preset_yun_sa3_second_super_refill_frame = 560;
+static const int scene_preset_repeat_first_super_frame = 150;
+static const int scene_preset_repeat_second_super_frame = 620;
+static const int scene_preset_repeat_super_input_frames = 40;
+static const int scene_preset_repeat_super_prep_frames = 32;
+static const int scene_preset_repeat_second_super_refill_frame = 560;
 
 static Uint64 frame = 0;
 static Phase phase = PHASE_INIT;
@@ -151,6 +157,24 @@ static TestScenePreset resolve_scene_preset(const char* preset_name) {
     }
     if (SDL_strcmp(preset_name, "yun-sa3-repeat-pressure") == 0) {
         return TEST_SCENE_PRESET_YUN_SA3_REPEAT_PRESSURE;
+    }
+    if (SDL_strcmp(preset_name, "q-sa1-repeat") == 0) {
+        return TEST_SCENE_PRESET_Q_SA1_REPEAT;
+    }
+    if (SDL_strcmp(preset_name, "q-sa1-repeat-pressure") == 0) {
+        return TEST_SCENE_PRESET_Q_SA1_REPEAT_PRESSURE;
+    }
+    if (SDL_strcmp(preset_name, "ken-sa3-repeat") == 0) {
+        return TEST_SCENE_PRESET_KEN_SA3_REPEAT;
+    }
+    if (SDL_strcmp(preset_name, "ken-sa3-repeat-pressure") == 0) {
+        return TEST_SCENE_PRESET_KEN_SA3_REPEAT_PRESSURE;
+    }
+    if (SDL_strcmp(preset_name, "chunli-sa2-repeat") == 0) {
+        return TEST_SCENE_PRESET_CHUNLI_SA2_REPEAT;
+    }
+    if (SDL_strcmp(preset_name, "chunli-sa2-repeat-pressure") == 0) {
+        return TEST_SCENE_PRESET_CHUNLI_SA2_REPEAT_PRESSURE;
     }
     if (SDL_strcmp(preset_name, "basic-exchange") == 0) {
         return TEST_SCENE_PRESET_BASIC_EXCHANGE;
@@ -499,16 +523,39 @@ static u16 pressure_exchange_script_input(int player, int local_frame) {
 }
 
 static bool scene_preset_uses_repeat_second_super(void) {
-    return scene_preset == TEST_SCENE_PRESET_YUN_SA3_REPEAT ||
-           scene_preset == TEST_SCENE_PRESET_YUN_SA3_REPEAT_PRESSURE;
+    switch (scene_preset) {
+    case TEST_SCENE_PRESET_YUN_SA3_REPEAT:
+    case TEST_SCENE_PRESET_YUN_SA3_REPEAT_PRESSURE:
+    case TEST_SCENE_PRESET_Q_SA1_REPEAT:
+    case TEST_SCENE_PRESET_Q_SA1_REPEAT_PRESSURE:
+    case TEST_SCENE_PRESET_KEN_SA3_REPEAT:
+    case TEST_SCENE_PRESET_KEN_SA3_REPEAT_PRESSURE:
+    case TEST_SCENE_PRESET_CHUNLI_SA2_REPEAT:
+    case TEST_SCENE_PRESET_CHUNLI_SA2_REPEAT_PRESSURE:
+        return true;
+    default:
+        return false;
+    }
 }
 
-static bool scene_preset_yun_sa3_super_input_active(int start_frame) {
-    return game_frame >= start_frame && game_frame < (start_frame + scene_preset_yun_sa3_super_input_frames);
+static bool scene_preset_uses_repeat_pressure(void) {
+    switch (scene_preset) {
+    case TEST_SCENE_PRESET_YUN_SA3_REPEAT_PRESSURE:
+    case TEST_SCENE_PRESET_Q_SA1_REPEAT_PRESSURE:
+    case TEST_SCENE_PRESET_KEN_SA3_REPEAT_PRESSURE:
+    case TEST_SCENE_PRESET_CHUNLI_SA2_REPEAT_PRESSURE:
+        return true;
+    default:
+        return false;
+    }
 }
 
-static bool scene_preset_yun_sa3_super_prep_active(int start_frame) {
-    const int prep_start = start_frame - scene_preset_yun_sa3_super_prep_frames;
+static bool scene_preset_repeat_super_input_active(int start_frame) {
+    return game_frame >= start_frame && game_frame < (start_frame + scene_preset_repeat_super_input_frames);
+}
+
+static bool scene_preset_repeat_super_prep_active(int start_frame) {
+    const int prep_start = start_frame - scene_preset_repeat_super_prep_frames;
 
     return game_frame >= prep_start && game_frame < start_frame;
 }
@@ -713,6 +760,14 @@ static void maybe_force_training_scene_super_confirm(void) {
     }
 }
 
+static void apply_repeat_super_preset_defaults(Character player1_character, Sint8 player1_super_art) {
+    characters[0] = player1_character;
+    characters[1] = CHAR_RYU;
+    selected_super_arts[0] = player1_super_art;
+    selected_super_arts[1] = 0;
+    stage = scene_preset_stage_heavy_stage;
+}
+
 static void apply_scene_preset_defaults() {
     scene_preset = resolve_scene_preset(configuration.test.scene_preset);
 
@@ -739,11 +794,22 @@ static void apply_scene_preset_defaults() {
 
     case TEST_SCENE_PRESET_YUN_SA3_REPEAT:
     case TEST_SCENE_PRESET_YUN_SA3_REPEAT_PRESSURE:
-        characters[0] = CHAR_YUN;
-        characters[1] = CHAR_RYU;
-        selected_super_arts[0] = 2;
-        selected_super_arts[1] = 0;
-        stage = scene_preset_stage_heavy_stage;
+        apply_repeat_super_preset_defaults(CHAR_YUN, 2);
+        break;
+
+    case TEST_SCENE_PRESET_Q_SA1_REPEAT:
+    case TEST_SCENE_PRESET_Q_SA1_REPEAT_PRESSURE:
+        apply_repeat_super_preset_defaults(CHAR_Q, 0);
+        break;
+
+    case TEST_SCENE_PRESET_KEN_SA3_REPEAT:
+    case TEST_SCENE_PRESET_KEN_SA3_REPEAT_PRESSURE:
+        apply_repeat_super_preset_defaults(CHAR_KEN, 2);
+        break;
+
+    case TEST_SCENE_PRESET_CHUNLI_SA2_REPEAT:
+    case TEST_SCENE_PRESET_CHUNLI_SA2_REPEAT_PRESSURE:
+        apply_repeat_super_preset_defaults(CHAR_CHUNLI, 1);
         break;
 
     case TEST_SCENE_PRESET_BASIC_EXCHANGE:
@@ -797,49 +863,49 @@ static void apply_scene_preset_inputs() {
         return;
     }
 
-    if (scene_preset == TEST_SCENE_PRESET_YUN_SA3_REPEAT) {
+    if (scene_preset_uses_repeat_second_super() && !scene_preset_uses_repeat_pressure()) {
         p1sw_buff = 0;
         p2sw_buff = 0;
 
-        if (scene_preset_yun_sa3_super_input_active(scene_preset_yun_sa3_first_super_frame)) {
-            p1sw_buff = super_script_input(0, game_frame - scene_preset_yun_sa3_first_super_frame);
+        if (scene_preset_repeat_super_input_active(scene_preset_repeat_first_super_frame)) {
+            p1sw_buff = super_script_input(0, game_frame - scene_preset_repeat_first_super_frame);
         }
 
-        if (scene_preset_yun_sa3_super_input_active(scene_preset_yun_sa3_second_super_frame)) {
-            p1sw_buff = super_script_input(0, game_frame - scene_preset_yun_sa3_second_super_frame);
+        if (scene_preset_repeat_super_input_active(scene_preset_repeat_second_super_frame)) {
+            p1sw_buff = super_script_input(0, game_frame - scene_preset_repeat_second_super_frame);
         }
         return;
     }
 
-    if (scene_preset == TEST_SCENE_PRESET_YUN_SA3_REPEAT_PRESSURE) {
+    if (scene_preset_uses_repeat_pressure()) {
         p1sw_buff = pressure_exchange_script_input(0, game_frame);
         p2sw_buff = pressure_exchange_script_input(1, game_frame);
 
-        if (scene_preset_yun_sa3_super_prep_active(scene_preset_yun_sa3_first_super_frame)) {
+        if (scene_preset_repeat_super_prep_active(scene_preset_repeat_first_super_frame)) {
             p1sw_buff = 0;
             p2sw_buff = pressure_exchange_defend_input(
-                1, game_frame - (scene_preset_yun_sa3_first_super_frame - scene_preset_yun_sa3_super_prep_frames));
+                1, game_frame - (scene_preset_repeat_first_super_frame - scene_preset_repeat_super_prep_frames));
             return;
         }
 
-        if (scene_preset_yun_sa3_super_input_active(scene_preset_yun_sa3_first_super_frame)) {
-            p1sw_buff = super_script_input(0, game_frame - scene_preset_yun_sa3_first_super_frame);
+        if (scene_preset_repeat_super_input_active(scene_preset_repeat_first_super_frame)) {
+            p1sw_buff = super_script_input(0, game_frame - scene_preset_repeat_first_super_frame);
             p2sw_buff = pressure_exchange_defend_input(
-                1, game_frame - (scene_preset_yun_sa3_first_super_frame - scene_preset_yun_sa3_super_prep_frames));
+                1, game_frame - (scene_preset_repeat_first_super_frame - scene_preset_repeat_super_prep_frames));
             return;
         }
 
-        if (scene_preset_yun_sa3_super_prep_active(scene_preset_yun_sa3_second_super_frame)) {
+        if (scene_preset_repeat_super_prep_active(scene_preset_repeat_second_super_frame)) {
             p1sw_buff = 0;
             p2sw_buff = pressure_exchange_defend_input(
-                1, game_frame - (scene_preset_yun_sa3_second_super_frame - scene_preset_yun_sa3_super_prep_frames));
+                1, game_frame - (scene_preset_repeat_second_super_frame - scene_preset_repeat_super_prep_frames));
             return;
         }
 
-        if (scene_preset_yun_sa3_super_input_active(scene_preset_yun_sa3_second_super_frame)) {
-            p1sw_buff = super_script_input(0, game_frame - scene_preset_yun_sa3_second_super_frame);
+        if (scene_preset_repeat_super_input_active(scene_preset_repeat_second_super_frame)) {
+            p1sw_buff = super_script_input(0, game_frame - scene_preset_repeat_second_super_frame);
             p2sw_buff = pressure_exchange_defend_input(
-                1, game_frame - (scene_preset_yun_sa3_second_super_frame - scene_preset_yun_sa3_super_prep_frames));
+                1, game_frame - (scene_preset_repeat_second_super_frame - scene_preset_repeat_super_prep_frames));
             return;
         }
 
@@ -905,7 +971,7 @@ static void apply_scene_preset_super_refill_overrides() {
         return;
     }
 
-    if (game_frame < scene_preset_yun_sa3_second_super_refill_frame || plw[0].sa == NULL || player_super_art_active(0)) {
+    if (game_frame < scene_preset_repeat_second_super_refill_frame || plw[0].sa == NULL || player_super_art_active(0)) {
         return;
     }
 

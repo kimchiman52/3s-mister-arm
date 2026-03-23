@@ -49,7 +49,7 @@ Options:
                          Delay capture until the runtime reaches the named state
                          (attract-demo-logo, character-select-super-art).
   --test-scene-preset <name>
-                         Named scripted gameplay preset (stage-heavy, effect-heavy, super-heavy, yun-sa3-repeat, yun-sa3-repeat-pressure, basic-exchange, pressure-exchange, left-corner-ryu-stage, training-yun-ryu-ryu-stage).
+                         Named scripted gameplay preset (stage-heavy, effect-heavy, super-heavy, yun-sa3-repeat, yun-sa3-repeat-pressure, q-sa1-repeat, q-sa1-repeat-pressure, ken-sa3-repeat, ken-sa3-repeat-pressure, chunli-sa2-repeat, chunli-sa2-repeat-pressure, basic-exchange, pressure-exchange, left-corner-ryu-stage, training-yun-ryu-ryu-stage).
   --test-p1-character <name-or-id>
                          Optional test-runner player 1 character override for scripted gameplay capture; requires --gameplay-idle or --test-scene-preset.
   --test-p2-character <name-or-id>
@@ -71,6 +71,9 @@ Options:
                          (nearest, native, linear, soft-linear, square-pixels, integer).
   --software-frame-mode <off|on>
                          Optional config override for `software-frame-mode` during capture.
+  --super-effect-quality <mode>
+                         Optional config override for `super-effect-quality` during capture
+                         (`full`, `simplified`, `minimal`).
                          Perf captures always force `show-fps = false` temporarily so the
                          player-facing HUD does not skew optimization measurements.
   --host <ip-or-host>    MiSTer host (default: $MISTER_HOST or 192.168.1.171).
@@ -139,6 +142,9 @@ is_supported_test_scene_preset() {
     local value="$1"
     [ "$value" = "stage-heavy" ] || [ "$value" = "effect-heavy" ] || [ "$value" = "super-heavy" ] ||
         [ "$value" = "yun-sa3-repeat" ] || [ "$value" = "yun-sa3-repeat-pressure" ] ||
+        [ "$value" = "q-sa1-repeat" ] || [ "$value" = "q-sa1-repeat-pressure" ] ||
+        [ "$value" = "ken-sa3-repeat" ] || [ "$value" = "ken-sa3-repeat-pressure" ] ||
+        [ "$value" = "chunli-sa2-repeat" ] || [ "$value" = "chunli-sa2-repeat-pressure" ] ||
         [ "$value" = "basic-exchange" ] || [ "$value" = "pressure-exchange" ] ||
         [ "$value" = "left-corner-ryu-stage" ] || [ "$value" = "training-yun-ryu-ryu-stage" ]
 }
@@ -146,6 +152,11 @@ is_supported_test_scene_preset() {
 is_supported_software_frame_mode() {
     local value="$1"
     [ "$value" = "off" ] || [ "$value" = "on" ]
+}
+
+is_supported_super_effect_quality() {
+    local value="$1"
+    [ "$value" = "full" ] || [ "$value" = "simplified" ] || [ "$value" = "minimal" ]
 }
 
 is_supported_scale_mode() {
@@ -225,6 +236,57 @@ apply_test_scene_preset_defaults() {
         fi
         if [ -z "$test_p1_super_art" ]; then
             test_p1_super_art="2"
+        fi
+        if [ -z "$test_p2_super_art" ]; then
+            test_p2_super_art="0"
+        fi
+        if [ -z "$test_stage" ]; then
+            test_stage="19"
+        fi
+        ;;
+    q-sa1-repeat|q-sa1-repeat-pressure)
+        if [ -z "$test_p1_character" ]; then
+            test_p1_character="17"
+        fi
+        if [ -z "$test_p2_character" ]; then
+            test_p2_character="2"
+        fi
+        if [ -z "$test_p1_super_art" ]; then
+            test_p1_super_art="0"
+        fi
+        if [ -z "$test_p2_super_art" ]; then
+            test_p2_super_art="0"
+        fi
+        if [ -z "$test_stage" ]; then
+            test_stage="19"
+        fi
+        ;;
+    ken-sa3-repeat|ken-sa3-repeat-pressure)
+        if [ -z "$test_p1_character" ]; then
+            test_p1_character="11"
+        fi
+        if [ -z "$test_p2_character" ]; then
+            test_p2_character="2"
+        fi
+        if [ -z "$test_p1_super_art" ]; then
+            test_p1_super_art="2"
+        fi
+        if [ -z "$test_p2_super_art" ]; then
+            test_p2_super_art="0"
+        fi
+        if [ -z "$test_stage" ]; then
+            test_stage="19"
+        fi
+        ;;
+    chunli-sa2-repeat|chunli-sa2-repeat-pressure)
+        if [ -z "$test_p1_character" ]; then
+            test_p1_character="15"
+        fi
+        if [ -z "$test_p2_character" ]; then
+            test_p2_character="2"
+        fi
+        if [ -z "$test_p1_super_art" ]; then
+            test_p1_super_art="1"
         fi
         if [ -z "$test_p2_super_art" ]; then
             test_p2_super_art="0"
@@ -376,6 +438,7 @@ test_delay_gameplay_inputs_until_active=0
 test_stage=""
 scale_mode=""
 software_frame_mode=""
+super_effect_quality=""
 have_test_overrides=0
 
 while [ "$#" -gt 0 ]; do
@@ -492,6 +555,10 @@ while [ "$#" -gt 0 ]; do
         software_frame_mode="$2"
         shift 2
         ;;
+    --super-effect-quality)
+        super_effect_quality="$2"
+        shift 2
+        ;;
     --host)
         host="$2"
         shift 2
@@ -590,7 +657,7 @@ if [ -n "$perf_wait_runtime_state" ] && ! is_supported_perf_wait_runtime_state "
 fi
 
 if [ -n "$test_scene_preset" ] && ! is_supported_test_scene_preset "$test_scene_preset"; then
-    echo "error: --test-scene-preset must be one of stage-heavy, effect-heavy, super-heavy, yun-sa3-repeat, yun-sa3-repeat-pressure, basic-exchange, pressure-exchange, left-corner-ryu-stage, or training-yun-ryu-ryu-stage." >&2
+    echo "error: --test-scene-preset must be one of stage-heavy, effect-heavy, super-heavy, yun-sa3-repeat, yun-sa3-repeat-pressure, q-sa1-repeat, q-sa1-repeat-pressure, ken-sa3-repeat, ken-sa3-repeat-pressure, chunli-sa2-repeat, chunli-sa2-repeat-pressure, basic-exchange, pressure-exchange, left-corner-ryu-stage, or training-yun-ryu-ryu-stage." >&2
     exit 2
 fi
 
@@ -681,6 +748,11 @@ fi
 
 if [ -n "$software_frame_mode" ] && ! is_supported_software_frame_mode "$software_frame_mode"; then
     echo "error: --software-frame-mode must be 'off' or 'on'." >&2
+    exit 2
+fi
+
+if [ -n "$super_effect_quality" ] && ! is_supported_super_effect_quality "$super_effect_quality"; then
+    echo "error: --super-effect-quality must be one of full, simplified, or minimal." >&2
     exit 2
 fi
 
@@ -895,6 +967,11 @@ if [ -n '${software_frame_mode}' ]; then
   mv '${remote_config_path}.tmp.mode' '${remote_config_path}.tmp'
   printf '%s\n' 'software-frame-mode = ${software_frame_mode}' >>'${remote_config_path}.tmp'
 fi
+if [ -n '${super_effect_quality}' ]; then
+  grep -v '^[[:space:]]*super-effect-quality[[:space:]]*=' '${remote_config_path}.tmp' >'${remote_config_path}.tmp.superfx' || true
+  mv '${remote_config_path}.tmp.superfx' '${remote_config_path}.tmp'
+  printf '%s\n' 'super-effect-quality = ${super_effect_quality}' >>'${remote_config_path}.tmp'
+fi
 grep -v '^[[:space:]]*show-fps[[:space:]]*=' '${remote_config_path}.tmp' >'${remote_config_path}.tmp.showfps' || true
 mv '${remote_config_path}.tmp.showfps' '${remote_config_path}.tmp'
 printf '%s\n' 'show-fps = false' >>'${remote_config_path}.tmp'
@@ -977,6 +1054,7 @@ if command -v jq >/dev/null 2>&1; then
     metadata_p2_super_art="null"
     metadata_scale_mode="$captured_scale_mode"
     metadata_software_frame_mode="$captured_software_frame_mode"
+    metadata_super_effect_quality="$super_effect_quality"
     metadata_capture_start_test_phase="$captured_test_phase"
     metadata_perf_wait_test_phase="$captured_wait_test_phase"
     metadata_perf_wait_runtime_state="$captured_wait_runtime_state"
@@ -1040,6 +1118,7 @@ if command -v jq >/dev/null 2>&1; then
         --arg test_scene_preset "$test_scene_preset" \
         --arg scale_mode "$metadata_scale_mode" \
         --arg software_frame_mode "$metadata_software_frame_mode" \
+        --arg super_effect_quality "$metadata_super_effect_quality" \
         --arg capture_start_test_phase "$metadata_capture_start_test_phase" \
         --arg perf_wait_test_phase "$metadata_perf_wait_test_phase" \
         --arg perf_wait_runtime_state "$metadata_perf_wait_runtime_state" \
@@ -1059,7 +1138,7 @@ if command -v jq >/dev/null 2>&1; then
         --argjson basic_first_window_onset_exact_hot_family_alpha_offpath "$metadata_basic_first_window_onset_exact_hot_family_alpha_offpath" \
         --argjson basic_first_window_onset_cluster_alpha_offpath "$metadata_basic_first_window_onset_cluster_alpha_offpath" \
         --argjson fast_non_integer_subrect_alpha_telemetry "$metadata_fast_non_integer_subrect_alpha_telemetry" \
-        '.metadata = ((.metadata // {}) + {scene: $scene, test_scene_preset: (if ($test_scene_preset | length) > 0 then $test_scene_preset else null end), scale_mode: (if ($scale_mode | length) > 0 then $scale_mode else null end), software_frame_mode: (if ($software_frame_mode | length) > 0 then $software_frame_mode else null end), capture_start_test_phase: (if ($capture_start_test_phase | length) > 0 and $capture_start_test_phase != "(none)" then $capture_start_test_phase else null end), perf_wait_test_phase: (if ($perf_wait_test_phase | length) > 0 and $perf_wait_test_phase != "(none)" then $perf_wait_test_phase else null end), perf_wait_runtime_state: (if ($perf_wait_runtime_state | length) > 0 and $perf_wait_runtime_state != "(none)" then $perf_wait_runtime_state else null end), stage_id: $stage_id, test_stage_override: $test_stage_override, p1_character: $p1_character, p2_character: $p2_character, p1_super_art: $p1_super_art, p2_super_art: $p2_super_art, test_p1_super_full: $p1_super_full, test_preserve_game_transition: $preserve_game_transition, test_delay_gameplay_inputs_until_active: $delay_gameplay_inputs_until_active, fast_non_integer_reuse_telemetry: $fast_non_integer_reuse_telemetry, basic_first_window_families: $basic_first_window_families, basic_first_window_render_subphases: $basic_first_window_render_subphases, basic_first_window_exact_hot_family_alpha_offpath: $basic_first_window_exact_hot_family_alpha_offpath, basic_first_window_onset_exact_hot_family_alpha_offpath: $basic_first_window_onset_exact_hot_family_alpha_offpath, basic_first_window_onset_cluster_alpha_offpath: $basic_first_window_onset_cluster_alpha_offpath, fast_non_integer_subrect_alpha_telemetry: $fast_non_integer_subrect_alpha_telemetry})' \
+        '.metadata = ((.metadata // {}) + {scene: $scene, test_scene_preset: (if ($test_scene_preset | length) > 0 then $test_scene_preset else null end), scale_mode: (if ($scale_mode | length) > 0 then $scale_mode else null end), software_frame_mode: (if ($software_frame_mode | length) > 0 then $software_frame_mode else null end), super_effect_quality: (if ($super_effect_quality | length) > 0 then $super_effect_quality else null end), capture_start_test_phase: (if ($capture_start_test_phase | length) > 0 and $capture_start_test_phase != "(none)" then $capture_start_test_phase else null end), perf_wait_test_phase: (if ($perf_wait_test_phase | length) > 0 and $perf_wait_test_phase != "(none)" then $perf_wait_test_phase else null end), perf_wait_runtime_state: (if ($perf_wait_runtime_state | length) > 0 and $perf_wait_runtime_state != "(none)" then $perf_wait_runtime_state else null end), stage_id: $stage_id, test_stage_override: $test_stage_override, p1_character: $p1_character, p2_character: $p2_character, p1_super_art: $p1_super_art, p2_super_art: $p2_super_art, test_p1_super_full: $p1_super_full, test_preserve_game_transition: $preserve_game_transition, test_delay_gameplay_inputs_until_active: $delay_gameplay_inputs_until_active, fast_non_integer_reuse_telemetry: $fast_non_integer_reuse_telemetry, basic_first_window_families: $basic_first_window_families, basic_first_window_render_subphases: $basic_first_window_render_subphases, basic_first_window_exact_hot_family_alpha_offpath: $basic_first_window_exact_hot_family_alpha_offpath, basic_first_window_onset_exact_hot_family_alpha_offpath: $basic_first_window_onset_exact_hot_family_alpha_offpath, basic_first_window_onset_cluster_alpha_offpath: $basic_first_window_onset_cluster_alpha_offpath, fast_non_integer_subrect_alpha_telemetry: $fast_non_integer_subrect_alpha_telemetry})' \
         "${local_output_path}" >"${temp_output_path}"
     mv "${temp_output_path}" "${local_output_path}"
 fi

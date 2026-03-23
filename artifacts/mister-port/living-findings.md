@@ -6,6 +6,7 @@ Purpose:
 
 Scope guardrails:
 - Performance/runtime optimizations only.
+- User-approved exception on `2026-03-22`: MiSTer-only visual fidelity reductions during super activation are now in scope when they do not change gameplay timing, logic, determinism, or input semantics.
 - No gameplay, determinism, rules, input semantics, timing model, or content changes.
 
 ## Current Snapshot
@@ -22,6 +23,7 @@ Scope guardrails:
 - Representative gameplay gate: 300-frame `gameplay-idle` capture via `tools/mister/perf-sampler.sh --gameplay-idle --gameplay-warmup 120`
 - Stage-aware anchors: Chunk 1 now keeps the no-override idle control on `stage_id=11`, names `stage_id=19` as the current `stage-heavy` gate, and keeps `stage_id=2` as the contrasting explicit override
 - Frozen stock-image scene matrix: `idle-control` = `stage 11 / Ryu-Ken / SA0-0`; `stage-heavy` = `stage 19 / Ryu-Ken / SA0-0`; `effect-heavy` = preset `effect-heavy` on `stage 19 / Ryu-Ken / SA0-0`; `super-heavy` = preset `super-heavy` on `stage 19 / Ryu-Ryu / SA0-0`
+- Expanded super-validation matrix: keep Yun SA3 first, then use scripted `Q SA1`, `Ken SA3`, and `Chun-Li SA2` lanes as secondary burst-validation scenarios when ranking MiSTer-only super-activation fidelity reductions.
 - 2026-03-20 toolchain status: the MiSTer Docker flow no longer needs Debian Bullseye's system `clang` 11. The official `apt.llvm.org` Bullseye repo now installs cleanly in `3sx-mister-build`, and `clang-20` cross-builds the `/work-arm` telemetry package successfully after two narrow compatibility updates: treat `software_source_surface_row_mask_words` as an enum constant in `src/port/sdl/sdl_game_renderer.c`, and teach the Clang warning-compat list in `CMakeLists.txt` to ignore `-Wdeprecated-non-prototype` plus `-Wgnu-folding-constant` on legacy upstream C. The resulting binary still verifies as `ELF32 / ARM / hard-float / NEON`, and real-hardware verification is now closed too: serialized `misterctl.sh health`, `deploy`, `probe`, and bounded `smoke` all passed on `192.168.1.171`, and `tools/mister/perf-sampler.sh --scene training --frames 120 --tag llvm20-toolchain-check --perf-basic` completed at `175.6014 FPS` on the deployed telemetry package. This host still cannot execute `linux/arm/v7` containers locally (`exec format error`), so local proof remains cross-build plus `readelf`, with on-device verification as the final truth source.
 - Historical hybrid note: the first-cut hybrid subset from `artifacts/mister-port/stock-image-architecture-loop-series/todo.md` remains closed at `65.64% / 56.86%` on `effect-heavy` and `66.85% / 58.19%` on `super-heavy`; do not reopen that track inside the active software-frame stream
 - Active checklist: `artifacts/mister-port/stock-image-software-frame-loop-series/todo.md` is the canonical checklist for this automation run on `mister-dev`; keep `artifacts/mister-port/ralphpart2/todo.md` as historical context only

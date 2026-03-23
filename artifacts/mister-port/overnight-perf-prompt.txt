@@ -23,6 +23,8 @@ Rules:
   - intro and menus feel full speed
   - this loop series is about native gameplay performance first, not nearest-only presenter work unless fresh evidence proves a native issue is actually present-bound
   - Yun SA3 Genei-Jin still causes obvious gameplay slowdown and remains the first-class gameplay target, especially the first visible activation/cold burst
+  - user-approved visual-only fidelity reductions during super activation are now in scope on MiSTer when they do not change gameplay logic, determinism, or timing; prefer opt-in or tightly burst-scoped reductions over another blind helper micro-tuning loop when they are the highest expected-value path to stable 60
+  - broaden the deciding super matrix beyond Yun alone when evaluating those fidelity reductions: keep Yun SA3 first, then add Q SA1, Ken SA3, and Chun-Li SA2 scripted lanes so future wins are not overfit to a single super
   - Remy-left still matters, but it is now a separate exact/refresh compare-dirty residue track rather than another non-integer/native-present bottleneck
   - the exact `Press Start -> main menu` type-`1` wipe now looks solved enough to treat as de-prioritized unless fresh evidence contradicts that
   - gameplay in most stages still feels near full speed until large effects/supers
@@ -37,9 +39,29 @@ Rules:
   - every gameplay capture should record and cite `metrics.fps.mean`
   - use `tools/mister/perf-sampler.sh` summaries plus the JSON to keep FPS visible in the loop log and checklist
 - One-time bootstrap note for the next unattended run:
-  - if the kickoff tree is dirty only in `artifacts/mister-port/stock-image-software-frame-loop-series/todo.md`, `src/main.c`, `src/test/test_runner.c`, and `tools/mister/perf-sampler.sh`, treat that state as unfinished Follow-On Loop `152` measurement support for the gameplay-real repeated Yun activation lane
-  - close that unfinished Loop `152` work first by verifying whether the new `yun-sa3-repeat-heavy` preset is worth keeping, then commit/preserve/revert it according to the normal dirty-tree rules before starting any fresh post-Loop-152 research or implementation
-  - do not mix new render-subphase telemetry work into the same cycle unless Loop `152` has first been returned to a clean committed or reverted state
+  - if the kickoff tree is dirty only in `artifacts/mister-port/stock-image-software-frame-loop-series/todo.md`, `artifacts/mister-port/overnight-perf-prompt.txt`, `docs/config.md`, `include/port/sdl/sdl_game_renderer.h`, `src/port/config/config.c`, `src/port/config/config.h`, `src/port/sdl/sdl_app.c`, `src/port/sdl/sdl_game_renderer.c`, `src/test/test_runner.c`, and `tools/mister/perf-sampler.sh`, treat that state as unfinished super-activation fidelity-reduction work rather than stale Loop `152`
+  - close that dirty state first by validating the new `super-effect-quality = full|simplified|minimal` MiSTer path, expanding the scripted super matrix to include Q SA1, Ken SA3, and Chun-Li SA2, and then commit/preserve/revert it according to the normal dirty-tree rules before inventing a different runtime or measurement hypothesis
+  - do not reopen old alpha-branch-layout, source-metadata, or repeat-pressure subphase collectors until that fidelity-reduction diff has first been cleanly resolved
+- Current active super-fidelity workstream, resolve this before inventing a new queue:
+  - the current dirty implementation is not a vague prototype; it already contains the first burst-fidelity path and should be treated as the active runtime candidate under test
+  - implementation state to preserve and verify first:
+    - public config key `super-effect-quality = full|simplified|minimal`, with `full` default and absent-key behavior matching `full`
+    - clean-build-visible P1 Yun SA3 burst countdown in the app layer, starting on the first inactive-to-active transition and lasting 8 frames
+    - `simplified` currently rounds destination geometry for the trusted six hot onset families so qualifying work can fall into `EXACT` or `SCALED`
+    - `minimal` currently applies the same survivor logic and then thins every other qualifying task after final sort so draw-order semantics are preserved
+    - `tools/mister/perf-sampler.sh` now accepts `--super-effect-quality full|simplified|minimal`
+    - scripted super presets now include `yun-sa3-repeat(-pressure)`, `q-sa1-repeat(-pressure)`, `ken-sa3-repeat(-pressure)`, and `chunli-sa2-repeat(-pressure)`
+  - the first unresolved question is not “what new micro-optimization should we try?” It is “how much speed do `simplified` and `minimal` actually buy on-device, and are they still too weak?”
+  - required first validation matrix for this workstream:
+    - run `full`, `simplified`, and `minimal` on `yun-sa3-repeat-pressure`
+    - run the same three modes on `q-sa1-repeat-pressure`, `ken-sa3-repeat-pressure`, and `chunli-sa2-repeat-pressure`
+    - keep `gameplay-idle` as the non-super guard, and at minimum compare `full` versus `minimal` there before keeping a stronger fidelity cut
+    - use the simpler `*-repeat` lanes only when a `*-repeat-pressure` result is ambiguous or clearly overfit to the pressure script
+  - if the current fidelity reductions are too weak, iterate deeper down the same path before reopening another helper-inner-loop queue:
+    - prefer stronger post-sort thinning, lower per-family survivor caps, or a broader burst-only candidate cohort on the proven supers
+    - allow super-specific fidelity rules if the expanded matrix shows that different supers need different cuts
+    - keep all such changes MiSTer-only, burst-scoped, and render-only; no frame-hold, skipped update, gameplay-state changes, or emitter/resource edits
+  - only if the current fidelity-reduction branch is convincingly rejected across the expanded matrix should the loop return to a different runtime hypothesis
 - Only broaden measurement or route-identification again if a new runtime attempt fails to match the already-proven manual evidence. The current default should be targeted runtime work against those confirmed lanes, not more generic capture support.
 - Every cycle must begin with DEEP research before any code changes:
   - inspect the current living findings, active checklist, relevant local code paths, and existing gameplay telemetry/logs
@@ -59,11 +81,9 @@ Rules:
   - if a forced experiment regresses or fails verification, roll it back normally, record the evidence, and continue reranking from that result
 - Candidate ordering for this loop series:
   - treat the old `ix 80 / texture 56` audit and scalar `4x` row-walk unroll ideas as closed by the March `2026-03-21` evidence; do not reopen them unchanged
-  - first add lower-distortion capture support plus render-subphase telemetry on the trusted first-visible Yun onset lane so the current `~20.9 ms/frame` dark-render gap can be reranked from measured evidence
-  - then rerun the deciding first-visible Yun onset capture on unchanged runtime behavior and use that new telemetry to identify the largest measured render sub-phase
-  - if the lower-distortion rerun still says helper-local work dominates, next add subrect alpha-structure telemetry for the hot Yun families instead of jumping to another helper-local runtime reland
-  - if cold-vs-warm activation ambiguity still matters after that rerun, prioritize gameplay-real repeated-activation support over the older stripped-repeat lane before attempting a new runtime optimization
-  - keep any future subrect alpha sidecar or clustered-shape runtime reland conditional on the new measurement proving ROI; do not treat them as first-line overnight work ahead of the reranking step
+  - first close and validate the current `super-effect-quality` burst-fidelity implementation on MiSTer, including `full/simplified/minimal` sweeps on Yun SA3 plus new Q SA1, Ken SA3, and Chun-Li SA2 scripted lanes
+  - second, if the current thinning/quantization is too weak, keep iterating on bounded fidelity reduction before reopening another helper-local alpha/layout experiment
+  - third, only if the fidelity-reduction branch is rejected or saturates without a keep-worthy win, rerank back toward a different measured runtime or update bottleneck
   - keep Remy-left on a separate compare-dirty `ppg-seqs 81/82` residue track rather than assuming Yun-targeted work will help it
   - treat fixed-point lookup generation, persistent lookup buffers, task-level Y lookup sharing, compiler hints, LTO, PMU/prefetch, NEON, row-dedup runtime changes, and dual-core ideas as secondary or deferred unless the new telemetry materially re-ranks them
   - do not spend first-line loop budget on nearest-only presenter work when the target is native gameplay unless current captures show a real native present bottleneck
@@ -90,6 +110,7 @@ Hard constraints (do not violate):
 - Do not change gameplay behavior, game rules, move properties, collision/hit logic, input mapping semantics, simulation timing, RNG behavior, stage logic, menu flow, or resource content.
 - Do not make changes that could alter determinism or game feel.
 - Restrict code changes to performance-oriented implementation details (render/present path, buffering/copy costs, allocation patterns, logging overhead, I/O overhead, build/profile flags) without changing visible gameplay behavior.
+- User-approved exception: MiSTer-only super-activation visual-fidelity reductions are allowed when they are bounded to the burst visuals, preserve gameplay timing/logic/determinism, and are verified through the normal device gates. Do not treat those bounded render-only degradations as a rules violation.
 - If a candidate optimization may affect gameplay behavior, skip it and choose a different optimization.
 - If any applied change is suspected to affect gameplay behavior, revert that change immediately and continue with a safer approach.
 - Objective is purely improved frame rate/stability on lower-powered MiSTer hardware.
