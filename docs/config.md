@@ -51,7 +51,7 @@ Defaults:
 Possible values:
 - `full`: Keep current behavior
 - `simplified`: Snap the hottest trusted Yun SA3 slowdown-window sprites to integer destination geometry so more work can use the cheaper exact/scaled software-frame paths
-- `minimal`: Apply `simplified` and thin every other hot trusted Yun SA3 slowdown-window sprite after final sort so only the first visible instance per family is always preserved
+- `minimal`: Apply `simplified` and preserve only every third qualifying hot trusted Yun SA3 slowdown-window sprite after final sort so the first visible instance per family stays preserved while the burst workload drops harder
 - `frame-skip`: Keep gameplay/update cadence, render trusted Yun SA3 slowdown-window frames with `minimal` quality, and reuse the previous rendered frame on every other slowdown-window frame after the trigger frame when a primed previous frame is available
 
 Notes:

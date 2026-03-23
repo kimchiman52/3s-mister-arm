@@ -891,6 +891,7 @@ static bool ensure_software_frame_surface(void);
 
 static bool draw_rect_borders = false;
 static bool dump_textures = false;
+static const int super_effect_minimal_keep_cadence = 3;
 
 static int texture_index = 0;
 
@@ -3648,7 +3649,7 @@ static void apply_minimal_super_effect_thinning_after_sort(void) {
                 const int family_index = classify_super_effect_hot_family(task);
                 if ((family_index >= 0) && (family_index < (int)SDL_arraysize(family_ordinals))) {
                     const int family_ordinal = family_ordinals[family_index];
-                    drop_task = (family_ordinal & 1) != 0;
+                    drop_task = (family_ordinal % super_effect_minimal_keep_cadence) != 0;
                     family_ordinals[family_index] = family_ordinal + 1;
                 }
             }
