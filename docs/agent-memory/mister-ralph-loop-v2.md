@@ -32,11 +32,13 @@
 - Decision: after two failed runtime bets in the same idea family, force a queue pivot to a different lever class. | Why: repeated branch-layout or micro-reland retries consume loop budget without widening the search space. | Date: `2026-03-22`
 - Decision: prefer workload-level or user-approved fidelity reductions over another helper micro-opt when the remaining lane is still far from stable target performance. | Why: the bigger remaining gap is often workload size, not one last inner-loop branch. | Date: `2026-03-22`
 - Decision: keep a small Ralph working brief and treat `living-findings.md` as archive/history, not default working context. | Why: the log is too large to serve as the routine prompt payload without anchoring and token drag. | Date: `2026-03-22`
+- Decision: when super or burst slowdown clearly extends beyond the first visible onset, stop using first-`8` frames as the default success window and rerank around the whole slowdown span. | Why: onset-only wins can miss later drops and overfit the loop to a shortcut window instead of the user-visible stall. | Date: `2026-03-23`
 
 ## Ralph V2 Rules
 
 - Start every loop by declaring its type: `runtime`, `measurement`, or `workload-fidelity`.
 - Name one deciding lane, at least one non-regression gameplay guard, and one stop condition before editing.
+- Name the deciding slowdown window too. If the real window length is unknown, the loop must either measure it directly or state the current uncertainty instead of silently assuming first-`8`.
 - Each loop must close one bounded diff or one bounded docs-only pivot. Do not let the same dirty runtime implementation drift across multiple loop IDs.
 - If a dirty runtime diff already exists at kickoff, either revert it before planning or explicitly adopt it as the sole diff under test for that loop.
 - For `runtime` loops, prefer one bounded code change over a family of adjacent tweaks.
@@ -54,6 +56,9 @@
 - Compare richer capture modes against an unchanged-tree baseline first.
 - Reject a collector if its own bookkeeping becomes a dominant reported subphase or if it more than modestly perturbs the deciding lane.
 - Prefer off-path or post-window exports over in-band per-pixel or per-row accounting on hot lanes.
+- Treat routing truth and workload-accounting truth separately. Basic-mode lower-distortion captures can still prove `software-frame on`, `owned`, `direct-present`, and `fallback/readback` state, but they may zero extended workload counters such as `software_frame_candidate_tasks` or `software_frame_fast_non_integer_tasks` when those counters are gated behind extended stats.
+- Do not treat zeroed software-frame workload counters from basic-mode captures as evidence that work moved to a GPU path or that software-frame work disappeared. Re-audit the code path and capture metadata first.
+- If a memo or queue ranking mixes full-export render numbers with lower-distortion basic-mode numbers, pause and re-audit before another runtime reland. Only continue the runtime queue if that audit still leaves one bounded, software-frame-real candidate; otherwise pivot back to the best validated workload-fidelity queue.
 
 ## Statistics Protocol
 
@@ -81,6 +86,7 @@
 
 - Prefer candidates that change the largest remaining cost center, not just the easiest helper to patch.
 - Prefer candidates that attack a whole workload class over candidates that shave a tiny subfamily.
+- Prefer candidates and validation windows that match the full user-visible slowdown span, not just the easiest onset slice to measure.
 - Prefer candidates that preserve or improve measurement clarity.
 - Demote candidates that require new in-band metadata on the hottest path.
 - Promote candidates with user approval when they trade non-gameplay visual fidelity for stable speed.
@@ -92,6 +98,7 @@
 - Giant loop history is useful archive, but poor default context -> load a brief first and drill into history only when needed.
 - Manual review is acceptable when automation stalls, but only after constraining the review scope to the actual diff.
 - Repeated docs-only closures can feel productive while the search space stagnates -> treat them as a signal to pivot, not as proof the process is still exploring well.
+- Lower-distortion basic-mode captures can hide extended workload counters while preserving the same software-frame route -> do not invent a renderer-path swap from zeroed `software_frame_*_tasks` metrics alone.
 
 ## Update Rules
 

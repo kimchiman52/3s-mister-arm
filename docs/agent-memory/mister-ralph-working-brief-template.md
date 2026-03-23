@@ -19,6 +19,7 @@
 - Active queue:
 - Loop type: `runtime` | `measurement` | `workload-fidelity`
 - Deciding lane:
+- Deciding window or slowdown span:
 - Primary guard lane(s):
 - Current owner note:
 
@@ -73,6 +74,7 @@
 - Accepted richer modes:
 - Distortion budget note:
 - Required route checks:
+- Window rule: do not assume a first-`8` or onset-only window unless current evidence proves that is the real slowdown span
 
 ## Statistics Rules
 
@@ -94,6 +96,7 @@
 - One scoped change:
 - Stop immediately if:
 - Capture plan:
+- Window-specific success check:
 - First-pass exclusions or deferred follow-ups:
 - Keep if:
 - Reject if:

@@ -6,6 +6,14 @@ review, 149-loop git history, ARM Cortex-A9 architecture research, graphics rend
 
 ---
 
+## Audit Status (2026-03-23)
+
+- This memo is now a partial historical hypothesis, not a clean current queue contract.
+- Important correction: Loop `164+` lower-distortion basic-mode captures did **not** prove that MiSTer moved off the software-frame path. Current code and capture metadata show those runs still stayed on `software-frame on`, `owned`, `direct-present`, with zero fallback/readback.
+- The real process bug is narrower but still serious: several software-frame workload counters, including `software_frame_candidate_tasks` and `software_frame_fast_non_integer_tasks`, are gated behind extended stats and therefore read as zero in basic-mode lower-distortion captures even while the software-frame path is still active.
+- Therefore any argument that treats zeroed basic-mode software-frame workload counters as evidence of an SDL/GPU render path, or as proof that software-frame work disappeared, is invalid.
+- The remaining useful part of this memo is the queue-shaping question: whether there is still a meaningful render-time cost outside the sampled hot helper buckets on the real software-frame path. That question must now be re-audited without mixing full-export accounting and lower-distortion basic-mode accounting as if they were the same measurement regime.
+
 ## The Most Important Discovery: The "Dark Render"
 
 During the Yun SA3 Genei-Jin cold burst (first 8 frames, 19.23 FPS):
@@ -28,10 +36,12 @@ But within render, the **sampled** non-integer work breaks down as:
 | **Total accounted** | **~19.7 ms** |
 | **UNACCOUNTED render time** | **~20.9 ms** |
 
-**~21 ms of render time per frame is NOT in any sampled pixel path.** The ralph loops have been
-exclusively optimizing the row raster inner loop (7.1 ms) and lookup generation (1.1 ms) — which
-together are only ~20% of the actual render phase. There's a massive chunk of render time that hasn't
-been profiled or targeted.
+Historical conclusion, now narrowed by audit:
+
+- On the older full-export Loop `150` capture, about `~21 ms` of per-frame render time was not attributed to the sampled pixel buckets that memo was examining.
+- That does **not** mean later lower-distortion basic-mode captures found a different renderer path.
+- It also does **not** mean the whole unaccounted render gap survived unchanged once measurement overhead was reduced.
+- The safe surviving statement is narrower: full-export telemetry exposed a large accounting gap relative to the sampled hot-helper buckets, but later lower-distortion captures changed the measurement regime enough that the memo must be re-audited before using that gap as the basis for another runtime queue.
 
 This "dark render" likely includes:
 - Per-task dispatch overhead (717 tasks across 8 frames = ~90 tasks/frame)
@@ -43,6 +53,13 @@ This "dark render" likely includes:
 - L1/L2 cache thrashing between tasks
 
 ---
+
+## Re-Audit Guidance
+
+- Use full-export captures only for claims that truly depend on extended workload accounting.
+- Use lower-distortion basic-mode captures for route validation and relative same-regime comparisons, not for absolute software-frame workload totals unless the required counters are explicitly backfilled.
+- If a future loop wants to reopen this memo as runtime guidance, it must first show one bounded candidate whose premises survive that accounting correction.
+- If no such candidate survives, return to the current whole-window super-effect-quality queue instead of forcing another software-frame micro-opt from this memo.
 
 ## What's Actually Been Tried vs What Hasn't
 
