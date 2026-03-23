@@ -35,6 +35,35 @@ typedef enum RenderTaskType {
     RENDER_TASK_TYPE_TEXTURED_RECT = 1,
 } RenderTaskType;
 
+typedef enum SoftwareFrameFastCopyResult {
+    SOFTWARE_FRAME_FAST_COPY_RESULT_EXACT = 0,
+    SOFTWARE_FRAME_FAST_COPY_RESULT_SCALED,
+    SOFTWARE_FRAME_FAST_COPY_RESULT_COLOR_MOD,
+    SOFTWARE_FRAME_FAST_COPY_RESULT_NON_INTEGER,
+    SOFTWARE_FRAME_FAST_COPY_RESULT_UNSUPPORTED_FLIP,
+    SOFTWARE_FRAME_FAST_COPY_RESULT_SOURCE_BOUNDS,
+} SoftwareFrameFastCopyResult;
+
+typedef struct SoftwareFrameFastCopyPlan {
+    int dst_x;
+    int dst_y;
+    int dst_w;
+    int dst_h;
+    int dst_x0;
+    int dst_y0;
+    int visible_w;
+    int visible_h;
+    int src_x;
+    int src_y;
+    int src_w;
+    int src_h;
+    bool color_mod;
+    bool flip_h;
+    bool flip_v;
+    bool clipped;
+    bool flipped;
+} SoftwareFrameFastCopyPlan;
+
 typedef struct RenderTask {
     SDL_Texture* texture;
     RenderTaskType type;
@@ -50,6 +79,9 @@ typedef struct RenderTask {
     Uint32 color;
     float z;
     int index;
+    bool fast_copy_cache_valid;
+    SoftwareFrameFastCopyResult fast_copy_cache_result;
+    SoftwareFrameFastCopyPlan fast_copy_cache_plan;
 } RenderTask;
 
 typedef struct RectRunTelemetryState {
@@ -97,6 +129,9 @@ static bool software_frame_direct_present_requested = false;
 static bool software_frame_surface_ready = false;
 static bool software_frame_owned = false;
 static bool software_frame_uploaded = false;
+static SDLGameRenderer_SuperEffectQualityMode super_effect_quality_mode =
+    SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_FULL;
+static int trusted_yun_sa3_burst_frames_remaining = 0;
 static bool perf_capture_logical_identity_enabled = false;
 static bool perf_capture_fast_non_integer_reuse_telemetry_enabled = true;
 static bool perf_capture_fast_non_integer_subrect_alpha_telemetry_enabled = false;
@@ -474,35 +509,6 @@ typedef enum SoftwareFrameFallbackReason {
     SOFTWARE_FRAME_FALLBACK_REASON_SOLID,
 } SoftwareFrameFallbackReason;
 
-typedef enum SoftwareFrameFastCopyResult {
-    SOFTWARE_FRAME_FAST_COPY_RESULT_EXACT = 0,
-    SOFTWARE_FRAME_FAST_COPY_RESULT_SCALED,
-    SOFTWARE_FRAME_FAST_COPY_RESULT_COLOR_MOD,
-    SOFTWARE_FRAME_FAST_COPY_RESULT_NON_INTEGER,
-    SOFTWARE_FRAME_FAST_COPY_RESULT_UNSUPPORTED_FLIP,
-    SOFTWARE_FRAME_FAST_COPY_RESULT_SOURCE_BOUNDS,
-} SoftwareFrameFastCopyResult;
-
-typedef struct SoftwareFrameFastCopyPlan {
-    int dst_x;
-    int dst_y;
-    int dst_w;
-    int dst_h;
-    int dst_x0;
-    int dst_y0;
-    int visible_w;
-    int visible_h;
-    int src_x;
-    int src_y;
-    int src_w;
-    int src_h;
-    bool color_mod;
-    bool flip_h;
-    bool flip_v;
-    bool clipped;
-    bool flipped;
-} SoftwareFrameFastCopyPlan;
-
 typedef struct SoftwareFrameSolidDiagonalStrip {
     int top_y;
     int bottom_y;
@@ -763,10 +769,12 @@ static bool analyze_textured_rect_family_task(const RenderTask* task,
                                               const SDL_Surface* dst_surface,
                                               TexturedRectFamilyProfile* out_profile);
 #endif
+#if ENABLE_PERF_TELEMETRY
 static bool perf_capture_basic_first_window_exact_hot_family_matches_profile(const TexturedRectFamilyProfile* profile);
 static bool perf_capture_basic_first_window_onset_exact_hot_family_matches_profile(
     const TexturedRectFamilyProfile* profile);
 static void note_perf_capture_basic_first_window_alpha_offpath_shape(const TexturedRectFamilyProfile* profile);
+#endif
 static void note_hybrid_eligibility(const RenderTask* task);
 static bool try_resolve_geometry_task_as_rect_copy(const RenderTask* task, RenderTask* out_rect_task);
 static bool try_resolve_solid_task_as_rect(const RenderTask* task, SDL_FRect* out_rect, Uint32* out_color);
@@ -839,6 +847,43 @@ static bool try_setup_textured_rect_task(RenderTask* task,
                                          float s1,
                                          float t1,
                                          Uint32 color);
+static int classify_super_effect_hot_family(const RenderTask* task);
+static bool super_effect_candidate_has_integer_source_subrect(const RenderTask* task,
+                                                              const SDL_Surface* src_surface,
+                                                              bool* out_full_texture_source_rect);
+static bool super_effect_candidate_is_unclipped(const RenderTask* task, const SDL_Surface* dst_surface);
+static bool super_effect_hot_candidate_matches_task(const RenderTask* task,
+                                                    const SDL_Surface* dst_surface,
+                                                    const SDL_Surface* src_surface,
+                                                    SoftwareFrameFastCopyResult fast_copy_result);
+static bool try_build_simplified_super_effect_task(const RenderTask* task,
+                                                   const SDL_Surface* dst_surface,
+                                                   const SDL_Surface* src_surface,
+                                                   SoftwareFrameFastCopyResult fast_copy_result,
+                                                   RenderTask* out_task,
+                                                   SoftwareFrameFastCopyPlan* out_plan,
+                                                   SoftwareFrameFastCopyResult* out_result);
+static void apply_minimal_super_effect_thinning_after_sort(void);
+#if ENABLE_PERF_TELEMETRY
+static int get_perf_capture_fast_non_integer_shared_shapes_from_exact_shapes(
+    const SDLGameRenderer_PerfCaptureTexturedRectExactShape* shapes,
+    int shape_count,
+    SDLGameRenderer_PerfCaptureFastNonIntegerSharedShape* out_shapes,
+    int max_shapes,
+    Uint64* out_task_total,
+    Uint64* out_pixel_total,
+    Uint64* out_sampled_ns_total,
+    int* out_shape_count);
+static int get_perf_capture_fast_non_integer_lookup_profiles_from_patterns(
+    const PerfCaptureFastNonIntegerLookupPatternExactProfile* patterns,
+    int pattern_count,
+    SDLGameRenderer_PerfCaptureFastNonIntegerLookupProfile* out_profiles,
+    int max_profiles,
+    Uint64* out_task_total,
+    Uint64* out_pixel_total,
+    Uint64* out_sampled_ns_total,
+    int* out_profile_count);
+#endif
 static bool ensure_software_frame_surface(void);
 
 // Debugging
@@ -3421,6 +3466,209 @@ static Uint64 render_task_submitted_pixels(const RenderTask* task) {
     return area > 0.0 ? (Uint64)llround(area) : 0;
 }
 
+static int classify_super_effect_hot_family(const RenderTask* task) {
+    if (task == NULL) {
+        return -1;
+    }
+
+    const int texture_handle = LO_16_BITS(task->texture_binding);
+    const int palette_handle = HI_16_BITS(task->texture_binding);
+    if ((texture_handle == 57) && (palette_handle == 391)) {
+        return 0;
+    }
+    if ((texture_handle == 58) && (palette_handle == 393)) {
+        return 1;
+    }
+    if ((texture_handle == 57) && (palette_handle == 394)) {
+        return 2;
+    }
+    if ((texture_handle == 18) && (palette_handle == 37)) {
+        return 3;
+    }
+    if ((texture_handle == 57) && (palette_handle == 393)) {
+        return 4;
+    }
+    if ((texture_handle == 57) && (palette_handle == 329)) {
+        return 5;
+    }
+
+    return -1;
+}
+
+static bool super_effect_candidate_has_integer_source_subrect(const RenderTask* task,
+                                                              const SDL_Surface* src_surface,
+                                                              bool* out_full_texture_source_rect) {
+    if ((task == NULL) || (src_surface == NULL) || (src_surface->w <= 0) || (src_surface->h <= 0)) {
+        return false;
+    }
+
+    const float src_x_f = task->src_uv_rect.x * (float)src_surface->w;
+    const float src_y_f = task->src_uv_rect.y * (float)src_surface->h;
+    const float src_w_f = task->src_uv_rect.w * (float)src_surface->w;
+    const float src_h_f = task->src_uv_rect.h * (float)src_surface->h;
+    const int src_x = (int)SDL_roundf(src_x_f);
+    const int src_y = (int)SDL_roundf(src_y_f);
+    const int src_w = (int)SDL_roundf(src_w_f);
+    const int src_h = (int)SDL_roundf(src_h_f);
+    if (!nearly_equal(src_x_f, (float)src_x) || !nearly_equal(src_y_f, (float)src_y) ||
+        !nearly_equal(src_w_f, (float)src_w) || !nearly_equal(src_h_f, (float)src_h) || (src_w <= 0) ||
+        (src_h <= 0)) {
+        return false;
+    }
+
+    if (out_full_texture_source_rect != NULL) {
+        *out_full_texture_source_rect =
+            (src_x == 0) && (src_y == 0) && (src_w == src_surface->w) && (src_h == src_surface->h);
+    }
+    return true;
+}
+
+static bool super_effect_candidate_is_unclipped(const RenderTask* task, const SDL_Surface* dst_surface) {
+    if ((task == NULL) || (dst_surface == NULL)) {
+        return false;
+    }
+
+    const int unclamped_x0 = (int)SDL_floorf(task->dst_rect.x);
+    const int unclamped_y0 = (int)SDL_floorf(task->dst_rect.y);
+    const int unclamped_x1 = (int)SDL_ceilf(task->dst_rect.x + task->dst_rect.w);
+    const int unclamped_y1 = (int)SDL_ceilf(task->dst_rect.y + task->dst_rect.h);
+    const int dst_x0 = clamp_to_range(unclamped_x0, 0, dst_surface->w);
+    const int dst_y0 = clamp_to_range(unclamped_y0, 0, dst_surface->h);
+    const int dst_x1 = clamp_to_range(unclamped_x1, 0, dst_surface->w);
+    const int dst_y1 = clamp_to_range(unclamped_y1, 0, dst_surface->h);
+    return (dst_x0 == unclamped_x0) && (dst_y0 == unclamped_y0) && (dst_x1 == unclamped_x1) &&
+           (dst_y1 == unclamped_y1);
+}
+
+static void invalidate_render_task_fast_copy_cache(RenderTask* task) {
+    if (task == NULL) {
+        return;
+    }
+
+    task->fast_copy_cache_valid = false;
+    task->fast_copy_cache_result = SOFTWARE_FRAME_FAST_COPY_RESULT_SOURCE_BOUNDS;
+    SDL_zero(task->fast_copy_cache_plan);
+}
+
+static void cache_render_task_fast_copy_plan(RenderTask* task,
+                                             SoftwareFrameFastCopyResult result,
+                                             const SoftwareFrameFastCopyPlan* plan) {
+    if (task == NULL) {
+        return;
+    }
+
+    task->fast_copy_cache_valid = true;
+    task->fast_copy_cache_result = result;
+    if (plan != NULL) {
+        task->fast_copy_cache_plan = *plan;
+    } else {
+        SDL_zero(task->fast_copy_cache_plan);
+    }
+}
+
+static bool super_effect_hot_candidate_matches_task(const RenderTask* task,
+                                                    const SDL_Surface* dst_surface,
+                                                    const SDL_Surface* src_surface,
+                                                    SoftwareFrameFastCopyResult fast_copy_result) {
+#if !defined(PORT_MISTER)
+    (void)task;
+    (void)dst_surface;
+    (void)src_surface;
+    (void)fast_copy_result;
+    return false;
+#else
+    if ((super_effect_quality_mode == SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_FULL) ||
+        (trusted_yun_sa3_burst_frames_remaining <= 0) || (task == NULL) || (dst_surface == NULL) ||
+        (src_surface == NULL) || (task->type != RENDER_TASK_TYPE_TEXTURED_RECT) || (task->texture == NULL) ||
+        (fast_copy_result != SOFTWARE_FRAME_FAST_COPY_RESULT_NON_INTEGER) || (task->color != 0xFFFFFFFFu) ||
+        (task->flip != SDL_FLIP_NONE) || (classify_super_effect_hot_family(task) < 0) ||
+        (src_surface->format != SDL_PIXELFORMAT_ARGB8888) || (src_surface->w != 256) || (src_surface->h != 256)) {
+        return false;
+    }
+
+    bool full_texture_source_rect = false;
+    return super_effect_candidate_has_integer_source_subrect(task, src_surface, &full_texture_source_rect) &&
+           !full_texture_source_rect && super_effect_candidate_is_unclipped(task, dst_surface);
+#endif
+}
+
+static bool try_build_simplified_super_effect_task(const RenderTask* task,
+                                                   const SDL_Surface* dst_surface,
+                                                   const SDL_Surface* src_surface,
+                                                   SoftwareFrameFastCopyResult fast_copy_result,
+                                                   RenderTask* out_task,
+                                                   SoftwareFrameFastCopyPlan* out_plan,
+                                                   SoftwareFrameFastCopyResult* out_result) {
+    if ((out_task == NULL) || (out_plan == NULL) || (out_result == NULL) ||
+        !super_effect_hot_candidate_matches_task(task, dst_surface, src_surface, fast_copy_result)) {
+        return false;
+    }
+
+    RenderTask simplified_task = *task;
+    simplified_task.dst_rect.x = SDL_roundf(simplified_task.dst_rect.x);
+    simplified_task.dst_rect.y = SDL_roundf(simplified_task.dst_rect.y);
+    simplified_task.dst_rect.w = SDL_roundf(simplified_task.dst_rect.w);
+    simplified_task.dst_rect.h = SDL_roundf(simplified_task.dst_rect.h);
+
+    SoftwareFrameFastCopyPlan simplified_plan = { 0 };
+    const SoftwareFrameFastCopyResult simplified_result =
+        build_software_frame_fast_copy_plan(&simplified_task, dst_surface, src_surface, &simplified_plan);
+    if ((simplified_result != SOFTWARE_FRAME_FAST_COPY_RESULT_EXACT) &&
+        (simplified_result != SOFTWARE_FRAME_FAST_COPY_RESULT_SCALED)) {
+        return false;
+    }
+
+    *out_task = simplified_task;
+    *out_plan = simplified_plan;
+    *out_result = simplified_result;
+    return true;
+}
+
+static void apply_minimal_super_effect_thinning_after_sort(void) {
+#if defined(PORT_MISTER)
+    if ((super_effect_quality_mode != SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_MINIMAL) ||
+        (trusted_yun_sa3_burst_frames_remaining <= 0) || !software_frame_mode_active || (software_frame_surface == NULL) ||
+        (render_task_count <= 0)) {
+        return;
+    }
+
+    int family_ordinals[6] = { 0 };
+    int write_index = 0;
+    for (int read_index = 0; read_index < render_task_count; read_index++) {
+        RenderTask* task = &render_tasks[read_index];
+        bool drop_task = false;
+
+        if ((task->type == RENDER_TASK_TYPE_TEXTURED_RECT) && (task->texture != NULL) &&
+            (task->software_source_surface != NULL)) {
+            SoftwareFrameFastCopyPlan fast_copy_plan = { 0 };
+            const SoftwareFrameFastCopyResult fast_copy_result = build_software_frame_fast_copy_plan(
+                task, software_frame_surface, task->software_source_surface, &fast_copy_plan);
+            cache_render_task_fast_copy_plan(task, fast_copy_result, &fast_copy_plan);
+            if (super_effect_hot_candidate_matches_task(
+                    task, software_frame_surface, task->software_source_surface, fast_copy_result)) {
+                const int family_index = classify_super_effect_hot_family(task);
+                if ((family_index >= 0) && (family_index < (int)SDL_arraysize(family_ordinals))) {
+                    const int family_ordinal = family_ordinals[family_index];
+                    drop_task = (family_ordinal & 1) != 0;
+                    family_ordinals[family_index] = family_ordinal + 1;
+                }
+            }
+        }
+
+        if (drop_task) {
+            continue;
+        }
+
+        if (write_index != read_index) {
+            render_tasks[write_index] = render_tasks[read_index];
+        }
+        write_index += 1;
+    }
+
+    render_task_count = write_index;
+#endif
+}
+
 #if ENABLE_PERF_TELEMETRY
 static bool rect_task_fits_native_canvas(const RenderTask* task) {
     if ((task == NULL) || (task->type != RENDER_TASK_TYPE_TEXTURED_RECT)) {
@@ -5392,6 +5640,7 @@ static bool try_merge_software_frame_rect_tasks(RenderTask* merged_task,
     }
 
     *merged_task = candidate_task;
+    invalidate_render_task_fast_copy_cache(merged_task);
     *inout_axis = axis;
     return true;
 }
@@ -6007,8 +6256,20 @@ static bool raster_textured_task_to_software_frame(const RenderTask* task) {
     const Uint64 non_integer_lookup_entries = (Uint64)(dst_x1 - dst_x0) + (Uint64)(dst_y1 - dst_y0);
 
     SoftwareFrameFastCopyPlan fast_copy_plan = { 0 };
-    const SoftwareFrameFastCopyResult fast_copy_result =
-        build_software_frame_fast_copy_plan(task, dst_surface, src_surface, &fast_copy_plan);
+    SoftwareFrameFastCopyResult fast_copy_result;
+    if (task->fast_copy_cache_valid) {
+        fast_copy_result = task->fast_copy_cache_result;
+        fast_copy_plan = task->fast_copy_cache_plan;
+    } else {
+        fast_copy_result = build_software_frame_fast_copy_plan(task, dst_surface, src_surface, &fast_copy_plan);
+    }
+    RenderTask simplified_task;
+    const RenderTask* fast_copy_task = task;
+    if ((super_effect_quality_mode != SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_FULL) &&
+        try_build_simplified_super_effect_task(
+            task, dst_surface, src_surface, fast_copy_result, &simplified_task, &fast_copy_plan, &fast_copy_result)) {
+        fast_copy_task = &simplified_task;
+    }
     if ((fast_copy_result == SOFTWARE_FRAME_FAST_COPY_RESULT_EXACT) ||
         (fast_copy_result == SOFTWARE_FRAME_FAST_COPY_RESULT_SCALED)) {
         const SDLGameRenderer_PerfCaptureRasterBucket raster_bucket =
@@ -6016,12 +6277,14 @@ static bool raster_textured_task_to_software_frame(const RenderTask* task) {
                 ? SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_FAST_EXACT
                 : SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_FAST_SCALED;
         const Uint64 sample_start_counter = begin_perf_capture_raster_bucket_sample(raster_bucket);
-        if (try_fast_copy_fast_textured_task_to_software_frame(task, &fast_copy_plan, dst_surface, src_surface)) {
+        if (try_fast_copy_fast_textured_task_to_software_frame(
+                fast_copy_task, &fast_copy_plan, dst_surface, src_surface)) {
             const Uint64 sampled_ns =
                 perf_capture_counter_delta_to_ns(sample_start_counter, SDL_GetPerformanceCounter());
             note_perf_capture_raster_bucket_sample(
-                raster_bucket, task, sampled_ns);
-            note_software_frame_fast_copy_result(task, fast_copy_result, &fast_copy_plan, dst_surface, 0, sampled_ns);
+                raster_bucket, fast_copy_task, sampled_ns);
+            note_software_frame_fast_copy_result(
+                fast_copy_task, fast_copy_result, &fast_copy_plan, dst_surface, 0, sampled_ns);
             if (src_locked) {
                 SDL_UnlockSurface(src_surface);
             }
@@ -7422,6 +7685,14 @@ void SDLGameRenderer_SetSoftwareFrameDirectPresentMode(bool enabled) {
     software_frame_direct_present_requested = enabled;
 }
 
+void SDLGameRenderer_SetSuperEffectQualityMode(SDLGameRenderer_SuperEffectQualityMode mode) {
+    super_effect_quality_mode = mode;
+}
+
+void SDLGameRenderer_SetTrustedYunSA3BurstFramesRemaining(int frames_remaining) {
+    trusted_yun_sa3_burst_frames_remaining = frames_remaining > 0 ? frames_remaining : 0;
+}
+
 bool SDLGameRenderer_IsSoftwareFrameModeEnabled(void) {
     return software_frame_mode_active;
 }
@@ -7559,6 +7830,8 @@ void SDLGameRenderer_RenderFrame() {
             qsort(render_tasks, render_task_count, sizeof(RenderTask), compare_render_tasks);
         }
     }
+
+    apply_minimal_super_effect_thinning_after_sort();
 
     if (software_frame_mode_active && render_frame_to_software_surface()) {
         software_frame_owned = true;
@@ -8633,6 +8906,7 @@ void SDLGameRenderer_GetPerfCaptureFastNonIntegerFamilyTotals(Uint64* out_task_t
 int SDLGameRenderer_GetPerfCaptureFastNonIntegerSharedShapes(
     SDLGameRenderer_PerfCaptureFastNonIntegerSharedShape* out_shapes,
     int max_shapes) {
+#if ENABLE_PERF_TELEMETRY
     return get_perf_capture_fast_non_integer_shared_shapes_from_exact_shapes(
         perf_capture_fast_non_integer_shapes,
         perf_capture_fast_non_integer_shape_count,
@@ -8642,12 +8916,18 @@ int SDLGameRenderer_GetPerfCaptureFastNonIntegerSharedShapes(
         NULL,
         NULL,
         NULL);
+#else
+    (void)out_shapes;
+    (void)max_shapes;
+    return 0;
+#endif
 }
 
 void SDLGameRenderer_GetPerfCaptureFastNonIntegerSharedShapeTotals(Uint64* out_task_total,
                                                                    Uint64* out_pixel_total,
                                                                    Uint64* out_sampled_ns_total,
                                                                    int* out_shape_count) {
+#if ENABLE_PERF_TELEMETRY
     get_perf_capture_fast_non_integer_shared_shapes_from_exact_shapes(perf_capture_fast_non_integer_shapes,
                                                                       perf_capture_fast_non_integer_shape_count,
                                                                       NULL,
@@ -8656,11 +8936,26 @@ void SDLGameRenderer_GetPerfCaptureFastNonIntegerSharedShapeTotals(Uint64* out_t
                                                                       out_pixel_total,
                                                                       out_sampled_ns_total,
                                                                       out_shape_count);
+#else
+    if (out_task_total != NULL) {
+        *out_task_total = 0;
+    }
+    if (out_pixel_total != NULL) {
+        *out_pixel_total = 0;
+    }
+    if (out_sampled_ns_total != NULL) {
+        *out_sampled_ns_total = 0;
+    }
+    if (out_shape_count != NULL) {
+        *out_shape_count = 0;
+    }
+#endif
 }
 
 int SDLGameRenderer_GetPerfCaptureFastNonIntegerLookupProfiles(
     SDLGameRenderer_PerfCaptureFastNonIntegerLookupProfile* out_profiles,
     int max_profiles) {
+#if ENABLE_PERF_TELEMETRY
     return get_perf_capture_fast_non_integer_lookup_profiles_from_patterns(
         perf_capture_fast_non_integer_lookup_patterns,
         perf_capture_fast_non_integer_lookup_pattern_count,
@@ -8670,12 +8965,18 @@ int SDLGameRenderer_GetPerfCaptureFastNonIntegerLookupProfiles(
         NULL,
         NULL,
         NULL);
+#else
+    (void)out_profiles;
+    (void)max_profiles;
+    return 0;
+#endif
 }
 
 void SDLGameRenderer_GetPerfCaptureFastNonIntegerLookupProfileTotals(Uint64* out_task_total,
                                                                      Uint64* out_pixel_total,
                                                                      Uint64* out_sampled_ns_total,
                                                                      int* out_profile_count) {
+#if ENABLE_PERF_TELEMETRY
     get_perf_capture_fast_non_integer_lookup_profiles_from_patterns(
         perf_capture_fast_non_integer_lookup_patterns,
         perf_capture_fast_non_integer_lookup_pattern_count,
@@ -8685,6 +8986,20 @@ void SDLGameRenderer_GetPerfCaptureFastNonIntegerLookupProfileTotals(Uint64* out
         out_pixel_total,
         out_sampled_ns_total,
         out_profile_count);
+#else
+    if (out_task_total != NULL) {
+        *out_task_total = 0;
+    }
+    if (out_pixel_total != NULL) {
+        *out_pixel_total = 0;
+    }
+    if (out_sampled_ns_total != NULL) {
+        *out_sampled_ns_total = 0;
+    }
+    if (out_profile_count != NULL) {
+        *out_profile_count = 0;
+    }
+#endif
 }
 
 int SDLGameRenderer_GetPerfCaptureGenericTexturedFamilies(SDLGameRenderer_PerfCaptureTexturedRectFamily* out_families,
@@ -9512,6 +9827,7 @@ static RenderTask* begin_quad_task(bool textured, float z) {
     task->texture_binding = textured && current_texture_binding_valid ? current_texture_binding : 0;
     task->software_source_surface = textured ? current_software_source_surface : NULL;
     task->z = flPS2ConvScreenFZ(z);
+    invalidate_render_task_fast_copy_cache(task);
 
     return task;
 }

@@ -41,6 +41,23 @@ Possible values:
 - `off`: Keep the existing SDL-owned gameplay frame path
 - `on`: Keep the `384x224` gameplay frame in 3SX-owned software memory. On MiSTer, eligible frames present directly through fbdev to avoid SDL readback; when composition or screenshots still need SDL, the frame uploads back to `cps3_canvas`.
 
+### `super-effect-quality`
+
+Controls MiSTer-only visual degradation during the trusted Yun SA3 burst window.
+
+Defaults:
+- `full`
+
+Possible values:
+- `full`: Keep current behavior
+- `simplified`: Snap the hottest Yun SA3 burst sprites to integer destination geometry so more work can use the cheaper exact/scaled software-frame paths
+- `minimal`: Apply `simplified` and thin every other hot burst sprite after final sort so only the first visible instance per family is always preserved
+
+Notes:
+- This setting is only active on MiSTer builds.
+- Current v1 scope is intentionally narrow: player 1 Yun SA3 onset only.
+- On non-MiSTer builds the config key is parsed but behaves like `full`.
+
 ### `show-fps`
 
 Whether to draw a small FPS readout while the game is running.

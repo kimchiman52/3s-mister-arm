@@ -51,6 +51,12 @@ typedef enum SDLGameRenderer_TaskSource {
     SDL_GAME_RENDERER_TASK_SOURCE_SOLID = 4,
 } SDLGameRenderer_TaskSource;
 
+typedef enum SDLGameRenderer_SuperEffectQualityMode {
+    SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_FULL = 0,
+    SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_SIMPLIFIED = 1,
+    SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_MINIMAL = 2,
+} SDLGameRenderer_SuperEffectQualityMode;
+
 typedef struct SDLGameRenderer_FrameStats {
     int render_task_count;
     int software_frame_mode_enabled;
@@ -701,6 +707,8 @@ typedef struct SDLGameRenderer_PerfCaptureRefreshLocalityCandidate {
 void SDLGameRenderer_Init(SDL_Renderer* renderer);
 void SDLGameRenderer_SetSoftwareFrameMode(bool enabled);
 void SDLGameRenderer_SetSoftwareFrameDirectPresentMode(bool enabled);
+void SDLGameRenderer_SetSuperEffectQualityMode(SDLGameRenderer_SuperEffectQualityMode mode);
+void SDLGameRenderer_SetTrustedYunSA3BurstFramesRemaining(int frames_remaining);
 bool SDLGameRenderer_IsSoftwareFrameModeEnabled(void);
 bool SDLGameRenderer_IsPerfCaptureExtendedStatsEnabled(void);
 bool SDLGameRenderer_HasSoftwareOwnedFrame(void);
