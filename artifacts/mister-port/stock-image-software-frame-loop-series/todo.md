@@ -74,7 +74,7 @@
 - [x] Keep/rollback decision:
   - preserve and defer; do not treat this as runtime rejection because the preserved diff was not reverified on-device
 - [x] Final commit hash:
-  - recorded in the closing commit for this cycle; the exact self-hash is reported in the loop closeout message because this workflow does not amend a commit just to embed its own ID
+  - `00818013b30ab74ae14869054a442c14c403b838` (`docs: record loop 188 device recheck`); recorded in this follow-up note rather than by amending the closeout commit
 - [x] Next best candidate:
   - rerun bounded serial `health` / `probe` first once the MiSTer gate recovers, then verify `preserve-loop187-flipped-41-1-frame-skip` before inventing any new burst-fidelity or native-runtime hypothesis
 

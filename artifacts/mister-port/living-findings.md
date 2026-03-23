@@ -246,7 +246,7 @@ Scope guardrails:
 
 - 2026-03-23T08:26:00-0400
   - Final commit hash:
-    - recorded in the docs-only closeout commit for this cycle; the exact self-hash is reported in the loop closeout message because this workflow does not amend a commit just to embed its own ID
+    - `00818013b30ab74ae14869054a442c14c403b838` (`docs: record loop 188 device recheck`); recorded in this follow-up note rather than by amending the closeout commit
   - Bottleneck targeted:
     - rechecking whether preserved branch `preserve-loop187-flipped-41-1-frame-skip` could finally clear the device gate and become the next on-device super-fidelity verification target
   - Change summary:
