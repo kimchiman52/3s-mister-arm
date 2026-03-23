@@ -244,6 +244,26 @@ Scope guardrails:
 
 ## Cycle Log
 
+- 2026-03-23T05:27:03-0400
+  - Final commit hash:
+    - recorded in the docs-only closeout commit for this cycle; the exact self-hash is reported in the loop closeout message because this workflow does not amend a commit just to embed its own ID
+  - Bottleneck targeted:
+    - testing whether rendered `frame-skip` ticks could beat kept Loop `184` by thinning only the proven opaque half of the trusted six-family Yun SA3 burst cohort more aggressively
+  - Change summary:
+    - temporarily patched only `src/port/sdl/sdl_app.c`, `src/port/sdl/sdl_game_renderer.c`, and `include/port/sdl/sdl_game_renderer.h` so rendered `frame-skip` ticks could identify themselves distinctly from plain `minimal`
+    - applied a stronger one-in-eight survivor cadence only to opaque families `58/393`, `57/394`, and `57/393`, leaving the binary-alpha families on the existing one-in-four cadence
+    - rebuilt the telemetry package in Docker `3sx-mister-build`, redeployed through serialized MiSTer tooling, captured same-build `full` versus candidate `frame-skip` on Yun SA3, Q SA1, and `gameplay-idle`, then fully rolled the runtime code back after the rejection
+  - Verification result summary:
+    - local `git diff --check` plus `tools/mister/build-game.sh --flavor telemetry` passed; serialized MiSTer `lock-status`, corrected env-backed `busy-status`, `health`, `deploy`, `probe`, and bounded `smoke` all passed on `192.168.1.171`
+    - same-build deciding Yun stayed on the trusted direct/native route with zero readback and `124` active frames; versus same-build `full`, the candidate reached `50.1244 FPS` overall, `51.2536` first `8`, `49.2362` first `60`, `50.9965` first `82`, `54.4178` post-`82`, and `52.1061` across the full active window with `62/62` scheduled/applied skips
+    - the reland still missed the actual keep bar because kept Loop `184` `frame-skip` remained slightly better on the deciding full active window (`52.3884 -> 52.1061 FPS`) and the main mid-window spans (`49.9367 -> 49.2362` first `60`, `51.5937 -> 50.9965` first `82`); Q SA1 stayed flat-to-slightly positive (`31.0582 -> 31.2562 FPS` active window, `0/0` scheduled/applied) and `gameplay-idle` only slipped slightly (`67.5453 -> 67.1771 FPS`)
+  - Keep/rollback decision with reason:
+    - reject and revert; the opaque-family-only frame-skip cadence split improves Yun versus same-build `full`, but it does not beat the kept Loop `184` baseline on the deciding full active window, so it is not a keep-worthy reland
+  - Next best candidate optimization:
+    - do not retry now: frame-skip-specific opaque-family-only cadence tightening on the current six-family Yun gate
+    - keep the full-window Yun-only `frame-skip` keep as the baseline, then rerank toward a broader trusted burst-only cohort on rendered ticks
+    - restore decision-grade broader-matrix validation in the next follow-up instead of deferring it indefinitely: keep Q SA1 live and repair or replace the Ken SA3 / Chun-Li SA2 lanes before treating a later burst-fidelity reland as a final keep/reject answer
+
 - 2026-03-23T04:55:32-0400
   - Final commit hash:
     - recorded in the closing commit for this cycle; the exact self-hash is reported in the loop closeout message because this workflow does not amend a commit just to embed its own ID
