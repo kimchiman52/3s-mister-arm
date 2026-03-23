@@ -7728,6 +7728,6 @@
 - [x] Keep/rollback decision:
   - [x] keep. The stronger one-in-four survivor cut materially improves the deciding Yun whole-window slowdown on a same-build direct/native comparator while leaving Q slightly positive and `gameplay-idle` effectively flat, so simple post-sort thinning still has real headroom on the active burst-fidelity queue
 - [ ] final commit hash:
-  - [ ] runtime keep commit pending; fill this in the post-commit docs closeout without amending the runtime commit
+  - [x] `8d0b4d92` (`perf: strengthen minimal super-effect thinning again`)
 - [x] next best candidate:
   - [x] stay on the same user-approved burst-fidelity path with one more bounded stronger/broader whole-window Yun cut before falling back to the already-implemented Yun-only `frame-skip` mode; keep Ken/Chun harness repair separate unless the next runtime pass stalls

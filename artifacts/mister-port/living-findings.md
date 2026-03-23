@@ -246,7 +246,7 @@ Scope guardrails:
 
 - 2026-03-23T18:40:00-0400
   - Final commit hash:
-    - runtime keep commit pending; fill this in the post-commit docs closeout without amending the runtime commit
+    - `8d0b4d92`
   - Bottleneck targeted:
     - one more stronger MiSTer-only whole-window Yun SA3 burst thinning step on the active `super-effect-quality = minimal` path
   - Change summary:
