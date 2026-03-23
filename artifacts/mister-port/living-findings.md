@@ -244,6 +244,24 @@ Scope guardrails:
 
 ## Cycle Log
 
+- 2026-03-23T08:31:18-0400
+  - Final commit hash:
+    - recorded in the docs-only closeout commit for this cycle; the exact self-hash is reported in the loop closeout message because this workflow does not amend a commit just to embed its own ID
+  - Bottleneck targeted:
+    - rechecking whether preserved branch `preserve-loop187-flipped-41-1-frame-skip` could finally move from queued runtime diff to on-device verification target
+  - Change summary:
+    - re-audited preserved branches and confirmed `preserve-native-analog-yc-crt-filter` plus `preserve-yc-packet-logging` are already integrated while `preserve-loop187-flipped-41-1-frame-skip` remains the only live unresolved perf branch
+    - re-audited the dark-render memo against the current tree and kept it closed as a docs/process correction rather than a surviving alternate runtime queue
+    - kept the active-branch outcome docs-only after another bounded device-gate recheck failed before any trustworthy remote command
+  - Verification result summary:
+    - `tools/mister/misterctl.sh lock-status` returned `lock_state=free`, but `busy-status` did not produce trustworthy output
+    - bounded `misterctl.sh health` and `misterctl.sh probe` attempts were rerun with `MISTER_CMD_TIMEOUT=20` and an outer `25s` watchdog, and both died before any trustworthy remote command completed
+    - because the gate never produced a trustworthy remote command, deploy/probe/smoke/capture work was skipped and no local-only runtime rerank was attempted
+  - Keep/rollback decision with reason:
+    - preserve and defer; the preserved flipped `41/1` runtime diff is still the next candidate, but this cycle still cannot judge it because the MiSTer gate remains unhealthy
+  - Next best candidate optimization:
+    - recover the device gate first, then verify `preserve-loop187-flipped-41-1-frame-skip` before any new burst-fidelity runtime experiment
+
 - 2026-03-23T08:26:00-0400
   - Final commit hash:
     - `00818013b30ab74ae14869054a442c14c403b838` (`docs: record loop 188 device recheck`); recorded in this follow-up note rather than by amending the closeout commit

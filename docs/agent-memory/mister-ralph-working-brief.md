@@ -9,7 +9,7 @@
 
 - Last updated: `2026-03-23`
 - Active branch: `super-fidelity-ralph-loop`
-- Active queue: bounded serial MiSTer rechecks on `2026-03-23` still timed out before any trustworthy remote command completed, so preserved branch `preserve-loop187-flipped-41-1-frame-skip` remains the first verification target once the device gate recovers; keep Loop 184's full-window Yun-only `frame-skip` extension as the burst-fidelity baseline, keep Loop 186's Ken/Chun preset repair, and do not invent a different runtime queue until the preserved flipped `41/1` follow-up is either verified or explicitly retired
+- Active queue: bounded MiSTer rechecks on `2026-03-23` still have not produced any trustworthy remote command output, so preserved branch `preserve-loop187-flipped-41-1-frame-skip` remains the first verification target once the device gate recovers; keep Loop 184's full-window Yun-only `frame-skip` extension as the burst-fidelity baseline, keep Loop 186's Ken/Chun preset repair, and do not invent a different runtime queue until the preserved flipped `41/1` follow-up is either verified or explicitly retired
 - Default loop type: `workload-fidelity`
 - Deciding lane: `yun-sa3-repeat-pressure` judged on first `8`, first `60`, first `82`, the post-`82` active tail, and the full trusted active window
 - Primary guard lane: `gameplay-idle`
@@ -25,6 +25,7 @@
 - Loop 186 rejected the broader non-flipped `256x256` rendered-tick reland but kept the Ken/Chun preset repair. Widening the trusted selector to families `57/317`, `57/328`, `58/327`, and `58/344` improved the same-build candidate versus `full`, but only to `33.6987 / 28.2044 / 29.2213 / 40.4766 FPS` on the deciding first-`8` / first-`60` / first-`82` / full-active windows, still far below kept Loop 184 `frame-skip` (`50.9294 / 49.8172 / 51.4887 / 52.2134`). The repeat-preset button repair is still a keep because Ken SA3 and Chun-Li SA2 now both produce `p1_super_art_active_starts_total = 1` at frame `179` with `44` active frames on-device.
 - Loop 187 verification is currently device-blocked, not reranked away. The preserved flipped `41/1` rendered-tick reland still matches the top surviving burst-fidelity hypothesis, but a fresh `2026-03-23` recheck hit the stop condition when bounded `misterctl.sh health` and `probe` both timed out before any trustworthy remote command completed. Keep that preserved branch as the next verification target instead of opening a different runtime experiment from local-only evidence.
 - Loop 188 kept the queue blocked for the same reason, but with a cleaner serial recheck. The preserved flipped `41/1` rendered-tick reland is still the oldest unresolved runtime candidate, yet serial bounded `health` and `probe` attempts under an outer watchdog again timed out on `2026-03-23` before any trustworthy remote output appeared. Treat this as device-gate recovery work, not as evidence against the preserved runtime diff.
+- Loop 189 kept the queue blocked again after another preserved-branch-first audit. `preserve-native-analog-yc-crt-filter` and `preserve-yc-packet-logging` still resolve as already-integrated ancestors of `HEAD`, the dark-render memo still does not leave a bounded current-tree runtime candidate after the accounting correction, and fresh bounded `health` / `probe` rechecks under an outer watchdog again died on `2026-03-23` before any trustworthy remote output appeared. Treat this as another device-gate recovery closeout, not as evidence against the preserved flipped `41/1` diff.
 - The absolute full-mode baseline on the live device is lower than the earlier Loop 180 artifact family, so Loop 181 is judged on same-build `full` versus `minimal` deltas rather than on stale cross-loop absolute FPS. The route truth still matches the trusted direct/native software-frame path.
 - Loop 184 closes the window-length question on the trusted repeat-pressure lane: the longer `124`-frame cap materially improved the previously untouched active tail without broad guard regression, so another cap-length tweak is no longer the best next runtime bet.
 - Trusted Yun is still not close enough to stable `60 FPS` to stop at this keep. After Loop 186's rejection, the next runtime pass should stay on the same burst-fidelity family but move away from both the exact opaque-family-only cadence split and the broader non-flipped `256x256` selector reland, using the now-live Ken/Chun matrix coverage to judge a materially different burst-only follow-up.
@@ -40,10 +41,10 @@
 
 ## Current Queue
 
-- Materially different burst-only follow-up on top of the kept full-window `frame-skip` baseline
-- Why it is still live: Loop 186 closed the “broaden the trusted selector to the next safe-shape non-flipped `256x256` families” idea. The deciding Yun lane improved over same-build `full`, but it still stayed far below kept Loop 184, so the next runtime lever must be meaningfully different rather than another small selector broadening on the same premise.
 - Preserve-loop187 verification recheck
 - Why it is still live: the runtime diff already exists on `preserve-loop187-flipped-41-1-frame-skip`, and the latest two cycles were blocked only by MiSTer `health` / `probe` timeouts. This stays ahead of any new runtime hypothesis until the device gate produces a trustworthy command again.
+- Materially different burst-only follow-up on top of the kept full-window `frame-skip` baseline
+- Why it is still live: Loop 186 closed the “broaden the trusted selector to the next safe-shape non-flipped `256x256` families” idea. The deciding Yun lane improved over same-build `full`, but it still stayed far below kept Loop 184, so the next runtime lever must be meaningfully different rather than another small selector broadening on the same premise. This remains secondary until `preserve-loop187-flipped-41-1-frame-skip` is verified or explicitly retired.
 - Keep decision-grade Ken SA3 / Chun-Li SA2 matrix coverage live in every future super-fidelity sweep
 - Why it is still live: Loop 186 repaired the repeat-preset button mismatch, and both lanes now produce real super activations on-device. Future burst-fidelity relands should use those lanes as actual guards instead of treating them as deferred setup work.
 - Native Yun deep measurement
@@ -76,10 +77,14 @@
 
 ## Top Candidates
 
+- Preserve-loop187 verification recheck
+- Lever class: `workload-fidelity`
+- Expected upside: it is still the highest-value bounded runtime diff already in hand, and preserved-branch-first rules keep it ahead of any newly invented reland once the MiSTer gate produces a trustworthy command again
+- Main risk: the device gate is still the blocker, so the next loop may close as another recovery recheck rather than a runtime judgment if remote commands keep failing before verification starts
 - Materially different burst-only follow-up on the kept full-window `frame-skip` baseline
 - Lever class: `workload-fidelity`
 - Expected upside: Loop 186 closed the next non-flipped safe-shape selector broadening, which leaves the remaining headroom in a different super-specific rendered-tick lever rather than another small extension of the same family gate. The dominant measured outside family is still flipped `41/1`, and that exact reland is already preserved for verification on-device.
-- Main risk: the remaining visible headroom is in a riskier part of the workload, and device-gate instability is now the immediate blocker, so no new runtime branch should be invented until the preserved diff is either verified or explicitly retired.
+- Main risk: the remaining visible headroom is in a riskier part of the workload, and device-gate instability is now the immediate blocker. This stays secondary until the preserved diff is either verified or explicitly retired.
 - Research and plan expansion from Yun-only gating to all supers across the full roster once a stronger mode gets trusted Yun SA3 close to stable speed
 - Lever class: `measurement`
 - Expected upside: turns a single-lane super-fidelity win into a roadmap for broader player-visible benefit instead of stopping at Yun-only success
@@ -148,6 +153,8 @@
 - Why it mattered: it proved the next blocker is the MiSTer gate, not queue ranking. The preserved branch still matches the top surviving burst-fidelity hypothesis, but bounded `health` and `probe` both timed out on `2026-03-23`, so the next loop must start with device recovery/recheck instead of opening a different runtime experiment.
 - Blocked: Loop 188 serial device-gate recheck
 - Why it mattered: it confirmed the blocker is still remote reachability rather than queue selection. Even with serial bounded checks and an outer watchdog, both `health` and `probe` timed out before any trustworthy remote output, so the preserved flipped `41/1` branch remains deferred rather than rejected.
+- Blocked: Loop 189 bounded device-gate recheck
+- Why it mattered: it reconfirmed that preserved-branch-first audit does not leave another unresolved perf branch ahead of `preserve-loop187-flipped-41-1-frame-skip`, and it still did not produce a trustworthy remote command. The next loop must stay on device recovery/recheck rather than opening a different runtime or measurement queue.
 
 ## Archive Pointers
 
