@@ -28,6 +28,54 @@ mister_transfer_timeout() {
     printf '%s\n' "${MISTER_TRANSFER_TIMEOUT:-1200}"
 }
 
+mister_ssh_connect_timeout() {
+    printf '%s\n' "${MISTER_SSH_CONNECT_TIMEOUT:-10}"
+}
+
+mister_ssh_password_args() {
+    local timeout_seconds
+    timeout_seconds="$(mister_ssh_connect_timeout)"
+
+    printf '%s\n' \
+        -o StrictHostKeyChecking=no \
+        -o ConnectTimeout="${timeout_seconds}" \
+        -o ConnectionAttempts=1 \
+        -o PubkeyAuthentication=no \
+        -o PreferredAuthentications=password \
+        -o NumberOfPasswordPrompts=1
+}
+
+mister_ssh_key_only_args() {
+    local timeout_seconds
+    timeout_seconds="$(mister_ssh_connect_timeout)"
+
+    printf '%s\n' \
+        -o StrictHostKeyChecking=no \
+        -o ConnectTimeout="${timeout_seconds}" \
+        -o ConnectionAttempts=1 \
+        -o BatchMode=yes \
+        -o IdentitiesOnly=yes \
+        -o IdentityAgent=none \
+        -o PreferredAuthentications=publickey \
+        -o NumberOfPasswordPrompts=0
+}
+
+mister_rsync_ssh_password_command() {
+    local timeout_seconds
+    timeout_seconds="$(mister_ssh_connect_timeout)"
+
+    printf '%s\n' \
+        "ssh -o StrictHostKeyChecking=no -o ConnectTimeout=${timeout_seconds} -o ConnectionAttempts=1 -o PubkeyAuthentication=no -o PreferredAuthentications=password -o NumberOfPasswordPrompts=1"
+}
+
+mister_rsync_ssh_key_only_command() {
+    local timeout_seconds
+    timeout_seconds="$(mister_ssh_connect_timeout)"
+
+    printf '%s\n' \
+        "ssh -o StrictHostKeyChecking=no -o ConnectTimeout=${timeout_seconds} -o ConnectionAttempts=1 -o BatchMode=yes -o IdentitiesOnly=yes -o IdentityAgent=none -o PreferredAuthentications=publickey -o NumberOfPasswordPrompts=0"
+}
+
 mister_normalize_remote_path() {
     local path="${1:-}"
 
@@ -380,16 +428,19 @@ mister_ssh_expect() {
     local remote_cmd="$4"
     local encoded_cmd
     local timeout_seconds
+    local ssh_args
     encoded_cmd="$(mister_base64_encode_inline "${remote_cmd}")"
     timeout_seconds="$(mister_cmd_timeout)"
+    ssh_args="$(mister_ssh_password_args)"
 
-    EXPECT_HOST="$host" EXPECT_USER="$user" EXPECT_PASSWORD="$password" EXPECT_CMD="$encoded_cmd" EXPECT_TIMEOUT="$timeout_seconds" expect <<'EOF'
+    EXPECT_HOST="$host" EXPECT_USER="$user" EXPECT_PASSWORD="$password" EXPECT_CMD="$encoded_cmd" EXPECT_TIMEOUT="$timeout_seconds" EXPECT_SSH_ARGS="$ssh_args" expect <<'EOF'
 set timeout $env(EXPECT_TIMEOUT)
 set host $env(EXPECT_HOST)
 set user $env(EXPECT_USER)
 set pw $env(EXPECT_PASSWORD)
 set cmd $env(EXPECT_CMD)
-spawn ssh -o StrictHostKeyChecking=no -o PubkeyAuthentication=no -o PreferredAuthentications=password -o NumberOfPasswordPrompts=1 ${user}@${host} "echo '${cmd}' | base64 -d | sh"
+set ssh_args [split $env(EXPECT_SSH_ARGS) "\n"]
+spawn ssh {*}$ssh_args ${user}@${host} "echo '${cmd}' | base64 -d | sh"
 expect {
   -re {[Pp]assword:} { send -- "$pw\r"; exp_continue }
   eof
@@ -404,12 +455,19 @@ mister_ssh_exec() {
     local user="$2"
     local password="$3"
     local remote_cmd="$4"
+    local -a ssh_args
 
     if [ -n "${password}" ]; then
         mister_require_cmd expect || return $?
         mister_ssh_expect "${host}" "${user}" "${password}" "${remote_cmd}"
     else
-        ssh -o StrictHostKeyChecking=no "${user}@${host}" "${remote_cmd}"
+        while IFS= read -r arg; do
+            ssh_args+=("${arg}")
+        done < <(mister_ssh_key_only_args)
+        ssh "${ssh_args[@]}" "${user}@${host}" "${remote_cmd}" || {
+            echo "MiSTer key-only SSH failed; set MISTER_PASSWORD to use password auth or configure a working SSH key." >&2
+            return 1
+        }
     fi
 }
 
@@ -421,16 +479,19 @@ mister_scp_expect() {
     local dst_path="$5"
 
     local timeout_seconds
+    local scp_args
     timeout_seconds="$(mister_transfer_timeout)"
+    scp_args="$(mister_ssh_password_args)"
 
-    EXPECT_HOST="$host" EXPECT_USER="$user" EXPECT_PASSWORD="$password" EXPECT_SRC="$src_path" EXPECT_DST="$dst_path" EXPECT_TIMEOUT="$timeout_seconds" expect <<'EOF'
+    EXPECT_HOST="$host" EXPECT_USER="$user" EXPECT_PASSWORD="$password" EXPECT_SRC="$src_path" EXPECT_DST="$dst_path" EXPECT_TIMEOUT="$timeout_seconds" EXPECT_SCP_ARGS="$scp_args" expect <<'EOF'
 set timeout $env(EXPECT_TIMEOUT)
 set host $env(EXPECT_HOST)
 set user $env(EXPECT_USER)
 set pw $env(EXPECT_PASSWORD)
 set src_path $env(EXPECT_SRC)
 set dst_path $env(EXPECT_DST)
-spawn scp -o StrictHostKeyChecking=no -o PubkeyAuthentication=no -o PreferredAuthentications=password -o NumberOfPasswordPrompts=1 "$src_path" ${user}@${host}:${dst_path}
+set scp_args [split $env(EXPECT_SCP_ARGS) "\n"]
+spawn scp {*}$scp_args "$src_path" ${user}@${host}:${dst_path}
 expect {
   -re {[Pp]assword:} { send -- "$pw\r"; exp_continue }
   eof
@@ -446,12 +507,19 @@ mister_scp_upload() {
     local user="$3"
     local password="$4"
     local dst_path="$5"
+    local -a scp_args
 
     if [ -n "${password}" ]; then
         mister_require_cmd expect || return $?
         mister_scp_expect "${src_path}" "${host}" "${user}" "${password}" "${dst_path}"
     else
-        scp -o StrictHostKeyChecking=no "${src_path}" "${user}@${host}:${dst_path}"
+        while IFS= read -r arg; do
+            scp_args+=("${arg}")
+        done < <(mister_ssh_key_only_args)
+        scp "${scp_args[@]}" "${src_path}" "${user}@${host}:${dst_path}" || {
+            echo "MiSTer key-only SCP upload failed; set MISTER_PASSWORD to use password auth or configure a working SSH key." >&2
+            return 1
+        }
     fi
 }
 
@@ -463,16 +531,19 @@ mister_scp_download_expect() {
     local dst_path="$5"
 
     local timeout_seconds
+    local scp_args
     timeout_seconds="$(mister_transfer_timeout)"
+    scp_args="$(mister_ssh_password_args)"
 
-    EXPECT_HOST="$host" EXPECT_USER="$user" EXPECT_PASSWORD="$password" EXPECT_SRC="$src_path" EXPECT_DST="$dst_path" EXPECT_TIMEOUT="$timeout_seconds" expect <<'EOF'
+    EXPECT_HOST="$host" EXPECT_USER="$user" EXPECT_PASSWORD="$password" EXPECT_SRC="$src_path" EXPECT_DST="$dst_path" EXPECT_TIMEOUT="$timeout_seconds" EXPECT_SCP_ARGS="$scp_args" expect <<'EOF'
 set timeout $env(EXPECT_TIMEOUT)
 set host $env(EXPECT_HOST)
 set user $env(EXPECT_USER)
 set pw $env(EXPECT_PASSWORD)
 set src_path $env(EXPECT_SRC)
 set dst_path $env(EXPECT_DST)
-spawn scp -o StrictHostKeyChecking=no -o PubkeyAuthentication=no -o PreferredAuthentications=password -o NumberOfPasswordPrompts=1 ${user}@${host}:${src_path} "$dst_path"
+set scp_args [split $env(EXPECT_SCP_ARGS) "\n"]
+spawn scp {*}$scp_args ${user}@${host}:${src_path} "$dst_path"
 expect {
   -re {[Pp]assword:} { send -- "$pw\r"; exp_continue }
   eof
@@ -488,12 +559,19 @@ mister_scp_download() {
     local password="$3"
     local src_path="$4"
     local dst_path="$5"
+    local -a scp_args
 
     if [ -n "${password}" ]; then
         mister_require_cmd expect || return $?
         mister_scp_download_expect "${host}" "${user}" "${password}" "${src_path}" "${dst_path}"
     else
-        scp -o StrictHostKeyChecking=no "${user}@${host}:${src_path}" "${dst_path}"
+        while IFS= read -r arg; do
+            scp_args+=("${arg}")
+        done < <(mister_ssh_key_only_args)
+        scp "${scp_args[@]}" "${user}@${host}:${src_path}" "${dst_path}" || {
+            echo "MiSTer key-only SCP download failed; set MISTER_PASSWORD to use password auth or configure a working SSH key." >&2
+            return 1
+        }
     fi
 }
 
@@ -505,16 +583,19 @@ mister_rsync_expect() {
     local dst_path="$5"
 
     local timeout_seconds
+    local rsync_shell
     timeout_seconds="$(mister_transfer_timeout)"
+    rsync_shell="$(mister_rsync_ssh_password_command)"
 
-    EXPECT_HOST="$host" EXPECT_USER="$user" EXPECT_PASSWORD="$password" EXPECT_SRC="$src_path" EXPECT_DST="$dst_path" EXPECT_TIMEOUT="$timeout_seconds" expect <<'EOF'
+    EXPECT_HOST="$host" EXPECT_USER="$user" EXPECT_PASSWORD="$password" EXPECT_SRC="$src_path" EXPECT_DST="$dst_path" EXPECT_TIMEOUT="$timeout_seconds" EXPECT_RSYNC_SHELL="$rsync_shell" expect <<'EOF'
 set timeout $env(EXPECT_TIMEOUT)
 set host $env(EXPECT_HOST)
 set user $env(EXPECT_USER)
 set pw $env(EXPECT_PASSWORD)
 set src_path $env(EXPECT_SRC)
 set dst_path $env(EXPECT_DST)
-spawn rsync -av --delete --omit-dir-times --no-perms --no-owner --no-group --exclude resources/SF33RD.AFS --filter {P resources/SF33RD.AFS} --exclude config --filter {P config} --exclude keymap --filter {P keymap} -e {ssh -o StrictHostKeyChecking=no -o PubkeyAuthentication=no -o PreferredAuthentications=password -o NumberOfPasswordPrompts=1} "$src_path" ${user}@${host}:${dst_path}
+set rsync_shell $env(EXPECT_RSYNC_SHELL)
+spawn rsync -av --delete --omit-dir-times --no-perms --no-owner --no-group --exclude resources/SF33RD.AFS --filter {P resources/SF33RD.AFS} --exclude config --filter {P config} --exclude keymap --filter {P keymap} -e $rsync_shell "$src_path" ${user}@${host}:${dst_path}
 expect {
   -re {[Pp]assword:} { send -- "$pw\r"; exp_continue }
   eof
@@ -532,16 +613,19 @@ mister_rsync_expect_copy() {
     local dst_path="$5"
 
     local timeout_seconds
+    local rsync_shell
     timeout_seconds="$(mister_transfer_timeout)"
+    rsync_shell="$(mister_rsync_ssh_password_command)"
 
-    EXPECT_HOST="$host" EXPECT_USER="$user" EXPECT_PASSWORD="$password" EXPECT_SRC="$src_path" EXPECT_DST="$dst_path" EXPECT_TIMEOUT="$timeout_seconds" expect <<'EOF'
+    EXPECT_HOST="$host" EXPECT_USER="$user" EXPECT_PASSWORD="$password" EXPECT_SRC="$src_path" EXPECT_DST="$dst_path" EXPECT_TIMEOUT="$timeout_seconds" EXPECT_RSYNC_SHELL="$rsync_shell" expect <<'EOF'
 set timeout $env(EXPECT_TIMEOUT)
 set host $env(EXPECT_HOST)
 set user $env(EXPECT_USER)
 set pw $env(EXPECT_PASSWORD)
 set src_path $env(EXPECT_SRC)
 set dst_path $env(EXPECT_DST)
-spawn rsync -av --omit-dir-times --no-perms --no-owner --no-group -e {ssh -o StrictHostKeyChecking=no -o PubkeyAuthentication=no -o PreferredAuthentications=password -o NumberOfPasswordPrompts=1} "$src_path" ${user}@${host}:${dst_path}
+set rsync_shell $env(EXPECT_RSYNC_SHELL)
+spawn rsync -av --omit-dir-times --no-perms --no-owner --no-group -e $rsync_shell "$src_path" ${user}@${host}:${dst_path}
 expect {
   -re {[Pp]assword:} { send -- "$pw\r"; exp_continue }
   eof
@@ -564,6 +648,8 @@ mister_rsync_deploy() {
         mister_require_cmd expect || return $?
         mister_rsync_expect "${src_path}" "${host}" "${user}" "${password}" "${dst_path}"
     else
+        local rsync_shell
+        rsync_shell="$(mister_rsync_ssh_key_only_command)"
         rsync -av --delete --omit-dir-times --no-perms --no-owner --no-group \
             --exclude 'resources/SF33RD.AFS' \
             --filter 'P resources/SF33RD.AFS' \
@@ -571,7 +657,11 @@ mister_rsync_deploy() {
             --filter 'P config' \
             --exclude 'keymap' \
             --filter 'P keymap' \
-            "${src_path}" "${user}@${host}:${dst_path}"
+            -e "${rsync_shell}" \
+            "${src_path}" "${user}@${host}:${dst_path}" || {
+            echo "MiSTer key-only rsync deploy failed; set MISTER_PASSWORD to use password auth or configure a working SSH key." >&2
+            return 1
+        }
     fi
 }
 
@@ -621,10 +711,20 @@ mister_rsync_deploy_wrapper() {
             mister_rsync_expect "${runtime_src}" "${host}" "${user}" "${password}" "${dst_path%/}/games/3sx/"
         fi
     else
+        local rsync_shell
+        rsync_shell="$(mister_rsync_ssh_key_only_command)"
         rsync -av --omit-dir-times --no-perms --no-owner --no-group \
-            "${hps_src}" "${user}@${host}:${dst_path%/}/"
+            -e "${rsync_shell}" \
+            "${hps_src}" "${user}@${host}:${dst_path%/}/" || {
+            echo "MiSTer key-only wrapper upload failed; set MISTER_PASSWORD to use password auth or configure a working SSH key." >&2
+            return 1
+        }
         rsync -av --omit-dir-times --no-perms --no-owner --no-group \
-            "${core_src}" "${user}@${host}:${dst_path%/}/_Other/"
+            -e "${rsync_shell}" \
+            "${core_src}" "${user}@${host}:${dst_path%/}/_Other/" || {
+            echo "MiSTer key-only wrapper-core upload failed; set MISTER_PASSWORD to use password auth or configure a working SSH key." >&2
+            return 1
+        }
         if [ "${deploy_mode}" = "full" ]; then
             rsync -av --delete --omit-dir-times --no-perms --no-owner --no-group \
                 --exclude 'resources/SF33RD.AFS' \
@@ -633,7 +733,11 @@ mister_rsync_deploy_wrapper() {
                 --filter 'P config' \
                 --exclude 'keymap' \
                 --filter 'P keymap' \
-                "${runtime_src}" "${user}@${host}:${dst_path%/}/games/3sx/"
+                -e "${rsync_shell}" \
+                "${runtime_src}" "${user}@${host}:${dst_path%/}/games/3sx/" || {
+                echo "MiSTer key-only wrapper runtime deploy failed; set MISTER_PASSWORD to use password auth or configure a working SSH key." >&2
+                return 1
+            }
         fi
     fi
 }

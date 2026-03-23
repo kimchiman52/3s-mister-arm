@@ -262,6 +262,11 @@ Preferred remote entry point:
 The MiSTer SSH path is fragile on this target. Use `tools/mister/misterctl.sh` for deploy, probe, smoke, and ad hoc remote commands, and use `tools/mister/perf-sampler.sh` for captures. Both tools take a shared local lock so only one MiSTer remote workflow runs at a time.
 `misterctl.sh deploy` also refreshes the visible MiSTer OSD wrapper at `/media/fat/Scripts/3SX.sh`.
 
+Auth note:
+
+- On the stock box, export `MISTER_PASSWORD=1` before remote commands unless you have intentionally configured working SSH key auth.
+- When `MISTER_PASSWORD` is unset, the tooling now uses a key-only, non-interactive SSH path that ignores the local agent. That avoids accidental `Too many authentication failures`, but it will fail fast instead of prompting for a password.
+
 When multiple agents/worktrees are active on the same machine, inspect the shared lock before starting a remote step:
 
 ```bash

@@ -118,7 +118,7 @@ lock-status)
     ;;
 busy-status)
     status_cmd="$(mister_target_busy_status_script)"
-    mister_ssh_exec "${host}" "${user}" "${password}" "${status_cmd}" || true
+    mister_ssh_exec "${host}" "${user}" "${password}" "${status_cmd}"
     ;;
 configure-3sx-ini)
     ini_path="/media/fat/MiSTer.ini"
