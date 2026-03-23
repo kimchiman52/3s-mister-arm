@@ -29,7 +29,7 @@ Scope guardrails:
 - CRT-oriented mode: `scale-mode = native`
 - Default gameplay guard: 300-frame `gameplay-idle` capture via `tools/mister/perf-sampler.sh --gameplay-idle --gameplay-warmup 120`
 - Frozen scene matrix anchor: `idle-control` = `stage 11 / Ryu-Ken / SA0-0`; `stage-heavy` = `stage 19 / Ryu-Ken / SA0-0`; `effect-heavy` = preset `effect-heavy`; `super-heavy` = preset `super-heavy`
-- Expanded super-validation matrix: scripted `Yun SA3`, `Q SA1`, `Ken SA3`, and `Chun-Li SA2` presets exist, but current non-`full` runtime behavior still activates only on the trusted P1 Yun SA3 burst. Use `full|simplified|minimal` for real first-pass effect validation on Yun, and use Q/Ken/Chun-Li as secondary route/regression sweeps until the runtime gate broadens. The Yun-only `frame-skip` mode stays outside that first automated matrix because it reuses prior rendered frames and is not yet part of the sampler sweep surface.
+- Expanded super-validation matrix: scripted `Yun SA3`, `Q SA1`, `Ken SA3`, and `Chun-Li SA2` presets exist, but current non-`full` runtime behavior still activates only on the trusted P1 Yun SA3 burst. Use `full|simplified|minimal|frame-skip` for real Yun validation on the deciding lane, and use Q/Ken/Chun-Li as secondary route/regression sweeps until the runtime gate broadens beyond Yun-only behavior.
 - Toolchain note: the validated MiSTer Docker path now uses `clang-20`; this host still cannot execute `linux/arm/v7` containers locally, so local proof remains cross-build plus `readelf` and on-device verification.
 - Active checklist: `artifacts/mister-port/stock-image-software-frame-loop-series/todo.md`
 - Active working brief: `docs/agent-memory/mister-ralph-working-brief.md`
@@ -193,8 +193,8 @@ Scope guardrails:
 ## Archive Queue Pointer
 
 - Active queue details now live in `docs/agent-memory/mister-ralph-working-brief.md`; keep that brief current after each meaningful keep, reject, or pivot.
-- The current first-line queue is one bounded automated `super-effect-quality` validation loop: real `full|simplified|minimal` effect ranking on trusted Yun SA3 first, then secondary Q/Ken/Chun-Li route/regression sweeps.
-- The Yun-only `frame-skip` mode remains an explicit follow-up candidate, but not part of that first automated matrix.
+- The current first-line queue keeps the Yun-only `frame-skip` validation as the new baseline and extends or retimes its trusted reuse window on the deciding Yun SA3 lane before reopening weaker cadence-only thinning.
+- Keep `full|simplified|minimal|frame-skip` available for Yun-first automated comparisons, and use Q/Ken/Chun-Li as secondary route/regression sweeps until the runtime gate broadens beyond Yun-only behavior.
 - Native Yun deep measurement is still a secondary queue, but only if it uses lower-distortion or external evidence rather than another in-band hot-path collector.
 - Nearest-HDMI presenter work remains secondary while the super-activation queue is open.
 - Future runtime loops should still start from trusted current-tree baselines and use the `telemetry` flavor by default.
@@ -243,6 +243,24 @@ Scope guardrails:
   - Kept the `r18` cached row-run destination-span reland in `src/port/sdl/fbdev_presenter.c`: it left copied bytes unchanged but improved the heavier or more user-visible lanes on the real device (`stage-heavy 51.9464 -> 52.6269 FPS`, `ibuki-stage7 55.5333 -> 57.3638`, `2p-character-select 36.1584 -> 37.0479`, `menu-transition 36.4438 -> 37.6084`, native guard `92.9887 -> 93.6382`) while only slightly regressing control (`72.2987 -> 71.7994`). Recover trustworthy automated `genei-jin-first-activation` coverage before another menu-specific nearest experiment.
 
 ## Cycle Log
+
+- 2026-03-23T04:27:30-0400
+  - Final commit hash:
+    - recorded in the closing commit for this cycle; the exact self-hash is reported in the loop closeout message because this workflow does not amend a commit just to embed its own ID
+  - Bottleneck targeted:
+    - validating whether the already-implemented MiSTer-only Yun SA3 `super-effect-quality = frame-skip` mode is a real whole-window gameplay keep once the capture starts early enough to include the inactive-to-active trigger
+  - Change summary:
+    - changed only `tools/mister/perf-sampler.sh` so the serialized capture flow now accepts and documents `--super-effect-quality frame-skip`
+    - rebuilt the telemetry package in Docker `3sx-mister-build`, redeployed through serialized MiSTer tooling, and switched the deciding repeat-super capture regime to `--perf-wait-test-phase game-input-active --gameplay-warmup 0` so the Yun trigger lands inside the sample
+    - captured same-build `loop183-yun-sa3-repeat-pressure-{full,minimal,frame-skip}-r1`, `loop183-q-sa1-repeat-pressure-{full,frame-skip}-r1`, and `loop183-gameplay-idle-{full,frame-skip}-r1`, then updated the active checklist and working brief to promote `frame-skip` to the new baseline
+  - Verification result summary:
+    - local `bash -n tools/mister/perf-sampler.sh`, `tools/mister/perf-sampler.sh --help`, `git diff --check`, the canonical telemetry Docker build/package, and serialized MiSTer `lock-status`, `busy-status`, `health`, `deploy`, `probe`, and bounded `smoke` all passed on `192.168.1.171`
+    - deciding Yun now records the real trigger inside the capture (`trusted_yun_sa3_burst_first_trigger_frame = 296`, `p1_super_art_active_first_frame = 296`, `p1_super_art_active_frames_total = 124`) and stays on `software_frame_exact` with zero readback; same-build FPS moved from `full = 34.7786` and `minimal = 35.5341` to `frame-skip = 41.0140` overall, and from `19.2751 / 18.1013 / 18.3406` (`first8 / first60 / first82`) on `full` and `21.9657 / 18.8698 / 19.5025` on `minimal` to `34.9757 / 30.1135 / 31.0109` on `frame-skip`; scheduled/applied Yun frame skips both reached `41`
+    - Q SA1 and `gameplay-idle` stayed effectively flat, never armed Yun-only reuse, and kept zero readback: Q moved only `36.6637 -> 36.8341 FPS` overall with `trusted_yun_sa3_frame_skip_scheduled_total = trusted_yun_sa3_frame_skip_applied_total = 0`, while `gameplay-idle` stayed `63.1058 -> 63.0385 FPS` with zero scheduled/applied skips
+  - Keep/rollback decision with reason:
+    - keep; once measured on the corrected trigger-inclusive comparator, the existing Yun-only `frame-skip` mode is a clear whole-window win on the trusted direct/native software-frame route, materially beating kept Loop 181 `minimal` while leaving Q SA1 and `gameplay-idle` flat
+  - Next best candidate optimization:
+    - keep `frame-skip` as the new baseline, then extend or retime the trusted Yun reuse window past the current provisional `82` active-frame cap so the same MiSTer-only burst-visual path covers more of the still-slow `124`-frame active tail
 
 - 2026-03-23T02:10:00-0400
   - Final commit hash:
