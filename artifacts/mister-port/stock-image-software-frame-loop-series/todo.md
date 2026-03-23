@@ -7917,3 +7917,33 @@
   - [ ] recorded in Git history by the closing commit that lands this section; the exact self-hash is reported in the loop closeout message because this workflow does not amend a commit just to embed its own ID
 - [x] next best candidate:
   - [x] keep the full-window Yun-only `frame-skip` keep from Loop `184` as the runtime baseline and use the now-valid Ken/Chun lanes as real guards, then rerank toward one materially different burst-only follow-up, most likely a bounded super-specific rendered-tick rule for the remaining dominant flipped `41/1` family or an equivalent non-selector lever; do not retry this exact non-flipped `256x256` broadening unchanged now
+
+### Follow-On Loop 187: Flipped `41/1` Frame-Skip Verification Recheck
+
+- [x] Value target: verify the already-preserved flipped `41/1` rendered-tick follow-up before inventing any new runtime or measurement hypothesis, because it remains the highest-value bounded candidate after Loop `186`
+- [x] Scope boundary: no new runtime expansion beyond the existing preserved diff on `preserve-loop187-flipped-41-1-frame-skip`; active-branch work for this cycle is docs-only closeout after device-gate results
+- [x] Dependencies:
+  - [x] clean kickoff tree on `super-fidelity-ralph-loop`
+  - [x] current working brief, living findings archive, and active checklist
+  - [x] existing preserved runtime branch `preserve-loop187-flipped-41-1-frame-skip`
+  - [x] canonical Docker telemetry build in `3sx-mister-build`
+  - [x] serialized MiSTer tooling with bounded `health` / `probe` checks before deploy
+- [x] Research checkpoint:
+  - [x] preserved-branch audit still leaves only one live unverified perf branch. `preserve-native-analog-yc-crt-filter` and `preserve-yc-packet-logging` are already integrated by patch equivalence, while `preserve-loop187-flipped-41-1-frame-skip` is still unique and matches the working brief's top candidate
+  - [x] the dark-render memo still does not reopen a different current-tree runtime queue after the accounting correction, so this cycle should verify the preserved flipped `41/1` follow-up rather than invent another helper/codegen branch
+  - [x] current `HEAD` still excludes the flipped `41/1` family only by selector policy, not by renderer capability, which keeps the preserved diff within the same bounded burst-only Yun frame-skip hypothesis
+- [x] Implementation summary:
+  - [x] restored the preserved Loop `187` runtime diff locally long enough to run the canonical verification build; no new runtime behavior beyond the existing preserved branch was authored this cycle
+  - [x] after the device gate failed again, restored `super-fidelity-ralph-loop` back to clean `HEAD` and left the runtime diff preserved only on `preserve-loop187-flipped-41-1-frame-skip`
+- [x] Verification summary:
+  - [x] local `git diff --check` passed, and `tools/mister/build-game.sh --flavor telemetry` rebuilt `build/mister-telemetry-install` plus `build/mister-telemetry-package` successfully in Docker container `3sx-mister-build`
+  - [x] the device gate failed before any trustworthy remote command completed. One bounded `health` attempt and one bounded `probe` attempt both timed out after `20s` with no usable output, matching the active-loop stop rule for an unhealthy MiSTer gate
+  - [x] because two consecutive bounded gate checks failed before deploy/probe/smoke or any capture could complete, no on-device runtime judgment was made from local-only evidence
+- [x] Keep/rollback decision:
+  - [x] preserve the runtime diff and close this cycle as device-blocked, not as a keep or rejection. The authored runtime change remains on `preserve-loop187-flipped-41-1-frame-skip`, and the active branch is restored to a clean docs-only state
+  - [x] do not open a new runtime or measurement queue from this blocked cycle. The next loop must start by rechecking MiSTer health and then verifying `preserve-loop187-flipped-41-1-frame-skip`
+- [ ] final commit hash:
+  - [ ] recorded in the docs-only closeout commit for this blocked verification cycle; the exact self-hash is reported in the loop closeout message because this workflow does not amend a commit just to embed its own ID
+- [x] next best candidate:
+  - [x] verify `preserve-loop187-flipped-41-1-frame-skip` first once bounded `misterctl.sh health` and `probe` succeed again, then run the same Yun/Q/Ken/Chun/idle matrix originally planned for that preserved diff
+  - [x] do not invent another MiSTer runtime reland until that preserved branch is either verified or explicitly retired with new device evidence

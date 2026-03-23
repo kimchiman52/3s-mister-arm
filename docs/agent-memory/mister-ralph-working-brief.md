@@ -9,7 +9,7 @@
 
 - Last updated: `2026-03-23`
 - Active branch: `super-fidelity-ralph-loop`
-- Active queue: keep Loop 184's full-window Yun-only `frame-skip` extension as the burst-fidelity baseline, close Loop 186's broader non-flipped `256x256` rendered-tick reland as rejected evidence, keep Loop 186's Ken/Chun preset repair, and rerank toward a materially different burst-only follow-up while using live Q/Ken/Chun matrix guards
+- Active queue: verify preserved branch `preserve-loop187-flipped-41-1-frame-skip` first once the MiSTer gate recovers; keep Loop 184's full-window Yun-only `frame-skip` extension as the burst-fidelity baseline, keep Loop 186's Ken/Chun preset repair, and do not invent a different runtime queue until the preserved flipped `41/1` follow-up is either verified or explicitly retired
 - Default loop type: `workload-fidelity`
 - Deciding lane: `yun-sa3-repeat-pressure` judged on first `8`, first `60`, first `82`, the post-`82` active tail, and the full trusted active window
 - Primary guard lane: `gameplay-idle`
@@ -23,6 +23,7 @@
 - Loop 184 kept the longer full-window Yun-only `frame-skip` cap. Extending the trusted reuse window from `82` to the recovered `124` active frames, while stopping it immediately once the trusted Yun active state clears, improved same-build Yun from `46.9374 -> 50.4138 FPS` overall, `39.9817 -> 50.9294` first `8`, `38.2801 -> 49.8172` first `60`, `39.5247 -> 51.4887` first `82`, `44.2897 -> 53.6886` on the previously uncovered post-`82` tail, and `41.0195 -> 52.2134` across the full active window; scheduled/applied skips rose from `41/41` to `62/62`
 - Loop 185 rejected the next family-specific cadence split on top of that keep. Thinning only the three proven opaque families harder on rendered `frame-skip` ticks still improved same-build Yun versus `full`, but it did not beat kept Loop 184 `frame-skip` on the deciding full active window (`52.3884 -> 52.1061 FPS`) or the key mid-window spans (`49.9367 -> 49.2362` first `60`, `51.5937 -> 50.9965` first `82`), so that exact six-family opaque-only cadence reland is now closed evidence rather than the next baseline
 - Loop 186 rejected the broader non-flipped `256x256` rendered-tick reland but kept the Ken/Chun preset repair. Widening the trusted selector to families `57/317`, `57/328`, `58/327`, and `58/344` improved the same-build candidate versus `full`, but only to `33.6987 / 28.2044 / 29.2213 / 40.4766 FPS` on the deciding first-`8` / first-`60` / first-`82` / full-active windows, still far below kept Loop 184 `frame-skip` (`50.9294 / 49.8172 / 51.4887 / 52.2134`). The repeat-preset button repair is still a keep because Ken SA3 and Chun-Li SA2 now both produce `p1_super_art_active_starts_total = 1` at frame `179` with `44` active frames on-device.
+- Loop 187 verification is currently device-blocked, not reranked away. The preserved flipped `41/1` rendered-tick reland still matches the top surviving burst-fidelity hypothesis, but a fresh `2026-03-23` recheck hit the stop condition when bounded `misterctl.sh health` and `probe` both timed out before any trustworthy remote command completed. Keep that preserved branch as the next verification target instead of opening a different runtime experiment from local-only evidence.
 - The absolute full-mode baseline on the live device is lower than the earlier Loop 180 artifact family, so Loop 181 is judged on same-build `full` versus `minimal` deltas rather than on stale cross-loop absolute FPS. The route truth still matches the trusted direct/native software-frame path.
 - Loop 184 closes the window-length question on the trusted repeat-pressure lane: the longer `124`-frame cap materially improved the previously untouched active tail without broad guard regression, so another cap-length tweak is no longer the best next runtime bet.
 - Trusted Yun is still not close enough to stable `60 FPS` to stop at this keep. After Loop 186's rejection, the next runtime pass should stay on the same burst-fidelity family but move away from both the exact opaque-family-only cadence split and the broader non-flipped `256x256` selector reland, using the now-live Ken/Chun matrix coverage to judge a materially different burst-only follow-up.
@@ -40,6 +41,8 @@
 
 - Materially different burst-only follow-up on top of the kept full-window `frame-skip` baseline
 - Why it is still live: Loop 186 closed the “broaden the trusted selector to the next safe-shape non-flipped `256x256` families” idea. The deciding Yun lane improved over same-build `full`, but it still stayed far below kept Loop 184, so the next runtime lever must be meaningfully different rather than another small selector broadening on the same premise.
+- Preserve-loop187 verification recheck
+- Why it is still live: the runtime diff already exists on `preserve-loop187-flipped-41-1-frame-skip`, and the latest cycle was blocked only by MiSTer `health` / `probe` timeouts. This stays ahead of any new runtime hypothesis until the device gate produces a trustworthy command again.
 - Keep decision-grade Ken SA3 / Chun-Li SA2 matrix coverage live in every future super-fidelity sweep
 - Why it is still live: Loop 186 repaired the repeat-preset button mismatch, and both lanes now produce real super activations on-device. Future burst-fidelity relands should use those lanes as actual guards instead of treating them as deferred setup work.
 - Native Yun deep measurement
@@ -74,8 +77,8 @@
 
 - Materially different burst-only follow-up on the kept full-window `frame-skip` baseline
 - Lever class: `workload-fidelity`
-- Expected upside: Loop 186 closed the next non-flipped safe-shape selector broadening, which leaves the remaining headroom in a different super-specific rendered-tick lever rather than another small extension of the same family gate. The dominant measured outside family is still flipped `41/1`, so a bounded treatment there or an equivalent non-selector rule is the highest-value remaining path inside the active burst-fidelity queue.
-- Main risk: the remaining visible headroom is in a riskier part of the workload, so the next reland must stay tightly burst-scoped, preserve the direct/native route semantics, and be judged with the now-live Q/Ken/Chun matrix guards.
+- Expected upside: Loop 186 closed the next non-flipped safe-shape selector broadening, which leaves the remaining headroom in a different super-specific rendered-tick lever rather than another small extension of the same family gate. The dominant measured outside family is still flipped `41/1`, and that exact reland is already preserved for verification on-device.
+- Main risk: the remaining visible headroom is in a riskier part of the workload, and device-gate instability is now the immediate blocker, so no new runtime branch should be invented until the preserved diff is either verified or explicitly retired.
 - Research and plan expansion from Yun-only gating to all supers across the full roster once a stronger mode gets trusted Yun SA3 close to stable speed
 - Lever class: `measurement`
 - Expected upside: turns a single-lane super-fidelity win into a roadmap for broader player-visible benefit instead of stopping at Yun-only success
@@ -108,12 +111,12 @@
 ## Next Loop Contract
 
 - Loop type: `workload-fidelity`
-- Existing diff under test: the kept Loop 184 full-window `frame-skip` baseline plus the existing Yun-only trigger/window plumbing in `src/port/sdl/sdl_app.c`
-- One scoped change: stay on the same render-only super-fidelity path and test one materially different burst-only follow-up on `yun-sa3-repeat-pressure` beyond the now-closed window-length, opaque-only-cadence, and non-flipped-safe-family broadening levers, while using the restored Q/Ken/Chun matrix lanes as real guards
-- Stop immediately if: the candidate widens beyond burst-scoped MiSTer-only render degradation, changes gameplay timing/logic/determinism, or tries to relitigate alpha-branch/layout or dark-render memo ideas without genuinely new evidence
-- Capture plan: keep `yun-sa3-repeat-pressure` as the deciding lane, start the repeat-super captures at `game-input-active` with zero warmup so the trigger lands inside the sample, and continue judging first `8`, first `60`, first `82`, the post-`82` active tail, and the full active window; keep Q SA1, Ken SA3, and Chun-Li SA2 live as actual guards now that their repeat-pressure presets trigger real activations
-- Keep if: the next burst-only follow-up materially improves the full trusted active window beyond kept Loop 184 while preserving the same direct/native route semantics and without broad Q/Ken/Chun/idle regression
-- Reject if: the stronger follow-up fails to move trusted Yun materially, widens degradation beyond the intended burst scope, or simply replays one of the now-closed selector/cadence relands without genuinely new evidence
+- Existing diff under test: preserved branch `preserve-loop187-flipped-41-1-frame-skip`
+- One scoped change: do not author a new runtime reland first. Recheck bounded MiSTer `health` / `probe`, then verify the preserved flipped `41/1` rendered-tick follow-up on `yun-sa3-repeat-pressure` with Q SA1, Ken SA3, Chun-Li SA2, and `gameplay-idle` as guards
+- Stop immediately if: bounded `misterctl.sh health` and `probe` still fail before any trustworthy remote command completes, or if verifying the preserved diff would require widening beyond burst-scoped MiSTer-only render degradation
+- Capture plan: once the device gate recovers, keep `yun-sa3-repeat-pressure` as the deciding lane, start the repeat-super captures at `game-input-active` with zero warmup so the trigger lands inside the sample, and continue judging first `8`, first `60`, first `82`, the post-`82` active tail, and the full active window; keep Q SA1, Ken SA3, and Chun-Li SA2 live as actual guards now that their repeat-pressure presets trigger real activations
+- Keep if: the preserved flipped `41/1` follow-up materially improves the full trusted active window beyond kept Loop 184 while preserving the same direct/native route semantics and without broad Q/Ken/Chun/idle regression
+- Reject if: the preserved follow-up fails to move trusted Yun materially or widens degradation beyond the intended burst scope once trustworthy device verification completes; if the device gate remains unhealthy again, preserve/defer the branch rather than treating that as runtime rejection
 - Post-Yun success note: if a later super-fidelity loop gets trusted Yun SA3 close enough to stable speed, do not stop at the Yun-only keep. Open a bounded research-and-planning loop next to map how the same burst-fidelity surface could expand to all supers for all characters, including gating strategy, likely grouping, measurement matrix, and rollout order before implementation broadens.
 
 ## Recent Decisive Evidence
@@ -140,6 +143,8 @@
 - Why it mattered: it restored decision-grade `ken-sa3-repeat-pressure` and `chunli-sa2-repeat-pressure` matrix lanes by switching those repeat presets to a kick-button finisher, producing real `p1_super_art_active_starts_total = 1` captures on-device instead of zero-activation false guards
 - Reject: Loop 186 broader non-flipped `256x256` rendered-tick selector reland
 - Why it mattered: it proved that broadening the trusted selector to `57/317`, `57/328`, `58/327`, and `58/344` is still not enough to beat kept Loop 184 on the deciding Yun windows, so future frame-skip follow-ups need a materially different lever rather than another safe-shape selector extension
+- Blocked: Loop 187 preserved flipped `41/1` verification recheck
+- Why it mattered: it proved the next blocker is the MiSTer gate, not queue ranking. The preserved branch still matches the top surviving burst-fidelity hypothesis, but bounded `health` and `probe` both timed out on `2026-03-23`, so the next loop must start with device recovery/recheck instead of opening a different runtime experiment.
 
 ## Archive Pointers
 

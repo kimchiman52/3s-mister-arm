@@ -244,6 +244,23 @@ Scope guardrails:
 
 ## Cycle Log
 
+- 2026-03-23T08:03:18-0400
+  - Final commit hash:
+    - recorded in the docs-only closeout commit for this cycle; the exact self-hash is reported in the loop closeout message because this workflow does not amend a commit just to embed its own ID
+  - Bottleneck targeted:
+    - verifying whether preserved branch `preserve-loop187-flipped-41-1-frame-skip` can clear the next burst-fidelity bar on-device before any new MiSTer runtime hypothesis is opened
+  - Change summary:
+    - restored the preserved flipped `41/1` rendered-tick diff locally only long enough to rerun the canonical telemetry build in Docker `3sx-mister-build`
+    - confirmed the exact runtime change still lives on `preserve-loop187-flipped-41-1-frame-skip`, then restored `super-fidelity-ralph-loop` back to clean `HEAD` after the device gate failed
+    - kept the active-branch outcome docs-only so the preserved diff remains the next verification target rather than being re-preserved redundantly
+  - Verification result summary:
+    - local `git diff --check` and `tools/mister/build-game.sh --flavor telemetry` both passed; `build/mister-telemetry-package` was rebuilt successfully from the canonical Docker flow
+    - one bounded `misterctl.sh health` attempt and one bounded `misterctl.sh probe` attempt both timed out after `20s` before any trustworthy remote command completed, so deploy/probe/smoke/capture work was skipped under the device stop rule
+  - Keep/rollback decision with reason:
+    - preserve and defer; the runtime diff is still live only on `preserve-loop187-flipped-41-1-frame-skip`, but this cycle cannot judge it because the MiSTer gate stayed unhealthy through two consecutive bounded checks
+  - Next best candidate optimization:
+    - verify `preserve-loop187-flipped-41-1-frame-skip` first once bounded `health` and `probe` succeed again; do not invent another runtime reland from this blocked cycle
+
 - 2026-03-23T06:06:26-0400
   - Final commit hash:
     - recorded in the closing commit for this cycle; the exact self-hash is reported in the loop closeout message because this workflow does not amend a commit just to embed its own ID
