@@ -4867,3 +4867,20 @@ Scope guardrails:
   - Next best candidate optimization:
     - do not retry this global opaque-first branch reorder unchanged now
     - if native Yun work continues, prefer a bounded compiler-hint or other codegen-level experiment that preserves the original transparent-first control flow while testing whether the onset win was branch-prediction/layout related
+
+- 2026-03-23T23:30:00-0400
+  - Final commit hash:
+    - pending docs-only closeout commit; reported in the loop closeout message because this workflow does not amend a commit just to embed its own self-hash
+  - Bottleneck targeted:
+    - verifying the preserved Loop `187` flipped `41/1` rendered-tick `frame-skip` follow-up on the active super-fidelity queue
+  - Change summary:
+    - re-audited the dark-render memo and preserved refs; `preserve-native-analog-yc-crt-filter` and `preserve-yc-packet-logging` remain already integrated, so `preserve-loop187-flipped-41-1-frame-skip` stayed the only unresolved runtime candidate
+    - ported the preserved Loop `187` source delta onto current `HEAD` long enough to rebuild `build/mister-telemetry-install` and `build/mister-telemetry-package` with `tools/mister/build-game.sh --flavor telemetry` in Docker `3sx-mister-build`
+    - rolled the unverified runtime diff back off the active branch after the device gate failed again; final tree is docs-only
+  - Verification result summary:
+    - Docker telemetry rebuild/package passed on the active branch
+    - bounded `busy-status`, `health`, and `probe` rechecks with `MISTER_CMD_TIMEOUT=20` and an outer `25s` watchdog all timed out before any trustworthy remote command output, so no deploy/smoke/capture work ran
+  - Keep/rollback decision with reason:
+    - preserve and defer; the preserved runtime diff still builds cleanly, but the MiSTer gate never recovered enough to verify it on-device
+  - Next best candidate optimization:
+    - rerun bounded serial `busy-status` / `health` / `probe` first once the device gate recovers, then verify `preserve-loop187-flipped-41-1-frame-skip` before inventing a different burst-fidelity or native-runtime hypothesis

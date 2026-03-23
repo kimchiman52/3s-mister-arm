@@ -31,7 +31,7 @@
 ## Current Operator Priorities
 
 - [x] Queue gate on `2026-03-23`: re-audit the dark-render memo before another helper-local/runtime reland. Loop `164+` lower-distortion onset captures stayed on `software-frame on` + direct/native present, but basic-mode zeroed several software-frame workload counters because extended stats were disabled; treat that as an accounting caveat, not a renderer-path swap.
-- [x] Queue gate on `2026-03-23` follow-up: the preserved-branch-first rule is still active and the device gate is still the blocker. The older preserved refs `preserve-native-analog-yc-crt-filter` and `preserve-yc-packet-logging` remain already integrated, while bounded `misterctl.sh health` and `probe` rechecks under an outer watchdog still failed before any trustworthy remote command completed, so `preserve-loop187-flipped-41-1-frame-skip` remains the next verification target and no new runtime hypothesis was opened this cycle.
+- [x] Queue gate on `2026-03-23` follow-up: the preserved-branch-first rule is still active and the device gate is still the blocker. The older preserved refs `preserve-native-analog-yc-crt-filter` and `preserve-yc-packet-logging` remain already integrated, the preserved Loop `187` runtime diff still rebuilt cleanly in Docker on the active branch, and bounded `busy-status` / `health` / `probe` rechecks under an outer watchdog still failed before any trustworthy remote command completed, so `preserve-loop187-flipped-41-1-frame-skip` remains the next verification target and no new runtime hypothesis was opened this cycle.
 - [x] Native override re-rank on `2026-03-21`: stop spending first-line Ralph loop budget on native presentation work. The trusted current-tree native captures keep `present.mean_ms` near the floor on both deciding lanes: `loop145-yun-shared-shapes-repro-r1 capture_windows.first_8_frames = 0.5093 ms` and `loop146-remy-rerank-r2 = 0.5255 ms`.
 - [x] Split the remaining native work into two separate queues instead of one shared queue:
   - Genei-Jin / first-visible activation remains the first-line native gameplay ceiling. The latest trusted schema-`62` onset repro `loop145-yun-shared-shapes-repro-r1` stayed at `25.0873 FPS / 39.8609 / 9.5879 / 29.7127 / 0.5603 ms` overall and `20.9510 FPS / 47.7304 / 11.2303 / 35.9909 / 0.5093 ms` for `capture_windows.first_8_frames`, still on direct native present with zero fallback/readback.
@@ -58,25 +58,36 @@
 - [x] Before commit, update the working brief, the living findings archive, and this checklist together.
 - [x] When a detail only matters for historical lookup or exact citations, keep it in `living-findings.md` instead of expanding the working brief.
 
+## Current Loop Plan
+
+- [x] Loop `190` type / deciding lane:
+  - `workload-fidelity` on `yun-sa3-repeat-pressure`, verifying the unresolved preserved runtime diff from `preserve-loop187-flipped-41-1-frame-skip`
+- [x] Research-backed hypothesis:
+  - the dark-render memo re-audit does not leave a stronger bounded current-tree runtime candidate after the basic-mode accounting correction, while `preserve-native-analog-yc-crt-filter` and `preserve-yc-packet-logging` are already integrated
+  - the preserved Loop `187` runtime diff is still the highest-expected-value rollback-safe candidate because it keeps the existing full-window Yun `frame-skip` baseline and only broadens the rendered-tick burst cohort to include the measured flipped `41/1` family
+- [x] Scoped plan before implementation:
+  - port the preserved Loop `187` runtime diff onto current `HEAD`, build/package the `telemetry` flavor in Docker `3sx-mister-build`, run bounded serialized `health` / `probe`, then either verify Yun/Q/Ken/Chun plus `gameplay-idle` on-device or close the cycle as preserve/defer again if the device gate still fails before a trustworthy remote command completes
+
 ## Latest Loop Closeout
 
-- [x] Loop `189` type / deciding lane:
+- [x] Loop `190` type / deciding lane:
   - `workload-fidelity` on `yun-sa3-repeat-pressure`, but this cycle remained a device-gate recheck because the oldest unresolved preserved runtime diff still lives on `preserve-loop187-flipped-41-1-frame-skip`
 - [x] Research target and scoped plan:
-  - verify that only `preserve-loop187-flipped-41-1-frame-skip` still contains unresolved perf work, confirm the older preserved refs remain integrated, re-audit the dark-render memo against the current queue, then run bounded `health` / `probe` before touching any new runtime code
+  - verify that only `preserve-loop187-flipped-41-1-frame-skip` still contains unresolved perf work, confirm the older preserved refs remain integrated, re-audit the dark-render memo against the current queue, port the preserved runtime diff onto current `HEAD`, and then run bounded `busy-status` / `health` / `probe` before treating it as a live runtime candidate
 - [x] Implementation summary:
-  - no new runtime or measurement diff was authored on `HEAD`
   - confirmed `preserve-native-analog-yc-crt-filter` and `preserve-yc-packet-logging` still have no unique commits relative to `HEAD`, so the only unresolved preserved performance branch remains `preserve-loop187-flipped-41-1-frame-skip`
-  - closed the cycle docs-only after the bounded device recheck failed again, keeping that preserved branch as the next verification target
+  - ported the preserved Loop `187` source delta onto the active branch long enough to rebuild the `telemetry` package in Docker `3sx-mister-build`, then rolled the unverified runtime diff back off `HEAD` once the device gate failed again
+  - closed the cycle docs-only after the bounded device recheck still produced no trustworthy remote command output, keeping the preserved branch as the next verification target
 - [x] Verification evidence:
-  - bounded `misterctl.sh health` and `misterctl.sh probe` attempts were rerun with `MISTER_CMD_TIMEOUT=20` and an outer `25s` watchdog after `busy-status` itself failed to produce any trustworthy output
-  - both bounded checks died before any trustworthy remote command completed, so deploy/probe/smoke/capture work did not proceed and no local-only runtime rerank was attempted
+  - `tools/mister/build-game.sh --flavor telemetry` rebuilt `build/mister-telemetry-install` and `build/mister-telemetry-package` successfully in Docker `3sx-mister-build`
+  - bounded `misterctl.sh busy-status`, `misterctl.sh health`, and `misterctl.sh probe` attempts were rerun with `MISTER_CMD_TIMEOUT=20` and an outer `25s` watchdog
+  - all three bounded checks died before any trustworthy remote command completed, so deploy/probe/smoke/capture work did not proceed and the preserved runtime diff was not judged from local-only evidence
 - [x] Keep/rollback decision:
-  - preserve and defer; do not treat this as runtime rejection because the preserved diff was not reverified on-device
+  - preserve and defer; do not treat this as runtime rejection because the preserved diff rebuilt cleanly but still was not reverified on-device
 - [ ] Final commit hash:
   - recorded in the docs-only closeout commit for this cycle; the exact self-hash is reported in the loop closeout message because this workflow does not amend a commit just to embed its own ID
 - [x] Next best candidate:
-  - rerun bounded serial `health` / `probe` first once the MiSTer gate recovers, then verify `preserve-loop187-flipped-41-1-frame-skip` before inventing any new burst-fidelity or native-runtime hypothesis
+  - rerun bounded serial `busy-status` / `health` / `probe` first once the MiSTer gate recovers, then verify `preserve-loop187-flipped-41-1-frame-skip` before inventing any new burst-fidelity or native-runtime hypothesis
 
 ## Active Ralph Loop Intake
 
