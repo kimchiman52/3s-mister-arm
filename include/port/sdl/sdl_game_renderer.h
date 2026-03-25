@@ -713,14 +713,6 @@ bool SDLGameRenderer_IsSoftwareFrameModeEnabled(void);
 bool SDLGameRenderer_IsPerfCaptureExtendedStatsEnabled(void);
 bool SDLGameRenderer_HasSoftwareOwnedFrame(void);
 const SDL_Surface* SDLGameRenderer_GetSoftwareFrameSurface(void);
-bool SDLGameRenderer_HasPreviousFrameSurfaceSnapshot(void);
-const SDL_Surface* SDLGameRenderer_GetPreviousFrameSurfaceSnapshot(void);
-bool SDLGameRenderer_HasPreviousFrameCanvasSnapshot(void);
-SDL_Texture* SDLGameRenderer_GetPreviousFrameCanvasSnapshot(void);
-void SDLGameRenderer_UpdatePreviousFrameSnapshot(bool capture_surface,
-                                                 bool capture_canvas,
-                                                 bool* out_surface_valid,
-                                                 bool* out_canvas_valid);
 bool SDLGameRenderer_EnsureSoftwareFrameCanvas(void);
 void SDLGameRenderer_NoteSoftwareFrameDirectPresent(void);
 void SDLGameRenderer_SetPerfCaptureLogicalIdentityEnabled(bool enabled);
