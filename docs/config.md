@@ -43,7 +43,7 @@ Possible values:
 
 ### `super-effect-quality`
 
-Controls MiSTer-only rendering optimization during the trusted Yun SA3 burst window.
+Controls MiSTer-only rendering optimization during super art activation.
 
 Defaults:
 - MiSTer builds: `cached-bg`
@@ -51,13 +51,11 @@ Defaults:
 
 Possible values:
 - `full`: No reduction — render every frame fully
-- `cached-bg`: Cache the rendered background surface on the first burst frame, then restore it via fast blit on subsequent burst frames while rendering characters/effects/HUD fresh at 60fps
+- `cached-bg`: Cache the rendered background surface on the first super art activation frame, then restore it via fast blit on subsequent frames while rendering characters/effects/HUD fresh at 60fps
 
 Notes:
 - This setting is only active on MiSTer builds. On non-MiSTer builds the config key is parsed but behaves like `full`.
-- The current trusted slowdown window is a bounded 82-frame post-trigger window, not the full Yun SA3 duration.
-- Current v1 scope is intentionally narrow: player 1 Yun SA3 onset only.
-- For backwards compatibility, the old config values `frame-skip`, `simplified`, and `minimal` are treated as `cached-bg`.
+- Detection uses `sa_stop_check()` (cinematic freeze signal) which fires for all characters and all super arts. A grace period of ~15 frames after the signal drops covers the zoom-out transition.
 
 ### `show-fps`
 

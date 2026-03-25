@@ -513,8 +513,7 @@ int read_runtime_super_effect_quality_default()
 	char value[64] = {};
 	if (!read_runtime_config_value("super-effect-quality", value, sizeof(value))) return kSuperEffectQualityCachedBg;
 
-	if (!strcasecmp(value, "cached-bg") || !strcasecmp(value, "frame-skip") ||
-	    !strcasecmp(value, "simplified") || !strcasecmp(value, "minimal"))
+	if (!strcasecmp(value, "cached-bg"))
 		return kSuperEffectQualityCachedBg;
 	if (!strcasecmp(value, "full")) return kSuperEffectQualityFull;
 	return kSuperEffectQualityCachedBg;

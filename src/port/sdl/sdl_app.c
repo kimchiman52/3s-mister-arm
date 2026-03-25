@@ -16,6 +16,7 @@
 #include "sf33rd/AcrSDK/ps2/foundaps2.h"
 #include "sf33rd/Source/Game/effect/effect.h"
 #include "sf33rd/Source/Game/engine/plcnt.h"
+#include "sf33rd/Source/Game/engine/pls01.h"
 #include "sf33rd/Source/Game/engine/pls03.h"
 #include "sf33rd/Source/Game/engine/workuser.h"
 #include "sf33rd/Source/Game/opening/opening.h"
@@ -91,19 +92,19 @@ static bool software_frame_mode_enabled = false;
 static SDLGameRenderer_SuperEffectQualityMode super_effect_quality_mode =
     SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_FULL;
 #if defined(PORT_MISTER)
-// The active super lasts longer, but the player-visible slowdown burst is still conservatively capped here.
-static const int TRUSTED_YUN_SA3_SLOWDOWN_WINDOW_FRAMES = 82;
-static int trusted_yun_sa3_burst_frames_remaining = 0;
-static int trusted_yun_sa3_active_frame_index = 0;
-static bool trusted_yun_sa3_burst_triggered_this_frame = false;
-static bool trusted_yun_sa3_burst_was_active = false;
-static bool trusted_yun_sa3_previous_frame_surface_valid = false;
-static bool trusted_yun_sa3_previous_frame_canvas_valid = false;
-static bool trusted_yun_sa3_frame_skip_scheduled_this_frame = false;
-static bool trusted_yun_sa3_frame_skip_applied_this_frame = false;
+static int sa_bg_cache_frames_remaining = 0;
+static int sa_bg_cache_active_frame_index = 0;
+static bool sa_bg_cache_triggered_this_frame = false;
+static bool sa_bg_cache_was_active = false;
+static bool sa_bg_cache_previous_frame_surface_valid = false;
+static bool sa_bg_cache_previous_frame_canvas_valid = false;
+static bool sa_bg_cache_frame_skip_scheduled_this_frame = false;
+static bool sa_bg_cache_frame_skip_applied_this_frame = false;
+static int sa_bg_cache_grace_frames_remaining = 0;
+#define SA_BG_CACHE_GRACE_PERIOD_FRAMES 15
 #endif
 #if ENABLE_PERF_TELEMETRY
-typedef struct SDLGameRenderer_PerfCaptureTrustedYunSA3BurstEffectSample {
+typedef struct SDLGameRenderer_PerfCaptureSABurstEffectSample {
     int texture_handle;
     int palette_handle;
     Uint32 source_format;
@@ -145,12 +146,12 @@ typedef struct SDLGameRenderer_PerfCaptureTrustedYunSA3BurstEffectSample {
     Uint64 task_count;
     Uint64 submitted_pixels;
     Uint64 sampled_ns;
-} SDLGameRenderer_PerfCaptureTrustedYunSA3BurstEffectSample;
+} SDLGameRenderer_PerfCaptureSABurstEffectSample;
 
-extern int SDLGameRenderer_GetPerfCaptureTrustedYunSA3BurstEffectSamples(
-    SDLGameRenderer_PerfCaptureTrustedYunSA3BurstEffectSample* out_samples,
+extern int SDLGameRenderer_GetPerfCaptureSABurstEffectSamples(
+    SDLGameRenderer_PerfCaptureSABurstEffectSample* out_samples,
     int max_samples);
-extern void SDLGameRenderer_GetPerfCaptureTrustedYunSA3BurstEffectSampleTotals(Uint64* out_task_total,
+extern void SDLGameRenderer_GetPerfCaptureSABurstEffectSampleTotals(Uint64* out_task_total,
                                                                                Uint64* out_pixel_total,
                                                                                Uint64* out_sampled_ns_total,
                                                                                int* out_sample_count);
@@ -310,12 +311,12 @@ static Uint64 perf_super_art_active_frames[2] = { 0 };
 static int perf_super_art_active_first_frame[2] = { -1, -1 };
 static Uint64 perf_super_art_active_starts[2] = { 0 };
 static bool perf_super_art_active_was_active[2] = { false, false };
-static Uint64 perf_trusted_yun_sa3_burst_triggers_total = 0;
-static int perf_trusted_yun_sa3_burst_first_trigger_frame = -1;
-static Uint64 perf_trusted_yun_sa3_frame_skip_scheduled_total = 0;
-static int perf_trusted_yun_sa3_frame_skip_first_scheduled_frame = -1;
-static Uint64 perf_trusted_yun_sa3_frame_skip_applied_total = 0;
-static int perf_trusted_yun_sa3_frame_skip_first_applied_frame = -1;
+static Uint64 perf_sa_bg_cache_triggers_total = 0;
+static int perf_sa_bg_cache_first_trigger_frame = -1;
+static Uint64 perf_sa_bg_cache_frame_skip_scheduled_total = 0;
+static int perf_sa_bg_cache_frame_skip_first_scheduled_frame = -1;
+static Uint64 perf_sa_bg_cache_frame_skip_applied_total = 0;
+static int perf_sa_bg_cache_frame_skip_first_applied_frame = -1;
 static Uint64 perf_metamorphose_active_frames[2] = { 0 };
 static int perf_metamorphose_active_first_frame[2] = { -1, -1 };
 static int perf_capture_start_g_no[4] = { 0, 0, 0, 0 };
@@ -1043,22 +1044,22 @@ static void note_perf_capture_test_state(int frame_index) {
     note_perf_capture_title_state(frame_index);
     note_perf_capture_demo_logo_state(frame_index);
 #if defined(PORT_MISTER)
-    if (trusted_yun_sa3_burst_triggered_this_frame) {
-        perf_trusted_yun_sa3_burst_triggers_total += 1;
-        if (perf_trusted_yun_sa3_burst_first_trigger_frame < 0) {
-            perf_trusted_yun_sa3_burst_first_trigger_frame = frame_index;
+    if (sa_bg_cache_triggered_this_frame) {
+        perf_sa_bg_cache_triggers_total += 1;
+        if (perf_sa_bg_cache_first_trigger_frame < 0) {
+            perf_sa_bg_cache_first_trigger_frame = frame_index;
         }
     }
-    if (trusted_yun_sa3_frame_skip_scheduled_this_frame) {
-        perf_trusted_yun_sa3_frame_skip_scheduled_total += 1;
-        if (perf_trusted_yun_sa3_frame_skip_first_scheduled_frame < 0) {
-            perf_trusted_yun_sa3_frame_skip_first_scheduled_frame = frame_index;
+    if (sa_bg_cache_frame_skip_scheduled_this_frame) {
+        perf_sa_bg_cache_frame_skip_scheduled_total += 1;
+        if (perf_sa_bg_cache_frame_skip_first_scheduled_frame < 0) {
+            perf_sa_bg_cache_frame_skip_first_scheduled_frame = frame_index;
         }
     }
-    if (trusted_yun_sa3_frame_skip_applied_this_frame) {
-        perf_trusted_yun_sa3_frame_skip_applied_total += 1;
-        if (perf_trusted_yun_sa3_frame_skip_first_applied_frame < 0) {
-            perf_trusted_yun_sa3_frame_skip_first_applied_frame = frame_index;
+    if (sa_bg_cache_frame_skip_applied_this_frame) {
+        perf_sa_bg_cache_frame_skip_applied_total += 1;
+        if (perf_sa_bg_cache_frame_skip_first_applied_frame < 0) {
+            perf_sa_bg_cache_frame_skip_first_applied_frame = frame_index;
         }
     }
 #endif
@@ -1304,12 +1305,12 @@ static void perf_capture_reset_storage(void) {
         perf_metamorphose_active_frames[player] = 0;
         perf_metamorphose_active_first_frame[player] = -1;
     }
-    perf_trusted_yun_sa3_burst_triggers_total = 0;
-    perf_trusted_yun_sa3_burst_first_trigger_frame = -1;
-    perf_trusted_yun_sa3_frame_skip_scheduled_total = 0;
-    perf_trusted_yun_sa3_frame_skip_first_scheduled_frame = -1;
-    perf_trusted_yun_sa3_frame_skip_applied_total = 0;
-    perf_trusted_yun_sa3_frame_skip_first_applied_frame = -1;
+    perf_sa_bg_cache_triggers_total = 0;
+    perf_sa_bg_cache_first_trigger_frame = -1;
+    perf_sa_bg_cache_frame_skip_scheduled_total = 0;
+    perf_sa_bg_cache_frame_skip_first_scheduled_frame = -1;
+    perf_sa_bg_cache_frame_skip_applied_total = 0;
+    perf_sa_bg_cache_frame_skip_first_applied_frame = -1;
     SDL_zero(perf_capture_start_g_no);
     SDL_zero(perf_capture_start_e_no);
     SDL_zero(perf_capture_start_d_no);
@@ -1626,12 +1627,12 @@ void SDLApp_ConfigurePerfCapture(int frame_count,
         perf_metamorphose_active_frames[player] = 0;
         perf_metamorphose_active_first_frame[player] = -1;
     }
-    perf_trusted_yun_sa3_burst_triggers_total = 0;
-    perf_trusted_yun_sa3_burst_first_trigger_frame = -1;
-    perf_trusted_yun_sa3_frame_skip_scheduled_total = 0;
-    perf_trusted_yun_sa3_frame_skip_first_scheduled_frame = -1;
-    perf_trusted_yun_sa3_frame_skip_applied_total = 0;
-    perf_trusted_yun_sa3_frame_skip_first_applied_frame = -1;
+    perf_sa_bg_cache_triggers_total = 0;
+    perf_sa_bg_cache_first_trigger_frame = -1;
+    perf_sa_bg_cache_frame_skip_scheduled_total = 0;
+    perf_sa_bg_cache_frame_skip_first_scheduled_frame = -1;
+    perf_sa_bg_cache_frame_skip_applied_total = 0;
+    perf_sa_bg_cache_frame_skip_first_applied_frame = -1;
     perf_software_frame_mode_enabled_frames = 0;
     perf_software_frame_surface_ready_frames = 0;
     perf_software_frame_owned_frames = 0;
@@ -2236,9 +2237,9 @@ static void io_write_perf_capture_window_fast_non_integer_shared_shapes(
     io_printf(io, "    ]");
 }
 
-static void io_write_perf_capture_trusted_yun_sa3_burst_effect_samples(
+static void io_write_perf_capture_sa_burst_effect_samples(
     SDL_IOStream* io,
-    const SDLGameRenderer_PerfCaptureTrustedYunSA3BurstEffectSample* samples,
+    const SDLGameRenderer_PerfCaptureSABurstEffectSample* samples,
     int sample_count,
     Uint64 task_total,
     Uint64 pixel_total,
@@ -2252,7 +2253,7 @@ static void io_write_perf_capture_trusted_yun_sa3_burst_effect_samples(
 
     io_printf(io, "\n");
     for (int i = 0; i < sample_count; i++) {
-        const SDLGameRenderer_PerfCaptureTrustedYunSA3BurstEffectSample* entry = &samples[i];
+        const SDLGameRenderer_PerfCaptureSABurstEffectSample* entry = &samples[i];
         const double task_ratio = task_total > 0 ? (double)entry->task_count / (double)task_total : 0.0;
         const double pixel_ratio = pixel_total > 0 ? (double)entry->submitted_pixels / (double)pixel_total : 0.0;
         const double sampled_ratio =
@@ -2734,15 +2735,15 @@ static void perf_capture_write_summary(void) {
                                                                     &fast_non_integer_lookup_profile_pixels_total,
                                                                     &fast_non_integer_lookup_profile_sampled_ns_total,
                                                                     NULL);
-    SDLGameRenderer_PerfCaptureTrustedYunSA3BurstEffectSample trusted_yun_sa3_burst_effect_samples[96] = { 0 };
-    const int trusted_yun_sa3_burst_effect_sample_count = SDLGameRenderer_GetPerfCaptureTrustedYunSA3BurstEffectSamples(
-        trusted_yun_sa3_burst_effect_samples, SDL_arraysize(trusted_yun_sa3_burst_effect_samples));
-    Uint64 trusted_yun_sa3_burst_effect_tasks_total = 0;
-    Uint64 trusted_yun_sa3_burst_effect_pixels_total = 0;
-    Uint64 trusted_yun_sa3_burst_effect_sampled_ns_total = 0;
-    SDLGameRenderer_GetPerfCaptureTrustedYunSA3BurstEffectSampleTotals(&trusted_yun_sa3_burst_effect_tasks_total,
-                                                                       &trusted_yun_sa3_burst_effect_pixels_total,
-                                                                       &trusted_yun_sa3_burst_effect_sampled_ns_total,
+    SDLGameRenderer_PerfCaptureSABurstEffectSample sa_burst_effect_samples[96] = { 0 };
+    const int sa_burst_effect_sample_count = SDLGameRenderer_GetPerfCaptureSABurstEffectSamples(
+        sa_burst_effect_samples, SDL_arraysize(sa_burst_effect_samples));
+    Uint64 sa_burst_effect_tasks_total = 0;
+    Uint64 sa_burst_effect_pixels_total = 0;
+    Uint64 sa_burst_effect_sampled_ns_total = 0;
+    SDLGameRenderer_GetPerfCaptureSABurstEffectSampleTotals(&sa_burst_effect_tasks_total,
+                                                                       &sa_burst_effect_pixels_total,
+                                                                       &sa_burst_effect_sampled_ns_total,
                                                                        NULL);
     Uint64 fast_non_integer_family_sampled_lookup_x_ns_total = 0;
     Uint64 fast_non_integer_family_sampled_lookup_y_ns_total = 0;
@@ -4727,34 +4728,34 @@ static void perf_capture_write_summary(void) {
         io_printf(io, "    \"p1_super_art_active_first_frame\": null,\n");
     }
     io_printf(io,
-              "    \"trusted_yun_sa3_burst_triggers_total\": %llu,\n",
-              (unsigned long long)perf_trusted_yun_sa3_burst_triggers_total);
-    if (perf_trusted_yun_sa3_burst_first_trigger_frame >= 0) {
+              "    \"sa_bg_cache_triggers_total\": %llu,\n",
+              (unsigned long long)perf_sa_bg_cache_triggers_total);
+    if (perf_sa_bg_cache_first_trigger_frame >= 0) {
         io_printf(io,
-                  "    \"trusted_yun_sa3_burst_first_trigger_frame\": %d,\n",
-                  perf_trusted_yun_sa3_burst_first_trigger_frame);
+                  "    \"sa_bg_cache_first_trigger_frame\": %d,\n",
+                  perf_sa_bg_cache_first_trigger_frame);
     } else {
-        io_printf(io, "    \"trusted_yun_sa3_burst_first_trigger_frame\": null,\n");
+        io_printf(io, "    \"sa_bg_cache_first_trigger_frame\": null,\n");
     }
     io_printf(io,
-              "    \"trusted_yun_sa3_frame_skip_scheduled_total\": %llu,\n",
-              (unsigned long long)perf_trusted_yun_sa3_frame_skip_scheduled_total);
-    if (perf_trusted_yun_sa3_frame_skip_first_scheduled_frame >= 0) {
+              "    \"sa_bg_cache_frame_skip_scheduled_total\": %llu,\n",
+              (unsigned long long)perf_sa_bg_cache_frame_skip_scheduled_total);
+    if (perf_sa_bg_cache_frame_skip_first_scheduled_frame >= 0) {
         io_printf(io,
-                  "    \"trusted_yun_sa3_frame_skip_first_scheduled_frame\": %d,\n",
-                  perf_trusted_yun_sa3_frame_skip_first_scheduled_frame);
+                  "    \"sa_bg_cache_frame_skip_first_scheduled_frame\": %d,\n",
+                  perf_sa_bg_cache_frame_skip_first_scheduled_frame);
     } else {
-        io_printf(io, "    \"trusted_yun_sa3_frame_skip_first_scheduled_frame\": null,\n");
+        io_printf(io, "    \"sa_bg_cache_frame_skip_first_scheduled_frame\": null,\n");
     }
     io_printf(io,
-              "    \"trusted_yun_sa3_frame_skip_applied_total\": %llu,\n",
-              (unsigned long long)perf_trusted_yun_sa3_frame_skip_applied_total);
-    if (perf_trusted_yun_sa3_frame_skip_first_applied_frame >= 0) {
+              "    \"sa_bg_cache_frame_skip_applied_total\": %llu,\n",
+              (unsigned long long)perf_sa_bg_cache_frame_skip_applied_total);
+    if (perf_sa_bg_cache_frame_skip_first_applied_frame >= 0) {
         io_printf(io,
-                  "    \"trusted_yun_sa3_frame_skip_first_applied_frame\": %d,\n",
-                  perf_trusted_yun_sa3_frame_skip_first_applied_frame);
+                  "    \"sa_bg_cache_frame_skip_first_applied_frame\": %d,\n",
+                  perf_sa_bg_cache_frame_skip_first_applied_frame);
     } else {
-        io_printf(io, "    \"trusted_yun_sa3_frame_skip_first_applied_frame\": null,\n");
+        io_printf(io, "    \"sa_bg_cache_frame_skip_first_applied_frame\": null,\n");
     }
     io_printf(io,
               "    \"p1_metamorphose_frames_total\": %llu,\n"
@@ -6555,13 +6556,13 @@ static void perf_capture_write_summary(void) {
                                                                   fast_non_integer_lookup_profile_sampled_ns_total,
                                                                   frame_count);
     io_printf(io, ",\n");
-    io_printf(io, "    \"software_frame_trusted_yun_sa3_burst_effect_samples\": ");
-    io_write_perf_capture_trusted_yun_sa3_burst_effect_samples(io,
-                                                               trusted_yun_sa3_burst_effect_samples,
-                                                               trusted_yun_sa3_burst_effect_sample_count,
-                                                               trusted_yun_sa3_burst_effect_tasks_total,
-                                                               trusted_yun_sa3_burst_effect_pixels_total,
-                                                               trusted_yun_sa3_burst_effect_sampled_ns_total,
+    io_printf(io, "    \"software_frame_sa_burst_effect_samples\": ");
+    io_write_perf_capture_sa_burst_effect_samples(io,
+                                                               sa_burst_effect_samples,
+                                                               sa_burst_effect_sample_count,
+                                                               sa_burst_effect_tasks_total,
+                                                               sa_burst_effect_pixels_total,
+                                                               sa_burst_effect_sampled_ns_total,
                                                                frame_count);
     io_printf(io, ",\n");
     io_printf(io, "    \"software_frame_generic_textured_families\": [");
@@ -8812,10 +8813,7 @@ static SDLGameRenderer_SuperEffectQualityMode parse_super_effect_quality_mode(co
     if (raw_mode == NULL) {
         return SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_FULL;
     }
-    if ((SDL_strcasecmp(raw_mode, "cached-bg") == 0) ||
-        (SDL_strcasecmp(raw_mode, "frame-skip") == 0) ||
-        (SDL_strcasecmp(raw_mode, "simplified") == 0) ||
-        (SDL_strcasecmp(raw_mode, "minimal") == 0)) {
+    if (SDL_strcasecmp(raw_mode, "cached-bg") == 0) {
         return SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_CACHED_BG;
     }
     return SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_FULL;
@@ -8823,14 +8821,15 @@ static SDLGameRenderer_SuperEffectQualityMode parse_super_effect_quality_mode(co
 
 static void reset_super_effect_quality_runtime_state(void) {
 #if defined(PORT_MISTER)
-    trusted_yun_sa3_burst_frames_remaining = 0;
-    trusted_yun_sa3_active_frame_index = 0;
-    trusted_yun_sa3_burst_triggered_this_frame = false;
-    trusted_yun_sa3_burst_was_active = false;
-    trusted_yun_sa3_previous_frame_surface_valid = false;
-    trusted_yun_sa3_previous_frame_canvas_valid = false;
-    trusted_yun_sa3_frame_skip_scheduled_this_frame = false;
-    trusted_yun_sa3_frame_skip_applied_this_frame = false;
+    sa_bg_cache_frames_remaining = 0;
+    sa_bg_cache_active_frame_index = 0;
+    sa_bg_cache_triggered_this_frame = false;
+    sa_bg_cache_was_active = false;
+    sa_bg_cache_previous_frame_surface_valid = false;
+    sa_bg_cache_previous_frame_canvas_valid = false;
+    sa_bg_cache_frame_skip_scheduled_this_frame = false;
+    sa_bg_cache_frame_skip_applied_this_frame = false;
+    sa_bg_cache_grace_frames_remaining = 0;
 #endif
 }
 
@@ -8849,67 +8848,67 @@ static void init_super_effect_quality_mode(void) {
 }
 
 #if defined(PORT_MISTER)
-static bool trusted_yun_sa3_frame_skip_mode_enabled(void);
+static bool sa_bg_cache_mode_enabled(void);
 
-static bool trusted_yun_sa3_identity_active(void) {
-    return mpp_w.inGame && (My_char[0] == 3) && (Super_Arts[0] == 2);
-}
-
-static bool trusted_yun_sa3_burst_active_now(void) {
-    if (!trusted_yun_sa3_identity_active()) {
+static bool sa_bg_cache_should_be_active(void) {
+    if (!mpp_w.inGame) {
         return false;
     }
-
-    const bool super_art_active = (plw[0].sa != NULL) && (plw[0].sa->ok == -1);
-    const bool metamorphose_active = plw[0].metamorphose != 0;
-    return super_art_active || metamorphose_active;
+    return sa_stop_check() != 0;
 }
 
-static void update_trusted_yun_sa3_burst_state_for_frame(void) {
-    trusted_yun_sa3_burst_triggered_this_frame = false;
-    trusted_yun_sa3_frame_skip_scheduled_this_frame = false;
-    trusted_yun_sa3_frame_skip_applied_this_frame = false;
-    const bool burst_active = trusted_yun_sa3_burst_active_now();
-    if (burst_active && !trusted_yun_sa3_burst_was_active) {
-        trusted_yun_sa3_burst_frames_remaining = TRUSTED_YUN_SA3_SLOWDOWN_WINDOW_FRAMES;
-        trusted_yun_sa3_active_frame_index = 1;
-        trusted_yun_sa3_burst_triggered_this_frame = true;
-        if (trusted_yun_sa3_frame_skip_mode_enabled()) {
-            backend_logf("Trusted Yun SA3 burst trigger: sa_ok=%d metamorphose=%d active_frame=%d window=%d",
-                         (plw[0].sa != NULL) ? plw[0].sa->ok : 0,
-                         plw[0].metamorphose,
-                         trusted_yun_sa3_active_frame_index,
-                         TRUSTED_YUN_SA3_SLOWDOWN_WINDOW_FRAMES);
+static void update_sa_bg_cache_state_for_frame(void) {
+    sa_bg_cache_triggered_this_frame = false;
+    sa_bg_cache_frame_skip_scheduled_this_frame = false;
+    sa_bg_cache_frame_skip_applied_this_frame = false;
+    const bool sa_stop_active = sa_bg_cache_should_be_active();
+    if (sa_stop_active) {
+        if (!sa_bg_cache_was_active) {
+            /* Fresh activation edge — log trigger. */
+            sa_bg_cache_triggered_this_frame = true;
+            sa_bg_cache_active_frame_index = 1;
+            if (sa_bg_cache_mode_enabled()) {
+                backend_logf("SA bg-cache trigger: sa_stop=%d active_frame=%d",
+                             sa_stop_check(),
+                             sa_bg_cache_active_frame_index);
+            }
+            SDLGameRenderer_InvalidateSABgCache();
+        } else {
+            sa_bg_cache_active_frame_index += 1;
         }
-    } else if (burst_active && (trusted_yun_sa3_burst_frames_remaining > 0)) {
-        trusted_yun_sa3_burst_frames_remaining -= 1;
-        trusted_yun_sa3_active_frame_index += 1;
+        sa_bg_cache_frames_remaining = SA_BG_CACHE_GRACE_PERIOD_FRAMES + 1;
+        sa_bg_cache_grace_frames_remaining = SA_BG_CACHE_GRACE_PERIOD_FRAMES;
+    } else if (sa_bg_cache_grace_frames_remaining > 0) {
+        /* Signal dropped but grace period still active — keep caching
+           through zoom-out transition frames. */
+        sa_bg_cache_frames_remaining = sa_bg_cache_grace_frames_remaining;
+        sa_bg_cache_grace_frames_remaining -= 1;
+        sa_bg_cache_active_frame_index += 1;
     } else {
-        trusted_yun_sa3_burst_frames_remaining = 0;
-        trusted_yun_sa3_active_frame_index = 0;
+        sa_bg_cache_frames_remaining = 0;
+        sa_bg_cache_active_frame_index = 0;
     }
-    trusted_yun_sa3_burst_was_active = burst_active;
-    if (trusted_yun_sa3_burst_triggered_this_frame) {
-        backend_logf("SA3-DIAG burst-trigger: my_char=%d super_arts=%d sa_ok=%d metamorphose=%d remaining=%d quality=%s",
+    sa_bg_cache_was_active = sa_stop_active;
+    if (sa_bg_cache_triggered_this_frame) {
+        backend_logf("SA-DIAG cache-trigger: my_char=%d super_arts=%d sa_stop=%d remaining=%d quality=%s",
                      mpp_w.inGame ? (int)My_char[0] : -1,
                      mpp_w.inGame ? (int)Super_Arts[0] : -1,
-                     (plw[0].sa != NULL) ? plw[0].sa->ok : 0,
-                     plw[0].metamorphose,
-                     trusted_yun_sa3_burst_frames_remaining,
+                     sa_stop_check(),
+                     sa_bg_cache_frames_remaining,
                      super_effect_quality_mode_name(super_effect_quality_mode));
     }
 }
 #else
-static void update_trusted_yun_sa3_burst_state_for_frame(void) {
+static void update_sa_bg_cache_state_for_frame(void) {
 }
 #endif
 
 #if defined(PORT_MISTER)
-static bool trusted_yun_sa3_frame_skip_mode_enabled(void) {
+static bool sa_bg_cache_mode_enabled(void) {
     return super_effect_quality_mode == SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_CACHED_BG;
 }
 
-static bool trusted_yun_sa3_frame_skip_scheduled_for_frame(void) {
+static bool sa_bg_cache_frame_skip_scheduled_for_frame(void) {
     /* Partial background skip is now handled inside the renderer
        (apply_super_effect_burst_reduction_after_sort) so the app layer
        no longer skips whole frames. */
@@ -8922,31 +8921,31 @@ static SDLGameRenderer_SuperEffectQualityMode current_renderer_super_effect_qual
     return super_effect_quality_mode;
 }
 
-static bool can_reuse_previous_frame_for_trusted_yun_sa3_frame_skip(bool prefer_software_frame_direct_present,
+static bool can_reuse_previous_frame_for_sa_bg_cache(bool prefer_software_frame_direct_present,
                                                                     bool has_message_content) {
-    if (!trusted_yun_sa3_frame_skip_mode_enabled() || should_save_screenshot) {
+    if (!sa_bg_cache_mode_enabled() || should_save_screenshot) {
         return false;
     }
 
     if (use_native_render_path) {
-        if (prefer_software_frame_direct_present && trusted_yun_sa3_previous_frame_surface_valid && !has_message_content) {
+        if (prefer_software_frame_direct_present && sa_bg_cache_previous_frame_surface_valid && !has_message_content) {
             return true;
         }
-        return trusted_yun_sa3_previous_frame_canvas_valid;
+        return sa_bg_cache_previous_frame_canvas_valid;
     }
 
-    return trusted_yun_sa3_previous_frame_canvas_valid;
+    return sa_bg_cache_previous_frame_canvas_valid;
 }
 #else
 static SDLGameRenderer_SuperEffectQualityMode current_renderer_super_effect_quality_mode(void) {
     return super_effect_quality_mode;
 }
 
-static bool trusted_yun_sa3_frame_skip_scheduled_for_frame(void) {
+static bool sa_bg_cache_frame_skip_scheduled_for_frame(void) {
     return false;
 }
 
-static bool can_reuse_previous_frame_for_trusted_yun_sa3_frame_skip(bool prefer_software_frame_direct_present,
+static bool can_reuse_previous_frame_for_sa_bg_cache(bool prefer_software_frame_direct_present,
                                                                     bool has_message_content) {
     (void)prefer_software_frame_direct_present;
     (void)has_message_content;
@@ -9149,7 +9148,7 @@ int SDLApp_Init() {
     SDLGameRenderer_Init(renderer);
     SDLGameRenderer_SetSoftwareFrameMode(software_frame_mode_enabled);
     SDLGameRenderer_SetSuperEffectQualityMode(current_renderer_super_effect_quality_mode());
-    SDLGameRenderer_SetTrustedYunSA3BurstFramesRemaining(0);
+    SDLGameRenderer_SetSABgCacheFramesRemaining(0);
     backend_logf("Software frame mode: %s", software_frame_mode_name());
     backend_logf("Super effect quality: %s", super_effect_quality_mode_name(super_effect_quality_mode));
 
@@ -9489,31 +9488,31 @@ void SDLApp_EndFrame() {
         !should_save_screenshot;
     bool current_frame_surface_valid = false;
     bool current_frame_canvas_valid = false;
-    update_trusted_yun_sa3_burst_state_for_frame();
-    const bool frame_skip_scheduled = trusted_yun_sa3_frame_skip_scheduled_for_frame();
+    update_sa_bg_cache_state_for_frame();
+    const bool frame_skip_scheduled = sa_bg_cache_frame_skip_scheduled_for_frame();
     const bool skip_burst_render =
         frame_skip_scheduled &&
-        can_reuse_previous_frame_for_trusted_yun_sa3_frame_skip(prefer_software_frame_direct_present, has_message_content);
+        can_reuse_previous_frame_for_sa_bg_cache(prefer_software_frame_direct_present, has_message_content);
 #if defined(PORT_MISTER)
-    trusted_yun_sa3_frame_skip_scheduled_this_frame = frame_skip_scheduled;
-    trusted_yun_sa3_frame_skip_applied_this_frame = skip_burst_render;
-    if (frame_skip_scheduled && trusted_yun_sa3_frame_skip_mode_enabled()) {
-        backend_logf("Trusted Yun SA3 frame-skip: scheduled frame=%llu active_frame=%d apply=%d direct_present=%d prev_surface=%d prev_canvas=%d message=%d screenshot=%d",
+    sa_bg_cache_frame_skip_scheduled_this_frame = frame_skip_scheduled;
+    sa_bg_cache_frame_skip_applied_this_frame = skip_burst_render;
+    if (frame_skip_scheduled && sa_bg_cache_mode_enabled()) {
+        backend_logf("SA bg-cache frame-skip: scheduled frame=%llu active_frame=%d apply=%d direct_present=%d prev_surface=%d prev_canvas=%d message=%d screenshot=%d",
                      (unsigned long long)frame_counter,
-                     trusted_yun_sa3_active_frame_index,
+                     sa_bg_cache_active_frame_index,
                      skip_burst_render ? 1 : 0,
                      prefer_software_frame_direct_present ? 1 : 0,
-                     trusted_yun_sa3_previous_frame_surface_valid ? 1 : 0,
-                     trusted_yun_sa3_previous_frame_canvas_valid ? 1 : 0,
+                     sa_bg_cache_previous_frame_surface_valid ? 1 : 0,
+                     sa_bg_cache_previous_frame_canvas_valid ? 1 : 0,
                      has_message_content ? 1 : 0,
                      should_save_screenshot ? 1 : 0);
     }
 #endif
     SDLGameRenderer_SetSuperEffectQualityMode(current_renderer_super_effect_quality_mode());
 #if defined(PORT_MISTER)
-    SDLGameRenderer_SetTrustedYunSA3BurstFramesRemaining(trusted_yun_sa3_burst_frames_remaining);
+    SDLGameRenderer_SetSABgCacheFramesRemaining(sa_bg_cache_frames_remaining);
 #else
-    SDLGameRenderer_SetTrustedYunSA3BurstFramesRemaining(0);
+    SDLGameRenderer_SetSABgCacheFramesRemaining(0);
 #endif
     SDLGameRenderer_SetSoftwareFrameDirectPresentMode(prefer_software_frame_direct_present);
     const SDL_Surface* reusable_software_frame_surface = NULL;
@@ -9561,7 +9560,7 @@ void SDLApp_EndFrame() {
         }
         const bool use_fbdev_software_frame_direct =
             prefer_software_frame_direct_present &&
-            (skip_burst_render ? trusted_yun_sa3_previous_frame_surface_valid : SDLGameRenderer_HasSoftwareOwnedFrame());
+            (skip_burst_render ? sa_bg_cache_previous_frame_surface_valid : SDLGameRenderer_HasSoftwareOwnedFrame());
         const bool use_fbdev_native_direct_target =
             fbdev_presenter_enabled && use_fbdev_only_present && !has_message_content && !force_full_fbdev_readback &&
             !use_fbdev_software_frame_direct && !skip_burst_render;
@@ -9704,8 +9703,8 @@ void SDLApp_EndFrame() {
     if (!skip_burst_render) {
         SDLGameRenderer_UpdatePreviousFrameSnapshot(current_frame_surface_valid,
                                                    current_frame_canvas_valid,
-                                                   &trusted_yun_sa3_previous_frame_surface_valid,
-                                                   &trusted_yun_sa3_previous_frame_canvas_valid);
+                                                   &sa_bg_cache_previous_frame_surface_valid,
+                                                   &sa_bg_cache_previous_frame_canvas_valid);
     }
 #else
     (void)current_frame_surface_valid;

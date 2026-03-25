@@ -47,11 +47,12 @@
 ## Burst Detection (Port Layer)
 
 ### State Tracking (`src/port/sdl/sdl_app.c`)
-- `trusted_yun_sa3_burst_active_now()` — checks `(plw[0].sa->ok == -1) || plw[0].metamorphose != 0`
-- `update_trusted_yun_sa3_burst_state_for_frame()` — fires each frame in `SDLApp_EndFrame()`
-- On activation (false→true transition): sets `trusted_yun_sa3_burst_frames_remaining = 82`
-- Decremented each frame while burst remains active
-- Logs `SA3-DIAG burst-trigger` once per activation
+- `sa_bg_cache_should_be_active()` — returns `sa_stop_check() != 0` (universal for all characters and all super arts)
+- `update_sa_bg_cache_state_for_frame()` — fires each frame in `SDLApp_EndFrame()`
+- On activation (false→true transition): sets `sa_bg_cache_triggered_this_frame`, calls `SDLGameRenderer_InvalidateSABgCache()` to force a fresh background snapshot
+- While `sa_stop_check()` is active: `sa_bg_cache_frames_remaining = SA_BG_CACHE_GRACE_PERIOD_FRAMES + 1`
+- After signal drops: grace period of ~15 frames covers zoom-out transition
+- Logs `SA-DIAG cache-trigger` once per activation
 
 ### Quality Modes
 - Config key: `super-effect-quality` (default: `full`)
@@ -139,31 +140,31 @@ Cache the rendered background surface once on the first burst frame. For all sub
 ### Architecture Overview
 
 ```
-Frame N (first burst frame — full render + snapshot):
+Frame N (first SA activation frame — full render + snapshot):
   ┌─────────────────────────────────────────────┐
   │ render_tasks[] (Z-sorted, low Z at index 0) │
   │ ┌─────────────────┐                         │
   │ │ BG tiles (pal≥256) │ ← rendered normally  │
   │ └─────────────────┘                         │
   │         ↓ mid-render snapshot here           │
-  │         ↓ memcpy surface → sa3_burst_saved   │
+  │         ↓ memcpy surface → sa_bg_cache       │
   │ ┌─────────────────┐                         │
   │ │ Chars/FX/HUD    │ ← rendered on top       │
   │ └─────────────────┘                         │
   └─────────────────────────────────────────────┘
 
-Frames N+1..N+81 (cached restore + fresh upper layers):
+Subsequent frames while sa_stop_check() active + grace period:
   ┌─────────────────────────────────────────────┐
-  │ 1. Restore sa3_burst_saved → surface        │
+  │ 1. Restore sa_bg_cache → surface            │
   │    (memcpy if no zoom/scroll change,        │
   │     scaled blit if zoom or scroll changed)  │
   │ 2. Drop BG tasks from render_tasks[]        │
   │ 3. Render chars/effects/HUD fresh at 60fps  │
   └─────────────────────────────────────────────┘
 
-Burst end (frames_remaining hits 0):
+Cache end (sa_stop_check() == 0 and grace period expired):
   ┌─────────────────────────────────────────────┐
-  │ sa3_burst_saved_surface_valid = false        │
+  │ sa_bg_cache_surface_valid = false            │
   │ Normal full rendering resumes               │
   └─────────────────────────────────────────────┘
 ```
@@ -173,12 +174,12 @@ Burst end (frames_remaining hits 0):
 #### Static State Variables (line ~131)
 
 ```c
-static SDL_Surface* sa3_burst_saved_surface = NULL;      /* Cached background pixels (384x224 ARGB8888) */
-static bool sa3_burst_saved_surface_valid = false;        /* True once snapshot has been taken */
-static int sa3_burst_save_snapshot_at_index = -1;         /* Render task index to trigger mid-render save */
-static float sa3_burst_cached_scr_sc = 1.0f;             /* scr_sc at time of snapshot */
-static short sa3_burst_cached_adgjust_x = 0;             /* scrn_adgjust_x at time of snapshot */
-static short sa3_burst_cached_adgjust_y = 0;             /* scrn_adgjust_y at time of snapshot */
+static SDL_Surface* sa_bg_cache_surface = NULL;           /* Cached background pixels (384x224 ARGB8888) */
+static bool sa_bg_cache_surface_valid = false;             /* True once snapshot has been taken */
+static int sa_bg_cache_snapshot_at_index = -1;             /* Render task index to trigger mid-render save */
+static float sa_bg_cache_saved_scr_sc = 1.0f;             /* scr_sc at time of snapshot */
+static short sa_bg_cache_saved_adgjust_x = 0;             /* scrn_adgjust_x at time of snapshot */
+static short sa_bg_cache_saved_adgjust_y = 0;             /* scrn_adgjust_y at time of snapshot */
 ```
 
 #### External Declarations (line ~10)
@@ -192,15 +193,15 @@ extern short scrn_adgjust_y;  /* from bg_data.h — zoom scroll Y compensation *
 
 `scrn_adgjust_x/y` are declared directly via `extern` rather than `#include "bg_data.h"` to avoid pulling in bg_data.h's deep dependency chain (bg.h → types.h → ...).
 
-#### Surface Allocator: `ensure_sa3_burst_saved_surface()` (line ~3373)
+#### Surface Allocator: `ensure_sa_bg_cache_surface()` (line ~3373)
 
 Lazy-allocates a 384x224 ARGB8888 SDL_Surface matching `software_frame_surface`. Called once; the surface persists for the lifetime of the process.
 
 ```c
-static bool ensure_sa3_burst_saved_surface(void) {
-    if (sa3_burst_saved_surface != NULL) return true;
-    sa3_burst_saved_surface = SDL_CreateSurface(cps3_width, cps3_height, SDL_PIXELFORMAT_ARGB8888);
-    return sa3_burst_saved_surface != NULL;
+static bool ensure_sa_bg_cache_surface(void) {
+    if (sa_bg_cache_surface != NULL) return true;
+    sa_bg_cache_surface = SDL_CreateSurface(cps3_width, cps3_height, SDL_PIXELFORMAT_ARGB8888);
+    return sa_bg_cache_surface != NULL;
 }
 ```
 
@@ -211,7 +212,7 @@ Called after `compare_render_tasks` sort, before `render_frame_to_software_surfa
 **Step 1 — Gate checks:**
 ```c
 if ((super_effect_quality_mode != SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_CACHED_BG) ||
-    (trusted_yun_sa3_burst_frames_remaining <= 0) || (render_task_count <= 1))
+    (sa_bg_cache_frames_remaining <= 0) || (render_task_count <= 1))
     return;
 ```
 
@@ -233,28 +234,28 @@ for (int i = 0; i < render_task_count; i++) {
 
 **Why contiguous-from-bottom?** Some stages have foreground decorative elements that also use palette >= 256, but these appear at HIGH Z values (top of the array, interleaved with HUD). Stopping at the first non-background textured task ensures we only cache the actual background slab, not foreground stage elements.
 
-**Step 3 — First burst frame (no cache yet):**
+**Step 3 — First activation frame (no cache yet):**
 
-Let the full render proceed normally. Set `sa3_burst_save_snapshot_at_index = bg_end` to trigger a mid-render surface copy. Record the current zoom/scroll state for later delta computation.
+Let the full render proceed normally. Set `sa_bg_cache_snapshot_at_index = bg_end` to trigger a mid-render surface copy. Record the current zoom/scroll state for later delta computation.
 
 ```c
-if (!sa3_burst_saved_surface_valid || sa3_burst_saved_surface == NULL) {
-    sa3_burst_save_snapshot_at_index = bg_end;
-    sa3_burst_cached_scr_sc = scr_sc;
-    sa3_burst_cached_adgjust_x = scrn_adgjust_x;
-    sa3_burst_cached_adgjust_y = scrn_adgjust_y;
+if (!sa_bg_cache_surface_valid || sa_bg_cache_surface == NULL) {
+    sa_bg_cache_snapshot_at_index = bg_end;
+    sa_bg_cache_saved_scr_sc = scr_sc;
+    sa_bg_cache_saved_adgjust_x = scrn_adgjust_x;
+    sa_bg_cache_saved_adgjust_y = scrn_adgjust_y;
     return;
 }
 ```
 
-**Step 4 — Subsequent burst frames (cache exists):**
+**Step 4 — Subsequent frames (cache exists):**
 
 Compute scroll/zoom deltas. If nothing changed, fast memcpy. If zoom or scroll changed, use the scaled blit. Then drop all background tasks so the rasterizer only processes characters/effects/HUD.
 
 ```c
-const int scroll_dx = (int)scrn_adgjust_x - (int)sa3_burst_cached_adgjust_x;
-const int scroll_dy = (int)scrn_adgjust_y - (int)sa3_burst_cached_adgjust_y;
-const bool needs_transform = (sa3_burst_cached_scr_sc != scr_sc) ||
+const int scroll_dx = (int)scrn_adgjust_x - (int)sa_bg_cache_saved_adgjust_x;
+const int scroll_dy = (int)scrn_adgjust_y - (int)sa_bg_cache_saved_adgjust_y;
+const bool needs_transform = (sa_bg_cache_saved_scr_sc != scr_sc) ||
                              (scroll_dx != 0) || (scroll_dy != 0);
 /* ... lock, blit (scaled or memcpy), unlock ... */
 
@@ -267,37 +268,37 @@ render_task_count = upper_count;
 
 #### Mid-Render Snapshot in `render_frame_to_software_surface()` (line ~7542)
 
-Inside the main software rasterization loop, after rendering task index `i >= sa3_burst_save_snapshot_at_index`, copy the current surface state to `sa3_burst_saved_surface`. This captures background-only pixels — no character data has been rendered yet.
+Inside the main software rasterization loop, after rendering task index `i >= sa_bg_cache_snapshot_at_index`, copy the current surface state to `sa_bg_cache_surface`. This captures background-only pixels — no character data has been rendered yet.
 
 ```c
-if ((sa3_burst_save_snapshot_at_index >= 0) &&
-    (i >= sa3_burst_save_snapshot_at_index) &&
-    !sa3_burst_saved_surface_valid &&
-    ensure_sa3_burst_saved_surface()) {
-    if (SDL_LockSurface(sa3_burst_saved_surface)) {
-        SDL_memcpy(sa3_burst_saved_surface->pixels,
+if ((sa_bg_cache_snapshot_at_index >= 0) &&
+    (i >= sa_bg_cache_snapshot_at_index) &&
+    !sa_bg_cache_surface_valid &&
+    ensure_sa_bg_cache_surface()) {
+    if (SDL_LockSurface(sa_bg_cache_surface)) {
+        SDL_memcpy(sa_bg_cache_surface->pixels,
                    software_frame_surface->pixels,
                    (size_t)software_frame_surface->pitch * software_frame_surface->h);
-        SDL_UnlockSurface(sa3_burst_saved_surface);
-        sa3_burst_saved_surface_valid = true;
+        SDL_UnlockSurface(sa_bg_cache_surface);
+        sa_bg_cache_surface_valid = true;
     }
-    sa3_burst_save_snapshot_at_index = -1;
+    sa_bg_cache_snapshot_at_index = -1;
 }
 ```
 
-#### Burst End Invalidation in `SDLGameRenderer_SetTrustedYunSA3BurstFramesRemaining()` (line ~8167)
+#### Cache End Invalidation in `SDLGameRenderer_SetSABgCacheFramesRemaining()` / `SDLGameRenderer_InvalidateSABgCache()`
 
-When burst countdown hits zero, invalidate the cache so the next SA3 activation gets a fresh snapshot.
+When frames remaining hits zero, or on re-activation edge, invalidate the cache so a fresh background snapshot is taken.
 
 ```c
-if (trusted_yun_sa3_burst_frames_remaining <= 0) {
-    sa3_burst_saved_surface_valid = false;
+if (sa_bg_cache_frames_remaining <= 0) {
+    sa_bg_cache_surface_valid = false;
 }
 ```
 
 ### Scaled Blit Math Derivation
 
-During SA3 activation, the camera zooms in briefly (`zoom_add` drops below 64, `scr_sc = 64.0 / zoom_add > 1.0`). The game compensates by adjusting scroll offsets (`scrn_adgjust_x/y`) so the camera centers on the player. We need to map pixels from the cached background surface (rendered at one zoom/scroll state) to the current frame's zoom/scroll state.
+During super art activation, the camera zooms in briefly (`zoom_add` drops below 64, `scr_sc = 64.0 / zoom_add > 1.0`). The game compensates by adjusting scroll offsets (`scrn_adgjust_x/y`) so the camera centers on the player. We need to map pixels from the cached background surface (rendered at one zoom/scroll state) to the current frame's zoom/scroll state.
 
 #### The BgMATRIX Transform Chain (`bg.c` line 599-604)
 
@@ -387,7 +388,7 @@ An earlier iteration added a center-screen correction term `(cx - cx * inv_rel)`
 The inner loop uses fixed-point arithmetic for ARM Cortex-A9 performance (no FPU in the hot path):
 
 ```c
-static void sa3_burst_restore_background_scaled(float cached_sc, float current_sc,
+static void sa_bg_cache_restore_background_scaled(float cached_sc, float current_sc,
                                                  int scroll_dx, int scroll_dy) {
     const int w = software_frame_surface->w;       /* 384 */
     const int h = software_frame_surface->h;       /* 224 */
@@ -400,9 +401,9 @@ static void sa3_burst_restore_background_scaled(float cached_sc, float current_s
     const int offset_x_fp = (int)((float)scroll_dx * cached_sc * 65536.0f);
     const int offset_y_fp = (int)((float)scroll_dy * cached_sc * 65536.0f);
 
-    const Uint32* src_pixels = (const Uint32*)sa3_burst_saved_surface->pixels;
+    const Uint32* src_pixels = (const Uint32*)sa_bg_cache_surface->pixels;
     Uint32* dst_pixels = (Uint32*)software_frame_surface->pixels;
-    const int src_pitch4 = sa3_burst_saved_surface->pitch / 4;
+    const int src_pitch4 = sa_bg_cache_surface->pitch / 4;
     const int dst_pitch4 = software_frame_surface->pitch / 4;
 
     for (int y = 0; y < h; y++) {
@@ -493,6 +494,58 @@ Count-delta between baseline and burst frames does NOT reliably identify visual 
 | Drop bottom 50% (v16) | ~60 | — | Full speed, bg removed, effects+char+HUD intact |
 | Thin middle 45% (v15) | ~47 | — | Slight improvement, char slightly garbled |
 | **BG caching + scaled blit** | **~60** | **~0.5ms blit** | **Full speed, all effects intact, zoom correct** |
+
+## Universal SA Detection (IMPLEMENTED — 2026-03-25)
+
+Universal detection using `sa_stop_check()` for ALL supers, ALL characters. Replaces the earlier Yun-SA3-specific hardcoded detection.
+
+### Key Game Signals Discovered
+
+#### Signal 1: `sa->ok == -1` — Universal "Super Art Active"
+
+- **Set in:** `pls03.c` — four call sites within `check_full_gauge_attack()` and `check_sa_exec_check()`
+- **Cleared by:** round/match reset (`plmain.c`, `plmain2.c`, `plcnt.c:clear_super_arts_point`), round-end wipe (`spgauge.c:wipe_check`)
+- **Checked by:** 20+ game subsystems — this is the game's canonical SA activation flag
+- **Per-player:** `plw[0].sa->ok` and `plw[1].sa->ok` are independent
+- **Caveat for timed SAs:** For gauge_type 1 (e.g. Genei-Jin, `dtm = 16384`), stays active for the FULL powered-up duration (hundreds of frames), not just the activation cinematic
+
+#### Signal 2: `sa_stop_flag` / `sa_stop_check()` — Cinematic Freeze Period
+
+- **Set:** `sa_stop_flag = 2` on the opponent by `comm_stop()` in `charset.c:1135` (embedded animation command)
+- **Transitions:** 2 → 1 when hitstop expires (`plmain.c:333`), 1 → 0 when freeze ends
+- **Query:** `sa_stop_check()` (`pls01.c:34`) returns 1 if EITHER player has `sa_stop_flag != 0`
+- **Gates:** opponent movement/animation, round timer, various game subsystems
+- **This precisely captures the cinematic freeze** — the heavy rendering period with screen fills, zoom effects, and flash overlays
+
+### Duration Behavior by SA Type
+
+| SA Type | `sa->ok == -1` Duration | `sa_stop_check()` Duration | Heavy Rendering |
+|---------|------------------------|---------------------------|-----------------|
+| Instant (gauge_type 0) | Full SA animation (60-200+ frames) | Cinematic freeze only | During freeze + some attack frames |
+| Timed (gauge_type 1, e.g. Genei-Jin) | Full powered-up mode (hundreds of frames) | Cinematic freeze only (~80 frames) | Concentrated in freeze period |
+
+### Recommended Detection: `sa_stop_check()` as Primary Gate
+
+Use `sa_stop_check() != 0` as the tight caching window — it precisely captures the cinematic freeze that causes the performance bottleneck. No hardcoded frame count needed.
+
+- **Start caching:** When `sa_stop_check()` transitions from 0 to non-zero
+- **Continue caching:** While `sa_stop_check() != 0`
+- **Grace period:** ~10-15 frames after `sa_stop_check()` returns 0, to cover zoom-out transition
+- **End caching:** After grace period expires, invalidate cache
+
+### Why Background Caching is Safe for ALL Supers
+
+1. Background tile textures loaded once at stage setup, never modified during gameplay
+2. Background palette indices (300+) completely separate from character palettes (0-31)
+3. Palette changes during ANY SA only touch character indices — this is architectural, not Genei-Jin-specific
+4. Existing renderer caching logic (`palette_handle >= 256`, scaled blit math) is already generic
+5. Camera zoom (`scr_sc`, `scrn_adgjust_x/y`) handling already works for any zoom state
+
+### Camera Zoom During SA
+
+- `scr_sc` changes from 1.0 during SA activation (via `Frame_Up`/`Frame_Down` in `bg.c`)
+- Zoom system uses `zoom_add` (default 64, decreases for zoom-in)
+- Not all SAs zoom, but most do — the scaled blit handles both cases
 
 ## Legacy Code State
 
