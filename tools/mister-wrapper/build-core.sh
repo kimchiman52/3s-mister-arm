@@ -152,6 +152,7 @@ end
    "${PROJECT_NAME}" \
    "${TEMPLATE_BASENAME}" \
    "${CONF_STR_TOKEN}"
+
 }
 
 build_project() {

@@ -111,10 +111,12 @@ if [ "${platform}" != "linux/arm/v7" ]; then
     cross_build=1
 fi
 
-rm -rf "${workdir}"
 mkdir -p "${workdir}"
-cd /src
-tar --exclude=.git --exclude=build --exclude=third_party/sdl3/build -cf - . | tar --no-same-owner -xf - -C "${workdir}"
+rsync -a --delete \
+    --exclude='.git/' \
+    --exclude='build/' \
+    --exclude='third_party/sdl3/build/' \
+    /src/ "${workdir}/"
 cd "${workdir}"
 
 export CC="clang-${llvm_version}"

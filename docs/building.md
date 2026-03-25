@@ -1,5 +1,21 @@
 # Build guide
 
+## Choose the target first
+
+Before running any build command, decide whether you are building the desktop app or the MiSTer runtime.
+
+MiSTer default for fresh agents and common host machines:
+
+```bash
+tools/mister/build-game.sh --flavor telemetry
+```
+
+Important:
+- Treat `tools/mister/build-game.sh` as the canonical MiSTer build entry point.
+- Do not start a MiSTer task with the desktop `cmake -B build` flow below.
+- Do not assume `PORT_MISTER=ON` on a non-ARM host produces a deployable MiSTer binary.
+- Use the native ARM Linux MiSTer flow only when the host itself is already native ARM Linux or when you are intentionally debugging outside Docker.
+
 ## Setup
 
 ### Windows
@@ -39,7 +55,7 @@ You should be able to build the project with just Xcode Command Line Tools.
     xcode-select --install
     ```
 
-## Building
+## Desktop Builds
 
 1. Build dependencies
 
@@ -56,6 +72,8 @@ You should be able to build the project with just Xcode Command Line Tools.
     ```
 
 3. Copy from build/application to the desired location
+
+These steps are for desktop builds only. They do not produce MiSTer ARM runtime outputs.
 
 ## MiSTer profile (offline-first)
 

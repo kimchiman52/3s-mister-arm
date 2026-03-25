@@ -23,6 +23,8 @@ tools/mister/build-game.sh --flavor clean
 tools/mister/build-game.sh --flavor both
 ```
 
+If the task is simply "build the MiSTer runtime," stop here and use the helper above. Drop into the manual Docker commands later in this file only when debugging the container/toolchain flow or intentionally changing the build pipeline.
+
 Why this is the default:
 
 - It is the canonical MiSTer Docker build entry point for this repo.

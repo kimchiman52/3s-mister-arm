@@ -137,7 +137,7 @@ deb http://security.debian.org/debian-security bullseye-security main
 deb http://archive.debian.org/debian bullseye-backports main contrib non-free
 EOF_APT
 apt-get update
-apt-get install -y build-essential ca-certificates curl git gpg libasound2-dev make pkg-config
+apt-get install -y build-essential ca-certificates curl git gpg libasound2-dev make pkg-config rsync
 install -d /usr/share/keyrings
 curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | gpg --dearmor --yes -o /usr/share/keyrings/apt.llvm.org.gpg
 rm -f /etc/apt/sources.list.d/llvm-bullseye-*.list
