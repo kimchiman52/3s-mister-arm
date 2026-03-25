@@ -908,21 +908,6 @@ static bool try_setup_textured_rect_task(RenderTask* task,
                                          float s1,
                                          float t1,
                                          Uint32 color);
-static int classify_super_effect_hot_family(const RenderTask* task);
-static bool super_effect_candidate_has_integer_source_subrect(const RenderTask* task,
-                                                              const SDL_Surface* src_surface,
-                                                              bool* out_full_texture_source_rect);
-static bool super_effect_hot_candidate_matches_task(const RenderTask* task,
-                                                    const SDL_Surface* dst_surface,
-                                                    const SDL_Surface* src_surface,
-                                                    SoftwareFrameFastCopyResult fast_copy_result);
-static bool try_build_simplified_super_effect_task(const RenderTask* task,
-                                                   const SDL_Surface* dst_surface,
-                                                   const SDL_Surface* src_surface,
-                                                   SoftwareFrameFastCopyResult fast_copy_result,
-                                                   RenderTask* out_task,
-                                                   SoftwareFrameFastCopyPlan* out_plan,
-                                                   SoftwareFrameFastCopyResult* out_result);
 static void apply_super_effect_burst_reduction_after_sort(void);
 #if ENABLE_PERF_TELEMETRY
 static int get_perf_capture_fast_non_integer_shared_shapes_from_exact_shapes(
@@ -3561,107 +3546,6 @@ static Uint64 render_task_submitted_pixels(const RenderTask* task) {
     return area > 0.0 ? (Uint64)llround(area) : 0;
 }
 
-static int classify_super_effect_hot_family(const RenderTask* task) {
-    if (task == NULL) {
-        return -1;
-    }
-
-    const int tex = LO_16_BITS(task->texture_binding);
-    const int pal = HI_16_BITS(task->texture_binding);
-    /* tex 41 pal 1/5 and tex 14 pal 1/5 are shared with character body overlays —
-       dropping them garbles the player sprite. Only target SA3-exclusive families. */
-    if (tex == 61 && pal == 11) return 0;
-    if (tex == 57 && pal == 397) return 1;
-    return -1;
-}
-
-static bool super_effect_candidate_has_integer_source_subrect(const RenderTask* task,
-                                                              const SDL_Surface* src_surface,
-                                                              bool* out_full_texture_source_rect) {
-    if ((task == NULL) || (src_surface == NULL) || (src_surface->w <= 0) || (src_surface->h <= 0)) {
-        return false;
-    }
-
-    const float src_x_f = task->src_uv_rect.x * (float)src_surface->w;
-    const float src_y_f = task->src_uv_rect.y * (float)src_surface->h;
-    const float src_w_f = task->src_uv_rect.w * (float)src_surface->w;
-    const float src_h_f = task->src_uv_rect.h * (float)src_surface->h;
-    const int src_x = (int)SDL_roundf(src_x_f);
-    const int src_y = (int)SDL_roundf(src_y_f);
-    const int src_w = (int)SDL_roundf(src_w_f);
-    const int src_h = (int)SDL_roundf(src_h_f);
-    if (!nearly_equal(src_x_f, (float)src_x) || !nearly_equal(src_y_f, (float)src_y) ||
-        !nearly_equal(src_w_f, (float)src_w) || !nearly_equal(src_h_f, (float)src_h) || (src_w <= 0) ||
-        (src_h <= 0)) {
-        return false;
-    }
-
-    if (out_full_texture_source_rect != NULL) {
-        *out_full_texture_source_rect =
-            (src_x == 0) && (src_y == 0) && (src_w == src_surface->w) && (src_h == src_surface->h);
-    }
-    return true;
-}
-
-static bool super_effect_hot_candidate_matches_task(const RenderTask* task,
-                                                    const SDL_Surface* dst_surface,
-                                                    const SDL_Surface* src_surface,
-                                                    SoftwareFrameFastCopyResult fast_copy_result) {
-#if !defined(PORT_MISTER)
-    (void)task;
-    (void)dst_surface;
-    (void)src_surface;
-    (void)fast_copy_result;
-    return false;
-#else
-    if ((super_effect_quality_mode == SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_FULL) ||
-        (super_effect_quality_mode == SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_FRAME_SKIP) ||
-        (trusted_yun_sa3_burst_frames_remaining <= 0) || (task == NULL) || (dst_surface == NULL) ||
-        (src_surface == NULL) || (task->type != RENDER_TASK_TYPE_TEXTURED_RECT) || (task->texture == NULL) ||
-        (fast_copy_result != SOFTWARE_FRAME_FAST_COPY_RESULT_NON_INTEGER) ||
-        (classify_super_effect_hot_family(task) < 0) ||
-        (src_surface->format != SDL_PIXELFORMAT_ARGB8888) || (src_surface->w < 64) || (src_surface->h < 64)) {
-        return false;
-    }
-
-    bool full_texture_source_rect = false;
-    return super_effect_candidate_has_integer_source_subrect(task, src_surface, &full_texture_source_rect) &&
-           !full_texture_source_rect;
-#endif
-}
-
-static bool try_build_simplified_super_effect_task(const RenderTask* task,
-                                                   const SDL_Surface* dst_surface,
-                                                   const SDL_Surface* src_surface,
-                                                   SoftwareFrameFastCopyResult fast_copy_result,
-                                                   RenderTask* out_task,
-                                                   SoftwareFrameFastCopyPlan* out_plan,
-                                                   SoftwareFrameFastCopyResult* out_result) {
-    if ((out_task == NULL) || (out_plan == NULL) || (out_result == NULL) ||
-        !super_effect_hot_candidate_matches_task(task, dst_surface, src_surface, fast_copy_result)) {
-        return false;
-    }
-
-    RenderTask simplified_task = *task;
-    simplified_task.dst_rect.x = SDL_roundf(simplified_task.dst_rect.x);
-    simplified_task.dst_rect.y = SDL_roundf(simplified_task.dst_rect.y);
-    simplified_task.dst_rect.w = SDL_roundf(simplified_task.dst_rect.w);
-    simplified_task.dst_rect.h = SDL_roundf(simplified_task.dst_rect.h);
-
-    SoftwareFrameFastCopyPlan simplified_plan = { 0 };
-    const SoftwareFrameFastCopyResult simplified_result =
-        build_software_frame_fast_copy_plan(&simplified_task, dst_surface, src_surface, &simplified_plan);
-    if ((simplified_result != SOFTWARE_FRAME_FAST_COPY_RESULT_EXACT) &&
-        (simplified_result != SOFTWARE_FRAME_FAST_COPY_RESULT_SCALED)) {
-        return false;
-    }
-
-    *out_task = simplified_task;
-    *out_plan = simplified_plan;
-    *out_result = simplified_result;
-    return true;
-}
-
 /* Nearest-neighbor scaled blit from sa3_burst_saved_surface to
    software_frame_surface.  Both surfaces must already be locked.
 
@@ -3732,7 +3616,7 @@ static void apply_super_effect_burst_reduction_after_sort(void) {
        the flashy effects on screen. */
     sa3_burst_save_snapshot_at_index = -1;
 
-    if ((super_effect_quality_mode != SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_FRAME_SKIP) ||
+    if ((super_effect_quality_mode != SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_CACHED_BG) ||
         (trusted_yun_sa3_burst_frames_remaining <= 0) || (render_task_count <= 1)) {
         return;
     }
@@ -6513,13 +6397,7 @@ static bool raster_textured_task_to_software_frame(const RenderTask* task) {
     SoftwareFrameFastCopyPlan fast_copy_plan = { 0 };
     SoftwareFrameFastCopyResult fast_copy_result =
         build_software_frame_fast_copy_plan(task, dst_surface, src_surface, &fast_copy_plan);
-    RenderTask simplified_task;
     const RenderTask* fast_copy_task = task;
-    if ((super_effect_quality_mode != SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_FULL) &&
-        try_build_simplified_super_effect_task(
-            task, dst_surface, src_surface, fast_copy_result, &simplified_task, &fast_copy_plan, &fast_copy_result)) {
-        fast_copy_task = &simplified_task;
-    }
     if ((fast_copy_result == SOFTWARE_FRAME_FAST_COPY_RESULT_EXACT) ||
         (fast_copy_result == SOFTWARE_FRAME_FAST_COPY_RESULT_SCALED)) {
         const SDLGameRenderer_PerfCaptureRasterBucket raster_bucket =

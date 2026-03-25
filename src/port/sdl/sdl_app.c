@@ -8777,12 +8777,8 @@ static const char* software_frame_mode_name(void) {
 
 static const char* super_effect_quality_mode_name(SDLGameRenderer_SuperEffectQualityMode mode) {
     switch (mode) {
-    case SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_SIMPLIFIED:
-        return "simplified";
-    case SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_MINIMAL:
-        return "minimal";
-    case SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_FRAME_SKIP:
-        return "frame-skip";
+    case SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_CACHED_BG:
+        return "cached-bg";
     case SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_FULL:
     default:
         return "full";
@@ -8816,14 +8812,11 @@ static SDLGameRenderer_SuperEffectQualityMode parse_super_effect_quality_mode(co
     if (raw_mode == NULL) {
         return SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_FULL;
     }
-    if (SDL_strcasecmp(raw_mode, "frame-skip") == 0) {
-        return SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_FRAME_SKIP;
-    }
-    if (SDL_strcasecmp(raw_mode, "simplified") == 0) {
-        return SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_SIMPLIFIED;
-    }
-    if (SDL_strcasecmp(raw_mode, "minimal") == 0) {
-        return SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_MINIMAL;
+    if ((SDL_strcasecmp(raw_mode, "cached-bg") == 0) ||
+        (SDL_strcasecmp(raw_mode, "frame-skip") == 0) ||
+        (SDL_strcasecmp(raw_mode, "simplified") == 0) ||
+        (SDL_strcasecmp(raw_mode, "minimal") == 0)) {
+        return SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_CACHED_BG;
     }
     return SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_FULL;
 }
@@ -8843,8 +8836,15 @@ static void reset_super_effect_quality_runtime_state(void) {
 
 static void init_super_effect_quality_mode(void) {
     const char* raw_mode = Config_GetString(CFG_KEY_SUPER_EFFECT_QUALITY);
-    const SDLGameRenderer_SuperEffectQualityMode configured_mode = parse_super_effect_quality_mode(raw_mode);
-    super_effect_quality_mode = configured_mode;
+    if (raw_mode == NULL || raw_mode[0] == '\0') {
+#if defined(PORT_MISTER)
+        super_effect_quality_mode = SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_CACHED_BG;
+#else
+        super_effect_quality_mode = SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_FULL;
+#endif
+    } else {
+        super_effect_quality_mode = parse_super_effect_quality_mode(raw_mode);
+    }
     reset_super_effect_quality_runtime_state();
 }
 
@@ -8906,7 +8906,7 @@ static void update_trusted_yun_sa3_burst_state_for_frame(void) {
 
 #if defined(PORT_MISTER)
 static bool trusted_yun_sa3_frame_skip_mode_enabled(void) {
-    return super_effect_quality_mode == SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_FRAME_SKIP;
+    return super_effect_quality_mode == SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_CACHED_BG;
 }
 
 static bool trusted_yun_sa3_frame_skip_scheduled_for_frame(void) {
@@ -8917,8 +8917,8 @@ static bool trusted_yun_sa3_frame_skip_scheduled_for_frame(void) {
 }
 
 static SDLGameRenderer_SuperEffectQualityMode current_renderer_super_effect_quality_mode(void) {
-    /* Pass FRAME_SKIP through so the renderer can detect it and apply
-       partial background task reduction on alternate burst frames. */
+    /* Pass CACHED_BG through so the renderer can detect it and apply
+       background caching during burst frames. */
     return super_effect_quality_mode;
 }
 
@@ -9041,23 +9041,10 @@ void SDLApp_SetSuperEffectQualityMode(SDLGameRenderer_SuperEffectQualityMode mod
 }
 
 void SDLApp_CycleSuperEffectQualityMode(void) {
-    SDLGameRenderer_SuperEffectQualityMode next_mode = SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_FULL;
-
-    switch (super_effect_quality_mode) {
-    case SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_FULL:
-        next_mode = SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_SIMPLIFIED;
-        break;
-    case SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_SIMPLIFIED:
-        next_mode = SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_MINIMAL;
-        break;
-    case SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_MINIMAL:
-        next_mode = SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_FRAME_SKIP;
-        break;
-    case SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_FRAME_SKIP:
-    default:
-        next_mode = SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_FULL;
-        break;
-    }
+    const SDLGameRenderer_SuperEffectQualityMode next_mode =
+        (super_effect_quality_mode == SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_FULL)
+            ? SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_CACHED_BG
+            : SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_FULL;
 
     SDLApp_SetSuperEffectQualityMode(next_mode);
 }

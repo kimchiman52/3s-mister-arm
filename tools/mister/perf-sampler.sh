@@ -73,7 +73,7 @@ Options:
                          Optional config override for `software-frame-mode` during capture.
   --super-effect-quality <mode>
                          Optional config override for `super-effect-quality` during capture
-                         (`full`, `simplified`, `minimal`, `frame-skip`).
+                         (`full`, `cached-bg`).
                          Perf captures always force `show-fps = false` temporarily so the
                          player-facing HUD does not skew optimization measurements.
   --host <ip-or-host>    MiSTer host (default: $MISTER_HOST or 192.168.1.171).
@@ -156,8 +156,7 @@ is_supported_software_frame_mode() {
 
 is_supported_super_effect_quality() {
     local value="$1"
-    [ "$value" = "full" ] || [ "$value" = "simplified" ] || [ "$value" = "minimal" ] ||
-        [ "$value" = "frame-skip" ]
+    [ "$value" = "full" ] || [ "$value" = "cached-bg" ]
 }
 
 is_supported_scale_mode() {
@@ -753,7 +752,7 @@ if [ -n "$software_frame_mode" ] && ! is_supported_software_frame_mode "$softwar
 fi
 
 if [ -n "$super_effect_quality" ] && ! is_supported_super_effect_quality "$super_effect_quality"; then
-    echo "error: --super-effect-quality must be one of full, simplified, minimal, or frame-skip." >&2
+    echo "error: --super-effect-quality must be one of full or cached-bg." >&2
     exit 2
 fi
 

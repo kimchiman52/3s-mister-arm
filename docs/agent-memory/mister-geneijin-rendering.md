@@ -55,8 +55,8 @@
 
 ### Quality Modes
 - Config key: `super-effect-quality` (default: `full`)
-- `FULL=0` — no reduction, `SIMPLIFIED=1`, `MINIMAL=2` — task dropping, `FRAME_SKIP=3` — background caching
-- Perf sampler passes `--super-effect-quality minimal`
+- `FULL=0` — no reduction, `CACHED_BG=1` — background caching
+- Perf sampler passes `--super-effect-quality cached-bg`
 - OSD toggle cycles through modes
 
 ## Render Task Types
@@ -117,7 +117,7 @@ static SDL_Surface* software_surface_cache[FL_TEXTURE_MAX][FL_PALETTE_MAX + 1];
 
 ---
 
-## Background Caching Fix (SHIPPED — FRAME_SKIP quality mode)
+## Background Caching Fix (SHIPPED — CACHED_BG quality mode)
 
 ### The Problem
 
@@ -210,7 +210,7 @@ Called after `compare_render_tasks` sort, before `render_frame_to_software_surfa
 
 **Step 1 — Gate checks:**
 ```c
-if ((super_effect_quality_mode != SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_FRAME_SKIP) ||
+if ((super_effect_quality_mode != SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_CACHED_BG) ||
     (trusted_yun_sa3_burst_frames_remaining <= 0) || (render_task_count <= 1))
     return;
 ```
@@ -506,7 +506,7 @@ Count-delta between baseline and burst frames does NOT reliably identify visual 
 - `super_effect_exact_burst_keep_cadence_for_mode()` at line ~3767
 - `super_effect_exact_burst_should_drop_for_mode()` at line ~3802
 - `sa3_tint_diagnostic_color()` v1 at line ~3826
-- `classify_super_effect_hot_family()` at line ~3568
+- `classify_super_effect_hot_family()` — removed (was live dead code, not `#if 0`-wrapped)
 
 ## Build & Test
 
@@ -526,5 +526,5 @@ MISTER_PASSWORD=1 tools/mister/perf-sampler.sh \
   --test-scene-preset yun-sa3-repeat \
   --perf-wait-test-phase p1-super-art-active \
   --perf-basic \
-  --super-effect-quality minimal
+  --super-effect-quality cached-bg
 ```

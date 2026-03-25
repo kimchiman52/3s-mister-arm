@@ -53,9 +53,7 @@ typedef enum SDLGameRenderer_TaskSource {
 
 typedef enum SDLGameRenderer_SuperEffectQualityMode {
     SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_FULL = 0,
-    SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_SIMPLIFIED = 1,
-    SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_MINIMAL = 2,
-    SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_FRAME_SKIP = 3,
+    SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_CACHED_BG = 1,
 } SDLGameRenderer_SuperEffectQualityMode;
 
 typedef struct SDLGameRenderer_FrameStats {

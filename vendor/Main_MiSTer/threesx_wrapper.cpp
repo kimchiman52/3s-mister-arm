@@ -74,9 +74,7 @@ enum RuntimeScaleModeMenu
 enum RuntimeSuperEffectQualityMenu
 {
 	kSuperEffectQualityFull = 0,
-	kSuperEffectQualitySimplified,
-	kSuperEffectQualityMinimal,
-	kSuperEffectQualityFrameSkip,
+	kSuperEffectQualityCachedBg,
 	kSuperEffectQualityMenuCount
 };
 
@@ -86,7 +84,7 @@ int g_wrapper_menu_visible = 0;
 int g_wrapper_menu_selected = kMenuResume;
 int g_wrapper_fps_enabled = 0;
 int g_wrapper_scale_mode = kScaleModeAuto;
-int g_wrapper_super_effect_quality = kSuperEffectQualityFull;
+int g_wrapper_super_effect_quality = kSuperEffectQualityCachedBg;
 int g_wrapper_restart_requested = 0;
 int g_wrapper_used_full_user_io_init = 0;
 
@@ -115,7 +113,7 @@ static const RuntimeConfigDefaultEntry kRuntimeGeneratedDefaults[] = {
 	{ "window-height", "240" },
 	{ "scale-mode", "native" },
 	{ "software-frame-mode", "on" },
-	{ "super-effect-quality", "full" },
+	{ "super-effect-quality", "cached-bg" },
 	{ "show-fps", "false" },
 	{ "video-driver-order", "dummy" },
 	{ "render-driver-order", "software" },
@@ -513,21 +511,20 @@ static const char *runtime_scale_mode_config_value(int mode)
 int read_runtime_super_effect_quality_default()
 {
 	char value[64] = {};
-	if (!read_runtime_config_value("super-effect-quality", value, sizeof(value))) return kSuperEffectQualityFull;
+	if (!read_runtime_config_value("super-effect-quality", value, sizeof(value))) return kSuperEffectQualityCachedBg;
 
-	if (!strcasecmp(value, "simplified")) return kSuperEffectQualitySimplified;
-	if (!strcasecmp(value, "minimal")) return kSuperEffectQualityMinimal;
-	if (!strcasecmp(value, "frame-skip")) return kSuperEffectQualityFrameSkip;
-	return kSuperEffectQualityFull;
+	if (!strcasecmp(value, "cached-bg") || !strcasecmp(value, "frame-skip") ||
+	    !strcasecmp(value, "simplified") || !strcasecmp(value, "minimal"))
+		return kSuperEffectQualityCachedBg;
+	if (!strcasecmp(value, "full")) return kSuperEffectQualityFull;
+	return kSuperEffectQualityCachedBg;
 }
 
 const char *runtime_super_effect_quality_label(int mode)
 {
 	switch (mode)
 	{
-	case kSuperEffectQualitySimplified: return "Simplified";
-	case kSuperEffectQualityMinimal: return "Minimal";
-	case kSuperEffectQualityFrameSkip: return "Frame Skip";
+	case kSuperEffectQualityCachedBg: return "Cached BG";
 	default: return "Full";
 	}
 }
@@ -536,9 +533,7 @@ static const char *runtime_super_effect_quality_config_value(int mode)
 {
 	switch (mode)
 	{
-	case kSuperEffectQualitySimplified: return "simplified";
-	case kSuperEffectQualityMinimal: return "minimal";
-	case kSuperEffectQualityFrameSkip: return "frame-skip";
+	case kSuperEffectQualityCachedBg: return "cached-bg";
 	default: return "full";
 	}
 }
