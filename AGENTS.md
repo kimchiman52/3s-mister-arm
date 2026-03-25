@@ -14,6 +14,7 @@
 
 - For MiSTer implementation/iteration work, prefer [`mister-ivrfc-loop`](/Users/sb/.codex/skills/mister-ivrfc-loop/SKILL.md) over the generic [`start-implementation`](/Users/sb/.codex/skills/start-implementation/SKILL.md) flow when the MiSTer-specific loop fits the task.
 - Use [`start-implementation`](/Users/sb/.codex/skills/start-implementation/SKILL.md) for non-MiSTer work or for MiSTer tasks that clearly fall outside the `mister-ivrfc-loop` scope.
+- For MiSTer runtime builds on fresh agents, do not start with a host-local `cmake -B build/mister` flow. Default to `tools/mister/build-game.sh --flavor telemetry` unless the task explicitly needs the clean package or the host is already native ARM Linux.
 - For mature MiSTer perf queues, use [docs/agent-memory/mister-ralph-loop-v2.md](/Users/sb/Developer/3sx-mister/docs/agent-memory/mister-ralph-loop-v2.md) to choose the right loop type (`runtime`, `measurement`, or `workload-fidelity`) before starting another Ralph pass.
 
 ## Memory Index
@@ -32,3 +33,5 @@
 - Load [docs/config.md](/Users/sb/Developer/3sx-mister/docs/config.md) when changing config keys, defaults, or user-facing scale/software-frame behavior.
 - Load [artifacts/mister-port/living-findings.md](/Users/sb/Developer/3sx-mister/artifacts/mister-port/living-findings.md) when you need archived Ralph loop evidence, exact rejection history, or old closeout details; do not treat it as the default working brief for new perf loops.
 - Load [docs/mister-port-plan.md](/Users/sb/Developer/3sx-mister/docs/mister-port-plan.md) when re-evaluating stock MiSTer platform constraints, dependency strategy, or custom-image vs stock-image architecture decisions.
+- Load [docs/agent-memory/mister-geneijin-rendering.md](/Users/sb/Developer/3sx-mister/docs/agent-memory/mister-geneijin-rendering.md) when working on Yun SA3 (Genei-Jin) rendering, effect reduction, burst-window optimization, or investigating what renders the activation visual effects. Permanent reference with game code pointers, confirmed findings, and perf data.
+- Load [docs/agent-memory/mister-sa3-effect-reduction-handoff.md](/Users/sb/Developer/3sx-mister/docs/agent-memory/mister-sa3-effect-reduction-handoff.md) when picking up SA3 effect reduction work mid-session. Temporary handoff doc with dirty code state, what's deployed, and immediate next steps. Delete when diagnostic phase is complete.

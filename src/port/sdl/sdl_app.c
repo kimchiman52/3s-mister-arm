@@ -91,8 +91,8 @@ static bool software_frame_mode_enabled = false;
 static SDLGameRenderer_SuperEffectQualityMode super_effect_quality_mode =
     SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_FULL;
 #if defined(PORT_MISTER)
-// Trigger-inclusive repeat-pressure captures keep the trusted Yun SA3 active burst at 124 frames.
-static const int TRUSTED_YUN_SA3_SLOWDOWN_WINDOW_FRAMES = 124;
+// The active super lasts longer, but the player-visible slowdown burst is still conservatively capped here.
+static const int TRUSTED_YUN_SA3_SLOWDOWN_WINDOW_FRAMES = 82;
 static int trusted_yun_sa3_burst_frames_remaining = 0;
 static int trusted_yun_sa3_active_frame_index = 0;
 static bool trusted_yun_sa3_burst_triggered_this_frame = false;
@@ -103,6 +103,58 @@ static bool trusted_yun_sa3_frame_skip_scheduled_this_frame = false;
 static bool trusted_yun_sa3_frame_skip_applied_this_frame = false;
 #endif
 #if ENABLE_PERF_TELEMETRY
+typedef struct SDLGameRenderer_PerfCaptureTrustedYunSA3BurstEffectSample {
+    int texture_handle;
+    int palette_handle;
+    Uint32 source_format;
+    int source_width;
+    int source_height;
+    int logical_identity_known;
+    int logical_identity_mixed;
+    Uint32 logical_identity_registrations;
+    SDLGameRenderer_TextureLogicalSourceKind logical_source_kind;
+    int logical_ix_num;
+    int logical_ix_num_first;
+    int logical_slot_index;
+    int logical_chunk_index;
+    int logical_texture_total;
+    int alpha_only;
+    int rgb_mod;
+    int opaque_color;
+    int clipped;
+    int flip_h;
+    int flip_v;
+    int source_x;
+    int source_y;
+    int source_w;
+    int source_h;
+    int visible_w;
+    int visible_h;
+    int center_x;
+    int center_y;
+    int dst_w;
+    int dst_h;
+    float raw_dst_x_first;
+    float raw_dst_y_first;
+    float raw_dst_w_first;
+    float raw_dst_h_first;
+    float raw_dst_x_last;
+    float raw_dst_y_last;
+    float raw_dst_w_last;
+    float raw_dst_h_last;
+    Uint64 task_count;
+    Uint64 submitted_pixels;
+    Uint64 sampled_ns;
+} SDLGameRenderer_PerfCaptureTrustedYunSA3BurstEffectSample;
+
+extern int SDLGameRenderer_GetPerfCaptureTrustedYunSA3BurstEffectSamples(
+    SDLGameRenderer_PerfCaptureTrustedYunSA3BurstEffectSample* out_samples,
+    int max_samples);
+extern void SDLGameRenderer_GetPerfCaptureTrustedYunSA3BurstEffectSampleTotals(Uint64* out_task_total,
+                                                                               Uint64* out_pixel_total,
+                                                                               Uint64* out_sampled_ns_total,
+                                                                               int* out_sample_count);
+
 typedef struct PerfCaptureDemoLogoState {
     int effect_index;
     int routine2;
@@ -2184,6 +2236,103 @@ static void io_write_perf_capture_window_fast_non_integer_shared_shapes(
     io_printf(io, "    ]");
 }
 
+static void io_write_perf_capture_trusted_yun_sa3_burst_effect_samples(
+    SDL_IOStream* io,
+    const SDLGameRenderer_PerfCaptureTrustedYunSA3BurstEffectSample* samples,
+    int sample_count,
+    Uint64 task_total,
+    Uint64 pixel_total,
+    Uint64 sampled_ns_total,
+    double frame_count) {
+    io_printf(io, "[");
+    if ((samples == NULL) || (sample_count <= 0)) {
+        io_printf(io, "]");
+        return;
+    }
+
+    io_printf(io, "\n");
+    for (int i = 0; i < sample_count; i++) {
+        const SDLGameRenderer_PerfCaptureTrustedYunSA3BurstEffectSample* entry = &samples[i];
+        const double task_ratio = task_total > 0 ? (double)entry->task_count / (double)task_total : 0.0;
+        const double pixel_ratio = pixel_total > 0 ? (double)entry->submitted_pixels / (double)pixel_total : 0.0;
+        const double sampled_ratio =
+            sampled_ns_total > 0 ? (double)entry->sampled_ns / (double)sampled_ns_total : 0.0;
+        const double sampled_total_ms = (double)entry->sampled_ns / 1e6;
+        const double sampled_mean_ms = entry->task_count > 0 ? sampled_total_ms / (double)entry->task_count : 0.0;
+
+        io_printf(io,
+                  "      {\"texture_handle\": %d, \"palette_handle\": %d, "
+                  "\"source_format\": \"%s\", \"source_width\": %d, \"source_height\": %d, "
+                  "\"logical_identity_known\": %s, \"logical_identity_mixed\": %s, "
+                  "\"logical_identity_registrations_total\": %u, \"logical_source_kind\": \"%s\", "
+                  "\"logical_ix_num\": %d, \"logical_ix_num_first\": %d, "
+                  "\"logical_slot_index\": %d, \"logical_chunk_index\": %d, \"logical_texture_total\": %d, "
+                  "\"alpha_only\": %s, \"rgb_mod\": %s, \"opaque_color\": %s, "
+                  "\"clipped\": %s, \"flip_h\": %s, \"flip_v\": %s, "
+                  "\"source_rect_x\": %d, \"source_rect_y\": %d, "
+                  "\"source_rect_w\": %d, \"source_rect_h\": %d, "
+                  "\"visible_w\": %d, \"visible_h\": %d, "
+                  "\"center_x\": %d, \"center_y\": %d, \"dst_w\": %d, \"dst_h\": %d, "
+                  "\"task_count_total\": %llu, \"task_count_mean\": %.4f, \"task_ratio\": %.6f, "
+                  "\"submitted_pixels_total\": %llu, \"submitted_pixels_mean\": %.2f, "
+                  "\"submitted_pixel_ratio\": %.6f, "
+                  "\"sampled_total_ms\": %.4f, \"sampled_mean_ms\": %.6f, \"sampled_ratio\": %.6f, "
+                  "\"raw_dst_x_first\": %.3f, \"raw_dst_y_first\": %.3f, "
+                  "\"raw_dst_w_first\": %.3f, \"raw_dst_h_first\": %.3f, "
+                  "\"raw_dst_x_last\": %.3f, \"raw_dst_y_last\": %.3f, "
+                  "\"raw_dst_w_last\": %.3f, \"raw_dst_h_last\": %.3f}%s\n",
+                  entry->texture_handle,
+                  entry->palette_handle,
+                  pixel_format_name_safe(entry->source_format),
+                  entry->source_width,
+                  entry->source_height,
+                  entry->logical_identity_known ? "true" : "false",
+                  entry->logical_identity_mixed ? "true" : "false",
+                  entry->logical_identity_registrations,
+                  texture_logical_source_kind_name(entry->logical_source_kind),
+                  entry->logical_ix_num,
+                  entry->logical_ix_num_first,
+                  entry->logical_slot_index,
+                  entry->logical_chunk_index,
+                  entry->logical_texture_total,
+                  entry->alpha_only ? "true" : "false",
+                  entry->rgb_mod ? "true" : "false",
+                  entry->opaque_color ? "true" : "false",
+                  entry->clipped ? "true" : "false",
+                  entry->flip_h ? "true" : "false",
+                  entry->flip_v ? "true" : "false",
+                  entry->source_x,
+                  entry->source_y,
+                  entry->source_w,
+                  entry->source_h,
+                  entry->visible_w,
+                  entry->visible_h,
+                  entry->center_x,
+                  entry->center_y,
+                  entry->dst_w,
+                  entry->dst_h,
+                  (unsigned long long)entry->task_count,
+                  frame_count > 0.0 ? (double)entry->task_count / frame_count : 0.0,
+                  task_ratio,
+                  (unsigned long long)entry->submitted_pixels,
+                  frame_count > 0.0 ? (double)entry->submitted_pixels / frame_count : 0.0,
+                  pixel_ratio,
+                  sampled_total_ms,
+                  sampled_mean_ms,
+                  sampled_ratio,
+                  entry->raw_dst_x_first,
+                  entry->raw_dst_y_first,
+                  entry->raw_dst_w_first,
+                  entry->raw_dst_h_first,
+                  entry->raw_dst_x_last,
+                  entry->raw_dst_y_last,
+                  entry->raw_dst_w_last,
+                  entry->raw_dst_h_last,
+                  (i + 1) < sample_count ? "," : "");
+    }
+    io_printf(io, "    ]");
+}
+
 static void io_write_perf_capture_window_fast_non_integer_lookup_profiles(
     SDL_IOStream* io,
     const SDLGameRenderer_PerfCaptureFastNonIntegerLookupProfile* profiles,
@@ -2585,6 +2734,16 @@ static void perf_capture_write_summary(void) {
                                                                     &fast_non_integer_lookup_profile_pixels_total,
                                                                     &fast_non_integer_lookup_profile_sampled_ns_total,
                                                                     NULL);
+    SDLGameRenderer_PerfCaptureTrustedYunSA3BurstEffectSample trusted_yun_sa3_burst_effect_samples[96] = { 0 };
+    const int trusted_yun_sa3_burst_effect_sample_count = SDLGameRenderer_GetPerfCaptureTrustedYunSA3BurstEffectSamples(
+        trusted_yun_sa3_burst_effect_samples, SDL_arraysize(trusted_yun_sa3_burst_effect_samples));
+    Uint64 trusted_yun_sa3_burst_effect_tasks_total = 0;
+    Uint64 trusted_yun_sa3_burst_effect_pixels_total = 0;
+    Uint64 trusted_yun_sa3_burst_effect_sampled_ns_total = 0;
+    SDLGameRenderer_GetPerfCaptureTrustedYunSA3BurstEffectSampleTotals(&trusted_yun_sa3_burst_effect_tasks_total,
+                                                                       &trusted_yun_sa3_burst_effect_pixels_total,
+                                                                       &trusted_yun_sa3_burst_effect_sampled_ns_total,
+                                                                       NULL);
     Uint64 fast_non_integer_family_sampled_lookup_x_ns_total = 0;
     Uint64 fast_non_integer_family_sampled_lookup_y_ns_total = 0;
     Uint64 fast_non_integer_family_sampled_pair_lookup_ns_total = 0;
@@ -6396,6 +6555,15 @@ static void perf_capture_write_summary(void) {
                                                                   fast_non_integer_lookup_profile_sampled_ns_total,
                                                                   frame_count);
     io_printf(io, ",\n");
+    io_printf(io, "    \"software_frame_trusted_yun_sa3_burst_effect_samples\": ");
+    io_write_perf_capture_trusted_yun_sa3_burst_effect_samples(io,
+                                                               trusted_yun_sa3_burst_effect_samples,
+                                                               trusted_yun_sa3_burst_effect_sample_count,
+                                                               trusted_yun_sa3_burst_effect_tasks_total,
+                                                               trusted_yun_sa3_burst_effect_pixels_total,
+                                                               trusted_yun_sa3_burst_effect_sampled_ns_total,
+                                                               frame_count);
+    io_printf(io, ",\n");
     io_printf(io, "    \"software_frame_generic_textured_families\": [");
     if (generic_textured_family_count > 0) {
         io_printf(io, "\n");
@@ -8721,6 +8889,15 @@ static void update_trusted_yun_sa3_burst_state_for_frame(void) {
         trusted_yun_sa3_active_frame_index = 0;
     }
     trusted_yun_sa3_burst_was_active = burst_active;
+    if (trusted_yun_sa3_burst_triggered_this_frame) {
+        backend_logf("SA3-DIAG burst-trigger: my_char=%d super_arts=%d sa_ok=%d metamorphose=%d remaining=%d quality=%s",
+                     mpp_w.inGame ? (int)My_char[0] : -1,
+                     mpp_w.inGame ? (int)Super_Arts[0] : -1,
+                     (plw[0].sa != NULL) ? plw[0].sa->ok : 0,
+                     plw[0].metamorphose,
+                     trusted_yun_sa3_burst_frames_remaining,
+                     super_effect_quality_mode_name(super_effect_quality_mode));
+    }
 }
 #else
 static void update_trusted_yun_sa3_burst_state_for_frame(void) {
@@ -8733,14 +8910,16 @@ static bool trusted_yun_sa3_frame_skip_mode_enabled(void) {
 }
 
 static bool trusted_yun_sa3_frame_skip_scheduled_for_frame(void) {
-    return trusted_yun_sa3_frame_skip_mode_enabled() && (trusted_yun_sa3_burst_frames_remaining > 0) &&
-           !trusted_yun_sa3_burst_triggered_this_frame && (trusted_yun_sa3_active_frame_index > 1) &&
-           ((trusted_yun_sa3_active_frame_index & 1) == 0);
+    /* Partial background skip is now handled inside the renderer
+       (apply_super_effect_burst_reduction_after_sort) so the app layer
+       no longer skips whole frames. */
+    return false;
 }
 
 static SDLGameRenderer_SuperEffectQualityMode current_renderer_super_effect_quality_mode(void) {
-    return trusted_yun_sa3_frame_skip_mode_enabled() ? SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_MINIMAL
-                                                     : super_effect_quality_mode;
+    /* Pass FRAME_SKIP through so the renderer can detect it and apply
+       partial background task reduction on alternate burst frames. */
+    return super_effect_quality_mode;
 }
 
 static bool can_reuse_previous_frame_for_trusted_yun_sa3_frame_skip(bool prefer_software_frame_direct_present,

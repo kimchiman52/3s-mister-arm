@@ -7,6 +7,11 @@
 #include "sf33rd/AcrSDK/ps2/foundaps2.h"
 #include "sf33rd/Source/Game/system/work_sys.h"
 
+/* From bg_data.h — zoom scroll compensation offsets.  Declared here
+   to avoid pulling in the full bg_data.h dependency chain. */
+extern short scrn_adgjust_x;
+extern short scrn_adgjust_y;
+
 #include <libgraph.h>
 
 #include <SDL3/SDL.h>
@@ -123,6 +128,12 @@ static SDL_Surface* software_frame_surface = NULL;
 static SDL_Texture* software_frame_upload_texture = NULL;
 static SDL_Surface* previous_frame_surface_snapshot = NULL;
 static SDL_Texture* previous_frame_canvas_snapshot = NULL;
+static SDL_Surface* sa3_burst_saved_surface = NULL;
+static bool sa3_burst_saved_surface_valid = false;
+static int sa3_burst_save_snapshot_at_index = -1;
+static float sa3_burst_cached_scr_sc = 1.0f;
+static short sa3_burst_cached_adgjust_x = 0;
+static short sa3_burst_cached_adgjust_y = 0;
 static bool previous_frame_surface_snapshot_valid = false;
 static bool previous_frame_canvas_snapshot_valid = false;
 static bool software_frame_mode_active = false;
@@ -405,6 +416,51 @@ static SDLGameRenderer_PerfCaptureTexturedRectFamily perf_capture_fast_non_integ
 static int perf_capture_fast_non_integer_family_count = 0;
 static SDLGameRenderer_PerfCaptureTexturedRectExactShape perf_capture_fast_non_integer_shapes[512] = { 0 };
 static int perf_capture_fast_non_integer_shape_count = 0;
+typedef struct PerfCaptureTrustedYunSA3BurstEffectSample {
+    int texture_handle;
+    int palette_handle;
+    Uint32 source_format;
+    int source_width;
+    int source_height;
+    int logical_identity_known;
+    int logical_identity_mixed;
+    Uint32 logical_identity_registrations;
+    SDLGameRenderer_TextureLogicalSourceKind logical_source_kind;
+    int logical_ix_num;
+    int logical_ix_num_first;
+    int logical_slot_index;
+    int logical_chunk_index;
+    int logical_texture_total;
+    int alpha_only;
+    int rgb_mod;
+    int opaque_color;
+    int clipped;
+    int flip_h;
+    int flip_v;
+    int source_x;
+    int source_y;
+    int source_w;
+    int source_h;
+    int visible_w;
+    int visible_h;
+    int center_x;
+    int center_y;
+    int dst_w;
+    int dst_h;
+    float raw_dst_x_first;
+    float raw_dst_y_first;
+    float raw_dst_w_first;
+    float raw_dst_h_first;
+    float raw_dst_x_last;
+    float raw_dst_y_last;
+    float raw_dst_w_last;
+    float raw_dst_h_last;
+    Uint64 task_count;
+    Uint64 submitted_pixels;
+    Uint64 sampled_ns;
+} PerfCaptureTrustedYunSA3BurstEffectSample;
+static PerfCaptureTrustedYunSA3BurstEffectSample perf_capture_trusted_yun_sa3_burst_effect_samples[128] = { 0 };
+static int perf_capture_trusted_yun_sa3_burst_effect_sample_count = 0;
 typedef struct PerfCaptureFastNonIntegerLookupPatternExactProfile {
     int texture_handle;
     int palette_handle;
@@ -775,6 +831,10 @@ static bool perf_capture_basic_first_window_exact_hot_family_matches_profile(con
 static bool perf_capture_basic_first_window_onset_exact_hot_family_matches_profile(
     const TexturedRectFamilyProfile* profile);
 static void note_perf_capture_basic_first_window_alpha_offpath_shape(const TexturedRectFamilyProfile* profile);
+static bool perf_capture_trusted_yun_sa3_burst_effect_candidate_matches_profile(
+    const TexturedRectFamilyProfile* profile);
+static void note_perf_capture_trusted_yun_sa3_burst_effect_sample(const TexturedRectFamilyProfile* profile,
+                                                                  Uint64 sampled_ns);
 #endif
 static void note_hybrid_eligibility(const RenderTask* task);
 static bool try_resolve_geometry_task_as_rect_copy(const RenderTask* task, RenderTask* out_rect_task);
@@ -852,7 +912,6 @@ static int classify_super_effect_hot_family(const RenderTask* task);
 static bool super_effect_candidate_has_integer_source_subrect(const RenderTask* task,
                                                               const SDL_Surface* src_surface,
                                                               bool* out_full_texture_source_rect);
-static bool super_effect_candidate_is_unclipped(const RenderTask* task, const SDL_Surface* dst_surface);
 static bool super_effect_hot_candidate_matches_task(const RenderTask* task,
                                                     const SDL_Surface* dst_surface,
                                                     const SDL_Surface* src_surface,
@@ -864,7 +923,7 @@ static bool try_build_simplified_super_effect_task(const RenderTask* task,
                                                    RenderTask* out_task,
                                                    SoftwareFrameFastCopyPlan* out_plan,
                                                    SoftwareFrameFastCopyResult* out_result);
-static void apply_minimal_super_effect_thinning_after_sort(void);
+static void apply_super_effect_burst_reduction_after_sort(void);
 #if ENABLE_PERF_TELEMETRY
 static int get_perf_capture_fast_non_integer_shared_shapes_from_exact_shapes(
     const SDLGameRenderer_PerfCaptureTexturedRectExactShape* shapes,
@@ -891,8 +950,6 @@ static bool ensure_software_frame_surface(void);
 
 static bool draw_rect_borders = false;
 static bool dump_textures = false;
-static const int super_effect_minimal_keep_cadence = 4;
-
 static int texture_index = 0;
 
 static void save_texture(const SDL_Surface* surface, const SDL_Palette* palette) {
@@ -3286,6 +3343,17 @@ static bool ensure_previous_frame_surface_snapshot(void) {
     return previous_frame_surface_snapshot != NULL;
 }
 
+#if defined(PORT_MISTER)
+static bool ensure_sa3_burst_saved_surface(void) {
+    if (sa3_burst_saved_surface != NULL) {
+        return true;
+    }
+
+    sa3_burst_saved_surface = SDL_CreateSurface(cps3_width, cps3_height, SDL_PIXELFORMAT_ARGB8888);
+    return sa3_burst_saved_surface != NULL;
+}
+#endif
+
 static bool ensure_previous_frame_canvas_snapshot(void) {
     if (previous_frame_canvas_snapshot != NULL) {
         return true;
@@ -3498,27 +3566,12 @@ static int classify_super_effect_hot_family(const RenderTask* task) {
         return -1;
     }
 
-    const int texture_handle = LO_16_BITS(task->texture_binding);
-    const int palette_handle = HI_16_BITS(task->texture_binding);
-    if ((texture_handle == 57) && (palette_handle == 391)) {
-        return 0;
-    }
-    if ((texture_handle == 58) && (palette_handle == 393)) {
-        return 1;
-    }
-    if ((texture_handle == 57) && (palette_handle == 394)) {
-        return 2;
-    }
-    if ((texture_handle == 18) && (palette_handle == 37)) {
-        return 3;
-    }
-    if ((texture_handle == 57) && (palette_handle == 393)) {
-        return 4;
-    }
-    if ((texture_handle == 57) && (palette_handle == 329)) {
-        return 5;
-    }
-
+    const int tex = LO_16_BITS(task->texture_binding);
+    const int pal = HI_16_BITS(task->texture_binding);
+    /* tex 41 pal 1/5 and tex 14 pal 1/5 are shared with character body overlays —
+       dropping them garbles the player sprite. Only target SA3-exclusive families. */
+    if (tex == 61 && pal == 11) return 0;
+    if (tex == 57 && pal == 397) return 1;
     return -1;
 }
 
@@ -3550,23 +3603,6 @@ static bool super_effect_candidate_has_integer_source_subrect(const RenderTask* 
     return true;
 }
 
-static bool super_effect_candidate_is_unclipped(const RenderTask* task, const SDL_Surface* dst_surface) {
-    if ((task == NULL) || (dst_surface == NULL)) {
-        return false;
-    }
-
-    const int unclamped_x0 = (int)SDL_floorf(task->dst_rect.x);
-    const int unclamped_y0 = (int)SDL_floorf(task->dst_rect.y);
-    const int unclamped_x1 = (int)SDL_ceilf(task->dst_rect.x + task->dst_rect.w);
-    const int unclamped_y1 = (int)SDL_ceilf(task->dst_rect.y + task->dst_rect.h);
-    const int dst_x0 = clamp_to_range(unclamped_x0, 0, dst_surface->w);
-    const int dst_y0 = clamp_to_range(unclamped_y0, 0, dst_surface->h);
-    const int dst_x1 = clamp_to_range(unclamped_x1, 0, dst_surface->w);
-    const int dst_y1 = clamp_to_range(unclamped_y1, 0, dst_surface->h);
-    return (dst_x0 == unclamped_x0) && (dst_y0 == unclamped_y0) && (dst_x1 == unclamped_x1) &&
-           (dst_y1 == unclamped_y1);
-}
-
 static bool super_effect_hot_candidate_matches_task(const RenderTask* task,
                                                     const SDL_Surface* dst_surface,
                                                     const SDL_Surface* src_surface,
@@ -3582,15 +3618,15 @@ static bool super_effect_hot_candidate_matches_task(const RenderTask* task,
         (super_effect_quality_mode == SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_FRAME_SKIP) ||
         (trusted_yun_sa3_burst_frames_remaining <= 0) || (task == NULL) || (dst_surface == NULL) ||
         (src_surface == NULL) || (task->type != RENDER_TASK_TYPE_TEXTURED_RECT) || (task->texture == NULL) ||
-        (fast_copy_result != SOFTWARE_FRAME_FAST_COPY_RESULT_NON_INTEGER) || (task->color != 0xFFFFFFFFu) ||
-        (task->flip != SDL_FLIP_NONE) || (classify_super_effect_hot_family(task) < 0) ||
-        (src_surface->format != SDL_PIXELFORMAT_ARGB8888) || (src_surface->w != 256) || (src_surface->h != 256)) {
+        (fast_copy_result != SOFTWARE_FRAME_FAST_COPY_RESULT_NON_INTEGER) ||
+        (classify_super_effect_hot_family(task) < 0) ||
+        (src_surface->format != SDL_PIXELFORMAT_ARGB8888) || (src_surface->w < 64) || (src_surface->h < 64)) {
         return false;
     }
 
     bool full_texture_source_rect = false;
     return super_effect_candidate_has_integer_source_subrect(task, src_surface, &full_texture_source_rect) &&
-           !full_texture_source_rect && super_effect_candidate_is_unclipped(task, dst_surface);
+           !full_texture_source_rect;
 #endif
 }
 
@@ -3626,46 +3662,139 @@ static bool try_build_simplified_super_effect_task(const RenderTask* task,
     return true;
 }
 
-static void apply_minimal_super_effect_thinning_after_sort(void) {
+/* Nearest-neighbor scaled blit from sa3_burst_saved_surface to
+   software_frame_surface.  Both surfaces must already be locked.
+
+   The game's BgMATRIX transform chain is:
+     njScale(scr_sc) → njTranslate(0,224) → njScale(1,-1,1) → njTranslate(-h_shift,-v_shift)
+   where h_shift includes +scrn_adgjust_x and v_shift includes -scrn_adgjust_y.
+
+   For a world point W, screen position is:
+     screen_x = (W_x - bg_h_shift) * scr_sc
+     screen_y = (224 - W_y + bg_v_shift) * scr_sc
+
+   Solving for the source pixel in the cached surface that shows the
+   same world content as a destination pixel in the current frame:
+     src = dst * (cached_sc / current_sc) + scroll_delta * cached_sc
+
+   The scrn_adgjust delta inherently handles zoom centering — no
+   additional center-screen correction is needed.
+
+   Source coordinates are clamped to edge pixels.  Integer-only inner
+   loop for ARM performance. */
+static void sa3_burst_restore_background_scaled(float cached_sc, float current_sc,
+                                                 int scroll_dx, int scroll_dy) {
+    const int w = software_frame_surface->w;
+    const int h = software_frame_surface->h;
+    const int w_max = w - 1;
+    const int h_max = h - 1;
+    const float inv_rel = cached_sc / current_sc; /* map dst→src scale */
+
+    /* Fixed-point 16.16: src = dst * inv_rel + scroll_delta * cached_sc */
+    const int inv_rel_fp = (int)(inv_rel * 65536.0f);
+    const int offset_x_fp = (int)((float)scroll_dx * cached_sc * 65536.0f);
+    const int offset_y_fp = (int)((float)scroll_dy * cached_sc * 65536.0f);
+
+    const Uint32* src_pixels = (const Uint32*)sa3_burst_saved_surface->pixels;
+    Uint32* dst_pixels = (Uint32*)software_frame_surface->pixels;
+    const int src_pitch4 = sa3_burst_saved_surface->pitch / 4;
+    const int dst_pitch4 = software_frame_surface->pitch / 4;
+
+    for (int y = 0; y < h; y++) {
+        int src_y = (y * inv_rel_fp + offset_y_fp) >> 16;
+        if (src_y < 0) src_y = 0;
+        else if (src_y > h_max) src_y = h_max;
+        Uint32* dst_row = dst_pixels + y * dst_pitch4;
+        const Uint32* src_row = src_pixels + src_y * src_pitch4;
+        int sx_fp = offset_x_fp;
+        for (int x = 0; x < w; x++) {
+            int src_x = sx_fp >> 16;
+            if (src_x < 0) src_x = 0;
+            else if (src_x > w_max) src_x = w_max;
+            dst_row[x] = src_row[src_x];
+            sx_fp += inv_rel_fp;
+        }
+    }
+}
+
+static void apply_super_effect_burst_reduction_after_sort(void) {
 #if defined(PORT_MISTER)
-    if ((super_effect_quality_mode != SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_MINIMAL) ||
-        (trusted_yun_sa3_burst_frames_remaining <= 0) || !software_frame_mode_active || (software_frame_surface == NULL) ||
-        (render_task_count <= 0)) {
+    /* Background caching with zoom support: during SA3 burst, render
+       background ONCE on the first burst frame, then reuse the cached
+       background for all subsequent frames.  If the camera zoom (scr_sc)
+       changes between frames, apply a nearest-neighbor scaled blit to
+       the cached surface instead of a plain memcpy.  Characters, effects,
+       and HUD render fresh every frame at 60fps.
+
+       The scaled blit costs ~0.5ms (86K pixels, integer math) vs ~10ms
+       for re-rendering 100+ background tiles.  Quality is slightly soft
+       during the brief ~12-24 frame zoom animation but acceptable given
+       the flashy effects on screen. */
+    sa3_burst_save_snapshot_at_index = -1;
+
+    if ((super_effect_quality_mode != SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_FRAME_SKIP) ||
+        (trusted_yun_sa3_burst_frames_remaining <= 0) || (render_task_count <= 1)) {
         return;
     }
 
-    int family_ordinals[6] = { 0 };
-    int write_index = 0;
-    for (int read_index = 0; read_index < render_task_count; read_index++) {
-        RenderTask* task = &render_tasks[read_index];
-        bool drop_task = false;
-
-        if ((task->type == RENDER_TASK_TYPE_TEXTURED_RECT) && (task->texture != NULL) &&
-            (task->software_source_surface != NULL)) {
-            const SoftwareFrameFastCopyResult fast_copy_result = build_software_frame_fast_copy_plan(
-                task, software_frame_surface, task->software_source_surface, NULL);
-            if (super_effect_hot_candidate_matches_task(
-                    task, software_frame_surface, task->software_source_surface, fast_copy_result)) {
-                const int family_index = classify_super_effect_hot_family(task);
-                if ((family_index >= 0) && (family_index < (int)SDL_arraysize(family_ordinals))) {
-                    const int family_ordinal = family_ordinals[family_index];
-                    drop_task = (family_ordinal % super_effect_minimal_keep_cadence) != 0;
-                    family_ordinals[family_index] = family_ordinal + 1;
-                }
-            }
+    /* Identify contiguous background tasks at the bottom of the Z-sorted
+       array.  Background tiles use palette indices >= 256 (bgPalCodeOffset
+       = 0x12C = 300).  Scan from index 0 upward; stop at the first
+       textured non-background task (character/effect).  Non-textured tasks
+       (solid geometry / shadows) are skipped over but NOT counted as
+       background — they're cheap and will re-render each frame. */
+    int bg_end = 0;
+    for (int i = 0; i < render_task_count; i++) {
+        const int pal = HI_16_BITS(render_tasks[i].texture_binding);
+        if (pal >= 256) {
+            bg_end = i + 1;
+        } else if (render_tasks[i].texture != NULL) {
+            break; /* First character/effect textured task — stop here. */
         }
-
-        if (drop_task) {
-            continue;
-        }
-
-        if (write_index != read_index) {
-            render_tasks[write_index] = render_tasks[read_index];
-        }
-        write_index += 1;
+        /* Solid geometry (shadows, pal==0, no texture): skip over. */
     }
 
-    render_task_count = write_index;
+    /* If no background tasks found at the bottom, nothing to cache. */
+    if (bg_end < 1) {
+        return;
+    }
+
+    /* No cached background yet — render everything this frame and
+       request a mid-render snapshot after background tasks complete. */
+    if (!sa3_burst_saved_surface_valid || (sa3_burst_saved_surface == NULL)) {
+        sa3_burst_save_snapshot_at_index = bg_end;
+        sa3_burst_cached_scr_sc = scr_sc;
+        sa3_burst_cached_adgjust_x = scrn_adgjust_x;
+        sa3_burst_cached_adgjust_y = scrn_adgjust_y;
+        return;
+    }
+
+    /* Restore the cached background surface as the base layer.
+       If zoom or scroll has changed since caching, use a scaled blit
+       to match the current zoom/scroll.  Otherwise use a fast memcpy. */
+    if ((software_frame_surface != NULL) && software_frame_surface_ready) {
+        const int scroll_dx = (int)scrn_adgjust_x - (int)sa3_burst_cached_adgjust_x;
+        const int scroll_dy = (int)scrn_adgjust_y - (int)sa3_burst_cached_adgjust_y;
+        const bool needs_transform = (sa3_burst_cached_scr_sc != scr_sc) ||
+                                     (scroll_dx != 0) || (scroll_dy != 0);
+        SDL_LockSurface(sa3_burst_saved_surface);
+        SDL_LockSurface(software_frame_surface);
+        if (needs_transform) {
+            sa3_burst_restore_background_scaled(sa3_burst_cached_scr_sc, scr_sc,
+                                                scroll_dx, scroll_dy);
+        } else {
+            SDL_memcpy(software_frame_surface->pixels, sa3_burst_saved_surface->pixels,
+                       (size_t)software_frame_surface->pitch * software_frame_surface->h);
+        }
+        SDL_UnlockSurface(software_frame_surface);
+        SDL_UnlockSurface(sa3_burst_saved_surface);
+    }
+
+    /* Drop background tasks.  Characters/effects/HUD render fresh
+       on top of cached background. */
+    const int upper_count = render_task_count - bg_end;
+    SDL_memmove(&render_tasks[0], &render_tasks[bg_end], (size_t)upper_count * sizeof(RenderTask));
+    render_task_count = upper_count;
 #endif
 }
 
@@ -4683,6 +4812,132 @@ static void note_perf_capture_basic_first_window_alpha_offpath_shape(const Textu
     entry->submitted_pixels += profile->submitted_pixels;
 }
 
+static bool perf_capture_trusted_yun_sa3_burst_effect_candidate_matches_profile(
+    const TexturedRectFamilyProfile* profile) {
+    if ((profile == NULL) || !frame_stats_extended_enabled || (trusted_yun_sa3_burst_frames_remaining <= 0)) {
+        return false;
+    }
+
+    if ((profile->texture_handle <= 0) || (profile->palette_handle < 0) || (profile->source_format != SDL_PIXELFORMAT_ARGB8888) ||
+        (profile->source_width <= 0) || (profile->source_height <= 0) || !profile->integer_source_rect ||
+        profile->full_texture_source_rect || profile->rgb_mod || (profile->source_w <= 0) || (profile->source_h <= 0) ||
+        (profile->visible_w <= 0) || (profile->visible_h <= 0)) {
+        return false;
+    }
+
+    const bool supported_source_surface =
+        ((profile->source_width == 128) && (profile->source_height == 128)) ||
+        ((profile->source_width == 256) && (profile->source_height == 256));
+    if (!supported_source_surface) {
+        return false;
+    }
+
+    const bool small_candidate =
+        (profile->source_w <= 48) && (profile->source_h <= 48) && (profile->visible_w <= 64) && (profile->visible_h <= 64);
+    const bool wide_or_tall_candidate =
+        (profile->source_w >= 96) || (profile->source_h >= 64) || (profile->visible_w >= 96) || (profile->visible_h >= 64);
+    return small_candidate || wide_or_tall_candidate;
+}
+
+static bool perf_capture_trusted_yun_sa3_burst_effect_sample_matches_profile(
+    const PerfCaptureTrustedYunSA3BurstEffectSample* entry,
+    const TexturedRectFamilyProfile* profile,
+    int center_x,
+    int center_y,
+    int dst_w,
+    int dst_h) {
+    if ((entry == NULL) || (profile == NULL)) {
+        return false;
+    }
+
+    return (entry->texture_handle == profile->texture_handle) && (entry->palette_handle == profile->palette_handle) &&
+           (entry->source_format == profile->source_format) && (entry->source_width == profile->source_width) &&
+           (entry->source_height == profile->source_height) && (entry->alpha_only == (profile->alpha_only ? 1 : 0)) &&
+           (entry->rgb_mod == (profile->rgb_mod ? 1 : 0)) && (entry->opaque_color == (profile->opaque_color ? 1 : 0)) &&
+           (entry->clipped == (profile->clipped ? 1 : 0)) && (entry->flip_h == (profile->flip_h ? 1 : 0)) &&
+           (entry->flip_v == (profile->flip_v ? 1 : 0)) && (entry->source_x == profile->source_x) &&
+           (entry->source_y == profile->source_y) && (entry->source_w == profile->source_w) &&
+           (entry->source_h == profile->source_h) && (entry->visible_w == profile->visible_w) &&
+           (entry->visible_h == profile->visible_h) && (entry->center_x == center_x) && (entry->center_y == center_y) &&
+           (entry->dst_w == dst_w) && (entry->dst_h == dst_h);
+}
+
+static void note_perf_capture_trusted_yun_sa3_burst_effect_sample(const TexturedRectFamilyProfile* profile,
+                                                                  Uint64 sampled_ns) {
+    if (!perf_capture_trusted_yun_sa3_burst_effect_candidate_matches_profile(profile)) {
+        return;
+    }
+
+    const int center_x = (int)SDL_roundf(profile->raw_dst_x + (profile->raw_dst_w * 0.5f));
+    const int center_y = (int)SDL_roundf(profile->raw_dst_y + (profile->raw_dst_h * 0.5f));
+    const int dst_w = (int)SDL_roundf(profile->raw_dst_w);
+    const int dst_h = (int)SDL_roundf(profile->raw_dst_h);
+
+    PerfCaptureTrustedYunSA3BurstEffectSample* entry = NULL;
+    for (int i = 0; i < perf_capture_trusted_yun_sa3_burst_effect_sample_count; i++) {
+        if (perf_capture_trusted_yun_sa3_burst_effect_sample_matches_profile(
+                &perf_capture_trusted_yun_sa3_burst_effect_samples[i], profile, center_x, center_y, dst_w, dst_h)) {
+            entry = &perf_capture_trusted_yun_sa3_burst_effect_samples[i];
+            break;
+        }
+    }
+
+    if ((entry == NULL) &&
+        (perf_capture_trusted_yun_sa3_burst_effect_sample_count <
+         (int)SDL_arraysize(perf_capture_trusted_yun_sa3_burst_effect_samples))) {
+        entry = &perf_capture_trusted_yun_sa3_burst_effect_samples[perf_capture_trusted_yun_sa3_burst_effect_sample_count];
+        perf_capture_trusted_yun_sa3_burst_effect_sample_count += 1;
+        SDL_zero(*entry);
+        entry->texture_handle = profile->texture_handle;
+        entry->palette_handle = profile->palette_handle;
+        entry->source_format = profile->source_format;
+        entry->source_width = profile->source_width;
+        entry->source_height = profile->source_height;
+        entry->alpha_only = profile->alpha_only ? 1 : 0;
+        entry->rgb_mod = profile->rgb_mod ? 1 : 0;
+        entry->opaque_color = profile->opaque_color ? 1 : 0;
+        entry->clipped = profile->clipped ? 1 : 0;
+        entry->flip_h = profile->flip_h ? 1 : 0;
+        entry->flip_v = profile->flip_v ? 1 : 0;
+        entry->source_x = profile->source_x;
+        entry->source_y = profile->source_y;
+        entry->source_w = profile->source_w;
+        entry->source_h = profile->source_h;
+        entry->visible_w = profile->visible_w;
+        entry->visible_h = profile->visible_h;
+        entry->center_x = center_x;
+        entry->center_y = center_y;
+        entry->dst_w = dst_w;
+        entry->dst_h = dst_h;
+        entry->raw_dst_x_first = profile->raw_dst_x;
+        entry->raw_dst_y_first = profile->raw_dst_y;
+        entry->raw_dst_w_first = profile->raw_dst_w;
+        entry->raw_dst_h_first = profile->raw_dst_h;
+        copy_perf_capture_texture_logical_identity(profile->texture_handle - 1,
+                                                   &entry->logical_identity_known,
+                                                   &entry->logical_identity_mixed,
+                                                   &entry->logical_identity_registrations,
+                                                   &entry->logical_source_kind,
+                                                   &entry->logical_ix_num,
+                                                   &entry->logical_ix_num_first,
+                                                   &entry->logical_slot_index,
+                                                   &entry->logical_chunk_index,
+                                                   &entry->logical_texture_total);
+    }
+
+    if (entry == NULL) {
+        return;
+    }
+
+    entry->task_count += 1u;
+    entry->submitted_pixels += profile->submitted_pixels;
+    entry->sampled_ns += sampled_ns;
+    entry->raw_dst_x_last = profile->raw_dst_x;
+    entry->raw_dst_y_last = profile->raw_dst_y;
+    entry->raw_dst_w_last = profile->raw_dst_w;
+    entry->raw_dst_h_last = profile->raw_dst_h;
+}
+
 static bool textured_rect_exact_shape_matches_profile(const SDLGameRenderer_PerfCaptureTexturedRectExactShape* entry,
                                                       const TexturedRectFamilyProfile* profile) {
     if ((entry == NULL) || (profile == NULL)) {
@@ -5247,6 +5502,7 @@ static void note_perf_capture_fast_non_integer_family(const RenderTask* task,
     if (frame_stats_extended_enabled && (profile.texture_handle >= 0)) {
         note_perf_capture_fast_non_integer_shape(&profile, sampled_ns);
         note_perf_capture_fast_non_integer_lookup_pattern(&profile, non_integer_telemetry, sampled_ns);
+        note_perf_capture_trusted_yun_sa3_burst_effect_sample(&profile, sampled_ns);
     }
 }
 
@@ -7077,6 +7333,26 @@ static bool render_frame_to_software_surface(void) {
         }
 
         i = next_task_index;
+
+#if defined(PORT_MISTER)
+        /* Mid-render background snapshot: after rendering the last background
+           task (index < split point) and before the first character task,
+           save the surface.  This captures background-only pixels so skip
+           frames can restore them without stale character positions. */
+        if ((sa3_burst_save_snapshot_at_index >= 0) &&
+            (i >= sa3_burst_save_snapshot_at_index) &&
+            !sa3_burst_saved_surface_valid &&
+            ensure_sa3_burst_saved_surface()) {
+            if (SDL_LockSurface(sa3_burst_saved_surface)) {
+                SDL_memcpy(sa3_burst_saved_surface->pixels,
+                           software_frame_surface->pixels,
+                           (size_t)software_frame_surface->pitch * software_frame_surface->h);
+                SDL_UnlockSurface(sa3_burst_saved_surface);
+                sa3_burst_saved_surface_valid = true;
+            }
+            sa3_burst_save_snapshot_at_index = -1;
+        }
+#endif
     }
 
     if (dst_locked) {
@@ -7685,6 +7961,11 @@ void SDLGameRenderer_SetSuperEffectQualityMode(SDLGameRenderer_SuperEffectQualit
 
 void SDLGameRenderer_SetTrustedYunSA3BurstFramesRemaining(int frames_remaining) {
     trusted_yun_sa3_burst_frames_remaining = frames_remaining > 0 ? frames_remaining : 0;
+#if defined(PORT_MISTER)
+    if (trusted_yun_sa3_burst_frames_remaining <= 0) {
+        sa3_burst_saved_surface_valid = false;
+    }
+#endif
 }
 
 bool SDLGameRenderer_IsSoftwareFrameModeEnabled(void) {
@@ -7872,7 +8153,7 @@ void SDLGameRenderer_RenderFrame() {
         }
     }
 
-    apply_minimal_super_effect_thinning_after_sort();
+    apply_super_effect_burst_reduction_after_sort();
 
     if (software_frame_mode_active && render_frame_to_software_surface()) {
         software_frame_owned = true;
@@ -8072,6 +8353,8 @@ void SDLGameRenderer_ResetPerfCaptureFastNonIntegerFamilyTelemetry(void) {
     perf_capture_fast_non_integer_lookup_pattern_count = 0;
     SDL_zero(perf_capture_basic_first_window_alpha_offpath_shapes);
     perf_capture_basic_first_window_alpha_offpath_shape_count = 0;
+    SDL_zero(perf_capture_trusted_yun_sa3_burst_effect_samples);
+    perf_capture_trusted_yun_sa3_burst_effect_sample_count = 0;
 }
 
 void SDLGameRenderer_ResetPerfCaptureGenericTexturedFamilyTelemetry(void) {
@@ -9039,6 +9322,117 @@ void SDLGameRenderer_GetPerfCaptureFastNonIntegerLookupProfileTotals(Uint64* out
     }
     if (out_profile_count != NULL) {
         *out_profile_count = 0;
+    }
+#endif
+}
+
+int SDLGameRenderer_GetPerfCaptureTrustedYunSA3BurstEffectSamples(
+    PerfCaptureTrustedYunSA3BurstEffectSample* out_samples,
+    int max_samples) {
+#if ENABLE_PERF_TELEMETRY
+    if ((out_samples == NULL) || (max_samples <= 0)) {
+        return 0;
+    }
+
+    int selected_count = 0;
+    for (int slot = 0; slot < max_samples; slot++) {
+        int best_index = -1;
+        for (int i = 0; i < perf_capture_trusted_yun_sa3_burst_effect_sample_count; i++) {
+            const PerfCaptureTrustedYunSA3BurstEffectSample* candidate =
+                &perf_capture_trusted_yun_sa3_burst_effect_samples[i];
+            if (candidate->task_count == 0) {
+                continue;
+            }
+
+            bool already_selected = false;
+            for (int existing = 0; existing < selected_count; existing++) {
+                const PerfCaptureTrustedYunSA3BurstEffectSample* selected = &out_samples[existing];
+                if ((selected->texture_handle == candidate->texture_handle) &&
+                    (selected->palette_handle == candidate->palette_handle) &&
+                    (selected->source_x == candidate->source_x) && (selected->source_y == candidate->source_y) &&
+                    (selected->source_w == candidate->source_w) && (selected->source_h == candidate->source_h) &&
+                    (selected->visible_w == candidate->visible_w) && (selected->visible_h == candidate->visible_h) &&
+                    (selected->center_x == candidate->center_x) && (selected->center_y == candidate->center_y) &&
+                    (selected->dst_w == candidate->dst_w) && (selected->dst_h == candidate->dst_h)) {
+                    already_selected = true;
+                    break;
+                }
+            }
+            if (already_selected) {
+                continue;
+            }
+
+            if ((best_index < 0) || (candidate->task_count > perf_capture_trusted_yun_sa3_burst_effect_samples[best_index].task_count) ||
+                ((candidate->task_count == perf_capture_trusted_yun_sa3_burst_effect_samples[best_index].task_count) &&
+                 (candidate->submitted_pixels >
+                  perf_capture_trusted_yun_sa3_burst_effect_samples[best_index].submitted_pixels)) ||
+                ((candidate->task_count == perf_capture_trusted_yun_sa3_burst_effect_samples[best_index].task_count) &&
+                 (candidate->submitted_pixels ==
+                  perf_capture_trusted_yun_sa3_burst_effect_samples[best_index].submitted_pixels) &&
+                 (candidate->sampled_ns > perf_capture_trusted_yun_sa3_burst_effect_samples[best_index].sampled_ns))) {
+                best_index = i;
+            }
+        }
+
+        if (best_index < 0) {
+            break;
+        }
+
+        out_samples[selected_count] = perf_capture_trusted_yun_sa3_burst_effect_samples[best_index];
+        selected_count += 1;
+    }
+
+    return selected_count;
+#else
+    (void)out_samples;
+    (void)max_samples;
+    return 0;
+#endif
+}
+
+void SDLGameRenderer_GetPerfCaptureTrustedYunSA3BurstEffectSampleTotals(Uint64* out_task_total,
+                                                                        Uint64* out_pixel_total,
+                                                                        Uint64* out_sampled_ns_total,
+                                                                        int* out_sample_count) {
+#if ENABLE_PERF_TELEMETRY
+    Uint64 task_total = 0;
+    Uint64 pixel_total = 0;
+    Uint64 sampled_ns_total = 0;
+    int sample_count = 0;
+    for (int i = 0; i < perf_capture_trusted_yun_sa3_burst_effect_sample_count; i++) {
+        const PerfCaptureTrustedYunSA3BurstEffectSample* entry = &perf_capture_trusted_yun_sa3_burst_effect_samples[i];
+        if (entry->task_count == 0) {
+            continue;
+        }
+        task_total += entry->task_count;
+        pixel_total += entry->submitted_pixels;
+        sampled_ns_total += entry->sampled_ns;
+        sample_count += 1;
+    }
+    if (out_task_total != NULL) {
+        *out_task_total = task_total;
+    }
+    if (out_pixel_total != NULL) {
+        *out_pixel_total = pixel_total;
+    }
+    if (out_sampled_ns_total != NULL) {
+        *out_sampled_ns_total = sampled_ns_total;
+    }
+    if (out_sample_count != NULL) {
+        *out_sample_count = sample_count;
+    }
+#else
+    if (out_task_total != NULL) {
+        *out_task_total = 0;
+    }
+    if (out_pixel_total != NULL) {
+        *out_pixel_total = 0;
+    }
+    if (out_sampled_ns_total != NULL) {
+        *out_sampled_ns_total = 0;
+    }
+    if (out_sample_count != NULL) {
+        *out_sample_count = 0;
     }
 #endif
 }
