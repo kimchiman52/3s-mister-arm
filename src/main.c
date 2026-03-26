@@ -80,6 +80,8 @@ static bool is_running_resource_flow = false;
 static volatile sig_atomic_t shutdown_signal = 0;
 static volatile sig_atomic_t fps_toggle_requested = 0;
 static volatile sig_atomic_t super_effect_quality_cycle_requested = 0;
+static volatile sig_atomic_t ghost_resolution_cycle_requested = 0;
+static volatile sig_atomic_t ghost_count_cycle_requested = 0;
 
 // forward decls
 static void game_init();
@@ -111,6 +113,18 @@ static void on_shutdown_signal(int signo) {
         return;
     }
 
+#ifdef SIGRTMIN
+    if (signo == SIGRTMIN) {
+        ghost_resolution_cycle_requested = 1;
+        return;
+    }
+
+    if (signo == SIGRTMIN + 1) {
+        ghost_count_cycle_requested = 1;
+        return;
+    }
+#endif
+
     shutdown_signal = signo;
 }
 
@@ -125,6 +139,10 @@ static void install_shutdown_signal_handlers() {
     sigaction(SIGTERM, &action, NULL);
     sigaction(SIGUSR1, &action, NULL);
     sigaction(SIGUSR2, &action, NULL);
+#ifdef SIGRTMIN
+    sigaction(SIGRTMIN, &action, NULL);
+    sigaction(SIGRTMIN + 1, &action, NULL);
+#endif
 }
 
 static void restore_shutdown_signal_handlers() {
@@ -133,6 +151,10 @@ static void restore_shutdown_signal_handlers() {
     signal(SIGTERM, SIG_DFL);
     signal(SIGUSR1, SIG_DFL);
     signal(SIGUSR2, SIG_DFL);
+#ifdef SIGRTMIN
+    signal(SIGRTMIN, SIG_DFL);
+    signal(SIGRTMIN + 1, SIG_DFL);
+#endif
 }
 
 static void read_args(int argc, const char* argv[]) {
@@ -632,6 +654,8 @@ static int loop() {
     shutdown_signal = 0;
     fps_toggle_requested = 0;
     super_effect_quality_cycle_requested = 0;
+    ghost_resolution_cycle_requested = 0;
+    ghost_count_cycle_requested = 0;
 
 #if ENABLE_PERF_TELEMETRY
     if (configuration.perf.software_frame_parity_check) {
@@ -704,6 +728,14 @@ static int loop() {
         if (super_effect_quality_cycle_requested != 0) {
             super_effect_quality_cycle_requested = 0;
             SDLApp_CycleSuperEffectQualityMode();
+        }
+        if (ghost_resolution_cycle_requested != 0) {
+            ghost_resolution_cycle_requested = 0;
+            SDLApp_CycleGhostResolutionMode();
+        }
+        if (ghost_count_cycle_requested != 0) {
+            ghost_count_cycle_requested = 0;
+            SDLApp_CycleGhostCountMax();
         }
 
         is_running = SDLApp_PollEvents();

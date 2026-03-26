@@ -51,6 +51,8 @@ constexpr const char *kMenuExec = "MiSTer";
 constexpr const char *kRuntimeTtySwitchEnv = "THREESX_WRAPPER_USE_TTY2";
 constexpr int kRuntimeFpsToggleSignal = SIGUSR1;
 constexpr int kRuntimeSuperEffectQualityCycleSignal = SIGUSR2;
+#define kRuntimeGhostResolutionCycleSignal (SIGRTMIN)
+#define kRuntimeGhostCountCycleSignal (SIGRTMIN + 1)
 
 enum WrapperMenuItem
 {
@@ -58,6 +60,8 @@ enum WrapperMenuItem
 	kMenuFpsToggle,
 	kMenuScaleMode,
 	kMenuSuperEffectQuality,
+	kMenuGhostResolution,
+	kMenuGhostCount,
 	kMenuRestart,
 	kMenuQuit,
 	kMenuItemCount
@@ -78,6 +82,23 @@ enum RuntimeSuperEffectQualityMenu
 	kSuperEffectQualityMenuCount
 };
 
+enum RuntimeGhostResolutionMenu
+{
+	kGhostResolutionFull = 0,
+	kGhostResolutionHalf,
+	kGhostResolutionMenuCount
+};
+
+enum RuntimeGhostCountMenu
+{
+	kGhostCount0 = 0,
+	kGhostCount1,
+	kGhostCount2,
+	kGhostCount3,
+	kGhostCount4,
+	kGhostCountMenuCount
+};
+
 volatile sig_atomic_t g_wrapper_signal = 0;
 volatile sig_atomic_t g_child_pid = -1;
 int g_wrapper_menu_visible = 0;
@@ -85,6 +106,8 @@ int g_wrapper_menu_selected = kMenuResume;
 int g_wrapper_fps_enabled = 0;
 int g_wrapper_scale_mode = kScaleModeAuto;
 int g_wrapper_super_effect_quality = kSuperEffectQualityCachedBg;
+int g_wrapper_ghost_resolution = kGhostResolutionFull;
+int g_wrapper_ghost_count = kGhostCount4;
 int g_wrapper_restart_requested = 0;
 int g_wrapper_used_full_user_io_init = 0;
 
@@ -714,6 +737,202 @@ bool write_runtime_super_effect_quality_default(int mode)
 	return true;
 }
 
+int read_runtime_ghost_resolution_default()
+{
+	char value[64] = {};
+	if (!read_runtime_config_value("ghost-resolution", value, sizeof(value))) return kGhostResolutionFull;
+
+	if (!strcasecmp(value, "half")) return kGhostResolutionHalf;
+	return kGhostResolutionFull;
+}
+
+const char *runtime_ghost_resolution_label(int mode)
+{
+	switch (mode)
+	{
+	case kGhostResolutionHalf: return "Half";
+	default: return "Full";
+	}
+}
+
+static const char *runtime_ghost_resolution_config_value(int mode)
+{
+	switch (mode)
+	{
+	case kGhostResolutionHalf: return "half";
+	default: return "full";
+	}
+}
+
+bool write_runtime_ghost_resolution_default(int mode)
+{
+	char path[PATH_MAX] = {};
+	char temp_path[PATH_MAX] = {};
+	snprintf(path, sizeof(path), "%s/config", kRuntimeHome);
+	snprintf(temp_path, sizeof(temp_path), "%s/config.tmp", kRuntimeHome);
+
+	FILE *in = fopen(path, "r");
+	FILE *out = fopen(temp_path, "w");
+	if (!out)
+	{
+		if (in) fclose(in);
+		return false;
+	}
+
+	bool wrote_value = false;
+	char line[256] = {};
+	if (in)
+	{
+		while (fgets(line, sizeof(line), in))
+		{
+			char inspect[256] = {};
+			snprintf(inspect, sizeof(inspect), "%s", line);
+
+			char *cursor = inspect;
+			while (*cursor && isspace((unsigned char)*cursor)) cursor++;
+			if (*cursor == '#')
+			{
+				fputs(line, out);
+				continue;
+			}
+
+			char *equals = strchr(cursor, '=');
+			if (equals)
+			{
+				*equals = 0;
+				trim_in_place(cursor);
+				if (!strcasecmp(cursor, "ghost-resolution"))
+				{
+					fprintf(out, "ghost-resolution = %s\n", runtime_ghost_resolution_config_value(mode));
+					wrote_value = true;
+					continue;
+				}
+			}
+
+			fputs(line, out);
+		}
+
+		fclose(in);
+	}
+
+	if (!wrote_value)
+	{
+		fprintf(out, "\nghost-resolution = %s\n", runtime_ghost_resolution_config_value(mode));
+	}
+
+	if (fclose(out) != 0) return false;
+	if (rename(temp_path, path) != 0)
+	{
+		remove(temp_path);
+		return false;
+	}
+
+	return true;
+}
+
+int read_runtime_ghost_count_default()
+{
+	char value[64] = {};
+	if (!read_runtime_config_value("ghost-count", value, sizeof(value))) return kGhostCount4;
+
+	int val = atoi(value);
+	if (val == 0) return kGhostCount0;
+	if (val == 1) return kGhostCount1;
+	if (val == 2) return kGhostCount2;
+	if (val == 3) return kGhostCount3;
+	return kGhostCount4;
+}
+
+const char *runtime_ghost_count_label(int mode)
+{
+	switch (mode)
+	{
+	case kGhostCount0: return "0";
+	case kGhostCount1: return "1";
+	case kGhostCount2: return "2";
+	case kGhostCount3: return "3";
+	default: return "4";
+	}
+}
+
+static const char *runtime_ghost_count_config_value(int mode)
+{
+	switch (mode)
+	{
+	case kGhostCount0: return "0";
+	case kGhostCount1: return "1";
+	case kGhostCount2: return "2";
+	case kGhostCount3: return "3";
+	default: return "4";
+	}
+}
+
+bool write_runtime_ghost_count_default(int mode)
+{
+	char path[PATH_MAX] = {};
+	char temp_path[PATH_MAX] = {};
+	snprintf(path, sizeof(path), "%s/config", kRuntimeHome);
+	snprintf(temp_path, sizeof(temp_path), "%s/config.tmp", kRuntimeHome);
+
+	FILE *in = fopen(path, "r");
+	FILE *out = fopen(temp_path, "w");
+	if (!out)
+	{
+		if (in) fclose(in);
+		return false;
+	}
+
+	bool wrote_value = false;
+	char line[256] = {};
+	if (in)
+	{
+		while (fgets(line, sizeof(line), in))
+		{
+			char inspect[256] = {};
+			snprintf(inspect, sizeof(inspect), "%s", line);
+
+			char *cursor = inspect;
+			while (*cursor && isspace((unsigned char)*cursor)) cursor++;
+			if (*cursor == '#')
+			{
+				fputs(line, out);
+				continue;
+			}
+
+			char *equals = strchr(cursor, '=');
+			if (equals)
+			{
+				*equals = 0;
+				trim_in_place(cursor);
+				if (!strcasecmp(cursor, "ghost-count"))
+				{
+					fprintf(out, "ghost-count = %s\n", runtime_ghost_count_config_value(mode));
+					wrote_value = true;
+					continue;
+				}
+			}
+
+			fputs(line, out);
+		}
+
+		fclose(in);
+	}
+
+	if (!wrote_value)
+	{
+		fprintf(out, "\nghost-count = %s\n", runtime_ghost_count_config_value(mode));
+	}
+
+	if (fclose(out) != 0) return false;
+	if (rename(temp_path, path) != 0)
+	{
+		remove(temp_path);
+		return false;
+	}
+
+	return true;
+}
+
 StartupScaleModeSelection resolve_startup_scale_mode()
 {
 	StartupScaleModeSelection selection = {};
@@ -849,14 +1068,24 @@ void draw_wrapper_menu(int selected)
 	char fps_line[33] = {};
 	char scale_line[33] = {};
 	char super_effect_quality_line[33] = {};
+	char ghost_resolution_line[33] = {};
+	char ghost_count_line[33] = {};
 	format_wrapper_value_line(fps_line, sizeof(fps_line), "FPS", g_wrapper_fps_enabled ? "On" : "Off");
 	format_wrapper_value_line(scale_line, sizeof(scale_line), "Scale", runtime_scale_mode_label(g_wrapper_scale_mode));
 	format_wrapper_value_line(super_effect_quality_line,
 	                          sizeof(super_effect_quality_line),
 	                          "SA Perf",
 	                          runtime_super_effect_quality_label(g_wrapper_super_effect_quality));
+	format_wrapper_value_line(ghost_resolution_line,
+	                          sizeof(ghost_resolution_line),
+	                          "GhostRes",
+	                          runtime_ghost_resolution_label(g_wrapper_ghost_resolution));
+	format_wrapper_value_line(ghost_count_line,
+	                          sizeof(ghost_count_line),
+	                          "GhostCnt",
+	                          runtime_ghost_count_label(g_wrapper_ghost_count));
 
-	OsdSetSize(8);
+	OsdSetSize(10);
 	OsdSetTitle("3SX Menu", 0);
 	OsdClear();
 	OsdWrite(0, "");
@@ -864,9 +1093,11 @@ void draw_wrapper_menu(int selected)
 	OsdWrite(2, fps_line, selected == kMenuFpsToggle);
 	OsdWrite(3, scale_line, selected == kMenuScaleMode);
 	OsdWrite(4, super_effect_quality_line, selected == kMenuSuperEffectQuality);
-	OsdWrite(5, " Restart", selected == kMenuRestart);
-	OsdWrite(6, " Quit to MiSTer", selected == kMenuQuit);
-	OsdWrite(7, "");
+	OsdWrite(5, ghost_resolution_line, selected == kMenuGhostResolution);
+	OsdWrite(6, ghost_count_line, selected == kMenuGhostCount);
+	OsdWrite(7, " Restart", selected == kMenuRestart);
+	OsdWrite(8, " Quit to MiSTer", selected == kMenuQuit);
+	OsdWrite(9, "");
 	threesx_wrapper_menu_set_visible(1);
 	OsdMenuCtl(1);
 	OsdEnable(DISABLE_KEYBOARD);
@@ -951,6 +1182,30 @@ void service_wrapper_menu(pid_t child)
 			{
 				g_wrapper_super_effect_quality = next_mode;
 				(void)kill(child, kRuntimeSuperEffectQualityCycleSignal);
+				draw_wrapper_menu(g_wrapper_menu_selected);
+			}
+			return;
+		}
+
+		if (g_wrapper_menu_selected == kMenuGhostResolution)
+		{
+			const int next_mode = (g_wrapper_ghost_resolution + 1) % kGhostResolutionMenuCount;
+			if (write_runtime_ghost_resolution_default(next_mode))
+			{
+				g_wrapper_ghost_resolution = next_mode;
+				(void)kill(child, kRuntimeGhostResolutionCycleSignal);
+				draw_wrapper_menu(g_wrapper_menu_selected);
+			}
+			return;
+		}
+
+		if (g_wrapper_menu_selected == kMenuGhostCount)
+		{
+			const int next_mode = (g_wrapper_ghost_count + 1) % kGhostCountMenuCount;
+			if (write_runtime_ghost_count_default(next_mode))
+			{
+				g_wrapper_ghost_count = next_mode;
+				(void)kill(child, kRuntimeGhostCountCycleSignal);
 				draw_wrapper_menu(g_wrapper_menu_selected);
 			}
 			return;
@@ -1145,6 +1400,8 @@ int threesx_wrapper_run(int argc, char *argv[])
 	g_wrapper_fps_enabled = read_runtime_fps_default() ? 1 : 0;
 	g_wrapper_scale_mode = read_runtime_scale_mode_default();
 	g_wrapper_super_effect_quality = read_runtime_super_effect_quality_default();
+	g_wrapper_ghost_resolution = read_runtime_ghost_resolution_default();
+	g_wrapper_ghost_count = read_runtime_ghost_count_default();
 	g_wrapper_restart_requested = 0;
 	g_wrapper_signal = 0;
 

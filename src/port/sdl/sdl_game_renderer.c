@@ -20,6 +20,13 @@ extern short scrn_adgjust_y;
 #include <stdio.h>
 #include <stdlib.h>
 
+#if defined(PORT_MISTER) && (defined(__ARM_NEON) || defined(__ARM_NEON__))
+#include <arm_neon.h>
+#define RENDERER_HAVE_NEON 1
+#else
+#define RENDERER_HAVE_NEON 0
+#endif
+
 #define RENDER_TASK_MAX 1024
 #define RENDER_TASK_VERTEX_MAX (RENDER_TASK_MAX * 4)
 #define RENDER_TASK_INDEX_MAX (RENDER_TASK_MAX * 6)
@@ -139,6 +146,8 @@ static bool software_frame_owned = false;
 static bool software_frame_uploaded = false;
 static SDLGameRenderer_SuperEffectQualityMode super_effect_quality_mode =
     SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_FULL;
+static SDLGameRenderer_GhostResolutionMode ghost_resolution_mode =
+    SDL_GAME_RENDERER_GHOST_RESOLUTION_FULL;
 static int sa_bg_cache_frames_remaining = 0;
 static bool perf_capture_logical_identity_enabled = false;
 static bool perf_capture_fast_non_integer_reuse_telemetry_enabled = true;
@@ -871,6 +880,9 @@ static void note_software_frame_fast_non_integer(const RenderTask* task,
                                                  const SDLSoftwareFrame_NonIntegerTelemetry* non_integer_telemetry,
                                                  Uint64 sampled_ns);
 static Uint32 modulate_argb8888(Uint32 pixel, Uint32 color);
+static bool is_blue_tint_color(Uint32 color);
+static Uint32 modulate_argb8888_blue_tint(Uint32 pixel, Uint32 rg_factor, Uint32 mod_a);
+static bool is_ghost_sprite_color(Uint32 color);
 static Uint32 blend_argb8888(Uint32 dst_pixel, Uint32 src_pixel);
 static bool raster_full_height_diagonal_strip_to_software_frame(const SoftwareFrameSolidDiagonalStrip* strip,
                                                                 SDL_Surface* dst_surface);
@@ -3651,6 +3663,7 @@ static void apply_super_effect_burst_reduction_after_sort(void) {
     const int upper_count = render_task_count - bg_end;
     SDL_memmove(&render_tasks[0], &render_tasks[bg_end], (size_t)upper_count * sizeof(RenderTask));
     render_task_count = upper_count;
+
 #endif
 }
 
@@ -5756,6 +5769,71 @@ static bool try_merge_software_frame_rect_tasks(RenderTask* merged_task,
     return true;
 }
 
+#if RENDERER_HAVE_NEON
+/* --- Optimization A: NEON-vectorized modulate for 4 pixels at a time ---
+ * The modulation color is constant across all pixels in a render task,
+ * so we precompute the color channel vector once and apply it to batches
+ * of 4 pixels using NEON widening multiply + narrowing shift.
+ *
+ * ARGB8888 layout in memory (little-endian ARM): byte 0=B, 1=G, 2=R, 3=A
+ * When loaded as uint32, bit layout: [31:24]=A [23:16]=R [15:8]=G [7:0]=B
+ *
+ * We treat each uint32 pixel as 4 bytes via vreinterpret and process all
+ * 16 bytes (4 pixels x 4 channels) in one NEON operation. */
+
+typedef struct NeonModulateState {
+    uint8x8_t color_lo;  /* color channels for pixels 0-1 (8 bytes) */
+    uint8x8_t color_hi;  /* color channels for pixels 2-3 (8 bytes) */
+} NeonModulateState;
+
+static NeonModulateState neon_modulate_init(Uint32 color) {
+    /* Splat the color to all 4 pixel positions within a 16-byte register */
+    const uint32x4_t color_vec = vdupq_n_u32(color);
+    const uint8x16_t color_bytes = vreinterpretq_u8_u32(color_vec);
+    NeonModulateState state;
+    state.color_lo = vget_low_u8(color_bytes);
+    state.color_hi = vget_high_u8(color_bytes);
+    return state;
+}
+
+/* Modulate 4 ARGB8888 pixels by a constant color using NEON.
+ * Uses (a * b + 128) >> 8 as a fast approximation of (a * b + 127) / 255.
+ * Max error vs exact: 1 LSB, visually imperceptible. */
+static inline void neon_modulate_4pixels(
+    const Uint32* src, Uint32* dst, const NeonModulateState* state) {
+    /* Load 4 source pixels = 16 bytes */
+    const uint8x16_t src_bytes = vreinterpretq_u8_u32(vld1q_u32(src));
+
+    /* Widening multiply: u8 x u8 -> u16, for low 8 bytes (pixels 0-1) */
+    const uint16x8_t prod_lo = vmull_u8(vget_low_u8(src_bytes), state->color_lo);
+    /* Widening multiply for high 8 bytes (pixels 2-3) */
+    const uint16x8_t prod_hi = vmull_u8(vget_high_u8(src_bytes), state->color_hi);
+
+    /* Add rounding bias of 128 */
+    const uint16x8_t biased_lo = vaddq_u16(prod_lo, vdupq_n_u16(128));
+    const uint16x8_t biased_hi = vaddq_u16(prod_hi, vdupq_n_u16(128));
+
+    /* Narrow with >>8: u16 -> u8 */
+    const uint8x8_t result_lo = vshrn_n_u16(biased_lo, 8);
+    const uint8x8_t result_hi = vshrn_n_u16(biased_hi, 8);
+
+    /* Combine and store as 4 uint32s */
+    const uint8x16_t result_bytes = vcombine_u8(result_lo, result_hi);
+    vst1q_u32(dst, vreinterpretq_u32_u8(result_bytes));
+}
+#endif /* RENDERER_HAVE_NEON */
+
+/* --- Optimization B: Ghost sprite detection for half-resolution rendering ---
+ * Ghost/after-image sprites use bright_type[3] (blue tint) which produces
+ * colors with B==0xFF, R==G, R<0xFF.  These semi-transparent blue overlays
+ * can be rendered at half X resolution (process every other pixel, write
+ * the same value twice) cutting expensive modulate+blend calls in half
+ * with negligible visual impact since they're already translucent blurs. */
+static bool is_ghost_sprite_color(Uint32 color) {
+    /* Ghost sprites: blue-tinted (B=0xFF, R==G, R<0xFF) from bright_type[3]. */
+    return is_blue_tint_color(color);
+}
+
 static bool try_fast_copy_fast_textured_task_to_software_frame(const RenderTask* task,
                                                                const SoftwareFrameFastCopyPlan* plan,
                                                                SDL_Surface* dst_surface,
@@ -5788,24 +5866,165 @@ static bool try_fast_copy_fast_textured_task_to_software_frame(const RenderTask*
                 return true;
             }
 
-            for (int row = 0; row < plan->visible_h; row++) {
-                const Uint32* src_row = src_pixels + ((src_row0_y + (row * src_y_step)) * src_pitch) + src_row0_x;
-                Uint32* dst_row = dst_pixels + ((plan->dst_y0 + row) * dst_pitch) + plan->dst_x0;
-                const Uint32* src_pixel_ptr = src_row;
-                for (int col = 0; col < plan->visible_w; col++) {
-                    Uint32 src_pixel = modulate_argb8888(*src_pixel_ptr, color);
-                    const Uint32 src_a = (src_pixel >> 24) & 0xFFu;
-                    if (src_a == 0u) {
-                        src_pixel_ptr += src_x_step;
-                        continue;
+            /* Optimization B+D: detect ghost sprites (blue-tint from bright_type[3]).
+             * These get half-X-resolution rendering (when ghost-resolution=half)
+             * AND the fast blue-tint modulate. */
+            const bool ghost_half_res = (ghost_resolution_mode == SDL_GAME_RENDERER_GHOST_RESOLUTION_HALF) &&
+                                        is_ghost_sprite_color(color);
+            const bool blue_tint = is_blue_tint_color(color);
+            const Uint32 rg_factor = (color >> 16) & 0xFFu; /* R == G for blue tint */
+
+#if RENDERER_HAVE_NEON
+            /* Optimization A: NEON fast path for non-flipped forward scan.
+             * Process 4 pixels at a time with NEON widening multiply.
+             * Ghost sprites additionally skip every other pixel (half-res). */
+            if (src_x_step == 1) {
+                const NeonModulateState neon_state = neon_modulate_init(color);
+                const int visible_w = plan->visible_w;
+                /* For ghost half-res: process every other row too (fill from row above) */
+                const int row_step = ghost_half_res ? 2 : 1;
+
+                for (int row = 0; row < plan->visible_h; row += row_step) {
+                    const Uint32* src_row = src_pixels + ((src_row0_y + (row * src_y_step)) * src_pitch) + src_row0_x;
+                    Uint32* dst_row = dst_pixels + ((plan->dst_y0 + row) * dst_pitch) + plan->dst_x0;
+                    int col = 0;
+
+                    if (ghost_half_res) {
+                        /* Half-res X: process every other pixel pair, duplicate results.
+                         * NEON processes 4 source pixels, but we step by 8 in source
+                         * and write each result pixel twice (covering 8 dst columns). */
+                        Uint32 modulated[4];
+                        for (; (col + 7) < visible_w; col += 8) {
+                            /* Load 4 pixels at positions col, col+2, col+4, col+6 */
+                            const Uint32 sampled[4] = {
+                                src_row[col], src_row[col + 2],
+                                src_row[col + 4], src_row[col + 6]
+                            };
+                            neon_modulate_4pixels(sampled, modulated, &neon_state);
+                            /* Write each modulated pixel twice (col, col+1), (col+2, col+3), ... */
+                            for (int k = 0; k < 4; k++) {
+                                const Uint32 src_pixel = modulated[k];
+                                const Uint32 src_a = (src_pixel >> 24) & 0xFFu;
+                                const int dst_col = col + (k * 2);
+                                if (src_a == 0u) {
+                                    continue;
+                                }
+                                if (src_a == 0xFFu) {
+                                    dst_row[dst_col] = src_pixel;
+                                    dst_row[dst_col + 1] = src_pixel;
+                                    continue;
+                                }
+                                const Uint32 blended = blend_argb8888(dst_row[dst_col], src_pixel);
+                                dst_row[dst_col] = blended;
+                                dst_row[dst_col + 1] = blended;
+                            }
+                        }
+                        /* Scalar tail for remaining pixels */
+                        for (; col < visible_w; col += 2) {
+                            Uint32 src_pixel = blue_tint
+                                ? modulate_argb8888_blue_tint(src_row[col], rg_factor, mod_a)
+                                : modulate_argb8888(src_row[col], color);
+                            const Uint32 src_a = (src_pixel >> 24) & 0xFFu;
+                            if (src_a == 0u) {
+                                continue;
+                            }
+                            if (src_a == 0xFFu) {
+                                dst_row[col] = src_pixel;
+                                if ((col + 1) < visible_w) { dst_row[col + 1] = src_pixel; }
+                                continue;
+                            }
+                            const Uint32 blended = blend_argb8888(dst_row[col], src_pixel);
+                            dst_row[col] = blended;
+                            if ((col + 1) < visible_w) { dst_row[col + 1] = blended; }
+                        }
+                    } else {
+                        /* Full-res NEON path: process 4 contiguous pixels at a time */
+                        Uint32 modulated[4];
+                        for (; (col + 3) < visible_w; col += 4) {
+                            neon_modulate_4pixels(src_row + col, modulated, &neon_state);
+                            for (int k = 0; k < 4; k++) {
+                                const Uint32 src_pixel = modulated[k];
+                                const Uint32 src_a = (src_pixel >> 24) & 0xFFu;
+                                if (src_a == 0u) {
+                                    continue;
+                                }
+                                if (src_a == 0xFFu) {
+                                    dst_row[col + k] = src_pixel;
+                                    continue;
+                                }
+                                dst_row[col + k] = blend_argb8888(dst_row[col + k], src_pixel);
+                            }
+                        }
+                        /* Scalar tail */
+                        for (; col < visible_w; col++) {
+                            Uint32 src_pixel = blue_tint
+                                ? modulate_argb8888_blue_tint(src_row[col], rg_factor, mod_a)
+                                : modulate_argb8888(src_row[col], color);
+                            const Uint32 src_a = (src_pixel >> 24) & 0xFFu;
+                            if (src_a == 0u) {
+                                continue;
+                            }
+                            if (src_a == 0xFFu) {
+                                dst_row[col] = src_pixel;
+                                continue;
+                            }
+                            dst_row[col] = blend_argb8888(dst_row[col], src_pixel);
+                        }
                     }
-                    if (src_a == 0xFFu) {
-                        dst_row[col] = src_pixel;
-                        src_pixel_ptr += src_x_step;
-                        continue;
+
+                    /* Ghost half-res Y: duplicate this row to the next row */
+                    if (ghost_half_res && ((row + 1) < plan->visible_h)) {
+                        Uint32* next_dst_row = dst_pixels + ((plan->dst_y0 + row + 1) * dst_pitch) + plan->dst_x0;
+                        SDL_memcpy(next_dst_row, dst_row, (size_t)visible_w * sizeof(Uint32));
                     }
-                    dst_row[col] = blend_argb8888(dst_row[col], src_pixel);
-                    src_pixel_ptr += src_x_step;
+                }
+                return true;
+            }
+#endif /* RENDERER_HAVE_NEON */
+
+            /* Scalar path: blue-tint fast path (Optimization D) or generic modulate.
+             * Also applies ghost half-res (Optimization B) when applicable. */
+            {
+                const int row_step = ghost_half_res ? 2 : 1;
+                const int col_step = ghost_half_res ? 2 : 1;
+
+                for (int row = 0; row < plan->visible_h; row += row_step) {
+                    const Uint32* src_row = src_pixels + ((src_row0_y + (row * src_y_step)) * src_pitch) + src_row0_x;
+                    Uint32* dst_row = dst_pixels + ((plan->dst_y0 + row) * dst_pitch) + plan->dst_x0;
+                    const Uint32* src_pixel_ptr = src_row;
+                    for (int col = 0; col < plan->visible_w; col += col_step) {
+                        Uint32 src_pixel = blue_tint
+                            ? modulate_argb8888_blue_tint(*src_pixel_ptr, rg_factor, mod_a)
+                            : modulate_argb8888(*src_pixel_ptr, color);
+                        const Uint32 src_a = (src_pixel >> 24) & 0xFFu;
+                        if (src_a == 0u) {
+                            src_pixel_ptr += src_x_step * col_step;
+                            continue;
+                        }
+                        if (ghost_half_res) {
+                            if (src_a == 0xFFu) {
+                                dst_row[col] = src_pixel;
+                                if ((col + 1) < plan->visible_w) { dst_row[col + 1] = src_pixel; }
+                            } else {
+                                const Uint32 blended = blend_argb8888(dst_row[col], src_pixel);
+                                dst_row[col] = blended;
+                                if ((col + 1) < plan->visible_w) { dst_row[col + 1] = blended; }
+                            }
+                        } else {
+                            if (src_a == 0xFFu) {
+                                dst_row[col] = src_pixel;
+                            } else {
+                                dst_row[col] = blend_argb8888(dst_row[col], src_pixel);
+                            }
+                        }
+                        src_pixel_ptr += src_x_step * col_step;
+                    }
+
+                    /* Ghost half-res Y: duplicate row */
+                    if (ghost_half_res && ((row + 1) < plan->visible_h)) {
+                        Uint32* next_dst_row = dst_pixels + ((plan->dst_y0 + row + 1) * dst_pitch) + plan->dst_x0;
+                        SDL_memcpy(next_dst_row, dst_row, (size_t)plan->visible_w * sizeof(Uint32));
+                    }
                 }
             }
             return true;
@@ -5875,6 +6094,34 @@ static Uint32 modulate_argb8888(Uint32 pixel, Uint32 color) {
     const Uint32 out_g = (src_g * mod_g + 127u) / 255u;
     const Uint32 out_b = (src_b * mod_b + 127u) / 255u;
     return (out_a << 24) | (out_r << 16) | (out_g << 8) | out_b;
+}
+
+/* --- Optimization D: Fast blue-tint modulate path ---
+ * The bright_type[3] table (blue ghost tint) has B=0xFF and R==G.
+ * For this case we skip the B multiply (it's a no-op) and use a single
+ * factor for R and G since they're equal.  Returns true if color matches
+ * the blue-tint pattern. */
+static bool is_blue_tint_color(Uint32 color) {
+    const Uint32 b = color & 0xFFu;
+    const Uint32 g = (color >> 8) & 0xFFu;
+    const Uint32 r = (color >> 16) & 0xFFu;
+    return (b == 0xFFu) && (r == g) && (r < 0xFFu);
+}
+
+static Uint32 modulate_argb8888_blue_tint(Uint32 pixel, Uint32 rg_factor, Uint32 mod_a) {
+    /* B channel: no-op (mod_b == 0xFF).
+     * R and G channels: multiply by the same factor (rg_factor).
+     * A channel: multiply by mod_a.
+     * Uses >>8 approximation instead of /255 for speed — max error is 1 LSB. */
+    const Uint32 src_a = (pixel >> 24) & 0xFFu;
+    const Uint32 src_r = (pixel >> 16) & 0xFFu;
+    const Uint32 src_g = (pixel >> 8) & 0xFFu;
+    const Uint32 src_b = pixel & 0xFFu;
+    const Uint32 out_a = (src_a * mod_a) >> 8;
+    const Uint32 out_r = (src_r * rg_factor) >> 8;
+    const Uint32 out_g = (src_g * rg_factor) >> 8;
+    /* out_b = (src_b * 0xFF) >> 8 ≈ src_b, just pass through */
+    return (out_a << 24) | (out_r << 16) | (out_g << 8) | src_b;
 }
 
 static Uint8 blend_argb8888_channel(Uint32 src_c, Uint32 src_a, Uint32 dst_c, Uint32 dst_a, Uint32 out_a) {
@@ -6440,6 +6687,10 @@ static bool raster_textured_task_to_software_frame(const RenderTask* task) {
     const bool flip_h = (task->flip & SDL_FLIP_HORIZONTAL) != 0;
     const bool flip_v = (task->flip & SDL_FLIP_VERTICAL) != 0;
     const bool apply_color_mod = task->color != 0xFFFFFFFFu;
+    /* Optimization D: precompute blue-tint state for the generic path */
+    const bool generic_blue_tint = apply_color_mod && is_blue_tint_color(task->color);
+    const Uint32 generic_rg_factor = (task->color >> 16) & 0xFFu;
+    const Uint32 generic_mod_a = (task->color >> 24) & 0xFFu;
     const Uint64 generic_sample_start_counter =
         begin_perf_capture_raster_bucket_sample(SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_GENERIC_TEXTURED);
 
@@ -6489,7 +6740,9 @@ static bool raster_textured_task_to_software_frame(const RenderTask* task) {
 
             const int src_x =
                 clamp_to_range((int)SDL_floorf(src_x_start + (u * src_x_span)), 0, src_surface->w - 1);
-            Uint32 src_pixel = modulate_argb8888(src_row[src_x], task->color);
+            Uint32 src_pixel = generic_blue_tint
+                ? modulate_argb8888_blue_tint(src_row[src_x], generic_rg_factor, generic_mod_a)
+                : modulate_argb8888(src_row[src_x], task->color);
             const Uint32 src_a = (src_pixel >> 24) & 0xFFu;
             if (src_a == 0u) {
                 continue;
@@ -7807,6 +8060,10 @@ void SDLGameRenderer_SetSoftwareFrameDirectPresentMode(bool enabled) {
 
 void SDLGameRenderer_SetSuperEffectQualityMode(SDLGameRenderer_SuperEffectQualityMode mode) {
     super_effect_quality_mode = mode;
+}
+
+void SDLGameRenderer_SetGhostResolutionMode(SDLGameRenderer_GhostResolutionMode mode) {
+    ghost_resolution_mode = mode;
 }
 
 void SDLGameRenderer_SetSABgCacheFramesRemaining(int frames_remaining) {

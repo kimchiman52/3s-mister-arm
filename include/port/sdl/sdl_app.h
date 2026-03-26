@@ -15,6 +15,10 @@ void SDLApp_ToggleFPSOverlay(void);
 SDLGameRenderer_SuperEffectQualityMode SDLApp_GetSuperEffectQualityMode(void);
 void SDLApp_SetSuperEffectQualityMode(SDLGameRenderer_SuperEffectQualityMode mode);
 void SDLApp_CycleSuperEffectQualityMode(void);
+SDLGameRenderer_GhostResolutionMode SDLApp_GetGhostResolutionMode(void);
+void SDLApp_CycleGhostResolutionMode(void);
+int SDLApp_GetGhostCountMax(void);
+void SDLApp_CycleGhostCountMax(void);
 
 static inline bool SDLApp_HasPerfTelemetry(void) {
     return ENABLE_PERF_TELEMETRY != 0;

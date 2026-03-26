@@ -57,6 +57,40 @@ Notes:
 - This setting is only active on MiSTer builds. On non-MiSTer builds the config key is parsed but behaves like `full`.
 - Detection uses `sa_stop_check()` (cinematic freeze signal) which fires for all characters and all super arts. A grace period of ~15 frames after the signal drops covers the zoom-out transition.
 
+### `ghost-resolution`
+
+Controls whether ghost/after-image sprites render at half resolution.
+
+Defaults:
+- `full`
+
+Possible values:
+- `full`: Ghost sprites render at normal resolution (no change from vanilla)
+- `half`: Ghost sprites render at 2x step in X and Y, duplicating pixels (~75% less pixel work)
+
+Notes:
+- Ghost sprites are the blue-tinted semi-transparent after-images that appear during super art activations.
+- The half-resolution mode is nearly imperceptible because the sprites are already translucent blurs.
+- On MiSTer, this can be toggled at runtime via the OSD menu.
+
+### `ghost-count`
+
+Controls the maximum number of ghost copies per activation.
+
+Defaults:
+- `4`
+
+Possible values:
+- `1`: Maximum 1 ghost copy per activation
+- `2`: Maximum 2 ghost copies per activation
+- `3`: Maximum 3 ghost copies per activation
+- `4`: No cap (vanilla behavior)
+
+Notes:
+- Lower values reduce sprite rendering cost during super art activations.
+- The cap applies to the `dmcal_d` value in the after-image effect system. Original values range 1-4 depending on the move.
+- On MiSTer, this can be toggled at runtime via the OSD menu.
+
 ### `show-fps`
 
 Whether to draw a small FPS readout while the game is running.

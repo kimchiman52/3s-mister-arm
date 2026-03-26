@@ -44,6 +44,8 @@ typedef struct ConfigEntry {
 #endif
 
 #define DEFAULT_SUPER_EFFECT_QUALITY "full"
+#define DEFAULT_GHOST_RESOLUTION "full"
+#define DEFAULT_GHOST_COUNT "4"
 
 static const ConfigEntry default_entries[] = {
     { .key = CFG_KEY_FULLSCREEN, .type = CFG_BOOL, .value.b = true },
@@ -52,6 +54,8 @@ static const ConfigEntry default_entries[] = {
     { .key = CFG_KEY_SCALEMODE, .type = CFG_STRING, .value.s = DEFAULT_SCALE_MODE },
     { .key = CFG_KEY_SOFTWARE_FRAME_MODE, .type = CFG_STRING, .value.s = DEFAULT_SOFTWARE_FRAME_MODE },
     { .key = CFG_KEY_SUPER_EFFECT_QUALITY, .type = CFG_STRING, .value.s = DEFAULT_SUPER_EFFECT_QUALITY },
+    { .key = CFG_KEY_GHOST_RESOLUTION, .type = CFG_STRING, .value.s = DEFAULT_GHOST_RESOLUTION },
+    { .key = CFG_KEY_GHOST_COUNT, .type = CFG_STRING, .value.s = DEFAULT_GHOST_COUNT },
     { .key = CFG_KEY_SHOW_FPS, .type = CFG_BOOL, .value.b = false },
     { .key = CFG_KEY_VIDEO_DRIVER_ORDER, .type = CFG_STRING, .value.s = DEFAULT_VIDEO_DRIVER_ORDER },
     { .key = CFG_KEY_RENDER_DRIVER_ORDER, .type = CFG_STRING, .value.s = DEFAULT_RENDER_DRIVER_ORDER },

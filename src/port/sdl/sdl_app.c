@@ -91,6 +91,13 @@ static bool use_native_render_path = false;
 static bool software_frame_mode_enabled = false;
 static SDLGameRenderer_SuperEffectQualityMode super_effect_quality_mode =
     SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_FULL;
+static SDLGameRenderer_GhostResolutionMode ghost_resolution_mode =
+    SDL_GAME_RENDERER_GHOST_RESOLUTION_FULL;
+/* ghost_count_max: max simultaneously-alive ghost sprites per player (1-4,
+   default 4 = vanilla).  Enforced in effect_E7_init / effect_E8_init via
+   count_active_ghosts().  Exposed as a non-static global so game code can
+   access it via extern. */
+int ghost_count_max = 4;
 #if defined(PORT_MISTER)
 static int sa_bg_cache_frames_remaining = 0;
 static int sa_bg_cache_active_frame_index = 0;
@@ -8795,6 +8802,51 @@ static void init_super_effect_quality_mode(void) {
     reset_super_effect_quality_runtime_state();
 }
 
+static SDLGameRenderer_GhostResolutionMode parse_ghost_resolution_mode(const char* raw_mode) {
+    if (raw_mode == NULL) {
+        return SDL_GAME_RENDERER_GHOST_RESOLUTION_FULL;
+    }
+    if (SDL_strcasecmp(raw_mode, "half") == 0) {
+        return SDL_GAME_RENDERER_GHOST_RESOLUTION_HALF;
+    }
+    return SDL_GAME_RENDERER_GHOST_RESOLUTION_FULL;
+}
+
+static const char* ghost_resolution_mode_name(SDLGameRenderer_GhostResolutionMode mode) {
+    switch (mode) {
+    case SDL_GAME_RENDERER_GHOST_RESOLUTION_HALF: return "half";
+    default: return "full";
+    }
+}
+
+static void init_ghost_resolution_mode(void) {
+    const char* raw_mode = Config_GetString(CFG_KEY_GHOST_RESOLUTION);
+    if (raw_mode == NULL || raw_mode[0] == '\0') {
+        ghost_resolution_mode = SDL_GAME_RENDERER_GHOST_RESOLUTION_FULL;
+    } else {
+        ghost_resolution_mode = parse_ghost_resolution_mode(raw_mode);
+    }
+}
+
+static int parse_ghost_count_max(const char* raw_value) {
+    if (raw_value == NULL) {
+        return 4;
+    }
+    int val = SDL_atoi(raw_value);
+    if (val < 0) val = 0;
+    if (val > 4) val = 4;
+    return val;
+}
+
+static void init_ghost_count_max(void) {
+    const char* raw_value = Config_GetString(CFG_KEY_GHOST_COUNT);
+    if (raw_value == NULL || raw_value[0] == '\0') {
+        ghost_count_max = 4;
+    } else {
+        ghost_count_max = parse_ghost_count_max(raw_value);
+    }
+}
+
 #if defined(PORT_MISTER)
 static bool sa_bg_cache_mode_enabled(void) {
     return super_effect_quality_mode == SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_CACHED_BG;
@@ -8950,12 +9002,74 @@ void SDLApp_CycleSuperEffectQualityMode(void) {
     SDLApp_SetSuperEffectQualityMode(next_mode);
 }
 
+SDLGameRenderer_GhostResolutionMode SDLApp_GetGhostResolutionMode(void) {
+    return ghost_resolution_mode;
+}
+
+void SDLApp_CycleGhostResolutionMode(void) {
+    const SDLGameRenderer_GhostResolutionMode next_mode =
+        (ghost_resolution_mode == SDL_GAME_RENDERER_GHOST_RESOLUTION_FULL)
+            ? SDL_GAME_RENDERER_GHOST_RESOLUTION_HALF
+            : SDL_GAME_RENDERER_GHOST_RESOLUTION_FULL;
+
+    ghost_resolution_mode = next_mode;
+    SDLGameRenderer_SetGhostResolutionMode(next_mode);
+    backend_logf("Ghost resolution: %s", ghost_resolution_mode_name(ghost_resolution_mode));
+}
+
+int SDLApp_GetGhostCountMax(void) {
+    return ghost_count_max;
+}
+
+void SDLApp_CycleGhostCountMax(void) {
+    /* Re-read ghost-count from the config file on disk.  The wrapper writes
+       the file on every OSD click before sending the signal, so reading it
+       back is always in sync with what the OSD displays.  This avoids
+       desync caused by signal key-repeat (multiple signals per click). */
+    const char* pref_path = Paths_GetPrefPath();
+    char* config_path = NULL;
+    SDL_asprintf(&config_path, "%sconfig", pref_path);
+    if (config_path != NULL) {
+        FILE* f = fopen(config_path, "r");
+        if (f != NULL) {
+            char line[256];
+            while (fgets(line, sizeof(line), f) != NULL) {
+                /* Look for "ghost-count = <value>" */
+                char* eq = SDL_strchr(line, '=');
+                if (eq == NULL) continue;
+                *eq = '\0';
+                /* Trim key */
+                char* key = line;
+                while (*key == ' ' || *key == '\t') key++;
+                char* key_end = key + SDL_strlen(key);
+                while (key_end > key && (key_end[-1] == ' ' || key_end[-1] == '\t')) key_end--;
+                *key_end = '\0';
+                if (SDL_strcmp(key, "ghost-count") != 0) continue;
+                /* Trim value */
+                char* val = eq + 1;
+                while (*val == ' ' || *val == '\t') val++;
+                char* val_end = val + SDL_strlen(val);
+                while (val_end > val && (val_end[-1] == ' ' || val_end[-1] == '\t' ||
+                       val_end[-1] == '\n' || val_end[-1] == '\r')) val_end--;
+                *val_end = '\0';
+                ghost_count_max = parse_ghost_count_max(val);
+                break;
+            }
+            fclose(f);
+        }
+        SDL_free(config_path);
+    }
+    backend_logf("Ghost count max: %d", ghost_count_max);
+}
+
 int SDLApp_Init() {
     Config_Init();
     Keymap_Init();
     init_scalemode();
     init_software_frame_mode();
     init_super_effect_quality_mode();
+    init_ghost_resolution_mode();
+    init_ghost_count_max();
     init_show_fps_overlay();
 
     SDL_SetAppMetadata(app_name, "0.1", NULL);
@@ -9050,9 +9164,12 @@ int SDLApp_Init() {
     SDLGameRenderer_Init(renderer);
     SDLGameRenderer_SetSoftwareFrameMode(software_frame_mode_enabled);
     SDLGameRenderer_SetSuperEffectQualityMode(current_renderer_super_effect_quality_mode());
+    SDLGameRenderer_SetGhostResolutionMode(ghost_resolution_mode);
     SDLGameRenderer_SetSABgCacheFramesRemaining(0);
     backend_logf("Software frame mode: %s", software_frame_mode_name());
     backend_logf("Super effect quality: %s", super_effect_quality_mode_name(super_effect_quality_mode));
+    backend_logf("Ghost resolution: %s", ghost_resolution_mode_name(ghost_resolution_mode));
+    backend_logf("Ghost count max: %d", ghost_count_max);
 
 #if defined(DEBUG)
     SDLDebugText_Initialize(renderer);

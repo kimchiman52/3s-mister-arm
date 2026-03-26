@@ -56,6 +56,11 @@ typedef enum SDLGameRenderer_SuperEffectQualityMode {
     SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_CACHED_BG = 1,
 } SDLGameRenderer_SuperEffectQualityMode;
 
+typedef enum SDLGameRenderer_GhostResolutionMode {
+    SDL_GAME_RENDERER_GHOST_RESOLUTION_FULL = 0,
+    SDL_GAME_RENDERER_GHOST_RESOLUTION_HALF = 1,
+} SDLGameRenderer_GhostResolutionMode;
+
 typedef struct SDLGameRenderer_FrameStats {
     int render_task_count;
     int software_frame_mode_enabled;
@@ -707,6 +712,7 @@ void SDLGameRenderer_Init(SDL_Renderer* renderer);
 void SDLGameRenderer_SetSoftwareFrameMode(bool enabled);
 void SDLGameRenderer_SetSoftwareFrameDirectPresentMode(bool enabled);
 void SDLGameRenderer_SetSuperEffectQualityMode(SDLGameRenderer_SuperEffectQualityMode mode);
+void SDLGameRenderer_SetGhostResolutionMode(SDLGameRenderer_GhostResolutionMode mode);
 void SDLGameRenderer_SetSABgCacheFramesRemaining(int frames_remaining);
 void SDLGameRenderer_InvalidateSABgCache(void);
 bool SDLGameRenderer_IsSoftwareFrameModeEnabled(void);
