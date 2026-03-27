@@ -14,6 +14,7 @@
 #define CFG_KEY_RENDER_DRIVER_ORDER "render-driver-order"
 #define CFG_KEY_GHOST_RESOLUTION "ghost-resolution"
 #define CFG_KEY_GHOST_COUNT "ghost-count"
+#define CFG_KEY_ARM_CLOCK "arm-clock"
 
 /// Initialize config system
 void Config_Init();

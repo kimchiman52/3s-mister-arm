@@ -98,6 +98,9 @@ static SDLGameRenderer_GhostResolutionMode ghost_resolution_mode =
    count_active_ghosts().  Exposed as a non-static global so game code can
    access it via extern. */
 int ghost_count_max = 4;
+/* arm_clock: ARM CPU clock mode (0=stock 800MHz, 1=1000MHz, 2=1200MHz).
+   Applied via sysfs scaling_max_freq.  Reset to stock on exit. */
+static int arm_clock_mode = 0;
 #if defined(PORT_MISTER)
 static int sa_bg_cache_frames_remaining = 0;
 static int sa_bg_cache_active_frame_index = 0;
@@ -8972,7 +8975,40 @@ static void reset_fps_overlay_state(void) {
 }
 
 void SDLApp_ToggleFPSOverlay(void) {
-    show_fps_overlay = !show_fps_overlay;
+    /* Re-read from config file on disk — the wrapper writes it before
+       sending the signal, so reading it back stays in sync. */
+    const char* pref_path = Paths_GetPrefPath();
+    char* config_path = NULL;
+    SDL_asprintf(&config_path, "%sconfig", pref_path);
+    if (config_path != NULL) {
+        FILE* f = fopen(config_path, "r");
+        if (f != NULL) {
+            char line[256];
+            while (fgets(line, sizeof(line), f) != NULL) {
+                char* eq = SDL_strchr(line, '=');
+                if (eq == NULL) continue;
+                *eq = '\0';
+                char* key = line;
+                while (*key == ' ' || *key == '\t') key++;
+                char* key_end = key + SDL_strlen(key);
+                while (key_end > key && (key_end[-1] == ' ' || key_end[-1] == '\t')) key_end--;
+                *key_end = '\0';
+                if (SDL_strcmp(key, "show-fps") != 0) continue;
+                char* val = eq + 1;
+                while (*val == ' ' || *val == '\t') val++;
+                char* val_end = val + SDL_strlen(val);
+                while (val_end > val && (val_end[-1] == ' ' || val_end[-1] == '\t' ||
+                       val_end[-1] == '\n' || val_end[-1] == '\r')) val_end--;
+                *val_end = '\0';
+                show_fps_overlay = (SDL_strcasecmp(val, "true") == 0 ||
+                                    SDL_strcasecmp(val, "on") == 0 ||
+                                    SDL_strcmp(val, "1") == 0);
+                break;
+            }
+            fclose(f);
+        }
+        SDL_free(config_path);
+    }
     reset_fps_overlay_state();
 
     if (fbdev_presenter_enabled) {
@@ -9062,6 +9098,89 @@ void SDLApp_CycleGhostCountMax(void) {
     backend_logf("Ghost count max: %d", ghost_count_max);
 }
 
+static void apply_arm_clock(int mode) {
+    const char* freq = "800000";
+    if (mode == 1) freq = "1000000";
+    else if (mode == 2) freq = "1200000";
+
+    FILE* f = fopen("/sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq", "w");
+    if (f != NULL) {
+        fprintf(f, "%s\n", freq);
+        fclose(f);
+    } else {
+        backend_logf("ARM clock: failed to open cpufreq sysfs (driver may not be loaded)");
+    }
+}
+
+static const char* arm_clock_mode_label(int mode) {
+    if (mode == 1) return "1000MHz";
+    if (mode == 2) return "1200MHz";
+    return "stock (800MHz)";
+}
+
+static int parse_arm_clock_mode(const char* raw_value) {
+    if (raw_value == NULL) return 0;
+    if (SDL_strcmp(raw_value, "1000") == 0) return 1;
+    if (SDL_strcmp(raw_value, "1200") == 0) return 2;
+    return 0;
+}
+
+static void init_arm_clock(void) {
+    const char* raw_value = Config_GetString(CFG_KEY_ARM_CLOCK);
+    if (raw_value == NULL || raw_value[0] == '\0') {
+        arm_clock_mode = 0;
+    } else {
+        arm_clock_mode = parse_arm_clock_mode(raw_value);
+    }
+    apply_arm_clock(arm_clock_mode);
+}
+
+int SDLApp_GetArmClock(void) {
+    return arm_clock_mode;
+}
+
+void SDLApp_CycleArmClock(void) {
+    /* Re-read arm-clock from the config file on disk.  The wrapper writes
+       the file on every OSD click before sending the signal, so reading it
+       back is always in sync with what the OSD displays.  This avoids
+       desync caused by signal key-repeat (multiple signals per click). */
+    const char* pref_path = Paths_GetPrefPath();
+    char* config_path = NULL;
+    SDL_asprintf(&config_path, "%sconfig", pref_path);
+    if (config_path != NULL) {
+        FILE* f = fopen(config_path, "r");
+        if (f != NULL) {
+            char line[256];
+            while (fgets(line, sizeof(line), f) != NULL) {
+                /* Look for "arm-clock = <value>" */
+                char* eq = SDL_strchr(line, '=');
+                if (eq == NULL) continue;
+                *eq = '\0';
+                /* Trim key */
+                char* key = line;
+                while (*key == ' ' || *key == '\t') key++;
+                char* key_end = key + SDL_strlen(key);
+                while (key_end > key && (key_end[-1] == ' ' || key_end[-1] == '\t')) key_end--;
+                *key_end = '\0';
+                if (SDL_strcmp(key, "arm-clock") != 0) continue;
+                /* Trim value */
+                char* val = eq + 1;
+                while (*val == ' ' || *val == '\t') val++;
+                char* val_end = val + SDL_strlen(val);
+                while (val_end > val && (val_end[-1] == ' ' || val_end[-1] == '\t' ||
+                       val_end[-1] == '\n' || val_end[-1] == '\r')) val_end--;
+                *val_end = '\0';
+                arm_clock_mode = parse_arm_clock_mode(val);
+                break;
+            }
+            fclose(f);
+        }
+        SDL_free(config_path);
+    }
+    apply_arm_clock(arm_clock_mode);
+    backend_logf("ARM clock: %s", arm_clock_mode_label(arm_clock_mode));
+}
+
 int SDLApp_Init() {
     Config_Init();
     Keymap_Init();
@@ -9070,6 +9189,7 @@ int SDLApp_Init() {
     init_super_effect_quality_mode();
     init_ghost_resolution_mode();
     init_ghost_count_max();
+    init_arm_clock();
     init_show_fps_overlay();
 
     SDL_SetAppMetadata(app_name, "0.1", NULL);
@@ -9170,6 +9290,7 @@ int SDLApp_Init() {
     backend_logf("Super effect quality: %s", super_effect_quality_mode_name(super_effect_quality_mode));
     backend_logf("Ghost resolution: %s", ghost_resolution_mode_name(ghost_resolution_mode));
     backend_logf("Ghost count max: %d", ghost_count_max);
+    backend_logf("ARM clock: %s", arm_clock_mode_label(arm_clock_mode));
 
 #if defined(DEBUG)
     SDLDebugText_Initialize(renderer);
@@ -9185,6 +9306,7 @@ int SDLApp_Init() {
 }
 
 void SDLApp_Quit() {
+    apply_arm_clock(0);
     Config_Destroy();
     FBDevPresenter_Quit();
     destroy_native_screenshot_texture();

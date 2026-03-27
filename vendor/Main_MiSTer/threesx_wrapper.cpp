@@ -53,6 +53,7 @@ constexpr int kRuntimeFpsToggleSignal = SIGUSR1;
 constexpr int kRuntimeSuperEffectQualityCycleSignal = SIGUSR2;
 #define kRuntimeGhostResolutionCycleSignal (SIGRTMIN)
 #define kRuntimeGhostCountCycleSignal (SIGRTMIN + 1)
+#define kRuntimeArmClockCycleSignal (SIGRTMIN + 2)
 
 enum WrapperMenuItem
 {
@@ -62,6 +63,7 @@ enum WrapperMenuItem
 	kMenuSuperEffectQuality,
 	kMenuGhostResolution,
 	kMenuGhostCount,
+	kMenuArmClock,
 	kMenuRestart,
 	kMenuQuit,
 	kMenuItemCount
@@ -99,6 +101,14 @@ enum RuntimeGhostCountMenu
 	kGhostCountMenuCount
 };
 
+enum RuntimeArmClockMenu
+{
+	kArmClockStock = 0,
+	kArmClock1000,
+	kArmClock1200,
+	kArmClockMenuCount
+};
+
 volatile sig_atomic_t g_wrapper_signal = 0;
 volatile sig_atomic_t g_child_pid = -1;
 int g_wrapper_menu_visible = 0;
@@ -108,6 +118,7 @@ int g_wrapper_scale_mode = kScaleModeAuto;
 int g_wrapper_super_effect_quality = kSuperEffectQualityCachedBg;
 int g_wrapper_ghost_resolution = kGhostResolutionFull;
 int g_wrapper_ghost_count = kGhostCount4;
+int g_wrapper_arm_clock = kArmClockStock;
 int g_wrapper_restart_requested = 0;
 int g_wrapper_used_full_user_io_init = 0;
 
@@ -933,6 +944,102 @@ bool write_runtime_ghost_count_default(int mode)
 	return true;
 }
 
+int read_runtime_arm_clock_default()
+{
+	char value[64] = {};
+	if (!read_runtime_config_value("arm-clock", value, sizeof(value))) return kArmClockStock;
+
+	if (!strcmp(value, "1000")) return kArmClock1000;
+	if (!strcmp(value, "1200")) return kArmClock1200;
+	return kArmClockStock;
+}
+
+const char *runtime_arm_clock_label(int mode)
+{
+	switch (mode)
+	{
+	case kArmClock1000: return "1000MHz";
+	case kArmClock1200: return "1200MHz";
+	default: return "Stock";
+	}
+}
+
+static const char *runtime_arm_clock_config_value(int mode)
+{
+	switch (mode)
+	{
+	case kArmClock1000: return "1000";
+	case kArmClock1200: return "1200";
+	default: return "stock";
+	}
+}
+
+bool write_runtime_arm_clock_default(int mode)
+{
+	char path[PATH_MAX] = {};
+	char temp_path[PATH_MAX] = {};
+	snprintf(path, sizeof(path), "%s/config", kRuntimeHome);
+	snprintf(temp_path, sizeof(temp_path), "%s/config.tmp", kRuntimeHome);
+
+	FILE *in = fopen(path, "r");
+	FILE *out = fopen(temp_path, "w");
+	if (!out)
+	{
+		if (in) fclose(in);
+		return false;
+	}
+
+	bool wrote_value = false;
+	char line[256] = {};
+	if (in)
+	{
+		while (fgets(line, sizeof(line), in))
+		{
+			char inspect[256] = {};
+			snprintf(inspect, sizeof(inspect), "%s", line);
+
+			char *cursor = inspect;
+			while (*cursor && isspace((unsigned char)*cursor)) cursor++;
+			if (*cursor == '#')
+			{
+				fputs(line, out);
+				continue;
+			}
+
+			char *equals = strchr(cursor, '=');
+			if (equals)
+			{
+				*equals = 0;
+				trim_in_place(cursor);
+				if (!strcasecmp(cursor, "arm-clock"))
+				{
+					fprintf(out, "arm-clock = %s\n", runtime_arm_clock_config_value(mode));
+					wrote_value = true;
+					continue;
+				}
+			}
+
+			fputs(line, out);
+		}
+
+		fclose(in);
+	}
+
+	if (!wrote_value)
+	{
+		fprintf(out, "\narm-clock = %s\n", runtime_arm_clock_config_value(mode));
+	}
+
+	if (fclose(out) != 0) return false;
+	if (rename(temp_path, path) != 0)
+	{
+		remove(temp_path);
+		return false;
+	}
+
+	return true;
+}
+
 StartupScaleModeSelection resolve_startup_scale_mode()
 {
 	StartupScaleModeSelection selection = {};
@@ -1057,6 +1164,72 @@ bool read_runtime_fps_default()
 	return !strcasecmp(value, "true") || !strcasecmp(value, "on") || !strcmp(value, "1");
 }
 
+bool write_runtime_fps_default(bool enabled)
+{
+	char path[PATH_MAX] = {};
+	char temp_path[PATH_MAX] = {};
+	snprintf(path, sizeof(path), "%s/config", kRuntimeHome);
+	snprintf(temp_path, sizeof(temp_path), "%s/config.tmp", kRuntimeHome);
+
+	FILE *in = fopen(path, "r");
+	FILE *out = fopen(temp_path, "w");
+	if (!out)
+	{
+		if (in) fclose(in);
+		return false;
+	}
+
+	bool wrote_value = false;
+	char line[256] = {};
+	if (in)
+	{
+		while (fgets(line, sizeof(line), in))
+		{
+			char inspect[256] = {};
+			snprintf(inspect, sizeof(inspect), "%s", line);
+
+			char *cursor = inspect;
+			while (*cursor && isspace((unsigned char)*cursor)) cursor++;
+			if (*cursor == '#')
+			{
+				fputs(line, out);
+				continue;
+			}
+
+			char *equals = strchr(cursor, '=');
+			if (equals)
+			{
+				*equals = 0;
+				trim_in_place(cursor);
+				if (!strcasecmp(cursor, "show-fps"))
+				{
+					fprintf(out, "show-fps = %s\n", enabled ? "true" : "false");
+					wrote_value = true;
+					continue;
+				}
+			}
+
+			fputs(line, out);
+		}
+
+		fclose(in);
+	}
+
+	if (!wrote_value)
+	{
+		fprintf(out, "\nshow-fps = %s\n", enabled ? "true" : "false");
+	}
+
+	if (fclose(out) != 0) return false;
+	if (rename(temp_path, path) != 0)
+	{
+		remove(temp_path);
+		return false;
+	}
+
+	return true;
+}
+
 void format_wrapper_value_line(char *line, size_t line_size, const char *label, const char *value)
 {
 	if (!line || !line_size) return;
@@ -1070,6 +1243,7 @@ void draw_wrapper_menu(int selected)
 	char super_effect_quality_line[33] = {};
 	char ghost_resolution_line[33] = {};
 	char ghost_count_line[33] = {};
+	char arm_clock_line[33] = {};
 	format_wrapper_value_line(fps_line, sizeof(fps_line), "FPS", g_wrapper_fps_enabled ? "On" : "Off");
 	format_wrapper_value_line(scale_line, sizeof(scale_line), "Scale", runtime_scale_mode_label(g_wrapper_scale_mode));
 	format_wrapper_value_line(super_effect_quality_line,
@@ -1084,8 +1258,12 @@ void draw_wrapper_menu(int selected)
 	                          sizeof(ghost_count_line),
 	                          "GhostCnt",
 	                          runtime_ghost_count_label(g_wrapper_ghost_count));
+	format_wrapper_value_line(arm_clock_line,
+	                          sizeof(arm_clock_line),
+	                          "ArmClk",
+	                          runtime_arm_clock_label(g_wrapper_arm_clock));
 
-	OsdSetSize(10);
+	OsdSetSize(11);
 	OsdSetTitle("3SX Menu", 0);
 	OsdClear();
 	OsdWrite(0, "");
@@ -1095,9 +1273,10 @@ void draw_wrapper_menu(int selected)
 	OsdWrite(4, super_effect_quality_line, selected == kMenuSuperEffectQuality);
 	OsdWrite(5, ghost_resolution_line, selected == kMenuGhostResolution);
 	OsdWrite(6, ghost_count_line, selected == kMenuGhostCount);
-	OsdWrite(7, " Restart", selected == kMenuRestart);
-	OsdWrite(8, " Quit to MiSTer", selected == kMenuQuit);
-	OsdWrite(9, "");
+	OsdWrite(7, arm_clock_line, selected == kMenuArmClock);
+	OsdWrite(8, " Restart", selected == kMenuRestart);
+	OsdWrite(9, " Quit to MiSTer", selected == kMenuQuit);
+	OsdWrite(10, "");
 	threesx_wrapper_menu_set_visible(1);
 	OsdMenuCtl(1);
 	OsdEnable(DISABLE_KEYBOARD);
@@ -1156,9 +1335,11 @@ void service_wrapper_menu(pid_t child)
 	case KEY_SPACE:
 		if (g_wrapper_menu_selected == kMenuFpsToggle)
 		{
-			if (kill(child, kRuntimeFpsToggleSignal) == 0)
+			const int next_fps = !g_wrapper_fps_enabled;
+			if (write_runtime_fps_default(next_fps))
 			{
-				g_wrapper_fps_enabled = !g_wrapper_fps_enabled;
+				g_wrapper_fps_enabled = next_fps;
+				(void)kill(child, kRuntimeFpsToggleSignal);
 				draw_wrapper_menu(g_wrapper_menu_selected);
 			}
 			return;
@@ -1206,6 +1387,18 @@ void service_wrapper_menu(pid_t child)
 			{
 				g_wrapper_ghost_count = next_mode;
 				(void)kill(child, kRuntimeGhostCountCycleSignal);
+				draw_wrapper_menu(g_wrapper_menu_selected);
+			}
+			return;
+		}
+
+		if (g_wrapper_menu_selected == kMenuArmClock)
+		{
+			const int next_mode = (g_wrapper_arm_clock + 1) % kArmClockMenuCount;
+			if (write_runtime_arm_clock_default(next_mode))
+			{
+				g_wrapper_arm_clock = next_mode;
+				(void)kill(child, kRuntimeArmClockCycleSignal);
 				draw_wrapper_menu(g_wrapper_menu_selected);
 			}
 			return;
@@ -1402,6 +1595,7 @@ int threesx_wrapper_run(int argc, char *argv[])
 	g_wrapper_super_effect_quality = read_runtime_super_effect_quality_default();
 	g_wrapper_ghost_resolution = read_runtime_ghost_resolution_default();
 	g_wrapper_ghost_count = read_runtime_ghost_count_default();
+	g_wrapper_arm_clock = read_runtime_arm_clock_default();
 	g_wrapper_restart_requested = 0;
 	g_wrapper_signal = 0;
 
@@ -1583,6 +1777,20 @@ int threesx_wrapper_run(int argc, char *argv[])
 
 		write_fd_line(last_run_fd, "exit=%d", exit_code);
 		write_log_line(wrapper_log, "child_exit=%d", exit_code);
+
+		/* Reset ARM clock to stock after child exits, regardless of exit reason.
+		   Catches crashes, SIGKILL, and abnormal termination that bypass the
+		   game-side cleanup in SDLApp_Quit(). */
+		if (g_wrapper_arm_clock != kArmClockStock)
+		{
+			FILE *fp_reset = fopen("/sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq", "w");
+			if (fp_reset)
+			{
+				fprintf(fp_reset, "800000\n");
+				fclose(fp_reset);
+			}
+			write_log_line(wrapper_log, "arm_clock_reset=stock (post-child)");
+		}
 
 		close(last_run_fd);
 
