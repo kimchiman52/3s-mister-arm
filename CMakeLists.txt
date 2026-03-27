@@ -187,6 +187,18 @@ if(PORT_MISTER AND ENABLE_MISTER_ARM_HARDENING)
     endif()
 endif()
 
+# MiSTer Release: aggressive optimisation — -O3 (Clang cross-build)
+# Note: -flto=thin was removed because it triggers a linker segfault in
+# clang-20 during the ARM cross-build (Debian bullseye toolchain).
+if(PORT_MISTER)
+    target_compile_options(3sx PRIVATE
+        $<$<CONFIG:Release>:-O3>
+    )
+    target_link_options(3sx PRIVATE
+        $<$<CONFIG:Release>:-O3>
+    )
+endif()
+
 set_target_properties(3sx PROPERTIES
     MACOSX_BUNDLE_INFO_PLIST "${CMAKE_SOURCE_DIR}/cmake/Info.plist"
 )

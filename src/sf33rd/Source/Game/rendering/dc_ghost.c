@@ -39,19 +39,6 @@ typedef struct {
 NJDP2D_W njdp2d_w;
 MTX cmtx;
 
-static void matmul(MTX* dst, const MTX* a, const MTX* b) {
-    MTX result;
-
-    for (int i = 0; i < 4; i++) {
-        for (int j = 0; j < 4; j++) {
-            result.a[i][j] =
-                a->a[i][0] * b->a[0][j] + a->a[i][1] * b->a[1][j] + a->a[i][2] * b->a[2][j] + a->a[i][3] * b->a[3][j];
-        }
-    }
-
-    memcpy(dst, &result, sizeof(MTX));
-}
-
 void njUnitMatrix(MTX* mtx) {
     if (mtx == NULL) {
         mtx = &cmtx;
@@ -93,14 +80,9 @@ void njTranslate(MTX* mtx, f32 x, f32 y, f32 z) {
         mtx = &cmtx;
     }
 
-    MTX translation_matrix;
-
-    njUnitMatrix(&translation_matrix);
-    translation_matrix.a[3][0] = x;
-    translation_matrix.a[3][1] = y;
-    translation_matrix.a[3][2] = z;
-
-    matmul(mtx, &translation_matrix, mtx);
+    for (int j = 0; j < 4; j++) {
+        mtx->a[3][j] += x * mtx->a[0][j] + y * mtx->a[1][j] + z * mtx->a[2][j];
+    }
 }
 
 void njTranslateZ(MTX* mtx, f32 z) {

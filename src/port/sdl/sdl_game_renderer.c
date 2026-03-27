@@ -5821,6 +5821,154 @@ static inline void neon_modulate_4pixels(
     const uint8x16_t result_bytes = vcombine_u8(result_lo, result_hi);
     vst1q_u32(dst, vreinterpretq_u32_u8(result_bytes));
 }
+
+/* --- NEON-vectorized alpha blending for 4 pixels at a time ---
+ * Implements the dst_a==255 fast path from blend_argb8888():
+ *   out_ch = (src_ch * src_a + dst_ch * (255 - src_a) + 128) >> 8
+ * with branchless handling of alpha==0 (keep dst) and alpha==255 (keep src).
+ *
+ * ARGB8888 little-endian byte layout: [B, G, R, A] at byte offsets 0-3.
+ * We broadcast each pixel's alpha byte to all 4 channel positions using
+ * vtbl1_u8 with a shuffle index table, then do the blend math on all
+ * channels simultaneously. Output alpha is forced to 0xFF. */
+
+static inline __attribute__((unused)) void neon_blend_4pixels(const Uint32* src, Uint32* dst) {
+    /* Load 4 source and 4 destination pixels */
+    const uint8x16_t src_bytes = vreinterpretq_u8_u32(vld1q_u32(src));
+    const uint8x16_t dst_bytes = vreinterpretq_u8_u32(vld1q_u32(dst));
+
+    /* Shuffle table to broadcast alpha (byte 3) to all 4 channels within each pixel.
+     * For 8-byte half (2 pixels): pixel0 alpha is byte 3, pixel1 alpha is byte 7.
+     * vtbl1_u8 uses the index to pick bytes from the source register. */
+    static const uint8_t alpha_shuffle_tbl[8] = { 3, 3, 3, 3, 7, 7, 7, 7 };
+    const uint8x8_t shuffle = vld1_u8(alpha_shuffle_tbl);
+
+    /* Extract alpha broadcast for low 2 pixels and high 2 pixels */
+    const uint8x8_t src_lo = vget_low_u8(src_bytes);
+    const uint8x8_t src_hi = vget_high_u8(src_bytes);
+    const uint8x8_t alpha_lo = vtbl1_u8(src_lo, shuffle);
+    const uint8x8_t alpha_hi = vtbl1_u8(src_hi, shuffle);
+
+    /* inv_alpha = 255 - src_alpha */
+    const uint8x8_t ones8 = vdup_n_u8(255);
+    const uint8x8_t inv_alpha_lo = vsub_u8(ones8, alpha_lo);
+    const uint8x8_t inv_alpha_hi = vsub_u8(ones8, alpha_hi);
+
+    /* Blend: result = (src * alpha + dst * inv_alpha + 128) >> 8 */
+    const uint8x8_t dst_lo = vget_low_u8(dst_bytes);
+    const uint8x8_t dst_hi = vget_high_u8(dst_bytes);
+
+    /* Low 2 pixels */
+    uint16x8_t acc_lo = vmull_u8(src_lo, alpha_lo);
+    acc_lo = vmlal_u8(acc_lo, dst_lo, inv_alpha_lo);
+    acc_lo = vaddq_u16(acc_lo, vdupq_n_u16(128));
+    const uint8x8_t blend_lo = vshrn_n_u16(acc_lo, 8);
+
+    /* High 2 pixels */
+    uint16x8_t acc_hi = vmull_u8(src_hi, alpha_hi);
+    acc_hi = vmlal_u8(acc_hi, dst_hi, inv_alpha_hi);
+    acc_hi = vaddq_u16(acc_hi, vdupq_n_u16(128));
+    const uint8x8_t blend_hi = vshrn_n_u16(acc_hi, 8);
+
+    /* Combine blended result */
+    uint8x16_t result = vcombine_u8(blend_lo, blend_hi);
+
+    /* Force output alpha to 0xFF (byte 3 of each pixel in LE = lane 3,7,11,15) */
+    static const uint8_t alpha_mask_tbl[16] = {
+        0x00, 0x00, 0x00, 0xFF, 0x00, 0x00, 0x00, 0xFF,
+        0x00, 0x00, 0x00, 0xFF, 0x00, 0x00, 0x00, 0xFF
+    };
+    const uint8x16_t alpha_mask = vld1q_u8(alpha_mask_tbl);
+    result = vorrq_u8(result, alpha_mask);
+
+    /* Branchless edge-case handling:
+     * - alpha==0:   keep dst (select dst)
+     * - alpha==255: keep src (select src)
+     * - otherwise:  keep blended result
+     * Build per-pixel masks from the alpha bytes. */
+    const uint8x16_t alpha_full = vcombine_u8(alpha_lo, alpha_hi);
+    const uint8x16_t zero_vec = vdupq_n_u8(0);
+    const uint8x16_t ff_vec = vdupq_n_u8(255);
+
+    /* mask_zero: 0xFF in all lanes where alpha==0 */
+    const uint8x16_t mask_zero = vceqq_u8(alpha_full, zero_vec);
+    /* mask_opaque: 0xFF in all lanes where alpha==255 */
+    const uint8x16_t mask_opaque = vceqq_u8(alpha_full, ff_vec);
+
+    /* Start with blended result, replace with dst where alpha==0 */
+    result = vbslq_u8(mask_zero, dst_bytes, result);
+    /* Then replace with src where alpha==255 */
+    result = vbslq_u8(mask_opaque, src_bytes, result);
+
+    vst1q_u32(dst, vreinterpretq_u32_u8(result));
+}
+
+/* Fused modulate+blend: modulate src by constant color, then alpha-blend onto dst.
+ * Avoids intermediate store/load between modulate and blend stages.
+ * Used for ghost sprites and other semi-transparent color-modulated content. */
+static inline void neon_blend_modulate_4pixels(
+    const Uint32* src, Uint32* dst, const NeonModulateState* mod) {
+    /* --- Stage 1: Modulate src by constant color --- */
+    const uint8x16_t src_bytes = vreinterpretq_u8_u32(vld1q_u32(src));
+
+    /* Widening multiply: src * color -> u16 */
+    const uint16x8_t mod_lo = vmull_u8(vget_low_u8(src_bytes), mod->color_lo);
+    const uint16x8_t mod_hi = vmull_u8(vget_high_u8(src_bytes), mod->color_hi);
+
+    /* Add rounding bias and narrow: (prod + 128) >> 8 */
+    const uint16x8_t bias = vdupq_n_u16(128);
+    const uint8x8_t modulated_lo = vshrn_n_u16(vaddq_u16(mod_lo, bias), 8);
+    const uint8x8_t modulated_hi = vshrn_n_u16(vaddq_u16(mod_hi, bias), 8);
+
+    /* --- Stage 2: Alpha-blend modulated src onto dst --- */
+    const uint8x16_t dst_bytes = vreinterpretq_u8_u32(vld1q_u32(dst));
+
+    /* Broadcast modulated alpha to all channels per pixel */
+    static const uint8_t alpha_shuffle_tbl[8] = { 3, 3, 3, 3, 7, 7, 7, 7 };
+    const uint8x8_t shuffle = vld1_u8(alpha_shuffle_tbl);
+    const uint8x8_t alpha_lo = vtbl1_u8(modulated_lo, shuffle);
+    const uint8x8_t alpha_hi = vtbl1_u8(modulated_hi, shuffle);
+
+    /* inv_alpha = 255 - alpha */
+    const uint8x8_t ones8 = vdup_n_u8(255);
+    const uint8x8_t inv_alpha_lo = vsub_u8(ones8, alpha_lo);
+    const uint8x8_t inv_alpha_hi = vsub_u8(ones8, alpha_hi);
+
+    /* Blend: (modulated * alpha + dst * inv_alpha + 128) >> 8 */
+    const uint8x8_t dst_lo = vget_low_u8(dst_bytes);
+    const uint8x8_t dst_hi = vget_high_u8(dst_bytes);
+
+    uint16x8_t acc_lo = vmull_u8(modulated_lo, alpha_lo);
+    acc_lo = vmlal_u8(acc_lo, dst_lo, inv_alpha_lo);
+    acc_lo = vaddq_u16(acc_lo, bias);
+    const uint8x8_t blend_lo = vshrn_n_u16(acc_lo, 8);
+
+    uint16x8_t acc_hi = vmull_u8(modulated_hi, alpha_hi);
+    acc_hi = vmlal_u8(acc_hi, dst_hi, inv_alpha_hi);
+    acc_hi = vaddq_u16(acc_hi, bias);
+    const uint8x8_t blend_hi = vshrn_n_u16(acc_hi, 8);
+
+    /* Combine blended result */
+    uint8x16_t result = vcombine_u8(blend_lo, blend_hi);
+
+    /* Force output alpha to 0xFF */
+    static const uint8_t alpha_mask_tbl[16] = {
+        0x00, 0x00, 0x00, 0xFF, 0x00, 0x00, 0x00, 0xFF,
+        0x00, 0x00, 0x00, 0xFF, 0x00, 0x00, 0x00, 0xFF
+    };
+    result = vorrq_u8(result, vld1q_u8(alpha_mask_tbl));
+
+    /* Branchless edge cases: alpha==0 -> keep dst, alpha==255 -> keep modulated src */
+    const uint8x16_t alpha_full = vcombine_u8(alpha_lo, alpha_hi);
+    const uint8x16_t modulated_full = vcombine_u8(modulated_lo, modulated_hi);
+    const uint8x16_t mask_zero = vceqq_u8(alpha_full, vdupq_n_u8(0));
+    const uint8x16_t mask_opaque = vceqq_u8(alpha_full, vdupq_n_u8(255));
+
+    result = vbslq_u8(mask_zero, dst_bytes, result);
+    result = vbslq_u8(mask_opaque, modulated_full, result);
+
+    vst1q_u32(dst, vreinterpretq_u32_u8(result));
+}
 #endif /* RENDERER_HAVE_NEON */
 
 /* --- Optimization B: Ghost sprite detection for half-resolution rendering ---
@@ -5887,6 +6035,13 @@ static bool try_fast_copy_fast_textured_task_to_software_frame(const RenderTask*
                 for (int row = 0; row < plan->visible_h; row += row_step) {
                     const Uint32* src_row = src_pixels + ((src_row0_y + (row * src_y_step)) * src_pitch) + src_row0_x;
                     Uint32* dst_row = dst_pixels + ((plan->dst_y0 + row) * dst_pitch) + plan->dst_x0;
+
+                    /* Prefetch next iteration's source and destination rows to hide L1/L2 miss latency. */
+                    if ((row + row_step) < plan->visible_h) {
+                        __builtin_prefetch(src_pixels + ((src_row0_y + ((row + row_step) * src_y_step)) * src_pitch) + src_row0_x, 0, 0);
+                        __builtin_prefetch(dst_pixels + ((plan->dst_y0 + row + row_step) * dst_pitch) + plan->dst_x0, 1, 0);
+                    }
+
                     int col = 0;
 
                     if (ghost_half_res) {
@@ -5938,22 +6093,10 @@ static bool try_fast_copy_fast_textured_task_to_software_frame(const RenderTask*
                             if ((col + 1) < visible_w) { dst_row[col + 1] = blended; }
                         }
                     } else {
-                        /* Full-res NEON path: process 4 contiguous pixels at a time */
-                        Uint32 modulated[4];
+                        /* Full-res NEON path: fused modulate+blend, 4 contiguous pixels at a time.
+                         * neon_blend_modulate_4pixels handles alpha==0/255 edge cases branchlessly. */
                         for (; (col + 3) < visible_w; col += 4) {
-                            neon_modulate_4pixels(src_row + col, modulated, &neon_state);
-                            for (int k = 0; k < 4; k++) {
-                                const Uint32 src_pixel = modulated[k];
-                                const Uint32 src_a = (src_pixel >> 24) & 0xFFu;
-                                if (src_a == 0u) {
-                                    continue;
-                                }
-                                if (src_a == 0xFFu) {
-                                    dst_row[col + k] = src_pixel;
-                                    continue;
-                                }
-                                dst_row[col + k] = blend_argb8888(dst_row[col + k], src_pixel);
-                            }
+                            neon_blend_modulate_4pixels(src_row + col, dst_row + col, &neon_state);
                         }
                         /* Scalar tail */
                         for (; col < visible_w; col++) {
@@ -5991,6 +6134,13 @@ static bool try_fast_copy_fast_textured_task_to_software_frame(const RenderTask*
                 for (int row = 0; row < plan->visible_h; row += row_step) {
                     const Uint32* src_row = src_pixels + ((src_row0_y + (row * src_y_step)) * src_pitch) + src_row0_x;
                     Uint32* dst_row = dst_pixels + ((plan->dst_y0 + row) * dst_pitch) + plan->dst_x0;
+
+                    /* Prefetch next iteration's source and destination rows to hide L1/L2 miss latency. */
+                    if ((row + row_step) < plan->visible_h) {
+                        __builtin_prefetch(src_pixels + ((src_row0_y + ((row + row_step) * src_y_step)) * src_pitch) + src_row0_x, 0, 0);
+                        __builtin_prefetch(dst_pixels + ((plan->dst_y0 + row + row_step) * dst_pitch) + plan->dst_x0, 1, 0);
+                    }
+
                     const Uint32* src_pixel_ptr = src_row;
                     for (int col = 0; col < plan->visible_w; col += col_step) {
                         Uint32 src_pixel = blue_tint
@@ -6033,6 +6183,13 @@ static bool try_fast_copy_fast_textured_task_to_software_frame(const RenderTask*
         for (int row = 0; row < plan->visible_h; row++) {
             const Uint32* src_row = src_pixels + ((src_row0_y + (row * src_y_step)) * src_pitch) + src_row0_x;
             Uint32* dst_row = dst_pixels + ((plan->dst_y0 + row) * dst_pitch) + plan->dst_x0;
+
+            /* Prefetch next iteration's source and destination rows to hide L1/L2 miss latency. */
+            if ((row + 1) < plan->visible_h) {
+                __builtin_prefetch(src_pixels + ((src_row0_y + ((row + 1) * src_y_step)) * src_pitch) + src_row0_x, 0, 0);
+                __builtin_prefetch(dst_pixels + ((plan->dst_y0 + row + 1) * dst_pitch) + plan->dst_x0, 1, 0);
+            }
+
             const Uint32* src_pixel_ptr = src_row;
             for (int col = 0; col < plan->visible_w; col++) {
                 const Uint32 src_pixel = *src_pixel_ptr;
@@ -6063,6 +6220,13 @@ static bool try_fast_copy_fast_textured_task_to_software_frame(const RenderTask*
     for (int row = 0; row < plan->visible_h; row++) {
         const Uint32* src_row = src_pixels + (src_y_lookup[row] * src_pitch);
         Uint32* dst_row = dst_pixels + ((plan->dst_y0 + row) * dst_pitch) + plan->dst_x0;
+
+        /* Prefetch next iteration's source and destination rows to hide L1/L2 miss latency. */
+        if ((row + 1) < plan->visible_h) {
+            __builtin_prefetch(src_pixels + (src_y_lookup[row + 1] * src_pitch), 0, 0);
+            __builtin_prefetch(dst_pixels + ((plan->dst_y0 + row + 1) * dst_pitch) + plan->dst_x0, 1, 0);
+        }
+
         for (int col = 0; col < plan->visible_w; col++) {
             const Uint32 src_pixel = src_row[src_x_lookup[col]];
             const Uint32 src_a = (src_pixel >> 24) & 0xFFu;
@@ -6089,10 +6253,10 @@ static Uint32 modulate_argb8888(Uint32 pixel, Uint32 color) {
     const Uint32 mod_r = (color >> 16) & 0xFFu;
     const Uint32 mod_g = (color >> 8) & 0xFFu;
     const Uint32 mod_b = color & 0xFFu;
-    const Uint32 out_a = (src_a * mod_a + 127u) / 255u;
-    const Uint32 out_r = (src_r * mod_r + 127u) / 255u;
-    const Uint32 out_g = (src_g * mod_g + 127u) / 255u;
-    const Uint32 out_b = (src_b * mod_b + 127u) / 255u;
+    const Uint32 out_a = (src_a * mod_a + 128u) >> 8;
+    const Uint32 out_r = (src_r * mod_r + 128u) >> 8;
+    const Uint32 out_g = (src_g * mod_g + 128u) >> 8;
+    const Uint32 out_b = (src_b * mod_b + 128u) >> 8;
     return (out_a << 24) | (out_r << 16) | (out_g << 8) | out_b;
 }
 
@@ -6131,7 +6295,7 @@ static Uint8 blend_argb8888_channel(Uint32 src_c, Uint32 src_a, Uint32 dst_c, Ui
 
     const Uint32 src_premul = src_c * src_a;
     const Uint32 dst_premul = dst_c * dst_a;
-    const Uint32 out_premul = src_premul + ((dst_premul * (255u - src_a) + 127u) / 255u);
+    const Uint32 out_premul = src_premul + ((dst_premul * (255u - src_a) + 128u) >> 8);
     return (Uint8)((out_premul + (out_a / 2u)) / out_a);
 }
 
@@ -6153,13 +6317,13 @@ static Uint32 blend_argb8888(Uint32 dst_pixel, Uint32 src_pixel) {
         const Uint32 dst_r = (dst_pixel >> 16) & 0xFFu;
         const Uint32 dst_g = (dst_pixel >> 8) & 0xFFu;
         const Uint32 dst_b = dst_pixel & 0xFFu;
-        const Uint32 out_r = ((src_r * src_a) + (dst_r * inv_src_a) + 127u) / 255u;
-        const Uint32 out_g = ((src_g * src_a) + (dst_g * inv_src_a) + 127u) / 255u;
-        const Uint32 out_b = ((src_b * src_a) + (dst_b * inv_src_a) + 127u) / 255u;
+        const Uint32 out_r = ((src_r * src_a) + (dst_r * inv_src_a) + 128u) >> 8;
+        const Uint32 out_g = ((src_g * src_a) + (dst_g * inv_src_a) + 128u) >> 8;
+        const Uint32 out_b = ((src_b * src_a) + (dst_b * inv_src_a) + 128u) >> 8;
         return 0xFF000000u | (out_r << 16) | (out_g << 8) | out_b;
     }
 
-    const Uint32 out_a = src_a + ((dst_a * (255u - src_a) + 127u) / 255u);
+    const Uint32 out_a = src_a + ((dst_a * (255u - src_a) + 128u) >> 8);
     const Uint32 src_r = (src_pixel >> 16) & 0xFFu;
     const Uint32 src_g = (src_pixel >> 8) & 0xFFu;
     const Uint32 src_b = src_pixel & 0xFFu;
@@ -6201,13 +6365,13 @@ static Uint32 blend_solid_argb8888(Uint32 dst_pixel,
     const Uint32 dst_b = dst_pixel & 0xFFu;
 
     if (dst_a == 255u) {
-        const Uint32 out_r = (src_r_premul + (dst_r * inv_src_a) + 127u) / 255u;
-        const Uint32 out_g = (src_g_premul + (dst_g * inv_src_a) + 127u) / 255u;
-        const Uint32 out_b = (src_b_premul + (dst_b * inv_src_a) + 127u) / 255u;
+        const Uint32 out_r = (src_r_premul + (dst_r * inv_src_a) + 128u) >> 8;
+        const Uint32 out_g = (src_g_premul + (dst_g * inv_src_a) + 128u) >> 8;
+        const Uint32 out_b = (src_b_premul + (dst_b * inv_src_a) + 128u) >> 8;
         return 0xFF000000u | (out_r << 16) | (out_g << 8) | out_b;
     }
 
-    const Uint32 out_a = src_a + ((dst_a * inv_src_a + 127u) / 255u);
+    const Uint32 out_a = src_a + ((dst_a * inv_src_a + 128u) >> 8);
     if (out_a == 0u) {
         return 0u;
     }
@@ -6215,9 +6379,9 @@ static Uint32 blend_solid_argb8888(Uint32 dst_pixel,
     const Uint32 dst_r_premul = dst_r * dst_a;
     const Uint32 dst_g_premul = dst_g * dst_a;
     const Uint32 dst_b_premul = dst_b * dst_a;
-    const Uint32 out_r_premul = src_r_premul + ((dst_r_premul * inv_src_a + 127u) / 255u);
-    const Uint32 out_g_premul = src_g_premul + ((dst_g_premul * inv_src_a + 127u) / 255u);
-    const Uint32 out_b_premul = src_b_premul + ((dst_b_premul * inv_src_a + 127u) / 255u);
+    const Uint32 out_r_premul = src_r_premul + ((dst_r_premul * inv_src_a + 128u) >> 8);
+    const Uint32 out_g_premul = src_g_premul + ((dst_g_premul * inv_src_a + 128u) >> 8);
+    const Uint32 out_b_premul = src_b_premul + ((dst_b_premul * inv_src_a + 128u) >> 8);
     const Uint32 out_r = (out_r_premul + (out_a / 2u)) / out_a;
     const Uint32 out_g = (out_g_premul + (out_a / 2u)) / out_a;
     const Uint32 out_b = (out_b_premul + (out_a / 2u)) / out_a;
@@ -6705,6 +6869,20 @@ static bool raster_textured_task_to_software_frame(const RenderTask* task) {
         const int src_y = clamp_to_range((int)SDL_floorf(src_y_start + (v * src_y_span)), 0, src_surface->h - 1);
         const Uint32* src_row = src_pixels + (src_y * src_pitch);
         Uint32* dst_row = dst_pixels + (y * dst_pitch);
+
+        /* Prefetch next iteration's source and destination rows to hide L1/L2 miss latency. */
+        if ((y + 1) < dst_y1) {
+            float next_v = (((float)(y + 1) + 0.5f) - task->dst_rect.y) / task->dst_rect.h;
+            next_v = SDL_max(0.0f, SDL_min(next_v, 0.999999f));
+            if (flip_v) {
+                next_v = 1.0f - next_v;
+                next_v = SDL_max(0.0f, SDL_min(next_v, 0.999999f));
+            }
+            const int next_src_y = clamp_to_range((int)SDL_floorf(src_y_start + (next_v * src_y_span)), 0, src_surface->h - 1);
+            __builtin_prefetch(src_pixels + (next_src_y * src_pitch), 0, 0);
+            __builtin_prefetch(dst_pixels + ((y + 1) * dst_pitch) + dst_x0, 1, 0);
+        }
+
         if (!apply_color_mod) {
             for (int x = dst_x0; x < dst_x1; x++) {
                 float u = (((float)x + 0.5f) - task->dst_rect.x) / task->dst_rect.w;

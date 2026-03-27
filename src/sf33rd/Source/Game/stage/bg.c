@@ -49,6 +49,13 @@ s32 bgPalCodeOffset[8];
 BG bg_w;
 RW_DATA rw_dat[20];
 
+// Fast path state for ppgCalScrPosition when scr_sc == 1.0f (no zoom).
+// Precomputed by scr_trans() to bypass per-tile matrix math.
+static u8 bg_fastpath_active;
+static f32 bg_fastpath_scroll_x; // -h_shift (negated horizontal scroll)
+static f32 bg_fastpath_scroll_y; // v_shift - 800 (vertical scroll with Y-flip offset)
+static f32 bg_fastpath_z;        // PrioBase[bg_priority[bgnm]]
+
 static void bgRWWorkUpdate();
 static void bgDrawOneScreen(s32 bgnum, s32 gixbase, s32* xx, s32* yy, s32 /* unused */, s32 ofsPal,
                             PPGDataList* curDataList);
@@ -559,51 +566,97 @@ void scr_trans(u8 bgnm) {
     u32 vtxColor;
     s32 suzi_pos;
 
-    njUnitMatrix(0);
-    njScale(0, 1.0f, -1.0f, 1.0f);
-    njTranslate(0, 0.0f, -1024.0f, 0.0f);
-    njTranslate(0, (s16)bg_prm[bgnm].bg_h_shift, (s16)bg_prm[bgnm].bg_v_shift, 0.0f);
-    njScale(0, 1.0f, -1.0f, 1.0f);
-    njTranslate(0, 0.0f, -224.0f, 0.0f);
-    njScale(0, 1.0f / scr_sc, 1.0f / scr_sc, 1.0f);
-    point[0].x = 0.0f;
-    point[0].y = 0.0f;
-    point[0].z = 00.f;
-    point[1].x = 648.0f;
-    point[1].y = 488.0f;
-    point[1].z = 0.0f;
-    njCalcPoints(0, &point[0], &point[0], 2);
-    xx[0] = ((s32)point[0].x) & ~0x7F;
-    yy[0] = ((s32)point[0].y) & ~0x7F;
-    xx[1] = ((s32)point[1].x + 0x7F) & ~0x7F;
-    yy[1] = ((s32)point[1].y + 0x7F) & ~0x7F;
+    if (scr_sc == 1.0f) {
+        /* Fast path: when zoom is 1.0 the matrix chains reduce to simple
+         * translations.  Derive viewport tile-grid bounds and the rendering
+         * matrix directly with integer/float arithmetic, avoiding the 14+
+         * nj* calls the generic path performs per background layer.
+         *
+         * Viewport matrix at scr_sc==1 transforms (0,0)→(h_shift, 800-v_shift)
+         * and (648,488)→(648+h_shift, 1288-v_shift). */
+        const f32 h_shift = (f32)(s16)bg_prm[bgnm].bg_h_shift;
+        const f32 v_shift = (f32)(s16)bg_prm[bgnm].bg_v_shift;
 
-    for (x = 0; x < 2; x++) {
-        if (xx[x] < 0) {
-            xx[x] = 0;
+        xx[0] = ((s32)h_shift) & ~0x7F;
+        yy[0] = ((s32)(800.0f - v_shift)) & ~0x7F;
+        xx[1] = ((s32)(648.0f + h_shift) + 0x7F) & ~0x7F;
+        yy[1] = ((s32)(1288.0f - v_shift) + 0x7F) & ~0x7F;
+
+        for (x = 0; x < 2; x++) {
+            if (xx[x] < 0)      xx[x] = 0;
+            if (0x3FF < xx[x])   xx[x] = 0x3FF;
+            if (yy[x] < 0)      yy[x] = 0;
+            if (0x3FF < yy[x])   yy[x] = 0x3FF;
         }
 
-        if (0x3FF < xx[x]) {
-            xx[x] = 0x3FF;
+        /* BgMATRIX: [1,0,0,0],[0,-1,0,0],[0,0,1,0],[-h_shift, 224+v_shift, 0, 1] */
+        njUnitMatrix(&BgMATRIX[bgnm + 1]);
+        BgMATRIX[bgnm + 1].a[1][1] = -1.0f;
+        BgMATRIX[bgnm + 1].a[3][0] = -h_shift;
+        BgMATRIX[bgnm + 1].a[3][1] = 224.0f + v_shift;
+
+        /* Rendering matrix (cmtx):
+         * [1,0,0,0],[0,1,0,0],[0,0,1,0],[-h_shift, v_shift-800, PrioBase, 1]
+         *
+         * We still build cmtx so that any code path that falls through to
+         * njCalcPoints (e.g. scr_trans_sub2) stays correct, but we also
+         * publish the offsets so ppgCalScrPosition can skip the matrix
+         * multiply entirely. */
+        njUnitMatrix(0);
+        njTranslate(0, -h_shift, v_shift - 800.0f, PrioBase[bg_priority[bgnm]]);
+
+        bg_fastpath_active   = 1;
+        bg_fastpath_scroll_x = -h_shift;
+        bg_fastpath_scroll_y = v_shift - 800.0f;
+        bg_fastpath_z        = PrioBase[bg_priority[bgnm]];
+    } else {
+        bg_fastpath_active = 0;
+        njUnitMatrix(0);
+        njScale(0, 1.0f, -1.0f, 1.0f);
+        njTranslate(0, 0.0f, -1024.0f, 0.0f);
+        njTranslate(0, (s16)bg_prm[bgnm].bg_h_shift, (s16)bg_prm[bgnm].bg_v_shift, 0.0f);
+        njScale(0, 1.0f, -1.0f, 1.0f);
+        njTranslate(0, 0.0f, -224.0f, 0.0f);
+        njScale(0, 1.0f / scr_sc, 1.0f / scr_sc, 1.0f);
+        point[0].x = 0.0f;
+        point[0].y = 0.0f;
+        point[0].z = 00.f;
+        point[1].x = 648.0f;
+        point[1].y = 488.0f;
+        point[1].z = 0.0f;
+        njCalcPoints(0, &point[0], &point[0], 2);
+        xx[0] = ((s32)point[0].x) & ~0x7F;
+        yy[0] = ((s32)point[0].y) & ~0x7F;
+        xx[1] = ((s32)point[1].x + 0x7F) & ~0x7F;
+        yy[1] = ((s32)point[1].y + 0x7F) & ~0x7F;
+
+        for (x = 0; x < 2; x++) {
+            if (xx[x] < 0) {
+                xx[x] = 0;
+            }
+
+            if (0x3FF < xx[x]) {
+                xx[x] = 0x3FF;
+            }
+
+            if (yy[x] < 0) {
+                yy[x] = 0;
+            }
+
+            if (0x3FF < yy[x]) {
+                yy[x] = 0x3FF;
+            }
         }
 
-        if (yy[x] < 0) {
-            yy[x] = 0;
-        }
-
-        if (0x3FF < yy[x]) {
-            yy[x] = 0x3FF;
-        }
+        njUnitMatrix(0);
+        njScale(0, scr_sc, scr_sc, 1.0);
+        njTranslate(0, 0, 224.0, 0);
+        njScale(0, 1.0, -1.0, 1.0);
+        njTranslate(0, (s16)-bg_prm[bgnm].bg_h_shift, (s16)-bg_prm[bgnm].bg_v_shift, 0);
+        njGetMatrix(&BgMATRIX[bgnm + 1]);
+        njTranslate(0, 0, 1024.0, PrioBase[bg_priority[bgnm]]);
+        njScale(0, 1.0, -1.0, 1.0);
     }
-
-    njUnitMatrix(0);
-    njScale(0, scr_sc, scr_sc, 1.0);
-    njTranslate(0, 0, 224.0, 0);
-    njScale(0, 1.0, -1.0, 1.0);
-    njTranslate(0, (s16)-bg_prm[bgnm].bg_h_shift, (s16)-bg_prm[bgnm].bg_v_shift, 0);
-    njGetMatrix(&BgMATRIX[bgnm + 1]);
-    njTranslate(0, 0, 1024.0, PrioBase[bg_priority[bgnm]]);
-    njScale(0, 1.0, -1.0, 1.0);
 
     if (Debug_w[42]) {
         return;
@@ -1124,19 +1177,37 @@ void bgAkebonoDraw() {
 }
 
 void ppgCalScrPosition(s32 x, s32 y, s32 xs, s32 ys) {
-    Vec3 point[2];
+    f32 sx0, sy0, sx1, sy1, sz;
 
-    point[0].x = (f32)x;
-    point[0].y = (f32)y;
-    point[1].x = (f32)(x + xs);
-    point[1].y = (f32)(y + ys);
-    point[0].z = point[1].z = 0;
-    njCalcPoints(0, point, point, 2);
-    scrDrawPos[0].x = scrDrawPos[2].x = point[0].x;
-    scrDrawPos[0].y = scrDrawPos[1].y = point[0].y;
-    scrDrawPos[1].x = scrDrawPos[3].x = point[1].x;
-    scrDrawPos[2].y = scrDrawPos[3].y = point[1].y;
-    scrDrawPos[0].z = scrDrawPos[1].z = scrDrawPos[2].z = scrDrawPos[3].z = point[0].z;
+    if (bg_fastpath_active) {
+        /* Fast path: the current matrix is a pure translation so the
+         * njCalcPoints call reduces to two additions per component. */
+        sx0 = (f32)x + bg_fastpath_scroll_x;
+        sy0 = (f32)y + bg_fastpath_scroll_y;
+        sx1 = (f32)(x + xs) + bg_fastpath_scroll_x;
+        sy1 = (f32)(y + ys) + bg_fastpath_scroll_y;
+        sz  = bg_fastpath_z;
+    } else {
+        Vec3 point[2];
+
+        point[0].x = (f32)x;
+        point[0].y = (f32)y;
+        point[1].x = (f32)(x + xs);
+        point[1].y = (f32)(y + ys);
+        point[0].z = point[1].z = 0;
+        njCalcPoints(0, point, point, 2);
+        sx0 = point[0].x;
+        sy0 = point[0].y;
+        sx1 = point[1].x;
+        sy1 = point[1].y;
+        sz  = point[0].z;
+    }
+
+    scrDrawPos[0].x = scrDrawPos[2].x = sx0;
+    scrDrawPos[0].y = scrDrawPos[1].y = sy0;
+    scrDrawPos[1].x = scrDrawPos[3].x = sx1;
+    scrDrawPos[2].y = scrDrawPos[3].y = sy1;
+    scrDrawPos[0].z = scrDrawPos[1].z = scrDrawPos[2].z = scrDrawPos[3].z = sz;
 
     scrDrawPos[0].s = (f32)(x & 0x7F) / 128.0f;
     scrDrawPos[0].t = (f32)(y & 0x7F) / 128.0f;

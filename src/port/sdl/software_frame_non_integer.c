@@ -47,10 +47,10 @@ static Uint32 modulate_argb8888(Uint32 pixel, Uint32 color) {
     const Uint32 mod_r = (color >> 16) & 0xFFu;
     const Uint32 mod_g = (color >> 8) & 0xFFu;
     const Uint32 mod_b = color & 0xFFu;
-    const Uint32 out_a = (src_a * mod_a + 127u) / 255u;
-    const Uint32 out_r = (src_r * mod_r + 127u) / 255u;
-    const Uint32 out_g = (src_g * mod_g + 127u) / 255u;
-    const Uint32 out_b = (src_b * mod_b + 127u) / 255u;
+    const Uint32 out_a = (src_a * mod_a + 128u) >> 8;
+    const Uint32 out_r = (src_r * mod_r + 128u) >> 8;
+    const Uint32 out_g = (src_g * mod_g + 128u) >> 8;
+    const Uint32 out_b = (src_b * mod_b + 128u) >> 8;
     return (out_a << 24) | (out_r << 16) | (out_g << 8) | out_b;
 }
 
@@ -61,7 +61,7 @@ static Uint8 blend_argb8888_channel(Uint32 src_c, Uint32 src_a, Uint32 dst_c, Ui
 
     const Uint32 src_premul = src_c * src_a;
     const Uint32 dst_premul = dst_c * dst_a;
-    const Uint32 out_premul = src_premul + ((dst_premul * (255u - src_a) + 127u) / 255u);
+    const Uint32 out_premul = src_premul + ((dst_premul * (255u - src_a) + 128u) >> 8);
     return (Uint8)((out_premul + (out_a / 2u)) / out_a);
 }
 
@@ -83,13 +83,13 @@ static Uint32 blend_argb8888(Uint32 dst_pixel, Uint32 src_pixel) {
         const Uint32 dst_r = (dst_pixel >> 16) & 0xFFu;
         const Uint32 dst_g = (dst_pixel >> 8) & 0xFFu;
         const Uint32 dst_b = dst_pixel & 0xFFu;
-        const Uint32 out_r = ((src_r * src_a) + (dst_r * inv_src_a) + 127u) / 255u;
-        const Uint32 out_g = ((src_g * src_a) + (dst_g * inv_src_a) + 127u) / 255u;
-        const Uint32 out_b = ((src_b * src_a) + (dst_b * inv_src_a) + 127u) / 255u;
+        const Uint32 out_r = ((src_r * src_a) + (dst_r * inv_src_a) + 128u) >> 8;
+        const Uint32 out_g = ((src_g * src_a) + (dst_g * inv_src_a) + 128u) >> 8;
+        const Uint32 out_b = ((src_b * src_a) + (dst_b * inv_src_a) + 128u) >> 8;
         return 0xFF000000u | (out_r << 16) | (out_g << 8) | out_b;
     }
 
-    const Uint32 out_a = src_a + ((dst_a * (255u - src_a) + 127u) / 255u);
+    const Uint32 out_a = src_a + ((dst_a * (255u - src_a) + 128u) >> 8);
     const Uint32 src_r = (src_pixel >> 16) & 0xFFu;
     const Uint32 src_g = (src_pixel >> 8) & 0xFFu;
     const Uint32 src_b = src_pixel & 0xFFu;
