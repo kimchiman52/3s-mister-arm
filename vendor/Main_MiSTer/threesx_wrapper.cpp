@@ -16,9 +16,12 @@
 #include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/mman.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #include <vector>
+
+#include "mister_joy_shm.h"
 
 #include "cfg.h"
 #include "file_io.h"
@@ -32,6 +35,8 @@
 #include "video.h"
 
 extern char **environ;
+
+static MisterJoyShm *g_joy_shm = nullptr;
 
 namespace {
 
@@ -1495,6 +1500,16 @@ int show_error_and_return(const char *message, FILE *wrapper_log, int active_vt,
 	return 1;
 }
 
+void cleanup_joy_shm()
+{
+	if (g_joy_shm)
+	{
+		munmap(g_joy_shm, sizeof(MisterJoyShm));
+		g_joy_shm = nullptr;
+	}
+	unlink(MISTER_JOY_SHM_PATH);
+}
+
 int validate_runtime_paths(FILE *wrapper_log, int active_vt, int saved_stdout, int saved_stderr)
 {
 	if (!FileExists(kRuntimeBinary, 0))
@@ -1571,6 +1586,14 @@ int wait_for_child(pid_t child, bool service_ui)
 		{
 			frame_timer();
 			input_poll(0);
+
+			if (g_joy_shm)
+			{
+				uint32_t masks[MISTER_JOY_MAX_PLAYERS];
+				input_get_joy_mask(masks, MISTER_JOY_MAX_PLAYERS);
+				for (int i = 0; i < MISTER_JOY_MAX_PLAYERS; i++)
+					g_joy_shm->joy_mask[i] = masks[i];
+			}
 		}
 
 		service_wrapper_menu(child);
@@ -1659,6 +1682,29 @@ int threesx_wrapper_run(int argc, char *argv[])
 	               runtime_tty2_requested() ? "set" : "unset",
 	               active_vt);
 
+	/* Create shared-memory region for joystick state visible to the game. */
+	int shm_fd = open(MISTER_JOY_SHM_PATH, O_RDWR | O_CREAT | O_TRUNC, 0644);
+	if (shm_fd >= 0)
+	{
+		if (ftruncate(shm_fd, sizeof(MisterJoyShm)) == 0)
+		{
+			g_joy_shm = (MisterJoyShm *)mmap(NULL, sizeof(MisterJoyShm),
+			                                  PROT_READ | PROT_WRITE,
+			                                  MAP_SHARED, shm_fd, 0);
+			if (g_joy_shm == MAP_FAILED)
+				g_joy_shm = nullptr;
+		}
+		close(shm_fd);
+	}
+	if (g_joy_shm)
+	{
+		g_joy_shm->magic = MISTER_JOY_SHM_MAGIC;
+		g_joy_shm->version = MISTER_JOY_SHM_VERSION;
+		memset(g_joy_shm->joy_mask, 0, sizeof(g_joy_shm->joy_mask));
+		setenv("THREESX_JOY_SHM", MISTER_JOY_SHM_PATH, 1);
+		write_log_line(wrapper_log, "joy_shm=%s", MISTER_JOY_SHM_PATH);
+	}
+
 	for (;;)
 	{
 		const StartupScaleModeSelection startup_scale_mode = resolve_startup_scale_mode();
@@ -1679,6 +1725,7 @@ int threesx_wrapper_run(int argc, char *argv[])
 		int last_run_fd = open(kLastRunLogPath, O_WRONLY | O_CREAT | O_TRUNC | O_APPEND | O_CLOEXEC, 0644);
 		if (last_run_fd < 0)
 		{
+			cleanup_joy_shm();
 			return show_error_and_return("Cannot open /media/fat/games/3sx/logs/last-run.log", wrapper_log, active_vt, saved_stdout, saved_stderr);
 		}
 
@@ -1703,6 +1750,7 @@ int threesx_wrapper_run(int argc, char *argv[])
 		if (pipe2(err_pipe, O_CLOEXEC) < 0)
 		{
 			close(last_run_fd);
+			cleanup_joy_shm();
 			return show_error_and_return("Cannot create 3SX launch pipe", wrapper_log, active_vt, saved_stdout, saved_stderr);
 		}
 
@@ -1716,6 +1764,7 @@ int threesx_wrapper_run(int argc, char *argv[])
 			close(err_pipe[0]);
 			close(err_pipe[1]);
 			close(last_run_fd);
+			cleanup_joy_shm();
 			return show_error_and_return("Cannot fork 3SX runtime", wrapper_log, active_vt, saved_stdout, saved_stderr);
 		}
 
@@ -1771,6 +1820,10 @@ int threesx_wrapper_run(int argc, char *argv[])
 			pin_current_thread_to_cpu(wrapper_log, "wrapper_ui", 0);
 		}
 
+		/* Enable joy passthrough so input_test/joy_digital bypass the
+		   video_fb_state() gate and populate key_states for SHM export. */
+		input_set_joy_passthrough(1);
+
 		int exit_code = wait_for_child(child, !forced);
 		restore_signal_handlers(&old_int, &old_hup, &old_term);
 		g_child_pid = -1;
@@ -1798,6 +1851,7 @@ int threesx_wrapper_run(int argc, char *argv[])
 		{
 			char error_message[512] = {};
 			snprintf(error_message, sizeof(error_message), "Failed to launch 3SX (%s)", strerror(exec_errno));
+			cleanup_joy_shm();
 			return show_error_and_return(error_message, wrapper_log, active_vt, saved_stdout, saved_stderr);
 		}
 
@@ -1805,6 +1859,7 @@ int threesx_wrapper_run(int argc, char *argv[])
 		{
 			int signal_exit = 128 + g_wrapper_signal;
 			write_log_line(wrapper_log, "wrapper_signal=%d", g_wrapper_signal);
+			cleanup_joy_shm();
 			restore_console(active_vt);
 			restore_stdio(saved_stdout, saved_stderr);
 			fclose(wrapper_log);
@@ -1813,6 +1868,7 @@ int threesx_wrapper_run(int argc, char *argv[])
 
 		if (forced)
 		{
+			cleanup_joy_shm();
 			restore_console(active_vt);
 			restore_stdio(saved_stdout, saved_stderr);
 			fclose(wrapper_log);
@@ -1828,6 +1884,7 @@ int threesx_wrapper_run(int argc, char *argv[])
 			continue;
 		}
 
+		cleanup_joy_shm();
 		restart_to_menu(wrapper_log, saved_stdout, saved_stderr, runtime_vt);
 		return exit_code;
 	}

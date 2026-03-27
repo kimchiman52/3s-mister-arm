@@ -96,6 +96,7 @@ target_compile_definitions(3sx PRIVATE
 
 if(PORT_MISTER)
     target_compile_definitions(3sx PRIVATE PORT_MISTER)
+    target_include_directories(3sx PRIVATE ${PROJECT_SOURCE_DIR}/vendor/Main_MiSTer)
 endif()
 
 if(ENABLE_NETPLAY)

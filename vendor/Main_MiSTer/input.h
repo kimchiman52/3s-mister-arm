@@ -130,6 +130,8 @@ void input_lightgun_save(int idx, int32_t *cal);
 
 void input_switch(int grab);
 int input_state();
+void input_get_joy_mask(uint32_t *out, int count);
+void input_set_joy_passthrough(int enable);
 void input_uinp_destroy();
 
 extern char joy_bnames[NUMBUTTONS][32];

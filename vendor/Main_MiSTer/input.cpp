@@ -1413,6 +1413,7 @@ static uint32_t tmp_axis[4];
 static int tmp_axis_n = 0;
 
 static int grabbed = 1;
+static int input_joy_passthrough = 0;
 
 static uint32_t osd_timer = 0;
 static uint32_t map_advance_timer = 0;
@@ -2203,7 +2204,7 @@ static void joy_digital(int jnum, uint32_t mask, uint32_t code, char press, int 
 			}
 			input_cb(&ev, 0, 0, true);
 		}
-		else if (video_fb_state())
+		else if (video_fb_state() && !input_joy_passthrough)
 		{
 			switch (mask)
 			{
@@ -2746,6 +2747,17 @@ static void input_cb(struct input_event *ev, struct input_absinfo *absinfo, int 
 				{
 					// not defined try to guess the mapping
 					map_joystick(input[dev].map, input[dev].mmap);
+
+					// When passthrough is active and the core defines no
+					// buttons (no J, in CONF_STR), map_joystick only fills
+					// the d-pad.  Copy any missing standard button entries
+					// from mmap so they flow through to shared memory.
+					if (input_joy_passthrough)
+					{
+						for (int b = SYS_BTN_A; b <= SYS_BTN_START; b++)
+							if (!input[dev].map[b] && input[dev].mmap[b])
+								input[dev].map[b] = input[dev].mmap[b];
+					}
 				}
 				else
 				{
@@ -3288,7 +3300,7 @@ static void input_cb(struct input_event *ev, struct input_absinfo *absinfo, int 
 					if (osd_event == 2) joy_digital(input[dev].num, 0, 0, 0, BTN_OSD);
 				}
 
-				if (user_io_osd_is_visible() || video_fb_state())
+				if (user_io_osd_is_visible() || (video_fb_state() && !input_joy_passthrough))
 				{
 					if (ev->value <= 1)
 					{
@@ -5935,6 +5947,8 @@ void key_update_frames_held()
 	}
 }
 
+static uint32_t joy_mask_export[NUMPLAYERS] = {};
+
 int input_poll(int getchar)
 {
 
@@ -6001,16 +6015,23 @@ int input_poll(int getchar)
 				joy_mask_prev[i] = joy_mask[i];
 				user_io_digital_joystick(i, joy_mask[i], newdir);
 			}
+			joy_mask_export[i] = joy_mask[i];
 		}
 	}
+	else if (input_joy_passthrough)
+	{
+		for (int i = 0; i < NUMPLAYERS; i++)
+			joy_mask_export[i] = joy_mask[i] | autofire_mask[i];
+	}
 
-	if (!grabbed || user_io_osd_is_visible())
+	if ((!grabbed || user_io_osd_is_visible()) && !input_joy_passthrough)
 	{
 		for (int i = 0; i < NUMPLAYERS; i++)
 		{
 			if(joy_mask[i]) user_io_digital_joystick(i, 0, 1);
 		}
 		memset(key_states, 0, sizeof(key_states));
+		memset(joy_mask_export, 0, sizeof(joy_mask_export));
 	}
 
 	if (mouse_req)
@@ -6546,4 +6567,15 @@ void input_advanced_save_entry(advancedButtonMap *abm_entry, int devnum)
 		input_advanced_save(devnum);
 		return;
 	}
+}
+
+void input_get_joy_mask(uint32_t *out, int count)
+{
+	for (int i = 0; i < count && i < NUMPLAYERS; i++)
+		out[i] = joy_mask_export[i];
+}
+
+void input_set_joy_passthrough(int enable)
+{
+	input_joy_passthrough = enable;
 }

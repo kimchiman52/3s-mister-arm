@@ -679,7 +679,12 @@ mister_rsync_deploy_wrapper() {
     local hps_src="${wrapper_root}/MiSTer_3SX"
 
     [ -f "${hps_src}" ] || { echo "wrapper HPS binary not found in package: ${hps_src}" >&2; return 1; }
-    [ -f "${core_src}" ] || { echo "wrapper core RBF not found in package: ${core_src}" >&2; return 1; }
+    local have_core=0
+    if [ -f "${core_src}" ]; then
+        have_core=1
+    else
+        echo "note: wrapper core RBF not found in package: ${core_src} (skipping RBF deploy)" >&2
+    fi
 
     case "${deploy_mode}" in
     full|artifacts-only)
@@ -697,16 +702,21 @@ mister_rsync_deploy_wrapper() {
     mister_require_safe_fat_root "${dst_path}" || return $?
     mister_require_safe_runtime_root "${dst_path%/}/games/3sx/" || return $?
 
-    if [ "${deploy_mode}" = "full" ]; then
-        mister_ssh_exec "${host}" "${user}" "${password}" "mkdir -p '${dst_path%/}/_Other' '${dst_path%/}/games/3sx'"
-    else
-        mister_ssh_exec "${host}" "${user}" "${password}" "mkdir -p '${dst_path%/}/_Other'"
+    local mkdir_dirs="'${dst_path%/}/'"
+    if [ "${have_core}" -eq 1 ]; then
+        mkdir_dirs="${mkdir_dirs} '${dst_path%/}/_Other'"
     fi
+    if [ "${deploy_mode}" = "full" ]; then
+        mkdir_dirs="${mkdir_dirs} '${dst_path%/}/games/3sx'"
+    fi
+    mister_ssh_exec "${host}" "${user}" "${password}" "mkdir -p ${mkdir_dirs}"
 
     if [ -n "${password}" ]; then
         mister_require_cmd expect || return $?
         mister_rsync_expect_copy "${hps_src}" "${host}" "${user}" "${password}" "${dst_path%/}/"
-        mister_rsync_expect_copy "${core_src}" "${host}" "${user}" "${password}" "${dst_path%/}/_Other/"
+        if [ "${have_core}" -eq 1 ]; then
+            mister_rsync_expect_copy "${core_src}" "${host}" "${user}" "${password}" "${dst_path%/}/_Other/"
+        fi
         if [ "${deploy_mode}" = "full" ]; then
             mister_rsync_expect "${runtime_src}" "${host}" "${user}" "${password}" "${dst_path%/}/games/3sx/"
         fi
@@ -719,12 +729,14 @@ mister_rsync_deploy_wrapper() {
             echo "MiSTer key-only wrapper upload failed; set MISTER_PASSWORD to use password auth or configure a working SSH key." >&2
             return 1
         }
-        rsync -av --omit-dir-times --no-perms --no-owner --no-group \
-            -e "${rsync_shell}" \
-            "${core_src}" "${user}@${host}:${dst_path%/}/_Other/" || {
-            echo "MiSTer key-only wrapper-core upload failed; set MISTER_PASSWORD to use password auth or configure a working SSH key." >&2
-            return 1
-        }
+        if [ "${have_core}" -eq 1 ]; then
+            rsync -av --omit-dir-times --no-perms --no-owner --no-group \
+                -e "${rsync_shell}" \
+                "${core_src}" "${user}@${host}:${dst_path%/}/_Other/" || {
+                echo "MiSTer key-only wrapper-core upload failed; set MISTER_PASSWORD to use password auth or configure a working SSH key." >&2
+                return 1
+            }
+        fi
         if [ "${deploy_mode}" = "full" ]; then
             rsync -av --delete --omit-dir-times --no-perms --no-owner --no-group \
                 --exclude 'resources/SF33RD.AFS' \

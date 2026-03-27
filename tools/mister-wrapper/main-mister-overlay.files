@@ -1,5 +1,8 @@
 fpga_io.cpp
 fpga_io.h
+input.cpp
+input.h
+mister_joy_shm.h
 threesx_core_context.cpp
 threesx_core_context.h
 threesx_main.cpp
