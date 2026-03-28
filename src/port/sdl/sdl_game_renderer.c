@@ -530,7 +530,7 @@ static Uint32 rgba32_fcolor_cache_pixel = 0;
 static SDL_FColor rgba32_fcolor_cache_value = { 0 };
 static bool rgba32_fcolor_cache_valid = false;
 static const int render_task_insertion_sort_max_inversions = 8;
-static const int render_task_insertion_sort_max_tasks = 128;
+static const int render_task_insertion_sort_max_tasks = 512;
 static Uint8 dirty_tile_map[dirty_tile_total] = { 0 };
 static Uint8 current_coverage_tile_map[dirty_tile_total] = { 0 };
 static Uint8 previous_coverage_tile_map[dirty_tile_total] = { 0 };
@@ -1210,37 +1210,20 @@ static void push_render_task(RenderTask* task) {
         printf("⚠️ Requesting a render task when no rendering is allowed is a programmer error!\n");
     }
 
-    RenderTask queued_task = *task;
-    int insert_index = render_task_count;
-
+    // Track Z-inversions so the post-accumulation sort knows whether it needs to run.
+    // The task data is already written at render_tasks[render_task_count] by begin_quad_task,
+    // so just append in place — the post-accumulation sort (qsort or insertion sort) uses the
+    // index field as a tiebreaker within equal-Z groups to produce the correct final order.
     if (render_task_count > 0) {
-        const RenderTask* prev_task = &render_tasks[render_task_count - 1];
-
-        if (prev_task->z < queued_task.z) {
-            // Strictly increasing Z is already in comparator order.
-        } else if (prev_task->z == queued_task.z) {
-            // Keep equal-Z tasks in final draw order as they are queued so the render pass can skip a reversal walk.
-            insert_index -= 1;
-            while ((insert_index > 0) && (render_tasks[insert_index - 1].z == queued_task.z)) {
-                insert_index -= 1;
-            }
-        } else {
-            // Preserve previous fallback behavior for descending or non-ordered Z values.
+        if (render_tasks[render_task_count - 1].z >= task->z) {
             render_tasks_have_z_inversion = true;
             render_tasks_z_inversion_count += 1;
         }
     }
 
-    if (insert_index != render_task_count) {
-        SDL_memmove(&render_tasks[insert_index + 1],
-                    &render_tasks[insert_index],
-                    (size_t)(render_task_count - insert_index) * sizeof(render_tasks[0]));
-    }
-
-    render_tasks[insert_index] = queued_task;
-    mark_dirty_tiles_for_task(&render_tasks[insert_index]);
+    mark_dirty_tiles_for_task(task);
 #if ENABLE_PERF_TELEMETRY
-    count_task_source(render_tasks[insert_index].source);
+    count_task_source(task->source);
 #endif
     render_task_count += 1;
 }
@@ -3599,7 +3582,6 @@ static void apply_super_effect_burst_reduction_after_sort(void) {
        during the brief zoom animation but acceptable given the flashy
        effects on screen. */
     sa_bg_cache_snapshot_at_index = -1;
-
     if ((super_effect_quality_mode != SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_CACHED_BG) ||
         (sa_bg_cache_frames_remaining <= 0) || (render_task_count <= 1)) {
         return;
@@ -3663,6 +3645,7 @@ static void apply_super_effect_burst_reduction_after_sort(void) {
     const int upper_count = render_task_count - bg_end;
     SDL_memmove(&render_tasks[0], &render_tasks[bg_end], (size_t)upper_count * sizeof(RenderTask));
     render_task_count = upper_count;
+    return;
 
 #endif
 }
@@ -7525,6 +7508,20 @@ static bool render_frame_to_software_surface(void) {
     bool frame_supported = true;
     for (int i = 0; i < render_task_count; i++) {
         const RenderTask* task = &render_tasks[i];
+
+        // Fast path: TEXTURED_RECT tasks need no geometry resolution — classify directly
+        // from the original task and copy once to the resolved array, avoiding the
+        // intermediate resolved_task struct copy (~200 bytes per task).
+        if (task->type == RENDER_TASK_TYPE_TEXTURED_RECT) {
+            const SoftwareFrameFallbackReason reason = classify_software_frame_fallback_reason(task);
+            note_software_frame_eligibility(task, reason);
+            software_frame_resolved_tasks[i] = *task;
+            if (reason != SOFTWARE_FRAME_FALLBACK_REASON_NONE) {
+                frame_supported = false;
+            }
+            continue;
+        }
+
         RenderTask resolved_task = *task;
 
         if ((task->type == RENDER_TASK_TYPE_GEOMETRY) && (task->texture != NULL)) {
@@ -8258,6 +8255,7 @@ void SDLGameRenderer_InvalidateSABgCache(void) {
     sa_bg_cache_surface_valid = false;
 #endif
 }
+
 
 bool SDLGameRenderer_IsSoftwareFrameModeEnabled(void) {
     return software_frame_mode_active;
@@ -10061,6 +10059,16 @@ void SDLGameRenderer_GetFrameStats(SDLGameRenderer_FrameStats* out_stats) {
 
     *out_stats = frame_stats;
     out_stats->render_task_count = render_task_count;
+#if ENABLE_PERF_TELEMETRY
+    {
+        extern int charsel_active_effect_count;
+        extern int charsel_frame_portrait_tiles;
+        extern int charsel_frame_plate_tiles;
+        out_stats->charsel_active_effects = charsel_active_effect_count;
+        out_stats->charsel_portrait_tiles = charsel_frame_portrait_tiles;
+        out_stats->charsel_plate_tiles = charsel_frame_plate_tiles;
+    }
+#endif
 }
 
 void SDLGameRenderer_RecordTextureUnlockDirtyRect(unsigned int texture_handle,
@@ -10451,6 +10459,17 @@ void SDLGameRenderer_SetTexture(unsigned int th) {
             texture = cached_texture;
             clear_cache_dirty_state(dirty_state);
             RENDERER_TELEMETRY(frame_stats.texture_cache_hits += 1);
+            // Fast path: if the software surface cache also has a clean entry for this
+            // texture+palette, grab it now to avoid calling get_or_create_software_source_surface
+            // which redundantly looks up the same arrays and dirty state.
+            if (software_frame_mode_active) {
+                SDL_Surface* cached_sw = software_surface_cache[texture_handle - 1][palette_handle];
+                if ((cached_sw != NULL) &&
+                    (software_surface_cache_runtime_dirty_reason[texture_handle - 1][palette_handle] ==
+                     CACHE_DIRTY_REASON_NONE)) {
+                    software_source_surface = cached_sw;
+                }
+            }
         }
     }
 

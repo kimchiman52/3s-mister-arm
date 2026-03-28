@@ -204,6 +204,9 @@ typedef struct SDLGameRenderer_FrameStats {
     int hybrid_reason_geometry;
     int hybrid_reason_solid;
     SDLGameRenderer_SortStrategy sort_strategy;
+    int charsel_active_effects;
+    int charsel_portrait_tiles;
+    int charsel_plate_tiles;
 } SDLGameRenderer_FrameStats;
 
 typedef struct SDLGameRenderer_PerfCaptureRefreshTelemetry {

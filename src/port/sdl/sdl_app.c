@@ -293,6 +293,9 @@ static Uint64 perf_hybrid_reason_color_mod_total = 0;
 static Uint64 perf_hybrid_reason_flip_total = 0;
 static Uint64 perf_hybrid_reason_geometry_total = 0;
 static Uint64 perf_hybrid_reason_solid_total = 0;
+static Uint64 perf_charsel_active_effects_total = 0;
+static Uint64 perf_charsel_portrait_tiles_total = 0;
+static Uint64 perf_charsel_plate_tiles_total = 0;
 static Uint64 perf_super_art_stock_available_frames[2] = { 0 };
 static int perf_super_art_stock_available_first_frame[2] = { -1, -1 };
 static int perf_super_art_stock_max_reached[2] = { 0, 0 };
@@ -598,6 +601,9 @@ typedef struct PerfFrameSample {
     int hybrid_reason_geometry;
     int hybrid_reason_solid;
     SDLGameRenderer_SortStrategy sort_strategy;
+    int charsel_active_effects;
+    int charsel_portrait_tiles;
+    int charsel_plate_tiles;
     FBDevPresenterPath fbdev_path;
     Uint32 readback_format;
     int readback_width;
@@ -1272,6 +1278,9 @@ static void perf_capture_reset_storage(void) {
     perf_hybrid_reason_flip_total = 0;
     perf_hybrid_reason_geometry_total = 0;
     perf_hybrid_reason_solid_total = 0;
+    perf_charsel_active_effects_total = 0;
+    perf_charsel_portrait_tiles_total = 0;
+    perf_charsel_plate_tiles_total = 0;
     for (int player = 0; player < 2; player++) {
         perf_super_art_stock_available_frames[player] = 0;
         perf_super_art_stock_available_first_frame[player] = -1;
@@ -1596,6 +1605,9 @@ void SDLApp_ConfigurePerfCapture(int frame_count,
     perf_hybrid_reason_flip_total = 0;
     perf_hybrid_reason_geometry_total = 0;
     perf_hybrid_reason_solid_total = 0;
+    perf_charsel_active_effects_total = 0;
+    perf_charsel_portrait_tiles_total = 0;
+    perf_charsel_plate_tiles_total = 0;
     for (int player = 0; player < 2; player++) {
         perf_super_art_ready_frames[player] = 0;
         perf_super_art_ready_first_frame[player] = -1;
@@ -2980,6 +2992,9 @@ static void perf_capture_write_summary(void) {
     const double avg_hybrid_reason_flip = (double)perf_hybrid_reason_flip_total / frame_count;
     const double avg_hybrid_reason_geometry = (double)perf_hybrid_reason_geometry_total / frame_count;
     const double avg_hybrid_reason_solid = (double)perf_hybrid_reason_solid_total / frame_count;
+    const double avg_charsel_active_effects = (double)perf_charsel_active_effects_total / frame_count;
+    const double avg_charsel_portrait_tiles = (double)perf_charsel_portrait_tiles_total / frame_count;
+    const double avg_charsel_plate_tiles = (double)perf_charsel_plate_tiles_total / frame_count;
     const double software_frame_mode_enabled_ratio = (double)perf_software_frame_mode_enabled_frames / frame_count;
     const double software_frame_surface_ready_ratio = (double)perf_software_frame_surface_ready_frames / frame_count;
     const double software_frame_owned_ratio = (double)perf_software_frame_owned_frames / frame_count;
@@ -3496,6 +3511,12 @@ static void perf_capture_write_summary(void) {
     int max_hybrid_reason_geometry = perf_samples[0].hybrid_reason_geometry;
     int min_hybrid_reason_solid = perf_samples[0].hybrid_reason_solid;
     int max_hybrid_reason_solid = perf_samples[0].hybrid_reason_solid;
+    int min_charsel_active_effects = perf_samples[0].charsel_active_effects;
+    int max_charsel_active_effects = perf_samples[0].charsel_active_effects;
+    int min_charsel_portrait_tiles = perf_samples[0].charsel_portrait_tiles;
+    int max_charsel_portrait_tiles = perf_samples[0].charsel_portrait_tiles;
+    int min_charsel_plate_tiles = perf_samples[0].charsel_plate_tiles;
+    int max_charsel_plate_tiles = perf_samples[0].charsel_plate_tiles;
     double min_dirty_ratio = perf_samples[0].dirty_ratio;
     double max_dirty_ratio = perf_samples[0].dirty_ratio;
     double min_dirty_hit_rate = perf_samples[0].dirty_hit_rate;
@@ -4596,6 +4617,24 @@ static void perf_capture_write_summary(void) {
         if (sample->hybrid_reason_solid > max_hybrid_reason_solid) {
             max_hybrid_reason_solid = sample->hybrid_reason_solid;
         }
+        if (sample->charsel_active_effects < min_charsel_active_effects) {
+            min_charsel_active_effects = sample->charsel_active_effects;
+        }
+        if (sample->charsel_active_effects > max_charsel_active_effects) {
+            max_charsel_active_effects = sample->charsel_active_effects;
+        }
+        if (sample->charsel_portrait_tiles < min_charsel_portrait_tiles) {
+            min_charsel_portrait_tiles = sample->charsel_portrait_tiles;
+        }
+        if (sample->charsel_portrait_tiles > max_charsel_portrait_tiles) {
+            max_charsel_portrait_tiles = sample->charsel_portrait_tiles;
+        }
+        if (sample->charsel_plate_tiles < min_charsel_plate_tiles) {
+            min_charsel_plate_tiles = sample->charsel_plate_tiles;
+        }
+        if (sample->charsel_plate_tiles > max_charsel_plate_tiles) {
+            max_charsel_plate_tiles = sample->charsel_plate_tiles;
+        }
         if (sample->dirty_ratio < min_dirty_ratio) {
             min_dirty_ratio = sample->dirty_ratio;
         }
@@ -5683,6 +5722,18 @@ static void perf_capture_write_summary(void) {
               avg_hybrid_reason_solid,
               min_hybrid_reason_solid,
               max_hybrid_reason_solid);
+    io_printf(io, "    \"charsel_active_effects\": {\"mean\": %.2f, \"min\": %d, \"max\": %d},\n",
+              avg_charsel_active_effects,
+              min_charsel_active_effects,
+              max_charsel_active_effects);
+    io_printf(io, "    \"charsel_portrait_tiles\": {\"mean\": %.2f, \"min\": %d, \"max\": %d},\n",
+              avg_charsel_portrait_tiles,
+              min_charsel_portrait_tiles,
+              max_charsel_portrait_tiles);
+    io_printf(io, "    \"charsel_plate_tiles\": {\"mean\": %.2f, \"min\": %d, \"max\": %d},\n",
+              avg_charsel_plate_tiles,
+              min_charsel_plate_tiles,
+              max_charsel_plate_tiles);
     io_printf(io, "    \"dirty_ratio\": {\"mean\": %.6f, \"min\": %.6f, \"max\": %.6f},\n",
               avg_dirty_ratio,
               min_dirty_ratio,
@@ -8004,6 +8055,7 @@ static void perf_capture_write_summary(void) {
                   "\"hybrid_reason_clip\": %d, \"hybrid_reason_alpha\": %d, "
                   "\"hybrid_reason_color_mod\": %d, \"hybrid_reason_flip\": %d, "
                   "\"hybrid_reason_geometry\": %d, \"hybrid_reason_solid\": %d, "
+                  "\"charsel_active_effects\": %d, \"charsel_portrait_tiles\": %d, \"charsel_plate_tiles\": %d, "
                   "\"sort_strategy\": \"%s\"}%s\n",
                   i + 1,
                   sample->frame_time_ms,
@@ -8177,6 +8229,9 @@ static void perf_capture_write_summary(void) {
                   sample->hybrid_reason_flip,
                   sample->hybrid_reason_geometry,
                   sample->hybrid_reason_solid,
+                  sample->charsel_active_effects,
+                  sample->charsel_portrait_tiles,
+                  sample->charsel_plate_tiles,
                   render_sort_strategy_name(sample->sort_strategy),
                   (i + 1) < perf_capture_recorded_frames ? "," : "");
     }
@@ -8184,7 +8239,7 @@ static void perf_capture_write_summary(void) {
     io_printf(io, "}\n");
     SDL_CloseIO(io);
 
-    backend_logf("PERF capture complete: frames=%d frame_time_ms=%.3f render_ms=%.3f present_ms=%.3f present_readback_ms=%.3f present_convert_ms=%.3f present_copy_ms=%.3f present_clear_ms=%.3f dominant_present_path=%s readback_format=%s readback_size=%dx%d copy_bytes=%.2f dirty_ratio=%.4f dirty_hit_rate=%.4f full_copy_fallback_ratio=%.4f rect_runs=%.2f rect_multi_runs=%.2f rect_multi_run_tasks=%.2f rect_max_run=%.2f rect_hstrip_runs=%.2f rect_hstrip_tasks=%.2f rect_vstrip_runs=%.2f rect_vstrip_tasks=%.2f rect_run_links=%.2f rect_color_breaks=%.2f rect_flip_breaks=%.2f rect_flipped_tasks=%.2f textured_geometry_tasks=%.2f textured_geometry_recovered=%.2f textured_geometry_fallback=%.2f set_texture_calls=%.2f binding_reuse=%.2f texture_unlocks=%.2f palette_unlocks=%.2f texture_evictions=%.2f palette_evictions=%.2f destroy_queue=%.2f source_ppg=%.2f source_mtrans=%.2f source_ui=%.2f source_solid=%.2f source_unknown=%.2f software_frame_mode_enabled_ratio=%.4f software_frame_surface_ready_ratio=%.4f software_frame_active_ratio=%.4f software_frame_owned_ratio=%.4f software_frame_direct_present_ratio=%.4f software_frame_uploaded_ratio=%.4f software_frame_fallback_ratio=%.4f software_frame_candidate_tasks=%.2f software_frame_candidate_pixels=%.2f software_frame_fallback_tasks=%.2f software_frame_fallback_pixels=%.2f software_frame_fast_exact_tasks=%.2f software_frame_fast_exact_pixels=%.2f software_frame_fast_exact_clipped_tasks=%.2f software_frame_fast_exact_flipped_tasks=%.2f software_frame_fast_exact_color_mod_tasks=%.2f software_frame_fast_exact_color_mod_pixels=%.2f software_frame_fast_scaled_tasks=%.2f software_frame_fast_scaled_pixels=%.2f software_frame_fast_non_integer_tasks=%.2f software_frame_fast_non_integer_pixels=%.2f software_frame_fast_non_integer_lookup_entries=%.2f software_frame_generic_textured_tasks=%.2f software_frame_generic_textured_pixels=%.2f software_frame_fast_miss_color_mod=%.2f software_frame_fast_miss_non_integer=%.2f software_frame_fast_miss_non_integer_lookup_entries=%.2f software_frame_fast_miss_non_integer_ge_256_tasks=%.2f software_frame_fast_miss_non_integer_ge_256_pixels=%.2f software_frame_fast_miss_non_integer_ge_256_lookup_entries=%.2f software_frame_fast_miss_non_integer_ge_1024_tasks=%.2f software_frame_fast_miss_non_integer_ge_1024_pixels=%.2f software_frame_fast_miss_non_integer_max_pixels=%.2f software_frame_fast_miss_scaled=%.2f software_frame_fast_miss_unsupported_flip=%.2f software_frame_fast_miss_source_bounds=%.2f software_frame_reason_alpha=%.2f software_frame_reason_color_mod=%.2f software_frame_reason_geometry=%.2f software_frame_reason_solid=%.2f hybrid_candidate_tasks=%.2f hybrid_candidate_pixels=%.2f hybrid_fallback_tasks=%.2f hybrid_fallback_pixels=%.2f hybrid_reason_clip=%.2f hybrid_reason_alpha=%.2f hybrid_reason_color_mod=%.2f hybrid_reason_flip=%.2f hybrid_reason_geometry=%.2f hybrid_reason_solid=%.2f fps=%.2f output=%s",
+    backend_logf("PERF capture complete: frames=%d frame_time_ms=%.3f render_ms=%.3f present_ms=%.3f present_readback_ms=%.3f present_convert_ms=%.3f present_copy_ms=%.3f present_clear_ms=%.3f dominant_present_path=%s readback_format=%s readback_size=%dx%d copy_bytes=%.2f dirty_ratio=%.4f dirty_hit_rate=%.4f full_copy_fallback_ratio=%.4f rect_runs=%.2f rect_multi_runs=%.2f rect_multi_run_tasks=%.2f rect_max_run=%.2f rect_hstrip_runs=%.2f rect_hstrip_tasks=%.2f rect_vstrip_runs=%.2f rect_vstrip_tasks=%.2f rect_run_links=%.2f rect_color_breaks=%.2f rect_flip_breaks=%.2f rect_flipped_tasks=%.2f textured_geometry_tasks=%.2f textured_geometry_recovered=%.2f textured_geometry_fallback=%.2f set_texture_calls=%.2f binding_reuse=%.2f texture_unlocks=%.2f palette_unlocks=%.2f texture_evictions=%.2f palette_evictions=%.2f destroy_queue=%.2f source_ppg=%.2f source_mtrans=%.2f source_ui=%.2f source_solid=%.2f source_unknown=%.2f software_frame_mode_enabled_ratio=%.4f software_frame_surface_ready_ratio=%.4f software_frame_active_ratio=%.4f software_frame_owned_ratio=%.4f software_frame_direct_present_ratio=%.4f software_frame_uploaded_ratio=%.4f software_frame_fallback_ratio=%.4f software_frame_candidate_tasks=%.2f software_frame_candidate_pixels=%.2f software_frame_fallback_tasks=%.2f software_frame_fallback_pixels=%.2f software_frame_fast_exact_tasks=%.2f software_frame_fast_exact_pixels=%.2f software_frame_fast_exact_clipped_tasks=%.2f software_frame_fast_exact_flipped_tasks=%.2f software_frame_fast_exact_color_mod_tasks=%.2f software_frame_fast_exact_color_mod_pixels=%.2f software_frame_fast_scaled_tasks=%.2f software_frame_fast_scaled_pixels=%.2f software_frame_fast_non_integer_tasks=%.2f software_frame_fast_non_integer_pixels=%.2f software_frame_fast_non_integer_lookup_entries=%.2f software_frame_generic_textured_tasks=%.2f software_frame_generic_textured_pixels=%.2f software_frame_fast_miss_color_mod=%.2f software_frame_fast_miss_non_integer=%.2f software_frame_fast_miss_non_integer_lookup_entries=%.2f software_frame_fast_miss_non_integer_ge_256_tasks=%.2f software_frame_fast_miss_non_integer_ge_256_pixels=%.2f software_frame_fast_miss_non_integer_ge_256_lookup_entries=%.2f software_frame_fast_miss_non_integer_ge_1024_tasks=%.2f software_frame_fast_miss_non_integer_ge_1024_pixels=%.2f software_frame_fast_miss_non_integer_max_pixels=%.2f software_frame_fast_miss_scaled=%.2f software_frame_fast_miss_unsupported_flip=%.2f software_frame_fast_miss_source_bounds=%.2f software_frame_reason_alpha=%.2f software_frame_reason_color_mod=%.2f software_frame_reason_geometry=%.2f software_frame_reason_solid=%.2f hybrid_candidate_tasks=%.2f hybrid_candidate_pixels=%.2f hybrid_fallback_tasks=%.2f hybrid_fallback_pixels=%.2f hybrid_reason_clip=%.2f hybrid_reason_alpha=%.2f hybrid_reason_color_mod=%.2f hybrid_reason_flip=%.2f hybrid_reason_geometry=%.2f hybrid_reason_solid=%.2f charsel_active_effects=%.2f charsel_portrait_tiles=%.2f charsel_plate_tiles=%.2f fps=%.2f output=%s",
                  perf_capture_recorded_frames,
                  avg_frame_ms,
                  avg_render_ms,
@@ -8278,6 +8333,9 @@ static void perf_capture_write_summary(void) {
                  avg_hybrid_reason_flip,
                  avg_hybrid_reason_geometry,
                  avg_hybrid_reason_solid,
+                 avg_charsel_active_effects,
+                 avg_charsel_portrait_tiles,
+                 avg_charsel_plate_tiles,
                  fps,
                  output_path);
     for (int i = 0; i < raster_bucket_timing_count; i++) {
@@ -10060,6 +10118,9 @@ void SDLApp_EndFrame() {
         sample->hybrid_reason_geometry = render_stats.hybrid_reason_geometry;
         sample->hybrid_reason_solid = render_stats.hybrid_reason_solid;
         sample->sort_strategy = render_stats.sort_strategy;
+        sample->charsel_active_effects = render_stats.charsel_active_effects;
+        sample->charsel_portrait_tiles = render_stats.charsel_portrait_tiles;
+        sample->charsel_plate_tiles = render_stats.charsel_plate_tiles;
         sample->fbdev_path = presenter_stats.path;
         sample->readback_format = presenter_stats.readback_format;
         sample->readback_width = presenter_stats.readback_width;
@@ -10294,6 +10355,9 @@ void SDLApp_EndFrame() {
         perf_hybrid_reason_flip_total += (Uint64)render_stats.hybrid_reason_flip;
         perf_hybrid_reason_geometry_total += (Uint64)render_stats.hybrid_reason_geometry;
         perf_hybrid_reason_solid_total += (Uint64)render_stats.hybrid_reason_solid;
+        perf_charsel_active_effects_total += (Uint64)render_stats.charsel_active_effects;
+        perf_charsel_portrait_tiles_total += (Uint64)render_stats.charsel_portrait_tiles;
+        perf_charsel_plate_tiles_total += (Uint64)render_stats.charsel_plate_tiles;
         perf_dirty_hit_rate_total += dirty_hit_rate;
         if (full_copy_fallback) {
             perf_full_copy_fallback_frames += 1;
@@ -10309,7 +10373,7 @@ void SDLApp_EndFrame() {
         perf_capture_snapshot_window_families_if_needed();
 
         if ((perf_capture_recorded_frames % 60) == 0 || (perf_capture_recorded_frames == perf_capture_target_frames)) {
-            backend_logf("PERF frame=%d frame_time_ms=%.3f update_ms=%.3f render_ms=%.3f present_ms=%.3f present_readback_ms=%.3f present_convert_ms=%.3f present_copy_ms=%.3f present_clear_ms=%.3f present_path=%s readback_format=%s readback_size=%dx%d copy_bytes=%llu dirty_tiles=%d dirty_ratio=%.4f dirty_hit_rate=%.4f full_copy_fallback=%s render_tasks=%d rect_tasks=%d batch_runs=%d rect_runs=%d rect_multi_runs=%d rect_multi_run_tasks=%d rect_max_run=%d rect_hstrip_runs=%d rect_hstrip_tasks=%d rect_vstrip_runs=%d rect_vstrip_tasks=%d rect_run_links=%d rect_color_breaks=%d rect_flip_breaks=%d rect_flipped_tasks=%d textured_geometry_tasks=%d textured_geometry_recovered=%d textured_geometry_fallback=%d set_texture_calls=%d binding_reuse=%d cache_hits=%d cache_misses=%d cache_creates=%d texture_unlocks=%d palette_unlocks=%d texture_evictions=%d palette_evictions=%d destroy_queue=%d source_ppg=%d source_mtrans=%d source_ui=%d source_solid=%d source_unknown=%d software_frame_mode_enabled=%d software_frame_surface_ready=%d software_frame_active=%d software_frame_owned=%d software_frame_direct_present=%d software_frame_uploaded=%d software_frame_fallback=%d software_frame_candidate_tasks=%d software_frame_candidate_pixels=%llu software_frame_fallback_tasks=%d software_frame_fallback_pixels=%llu software_frame_fast_exact_tasks=%d software_frame_fast_exact_pixels=%llu software_frame_fast_exact_clipped_tasks=%d software_frame_fast_exact_flipped_tasks=%d software_frame_fast_exact_color_mod_tasks=%d software_frame_fast_exact_color_mod_pixels=%llu software_frame_fast_scaled_tasks=%d software_frame_fast_scaled_pixels=%llu software_frame_fast_non_integer_tasks=%d software_frame_fast_non_integer_pixels=%llu software_frame_fast_non_integer_lookup_entries=%llu software_frame_generic_textured_tasks=%d software_frame_generic_textured_pixels=%llu software_frame_fast_miss_color_mod=%d software_frame_fast_miss_non_integer=%d software_frame_fast_miss_non_integer_lookup_entries=%llu software_frame_fast_miss_non_integer_ge_256_tasks=%d software_frame_fast_miss_non_integer_ge_256_pixels=%llu software_frame_fast_miss_non_integer_ge_256_lookup_entries=%llu software_frame_fast_miss_non_integer_ge_1024_tasks=%d software_frame_fast_miss_non_integer_ge_1024_pixels=%llu software_frame_fast_miss_non_integer_max_pixels=%llu software_frame_fast_miss_scaled=%d software_frame_fast_miss_unsupported_flip=%d software_frame_fast_miss_source_bounds=%d software_frame_reason_alpha=%d software_frame_reason_color_mod=%d software_frame_reason_geometry=%d software_frame_reason_solid=%d hybrid_candidate_tasks=%d hybrid_candidate_pixels=%llu hybrid_fallback_tasks=%d hybrid_fallback_pixels=%llu hybrid_reason_clip=%d hybrid_reason_alpha=%d hybrid_reason_color_mod=%d hybrid_reason_flip=%d hybrid_reason_geometry=%d hybrid_reason_solid=%d sort=%s",
+            backend_logf("PERF frame=%d frame_time_ms=%.3f update_ms=%.3f render_ms=%.3f present_ms=%.3f present_readback_ms=%.3f present_convert_ms=%.3f present_copy_ms=%.3f present_clear_ms=%.3f present_path=%s readback_format=%s readback_size=%dx%d copy_bytes=%llu dirty_tiles=%d dirty_ratio=%.4f dirty_hit_rate=%.4f full_copy_fallback=%s render_tasks=%d rect_tasks=%d batch_runs=%d rect_runs=%d rect_multi_runs=%d rect_multi_run_tasks=%d rect_max_run=%d rect_hstrip_runs=%d rect_hstrip_tasks=%d rect_vstrip_runs=%d rect_vstrip_tasks=%d rect_run_links=%d rect_color_breaks=%d rect_flip_breaks=%d rect_flipped_tasks=%d textured_geometry_tasks=%d textured_geometry_recovered=%d textured_geometry_fallback=%d set_texture_calls=%d binding_reuse=%d cache_hits=%d cache_misses=%d cache_creates=%d texture_unlocks=%d palette_unlocks=%d texture_evictions=%d palette_evictions=%d destroy_queue=%d source_ppg=%d source_mtrans=%d source_ui=%d source_solid=%d source_unknown=%d software_frame_mode_enabled=%d software_frame_surface_ready=%d software_frame_active=%d software_frame_owned=%d software_frame_direct_present=%d software_frame_uploaded=%d software_frame_fallback=%d software_frame_candidate_tasks=%d software_frame_candidate_pixels=%llu software_frame_fallback_tasks=%d software_frame_fallback_pixels=%llu software_frame_fast_exact_tasks=%d software_frame_fast_exact_pixels=%llu software_frame_fast_exact_clipped_tasks=%d software_frame_fast_exact_flipped_tasks=%d software_frame_fast_exact_color_mod_tasks=%d software_frame_fast_exact_color_mod_pixels=%llu software_frame_fast_scaled_tasks=%d software_frame_fast_scaled_pixels=%llu software_frame_fast_non_integer_tasks=%d software_frame_fast_non_integer_pixels=%llu software_frame_fast_non_integer_lookup_entries=%llu software_frame_generic_textured_tasks=%d software_frame_generic_textured_pixels=%llu software_frame_fast_miss_color_mod=%d software_frame_fast_miss_non_integer=%d software_frame_fast_miss_non_integer_lookup_entries=%llu software_frame_fast_miss_non_integer_ge_256_tasks=%d software_frame_fast_miss_non_integer_ge_256_pixels=%llu software_frame_fast_miss_non_integer_ge_256_lookup_entries=%llu software_frame_fast_miss_non_integer_ge_1024_tasks=%d software_frame_fast_miss_non_integer_ge_1024_pixels=%llu software_frame_fast_miss_non_integer_max_pixels=%llu software_frame_fast_miss_scaled=%d software_frame_fast_miss_unsupported_flip=%d software_frame_fast_miss_source_bounds=%d software_frame_reason_alpha=%d software_frame_reason_color_mod=%d software_frame_reason_geometry=%d software_frame_reason_solid=%d hybrid_candidate_tasks=%d hybrid_candidate_pixels=%llu hybrid_fallback_tasks=%d hybrid_fallback_pixels=%llu hybrid_reason_clip=%d hybrid_reason_alpha=%d hybrid_reason_color_mod=%d hybrid_reason_flip=%d hybrid_reason_geometry=%d hybrid_reason_solid=%d charsel_active_effects=%d charsel_portrait_tiles=%d charsel_plate_tiles=%d sort=%s",
                          perf_capture_recorded_frames,
                          sample->frame_time_ms,
                          sample->update_ms,
@@ -10411,6 +10475,9 @@ void SDLApp_EndFrame() {
                          sample->hybrid_reason_flip,
                          sample->hybrid_reason_geometry,
                          sample->hybrid_reason_solid,
+                         sample->charsel_active_effects,
+                         sample->charsel_portrait_tiles,
+                         sample->charsel_plate_tiles,
                          render_sort_strategy_name(sample->sort_strategy));
         }
 

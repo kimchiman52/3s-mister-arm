@@ -5,6 +5,7 @@
 
 #include "sf33rd/Source/Game/effect/effect.h"
 #include "common.h"
+#include "port/build_config.h"
 #include "sf33rd/AcrSDK/ps2/flps2debug.h"
 #include "sf33rd/Source/Game/debug/Debug.h"
 #include "sf33rd/Source/Game/effect/effxx.h"
@@ -14,6 +15,10 @@
 #include "sf33rd/Source/Game/stage/bg.h"
 
 #include <SDL3/SDL.h>
+
+#if ENABLE_PERF_TELEMETRY
+int charsel_active_effect_count = 0;
+#endif
 
 s16 frwctr;
 s16 frwctr_min;
