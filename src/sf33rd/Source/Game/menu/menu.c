@@ -4105,6 +4105,7 @@ void Next_Be_Tr_Menu(struct _TASK* task_ptr) {
     task_ptr->r_no[2] = 0;
     task_ptr->r_no[3] = 0;
     Allow_a_battle_f = 0;
+    Request_LDREQ_Break();
 
     for (ix = 0; ix < 4; ix++) {
         Menu_Suicide[ix] = 1;
