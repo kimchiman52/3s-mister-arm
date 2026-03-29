@@ -2435,6 +2435,52 @@ const char* FBDevPresenter_PathName(FBDevPresenterPath path) {
     return "unknown";
 }
 
+void FBDevPresenter_ApplyFPSOverlayToBuffer(Uint32* pixels, int width, int height) {
+    if (!fps_overlay_enabled || (fps_overlay_text[0] == '\0') || (pixels == NULL) || (width <= 0) || (height <= 0)) {
+        return;
+    }
+
+    /* Compute layout for the given buffer dimensions (standalone, not dependent on fb_width/fb_height). */
+    int scale = 1;
+    if (height >= 700) {
+        scale = 4;
+    } else if (height >= 420) {
+        scale = 3;
+    } else if (height >= 350) {
+        scale = 2;
+    }
+
+    const int glyph_w = 3 * scale;
+    const int glyph_h = 5 * scale;
+    const int char_gap = scale;
+    const int text_len = (int)SDL_strlen(fps_overlay_text);
+    if (text_len <= 0) {
+        return;
+    }
+
+    const int text_w = (text_len * glyph_w) + ((text_len - 1) * char_gap);
+    const int safe_margin = SDL_max(4, scale * 2);
+    const int bg_pad = SDL_max(1, scale);
+
+    FpsOverlayLayout layout;
+    layout.draw_x = SDL_max(0, (width - text_w) / 2 - bg_pad);
+    layout.draw_y = SDL_max(0, height - glyph_h - safe_margin - bg_pad);
+    layout.width = SDL_min(text_w + 2 * bg_pad, width - layout.draw_x);
+    layout.height = SDL_min(glyph_h + 2 * bg_pad, height - layout.draw_y);
+    layout.text_x = bg_pad;
+    layout.text_y = bg_pad;
+    layout.scale = scale;
+
+    if (!ensure_rasterized_fps_overlay(&layout, NULL)) {
+        return;
+    }
+
+    fps_overlay_frame_layout = layout;
+    fps_overlay_frame_active = true;
+    apply_rasterized_fps_overlay_to_argb_buffer(pixels, width, height, width);
+    fps_overlay_frame_active = false;
+}
+
 void FBDevPresenter_Quit(void) {
     fbdev_active = false;
     close_fb();
@@ -2507,6 +2553,12 @@ void FBDevPresenter_SetFPSOverlayEnabled(bool enabled) {
 
 void FBDevPresenter_SetFPSOverlayText(const char* text) {
     (void)text;
+}
+
+void FBDevPresenter_ApplyFPSOverlayToBuffer(Uint32* pixels, int width, int height) {
+    (void)pixels;
+    (void)width;
+    (void)height;
 }
 
 const char* FBDevPresenter_PathName(FBDevPresenterPath path) {

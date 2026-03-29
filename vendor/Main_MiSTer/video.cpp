@@ -75,6 +75,8 @@ static int brd_y = 0;
 static int menu_bg = 0;
 static int menu_bgn = 0;
 
+static bool native_video_enabled = false;
+
 VideoInfo current_video_info;
 
 static int support_FHD = 0;
@@ -3021,7 +3023,12 @@ static void set_yc_mode()
 		float fps = current_video_info.vtime ? (100000000.f / current_video_info.vtime) : 0.f;
 		int pal = fps < 55.f;
 		double CLK_REF = (pal || (cfg.ntsc_mode == 1)) ? 4.43361875f : (cfg.ntsc_mode == 2) ? 3.575611f : 3.579545f;
-		const double core_CLK_VIDEO = current_video_info.ctime * 100.f / current_video_info.ptime;
+		/* When native video is active, CLK_VIDEO is 31.25 MHz (PLL outclk_2,
+		   VCO=1000 MHz, C2=32). The YC encoder runs at 31.25 MHz, giving
+		   ~8.7 samples per 3.58 MHz chroma cycle for clean S-Video color. */
+		const double core_CLK_VIDEO = native_video_enabled
+			? 31.25  // PLL: M=20, C2=32
+			: (current_video_info.ctime * 100.f / current_video_info.ptime);
 		double CLK_VIDEO = core_CLK_VIDEO;
 		const double output_CLK_VIDEO = v_cur.Fpix;
 		const bool output_clock_available = output_CLK_VIDEO > 0.0;
@@ -3035,10 +3042,11 @@ static void set_yc_mode()
 			CLK_VIDEO = output_CLK_VIDEO;
 		}
 
-		// When in fb-auto mode the game hasn't started yet so vtime=0, which causes
-		// fps=0 → pal=1 (wrong for NTSC).  Derive PAL/NTSC from the output timing
-		// stored in v_cur instead.
-		if (fb_native_analog_auto && !current_video_info.vtime)
+		// When vtime=0 (no video measurement yet), fps=0 which causes pal=1.
+		// This is wrong for NTSC systems and produces a 4.43 MHz colorburst
+		// that an NTSC CRT will reject entirely, resulting in B&W output.
+		// Derive PAL/NTSC from the output timing stored in v_cur instead.
+		if (!current_video_info.vtime && (fb_native_analog_auto || native_video_enabled))
 		{
 			int htotal = (int)(v_cur.param.hact + v_cur.param.hfp + v_cur.param.hs + v_cur.param.hbp);
 			int vtotal = (int)(v_cur.param.vact + v_cur.param.vfp + v_cur.param.vs + v_cur.param.vbp);
@@ -3046,6 +3054,12 @@ static void set_yc_mode()
 			{
 				double output_fps = (v_cur.Fpix * 1000000.0) / ((double)htotal * vtotal);
 				pal = output_fps < 55.0;
+				CLK_REF = (pal || (cfg.ntsc_mode == 1)) ? 4.43361875 : (cfg.ntsc_mode == 2) ? 3.575611 : 3.579545;
+			}
+			else
+			{
+				// No valid timing available at all; default to NTSC
+				pal = cfg.menu_pal ? 1 : 0;
 				CLK_REF = (pal || (cfg.ntsc_mode == 1)) ? 4.43361875 : (cfg.ntsc_mode == 2) ? 3.575611 : 3.579545;
 			}
 		}
@@ -3099,6 +3113,11 @@ static void set_yc_mode()
 	{
 		spi_uio_cmd8(UIO_SET_YC_PAR, 0);
 	}
+}
+
+void video_set_native_video_enabled(bool enabled)
+{
+	native_video_enabled = enabled;
 }
 
 void video_refresh_yc_mode()

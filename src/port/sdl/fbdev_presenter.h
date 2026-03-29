@@ -98,6 +98,10 @@ void FBDevPresenter_SetFPSOverlayEnabled(bool enabled);
 /// Update the on-screen FPS overlay label.
 void FBDevPresenter_SetFPSOverlayText(const char* text);
 
+/// Composite the FPS overlay onto an arbitrary ARGB8888 buffer.
+/// Used by the native video writer path which bypasses the fbdev presenter.
+void FBDevPresenter_ApplyFPSOverlayToBuffer(Uint32* pixels, int width, int height);
+
 /// Human-readable presenter path name for perf output.
 const char* FBDevPresenter_PathName(FBDevPresenterPath path);
 

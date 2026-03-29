@@ -89,6 +89,10 @@ mkdir -p "$LOG_DIR"
     echo "------------------------"
 } >"$LOG_PATH"
 
+# Native video: bypass the MiSTer scaler for analog CRT output.
+# Set THREESX_NATIVE_VIDEO=0 to disable and use the scaler path instead.
+export THREESX_NATIVE_VIDEO="${THREESX_NATIVE_VIDEO:-1}"
+
 # On stock MiSTer OSD launches, force SDL onto dummy video and software renderer.
 # Final on-screen output is handled by the fbdev presenter path in-app.
 export SDL_VIDEODRIVER="${SDL_VIDEODRIVER:-dummy}"

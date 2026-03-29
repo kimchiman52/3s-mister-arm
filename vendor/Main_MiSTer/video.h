@@ -59,6 +59,7 @@ void video_cfg_reset();
 
 void  video_mode_adjust();
 void  video_refresh_yc_mode();
+void  video_set_native_video_enabled(bool enabled);
 
 int   hasAPI1_5();
 

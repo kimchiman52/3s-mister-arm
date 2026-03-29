@@ -1,0 +1,37 @@
+
+# --------------------------------------------------------------------------
+# Fast iteration QSF overlay
+#
+# Appended to the project QSF when building with --fast.
+# Quartus uses last-wins for set_global_assignment, so these override
+# the aggressive optimization defaults with faster-compile settings.
+#
+# Expected savings: ~50-70% compile time reduction vs full optimization.
+# Trade-off: ~10-20% fMAX degradation (acceptable for dev iteration
+# at 19% ALM utilization).
+# --------------------------------------------------------------------------
+
+# Fitter: fast fit with single attempt (biggest single win)
+set_global_assignment -name FITTER_EFFORT "FAST FIT"
+set_global_assignment -name OPTIMIZATION_MODE "BALANCED"
+set_global_assignment -name FINAL_PLACEMENT_OPTIMIZATION NEVER
+set_global_assignment -name FITTER_AGGRESSIVE_ROUTABILITY_OPTIMIZATION NEVER
+
+# Physical synthesis: disable all (very expensive, marginal gains at low utilization)
+set_global_assignment -name PHYSICAL_SYNTHESIS_EFFORT FAST
+set_global_assignment -name PHYSICAL_SYNTHESIS_COMBO_LOGIC OFF
+set_global_assignment -name PHYSICAL_SYNTHESIS_REGISTER_DUPLICATION OFF
+set_global_assignment -name PHYSICAL_SYNTHESIS_REGISTER_RETIMING OFF
+set_global_assignment -name PHYSICAL_SYNTHESIS_COMBO_LOGIC_FOR_AREA OFF
+set_global_assignment -name PHYSICAL_SYNTHESIS_ASYNCHRONOUS_SIGNAL_PIPELINING OFF
+
+# Router optimizations: disable
+set_global_assignment -name ROUTER_LCELL_INSERTION_AND_LOGIC_DUPLICATION OFF
+set_global_assignment -name ROUTER_REGISTER_DUPLICATION OFF
+set_global_assignment -name ROUTER_CLOCKING_TOPOLOGY_ANALYSIS OFF
+
+# Synthesis extras: disable
+set_global_assignment -name ADV_NETLIST_OPT_SYNTH_WYSIWYG_REMAP OFF
+set_global_assignment -name PRE_MAPPING_RESYNTHESIS OFF
+set_global_assignment -name ECO_OPTIMIZE_TIMING OFF
+set_global_assignment -name PERIPHERY_TO_CORE_PLACEMENT_AND_ROUTING_OPTIMIZATION OFF

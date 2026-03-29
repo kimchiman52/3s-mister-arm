@@ -168,6 +168,51 @@ Verify ARM hard-float/NEON codegen in the final binary:
 readelf -A build/mister-install/bin/3sx | rg -i "Tag_CPU_name|Tag_ABI_VFP_args|Tag_Advanced_SIMD_arch"
 ```
 
+## FPGA Core Build (3SX.rbf)
+
+Quartus 17.0 Lite is installed **natively inside the Colima `quartus2` VM** — not in a Docker
+container. Do not search Docker images or Docker Desktop for Quartus; it lives in the VM itself.
+
+Prerequisites:
+
+- Colima profile `quartus2` must be running: `colima list` to check, `colima start --profile quartus2` if stopped
+- Quartus install: `/home/sb.linux/intelFPGA_lite/17.0/` (8.5 GB, inside the VM)
+- The Mac project directory is bind-mounted into the VM by Colima
+
+Quick build using the existing build script:
+
+```bash
+colima ssh --profile quartus2 -- bash -lc '
+  export PATH="/home/sb.linux/intelFPGA_lite/17.0/quartus/bin:$PATH"
+  cd /Users/sb/Developer/3sx-mister
+  tools/mister-wrapper/build-core.sh
+'
+```
+
+Or manually inside the VM:
+
+```bash
+colima ssh --profile quartus2
+export PATH="/home/sb.linux/intelFPGA_lite/17.0/quartus/bin:$PATH"
+cd /Users/sb/Developer/3sx-mister
+tools/mister-wrapper/build-core.sh --prepare-source
+cd build/mister-wrapper-core/src
+quartus_sh --flow compile 3SX -c 3SX
+```
+
+Output: `build/mister-wrapper-core/3SX.rbf` (visible from both inside the VM and on the Mac host).
+
+Previous builds are also cached inside the VM at `/home/sb.linux/build/mister-wrapper-core/`.
+
+Synthesis takes ~30-60 minutes on the x86_64-emulated Colima VM.
+
+Deploy to MiSTer:
+
+```bash
+scp build/mister-wrapper-core/3SX.rbf root@192.168.1.171:/media/fat/_Other/3SX.rbf
+# password: 1
+```
+
 ## Package
 
 Telemetry package:

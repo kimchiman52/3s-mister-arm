@@ -217,7 +217,10 @@ The wrapper core entrypoint is `tools/mister-wrapper/build-core.sh`.
 
 Current verified behavior:
 
-- it accepts `--seed menu` and defaults to `menu`
+- it accepts `--seed menu` (default) and `--fast`
+- `--fast` appends `vendor/Menu_MiSTer/menu-fast.qsf` to the project QSF, overriding
+  aggressive optimization defaults with faster-compile settings (~50-70% compile time
+  reduction, ~10-20% fMAX trade-off). Suitable for dev iteration; omit for release builds.
 - it stages the selected seed into `build/mister-wrapper-core/src`
 - it renames the Quartus project from the seed basename (`menu`) to `3SX`
 - it patches:
@@ -251,17 +254,25 @@ Verified commands on this host:
 
 ```sh
 tools/mister-wrapper/build-core.sh --seed menu --prepare-source
+tools/mister-wrapper/build-core.sh --fast --seed menu --prepare-source
 tools/mister-wrapper/build-quartus-image.sh --help
 ```
 
 Validated full-build path on this Apple Silicon host:
 
 ```sh
+# Dev iteration (fast compile, ~50-70% faster):
 colima --profile quartus2 ssh -- bash -lc '
   export PATH=/home/sb.linux/intelFPGA_lite/17.0/quartus/bin:$PATH LC_ALL=C LANG=C &&
   cd /Users/sb/Developer/3sx-mister &&
   OUTPUT_DIR=/home/sb.linux/build/mister-wrapper-core \
-  bash tools/mister-wrapper/build-core.sh --seed menu --check-env &&
+  bash tools/mister-wrapper/build-core.sh --fast --seed menu
+'
+
+# Release (full optimization):
+colima --profile quartus2 ssh -- bash -lc '
+  export PATH=/home/sb.linux/intelFPGA_lite/17.0/quartus/bin:$PATH LC_ALL=C LANG=C &&
+  cd /Users/sb/Developer/3sx-mister &&
   OUTPUT_DIR=/home/sb.linux/build/mister-wrapper-core \
   bash tools/mister-wrapper/build-core.sh --seed menu
 '

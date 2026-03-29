@@ -126,6 +126,7 @@ int g_wrapper_ghost_count = kGhostCount4;
 int g_wrapper_arm_clock = kArmClockStock;
 int g_wrapper_restart_requested = 0;
 int g_wrapper_used_full_user_io_init = 0;
+static bool g_native_video_mode = false;
 
 struct StartupScaleModeSelection
 {
@@ -1432,9 +1433,32 @@ void service_wrapper_menu(pid_t child)
 	}
 }
 
+// Clear the DDR3 native video control word to prevent stale frame data.
+// Maps just the first page of the 0x3A000000 region, zeroes the 4-byte
+// control word, then unmaps.
+void clear_native_video_ddr3_ctrl()
+{
+	int fd = open("/dev/mem", O_RDWR | O_SYNC);
+	if (fd < 0) return;
+	void *map = mmap(nullptr, 4096, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0x3A000000);
+	if (map != MAP_FAILED)
+	{
+		*(volatile uint32_t *)map = 0;
+		munmap(map, 4096);
+	}
+	close(fd);
+}
+
 void restart_to_menu(FILE *wrapper_log, int saved_stdout, int saved_stderr, int runtime_vt)
 {
 	write_log_line(wrapper_log, "return_to_menu=1");
+	if (g_native_video_mode)
+	{
+		clear_native_video_ddr3_ctrl();
+		user_io_status_set("[9]", 0);
+		video_set_native_video_enabled(false);
+		g_native_video_mode = false;
+	}
 	set_vga_fb(0);
 	video_fb_enable(0);
 	video_refresh_yc_mode();
@@ -1483,12 +1507,26 @@ int show_error_and_return(const char *message, FILE *wrapper_log, int active_vt,
 	write_log_line(wrapper_log, "error=%s", message);
 	if (force_requested())
 	{
+		if (g_native_video_mode)
+		{
+			clear_native_video_ddr3_ctrl();
+			user_io_status_set("[9]", 0);
+			video_set_native_video_enabled(false);
+			g_native_video_mode = false;
+		}
 		restore_console(active_vt);
 		restore_stdio(saved_stdout, saved_stderr);
 		if (wrapper_log) fclose(wrapper_log);
 		return 1;
 	}
 
+	if (g_native_video_mode)
+	{
+		clear_native_video_ddr3_ctrl();
+		user_io_status_set("[9]", 0);
+		video_set_native_video_enabled(false);
+		g_native_video_mode = false;
+	}
 	set_vga_fb(0);
 	video_fb_enable(0);
 	video_refresh_yc_mode();
@@ -1666,13 +1704,37 @@ int threesx_wrapper_run(int argc, char *argv[])
 	if (validation_rc != 0) return validation_rc;
 
 	const int runtime_vt = runtime_tty2_requested() ? 2 : active_vt;
+	/* Detect native video mode: when THREESX_NATIVE_VIDEO=1, the game writes
+	   frames directly to DDR3 for the FPGA's native video reader instead of
+	   going through the Linux framebuffer scaler path.  In this mode we must
+	   NOT enable vga_fb or the FB scaler -- the core outputs video directly
+	   via its VGA_R/G/B pins using the native video timing generator.  We set
+	   status bit 9 to tell the FPGA to enable its native video reader. */
+	{
+		const char *nv_env = getenv("THREESX_NATIVE_VIDEO");
+		g_native_video_mode = !nv_env || strcmp(nv_env, "0") != 0;
+	}
+	video_set_native_video_enabled(g_native_video_mode);
+
 	if (!forced)
 	{
 		disable_wrapper_osd();
-		video_fb_clear(0);
-		set_vga_fb(1);
-		if (runtime_vt != active_vt) video_chvt(runtime_vt);
-		video_fb_enable(1);
+		if (g_native_video_mode)
+		{
+			/* Native video: do NOT enable the scaler/FB path.
+			   set_vga_fb(0) is already the default.  Clear any stale DDR3
+			   control word, then signal FPGA to start the native video reader. */
+			clear_native_video_ddr3_ctrl();
+			if (runtime_vt != active_vt) video_chvt(runtime_vt);
+			user_io_status_set("[9]", 1);
+		}
+		else
+		{
+			video_fb_clear(0);
+			set_vga_fb(1);
+			if (runtime_vt != active_vt) video_chvt(runtime_vt);
+			video_fb_enable(1);
+		}
 		video_refresh_yc_mode();
 	}
 
@@ -1681,6 +1743,7 @@ int threesx_wrapper_run(int argc, char *argv[])
 	               runtime_vt,
 	               runtime_tty2_requested() ? "set" : "unset",
 	               active_vt);
+	write_log_line(wrapper_log, "native_video=%s", g_native_video_mode ? "enabled" : "disabled");
 
 	/* Create shared-memory region for joystick state visible to the game. */
 	int shm_fd = open(MISTER_JOY_SHM_PATH, O_RDWR | O_CREAT | O_TRUNC, 0644);
@@ -1859,6 +1922,12 @@ int threesx_wrapper_run(int argc, char *argv[])
 		{
 			int signal_exit = 128 + g_wrapper_signal;
 			write_log_line(wrapper_log, "wrapper_signal=%d", g_wrapper_signal);
+			if (g_native_video_mode)
+			{
+				clear_native_video_ddr3_ctrl();
+				user_io_status_set("[9]", 0);
+				video_set_native_video_enabled(false);
+			}
 			cleanup_joy_shm();
 			restore_console(active_vt);
 			restore_stdio(saved_stdout, saved_stderr);
@@ -1868,6 +1937,12 @@ int threesx_wrapper_run(int argc, char *argv[])
 
 		if (forced)
 		{
+			if (g_native_video_mode)
+			{
+				clear_native_video_ddr3_ctrl();
+				user_io_status_set("[9]", 0);
+				video_set_native_video_enabled(false);
+			}
 			cleanup_joy_shm();
 			restore_console(active_vt);
 			restore_stdio(saved_stdout, saved_stderr);
@@ -1878,6 +1953,8 @@ int threesx_wrapper_run(int argc, char *argv[])
 		if (g_wrapper_restart_requested)
 		{
 			write_log_line(wrapper_log, "restart_runtime=1");
+			if (g_native_video_mode)
+				clear_native_video_ddr3_ctrl();
 			g_wrapper_restart_requested = 0;
 			g_wrapper_menu_visible = 0;
 			g_wrapper_menu_selected = kMenuResume;

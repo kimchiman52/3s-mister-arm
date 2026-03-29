@@ -9,6 +9,7 @@
 #include "port/sdl/netstats_renderer.h"
 #include "port/sdl/sdl_debug_text.h"
 #include "port/sdl/fbdev_presenter.h"
+#include "port/sdl/native_video_writer.h"
 #include "port/sdl/sdl_game_renderer.h"
 #include "port/sdl/sdl_message_renderer.h"
 #include "port/sdl/sdl_pad.h"
@@ -86,6 +87,7 @@ static bool should_save_screenshot = false;
 static Uint64 last_mouse_motion_time = 0;
 static const int mouse_hide_delay_ms = 2000; // 2 seconds
 static bool fbdev_presenter_enabled = false;
+static bool native_video_writer_enabled = false;
 static bool use_fbdev_only_present = false;
 static bool use_native_render_path = false;
 static bool software_frame_mode_enabled = false;
@@ -102,6 +104,21 @@ int ghost_count_max = 4;
    Applied via sysfs scaling_max_freq.  Reset to stock on exit. */
 static int arm_clock_mode = 0;
 #if defined(PORT_MISTER)
+/* Native video: RGB565 scratch buffer for ARGB8888-to-RGB565 conversion.
+   384 * 224 * 2 = 172,032 bytes.  Sits in cached ARM memory so the conversion
+   runs at full speed before the uncached DDR3 copy. */
+static uint16_t native_video_rgb565_scratch[384 * 224];
+
+static void convert_argb8888_to_rgb565(const uint32_t* src, uint16_t* dst, int pixel_count) {
+    for (int i = 0; i < pixel_count; i++) {
+        uint32_t argb = src[i];
+        uint32_t r = (argb >> 16) & 0xFF;
+        uint32_t g = (argb >> 8) & 0xFF;
+        uint32_t b = argb & 0xFF;
+        dst[i] = (uint16_t)(((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3));
+    }
+}
+
 static int sa_bg_cache_frames_remaining = 0;
 static int sa_bg_cache_active_frame_index = 0;
 static bool sa_bg_cache_triggered_this_frame = false;
@@ -9317,6 +9334,24 @@ int SDLApp_Init() {
     FBDevPresenter_SetFPSOverlayEnabled(show_fps_overlay);
     backend_logf("FPS overlay: %s", show_fps_overlay ? "enabled" : "disabled");
 
+    /* Native video: write frames directly to DDR3 for the FPGA's native video
+       reader instead of going through the Linux framebuffer scaler path.
+       Enabled by default; set THREESX_NATIVE_VIDEO=0 to disable. */
+    {
+        const char* native_video_env = SDL_getenv("THREESX_NATIVE_VIDEO");
+        if (!native_video_env || SDL_strcmp(native_video_env, "0") != 0) {
+            native_video_writer_enabled = NativeVideoWriter_Init();
+            backend_logf("Native video writer: %s", native_video_writer_enabled ? "enabled" : "disabled");
+
+            /* Native video requires software frame mode to get the ARGB8888
+               surface.  Force it on regardless of the user config setting. */
+            if (native_video_writer_enabled && !software_frame_mode_enabled) {
+                software_frame_mode_enabled = true;
+                backend_logf("Native video: auto-enabled software frame mode");
+            }
+        }
+    }
+
     if (fbdev_presenter_enabled && selected_video_driver != NULL && SDL_strcmp(selected_video_driver, "dummy") == 0) {
         const int fb_w = FBDevPresenter_GetWidth();
         const int fb_h = FBDevPresenter_GetHeight();
@@ -9366,6 +9401,7 @@ int SDLApp_Init() {
 void SDLApp_Quit() {
     apply_arm_clock(0);
     Config_Destroy();
+    NativeVideoWriter_Shutdown();
     FBDevPresenter_Quit();
     destroy_native_screenshot_texture();
     SDL_DestroyTexture(screen_texture);
@@ -9800,7 +9836,35 @@ void SDLApp_EndFrame() {
     const Uint64 present_start_ns = SDL_GetTicksNS();
 #endif
 
-    if (fbdev_presenter_enabled) {
+#if defined(PORT_MISTER)
+    /* Native video path: convert the software-rendered frame from ARGB8888 to
+       RGB565 and write it directly to DDR3 for the FPGA's native video reader.
+       This path takes priority over the fbdev presenter when active. */
+    if (native_video_writer_enabled) {
+        const SDL_Surface* frame = SDLGameRenderer_GetSoftwareFrameSurface();
+        if (frame && frame->pixels && frame->w == 384 && frame->h == 224) {
+            if (show_fps_overlay) {
+                FBDevPresenter_ApplyFPSOverlayToBuffer(
+                    (Uint32*)frame->pixels, frame->w, frame->h);
+            }
+            convert_argb8888_to_rgb565(
+                (const uint32_t*)frame->pixels,
+                native_video_rgb565_scratch,
+                384 * 224);
+            NativeVideoWriter_WriteFrame(
+                native_video_rgb565_scratch,
+                384, 224, 384 * 2);
+        } else {
+            static bool nv_warned = false;
+            if (!nv_warned) {
+                backend_logf("Native video: software frame surface not available (check software_frame_mode)");
+                nv_warned = true;
+            }
+        }
+    }
+#endif
+
+    if (fbdev_presenter_enabled && !native_video_writer_enabled) {
         if (fbdev_present_software_frame) {
             if (!FBDevPresenter_PresentSurface(fbdev_software_frame_surface, &native_output_rect)) {
                 backend_logf("FBDEV direct software-frame present failed; falling back to current-target/readback");
@@ -9879,6 +9943,17 @@ void SDLApp_EndFrame() {
     hide_cursor_if_needed();
 
     // Do frame pacing
+    //
+    // When native video is active the ideal pacing source would be the FPGA's
+    // own vsync via spi_uio_cmd(UIO_WAIT_VSYNC).  However the game runs in a
+    // forked child process separate from the MiSTer wrapper, which owns the SPI
+    // interface.  Calling SPI from both processes would cause bus contention.
+    //
+    // The timer-based pacing at TARGET_FPS (59.59949 Hz) is well-matched to the
+    // FPGA native refresh rate (~59.60 Hz), and the DDR3 double-buffer absorbs
+    // any minor phase drift between the ARM timer and the FPGA's pixel-clock PLL.
+    // A future hardware vsync bridge (e.g. via shared-memory signaling from the
+    // wrapper's polling loop) could replace this for tighter lock.
     Uint64 now = SDL_GetTicksNS();
 
     if (frame_deadline == 0) {

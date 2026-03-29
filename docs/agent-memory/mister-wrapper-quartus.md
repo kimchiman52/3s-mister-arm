@@ -34,18 +34,22 @@ tools/mister-wrapper/fetch-quartus17-installer.sh
 ```
 
 ```sh
+# Dev iteration (fast compile, ~50-70% faster):
 colima --profile quartus2 ssh -- bash -lc '
+  export PATH=/home/sb.linux/intelFPGA_lite/17.0/quartus/bin:$PATH LC_ALL=C LANG=C &&
   cd /Users/sb/Developer/3sx-mister &&
   OUTPUT_DIR=/home/sb.linux/build/mister-wrapper-core \
-  bash tools/mister-wrapper/build-core.sh --seed menu --prepare-source
+  bash tools/mister-wrapper/build-core.sh --fast --seed menu
 '
 ```
 
 ```sh
+# Release (full optimization):
 colima --profile quartus2 ssh -- bash -lc '
   export PATH=/home/sb.linux/intelFPGA_lite/17.0/quartus/bin:$PATH LC_ALL=C LANG=C &&
-  cd /home/sb.linux/build/mister-wrapper-core/src &&
-  quartus_sh --flow compile 3SX -c 3SX
+  cd /Users/sb/Developer/3sx-mister &&
+  OUTPUT_DIR=/home/sb.linux/build/mister-wrapper-core \
+  bash tools/mister-wrapper/build-core.sh --seed menu
 '
 ```
 
@@ -79,6 +83,9 @@ colima --profile quartus2 ssh -- bash -lc '
 - Decision: Keep Quartus builds separate from the ARMv7 MiSTer runtime container. | Why: FPGA bitstream builds need x86_64 Quartus, while the runtime container targets ARMv7 userspace binaries. | Date: `2026-03-09`.
 - Decision: On Apple Silicon, prefer an x86_64 VM over Docker Desktop `linux/amd64` for Quartus. | Why: the Quartus installer hit `rosetta error: bss_size overflow` in Docker Desktop builds, while the x86_64 Colima/QEMU VM worked. | Date: `2026-03-09`.
 
+- Decision: Use `--fast` for dev iteration builds. | Why: the default QSF has every aggressive optimization maxed out (`PHYSICAL_SYNTHESIS_EFFORT EXTRA`, `FITTER_EFFORT "STANDARD FIT"`, `OPTIMIZATION_MODE "HIGH PERFORMANCE EFFORT"`, etc.), which makes compilation very slow. At 19% ALM utilization there is massive headroom, so timing should still close with relaxed settings. The fast overlay (`menu-fast.qsf`) sets `FAST FIT`, `BALANCED` mode, and disables physical synthesis/router extras. | Date: `2026-03-28`.
+- Decision: VZ+Rosetta and QEMU user-mode are dead ends for Quartus 17.0 on Apple Silicon. | Why: Rosetta deadlocks after `fork()` during `quartus_map` synthesis (child completes as zombie, parent hangs permanently). QEMU user-mode 8.2 SIGSEGV during heavy computation. Tested thoroughly on macOS 26.3 / Colima 0.10.1. The x86_64 QEMU full-system VM remains the only viable local path. | Date: `2026-03-28`.
+
 ## Known Pitfalls
 
 - Missing `cyclonev-17.0*.qdz` makes Lite look unsupported for the target device. -> Install both `cyclone` and `cyclonev` packages before concluding Lite is insufficient.
@@ -87,6 +94,8 @@ colima --profile quartus2 ssh -- bash -lc '
 - Changing the global Docker context can interfere with other worktrees. -> Prefer the VM path or use explicit `docker --context ...` instead of `docker context use ...`.
 - Standard installs may fail with missing-license errors. -> Try Lite first; if Standard is required, set `LM_LICENSE_FILE` or `MISTER_QUARTUS_LICENSE_FILE`.
 - `tools/mister-wrapper/build-core.sh` selecting Docker mode does not prove the image path is the right host strategy on this Mac. -> Use the local-in-VM `quartus_sh` path first for real compile diagnosis.
+- VZ+Rosetta (aarch64 VM with Rosetta x86 binary translation) does not work for Quartus 17.0 compilation. -> Do not attempt; `quartus_map` deadlocks after `fork()`. Stick with x86_64 QEMU VM.
+- QEMU user-mode (qemu-x86_64) inside a VZ VM segfaults during Quartus synthesis. -> Do not attempt; the QEMU 8.2 TCG translator crashes during heavy x86_64 computation.
 
 ## Update Rules
 
@@ -94,4 +103,4 @@ colima --profile quartus2 ssh -- bash -lc '
 - Update `Last verified` whenever the host recipe or the official Intel doc links are rechecked.
 - Replace disproven claims instead of stacking contradictory history.
 
-Last verified: `2026-03-09`
+Last verified: `2026-03-28`

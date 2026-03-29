@@ -355,6 +355,7 @@ always@(posedge clk_sys) begin
 	reg        has_cmd;
 	reg  [7:0] cnt = 0;
 	reg        vs_d0,vs_d1,vs_d2;
+	reg        vs_core_d0, vs_core_d1, vs_core_d2;
 	reg  [4:0] acx_att;
 	reg  [7:0] fb_crc;
 
@@ -529,11 +530,23 @@ always@(posedge clk_sys) begin
 				^ ary[7:0] ^ ary[11:8];
 `endif
 
+	// HDMI vsync CDC (existing path)
 	vs_d0 <= HDMI_TX_VS;
 	if(vs_d0 == HDMI_TX_VS) vs_d1 <= vs_d0;
-
 	vs_d2 <= vs_d1;
-	if(~vs_d2 & vs_d1) vs_wait <= 0;
+
+	// Core vsync CDC (for native video mode)
+	// vs_fix is in clk_vid domain; synchronize to clk_sys
+	vs_core_d0 <= vs_fix;
+	if(vs_core_d0 == vs_fix) vs_core_d1 <= vs_core_d0;
+	vs_core_d2 <= vs_core_d1;
+
+	// Clear vs_wait on the appropriate vsync edge:
+	// - Native video active: use core vsync (vs_fix rising edge)
+	// - Normal mode: use HDMI vsync (HDMI_TX_VS rising edge)
+	if((native_vid_active & ~vs_core_d2 & vs_core_d1) |
+	   (~native_vid_active & ~vs_d2 & vs_d1))
+		vs_wait <= 0;
 end
 
 reg [7:0] frame_cnt;
@@ -1330,7 +1343,7 @@ assign HDMI_TX_D  = hdmi_out_d;
 	wire vga_tx_clk;
 	`ifndef MISTER_DEBUG_NOHDMI
 		cyclonev_clkselect vga_clk_sw
-		( 
+		(
 			.clkselect({1'b1, ~vga_fb & ~vga_scaler}),
 			.inclk({clk_vid, hdmi_clk_out, 2'b00}),
 			.outclk(vga_tx_clk)
@@ -1532,21 +1545,21 @@ reg  [39:0] PhaseInc;
 	wire de1 = vgas_en ? vgas_de : vga_de;
 
 `ifndef MISTER_DISABLE_YC
-	assign VGA_VS = av_dis ? 1'bZ      :(((vga_fb_yc_en ? (~yc_fb_vs ^ VS[12]) : vgas_en ? (~vgas_vs ^ VS[12])                         : VGA_DISABLE ? 1'd1 : ~vga_vs) | csync_en) & subcarrier_out);
-	assign VGA_HS = av_dis ? 1'bZ      :  (vga_fb_yc_en ? ((csync_en ? ~yc_fb_cs : ~yc_fb_hs) ^ HS[12]) : vgas_en ? ((csync_en ? ~vgas_cs : ~vgas_hs) ^ HS[12]) : VGA_DISABLE ? 1'd1 : (csync_en ? ~vga_cs : ~vga_hs));
-	assign VGA_R  = av_dis ? 6'bZZZZZZ :   vga_fb_yc_en ? yc_fb_o[23:18] : vgas_en ? vgas_o[23:18]                               : VGA_DISABLE ? 6'd0 : vga_o[23:18];
-	assign VGA_G  = av_dis ? 6'bZZZZZZ :   vga_fb_yc_en ? yc_fb_o[15:10] : vgas_en ? vgas_o[15:10]                               : VGA_DISABLE ? 6'd0 : vga_o[15:10];
-	assign VGA_B  = av_dis ? 6'bZZZZZZ :   vga_fb_yc_en ? yc_fb_o[7:2]   : vgas_en ? vgas_o[7:2]                                 : VGA_DISABLE ? 6'd0 : vga_o[7:2]  ;
+	assign VGA_VS = av_dis ? 1'bZ      : (((vga_fb_yc_en ? (~yc_fb_vs ^ VS[12]) : vgas_en ? (~vgas_vs ^ VS[12])                         : VGA_DISABLE ? 1'd1 : ~vga_vs) | csync_en) & subcarrier_out);
+	assign VGA_HS = av_dis ? 1'bZ      : (vga_fb_yc_en ? ((csync_en ? ~yc_fb_cs : ~yc_fb_hs) ^ HS[12]) : vgas_en ? ((csync_en ? ~vgas_cs : ~vgas_hs) ^ HS[12]) : VGA_DISABLE ? 1'd1 : (csync_en ? ~vga_cs : ~vga_hs));
+	assign VGA_R  = av_dis ? 6'bZZZZZZ : vga_fb_yc_en ? yc_fb_o[23:18] : vgas_en ? vgas_o[23:18]                               : VGA_DISABLE ? 6'd0 : vga_o[23:18];
+	assign VGA_G  = av_dis ? 6'bZZZZZZ : vga_fb_yc_en ? yc_fb_o[15:10] : vgas_en ? vgas_o[15:10]                               : VGA_DISABLE ? 6'd0 : vga_o[15:10];
+	assign VGA_B  = av_dis ? 6'bZZZZZZ : vga_fb_yc_en ? yc_fb_o[7:2]   : vgas_en ? vgas_o[7:2]                                 : VGA_DISABLE ? 6'd0 : vga_o[7:2]  ;
 
 	wire [1:0] vga_r  = vga_fb_yc_en ? yc_fb_o[17:16] : vgas_en ? vgas_o[17:16] : VGA_DISABLE ? 2'd0 : vga_o[17:16];
 	wire [1:0] vga_g  = vga_fb_yc_en ? yc_fb_o[9:8]   : vgas_en ? vgas_o[9:8]   : VGA_DISABLE ? 2'd0 : vga_o[9:8];
 	wire [1:0] vga_b  = vga_fb_yc_en ? yc_fb_o[1:0]   : vgas_en ? vgas_o[1:0]   : VGA_DISABLE ? 2'd0 : vga_o[1:0];
 `else
-	assign VGA_VS = av_dis ? 1'bZ      :(((vgas_en ? (~vgas_vs ^ VS[12])                         : VGA_DISABLE ? 1'd1 : ~vga_vs) | csync_en) & subcarrier_out);
-	assign VGA_HS = av_dis ? 1'bZ      :  (vgas_en ? ((csync_en ? ~vgas_cs : ~vgas_hs) ^ HS[12]) : VGA_DISABLE ? 1'd1 : (csync_en ? ~vga_cs : ~vga_hs));
-	assign VGA_R  = av_dis ? 6'bZZZZZZ :   vgas_en ? vgas_o[23:18]                               : VGA_DISABLE ? 6'd0 : vga_o[23:18];
-	assign VGA_G  = av_dis ? 6'bZZZZZZ :   vgas_en ? vgas_o[15:10]                               : VGA_DISABLE ? 6'd0 : vga_o[15:10];
-	assign VGA_B  = av_dis ? 6'bZZZZZZ :   vgas_en ? vgas_o[7:2]                                 : VGA_DISABLE ? 6'd0 : vga_o[7:2]  ;
+	assign VGA_VS = av_dis ? 1'bZ      : (((vgas_en ? (~vgas_vs ^ VS[12])                         : VGA_DISABLE ? 1'd1 : ~vga_vs) | csync_en) & subcarrier_out);
+	assign VGA_HS = av_dis ? 1'bZ      : (vgas_en ? ((csync_en ? ~vgas_cs : ~vgas_hs) ^ HS[12]) : VGA_DISABLE ? 1'd1 : (csync_en ? ~vga_cs : ~vga_hs));
+	assign VGA_R  = av_dis ? 6'bZZZZZZ : vgas_en ? vgas_o[23:18]                               : VGA_DISABLE ? 6'd0 : vga_o[23:18];
+	assign VGA_G  = av_dis ? 6'bZZZZZZ : vgas_en ? vgas_o[15:10]                               : VGA_DISABLE ? 6'd0 : vga_o[15:10];
+	assign VGA_B  = av_dis ? 6'bZZZZZZ : vgas_en ? vgas_o[7:2]                                 : VGA_DISABLE ? 6'd0 : vga_o[7:2]  ;
 
 	wire [1:0] vga_r  = vgas_en ? vgas_o[17:16] : VGA_DISABLE ? 2'd0 : vga_o[17:16];
 	wire [1:0] vga_g  = vgas_en ? vgas_o[9:8]   : VGA_DISABLE ? 2'd0 : vga_o[9:8];
@@ -1711,6 +1724,7 @@ wire        vs_fix, hs_fix, de_emu, vs_emu, hs_emu, f1;
 wire        hvs_fix, hhs_fix, hde_emu;
 wire        clk_vid, ce_pix, clk_ihdmi, ce_hpix;
 wire        vga_force_scaler;
+wire        native_vid_active;
 
 wire        ram_clk;
 wire [28:0] ram_address;
@@ -1900,7 +1914,9 @@ emu emu
 	.UART_DSR(uart_dtr),
 
 	.USER_OUT(user_out),
-	.USER_IN(user_in)
+	.USER_IN(user_in),
+
+	.NATIVE_VID_ACTIVE(native_vid_active)
 );
 
 endmodule

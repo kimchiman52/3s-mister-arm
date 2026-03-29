@@ -174,7 +174,10 @@ module emu
 	input   [6:0] USER_IN,
 	output  [6:0] USER_OUT,
 
-	input         OSD_STATUS
+	input         OSD_STATUS,
+
+	// Native video active signal for sys_top.v vsync routing
+	output        NATIVE_VID_ACTIVE
 );
 
 assign ADC_BUS  = 'Z;
@@ -182,7 +185,16 @@ assign {UART_RTS, UART_DTR} = 0;
 assign {SD_SCK, SD_MOSI, SD_CS} = 'Z;
 
 assign DDRAM_CLK = clk_sys;
-assign CE_PIXEL  = ce_pix;
+
+// CE_PIXEL: divide CLK_VIDEO (31.25 MHz) by 4 for ~7.8125 MHz effective pixel rate.
+// Integer divider = zero pixel timing jitter.
+reg [1:0] ce_div;
+wire ce_pix_div4 = (ce_div == 2'd0);
+always @(posedge CLK_VIDEO) begin
+	if (RESET) ce_div <= 2'd0;
+	else ce_div <= ce_div + 2'd1;
+end
+assign CE_PIXEL = ce_pix_div4;
 
 assign VGA_SL = 0;
 assign VGA_F1 = 0;
@@ -228,14 +240,23 @@ hps_io #(.CONF_STR(CONF_STR)) hps_io
 
 ////////////////////   CLOCKS   ///////////////////
 wire locked, clk_sys;
+wire clk_20m;   // PLL outclk_1 (unused, kept for future use)
+wire clk_pix;   // PLL outclk_2: 31.25 MHz (CLK_VIDEO, divided by 4 for 7.8125 MHz pixels)
 pll pll
 (
 	.refclk(CLK_50M),
 	.rst(0),
 	.outclk_0(clk_sys),
-	.outclk_1(CLK_VIDEO),
+	.outclk_1(clk_20m),
+	.outclk_2(clk_pix),
 	.locked(locked)
 );
+
+assign CLK_VIDEO = clk_pix;
+
+// --- Native video control ---
+wire NATIVE_VID = status[9];
+assign NATIVE_VID_ACTIVE = NATIVE_VID;
 
 
 /////////////////////   SDRAM   ///////////////////
@@ -344,15 +365,49 @@ always @(posedge clk_sys) begin
 	end
 end
 
+// --- DDR3 port sharing: old ddram (SDRAM clear) + native video reader ---
+wire  [7:0] old_ddr_burstcnt;
+wire [28:0] old_ddr_addr;
+wire        old_ddr_rd;
+wire [63:0] old_ddr_din;
+wire  [7:0] old_ddr_be;
+wire        old_ddr_we;
+
 ddram ddr
 (
-	.*,
+	.DDRAM_CLK(clk_sys),
+	.DDRAM_BUSY(DDRAM_BUSY),
+	.DDRAM_BURSTCNT(old_ddr_burstcnt),
+	.DDRAM_ADDR(old_ddr_addr),
+	.DDRAM_DOUT(DDRAM_DOUT),
+	.DDRAM_DOUT_READY(DDRAM_DOUT_READY & ~use_nv),
+	.DDRAM_RD(old_ddr_rd),
+	.DDRAM_DIN(old_ddr_din),
+	.DDRAM_BE(old_ddr_be),
+	.DDRAM_WE(old_ddr_we),
 	.reset(RESET),
-   .dout(),
-   .din(0),
-   .rd(0),
-   .ready()
+	.addr(addr),
+	.dout(),
+	.din(0),
+	.we(we),
+	.rd(0),
+	.ready()
 );
+
+// Native video DDR3 signals
+wire  [7:0] nv_ddr_burstcnt;
+wire [28:0] nv_ddr_addr;
+wire        nv_ddr_rd;
+
+// Priority mux: native video reader takes over after boot (cfg[15])
+wire use_nv = NATIVE_VID & cfg[15];
+
+assign DDRAM_BURSTCNT = use_nv ? nv_ddr_burstcnt : old_ddr_burstcnt;
+assign DDRAM_ADDR     = use_nv ? nv_ddr_addr     : old_ddr_addr;
+assign DDRAM_RD       = use_nv ? nv_ddr_rd       : old_ddr_rd;
+assign DDRAM_DIN      = use_nv ? 64'd0           : old_ddr_din;
+assign DDRAM_BE       = use_nv ? 8'hFF           : old_ddr_be;
+assign DDRAM_WE       = use_nv ? 1'b0            : old_ddr_we;
 
 reg        we;
 reg [28:0] addr = 0;
@@ -492,13 +547,12 @@ wire  [5:0] rnd_c = {rnd_reg[0],rnd_reg[1],rnd_reg[2],rnd_reg[2],rnd_reg[2],rnd_
 lfsr #(lfsr_n) random(rnd);
 
 always @(posedge CLK_VIDEO) begin
-	if(forced_scandoubler) ce_pix <= 1;
-		else ce_pix <= ~ce_pix;
+	ce_pix <= ce_pix_div4;
 
 	if(ce_pix) begin
-		if(hc == 637) begin
+		if(hc == 499) begin
 			hc <= 0;
-			if(vc == (PAL ? (forced_scandoubler ? 623 : 311) : (forced_scandoubler ? 523 : 261))) begin 
+			if(vc == (PAL ? (forced_scandoubler ? 623 : 311) : (forced_scandoubler ? 523 : 261))) begin
 				vc <= 0;
 				vvc <= vvc + 9'd6;
 			end else begin
@@ -519,29 +573,29 @@ reg VSync;
 
 reg ce_pix;
 always @(posedge CLK_VIDEO) begin
-	if (hc == 529) HBlank <= 1;
+	if (hc == 384) HBlank <= 1;
 		else if (hc == 0) HBlank <= 0;
 
-	if (hc == 544) begin
+	if (hc == 410) begin
 		HSync <= 1;
 
 		if(PAL) begin
-			if(vc == (forced_scandoubler ? 609 : 304)) VSync <= 1;
-				else if (vc == (forced_scandoubler ? 617 : 308)) VSync <= 0;
+			if(vc == (forced_scandoubler ? 609 : 280)) VSync <= 1;
+				else if (vc == (forced_scandoubler ? 617 : 283)) VSync <= 0;
 
-			if(vc == (forced_scandoubler ? 601 : 300)) VBlank <= 1;
+			if(vc == (forced_scandoubler ? 601 : 270)) VBlank <= 1;
 				else if (vc == 0) VBlank <= 0;
 		end
 		else begin
-			if(vc == (forced_scandoubler ? 490 : 245)) VSync <= 1;
-				else if (vc == (forced_scandoubler ? 496 : 248)) VSync <= 0;
+			if(vc == (forced_scandoubler ? 490 : 224)) VSync <= 1;
+				else if (vc == (forced_scandoubler ? 496 : 227)) VSync <= 0;
 
-			if(vc == (forced_scandoubler ? 480 : 240)) VBlank <= 1;
+			if(vc == (forced_scandoubler ? 480 : 224)) VBlank <= 1;
 				else if (vc == 0) VBlank <= 0;
 		end
 	end
-	
-	if (hc == 590) HSync <= 0;
+
+	if (hc == 448) HSync <= 0;
 end
 
 reg  [7:0] cos_out;
@@ -550,11 +604,52 @@ cos cos(vvc + {vc>>forced_scandoubler, 2'b00}, cos_out);
 
 wire [7:0] comp_v = (cos_g >= rnd_c) ? {cos_g - rnd_c, 2'b00} : 8'd0;
 
-assign VGA_DE  = ~(HBlank | VBlank);
-assign VGA_HS  = HSync;
-assign VGA_VS  = VSync;
-assign VGA_G   = comp_v;
-assign VGA_R   = comp_v;
-assign VGA_B   = comp_v;
+// --- Native video module ---
+wire [7:0] nv_r, nv_g, nv_b;
+wire       nv_hs, nv_vs, nv_de;
+wire       nv_active;
+
+native_video_top native_video
+(
+	.clk_sys        (clk_sys),
+	.clk_vid        (CLK_VIDEO),
+	.ce_pix         (ce_pix_div4),
+	.reset          (RESET),
+
+	// DDR3 interface (directly to mux)
+	.ddr_busy       (DDRAM_BUSY),
+	.ddr_burstcnt   (nv_ddr_burstcnt),
+	.ddr_addr       (nv_ddr_addr),
+	.ddr_dout       (DDRAM_DOUT),
+	.ddr_dout_ready (DDRAM_DOUT_READY & use_nv),
+	.ddr_rd         (nv_ddr_rd),
+	.ddr_din        (),
+	.ddr_be         (),
+	.ddr_we         (),
+
+	// Video output
+	.vga_r          (nv_r),
+	.vga_g          (nv_g),
+	.vga_b          (nv_b),
+	.vga_hs         (nv_hs),
+	.vga_vs         (nv_vs),
+	.vga_de         (nv_de),
+
+	// Control
+	.enable         (use_nv),
+	.active         (nv_active),
+	.vsync_out      ()
+);
+
+// Mux VGA outputs: native video path vs. existing menu pattern
+// When NATIVE_VID_ACTIVE, output native video timing (hs/vs/de) so the CRT
+// can lock onto valid sync immediately. Pixel data comes from nv_active
+// (frame_ready); until then, output black.
+assign VGA_DE  = NATIVE_VID_ACTIVE ? nv_de    : ~(HBlank | VBlank);
+assign VGA_HS  = NATIVE_VID_ACTIVE ? nv_hs    : HSync;
+assign VGA_VS  = NATIVE_VID_ACTIVE ? nv_vs    : VSync;
+assign VGA_R   = nv_active ? nv_r     : (NATIVE_VID_ACTIVE ? 8'd0 : comp_v);
+assign VGA_G   = nv_active ? nv_g     : (NATIVE_VID_ACTIVE ? 8'd0 : comp_v);
+assign VGA_B   = nv_active ? nv_b     : (NATIVE_VID_ACTIVE ? 8'd0 : comp_v);
 
 endmodule
