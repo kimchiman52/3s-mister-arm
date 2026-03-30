@@ -3,9 +3,23 @@
 
 #include <SDL3/SDL.h>
 
+#if defined(PORT_MISTER)
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <unistd.h>
+#include "mister_joy_shm.h"
+#endif
+
 #define INPUT_SOURCES_MAX 2
 
-typedef enum SDLPad_InputType { SDLPAD_INPUT_NONE = 0, SDLPAD_INPUT_GAMEPAD, SDLPAD_INPUT_KEYBOARD } SDLPad_InputType;
+typedef enum SDLPad_InputType {
+    SDLPAD_INPUT_NONE = 0,
+    SDLPAD_INPUT_GAMEPAD,
+    SDLPAD_INPUT_KEYBOARD,
+#if defined(PORT_MISTER)
+    SDLPAD_INPUT_MISTER_SHM,
+#endif
+} SDLPad_InputType;
 
 typedef struct SDLPad_GamepadInputSource {
     Uint32 type;
@@ -26,6 +40,10 @@ static SDLPad_InputSource input_sources[INPUT_SOURCES_MAX] = { 0 };
 static int connected_input_sources = 0;
 static int keyboard_index = -1;
 static SDLPad_ButtonState button_state[INPUT_SOURCES_MAX] = { 0 };
+
+#if defined(PORT_MISTER)
+static const volatile MisterJoyShm *mister_shm = NULL;
+#endif
 
 static int input_source_index_from_joystick_id(SDL_JoystickID id) {
     for (int i = 0; i < INPUT_SOURCES_MAX; i++) {
@@ -79,15 +97,27 @@ static void remove_keyboard() {
     }
 }
 
-static void handle_gamepad_added_event(SDL_GamepadDeviceEvent* event) {
+static bool add_gamepad_by_id(SDL_JoystickID id) {
+    if (input_source_index_from_joystick_id(id) >= 0) {
+        return false;
+    }
+
     // Remove keyboard to potentially make space for the new gamepad
     remove_keyboard();
 
     if (connected_input_sources >= INPUT_SOURCES_MAX) {
-        return;
+        setup_keyboard();
+        return false;
     }
 
-    const SDL_Gamepad* gamepad = SDL_OpenGamepad(event->which);
+    SDL_Gamepad* gamepad = SDL_OpenGamepad(id);
+
+    if (gamepad == NULL) {
+        setup_keyboard();
+        return false;
+    }
+
+    int assigned_index = -1;
 
     for (int i = 0; i < INPUT_SOURCES_MAX; i++) {
         SDLPad_InputSource* input_source = &input_sources[i];
@@ -98,13 +128,27 @@ static void handle_gamepad_added_event(SDL_GamepadDeviceEvent* event) {
 
         input_source->type = SDLPAD_INPUT_GAMEPAD;
         input_source->gamepad.gamepad = gamepad;
+        assigned_index = i;
         break;
+    }
+
+    if (assigned_index < 0) {
+        SDL_CloseGamepad(gamepad);
+        setup_keyboard();
+        return false;
     }
 
     connected_input_sources += 1;
 
+    SDL_Log("SDLPad: gamepad added id=%d index=%d name=%s", id, assigned_index, SDL_GetGamepadName(gamepad));
+
     // Setup keyboard again, if there's a free slot
     setup_keyboard();
+    return true;
+}
+
+static void handle_gamepad_added_event(SDL_GamepadDeviceEvent* event) {
+    add_gamepad_by_id(event->which);
 }
 
 static void handle_gamepad_removed_event(SDL_GamepadDeviceEvent* event) {
@@ -193,8 +237,77 @@ static void get_gamepad_state(int id, SDLPad_ButtonState* state) {
     state->right_stick_y = SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_RIGHTY);
 }
 
+#if defined(PORT_MISTER)
+static void get_mister_state(int id, SDLPad_ButtonState *state) {
+    SDL_zerop(state);
+    if (!mister_shm || id < 0 || id >= MISTER_JOY_MAX_PLAYERS) return;
+
+    const uint32_t m = mister_shm->joy_mask[id];
+
+    state->dpad_right      = (m >> 0)  & 1;
+    state->dpad_left       = (m >> 1)  & 1;
+    state->dpad_down       = (m >> 2)  & 1;
+    state->dpad_up         = (m >> 3)  & 1;
+    /* MiSTer uses SNES button convention:
+       A = right face, B = bottom face, X = top face, Y = left face.
+       Map to PS2/SDL pad for 3rd Strike (6-button fighter):
+       Y → Square (LP), X → Triangle (MP), L → R1 (HP),
+       B → Cross (LK),  A → Circle (MK),  R → R2 (HK). */
+    state->east            = (m >> 4)  & 1;   /* A → Circle (MK)    */
+    state->south           = (m >> 5)  & 1;   /* B → Cross (LK)     */
+    state->north           = (m >> 6)  & 1;   /* X → Triangle (MP)  */
+    state->west            = (m >> 7)  & 1;   /* Y → Square (LP)    */
+    state->right_shoulder  = (m >> 8)  & 1;   /* L → R1 (HP)        */
+    state->right_trigger   = (m >> 9) & 1 ? SDL_MAX_SINT16 : 0; /* R → R2 (HK) */
+    state->back            = (m >> 10) & 1;
+    state->start           = (m >> 11) & 1;
+
+    state->left_stick_x    = (Sint16)mister_shm->left_stick_x[id]  * 256;
+    state->left_stick_y    = (Sint16)mister_shm->left_stick_y[id]  * 256;
+    state->right_stick_x   = (Sint16)mister_shm->right_stick_x[id] * 256;
+    state->right_stick_y   = (Sint16)mister_shm->right_stick_y[id] * 256;
+}
+#endif
+
 void SDLPad_Init() {
+#if defined(PORT_MISTER)
+    const char *shm_path = SDL_getenv("THREESX_JOY_SHM");
+    if (shm_path) {
+        int fd = open(shm_path, O_RDONLY);
+        if (fd >= 0) {
+            const MisterJoyShm *shm = (const MisterJoyShm *)mmap(
+                NULL, sizeof(MisterJoyShm), PROT_READ, MAP_SHARED, fd, 0);
+            close(fd);
+            if (shm != MAP_FAILED
+                && shm->magic == MISTER_JOY_SHM_MAGIC
+                && shm->version == MISTER_JOY_SHM_VERSION) {
+                mister_shm = shm;
+                for (int i = 0; i < INPUT_SOURCES_MAX; i++) {
+                    input_sources[i].type = SDLPAD_INPUT_MISTER_SHM;
+                    connected_input_sources++;
+                }
+                SDL_Log("SDLPad: using MiSTer shared-memory joystick input");
+                return;
+            }
+            if (shm != MAP_FAILED) munmap((void *)shm, sizeof(MisterJoyShm));
+        }
+    }
+#endif
+
     setup_keyboard();
+
+    int gamepad_count = 0;
+    SDL_JoystickID* gamepad_ids = SDL_GetGamepads(&gamepad_count);
+
+    if (gamepad_ids == NULL) {
+        return;
+    }
+
+    for (int i = 0; i < gamepad_count; i++) {
+        add_gamepad_by_id(gamepad_ids[i]);
+    }
+
+    SDL_free(gamepad_ids);
 }
 
 void SDLPad_HandleGamepadDeviceEvent(SDL_GamepadDeviceEvent* event) {
@@ -214,10 +327,16 @@ void SDLPad_HandleGamepadDeviceEvent(SDL_GamepadDeviceEvent* event) {
 }
 
 bool SDLPad_IsGamepadConnected(int id) {
+#if defined(PORT_MISTER)
+    if (mister_shm && id >= 0 && id < MISTER_JOY_MAX_PLAYERS) return true;
+#endif
     return input_sources[id].type != SDLPAD_INPUT_NONE;
 }
 
 void SDLPad_GetButtonState(int id, SDLPad_ButtonState* state) {
+#if defined(PORT_MISTER)
+    if (mister_shm) { get_mister_state(id, state); return; }
+#endif
     if (id == keyboard_index) {
         get_keyboard_state(state);
     } else {
