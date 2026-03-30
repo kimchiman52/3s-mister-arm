@@ -24,6 +24,48 @@ extern const s16 cmdshot_conv_tbl[32];
 
 u16 decode_wst_data(PLW* wk, u16 cmd, s16 cmd_ex);
 
+#if ENABLE_PERF_TELEMETRY
+static PLS03_SuperArtCommandTelemetry perf_super_art_command_telemetry[2] = { 0 };
+
+static PLS03_SuperArtCommandTelemetry* get_perf_super_art_command_telemetry_slot(const PLW* wk) {
+    if ((wk == NULL) || (wk->wu.id < 0) || (wk->wu.id >= 2)) {
+        return NULL;
+    }
+
+    return &perf_super_art_command_telemetry[wk->wu.id];
+}
+#endif
+
+void PLS03_ResetSuperArtCommandTelemetry(void) {
+#if ENABLE_PERF_TELEMETRY
+    const PLS03_SuperArtCommandTelemetry zero = { 0 };
+
+    for (s16 player = 0; player < 2; player++) {
+        perf_super_art_command_telemetry[player] = zero;
+    }
+#endif
+}
+
+s32 PLS03_GetSuperArtCommandTelemetry(s16 player, PLS03_SuperArtCommandTelemetry* out_telemetry) {
+    if (out_telemetry == NULL) {
+        return 0;
+    }
+
+#if ENABLE_PERF_TELEMETRY
+    if (player < 0 || player >= 2) {
+        *out_telemetry = (PLS03_SuperArtCommandTelemetry){ 0 };
+        return 0;
+    }
+
+    *out_telemetry = perf_super_art_command_telemetry[player];
+    return 1;
+#else
+    (void)player;
+    *out_telemetry = (PLS03_SuperArtCommandTelemetry){ 0 };
+    return 0;
+#endif
+}
+
 void hissatsu_setup_union(PLW* wk, s16 rno) {
     wk->wu.routine_no[1] = 4;
     wk->wu.routine_no[2] = rno;
@@ -309,8 +351,19 @@ s32 check_full_gauge_attack2(PLW* wk, s8 always) {
 s16 check_super_arts_attack(PLW* wk) {
     s16 rnum = 0;
     s16 i;
+#if ENABLE_PERF_TELEMETRY
+    PLS03_SuperArtCommandTelemetry* const perf_command_telemetry = get_perf_super_art_command_telemetry_slot(wk);
+    if (perf_command_telemetry != NULL) {
+        perf_command_telemetry->entry_calls_total += 1;
+    }
+#endif
 
     if (cmd_sel[wk->wu.id]) {
+#if ENABLE_PERF_TELEMETRY
+        if (perf_command_telemetry != NULL) {
+            perf_command_telemetry->entry_cmd_sel_calls_total += 1;
+        }
+#endif
         if (wk->sa->ok != -1) {
             for (i = 0; i < 3; i++) {
                 Super_Arts[wk->wu.id] = i;
@@ -323,7 +376,17 @@ s16 check_super_arts_attack(PLW* wk) {
                 }
             }
         }
+#if ENABLE_PERF_TELEMETRY
+        else if (perf_command_telemetry != NULL) {
+            perf_command_telemetry->entry_cmd_sel_not_ready_total += 1;
+        }
+#endif
     } else {
+#if ENABLE_PERF_TELEMETRY
+        if (perf_command_telemetry != NULL) {
+            perf_command_telemetry->entry_direct_calls_total += 1;
+        }
+#endif
         rnum = check_super_arts_attack_dc(wk);
     }
 
@@ -335,12 +398,29 @@ s32 check_super_arts_attack_dc(PLW* wk) {
     u16 cusw;
     u16 exsw;
     u16* conpane;
+#if ENABLE_PERF_TELEMETRY
+    PLS03_SuperArtCommandTelemetry* const perf_command_telemetry = get_perf_super_art_command_telemetry_slot(wk);
+    if (perf_command_telemetry != NULL) {
+        perf_command_telemetry->check_calls_total += 1;
+    }
+#endif
 
     if (wk->sa->ok != 1) {
         return 0;
     }
 
+#if ENABLE_PERF_TELEMETRY
+    if (perf_command_telemetry != NULL) {
+        perf_command_telemetry->ready_checks_total += 1;
+    }
+#endif
+
     if (pcon_dp_flag) {
+#if ENABLE_PERF_TELEMETRY
+        if (perf_command_telemetry != NULL) {
+            perf_command_telemetry->blocked_pcon_dp_total += 1;
+        }
+#endif
         return 0;
     }
 
@@ -350,28 +430,58 @@ s32 check_super_arts_attack_dc(PLW* wk) {
 
     if (((Bonus_Game_Flag == 0x14) && wk->bs2_on_car) || (wk->wu.xyz[1].disp.pos <= 0)) {
         if (wk->spmv_ng_flag & DIP_UNKNOWN_30) {
+#if ENABLE_PERF_TELEMETRY
+            if (perf_command_telemetry != NULL) {
+                perf_command_telemetry->ground_precondition_blocked_total += 1;
+            }
+#endif
             return 0;
         }
 
         if (wk->sa->nmsa_g_ix == 0) {
+#if ENABLE_PERF_TELEMETRY
+            if (perf_command_telemetry != NULL) {
+                perf_command_telemetry->ground_precondition_blocked_total += 1;
+            }
+#endif
             return 0;
         }
 
         if ((wk->sa->nmsa_g_ix) > 0x1C) {
+#if ENABLE_PERF_TELEMETRY
+            if (perf_command_telemetry != NULL) {
+                perf_command_telemetry->ground_precondition_blocked_total += 1;
+            }
+#endif
             return 0;
         }
 
         if ((wk->spmv_ng_flag2 & DIP2_UNKNOWN_23) && (chainex_check[wk->wu.id][wk->sa->nmsa_g_ix - 20])) {
+#if ENABLE_PERF_TELEMETRY
+            if (perf_command_telemetry != NULL) {
+                perf_command_telemetry->ground_precondition_blocked_total += 1;
+            }
+#endif
             return 0;
         }
 
         conpane = &wk->cp->sw_lvbt;
 
         if (wk->cp->waza_flag[wk->sa->nmsa_g_ix] == -1) {
+#if ENABLE_PERF_TELEMETRY
+            if (perf_command_telemetry != NULL) {
+                perf_command_telemetry->ground_precondition_blocked_total += 1;
+            }
+#endif
             return 0;
         }
 
         if (((wk->cp->btix[wk->sa->nmsa_g_ix] & 0xFF) != 0x80) && (wk->cp->waza_flag[wk->sa->nmsa_g_ix])) {
+#if ENABLE_PERF_TELEMETRY
+            if (perf_command_telemetry != NULL) {
+                perf_command_telemetry->ground_candidate_checks_total += 1;
+            }
+#endif
             cusw = conpane[wk->cp->btix[wk->sa->nmsa_g_ix] & 0xFF];
 
             for (j = 3; j >= 0; j--) {
@@ -384,6 +494,11 @@ s32 check_super_arts_attack_dc(PLW* wk) {
                 exsw = cusw & cmdshot_conv_tbl[wk->cp->exdt[wk->sa->nmsa_g_ix][j]];
 
                 if (exsw == cmdshot_conv_tbl[wk->cp->exdt[wk->sa->nmsa_g_ix][j] & 0xF]) {
+#if ENABLE_PERF_TELEMETRY
+                    if (perf_command_telemetry != NULL) {
+                        perf_command_telemetry->command_matches_total += 1;
+                    }
+#endif
                     setup_comm_back(&wk->wu);
                     wk->as = &_assadr_lv_9900[wk->player_number][cmdixconv(wk->sa->nmsa_g_ix)]
                                              [j + ((wk->sa->nmsa_g_ix - 20) * 4)];
@@ -397,34 +512,76 @@ s32 check_super_arts_attack_dc(PLW* wk) {
                     return 1;
                 }
             }
+
+#if ENABLE_PERF_TELEMETRY
+            if (perf_command_telemetry != NULL) {
+                perf_command_telemetry->ground_no_match_total += 1;
+            }
+#endif
+        } else {
+#if ENABLE_PERF_TELEMETRY
+            if (perf_command_telemetry != NULL) {
+                perf_command_telemetry->ground_precondition_blocked_total += 1;
+            }
+#endif
         }
 
         return 0;
     }
 
     if (wk->spmv_ng_flag & DIP_UNKNOWN_31) {
+#if ENABLE_PERF_TELEMETRY
+        if (perf_command_telemetry != NULL) {
+            perf_command_telemetry->air_precondition_blocked_total += 1;
+        }
+#endif
         return 0;
     }
 
     if (wk->sa->nmsa_a_ix == 0) {
+#if ENABLE_PERF_TELEMETRY
+        if (perf_command_telemetry != NULL) {
+            perf_command_telemetry->air_precondition_blocked_total += 1;
+        }
+#endif
         return 0;
     }
 
     if ((wk->sa->nmsa_a_ix) < 0x1C) {
+#if ENABLE_PERF_TELEMETRY
+        if (perf_command_telemetry != NULL) {
+            perf_command_telemetry->air_precondition_blocked_total += 1;
+        }
+#endif
         return 0;
     }
 
     if ((wk->spmv_ng_flag2 & DIP2_UNKNOWN_23) && (chainex_check[wk->wu.id][wk->sa->nmsa_a_ix - 20])) {
+#if ENABLE_PERF_TELEMETRY
+        if (perf_command_telemetry != NULL) {
+            perf_command_telemetry->air_precondition_blocked_total += 1;
+        }
+#endif
         return 0;
     }
 
     conpane = &wk->cp->sw_lvbt;
 
     if (wk->cp->waza_flag[wk->sa->nmsa_a_ix] == -1) {
+#if ENABLE_PERF_TELEMETRY
+        if (perf_command_telemetry != NULL) {
+            perf_command_telemetry->air_precondition_blocked_total += 1;
+        }
+#endif
         return 0;
     }
 
     if (((wk->cp->btix[wk->sa->nmsa_a_ix] & 0xFF) != 0x80) && (wk->cp->waza_flag[wk->sa->nmsa_a_ix])) {
+#if ENABLE_PERF_TELEMETRY
+        if (perf_command_telemetry != NULL) {
+            perf_command_telemetry->air_candidate_checks_total += 1;
+        }
+#endif
         cusw = conpane[wk->cp->btix[wk->sa->nmsa_a_ix] & 0xFF];
 
         for (j = 3; j >= 0; j--) {
@@ -437,6 +594,11 @@ s32 check_super_arts_attack_dc(PLW* wk) {
             exsw = cusw & cmdshot_conv_tbl[wk->cp->exdt[wk->sa->nmsa_a_ix][j]];
 
             if (exsw == cmdshot_conv_tbl[wk->cp->exdt[wk->sa->nmsa_a_ix][j] & 0xF]) {
+#if ENABLE_PERF_TELEMETRY
+                if (perf_command_telemetry != NULL) {
+                    perf_command_telemetry->command_matches_total += 1;
+                }
+#endif
                 setup_comm_back(&wk->wu);
                 wk->as = &_assadr_lv_9900[wk->player_number][cmdixconv(wk->sa->nmsa_a_ix)]
                                          [j + (((wk->sa->nmsa_a_ix) - 38) * 4)];
@@ -450,6 +612,18 @@ s32 check_super_arts_attack_dc(PLW* wk) {
                 return 1;
             }
         }
+
+#if ENABLE_PERF_TELEMETRY
+        if (perf_command_telemetry != NULL) {
+            perf_command_telemetry->air_no_match_total += 1;
+        }
+#endif
+    } else {
+#if ENABLE_PERF_TELEMETRY
+        if (perf_command_telemetry != NULL) {
+            perf_command_telemetry->air_precondition_blocked_total += 1;
+        }
+#endif
     }
 
     return 0;

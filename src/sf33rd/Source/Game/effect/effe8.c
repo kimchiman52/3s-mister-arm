@@ -154,6 +154,15 @@ s32 effect_E8_init(WORK_Other* ek, PLW* mk, s16 data) {
     WORK_Other* ewk;
     s16 ix;
 
+    /* Enforce active ghost count limit (ghost_count_max, default 4 = vanilla).
+       Suppress the spawn when the per-player cap is already reached. */
+    {
+        extern int ghost_count_max;
+        if (count_active_ghosts(mk->wu.id) >= ghost_count_max) {
+            return -1;
+        }
+    }
+
     if ((ix = pull_effect_work(3)) == -1) {
         return -1;
     }

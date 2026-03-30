@@ -4,12 +4,31 @@
 #include "structs.h"
 #include "types.h"
 
+typedef struct PLS03_SuperArtCommandTelemetry {
+    u64 entry_calls_total;
+    u64 entry_cmd_sel_calls_total;
+    u64 entry_cmd_sel_not_ready_total;
+    u64 entry_direct_calls_total;
+    u64 check_calls_total;
+    u64 ready_checks_total;
+    u64 blocked_pcon_dp_total;
+    u64 ground_candidate_checks_total;
+    u64 ground_precondition_blocked_total;
+    u64 ground_no_match_total;
+    u64 air_candidate_checks_total;
+    u64 air_precondition_blocked_total;
+    u64 air_no_match_total;
+    u64 command_matches_total;
+} PLS03_SuperArtCommandTelemetry;
+
 void hissatsu_setup_union(PLW* wk, s16 rno);
 s16 cmdixconv(s16 ix);
 s32 check_full_gauge_attack(PLW* wk, s8 always);
 s32 check_full_gauge_attack2(PLW* wk, s8 always);
 s16 check_super_arts_attack(PLW* wk);
 s32 check_super_arts_attack_dc(PLW* wk);
+void PLS03_ResetSuperArtCommandTelemetry(void);
+s32 PLS03_GetSuperArtCommandTelemetry(s16 player, PLS03_SuperArtCommandTelemetry* out_telemetry);
 s32 execute_super_arts(PLW* wk);
 s32 check_special_attack(PLW* wk);
 void chainex_spat_cancel_kidou(WORK* wk);

@@ -49,6 +49,11 @@ s32 flFileRead(s8* filename, void* buf, s32 len) {
     s32 fd;
     s8 temp[2048];
     s8* p;
+    ssize_t nread;
+
+    if (len < 0) {
+        return 0;
+    }
 
     fatal_error("Unhandled path: %s", filename);
 
@@ -65,15 +70,20 @@ s32 flFileRead(s8* filename, void* buf, s32 len) {
         return 0;
     }
 
-    read(fd, buf, len);
+    nread = read(fd, buf, (size_t)len);
     close(fd);
-    return 1;
+    return nread == len;
 }
 
 s32 flFileWrite(s8* filename, void* buf, s32 len) {
     s32 fd;
     s8 temp[2048];
     s8* p;
+    ssize_t nwritten;
+
+    if (len < 0) {
+        return 0;
+    }
 
     strcpy(temp, "cdrom0:\\THIRD\\");
     p = strlen(temp) + temp;
@@ -81,19 +91,24 @@ s32 flFileWrite(s8* filename, void* buf, s32 len) {
     strupr(p);
     strcat(temp, ";1");
 
-    if ((fd = open(temp, O_WRONLY | O_CREAT | O_TRUNC)) < 0) {
+    if ((fd = open(temp, O_WRONLY | O_CREAT | O_TRUNC, 0644)) < 0) {
         return 0;
     }
 
-    write(fd, buf, len);
+    nwritten = write(fd, buf, (size_t)len);
     close(fd);
-    return 1;
+    return nwritten == len;
 }
 
 s32 flFileAppend(s8* filename, void* buf, ssize_t len) {
     s32 fd;
     s8 temp[2048];
     s8* p;
+    ssize_t nwritten;
+
+    if (len < 0) {
+        return 0;
+    }
 
     strcpy(temp, "cdrom0:\\THIRD\\");
     p = strlen(temp) + temp;
@@ -105,10 +120,14 @@ s32 flFileAppend(s8* filename, void* buf, ssize_t len) {
         return 0;
     }
 
-    lseek(fd, 0, 2);
-    write(fd, buf, (s32)len);
+    if (lseek(fd, 0, SEEK_END) < 0) {
+        close(fd);
+        return 0;
+    }
+
+    nwritten = write(fd, buf, (size_t)len);
     close(fd);
-    return 1;
+    return nwritten == len;
 }
 
 s32 flFileLength(s8* filename) {

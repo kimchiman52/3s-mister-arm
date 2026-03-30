@@ -342,7 +342,7 @@ u8* GetTim2PictureHead(u8* lpFile, s32 no) {
     return lpPict;
 }
 
-u8* GetTim2PictureData(u8* lpFile, s32 /* unused */, s32 Mipmap) {
+u8* GetTim2PictureData(u8* lpFile, s32 unused, s32 Mipmap) {
     s32 header_size;
     s32 mipmap_header_size;
     s32 lp0;
@@ -354,6 +354,7 @@ u8* GetTim2PictureData(u8* lpFile, s32 /* unused */, s32 Mipmap) {
     u8* lpTim2MipmapSubHead[7];
     u32 pixel_size;
 
+    (void)unused;
     lpTim2FileHead = lpFile;
     lpData = GetTim2PictureHead(lpFile, 0);
     lpTim2PictureHead = lpData;
@@ -394,7 +395,7 @@ u8* GetTim2PictureData(u8* lpFile, s32 /* unused */, s32 Mipmap) {
     return lpImage;
 }
 
-u8* GetTim2ClutData(u8* lpFile, s32 /* unused */) {
+u8* GetTim2ClutData(u8* lpFile, s32 unused) {
     s32 header_size;
     s32 lp0;
     s32 mipmap_header_size;
@@ -404,6 +405,7 @@ u8* GetTim2ClutData(u8* lpFile, s32 /* unused */) {
     u8* lpTim2PictureHead;
     u8* lpTim2MipmapSubHead[7];
 
+    (void)unused;
     lpTim2FileHead = lpFile;
     lpData = GetTim2PictureHead(lpFile, 0);
     lpTim2PictureHead = lpData;

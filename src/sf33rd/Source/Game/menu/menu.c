@@ -428,9 +428,16 @@ void Mode_Select(struct _TASK* task_ptr) {
                 cpExitTask(TASK_MENU);
                 break;
 
+            case 4:
+#if defined(NETPLAY_ENABLED)
+                Netplay_BeginMatchmaking();
+                Netplay_BeginDirectP2P();
+                break;
+#else
+                break;
+#endif
             case 2:
             case 3:
-            case 4:
             case 5:
             case 6:
                 task_ptr->r_no[2] += 1;
@@ -4174,6 +4181,7 @@ void Next_Be_Tr_Menu(struct _TASK* task_ptr) {
     task_ptr->r_no[2] = 0;
     task_ptr->r_no[3] = 0;
     Allow_a_battle_f = 0;
+    Request_LDREQ_Break();
 
     for (ix = 0; ix < 4; ix++) {
         Menu_Suicide[ix] = 1;

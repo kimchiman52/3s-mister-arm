@@ -18,6 +18,8 @@
 #include "sf33rd/Source/Game/sound/sound3rd.h"
 #include "sf33rd/Source/Game/system/ramcnt.h"
 
+#include <string.h>
+
 typedef struct {
     u16 col[2][28][64];
 } COL;
@@ -397,12 +399,7 @@ void init_trans_color_ram(s16 id, s16 key, u8 type, u16 data) {
 }
 
 void init_color_trans_req() {
-    s16 i;
-
-    for (i = 0; i < 32; i++) {
-        col3rd_w.req[i][0] = col3rd_w.req[i][1] = 0;
-    }
-
+    memset(col3rd_w.req, 0, sizeof(col3rd_w.req));
     col3rd_w.reqNum = 0;
 }
 
@@ -412,12 +409,11 @@ void push_color_trans_req(s16 from_col, s16 to_col) {
 }
 
 void palCopyGhostDC(s32 ofs, s32 cnt, void* data) {
-    s32 i;
     u16* srcAdrs = data;
     u16* dstAdrs = &colPalBuffDC[ofs];
 
-    for (i = 0; i < cnt; i++) {
-        *dstAdrs++ = *srcAdrs++;
+    if (cnt > 0) {
+        memcpy(dstAdrs, srcAdrs, (size_t)cnt * sizeof(*dstAdrs));
     }
 
     col3rd_w.upBits = col3rd_w.upBits | (1 << (ofs / 64));
@@ -444,7 +440,6 @@ void palCreateGhost() {
     PPLFileHeader ppl;
     s32 key;
     s32 size;
-    s32 i;
     u8* adrs;
 
     palFormConv = 0;
@@ -490,9 +485,7 @@ void palCreateGhost() {
     key = Pull_ramcnt_key(size, 2, 0, 1);
     adrs = (u8*)Get_ramcnt_address(key);
 
-    for (i = 0; i < size; i++) {
-        adrs[i] = 0;
-    }
+    memset(adrs, 0, size);
 
     ppgSetupPalChunkDir(&col3rd_w.palDC, &ppl, adrs, 0, 1);
     Push_ramcnt_key(key);
@@ -502,9 +495,7 @@ void palCreateGhost() {
     key = Pull_ramcnt_key(size, 2, 0, 1);
     adrs = (u8*)Get_ramcnt_address(key);
 
-    for (i = 0; i < size; i++) {
-        adrs[i] = 0;
-    }
+    memset(adrs, 0, size);
 
     ppgSetupPalChunkDir(&col3rd_w.palCP3, &ppl, adrs, 0, 1);
     Push_ramcnt_key(key);

@@ -20,7 +20,57 @@
 static s32 flPS2ConvertTextureFromContext(plContext* lpcontext, FLTexture* lpflTexture, u32 type);
 u32 flPS2GetTextureSize(u32 format, s32 dw, s32 dh, s32 bnum);
 s32 flPS2LockTexture(Rect* /* unused */, FLTexture* lpflTexture, plContext* lpcontext, u32 flag, s32 /* unused */);
-s32 flPS2UnlockTexture(FLTexture*);
+s32 flPS2UnlockTexture(u32 th, FLTexture*);
+
+static void flPS2CopyIndex8TextureAndTrackDirtyRect(u32 th, FLTexture* lpflTexture, u8* dst_pixels, const u8* src_pixels) {
+    if ((th == 0) || (lpflTexture->mem_handle == 0) || (lpflTexture->tex_num != 1) || (lpflTexture->width != 256) ||
+        (lpflTexture->height != 256)) {
+        flMemcpy(dst_pixels, src_pixels, lpflTexture->size);
+        return;
+    }
+
+    const int width = lpflTexture->width;
+    const int height = lpflTexture->height;
+    int min_x = width;
+    int max_x = -1;
+    int min_y = height;
+    int max_y = -1;
+
+    for (int y = 0; y < height; y++) {
+        u8* dst_row = dst_pixels + ((size_t)y * (size_t)width);
+        const u8* src_row = src_pixels + ((size_t)y * (size_t)width);
+        int row_min_x = width;
+        int row_max_x = -1;
+
+        for (int x = 0; x < width; x++) {
+            const u8 value = src_row[x];
+            if (dst_row[x] != value) {
+                if (x < row_min_x) {
+                    row_min_x = x;
+                }
+                row_max_x = x;
+            }
+            dst_row[x] = value;
+        }
+
+        if (row_max_x >= 0) {
+            if (row_min_x < min_x) {
+                min_x = row_min_x;
+            }
+            if (row_max_x > max_x) {
+                max_x = row_max_x;
+            }
+            if (y < min_y) {
+                min_y = y;
+            }
+            max_y = y;
+        }
+    }
+
+    if ((max_x >= 0) && (max_y >= 0)) {
+        SDLGameRenderer_RecordTextureUnlockDirtyRect(th, min_x, min_y, max_x, max_y);
+    }
+}
 
 u32 flCreateTextureHandle(plContext* bits, u32 flag) {
     FLTexture* lpflTexture;
@@ -760,7 +810,7 @@ s32 flUnlockTexture(u32 th) {
         return 0;
     }
 
-    const s32 ret = flPS2UnlockTexture(lpflTexture);
+    const s32 ret = flPS2UnlockTexture(th, lpflTexture);
     Renderer_UnlockTexture(th);
     return ret;
 }
@@ -776,12 +826,12 @@ s32 flUnlockPalette(u32 th) {
         return 0;
     }
 
-    const s32 ret = flPS2UnlockTexture(lpflPalette);
+    const s32 ret = flPS2UnlockTexture(0, lpflPalette);
     Renderer_UnlockPalette(th);
     return ret;
 }
 
-s32 flPS2UnlockTexture(FLTexture* lpflTexture) {
+s32 flPS2UnlockTexture(u32 th, FLTexture* lpflTexture) {
     u8* buff_ptr;
     u8* buff_ptr1;
     plContext src;
@@ -808,8 +858,11 @@ s32 flPS2UnlockTexture(FLTexture* lpflTexture) {
 
         switch (lpflTexture->format) {
         case 20:
-        case 19:
             flMemcpy(buff_ptr, buff_ptr1, lpflTexture->size);
+            break;
+
+        case 19:
+            flPS2CopyIndex8TextureAndTrackDirtyRect(th, lpflTexture, buff_ptr, buff_ptr1);
             break;
 
         case 2:
@@ -923,7 +976,11 @@ s32 flPS2UnlockTexture(FLTexture* lpflTexture) {
         if (lpflTexture->mem_handle != 0) {
             buff_ptr = flPS2GetSystemBuffAdrs(lpflTexture->mem_handle);
             buff_ptr1 = (u8*)lpflTexture->lock_ptr;
-            flMemcpy(buff_ptr, buff_ptr1, lpflTexture->size);
+            if (lpflTexture->format == 19) {
+                flPS2CopyIndex8TextureAndTrackDirtyRect(th, lpflTexture, buff_ptr, buff_ptr1);
+            } else {
+                flMemcpy(buff_ptr, buff_ptr1, lpflTexture->size);
+            }
         } else {
             buff_ptr = (u8*)lpflTexture->lock_ptr;
         }

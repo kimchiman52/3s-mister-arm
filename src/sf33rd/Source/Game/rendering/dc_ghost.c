@@ -40,19 +40,6 @@ typedef struct {
 NJDP2D_W njdp2d_w;
 MTX cmtx;
 
-static void matmul(MTX* dst, const MTX* a, const MTX* b) {
-    MTX result;
-
-    for (int i = 0; i < 4; i++) {
-        for (int j = 0; j < 4; j++) {
-            result.a[i][j] =
-                a->a[i][0] * b->a[0][j] + a->a[i][1] * b->a[1][j] + a->a[i][2] * b->a[2][j] + a->a[i][3] * b->a[3][j];
-        }
-    }
-
-    memcpy(dst, &result, sizeof(MTX));
-}
-
 void njUnitMatrix(MTX* mtx) {
     if (mtx == NULL) {
         mtx = &cmtx;
@@ -94,14 +81,20 @@ void njTranslate(MTX* mtx, f32 x, f32 y, f32 z) {
         mtx = &cmtx;
     }
 
-    MTX translation_matrix;
+    for (int j = 0; j < 4; j++) {
+        mtx->a[3][j] += x * mtx->a[0][j] + y * mtx->a[1][j] + z * mtx->a[2][j];
+    }
+}
 
-    njUnitMatrix(&translation_matrix);
-    translation_matrix.a[3][0] = x;
-    translation_matrix.a[3][1] = y;
-    translation_matrix.a[3][2] = z;
+void njTranslateZ(MTX* mtx, f32 z) {
+    if (mtx == NULL) {
+        mtx = &cmtx;
+    }
 
-    matmul(mtx, &translation_matrix, mtx);
+    mtx->a[3][0] += z * mtx->a[2][0];
+    mtx->a[3][1] += z * mtx->a[2][1];
+    mtx->a[3][2] += z * mtx->a[2][2];
+    mtx->a[3][3] += z * mtx->a[2][3];
 }
 
 void njSetBackColor(u32 c0, u32 c1, u32 c2) {
@@ -181,7 +174,9 @@ void njdp2d_draw() {
                 prm.v[j] = njdp2d_w.prim[i].v[j];
             }
 
+            SDLGameRenderer_SetTaskSource(SDL_GAME_RENDERER_TASK_SOURCE_SOLID);
             Renderer_DrawSolidQuad(&prm, njdp2d_w.prim[i].col);
+            SDLGameRenderer_SetTaskSource(SDL_GAME_RENDERER_TASK_SOURCE_UNKNOWN);
             break;
 
         case 1:

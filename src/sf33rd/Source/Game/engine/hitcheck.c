@@ -1898,18 +1898,9 @@ void hit_push_request(WORK* hpr_wk) {
 }
 
 void clear_hit_queue() {
-    s16 i;
-
     hpq_in = 0;
-
-    for (i = 0; i < 32; i++) {
-        mkm_wk[i] = 0;
-    }
-
-    for (i = 0; i < 32; i++) {
-        q_hit_push[i] = 0;
-    }
-
+    SDL_memset(mkm_wk, 0, sizeof(mkm_wk));
+    SDL_memset(q_hit_push, 0, sizeof(q_hit_push));
     SDL_zeroa(hs);
 }
 

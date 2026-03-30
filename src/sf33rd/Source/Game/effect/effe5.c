@@ -49,6 +49,25 @@ const u16 illusion_setup_table[13][2] = {
 s32 check_new_after_image(WORK_Other* ewk, PLW* mwk);
 void setup_illusion_data(WORK_Other* ewk, PLW* mwk);
 
+/* Count active ghost sprites (E7=147 / E8=148) belonging to a player.
+   Walks effect list 3 where all ghost sprites live.  Used to enforce
+   ghost_count_max as a hard cap on simultaneously-alive ghosts. */
+s16 count_active_ghosts(s16 player_id) {
+    s16 count = 0;
+    s16 aix = head_ix[3];
+
+    while (aix != -1) {
+        WORK* wk = (WORK*)frw[aix];
+        if ((wk->id == 147 || wk->id == 148) &&
+            ((WORK_Other*)wk)->master_id == player_id) {
+            count++;
+        }
+        aix = wk->behind;
+    }
+
+    return count;
+}
+
 void effect_E5_move(WORK_Other* ewk) {
     PLW* mwk = (PLW*)ewk->my_master;
     s16 i;

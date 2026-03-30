@@ -9,6 +9,7 @@ void njGetMatrix(MTX* m);
 void njSetMatrix(MTX* md, MTX* ms);
 void njScale(MTX* mtx, f32 x, f32 y, f32 z);
 void njTranslate(MTX* mtx, f32 x, f32 y, f32 z);
+void njTranslateZ(MTX* mtx, f32 z);
 void njSetBackColor(u32 c0, u32 c1, u32 c2);
 void njColorBlendingMode(s32 target, s32 mode);
 void njCalcPoint(MTX* mtx, Vec3* ps, Vec3* pd);

@@ -38,6 +38,7 @@
 #include <memory.h>
 
 u8 Candidate_Buff[16];
+s8 Active_Wipe_Type = -1;
 static bool training_hitbox_display_enabled;
 
 // forward decls
@@ -64,6 +65,7 @@ const u16 Convert_Data[12] = { 0x10, 0x20, 0x40, 0x100, 0x200, 0x400, 0x110, 0x2
 
 void Switch_Screen_Init(s32 /* unused */) {
     WipeInit();
+    Active_Wipe_Type = -1;
     Forbid_Break = 1;
     Exec_Wipe = 1;
     Gap_Timer = 4;
@@ -72,7 +74,8 @@ void Switch_Screen_Init(s32 /* unused */) {
 }
 
 s32 Switch_Screen(u8 Wipe_Type) {
-    if (WipeOut(Wipe_Type)) {
+    Active_Wipe_Type = (s8)Wipe_Type;
+    if (WipeOut(Wipe_Type) && --Gap_Timer <= 0) {
         Exec_Wipe = 0;
         Stop_Combo = 0;
         return 1;
@@ -82,7 +85,8 @@ s32 Switch_Screen(u8 Wipe_Type) {
 }
 
 s32 Switch_Screen_Revival(u8 Wipe_Type) {
-    if (WipeIn(Wipe_Type)) {
+    Active_Wipe_Type = (s8)Wipe_Type;
+    if (WipeIn(Wipe_Type) && --Gap_Timer <= 0) {
         Exec_Wipe = 0;
         Stop_Combo = 0;
         return 1;
