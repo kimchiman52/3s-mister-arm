@@ -1,0 +1,52 @@
+diff --git a/menu.h b/menu.h
+index b69bdfb..1d8ab8b 100644
+--- a/menu.h
++++ b/menu.h
+@@ -7,6 +7,8 @@ void SelectFile(const char* path, const char* pFileExt, int Options, unsigned ch
+ 
+ void HandleUI(void);
+ void menu_key_set(unsigned int c);
++unsigned int threesx_wrapper_menu_key_take();
++void threesx_wrapper_menu_set_visible(int visible);
+ void menu_process_save();
+ void PrintDirectory(int expand = 0);
+ void ScrollLongName(void);
+diff --git a/menu.cpp b/menu.cpp
+index a8d8bd8..8788dd1 100644
+--- a/menu.cpp
++++ b/menu.cpp
+@@ -526,6 +526,8 @@ void build_advanced_map_code_str(uint16_t *abm_codes, size_t abm_size, char *cod
+ 
+ /* the Atari core handles OSD keys competely inside the core */
+ static uint32_t menu_key = 0;
++static int wrapper_menu_visible = 0;
++static uint32_t menu_key_get(void);
+ 
+ void menu_key_set(unsigned int c)
+ {
+@@ -533,6 +535,16 @@ void menu_key_set(unsigned int c)
+ 	menu_key = c;
+ }
+ 
++unsigned int threesx_wrapper_menu_key_take()
++{
++	return menu_key_get();
++}
++
++void threesx_wrapper_menu_set_visible(int visible)
++{
++	wrapper_menu_visible = visible ? 1 : 0;
++}
++
+ // get key status
+ static int hold_cnt = 0;
+ static uint32_t menu_key_get(void)
+@@ -7844,7 +7856,7 @@ void MenuHide()
+ 
+ int menu_present()
+ {
+-	return (menustate != MENU_NONE1) && (menustate != MENU_NONE2);
++	return wrapper_menu_visible || ((menustate != MENU_NONE1) && (menustate != MENU_NONE2));
+ }
+ 
+ void Info(const char *message, int timeout, int width, int height, int frame)
