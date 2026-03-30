@@ -1,0 +1,1342 @@
+# Implementation Todo
+
+## Todo Metadata
+
+- [x] Canonical todo path: `artifacts/mister-port/scaled-present-path/todo.md`
+- [x] Active feature/phase: MiSTer nearest-scaled present-path optimization for modern displays
+- [x] Stale todo files to retire:
+  - none on the current clean branch
+  - keep historical Ralph loop checklists and journals on `ralph-loop-support` and `mister-perf-backup-20260310-7dd791e8` archived; do not reuse them as the active checklist for this stream
+
+## Goal and Success Criteria
+
+- [x] Goal:
+  - make `scale-mode = nearest` on MiSTer use a fast direct fbdev/native present path suitable for modern displays instead of the slower SDL-scaled `screen_texture` path
+- [x] Success criteria:
+  - `tools/mister/perf-sampler.sh` can automate `scale-mode` selection without hand-editing the remote config
+  - nearest-mode captures clearly report active scale-mode and dominant fbdev present path
+  - normal nearest-mode gameplay on MiSTer no longer routes through the non-native `screen_texture` present path
+  - nearest-mode control plus at least one heavy scene improve `frame_time.mean` by at least `10%` relative to the captured nearest baseline
+  - `present_readback.mean_ms` drops materially on the validated nearest-mode gates
+  - validated `native` controls do not regress by more than `3%`
+  - gameplay behavior, aspect ratio, message composition, screenshots, and FPS overlay placement remain correct
+
+## Active Hotspot Matrix
+
+- [x] Nearest-HDMI loops should no longer rely on only `control` and `stage-heavy` for decision-grade validation.
+- [x] Primary gameplay gates that should drive optimization priority on this branch:
+  - `control` via `--gameplay-idle`
+  - `stage-heavy` via `--test-scene-preset stage-heavy`
+  - `ibuki-stage7` via `--test-scene-preset effect-heavy --test-stage 7`
+- [x] Recovered gameplay-heavy gate that should now participate in keep/reject decisions:
+  - `genei-jin-first-activation` is now trustworthy on this branch with the existing Yun helper path (`--test-p1-super-full`, `--test-delay-gameplay-inputs-until-active`, `--perf-wait-test-phase game-input-active`) plus Yun-vs-Ryu `super-heavy` setup; the recovered `nearest-hdmi-r19-genei-jin-first-activation` capture proved `p1_super_art_active_frames_total = 121` and `p1_super_art_active_first_frame = 179` inside the sampled window
+  - do not treat plain `super-heavy --test-p1-super-full` by itself as a trusted Genei gate on this branch: a fresh nearest full capture on `2026-03-16` stayed `stage 19 / Ryu-Ryu / SA0-0` with `p1_super_active_frames = 0`, so keep the explicit Yun-vs-Ryu overrides whenever `genei-jin-first-activation` is part of a decision
+- [x] Recovered ordinary-gameplay pressure gate for non-super exchanges:
+  - `basic-exchange` now exists as a scripted nearest capture via `--test-scene-preset basic-exchange --perf-wait-test-phase game-input-active --test-delay-gameplay-inputs-until-active --gameplay-warmup 60`
+  - the first on-device nearest validation on `2026-03-16` stayed on `software_frame_mapped_scale` at `57.6342 FPS / 17.3508 / 4.2225 / 7.0262 / 6.1022 ms` (`frame / update / render / present`) on `stage 11 / Ryu-Ken / SA0-0`, versus matched nearest idle control `74.9833 FPS / 13.3363 / 3.1994 / 6.9908 / 3.1461 ms`; use this lane to rank future gameplay work before another Genei-only micro-optimization
+  - `basic-exchange --test-stage 7` is now the recovered ordinary raster-aware nearest lane for broader `sdl_game_renderer.c` work. Fresh full telemetry on `2026-03-16` stayed `300/300` on direct `software_frame_mapped_scale` at `55.6986 FPS / 17.9538 / 4.7960 / 6.8988 / 6.2590 ms` (`frame / update / render / present`) while `software_frame_raster_bucket_sampling` showed `generic_textured` work averaging `2.5000` sampled calls/frame, `65536.00` pixels/sample, and `0.374053 ms/sample`; the same-session stage-`11` `basic-exchange` full capture stayed at zero `fast_non_integer` and zero `generic_textured`, so use stage `7` when a loop needs ordinary gameplay raster validation rather than presenter-only exchange pressure
+  - kept `2026-03-16` measurement-support follow-up: export direct-present recovered textured-geometry families for the stage-`7` ordinary raster lane instead of inferring them from bucket sampling alone. Fresh same-package MiSTer captures kept stage-`7` effectively flat (`55.4801 -> 55.5278 FPS`) while upgrading the old zero-signal gap from `software_frame_textured_geometry_recovered_families = []` to three stable `rect_uv_parallelogram` families (`texture_handle 97/98/99`, `task_count_total 270`, `submitted_pixels_total 17694720`, `task_ratio = pixel_ratio = 0.333333` each); matched nearest idle control exported zero recovered families, so use this new family export to rank broader raster candidates before reopening another generic `sdl_game_renderer.c` fast path
+  - kept `2026-03-16` runtime follow-up: cache a per-binding full-opaque row mask for the recovered `256x256` ARGB software-source surfaces and let the stage-`7` `rect_uv_parallelogram` shear path `SDL_memcpy` any fully opaque row instead of rechecking alpha per pixel. Same-session MiSTer validation needed one rerun because the first `basic-exchange --test-stage 7` post capture stayed render-better but update-noisy (`56.1222 -> 55.5662 FPS`, `generic_textured 0.353114 -> 0.268434 ms/sample`); the rerun recovered the player-visible win at `56.5357 FPS / 17.6879 / 4.9094 / 6.6099 / 6.1686 ms` with `generic_textured 0.249783 ms/sample`, while matched `effect-heavy --test-stage 7` also improved `55.4679 -> 55.6217 FPS` and `generic_textured 0.173154 -> 0.127398 ms/sample`. Nearest idle control stayed on direct `software_frame_mapped_scale` with zero generic textured work, so keep this row-mask fast path as the first accepted ordinary gameplay raster reland from the recovered family export
+  - kept `2026-03-17` runtime follow-up: reland the accidentally dropped stage-`7` row-mask fast path before spending another cycle rediscovering it. `93726193` removed the accepted `45c6566f` helper/use sites from `src/port/sdl/sdl_game_renderer.c` while leaving the row-mask invalidation/storage state in place; restoring the helper plus the `SDL_memcpy` opaque-row branch on the current tree improved same-session nearest `control` `74.7301 -> 75.5319 FPS`, recovered ordinary `training-yun-ryu-ryu-stage` `61.1954 -> 62.9272 FPS`, ordinary `basic-exchange --test-stage 7` `64.3678 -> 65.8424 FPS`, and `effect-heavy --test-stage 7` `69.6488 -> 71.6040 FPS`, while the native guard also improved `91.1749 -> 91.9492 FPS`. Matched full stage-`7` telemetry improved `55.4909 -> 56.0972 FPS` with `render.mean_ms 6.8696 -> 6.6869` and `generic_textured.mean_ms 0.358811 -> 0.274096` while `present_copy.mean_ms` stayed flat `6.2368 -> 6.2551`, and the recovered family mix stayed the same three-way `rect_uv_parallelogram` split. Keep this reland on the branch; do not drop it again without a same-source gameplay matrix disproving the win
+  - rejected `2026-03-16` runtime follow-up: widening that kept stage-`7` reland to copy single opaque spans per row regressed matched nearest `control` (`74.8844 -> 66.7720 FPS`), `basic-exchange --test-stage 7` (`56.5357 -> 47.7482 FPS`), and `effect-heavy --test-stage 7` (`55.6217 -> 47.4526 FPS`) while leaving sampled `generic_textured` work effectively flat (`0.249783 -> 0.246526 ms/sample` and `0.127398 -> 0.126540 ms/sample` on the gameplay reruns). Keep the full-row mask win, revert the span-copy reland, and do not reopen this lane without telemetry that isolates a real non-full-row opaque cohort and explains the global control loss
+  - rejected `2026-03-17` runtime follow-up: replacing the stage-`7` `rect_uv_parallelogram` row-start `SDL_roundf` midpoint with integer midpoint division did not survive the gameplay-first matrix. Same-session nearest `control` fell `76.0618 -> 75.2604 FPS`, ordinary `basic-exchange --test-stage 7` basic fell `66.6613 -> 66.0437 FPS`, and matched full stage-`7` telemetry fell `59.3007 -> 58.8685 FPS` with `render.mean_ms 6.6601 -> 6.7576`, `present.mean_ms 5.2134 -> 5.2942`, `present_copy.mean_ms 5.2007 -> 5.2756`, and `generic_textured.sampled_mean_ms 0.267892 -> 0.269332`; trusted `genei-jin-first-activation` basic also slipped `41.4735 -> 41.2344 FPS`, while only `effect-heavy --test-stage 7` nudged up `65.7194 -> 66.1783 FPS`. Independent review also found a real exactness bug: rounding the shear offset before adding `top_left_x` does not match `SDL_roundf(top_left_x + offset)` across zero-crossing cases (`top_left_x = -8`, `src_h = 1`, `shear_dx_total = 1`, `row = 0` shifts `-8 -> -7`). Reject, keep the existing float midpoint path, and do not reopen this row-start rewrite unless a future candidate preserves full-position rounding semantics as well as the native guard (`94.0451 -> 91.4704 FPS`)
+  - `pressure-exchange` now exists as a scripted nearest capture via `--test-scene-preset pressure-exchange --perf-wait-test-phase game-input-active --test-delay-gameplay-inputs-until-active --gameplay-warmup 60`
+  - the first on-device nearest validation on `2026-03-16` stayed on direct `software_frame_mapped_scale` at `43.6910 FPS / 22.8880 / 5.1055 / 8.0664 / 9.7161 ms` (`frame / update / render / present`) on `stage 19 / Ryu-Ken / SA0-0`, versus matched nearest idle control `76.1958 FPS / 13.1241 / 3.2130 / 6.9518 / 2.9593 ms`; use this lane as an ordinary nearest presenter/copy-pressure guardrail before another Genei-only presenter micro-optimization
+  - do not treat `pressure-exchange` as an ordinary raster-residue lane by itself: the first full telemetry run landed at `36.2125 FPS / 27.6148 / 8.2157 / 13.0790 ms` with `copy_bytes 2865058.71`, `software_frame_mapped_scale = 1.0`, `software_frame_fast_exact_tasks.mean = 300.27`, `software_frame_fast_scaled_tasks.mean = 4.79`, `software_frame_fast_non_integer_tasks.mean = 0.00`, and `software_frame_generic_textured_tasks.mean = 0.00`
+  - `training-yun-ryu-ryu-stage` is now a recovered ordinary training-mode gameplay lane for repeated attacks / hitsparks / jumps without supers. The cleaned scripted path explicitly locks `Yun SA3` versus `Ryu SA1`, advances the VS screen, clears the post-VS training menu, and starts real training gameplay before capture.
+  - fresh nearest metrics on `2026-03-17` stayed on direct `software_frame_mapped_scale` at `61.1337 FPS / 16.3576 / 3.5906 / 7.4072 / 5.3598 ms` (`frame / update / render / present`) in `--perf-basic`, and `51.5853 FPS / 19.3854 / 4.2064 / 7.5411 / 7.6379 ms` in full telemetry, both on `stage 2 / Yun-Ryu / SA2-0` with direct-present ratio `1.0`
+  - full telemetry says this lane is a useful ordinary gameplay guardrail but not a raster-residue lane today: `software_frame_fast_exact_tasks.mean = 222.91`, `software_frame_fast_scaled_tasks.mean = 4.69`, `software_frame_fast_non_integer_tasks.mean = 0.00`, `software_frame_generic_textured_tasks.mean = 0.00`, and `present_copy.mean_ms = 7.6190`; use it to represent player-visible training-mode slowdown before another Genei-only loop, not to rank broader raster work
+- [x] Secondary guardrails that still matter, but should not outrank gameplay FPS:
+  - `2p-character-select` via `--perf-wait-test-phase character-select`
+  - `menu-transition` via `--perf-wait-test-phase character-select-transition`
+- [x] Follow-on rule:
+  - when a nearest HDMI runtime change is large enough to justify expanded validation, prioritize `control` plus at least one gameplay-heavy lane first; prefer `training-yun-ryu-ryu-stage`, `pressure-exchange`, `basic-exchange`, `genei-jin-first-activation`, `stage-heavy`, or `ibuki-stage7` before spending capture budget on `2p-character-select` or `menu-transition` unless the change explicitly targets those menu lanes
+- [x] Combined research steering:
+  - the `2026-03-15` nearest-specific memo plus the broad all-scenes memo now say the branch has three realistic next runtime directions, not one: `(1)` nearest presenter tail work in `src/port/sdl/fbdev_presenter.c` for the first-Genei repeated-row hotspot; `(2)` broader software-frame gameplay raster residue in `src/port/sdl/sdl_game_renderer.c` for `effect-heavy` / `super-heavy` / trusted first-Genei direct-present scenes; `(3)` broader 2P character-select submit/state churn after the kept chooser refresh reland. Attract/logo is still measurement-first, and the exact type-`1` wipe stays a guardrail only.
+- [x] Combined experiment order for Ralph:
+  - if the chosen loop is nearest-specific, start with a tail-gated repeated-row candidate and add one telemetry split that separates first-row materialization from repeated-row replay
+  - kept `2026-03-16` nearest presenter follow-up: broaden the RAM row-template gate with a sparse-repeat shape signal instead of another raw threshold drop. In `src/port/sdl/fbdev_presenter.c`, arm the existing template replay path when repeated-row work predicts high sparse copy cost (`mapped_repeat_gap_pixels` + `mapped_repeat_run_copies` + changed-row depth), not only on the extreme tail row-count thresholds
+  - rejected `2026-03-17` nearest presenter follow-up: widening the kept sparse-only RAM-first template seed so dense repeated rows also rasterize their first row into RAM did not clear the gameplay-first keep bar. Same-session nearest `control` slipped `75.4872 -> 75.2485 FPS`, recovered ordinary `training-yun-ryu-ryu-stage` slipped `61.8335 -> 61.6912 FPS`, trusted `genei-jin-first-activation` basic only nudged `41.0261 -> 41.1077 FPS`, and matched full Genei still slipped `34.3901 -> 34.3250 FPS` while `mapped_repeat_row.mean_ms` worsened `3.7482 -> 3.7896`; the native guard slightly improved `91.4538 -> 91.5362 FPS`. Keep the accepted sparse-only RAM-first path and do not reopen this dense-row seed expansion without telemetry proving the remaining dense-gap rows are readback-bound enough to outweigh the extra full-span RAM raster and flush cost
+  - rejected `2026-03-17` nearest presenter follow-up: adding a row-level projected sparse-repeat threshold before seeding the existing RAM row template did not survive the modern-display gameplay bar. Same-session nearest `control` fell `75.4330 -> 75.1750 FPS` and the recovered ordinary `training-yun-ryu-ryu-stage` guardrail fell `61.5101 -> 60.1638 FPS`, while the native guard improved `92.2041 -> 93.1715 FPS`. Both nearest lanes kept identical copied-byte means (`183105.60` and `891245.31`) and unchanged total repeat-row workload, but template engagement still dropped (`control` template rows/copies `23.77 -> 10.74` / `196.79 -> 133.77`; `training` `191.11 -> 152.61` / `2863.08 -> 2699.60`) without buying a player-visible present-path win. Reject; keep the accepted sparse-repeat shape gate unchanged and do not reopen this per-row repeat-count gate unless a future telemetry export proves template setup cost on low-fanout sparse rows is expensive enough to offset the extra row-level gating work.
+  - kept `2026-03-17` nearest presenter follow-up: process repeated mapped nearest rows as same-`src_y` vertical bands in `src/port/sdl/fbdev_presenter.c` so the hot replay path chooses its copy policy once per band instead of redoing that work on every destination row. Same-session nearest full telemetry improved `control 67.4876 -> 69.8019 FPS` (`present.mean_ms 3.9168 -> 3.3384`, `mapped_repeat_row.mean_ms 1.5654 -> 1.2862`), recovered ordinary `training-yun-ryu-ryu-stage 52.3136 -> 56.1823 FPS` (`7.0463 -> 5.8229`, `2.6274 -> 2.0307`), and trusted `genei-jin-first-activation 34.4482 -> 36.7661 FPS` (`10.3599 -> 8.5776`, `3.7914 -> 2.9049`) while the native guard also improved `92.6742 -> 93.2786 FPS`. The copied-row workload stayed identical on the compared captures (`mapped_row_runs`, `mapped_repeat_run_copies`, and template-row counters unchanged) and `mapped_first_row.mean_ms` stayed effectively flat, so keep this as a control-overhead cut on repeated-row replay rather than a new bytes-saving path. If the next loop stays nearest-specific, rank repeated-row replay-source/body work ahead of first-row materialization because repeated-row replay is still the movable term after this reland.
+  - rejected `2026-03-17` nearest presenter follow-up: specializing template-backed repeat-row replay so sparse/dense template bands emit `run/span -> repeated rows` instead of `row -> run/span` did not clear the gameplay-first keep bar. Same-package MiSTer reruns only nudged nearest `control 69.8019 -> 69.9146 FPS` and trusted `genei-jin-first-activation 36.7661 -> 36.8324 FPS`, while the recovered ordinary `training-yun-ryu-ryu-stage` guardrail slipped `56.1823 -> 56.0356 FPS` and the native guard moved down `93.2786 -> 91.6576 FPS` but stayed inside the `3%` budget. The replay-body rewrite still cut `mapped_repeat_row.mean_ms` on training/Genei (`2.0307 -> 2.0039`, `2.9049 -> 2.8218`) with identical repeat-row counters, but `mapped_first_row.mean_ms` rose on every nearest lane (`control 0.2628 -> 0.2696`, `training 1.0359 -> 1.0593`, `genei 2.2536 -> 2.2791`) and erased the player-visible gain. Reject; keep the band replay reland, and do not reopen this template-backed loop-order rewrite unless a future telemetry split proves the first-row spillback can be held flat enough for the smaller replay win to survive ordinary gameplay validation.
+  - rejected `2026-03-17` nearest presenter follow-up: rewriting mapped first-row rasterization as source-driven fills over `scale_x_first_dst_for_src[]` / `scale_x_last_dst_for_src[]` did not survive the nearest gameplay bar. Same-session reruns regressed nearest `control 75.7809 -> 75.3535 FPS`, recovered ordinary `training-yun-ryu-ryu-stage` basic `62.0663 -> 60.7009 FPS`, and matched training full `56.0552 -> 54.8999 FPS`; `present.mean_ms` rose `5.7691 -> 6.1843`, `present_copy.mean_ms` rose `5.7559 -> 6.1713`, `mapped_first_row.mean_ms` worsened `1.0437 -> 1.3371`, and `mapped_repeat_row.mean_ms` stayed effectively flat `2.0280 -> 2.0349`, while the native guard stayed inside budget at `92.0977 -> 91.9276 FPS`. Reject; keep the simpler destination-driven LUT walk and do not reopen source-driven first-row expansion on this branch without a cheaper fill path that proves fewer per-source clamp/branch costs than the current row walk.
+  - rejected `2026-03-17` nearest presenter follow-up: trimming dense-band RAM-template seeding so only sparse repeat bands replay from `repeat_row_template_bytes` regressed the trusted dense tail. Same-package nearest `control` stayed flat `75.8691 -> 75.8478 FPS`, recovered ordinary `training-yun-ryu-ryu-stage` stayed flat-to-down at `61.9399 -> 61.8833 FPS` in `--perf-basic` and `55.9407 -> 55.6316 FPS` in full telemetry, but trusted `genei-jin-first-activation` fell `41.4507 -> 39.8446 FPS` in `--perf-basic` and `36.7847 -> 34.8925 FPS` in full telemetry while `mapped_first_row.mean_ms` improved `2.2393 -> 1.7840` yet `mapped_repeat_row.mean_ms` worsened `2.9206 -> 4.9136` after template-backed dense rows dropped `67.24 -> 0.00`; the native guard slightly improved `92.1104 -> 92.3841 FPS`. Reject; dense repeat bands still need the RAM replay source, so do not reopen this sparse-only replay-source trim without telemetry showing first-Genei no longer pays materially for mapped-fb rereads on repeated rows.
+  - rejected `2026-03-17` nearest presenter follow-up: adding a band-local extreme dense-repeat tail gate so the existing RAM template replay could arm inside dense repeat bands without the wider frame-level sparse-shape gate stayed effectively inert on the measured nearest lanes. Same-session reruns only nudged `control` full `70.3096 -> 70.4041 FPS` and ordinary `training-yun-ryu-ryu-stage` full `56.1737 -> 56.2806 FPS`, while `pressure-exchange` basic slipped `44.3737 -> 44.3437 FPS`, trusted `genei-jin-first-activation` full slipped `36.8354 -> 36.7243 FPS`, and the native basic guard slipped `94.4655 -> 94.2069 FPS`. The deciding telemetry showed why: template-backed dense replay never changed on the compared lanes (`mapped_repeat_template_dense_rows.mean` stayed `0.08`, `3.88`, and `67.24`, with matching `mapped_repeat_template_rows.mean` `23.77`, `191.11`, and `397.81` on `control`, `training`, and trusted Genei), so the new gate did not actually move any repeat-row work. Reject; do not reopen this band-local dense-tail gate without telemetry that proves a real nearest lane where the current frame-level template gate misses dense repeat bands, and keep prioritizing measured repeat-row source/body work ahead of another dormant gate experiment.
+  - rejected `2026-03-17` nearest presenter follow-up: dual-writing sparse template-backed first-row rasterization into both `fb_map` and `repeat_row_template_bytes` did not clear the gameplay-first matrix. Same-package nearest `control` improved `75.8691 -> 76.7896 FPS`, but recovered ordinary `training-yun-ryu-ryu-stage` basic slipped `61.9399 -> 61.6003 FPS`, `pressure-exchange` fell from the kept lane baselines `43.6910 -> 39.2066 FPS` in `--perf-basic` and `36.2125 -> 35.2115 FPS` in full telemetry, and trusted `genei-jin-first-activation` basic regressed `41.4507 -> 38.9055 FPS`; the native guard improved slightly `92.3841 -> 92.8254 FPS`. Full `pressure-exchange` telemetry still showed sparse template rows only (`mapped_repeat_template_dense_rows.mean = 0.00`) and landed at `mapped_first_row.mean_ms = 2.4207` plus `mapped_repeat_row.mean_ms = 7.1685`, so the extra per-pixel dual write did not buy enough replay savings to offset the heavier first-row path on ordinary pressure and Genei. Reject; keep the current sparse-template raster-then-copy shape, and do not reopen dual-target first-row rasterization without telemetry proving sparse first-row copy fanout dominates both `pressure-exchange` and trusted Genei.
+  - if the chosen loop is broader than nearest, prefer gameplay-wide raster residue before reopening menu or title work, and treat `basic-exchange --test-stage 7` as the first ordinary no-super raster gate ahead of presenter-only `basic-exchange`, `training-yun-ryu-ryu-stage`, or `pressure-exchange`
+  - for the stage-`7` raster lane, use the recovered-family export before another broad runtime guess: the `2026-03-16` telemetry reland shows the hot ordinary cohort is a three-way `rect_uv_parallelogram` family split rather than a diffuse bucket, so the next `sdl_game_renderer.c` runtime loop should start from that concrete family shape
+  - rejected `2026-03-16` broader raster follow-up: admitting scaled color-mod textured rects to the existing lookup fast path in `src/port/sdl/sdl_game_renderer.c` produced only noise-level movement on matched nearest `control` / `ibuki-stage7` / trusted `genei-jin-first-activation` plus a native guard, while `software_frame_fast_miss_color_mod` stayed `0.00` and `generic_textured_rgb_mod` stayed effectively flat on the compared gates; do not reopen this lane without a gameplay-first capture that proves real color-mod fallback or RGB-mod residue
+  - rejected `2026-03-16` broader raster follow-up: a palette-opaque exact-copy `SDL_memcpy` shortcut for exact unmodulated software-source blits in `src/port/sdl/sdl_game_renderer.c` did not produce a stable ordinary-gameplay win. Matched nearest `basic-exchange` moved `49.7951 -> 50.7135 FPS` on the first post run but fell to `49.3554 FPS` on the rerun, trusted full `genei-jin-first-activation` stayed effectively flat `33.7726 -> 33.7062 FPS`, and nearest/native control stayed within tolerance; do not reopen this lane without telemetry that proves a large stable palette-opaque exact-copy family or a narrower source-surface cohort
+  - rejected `2026-03-16` broader raster follow-up: a stage-`7` single-opaque-span row-copy reland on top of the kept full-row mask shortcut regressed both the nearest guardrail and ordinary gameplay (`control 74.8844 -> 66.7720 FPS`, `basic-exchange --test-stage 7 56.5357 -> 47.7482 FPS`, `effect-heavy --test-stage 7 55.6217 -> 47.4526 FPS`) without a real `generic_textured` win. Do not reopen this broader row-span lane until a future telemetry pass explains why the span metadata path drags even idle nearest control
+  - rejected `2026-03-17` broader raster follow-up: extending the kept stage-`7` row-alpha cache so the exact `rect_uv_parallelogram` family also skips fully transparent rows did not survive gameplay validation. Same-package reruns improved nearest `control 75.0442 -> 76.3640 FPS`, but `basic-exchange --test-stage 7` full fell `59.1771 -> 55.4642 FPS` with `generic_textured.mean_ms 0.273164 -> 0.280230`, `effect-heavy --test-stage 7` basic fell `66.2084 -> 64.7712 FPS`, and the native guard stayed within budget at `91.4189 FPS`. Reject; keep only the accepted full-opaque row mask and do not reopen transparent-row skipping without evidence that this recovered exact family has a meaningful full-transparent row cohort
+  - rejected `2026-03-17` broader raster follow-up: widening `raster_textured_float_parallelogram_to_software_frame()` so any full-opaque row whose projected width was only epsilon-close to `src_w` could reuse the kept row-mask `SDL_memcpy` path did not clear the gameplay-first matrix and failed review for exactness. Same-session MiSTer reruns regressed nearest `control 76.1443 -> 74.7118 FPS`, ordinary `basic-exchange --test-stage 7` full `59.7476 -> 59.0481 FPS` with `render.mean_ms 6.6983 -> 6.8325`, `present.mean_ms 5.1142 -> 5.2099`, and `generic_textured.mean_ms 0.252898 -> 0.269267`, trusted `genei-jin-first-activation` basic `41.3435 -> 41.0578 FPS`, and native control `92.6552 -> 90.6242 FPS`; only the training guardrail stayed roughly flat at `62.0777 -> 62.2866 FPS`. The required second-opinion review also found the epsilon admission was not exact enough: rows can still sample with non-`1.0` `src_step` even when `fabs(row_width - src_w) <= rect_task_epsilon`, so the memcpy path can shift pixels near clip boundaries. Reject, keep the accepted exact full-row mask only, and do not reopen float-parallelogram row-copy widening without proof that the source row mapping is exactly contiguous rather than merely epsilon-close
+  - rejected `2026-03-17` broader raster follow-up: broadening the kept opaque-row cache into shared exact/scaled/non-integer/generic unmodulated software-frame loops did not survive gameplay-first validation. Same-package MiSTer reruns improved nearest `control 75.6622 -> 79.5335 FPS`, recovered `training-yun-ryu-ryu-stage 61.9006 -> 62.9260 FPS`, and the native guard `92.3470 -> 95.4592 FPS`, but ordinary `basic-exchange --test-stage 7` fell `60.4355 -> 58.0674 FPS`, `effect-heavy` fell `44.6596 -> 41.9880 FPS`, and trusted `genei-jin-first-activation` fell `36.6507 -> 34.8713 FPS` while `render.mean_ms` worsened on every rejected gameplay lane (`6.6063 -> 7.0603`, `9.2284 -> 10.5724`, `10.4267 -> 11.8903`). The post stage-`7` full capture also kept the recovered three-way `rect_uv_parallelogram` family but sampled `generic_textured` slightly worse (`0.237190 -> 0.242578 ms/sample`) instead of better. Reject; keep the narrower accepted row-mask reland only, and do not reopen cache-wide opaque-row bypass work without telemetry that isolates a family where the added opacity probing/cache state beats the current branch on ordinary gameplay as well as idle.
+  - rejected `2026-03-17` broader raster follow-up: caching per-row visible `x0/x1` bounds for the recovered `256x256` ARGB stage-`7` `rect_uv_parallelogram` family and trimming transparent leading/trailing columns inside `raster_textured_parallelogram_to_software_frame()` did not clear the gameplay-first matrix. Same-session nearest `control` improved `76.0419 -> 77.0989 FPS`, ordinary `basic-exchange --test-stage 7` basic improved `66.2211 -> 67.0400 FPS`, and the native guard stayed slightly better `93.1700 -> 93.5016 FPS`, but matched full stage-`7` telemetry still slipped `59.3574 -> 59.1520 FPS` with `generic_textured.sampled_mean_ms 0.264341 -> 0.274044`, `effect-heavy --test-stage 7` basic fell `71.5959 -> 71.3100 FPS`, and trusted `genei-jin-first-activation` basic fell `40.2153 -> 40.1161 FPS`. The required review pass found no correctness blocker in the trim itself, so reject on measured value: keep the accepted full-row opaque mask only, and do not reopen per-row visible-bounds caching without telemetry that proves transparent edge columns dominate a player-visible gameplay lane rather than just helping control/basic snapshots.
+  - rejected `2026-03-17` broader raster follow-up: deriving compare-dirty partial refreshes for eligible `256x256 INDEX8` software-source surfaces when refresh locality found no explicit dirty rect regressed every validated player-visible lane even though sampled stage-`7` generic textured work looked slightly cheaper. Same-session MiSTer reruns fell on nearest `control` (`76.3972 -> 73.9700 FPS`), recovered ordinary `training-yun-ryu-ryu-stage` full telemetry (`56.2981 -> 53.9858 FPS`), ordinary `basic-exchange --test-stage 7` full telemetry (`59.2503 -> 57.5467 FPS` with `update.mean_ms 4.8831 -> 5.7621` and `generic_textured.mean_ms 0.273219 -> 0.237732`), and the native guard (`94.0211 -> 89.3922 FPS`). Independent review also found this fallback was not safe to keep: the compare shadow was shared per `texture_index` even though software-source caches are per `(texture, palette)`, unlock telemetry could overwrite the old compare baseline before refresh, and the fallback paid a full-surface compare even when an existing unlock dirty rect was already usable. Reject, keep the current refresh path, and do not reopen compare-dirty refresh fallback without a cache-keyed shadow source plus telemetry isolation that preserves ordinary gameplay and native control.
+  - if the chosen loop explicitly targets menu residue, work from the broader `2p-character-select` lane and `SDLGameRenderer_SetTexture` / submit-state churn, not the already-rejected `DrawSprite2` fast-path guess
+  - kept `2026-03-17` measurement-support follow-up: recover the exact `character-select-super-art` lane on the current tree before attempting another menu runtime reland. The fresh baseline `menu-mts13-pre-char-select` showed broad 2P character select is again materially player-visible on this branch at `45.6920 FPS / 21.8857 / 7.3056 / 8.7992 / 5.7809 ms` with direct nearest present still intact and `source_mtrans = 180.70 tasks/frame`, but the old exact chooser command path had regressed into a tooling hole: `src/main.c` only accepted `attract-demo-logo` for `--perf-wait-runtime-state`, and `tools/mister/perf-sampler.sh` no longer auto-added `--test-enable` for `character-select-super-art`. Re-enable that runtime-state gate, define it in `src/port/sdl/sdl_app.c` with the chooser-instantiated signals (`Sel_PL_Complete=1/1`, `Sel_Arts_Complete=0/0`, `Select_Arts=3/3`, `Moving_Plate=0/0`, `Moving_Plate_Counter=0/0`, command-name visible for both players), and export those exact start-state arrays into perf JSON. Same-package MiSTer reruns kept broad character select flat (`45.6920 -> 45.7366 FPS`) while recovering the exact chooser-instantiation lane at `32.7465 FPS / 30.5376 / 18.3392 / 9.8073 / 2.3911 ms`; `artifacts/mister-port/perf/menu-mts13-post-super-art-rerun.json` now proves the capture starts on the intended chooser state via `character_select_state.capture_start_*`. Keep this capture-support reland, and use the recovered exact lane plus broad `2p-character-select` to rank the next menu runtime loop from current-tree evidence rather than stale March telemetry alone.
+  - kept `2026-03-17` menu runtime follow-up: remap renew-dirty retention from transient texture handles onto stable `ppg-seqs` identities in `src/sf33rd/Source/Common/PPGFile.c`, then keep the reviewed stable whitelist rather than the first too-narrow chooser-only draft. The kept map now covers chooser `1030/{0,1,2,4}` plus the historical non-chooser identities `40/{0,3}`, `50/{0,3}`, `80/{0,1,2}`, and `1100/{0,2}`, while tile-mask tracking stays narrow on `40/3` and `50/3`. Fresh nearest full telemetry on the kept reland improved broad `2p-character-select` from `45.5494 -> 53.0181 FPS` with `update.mean_ms 7.2665 -> 4.5053` and `software_surface_cache_refresh.mean_ms 3.1969 -> 0.5057`, and improved exact chooser instantiation from `33.0015 -> 55.0565 FPS` with `update.mean_ms 17.9937 -> 5.9678` and `software_surface_cache_refresh.mean_ms 13.5856 -> 1.7878`, while `source_mtrans` stayed flat at `180.70` and `277.25` tasks/frame. Refresh attribution flipped from mostly full-no-rect work to partial refreshes (`2p-character-select 0.3367/3.8600/3.8567 -> 4.0667/0.1300/0.0067`, chooser `0.0000/16.7500/16.7500 -> 16.6000/0.1500/0.0000` for partial/full/full-no-rect), `texture_unlock_dirty_rect_lifetime.retained_after_unlock_record_ratio` reached `0.971429`, and the chooser capture still started on the intended state (`Sel_PL_Complete=[1,1]`, `Sel_Arts_Complete=[0,0]`, `Select_Arts=[3,3]`, `Moving_Plate=[0,0]`, `Moving_Plate_Counter=[0,0]`, `Command_Name_Visible=[1,1]`). Keep this reland; the menu slowdown was stale renew-dirty handle mapping, not the earlier circle/highlight guess.
+  - do not spend a runtime loop on attract/logo until a trustworthy exact opening/title capture boundary exists
+
+## Scope and Constraints
+
+- [x] In scope:
+  - MiSTer `scale-mode = nearest` measurement support
+  - MiSTer native/fbdev present-path routing for nearest mode
+  - fbdev mapped nearest-scaling optimization in `src/port/sdl/fbdev_presenter.c`
+  - docs updates after the runtime path is validated
+- [x] Out of scope:
+  - changing the default shipped scale-mode
+  - optimizing `linear` or `soft-linear` unless they benefit automatically from shared fbdev helper changes
+  - GPU, KMSDRM, `/dev/dri`, or custom-image rendering work
+  - gameplay, timing-model, or content changes
+- [x] Constraints (time, tech, architecture, dependencies):
+  - keep chunk size to roughly `45-90` minutes and `1-3` components
+  - use the existing MiSTer stock Linux path: SDL dummy/software plus fbdev presenter
+  - use `telemetry` builds for perf iteration and `clean` builds only for player-facing validation
+  - use `tools/mister/misterctl.sh` for deploy/probe/smoke and `tools/mister/perf-sampler.sh` for captures
+  - preserve the accepted `software-frame-mode = on` MiSTer default
+  - on this host, `3sx-mister-build` is currently `x86_64`; use the validated `/work-arm` ARM cross-build path inside that container for any MiSTer-deployable package
+- [x] Assumptions:
+  - the main user-facing target is `scale-mode = nearest` on a modern panel, not CRT `native`
+  - `square-pixels` remains a separate path and should stay flat while nearest work lands
+  - common MiSTer output is `1280x720`, but the implementation should remain generic for other framebuffer sizes
+  - full-screen nearest will still write materially more pixels than `native`, so the realistic target is “much faster than today,” not parity with `native`
+
+## Blueprint Summary
+
+- [x] Phases:
+  - Phase A: add repeatable nearest-mode measurement plumbing and record the baseline matrix
+  - Phase B: route nearest mode onto the native/fbdev present pipeline instead of the SDL `screen_texture` branch
+  - Phase C: optimize the fbdev mapped nearest scaler once nearest is on the correct pipeline
+  - Phase D: validate the clean/player build and document modern-display guidance
+- [x] Dependency map:
+  - measurement support must land first so nearest captures are reproducible
+  - native-path routing comes before scaler micro-optimization, otherwise measurements mix pipeline and copy costs
+  - docs and player validation should wait until the nearest runtime path is proven stable
+- [x] Risks and mitigations:
+  - risk: nearest-mode native routing breaks message overlays or screenshots
+    - mitigation: keep the existing readback/composited fallback path for message-content and screenshot cases until direct nearest presentation is proven safe
+  - risk: nearest-mode routing improves path selection but the mapped scaler remains too CPU-heavy
+    - mitigation: isolate scaler work in its own chunk and measure `copy`/`present` buckets separately
+  - risk: telemetry overhead distorts the scaled-path measurements
+    - mitigation: use `--perf-basic` for decision-grade gameplay captures and reserve full telemetry for route attribution
+  - risk: a generic scaler rewrite regresses `native` or `square-pixels`
+    - mitigation: keep exact and integer fast paths untouched and rerun native control guardrails every chunk
+- [x] Validation strategy:
+  - tier 1: `git diff --check`, `bash -n tools/mister/perf-sampler.sh`, and telemetry build/package at the end of every chunk
+  - tier 2: deploy telemetry package and run bounded nearest/native capture matrix every `1-2` chunks
+  - tier 3: deploy clean package and validate player-facing nearest mode only after the telemetry path is accepted
+- [x] Rollout considerations:
+  - keep all work behind existing `scale-mode` selection; do not silently change shipped defaults
+  - land measurement and runtime changes as separate commits
+  - update docs only after the final path and capture commands are verified on MiSTer
+
+## Iterative Chunks
+
+### Chunk 1: Nearest Measurement Plumbing and Baseline Matrix
+
+- [x] Value delivered:
+  - nearest-mode captures become repeatable and self-describing, so later runtime work is based on measured path data instead of ad hoc config edits
+- [x] Scope boundary:
+  - add a `--scale-mode <mode>` override to `tools/mister/perf-sampler.sh`
+  - write the chosen scale-mode into the temporary remote config during captures
+  - export active scale-mode into perf metadata or backend diagnostics so captures prove which path was tested
+  - recover the nearest baseline matrix for control, stage-heavy, Ibuki stage, and attract-demo logo
+- [ ] Estimated effort (target 45-90 min): `60-75 min`
+- [x] Dependencies:
+  - none
+- [x] Chunk-end verification commands:
+  - [x] Tier 1 smoke:
+    - `git diff --check`
+    - `bash -n tools/mister/perf-sampler.sh`
+    - `docker exec 3sx-mister-build bash -lc 'set -euxo pipefail; cp /src/tools/mister/perf-sampler.sh /work-arm/tools/mister/perf-sampler.sh; cp /src/src/port/sdl/sdl_app.c /work-arm/src/port/sdl/sdl_app.c; cd /work-arm; export CC=clang; export CXX=clang++; export PKG_CONFIG_LIBDIR=/usr/lib/arm-linux-gnueabihf/pkgconfig:/usr/share/pkgconfig; export CFLAGS=\"--target=arm-linux-gnueabihf --gcc-toolchain=/usr -isystem /usr/arm-linux-gnueabihf/include\"; export CXXFLAGS=\"$CFLAGS\"; export LDFLAGS=\"--target=arm-linux-gnueabihf --gcc-toolchain=/usr\"; cmake -S . -B build/mister-telemetry -DCMAKE_BUILD_TYPE=Release -DPORT_MISTER=ON -DENABLE_PERF_TELEMETRY=ON -DCMAKE_C_COMPILER_TARGET=arm-linux-gnueabihf -DCMAKE_CXX_COMPILER_TARGET=arm-linux-gnueabihf; cmake --build build/mister-telemetry --parallel 2; cmake --install build/mister-telemetry --prefix build/mister-telemetry-install; tools/mister/package.sh build/mister-telemetry-install build/mister-telemetry-package; readelf -h build/mister-telemetry-package/bin/3sx | sed -n \"1,18p\"'`
+  - [x] Tier 2 targeted (if checkpoint chunk):
+    - `MISTER_HOST=192.168.1.171 MISTER_USER=root MISTER_PASSWORD=1 tools/mister/misterctl.sh health`
+    - `MISTER_HOST=192.168.1.171 MISTER_USER=root MISTER_PASSWORD=1 tools/mister/misterctl.sh deploy --src build/mister-telemetry-package-arm-c1`
+    - `MISTER_HOST=192.168.1.171 MISTER_USER=root MISTER_PASSWORD=1 tools/mister/misterctl.sh probe`
+    - `MISTER_HOST=192.168.1.171 MISTER_USER=root MISTER_PASSWORD=1 tools/mister/misterctl.sh smoke`
+    - `MISTER_HOST=192.168.1.171 MISTER_USER=root MISTER_PASSWORD=1 tools/mister/perf-sampler.sh --scene gameplay-idle --frames 300 --tag nearest-c1-control --gameplay-idle --gameplay-warmup 120 --software-frame-mode on --scale-mode nearest --perf-basic`
+    - `MISTER_HOST=192.168.1.171 MISTER_USER=root MISTER_PASSWORD=1 tools/mister/perf-sampler.sh --scene gameplay-stage-heavy --frames 300 --tag nearest-c1-stage-heavy --test-scene-preset stage-heavy --software-frame-mode on --scale-mode nearest --perf-basic`
+    - `MISTER_HOST=192.168.1.171 MISTER_USER=root MISTER_PASSWORD=1 tools/mister/perf-sampler.sh --scene gameplay-ibuki-stage7 --frames 300 --tag nearest-c1-ibuki-stage7 --test-scene-preset effect-heavy --test-stage 7 --software-frame-mode on --scale-mode nearest --perf-basic`
+    - `MISTER_HOST=192.168.1.171 MISTER_USER=root MISTER_PASSWORD=1 tools/mister/perf-sampler.sh --scene attract-demo-logo --frames 180 --tag nearest-c1-attract-logo --perf-wait-runtime-state attract-demo-logo --scale-mode nearest --perf-basic`
+- [x] Chunk gate pass criteria:
+  - nearest captures are reproducible without manual config editing
+  - captures record enough metadata to prove nearest mode was actually active
+  - the baseline matrix identifies the dominant nearest present path and whether the slowdown is present-bound, copy-bound, or readback-bound
+- [x] Evidence to capture in progress log:
+  - nearest baseline FPS/frame/update/render/present numbers for each gate
+  - dominant fbdev path for each nearest gate
+  - exact gap between nearest and native control
+
+### Chunk 2: Route Nearest Onto Native/Fbdev Presentation
+
+- [x] Value delivered:
+  - nearest mode stops paying the extra SDL `screen_texture` scaling/compositing tax during normal MiSTer gameplay
+- [x] Scope boundary:
+  - extend the native present-path routing in `src/port/sdl/sdl_app.c` so nearest mode uses `native_output_rect` and fbdev presentation
+  - keep message-content and screenshot fallback behavior correct
+  - preserve exact and integer paths for `native` and `square-pixels`
+- [ ] Estimated effort (target 45-90 min): `60-90 min`
+- [x] Dependencies:
+  - Chunk 1 baseline and measurement support
+- [x] Chunk-end verification commands:
+  - [x] Tier 1 smoke:
+    - [x] `git diff --check`
+    - `bash -n tools/mister/perf-sampler.sh`
+    - [x] `docker exec 3sx-mister-build bash -lc 'set -euxo pipefail; cd /src; CC=clang CXX=clang++ cmake -S . -B build/mister-telemetry -DCMAKE_BUILD_TYPE=Release -DPORT_MISTER=ON -DENABLE_PERF_TELEMETRY=ON; cmake --build build/mister-telemetry --parallel 2; cmake --install build/mister-telemetry --prefix build/mister-telemetry-install; tools/mister/package.sh build/mister-telemetry-install build/mister-telemetry-package'`
+  - [x] Tier 2 targeted (if checkpoint chunk):
+    - [x] `MISTER_HOST=192.168.1.171 MISTER_USER=root MISTER_PASSWORD=1 tools/mister/misterctl.sh deploy --src build/mister-telemetry-package`
+    - [x] `MISTER_HOST=192.168.1.171 MISTER_USER=root MISTER_PASSWORD=1 tools/mister/misterctl.sh probe`
+    - [x] rerun `nearest-c1-control`, `nearest-c1-stage-heavy`, and `nearest-c1-attract-logo` with fresh `c2` tags
+    - [x] `MISTER_HOST=192.168.1.171 MISTER_USER=root MISTER_PASSWORD=1 tools/mister/perf-sampler.sh --scene gameplay-idle --frames 300 --tag native-c2-control-guard --gameplay-idle --gameplay-warmup 120 --software-frame-mode on --scale-mode native --perf-basic`
+- [x] Chunk gate pass criteria:
+  - normal nearest gameplay no longer falls through the non-native `screen_texture` branch
+  - nearest control is dominated by `software_frame_mapped_scale` or `current_target_mapped_scale` rather than readback/composited paths
+  - `present_readback.mean_ms` on nearest control drops materially from the Chunk 1 baseline
+  - native control remains within the `3%` regression guardrail
+- [x] Evidence to capture in progress log:
+  - before/after present-path ratios on nearest control and one heavy gate
+  - any remaining cases that still require the composited/readback fallback
+  - screenshot and message-overlay behavior notes
+
+### Chunk 3: Optimize Mapped Nearest Scaling
+
+- [x] Value delivered:
+  - nearest mode becomes materially cheaper once it is on the correct pipeline, reducing per-frame copy and present cost on modern displays
+- [x] Scope boundary:
+  - optimize `copy_argb_surface_scaled_to_fb_mapped_rect(...)` in `src/port/sdl/fbdev_presenter.c`
+  - prefer cached lookup tables or fixed-point stepping over per-pixel divides in the mapped scaler
+  - preserve the existing exact and integer fast paths unchanged
+- [ ] Estimated effort (target 45-90 min): `60-90 min`
+- [x] Dependencies:
+  - Chunk 2
+- [x] Chunk-end verification commands:
+  - [x] Tier 1 smoke:
+    - `git diff --check`
+    - `docker exec 3sx-mister-build bash -lc 'set -euxo pipefail; cd /src; CC=clang CXX=clang++ cmake -S . -B build/mister-telemetry -DCMAKE_BUILD_TYPE=Release -DPORT_MISTER=ON -DENABLE_PERF_TELEMETRY=ON; cmake --build build/mister-telemetry --parallel 2; cmake --install build/mister-telemetry --prefix build/mister-telemetry-install; tools/mister/package.sh build/mister-telemetry-install build/mister-telemetry-package'`
+  - [x] Tier 2 targeted (if checkpoint chunk):
+    - `MISTER_HOST=192.168.1.171 MISTER_USER=root MISTER_PASSWORD=1 tools/mister/misterctl.sh deploy --src build/mister-telemetry-package`
+    - rerun `nearest` control, stage-heavy, Ibuki stage 7, and attract-logo captures with fresh `c3` tags
+    - rerun native control and square-pixels control spot checks for guardrails
+- [x] Chunk gate pass criteria:
+  - nearest control and at least one heavy gate improve `frame_time.mean` by at least `10%` versus the Chunk 1 nearest baseline
+  - nearest `present_ms` and/or presenter `copy_ms` drop materially relative to the Chunk 2 routed baseline
+  - no validated native or square-pixels guardrail regresses by more than `3%`
+- [x] Evidence to capture in progress log:
+  - before/after nearest timing table with `frame`, `render`, `present`, and dominant fbdev path
+  - whether remaining nearest cost is now mostly copy bandwidth rather than path overhead
+  - any scenes that still need path-specific follow-up
+
+### Chunk 4: Player Validation and Docs Closeout
+
+- [x] Value delivered:
+  - the accepted nearest-mode improvements are validated in the clean package and documented for future work
+- [x] Scope boundary:
+  - build and deploy the `clean` package with the accepted runtime changes
+  - update docs for nearest-mode modern-display guidance, perf workflow, and any new sampler flags
+  - record the final keep/reject decision for any optional scaler follow-up left out of scope
+- [ ] Estimated effort (target 45-90 min): `45-60 min`
+- [x] Dependencies:
+  - Chunk 3
+- [x] Chunk-end verification commands:
+  - [x] Tier 1 smoke:
+    - `git diff --check`
+    - `bash -n tools/mister/perf-sampler.sh`
+    - `docker exec 3sx-mister-build bash -lc 'set -euxo pipefail; cd /work-arm; export CC=clang; export CXX=clang++; export PKG_CONFIG_LIBDIR=/usr/lib/arm-linux-gnueabihf/pkgconfig:/usr/share/pkgconfig; export CFLAGS="--target=arm-linux-gnueabihf --gcc-toolchain=/usr -isystem /usr/arm-linux-gnueabihf/include"; export CXXFLAGS="$CFLAGS"; export LDFLAGS="--target=arm-linux-gnueabihf --gcc-toolchain=/usr"; cmake -S . -B build/mister-clean -DCMAKE_BUILD_TYPE=Release -DPORT_MISTER=ON -DENABLE_PERF_TELEMETRY=OFF -DCMAKE_C_COMPILER_TARGET=arm-linux-gnueabihf -DCMAKE_CXX_COMPILER_TARGET=arm-linux-gnueabihf; cmake --build build/mister-clean --parallel 2; cmake --install build/mister-clean --prefix build/mister-clean-install; tools/mister/package.sh build/mister-clean-install build/mister-clean-package; readelf -h build/mister-clean-package/bin/3sx | sed -n "1,18p"'`
+    - `rm -rf build/mister-clean-package-arm && docker cp 3sx-mister-build:/work-arm/build/mister-clean-package ./build/mister-clean-package-arm`
+  - [x] Tier 2 targeted (if checkpoint chunk):
+    - `MISTER_HOST=192.168.1.171 MISTER_USER=root MISTER_PASSWORD=1 tools/mister/misterctl.sh deploy --src build/mister-clean-package-arm`
+    - `MISTER_HOST=192.168.1.171 MISTER_USER=root MISTER_PASSWORD=1 tools/mister/misterctl.sh probe`
+    - bounded nearest-mode player validation on-device with the clean package
+- [x] Chunk gate pass criteria:
+  - clean package deploys and probes successfully with the accepted nearest runtime path
+  - docs match the actual capture and validation flow
+  - the repo is ready for another nearest-mode optimization pass without rediscovering the same plumbing
+- [x] Evidence to capture in progress log:
+  - final nearest before/after summary
+  - doc files updated
+  - any remaining follow-up item that should become a separate todo stream
+
+## Verification Gates
+
+- [x] Tier 1 (per chunk smoke):
+  - `git diff --check`
+  - `bash -n tools/mister/perf-sampler.sh` when that file changes
+  - telemetry or clean build/package for the flavor touched by the chunk
+- [x] Tier 2 (phase targeted every 1-2 chunks):
+  - deploy telemetry package and rerun the nearest capture matrix
+  - probe MiSTer after every runtime chunk
+  - rerun native control guardrails whenever present-path code changes
+- [x] Tier 3 (full-suite final gate only):
+  - deploy clean package to MiSTer
+  - verify nearest modern-display play on the clean package
+  - update docs and memory artifacts only after the runtime keep decision is final
+
+## Checklist Sync Rules
+
+- [x] Step checkbox is marked `[x]` immediately after its verification command passes.
+- [x] Chunk checkboxes are marked `[x]` only after required chunk gate commands pass.
+- [x] Goal/success and other summary checkboxes are updated when evidence is recorded.
+
+## Right-Sized Steps
+
+- [x] Step 1: add `--scale-mode` override support to `tools/mister/perf-sampler.sh`
+  - Chunk: `Chunk 1`
+  - Affected area or component: `tools/mister/perf-sampler.sh`
+  - Verification method and command: `bash -n tools/mister/perf-sampler.sh`
+  - Dependencies: none
+
+- [x] Step 2: export active scale-mode into perf metadata or backend diagnostics used by the sampler
+  - Chunk: `Chunk 1`
+  - Affected area or component: `src/port/sdl/sdl_app.c`, possibly `src/main.c` if a new metadata field is needed
+  - Verification method and command: telemetry build/package plus one nearest tagged capture that reports scale-mode explicitly
+  - Dependencies: Step 1
+
+- [x] Step 3: recover the nearest baseline matrix for control, stage-heavy, Ibuki stage 7, and attract-demo logo
+  - Chunk: `Chunk 1`
+  - Affected area or component: MiSTer telemetry package and perf artifacts under `artifacts/mister-port/perf/`
+  - Verification method and command: the four Chunk 1 targeted `perf-sampler` commands
+  - Dependencies: Steps 1-2
+
+- [x] Step 4: extend MiSTer native-path selection so nearest uses `native_output_rect`/fbdev presentation
+  - Chunk: `Chunk 2`
+  - Affected area or component: `src/port/sdl/sdl_app.c`
+  - Verification method and command: telemetry build/package plus a nearest control capture showing `software_frame_mapped_scale` or `current_target_mapped_scale`
+  - Dependencies: Step 3
+
+- [x] Step 5: preserve correctness for message-content, screenshots, and fallback readback when nearest uses the native path
+  - Chunk: `Chunk 2`
+  - Affected area or component: `src/port/sdl/sdl_app.c`, `src/port/sdl/fbdev_presenter.c`
+  - Verification method and command: MiSTer `probe`, bounded smoke, and nearest attract-logo capture after the routing change
+  - Dependencies: Step 4
+
+- [x] Step 6: rerun native and nearest guardrails after the routing change
+  - Chunk: `Chunk 2`
+  - Affected area or component: MiSTer telemetry package and capture matrix
+  - Verification method and command: nearest control/stage-heavy/attract plus native control reruns
+  - Dependencies: Step 5
+
+- [x] Step 7: replace mapped nearest per-pixel divides with cached LUT or fixed-point stepping
+  - Chunk: `Chunk 3`
+  - Affected area or component: `src/port/sdl/fbdev_presenter.c`
+  - Verification method and command: telemetry build/package plus nearest control rerun showing lower `present`/`copy` cost
+  - Dependencies: Step 6
+
+- [x] Step 8: preserve or improve row-reuse behavior in the mapped scaler for repeated source rows
+  - Chunk: `Chunk 3`
+  - Affected area or component: `src/port/sdl/fbdev_presenter.c`
+  - Verification method and command: nearest stage-heavy and Ibuki reruns after Step 7
+  - Dependencies: Step 7
+
+- [x] Step 9: validate nearest improvements against native and square-pixels guardrails
+  - Chunk: `Chunk 3`
+  - Affected area or component: telemetry capture matrix
+  - Verification method and command: nearest and native/square-pixels targeted captures with fresh `c3` tags
+  - Dependencies: Step 8
+
+- [x] Step 10: deploy the clean package and update docs for nearest modern-display workflow
+  - Chunk: `Chunk 4`
+  - Affected area or component: `docs/config.md`, `docs/mister-runbook.md`, `docs/agent-memory/mister-performance.md`, clean package output
+  - Verification method and command: clean build/package, `misterctl.sh deploy`, and `misterctl.sh probe`
+  - Dependencies: Step 9
+
+## Parallelizable Work
+
+- [x] Workstream:
+  - local inspection of `fbdev_presenter.c` scale helpers and review of existing perf JSON can happen in parallel with Docker telemetry builds once Chunk 1 plumbing is authored
+  - Parallel with:
+    - build/package turnaround
+  - Preconditions:
+    - no concurrent MiSTer deploy/capture session is holding the local MiSTer lock
+
+## Open Questions
+
+- [x] Question:
+  - nearest is the primary target; if the mapped-scaler rewrite ends up also benefiting `linear` or `soft-linear`, keep that as an incidental win rather than widening scope during the first pass
+- [x] Question:
+  - if Chunk 3 still leaves nearest clearly bandwidth-bound after path routing and LUT work, start a separate follow-up stream for dirty-row or tile-aware scaled software-frame present instead of overloading this checklist
+
+## Cycle Log
+
+- 2026-03-17T01:56:03-04:00
+  - Bottleneck targeted:
+    - the accidentally dropped stage-`7` opaque-row fast path on the broader nearest-HDMI gameplay raster lane
+  - Change summary:
+    - restored the accepted `src/port/sdl/sdl_game_renderer.c` helper/use sites that compute a per-binding full-opaque row mask for `256x256` ARGB software-source surfaces and let the recovered `rect_uv_parallelogram` shear path `SDL_memcpy` fully opaque rows instead of rechecking alpha per pixel
+    - rebuilt/exported `build/loop-row-mask-telemetry-post-20260317a` through the validated `/work-arm` ARM telemetry path after first capturing same-source baselines on `build/loop-baseline-telemetry-current-20260317a`, redeployed with `tools/mister/misterctl.sh`, reran the gameplay-first nearest matrix plus native guard, and closed review with an explorer pass that found no actionable issues
+  - Verification result summary:
+    - `git diff --check` passed before the ARM rebuild; both telemetry packages built, deployed, probed, and bounded-smoked successfully on MiSTer with `dummy/software`, `FBDEV: active`, `scale-mode=nearest`, and `Software frame mode: on`
+    - low-overhead nearest captures improved across the same-session gameplay-first matrix: `control 74.7301 -> 75.5319 FPS`, `training-yun-ryu-ryu-stage 61.1954 -> 62.9272 FPS`, `basic-exchange --test-stage 7 64.3678 -> 65.8424 FPS`, and `effect-heavy --test-stage 7 69.6488 -> 71.6040 FPS`; the native guard also improved `91.1749 -> 91.9492 FPS`
+    - matched full telemetry on the recovered ordinary raster lane also improved while keeping the same family mix: `basic-exchange --test-stage 7` moved `55.4909 -> 56.0972 FPS`, `render.mean_ms 6.8696 -> 6.6869`, and `generic_textured.mean_ms 0.358811 -> 0.274096`, while `present_copy.mean_ms` stayed effectively flat `6.2368 -> 6.2551` and the recovered textured-geometry families remained the same three `rect_uv_parallelogram` handles (`97/98/99`)
+  - Keep/rollback decision with reason:
+    - keep; this was not a new speculative runtime shape, it restored an already accepted ordinary gameplay raster win that had been accidentally dropped, and the same-source MiSTer matrix re-confirmed the player-visible gain on both ordinary gameplay and stage-`7` effect pressure without regressing the native guard
+  - Final commit hash:
+    - recorded in the loop closure commit
+  - Next best candidate optimization:
+    - treat this reland as closed and move on to newly measured residue; do not spend another cycle re-proving the same row-mask win unless fresh captures say it drifted again
+
+- 2026-03-16T20:17:33-0400
+  - Research target:
+    - test whether caching sparse repeated-row destination byte spans and per-row sparse copy totals can trim nearest HDMI repeat-row replay overhead without changing copied-byte shape or template gating
+  - Change summary:
+    - tried a narrow single-file reland in `src/port/sdl/fbdev_presenter.c` that cached each mapped run's destination byte offset/span plus each changed source row's sparse copied-byte total and valid sparse run count, then reused that metadata inside sparse repeated-row replay instead of rebuilding offsets and copy counts on every repeated row
+    - rebuilt/exported `build/mister-telemetry-package-arm-nearest-r48-repeat-byte-spans-20260316a` through the validated `/work-arm` ARM telemetry path in `3sx-mister-build-nearest-hdmi-perf`, redeployed the accepted `build/mister-telemetry-package-arm-nearest-r47-repeat-metadata-20260316a` first for same-session baselines, then deployed/probed/smoked the candidate, captured the bounded nearest gameplay matrix plus native guard, rolled the source diff back locally, and restored the accepted `r47` package on-device after the keep gates failed
+    - completed the required review pass as a manual scoped review of the rejected single-file diff with focus on cached-byte-span reset correctness, row/run count coherence, and preserving identical copied-byte coverage; no actionable correctness issue survived review, so the rejection stayed purely performance-based
+  - Verification evidence:
+    - `git diff --check` passed before the build; the `/work-arm` ARM telemetry rebuild/install/package succeeded in `3sx-mister-build-nearest-hdmi-perf`, `readelf -h` still reported `ELF32` `ARM` with hard-float ABI, and the exported candidate package was `build/mister-telemetry-package-arm-nearest-r48-repeat-byte-spans-20260316a`
+    - accepted-runtime baseline `deploy` and `probe`, candidate `deploy` / `probe` / `smoke`, and final rollback `deploy` / `probe` back to `build/mister-telemetry-package-arm-nearest-r47-repeat-metadata-20260316a` all passed through `tools/mister/misterctl.sh`; every probe stayed on `dummy/software` with `FBDEV: active (1920x1080 ...)`, `Native render path: enabled`, and direct `software_frame_mapped_scale` or `software_frame_exact`
+    - nearest control only improved within noise at unchanged workload shape: `nearest-r48-base-control-basic = 75.9844 FPS / 13.1606 / 7.0027 / 2.9301 ms` versus `nearest-r48-post-control-basic = 76.0840 / 13.1434 / 6.9214 / 2.9959` (`frame / render / present`) with identical `mapped_repeat_rows 205.02`, `mapped_repeat_run_copies 1020.43`, and `copy_bytes 183105.60`
+    - the recovered ordinary gameplay lane drifted slightly the wrong way: `nearest-r48-base-basic-exchange-basic = 63.6727 FPS / 15.7053 / 6.9811 / 4.5370 ms` versus `nearest-r48-post-basic-exchange-basic = 63.5574 / 15.7338 / 6.9401 / 4.5591` with unchanged `mapped_repeat_rows 355.06`, `mapped_repeat_run_copies 2447.34`, and `copy_bytes 495530.19`
+    - the recovered ordinary pressure lane also regressed at identical copy workload: `nearest-r48-base-pressure-exchange-basic = 44.4815 FPS / 22.4813 / 8.0136 / 9.3520 ms` versus `nearest-r48-post-pressure-exchange-basic = 44.0971 / 22.6772 / 8.0096 / 9.5538`, again with unchanged `mapped_repeat_rows 691.03`, `mapped_repeat_run_copies 4674.51`, and `copy_bytes 2865058.71`
+    - trusted full Genei regressed at identical workload shape, including the explicit replay timing split: `nearest-r48-base-genei-full = 34.8339 FPS / 28.7077 / 10.4071 / 10.3481 / 10.3350 ms` versus `nearest-r48-post-genei-full = 34.6409 / 28.8676 / 10.4330 / 10.5142 / 10.5000` (`frame / render / present / present_copy`), while `mapped_first_row.mean_ms` rose `2.2685 -> 2.3316`, `mapped_repeat_row.mean_ms` rose `3.7693 -> 3.8095`, and `copy_bytes` plus repeat-run counts stayed fixed
+    - the native guard improved rather than regressed: `native-r48-base-control-basic = 93.1338 FPS / 10.7372 / 6.9632 / 0.5285 ms` versus `native-r48-post-control-basic = 94.5027 / 10.5817 / 6.8789 / 0.5205`
+  - Keep/rollback decision with reason:
+    - rollback; caching sparse repeated-row byte spans and row totals did not move the actual repeated-row workload, left the player-visible ordinary nearest lanes flat-to-worse, and regressed trusted full Genei on identical copied bytes, so it is not a decision-grade nearest HDMI win
+  - Next best candidate:
+    - do not reopen this cached-byte-span replay-body shape without telemetry proving the remaining sparse repeated-row overhead is dominated by offset/byte-count arithmetic rather than the `memcpy` traffic itself; if presenter work continues, prefer a different tail-gated repeat-row body cut, otherwise re-rank broader gameplay raster residue against the restored `r47` baseline
+
+- 2026-03-16T23:10:18-0400
+  - Research target:
+    - test whether a cheaper nearest presenter repeat-row-body cut can now land on the current accepted runtime by caching per-source-row repeat metadata once during mapped-row cache build instead of rescanning run spans on every repeated row
+  - Change summary:
+    - reopened the older metadata-only presenter lane in `src/port/sdl/fbdev_presenter.c` and cached each changed source row's dense-repeat destination span plus repeat-gap pixels alongside the existing mapped-row cache, then reused that metadata in repeat-work prediction and repeated-row replay without changing copy policy, copied bytes, or template gating
+    - rebuilt/exported `build/mister-telemetry-package-arm-nearest-r47-repeat-metadata-20260316a` through the validated `/work-arm` ARM telemetry path in `3sx-mister-build-nearest-hdmi-perf`, redeployed the accepted `build/mister-telemetry-package-arm-nearest-r41-sparse-shape-20260316a` first for same-session baselines, then deployed/probed/smoked the candidate and reran the matched nearest matrix on-device
+    - completed the required review pass as a manual scoped review of the single-file presenter diff with focus on cache lifetime, per-row reset correctness on changed/unchanged rows, and preserving identical repeat-row copy policy and copy-byte shape; no actionable correctness issue survived review, so no post-review code fix was needed
+  - Verification evidence:
+    - `git diff --check` passed before the build; the `/work-arm` ARM telemetry rebuild/install/package succeeded in `3sx-mister-build-nearest-hdmi-perf`, `readelf -h` still reported `ELF32` `ARM` with hard-float ABI, and the exported candidate package was `build/mister-telemetry-package-arm-nearest-r47-repeat-metadata-20260316a`
+    - accepted-runtime baseline `deploy`, candidate `deploy`, both `probe` runs, and candidate `smoke` all passed through `tools/mister/misterctl.sh`; every capture stayed on `dummy/software` with `FBDEV: active (1920x1080 ...)`, `Native render path: enabled`, and direct `software_frame_mapped_scale` or `software_frame_exact`
+    - nearest control stayed effectively flat while present trimmed slightly at unchanged bytes: `nearest-r47-base-control-basic = 75.8209 FPS / 13.1890 / 7.0366 / 2.9559 ms` versus `nearest-r47-post-control-basic = 75.8121 / 13.1905 / 7.0711 / 2.9021` (`frame / render / present`) with `copy_bytes 183105.60` on both runs
+    - the recovered ordinary gameplay lane improved on the first post run and held the rerun: `nearest-r47-base-basic-exchange-basic = 62.9061 FPS / 15.8967 / 7.0937 / 4.5755 ms`, `nearest-r47-post-basic-exchange-basic = 63.5992 / 15.7235 / 6.9766 / 4.4106`, and `nearest-r47-post-basic-exchange-basic-rerun = 63.7713 / 15.6810 / 6.9691 / 4.4799` with unchanged `copy_bytes 495530.19`
+    - trusted `genei-jin-first-activation` basic improved on the player-visible lane at unchanged bytes and activation timing: `nearest-r47-base-genei-basic = 41.0823 FPS / 24.3414 / 10.1720 / 7.6478 ms` versus `nearest-r47-post-genei-basic = 41.5436 / 24.0711 / 10.1232 / 7.3896`, with `copy_bytes 1895206.84` and `p1_super_first = 179` on both runs
+    - matched full Genei improved at unchanged workload shape: `nearest-r47-base-genei-full = 34.3606 FPS / 29.1031 / 10.5423 / 10.5761 / 10.5587 ms` versus `nearest-r47-post-genei-full = 34.6926 / 28.8246 / 10.4810 / 10.3374 / 10.3246` (`frame / render / present / present_copy`), while `copy_bytes` stayed fixed `1895206.84`, `mapped_repeat_row.mean_ms` fell `3.8285 -> 3.7508`, and the active Genei window moved `34.7153 / 12.6057 / 13.6240 / 13.6011 ms` to `34.2553 / 12.6017 / 13.2370 / 13.2237` with `mapped_repeat_row.mean_ms 4.7842 -> 4.6858`
+    - the native guard improved instead of regressing: `native-r47-base-control-basic = 92.4684 FPS / 10.8145 / 7.0246 / 0.5622 ms` versus `native-r47-post-control-basic = 93.8077 / 10.6601 / 6.9357 / 0.5119`
+  - Keep/rollback decision with reason:
+    - keep; on the current accepted runtime, caching repeat-row metadata once per changed source row is finally a real nearest-HDMI win instead of a bookkeeping-only micro-move. It leaves bytes and routing unchanged, stays flat on `control`, improves the recovered ordinary `basic-exchange` lane on both post runs, improves trusted Genei basic and full, and improves the native guard
+  - Next best candidate:
+    - if presenter work continues, stay on the repeat-row body and target a tighter tail-gated cut that can move more than the remaining ~`0.1 ms` repeat-row slice without reintroducing the previously rejected dense-overcopy or template-gap shapes; otherwise re-rank this improved presenter baseline against broader gameplay raster residue again before spending the next loop on `sdl_game_renderer.c`
+
+- 2026-03-16T19:32:24-0400
+  - Research target:
+    - recover a separate ordinary nearest gameplay gate with attacks, jumps, and non-super exchanges that actually exercises software-frame raster residue before another broader `sdl_game_renderer.c` reland
+  - Change summary:
+    - tried a narrow three-file measurement-support reland in `src/test/test_runner.c`, `src/main.c`, and `tools/mister/perf-sampler.sh` that added a scripted `raster-exchange` preset for `stage 19 / Ryu-Ken / SA0-0`, first as a mixed projectile-plus-basic cycle and then as a reordered basic-first cycle so the projectile window landed after the `60`-frame warmup
+    - rebuilt/exported telemetry packages `build/mister-telemetry-package-arm-raster-exchange-20260316b` and `build/mister-telemetry-package-arm-raster-exchange-20260316d` through the validated `/work-arm` ARM path in `3sx-mister-build-nearest-hdmi-perf`, deployed/probed the candidate on MiSTer, captured matched nearest `control`, `raster-exchange` basic, and `raster-exchange` full telemetry, then rolled the source diff back and restored `build/mister-telemetry-package-arm-nearest-r41-sparse-shape-20260316a` on-device after the new lane never crossed into raster-residue work
+    - completed the required review pass as a manual scoped review of the reverted three-file harness diff with focus on test-runner isolation, preset-only behavior changes, and no gameplay/runtime effect outside test mode; no actionable correctness issue survived review, so the rejection stayed purely measurement-based
+  - Verification evidence:
+    - `git diff --check` and `bash -n tools/mister/perf-sampler.sh` passed before the candidate build and again after rollback; the `/work-arm` telemetry rebuild/install/package succeeded in `3sx-mister-build-nearest-hdmi-perf`, and `readelf -h` inside the container still reported `ELF32` `ARM` with hard-float ABI
+    - candidate `deploy` and `probe` passed through `tools/mister/misterctl.sh`; after rollback, redeploy/probe/smoke of `build/mister-telemetry-package-arm-nearest-r41-sparse-shape-20260316a` also passed with the same `dummy/software` + `FBDEV` nearest direct-present probe state
+    - matched nearest control stayed on the accepted runtime shape: `raster-exchange-c46-control-basic = 75.5802 FPS / 13.2310 / 6.9972 / 2.9868 ms` (`frame / render / present`) with `copy_bytes 183105.60`
+    - the first candidate lane was heavier but still not raster-aware: `raster-exchange-c46-basic = 44.3361 FPS / 22.5550 / 8.0310 / 8.9806 ms` and `raster-exchange-c46-full = 36.5886 FPS / 27.3309 / 8.3003 / 12.2577 ms`, yet full telemetry stayed at `software_frame_fast_exact_tasks.mean = 303.00`, `software_frame_fast_scaled_tasks.mean = 6.38`, `software_frame_fast_non_integer_tasks.mean = 0.00`, and `software_frame_generic_textured_tasks.mean = 0.00`
+    - reordering the script so the projectile burst fell after warmup improved the lane but still failed the real gate: `raster-exchange-c46r-basic = 48.0098 FPS / 20.8291 / 8.2685 / 6.9329 ms` and `raster-exchange-c46r-full = 38.9051 FPS / 25.7036 / 8.6974 / 10.0231 ms`, while full telemetry still stayed entirely on `software_frame_fast_exact_tasks.mean = 318.71` plus `software_frame_fast_scaled_tasks.mean = 6.36` with zero `software_frame_fast_non_integer_*` and zero `software_frame_generic_textured_*`
+  - Keep/rollback decision with reason:
+    - rollback; the new lane is reproducible, heavy, and player-visible, but it is still only a presenter/copy-heavy direct-present workload and does not recover the missing ordinary raster-aware gate needed before another broader `sdl_game_renderer.c` runtime reland
+  - Next best candidate:
+    - do not reopen this mixed ordinary-plus-projectile Ryu/Ken stage-19 harness without telemetry proving real `fast_non_integer` or `generic_textured` work inside the sampled window; the next measurement-support loop should start from a different ordinary gameplay family whose full telemetry already shows non-zero raster residue instead of trying to force it out of the current `fast_exact` lane
+
+- 2026-03-16T19:10:21-0400
+  - Research target:
+    - test whether extreme nearest presenter tail frames can trade a little extra repeated-row overcopy for materially lower replay fanout by relaxing dense repeated-row coverage only on the heavy tail, while keeping ordinary gameplay and native guardrails stable
+  - Change summary:
+    - tried a narrow single-file reland in `src/port/sdl/fbdev_presenter.c` that added a tail-only dense-repeat helper and let the repeat-row body collapse near-dense sparse rows to one span copy only when the predicted repeat workload hit the extreme Genei-style tail
+    - rebuilt/exported `build/mister-telemetry-package-arm-nearest-r45-tail-dense-20260316a` through the validated `/work-arm` ARM telemetry path in `3sx-mister-build-nearest-hdmi-perf`, captured fresh pre-change nearest `control`, `basic-exchange`, `pressure-exchange`, trusted full `genei-jin-first-activation`, and native guard baselines on the current runtime, deployed the candidate, reran the same matrix, then rolled the source diff back and restored `build/mister-telemetry-package-arm-nearest-r41-sparse-shape-20260316a` on-device after the keep gates failed
+    - completed the required review pass as a manual scoped review of the reverted single-file presenter diff with focus on repeat-row source correctness, tail-gate dormancy on non-tail frames, and no gameplay-affecting behavior changes; no actionable correctness issue survived review, so the rejection stayed purely performance-based
+  - Verification evidence:
+    - `git diff --check` passed before the candidate build; the `/work-arm` ARM telemetry rebuild/install/package succeeded in `3sx-mister-build-nearest-hdmi-perf`, `readelf -h` still reported `ELF32` `ARM` with hard-float ABI, and the exported candidate package was `build/mister-telemetry-package-arm-nearest-r45-tail-dense-20260316a`
+    - candidate `deploy`, `probe`, and bounded `smoke` passed through `tools/mister/misterctl.sh`; after rollback, redeploy/probe/smoke of `build/mister-telemetry-package-arm-nearest-r41-sparse-shape-20260316a` also passed with the same `dummy/software` + `FBDEV` nearest direct-present probe state
+    - nearest control stayed flat: `loop45-pre-control = 75.5199 FPS / 13.2415 / 7.0337 / 2.9538 ms` versus `loop45-post-control = 75.5437 / 13.2374 / 7.0036 / 2.9756` (`frame / render / present`)
+    - ordinary `basic-exchange` improved only slightly: `loop45-pre-basic-exchange = 63.4216 FPS / 15.7675 / 6.8730 / 4.6287 ms` versus `loop45-post-basic-exchange = 63.9611 / 15.6345 / 6.8632 / 4.5710`
+    - the recovered ordinary pressure lane failed decisively: `loop45-pre-pressure-exchange = 43.7485 FPS / 22.8579 / 8.0290 / 9.6639 ms` versus `loop45-post-pressure-exchange = 38.3089 / 26.1036 / 8.0340 / 12.9883`, with `copy_bytes` worsening `2865058.71 -> 2912658.05`
+    - trusted full Genei also regressed materially: `loop45-pre-genei = 33.3181 FPS / 30.0137 / 10.5492 / 11.5892 ms` versus `loop45-post-genei = 31.5105 / 31.7354 / 10.4295 / 13.4203`, while the trusted active-super window stayed present (`p1_super_active_frames = 181`, `p1_super_first = 119`) on both runs
+    - native guard stayed inside tolerance but still dipped slightly: `loop45-pre-native-control = 93.2605 FPS / 10.7227 / 6.9912 / 0.5134 ms` versus `loop45-post-native-control = 92.4653 / 10.8149 / 7.0078 / 0.5376`
+  - Keep/rollback decision with reason:
+    - rollback; even though `control` stayed flat and `basic-exchange` nudged up, the tail-only near-dense replay overcopy regressed the player-visible heavy lanes that matter more on modern HDMI, especially `pressure-exchange` and trusted full Genei, so it is not a decision-grade nearest-HDMI win
+  - Next best candidate:
+    - do not reopen this tail-only dense-repeat relaxation without telemetry that shows the heavy nearest lanes can absorb the added copied bytes; if presenter work continues, prefer a repeat-row body cut that reduces fanout without broadening span overcopy on `pressure-exchange` or trusted Genei
+
+- 2026-03-16T18:40:56-0400
+  - Research target:
+    - recover a repeatable ordinary gameplay nearest gate with attacks, hitsparks, jumps, and short exchanges that is heavier than idle or `basic-exchange` and can validate player-visible slowdown outside Genei-only captures
+  - Change summary:
+    - added a scripted `pressure-exchange` preset in `src/test/test_runner.c`, exposed it through `src/main.c`, and taught `tools/mister/perf-sampler.sh` the new preset defaults so nearest captures can start at `game-input-active` on `stage 19 / Ryu-Ken / SA0-0` without supers
+    - rebuilt/exported `build/mister-telemetry-package-arm-pressure-exchange-20260316b` through the validated `/work-arm` ARM telemetry path in `3sx-mister-build-nearest-hdmi-perf`, then deployed, probed, and smoked it through `tools/mister/misterctl.sh`
+    - the required automated review helper stalled again, so the review pass closed as a manual scoped review of the three-file measurement-support diff with no actionable correctness issues
+  - Verification evidence:
+    - `git diff --check` and `bash -n tools/mister/perf-sampler.sh` passed; after refreshing `/work-arm` with `build-deps.sh --profile mister`, the ARM telemetry rebuild/install/package succeeded and `readelf -h` still reported `ELF32` `ARM` with hard-float ABI
+    - candidate `deploy`, `probe`, and bounded `smoke` passed through `tools/mister/misterctl.sh`, keeping the same `dummy/software` + `FBDEV` nearest direct-present probe state
+    - full telemetry established the new ordinary gameplay lane and its current limit: `pressure-exchange-c44-full = 36.2125 FPS / 27.6148 / 8.2157 / 13.0790 ms` (`frame / render / present`) with `copy_bytes 2865058.71`, `software_frame_mapped_scale = 1.0`, `software_frame_fast_exact_tasks.mean = 300.27`, `software_frame_fast_scaled_tasks.mean = 4.79`, `software_frame_fast_non_integer_tasks.mean = 0.00`, and `software_frame_generic_textured_tasks.mean = 0.00`
+    - the decision-grade nearest gameplay capture landed at `pressure-exchange-c44-basic = 43.6910 FPS / 22.8880 / 5.1055 / 8.0664 / 9.7161 ms` (`frame / update / render / present`)
+    - matched nearest idle control landed at `pressure-exchange-c44-control-basic = 76.1958 FPS / 13.1241 / 3.2130 / 6.9518 / 2.9593 ms` with `copy_bytes 183105.60`
+  - Keep/rollback decision with reason:
+    - keep as measurement support only; `pressure-exchange` is a valid ordinary nearest gameplay pressure lane for presenter/copy-heavy validation, but it does not yet cover the broader ordinary raster-residue lane because the first verified full run stayed entirely in `fast_exact` plus a small `fast_scaled` tail
+  - Next best candidate:
+    - use `pressure-exchange` alongside `control` before another nearest presenter loop, but if the next runtime loop targets broader gameplay raster residue, recover or define a separate ordinary raster-aware gate instead of assuming this preset already covers it
+
+- 2026-03-16T21:22:40-0400
+  - Research target:
+    - test whether nearest presenter work can recover more ordinary nearest-HDMI FPS by sourcing the remaining non-tile full-span repeated mapped rows from the existing RAM row template instead of rereading `fb_map`, while validating with recovered ordinary `basic-exchange`, `effect-heavy`, trusted full `genei-jin-first-activation`, `control`, and a native guard
+  - Change summary:
+    - tried a narrow single-file reland in `src/port/sdl/fbdev_presenter.c` that seeded `mapped_repeat_row_template_pixels` from already-rasterized non-tile mapped rows only when the same `src_y` would replay at least two more times, then let later full-span repeats copy from RAM instead of from the previous framebuffer row
+    - rebuilt/exported `build/mister-telemetry-package-arm-nearest-r43-fullspan-template-20260316a` through the validated `/work-arm` ARM telemetry path in `3sx-mister-build-nearest-hdmi-perf`, captured fresh accepted-runtime baselines, deployed the candidate with `tools/mister/misterctl.sh`, reran the same nearest gameplay matrix plus native guard, then rolled the source diff back and restored `build/mister-telemetry-package-arm-nearest-r41-sparse-shape-20260316a` on-device after the keep gates failed
+    - completed the required review pass as a manual scoped review of the reverted single-file presenter diff with focus on repeat-group template lifetime, no gameplay-affecting behavior changes, and parity with the accepted non-template row path; no actionable correctness issue survived review, so the rejection stayed purely performance-based
+  - Verification evidence:
+    - `git diff --check` passed before the candidate build; the `/work-arm` ARM telemetry rebuild/install/package succeeded, `readelf -h` still reported `ELF32` `ARM` with hard-float ABI, and the exported candidate package was `build/mister-telemetry-package-arm-nearest-r43-fullspan-template-20260316a`
+    - candidate `deploy`, `probe`, and bounded `smoke` passed through `tools/mister/misterctl.sh`; after rollback, redeploy/probe of `build/mister-telemetry-package-arm-nearest-r41-sparse-shape-20260316a` also passed with the same `dummy/software` + `FBDEV` nearest direct-present probe state
+    - nearest control improved modestly: `loop43-base-control = 75.5803 FPS / 13.2310 / 7.0105 / 3.0080 ms` versus `loop43-post-control = 76.5113 / 13.0700 / 6.9981 / 2.9114` (`frame / render / present`)
+    - the recovered ordinary gameplay lane stayed effectively flat and did not show the intended workload move: `loop43-base-basic-exchange = 53.4554 FPS / 18.7072 / 7.1284 / 6.4707 ms` versus `loop43-post-basic-exchange = 53.4706 / 18.7019 / 7.1758 / 6.4693`, while `mapped_repeat_rows`, `mapped_repeat_template_rows`, `mapped_repeat_run_copies`, `mapped_repeat_template_run_copies`, and `copy_bytes` all stayed unchanged at `355.06`, `177.33`, `2447.34`, `1409.89`, and `495530.19`
+    - ordinary gameplay pressure outside the exact exchange regressed: `loop43-base-effect-heavy = 42.0501 FPS / 23.7812 / 9.2433 / 7.5742 ms` versus `loop43-post-effect-heavy = 41.8057 / 23.9202 / 9.3690 / 7.5838`, with `copy_bytes` unchanged `838947.17` and `mapped_repeat_row.mean_ms` worsening `2.7996 -> 2.8402`
+    - trusted full Genei regressed materially at unchanged workload shape: `loop43-base-genei = 34.8065 FPS / 28.7303 / 10.4274 / 10.4344 ms` versus `loop43-post-genei = 34.3127 / 29.1437 / 10.4747 / 10.6738`, while `mapped_repeat_rows`, `mapped_repeat_template_rows`, `mapped_repeat_run_copies`, `mapped_repeat_template_run_copies`, and `copy_bytes` stayed fixed at `599.25`, `397.81`, `3732.92`, `3054.79`, and `1895206.84`
+    - native guard stayed close but slightly down: `loop43-base-native-control = 92.2672 FPS / 10.8381 / 7.0411 / 0.5433 ms` versus `loop43-post-native-control = 91.9275 / 10.8781 / 7.1150 / 0.5323`
+  - Keep/rollback decision with reason:
+    - rollback; seeding the existing RAM template from already-rasterized non-tile full-span rows did not change the measured repeat-row workload shape or copied bytes on the ordinary or trusted heavy gates, left `basic-exchange` flat, and regressed both `effect-heavy` and trusted full Genei, so it is not a decision-grade nearest-HDMI win
+  - Next best candidate:
+    - do not reopen this non-tile full-span RAM-seeding shape without fresh telemetry that explicitly proves the remaining non-template repeated rows are a large source-side hotspot; re-rank broader gameplay raster residue against another nearest presenter body cut using `basic-exchange` plus an ordinary effect lane before another RAM-source reland
+
+- 2026-03-16T17:48:52-0400
+  - Research target:
+    - test whether a narrow nearest-presenter replay-body change can cut repeat-row fanout on template-backed sparse rows by merging tiny gaps, while using recovered ordinary `basic-exchange` plus trusted full `genei-jin-first-activation` as the player-visible keep/reject gates instead of Genei alone
+  - Change summary:
+    - tried a narrow single-file reland in `src/port/sdl/fbdev_presenter.c` that seeded sparse template rows with tiny-gap spans and replayed merged template-backed spans on repeated rows to reduce very small `memcpy` fanout in the nearest direct-present path
+    - rebuilt/exported `build/mister-telemetry-package-arm-nearest-r42-gap-merge-20260316a` through the documented `/work-arm` ARM telemetry path in `3sx-mister-build-nearest-hdmi-perf`, captured a fresh accepted-runtime baseline matrix, deployed the candidate with `tools/mister/misterctl.sh`, reran the same nearest gameplay matrix plus native guard, then rolled the source diff back and restored `build/mister-telemetry-package-arm-nearest-r41-sparse-shape-20260316a` on-device after the keep gates failed
+    - completed the required review pass as a manual scoped review of the rejected single-file presenter diff with focus on template validity across merged tiny gaps, repeat-row accounting, and no gameplay-affecting behavior changes; no actionable correctness issue survived review, so the rejection stayed purely performance-based
+  - Verification evidence:
+    - `git diff --check` passed before the build; the `/work-arm` ARM telemetry rebuild/install/package succeeded, `readelf -h` still reported `ELF32` `ARM` with hard-float ABI, and the exported candidate package was `build/mister-telemetry-package-arm-nearest-r42-gap-merge-20260316a`
+    - candidate `deploy`, `probe`, and bounded `smoke` passed through `tools/mister/misterctl.sh`; after rollback, redeploy/probe of `build/mister-telemetry-package-arm-nearest-r41-sparse-shape-20260316a` also passed with the same nearest direct-present probe state
+    - nearest control stayed within noise: `loop42-base-control = 66.5771 FPS / 15.0202 / 7.3397 / 3.9765 ms` versus `loop42-post-control = 66.8798 / 14.9522 / 7.2582 / 4.0205` (`frame / render / present`)
+    - the recovered ordinary gameplay lane regressed: `loop42-base-basic-exchange = 54.5951 FPS / 18.3167 / 6.9451 / 6.3159 ms` versus `loop42-post-basic-exchange = 53.4093 / 18.7233 / 7.0474 / 6.7022`
+    - trusted full Genei regressed materially: `loop42-base-genei = 34.4320 FPS / 29.0428 / 10.4789 / 10.5709 ms` versus `loop42-post-genei = 32.9101 / 30.3858 / 10.5393 / 11.9203`
+    - native guard stayed essentially flat: `loop42-base-native-control = 86.7814 FPS / 11.5232 / 7.3310 / 0.5217 ms` versus `loop42-post-native-control = 86.8836 / 11.5097 / 7.2583 / 0.5633`
+  - Keep/rollback decision with reason:
+    - rollback; the tiny-gap merged sparse-template replay shape increased player-visible present cost on both the recovered ordinary exchange lane and trusted full Genei, so it is not a decision-grade win for nearest HDMI gameplay
+  - Next best candidate:
+    - do not reopen this tiny-gap merged sparse-template replay shape without new telemetry proving a materially different repeat-row gap distribution; if presenter work continues, prefer a cheaper repeat-row-body cut that does not add first-row/template seeding work, otherwise re-rank broader gameplay raster residue against presenter work using `basic-exchange` first
+
+- 2026-03-16T17:15:53-0400
+  - Research target:
+    - test whether the next nearest-presenter keep should be a tighter RAM-template gate for sparse repeated-row work, using the recovered ordinary `basic-exchange` lane as the primary proof target instead of widening the old Genei-only repeat-row threshold blindly
+  - Change summary:
+    - updated `src/port/sdl/fbdev_presenter.c` so the existing RAM row-template replay path now also arms on a predicted sparse-repeat workload shape for the current clip: repeated-row gap pixels plus repeat-run copies gated by changed-row depth, while keeping the older extreme-tail `mapped_row_runs` / repeat-row count thresholds unchanged
+    - rebuilt/exported `build/mister-telemetry-package-arm-nearest-r41-sparse-shape-20260316a` through the documented `/work-arm` ARM telemetry path in `3sx-mister-build-nearest-hdmi-perf`, deployed it with `tools/mister/misterctl.sh`, and reran the matched nearest gameplay matrix plus the native guard on-device
+    - completed the required review pass as a manual scoped review of the single-file presenter diff with focus on predicted-work gating correctness, repeated-row accounting symmetry with the runtime path, and no gameplay-affecting behavior changes; no actionable issue survived review, so no post-review code fix was needed
+  - Verification evidence:
+    - `git diff --check` passed before the build; the `/work-arm` ARM telemetry rebuild/install/package succeeded, `readelf -h` still reported `ELF32` `ARM` with hard-float ABI, and the exported candidate package was `build/mister-telemetry-package-arm-nearest-r41-sparse-shape-20260316a`
+    - candidate `deploy`, `probe`, and bounded `smoke` passed through `tools/mister/misterctl.sh`; probe stayed on `dummy/software` with `FBDEV: active (1920x1080 ...)`, `Native render path: enabled (scale-mode=nearest)`, and `Software frame mode: on`
+    - nearest control and native guardrails stayed within tolerance or improved slightly: `loop41-base-control = 67.0116 FPS / 14.9228 / 7.2326 / 4.0361 ms` versus `loop41-post-control = 67.5893 / 14.7952 / 7.1841 / 3.9444`, and `loop41-base-native-control = 92.4992 FPS / 10.8109 / 7.0406 / 0.5350 ms` versus `loop41-post-native-control = 92.8325 / 10.7721 / 6.9966 / 0.5406` (`frame / render / present`)
+    - the recovered ordinary gameplay lane improved materially and held the rerun: `loop41-base-basic-exchange = 49.6923 FPS / 20.1238 / 7.2488 / 7.8649 ms`, `loop41-post-basic-exchange = 53.9905 / 18.5218 / 7.1537 / 6.3850`, and `loop41-post-basic-exchange-rerun = 53.5256 / 18.6827 / 7.2479 / 6.4324` while `mapped_repeat_row.mean_ms` fell `4.3155 -> 2.6898 -> 2.6906` and template-backed repeat rows/copies rose `11.40 -> 177.33 -> 177.33` / `225.70 -> 1409.89 -> 1409.89`
+    - trusted full Genei also improved at unchanged workload shape: `loop41-base-genei = 33.5719 FPS / 29.7868 / 10.5606 / 11.2445 ms` versus `loop41-post-genei = 34.4122 / 29.0594 / 10.5130 / 10.6062`, with `mapped_repeat_row.mean_ms` falling `4.5553 -> 3.8231` and template-backed repeat rows/copies rising `309.16 -> 397.81` / `2601.08 -> 3054.79`
+  - Keep/rollback decision with reason:
+    - keep; the sparse-repeat work gate converts a repeatable ordinary `basic-exchange` nearest win into a decision-grade result while also improving trusted full Genei and leaving the control/native guardrails inside tolerance
+  - Next best candidate:
+    - if nearest presenter work continues, target the remaining repeat-row replay body before widening the gate again; the ordinary sparse-repeat lane is now materially better, so another runtime loop should not spend budget on more threshold drift without new telemetry
+
+- 2026-03-16T16:43:53-0400
+  - Research target:
+    - test whether the broader gameplay-raster lane can recover real nearest-HDMI FPS on ordinary exchanges by recognizing palette-opaque software-source surfaces and replacing the exact unmodulated copy path with a direct `SDL_memcpy` fast path inside `src/port/sdl/sdl_game_renderer.c`
+  - Change summary:
+    - tried a narrow single-file reland in `src/port/sdl/sdl_game_renderer.c` that cached whether each software-source surface was palette-opaque and then used `SDL_memcpy` for exact unmodulated non-flipped copies; fixed the first build break by switching the opacity check to `SDL_GetSurfacePalette(source_surface)` for SDL3
+    - rebuilt/exported `build/mister-telemetry-package-arm-raster-r40-opaque-exact-20260316a`, captured fresh on-device baselines on the accepted `build/mister-telemetry-package-arm-r39a` runtime, deployed the candidate through `tools/mister/misterctl.sh`, reran the nearest gameplay matrix plus the native guard, then rolled the source diff back and restored `build/mister-telemetry-package-arm-r39a` on-device after the keep gates failed
+    - completed the required review pass as a manual scoped review of the rejected single-file raster diff with focus on palette-opacity classification, cache-slot/source-surface correctness, and exact-copy semantics; no actionable correctness issue survived review, so the rejection stayed purely performance-based
+  - Verification evidence:
+    - `git diff --check` passed before the build; the `/work-arm` ARM telemetry rebuild/install/package succeeded in `3sx-mister-build-nearest-hdmi-perf`, exported cleanly to `build/mister-telemetry-package-arm-raster-r40-opaque-exact-20260316a`, and `readelf -h` still reported `ELF32` `ARM` with hard-float ABI
+    - candidate `deploy`, `probe`, and bounded `smoke` passed through `tools/mister/misterctl.sh`; the post-deploy probe stayed on `dummy/software` with `FBDEV: active (1920x1080 ...)`, `Native render path: enabled (scale-mode=nearest)`, and `Software frame mode: on`. After rollback, redeploy/probe/smoke of `build/mister-telemetry-package-arm-r39a` also passed with the same nearest direct-present probe state
+    - nearest control and native guardrails stayed within tolerance: `nearest-raster-r40-control-basic-pre = 74.3032 FPS / 13.4584 / 7.0714 / 3.1271 ms` versus `nearest-raster-r40-control-basic-post = 73.4055 FPS / 13.6230 / 7.1559 / 3.2415 ms`, and `native-raster-r40-control-basic-pre = 91.3281 FPS / 10.9495 / 7.1839 / 0.5429 ms` versus `native-raster-r40-control-basic-post = 91.1903 FPS / 10.9661 / 7.2103 / 0.5481 ms` (`frame / render / present`)
+    - the recovered ordinary gameplay gate did not hold a repeatable win: `nearest-raster-r40-basic-exchange-full-pre = 49.7951 FPS / 20.0823 / 5.0975 / 7.2294 / 7.7554 ms`, first post `nearest-raster-r40-basic-exchange-full-post = 50.7135 FPS / 19.7186 / 4.9259 / 7.1518 / 7.6410 ms`, and rerun `nearest-raster-r40-basic-exchange-full-post-rerun = 49.3554 FPS / 20.2612 / 5.0453 / 7.3732 / 7.8426 ms` (`frame / update / render / present`)
+    - trusted full Genei stayed effectively flat to slightly worse on the candidate: `nearest-raster-r40-genei-full-pre = 33.7726 FPS / 29.6098 / 7.9582 / 10.4819 / 11.1697 ms` versus `nearest-raster-r40-genei-full-post = 33.7062 FPS / 29.6681 / 7.9703 / 10.5111 / 11.1867 ms`
+  - Keep/rollback decision with reason:
+    - rollback; the only visible gain was a one-run `basic-exchange` bump that disappeared on the immediate rerun, while the trusted heavy gate stayed flat/slightly worse. This exact palette-opaque memcpy shortcut is not decision-grade evidence of a player-visible FPS improvement
+  - Next best candidate:
+    - do not reopen this exact raster shortcut without telemetry that proves a large stable palette-opaque exact-copy family or a narrower source-surface cohort; re-rank the next loop between nearest presenter tail work and broader gameplay raster residue using the recovered ordinary `basic-exchange` lane first
+
+- 2026-03-16T16:16:31-0400
+  - Research target:
+    - test whether the next nearest-presenter follow-up after the kept repeat-row-count gate is to stop materializing sparse template-backed first rows through `fb_map`, by rasterizing those rows into RAM and then copying the changed runs into the framebuffer once
+  - Change summary:
+    - updated `src/port/sdl/fbdev_presenter.c` so sparse template-backed first rows now rasterize into `mapped_repeat_row_template_pixels` first and then copy just the changed runs into fbdev, while dense-gap rows keep the existing destination-first path
+    - rebuilt/exported `build/mister-telemetry-package-arm-r39a` from a container-local `/tmp/3sx-r39-copy` snapshot after discovering the shared `3sx-mister-build` container was mounted to a different worktree, then deployed it with `tools/mister/misterctl.sh` and reran the matched nearest/full plus guardrail captures on-device
+    - completed the required review pass as a manual scoped review of the single-file presenter diff with focus on sparse-run gap correctness, template validity, and framebuffer-write accounting; no actionable correctness issues survived review
+  - Verification evidence:
+    - `git diff --check` passed before the build; the ARM telemetry rebuild/install/package succeeded, exported cleanly to `build/mister-telemetry-package-arm-r39a`, and `readelf -h` still reported `ELF32` `ARM` with hard-float ABI
+    - candidate `deploy`, `probe`, and bounded `smoke` passed through `tools/mister/misterctl.sh`; the post-deploy probe stayed on `dummy/software` with `FBDEV: active (1920x1080 ...)`, `Native render path: enabled (scale-mode=nearest)`, and `Software frame mode: on`
+    - nearest guardrails stayed within tolerance: `nearest-hdmi-r39-control-full-pre = 66.5466 FPS / 15.0271 / 7.3158 / 4.0608 / 4.0465 ms` versus `nearest-hdmi-r39-control-full-post = 66.1617 FPS / 15.1145 / 7.3057 / 4.1329 / 4.1183 ms`, `nearest-hdmi-r39-stage-heavy-basic-pre = 55.4460 FPS / 18.0356 / 8.8404 / 4.1415 ms` versus `nearest-hdmi-r39-stage-heavy-basic-post = 55.0769 FPS / 18.1564 / 8.9305 / 4.1911 ms`, and the native guard stayed inside tolerance at `native-hdmi-r39-control-basic-pre = 92.2942 FPS / 10.8349 / 7.0502 / 0.5494 ms` versus `native-hdmi-r39-control-basic-post = 91.8090 FPS / 10.8922 / 7.1177 / 0.5360 ms` (`frame / render / present`)
+    - recovered ordinary gameplay stayed effectively flat across two post runs: `nearest-hdmi-r39-basic-exchange-full-pre = 50.0449 FPS / 19.9820 / 7.7078 ms`, `nearest-hdmi-r39-basic-exchange-full-post = 49.8206 FPS / 20.0720 / 7.7643 ms`, and rerun `nearest-hdmi-r39-basic-exchange-full-post-rerun = 49.9624 FPS / 20.0151 / 7.7286 ms`, while `mapped_first_row.mean_ms` improved `0.6137 -> 0.5727 -> 0.5564` and `mapped_repeat_row.mean_ms` stayed effectively flat `4.1655 -> 4.2333 -> 4.1588`
+    - matched full trusted Genei improved materially at unchanged workload shape: `nearest-hdmi-r39-genei-jin-first-activation-full-pre = 32.3896 FPS / 30.8742 / 10.6160 / 12.3447 / 12.3316 ms` versus `nearest-hdmi-r39-genei-jin-first-activation-full-post = 33.5997 FPS / 29.7622 / 10.5177 / 11.2654 / 11.2515 ms` (`frame / render / present / present_copy`), with `mapped_first_row.mean_ms` dropping `3.5975 -> 2.2608` while `mapped_repeat_row.mean_ms` stayed effectively flat `4.4247 -> 4.4884` and template counters were unchanged
+  - Keep/rollback decision with reason:
+    - keep; RAM-sourcing sparse template-backed first rows cuts the measured first-row Genei tail materially without reopening dense-gap correctness risk, while `basic-exchange`, `stage-heavy`, `control`, and the native guard all stay within a noise-level envelope
+  - Next best candidate:
+    - keep dense-gap template rows on the old path for now; if the next nearest presenter loop stays here, measure whether the remaining cost lives in dense repeat rows or in the repeat-row replay body before widening the RAM-first source path
+
+- 2026-03-16T18:34:30-0400
+  - Research target:
+    - test whether the broader gameplay-raster lane can clear another real nearest-HDMI keep by splitting the common unmodulated case out of the remaining non-integer and generic textured software-frame loops, so those inner loops stop branching on `color == 0xFFFFFFFFu` per pixel
+  - Change summary:
+    - updated `src/port/sdl/software_frame_non_integer.c` and `src/port/sdl/sdl_game_renderer.c` so the surviving non-integer lookup helper and generic textured fallback now choose the unmodulated path once per task/row, while preserving the existing alpha short-circuit and modulation behavior for non-white colors
+    - rebuilt/exported `build/mister-telemetry-package-arm-raster-r38-unmod-fastpath-20260316a`, captured a fresh baseline on the accepted `r37` runtime, deployed the candidate through `tools/mister/misterctl.sh`, and reran the same nearest gameplay matrix plus the native control guard
+    - attempted the required review pass with `codex review --uncommitted`; it stalled after repeated read-only inspection, so the cycle closed on a manual scoped review of the two-file diff with focus on color-mod semantics, alpha handling, and parity with the existing modulated path
+  - Verification evidence:
+    - `git diff --check` passed before the build; the `/work-arm` ARM telemetry rebuild/install/package succeeded in `3sx-mister-build-nearest-hdmi-perf`, exported cleanly to `build/mister-telemetry-package-arm-raster-r38-unmod-fastpath-20260316a`, and `readelf -h` still reported `ELF32` `ARM` with hard-float ABI
+    - candidate `deploy`, `probe`, and bounded `smoke` passed through `tools/mister/misterctl.sh`; both the pre and post probes stayed on `dummy/software` with `FBDEV: active (1920x1080 ...)`, `Native render path: enabled (scale-mode=nearest)`, and `Software frame mode: on`
+    - nearest non-targeted gameplay stayed effectively flat: `nearest-raster-r38-control-basic-pre = 74.2699 FPS / 13.4644 / 7.0305 / 3.1837 ms` versus `nearest-raster-r38-control-basic-post = 73.9789 FPS / 13.5174 / 7.1178 / 3.1440 ms`, and `nearest-raster-r38-effect-basic-pre = 47.4315 FPS / 21.0830 / 9.1074 / 6.3232 ms` versus `nearest-raster-r38-effect-basic-post = 47.4699 FPS / 21.0660 / 9.0152 / 6.3724 ms` (`frame / render / present`)
+    - the trusted low-overhead Genei keep gate improved materially on the player-visible lane: `nearest-raster-r38-genei-basic-pre = 38.0155 FPS / 26.3051 / 10.3647 / 9.4643 ms` versus `nearest-raster-r38-genei-basic-post = 38.9914 FPS / 25.6467 / 10.1585 / 9.1462 ms`
+    - matched full Genei improved overall with the same workload shape: `nearest-raster-r38-genei-full-pre = 32.2303 FPS / 31.0268 / 10.5982 / 12.4119 / 12.3950 ms` versus `nearest-raster-r38-genei-full-post = 32.4328 FPS / 30.8329 / 10.4653 / 12.3702 / 12.3574 ms` (`frame / render / present / present_copy`), while active-Genei frames moved `37.3094 / 12.8914 / 16.0868 / 16.0654 ms` to `36.9395 / 12.3936 / 16.0476 / 16.0349 ms` and sampled raster time fell in both targeted buckets (`fast_non_integer.mean_ms 0.059224 -> 0.055206`, `generic_textured.mean_ms 0.038166 -> 0.037813`) without changing `software_frame_fast_non_integer_pixels.mean` or `software_frame_generic_textured_pixels.mean`
+    - the native guard stayed within tolerance at `native-raster-r38-control-basic-pre = 91.9464 FPS / 10.8759 / 7.0895 / 0.5393 ms` versus `native-raster-r38-control-basic-post = 91.1028 FPS / 10.9766 / 7.1355 / 0.5398 ms`
+  - Keep/rollback decision with reason:
+    - keep; the unmodulated branch split is a behavior-preserving common-case raster win that improves both trusted nearest Genei gates and full active-Genei render cost, keeps `effect-heavy` flat-to-better, and stays inside the native tolerance despite a small `control` dip that remained well below the Genei gain
+  - Next best candidate:
+    - do not keep cloning branch splits blindly; this reland says there is still value in cheaper common-case per-pixel math on the surviving raster paths, but the remaining active nearest cost is now split between modest raster gains and stubborn present time, so the next loop should re-rank raster versus presenter work from fresh telemetry again
+
+- 2026-03-16T18:09:13-0400
+  - Research target:
+    - test whether the broader gameplay-raster lane can clear a real nearest-HDMI keep by hoisting the exact/scaled path's transparent/opaque alpha short-circuit into the remaining non-integer and generic textured raster loops, without changing routing or thresholds
+  - Change summary:
+    - updated `src/port/sdl/software_frame_non_integer.c` and `src/port/sdl/sdl_game_renderer.c` so the non-integer lookup helper and the generic textured fallback loop now skip zero-alpha samples and directly store fully opaque samples before calling `blend_argb8888(...)`
+    - rebuilt/exported `build/mister-telemetry-package-arm-raster-r37-alpha-shortcut-20260316a`, captured a fresh on-device baseline on the accepted `r36` runtime, redeployed the candidate through `tools/mister/misterctl.sh`, and reran the same nearest gameplay matrix plus the native control guard
+    - completed the required review pass with `codex review --uncommitted`; it found no correctness regressions in the two-file diff
+  - Verification evidence:
+    - `git diff --check` passed before the build; the `/work-arm` ARM telemetry rebuild/install/package succeeded in `3sx-mister-build-nearest-hdmi-perf`, exported cleanly to `build/mister-telemetry-package-arm-raster-r37-alpha-shortcut-20260316a`, and `readelf -h` still reported `ELF32` `ARM` with hard-float ABI
+    - candidate `deploy`, `probe`, and bounded `smoke` passed through `tools/mister/misterctl.sh`, and both the baseline and candidate probes stayed on `dummy/software` with `FBDEV: active (1920x1080 ...)`, `Native render path: enabled (scale-mode=nearest)`, and `Software frame mode: on`
+    - nearest non-targeted gameplay stayed flat-to-better: `nearest-raster-r37-control-basic-pre = 74.7067 FPS / 13.3857 / 7.1395 / 3.0261 ms` versus `nearest-raster-r37-control-basic-post = 75.3628 FPS / 13.2691 / 7.0475 / 3.0263 ms`, and `nearest-raster-r37-effect-basic-pre = 47.1435 FPS / 21.2118 / 9.1606 / 6.3580 ms` versus `nearest-raster-r37-effect-basic-post = 47.1534 FPS / 21.2074 / 9.1096 / 6.4157 ms` (`frame / render / present`)
+    - the trusted low-overhead Genei keep gate improved instead of regressing: `nearest-raster-r37-genei-basic-pre = 37.0040 FPS / 27.0241 / 11.0216 / 9.4980 ms` versus `nearest-raster-r37-genei-basic-post = 37.8456 FPS / 26.4231 / 10.4987 / 9.4818 ms`
+    - matched full Genei improved overall with the same workload shape: `nearest-raster-r37-genei-full-pre = 31.3787 FPS / 31.8688 / 11.4339 / 12.3624 / 12.3445 ms` versus `nearest-raster-r37-genei-full-post = 32.1814 FPS / 31.0738 / 10.6168 / 12.4346 / 12.4218 ms` (`frame / render / present / present_copy`), while active-Genei frames moved `39.1254 / 14.6698 / 15.9808 / 15.9671 ms` to `37.3766 / 12.8269 / 16.1511 / 16.1383 ms` and sampled raster time fell inside both surviving buckets (`fast_non_integer.mean_ms 0.075734 -> 0.059115`, `generic_textured.mean_ms 0.044350 -> 0.037172`) without changing `software_frame_fast_non_integer_pixels.mean` or `software_frame_generic_textured_pixels.mean`
+    - the native guard stayed within tolerance at `native-raster-r37-control-basic-pre = 91.2322 FPS / 10.9610 / 7.1519 / 0.5400 ms` versus `native-raster-r37-control-basic-post = 91.1642 FPS / 10.9692 / 7.1643 / 0.5481 ms`
+  - Keep/rollback decision with reason:
+    - keep; the alpha short-circuit is a behavior-preserving raster-only win that improves the trusted first-Genei nearest gameplay lane and full Genei render cost without reopening rejected threshold/routing changes, while `effect-heavy` stays flat and native remains inside guardrail
+  - Next best candidate:
+    - do not reopen the shared non-integer threshold gate blindly; this keep shows the remaining broad raster value is in cheaper per-pixel math on the existing non-integer/generic paths, but active Genei is now split between improved render cost and still-heavy present time, so the next loop should re-rank raster versus presenter work from fresh telemetry instead of guessing
+
+- 2026-03-16T13:44:47-0400
+  - Research target:
+    - test whether the kept nearest row-template presenter should trigger on the missed first-Genei repeat-row tail counted by repeated mapped rows, not just the existing `mapped_row_runs >= 2000` gate
+  - Change summary:
+    - updated `src/port/sdl/fbdev_presenter.c` so nearest template replay also arms when the current clip predicts `>=750` repeated mapped rows, while keeping the existing `>=2000` row-run gate unchanged
+    - rebuilt/exported `build/mister-telemetry-package-arm-nearest-r36-repeat-rows-20260316a`, deployed it with `tools/mister/misterctl.sh`, and captured the required nearest `control`, `stage-heavy`, trusted `genei-jin-first-activation` basic + full, plus the native control guard on-device
+    - attempted `codex review --uncommitted` for the required review pass, but the helper stalled again after repeated read-only source inspection; completed a manual scoped review of the presenter diff instead and found no actionable correctness issues
+  - Verification evidence:
+    - `git diff --check` passed before the build; the `/work-arm` ARM telemetry rebuild/install/package succeeded in `3sx-mister-build-nearest-hdmi-perf`, exported cleanly to `build/mister-telemetry-package-arm-nearest-r36-repeat-rows-20260316a`, and `readelf -h` still reported `ELF32` `ARM` with hard-float ABI
+    - candidate `health`, `deploy`, `probe`, and bounded `smoke` passed through `tools/mister/misterctl.sh`; the candidate probe stayed on `dummy/software` with `FBDEV: active (1920x1080 ...)`, `Native render path: enabled (scale-mode=nearest)`, and `Software frame mode: on`
+    - nearest non-targeted guardrails dipped slightly, but the new gate stayed off on both: `nearest-hdmi-r30-control-basic = 74.5795 FPS` versus `nearest-hdmi-r36-control-basic-post = 73.9428 FPS`, `nearest-hdmi-r30-stage-heavy-basic = 55.2604 FPS` versus `nearest-hdmi-r36-stage-heavy-basic-post = 54.7535 FPS`, and both captures still recorded `mapped_repeat_template_rows = 0`
+    - the trusted low-overhead Genei keep gate improved while template engagement widened: `nearest-hdmi-r30-genei-jin-first-activation-basic = 36.3845 FPS / 27.4843 / 10.4537 ms` versus `nearest-hdmi-r36-genei-jin-first-activation-basic-post = 36.8849 FPS / 27.1114 / 9.5594 ms` (`frame / present`), and `mapped_repeat_template_rows.mean` rose from `199.73` to `309.16`
+    - matched full Genei improved materially overall: `nearest-hdmi-r30-genei-jin-first-activation-full = 30.5859 FPS / 13.8154 / 13.8025 ms` versus `nearest-hdmi-r36-genei-jin-first-activation-full-post = 31.6392 FPS / 12.2227 / 12.2099 ms` (`present / present_copy`), while the active Genei window moved `41.1821 / 19.2458 / 19.2329 ms` to `38.5663 / 15.6302 / 15.6169 ms` (`frame / present / present_copy`), `mapped_repeat_row.mean_ms` fell `9.9363 -> 5.1537`, and active template-backed repeat rows rose `266.62 -> 528.70`
+    - the new repeat-row-count gate caught the missed Genei tail directly: active Genei frames with `mapped_repeat_template_rows > 0` rose from `38` to `77`, and the candidate now template-replays previously missed `mapped_row_runs < 2000` frames such as `180-184` and `201-217`
+    - the native guard stayed within tolerance at `native-hdmi-r30-control-basic = 91.5672 FPS` versus `native-hdmi-r36-control-basic-post = 91.1617 FPS`
+  - Keep/rollback decision with reason:
+    - keep; the repeat-row-count gate catches the previously missed first-Genei repeated-row tail, materially cuts active repeat-row replay cost on the player-visible nearest lane, stays dormant on the non-targeted gameplay guards, and preserves the native control tolerance
+  - Next best candidate:
+    - do not lower the new repeat-row threshold blindly below `750`; the remaining `657-738` repeat-row Genei family is still visible, but the slight `control` and `stage-heavy` dips mean any follow-up should use a tighter shape signal than another raw threshold widen, or else re-rank the broader gameplay-raster lane again
+
+- 2026-03-16T13:19:14-0400
+  - Research target:
+    - test whether the remaining trusted-Genei raster residue can be narrowed into an exact-size non-integer subpixel-translation fast path for `src/port/sdl/sdl_game_renderer.c`, instead of another threshold gate
+  - Change summary:
+    - tried a four-file candidate in `src/port/sdl/sdl_game_renderer.c`, `src/port/sdl/software_frame_non_integer.{c,h}`, and `src/port/sdl/software_frame_parity.c` that recognized exact-size, unmodulated, unflipped non-integer copies and routed them through a shifted `1:1` helper path
+    - rebuilt/exported `build/mister-telemetry-package-arm-raster-r35-exact-phase-20260316b`, deployed it with `tools/mister/misterctl.sh`, captured the required nearest gameplay-first matrix plus a matched trusted full Genei pass, and then rolled both source and MiSTer runtime back after the reject to restore `build/mister-telemetry-package-arm-nearest-r30-row-template-20260315a`
+    - the local ARM telemetry build/install/package path succeeded, but parity could not be executed locally because the validated cross-build path produced an ARM binary and the available host fallbacks were blocked by missing desktop dependencies or MiSTer-only headers
+    - completed a manual scoped review of the candidate diff and found no correctness issues beyond the measured keep-bar tradeoff
+  - Verification evidence:
+    - `git diff --check` passed before the build; the `/work-arm` ARM telemetry rebuild/install/package succeeded in `3sx-mister-build-nearest-hdmi-perf`, exported cleanly to `build/mister-telemetry-package-arm-raster-r35-exact-phase-20260316b`, and `readelf -h` still reported `ELF32` `ARM` with hard-float ABI
+    - candidate `deploy`, `probe`, and bounded `smoke` passed through `tools/mister/misterctl.sh`; after the reject, restored `r30` `deploy`, `probe`, and bounded `smoke` also passed and returned to the normal timeout-backed success pattern
+    - nearest `control` slipped slightly versus the standing raster-lane baseline: `nearest-raster-r31-control-basic-pre = 74.1686 FPS` versus `nearest-raster-r35-control-basic-post = 73.9947 FPS`
+    - trusted low-overhead Genei failed clearly on the player-visible lane: `nearest-raster-r31-genei-basic-pre = 36.2138 FPS` versus `nearest-raster-r35-genei-basic-post = 35.1001 FPS`
+    - matched full Genei also regressed: `nearest-raster-r35-genei-full-pre = 30.4726 FPS / 32.8163 / 10.9970 / 13.8789 ms` versus `nearest-raster-r35-genei-full-post = 29.9113 FPS / 33.4322 / 11.4809 / 13.9364 ms` (`frame / render / present`), while the workload counters stayed unchanged at `software_frame_fast_non_integer_pixels.mean = 58399.05`, `software_frame_generic_textured_pixels.mean = 1991.68`, and `software_frame_fast_miss_non_integer_ge_256_pixels.mean = 860.94`
+    - the native guard stayed within tolerance at `native-raster-r35-control-basic-post = 90.9652 FPS`
+  - Keep/rollback decision with reason:
+    - rollback; the exact-size subpixel-copy fast path did not materially engage on the measured trusted-Genei workload, added overhead without changing the remaining non-integer or generic-textured residue, and regressed both trusted Genei basic and matched full Genei
+  - Next best candidate:
+    - keep the broader gameplay-raster lane open, but do not retry this exact subpixel-translation shape blindly; the next runtime attempt needs tighter task-shape attribution inside the remaining small non-integer and generic-textured Genei residue before another reland
+
+- 2026-03-16T16:08:12-0400
+  - Research target:
+    - test whether the rejected global `256` lookup reland can be narrowed into a frame-local medium-miss burst gate, so `256-383 px` non-integer tasks only shift onto the existing helper after a heavy Genei frame has already shown repeated medium-miss traffic
+  - Change summary:
+    - tried a single-file `src/port/sdl/sdl_game_renderer.c` candidate that kept the shared `>=384 px` lookup threshold but enabled `256-383 px` tasks only after the frame accumulated `>=1024` submitted pixels from that medium-miss family
+    - rebuilt/exported `build/mister-telemetry-package-arm-r33-burst-gated-20260316a`, deployed it with `tools/mister/misterctl.sh`, captured the gameplay-first nearest matrix on-device, and then restored the accepted `build/mister-telemetry-package-arm-nearest-r30-row-template-20260315a` runtime after the reject
+    - attempted `codex review --uncommitted` for the required review pass, but the helper stalled again after read-only inspection; completed a manual scoped review of the diff instead and found no correctness issues beyond the measured keep-bar tradeoff
+  - Verification evidence:
+    - `git diff --check` passed before the build; the `/work-arm` ARM telemetry rebuild/install/package succeeded in `3sx-mister-build-nearest-hdmi-perf`, exported cleanly to `build/mister-telemetry-package-arm-r33-burst-gated-20260316a`, and container `readelf -h` still reported `ELF32` `ARM` with hard-float ABI
+    - candidate `deploy`, `probe`, and bounded `smoke` passed through `tools/mister/misterctl.sh`; both candidate and restored probes stayed on `dummy/software` with `FBDEV: active (1920x1080 ...)`, `Native render path: enabled (scale-mode=nearest)`, and `Software frame mode: on`
+    - non-targeted gameplay guardrails improved on the candidate: `nearest-raster-r31-control-basic-pre = 74.1686 FPS / 13.4828 / 7.1283 / 3.1003 ms` versus `nearest-raster-r33-control-basic-post = 74.5218 FPS / 13.4189 / 7.0852 / 3.0820 ms`, and `nearest-raster-r31-effect-basic-pre = 46.2054 FPS / 21.6425 / 8.9866 / 6.8966 ms` versus `nearest-raster-r33-effect-basic-post = 47.2536 FPS / 21.1624 / 8.8765 / 6.6095 ms`
+    - the trusted low-overhead Genei keep gate still failed twice on the candidate: `nearest-raster-r31-genei-basic-pre = 36.2138 FPS / 27.6138 / 10.5481 / 10.6002 ms`, `nearest-raster-r33-genei-basic-post = 36.0394 FPS / 27.7474 / 10.3897 / 10.8412 ms`, and rerun `nearest-raster-r33-genei-basic-post-rerun = 35.9517 FPS / 27.8151 / 10.4282 / 10.7396 ms`
+    - matched full telemetry still proved the burst gate moved the intended active workload: overall `nearest-raster-r31-genei-full-pre -> nearest-raster-r33-genei-full-post` improved `30.4967 -> 30.7605 FPS`, active-window means moved `41.4480 / 13.3896 / 19.5017 / 19.4801 ms` to `40.8022 / 13.2910 / 19.1296 / 19.1166 ms` (`frame / render / present / present_copy`), active `>=256 px` miss pixels fell `2117.07 -> 328.66`, active `>=256 px` miss tasks fell `6.76 -> 1.03`, and active generic-textured pixels fell `4897.57 -> 3109.15`
+  - Keep/rollback decision with reason:
+    - rollback; the frame-local medium-miss burst gate does improve the full active Genei hotspot and stays friendly on `control` plus `effect-heavy`, but the trusted low-overhead Genei keep gate still landed below baseline twice, so this does not clear the real player-visible FPS bar
+  - Next best candidate:
+    - keep the broader gameplay-raster lane open, but do not reopen threshold-style medium-miss gating without tighter task-shape attribution; the next runtime attempt should target a narrower measured raster family than a frame-local burst budget, or re-rank the broader menu lane if fresh gameplay evidence stops pointing here
+
+- 2026-03-16T12:43:30-0400
+  - Research target:
+    - test whether the next cheapest nearest-presenter follow-up after the kept `r30` RAM row-template reland is cached per-row repeat metadata in `src/port/sdl/fbdev_presenter.c`, specifically dense-span eligibility plus repeated-row gap pixels, before reopening broader raster or menu lanes
+  - Change summary:
+    - tried a single-file `src/port/sdl/fbdev_presenter.c` candidate that precomputed per-source-row dense repeated-row dst spans and repeated-row gap pixels while building the mapped-row cache, then reused that metadata inside the repeated-row hot path instead of recomputing it on each replayed row
+    - rebuilt/exported `build/mister-telemetry-package-arm-nearest-r34-repeat-row-meta-20260316a`, deployed it with `tools/mister/misterctl.sh`, captured the required nearest gameplay-first matrix plus a matched trusted full Genei pass, and then rolled the source change back after the keep bar failed
+    - attempted `codex review --uncommitted` for the required review pass, but the helper stalled again after read-only inspection; completed a manual scoped review of the presenter diff instead and found no correctness issues beyond the measured keep-bar tradeoff
+    - restored the MiSTer to the accepted `build/mister-telemetry-package-arm-nearest-r30-row-template-20260315a` runtime after first discovering that `build/mister-telemetry-package-arm-raster-baseline-20260316b` was missing `libSDL3` on-device and failed `probe` / `smoke` with loader errors
+  - Verification evidence:
+    - `git diff --check` passed before the candidate build; the `/work-arm-r34` ARM telemetry rebuild/install/package succeeded in `3sx-mister-build-nearest-hdmi-perf`, exported cleanly to `build/mister-telemetry-package-arm-nearest-r34-repeat-row-meta-20260316a`, and container `readelf -h` still reported `ELF32` `ARM` with hard-float ABI
+    - candidate `deploy`, `probe`, and bounded `smoke` passed through `tools/mister/misterctl.sh`; after the restore detour, the accepted `r30` runtime again probed as `dummy/software` with `FBDEV: active (1920x1080 ...)`, `Native render path: enabled (scale-mode=nearest)`, and `Software frame mode: on`, and bounded `smoke` returned to the normal timeout-backed success pattern
+    - the player-facing low-overhead gates all regressed slightly on the candidate: `nearest-hdmi-r34-control-basic-pre = 74.5582 FPS / 13.4123 / 7.0732 / 3.0986 ms` versus `nearest-hdmi-r34-control-basic-post = 74.3434 FPS / 13.4511 / 7.0910 / 3.1095 ms`, `nearest-hdmi-r34-stage-heavy-basic-pre = 55.1345 FPS / 18.1375 / 8.9956 / 4.1080 ms` versus `nearest-hdmi-r34-stage-heavy-basic-post = 54.7728 FPS / 18.2572 / 9.0419 / 4.1617 ms`, and trusted `nearest-hdmi-r34-genei-jin-first-activation-basic-pre = 35.9375 FPS / 27.8261 / 10.6039 / 10.8295 ms` versus `nearest-hdmi-r34-genei-jin-first-activation-basic-post = 35.8705 FPS / 27.8780 / 10.6869 / 10.6717 ms`; the native guard stayed effectively flat at `native-hdmi-r34-control-basic-pre = 91.7484 FPS` versus `native-hdmi-r34-control-basic-post = 91.7074 FPS`
+    - matched full telemetry did prove the bookkeeping cache moved the intended hotspot inside trusted Genei: `nearest-hdmi-r34-genei-jin-first-activation-full` improved `30.4962 -> 30.7053 FPS`, `mapped_repeat_row.mean_ms` fell `6.4982 -> 6.2847`, and `present.mean_ms` fell `13.7873 -> 13.6653`, while the workload shape itself stayed unchanged (`mapped_repeat_gap_pixels = 175109.84`, `mapped_repeat_run_copies = 3732.92`, `mapped_repeat_dense_rows = 68.41`)
+  - Keep/rollback decision with reason:
+    - rollback; caching per-row repeat metadata trims a little repeated-row presenter bookkeeping on the trusted full Genei hotspot, but the low-overhead `control`, `stage-heavy`, and trusted Genei basic gates all landed slightly below baseline, so it does not clear the real player-visible FPS bar
+  - Next best candidate:
+    - do not spend another nearest-presenter loop on bookkeeping-only metadata caches unless fresh telemetry shows a larger first-row versus repeated-row compute gap; re-rank the broader gameplay-raster lane before reopening presenter micro-optimizations
+
+- 2026-03-16T15:10:04-0400
+  - Research target:
+    - test whether the kept `r30` RAM row-template presenter path can convert more extreme tail rows from sparse template replay to bounded dense replay, while staying inert on non-tail nearest gameplay gates
+  - Change summary:
+    - tried a single-file `src/port/sdl/fbdev_presenter.c` candidate that keeps the existing `mapped_row_runs >= 2000` frame gate but relaxes dense-span eligibility only for template-backed repeat rows to `>=12` runs, `>=384` pixels, and `85%` coverage
+    - rebuilt/exported `build/mister-telemetry-package-arm-nearest-r32-template-dense-20260316a`, deployed it with `tools/mister/misterctl.sh`, and then restored the accepted `build/mister-telemetry-package-arm-nearest-r30-row-template-20260315a` runtime after the reject
+    - attempted `codex review --uncommitted` for the required review pass, but the helper stalled without returning findings; completed a manual scoped review of the presenter diff instead and found no correctness issues beyond the measured keep-bar tradeoff
+  - Verification evidence:
+    - `git diff --check` passed before the build; the `/work-arm` ARM telemetry rebuild/install/package succeeded, exported cleanly to `build/mister-telemetry-package-arm-nearest-r32-template-dense-20260316a`, and `readelf -h` still reported `ELF32` `ARM` with hard-float ABI
+    - candidate `deploy`, `probe`, and bounded `smoke` passed through `tools/mister/misterctl.sh`; both candidate and restored probes stayed on `dummy/software` with `FBDEV: active (1920x1080 ...)`, `Native render path: enabled (scale-mode=nearest)`, and `Software frame mode: on`
+    - nearest guardrails stayed effectively flat: `nearest-hdmi-r32-control-basic-pre = 74.1630 FPS / 13.4838 / 7.1258 / 3.0887 ms` versus `nearest-hdmi-r32-control-basic-post = 74.1116 FPS / 13.4932 / 7.1914 / 3.1217 ms`, `nearest-hdmi-r32-stage-heavy-basic-pre = 55.0392 FPS / 18.1689 / 8.9145 / 4.2073 ms` versus `nearest-hdmi-r32-stage-heavy-basic-post = 55.0859 FPS / 18.1535 / 8.8759 / 4.1951 ms`, and the native guard stayed within tolerance at `native-hdmi-r32-control-basic-pre = 91.3777 FPS / 10.9436 / 7.1928 / 0.5308 ms` versus `native-hdmi-r32-control-basic-post = 91.9130 FPS / 10.8798 / 7.0963 / 0.5490 ms`
+    - the trusted low-overhead Genei keep gate did not clear a player-visible win: `nearest-hdmi-r32-genei-jin-first-activation-basic-pre = 39.4083 FPS / 25.3754 / 10.0368 / 8.6281 ms`, `nearest-hdmi-r32-genei-jin-first-activation-basic-post = 39.4010 FPS / 25.3800 / 10.0716 / 8.5987 ms`, and rerun `nearest-hdmi-r32-genei-jin-first-activation-basic-post-rerun = 39.4451 FPS / 25.3517 / 10.0903 / 8.5622 ms`
+    - matched full telemetry did prove the policy change moved work the intended way inside the active Genei window: overall `nearest-hdmi-r32-genei-jin-first-activation-full` improved `33.3078 -> 33.9982 FPS` and active-window means moved `34.1329 / 14.2531 / 11.0644 / 11.0489 ms` to `33.3886 / 13.9557 / 10.7617 / 10.7493 ms` (`frame / render / present / present_copy`), while template-backed sparse run copies fell `1363.30 -> 963.43` and template-backed dense rows rose `22.28 -> 46.76`; copied bytes also rose slightly `1103224.78 -> 1118607.04` per active frame
+  - Keep/rollback decision with reason:
+    - rollback; the template-only dense replay policy does reduce repeat-row fanout and active Genei presenter time on full telemetry, but the trusted low-overhead Genei keep gate stayed effectively flat across two post runs, so this does not clear the real player-visible FPS bar
+  - Next best candidate:
+    - keep the nearest presenter lane open, but do not spend another loop on denser template replay without a stronger low-overhead gain signal; the better next nearest-specific move is likely cheaper repeat-row bookkeeping such as cached per-row dense/gap metadata, or else a fresh re-rank against broader gameplay raster work before reopening presenter micro-policy changes
+
+- 2026-03-16T11:20:37-0400
+  - Research target:
+    - test the next narrow gameplay-raster hypothesis after the kept `r30` presenter reland by lowering the shared software-frame non-integer lookup threshold from `384` to `256`, then validate it on nearest-HDMI gameplay-first gates before reopening presenter or menu work
+  - Change summary:
+    - rebuilt the current branch telemetry package in `/work-arm`, recovered fresh nearest baselines on the kept `r30` runtime for `control`, `effect-heavy`, and trusted `genei-jin-first-activation`, then tried a one-line `src/port/sdl/sdl_game_renderer.c` reland that lowered `software_frame_non_integer_lookup_threshold_pixels` from `384u` to `256u`
+    - manually staged `libSDL3.so*` into the telemetry install/package during this loop because the fresh cross-build install tree did not populate `build/mister-telemetry-install/lib` on its own; deploy/probe/smoke then succeeded on the candidate package
+    - completed a manual scoped review of the one-line runtime diff with focus on software-frame eligibility scope and gameplay-safety risk; no correctness or behavior issues were found beyond the measured keep-bar tradeoff
+  - Verification evidence:
+    - `git diff --check` and `bash -n tools/mister/perf-sampler.sh` passed before the runtime build; the `/work-arm` ARM telemetry rebuild/install/package succeeded, the staged package exported cleanly to `build/mister-telemetry-package-arm-raster-r31-threshold256-20260316a`, and `readelf -h` still reported `ELF32` `ARM` with hard-float ABI
+    - baseline and candidate `deploy`, `probe`, and bounded `smoke` passed through `tools/mister/misterctl.sh`, and both probes stayed on `dummy/software` with `FBDEV: active (1920x1080 ...)`, `Native render path: enabled (scale-mode=nearest)`, and `Software frame mode: on`
+    - fresh low-overhead nearest baselines on the kept runtime were `nearest-raster-r31-control-basic-pre = 74.1685 FPS / 13.4828 / 7.1283 / 3.1003 ms`, `nearest-raster-r31-effect-basic-pre = 46.2053 FPS / 21.6425 / 8.9866 / 6.8966 ms`, and `nearest-raster-r31-genei-basic-pre = 36.2137 FPS / 27.6138 / 10.5481 / 10.6002 ms` (`frame / render / present`)
+    - the candidate kept the guardrails flat-to-better on the non-targeted lanes: `nearest-raster-r31-control-basic-post = 74.5395 FPS / 13.4157 / 7.0417 / 3.1491 ms` and `nearest-raster-r31-effect-basic-post = 46.4155 FPS / 21.5445 / 8.9955 / 6.8818 ms`
+    - the user-priority trusted Genei basic lane failed the keep bar twice on the candidate: `nearest-raster-r31-genei-basic-post = 35.9753 FPS / 27.7968 / 10.4580 / 10.8578 ms`, and rerun `nearest-raster-r31-genei-basic-post-rerun = 35.4434 FPS / 28.2140 / 10.6222 / 11.0265 ms`, both below the fresh `36.2137 FPS` baseline
+    - matched full telemetry did prove the threshold moved the intended workload on active Genei frames: active-window means improved from `41.5591 / 13.4276 / 19.5902 / 19.5685 ms` (`frame / render / present / present_copy`) with `4938.04` generic-textured pixels and `2134.57` `>=256 px` miss pixels per frame to `40.8176 / 13.2801 / 19.1742 / 19.1548 ms` with `2803.47` generic-textured pixels and zero `>=256 px` miss pixels, but that did not survive into the repeated low-overhead FPS gate
+  - Keep/rollback decision with reason:
+    - rollback; the `256` threshold does rerank the expected `256-383 px` Genei residue onto the fast non-integer helper, but two trusted low-overhead Genei reruns still landed below the fresh nearest baseline, so the change does not clear the player-visible keep bar on the highest-value lane
+  - Next best candidate:
+    - keep the broader gameplay-raster lane open, but do not lower the shared threshold further without a tighter admission rule; the next runtime attempt should target a narrower Genei-heavy subset than a global `256` threshold reland, or re-rank another measured raster residue before reopening presenter or menu churn
+
+- 2026-03-16T22:12:52-0400
+  - Bottleneck targeted:
+    - ordinary stage-`7` `rect_uv_parallelogram` generic-textured residue on the broader nearest-HDMI gameplay raster lane
+  - Change summary:
+    - added a narrow `src/port/sdl/sdl_game_renderer.c` reland that caches a per-binding full-opaque row mask for `256x256` ARGB software-source surfaces and lets the recovered shear path `SDL_memcpy` any fully opaque row instead of rechecking alpha per pixel
+    - rebuilt/exported `build/mister-telemetry-package-arm-post-20260316d` through the `/work-arm` ARM container path, redeployed it with `tools/mister/misterctl.sh`, reran nearest `control`, `basic-exchange --test-stage 7`, and `effect-heavy --test-stage 7`, and closed review with a manual scoped pass after `codex review --uncommitted` stalled
+  - Verification result summary:
+    - `git diff --check` passed before the ARM rebuild; the incremental `/work-arm` telemetry rebuild/install/package succeeded after the pointer-zero fix, and the MiSTer `deploy`, `probe`, and bounded `smoke` checks all passed on `build/mister-telemetry-package-arm-post-20260316d` with `dummy/software`, `FBDEV: active`, `scale-mode=nearest`, and `Software frame mode: on`
+    - nearest idle control stayed effectively flat aside from noise and still exported zero generic textured work: `loop-20260316d-control-basic-pre -> post` moved `75.6460 -> 74.8844 FPS` with `render.mean_ms 7.0307 -> 7.0777` and `present.mean_ms 2.9482 -> 2.9299`
+    - the ordinary stage-`7` raster lane got materially cheaper in both telemetry and player-facing timing: the first post capture was update-noisy (`56.1222 -> 55.5662 FPS`) even though `render.mean_ms` already improved `6.9037 -> 6.7864` and `generic_textured` dropped `0.353114 -> 0.268434 ms/sample`; the immediate rerun then recovered the representative result at `56.5357 FPS / 17.6879 / 4.9094 / 6.6099 / 6.1686 ms` (`frame / update / render / present`) with `generic_textured 0.249783 ms/sample`
+    - the stage-`7` effect guard moved in the same direction: `loop-20260316d-effect-heavy-stage7-full-pre -> post` improved `55.4679 -> 55.6217 FPS`, `render.mean_ms 7.0637 -> 6.8919`, `present.mean_ms 6.3840 -> 6.3176`, and `generic_textured 0.173154 -> 0.127398 ms/sample`
+  - Keep/rollback decision with reason:
+    - keep; the row-mask reland materially reduces the recovered ordinary gameplay raster hotspot on the real device, recovered a small but real FPS win on the rerun-validated stage-`7` exchange lane, improved the heavier stage-`7` effect lane, and does not change gameplay behavior or route selection
+  - Next best candidate optimization:
+    - stay on the gameplay-first ranking order and re-rank the next loop between remaining nearest presenter tail work and broader software-frame raster residue, using the kept stage-`7` ordinary lane plus an effect-heavy or trusted Genei guard before reopening menu churn
+
+- 2026-03-15T23:46:12-0400
+  - Research target:
+    - test the highest-value nearest-HDMI lane from the new March research by tail-gating a RAM row-template replay source for repeated mapped rows, adding first-row-vs-repeat-row presenter telemetry, and validating on gameplay-first MiSTer gates before widening to broader raster or menu work
+  - Change summary:
+    - added an `r30` presenter reland in `src/port/sdl/fbdev_presenter.{c,h}` that allocates a one-row RAM template for extreme mapped-repeat tails, seeds it from the first materialized row only when the next dst row reuses the same source row, replays repeated rows from that RAM template instead of rereading fbdev memory, and exports the new template/timing counters through schema-`48` perf JSON in `src/port/sdl/sdl_app.c`
+    - rebuilt/exported `build/mister-telemetry-package-arm-nearest-r30-row-template-20260315a`, redeployed it with `tools/mister/misterctl.sh`, and completed a manual scoped review of the accepted runtime diff with focus on repeat-row validity, mapped/native isolation, and telemetry wiring; no correctness findings survived review
+    - recovered the trustworthy first-Genei automation detail for this branch by explicitly forcing Yun `super art 2`, then used that same harness for both baseline and candidate `--perf-basic` captures plus one trusted `full` Genei telemetry pass
+  - Verification evidence:
+    - `git diff --check` passed before the build; the ARM telemetry rebuild/install/package succeeded in the `/work-arm` container worktree, exported cleanly to `build/mister-telemetry-package-arm-nearest-r30-row-template-20260315a`, and still reported `ELF32` `ARM` with hard-float ABI
+    - candidate `deploy`, `probe`, and bounded `smoke` passed through `tools/mister/misterctl.sh`, and the candidate probe stayed on `dummy/software` with `FBDEV: active (1920x1080 ...)`, `Native render path: enabled (scale-mode=nearest)`, and `Software frame mode: on`
+    - decision-grade nearest `basic` captures kept the gameplay guardrails flat while materially improving the player-visible hotspot: `nearest-hdmi-r28-control-basic -> r30` moved `74.5375 -> 74.5795 FPS` with `present.mean_ms 3.0818 -> 3.0964`; `nearest-hdmi-r28-stage-heavy-basic -> r30` moved `55.0339 -> 55.2604 FPS` with `present.mean_ms 4.1339 -> 4.2014`; trusted `nearest-hdmi-r28-genei-jin-first-activation-basic -> r30` moved `31.1225 -> 36.3845 FPS` with `frame.mean_ms 32.1311 -> 27.4843` and `present.mean_ms 15.0369 -> 10.4537`; the native guard stayed inside tolerance at `native-hdmi-r30-control-basic = 91.5672 FPS / 10.9209 / 0.5348 ms`, still within `3%` of the kept `r28` native control
+    - the new counters showed the reland stayed dormant on non-tail lanes and only engaged on the intended hotspot: `nearest-hdmi-r30-control-basic` and `nearest-hdmi-r30-stage-heavy-basic` both recorded `mapped_repeat_template_rows = 0`, while trusted `nearest-hdmi-r30-genei-jin-first-activation-basic` averaged `199.73` template-backed repeat rows, `2131.33` template-backed sparse run copies, and `47.90` template-backed dense repeat rows; the trusted `nearest-hdmi-r30-genei-jin-first-activation-full` telemetry split then measured `mapped_first_row.mean_ms = 3.0381` versus `mapped_repeat_row.mean_ms = 6.4401`
+    - paired `full` control and stage-heavy captures did regress, but only because the new per-row timing split is expensive when enabled; their matching `basic` captures stayed flat and the template counters remained zero there, so the runtime keep decision stays tied to the low-overhead gameplay measurements
+  - Keep/rollback decision with reason:
+    - keep; the tail-gated RAM row-template replay materially improves the trusted first-Genei nearest-HDMI hotspot on the real device, stays inert on `control` and `stage-heavy`, preserves the native guardrail, and leaves behind the requested first-row-vs-repeat-row telemetry for the next presenter or gameplay-raster decision
+  - Final commit hash:
+    - recorded in the loop closure commit
+  - Next best candidate:
+    - treat this presenter-tail keep as closed and move the next runtime loop to the broader gameplay raster lane in `src/port/sdl/sdl_game_renderer.c`, prioritizing `effect-heavy`, `super-heavy`, or trusted first-Genei direct-present residue before reopening menu-only churn
+
+- 2026-03-15T21:12:40-0400
+  - Research target:
+    - verify the live `scale-mode = nearest` HDMI slowdown on the current branch/package again, add row-gap/fanout telemetry to the kept direct presenter path, and test whether a narrow sparse repeated-row copy-primitive change helps the gameplay-first hotspot without replaying the overcopy regressions
+  - Change summary:
+    - rebuilt and redeployed the current branch as a telemetry ARM package, revalidated that nearest still probed as `dummy/software` plus `FBDEV: active`, `Native render path: enabled (scale-mode=nearest)`, and `software_frame_mapped_scale`, and recovered fresh gameplay-first nearest captures on the live `1920x1080` device before changing runtime behavior
+    - added schema-`47` telemetry-only plumbing in `src/port/sdl/fbdev_presenter.{c,h}` and `src/port/sdl/sdl_app.c` so perf JSON now exports `mapped_changed_rows`, `mapped_row_runs`, `mapped_row_runs_max`, `mapped_repeat_rows`, `mapped_repeat_run_copies`, `mapped_repeat_dense_rows`, and `mapped_repeat_gap_pixels` in both the summary metrics and per-frame samples
+    - tried a single-file `r29` presenter candidate that replaced sparse repeated-row `SDL_memcpy` calls with an inline aligned word-copy helper, rebuilt/exported it incrementally from the existing ARM worktree, and rolled it back immediately after the first gameplay gate regressed on the real device
+    - attempted `codex review --uncommitted` for the kept telemetry diff, but the helper stalled after repeated read-only diff inspection; completed a manual scoped review of the accepted measurement-support change and found no additional correctness issue
+  - Verification evidence:
+    - `git diff --check` passed before both builds; the full telemetry ARM rebuild/install/package succeeded in `3sx-mister-build-nearest-hdmi-perf`, exported cleanly to `build/mister-telemetry-package-arm-nearest-r28-fanout-20260315a`, and the incremental `r29` rebuild/install/package also succeeded from the same ARM worktree and exported cleanly to `build/mister-telemetry-package-arm-nearest-r29-smallcopy-20260315a`; both packages still reported `ELF32` `ARM` with hard-float ABI
+    - candidate and rollback `deploy`, `probe`, and bounded `smoke` all passed through `tools/mister/misterctl.sh`; after the reject, the live runtime was restored with `tools/mister/misterctl.sh --password 1 deploy --src build/mister-telemetry-package-arm-nearest-r28-fanout-20260315a` plus a final `probe`
+    - the accepted schema-`47` telemetry tree stayed route-correct and close to the preserved direct-path baseline: `nearest-hdmi-r28-control-full = 71.2582 FPS / 14.0335 / 3.0903 / 3.0757 ms` (`frame / present / present_copy`), `nearest-hdmi-r28-stage-heavy-full = 52.0238 FPS / 19.2220 / 4.0953 / 4.0801 ms`, `nearest-hdmi-r28-genei-jin-first-activation = 29.7295 FPS / 33.6367 / 14.9453 / 14.9236 ms` with trusted `p1_super_art_active_frames_total = 121` and `p1_super_art_active_first_frame = 179`, and `native-hdmi-r28-control-basic = 92.6854 FPS / 10.7892 / 0.5367 ms`
+    - the new telemetry exposed the remaining hotspot shape directly: active Genei frames averaged `194.57` changed source rows, `1395.37` mapped row runs, `15.86` max runs on the busiest source row, `743.60` repeated mapped rows, `4415.81` sparse repeated-row copy calls, `117.50` dense repeated rows, and `205927.85` repeated-row gap pixels while still averaging `42.8552 ms` frame / `21.2190 ms` `present_copy`; the active Genei tail peaked at `4852` total row runs, `18547` sparse repeated-row copies, `499290` gap pixels, and `5444412` copied bytes
+    - the new counters also showed why the next runtime reland should stay tightly gated: `control` and `stage-heavy` never exceeded `mapped_row_runs = 1753`, while active Genei exceeded `2000` row runs on `38/121` frames and `8000` sparse repeated-row copies on `16/121` frames
+    - the `r29` inline-copy candidate failed the first keep gate immediately even though bytes and routing stayed flat: `nearest-hdmi-r29-control-full` fell to `66.5394 FPS / 15.0287 / 4.0357 / 4.0200 ms` with the same `183105.60` copied bytes/frame and the same direct `software_frame_mapped_scale` path, so the primitive change itself made the control lane slower
+  - Keep/rollback decision with reason:
+    - keep the schema-`47` telemetry-only reland and rollback the inline sparse-copy primitive; the accepted change gives the branch the missing fanout/gap evidence for the real HDMI nearest hotspot, while the first primitive experiment regressed `control` badly enough that wider capture budget was not justified
+  - Final commit hash:
+    - recorded in the loop closure commit
+  - Next best candidate:
+    - use the new row-fanout telemetry to gate any future repeated-row cluster or alternate-copy experiment behind truly extreme frames only; `control` and `stage-heavy` stayed below `mapped_row_runs = 2000`, so the next runtime loop should target the active Genei tail (`mapped_row_runs >= 2000` or `mapped_repeat_run_copies >= 8000`) instead of broad small-copy rewrites or another byte-only split/merge attempt
+
+- 2026-03-15T20:05:31-0400
+  - Research target:
+    - refresh the gameplay-first nearest HDMI baseline on the live `1920x1080` direct path, then test whether splitting only tiles with a large interior mapped gap could reduce copied bytes without replaying the broad disjoint-run fanout loss
+  - Change summary:
+    - revalidated the live device on `scale-mode = nearest` with a fresh `probe`, then recovered fresh `r25` gameplay-first baselines on the expected direct path: `control`, `stage-heavy`, and a trustworthy `genei-jin-first-activation` rerun with `p1_super_art_active_frames_total = 121` and `p1_super_art_active_first_frame = 179`, plus a native control and native Genei comparison
+    - tried a single-file runtime reland in `src/port/sdl/fbdev_presenter.c` that let the mapped nearest cache keep up to two runs per `8`-pixel compare tile, but only split a tile when the unchanged middle mapped to at least `16` destination pixels, aiming to cut dirty bytes with less run fanout than the rejected broad disjoint-run shape
+    - rebuilt the ARM telemetry package in `3sx-mister-build-nearest-hdmi-perf`, exported it to `build/mister-telemetry-package-arm-nearest-r26-selective-gap-20260315b`, deployed it through `tools/mister/misterctl.sh`, and completed a manual scoped review of the rejected runtime diff with focus on run-capacity fallback, cached-row coherence, and mapped/native isolation
+  - Verification evidence:
+    - `git diff --check` passed on the runtime diff before the build; the telemetry ARM rebuild/install/package succeeded in `/work-arm`, `readelf -h build/mister-telemetry-package/bin/3sx` still reported `ELF32` `ARM` with hard-float ABI, and the package exported cleanly to `build/mister-telemetry-package-arm-nearest-r26-selective-gap-20260315b`
+    - candidate MiSTer `deploy`, `probe`, and bounded `smoke` all passed on the serialized tooling path; the candidate probe stayed on `dummy/software` with `FBDEV: active (1920x1080 ...)`, `Native render path: enabled (scale-mode=nearest)`, and `Software frame mode: on`
+    - fresh `r25` repro confirmed the live user symptom still matched the kept direct path rather than a route regression: `nearest-hdmi-r25-control-full = 71.7315 FPS / 13.9409 / 3.0252 ms` (`frame / present_copy`), `nearest-hdmi-r25-stage-heavy-full = 52.5588 FPS / 19.0263 / 4.0765 ms`, `nearest-hdmi-r25-genei-jin-first-activation = 30.7881 FPS / 32.4801 / 14.1000 ms`, `native-hdmi-r25-control-basic = 93.6009 FPS / 10.6837 / 0.5648 ms`, and the native Genei comparison kept the same trusted active window at `121` frames starting at frame `179`
+    - the selective-gap candidate lowered copied bytes slightly but regressed every gameplay-first nearest lane anyway: `nearest-hdmi-r26-control-full` fell to `71.2994 FPS / 14.0254 / 3.1573 ms` while copied bytes only moved `183105.60 -> 181038.00`; `nearest-hdmi-r26-stage-heavy-full` fell to `51.7740 FPS / 19.3147 / 4.2576 ms` while copied bytes moved `262209.65 -> 258637.51`; and `nearest-hdmi-r26-genei-jin-first-activation` fell to `28.9341 FPS / 34.5614 / 15.8215 ms` while copied bytes only moved `1895206.84 -> 1885953.79`
+    - the trustworthy active Genei window proved the failure mode directly: active Genei frames stayed at `121`, but worsened from `41.4055 ms frame / 19.9769 ms present / 19.9625 ms present_copy / 2910410.41 bytes` on `r25` to `44.3926 / 22.5737 / 22.5593 / 2899249.65` on `r26`, and worst active `present.max_ms` worsened `37.3016 -> 44.7242`
+    - the native guard stayed flat-to-better, confirming the regression was isolated to the nearest mapped path: `native-hdmi-r26-control-basic = 93.6425 FPS / 10.6789 / 0.5289 ms`
+    - after rollback, the live runtime was restored with `tools/mister/misterctl.sh --password 1 deploy --src build/mister-share-20260314-112734/stage/games/3sx` plus a final `probe`
+  - Keep/rollback decision with reason:
+    - rollback; this selective large-gap tile split does trim dirty bytes, but the extra mapped-run fanout and bookkeeping still make the direct nearest presenter slower on `control`, `stage-heavy`, and especially the gameplay-priority Genei burst, so it does not beat the kept baseline on the real device
+  - Final commit hash:
+    - recorded in the loop closure commit
+  - Next best candidate:
+    - keep the live baseline on the current direct nearest path and do not retry per-tile sparse splitting blindly; the next presenter-side loop should add row-gap/fanout measurement or target a different hotspot than tile-level split/merge, because small dirty-byte wins are still backfiring on gameplay-first gates
+
+- 2026-03-15T19:36:56-0400
+  - Research target:
+    - revalidate the live `scale-mode = nearest` HDMI slowdown on the kept `r22` branch/runtime, quantify how much of the remaining Genei-Jin first-activation cost is still nearest-present-specific versus general gameplay cost, and test whether conservatively clustering nearby repeated-row dst runs could lower repeated-row memcpy fanout without replaying the rejected broad dense-row shape
+  - Change summary:
+    - redeployed the kept `r22` telemetry runtime to the live `1920x1080` MiSTer output, reverified that nearest still probed as `dummy/software` plus `FBDEV: active`, `Native render path: enabled (scale-mode=nearest)`, and `software_frame_mapped_scale`, and recovered a fresh `r23` gameplay-first baseline on the direct path
+    - added a narrow `src/port/sdl/fbdev_presenter.c` candidate that only merged near-adjacent repeated-row destination runs into a few bounded-overcopy memcpy clusters after the existing dense repeated-row fast path declined, then rebuilt/exported a fresh ARM telemetry package for on-device validation
+    - attempted `codex review --uncommitted` for the scoped presenter diff, but the helper stalled after read-only diff inspection; completed a manual scoped review of the rejected runtime diff and found no additional correctness issue beyond the measured performance tradeoff
+  - Verification evidence:
+    - `git diff --check` passed on the runtime diff before the build; the telemetry ARM rebuild/install/package succeeded inside `3sx-mister-build-nearest-hdmi-perf`, exported cleanly to `build/mister-telemetry-package-arm-nearest-r24-repeatcluster-20260315b`, and `readelf -h` still reported `ELF32` `ARM` with hard-float ABI
+    - MiSTer baseline and candidate `deploy`, `probe`, and bounded `smoke` all passed; both the `r23` baseline and `r24` candidate probes continued to report `FBDEV: active (1920x1080 ...)`, `Native render path: enabled (scale-mode=nearest)`, and `Software frame mode: on`
+    - fresh `r23` baseline confirmed the live user symptom still matched the kept direct path rather than a route regression: `nearest-hdmi-r23-control-full = 71.3611 FPS / 14.0132 / 3.0390 ms` (`frame / present_copy`), `nearest-hdmi-r23-stage-heavy-full = 53.1773 FPS / 18.8050 / 3.9644 ms`, `nearest-hdmi-r23-genei-jin-first-activation = 29.7460 FPS / 33.6180 / 14.9784 ms`, and `native-hdmi-r23-control-basic = 92.9223 FPS / 10.7617 / 0.5233 ms`
+    - the native comparison proved the remaining Genei slowdown is still overwhelmingly nearest-present-specific on modern HDMI: active Genei frames on `nearest` averaged `42.9206 ms` frame, `21.2449 ms` present, and `21.2298 ms` `present_copy`, while the same active window on `native` averaged `20.3424 ms` frame and only `0.5519 ms` present
+    - the clustered repeated-row candidate improved the targeted Genei lane modestly but at the expense of another gameplay-heavy gate: `nearest-hdmi-r24-control-full` stayed essentially flat at `71.5397 FPS / 13.9783 / 3.0649 ms` with copied bytes `183105.60 -> 184730.69`; `nearest-hdmi-r24-genei-jin-first-activation` improved slightly to `29.9211 FPS / 33.4212 / 14.5497 ms` with active Genei frames moving `42.9206 -> 42.6233 ms`, `21.2298 -> 20.6406 ms` `present_copy`, and worst `present.max_ms` `43.2985 -> 40.4740`, but copied bytes rose `1895206.84 -> 1924316.51` overall and `2910410.41 -> 2947542.41` active-window mean
+    - the same candidate regressed `stage-heavy` and slightly weakened the native guard: `nearest-hdmi-r24-stage-heavy-full` fell to `51.9476 FPS / 19.2502 / 4.1152 ms` with copied bytes `262209.65 -> 265298.17`, and `native-hdmi-r24-control-basic` slipped to `92.0948 FPS / 10.8584 / 0.5197 ms`; both stayed on the expected direct/native routes with zero readback
+    - after rollback, the live runtime was restored with `tools/mister/misterctl.sh --password 1 deploy --src build/mister-telemetry-package-arm-nearest-r22-repeatdense-20260315a` plus a final `probe`, returning the device to the kept `r22` branch runtime
+  - Keep/rollback decision with reason:
+    - rollback; the clustered repeated-row gap-merge shape does reduce active Genei present tails, but the gain is too small relative to the `stage-heavy` regression and copied-byte growth, and it still fails to beat the kept `r22` gameplay-first baseline decisively enough to justify landing another repeated-row overcopy tradeoff
+  - Final commit hash:
+    - recorded in the loop closure commit
+  - Next best candidate:
+    - keep `r22` as the active nearest baseline and use the fresh nearest-vs-native Genei delta to target a different present-copy hotspot; do not retry this clustered repeated-row gap-merge shape blindly, and prefer another measurement-backed presenter-side step before widening to menu-only work
+
+- 2026-03-15T19:10:58-0400
+  - Research target:
+    - verify the live `scale-mode = nearest` HDMI slowdown again on the current branch/package with a fresh telemetry baseline, then test whether collapsing only dense repeated mapped rows could lower the first-activation Genei-Jin present hotspot without replaying the rejected all-row dense-span shape
+  - Change summary:
+    - reverified the live `1920x1080` MiSTer output against the current branch/package and then recovered a fresh telemetry baseline with the direct fbdev route intact; the nearest HDMI path was still `dummy/software` plus `FBDEV: active`, `Native render path: enabled (scale-mode=nearest)`, and `software_frame_mapped_scale` rather than `fullscreen_staging` or readback fallback
+    - updated `src/port/sdl/fbdev_presenter.c` so repeated mapped rows can collapse to one contiguous `memcpy` only when they already reuse the prior destination row and their cached destination tile runs cover a dense enough span; first-row rendering and sparse repeated rows stay on the existing run-copy path
+    - completed a manual scoped review of the kept presenter diff and found no additional correctness issues
+  - Verification evidence:
+    - `git diff --check` passed before the deploy step; the telemetry ARM rebuild/install/package succeeded inside `/work-arm` in `3sx-mister-build-nearest-hdmi-perf`, exported cleanly to `build/mister-telemetry-package-arm-nearest-r22-repeatdense-20260315a`, and `readelf -h` still reported `ELF32` `ARM` with hard-float ABI
+    - MiSTer baseline/candidate `deploy`, `probe`, and bounded `smoke` all passed on the telemetry package, with probe continuing to report `FBDEV: active (1920x1080 ...)`, `Native render path: enabled (scale-mode=nearest)`, and `Software frame mode: on`
+    - fresh `r21` gameplay baseline confirmed the user-visible slowdown is still direct-path mapped present cost rather than route drift: `nearest-hdmi-r21-control-full = 71.5297 FPS / 13.9802 / 3.0152 / 3.0004 ms` (`frame / present / present_copy`), `nearest-hdmi-r21-stage-heavy-full = 52.2461 FPS / 19.1402 / 4.0302 / 4.0156 ms`, and `nearest-hdmi-r21-genei-jin-first-activation = 29.6182 FPS / 33.7630 / 14.9579 / 14.9399 ms` with `p1_super_art_active_frames_total = 121` and `p1_super_art_active_first_frame = 179`
+    - the kept `r22` repeated-row-only dense-copy reland stayed on the same direct route and improved the primary Genei hotspot without hurting the gameplay guardrails: `nearest-hdmi-r22-control-full = 71.9975 FPS / 13.8894 / 3.0095 / 2.9949 ms`, `nearest-hdmi-r22-stage-heavy-full = 52.2905 FPS / 19.1239 / 4.0317 / 4.0170 ms`, and `nearest-hdmi-r22-genei-jin-first-activation = 30.1628 FPS / 33.1534 / 14.5952 / 14.5817 ms`
+    - inside the active Genei window, the kept reland moved `frame_time.mean` from `43.1074` to `41.9121 ms`, `present.mean_ms` from `21.2856` to `20.3522`, `present_copy.mean_ms` from `21.2610` to `20.3386`, and worst-case `present.max_ms` from `42.3779` to `39.1904`, while copied bytes only nudged `2887272.36 -> 2910410.41` instead of reproducing the rejected `r20` byte explosion
+    - native guard stayed flat on the present-path change: `native-hdmi-r22-control-basic = 92.6996 FPS / 10.7875 / 0.5453 ms` versus the trusted `native-hdmi-r19-control-basic = 92.7239 FPS / 10.7847 / 0.5450 ms`
+  - Keep/rollback decision with reason:
+    - keep; this repeated-row-only dense-span collapse improves the gameplay-first Genei hotspot and trims worst present tails while leaving `control`, `stage-heavy`, and the native guard effectively flat, and it avoids the broad copied-byte regression that invalidated `r20`
+  - Final commit hash:
+    - recorded in the loop closure commit
+  - Next best candidate:
+    - stay on gameplay-first nearest HDMI validation and rerank the remaining Genei hotspot between presenter copy fanout and the still-material renderer cost; do not reopen the broader dense-row-collapse shape or let menu-only lanes outrank gameplay gates
+
+- 2026-03-15T18:38:50-0400
+  - Research target:
+    - verify that the live nearest HDMI slowdown with `scale-mode = nearest` was still on the kept direct fbdev path, recover trustworthy automated `genei-jin-first-activation` coverage on this branch, and then test one dense-row mapped-present hypothesis against that gameplay-first hotspot before reopening broader experiments
+  - Change summary:
+    - recovered fresh `r19` nearest control, stage-heavy, Ibuki stage 7, Genei-Jin first activation, and native guard captures on the live `1920x1080` MiSTer output; the current branch/package still matched the kept direct `software_frame_mapped_scale` route rather than regressing to `fullscreen_staging` or readback
+    - proved the old Yun helper path is now trustworthy gameplay coverage on this branch: `nearest-hdmi-r19-genei-jin-first-activation` used the existing `--test-p1-super-full`, `--test-delay-gameplay-inputs-until-active`, and `--perf-wait-test-phase game-input-active` path to capture the first active Genei-Jin burst with `p1_super_art_active_frames_total = 121` and `p1_super_art_active_first_frame = 179`
+    - tried a single-file runtime reland in `src/port/sdl/fbdev_presenter.c` that collapses fragmented changed mapped rows into one dirty span when changed coverage is dense enough to avoid excessive row-run fanout; completed a manual scoped review of that diff and then rejected it on measured performance
+  - Verification evidence:
+    - `git diff --check` passed before and after the attempted reland; the telemetry ARM rebuild/install/package succeeded in `/work-arm-r20-dense-rows-20260315a`, exported cleanly to `build/mister-telemetry-package-arm-nearest-r20-dense-rows-20260315b`, and `readelf -h` still reported `ELF32` `ARM` with hard-float ABI
+    - MiSTer baseline/candidate `deploy`, `probe`, and bounded candidate `smoke` all passed; after rollback, the live runtime was restored with `tools/mister/misterctl.sh --password 1 deploy --src build/mister-share-20260314-112734/stage/games/3sx` plus a final `probe`, and the probes in this cycle still reported `FBDEV: active (1920x1080 ...)` and `Software frame mode: on`
+    - fresh baseline confirmed no route regression on the current branch: `nearest-hdmi-r19-control-full = 71.2908 FPS / 14.0271 / 3.0144 / 3.0005 ms` (`frame / present / present_copy`) with `183059.04` copied bytes/frame, `nearest-hdmi-r19-stage-heavy-full = 52.2327 FPS / 19.1451 / 4.0471 / 4.0327 ms` with `262170.55` copied bytes/frame, `nearest-hdmi-r19-ibuki-stage7-basic = 57.2269 FPS / 17.4743 / 6.8739 ms`, and `native-hdmi-r19-control-basic = 92.7239 FPS / 10.7847 / 0.5450 ms`, all on the expected direct/native routes
+    - the recovered gameplay-first Genei lane exposed the real hotspot directly on the kept route: `nearest-hdmi-r19-genei-jin-first-activation = 29.7032 FPS / 33.6664 / 15.0383 / 15.0204 ms` with `1881327.65` copied bytes/frame, while the active Genei window averaged `43.1364 ms` frame, `21.4637 ms` present, `21.4403 ms` `present_copy`, and `2887184.23` copied bytes/frame across the `121` active frames
+    - the dense-row-collapse candidate stayed on the same direct path and slightly improved control plus overall Genei average, but it was not decision-grade: `nearest-hdmi-r20-control-full = 72.5593 FPS / 13.7818 / 2.9732 / 2.9587 ms`, `nearest-hdmi-r20-stage-heavy-full = 52.2985 FPS / 19.1210 / 4.1125 / 4.0980 ms`, `nearest-hdmi-r20-genei-jin-first-activation = 30.0413 FPS / 33.2875 / 14.5323 / 14.5180 ms` with copied bytes rising to `2078135.63`; inside the active Genei window, frame time only moved `43.1364 -> 42.5247 ms` and present `21.4637 -> 20.8053 ms`, while copied bytes rose `2887184.23 -> 3165249.62` and worst-case tails worsened
+  - Keep/rollback decision with reason:
+    - rollback; the live user symptom is still a direct-path mapped-copy hotspot, not a route regression, and dense row collapse buys too little on the recovered first-activation gameplay lane while increasing copied bytes and failing to improve `stage-heavy` meaningfully
+  - Final commit hash:
+    - recorded in the cycle closeout commit
+  - Next best candidate optimization:
+    - use the recovered trustworthy `genei-jin-first-activation` lane together with `control` plus one of `stage-heavy` or `ibuki-stage7` to rank a different presenter or raster hotspot; do not retry this dense-row-collapse shape blindly and do not let menu-only lanes outrank gameplay-first nearest validation
+
+- 2026-03-15T00:05:20-0400
+  - Commit hash:
+    - recorded in the loop closure commit
+  - Bottleneck targeted:
+    - the remaining row-granular `software_frame_mapped_scale` copy tax on the restored nearest HDMI direct path at `1920x1080`, specifically whether tightening changed mapped rows to their changed source-column span could cut bandwidth without touching route selection or native exact behavior
+  - Change summary:
+    - recovered fresh `r6` nearest and native baselines on the live device and confirmed there was still no route regression: nearest stayed on `software_frame_mapped_scale`, native stayed on `software_frame_exact`, and the preserved `r5` row-cache baseline still described the current branch accurately
+    - updated `src/port/sdl/fbdev_presenter.c` to record first/last changed source columns for each cached `384x224` mapped-present row and remap only that destination span through the existing nearest LUT, while preserving the current whole-row fallback whenever the mapped cache or LUT is unavailable
+    - attempted `codex review --uncommitted` for the required review pass, but the helper stalled again; completed a manual scoped review of the kept diff and found no additional correctness issues
+  - Verification result summary:
+    - `git diff --check`, ARM telemetry rebuild/install/package in `3sx-mister-build-nearest-hdmi-perf`, and non-destructive `docker cp` export to `build/mister-telemetry-package-arm-nearest-r7-spans` all passed, with `readelf` still reporting `ELF32 ARM` and hard-float ABI inside the container package
+    - MiSTer `deploy`, `probe`, and bounded `smoke` all passed on the candidate package; probe and smoke still reported `FBDEV: active (1920x1080 ...)`, `Native render path: enabled (scale-mode=nearest)`, and `Software frame mode: on`
+    - `nearest-hdmi-r7-control-full` improved from the fresh `r6` baseline `48.3212 FPS / 20.6948 / 9.7569 / 9.7423 ms` (`frame / present / present_copy`) and `1490016` copied bytes/frame to `65.4989 FPS / 15.2674 / 4.4119 / 4.3974 ms` and `443678.77` copied bytes/frame, while staying on `software_frame_mapped_scale = 1.0000`
+    - `nearest-hdmi-r7-stage-heavy-basic` improved from `33.4123 FPS / 29.9291 / 16.1042 ms` and `2588697.60` copied bytes/frame to `46.3955 FPS / 21.5538 / 7.8331 ms` and `935399.44` copied bytes/frame, again staying fully on `software_frame_mapped_scale`
+    - the first native guard `native-hdmi-r7-control-basic` landed outside the `3%` budget, so the guard was rerun immediately; the accepted rerun `native-hdmi-r7-control-basic-rerun` held `93.0101 FPS / 10.7515 / 0.5518 ms` versus the fresh `r6` guard `94.6604 FPS / 10.5641 / 0.5473 ms`, keeping native exact presentation inside the allowed drift on `software_frame_exact = 1.0000`
+  - Keep/rollback decision with reason:
+    - keep; the dirty-span reland preserves the intended direct nearest HDMI presenter route, cuts mapped present bandwidth materially on both measured gates, and the accepted native rerun stays within guardrail
+  - Next best candidate optimization:
+    - if modern-display nearest still needs another loop after this reland, stay inside partial mapped-present follow-up by moving from coarse row spans to source-tile-guided copies or another sparse-span reuse shape rather than reopening route selection
+
+- 2026-03-14T23:40:54-0400
+  - Research target:
+    - modern-display HDMI nearest on the restored direct path: confirm the fresh `r4` baseline still matches the preserved `r3` state, then test a single partial-present hypothesis that avoids rewriting unchanged mapped rows to the `1920x1080` framebuffer
+  - Change summary:
+    - recovered fresh `r4` nearest and native baselines on the live device and confirmed there was no route regression: nearest still direct-presented on `software_frame_mapped_scale`, while native remained on `software_frame_exact`
+    - updated `src/port/sdl/fbdev_presenter.c` to cache the prior `384x224` source rows for mapped nearest present and only rescale/write destination rows whose source rows changed; invalidated that cache on non-mapped presenter paths so fallback/readback frames still force a safe refresh
+    - attempted `codex review --uncommitted` for the required review pass, but the helper stalled again; completed a manual scoped review of the kept diff and found no additional correctness issues
+  - Verification evidence:
+    - `git diff --check` passed; the ARM telemetry rebuild/install/package through `/work-arm` in `3sx-mister-build-nearest-hdmi-perf` succeeded, `readelf -h build/mister-package/bin/3sx` still reported `ELF32` `ARM` with hard-float ABI inside the container, and the package exported cleanly to `build/mister-telemetry-package-arm-nearest-r5-rowcache`
+    - MiSTer `deploy`, `probe`, and bounded `smoke` all passed on the candidate package, with probe and smoke still reporting `FBDEV: active (1920x1080 ...)`, `Native render path: enabled (scale-mode=nearest)`, and `Software frame mode: on`
+    - control keep gate: `nearest-hdmi-r4-control-full` = `21.3593 FPS` / `46.8180 / 35.8808 / 35.8674 ms` (`frame / present / present_copy`) with `6220800` copied bytes/frame; `nearest-hdmi-r5-control-full` improved to `48.3931 FPS` / `20.6641 / 9.7551 / 9.7403 ms` with `1490016` copied bytes/frame and the dominant path unchanged at `software_frame_mapped_scale = 1.0000`
+    - heavy nearest keep gate: `nearest-hdmi-r4-stage-heavy-basic` = `20.0642 FPS` / `49.8400 / 35.9736 ms` with `6220800` copied bytes/frame; `nearest-hdmi-r5-stage-heavy-basic` improved to `34.9093 FPS` / `28.6457 / 15.0385 ms` with `2588697.60` copied bytes/frame, again staying fully on `software_frame_mapped_scale`
+    - native guard held: `native-hdmi-r4-control-basic` = `93.4393 FPS` / `10.7021 / 0.5452 ms`; `native-hdmi-r5-control-basic` stayed effectively flat at `92.9181 FPS` / `10.7622 / 0.5390 ms` on `software_frame_exact = 1.0000`
+  - Keep/rollback decision:
+    - keep the mapped-present source-row cache reland; on the live `1920x1080` HDMI path it preserves the intended direct presenter route, cuts the remaining nearest present/copy cost by more than half on both measured gates, and leaves native exact presentation flat
+  - Final commit hash:
+    - recorded in the loop closure commit
+  - Next best candidate:
+    - if modern-display nearest still needs another loop after this reland, keep the branch on partial mapped-present follow-up and widen from row-only updates to narrower dirty spans or source-tile-guided copies before reopening route-selection work
+
+- 2026-03-14T23:15:00-0400
+  - Research target:
+    - modern-display HDMI `scale-mode = nearest` slowdown on the restored direct path: verify the current branch against the preserved `r1` recovery at `1920x1080`, confirm whether the older mapped-LUT reland was missing, and test that single hypothesis before widening to a more invasive scaled-present rewrite
+  - Change summary:
+    - reproduced the fresh nearest HDMI baseline on the live device and confirmed the branch still matched the preserved direct-path recovery: `misterctl.sh probe` reported `Native render path: enabled (scale-mode=nearest)`, while `nearest-hdmi-r2-control-full` and `nearest-hdmi-r2-stage-heavy-basic` stayed on `software_frame_mapped_scale` with zero readback but very high mapped-copy cost
+    - relanded the missing mapped nearest LUT cache in `src/port/sdl/fbdev_presenter.c`, keying cached indices on source dimensions plus mapped destination geometry and reusing that cache for both `copy_argb_surface_scaled_to_fb_mapped_rect(...)` and the shared fullscreen scaled helper
+    - attempted `codex review --uncommitted` for the required review pass, but the helper stalled during read-only inspection; completed a manual scoped review of the kept diff instead and found no additional correctness issues
+  - Verification evidence:
+    - `git diff --check` passed; the ARM telemetry rebuild/install/package through `/work-arm` in `3sx-mister-build-nearest-hdmi-perf` succeeded, `readelf -h build/mister-telemetry-package/bin/3sx` still reported `ELF32` `ARM` with hard-float ABI, and the package exported cleanly to `build/mister-telemetry-package-arm-nearest-r2-lut`
+    - MiSTer `deploy`, `probe`, and bounded `smoke` all passed on the candidate package, with probe and smoke both still reporting `FBDEV: active (1920x1080 ...)`, `Native render path: enabled (scale-mode=nearest)`, and `Software frame mode: on`
+    - control keep gate: `nearest-hdmi-r2-control-full` = `13.7570 FPS` / `72.6901 / 3.5826 / 7.4603 / 61.6472 ms` (`frame / update / render / present`) with `present_copy.mean_ms = 61.6330`; `nearest-hdmi-r3-control-full` improved to `21.2800 FPS` / `46.9925 / 3.5854 / 7.3557 / 36.0514 ms`, with `present_copy.mean_ms = 36.0379` and the dominant path unchanged at `software_frame_mapped_scale = 1.0000`
+    - heavy nearest keep gate: `nearest-hdmi-r2-stage-heavy-basic` = `13.2111 FPS` / `75.6939 / 4.9553 / 9.1315 / 61.6070 ms`; `nearest-hdmi-r3-stage-heavy-basic` improved to `20.2745 FPS` / `49.3231 / 4.8857 / 8.9595 / 35.4778 ms`, again staying fully on `software_frame_mapped_scale`
+    - native guard held: `native-hdmi-r2-control-basic` = `92.9890 FPS` / `10.7540 / 3.1950 / 7.0041 / 0.5549 ms`; `native-hdmi-r3-control-basic` stayed effectively flat at `92.7909 FPS` / `10.7769 / 3.1401 / 7.0768 / 0.5601 ms` on `software_frame_exact = 1.0000`
+  - Keep/rollback decision:
+    - keep the mapped-LUT reland; on the live `1920x1080` HDMI path it preserves the intended direct presenter route, cuts mapped nearest present cost by roughly `41%` on both measured gates, and leaves the native guardrail well inside the allowed drift
+  - Final commit hash:
+    - recorded in the loop closure commit
+  - Next best candidate:
+    - if modern-display nearest still needs another loop after this reland, move to a partial scaled-present / dirty-row style investigation rather than reopening route selection or native exact behavior
+
+- 2026-03-14T22:50:00-0400
+  - Research target:
+    - modern-display HDMI regression recovery for `scale-mode = nearest`: verify whether the accepted direct fbdev/native path had fallen out on `nearest-hdmi-perf`, recover a fresh on-device baseline at `1920x1080`, and restore the routed nearest path before opening a new scaler hypothesis
+  - Change summary:
+    - deep rechecked the current branch against the preserved nearest findings and confirmed the reland had drifted out: probe no longer reported `Native render path: enabled (scale-mode=nearest)`, and the preserved `--scale-mode` capture plumbing had also fallen out of `tools/mister/perf-sampler.sh`
+    - restored the nearest native/fbdev route and native-path screenshot target support in `src/port/sdl/sdl_app.c`, then restored `--scale-mode` override, runtime scale-mode capture, and dominant-present-path summary support in `tools/mister/perf-sampler.sh`
+    - completed the required review pass on the scoped diff after verification; the standalone `codex review --uncommitted` helper stalled during read-only inspection, so the kept tree closed on a manual scoped review with no additional correctness findings
+  - Verification evidence:
+    - remote lock and busy checks were clear before every device step; `git diff --check`, `bash -n tools/mister/perf-sampler.sh`, and the telemetry ARM rebuild/install/package through `/work-arm` in `3sx-mister-build-nearest-hdmi-perf` all passed on the kept tree
+    - reproduced the live HDMI regression first: `nearest-hdmi-r0-control-full` landed at `5.7141 FPS` with `175.0050 / 9.7776 / 161.5944 ms` for `frame/render/present`, `dominant_present_path = readback_rect`, and `present_readback.mean_ms = 152.5426`; the probe log likewise lacked the nearest native-path line
+    - after the reland, `misterctl.sh probe` again logged `Native render path: enabled (scale-mode=nearest)`, bounded smoke passed, and `nearest-hdmi-r1-control-full` moved to `14.2285 FPS` with `70.2816 / 7.4068 / 59.3430 ms`, `dominant_present_path = software_frame_mapped_scale`, `software_frame_direct_present_ratio = 1.0000`, and `present_readback.mean_ms = 0.0000`
+    - the heavy nearest rerun `nearest-hdmi-r1-stage-heavy-basic` stayed on the same direct path at `13.2139 FPS` with `75.6779 / 9.1134 / 61.5909 ms`; native guard `native-hdmi-r1-control-basic` held `92.9996 FPS` with `10.7527 / 7.0311 / 0.5480 ms` and `dominant_present_path = software_frame_exact`
+  - Keep/rollback decision:
+    - keep the routing and sampler restoration; they remove the catastrophic `readback_rect` regression on `1920x1080` HDMI nearest without disturbing native exact presentation, but the remaining modern-display nearest cost is still dominated by mapped-scale presenter work rather than by readback or upload fallback
+  - Final commit hash:
+    - recorded in the loop closure commit
+  - Next best candidate:
+    - stay on the reopened modern-display nearest stream and attack the remaining `software_frame_mapped_scale` copy cost on `1920x1080` output without reopening gameplay logic, native exact routing, or the older closed menu stream
+
+- 2026-03-11T09:15:20-0400
+  - Research target:
+    - first attribution pass on the user-priority menu lane: measure which select-screen update scopes dominate 2P character select overall and the exact super-art chooser slowdown, especially the suspected circle/highlight animation
+  - Change summary:
+    - added telemetry-only update-breakdown scopes and export plumbing for `SelectTimer_Run`, `Select_Player`, `Sel_PL_Control`, `Player_Select_Control`, `Sel_Arts_Sub`, and targeted menu effect IDs in `effect.c`, then surfaced the top scopes in `tools/mister/perf-sampler.sh`
+    - completed the required independent review pass with a fresh `codex` reviewer; accepted and fixed both valid findings by removing the raw `<stdint.h>` dependency from `main.h` and gating the new probes so they only execute when a relevant full character-select capture is active
+    - kept the runtime tree gameplay-neutral: the final telemetry reports per-frame portrait, super-art plate, cursor-circle, and command-name slices without changing menu logic, timing, or determinism
+  - Verification evidence:
+    - fresh `codex` review produced two valid findings and both were fixed; the parallel `claude` review attempt stalled without an artifact and was ignored. `git diff --check` and `bash -n tools/mister/perf-sampler.sh` passed after the fixes
+    - host telemetry rebuild/install plus `--headless --software-frame-parity-check` passed in `3sx-mister-build` with `Software-frame parity check passed: 10 cases` and `Software-source refresh parity check passed: 2 cases`
+    - `/work-arm` telemetry rebuild/install passed; because the host-side telemetry package script is still unreliable here, the deploy package was refreshed by replacing `bin/3sx` inside the prior known-good `build/mister-telemetry-package-arm-c112` shell, producing `build/mister-telemetry-package-arm-c112r`. MiSTer `health`, `deploy`, `probe`, and bounded `smoke` all passed on that package
+    - `menu-c112r-char-select-overall-full` landed at `44.7572 FPS` with `22.3428 / 11.3586 / 10.4541 / 0.5302 ms` for `frame/update/render/present`; top update scopes were `effect-38-portrait 0.2040 ms`, `effect-79-super-art-plate 0.0641 ms`, `effect-d8-cursor-circle 0.0292 ms`, `select-player 0.0229 ms`, and `effect-80-super-art-command-name 0.0224 ms`
+    - `menu-c112r-super-art-selection-exact-full` landed at `35.2220 FPS` with `28.3914 / 18.3873 / 9.3891 / 0.6150 ms`; top update scopes were `effect-38-portrait 0.2329 ms`, `effect-79-super-art-plate 0.1065 ms`, `effect-d8-cursor-circle 0.0493 ms`, `select-player 0.0211 ms`, and `effect-39-name 0.0204 ms`
+  - Keep/rollback decision:
+    - keep the measurement-support changes; the accepted review fixes preserve portability and remove idle telemetry overhead, and the chooser lane still measures as decisively update-bound with the suspected circle/highlight slice far too small to explain the `~18.4 ms` update cost by itself
+  - Final commit hash:
+    - `b54dc230`
+  - Next best candidate:
+    - stay on the user-priority chooser lane but move attribution one level up from these effect slices, likely into broader character-select/menu task dispatch outside individual effect moves, before attempting a runtime optimization
+
+- 2026-03-11T08:47:00-0400
+  - Research target:
+    - measurement-only closeout for the next active runtime stream: make the 2P post-character-select super-art chooser reproducible as an exact perf lane without regressing the older `attract-demo-logo` runtime-state workflow
+  - Change summary:
+    - added `character-select-super-art` support to the perf runtime-state plumbing in `src/main.c`, `src/port/sdl/sdl_app.c`, and `tools/mister/perf-sampler.sh`, including a concise chooser start-state snapshot in perf JSON/summary output
+    - fixed `tools/mister/perf-sampler.sh` so `--perf-wait-runtime-state` enables the test runner only for `character-select-super-art`; `attract-demo-logo` now keeps its original idle title/demo path
+    - completed the required independent review pass with a fresh `codex` reviewer; kept the valid blanket-automation regression fix, tightened the chooser runtime-state to chooser-instantiated signals (`Select_Arts >= 0` plus visible command-name state), and added a fail-fast CLI guard so raw `character-select-super-art` waits require `--test-enable` instead of hanging indefinitely
+  - Verification evidence:
+    - `git diff --check` and `bash -n tools/mister/perf-sampler.sh` passed; telemetry ARM rebuild/install/package in `3sx-mister-build`, host `docker cp` export, MiSTer `deploy`, and `probe` all passed on the kept tree
+    - unchanged-tree refreshed menu baselines confirmed the user-priority lane is update-bound, not presenter-bound: `menu-c110-char-select-overall-basic` landed at `39.6416 FPS` with `15.5266 ms update`, while warmed `menu-c110-super-art-selection-basic` landed at `36.7670 FPS` with `17.2662 ms update` and only `0.5464 ms present`
+    - the final exact-lane rerun `menu-c111e-super-art-selection-exact-basic` landed at `37.3927 FPS` with `26.7432 / 16.8619 / 9.3454 / 0.5358 ms` for `frame/update/render/present`, `runtime_state=character-select-super-art`, `active_frames=40`, and chooser start state `Sel_PL_Complete=1/1`, `Sel_Arts_Complete=0/0`, `Select_Arts=3/3`, `Moving_Plate=0/0`, `Moving_Plate_Counter=0/0`, `Disp_Command_Name=1/1`
+    - regression guard `menu-c111-attract-demo-logo-check` landed at `63.1002 FPS`, `runtime_state=attract-demo-logo`, and `active_frames=60`, confirming the attract/logo idle path still arms after the sampler fix
+  - Keep/rollback decision:
+    - keep the measurement-support changes; they recover a reproducible chooser-instantiation super-art lane and preserve the older attract/logo lane, while the earlier pre-chooser gate was replaced rather than kept
+  - Final commit hash:
+    - recorded in the loop closure commit
+  - Next best candidate:
+    - stay on the user-priority menu lane and attribute the remaining `~16.5 ms` chooser update cost inside the select-screen path itself, starting with the circle/highlight and related menu-effect update routines before broader safe wins
+
+- 2026-03-11T07:21:00-0400
+  - Research target:
+    - Chunk 4 closeout: validate the player-facing `clean` package on MiSTer, document the finished nearest modern-display workflow, and hand the branch back to the next measured runtime lane
+  - Change summary:
+    - rebuilt the deployable ARM hard-float `clean` package through `/work-arm` in `3sx-mister-build`, copied it back to the host as `build/mister-clean-package-arm` with `docker cp`, redeployed it with `tools/mister/misterctl.sh`, and validated both the default clean startup path and a temporary nearest-mode launch on-device
+    - updated `docs/config.md`, `docs/mister-runbook.md`, and `docs/agent-memory/mister-performance.md` so the repo now records the validated `nearest` modern-display guidance plus the `telemetry` versus `clean` workflow explicitly
+    - completed the required independent review pass with a fresh `codex exec` reviewer scoped to the docs/checklist diff; accepted its reproducibility finding by adding the explicit host-side `docker cp` export step before deploy and by removing the ad hoc `-c4` package path from the canonical checklist, then reran review and got `No findings`
+  - Verification evidence:
+    - `git diff --check` passed, `bash -n tools/mister/perf-sampler.sh` passed, the `/work-arm` clean build/install/package command succeeded in `3sx-mister-build`, `docker cp 3sx-mister-build:/work-arm/build/mister-clean-package ./build/mister-clean-package-arm` succeeded, and `readelf -h build/mister-clean-package/bin/3sx` reported `Machine: ARM` and `hard-float ABI`
+    - `tools/mister/misterctl.sh deploy --src build/mister-clean-package-arm`, `probe`, and bounded `smoke` all passed on MiSTer; the clean-package default path reported `Native render path: enabled (scale-mode=native)`, `Scale mode: native`, `Software frame mode: on`, `__RUNTIME_RC__=124`, and `exit=143`
+    - temporary nearest-mode clean validation also passed on MiSTer: the scripted config override reported `scale-mode = nearest` / `software-frame-mode = on`, `--probe-renderer-only` and bounded `launch-osd.sh` both logged `Native render path: enabled (scale-mode=nearest)` plus `Scale mode: nearest`, and the device returned `__RUNTIME_RC__=124` / `exit=143` before the config restored to `scale-mode = native` / `software-frame-mode = on`
+    - final nearest keep summary carried forward from the accepted telemetry matrix: control `47.5056 -> 84.1389 FPS`, stage-heavy `40.0243 -> 65.1989 FPS`, Ibuki stage 7 `45.6766 -> 81.6454 FPS`, and attract/logo `38.3566 -> 60.1424 FPS`; native guard remained `96.0766 FPS` and square-pixels guard remained `95.9970 FPS`
+  - Keep/rollback decision:
+    - keep; the nearest scaled-present path is already performance-validated in telemetry, the clean package now passes player-facing native and nearest launches on-device, and this checklist can close without reopening runtime code
+  - Final commit hash:
+    - `29168767`
+  - Next best candidate:
+    - start the next measurement-first runtime loop on 2P character select overall, then the immediate post-select super-art selection slowdown, especially the circle/highlight animation around the super-art name, before spending time on lower-priority safe wins
+
+- 2026-03-15T01:04:55-0400
+  - Research target:
+    - modern-display HDMI nearest on the verified `r8` direct path: test whether source-tile-guided dirty runs can cut mapped-copy waste beyond the kept dirty-span reland without reopening route selection
+  - Change summary:
+    - recovered fresh `r8` nearest control, stage-heavy, and native guard baselines on the live `1920x1080` HDMI target and confirmed there was still no route regression: nearest stayed on `software_frame_mapped_scale`, native stayed on `software_frame_exact`, and the preserved `r7` direct-path runtime still described the branch accurately
+    - updated `src/port/sdl/fbdev_presenter.c` to cache per-row `16`-pixel source-tile runs for mapped nearest present and only remap/copy those runs, while preserving the current coarse-span fallback whenever the mapped cache or LUT is unavailable
+    - attempted `codex review --uncommitted` for the required review pass, but the helper stalled again after read-only inspection; completed a manual scoped review of the kept diff and found no additional correctness issues
+  - Verification evidence:
+    - `git diff --check` passed; the ARM telemetry rebuild/install/package through `/work-arm` in `3sx-mister-build-nearest-hdmi-perf` succeeded, `readelf -h build/mister-telemetry-package/bin/3sx` inside the container still reported `ELF32` `ARM` with hard-float ABI, and the package exported cleanly to `build/mister-telemetry-package-arm-nearest-r9-tileruns-export1`
+    - MiSTer `deploy`, `probe`, and bounded `smoke` all passed on the candidate package; probe and smoke still reported `FBDEV: active (1920x1080 ...)`, `Native render path: enabled (scale-mode=nearest)`, and `Software frame mode: on`
+    - control keep gate: `nearest-hdmi-r8-control-full` = `65.1655 FPS` / `15.3455 / 3.8646 / 4.3349 ms` (`frame / present / present_copy`) with `443678.77` copied bytes/frame; `nearest-hdmi-r9-control-full` improved to `67.3417 FPS` / `14.8496 / 3.8646 / 3.8498 ms` with `376378.40` copied bytes/frame, while staying on `software_frame_mapped_scale = 1.0000`
+    - stage-heavy keep gates: `nearest-hdmi-r8-stage-heavy-basic` = `47.0640 FPS` / `21.2476 / 5.3031 ms` with `935399.44` copied bytes/frame; `nearest-hdmi-r9-stage-heavy-basic` improved to `51.9519 FPS` / `19.2486 / 5.3031 ms` with `544665.60` copied bytes/frame. Attribution rerun `nearest-hdmi-r8-stage-heavy-full` = `43.4044 FPS` / `23.0391 / 7.7996 / 7.7855 ms` (`frame / present / present_copy`) improved to `nearest-hdmi-r9-stage-heavy-full` = `48.7243 FPS` / `20.5236 / 5.3149 / 5.2997 ms`, again with `544665.60` copied bytes/frame and the dominant path unchanged at `software_frame_mapped_scale = 1.0000`
+    - native guard held: `native-hdmi-r8-control-basic` = `92.2942 FPS` / `10.8349 / 0.5355 ms`; `native-hdmi-r9-control-basic` stayed within the `3%` budget at `91.5832 FPS` / `10.9190 / 0.5368 ms` on `software_frame_exact = 1.0000`
+  - Keep/rollback decision with reason:
+    - keep; the source-tile reland preserves the intended direct nearest HDMI presenter route, materially cuts mapped-copy cost on both the control and heavy gates, and leaves native exact presentation effectively flat
+  - Next best candidate optimization:
+    - if modern-display nearest needs another loop after this reland, stay on mapped-present sparsity follow-up by testing finer sparse-span merging or a newly reproduced player-visible HDMI gate before reopening route selection
+
+- 2026-03-15T04:40:00-0400
+  - Research target:
+    - revalidate the modern-display `scale-mode = nearest` symptom on the current canonical package and recover the blocked full-capture transport in `tools/mister/perf-sampler.sh`
+  - Change summary:
+    - verified on the live `1920x1080` HDMI target that the current branch/package still probes as dummy/software + fbdev with `Native render path: enabled (scale-mode=nearest)` and that the preserved nearest runtime has not drifted off `software_frame_mapped_scale`
+    - replaced `perf-sampler.sh`'s large base64-over-SSH artifact return path with serialized `scp` downloads through a new `mister_scp_download(...)` helper, while preserving remote config restore and failure cleanup
+  - Verification evidence:
+    - `tools/mister/misterctl.sh lock-status`, `busy-status`, `health`, and `probe` all passed before sampling; the live device still matched `scale-mode = nearest`, `software-frame-mode = on`, and `FBDEV: active (1920x1080 ...)`
+    - fresh nearest/runtime guardrails did not reproduce the user-reported slowdown:
+      - `nearest-hdmi-r8-control-full` landed at `65.1470 FPS` / `15.3499 / 7.3049 / 4.3903 / 4.3758 ms` for `frame/render/present/present_copy`, with `dominant_present_path = software_frame_mapped_scale` and `copy_bytes = 443678.77`
+      - `nearest-hdmi-r8-stage-heavy-basic` landed at `46.0352 FPS` / `21.7225 / 8.8949 / 7.7571 ms`, with `dominant_present_path = software_frame_mapped_scale` and `copy_bytes = 935399.44`
+      - `native-hdmi-r8-control-basic` held `93.4249 FPS` / `10.7038 / 7.0115 / 0.5076 ms`, with `dominant_present_path = software_frame_exact`
+    - compared with the kept `r7` references, control stayed at `65.4989 -> 65.1470 FPS`, `15.2674 -> 15.3499 ms`, `4.3974 -> 4.3758 ms present_copy`; `stage-heavy` stayed at `46.3955 -> 46.0352 FPS`, `21.5538 -> 21.7225 ms`; native improved slightly to `93.4249 FPS`
+    - `git diff --check` plus `bash -n tools/mister/mister-common.sh tools/mister/perf-sampler.sh` passed, the rerun `nearest-hdmi-r8-control-full` saved local JSON successfully after the transport fix, and the post-fix smoke `nearest-hdmi-r8-tooling-smoke` also completed through the new download path
+    - attempted `codex review --uncommitted` twice for the tooling diff, but the review CLI stalled/timed out in this environment before returning findings; final keep used manual diff review plus the successful post-fix rerun above
+  - Keep/rollback decision:
+    - keep the tooling fix; the reported nearest HDMI slowdown does not reproduce on the current branch/package, and the only real regression recovered this cycle was the full-capture transport in `perf-sampler.sh`
+  - Final commit hash:
+    - recorded in the cycle closeout commit
+  - Next best candidate:
+    - do not spend another runtime loop on route recovery unless a fresh on-device nearest repro falls materially below the kept `r7` baseline; if nearest HDMI work resumes, start from the verified `r8` baseline and target only a newly measured mapped-scale hotspot
+
+- 2026-03-15T02:07:09-0400
+  - Research target:
+    - modern-display HDMI nearest on the kept `r11` direct path: test whether trimming each dirty mapped run down to the actual changed source-pixel edges can cut the remaining nearest overcopy without reopening route selection
+  - Change summary:
+    - recovered fresh `r12` nearest control, stage-heavy, and native guard baselines on the live `1920x1080` HDMI target and confirmed there was still no route regression: nearest stayed on `software_frame_mapped_scale`, native stayed on `software_frame_exact`, and the branch still matched the kept `r11` state
+    - updated `src/port/sdl/fbdev_presenter.c` so the mapped nearest path keeps the existing `8`-pixel tile comparisons but trims each dirty run to the actual changed source-pixel edges before mapping/copying it, while preserving the current cache, LUT, and non-mapped fallback behavior
+    - completed a manual scoped review of the single-file diff with focus on cached-row coherence, merged-run bounds, and row-stride limits; no correctness issues were found
+  - Verification evidence:
+    - `git diff --check` passed; the telemetry ARM rebuild/install/package succeeded in fresh `/work-arm-nearest-r13-edgetrim-20260315a` on `3sx-mister-build-nearest-hdmi-perf`, `readelf -h` still reported `ELF32` `ARM` with hard-float ABI, and the package exported cleanly to `build/mister-telemetry-package-arm-nearest-r13-edgetrim-20260315a`
+    - MiSTer `deploy`, `probe`, and bounded `smoke` all passed on the candidate package; probe and smoke still reported `FBDEV: active (1920x1080 ...)`, `Native render path: enabled (scale-mode=nearest)`, and `Software frame mode: on`
+    - control keep gate: `nearest-hdmi-r12-control-full` = `70.7016 FPS` / `14.1440 / 3.4697 / 3.4559 ms` (`frame / present / present_copy`) with `290150.00` copied bytes/frame; `nearest-hdmi-r13-control-full` improved to `71.2450 FPS` / `14.0361 / 3.2068 / 3.1925 ms` with `183059.04` copied bytes/frame, while staying on `software_frame_mapped_scale = 1.0000`
+    - stage-heavy keep gates: `nearest-hdmi-r12-stage-heavy-basic` = `53.2120 FPS` / `18.7928 / 4.8743 ms` with `425478.80` copied bytes/frame; `nearest-hdmi-r13-stage-heavy-basic` improved to `55.4209 FPS` / `18.0437 / 4.2385 ms` with `262170.55` copied bytes/frame. Attribution rerun `nearest-hdmi-r12-stage-heavy-full` = `50.3031 FPS` / `19.8795 / 4.8516 / 4.8369 ms` (`frame / present / present_copy`) improved to `nearest-hdmi-r13-stage-heavy-full` = `52.4355 FPS` / `19.0711 / 4.1679 / 4.1539 ms`, again with the dominant path unchanged at `software_frame_mapped_scale = 1.0000`
+    - bursty tails tightened too: control p95/p99 copied bytes `1134360 / 1355880 -> 908148 / 1098980` with p95/p99 `present_copy` `9.8481 / 11.0254 -> 8.6670 / 10.7886 ms`; stage-heavy p95/p99 copied bytes `1283160 / 1420800 -> 930496 / 1120004` with p95/p99 `present_copy` `10.6873 / 13.1460 -> 9.3520 / 10.6897 ms`
+    - native guard held: `native-hdmi-r12-control-basic` = `92.3190 FPS` / `10.8320 / 0.5340 ms`; `native-hdmi-r13-control-basic` stayed within the `3%` budget at `92.5885 FPS` / `10.8005 / 0.5240 ms` on `software_frame_exact = 1.0000`
+  - Keep/rollback decision with reason:
+    - keep; trimming mapped dirty runs to the actual changed source-pixel edges materially lowers nearest HDMI copy traffic and presenter time on both measured gates without reopening route selection or regressing native exact presentation
+  - Next best candidate optimization:
+    - if modern-display nearest still needs another loop after this reland, stay inside mapped-present sparsity follow-up by testing interior disjoint-run splitting or other finer source-pixel-guided runs on a freshly reproduced HDMI hotspot rather than revisiting route selection
+
+- 2026-03-15T02:40:25-0400
+  - Research target:
+    - fresh modern-display HDMI nearest repro on the kept `r13` direct path, then test whether splitting changed `8`-pixel compare tiles into interior disjoint source runs can cut the remaining mapped-present overcopy without reopening route selection
+  - Change summary:
+    - rebuilt the current branch as a telemetry ARM package in fresh `/work-arm-r14b`, redeployed it to MiSTer, and recovered fresh `r14` nearest control, stage-heavy, and native guard baselines; the live branch still matched the kept `r13` state with `software_frame_mapped_scale` on `1920x1080`, zero readback, and no route drift
+    - tried a single-file runtime reland in `src/port/sdl/fbdev_presenter.c` that split changed mapped compare tiles into disjoint source-pixel runs instead of copying each changed tile as one trimmed span
+    - completed a manual scoped review of the candidate diff with focus on run-count bounds, cached-row coherence, and fallback coverage; no correctness issue was found, but the runtime change was rejected on measured performance
+  - Verification evidence:
+    - `git diff --check` passed before and after the attempted runtime reland; the telemetry ARM rebuild/install/package succeeded in `/work-arm-r14b`, exported cleanly to `build/mister-telemetry-package-arm-nearest-r14-baseline-20260315a` and `build/mister-telemetry-package-arm-nearest-r15-disjointruns-20260315a`, and `readelf -h` still reported `ELF32` `ARM` with hard-float ABI
+    - MiSTer `deploy`, `probe`, and bounded `smoke` all passed on the candidate package, and baseline restore `deploy` plus final `probe` passed after rollback; every probe in the cycle still reported `FBDEV: active (1920x1080 ...)`, `Native render path: enabled (scale-mode=nearest)`, and `Software frame mode: on`
+    - fresh baseline confirmed the current branch/package still matches the kept direct nearest path: `nearest-hdmi-r14-control-full = 70.8695 FPS / 14.1104 / 3.1638 / 3.1499 ms` (`frame / present / present_copy`) with `183059.04` copied bytes/frame, `nearest-hdmi-r14-stage-heavy-full = 51.8518 FPS / 19.2857 / 4.3133 / 4.2960 ms` with `262170.55` copied bytes/frame, `nearest-hdmi-r14-stage-heavy-basic = 55.3620 FPS / 18.0629 / 4.2224 ms`, and `native-hdmi-r14-control-basic = 92.3879 FPS / 10.8239 / 0.5306 ms`
+    - the disjoint-run candidate lowered copied bytes but still regressed nearest timing: `nearest-hdmi-r15-control-full` moved to `70.6957 FPS / 14.1451 / 3.3252 / 3.3083 ms` with `166429.97` copied bytes/frame, `nearest-hdmi-r15-stage-heavy-full` to `50.7895 FPS / 19.6891 / 4.5776 / 4.5633 ms` with `233904.96` copied bytes/frame, and `nearest-hdmi-r15-stage-heavy-basic` to `54.5137 FPS / 18.3440 / 4.5521 ms`; native guard `native-hdmi-r15-control-basic` stayed flat at `92.5896 FPS / 10.8004 / 0.5433 ms`
+  - Keep/rollback decision with reason:
+    - rollback; splitting changed compare tiles into disjoint source runs does reduce mapped-copy bytes, but the extra run fanout raises `present` / `present_copy` enough to regress both nearest HDMI keep gates, so the branch and live device were restored to the kept baseline package
+  - Final commit hash:
+    - recorded in the cycle closeout commit
+  - Next best candidate optimization:
+    - keep route selection closed and do not retry this higher-fanout disjoint-run shape blindly; if another nearest HDMI loop is needed, stay on lower-overhead mapped-present sparsity follow-up or move to a newly reproduced player-visible nearest gate
+
+- 2026-03-15T18:02:21-0400
+  - Research target:
+    - verify the live nearest HDMI slowdown was still on the kept direct fbdev route with the current branch/package, then test whether caching per-row-run destination spans in `copy_argb_surface_scaled_to_fb_mapped_rect(...)` could cut repeated span-mapping overhead on the modern-display nearest path without changing copy coverage
+  - Change summary:
+    - rebuilt and redeployed a fresh telemetry ARM baseline from the current branch in `/work-arm-r17-baseline-20260315a`, recovered `r17` nearest control, stage-heavy, Ibuki stage 7, 2P character-select, menu-transition, and native guard captures, and confirmed the live device still matched the preserved direct `software_frame_mapped_scale` path on `1920x1080`
+    - updated `src/port/sdl/fbdev_presenter.c` so mapped nearest row runs cache their destination `x` spans alongside the existing source-run cache and reuse those cached spans for both row reuse and per-pixel expansion instead of remapping each run on every copied row
+    - attempted the independent `codex review --uncommitted` pass twice, but the helper stalled without returning findings; completed a manual scoped review of the single-file diff with focus on clip invariants, cached-run coherence, and mapped/native isolation and found no correctness issue
+  - Verification evidence:
+    - `git diff --check` passed; the telemetry ARM rebuild/install/package succeeded in `/work-arm-r17-baseline-20260315a`, exported cleanly to `build/mister-telemetry-package-arm-nearest-r17-baseline-20260315a` and `build/mister-telemetry-package-arm-nearest-r18-runspan-20260315a`, and `readelf -h` still reported `ELF32` `ARM` with hard-float ABI
+    - MiSTer `deploy`, `probe`, and bounded `smoke` all passed on the baseline and candidate packages; every probe still reported `FBDEV: active (1920x1080 ...)`, `Native render path: enabled (scale-mode=nearest)`, and `Software frame mode: on`
+    - fresh baseline confirmed there was no route regression on the current branch: `nearest-hdmi-r17-control-full = 72.2987 FPS / 13.8315 / 3.0743 / 3.0601 ms` (`frame / present / present_copy`) with `183059.04` copied bytes/frame, `nearest-hdmi-r17-stage-heavy-full = 51.9464 FPS / 19.2506 / 4.2805 / 4.2666 ms` with `262170.55` copied bytes/frame, `nearest-hdmi-r17-ibuki-stage7-basic = 55.5333 FPS / 18.0072 / 7.3953 ms`, `nearest-hdmi-r17-2p-character-select-full = 36.1584 FPS / 27.6561 / 11.7866 / 11.5624 ms`, `nearest-hdmi-r17-menu-transition-basic = 36.4438 FPS / 27.4395 / 12.4014 ms`, and `native-hdmi-r17-control-basic = 92.9887 FPS / 10.7540 / 0.5357 ms`; nearest gameplay lanes stayed on `software_frame_mapped_scale = 1.0000`, with menu guardrails still at only `0.9967/0.0033` and `0.9933/0.0067` direct/fallback ratios
+    - the cached-run-span candidate kept the same route and improved the heavier or more user-visible lanes: `nearest-hdmi-r18-control-full` moved slightly down to `71.7994 FPS / 13.9277 / 3.0785 / 3.0633 ms`, but `nearest-hdmi-r18-stage-heavy-full` improved to `52.6269 FPS / 19.0017 / 4.0178 / 4.0000 ms`, `nearest-hdmi-r18-ibuki-stage7-basic` to `57.3638 FPS / 17.4326 / 6.8850 ms`, `nearest-hdmi-r18-2p-character-select-full` to `37.0479 FPS / 26.9921 / 10.8882 / 10.6609 ms` with `software_frame_direct_present_ratio = 0.9967`, `nearest-hdmi-r18-menu-transition-basic` to `37.6084 FPS / 26.5898 / 11.5579 ms` with `software_frame_direct_present_ratio = 0.9933`, and `native-hdmi-r18-control-basic` improved slightly to `93.6382 FPS / 10.6794 / 0.5219 ms`
+  - Keep/rollback decision with reason:
+    - keep; despite a small control regression, the cached destination-span reland preserves the direct nearest HDMI route, improves both gameplay-heavy keep gates plus the user-visible 2P/menu guardrails, and slightly improves the native exact guard without reopening route selection
+  - Final commit hash:
+    - recorded in the cycle closeout commit
+  - Next best candidate optimization:
+    - recover a trustworthy automated `genei-jin-first-activation` gameplay lane on this branch using the existing Yun helper flags before another menu-specific nearest experiment, and do not count coverage until the capture proves nonzero `p1_super_art_active_frames_total` with the first activation inside the sampled window
+
+- 2026-03-15T17:27:37-0400
+  - Research target:
+    - fresh nearest HDMI repro on the kept `r16` direct path, then test whether tightening the mapped-source compare tile from `8` to `4` source pixels can cut the remaining modern-display overcopy on `1920x1080` menu-heavy nearest frames without reopening route selection
+  - Change summary:
+    - redeployed the kept `r13` telemetry runtime, recovered fresh `r16` control, stage-heavy, Ibuki stage 7, 2P character-select, menu-transition, and native guard baselines, and confirmed the current branch still matched the preserved direct `software_frame_mapped_scale` path with the worst nearest lanes on the same route in `2p-character-select` and `menu-transition`
+    - tried a one-line runtime reland in `src/port/sdl/fbdev_presenter.c` that tightened `mapped_source_compare_tile_size` from `8` to `4` source pixels for the mapped nearest path only
+    - completed a manual scoped review of the single-file diff with focus on mapped-cache bounds, run-count implications, and route isolation; no correctness issue was found, but the runtime change was rejected on measured performance
+  - Verification evidence:
+    - `git diff --check` passed before the reland; the telemetry ARM rebuild/install/package succeeded in the prepared `/work-arm` tree inside `3sx-mister-build-nearest-hdmi-perf`, exported cleanly to `build/mister-telemetry-package-arm-nearest-r16-subtile4-20260315b`, and `readelf -h` still reported `ELF32` `ARM` with hard-float ABI
+    - MiSTer candidate `deploy`, `probe`, and bounded `smoke` all passed; probe and smoke kept `FBDEV: active (1920x1080 ...)`, `Native render path: enabled (scale-mode=nearest)`, and `Software frame mode: on`; after rollback, the live runtime was restored with `tools/mister/misterctl.sh deploy --src build/mister-telemetry-package-arm-nearest-r13-edgetrim-20260315a` plus a final `probe`
+    - fresh baseline confirmed no route drift: `nearest-hdmi-r16-control-full = 70.8252 FPS / 14.1193 / 3.2027 / 3.1887 ms` with `183059.04` copied bytes/frame, `nearest-hdmi-r16-stage-heavy-full = 52.0083 FPS / 19.2277 / 4.2775 / 4.2632 ms` with `262170.55` copied bytes/frame, `nearest-hdmi-r16-2p-character-select-full = 35.9836 FPS / 27.7904 / 11.7840 / 11.5564 ms` with `1513777.01` copied bytes/frame, `nearest-hdmi-r16-menu-transition-basic = 36.3634 FPS / 27.5002 / 12.4373 ms` with `1575586.49` copied bytes/frame, `nearest-hdmi-r16-ibuki-stage7-basic = 56.7475 FPS / 17.6219 / 7.2012 ms` with `651778.15` copied bytes/frame, and `native-hdmi-r16-control-basic = 92.9184 FPS / 10.7621 / 0.5399 ms`
+    - the `4`-pixel compare-tile candidate lowered copied bytes while staying on `software_frame_mapped_scale`, but it still regressed every checked nearest lane: control moved `70.8252 -> 69.2206 FPS` with `3.2027 / 3.1887 -> 3.4535 / 3.4390 ms` `present / present_copy` while copied bytes fell `183059.04 -> 171606.19`; stage-heavy moved `52.0083 -> 50.4430 FPS` with `4.2775 / 4.2632 -> 4.7301 / 4.7154 ms` while copied bytes fell `262170.55 -> 242407.79`; and 2P character-select moved `35.9836 -> 34.8866 FPS` with `11.7840 / 11.5564 -> 12.5879 / 12.3676 ms` while copied bytes fell `1513777.01 -> 1497124.49`; native guard stayed flat-to-better at `93.0007 FPS / 10.7526 / 0.5256 ms`
+  - Keep/rollback decision with reason:
+    - rollback; on this nearest HDMI path, tightening mapped compare granularity to `4` source pixels lowers dirty bytes but increases compare/run overhead enough to regress control, stage-heavy, and the user-priority 2P character-select lane
+  - Next best candidate optimization:
+    - keep route selection closed and stop shrinking compare tiles globally; the next byte-focused follow-up should target a lower-overhead sparse shape than blanket `8 -> 4` compare granularity, likely something selective around menu-lane burst rows rather than another global finer-tile reland
+
+- 2026-03-15T10:04:00-0400
+  - Research target:
+    - fresh nearest-HDMI validation on the kept direct path, then test whether replacing the mapped nearest path's per-destination-pixel `scale_x_lut` expansion with source-pixel span fills via the existing inverse LUT plus `memset32` could improve the user-visible menu hotspot without reopening route selection
+  - Change summary:
+    - recovered fresh `1920x1080` nearest control, stage-heavy, Ibuki stage 7, 2P character-select, menu-transition, and native guard baselines; control and stage-heavy still matched the kept direct `software_frame_mapped_scale` path with zero readback, while the expanded pool showed the worst remaining nearest lanes were the menu/transition bursts on that same direct route rather than a routing regression
+    - tried a single-file runtime reland in `src/port/sdl/fbdev_presenter.c` that filled mapped nearest output from source-pixel spans with the existing inverse LUT plus `memset32` instead of walking every destination pixel through `scale_x_lut`
+    - completed a manual scoped review of the candidate diff with focus on run coverage, row-reuse semantics, and mapped/native isolation; no correctness issue was found, but the runtime change was rejected on measured performance and rolled back locally and on device
+  - Verification evidence:
+    - `git diff --check` passed before and after the attempted reland; the telemetry ARM rebuild/install/package succeeded in `3sx-mister-build-nearest-hdmi-perf`, exported cleanly to `build/mister-telemetry-package-arm-nearest-r15-spanfill`, and `readelf -h` still reported `ELF32` `ARM` with hard-float ABI
+    - MiSTer `health`, candidate `deploy`, `probe`, and bounded `smoke` all passed on the attempted runtime change; after rollback, the live runtime was restored with `tools/mister/misterctl.sh deploy --src build/mister-share-20260314-112734/stage/games/3sx` plus a final `probe` because the FAT-root `stage/` package is not a valid direct input to `misterctl.sh deploy`
+    - fresh baseline on the kept direct path: control stayed around `70.85 FPS / 14.11 / 3.23 / 3.21 ms` (`frame / present / present_copy`), stage-heavy `52.66 FPS / 18.99 / 4.18 / 4.17 ms`, 2P character-select `35.90 FPS / 27.85 / 11.78 / 11.56 ms`, and menu-transition `36.29 FPS / 27.56 / 12.55 ms`, all on `software_frame_mapped_scale` with zero readback; native guard held `92.65 FPS / 10.79 / 0.54 ms`
+    - the source-span-fill candidate left copied bytes unchanged on the compared gates and failed to reduce present cost: control moved `70.8497 -> 71.1515 FPS` with `3.2253 -> 3.2328 ms` present and the same `183059.04` copied bytes/frame, stage-heavy regressed `52.6621 -> 51.7873 FPS` with `4.1816 -> 4.3216 ms` present at the same `262170.55` copied bytes/frame, and 2P character-select stayed flat `35.9005 -> 35.9681 FPS` while `present / present_copy` rose `11.7768 / 11.5627 -> 11.9005 / 11.6845 ms` at the same `1513777.01` copied bytes/frame; native guard improved slightly to `93.3664 FPS / 10.7105 / 0.5305 ms`
+  - Keep/rollback decision with reason:
+    - rollback; changing mapped nearest fill style without reducing dirty-byte volume did not buy back the HDMI hotspot and slightly worsened the heavy gameplay keep gate plus the user-priority menu lane's present cost
+  - Next best candidate optimization:
+    - keep route selection closed and do not retry this fill-style-only source-span shape blindly; the next nearest-HDMI loop should stay on byte-reducing sparsity work or another measured low-overhead follow-up, ideally against the menu/transition bursts and/or Ibuki stage 7
+
+- 2026-03-15T01:36:38-0400
+  - Research target:
+    - modern-display HDMI nearest on the kept `r9` direct path: test whether the mapped-source `16`-pixel compare/run size is still too coarse on bursty `1920x1080` nearest frames without perturbing the older staging-diff path
+  - Change summary:
+    - recovered fresh `r10` nearest control, stage-heavy, and native guard baselines on the live `1920x1080` HDMI target and confirmed there was still no route regression: nearest stayed on `software_frame_mapped_scale`, native stayed on `software_frame_exact`, and the live device still matched the kept `r9` state
+    - updated `src/port/sdl/fbdev_presenter.c` to split mapped-source compare/run granularity from `staging_tile_size` and tighten only the mapped nearest path to `8`-pixel source tiles
+    - completed a manual scoped review of the single-file diff with focus on mapped-row stride sizing, run-count bounds, and non-nearest staging isolation; no correctness issues were found
+  - Verification evidence:
+    - `git diff --check` passed; the telemetry ARM rebuild/install/package succeeded in a fresh `/work-arm-nearest-r11-subtile8-20260315a` tree, `readelf -h` still reported `ELF32` `ARM` with hard-float ABI, and the package exported cleanly to `build/mister-telemetry-package-arm-nearest-r11-subtile8-20260315a`
+    - MiSTer `deploy`, `probe`, and bounded `smoke` all passed on the candidate package; probe and smoke still reported `FBDEV: active (1920x1080 ...)`, `Native render path: enabled (scale-mode=nearest)`, and `Software frame mode: on`
+    - control keep gate: `nearest-hdmi-r10-control-full` = `67.3534 FPS` / `14.8471 / 3.8729 / 3.8585 ms` (`frame / present / present_copy`) with `376378.40` copied bytes/frame; `nearest-hdmi-r11-control-full` improved to `69.0655 FPS` / `14.4790 / 3.5510 / 3.5371 ms` with `290150.00` copied bytes/frame, while staying on `software_frame_mapped_scale = 1.0000`
+    - stage-heavy keep gate: `nearest-hdmi-r10-stage-heavy-basic` = `52.1437 FPS` / `19.1778 / 5.3019 ms` with `544665.60` copied bytes/frame; `nearest-hdmi-r11-stage-heavy-basic` improved to `53.4607 FPS` / `18.7053 / 4.8880 ms` with `425478.80` copied bytes/frame, again staying on `software_frame_mapped_scale = 1.0000`
+    - bursty control frames tightened too: `nearest-hdmi-r10-control-full` p95/p99 copied bytes `1423200 / 1615920` and p95/p99 `present_copy` `10.6263 / 11.9710 ms` improved to `1080840 / 1350360` bytes and `9.2925 / 11.3529 ms` on `nearest-hdmi-r11-control-full`
+    - native guard held: `native-hdmi-r10-control-basic` = `93.8539 FPS / 10.6549 / 0.5217 ms`; `native-hdmi-r11-control-basic` stayed within the `3%` budget at `93.2606 FPS / 10.7226 / 0.5371 ms` on `software_frame_exact = 1.0000`
+  - Keep/rollback decision with reason:
+    - keep; the narrower mapped-source run granularity trims nearest HDMI copy traffic on both measured gates, improves bursty present cost, and leaves native exact presentation within guardrail while keeping the older staging-diff path untouched
+  - Next best candidate optimization:
+    - if modern-display nearest still needs another loop after this reland, stay inside mapped-present sparsity follow-up by testing even finer edge trimming or source-pixel-guided runs on a freshly reproduced HDMI hotspot rather than reopening route selection
+
+- 2026-03-11T06:56:00-0400
+  - Research target:
+    - Chunk 3 mapped-scaler reland: remove the remaining `software_frame_mapped_scale` divide-heavy copy cost in `copy_argb_surface_scaled_to_fb_mapped_rect(...)` now that nearest-mode is on the correct fbdev route
+  - Change summary:
+    - generalized the existing fbdev scale LUT cache in `src/port/sdl/fbdev_presenter.c` so it keys on source size plus mapped destination geometry instead of only fullscreen dimensions
+    - switched the mapped nearest-scaling path to reuse those cached LUTs when available, keeping the old exact/integer paths unchanged and preserving repeated-source-row memcpy reuse
+    - completed the required independent review pass with a fresh `codex exec` reviewer scoped to the diff; it returned `No findings`, so no post-review code changes were needed
+  - Verification evidence:
+    - `git diff --check` passed; host telemetry build/install plus `--headless --software-frame-parity-check` passed with `Software-frame parity check passed: 10 cases` and `Software-source refresh parity check passed: 2 cases`
+    - deployable telemetry package rebuilt successfully through `/work-arm` in `3sx-mister-build`, confirmed as ARM hard-float by `readelf`, copied out as `build/mister-telemetry-package-arm-c3`, and host-side `tools/mister/package.sh build/mister-telemetry-install build/mister-telemetry-package-host-c3` also passed
+    - MiSTer `health`, telemetry deploy, `probe`, and bounded `smoke` all passed on the candidate package
+    - full route-attribution control check versus Chunk 2 routed baseline:
+      - `nearest-c2-control-full` -> `nearest-c3-control-full`: `53.7597 -> 77.3658 FPS` (`+43.91%`), `18.6013 -> 12.9256 ms` frame (`-30.51%`), `7.5018 -> 1.9336 ms` present (`-74.22%`), `7.4874 -> 1.9207 ms` presenter copy (`-74.35%`), path unchanged at `software_frame_mapped_scale = 1.0000`
+    - decision-grade nearest keep matrix versus Chunk 1 baseline:
+      - `nearest-c3-control`: `47.5056 -> 84.1389 FPS` (`+77.12%`), `21.0501 -> 11.8851 ms` frame (`-43.54%`), `9.3925 -> 1.9913 ms` present (`-78.80%`)
+      - `nearest-c3-stage-heavy`: `40.0243 -> 65.1989 FPS` (`+62.90%`), `24.9849 -> 15.3377 ms` frame (`-38.61%`), `9.5416 -> 1.9445 ms` present (`-79.62%`)
+      - `nearest-c3-ibuki-stage7`: `45.6766 -> 81.6454 FPS` (`+78.75%`), `21.8930 -> 12.2481 ms` frame (`-44.05%`), `9.5200 -> 1.9673 ms` present (`-79.34%`)
+      - `nearest-c3-attract-logo`: `38.3566 -> 60.1424 FPS` (`+56.79%`), `26.0711 -> 16.6272 ms` frame (`-36.22%`), `9.5125 -> 1.9303 ms` present (`-79.71%`)
+    - guardrails held: `native-c2-control-guard` -> `native-c3-control-guard` improved slightly from `94.8017 FPS` / `10.5483 ms` to `96.0766 FPS` / `10.4084 ms`, and `square-c3-control-guard` stayed on `software_frame_exact = 1.0000` at `95.9970 FPS` / `10.4170 ms`
+  - Keep/rollback decision:
+    - keep; the LUT reland preserves the routed nearest path, collapses mapped-scale presenter cost on every measured nearest gate, clears the Chunk 3 `10%`-vs-Chunk-1 target by a wide margin, and leaves native/square guardrails flat to slightly better
+  - Final commit hash:
+    - `6a971ea3`
+  - Next best candidate:
+    - with Chunk 3 closed, shift the next runtime-measurement loop to the user-priority 2P character-select lane and the immediate post-select super-art selection slowdown before spending time on Chunk 4 docs-only closeout
+
+- 2026-03-11T02:30:59-0400
+  - Research target:
+    - Chunk 2 runtime reland: move MiSTer `scale-mode = nearest` from the `screen_texture` / `fullscreen_staging` path onto `native_output_rect` plus fbdev presentation, while preserving screenshot and fallback correctness
+  - Change summary:
+    - enabled the MiSTer fbdev-only native render path for `scale-mode = nearest` in `src/port/sdl/sdl_app.c`, so ordinary nearest gameplay can direct-present the software-owned frame through `software_frame_mapped_scale` instead of routing every frame through `screen_texture`
+    - added a dedicated native-path screenshot render target so `screenshot_screen.bmp` stays available even when `screen_texture` is absent on the native path
+    - accepted the valid independent review finding about silent native screenshot failure and added a backend log when the screenshot target cannot be created; rejected the other review finding because the render-path switch is the explicit Chunk 2 objective and was validated on-device
+  - Verification evidence:
+    - `git diff --check`, telemetry ARM rebuild/package in `/work-arm`, and host telemetry `--headless --software-frame-parity-check` all passed twice; parity remained `Software-frame parity check passed: 10 cases` plus `Software-source refresh parity check passed: 2 cases`
+    - MiSTer `health`, deploy, probe, bounded smoke, and the routed nearest capture matrix all passed on the ARM package; the current device gate reported `FBDEV: active (320x240 ...)`, so the keep comparison uses the same-device `nearest-c1-*` baselines rather than the older `1280x720` native reference
+    - full route-attribution spot check `nearest-c2-control-full`: `53.7597 FPS` / `18.6013 / 3.7660 / 7.3335 / 7.5018 ms`, dominant path `software_frame_mapped_scale`, `software_frame_direct_present_ratio = 1.0000`, `software_frame_uploaded_ratio = 0.0000`, `present_readback.mean_ms = 0.0000`
+    - decision-grade nearest reruns versus Chunk 1 baseline:
+      - `nearest-c2-control`: `47.5056 -> 57.1255 FPS` (`+20.25%`), `21.0501 -> 17.5053 ms` frame (`-16.84%`), `9.3925 -> 7.5821 ms` present (`-19.27%`), path `fullscreen_staging = 1.0000 -> software_frame_mapped_scale = 1.0000`
+      - `nearest-c2-stage-heavy`: `40.0243 -> 47.5627 FPS` (`+18.83%`), `24.9849 -> 21.0249 ms` frame (`-15.85%`), `9.5416 -> 7.5866 ms` present (`-20.49%`), path `fullscreen_staging = 1.0000 -> software_frame_mapped_scale = 1.0000`
+      - `nearest-c2-attract-logo`: `38.3566 -> 45.1744 FPS` (`+17.77%`), `26.0711 -> 22.1364 ms` frame (`-15.09%`), `9.5125 -> 7.5319 ms` present (`-20.82%`), path `fullscreen_staging = 1.0000 -> software_frame_mapped_scale = 1.0000`
+    - native guard spot check on the current low-resolution gate: `native-c2-control-guard` landed at `94.8017 FPS` / `10.5483 / 3.1422 / 6.8732 / 0.5330 ms` with `software_frame_exact = 1.0000`
+    - post-fix rerun after the review-driven logging change stayed aligned: `nearest-c2-control-postfix` landed at `57.1437 FPS` / `17.4997 / 3.1451 / 6.8084 / 7.5463 ms` with dominant path `software_frame_mapped_scale`
+  - Keep/rollback decision:
+    - keep; the MiSTer nearest path now leaves `fullscreen_staging` entirely, direct-presents the software frame through the native fbdev path, materially improves every routed nearest gate, preserves the native exact guard, and keeps screenshot failure diagnosable
+  - Final commit hash:
+    - recorded in the loop closure commit
+  - Next best candidate:
+    - start Chunk 3 and optimize `copy_argb_surface_scaled_to_fb_mapped_rect(...)` in `src/port/sdl/fbdev_presenter.c`; nearest is now on the correct route, so the next safe win is lowering the mapped-scaler copy cost rather than reopening broader routing work
+
+- 2026-03-11T01:37:02-0400
+  - Research target:
+    - Chunk 1 measurement support: make nearest captures reproducible, self-describing, and decision-grade before any present-path runtime work
+  - Change summary:
+    - added `--scale-mode` override support to `tools/mister/perf-sampler.sh`, wrote the chosen value into the temporary remote config, and stamped capture metadata plus summary output with `scale_mode` and the dominant fbdev present path
+    - logged the applied runtime scale mode from `src/port/sdl/sdl_app.c` so the sampler can trust the effective MiSTer mode instead of only the CLI request
+    - accepted the independent review finding that the sampler could mislabel MiSTer `soft-linear` as effective `soft-linear` after the runtime coerced it to `nearest`, then fixed the metadata path to prefer the runtime-reported mode
+    - validated the actual deployable telemetry package through the container-local `/work-arm` ARM cross-build after the host-mounted `/src` package probe exposed an `x86_64` binary mismatch on MiSTer
+  - Verification evidence:
+    - `git diff --check` and `bash -n tools/mister/perf-sampler.sh` passed
+    - telemetry compile/install passed in `3sx-mister-build`, and the validated `/work-arm` cross-build produced an ARM hard-float package confirmed by `readelf -h build/mister-telemetry-package/bin/3sx`
+    - `tools/mister/misterctl.sh health`, `deploy`, `probe`, and bounded `smoke` passed on MiSTer after the ARM redeploy
+    - nearest baseline matrix:
+      - `nearest-c1-control`: `47.5056 FPS` / `21.0501 / 3.2656 / 8.3920 / 9.3925 ms`, dominant path `fullscreen_staging`, `scale_mode = nearest`
+      - `nearest-c1-stage-heavy`: `40.0243 FPS` / `24.9849 / 5.1238 / 10.3195 / 9.5416 ms`, dominant path `fullscreen_staging`, `scale_mode = nearest`
+      - `nearest-c1-ibuki-stage7`: `45.6766 FPS` / `21.8930 / 3.8760 / 8.4970 / 9.5200 ms`, dominant path `fullscreen_staging`, `scale_mode = nearest`
+      - `nearest-c1-attract-logo`: `38.3566 FPS` / `26.0711 / 4.6631 / 11.8956 / 9.5125 ms`, dominant path `fullscreen_staging`, `scale_mode = nearest`
+    - nearest versus trusted native control baseline: `47.5056 FPS` versus `89.6375 FPS` and `21.0501 ms` versus `11.1560 ms`, a `47.00%` FPS drop and `88.69%` frame-time increase
+    - review-fix spot check: `nearest-c1-softlinear-coerce-check` reported `scale_mode = nearest` on-device even when invoked with `--scale-mode soft-linear`
+  - Keep/rollback decision:
+    - keep measurement-support only; the tooling changes are behavior-neutral and the recovered baseline shows nearest is consistently trapped on `fullscreen_staging` with `present_readback.mean_ms = 0.0000`, so the next runtime step is clearly path routing rather than more capture plumbing
+  - Final commit hash:
+    - `5f9b3566`
+  - Next best candidate:
+    - start Chunk 2 and route nearest onto `native_output_rect` plus fbdev presentation so normal nearest gameplay stops paying the `screen_texture`/`fullscreen_staging` tax while preserving message-content and screenshot fallback behavior
+
+- 2026-03-17T05:56:00-0400
+  - Bottleneck targeted:
+    - nearest-HDMI clipped source-span setup cost in `src/port/sdl/fbdev_presenter.c`, specifically the per-source scan inside `map_source_span_to_dst_span(...)` on ordinary gameplay plus trusted first-Genei
+  - Change summary:
+    - tried a narrow presenter reland that precomputed next/previous mapped-source LUTs and switched clipped span mapping to endpoint lookup instead of rescanning every source column for each run
+    - completed the required review pass before finalizing: the reviewer found a real clip-edge widening bug in the first draft, I fixed it, rebuilt/exported `build/mister-telemetry-package-arm-opt-spanmap-rfix-20260317`, redeployed it with `tools/mister/misterctl.sh`, reran nearest `control`, recovered ordinary `training-yun-ryu-ryu-stage`, trusted `genei-jin-first-activation`, and a native basic guard, then reverted the runtime diff locally and restored `build/mister-telemetry-package-arm-baseline-spanmap-20260317` on-device after the keep gates failed
+  - Verification result summary:
+    - nearest `control` stayed flat-to-down `70.0416 -> 69.9988 FPS`, with `present.mean_ms 3.3047 -> 3.3350` and `present_copy.mean_ms 3.2899 -> 3.3127`
+    - recovered ordinary `training-yun-ryu-ryu-stage` improved modestly `55.9565 -> 56.3237 FPS`, with `present.mean_ms 5.8912 -> 5.7337` and `present_copy.mean_ms 5.8769 -> 5.7209`
+    - trusted `genei-jin-first-activation` regressed `37.2477 -> 36.9871 FPS`; `present.mean_ms` improved `8.4986 -> 8.3584`, but `render.mean_ms` and total frame time worsened `10.2651 -> 10.3761` and `26.8473 -> 27.0364`
+    - the native basic guard improved `91.9722 -> 92.7198 FPS`, so the lookup itself is not globally harmful, but it still failed to produce a consistent nearest gameplay win
+  - Keep/rollback decision with reason:
+    - reject and revert; the endpoint lookup is too mixed to justify keeping, because it does not improve both ordinary nearest gameplay and trusted Genei together, and flat-to-worse nearest control leaves no broad player-visible FPS gain to offset the regression risk
+  - Next best candidate optimization:
+    - do not reopen source-span endpoint lookup without telemetry that isolates first-row versus repeated-row clipped-span/setup cost; if nearest presenter work continues, prefer the memo-backed first-row vs repeated-row telemetry split before another mapped-row rewrite
+
+- 2026-03-17T11:40:00-0400
+  - Bottleneck targeted:
+    - broader 2P character-select submit/state churn, specifically whether hoisting the existing live-binding guard above `SDLGameRenderer_SetTexture()` can turn repeated `FLRENDER_TEXSTAGE0` work into a real menu FPS win
+  - Change summary:
+    - tried a narrow runtime reland in `src/sf33rd/AcrSDK/ps2/flps2render.c`, `src/port/sdl/sdl_game_renderer.c`, and `include/port/sdl/sdl_game_renderer.h` that added `SDLGameRenderer_IsTextureBindingLive()` and returned early from `flPS2SetTextureRegister()` when the requested texture binding was already live
+    - rebuilt an ARM hard-float telemetry package through `/work-arm` in `3sx-mister-build`, deployed the candidate to MiSTer with `tools/mister/misterctl.sh`, captured full nearest `2p-character-select` plus exact `character-select-super-art` and the recovered ordinary `training-yun-ryu-ryu-stage` guardrail, then reverted the runtime diff locally and restored `build/mister-telemetry-package-arm-rollback` on-device after the same-source keep gates failed
+    - completed the required review as a manual scoped review of the three touched files before finalizing; the delayed explorer second-opinion follow-up also returned no runtime correctness findings, so the reject stays performance-only
+  - Verification result summary:
+    - same-source rollback baseline `menu-rstateguard-baseline-char-select-full` landed at `52.0801 FPS / 19.2012 / 4.4952 / 9.0380 / 5.6679 ms` (`frame / update / render / present`) with `set_texture_calls 154.93`, `texture_binding_reuse_hits 35.97`, and direct-present ratio `0.9967`
+    - candidate `menu-rstateguard-char-select-full` slipped slightly to `51.8208 FPS / 19.2973 / 4.5984 / 8.9514 / 5.7475 ms` while `set_texture_calls` fell to `118.96` and `texture_binding_reuse_hits` to `0.00`, so the hoist removed duplicate bind work but still worsened total frame time and present cost
+    - same-source rollback baseline `menu-rstateguard-baseline-super-art-full` landed at `55.8883 FPS / 17.8928 / 5.8393 / 9.6396 / 2.4140 ms`; candidate `menu-rstateguard-super-art-full` also slipped to `55.4878 FPS / 18.0220 / 6.1175 / 9.4144 / 2.4901 ms`, with zero reuse on both captures
+    - recovered ordinary gameplay guardrail only nudged up on the candidate: `menu-rstateguard-baseline-training-yun-basic 61.6344 FPS / 16.2247 / 3.5913 / 7.7221 / 4.9114 ms` versus `menu-rstateguard-training-yun-basic 61.9855 FPS / 16.1328 / 3.5728 / 7.5718 / 4.9882 ms`
+    - MiSTer `health`, candidate `deploy`, `probe`, and bounded `smoke` passed before the keep gate; after rejection, the restored rollback package redeployed successfully and passed `probe` plus bounded `smoke`
+  - Keep/rollback decision with reason:
+    - reject and revert; the live-binding hoist does reduce repeated broad character-select bind work, but it still makes both user-priority menu lanes slightly slower overall and provides no chooser win to justify keeping a global render-state-path change
+  - Next best candidate optimization:
+    - do not reopen this `FLRENDER_TEXSTAGE0` live-binding hoist blindly; the next fresh menu loop should stay on the broader 2P character-select lane, but target non-consecutive submit/state churn or another newly measured menu residue instead of moving the existing duplicate-bind guard above `SDLGameRenderer_SetTexture()`
+
+- 2026-03-17T12:22:19-0400
+  - Bottleneck targeted:
+    - broader 2P character-select submit/state churn, specifically whether deferring SDL texture materialization during software-frame submit can convert repeated menu texture/state setup into a real player-visible win, including the exact post-lock super-art chooser appearance lane
+  - Change summary:
+    - tried a narrow runtime reland in `src/port/sdl/sdl_game_renderer.c` that treated `texture_binding` plus `software_source_surface` as enough for software-frame submit and deferred SDL texture creation until fallback submit actually needed it
+    - rebuilt/exported `build/mister-telemetry-package-arm-menu-lazytexture-c1` through the validated `/work-arm` ARM telemetry path, deployed the candidate with `tools/mister/misterctl.sh`, captured full nearest `2p-character-select`, exact `character-select-super-art` twice, and the recovered ordinary `training-yun-ryu-ryu-stage` guardrail, then reverted the runtime diff locally and restored `build/mister-telemetry-package-arm-menu-baseline` on-device after the exact chooser rerun failed the keep bar
+    - completed the required review as a manual scoped review of the single-file renderer diff before rollback; the delayed explorer second opinion returned no findings because the runtime diff had already been reverted, so the closure stays performance-only
+  - Verification result summary:
+    - same-source baseline `menu-rstateguard-baseline-char-select-full` landed at `52.0801 FPS / 19.2012 / 4.4952 / 9.0380 / 5.6679 ms` (`frame / update / render / present`); candidate `menu-lazytexture-c1-char-select-full` improved to `52.8637 FPS / 18.9166 / 4.1951 / 9.0277 / 5.6937 ms`
+    - same-source baseline `menu-rstateguard-baseline-super-art-full` landed at `55.8883 FPS / 17.8928 / 5.8393 / 9.6396 / 2.4140 ms`; candidate `menu-lazytexture-c1-super-art-full` only matched noise at `55.8716 FPS / 17.8982 / 5.7361 / 9.5717 / 2.5904 ms`, and the exact rerun `menu-lazytexture-c1-super-art-r2` fell to `54.5721 FPS / 18.3244 / 5.9347 / 9.9580 / 2.4317 ms`
+    - recovered ordinary gameplay guardrail only nudged up: `menu-rstateguard-baseline-training-yun-basic 61.6344 FPS / 16.2247 / 3.5913 / 7.7221 / 4.9114 ms` versus `menu-lazytexture-c1-training-yun-basic 61.7117 FPS / 16.2044 / 3.5730 / 7.6856 / 4.9458 ms`
+    - MiSTer `health`, candidate `deploy`, `probe`, and bounded `smoke` passed before the keep gate; after rejection, the restored baseline package redeployed successfully and passed `probe` plus bounded `smoke`
+  - Keep/rollback decision with reason:
+    - reject and revert; the broad character-select lane improved, but the user-priority exact chooser-instantiation lane did not survive rerun variance, so this global software-frame texture-deferral change does not clear the menu keep bar
+  - Next best candidate optimization:
+    - do not reopen broad software-frame lazy SDL texture deferral blindly; stay on the 2P menu lane, but prefer a menu-local submit/state churn cut that wins on exact `character-select-super-art` before another renderer-wide deferral experiment
+
+- 2026-03-17T12:58:06-0400
+  - Bottleneck targeted:
+    - broader 2P character-select submit/state churn after the kept chooser renew-rect reland, specifically the retained dirty-rect cleanup scan in `src/port/sdl/sdl_game_renderer.c` that still walked all `FL_PALETTE_MAX + 1` palette variants on hot chooser texture access
+  - Change summary:
+    - kept a narrow runtime reland in `src/port/sdl/sdl_game_renderer.c` that tracks per-texture counts of cached software-surface variants still dirty from `CACHE_DIRTY_REASON_TEXTURE_UNLOCK`, then uses that count instead of rescanning every palette slot in `clear_texture_unlock_dirty_rect_if_unused(...)`
+    - rebuilt/exported both a pristine committed-`HEAD` baseline package and the candidate package through the validated `/work-arm` ARM telemetry path in `3sx-mister-build`, redeployed the baseline to recover a trustworthy exact chooser gate, then deployed the candidate and reran the same menu pair plus the recovered ordinary `training-yun-ryu-ryu-stage` guardrail on MiSTer
+    - completed the required review as a manual scoped review of the single-file renderer diff with focus on count lifetime, palette-unlock transitions, and early/late dirty-rect clears; no actionable correctness issue survived review
+  - Verification result summary:
+    - fresh same-source baseline `menu-dirtycount-base-char-select-full-r2` landed at `52.1162 FPS / 19.1879 / 4.5560 / 8.8700 / 5.7619 ms` (`frame / update / render / present`); candidate `menu-dirtycount-c1-char-select-full-r1` improved to `52.9285 FPS / 18.8934 / 4.3900 / 8.8588 / 5.6446 ms`
+    - fresh same-source baseline `menu-dirtycount-base-super-art-full-r2` landed at `55.1760 FPS / 18.1238 / 6.0911 / 9.5563 / 2.4764 ms`; candidate `menu-dirtycount-c1-super-art-full-r1` improved to `55.6812 FPS / 17.9594 / 5.7147 / 9.7780 / 2.4667 ms`, and the exact rerun `menu-dirtycount-c1-super-art-full-r2` held the gain at `55.3707 FPS / 18.0601 / 6.0077 / 9.6022 / 2.4502 ms`
+    - the recovered ordinary gameplay guardrail stayed within noise: `menu-dirtycount-base-training-yun-basic-r1` was `61.8180 FPS / 16.1765 / 3.5670 / 7.6796 / 4.9300 ms` versus `menu-dirtycount-c1-training-yun-basic-r1` at `61.3221 FPS / 16.3073 / 3.5756 / 7.7817 / 4.9500 ms`
+    - baseline and candidate MiSTer `deploy`, `probe`, and bounded `smoke` all passed through `tools/mister/misterctl.sh`
+  - Keep/rollback decision with reason:
+    - keep; the counted fast path clears the user-priority exact chooser lane on both candidate runs, improves broad `2p-character-select`, and leaves the recovered ordinary gameplay guardrail effectively flat while preserving the same direct `software_frame_mapped_scale` route
+  - Next best candidate optimization:
+    - keep this counted dirty-variant fast path; if the next fresh loop stays on menus, re-rank the remaining non-consecutive submit/state churn inside `seqsAfterProcess` before reopening any broader renderer-wide texture-deferral idea
+
+- 2026-03-17T13:35:15-0400
+  - Bottleneck targeted:
+    - broader 2P character-select submit/state churn after the kept dirty-variant count reland, specifically whether the hot `ppg-seqs` chooser textures could turn the remaining partial `INDEX8 -> ARGB8888` software-surface refresh work into a real menu-local win by bypassing SDL palette+blit refresh in `src/port/sdl/sdl_game_renderer.c`
+  - Change summary:
+    - tried a narrow runtime reland in `src/port/sdl/sdl_game_renderer.c` that replaced only the partial software-surface refresh path for indexed textures with a direct palette-conversion loop into the cached `ARGB8888` surface while leaving the full refresh and fallback paths unchanged
+    - rebuilt/exported `build/mister-telemetry-package-arm-menu-index8partial` through the validated `/work-arm` ARM telemetry path in `3sx-mister-build-nearest-hdmi-perf`, deployed the candidate with `tools/mister/misterctl.sh`, captured full nearest `2p-character-select`, exact `character-select-super-art`, and the recovered ordinary `training-yun-ryu-ryu-stage` guardrail, then reverted the runtime diff locally and restored `build/mister-telemetry-package-arm-menu-dirtycount-c1-20260317a` on-device after the menu gates failed
+    - completed the required review pass with a scoped explorer second opinion after the revert; it reported `No findings`, so the closure stays performance-only rather than correctness-driven
+  - Verification result summary:
+    - accepted baseline `menu-dirtycount-c1-char-select-full-r1` was `52.9285 FPS / 18.8934 / 4.3900 / 8.8588 / 5.6446 ms` (`frame / update / render / present`); candidate `menu-index8partial-c1-char-select-full` regressed to `52.4002 FPS / 19.0839 / 4.4895 / 8.8822 / 5.7122 ms`
+    - accepted baseline `menu-dirtycount-c1-super-art-full-r2` was `55.3707 FPS / 18.0601 / 6.0077 / 9.6022 / 2.4502 ms`; candidate `menu-index8partial-c1-super-art-full` regressed to `54.6496 FPS / 18.2984 / 4.0930 / 8.7889 / 5.4165 ms`
+    - recovered ordinary gameplay guardrail improved, but not enough to offset the menu regression: `menu-dirtycount-c1-training-yun-basic-r1` was `61.3221 FPS / 16.3073 / 3.5756 / 7.7817 / 4.9500 ms` versus `menu-index8partial-c1-training-basic` at `62.9063 FPS / 15.8967 / 3.4989 / 7.5669 / 4.8309 ms`
+    - candidate `deploy`, `probe`, and bounded `smoke` passed before capture; after rejection, the restored accepted package redeployed successfully and passed `probe`
+  - Keep/rollback decision with reason:
+    - reject and revert; both user-priority menu lanes lost FPS on-device, and the exact chooser lane turned the attempted refresh shortcut into a major present-cost regression, so this partial-refresh rewrite is not a viable follow-up to the kept dirty-variant count win
+  - Next best candidate optimization:
+    - leave the current SDL partial-refresh path intact and keep the next fresh menu loop on measured `seqsAfterProcess` submit/state churn rather than another generic software-surface refresh rewrite
+
+- 2026-03-17T05:01:00-0400
+  - Bottleneck targeted:
+    - possible remaining stage-`7` exact-family raster residue beyond the kept full-opaque row mask, specifically fully transparent rows inside the recovered `256x256` `rect_uv_parallelogram` sources
+  - Change summary:
+    - tried a narrow `src/port/sdl/sdl_game_renderer.c` reland that extended the kept row-alpha cache so the exact stage-`7` shear path could skip fully transparent rows as well as fully opaque rows
+    - rebuilt/exported `build/mister-telemetry-package-arm-stage7-transparent-row-skip-20260317c`, redeployed it with `tools/mister/misterctl.sh`, reran nearest `control`, `basic-exchange --test-stage 7` full telemetry, `effect-heavy --test-stage 7`, and a native control guard, then reverted the runtime diff locally and restored `build/mister-telemetry-package-arm-opt1-20260317b` on-device after the keep gates failed
+    - completed the required review pass as a manual scoped review plus an explorer second opinion focused on row-alpha cache lifetime, exact-family isolation, and whether the transparent-row hypothesis was better founded than cheaper row-start setup; no correctness issue survived review, so the rejection stayed purely performance-based
+  - Verification result summary:
+    - nearest `control` improved `75.0442 -> 76.3640 FPS` with `present.mean_ms 2.9365 -> 2.8617`
+    - ordinary raster validation regressed: `basic-exchange --test-stage 7` full fell `59.1771 -> 55.4642 FPS`, `present.mean_ms 5.1497 -> 6.1983`, `present_copy.mean_ms 5.1364 -> 6.1823`, and sampled `generic_textured.mean_ms 0.273164 -> 0.280230`
+    - matched `effect-heavy --test-stage 7` basic also regressed `66.2084 -> 64.7712 FPS` with `present.mean_ms 4.5976 -> 4.7609`, while the native control guard stayed within budget at `91.4189 FPS`
+  - Keep/rollback decision with reason:
+    - reject and revert; the transparent-row extension helps idle nearest control but makes the real stage-`7` gameplay lanes worse, so it is not a player-visible win
+  - Next best candidate optimization:
+    - keep the accepted full-opaque row mask only; if stage-`7` raster work resumes, prefer a cheaper exact-family row-start/setup cut or fresh measurement that proves a strong fully transparent row cohort before broadening the row-alpha metadata again
+
+- 2026-03-17T04:02:11-0400
+  - Bottleneck targeted:
+    - mapped nearest first-row materialization cost in `src/port/sdl/fbdev_presenter.c` after the kept same-`src_y` band replay reland
+  - Change summary:
+    - tried a narrow presenter reland that rewrote `rasterize_mapped_row_tile_runs(...)` to rasterize scaled-up first rows as source-driven destination-span fills using the existing `scale_x_first_dst_for_src[]` / `scale_x_last_dst_for_src[]` LUTs instead of the current destination-driven `scale_x_lut[x]` walk
+    - rebuilt/exported `build/mister-telemetry-package-arm-frow-srcfill-20260317d-export` through the validated `/work-arm` ARM telemetry path in `3sx-mister-build-nearest-hdmi-perf`, redeployed it with `tools/mister/misterctl.sh`, reran nearest `control`, recovered ordinary `training-yun-ryu-ryu-stage` basic + full, and a native guard, then reverted the runtime diff locally and restored `build/mister-telemetry-package-arm-opt1-20260317b` on-device after the keep gates failed
+    - completed the required review pass as a manual scoped review plus an explorer second opinion focused on overlap/clipping risk and whether the source-driven branch could explain the measured regression; no correctness issue survived review, so the rejection stayed purely performance-based
+  - Verification result summary:
+    - nearest `control` regressed `75.7809 -> 75.3535 FPS` with `present.mean_ms 2.9167 -> 3.0116`
+    - recovered ordinary `training-yun-ryu-ryu-stage` basic regressed `62.0663 -> 60.7009 FPS` with `present.mean_ms 4.9307 -> 5.2597`
+    - matched training full also regressed `56.0552 -> 54.8999 FPS`, with `present.mean_ms 5.7691 -> 6.1843`, `present_copy.mean_ms 5.7559 -> 6.1713`, `mapped_first_row.mean_ms 1.0437 -> 1.3371`, and `mapped_repeat_row.mean_ms` effectively flat `2.0280 -> 2.0349`
+    - the native control guard stayed inside budget but still slipped `92.0977 -> 91.9276 FPS`
+  - Keep/rollback decision with reason:
+    - reject and revert; the source-driven first-row fill path makes the real nearest training lane worse and raises `mapped_first_row` instead of cutting it, so it is not a player-visible win
+  - Next best candidate optimization:
+    - keep the accepted destination-driven first-row raster for now; if nearest presenter work continues, go back to repeat-row source/body cuts or find a materially cheaper first-row prototype before reopening source-driven expansion

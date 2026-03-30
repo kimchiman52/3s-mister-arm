@@ -1,0 +1,181 @@
+Continue MiSTer performance optimization work in this repo.
+
+Rules:
+- Focus only on performance/runtime improvements for MiSTer.
+- Prefer the highest expected-value candidate that is rollback-safe within one loop. When two options look comparable, prefer the simpler or more incremental one.
+- Build/validate in Docker container `3sx-mister-build`.
+- At cycle start, read and use `artifacts/mister-port/living-findings.md` as prior context.
+- At cycle start, also read and maintain `artifacts/mister-port/stock-image-software-frame-loop-series/todo.md` as the active checklist for this automation series.
+- At cycle start, read `docs/agent-memory/mister-perf-opportunities.md` as a candidate-ideas backlog, but verify every recommendation against current code, fresh telemetry, and the living findings before acting on it.
+- Before attempting any new optimization work, check for preserved unverified branches with `git for-each-ref --format='%(refname:short)' refs/heads/preserve-*`.
+  - If any exist, verify the oldest preserved branch first before inventing a new runtime or measurement hypothesis.
+  - Ignore preserved branches whose work has already been cherry-picked or otherwise integrated into `HEAD`.
+- Use the `telemetry` MiSTer build flavor for optimization loops:
+  - build/package from `build/mister-telemetry`, `build/mister-telemetry-install`, and `build/mister-telemetry-package`
+  - reserve the `clean` flavor for player/runtime handoff validation, not routine perf sampling
+- Treat `artifacts/mister-port/ralphpart2/todo.md` as historical context only; do not add new active-loop items there.
+- Treat the latest trusted on-device runtime baseline as the kept `stock-soft-c80-*` family unless a later committed runtime keep supersedes it.
+- Use the committed software-frame telemetry to choose the next bottleneck instead of guessing:
+  - `software_frame_fast_*` counters define what is already covered by fast paths
+  - `software_frame_generic_textured_*` and `software_frame_fast_miss_*` counters define remaining textured residue
+  - `training` remains the transition-hitch diagnostic scene, while `gameplay-idle` and `gameplay-super-heavy` remain the gameplay keep gates
+  - important accounting caveat: lower-distortion basic-mode captures can preserve the real software-frame/direct-present route while still zeroing extended workload counters such as `software_frame_candidate_tasks` and `software_frame_fast_non_integer_tasks`; do not read those zeroes as evidence of a GPU path or disappearing software-frame work
+- User-observed priority lanes now matter as much as the old canned gates:
+  - intro and menus feel full speed
+  - this loop series is about native gameplay performance first, not nearest-only presenter work unless fresh evidence proves a native issue is actually present-bound
+  - Yun SA3 Genei-Jin still causes obvious gameplay slowdown and remains the first-class gameplay target, but do not overfit the queue to only the first visible activation/cold burst anymore
+  - user-approved visual-only fidelity reductions during super activation are now in scope on MiSTer when they do not change gameplay logic, determinism, or timing; prefer opt-in or tightly burst-scoped reductions over another blind helper micro-tuning loop when they are the highest expected-value path to stable 60
+  - broaden the deciding super matrix beyond Yun alone when evaluating those fidelity reductions: keep Yun SA3 first, then add Q SA1, Ken SA3, and Chun-Li SA2 scripted lanes so future wins are not overfit to a single super
+  - current operator inference is that Yun SA3 slowdown lasts well beyond the first `8` frames, likely somewhere in the `80s`, but that exact span is still unverified; future Ralph loops must investigate and improve the whole slowdown window instead of assuming onset-only improvement is enough
+  - Remy-left still matters, but it is now a separate exact/refresh compare-dirty residue track rather than another non-integer/native-present bottleneck
+  - the exact `Press Start -> main menu` type-`1` wipe now looks solved enough to treat as de-prioritized unless fresh evidence contradicts that
+  - gameplay in most stages still feels near full speed until large effects/supers
+- Fresh manual full-telemetry captures from `2026-03-09` now resolve the remaining ambiguity and should override stale scene-broadening guesses:
+  - `manual-yun-geneijin` reproduced a real gameplay slowdown during the active SA3 burst, but it stayed on direct present. The worst 60-frame windows sat around `49-51 FPS` and were dominated by very large `software_frame_fast_non_integer_pixels` plus a smaller `software_frame_generic_textured_pixels` residue, not by presenter/readback fallback.
+  - `manual-menu-transition` reproduced the catastrophic checkered collapse directly. The bad bursts are repeated 8-frame runs around `3.5 FPS` with `software_frame_fallback = 1`, `software_frame_reason_solid = 76`, `software_frame_direct_present = 0`, and `present_readback ~= 273-316 ms` while the actual fb copy remains sub-millisecond.
+  - Easy manual repro note: from boot, keep pressing `Start`. It skips the logo/intro, lands on the `Press Start` screen, and the next `Start` triggers the real user-facing `Press Start -> main menu` wipe. Treat that as a valid quick manual spot-check even when a narrower harness capture also exists.
+  - Operator retest after Loop 104 says that exact type-`1` wipe now looks good enough to treat as solved for now.
+  - Operator retest after Loop 105 says the first visible Genei-Jin activation still dips harder than later ones: roughly `45 FPS` on the first activation, then mid/upper `50s` on later activations.
+  - More recent manual observation suggests the user-visible Yun SA3 slowdown extends far past the initial burst and may last roughly `80+` frames, though the exact end point is still uncertain.
+  - Therefore the next gameplay loops should target native gameplay bursts first: Yun/effect raster cost with explicit attention to the full super slowdown window, not just first-activation/cold-start behavior. Keep Remy-left on a separate compare-dirty residue track unless fresh telemetry proves `fast_non_integer` has reappeared there. Transition work should stay de-prioritized unless fresh evidence says it regressed.
+- Track gameplay speed explicitly in FPS as well as milliseconds:
+  - every gameplay capture should record and cite `metrics.fps.mean`
+  - use `tools/mister/perf-sampler.sh` summaries plus the JSON to keep FPS visible in the loop log and checklist
+- One-time bootstrap note for the next unattended run:
+  - if the kickoff tree is dirty only in `artifacts/mister-port/stock-image-software-frame-loop-series/todo.md`, `artifacts/mister-port/overnight-perf-prompt.txt`, `docs/config.md`, `include/port/sdl/sdl_game_renderer.h`, `src/port/config/config.c`, `src/port/config/config.h`, `src/port/sdl/sdl_app.c`, `src/port/sdl/sdl_game_renderer.c`, `src/test/test_runner.c`, and `tools/mister/perf-sampler.sh`, treat that state as unfinished super-activation fidelity-reduction work rather than stale Loop `152`
+  - close that dirty state first by validating the new `super-effect-quality = full|simplified|minimal` MiSTer path, expanding the scripted super matrix to include Q SA1, Ken SA3, and Chun-Li SA2, and then commit/preserve/revert it according to the normal dirty-tree rules before inventing a different runtime or measurement hypothesis
+  - do not reopen old alpha-branch-layout, source-metadata, or repeat-pressure subphase collectors until that fidelity-reduction diff has first been cleanly resolved
+- Current active super-fidelity workstream, resolve this before inventing a new queue:
+  - the current dirty implementation is not a vague prototype; it already contains the first burst-fidelity path and should be treated as the active runtime candidate under test
+  - implementation state to preserve and verify first:
+    - public config key `super-effect-quality = full|simplified|minimal`, with `full` default and absent-key behavior matching `full`
+    - clean-build-visible P1 Yun SA3 burst countdown in the app layer, starting on the first inactive-to-active transition and lasting 8 frames; treat this as the current implementation detail, not the full measurement target for future loop decisions
+    - `simplified` currently rounds destination geometry for the trusted six hot onset families so qualifying work can fall into `EXACT` or `SCALED`
+    - `minimal` currently applies the same survivor logic and then thins every other qualifying task after final sort so draw-order semantics are preserved
+    - `tools/mister/perf-sampler.sh` now accepts `--super-effect-quality full|simplified|minimal`
+    - scripted super presets now include `yun-sa3-repeat(-pressure)`, `q-sa1-repeat(-pressure)`, `ken-sa3-repeat(-pressure)`, and `chunli-sa2-repeat(-pressure)`
+  - the first unresolved question is not “what new micro-optimization should we try?” It is “how much speed do `simplified` and `minimal` actually buy on-device across the real slowdown window, and are they still too weak?”
+  - required first validation matrix for this workstream:
+    - run `full`, `simplified`, and `minimal` on `yun-sa3-repeat-pressure`
+    - run the same three modes on `q-sa1-repeat-pressure`, `ken-sa3-repeat-pressure`, and `chunli-sa2-repeat-pressure`
+    - keep `gameplay-idle` as the non-super guard, and at minimum compare `full` versus `minimal` there before keeping a stronger fidelity cut
+    - use the simpler `*-repeat` lanes only when a `*-repeat-pressure` result is ambiguous or clearly overfit to the pressure script
+    - do not judge this matrix on the first `8` frames alone; inspect first `8`, first `60`, and the longest trustworthy visible slowdown span available in the capture, and use the loop to pin down that span more precisely when needed
+  - if trusted Yun SA3 becomes stable enough on `minimal`, do not treat that as the terminal state for this feature:
+    - close the Yun validation keep cleanly
+    - then open a research-and-plan loop for expanding the super-fidelity path to all supers across all characters
+    - that planning loop should map character/super grouping, likely reusable burst rules, where Yun-only assumptions still exist in code, the validation matrix needed for roster-wide rollout, and a staged implementation order before broadening runtime behavior
+  - if the current fidelity reductions are too weak, iterate deeper down the same path before reopening another helper-inner-loop queue:
+    - prefer stronger post-sort thinning, lower per-family survivor caps, or a broader burst-only candidate cohort on the proven supers
+    - allow super-specific fidelity rules if the expanded matrix shows that different supers need different cuts
+    - keep all such changes MiSTer-only, burst-scoped, and render-only; no frame-hold, skipped update, gameplay-state changes, or emitter/resource edits
+  - only if the current fidelity-reduction branch is convincingly rejected across the expanded matrix should the loop return to a different runtime hypothesis
+- Immediate queue gate before any fresh runtime reland:
+  - re-audit `docs/agent-memory/mister-perf-dark-render-research-2026-03-21.md` against current code plus trusted Loop `164+` lower-distortion evidence
+  - treat Loop `164+` as preserved software-frame/direct-present routing with incomplete workload accounting, not as a renderer-path swap
+  - only open a new runtime/performance reland if that audit still leaves one bounded software-frame-real candidate after the accounting correction
+  - if the audit does not leave such a candidate, return to the current whole-window `super-effect-quality` validation queue instead of forcing another helper-local/runtime experiment
+- Only broaden measurement or route-identification again if a new runtime attempt fails to match the already-proven manual evidence. The current default should be targeted runtime work against those confirmed lanes, not more generic capture support.
+- Every cycle must begin with DEEP research before any code changes:
+  - inspect the current living findings, active checklist, relevant local code paths, and existing gameplay telemetry/logs
+  - inspect `docs/agent-memory/mister-perf-opportunities.md` and decide which listed ideas are still plausible on the current tree
+  - identify the remaining real gameplay bottleneck, not just the easiest code change
+  - if existing automated captures do not cover the user-observed transition/effect/stage-specific stalls, first add or recover the narrowest safe capture support needed to measure them
+  - when external behavior or APIs matter, consult primary sources or official docs and rely on those findings
+  - write a short research-backed hypothesis and scoped plan into the active checklist before implementing
+- Bias toward enough research to bound risk now that the obvious software-frame wins have already landed:
+  - challenge whether the remaining ceiling is refresh/update, stage-specific game work, effect bursts, or measurement blind spots before editing runtime code
+  - prefer new evidence over intuition when deciding whether the hardware is near a hard limit
+  - do not let repeated measurement-only loops crowd out reversible runtime/build experiments once the surviving candidate set is narrow
+- Selection policy when the queue stalls:
+  - keep gameplay/determinism safety, rollback discipline, device verification, and review strict
+  - but relax candidate conservatism: after `2` consecutive completed loops on the active queue that land only measurement support or docs-only closeouts without a kept runtime/build win, the next unblocked cycle should prefer one bounded rollback-safe runtime or build-level experiment from the strongest surviving hypotheses instead of inventing another new collector
+  - acceptable forced-experiment classes include narrowly scoped helper-local relands, build-flag/codegen trials such as ThinLTO or compiler-hint patches, and other reversible changes that can be fully verified and rolled back within one loop
+  - if a forced experiment regresses or fails verification, roll it back normally, record the evidence, and continue reranking from that result
+- Candidate ordering for this loop series:
+  - treat the old `ix 80 / texture 56` audit and scalar `4x` row-walk unroll ideas as closed by the March `2026-03-21` evidence; do not reopen them unchanged
+  - first re-audit the dark-render memo and lower-distortion onset accounting so the queue stops mixing routing truth with invalid basic-mode workload-accounting zeroes
+  - second, if that audit still leaves one bounded software-frame-real candidate, pursue that runtime/performance game directly and judge it on the corrected premises
+  - otherwise, close the audit as a docs/process correction and return to the current `super-effect-quality` burst-fidelity implementation on MiSTer, including `full/simplified/minimal` sweeps on Yun SA3 plus Q SA1, Ken SA3, and Chun-Li SA2 scripted lanes, judged on the whole slowdown window rather than the old onset-only shortcut
+  - next, if the current thinning/quantization is too weak, keep iterating on bounded fidelity reduction before reopening another helper-local alpha/layout experiment
+  - if the current fidelity path produces a clear keep where trusted Yun SA3 is stable enough on `minimal`, the next queue is not another Yun-only micro-pass; it is a research-and-plan loop for expanding the super-fidelity path to all supers for all characters before implementation broadens
+  - only if the fidelity-reduction branch is rejected or saturates without a keep-worthy win, rerank back toward a different measured runtime or update bottleneck
+  - keep Remy-left on a separate compare-dirty `ppg-seqs 81/82` residue track rather than assuming Yun-targeted work will help it
+  - treat fixed-point lookup generation, persistent lookup buffers, task-level Y lookup sharing, compiler hints, LTO, PMU/prefetch, NEON, row-dedup runtime changes, and dual-core ideas as secondary or deferred unless the new telemetry materially re-ranks them
+  - do not spend first-line loop budget on nearest-only presenter work when the target is native gameplay unless current captures show a real native present bottleneck
+- When the top surviving queue has already consumed multiple measurement-only passes, prefer a bounded runtime/build bet over another collector if the experiment is reversible within one loop and the current evidence is already good enough to reject or keep it cleanly.
+- Only implement optimizations that are backed by that cycle's DEEP research. If the research does not support a safe/high-confidence change, record the result and move to the next candidate instead of forcing an implementation.
+- Never leave the branch dirty between loops. If the repo is dirty at cycle start, do not block; instead treat the first part of that cycle as mandatory closure work:
+  - inspect the dirty state
+  - determine whether it is a verified keep, a diff that still needs MiSTer verification, or a failed experiment that can be safely rolled back
+  - if MiSTer verification is still pending or the device gate is currently unhealthy, preserve that diff on a dedicated `preserve-*` branch with `tools/mister/preserve-blocked-work.sh` instead of rolling it back or pretending it was closed
+  - return the current working branch to a clean committed state before moving on
+- Exception: ignore any inherited dirty state in `tools/mister/package.sh`. Treat that file as user-owned/out-of-scope unless the user explicitly asks to change it; do not stage, commit, or revert it as part of a Ralph cycle.
+- Before finalizing a cycle, run an independent code review agent pass on the diff, evaluate findings critically, apply only valid fixes, then rebuild/re-verify any runtime-changing diff.
+- Every completed cycle must end on a clean git worktree with a real local commit.
+- If a runtime-changing diff passes final verification, create the runtime commit for that loop.
+- If research disproves every safe runtime change before implementation, or a runtime experiment is reverted after failing verification, fully roll back the runtime code, update the checklist/living findings, and create a docs-only closure commit for that loop.
+- If a runtime-changing or measurement-support diff cannot be verified only because the MiSTer device gate is unhealthy, do not throw it away and do not create a fake docs-only closure for it. Preserve it on a `preserve-*` branch, record that it is pending verification, and make that preserved branch the next verification target once the device gate recovers.
+- Measurement-support or scene-broadening code that is kept for future loops is not "research-only"; if it remains in the tree at cycle end, it must be committed in that cycle.
+- Never leave a loop in a final `no-commit` state on the active branch. If verification is blocked by device health, preserve the diff on a dedicated branch with a real commit there, then return the active branch to a clean state.
+- Never push to git remotes, never rebase, never rewrite history.
+- Log what changed and why in concise commit messages.
+- If a cycle inherits dirty state, resolve that state first instead of treating it as a blocker. Only use a stop note for truly exceptional cases where neither commit nor rollback can be completed safely.
+
+Hard constraints (do not violate):
+- Do not change gameplay behavior, game rules, move properties, collision/hit logic, input mapping semantics, simulation timing, RNG behavior, stage logic, menu flow, or resource content.
+- Do not make changes that could alter determinism or game feel.
+- Restrict code changes to performance-oriented implementation details (render/present path, buffering/copy costs, allocation patterns, logging overhead, I/O overhead, build/profile flags) without changing visible gameplay behavior.
+- User-approved exception: MiSTer-only super-activation visual-fidelity reductions are allowed when they are bounded to the burst visuals, preserve gameplay timing/logic/determinism, and are verified through the normal device gates. Do not treat those bounded render-only degradations as a rules violation.
+- If a candidate optimization may affect gameplay behavior, skip it and choose a different optimization.
+- If any applied change is suspected to affect gameplay behavior, revert that change immediately and continue with a safer approach.
+- Objective is purely improved frame rate/stability on lower-powered MiSTer hardware.
+
+End-of-cycle review gate (required):
+- After implementing candidate optimizations, or before closing a docs-only rollback/research cycle, spawn a separate review agent/process to review the staged/working diff.
+- Treat review findings as input, not absolute truth: validate each point against code and constraints before acting.
+- Do not blindly apply every suggestion; reject findings that are incorrect, out-of-scope, or risk gameplay behavior.
+- Apply only high-confidence, in-scope fixes.
+- Re-run build and device verification after applying review-driven fixes to any runtime-changing diff.
+- Commit only after the review gate passes and the cycle has returned to a clean final state.
+
+Checklist update (required every completed cycle):
+- Keep `artifacts/mister-port/stock-image-software-frame-loop-series/todo.md` as the canonical active checklist for this automation series.
+- Update it with the cycle's research target, implementation summary, verification evidence, keep/rollback decision, final commit hash, and next best candidate.
+- Mark rejected ideas clearly so future cycles do not waste time rediscovering the same dead ends.
+- If a runtime experiment is rejected, the checklist must still close that loop with the docs-only closure commit hash after the rollback is complete.
+
+Living memory update (required every completed cycle):
+- Append one new entry to `artifacts/mister-port/living-findings.md` under "## Cycle Log".
+- Keep each entry short and structured:
+  - Timestamp
+  - Final commit hash
+  - Bottleneck targeted
+  - Change summary (1-3 bullets)
+  - Verification result summary (build + device run/probe, or an explicit reason the device gate was skipped)
+  - Keep/rollback decision with reason
+  - Next best candidate optimization
+- Keep this file high-signal: do not paste large diffs or full logs.
+- If two consecutive entries repeat the same failed idea, add a "Do not retry now" note for that idea.
+
+Device verification (allowed every cycle when useful):
+- Deploy the latest packaged build to MiSTer host `192.168.1.171` as user `root` with password `1`.
+- Sync payload to `/media/fat/games/3sx/` (include binary/libs/scripts/config as needed).
+- Use `tools/mister/misterctl.sh` for deploy/probe/smoke and `tools/mister/perf-sampler.sh` for captures. Do not call raw `ssh`, `scp`, or `rsync` directly from a Ralph cycle now that the serialized tooling exists.
+- The MiSTer tooling now holds a shared local lock and expects serialized access. Never run two MiSTer remote workflows in parallel.
+- Ensure required resource exists at `/media/fat/games/3sx/resources/SF33RD.AFS`; if missing, copy from local source if available.
+- Run remote checks through the serialized tooling:
+  - `tools/mister/misterctl.sh probe`
+  - `tools/mister/misterctl.sh smoke`
+- Collect and inspect remote logs after each run:
+  - `/media/fat/games/3sx/logs/backend.log`
+  - `/media/fat/games/3sx/logs/last-run.log`
+- Use findings from on-device logs and the committed perf JSON telemetry to guide the next optimization.
+ - When a gameplay capture runs, preserve both millisecond and FPS summaries in the loop notes so user-facing speed changes stay easy to compare overnight.
+- If two consecutive bounded `misterctl.sh health` or `probe` attempts fail before a trustworthy remote command completes, do not invent a new optimization loop from local-only evidence. Preserve any dirty diff, record the device gate failure, and keep the next cycle focused on recovering or rechecking on-device verification.
+
+Safety:
+- Keep all operations non-interactive.
+- Do not modify unrelated files.
+- Do not disable existing safety checks.
+- Before ending a cycle, verify `git status --short` is clean apart from ignored artifacts. If it is not clean, the cycle is not complete.
