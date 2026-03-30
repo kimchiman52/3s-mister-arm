@@ -27,13 +27,42 @@ typedef struct ConfigEntry {
     ConfigValue value;
 } ConfigEntry;
 
+#if defined(PORT_MISTER)
+#define DEFAULT_VIDEO_DRIVER_ORDER "dummy"
+#define DEFAULT_RENDER_DRIVER_ORDER "software"
+#define DEFAULT_WINDOW_WIDTH 320
+#define DEFAULT_WINDOW_HEIGHT 240
+#define DEFAULT_SCALE_MODE "native"
+#define DEFAULT_SOFTWARE_FRAME_MODE "on"
+#else
+#define DEFAULT_VIDEO_DRIVER_ORDER ""
+#define DEFAULT_RENDER_DRIVER_ORDER ""
+#define DEFAULT_WINDOW_WIDTH 640
+#define DEFAULT_WINDOW_HEIGHT 480
+#define DEFAULT_SCALE_MODE "soft-linear"
+#define DEFAULT_SOFTWARE_FRAME_MODE "off"
+#endif
+
+#define DEFAULT_SUPER_EFFECT_QUALITY "full"
+#define DEFAULT_GHOST_RESOLUTION "full"
+#define DEFAULT_GHOST_COUNT "4"
+#define DEFAULT_ARM_CLOCK "1200"
+
 static const ConfigEntry default_entries[] = {
     { .key = CFG_KEY_FULLSCREEN, .type = CFG_BOOL, .value.b = true },
-    { .key = CFG_KEY_WINDOW_WIDTH, .type = CFG_INT, .value.i = 640 },
-    { .key = CFG_KEY_WINDOW_HEIGHT, .type = CFG_INT, .value.i = 480 },
-    { .key = CFG_KEY_SCALEMODE, .type = CFG_STRING, .value.s = "soft-linear" },
+    { .key = CFG_KEY_WINDOW_WIDTH, .type = CFG_INT, .value.i = DEFAULT_WINDOW_WIDTH },
+    { .key = CFG_KEY_WINDOW_HEIGHT, .type = CFG_INT, .value.i = DEFAULT_WINDOW_HEIGHT },
+    { .key = CFG_KEY_SCALEMODE, .type = CFG_STRING, .value.s = DEFAULT_SCALE_MODE },
     { .key = CFG_DRAW_PLAYERS_ABOVE_HUD, .type = CFG_BOOL, .value.b = false },
     { .key = CFG_ARCADE_BALANCE, .type = CFG_BOOL, .value.b = false },
+    { .key = CFG_KEY_SOFTWARE_FRAME_MODE, .type = CFG_STRING, .value.s = DEFAULT_SOFTWARE_FRAME_MODE },
+    { .key = CFG_KEY_SUPER_EFFECT_QUALITY, .type = CFG_STRING, .value.s = DEFAULT_SUPER_EFFECT_QUALITY },
+    { .key = CFG_KEY_GHOST_RESOLUTION, .type = CFG_STRING, .value.s = DEFAULT_GHOST_RESOLUTION },
+    { .key = CFG_KEY_GHOST_COUNT, .type = CFG_STRING, .value.s = DEFAULT_GHOST_COUNT },
+    { .key = CFG_KEY_ARM_CLOCK, .type = CFG_STRING, .value.s = DEFAULT_ARM_CLOCK },
+    { .key = CFG_KEY_SHOW_FPS, .type = CFG_BOOL, .value.b = false },
+    { .key = CFG_KEY_VIDEO_DRIVER_ORDER, .type = CFG_STRING, .value.s = DEFAULT_VIDEO_DRIVER_ORDER },
+    { .key = CFG_KEY_RENDER_DRIVER_ORDER, .type = CFG_STRING, .value.s = DEFAULT_RENDER_DRIVER_ORDER },
 };
 
 static ConfigEntry entries[CONFIG_ENTRIES_MAX] = { 0 };
@@ -81,6 +110,10 @@ static ConfigEntry* find_entry(const char* key) {
         SDL_assert(false);
         return NULL;
     }
+}
+
+bool Config_HasExplicitKey(const char* key) {
+    return find_entry_in_array(key, entries, entry_count) != NULL;
 }
 
 static void print_config_entry_to_io(SDL_IOStream* io, const ConfigEntry* entry) {

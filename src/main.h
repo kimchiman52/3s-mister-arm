@@ -2,6 +2,7 @@
 #define MAIN_H
 
 #include "configuration.h"
+#include "port/build_config.h"
 #include "structs.h"
 #include "types.h"
 
@@ -20,7 +21,8 @@ extern MPP mpp_w;
 extern s32 system_init_level;
 extern Configuration configuration;
 
-void cpReadyTask(TaskID num, void* func_adrs);
+void cpInitTask();
+void cpReadyTask(TaskID num, void (*func_adrs)(struct _TASK* task_ptr));
 void cpExitTask(TaskID num);
 s32 mppGetFavoritePlayerNumber();
 void njUserMain(); // FIXME: This shouldn't be public

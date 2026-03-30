@@ -66,6 +66,8 @@ static const char* get_button_name(KeymapButton button) {
     default:
         return "";
     }
+
+    return "unknown";
 }
 
 static KeymapButton get_button(const char* name) {

@@ -3,18 +3,33 @@
 #include "utils/sha256.h"
 
 #include <SDL3/SDL.h>
+
+#if defined(ENABLE_ISO_IMPORT)
 #include <cdio/iso9660.h>
+#endif
 
 #define EXPECTED_AFS_SHA "f9fa50f3a124ec9fa9465aa9c8546c2d867887eb39f711a070762a0324ba5604"
 #define ERROR_LEN_MAX 512
 
-typedef enum FlowState { INIT, DIALOG_OPENED, COPY_ERROR, COPY_SUCCESS } ResourceCopyingFlowState;
+#if defined(ENABLE_ISO_IMPORT)
+typedef enum FlowState {
+    INIT,
+    DIALOG_OPENED,
+    COPY_ERROR,
+    COPY_SUCCESS,
+} ResourceCopyingFlowState;
 
 static ResourceCopyingFlowState flow_state = INIT;
+#endif
+
+#if defined(ENABLE_SDL_DIALOGS)
 static SDL_Window* dialog_owner_window = NULL;
+#endif
+
 static char error[ERROR_LEN_MAX] = { 0 };
 static const char* afs_path = NULL;
 
+#if defined(ENABLE_SDL_DIALOGS)
 static void create_dialog_parent_window() {
     if (dialog_owner_window != NULL) {
         return;
@@ -33,6 +48,7 @@ static void destroy_dialog_owner_window() {
     SDL_DestroyWindow(dialog_owner_window);
     dialog_owner_window = NULL;
 }
+#endif
 
 static bool file_exists(const char* path) {
     SDL_PathInfo path_info;
@@ -40,6 +56,14 @@ static bool file_exists(const char* path) {
     return path_info.type == SDL_PATHTYPE_FILE;
 }
 
+static bool check_if_file_present(const char* filename) {
+    char* file_path = Resources_GetPath(filename);
+    const bool result = file_exists(file_path);
+    SDL_free(file_path);
+    return result;
+}
+
+#if defined(ENABLE_ISO_IMPORT)
 static void create_resources_directory() {
     char* path = Resources_GetPath(NULL);
     SDL_CreateDirectory(path);
@@ -50,6 +74,14 @@ static void create_resources_directory() {
 #define BUFFER_SIZE (ISO_BLOCKSIZE * CHUNK_SECTORS)
 
 static void open_file_dialog_callback(void* userdata, const char* const* filelist, int filter) {
+    (void)userdata;
+    (void)filter;
+
+    if (filelist == NULL || filelist[0] == NULL) {
+        flow_state = COPY_ERROR;
+        return;
+    }
+
     const char* iso_path = filelist[0];
 
     iso9660_t* iso = iso9660_open(iso_path);
@@ -63,7 +95,6 @@ static void open_file_dialog_callback(void* userdata, const char* const* filelis
     iso9660_stat_t* stat = iso9660_ifs_stat(iso, "/THIRD/SF33RD.AFS;1");
 
     if (stat == NULL) {
-        // Try a different path
         stat = iso9660_ifs_stat(iso, "/SF33RD.AFS;1");
 
         if (stat == NULL) {
@@ -121,12 +152,37 @@ static void open_file_dialog_callback(void* userdata, const char* const* filelis
     flow_state = COPY_SUCCESS;
 #endif
 }
+#endif
+
+#if defined(ENABLE_ISO_IMPORT)
+
+static void show_info_message(const char* title, const char* message) {
+#if defined(ENABLE_SDL_DIALOGS)
+    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, title, message, dialog_owner_window);
+#else
+    SDL_Log("%s: %s", title, message);
+#endif
+}
+
+static void show_error_message(const char* title, const char* message) {
+#if defined(ENABLE_SDL_DIALOGS)
+    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, title, message, dialog_owner_window);
+#else
+    SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "%s: %s", title, message);
+#endif
+}
 
 static void open_dialog() {
     flow_state = DIALOG_OPENED;
+
+#if defined(ENABLE_SDL_DIALOGS)
     const SDL_DialogFileFilter filter = { .name = "Game iso", .pattern = "iso" };
     SDL_ShowOpenFileDialog(open_file_dialog_callback, NULL, dialog_owner_window, &filter, 1, NULL, false);
+#else
+    flow_state = COPY_ERROR;
+#endif
 }
+#endif
 
 char* Resources_GetPath(const char* file_path) {
     const char* base = Paths_GetPrefPath();
@@ -185,38 +241,41 @@ bool Resources_Check() {
 }
 
 bool Resources_RunResourceCopyingFlow() {
+#if defined(ENABLE_ISO_IMPORT)
     switch (flow_state) {
     case INIT:
+#if defined(ENABLE_SDL_DIALOGS)
         create_dialog_parent_window();
-        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION,
-                                 "Valid resources are missing",
-                                 "3SX needs resources from a copy of \"Street Fighter III: 3rd Strike\" to run. Choose "
-                                 "the iso in the next dialog",
-                                 dialog_owner_window);
+#endif
+        show_info_message("Valid resources are missing",
+                          "3SX needs resources from a copy of \"Street Fighter III: 3rd Strike\" to run. Choose "
+                          "the iso in the next dialog");
         open_dialog();
         break;
 
     case DIALOG_OPENED:
-        // Wait for the callback to be called
         break;
 
     case COPY_ERROR:
-        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Error", error, dialog_owner_window);
+        show_error_message("Error", error);
         open_dialog();
         break;
 
-    case COPY_SUCCESS:
+    case COPY_SUCCESS: {
         char* resources_path = Resources_GetPath(NULL);
         char* message = NULL;
         SDL_asprintf(&message, "You can find them at:\n%s", resources_path);
-        SDL_ShowSimpleMessageBox(
-            SDL_MESSAGEBOX_INFORMATION, "Resources copied successfully", message, dialog_owner_window);
+        show_info_message("Resources copied successfully", message);
         SDL_free(resources_path);
         SDL_free(message);
+#if defined(ENABLE_SDL_DIALOGS)
         destroy_dialog_owner_window();
+#endif
         flow_state = INIT;
         return true;
     }
+    }
+#endif
 
     return false;
 }

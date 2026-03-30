@@ -63,35 +63,56 @@ int sceMcGetInfo(int port, int slot, int* type, int* free, int* format) {
     return 0;
 }
 
-int sceMcOpen(int, int, const char*, int) {
+int sceMcOpen(int port, int slot, const char* name, int flags) {
+    (void)port;
+    (void)slot;
+    (void)name;
+    (void)flags;
     not_implemented(__func__);
 }
 
-int sceMcClose(int) {
+int sceMcClose(int fd) {
+    (void)fd;
     not_implemented(__func__);
 }
 
-int sceMcRead(int, void*, int) {
+int sceMcRead(int fd, void* buffer, int size) {
+    (void)fd;
+    (void)buffer;
+    (void)size;
     not_implemented(__func__);
 }
 
-int sceMcWrite(int, const void*, int) {
+int sceMcWrite(int fd, const void* buffer, int size) {
+    (void)fd;
+    (void)buffer;
+    (void)size;
     not_implemented(__func__);
 }
 
-int sceMcMkdir(int, int, const char*) {
+int sceMcMkdir(int port, int slot, const char* name) {
+    (void)port;
+    (void)slot;
+    (void)name;
     not_implemented(__func__);
 }
 
-int sceMcDelete(int, int, const char*) {
+int sceMcDelete(int port, int slot, const char* name) {
+    (void)port;
+    (void)slot;
+    (void)name;
     not_implemented(__func__);
 }
 
-int sceMcFormat(int, int) {
+int sceMcFormat(int port, int slot) {
+    (void)port;
+    (void)slot;
     not_implemented(__func__);
 }
 
-int sceMcUnformat(int, int) {
+int sceMcUnformat(int port, int slot) {
+    (void)port;
+    (void)slot;
     not_implemented(__func__);
 }
 

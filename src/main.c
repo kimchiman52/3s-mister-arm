@@ -5,6 +5,7 @@
 #include "configuration.h"
 #include "netplay/netplay.h"
 #include "port/sdl/sdl_app.h"
+#include "port/sdl/sdl_game_renderer.h"
 #include "sf33rd/AcrSDK/common/mlPAD.h"
 #include "sf33rd/AcrSDK/ps2/flps2debug.h"
 #include "sf33rd/AcrSDK/ps2/flps2etc.h"
@@ -32,6 +33,7 @@
 #include "sf33rd/Source/Game/system/sys_sub.h"
 #include "sf33rd/Source/Game/system/sys_sub2.h"
 #include "sf33rd/Source/Game/system/work_sys.h"
+#include "sf33rd/Source/Game/ui/sc_sub.h"
 #include "sf33rd/Source/PS2/mc/knjsub.h"
 #include "sf33rd/Source/PS2/mc/mcsub.h"
 #include "structs.h"
@@ -42,6 +44,7 @@
 #endif
 
 #include "port/io/afs.h"
+#include "port/linux/console_mode.h"
 #include "port/resources.h"
 
 #include <SDL3/SDL.h>
@@ -55,6 +58,7 @@
 #endif
 
 #include <memory.h>
+#include <signal.h>
 #include <stdbool.h>
 #include <stdio.h>
 
@@ -66,28 +70,110 @@ typedef enum MainPhase {
 
 s32 system_init_level;
 MPP mpp_w;
-Configuration configuration = { 0 };
+Configuration configuration = {
+    .test =
+        {
+            .scene_preset = NULL,
+            .characters = { -1, -1 },
+            .super_arts = { -1, -1 },
+            .initial_super_full = false,
+            .preserve_game_transition = false,
+            .delay_gameplay_inputs_until_active = false,
+            .stage = -1,
+        },
+};
 
 static u8 dctex_linear_mem[0x800];
 static u8 texcash_melt_buffer_mem[0x1000];
 static u8 tpu_free_mem[0x2000];
 static MainPhase phase = MAIN_PHASE_INIT;
 
+static volatile sig_atomic_t shutdown_signal = 0;
+static volatile sig_atomic_t fps_toggle_requested = 0;
+static volatile sig_atomic_t super_effect_quality_cycle_requested = 0;
+static volatile sig_atomic_t ghost_resolution_cycle_requested = 0;
+static volatile sig_atomic_t ghost_count_cycle_requested = 0;
+static volatile sig_atomic_t arm_clock_cycle_requested = 0;
+
 static u8* mppMalloc(u32 size) {
     return flAllocMemory(size);
+}
+
+static void on_shutdown_signal(int signo) {
+    if (signo == SIGUSR1) {
+        fps_toggle_requested = 1;
+        return;
+    }
+
+    if (signo == SIGUSR2) {
+        super_effect_quality_cycle_requested = 1;
+        return;
+    }
+
+#ifdef SIGRTMIN
+    if (signo == SIGRTMIN) {
+        ghost_resolution_cycle_requested = 1;
+        return;
+    }
+
+    if (signo == SIGRTMIN + 1) {
+        ghost_count_cycle_requested = 1;
+        return;
+    }
+
+    if (signo == SIGRTMIN + 2) {
+        arm_clock_cycle_requested = 1;
+        return;
+    }
+#endif
+
+    shutdown_signal = signo;
+}
+
+static void install_shutdown_signal_handlers() {
+    struct sigaction action;
+    SDL_zero(action);
+    action.sa_handler = on_shutdown_signal;
+    sigemptyset(&action.sa_mask);
+
+    sigaction(SIGINT, &action, NULL);
+    sigaction(SIGHUP, &action, NULL);
+    sigaction(SIGTERM, &action, NULL);
+    sigaction(SIGUSR1, &action, NULL);
+    sigaction(SIGUSR2, &action, NULL);
+#ifdef SIGRTMIN
+    sigaction(SIGRTMIN, &action, NULL);
+    sigaction(SIGRTMIN + 1, &action, NULL);
+    sigaction(SIGRTMIN + 2, &action, NULL);
+#endif
+}
+
+static void restore_shutdown_signal_handlers() {
+    signal(SIGINT, SIG_DFL);
+    signal(SIGHUP, SIG_DFL);
+    signal(SIGTERM, SIG_DFL);
+    signal(SIGUSR1, SIG_DFL);
+    signal(SIGUSR2, SIG_DFL);
+#ifdef SIGRTMIN
+    signal(SIGRTMIN, SIG_DFL);
+    signal(SIGRTMIN + 1, SIG_DFL);
+    signal(SIGRTMIN + 2, SIG_DFL);
+#endif
 }
 
 // Initialization
 
 static void set_netplay_params() {
+#if defined(ENABLE_NETPLAY)
     if (configuration.netplay.p2p_remote_ip != NULL) {
         Netplay_SetParams(configuration.netplay.p2p_local_player, configuration.netplay.p2p_remote_ip);
     } else if (configuration.netplay.matchmaking_ip != NULL) {
         Netplay_SetMatchmakingParams(configuration.netplay.matchmaking_ip, configuration.netplay.matchmaking_port);
     }
+#endif
 }
 
-static void cpInitTask() {
+void cpInitTask() {
     memset(&task, 0, sizeof(task));
 }
 
@@ -407,10 +493,59 @@ static bool sdl_poll_helper() {
     return continue_running;
 }
 
+static void handle_signal_requests() {
+    if (fps_toggle_requested != 0) {
+        fps_toggle_requested = 0;
+        SDLApp_ToggleFPSOverlay();
+    }
+    if (super_effect_quality_cycle_requested != 0) {
+        super_effect_quality_cycle_requested = 0;
+        SDLApp_CycleSuperEffectQualityMode();
+    }
+    if (ghost_resolution_cycle_requested != 0) {
+        ghost_resolution_cycle_requested = 0;
+        SDLApp_CycleGhostResolutionMode();
+    }
+    if (ghost_count_cycle_requested != 0) {
+        ghost_count_cycle_requested = 0;
+        SDLApp_CycleGhostCountMax();
+    }
+    if (arm_clock_cycle_requested != 0) {
+        arm_clock_cycle_requested = 0;
+        SDLApp_CycleArmClock();
+    }
+}
+
 static int loop() {
     bool is_running = true;
+    bool console_mode_entered = false;
+    bool shutdown_handlers_installed = false;
+#if ENABLE_PERF_TELEMETRY
+    bool perf_capture_started = false;
+    int perf_wait_warmup_remaining = configuration.perf.gameplay_warmup_frames;
+#endif
+    int exit_code = 0;
 
-    while (is_running) {
+    shutdown_signal = 0;
+    fps_toggle_requested = 0;
+    super_effect_quality_cycle_requested = 0;
+    ghost_resolution_cycle_requested = 0;
+    ghost_count_cycle_requested = 0;
+    arm_clock_cycle_requested = 0;
+
+    console_mode_entered = ConsoleMode_Enter();
+    install_shutdown_signal_handlers();
+    shutdown_handlers_installed = true;
+
+#if ENABLE_PERF_TELEMETRY
+    if (configuration.perf.frame_count > 0 && !configuration.perf.basic_mode &&
+        (configuration.perf.wait_for_gameplay || configuration.perf.wait_for_test_phase != NULL ||
+         configuration.perf.wait_for_runtime_state != NULL)) {
+        SDLGameRenderer_SetPerfCaptureLogicalIdentityEnabled(true);
+    }
+#endif
+
+    while (is_running && shutdown_signal == 0) {
         switch (phase) {
         case MAIN_PHASE_INIT:
             SDLApp_PreInit();
@@ -418,6 +553,25 @@ static int loop() {
             if (Resources_Check()) {
                 initialize_game();
                 phase = MAIN_PHASE_INITIALIZED;
+
+#if ENABLE_PERF_TELEMETRY
+                if (configuration.perf.frame_count > 0 && !configuration.perf.wait_for_gameplay &&
+                    configuration.perf.wait_for_test_phase == NULL &&
+                    configuration.perf.wait_for_runtime_state == NULL) {
+                    SDLApp_ConfigurePerfCapture(configuration.perf.frame_count,
+                                                configuration.perf.output_path,
+                                                configuration.perf.scene,
+                                                configuration.perf.basic_mode,
+                                                configuration.perf.basic_first_window_family_snapshots,
+                                                configuration.perf.basic_first_window_render_subphases,
+                                                configuration.perf.basic_first_window_exact_hot_family_alpha_offpath,
+                                                configuration.perf.basic_first_window_onset_exact_hot_family_alpha_offpath,
+                                                configuration.perf.basic_first_window_onset_cluster_alpha_offpath,
+                                                configuration.perf.fast_non_integer_disable_reuse_telemetry,
+                                                configuration.perf.fast_non_integer_enable_subrect_alpha_telemetry);
+                    perf_capture_started = true;
+                }
+#endif
             } else {
                 phase = MAIN_PHASE_COPYING_RESOURCES;
             }
@@ -443,6 +597,8 @@ static int loop() {
             break;
 
         case MAIN_PHASE_INITIALIZED:
+            handle_signal_requests();
+
             is_running = SDLApp_PollEvents();
 
             if (!is_running) {
@@ -453,12 +609,139 @@ static int loop() {
             game_step_0();
             SDLApp_EndFrame();
             game_step_1();
+
+#if ENABLE_PERF_TELEMETRY
+            if (!perf_capture_started && configuration.perf.frame_count > 0 &&
+                (configuration.perf.wait_for_gameplay || configuration.perf.wait_for_test_phase != NULL ||
+                 configuration.perf.wait_for_runtime_state != NULL)) {
+                const bool wait_condition_met =
+                    configuration.perf.wait_for_gameplay
+                        ? mpp_w.inGame
+                        : ((configuration.perf.wait_for_test_phase != NULL)
+                               ? TestRunner_IsPhaseActive(configuration.perf.wait_for_test_phase)
+                               : SDLApp_IsPerfRuntimeStateActive(configuration.perf.wait_for_runtime_state));
+
+                if (wait_condition_met) {
+                    if (perf_wait_warmup_remaining > 0) {
+                        perf_wait_warmup_remaining -= 1;
+                    } else {
+                        const int perf_stage_id = mpp_w.inGame ? bg_w.stage : -1;
+                        const int perf_p1_character = mpp_w.inGame ? My_char[0] : -1;
+                        const int perf_p2_character = mpp_w.inGame ? My_char[1] : -1;
+                        const int perf_p1_super_art = mpp_w.inGame ? Super_Arts[0] : -1;
+                        const int perf_p2_super_art = mpp_w.inGame ? Super_Arts[1] : -1;
+                        SDL_Log("PERF capture start: in_game=%d warmup_frames=%d scene=%s detail_mode=%s stage_id=%d "
+                                "test_stage_override=%d test_scene_preset=%s p1_character=%d p2_character=%d "
+                                "p1_super_art=%d p2_super_art=%d test_phase=%s wait_test_phase=%s wait_runtime_state=%s "
+                                "fast_non_integer_reuse_telemetry=%s basic_first_window_family_snapshots=%s "
+                                "basic_first_window_render_subphases=%s "
+                                "basic_first_window_exact_hot_family_alpha_offpath=%s "
+                                "basic_first_window_onset_exact_hot_family_alpha_offpath=%s "
+                                "basic_first_window_onset_cluster_alpha_offpath=%s "
+                                "fast_non_integer_subrect_alpha_telemetry=%s "
+                                "g_no=%d/%d/%d/%d e_no=%d/%d/%d/%d menu_task_condition=%d menu_r_no=%d/%d/%d/%d "
+                                "break_into=%d hnc_num=%d exec_wipe=%d active_wipe_type=%d wipe_limit=%d",
+                                mpp_w.inGame ? 1 : 0,
+                                configuration.perf.gameplay_warmup_frames,
+                                configuration.perf.scene != NULL ? configuration.perf.scene : "(none)",
+                                configuration.perf.basic_mode
+                                    ? (configuration.perf.basic_first_window_family_snapshots
+                                           ? "basic-first-window-families"
+                                           : "basic")
+                                    : "full",
+                                perf_stage_id,
+                                configuration.test.stage,
+                                configuration.test.scene_preset != NULL ? configuration.test.scene_preset : "(none)",
+                                perf_p1_character,
+                                perf_p2_character,
+                                perf_p1_super_art,
+                                perf_p2_super_art,
+                                TestRunner_GetPhaseName(),
+                                configuration.perf.wait_for_test_phase != NULL ? configuration.perf.wait_for_test_phase
+                                                                               : "(none)",
+                                configuration.perf.wait_for_runtime_state != NULL ? configuration.perf.wait_for_runtime_state
+                                                                                 : "(none)",
+                                !configuration.perf.fast_non_integer_disable_reuse_telemetry
+                                    ? "on"
+                                    : "off",
+                                (configuration.perf.basic_mode &&
+                                 configuration.perf.basic_first_window_family_snapshots)
+                                    ? "on"
+                                    : "off",
+                                (configuration.perf.basic_mode &&
+                                 configuration.perf.basic_first_window_render_subphases)
+                                    ? "on"
+                                    : "off",
+                                (configuration.perf.basic_mode &&
+                                 configuration.perf.basic_first_window_exact_hot_family_alpha_offpath)
+                                    ? "on"
+                                    : "off",
+                                (configuration.perf.basic_mode &&
+                                 configuration.perf.basic_first_window_onset_exact_hot_family_alpha_offpath)
+                                    ? "on"
+                                    : "off",
+                                (configuration.perf.basic_mode &&
+                                 configuration.perf.basic_first_window_onset_cluster_alpha_offpath)
+                                    ? "on"
+                                    : "off",
+                                (!configuration.perf.basic_mode &&
+                                 configuration.perf.fast_non_integer_enable_subrect_alpha_telemetry)
+                                    ? "on"
+                                    : "off",
+                                G_No[0],
+                                G_No[1],
+                                G_No[2],
+                                G_No[3],
+                                E_No[0],
+                                E_No[1],
+                                E_No[2],
+                                E_No[3],
+                                task[TASK_MENU].condition,
+                                task[TASK_MENU].r_no[0],
+                                task[TASK_MENU].r_no[1],
+                                task[TASK_MENU].r_no[2],
+                                task[TASK_MENU].r_no[3],
+                                Break_Into,
+                                Hnc_Num,
+                                Exec_Wipe,
+                                Active_Wipe_Type,
+                                WipeLimit);
+                        SDLApp_ConfigurePerfCapture(configuration.perf.frame_count,
+                                                    configuration.perf.output_path,
+                                                    configuration.perf.scene,
+                                                    configuration.perf.basic_mode,
+                                                    configuration.perf.basic_first_window_family_snapshots,
+                                                    configuration.perf.basic_first_window_render_subphases,
+                                                    configuration.perf.basic_first_window_exact_hot_family_alpha_offpath,
+                                                    configuration.perf.basic_first_window_onset_exact_hot_family_alpha_offpath,
+                                                    configuration.perf.basic_first_window_onset_cluster_alpha_offpath,
+                                                    configuration.perf.fast_non_integer_disable_reuse_telemetry,
+                                                    configuration.perf.fast_non_integer_enable_subrect_alpha_telemetry);
+                        perf_capture_started = true;
+                    }
+                } else {
+                    perf_wait_warmup_remaining = configuration.perf.gameplay_warmup_frames;
+                }
+            }
+#endif
             break;
         }
     }
 
     cleanup();
-    return 0;
+
+    if (shutdown_handlers_installed) {
+        restore_shutdown_signal_handlers();
+    }
+    if (console_mode_entered) {
+        ConsoleMode_Exit();
+    }
+
+    if (shutdown_signal != 0) {
+        exit_code = 128 + shutdown_signal;
+    }
+
+    return exit_code;
 }
 
 int main(int argc, const char* argv[]) {
@@ -489,7 +772,7 @@ s32 mppGetFavoritePlayerNumber() {
 
 // Tasks
 
-void cpReadyTask(TaskID num, void* func_adrs) {
+void cpReadyTask(TaskID num, void (*func_adrs)(struct _TASK* task_ptr)) {
     struct _TASK* task_ptr = &task[num];
 
     memset(task_ptr, 0, sizeof(struct _TASK));
