@@ -1,0 +1,6 @@
+#ifndef PORT_BUILD_CONFIG_H
+#define PORT_BUILD_CONFIG_H
+
+#cmakedefine01 ENABLE_PERF_TELEMETRY
+
+#endif

@@ -6,9 +6,43 @@ THIRD_PARTY="$ROOT_DIR/third_party"
 
 mkdir -p "$THIRD_PARTY"
 
+PROFILE="desktop"
+
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --profile)
+            PROFILE="${2:-}"
+            shift 2
+            ;;
+        *)
+            echo "Unknown argument: $1"
+            echo "Usage: $0 [--profile desktop|mister]"
+            exit 1
+            ;;
+    esac
+done
+
+if [ "$PROFILE" != "desktop" ] && [ "$PROFILE" != "mister" ]; then
+    echo "Invalid profile: $PROFILE"
+    echo "Expected one of: desktop, mister"
+    exit 1
+fi
+
+if [ -n "${JOBS:-}" ]; then
+    JOBS="$JOBS"
+elif command -v nproc >/dev/null 2>&1; then
+    JOBS="$(nproc)"
+elif command -v sysctl >/dev/null 2>&1; then
+    JOBS="$(sysctl -n hw.ncpu)"
+else
+    JOBS=4
+fi
+
 # Detect OS
 OS="$(uname -s)"
 echo "Detected OS: $OS"
+echo "Dependency profile: $PROFILE"
+echo "Parallel jobs: $JOBS"
 
 echo "Using cmake from: $(which cmake)"
 cmake --version
@@ -17,76 +51,80 @@ cmake --version
 # FFmpeg
 # -----------------------------
 
-FFMPEG="ffmpeg-8.0"
-FFMPEG_DIR="$THIRD_PARTY/ffmpeg"
-FFMPEG_BUILD="$FFMPEG_DIR/build"
+if [ "$PROFILE" = "desktop" ]; then
+    FFMPEG="ffmpeg-8.0"
+    FFMPEG_DIR="$THIRD_PARTY/ffmpeg"
+    FFMPEG_BUILD="$FFMPEG_DIR/build"
 
-if [ -d "$FFMPEG_BUILD" ]; then
-    echo "FFmpeg already built at $FFMPEG_BUILD"
-else
-    echo "Building FFmpeg..."
-    mkdir -p "$FFMPEG_DIR"
-    cd "$FFMPEG_DIR"
+    if [ -d "$FFMPEG_BUILD" ]; then
+        echo "FFmpeg already built at $FFMPEG_BUILD"
+    else
+        echo "Building FFmpeg..."
+        mkdir -p "$FFMPEG_DIR"
+        cd "$FFMPEG_DIR"
 
-    if [ ! -d "$FFMPEG" ]; then
-        curl -L -O "https://ffmpeg.org/releases/$FFMPEG.tar.xz"
-        tar xf "$FFMPEG.tar.xz"
+        if [ ! -d "$FFMPEG" ]; then
+            curl -L -O "https://ffmpeg.org/releases/$FFMPEG.tar.xz"
+            tar xf "$FFMPEG.tar.xz"
+        fi
+
+        cd "$FFMPEG"
+
+        mkdir -p build
+        cd build
+
+        case "$OS" in
+            Darwin)
+                ../configure \
+                    --prefix=$FFMPEG_BUILD \
+                    --disable-all --disable-autodetect \
+                    --disable-static --enable-shared \
+                    --enable-avcodec --enable-avformat --enable-avutil --enable-swresample \
+                    --enable-decoder=adpcm_adx --enable-parser=adx --enable-muxer=adx \
+                    --enable-pic \
+                    --extra-cflags="-fPIC" \
+                    --extra-ldflags="-Wl,-rpath,@loader_path/../Frameworks" \
+                    --install-name-dir="@rpath"
+                ;;
+            Linux)
+                ../configure \
+                    --prefix=$FFMPEG_BUILD \
+                    --disable-all --disable-autodetect \
+                    --disable-static --enable-shared \
+                    --enable-avcodec --enable-avformat --enable-avutil --enable-swresample \
+                    --enable-decoder=adpcm_adx --enable-parser=adx --enable-muxer=adx \
+                    --enable-pic \
+                    --extra-cflags="-fPIC" \
+                    --extra-ldflags="-Wl,-rpath,\$ORIGIN/../lib" \
+                    --install-name-dir=\$ORIGIN
+                ;;
+            MINGW*|MSYS*|CYGWIN*)
+                ../configure \
+                    --prefix=$FFMPEG_BUILD \
+                    --disable-all --disable-autodetect \
+                    --disable-static --enable-shared \
+                    --enable-avcodec --enable-avformat --enable-avutil --enable-swresample \
+                    --enable-decoder=adpcm_adx --enable-parser=adx --enable-muxer=adx \
+                    --extra-cflags="-I/mingw64/include" \
+                    --extra-ldflags="-L/mingw64/lib"
+                ;;
+            *)
+                echo "Unsupported OS: $OS"
+                exit 1
+                ;;
+        esac
+
+        make -j"$JOBS"
+        make install
+        echo "FFmpeg installed to $FFMPEG_BUILD"
+
+        cd ../..
+        rm -rf "$FFMPEG"
+        rm "$FFMPEG.tar.xz"
+        cd "$ROOT_DIR"
     fi
-
-    cd "$FFMPEG"
-
-    mkdir -p build
-    cd build
-
-    case "$OS" in
-        Darwin)
-            ../configure \
-                --prefix=$FFMPEG_BUILD \
-                --disable-all --disable-autodetect \
-                --disable-static --enable-shared \
-                --enable-avcodec --enable-avformat --enable-avutil --enable-swresample \
-                --enable-decoder=adpcm_adx --enable-parser=adx --enable-muxer=adx \
-                --enable-pic \
-                --extra-cflags="-fPIC" \
-                --extra-ldflags="-Wl,-rpath,@loader_path/../Frameworks" \
-                --install-name-dir="@rpath"
-            ;;
-        Linux)
-            ../configure \
-                --prefix=$FFMPEG_BUILD \
-                --disable-all --disable-autodetect \
-                --disable-static --enable-shared \
-                --enable-avcodec --enable-avformat --enable-avutil --enable-swresample \
-                --enable-decoder=adpcm_adx --enable-parser=adx --enable-muxer=adx \
-                --enable-pic \
-                --extra-cflags="-fPIC" \
-                --extra-ldflags="-Wl,-rpath,\$ORIGIN/../lib" \
-                --install-name-dir=\$ORIGIN
-            ;;
-        MINGW*|MSYS*|CYGWIN*)
-            ../configure \
-                --prefix=$FFMPEG_BUILD \
-                --disable-all --disable-autodetect \
-                --disable-static --enable-shared \
-                --enable-avcodec --enable-avformat --enable-avutil --enable-swresample \
-                --enable-decoder=adpcm_adx --enable-parser=adx --enable-muxer=adx \
-                --extra-cflags="-I/mingw64/include" \
-                --extra-ldflags="-L/mingw64/lib"
-            ;;
-        *)
-            echo "Unsupported OS: $OS"
-            exit 1
-            ;;
-    esac
-
-    make -j$(nproc)
-    make install
-    echo "FFmpeg installed to $FFMPEG_BUILD"
-
-    cd ../..
-    rm -rf "$FFMPEG"
-    rm "$FFMPEG.tar.xz"
-    cd "$ROOT_DIR"
+else
+    echo "Skipping FFmpeg for profile '$PROFILE'"
 fi
 
 # -----------------------------
@@ -115,11 +153,31 @@ else
     cd build
 
     case "$OS" in
-        Darwin|Linux)
+        Darwin)
             cmake .. \
                 -DCMAKE_INSTALL_PREFIX="$SDL_BUILD" \
                 -DBUILD_SHARED_LIBS=ON \
                 -DSDL_STATIC=OFF
+            ;;
+        Linux)
+            if [ "$PROFILE" = "mister" ]; then
+                cmake .. \
+                    -DCMAKE_INSTALL_PREFIX="$SDL_BUILD" \
+                    -DBUILD_SHARED_LIBS=ON \
+                    -DSDL_STATIC=OFF \
+                    -DSDL_TESTS=OFF \
+                    -DSDL_TEST_LIBRARY=OFF \
+                    -DSDL_INSTALL_TESTS=OFF \
+                    -DSDL_EXAMPLES=OFF \
+                    -DSDL_UNIX_CONSOLE_BUILD=ON \
+                    -DSDL_X11=OFF \
+                    -DSDL_WAYLAND=OFF
+            else
+                cmake .. \
+                    -DCMAKE_INSTALL_PREFIX="$SDL_BUILD" \
+                    -DBUILD_SHARED_LIBS=ON \
+                    -DSDL_STATIC=OFF
+            fi
             ;;
         MINGW*|MSYS*|CYGWIN*)
             cmake .. \
@@ -128,7 +186,7 @@ else
             ;;
     esac
 
-    cmake --build . -j$(nproc)
+    cmake --build . -j"$JOBS"
     cmake --install .
     echo "SDL3 installed to $SDL_BUILD"
 
@@ -142,105 +200,117 @@ fi
 # GekkoNet
 # -----------------------------
 
-GEKKONET_REF="7be848c"
-GEKKONET_DIR="$THIRD_PARTY/GekkoNet"
-GEKKONET_BUILD="$GEKKONET_DIR/build"
+if [ "$PROFILE" = "desktop" ]; then
+    GEKKONET_REF="7be848c"
+    GEKKONET_DIR="$THIRD_PARTY/GekkoNet"
+    GEKKONET_BUILD="$GEKKONET_DIR/build"
 
-if [ -d "$GEKKONET_BUILD" ]; then
-    echo "GekkoNet already built at $GEKKONET_BUILD"
+    if [ -d "$GEKKONET_BUILD" ]; then
+        echo "GekkoNet already built at $GEKKONET_BUILD"
+    else
+        echo "Building GekkoNet @ $GEKKONET_REF..."
+
+        GEKKONET_SRC=$(mktemp -d)
+        git clone https://github.com/HeatXD/GekkoNet.git "$GEKKONET_SRC"
+        git -C "$GEKKONET_SRC" -c advice.detachedHead=false checkout "$GEKKONET_REF"
+
+        cmake -S "$GEKKONET_SRC" -B "$GEKKONET_SRC/cmake-build" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DNO_ASIO_BUILD=ON \
+            -DBUILD_SHARED_LIBS=OFF
+
+        cmake --build "$GEKKONET_SRC/cmake-build" -j"$JOBS"
+
+        mkdir -p "$GEKKONET_BUILD/include" "$GEKKONET_BUILD/lib"
+        cp -r "$GEKKONET_SRC/GekkoLib/include/." "$GEKKONET_BUILD/include/"
+        find "$GEKKONET_SRC" -name "*.a" -exec cp {} "$GEKKONET_BUILD/lib/libGekkoNet.a" \;
+
+        rm -rf "$GEKKONET_SRC"
+        echo "GekkoNet installed to $GEKKONET_BUILD"
+    fi
 else
-    echo "Building GekkoNet @ $GEKKONET_REF..."
-
-    GEKKONET_SRC=$(mktemp -d)
-    git clone https://github.com/HeatXD/GekkoNet.git "$GEKKONET_SRC"
-    git -C "$GEKKONET_SRC" -c advice.detachedHead=false checkout "$GEKKONET_REF"
-
-    cmake -S "$GEKKONET_SRC" -B "$GEKKONET_SRC/cmake-build" \
-        -DCMAKE_BUILD_TYPE=Release \
-        -DNO_ASIO_BUILD=ON \
-        -DBUILD_SHARED_LIBS=OFF
-
-    cmake --build "$GEKKONET_SRC/cmake-build" -j$(nproc)
-
-    mkdir -p "$GEKKONET_BUILD/include" "$GEKKONET_BUILD/lib"
-    cp -r "$GEKKONET_SRC/GekkoLib/include/." "$GEKKONET_BUILD/include/"
-    find "$GEKKONET_SRC" -name "*.a" -exec cp {} "$GEKKONET_BUILD/lib/libGekkoNet.a" \;
-
-    rm -rf "$GEKKONET_SRC"
-    echo "GekkoNet installed to $GEKKONET_BUILD"
+    echo "Skipping GekkoNet for profile '$PROFILE'"
 fi
 
 # -----------------------------
 # SDL3_net
 # -----------------------------
 
-SDL3_NET_REF="92022dc"
-SDL3_NET_DIR="$THIRD_PARTY/SDL_net"
-SDL3_NET_BUILD="$SDL3_NET_DIR/build"
+if [ "$PROFILE" = "desktop" ]; then
+    SDL3_NET_REF="92022dc"
+    SDL3_NET_DIR="$THIRD_PARTY/SDL_net"
+    SDL3_NET_BUILD="$SDL3_NET_DIR/build"
 
-if [ -d "$SDL3_NET_BUILD" ]; then
-    echo "SDL3_net already built at $SDL3_NET_BUILD"
+    if [ -d "$SDL3_NET_BUILD" ]; then
+        echo "SDL3_net already built at $SDL3_NET_BUILD"
+    else
+        echo "Building SDL3_net @ $SDL3_NET_REF..."
+
+        SDL3_NET_SRC=$(mktemp -d)
+        git clone https://github.com/libsdl-org/SDL_net.git "$SDL3_NET_SRC"
+        git -C "$SDL3_NET_SRC" -c advice.detachedHead=false checkout "$SDL3_NET_REF"
+
+        cmake -S "$SDL3_NET_SRC" -B "$SDL3_NET_SRC/cmake-build" \
+            -DCMAKE_INSTALL_PREFIX="$SDL3_NET_BUILD" \
+            -DCMAKE_PREFIX_PATH="$SDL_BUILD" \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DSDLNET_INSTALL=ON
+
+        cmake --build "$SDL3_NET_SRC/cmake-build" -j"$JOBS"
+        cmake --install "$SDL3_NET_SRC/cmake-build"
+
+        rm -rf "$SDL3_NET_SRC"
+        echo "SDL3_net installed to $SDL3_NET_BUILD"
+    fi
 else
-    echo "Building SDL3_net @ $SDL3_NET_REF..."
-
-    SDL3_NET_SRC=$(mktemp -d)
-    git clone https://github.com/libsdl-org/SDL_net.git "$SDL3_NET_SRC"
-    git -C "$SDL3_NET_SRC" -c advice.detachedHead=false checkout "$SDL3_NET_REF"
-
-    cmake -S "$SDL3_NET_SRC" -B "$SDL3_NET_SRC/cmake-build" \
-        -DCMAKE_INSTALL_PREFIX="$SDL3_NET_BUILD" \
-        -DCMAKE_PREFIX_PATH="$SDL_BUILD" \
-        -DBUILD_SHARED_LIBS=OFF \
-        -DSDLNET_INSTALL=ON
-
-    cmake --build "$SDL3_NET_SRC/cmake-build" -j$(nproc)
-    cmake --install "$SDL3_NET_SRC/cmake-build"
-
-    rm -rf "$SDL3_NET_SRC"
-    echo "SDL3_net installed to $SDL3_NET_BUILD"
+    echo "Skipping SDL3_net for profile '$PROFILE'"
 fi
 
 # -----------------------------
 # libcdio
 # -----------------------------
 
-LIBCDIO_VERSION="2.3.0"
-LIBCDIO="libcdio-$LIBCDIO_VERSION"
-LIBCDIO_DIR="$THIRD_PARTY/libcdio"
-LIBCDIO_BUILD="$LIBCDIO_DIR/build"
+if [ "$PROFILE" = "desktop" ]; then
+    LIBCDIO_VERSION="2.3.0"
+    LIBCDIO="libcdio-$LIBCDIO_VERSION"
+    LIBCDIO_DIR="$THIRD_PARTY/libcdio"
+    LIBCDIO_BUILD="$LIBCDIO_DIR/build"
 
-if [ -d "$LIBCDIO_DIR" ]; then
-    echo "libcdio already built at $LIBCDIO_BUILD"
-else
-    echo "Building libcdio..."
-    mkdir -p "$LIBCDIO_DIR"
-    cd "$LIBCDIO_DIR"
+    if [ -d "$LIBCDIO_DIR" ]; then
+        echo "libcdio already built at $LIBCDIO_BUILD"
+    else
+        echo "Building libcdio..."
+        mkdir -p "$LIBCDIO_DIR"
+        cd "$LIBCDIO_DIR"
 
-    if [ ! -d "$LIBCDIO" ]; then
-        curl -L -O "https://github.com/libcdio/libcdio/releases/download/$LIBCDIO_VERSION/$LIBCDIO.tar.gz"
-        tar xf "$LIBCDIO.tar.gz"
+        if [ ! -d "$LIBCDIO" ]; then
+            curl -L -O "https://github.com/libcdio/libcdio/releases/download/$LIBCDIO_VERSION/$LIBCDIO.tar.gz"
+            tar xf "$LIBCDIO.tar.gz"
+        fi
+
+        cd "$LIBCDIO"
+
+        mkdir -p build
+        cd build
+
+        sh ../configure MAKE=make \
+            --prefix=$LIBCDIO_BUILD \
+            --enable-static \
+            --disable-shared \
+            --disable-cxx \
+            --disable-example-progs
+
+        make
+        make install
+        echo "libcdio installed to $LIBCDIO_BUILD"
+
+        cd ../..
+        rm -rf "$LIBCDIO"
+        rm "$LIBCDIO.tar.gz"
+        cd "$ROOT_DIR"
     fi
-
-    cd "$LIBCDIO"
-
-    mkdir -p build
-    cd build
-
-    sh ../configure MAKE=make \
-        --prefix=$LIBCDIO_BUILD \
-        --enable-static \
-        --disable-shared \
-        --disable-cxx \
-        --disable-example-progs
-
-    make
-    make install
-    echo "libcdio installed to $LIBCDIO_BUILD"
-
-    cd ../..
-    rm -rf "$LIBCDIO"
-    rm "$LIBCDIO.tar.gz"
-    cd "$ROOT_DIR"
+else
+    echo "Skipping libcdio for profile '$PROFILE'"
 fi
 
 # -----------------------------
@@ -280,7 +350,7 @@ else
         -DMZ_LIBBSD=OFF \
         -DMZ_DECOMPRESS_ONLY=ON
 
-    cmake --build "$MINIZIP_NG_SRC/cmake-build" -j$(nproc)
+    cmake --build "$MINIZIP_NG_SRC/cmake-build" -j"$JOBS"
     cmake --install "$MINIZIP_NG_SRC/cmake-build"
 
     rm -rf "$MINIZIP_NG_SRC"
@@ -316,11 +386,11 @@ else
         -DUSE_STATIC_TF_PSA_CRYPTO_LIBRARY=ON \
         -DTF_PSA_CRYPTO_CONFIG_FILE="configs/crypto-config-ccm-aes-sha256.h"
 
-    cmake --build "$TF_PSA_CRYPTO_SRC/cmake-build" -j$(nproc)
+    cmake --build "$TF_PSA_CRYPTO_SRC/cmake-build" -j"$JOBS"
     cmake --install "$TF_PSA_CRYPTO_SRC/cmake-build"
 
     rm -rf "$TF_PSA_CRYPTO_SRC"
     echo "tf-psa-crypto installed to $TF_PSA_CRYPTO_BUILD"
 fi
 
-echo "All dependencies installed successfully in $THIRD_PARTY"
+echo "Dependencies for profile '$PROFILE' installed in $THIRD_PARTY"
