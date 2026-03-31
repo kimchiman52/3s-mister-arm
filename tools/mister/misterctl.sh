@@ -123,8 +123,11 @@ busy-status)
 configure-3sx-ini)
     ini_path="/media/fat/MiSTer.ini"
     main_value="MiSTer_3SX"
-    video_mode_value="384,240,60"
-    vga_scaler_value="1"
+    # video_mode: not set by default — core controls native video timing.
+    # vga_scaler: only written when explicitly passed (e.g. --vga-scaler 0
+    # to override a global vga_scaler=1 that would break YC color output).
+    video_mode_value=""
+    vga_scaler_value=""
 
     while [ "$#" -gt 0 ]; do
         case "$1" in
@@ -151,8 +154,8 @@ configure-3sx-ini)
         esac
     done
 
-    if [ -z "${ini_path}" ] || [ -z "${main_value}" ] || [ -z "${video_mode_value}" ] || [ -z "${vga_scaler_value}" ]; then
-        echo "configure-3sx-ini requires non-empty --ini, --main, --video-mode, and --vga-scaler values" >&2
+    if [ -z "${ini_path}" ] || [ -z "${main_value}" ]; then
+        echo "configure-3sx-ini requires non-empty --ini and --main values" >&2
         exit 2
     fi
 
@@ -177,13 +180,17 @@ cp -p "\${ini_path}" "\${backup}"
 awk 'BEGIN{skip=0} /^\[3SX\]\$/{skip=1; next} /^\[/{if(skip){skip=0}} !skip {print}' "\${ini_path}" > "\${tmp}"
 printf '\n[3SX]\n' >> "\${tmp}"
 printf 'main=%s\n' "\${main_value}" >> "\${tmp}"
-printf 'video_mode=%s\n' "\${video_mode_value}" >> "\${tmp}"
-printf 'vga_scaler=%s\n' "\${vga_scaler_value}" >> "\${tmp}"
+if [ -n "\${video_mode_value}" ]; then
+    printf 'video_mode=%s\n' "\${video_mode_value}" >> "\${tmp}"
+fi
+if [ -n "\${vga_scaler_value}" ]; then
+    printf 'vga_scaler=%s\n' "\${vga_scaler_value}" >> "\${tmp}"
+fi
 cp "\${tmp}" "\${ini_path}"
 rm -f "\${tmp}"
 echo __MISTER_3SX_INI_UPDATED__
 echo "backup=\${backup}"
-grep -n -A2 '^\[3SX\]' "\${ini_path}"
+grep -n -A4 '^\[3SX\]' "\${ini_path}"
 EOF
 )
     mister_ssh_exec "${host}" "${user}" "${password}" "${configure_ini_cmd}"

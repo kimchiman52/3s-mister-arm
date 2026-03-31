@@ -24,12 +24,11 @@ Add this section to /media/fat/MiSTer.ini if it is not already present:
 [3SX]
 main=MiSTer_3SX
 
-Optional CRT-friendly overrides:
-
 [3SX]
 main=MiSTer_3SX
-video_mode=384,240,60
-vga_scaler=1
+
+If your global MiSTer settings have vga_scaler=1, add vga_scaler=0
+to the [3SX] section to override it.
 
 Launch
 ------
