@@ -407,13 +407,28 @@ downstream code already consumes.
 
 ---
 
-## Open questions
+## Status (2026-03-31)
 
-- **A/B button convention.** The plan maps MiSTer A (bit 4) → SDL South (bottom face). If the 3SX FPGA core or user community expects a different convention (e.g., SNES-style where A = right face), the mapping table in `get_mister_state` needs adjustment. This should be validated with the actual button mapping that the 3SX FPGA core's `CONF_STR` defines.
+Shared memory joystick is **fully implemented and working**. All open
+questions are resolved:
 
-- **Analog sticks.** Deferred. The shared memory struct reserves fields but the wrapper doesn't populate them in the initial implementation. This only matters for users who use analog stick for movement (rare in fighting games).
+- **A/B button convention — resolved.** CONF_STR uses `J1,LP,MP,HP,LK,MK,HK,Select,Start`
+  with `jn,Y,X,L,B,A,R,Select,Start` for traditional SF defaults.
+  `get_mister_state()` maps bit positions to match J1 order:
+  bit4→LP(Square), bit5→MP(Triangle), bit6→HP(R1), bit7→LK(Cross),
+  bit8→MK(Circle), bit9→HK(R2). The `jn` directive auto-maps physical
+  buttons to the traditional layout (Y=LP, X=MP, L=HP, B=LK, A=MK, R=HK).
 
-- **Autofire.** The wrapper applies autofire masks before writing `joy_mask_prev`. These carry through to shared memory automatically. No special handling needed.
+- **OSD button mapping wizard — implemented.** The wrapper menu has a
+  "Define Buttons" option that opens the standard MiSTer JOYDIGMAP wizard
+  via passthrough mode (wrapper stops consuming keys, HandleUI drives the
+  wizard). Mappings are saved per-controller in `config/inputs/`.
+
+- **Analog sticks — deferred.** Shared memory struct reserves fields but
+  the wrapper doesn't populate them. Digital d-pad is primary for fighting games.
+
+- **Autofire.** Works automatically — wrapper applies autofire masks before
+  writing `joy_mask_prev`, which carries through to shared memory.
 
 ---
 
