@@ -222,6 +222,8 @@ assign LED_POWER[0]= FB ? led[2] : act_cnt2[26] ? act_cnt2[25:18] > act_cnt2[7:0
 `include "build_id.v" 
 localparam CONF_STR = {
 	"MENU;UART31250,MIDI;",
+	"J1,LP,MP,HP,LK,MK,HK,Select,Start;",
+	"jn,Y,X,L,B,A,R,Select,Start;",
 	"-;",
 	"V,v",`BUILD_DATE 
 };

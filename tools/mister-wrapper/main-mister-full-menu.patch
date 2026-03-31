@@ -3,7 +3,7 @@ index b69bdfb..1d8ab8b 100644
 --- a/menu.h
 +++ b/menu.h
 @@ -7,6 +7,8 @@ void SelectFile(const char* path, const char* pFileExt, int Options, unsigned ch
- 
+
  void HandleUI(void);
  void menu_key_set(unsigned int c);
 +unsigned int threesx_wrapper_menu_key_take();
@@ -16,18 +16,18 @@ index a8d8bd8..8788dd1 100644
 --- a/menu.cpp
 +++ b/menu.cpp
 @@ -526,6 +526,8 @@ void build_advanced_map_code_str(uint16_t *abm_codes, size_t abm_size, char *cod
- 
+
  /* the Atari core handles OSD keys competely inside the core */
  static uint32_t menu_key = 0;
 +static int wrapper_menu_visible = 0;
 +static uint32_t menu_key_get(void);
- 
+
  void menu_key_set(unsigned int c)
  {
 @@ -533,6 +535,16 @@ void menu_key_set(unsigned int c)
  	menu_key = c;
  }
- 
+
 +unsigned int threesx_wrapper_menu_key_take()
 +{
 +	return menu_key_get();
@@ -41,12 +41,26 @@ index a8d8bd8..8788dd1 100644
  // get key status
  static int hold_cnt = 0;
  static uint32_t menu_key_get(void)
+@@ -4279,4 +4291,4 @@ void HandleUI(void)
+ 			case 0:
+-				menustate = MENU_COMMON1;
+-				menusub = 2;
++				menustate = MENU_NONE1;
++				menusub = 0;
+ 				break;
+@@ -6610,5 +6622,5 @@ void HandleUI(void)
+ 	case MENU_SYSTEM1:
+-		if (video_fb_state())
++		if (is_menu())
+ 		{
+ 			menustate = MENU_NONE1;
+ 			break;
 @@ -7844,7 +7856,7 @@ void MenuHide()
- 
+
  int menu_present()
  {
 -	return (menustate != MENU_NONE1) && (menustate != MENU_NONE2);
 +	return wrapper_menu_visible || ((menustate != MENU_NONE1) && (menustate != MENU_NONE2));
  }
- 
+
  void Info(const char *message, int timeout, int width, int height, int frame)

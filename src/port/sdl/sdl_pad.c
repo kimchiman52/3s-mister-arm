@@ -248,17 +248,17 @@ static void get_mister_state(int id, SDLPad_ButtonState *state) {
     state->dpad_left       = (m >> 1)  & 1;
     state->dpad_down       = (m >> 2)  & 1;
     state->dpad_up         = (m >> 3)  & 1;
-    /* MiSTer uses SNES button convention:
-       A = right face, B = bottom face, X = top face, Y = left face.
-       Map to PS2/SDL pad for 3rd Strike (6-button fighter):
-       Y → Square (LP), X → Triangle (MP), L → R1 (HP),
-       B → Cross (LK),  A → Circle (MK),  R → R2 (HK). */
-    state->east            = (m >> 4)  & 1;   /* A → Circle (MK)    */
-    state->south           = (m >> 5)  & 1;   /* B → Cross (LK)     */
-    state->north           = (m >> 6)  & 1;   /* X → Triangle (MP)  */
-    state->west            = (m >> 7)  & 1;   /* Y → Square (LP)    */
-    state->right_shoulder  = (m >> 8)  & 1;   /* L → R1 (HP)        */
-    state->right_trigger   = (m >> 9) & 1 ? SDL_MAX_SINT16 : 0; /* R → R2 (HK) */
+    /* CONF_STR: J1,LP,MP,HP,LK,MK,HK,Select,Start
+       jn,Y,X,L,B,A,R,Select,Start provides traditional SF defaults.
+       Bit positions match J1 order so wizard labels are accurate.
+       Full chain: get_mister_state → scePad2Read (sdk_libpad2.c)
+       → ps2pad_hard_to_soft_ds2 (ps2PAD.c) → ioconv_table (ioconv.c). */
+    state->west            = (m >> 4)  & 1;   /* bit4  → Square  (LP)   */
+    state->north           = (m >> 5)  & 1;   /* bit5  → Triangle(MP)   */
+    state->right_shoulder  = (m >> 6)  & 1;   /* bit6  → R1      (HP)   */
+    state->south           = (m >> 7)  & 1;   /* bit7  → Cross   (LK)   */
+    state->east            = (m >> 8)  & 1;   /* bit8  → Circle  (MK)   */
+    state->right_trigger   = (m >> 9) & 1 ? SDL_MAX_SINT16 : 0; /* bit9 → R2 (HK) */
     state->back            = (m >> 10) & 1;
     state->start           = (m >> 11) & 1;
 

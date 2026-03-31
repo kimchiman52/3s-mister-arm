@@ -30,6 +30,8 @@
 #include "input.h"
 #include "audio.h"
 #include "osd.h"
+#include "menu.h"
+#include "support/arcade/mra_loader.h"
 #include "threesx_core_context.h"
 #include "user_io.h"
 #include "video.h"
@@ -63,6 +65,7 @@ constexpr int kRuntimeSuperEffectQualityCycleSignal = SIGUSR2;
 enum WrapperMenuItem
 {
 	kMenuResume = 0,
+	kMenuDefineButtons,
 	kMenuFpsToggle,
 	kMenuScaleMode,
 	kMenuSuperEffectQuality,
@@ -119,6 +122,7 @@ volatile sig_atomic_t g_wrapper_signal = 0;
 volatile sig_atomic_t g_child_pid = -1;
 int g_wrapper_menu_visible = 0;
 int g_wrapper_menu_selected = kMenuResume;
+int g_wrapper_menu_passthrough = 0;
 int g_wrapper_fps_enabled = 0;
 int g_wrapper_scale_mode = kScaleModeAuto;
 int g_wrapper_super_effect_quality = kSuperEffectQualityCachedBg;
@@ -1282,15 +1286,15 @@ void draw_wrapper_menu(int selected)
 	OsdClear();
 	OsdWrite(0, " Resume", selected == kMenuResume);
 	OsdWrite(1, "");
-	OsdWrite(2, fps_line, selected == kMenuFpsToggle);
-	OsdWrite(3, scale_line, selected == kMenuScaleMode);
-	OsdWrite(4, "");
-	OsdWrite(5, super_effect_quality_line, selected == kMenuSuperEffectQuality);
-	OsdWrite(6, ghost_resolution_line, selected == kMenuGhostResolution);
-	OsdWrite(7, ghost_count_line, selected == kMenuGhostCount);
-	OsdWrite(8, "");
-	OsdWrite(9, arm_clock_line, selected == kMenuArmClock);
-	OsdWrite(10, "");
+	OsdWrite(2, " Define Buttons", selected == kMenuDefineButtons);
+	OsdWrite(3, fps_line, selected == kMenuFpsToggle);
+	OsdWrite(4, scale_line, selected == kMenuScaleMode);
+	OsdWrite(5, "");
+	OsdWrite(6, super_effect_quality_line, selected == kMenuSuperEffectQuality);
+	OsdWrite(7, ghost_resolution_line, selected == kMenuGhostResolution);
+	OsdWrite(8, ghost_count_line, selected == kMenuGhostCount);
+	OsdWrite(9, "");
+	OsdWrite(10, arm_clock_line, selected == kMenuArmClock);
 	OsdWrite(11, "");
 	OsdWrite(12, "");
 	OsdWrite(13, " Reset to Default", selected == kMenuResetDefaults);
@@ -1304,6 +1308,17 @@ void draw_wrapper_menu(int selected)
 
 void service_wrapper_menu(pid_t child)
 {
+	/* Passthrough mode: don't consume keys — let HandleUI() in the
+	   main loop tick the MiSTer menu state machine instead.
+	   When the user exits the MiSTer menu (menu_present goes false),
+	   return to normal wrapper key handling. */
+	if (g_wrapper_menu_passthrough)
+	{
+		if (!menu_present())
+			g_wrapper_menu_passthrough = 0;
+		return;
+	}
+
 	unsigned int key = threesx_wrapper_menu_key_take();
 	if (!key)
 	{
@@ -1420,6 +1435,17 @@ void service_wrapper_menu(pid_t child)
 				(void)kill(child, kRuntimeArmClockCycleSignal);
 				draw_wrapper_menu(g_wrapper_menu_selected);
 			}
+			return;
+		}
+
+		if (g_wrapper_menu_selected == kMenuDefineButtons)
+		{
+			g_wrapper_menu_visible = 0;
+			threesx_wrapper_menu_set_visible(0);
+			g_wrapper_menu_passthrough = 1;
+			mgl_get()->done = 1;
+			parse_buttons();
+			open_joystick_setup();
 			return;
 		}
 
@@ -1689,6 +1715,8 @@ int wait_for_child(pid_t child, bool service_ui)
 		}
 
 		service_wrapper_menu(child);
+		HandleUI();
+		OsdUpdate();
 
 		usleep(1000);
 	}
