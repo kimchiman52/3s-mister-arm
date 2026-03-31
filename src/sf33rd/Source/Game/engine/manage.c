@@ -376,6 +376,10 @@ void Game_Manage_2_2() {
         Message_Suicide[ix] = 0;
     }
 
+    if (Is_Training_Mode(Mode_Type)) {
+        compel_bg_init_position();
+    }
+
     if (effect_84_init()) {
         return;
     }
@@ -433,6 +437,22 @@ void Game_Manage_2_3() {
 
     if (Is_Training_Mode(Mode_Type)) {
         Next_Step = 1;
+
+        /* Do round init on the same frame the appear completes to avoid
+           a visible sprite glitch; skips the white flash in 2_4 case 0. */
+        Disp_Cockpit = 1;
+        Score[0][2] = 0;
+        Score[1][2] = 0;
+        Game_pause = 0;
+        pcon_rno[0] = 0;
+        pcon_rno[1] = 2; /* skip init_app_10000 case 0 (pli_0000) which zeros disp_flag */
+        pcon_rno[2] = 0;
+        pcon_rno[3] = 0;
+        appear_type = APPEAR_TYPE_NON_ANIMATED;
+        erase_extra_plef_work();
+        win_lose_work_clear();
+        Clear_Flash_No();
+        C_No[2] = 3; /* skip 2_4 case 0 entirely */
     } else {
         effect_B2_init();
     }
@@ -452,21 +472,6 @@ void Game_Manage_2_4() {
         FadeInit();
         FadeOut(0, 0xFF, 8);
         Disp_Cockpit = 1;
-
-        if (Is_Training_Mode(Mode_Type)) {
-            Score[0][2] = 0;
-            Score[1][2] = 0;
-            Game_pause = 0;
-            pcon_rno[0] = 0;
-            pcon_rno[1] = 0;
-            pcon_rno[2] = 0;
-            pcon_rno[3] = 0;
-            appear_type = APPEAR_TYPE_NON_ANIMATED;
-            erase_extra_plef_work();
-            compel_bg_init_position();
-            win_lose_work_clear();
-        }
-
         break;
 
     case 1:

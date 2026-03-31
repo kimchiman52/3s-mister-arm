@@ -188,6 +188,8 @@ void Switch_Work() {
         Training_Disp_Work_Clear();
         Menu_Cursor_X[0] = 0;
         Training_Cursor = 0;
+        Training_Menu_From_Pause = TRAINING_MENU_DIRECT;
+        Training_Auto_Start = 1; /* on first menu frame, auto-confirm RESUME without displaying the menu */
 
         if (Champion) {
             p1sw_0 = p2sw_0;

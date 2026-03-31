@@ -6,9 +6,8 @@
 #include "sf33rd/Source/Game/ui/sc_sub.h"
 #include "common.h"
 #include "rendering/game_renderer.h"
-#if PORT_MISTER
 #include "port/sdl/sdl_game_renderer.h"
-#endif
+#include "sf33rd/AcrSDK/common/pad.h"
 #include "sf33rd/AcrSDK/ps2/flps2render.h"
 #include "sf33rd/AcrSDK/ps2/foundaps2.h"
 #include "sf33rd/Source/Common/PPGFile.h"
@@ -20,6 +19,7 @@
 #include "sf33rd/Source/Game/rendering/mtrans.h"
 #include "sf33rd/Source/Game/stage/bg_data.h"
 #include "sf33rd/Source/Game/system/ramcnt.h"
+#include "sf33rd/Source/Game/system/sys_sub.h"
 #include "sf33rd/Source/Game/system/sysdir.h"
 #include "sf33rd/Source/Game/system/work_sys.h"
 #include "sf33rd/Source/Game/ui/sc_data.h"
@@ -30,6 +30,51 @@
 #define TO_UV_256(val) ((val) / 256.0f)
 #define TO_UV_256_NEG(val) (TO_UV_256(val))
 #define TO_UV_128(val) ((val) / 128.0f)
+
+#define TRAINING_INPUT_HISTORY_ROWS 13
+#define TRAINING_INPUT_HISTORY_MAX_FRAMES 99
+#define TRAINING_INPUT_HISTORY_BUTTONS_MASK 0x770
+#define TRAINING_INPUT_HISTORY_TEXT_ATR 13
+#define TRAINING_INPUT_HISTORY_BUTTON_ATR 13
+#define TRAINING_INPUT_HISTORY_TEXT_PRIORITY 2
+#define TRAINING_INPUT_HISTORY_TEXT_SCALE 1.0f
+#define TRAINING_INPUT_HISTORY_CHAR_WIDTH 8
+#define TRAINING_INPUT_HISTORY_GLYPH_WIDTH 8
+#define TRAINING_INPUT_HISTORY_BUTTON_LABEL_WIDTH TRAINING_INPUT_HISTORY_CHAR_WIDTH
+
+#define TRAINING_INPUT_HISTORY_GR_WHITE 0
+#define TRAINING_INPUT_HISTORY_GR_BLUE 11
+#define TRAINING_INPUT_HISTORY_GR_YELLOW 14
+#define TRAINING_INPUT_HISTORY_GR_RED 15
+
+typedef struct {
+    u16 input;
+    u8 frames;
+} TrainingInputHistoryEntry;
+
+typedef struct {
+    u16 mask;
+    SDLGameRenderer_InputHistoryGlyph glyph;
+    const char* fallback_label;
+    u8 gr;
+} TrainingInputButtonLabel;
+
+static TrainingInputHistoryEntry training_input_history[TRAINING_INPUT_HISTORY_ROWS];
+static u8 training_input_history_size;
+static s8 training_input_history_player = -1;
+
+static const u16 training_input_normalized_lever[16] = { 0, 1, 2, 2, 4, 5, 6, 5, 8, 9, 10, 9, 8, 5, 10, 0 };
+static const char* training_input_direction_labels[16] = {
+    " ", "^", "v", ".", "<", "^<", "v<", ".", ">", "^>", "v>", ".", ".", ".", ".", "."
+};
+static const TrainingInputButtonLabel training_input_button_labels[] = {
+    { SWK_WEST, SDL_GAME_RENDERER_INPUT_GLYPH_PUNCH, "P", TRAINING_INPUT_HISTORY_GR_BLUE },
+    { SWK_NORTH, SDL_GAME_RENDERER_INPUT_GLYPH_PUNCH, "P", TRAINING_INPUT_HISTORY_GR_YELLOW },
+    { SWK_RIGHT_SHOULDER, SDL_GAME_RENDERER_INPUT_GLYPH_PUNCH, "P", TRAINING_INPUT_HISTORY_GR_RED },
+    { SWK_SOUTH, SDL_GAME_RENDERER_INPUT_GLYPH_KICK, "K", TRAINING_INPUT_HISTORY_GR_BLUE },
+    { SWK_EAST, SDL_GAME_RENDERER_INPUT_GLYPH_KICK, "K", TRAINING_INPUT_HISTORY_GR_YELLOW },
+    { SWK_RIGHT_TRIGGER, SDL_GAME_RENDERER_INPUT_GLYPH_KICK, "K", TRAINING_INPUT_HISTORY_GR_RED },
+};
 
 /// Trim values for ASCII characters (high nibble = left trim, low nibble = right trim)
 const u8 ascProData[128] = {
@@ -162,6 +207,185 @@ const u8 ascProData[128] = {
     0x00, // ~
     0x21, // 0x7F
 };
+
+static u16 normalize_training_input(u16 input) {
+    u16 normalized = input & 0xFFF;
+    normalized = (normalized & 0xFF0) | training_input_normalized_lever[normalized & 0xF];
+    return normalized;
+}
+
+static const char* training_input_direction_string(u16 input) {
+    return training_input_direction_labels[input & 0xF];
+}
+
+static SDLGameRenderer_InputHistoryGlyph training_input_direction_glyph(u16 input) {
+    switch (input & 0xF) {
+    case 1:
+        return SDL_GAME_RENDERER_INPUT_GLYPH_UP;
+    case 2:
+        return SDL_GAME_RENDERER_INPUT_GLYPH_DOWN;
+    case 4:
+        return SDL_GAME_RENDERER_INPUT_GLYPH_LEFT;
+    case 5:
+        return SDL_GAME_RENDERER_INPUT_GLYPH_UP_LEFT;
+    case 6:
+        return SDL_GAME_RENDERER_INPUT_GLYPH_DOWN_LEFT;
+    case 8:
+        return SDL_GAME_RENDERER_INPUT_GLYPH_RIGHT;
+    case 9:
+        return SDL_GAME_RENDERER_INPUT_GLYPH_UP_RIGHT;
+    case 10:
+        return SDL_GAME_RENDERER_INPUT_GLYPH_DOWN_RIGHT;
+    default:
+        return SDL_GAME_RENDERER_INPUT_GLYPH_COUNT;
+    }
+}
+
+static void draw_training_input_buttons(s32 x, s32 y, u16 input) {
+    u16 buttons = input & TRAINING_INPUT_HISTORY_BUTTONS_MASK;
+    u8 i;
+    bool button_drawn;
+
+    for (i = 0; i < SDL_arraysize(training_input_button_labels); i++) {
+        if (!(buttons & training_input_button_labels[i].mask)) {
+            continue;
+        }
+
+        button_drawn = SDLGameRenderer_DrawInputHistoryGlyph(
+            (float)x,
+            (float)y,
+            PrioBase[TRAINING_INPUT_HISTORY_TEXT_PRIORITY],
+            training_input_button_labels[i].glyph,
+            bigger_col_tbl[training_input_button_labels[i].gr][0]);
+
+        if (!button_drawn) {
+            SSPutStr_Bigger((u16)x,
+                            (u16)y,
+                            TRAINING_INPUT_HISTORY_BUTTON_ATR,
+                            (s8*)training_input_button_labels[i].fallback_label,
+                            TRAINING_INPUT_HISTORY_TEXT_SCALE,
+                            training_input_button_labels[i].gr,
+                            TRAINING_INPUT_HISTORY_TEXT_PRIORITY);
+        }
+
+        x += TRAINING_INPUT_HISTORY_BUTTON_LABEL_WIDTH;
+    }
+}
+
+static void clear_training_input_history() {
+    training_input_history_size = 0;
+    training_input_history_player = -1;
+}
+
+static void push_training_input_history(u16 input) {
+    if (training_input_history_size != 0 && training_input_history[0].input == input) {
+        if (training_input_history[0].frames < TRAINING_INPUT_HISTORY_MAX_FRAMES) {
+            training_input_history[0].frames++;
+        }
+        return;
+    }
+
+    if (training_input_history_size < TRAINING_INPUT_HISTORY_ROWS) {
+        training_input_history_size++;
+    }
+
+    if (training_input_history_size > 1) {
+        SDL_memmove(&training_input_history[1],
+                    &training_input_history[0],
+                    (training_input_history_size - 1) * sizeof(training_input_history[0]));
+    }
+
+    training_input_history[0].input = input;
+    training_input_history[0].frames = 1;
+}
+
+static void update_training_input_history() {
+    s16 player_id;
+    u16 input;
+
+    if ((Mode_Type != MODE_NORMAL_TRAINING && Mode_Type != MODE_PARRY_TRAINING) || (Game_pause & 0x80)) {
+        return;
+    }
+
+    player_id = Training_ID & 1;
+    if (training_input_history_player != player_id) {
+        clear_training_input_history();
+        training_input_history_player = player_id;
+    }
+
+    input = normalize_training_input(Convert_User_Setting(player_id));
+    push_training_input_history(input);
+}
+
+static void draw_training_input_history() {
+    static const s32 line_y_base = 58;
+    static const s32 line_y_step = 10;
+    char line_buffer[16];
+    s32 line_x;
+    s32 line_y;
+    s32 direction_x;
+    s32 buttons_x;
+    u16 i;
+    u16 input;
+    u16 buttons;
+    SDLGameRenderer_InputHistoryGlyph direction_glyph;
+    bool direction_drawn;
+    u8 player_id;
+
+    if (training_input_history_size == 0) {
+        return;
+    }
+
+    player_id = Training_ID & 1;
+    line_x = (player_id == 0) ? 8 : 320;
+
+    for (i = 0; i < training_input_history_size; i++) {
+        input = training_input_history[i].input;
+        buttons = input & TRAINING_INPUT_HISTORY_BUTTONS_MASK;
+        direction_glyph = training_input_direction_glyph(input);
+        direction_drawn = false;
+
+        SDL_snprintf(line_buffer, sizeof(line_buffer), "%2u ", training_input_history[i].frames);
+
+        line_y = line_y_base + (i * line_y_step);
+        SSPutStr_Bigger((u16)line_x,
+                        (u16)line_y,
+                        TRAINING_INPUT_HISTORY_TEXT_ATR,
+                        (s8*)line_buffer,
+                        TRAINING_INPUT_HISTORY_TEXT_SCALE,
+                        TRAINING_INPUT_HISTORY_GR_WHITE,
+                        TRAINING_INPUT_HISTORY_TEXT_PRIORITY);
+        direction_x = line_x + ((s32)SDL_strlen(line_buffer) * TRAINING_INPUT_HISTORY_CHAR_WIDTH);
+
+        if (direction_glyph != SDL_GAME_RENDERER_INPUT_GLYPH_COUNT) {
+            direction_drawn =
+                SDLGameRenderer_DrawInputHistoryGlyph((float)direction_x,
+                                                      (float)line_y,
+                                                      PrioBase[TRAINING_INPUT_HISTORY_TEXT_PRIORITY],
+                                                      direction_glyph,
+                                                      bigger_col_tbl[TRAINING_INPUT_HISTORY_GR_WHITE][0]);
+        }
+
+        if (!direction_drawn) {
+            SDL_snprintf(line_buffer, sizeof(line_buffer), "%s", training_input_direction_string(input));
+            SSPutStr_Bigger((u16)direction_x,
+                            (u16)line_y,
+                            TRAINING_INPUT_HISTORY_TEXT_ATR,
+                            (s8*)line_buffer,
+                            TRAINING_INPUT_HISTORY_TEXT_SCALE,
+                            TRAINING_INPUT_HISTORY_GR_WHITE,
+                            TRAINING_INPUT_HISTORY_TEXT_PRIORITY);
+            direction_x += (s32)SDL_strlen(line_buffer) * TRAINING_INPUT_HISTORY_CHAR_WIDTH;
+        } else {
+            direction_x += TRAINING_INPUT_HISTORY_GLYPH_WIDTH;
+        }
+
+        if (buttons != 0) {
+            buttons_x = direction_x + TRAINING_INPUT_HISTORY_CHAR_WIDTH;
+            draw_training_input_buttons(buttons_x, line_y, input);
+        }
+    }
+}
 
 SAFrame sa_frame[3][48];
 Polygon scrscrntex[4];
@@ -2140,6 +2364,8 @@ void Training_Disp_Work_Clear() {
         tr_data[i].total_damage = 0;
         tr_data[i].disp_total_damage = 0;
     }
+
+    clear_training_input_history();
 }
 
 void Training_Damage_Set(s16 damage, s16 arg1, u8 kezuri) {
@@ -2185,6 +2411,11 @@ void Training_Data_Disp() {
     }
 
     ppgSetupCurrentDataList(&ppgScrList);
+
+    if (Disp_Input_History) {
+        update_training_input_history();
+        draw_training_input_history();
+    }
 
     if (Disp_Attack_Data == 0) {
         return;

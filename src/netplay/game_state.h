@@ -336,6 +336,7 @@ typedef struct GameState {
     u8 Pause_Down;
     u8 Training_ID;
     u8 Disp_Attack_Data;
+    u8 Disp_Input_History;
     u8 Record_Data_Tr;
     u8 End_Training;
     s8 Menu_Page_Buff;

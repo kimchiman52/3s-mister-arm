@@ -160,6 +160,9 @@ u16 cpu_algorithm(PLW* wk) {
         }
 
         Check_Replay_Status(wk->wu.id, 1);
+    } else if (Play_Mode == PLAY_MODE_REPLAY && Replay_Status[wk->wu.id] == REPLAY_STATUS_REPLAYING) {
+        Check_Replay_Status(wk->wu.id, REPLAY_STATUS_REPLAYING); /* dispatches to Replay() */
+        return Condense_Buff[wk->wu.id]; /* Replay() writes decoded input here for CPU-controlled players, not p_sw */
     }
 
     return sw;

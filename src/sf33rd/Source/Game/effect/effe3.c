@@ -39,7 +39,7 @@ void effect_E3_move(WORK_Other* ewk) {
             vib_sel[mwk->wu.id] = 0;
         }
 
-        if (Training[0].contents[0][1][3] == 2) {
+        if (Training_Cursor == 2) {
             vib_sel[mwk->wu.id] = 0;
         }
 
@@ -51,7 +51,7 @@ void effect_E3_move(WORK_Other* ewk) {
 
         omop_vital_ix[mwk->wu.id] = 1;
 
-        if (Training[0].contents[0][1][3] == 0) {
+        if (Training_Cursor == 0) {
             omop_vital_ix[mwk->wu.id] = 3;
         }
 

@@ -511,13 +511,16 @@ void Game2_1() {
     set_EXE_flag();
     ppgPurgeFromVRAM(5);
 
-    if (Disp_Cockpit) {
+    /* Hide the HUD while the training menu overlay is visible.  We avoid
+       clearing Disp_Cockpit itself because doing so has side-effects that
+       break menu input processing during the pause state. */
+    if (Disp_Cockpit && Game_pause != GAME_PAUSE_TRAINING) {
         Time_Control();
     }
 
     Player_control();
 
-    if (Disp_Cockpit) {
+    if (Disp_Cockpit && Game_pause != GAME_PAUSE_TRAINING) {
         vital_cont_main();
         combo_cont_main();
     }
@@ -529,7 +532,7 @@ void Game2_1() {
     reqPlayerDraw();
     Basic_Sub_Ex();
 
-    if (Disp_Cockpit) {
+    if (Disp_Cockpit && Game_pause != GAME_PAUSE_TRAINING) {
         player_face();
         player_name();
         stngauge_cont_main();

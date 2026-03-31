@@ -16,6 +16,59 @@ typedef enum ModeType {
     MODE_REPLAY,
 } ModeType;
 
+typedef enum PlayMode {
+    PLAY_MODE_NORMAL    = 0,
+    PLAY_MODE_RECORDING = 1,
+    PLAY_MODE_REPLAY    = 3,
+} PlayMode;
+
+typedef enum ReplayStatus {
+    REPLAY_STATUS_IDLE        = 0,
+    REPLAY_STATUS_RECORDING   = 1,
+    REPLAY_STATUS_DONE        = 2,  /* buffer exhausted / playback finished */
+    REPLAY_STATUS_REPLAYING   = 3,
+    REPLAY_STATUS_BUFFER_FULL = 99,
+} ReplayStatus;
+
+typedef enum GamePauseState {
+    GAME_PAUSE_RUNNING  = 0,
+    GAME_PAUSE_NORMAL   = 1,    /* standard pause (demo mode, etc.) */
+    GAME_PAUSE_TRAINING = 0x81, /* training-paused: suppresses hardware input reads and record/replay */
+} GamePauseState;
+
+/* Values for Training_Menu_From_Pause */
+typedef enum TrainingMenuSource {
+    TRAINING_MENU_DIRECT    = 0, /* normal entry (initial load or character change) */
+    TRAINING_MENU_PAUSED    = 1, /* player pressed START during gameplay */
+    TRAINING_MENU_RESETTING = 2, /* Record/Replay selected; Reset_Training will auto-advance to gameplay */
+} TrainingMenuSource;
+
+/* Values for control_pl_rno — what input to force on the dummy each frame via Control_Player_Tr() */
+typedef enum DummyAction {
+    DUMMY_ACTION_STAND    = 0,  /* force neutral input (dummy stands still) */
+    DUMMY_ACTION_CROUCH   = 1,  /* force down direction */
+    DUMMY_ACTION_JUMP     = 2,  /* force up direction */
+    DUMMY_ACTION_UNFORCED = 99, /* don't force; behavior set by operator field (CPU or HUMAN) */
+} DummyAction;
+
+/* Indices into Menu_Jmp_Tbl — the outer game task state machine (task_ptr->r_no[0]) */
+typedef enum MenuState {
+    MENU_STATE_AFTER_TITLE      = 0,
+    MENU_STATE_IN_GAME          = 1,
+    MENU_STATE_WAIT_LOAD_SAVE   = 2,
+    MENU_STATE_WAIT_REPLAY_CHK  = 3,
+    MENU_STATE_DISP_AUTO_SAVE   = 4,
+    MENU_STATE_SUSPEND          = 5,
+    MENU_STATE_WAIT_REPLAY_LOAD = 6,
+    MENU_STATE_TRAINING_MENU    = 7,  /* Training_Menu: training menu state machine */
+    MENU_STATE_AFTER_REPLAY     = 8,
+    MENU_STATE_DISP_AUTO_SAVE2  = 9,
+    MENU_STATE_GAMEPLAY         = 10, /* Wait_Pause_in_Tr: gameplay with pause detection */
+    MENU_STATE_RESET_TRAINING   = 11, /* Reset_Training: full screen wipe + character reinit */
+    MENU_STATE_RESET_REPLAY     = 12,
+    MENU_STATE_END_REPLAY       = 13,
+} MenuState;
+
 static inline bool Is_Training_Mode(ModeType mode) {
     return mode == MODE_NORMAL_TRAINING || mode == MODE_PARRY_TRAINING;
 }
@@ -356,12 +409,15 @@ extern s8 SA_shadow_on;
 extern u8 Pause_Down;
 extern u8 Training_ID;
 extern u8 Disp_Attack_Data;
+extern u8 Disp_Input_History;
 extern u8 Record_Data_Tr;
 extern u8 End_Training;
 extern s8 Menu_Page_Buff;
 extern u8 Reset_Bootrom;
 extern u8 Decide_ID;
 extern s8 Training_Cursor;
+extern u8 Training_Menu_From_Pause;
+extern u8 Training_Auto_Start;
 extern s8 Lag_Timer;
 extern u8 CPU_Time_Lag[2];
 extern u8 Forbid_Reset;

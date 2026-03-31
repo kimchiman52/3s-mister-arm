@@ -10,10 +10,10 @@
 #include "sf33rd/Source/Game/system/work_sys.h"
 #include "sf33rd/Source/Game/ui/sc_sub.h"
 
-const u8 Contents_Check_Data_A3[23] = { 0, 0, 1, 1, 1, 1, 0, 1, 1, 1, 1, 0, 1, 1, 1, 1, 0, 1, 1, 1, 1, 0, 0 };
+const u8 Contents_Check_Data_A3[25] = { 0, 0, 1, 1, 1, 1, 0, 1, 1, 1, 1, 0, 1, 1, 1, 1, 0, 1, 1, 1, 1, 0, 0, 1, 1 };
 
-s8* Letter_Data_A3[23][8] = {
-    { "NORMAL MODE",
+s8* Letter_Data_A3[25][8] = {
+    { "RESUME",
       "RECORDING MODE",
       "REPLAY",
       "DUMMY SETTING",
@@ -37,12 +37,12 @@ s8* Letter_Data_A3[23][8] = {
       "ATTACK DATA$...........",
       "DAMAGE$................$L    $H",
       "DIFFICULTY$............$L        $H",
+      "HITBOXES$..............",
+      "INPUT HISTORY$.........",
       "DEFAULT SETTING",
-      "EXIT",
-      NULL,
-      NULL },
+      "EXIT" },
     { "NORMAL", "MAX START", "INFINITY", "MAXIMUM", NULL, NULL, NULL, NULL },
-    { "OFF", "DATA", "DATA+HITBOXES", NULL, NULL, NULL, NULL, NULL },
+    { "OFF", "ON", NULL, NULL, NULL, NULL, NULL, NULL },
     { "$ *", "$ **", "$ ***", "$ ****", NULL, NULL, NULL, NULL },
     { "$ *", "$ **", "$ ***", "$ ****", "$ *****", "$ ******", "$ *******", "$ ********" },
     { "DUMMY RECORDING",
@@ -70,7 +70,9 @@ s8* Letter_Data_A3[23][8] = {
     { "OFF", "ON", NULL, NULL, NULL, NULL, NULL, NULL },
     { "NORMAL", "MAX START", "INFINITY", "MAXIMUM", NULL, NULL, NULL, NULL },
     { "RECORDING", "TRAINING", NULL, NULL, NULL, NULL, NULL, NULL },
-    { "REPLAY DATA", "FINISHED$!", NULL, NULL, NULL, NULL, NULL, NULL }
+    { "REPLAY DATA", "FINISHED$!", NULL, NULL, NULL, NULL, NULL, NULL },
+    { "OFF", "ON", NULL, NULL, NULL, NULL, NULL, NULL },
+    { "OFF", "ON", NULL, NULL, NULL, NULL, NULL, NULL }
 };
 
 void effect_A3_move(WORK_Other* ewk) {
