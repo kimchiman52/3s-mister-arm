@@ -1,4 +1,4 @@
-#if DEBUG
+#if DEBUG || ENABLE_PERF_TELEMETRY
 
 #ifndef TEST_RUNNER_H
 #define TEST_RUNNER_H

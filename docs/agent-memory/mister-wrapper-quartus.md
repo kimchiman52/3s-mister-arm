@@ -17,7 +17,7 @@
 - Preferred wrapper-core seed: `menu` via `tools/mister-wrapper/build-core.sh --seed menu`.
 - Preferred edition: Quartus Prime Lite 17.0 with both `cyclone-17.0.0.595.qdz` and `cyclonev-17.0.0.595.qdz`.
 - Preferred host on this Mac: x86_64 Colima/QEMU VM, not Docker Desktop `linux/amd64`.
-- Validated VM profile: `quartus2` in `~/.colima/quartus2/colima.yaml` with `arch: x86_64`, `vmType: qemu`, `cpu: 4`, `memory: 8`, `disk: 80`, `mountType: sshfs`.
+- Validated VM profile: `quartus2` in `~/.colima/quartus2/colima.yaml` with `arch: x86_64`, `vmType: qemu`, `cpu: 4`, `memory: 8`, `disk: 20`, `mountType: sshfs`.
 - Validated in-VM install path: `/home/sb.linux/intelFPGA_lite/17.0`.
 - Local installer cache: [build/quartus17-installer](/Users/sb/Developer/3sx-mister/build/quartus17-installer).
 
@@ -66,6 +66,29 @@ colima --profile quartus2 ssh -- bash -lc '
     /Users/sb/Developer/3sx-mister/build/mister-wrapper-core/3SX.rbf
 '
 ```
+
+## VM Recreation
+
+If the `quartus2` Colima VM needs to be rebuilt (disk shrink, corruption, new machine), use the automated setup script:
+
+```sh
+# 1. Fetch Quartus installer files (~3.5 GB, skip if already in build/quartus17-installer/)
+tools/mister-wrapper/fetch-quartus17-installer.sh
+
+# 2. Create VM (disk: 20 GiB) + install Quartus + set up build container
+tools/mister/setup-colima-vm.sh
+```
+
+To shrink an existing VM (e.g. was created with disk: 80):
+```sh
+colima stop -p quartus2
+colima delete -p quartus2
+tools/mister/setup-colima-vm.sh
+```
+
+**ARM/HPS build container** (`3sx-mister-build`): rebuilt automatically by `setup-colima-vm.sh` via `tools/mister/setup-build-container.sh`. Contains: ARM cross-compiler (gcc-arm-linux-gnueabihf), Clang 20 (from apt.llvm.org/bullseye), cmake 3.25 (bullseye-backports), libasound2-dev (amd64 + armhf), libstdc++-10-dev-armhf-cross.
+
+**Do not skip `prepare_source`**: Both `build-hps.sh` and `build-core.sh` call `prepare_source` unconditionally at startup — it clones/rsyncs fresh source. Agents must invoke the build scripts (not `make` or `quartus_sh` directly) to guarantee a clean source tree.
 
 ## Research Starting Points
 

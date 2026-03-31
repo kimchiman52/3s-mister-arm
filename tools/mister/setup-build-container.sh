@@ -137,7 +137,7 @@ deb http://security.debian.org/debian-security bullseye-security main
 deb http://archive.debian.org/debian bullseye-backports main contrib non-free
 EOF_APT
 apt-get update
-apt-get install -y build-essential ca-certificates curl git gpg libasound2-dev make pkg-config rsync
+apt-get install -y build-essential ca-certificates curl git gpg libasound2-dev make pkg-config rsync zlib1g-dev
 install -d /usr/share/keyrings
 curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | gpg --dearmor --yes -o /usr/share/keyrings/apt.llvm.org.gpg
 rm -f /etc/apt/sources.list.d/llvm-bullseye-*.list
@@ -154,7 +154,7 @@ if [ "${cross_build}" -eq 1 ]; then
 set -euxo pipefail
 dpkg --add-architecture armhf
 apt-get update
-apt-get install -y gcc-arm-linux-gnueabihf binutils-arm-linux-gnueabihf libc6-dev-armhf-cross libstdc++-10-dev-armhf-cross libasound2-dev:armhf
+apt-get install -y gcc-arm-linux-gnueabihf binutils-arm-linux-gnueabihf libc6-dev-armhf-cross libstdc++-10-dev-armhf-cross libasound2-dev:armhf zlib1g-dev:armhf
 "
 fi
 

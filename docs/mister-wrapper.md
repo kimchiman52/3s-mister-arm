@@ -39,14 +39,18 @@ slim-source build.
 main=MiSTer_3SX
 ```
 
-Optional per-core video overrides are expected to live in the same `[3SX]` section, for example:
+The `[3SX]` section only needs `main`:
 
 ```ini
 [3SX]
 main=MiSTer_3SX
-video_mode=384,240,60
-vga_scaler=1
 ```
+
+If the user's global MiSTer settings have `vga_scaler=1`, override it to 0 in the
+`[3SX]` section. When `vga_scaler=1`, the FPGA routes the HDMI scaler's plain RGB
+to the VGA DAC, bypassing the core video path and YC encoder — causing grayscale
+S-Video and wrong aspect ratio on CRT. Do not add `video_mode` overrides — native
+video timing is controlled by the core.
 
 ## Launch Contract
 
@@ -315,8 +319,7 @@ Most recent device validation:
   - `core_name=3SX`
   - `rbf_name=3SX`
   - `FBDEV: active (384x240 stride=1536 bpp=32)`
-- that confirms both the `[3SX] main=MiSTer_3SX` handoff and the `[3SX] video_mode=384,240,60`
-  override on the actual device launch path
+- that confirms the `[3SX] main=MiSTer_3SX` handoff on the actual device launch path
 - current caveat: the game's in-game "Exit Game" behavior appears to be a soft reset back into the
   title/game flow, not a process exit, so leaving the wrapper back to MiSTer still needs a
   deliberate runtime or wrapper-level exit path

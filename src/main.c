@@ -61,6 +61,7 @@
 #include <signal.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 typedef enum MainPhase {
     MAIN_PHASE_INIT,
@@ -533,10 +534,6 @@ static int loop() {
     ghost_count_cycle_requested = 0;
     arm_clock_cycle_requested = 0;
 
-    console_mode_entered = ConsoleMode_Enter();
-    install_shutdown_signal_handlers();
-    shutdown_handlers_installed = true;
-
 #if ENABLE_PERF_TELEMETRY
     if (configuration.perf.frame_count > 0 && !configuration.perf.basic_mode &&
         (configuration.perf.wait_for_gameplay || configuration.perf.wait_for_test_phase != NULL ||
@@ -548,9 +545,24 @@ static int loop() {
     while (is_running && shutdown_signal == 0) {
         switch (phase) {
         case MAIN_PHASE_INIT:
-            SDLApp_PreInit();
-
             if (Resources_Check()) {
+                /* Resources verified: enter console mode and initialize.
+                   ConsoleMode switches the VT to KD_GRAPHICS (black screen).
+                   Doing this AFTER Resources_Check means the SHA256 hash runs
+                   while the screen is still visible, avoiding a long unexplained
+                   black screen before the game starts. */
+                console_mode_entered = ConsoleMode_Enter();
+#if defined(PORT_MISTER) && defined(__linux__)
+                if (!console_mode_entered) {
+                    fprintf(stderr,
+                            "Failed to acquire Linux console (KD_GRAPHICS). "
+                            "Run from MiSTer OSD/local console, not over SSH.\n");
+                    exit(1);
+                }
+#endif
+                install_shutdown_signal_handlers();
+                shutdown_handlers_installed = true;
+                SDLApp_PreInit();
                 initialize_game();
                 phase = MAIN_PHASE_INITIALIZED;
 

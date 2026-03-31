@@ -6,6 +6,9 @@
 #include "sf33rd/Source/Game/ui/sc_sub.h"
 #include "common.h"
 #include "rendering/game_renderer.h"
+#if PORT_MISTER
+#include "port/sdl/sdl_game_renderer.h"
+#endif
 #include "sf33rd/AcrSDK/ps2/flps2render.h"
 #include "sf33rd/AcrSDK/ps2/foundaps2.h"
 #include "sf33rd/Source/Common/PPGFile.h"

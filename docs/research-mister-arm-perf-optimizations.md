@@ -67,7 +67,7 @@ total during Genei-Jin).
 
 - **Source:** https://github.com/bbond007/MiSTer_PrBoom-Plus
 - **Video backend:** SDL 1.2 with Linux framebuffer (`fbdev`)
-- **Resolution:** 640x480 with `vga_scaler=1`
+- **Resolution:** 640x480 with `vga_scaler=1` (note: 3SX uses native video mode which requires `vga_scaler=0`)
 - **Performance:** Developer stated: "the weakness of the DE10's ARM CPU has been
   greatly exaggerated." Considerably higher FPS than ao486 DOS Doom.
 - **Audio:** FluidSynth for MIDI, soundfonts at `/media/fat/linux/soundfonts/`

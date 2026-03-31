@@ -15,9 +15,11 @@ static void error_out_with_code(const char* error, int code) {
     exit(code);
 }
 
+#if ENABLE_NETPLAY
 static void error_out(const char* error) {
     error_out_with_code(error, EXIT_CODE_RUNTIME_ERROR);
 }
+#endif
 
 static bool is_supported_test_stage(int stage) {
     return stage >= 0 && stage <= 19 && stage != 17;
@@ -130,7 +132,7 @@ static void verify_configuration(Configuration* configuration) {
                             EXIT_CODE_RUNTIME_ERROR);
     }
 
-#if defined(ENABLE_NETPLAY)
+#if ENABLE_NETPLAY
     {
         const NetplayConfiguration* netplay = &configuration->netplay;
         const bool p2p_specified = netplay->p2p_local_player > 0 || netplay->p2p_remote_ip != NULL;
@@ -167,7 +169,7 @@ void read_args(int argc, const char* argv[], Configuration* configuration) {
     struct argparse_option options[] = {
         OPT_HELP(),
 
-#if defined(ENABLE_NETPLAY)
+#if ENABLE_NETPLAY
         OPT_GROUP("Netplay"),
         OPT_INTEGER(0,
                     "p2p-local-player",

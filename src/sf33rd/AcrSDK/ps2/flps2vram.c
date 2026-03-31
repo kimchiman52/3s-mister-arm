@@ -8,6 +8,9 @@
 #include "sf33rd/AcrSDK/ps2/foundaps2.h"
 
 #include "rendering/game_renderer.h"
+#if PORT_MISTER
+#include "port/sdl/sdl_game_renderer.h"
+#endif
 
 #include <libgraph.h>
 

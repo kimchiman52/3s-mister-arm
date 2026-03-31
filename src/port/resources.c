@@ -26,7 +26,9 @@ static ResourceCopyingFlowState flow_state = INIT;
 static SDL_Window* dialog_owner_window = NULL;
 #endif
 
+#if defined(ENABLE_ISO_IMPORT)
 static char error[ERROR_LEN_MAX] = { 0 };
+#endif
 static const char* afs_path = NULL;
 
 #if defined(ENABLE_SDL_DIALOGS)
@@ -56,14 +58,13 @@ static bool file_exists(const char* path) {
     return path_info.type == SDL_PATHTYPE_FILE;
 }
 
+#if defined(ENABLE_ISO_IMPORT)
 static bool check_if_file_present(const char* filename) {
     char* file_path = Resources_GetPath(filename);
     const bool result = file_exists(file_path);
     SDL_free(file_path);
     return result;
 }
-
-#if defined(ENABLE_ISO_IMPORT)
 static void create_resources_directory() {
     char* path = Resources_GetPath(NULL);
     SDL_CreateDirectory(path);

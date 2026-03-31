@@ -88,7 +88,7 @@ target_compile_definitions(3sx PRIVATE
     $<$<CONFIG:Debug>:DEBUG>
 
     $<$<CONFIG:Release>:RELEASE>
-    $<$<CONFIG:Release>:CHECKSUM>
+    $<$<AND:$<CONFIG:Release>,$<NOT:$<BOOL:${PORT_MISTER}>>>:CHECKSUM>
 
     _POSIX_C_SOURCE
     MEMCARD_DISABLED
