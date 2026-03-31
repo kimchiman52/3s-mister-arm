@@ -50,7 +50,7 @@ static const int window_min_height = 240;
 static const int window_min_width = 384;
 static const int window_min_height = (int)(window_min_width / display_target_ratio);
 #endif
-static const Uint64 target_frame_time_ns = 1000000000.0 / TARGET_FPS;
+static Uint64 target_frame_time_ns = (Uint64)(1000000000.0 / TARGET_FPS);
 
 SDL_Window* window = NULL;
 static SDL_Renderer* renderer = NULL;
@@ -9307,6 +9307,17 @@ static bool init_window() {
             native_video_writer_enabled = NativeVideoWriter_Init();
             backend_logf("Native video writer: %s", native_video_writer_enabled ? "enabled" : "disabled");
 
+            /* Match ARM frame pacing to the FPGA's actual pixel-clock-derived
+               refresh rate (NV_TARGET_FPS = 59.6374 Hz) instead of the CPS3
+               original (59.5995 Hz).  The 31.25 MHz integer-N PLL cannot
+               produce 59.5995 Hz with any integer H/V total combination, so
+               the ARM must adapt.  The 0.063% speed increase is imperceptible
+               (~0.06 s over a 99-second round). */
+            if (native_video_writer_enabled) {
+                target_frame_time_ns = (Uint64)(1000000000.0 / NV_TARGET_FPS);
+                backend_logf("Native video: frame pacing adjusted to %.4f Hz (FPGA PLL rate)", NV_TARGET_FPS);
+            }
+
             /* Native video requires software frame mode to get the ARGB8888
                surface.  Force it on regardless of the user config setting. */
             if (native_video_writer_enabled && !software_frame_mode_enabled) {
@@ -9965,16 +9976,16 @@ void SDLApp_EndFrame() {
 
     // Do frame pacing
     //
-    // When native video is active the ideal pacing source would be the FPGA's
-    // own vsync via spi_uio_cmd(UIO_WAIT_VSYNC).  However the game runs in a
-    // forked child process separate from the MiSTer wrapper, which owns the SPI
-    // interface.  Calling SPI from both processes would cause bus contention.
+    // When native video is active, target_frame_time_ns is set to match the
+    // FPGA's PLL-derived refresh rate (NV_TARGET_FPS = 59.6374 Hz) rather than
+    // the CPS3 original (59.5995 Hz).  This keeps ARM frame delivery in phase
+    // with the FPGA's vblank poll, preventing periodic frame repeats from the
+    // DDR3 double-buffer stale-frame path.
     //
-    // The timer-based pacing at TARGET_FPS (59.59949 Hz) is well-matched to the
-    // FPGA native refresh rate (~59.60 Hz), and the DDR3 double-buffer absorbs
-    // any minor phase drift between the ARM timer and the FPGA's pixel-clock PLL.
-    // A future hardware vsync bridge (e.g. via shared-memory signaling from the
-    // wrapper's polling loop) could replace this for tighter lock.
+    // The ideal pacing source would be the FPGA's own vsync via
+    // spi_uio_cmd(UIO_WAIT_VSYNC), but the game runs in a forked child process
+    // separate from the MiSTer wrapper which owns the SPI interface.  A future
+    // hardware vsync bridge could replace timer pacing for tighter lock.
     Uint64 now = SDL_GetTicksNS();
 
     if (frame_deadline == 0) {

@@ -2,11 +2,22 @@
 //
 //  Native Video Timing Generator
 //
-//  384x224 active area @ ~59.63 Hz (500x262 total)
+//  384x224 active area @ ~59.64 Hz (500x262 total)
 //  CLK_VIDEO: 31.25 MHz, CE_PIXEL: divide-by-4 (7.8125 MHz effective)
 //
 //  H: 384 active + 26 FP + 38 sync + 52 BP = 500 total
 //  V: 224 active + 14 FP +  3 sync + 21 BP = 262 total
+//
+//  Refresh rate vs. CPS3 original:
+//    FPGA:  7,812,500 / (500*262) = 59.6374 Hz
+//    CPS3:  59.59949 Hz (TARGET_FPS)
+//    Delta: +0.038 Hz → ARM frame pacing targets NV_TARGET_FPS to compensate.
+//
+//    The integer-N PLL (50 MHz * 5/8 = 31.25 MHz) cannot be tuned to hit
+//    59.5995 Hz exactly.  Fractional-N would add pixel clock jitter (bad for
+//    CRT).  Adjusting H/V totals alone yields at best ~59.605 Hz (512*256),
+//    but shifts H_freq from 15,625 to 15,259 Hz which risks CRT sync loss.
+//    See NV_TARGET_FPS in sdl_app.h for the ARM-side compensation.
 //
 //  Copyright (C) 2026 3SX Project
 //  Licensed under GNU General Public License v2+

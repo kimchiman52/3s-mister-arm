@@ -7,6 +7,14 @@
 
 #define TARGET_FPS 59.59949
 
+// FPGA native video refresh rate: 31.25 MHz PLL / 4 CE_PIXEL / (500 * 262) total pixels
+// = 7,812,500 / 131,000 = 59.6374 Hz.  The fixed integer-N PLL and integer H/V totals
+// cannot produce exactly 59.59949 Hz; the closest options are 0.005-0.038 Hz off (see
+// native_video_timing.sv header for analysis).  ARM frame pacing must target this rate
+// when outputting via the FPGA's native video path, otherwise the 0.038 Hz mismatch
+// causes the DDR3 double-buffer to show a stale frame every ~26 seconds.
+#define NV_TARGET_FPS (7812500.0 / 131000.0)
+
 int SDLApp_PreInit();
 int SDLApp_FullInit();
 void SDLApp_Quit();
