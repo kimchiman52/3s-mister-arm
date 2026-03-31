@@ -3641,11 +3641,24 @@ static void apply_super_effect_burst_reduction_after_sort(void) {
         SDL_UnlockSurface(sa_bg_cache_surface);
     }
 
-    /* Drop background tasks.  Characters/effects/HUD render fresh
-       on top of cached background. */
+    /* Drop background tile tasks but preserve any non-background tasks
+       (solid geometry overlays like the eff77 darkening panel, shadows)
+       that are interleaved in the background Z-range. */
+    int write = 0;
+    for (int i = 0; i < bg_end; i++) {
+        const int pal = HI_16_BITS(render_tasks[i].texture_binding);
+        if (pal < 256) {
+            if (write != i) {
+                render_tasks[write] = render_tasks[i];
+            }
+            write++;
+        }
+    }
     const int upper_count = render_task_count - bg_end;
-    SDL_memmove(&render_tasks[0], &render_tasks[bg_end], (size_t)upper_count * sizeof(RenderTask));
-    render_task_count = upper_count;
+    if (upper_count > 0) {
+        SDL_memmove(&render_tasks[write], &render_tasks[bg_end], (size_t)upper_count * sizeof(RenderTask));
+    }
+    render_task_count = write + upper_count;
     return;
 
 #endif
