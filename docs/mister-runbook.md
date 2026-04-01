@@ -179,28 +179,50 @@ Prerequisites:
 - Quartus install: `/home/sb.linux/intelFPGA_lite/17.0/` (8.5 GB, inside the VM)
 - The Mac project directory is bind-mounted into the VM by Colima
 
-Quick build using the existing build script:
+**IMPORTANT: The Quartus compile takes 30-60 minutes.** The `colima ssh` session
+will time out and kill the build if you run Quartus directly via SSH. Always use
+`nohup` to detach the build inside the VM, then poll for completion.
+
+Quick build (detached, survives SSH disconnect):
 
 ```bash
+# 1. Prepare source (fast, can run inline)
 colima ssh --profile quartus2 -- bash -lc '
   export PATH="/home/sb.linux/intelFPGA_lite/17.0/quartus/bin:$PATH"
   cd /Users/sb/Developer/3sx-mister
-  tools/mister-wrapper/build-core.sh
+  tools/mister-wrapper/build-core.sh --prepare-source
 '
+
+# 2. Launch Quartus compile detached with nohup
+colima ssh --profile quartus2 -- bash -c '
+  nohup bash -c "
+    export PATH=\"/home/sb.linux/intelFPGA_lite/17.0/quartus/bin:\$PATH\"
+    cd /Users/sb/Developer/3sx-mister/build/mister-wrapper-core/src
+    quartus_sh --flow compile 3SX -c 3SX > /tmp/quartus_build.log 2>&1
+    echo EXIT_CODE=\$? >> /tmp/quartus_build.log
+  " &
+  echo "Build launched, PID=$!"
+'
+
+# 3. Poll for completion (check every 60s)
+while colima ssh --profile quartus2 -- pgrep -f "quartus_sh.*compile" > /dev/null 2>&1; do
+  echo "$(date +%H:%M:%S) - still building..."
+  sleep 60
+done
+echo "Done! Check result:"
+colima ssh --profile quartus2 -- tail -5 /tmp/quartus_build.log
 ```
 
-Or manually inside the VM:
+**Do NOT** run Quartus directly via `colima ssh -- quartus_sh ...` — the SSH
+session will time out after ~2 minutes and kill the build. Do NOT launch multiple
+concurrent Quartus builds (they corrupt the `db/` directory). If a build was
+killed, clean stale artifacts from the Mac side before retrying:
 
 ```bash
-colima ssh --profile quartus2
-export PATH="/home/sb.linux/intelFPGA_lite/17.0/quartus/bin:$PATH"
-cd /Users/sb/Developer/3sx-mister
-tools/mister-wrapper/build-core.sh --prepare-source
-cd build/mister-wrapper-core/src
-quartus_sh --flow compile 3SX -c 3SX
+rm -rf build/mister-wrapper-core/src/db build/mister-wrapper-core/src/output_files
 ```
 
-Output: `build/mister-wrapper-core/3SX.rbf` (visible from both inside the VM and on the Mac host).
+Output: `build/mister-wrapper-core/src/output_files/3SX.rbf` (visible from both inside the VM and on the Mac host).
 
 Previous builds are also cached inside the VM at `/home/sb.linux/build/mister-wrapper-core/`.
 
