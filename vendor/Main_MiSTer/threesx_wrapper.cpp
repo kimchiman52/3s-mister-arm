@@ -958,7 +958,7 @@ bool write_runtime_ghost_count_default(int mode)
 int read_runtime_arm_clock_default()
 {
 	char value[64] = {};
-	if (!read_runtime_config_value("arm-clock", value, sizeof(value))) return kArmClock1200;
+	if (!read_runtime_config_value("arm-clock", value, sizeof(value))) return kArmClockStock;
 
 	if (!strcmp(value, "1000")) return kArmClock1000;
 	if (!strcmp(value, "1200")) return kArmClock1200;
@@ -1479,8 +1479,8 @@ void service_wrapper_menu(pid_t child)
 				(void)kill(child, kRuntimeGhostCountCycleSignal);
 			}
 
-			write_runtime_arm_clock_default(kArmClock1200);
-			while (g_wrapper_arm_clock != kArmClock1200)
+			write_runtime_arm_clock_default(kArmClockStock);
+			while (g_wrapper_arm_clock != kArmClockStock)
 			{
 				g_wrapper_arm_clock = (g_wrapper_arm_clock + 1) % kArmClockMenuCount;
 				(void)kill(child, kRuntimeArmClockCycleSignal);
