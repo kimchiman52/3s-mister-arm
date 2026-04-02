@@ -1380,4 +1380,23 @@ void TestRunner_Epilogue() {
     }
 }
 
+#else /* !DEBUG — provide stubs for perf-telemetry references */
+
+#include "test/test_runner.h"
+#include <stdbool.h>
+
+bool TestRunner_IsSupportedPhaseName(const char* phase_name) {
+    (void)phase_name;
+    return false;
+}
+
+const char* TestRunner_GetPhaseName(void) {
+    return "none";
+}
+
+bool TestRunner_IsPhaseActive(const char* phase_name) {
+    (void)phase_name;
+    return false;
+}
+
 #endif

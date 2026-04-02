@@ -9872,7 +9872,7 @@ void SDLApp_EndFrame() {
     /* Native video path: convert the software-rendered frame from ARGB8888 to
        RGB565 and write it directly to DDR3 for the FPGA's native video reader.
        This path takes priority over the fbdev presenter when active. */
-    if (native_video_writer_enabled) {
+    if (native_video_writer_enabled && SDLGameRenderer_HasSoftwareOwnedFrame()) {
         const SDL_Surface* frame = SDLGameRenderer_GetSoftwareFrameSurface();
         if (frame && frame->pixels && frame->w == 384 && frame->h == 224) {
             if (show_fps_overlay) {

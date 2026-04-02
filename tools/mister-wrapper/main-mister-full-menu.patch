@@ -41,7 +41,20 @@ index a8d8bd8..8788dd1 100644
  // get key status
  static int hold_cnt = 0;
  static uint32_t menu_key_get(void)
-@@ -4279,4 +4291,4 @@ void HandleUI(void)
+@@ -4268,15 +4280,15 @@ void HandleUI(void)
+ 	case MENU_JOYDIGMAP4:
+ 		if (menu)
+ 		{
+-			menustate = MENU_COMMON1;
+-			menusub = 2;
++			menustate = MENU_NONE1;
++			menusub = 0;
+ 			break;
+ 		}
+ 		else if (select)
+ 		{
+ 			switch (menusub)
+ 			{
  			case 0:
 -				menustate = MENU_COMMON1;
 -				menusub = 2;
