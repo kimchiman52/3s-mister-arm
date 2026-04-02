@@ -198,8 +198,10 @@ assign CE_PIXEL = ce_pix_div4;
 
 assign VGA_SL = 0;
 assign VGA_F1 = 0;
-assign VIDEO_ARX = 0;
-assign VIDEO_ARY = 0;
+// CPS3 was designed for 4:3 CRT monitors. Tells ASCAL to pillarbox on 16:9.
+// Only affects HDMI output; analog and direct_video are unaffected.
+assign VIDEO_ARX = 13'd4;
+assign VIDEO_ARY = 13'd3;
 assign VGA_SCALER= 0;
 assign VGA_DISABLE = 0;
 
