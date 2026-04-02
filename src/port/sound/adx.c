@@ -25,7 +25,7 @@
 #define DEFAULT_SAMPLE_RATE 48000
 #define N_CHANNELS 2
 #define BYTES_PER_SAMPLE 2
-#define MIN_QUEUED_DATA_MS 400
+#define MIN_QUEUED_DATA_MS 100
 #define TRACKS_MAX 10
 #define ADX_SAMPLES_PER_FRAME 32
 
@@ -88,6 +88,11 @@ static int first_track_index = 0;
 static bool has_tracks = false;
 static int output_sample_rate = DEFAULT_SAMPLE_RATE;
 
+// Clock recovery: dynamic rate control to prevent ARM/FPGA drift
+#define ADX_CR_MAX_DELTA        0.005   // 0.5% max pitch adjustment
+#define ADX_CR_UPDATE_INTERVAL  60      // Update every 60 frames (~1 second at 59.6 Hz)
+static int adx_cr_update_counter = 0;
+
 static uint16_t read_be16(const uint8_t* p) {
     return (uint16_t)((p[0] << 8) | p[1]);
 }
@@ -135,6 +140,7 @@ static void create_audio_stream(int sample_rate) {
     }
 
     SDL_ResumeAudioStreamDevice(stream);
+    adx_cr_update_counter = 0;
 }
 
 #if defined(ENABLE_FFMPEG_ADX)
@@ -652,28 +658,51 @@ void ADX_ProcessTracks() {
     }
 
     if (!stream_needs_data() && !track_exhausted(&tracks[first_track_index])) {
-        return;
+        goto clock_recovery;
     }
 
-    const int first_track_index_old = first_track_index;
-    const int num_tracks_old = num_tracks;
+    {
+        const int first_track_index_old = first_track_index;
+        const int num_tracks_old = num_tracks;
 
-    for (int i = 0; i < num_tracks_old; i++) {
-        const int j = (first_track_index_old + i) % TRACKS_MAX;
-        ADXTrack* track = &tracks[j];
-        process_track(track);
+        for (int i = 0; i < num_tracks_old; i++) {
+            const int j = (first_track_index_old + i) % TRACKS_MAX;
+            ADXTrack* track = &tracks[j];
+            process_track(track);
 
-        if (!track_exhausted(track)) {
-            break;
+            if (!track_exhausted(track)) {
+                break;
+            }
+
+            track_destroy(track);
+            num_tracks -= 1;
+
+            if (num_tracks > 0) {
+                first_track_index += 1;
+            } else {
+                first_track_index = 0;
+            }
         }
+    }
 
-        track_destroy(track);
-        num_tracks -= 1;
-
-        if (num_tracks > 0) {
-            first_track_index += 1;
-        } else {
-            first_track_index = 0;
+clock_recovery:
+    // Clock recovery: adjust frequency ratio to keep buffer near target fill level.
+    // Runs every ADX_CR_UPDATE_INTERVAL frames (~1 second) to smooth measurement noise.
+    if (stream == NULL) {
+        return;
+    }
+    adx_cr_update_counter++;
+    if (adx_cr_update_counter >= ADX_CR_UPDATE_INTERVAL) {
+        adx_cr_update_counter = 0;
+        int queued = SDL_GetAudioStreamQueued(stream);
+        if (queued >= 0) {
+            int target = min_queued_data_bytes();
+            double fill_level = (target > 0) ? (double)queued / (double)target : 0.5;
+            if (fill_level > 1.0) fill_level = 1.0;
+            double ratio = (1.0 - ADX_CR_MAX_DELTA) + 2.0 * fill_level * ADX_CR_MAX_DELTA;
+            if (ratio < 1.0 - ADX_CR_MAX_DELTA) ratio = 1.0 - ADX_CR_MAX_DELTA;
+            if (ratio > 1.0 + ADX_CR_MAX_DELTA) ratio = 1.0 + ADX_CR_MAX_DELTA;
+            SDL_SetAudioStreamFrequencyRatio(stream, (float)ratio);
         }
     }
 }
@@ -695,6 +724,8 @@ void ADX_Stop() {
     if (stream != NULL) {
         ADX_Pause(true);
         SDL_ClearAudioStream(stream);
+        SDL_SetAudioStreamFrequencyRatio(stream, 1.0f);
+        adx_cr_update_counter = 0;
     }
 
     for (int i = 0; i < num_tracks; i++) {

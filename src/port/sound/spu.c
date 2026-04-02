@@ -68,6 +68,13 @@ static s16 adpcm_coefs[5][2] = {
 };
 static u64 active_voices = 0;
 
+// Clock recovery: dynamic rate control to prevent ARM/FPGA drift
+#define SPU_CR_TARGET_BYTES (2048 * 2 * sizeof(s16))  // ~42.7ms at 48kHz stereo S16
+#define SPU_CR_MAX_DELTA    0.005                       // 0.5% max pitch adjustment
+#define SPU_CR_UPDATE_INTERVAL 192                      // Update every 192 callbacks (~4ms each = ~768ms)
+                                                        // Smooths out per-callback jitter
+static int cr_update_counter = 0;
+
 static int SPU_Ctz64(u64 mask) {
 #if defined(__clang__) || defined(__GNUC__)
     return __builtin_ctzll(mask);
@@ -329,7 +336,7 @@ void SPU_VoiceStart(int vnum, u32 start_addr) {
     v->nax = (v->nax + 1) & 0xfffff;
 }
 
-void SPU_SDL_CB(void* user, SDL_AudioStream* stream, int additional_amount, int total_amount) {
+void SPU_SDL_CB(void* user, SDL_AudioStream* stream_cb, int additional_amount, int total_amount) {
     u32 samples_per_channel = (additional_amount / sizeof(s16)) >> 1;
     static s16 outbuf[4096] = {};
 
@@ -359,8 +366,26 @@ void SPU_SDL_CB(void* user, SDL_AudioStream* stream, int additional_amount, int 
         }
 
         SDL_UnlockMutex(soundLock);
-        SDL_PutAudioStreamData(stream, outbuf, (batch_count * sizeof(s16)) << 1);
+        SDL_PutAudioStreamData(stream_cb, outbuf, (batch_count * sizeof(s16)) << 1);
         samples_per_channel -= batch_count;
+    }
+
+    // Clock recovery: adjust frequency ratio to keep buffer near target fill level.
+    // This compensates for ARM/FPGA clock drift that otherwise causes latency to
+    // grow over time. Runs every SPU_CR_UPDATE_INTERVAL callbacks to smooth noise.
+    cr_update_counter++;
+    if (cr_update_counter >= SPU_CR_UPDATE_INTERVAL) {
+        cr_update_counter = 0;
+        int queued = SDL_GetAudioStreamQueued(stream_cb);
+        if (queued >= 0) {
+            double fill_level = (double)queued / (double)SPU_CR_TARGET_BYTES;
+            if (fill_level > 1.0) fill_level = 1.0;
+            double ratio = (1.0 - SPU_CR_MAX_DELTA) + 2.0 * fill_level * SPU_CR_MAX_DELTA;
+            // Clamp to [1 - max_delta, 1 + max_delta]
+            if (ratio < 1.0 - SPU_CR_MAX_DELTA) ratio = 1.0 - SPU_CR_MAX_DELTA;
+            if (ratio > 1.0 + SPU_CR_MAX_DELTA) ratio = 1.0 + SPU_CR_MAX_DELTA;
+            SDL_SetAudioStreamFrequencyRatio(stream_cb, (float)ratio);
+        }
     }
 }
 
@@ -389,6 +414,7 @@ void SPU_Init(void (*cb)()) {
     }
 
     SDL_ResumeAudioStreamDevice(stream);
+    cr_update_counter = 0;
 }
 
 void SPU_Upload(u32 dst, void* src, u32 size) {

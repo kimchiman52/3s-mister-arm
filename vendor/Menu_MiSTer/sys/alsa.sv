@@ -93,13 +93,13 @@ always @(posedge clk) begin
 	else begin
 
 		//ramp up
-		if(len[18:14] && (hurryup < 1)) hurryup <= 1;
-		if(len[18:16] && (hurryup < 2)) hurryup <= 2;
-		if(len[18:17] && (hurryup < 4)) hurryup <= 4;
+		if(len[18:13] && (hurryup < 1)) hurryup <= 1;
+		if(len[18:14] && (hurryup < 2)) hurryup <= 2;
+		if(len[18:15] && (hurryup < 4)) hurryup <= 4;
 
 		//ramp down
-		if(!len[18:15] && (hurryup > 2)) hurryup <= 2;
-		if(!len[18:13] && (hurryup > 1)) hurryup <= 1;
+		if(!len[18:14] && (hurryup > 2)) hurryup <= 2;
+		if(!len[18:12] && (hurryup > 1)) hurryup <= 1;
 		if(!len[18:10]) hurryup <= 0;
 
 		if(ce_sample && ~&ce_cnt) ce_cnt <= ce_cnt + 1'd1;
