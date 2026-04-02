@@ -268,36 +268,8 @@ deploy)
     mister_rsync_deploy "${src_path%/}/" "${host}" "${user}" "${password}" "${remote_root}/"
     wrapper_cmd=$(cat <<EOF
 set -e
-mkdir -p /media/fat/Scripts '${remote_root}/logs'
-cat > /media/fat/Scripts/3SX.sh <<'SCRIPT_WRAPPER'
-#!/bin/sh
-set -eu
-
-LOG_DIR="/media/fat/games/3sx/logs"
-LOG_PATH="\${LOG_DIR}/osd-wrapper.log"
-
-mkdir -p "\${LOG_DIR}"
-
-{
-    echo "==== 3SX OSD wrapper ===="
-    date 2>/dev/null || true
-    echo "pid=\$\$ ppid=\$PPID"
-    echo "tty=\$(tty 2>&1 || true)"
-    echo "args=\$*"
-    echo "-------------------------"
-} >"\${LOG_PATH}"
-
-exec /media/fat/games/3sx/scripts/launch-osd.sh "\$@" >>"\${LOG_PATH}" 2>&1
-SCRIPT_WRAPPER
-chmod +x /media/fat/Scripts/3SX.sh
-rm -f '/media/fat/Scripts/3SX Training Yun Ryu Ryu Stage.sh'
-cat > '/media/fat/Scripts/3SX_Training_Yun_Ryu_Ryu_Stage.sh' <<'TRAINING_SCRIPT_WRAPPER'
-#!/bin/sh
-set -eu
-
-exec /media/fat/games/3sx/scripts/launch-training-yun-ryu-ryu-stage.sh "\$@"
-TRAINING_SCRIPT_WRAPPER
-chmod +x '/media/fat/Scripts/3SX_Training_Yun_Ryu_Ryu_Stage.sh'
+mkdir -p '${remote_root}/logs'
+rm -f /media/fat/Scripts/3SX.sh '/media/fat/Scripts/3SX_Training_Yun_Ryu_Ryu_Stage.sh' '/media/fat/Scripts/3SX Training Yun Ryu Ryu Stage.sh'
 EOF
 )
     mister_ssh_exec "${host}" "${user}" "${password}" "${wrapper_cmd}"
