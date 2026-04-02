@@ -67,7 +67,6 @@ enum WrapperMenuItem
 	kMenuResume = 0,
 	kMenuDefineButtons,
 	kMenuFpsToggle,
-	kMenuScaleMode,
 	kMenuSuperEffectQuality,
 	kMenuGhostResolution,
 	kMenuGhostCount,
@@ -124,7 +123,6 @@ int g_wrapper_menu_visible = 0;
 int g_wrapper_menu_selected = kMenuResume;
 int g_wrapper_menu_passthrough = 0;
 int g_wrapper_fps_enabled = 0;
-int g_wrapper_scale_mode = kScaleModeAuto;
 int g_wrapper_super_effect_quality = kSuperEffectQualityCachedBg;
 int g_wrapper_ghost_resolution = kGhostResolutionFull;
 int g_wrapper_ghost_count = kGhostCount4;
@@ -1257,13 +1255,11 @@ void format_wrapper_value_line(char *line, size_t line_size, const char *label, 
 void draw_wrapper_menu(int selected)
 {
 	char fps_line[33] = {};
-	char scale_line[33] = {};
 	char super_effect_quality_line[33] = {};
 	char ghost_resolution_line[33] = {};
 	char ghost_count_line[33] = {};
 	char arm_clock_line[33] = {};
 	format_wrapper_value_line(fps_line, sizeof(fps_line), "FPS", g_wrapper_fps_enabled ? "On" : "Off");
-	format_wrapper_value_line(scale_line, sizeof(scale_line), "Scale Mode", runtime_scale_mode_label(g_wrapper_scale_mode));
 	format_wrapper_value_line(super_effect_quality_line,
 	                          sizeof(super_effect_quality_line),
 	                          "SA Activation",
@@ -1288,13 +1284,13 @@ void draw_wrapper_menu(int selected)
 	OsdWrite(1, "");
 	OsdWrite(2, " Define Buttons", selected == kMenuDefineButtons);
 	OsdWrite(3, fps_line, selected == kMenuFpsToggle);
-	OsdWrite(4, scale_line, selected == kMenuScaleMode);
-	OsdWrite(5, "");
-	OsdWrite(6, super_effect_quality_line, selected == kMenuSuperEffectQuality);
-	OsdWrite(7, ghost_resolution_line, selected == kMenuGhostResolution);
-	OsdWrite(8, ghost_count_line, selected == kMenuGhostCount);
-	OsdWrite(9, "");
-	OsdWrite(10, arm_clock_line, selected == kMenuArmClock);
+	OsdWrite(4, "");
+	OsdWrite(5, super_effect_quality_line, selected == kMenuSuperEffectQuality);
+	OsdWrite(6, ghost_resolution_line, selected == kMenuGhostResolution);
+	OsdWrite(7, ghost_count_line, selected == kMenuGhostCount);
+	OsdWrite(8, "");
+	OsdWrite(9, arm_clock_line, selected == kMenuArmClock);
+	OsdWrite(10, "");
 	OsdWrite(11, "");
 	OsdWrite(12, "");
 	OsdWrite(13, " Reset to Default", selected == kMenuResetDefaults);
@@ -1379,17 +1375,6 @@ void service_wrapper_menu(pid_t child)
 			return;
 		}
 
-		if (g_wrapper_menu_selected == kMenuScaleMode)
-		{
-			const int next_mode = (g_wrapper_scale_mode + 1) % kScaleModeMenuCount;
-			if (write_runtime_scale_mode_default(next_mode))
-			{
-				g_wrapper_scale_mode = next_mode;
-				draw_wrapper_menu(g_wrapper_menu_selected);
-			}
-			return;
-		}
-
 		if (g_wrapper_menu_selected == kMenuSuperEffectQuality)
 		{
 			const int next_mode = (g_wrapper_super_effect_quality + 1) % kSuperEffectQualityMenuCount;
@@ -1454,9 +1439,6 @@ void service_wrapper_menu(pid_t child)
 			write_runtime_fps_default(0);
 			if (g_wrapper_fps_enabled) (void)kill(child, kRuntimeFpsToggleSignal);
 			g_wrapper_fps_enabled = 0;
-
-			write_runtime_scale_mode_default(kScaleModeAuto);
-			g_wrapper_scale_mode = kScaleModeAuto;
 
 			write_runtime_super_effect_quality_default(kSuperEffectQualityCachedBg);
 			while (g_wrapper_super_effect_quality != kSuperEffectQualityCachedBg)
@@ -1734,7 +1716,6 @@ int threesx_wrapper_run(int argc, char *argv[])
 	g_wrapper_menu_visible = 0;
 	g_wrapper_menu_selected = kMenuResume;
 	g_wrapper_fps_enabled = read_runtime_fps_default() ? 1 : 0;
-	g_wrapper_scale_mode = read_runtime_scale_mode_default();
 	g_wrapper_super_effect_quality = read_runtime_super_effect_quality_default();
 	g_wrapper_ghost_resolution = read_runtime_ghost_resolution_default();
 	g_wrapper_ghost_count = read_runtime_ghost_count_default();
