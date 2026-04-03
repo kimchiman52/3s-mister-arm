@@ -7,6 +7,7 @@
 #include "common.h"
 #include "main.h"
 #include "netplay/netplay.h"
+#include "port/config/training_config.h"
 #include "port/sdl/sdl_app.h"
 #include "sf33rd/AcrSDK/common/pad.h"
 #include "sf33rd/Source/Game/animation/appear.h"
@@ -438,6 +439,22 @@ void Mode_Select(struct _TASK* task_ptr) {
                 break;
 #endif
             case 2:
+                mpp_w.initTrainingData = true;
+                Mode_Type = MODE_NORMAL_TRAINING;
+                Present_Mode = 4;
+                Decide_ID = PL_id;
+                Setup_VS_Mode(task_ptr);
+                G_No[2] += 1;
+                task_ptr->r_no[0] = 5;
+                cpExitTask(TASK_SAVER);
+                Champion = PL_id;
+                Pause_ID = PL_id;
+                Training_ID = PL_id;
+                New_Challenger = PL_id ^ 1;
+                cpExitTask(TASK_ENTRY);
+                TrainingConfig_RestoreCharSelect();
+                break;
+
             case 3:
             case 5:
             case 6:
@@ -682,6 +699,7 @@ void Training_Mode(struct _TASK* task_ptr) {
         Training_ID = PL_id;
         New_Challenger = PL_id ^ 1;
         cpExitTask(TASK_ENTRY);
+        TrainingConfig_RestoreCharSelect();
 
         break;
     }
@@ -4213,14 +4231,6 @@ void Next_Be_Tr_Menu(struct _TASK* task_ptr) {
 }
 
 s32 Check_Pause_Term_Tr(s16 PL_id) {
-    if (Mode_Type == MODE_PARRY_TRAINING) {
-        if (PL_id == Champion) {
-            return 1;
-        }
-
-        return 0;
-    }
-
     if (PL_id == Champion) {
         return 1;
     }
@@ -4401,7 +4411,7 @@ s32 Pause_1st_Sub(struct _TASK* task_ptr) {
     }
 
     if (sw & SWK_START) {
-        if (((Mode_Type == MODE_NORMAL_TRAINING) || (Mode_Type == MODE_PARRY_TRAINING)) &&
+        if (Is_Training_Mode(Mode_Type) &&
             (Check_Pause_Term_Tr(Pause_ID ^ 1) != 0) && plw[Pause_ID ^ 1].wu.operator &&
             (Interface_Type[Pause_ID ^ 1] == 0)) {
             Pause_ID = Pause_ID ^ 1;
@@ -4568,18 +4578,13 @@ void Training_Menu(struct _TASK* task_ptr) {
 void Training_Init(struct _TASK* task_ptr) {
     ToneDown(0x80, 2);
     Menu_Init(task_ptr);
-    task_ptr->r_no[1] = Mode_Type - 2;
+    task_ptr->r_no[1] = 1;
     Pause_Down = 1;
     End_Training = 0;
     Demo_Time_Stop = 0;
 
-    if (Mode_Type == MODE_NORMAL_TRAINING) {
-        control_player = Champion;
-        control_pl_rno = 0x63;
-    } else {
-        control_player = Champion;
-        control_pl_rno = 0;
-    }
+    control_player = Champion;
+    control_pl_rno = 0x63;
 
     if (!Training_Menu_From_Pause) {
         Disp_Cockpit = 0;        /* hide the HUD (health bars, timer, SA gauge) */
@@ -4606,10 +4611,10 @@ void Normal_Training(struct _TASK* task_ptr) {
         Training_Init_Sub(task_ptr);
         Training_Index = 0;
         x = 120;
-        y = 56;
+        y = 48;
         Training[0] = Training[2];
         if (!Training_Auto_Start) {
-            for (ix = 0; ix < 8; ix++, s2 = y += 16) {
+            for (ix = 0; ix < 9; ix++, s2 = y += 16) {
                 (void)s2;
 
                 effect_A3_init(0, 0, ix, ix, 0, x, y, 0);
@@ -4629,17 +4634,19 @@ void Normal_Training(struct _TASK* task_ptr) {
             }
         }
 
+        bool auto_started = false;
         if (Training_Auto_Start) {
             Training_Auto_Start = 0;
             IO_Result = SWK_SOUTH;   /* synthesize confirm (X/south button) */
             Menu_Cursor_Y[0] = 0;    /* RESUME is item 0 */
+            auto_started = true;
         } else {
-            MC_Move_Sub(Check_Menu_Lever(Decide_ID, 0), 0, 7, 0xFF); /* move cursor; 7=max item index, 0xFF=wrap */
-            Check_Skip_Recording();
+            MC_Move_Sub(Check_Menu_Lever(Decide_ID, 0), 0, 8, 0xFF); /* move cursor; 8=max item index, 0xFF=wrap */
             Check_Skip_Replay(2);
 
-            if (IO_Result == SWK_START && Training_Menu_From_Pause) {
-                IO_Result = SWK_SOUTH; /* START confirms current cursor position when in the training menu */
+            if ((IO_Result == SWK_START || IO_Result == SWK_EAST) && Training_Menu_From_Pause) {
+                Menu_Cursor_Y[0] = 0;  /* START/CIRCLE always resumes training from the training menu */
+                IO_Result = SWK_SOUTH;
             }
         }
 
@@ -4654,93 +4661,131 @@ void Normal_Training(struct _TASK* task_ptr) {
                 }
 
                 if (Training_Menu_From_Pause && Menu_Cursor_Y[0] == 0 /* RESUME */) {
-                    Setup_NTr_Data(0);             /* 0=resume: Play_Mode=0, reset Replay_Status, copy Training[2]→Training[0] */
-                    effect_00_init(&plw[0].wu);    /* reinit hitbox display work items so visuals update immediately */
-                    effect_00_init(&plw[1].wu);
-                    Menu_Suicide[0] = 1;           /* remove menu work items */
-                    pulpul_request_again();        /* re-register player work units for this frame */
-                    Game_pause = GAME_PAUSE_RUNNING;
-                    Pause_Down = 0;
-                    Allow_a_battle_f = 1;          /* re-enable gameplay logic */
-                    Training_Menu_From_Pause = TRAINING_MENU_DIRECT;
-                    Training_Cursor = 0;
+                    s16 was_recording = (Play_Mode != 0);
+                    Setup_NTr_Data(0);             /* 0=resume: Play_Mode=0, reset Replay_Status, copy Training[2]->Training[0] */
 
-                    Training[0].contents[0][1][3] = 0; /* clear stored sub-mode cursor (player 0, submenu page 1, slot 3) */
-                    set_init_A4_flag();
-                    Setup_Training_Difficulty();
+                    if (was_recording) {
+                        /* Full reset when leaving recording/replay mode —
+                           resets all player state, timer, operator flags, etc. */
+                        Menu_Suicide[0] = 1;
+                        Training_Menu_From_Pause = TRAINING_MENU_RESETTING;
+                        task_ptr->r_no[0] = MENU_STATE_RESET_TRAINING;
+                        task_ptr->r_no[1] = 0;
+                        task_ptr->r_no[2] = 0;
+                        task_ptr->r_no[3] = 0;
+                    } else {
+                        /* Quick resume for normal training */
+                        effect_00_init(&plw[0].wu);    /* reinit hitbox display work items so visuals update immediately */
+                        effect_00_init(&plw[1].wu);
+                        Menu_Suicide[0] = 1;           /* remove menu work items */
+                        pulpul_request_again();        /* re-register player work units for this frame */
+                        Game_pause = GAME_PAUSE_RUNNING;
+                        Pause_Down = 0;
+                        Allow_a_battle_f = 1;          /* re-enable gameplay logic */
+                        Training_Menu_From_Pause = TRAINING_MENU_DIRECT;
+                        Training_Cursor = 0;
 
-                    /* contents[0][0][0] = dummy action setting: 0=STAND, 1=CROUCH, 2=JUMP, 3=CPU, 4=HUMAN */
-                    switch (Training[0].contents[0][0][0]) {
-                    case 0:
-                        control_pl_rno = DUMMY_ACTION_STAND;
-                        control_player = New_Challenger;
-                        break;
+                        Training[0].contents[0][1][3] = 0; /* clear stored sub-mode cursor (player 0, submenu page 1, slot 3) */
+                        set_init_A4_flag();
+                        Setup_Training_Difficulty();
 
-                    case 1:
-                        control_pl_rno = DUMMY_ACTION_CROUCH;
-                        control_player = New_Challenger;
-                        break;
+                        /* contents[0][0][0] = dummy action setting: 0=STAND, 1=CROUCH, 2=JUMP, 3=CPU, 4=HUMAN */
+                        switch (Training[0].contents[0][0][0]) {
+                        case 0:
+                            control_pl_rno = DUMMY_ACTION_STAND;
+                            control_player = New_Challenger;
+                            break;
 
-                    case 2:
-                        control_pl_rno = DUMMY_ACTION_JUMP;
-                        control_player = New_Challenger;
-                        break;
+                        case 1:
+                            control_pl_rno = DUMMY_ACTION_CROUCH;
+                            control_player = New_Challenger;
+                            break;
 
-                    case 3:
-                        control_pl_rno = DUMMY_ACTION_UNFORCED; /* operator=0: dummy runs cpu_algorithm */
-                        plw[New_Challenger].wu.operator = 0;
-                        Operator_Status[New_Challenger] = 0;
-                        break;
+                        case 2:
+                            control_pl_rno = DUMMY_ACTION_JUMP;
+                            control_player = New_Challenger;
+                            break;
 
-                    case 4:
-                        control_pl_rno = DUMMY_ACTION_UNFORCED; /* operator=1: dummy reads direct human input */
-                        break;
+                        case 3:
+                            control_pl_rno = DUMMY_ACTION_UNFORCED; /* operator=0: dummy runs cpu_algorithm */
+                            plw[New_Challenger].wu.operator = 0;
+                            Operator_Status[New_Challenger] = 0;
+                            break;
+
+                        case 4:
+                            control_pl_rno = DUMMY_ACTION_UNFORCED; /* operator=1: dummy reads direct human input */
+                            break;
+                        }
+
+                        task_ptr->r_no[0] = MENU_STATE_GAMEPLAY;
+                        task_ptr->r_no[1] = 0;
+                        task_ptr->r_no[2] = 0;
+                        task_ptr->r_no[3] = 0;
                     }
-
-                    task_ptr->r_no[0] = MENU_STATE_GAMEPLAY;
-                    task_ptr->r_no[1] = 0;
-                    task_ptr->r_no[2] = 0;
-                    task_ptr->r_no[3] = 0;
                 } else {
                     Menu_Suicide[0] = 1;           /* remove menu work items */
                     Training_Disp_Work_Clear();
                     CP_No[0][0] = 0;               /* assign control port 0 to player slot 0 */
                     CP_No[1][0] = 0;               /* assign control port 0 to player slot 1 */
-                    plw[New_Challenger].wu.operator = 1; /* dummy reads p_sw directly (human-mode input path) */
-                    Operator_Status[New_Challenger] = 1; /* mirrors operator field */
+                    plw[0].wu.operator = 1;
+                    Operator_Status[0] = 1;
+                    plw[1].wu.operator = 1;
+                    Operator_Status[1] = 1;
                     Setup_NTr_Data(Menu_Cursor_Y[0]);
                     count_cont_init(0);
 
-                    /* contents[0][0][0] = dummy action setting: 0=STAND, 1=CROUCH, 2=JUMP, 3=CPU, 4=HUMAN */
-                    switch (Training[0].contents[0][0][0]) {
-                    case 0:
-                        control_pl_rno = DUMMY_ACTION_STAND;
-                        control_player = New_Challenger;
-                        break;
+                    if (Menu_Cursor_Y[0] == 1) {
+                        /* Record: parry-style — set control_pl_rno from recording setting */
+                        Record_Data_Tr = 1;
+                        control_pl_rno = Training[0].contents[1][0][0];
+                        Training[0].contents[1][1][3] = 0;
+                    } else if (Menu_Cursor_Y[0] == 2) {
+                        /* Replay: parry-style — CPU replays dummy's inputs */
+                        control_pl_rno = 99;
+                        Training[0].contents[1][1][3] = 1;
+                    } else {
+                        /* Practice: use dummy action setting */
+                        switch (Training[0].contents[0][0][0]) {
+                        case 0:
+                            control_pl_rno = DUMMY_ACTION_STAND;
+                            control_player = New_Challenger;
+                            break;
 
-                    case 1:
-                        control_pl_rno = DUMMY_ACTION_CROUCH;
-                        control_player = New_Challenger;
-                        break;
+                        case 1:
+                            control_pl_rno = DUMMY_ACTION_CROUCH;
+                            control_player = New_Challenger;
+                            break;
 
-                    case 2:
-                        control_pl_rno = DUMMY_ACTION_JUMP;
-                        control_player = New_Challenger;
-                        break;
+                        case 2:
+                            control_pl_rno = DUMMY_ACTION_JUMP;
+                            control_player = New_Challenger;
+                            break;
 
-                    case 3:
-                        control_pl_rno = DUMMY_ACTION_UNFORCED; /* operator=0: dummy runs cpu_algorithm */
-                        plw[New_Challenger].wu.operator = 0;
-                        Operator_Status[New_Challenger] = 0;
-                        break;
+                        case 3:
+                            control_pl_rno = DUMMY_ACTION_UNFORCED; /* operator=0: dummy runs cpu_algorithm */
+                            plw[New_Challenger].wu.operator = 0;
+                            Operator_Status[New_Challenger] = 0;
+                            break;
 
-                    case 4:
-                        control_pl_rno = DUMMY_ACTION_UNFORCED; /* operator=1: dummy reads direct human input */
-                        break;
+                        case 4:
+                            control_pl_rno = DUMMY_ACTION_UNFORCED; /* operator=1: dummy reads direct human input */
+                            break;
+                        }
                     }
 
                     All_Clear_Timer();
                     Check_Replay();
+
+                    if (Menu_Cursor_Y[0] == 2) {
+                        /* After Check_Replay for replay mode: set replay status and load recorded data */
+                        Replay_Status[Training_ID] = 0;
+                        Replay_Status[Training_ID ^ 1] = 3;
+                        Training[0] = Training[1];
+                        Training[0].contents[1][0][2] = Training[2].contents[1][0][2];
+                        Training[0].contents[1][0][3] = Training[2].contents[1][0][3];
+                    }
+
+                    Training[0].contents[0][1][3] = Menu_Cursor_Y[0]; /* store selected sub-mode cursor */
                     init_omop();
                     set_init_A4_flag();
 
@@ -4764,28 +4809,55 @@ void Normal_Training(struct _TASK* task_ptr) {
                 break;
 
             case 3:
+                task_ptr->r_no[1] = 3;
+                task_ptr->r_no[2] = 0;
+                task_ptr->r_no[3] = 0;
+                Training_Cursor = Menu_Cursor_Y[0];
+                break;
+
             case 4:
+                task_ptr->r_no[1] = 4;
+                task_ptr->r_no[2] = 0;
+                task_ptr->r_no[3] = 0;
+                Training_Cursor = Menu_Cursor_Y[0];
+                break;
+
             case 5:
+                task_ptr->r_no[1] = 7;
+                task_ptr->r_no[2] = 0;
+                task_ptr->r_no[3] = 0;
+                Training_Cursor = Menu_Cursor_Y[0];
+                break;
+
             case 6:
-                task_ptr->r_no[1] = Menu_Cursor_Y[0];
+                task_ptr->r_no[1] = 5;
                 task_ptr->r_no[2] = 0;
                 task_ptr->r_no[3] = 0;
                 Training_Cursor = Menu_Cursor_Y[0];
                 break;
 
             case 7:
-                Training_Cursor = 7;
+                task_ptr->r_no[1] = 6;
+                task_ptr->r_no[2] = 0;
+                task_ptr->r_no[3] = 0;
+                Training_Cursor = Menu_Cursor_Y[0];
+                break;
+
+            case 8:
+                Training_Cursor = 8;
                 Training_Exit_Sub(task_ptr);
             }
 
             SsBgmHalfVolume(0);
-            SE_selected();
+            if (!auto_started) {
+                SE_selected();
+            }
         }
 
         break;
 
     case 2:
-        Yes_No_Cursor_Exit_Training(task_ptr, 7);
+        Yes_No_Cursor_Exit_Training(task_ptr, 8);
         break;
 
     default:
@@ -4795,6 +4867,7 @@ void Normal_Training(struct _TASK* task_ptr) {
 }
 
 void Setup_NTr_Data(s16 ix) {
+    TrainingConfig_Save();
     switch (ix) {
     case 0:
         Play_Mode = 0;
@@ -4808,21 +4881,20 @@ void Setup_NTr_Data(s16 ix) {
     case 1:
         Record_Data_Tr = 1;
         Play_Mode = 1;
-        Replay_Status[0] = 1;
-        Replay_Status[1] = 1;
+        Replay_Status[0] = 0;
+        Replay_Status[1] = 0;
         save_w[Present_Mode].Time_Limit = 60;
         save_w[Present_Mode].Damage_Level = Training[2].contents[0][1][2];
         Training[0] = Training[2];
+        Training[0].contents[1][0][2] = 1;
         Training[1] = Training[2];
         break;
 
     case 2:
         Play_Mode = 3;
-        Replay_Status[0] = 3;
-        Replay_Status[1] = 3;
         save_w[Present_Mode].Time_Limit = 60;
-        save_w[Present_Mode].Damage_Level = Training[1].contents[0][1][2];
-        Training[0] = Training[1];
+        save_w[Present_Mode].Damage_Level = Training[2].contents[0][1][2];
+        Training[0] = Training[2];
         break;
     }
 
@@ -4949,11 +5021,7 @@ void Button_Exit_Check_in_Tr(struct _TASK* task_ptr, s16 PL_id) {
         task_ptr->r_no[2] = 0;
         task_ptr->r_no[3] = 0;
 
-        if (Mode_Type == MODE_NORMAL_TRAINING) {
-            task_ptr->r_no[1] = 1;
-        } else {
-            task_ptr->r_no[1] = 2;
-        }
+        task_ptr->r_no[1] = 1;
 
         pp_operator_check_flag(1);
         return;
@@ -5076,14 +5144,8 @@ void Training_Option(struct _TASK* task_ptr) {
 }
 
 void Training_Disp_Sub(struct _TASK* task_ptr) {
-    if (Mode_Type == MODE_NORMAL_TRAINING) {
-        task_ptr->r_no[1] = 1;
-        Training_Index = 0;
-        return;
-    }
-
-    task_ptr->r_no[1] = 2;
-    Training_Index = 1;
+    task_ptr->r_no[1] = 1;
+    Training_Index = 0;
 }
 
 void Dummy_Move_Sub(struct _TASK* task_ptr, s16 PL_id, s16 id, s16 type, s16 max) {
@@ -5111,7 +5173,7 @@ static bool is_data_plus_hitboxes_option_selected() {
 }
 
 static void apply_training_hitbox_display(bool force_off) {
-    if (force_off || Mode_Type != MODE_NORMAL_TRAINING || !is_data_plus_hitboxes_option_selected()) {
+    if (force_off || !Is_Training_Mode(Mode_Type) || !is_data_plus_hitboxes_option_selected()) {
         Set_Training_Hitbox_Display(false);
     } else {
         Set_Training_Hitbox_Display(true);
@@ -5340,7 +5402,7 @@ void Blocking_Tr_Option(struct _TASK* task_ptr) {
         Menu_Cursor_Y[0] = 0;
         Menu_Cursor_Y[1] = 0;
         Menu_Suicide[0] = 1;
-        Training_Index = 3;
+        Training_Index = 4;
         effect_A3_init(1, 21, 99, 0, 1, 51, 56, 1);
         effect_A3_init(1, 21, 99, 1, 1, 51, 106, 1);
 
@@ -5431,6 +5493,9 @@ void Training_Exit_Sub(struct _TASK* task_ptr) {
 void Character_Change(struct _TASK* task_ptr) {
     s16 ix;
 
+    if (Is_Training_Mode(Mode_Type)) {
+        TrainingConfig_Save();
+    }
     Training_Menu_From_Pause = TRAINING_MENU_DIRECT;
 
     if (Check_Pad_in_Pause(task_ptr) == 0) {
@@ -5504,6 +5569,13 @@ void Default_Training_Data(s32 flag) {
     Training[2] = Training[0];
     Disp_Attack_Data = 0;
     Disp_Input_History = 0;
+
+    if (flag == 0) {
+        if (TrainingConfig_Load()) {
+            save_w[Present_Mode].Damage_Level = Training[0].contents[0][1][2];
+            save_w[Present_Mode].Difficulty = Training[0].contents[0][1][3];
+        }
+    }
 }
 
 void Default_Training_Option() {

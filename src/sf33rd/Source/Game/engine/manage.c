@@ -232,7 +232,7 @@ void Game_Manage_1st() {
     grade_check_work_stage_init(0);
     grade_check_work_stage_init(1);
 
-    if (Mode_Type == MODE_NORMAL_TRAINING || Mode_Type == MODE_PARRY_TRAINING) {
+    if (Is_Training_Mode(Mode_Type)) {
         cpReadyTask(TASK_MENU, Menu_Task);
         task[TASK_MENU].r_no[0] = 7;
         plw[New_Challenger].wu.operator = 0;
@@ -312,11 +312,7 @@ s32 Wait_Seek_Time() {
         return 1;
 
     case 3:
-        if (Mode_Type == MODE_NORMAL_TRAINING) {
-            return 1;
-        }
-
-        if (Mode_Type == MODE_PARRY_TRAINING) {
+        if (Is_Training_Mode(Mode_Type)) {
             return 1;
         }
 
@@ -347,7 +343,7 @@ void Game_Manage_2_1() {
             break;
         }
 
-        if (Mode_Type == MODE_NORMAL_TRAINING || Mode_Type == MODE_PARRY_TRAINING) {
+        if (Is_Training_Mode(Mode_Type)) {
             C_No[2]++;
             break;
         }
@@ -452,6 +448,9 @@ void Game_Manage_2_3() {
         erase_extra_plef_work();
         win_lose_work_clear();
         Clear_Flash_No();
+        setup_any_data();              /* reinit effects (E5 ghost chain, J7, etc.) cleared by erase_extra_plef_work */
+        plw[0].wu.disp_flag = 1;      /* setup_any_data zeroes disp_flag; restore it since training skips appear anim */
+        plw[1].wu.disp_flag = 1;
         C_No[2] = 3; /* skip 2_4 case 0 entirely */
     } else {
         effect_B2_init();
@@ -592,8 +591,7 @@ void Game_Manage_4th() {
     default:
         SsRequest(143);
 
-        if (plw[0].wu.vital_new != plw[1].wu.vital_new || Mode_Type == MODE_NORMAL_TRAINING ||
-            Mode_Type == MODE_PARRY_TRAINING) {
+        if (plw[0].wu.vital_new != plw[1].wu.vital_new || Is_Training_Mode(Mode_Type)) {
             C_No[0] = 6;
             Round_Result |= 1;
             setFinishType();
@@ -724,7 +722,7 @@ void Game_Manage_6th() {
         pcon_rno[2] = 0;
         grade_makeup_round_para_dko();
 
-        if (Mode_Type != MODE_NORMAL_TRAINING && Mode_Type != MODE_PARRY_TRAINING && omop_cockpit) {
+        if (!Is_Training_Mode(Mode_Type) && omop_cockpit) {
             effect_58_init(6, 1, Winner_id + 100);
             effect_92_init(0, PL_Wins[0] - 1);
             effect_92_init(1, PL_Wins[1] - 1);
@@ -738,7 +736,7 @@ void Game_Manage_6th() {
             break;
         }
 
-        if (Mode_Type == MODE_NORMAL_TRAINING || Mode_Type == MODE_PARRY_TRAINING) {
+        if (Is_Training_Mode(Mode_Type)) {
             C_No[0] = 12;
             End_Training = 1;
             break;
@@ -765,7 +763,7 @@ void Game_Manage_7_0() {
     C_Timer = 1;
     grade_makeup_round_parameter(Winner_id);
 
-    if (Mode_Type != MODE_NORMAL_TRAINING && Mode_Type != MODE_PARRY_TRAINING && omop_cockpit) {
+    if (!Is_Training_Mode(Mode_Type) && omop_cockpit) {
         effect_58_init(6, 1, Winner_id + 100);
         effect_92_init(Winner_id, PL_Wins[Winner_id] - 1);
     }
@@ -827,7 +825,7 @@ void Game_Manage_7_3() {
 
     Message_Suicide[1] = 1;
 
-    if (Mode_Type == MODE_NORMAL_TRAINING || Mode_Type == MODE_PARRY_TRAINING) {
+    if (Is_Training_Mode(Mode_Type)) {
         C_No[0] = 12;
         End_Training = 1;
         return;
@@ -1336,7 +1334,7 @@ void Setup_Win_Mark() {
 }
 
 void Check_Perfect(s16 PL_id) {
-    if (Mode_Type == MODE_NORMAL_TRAINING || Mode_Type == MODE_PARRY_TRAINING) {
+    if (Is_Training_Mode(Mode_Type)) {
         return;
     }
 
@@ -1635,7 +1633,7 @@ void Update_Level_Control() {
 }
 
 s32 Judge_Next_Disposal() {
-    if (Mode_Type == MODE_NORMAL_TRAINING || Mode_Type == MODE_PARRY_TRAINING) {
+    if (Is_Training_Mode(Mode_Type)) {
         return 0;
     }
 
@@ -1832,7 +1830,7 @@ void Judge_Winner() {
 }
 
 s32 Check_Disp_Winner() {
-    if (Mode_Type == MODE_NORMAL_TRAINING || Mode_Type == MODE_PARRY_TRAINING) {
+    if (Is_Training_Mode(Mode_Type)) {
         return Disp_Win_Name = 0;
     }
 

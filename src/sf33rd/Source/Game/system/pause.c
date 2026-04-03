@@ -43,8 +43,7 @@ s32 Check_Play_Status(s16 PL_id);
 void Pause_Task(struct _TASK* task_ptr) {
     void (*Main_Jmp_Tbl[4])(struct _TASK*) = { Pause_Check, Pause_Move, Pause_Sleep, Pause_Die };
 
-    if (!nowSoftReset() && Mode_Type != MODE_NETWORK && Mode_Type != MODE_NORMAL_TRAINING &&
-        Mode_Type != MODE_PARRY_TRAINING) {
+    if (!nowSoftReset() && Mode_Type != MODE_NETWORK && !Is_Training_Mode(Mode_Type)) {
         Main_Jmp_Tbl[task_ptr->r_no[0]](task_ptr);
         Flash_Pause(task_ptr);
     }

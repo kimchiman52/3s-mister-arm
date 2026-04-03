@@ -85,6 +85,7 @@ void set_quake(PLW* wk);
 void add_next_position(PLW* wk);
 void store_player_after_image_data();
 void setup_base_and_other_data();
+void setup_any_data();
 s32 check_sa_type_rebirth(PLW* wk);
 void pli_0002();
 void set_super_arts_status_dc(s16 ix);

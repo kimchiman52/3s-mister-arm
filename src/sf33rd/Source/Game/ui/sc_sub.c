@@ -34,7 +34,7 @@
 #define TRAINING_INPUT_HISTORY_ROWS 13
 #define TRAINING_INPUT_HISTORY_MAX_FRAMES 99
 #define TRAINING_INPUT_HISTORY_BUTTONS_MASK 0x770
-#define TRAINING_INPUT_HISTORY_TEXT_ATR 13
+#define TRAINING_INPUT_HISTORY_TEXT_ATR 9
 #define TRAINING_INPUT_HISTORY_BUTTON_ATR 13
 #define TRAINING_INPUT_HISTORY_TEXT_PRIORITY 2
 #define TRAINING_INPUT_HISTORY_TEXT_SCALE 1.0f
@@ -303,7 +303,7 @@ static void update_training_input_history() {
     s16 player_id;
     u16 input;
 
-    if ((Mode_Type != MODE_NORMAL_TRAINING && Mode_Type != MODE_PARRY_TRAINING) || (Game_pause & 0x80)) {
+    if (!Is_Training_Mode(Mode_Type) || (Game_pause & 0x80)) {
         return;
     }
 

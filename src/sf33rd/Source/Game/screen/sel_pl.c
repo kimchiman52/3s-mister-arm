@@ -167,7 +167,7 @@ s16 Select_Player() {
 }
 
 void Switch_Work() {
-    if (Mode_Type != MODE_NORMAL_TRAINING && Mode_Type != MODE_PARRY_TRAINING) {
+    if (!Is_Training_Mode(Mode_Type)) {
         return;
     }
 
@@ -825,7 +825,7 @@ void PL_Sel_2nd() {
             Cursor_Timer[ID2] = 40;
             Go_Away_Red_Lines();
 
-            if (Mode_Type == MODE_NORMAL_TRAINING || Mode_Type == MODE_PARRY_TRAINING) {
+            if (Is_Training_Mode(Mode_Type)) {
                 S_No[3] = 1;
                 break;
             }
@@ -1081,7 +1081,7 @@ void Sel_PL_5th() {
 
     SP_No[ID][0]++;
 
-    if (Mode_Type == MODE_NORMAL_TRAINING || Mode_Type == MODE_PARRY_TRAINING) {
+    if (Is_Training_Mode(Mode_Type)) {
         S_No[3] = 1;
     }
 

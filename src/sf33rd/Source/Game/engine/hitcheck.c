@@ -1024,6 +1024,12 @@ s32 defense_sky(PLW* as, PLW* ds, s8 gddir) {
     abs = (ds->spmv_ng_flag & DIP_AUTO_PARRY_DISABLED) == 0;
     ags = (ds->spmv_ng_flag & DIP_AUTO_GUARD_DISABLED) == 0;
 
+    if (Play_Mode != 0) {
+        abs = 0;
+        ags = 0;
+        ds->auto_guard = 0;
+    }
+
     if (ds->dead_flag) {
         ds->guard_flag = 3;
     }
@@ -1119,6 +1125,12 @@ s32 defense_ground(PLW* as, PLW* ds, s8 gddir) {
 
     abs = (ds->spmv_ng_flag & DIP_AUTO_PARRY_DISABLED) == 0;
     ags = (ds->spmv_ng_flag & DIP_AUTO_GUARD_DISABLED) == 0;
+
+    if (Play_Mode != 0) {
+        abs = 0;
+        ags = 0;
+        ds->auto_guard = 0;
+    }
 
     if (ds->dead_flag) {
         ds->guard_flag = 3;

@@ -35,6 +35,7 @@
 #include "sf33rd/Source/Game/system/sysdir.h"
 #include "sf33rd/Source/Game/system/work_sys.h"
 #include "sf33rd/Source/Game/ui/sc_sub.h"
+#include "port/config/training_config.h"
 #include <memory.h>
 
 u8 Candidate_Buff[16];
@@ -284,7 +285,7 @@ void Score_Sub() {
     s32 assign2;
     s8 assign3;
 
-    if (Mode_Type == MODE_NORMAL_TRAINING || Mode_Type == MODE_PARRY_TRAINING) {
+    if (Is_Training_Mode(Mode_Type)) {
         return;
     }
 
@@ -783,7 +784,7 @@ void cpRevivalTask() {
 s32 Check_Menu_Task() {
     struct _TASK* task_ptr = &task[TASK_MENU];
 
-    if (Mode_Type == MODE_NORMAL_TRAINING || Mode_Type == MODE_PARRY_TRAINING) {
+    if (Is_Training_Mode(Mode_Type)) {
         if (task[TASK_MENU].r_no[0] == 7 && task[TASK_MENU].r_no[1] == 7) {
             return 1;
         }
@@ -1006,7 +1007,8 @@ void Soft_Reset_Sub() {
     sound_all_off();
     SsBgmHalfVolume(0);
 
-    if (Mode_Type == MODE_NORMAL_TRAINING || Mode_Type == MODE_PARRY_TRAINING) {
+    if (Is_Training_Mode(Mode_Type)) {
+        TrainingConfig_Save();
         Set_Training_Hitbox_Display(false);
     }
 
@@ -1078,7 +1080,7 @@ void Check_Replay() {
         Condense_Buff[1] = 0xFFFF;
         memset(&Replay_w, 0, sizeof(Replay_w));
 
-        if (Mode_Type == MODE_NORMAL_TRAINING || Mode_Type == MODE_PARRY_TRAINING) {
+        if (Is_Training_Mode(Mode_Type)) {
             for (ix = 0; ix < 0x1C1E; ix++) {
                 Replay_w.io_unit.key_buff[0][ix] = 0xF000;
                 Replay_w.io_unit.key_buff[1][ix] = 0xF000;

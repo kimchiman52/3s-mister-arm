@@ -1297,7 +1297,7 @@ void setup_base_and_other_data() {
     poison_flag[0] = 0;
     poison_flag[1] = 0;
 
-    if (Mode_Type == MODE_NORMAL_TRAINING || Mode_Type == MODE_PARRY_TRAINING) {
+    if (Is_Training_Mode(Mode_Type)) {
         effect_E3_init(&plw[0]);
         effect_E3_init(&plw[1]);
         effect_E4_init(&plw[0]);

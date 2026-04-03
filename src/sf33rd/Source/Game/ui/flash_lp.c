@@ -19,7 +19,7 @@ void Flash_Lamp() {
     u8 mark;
     u8 color;
 
-    if (Mode_Type == MODE_NORMAL_TRAINING || Mode_Type == MODE_PARRY_TRAINING) {
+    if (Is_Training_Mode(Mode_Type)) {
         return;
     }
 

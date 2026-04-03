@@ -12,12 +12,13 @@
 
 const u8 Contents_Check_Data_A3[25] = { 0, 0, 1, 1, 1, 1, 0, 1, 1, 1, 1, 0, 1, 1, 1, 1, 0, 1, 1, 1, 1, 0, 0, 1, 1 };
 
-s8* Letter_Data_A3[25][8] = {
+s8* Letter_Data_A3[25][9] = {
     { "RESUME",
-      "RECORDING MODE",
+      "DUMMY RECORDING",
       "REPLAY",
       "DUMMY SETTING",
       "TRAINING OPTION",
+      "RECORDING SETTING",
       "BUTTON CONFIG.",
       "CHARACTER CHANGE",
       "EXIT" },
@@ -28,11 +29,12 @@ s8* Letter_Data_A3[25][8] = {
       "DEFAULT SETTING",
       "EXIT",
       NULL,
+      NULL,
       NULL },
-    { "STAND", "CROUCH", "JUMP", "CPU", "HUMAN", NULL, NULL, NULL },
-    { "AUTO GUARD", "NO GUARD", "ALL GUARD", "PARRYING", "RANDOM GUARD", "RANDOM PARRYING", "ALL RANDOM", NULL },
-    { "OFF", "ON", "RANDOM", NULL, NULL, NULL, NULL, NULL },
-    { "OFF", "1-HIT STUN", "NO STUN GAIN", NULL, NULL, NULL, NULL, NULL },
+    { "STAND", "CROUCH", "JUMP", "CPU", "HUMAN", NULL, NULL, NULL, NULL },
+    { "AUTO GUARD", "NO GUARD", "ALL GUARD", "PARRYING", "RANDOM GUARD", "RANDOM PARRYING", "ALL RANDOM", NULL, NULL },
+    { "OFF", "ON", "RANDOM", NULL, NULL, NULL, NULL, NULL, NULL },
+    { "OFF", "1-HIT STUN", "NO STUN GAIN", NULL, NULL, NULL, NULL, NULL, NULL },
     { "S.A.GAUGE$.............",
       "ATTACK DATA$...........",
       "DAMAGE$................$L    $H",
@@ -40,11 +42,12 @@ s8* Letter_Data_A3[25][8] = {
       "HITBOXES$..............",
       "INPUT HISTORY$.........",
       "DEFAULT SETTING",
-      "EXIT" },
-    { "NORMAL", "MAX START", "INFINITY", "MAXIMUM", NULL, NULL, NULL, NULL },
-    { "OFF", "ON", NULL, NULL, NULL, NULL, NULL, NULL },
-    { "$ *", "$ **", "$ ***", "$ ****", NULL, NULL, NULL, NULL },
-    { "$ *", "$ **", "$ ***", "$ ****", "$ *****", "$ ******", "$ *******", "$ ********" },
+      "EXIT",
+      NULL },
+    { "NORMAL", "MAX START", "INFINITY", "MAXIMUM", NULL, NULL, NULL, NULL, NULL },
+    { "OFF", "ON", NULL, NULL, NULL, NULL, NULL, NULL, NULL },
+    { "$ *", "$ **", "$ ***", "$ ****", NULL, NULL, NULL, NULL, NULL },
+    { "$ *", "$ **", "$ ***", "$ ****", "$ *****", "$ ******", "$ *******", "$ ********", NULL },
     { "DUMMY RECORDING",
       "PARRYING TRAINING",
       "TRAINING OPTION",
@@ -52,11 +55,12 @@ s8* Letter_Data_A3[25][8] = {
       "CHARACTER CHANGE",
       "EXIT",
       NULL,
+      NULL,
       NULL },
-    { "STAND", "CROUCH", "JUMP", NULL, NULL, NULL, NULL, NULL },
-    { "NORMAL", "MAX START", "INFINITY", NULL, NULL, NULL, NULL, NULL },
-    { "NORMAL", "MAX START", "INFINITY", NULL, NULL, NULL, NULL, NULL },
-    { "OFF", "ON", NULL, NULL, NULL, NULL, NULL, NULL },
+    { "STAND", "CROUCH", "JUMP", NULL, NULL, NULL, NULL, NULL, NULL },
+    { "NORMAL", "MAX START", "INFINITY", NULL, NULL, NULL, NULL, NULL, NULL },
+    { "NORMAL", "MAX START", "INFINITY", NULL, NULL, NULL, NULL, NULL, NULL },
+    { "OFF", "ON", NULL, NULL, NULL, NULL, NULL, NULL, NULL },
     { "ACTION(PLAYER)$..........",
       "S.A.GAUGE(DUMMY)$........",
       "AUTO PARRYING$...........",
@@ -64,15 +68,16 @@ s8* Letter_Data_A3[25][8] = {
       "DEFAULT SETTING",
       "EXIT",
       NULL,
+      NULL,
       NULL },
-    { "STAND", "CROUCH", "JUMP", NULL, NULL, NULL, NULL, NULL },
-    { "NORMAL", "MAX START", "INFINITY", "MAXIMUM", NULL, NULL, NULL, NULL },
-    { "OFF", "ON", NULL, NULL, NULL, NULL, NULL, NULL },
-    { "NORMAL", "MAX START", "INFINITY", "MAXIMUM", NULL, NULL, NULL, NULL },
-    { "RECORDING", "TRAINING", NULL, NULL, NULL, NULL, NULL, NULL },
-    { "REPLAY DATA", "FINISHED$!", NULL, NULL, NULL, NULL, NULL, NULL },
-    { "OFF", "ON", NULL, NULL, NULL, NULL, NULL, NULL },
-    { "OFF", "ON", NULL, NULL, NULL, NULL, NULL, NULL }
+    { "STAND", "CROUCH", "JUMP", NULL, NULL, NULL, NULL, NULL, NULL },
+    { "NORMAL", "MAX START", "INFINITY", "MAXIMUM", NULL, NULL, NULL, NULL, NULL },
+    { "OFF", "ON", NULL, NULL, NULL, NULL, NULL, NULL, NULL },
+    { "NORMAL", "MAX START", "INFINITY", "MAXIMUM", NULL, NULL, NULL, NULL, NULL },
+    { "RECORDING", "TRAINING", NULL, NULL, NULL, NULL, NULL, NULL, NULL },
+    { "REPLAY DATA", "FINISHED$!", NULL, NULL, NULL, NULL, NULL, NULL, NULL },
+    { "OFF", "ON", NULL, NULL, NULL, NULL, NULL, NULL, NULL },
+    { "OFF", "ON", NULL, NULL, NULL, NULL, NULL, NULL, NULL }
 };
 
 void effect_A3_move(WORK_Other* ewk) {
@@ -101,13 +106,6 @@ void effect_A3_move(WORK_Other* ewk) {
     clear_level = 0;
 
     if (Record_Data_Tr == 0 && ewk->wu.type == 0 && ewk->master_priority == 2) {
-        clear_level = 1;
-    }
-    if (Record_Data_Tr == 0 && ewk->wu.type == 11 && ewk->master_priority == 1) {
-        clear_level = 1;
-    }
-
-    if (Training[2].contents[0][0][0] == 3 && ewk->wu.type == 0 && ewk->master_priority == 1) {
         clear_level = 1;
     }
 

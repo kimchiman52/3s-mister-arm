@@ -435,7 +435,7 @@ static void game_step_0() {
         p3sw_0 = p3sw_buff;
         p4sw_0 = p4sw_buff;
 
-        if ((task[TASK_MENU].condition == 1) && (Mode_Type == MODE_PARRY_TRAINING) && (Play_Mode == 1)) {
+        if ((task[TASK_MENU].condition == 1) && Is_Training_Mode(Mode_Type) && (Play_Mode == 1)) {
             const u16 sw_buff = p2sw_0;
             p2sw_0 = p1sw_0;
             p1sw_0 = sw_buff;

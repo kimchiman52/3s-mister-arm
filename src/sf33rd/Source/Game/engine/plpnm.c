@@ -704,7 +704,7 @@ void Normal_39000(PLW* wk) {
 void Normal_40000(PLW* wk) {
     wk->wu.next_z = 38;
 
-    if ((Mode_Type == MODE_NORMAL_TRAINING) || (Mode_Type == MODE_PARRY_TRAINING)) {
+    if (Is_Training_Mode(Mode_Type)) {
         switch (wk->wu.routine_no[3]) {
         case 0:
             if (wk->wu.now_koc != 0 || (wk->wu.char_index != 0)) {
@@ -725,7 +725,7 @@ void Normal_40000(PLW* wk) {
 void Normal_41000(PLW* wk) {
     wk->wu.next_z = 34;
 
-    if ((Mode_Type == MODE_NORMAL_TRAINING) || (Mode_Type == MODE_PARRY_TRAINING)) {
+    if (Is_Training_Mode(Mode_Type)) {
         switch (wk->wu.routine_no[3]) {
         case 0:
             if (wk->wu.vital_new >= 0 && (wk->wu.now_koc != 0 || wk->wu.char_index != 0)) {
