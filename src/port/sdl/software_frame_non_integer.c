@@ -392,9 +392,9 @@ bool SDLSoftwareFrame_AnalyzeNonIntegerSourceAlphaARGB8888(const SDL_FRect* dst_
 
     SDL_zero(*out_telemetry);
 
-    int src_x_lookup[software_frame_lookup_max_width];
-    int src_y_lookup[software_frame_lookup_max_height];
-    Uint8 same_source_pair_lookup[software_frame_lookup_max_width];
+    static int src_x_lookup[software_frame_lookup_max_width];
+    static int src_y_lookup[software_frame_lookup_max_height];
+    static Uint8 same_source_pair_lookup[software_frame_lookup_max_width];
     populate_non_integer_lookup(src_x_lookup,
                                 visible_w,
                                 dst_x0,
@@ -481,9 +481,9 @@ bool SDLSoftwareFrame_RasterNonIntegerLookupARGB8888(const SDL_FRect* dst_rect,
         return false;
     }
 
-    int src_x_lookup[software_frame_lookup_max_width];
-    int src_y_lookup[software_frame_lookup_max_height];
-    Uint8 same_source_pair_lookup[software_frame_lookup_max_width];
+    static int src_x_lookup[software_frame_lookup_max_width];
+    static int src_y_lookup[software_frame_lookup_max_height];
+    static Uint8 same_source_pair_lookup[software_frame_lookup_max_width];
     const Uint64 perf_frequency = sample_phase_timing ? SDL_GetPerformanceFrequency() : 0u;
     Uint64 phase_start_counter = sample_phase_timing ? SDL_GetPerformanceCounter() : 0u;
     populate_non_integer_lookup(src_x_lookup,

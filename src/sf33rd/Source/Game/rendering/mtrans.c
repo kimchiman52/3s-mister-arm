@@ -1650,6 +1650,16 @@ s32 seqsStoreChip(f32 x, f32 y, s32 w, s32 h, s32 gix, s32 code, s32 attr, s32 a
     chip->v[0].z = chip->v[1].z = 0.0f;
     njCalcPoints(NULL, &chip->v[0], &chip->v[0], 2);
 
+    /* Snap screen-space positions to integers.  CPS3 hardware has no
+       sub-pixel addressing — fractional coordinates are purely an artifact
+       of the floating-point matrix pipeline (camera scroll, zoom).
+       Rounding here routes sprites through the exact-copy fast path
+       instead of the expensive non-integer gather rasterizer. */
+    chip->v[0].x = SDL_roundf(chip->v[0].x);
+    chip->v[0].y = SDL_roundf(chip->v[0].y);
+    chip->v[1].x = SDL_roundf(chip->v[1].x);
+    chip->v[1].y = SDL_roundf(chip->v[1].y);
+
     if ((chip->v[0].x >= 384.0f) || (chip->v[1].x < 0.0f) || (chip->v[0].y >= 224.0f) || (chip->v[1].y < 0.0f)) {
         return 1;
     }
