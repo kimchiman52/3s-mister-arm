@@ -976,7 +976,7 @@ grep -v '^[[:space:]]*show-fps[[:space:]]*=' '${remote_config_path}.tmp' >'${rem
 mv '${remote_config_path}.tmp.showfps' '${remote_config_path}.tmp'
 printf '%s\n' 'show-fps = false' >>'${remote_config_path}.tmp'
 mv '${remote_config_path}.tmp' '${remote_config_path}'
-SDL_VIDEODRIVER=dummy SDL_VIDEO_DRIVER=dummy SDL_RENDER_DRIVER=software SDL_AUDIODRIVER=dummy \
+SDL_VIDEO_DRIVER=dummy SDL_RENDER_DRIVER=software SDL_AUDIO_DRIVER=dummy \
   '${remote_root}/scripts/run-3sx.sh' --perf-capture '${frames}' --scene '${scene}' --perf-output '${remote_output_path}' \
   ${extra_app_args} \
   >'${remote_log_path}' 2>&1

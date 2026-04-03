@@ -97,6 +97,7 @@ stage_release() {
         --hps-binary "${HPS_BINARY}" \
         --core-rbf "${CORE_RBF}"
 
+    mkdir -p "${STAGE_DIR}/games/3sx/resources"
     cp "${INSTALL_README_TEMPLATE}" "${STAGE_DIR}/${README_BASENAME}"
     validate_release_stage "${STAGE_DIR}"
 }

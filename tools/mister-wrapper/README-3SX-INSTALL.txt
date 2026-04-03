@@ -23,12 +23,10 @@ Add this section to /media/fat/MiSTer.ini if it is not already present:
 
 [3SX]
 main=MiSTer_3SX
+video_mode=8    ; HDMI users: forces 1080p60 to avoid sync issues
 
-[3SX]
-main=MiSTer_3SX
-
-If your global MiSTer settings have vga_scaler=1, add vga_scaler=0
-to the [3SX] section to override it.
+If video_mode is already set in your global INI settings, the per-core
+value here will override it for 3SX only.
 
 Launch
 ------
