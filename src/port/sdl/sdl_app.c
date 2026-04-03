@@ -29,6 +29,13 @@
 
 #include <stdarg.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#if defined(PORT_MISTER)
+#include <unistd.h>
+#include <fcntl.h>
+#include <errno.h>
+#endif
 
 typedef enum ScaleMode {
     SCALEMODE_NATIVE,
@@ -9175,18 +9182,79 @@ void SDLApp_CycleGhostCountMax(void) {
     backend_logf("Ghost count max: %d", ghost_count_max);
 }
 
+#if defined(PORT_MISTER)
+static bool sysfs_write(const char* path, const char* value) {
+    int fd = open(path, O_WRONLY);
+    if (fd < 0) {
+        backend_logf("ARM clock: open(%s) failed: %s", path, strerror(errno));
+        return false;
+    }
+    size_t len = strlen(value);
+    ssize_t written = write(fd, value, len);
+    close(fd);
+    if (written < 0 || (size_t)written != len) {
+        backend_logf("ARM clock: write(%s, \"%s\") failed: %s", path, value, strerror(errno));
+        return false;
+    }
+    return true;
+}
+
+static bool sysfs_read(const char* path, char* buf, size_t buf_size) {
+    int fd = open(path, O_RDONLY);
+    if (fd < 0) return false;
+    ssize_t n = read(fd, buf, buf_size - 1);
+    close(fd);
+    if (n <= 0) return false;
+    /* strip trailing whitespace */
+    while (n > 0 && (buf[n - 1] == '\n' || buf[n - 1] == ' ')) n--;
+    buf[n] = '\0';
+    return true;
+}
+#endif
+
 static void apply_arm_clock(int mode) {
+#if defined(PORT_MISTER)
     const char* freq = "800000";
     if (mode == 1) freq = "1000000";
     else if (mode == 2) freq = "1200000";
 
-    FILE* f = fopen("/sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq", "w");
-    if (f != NULL) {
-        fprintf(f, "%s\n", freq);
-        fclose(f);
+    /* Pin governor to performance so it doesn't downclock during frame sleep */
+    sysfs_write("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor", "performance");
+
+    /* Determine direction: kernel rejects min > max and max < min, so we must
+       write in the right order depending on whether we're raising or lowering. */
+    char cur_max[32] = {};
+    bool have_cur = sysfs_read("/sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq",
+                               cur_max, sizeof(cur_max));
+    long target = strtol(freq, NULL, 10);
+    long current = have_cur ? strtol(cur_max, NULL, 10) : 0;
+
+    if (target >= current) {
+        /* Raising: max first (so min write doesn't exceed old max) */
+        if (!sysfs_write("/sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq", freq)) {
+            backend_logf("ARM clock: failed to set scaling_max_freq (driver may not be loaded)");
+            return;
+        }
+        sysfs_write("/sys/devices/system/cpu/cpu0/cpufreq/scaling_min_freq", freq);
     } else {
-        backend_logf("ARM clock: failed to open cpufreq sysfs (driver may not be loaded)");
+        /* Lowering: min first (so max write doesn't go below old min) */
+        sysfs_write("/sys/devices/system/cpu/cpu0/cpufreq/scaling_min_freq", freq);
+        if (!sysfs_write("/sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq", freq)) {
+            backend_logf("ARM clock: failed to set scaling_max_freq");
+            return;
+        }
     }
+
+    /* Read back and verify */
+    char readback[32] = {};
+    if (sysfs_read("/sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq", readback, sizeof(readback))) {
+        if (strcmp(readback, freq) != 0) {
+            backend_logf("ARM clock: WARNING scaling_max_freq readback mismatch: wanted %s, got %s", freq, readback);
+        }
+    }
+#else
+    (void)mode;
+#endif
 }
 
 static const char* arm_clock_mode_label(int mode) {
@@ -9255,6 +9323,9 @@ void SDLApp_CycleArmClock(void) {
         SDL_free(config_path);
     }
     apply_arm_clock(arm_clock_mode);
+    /* Reset frame deadline so pacing re-aligns with the FPGA's vblank poll.
+       Without this, the phase relationship after a clock change is random. */
+    frame_deadline = 0;
     backend_logf("ARM clock: %s", arm_clock_mode_label(arm_clock_mode));
 }
 

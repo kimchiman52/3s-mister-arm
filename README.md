@@ -134,11 +134,14 @@ missing `SF33RD.AFS`.
 
 ### Overclock
 
-The game generally runs at 60 FPS, but will slow down during heavy
-situations — animated stage backgrounds, super art activations, and other
-effect-heavy scenes. Overclocking the ARM to **1200 MHz** via the in-game
-OSD menu will get the game closer to 60 FPS in those situations. The
-setting persists across launches — you only need to set it once.
+The ARM CPU defaults to **1200 MHz** out of the box. The game generally
+runs at 60 FPS, but may slow down during heavy
+situations (animated stage backgrounds, super art activations, and other
+effect-heavy scenes). The overclock keeps the game closer to 60 FPS in
+those situations.
+
+You can cycle between 800 MHz (stock), 1000 MHz, and 1200 MHz via the
+in-game OSD menu. The setting persists across launches.
 
 ---
 
