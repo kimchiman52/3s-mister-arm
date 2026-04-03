@@ -179,19 +179,15 @@ Prerequisites:
 - Quartus install: `/home/sb.linux/intelFPGA_lite/17.0/` (8.5 GB, inside the VM)
 - The Mac project directory is bind-mounted into the VM by Colima
 
-**IMPORTANT: The Quartus compile takes 30-60 minutes.** The `colima ssh` session
-will time out and kill the build if you run Quartus directly via SSH. Always use
-`nohup` to detach the build inside the VM, then poll for completion.
+**IMPORTANT:** The `colima ssh` session will time out and kill the build if you
+run Quartus directly via SSH. Always use `nohup` to detach the build inside the
+VM, then poll for completion.
 
 Quick build (detached, survives SSH disconnect):
 
 ```bash
-# 1. Prepare source (fast, can run inline)
-colima ssh --profile quartus2 -- bash -lc '
-  export PATH="/home/sb.linux/intelFPGA_lite/17.0/quartus/bin:$PATH"
-  cd /Users/sb/Developer/3sx-mister
-  tools/mister-wrapper/build-core.sh --prepare-source
-'
+# 1. Prepare source (run on the Mac side)
+tools/mister-wrapper/build-core.sh --prepare-source
 
 # 2. Launch Quartus compile detached with nohup
 colima ssh --profile quartus2 -- bash -c '
@@ -199,7 +195,10 @@ colima ssh --profile quartus2 -- bash -c '
     export PATH=\"/home/sb.linux/intelFPGA_lite/17.0/quartus/bin:\$PATH\"
     cd /Users/sb/Developer/3sx-mister/build/mister-wrapper-core/src
     quartus_sh --flow compile 3SX -c 3SX > /tmp/quartus_build.log 2>&1
-    echo EXIT_CODE=\$? >> /tmp/quartus_build.log
+    if [ ! -f output_files/3SX.rbf ] && [ -f output_files/3SX.sof ]; then
+      quartus_cpf -c output_files/3SX.sof output_files/3SX.rbf
+    fi
+    echo BUILD_DONE >> /tmp/quartus_build.log
   " &
   echo "Build launched, PID=$!"
 '
@@ -226,13 +225,20 @@ Output: `build/mister-wrapper-core/src/output_files/3SX.rbf` (visible from both 
 
 Previous builds are also cached inside the VM at `/home/sb.linux/build/mister-wrapper-core/`.
 
-Synthesis takes ~30-60 minutes on the x86_64-emulated Colima VM.
+Build time: ~30-60 minutes (x86_64-emulated Colima QEMU VM).
 
-Deploy to MiSTer:
+Deploy the FPGA core to MiSTer using `misterctl.sh`:
 
 ```bash
-scp build/mister-wrapper-core/3SX.rbf root@192.168.1.171:/media/fat/_Other/3SX.rbf
-# password: 1
+MISTER_HOST=192.168.1.171 MISTER_USER=root MISTER_PASSWORD=1 \
+  tools/mister/misterctl.sh deploy-wrapper --src build/mister-wrapper-core --artifacts-only
+```
+
+Or manually (core only):
+
+```bash
+sshpass -p 1 scp build/mister-wrapper-core/src/output_files/3SX.rbf \
+  root@192.168.1.171:/media/fat/_Other/3SX.rbf
 ```
 
 ## Package

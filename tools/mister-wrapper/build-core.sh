@@ -14,7 +14,6 @@ CONTAINER_ROOT="${MISTER_WRAPPER_CORE_CONTAINER_ROOT:-/workspaces/3sx-mister}"
 CONTAINER_BUILD_SRC_DIR="${CONTAINER_ROOT}/build/mister-wrapper-core/src"
 MISTER_QUARTUS_INSTALLER_DIR="${MISTER_QUARTUS_INSTALLER_DIR:-}"
 QUARTUS_LICENSE_SPEC="${MISTER_QUARTUS_LICENSE_FILE:-${LM_LICENSE_FILE:-}}"
-FAST_BUILD=0
 SOURCE_DIR=""
 UPSTREAM_FILE=""
 TEMPLATE_BASENAME=""
@@ -23,15 +22,10 @@ CONF_STR_TOKEN=""
 usage() {
     cat <<EOF
 Usage:
-  tools/mister-wrapper/build-core.sh [--seed menu] [--fast] --check-env
-  tools/mister-wrapper/build-core.sh [--seed menu] [--fast] --prepare-source
+  tools/mister-wrapper/build-core.sh [--seed menu] --check-env
+  tools/mister-wrapper/build-core.sh [--seed menu] --prepare-source
   tools/mister-wrapper/build-core.sh [--seed menu] --build-image
-  tools/mister-wrapper/build-core.sh [--seed menu] [--fast]
-
-Options:
-  --fast    Use relaxed optimization settings for faster compile (~50-70%
-            reduction). Trades ~10-20% fMAX for compile speed. Suitable for
-            dev iteration; use full optimization for release builds.
+  tools/mister-wrapper/build-core.sh [--seed menu]
 
 Purpose:
   Build the minimal FPGA wrapper core that produces ${PROJECT_NAME}.rbf from the
@@ -123,15 +117,6 @@ prepare_source() {
         mv "${BUILD_SRC_DIR}/${TEMPLATE_BASENAME}.sdc" "${BUILD_SRC_DIR}/${PROJECT_NAME}.sdc"
     fi
 
-    if [ "${FAST_BUILD}" -eq 1 ]; then
-        local fast_overlay="${SOURCE_DIR}/${TEMPLATE_BASENAME}-fast.qsf"
-        if [ -f "${fast_overlay}" ]; then
-            cat "${fast_overlay}" >> "${BUILD_SRC_DIR}/${PROJECT_NAME}.qsf"
-            echo "fast_overlay=${fast_overlay}"
-        else
-            echo "warning: --fast requested but ${fast_overlay} not found, using default settings" >&2
-        fi
-    fi
 
     ruby -e '
 project = ARGV[4]
@@ -237,8 +222,8 @@ while [ "$#" -gt 0 ]; do
             CORE_SEED="$2"
             shift 2
             ;;
-        --fast)
-            FAST_BUILD=1
+        --fast|--release)
+            echo "note: $1 is no longer needed (fast settings are now the default)" >&2
             shift
             ;;
         --check-env|--prepare-source|--build-image)
@@ -263,7 +248,6 @@ if [ "${COMMAND}" = "--check-env" ]; then
     fi
     echo "planned_project=${BUILD_SRC_DIR}/${PROJECT_NAME}.qpf"
     echo "planned_output=${OUTPUT_DIR}/${PROJECT_NAME}.rbf"
-    echo "fast_build=${FAST_BUILD}"
     mode="$(selected_build_mode || true)"
     if [ "${mode}" = "local" ]; then
         echo "build_mode=local"

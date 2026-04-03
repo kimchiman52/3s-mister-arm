@@ -109,14 +109,8 @@ Then add this section to `/media/fat/MiSTer.ini`:
 ```ini
 [3SX]
 main=MiSTer_3SX
-vga_scaler=0
 video_mode=8    ; HDMI users: forces 1080p60 to avoid sync issues
 ```
-
-If your global MiSTer settings already have `vga_scaler=0`, you can omit it
-from the `[3SX]` section. But if your global setting is `vga_scaler=1`, the
-per-core override is **required** — the native video path requires the scaler
-to be off.
 
 If `video_mode` is already set in your global INI settings, the per-core
 value here will override it for 3SX only.
@@ -219,7 +213,7 @@ This matters because:
 - **Zero scaler latency.** The asynchronous MiSTer scaler (ascal) adds 1–2
   frames of buffering. The native path outputs pixels directly to the DAC as
   they're read from DDR3, with latency measured in scanlines, not frames.
-- **CRT-correct timing.** The FPGA generates 15 kHz NTSC timing at 59.5995 Hz
+- **CRT-correct timing.** The FPGA generates 15 kHz NTSC timing at 59.5993 Hz
   (matching the original CPS3 hardware) from a dedicated PLL. CRTs lock to
   this signal directly.
 - **S-Video / composite / RGB.** The `yc_out` module encodes luma + chroma for
@@ -234,7 +228,7 @@ ARM renders 384x224 ARGB8888 (SDL3 software renderer)
     → native_video_reader.sv reads DDR3 in 96-beat bursts
       → Decodes RGB565 → RGB888, pushes into dcfifo line buffer
         → native_video_timing.sv outputs pixels at ce_pix rate
-          → VGA_R/G/B/HS/VS/DE signals on clk_vid (~8 MHz pixel clock)
+          → VGA_R/G/B/HS/VS/DE signals on clk_vid (~7.8 MHz pixel clock)
             → OSD composites on top (vga_osd, always in signal path)
               → yc_out (S-Video) or vga_out (RGB) → DAC → display
 ```
@@ -258,12 +252,12 @@ No SPI handshake needed per frame.
 | Parameter | Value |
 |-----------|-------|
 | Active pixels | 384 × 224 |
-| H total | 500 |
+| H total | 501 |
 | V total | 262 |
-| Refresh rate | 59.5995 Hz |
-| Pixel clock | 7.8125 MHz |
-| H frequency | 15.625 kHz |
-| PLL config | Integer-N, 50 MHz × 5/8 = 31.25 MHz (÷4 for pixel clock) |
+| Refresh rate | 59.5993 Hz |
+| Pixel clock | 7.8231 MHz |
+| H frequency | 15.615 kHz |
+| PLL config | Integer-N, dedicated video PLL: 50 MHz × 92/(7×21) = 31.2925 MHz (÷4 for pixel clock) |
 
 HDMI output still works via the standard MiSTer scaler path (`video_mixer` →
 ascal). CRT users get the direct analog path; HDMI users get the scaler. No
@@ -326,9 +320,12 @@ includes:
   clock recovery, and all MiSTer-specific platform code in `src/port/`.
 - **HPS wrapper** — `threesx_main.cpp`, `threesx_wrapper.cpp`,
   `threesx_core_context.cpp`, and all `Main_MiSTer` overlay modifications.
-- **PLL design** — The integer-N PLL producing 31.25 MHz (50 MHz × 5/8),
-  divided by 4 for a 7.8125 MHz pixel clock. Multiple configurations were
-  tested and reverted before arriving at stable values.
+- **PLL design** — A dedicated integer-N video PLL producing 31.2925 MHz
+  (50 MHz × 92/(7×21)), divided by 4 for a 7.8231 MHz pixel clock. This PLL
+  is separate from the 100 MHz system PLL, which decouples video timing
+  from system-clock constraints and pins CPS3's native 59.5993 Hz refresh
+  rate. Multiple configurations were tested and reverted before arriving
+  at stable values.
 - **S-Video / analog video** — Blanking distribution, YC encoding fixes, and
   the native video bypass that makes analog CRT output work without the
   scaler.

@@ -3023,11 +3023,11 @@ static void set_yc_mode()
 		float fps = current_video_info.vtime ? (100000000.f / current_video_info.vtime) : 0.f;
 		int pal = fps < 55.f;
 		double CLK_REF = (pal || (cfg.ntsc_mode == 1)) ? 4.43361875f : (cfg.ntsc_mode == 2) ? 3.575611f : 3.579545f;
-		/* When native video is active, CLK_VIDEO is 31.25 MHz (PLL outclk_2,
-		   VCO=1000 MHz, C2=32). The YC encoder runs at 31.25 MHz, giving
-		   ~8.7 samples per 3.58 MHz chroma cycle for clean S-Video color. */
+		/* When native video is active, CLK_VIDEO is 31.2925 MHz from a
+		   dedicated video PLL (50 MHz * 92/7 / 21). The YC encoder runs at
+		   this frequency, giving ~8.7 samples per 3.58 MHz chroma cycle. */
 		const double core_CLK_VIDEO = native_video_enabled
-			? 31.25  // PLL: M=20, C2=32
+			? 31.292517  // dedicated pll_video: 50 * 92/7 / 21
 			: (current_video_info.ctime * 100.f / current_video_info.ptime);
 		double CLK_VIDEO = core_CLK_VIDEO;
 		const double output_CLK_VIDEO = v_cur.Fpix;
@@ -3037,7 +3037,7 @@ static void set_yc_mode()
 		const bool fb_native_analog_auto = output_clock_available
 			&& vga_fb_enabled
 			&& native_analog_tv_mode;
-		if (fb_native_analog_auto)
+		if (fb_native_analog_auto && !native_video_enabled)
 		{
 			CLK_VIDEO = output_CLK_VIDEO;
 		}
@@ -3072,6 +3072,8 @@ static void set_yc_mode()
 		int COLORBURST_START = (int)(3.7f * (CLK_VIDEO / CLK_REF));
 		int COLORBURST_END = (int)(9.0f * (CLK_VIDEO / CLK_REF)) + COLORBURST_START;
 		int COLORBURST_RANGE = (COLORBURST_START << 10) | COLORBURST_END;
+
+
 
 		char yc_key[64];
 		char yc_key_expand[64];

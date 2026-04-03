@@ -1,0 +1,2 @@
+set_global_assignment -library "pll_video" -name VERILOG_FILE [file join $::quartus(qip_path) "pll_video/pll_video.v"]
+set_global_assignment -library "pll_video" -name VERILOG_FILE [file join $::quartus(qip_path) "pll_video/pll_video_0002.v"]

@@ -186,7 +186,7 @@ assign {SD_SCK, SD_MOSI, SD_CS} = 'Z;
 
 assign DDRAM_CLK = clk_sys;
 
-// CE_PIXEL: divide CLK_VIDEO (31.25 MHz) by 4 for ~7.8125 MHz effective pixel rate.
+// CE_PIXEL: divide CLK_VIDEO (31.2925 MHz) by 4 for ~7.8231 MHz effective pixel rate.
 // Integer divider = zero pixel timing jitter.
 reg [1:0] ce_div;
 wire ce_pix_div4 = (ce_div == 2'd0);
@@ -244,16 +244,21 @@ hps_io #(.CONF_STR(CONF_STR)) hps_io
 
 ////////////////////   CLOCKS   ///////////////////
 wire locked, clk_sys;
-wire clk_20m;   // PLL outclk_1 (unused, kept for future use)
-wire clk_pix;   // PLL outclk_2: 31.25 MHz (CLK_VIDEO, divided by 4 for 7.8125 MHz pixels)
+wire clk_pix;   // Dedicated video PLL: 31.2925 MHz (CLK_VIDEO, divided by 4 for 7.8231 MHz pixels)
 pll pll
 (
 	.refclk(CLK_50M),
 	.rst(0),
 	.outclk_0(clk_sys),
-	.outclk_1(clk_20m),
-	.outclk_2(clk_pix),
 	.locked(locked)
+);
+
+pll_video pll_vid
+(
+	.refclk(CLK_50M),
+	.rst(0),
+	.outclk_0(clk_pix),
+	.locked()
 );
 
 assign CLK_VIDEO = clk_pix;
@@ -554,7 +559,7 @@ always @(posedge CLK_VIDEO) begin
 	ce_pix <= ce_pix_div4;
 
 	if(ce_pix) begin
-		if(hc == 499) begin
+		if(hc == 500) begin
 			hc <= 0;
 			if(vc == (PAL ? (forced_scandoubler ? 623 : 311) : (forced_scandoubler ? 523 : 261))) begin
 				vc <= 0;
@@ -580,7 +585,7 @@ always @(posedge CLK_VIDEO) begin
 	if (hc == 384) HBlank <= 1;
 		else if (hc == 0) HBlank <= 0;
 
-	if (hc == 410) begin
+	if (hc == 412) begin
 		HSync <= 1;
 
 		if(PAL) begin
@@ -599,7 +604,7 @@ always @(posedge CLK_VIDEO) begin
 		end
 	end
 
-	if (hc == 448) HSync <= 0;
+	if (hc == 450) HSync <= 0;
 end
 
 reg  [7:0] cos_out;

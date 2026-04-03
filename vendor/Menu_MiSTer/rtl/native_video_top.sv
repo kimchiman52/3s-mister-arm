@@ -3,8 +3,8 @@
 //  Native Video Top-Level Wrapper
 //
 //  Instantiates the timing generator and DDR3 reader, providing a clean
-//  interface to menu.sv. Runs on CLK_VIDEO (31.25 MHz) with integer
-//  divide-by-4 ce_pix for 7.8125 MHz effective pixel rate.
+//  interface to menu.sv. Runs on CLK_VIDEO (31.2925 MHz) with integer
+//  divide-by-4 ce_pix for 7.8231 MHz effective pixel rate.
 //
 //  Copyright (C) 2026 3SX Project
 //  Licensed under GNU General Public License v2+
@@ -13,8 +13,8 @@
 
 module native_video_top (
     input  wire        clk_sys,          // system clock (100 MHz) for DDR3
-    input  wire        clk_vid,          // video clock (20 MHz, CLK_VIDEO)
-    input  wire        ce_pix,           // fractional pixel enable (~8.065 MHz)
+    input  wire        clk_vid,          // video clock (31.2925 MHz, CLK_VIDEO)
+    input  wire        ce_pix,           // pixel enable (divide-by-4, ~7.8231 MHz)
     input  wire        reset,
 
     // DDR3 Avalon-MM master
@@ -44,7 +44,7 @@ module native_video_top (
 
 // =========================================================================
 // Timing Generator
-// Runs on clk_vid (20 MHz) with ce_pix gating at ~8.065 MHz.
+// Runs on clk_vid (31.2925 MHz) with ce_pix gating at ~7.8231 MHz.
 // H/V counters only advance on ce_pix pulses.
 // =========================================================================
 wire        tim_hsync;
@@ -76,7 +76,7 @@ native_video_timing timing (
 // =========================================================================
 // DDR3 Pixel Reader
 // Write side: ddr_clk (100 MHz)
-// Read side: clk_vid (20 MHz) with ce_pix gating at ~8.065 MHz
+// Read side: clk_vid (31.2925 MHz) with ce_pix gating at ~7.8231 MHz
 // =========================================================================
 wire [7:0]  reader_r, reader_g, reader_b;
 wire        reader_frame_ready;

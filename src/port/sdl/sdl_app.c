@@ -9378,12 +9378,10 @@ static bool init_window() {
             native_video_writer_enabled = NativeVideoWriter_Init();
             backend_logf("Native video writer: %s", native_video_writer_enabled ? "enabled" : "disabled");
 
-            /* Match ARM frame pacing to the FPGA's actual pixel-clock-derived
-               refresh rate (NV_TARGET_FPS = 59.6374 Hz) instead of the CPS3
-               original (59.5995 Hz).  The 31.25 MHz integer-N PLL cannot
-               produce 59.5995 Hz with any integer H/V total combination, so
-               the ARM must adapt.  The 0.063% speed increase is imperceptible
-               (~0.06 s over a 99-second round). */
+            /* Match ARM frame pacing to the FPGA's pixel-clock-derived refresh
+               rate.  With the dedicated video PLL (31.2925 MHz, 501x262),
+               NV_TARGET_FPS = TARGET_FPS = 59.59949 Hz (0.00015 Hz error),
+               so no compensation is needed. */
             if (native_video_writer_enabled) {
                 target_frame_time_ns = (Uint64)(1000000000.0 / NV_TARGET_FPS);
                 backend_logf("Native video: frame pacing adjusted to %.4f Hz (FPGA PLL rate)", NV_TARGET_FPS);
@@ -10048,8 +10046,8 @@ void SDLApp_EndFrame() {
     // Do frame pacing
     //
     // When native video is active, target_frame_time_ns is set to match the
-    // FPGA's PLL-derived refresh rate (NV_TARGET_FPS = 59.6374 Hz) rather than
-    // the CPS3 original (59.5995 Hz).  This keeps ARM frame delivery in phase
+    // FPGA's PLL-derived refresh rate (NV_TARGET_FPS = 59.59949 Hz, essentially
+    // equal to the CPS3 original).  This keeps ARM frame delivery in phase
     // with the FPGA's vblank poll, preventing periodic frame repeats from the
     // DDR3 double-buffer stale-frame path.
     //

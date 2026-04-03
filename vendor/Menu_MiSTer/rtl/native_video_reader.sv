@@ -19,7 +19,7 @@
 //
 //  Clock domains:
 //    Write side: ddr_clk (clk_sys, 100 MHz)
-//    Read side:  clk_vid (CLK_VIDEO, 31.25 MHz) with ce_pix divide-by-4 (7.8125 MHz)
+//    Read side:  clk_vid (CLK_VIDEO, 31.2925 MHz) with ce_pix divide-by-4 (7.8231 MHz)
 //
 //  Copyright (C) 2026 3SX Project
 //  Licensed under GNU General Public License v2+
@@ -40,8 +40,8 @@ module native_video_reader (
     output wire        ddr_we,          // DDRAM_WE (unused, tie to 0)
 
     // Pixel output (clk_vid domain)
-    input  wire        clk_vid,         // video clock (20 MHz, CLK_VIDEO)
-    input  wire        ce_pix,          // fractional pixel enable (~8.065 MHz)
+    input  wire        clk_vid,         // video clock (31.2925 MHz, CLK_VIDEO)
+    input  wire        ce_pix,          // pixel enable (divide-by-4, ~7.8231 MHz)
     input  wire        reset,           // active high reset
 
     // Timing inputs (from native_video_timing, clk_vid domain)
@@ -93,8 +93,8 @@ end
 wire enable_ddr = enable_sync[1];
 
 // =========================================================================
-// CDC: new_frame from clk_vid (20 MHz, ce_pix gated) to ddr_clk (100 MHz)
-// Pulse is one 20 MHz cycle wide (50 ns), safely captured at 100 MHz.
+// CDC: new_frame from clk_vid (31.2925 MHz, ce_pix gated) to ddr_clk (100 MHz)
+// Pulse is one 31.2925 MHz cycle wide (~32 ns), safely captured at 100 MHz.
 // =========================================================================
 reg [1:0] new_frame_sync;
 always @(posedge ddr_clk) begin
@@ -106,7 +106,7 @@ end
 wire new_frame_ddr = ~new_frame_sync[1] & new_frame_sync[0];
 
 // =========================================================================
-// CDC: new_line from clk_vid (20 MHz, ce_pix gated) to ddr_clk (100 MHz)
+// CDC: new_line from clk_vid (31.2925 MHz, ce_pix gated) to ddr_clk (100 MHz)
 // =========================================================================
 reg [1:0] new_line_sync;
 always @(posedge ddr_clk) begin
@@ -370,7 +370,7 @@ end
 // Dual-Clock FIFO (Altera dcfifo primitive)
 // 64-bit wide: stores raw DDR3 beats (4 RGB565 pixels per entry)
 // Write side: ddr_clk (100 MHz) -- 1 beat per ddr_dout_ready cycle
-// Read side: clk_vid (20 MHz) -- pop 1 entry per 4 ce_pix cycles
+// Read side: clk_vid (31.2925 MHz) -- pop 1 entry per 4 ce_pix cycles
 // Depth 256: holds ~2.67 scanlines (96 beats/line * 2.67 = 256)
 // =========================================================================
 wire [63:0] fifo_rd_data;
