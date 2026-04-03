@@ -68,12 +68,6 @@ static s16 adpcm_coefs[5][2] = {
 };
 static u64 active_voices = 0;
 
-// Clock recovery: dynamic rate control to prevent ARM/FPGA drift
-#define SPU_CR_TARGET_BYTES (2048 * 2 * sizeof(s16))  // ~42.7ms at 48kHz stereo S16
-#define SPU_CR_MAX_DELTA    0.005                       // 0.5% max pitch adjustment
-#define SPU_CR_UPDATE_INTERVAL 192                      // Update every 192 callbacks (~4ms each = ~768ms)
-                                                        // Smooths out per-callback jitter
-static int cr_update_counter = 0;
 
 static int SPU_Ctz64(u64 mask) {
 #if defined(__clang__) || defined(__GNUC__)
@@ -190,6 +184,7 @@ static void SPU_VoiceDecode(struct SPU_Voice* v) {
     header = ram[v->nax & ~0x7];
     shift = header & 0xf;
     filter = (header >> 4) & 7;
+    if (filter > 4) filter = 0;
 
     for (int i = 0; i < 4; i++) {
         s32 sample = (s16)((data & 0xF) << 12);
@@ -262,7 +257,7 @@ static void SPU_VoiceTick(struct SPU_Voice* v, s32* output) {
     decInc = v->counter >> 12;
     v->counter &= 0xfff;
     v->decRPos = (v->decRPos + decInc) & 0x1f;
-    v->decLeft -= decInc;
+    v->decLeft = (decInc > v->decLeft) ? 0 : v->decLeft - decInc;
 
     sample = SPU_ApplyVolume(sample, v->envx);
     output[0] = SPU_ApplyVolume(sample, v->voll);
@@ -328,6 +323,15 @@ void SPU_VoiceStart(int vnum, u32 start_addr) {
     v->adsr_phase = ADSR_PHASE_ATTACK;
     SPU_VoiceCacheADSR(v);
 
+    v->decodeHist[0] = 0;
+    v->decodeHist[1] = 0;
+    v->counter = 0;
+    v->decRPos = 0;
+    v->decWPos = 0;
+    v->decLeft = 0;
+    v->endx = false;
+    memset(v->decodeBuf, 0, sizeof(v->decodeBuf));
+
     header = ram[v->nax & ~0x7];
     if ((header >> 10) & 1) {
         v->lsa = v->nax;
@@ -369,24 +373,6 @@ void SPU_SDL_CB(void* user, SDL_AudioStream* stream_cb, int additional_amount, i
         SDL_PutAudioStreamData(stream_cb, outbuf, (batch_count * sizeof(s16)) << 1);
         samples_per_channel -= batch_count;
     }
-
-    // Clock recovery: adjust frequency ratio to keep buffer near target fill level.
-    // This compensates for ARM/FPGA clock drift that otherwise causes latency to
-    // grow over time. Runs every SPU_CR_UPDATE_INTERVAL callbacks to smooth noise.
-    cr_update_counter++;
-    if (cr_update_counter >= SPU_CR_UPDATE_INTERVAL) {
-        cr_update_counter = 0;
-        int queued = SDL_GetAudioStreamQueued(stream_cb);
-        if (queued >= 0) {
-            double fill_level = (double)queued / (double)SPU_CR_TARGET_BYTES;
-            if (fill_level > 1.0) fill_level = 1.0;
-            double ratio = (1.0 - SPU_CR_MAX_DELTA) + 2.0 * fill_level * SPU_CR_MAX_DELTA;
-            // Clamp to [1 - max_delta, 1 + max_delta]
-            if (ratio < 1.0 - SPU_CR_MAX_DELTA) ratio = 1.0 - SPU_CR_MAX_DELTA;
-            if (ratio > 1.0 + SPU_CR_MAX_DELTA) ratio = 1.0 + SPU_CR_MAX_DELTA;
-            SDL_SetAudioStreamFrequencyRatio(stream_cb, (float)ratio);
-        }
-    }
 }
 
 static void nullcb() {}
@@ -414,7 +400,6 @@ void SPU_Init(void (*cb)()) {
     }
 
     SDL_ResumeAudioStreamDevice(stream);
-    cr_update_counter = 0;
 }
 
 void SPU_Upload(u32 dst, void* src, u32 size) {
