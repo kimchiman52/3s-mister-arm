@@ -73,7 +73,7 @@ static int frame_tiles_copied = 0;
 static bool frame_full_copy_fallback = false;
 static FBDevPresenter_FrameStats frame_stats = { 0 };
 static bool fps_overlay_enabled = false;
-static char fps_overlay_text[16] = "";
+static char fps_overlay_text[128] = "";
 static Uint32* fps_overlay_pixels = NULL;
 static int fps_overlay_width = 0;
 static int fps_overlay_height = 0;
@@ -82,7 +82,7 @@ static int fps_overlay_cached_draw_y = 0;
 static int fps_overlay_cached_text_x = 0;
 static int fps_overlay_cached_text_y = 0;
 static int fps_overlay_cached_scale = 0;
-static char fps_overlay_cached_text[16] = "";
+static char fps_overlay_cached_text[64] = "";
 static bool fps_overlay_cache_valid = false;
 #if ENABLE_PERF_TELEMETRY
 static bool frame_stats_breakdown_enabled = false;
@@ -833,6 +833,21 @@ static Uint8 overlay_glyph_row(char ch, int row) {
     static const Uint8 glyph_F[5] = { 0x7, 0x4, 0x6, 0x4, 0x4 };
     static const Uint8 glyph_P[5] = { 0x6, 0x5, 0x6, 0x4, 0x4 };
     static const Uint8 glyph_S[5] = { 0x7, 0x4, 0x7, 0x1, 0x7 };
+    static const Uint8 glyph_U[5] = { 0x5, 0x5, 0x5, 0x5, 0x7 };
+    static const Uint8 glyph_R[5] = { 0x6, 0x5, 0x6, 0x5, 0x5 };
+    static const Uint8 glyph_T[5] = { 0x7, 0x2, 0x2, 0x2, 0x2 };
+    static const Uint8 glyph_G[5] = { 0x7, 0x4, 0x5, 0x5, 0x7 };
+    static const Uint8 glyph_D[5] = { 0x6, 0x5, 0x5, 0x5, 0x6 };
+    static const Uint8 glyph_r[5] = { 0x0, 0x5, 0x6, 0x4, 0x4 };
+    static const Uint8 glyph_t[5] = { 0x4, 0x7, 0x4, 0x4, 0x3 };
+    static const Uint8 glyph_s[5] = { 0x0, 0x3, 0x2, 0x6, 0x0 };
+    static const Uint8 glyph_lbracket[5] = { 0x6, 0x4, 0x4, 0x4, 0x6 };
+    static const Uint8 glyph_rbracket[5] = { 0x3, 0x1, 0x1, 0x1, 0x3 };
+    static const Uint8 glyph_colon[5] = { 0x0, 0x2, 0x0, 0x2, 0x0 };
+    static const Uint8 glyph_dot[5] = { 0x0, 0x0, 0x0, 0x0, 0x2 };
+    static const Uint8 glyph_eq[5] = { 0x0, 0x7, 0x0, 0x7, 0x0 };
+    static const Uint8 glyph_lparen[5] = { 0x2, 0x4, 0x4, 0x4, 0x2 };
+    static const Uint8 glyph_rparen[5] = { 0x2, 0x1, 0x1, 0x1, 0x2 };
 
     const Uint8* glyph = glyph_blank;
     switch (ch) {
@@ -874,6 +889,51 @@ static Uint8 overlay_glyph_row(char ch, int row) {
         break;
     case 'S':
         glyph = glyph_S;
+        break;
+    case 'U':
+        glyph = glyph_U;
+        break;
+    case 'R':
+        glyph = glyph_R;
+        break;
+    case 'T':
+        glyph = glyph_T;
+        break;
+    case 'G':
+        glyph = glyph_G;
+        break;
+    case 'D':
+        glyph = glyph_D;
+        break;
+    case 'r':
+        glyph = glyph_r;
+        break;
+    case 't':
+        glyph = glyph_t;
+        break;
+    case 's':
+        glyph = glyph_s;
+        break;
+    case '[':
+        glyph = glyph_lbracket;
+        break;
+    case ']':
+        glyph = glyph_rbracket;
+        break;
+    case '(':
+        glyph = glyph_lparen;
+        break;
+    case ')':
+        glyph = glyph_rparen;
+        break;
+    case ':':
+        glyph = glyph_colon;
+        break;
+    case '.':
+        glyph = glyph_dot;
+        break;
+    case '=':
+        glyph = glyph_eq;
         break;
     case ' ':
     default:

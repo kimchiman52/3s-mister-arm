@@ -823,6 +823,9 @@ int SDLGameRenderer_GetDirtyTileCount(void);
 int SDLGameRenderer_GetDirtyTileTotal(void);
 const Uint8* SDLGameRenderer_GetDirtyTileMap(int* out_cols, int* out_rows, int* out_tile_size);
 void SDLGameRenderer_GetFrameStats(SDLGameRenderer_FrameStats* out_stats);
+Uint64 SDLGameRenderer_GetTextureRefreshNs(void);
+Uint64 SDLGameRenderer_GetSortNs(void);
+Uint64 SDLGameRenderer_GetRasterNs(void);
 
 /* SDL backend implementations of CRS_Renderer_ interface */
 void SDLGameRenderer_CreateTexture(unsigned int th);
@@ -852,6 +855,10 @@ void SDLGameRenderer_SetTaskSource(SDLGameRenderer_TaskSource source);
 void SDLGameRenderer_DrawTexturedQuad(const Sprite* sprite, unsigned int color);
 void SDLGameRenderer_DrawSprite(const Sprite* sprite, unsigned int color);
 void SDLGameRenderer_DrawSprite2(const Sprite2* sprite2);
+void SDLGameRenderer_DrawSprites2Batch(const Sprite2* sprites,
+                                       int sprite_count,
+                                       const signed char* up_flags,
+                                       int up_flag_count);
 void SDLGameRenderer_DrawSolidQuad(const Quad* quad, unsigned int color);
 bool SDLGameRenderer_DrawInputHistoryGlyph(float x, float y, float z, SDLGameRenderer_InputHistoryGlyph glyph,
                                            unsigned int color);

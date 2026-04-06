@@ -26,4 +26,9 @@ void draw_box(f64 arg0, f64 arg1, f64 arg2, f64 arg3, u32 col, u32 attr, s16 pri
 u16 seqsGetSprMax();
 s16 getObjectHeight(u16 cgnum);
 
+#include <stdint.h>
+uint64_t Mtrans_GetPerfTexRenewNs(void);
+uint64_t Mtrans_GetPerfSprSubmitNs(void);
+void Mtrans_ResetPerfTimers(void);
+
 #endif

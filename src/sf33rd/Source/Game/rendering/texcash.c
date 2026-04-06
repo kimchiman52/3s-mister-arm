@@ -15,6 +15,7 @@
 #include "sf33rd/Source/Game/system/ramcnt.h"
 #include "sf33rd/Source/Game/system/sys_sub.h"
 #include "structs.h"
+#include "mts_hash.h"
 
 #include <SDL3/SDL.h>
 
@@ -225,6 +226,33 @@ void init_texcash_2nd(s16 ix) {
         }
     }
 
+    if (mts[ix].hash16) {
+        PatternState* mc16 = mts[ix].mltcsh16;
+        mts_hash_clear(mts[ix].hash16);
+        mts[ix].free16.top = -1;
+        for (i = 0; i < mts[ix].mltnum16; i++) {
+            if (mc16[i].cs.code == (u32)-1) {
+                mts_freelist_push(&mts[ix].free16, (u16)i);
+            } else {
+                mts_hash_insert(mts[ix].hash16, mc16[i].cs.code,
+                                (u32)(u16)mc16[i].state, (u16)i);
+            }
+        }
+    }
+    if (mts[ix].hash32) {
+        PatternState* mc32 = mts[ix].mltcsh32;
+        mts_hash_clear(mts[ix].hash32);
+        mts[ix].free32.top = -1;
+        for (i = 0; i < mts[ix].mltnum32; i++) {
+            if (mc32[i].cs.code == (u32)-1) {
+                mts_freelist_push(&mts[ix].free32, (u16)i);
+            } else {
+                mts_hash_insert(mts[ix].hash32, mc32[i].cs.code,
+                                (u32)(u16)mc32[i].state, (u16)i);
+            }
+        }
+    }
+
     cp->kazu = 0;
 
     for (i = 0; i < 0x40; i++) {
@@ -256,7 +284,7 @@ void texture_cash_update() {
                             } while (1);
                         }
 
-                        update_with_tpu_free(mts[num].mltcsh16, mts[num].mltcsh32);
+                        update_with_tpu_free(&mts[num]);
                     }
                 }
             } else {
@@ -273,38 +301,51 @@ void texture_cash_update() {
     disp_texcash_free_area();
 }
 
-void update_with_tpu_free(PatternState* mc16, PatternState* mc32) {
+void update_with_tpu_free(MultiTexture* mt) {
+    PatternState* mc16 = mt->mltcsh16;
+    PatternState* mc32 = mt->mltcsh32;
     s16 i;
+    s16 slot;
 
     for (i = 0; i < tpu_free->x16; i++) {
-        mc16[tpu_free->x16_used[i]].time -= 1;
-        if (mc16[tpu_free->x16_used[i]].time < 0) {
+        slot = tpu_free->x16_used[i];
+        mc16[slot].time -= 1;
+        if (mc16[slot].time < 0) {
             Debug_w[11] = 1;
             do {
                 disp_texcash_free_area();
-                flPrintL(2, 3, "CACHE MISS x16 : %3d", tpu_free->x16_used[i]);
+                flPrintL(2, 3, "CACHE MISS x16 : %3d", slot);
                 njWaitVSync_with_N();
             } while (1);
         }
 
-        if (mc16[tpu_free->x16_used[i]].time <= 0) {
-            mc16[tpu_free->x16_used[i]].cs.code = -1;
+        if (mc16[slot].time <= 0) {
+            if (mt->hash16) {
+                mts_hash_remove(mt->hash16, mc16[slot].cs.code,
+                                (u32)(u16)mc16[slot].state, mc16);
+            }
+            mc16[slot].cs.code = -1;
         }
     }
 
     for (i = 0; i < tpu_free->x32; i++) {
-        mc32[tpu_free->x32_used[i]].time -= 1;
-        if (mc32[tpu_free->x32_used[i]].time < 0) {
+        slot = tpu_free->x32_used[i];
+        mc32[slot].time -= 1;
+        if (mc32[slot].time < 0) {
             Debug_w[11] = 1;
             do {
                 disp_texcash_free_area();
-                flPrintL(2, 3, "CACHE MISS x32 : %3d", tpu_free->x32_used[i]);
+                flPrintL(2, 3, "CACHE MISS x32 : %3d", slot);
                 njWaitVSync_with_N();
             } while (1);
         }
 
-        if (mc32[tpu_free->x32_used[i]].time <= 0) {
-            mc32[tpu_free->x32_used[i]].cs.code = -1;
+        if (mc32[slot].time <= 0) {
+            if (mt->hash32) {
+                mts_hash_remove(mt->hash32, mc32[slot].cs.code,
+                                (u32)(u16)mc32[slot].state, mc32);
+            }
+            mc32[slot].cs.code = -1;
         }
     }
 }
@@ -325,6 +366,7 @@ void make_texcash_work(s16 ix) {
     // I guess the devs were too lazy to make another var or something.
     uintptr_t page16;
     u32 page32;
+    u16 bc16, bc32;
 
     if (mts_ok[ix].be) {
         if ((Test_ramcnt_key(mts_ok[ix].key0) != 0) && (Test_ramcnt_key(mts_ok[ix].key1) != 0)) {
@@ -357,8 +399,15 @@ void make_texcash_work(s16 ix) {
         mts[ix].mltcshtime32 = mts_base[ix].life32;
 
         if ((mts[ix].ext = ((mts_base[ix].mode & 0x2000) != 0))) {
+            bc16 = mts_hash_bucket_count((u32)mts[ix].mltnum16);
+            bc32 = mts_hash_bucket_count((u32)mts[ix].mltnum32);
             memreq = (mts[ix].mltnum16 * 8) + (mts[ix].mltnum32 * 8) + sizeof(PatternCollection) +
-                     sizeof(TexturePoolFree) + sizeof(TexturePoolUsed);
+                     sizeof(TexturePoolFree) + sizeof(TexturePoolUsed) +
+                     sizeof(MtsCacheIndex) * 2 +
+                     (bc16 * sizeof(u16)) +
+                     (bc32 * sizeof(u16)) +
+                     (mts[ix].mltnum16 * sizeof(u16)) +
+                     (mts[ix].mltnum32 * sizeof(u16));
             mts_ok[ix].key0 = Pull_ramcnt_key(memreq, mts_base[ix].type, 0, 0);
             adrs = (u8*)Get_ramcnt_address(mts_ok[ix].key0);
             mts[ix].mltcsh16 = (PatternState*)adrs;
@@ -370,17 +419,66 @@ void make_texcash_work(s16 ix) {
             mts[ix].tpf = (TexturePoolFree*)adrs;
             adrs += sizeof(TexturePoolFree);
             mts[ix].tpu = (TexturePoolUsed*)adrs;
+            adrs += sizeof(TexturePoolUsed);
+            mts[ix].hash16 = (MtsCacheIndex*)adrs;
+            adrs += sizeof(MtsCacheIndex);
+            mts[ix].hash32 = (MtsCacheIndex*)adrs;
+            adrs += sizeof(MtsCacheIndex);
+            mts[ix].hash16->buckets = (u16*)adrs;
+            mts[ix].hash16->bucket_count = bc16;
+            mts[ix].hash16->bucket_mask = bc16 - 1;
+            adrs += bc16 * sizeof(u16);
+            mts[ix].hash32->buckets = (u16*)adrs;
+            mts[ix].hash32->bucket_count = bc32;
+            mts[ix].hash32->bucket_mask = bc32 - 1;
+            adrs += bc32 * sizeof(u16);
+            mts[ix].free16.slots = (u16*)adrs;
+            adrs += mts[ix].mltnum16 * sizeof(u16);
+            mts[ix].free32.slots = (u16*)adrs;
+            /* adrs += mts[ix].mltnum32 * sizeof(u16); -- not needed, last item */
+            mts_hash_clear(mts[ix].hash16);
+            mts_hash_clear(mts[ix].hash32);
+            mts[ix].free16.top = -1;
+            mts[ix].free32.top = -1;
             SDL_zerop(mts[ix].cpat);
             SDL_zerop(mts[ix].tpf);
             SDL_zerop(mts[ix].tpu);
             init_texcash_2nd(ix);
         } else {
-            memreq = mts[ix].mltnum16 * 8 + mts[ix].mltnum32 * 8;
+            bc16 = mts_hash_bucket_count((u32)mts[ix].mltnum16);
+            bc32 = mts_hash_bucket_count((u32)mts[ix].mltnum32);
+            memreq = mts[ix].mltnum16 * 8 + mts[ix].mltnum32 * 8 +
+                     sizeof(MtsCacheIndex) * 2 +
+                     (bc16 * sizeof(u16)) +
+                     (bc32 * sizeof(u16)) +
+                     (mts[ix].mltnum16 * sizeof(u16)) +
+                     (mts[ix].mltnum32 * sizeof(u16));
             mts_ok[ix].key0 = Pull_ramcnt_key(memreq, mts_base[ix].type, 0, 0);
             adrs = (u8*)Get_ramcnt_address(mts_ok[ix].key0);
             mts[ix].mltcsh16 = (PatternState*)adrs;
             adrs += mts[ix].mltnum16 * 8;
             mts[ix].mltcsh32 = (PatternState*)adrs;
+            adrs += mts[ix].mltnum32 * 8;
+            mts[ix].hash16 = (MtsCacheIndex*)adrs;
+            adrs += sizeof(MtsCacheIndex);
+            mts[ix].hash32 = (MtsCacheIndex*)adrs;
+            adrs += sizeof(MtsCacheIndex);
+            mts[ix].hash16->buckets = (u16*)adrs;
+            mts[ix].hash16->bucket_count = bc16;
+            mts[ix].hash16->bucket_mask = bc16 - 1;
+            adrs += bc16 * sizeof(u16);
+            mts[ix].hash32->buckets = (u16*)adrs;
+            mts[ix].hash32->bucket_count = bc32;
+            mts[ix].hash32->bucket_mask = bc32 - 1;
+            adrs += bc32 * sizeof(u16);
+            mts[ix].free16.slots = (u16*)adrs;
+            adrs += mts[ix].mltnum16 * sizeof(u16);
+            mts[ix].free32.slots = (u16*)adrs;
+            /* adrs += mts[ix].mltnum32 * sizeof(u16); -- not needed, last item */
+            mts_hash_clear(mts[ix].hash16);
+            mts_hash_clear(mts[ix].hash32);
+            mts[ix].free16.top = -1;
+            mts[ix].free32.top = -1;
         }
 
         mts[ix].mltbuf = texcash_melt_buffer;
@@ -424,6 +522,19 @@ void clear_texcash_work(s16 ix) {
         for (i = 0; i < mts[ix].mltnum32; i++) {
             mts[ix].mltcsh32[i].time = 0;
             mts[ix].mltcsh32[i].cs.code = -1;
+        }
+
+        if (mts[ix].hash16) {
+            mts_hash_clear(mts[ix].hash16);
+            mts[ix].free16.top = mts[ix].mltnum16 - 1;
+            for (i = 0; i < mts[ix].mltnum16; i++)
+                mts[ix].free16.slots[i] = (u16)(mts[ix].mltnum16 - 1 - i);
+        }
+        if (mts[ix].hash32) {
+            mts_hash_clear(mts[ix].hash32);
+            mts[ix].free32.top = mts[ix].mltnum32 - 1;
+            for (i = 0; i < mts[ix].mltnum32; i++)
+                mts[ix].free32.slots[i] = (u16)(mts[ix].mltnum32 - 1 - i);
         }
 
         if (mts[ix].ext) {

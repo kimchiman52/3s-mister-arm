@@ -20,6 +20,10 @@ void Renderer_SetTexture(unsigned int th);
 void Renderer_DrawTexturedQuad(const Sprite* sprite, unsigned int color);
 void Renderer_DrawSprite(const Sprite* sprite, unsigned int color);
 void Renderer_DrawSprite2(const Sprite2* sprite2);
+void Renderer_DrawSprites2Batch(const Sprite2* sprites,
+                                int sprite_count,
+                                const signed char* up_flags,
+                                int up_flag_count);
 void Renderer_DrawSolidQuad(const Quad* quad, unsigned int color);
 
 #endif

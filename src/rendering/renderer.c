@@ -113,6 +113,32 @@ void Renderer_DrawSprite2(const Sprite2* sprite2) {
 #endif
 }
 
+void Renderer_DrawSprites2Batch(const Sprite2* sprites,
+                                int sprite_count,
+                                const signed char* up_flags,
+                                int up_flag_count) {
+#if defined(TARGET_PSP) || defined(TARGET_3DS)
+    /* Non-SDL targets: fall back to individual per-sprite calls.
+       These targets are not active for MiSTer but kept for completeness. */
+    unsigned int keep = 0;
+    for (int i = 0; i < sprite_count; i++) {
+        if ((int)sprites[i].id < up_flag_count && up_flags[sprites[i].id]) {
+            if (keep != sprites[i].tex_code) {
+                keep = sprites[i].tex_code;
+                Renderer_SetTexture(keep);
+            }
+#if defined(TARGET_PSP)
+            PSPRenderer_DrawSprite2(&sprites[i]);
+#else
+            CTRRenderer_DrawSprite2(&sprites[i]);
+#endif
+        }
+    }
+#else
+    SDLGameRenderer_DrawSprites2Batch(sprites, sprite_count, up_flags, up_flag_count);
+#endif
+}
+
 void Renderer_DrawSolidQuad(const Quad* quad, unsigned int color) {
 #if defined(TARGET_PSP)
     PSPRenderer_DrawSolidQuad(quad, color);

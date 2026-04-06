@@ -24,6 +24,8 @@
 #include "sf33rd/Source/Game/system/sys_sub.h"
 #include "sf33rd/Source/Game/system/work_sys.h"
 #include "sf33rd/Source/Game/ui/sc_sub.h"
+#include "sf33rd/Source/Game/game.h"
+#include "sf33rd/Source/Game/rendering/mtrans.h"
 
 #include <SDL3/SDL.h>
 
@@ -85,7 +87,34 @@ static bool show_fps_overlay = false;
 static Uint64 fps_overlay_window_start_ns = 0;
 static Uint32 fps_overlay_window_frames = 0;
 static int fps_overlay_value = 0;
-static char fps_overlay_label[16] = "";
+static char fps_overlay_label[128] = "";
+
+/* Rolling-average timing breakdown for the FPS overlay (accumulated over the
+   same 250 ms measurement window used for the FPS counter). */
+static Uint64 fps_overlay_update_ns_accum = 0;
+static Uint64 fps_overlay_texrefresh_ns_accum = 0;
+static Uint64 fps_overlay_gamelogic_ns_accum = 0;
+static Uint64 fps_overlay_spritesubmit_ns_accum = 0;
+static Uint64 fps_overlay_dispatch_ns_accum = 0;
+static Uint64 fps_overlay_dtexrenew_ns_accum = 0;
+static Uint64 fps_overlay_dsprsubmit_ns_accum = 0;
+static Uint64 fps_overlay_render_ns_accum = 0;
+static Uint64 fps_overlay_sort_ns_accum = 0;
+static Uint64 fps_overlay_raster_ns_accum = 0;
+static Uint64 fps_overlay_present_ns_accum = 0;
+static Uint64 fps_overlay_frame_ns_accum = 0;
+static double fps_overlay_avg_update_ms = 0.0;
+static double fps_overlay_avg_texrefresh_ms = 0.0;
+static double fps_overlay_avg_gamelogic_ms = 0.0;
+static double fps_overlay_avg_spritesubmit_ms = 0.0;
+static double fps_overlay_avg_dispatch_ms = 0.0;
+static double fps_overlay_avg_dtexrenew_ms = 0.0;
+static double fps_overlay_avg_dsprsubmit_ms = 0.0;
+static double fps_overlay_avg_render_ms = 0.0;
+static double fps_overlay_avg_sort_ms = 0.0;
+static double fps_overlay_avg_raster_ms = 0.0;
+static double fps_overlay_avg_present_ms = 0.0;
+static double fps_overlay_avg_frame_ms = 0.0;
 
 static Uint64 frame_deadline = 0;
 static Uint64 frame_counter = 0;
@@ -9000,6 +9029,30 @@ static void init_show_fps_overlay(void) {
     fps_overlay_window_frames = 0;
     fps_overlay_value = 0;
     fps_overlay_label[0] = '\0';
+    fps_overlay_update_ns_accum = 0;
+    fps_overlay_texrefresh_ns_accum = 0;
+    fps_overlay_gamelogic_ns_accum = 0;
+    fps_overlay_spritesubmit_ns_accum = 0;
+    fps_overlay_dispatch_ns_accum = 0;
+    fps_overlay_dtexrenew_ns_accum = 0;
+    fps_overlay_dsprsubmit_ns_accum = 0;
+    fps_overlay_render_ns_accum = 0;
+    fps_overlay_sort_ns_accum = 0;
+    fps_overlay_raster_ns_accum = 0;
+    fps_overlay_present_ns_accum = 0;
+    fps_overlay_frame_ns_accum = 0;
+    fps_overlay_avg_update_ms = 0.0;
+    fps_overlay_avg_texrefresh_ms = 0.0;
+    fps_overlay_avg_gamelogic_ms = 0.0;
+    fps_overlay_avg_spritesubmit_ms = 0.0;
+    fps_overlay_avg_dispatch_ms = 0.0;
+    fps_overlay_avg_dtexrenew_ms = 0.0;
+    fps_overlay_avg_dsprsubmit_ms = 0.0;
+    fps_overlay_avg_render_ms = 0.0;
+    fps_overlay_avg_sort_ms = 0.0;
+    fps_overlay_avg_raster_ms = 0.0;
+    fps_overlay_avg_present_ms = 0.0;
+    fps_overlay_avg_frame_ms = 0.0;
 }
 
 static void publish_fps_overlay_label(void) {
@@ -9011,10 +9064,45 @@ static void publish_fps_overlay_label(void) {
         return;
     }
 
-    SDL_snprintf(fps_overlay_label, sizeof(fps_overlay_label), "%d FPS", fps_overlay_value);
+    if (fps_overlay_avg_frame_ms > 0.0) {
+        SDL_snprintf(fps_overlay_label, sizeof(fps_overlay_label),
+                     "%d U:%.1f(T%.1f G%.1f S%.1f D%.1f[t%.1f s%.1f]) R:%.1f(r%.1f) =%.1f",
+                     fps_overlay_value,
+                     fps_overlay_avg_update_ms,
+                     fps_overlay_avg_texrefresh_ms,
+                     fps_overlay_avg_gamelogic_ms,
+                     fps_overlay_avg_spritesubmit_ms,
+                     fps_overlay_avg_dispatch_ms,
+                     fps_overlay_avg_dtexrenew_ms,
+                     fps_overlay_avg_dsprsubmit_ms,
+                     fps_overlay_avg_render_ms,
+                     fps_overlay_avg_raster_ms,
+                     fps_overlay_avg_frame_ms);
+    } else {
+        SDL_snprintf(fps_overlay_label, sizeof(fps_overlay_label), "%d FPS", fps_overlay_value);
+    }
     if (fbdev_presenter_enabled) {
         FBDevPresenter_SetFPSOverlayText(fps_overlay_label);
     }
+}
+
+static void fps_overlay_accumulate_timing(Uint64 update_ns, Uint64 texrefresh_ns,
+                                          Uint64 gamelogic_ns, Uint64 spritesubmit_ns, Uint64 dispatch_ns,
+                                          Uint64 dtexrenew_ns, Uint64 dsprsubmit_ns,
+                                          Uint64 render_ns, Uint64 sort_ns, Uint64 raster_ns,
+                                          Uint64 present_ns, Uint64 frame_work_ns) {
+    fps_overlay_update_ns_accum += update_ns;
+    fps_overlay_texrefresh_ns_accum += texrefresh_ns;
+    fps_overlay_gamelogic_ns_accum += gamelogic_ns;
+    fps_overlay_spritesubmit_ns_accum += spritesubmit_ns;
+    fps_overlay_dispatch_ns_accum += dispatch_ns;
+    fps_overlay_dtexrenew_ns_accum += dtexrenew_ns;
+    fps_overlay_dsprsubmit_ns_accum += dsprsubmit_ns;
+    fps_overlay_render_ns_accum += render_ns;
+    fps_overlay_sort_ns_accum += sort_ns;
+    fps_overlay_raster_ns_accum += raster_ns;
+    fps_overlay_present_ns_accum += present_ns;
+    fps_overlay_frame_ns_accum += frame_work_ns;
 }
 
 static void update_fps_overlay(Uint64 frame_end_ns) {
@@ -9036,12 +9124,38 @@ static void update_fps_overlay(Uint64 frame_end_ns) {
 
     const int measured_fps =
         (int)((((double)fps_overlay_window_frames * 1000000000.0) / (double)elapsed_ns) + 0.5);
+
+    /* Snapshot timing averages from the measurement window. */
+    if (fps_overlay_window_frames > 0) {
+        const double n = (double)fps_overlay_window_frames;
+        fps_overlay_avg_update_ms = ((double)fps_overlay_update_ns_accum / n) / 1e6;
+        fps_overlay_avg_texrefresh_ms = ((double)fps_overlay_texrefresh_ns_accum / n) / 1e6;
+        fps_overlay_avg_gamelogic_ms = ((double)fps_overlay_gamelogic_ns_accum / n) / 1e6;
+        fps_overlay_avg_spritesubmit_ms = ((double)fps_overlay_spritesubmit_ns_accum / n) / 1e6;
+        fps_overlay_avg_dispatch_ms = ((double)fps_overlay_dispatch_ns_accum / n) / 1e6;
+        fps_overlay_avg_dtexrenew_ms = ((double)fps_overlay_dtexrenew_ns_accum / n) / 1e6;
+        fps_overlay_avg_dsprsubmit_ms = ((double)fps_overlay_dsprsubmit_ns_accum / n) / 1e6;
+        fps_overlay_avg_render_ms = ((double)fps_overlay_render_ns_accum / n) / 1e6;
+        fps_overlay_avg_sort_ms = ((double)fps_overlay_sort_ns_accum / n) / 1e6;
+        fps_overlay_avg_raster_ms = ((double)fps_overlay_raster_ns_accum / n) / 1e6;
+        fps_overlay_avg_present_ms = ((double)fps_overlay_present_ns_accum / n) / 1e6;
+        fps_overlay_avg_frame_ms = ((double)fps_overlay_frame_ns_accum / n) / 1e6;
+    }
+    fps_overlay_update_ns_accum = 0;
+    fps_overlay_texrefresh_ns_accum = 0;
+    fps_overlay_gamelogic_ns_accum = 0;
+    fps_overlay_spritesubmit_ns_accum = 0;
+    fps_overlay_dispatch_ns_accum = 0;
+    fps_overlay_dtexrenew_ns_accum = 0;
+    fps_overlay_dsprsubmit_ns_accum = 0;
+    fps_overlay_render_ns_accum = 0;
+    fps_overlay_sort_ns_accum = 0;
+    fps_overlay_raster_ns_accum = 0;
+    fps_overlay_present_ns_accum = 0;
+    fps_overlay_frame_ns_accum = 0;
+
     fps_overlay_window_start_ns = frame_end_ns;
     fps_overlay_window_frames = 0;
-
-    if ((measured_fps == fps_overlay_value) && (fps_overlay_label[0] != '\0')) {
-        return;
-    }
 
     fps_overlay_value = measured_fps;
     publish_fps_overlay_label();
@@ -9052,6 +9166,30 @@ static void reset_fps_overlay_state(void) {
     fps_overlay_window_frames = 0;
     fps_overlay_value = 0;
     fps_overlay_label[0] = '\0';
+    fps_overlay_update_ns_accum = 0;
+    fps_overlay_texrefresh_ns_accum = 0;
+    fps_overlay_gamelogic_ns_accum = 0;
+    fps_overlay_spritesubmit_ns_accum = 0;
+    fps_overlay_dispatch_ns_accum = 0;
+    fps_overlay_dtexrenew_ns_accum = 0;
+    fps_overlay_dsprsubmit_ns_accum = 0;
+    fps_overlay_render_ns_accum = 0;
+    fps_overlay_sort_ns_accum = 0;
+    fps_overlay_raster_ns_accum = 0;
+    fps_overlay_present_ns_accum = 0;
+    fps_overlay_frame_ns_accum = 0;
+    fps_overlay_avg_update_ms = 0.0;
+    fps_overlay_avg_texrefresh_ms = 0.0;
+    fps_overlay_avg_gamelogic_ms = 0.0;
+    fps_overlay_avg_spritesubmit_ms = 0.0;
+    fps_overlay_avg_dispatch_ms = 0.0;
+    fps_overlay_avg_dtexrenew_ms = 0.0;
+    fps_overlay_avg_dsprsubmit_ms = 0.0;
+    fps_overlay_avg_render_ms = 0.0;
+    fps_overlay_avg_sort_ms = 0.0;
+    fps_overlay_avg_raster_ms = 0.0;
+    fps_overlay_avg_present_ms = 0.0;
+    fps_overlay_avg_frame_ms = 0.0;
 
     if (fbdev_presenter_enabled) {
         FBDevPresenter_SetFPSOverlayText(NULL);
@@ -10034,6 +10172,24 @@ void SDLApp_EndFrame() {
     const bool full_copy_fallback = fbdev_presenter_enabled ? FBDevPresenter_UsedFullCopyFallback() : false;
     const double dirty_hit_rate =
         presenter_tiles_total > 0 ? 1.0 - ((double)presenter_tiles_copied / (double)presenter_tiles_total) : 0.0;
+
+    /* Feed per-frame timing into the FPS overlay rolling accumulator so the
+       overlay can display averaged component-breakdown values. */
+    if (show_fps_overlay) {
+        const Uint64 texrefresh_ns = SDLGameRenderer_GetTextureRefreshNs();
+        const Uint64 gamelogic_ns = Game_GetPerfGameLogicNs();
+        const Uint64 spritesubmit_ns = Game_GetPerfSpriteSubmitNs();
+        const Uint64 dispatch_ns = Game_GetPerfDispatchNs();
+        const Uint64 dtexrenew_ns = Mtrans_GetPerfTexRenewNs();
+        const Uint64 dsprsubmit_ns = Mtrans_GetPerfSprSubmitNs();
+        const Uint64 sort_ns = SDLGameRenderer_GetSortNs();
+        const Uint64 raster_ns = SDLGameRenderer_GetRasterNs();
+        fps_overlay_accumulate_timing(update_ns, texrefresh_ns,
+                                      gamelogic_ns, spritesubmit_ns, dispatch_ns,
+                                      dtexrenew_ns, dsprsubmit_ns,
+                                      render_ns, sort_ns, raster_ns,
+                                      present_ns, frame_work_ns);
+    }
 #endif
 
     // Cleanup

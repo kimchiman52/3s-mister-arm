@@ -98,20 +98,20 @@ static bool ppgKeepRenewDirtyRectByTextureHandle[FL_TEXTURE_MAX] = { false };
 static bool ppgTrackRenewDirtyTileMaskByTextureHandle[FL_TEXTURE_MAX] = { false };
 
 static bool ppgShouldKeepRenewDirtyRectForSeqs(s32 ix_num_first, s32 slot_index, s32 texture_total) {
-    // The seq-specific renew-dirty fast path is currently causing visible corruption
-    // in submenu fonts and HUD counters on real MiSTer hardware. Keep the tracking
-    // scaffold in place, but fall back to the safer full-refresh behavior for now.
     (void)ix_num_first;
     (void)slot_index;
-    (void)texture_total;
-    return false;
+    /* Enable dirty-rect tracking for character/effect sprite entries (5+ pages).
+       Lower page counts (1-4) include UI, menu, and options textures that
+       showed corruption when dirty tracking was enabled (see ee8269bb). */
+    return texture_total >= 5;
 }
 
 static bool ppgShouldTrackRenewDirtyTileMaskForSeqs(s32 ix_num_first, s32 slot_index, s32 texture_total) {
     (void)ix_num_first;
     (void)slot_index;
-    (void)texture_total;
-    return false;
+    /* Tile-mask tracking is more granular than dirty-rect tracking. Enable for
+       the same character/effect sprite entries (5+ pages). */
+    return texture_total >= 5;
 }
 
 static void ppgConfigureRenewDirtyTracking(u32 texture_handle, s32 ix_num_first, s32 slot_index, s32 texture_total) {
@@ -1196,7 +1196,24 @@ s32 ppgRenewTexChunkSeqs(Texture* tch) {
             flLockTexture(NULL, texture_handle, &bits, 3);
             dstRam = bits.ptr;
             srcRam = (s32*)(tch->srcAdrs + tch->srcSize * i);
-            SDL_memmove(dstRam, srcRam, tch->srcSize);
+
+            /* Opt 3: Partial texture upload via dirty rect. */
+            if (have_renew_dirty_rect && (bits.pitch > 0) && (renew_dirty_rect.h > 0)) {
+                const ssize_t row_start_byte = (ssize_t)renew_dirty_rect.y * (ssize_t)bits.pitch;
+                const ssize_t row_count_bytes = (ssize_t)renew_dirty_rect.h * (ssize_t)bits.pitch;
+                if ((row_start_byte >= 0) &&
+                    (row_count_bytes > 0) &&
+                    ((row_start_byte + row_count_bytes) <= tch->srcSize)) {
+                    SDL_memmove((u8*)dstRam + row_start_byte,
+                                (const u8*)srcRam + row_start_byte,
+                                (size_t)row_count_bytes);
+                } else {
+                    SDL_memmove(dstRam, srcRam, tch->srcSize);
+                }
+            } else {
+                SDL_memmove(dstRam, srcRam, tch->srcSize);
+            }
+
             flUnlockTexture(texture_handle);
             if (have_renew_dirty_rect) {
                 // Replace the pre-invalidation compare bbox with the exact direct-write renew bbox.

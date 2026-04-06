@@ -22,6 +22,7 @@
 #include "sf33rd/Source/Game/rendering/texgroup.h"
 #include "sf33rd/Source/Game/system/work_sys.h"
 #include "structs.h"
+#include "mts_hash.h"
 
 #include <SDL3/SDL.h>
 
@@ -1595,41 +1596,44 @@ void seqsBeforeProcess() {
 #endif
 }
 
+static Uint64 perf_texrenew_ns = 0;
+static Uint64 perf_sprsubmit_ns = 0;
+
+uint64_t Mtrans_GetPerfTexRenewNs(void) { return perf_texrenew_ns; }
+uint64_t Mtrans_GetPerfSprSubmitNs(void) { return perf_sprsubmit_ns; }
+void Mtrans_ResetPerfTimers(void) { perf_texrenew_ns = 0; perf_sprsubmit_ns = 0; }
+
 void seqsAfterProcess() {
     s32 i;
-    u32 keep = 0;
-    u32 val = 0;
 
     if ((Debug_w[0x27] != 3) && (seqs_w.sprTotal != 0)) {
-        for (i = 0; i < 24; i++) {
-            if (seqs_w.up[i]) {
-                if (Debug_w[0x22]) {
-                    if (ppgCheckTextureDataBe(mts[i].texList.tex) == 0) {
+        {
+            const Uint64 _t0 = SDL_GetTicksNS();
+            for (i = 0; i < 24; i++) {
+                if (seqs_w.up[i]) {
+                    if (Debug_w[0x22]) {
+                        if (ppgCheckTextureDataBe(mts[i].texList.tex) == 0) {
+                            seqs_w.up[i] = 0;
+                        }
+                    } else if (ppgRenewTexChunkSeqs(mts[i].texList.tex) == 0) {
                         seqs_w.up[i] = 0;
                     }
-                } else if (ppgRenewTexChunkSeqs(mts[i].texList.tex) == 0) {
-                    seqs_w.up[i] = 0;
                 }
             }
+            perf_texrenew_ns += SDL_GetTicksNS() - _t0;
         }
 
         if (seqs_w.sprMax < seqs_w.sprTotal) {
             seqs_w.sprMax = seqs_w.sprTotal;
         }
 
-        for (i = 0; i < seqs_w.sprTotal; i++) {
-            if (seqs_w.up[seqs_w.chip[i].id]) {
-                val = seqs_w.chip[i].tex_code;
-
-                if (keep != val) {
-                    keep = val;
-                    flSetRenderState(FLRENDER_TEXSTAGE0, val);
-                }
-
-                SDLGameRenderer_SetTaskSource(SDL_GAME_RENDERER_TASK_SOURCE_MTRANS);
-                Renderer_DrawSprite2(&seqs_w.chip[i]);
-                SDLGameRenderer_SetTaskSource(SDL_GAME_RENDERER_TASK_SOURCE_UNKNOWN);
-            }
+        {
+            const Uint64 _t0 = SDL_GetTicksNS();
+            Renderer_DrawSprites2Batch(seqs_w.chip,
+                                       seqs_w.sprTotal,
+                                       seqs_w.up,
+                                       24);
+            perf_sprsubmit_ns += SDL_GetTicksNS() - _t0;
         }
     }
 }
@@ -1707,182 +1711,328 @@ s32 seqsStoreChip(f32 x, f32 y, s32 w, s32 h, s32 gix, s32 code, s32 attr, s32 a
 }
 
 static s32 get_mltbuf16(MultiTexture* mt, u32 code, u32 palt, s32* ret) {
-    s32 i;
-    s32 b = -1;
+    MtsCacheIndex* idx = mt->hash16;
     PatternState* mc = mt->mltcsh16;
 
-    i = mt->mltnum16;
-
-    while (1) {
-        if ((mc->cs.code == code) && (mc->state == palt)) {
-            mc->time = mt->mltcshtime16;
-            *ret = mt->mltnum16 - i;
+    /* Fast path: hash lookup */
+    if (idx) {
+        s32 slot = mts_hash_lookup(idx, code, palt, mc);
+        if (slot >= 0) {
+            mc[slot].time = mt->mltcshtime16;
+            *ret = slot;
             return 0;
         }
-
-        if ((mc->cs.code == -1) && (b < 0)) {
-            b = i;
+        slot = mts_freelist_pop(&mt->free16);
+        if (slot >= 0) {
+            mc[slot].time = mt->mltcshtime16;
+            mc[slot].state = palt;
+            mc[slot].cs.code = code;
+            mts_hash_insert(idx, code, palt, (u16)slot);
+            *ret = slot;
+            return 1;
         }
+        /* free list empty — fall through to linear scan */
+    }
 
-        mc++;
-        i -= 1;
+    /* Fallback: original linear scan */
+    {
+        s32 i;
+        s32 b = -1;
+        PatternState* mcp = mc;
 
-        if (i <= 0) {
-            if (b >= 0) {
-                b = mt->mltnum16 - b;
-                mt->mltcsh16[b].time = mt->mltcshtime16;
-                mt->mltcsh16[b].state = palt;
-                mt->mltcsh16[b].cs.code = code;
-                *ret = b;
-                return 1;
+        i = mt->mltnum16;
+
+        while (1) {
+            if ((mcp->cs.code == code) && (mcp->state == palt)) {
+                mcp->time = mt->mltcshtime16;
+                *ret = mt->mltnum16 - i;
+                if (idx) mts_hash_insert(idx, code, palt, (u16)(mt->mltnum16 - i));
+                return 0;
             }
 
-            // CG cache is full. 16x16: %d\n
-            flLogOut("ＣＧキャッシュが一杯になりました。１６×１６ : %d\n", mt->id);
-            while (1) {}
+            if ((mcp->cs.code == -1) && (b < 0)) {
+                b = i;
+            }
+
+            mcp++;
+            i -= 1;
+
+            if (i <= 0) {
+                if (b >= 0) {
+                    b = mt->mltnum16 - b;
+                    mc[b].time = mt->mltcshtime16;
+                    mc[b].state = palt;
+                    mc[b].cs.code = code;
+                    if (idx) mts_hash_insert(idx, code, palt, (u16)b);
+                    *ret = b;
+                    return 1;
+                }
+
+                // CG cache is full. 16x16: %d\n
+                flLogOut("ＣＧキャッシュが一杯になりました。１６×１６ : %d\n", mt->id);
+                while (1) {}
+            }
         }
     }
 }
 
 static s32 get_mltbuf32(MultiTexture* mt, u32 code, u32 palt, s32* ret) {
-    s32 i;
-    s32 b = -1;
+    MtsCacheIndex* idx = mt->hash32;
     PatternState* mc = mt->mltcsh32;
 
-    i = mt->mltnum32;
-
-    while (1) {
-        if ((mc->cs.code == code) && (mc->state == palt)) {
-            mc->time = mt->mltcshtime32;
-            *ret = mt->mltnum32 - i;
+    /* Fast path: hash lookup */
+    if (idx) {
+        s32 slot = mts_hash_lookup(idx, code, palt, mc);
+        if (slot >= 0) {
+            mc[slot].time = mt->mltcshtime32;
+            *ret = slot;
             return 0;
         }
-
-        if ((mc->cs.code == -1) && (b < 0)) {
-            b = i;
+        slot = mts_freelist_pop(&mt->free32);
+        if (slot >= 0) {
+            mc[slot].time = mt->mltcshtime32;
+            mc[slot].state = palt;
+            mc[slot].cs.code = code;
+            mts_hash_insert(idx, code, palt, (u16)slot);
+            *ret = slot;
+            return 1;
         }
+        /* free list empty — fall through to linear scan */
+    }
 
-        mc++;
-        i -= 1;
+    /* Fallback: original linear scan */
+    {
+        s32 i;
+        s32 b = -1;
+        PatternState* mcp = mc;
 
-        if (i <= 0) {
-            if (b >= 0) {
-                b = mt->mltnum32 - b;
-                mt->mltcsh32[b].time = mt->mltcshtime32;
-                mt->mltcsh32[b].state = palt;
-                mt->mltcsh32[b].cs.code = code;
-                *ret = b;
-                return 1;
+        i = mt->mltnum32;
+
+        while (1) {
+            if ((mcp->cs.code == code) && (mcp->state == palt)) {
+                mcp->time = mt->mltcshtime32;
+                *ret = mt->mltnum32 - i;
+                if (idx) mts_hash_insert(idx, code, palt, (u16)(mt->mltnum32 - i));
+                return 0;
             }
 
-            // CG cache is full. 32x32 : %d\n
-            flLogOut("ＣＧキャッシュが一杯になりました。３２×３２ : %d\n", mt->id);
-            while (1) {}
+            if ((mcp->cs.code == -1) && (b < 0)) {
+                b = i;
+            }
+
+            mcp++;
+            i -= 1;
+
+            if (i <= 0) {
+                if (b >= 0) {
+                    b = mt->mltnum32 - b;
+                    mc[b].time = mt->mltcshtime32;
+                    mc[b].state = palt;
+                    mc[b].cs.code = code;
+                    if (idx) mts_hash_insert(idx, code, palt, (u16)b);
+                    *ret = b;
+                    return 1;
+                }
+
+                // CG cache is full. 32x32 : %d\n
+                flLogOut("ＣＧキャッシュが一杯になりました。３２×３２ : %d\n", mt->id);
+                while (1) {}
+            }
         }
     }
 }
 
 static s32 get_mltbuf16_ext_2(MultiTexture* mt, u32 code, u32 palt, s32* ret, PatternInstance* cp) {
     PatternState* mc = mt->mltcsh16;
-    s32 i;
 
-    for (i = 0; i < mt->tpu->x16; i++) {
-        if ((code == mc[mt->tpu->x16_used[i]].cs.code) && (palt == mc[mt->tpu->x16_used[i]].state)) {
-            *ret = mt->tpu->x16_used[i];
-
+    /* Fast path: hash lookup */
+    if (mt->hash16) {
+        s32 slot = mts_hash_lookup(mt->hash16, code, palt, mc);
+        if (slot >= 0) {
+            *ret = slot;
             if (x16_mapping_set(&cp->map, *ret)) {
                 cp->x16 += 1;
-                mc[mt->tpu->x16_used[i]].time += 1;
+                mc[slot].time += 1;
             }
-
             return 0;
         }
-    }
 
-    if ((i != mt->mltnum16) && (mt->tpf->x16 != 0)) {
-        mt->tpf->x16 -= 1;
-        mt->tpu->x16_used[i] = mt->tpf->x16_free[mt->tpf->x16];
-        mt->tpu->x16 += 1;
-        mc[mt->tpu->x16_used[i]].cs.code = code;
-        mc[mt->tpu->x16_used[i]].state = palt;
-        *ret = mt->tpu->x16_used[i];
-        mc[mt->tpu->x16_used[i]].time = 1;
-
-        if (x16_mapping_set(&cp->map, *ret)) {
-            cp->x16 += 1;
+        /* Cache miss: allocate from tpf free pool (ext uses tpf, not our free list) */
+        if (mt->tpf->x16 != 0) {
+            s32 i = mt->tpu->x16;
+            mt->tpf->x16 -= 1;
+            mt->tpu->x16_used[i] = mt->tpf->x16_free[mt->tpf->x16];
+            mt->tpu->x16 += 1;
+            mc[mt->tpu->x16_used[i]].cs.code = code;
+            mc[mt->tpu->x16_used[i]].state = palt;
+            *ret = mt->tpu->x16_used[i];
+            mc[mt->tpu->x16_used[i]].time = 1;
+            mts_hash_insert(mt->hash16, code, palt, (u16)*ret);
+            if (x16_mapping_set(&cp->map, *ret)) {
+                cp->x16 += 1;
+            }
+            return 1;
         }
 
-        return 1;
+        /* Fall through to fatal */
     }
 
-    // CG cache is full. x16 EXT2\n
-    flLogOut("ＣＧキャッシュが一杯になりました。×１６　ＥＸＴ２\n");
-    while (1) {}
+    /* Fallback: original linear scan (sync hash on hit/miss) */
+    {
+        s32 i;
+        for (i = 0; i < mt->tpu->x16; i++) {
+            if ((code == mc[mt->tpu->x16_used[i]].cs.code) && (palt == mc[mt->tpu->x16_used[i]].state)) {
+                *ret = mt->tpu->x16_used[i];
+                if (x16_mapping_set(&cp->map, *ret)) {
+                    cp->x16 += 1;
+                    mc[mt->tpu->x16_used[i]].time += 1;
+                }
+                /* Sync hash: insert so future lookups use fast path */
+                if (mt->hash16)
+                    mts_hash_insert(mt->hash16, code, palt, (u16)*ret);
+                return 0;
+            }
+        }
+        if ((i != mt->mltnum16) && (mt->tpf->x16 != 0)) {
+            mt->tpf->x16 -= 1;
+            mt->tpu->x16_used[i] = mt->tpf->x16_free[mt->tpf->x16];
+            mt->tpu->x16 += 1;
+            mc[mt->tpu->x16_used[i]].cs.code = code;
+            mc[mt->tpu->x16_used[i]].state = palt;
+            *ret = mt->tpu->x16_used[i];
+            mc[mt->tpu->x16_used[i]].time = 1;
+            /* Sync hash: insert newly allocated entry */
+            if (mt->hash16)
+                mts_hash_insert(mt->hash16, code, palt, (u16)*ret);
+            if (x16_mapping_set(&cp->map, *ret)) {
+                cp->x16 += 1;
+            }
+            return 1;
+        }
+        // CG cache is full. x16 EXT2\n
+        flLogOut("ＣＧキャッシュが一杯になりました。×１６　ＥＸＴ２\n");
+        while (1) {}
+    }
 }
 
 static s32 get_mltbuf32_ext_2(MultiTexture* mt, u32 code, u32 palt, s32* ret, PatternInstance* cp) {
     PatternState* mc = mt->mltcsh32;
-    s32 i;
 
-    for (i = 0; i < mt->tpu->x32; i++) {
-        if ((code == mc[mt->tpu->x32_used[i]].cs.code) && (palt == mc[mt->tpu->x32_used[i]].state)) {
-            *ret = mt->tpu->x32_used[i];
-
+    /* Fast path: hash lookup */
+    if (mt->hash32) {
+        s32 slot = mts_hash_lookup(mt->hash32, code, palt, mc);
+        if (slot >= 0) {
+            *ret = slot;
             if (x32_mapping_set(&cp->map, *ret)) {
                 cp->x32 += 1;
-                mc[mt->tpu->x32_used[i]].time += 1;
+                mc[slot].time += 1;
             }
-
             return 0;
         }
-    }
 
-    if ((i != mt->mltnum32) && (mt->tpf->x32 != 0)) {
-        mt->tpf->x32 -= 1;
-        mt->tpu->x32_used[i] = mt->tpf->x32_free[mt->tpf->x32];
-        mt->tpu->x32 += 1;
-        mc[mt->tpu->x32_used[i]].cs.code = code;
-        mc[mt->tpu->x32_used[i]].state = palt;
-        *ret = mt->tpu->x32_used[i];
-        mc[mt->tpu->x32_used[i]].time += 1;
-
-        if (x32_mapping_set(&cp->map, *ret)) {
-            cp->x32 += 1;
+        /* Cache miss: allocate from tpf free pool (ext uses tpf, not our free list) */
+        if (mt->tpf->x32 != 0) {
+            s32 i = mt->tpu->x32;
+            mt->tpf->x32 -= 1;
+            mt->tpu->x32_used[i] = mt->tpf->x32_free[mt->tpf->x32];
+            mt->tpu->x32 += 1;
+            mc[mt->tpu->x32_used[i]].cs.code = code;
+            mc[mt->tpu->x32_used[i]].state = palt;
+            *ret = mt->tpu->x32_used[i];
+            mc[mt->tpu->x32_used[i]].time += 1;
+            mts_hash_insert(mt->hash32, code, palt, (u16)*ret);
+            if (x32_mapping_set(&cp->map, *ret)) {
+                cp->x32 += 1;
+            }
+            return 1;
         }
 
-        return 1;
+        /* Fall through to fatal */
     }
 
-    flLogOut("ＣＧキャッシュが一杯になりました。×３２　ＥＸＴ２\n");
-    while (1) {}
+    /* Fallback: original linear scan (sync hash on hit/miss) */
+    {
+        s32 i;
+        for (i = 0; i < mt->tpu->x32; i++) {
+            if ((code == mc[mt->tpu->x32_used[i]].cs.code) && (palt == mc[mt->tpu->x32_used[i]].state)) {
+                *ret = mt->tpu->x32_used[i];
+                if (x32_mapping_set(&cp->map, *ret)) {
+                    cp->x32 += 1;
+                    mc[mt->tpu->x32_used[i]].time += 1;
+                }
+                /* Sync hash: insert so future lookups use fast path */
+                if (mt->hash32)
+                    mts_hash_insert(mt->hash32, code, palt, (u16)*ret);
+                return 0;
+            }
+        }
+        if ((i != mt->mltnum32) && (mt->tpf->x32 != 0)) {
+            mt->tpf->x32 -= 1;
+            mt->tpu->x32_used[i] = mt->tpf->x32_free[mt->tpf->x32];
+            mt->tpu->x32 += 1;
+            mc[mt->tpu->x32_used[i]].cs.code = code;
+            mc[mt->tpu->x32_used[i]].state = palt;
+            *ret = mt->tpu->x32_used[i];
+            mc[mt->tpu->x32_used[i]].time += 1;
+            /* Sync hash: insert newly allocated entry */
+            if (mt->hash32)
+                mts_hash_insert(mt->hash32, code, palt, (u16)*ret);
+            if (x32_mapping_set(&cp->map, *ret)) {
+                cp->x32 += 1;
+            }
+            return 1;
+        }
+        flLogOut("ＣＧキャッシュが一杯になりました。×３２　ＥＸＴ２\n");
+        while (1) {}
+    }
 }
 
 static s32 get_mltbuf16_ext(MultiTexture* mt, u32 code, u32 palt) {
     PatternState* mc = mt->mltcsh16;
-    s32 i;
 
-    for (i = 0; i < tpu_free->x16; i++) {
-        if ((code == mc[tpu_free->x16_used[i]].cs.code) && (palt == mc[tpu_free->x16_used[i]].state)) {
-            return tpu_free->x16_used[i];
-        }
+    /* Fast path: hash lookup */
+    if (mt->hash16) {
+        s32 slot = mts_hash_lookup(mt->hash16, code, palt, mc);
+        if (slot >= 0)
+            return slot;
+        /* Hash miss but entry must exist -- fall through to linear scan */
     }
 
-    flLogOut("ＣＧ展開エラー　１６×１６\n");
-    while (1) {}
+    /* Fallback: original linear scan */
+    {
+        s32 i;
+        for (i = 0; i < tpu_free->x16; i++) {
+            if ((code == mc[tpu_free->x16_used[i]].cs.code) && (palt == mc[tpu_free->x16_used[i]].state)) {
+                return tpu_free->x16_used[i];
+            }
+        }
+        flLogOut("ＣＧ展開エラー　１６×１６\n");
+        while (1) {}
+    }
 }
 
 static s32 get_mltbuf32_ext(MultiTexture* mt, u32 code, u32 palt) {
     PatternState* mc = mt->mltcsh32;
-    s32 i;
 
-    for (i = 0; i < tpu_free->x32; i++) {
-        if ((code == mc[tpu_free->x32_used[i]].cs.code) && (palt == mc[tpu_free->x32_used[i]].state)) {
-            return tpu_free->x32_used[i];
-        }
+    /* Fast path: hash lookup */
+    if (mt->hash32) {
+        s32 slot = mts_hash_lookup(mt->hash32, code, palt, mc);
+        if (slot >= 0)
+            return slot;
+        /* Hash miss but entry must exist -- fall through to linear scan */
     }
 
-    flLogOut("ＣＧ展開エラー　３２×３２\n");
-    while (1) {}
+    /* Fallback: original linear scan */
+    {
+        s32 i;
+        for (i = 0; i < tpu_free->x32; i++) {
+            if ((code == mc[tpu_free->x32_used[i]].cs.code) && (palt == mc[tpu_free->x32_used[i]].state)) {
+                return tpu_free->x32_used[i];
+            }
+        }
+        flLogOut("ＣＧ展開エラー　３２×３２\n");
+        while (1) {}
+    }
 }
 
 static u16 x16_mapping_set(PatternMap* map, s32 code) {
@@ -2122,6 +2272,35 @@ void mlt_obj_trans_init(MultiTexture* mt, s32 mode, u8* adrs) {
             mc++;
         }
     }
+
+    /* Rebuild hash tables and free lists from actual array contents.
+       Runs for all caches, including persist (mode & 0x20) like DM. */
+    if (mt->hash16) {
+        mts_hash_clear(mt->hash16);
+        mt->free16.top = -1;
+        mc = mt->mltcsh16;
+        for (i = 0; i < mt->mltnum16; i++) {
+            if (mc[i].cs.code == (u32)-1) {
+                mts_freelist_push(&mt->free16, (u16)i);
+            } else {
+                mts_hash_insert(mt->hash16, mc[i].cs.code,
+                                (u32)(u16)mc[i].state, (u16)i);
+            }
+        }
+    }
+    if (mt->hash32) {
+        mts_hash_clear(mt->hash32);
+        mt->free32.top = -1;
+        mc = mt->mltcsh32;
+        for (i = 0; i < mt->mltnum32; i++) {
+            if (mc[i].cs.code == (u32)-1) {
+                mts_freelist_push(&mt->free32, (u16)i);
+            } else {
+                mts_hash_insert(mt->hash32, mc[i].cs.code,
+                                (u32)(u16)mc[i].state, (u16)i);
+            }
+        }
+    }
 }
 
 void mlt_obj_trans_update(MultiTexture* mt) {
@@ -2134,6 +2313,12 @@ void mlt_obj_trans_update(MultiTexture* mt) {
     for (mc = mt->mltcsh16, i = 0; i < mt->mltnum16; i++, mc += 1, assign1 = mc) {
         if (mc->time) {
             if (--mc->time == 0) {
+                /* Remove from hash before invalidating */
+                if (mt->hash16) {
+                    mts_hash_remove(mt->hash16, mc->cs.code,
+                                    (u32)(u16)mc->state, mt->mltcsh16);
+                    mts_freelist_push(&mt->free16, (u16)i);
+                }
                 mc->cs.code = -1;
             }
         }
@@ -2142,6 +2327,12 @@ void mlt_obj_trans_update(MultiTexture* mt) {
     for (mc = mt->mltcsh32, i = 0; i < mt->mltnum32; i++, mc += 1, assign2 = mc) {
         if (mc->time) {
             if (--mc->time == 0) {
+                /* Remove from hash before invalidating */
+                if (mt->hash32) {
+                    mts_hash_remove(mt->hash32, mc->cs.code,
+                                    (u32)(u16)mc->state, mt->mltcsh32);
+                    mts_freelist_push(&mt->free32, (u16)i);
+                }
                 mc->cs.code = -1U;
             }
         }

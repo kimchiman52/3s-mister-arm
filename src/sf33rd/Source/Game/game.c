@@ -61,6 +61,19 @@
 #include "sf33rd/Source/Game/ui/sc_sub.h"
 #include "structs.h"
 
+#include <SDL3/SDL.h>
+
+/* Per-frame sub-timer accumulators for the FPS overlay.  Reset at the
+   top of Game_Task, accumulated around hot call sites, read by sdl_app.c
+   via the getter functions declared in game.h. */
+static Uint64 perf_game_logic_ns = 0;
+static Uint64 perf_sprite_submit_ns = 0;
+static Uint64 perf_dispatch_ns = 0;
+
+uint64_t Game_GetPerfGameLogicNs(void) { return perf_game_logic_ns; }
+uint64_t Game_GetPerfSpriteSubmitNs(void) { return perf_sprite_submit_ns; }
+uint64_t Game_GetPerfDispatchNs(void) { return perf_dispatch_ns; }
+
 void Wait_Auto_Load(struct _TASK* /* unused */);
 void Loop_Demo(struct _TASK* /* unused */);
 void Game();
@@ -117,6 +130,11 @@ void Game_Task(struct _TASK* task_ptr) {
     s16 ix;
     s16 ff;
 
+    perf_game_logic_ns = 0;
+    perf_sprite_submit_ns = 0;
+    perf_dispatch_ns = 0;
+    Mtrans_ResetPerfTimers();
+
     if (!No_Trans) {
         init_color_trans_req();
     }
@@ -145,7 +163,11 @@ void Game_Task(struct _TASK* task_ptr) {
             Main_Jmp_Tbl[G_No[0]](task_ptr);
         }
 
-        seqsAfterProcess();
+        {
+            const Uint64 _d0 = SDL_GetTicksNS();
+            seqsAfterProcess();
+            perf_dispatch_ns += SDL_GetTicksNS() - _d0;
+        }
         texture_cash_update();
         move_pulpul_work();
         Check_LDREQ_Queue();
@@ -518,7 +540,11 @@ void Game2_1() {
         Time_Control();
     }
 
-    Player_control();
+    {
+        const Uint64 _g0 = SDL_GetTicksNS();
+        Player_control();
+        perf_game_logic_ns += SDL_GetTicksNS() - _g0;
+    }
 
     if (Disp_Cockpit && Game_pause != GAME_PAUSE_TRAINING) {
         vital_cont_main();
@@ -529,7 +555,11 @@ void Game2_1() {
     Game_Management();
     BG_Draw_System();
     ppgPurgeFromVRAM(4);
-    reqPlayerDraw();
+    {
+        const Uint64 _s0 = SDL_GetTicksNS();
+        reqPlayerDraw();
+        perf_sprite_submit_ns += SDL_GetTicksNS() - _s0;
+    }
     Basic_Sub_Ex();
 
     if (Disp_Cockpit && Game_pause != GAME_PAUSE_TRAINING) {

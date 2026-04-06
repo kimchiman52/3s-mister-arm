@@ -545,6 +545,9 @@ static int previous_coverage_tile_count = 0;
 static Uint32 previous_frame_clear_color = 0;
 static bool previous_frame_clear_color_valid = false;
 static SDLGameRenderer_FrameStats frame_stats = { 0 };
+static Uint64 texture_refresh_ns_this_frame = 0;
+static Uint64 sort_ns_this_frame = 0;
+static Uint64 raster_ns_this_frame = 0;
 static SDL_Texture* submitted_texture_mod = NULL;
 static Uint32 submitted_texture_mod_color = 0;
 static bool submitted_texture_mod_valid = false;
@@ -889,6 +892,7 @@ static bool is_blue_tint_color(Uint32 color);
 static Uint32 modulate_argb8888_blue_tint(Uint32 pixel, Uint32 rg_factor, Uint32 mod_a);
 static bool is_ghost_sprite_color(Uint32 color);
 static Uint32 blend_argb8888(Uint32 dst_pixel, Uint32 src_pixel);
+static inline Uint32 blend_argb8888_opaque_dst(Uint32 dst_pixel, Uint32 src_pixel);
 static bool raster_full_height_diagonal_strip_to_software_frame(const SoftwareFrameSolidDiagonalStrip* strip,
                                                                 SDL_Surface* dst_surface);
 static bool raster_textured_parallelogram_to_software_frame(const RenderTask* task);
@@ -2322,9 +2326,11 @@ static Uint64 compare_dirty_rect_partial_refresh_max_pixels(const SDL_Surface* s
         return 0;
     }
 
-    // Keep compare-dirty fallback slightly broader than explicit renew metadata: current native Remy telemetry leaves
-    // seq 81 inside 3/8 while the still-riskier seq 82 residue remains above it.
-    return ((Uint64)source_surface->w * (Uint64)source_surface->h * 3u) / 8u;
+    // Relaxed from 3/8 to 1/2: telemetry shows the hottest texture (seq 82)
+    // needs ~25600 pixels (just above the old 24576 cap), causing 100% full-blit
+    // fallback.  The compare-dirty path is safe (runtime pixel comparison, not
+    // heuristic) so a broader cap admits nearly all partial refresh candidates.
+    return ((Uint64)source_surface->w * (Uint64)source_surface->h) / 2u;
 }
 
 static bool texture_unlock_refresh_rect_is_valid(const SDL_Rect* rect, const SDL_Surface* source_surface) {
@@ -3130,7 +3136,7 @@ static TextureUnlockRefreshDecision classify_texture_unlock_refresh_decision(uns
 static bool refresh_software_source_surface_in_place(unsigned int th, SDL_Surface* cached_surface, Uint8 dirty_reason) {
     const int texture_handle = LO_16_BITS(th);
     const int palette_handle = HI_16_BITS(th);
-    const Uint64 refresh_start_ns = frame_stats_extended_enabled ? SDL_GetTicksNS() : 0;
+    const Uint64 refresh_start_ns = SDL_GetTicksNS();
     bool success = false;
 
     note_software_surface_refresh_attempt(th);
@@ -3212,14 +3218,18 @@ static bool refresh_software_source_surface_in_place(unsigned int th, SDL_Surfac
     }
 
 done:
-    if (success) {
-        clear_software_surface_full_opaque_row_mask(texture_handle - 1, palette_handle);
-    }
-    if (frame_stats_extended_enabled) {
-        frame_stats.software_surface_cache_refresh_attempts += 1;
-        frame_stats.software_surface_cache_refresh_ns += SDL_GetTicksNS() - refresh_start_ns;
-        if (!success) {
-            frame_stats.software_surface_cache_refresh_failures += 1;
+    {
+        const Uint64 elapsed_ns = SDL_GetTicksNS() - refresh_start_ns;
+        texture_refresh_ns_this_frame += elapsed_ns;
+        if (success) {
+            clear_software_surface_full_opaque_row_mask(texture_handle - 1, palette_handle);
+        }
+        if (frame_stats_extended_enabled) {
+            frame_stats.software_surface_cache_refresh_attempts += 1;
+            frame_stats.software_surface_cache_refresh_ns += elapsed_ns;
+            if (!success) {
+                frame_stats.software_surface_cache_refresh_failures += 1;
+            }
         }
     }
 
@@ -5393,19 +5403,29 @@ static void note_perf_capture_generic_textured_family(const RenderTask* task,
 }
 
 static void note_software_frame_eligibility(const RenderTask* task, SoftwareFrameFallbackReason reason) {
-    if (!frame_stats_extended_enabled || (task == NULL)) {
+    if (task == NULL) {
         return;
     }
 
+    /* Lightweight candidate/fallback counters: always active when perf
+       telemetry is compiled in, even in --perf-basic mode.  The cost is
+       a few integer increments per render task — negligible. */
     const Uint64 submitted_pixels = render_task_submitted_pixels(task);
     if (reason == SOFTWARE_FRAME_FALLBACK_REASON_NONE) {
         frame_stats.software_frame_candidate_tasks += 1;
         frame_stats.software_frame_candidate_pixels += submitted_pixels;
+    } else {
+        frame_stats.software_frame_fallback_tasks += 1;
+        frame_stats.software_frame_fallback_pixels += submitted_pixels;
+    }
+
+    if (!frame_stats_extended_enabled) {
         return;
     }
 
-    frame_stats.software_frame_fallback_tasks += 1;
-    frame_stats.software_frame_fallback_pixels += submitted_pixels;
+    if (reason == SOFTWARE_FRAME_FALLBACK_REASON_NONE) {
+        return;
+    }
     switch (reason) {
     case SOFTWARE_FRAME_FALLBACK_REASON_ALPHA:
         frame_stats.software_frame_reason_alpha += 1;
@@ -5527,11 +5547,11 @@ static void note_software_frame_fast_copy_result(const RenderTask* task,
 
     const Uint64 submitted_pixels = render_task_submitted_pixels(task);
     if (result == SOFTWARE_FRAME_FAST_COPY_RESULT_EXACT) {
+        frame_stats.software_frame_fast_exact_tasks += 1;
+        frame_stats.software_frame_fast_exact_pixels += submitted_pixels;
         if (!frame_stats_extended_enabled) {
             return;
         }
-        frame_stats.software_frame_fast_exact_tasks += 1;
-        frame_stats.software_frame_fast_exact_pixels += submitted_pixels;
         note_perf_capture_fast_exact_family(task, dst_surface, 0, sampled_ns);
         if ((plan != NULL) && plan->clipped) {
             frame_stats.software_frame_fast_exact_clipped_tasks += 1;
@@ -5546,11 +5566,11 @@ static void note_software_frame_fast_copy_result(const RenderTask* task,
         return;
     }
     if (result == SOFTWARE_FRAME_FAST_COPY_RESULT_SCALED) {
+        frame_stats.software_frame_fast_scaled_tasks += 1;
+        frame_stats.software_frame_fast_scaled_pixels += submitted_pixels;
         if (!frame_stats_extended_enabled) {
             return;
         }
-        frame_stats.software_frame_fast_scaled_tasks += 1;
-        frame_stats.software_frame_fast_scaled_pixels += submitted_pixels;
         return;
     }
 
@@ -5631,9 +5651,10 @@ static void note_software_frame_fast_non_integer(const RenderTask* task,
     }
 
     const Uint64 submitted_pixels = render_task_submitted_pixels(task);
+    /* Lightweight counters: always active in perf mode, even --perf-basic. */
+    frame_stats.software_frame_fast_non_integer_tasks += 1;
+    frame_stats.software_frame_fast_non_integer_pixels += submitted_pixels;
     if (frame_stats_extended_enabled) {
-        frame_stats.software_frame_fast_non_integer_tasks += 1;
-        frame_stats.software_frame_fast_non_integer_pixels += submitted_pixels;
         frame_stats.software_frame_fast_non_integer_lookup_entries += lookup_entries;
         if (non_integer_telemetry != NULL) {
             frame_stats.software_frame_fast_non_integer_source_alpha_opaque_pixels +=
@@ -5721,6 +5742,13 @@ static bool try_merge_software_frame_rect_tasks(RenderTask* merged_task,
         (merged_task->texture == NULL) || (next_task->texture == NULL) ||
         (merged_task->software_source_surface != next_task->software_source_surface) ||
         (merged_task->flip != SDL_FLIP_NONE) || (next_task->flip != SDL_FLIP_NONE)) {
+        return false;
+    }
+
+    /* Opt 1: Early merge rejection — cheap checks before expensive plan-building. */
+    if ((merged_task->texture != next_task->texture) ||
+        (merged_task->color != next_task->color) ||
+        (merged_task->flip != next_task->flip)) {
         return false;
     }
 
@@ -6070,7 +6098,7 @@ static bool try_fast_copy_fast_textured_task_to_software_frame(const RenderTask*
                                     dst_row[dst_col + 1] = src_pixel;
                                     continue;
                                 }
-                                const Uint32 blended = blend_argb8888(dst_row[dst_col], src_pixel);
+                                const Uint32 blended = blend_argb8888_opaque_dst(dst_row[dst_col], src_pixel);
                                 dst_row[dst_col] = blended;
                                 dst_row[dst_col + 1] = blended;
                             }
@@ -6089,7 +6117,7 @@ static bool try_fast_copy_fast_textured_task_to_software_frame(const RenderTask*
                                 if ((col + 1) < visible_w) { dst_row[col + 1] = src_pixel; }
                                 continue;
                             }
-                            const Uint32 blended = blend_argb8888(dst_row[col], src_pixel);
+                            const Uint32 blended = blend_argb8888_opaque_dst(dst_row[col], src_pixel);
                             dst_row[col] = blended;
                             if ((col + 1) < visible_w) { dst_row[col + 1] = blended; }
                         }
@@ -6112,7 +6140,7 @@ static bool try_fast_copy_fast_textured_task_to_software_frame(const RenderTask*
                                 dst_row[col] = src_pixel;
                                 continue;
                             }
-                            dst_row[col] = blend_argb8888(dst_row[col], src_pixel);
+                            dst_row[col] = blend_argb8888_opaque_dst(dst_row[col], src_pixel);
                         }
                     }
 
@@ -6157,7 +6185,7 @@ static bool try_fast_copy_fast_textured_task_to_software_frame(const RenderTask*
                                 dst_row[col] = src_pixel;
                                 if ((col + 1) < plan->visible_w) { dst_row[col + 1] = src_pixel; }
                             } else {
-                                const Uint32 blended = blend_argb8888(dst_row[col], src_pixel);
+                                const Uint32 blended = blend_argb8888_opaque_dst(dst_row[col], src_pixel);
                                 dst_row[col] = blended;
                                 if ((col + 1) < plan->visible_w) { dst_row[col + 1] = blended; }
                             }
@@ -6165,7 +6193,7 @@ static bool try_fast_copy_fast_textured_task_to_software_frame(const RenderTask*
                             if (src_a == 0xFFu) {
                                 dst_row[col] = src_pixel;
                             } else {
-                                dst_row[col] = blend_argb8888(dst_row[col], src_pixel);
+                                dst_row[col] = blend_argb8888_opaque_dst(dst_row[col], src_pixel);
                             }
                         }
                         src_pixel_ptr += src_x_step * col_step;
@@ -6180,6 +6208,35 @@ static bool try_fast_copy_fast_textured_task_to_software_frame(const RenderTask*
             }
             return true;
         }
+
+
+#if RENDERER_HAVE_NEON
+        /* Opt 2: NEON fast path for non-color-mod exact-copy blend. */
+        if (src_x_step == 1) {
+            for (int row = 0; row < plan->visible_h; row++) {
+                const Uint32* src_row = src_pixels + ((src_row0_y + (row * src_y_step)) * src_pitch) + src_row0_x;
+                Uint32* dst_row = dst_pixels + ((plan->dst_y0 + row) * dst_pitch) + plan->dst_x0;
+
+                if ((row + 1) < plan->visible_h) {
+                    __builtin_prefetch(src_pixels + ((src_row0_y + ((row + 1) * src_y_step)) * src_pitch) + src_row0_x, 0, 0);
+                    __builtin_prefetch(dst_pixels + ((plan->dst_y0 + row + 1) * dst_pitch) + plan->dst_x0, 1, 0);
+                }
+
+                int col = 0;
+                for (; (col + 3) < plan->visible_w; col += 4) {
+                    neon_blend_4pixels(src_row + col, dst_row + col);
+                }
+                for (; col < plan->visible_w; col++) {
+                    const Uint32 src_pixel = src_row[col];
+                    const Uint32 src_a = (src_pixel >> 24) & 0xFFu;
+                    if (src_a == 0u) { continue; }
+                    if (src_a == 0xFFu) { dst_row[col] = src_pixel; continue; }
+                    dst_row[col] = blend_argb8888_opaque_dst(dst_row[col], src_pixel);
+                }
+            }
+            return true;
+        }
+#endif /* RENDERER_HAVE_NEON */
 
         for (int row = 0; row < plan->visible_h; row++) {
             const Uint32* src_row = src_pixels + ((src_row0_y + (row * src_y_step)) * src_pitch) + src_row0_x;
@@ -6204,7 +6261,7 @@ static bool try_fast_copy_fast_textured_task_to_software_frame(const RenderTask*
                     src_pixel_ptr += src_x_step;
                     continue;
                 }
-                dst_row[col] = blend_argb8888(dst_row[col], src_pixel);
+                dst_row[col] = blend_argb8888_opaque_dst(dst_row[col], src_pixel);
                 src_pixel_ptr += src_x_step;
             }
         }
@@ -6238,7 +6295,7 @@ static bool try_fast_copy_fast_textured_task_to_software_frame(const RenderTask*
                 dst_row[col] = src_pixel;
                 continue;
             }
-            dst_row[col] = blend_argb8888(dst_row[col], src_pixel);
+            dst_row[col] = blend_argb8888_opaque_dst(dst_row[col], src_pixel);
         }
     }
 
@@ -6289,7 +6346,7 @@ static Uint32 modulate_argb8888_blue_tint(Uint32 pixel, Uint32 rg_factor, Uint32
     return (out_a << 24) | (out_r << 16) | (out_g << 8) | src_b;
 }
 
-static Uint8 blend_argb8888_channel(Uint32 src_c, Uint32 src_a, Uint32 dst_c, Uint32 dst_a, Uint32 out_a) {
+static __attribute__((unused)) Uint8 blend_argb8888_channel(Uint32 src_c, Uint32 src_a, Uint32 dst_c, Uint32 dst_a, Uint32 out_a) {
     if (out_a == 0u) {
         return 0;
     }
@@ -6300,7 +6357,7 @@ static Uint8 blend_argb8888_channel(Uint32 src_c, Uint32 src_a, Uint32 dst_c, Ui
     return (Uint8)((out_premul + (out_a / 2u)) / out_a);
 }
 
-static Uint32 blend_argb8888(Uint32 dst_pixel, Uint32 src_pixel) {
+static __attribute__((unused)) Uint32 blend_argb8888(Uint32 dst_pixel, Uint32 src_pixel) {
     const Uint32 src_a = (src_pixel >> 24) & 0xFFu;
     if (src_a == 0u) {
         return dst_pixel;
@@ -6335,6 +6392,33 @@ static Uint32 blend_argb8888(Uint32 dst_pixel, Uint32 src_pixel) {
     const Uint8 out_g = blend_argb8888_channel(src_g, src_a, dst_g, dst_a, out_a);
     const Uint8 out_b = blend_argb8888_channel(src_b, src_a, dst_b, dst_a, out_a);
     return (out_a << 24) | ((Uint32)out_r << 16) | ((Uint32)out_g << 8) | (Uint32)out_b;
+}
+
+/* Opt 10: Specialized blend for software frame raster paths where dst_a is
+ * always 255.  The software frame surface is cleared with alpha=0xFF and all
+ * rendering forces output alpha to 0xFF, so the generic blend_argb8888()
+ * path 3 (dst_a==255) is always taken.  This inline version eliminates the
+ * dst_a extraction + comparison and the generic path 4 (with division)
+ * entirely, saving ~3 instructions per pixel in the scalar blend tails. */
+static inline Uint32 blend_argb8888_opaque_dst(Uint32 dst_pixel, Uint32 src_pixel) {
+    const Uint32 src_a = (src_pixel >> 24) & 0xFFu;
+    if (src_a == 0u) {
+        return dst_pixel;
+    }
+    if (src_a == 255u) {
+        return src_pixel;
+    }
+    const Uint32 inv_src_a = 255u - src_a;
+    const Uint32 src_r = (src_pixel >> 16) & 0xFFu;
+    const Uint32 src_g = (src_pixel >> 8) & 0xFFu;
+    const Uint32 src_b = src_pixel & 0xFFu;
+    const Uint32 dst_r = (dst_pixel >> 16) & 0xFFu;
+    const Uint32 dst_g = (dst_pixel >> 8) & 0xFFu;
+    const Uint32 dst_b = dst_pixel & 0xFFu;
+    const Uint32 out_r = ((src_r * src_a) + (dst_r * inv_src_a) + 128u) >> 8;
+    const Uint32 out_g = ((src_g * src_a) + (dst_g * inv_src_a) + 128u) >> 8;
+    const Uint32 out_b = ((src_b * src_a) + (dst_b * inv_src_a) + 128u) >> 8;
+    return 0xFF000000u | (out_r << 16) | (out_g << 8) | out_b;
 }
 
 static void fill_argb8888_span(Uint32* dst_pixels, int pixel_count, Uint32 color) {
@@ -6841,6 +6925,189 @@ static bool raster_textured_task_to_software_frame(const RenderTask* task) {
         }
     }
 
+    /* Opt 5: COLOR_MOD lookup table path.
+     * When build_software_frame_fast_copy_plan() returns COLOR_MOD, the task has
+     * integer coordinates but is scaled with color modulation.  The plan was NOT
+     * populated (early return at the COLOR_MOD result).  We recompute the plan
+     * fields here and use pre-computed integer lookup tables instead of per-pixel
+     * float UV math, applying color modulation per pixel.
+     *
+     * If any validation fails, we fall through to the generic float UV path. */
+    if (fast_copy_result == SOFTWARE_FRAME_FAST_COPY_RESULT_COLOR_MOD) {
+        /* Recompute the plan fields — mirrors build_software_frame_fast_copy_plan logic */
+        const int cm_dst_x = (int)SDL_roundf(task->dst_rect.x);
+        const int cm_dst_y = (int)SDL_roundf(task->dst_rect.y);
+        const int cm_dst_w = (int)SDL_roundf(task->dst_rect.w);
+        const int cm_dst_h = (int)SDL_roundf(task->dst_rect.h);
+
+        const float cm_src_x_start_f = task->src_uv_rect.x * (float)src_surface->w;
+        const float cm_src_y_start_f = task->src_uv_rect.y * (float)src_surface->h;
+        const float cm_src_x_span_f = task->src_uv_rect.w * (float)src_surface->w;
+        const float cm_src_y_span_f = task->src_uv_rect.h * (float)src_surface->h;
+        const int cm_src_x = (int)SDL_roundf(cm_src_x_start_f);
+        const int cm_src_y = (int)SDL_roundf(cm_src_y_start_f);
+        const int cm_src_w = (int)SDL_roundf(cm_src_x_span_f);
+        const int cm_src_h = (int)SDL_roundf(cm_src_y_span_f);
+
+        /* Validate all fields — if anything is out of range, fall through */
+        const bool cm_valid =
+            (cm_dst_w > 0) && (cm_dst_h > 0) && (cm_src_w > 0) && (cm_src_h > 0) &&
+            (cm_src_x >= 0) && (cm_src_y >= 0) &&
+            ((cm_src_x + cm_src_w) <= src_surface->w) &&
+            ((cm_src_y + cm_src_h) <= src_surface->h);
+
+        if (cm_valid) {
+            const int cm_dst_x0 = clamp_to_range(cm_dst_x, 0, dst_surface->w);
+            const int cm_dst_y0 = clamp_to_range(cm_dst_y, 0, dst_surface->h);
+            const int cm_dst_x1 = clamp_to_range(cm_dst_x + cm_dst_w, 0, dst_surface->w);
+            const int cm_dst_y1 = clamp_to_range(cm_dst_y + cm_dst_h, 0, dst_surface->h);
+            const int cm_visible_w = cm_dst_x1 - cm_dst_x0;
+            const int cm_visible_h = cm_dst_y1 - cm_dst_y0;
+            const bool cm_flip_h = (task->flip & SDL_FLIP_HORIZONTAL) != 0;
+            const bool cm_flip_v = (task->flip & SDL_FLIP_VERTICAL) != 0;
+
+            if ((cm_visible_w > 0) && (cm_visible_h > 0) &&
+                (cm_visible_w <= cps3_width) && (cm_visible_h <= cps3_height)) {
+                const Uint32 cm_color = task->color;
+                const Uint32 cm_mod_a = (cm_color >> 24) & 0xFFu;
+
+                /* Skip entirely if modulation alpha is 0 (fully transparent) */
+                if (cm_mod_a == 0u) {
+                    if (src_locked) {
+                        SDL_UnlockSurface(src_surface);
+                    }
+                    return true;
+                }
+
+                const Uint32* cm_src_pixels = (const Uint32*)src_surface->pixels;
+                Uint32* cm_dst_pixels = (Uint32*)dst_surface->pixels;
+                const int cm_src_pitch = src_surface->pitch / (int)sizeof(Uint32);
+                const int cm_dst_pitch = dst_surface->pitch / (int)sizeof(Uint32);
+
+                /* Build scaled lookup tables — same logic as the SCALED path */
+                int cm_src_x_lookup[cps3_width];
+                int cm_src_y_lookup[cps3_height];
+                populate_scaled_lookup_table(
+                    cm_src_x_lookup, cm_visible_w, cm_dst_x, cm_dst_x0, cm_dst_w,
+                    cm_src_x, cm_src_w, cm_flip_h);
+                populate_scaled_lookup_table(
+                    cm_src_y_lookup, cm_visible_h, cm_dst_y, cm_dst_y0, cm_dst_h,
+                    cm_src_y, cm_src_h, cm_flip_v);
+
+                /* Clamp lookup table values to valid source bounds */
+                const int cm_src_x_max = src_surface->w - 1;
+                const int cm_src_y_max = src_surface->h - 1;
+                for (int ci = 0; ci < cm_visible_w; ci++) {
+                    if (cm_src_x_lookup[ci] < 0) { cm_src_x_lookup[ci] = 0; }
+                    else if (cm_src_x_lookup[ci] > cm_src_x_max) { cm_src_x_lookup[ci] = cm_src_x_max; }
+                }
+                for (int ci = 0; ci < cm_visible_h; ci++) {
+                    if (cm_src_y_lookup[ci] < 0) { cm_src_y_lookup[ci] = 0; }
+                    else if (cm_src_y_lookup[ci] > cm_src_y_max) { cm_src_y_lookup[ci] = cm_src_y_max; }
+                }
+
+                /* Precompute blue-tint state */
+                const bool cm_blue_tint = is_blue_tint_color(cm_color);
+                const Uint32 cm_rg_factor = (cm_color >> 16) & 0xFFu;
+
+                /* Opt 12: Pre-scan lookup table for contiguous stride-1 layout.
+                 * For 1:1 non-flipped sprites (common case), all lookup indices
+                 * are consecutive, so we can skip the per-batch gather and use
+                 * direct contiguous NEON loads instead. */
+                bool cm_src_x_contiguous = (cm_visible_w > 0);
+                const int cm_src_x_base = (cm_visible_w > 0) ? cm_src_x_lookup[0] : 0;
+                for (int ci = 1; ci < cm_visible_w; ci++) {
+                    if (cm_src_x_lookup[ci] != (cm_src_x_base + ci)) {
+                        cm_src_x_contiguous = false;
+                        break;
+                    }
+                }
+
+                const Uint64 cm_sample_start_counter =
+                    begin_perf_capture_raster_bucket_sample(
+                        SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_GENERIC_TEXTURED);
+
+#if RENDERER_HAVE_NEON
+                const NeonModulateState cm_neon_state = neon_modulate_init(cm_color);
+#endif
+
+                for (int row = 0; row < cm_visible_h; row++) {
+                    const Uint32* cm_src_row = cm_src_pixels + (cm_src_y_lookup[row] * cm_src_pitch);
+                    Uint32* cm_dst_row = cm_dst_pixels + ((cm_dst_y0 + row) * cm_dst_pitch) + cm_dst_x0;
+
+                    if ((row + 1) < cm_visible_h) {
+                        __builtin_prefetch(cm_src_pixels + (cm_src_y_lookup[row + 1] * cm_src_pitch), 0, 0);
+                        __builtin_prefetch(cm_dst_pixels + ((cm_dst_y0 + row + 1) * cm_dst_pitch) + cm_dst_x0, 1, 0);
+                    }
+
+                    int col = 0;
+
+#if RENDERER_HAVE_NEON
+                    if (cm_src_x_contiguous) {
+                        /* Opt 12: Contiguous NEON fast path — direct load from
+                         * src_row + base + col, no gather needed. */
+                        const Uint32* cm_src_contiguous = cm_src_row + cm_src_x_base;
+                        for (; (col + 3) < cm_visible_w; col += 4) {
+                            neon_blend_modulate_4pixels(cm_src_contiguous + col, cm_dst_row + col, &cm_neon_state);
+                        }
+                    } else {
+                        /* Gather path: load 4 individual pixels via lookup */
+                        for (; (col + 3) < cm_visible_w; col += 4) {
+                            const Uint32 gathered[4] = {
+                                cm_src_row[cm_src_x_lookup[col]],
+                                cm_src_row[cm_src_x_lookup[col + 1]],
+                                cm_src_row[cm_src_x_lookup[col + 2]],
+                                cm_src_row[cm_src_x_lookup[col + 3]]
+                            };
+                            /* Opt 4 (binary-alpha skip) at batch level: if all 4 raw
+                             * alphas are 0, skip entire batch. */
+                            if (((gathered[0] | gathered[1] | gathered[2] | gathered[3]) >> 24) == 0u) {
+                                continue;
+                            }
+                            neon_blend_modulate_4pixels(gathered, cm_dst_row + col, &cm_neon_state);
+                        }
+                    }
+#endif
+
+                    /* Scalar tail (or full loop on non-NEON) */
+                    for (; col < cm_visible_w; col++) {
+                        const Uint32 raw_pixel = cm_src_row[cm_src_x_lookup[col]];
+                        /* Opt 4: skip modulation if raw alpha is 0 */
+                        if (((raw_pixel >> 24) & 0xFFu) == 0u) {
+                            continue;
+                        }
+                        Uint32 src_pixel = cm_blue_tint
+                            ? modulate_argb8888_blue_tint(raw_pixel, cm_rg_factor, cm_mod_a)
+                            : modulate_argb8888(raw_pixel, cm_color);
+                        const Uint32 src_a = (src_pixel >> 24) & 0xFFu;
+                        if (src_a == 0u) {
+                            continue;
+                        }
+                        if (src_a == 0xFFu) {
+                            cm_dst_row[col] = src_pixel;
+                            continue;
+                        }
+                        cm_dst_row[col] = blend_argb8888_opaque_dst(cm_dst_row[col], src_pixel);
+                    }
+                }
+
+                const Uint64 cm_sampled_ns = perf_capture_counter_delta_to_ns(
+                    cm_sample_start_counter, SDL_GetPerformanceCounter());
+                note_perf_capture_raster_bucket_sample(
+                    SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_GENERIC_TEXTURED,
+                    task, cm_sampled_ns);
+                note_software_frame_fast_copy_result(
+                    task, fast_copy_result, NULL, dst_surface, 0, cm_sampled_ns);
+
+                if (src_locked) {
+                    SDL_UnlockSurface(src_surface);
+                }
+                return true;
+            }
+        }
+        /* If validation failed, fall through to generic float UV path */
+    }
+
     const float src_x_start = task->src_uv_rect.x * (float)src_surface->w;
     const float src_y_start = task->src_uv_rect.y * (float)src_surface->h;
     const float src_x_span = task->src_uv_rect.w * (float)src_surface->w;
@@ -6859,78 +7126,166 @@ static bool raster_textured_task_to_software_frame(const RenderTask* task) {
     const Uint64 generic_sample_start_counter =
         begin_perf_capture_raster_bucket_sample(SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_GENERIC_TEXTURED);
 
-    for (int y = dst_y0; y < dst_y1; y++) {
+    /* Opt 6: Pre-compute integer lookup tables for src_x and src_y.
+     * The float UV computation only depends on (x, dst_rect) for src_x and
+     * (y, dst_rect) for src_y — it's independent between axes.  By computing
+     * the lookup tables once before the main loop, we replace N*M per-pixel
+     * float ops with N+M pre-computation ops + integer-indexed reads. */
+    const int generic_visible_w = dst_x1 - dst_x0;
+    const int generic_visible_h = dst_y1 - dst_y0;
+    int generic_src_x_lookup[cps3_width];
+    int generic_src_y_lookup[cps3_height];
+
+    /* Pre-compute src_y for each destination row — same math as the per-row
+     * float UV code to ensure pixel-identical results. */
+    for (int row = 0; row < generic_visible_h; row++) {
+        const int y = dst_y0 + row;
         float v = (((float)y + 0.5f) - task->dst_rect.y) / task->dst_rect.h;
         v = SDL_max(0.0f, SDL_min(v, 0.999999f));
         if (flip_v) {
             v = 1.0f - v;
             v = SDL_max(0.0f, SDL_min(v, 0.999999f));
         }
+        generic_src_y_lookup[row] =
+            clamp_to_range((int)SDL_floorf(src_y_start + (v * src_y_span)), 0, src_surface->h - 1);
+    }
 
-        const int src_y = clamp_to_range((int)SDL_floorf(src_y_start + (v * src_y_span)), 0, src_surface->h - 1);
-        const Uint32* src_row = src_pixels + (src_y * src_pitch);
-        Uint32* dst_row = dst_pixels + (y * dst_pitch);
+    /* Pre-compute src_x for each destination column — same math as the per-pixel
+     * float UV code.  Since UV depends only on x position (not y), this is
+     * constant across all rows and only needs to be computed once. */
+    for (int col = 0; col < generic_visible_w; col++) {
+        const int x = dst_x0 + col;
+        float u = (((float)x + 0.5f) - task->dst_rect.x) / task->dst_rect.w;
+        u = SDL_max(0.0f, SDL_min(u, 0.999999f));
+        if (flip_h) {
+            u = 1.0f - u;
+            u = SDL_max(0.0f, SDL_min(u, 0.999999f));
+        }
+        generic_src_x_lookup[col] =
+            clamp_to_range((int)SDL_floorf(src_x_start + (u * src_x_span)), 0, src_surface->w - 1);
+    }
+
+    /* Opt 12: Pre-scan generic lookup table for contiguous stride-1 layout.
+     * For 1:1 non-flipped sprites (common case), all lookup indices are
+     * consecutive, allowing direct contiguous NEON loads instead of gather. */
+    bool generic_src_x_contiguous = (generic_visible_w > 0);
+    const int generic_src_x_base = (generic_visible_w > 0) ? generic_src_x_lookup[0] : 0;
+    for (int ci = 1; ci < generic_visible_w; ci++) {
+        if (generic_src_x_lookup[ci] != (generic_src_x_base + ci)) {
+            generic_src_x_contiguous = false;
+            break;
+        }
+    }
+
+#if RENDERER_HAVE_NEON
+    const NeonModulateState generic_neon_state = apply_color_mod ? neon_modulate_init(task->color) : (NeonModulateState){ .color_lo = { 0 }, .color_hi = { 0 } };
+#endif
+
+    for (int row = 0; row < generic_visible_h; row++) {
+        const Uint32* src_row = src_pixels + (generic_src_y_lookup[row] * src_pitch);
+        Uint32* dst_row = dst_pixels + ((dst_y0 + row) * dst_pitch) + dst_x0;
 
         /* Prefetch next iteration's source and destination rows to hide L1/L2 miss latency. */
-        if ((y + 1) < dst_y1) {
-            float next_v = (((float)(y + 1) + 0.5f) - task->dst_rect.y) / task->dst_rect.h;
-            next_v = SDL_max(0.0f, SDL_min(next_v, 0.999999f));
-            if (flip_v) {
-                next_v = 1.0f - next_v;
-                next_v = SDL_max(0.0f, SDL_min(next_v, 0.999999f));
-            }
-            const int next_src_y = clamp_to_range((int)SDL_floorf(src_y_start + (next_v * src_y_span)), 0, src_surface->h - 1);
-            __builtin_prefetch(src_pixels + (next_src_y * src_pitch), 0, 0);
-            __builtin_prefetch(dst_pixels + ((y + 1) * dst_pitch) + dst_x0, 1, 0);
+        if ((row + 1) < generic_visible_h) {
+            __builtin_prefetch(src_pixels + (generic_src_y_lookup[row + 1] * src_pitch), 0, 0);
+            __builtin_prefetch(dst_pixels + ((dst_y0 + row + 1) * dst_pitch) + dst_x0, 1, 0);
         }
 
         if (!apply_color_mod) {
-            for (int x = dst_x0; x < dst_x1; x++) {
-                float u = (((float)x + 0.5f) - task->dst_rect.x) / task->dst_rect.w;
-                u = SDL_max(0.0f, SDL_min(u, 0.999999f));
-                if (flip_h) {
-                    u = 1.0f - u;
-                    u = SDL_max(0.0f, SDL_min(u, 0.999999f));
-                }
+            int col = 0;
 
-                const int src_x =
-                    clamp_to_range((int)SDL_floorf(src_x_start + (u * src_x_span)), 0, src_surface->w - 1);
-                const Uint32 src_pixel = src_row[src_x];
+#if RENDERER_HAVE_NEON
+            if (generic_src_x_contiguous) {
+                /* Opt 12: Contiguous NEON fast path — direct load, no gather */
+                const Uint32* src_contiguous = src_row + generic_src_x_base;
+                for (; (col + 3) < generic_visible_w; col += 4) {
+                    neon_blend_4pixels(src_contiguous + col, dst_row + col);
+                }
+            } else {
+                /* Gather path: load 4 individual pixels via lookup */
+                for (; (col + 3) < generic_visible_w; col += 4) {
+                    const Uint32 gathered[4] = {
+                        src_row[generic_src_x_lookup[col]],
+                        src_row[generic_src_x_lookup[col + 1]],
+                        src_row[generic_src_x_lookup[col + 2]],
+                        src_row[generic_src_x_lookup[col + 3]]
+                    };
+                    /* Batch-level alpha skip: if all 4 raw alphas are 0, skip */
+                    if (((gathered[0] | gathered[1] | gathered[2] | gathered[3]) >> 24) == 0u) {
+                        continue;
+                    }
+                    neon_blend_4pixels(gathered, dst_row + col);
+                }
+            }
+#endif
+
+            /* Scalar tail (or full loop on non-NEON) */
+            for (; col < generic_visible_w; col++) {
+                const Uint32 src_pixel = src_row[generic_src_x_lookup[col]];
                 const Uint32 src_a = (src_pixel >> 24) & 0xFFu;
                 if (src_a == 0u) {
                     continue;
                 }
                 if (src_a == 0xFFu) {
-                    dst_row[x] = src_pixel;
+                    dst_row[col] = src_pixel;
                     continue;
                 }
-                dst_row[x] = blend_argb8888(dst_row[x], src_pixel);
+                dst_row[col] = blend_argb8888_opaque_dst(dst_row[col], src_pixel);
             }
             continue;
         }
 
-        for (int x = dst_x0; x < dst_x1; x++) {
-            float u = (((float)x + 0.5f) - task->dst_rect.x) / task->dst_rect.w;
-            u = SDL_max(0.0f, SDL_min(u, 0.999999f));
-            if (flip_h) {
-                u = 1.0f - u;
-                u = SDL_max(0.0f, SDL_min(u, 0.999999f));
-            }
+        /* apply_color_mod path */
+        int col = 0;
 
-            const int src_x =
-                clamp_to_range((int)SDL_floorf(src_x_start + (u * src_x_span)), 0, src_surface->w - 1);
+#if RENDERER_HAVE_NEON
+        if (generic_src_x_contiguous) {
+            /* Opt 12: Contiguous NEON fast path — direct load, no gather */
+            const Uint32* src_contiguous = src_row + generic_src_x_base;
+            for (; (col + 3) < generic_visible_w; col += 4) {
+                neon_blend_modulate_4pixels(src_contiguous + col, dst_row + col, &generic_neon_state);
+            }
+        } else {
+            /* Gather path: load 4 individual pixels via lookup */
+            for (; (col + 3) < generic_visible_w; col += 4) {
+                const Uint32 gathered[4] = {
+                    src_row[generic_src_x_lookup[col]],
+                    src_row[generic_src_x_lookup[col + 1]],
+                    src_row[generic_src_x_lookup[col + 2]],
+                    src_row[generic_src_x_lookup[col + 3]]
+                };
+                /* Opt 4 (binary-alpha skip) at batch level: if all 4 raw
+                 * alphas are 0, skip entire batch. */
+                if (((gathered[0] | gathered[1] | gathered[2] | gathered[3]) >> 24) == 0u) {
+                    continue;
+                }
+                neon_blend_modulate_4pixels(gathered, dst_row + col, &generic_neon_state);
+            }
+        }
+#endif
+
+        /* Scalar tail (or full loop on non-NEON) */
+        for (; col < generic_visible_w; col++) {
+            const Uint32 raw_pixel = src_row[generic_src_x_lookup[col]];
+            /* Opt 4: Binary-alpha skip before modulation.
+             * If the raw source alpha is 0, modulated alpha is also 0 because
+             * (0 * mod_a + 128) >> 8 = 0 for all mod_a in [0..255].
+             * Skip the expensive modulate call entirely. */
+            if (((raw_pixel >> 24) & 0xFFu) == 0u) {
+                continue;
+            }
             Uint32 src_pixel = generic_blue_tint
-                ? modulate_argb8888_blue_tint(src_row[src_x], generic_rg_factor, generic_mod_a)
-                : modulate_argb8888(src_row[src_x], task->color);
+                ? modulate_argb8888_blue_tint(raw_pixel, generic_rg_factor, generic_mod_a)
+                : modulate_argb8888(raw_pixel, task->color);
             const Uint32 src_a = (src_pixel >> 24) & 0xFFu;
             if (src_a == 0u) {
                 continue;
             }
             if (src_a == 0xFFu) {
-                dst_row[x] = src_pixel;
+                dst_row[col] = src_pixel;
                 continue;
             }
-            dst_row[x] = blend_argb8888(dst_row[x], src_pixel);
+            dst_row[col] = blend_argb8888_opaque_dst(dst_row[col], src_pixel);
         }
     }
     const Uint64 generic_sampled_ns = perf_capture_counter_delta_to_ns(
@@ -7014,7 +7369,7 @@ static bool raster_textured_parallelogram_to_software_frame(const RenderTask* ta
                 dst_row[col] = src_pixel;
                 continue;
             }
-            dst_row[col] = blend_argb8888(dst_row[col], src_pixel);
+            dst_row[col] = blend_argb8888_opaque_dst(dst_row[col], src_pixel);
         }
     }
 
@@ -7096,7 +7451,7 @@ static bool raster_textured_float_parallelogram_to_software_frame(const RenderTa
             if (src_a == 0xFFu) {
                 dst_row[dst_x] = src_pixel;
             } else {
-                dst_row[dst_x] = blend_argb8888(dst_row[dst_x], src_pixel);
+                dst_row[dst_x] = blend_argb8888_opaque_dst(dst_row[dst_x], src_pixel);
             }
             src_x_f += src_step;
         }
@@ -7178,7 +7533,7 @@ static bool raster_textured_float_triangle_to_software_frame(const SDL_Surface* 
                 dst_row[x] = src_pixel;
                 continue;
             }
-            dst_row[x] = blend_argb8888(dst_row[x], src_pixel);
+            dst_row[x] = blend_argb8888_opaque_dst(dst_row[x], src_pixel);
         }
     }
 
@@ -7253,7 +7608,7 @@ static bool raster_textured_triangle_to_software_frame(const SDL_Surface* src_su
                 dst_row[x] = src_pixel;
                 continue;
             }
-            dst_row[x] = blend_argb8888(dst_row[x], src_pixel);
+            dst_row[x] = blend_argb8888_opaque_dst(dst_row[x], src_pixel);
         }
     }
 
@@ -7341,7 +7696,7 @@ static bool raster_textured_translated_triangle_to_software_frame(const SDL_Surf
                 dst_row[x] = src_pixel;
                 continue;
             }
-            dst_row[x] = blend_argb8888(dst_row[x], src_pixel);
+            dst_row[x] = blend_argb8888_opaque_dst(dst_row[x], src_pixel);
         }
     }
 
@@ -7612,6 +7967,24 @@ static bool render_frame_to_software_surface(void) {
         }
 
         const RenderTask* task = &merged_task;
+
+        /* Opt 11: Early off-screen skip for TEXTURED_RECT tasks.  If the dst
+         * rect is entirely outside the software frame surface, skip the task
+         * without entering the raster function (avoids surface locking, plan
+         * building, and lookup table construction). */
+        if (task->type == RENDER_TASK_TYPE_TEXTURED_RECT) {
+            const float dx = task->dst_rect.x;
+            const float dy = task->dst_rect.y;
+            const float dw = task->dst_rect.w;
+            const float dh = task->dst_rect.h;
+            if ((dw <= 0.0f) || (dh <= 0.0f) ||
+                ((dx + dw) <= 0.0f) || (dx >= (float)software_frame_surface->w) ||
+                ((dy + dh) <= 0.0f) || (dy >= (float)software_frame_surface->h)) {
+                i = next_task_index;
+                continue;
+            }
+        }
+
         const bool ok = (task->type == RENDER_TASK_TYPE_TEXTURED_RECT)
                             ? raster_textured_task_to_software_frame(task)
                             : ((task->texture != NULL)
@@ -8438,6 +8811,9 @@ void SDLGameRenderer_BeginFrame(bool capture_extended_stats) {
     (void)capture_extended_stats;
 #endif
     reset_frame_stats();
+    texture_refresh_ns_this_frame = 0;
+    sort_ns_this_frame = 0;
+    raster_ns_this_frame = 0;
     software_frame_direct_present_requested = false;
 #if ENABLE_PERF_TELEMETRY
     current_task_source = SDL_GAME_RENDERER_TASK_SOURCE_UNKNOWN;
@@ -8495,30 +8871,39 @@ void SDLGameRenderer_RenderFrame() {
         cps3_target_bound = SDL_SetRenderTarget(_renderer, cps3_canvas);
     }
 
-    if ((render_task_count > 1) && render_tasks_have_z_inversion) {
-        if ((render_task_count <= render_task_insertion_sort_max_tasks) &&
-            (render_tasks_z_inversion_count <= render_task_insertion_sort_max_inversions)) {
-            RENDERER_TELEMETRY(frame_stats.sort_strategy = SDL_GAME_RENDERER_SORT_INSERTION);
-            insertion_sort_render_tasks();
-        } else {
-            RENDERER_TELEMETRY(frame_stats.sort_strategy = SDL_GAME_RENDERER_SORT_QSORT);
-            qsort(render_tasks, render_task_count, sizeof(RenderTask), compare_render_tasks);
+    {
+        const Uint64 sort_t0 = SDL_GetTicksNS();
+        if ((render_task_count > 1) && render_tasks_have_z_inversion) {
+            if ((render_task_count <= render_task_insertion_sort_max_tasks) &&
+                (render_tasks_z_inversion_count <= render_task_insertion_sort_max_inversions)) {
+                RENDERER_TELEMETRY(frame_stats.sort_strategy = SDL_GAME_RENDERER_SORT_INSERTION);
+                insertion_sort_render_tasks();
+            } else {
+                RENDERER_TELEMETRY(frame_stats.sort_strategy = SDL_GAME_RENDERER_SORT_QSORT);
+                qsort(render_tasks, render_task_count, sizeof(RenderTask), compare_render_tasks);
+            }
         }
+        sort_ns_this_frame = SDL_GetTicksNS() - sort_t0;
     }
 
     apply_super_effect_burst_reduction_after_sort();
 
-    if (software_frame_mode_active && render_frame_to_software_surface()) {
-        software_frame_owned = true;
-        RENDERER_TELEMETRY({
-            frame_stats.software_frame_owned = 1;
-            frame_stats.software_frame_fallback = 0;
-        });
-        if (!software_frame_direct_present_requested) {
-            ensure_software_frame_canvas_for_frame();
+    {
+        const Uint64 raster_t0 = SDL_GetTicksNS();
+        const bool raster_ok = software_frame_mode_active && render_frame_to_software_surface();
+        raster_ns_this_frame = SDL_GetTicksNS() - raster_t0;
+        if (raster_ok) {
+            software_frame_owned = true;
+            RENDERER_TELEMETRY({
+                frame_stats.software_frame_owned = 1;
+                frame_stats.software_frame_fallback = 0;
+            });
+            if (!software_frame_direct_present_requested) {
+                ensure_software_frame_canvas_for_frame();
+            }
+        } else {
+            submit_render_tasks();
         }
-    } else {
-        submit_render_tasks();
     }
 
     if (draw_rect_borders) {
@@ -10182,6 +10567,18 @@ void SDLGameRenderer_GetFrameStats(SDLGameRenderer_FrameStats* out_stats) {
 #endif
 }
 
+Uint64 SDLGameRenderer_GetTextureRefreshNs(void) {
+    return texture_refresh_ns_this_frame;
+}
+
+Uint64 SDLGameRenderer_GetSortNs(void) {
+    return sort_ns_this_frame;
+}
+
+Uint64 SDLGameRenderer_GetRasterNs(void) {
+    return raster_ns_this_frame;
+}
+
 void SDLGameRenderer_RecordTextureUnlockDirtyRect(unsigned int texture_handle,
                                                   int min_x,
                                                   int min_y,
@@ -10669,10 +11066,15 @@ static bool try_setup_textured_rect_task(RenderTask* task,
         return false;
     }
 
-    const float dst_x0 = SDL_min(x0, x1);
-    const float dst_y0 = SDL_min(y0, y1);
-    const float dst_w = SDL_fabsf(x1 - x0);
-    const float dst_h = SDL_fabsf(y1 - y0);
+    /* CPS3 hardware has no sub-pixel sprite addressing — fractional
+       destination coords are purely artifacts of the floating-point matrix
+       pipeline (camera scroll, zoom).  Snapping to integers routes every
+       textured rect through the exact-copy fast path instead of the
+       expensive non-integer gather rasterizer (~0.5 vs ~8 cycles/pixel). */
+    const float dst_x0 = SDL_roundf(SDL_min(x0, x1));
+    const float dst_y0 = SDL_roundf(SDL_min(y0, y1));
+    const float dst_w = SDL_roundf(SDL_fabsf(x1 - x0));
+    const float dst_h = SDL_roundf(SDL_fabsf(y1 - y0));
     if ((dst_w <= 0.0f) || (dst_h <= 0.0f)) {
         return false;
     }
@@ -10855,6 +11257,200 @@ void SDLGameRenderer_DrawSprite2(const Sprite2* sprite2) {
                      sprite2->t[1].s,
                      sprite2->t[1].t,
                      sprite2->vertex_color);
+}
+
+/* ---------------------------------------------------------------------------
+ * Batch sprite submission for seqsAfterProcess (D timer hot path).
+ *
+ * During super-art activation the game submits 200-400 sprites per frame
+ * through the individual Renderer_DrawSprite2 path.  Each call traverses
+ * four levels of function indirection (flSetRenderState -> ... ->
+ * push_render_task) and marks dirty tiles per sprite.
+ *
+ * This batch variant:
+ *   1. Sets the task source ONCE at the top.
+ *   2. Calls SDLGameRenderer_SetTexture directly (bypassing flSetRenderState /
+ *      flPS2SendTextureRegister overhead) when the texture binding changes.
+ *   3. Populates render tasks in a tight loop with the minimum per-sprite
+ *      work (begin_quad_task + try_setup_textured_rect_task + task bookkeeping).
+ *   4. Defers dirty-tile marking to a single pass after the batch.
+ *
+ * The output is IDENTICAL to calling the per-sprite path in a loop.
+ * ------------------------------------------------------------------------- */
+void SDLGameRenderer_DrawSprites2Batch(const Sprite2* sprites,
+                                       int sprite_count,
+                                       const signed char* up_flags,
+                                       int up_flag_count) {
+    if (sprite_count <= 0) {
+        return;
+    }
+
+    /* 1. Set task source once for the entire batch. */
+#if ENABLE_PERF_TELEMETRY
+    const SDLGameRenderer_TaskSource prev_source = current_task_source;
+    current_task_source = SDL_GAME_RENDERER_TASK_SOURCE_MTRANS;
+#endif
+
+    /* Track the first task index so we can do dirty-tile marking in bulk. */
+    const int batch_start = render_task_count;
+
+    /* Track the current texture binding to avoid redundant SetTexture calls,
+       mirroring the keep/val logic in seqsAfterProcess. */
+    unsigned int keep = 0;
+
+    for (int i = 0; i < sprite_count; i++) {
+        const Sprite2* s = &sprites[i];
+
+        /* Skip sprites whose texture sheet is not ready (same as up[] check
+           in the original seqsAfterProcess loop). */
+        if ((int)s->id >= up_flag_count || !up_flags[s->id]) {
+            continue;
+        }
+
+        /* Bind the texture if it changed. SDLGameRenderer_SetTexture is the
+           same function ultimately reached by flSetRenderState(FLRENDER_TEXSTAGE0, val),
+           but we skip the flPS2SendTextureRegister / flPS2SetTextureRegister
+           indirection layers that only do validation. */
+        const unsigned int tex_code = s->tex_code;
+        if (keep != tex_code) {
+            keep = tex_code;
+            SDLGameRenderer_SetTexture(tex_code);
+        }
+
+        /* Guard against overflowing the render task array. */
+        if (render_task_count >= RENDER_TASK_MAX) {
+            break;
+        }
+
+        /* --- Inline begin_quad_task --- */
+        RenderTask* task = &render_tasks[render_task_count];
+        task->index = render_task_count;
+        task->texture = current_texture_binding_valid ? get_texture() : NULL;
+        task->type = RENDER_TASK_TYPE_GEOMETRY;
+#if ENABLE_PERF_TELEMETRY
+        task->source = SDL_GAME_RENDERER_TASK_SOURCE_MTRANS;
+#endif
+        task->texture_binding = current_texture_binding_valid ? current_texture_binding : 0;
+        task->software_source_surface = current_texture_binding_valid ? current_software_source_surface : NULL;
+        task->z = flPS2ConvScreenFZ(s->v[0].z);
+
+        /* --- Inline try_setup_textured_rect_task --- */
+        if (!current_texture_binding_valid) {
+            /* Cannot produce a textured rect; fall back to per-sprite path for
+               this sprite (should be extremely rare). */
+            draw_sprite_rect(s->v[0].x, s->v[0].y, s->v[1].x, s->v[1].y,
+                             s->v[0].z, s->t[0].s, s->t[0].t, s->t[1].s, s->t[1].t,
+                             s->vertex_color);
+            continue;
+        }
+
+        {
+            const int texture_handle = LO_16_BITS(current_texture_binding);
+            const SDL_Surface* surface = surfaces[texture_handle - 1];
+            if (surface == NULL) {
+                draw_sprite_rect(s->v[0].x, s->v[0].y, s->v[1].x, s->v[1].y,
+                                 s->v[0].z, s->t[0].s, s->t[0].t, s->t[1].s, s->t[1].t,
+                                 s->vertex_color);
+                continue;
+            }
+
+            const float x0 = s->v[0].x, y0 = s->v[0].y;
+            const float x1 = s->v[1].x, y1 = s->v[1].y;
+            const float s0 = s->t[0].s, t0 = s->t[0].t;
+            const float s1 = s->t[1].s, t1 = s->t[1].t;
+
+            const bool finite_rect = isfinite(x0) && isfinite(y0) && isfinite(x1) && isfinite(y1) &&
+                                     isfinite(s0) && isfinite(t0) && isfinite(s1) && isfinite(t1);
+            if (!finite_rect) {
+                draw_sprite_rect(x0, y0, x1, y1, s->v[0].z, s0, t0, s1, t1, s->vertex_color);
+                continue;
+            }
+
+            const float dst_x0 = SDL_roundf(SDL_min(x0, x1));
+            const float dst_y0 = SDL_roundf(SDL_min(y0, y1));
+            const float dst_w = SDL_roundf(SDL_fabsf(x1 - x0));
+            const float dst_h = SDL_roundf(SDL_fabsf(y1 - y0));
+            if ((dst_w <= 0.0f) || (dst_h <= 0.0f)) {
+                draw_sprite_rect(x0, y0, x1, y1, s->v[0].z, s0, t0, s1, t1, s->vertex_color);
+                continue;
+            }
+
+            float norm_s0 = s0, norm_t0 = t0, norm_s1 = s1, norm_t1 = t1;
+            const float tex_w = (float)surface->w;
+            const float tex_h = (float)surface->h;
+            const float uv_x0 = SDL_min(s0, s1);
+            const float uv_y0 = SDL_min(t0, t1);
+            const float uv_x1 = SDL_max(s0, s1);
+            const float uv_y1 = SDL_max(t0, t1);
+            const bool normalized_uv = (uv_x0 >= 0.0f) && (uv_y0 >= 0.0f) && (uv_x1 <= 1.0f) && (uv_y1 <= 1.0f);
+
+            if (!normalized_uv) {
+                const bool pixel_uv = (uv_x0 >= 0.0f) && (uv_y0 >= 0.0f) && (uv_x1 <= tex_w) && (uv_y1 <= tex_h);
+                if (!pixel_uv || (tex_w <= 0.0f) || (tex_h <= 0.0f)) {
+                    draw_sprite_rect(x0, y0, x1, y1, s->v[0].z, s0, t0, s1, t1, s->vertex_color);
+                    continue;
+                }
+                norm_s0 = s0 / tex_w;
+                norm_t0 = t0 / tex_h;
+                norm_s1 = s1 / tex_w;
+                norm_t1 = t1 / tex_h;
+            }
+
+            const float src_x0f = SDL_min(norm_s0, norm_s1);
+            const float src_y0f = SDL_min(norm_t0, norm_t1);
+            const float src_w = SDL_fabsf(norm_s1 - norm_s0);
+            const float src_h = SDL_fabsf(norm_t1 - norm_t0);
+            const bool within_normalized_uv = (src_x0f >= 0.0f) && (src_y0f >= 0.0f) &&
+                                              ((src_x0f + src_w) <= 1.0f) && ((src_y0f + src_h) <= 1.0f);
+            if (!within_normalized_uv || (src_w <= 0.0f) || (src_h <= 0.0f)) {
+                draw_sprite_rect(x0, y0, x1, y1, s->v[0].z, s0, t0, s1, t1, s->vertex_color);
+                continue;
+            }
+
+            /* Populate the textured rect task fields. */
+            task->type = RENDER_TASK_TYPE_TEXTURED_RECT;
+            task->dst_rect.x = dst_x0;
+            task->dst_rect.y = dst_y0;
+            task->dst_rect.w = dst_w;
+            task->dst_rect.h = dst_h;
+            task->src_uv_rect.x = src_x0f;
+            task->src_uv_rect.y = src_y0f;
+            task->src_uv_rect.w = src_w;
+            task->src_uv_rect.h = src_h;
+            task->flip = SDL_FLIP_NONE;
+            if ((x1 < x0) != (norm_s1 < norm_s0)) {
+                task->flip |= SDL_FLIP_HORIZONTAL;
+            }
+            if ((y1 < y0) != (norm_t1 < norm_t0)) {
+                task->flip |= SDL_FLIP_VERTICAL;
+            }
+            task->color = s->vertex_color;
+        }
+
+        /* --- Inline push_render_task (without dirty-tile marking) --- */
+        if (render_task_count > 0) {
+            if (render_tasks[render_task_count - 1].z >= task->z) {
+                render_tasks_have_z_inversion = true;
+                render_tasks_z_inversion_count += 1;
+            }
+        }
+#if ENABLE_PERF_TELEMETRY
+        count_task_source(task->source);
+#endif
+        render_task_count += 1;
+    }
+
+    /* 4. Deferred dirty-tile marking: single pass over all tasks emitted by
+       this batch.  This is equivalent to calling mark_dirty_tiles_for_task
+       per sprite but avoids per-sprite function call overhead. */
+    for (int i = batch_start; i < render_task_count; i++) {
+        mark_dirty_tiles_for_task(&render_tasks[i]);
+    }
+
+    /* Restore the task source so subsequent non-batch calls get the right tag. */
+#if ENABLE_PERF_TELEMETRY
+    current_task_source = prev_source;
+#endif
 }
 
 bool SDLGameRenderer_DrawInputHistoryGlyph(float x, float y, float z, SDLGameRenderer_InputHistoryGlyph glyph,

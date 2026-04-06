@@ -1490,6 +1490,22 @@ typedef struct {
     PatternInstance patt[64];
 } PatternCollection;
 
+#define MTS_HASH_BUCKETS_2K  2048
+#define MTS_HASH_BUCKETS_4K  4096
+#define MTS_HASH_EMPTY       0xFFFF
+#define MTS_HASH_PROBE_LIMIT 16
+
+typedef struct {
+    u16* buckets;     /* indexed by hash; value = slot index or MTS_HASH_EMPTY */
+    u16 bucket_mask;  /* (bucket_count - 1); either 0x7FF (2K) or 0xFFF (4K) */
+    u16 bucket_count; /* 2048 or 4096 */
+} MtsCacheIndex;
+
+typedef struct {
+    u16* slots;   /* stack array, capacity = mltnum16 or mltnum32 */
+    s32 top;      /* index of next free slot to pop; -1 = empty */
+} MtsFreeList;
+
 typedef struct {
     s32 mltnum16;
     s32 mltnum32;
@@ -1507,6 +1523,10 @@ typedef struct {
     PatternCollection* cpat;
     TexturePoolFree* tpf;
     TexturePoolUsed* tpu;
+    MtsCacheIndex* hash16;
+    MtsCacheIndex* hash32;
+    MtsFreeList free16;
+    MtsFreeList free32;
     u8 id;
     u8 ext;
     s16 mode;
