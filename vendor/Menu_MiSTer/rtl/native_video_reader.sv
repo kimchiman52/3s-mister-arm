@@ -64,10 +64,9 @@ module native_video_reader (
 
 // DDR3 write signals: active only during feedback write
 reg  [63:0] feedback_din;
-reg  [7:0]  feedback_be;
 reg         feedback_wr;
 assign ddr_din = feedback_din;
-assign ddr_be  = feedback_be;
+assign ddr_be  = feedback_wr ? 8'h0F : 8'hFF;  // 0F for feedback write, FF for reads
 assign ddr_we  = feedback_wr;
 
 // =========================================================================
@@ -225,7 +224,6 @@ always @(posedge ddr_clk) begin
         fifo_wr_data       <= 64'd0;
         fifo_aclr_cnt      <= 4'd0;
         feedback_din        <= 64'd0;
-        feedback_be         <= 8'h0F;
         feedback_wr         <= 1'b0;
         vblank_counter      <= 30'd0;
         last_buffer_status  <= 2'd0;
@@ -387,8 +385,7 @@ always @(posedge ddr_clk) begin
                     ddr_addr     <= FEEDBACK_ADDR;
                     ddr_burstcnt <= 8'd1;
                     feedback_din <= {32'd0, vblank_counter, last_buffer_status};
-                    feedback_be  <= 8'h0F;   // Write lower 4 bytes of qword
-                    feedback_wr  <= 1'b1;
+                    feedback_wr  <= 1'b1;    // ddr_be driven combinationally: 0F when wr=1, FF otherwise
                     state        <= ST_WAIT_WR_ACK;
                 end
             end
