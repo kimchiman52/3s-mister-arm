@@ -304,7 +304,15 @@ Six render-path optimizations targeting super art frame drops, plus four additio
 - **Commit**: `dbcf340e`
 - **Files**: FPGA: `pll_video.v`, `menu.sv`, `native_video_timing.sv`. ARM: `src/port/sdl/sdl_app.c`
 
-### 8.3 Stale Texture Comparison Removal
+### 8.3 Vsync Feedback via DDR3 Shared Memory
+
+- **What**: FPGA writes a 32-bit feedback word (vblank counter + buffer status) to DDR3 at each vblank. ARM reads it and phase-locks frame delivery to actual FPGA timing instead of using a blind `SDL_DelayNS` timer. Closed-loop pacer with low-pass filtered period tracking (alpha=1/16), single-shot phase correction on consecutive stale frames, and 500ms watchdog fallback to open-loop.
+- **Why**: Even with matched PLL frequencies (Part 1), Linux scheduling jitter (0.5-2ms) causes the ARM's frame write to occasionally land after the FPGA's vblank poll, resulting in stale frame display. At 800MHz the CPU margin is tight enough that this is perceptible.
+- **Impact**: Eliminates sporadic frame stutter from OS scheduling jitter. Frame delivery stays phase-locked to FPGA vblank even under system load.
+- **Commit**: `6e334f53`
+- **Files**: FPGA: `native_video_reader.sv`, `menu.sv`. ARM: `sdl_app.c`, `native_video_writer.c/.h`
+
+### 8.4 Stale Texture Comparison Removal
 
 - **What**: Remove the per-pixel `flPS2CopyIndex8TextureAndTrackDirtyRect` comparison that was tracking dirty rects at the INDEX8 texture unlock level. Revert to simple `flMemcpy`.
 - **Why**: The dirty-rect tracking it fed was disabled (ppg dirty-rect was off at the time), so this was pure overhead: 0.5-3ms/frame of byte-by-byte comparison producing unused results.
@@ -417,8 +425,9 @@ These commits do not directly improve performance but were essential for identif
 | 7.1 | Batch sprite submission | Submission | Eliminates 4+ indirection levels | `5d603873` |
 | 8.1 | ARM frame pacing match | Timing | Eliminates 26-second stutter | `ab80248a` |
 | 8.2 | Dedicated video PLL (59.5993 Hz) | Timing | 245x more accurate frame rate | `dbcf340e` |
-| 8.3 | Stale texture comparison removal | Texture | 0.5-3ms/frame on animated stages | `9e7d69ee` |
-| 8.4 | ARM clock management (user-selectable overclock) | System | ~50% CPU headroom at 1200MHz | `e510bc42` |
+| 8.3 | Vsync feedback via DDR3 shared memory | Timing | Eliminates OS jitter stutter | `6e334f53` |
+| 8.4 | Stale texture comparison removal | Texture | 0.5-3ms/frame on animated stages | `9e7d69ee` |
+| 8.5 | ARM clock management (user-selectable overclock) | System | ~50% CPU headroom at 1200MHz | `e510bc42` |
 | 9.1 | Texture group load race → skip frame | Stability | Eliminates SIGABRT crash in attract mode at 800MHz | |
 | 9.2 | CG cache full / decode error → graceful fallback | Stability | Eliminates infinite CPU spin on long idle (animated stages) | |
 | 11.1 | INDEX8 rasterization with per-pixel palette lookup | Rendering | 4× smaller source textures, eliminates ARGB8888 conversion | (pending) |

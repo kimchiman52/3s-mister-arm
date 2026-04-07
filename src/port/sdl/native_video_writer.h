@@ -23,4 +23,15 @@ void NativeVideoWriter_WriteFrame(const void* pixels_rgb565, int width, int heig
 /// True if the DDR3 writer has been initialised and is ready for frames.
 bool NativeVideoWriter_IsActive(void);
 
+/// Read the FPGA's vblank feedback word from DDR3.
+/// Returns the raw 32-bit value: bits[31:2] = vblank_counter, bits[1:0] = buffer_status.
+/// Returns 0 if the writer is not initialized.
+uint32_t NativeVideoWriter_ReadFeedback(void);
+
+/// Extract the vblank counter from a feedback word.
+static inline uint32_t NV_FeedbackVblankCounter(uint32_t fb) { return fb >> 2; }
+
+/// Extract the buffer status from a feedback word (0,1 = buffer read; 2 = stale).
+static inline uint32_t NV_FeedbackBufferStatus(uint32_t fb) { return fb & 3; }
+
 #endif

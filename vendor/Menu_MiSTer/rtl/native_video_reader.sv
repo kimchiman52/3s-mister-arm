@@ -35,9 +35,9 @@ module native_video_reader (
     input  wire [63:0] ddr_dout,        // DDRAM_DOUT
     input  wire        ddr_dout_ready,  // DDRAM_DOUT_READY
     output reg         ddr_rd,          // DDRAM_RD
-    output wire [63:0] ddr_din,         // DDRAM_DIN (unused, tie to 0)
-    output wire  [7:0] ddr_be,          // DDRAM_BE (all 1s for reads)
-    output wire        ddr_we,          // DDRAM_WE (unused, tie to 0)
+    output wire [63:0] ddr_din,         // DDRAM_DIN (feedback write data)
+    output wire  [7:0] ddr_be,          // DDRAM_BE (byte enables)
+    output wire        ddr_we,          // DDRAM_WE (feedback write enable)
 
     // Pixel output (clk_vid domain)
     input  wire        clk_vid,         // video clock (31.1538 MHz, CLK_VIDEO)
@@ -62,10 +62,13 @@ module native_video_reader (
     output wire        frame_ready      // indicates valid data being output
 );
 
-// Unused DDR3 write signals
-assign ddr_din = 64'd0;
-assign ddr_be  = 8'hFF;
-assign ddr_we  = 1'b0;
+// DDR3 write signals: active only during feedback write
+reg  [63:0] feedback_din;
+reg  [7:0]  feedback_be;
+reg         feedback_wr;
+assign ddr_din = feedback_din;
+assign ddr_be  = feedback_be;
+assign ddr_we  = feedback_wr;
 
 // =========================================================================
 // DDR3 Address Constants (29-bit qword addresses = physical >> 3)
@@ -75,6 +78,7 @@ localparam [28:0] BUF0_ADDR   = 29'h07400020;  // 0x3A000100 >> 3
 localparam [28:0] BUF1_ADDR   = 29'h07405440;  // 0x3A02A200 >> 3
 localparam [7:0]  LINE_BURST  = 8'd96;         // 768 bytes / 8 = 96 beats
 localparam [28:0] LINE_STRIDE = 29'd96;        // 96 qword addresses per line
+localparam [28:0] FEEDBACK_ADDR = 29'h07400008;  // 0x3A000040 >> 3
 localparam [8:0]  V_ACTIVE    = 9'd224;
 
 // Deadlock timeout: ~1M cycles at 100 MHz = ~10 ms
@@ -156,14 +160,16 @@ assign frame_ready = frame_ready_vid;
 // =========================================================================
 // DDR3 Read State Machine (ddr_clk domain)
 // =========================================================================
-localparam [3:0] ST_IDLE         = 4'd0;
-localparam [3:0] ST_POLL_CTRL    = 4'd1;
-localparam [3:0] ST_WAIT_CTRL    = 4'd2;
-localparam [3:0] ST_CHECK_CTRL   = 4'd3;
-localparam [3:0] ST_READ_LINE    = 4'd4;
-localparam [3:0] ST_WAIT_LINE    = 4'd5;
-localparam [3:0] ST_LINE_DONE    = 4'd6;
-localparam [3:0] ST_WAIT_DISPLAY = 4'd7;
+localparam [3:0] ST_IDLE           = 4'd0;
+localparam [3:0] ST_POLL_CTRL      = 4'd1;
+localparam [3:0] ST_WAIT_CTRL      = 4'd2;
+localparam [3:0] ST_CHECK_CTRL     = 4'd3;
+localparam [3:0] ST_READ_LINE      = 4'd4;
+localparam [3:0] ST_WAIT_LINE      = 4'd5;
+localparam [3:0] ST_LINE_DONE      = 4'd6;
+localparam [3:0] ST_WAIT_DISPLAY   = 4'd7;
+localparam [3:0] ST_WRITE_FEEDBACK = 4'd8;
+localparam [3:0] ST_WAIT_WR_ACK   = 4'd9;
 
 reg  [3:0]  state;
 reg  [31:0] ctrl_word;
@@ -176,6 +182,9 @@ reg         first_frame_loaded;
 reg  [4:0]  stale_vblank_count;
 reg         preloading;
 reg  [19:0] timeout_cnt;
+reg  [29:0] vblank_counter;      // Incremented each vblank, written to DDR3
+reg  [1:0]  last_buffer_status;  // 0/1 = which buffer consumed, 2 = stale
+reg         proceed_to_read;     // After feedback write: go to READ_LINE or IDLE?
 
 // =========================================================================
 // FIFO write: push raw 64-bit DDR3 beats directly on ddr_dout_ready.
@@ -215,6 +224,12 @@ always @(posedge ddr_clk) begin
         fifo_wr            <= 1'b0;
         fifo_wr_data       <= 64'd0;
         fifo_aclr_cnt      <= 4'd0;
+        feedback_din        <= 64'd0;
+        feedback_be         <= 8'h0F;
+        feedback_wr         <= 1'b0;
+        vblank_counter      <= 30'd0;
+        last_buffer_status  <= 2'd0;
+        proceed_to_read     <= 1'b0;
     end
     else begin
         // Default: deassert FIFO write each cycle
@@ -225,6 +240,7 @@ always @(posedge ddr_clk) begin
 
         // Deassert DDR3 read request once accepted (not busy)
         if (!ddr_busy) ddr_rd <= 1'b0;
+        if (!ddr_busy) feedback_wr <= 1'b0;
 
         // -----------------------------------------------------------
         // In ST_WAIT_LINE: capture EVERY DDR3 beat immediately.
@@ -275,36 +291,41 @@ always @(posedge ddr_clk) begin
             end
 
             ST_CHECK_CTRL: begin
+                // Always increment vblank counter and prepare feedback
+                vblank_counter <= vblank_counter + 30'd1;
+
                 if (ctrl_word[31:2] != prev_frame_counter) begin
-                    // New frame available -- NOW clear the FIFO and load it
+                    // New frame available -- clear FIFO and load it
                     prev_frame_counter <= ctrl_word[31:2];
                     active_buffer      <= ctrl_word[0];
                     stale_vblank_count <= 5'd0;
+                    last_buffer_status <= {1'b0, ctrl_word[0]};
                     buf_base_addr      <= ctrl_word[0] ? BUF1_ADDR : BUF0_ADDR;
                     cur_line           <= 9'd0;
                     preloading         <= 1'b1;
                     fifo_aclr_cnt      <= 4'd8;
-                    state              <= ST_READ_LINE;
+                    proceed_to_read    <= 1'b1;
+                    state              <= ST_WRITE_FEEDBACK;
                 end
                 else if (first_frame_loaded) begin
-                    // Stale frame but we have a valid previous buffer --
-                    // re-read the same buffer so the display shows the last
-                    // good frame instead of going black. This handles the
-                    // common case where ARM delivery drifts slightly behind
-                    // the FPGA's vblank poll.
+                    // Stale frame -- re-read previous buffer
                     if (stale_vblank_count < 5'd30)
                         stale_vblank_count <= stale_vblank_count + 5'd1;
                     if (stale_vblank_count >= 5'd29)
                         frame_ready_reg <= 1'b0;
-                    // Re-read previous buffer (buf_base_addr unchanged)
-                    cur_line      <= 9'd0;
-                    preloading    <= 1'b1;
-                    fifo_aclr_cnt <= 4'd8;
-                    state         <= ST_READ_LINE;
+                    last_buffer_status <= 2'd2;  // stale
+                    cur_line           <= 9'd0;
+                    preloading         <= 1'b1;
+                    fifo_aclr_cnt      <= 4'd8;
+                    proceed_to_read    <= 1'b1;
+                    state              <= ST_WRITE_FEEDBACK;
                 end
                 else begin
-                    // No frame ever loaded -- just wait
-                    state <= ST_IDLE;
+                    // No frame ever loaded -- still write feedback so ARM
+                    // knows vblanks are happening
+                    last_buffer_status <= 2'd2;
+                    proceed_to_read    <= 1'b0;
+                    state              <= ST_WRITE_FEEDBACK;
                 end
             end
 
@@ -358,6 +379,24 @@ always @(posedge ddr_clk) begin
                 // the FIFO since the read side doesn't consume during vblank.
                 if (cur_line < V_ACTIVE && new_line_ddr && !vblank_ddr) begin
                     state <= ST_READ_LINE;
+                end
+            end
+
+            ST_WRITE_FEEDBACK: begin
+                if (!ddr_busy) begin
+                    ddr_addr     <= FEEDBACK_ADDR;
+                    ddr_burstcnt <= 8'd1;
+                    feedback_din <= {32'd0, vblank_counter, last_buffer_status};
+                    feedback_be  <= 8'h0F;   // Write lower 4 bytes of qword
+                    feedback_wr  <= 1'b1;
+                    state        <= ST_WAIT_WR_ACK;
+                end
+            end
+
+            ST_WAIT_WR_ACK: begin
+                if (!ddr_busy) begin
+                    feedback_wr <= 1'b0;
+                    state       <= proceed_to_read ? ST_READ_LINE : ST_IDLE;
                 end
             end
 

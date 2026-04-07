@@ -123,6 +123,11 @@ static double fps_overlay_avg_frame_ms = 0.0;
 
 static Uint64 frame_deadline = 0;
 static Uint64 frame_counter = 0;
+static uint32_t last_fpga_vblank = 0;
+static Uint64   last_vblank_observe_ns = 0;
+static Uint64   adjusted_frame_time_ns = 0;
+static int      vsync_lock_state = 0;  // 0=unsynced, 1=locking, 2=locked
+static int      consecutive_stale = 0;
 
 static bool should_save_screenshot = false;
 static Uint64 last_mouse_motion_time = 0;
@@ -9541,6 +9546,7 @@ static bool init_window() {
             if (native_video_writer_enabled) {
                 target_frame_time_ns = (Uint64)(1000000000.0 / NV_TARGET_FPS);
                 backend_logf("Native video: frame pacing adjusted to %.4f Hz (FPGA PLL rate)", NV_TARGET_FPS);
+                adjusted_frame_time_ns = target_frame_time_ns;
             }
 
             /* Native video requires software frame mode to get the ARGB8888
@@ -10225,33 +10231,95 @@ void SDLApp_EndFrame() {
 
     // Do frame pacing
     //
-    // When native video is active, target_frame_time_ns is set to match the
-    // FPGA's PLL-derived refresh rate (NV_TARGET_FPS = 59.59949 Hz, essentially
-    // equal to the CPS3 original).  This keeps ARM frame delivery in phase
-    // with the FPGA's vblank poll, preventing periodic frame repeats from the
-    // DDR3 double-buffer stale-frame path.
+    // When native video is active, closed-loop pacing via FPGA vblank feedback
+    // keeps ARM frame delivery phase-locked to the FPGA's actual vblank.
+    // The FPGA writes a vblank counter + buffer status to DDR3 at each vblank;
+    // we read it to track the true frame period and detect stale frames.
     //
-    // The ideal pacing source would be the FPGA's own vsync via
-    // spi_uio_cmd(UIO_WAIT_VSYNC), but the game runs in a forked child process
-    // separate from the MiSTer wrapper which owns the SPI interface.  A future
-    // hardware vsync bridge could replace timer pacing for tighter lock.
+    // When native video is not active, open-loop timer pacing is used.
     Uint64 now = SDL_GetTicksNS();
 
-    if (frame_deadline == 0) {
-        frame_deadline = now + target_frame_time_ns;
-    }
+    if (native_video_writer_enabled) {
+        // --- Closed-loop frame pacing via FPGA vblank feedback ---
+        //
+        // The FPGA writes a vblank counter + buffer status to DDR3 at each
+        // vblank.  We read it to:
+        //   1) Track the FPGA's true frame period (low-pass filtered) to
+        //      compensate for crystal PPM mismatch between ARM and FPGA.
+        //   2) Detect stale frames (ARM was late) and nudge our deadline
+        //      earlier so subsequent frames land before vblank.
 
-    if (now < frame_deadline) {
-        Uint64 sleep_time = frame_deadline - now;
-        SDL_DelayNS(sleep_time);
-        now = SDL_GetTicksNS();
-    }
+        uint32_t feedback = NativeVideoWriter_ReadFeedback();
+        uint32_t fpga_vblank = NV_FeedbackVblankCounter(feedback);
+        uint32_t buf_status  = NV_FeedbackBufferStatus(feedback);
 
-    frame_deadline += target_frame_time_ns;
+        if (fpga_vblank != 0 && fpga_vblank != last_fpga_vblank) {
+            Uint64 observe_ns = SDL_GetTicksNS();
 
-    // If we fell behind by more than one frame, resync to avoid spiraling
-    if (now > frame_deadline + target_frame_time_ns) {
-        frame_deadline = now + target_frame_time_ns;
+            if (vsync_lock_state == 0) {
+                // First reference point — start tracking
+                last_fpga_vblank      = fpga_vblank;
+                last_vblank_observe_ns = observe_ns;
+                adjusted_frame_time_ns = target_frame_time_ns;
+                frame_deadline         = observe_ns + adjusted_frame_time_ns;
+                vsync_lock_state       = 1;
+            } else {
+                // Compute observed FPGA frame period
+                uint32_t delta_vblanks = (fpga_vblank - last_fpga_vblank) & 0x3FFFFFFF;
+                Uint64   delta_ns      = observe_ns - last_vblank_observe_ns;
+                Uint64   observed_period = delta_ns / delta_vblanks;
+
+                // Low-pass filter: alpha = 1/16 — rejects jitter, tracks drift
+                int64_t period_err = (int64_t)observed_period - (int64_t)adjusted_frame_time_ns;
+                adjusted_frame_time_ns = (Uint64)((int64_t)adjusted_frame_time_ns + period_err / 16);
+
+                last_fpga_vblank       = fpga_vblank;
+                last_vblank_observe_ns = observe_ns;
+                vsync_lock_state       = 2;
+            }
+
+            // Phase correction: if FPGA reports stale, we were late
+            if (buf_status == 2) {
+                if (consecutive_stale < 4)
+                    consecutive_stale++;
+                if (consecutive_stale == 3) {
+                    // Systematic lateness: advance deadline by 0.5ms (once)
+                    frame_deadline -= 500000;
+                }
+            } else {
+                consecutive_stale = 0;
+            }
+        }
+
+        // Watchdog: fall back to open-loop if feedback stops updating
+        if (last_vblank_observe_ns != 0 &&
+            now - last_vblank_observe_ns > 500000000ULL) {
+            vsync_lock_state       = 0;
+            adjusted_frame_time_ns = target_frame_time_ns;
+            consecutive_stale      = 0;
+        }
+
+        // Sleep until deadline
+        if (frame_deadline == 0)
+            frame_deadline = now + adjusted_frame_time_ns;
+        if (now < frame_deadline) {
+            SDL_DelayNS(frame_deadline - now);
+            now = SDL_GetTicksNS();
+        }
+        frame_deadline += adjusted_frame_time_ns;
+        if (now > frame_deadline + adjusted_frame_time_ns)
+            frame_deadline = now + adjusted_frame_time_ns;
+    } else {
+        // --- Open-loop pacing for non-native-video paths ---
+        if (frame_deadline == 0)
+            frame_deadline = now + target_frame_time_ns;
+        if (now < frame_deadline) {
+            SDL_DelayNS(frame_deadline - now);
+            now = SDL_GetTicksNS();
+        }
+        frame_deadline += target_frame_time_ns;
+        if (now > frame_deadline + target_frame_time_ns)
+            frame_deadline = now + target_frame_time_ns;
     }
 
     // Measure

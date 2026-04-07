@@ -407,6 +407,9 @@ ddram ddr
 wire  [7:0] nv_ddr_burstcnt;
 wire [28:0] nv_ddr_addr;
 wire        nv_ddr_rd;
+wire [63:0] nv_ddr_din;
+wire  [7:0] nv_ddr_be;
+wire        nv_ddr_we;
 
 // Priority mux: native video reader takes over after boot (cfg[15])
 wire use_nv = NATIVE_VID & cfg[15];
@@ -414,9 +417,9 @@ wire use_nv = NATIVE_VID & cfg[15];
 assign DDRAM_BURSTCNT = use_nv ? nv_ddr_burstcnt : old_ddr_burstcnt;
 assign DDRAM_ADDR     = use_nv ? nv_ddr_addr     : old_ddr_addr;
 assign DDRAM_RD       = use_nv ? nv_ddr_rd       : old_ddr_rd;
-assign DDRAM_DIN      = use_nv ? 64'd0           : old_ddr_din;
-assign DDRAM_BE       = use_nv ? 8'hFF           : old_ddr_be;
-assign DDRAM_WE       = use_nv ? 1'b0            : old_ddr_we;
+assign DDRAM_DIN      = use_nv ? nv_ddr_din      : old_ddr_din;
+assign DDRAM_BE       = use_nv ? nv_ddr_be       : old_ddr_be;
+assign DDRAM_WE       = use_nv ? nv_ddr_we       : old_ddr_we;
 
 reg        we;
 reg [28:0] addr = 0;
@@ -632,9 +635,9 @@ native_video_top native_video
 	.ddr_dout       (DDRAM_DOUT),
 	.ddr_dout_ready (DDRAM_DOUT_READY & use_nv),
 	.ddr_rd         (nv_ddr_rd),
-	.ddr_din        (),
-	.ddr_be         (),
-	.ddr_we         (),
+	.ddr_din        (nv_ddr_din),
+	.ddr_be         (nv_ddr_be),
+	.ddr_we         (nv_ddr_we),
 
 	// Video output
 	.vga_r          (nv_r),

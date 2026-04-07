@@ -1,5 +1,7 @@
 # Frame Pacing Fix: PLL Retune + Vsync Feedback
 
+**Status:** Both parts implemented. Part 1: `dbcf340e`. Part 2: `6e334f53`.
+
 Two-part fix for frame stutter on the FPGA native video path via direct video.
 
 **Problem:** The FPGA runs at 59.6374 Hz (PLL-derived). The CPS3 game targets

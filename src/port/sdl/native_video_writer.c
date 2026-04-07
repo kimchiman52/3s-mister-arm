@@ -13,6 +13,7 @@
 #define NV_CTRL_OFFSET      0x00000000u
 #define NV_BUF0_OFFSET      0x00000100u
 #define NV_BUF1_OFFSET      0x0002A200u
+#define NV_FEEDBACK_OFFSET  0x00000040u
 #define NV_FRAME_WIDTH       384
 #define NV_FRAME_HEIGHT      224
 #define NV_FRAME_BYTES      (NV_FRAME_WIDTH * NV_FRAME_HEIGHT * 2)  /* 172,032 */
@@ -46,6 +47,10 @@ bool NativeVideoWriter_Init(void) {
     *ctrl = 0;
     frame_counter = 0;
     active_buf = 0;
+
+    /* Clear feedback word so ARM doesn't read stale data from a previous run */
+    volatile uint32_t* feedback = (volatile uint32_t*)(ddr_base + NV_FEEDBACK_OFFSET);
+    *feedback = 0;
 
     return true;
 }
@@ -103,6 +108,12 @@ bool NativeVideoWriter_IsActive(void) {
     return ddr_base != NULL;
 }
 
+uint32_t NativeVideoWriter_ReadFeedback(void) {
+    if (!ddr_base) return 0;
+    volatile uint32_t* fb = (volatile uint32_t*)(ddr_base + NV_FEEDBACK_OFFSET);
+    return *fb;
+}
+
 #else
 
 bool NativeVideoWriter_Init(void) {
@@ -121,6 +132,10 @@ void NativeVideoWriter_WriteFrame(const void* pixels_rgb565, int width, int heig
 
 bool NativeVideoWriter_IsActive(void) {
     return false;
+}
+
+uint32_t NativeVideoWriter_ReadFeedback(void) {
+    return 0;
 }
 
 #endif
