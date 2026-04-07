@@ -261,12 +261,12 @@ No SPI handshake needed per frame.
 | Parameter | Value |
 |-----------|-------|
 | Active pixels | 384 × 224 |
-| H total | 501 |
-| V total | 262 |
-| Refresh rate | 59.5993 Hz |
-| Pixel clock | 7.8231 MHz |
-| H frequency | 15.615 kHz |
-| PLL config | Integer-N, dedicated video PLL: 50 MHz × 92/(7×21) = 31.2925 MHz (÷4 for pixel clock) |
+| H total | 495 |
+| V total | 264 |
+| Refresh rate | 59.5995 Hz |
+| Pixel clock | 7.7885 MHz |
+| H frequency | 15.734 kHz (NTSC standard, exact) |
+| PLL config | Integer-N, dedicated video PLL: 50 MHz × 81/(5×26) = 31.1538 MHz (÷4 for pixel clock) |
 
 HDMI output still works via the standard MiSTer scaler path (`video_mixer` →
 ascal). CRT users get the direct analog path; HDMI users get the scaler. No
@@ -329,12 +329,11 @@ includes:
   clock recovery, and all MiSTer-specific platform code in `src/port/`.
 - **HPS wrapper** — `threesx_main.cpp`, `threesx_wrapper.cpp`,
   `threesx_core_context.cpp`, and all `Main_MiSTer` overlay modifications.
-- **PLL design** — A dedicated integer-N video PLL producing 31.2925 MHz
-  (50 MHz × 92/(7×21)), divided by 4 for a 7.8231 MHz pixel clock. This PLL
+- **PLL design** — A dedicated integer-N video PLL producing 31.1538 MHz
+  (50 MHz × 81/(5×26)), divided by 4 for a 7.7885 MHz pixel clock. This PLL
   is separate from the 100 MHz system PLL, which decouples video timing
-  from system-clock constraints and pins CPS3's native 59.5993 Hz refresh
-  rate. Multiple configurations were tested and reverted before arriving
-  at stable values.
+  from system-clock constraints. H-freq is exactly the NTSC standard
+  15,734 Hz, and V-freq matches CPS3's 59.59949 Hz to within 1.4 μHz.
 - **S-Video / analog video** — Blanking distribution, YC encoding fixes, and
   the native video bypass that makes analog CRT output work without the
   scaler.

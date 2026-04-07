@@ -186,7 +186,7 @@ assign {SD_SCK, SD_MOSI, SD_CS} = 'Z;
 
 assign DDRAM_CLK = clk_sys;
 
-// CE_PIXEL: divide CLK_VIDEO (31.2925 MHz) by 4 for ~7.8231 MHz effective pixel rate.
+// CE_PIXEL: divide CLK_VIDEO (31.1538 MHz) by 4 for ~7.7885 MHz effective pixel rate.
 // Integer divider = zero pixel timing jitter.
 reg [1:0] ce_div;
 wire ce_pix_div4 = (ce_div == 2'd0);
@@ -244,7 +244,7 @@ hps_io #(.CONF_STR(CONF_STR)) hps_io
 
 ////////////////////   CLOCKS   ///////////////////
 wire locked, clk_sys;
-wire clk_pix;   // Dedicated video PLL: 31.2925 MHz (CLK_VIDEO, divided by 4 for 7.8231 MHz pixels)
+wire clk_pix;   // Dedicated video PLL: 31.1538 MHz (CLK_VIDEO, divided by 4 for 7.7885 MHz pixels)
 pll pll
 (
 	.refclk(CLK_50M),

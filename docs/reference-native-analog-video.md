@@ -6,7 +6,7 @@ double-buffering, FPGA pixel readout, video timing generation, YC color encoding
 and DAC output. Includes PLL design rationale, frame pacing architecture, S-Video
 color fix history, and troubleshooting.
 
-**Last updated:** 2026-03-31
+**Last updated:** 2026-04-07
 
 ---
 
@@ -93,9 +93,9 @@ menu.sv
 
 | Clock | Frequency | Source | Used by |
 |-------|-----------|--------|---------|
-| `clk_sys` (ddr_clk) | 100 MHz | PLL outclk_0 (VCO/9) | DDR3 Avalon master, state machine |
-| `CLK_VIDEO` (clk_vid) | 16.364 MHz | PLL outclk_2 (VCO/55) | Timing generator, FIFO read side |
-| `CE_PIXEL` | 8.182 MHz | CLK_VIDEO / 2 | Pixel-rate gating for counters and FIFO |
+| `clk_sys` (ddr_clk) | 100 MHz | System PLL (pll_0002) | DDR3 Avalon master, state machine |
+| `CLK_VIDEO` (clk_vid) | 31.154 MHz | Video PLL (pll_video_0002) | Timing generator, FIFO read side |
+| `CE_PIXEL` | 7.789 MHz | CLK_VIDEO / 4 | Pixel-rate gating for counters and FIFO |
 
 ### Signal Flow
 
@@ -110,80 +110,101 @@ menu.sv
 
 ## 4. PLL Configuration
 
-### Current Configuration (commit af65300e)
+### Current Configuration
 
 ```
 Reference:  50 MHz (FPGA_CLK1_50)
-VCO:        50 MHz × 18/1 = 900.000 MHz
-outclk_0:   VCO / 9  = 100.000 MHz (clk_sys, exact)
-outclk_2:   VCO / 55 = 16.3636 MHz (CLK_VIDEO)
-CE_PIXEL:   divide-by-2
-Pixel clk:  8,181,818.182 Hz
+System PLL: 50 MHz × 2/1 = 100.000 MHz (clk_sys, pll_0002.v)
+Video PLL:  50 MHz × 81/5 = 810.000 MHz VCO, /26 = 31.153846 MHz (CLK_VIDEO, pll_video_0002.v)
+CE_PIXEL:   divide-by-4
+Pixel clk:  7,788,461.538 Hz
 ```
 
 ### Frame Rate Derivation
 
 ```
 frame_rate = pixel_clock / (H_TOTAL × V_TOTAL)
-           = 8,181,818.182 / (520 × 264)
-           = 8,181,818.182 / 137,280
-           = 59.59949106 Hz
+           = 7,788,461.538 / (495 × 264)
+           = 7,788,461.538 / 130,680
+           = 59.59949 Hz
+
+H_freq     = 7,788,461.538 / 495 = 15,734.266 Hz (NTSC standard, exact)
 
 CPS3 TARGET_FPS = 59.59949 Hz
-Error           = +0.000001 Hz (1 microhertz)
-Phase drift     = 1 frame / ~31 years
+Error           = +0.0000014 Hz (1.4 microhertz)
+Phase drift     = 1 stale frame / ~8.2 days
 ```
+
+The H-freq is mathematically identical to the NTSC standard line rate: both
+reduce to the rational number 2,250,000/143 Hz, derived from the NTSC color
+subcarrier (315/88 MHz × 2/455).
 
 ### Design Space Exploration
 
 The PLL configuration was selected via exhaustive computational search over:
-- M: 1–512, N: 1–512 (VCO = 50 × M/N, constrained to 600–1300 MHz)
+- M: 1–120, N: 1–50 (VCO = 50 × M/N, constrained to 600–1300 MHz)
 - C: 1–512 (output divider)
-- CE_PIXEL: {1, 2, 4, 8}
-- H_TOTAL: 450–550, V_TOTAL: 250–280
-- H_freq: 14,500–16,500 Hz (CRT 15 kHz compatibility)
+- CE_PIXEL: {1, 2, 4}
+- H_TOTAL: 488–520, V_TOTAL: 260–270
+- H_freq: within ±30 Hz of 15,734 Hz (NTSC standard)
+- Active area time change: < 2% (CRT image width preservation)
 
-170,846 valid combinations found with error < 0.01 Hz and VCO ≤ 1000 MHz.
-Initial selection (M=373/N=21) failed Quartus synthesis — M value too large for
-the PLL fitter. Final selection M=18/N=1/C=55/CE=2 chosen for:
-- Near-zero frame rate error (1 μHz)
-- H_freq = 15,734 Hz (NTSC standard — perfect CRT compatibility)
-- Trivial VCO (900 MHz, M=18, N=1 — Quartus synthesizes instantly)
-- clk_sys = 100 MHz exact (unchanged from original design)
+M upper limit of 120 determined empirically: M=92 synthesizes in Quartus 17
+Lite, M=171 is rejected ("illegal value"). M=81 chosen — smaller than the
+proven M=92, guaranteeing Quartus acceptance.
 
-### Previous Configuration (pre-e136fbc2, original)
+### Previous Configurations
 
+**Dedicated video PLL (pre-NTSC retune):**
 ```
-VCO:       50 MHz × 5/8 = 31.25 MHz (via some M/N/C combination)
+VCO:       50 MHz × 92/7 = 657.14 MHz, /21 = 31.2925 MHz
+CE_PIXEL:  divide-by-4
+Pixel clk: 7,823,129 Hz
+H_TOTAL:   501, V_TOTAL: 262
+Frame rate: 59.5993 Hz (error: -0.00015 Hz)
+H_freq:    15,615 Hz (not NTSC — some arcade monitors couldn't sync)
+```
+
+**Original shared PLL:**
+```
+VCO:       50 MHz × 5/8 = 31.25 MHz (outclk_2 of system PLL)
 CE_PIXEL:  divide-by-4
 Pixel clk: 7,812,500 Hz
 H_TOTAL:   500, V_TOTAL: 262
 Frame rate: 59.6374 Hz (error: +0.038 Hz → stale frame every ~26 seconds)
 ```
 
-### Failed Intermediate Configuration (Quartus rejected)
+### Failed Configurations
 
-```
-VCO:       50 MHz × 373/21 = 888.095 MHz  (M=373 too large for Quartus fitter)
-CE_PIXEL:  divide-by-2
-Pixel clk: 7,790,309 Hz
-H_TOTAL:   497, V_TOTAL: 263
-Would have been: 59.59949 Hz — but Quartus 17 Lite could not synthesize M=373
-```
+**M=18/N=1/C=55/CE=2 (reverted — image too narrow):**
+Produced exact NTSC timing (520×264) but pixel clock was 8.182 MHz — 4.5%
+faster than original. Active area time dropped from 49.15 μs to 46.93 μs,
+visibly narrowing the CRT image. Also broke S-Video (hardcoded CLK_VIDEO
+in video.cpp). See Section 10 for full details.
+
+**M=373 (Quartus rejected):**
+Would have produced 59.59949 Hz but M=373 exceeded Quartus 17 Lite's PLL
+fitter search space.
+
+**M=171 (Quartus rejected):**
+Would have produced exact NTSC at H_TOTAL=494 with CE_PIXEL=4, but M=171
+also exceeded Quartus's limit. Led to discovering the M=81 solution at
+H_TOTAL=495.
 
 ### Why Not Fractional-N PLL?
 
 The Cyclone V supports fractional-N PLLs, but the design uses integer-N only.
 Fractional-N introduces delta-sigma modulated jitter on the pixel clock, which
 causes visible horizontal position jitter on CRT displays. Since the integer-N
-search found a configuration with 1.1 μHz error, fractional-N is unnecessary.
+search found a configuration with 1.4 μHz error, fractional-N is unnecessary.
 
 ### Cyclone V Device
 
 - **Part:** 5CSEBA6U23I7 (SoC, UFBGA-672, Industrial, Speed Grade 7)
 - **PLL IP:** Altera PLL v17.0 (`altera_pll` primitive)
 - **VCO range:** 600–1300 MHz
-- **File:** `vendor/Menu_MiSTer/rtl/pll/pll_0002.v`
+- **System PLL file:** `vendor/Menu_MiSTer/rtl/pll/pll_0002.v` (100 MHz only)
+- **Video PLL file:** `vendor/Menu_MiSTer/rtl/pll_video/pll_video_0002.v` (31.1538 MHz)
 
 ---
 
@@ -196,19 +217,19 @@ search found a configuration with 1.1 μHz error, fractional-N is unnecessary.
 | Region | H (pixels) | V (lines) |
 |--------|-----------|-----------|
 | Active | 384 | 224 |
-| Front porch | 28 | 14 |
+| Front porch | 22 | 16 |
 | Sync | 38 | 3 |
-| Back porch | 70 | 23 |
-| **Total** | **520** | **264** |
+| Back porch | 51 | 21 |
+| **Total** | **495** | **264** |
 
 ### Derived Values
 
 ```
-H_SYNC_START = 384 + 28        = 412
-H_SYNC_END   = 412 + 38        = 450
-V_SYNC_START = 224 + 14        = 238
-V_SYNC_END   = 238 + 3         = 241
-H_freq       = 8,181,818 / 520 = 15,734.27 Hz (NTSC standard)
+H_SYNC_START = 384 + 22        = 406
+H_SYNC_END   = 406 + 38        = 444
+V_SYNC_START = 224 + 16        = 240
+V_SYNC_END   = 240 + 3         = 243
+H_freq       = 7,788,462 / 495 = 15,734.27 Hz (NTSC standard, exact)
 ```
 
 ### Sync Polarity
@@ -236,7 +257,7 @@ H_freq       = 8,181,818 / 520 = 15,734.27 Hz (NTSC standard)
 The CRT positions the image based on sync-to-active timing:
 - Larger `H_BP` shifts image **right**
 - Larger `V_BP` shifts image **down**
-- Current values (H_BP=70, V_BP=23) center the 384×224 image on a standard NTSC CRT
+- Current values (H_BP=51, V_BP=21) center the 384×224 image on a standard NTSC CRT
 
 ---
 
@@ -429,43 +450,31 @@ encoding.
 
 ## 10. Frame Pacing
 
-### Part 1: PLL Retune (reverted — caused regressions)
+### Part 1: PLL Retune — NTSC H-freq (current, working)
 
-**Problem:** FPGA ran at 59.6374 Hz vs CPS3's 59.59949 Hz. The 0.038 Hz mismatch
-caused the DDR3 double-buffer to show a stale frame every ~26 seconds.
+**Problem:** The original shared PLL ran at 59.6374 Hz (0.038 Hz off CPS3 target),
+causing stale frames every ~26 seconds. The dedicated video PLL (92/7/21) improved
+V-freq to 59.5993 Hz (0.00015 Hz error) but H-freq was 15,615 Hz — not NTSC
+standard. Some arcade monitors (Blast City MS-2930/MS-2931) couldn't sync.
 
-**What was attempted:** Retune PLL from 31.25 MHz/div4 to 16.364 MHz/div2
-(VCO=900 MHz, M=18/N=1/C=55), producing 59.59949 Hz (1 μHz error). Timing changed
-from 500×262 to 520×264. H_freq moved to 15,734 Hz (NTSC standard).
+**Solution:** PLL retune to M=81/N=5/C=26 with H_TOTAL=495, V_TOTAL=264,
+CE_PIXEL=÷4. This produces:
+- H-freq = 15,734.266 Hz — mathematically identical to NTSC standard (2,250,000/143 Hz)
+- V-freq = 59.59949 Hz — 1.4 μHz error vs CPS3 target
+- Pixel clock = 7.7885 MHz — only 0.45% slower than previous, imperceptible on CRT
+- CLK_VIDEO = 31.1538 MHz — same order as previous 31.2925 MHz, no architectural change
 
-**What went wrong (three regressions):**
+**Why this succeeded where the earlier retune (M=18/N=1/C=55/CE=2) failed:**
+1. CE_PIXEL stayed at ÷4 (previous attempt changed to ÷2, doubling pixel clock)
+2. H_TOTAL=495 (previous used 520 — more blanking forced faster pixel clock)
+3. M=81 < proven M=92 (previous M=373 and M=171 were rejected by Quartus)
+4. `video.cpp` CLK_VIDEO updated to `405.0/13.0` (exact rational representation)
 
-1. **Image 4.5% narrower on CRT.** The pixel clock changed from 7.8125 MHz to
-   8.182 MHz. Active area time dropped from 49.15 μs to 46.93 μs. This is
-   inherent to any PLL retune — changing the pixel clock changes the active area
-   width on CRT. Cannot be fixed by blanking redistribution alone. The image
-   visibly "looked narrower with bigger bars."
-
-2. **S-Video color lost (grayscale).** The YC encoder runs on CLK_VIDEO. Changing
-   CLK_VIDEO from 31.25 MHz to 16.364 MHz broke the PHASE_INC calculation because
-   `video.cpp` had a hardcoded `31.25` for the native video path (line 3030).
-   The NCO produced a 1.87 MHz subcarrier instead of 3.58 MHz — CRT color killer
-   activated. Fix was to change `31.25` to `900.0/55.0`, but this revealed a
-   deeper issue: any PLL change requires updating this hardcoded constant, which
-   is fragile and error-prone.
-
-3. **Quartus build failures.** The initial PLL config (M=373, N=21, VCO=888 MHz)
-   was rejected by Quartus 17 Lite — M=373 exceeded the PLL fitter's search
-   space. Required a second exhaustive search to find M=18/N=1 (trivial for
-   Quartus). Multiple build attempts were lost to SSH timeouts killing Quartus
-   in the colima VM (documented in `feedback-quartus-nohup.md`).
-
-**Lesson learned:** Changing the PLL has a wide blast radius. It affects pixel
-clock (image width on CRT), YC encoder (color), all clock frequency comments in
-RTL, the hardcoded CLK_VIDEO in video.cpp, and potentially the colorburst range.
-The 0.038 Hz drift it fixes is subtle (~26-second stale frame) while the
-regressions are immediately visible. The ARM-side NV_TARGET_FPS compensation
-(running 0.063% fast) is the safer approach.
+**Earlier failed retune (M=18/N=1/C=55/CE=2, reverted):**
+Produced exact NTSC timing at 520×264 but with CE_PIXEL=÷2, the pixel clock
+jumped to 8.182 MHz — 4.5% faster. Active area time dropped from 49.15 μs to
+46.93 μs, visibly narrowing the CRT image. Also broke S-Video due to hardcoded
+`31.25` in video.cpp. See Section 4 "Failed Configurations" for details.
 
 ### Part 2: Vsync Feedback (reverted — caused frame rate collapse)
 
@@ -505,14 +514,12 @@ period tracking entirely and just use the stale/fresh status as a binary phase
 detector — if stale, deliver earlier next frame; if fresh, hold steady. This
 avoids the period measurement problem altogether.
 
-### Pre-Part-1 Frame Pacing (working baseline)
-
-The working configuration before these changes:
+### Current Frame Pacing (working)
 
 ```
-FPGA:  59.6374 Hz (31.25 MHz PLL, div4, 500×262)
-ARM:   targets NV_TARGET_FPS = 59.6374 Hz (matches FPGA)
-Game:  runs 0.063% fast (imperceptible)
+FPGA:  59.59949 Hz (31.1538 MHz PLL, div4, 495×264)
+ARM:   targets NV_TARGET_FPS = TARGET_FPS = 59.59949 Hz
+Error: 1.4 μHz — one stale frame per ~8.2 days (effectively zero)
 ```
 
 Open-loop pacing with deadline-based sleep:
@@ -528,10 +535,9 @@ if (now > frame_deadline + target_frame_time_ns) {
 }
 ```
 
-**Known issues with baseline (not yet fixed):**
-- ~26-second periodic stale frame from 0.038 Hz drift (Part 1 target)
+**Remaining issue (not yet fixed):**
 - Sporadic stale frames on heavy stages from OS scheduling jitter (Part 2 target)
-- Both manifest as "60fps on counter but feels skippy"
+- Manifests as "60fps on counter but feels skippy" under load
 
 ---
 
@@ -617,9 +623,9 @@ See `docs/native-analog-svideo-plan.md` for full design rationale.
 
 ### Frame stutter every ~26 seconds
 
-- This was caused by the old PLL running at 59.6374 Hz vs CPS3's 59.59949 Hz
-- Fixed by PLL retune (commit e136fbc2)
-- If still present: verify the new PLL is compiled into the bitstream
+- This was caused by the original shared PLL running at 59.6374 Hz vs CPS3's 59.59949 Hz
+- Fixed by dedicated video PLL (current: M=81/N=5/C=26, V-freq error = 1.4 μHz)
+- If still present: verify the new PLL bitstream (3SX.rbf) is deployed
 
 ### Sporadic frame drops under system load
 
@@ -637,8 +643,8 @@ See `docs/native-analog-svideo-plan.md` for full design rationale.
 ### CRT won't sync
 
 - H_freq must be in 14,500–16,500 Hz range for 15 kHz CRTs
-- Current: 15,675 Hz (within range)
-- Some CRTs may need manual H-hold adjustment for non-standard frequencies
+- Current: 15,734 Hz (NTSC standard, exact — maximum CRT compatibility)
+- If still failing: check composite_sync setting, verify RBF is deployed
 
 ---
 
@@ -648,11 +654,12 @@ See `docs/native-analog-svideo-plan.md` for full design rationale.
 
 | File | Lines | Description |
 |------|-------|-------------|
-| `vendor/Menu_MiSTer/rtl/native_video_timing.sv` | ~184 | H/V counter, sync generation, 520×264 timing |
+| `vendor/Menu_MiSTer/rtl/native_video_timing.sv` | ~184 | H/V counter, sync generation, 495×264 timing |
 | `vendor/Menu_MiSTer/rtl/native_video_reader.sv` | ~493 | DDR3 Avalon master, dual-clock FIFO, RGB565 decode |
 | `vendor/Menu_MiSTer/rtl/native_video_top.sv` | ~137 | Top-level wrapper (timing + reader) |
-| `vendor/Menu_MiSTer/rtl/pll/pll_0002.v` | ~94 | PLL IP (M=18/N=1, outclk_0=100 MHz, outclk_2=16.4 MHz) |
-| `vendor/Menu_MiSTer/rtl/pll.v` | ~258 | PLL wrapper |
+| `vendor/Menu_MiSTer/rtl/pll/pll_0002.v` | ~88 | System PLL IP (100 MHz clk_sys only) |
+| `vendor/Menu_MiSTer/rtl/pll_video/pll_video_0002.v` | ~87 | Video PLL IP (31.1538 MHz CLK_VIDEO) |
+| `vendor/Menu_MiSTer/rtl/pll.v` | ~258 | System PLL wrapper |
 | `vendor/Menu_MiSTer/menu.sv` | ~658 | Core top-level (PLL inst, CE_PIXEL, DDR3 mux, DAC mux) |
 | `vendor/Menu_MiSTer/sys/yc_out.sv` | ~640 | YC/S-Video encoder (NCO, colorspace, burst) |
 | `vendor/Menu_MiSTer/sys/sys_top.v` | ~1500+ | System top (YC instances, PHASE_INC regs, DAC routing) |

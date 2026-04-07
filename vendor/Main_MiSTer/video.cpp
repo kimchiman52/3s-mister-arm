@@ -3023,11 +3023,11 @@ static void set_yc_mode()
 		float fps = current_video_info.vtime ? (100000000.f / current_video_info.vtime) : 0.f;
 		int pal = fps < 55.f;
 		double CLK_REF = (pal || (cfg.ntsc_mode == 1)) ? 4.43361875f : (cfg.ntsc_mode == 2) ? 3.575611f : 3.579545f;
-		/* When native video is active, CLK_VIDEO is 31.2925 MHz from a
-		   dedicated video PLL (50 MHz * 92/7 / 21). The YC encoder runs at
+		/* When native video is active, CLK_VIDEO is 31.1538 MHz from a
+		   dedicated video PLL (50 MHz * 81/5 / 26). The YC encoder runs at
 		   this frequency, giving ~8.7 samples per 3.58 MHz chroma cycle. */
 		const double core_CLK_VIDEO = native_video_enabled
-			? 31.292517  // dedicated pll_video: 50 * 92/7 / 21
+			? (405.0 / 13.0)  // dedicated pll_video: 50 * 81/5 / 26 = 31.153846 MHz
 			: (current_video_info.ctime * 100.f / current_video_info.ptime);
 		double CLK_VIDEO = core_CLK_VIDEO;
 		const double output_CLK_VIDEO = v_cur.Fpix;

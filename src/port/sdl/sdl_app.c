@@ -9100,6 +9100,7 @@ static void publish_fps_overlay_label(void) {
     }
 }
 
+#if ENABLE_PERF_TELEMETRY
 static void fps_overlay_accumulate_timing(Uint64 update_ns, Uint64 texrefresh_ns,
                                           Uint64 gamelogic_ns, Uint64 spritesubmit_ns, Uint64 dispatch_ns,
                                           Uint64 dtexrenew_ns, Uint64 dsprsubmit_ns,
@@ -9118,6 +9119,7 @@ static void fps_overlay_accumulate_timing(Uint64 update_ns, Uint64 texrefresh_ns
     fps_overlay_present_ns_accum += present_ns;
     fps_overlay_frame_ns_accum += frame_work_ns;
 }
+#endif /* ENABLE_PERF_TELEMETRY */
 
 static void update_fps_overlay(Uint64 frame_end_ns) {
     if (fps_overlay_mode == FPS_OVERLAY_OFF) {
@@ -9533,7 +9535,7 @@ static bool init_window() {
             backend_logf("Native video writer: %s", native_video_writer_enabled ? "enabled" : "disabled");
 
             /* Match ARM frame pacing to the FPGA's pixel-clock-derived refresh
-               rate.  With the dedicated video PLL (31.0909 MHz, 494x264),
+               rate.  With the dedicated video PLL (31.1538 MHz, 495x264),
                NV_TARGET_FPS = TARGET_FPS = 59.59949 Hz (1.4 uHz error).
                H-freq = 15,734 Hz (NTSC standard). No compensation needed. */
             if (native_video_writer_enabled) {

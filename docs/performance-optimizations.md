@@ -298,9 +298,9 @@ Six render-path optimizations targeting super art frame drops, plus four additio
 
 ### 8.2 Dedicated Video PLL (59.5993 Hz)
 
-- **What**: Add a separate integer-N video PLL (50 MHz * 92/7 / 21 = 31.2925 MHz) so CLK_VIDEO is no longer constrained by the system PLL. Frame rate: 59.5993 Hz (0.00015 Hz error vs CPS3 target).
-- **Why**: The old shared PLL produced 31.25 MHz, giving 59.6374 Hz -- 0.038 Hz off from CPS3's 59.5995 Hz. This caused ARM/FPGA frame rate mismatch.
-- **Impact**: 245x more accurate frame rate. Eliminates the root cause of the 26-second drift pattern. ARM no longer needs separate NV_TARGET_FPS compensation.
+- **What**: Add a separate integer-N video PLL (50 MHz × 81/5 / 26 = 31.1538 MHz) so CLK_VIDEO is no longer constrained by the system PLL. H-freq = 15,734 Hz (NTSC standard, exact). Frame rate: 59.5995 Hz (1.4 μHz error vs CPS3 target).
+- **Why**: The old shared PLL produced 31.25 MHz, giving 59.6374 Hz -- 0.038 Hz off from CPS3's 59.5995 Hz, and H-freq of 15,625 Hz which some NTSC CRTs couldn't sync to.
+- **Impact**: NTSC-compatible H-freq for all CRTs. Frame rate error reduced to 1.4 μHz (one stale frame per 8 days). ARM no longer needs separate NV_TARGET_FPS compensation.
 - **Commit**: `dbcf340e`
 - **Files**: FPGA: `pll_video.v`, `menu.sv`, `native_video_timing.sv`. ARM: `src/port/sdl/sdl_app.c`
 

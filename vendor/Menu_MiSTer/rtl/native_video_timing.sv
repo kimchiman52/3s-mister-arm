@@ -2,22 +2,22 @@
 //
 //  Native Video Timing Generator
 //
-//  384x224 active area @ ~59.5993 Hz (501x262 total)
-//  CLK_VIDEO: 31.2925 MHz (dedicated video PLL), CE_PIXEL: divide-by-4
+//  384x224 active area @ ~59.5995 Hz (495x264 total)
+//  CLK_VIDEO: 31.1538 MHz (dedicated video PLL), CE_PIXEL: divide-by-4
 //
-//  PLL: 50 MHz * 92/7 = 657.14 MHz VCO, /21 = 31.2925 MHz CLK_VIDEO
-//  Pixel clock: 31.2925 / 4 (CE_PIXEL) = 7.8231 MHz
+//  PLL: 50 MHz * 81/5 = 810 MHz VCO, /26 = 31.1538 MHz CLK_VIDEO
+//  Pixel clock: 31.1538 / 4 (CE_PIXEL) = 7.7885 MHz
 //
-//  H: 384 active + 28 FP + 38 sync + 51 BP = 501 total
-//  V: 224 active + 14 FP +  3 sync + 21 BP = 262 total
+//  H: 384 active + 22 FP + 38 sync + 51 BP = 495 total
+//  V: 224 active + 16 FP +  3 sync + 21 BP = 264 total
 //
-//  Frame rate: 7,823,129 / (501 * 262) = 59.5993 Hz
-//  H_freq: 7,823,129 / 501 = 15,615 Hz
+//  Frame rate: 7,788,462 / (495 * 264) = 59.5995 Hz
+//  H_freq: 7,788,462 / 495 = 15,734 Hz (NTSC standard, exact)
 //
 //  Refresh rate vs. CPS3 original:
-//    FPGA:  59.5993 Hz
+//    FPGA:  59.59949 Hz
 //    CPS3:  59.59949 Hz (TARGET_FPS)
-//    Delta: -0.00015 Hz (negligible -- no ARM-side compensation needed)
+//    Delta: +0.0000014 Hz (1.4 microhertz -- essentially zero)
 //
 //  Copyright (C) 2026 3SX Project
 //  Licensed under GNU General Public License v2+
@@ -25,7 +25,7 @@
 //============================================================================
 
 module native_video_timing (
-    input  wire        clk,        // pixel clock (~7.82 MHz)
+    input  wire        clk,        // pixel clock (~7.79 MHz)
     input  wire        ce_pix,     // pixel clock enable (normally 1)
     input  wire        reset,      // synchronous reset
 
@@ -50,28 +50,28 @@ module native_video_timing (
 //
 // Standard NTSC horizontal blanking at 15.734 kHz:
 //   FP ~1.5us, Sync ~4.7us, BP ~4.5us (incl. colorburst)
-// At 7.823 MHz pixel clock: FP~12px, Sync~37px, BP~39px
+// At 7.789 MHz pixel clock: FP~12px, Sync~37px, BP~35px
 //
-// H_TOTAL=501, V_TOTAL=262: with dedicated video PLL (CLK_VIDEO=31.2925 MHz, CE_DIV=4):
-// pixel_clock = 7.8231 MHz, H_freq = 15,615 Hz, refresh = 59.5993 Hz.
+// H_TOTAL=495, V_TOTAL=264: with dedicated video PLL (CLK_VIDEO=31.1538 MHz, CE_DIV=4):
+// pixel_clock = 7.7885 MHz, H_freq = 15,734 Hz (NTSC exact), refresh = 59.5995 Hz.
 // Reduced blanking fills the CRT screen better than H_TOTAL=512.
 localparam H_ACTIVE = 384;
-localparam H_FP     = 28;
+localparam H_FP     = 22;
 localparam H_SYNC   = 38;
 localparam H_BP     = 51;
-localparam H_TOTAL  = 501;   // 384+28+38+51
+localparam H_TOTAL  = 495;   // 384+22+38+51
 
 localparam V_ACTIVE = 224;
-localparam V_FP     = 14;
+localparam V_FP     = 16;
 localparam V_SYNC   = 3;
 localparam V_BP     = 21;
-localparam V_TOTAL  = 262;   // 224+14+3+21
+localparam V_TOTAL  = 264;   // 224+16+3+21
 
 // Derived boundaries
-localparam H_SYNC_START = H_ACTIVE + H_FP;        // 412
-localparam H_SYNC_END   = H_SYNC_START + H_SYNC;  // 450
-localparam V_SYNC_START = V_ACTIVE + V_FP;         // 238
-localparam V_SYNC_END   = V_SYNC_START + V_SYNC;   // 241
+localparam H_SYNC_START = H_ACTIVE + H_FP;        // 406
+localparam H_SYNC_END   = H_SYNC_START + H_SYNC;  // 444
+localparam V_SYNC_START = V_ACTIVE + V_FP;         // 240
+localparam V_SYNC_END   = V_SYNC_START + V_SYNC;   // 243
 
 always @(posedge clk) begin
     if (reset) begin

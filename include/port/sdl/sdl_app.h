@@ -7,9 +7,9 @@
 
 #define TARGET_FPS 59.59949
 
-// FPGA native video refresh rate: dedicated video PLL (50 MHz * 92/7/21 = 31.2925 MHz)
-// / 4 CE_PIXEL / (501 * 262) total pixels = 7,823,129 / 131,262 = 59.5993 Hz.
-// The PLL error vs. TARGET_FPS (59.59949 Hz) is only 0.00015 Hz -- negligible.
+// FPGA native video refresh rate: dedicated video PLL (50 MHz * 81/5/26 = 31.1538 MHz)
+// / 4 CE_PIXEL / (495 * 264) total pixels = 7,788,462 / 130,680 = 59.5995 Hz.
+// H-freq = 15,734 Hz (NTSC standard, exact). PLL error vs. TARGET_FPS: 1.4 microhertz.
 // ARM frame pacing uses TARGET_FPS directly (no compensation needed).
 #define NV_TARGET_FPS TARGET_FPS
 
