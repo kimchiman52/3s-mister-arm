@@ -126,16 +126,59 @@ value here will override it for 3SX only.
 If the core immediately exits back to MiSTer, the most common cause is a
 missing `SF33RD.AFS`.
 
-### Overclock
+### CRT Troubleshooting
 
-The ARM CPU defaults to **stock 800 MHz**. The game generally runs at
-60 FPS, but may slow down during heavy situations (animated stage
-backgrounds, super art activations, and other effect-heavy scenes).
-Overclocking to 1000 or 1200 MHz can help maintain 60 FPS in those
-situations.
+The native video path outputs at NTSC standard horizontal frequency
+(15,734 Hz). Most 15 kHz CRTs and arcade monitors should sync directly
+with `vga_scaler=0` (the default).
 
-You can cycle between 800 MHz (stock), 1000 MHz, and 1200 MHz via the
-in-game OSD menu. The setting persists across launches.
+If you still cannot get a picture, try using the MiSTer scaler with a
+custom video mode:
+
+```ini
+[3SX]
+main=MiSTer_3SX
+vga_scaler=1
+video_mode=384,22,38,51,224,16,3,21,7788
+```
+
+This routes through the MiSTer scaler at 384x224 NTSC timing. If your
+CRT expects composite sync, also add `composite_sync=1`. Note:
+`vga_scaler=1` disables S-Video color output.
+
+### Performance
+
+The game runs at 60 FPS during normal gameplay at stock 800 MHz. Frame
+rate drops can occur in two main situations: **stages with complex
+animated backgrounds** (e.g. Remy's and Chun-Li's stages), and **super art
+activations**, which layer multiple translucent ghost sprites and
+effects on top of the scene.
+
+All performance settings are accessible from the **OSD menu** (press
+F12 or the MiSTer menu button) and persist across launches.
+
+#### Super Art Settings
+
+These settings reduce rendering work during super art activations:
+
+| Setting | Options | Effect |
+|---------|---------|--------|
+| **SA Activation** | Full / Cached BG | **Cached BG** snapshots the background once when a super art activates, skipping per-frame background re-rendering for the duration. Significant FPS improvement during supers on animated stages. |
+| **SA Ghost Res** | Full / Half | **Half** renders ghost (after-image) sprites at half vertical resolution. Reduces ghost rendering cost by ~50%. |
+| **SA Ghost Count** | 0–4 | Limits the maximum simultaneous ghost sprites per player. Default is 4 (vanilla). Reducing this directly reduces the number of translucent sprites composited per frame. |
+
+For the best balance of visual fidelity and performance, try **Cached BG**
+with ghost count at **3** or **4**. For maximum performance on demanding
+scenes, combine **Cached BG** + **Half** ghost resolution + a lower ghost
+count.
+
+#### Overclock
+
+The ARM CPU defaults to **stock 800 MHz**. Overclocking to 1000 or
+1200 MHz can help maintain 60 FPS during heavy scenes.
+
+You can cycle between 800 MHz (stock), 1000 MHz, and 1200 MHz from the
+OSD menu. The setting persists across launches.
 
 **Note:** Not all DE10-Nano boards can run stably at 1200 MHz. If the
 game crashes or freezes after overclocking, SSH into your MiSTer and

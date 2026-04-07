@@ -62,16 +62,32 @@ INSTALLATION
 
      [3SX]
      main=MiSTer_3SX
-     vga_scaler=0
      video_mode=8    ; HDMI users: forces 1080p60 to avoid sync issues
-
-   NOTE: vga_scaler=0 is required. If your global MiSTer settings have
-   vga_scaler=1, the per-core override in the [3SX] section is mandatory.
-   The native video path will not work with the scaler enabled.
 
    video_mode=8 sets HDMI to 1920x1080@60 for this core. Without it,
    MiSTer's auto-detection can cause sync issues with 3SX's native video
    signal on some HDMI displays.
+
+
+CRT TROUBLESHOOTING
+-------------------
+
+The native video path outputs at NTSC standard horizontal frequency
+(15,734 Hz). Most 15 kHz CRTs and arcade monitors should sync directly
+with vga_scaler=0 (the default).
+
+If you still cannot get a picture, try using the MiSTer scaler with
+this custom video mode:
+
+     [3SX]
+     main=MiSTer_3SX
+     vga_scaler=1
+     video_mode=384,22,38,51,224,16,3,21,7788
+
+This routes through the MiSTer scaler at 384x224 NTSC timing. If your
+CRT expects composite sync, also add composite_sync=1 to the [3SX]
+section. Note: vga_scaler=1 disables S-Video color output.
+
 
 
 RUNNING
