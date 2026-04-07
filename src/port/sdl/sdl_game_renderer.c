@@ -5828,7 +5828,7 @@ static NeonModulateState neon_modulate_init(Uint32 color) {
 /* Modulate 4 ARGB8888 pixels by a constant color using NEON.
  * Uses (a * b + 128) >> 8 as a fast approximation of (a * b + 127) / 255.
  * Max error vs exact: 1 LSB, visually imperceptible. */
-static inline void neon_modulate_4pixels(
+static inline __attribute__((unused)) void neon_modulate_4pixels(
     const Uint32* src, Uint32* dst, const NeonModulateState* state) {
     /* Load 4 source pixels = 16 bytes */
     const uint8x16_t src_bytes = vreinterpretq_u8_u32(vld1q_u32(src));
@@ -6003,9 +6003,10 @@ static inline void neon_blend_modulate_4pixels(
 /* --- Optimization B: Ghost sprite detection for half-resolution rendering ---
  * Ghost/after-image sprites use bright_type[3] (blue tint) which produces
  * colors with B==0xFF, R==G, R<0xFF.  These semi-transparent blue overlays
- * can be rendered at half X resolution (process every other pixel, write
- * the same value twice) cutting expensive modulate+blend calls in half
- * with negligible visual impact since they're already translucent blurs. */
+ * can be rendered at half vertical resolution (process every other row,
+ * memcpy to duplicate) with negligible visual impact since they're already
+ * translucent blurs.  Row-only skip preserves the fused NEON modulate+blend
+ * path for maximum per-row throughput. */
 static bool is_ghost_sprite_color(Uint32 color) {
     /* Ghost sprites: blue-tinted (B=0xFF, R==G, R<0xFF) from bright_type[3]. */
     return is_blue_tint_color(color);
@@ -6044,8 +6045,8 @@ static bool try_fast_copy_fast_textured_task_to_software_frame(const RenderTask*
             }
 
             /* Optimization B+D: detect ghost sprites (blue-tint from bright_type[3]).
-             * These get half-X-resolution rendering (when ghost-resolution=half)
-             * AND the fast blue-tint modulate. */
+             * These get half-vertical-resolution rendering (when ghost-resolution=half)
+             * via row_step=2 + memcpy duplication, AND the fast blue-tint modulate. */
             const bool ghost_half_res = (ghost_resolution_mode == SDL_GAME_RENDERER_GHOST_RESOLUTION_HALF) &&
                                         is_ghost_sprite_color(color);
             const bool blue_tint = is_blue_tint_color(color);
@@ -6073,75 +6074,32 @@ static bool try_fast_copy_fast_textured_task_to_software_frame(const RenderTask*
 
                     int col = 0;
 
-                    if (ghost_half_res) {
-                        /* Half-res X: process every other pixel pair, duplicate results.
-                         * NEON processes 4 source pixels, but we step by 8 in source
-                         * and write each result pixel twice (covering 8 dst columns). */
-                        Uint32 modulated[4];
-                        for (; (col + 7) < visible_w; col += 8) {
-                            /* Load 4 pixels at positions col, col+2, col+4, col+6 */
-                            const Uint32 sampled[4] = {
-                                src_row[col], src_row[col + 2],
-                                src_row[col + 4], src_row[col + 6]
-                            };
-                            neon_modulate_4pixels(sampled, modulated, &neon_state);
-                            /* Write each modulated pixel twice (col, col+1), (col+2, col+3), ... */
-                            for (int k = 0; k < 4; k++) {
-                                const Uint32 src_pixel = modulated[k];
-                                const Uint32 src_a = (src_pixel >> 24) & 0xFFu;
-                                const int dst_col = col + (k * 2);
-                                if (src_a == 0u) {
-                                    continue;
-                                }
-                                if (src_a == 0xFFu) {
-                                    dst_row[dst_col] = src_pixel;
-                                    dst_row[dst_col + 1] = src_pixel;
-                                    continue;
-                                }
-                                const Uint32 blended = blend_argb8888_opaque_dst(dst_row[dst_col], src_pixel);
-                                dst_row[dst_col] = blended;
-                                dst_row[dst_col + 1] = blended;
-                            }
+                    /* Ghost half-res: row-only skip (row_step=2 above) with the
+                     * same fused NEON modulate+blend inner loop as full-res.
+                     * The previous column-skipping approach used gathered reads +
+                     * scalar blend which negated the savings.  Row-only halving
+                     * keeps contiguous NEON loads and the fused path, giving a
+                     * real ~50% reduction.  Rows are duplicated via memcpy below. */
+
+                    /* Full-res NEON path: fused modulate+blend, 4 contiguous pixels at a time.
+                     * neon_blend_modulate_4pixels handles alpha==0/255 edge cases branchlessly. */
+                    for (; (col + 3) < visible_w; col += 4) {
+                        neon_blend_modulate_4pixels(src_row + col, dst_row + col, &neon_state);
+                    }
+                    /* Scalar tail */
+                    for (; col < visible_w; col++) {
+                        Uint32 src_pixel = blue_tint
+                            ? modulate_argb8888_blue_tint(src_row[col], rg_factor, mod_a)
+                            : modulate_argb8888(src_row[col], color);
+                        const Uint32 src_a = (src_pixel >> 24) & 0xFFu;
+                        if (src_a == 0u) {
+                            continue;
                         }
-                        /* Scalar tail for remaining pixels */
-                        for (; col < visible_w; col += 2) {
-                            Uint32 src_pixel = blue_tint
-                                ? modulate_argb8888_blue_tint(src_row[col], rg_factor, mod_a)
-                                : modulate_argb8888(src_row[col], color);
-                            const Uint32 src_a = (src_pixel >> 24) & 0xFFu;
-                            if (src_a == 0u) {
-                                continue;
-                            }
-                            if (src_a == 0xFFu) {
-                                dst_row[col] = src_pixel;
-                                if ((col + 1) < visible_w) { dst_row[col + 1] = src_pixel; }
-                                continue;
-                            }
-                            const Uint32 blended = blend_argb8888_opaque_dst(dst_row[col], src_pixel);
-                            dst_row[col] = blended;
-                            if ((col + 1) < visible_w) { dst_row[col + 1] = blended; }
+                        if (src_a == 0xFFu) {
+                            dst_row[col] = src_pixel;
+                            continue;
                         }
-                    } else {
-                        /* Full-res NEON path: fused modulate+blend, 4 contiguous pixels at a time.
-                         * neon_blend_modulate_4pixels handles alpha==0/255 edge cases branchlessly. */
-                        for (; (col + 3) < visible_w; col += 4) {
-                            neon_blend_modulate_4pixels(src_row + col, dst_row + col, &neon_state);
-                        }
-                        /* Scalar tail */
-                        for (; col < visible_w; col++) {
-                            Uint32 src_pixel = blue_tint
-                                ? modulate_argb8888_blue_tint(src_row[col], rg_factor, mod_a)
-                                : modulate_argb8888(src_row[col], color);
-                            const Uint32 src_a = (src_pixel >> 24) & 0xFFu;
-                            if (src_a == 0u) {
-                                continue;
-                            }
-                            if (src_a == 0xFFu) {
-                                dst_row[col] = src_pixel;
-                                continue;
-                            }
-                            dst_row[col] = blend_argb8888_opaque_dst(dst_row[col], src_pixel);
-                        }
+                        dst_row[col] = blend_argb8888_opaque_dst(dst_row[col], src_pixel);
                     }
 
                     /* Ghost half-res Y: duplicate this row to the next row */
@@ -6155,10 +6113,10 @@ static bool try_fast_copy_fast_textured_task_to_software_frame(const RenderTask*
 #endif /* RENDERER_HAVE_NEON */
 
             /* Scalar path: blue-tint fast path (Optimization D) or generic modulate.
-             * Also applies ghost half-res (Optimization B) when applicable. */
+             * Ghost half-res uses row-only skip (no column skip) for same reason
+             * as the NEON path above — column skipping negated the savings. */
             {
                 const int row_step = ghost_half_res ? 2 : 1;
-                const int col_step = ghost_half_res ? 2 : 1;
 
                 for (int row = 0; row < plan->visible_h; row += row_step) {
                     const Uint32* src_row = src_pixels + ((src_row0_y + (row * src_y_step)) * src_pitch) + src_row0_x;
@@ -6171,32 +6129,21 @@ static bool try_fast_copy_fast_textured_task_to_software_frame(const RenderTask*
                     }
 
                     const Uint32* src_pixel_ptr = src_row;
-                    for (int col = 0; col < plan->visible_w; col += col_step) {
+                    for (int col = 0; col < plan->visible_w; col++) {
                         Uint32 src_pixel = blue_tint
                             ? modulate_argb8888_blue_tint(*src_pixel_ptr, rg_factor, mod_a)
                             : modulate_argb8888(*src_pixel_ptr, color);
                         const Uint32 src_a = (src_pixel >> 24) & 0xFFu;
                         if (src_a == 0u) {
-                            src_pixel_ptr += src_x_step * col_step;
+                            src_pixel_ptr += src_x_step;
                             continue;
                         }
-                        if (ghost_half_res) {
-                            if (src_a == 0xFFu) {
-                                dst_row[col] = src_pixel;
-                                if ((col + 1) < plan->visible_w) { dst_row[col + 1] = src_pixel; }
-                            } else {
-                                const Uint32 blended = blend_argb8888_opaque_dst(dst_row[col], src_pixel);
-                                dst_row[col] = blended;
-                                if ((col + 1) < plan->visible_w) { dst_row[col + 1] = blended; }
-                            }
+                        if (src_a == 0xFFu) {
+                            dst_row[col] = src_pixel;
                         } else {
-                            if (src_a == 0xFFu) {
-                                dst_row[col] = src_pixel;
-                            } else {
-                                dst_row[col] = blend_argb8888_opaque_dst(dst_row[col], src_pixel);
-                            }
+                            dst_row[col] = blend_argb8888_opaque_dst(dst_row[col], src_pixel);
                         }
-                        src_pixel_ptr += src_x_step * col_step;
+                        src_pixel_ptr += src_x_step;
                     }
 
                     /* Ghost half-res Y: duplicate row */
