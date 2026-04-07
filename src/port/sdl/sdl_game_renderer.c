@@ -30,6 +30,13 @@ extern short scrn_adgjust_y;
 #define RENDERER_HAVE_NEON 0
 #endif
 
+/* INDEX8 rasterization: keep textures in INDEX8 format through to the
+ * rasterizer inner loop, applying palette per-pixel instead of pre-converting
+ * to ARGB8888.  This reduces the source texture working set from 256KB
+ * (ARGB8888) to 64KB (INDEX8) + 1KB (palette LUT), improving L1 D-cache
+ * hit rate on the ARM Cortex-A9's 32KB L1 D-cache. */
+#define INDEX8_RASTERIZATION_ENABLED 1
+
 #define RENDER_TASK_MAX 1024
 #define RENDER_TASK_VERTEX_MAX (RENDER_TASK_MAX * 4)
 #define RENDER_TASK_INDEX_MAX (RENDER_TASK_MAX * 6)
@@ -87,6 +94,10 @@ typedef struct RenderTask {
 #endif
     unsigned int texture_binding;
     SDL_Surface* software_source_surface;
+#if INDEX8_RASTERIZATION_ENABLED
+    const Uint32* software_palette_lut;   /* Non-NULL when source is INDEX8 */
+    bool software_source_is_index8;        /* Format discriminant */
+#endif
     SDL_Vertex vertices[4];
     SDL_FRect dst_rect;
     SDL_FRect src_uv_rect;
@@ -157,6 +168,12 @@ static bool perf_capture_fast_non_integer_reuse_telemetry_enabled = true;
 static bool perf_capture_fast_non_integer_subrect_alpha_telemetry_enabled = false;
 static SDL_Surface* surfaces[FL_TEXTURE_MAX] = { NULL };
 static SDL_Palette* palettes[FL_PALETTE_MAX] = { NULL };
+#if INDEX8_RASTERIZATION_ENABLED
+/* Per-palette LUT: 256 ARGB8888 entries built from SDL_Palette->colors[].
+ * FL_PALETTE_MAX is 1088, so this is 1088 * 1KB = ~1MB static allocation. */
+static Uint32 software_palette_lut[FL_PALETTE_MAX][256];
+static bool software_palette_lut_valid[FL_PALETTE_MAX] = { false };
+#endif
 typedef enum CacheDirtyReason {
     CACHE_DIRTY_REASON_NONE = 0,
     CACHE_DIRTY_REASON_TEXTURE_UNLOCK,
@@ -513,6 +530,10 @@ static SDL_Surface* software_surfaces_to_destroy[1024] = { NULL };
 static int software_surfaces_to_destroy_count = 0;
 static SDL_Texture* current_texture = NULL;
 static SDL_Surface* current_software_source_surface = NULL;
+#if INDEX8_RASTERIZATION_ENABLED
+static const Uint32* current_software_palette_lut = NULL;
+static bool current_software_source_is_index8 = false;
+#endif
 static unsigned int current_texture_binding = 0;
 static bool current_texture_binding_valid = false;
 static bool cps3_target_bound = false;
@@ -1045,6 +1066,10 @@ static int invalidate_texture_cache_for_texture_index(int texture_index, CacheDi
     if (current_texture_binding_valid && (LO_16_BITS(current_texture_binding) == (unsigned int)texture_handle)) {
         current_texture = NULL;
         current_software_source_surface = NULL;
+#if INDEX8_RASTERIZATION_ENABLED
+        current_software_palette_lut = NULL;
+        current_software_source_is_index8 = false;
+#endif
         current_texture_binding_valid = false;
     }
 
@@ -1085,6 +1110,10 @@ static int invalidate_software_surface_cache_for_texture_index(int texture_index
 
     if (current_texture_binding_valid && (LO_16_BITS(current_texture_binding) == (unsigned int)texture_handle)) {
         current_software_source_surface = NULL;
+#if INDEX8_RASTERIZATION_ENABLED
+        current_software_palette_lut = NULL;
+        current_software_source_is_index8 = false;
+#endif
     }
 
     for (int i = 0; i < FL_PALETTE_MAX + 1; i++) {
@@ -1125,6 +1154,10 @@ static int invalidate_texture_cache_for_palette_handle(int palette_handle,
     if (current_texture_binding_valid && (HI_16_BITS(current_texture_binding) == (unsigned int)palette_handle)) {
         current_texture = NULL;
         current_software_source_surface = NULL;
+#if INDEX8_RASTERIZATION_ENABLED
+        current_software_palette_lut = NULL;
+        current_software_source_is_index8 = false;
+#endif
         current_texture_binding_valid = false;
     }
 
@@ -1166,6 +1199,10 @@ static int invalidate_software_surface_cache_for_palette_handle(int palette_hand
 
     if (current_texture_binding_valid && (HI_16_BITS(current_texture_binding) == (unsigned int)palette_handle)) {
         current_software_source_surface = NULL;
+#if INDEX8_RASTERIZATION_ENABLED
+        current_software_palette_lut = NULL;
+        current_software_source_is_index8 = false;
+#endif
     }
 
     for (int i = 0; i < FL_TEXTURE_MAX; i++) {
@@ -1200,6 +1237,10 @@ static int invalidate_software_surface_cache_for_palette_handle(int palette_hand
 static void destroy_textures() {
     current_texture = NULL;
     current_software_source_surface = NULL;
+#if INDEX8_RASTERIZATION_ENABLED
+    current_software_palette_lut = NULL;
+    current_software_source_is_index8 = false;
+#endif
     current_texture_binding_valid = false;
     current_texture_binding = 0;
 
@@ -3150,8 +3191,85 @@ static bool refresh_software_source_surface_in_place(unsigned int th, SDL_Surfac
         goto done;
     }
 
-    if ((cached_surface->w != surface->w) || (cached_surface->h != surface->h) ||
-        (cached_surface->format != SDL_PIXELFORMAT_ARGB8888)) {
+    if ((cached_surface->w != surface->w) || (cached_surface->h != surface->h)) {
+        goto done;
+    }
+
+#if INDEX8_RASTERIZATION_ENABLED
+    if (cached_surface->format == SDL_PIXELFORMAT_INDEX8) {
+        if (surface->format != SDL_PIXELFORMAT_INDEX8) {
+            goto done;
+        }
+
+        note_perf_capture_refresh_attempt(th, surface);
+
+        TextureUnlockRefreshPlan i8_partial_plan = { 0 };
+        note_perf_capture_compare_dirty_rect_refresh_candidate(th, dirty_reason, surface);
+        const TextureUnlockRefreshDecision i8_refresh_decision =
+            classify_texture_unlock_refresh_decision(th, dirty_reason, surface, &i8_partial_plan);
+        const bool i8_use_partial = i8_refresh_decision == TEXTURE_UNLOCK_REFRESH_DECISION_PARTIAL;
+        note_perf_capture_refresh_path(th, surface, i8_refresh_decision, i8_use_partial ? &i8_partial_plan : NULL);
+        const bool i8_sample_blit = should_sample_perf_capture_refresh_blit();
+        Uint64 i8_sampled_blit_start_counter = 0;
+
+        if (frame_stats_extended_enabled) {
+            const Uint64 blit_start_ns = SDL_GetTicksNS();
+            i8_sampled_blit_start_counter = i8_sample_blit ? SDL_GetPerformanceCounter() : 0;
+            frame_stats.software_surface_cache_refresh_blit_calls += 1;
+            if (i8_use_partial) {
+                success = true;
+                for (int rect_index = 0; rect_index < i8_partial_plan.rect_count; rect_index++) {
+                    const SDL_Rect* rect = &i8_partial_plan.rects[rect_index];
+                    for (int y = rect->y; y < rect->y + rect->h && y < surface->h; y++) {
+                        const int row_bytes = SDL_min(rect->w, SDL_min(surface->pitch - rect->x, cached_surface->pitch - rect->x));
+                        if (row_bytes <= 0) continue;
+                        memcpy((Uint8*)cached_surface->pixels + y * cached_surface->pitch + rect->x,
+                               (const Uint8*)surface->pixels + y * surface->pitch + rect->x,
+                               row_bytes);
+                    }
+                }
+            } else {
+                const int row_bytes = SDL_min(surface->pitch, cached_surface->pitch);
+                for (int y = 0; y < surface->h; y++) {
+                    memcpy((Uint8*)cached_surface->pixels + y * cached_surface->pitch,
+                           (const Uint8*)surface->pixels + y * surface->pitch,
+                           row_bytes);
+                }
+                success = true;
+            }
+            frame_stats.software_surface_cache_refresh_blit_ns += SDL_GetTicksNS() - blit_start_ns;
+        } else {
+            if (i8_use_partial) {
+                success = true;
+                for (int rect_index = 0; rect_index < i8_partial_plan.rect_count; rect_index++) {
+                    const SDL_Rect* rect = &i8_partial_plan.rects[rect_index];
+                    for (int y = rect->y; y < rect->y + rect->h && y < surface->h; y++) {
+                        const int row_bytes = SDL_min(rect->w, SDL_min(surface->pitch - rect->x, cached_surface->pitch - rect->x));
+                        if (row_bytes <= 0) continue;
+                        memcpy((Uint8*)cached_surface->pixels + y * cached_surface->pitch + rect->x,
+                               (const Uint8*)surface->pixels + y * surface->pitch + rect->x,
+                               row_bytes);
+                    }
+                }
+            } else {
+                const int row_bytes = SDL_min(surface->pitch, cached_surface->pitch);
+                for (int y = 0; y < surface->h; y++) {
+                    memcpy((Uint8*)cached_surface->pixels + y * cached_surface->pitch,
+                           (const Uint8*)surface->pixels + y * surface->pitch,
+                           row_bytes);
+                }
+                success = true;
+            }
+        }
+        if (i8_sample_blit) {
+            note_perf_capture_refresh_blit_sample(
+                th, i8_refresh_decision, perf_capture_counter_delta_to_ns(i8_sampled_blit_start_counter, SDL_GetPerformanceCounter()));
+        }
+        goto done;
+    }
+#endif
+
+    if (cached_surface->format != SDL_PIXELFORMAT_ARGB8888) {
         goto done;
     }
 
@@ -3458,6 +3576,20 @@ static SDL_Surface* get_or_create_software_source_surface(unsigned int th) {
         return NULL;
     }
 
+#if INDEX8_RASTERIZATION_ENABLED
+    if (surface->format == SDL_PIXELFORMAT_INDEX8) {
+        cached_surface = SDL_CreateSurface(surface->w, surface->h, SDL_PIXELFORMAT_INDEX8);
+        if (cached_surface == NULL) {
+            return NULL;
+        }
+        const int row_bytes = SDL_min(surface->pitch, cached_surface->pitch);
+        for (int y = 0; y < surface->h; y++) {
+            memcpy((Uint8*)cached_surface->pixels + y * cached_surface->pitch,
+                   (const Uint8*)surface->pixels + y * surface->pitch,
+                   row_bytes);
+        }
+    } else {
+#endif
     SDL_Palette* palette = palette_handle != 0 ? palettes[palette_handle - 1] : NULL;
     if (palette != NULL) {
         SDL_SetSurfacePalette(surface, palette);
@@ -3467,6 +3599,9 @@ static SDL_Surface* get_or_create_software_source_surface(unsigned int th) {
     if (cached_surface == NULL) {
         return NULL;
     }
+#if INDEX8_RASTERIZATION_ENABLED
+    }
+#endif
 
     RENDERER_TELEMETRY({
         if (frame_stats_extended_enabled) {
@@ -6012,6 +6147,13 @@ static bool is_ghost_sprite_color(Uint32 color) {
     return is_blue_tint_color(color);
 }
 
+#if INDEX8_RASTERIZATION_ENABLED
+/* Helper to get INDEX8 source row pointer from a surface. */
+static inline const Uint8* index8_src_row(const SDL_Surface* surface, int y) {
+    return (const Uint8*)surface->pixels + (y * surface->pitch);
+}
+#endif
+
 static bool try_fast_copy_fast_textured_task_to_software_frame(const RenderTask* task,
                                                                const SoftwareFrameFastCopyPlan* plan,
                                                                SDL_Surface* dst_surface,
@@ -6023,6 +6165,213 @@ static bool try_fast_copy_fast_textured_task_to_software_frame(const RenderTask*
     if ((plan->visible_w <= 0) || (plan->visible_h <= 0)) {
         return true;
     }
+
+#if INDEX8_RASTERIZATION_ENABLED
+    /* INDEX8 fast path: when the source surface is INDEX8, use 1-byte
+     * indexed reads + palette LUT instead of 4-byte ARGB8888 reads.
+     * This handles both exact-copy and scaled-copy sub-paths. */
+    if (task->software_source_is_index8 && (task->software_palette_lut != NULL) &&
+        (task->software_source_surface != NULL)) {
+        const Uint32* palette_lut = task->software_palette_lut;
+        const SDL_Surface* i8_surface = task->software_source_surface;
+        Uint32* dst_pixels = (Uint32*)dst_surface->pixels;
+        const int dst_pitch = dst_surface->pitch / (int)sizeof(Uint32);
+
+        if ((plan->src_w == plan->dst_w) && (plan->src_h == plan->dst_h)) {
+            /* --- INDEX8 exact copy --- */
+            const int clip_left = plan->dst_x0 - plan->dst_x;
+            const int clip_top = plan->dst_y0 - plan->dst_y;
+            const int src_x_step = plan->flip_h ? -1 : 1;
+            const int src_y_step = plan->flip_v ? -1 : 1;
+            const int src_row0_x = plan->flip_h ? (plan->src_x + plan->src_w - 1 - clip_left) : (plan->src_x + clip_left);
+            const int src_row0_y = plan->flip_v ? (plan->src_y + plan->src_h - 1 - clip_top) : (plan->src_y + clip_top);
+
+            if (plan->color_mod) {
+                const Uint32 color = task->color;
+                const Uint32 mod_a = (color >> 24) & 0xFFu;
+                if (mod_a == 0u) {
+                    return true;
+                }
+                const bool ghost_half_res = (ghost_resolution_mode == SDL_GAME_RENDERER_GHOST_RESOLUTION_HALF) &&
+                                            is_ghost_sprite_color(color);
+                const bool blue_tint = is_blue_tint_color(color);
+                const Uint32 rg_factor = (color >> 16) & 0xFFu;
+                const int row_step = ghost_half_res ? 2 : 1;
+
+#if RENDERER_HAVE_NEON
+                if (src_x_step == 1) {
+                    const NeonModulateState neon_state = neon_modulate_init(color);
+                    const int visible_w = plan->visible_w;
+
+                    for (int row = 0; row < plan->visible_h; row += row_step) {
+                        const Uint8* i8_row = index8_src_row(i8_surface, src_row0_y + (row * src_y_step));
+                        Uint32* dst_row = dst_pixels + ((plan->dst_y0 + row) * dst_pitch) + plan->dst_x0;
+
+                        if ((row + row_step) < plan->visible_h) {
+                            __builtin_prefetch(index8_src_row(i8_surface, src_row0_y + ((row + row_step) * src_y_step)), 0, 0);
+                            __builtin_prefetch(dst_pixels + ((plan->dst_y0 + row + row_step) * dst_pitch) + plan->dst_x0, 1, 0);
+                        }
+
+                        int col = 0;
+                        /* INDEX8 NEON gather: load 4 INDEX8 bytes, look up 4 palette entries */
+                        for (; (col + 3) < visible_w; col += 4) {
+                            const Uint32 gathered[4] = {
+                                palette_lut[i8_row[src_row0_x + col]],
+                                palette_lut[i8_row[src_row0_x + col + 1]],
+                                palette_lut[i8_row[src_row0_x + col + 2]],
+                                palette_lut[i8_row[src_row0_x + col + 3]]
+                            };
+                            if (((gathered[0] | gathered[1] | gathered[2] | gathered[3]) >> 24) == 0u) {
+                                continue;
+                            }
+                            neon_blend_modulate_4pixels(gathered, dst_row + col, &neon_state);
+                        }
+                        /* Scalar tail */
+                        for (; col < visible_w; col++) {
+                            Uint32 src_pixel = blue_tint
+                                ? modulate_argb8888_blue_tint(palette_lut[i8_row[src_row0_x + col]], rg_factor, mod_a)
+                                : modulate_argb8888(palette_lut[i8_row[src_row0_x + col]], color);
+                            const Uint32 src_a = (src_pixel >> 24) & 0xFFu;
+                            if (src_a == 0u) { continue; }
+                            if (src_a == 0xFFu) { dst_row[col] = src_pixel; continue; }
+                            dst_row[col] = blend_argb8888_opaque_dst(dst_row[col], src_pixel);
+                        }
+
+                        if (ghost_half_res && ((row + 1) < plan->visible_h)) {
+                            Uint32* next_dst_row = dst_pixels + ((plan->dst_y0 + row + 1) * dst_pitch) + plan->dst_x0;
+                            SDL_memcpy(next_dst_row, dst_row, (size_t)visible_w * sizeof(Uint32));
+                        }
+                    }
+                    return true;
+                }
+#endif /* RENDERER_HAVE_NEON */
+
+                /* INDEX8 scalar color-mod path */
+                for (int row = 0; row < plan->visible_h; row += row_step) {
+                    const Uint8* i8_row = index8_src_row(i8_surface, src_row0_y + (row * src_y_step));
+                    Uint32* dst_row = dst_pixels + ((plan->dst_y0 + row) * dst_pitch) + plan->dst_x0;
+
+                    if ((row + row_step) < plan->visible_h) {
+                        __builtin_prefetch(index8_src_row(i8_surface, src_row0_y + ((row + row_step) * src_y_step)), 0, 0);
+                        __builtin_prefetch(dst_pixels + ((plan->dst_y0 + row + row_step) * dst_pitch) + plan->dst_x0, 1, 0);
+                    }
+
+                    int src_x = src_row0_x;
+                    for (int col = 0; col < plan->visible_w; col++) {
+                        Uint32 src_pixel = blue_tint
+                            ? modulate_argb8888_blue_tint(palette_lut[i8_row[src_x]], rg_factor, mod_a)
+                            : modulate_argb8888(palette_lut[i8_row[src_x]], color);
+                        const Uint32 src_a = (src_pixel >> 24) & 0xFFu;
+                        if (src_a != 0u) {
+                            if (src_a == 0xFFu) {
+                                dst_row[col] = src_pixel;
+                            } else {
+                                dst_row[col] = blend_argb8888_opaque_dst(dst_row[col], src_pixel);
+                            }
+                        }
+                        src_x += src_x_step;
+                    }
+
+                    if (ghost_half_res && ((row + 1) < plan->visible_h)) {
+                        Uint32* next_dst_row = dst_pixels + ((plan->dst_y0 + row + 1) * dst_pitch) + plan->dst_x0;
+                        SDL_memcpy(next_dst_row, dst_row, (size_t)plan->visible_w * sizeof(Uint32));
+                    }
+                }
+                return true;
+            }
+
+            /* INDEX8 non-color-mod exact copy */
+#if RENDERER_HAVE_NEON
+            if (src_x_step == 1) {
+                for (int row = 0; row < plan->visible_h; row++) {
+                    const Uint8* i8_row = index8_src_row(i8_surface, src_row0_y + (row * src_y_step));
+                    Uint32* dst_row = dst_pixels + ((plan->dst_y0 + row) * dst_pitch) + plan->dst_x0;
+
+                    if ((row + 1) < plan->visible_h) {
+                        __builtin_prefetch(index8_src_row(i8_surface, src_row0_y + ((row + 1) * src_y_step)), 0, 0);
+                        __builtin_prefetch(dst_pixels + ((plan->dst_y0 + row + 1) * dst_pitch) + plan->dst_x0, 1, 0);
+                    }
+
+                    int col = 0;
+                    for (; (col + 3) < plan->visible_w; col += 4) {
+                        const Uint32 gathered[4] = {
+                            palette_lut[i8_row[src_row0_x + col]],
+                            palette_lut[i8_row[src_row0_x + col + 1]],
+                            palette_lut[i8_row[src_row0_x + col + 2]],
+                            palette_lut[i8_row[src_row0_x + col + 3]]
+                        };
+                        if (((gathered[0] | gathered[1] | gathered[2] | gathered[3]) >> 24) == 0u) {
+                            continue;
+                        }
+                        neon_blend_4pixels(gathered, dst_row + col);
+                    }
+                    for (; col < plan->visible_w; col++) {
+                        const Uint32 src_pixel = palette_lut[i8_row[src_row0_x + col]];
+                        const Uint32 src_a = (src_pixel >> 24) & 0xFFu;
+                        if (src_a == 0u) { continue; }
+                        if (src_a == 0xFFu) { dst_row[col] = src_pixel; continue; }
+                        dst_row[col] = blend_argb8888_opaque_dst(dst_row[col], src_pixel);
+                    }
+                }
+                return true;
+            }
+#endif /* RENDERER_HAVE_NEON */
+
+            /* INDEX8 scalar non-color-mod exact copy (with flip support) */
+            for (int row = 0; row < plan->visible_h; row++) {
+                const Uint8* i8_row = index8_src_row(i8_surface, src_row0_y + (row * src_y_step));
+                Uint32* dst_row = dst_pixels + ((plan->dst_y0 + row) * dst_pitch) + plan->dst_x0;
+
+                if ((row + 1) < plan->visible_h) {
+                    __builtin_prefetch(index8_src_row(i8_surface, src_row0_y + ((row + 1) * src_y_step)), 0, 0);
+                    __builtin_prefetch(dst_pixels + ((plan->dst_y0 + row + 1) * dst_pitch) + plan->dst_x0, 1, 0);
+                }
+
+                int src_x = src_row0_x;
+                for (int col = 0; col < plan->visible_w; col++) {
+                    const Uint32 src_pixel = palette_lut[i8_row[src_x]];
+                    const Uint32 src_a = (src_pixel >> 24) & 0xFFu;
+                    if (src_a != 0u) {
+                        if (src_a == 0xFFu) {
+                            dst_row[col] = src_pixel;
+                        } else {
+                            dst_row[col] = blend_argb8888_opaque_dst(dst_row[col], src_pixel);
+                        }
+                    }
+                    src_x += src_x_step;
+                }
+            }
+            return true;
+        }
+
+        /* --- INDEX8 scaled copy (non-exact) --- */
+        int src_x_lookup[cps3_width];
+        int src_y_lookup[cps3_height];
+        populate_scaled_lookup_table(
+            src_x_lookup, plan->visible_w, plan->dst_x, plan->dst_x0, plan->dst_w, plan->src_x, plan->src_w, plan->flip_h);
+        populate_scaled_lookup_table(
+            src_y_lookup, plan->visible_h, plan->dst_y, plan->dst_y0, plan->dst_h, plan->src_y, plan->src_h, plan->flip_v);
+
+        for (int row = 0; row < plan->visible_h; row++) {
+            const Uint8* i8_row = index8_src_row(i8_surface, src_y_lookup[row]);
+            Uint32* dst_row = dst_pixels + ((plan->dst_y0 + row) * dst_pitch) + plan->dst_x0;
+
+            if ((row + 1) < plan->visible_h) {
+                __builtin_prefetch(index8_src_row(i8_surface, src_y_lookup[row + 1]), 0, 0);
+                __builtin_prefetch(dst_pixels + ((plan->dst_y0 + row + 1) * dst_pitch) + plan->dst_x0, 1, 0);
+            }
+
+            for (int col = 0; col < plan->visible_w; col++) {
+                const Uint32 src_pixel = palette_lut[i8_row[src_x_lookup[col]]];
+                const Uint32 src_a = (src_pixel >> 24) & 0xFFu;
+                if (src_a == 0u) { continue; }
+                if (src_a == 0xFFu) { dst_row[col] = src_pixel; continue; }
+                dst_row[col] = blend_argb8888_opaque_dst(dst_row[col], src_pixel);
+            }
+        }
+        return true;
+    }
+#endif /* INDEX8_RASTERIZATION_ENABLED */
 
     const Uint32* src_pixels = (const Uint32*)src_surface->pixels;
     Uint32* dst_pixels = (Uint32*)dst_surface->pixels;
@@ -6833,7 +7182,11 @@ static bool raster_textured_task_to_software_frame(const RenderTask* task) {
             }
             return true;
         }
-    } else if (fast_copy_result == SOFTWARE_FRAME_FAST_COPY_RESULT_NON_INTEGER) {
+    } else if (fast_copy_result == SOFTWARE_FRAME_FAST_COPY_RESULT_NON_INTEGER
+#if INDEX8_RASTERIZATION_ENABLED
+               && !(task->software_source_is_index8 && (task->software_palette_lut != NULL))
+#endif
+    ) {
         const Uint64 submitted_pixels = render_task_submitted_pixels(task);
         const bool collect_phase_timing =
             frame_stats_extended_enabled || perf_capture_basic_first_window_render_subphases_enabled;
@@ -6880,7 +7233,11 @@ static bool raster_textured_task_to_software_frame(const RenderTask* task) {
      * float UV math, applying color modulation per pixel.
      *
      * If any validation fails, we fall through to the generic float UV path. */
-    if (fast_copy_result == SOFTWARE_FRAME_FAST_COPY_RESULT_COLOR_MOD) {
+    if (fast_copy_result == SOFTWARE_FRAME_FAST_COPY_RESULT_COLOR_MOD
+#if INDEX8_RASTERIZATION_ENABLED
+        && !(task->software_source_is_index8 && (task->software_palette_lut != NULL))
+#endif
+    ) {
         /* Recompute the plan fields — mirrors build_software_frame_fast_copy_plan logic */
         const int cm_dst_x = (int)SDL_roundf(task->dst_rect.x);
         const int cm_dst_y = (int)SDL_roundf(task->dst_rect.y);
@@ -7054,6 +7411,181 @@ static bool raster_textured_task_to_software_frame(const RenderTask* task) {
         }
         /* If validation failed, fall through to generic float UV path */
     }
+
+#if INDEX8_RASTERIZATION_ENABLED
+    /* INDEX8 generic path: handles all fallthrough cases (non-integer too small,
+     * COLOR_MOD with non-integer, and generic float UV) for INDEX8 textures.
+     * Uses 1-byte indexed reads + palette LUT instead of 4-byte ARGB8888 reads. */
+    if (task->software_source_is_index8 && (task->software_palette_lut != NULL) &&
+        (task->software_source_surface != NULL)) {
+        const Uint32* palette_lut = task->software_palette_lut;
+        const SDL_Surface* i8_surface = task->software_source_surface;
+        const int i8_src_w = i8_surface->w;
+        const int i8_src_h = i8_surface->h;
+        Uint32* i8_dst_pixels = (Uint32*)dst_surface->pixels;
+        const int i8_dst_pitch = dst_surface->pitch / (int)sizeof(Uint32);
+        const bool i8_flip_h = (task->flip & SDL_FLIP_HORIZONTAL) != 0;
+        const bool i8_flip_v = (task->flip & SDL_FLIP_VERTICAL) != 0;
+        const bool i8_apply_color_mod = task->color != 0xFFFFFFFFu;
+        const bool i8_blue_tint = i8_apply_color_mod && is_blue_tint_color(task->color);
+        const Uint32 i8_rg_factor = (task->color >> 16) & 0xFFu;
+        const Uint32 i8_mod_a = (task->color >> 24) & 0xFFu;
+        const Uint64 i8_sample_start_counter =
+            begin_perf_capture_raster_bucket_sample(SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_GENERIC_TEXTURED);
+
+        const int i8_visible_w = dst_x1 - dst_x0;
+        const int i8_visible_h = dst_y1 - dst_y0;
+        int i8_src_x_lookup[cps3_width];
+        int i8_src_y_lookup[cps3_height];
+
+        const float i8_src_x_start = task->src_uv_rect.x * (float)i8_src_w;
+        const float i8_src_y_start = task->src_uv_rect.y * (float)i8_src_h;
+        const float i8_src_x_span = task->src_uv_rect.w * (float)i8_src_w;
+        const float i8_src_y_span = task->src_uv_rect.h * (float)i8_src_h;
+
+        for (int row = 0; row < i8_visible_h; row++) {
+            const int y = dst_y0 + row;
+            float v = (((float)y + 0.5f) - task->dst_rect.y) / task->dst_rect.h;
+            v = SDL_max(0.0f, SDL_min(v, 0.999999f));
+            if (i8_flip_v) { v = 1.0f - v; v = SDL_max(0.0f, SDL_min(v, 0.999999f)); }
+            i8_src_y_lookup[row] =
+                clamp_to_range((int)SDL_floorf(i8_src_y_start + (v * i8_src_y_span)), 0, i8_src_h - 1);
+        }
+        for (int col = 0; col < i8_visible_w; col++) {
+            const int x = dst_x0 + col;
+            float u = (((float)x + 0.5f) - task->dst_rect.x) / task->dst_rect.w;
+            u = SDL_max(0.0f, SDL_min(u, 0.999999f));
+            if (i8_flip_h) { u = 1.0f - u; u = SDL_max(0.0f, SDL_min(u, 0.999999f)); }
+            i8_src_x_lookup[col] =
+                clamp_to_range((int)SDL_floorf(i8_src_x_start + (u * i8_src_x_span)), 0, i8_src_w - 1);
+        }
+
+        /* Contiguous stride-1 detection for INDEX8 */
+        bool i8_src_x_contiguous = (i8_visible_w > 0);
+        const int i8_src_x_base = (i8_visible_w > 0) ? i8_src_x_lookup[0] : 0;
+        for (int ci = 1; ci < i8_visible_w; ci++) {
+            if (i8_src_x_lookup[ci] != (i8_src_x_base + ci)) {
+                i8_src_x_contiguous = false;
+                break;
+            }
+        }
+
+#if RENDERER_HAVE_NEON
+        const NeonModulateState i8_neon_state = i8_apply_color_mod ? neon_modulate_init(task->color) : (NeonModulateState){ .color_lo = { 0 }, .color_hi = { 0 } };
+#endif
+
+        for (int row = 0; row < i8_visible_h; row++) {
+            const Uint8* i8_row = index8_src_row(i8_surface, i8_src_y_lookup[row]);
+            Uint32* dst_row = i8_dst_pixels + ((dst_y0 + row) * i8_dst_pitch) + dst_x0;
+
+            if ((row + 1) < i8_visible_h) {
+                __builtin_prefetch(index8_src_row(i8_surface, i8_src_y_lookup[row + 1]), 0, 0);
+                __builtin_prefetch(i8_dst_pixels + ((dst_y0 + row + 1) * i8_dst_pitch) + dst_x0, 1, 0);
+            }
+
+            if (!i8_apply_color_mod) {
+                int col = 0;
+#if RENDERER_HAVE_NEON
+                if (i8_src_x_contiguous) {
+                    const Uint8* i8_contiguous = i8_row + i8_src_x_base;
+                    for (; (col + 3) < i8_visible_w; col += 4) {
+                        const Uint32 gathered[4] = {
+                            palette_lut[i8_contiguous[col]],
+                            palette_lut[i8_contiguous[col + 1]],
+                            palette_lut[i8_contiguous[col + 2]],
+                            palette_lut[i8_contiguous[col + 3]]
+                        };
+                        if (((gathered[0] | gathered[1] | gathered[2] | gathered[3]) >> 24) == 0u) {
+                            continue;
+                        }
+                        neon_blend_4pixels(gathered, dst_row + col);
+                    }
+                } else {
+                    for (; (col + 3) < i8_visible_w; col += 4) {
+                        const Uint32 gathered[4] = {
+                            palette_lut[i8_row[i8_src_x_lookup[col]]],
+                            palette_lut[i8_row[i8_src_x_lookup[col + 1]]],
+                            palette_lut[i8_row[i8_src_x_lookup[col + 2]]],
+                            palette_lut[i8_row[i8_src_x_lookup[col + 3]]]
+                        };
+                        if (((gathered[0] | gathered[1] | gathered[2] | gathered[3]) >> 24) == 0u) {
+                            continue;
+                        }
+                        neon_blend_4pixels(gathered, dst_row + col);
+                    }
+                }
+#endif
+                for (; col < i8_visible_w; col++) {
+                    const Uint32 src_pixel = palette_lut[i8_row[i8_src_x_lookup[col]]];
+                    const Uint32 src_a = (src_pixel >> 24) & 0xFFu;
+                    if (src_a == 0u) { continue; }
+                    if (src_a == 0xFFu) { dst_row[col] = src_pixel; continue; }
+                    dst_row[col] = blend_argb8888_opaque_dst(dst_row[col], src_pixel);
+                }
+                continue;
+            }
+
+            /* INDEX8 color-mod path */
+            int col = 0;
+#if RENDERER_HAVE_NEON
+            if (i8_src_x_contiguous) {
+                const Uint8* i8_contiguous = i8_row + i8_src_x_base;
+                for (; (col + 3) < i8_visible_w; col += 4) {
+                    const Uint32 gathered[4] = {
+                        palette_lut[i8_contiguous[col]],
+                        palette_lut[i8_contiguous[col + 1]],
+                        palette_lut[i8_contiguous[col + 2]],
+                        palette_lut[i8_contiguous[col + 3]]
+                    };
+                    if (((gathered[0] | gathered[1] | gathered[2] | gathered[3]) >> 24) == 0u) {
+                        continue;
+                    }
+                    neon_blend_modulate_4pixels(gathered, dst_row + col, &i8_neon_state);
+                }
+            } else {
+                for (; (col + 3) < i8_visible_w; col += 4) {
+                    const Uint32 gathered[4] = {
+                        palette_lut[i8_row[i8_src_x_lookup[col]]],
+                        palette_lut[i8_row[i8_src_x_lookup[col + 1]]],
+                        palette_lut[i8_row[i8_src_x_lookup[col + 2]]],
+                        palette_lut[i8_row[i8_src_x_lookup[col + 3]]]
+                    };
+                    if (((gathered[0] | gathered[1] | gathered[2] | gathered[3]) >> 24) == 0u) {
+                        continue;
+                    }
+                    neon_blend_modulate_4pixels(gathered, dst_row + col, &i8_neon_state);
+                }
+            }
+#endif
+            for (; col < i8_visible_w; col++) {
+                const Uint32 raw_pixel = palette_lut[i8_row[i8_src_x_lookup[col]]];
+                if (((raw_pixel >> 24) & 0xFFu) == 0u) { continue; }
+                Uint32 src_pixel = i8_blue_tint
+                    ? modulate_argb8888_blue_tint(raw_pixel, i8_rg_factor, i8_mod_a)
+                    : modulate_argb8888(raw_pixel, task->color);
+                const Uint32 src_a = (src_pixel >> 24) & 0xFFu;
+                if (src_a == 0u) { continue; }
+                if (src_a == 0xFFu) { dst_row[col] = src_pixel; continue; }
+                dst_row[col] = blend_argb8888_opaque_dst(dst_row[col], src_pixel);
+            }
+        }
+
+        const Uint64 i8_sampled_ns = perf_capture_counter_delta_to_ns(
+            i8_sample_start_counter, SDL_GetPerformanceCounter());
+        note_perf_capture_raster_bucket_sample(
+            SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_GENERIC_TEXTURED, task, i8_sampled_ns);
+        if ((fast_copy_result != SOFTWARE_FRAME_FAST_COPY_RESULT_EXACT) &&
+            (fast_copy_result != SOFTWARE_FRAME_FAST_COPY_RESULT_SCALED)) {
+            note_software_frame_fast_copy_result(
+                task, fast_copy_result, NULL, dst_surface, non_integer_lookup_entries, i8_sampled_ns);
+        }
+
+        if (src_locked) {
+            SDL_UnlockSurface(src_surface);
+        }
+        return true;
+    }
+#endif /* INDEX8_RASTERIZATION_ENABLED */
 
     const float src_x_start = task->src_uv_rect.x * (float)src_surface->w;
     const float src_y_start = task->src_uv_rect.y * (float)src_surface->h;
@@ -7270,14 +7802,49 @@ static bool raster_textured_parallelogram_to_software_frame(const RenderTask* ta
         src_locked = true;
     }
 
-    const Uint32* src_pixels = (const Uint32*)src_surface->pixels;
     Uint32* dst_pixels = (Uint32*)software_frame_surface->pixels;
-    const int src_pitch = src_surface->pitch / (int)sizeof(Uint32);
     const int dst_pitch = software_frame_surface->pitch / (int)sizeof(Uint32);
     const int shear_dx_total = parallelogram.bottom_left_x - parallelogram.top_left_x;
-    const Uint64* full_opaque_row_mask = get_software_surface_full_opaque_row_mask(task->texture_binding, src_surface);
     const Uint64 sample_start_counter =
         begin_perf_capture_raster_bucket_sample(SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_GENERIC_TEXTURED);
+
+#if INDEX8_RASTERIZATION_ENABLED
+    if (task->software_source_is_index8 && (task->software_palette_lut != NULL)) {
+        const Uint32* palette_lut = task->software_palette_lut;
+        for (int row = 0; row < parallelogram.src_h; row++) {
+            const int dst_y = parallelogram.top_y + row;
+            if ((dst_y < 0) || (dst_y >= software_frame_surface->h)) { continue; }
+            const float row_start_f = (float)parallelogram.top_left_x +
+                                      ((((float)row + 0.5f) * (float)shear_dx_total) / (float)parallelogram.src_h);
+            const int unclipped_dst_x0 = (int)SDL_roundf(row_start_f);
+            const int unclipped_dst_x1 = unclipped_dst_x0 + parallelogram.src_w;
+            const int dst_x0 = clamp_to_range(unclipped_dst_x0, 0, software_frame_surface->w);
+            const int dst_x1 = clamp_to_range(unclipped_dst_x1, 0, software_frame_surface->w);
+            if (dst_x1 <= dst_x0) { continue; }
+            const int para_src_x0 = parallelogram.src_x + (dst_x0 - unclipped_dst_x0);
+            const int visible_w = dst_x1 - dst_x0;
+            const Uint8* i8_row = index8_src_row(src_surface, parallelogram.src_y + row);
+            Uint32* dst_row = dst_pixels + (dst_y * dst_pitch) + dst_x0;
+            for (int col = 0; col < visible_w; col++) {
+                const Uint32 src_pixel = palette_lut[i8_row[para_src_x0 + col]];
+                const Uint32 src_a = (src_pixel >> 24) & 0xFFu;
+                if (src_a == 0u) { continue; }
+                if (src_a == 0xFFu) { dst_row[col] = src_pixel; continue; }
+                dst_row[col] = blend_argb8888_opaque_dst(dst_row[col], src_pixel);
+            }
+        }
+        note_perf_capture_raster_bucket_sample(SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_GENERIC_TEXTURED,
+                                               task,
+                                               perf_capture_counter_delta_to_ns(
+                                                   sample_start_counter, SDL_GetPerformanceCounter()));
+        if (src_locked) { SDL_UnlockSurface(src_surface); }
+        return true;
+    }
+#endif /* INDEX8_RASTERIZATION_ENABLED */
+
+    const Uint32* src_pixels = (const Uint32*)src_surface->pixels;
+    const int src_pitch = src_surface->pitch / (int)sizeof(Uint32);
+    const Uint64* full_opaque_row_mask = get_software_surface_full_opaque_row_mask(task->texture_binding, src_surface);
 
     // The recovered Kyoto stage family is a same-size full-texture shear, so each visible row can
     // reuse the cached ARGB source row directly and only adjust the destination x offset.
@@ -7349,9 +7916,7 @@ static bool raster_textured_float_parallelogram_to_software_frame(const RenderTa
         src_locked = true;
     }
 
-    const Uint32* src_pixels = (const Uint32*)src_surface->pixels;
     Uint32* dst_pixels = (Uint32*)software_frame_surface->pixels;
-    const int src_pitch = src_surface->pitch / (int)sizeof(Uint32);
     const int dst_pitch = software_frame_surface->pitch / (int)sizeof(Uint32);
     const float height = parallelogram.bottom_y - parallelogram.top_y;
     const float left_dx = parallelogram.bottom_left_x - parallelogram.top_left_x;
@@ -7361,6 +7926,16 @@ static bool raster_textured_float_parallelogram_to_software_frame(const RenderTa
         clamp_to_range((int)SDL_floorf(parallelogram.bottom_y - 0.5f), 0, software_frame_surface->h - 1);
     const Uint64 sample_start_counter =
         begin_perf_capture_raster_bucket_sample(SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_GENERIC_TEXTURED);
+
+#if INDEX8_RASTERIZATION_ENABLED
+    const bool fp_is_index8 = task->software_source_is_index8 && (task->software_palette_lut != NULL);
+    const Uint32* fp_palette_lut = task->software_palette_lut;
+#else
+    const bool fp_is_index8 = false;
+    const Uint32* fp_palette_lut = NULL;
+#endif
+    const Uint32* src_pixels = fp_is_index8 ? NULL : (const Uint32*)src_surface->pixels;
+    const int src_pitch = fp_is_index8 ? 0 : (src_surface->pitch / (int)sizeof(Uint32));
 
     for (int dst_y = start_y; dst_y <= end_y; dst_y++) {
         const float py = (float)dst_y + 0.5f;
@@ -7382,14 +7957,15 @@ static bool raster_textured_float_parallelogram_to_software_frame(const RenderTa
 
         const int src_y = parallelogram.src_y +
                           clamp_to_range((int)SDL_floorf(v * (float)parallelogram.src_h), 0, parallelogram.src_h - 1);
-        const Uint32* src_row = src_pixels + (src_y * src_pitch);
         Uint32* dst_row = dst_pixels + (dst_y * dst_pitch);
         const float src_step = (float)parallelogram.src_w / row_width;
         float src_x_f = ((((float)dst_x0 + 0.5f) - left_x) * src_step);
         for (int dst_x = dst_x0; dst_x < dst_x1; dst_x++) {
             const int src_x = parallelogram.src_x +
                               clamp_to_range((int)SDL_floorf(src_x_f), 0, parallelogram.src_w - 1);
-            const Uint32 src_pixel = src_row[src_x];
+            const Uint32 src_pixel = fp_is_index8
+                ? fp_palette_lut[((const Uint8*)src_surface->pixels)[(src_y * src_surface->pitch) + src_x]]
+                : src_pixels[(src_y * src_pitch) + src_x];
             const Uint32 src_a = (src_pixel >> 24) & 0xFFu;
             if (src_a == 0u) {
                 src_x_f += src_step;
@@ -7418,7 +7994,8 @@ static bool raster_textured_float_triangle_to_software_frame(const SDL_Surface* 
                                                              const SoftwareFrameTexturedFloatAffineQuad* quad,
                                                              int i0,
                                                              int i1,
-                                                             int i2) {
+                                                             int i2,
+                                                             const Uint32* palette_lut) {
     if ((src_surface == NULL) || (software_frame_surface == NULL) || (quad == NULL)) {
         return false;
     }
@@ -7443,9 +8020,9 @@ static bool raster_textured_float_triangle_to_software_frame(const SDL_Surface* 
     }
 
     const float inv_area = 1.0f / area;
-    const Uint32* src_pixels = (const Uint32*)src_surface->pixels;
+    const Uint32* src_pixels = (palette_lut != NULL) ? NULL : (const Uint32*)src_surface->pixels;
     Uint32* dst_pixels = (Uint32*)software_frame_surface->pixels;
-    const int src_pitch = src_surface->pitch / (int)sizeof(Uint32);
+    const int src_pitch = (palette_lut != NULL) ? 0 : (src_surface->pitch / (int)sizeof(Uint32));
     const int dst_pitch = software_frame_surface->pitch / (int)sizeof(Uint32);
     for (int y = min_y; y <= max_y; y++) {
         Uint32* dst_row = dst_pixels + (y * dst_pitch);
@@ -7471,7 +8048,9 @@ static bool raster_textured_float_triangle_to_software_frame(const SDL_Surface* 
                                                              (alpha2 * quad->src_v[i2])),
                                              0,
                                              src_surface->h - 1);
-            const Uint32 src_pixel = src_pixels[(src_y * src_pitch) + src_x];
+            const Uint32 src_pixel = (palette_lut != NULL)
+                ? palette_lut[((const Uint8*)src_surface->pixels)[(src_y * src_surface->pitch) + src_x]]
+                : src_pixels[(src_y * src_pitch) + src_x];
             const Uint32 src_a = (src_pixel >> 24) & 0xFFu;
             if (src_a == 0u) {
                 continue;
@@ -7491,7 +8070,8 @@ static bool raster_textured_triangle_to_software_frame(const SDL_Surface* src_su
                                                        const SoftwareFrameTexturedAffineQuad* quad,
                                                        int i0,
                                                        int i1,
-                                                       int i2) {
+                                                       int i2,
+                                                       const Uint32* palette_lut) {
     if ((src_surface == NULL) || (software_frame_surface == NULL) || (quad == NULL)) {
         return false;
     }
@@ -7518,9 +8098,9 @@ static bool raster_textured_triangle_to_software_frame(const SDL_Surface* src_su
     }
 
     const float inv_area = 1.0f / area;
-    const Uint32* src_pixels = (const Uint32*)src_surface->pixels;
+    const Uint32* src_pixels = (palette_lut != NULL) ? NULL : (const Uint32*)src_surface->pixels;
     Uint32* dst_pixels = (Uint32*)software_frame_surface->pixels;
-    const int src_pitch = src_surface->pitch / (int)sizeof(Uint32);
+    const int src_pitch = (palette_lut != NULL) ? 0 : (src_surface->pitch / (int)sizeof(Uint32));
     const int dst_pitch = software_frame_surface->pitch / (int)sizeof(Uint32);
     for (int y = min_y; y <= max_y; y++) {
         Uint32* dst_row = dst_pixels + (y * dst_pitch);
@@ -7546,7 +8126,9 @@ static bool raster_textured_triangle_to_software_frame(const SDL_Surface* src_su
                                                              (alpha2 * quad->src_v[i2])),
                                              0,
                                              src_surface->h - 1);
-            const Uint32 src_pixel = src_pixels[(src_y * src_pitch) + src_x];
+            const Uint32 src_pixel = (palette_lut != NULL)
+                ? palette_lut[((const Uint8*)src_surface->pixels)[(src_y * src_surface->pitch) + src_x]]
+                : src_pixels[(src_y * src_pitch) + src_x];
             const Uint32 src_a = (src_pixel >> 24) & 0xFFu;
             if (src_a == 0u) {
                 continue;
@@ -7566,7 +8148,8 @@ static bool raster_textured_translated_triangle_to_software_frame(const SDL_Surf
                                                                   const SoftwareFrameTexturedTranslatedQuad* quad,
                                                                   int i0,
                                                                   int i1,
-                                                                  int i2) {
+                                                                  int i2,
+                                                                  const Uint32* palette_lut) {
     if ((src_surface == NULL) || (software_frame_surface == NULL) || (quad == NULL)) {
         return false;
     }
@@ -7579,9 +8162,9 @@ static bool raster_textured_translated_triangle_to_software_frame(const SDL_Surf
         return true;
     }
 
-    const Uint32* src_pixels = (const Uint32*)src_surface->pixels;
+    const Uint32* src_pixels = (palette_lut != NULL) ? NULL : (const Uint32*)src_surface->pixels;
     Uint32* dst_pixels = (Uint32*)software_frame_surface->pixels;
-    const int src_pitch = src_surface->pitch / (int)sizeof(Uint32);
+    const int src_pitch = (palette_lut != NULL) ? 0 : (src_surface->pitch / (int)sizeof(Uint32));
     const int dst_pitch = software_frame_surface->pitch / (int)sizeof(Uint32);
     const int indices[3] = { i0, i1, i2 };
     for (int y = min_y; y <= max_y; y++) {
@@ -7627,14 +8210,15 @@ static bool raster_textured_translated_triangle_to_software_frame(const SDL_Surf
         if ((src_y < 0) || (src_y >= src_surface->h)) {
             continue;
         }
-        const Uint32* src_row = src_pixels + (src_y * src_pitch);
         Uint32* dst_row = dst_pixels + (y * dst_pitch);
         for (int x = dst_x0; x < dst_x1; x++) {
             const int src_x = x + quad->src_dx;
             if ((src_x < 0) || (src_x >= src_surface->w)) {
                 continue;
             }
-            const Uint32 src_pixel = src_row[src_x];
+            const Uint32 src_pixel = (palette_lut != NULL)
+                ? palette_lut[((const Uint8*)src_surface->pixels)[(src_y * src_surface->pitch) + src_x]]
+                : src_pixels[(src_y * src_pitch) + src_x];
             const Uint32 src_a = (src_pixel >> 24) & 0xFFu;
             if (src_a == 0u) {
                 continue;
@@ -7671,8 +8255,13 @@ static bool raster_textured_translated_quad_to_software_frame(const RenderTask* 
 
     const Uint64 sample_start_counter =
         begin_perf_capture_raster_bucket_sample(SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_GENERIC_TEXTURED);
-    const bool ok = raster_textured_translated_triangle_to_software_frame(src_surface, &quad, 0, 1, 2) &&
-                    raster_textured_translated_triangle_to_software_frame(src_surface, &quad, 1, 2, 3);
+#if INDEX8_RASTERIZATION_ENABLED
+    const Uint32* tq_palette_lut = (task->software_source_is_index8 && task->software_palette_lut) ? task->software_palette_lut : NULL;
+#else
+    const Uint32* tq_palette_lut = NULL;
+#endif
+    const bool ok = raster_textured_translated_triangle_to_software_frame(src_surface, &quad, 0, 1, 2, tq_palette_lut) &&
+                    raster_textured_translated_triangle_to_software_frame(src_surface, &quad, 1, 2, 3, tq_palette_lut);
     note_perf_capture_raster_bucket_sample(SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_GENERIC_TEXTURED,
                                            task,
                                            perf_capture_counter_delta_to_ns(
@@ -7704,8 +8293,13 @@ static bool raster_textured_full_texture_affine_quad_to_software_frame(const Ren
 
     const Uint64 sample_start_counter =
         begin_perf_capture_raster_bucket_sample(SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_GENERIC_TEXTURED);
-    const bool ok = raster_textured_float_triangle_to_software_frame(src_surface, &quad, 0, 1, 2) &&
-                    raster_textured_float_triangle_to_software_frame(src_surface, &quad, 1, 2, 3);
+#if INDEX8_RASTERIZATION_ENABLED
+    const Uint32* ftaq_palette_lut = (task->software_source_is_index8 && task->software_palette_lut) ? task->software_palette_lut : NULL;
+#else
+    const Uint32* ftaq_palette_lut = NULL;
+#endif
+    const bool ok = raster_textured_float_triangle_to_software_frame(src_surface, &quad, 0, 1, 2, ftaq_palette_lut) &&
+                    raster_textured_float_triangle_to_software_frame(src_surface, &quad, 1, 2, 3, ftaq_palette_lut);
     note_perf_capture_raster_bucket_sample(SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_GENERIC_TEXTURED,
                                            task,
                                            perf_capture_counter_delta_to_ns(
@@ -7737,8 +8331,13 @@ static bool raster_textured_affine_quad_to_software_frame(const RenderTask* task
 
     const Uint64 sample_start_counter =
         begin_perf_capture_raster_bucket_sample(SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_GENERIC_TEXTURED);
-    const bool ok = raster_textured_triangle_to_software_frame(src_surface, &quad, 0, 1, 2) &&
-                    raster_textured_triangle_to_software_frame(src_surface, &quad, 1, 2, 3);
+#if INDEX8_RASTERIZATION_ENABLED
+    const Uint32* aq_palette_lut = (task->software_source_is_index8 && task->software_palette_lut) ? task->software_palette_lut : NULL;
+#else
+    const Uint32* aq_palette_lut = NULL;
+#endif
+    const bool ok = raster_textured_triangle_to_software_frame(src_surface, &quad, 0, 1, 2, aq_palette_lut) &&
+                    raster_textured_triangle_to_software_frame(src_surface, &quad, 1, 2, 3, aq_palette_lut);
     note_perf_capture_raster_bucket_sample(SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_GENERIC_TEXTURED,
                                            task,
                                            perf_capture_counter_delta_to_ns(
@@ -8514,6 +9113,29 @@ static void fill_palette_colors_from_fl_texture(const FLTexture* fl_palette, SDL
     }
 }
 
+#if INDEX8_RASTERIZATION_ENABLED
+/* Build the ARGB8888 palette LUT from an SDL_Palette.  The palette's
+ * colors[] array already has CLUT-shuffled entries in the correct order,
+ * so we just pack each SDL_Color into ARGB8888 format. */
+static void build_software_palette_lut(int palette_index, const SDL_Palette* palette) {
+    if ((palette == NULL) || (palette_index < 0) || (palette_index >= FL_PALETTE_MAX)) {
+        return;
+    }
+
+    Uint32* lut = software_palette_lut[palette_index];
+    const int ncolors = palette->ncolors;
+    for (int i = 0; i < ncolors && i < 256; i++) {
+        const SDL_Color* c = &palette->colors[i];
+        lut[i] = ((Uint32)c->a << 24) | ((Uint32)c->r << 16) | ((Uint32)c->g << 8) | (Uint32)c->b;
+    }
+    /* Zero-fill any remaining entries */
+    for (int i = ncolors; i < 256; i++) {
+        lut[i] = 0;
+    }
+    software_palette_lut_valid[palette_index] = true;
+}
+#endif
+
 #define LERP_FLOAT(a, b, x) ((a) * (1 - (x)) + (b) * (x))
 
 static void lerp_fcolors(SDL_FColor* dest, const SDL_FColor* a, const SDL_FColor* b, float x) {
@@ -8655,6 +9277,10 @@ void SDLGameRenderer_SetSoftwareFrameMode(bool enabled) {
         }
         current_texture = NULL;
         current_software_source_surface = NULL;
+#if INDEX8_RASTERIZATION_ENABLED
+        current_software_palette_lut = NULL;
+        current_software_source_is_index8 = false;
+#endif
         current_texture_binding_valid = false;
         current_texture_binding = 0;
     }
@@ -10688,6 +11314,11 @@ void SDLGameRenderer_UnlockPalette(unsigned int ph) {
         } else {
             maybe_adjust_training_input_palette(palette_index, color_count, colors);
             SDL_SetPaletteColors(palettes[palette_index], colors, 0, color_count);
+#if INDEX8_RASTERIZATION_ENABLED
+            if (palette_changed) {
+                build_software_palette_lut(palette_index, palettes[palette_index]);
+            }
+#endif
         }
         if (frame_stats_extended_enabled) {
             const Uint64 invalidation_start_ns = SDL_GetTicksNS();
@@ -10852,6 +11483,9 @@ void SDLGameRenderer_CreatePalette(unsigned int ph) {
     SDL_Palette* palette = SDL_CreatePalette(color_count);
     SDL_SetPaletteColors(palette, colors, 0, color_count);
     palettes[palette_index] = palette;
+#if INDEX8_RASTERIZATION_ENABLED
+    build_software_palette_lut(palette_index, palette);
+#endif
 }
 
 void SDLGameRenderer_DestroyPalette(unsigned int palette_handle) {
@@ -10861,6 +11495,11 @@ void SDLGameRenderer_DestroyPalette(unsigned int palette_handle) {
     invalidate_software_surface_cache_for_palette_handle(
         (int)palette_handle, CACHE_DIRTY_REASON_NONE, CACHE_DIRTY_DETAIL_NONE);
 
+#if INDEX8_RASTERIZATION_ENABLED
+    if ((palette_index >= 0) && (palette_index < FL_PALETTE_MAX)) {
+        software_palette_lut_valid[palette_index] = false;
+    }
+#endif
     SDL_DestroyPalette(palettes[palette_index]);
     palettes[palette_index] = NULL;
 }
@@ -10956,10 +11595,31 @@ void SDLGameRenderer_SetTexture(unsigned int th) {
     }
 
     push_texture(texture);
+
+#if INDEX8_RASTERIZATION_ENABLED
+    if (software_frame_mode_active && (surface != NULL) &&
+        (surface->format == SDL_PIXELFORMAT_INDEX8) &&
+        (palette_handle > 0) && (palette_handle <= FL_PALETTE_MAX) &&
+        software_palette_lut_valid[palette_handle - 1]) {
+        current_software_source_is_index8 = true;
+        current_software_palette_lut = software_palette_lut[palette_handle - 1];
+        current_software_source_surface =
+            software_source_surface != NULL ? software_source_surface
+                                            : get_or_create_software_source_surface(th);
+    } else {
+        current_software_source_is_index8 = false;
+        current_software_palette_lut = NULL;
+        current_software_source_surface =
+            software_frame_mode_active ? (software_source_surface != NULL ? software_source_surface
+                                                                          : get_or_create_software_source_surface(th))
+                                       : NULL;
+    }
+#else
     current_software_source_surface =
         software_frame_mode_active ? (software_source_surface != NULL ? software_source_surface
                                                                       : get_or_create_software_source_surface(th))
                                    : NULL;
+#endif
     current_texture_binding = th;
     current_texture_binding_valid = true;
 }
@@ -10982,6 +11642,10 @@ static RenderTask* begin_quad_task(bool textured, float z) {
 #endif
     task->texture_binding = textured && current_texture_binding_valid ? current_texture_binding : 0;
     task->software_source_surface = textured ? current_software_source_surface : NULL;
+#if INDEX8_RASTERIZATION_ENABLED
+    task->software_palette_lut = textured ? current_software_palette_lut : NULL;
+    task->software_source_is_index8 = textured && current_software_source_is_index8;
+#endif
     task->z = flPS2ConvScreenFZ(z);
 
     return task;
@@ -11279,6 +11943,10 @@ void SDLGameRenderer_DrawSprites2Batch(const Sprite2* sprites,
 #endif
         task->texture_binding = current_texture_binding_valid ? current_texture_binding : 0;
         task->software_source_surface = current_texture_binding_valid ? current_software_source_surface : NULL;
+#if INDEX8_RASTERIZATION_ENABLED
+        task->software_palette_lut = current_texture_binding_valid ? current_software_palette_lut : NULL;
+        task->software_source_is_index8 = current_texture_binding_valid && current_software_source_is_index8;
+#endif
         task->z = flPS2ConvScreenFZ(s->v[0].z);
 
         /* --- Inline try_setup_textured_rect_task --- */
@@ -11432,6 +12100,10 @@ bool SDLGameRenderer_DrawInputHistoryGlyph(float x, float y, float z, SDLGameRen
 #endif
     task->texture_binding = 0;
     task->software_source_surface = input_history_glyph_surfaces[glyph];
+#if INDEX8_RASTERIZATION_ENABLED
+    task->software_palette_lut = NULL;
+    task->software_source_is_index8 = false;
+#endif
     task->z = flPS2ConvScreenFZ(z);
 
     read_rgba32_fcolor(color, &fcolor);

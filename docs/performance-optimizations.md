@@ -372,6 +372,18 @@ These commits do not directly improve performance but were essential for identif
 
 ---
 
+## 11. INDEX8 Rasterization
+
+### 11.1 INDEX8 Surface Cache with Per-Pixel Palette Lookup
+
+- **What**: Keep textures in INDEX8 (1 byte/pixel) format through to the rasterizer inner loop. Apply a 256-entry ARGB8888 palette lookup per-pixel instead of pre-converting entire textures from INDEX8 to ARGB8888 (4 bytes/pixel). INDEX8 surfaces are cached independently in `software_surface_cache` with deferred destruction, mirroring the ARGB8888 cache lifetime model.
+- **Why**: The software rasterizer's gather loop reads from 256KB ARGB8888 source surfaces that exceed the 32KB L1 D-cache by 8×. Keeping textures as 64KB INDEX8 reduces the working set to 2× L1. The 1KB palette table (256 × 4 bytes) fits permanently in L1. Inspired by the PSP port (demmis98/3s-psp) which uses hardware CLUT to keep textures indexed.
+- **Impact**: Texture refresh eliminated for INDEX8 textures (no `SDL_ConvertSurface` needed — just 64KB `memcpy` vs 256KB palette conversion). L1 cache pressure reduced ~4× in the gather loop. Near-stable 60 FPS on Remy and Chun-Li stages at stock 800MHz clock. Also resolved the PPG dirty-rect corruption bug (options menu text, Remy stage background) as a side effect — the corruption was in the renderer-side ARGB8888 cache refresh path, which INDEX8 bypasses entirely.
+- **Commit**: (pending)
+- **Files**: `src/port/sdl/sdl_game_renderer.c`
+
+---
+
 ## Summary Table
 
 | # | Optimization | Category | Estimated Impact | Commit |
@@ -409,12 +421,13 @@ These commits do not directly improve performance but were essential for identif
 | 8.4 | ARM clock management (user-selectable overclock) | System | ~50% CPU headroom at 1200MHz | `e510bc42` |
 | 9.1 | Texture group load race → skip frame | Stability | Eliminates SIGABRT crash in attract mode at 800MHz | |
 | 9.2 | CG cache full / decode error → graceful fallback | Stability | Eliminates infinite CPU spin on long idle (animated stages) | |
+| 11.1 | INDEX8 rasterization with per-pixel palette lookup | Rendering | 4× smaller source textures, eliminates ARGB8888 conversion | (pending) |
 
 ### Aggregate Impact
 
 | Metric | Before | After | Improvement |
 |--------|--------|-------|-------------|
-| Heavy stage FPS (Remy, 800MHz) | ~28 | ~60 | +114% |
+| Heavy stage FPS (Remy, 800MHz) | ~28 | ~60 (stable) | +114% |
 | Character select FPS (800MHz) | ~40 | ~60 | +50% |
 | Texture refresh time (char select) | ~7ms | ~1ms | -86% |
 | Super art burst FPS | ~20-30 | ~45-50 | +67-100% |
