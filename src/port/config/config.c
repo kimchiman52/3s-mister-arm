@@ -46,7 +46,7 @@ typedef struct ConfigEntry {
 #define DEFAULT_SUPER_EFFECT_QUALITY "full"
 #define DEFAULT_GHOST_RESOLUTION "full"
 #define DEFAULT_GHOST_COUNT "4"
-#define DEFAULT_ARM_CLOCK "1200"
+#define DEFAULT_ARM_CLOCK "800"
 
 static const ConfigEntry default_entries[] = {
     { .key = CFG_KEY_FULLSCREEN, .type = CFG_BOOL, .value.b = true },

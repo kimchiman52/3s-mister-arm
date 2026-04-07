@@ -9411,7 +9411,7 @@ static int parse_arm_clock_mode(const char* raw_value) {
 static void init_arm_clock(void) {
     const char* raw_value = Config_GetString(CFG_KEY_ARM_CLOCK);
     if (raw_value == NULL || raw_value[0] == '\0') {
-        arm_clock_mode = 2; /* default to 1200MHz */
+        arm_clock_mode = 0; /* default to stock 800MHz */
     } else {
         arm_clock_mode = parse_arm_clock_mode(raw_value);
     }

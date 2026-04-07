@@ -406,7 +406,7 @@ These commits do not directly improve performance but were essential for identif
 | 8.1 | ARM frame pacing match | Timing | Eliminates 26-second stutter | `ab80248a` |
 | 8.2 | Dedicated video PLL (59.5993 Hz) | Timing | 245x more accurate frame rate | `dbcf340e` |
 | 8.3 | Stale texture comparison removal | Texture | 0.5-3ms/frame on animated stages | `9e7d69ee` |
-| 8.4 | ARM clock management (1200MHz default) | System | ~50% CPU headroom | `e510bc42` |
+| 8.4 | ARM clock management (user-selectable overclock) | System | ~50% CPU headroom at 1200MHz | `e510bc42` |
 
 ### Aggregate Impact
 
