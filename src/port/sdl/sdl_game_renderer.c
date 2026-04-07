@@ -3195,80 +3195,6 @@ static bool refresh_software_source_surface_in_place(unsigned int th, SDL_Surfac
         goto done;
     }
 
-#if INDEX8_RASTERIZATION_ENABLED
-    if (cached_surface->format == SDL_PIXELFORMAT_INDEX8) {
-        if (surface->format != SDL_PIXELFORMAT_INDEX8) {
-            goto done;
-        }
-
-        note_perf_capture_refresh_attempt(th, surface);
-
-        TextureUnlockRefreshPlan i8_partial_plan = { 0 };
-        note_perf_capture_compare_dirty_rect_refresh_candidate(th, dirty_reason, surface);
-        const TextureUnlockRefreshDecision i8_refresh_decision =
-            classify_texture_unlock_refresh_decision(th, dirty_reason, surface, &i8_partial_plan);
-        const bool i8_use_partial = i8_refresh_decision == TEXTURE_UNLOCK_REFRESH_DECISION_PARTIAL;
-        note_perf_capture_refresh_path(th, surface, i8_refresh_decision, i8_use_partial ? &i8_partial_plan : NULL);
-        const bool i8_sample_blit = should_sample_perf_capture_refresh_blit();
-        Uint64 i8_sampled_blit_start_counter = 0;
-
-        if (frame_stats_extended_enabled) {
-            const Uint64 blit_start_ns = SDL_GetTicksNS();
-            i8_sampled_blit_start_counter = i8_sample_blit ? SDL_GetPerformanceCounter() : 0;
-            frame_stats.software_surface_cache_refresh_blit_calls += 1;
-            if (i8_use_partial) {
-                success = true;
-                for (int rect_index = 0; rect_index < i8_partial_plan.rect_count; rect_index++) {
-                    const SDL_Rect* rect = &i8_partial_plan.rects[rect_index];
-                    for (int y = rect->y; y < rect->y + rect->h && y < surface->h; y++) {
-                        const int row_bytes = SDL_min(rect->w, SDL_min(surface->pitch - rect->x, cached_surface->pitch - rect->x));
-                        if (row_bytes <= 0) continue;
-                        memcpy((Uint8*)cached_surface->pixels + y * cached_surface->pitch + rect->x,
-                               (const Uint8*)surface->pixels + y * surface->pitch + rect->x,
-                               row_bytes);
-                    }
-                }
-            } else {
-                const int row_bytes = SDL_min(surface->pitch, cached_surface->pitch);
-                for (int y = 0; y < surface->h; y++) {
-                    memcpy((Uint8*)cached_surface->pixels + y * cached_surface->pitch,
-                           (const Uint8*)surface->pixels + y * surface->pitch,
-                           row_bytes);
-                }
-                success = true;
-            }
-            frame_stats.software_surface_cache_refresh_blit_ns += SDL_GetTicksNS() - blit_start_ns;
-        } else {
-            if (i8_use_partial) {
-                success = true;
-                for (int rect_index = 0; rect_index < i8_partial_plan.rect_count; rect_index++) {
-                    const SDL_Rect* rect = &i8_partial_plan.rects[rect_index];
-                    for (int y = rect->y; y < rect->y + rect->h && y < surface->h; y++) {
-                        const int row_bytes = SDL_min(rect->w, SDL_min(surface->pitch - rect->x, cached_surface->pitch - rect->x));
-                        if (row_bytes <= 0) continue;
-                        memcpy((Uint8*)cached_surface->pixels + y * cached_surface->pitch + rect->x,
-                               (const Uint8*)surface->pixels + y * surface->pitch + rect->x,
-                               row_bytes);
-                    }
-                }
-            } else {
-                const int row_bytes = SDL_min(surface->pitch, cached_surface->pitch);
-                for (int y = 0; y < surface->h; y++) {
-                    memcpy((Uint8*)cached_surface->pixels + y * cached_surface->pitch,
-                           (const Uint8*)surface->pixels + y * surface->pitch,
-                           row_bytes);
-                }
-                success = true;
-            }
-        }
-        if (i8_sample_blit) {
-            note_perf_capture_refresh_blit_sample(
-                th, i8_refresh_decision, perf_capture_counter_delta_to_ns(i8_sampled_blit_start_counter, SDL_GetPerformanceCounter()));
-        }
-        goto done;
-    }
-#endif
-
     if (cached_surface->format != SDL_PIXELFORMAT_ARGB8888) {
         goto done;
     }
@@ -3576,20 +3502,6 @@ static SDL_Surface* get_or_create_software_source_surface(unsigned int th) {
         return NULL;
     }
 
-#if INDEX8_RASTERIZATION_ENABLED
-    if (surface->format == SDL_PIXELFORMAT_INDEX8) {
-        cached_surface = SDL_CreateSurface(surface->w, surface->h, SDL_PIXELFORMAT_INDEX8);
-        if (cached_surface == NULL) {
-            return NULL;
-        }
-        const int row_bytes = SDL_min(surface->pitch, cached_surface->pitch);
-        for (int y = 0; y < surface->h; y++) {
-            memcpy((Uint8*)cached_surface->pixels + y * cached_surface->pitch,
-                   (const Uint8*)surface->pixels + y * surface->pitch,
-                   row_bytes);
-        }
-    } else {
-#endif
     SDL_Palette* palette = palette_handle != 0 ? palettes[palette_handle - 1] : NULL;
     if (palette != NULL) {
         SDL_SetSurfacePalette(surface, palette);
@@ -3599,9 +3511,6 @@ static SDL_Surface* get_or_create_software_source_surface(unsigned int th) {
     if (cached_surface == NULL) {
         return NULL;
     }
-#if INDEX8_RASTERIZATION_ENABLED
-    }
-#endif
 
     RENDERER_TELEMETRY({
         if (frame_stats_extended_enabled) {
@@ -9505,6 +9414,10 @@ void SDLGameRenderer_RenderFrame() {
     }
 }
 
+int SDLGameRenderer_GetRenderTaskCount(void) {
+    return render_task_count;
+}
+
 void SDLGameRenderer_EndFrame() {
     SDL_memcpy(previous_coverage_tile_map, current_coverage_tile_map, dirty_tile_total);
     previous_coverage_tile_count = current_coverage_tile_count;
@@ -11431,6 +11344,22 @@ void SDLGameRenderer_DestroyTexture(unsigned int texture_handle) {
     reset_perf_capture_unlock_locality_texture_slot(texture_index);
     reset_perf_capture_texture_renew_slot(texture_index);
 
+#if INDEX8_RASTERIZATION_ENABLED
+    /* Nullify any pending render tasks that reference this texture's surface.
+     * The INDEX8 bypass stores the raw surfaces[] pointer in tasks — if we
+     * free the surface without clearing these references, the rasterizer
+     * would dereference freed memory.  Tasks with NULL surface are safely
+     * skipped by all rasterizer paths (they return false on NULL check). */
+    for (int i = 0; i < render_task_count; i++) {
+        if (LO_16_BITS(render_tasks[i].texture_binding) == (unsigned int)texture_handle &&
+            render_tasks[i].software_source_is_index8) {
+            render_tasks[i].software_source_surface = NULL;
+            render_tasks[i].software_source_is_index8 = false;
+            render_tasks[i].software_palette_lut = NULL;
+        }
+    }
+#endif
+
     SDL_DestroySurface(surfaces[texture_index]);
     surfaces[texture_index] = NULL;
 }
@@ -11601,18 +11530,20 @@ void SDLGameRenderer_SetTexture(unsigned int th) {
         (surface->format == SDL_PIXELFORMAT_INDEX8) &&
         (palette_handle > 0) && (palette_handle <= FL_PALETTE_MAX) &&
         software_palette_lut_valid[palette_handle - 1]) {
-        current_software_source_is_index8 = true;
+        /* INDEX8 bypass: pass the raw INDEX8 surface directly to the rasterizer.
+         * No ARGB8888 conversion, no cache copy. The rasterizer reads live pixel
+         * data from the flTexture backing buffer, applying the palette LUT per-pixel.
+         * This eliminates garbling caused by the cache's dirty-rect refresh bugs. */
+        current_software_source_surface = (SDL_Surface*)surface;
         current_software_palette_lut = software_palette_lut[palette_handle - 1];
-        current_software_source_surface =
-            software_source_surface != NULL ? software_source_surface
-                                            : get_or_create_software_source_surface(th);
+        current_software_source_is_index8 = true;
     } else {
-        current_software_source_is_index8 = false;
-        current_software_palette_lut = NULL;
         current_software_source_surface =
             software_frame_mode_active ? (software_source_surface != NULL ? software_source_surface
                                                                           : get_or_create_software_source_surface(th))
                                        : NULL;
+        current_software_palette_lut = NULL;
+        current_software_source_is_index8 = false;
     }
 #else
     current_software_source_surface =
