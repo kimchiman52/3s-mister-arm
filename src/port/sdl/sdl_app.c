@@ -83,7 +83,12 @@ static bool screen_output_rect_dirty = true;
 static bool screen_output_has_letterbox = true;
 static int screen_output_width = 0;
 static int screen_output_height = 0;
-static bool show_fps_overlay = false;
+typedef enum FpsOverlayMode {
+    FPS_OVERLAY_OFF = 0,
+    FPS_OVERLAY_FPS = 1,
+    FPS_OVERLAY_DEBUG = 2,
+} FpsOverlayMode;
+static FpsOverlayMode fps_overlay_mode = FPS_OVERLAY_OFF;
 static Uint64 fps_overlay_window_start_ns = 0;
 static Uint32 fps_overlay_window_frames = 0;
 static int fps_overlay_value = 0;
@@ -8574,7 +8579,7 @@ static const StartupConfigDefaultEntry startup_generated_defaults[] = {
     { CFG_KEY_WINDOW_HEIGHT, "240" },
     { CFG_KEY_SCALEMODE, "native" },
     { CFG_KEY_SOFTWARE_FRAME_MODE, "on" },
-    { CFG_KEY_SHOW_FPS, "false" },
+    { CFG_KEY_SHOW_FPS, "off" },
     { CFG_KEY_VIDEO_DRIVER_ORDER, "dummy" },
     { CFG_KEY_RENDER_DRIVER_ORDER, "software" },
 };
@@ -9023,8 +9028,15 @@ static SDLGameRenderer_SuperEffectQualityMode current_renderer_super_effect_qual
     return super_effect_quality_mode;
 }
 
+static FpsOverlayMode parse_fps_overlay_mode(const char* value) {
+    if (value == NULL) return FPS_OVERLAY_OFF;
+    if (SDL_strcasecmp(value, "fps") == 0) return FPS_OVERLAY_FPS;
+    if (SDL_strcasecmp(value, "debug") == 0) return FPS_OVERLAY_DEBUG;
+    return FPS_OVERLAY_OFF;
+}
+
 static void init_show_fps_overlay(void) {
-    show_fps_overlay = Config_GetBool(CFG_KEY_SHOW_FPS);
+    fps_overlay_mode = parse_fps_overlay_mode(Config_GetString(CFG_KEY_SHOW_FPS));
     fps_overlay_window_start_ns = 0;
     fps_overlay_window_frames = 0;
     fps_overlay_value = 0;
@@ -9056,7 +9068,7 @@ static void init_show_fps_overlay(void) {
 }
 
 static void publish_fps_overlay_label(void) {
-    if (!show_fps_overlay) {
+    if (fps_overlay_mode == FPS_OVERLAY_OFF) {
         fps_overlay_label[0] = '\0';
         if (fbdev_presenter_enabled) {
             FBDevPresenter_SetFPSOverlayText(NULL);
@@ -9064,7 +9076,9 @@ static void publish_fps_overlay_label(void) {
         return;
     }
 
-    if (fps_overlay_avg_frame_ms > 0.0) {
+    if (fps_overlay_mode == FPS_OVERLAY_FPS) {
+        SDL_snprintf(fps_overlay_label, sizeof(fps_overlay_label), "%d", fps_overlay_value);
+    } else if (fps_overlay_avg_frame_ms > 0.0) {
         SDL_snprintf(fps_overlay_label, sizeof(fps_overlay_label),
                      "%d U:%.1f(T%.1f G%.1f S%.1f D%.1f[t%.1f s%.1f]) R:%.1f(r%.1f) =%.1f",
                      fps_overlay_value,
@@ -9106,7 +9120,7 @@ static void fps_overlay_accumulate_timing(Uint64 update_ns, Uint64 texrefresh_ns
 }
 
 static void update_fps_overlay(Uint64 frame_end_ns) {
-    if (!show_fps_overlay) {
+    if (fps_overlay_mode == FPS_OVERLAY_OFF) {
         return;
     }
 
@@ -9222,9 +9236,7 @@ void SDLApp_ToggleFPSOverlay(void) {
                 while (val_end > val && (val_end[-1] == ' ' || val_end[-1] == '\t' ||
                        val_end[-1] == '\n' || val_end[-1] == '\r')) val_end--;
                 *val_end = '\0';
-                show_fps_overlay = (SDL_strcasecmp(val, "true") == 0 ||
-                                    SDL_strcasecmp(val, "on") == 0 ||
-                                    SDL_strcmp(val, "1") == 0);
+                fps_overlay_mode = parse_fps_overlay_mode(val);
                 break;
             }
             fclose(f);
@@ -9234,10 +9246,11 @@ void SDLApp_ToggleFPSOverlay(void) {
     reset_fps_overlay_state();
 
     if (fbdev_presenter_enabled) {
-        FBDevPresenter_SetFPSOverlayEnabled(show_fps_overlay);
+        FBDevPresenter_SetFPSOverlayMode(fps_overlay_mode);
     }
 
-    backend_logf("FPS overlay: %s", show_fps_overlay ? "enabled" : "disabled");
+    static const char* mode_names[] = { "off", "fps", "debug" };
+    backend_logf("FPS overlay: %s", mode_names[fps_overlay_mode]);
 }
 
 SDLGameRenderer_SuperEffectQualityMode SDLApp_GetSuperEffectQualityMode(void) {
@@ -9504,8 +9517,11 @@ static bool init_window() {
 #if defined(PORT_MISTER)
     fbdev_presenter_enabled = FBDevPresenter_Init();
     backend_logf("FBDEV presenter: %s", fbdev_presenter_enabled ? "enabled" : "disabled");
-    FBDevPresenter_SetFPSOverlayEnabled(show_fps_overlay);
-    backend_logf("FPS overlay: %s", show_fps_overlay ? "enabled" : "disabled");
+    FBDevPresenter_SetFPSOverlayMode(fps_overlay_mode);
+    {
+        static const char* mode_names[] = { "off", "fps", "debug" };
+        backend_logf("FPS overlay: %s", mode_names[fps_overlay_mode]);
+    }
 
     /* Native video: write frames directly to DDR3 for the FPGA's native video
        reader instead of going through the Linux framebuffer scaler path.
@@ -9517,9 +9533,9 @@ static bool init_window() {
             backend_logf("Native video writer: %s", native_video_writer_enabled ? "enabled" : "disabled");
 
             /* Match ARM frame pacing to the FPGA's pixel-clock-derived refresh
-               rate.  With the dedicated video PLL (31.2925 MHz, 501x262),
-               NV_TARGET_FPS = TARGET_FPS = 59.59949 Hz (0.00015 Hz error),
-               so no compensation is needed. */
+               rate.  With the dedicated video PLL (31.0909 MHz, 494x264),
+               NV_TARGET_FPS = TARGET_FPS = 59.59949 Hz (1.4 uHz error).
+               H-freq = 15,734 Hz (NTSC standard). No compensation needed. */
             if (native_video_writer_enabled) {
                 target_frame_time_ns = (Uint64)(1000000000.0 / NV_TARGET_FPS);
                 backend_logf("Native video: frame pacing adjusted to %.4f Hz (FPGA PLL rate)", NV_TARGET_FPS);
@@ -9814,7 +9830,7 @@ static bool rect_has_letterbox(const SDL_FRect* rect, int target_w, int target_h
 }
 
 static void render_renderer_fps_overlay(const SDL_FRect* content_rect) {
-    if (!show_fps_overlay || fbdev_presenter_enabled || (fps_overlay_label[0] == '\0')) {
+    if (fps_overlay_mode == FPS_OVERLAY_OFF || fbdev_presenter_enabled || (fps_overlay_label[0] == '\0')) {
         return;
     }
 
@@ -9834,8 +9850,14 @@ static void render_renderer_fps_overlay(const SDL_FRect* content_rect) {
     const int text_w = text_len * 8 * scale;
     const int text_h = 8 * scale;
     const int margin = SDL_max(10, scale * 4);
-    const float draw_x = draw_rect.x + ((draw_rect.w - (float)text_w) * 0.5f);
-    const float draw_y = (draw_rect.y + draw_rect.h) - (float)text_h - (float)margin;
+    float draw_x, draw_y;
+    if (fps_overlay_mode == FPS_OVERLAY_FPS) {
+        draw_x = draw_rect.x + (float)margin;
+        draw_y = draw_rect.y + (float)margin;
+    } else {
+        draw_x = draw_rect.x + ((draw_rect.w - (float)text_w) * 0.5f);
+        draw_y = (draw_rect.y + draw_rect.h) - (float)text_h - (float)margin;
+    }
 
     SDL_SetRenderScale(renderer, (float)scale, (float)scale);
     SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
@@ -10082,7 +10104,7 @@ void SDLApp_EndFrame() {
     if (native_video_writer_enabled && SDLGameRenderer_HasSoftwareOwnedFrame()) {
         const SDL_Surface* frame = SDLGameRenderer_GetSoftwareFrameSurface();
         if (frame && frame->pixels && frame->w == 384 && frame->h == 224) {
-            if (show_fps_overlay) {
+            if (fps_overlay_mode != FPS_OVERLAY_OFF) {
                 FBDevPresenter_ApplyFPSOverlayToBuffer(
                     (Uint32*)frame->pixels, frame->w, frame->h);
             }
@@ -10175,7 +10197,7 @@ void SDLApp_EndFrame() {
 
     /* Feed per-frame timing into the FPS overlay rolling accumulator so the
        overlay can display averaged component-breakdown values. */
-    if (show_fps_overlay) {
+    if (fps_overlay_mode == FPS_OVERLAY_DEBUG) {
         const Uint64 texrefresh_ns = SDLGameRenderer_GetTextureRefreshNs();
         const Uint64 gamelogic_ns = Game_GetPerfGameLogicNs();
         const Uint64 spritesubmit_ns = Game_GetPerfSpriteSubmitNs();

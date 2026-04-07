@@ -72,7 +72,7 @@ static int frame_tiles_total = 0;
 static int frame_tiles_copied = 0;
 static bool frame_full_copy_fallback = false;
 static FBDevPresenter_FrameStats frame_stats = { 0 };
-static bool fps_overlay_enabled = false;
+static int fps_overlay_mode = 0; /* 0=off, 1=fps (top-left), 2=debug (bottom-center) */
 static char fps_overlay_text[128] = "";
 static Uint32* fps_overlay_pixels = NULL;
 static int fps_overlay_width = 0;
@@ -970,7 +970,7 @@ static void draw_overlay_glyph(Uint32* pixels,
 }
 
 static bool compute_fps_overlay_layout(const SDL_FRect* content_rect, FpsOverlayLayout* out_layout) {
-    if ((out_layout == NULL) || !fps_overlay_enabled || (fps_overlay_text[0] == '\0') || !fbdev_active || (fb_map == NULL)) {
+    if ((out_layout == NULL) || (fps_overlay_mode == 0) || (fps_overlay_text[0] == '\0') || !fbdev_active || (fb_map == NULL)) {
         return false;
     }
 
@@ -1009,9 +1009,17 @@ static bool compute_fps_overlay_layout(const SDL_FRect* content_rect, FpsOverlay
 
     const int text_w = (text_len * glyph_w) + ((text_len - 1) * char_gap);
     const int safe_margin = SDL_max(10, scale * 4);
-    const int draw_x = x0 + ((content_w - text_w) / 2);
-    const int draw_y = y1 - glyph_h - safe_margin;
     const int bg_pad = SDL_max(2, scale);
+    int draw_x, draw_y;
+    if (fps_overlay_mode == 1) {
+        /* FPS mode: top-left corner */
+        draw_x = x0 + safe_margin;
+        draw_y = y0 + safe_margin;
+    } else {
+        /* Debug mode: bottom-center */
+        draw_x = x0 + ((content_w - text_w) / 2);
+        draw_y = y1 - glyph_h - safe_margin;
+    }
     const int bg_x = clamp_to_range(draw_x - bg_pad, 0, fb_width);
     const int bg_y = clamp_to_range(draw_y - bg_pad, 0, fb_height);
     const int bg_x1 = clamp_to_range(draw_x + text_w + bg_pad, 0, fb_width);
@@ -2409,9 +2417,9 @@ void FBDevPresenter_Present(SDL_Renderer* renderer, const SDL_FRect* content_rec
     invalidate_mapped_source_cache();
 }
 
-void FBDevPresenter_SetFPSOverlayEnabled(bool enabled) {
-    fps_overlay_enabled = enabled;
-    if (!enabled) {
+void FBDevPresenter_SetFPSOverlayMode(int mode) {
+    fps_overlay_mode = mode;
+    if (mode == 0) {
         fps_overlay_text[0] = '\0';
     }
 }
@@ -2496,7 +2504,7 @@ const char* FBDevPresenter_PathName(FBDevPresenterPath path) {
 }
 
 void FBDevPresenter_ApplyFPSOverlayToBuffer(Uint32* pixels, int width, int height) {
-    if (!fps_overlay_enabled || (fps_overlay_text[0] == '\0') || (pixels == NULL) || (width <= 0) || (height <= 0)) {
+    if ((fps_overlay_mode == 0) || (fps_overlay_text[0] == '\0') || (pixels == NULL) || (width <= 0) || (height <= 0)) {
         return;
     }
 
@@ -2523,8 +2531,15 @@ void FBDevPresenter_ApplyFPSOverlayToBuffer(Uint32* pixels, int width, int heigh
     const int bg_pad = SDL_max(1, scale);
 
     FpsOverlayLayout layout;
-    layout.draw_x = SDL_max(0, (width - text_w) / 2 - bg_pad);
-    layout.draw_y = SDL_max(0, height - glyph_h - safe_margin - bg_pad);
+    if (fps_overlay_mode == 1) {
+        /* FPS mode: top-left corner */
+        layout.draw_x = SDL_max(0, safe_margin - bg_pad);
+        layout.draw_y = SDL_max(0, safe_margin - bg_pad);
+    } else {
+        /* Debug mode: bottom-center */
+        layout.draw_x = SDL_max(0, (width - text_w) / 2 - bg_pad);
+        layout.draw_y = SDL_max(0, height - glyph_h - safe_margin - bg_pad);
+    }
     layout.width = SDL_min(text_w + 2 * bg_pad, width - layout.draw_x);
     layout.height = SDL_min(glyph_h + 2 * bg_pad, height - layout.draw_y);
     layout.text_x = bg_pad;
@@ -2607,8 +2622,8 @@ bool FBDevPresenter_UsedFullCopyFallback(void) {
     return false;
 }
 
-void FBDevPresenter_SetFPSOverlayEnabled(bool enabled) {
-    (void)enabled;
+void FBDevPresenter_SetFPSOverlayMode(int mode) {
+    (void)mode;
 }
 
 void FBDevPresenter_SetFPSOverlayText(const char* text) {

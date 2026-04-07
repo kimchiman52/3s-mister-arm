@@ -117,12 +117,20 @@ enum RuntimeArmClockMenu
 	kArmClockMenuCount
 };
 
+enum FpsOverlayMode
+{
+	kFpsOverlayOff = 0,
+	kFpsOverlayFps = 1,
+	kFpsOverlayDebug = 2,
+	kFpsOverlayModeCount = 3,
+};
+
 volatile sig_atomic_t g_wrapper_signal = 0;
 volatile sig_atomic_t g_child_pid = -1;
 int g_wrapper_menu_visible = 0;
 int g_wrapper_menu_selected = kMenuResume;
 int g_wrapper_menu_passthrough = 0;
-int g_wrapper_fps_enabled = 0;
+int g_wrapper_fps_mode = kFpsOverlayOff;
 int g_wrapper_super_effect_quality = kSuperEffectQualityCachedBg;
 int g_wrapper_ghost_resolution = kGhostResolutionFull;
 int g_wrapper_ghost_count = kGhostCount4;
@@ -1166,15 +1174,38 @@ void disable_wrapper_osd()
 	OsdUpdate();
 }
 
-bool read_runtime_fps_default()
+int read_runtime_fps_default()
 {
 	char value[64] = {};
-	if (!read_runtime_config_value("show-fps", value, sizeof(value))) return false;
-	return !strcasecmp(value, "true") || !strcasecmp(value, "on") || !strcmp(value, "1");
+	if (!read_runtime_config_value("show-fps", value, sizeof(value))) return kFpsOverlayOff;
+	if (!strcasecmp(value, "fps")) return kFpsOverlayFps;
+	if (!strcasecmp(value, "debug")) return kFpsOverlayDebug;
+	return kFpsOverlayOff;
 }
 
-bool write_runtime_fps_default(bool enabled)
+const char *runtime_fps_mode_label(int mode)
 {
+	switch (mode)
+	{
+	case kFpsOverlayFps: return "FPS";
+	case kFpsOverlayDebug: return "Debug";
+	default: return "Off";
+	}
+}
+
+static const char *runtime_fps_mode_config_value(int mode)
+{
+	switch (mode)
+	{
+	case kFpsOverlayFps: return "fps";
+	case kFpsOverlayDebug: return "debug";
+	default: return "off";
+	}
+}
+
+bool write_runtime_fps_default(int mode)
+{
+	const char *mode_str = runtime_fps_mode_config_value(mode);
 	char path[PATH_MAX] = {};
 	char temp_path[PATH_MAX] = {};
 	snprintf(path, sizeof(path), "%s/config", kRuntimeHome);
@@ -1212,7 +1243,7 @@ bool write_runtime_fps_default(bool enabled)
 				trim_in_place(cursor);
 				if (!strcasecmp(cursor, "show-fps"))
 				{
-					fprintf(out, "show-fps = %s\n", enabled ? "true" : "false");
+					fprintf(out, "show-fps = %s\n", mode_str);
 					wrote_value = true;
 					continue;
 				}
@@ -1226,7 +1257,7 @@ bool write_runtime_fps_default(bool enabled)
 
 	if (!wrote_value)
 	{
-		fprintf(out, "\nshow-fps = %s\n", enabled ? "true" : "false");
+		fprintf(out, "\nshow-fps = %s\n", mode_str);
 	}
 
 	if (fclose(out) != 0) return false;
@@ -1259,7 +1290,7 @@ void draw_wrapper_menu(int selected)
 	char ghost_resolution_line[33] = {};
 	char ghost_count_line[33] = {};
 	char arm_clock_line[33] = {};
-	format_wrapper_value_line(fps_line, sizeof(fps_line), "FPS", g_wrapper_fps_enabled ? "On" : "Off");
+	format_wrapper_value_line(fps_line, sizeof(fps_line), "FPS Overlay", runtime_fps_mode_label(g_wrapper_fps_mode));
 	format_wrapper_value_line(super_effect_quality_line,
 	                          sizeof(super_effect_quality_line),
 	                          "SA Activation",
@@ -1365,10 +1396,10 @@ void service_wrapper_menu(pid_t child)
 	case KEY_SPACE:
 		if (g_wrapper_menu_selected == kMenuFpsToggle)
 		{
-			const int next_fps = !g_wrapper_fps_enabled;
-			if (write_runtime_fps_default(next_fps))
+			const int next_mode = (g_wrapper_fps_mode + 1) % kFpsOverlayModeCount;
+			if (write_runtime_fps_default(next_mode))
 			{
-				g_wrapper_fps_enabled = next_fps;
+				g_wrapper_fps_mode = next_mode;
 				(void)kill(child, kRuntimeFpsToggleSignal);
 				draw_wrapper_menu(g_wrapper_menu_selected);
 			}
@@ -1436,9 +1467,9 @@ void service_wrapper_menu(pid_t child)
 
 		if (g_wrapper_menu_selected == kMenuResetDefaults)
 		{
-			write_runtime_fps_default(0);
-			if (g_wrapper_fps_enabled) (void)kill(child, kRuntimeFpsToggleSignal);
-			g_wrapper_fps_enabled = 0;
+			write_runtime_fps_default(kFpsOverlayOff);
+			if (g_wrapper_fps_mode != kFpsOverlayOff) (void)kill(child, kRuntimeFpsToggleSignal);
+			g_wrapper_fps_mode = kFpsOverlayOff;
 
 			write_runtime_super_effect_quality_default(kSuperEffectQualityCachedBg);
 			while (g_wrapper_super_effect_quality != kSuperEffectQualityCachedBg)
@@ -1715,7 +1746,7 @@ int threesx_wrapper_run(int argc, char *argv[])
 	const bool forced = force_requested();
 	g_wrapper_menu_visible = 0;
 	g_wrapper_menu_selected = kMenuResume;
-	g_wrapper_fps_enabled = read_runtime_fps_default() ? 1 : 0;
+	g_wrapper_fps_mode = read_runtime_fps_default();
 	g_wrapper_super_effect_quality = read_runtime_super_effect_quality_default();
 	g_wrapper_ghost_resolution = read_runtime_ghost_resolution_default();
 	g_wrapper_ghost_count = read_runtime_ghost_count_default();
