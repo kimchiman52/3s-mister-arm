@@ -108,6 +108,6 @@ s32 flLogOut(s8* format, ...) {
     flFileAppend("../acrout.txt", str, strlen(str));
     va_end(args);
 
-    fatal_error(str);
+    fprintf(stderr, "%s", str);
     return 1;
 }
