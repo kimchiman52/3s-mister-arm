@@ -1630,6 +1630,10 @@ s32 seqsStoreChip(f32 x, f32 y, s32 w, s32 h, s32 gix, s32 code, s32 attr, s32 a
     const f32 dx = 0;
     const f32 dy = 0;
 
+    if (seqs_w.sprTotal >= 0x400) {
+        return 0; /* sprite buffer full — skip */
+    }
+
     chip = &seqs_w.chip[seqs_w.sprTotal];
     chip->v[0].x = x;
     chip->v[0].y = y;
@@ -1684,13 +1688,6 @@ s32 seqsStoreChip(f32 x, f32 y, s32 w, s32 h, s32 gix, s32 code, s32 attr, s32 a
     chip->vertex_color = curr_bright | ((0xFF - alpha) << 24);
     chip->id = id;
     seqs_w.sprTotal += 1;
-
-    if (seqs_w.sprTotal > 0x400) {
-        // The number of OBJ fragments has exceeded the planned number
-        flLogOut("ＯＢＪの破片が予定数を越えてしまいました");
-        while (1) {}
-    }
-
     return 1;
 }
 
@@ -1752,9 +1749,8 @@ static s32 get_mltbuf16(MultiTexture* mt, u32 code, u32 palt, s32* ret) {
                     return 1;
                 }
 
-                // CG cache is full. 16x16: %d\n
-                flLogOut("ＣＧキャッシュが一杯になりました。１６×１６ : %d\n", mt->id);
-                while (1) {}
+                *ret = 0; /* cache full — reuse slot 0 */
+                return 0;
             }
         }
     }
@@ -1818,9 +1814,8 @@ static s32 get_mltbuf32(MultiTexture* mt, u32 code, u32 palt, s32* ret) {
                     return 1;
                 }
 
-                // CG cache is full. 32x32 : %d\n
-                flLogOut("ＣＧキャッシュが一杯になりました。３２×３２ : %d\n", mt->id);
-                while (1) {}
+                *ret = 0; /* cache full — reuse slot 0 */
+                return 0;
             }
         }
     }
@@ -1893,9 +1888,8 @@ static s32 get_mltbuf16_ext_2(MultiTexture* mt, u32 code, u32 palt, s32* ret, Pa
             }
             return 1;
         }
-        // CG cache is full. x16 EXT2\n
-        flLogOut("ＣＧキャッシュが一杯になりました。×１６　ＥＸＴ２\n");
-        while (1) {}
+        *ret = 0; /* cache full — reuse slot 0 */
+        return 0;
     }
 }
 
@@ -1966,8 +1960,8 @@ static s32 get_mltbuf32_ext_2(MultiTexture* mt, u32 code, u32 palt, s32* ret, Pa
             }
             return 1;
         }
-        flLogOut("ＣＧキャッシュが一杯になりました。×３２　ＥＸＴ２\n");
-        while (1) {}
+        *ret = 0; /* cache full — reuse slot 0 */
+        return 0;
     }
 }
 
@@ -1990,8 +1984,7 @@ static s32 get_mltbuf16_ext(MultiTexture* mt, u32 code, u32 palt) {
                 return tpu_free->x16_used[i];
             }
         }
-        flLogOut("ＣＧ展開エラー　１６×１６\n");
-        while (1) {}
+        return 0; /* decode error — reuse slot 0 */
     }
 }
 
@@ -2014,8 +2007,7 @@ static s32 get_mltbuf32_ext(MultiTexture* mt, u32 code, u32 palt) {
                 return tpu_free->x32_used[i];
             }
         }
-        flLogOut("ＣＧ展開エラー　３２×３２\n");
-        while (1) {}
+        return 0; /* decode error — reuse slot 0 */
     }
 }
 
@@ -2104,8 +2096,7 @@ static s32 get_free_patcash_index(PatternCollection* padr) {
         }
     }
 
-    flLogOut("ＣＧキャッシュバッファが一杯になりました。\n");
-    while (1) {}
+    return 0; /* cache buffer full — reuse slot 0 */
 }
 
 static void lz_ext_p6_fx(u8* srcptr, u8* dstptr, u32 len) {

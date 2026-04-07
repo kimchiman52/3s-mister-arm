@@ -407,6 +407,8 @@ These commits do not directly improve performance but were essential for identif
 | 8.2 | Dedicated video PLL (59.5993 Hz) | Timing | 245x more accurate frame rate | `dbcf340e` |
 | 8.3 | Stale texture comparison removal | Texture | 0.5-3ms/frame on animated stages | `9e7d69ee` |
 | 8.4 | ARM clock management (user-selectable overclock) | System | ~50% CPU headroom at 1200MHz | `e510bc42` |
+| 9.1 | Texture group load race → skip frame | Stability | Eliminates SIGABRT crash in attract mode at 800MHz | |
+| 9.2 | CG cache full / decode error → graceful fallback | Stability | Eliminates infinite CPU spin on long idle (animated stages) | |
 
 ### Aggregate Impact
 
