@@ -32,6 +32,7 @@
 #include "audio.h"
 #include "osd.h"
 #include "menu.h"
+#include "support/arcade/mra_loader.h"
 #include "threesx_core_context.h"
 #include "user_io.h"
 #include "video.h"
@@ -1580,6 +1581,10 @@ int threesx_wrapper_run(int argc, char *argv[])
 		load_volume();
 		user_io_send_buttons(1);
 	}
+
+	// Tell HandleUI the core is fully loaded so it renders the CONF_STR menu
+	// instead of disabling the OSD (menu.cpp checks mgl->done before enabling).
+	mgl_get()->done = 1;
 
 	// Seed CONF_STR status bits from persisted game config so the MiSTer
 	// menu reflects the actual runtime settings. This overwrites any values

@@ -545,11 +545,20 @@ uint32_t user_io_hd_mask(const char *opt)
 	return start;
 }
 
+// Sticky flags for T/R trigger detection. HandleUI() pulses triggers
+// (set 1 then 0) within a single call, so external pollers can't see them.
+// This captures the pulse so the wrapper can detect it later.
+static volatile uint32_t g_status_trigger_flags = 0;
+
 void user_io_status_set(const char *opt, uint32_t value, int ex)
 {
 	int start, end;
 	int size = user_io_status_bits(opt, &start, &end, ex);
 	if (!size) return;
+
+	// Capture trigger pulses (single-bit set to 1) as sticky flags
+	if (value == 1 && size == 1)
+		g_status_trigger_flags |= (1u << start);
 
 	int s = start / 8;
 	int e = end / 8;
@@ -568,6 +577,13 @@ void user_io_status_set(const char *opt, uint32_t value, int ex)
 		for (uint32_t i = 0; i < sizeof(cur_status); i += 2) spi_w((cur_status[i + 1] << 8) | cur_status[i]);
 		DisableIO();
 	}
+}
+
+uint32_t user_io_status_trigger_take()
+{
+	uint32_t flags = g_status_trigger_flags;
+	g_status_trigger_flags = 0;
+	return flags;
 }
 
 int user_io_status_save(const char *filename)
