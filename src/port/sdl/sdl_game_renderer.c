@@ -11625,11 +11625,20 @@ static bool try_setup_textured_rect_task(RenderTask* task,
        destination coords are purely artifacts of the floating-point matrix
        pipeline (camera scroll, zoom).  Snapping to integers routes every
        textured rect through the exact-copy fast path instead of the
-       expensive non-integer gather rasterizer (~0.5 vs ~8 cycles/pixel). */
-    const float dst_x0 = SDL_roundf(SDL_min(x0, x1));
-    const float dst_y0 = SDL_roundf(SDL_min(y0, y1));
-    const float dst_w = SDL_roundf(SDL_fabsf(x1 - x0));
-    const float dst_h = SDL_roundf(SDL_fabsf(y1 - y0));
+       expensive non-integer gather rasterizer (~0.5 vs ~8 cycles/pixel).
+
+       Round BOTH edges independently and derive width from the difference.
+       Rounding width separately (round(pos) + round(width)) can disagree
+       with round(pos + width), producing 1-pixel gaps between adjacent
+       tiles — visible as horizontal/vertical lines when zoom != 1.0. */
+    const float raw_x0 = SDL_min(x0, x1);
+    const float raw_y0 = SDL_min(y0, y1);
+    const float raw_x1 = SDL_max(x0, x1);
+    const float raw_y1 = SDL_max(y0, y1);
+    const float dst_x0 = SDL_roundf(raw_x0);
+    const float dst_y0 = SDL_roundf(raw_y0);
+    const float dst_w = SDL_roundf(raw_x1) - dst_x0;
+    const float dst_h = SDL_roundf(raw_y1) - dst_y0;
     if ((dst_w <= 0.0f) || (dst_h <= 0.0f)) {
         return false;
     }
@@ -11925,10 +11934,14 @@ void SDLGameRenderer_DrawSprites2Batch(const Sprite2* sprites,
                 continue;
             }
 
-            const float dst_x0 = SDL_roundf(SDL_min(x0, x1));
-            const float dst_y0 = SDL_roundf(SDL_min(y0, y1));
-            const float dst_w = SDL_roundf(SDL_fabsf(x1 - x0));
-            const float dst_h = SDL_roundf(SDL_fabsf(y1 - y0));
+            const float raw_x0 = SDL_min(x0, x1);
+            const float raw_y0 = SDL_min(y0, y1);
+            const float raw_x1 = SDL_max(x0, x1);
+            const float raw_y1 = SDL_max(y0, y1);
+            const float dst_x0 = SDL_roundf(raw_x0);
+            const float dst_y0 = SDL_roundf(raw_y0);
+            const float dst_w = SDL_roundf(raw_x1) - dst_x0;
+            const float dst_h = SDL_roundf(raw_y1) - dst_y0;
             if ((dst_w <= 0.0f) || (dst_h <= 0.0f)) {
                 draw_sprite_rect(x0, y0, x1, y1, s->v[0].z, s0, t0, s1, t1, s->vertex_color);
                 continue;
