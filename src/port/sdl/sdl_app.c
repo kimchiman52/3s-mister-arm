@@ -9480,11 +9480,10 @@ void SDLApp_CycleArmClock(void) {
         }
         SDL_free(config_path);
     }
-    apply_arm_clock(arm_clock_mode);
-    /* Reset frame deadline so pacing re-aligns with the FPGA's vblank poll.
-       Without this, the phase relationship after a clock change is random. */
-    frame_deadline = 0;
-    backend_logf("ARM clock: %s", arm_clock_mode_label(arm_clock_mode));
+    /* Don't apply the clock change live — changing frequency via sysfs while
+       the game is running causes freezes on some DE10-Nano boards.  The new
+       setting will take effect on the next game restart via init_arm_clock(). */
+    backend_logf("ARM clock: %s (applies on restart)", arm_clock_mode_label(arm_clock_mode));
 }
 
 static bool init_window() {

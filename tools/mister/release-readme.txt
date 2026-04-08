@@ -30,8 +30,9 @@ Overclocking to 1000 or 1200 MHz can help maintain 60 FPS in those
 situations.
 
 You can cycle between 800 MHz (stock), 1000 MHz, and 1200 MHz via
-the in-game OSD menu (press F12 or the MiSTer menu button). The
-setting persists across launches.
+the in-game OSD menu (press F12 or the MiSTer menu button). The new
+clock speed takes effect on the next game restart (shown with a *
+in the OSD until applied). The setting persists across launches.
 
 NOTE: Not all DE10-Nano boards can run stably at 1200 MHz. If the
 game crashes or freezes after overclocking, SSH into your MiSTer and

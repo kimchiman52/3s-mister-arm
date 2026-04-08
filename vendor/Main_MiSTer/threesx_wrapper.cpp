@@ -135,6 +135,7 @@ int g_wrapper_super_effect_quality = kSuperEffectQualityCachedBg;
 int g_wrapper_ghost_resolution = kGhostResolutionFull;
 int g_wrapper_ghost_count = kGhostCount4;
 int g_wrapper_arm_clock = kArmClockStock;
+int g_wrapper_arm_clock_active = kArmClockStock;
 int g_wrapper_restart_requested = 0;
 int g_wrapper_used_full_user_io_init = 0;
 static bool g_native_video_mode = false;
@@ -1303,10 +1304,18 @@ void draw_wrapper_menu(int selected)
 	                          sizeof(ghost_count_line),
 	                          "SA Ghost Count",
 	                          runtime_ghost_count_label(g_wrapper_ghost_count));
-	format_wrapper_value_line(arm_clock_line,
-	                          sizeof(arm_clock_line),
-	                          "Overclock",
-	                          runtime_arm_clock_label(g_wrapper_arm_clock));
+	{
+		char arm_clock_value[24] = {};
+		const char *label = runtime_arm_clock_label(g_wrapper_arm_clock);
+		if (g_wrapper_arm_clock != g_wrapper_arm_clock_active)
+			snprintf(arm_clock_value, sizeof(arm_clock_value), "%s *", label);
+		else
+			snprintf(arm_clock_value, sizeof(arm_clock_value), "%s", label);
+		format_wrapper_value_line(arm_clock_line,
+		                          sizeof(arm_clock_line),
+		                          "Overclock",
+		                          arm_clock_value);
+	}
 
 	OsdSetSize(16);
 	OsdSetTitle("3SX", 0);
@@ -1751,6 +1760,7 @@ int threesx_wrapper_run(int argc, char *argv[])
 	g_wrapper_ghost_resolution = read_runtime_ghost_resolution_default();
 	g_wrapper_ghost_count = read_runtime_ghost_count_default();
 	g_wrapper_arm_clock = read_runtime_arm_clock_default();
+	g_wrapper_arm_clock_active = g_wrapper_arm_clock;
 	g_wrapper_restart_requested = 0;
 	g_wrapper_signal = 0;
 
@@ -1991,7 +2001,7 @@ int threesx_wrapper_run(int argc, char *argv[])
 		/* Reset ARM clock to stock after child exits, regardless of exit reason.
 		   Catches crashes, SIGKILL, and abnormal termination that bypass the
 		   game-side cleanup in SDLApp_Quit(). */
-		if (g_wrapper_arm_clock != kArmClockStock)
+		if (g_wrapper_arm_clock_active != kArmClockStock)
 		{
 			/* Use unbuffered write for reliable sysfs interaction.
 			   Restore min_freq and governor to safe defaults. */
@@ -2056,6 +2066,7 @@ int threesx_wrapper_run(int argc, char *argv[])
 			g_wrapper_restart_requested = 0;
 			g_wrapper_menu_visible = 0;
 			g_wrapper_menu_selected = kMenuResume;
+			g_wrapper_arm_clock_active = g_wrapper_arm_clock;
 			continue;
 		}
 
