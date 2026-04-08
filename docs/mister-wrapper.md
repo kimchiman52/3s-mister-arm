@@ -352,7 +352,7 @@ Current implemented behavior:
 
 - rebuild the player-facing runtime package from `build/mister-clean-install` via `tools/mister/build-runtime-package.sh`
 - assemble a FAT-rooted stage at `build/mister-release/stage`
-- copy `README-3SX-INSTALL.txt` to the ZIP root
+- copy `README.txt` (from `tools/mister/release-readme.txt`) to the ZIP root
 - fail if the staged release contains `games/3sx/resources/SF33RD.AFS`, `games/3sx/config`,
   `games/3sx/keymap`, or `games/3sx/logs`
 - write the final player ZIP to `build/mister-release/3SX-mister-rolling-pre-release.zip`

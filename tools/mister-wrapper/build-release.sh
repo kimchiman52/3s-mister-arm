@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 BUILD_RUNTIME_SCRIPT="${ROOT_DIR}/tools/mister/build-runtime-package.sh"
 PACKAGE_WRAPPER_SCRIPT="${ROOT_DIR}/tools/mister-wrapper/package-wrapper.sh"
-INSTALL_README_TEMPLATE="${ROOT_DIR}/tools/mister-wrapper/README-3SX-INSTALL.txt"
+INSTALL_README_TEMPLATE="${ROOT_DIR}/tools/mister/release-readme.txt"
 RUNTIME_INSTALL_PREFIX="${RUNTIME_INSTALL_PREFIX:-${ROOT_DIR}/build/mister-clean-install}"
 RUNTIME_PACKAGE="${RUNTIME_PACKAGE:-${ROOT_DIR}/build/mister-runtime-package}"
 HPS_BINARY="${HPS_BINARY:-${ROOT_DIR}/build/mister-wrapper-hps/MiSTer_3SX}"
@@ -13,7 +13,7 @@ CORE_RBF="${CORE_RBF:-${ROOT_DIR}/build/mister-wrapper-core/3SX.rbf}"
 WORK_DIR="${WORK_DIR:-${ROOT_DIR}/build/mister-release}"
 STAGE_DIR="${STAGE_DIR:-${WORK_DIR}/stage}"
 OUTPUT_ZIP="${OUTPUT_ZIP:-${WORK_DIR}/3SX-mister-rolling-pre-release.zip}"
-README_BASENAME="README-3SX-INSTALL.txt"
+README_BASENAME="README.txt"
 
 usage() {
     cat <<EOF

@@ -20,28 +20,6 @@ To extract it: the AFS file is on the PS2 disc at the root or inside a
 data directory, typically named SF33RD.AFS (~600 MB).
 
 
-OVERCLOCK
----------
-
-The ARM CPU defaults to stock 800 MHz. The game generally runs at
-60 FPS, but may slow down during heavy situations (animated stage
-backgrounds, super art activations, and other effect-heavy scenes).
-Overclocking to 1000 or 1200 MHz can help maintain 60 FPS in those
-situations.
-
-You can cycle between 800 MHz (stock), 1000 MHz, and 1200 MHz via
-the in-game OSD menu (press F12 or the MiSTer menu button). The new
-clock speed takes effect on the next game restart (shown with a *
-in the OSD until applied). The setting persists across launches.
-
-NOTE: Not all DE10-Nano boards can run stably at 1200 MHz. If the
-game crashes or freezes after overclocking, SSH into your MiSTer and
-edit /media/fat/games/3sx/config. Find the arm-clock line and change
-it back to stock:
-
-  arm-clock = 800
-
-
 INSTALLATION
 ------------
 
@@ -100,6 +78,28 @@ RUNNING
 
 If the core immediately exits back to MiSTer, the most common cause is
 a missing SF33RD.AFS file.
+
+
+OVERCLOCK
+---------
+
+The ARM CPU defaults to stock 800 MHz. The game generally runs at
+60 FPS, but may slow down during heavy situations (animated stage
+backgrounds, super art activations, and other effect-heavy scenes).
+Overclocking to 1000 or 1200 MHz can help maintain 60 FPS in those
+situations.
+
+You can cycle between 800 MHz (stock), 1000 MHz, and 1200 MHz via
+the in-game OSD menu (press F12 or the MiSTer menu button). The new
+clock speed takes effect on the next game restart (shown with a *
+in the OSD until applied). The setting persists across launches.
+
+NOTE: Not all DE10-Nano boards can run stably at 1200 MHz. If the
+game crashes or freezes after overclocking, SSH into your MiSTer and
+edit /media/fat/games/3sx/config. Find the arm-clock line and change
+it back to stock:
+
+  arm-clock = 800
 
 
 MORE INFORMATION

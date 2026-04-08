@@ -302,7 +302,7 @@ staged release contains any of the player-local or excluded content below:
 - `games/3sx/keymap`
 - `games/3sx/logs`
 
-The staged ZIP root always includes `README-3SX-INSTALL.txt`, and the archive intentionally leaves
+The staged ZIP root always includes `README.txt` (the release readme), and the archive intentionally leaves
 `games/3sx/resources/SF33RD.AFS` empty so end users must add their own copy manually after install.
 
 ## Publish Rolling Pre-Release
