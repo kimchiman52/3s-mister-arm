@@ -8372,6 +8372,26 @@ static bool render_frame_to_software_surface(void) {
                 resolved_task.dst_rect = solid_rect;
                 resolved_task.color = solid_color;
             } else {
+                /* Check for degenerate (zero-area) solid polygons before
+                   falling back.  WipeIn/WipeOut can produce zero-height
+                   band polygons at the end of the animation; these are
+                   invisible and safe to skip without triggering a
+                   full-frame fallback to the slow SDL hardware path. */
+                float _solid_min_x = task->vertices[0].position.x;
+                float _solid_max_x = _solid_min_x;
+                float _solid_min_y = task->vertices[0].position.y;
+                float _solid_max_y = _solid_min_y;
+                for (int _si = 1; _si < 4; _si++) {
+                    _solid_min_x = SDL_min(_solid_min_x, task->vertices[_si].position.x);
+                    _solid_max_x = SDL_max(_solid_max_x, task->vertices[_si].position.x);
+                    _solid_min_y = SDL_min(_solid_min_y, task->vertices[_si].position.y);
+                    _solid_max_y = SDL_max(_solid_max_y, task->vertices[_si].position.y);
+                }
+                if ((_solid_max_x - _solid_min_x) <= 0.0f || (_solid_max_y - _solid_min_y) <= 0.0f) {
+                    /* Zero-area polygon — invisible, skip without fallback. */
+                    software_frame_resolved_tasks[i] = resolved_task;
+                    continue;
+                }
                 SoftwareFrameSolidDiagonalStrip diagonal_strip;
                 if (!try_resolve_solid_task_as_full_height_diagonal_strip(task, &diagonal_strip)) {
                     note_software_frame_eligibility(task, SOFTWARE_FRAME_FALLBACK_REASON_SOLID);
