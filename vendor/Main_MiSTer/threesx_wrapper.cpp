@@ -1056,17 +1056,7 @@ void set_runtime_environment(const StartupScaleModeSelection &startup_scale_mode
 		unsetenv(kRuntimeScaleModeEnv);
 	}
 
-	const char *existing_ld = getenv("LD_LIBRARY_PATH");
-	if (existing_ld && existing_ld[0])
-	{
-		char buffer[2048] = {};
-		snprintf(buffer, sizeof(buffer), "%s:%s", kRuntimeLibDir, existing_ld);
-		setenv("LD_LIBRARY_PATH", buffer, 1);
-	}
-	else
-	{
-		setenv("LD_LIBRARY_PATH", kRuntimeLibDir, 1);
-	}
+	setenv("LD_LIBRARY_PATH", kRuntimeLibDir, 1);
 }
 
 void split_message_line(const char *start, char *line, size_t line_size)
@@ -1206,7 +1196,6 @@ void poll_status_changes(pid_t child)
 	static uint32_t prev_ghost_res = 0xFFFFFFFF;
 	static uint32_t prev_ghost_count = 0xFFFFFFFF;
 	static uint32_t prev_arm_clock = 0xFFFFFFFF;
-	static uint32_t prev_scale_mode = 0xFFFFFFFF;
 
 	// --- Option bits: detect changes and apply ---
 
@@ -1286,40 +1275,28 @@ void poll_status_changes(pid_t child)
 		}
 	}
 
-	uint32_t scale_mode = user_io_status_get("[13:12]");
-	if (scale_mode != prev_scale_mode) {
-		prev_scale_mode = scale_mode;
-		// Scale mode is startup-only. Write config, no signal.
-		write_runtime_scale_mode_default((int)scale_mode);
-	}
+	// --- T-type triggers (Reset/Restart) ---
+	// HandleUI() pulses T bits (set 1 then 0) within a single call.
+	// user_io_status_trigger_take() captures the pulse via a sticky flag
+	// inside user_io_status_set().
+	uint32_t triggers = user_io_status_trigger_take();
 
-	// --- O-type action bits (Reset/Restart) ---
-	// These use O-type toggles instead of T/R triggers because HandleUI()
-	// pulses T/R bits within a single call (set(1) then set(0)), making
-	// them invisible to the poller. O-type bits stay set until we clear them.
-
-	if (user_io_status_get("[21]")) {
-		// Reset to Default: set option bits to defaults, clear the trigger
-		user_io_status_set("[21]", 0);
+	if (triggers & (1u << 21)) {
+		// Reset to Default
 		user_io_status_set("[11:10]", 0); // FPS off
-		user_io_status_set("[13:12]", 0); // Scale auto
 		user_io_status_set("[14]", kSuperEffectQualityCachedBg); // SA default=CachedBg
 		user_io_status_set("[15]", 0);    // Ghost Res = Full (enum 0)
 		user_io_status_set("[18:16]", kGhostCount4); // Ghost Count default=4
 		user_io_status_set("[20:19]", 0); // Overclock = Stock
-		// Force prev_ values to 0xFFFFFFFF so next poll iteration detects
-		// the change and sends the appropriate cycle signals
 		prev_fps = 0xFFFFFFFF;
 		prev_sa_activation = 0xFFFFFFFF;
 		prev_ghost_res = 0xFFFFFFFF;
 		prev_ghost_count = 0xFFFFFFFF;
 		prev_arm_clock = 0xFFFFFFFF;
-		prev_scale_mode = 0xFFFFFFFF;
 	}
 
-	if (user_io_status_get("[22]")) {
-		// Restart Game: clear the trigger, then restart
-		user_io_status_set("[22]", 0);
+	if (triggers & (1u << 22)) {
+		// Restart
 		g_wrapper_restart_requested = 1;
 		kill(child, SIGTERM);
 	}
@@ -1592,7 +1569,6 @@ int threesx_wrapper_run(int argc, char *argv[])
 	if (g_wrapper_used_full_user_io_init)
 	{
 		user_io_status_set("[11:10]", (uint32_t)g_wrapper_fps_mode);
-		user_io_status_set("[13:12]", (uint32_t)read_runtime_scale_mode_default());
 		user_io_status_set("[14]", (uint32_t)g_wrapper_super_effect_quality);
 		user_io_status_set("[15]", (uint32_t)g_wrapper_ghost_resolution);
 		user_io_status_set("[18:16]", (uint32_t)g_wrapper_ghost_count);
@@ -1746,6 +1722,15 @@ int threesx_wrapper_run(int argc, char *argv[])
 			close(err_pipe[0]);
 			prctl(PR_SET_PDEATHSIG, SIGTERM);
 
+			// Reset CPU affinity so the game isn't pinned to the wrapper's
+			// core. On restart, the parent is already pinned to CPU 0 and
+			// fork() inherits that affinity.
+			cpu_set_t all_cpus;
+			CPU_ZERO(&all_cpus);
+			CPU_SET(0, &all_cpus);
+			CPU_SET(1, &all_cpus);
+			sched_setaffinity(0, sizeof(all_cpus), &all_cpus);
+
 			int stdin_fd = open("/dev/null", O_RDONLY | O_CLOEXEC);
 			if (stdin_fd >= 0)
 			{
@@ -1875,7 +1860,6 @@ int threesx_wrapper_run(int argc, char *argv[])
 
 			// Re-seed status bits so the menu reflects current values after restart
 			user_io_status_set("[11:10]", (uint32_t)g_wrapper_fps_mode);
-			user_io_status_set("[13:12]", (uint32_t)read_runtime_scale_mode_default());
 			user_io_status_set("[14]", (uint32_t)g_wrapper_super_effect_quality);
 			user_io_status_set("[15]", (uint32_t)g_wrapper_ghost_resolution);
 			user_io_status_set("[18:16]", (uint32_t)g_wrapper_ghost_count);
