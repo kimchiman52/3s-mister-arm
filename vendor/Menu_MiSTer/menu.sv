@@ -227,7 +227,19 @@ localparam CONF_STR = {
 	"J1,LP,MP,HP,LK,MK,HK,Select,Start;",
 	"jn,Y,X,L,B,A,R,Select,Start;",
 	"-;",
-	"V,v",`BUILD_DATE 
+	"O[11:10],Show FPS,Off,FPS,Debug;",
+	"O[13:12],Scale Mode,Auto,Native,Nearest;",
+	"-;",
+	"O[14],SA Activation,Full,Cached BG;",
+	"O[15],SA Ghost Res,Full,Half;",
+	"O[18:16],SA Ghost Count,0,1,2,3,4;",
+	"-;",
+	"O[20:19],Overclock,Stock,1000MHz,1200MHz;",
+	"-;",
+	"O[21],Reset to Default,No,Yes;",
+	"O[22],Restart Game,No,Yes;",
+	"-;",
+	"V,v",`BUILD_DATE
 };
 
 wire forced_scandoubler;

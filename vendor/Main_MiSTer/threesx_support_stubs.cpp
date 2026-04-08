@@ -1,12 +1,5 @@
 #include <stdint.h>
 
-namespace {
-
-volatile unsigned int g_menu_key = 0;
-volatile int g_menu_visible = 0;
-
-}
-
 int arcade_get_direction()
 {
 	return 0;
@@ -17,31 +10,17 @@ int arcade_is_vertical()
 	return 0;
 }
 
-void menu_key_set(unsigned int c)
+void menu_key_set(unsigned int)
 {
-	g_menu_key = c;
-}
-
-unsigned int threesx_wrapper_menu_key_take()
-{
-	unsigned int key = g_menu_key;
-	g_menu_key = 0;
-	return key;
-}
-
-void threesx_wrapper_menu_set_visible(int visible)
-{
-	g_menu_visible = visible ? 1 : 0;
 }
 
 int menu_present()
 {
-	return g_menu_visible;
+	return 0;
 }
 
 void MenuHide()
 {
-	threesx_wrapper_menu_set_visible(0);
 }
 
 void SelectINI()

@@ -31,7 +31,6 @@
 #include "audio.h"
 #include "osd.h"
 #include "menu.h"
-#include "support/arcade/mra_loader.h"
 #include "threesx_core_context.h"
 #include "user_io.h"
 #include "video.h"
@@ -61,21 +60,6 @@ constexpr int kRuntimeSuperEffectQualityCycleSignal = SIGUSR2;
 #define kRuntimeGhostResolutionCycleSignal (SIGRTMIN)
 #define kRuntimeGhostCountCycleSignal (SIGRTMIN + 1)
 #define kRuntimeArmClockCycleSignal (SIGRTMIN + 2)
-
-enum WrapperMenuItem
-{
-	kMenuResume = 0,
-	kMenuDefineButtons,
-	kMenuFpsToggle,
-	kMenuSuperEffectQuality,
-	kMenuGhostResolution,
-	kMenuGhostCount,
-	kMenuArmClock,
-	kMenuResetDefaults,
-	kMenuRestart,
-	kMenuQuit,
-	kMenuItemCount
-};
 
 enum RuntimeScaleModeMenu
 {
@@ -127,9 +111,6 @@ enum FpsOverlayMode
 
 volatile sig_atomic_t g_wrapper_signal = 0;
 volatile sig_atomic_t g_child_pid = -1;
-int g_wrapper_menu_visible = 0;
-int g_wrapper_menu_selected = kMenuResume;
-int g_wrapper_menu_passthrough = 0;
 int g_wrapper_fps_mode = kFpsOverlayOff;
 int g_wrapper_super_effect_quality = kSuperEffectQualityCachedBg;
 int g_wrapper_ghost_resolution = kGhostResolutionFull;
@@ -540,16 +521,6 @@ int read_runtime_scale_mode_default()
 	return kScaleModeAuto;
 }
 
-const char *runtime_scale_mode_label(int mode)
-{
-	switch (mode)
-	{
-	case kScaleModeNative: return "Native";
-	case kScaleModeNearest: return "Nearest";
-	default: return "Auto";
-	}
-}
-
 static const char *runtime_scale_mode_config_value(int mode)
 {
 	switch (mode)
@@ -569,15 +540,6 @@ int read_runtime_super_effect_quality_default()
 		return kSuperEffectQualityCachedBg;
 	if (!strcasecmp(value, "full")) return kSuperEffectQualityFull;
 	return kSuperEffectQualityCachedBg;
-}
-
-const char *runtime_super_effect_quality_label(int mode)
-{
-	switch (mode)
-	{
-	case kSuperEffectQualityCachedBg: return "Cached BG";
-	default: return "Full";
-	}
 }
 
 static const char *runtime_super_effect_quality_config_value(int mode)
@@ -775,14 +737,6 @@ int read_runtime_ghost_resolution_default()
 	return kGhostResolutionFull;
 }
 
-const char *runtime_ghost_resolution_label(int mode)
-{
-	switch (mode)
-	{
-	case kGhostResolutionHalf: return "Half";
-	default: return "Full";
-	}
-}
 
 static const char *runtime_ghost_resolution_config_value(int mode)
 {
@@ -872,17 +826,6 @@ int read_runtime_ghost_count_default()
 	return kGhostCount4;
 }
 
-const char *runtime_ghost_count_label(int mode)
-{
-	switch (mode)
-	{
-	case kGhostCount0: return "0";
-	case kGhostCount1: return "1";
-	case kGhostCount2: return "2";
-	case kGhostCount3: return "3";
-	default: return "4";
-	}
-}
 
 static const char *runtime_ghost_count_config_value(int mode)
 {
@@ -970,16 +913,6 @@ int read_runtime_arm_clock_default()
 	if (!strcmp(value, "1000")) return kArmClock1000;
 	if (!strcmp(value, "1200")) return kArmClock1200;
 	return kArmClockStock;
-}
-
-const char *runtime_arm_clock_label(int mode)
-{
-	switch (mode)
-	{
-	case kArmClock1000: return "1000MHz";
-	case kArmClock1200: return "1200MHz";
-	default: return "Stock";
-	}
 }
 
 static const char *runtime_arm_clock_config_value(int mode)
@@ -1169,7 +1102,6 @@ void show_wrapper_message(const char *title, const char *message)
 
 void disable_wrapper_osd()
 {
-	threesx_wrapper_menu_set_visible(0);
 	OsdMenuCtl(0);
 	OsdDisable();
 	OsdUpdate();
@@ -1182,16 +1114,6 @@ int read_runtime_fps_default()
 	if (!strcasecmp(value, "fps")) return kFpsOverlayFps;
 	if (!strcasecmp(value, "debug")) return kFpsOverlayDebug;
 	return kFpsOverlayOff;
-}
-
-const char *runtime_fps_mode_label(int mode)
-{
-	switch (mode)
-	{
-	case kFpsOverlayFps: return "FPS";
-	case kFpsOverlayDebug: return "Debug";
-	default: return "Off";
-	}
 }
 
 static const char *runtime_fps_mode_config_value(int mode)
@@ -1271,269 +1193,135 @@ bool write_runtime_fps_default(int mode)
 	return true;
 }
 
-void format_wrapper_value_line(char *line, size_t line_size, const char *label, const char *value)
+void poll_status_changes(pid_t child)
 {
-	if (!line || !line_size) return;
-	const char *l = label ? label : "";
-	const char *v = value ? value : "";
-	int total_width = 28;
-	int used = 1 + (int)strlen(l); // leading space + label
-	int value_len = (int)strlen(v);
-	int gap = total_width - used - value_len;
-	if (gap < 1) gap = 1;
-	snprintf(line, line_size, " %s%*s%s", l, gap, "", v);
+	// Cache previous status bits for change detection.
+	// Initialized to 0xFFFFFFFF so the first poll detects
+	// the seeded values and sends appropriate cycle signals.
+	static uint32_t prev_fps = 0xFFFFFFFF;
+	static uint32_t prev_sa_activation = 0xFFFFFFFF;
+	static uint32_t prev_ghost_res = 0xFFFFFFFF;
+	static uint32_t prev_ghost_count = 0xFFFFFFFF;
+	static uint32_t prev_arm_clock = 0xFFFFFFFF;
+	static uint32_t prev_scale_mode = 0xFFFFFFFF;
+
+	// --- Option bits: detect changes and apply ---
+
+	uint32_t fps = user_io_status_get("[11:10]");
+	if (fps != prev_fps) {
+		prev_fps = fps;
+		// CONF_STR: 0=Off, 1=FPS, 2=Debug (matches kFpsOverlay* enums)
+		int target = (int)fps;
+		if (target != g_wrapper_fps_mode) {
+			write_runtime_fps_default(target);
+			// FPS signal is a toggle (cycles Off->FPS->Debug->Off).
+			// Compute the number of toggles needed to reach the target.
+			int toggles = (target - g_wrapper_fps_mode + kFpsOverlayModeCount)
+			              % kFpsOverlayModeCount;
+			g_wrapper_fps_mode = target;
+			for (int i = 0; i < toggles; i++)
+				kill(child, kRuntimeFpsToggleSignal);
+		}
+	}
+
+	uint32_t sa_activation = user_io_status_get("[14]");
+	if (sa_activation != prev_sa_activation) {
+		prev_sa_activation = sa_activation;
+		// Enum values match CONF_STR option order (0=Full, 1=CachedBg)
+		int target = (int)sa_activation;
+		if (target != g_wrapper_super_effect_quality) {
+			write_runtime_super_effect_quality_default(target);
+			int cycles = (target - g_wrapper_super_effect_quality
+			              + kSuperEffectQualityMenuCount)
+			             % kSuperEffectQualityMenuCount;
+			g_wrapper_super_effect_quality = target;
+			for (int i = 0; i < cycles; i++)
+				kill(child, kRuntimeSuperEffectQualityCycleSignal);
+		}
+	}
+
+	uint32_t ghost_res = user_io_status_get("[15]");
+	if (ghost_res != prev_ghost_res) {
+		prev_ghost_res = ghost_res;
+		int target = (int)ghost_res;
+		if (target != g_wrapper_ghost_resolution) {
+			write_runtime_ghost_resolution_default(target);
+			int cycles = (target - g_wrapper_ghost_resolution
+			              + kGhostResolutionMenuCount)
+			             % kGhostResolutionMenuCount;
+			g_wrapper_ghost_resolution = target;
+			for (int i = 0; i < cycles; i++)
+				kill(child, kRuntimeGhostResolutionCycleSignal);
+		}
+	}
+
+	uint32_t ghost_count = user_io_status_get("[18:16]");
+	if (ghost_count != prev_ghost_count) {
+		prev_ghost_count = ghost_count;
+		int target = (int)ghost_count;
+		if (target != g_wrapper_ghost_count) {
+			write_runtime_ghost_count_default(target);
+			int cycles = (target - g_wrapper_ghost_count
+			              + kGhostCountMenuCount)
+			             % kGhostCountMenuCount;
+			g_wrapper_ghost_count = target;
+			for (int i = 0; i < cycles; i++)
+				kill(child, kRuntimeGhostCountCycleSignal);
+		}
+	}
+
+	uint32_t arm_clock = user_io_status_get("[20:19]");
+	if (arm_clock != prev_arm_clock) {
+		prev_arm_clock = arm_clock;
+		int target = (int)arm_clock;
+		if (target != g_wrapper_arm_clock) {
+			write_runtime_arm_clock_default(target);
+			// Overclock defers to restart -- update the pending value only.
+			// g_wrapper_arm_clock_active is applied in the restart loop.
+			g_wrapper_arm_clock = target;
+			// Do NOT send kRuntimeArmClockCycleSignal here.
+		}
+	}
+
+	uint32_t scale_mode = user_io_status_get("[13:12]");
+	if (scale_mode != prev_scale_mode) {
+		prev_scale_mode = scale_mode;
+		// Scale mode is startup-only. Write config, no signal.
+		write_runtime_scale_mode_default((int)scale_mode);
+	}
+
+	// --- O-type action bits (Reset/Restart) ---
+	// These use O-type toggles instead of T/R triggers because HandleUI()
+	// pulses T/R bits within a single call (set(1) then set(0)), making
+	// them invisible to the poller. O-type bits stay set until we clear them.
+
+	if (user_io_status_get("[21]")) {
+		// Reset to Default: set option bits to defaults, clear the trigger
+		user_io_status_set("[21]", 0);
+		user_io_status_set("[11:10]", 0); // FPS off
+		user_io_status_set("[13:12]", 0); // Scale auto
+		user_io_status_set("[14]", kSuperEffectQualityCachedBg); // SA default=CachedBg
+		user_io_status_set("[15]", 0);    // Ghost Res = Full (enum 0)
+		user_io_status_set("[18:16]", kGhostCount4); // Ghost Count default=4
+		user_io_status_set("[20:19]", 0); // Overclock = Stock
+		// Force prev_ values to 0xFFFFFFFF so next poll iteration detects
+		// the change and sends the appropriate cycle signals
+		prev_fps = 0xFFFFFFFF;
+		prev_sa_activation = 0xFFFFFFFF;
+		prev_ghost_res = 0xFFFFFFFF;
+		prev_ghost_count = 0xFFFFFFFF;
+		prev_arm_clock = 0xFFFFFFFF;
+		prev_scale_mode = 0xFFFFFFFF;
+	}
+
+	if (user_io_status_get("[22]")) {
+		// Restart Game: clear the trigger, then restart
+		user_io_status_set("[22]", 0);
+		g_wrapper_restart_requested = 1;
+		kill(child, SIGTERM);
+	}
 }
 
-void draw_wrapper_menu(int selected)
-{
-	char fps_line[33] = {};
-	char super_effect_quality_line[33] = {};
-	char ghost_resolution_line[33] = {};
-	char ghost_count_line[33] = {};
-	char arm_clock_line[33] = {};
-	format_wrapper_value_line(fps_line, sizeof(fps_line), "FPS Overlay", runtime_fps_mode_label(g_wrapper_fps_mode));
-	format_wrapper_value_line(super_effect_quality_line,
-	                          sizeof(super_effect_quality_line),
-	                          "SA Activation",
-	                          runtime_super_effect_quality_label(g_wrapper_super_effect_quality));
-	format_wrapper_value_line(ghost_resolution_line,
-	                          sizeof(ghost_resolution_line),
-	                          "SA Ghost Res",
-	                          runtime_ghost_resolution_label(g_wrapper_ghost_resolution));
-	format_wrapper_value_line(ghost_count_line,
-	                          sizeof(ghost_count_line),
-	                          "SA Ghost Count",
-	                          runtime_ghost_count_label(g_wrapper_ghost_count));
-	{
-		char arm_clock_value[24] = {};
-		const char *label = runtime_arm_clock_label(g_wrapper_arm_clock);
-		if (g_wrapper_arm_clock != g_wrapper_arm_clock_active)
-			snprintf(arm_clock_value, sizeof(arm_clock_value), "%s *", label);
-		else
-			snprintf(arm_clock_value, sizeof(arm_clock_value), "%s", label);
-		format_wrapper_value_line(arm_clock_line,
-		                          sizeof(arm_clock_line),
-		                          "Overclock",
-		                          arm_clock_value);
-	}
-
-	OsdSetSize(16);
-	OsdSetTitle("3SX", 0);
-	OsdClear();
-	OsdWrite(0, " Resume", selected == kMenuResume);
-	OsdWrite(1, "");
-	OsdWrite(2, " Define Buttons", selected == kMenuDefineButtons);
-	OsdWrite(3, fps_line, selected == kMenuFpsToggle);
-	OsdWrite(4, "");
-	OsdWrite(5, super_effect_quality_line, selected == kMenuSuperEffectQuality);
-	OsdWrite(6, ghost_resolution_line, selected == kMenuGhostResolution);
-	OsdWrite(7, ghost_count_line, selected == kMenuGhostCount);
-	OsdWrite(8, "");
-	OsdWrite(9, arm_clock_line, selected == kMenuArmClock);
-	OsdWrite(10, "");
-	OsdWrite(11, "");
-	OsdWrite(12, "");
-	OsdWrite(13, " Reset to Default", selected == kMenuResetDefaults);
-	OsdWrite(14, " Restart", selected == kMenuRestart);
-	OsdWrite(15, " Quit to MiSTer", selected == kMenuQuit);
-	threesx_wrapper_menu_set_visible(1);
-	OsdMenuCtl(1);
-	OsdEnable(DISABLE_KEYBOARD);
-	OsdUpdate();
-}
-
-void service_wrapper_menu(pid_t child)
-{
-	/* Passthrough mode: don't consume keys — let HandleUI() in the
-	   main loop tick the MiSTer menu state machine instead.
-	   When the user exits the MiSTer menu (menu_present goes false),
-	   return to normal wrapper key handling. */
-	if (g_wrapper_menu_passthrough)
-	{
-		if (!menu_present())
-			g_wrapper_menu_passthrough = 0;
-		return;
-	}
-
-	unsigned int key = threesx_wrapper_menu_key_take();
-	if (!key)
-	{
-		if (g_wrapper_menu_visible) OsdUpdate();
-		return;
-	}
-
-	const int released = (key & UPSTROKE) ? 1 : 0;
-	key &= ~UPSTROKE;
-	if (released) return;
-
-	if (!g_wrapper_menu_visible)
-	{
-		if (key == KEY_F12 || key == KEY_MENU)
-		{
-			g_wrapper_menu_selected = kMenuResume;
-			g_wrapper_menu_visible = 1;
-			draw_wrapper_menu(g_wrapper_menu_selected);
-		}
-		return;
-	}
-
-	switch (key)
-	{
-	case KEY_F12:
-	case KEY_MENU:
-	case KEY_ESC:
-	case KEY_BACK:
-	case KEY_BACKSPACE:
-		g_wrapper_menu_visible = 0;
-		disable_wrapper_osd();
-		return;
-
-	case KEY_UP:
-	case KEY_LEFT:
-		g_wrapper_menu_selected = (g_wrapper_menu_selected + kMenuItemCount - 1) % kMenuItemCount;
-		draw_wrapper_menu(g_wrapper_menu_selected);
-		return;
-
-	case KEY_DOWN:
-	case KEY_RIGHT:
-	case KEY_TAB:
-		g_wrapper_menu_selected = (g_wrapper_menu_selected + 1) % kMenuItemCount;
-		draw_wrapper_menu(g_wrapper_menu_selected);
-		return;
-
-	case KEY_ENTER:
-	case KEY_SPACE:
-		if (g_wrapper_menu_selected == kMenuFpsToggle)
-		{
-			const int next_mode = (g_wrapper_fps_mode + 1) % kFpsOverlayModeCount;
-			if (write_runtime_fps_default(next_mode))
-			{
-				g_wrapper_fps_mode = next_mode;
-				(void)kill(child, kRuntimeFpsToggleSignal);
-				draw_wrapper_menu(g_wrapper_menu_selected);
-			}
-			return;
-		}
-
-		if (g_wrapper_menu_selected == kMenuSuperEffectQuality)
-		{
-			const int next_mode = (g_wrapper_super_effect_quality + 1) % kSuperEffectQualityMenuCount;
-			if (write_runtime_super_effect_quality_default(next_mode))
-			{
-				g_wrapper_super_effect_quality = next_mode;
-				(void)kill(child, kRuntimeSuperEffectQualityCycleSignal);
-				draw_wrapper_menu(g_wrapper_menu_selected);
-			}
-			return;
-		}
-
-		if (g_wrapper_menu_selected == kMenuGhostResolution)
-		{
-			const int next_mode = (g_wrapper_ghost_resolution + 1) % kGhostResolutionMenuCount;
-			if (write_runtime_ghost_resolution_default(next_mode))
-			{
-				g_wrapper_ghost_resolution = next_mode;
-				(void)kill(child, kRuntimeGhostResolutionCycleSignal);
-				draw_wrapper_menu(g_wrapper_menu_selected);
-			}
-			return;
-		}
-
-		if (g_wrapper_menu_selected == kMenuGhostCount)
-		{
-			const int next_mode = (g_wrapper_ghost_count + 1) % kGhostCountMenuCount;
-			if (write_runtime_ghost_count_default(next_mode))
-			{
-				g_wrapper_ghost_count = next_mode;
-				(void)kill(child, kRuntimeGhostCountCycleSignal);
-				draw_wrapper_menu(g_wrapper_menu_selected);
-			}
-			return;
-		}
-
-		if (g_wrapper_menu_selected == kMenuArmClock)
-		{
-			const int next_mode = (g_wrapper_arm_clock + 1) % kArmClockMenuCount;
-			if (write_runtime_arm_clock_default(next_mode))
-			{
-				g_wrapper_arm_clock = next_mode;
-				(void)kill(child, kRuntimeArmClockCycleSignal);
-				draw_wrapper_menu(g_wrapper_menu_selected);
-			}
-			return;
-		}
-
-		if (g_wrapper_menu_selected == kMenuDefineButtons)
-		{
-			g_wrapper_menu_visible = 0;
-			threesx_wrapper_menu_set_visible(0);
-			g_wrapper_menu_passthrough = 1;
-			mgl_get()->done = 1;
-			parse_buttons();
-			open_joystick_setup();
-			return;
-		}
-
-		if (g_wrapper_menu_selected == kMenuResetDefaults)
-		{
-			write_runtime_fps_default(kFpsOverlayOff);
-			if (g_wrapper_fps_mode != kFpsOverlayOff) (void)kill(child, kRuntimeFpsToggleSignal);
-			g_wrapper_fps_mode = kFpsOverlayOff;
-
-			write_runtime_super_effect_quality_default(kSuperEffectQualityCachedBg);
-			while (g_wrapper_super_effect_quality != kSuperEffectQualityCachedBg)
-			{
-				g_wrapper_super_effect_quality = (g_wrapper_super_effect_quality + 1) % kSuperEffectQualityMenuCount;
-				(void)kill(child, kRuntimeSuperEffectQualityCycleSignal);
-			}
-
-			write_runtime_ghost_resolution_default(kGhostResolutionFull);
-			while (g_wrapper_ghost_resolution != kGhostResolutionFull)
-			{
-				g_wrapper_ghost_resolution = (g_wrapper_ghost_resolution + 1) % kGhostResolutionMenuCount;
-				(void)kill(child, kRuntimeGhostResolutionCycleSignal);
-			}
-
-			write_runtime_ghost_count_default(kGhostCount4);
-			while (g_wrapper_ghost_count != kGhostCount4)
-			{
-				g_wrapper_ghost_count = (g_wrapper_ghost_count + 1) % kGhostCountMenuCount;
-				(void)kill(child, kRuntimeGhostCountCycleSignal);
-			}
-
-			write_runtime_arm_clock_default(kArmClockStock);
-			while (g_wrapper_arm_clock != kArmClockStock)
-			{
-				g_wrapper_arm_clock = (g_wrapper_arm_clock + 1) % kArmClockMenuCount;
-				(void)kill(child, kRuntimeArmClockCycleSignal);
-			}
-
-			draw_wrapper_menu(g_wrapper_menu_selected);
-			return;
-		}
-
-		if (g_wrapper_menu_selected == kMenuRestart)
-		{
-			g_wrapper_restart_requested = 1;
-			g_wrapper_menu_visible = 0;
-			disable_wrapper_osd();
-			kill(child, SIGTERM);
-			return;
-		}
-
-		if (g_wrapper_menu_selected == kMenuQuit)
-		{
-			g_wrapper_menu_visible = 0;
-			disable_wrapper_osd();
-			kill(child, SIGTERM);
-			return;
-		}
-
-		g_wrapper_menu_visible = 0;
-		disable_wrapper_osd();
-		return;
-	}
-}
 
 // Clear the DDR3 native video control word to prevent stale frame data.
 // Maps just the first page of the 0x3A000000 region, zeroes the 4-byte
@@ -1736,7 +1524,7 @@ int wait_for_child(pid_t child, bool service_ui)
 			}
 		}
 
-		service_wrapper_menu(child);
+		poll_status_changes(child);
 		HandleUI();
 		OsdUpdate();
 
@@ -1753,8 +1541,6 @@ int wait_for_child(pid_t child, bool service_ui)
 int threesx_wrapper_run(int argc, char *argv[])
 {
 	const bool forced = force_requested();
-	g_wrapper_menu_visible = 0;
-	g_wrapper_menu_selected = kMenuResume;
 	g_wrapper_fps_mode = read_runtime_fps_default();
 	g_wrapper_super_effect_quality = read_runtime_super_effect_quality_default();
 	g_wrapper_ghost_resolution = read_runtime_ghost_resolution_default();
@@ -1791,6 +1577,19 @@ int threesx_wrapper_run(int argc, char *argv[])
 		// volume/filter state explicitly there.
 		load_volume();
 		user_io_send_buttons(1);
+	}
+
+	// Seed CONF_STR status bits from persisted game config so the MiSTer
+	// menu reflects the actual runtime settings. This overwrites any values
+	// loaded from 3SX.CFG by user_io_init -- the game config is authoritative.
+	if (g_wrapper_used_full_user_io_init)
+	{
+		user_io_status_set("[11:10]", (uint32_t)g_wrapper_fps_mode);
+		user_io_status_set("[13:12]", (uint32_t)read_runtime_scale_mode_default());
+		user_io_status_set("[14]", (uint32_t)g_wrapper_super_effect_quality);
+		user_io_status_set("[15]", (uint32_t)g_wrapper_ghost_resolution);
+		user_io_status_set("[18:16]", (uint32_t)g_wrapper_ghost_count);
+		user_io_status_set("[20:19]", (uint32_t)g_wrapper_arm_clock);
 	}
 
 	write_log_line(wrapper_log, "==== 3SX wrapper launch ====");
@@ -2064,9 +1863,16 @@ int threesx_wrapper_run(int argc, char *argv[])
 			if (g_native_video_mode)
 				clear_native_video_ddr3_ctrl();
 			g_wrapper_restart_requested = 0;
-			g_wrapper_menu_visible = 0;
-			g_wrapper_menu_selected = kMenuResume;
 			g_wrapper_arm_clock_active = g_wrapper_arm_clock;
+
+			// Re-seed status bits so the menu reflects current values after restart
+			user_io_status_set("[11:10]", (uint32_t)g_wrapper_fps_mode);
+			user_io_status_set("[13:12]", (uint32_t)read_runtime_scale_mode_default());
+			user_io_status_set("[14]", (uint32_t)g_wrapper_super_effect_quality);
+			user_io_status_set("[15]", (uint32_t)g_wrapper_ghost_resolution);
+			user_io_status_set("[18:16]", (uint32_t)g_wrapper_ghost_count);
+			user_io_status_set("[20:19]", (uint32_t)g_wrapper_arm_clock);
+
 			continue;
 		}
 
