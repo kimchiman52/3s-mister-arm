@@ -224,28 +224,26 @@ assign LED_POWER[0]= FB ? led[2] : act_cnt2[26] ? act_cnt2[25:18] > act_cnt2[7:0
 `include "build_id.v" 
 localparam CONF_STR = {
 	"MENU;UART31250,MIDI;",
-	"J1,LP,MP,HP,LK,MK,HK,Select,Start;",
-	"jn,Y,X,L,B,A,R,Select,Start;",
-	"-;",
-	"O[11:10],Show FPS,Off,FPS,Debug;",
-	"O[13:12],Scale Mode,Auto,Native,Nearest;",
+	"O[11:10],FPS Counter,Off,FPS,Debug;",
 	"-;",
 	"O[14],SA Activation,Full,Cached BG;",
 	"O[15],SA Ghost Res,Full,Half;",
 	"O[18:16],SA Ghost Count,0,1,2,3,4;",
-	"-;",
 	"O[20:19],Overclock,Stock,1000MHz,1200MHz;",
 	"-;",
-	"O[21],Reset to Default,No,Yes;",
-	"O[22],Restart Game,No,Yes;",
+	"T[21],Reset to Default;",
 	"-;",
+	"T[22],Restart;",
+	"-;",
+	"J1,LP,MP,HP,LK,MK,HK,Select,Start;",
+	"jn,Y,X,L,B,A,R,Select,Start;",
 	"V,v",`BUILD_DATE
 };
 
 wire forced_scandoubler;
 wire [31:0] status;
 
-hps_io #(.CONF_STR(CONF_STR)) hps_io
+hps_io #(.CONF_STR(CONF_STR), .CONF_STR_BRAM(1)) hps_io
 (
 	.clk_sys(clk_sys),
 	.HPS_BUS(HPS_BUS),
