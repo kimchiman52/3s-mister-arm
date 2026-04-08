@@ -5,6 +5,9 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
+#if defined(PORT_MISTER)
+#include <sched.h>
+#endif
 
 #define min(a, b) (((a) < (b)) ? (a) : (b))
 #define max(a, b) (((a) > (b)) ? (a) : (b))
@@ -341,6 +344,18 @@ void SPU_VoiceStart(int vnum, u32 start_addr) {
 }
 
 void SPU_SDL_CB(void* user, SDL_AudioStream* stream_cb, int additional_amount, int total_amount) {
+#if defined(PORT_MISTER)
+    /* Boost audio thread to SCHED_FIFO priority 50 (above game thread's 49)
+       so it can preempt the game to fill audio buffers and release soundLock.
+       Without this, SCHED_FIFO on the game thread causes priority inversion. */
+    static bool audio_thread_boosted = false;
+    if (!audio_thread_boosted) {
+        struct sched_param sp = { .sched_priority = 50 };
+        sched_setscheduler(0, SCHED_FIFO, &sp);
+        audio_thread_boosted = true;
+    }
+#endif
+
     u32 samples_per_channel = (additional_amount / sizeof(s16)) >> 1;
     static s16 outbuf[4096] = {};
 

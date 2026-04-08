@@ -37,6 +37,8 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <sched.h>
+#include <sys/mman.h>
 #endif
 
 typedef enum ScaleMode {
@@ -122,12 +124,18 @@ static double fps_overlay_avg_present_ms = 0.0;
 static double fps_overlay_avg_frame_ms = 0.0;
 
 static Uint64 frame_deadline = 0;
-static Uint64 frame_counter = 0;
-static uint32_t last_fpga_vblank = 0;
-static Uint64   last_vblank_observe_ns = 0;
-static Uint64   adjusted_frame_time_ns = 0;
-static int      vsync_lock_state = 0;  // 0=unsynced, 1=locking, 2=locked
-static int      consecutive_stale = 0;
+static int      pacer_late_streak = 0;
+static int      pacer_ontime_streak = 0;
+static Uint64   pacer_phase_correction = 0;
+
+static Uint64   pacer_max_jitter_ns = 0;
+static Uint64   pacer_jitter_sum_ns = 0;
+static Uint32   pacer_late_count = 0;
+static Uint32   pacer_stats_frames = 0;
+static Uint64   pacer_overlay_max_jitter_us = 0;
+static Uint64   pacer_overlay_avg_jitter_us = 0;
+static Uint32   pacer_overlay_late_pct = 0;
+static Uint64   pacer_overlay_phase_us = 0;
 
 static bool should_save_screenshot = false;
 static Uint64 last_mouse_motion_time = 0;
@@ -9084,7 +9092,7 @@ static void publish_fps_overlay_label(void) {
     if (fps_overlay_mode == FPS_OVERLAY_FPS) {
         SDL_snprintf(fps_overlay_label, sizeof(fps_overlay_label), "%d", fps_overlay_value);
     } else if (fps_overlay_avg_frame_ms > 0.0) {
-        SDL_snprintf(fps_overlay_label, sizeof(fps_overlay_label),
+        int n = SDL_snprintf(fps_overlay_label, sizeof(fps_overlay_label),
                      "%d U:%.1f(T%.1f G%.1f S%.1f D%.1f[t%.1f s%.1f]) R:%.1f(r%.1f) =%.1f",
                      fps_overlay_value,
                      fps_overlay_avg_update_ms,
@@ -9097,6 +9105,14 @@ static void publish_fps_overlay_label(void) {
                      fps_overlay_avg_render_ms,
                      fps_overlay_avg_raster_ms,
                      fps_overlay_avg_frame_ms);
+        if (native_video_writer_enabled && n > 0 && (size_t)n < sizeof(fps_overlay_label)) {
+            SDL_snprintf(fps_overlay_label + n, sizeof(fps_overlay_label) - (size_t)n,
+                         " P:j%llu/%llua L%lu%% ph%llu",
+                         (unsigned long long)pacer_overlay_max_jitter_us,
+                         (unsigned long long)pacer_overlay_avg_jitter_us,
+                         (unsigned long)pacer_overlay_late_pct,
+                         (unsigned long long)pacer_overlay_phase_us);
+        }
     } else {
         SDL_snprintf(fps_overlay_label, sizeof(fps_overlay_label), "%d FPS", fps_overlay_value);
     }
@@ -9174,6 +9190,23 @@ static void update_fps_overlay(Uint64 frame_end_ns) {
     fps_overlay_raster_ns_accum = 0;
     fps_overlay_present_ns_accum = 0;
     fps_overlay_frame_ns_accum = 0;
+
+    /* Snapshot pacer stats for overlay */
+    if (pacer_stats_frames > 0) {
+        pacer_overlay_max_jitter_us = pacer_max_jitter_ns / 1000;
+        pacer_overlay_avg_jitter_us = (pacer_jitter_sum_ns / pacer_stats_frames) / 1000;
+        pacer_overlay_late_pct = (pacer_late_count * 100) / pacer_stats_frames;
+        pacer_overlay_phase_us = pacer_phase_correction / 1000;
+    } else {
+        pacer_overlay_max_jitter_us = 0;
+        pacer_overlay_avg_jitter_us = 0;
+        pacer_overlay_late_pct = 0;
+        pacer_overlay_phase_us = pacer_phase_correction / 1000;
+    }
+    pacer_max_jitter_ns = 0;
+    pacer_jitter_sum_ns = 0;
+    pacer_late_count = 0;
+    pacer_stats_frames = 0;
 
     fps_overlay_window_start_ns = frame_end_ns;
     fps_overlay_window_frames = 0;
@@ -9370,6 +9403,60 @@ static bool sysfs_read(const char* path, char* buf, size_t buf_size) {
 }
 #endif
 
+#if defined(PORT_MISTER)
+static bool pacer_rt_sched_active = false;
+static bool pacer_mlock_active = false;
+static Uint64 busywait_threshold_ns = 200000; /* default 0.2ms */
+
+static void setup_realtime_scheduling(void) {
+    if (mlockall(MCL_CURRENT | MCL_FUTURE) == 0) {
+        pacer_mlock_active = true;
+    } else {
+        backend_logf("Frame pacer: mlockall failed (errno %d), continuing without", errno);
+    }
+
+    /* SCHED_FIFO at priority 49 for the game thread.  The SPU audio callback
+       (SPU_SDL_CB in spu.c) boosts its own thread to priority 50 on first
+       invocation, so the audio thread can always preempt the game thread to
+       fill audio buffers and release soundLock.  This avoids the priority
+       inversion that would otherwise cause audio stutter in heavy scenes. */
+    struct sched_param sp;
+    sp.sched_priority = 49;
+    if (sched_setscheduler(0, SCHED_FIFO, &sp) == 0) {
+        pacer_rt_sched_active = true;
+    } else {
+        backend_logf("Frame pacer: SCHED_FIFO failed (errno %d), continuing with normal scheduling", errno);
+    }
+}
+
+static void teardown_realtime_scheduling(void) {
+    if (pacer_rt_sched_active) {
+        struct sched_param sp;
+        sp.sched_priority = 0;
+        sched_setscheduler(0, SCHED_OTHER, &sp);
+        pacer_rt_sched_active = false;
+    }
+    if (pacer_mlock_active) {
+        munlockall();
+        pacer_mlock_active = false;
+    }
+}
+
+static void precise_delay_ns(Uint64 target_wakeup_ns) {
+    Uint64 now = SDL_GetTicksNS();
+    if (now >= target_wakeup_ns) return;
+    Uint64 remaining = target_wakeup_ns - now;
+    if (remaining > busywait_threshold_ns) {
+        SDL_DelayNS(remaining - busywait_threshold_ns);
+    }
+    while (SDL_GetTicksNS() < target_wakeup_ns) {
+#if defined(__arm__) || defined(__aarch64__)
+        __asm__ volatile("yield");
+#endif
+    }
+}
+#endif /* PORT_MISTER */
+
 static void apply_arm_clock(int mode) {
 #if defined(PORT_MISTER)
     const char* freq = "800000";
@@ -9544,8 +9631,15 @@ static bool init_window() {
                H-freq = 15,734 Hz (NTSC standard). No compensation needed. */
             if (native_video_writer_enabled) {
                 target_frame_time_ns = (Uint64)(1000000000.0 / NV_TARGET_FPS);
-                backend_logf("Native video: frame pacing adjusted to %.4f Hz (FPGA PLL rate)", NV_TARGET_FPS);
-                adjusted_frame_time_ns = target_frame_time_ns;
+                backend_logf("Native video: frame pacing at %.4f Hz (FPGA PLL rate)", NV_TARGET_FPS);
+
+                const char* bw_env = SDL_getenv("THREESX_BUSYWAIT_US");
+                if (bw_env) {
+                    int val = SDL_atoi(bw_env);
+                    if (val >= 0 && val <= 5000) {
+                        busywait_threshold_ns = (Uint64)val * 1000;
+                    }
+                }
             }
 
             /* Native video requires software frame mode to get the ARGB8888
@@ -9654,10 +9748,23 @@ int SDLApp_FullInit() {
     // Initialize pads
     SDLPad_Init();
 
+#if defined(PORT_MISTER)
+    if (native_video_writer_enabled) {
+        setup_realtime_scheduling();
+        backend_logf("Frame pacer: software PLL, busy-wait %lluus, SCHED_FIFO=%s, mlock=%s",
+                     (unsigned long long)(busywait_threshold_ns / 1000),
+                     pacer_rt_sched_active ? "yes" : "no",
+                     pacer_mlock_active ? "yes" : "no");
+    }
+#endif
+
     return 0;
 }
 
 void SDLApp_Quit() {
+#if defined(PORT_MISTER)
+    teardown_realtime_scheduling();
+#endif
     apply_arm_clock(0);
     Config_Destroy();
     NativeVideoWriter_Shutdown();
@@ -10230,84 +10337,64 @@ void SDLApp_EndFrame() {
 
     // Do frame pacing
     //
-    // When native video is active, closed-loop pacing via FPGA vblank feedback
-    // keeps ARM frame delivery phase-locked to the FPGA's actual vblank.
-    // The FPGA writes a vblank counter + buffer status to DDR3 at each vblank;
-    // we read it to track the true frame period and detect stale frames.
-    //
-    // When native video is not active, open-loop timer pacing is used.
+    // Software PLL: the FPGA PLL produces 59.5995 Hz, matching TARGET_FPS to
+    // within 1.4 uHz.  No frequency tracking needed.  We use SCHED_FIFO +
+    // hybrid sleep/busy-wait for sub-ms precision, and phase correction to
+    // compensate for systematic OS scheduling lateness.
     Uint64 now = SDL_GetTicksNS();
 
     if (native_video_writer_enabled) {
-        // --- Closed-loop frame pacing via FPGA vblank feedback ---
-        //
-        // The FPGA writes a vblank counter + buffer status to DDR3 at each
-        // vblank.  We read it to:
-        //   1) Track the FPGA's true frame period (low-pass filtered) to
-        //      compensate for crystal PPM mismatch between ARM and FPGA.
-        //   2) Detect stale frames (ARM was late) and nudge our deadline
-        //      earlier so subsequent frames land before vblank.
-
-        uint32_t feedback = NativeVideoWriter_ReadFeedback();
-        uint32_t fpga_vblank = NV_FeedbackVblankCounter(feedback);
-        uint32_t buf_status  = NV_FeedbackBufferStatus(feedback);
-
-        if (fpga_vblank != 0 && fpga_vblank != last_fpga_vblank) {
-            Uint64 observe_ns = SDL_GetTicksNS();
-
-            if (vsync_lock_state == 0) {
-                // First reference point — start tracking
-                last_fpga_vblank      = fpga_vblank;
-                last_vblank_observe_ns = observe_ns;
-                adjusted_frame_time_ns = target_frame_time_ns;
-                frame_deadline         = observe_ns + adjusted_frame_time_ns;
-                vsync_lock_state       = 1;
-            } else {
-                // Compute observed FPGA frame period
-                uint32_t delta_vblanks = (fpga_vblank - last_fpga_vblank) & 0x3FFFFFFF;
-                Uint64   delta_ns      = observe_ns - last_vblank_observe_ns;
-                Uint64   observed_period = delta_ns / delta_vblanks;
-
-                // Low-pass filter: alpha = 1/16 — rejects jitter, tracks drift
-                int64_t period_err = (int64_t)observed_period - (int64_t)adjusted_frame_time_ns;
-                adjusted_frame_time_ns = (Uint64)((int64_t)adjusted_frame_time_ns + period_err / 16);
-
-                last_fpga_vblank       = fpga_vblank;
-                last_vblank_observe_ns = observe_ns;
-                vsync_lock_state       = 2;
-            }
-
-            // Phase correction: if FPGA reports stale, we were late
-            if (buf_status == 2) {
-                if (consecutive_stale < 4)
-                    consecutive_stale++;
-                if (consecutive_stale == 3) {
-                    // Systematic lateness: advance deadline by 0.5ms (once)
-                    frame_deadline -= 500000;
-                }
-            } else {
-                consecutive_stale = 0;
-            }
+        if (frame_deadline == 0) {
+            frame_deadline = now + target_frame_time_ns;
         }
 
-        // Watchdog: fall back to open-loop if feedback stops updating
-        if (last_vblank_observe_ns != 0 &&
-            now - last_vblank_observe_ns > 500000000ULL) {
-            vsync_lock_state       = 0;
-            adjusted_frame_time_ns = target_frame_time_ns;
-            consecutive_stale      = 0;
-        }
-
-        // Sleep until deadline
-        if (frame_deadline == 0)
-            frame_deadline = now + adjusted_frame_time_ns;
         if (now < frame_deadline) {
-            SDL_DelayNS(frame_deadline - now);
+            // native_video_writer_enabled is only true on PORT_MISTER builds,
+            // so precise_delay_ns is always available here.
+            precise_delay_ns(frame_deadline);
             now = SDL_GetTicksNS();
         }
-        frame_deadline += adjusted_frame_time_ns;
-        if (now > frame_deadline + adjusted_frame_time_ns)
-            frame_deadline = now + adjusted_frame_time_ns;
+
+        Uint64 jitter_ns = now - frame_deadline;
+
+        // Phase tracking: detect systematic lateness
+        if (jitter_ns > 500000) {  // >0.5ms late
+            pacer_late_streak++;
+            pacer_ontime_streak = 0;
+            if (pacer_late_streak >= 3 && pacer_phase_correction < 2000000) {
+                pacer_phase_correction += 250000;
+                frame_deadline -= 250000;  // one-time shift for this increment
+                backend_logf("Frame pacer: phase correction +0.25ms (total: %.2fms)",
+                             (double)pacer_phase_correction / 1e6);
+            }
+        } else {
+            pacer_late_streak = 0;
+            if (pacer_phase_correction > 0) {
+                pacer_ontime_streak++;
+                if (pacer_ontime_streak >= 15) {
+                    pacer_phase_correction -= 250000;
+                    frame_deadline += 250000;  // one-time shift for this decrement
+                    pacer_ontime_streak = 0;
+                    backend_logf("Frame pacer: phase correction -0.25ms (total: %.2fms)",
+                                 (double)pacer_phase_correction / 1e6);
+                }
+            }
+        }
+
+        // Jitter stats for FPS overlay
+        pacer_stats_frames++;
+        if (jitter_ns > pacer_max_jitter_ns)
+            pacer_max_jitter_ns = jitter_ns;
+        pacer_jitter_sum_ns += jitter_ns;
+        if (jitter_ns > 500000)
+            pacer_late_count++;
+
+        // Advance deadline
+        frame_deadline += target_frame_time_ns;
+
+        // Guard: if >1 frame behind, reset
+        if (now > frame_deadline + target_frame_time_ns)
+            frame_deadline = now + target_frame_time_ns - pacer_phase_correction;
     } else {
         // --- Open-loop pacing for non-native-video paths ---
         if (frame_deadline == 0)
@@ -10322,7 +10409,6 @@ void SDLApp_EndFrame() {
     }
 
     // Measure
-    frame_counter += 1;
     update_fps_overlay(now);
 
 #if ENABLE_PERF_TELEMETRY
