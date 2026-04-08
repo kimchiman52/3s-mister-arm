@@ -98,6 +98,11 @@ FAT-rooted and places files at:
   └── scripts/                             Launch helpers
 ```
 
+> **⚠️ FTP users:** If transferring files via FileZilla or another FTP client,
+> set the transfer type to **Binary** (not Auto or ASCII). The default mode
+> corrupts extensionless binaries like `MiSTer_3SX` and `3sx`, causing the
+> core to crash on launch.
+
 After extracting, place your legally obtained game archive:
 
 ```
