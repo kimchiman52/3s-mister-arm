@@ -9128,7 +9128,7 @@ static void publish_fps_overlay_label(void) {
         SDL_snprintf(fps_overlay_label, sizeof(fps_overlay_label), "%d", fps_overlay_value);
     } else if (fps_overlay_avg_frame_ms > 0.0) {
         int n = SDL_snprintf(fps_overlay_label, sizeof(fps_overlay_label),
-                     "%d U:%.1f(T%.1f G%.1f S%.1f D%.1f[t%.1f s%.1f]) R:%.1f(r%.1f) =%.1f",
+                     "%2d U:%4.1f(T%4.1f G%4.1f S%4.1f D%4.1f[t%4.1f s%4.1f]) R:%4.1f(r%4.1f) =%5.1f",
                      fps_overlay_value,
                      fps_overlay_avg_update_ms,
                      fps_overlay_avg_texrefresh_ms,
@@ -9142,7 +9142,7 @@ static void publish_fps_overlay_label(void) {
                      fps_overlay_avg_frame_ms);
         if (native_video_writer_enabled && n > 0 && (size_t)n < sizeof(fps_overlay_label)) {
             SDL_snprintf(fps_overlay_label + n, sizeof(fps_overlay_label) - (size_t)n,
-                         " P:j%llu/%llua L%lu%% ph%llu",
+                         " P:j%4llu/%4llua L%3lu%% ph%4llu",
                          (unsigned long long)pacer_overlay_max_jitter_us,
                          (unsigned long long)pacer_overlay_avg_jitter_us,
                          (unsigned long)pacer_overlay_late_pct,
