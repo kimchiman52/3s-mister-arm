@@ -39,6 +39,9 @@
 #include <errno.h>
 #include <sched.h>
 #include <sys/mman.h>
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+#include <arm_neon.h>
+#endif
 #endif
 
 typedef enum ScaleMode {
@@ -161,9 +164,40 @@ static int arm_clock_mode = 0;
 /* Native video: RGB565 scratch buffer for ARGB8888-to-RGB565 conversion.
    384 * 224 * 2 = 172,032 bytes.  Sits in cached ARM memory so the conversion
    runs at full speed before the uncached DDR3 copy. */
-static uint16_t native_video_rgb565_scratch[384 * 224];
+static uint16_t __attribute__((aligned(16))) native_video_rgb565_scratch[384 * 224];
 
 static void convert_argb8888_to_rgb565(const uint32_t* src, uint16_t* dst, int pixel_count) {
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+    int i = 0;
+    for (; i + 8 <= pixel_count; i += 8) {
+        /* Load 8 ARGB8888 pixels (32 bytes), deinterleave into B, G, R, A channels.
+         * ARGB8888 little-endian byte layout: [B, G, R, A] at offsets 0-3 per pixel. */
+        const uint8x8x4_t argb = vld4_u8((const uint8_t*)(src + i));
+
+        /* Shift channels to RGB565 bit widths (in 8-bit D-registers = 1 cycle on A9) */
+        const uint8x8_t r5 = vshr_n_u8(argb.val[2], 3);  /* R: 8-bit >> 3 = 5-bit */
+        const uint8x8_t g6 = vshr_n_u8(argb.val[1], 2);  /* G: 8-bit >> 2 = 6-bit */
+        const uint8x8_t b5 = vshr_n_u8(argb.val[0], 3);  /* B: 8-bit >> 3 = 5-bit */
+
+        /* Widen to 16-bit and shift into RGB565 positions */
+        const uint16x8_t r16 = vshlq_n_u16(vmovl_u8(r5), 11);  /* R in bits [15:11] */
+        const uint16x8_t g16 = vshlq_n_u16(vmovl_u8(g6), 5);   /* G in bits [10:5]  */
+        const uint16x8_t b16 = vmovl_u8(b5);                    /* B in bits [4:0]   */
+
+        /* Combine channels and store 8 RGB565 pixels (16 bytes) */
+        const uint16x8_t rgb565 = vorrq_u16(vorrq_u16(r16, g16), b16);
+        vst1q_u16(dst + i, rgb565);
+    }
+    /* Scalar tail for remaining pixels (not needed when pixel_count is multiple of 8,
+     * but included for correctness) */
+    for (; i < pixel_count; i++) {
+        uint32_t argb = src[i];
+        uint32_t r = (argb >> 16) & 0xFF;
+        uint32_t g = (argb >> 8) & 0xFF;
+        uint32_t b = argb & 0xFF;
+        dst[i] = (uint16_t)(((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3));
+    }
+#else
     for (int i = 0; i < pixel_count; i++) {
         uint32_t argb = src[i];
         uint32_t r = (argb >> 16) & 0xFF;
@@ -171,6 +205,7 @@ static void convert_argb8888_to_rgb565(const uint32_t* src, uint16_t* dst, int p
         uint32_t b = argb & 0xFF;
         dst[i] = (uint16_t)(((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3));
     }
+#endif
 }
 
 static int sa_bg_cache_frames_remaining = 0;
