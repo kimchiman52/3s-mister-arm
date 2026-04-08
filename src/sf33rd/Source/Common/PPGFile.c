@@ -100,18 +100,19 @@ static bool ppgTrackRenewDirtyTileMaskByTextureHandle[FL_TEXTURE_MAX] = { false 
 static bool ppgShouldKeepRenewDirtyRectForSeqs(s32 ix_num_first, s32 slot_index, s32 texture_total) {
     (void)ix_num_first;
     (void)slot_index;
-    /* Enable dirty-rect tracking for character/effect sprite entries (5+ pages).
-       Lower page counts (1-4) include UI, menu, and options textures that
-       showed corruption when dirty tracking was enabled (see ee8269bb). */
-    return texture_total >= 5;
+    /* Enable dirty-rect tracking for all texture entries.  The original
+       texture_total >= 5 threshold excluded menu/UI textures (1-4 pages) due
+       to corruption (ee8269bb), but INDEX8 rasterization has since eliminated
+       the underlying surface format mismatch that caused it. */
+    return texture_total >= 1;
 }
 
 static bool ppgShouldTrackRenewDirtyTileMaskForSeqs(s32 ix_num_first, s32 slot_index, s32 texture_total) {
     (void)ix_num_first;
     (void)slot_index;
     /* Tile-mask tracking is more granular than dirty-rect tracking. Enable for
-       the same character/effect sprite entries (5+ pages). */
-    return texture_total >= 5;
+       all texture entries (see dirty-rect comment above). */
+    return texture_total >= 1;
 }
 
 static void ppgConfigureRenewDirtyTracking(u32 texture_handle, s32 ix_num_first, s32 slot_index, s32 texture_total) {
