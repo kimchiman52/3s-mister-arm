@@ -8,6 +8,7 @@
 #include <termios.h>
 #include <sys/types.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 
 #include "fpga_io.h"
 #include "file_io.h"
@@ -629,8 +630,17 @@ char *getappname()
 	return dest;
 }
 
+extern volatile sig_atomic_t g_child_pid;
+
 void app_restart(const char *path, const char *xml, const char *exe)
 {
+	pid_t child = (pid_t)g_child_pid;
+	if (child > 0)
+	{
+		kill(child, SIGTERM);
+		waitpid(child, NULL, 0);
+	}
+
 	sync();
 	fpga_core_reset(1);
 

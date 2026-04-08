@@ -1,5 +1,8 @@
 # Plan: Migrate 3SX wrapper menu to CONF_STR-driven MiSTer common menu
 
+**Status: IMPLEMENTED** — See commit `d0c8754b`. Implementation plan:
+`docs/plan-confstr-menu-migration-impl.md`.
+
 ## Summary
 
 Replace the custom wrapper OSD menu (`draw_wrapper_menu` / `service_wrapper_menu`

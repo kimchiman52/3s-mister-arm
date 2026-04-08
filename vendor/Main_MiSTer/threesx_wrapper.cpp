@@ -17,6 +17,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/mman.h>
+#include <sys/prctl.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #include <vector>
@@ -36,6 +37,8 @@
 #include "video.h"
 
 extern char **environ;
+
+volatile sig_atomic_t g_child_pid = -1;
 
 static MisterJoyShm *g_joy_shm = nullptr;
 
@@ -110,7 +113,6 @@ enum FpsOverlayMode
 };
 
 volatile sig_atomic_t g_wrapper_signal = 0;
-volatile sig_atomic_t g_child_pid = -1;
 int g_wrapper_fps_mode = kFpsOverlayOff;
 int g_wrapper_super_effect_quality = kSuperEffectQualityCachedBg;
 int g_wrapper_ghost_resolution = kGhostResolutionFull;
@@ -1737,6 +1739,7 @@ int threesx_wrapper_run(int argc, char *argv[])
 		if (child == 0)
 		{
 			close(err_pipe[0]);
+			prctl(PR_SET_PDEATHSIG, SIGTERM);
 
 			int stdin_fd = open("/dev/null", O_RDONLY | O_CLOEXEC);
 			if (stdin_fd >= 0)
