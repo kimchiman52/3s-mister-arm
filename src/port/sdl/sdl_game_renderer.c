@@ -3838,8 +3838,21 @@ static bool try_resolve_solid_task_as_rect(const RenderTask* task, SDL_FRect* ou
         max_y = SDL_max(max_y, task->vertices[i].position.y);
     }
 
+    /* Zero-area polygons (e.g. WipeIn bands at their final frame) are valid
+       degenerate rects that produce no pixels.  Resolve them early so the
+       caller never falls through to the unsupported-geometry path. */
     if ((max_x - min_x) <= 0.0f || (max_y - min_y) <= 0.0f) {
-        return false;
+        if (out_rect != NULL) {
+            out_rect->x = min_x;
+            out_rect->y = min_y;
+            out_rect->w = max_x - min_x;
+            out_rect->h = max_y - min_y;
+        }
+        if (out_color != NULL) {
+            *out_color = (((Uint32)SDL_roundf(color0.a * 255.0f)) << 24) | (((Uint32)SDL_roundf(color0.r * 255.0f)) << 16) |
+                         (((Uint32)SDL_roundf(color0.g * 255.0f)) << 8) | ((Uint32)SDL_roundf(color0.b * 255.0f));
+        }
+        return true;
     }
 
     for (int i = 0; i < 4; i++) {
@@ -8275,7 +8288,7 @@ static bool raster_solid_task_to_software_frame(const RenderTask* task) {
     }
 
     if ((task->dst_rect.w <= 0.0f) || (task->dst_rect.h <= 0.0f)) {
-        return false;
+        return true;  /* Zero-area rect is a valid no-op, not a failure. */
     }
 
     const int dst_x0 = clamp_to_range((int)SDL_floorf(task->dst_rect.x), 0, software_frame_surface->w);
@@ -8372,26 +8385,6 @@ static bool render_frame_to_software_surface(void) {
                 resolved_task.dst_rect = solid_rect;
                 resolved_task.color = solid_color;
             } else {
-                /* Check for degenerate (zero-area) solid polygons before
-                   falling back.  WipeIn/WipeOut can produce zero-height
-                   band polygons at the end of the animation; these are
-                   invisible and safe to skip without triggering a
-                   full-frame fallback to the slow SDL hardware path. */
-                float _solid_min_x = task->vertices[0].position.x;
-                float _solid_max_x = _solid_min_x;
-                float _solid_min_y = task->vertices[0].position.y;
-                float _solid_max_y = _solid_min_y;
-                for (int _si = 1; _si < 4; _si++) {
-                    _solid_min_x = SDL_min(_solid_min_x, task->vertices[_si].position.x);
-                    _solid_max_x = SDL_max(_solid_max_x, task->vertices[_si].position.x);
-                    _solid_min_y = SDL_min(_solid_min_y, task->vertices[_si].position.y);
-                    _solid_max_y = SDL_max(_solid_max_y, task->vertices[_si].position.y);
-                }
-                if ((_solid_max_x - _solid_min_x) <= 0.0f || (_solid_max_y - _solid_min_y) <= 0.0f) {
-                    /* Zero-area polygon — invisible, skip without fallback. */
-                    software_frame_resolved_tasks[i] = resolved_task;
-                    continue;
-                }
                 SoftwareFrameSolidDiagonalStrip diagonal_strip;
                 if (!try_resolve_solid_task_as_full_height_diagonal_strip(task, &diagonal_strip)) {
                     note_software_frame_eligibility(task, SOFTWARE_FRAME_FALLBACK_REASON_SOLID);
