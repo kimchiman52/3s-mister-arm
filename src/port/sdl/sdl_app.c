@@ -9049,10 +9049,18 @@ static void update_sa_bg_cache_state_for_frame(void) {
         sa_bg_cache_grace_frames_remaining = SA_BG_CACHE_GRACE_PERIOD_FRAMES;
     } else if (sa_bg_cache_grace_frames_remaining > 0) {
         /* Signal dropped but grace period still active — keep caching
-           through zoom-out transition frames. */
-        sa_bg_cache_frames_remaining = sa_bg_cache_grace_frames_remaining;
-        sa_bg_cache_grace_frames_remaining -= 1;
-        sa_bg_cache_active_frame_index += 1;
+           through zoom-out transition frames.  Release early if zoom
+           has already returned to 1:1 (scr_sc == 1.0f) since the
+           cache only exists to cover the zoom-out animation. */
+        if (scr_sc == 1.0f) {
+            sa_bg_cache_frames_remaining = 0;
+            sa_bg_cache_grace_frames_remaining = 0;
+            sa_bg_cache_active_frame_index = 0;
+        } else {
+            sa_bg_cache_frames_remaining = sa_bg_cache_grace_frames_remaining;
+            sa_bg_cache_grace_frames_remaining -= 1;
+            sa_bg_cache_active_frame_index += 1;
+        }
     } else {
         sa_bg_cache_frames_remaining = 0;
         sa_bg_cache_active_frame_index = 0;
