@@ -304,13 +304,13 @@ Six render-path optimizations targeting super art frame drops, plus four additio
 - **Commit**: `dbcf340e`
 - **Files**: FPGA: `pll_video.v`, `menu.sv`, `native_video_timing.sv`. ARM: `src/port/sdl/sdl_app.c`
 
-### 8.3 Vsync Feedback via DDR3 Shared Memory
+### 8.3 Software PLL Frame Pacer
 
-- **What**: FPGA writes a 32-bit feedback word (vblank counter + buffer status) to DDR3 at each vblank. ARM reads it and phase-locks frame delivery to actual FPGA timing instead of using a blind `SDL_DelayNS` timer. Closed-loop pacer with low-pass filtered period tracking (alpha=1/16), single-shot phase correction on consecutive stale frames, and 500ms watchdog fallback to open-loop.
-- **Why**: Even with matched PLL frequencies (Part 1), Linux scheduling jitter (0.5-2ms) causes the ARM's frame write to occasionally land after the FPGA's vblank poll, resulting in stale frame display. At 800MHz the CPU margin is tight enough that this is perceptible.
-- **Impact**: Eliminates sporadic frame stutter from OS scheduling jitter. Frame delivery stays phase-locked to FPGA vblank even under system load.
-- **Commit**: `6e334f53`
-- **Files**: FPGA: `native_video_reader.sv`, `menu.sv`. ARM: `sdl_app.c`, `native_video_writer.c/.h`
+- **What**: ARM-only software PLL replaces the broken FPGA DDR3 vsync feedback approach. SCHED_FIFO real-time scheduling (priority 49) + mlockall + hybrid sleep/busy-wait (1.5ms spin with ARM `yield` instruction) + adaptive phase correction (+250us after 3 consecutive late frames, -250us decay after 60 on-time frames, capped at 2ms). SPU audio thread self-boosts to SCHED_FIFO priority 50 to prevent priority inversion on the shared soundLock mutex.
+- **Why**: The FPGA DDR3 feedback approach produced broken video on all builds (Quartus fitter placement shift from 73 new signal routes). With the PLL matched to 1.4 µHz, frequency tracking is unnecessary — only OS scheduling jitter needs compensation. See `docs/archive/research-vsync-feedback-fpga-bug.md` for the full FPGA bug analysis.
+- **Impact**: Eliminates sporadic frame stutter from OS scheduling jitter without any FPGA changes. Audio stays clean during heavy scenes via RT priority layering.
+- **Commit**: `e65b51a8`
+- **Files**: `src/port/sdl/sdl_app.c`, `src/port/sound/spu.c`
 
 ### 8.4 Stale Texture Comparison Removal
 
@@ -425,7 +425,7 @@ These commits do not directly improve performance but were essential for identif
 | 7.1 | Batch sprite submission | Submission | Eliminates 4+ indirection levels | `5d603873` |
 | 8.1 | ARM frame pacing match | Timing | Eliminates 26-second stutter | `ab80248a` |
 | 8.2 | Dedicated video PLL (59.5993 Hz) | Timing | 245x more accurate frame rate | `dbcf340e` |
-| 8.3 | Vsync feedback via DDR3 shared memory | Timing | Eliminates OS jitter stutter | `6e334f53` |
+| 8.3 | Software PLL frame pacer | Timing | Eliminates OS jitter stutter | `e65b51a8` |
 | 8.4 | Stale texture comparison removal | Texture | 0.5-3ms/frame on animated stages | `9e7d69ee` |
 | 8.5 | ARM clock management (user-selectable overclock) | System | ~50% CPU headroom at 1200MHz | `e510bc42` |
 | 9.1 | Texture group load race → skip frame | Stability | Eliminates SIGABRT crash in attract mode at 800MHz | |

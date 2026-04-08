@@ -1,7 +1,7 @@
 # Software PLL Frame Pacer — Implementation Plan
 
 **Date:** 2026-04-08
-**Status:** Planning
+**Status:** Implemented (commit e65b51a8)
 **Approach:** ARM-only software PLL — zero FPGA changes
 
 ## Background

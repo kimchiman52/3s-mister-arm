@@ -1,6 +1,6 @@
 # Frame Pacing Fix: PLL Retune + Vsync Feedback
 
-**Status:** Both parts implemented. Part 1: `dbcf340e`. Part 2: `6e334f53`.
+**Status:** Part 1 deployed. Part 2 replaced by software PLL (see plan-software-pll-frame-pacer.md).
 
 Two-part fix for frame stutter on the FPGA native video path via direct video.
 
@@ -14,9 +14,12 @@ additional sporadic stale frames.
 - **Part 1 — PLL Retune:** Change the PLL from 31.25 MHz (div4) to 15.581 MHz
   (div2), producing 59.59949 Hz — a 34,000x improvement in frequency accuracy.
   Eliminates the systematic drift entirely.
-- **Part 2 — Vsync Feedback:** Add a DDR3 feedback channel from FPGA to ARM so
-  the ARM can phase-lock its frame delivery to actual FPGA vblank timing.
-  Eliminates stutter from OS scheduling jitter.
+- **Part 2 — ~~Vsync Feedback~~ Software PLL:** The FPGA DDR3 feedback approach
+  produced broken video on all builds (see research-vsync-feedback-fpga-bug.md).
+  Replaced with an ARM-only software PLL: SCHED_FIFO + mlockall + hybrid
+  sleep/busy-wait + phase tracking. Audio thread boosted to priority 50 to
+  prevent priority inversion on shared soundLock mutex. See
+  plan-software-pll-frame-pacer.md for details.
 
 ---
 
