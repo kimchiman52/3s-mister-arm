@@ -63,9 +63,11 @@ this custom video mode:
      vga_scaler=1
      video_mode=384,22,38,51,224,16,3,21,7788
 
-This routes through the MiSTer scaler at 384x224 NTSC timing. If your
-CRT expects composite sync, also add composite_sync=1 to the [3SX]
-section. Note: vga_scaler=1 disables S-Video color output.
+Then open the OSD (F12) and set "Aspect Ratio" to "Full". This routes
+through the MiSTer scaler at native 384x224 NTSC timing without pixel
+resampling. If your CRT expects composite sync, also add
+composite_sync=1 to the [3SX] section. Note: vga_scaler=1 disables
+S-Video color output.
 
 
 

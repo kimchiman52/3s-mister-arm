@@ -198,10 +198,13 @@ assign CE_PIXEL = ce_pix_div4;
 
 assign VGA_SL = 0;
 assign VGA_F1 = 0;
-// CPS3 was designed for 4:3 CRT monitors. Tells ASCAL to pillarbox on 16:9.
-// Only affects HDMI output; analog and direct_video are unaffected.
-assign VIDEO_ARX = 13'd4;
-assign VIDEO_ARY = 13'd3;
+// CPS3 was designed for 4:3 CRT monitors.  Tells ASCAL to pillarbox on 16:9.
+// "Full" (status[12]=1) sends ARX=0/ARY=0 so the scaler fills the display
+// without resampling — needed for clean pixels when vga_scaler=1 routes
+// analog output through ASCAL.  Has no effect on direct analog (vga_scaler=0).
+wire ar_full = status[12];
+assign VIDEO_ARX = ar_full ? 13'd0 : 13'd4;
+assign VIDEO_ARY = ar_full ? 13'd0 : 13'd3;
 assign VGA_SCALER= 0;
 assign VGA_DISABLE = 0;
 
@@ -225,6 +228,7 @@ assign LED_POWER[0]= FB ? led[2] : act_cnt2[26] ? act_cnt2[25:18] > act_cnt2[7:0
 localparam CONF_STR = {
 	"MENU;UART31250,MIDI;",
 	"O[11:10],FPS Counter,Off,FPS,Debug;",
+	"O[12],Aspect Ratio,4:3,Full;",
 	"-;",
 	"O[14],SA Activation,Full,Cached BG;",
 	"O[15],SA Ghost Res,Full,Half;",
