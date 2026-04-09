@@ -1,11 +1,159 @@
 diff --git a/menu.cpp b/menu.cpp
-index a8d8bd8..c4e7f01 100644
+index a8d8bd8..04de3ac 100644
 --- a/menu.cpp
 +++ b/menu.cpp
-@@ -6610,5 +6610,5 @@ void HandleUI(void)
+@@ -120,6 +120,8 @@ enum MENU
+ 	MENU_LGCAL,
+ 	MENU_LGCAL1,
+ 	MENU_LGCAL2,
++	MENU_BTNCHECK,
++	MENU_BTNCHECK1,
+ 	MENU_PROHIB_BTPAIR2,
+ 
+ 	MENU_SCRIPTS_PRE,
+@@ -2468,6 +2470,12 @@ void HandleUI(void)
+ 							int ex = (p[0] == 't') || (p[0] == 'r');
+ 							if (user_io_status_bits(p + 1, &bit, 0, ex) == 1)
+ 							{
++								if (bit == 23 && p[0] == 'T')
++								{
++									menustate = MENU_BTNCHECK;
++								}
++								else
++								{
+ 								const char *opt = p + 1;
+ 								if (!bit && (is_x86() || is_pcxt()))
+ 								{
+@@ -2506,6 +2514,7 @@ void HandleUI(void)
+ 									menustate = MENU_GENERIC_MAIN1;
+ 									if (p[0] == 'R' || p[0] == 'r') menustate = MENU_NONE1;
+ 								}
++								}
+ 							}
+ 						}
+ 					}
+@@ -6608,7 +6617,7 @@ void HandleUI(void)
+ 		/* system menu */
+ 		/******************************************************************/
  	case MENU_SYSTEM1:
 -		if (video_fb_state())
 +		if (is_menu())
  		{
  			menustate = MENU_NONE1;
  			break;
+@@ -6851,6 +6860,115 @@ void HandleUI(void)
+ 		}
+ 		break;
+ 
++	case MENU_BTNCHECK:
++		helptext_idx = 0;
++		menumask = 0;
++		OsdSetSize(16);
++		OsdSetTitle("Button Check", 0);
++		for (int i = 0; i < OsdGetSize(); i++) OsdWrite(i);
++		input_btncheck_active = 1;
++		menustate = MENU_BTNCHECK1;
++		break;
++
++	case MENU_BTNCHECK1:
++		{
++			uint32_t masks[2];
++			input_get_joy_mask_raw(masks, 2);
++
++			for (int pl = 0; pl < 2; pl++)
++			{
++				uint32_t j = masks[pl];
++				int base = pl * 7;
++
++				sprintf(s, " P%d", pl + 1);
++				OsdWrite(base, s);
++				OsdWrite(base + 1);
++
++				// U + Sel + LP MP HP
++				{
++					char *w = s;
++					memcpy(w, "     ", 5); w += 5;
++					if (j & 0x08) *w++ = '\x0c';
++					*w++ = 'U';
++					if (j & 0x08) *w++ = '\x0c';
++					memcpy(w, "    ", 4); w += 4;
++					if (j & 0x400) *w++ = '\x0c';
++					memcpy(w, "Sel", 3); w += 3;
++					if (j & 0x400) *w++ = '\x0c';
++					memcpy(w, "    ", 4); w += 4;
++					if (j & 0x10) *w++ = '\x0c';
++					*w++ = 'L'; *w++ = 'P';
++					if (j & 0x10) *w++ = '\x0c';
++					*w++ = ' ';
++					if (j & 0x20) *w++ = '\x0c';
++					*w++ = 'M'; *w++ = 'P';
++					if (j & 0x20) *w++ = '\x0c';
++					*w++ = ' ';
++					if (j & 0x40) *w++ = '\x0c';
++					*w++ = 'H'; *w++ = 'P';
++					if (j & 0x40) *w++ = '\x0c';
++					*w = '\0';
++					OsdWrite(base + 2, s);
++				}
++
++				// L   R + Start
++				{
++					char *w = s;
++					memcpy(w, "   ", 3); w += 3;
++					if (j & 0x02) *w++ = '\x0c';
++					*w++ = 'L';
++					if (j & 0x02) *w++ = '\x0c';
++					memcpy(w, "   ", 3); w += 3;
++					if (j & 0x01) *w++ = '\x0c';
++					*w++ = 'R';
++					if (j & 0x01) *w++ = '\x0c';
++					memcpy(w, "  ", 2); w += 2;
++					if (j & 0x800) *w++ = '\x0c';
++					memcpy(w, "Start", 5); w += 5;
++					if (j & 0x800) *w++ = '\x0c';
++					*w = '\0';
++					OsdWrite(base + 3, s);
++				}
++
++				// D + LK MK HK
++				{
++					char *w = s;
++					memcpy(w, "     ", 5); w += 5;
++					if (j & 0x04) *w++ = '\x0c';
++					*w++ = 'D';
++					if (j & 0x04) *w++ = '\x0c';
++					memcpy(w, "           ", 11); w += 11;
++					if (j & 0x80) *w++ = '\x0c';
++					*w++ = 'L'; *w++ = 'K';
++					if (j & 0x80) *w++ = '\x0c';
++					*w++ = ' ';
++					if (j & 0x100) *w++ = '\x0c';
++					*w++ = 'M'; *w++ = 'K';
++					if (j & 0x100) *w++ = '\x0c';
++					*w++ = ' ';
++					if (j & 0x200) *w++ = '\x0c';
++					*w++ = 'H'; *w++ = 'K';
++					if (j & 0x200) *w++ = '\x0c';
++					*w = '\0';
++					OsdWrite(base + 4, s);
++				}
++			}
++
++			OsdWrite(5);
++			OsdWrite(6);
++			OsdWrite(12);
++			OsdWrite(13);
++			OsdWrite(14);
++			OsdWrite(15, "     Press Menu to close");
++
++			if (menu)
++			{
++				input_btncheck_active = 0;
++				menustate = MENU_GENERIC_MAIN1;
++			}
++		}
++		break;
++
+ 	case MENU_SCRIPTS_PRE:
+ 		OsdSetTitle("Warning!!!", 0);
+ 		helptext_idx = 0;

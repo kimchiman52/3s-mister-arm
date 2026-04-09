@@ -2088,7 +2088,11 @@ static void joy_digital(int jnum, uint32_t mask, uint32_t code, char press, int 
 		// on OSD exit and causes combinations to match when partial buttons are pressed.
 		if (!user_io_osd_is_visible()) osdbtn = 0;
 
-		if (user_io_osd_is_visible() || (bnum == BTN_OSD))
+		if (input_btncheck_active && bnum != BTN_OSD)
+		{
+			set_key_state(num, code, press, mask);
+		}
+		else if (user_io_osd_is_visible() || (bnum == BTN_OSD))
 		{
 			mask &= ~JOY_BTN3;
 			if (press)
@@ -3300,7 +3304,7 @@ static void input_cb(struct input_event *ev, struct input_absinfo *absinfo, int 
 					if (osd_event == 2) joy_digital(input[dev].num, 0, 0, 0, BTN_OSD);
 				}
 
-				if (user_io_osd_is_visible() || (video_fb_state() && !input_joy_passthrough))
+				if ((user_io_osd_is_visible() && !input_btncheck_active) || (video_fb_state() && !input_joy_passthrough))
 				{
 					if (ev->value <= 1)
 					{
@@ -5948,6 +5952,8 @@ void key_update_frames_held()
 }
 
 static uint32_t joy_mask_export[NUMPLAYERS] = {};
+static uint32_t joy_mask_raw[NUMPLAYERS] = {};
+int input_btncheck_active = 0;
 
 int input_poll(int getchar)
 {
@@ -6003,6 +6009,7 @@ int input_poll(int getchar)
 	for (int i = 0; i < NUMPLAYERS; i++) {
 		joy_mask[i] = build_joy_mask(i);
 		autofire_mask[i] = build_autofire_mask(i);
+		joy_mask_raw[i] = joy_mask[i];
 	}
 
 	if (grabbed)
@@ -6030,7 +6037,8 @@ int input_poll(int getchar)
 		{
 			if(joy_mask[i]) user_io_digital_joystick(i, 0, 1);
 		}
-		memset(key_states, 0, sizeof(key_states));
+		if (!input_btncheck_active)
+			memset(key_states, 0, sizeof(key_states));
 		memset(joy_mask_export, 0, sizeof(joy_mask_export));
 	}
 
@@ -6573,6 +6581,12 @@ void input_get_joy_mask(uint32_t *out, int count)
 {
 	for (int i = 0; i < count && i < NUMPLAYERS; i++)
 		out[i] = joy_mask_export[i];
+}
+
+void input_get_joy_mask_raw(uint32_t *out, int count)
+{
+	for (int i = 0; i < count && i < NUMPLAYERS; i++)
+		out[i] = joy_mask_raw[i];
 }
 
 void input_set_joy_passthrough(int enable)
