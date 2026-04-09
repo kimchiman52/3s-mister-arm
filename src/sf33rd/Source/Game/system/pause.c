@@ -16,8 +16,12 @@
 #include "sf33rd/Source/Game/system/reset.h"
 #include "sf33rd/Source/Game/system/work_sys.h"
 #include "sf33rd/Source/Game/ui/sc_sub.h"
+#include "port/sdl/sdl_app.h"
+
+#define PAUSE_HOLD_FRAMES 105
 
 u8 PAUSE_X;
+static u16 start_hold_counter[2];
 
 void Pause_Task(struct _TASK* task_ptr);
 
@@ -52,8 +56,24 @@ void Pause_Task(struct _TASK* task_ptr) {
 void Pause_Check(struct _TASK* task_ptr) {
     PAUSE_X = 0;
 
-    if (Check_Pause_Term(~PLsw[0][1] & PLsw[0][0], 0) == 0) {
-        Check_Pause_Term(~PLsw[1][1] & PLsw[1][0], 1);
+    if (SDLApp_IsArcadeGameMode()) {
+        for (int i = 0; i < 2; i++) {
+            if (PLsw[i][0] & SWK_START) {
+                if (start_hold_counter[i] <= PAUSE_HOLD_FRAMES)
+                    start_hold_counter[i]++;
+            } else {
+                start_hold_counter[i] = 0;
+            }
+
+            if (start_hold_counter[i] == PAUSE_HOLD_FRAMES) {
+                if (Check_Pause_Term(SWK_START, i) != 0)
+                    break;
+            }
+        }
+    } else {
+        if (Check_Pause_Term(~PLsw[0][1] & PLsw[0][0], 0) == 0) {
+            Check_Pause_Term(~PLsw[1][1] & PLsw[1][0], 1);
+        }
     }
 
     switch (PAUSE_X) {
