@@ -95,6 +95,7 @@ static volatile sig_atomic_t super_effect_quality_cycle_requested = 0;
 static volatile sig_atomic_t ghost_resolution_cycle_requested = 0;
 static volatile sig_atomic_t ghost_count_cycle_requested = 0;
 static volatile sig_atomic_t arm_clock_cycle_requested = 0;
+static volatile sig_atomic_t game_mode_cycle_requested = 0;
 
 static u8* mppMalloc(u32 size) {
     return flAllocMemory(size);
@@ -126,6 +127,11 @@ static void on_shutdown_signal(int signo) {
         arm_clock_cycle_requested = 1;
         return;
     }
+
+    if (signo == SIGRTMIN + 3) {
+        game_mode_cycle_requested = 1;
+        return;
+    }
 #endif
 
     shutdown_signal = signo;
@@ -146,6 +152,7 @@ static void install_shutdown_signal_handlers() {
     sigaction(SIGRTMIN, &action, NULL);
     sigaction(SIGRTMIN + 1, &action, NULL);
     sigaction(SIGRTMIN + 2, &action, NULL);
+    sigaction(SIGRTMIN + 3, &action, NULL);
 #endif
 }
 
@@ -159,6 +166,7 @@ static void restore_shutdown_signal_handlers() {
     signal(SIGRTMIN, SIG_DFL);
     signal(SIGRTMIN + 1, SIG_DFL);
     signal(SIGRTMIN + 2, SIG_DFL);
+    signal(SIGRTMIN + 3, SIG_DFL);
 #endif
 }
 
@@ -515,6 +523,10 @@ static void handle_signal_requests() {
         arm_clock_cycle_requested = 0;
         SDLApp_CycleArmClock();
     }
+    if (game_mode_cycle_requested != 0) {
+        game_mode_cycle_requested = 0;
+        SDLApp_CycleGameMode();
+    }
 }
 
 static int loop() {
@@ -533,6 +545,7 @@ static int loop() {
     ghost_resolution_cycle_requested = 0;
     ghost_count_cycle_requested = 0;
     arm_clock_cycle_requested = 0;
+    game_mode_cycle_requested = 0;
 
 #if ENABLE_PERF_TELEMETRY
     if (configuration.perf.frame_count > 0 && !configuration.perf.basic_mode &&

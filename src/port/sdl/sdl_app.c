@@ -160,6 +160,7 @@ int ghost_count_max = 4;
 /* arm_clock: ARM CPU clock mode (0=stock 800MHz, 1=1000MHz, 2=1200MHz).
    Applied via sysfs scaling_max_freq.  Reset to stock on exit. */
 static int arm_clock_mode = 0;
+static bool game_mode_arcade = false;
 #if defined(PORT_MISTER)
 /* Native video: RGB565 scratch buffer for ARGB8888-to-RGB565 conversion.
    384 * 224 * 2 = 172,032 bytes.  Sits in cached ARM memory so the conversion
@@ -9616,6 +9617,59 @@ void SDLApp_CycleArmClock(void) {
     backend_logf("ARM clock: %s (applies on restart)", arm_clock_mode_label(arm_clock_mode));
 }
 
+static void init_game_mode(void) {
+    const char* raw_value = Config_GetString(CFG_KEY_GAME_MODE);
+    if (raw_value != NULL && SDL_strcasecmp(raw_value, "arcade") == 0) {
+        game_mode_arcade = true;
+    } else {
+        game_mode_arcade = false;
+    }
+}
+
+void SDLApp_CycleGameMode(void) {
+    /* Re-read game-mode from the config file on disk.  The wrapper writes
+       the file on every OSD click before sending the signal, so reading it
+       back is always in sync with what the OSD displays. */
+    const char* pref_path = Paths_GetPrefPath();
+    char* config_path = NULL;
+    SDL_asprintf(&config_path, "%sconfig", pref_path);
+    if (config_path != NULL) {
+        FILE* f = fopen(config_path, "r");
+        if (f != NULL) {
+            char line[256];
+            while (fgets(line, sizeof(line), f) != NULL) {
+                /* Look for "game-mode = <value>" */
+                char* eq = SDL_strchr(line, '=');
+                if (eq == NULL) continue;
+                *eq = '\0';
+                /* Trim key */
+                char* key = line;
+                while (*key == ' ' || *key == '\t') key++;
+                char* key_end = key + SDL_strlen(key);
+                while (key_end > key && (key_end[-1] == ' ' || key_end[-1] == '\t')) key_end--;
+                *key_end = '\0';
+                if (SDL_strcmp(key, "game-mode") != 0) continue;
+                /* Trim value */
+                char* val = eq + 1;
+                while (*val == ' ' || *val == '\t') val++;
+                char* val_end = val + SDL_strlen(val);
+                while (val_end > val && (val_end[-1] == ' ' || val_end[-1] == '\t' ||
+                       val_end[-1] == '\n' || val_end[-1] == '\r')) val_end--;
+                *val_end = '\0';
+                game_mode_arcade = (SDL_strcasecmp(val, "arcade") == 0);
+                break;
+            }
+            fclose(f);
+        }
+        SDL_free(config_path);
+    }
+    backend_logf("Game mode: %s", game_mode_arcade ? "arcade" : "console");
+}
+
+bool SDLApp_IsArcadeGameMode(void) {
+    return game_mode_arcade;
+}
+
 static bool init_window() {
     SDL_WindowFlags window_flags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY;
 
@@ -9747,6 +9801,7 @@ int SDLApp_FullInit() {
     init_ghost_resolution_mode();
     init_ghost_count_max();
     init_arm_clock();
+    init_game_mode();
     init_show_fps_overlay();
 
     if (!SDL_Init(SDL_INIT_GAMEPAD)) {

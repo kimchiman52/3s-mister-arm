@@ -26,6 +26,8 @@ int SDLApp_GetGhostCountMax(void);
 void SDLApp_CycleGhostCountMax(void);
 int SDLApp_GetArmClock(void);
 void SDLApp_CycleArmClock(void);
+void SDLApp_CycleGameMode(void);
+bool SDLApp_IsArcadeGameMode(void);
 
 static inline bool SDLApp_HasPerfTelemetry(void) {
     return ENABLE_PERF_TELEMETRY != 0;

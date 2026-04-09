@@ -64,6 +64,7 @@ constexpr int kRuntimeSuperEffectQualityCycleSignal = SIGUSR2;
 #define kRuntimeGhostResolutionCycleSignal (SIGRTMIN)
 #define kRuntimeGhostCountCycleSignal (SIGRTMIN + 1)
 #define kRuntimeArmClockCycleSignal (SIGRTMIN + 2)
+#define kRuntimeGameModeCycleSignal (SIGRTMIN + 3)
 
 enum RuntimeScaleModeMenu
 {
@@ -105,6 +106,13 @@ enum RuntimeArmClockMenu
 	kArmClockMenuCount
 };
 
+enum RuntimeGameModeMenu
+{
+	kGameModeConsole = 0,
+	kGameModeArcade,
+	kGameModeMenuCount
+};
+
 enum FpsOverlayMode
 {
 	kFpsOverlayOff = 0,
@@ -120,6 +128,7 @@ int g_wrapper_ghost_resolution = kGhostResolutionFull;
 int g_wrapper_ghost_count = kGhostCount4;
 int g_wrapper_arm_clock = kArmClockStock;
 int g_wrapper_arm_clock_active = kArmClockStock;
+int g_wrapper_game_mode = kGameModeConsole;
 int g_wrapper_restart_requested = 0;
 int g_wrapper_used_full_user_io_init = 0;
 static bool g_native_video_mode = false;
@@ -153,6 +162,7 @@ static const RuntimeConfigDefaultEntry kRuntimeGeneratedDefaults[] = {
 	{ "show-fps", "false" },
 	{ "video-driver-order", "dummy" },
 	{ "render-driver-order", "software" },
+	{ "game-mode", "console" },
 };
 
 void write_log_line(FILE *file, const char *fmt, ...);
@@ -994,6 +1004,90 @@ bool write_runtime_arm_clock_default(int mode)
 	return true;
 }
 
+int read_runtime_game_mode_default()
+{
+	char value[64] = {};
+	if (!read_runtime_config_value("game-mode", value, sizeof(value))) return kGameModeConsole;
+
+	if (!strcasecmp(value, "arcade")) return kGameModeArcade;
+	return kGameModeConsole;
+}
+
+static const char *runtime_game_mode_config_value(int mode)
+{
+	switch (mode)
+	{
+	case kGameModeArcade: return "arcade";
+	default: return "console";
+	}
+}
+
+bool write_runtime_game_mode_default(int mode)
+{
+	char path[PATH_MAX] = {};
+	char temp_path[PATH_MAX] = {};
+	snprintf(path, sizeof(path), "%s/config", kRuntimeHome);
+	snprintf(temp_path, sizeof(temp_path), "%s/config.tmp", kRuntimeHome);
+
+	FILE *in = fopen(path, "r");
+	FILE *out = fopen(temp_path, "w");
+	if (!out)
+	{
+		if (in) fclose(in);
+		return false;
+	}
+
+	bool wrote_value = false;
+	char line[256] = {};
+	if (in)
+	{
+		while (fgets(line, sizeof(line), in))
+		{
+			char inspect[256] = {};
+			snprintf(inspect, sizeof(inspect), "%s", line);
+
+			char *cursor = inspect;
+			while (*cursor && isspace((unsigned char)*cursor)) cursor++;
+			if (*cursor == '#')
+			{
+				fputs(line, out);
+				continue;
+			}
+
+			char *equals = strchr(cursor, '=');
+			if (equals)
+			{
+				*equals = 0;
+				trim_in_place(cursor);
+				if (!strcasecmp(cursor, "game-mode"))
+				{
+					fprintf(out, "game-mode = %s\n", runtime_game_mode_config_value(mode));
+					wrote_value = true;
+					continue;
+				}
+			}
+
+			fputs(line, out);
+		}
+
+		fclose(in);
+	}
+
+	if (!wrote_value)
+	{
+		fprintf(out, "\ngame-mode = %s\n", runtime_game_mode_config_value(mode));
+	}
+
+	if (fclose(out) != 0) return false;
+	if (rename(temp_path, path) != 0)
+	{
+		remove(temp_path);
+		return false;
+	}
+
+	return true;
+}
+
 StartupScaleModeSelection resolve_startup_scale_mode()
 {
 	StartupScaleModeSelection selection = {};
@@ -1196,6 +1290,7 @@ void poll_status_changes(pid_t child)
 	static uint32_t prev_ghost_res = 0xFFFFFFFF;
 	static uint32_t prev_ghost_count = 0xFFFFFFFF;
 	static uint32_t prev_arm_clock = 0xFFFFFFFF;
+	static uint32_t prev_game_mode = 0xFFFFFFFF;
 
 	// --- Option bits: detect changes and apply ---
 
@@ -1275,6 +1370,17 @@ void poll_status_changes(pid_t child)
 		}
 	}
 
+	uint32_t game_mode = user_io_status_get("[13]");
+	if (game_mode != prev_game_mode) {
+		prev_game_mode = game_mode;
+		int target = (int)game_mode;
+		if (target != g_wrapper_game_mode) {
+			write_runtime_game_mode_default(target);
+			g_wrapper_game_mode = target;
+			kill(child, kRuntimeGameModeCycleSignal);
+		}
+	}
+
 	// --- T-type triggers (Reset/Restart) ---
 	// HandleUI() pulses T bits (set 1 then 0) within a single call.
 	// user_io_status_trigger_take() captures the pulse via a sticky flag
@@ -1288,11 +1394,13 @@ void poll_status_changes(pid_t child)
 		user_io_status_set("[15]", 0);    // Ghost Res = Full (enum 0)
 		user_io_status_set("[18:16]", kGhostCount4); // Ghost Count default=4
 		user_io_status_set("[20:19]", 0); // Overclock = Stock
+		user_io_status_set("[13]", 0);    // Game Mode = Console
 		prev_fps = 0xFFFFFFFF;
 		prev_sa_activation = 0xFFFFFFFF;
 		prev_ghost_res = 0xFFFFFFFF;
 		prev_ghost_count = 0xFFFFFFFF;
 		prev_arm_clock = 0xFFFFFFFF;
+		prev_game_mode = 0xFFFFFFFF;
 	}
 
 	if (triggers & (1u << 22)) {
@@ -1527,6 +1635,7 @@ int threesx_wrapper_run(int argc, char *argv[])
 	g_wrapper_ghost_count = read_runtime_ghost_count_default();
 	g_wrapper_arm_clock = read_runtime_arm_clock_default();
 	g_wrapper_arm_clock_active = g_wrapper_arm_clock;
+	g_wrapper_game_mode = read_runtime_game_mode_default();
 	g_wrapper_restart_requested = 0;
 	g_wrapper_signal = 0;
 

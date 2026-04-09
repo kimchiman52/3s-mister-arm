@@ -1,6 +1,7 @@
 #include "sf33rd/Source/Game/game.h"
 #include "common.h"
 #include "main.h"
+#include "port/sdl/sdl_app.h"
 #include "port/utils.h"
 #include "sf33rd/AcrSDK/common/pad.h"
 #include "sf33rd/Source/Common/PPGWork.h"
@@ -252,11 +253,18 @@ void Game0_2() {
 
     case 5:
         FadeOut(1, 0xFF, 8);
-        BGM_Request(65);
         G_No[1] = 0xC;
-        G_No[2] = 0;
         G_No[3] = 0;
-        cpReadyTask(TASK_MENU, Menu_Task);
+        BGM_Request(65);
+        if (SDLApp_IsArcadeGameMode()) {
+            Mode_Type = MODE_ARCADE;
+            Decide_PL(Champion);
+            G_No[2] = 1;
+        } else {
+            BGM_Request(65);
+            G_No[2] = 0;
+            cpReadyTask(TASK_MENU, Menu_Task);
+        }
         break;
     }
 }
@@ -1599,6 +1607,25 @@ void Game11() {
 void Loop_Demo(struct _TASK* /* unused */) {
     if (Ck_Coin()) {
         Next_Title_Sub();
+
+        // Arcade game mode: skip the title screen and land directly on
+        // the character select transition. Next_Title_Sub leaves us at
+        // Game00 with TASK_ENTRY running; reroute to Game12 with the
+        // same state Game0_2 case 5 would produce for arcade mode, and
+        // perform the texture teardown that Game0_2 cases 3-4 do.
+        if (SDLApp_IsArcadeGameMode()) {
+            TexRelease(601);
+            title_tex_flag = 0;
+            Purge_mmtm_area(2);
+            Make_texcash_of_list(2);
+            G_No[1] = 12;
+            G_No[2] = 1;
+            Mode_Type = MODE_ARCADE;
+            Decide_PL(Champion);
+            BGM_Request(65);
+            cpExitTask(TASK_ENTRY);
+        }
+
         return;
     }
 
@@ -1818,12 +1845,15 @@ s16 Ck_Coin() {
     s16 PL_id;
 
     switch (G_No[3]) {
-    case 0:
+    case 0: {
+        // Arcade game mode accepts only START to leave attract mode.
+        // Menu mode also accepts attack buttons (legacy coin-insert feel).
+        u32 coin_buttons = SDLApp_IsArcadeGameMode() ? SWK_START : (SWK_START | SWK_ATTACKS);
         PL_id = -1;
 
-        if (~p1sw_1 & p1sw_0 & (SWK_START | SWK_ATTACKS)) {
+        if (~p1sw_1 & p1sw_0 & coin_buttons) {
             PL_id = 0;
-        } else if (~p2sw_1 & p2sw_0 & (SWK_START | SWK_ATTACKS)) {
+        } else if (~p2sw_1 & p2sw_0 & coin_buttons) {
             PL_id = 1;
         }
 
@@ -1840,6 +1870,7 @@ s16 Ck_Coin() {
         plw[PL_id ^ 1].wu.operator = 0;
         Operator_Status[PL_id ^ 1] = 0;
         return 0;
+    }
 
     default:
     case 1:

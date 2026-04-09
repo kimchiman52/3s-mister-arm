@@ -7,6 +7,7 @@
 #include "common.h"
 #include "constants.h"
 #include "main.h"
+#include "port/sdl/sdl_app.h"
 #include "sf33rd/AcrSDK/common/pad.h"
 #include "sf33rd/Source/Game/debug/Debug.h"
 #include "sf33rd/Source/Game/effect/effa2.h"
@@ -155,7 +156,11 @@ void Disp_00_0() {
         return;
     }
 
-    SSPutStr(16, Insert_Y, 9, "PRESS ANY BUTTON", 2);
+    if (SDLApp_IsArcadeGameMode()) {
+        SSPutStr(19, Insert_Y, 9, "FREE PLAY", 2);
+    } else {
+        SSPutStr(16, Insert_Y, 9, "PRESS ANY BUTTON", 2);
+    }
 
     if (!(G_No[1] == 3 || G_No[1] == 5)) {
         return;
@@ -176,10 +181,13 @@ void Entry_01() {
     case 1:
         Entry_00();
 
-        if (~p1sw_1 & p1sw_0 & (SWK_START | SWK_ATTACKS)) {
-            Entry_01_Sub(0);
-        } else if (~p2sw_1 & p2sw_0 & (SWK_START | SWK_ATTACKS)) {
-            Entry_01_Sub(1);
+        {
+            u32 entry_buttons = SDLApp_IsArcadeGameMode() ? SWK_START : (SWK_START | SWK_ATTACKS);
+            if (~p1sw_1 & p1sw_0 & entry_buttons) {
+                Entry_01_Sub(0);
+            } else if (~p2sw_1 & p2sw_0 & entry_buttons) {
+                Entry_01_Sub(1);
+            }
         }
 
         break;
@@ -207,6 +215,12 @@ void Entry_01_Sub(s16 PL_id) {
     Operator_Status[PL_id ^ 1] = 0;
     Ignore_Entry[0] = 0;
     Ignore_Entry[1] = 0;
+    // In arcade game mode, play the coin-insert SE that Next_Title_Sub
+    // plays on attract-start-press. Console mode already heard it during
+    // the attract -> title transition and shouldn't hear it a second time.
+    if (SDLApp_IsArcadeGameMode()) {
+        SsRequest(106);
+    }
 
     if (Continue_Coin[PL_id] == 0) {
         grade_check_work_1st_init(PL_id, 0);
