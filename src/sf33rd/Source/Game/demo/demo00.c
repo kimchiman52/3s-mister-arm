@@ -119,6 +119,7 @@ s32 CAPCOM_Logo() {
     case 0:
         D_No[1] += 1;
         checkAdxFileLoaded();
+        preloadIntroBgm();
         checkSelObjFileLoaded();
         break;
 

@@ -14,6 +14,7 @@ void Init_sound_system();
 s32 sndCheckVTransStatus(s32 type);
 void sndInitialLoad();
 void checkAdxFileLoaded();
+void preloadIntroBgm();
 void Exit_sound_system();
 void Init_bgm_work();
 void sound_all_off();

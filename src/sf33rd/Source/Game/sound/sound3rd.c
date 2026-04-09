@@ -6,6 +6,7 @@
 #include "sf33rd/Source/Game/sound/sound3rd.h"
 #include "common.h"
 #include "main.h"
+#include "port/io/afs.h"
 #include "port/sound/adx.h"
 #include "sf33rd/AcrSDK/MiddleWare/PS2/CapSndEng/cse.h"
 #include "sf33rd/AcrSDK/MiddleWare/PS2/CapSndEng/emlMemMap.h"
@@ -27,6 +28,7 @@
 #include "structs.h"
 
 #include <SDL3/SDL.h>
+#include <stdlib.h>
 
 #define ADX_STM_WORK_SIZE 252388
 
@@ -45,6 +47,8 @@ s8* sdbd[3];
 u8 adx_VS[198954];
 u8 adx_EmSel[391168];
 s8 adx_stm_work[ADX_STM_WORK_SIZE];
+static u8* adx_IntroBgm = NULL;
+static int adx_IntroBgm_size = 0;
 
 BGMTableEntry bgm_tableDC[68] = {
     { 0, 0, 0 },         { 16384, 58, 572 },  { 16385, 64, 588 },  { 16386, 64, 598 },  { 16387, 60, 616 },
@@ -189,7 +193,29 @@ void checkAdxFileLoaded() {
     adx_NowOnMemoryType = sys_w.bgm_type;
 }
 
+void preloadIntroBgm() {
+    if (adx_IntroBgm != NULL) {
+        return;
+    }
+
+    int fnum = bgm_table[sys_w.bgm_type][67].fnum;
+    unsigned int file_size = fsGetFileSize(fnum);
+    size_t buff_size = (file_size + 2048 - 1) & ~(2048 - 1);
+    adx_IntroBgm = (u8*)malloc(buff_size);
+    adx_IntroBgm_size = (int)file_size;
+
+    AFSHandle handle = AFS_Open(fnum);
+    AFS_ReadSync(handle, fsCalSectorSize(file_size), adx_IntroBgm);
+    AFS_Close(handle);
+}
+
 void Exit_sound_system() {
+    if (adx_IntroBgm != NULL) {
+        free(adx_IntroBgm);
+        adx_IntroBgm = NULL;
+        adx_IntroBgm_size = 0;
+    }
+
     if (system_init_level & 2) {
         ADX_Exit();
         system_init_level &= ~2;
@@ -361,19 +387,27 @@ void BGM_Server() {
             if (adx_NowOnMemoryType == sys_w.bgm_type) {
                 switch (bgm_exe.code) {
                 case 0x33:
-                    ADX_StartMem(adx_VS, sizeof(adx_VS));
+                    ADX_LoadMem(adx_VS, sizeof(adx_VS));
                     break;
 
                 case 0x39:
-                    ADX_StartMem(adx_EmSel, sizeof(adx_EmSel));
+                    ADX_LoadMem(adx_EmSel, sizeof(adx_EmSel));
                     break;
 
                 default:
-                    bgm_play_request(bgm_exe.code, 1);
+                    if (bgm_exe.code == 67 && adx_IntroBgm != NULL) {
+                        ADX_LoadMem(adx_IntroBgm, adx_IntroBgm_size);
+                    } else {
+                        ADX_LoadAfs(bgm_table[sys_w.bgm_type][bgm_exe.code].fnum);
+                    }
                     break;
                 }
             } else {
-                bgm_play_request(bgm_exe.code, 1);
+                if (bgm_exe.code == 67 && adx_IntroBgm != NULL) {
+                    ADX_LoadMem(adx_IntroBgm, adx_IntroBgm_size);
+                } else {
+                    ADX_LoadAfs(bgm_table[sys_w.bgm_type][bgm_exe.code].fnum);
+                }
             }
         }
 

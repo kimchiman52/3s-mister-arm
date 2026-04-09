@@ -763,6 +763,20 @@ void ADX_StartAfs(int file_id) {
     ADX_Pause(false);
 }
 
+void ADX_LoadAfs(int file_id) {
+    ADX_Stop();
+    ADXTrack* track = alloc_track();
+    track_init(track, file_id, NULL, 0, true);
+    ADX_Pause(true);
+}
+
+void ADX_LoadMem(void* buf, size_t size) {
+    ADX_Stop();
+    ADXTrack* track = alloc_track();
+    track_init(track, -1, buf, size, true);
+    ADX_Pause(true);
+}
+
 void ADX_SetOutVol(int volume) {
     const float gain = powf(10.0f, volume / 200.0f);
 
