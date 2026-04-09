@@ -5493,14 +5493,14 @@ void Training_Exit_Sub(struct _TASK* task_ptr) {
 void Character_Change(struct _TASK* task_ptr) {
     s16 ix;
 
-    if (Is_Training_Mode(Mode_Type)) {
-        TrainingConfig_Save();
-    }
     Training_Menu_From_Pause = TRAINING_MENU_DIRECT;
 
     if (Check_Pad_in_Pause(task_ptr) == 0) {
         switch (task_ptr->r_no[2]) {
         case 0:
+            if (Is_Training_Mode(Mode_Type)) {
+                TrainingConfig_Save();
+            }
             task_ptr->r_no[2]++;
             task_ptr->timer = 0xA;
             Game_pause = 0x81;

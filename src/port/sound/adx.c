@@ -80,6 +80,12 @@ typedef struct ADXTrack {
 #else
     ADXBuiltinDecoder decoder;
 #endif
+    /* Async loading state — when loading is true, the track's AFS read
+       is in flight and the decoder has not been initialized yet. */
+    bool loading;
+    bool deferred_looping;
+    bool deferred_auto_play;
+    AFSHandle afs_handle;
 } ADXTrack;
 
 static SDL_AudioStream* stream = NULL;
@@ -360,17 +366,57 @@ static int decode_samples(ADXBuiltinDecoder* decoder, const uint8_t* data, int d
 }
 #endif
 
-static void* load_file(int file_id, int* size) {
+static void loop_info_init(ADXLoopInfo* info, const uint8_t* data);
+static void loop_info_destroy(ADXLoopInfo* info);
+static void process_track(ADXTrack* track);
+
+static void track_start_async_load(ADXTrack* track, int file_id, bool looping_allowed, bool auto_play) {
     const unsigned int file_size = fsGetFileSize(file_id);
-    *size = (int)file_size;
     const size_t buff_size = (file_size + 2048 - 1) & ~(2048 - 1);
-    void* buff = malloc(buff_size);
 
-    AFSHandle handle = AFS_Open(file_id);
-    AFS_ReadSync(handle, fsCalSectorSize(file_size), buff);
-    AFS_Close(handle);
+    track->data = malloc(buff_size);
+    track->size = (int)file_size;
+    track->should_free_data_after_use = true;
+    track->loading = true;
+    track->deferred_looping = looping_allowed;
+    track->deferred_auto_play = auto_play;
+    track->afs_handle = AFS_Open(file_id);
 
-    return buff;
+    AFS_Read(track->afs_handle, fsCalSectorSize(file_size), track->data);
+}
+
+static void track_setup_decoder(ADXTrack* track, bool looping_allowed) {
+    track->used_bytes = 0;
+
+#if defined(ENABLE_FFMPEG_ADX)
+    pipeline_init(&track->pipeline);
+#else
+    if (!decoder_init(&track->decoder, track->data, track->size)) {
+        fatal_error("Failed to initialize in-tree ADX decoder.");
+    }
+
+    if (num_tracks == 1 && track->decoder.sample_rate != output_sample_rate) {
+        create_audio_stream(track->decoder.sample_rate);
+    }
+#endif
+
+    if (looping_allowed) {
+        loop_info_init(&track->loop_info, track->data);
+    }
+
+    process_track(track);
+}
+
+static void track_finalize_async_load(ADXTrack* track) {
+    AFS_Close(track->afs_handle);
+    track->afs_handle = AFS_NONE;
+    track->loading = false;
+
+    track_setup_decoder(track, track->deferred_looping);
+
+    if (track->deferred_auto_play) {
+        ADX_Pause(false);
+    }
 }
 
 static bool track_reached_eof(ADXTrack* track) {
@@ -398,6 +444,10 @@ static bool track_needs_decoding(ADXTrack* track) {
 }
 
 static bool track_exhausted(ADXTrack* track) {
+    if (track->loading) {
+        return false;
+    }
+
     if (track->loop_info.looping_enabled) {
         return false;
     }
@@ -488,6 +538,10 @@ static void loop_info_destroy(ADXLoopInfo* info) {
 }
 
 static void process_track(ADXTrack* track) {
+    if (track->loading) {
+        return;
+    }
+
 #if defined(ENABLE_FFMPEG_ADX)
     ADXDecoderPipeline* pipeline = &track->pipeline;
 #endif
@@ -586,42 +640,30 @@ static void process_track(ADXTrack* track) {
     }
 }
 
-static void track_init(ADXTrack* track, int file_id, void* buf, size_t buf_size, bool looping_allowed) {
+static void track_init(ADXTrack* track, int file_id, void* buf, size_t buf_size, bool looping_allowed, bool auto_play) {
     if (file_id == -1 && buf == NULL) {
         fatal_error("One of file_id or buf must be valid.");
     }
 
     if (file_id != -1) {
-        track->data = load_file(file_id, &track->size);
-        track->should_free_data_after_use = true;
-    } else {
-        track->data = buf;
-        track->size = (int)buf_size;
-        track->should_free_data_after_use = false;
+        track_start_async_load(track, file_id, looping_allowed, auto_play);
+        return;
     }
 
-    track->used_bytes = 0;
-
-#if defined(ENABLE_FFMPEG_ADX)
-    pipeline_init(&track->pipeline);
-#else
-    if (!decoder_init(&track->decoder, track->data, track->size)) {
-        fatal_error("Failed to initialize in-tree ADX decoder.");
-    }
-
-    if (num_tracks == 1 && track->decoder.sample_rate != output_sample_rate) {
-        create_audio_stream(track->decoder.sample_rate);
-    }
-#endif
-
-    if (looping_allowed) {
-        loop_info_init(&track->loop_info, track->data);
-    }
-
-    process_track(track);
+    track->data = buf;
+    track->size = (int)buf_size;
+    track->should_free_data_after_use = false;
+    track_setup_decoder(track, looping_allowed);
 }
 
 static void track_destroy(ADXTrack* track) {
+    if (track->loading) {
+        AFS_Stop(track->afs_handle);
+        AFS_Close(track->afs_handle);
+        track->afs_handle = AFS_NONE;
+        track->loading = false;
+    }
+
 #if defined(ENABLE_FFMPEG_ADX)
     pipeline_destroy(&track->pipeline);
 #endif
@@ -649,6 +691,49 @@ static ADXTrack* alloc_track() {
 }
 
 void ADX_ProcessTracks() {
+    if (num_tracks == 0) {
+        return;
+    }
+
+    /* Check for tracks whose async AFS read has completed. */
+    for (int i = 0; i < num_tracks; i++) {
+        const int j = (first_track_index + i) % TRACKS_MAX;
+        ADXTrack* track = &tracks[j];
+
+        if (!track->loading) {
+            continue;
+        }
+
+        const AFSReadState state = AFS_GetState(track->afs_handle);
+
+        if (state == AFS_READ_STATE_READING) {
+            continue;
+        }
+
+        if (state == AFS_READ_STATE_FINISHED) {
+            track_finalize_async_load(track);
+        } else {
+            /* Error or unexpected state — discard the track and
+               remove it from the circular queue. */
+            track_destroy(track);
+
+            for (int k = i; k < num_tracks - 1; k++) {
+                const int dst = (first_track_index + k) % TRACKS_MAX;
+                const int src = (first_track_index + k + 1) % TRACKS_MAX;
+                tracks[dst] = tracks[src];
+                SDL_zerop(&tracks[src]);
+            }
+
+            num_tracks--;
+
+            if (num_tracks == 0) {
+                first_track_index = 0;
+            }
+
+            i--;
+        }
+    }
+
     if (num_tracks == 0) {
         return;
     }
@@ -735,7 +820,7 @@ void ADX_StartMem(void* buf, size_t size) {
     ADX_Stop();
 
     ADXTrack* track = alloc_track();
-    track_init(track, -1, buf, size, true);
+    track_init(track, -1, buf, size, true, false);
     ADX_Pause(false);
 }
 
@@ -745,7 +830,7 @@ int ADX_GetNumFiles() {
 
 void ADX_EntryAfs(int file_id) {
     ADXTrack* track = alloc_track();
-    track_init(track, file_id, NULL, 0, false);
+    track_init(track, file_id, NULL, 0, false, false);
 }
 
 void ADX_StartSeamless() {
@@ -759,22 +844,19 @@ void ADX_StartAfs(int file_id) {
     ADX_Stop();
 
     ADXTrack* track = alloc_track();
-    track_init(track, file_id, NULL, 0, true);
-    ADX_Pause(false);
+    track_init(track, file_id, NULL, 0, true, true);
 }
 
 void ADX_LoadAfs(int file_id) {
     ADX_Stop();
     ADXTrack* track = alloc_track();
-    track_init(track, file_id, NULL, 0, true);
-    ADX_Pause(true);
+    track_init(track, file_id, NULL, 0, true, false);
 }
 
 void ADX_LoadMem(void* buf, size_t size) {
     ADX_Stop();
     ADXTrack* track = alloc_track();
-    track_init(track, -1, buf, size, true);
-    ADX_Pause(true);
+    track_init(track, -1, buf, size, true, false);
 }
 
 void ADX_SetOutVol(int volume) {
