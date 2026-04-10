@@ -142,7 +142,7 @@ static void print_config_entry_to_io(SDL_IOStream* io, const ConfigEntry* entry)
 static void write_defaults(const char* dst_path) {
     SDL_IOStream* io = SDL_IOFromFile(dst_path, "w");
     io_printf(io,
-              "# For the full list of settings see https://github.com/crowded-street/3s-mister-arm/blob/main/docs/config.md\n\n");
+              "# For the full list of settings see https://github.com/kimchiman52/3s-mister-arm/blob/main/docs/config.md\n\n");
 
     for (int i = 0; i < SDL_arraysize(default_entries); i++) {
         print_config_entry_to_io(io, &default_entries[i]);

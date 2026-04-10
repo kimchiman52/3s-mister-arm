@@ -8,6 +8,25 @@ audio buffering, and DAC conversion.
 This is an experimental release. Expect rough edges.
 
 
+UPGRADING FROM A PRE-RENAME BUILD
+---------------------------------
+
+This project was formerly "3SX MiSTer" and has been renamed to
+3s-mister-arm. The INI section, wrapper executable, and game data
+directory all changed. After extracting the new release:
+
+1. In /media/fat/MiSTer.ini, rename your [3SX] section to [3S-ARM]
+   and change main=MiSTer_3SX to main=MiSTer_3S-ARM.
+
+2. Move your game data from /media/fat/games/3sx/ to
+   /media/fat/games/3s-arm/ (most importantly resources/SF33RD.AFS).
+   Config, saves, and logs all live under this directory too.
+
+3. You can delete the old /media/fat/MiSTer_3SX wrapper and
+   /media/fat/_Other/3SX.rbf bitstream — the new release ships as
+   MiSTer_3S-ARM and 3S-ARM.rbf.
+
+
 REQUIREMENTS
 ------------
 
@@ -106,6 +125,6 @@ Full documentation, source code, and build instructions:
   https://github.com/kimchiman52/3s-mister-arm
 
 Upstream project:
-  https://github.com/crowded-street/3s-mister-arm
+  https://github.com/crowded-street/3sx
 
 This project is licensed under the GNU Affero General Public License v3.

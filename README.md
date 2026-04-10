@@ -2,15 +2,37 @@
 ### Based on [crowded-street/3sx](https://github.com/crowded-street/3sx) — a multiplatform port of *Street Fighter III: 3rd Strike* built from a PS2 decompilation
 
 > **Note:** This project was formerly known as "3SX MiSTer." It has been renamed to **3s-mister-arm** to make clear that this is an **independent MiSTer port** — it is ***NOT*** an official release by the 3sx team. For support, please use this project's issue tracker — the 3sx team's Discord is not the right place for 3s-mister-arm questions.
+>
+> **⚠️ Upgrading from a pre-rename build?** The INI section, wrapper
+> executable, and game data directory all changed. After extracting a
+> new release:
+>
+> 1. In `/media/fat/MiSTer.ini`, rename your `[3SX]` section to
+>    `[3S-ARM]` and change `main=MiSTer_3SX` to `main=MiSTer_3S-ARM`.
+> 2. Move your game data from `/media/fat/games/3sx/` to
+>    `/media/fat/games/3s-arm/` (most importantly
+>    `resources/SF33RD.AFS`). Your saves live under this directory too.
+> 3. You can delete the old `/media/fat/MiSTer_3SX` wrapper and
+>    `/media/fat/_Other/3SX.rbf` bitstream — the new release ships as
+>    `MiSTer_3S-ARM` and `3S-ARM.rbf`.
 
-A vibe-coded hybrid ARM + FPGA port of *Street Fighter III: 3rd Strike*
-running on the [MiSTer FPGA](https://mister-devel.github.io/MkDocs_MiSTer/)
-platform (DE10-Nano).
+A vibe-coded port of *Street Fighter III: 3rd Strike* running on the
+[MiSTer FPGA](https://mister-devel.github.io/MkDocs_MiSTer/) platform
+(DE10-Nano).
 
-The game logic and software rendering run on the ARM Cortex-A9, while custom
-FPGA modules handle video output timing, DDR3 framebuffer scanout, audio
-buffering, and DAC conversion — the same native video path used by every
-MiSTer FPGA core.
+**This is not an FPGA recreation of CPS3.** 100% of the game — all game
+logic, all rendering, all audio decode — runs as ARM software on the
+DE10-Nano's Cortex-A9, using the PS2 decompilation as its source. The
+FPGA side is only the video and audio *output* layer: it scans a
+framebuffer the ARM writes into DDR3 out to the analog DAC with
+cycle-exact 15 kHz NTSC timing, and buffers PCM samples out to the I2S
+DAC. This is the same native video/audio path every MiSTer core uses —
+the difference is that the pixels on the other end were rendered in
+software by a CPU instead of synthesized by FPGA logic.
+
+In other words: think of it as a Linux port of 3sx that happens to use
+the MiSTer FPGA as its display and audio hardware, not as a hybrid
+where "half the work" lives in the fabric.
 
 Based on a [decompilation](https://github.com/crowded-street/sfiii-decomp) of the
 PlayStation 2 port. Requires a legally obtained copy of *Street Fighter III: 3rd
@@ -45,9 +67,12 @@ Strike* or *Street Fighter Anniversary Collection* for PS2 to play.
 ## How It Works
 
 The MiSTer DE10-Nano is a Cyclone V SoC: a dual-core ARM Cortex-A9 at 800 MHz
-bolted to an FPGA fabric. Most MiSTer cores are pure FPGA — the game logic,
-rendering, and video output all happen in hardware. 3s-mister-arm takes a different
-approach:
+bolted to an FPGA fabric. Most MiSTer cores are pure FPGA — game logic,
+rendering, and video output all happen in hardware. 3s-mister-arm takes a
+different approach: **everything game-related runs as software on the ARM**,
+and the FPGA is used only for what it would do anyway on any other MiSTer
+core — driving the video and audio outputs. No game logic, no sprites, no
+tiles, and no blending live in the fabric.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
