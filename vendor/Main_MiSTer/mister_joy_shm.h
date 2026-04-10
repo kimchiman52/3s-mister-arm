@@ -3,8 +3,8 @@
 
 #include <stdint.h>
 
-#define MISTER_JOY_SHM_PATH "/dev/shm/threesx-joy"
-#define MISTER_JOY_SHM_MAGIC 0x334A5358   /* "3JSX" */
+#define MISTER_JOY_SHM_PATH "/dev/shm/thirdsarm-joy"
+#define MISTER_JOY_SHM_MAGIC 0x33534152   /* "3SAR" */
 #define MISTER_JOY_SHM_VERSION 1
 #define MISTER_JOY_MAX_PLAYERS 2
 

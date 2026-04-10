@@ -15,7 +15,7 @@ if [[ -z "$docker_bin" ]]; then
     exit 127
 fi
 
-CONTAINER="${CONTAINER:-3sx-mister-build}"
+CONTAINER="${CONTAINER:-3s-mister-arm-build}"
 
 cat <<'SRC' | "$docker_bin" exec -i "$CONTAINER" sh -lc '
 set -e

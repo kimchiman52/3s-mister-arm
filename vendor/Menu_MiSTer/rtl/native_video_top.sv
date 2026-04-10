@@ -6,7 +6,7 @@
 //  interface to menu.sv. Runs on CLK_VIDEO (31.1538 MHz) with integer
 //  divide-by-4 ce_pix for 7.7885 MHz effective pixel rate.
 //
-//  Copyright (C) 2026 3SX Project
+//  Copyright (C) 2026 3S-ARM Project
 //  Licensed under GNU General Public License v2+
 //
 //============================================================================

@@ -1,4 +1,4 @@
-#include "threesx_core_context.h"
+#include "thirdsarm_core_context.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -11,9 +11,9 @@
 
 namespace {
 
-constexpr const char *kCoreName = "3SX";
+constexpr const char *kCoreName = "3S-ARM";
 
-char g_core_name[32] = "3SX";
+char g_core_name[32] = "3S-ARM";
 
 const char *basename_ptr(const char *path)
 {
@@ -50,12 +50,12 @@ void set_error(char *error, size_t error_size, const char *message)
 
 }  // namespace
 
-int threesx_core_context_init(const char *rbf_path, char *error, size_t error_size)
+int thirdsarm_core_context_init(const char *rbf_path, char *error, size_t error_size)
 {
 	copy_core_name(g_core_name, sizeof(g_core_name), rbf_path);
 	if (strcasecmp(g_core_name, kCoreName))
 	{
-		set_error(error, error_size, "Expected core identity 3SX");
+		set_error(error, error_size, "Expected core identity 3S-ARM");
 		return -1;
 	}
 
@@ -66,7 +66,7 @@ int threesx_core_context_init(const char *rbf_path, char *error, size_t error_si
 	return 0;
 }
 
-const char *threesx_core_context_core_name()
+const char *thirdsarm_core_context_core_name()
 {
 	return g_core_name;
 }

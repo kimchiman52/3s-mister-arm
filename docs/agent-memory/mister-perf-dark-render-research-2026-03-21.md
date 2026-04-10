@@ -219,8 +219,8 @@ boundaries: `sdl_game_renderer.c` calls `SDLSoftwareFrame_RasterNonIntegerLookup
 
 **What to add** in `CMakeLists.txt`, inside the existing ARM hardening `if` block:
 ```cmake
-target_compile_options(3sx PRIVATE -flto=thin)
-target_link_options(3sx PRIVATE -flto=thin)
+target_compile_options(3s-arm PRIVATE -flto=thin)
+target_link_options(3s-arm PRIVATE -flto=thin)
 ```
 
 **Risk:** Low-medium. Need to verify linker compatibility in Docker build. Run parity check before

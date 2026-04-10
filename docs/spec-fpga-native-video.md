@@ -915,9 +915,9 @@ if((native_vid_active & core_vs_edge) | (~native_vid_active & hdmi_vs_edge))
 
 This ensures the ARM unblocks on the correct vsync for the active video path.
 
-### 4.4 Changes in threesx_wrapper.cpp
+### 4.4 Changes in thirdsarm_wrapper.cpp
 
-**File**: `vendor/Main_MiSTer/threesx_wrapper.cpp`
+**File**: `vendor/Main_MiSTer/thirdsarm_wrapper.cpp`
 
 **Current code** (lines 1669--1677):
 ```cpp
@@ -966,7 +966,7 @@ In native video mode, these calls are fine (they're already setting vga_fb=0, an
 video_fb_enable(0) is harmless).
 
 **How to detect native video mode**: Add an environment variable or configuration
-option, e.g., `THREESX_NATIVE_VIDEO=1` or a `[3sx]` section in `MiSTer.ini`.
+option, e.g., `THIRDSARM_NATIVE_VIDEO=1` or a `[3s-arm]` section in `MiSTer.ini`.
 The wrapper reads this before launching the game and sets it in the environment
 for the game process.
 
@@ -1308,7 +1308,7 @@ When `vga_fb=0` (native video active), the full signal path is:
    `OsdUpdate()` in `osd.cpp` send SPI commands that address the OSD module
    directly via `EnableOsd()`/`DisableOsd()` chip select control in `spi.cpp`.
    The wrapper menu (`draw_wrapper_menu()`, `service_wrapper_menu()` in
-   `threesx_wrapper.cpp`) works identically.
+   `thirdsarm_wrapper.cpp`) works identically.
 
 6. **`osd_target` defaults to `OSD_ALL`**: Both VGA and HDMI OSD instances
    receive data simultaneously. No code changes this default.
@@ -1339,7 +1339,7 @@ works as-is. Our native video module outputs `VGA_R/G/B/HS/VS/DE` from the
 `emu` module, which feeds into `r_out/g_out/b_out` → scanlines → `vga_osd`
 automatically.
 
-**ARM side**: None. The wrapper's OSD calls (`osd.cpp`, `threesx_wrapper.cpp`)
+**ARM side**: None. The wrapper's OSD calls (`osd.cpp`, `thirdsarm_wrapper.cpp`)
 work identically. No SPI protocol changes, no chip select changes, no
 rendering changes.
 
@@ -1735,8 +1735,8 @@ functional and is the default when native video is not enabled.
 | `vendor/Main_MiSTer/user_io.cpp` | 2965 | CONF_VGA_FB bit in buttons map |
 | `vendor/Main_MiSTer/user_io.h` | 58 | `UIO_WAIT_VSYNC = 0x30` |
 | `vendor/Main_MiSTer/user_io.h` | 152 | `CONF_VGA_FB = 0b0001000000000000` |
-| `vendor/Main_MiSTer/threesx_wrapper.cpp` | 1669-1677 | Video init (set_vga_fb, video_fb_enable) |
-| `vendor/Main_MiSTer/threesx_wrapper.cpp` | 1437-1439 | Video shutdown path |
+| `vendor/Main_MiSTer/thirdsarm_wrapper.cpp` | 1669-1677 | Video init (set_vga_fb, video_fb_enable) |
+| `vendor/Main_MiSTer/thirdsarm_wrapper.cpp` | 1437-1439 | Video shutdown path |
 | `vendor/Main_MiSTer/shmem.cpp` | 18-28 | `shmem_map()` via /dev/mem mmap |
 | `vendor/Main_MiSTer/fpga_io.cpp` | 26-27 | FPGA_REG_BASE address |
 | `vendor/Main_MiSTer/spi.cpp` | 106-117 | `spi_uio_cmd_cont()`, `spi_uio_cmd()` |
@@ -1765,7 +1765,7 @@ functional and is the default when native video is not enabled.
 |------|------------------|
 | `vendor/Menu_MiSTer/menu.sv` | Add PLL, clock mux, native video module, DDR3 mux, output mux |
 | `vendor/Menu_MiSTer/files.qip` | Add new source files |
-| `vendor/Main_MiSTer/threesx_wrapper.cpp` | Conditional skip of set_vga_fb/video_fb_enable |
+| `vendor/Main_MiSTer/thirdsarm_wrapper.cpp` | Conditional skip of set_vga_fb/video_fb_enable |
 | `vendor/Main_MiSTer/video.cpp` | YC mode pixel clock override for native video |
 | `src/port/sdl/sdl_app.c` | Native video frame write + vsync pacing |
 | `CMakeLists.txt` | Add native_video_writer.c to build |

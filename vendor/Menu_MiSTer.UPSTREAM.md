@@ -7,4 +7,4 @@
 - Notes:
   - vendored as the Menu-core-derived wrapper seed after hardware validation showed the MemTest-derived seed still produced a black screen on CRT despite correct HPS framebuffer handoff
   - excluded upstream `.git/`, `releases/`, and `*.srf`
-  - staged builds rename the project from `menu` to `3SX` and patch the visible `CONF_STR`
+  - staged builds rename the project from `menu` to `3S-ARM` and patch the visible `CONF_STR`

@@ -79,7 +79,7 @@ Options:
   --host <ip-or-host>    MiSTer host (default: $MISTER_HOST or 192.168.1.171).
   --user <name>          SSH user (default: $MISTER_USER or root).
   --password <value>     SSH password (default: $MISTER_PASSWORD).
-  --remote-root <path>   Remote 3SX root (default: $MISTER_ROOT or /media/fat/games/3sx).
+  --remote-root <path>   Remote 3S-ARM root (default: $MISTER_ROOT or /media/fat/games/3s-arm).
   --copy-afs <path>      Optional local SF33RD.AFS path to stage temporarily before capture.
   --help                 Show this message.
 
@@ -412,7 +412,7 @@ tag=""
 host="${MISTER_HOST:-192.168.1.171}"
 user="${MISTER_USER:-root}"
 password="${MISTER_PASSWORD:-}"
-remote_root="${MISTER_ROOT:-/media/fat/games/3sx}"
+remote_root="${MISTER_ROOT:-/media/fat/games/3s-arm}"
 copy_afs_path=""
 gameplay_idle=0
 gameplay_warmup=120
@@ -770,11 +770,11 @@ mister_require_safe_runtime_root "$remote_root" || exit 1
 local_perf_dir="artifacts/mister-port/perf"
 local_output_path="${local_perf_dir}/${tag}.json"
 remote_output_path="${remote_root}/logs/perf-${tag}.json"
-remote_log_path="/tmp/3sx-perf-${tag}.log"
+remote_log_path="/tmp/3s-arm-perf-${tag}.log"
 remote_config_path="${remote_root}/config"
 remote_resources_afs="${remote_root}/resources/SF33RD.AFS"
-remote_afs_backup_path="/tmp/3sx-afs-${tag}.bak"
-remote_afs_missing_marker="/tmp/3sx-afs-${tag}.missing"
+remote_afs_backup_path="/tmp/3s-arm-afs-${tag}.bak"
+remote_afs_missing_marker="/tmp/3s-arm-afs-${tag}.missing"
 remote_afs_restore_needed=0
 extra_app_args=""
 remote_stdout_path=""
@@ -928,8 +928,8 @@ fi
 
 remote_run_cmd=$(cat <<EOF
 set -e
-remote_config_backup='/tmp/3sx-config-${tag}.bak'
-remote_config_missing_marker='/tmp/3sx-config-${tag}.missing'
+remote_config_backup='/tmp/3s-arm-config-${tag}.bak'
+remote_config_missing_marker='/tmp/3s-arm-config-${tag}.missing'
 cleanup() {
   status=\$?
   if [ -f "\$remote_config_backup" ]; then
@@ -977,7 +977,7 @@ mv '${remote_config_path}.tmp.showfps' '${remote_config_path}.tmp'
 printf '%s\n' 'show-fps = false' >>'${remote_config_path}.tmp'
 mv '${remote_config_path}.tmp' '${remote_config_path}'
 SDL_VIDEO_DRIVER=dummy SDL_RENDER_DRIVER=software SDL_AUDIO_DRIVER=dummy \
-  '${remote_root}/scripts/run-3sx.sh' --perf-capture '${frames}' --scene '${scene}' --perf-output '${remote_output_path}' \
+  '${remote_root}/scripts/run-3s-arm.sh' --perf-capture '${frames}' --scene '${scene}' --perf-output '${remote_output_path}' \
   ${extra_app_args} \
   >'${remote_log_path}' 2>&1
 EOF
@@ -985,7 +985,7 @@ EOF
 
 echo "Running perf sample on ${user}@${host} (scene=${scene}, frames=${frames}, tag=${tag})"
 
-remote_stdout_path="$(mktemp "${TMPDIR:-/tmp}/3sx-perf-stdout.XXXXXX")"
+remote_stdout_path="$(mktemp "${TMPDIR:-/tmp}/3s-arm-perf-stdout.XXXXXX")"
 mister_ssh_exec "$host" "$user" "$password" "$remote_run_cmd" >"${remote_stdout_path}"
 if [ ! -f "${remote_stdout_path}" ]; then
     echo "error: remote perf capture did not produce a host-side command log" >&2
@@ -993,8 +993,8 @@ if [ ! -f "${remote_stdout_path}" ]; then
     exit 1
 fi
 
-local_downloaded_output_path="$(mktemp "${TMPDIR:-/tmp}/3sx-perf-json.XXXXXX")"
-local_remote_log_path="$(mktemp "${TMPDIR:-/tmp}/3sx-perf-log.XXXXXX")"
+local_downloaded_output_path="$(mktemp "${TMPDIR:-/tmp}/3s-arm-perf-json.XXXXXX")"
+local_remote_log_path="$(mktemp "${TMPDIR:-/tmp}/3s-arm-perf-log.XXXXXX")"
 
 mister_scp_download "$host" "$user" "$password" "${remote_output_path}" "${local_downloaded_output_path}" || {
     echo "error: failed to download remote perf JSON from ${remote_output_path}" >&2
@@ -1112,7 +1112,7 @@ if command -v jq >/dev/null 2>&1; then
         metadata_capture_start_test_phase="$metadata_perf_wait_test_phase"
     fi
 
-    temp_output_path="$(mktemp "${TMPDIR:-/tmp}/3sx-perf-json.XXXXXX")"
+    temp_output_path="$(mktemp "${TMPDIR:-/tmp}/3s-arm-perf-json.XXXXXX")"
     jq \
         --arg scene "$scene" \
         --arg test_scene_preset "$test_scene_preset" \

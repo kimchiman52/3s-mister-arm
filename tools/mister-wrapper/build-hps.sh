@@ -6,7 +6,7 @@ ROOT_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 SOURCE_DIR="${ROOT_DIR}/vendor/Main_MiSTer"
 UPSTREAM_FILE="${ROOT_DIR}/vendor/Main_MiSTer.UPSTREAM.md"
 OVERLAY_MANIFEST="${ROOT_DIR}/tools/mister-wrapper/main-mister-overlay.files"
-BUILD_MANIFEST="${ROOT_DIR}/tools/mister-wrapper/Makefile.full.3sx"
+BUILD_MANIFEST="${ROOT_DIR}/tools/mister-wrapper/Makefile.full.3s-arm"
 MENU_PATCH="${ROOT_DIR}/tools/mister-wrapper/main-mister-full-menu.patch"
 OUTPUT_DIR="${OUTPUT_DIR:-${ROOT_DIR}/build/mister-wrapper-hps}"
 BUILD_SRC_DIR="${OUTPUT_DIR}/src"
@@ -18,9 +18,9 @@ UPSTREAM_URL="${MISTER_WRAPPER_HPS_UPSTREAM_URL:-https://github.com/MiSTer-devel
 UPSTREAM_COMMIT="${MISTER_WRAPPER_HPS_UPSTREAM_COMMIT:-3380931329b8acb442bd3d35a24d89f88641b7cf}"
 DOCKER_CONTEXT_DIR="${ROOT_DIR}/vendor/Main_MiSTer/.devcontainer"
 DOCKERFILE_PATH="${DOCKER_CONTEXT_DIR}/Dockerfile"
-DOCKER_IMAGE="${MISTER_WRAPPER_HPS_IMAGE:-3sx-mister-wrapper-hps}"
+DOCKER_IMAGE="${MISTER_WRAPPER_HPS_IMAGE:-3s-mister-arm-wrapper-hps}"
 DOCKER_PLATFORM="${MISTER_WRAPPER_HPS_DOCKER_PLATFORM:-linux/amd64}"
-CONTAINER_ROOT="${MISTER_WRAPPER_HPS_CONTAINER_ROOT:-/workspaces/3sx-mister}"
+CONTAINER_ROOT="${MISTER_WRAPPER_HPS_CONTAINER_ROOT:-/workspaces/3s-mister-arm}"
 CONTAINER_BUILD_SRC_DIR="${CONTAINER_ROOT}/build/mister-wrapper-hps/src"
 
 usage() {
@@ -32,11 +32,11 @@ Usage:
   tools/mister-wrapper/build-hps.sh
 
 Purpose:
-  Build the Main_MiSTer-derived HPS wrapper binary MiSTer_3SX from the pinned
-  full upstream tree plus the local 3SX overlay files.
+  Build the Main_MiSTer-derived HPS wrapper binary MiSTer_3S-ARM from the pinned
+  full upstream tree plus the local 3S-ARM overlay files.
 
 Planned output:
-  ${OUTPUT_DIR}/MiSTer_3SX
+  ${OUTPUT_DIR}/MiSTer_3S-ARM
 
 Pinned source:
   ${UPSTREAM_URL} @ ${UPSTREAM_COMMIT}
@@ -90,7 +90,7 @@ prepare_source() {
     git -C "${BUILD_SRC_DIR}" checkout "${UPSTREAM_COMMIT}"
     rsync -a --files-from="${OVERLAY_MANIFEST}" "${SOURCE_DIR}/" "${BUILD_SRC_DIR}/"
     git -C "${BUILD_SRC_DIR}" apply --whitespace=nowarn "${MENU_PATCH}"
-    cp "${BUILD_MANIFEST}" "${BUILD_SRC_DIR}/Makefile.3sx"
+    cp "${BUILD_MANIFEST}" "${BUILD_SRC_DIR}/Makefile.3s-arm"
 }
 
 check_compiler_stack() {
@@ -115,7 +115,7 @@ run_make_in_docker() {
         -v "${ROOT_DIR}:${CONTAINER_ROOT}" \
         -w "${CONTAINER_ROOT}" \
         "${DOCKER_IMAGE}" \
-        bash -lc "TOOLCHAIN_BIN=${toolchain_bin_expr}; export PATH=\"\$PATH:\${TOOLCHAIN_BIN}\"; make -C \"${CONTAINER_BUILD_SRC_DIR}\" -f Makefile.3sx BASE=\"${TOOLCHAIN_PREFIX}\""
+        bash -lc "TOOLCHAIN_BIN=${toolchain_bin_expr}; export PATH=\"\$PATH:\${TOOLCHAIN_BIN}\"; make -C \"${CONTAINER_BUILD_SRC_DIR}\" -f Makefile.3s-arm BASE=\"${TOOLCHAIN_PREFIX}\""
 }
 
 if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
@@ -149,7 +149,7 @@ if [ "${1:-}" = "--check-env" ]; then
         echo "upstream_metadata=${UPSTREAM_FILE}"
     fi
     echo "toolchain_prefix=${TOOLCHAIN_PREFIX}"
-    echo "planned_output=${OUTPUT_DIR}/MiSTer_3SX"
+    echo "planned_output=${OUTPUT_DIR}/MiSTer_3S-ARM"
     exit 0
 fi
 
@@ -157,7 +157,7 @@ if [ "${1:-}" = "--prepare-source" ]; then
     require_base_host_tools || exit 1
     prepare_source
     echo "prepared_source=${BUILD_SRC_DIR}"
-    echo "prepared_manifest=${BUILD_SRC_DIR}/Makefile.3sx"
+    echo "prepared_manifest=${BUILD_SRC_DIR}/Makefile.3s-arm"
     exit 0
 fi
 
@@ -175,7 +175,7 @@ mode="$(selected_build_mode || true)"
 if [ "${mode}" = "local" ]; then
     command -v make >/dev/null 2>&1 || { echo "missing required command: make" >&2; exit 1; }
     check_compiler_stack || exit 1
-    make -C "${BUILD_SRC_DIR}" -f Makefile.3sx BASE="${TOOLCHAIN_PREFIX}"
+    make -C "${BUILD_SRC_DIR}" -f Makefile.3s-arm BASE="${TOOLCHAIN_PREFIX}"
 elif [ "${mode}" = "docker" ]; then
     build_docker_image
     run_make_in_docker
@@ -184,6 +184,6 @@ else
     exit 1
 fi
 
-cp "${BUILD_SRC_DIR}/bin/MiSTer_3SX" "${OUTPUT_DIR}/MiSTer_3SX"
+cp "${BUILD_SRC_DIR}/bin/MiSTer_3S-ARM" "${OUTPUT_DIR}/MiSTer_3S-ARM"
 echo "build_mode=${mode}"
-echo "built_output=${OUTPUT_DIR}/MiSTer_3SX"
+echo "built_output=${OUTPUT_DIR}/MiSTer_3S-ARM"

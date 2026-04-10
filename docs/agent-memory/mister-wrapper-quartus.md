@@ -2,15 +2,15 @@
 
 ## Purpose
 
-- Capture the durable Quartus setup and host strategy for building `3SX.rbf`.
+- Capture the durable Quartus setup and host strategy for building `3S-ARM.rbf`.
 - Prevent future agents from repeating the Lite-vs-Standard and Apple Silicon Docker dead ends.
 
 ## When To Load This
 
-- When touching [tools/mister-wrapper/build-core.sh](/Users/sb/Developer/3sx-mister/tools/mister-wrapper/build-core.sh).
-- When touching [tools/mister-wrapper/build-quartus-image.sh](/Users/sb/Developer/3sx-mister/tools/mister-wrapper/build-quartus-image.sh) or [tools/mister-wrapper/fetch-quartus17-installer.sh](/Users/sb/Developer/3sx-mister/tools/mister-wrapper/fetch-quartus17-installer.sh).
+- When touching [tools/mister-wrapper/build-core.sh](/Users/sb/Developer/3s-mister-arm/tools/mister-wrapper/build-core.sh).
+- When touching [tools/mister-wrapper/build-quartus-image.sh](/Users/sb/Developer/3s-mister-arm/tools/mister-wrapper/build-quartus-image.sh) or [tools/mister-wrapper/fetch-quartus17-installer.sh](/Users/sb/Developer/3s-mister-arm/tools/mister-wrapper/fetch-quartus17-installer.sh).
 - When diagnosing `.rbf` build failures on Apple Silicon hosts.
-- Skip for HPS-only work in [tools/mister-wrapper/build-hps.sh](/Users/sb/Developer/3sx-mister/tools/mister-wrapper/build-hps.sh) or ARMv7 runtime packaging work.
+- Skip for HPS-only work in [tools/mister-wrapper/build-hps.sh](/Users/sb/Developer/3s-mister-arm/tools/mister-wrapper/build-hps.sh) or ARMv7 runtime packaging work.
 
 ## Fast Path
 
@@ -19,7 +19,7 @@
 - Preferred host on this Mac: x86_64 Colima/QEMU VM, not Docker Desktop `linux/amd64`.
 - Validated VM profile: `quartus2` in `~/.colima/quartus2/colima.yaml` with `arch: x86_64`, `vmType: qemu`, `cpu: 4`, `memory: 8`, `disk: 20`, `mountType: sshfs`.
 - Validated in-VM install path: `/home/sb.linux/intelFPGA_lite/17.0`.
-- Local installer cache: [build/quartus17-installer](/Users/sb/Developer/3sx-mister/build/quartus17-installer).
+- Local installer cache: [build/quartus17-installer](/Users/sb/Developer/3s-mister-arm/build/quartus17-installer).
 
 ### Known-Good Files
 
@@ -37,7 +37,7 @@ tools/mister-wrapper/fetch-quartus17-installer.sh
 # Dev iteration (fast compile, ~50-70% faster):
 colima --profile quartus2 ssh -- bash -lc '
   export PATH=/home/sb.linux/intelFPGA_lite/17.0/quartus/bin:$PATH LC_ALL=C LANG=C &&
-  cd /Users/sb/Developer/3sx-mister &&
+  cd /Users/sb/Developer/3s-mister-arm &&
   OUTPUT_DIR=/home/sb.linux/build/mister-wrapper-core \
   bash tools/mister-wrapper/build-core.sh --fast --seed menu
 '
@@ -47,7 +47,7 @@ colima --profile quartus2 ssh -- bash -lc '
 # Release (full optimization):
 colima --profile quartus2 ssh -- bash -lc '
   export PATH=/home/sb.linux/intelFPGA_lite/17.0/quartus/bin:$PATH LC_ALL=C LANG=C &&
-  cd /Users/sb/Developer/3sx-mister &&
+  cd /Users/sb/Developer/3s-mister-arm &&
   OUTPUT_DIR=/home/sb.linux/build/mister-wrapper-core \
   bash tools/mister-wrapper/build-core.sh --seed menu
 '
@@ -57,13 +57,13 @@ colima --profile quartus2 ssh -- bash -lc '
 
 - `colima --profile quartus2 ssh -- bash -lc 'quartus_sh --version'`
 - `colima --profile quartus2 ssh -- pgrep -af 'quartus_(fit|asm|sta)|quartus_sh --flow compile'`
-- Check for `output_files/3SX.rbf` under `/home/sb.linux/build/mister-wrapper-core/src` or the host mirror under [build/mister-wrapper-core/src/output_files](/Users/sb/Developer/3sx-mister/build/mister-wrapper-core/src/output_files).
+- Check for `output_files/3S-ARM.rbf` under `/home/sb.linux/build/mister-wrapper-core/src` or the host mirror under [build/mister-wrapper-core/src/output_files](/Users/sb/Developer/3s-mister-arm/build/mister-wrapper-core/src/output_files).
 - Copy the finished artifact back to the host mirror with:
 
 ```sh
 colima --profile quartus2 ssh -- bash -lc '
-  cp /home/sb.linux/build/mister-wrapper-core/3SX.rbf \
-    /Users/sb/Developer/3sx-mister/build/mister-wrapper-core/3SX.rbf
+  cp /home/sb.linux/build/mister-wrapper-core/3S-ARM.rbf \
+    /Users/sb/Developer/3s-mister-arm/build/mister-wrapper-core/3S-ARM.rbf
 '
 ```
 
@@ -86,7 +86,7 @@ colima delete -p quartus2
 tools/mister/setup-colima-vm.sh
 ```
 
-**ARM/HPS build container** (`3sx-mister-build`): rebuilt automatically by `setup-colima-vm.sh` via `tools/mister/setup-build-container.sh`. Contains: ARM cross-compiler (gcc-arm-linux-gnueabihf), Clang 20 (from apt.llvm.org/bullseye), cmake 3.25 (bullseye-backports), libasound2-dev (amd64 + armhf), libstdc++-10-dev-armhf-cross.
+**ARM/HPS build container** (`3s-mister-arm-build`): rebuilt automatically by `setup-colima-vm.sh` via `tools/mister/setup-build-container.sh`. Contains: ARM cross-compiler (gcc-arm-linux-gnueabihf), Clang 20 (from apt.llvm.org/bullseye), cmake 3.25 (bullseye-backports), libasound2-dev (amd64 + armhf), libstdc++-10-dev-armhf-cross.
 
 **Do not skip `prepare_source`**: Both `build-hps.sh` and `build-core.sh` call `prepare_source` unconditionally at startup — it clones/rsyncs fresh source. Agents must invoke the build scripts (not `make` or `quartus_sh` directly) to guarantee a clean source tree.
 
@@ -95,12 +95,12 @@ tools/mister/setup-colima-vm.sh
 - Source: [Intel installer CLI docs](https://www.intel.com/content/www/us/en/docs/programmable/683472/25-1/using-cli-commands.html) | Use for: supported command-line installer behavior and flags like `--cli`, `--install-dir`, and `--accept-eula`.
 - Source: [Intel Quartus edition comparison PDF](https://www.intel.com/content/dam/www/central-libraries/us/en/documents/quartus-prime-compare-editions-guide.pdf) | Use for: official statement that Lite is free and includes Cyclone IV/V device support.
 - Source: [Altera installation/licensing guide](https://docs.altera.com/r/docs/683472/current) | Use for: installation archive, licensing flow, and cross-version install references when Intel links move.
-- Source: [Wrapper operator doc](/Users/sb/Developer/3sx-mister/docs/mister-wrapper.md) | Use for: repo-specific packaging, deploy, and wrapper runtime behavior.
+- Source: [Wrapper operator doc](/Users/sb/Developer/3s-mister-arm/docs/mister-wrapper.md) | Use for: repo-specific packaging, deploy, and wrapper runtime behavior.
 
 ## Durable Decisions
 
-- Decision: Prefer Quartus Lite 17.0 plus both Cyclone device packs for `3SX.rbf` work. | Why: a clean Lite install passed the earlier false `Cyclone V` blocker and reached `quartus_fit`; the original failure came from incomplete device support. | Date: `2026-03-09`.
-- Decision: The validated end-to-end host recipe is `build-core.sh` inside the x86_64 `quartus2` Colima/QEMU VM with local Quartus Lite on `PATH`. | Why: that exact scripted path completed `quartus_map`, `quartus_fit`, `quartus_asm`, and `quartus_sta` and produced `3SX.rbf`. | Date: `2026-03-09`.
+- Decision: Prefer Quartus Lite 17.0 plus both Cyclone device packs for `3S-ARM.rbf` work. | Why: a clean Lite install passed the earlier false `Cyclone V` blocker and reached `quartus_fit`; the original failure came from incomplete device support. | Date: `2026-03-09`.
+- Decision: The validated end-to-end host recipe is `build-core.sh` inside the x86_64 `quartus2` Colima/QEMU VM with local Quartus Lite on `PATH`. | Why: that exact scripted path completed `quartus_map`, `quartus_fit`, `quartus_asm`, and `quartus_sta` and produced `3S-ARM.rbf`. | Date: `2026-03-09`.
 - Decision: Prefer the `menu` wrapper-core seed as the only supported path. | Why: real hardware proved the HPS framebuffer handoff, while the MemTest-derived core still produced a black CRT image; the Menu-derived seed preserves the known-good MiSTer framebuffer substrate and keeps the build surface smaller. | Date: `2026-03-10`.
 - Decision: Keep Standard installer support in the scripts, but treat it as fallback only. | Why: Standard may still be useful on Linux hosts with existing installs, but it can introduce license requirements that are unnecessary for the default path. | Date: `2026-03-09`.
 - Decision: Keep Quartus builds separate from the ARMv7 MiSTer runtime container. | Why: FPGA bitstream builds need x86_64 Quartus, while the runtime container targets ARMv7 userspace binaries. | Date: `2026-03-09`.

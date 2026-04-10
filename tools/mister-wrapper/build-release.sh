@@ -8,11 +8,11 @@ PACKAGE_WRAPPER_SCRIPT="${ROOT_DIR}/tools/mister-wrapper/package-wrapper.sh"
 INSTALL_README_TEMPLATE="${ROOT_DIR}/tools/mister/release-readme.txt"
 RUNTIME_INSTALL_PREFIX="${RUNTIME_INSTALL_PREFIX:-${ROOT_DIR}/build/mister-clean-install}"
 RUNTIME_PACKAGE="${RUNTIME_PACKAGE:-${ROOT_DIR}/build/mister-runtime-package}"
-HPS_BINARY="${HPS_BINARY:-${ROOT_DIR}/build/mister-wrapper-hps/MiSTer_3SX}"
-CORE_RBF="${CORE_RBF:-${ROOT_DIR}/build/mister-wrapper-core/3SX.rbf}"
+HPS_BINARY="${HPS_BINARY:-${ROOT_DIR}/build/mister-wrapper-hps/MiSTer_3S-ARM}"
+CORE_RBF="${CORE_RBF:-${ROOT_DIR}/build/mister-wrapper-core/3S-ARM.rbf}"
 WORK_DIR="${WORK_DIR:-${ROOT_DIR}/build/mister-release}"
 STAGE_DIR="${STAGE_DIR:-${WORK_DIR}/stage}"
-OUTPUT_ZIP="${OUTPUT_ZIP:-${WORK_DIR}/3SX-mister-rolling-pre-release.zip}"
+OUTPUT_ZIP="${OUTPUT_ZIP:-${WORK_DIR}/3S-ARM-mister-rolling-pre-release.zip}"
 README_BASENAME="README.txt"
 
 usage() {
@@ -24,8 +24,8 @@ Usage:
 Options:
   --runtime-install-prefix <dir>  Clean MiSTer install prefix to package
   --runtime-package <dir>         Runtime package output directory
-  --hps-binary <file>             MiSTer_3SX binary to include
-  --core-rbf <file>               3SX.rbf to include
+  --hps-binary <file>             MiSTer_3S-ARM binary to include
+  --core-rbf <file>               3S-ARM.rbf to include
   --work-dir <dir>                Working directory for stage and zip
   --stage-dir <dir>               FAT-rooted staging directory
   --output-zip <file>             Final FAT-rooted release zip path
@@ -70,16 +70,16 @@ assert_absent() {
 validate_release_stage() {
     local stage_root="$1"
 
-    [ -f "${stage_root}/MiSTer_3SX" ] || { echo "missing staged HPS binary: ${stage_root}/MiSTer_3SX" >&2; return 1; }
-    [ -f "${stage_root}/_Other/3SX.rbf" ] || { echo "missing staged core: ${stage_root}/_Other/3SX.rbf" >&2; return 1; }
-    [ -f "${stage_root}/games/3sx/bin/3sx" ] || { echo "missing staged runtime binary: ${stage_root}/games/3sx/bin/3sx" >&2; return 1; }
-    [ -d "${stage_root}/games/3sx/resources" ] || { echo "missing staged resources directory: ${stage_root}/games/3sx/resources" >&2; return 1; }
+    [ -f "${stage_root}/MiSTer_3S-ARM" ] || { echo "missing staged HPS binary: ${stage_root}/MiSTer_3S-ARM" >&2; return 1; }
+    [ -f "${stage_root}/_Other/3S-ARM.rbf" ] || { echo "missing staged core: ${stage_root}/_Other/3S-ARM.rbf" >&2; return 1; }
+    [ -f "${stage_root}/games/3s-arm/bin/3s-arm" ] || { echo "missing staged runtime binary: ${stage_root}/games/3s-arm/bin/3s-arm" >&2; return 1; }
+    [ -d "${stage_root}/games/3s-arm/resources" ] || { echo "missing staged resources directory: ${stage_root}/games/3s-arm/resources" >&2; return 1; }
     [ -f "${stage_root}/${README_BASENAME}" ] || { echo "missing staged install README: ${stage_root}/${README_BASENAME}" >&2; return 1; }
 
-    assert_absent "${stage_root}/games/3sx/resources/SF33RD.AFS"
-    assert_absent "${stage_root}/games/3sx/config"
-    assert_absent "${stage_root}/games/3sx/keymap"
-    assert_absent "${stage_root}/games/3sx/logs"
+    assert_absent "${stage_root}/games/3s-arm/resources/SF33RD.AFS"
+    assert_absent "${stage_root}/games/3s-arm/config"
+    assert_absent "${stage_root}/games/3s-arm/keymap"
+    assert_absent "${stage_root}/games/3s-arm/logs"
 }
 
 build_runtime_package() {
@@ -97,7 +97,7 @@ stage_release() {
         --hps-binary "${HPS_BINARY}" \
         --core-rbf "${CORE_RBF}"
 
-    mkdir -p "${STAGE_DIR}/games/3sx/resources"
+    mkdir -p "${STAGE_DIR}/games/3s-arm/resources"
     cp "${INSTALL_README_TEMPLATE}" "${STAGE_DIR}/${README_BASENAME}"
     validate_release_stage "${STAGE_DIR}"
 }
@@ -111,7 +111,7 @@ build_zip() {
 
     (
         cd "${STAGE_DIR}"
-        zip -rq "${OUTPUT_ZIP}" "MiSTer_3SX" "_Other" "games" "${README_BASENAME}"
+        zip -rq "${OUTPUT_ZIP}" "MiSTer_3S-ARM" "_Other" "games" "${README_BASENAME}"
     )
 }
 
@@ -146,7 +146,7 @@ while [ "$#" -gt 0 ]; do
     --work-dir)
         WORK_DIR="$2"
         STAGE_DIR="${WORK_DIR}/stage"
-        OUTPUT_ZIP="${WORK_DIR}/3SX-mister-rolling-pre-release.zip"
+        OUTPUT_ZIP="${WORK_DIR}/3S-ARM-mister-rolling-pre-release.zip"
         shift 2
         ;;
     --stage-dir)

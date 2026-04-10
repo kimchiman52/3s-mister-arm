@@ -21,7 +21,7 @@
 //    Write side: ddr_clk (clk_sys, 100 MHz)
 //    Read side:  clk_vid (CLK_VIDEO, 31.1538 MHz) with ce_pix divide-by-4 (7.7885 MHz)
 //
-//  Copyright (C) 2026 3SX Project
+//  Copyright (C) 2026 3S-ARM Project
 //  Licensed under GNU General Public License v2+
 //
 //============================================================================

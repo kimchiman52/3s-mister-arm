@@ -4,7 +4,7 @@
 
 ## Problem Statement
 
-3SX runs on the MiSTer ARM CPU (Cortex-A9) and renders frames in software at 384x224 (NTSC, 59.59949 Hz). Currently, frames are presented via the Linux framebuffer (`/dev/fb0`), which the FPGA scaler (ascal) reads asynchronously from DDR3 and outputs to the display.
+3S-ARM runs on the MiSTer ARM CPU (Cortex-A9) and renders frames in software at 384x224 (NTSC, 59.59949 Hz). Currently, frames are presented via the Linux framebuffer (`/dev/fb0`), which the FPGA scaler (ascal) reads asynchronously from DDR3 and outputs to the display.
 
 This architecture has two problems on CRT:
 
@@ -46,7 +46,7 @@ Game (ARM) -> SDL3 software renderer -> SDL_Surface (384x224 ARGB8888)
 | `src/port/sdl/fbdev_presenter.c` | Copies rendered frames to `/dev/fb0` with scaling, dirty tracking, NEON |
 | `src/port/sdl/sdl_app.c` | Frame loop, timer-based pacing (`SDL_DelayNS`), presentation dispatch |
 | `vendor/Main_MiSTer/video.cpp` | Configures FPGA framebuffer via `UIO_SET_FBUF`, manages scaler |
-| `vendor/Main_MiSTer/threesx_wrapper.cpp` | Wrapper process, OSD, ARM clock control |
+| `vendor/Main_MiSTer/thirdsarm_wrapper.cpp` | Wrapper process, OSD, ARM clock control |
 | `vendor/Menu_MiSTer/sys/sys_top.v` | FPGA top-level: DAC mux, clock selection, scaler instantiation |
 | `vendor/Menu_MiSTer/menu.sv` | Menu core: fixed PLL, basic video output, DDRAM interface |
 
@@ -224,7 +224,7 @@ This gives deterministic frame timing locked to the display, eliminating timer j
 
 ### 3. Wrapper changes
 
-The wrapper (`threesx_wrapper.cpp`) currently calls `video_fb_enable(1)` and `set_vga_fb(1)` to activate the framebuffer/scaler path. For native video mode:
+The wrapper (`thirdsarm_wrapper.cpp`) currently calls `video_fb_enable(1)` and `set_vga_fb(1)` to activate the framebuffer/scaler path. For native video mode:
 - Don't call `video_fb_enable(1)` — leave `vga_fb=0` so the DAC mux selects core video
 - Instead, send an init command to the FPGA module (via SPI or `hps_ext`) to start the pixel reader
 - Or simply have the FPGA module start automatically when it detects valid frame data in DDR3
@@ -346,7 +346,7 @@ The `vga_osd` instance sits between scanlines and the DAC and is **always in the
 
 - **Two independent OSD instances**: `vga_osd` (clocked on `clk_vid`) and `hdmi_osd` (clocked on `clk_hdmi`). They receive SPI data via separate chip selects: `io_osd_vga = io_ss1 & ~io_ss2`, `io_osd_hdmi = io_ss1 & ~io_ss0`.
 - **OSD is independent of `vga_fb`**: Different SPI chip selects, different control flags. `OsdEnable()`/`OsdDisable()`/`OsdWrite()`/`OsdUpdate()` all work identically.
-- **ARM-side code unchanged**: The wrapper's menu rendering (`draw_wrapper_menu()`, `service_wrapper_menu()` in `threesx_wrapper.cpp`) and the OSD library (`osd.cpp`) require zero modifications.
+- **ARM-side code unchanged**: The wrapper's menu rendering (`draw_wrapper_menu()`, `service_wrapper_menu()` in `thirdsarm_wrapper.cpp`) and the OSD library (`osd.cpp`) require zero modifications.
 - **Clock-agnostic**: The OSD module takes `clk_video` as input and adapts to any pixel clock rate. At our ~8MHz pixel clock it will function correctly. The `clk_sys` domain handles SPI command reception with internal CDC.
 - **3-cycle pipeline latency**: Negligible (~375ns at 8MHz).
 - **`osd_target` defaults to `OSD_ALL`**: OSD data goes to both VGA and HDMI instances simultaneously. No wrapper code changes this.

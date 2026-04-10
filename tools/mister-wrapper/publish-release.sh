@@ -4,9 +4,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 TAG_NAME="${TAG_NAME:-rolling-pre-release}"
-ZIP_PATH="${ZIP_PATH:-${ROOT_DIR}/build/mister-release/3SX-mister-rolling-pre-release.zip}"
+ZIP_PATH="${ZIP_PATH:-${ROOT_DIR}/build/mister-release/3S-ARM-mister-rolling-pre-release.zip}"
 REMOTE_NAME="${REMOTE_NAME:-origin}"
-ASSET_GLOB="${ASSET_GLOB:-3SX-mister-*.zip}"
+ASSET_GLOB="${ASSET_GLOB:-3S-ARM-mister-*.zip}"
 
 usage() {
     cat <<EOF
@@ -110,7 +110,7 @@ fi
 full_sha="$(git rev-parse HEAD)"
 short_sha="$(git rev-parse --short HEAD)"
 asset_name="$(basename "${ZIP_PATH}")"
-notes_file="$(mktemp "${TMPDIR:-/tmp}/3sx-release-notes.XXXXXX")"
+notes_file="$(mktemp "${TMPDIR:-/tmp}/3s-arm-release-notes.XXXXXX")"
 trap 'rm -f "${notes_file}"' EXIT
 
 write_notes "${notes_file}" "${full_sha}" "${asset_name}"

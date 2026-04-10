@@ -1,7 +1,7 @@
 # MiSTer Analog Video Output: Deep Reference
 
 When to load:
-- Load this when working on S-Video, CVBS, or native analog CRT output for MiSTer or 3SX — video pipeline routing, YC encoding, PHASE_INC tuning, DAC mux, or framebuffer-to-analog handoff.
+- Load this when working on S-Video, CVBS, or native analog CRT output for MiSTer or 3S-ARM — video pipeline routing, YC encoding, PHASE_INC tuning, DAC mux, or framebuffer-to-analog handoff.
 
 ---
 
@@ -33,7 +33,7 @@ FPGA game core VGA signals
 ```
 - Clock domain: `clk_hdmi` (scaler clock — typically fixed or output-mode-driven)
 - No YC encoder in this chain by default
-- Used by 3SX (HPS software renderer), menu OSD, scaler modes
+- Used by 3S-ARM (HPS software renderer), menu OSD, scaler modes
 
 ---
 
@@ -49,7 +49,7 @@ assign VGA_B = vgas_en ? vgas_o[7:2]   : vga_o[7:2];
 
 - `vga_fb = cfg[12]` — set by HPS via `set_vga_fb(1)` → `spi_uio_cmd16(UIO_BUT_SW, map)` with bit 12 set
 - `vga_scaler = cfg[2] | vga_force_scaler` — Menu core always assigns `VGA_SCALER=0`
-- When `vga_fb=1` (3SX framebuffer mode): `vgas_en=1` → DAC gets Pipeline B output
+- When `vga_fb=1` (3S-ARM framebuffer mode): `vgas_en=1` → DAC gets Pipeline B output
 
 ### VGA pixel clock also switches
 ```verilog
@@ -91,9 +91,9 @@ Y on bits [15:8], C on bits [23:16]. The DAC only uses the top 6 bits of each ch
 
 ---
 
-## The `yc_out_fb` Second Encoder (3SX Fix)
+## The `yc_out_fb` Second Encoder (3S-ARM Fix)
 
-To support HPS framebuffer YC output (3SX native analog), `sys_top.v` was modified to add a second encoder instance on Pipeline B's clock domain.
+To support HPS framebuffer YC output (3S-ARM native analog), `sys_top.v` was modified to add a second encoder instance on Pipeline B's clock domain.
 
 ### New wires
 ```verilog
@@ -104,7 +104,7 @@ wire        vga_fb_yc_en = vga_fb & ~vga_scaler & yc_en;
 
 `vga_fb_yc_en` is true when:
 - `vga_fb=1` (HPS framebuffer active)
-- `vga_scaler=0` (scaler not overriding — always 0 in Menu/3SX native analog)
+- `vga_scaler=0` (scaler not overriding — always 0 in Menu/3S-ARM native analog)
 - `yc_en=1` (YC mode enabled, set by `UIO_SET_YC_PAR`)
 
 ### `yc_out_fb` instance
@@ -146,7 +146,7 @@ Previously `~vgas_en` suppressed the subcarrier pin entirely when `vgas_en=1`. T
 
 ## HPS Side: `set_yc_mode()` in `video.cpp`
 
-Called from `video_refresh_yc_mode()` → called from `threesx_wrapper.cpp` just before `fork()+execve()` launches the game.
+Called from `video_refresh_yc_mode()` → called from `thirdsarm_wrapper.cpp` just before `fork()+execve()` launches the game.
 
 ### PAL/NTSC determination
 ```cpp
@@ -261,16 +261,16 @@ Pipeline B plain RGB output contains luma information → TV syncs and shows bri
 
 ## `yc_key` and `yc.txt` Override Mechanism
 
-`set_yc_mode()` builds a lookup key: `{core_name}_{fps}{interlace_flag}{ntsc_suffix}` (e.g. `3SX_0.0` before game starts, `MENU_59.8` for the menu). This key is checked against entries in `yc.txt` (on the SD card) and a yc_modes array loaded from it. A matching entry overrides `PHASE_INC`. Used for per-core manual tuning corrections.
+`set_yc_mode()` builds a lookup key: `{core_name}_{fps}{interlace_flag}{ntsc_suffix}` (e.g. `3S-ARM_0.0` before game starts, `MENU_59.8` for the menu). This key is checked against entries in `yc.txt` (on the SD card) and a yc_modes array loaded from it. A matching entry overrides `PHASE_INC`. Used for per-core manual tuning corrections.
 
 Caution: when `vtime=0`, the key is always `{core}_0.0`, which may unintentionally match a manual override entry.
 
 ---
 
-## Call Sequence in 3SX Launch Path
+## Call Sequence in 3S-ARM Launch Path
 
 ```
-threesx_core_context_init()        ← early startup
+thirdsarm_core_context_init()        ← early startup
   → cfg_parse()
   → video_init()
       → set_default_tv_video_mode()
@@ -278,7 +278,7 @@ threesx_core_context_init()        ← early startup
 
 ... OSD mode selection, game launch picked ...
 
-threesx_wrapper.cpp ~line 1068:
+thirdsarm_wrapper.cpp ~line 1068:
   disable_wrapper_osd()
   video_fb_clear(0)
   set_vga_fb(1)                    ← vga_fb=1 in HPS and FPGA
@@ -289,11 +289,11 @@ threesx_wrapper.cpp ~line 1068:
   fork() + execve()                ← game starts, vtime populated after this
 ```
 
-`video_refresh_yc_mode()` is a thin wrapper that just calls `set_yc_mode()`. The function is also called on mode changes and OSD events, but in the 3SX launch path the critical call is at line ~1075 before the game process starts.
+`video_refresh_yc_mode()` is a thin wrapper that just calls `set_yc_mode()`. The function is also called on mode changes and OSD events, but in the 3S-ARM launch path the critical call is at line ~1075 before the game process starts.
 
 ---
 
-## Confirmed Working Configuration (NTSC S-Video, 3SX)
+## Confirmed Working Configuration (NTSC S-Video, 3S-ARM)
 
 After all three fixes (RTL `yc_out_fb`, `fb_native_analog_auto`, `vtime=0` PAL correction):
 

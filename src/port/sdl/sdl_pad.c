@@ -271,7 +271,7 @@ static void get_mister_state(int id, SDLPad_ButtonState *state) {
 
 void SDLPad_Init() {
 #if defined(PORT_MISTER)
-    const char *shm_path = SDL_getenv("THREESX_JOY_SHM");
+    const char *shm_path = SDL_getenv("THIRDSARM_JOY_SHM");
     if (shm_path) {
         int fd = open(shm_path, O_RDONLY);
         if (fd >= 0) {

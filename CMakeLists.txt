@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(3sx LANGUAGES C)
+project(3s-arm LANGUAGES C)
 
 # ======================================
 # Options and platform setup
@@ -67,7 +67,7 @@ if(NOT ENABLE_NETPLAY)
     )
 endif()
 
-add_executable(3sx MACOSX_BUNDLE
+add_executable(3s-arm MACOSX_BUNDLE
     ${GAME_SRC}
 )
 
@@ -76,7 +76,7 @@ configure_file(
     "${CMAKE_BINARY_DIR}/generated/port/build_config.h"
 )
 
-target_include_directories(3sx PRIVATE
+target_include_directories(3s-arm PRIVATE
     "${CMAKE_BINARY_DIR}/generated"
 )
 
@@ -84,7 +84,7 @@ target_include_directories(3sx PRIVATE
 # Compiler and linker flags
 # ======================================
 
-target_compile_definitions(3sx PRIVATE
+target_compile_definitions(3s-arm PRIVATE
     $<$<CONFIG:Debug>:DEBUG>
 
     $<$<CONFIG:Release>:RELEASE>
@@ -95,29 +95,29 @@ target_compile_definitions(3sx PRIVATE
 )
 
 # Feature toggles
-target_compile_definitions(3sx PRIVATE
+target_compile_definitions(3s-arm PRIVATE
     # CPS3
 )
 
 if(PORT_MISTER)
-    target_compile_definitions(3sx PRIVATE PORT_MISTER)
-    target_include_directories(3sx PRIVATE ${PROJECT_SOURCE_DIR}/vendor/Main_MiSTer)
+    target_compile_definitions(3s-arm PRIVATE PORT_MISTER)
+    target_include_directories(3s-arm PRIVATE ${PROJECT_SOURCE_DIR}/vendor/Main_MiSTer)
 endif()
 
 if(ENABLE_NETPLAY)
-    target_compile_definitions(3sx PRIVATE NETPLAY_ENABLED GEKKONET_STATIC GEKKONET_NO_ASIO ENABLE_NETPLAY)
+    target_compile_definitions(3s-arm PRIVATE NETPLAY_ENABLED GEKKONET_STATIC GEKKONET_NO_ASIO ENABLE_NETPLAY)
 endif()
 
 if(ENABLE_ISO_IMPORT)
-    target_compile_definitions(3sx PRIVATE ENABLE_ISO_IMPORT)
+    target_compile_definitions(3s-arm PRIVATE ENABLE_ISO_IMPORT)
 endif()
 
 if(ENABLE_FFMPEG_ADX)
-    target_compile_definitions(3sx PRIVATE ENABLE_FFMPEG_ADX)
+    target_compile_definitions(3s-arm PRIVATE ENABLE_FFMPEG_ADX)
 endif()
 
 if(ENABLE_SDL_DIALOGS)
-    target_compile_definitions(3sx PRIVATE ENABLE_SDL_DIALOGS)
+    target_compile_definitions(3s-arm PRIVATE ENABLE_SDL_DIALOGS)
 endif()
 
 if(CMAKE_C_COMPILER_ID STREQUAL "Clang" OR CMAKE_C_COMPILER_ID STREQUAL "AppleClang")
@@ -148,7 +148,7 @@ elseif(CMAKE_C_COMPILER_ID STREQUAL "GNU")
     )
 endif()
 
-target_compile_options(3sx PRIVATE
+target_compile_options(3s-arm PRIVATE
     -Wall
     -Werror
 
@@ -175,12 +175,12 @@ if(PORT_MISTER AND ENABLE_MISTER_ARM_HARDENING)
     if((CMAKE_C_COMPILER_ID STREQUAL "Clang") OR (CMAKE_C_COMPILER_ID STREQUAL "AppleClang") OR
        (CMAKE_C_COMPILER_ID STREQUAL "GNU"))
         if(_mister_armv7_target_detected)
-            target_compile_options(3sx PRIVATE
+            target_compile_options(3s-arm PRIVATE
                 -mcpu=cortex-a9
                 -mfpu=neon-vfpv3
                 -mfloat-abi=hard
             )
-            target_link_options(3sx PRIVATE
+            target_link_options(3s-arm PRIVATE
                 -mcpu=cortex-a9
                 -mfpu=neon-vfpv3
                 -mfloat-abi=hard
@@ -201,26 +201,26 @@ endif()
 # Note: -flto=thin was removed because it triggers a linker segfault in
 # clang-20 during the ARM cross-build (Debian bullseye toolchain).
 if(PORT_MISTER)
-    target_compile_options(3sx PRIVATE
+    target_compile_options(3s-arm PRIVATE
         $<$<CONFIG:Release>:-O3>
     )
-    target_link_options(3sx PRIVATE
+    target_link_options(3s-arm PRIVATE
         $<$<CONFIG:Release>:-O3>
     )
 endif()
 
-set_target_properties(3sx PROPERTIES
+set_target_properties(3s-arm PROPERTIES
     MACOSX_BUNDLE_INFO_PLIST "${CMAKE_SOURCE_DIR}/cmake/Info.plist"
 )
 
 if(APPLE)
-    set_target_properties(3sx PROPERTIES
-        OUTPUT_NAME "3SX"
-        MACOSX_BUNDLE_BUNDLE_NAME "3SX"
+    set_target_properties(3s-arm PROPERTIES
+        OUTPUT_NAME "3S-ARM"
+        MACOSX_BUNDLE_BUNDLE_NAME "3S-ARM"
         INSTALL_RPATH "@executable_path/../Frameworks"
     )
 elseif(UNIX AND NOT APPLE)
-    set_target_properties(3sx PROPERTIES
+    set_target_properties(3s-arm PROPERTIES
         INSTALL_RPATH "\$ORIGIN/../lib"
     )
 endif()
@@ -261,7 +261,7 @@ if(ENABLE_NETPLAY)
     )
 endif()
 
-target_link_libraries(3sx PRIVATE
+target_link_libraries(3s-arm PRIVATE
     m
     "${MINIZIP_NG_ROOT}/lib/libminizip-ng.a"
     "${TF_PSA_CRYPTO_ROOT}/lib/libtfpsacrypto.a"
@@ -270,14 +270,14 @@ target_link_libraries(3sx PRIVATE
 )
 
 if(ENABLE_ISO_IMPORT)
-    target_link_libraries(3sx PRIVATE
+    target_link_libraries(3s-arm PRIVATE
         "${LIBCDIO_ROOT}/lib/libiso9660.a"
         "${LIBCDIO_ROOT}/lib/libcdio.a"
     )
 endif()
 
 if(ENABLE_NETPLAY)
-    target_link_libraries(3sx PRIVATE
+    target_link_libraries(3s-arm PRIVATE
         "${GEKKONET_ROOT}/lib/libGekkoNet.a"
         "${SDL3_NET_ROOT}/lib/libSDL3_net.a"
     )
@@ -285,7 +285,7 @@ endif()
 
 if(APPLE)
     if(ENABLE_FFMPEG_ADX)
-        target_link_libraries(3sx PRIVATE
+        target_link_libraries(3s-arm PRIVATE
             ${FFMPEG_ROOT}/lib/libavcodec.dylib
             ${FFMPEG_ROOT}/lib/libavformat.dylib
             ${FFMPEG_ROOT}/lib/libavutil.dylib
@@ -293,13 +293,13 @@ if(APPLE)
         )
     endif()
 
-    target_link_libraries(3sx PRIVATE
+    target_link_libraries(3s-arm PRIVATE
         ${SDL3_ROOT}/lib/libSDL3.0.dylib
         iconv
     )
 elseif(WIN32)
     if(ENABLE_FFMPEG_ADX)
-        target_link_libraries(3sx PRIVATE
+        target_link_libraries(3s-arm PRIVATE
             ${FFMPEG_ROOT}/lib/libavcodec.dll.a
             ${FFMPEG_ROOT}/lib/libavformat.dll.a
             ${FFMPEG_ROOT}/lib/libavutil.dll.a
@@ -307,7 +307,7 @@ elseif(WIN32)
         )
     endif()
 
-    target_link_libraries(3sx PRIVATE
+    target_link_libraries(3s-arm PRIVATE
         ${SDL3_ROOT}/lib/libSDL3.dll.a
         iconv
         bcrypt
@@ -315,13 +315,13 @@ elseif(WIN32)
         ws2_32
         iphlpapi
     )
-    target_link_options(3sx PRIVATE
+    target_link_options(3s-arm PRIVATE
         "$<$<OR:$<CONFIG:Debug>,$<CONFIG:RelWithDebInfo>>:--for-linker>"
-        "$<$<OR:$<CONFIG:Debug>,$<CONFIG:RelWithDebInfo>>:--pdb=3sx.pdb>"
+        "$<$<OR:$<CONFIG:Debug>,$<CONFIG:RelWithDebInfo>>:--pdb=3s-arm.pdb>"
     )
 elseif(UNIX)
     if(ENABLE_FFMPEG_ADX)
-        target_link_libraries(3sx PRIVATE
+        target_link_libraries(3s-arm PRIVATE
             ${FFMPEG_ROOT}/lib/libavcodec.so
             ${FFMPEG_ROOT}/lib/libavformat.so
             ${FFMPEG_ROOT}/lib/libavutil.so
@@ -329,7 +329,7 @@ elseif(UNIX)
         )
     endif()
 
-    target_link_libraries(3sx PRIVATE
+    target_link_libraries(3s-arm PRIVATE
         ${SDL3_ROOT}/lib/libSDL3.so
     )
 endif()
@@ -344,27 +344,27 @@ set(PROJECT_LICENSE_FILES
 )
 
 if(APPLE)
-    install(TARGETS 3sx
+    install(TARGETS 3s-arm
         RUNTIME DESTINATION bin
         BUNDLE DESTINATION .
     )
 
     if(ENABLE_FFMPEG_ADX)
         file(GLOB FFMPEG_DYLIBS "${FFMPEG_ROOT}/lib/*.dylib")
-        install(FILES ${FFMPEG_DYLIBS} DESTINATION 3SX.app/Contents/Frameworks)
+        install(FILES ${FFMPEG_DYLIBS} DESTINATION 3S-ARM.app/Contents/Frameworks)
     endif()
 
     install(FILES
         ${SDL3_ROOT}/lib/libSDL3.0.dylib
-        DESTINATION 3SX.app/Contents/Frameworks
+        DESTINATION 3S-ARM.app/Contents/Frameworks
     )
 
     install(FILES
         ${PROJECT_LICENSE_FILES}
-        DESTINATION 3SX.app/Contents/Resources/licenses
+        DESTINATION 3S-ARM.app/Contents/Resources/licenses
     )
 elseif(WIN32)
-    install(TARGETS 3sx
+    install(TARGETS 3s-arm
         RUNTIME_DEPENDENCY_SET deps
         RUNTIME DESTINATION bin
     )
@@ -387,7 +387,7 @@ elseif(WIN32)
     )
 
     install(FILES
-        "$<$<OR:$<CONFIG:Debug>,$<CONFIG:RelWithDebInfo>>:${CMAKE_CURRENT_BINARY_DIR}/3sx.pdb>"
+        "$<$<OR:$<CONFIG:Debug>,$<CONFIG:RelWithDebInfo>>:${CMAKE_CURRENT_BINARY_DIR}/3s-arm.pdb>"
         DESTINATION bin
     )
 
@@ -396,7 +396,7 @@ elseif(WIN32)
         DESTINATION bin/licenses
     )
 elseif(UNIX)
-    install(TARGETS 3sx
+    install(TARGETS 3s-arm
         RUNTIME DESTINATION bin
     )
 
@@ -410,7 +410,7 @@ elseif(UNIX)
 
     install(FILES
         ${PROJECT_LICENSE_FILES}
-        DESTINATION share/3sx/licenses
+        DESTINATION share/3s-arm/licenses
     )
 endif()
 
@@ -418,7 +418,7 @@ endif()
 # Packaging
 # ======================================
 
-set(CPACK_PACKAGE_NAME "3SX")
+set(CPACK_PACKAGE_NAME "3S-ARM")
 set(CPACK_PACKAGE_VENDOR "CrowdedStreet")
 # set(CPACK_PACKAGE_VERSION "1.0.0")
 

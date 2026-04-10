@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 SETUP_CONTAINER_SCRIPT="${ROOT_DIR}/tools/mister/setup-build-container.sh"
 
-container_name="${MISTER_BUILD_CONTAINER:-3sx-mister-build}"
+container_name="${MISTER_BUILD_CONTAINER:-3s-mister-arm-build}"
 platform="${MISTER_DOCKER_PLATFORM:-linux/amd64}"
 flavor="telemetry"
 jobs="${JOBS:-2}"
@@ -142,7 +142,7 @@ build_one() {
     local build_dir="build/mister-${flavor_name}"
     local install_dir="build/mister-${flavor_name}-install"
     local package_dir="build/mister-${flavor_name}-package"
-    local binary_path="${install_dir}/bin/3sx"
+    local binary_path="${install_dir}/bin/3s-arm"
 
     cmake -S . -B "${build_dir}" -DCMAKE_BUILD_TYPE=Release -DPORT_MISTER=ON \
         -DENABLE_PERF_TELEMETRY="${telemetry_flag}" \

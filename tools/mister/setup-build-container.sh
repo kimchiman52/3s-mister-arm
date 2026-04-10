@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
-container_name="${MISTER_BUILD_CONTAINER:-3sx-mister-build}"
+container_name="${MISTER_BUILD_CONTAINER:-3s-mister-arm-build}"
 platform="${MISTER_DOCKER_PLATFORM:-linux/amd64}"
 llvm_version="${MISTER_LLVM_VERSION:-20}"
 cross_build_mode="auto"

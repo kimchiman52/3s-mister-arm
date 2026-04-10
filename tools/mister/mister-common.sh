@@ -13,7 +13,7 @@ mister_require_cmd() {
 }
 
 mister_lock_dir() {
-    printf '%s\n' "${MISTER_LOCK_DIR:-${TMPDIR:-/tmp}/3sx-mister-remote.lock}"
+    printf '%s\n' "${MISTER_LOCK_DIR:-${TMPDIR:-/tmp}/3s-mister-arm-remote.lock}"
 }
 
 mister_lock_timeout() {
@@ -148,24 +148,24 @@ mister_require_safe_runtime_root() {
         return 2
     fi
 
-    if [ "${normalized}" = "/media/fat/games/3sx" ]; then
+    if [ "${normalized}" = "/media/fat/games/3s-arm" ]; then
         return 0
     fi
 
     case "${normalized}" in
     /|/media|/media/fat|/media/fat/games)
         echo "refusing dangerous remote runtime root: ${normalized}" >&2
-        echo "expected the exact runtime root /media/fat/games/3sx" >&2
+        echo "expected the exact runtime root /media/fat/games/3s-arm" >&2
         return 2
         ;;
     *)
         case "${normalized}" in
-        */games/3sx)
+        */games/3s-arm)
             mister_require_confirmed_remote_override "${normalized}" "remote runtime root"
             ;;
         *)
             echo "refusing nonstandard remote runtime root: ${normalized}" >&2
-            echo "expected the exact runtime root /media/fat/games/3sx" >&2
+            echo "expected the exact runtime root /media/fat/games/3s-arm" >&2
             return 2
             ;;
         esac
@@ -268,7 +268,7 @@ mister_allow_busy_target() {
 }
 
 mister_remote_busy_regex() {
-    printf '%s\n' "${MISTER_REMOTE_BUSY_REGEX:-(^|/)(3sx|launch-osd\\.sh|run-3sx\\.sh|perf-sampler\\.sh)( |$)|MiSTer_3SX|(^| )rsync( |$)|(^| )scp( |$)|sftp-server}"
+    printf '%s\n' "${MISTER_REMOTE_BUSY_REGEX:-(^|/)(3s-arm|launch-osd\\.sh|run-3s-arm\\.sh|perf-sampler\\.sh)( |$)|MiSTer_3S-ARM|(^| )rsync( |$)|(^| )scp( |$)|sftp-server}"
 }
 
 mister_target_busy_status_script() {
@@ -674,9 +674,9 @@ mister_rsync_deploy_wrapper() {
     local deploy_mode="${6:-full}"
 
     local wrapper_root="${src_path%/}"
-    local runtime_src="${wrapper_root}/games/3sx/"
-    local core_src="${wrapper_root}/_Other/3SX.rbf"
-    local hps_src="${wrapper_root}/MiSTer_3SX"
+    local runtime_src="${wrapper_root}/games/3s-arm/"
+    local core_src="${wrapper_root}/_Other/3S-ARM.rbf"
+    local hps_src="${wrapper_root}/MiSTer_3S-ARM"
 
     [ -f "${hps_src}" ] || { echo "wrapper HPS binary not found in package: ${hps_src}" >&2; return 1; }
     local have_core=0
@@ -700,14 +700,14 @@ mister_rsync_deploy_wrapper() {
     fi
 
     mister_require_safe_fat_root "${dst_path}" || return $?
-    mister_require_safe_runtime_root "${dst_path%/}/games/3sx/" || return $?
+    mister_require_safe_runtime_root "${dst_path%/}/games/3s-arm/" || return $?
 
     local mkdir_dirs="'${dst_path%/}/'"
     if [ "${have_core}" -eq 1 ]; then
         mkdir_dirs="${mkdir_dirs} '${dst_path%/}/_Other'"
     fi
     if [ "${deploy_mode}" = "full" ]; then
-        mkdir_dirs="${mkdir_dirs} '${dst_path%/}/games/3sx'"
+        mkdir_dirs="${mkdir_dirs} '${dst_path%/}/games/3s-arm'"
     fi
     mister_ssh_exec "${host}" "${user}" "${password}" "mkdir -p ${mkdir_dirs}"
 
@@ -718,7 +718,7 @@ mister_rsync_deploy_wrapper() {
             mister_rsync_expect_copy "${core_src}" "${host}" "${user}" "${password}" "${dst_path%/}/_Other/"
         fi
         if [ "${deploy_mode}" = "full" ]; then
-            mister_rsync_expect "${runtime_src}" "${host}" "${user}" "${password}" "${dst_path%/}/games/3sx/"
+            mister_rsync_expect "${runtime_src}" "${host}" "${user}" "${password}" "${dst_path%/}/games/3s-arm/"
         fi
     else
         local rsync_shell
@@ -746,7 +746,7 @@ mister_rsync_deploy_wrapper() {
                 --exclude 'keymap' \
                 --filter 'P keymap' \
                 -e "${rsync_shell}" \
-                "${runtime_src}" "${user}@${host}:${dst_path%/}/games/3sx/" || {
+                "${runtime_src}" "${user}@${host}:${dst_path%/}/games/3s-arm/" || {
                 echo "MiSTer key-only wrapper runtime deploy failed; set MISTER_PASSWORD to use password auth or configure a working SSH key." >&2
                 return 1
             }

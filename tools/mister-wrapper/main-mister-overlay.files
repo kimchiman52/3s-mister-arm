@@ -3,11 +3,11 @@ fpga_io.h
 input.cpp
 input.h
 mister_joy_shm.h
-threesx_core_context.cpp
-threesx_core_context.h
-threesx_main.cpp
-threesx_wrapper.cpp
-threesx_wrapper.h
+thirdsarm_core_context.cpp
+thirdsarm_core_context.h
+thirdsarm_main.cpp
+thirdsarm_wrapper.cpp
+thirdsarm_wrapper.h
 user_io.cpp
 user_io.h
 video.cpp

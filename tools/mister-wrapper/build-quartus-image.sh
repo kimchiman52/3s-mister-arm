@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 DOCKER_TEMPLATE_DIR="${SCRIPT_DIR}/docker/quartus17"
-DOCKER_IMAGE="${MISTER_WRAPPER_CORE_IMAGE:-3sx-mister-wrapper-quartus17}"
+DOCKER_IMAGE="${MISTER_WRAPPER_CORE_IMAGE:-3s-mister-arm-wrapper-quartus17}"
 DOCKER_PLATFORM="${MISTER_WRAPPER_CORE_DOCKER_PLATFORM:-linux/amd64}"
 INSTALLER_DIR="${MISTER_QUARTUS_INSTALLER_DIR:-}"
 BASE_IMAGE="${MISTER_QUARTUS_BASE_IMAGE:-ubuntu:20.04}"
@@ -107,7 +107,7 @@ if [ -z "${QUARTUS_INSTALL_DIR}" ]; then
     esac
 fi
 
-BUILD_CONTEXT="$(mktemp -d "${TMPDIR:-/tmp}/3sx-quartus-image.XXXXXX")"
+BUILD_CONTEXT="$(mktemp -d "${TMPDIR:-/tmp}/3s-arm-quartus-image.XXXXXX")"
 trap 'rm -rf "${BUILD_CONTEXT}"' EXIT
 
 mkdir -p "${BUILD_CONTEXT}/installer"

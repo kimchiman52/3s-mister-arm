@@ -322,8 +322,8 @@ through the blend path. Zero changes to hot files.
 
 **What to add** in `CMakeLists.txt`, inside the existing ARM hardening `if` block:
 ```cmake
-target_compile_options(3sx PRIVATE -flto=thin)
-target_link_options(3sx PRIVATE -flto=thin)
+target_compile_options(3s-arm PRIVATE -flto=thin)
+target_link_options(3s-arm PRIVATE -flto=thin)
 ```
 Use ThinLTO (not full LTO) to keep Docker build link time reasonable.
 

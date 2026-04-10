@@ -2,7 +2,7 @@
 
 #include "fpga_io.h"
 #include "offload.h"
-#include "threesx_wrapper.h"
+#include "thirdsarm_wrapper.h"
 
 const char *version = "$VER:" VDATE;
 
@@ -16,5 +16,5 @@ int main(int argc, char *argv[])
 	offload_start();
 	fpga_io_init();
 
-	return threesx_wrapper_run(argc, argv);
+	return thirdsarm_wrapper_run(argc, argv);
 }

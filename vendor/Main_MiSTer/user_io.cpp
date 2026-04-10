@@ -219,7 +219,7 @@ char is_menu()
 
 char is_menu_like_fb()
 {
-	return is_menu() || !strcasecmp(orig_name, "3SX");
+	return is_menu() || !strcasecmp(orig_name, "3S-ARM");
 }
 
 static int is_x86_type = 0;

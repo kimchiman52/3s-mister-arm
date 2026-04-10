@@ -326,7 +326,7 @@ Six render-path optimizations targeting super art frame drops, plus four additio
 - **Why**: The original `fprintf`-based clock writes were unreliable (buffered I/O could be lost). The kernel governor could downclock during frame sleep, wasting headroom.
 - **Impact**: Reliable overclocking to 1200MHz provides ~50% more CPU headroom. Governor pinning ensures consistent performance.
 - **Commit**: `e510bc42`
-- **Files**: `src/port/sdl/sdl_app.c`, `vendor/Main_MiSTer/threesx_wrapper.cpp`
+- **Files**: `src/port/sdl/sdl_app.c`, `vendor/Main_MiSTer/thirdsarm_wrapper.cpp`
 
 ---
 

@@ -71,9 +71,9 @@ static SDL_Renderer* renderer = NULL;
 static SDL_Texture* screen_texture = NULL;
 static SDL_Texture* native_screenshot_texture = NULL;
 static ScaleMode scale_mode = SCALEMODE_SOFT_LINEAR;
-static const char* mister_scale_mode_override_env = "THREESX_SCALE_MODE_STARTUP_OVERRIDE";
-static const char* wrapper_scale_mode_explicit_marker = "# threesx-wrapper-scale-mode-explicit";
-static const char* wrapper_scale_mode_auto_marker = "# threesx-wrapper-scale-mode-auto";
+static const char* mister_scale_mode_override_env = "THIRDSARM_SCALE_MODE_STARTUP_OVERRIDE";
+static const char* wrapper_scale_mode_explicit_marker = "# thirdsarm-wrapper-scale-mode-explicit";
+static const char* wrapper_scale_mode_auto_marker = "# thirdsarm-wrapper-scale-mode-auto";
 static char scale_mode_startup_source[32] = "default";
 static char scale_mode_requested_value[32] = "";
 static SDL_FRect native_output_rect = { 0 };
@@ -9715,9 +9715,9 @@ static bool init_window() {
 
     /* Native video: write frames directly to DDR3 for the FPGA's native video
        reader instead of going through the Linux framebuffer scaler path.
-       Enabled by default; set THREESX_NATIVE_VIDEO=0 to disable. */
+       Enabled by default; set THIRDSARM_NATIVE_VIDEO=0 to disable. */
     {
-        const char* native_video_env = SDL_getenv("THREESX_NATIVE_VIDEO");
+        const char* native_video_env = SDL_getenv("THIRDSARM_NATIVE_VIDEO");
         if (!native_video_env || SDL_strcmp(native_video_env, "0") != 0) {
             native_video_writer_enabled = NativeVideoWriter_Init();
             backend_logf("Native video writer: %s", native_video_writer_enabled ? "enabled" : "disabled");
@@ -9730,7 +9730,7 @@ static bool init_window() {
                 target_frame_time_ns = (Uint64)(1000000000.0 / NV_TARGET_FPS);
                 backend_logf("Native video: frame pacing at %.4f Hz (FPGA PLL rate)", NV_TARGET_FPS);
 
-                const char* bw_env = SDL_getenv("THREESX_BUSYWAIT_US");
+                const char* bw_env = SDL_getenv("THIRDSARM_BUSYWAIT_US");
                 if (bw_env) {
                     int val = SDL_atoi(bw_env);
                     if (val >= 0 && val <= 5000) {

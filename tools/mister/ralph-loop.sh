@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-ROOT_DIR="${ROOT_DIR:-/Users/sb/Developer/3sx-mister}"
+ROOT_DIR="${ROOT_DIR:-/Users/sb/Developer/3s-mister-arm}"
 PROMPT_FILE="${PROMPT_FILE:-$ROOT_DIR/artifacts/mister-port/overnight-perf-prompt.txt}"
 LIVING_DOC="${LIVING_DOC:-$ROOT_DIR/artifacts/mister-port/living-findings.md}"
 LOG_DIR="${LOG_DIR:-$ROOT_DIR/artifacts/mister-port/logs}"

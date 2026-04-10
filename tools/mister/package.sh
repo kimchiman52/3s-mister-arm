@@ -17,40 +17,40 @@ fi
 rm -rf "$OUTPUT_DIR"
 mkdir -p "$OUTPUT_DIR/bin" "$OUTPUT_DIR/lib" "$OUTPUT_DIR/licenses" "$OUTPUT_DIR/scripts"
 
-if [ -f "$INSTALL_PREFIX/bin/3sx" ]; then
-    cp "$INSTALL_PREFIX/bin/3sx" "$OUTPUT_DIR/bin/3sx"
-elif [ -f "$INSTALL_PREFIX/3SX.app/Contents/MacOS/3SX" ]; then
-    cp "$INSTALL_PREFIX/3SX.app/Contents/MacOS/3SX" "$OUTPUT_DIR/bin/3sx"
+if [ -f "$INSTALL_PREFIX/bin/3s-arm" ]; then
+    cp "$INSTALL_PREFIX/bin/3s-arm" "$OUTPUT_DIR/bin/3s-arm"
+elif [ -f "$INSTALL_PREFIX/3S-ARM.app/Contents/MacOS/3S-ARM" ]; then
+    cp "$INSTALL_PREFIX/3S-ARM.app/Contents/MacOS/3S-ARM" "$OUTPUT_DIR/bin/3s-arm"
 else
-    echo "Missing binary: $INSTALL_PREFIX/bin/3sx"
-    echo "Also checked: $INSTALL_PREFIX/3SX.app/Contents/MacOS/3SX"
+    echo "Missing binary: $INSTALL_PREFIX/bin/3s-arm"
+    echo "Also checked: $INSTALL_PREFIX/3S-ARM.app/Contents/MacOS/3S-ARM"
     exit 1
 fi
 
 if [ -d "$INSTALL_PREFIX/lib" ]; then
     rsync -a --no-owner --no-group "$INSTALL_PREFIX/lib/" "$OUTPUT_DIR/lib/"
-elif [ -d "$INSTALL_PREFIX/3SX.app/Contents/Frameworks" ]; then
-    rsync -a --no-owner --no-group "$INSTALL_PREFIX/3SX.app/Contents/Frameworks/" "$OUTPUT_DIR/lib/"
+elif [ -d "$INSTALL_PREFIX/3S-ARM.app/Contents/Frameworks" ]; then
+    rsync -a --no-owner --no-group "$INSTALL_PREFIX/3S-ARM.app/Contents/Frameworks/" "$OUTPUT_DIR/lib/"
 fi
 
-if [ -d "$INSTALL_PREFIX/share/3sx/licenses" ]; then
-    rsync -a --no-owner --no-group "$INSTALL_PREFIX/share/3sx/licenses/" "$OUTPUT_DIR/licenses/"
-elif [ -d "$INSTALL_PREFIX/3SX.app/Contents/Resources/licenses" ]; then
-    rsync -a --no-owner --no-group "$INSTALL_PREFIX/3SX.app/Contents/Resources/licenses/" "$OUTPUT_DIR/licenses/"
+if [ -d "$INSTALL_PREFIX/share/3s-arm/licenses" ]; then
+    rsync -a --no-owner --no-group "$INSTALL_PREFIX/share/3s-arm/licenses/" "$OUTPUT_DIR/licenses/"
+elif [ -d "$INSTALL_PREFIX/3S-ARM.app/Contents/Resources/licenses" ]; then
+    rsync -a --no-owner --no-group "$INSTALL_PREFIX/3S-ARM.app/Contents/Resources/licenses/" "$OUTPUT_DIR/licenses/"
 fi
 
-cat > "$OUTPUT_DIR/scripts/run-3sx.sh" <<'LAUNCHER'
+cat > "$OUTPUT_DIR/scripts/run-3s-arm.sh" <<'LAUNCHER'
 #!/bin/sh
 set -eu
 
 SELF_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 APP_DIR="$(CDPATH= cd -- "${SELF_DIR}/.." && pwd)"
 
-export THREESX_HOME="${THREESX_HOME:-$APP_DIR}"
+export THIRDSARM_HOME="${THIRDSARM_HOME:-$APP_DIR}"
 export LD_LIBRARY_PATH="$APP_DIR/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 export SDL_AUDIO_DRIVER="${SDL_AUDIO_DRIVER:-alsa}"
 
-exec "$APP_DIR/bin/3sx" "$@"
+exec "$APP_DIR/bin/3s-arm" "$@"
 LAUNCHER
 
 cat > "$OUTPUT_DIR/scripts/launch-osd.sh" <<'OSD_LAUNCHER'
@@ -66,7 +66,7 @@ mkdir -p "$LOG_DIR"
 
 # Keep OSD launches quiet on the text console; inspect logs/last-run.log for diagnostics.
 {
-    echo "==== 3SX OSD launch ===="
+    echo "==== 3S-ARM OSD launch ===="
     date 2>/dev/null || true
     echo "pid=$$ ppid=$PPID"
     echo "tty=$(tty 2>&1 || true)"
@@ -76,8 +76,8 @@ mkdir -p "$LOG_DIR"
 } >"$LOG_PATH"
 
 # Native video: bypass the MiSTer scaler for analog CRT output.
-# Set THREESX_NATIVE_VIDEO=0 to disable and use the scaler path instead.
-export THREESX_NATIVE_VIDEO="${THREESX_NATIVE_VIDEO:-1}"
+# Set THIRDSARM_NATIVE_VIDEO=0 to disable and use the scaler path instead.
+export THIRDSARM_NATIVE_VIDEO="${THIRDSARM_NATIVE_VIDEO:-1}"
 
 # On stock MiSTer OSD launches, force SDL onto dummy video and software renderer.
 # Final on-screen output is handled by the fbdev presenter path in-app.
@@ -120,7 +120,7 @@ trap 'terminate_child 130' INT
 trap 'terminate_child 129' HUP
 trap 'terminate_child 143' TERM
 
-if "$SELF_DIR/run-3sx.sh" "$@" >>"$LOG_PATH" 2>&1; then
+if "$SELF_DIR/run-3s-arm.sh" "$@" >>"$LOG_PATH" 2>&1; then
     trap - INT HUP TERM
     restore_console
     echo "exit=0" >>"$LOG_PATH"
@@ -134,7 +134,7 @@ else
 fi
 OSD_LAUNCHER
 
-chmod +x "$OUTPUT_DIR/scripts/run-3sx.sh" "$OUTPUT_DIR/scripts/launch-osd.sh" \
-    "$OUTPUT_DIR/bin/3sx"
+chmod +x "$OUTPUT_DIR/scripts/run-3s-arm.sh" "$OUTPUT_DIR/scripts/launch-osd.sh" \
+    "$OUTPUT_DIR/bin/3s-arm"
 
 echo "MiSTer package created at: $OUTPUT_DIR"

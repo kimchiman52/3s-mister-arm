@@ -19,7 +19,7 @@
 //    CPS3:  59.59949 Hz (TARGET_FPS)
 //    Delta: +0.0000014 Hz (1.4 microhertz -- essentially zero)
 //
-//  Copyright (C) 2026 3SX Project
+//  Copyright (C) 2026 3S-ARM Project
 //  Licensed under GNU General Public License v2+
 //
 //============================================================================

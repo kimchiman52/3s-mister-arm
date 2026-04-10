@@ -37,7 +37,7 @@ static void create_dialog_parent_window() {
         return;
     }
 
-    dialog_owner_window = SDL_CreateWindow("3SX", 1, 1, SDL_WINDOW_HIDDEN);
+    dialog_owner_window = SDL_CreateWindow("3S-ARM", 1, 1, SDL_WINDOW_HIDDEN);
     SDL_ShowWindow(dialog_owner_window);
     SDL_RaiseWindow(dialog_owner_window);
 }
@@ -249,7 +249,7 @@ bool Resources_RunResourceCopyingFlow() {
         create_dialog_parent_window();
 #endif
         show_info_message("Valid resources are missing",
-                          "3SX needs resources from a copy of \"Street Fighter III: 3rd Strike\" to run. Choose "
+                          "3S-ARM needs resources from a copy of \"Street Fighter III: 3rd Strike\" to run. Choose "
                           "the iso in the next dialog");
         open_dialog();
         break;

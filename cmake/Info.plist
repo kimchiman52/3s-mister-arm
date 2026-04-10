@@ -3,11 +3,11 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleName</key> 
-    <string>3sx</string>
+    <string>3s-arm</string>
     <key>CFBundleExecutable</key> 
-    <string>3sx</string>
+    <string>3s-arm</string>
     <key>CFBundleIdentifier</key> 
-    <string>com.crowded-street.3sx</string>
+    <string>com.crowded-street.3s-arm</string>
     <key>CFBundleVersion</key> 
     <string>1.0</string>
     <key>CFBundlePackageType</key> 

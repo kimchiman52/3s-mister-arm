@@ -2,7 +2,7 @@
 
 ## Scope
 
-This runbook targets stock MiSTer Linux with the 3SX MiSTer profile:
+This runbook targets stock MiSTer Linux with the 3S-ARM MiSTer profile:
 
 - no netplay
 - no runtime ISO import
@@ -56,7 +56,7 @@ tools/mister/setup-build-container.sh --platform linux/arm/v7
 Important:
 
 - Set `JOBS=2` for this container. Letting the ARMv7 container auto-detect `10` jobs caused emulated clean builds to be OOM-killed around the halfway mark.
-- Before creating a new Docker container, check whether `3sx-mister-build` already exists and reuse it. Only recreate it if the container is broken or its `/src` bind mount points at the wrong checkout.
+- Before creating a new Docker container, check whether `3s-mister-arm-build` already exists and reuse it. Only recreate it if the container is broken or its `/src` bind mount points at the wrong checkout.
 - This path requires host `binfmt_misc`/QEMU support. If `docker run --platform linux/arm/v7 ...` fails immediately with `exec format error`, use the cross-build Docker path below instead.
 - `tools/mister/setup-build-container.sh` installs the official LLVM Bullseye repo key, pins `clang-20`, and keeps CMake on `bullseye-backports`.
 - Install `libasound2-dev` in the container. Without it SDL3 builds only `disk` and `dummy` audio backends, and MiSTer audio will not come up as `alsa`.
@@ -65,13 +65,13 @@ Important:
 Quick mount check for an existing container:
 
 ```bash
-docker inspect -f '{{range .Mounts}}{{println .Source "->" .Destination}}{{end}}' 3sx-mister-build
+docker inspect -f '{{range .Mounts}}{{println .Source "->" .Destination}}{{end}}' 3s-mister-arm-build
 ```
 
 Validated Docker build command:
 
 ```bash
-docker exec 3sx-mister-build bash -lc '
+docker exec 3s-mister-arm-build bash -lc '
 set -euxo pipefail
 cd /src
 JOBS=2 bash build-deps.sh --profile mister
@@ -86,7 +86,7 @@ If this repo was previously used for a macOS or other non-Linux build, remove `t
 On Docker Desktop/macOS bind mounts, do not unpack or build SDL directly inside `/src`. GNU `tar` will try to restore archive ownership into the bind mount, emit `Cannot change ownership ... Permission denied`, and abort the dependency build. Copy the repo into a container-local workdir first, for example:
 
 ```bash
-docker exec 3sx-mister-build bash -lc '
+docker exec 3s-mister-arm-build bash -lc '
 set -euxo pipefail
 rm -rf /work
 mkdir -p /work
@@ -103,7 +103,7 @@ Build flavors:
 Validated dual-flavor Docker build/package commands:
 
 ```bash
-docker exec 3sx-mister-build bash -lc '
+docker exec 3s-mister-arm-build bash -lc '
 set -euxo pipefail
 cd /src
 CC=clang-20 CXX=clang++-20 cmake -S . -B build/mister-telemetry -DCMAKE_BUILD_TYPE=Release -DPORT_MISTER=ON -DENABLE_PERF_TELEMETRY=ON
@@ -134,7 +134,7 @@ This fallback was revalidated with `clang-20` on March 20, 2026 from an x86_64 D
 ```bash
 tools/mister/setup-build-container.sh --platform linux/amd64
 
-docker exec 3sx-mister-build bash -lc '
+docker exec 3s-mister-arm-build bash -lc '
 set -euxo pipefail
 rm -rf /work-arm
 mkdir -p /work-arm
@@ -156,19 +156,19 @@ cmake -S . -B build/mister -DCMAKE_BUILD_TYPE=Release -DPORT_MISTER=ON \
 cmake --build build/mister --parallel 2
 cmake --install build/mister --prefix build/mister-install
 tools/mister/package.sh build/mister-install build/mister-package
-readelf -h build/mister-install/bin/3sx | sed -n "1,20p"
+readelf -h build/mister-install/bin/3s-arm | sed -n "1,20p"
 '
 
-docker cp 3sx-mister-build:/work-arm/build/mister-package ./build/mister-package-arm
+docker cp 3s-mister-arm-build:/work-arm/build/mister-package ./build/mister-package-arm
 ```
 
 Verify ARM hard-float/NEON codegen in the final binary:
 
 ```bash
-readelf -A build/mister-install/bin/3sx | rg -i "Tag_CPU_name|Tag_ABI_VFP_args|Tag_Advanced_SIMD_arch"
+readelf -A build/mister-install/bin/3s-arm | rg -i "Tag_CPU_name|Tag_ABI_VFP_args|Tag_Advanced_SIMD_arch"
 ```
 
-## FPGA Core Build (3SX.rbf)
+## FPGA Core Build (3S-ARM.rbf)
 
 Quartus 17.0 Lite is installed **natively inside the Colima `quartus2` VM** — not in a Docker
 container. Do not search Docker images or Docker Desktop for Quartus; it lives in the VM itself.
@@ -193,10 +193,10 @@ tools/mister-wrapper/build-core.sh --prepare-source
 colima ssh --profile quartus2 -- bash -c '
   nohup bash -c "
     export PATH=\"/home/sb.linux/intelFPGA_lite/17.0/quartus/bin:\$PATH\"
-    cd /Users/sb/Developer/3sx-mister/build/mister-wrapper-core/src
-    quartus_sh --flow compile 3SX -c 3SX > /tmp/quartus_build.log 2>&1
-    if [ ! -f output_files/3SX.rbf ] && [ -f output_files/3SX.sof ]; then
-      quartus_cpf -c output_files/3SX.sof output_files/3SX.rbf
+    cd /Users/sb/Developer/3s-mister-arm/build/mister-wrapper-core/src
+    quartus_sh --flow compile 3S-ARM -c 3S-ARM > /tmp/quartus_build.log 2>&1
+    if [ ! -f output_files/3S-ARM.rbf ] && [ -f output_files/3S-ARM.sof ]; then
+      quartus_cpf -c output_files/3S-ARM.sof output_files/3S-ARM.rbf
     fi
     echo BUILD_DONE >> /tmp/quartus_build.log
   " &
@@ -221,7 +221,7 @@ killed, clean stale artifacts from the Mac side before retrying:
 rm -rf build/mister-wrapper-core/src/db build/mister-wrapper-core/src/output_files
 ```
 
-Output: `build/mister-wrapper-core/src/output_files/3SX.rbf` (visible from both inside the VM and on the Mac host).
+Output: `build/mister-wrapper-core/src/output_files/3S-ARM.rbf` (visible from both inside the VM and on the Mac host).
 
 Previous builds are also cached inside the VM at `/home/sb.linux/build/mister-wrapper-core/`.
 
@@ -237,8 +237,8 @@ MISTER_HOST=192.168.1.171 MISTER_USER=root MISTER_PASSWORD=1 \
 Or manually (core only):
 
 ```bash
-sshpass -p 1 scp build/mister-wrapper-core/src/output_files/3SX.rbf \
-  root@192.168.1.171:/media/fat/_Other/3SX.rbf
+sshpass -p 1 scp build/mister-wrapper-core/src/output_files/3S-ARM.rbf \
+  root@192.168.1.171:/media/fat/_Other/3S-ARM.rbf
 ```
 
 ## Package
@@ -263,16 +263,16 @@ tools/mister/build-runtime-package.sh
 
 Output layout:
 
-- `build/mister-telemetry-package/bin/3sx`
-- `build/mister-clean-package/bin/3sx`
+- `build/mister-telemetry-package/bin/3s-arm`
+- `build/mister-clean-package/bin/3s-arm`
 - `build/mister-telemetry-package/lib/*`
 - `build/mister-clean-package/lib/*`
-- `build/mister-telemetry-package/scripts/run-3sx.sh`
-- `build/mister-clean-package/scripts/run-3sx.sh`
+- `build/mister-telemetry-package/scripts/run-3s-arm.sh`
+- `build/mister-clean-package/scripts/run-3s-arm.sh`
 - `build/mister-telemetry-package/scripts/launch-osd.sh`
 - `build/mister-clean-package/scripts/launch-osd.sh`
-- `build/mister-telemetry-package/run-3sx.sh` and `build/mister-telemetry-package/launch-osd.sh` are compatibility wrappers
-- `build/mister-clean-package/run-3sx.sh` and `build/mister-clean-package/launch-osd.sh` are compatibility wrappers
+- `build/mister-telemetry-package/run-3s-arm.sh` and `build/mister-telemetry-package/launch-osd.sh` are compatibility wrappers
+- `build/mister-clean-package/run-3s-arm.sh` and `build/mister-clean-package/launch-osd.sh` are compatibility wrappers
 
 ## Player Release Zip
 
@@ -286,24 +286,24 @@ tools/mister-wrapper/build-release.sh
 Default inputs:
 
 - `build/mister-clean-install`
-- `build/mister-wrapper-hps/MiSTer_3SX`
-- `build/mister-wrapper-core/3SX.rbf`
+- `build/mister-wrapper-hps/MiSTer_3S-ARM`
+- `build/mister-wrapper-core/3S-ARM.rbf`
 
 Default outputs:
 
 - staged FAT root: `build/mister-release/stage`
-- release zip: `build/mister-release/3SX-mister-rolling-pre-release.zip`
+- release zip: `build/mister-release/3S-ARM-mister-rolling-pre-release.zip`
 
 The release zip is ready to extract directly onto a MiSTer SD card root. The build fails if the
 staged release contains any of the player-local or excluded content below:
 
-- `games/3sx/resources/SF33RD.AFS`
-- `games/3sx/config`
-- `games/3sx/keymap`
-- `games/3sx/logs`
+- `games/3s-arm/resources/SF33RD.AFS`
+- `games/3s-arm/config`
+- `games/3s-arm/keymap`
+- `games/3s-arm/logs`
 
 The staged ZIP root always includes `README.txt` (the release readme), and the archive intentionally leaves
-`games/3sx/resources/SF33RD.AFS` empty so end users must add their own copy manually after install.
+`games/3s-arm/resources/SF33RD.AFS` empty so end users must add their own copy manually after install.
 
 ## Publish Rolling Pre-Release
 
@@ -319,7 +319,7 @@ Current behavior:
 - move `rolling-pre-release` to the current `HEAD`
 - keep the release marked as a pre-release
 - update the release title to the current short SHA
-- replace only existing `3SX-mister-*.zip` assets on that release, leaving other platform assets alone
+- replace only existing `3S-ARM-mister-*.zip` assets on that release, leaving other platform assets alone
 
 This remains a local maintainer flow. GitHub-hosted CI does not build or publish the MiSTer release
 zip yet.
@@ -328,14 +328,14 @@ zip yet.
 
 Copy package contents to:
 
-- `/media/fat/games/3sx/`
+- `/media/fat/games/3s-arm/`
 
 Preferred remote entry point:
 
 - `tools/mister/misterctl.sh`
 
 The MiSTer SSH path is fragile on this target. Use `tools/mister/misterctl.sh` for deploy, probe, smoke, and ad hoc remote commands, and use `tools/mister/perf-sampler.sh` for captures. Both tools take a shared local lock so only one MiSTer remote workflow runs at a time.
-`misterctl.sh deploy` also refreshes the visible MiSTer OSD wrapper at `/media/fat/Scripts/3SX.sh`.
+`misterctl.sh deploy` also refreshes the visible MiSTer OSD wrapper at `/media/fat/Scripts/3S-ARM.sh`.
 
 Auth note:
 
@@ -356,11 +356,11 @@ Before any deploy/probe/smoke step that could collide with another workflow, ins
 tools/mister/misterctl.sh busy-status
 ```
 
-`misterctl.sh` now runs that busy preflight automatically before `deploy`, `deploy-wrapper`, `probe`, `smoke`, `probe-wrapper`, `smoke-wrapper`, and `run-wrapper`. If the target already shows an active `3sx`, `MiSTer_3SX`, `launch-osd.sh`, `run-3sx.sh`, `rsync`, `scp`, or `sftp-server` process, the command aborts unless `MISTER_ALLOW_BUSY_TARGET=1` is set deliberately.
+`misterctl.sh` now runs that busy preflight automatically before `deploy`, `deploy-wrapper`, `probe`, `smoke`, `probe-wrapper`, `smoke-wrapper`, and `run-wrapper`. If the target already shows an active `3s-arm`, `MiSTer_3S-ARM`, `launch-osd.sh`, `run-3s-arm.sh`, `rsync`, `scp`, or `sftp-server` process, the command aborts unless `MISTER_ALLOW_BUSY_TARGET=1` is set deliberately.
 
 Remote mutation safety:
 
-- Delete-capable syncs are only safe inside `/media/fat/games/3sx/`.
+- Delete-capable syncs are only safe inside `/media/fat/games/3s-arm/`.
 - Never retarget a `--delete` sync at `/media/fat/`, `/media/`, or `/`.
 - `misterctl.sh` now rejects nonstandard remote roots unless both `MISTER_UNSAFE_ALLOW_ANY_REMOTE_ROOT=1` and `MISTER_UNSAFE_CONFIRM_REMOTE_ROOT=<exact-path>` are set deliberately.
 - Raw `misterctl.sh exec` is disabled by default; set `MISTER_ALLOW_REMOTE_EXEC=1` only for intentional one-off maintenance.
@@ -376,7 +376,7 @@ MISTER_HOST=192.168.1.171 MISTER_USER=root MISTER_PASSWORD=1 \
 
 Use `build/mister-clean-package/` for normal play and `build/mister-telemetry-package/` when you need perf capture or parity tooling on the device.
 
-Low-level `rsync` still works, but do not prefer it in automation now that `misterctl.sh` exists. If you bypass `misterctl.sh`, dry-run first and keep the destination exactly `/media/fat/games/3sx/`:
+Low-level `rsync` still works, but do not prefer it in automation now that `misterctl.sh` exists. If you bypass `misterctl.sh`, dry-run first and keep the destination exactly `/media/fat/games/3s-arm/`:
 
 ```bash
 rsync -avn --itemize-changes --delete --omit-dir-times --no-perms --no-owner --no-group \
@@ -386,16 +386,16 @@ rsync -avn --itemize-changes --delete --omit-dir-times --no-perms --no-owner --n
   --filter 'P config' \
   --exclude 'keymap' \
   --filter 'P keymap' \
-  build/mister-clean-package/ root@192.168.1.171:/media/fat/games/3sx/
+  build/mister-clean-package/ root@192.168.1.171:/media/fat/games/3s-arm/
 ```
 
-Remove `-n` only after reviewing the itemized path list and confirming every changed file belongs to `games/3sx`.
+Remove `-n` only after reviewing the itemized path list and confirming every changed file belongs to `games/3s-arm`.
 
 Required game data:
 
-- `/media/fat/games/3sx/resources/SF33RD.AFS`
+- `/media/fat/games/3s-arm/resources/SF33RD.AFS`
 
-If `SF33RD.AFS` is missing, 3SX exits with code `20` and prints the expected path.
+If `SF33RD.AFS` is missing, 3S-ARM exits with code `20` and prints the expected path.
 
 ## Probe Backends
 
@@ -406,32 +406,32 @@ MISTER_HOST=192.168.1.171 MISTER_USER=root MISTER_PASSWORD=1 \
 
 Probe log path:
 
-- `/media/fat/games/3sx/logs/backend.log`
+- `/media/fat/games/3s-arm/logs/backend.log`
 
 ## Run
 
 ```bash
-/media/fat/games/3sx/run-3sx.sh
+/media/fat/games/3s-arm/run-3s-arm.sh
 ```
 
 For OSD launchers (`/media/fat/Scripts/*.sh`), call:
 
 ```bash
-/media/fat/Scripts/3SX.sh
+/media/fat/Scripts/3S-ARM.sh
 ```
 
-This keeps stdout/stderr out of the text console and writes logs to `/media/fat/games/3sx/logs/last-run.log`.
-`/media/fat/Scripts/3SX.sh` delegates to the packaged OSD launcher, which forces SDL dummy video + software renderer for stable stock-MiSTer OSD startup; fbdev presenter handles on-screen output. The top-level `run-3sx.sh` and `launch-osd.sh` remain the user-facing app-local wrappers.
+This keeps stdout/stderr out of the text console and writes logs to `/media/fat/games/3s-arm/logs/last-run.log`.
+`/media/fat/Scripts/3S-ARM.sh` delegates to the packaged OSD launcher, which forces SDL dummy video + software renderer for stable stock-MiSTer OSD startup; fbdev presenter handles on-screen output. The top-level `run-3s-arm.sh` and `launch-osd.sh` remain the user-facing app-local wrappers.
 
 Generated OSD wrapper:
 
 ```sh
 #!/bin/sh
 set -eu
-exec /media/fat/Scripts/3SX.sh "$@"
+exec /media/fat/Scripts/3S-ARM.sh "$@"
 ```
 
-Do not wrap `/media/fat/Scripts/3SX.sh` in `openvt`, `chvt`, or another manual VT hop. On this MiSTer target that path can hang before the launcher starts, leaving the OSD frozen and producing no fresh `last-run.log`.
+Do not wrap `/media/fat/Scripts/3S-ARM.sh` in `openvt`, `chvt`, or another manual VT hop. On this MiSTer target that path can hang before the launcher starts, leaving the OSD frozen and producing no fresh `last-run.log`.
 
 ## Performance Sampling
 
@@ -485,7 +485,7 @@ Fix:
 
 ```bash
 rm -rf third_party/sdl3/build
-docker exec 3sx-mister-build bash -lc '
+docker exec 3s-mister-arm-build bash -lc '
 set -euxo pipefail
 cd /src
 JOBS=2 bash build-deps.sh --profile mister
@@ -503,7 +503,7 @@ Symptom:
 
 Fix:
 
-- ensure `SF33RD.AFS` exists at `/media/fat/games/3sx/resources/SF33RD.AFS`
+- ensure `SF33RD.AFS` exists at `/media/fat/games/3s-arm/resources/SF33RD.AFS`
 
 ### macOS tar deploy leaves `._*` files or ownership errors on MiSTer
 
@@ -511,7 +511,7 @@ Symptoms:
 
 - remote `tar` extraction prints `Cannot change ownership`
 - remote `tar` extraction prints `Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.*'`
-- unexpected `._*` files appear under `/media/fat/games/3sx/`
+- unexpected `._*` files appear under `/media/fat/games/3s-arm/`
 
 Fix:
 
@@ -528,7 +528,7 @@ Fix:
 
 1. Run `--probe-renderer-only`
 2. Inspect `logs/backend.log`
-3. Adjust config keys in `/media/fat/games/3sx/config`:
+3. Adjust config keys in `/media/fat/games/3s-arm/config`:
 
 ```text
 scale-mode = native
@@ -536,31 +536,31 @@ video-driver-order = dummy
 render-driver-order = software
 ```
 
-Use `/media/fat/Scripts/3SX.sh` as-is for OSD boot. If you write a custom wrapper, mirror its `SDL_VIDEODRIVER`/`SDL_VIDEO_DRIVER`/`SDL_RENDER_DRIVER` exports.
+Use `/media/fat/Scripts/3S-ARM.sh` as-is for OSD boot. If you write a custom wrapper, mirror its `SDL_VIDEODRIVER`/`SDL_VIDEO_DRIVER`/`SDL_RENDER_DRIVER` exports.
 
-### Frozen OSD after selecting 3SX
+### Frozen OSD after selecting 3S-ARM
 
 Symptoms:
 
-- the OSD stays on screen and stops responding normally after launching 3SX
-- no new `/media/fat/games/3sx/logs/last-run.log` appears
+- the OSD stays on screen and stops responding normally after launching 3S-ARM
+- no new `/media/fat/games/3s-arm/logs/last-run.log` appears
 - stuck `openvt` processes may remain on the MiSTer
 
 Cause:
 
-- the OSD wrapper is trying to launch 3SX through `openvt` or another explicit VT switch, and the handoff wedges before `/media/fat/Scripts/3SX.sh` starts
+- the OSD wrapper is trying to launch 3S-ARM through `openvt` or another explicit VT switch, and the handoff wedges before `/media/fat/Scripts/3S-ARM.sh` starts
 
 Fix:
 
-1. Use `/media/fat/Scripts/3SX.sh` directly, or a wrapper that only execs `/media/fat/Scripts/3SX.sh "$@"`.
+1. Use `/media/fat/Scripts/3S-ARM.sh` directly, or a wrapper that only execs `/media/fat/Scripts/3S-ARM.sh "$@"`.
 2. Do not add `openvt`, `chvt`, or backgrounding around the launcher.
-3. If you need to confirm the wrapper path ran, inspect `/media/fat/games/3sx/logs/osd-wrapper.log` and `/media/fat/games/3sx/logs/last-run.log`.
+3. If you need to confirm the wrapper path ran, inspect `/media/fat/games/3s-arm/logs/osd-wrapper.log` and `/media/fat/games/3s-arm/logs/last-run.log`.
 
 ### Input not responding
 
 1. Verify controller is recognized by MiSTer Linux.
-2. Relaunch 3SX after controller is connected.
-3. Check 3SX config/keymap files under `THREESX_HOME`.
+2. Relaunch 3S-ARM after controller is connected.
+3. Check 3S-ARM config/keymap files under `THIRDSARM_HOME`.
 
 ### Console still receiving input / terminal cursor visible
 
@@ -571,6 +571,6 @@ Symptoms:
 
 Fix:
 
-1. Launch through `/media/fat/Scripts/3SX.sh` (or an OSD wrapper that calls it).
-2. Use `/media/fat/Scripts/3SX.sh` (or match its SDL env exports exactly) so video/backend selection is deterministic.
+1. Launch through `/media/fat/Scripts/3S-ARM.sh` (or an OSD wrapper that calls it).
+2. Use `/media/fat/Scripts/3S-ARM.sh` (or match its SDL env exports exactly) so video/backend selection is deterministic.
 3. If startup says it failed to acquire Linux console/KD_GRAPHICS, run from MiSTer OSD/local console, not SSH.

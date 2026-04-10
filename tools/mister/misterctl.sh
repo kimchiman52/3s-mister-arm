@@ -14,23 +14,23 @@ Global options:
   --host <ip-or-host>    MiSTer host (default: $MISTER_HOST or 192.168.1.171)
   --user <name>          SSH user (default: $MISTER_USER or root)
   --password <value>     SSH password (default: $MISTER_PASSWORD)
-  --remote-root <path>   Remote 3SX root (default: $MISTER_ROOT or /media/fat/games/3sx)
+  --remote-root <path>   Remote 3S-ARM root (default: $MISTER_ROOT or /media/fat/games/3s-arm)
   --remote-fat-root <p>  Remote /media/fat root (default: $MISTER_FAT_ROOT or /media/fat)
 
 Commands:
   lock-status                Show the shared local MiSTer lock owner, if any
   busy-status                Show whether the MiSTer target appears busy
-  configure-3sx-ini         Update a MiSTer INI with the 3SX core section
+  configure-3s-arm-ini         Update a MiSTer INI with the 3S-ARM core section
   exec --command <sh>        Run one remote shell command (requires MISTER_ALLOW_REMOTE_EXEC=1)
   exec --script-file <path>  Run a local shell script remotely (requires MISTER_ALLOW_REMOTE_EXEC=1)
-  deploy --src <path>        Rsync a runtime package tree into the remote 3SX root
+  deploy --src <path>        Rsync a runtime package tree into the remote 3S-ARM root
   deploy-wrapper --src <p>   Sync wrapper-owned files into the remote /media/fat tree
-    --artifacts-only         Copy only MiSTer_3SX + 3SX.rbf; leave games/3sx untouched
-  probe                      Run run-3sx.sh --probe-renderer-only
+    --artifacts-only         Copy only MiSTer_3S-ARM + 3S-ARM.rbf; leave games/3s-arm untouched
+  probe                      Run run-3s-arm.sh --probe-renderer-only
   smoke                      Run a bounded launch-osd.sh smoke and tail logs
-  probe-wrapper              Run MiSTer_3SX with --probe-renderer-only and tail wrapper logs
-  smoke-wrapper              Run a bounded MiSTer_3SX launch and tail wrapper logs
-  run-wrapper                Run MiSTer_3SX with explicit runtime args and tail wrapper logs
+  probe-wrapper              Run MiSTer_3S-ARM with --probe-renderer-only and tail wrapper logs
+  smoke-wrapper              Run a bounded MiSTer_3S-ARM launch and tail wrapper logs
+  run-wrapper                Run MiSTer_3S-ARM with explicit runtime args and tail wrapper logs
   wrapper-status             Show installed wrapper artifacts, matching processes, and wrapper logs
   capture-wrapper            Capture detailed live wrapper/runtime state without mutating the target
   health                     Run a short remote health command and verify SF33RD.AFS
@@ -47,13 +47,13 @@ EOF
 host="${MISTER_HOST:-192.168.1.171}"
 user="${MISTER_USER:-root}"
 password="${MISTER_PASSWORD:-}"
-remote_root="${MISTER_ROOT:-/media/fat/games/3sx}"
+remote_root="${MISTER_ROOT:-/media/fat/games/3s-arm}"
 remote_fat_root="${MISTER_FAT_ROOT:-/media/fat}"
-wrapper_core_relpath="${MISTER_WRAPPER_CORE_RELPATH:-_Other/3SX.rbf}"
+wrapper_core_relpath="${MISTER_WRAPPER_CORE_RELPATH:-_Other/3S-ARM.rbf}"
 
 wrapper_preflight_script() {
     cat <<EOF
-if [ ! -x './MiSTer_3SX' ]; then
+if [ ! -x './MiSTer_3S-ARM' ]; then
   echo __WRAPPER_HPS_MISSING__
   exit 10
 fi
@@ -61,12 +61,12 @@ if [ ! -f './${wrapper_core_relpath}' ]; then
   echo __WRAPPER_RBF_MISSING__
   exit 11
 fi
-if [ ! -f './games/3sx/bin/3sx' ]; then
+if [ ! -f './games/3s-arm/bin/3s-arm' ]; then
   echo __WRAPPER_RUNTIME_MISSING__
   exit 12
 fi
-mkdir -p ./games/3sx/logs
-rm -f ./games/3sx/logs/osd-wrapper.log ./games/3sx/logs/last-run.log
+mkdir -p ./games/3s-arm/logs
+rm -f ./games/3s-arm/logs/osd-wrapper.log ./games/3s-arm/logs/last-run.log
 EOF
 }
 
@@ -120,9 +120,9 @@ busy-status)
     status_cmd="$(mister_target_busy_status_script)"
     mister_ssh_exec "${host}" "${user}" "${password}" "${status_cmd}"
     ;;
-configure-3sx-ini)
+configure-3s-arm-ini)
     ini_path="/media/fat/MiSTer.ini"
-    main_value="MiSTer_3SX"
+    main_value="MiSTer_3S-ARM"
     # video_mode: not set by default — core controls native video timing.
     # vga_scaler: only written when explicitly passed (e.g. --vga-scaler 0
     # to override a global vga_scaler=1 that would break YC color output).
@@ -148,20 +148,20 @@ configure-3sx-ini)
             shift 2
             ;;
         *)
-            echo "unknown configure-3sx-ini option: $1" >&2
+            echo "unknown configure-3s-arm-ini option: $1" >&2
             exit 2
             ;;
         esac
     done
 
     if [ -z "${ini_path}" ] || [ -z "${main_value}" ]; then
-        echo "configure-3sx-ini requires non-empty --ini and --main values" >&2
+        echo "configure-3s-arm-ini requires non-empty --ini and --main values" >&2
         exit 2
     fi
 
     mister_require_safe_ini_path "${ini_path}"
     mister_lock_acquire
-    mister_require_target_idle "${host}" "${user}" "${password}" "configure-3sx-ini"
+    mister_require_target_idle "${host}" "${user}" "${password}" "configure-3s-arm-ini"
 
     ini_path_q="$(mister_shell_quote "${ini_path}")"
     main_value_q="$(mister_shell_quote "${main_value}")"
@@ -174,11 +174,11 @@ ini_path=${ini_path_q}
 main_value=${main_value_q}
 video_mode_value=${video_mode_value_q}
 vga_scaler_value=${vga_scaler_value_q}
-backup="\${ini_path}.pre-3sx-\$(date +%Y%m%d-%H%M%S).bak"
+backup="\${ini_path}.pre-3s-arm-\$(date +%Y%m%d-%H%M%S).bak"
 tmp=\$(mktemp)
 cp -p "\${ini_path}" "\${backup}"
-awk 'BEGIN{skip=0} /^\[3SX\]\$/{skip=1; next} /^\[/{if(skip){skip=0}} !skip {print}' "\${ini_path}" > "\${tmp}"
-printf '\n[3SX]\n' >> "\${tmp}"
+awk 'BEGIN{skip=0} /^\[3S-ARM\]\$/{skip=1; next} /^\[/{if(skip){skip=0}} !skip {print}' "\${ini_path}" > "\${tmp}"
+printf '\n[3S-ARM]\n' >> "\${tmp}"
 printf 'main=%s\n' "\${main_value}" >> "\${tmp}"
 if [ -n "\${video_mode_value}" ]; then
     printf 'video_mode=%s\n' "\${video_mode_value}" >> "\${tmp}"
@@ -188,9 +188,9 @@ if [ -n "\${vga_scaler_value}" ]; then
 fi
 cp "\${tmp}" "\${ini_path}"
 rm -f "\${tmp}"
-echo __MISTER_3SX_INI_UPDATED__
+echo __MISTER_3S_ARM_INI_UPDATED__
 echo "backup=\${backup}"
-grep -n -A4 '^\[3SX\]' "\${ini_path}"
+grep -n -A4 '^\[3S-ARM\]' "\${ini_path}"
 EOF
 )
     mister_ssh_exec "${host}" "${user}" "${password}" "${configure_ini_cmd}"
@@ -269,7 +269,7 @@ deploy)
     wrapper_cmd=$(cat <<EOF
 set -e
 mkdir -p '${remote_root}/logs'
-rm -f /media/fat/Scripts/3SX.sh '/media/fat/Scripts/3SX_Training_Yun_Ryu_Ryu_Stage.sh' '/media/fat/Scripts/3SX Training Yun Ryu Ryu Stage.sh'
+rm -f /media/fat/Scripts/3S-ARM.sh '/media/fat/Scripts/3S-ARM_Training_Yun_Ryu_Ryu_Stage.sh' '/media/fat/Scripts/3S-ARM Training Yun Ryu Ryu Stage.sh'
 EOF
 )
     mister_ssh_exec "${host}" "${user}" "${password}" "${wrapper_cmd}"
@@ -313,7 +313,7 @@ probe)
     mister_require_safe_runtime_root "${remote_root}"
     mister_lock_acquire
     mister_require_target_idle "${host}" "${user}" "${password}" "probe"
-    mister_ssh_exec "${host}" "${user}" "${password}" "'${remote_root}/run-3sx.sh' --probe-renderer-only"
+    mister_ssh_exec "${host}" "${user}" "${password}" "'${remote_root}/run-3s-arm.sh' --probe-renderer-only"
     ;;
 smoke)
     mister_require_safe_runtime_root "${remote_root}"
@@ -337,10 +337,10 @@ probe-wrapper)
 set -e
 cd '${remote_fat_root}'
 $(wrapper_preflight_script)
-timeout 20 env THREESX_WRAPPER_FORCE=1 ./MiSTer_3SX './${wrapper_core_relpath}' '' --probe-renderer-only || rc=\$?
+timeout 20 env THIRDSARM_WRAPPER_FORCE=1 ./MiSTer_3S-ARM './${wrapper_core_relpath}' '' --probe-renderer-only || rc=\$?
 printf '__WRAPPER_PROBE_RC__=%s\n' "\${rc:-0}"
-tail -n 80 ./games/3sx/logs/osd-wrapper.log || true
-tail -n 80 ./games/3sx/logs/last-run.log || true
+tail -n 80 ./games/3s-arm/logs/osd-wrapper.log || true
+tail -n 80 ./games/3s-arm/logs/last-run.log || true
 EOF
 )
     mister_lock_acquire
@@ -353,10 +353,10 @@ smoke-wrapper)
 set -e
 cd '${remote_fat_root}'
 $(wrapper_preflight_script)
-timeout 20 env THREESX_WRAPPER_FORCE=1 ./MiSTer_3SX './${wrapper_core_relpath}' || rc=\$?
+timeout 20 env THIRDSARM_WRAPPER_FORCE=1 ./MiSTer_3S-ARM './${wrapper_core_relpath}' || rc=\$?
 printf '__WRAPPER_RC__=%s\n' "\${rc:-0}"
-tail -n 80 ./games/3sx/logs/osd-wrapper.log || true
-tail -n 80 ./games/3sx/logs/last-run.log || true
+tail -n 80 ./games/3s-arm/logs/osd-wrapper.log || true
+tail -n 80 ./games/3s-arm/logs/last-run.log || true
 EOF
 )
     mister_lock_acquire
@@ -406,10 +406,10 @@ run-wrapper)
 set -e
 cd '${remote_fat_root}'
 $(wrapper_preflight_script)
-${wrapper_timeout_prefix}env THREESX_WRAPPER_FORCE=1 ./MiSTer_3SX './${wrapper_core_relpath}' ''${runtime_args_invocation} || rc=\$?
+${wrapper_timeout_prefix}env THIRDSARM_WRAPPER_FORCE=1 ./MiSTer_3S-ARM './${wrapper_core_relpath}' ''${runtime_args_invocation} || rc=\$?
 printf '__WRAPPER_RUN_RC__=%s\n' "\${rc:-0}"
-tail -n 80 ./games/3sx/logs/osd-wrapper.log || true
-tail -n 80 ./games/3sx/logs/last-run.log || true
+tail -n 80 ./games/3s-arm/logs/osd-wrapper.log || true
+tail -n 80 ./games/3s-arm/logs/last-run.log || true
 EOF
 )
     mister_lock_acquire
@@ -421,7 +421,7 @@ wrapper-status)
     wrapper_status_cmd=$(cat <<EOF
 set -e
 cd '${remote_fat_root}'
-if [ -x './MiSTer_3SX' ]; then
+if [ -x './MiSTer_3S-ARM' ]; then
   echo __WRAPPER_HPS_OK__
 else
   echo __WRAPPER_HPS_MISSING__
@@ -431,18 +431,18 @@ if [ -f './${wrapper_core_relpath}' ]; then
 else
   echo __WRAPPER_RBF_MISSING__
 fi
-if [ -f './games/3sx/bin/3sx' ]; then
+if [ -f './games/3s-arm/bin/3s-arm' ]; then
   echo __WRAPPER_RUNTIME_OK__
 else
   echo __WRAPPER_RUNTIME_MISSING__
 fi
-if [ -f './games/3sx/resources/SF33RD.AFS' ]; then
+if [ -f './games/3s-arm/resources/SF33RD.AFS' ]; then
   echo __WRAPPER_AFS_OK__
 else
   echo __WRAPPER_AFS_MISSING__
 fi
-wrapper_ps=\$(ps | grep -E 'MiSTer_3SX|launch-osd\\.sh|(^|/)3sx( |$)' | grep -v grep || true)
-if printf '%s\n' "\${wrapper_ps}" | grep -q 'MiSTer_3SX'; then
+wrapper_ps=\$(ps | grep -E 'MiSTer_3S-ARM|launch-osd\\.sh|(^|/)3s-arm( |$)' | grep -v grep || true)
+if printf '%s\n' "\${wrapper_ps}" | grep -q 'MiSTer_3S-ARM'; then
   if printf '%s\n' "\${wrapper_ps}" | grep -q 'launch-osd\\.sh'; then
     echo __WRAPPER_LAUNCH_MODE__=mixed
   else
@@ -463,8 +463,8 @@ echo __WRAPPER_PS_BEGIN__
 printf '%s\n' "\${wrapper_ps}"
 echo __WRAPPER_PS_END__
 echo __WRAPPER_LOGS_BEGIN__
-tail -n 80 ./games/3sx/logs/osd-wrapper.log 2>/dev/null || echo __WRAPPER_LOG_MISSING__
-tail -n 80 ./games/3sx/logs/last-run.log 2>/dev/null || echo __WRAPPER_LASTRUN_MISSING__
+tail -n 80 ./games/3s-arm/logs/osd-wrapper.log 2>/dev/null || echo __WRAPPER_LOG_MISSING__
+tail -n 80 ./games/3s-arm/logs/last-run.log 2>/dev/null || echo __WRAPPER_LASTRUN_MISSING__
 echo __WRAPPER_LOGS_END__
 EOF
 )
@@ -480,13 +480,13 @@ echo __WRAPPER_CAPTURE_BEGIN__
 echo "active_vt=\$(cat /sys/class/tty/tty0/active 2>/dev/null || true)"
 echo "fb_mode=\$(cat /sys/module/MiSTer_fb/parameters/mode 2>/dev/null || true)"
 echo "__PS_TABLE_BEGIN__"
-ps -o pid=,ppid=,pgid=,sid=,tty=,stat=,wchan=,args= 2>/dev/null | grep -E 'MiSTer_3SX|launch-osd\\.sh|run-3sx\\.sh|(^|/)3sx( |$)' | grep -v grep || true
+ps -o pid=,ppid=,pgid=,sid=,tty=,stat=,wchan=,args= 2>/dev/null | grep -E 'MiSTer_3S-ARM|launch-osd\\.sh|run-3s-arm\\.sh|(^|/)3s-arm( |$)' | grep -v grep || true
 echo "__PS_TABLE_END__"
 echo "__WRAPPER_LOG_BEGIN__"
-tail -n 120 ./games/3sx/logs/osd-wrapper.log 2>/dev/null || echo __WRAPPER_LOG_MISSING__
+tail -n 120 ./games/3s-arm/logs/osd-wrapper.log 2>/dev/null || echo __WRAPPER_LOG_MISSING__
 echo "__WRAPPER_LOG_END__"
 echo "__LAST_RUN_BEGIN__"
-tail -n 120 ./games/3sx/logs/last-run.log 2>/dev/null || echo __WRAPPER_LASTRUN_MISSING__
+tail -n 120 ./games/3s-arm/logs/last-run.log 2>/dev/null || echo __WRAPPER_LASTRUN_MISSING__
 echo "__LAST_RUN_END__"
 echo __WRAPPER_CAPTURE_END__
 EOF

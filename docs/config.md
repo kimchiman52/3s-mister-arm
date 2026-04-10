@@ -1,11 +1,11 @@
 # Config
 
-3SX supports a config file which allows you to change several useful options.
+3S-ARM supports a config file which allows you to change several useful options.
 
 Config location:
-- **Windows**: `C:\Users\<username>\AppData\Roaming\CrowdedStreet\3SX\config`
-- **Linux**: `~/.local/share/CrowdedStreet/3SX/config`
-- **macOS**: `~/Library/Application Support/CrowdedStreet/3SX/config`
+- **Windows**: `C:\Users\<username>\AppData\Roaming\CrowdedStreet\3S-ARM\config`
+- **Linux**: `~/.local/share/CrowdedStreet/3S-ARM/config`
+- **macOS**: `~/Library/Application Support/CrowdedStreet/3S-ARM/config`
 
 ## Options
 
@@ -39,7 +39,7 @@ Enables arcade balance instead of PS2 balance (work in progress). Requires `sfii
 
 ### `software-frame-mode`
 
-Controls whether gameplay uses the 3SX-owned software frame path or the legacy SDL-owned gameplay frame path.
+Controls whether gameplay uses the 3S-ARM-owned software frame path or the legacy SDL-owned gameplay frame path.
 
 Defaults:
 - MiSTer builds: `on`
@@ -47,7 +47,7 @@ Defaults:
 
 Possible values:
 - `off`: Keep the existing SDL-owned gameplay frame path
-- `on`: Keep the `384x224` gameplay frame in 3SX-owned software memory. On MiSTer, eligible frames present directly through fbdev to avoid SDL readback; when composition or screenshots still need SDL, the frame uploads back to `cps3_canvas`.
+- `on`: Keep the `384x224` gameplay frame in 3S-ARM-owned software memory. On MiSTer, eligible frames present directly through fbdev to avoid SDL readback; when composition or screenshots still need SDL, the frame uploads back to `cps3_canvas`.
 
 ### `super-effect-quality`
 

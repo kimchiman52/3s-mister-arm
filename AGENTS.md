@@ -3,8 +3,8 @@
 ## Safety
 
 - Remote MiSTer filesystem mutations are high risk. Treat `rsync --delete`, `rm -rf`, broad `scp` copies, and remote config rewrites as dangerous until the destination scope is proven.
-- Never target delete-capable syncs at `/media/fat`, `/media`, `/`, or another shared remote root. Limit destructive syncs to owned subtrees such as `/media/fat/games/3sx/`.
-- For wrapper deploys, only `/media/fat/MiSTer_3SX`, `/media/fat/_Other/3SX.rbf`, and `/media/fat/games/3sx/` are owned targets. Delete scope belongs only inside `/media/fat/games/3sx/`.
+- Never target delete-capable syncs at `/media/fat`, `/media`, `/`, or another shared remote root. Limit destructive syncs to owned subtrees such as `/media/fat/games/3s-arm/`.
+- For wrapper deploys, only `/media/fat/MiSTer_3S-ARM`, `/media/fat/_Other/3S-ARM.rbf`, and `/media/fat/games/3s-arm/` are owned targets. Delete scope belongs only inside `/media/fat/games/3s-arm/`.
 - When the MiSTer may be shared with another agent or worktree, check `tools/mister/misterctl.sh lock-status` and `tools/mister/misterctl.sh busy-status` before deploy/probe/smoke work. Prefer local-only progress until the target is clearly idle.
 - If a task truly requires a nonstandard remote root, require both a boolean unsafe override and a typed exact-path confirmation. Do not accept a bare "unsafe mode" toggle for delete-capable operations.
 - When touching MiSTer deploy helpers or docs, add path validation and dry-run guidance before adding convenience shortcuts.
@@ -29,12 +29,12 @@
 - Load [docs/mister-runbook.md](docs/mister-runbook.md) when building, packaging, deploying, probing, or perf-sampling the MiSTer runtime on device. **This is the most important doc for fresh agents doing MiSTer work.**
 - Load [docs/building.md](docs/building.md) when you need baseline host build commands, MiSTer profile setup, or the desktop-vs-MiSTer build split.
 - Load [docs/performance-optimizations.md](docs/performance-optimizations.md) when investigating performance, understanding optimization history, or planning new perf work.
-- Load [docs/mister-wrapper.md](docs/mister-wrapper.md) when working on the `3SX.rbf` + `MiSTer_3SX` wrapper-core path, wrapper packaging, or wrapper deploy/smoke commands.
+- Load [docs/mister-wrapper.md](docs/mister-wrapper.md) when working on the `3S-ARM.rbf` + `MiSTer_3S-ARM` wrapper-core path, wrapper packaging, or wrapper deploy/smoke commands.
 - Load [docs/config.md](docs/config.md) when changing config keys, defaults, or user-facing scale/software-frame behavior.
 - Load [docs/design-fpga-native-video.md](docs/design-fpga-native-video.md) when working on the FPGA native video DDR3 reader, timing generator, or ARM↔FPGA shared memory protocol.
 - Load [docs/reference-native-analog-video.md](docs/reference-native-analog-video.md) when working on analog CRT output (S-Video, composite, VGA), the YC encoder, or sync signal routing.
 - Load [docs/agent-memory/mister-remote-safety.md](docs/agent-memory/mister-remote-safety.md) when touching MiSTer deploy helpers, remote command wrappers, or docs that show remote file mutation.
-- Load [docs/agent-memory/mister-wrapper-quartus.md](docs/agent-memory/mister-wrapper-quartus.md) when touching `3SX.rbf`, Quartus setup, Apple Silicon host strategy, wrapper-core build failures, or rebuilding the Colima VM.
+- Load [docs/agent-memory/mister-wrapper-quartus.md](docs/agent-memory/mister-wrapper-quartus.md) when touching `3S-ARM.rbf`, Quartus setup, Apple Silicon host strategy, wrapper-core build failures, or rebuilding the Colima VM.
 - Load [docs/agent-memory/mister-native-analog-crt.md](docs/agent-memory/mister-native-analog-crt.md) when revisiting scaler-off analog CRT output, `svideo`/`cvbs` color loss, or native analog wrapper/video-path cleanup.
 - Load [docs/agent-memory/mister-ralph-loop-v2.md](docs/agent-memory/mister-ralph-loop-v2.md) when planning, reranking, or repairing the Ralph perf process itself.
 - Load [docs/agent-memory/mister-ralph-working-brief.md](docs/agent-memory/mister-ralph-working-brief.md) first when starting a new Ralph perf loop on the active queue.

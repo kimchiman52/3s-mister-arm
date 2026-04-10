@@ -40,7 +40,7 @@ jobs:
           fi
 
           SHORT_SHA="${GITHUB_SHA::7}"
-          DMG_NAME="3SX-${SHORT_SHA}-macos.dmg"
+          DMG_NAME="3S-ARM-${SHORT_SHA}-macos.dmg"
           mv "${DMG_PATH}" "${DMG_NAME}"
         shell: bash
 
@@ -49,7 +49,7 @@ jobs:
         with:
           name: release-assets-macos
           path: |
-            3SX-*-macos.dmg
+            3S-ARM-*-macos.dmg
 
       - name: Upload macOS build log
         if: always()
@@ -101,7 +101,7 @@ jobs:
         shell: pwsh
         run: |
           $shortSha = "${env:GITHUB_SHA}".Substring(0, 7)
-          $archiveName = "3SX-$shortSha-windows.zip"
+          $archiveName = "3S-ARM-$shortSha-windows.zip"
 
           Compress-Archive -Path "dist\*" -DestinationPath $archiveName -Force
 
@@ -110,7 +110,7 @@ jobs:
         with:
           name: release-assets-windows
           path: |
-            3SX-*-windows.zip
+            3S-ARM-*-windows.zip
 
       - name: Upload Windows build log
         if: always()

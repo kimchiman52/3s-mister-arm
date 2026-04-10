@@ -1,4 +1,4 @@
-#include "threesx_wrapper.h"
+#include "thirdsarm_wrapper.h"
 
 #include <errno.h>
 #include <ctype.h>
@@ -33,7 +33,7 @@
 #include "osd.h"
 #include "menu.h"
 #include "support/arcade/mra_loader.h"
-#include "threesx_core_context.h"
+#include "thirdsarm_core_context.h"
 #include "user_io.h"
 #include "video.h"
 
@@ -45,20 +45,20 @@ static MisterJoyShm *g_joy_shm = nullptr;
 
 namespace {
 
-constexpr const char *kCoreName = "3SX";
-constexpr const char *kRuntimeHome = "/media/fat/games/3sx";
-constexpr const char *kRuntimeBinary = "/media/fat/games/3sx/bin/3sx";
-constexpr const char *kRuntimeArchive = "/media/fat/games/3sx/resources/SF33RD.AFS";
-constexpr const char *kRuntimeLibDir = "/media/fat/games/3sx/lib";
-constexpr const char *kLogDir = "/media/fat/games/3sx/logs";
-constexpr const char *kWrapperLogPath = "/media/fat/games/3sx/logs/osd-wrapper.log";
-constexpr const char *kLastRunLogPath = "/media/fat/games/3sx/logs/last-run.log";
-constexpr const char *kRuntimeScaleModeEnv = "THREESX_SCALE_MODE_STARTUP_OVERRIDE";
-constexpr const char *kRuntimeScaleModeExplicitMarker = "# threesx-wrapper-scale-mode-explicit";
-constexpr const char *kRuntimeScaleModeAutoMarker = "# threesx-wrapper-scale-mode-auto";
+constexpr const char *kCoreName = "3S-ARM";
+constexpr const char *kRuntimeHome = "/media/fat/games/3s-arm";
+constexpr const char *kRuntimeBinary = "/media/fat/games/3s-arm/bin/3s-arm";
+constexpr const char *kRuntimeArchive = "/media/fat/games/3s-arm/resources/SF33RD.AFS";
+constexpr const char *kRuntimeLibDir = "/media/fat/games/3s-arm/lib";
+constexpr const char *kLogDir = "/media/fat/games/3s-arm/logs";
+constexpr const char *kWrapperLogPath = "/media/fat/games/3s-arm/logs/osd-wrapper.log";
+constexpr const char *kLastRunLogPath = "/media/fat/games/3s-arm/logs/last-run.log";
+constexpr const char *kRuntimeScaleModeEnv = "THIRDSARM_SCALE_MODE_STARTUP_OVERRIDE";
+constexpr const char *kRuntimeScaleModeExplicitMarker = "# thirdsarm-wrapper-scale-mode-explicit";
+constexpr const char *kRuntimeScaleModeAutoMarker = "# thirdsarm-wrapper-scale-mode-auto";
 constexpr const char *kMenuCore = "menu.rbf";
 constexpr const char *kMenuExec = "MiSTer";
-constexpr const char *kRuntimeTtySwitchEnv = "THREESX_WRAPPER_USE_TTY2";
+constexpr const char *kRuntimeTtySwitchEnv = "THIRDSARM_WRAPPER_USE_TTY2";
 constexpr int kRuntimeFpsToggleSignal = SIGUSR1;
 constexpr int kRuntimeSuperEffectQualityCycleSignal = SIGUSR2;
 #define kRuntimeGhostResolutionCycleSignal (SIGRTMIN)
@@ -169,7 +169,7 @@ void write_log_line(FILE *file, const char *fmt, ...);
 
 bool force_requested()
 {
-	const char *force = getenv("THREESX_WRAPPER_FORCE");
+	const char *force = getenv("THIRDSARM_WRAPPER_FORCE");
 	return force && strcmp(force, "0");
 }
 
@@ -1137,7 +1137,7 @@ StartupScaleModeSelection resolve_startup_scale_mode()
 
 void set_runtime_environment(const StartupScaleModeSelection &startup_scale_mode)
 {
-	setenv("THREESX_HOME", kRuntimeHome, 1);
+	setenv("THIRDSARM_HOME", kRuntimeHome, 1);
 	setenv("SDL_VIDEODRIVER", "dummy", 1);
 	setenv("SDL_VIDEO_DRIVER", "dummy", 1);
 	setenv("SDL_RENDER_DRIVER", "software", 1);
@@ -1530,12 +1530,12 @@ int validate_runtime_paths(FILE *wrapper_log, int active_vt, int saved_stdout, i
 {
 	if (!FileExists(kRuntimeBinary, 0))
 	{
-		return show_error_and_return("Missing /media/fat/games/3sx/bin/3sx", wrapper_log, active_vt, saved_stdout, saved_stderr);
+		return show_error_and_return("Missing /media/fat/games/3s-arm/bin/3s-arm", wrapper_log, active_vt, saved_stdout, saved_stderr);
 	}
 
 	if (!FileExists(kRuntimeArchive, 0))
 	{
-		return show_error_and_return("Missing /media/fat/games/3sx/resources/SF33RD.AFS", wrapper_log, active_vt, saved_stdout, saved_stderr);
+		return show_error_and_return("Missing /media/fat/games/3s-arm/resources/SF33RD.AFS", wrapper_log, active_vt, saved_stdout, saved_stderr);
 	}
 
 	return 0;
@@ -1557,11 +1557,11 @@ int init_wrapper_context(bool forced, const char *rbf_path, char *error, size_t 
 			return 0;
 		}
 
-		set_error_message(error, error_size, "Expected loaded core identity 3SX");
+		set_error_message(error, error_size, "Expected loaded core identity 3S-ARM");
 		return -1;
 	}
 
-	if (threesx_core_context_init(rbf_path, error, error_size) != 0)
+	if (thirdsarm_core_context_init(rbf_path, error, error_size) != 0)
 	{
 		return -1;
 	}
@@ -1571,7 +1571,7 @@ int init_wrapper_context(bool forced, const char *rbf_path, char *error, size_t 
 
 const char *wrapper_core_name(bool forced)
 {
-	return forced ? threesx_core_context_core_name() : user_io_get_core_name();
+	return forced ? thirdsarm_core_context_core_name() : user_io_get_core_name();
 }
 
 const char *wrapper_rbf_name(bool forced, int argc, char *argv[])
@@ -1626,7 +1626,7 @@ int wait_for_child(pid_t child, bool service_ui)
 
 }  // namespace
 
-int threesx_wrapper_run(int argc, char *argv[])
+int thirdsarm_wrapper_run(int argc, char *argv[])
 {
 	const bool forced = force_requested();
 	g_wrapper_fps_mode = read_runtime_fps_default();
@@ -1674,7 +1674,7 @@ int threesx_wrapper_run(int argc, char *argv[])
 
 	// Seed CONF_STR status bits from persisted game config so the MiSTer
 	// menu reflects the actual runtime settings. This overwrites any values
-	// loaded from 3SX.CFG by user_io_init -- the game config is authoritative.
+	// loaded from 3S-ARM.CFG by user_io_init -- the game config is authoritative.
 	if (g_wrapper_used_full_user_io_init)
 	{
 		user_io_status_set("[11:10]", (uint32_t)g_wrapper_fps_mode);
@@ -1684,7 +1684,7 @@ int threesx_wrapper_run(int argc, char *argv[])
 		user_io_status_set("[20:19]", (uint32_t)g_wrapper_arm_clock);
 	}
 
-	write_log_line(wrapper_log, "==== 3SX wrapper launch ====");
+	write_log_line(wrapper_log, "==== 3S-ARM wrapper launch ====");
 	write_log_line(wrapper_log, "pid=%d ppid=%d", getpid(), getppid());
 	write_log_line(wrapper_log, "cwd=%s", cwd_buffer);
 	write_log_line(wrapper_log, "pgrp=%d sid=%d", getpgrp(), getsid(0));
@@ -1699,14 +1699,14 @@ int threesx_wrapper_run(int argc, char *argv[])
 	if (validation_rc != 0) return validation_rc;
 
 	const int runtime_vt = runtime_tty2_requested() ? 2 : active_vt;
-	/* Detect native video mode: when THREESX_NATIVE_VIDEO=1, the game writes
+	/* Detect native video mode: when THIRDSARM_NATIVE_VIDEO=1, the game writes
 	   frames directly to DDR3 for the FPGA's native video reader instead of
 	   going through the Linux framebuffer scaler path.  In this mode we must
 	   NOT enable vga_fb or the FB scaler -- the core outputs video directly
 	   via its VGA_R/G/B pins using the native video timing generator.  We set
 	   status bit 9 to tell the FPGA to enable its native video reader. */
 	{
-		const char *nv_env = getenv("THREESX_NATIVE_VIDEO");
+		const char *nv_env = getenv("THIRDSARM_NATIVE_VIDEO");
 		g_native_video_mode = !nv_env || strcmp(nv_env, "0") != 0;
 	}
 	video_set_native_video_enabled(g_native_video_mode);
@@ -1759,7 +1759,7 @@ int threesx_wrapper_run(int argc, char *argv[])
 		g_joy_shm->magic = MISTER_JOY_SHM_MAGIC;
 		g_joy_shm->version = MISTER_JOY_SHM_VERSION;
 		memset(g_joy_shm->joy_mask, 0, sizeof(g_joy_shm->joy_mask));
-		setenv("THREESX_JOY_SHM", MISTER_JOY_SHM_PATH, 1);
+		setenv("THIRDSARM_JOY_SHM", MISTER_JOY_SHM_PATH, 1);
 		write_log_line(wrapper_log, "joy_shm=%s", MISTER_JOY_SHM_PATH);
 	}
 
@@ -1784,10 +1784,10 @@ int threesx_wrapper_run(int argc, char *argv[])
 		if (last_run_fd < 0)
 		{
 			cleanup_joy_shm();
-			return show_error_and_return("Cannot open /media/fat/games/3sx/logs/last-run.log", wrapper_log, active_vt, saved_stdout, saved_stderr);
+			return show_error_and_return("Cannot open /media/fat/games/3s-arm/logs/last-run.log", wrapper_log, active_vt, saved_stdout, saved_stderr);
 		}
 
-		write_fd_line(last_run_fd, "==== 3SX wrapper launch ====");
+		write_fd_line(last_run_fd, "==== 3S-ARM wrapper launch ====");
 		write_fd_line(last_run_fd, "pid=%d ppid=%d", getpid(), getppid());
 		write_fd_line(last_run_fd, "cwd=%s", cwd_buffer);
 		write_fd_line(last_run_fd, "pgrp=%d sid=%d", getpgrp(), getsid(0));
@@ -1809,7 +1809,7 @@ int threesx_wrapper_run(int argc, char *argv[])
 		{
 			close(last_run_fd);
 			cleanup_joy_shm();
-			return show_error_and_return("Cannot create 3SX launch pipe", wrapper_log, active_vt, saved_stdout, saved_stderr);
+			return show_error_and_return("Cannot create 3S-ARM launch pipe", wrapper_log, active_vt, saved_stdout, saved_stderr);
 		}
 
 		struct sigaction old_int = {}, old_hup = {}, old_term = {};
@@ -1823,7 +1823,7 @@ int threesx_wrapper_run(int argc, char *argv[])
 			close(err_pipe[1]);
 			close(last_run_fd);
 			cleanup_joy_shm();
-			return show_error_and_return("Cannot fork 3SX runtime", wrapper_log, active_vt, saved_stdout, saved_stderr);
+			return show_error_and_return("Cannot fork 3S-ARM runtime", wrapper_log, active_vt, saved_stdout, saved_stderr);
 		}
 
 		if (child == 0)
@@ -1872,7 +1872,7 @@ int threesx_wrapper_run(int argc, char *argv[])
 
 		write_log_line(wrapper_log, "child_pid=%d", child);
 		write_log_line(wrapper_log, "runtime=%s", kRuntimeBinary);
-		write_log_line(wrapper_log, "THREESX_HOME=%s", kRuntimeHome);
+		write_log_line(wrapper_log, "THIRDSARM_HOME=%s", kRuntimeHome);
 		write_log_line(wrapper_log, "LD_LIBRARY_PATH=%s", getenv("LD_LIBRARY_PATH") ? getenv("LD_LIBRARY_PATH") : "");
 		write_log_line(wrapper_log, "SDL_VIDEODRIVER=%s", getenv("SDL_VIDEODRIVER") ? getenv("SDL_VIDEODRIVER") : "");
 		write_log_line(wrapper_log, "SDL_VIDEO_DRIVER=%s", getenv("SDL_VIDEO_DRIVER") ? getenv("SDL_VIDEO_DRIVER") : "");
@@ -1922,7 +1922,7 @@ int threesx_wrapper_run(int argc, char *argv[])
 		if (exec_read > 0)
 		{
 			char error_message[512] = {};
-			snprintf(error_message, sizeof(error_message), "Failed to launch 3SX (%s)", strerror(exec_errno));
+			snprintf(error_message, sizeof(error_message), "Failed to launch 3S-ARM (%s)", strerror(exec_errno));
 			cleanup_joy_shm();
 			return show_error_and_return(error_message, wrapper_log, active_vt, saved_stdout, saved_stderr);
 		}

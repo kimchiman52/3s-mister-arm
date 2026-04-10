@@ -2,8 +2,8 @@
 set -euo pipefail
 
 # Sets up the 'quartus2' Colima VM used for:
-#   - Quartus 17.0 FPGA builds (3SX.rbf)
-#   - The 3sx-mister-build Docker container (ARM/HPS builds)
+#   - Quartus 17.0 FPGA builds (3S-ARM.rbf)
+#   - The 3s-mister-arm-build Docker container (ARM/HPS builds)
 #
 # Safe to re-run on an existing running VM — skips steps already done.
 
@@ -42,7 +42,7 @@ Options:
 Steps performed (default):
   1. Start the VM (creates it with --disk ${DISK_GB} if absent).
   2. Install Quartus 17.0 Lite into the VM at ${QUARTUS_INSTALL_DIR}.
-  3. Set up the 3sx-mister-build Docker container (ARM/HPS builds).
+  3. Set up the 3s-mister-arm-build Docker container (ARM/HPS builds).
 
 Recreating the VM (shrinking disk):
   # 1. Backup Quartus from old VM to external drive
@@ -274,7 +274,7 @@ echo ""
 echo "Quartus (FPGA builds):"
 echo "  colima ssh --profile ${PROFILE} -- bash -lc \\"
 echo "    'PATH=${QUARTUS_INSTALL_DIR}/quartus/bin:\$PATH LC_ALL=C LANG=C \\"
-echo "     bash /Users/\$USER/Developer/3sx-mister/tools/mister-wrapper/build-core.sh --fast --seed menu'"
+echo "     bash /Users/\$USER/Developer/3s-mister-arm/tools/mister-wrapper/build-core.sh --fast --seed menu'"
 echo ""
 echo "ARM/HPS build container:"
 echo "  DOCKER_HOST=unix://\$HOME/.colima/${PROFILE}/docker.sock \\"

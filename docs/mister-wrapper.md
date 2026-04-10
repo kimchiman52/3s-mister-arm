@@ -1,17 +1,17 @@
 # MiSTer Wrapper Core
 
-This document tracks the operator-facing shape of the 3SX wrapper-core work.
+This document tracks the operator-facing shape of the 3S-ARM wrapper-core work.
 
 ## Phase 1 Goal
 
-Phase 1 adds a real MiSTer core identity for 3SX without changing gameplay logic:
+Phase 1 adds a real MiSTer core identity for 3S-ARM without changing gameplay logic:
 
-- `3SX.rbf` provides the real MiSTer core name `3SX`
-- `MiSTer_3SX` is a Main_MiSTer-derived HPS executable launched through `[3SX] main=MiSTer_3SX`
-- the existing `/media/fat/games/3sx` runtime remains the actual game binary and data path
+- `3S-ARM.rbf` provides the real MiSTer core name `3S-ARM`
+- `MiSTer_3S-ARM` is a Main_MiSTer-derived HPS executable launched through `[3S-ARM] main=MiSTer_3S-ARM`
+- the existing `/media/fat/games/3s-arm` runtime remains the actual game binary and data path
 
 The current HPS build path fetches the pinned full `Main_MiSTer` upstream tree into `build/`,
-then overlays the local 3SX-specific files from the curated `vendor/Main_MiSTer` subset before
+then overlays the local 3S-ARM-specific files from the curated `vendor/Main_MiSTer` subset before
 building. That keeps the checked-in vendor footprint small without depending on the old stub-heavy
 slim-source build.
 
@@ -19,35 +19,35 @@ slim-source build.
 
 ```text
 /media/fat/
-  MiSTer_3SX
+  MiSTer_3S-ARM
   _Other/
-    3SX.rbf
+    3S-ARM.rbf
   games/
-    3sx/
-      bin/3sx
+    3s-arm/
+      bin/3s-arm
       lib/*
       resources/SF33RD.AFS
       launch-osd.sh
-      run-3sx.sh
+      run-3s-arm.sh
       logs/
 ```
 
 ## Planned Config Snippet
 
 ```ini
-[3SX]
-main=MiSTer_3SX
+[3S-ARM]
+main=MiSTer_3S-ARM
 ```
 
-The `[3SX]` section only needs `main`:
+The `[3S-ARM]` section only needs `main`:
 
 ```ini
-[3SX]
-main=MiSTer_3SX
+[3S-ARM]
+main=MiSTer_3S-ARM
 ```
 
 If the user's global MiSTer settings have `vga_scaler=1`, override it to 0 in the
-`[3SX]` section. When `vga_scaler=1`, the FPGA routes the HDMI scaler's plain RGB
+`[3S-ARM]` section. When `vga_scaler=1`, the FPGA routes the HDMI scaler's plain RGB
 to the VGA DAC, bypassing the core video path and YC encoder — causing grayscale
 S-Video and wrong aspect ratio on CRT. Do not add `video_mode` overrides — native
 video timing is controlled by the core.
@@ -55,12 +55,12 @@ video timing is controlled by the core.
 ## Launch Contract
 
 The core-driven path is not allowed to hand-wave away the current MiSTer launcher behavior.
-`MiSTer_3SX` preserves the important parts of the existing
-`/media/fat/games/3sx/launch-osd.sh` contract while directly `execve()`-launching
-`/media/fat/games/3sx/bin/3sx`:
+`MiSTer_3S-ARM` preserves the important parts of the existing
+`/media/fat/games/3s-arm/launch-osd.sh` contract while directly `execve()`-launching
+`/media/fat/games/3s-arm/bin/3s-arm`:
 
 - force SDL onto dummy video plus software renderer for stock MiSTer startup
-- keep startup and exit logs under `/media/fat/games/3sx/logs`
+- keep startup and exit logs under `/media/fat/games/3s-arm/logs`
 - preserve and restore the active console on exit/failure
 - handle `INT`, `HUP`, and `TERM` cleanly
 - avoid manual `openvt`/`chvt` launch hops in the core-driven path
@@ -82,7 +82,7 @@ handoff conditions on hardware:
 - changing `/dev/fb0`
 - `MiSTer_fb` mode `8888 1 384 240 1536`
 
-Despite that, the old MemTest-derived `3SX.rbf` still produced a black CRT image. The next
+Despite that, the old MemTest-derived `3S-ARM.rbf` still produced a black CRT image. The next
 wrapper-core step is therefore core-side, not HPS-side. The wrapper-core build path now standardizes
 on a `Menu_MiSTer`-derived seed so the core can inherit the same framebuffer/CRT substrate as the
 known-good menu launch path.
@@ -111,7 +111,7 @@ Phase 1 uses a tracked local overlay subset derived from upstream `Main_MiSTer`:
 - overlay file manifest: `tools/mister-wrapper/main-mister-overlay.files`
 
 The full upstream source now stays out of git and is fetched on demand during the HPS build. The
-checked-in subset exists only to carry the 3SX-specific overlays and the Docker fallback context.
+checked-in subset exists only to carry the 3S-ARM-specific overlays and the Docker fallback context.
 
 ## Verified HPS Build Path
 
@@ -120,13 +120,13 @@ The wrapper HPS entrypoint is `tools/mister-wrapper/build-hps.sh`.
 Current verified behavior:
 
 - it clones the pinned upstream `Main_MiSTer` tree into `build/mister-wrapper-hps/src`
-- it overlays the local 3SX-customized files listed in
+- it overlays the local 3S-ARM-customized files listed in
   `tools/mister-wrapper/main-mister-overlay.files`
 - it applies the wrapper menu bridge patch from
   `tools/mister-wrapper/main-mister-full-menu.patch`
-- it copies `tools/mister-wrapper/Makefile.full.3sx` into the staged tree and builds with
-  `make -f Makefile.3sx`
-- it writes the final artifact to `build/mister-wrapper-hps/MiSTer_3SX`
+- it copies `tools/mister-wrapper/Makefile.full.3s-arm` into the staged tree and builds with
+  `make -f Makefile.3s-arm`
+- it writes the final artifact to `build/mister-wrapper-hps/MiSTer_3S-ARM`
 - it prefers a local `arm-none-linux-gnueabihf` toolchain when present
 - otherwise it falls back to Docker and builds inside an image derived from
   `vendor/Main_MiSTer/.devcontainer/Dockerfile`
@@ -134,11 +134,11 @@ Current verified behavior:
 Current local overlay boundary:
 
 - wrapper-local sources:
-  - `threesx_main.cpp`
-  - `threesx_wrapper.cpp`
-  - `threesx_wrapper.h`
-  - `threesx_core_context.cpp`
-  - `threesx_core_context.h`
+  - `thirdsarm_main.cpp`
+  - `thirdsarm_wrapper.cpp`
+  - `thirdsarm_wrapper.h`
+  - `thirdsarm_core_context.cpp`
+  - `thirdsarm_core_context.h`
 - locally carried upstream deltas:
   - `fpga_io.cpp`
   - `fpga_io.h`
@@ -162,7 +162,7 @@ installed locally.
 
 ## Intended Fork Surface
 
-The default rule for `vendor/Main_MiSTer` is "overlay-only unless 3SX handoff requires otherwise."
+The default rule for `vendor/Main_MiSTer` is "overlay-only unless 3S-ARM handoff requires otherwise."
 
 Current local customization boundary:
 
@@ -178,20 +178,20 @@ and the broken old slim-source build.
 
 ## Current Runtime Handoff
 
-The current wrapper implementation lives in `vendor/Main_MiSTer/threesx_wrapper.cpp` and is
-entered through `vendor/Main_MiSTer/threesx_main.cpp`, but it now builds against fetched full
+The current wrapper implementation lives in `vendor/Main_MiSTer/thirdsarm_wrapper.cpp` and is
+entered through `vendor/Main_MiSTer/thirdsarm_main.cpp`, but it now builds against fetched full
 upstream `Main_MiSTer` source plus the local overlay set.
 
 Current implemented behavior:
 
-- seed the MiSTer-side `3SX` core identity explicitly before `cfg`/video init so `[3SX]`
+- seed the MiSTer-side `3S-ARM` core identity explicitly before `cfg`/video init so `[3S-ARM]`
   `MiSTer.ini` video overrides still apply without running the full `user_io_init()` path
-- validate `/media/fat/games/3sx/bin/3sx` and `/media/fat/games/3sx/resources/SF33RD.AFS` before launch
+- validate `/media/fat/games/3s-arm/bin/3s-arm` and `/media/fat/games/3s-arm/resources/SF33RD.AFS` before launch
 - launch the runtime as a direct `execve()` child instead of invoking `launch-osd.sh`
-- set `THREESX_HOME`, `LD_LIBRARY_PATH`, `SDL_VIDEODRIVER`, `SDL_VIDEO_DRIVER`, and
+- set `THIRDSARM_HOME`, `LD_LIBRARY_PATH`, `SDL_VIDEODRIVER`, `SDL_VIDEO_DRIVER`, and
   `SDL_RENDER_DRIVER` explicitly for the child
-- write wrapper lifecycle events to `/media/fat/games/3sx/logs/osd-wrapper.log`
-- capture runtime stdout/stderr in `/media/fat/games/3sx/logs/last-run.log`
+- write wrapper lifecycle events to `/media/fat/games/3s-arm/logs/osd-wrapper.log`
+- capture runtime stdout/stderr in `/media/fat/games/3s-arm/logs/last-run.log`
 - forward `INT`, `HUP`, and `TERM` to the child and restore the active console before exit
 - on normal child exit or startup failure, restart back to `MiSTer` with `menu.rbf`
 - on missing files or `execve()` failure, show a simple OSD error before returning to menu
@@ -213,7 +213,7 @@ Why `Menu_MiSTer` is the supported path:
 - `Menu_MiSTer` is the known-good MiSTer framebuffer/CRT family already used by the working
   menu/script path
 - the staged Menu project still keeps the visible core identity at a simple top-level `CONF_STR`,
-  which makes the `3SX` rename straightforward
+  which makes the `3S-ARM` rename straightforward
 
 ## Verified Core Build Prep Path
 
@@ -226,12 +226,12 @@ Current verified behavior:
   aggressive optimization defaults with faster-compile settings (~50-70% compile time
   reduction, ~10-20% fMAX trade-off). Suitable for dev iteration; omit for release builds.
 - it stages the selected seed into `build/mister-wrapper-core/src`
-- it renames the Quartus project from the seed basename (`menu`) to `3SX`
+- it renames the Quartus project from the seed basename (`menu`) to `3S-ARM`
 - it patches:
-  - `3SX.qpf` project revision
+  - `3S-ARM.qpf` project revision
   - `files.qip` top-level source references
-  - `3SX.sv` `CONF_STR` so the core identifies as `3SX`
-- it reserves `build/mister-wrapper-core/3SX.rbf` as the final artifact path
+  - `3S-ARM.sv` `CONF_STR` so the core identifies as `3S-ARM`
+- it reserves `build/mister-wrapper-core/3S-ARM.rbf` as the final artifact path
 - it can use either:
   - a local Quartus install when `quartus_sh` and `quartus_cpf` are on `PATH`
   - a separate `linux/amd64` Docker image for Quartus 17 when the MiSTer runtime container is the
@@ -246,7 +246,7 @@ It expects an installer directory containing:
 
 Current Docker defaults for the Quartus image path:
 
-- image name: `3sx-mister-wrapper-quartus17`
+- image name: `3s-mister-arm-wrapper-quartus17`
 - platform: `linux/amd64`
 - base image: `ubuntu:20.04`
 - install dir: derived from the selected installer edition unless overridden
@@ -268,7 +268,7 @@ Validated full-build path on this Apple Silicon host:
 # Dev iteration (fast compile, ~50-70% faster):
 colima --profile quartus2 ssh -- bash -lc '
   export PATH=/home/sb.linux/intelFPGA_lite/17.0/quartus/bin:$PATH LC_ALL=C LANG=C &&
-  cd /Users/sb/Developer/3sx-mister &&
+  cd /Users/sb/Developer/3s-mister-arm &&
   OUTPUT_DIR=/home/sb.linux/build/mister-wrapper-core \
   bash tools/mister-wrapper/build-core.sh --fast --seed menu
 '
@@ -276,7 +276,7 @@ colima --profile quartus2 ssh -- bash -lc '
 # Release (full optimization):
 colima --profile quartus2 ssh -- bash -lc '
   export PATH=/home/sb.linux/intelFPGA_lite/17.0/quartus/bin:$PATH LC_ALL=C LANG=C &&
-  cd /Users/sb/Developer/3sx-mister &&
+  cd /Users/sb/Developer/3s-mister-arm &&
   OUTPUT_DIR=/home/sb.linux/build/mister-wrapper-core \
   bash tools/mister-wrapper/build-core.sh --seed menu
 '
@@ -296,18 +296,18 @@ Current verified Quartus findings on this host:
   failure (`rosetta error: bss_size overflow`). The validated workaround is an x86_64 Linux VM
   (`colima --arch x86_64 --vm-type qemu`) or another real Linux/x86_64 machine.
 
-That means the preferred path for a real `3SX.rbf` build is Quartus Lite 17.0 plus both Cyclone
+That means the preferred path for a real `3S-ARM.rbf` build is Quartus Lite 17.0 plus both Cyclone
 device packs on an x86_64 Linux host or VM. The remaining wrapper gates are now on-device deploy
 and launch validation, not Quartus build viability.
 
 Most recent local validation:
 
 - the Menu-derived core build completed on the validated `quartus2` x86_64 VM and produced
-  `build/mister-wrapper-core/3SX.menu.rbf`
-- the HPS wrapper rebuild completed locally and updated `build/mister-wrapper-hps/MiSTer_3SX`
+  `build/mister-wrapper-core/3S-ARM.menu.rbf`
+- the HPS wrapper rebuild completed locally and updated `build/mister-wrapper-hps/MiSTer_3S-ARM`
 - a local wrapper package assembled successfully at `build/mister-wrapper-package-menu`
-- an artifacts-only deploy of that Menu package updated `/media/fat/MiSTer_3SX` and
-  `/media/fat/_Other/3SX.rbf` on the MiSTer without touching `/media/fat/games/3sx`
+- an artifacts-only deploy of that Menu package updated `/media/fat/MiSTer_3S-ARM` and
+  `/media/fat/_Other/3S-ARM.rbf` on the MiSTer without touching `/media/fat/games/3s-arm`
 - forced wrapper probe still passes on the new artifacts, but it continues to inherit the SSH-side
   `320x240` fbdev path, so the next meaningful gate remains a real OSD launch on the CRT
 
@@ -316,10 +316,10 @@ Most recent device validation:
 - real OSD/core launch is now proven through the wrapper path, not just the forced probe path
 - `wrapper-status` captured a normal wrapper launch with:
   - `forced_mode=0`
-  - `core_name=3SX`
-  - `rbf_name=3SX`
+  - `core_name=3S-ARM`
+  - `rbf_name=3S-ARM`
   - `FBDEV: active (384x240 stride=1536 bpp=32)`
-- that confirms the `[3SX] main=MiSTer_3SX` handoff on the actual device launch path
+- that confirms the `[3S-ARM] main=MiSTer_3S-ARM` handoff on the actual device launch path
 - current caveat: the game's in-game "Exit Game" behavior appears to be a soft reset back into the
   title/game flow, not a process exit, so leaving the wrapper back to MiSTer still needs a
   deliberate runtime or wrapper-level exit path
@@ -342,9 +342,9 @@ The wrapper package entrypoint is `tools/mister-wrapper/package-wrapper.sh`.
 Current implemented behavior:
 
 - assemble a `/media/fat`-rooted tree at `build/mister-wrapper-package`
-- place `MiSTer_3SX` at the package root
-- place `3SX.rbf` under `_Other/`
-- copy the existing runtime package into `games/3sx/`
+- place `MiSTer_3S-ARM` at the package root
+- place `3S-ARM.rbf` under `_Other/`
+- copy the existing runtime package into `games/3s-arm/`
 
 The player-facing release entrypoint is `tools/mister-wrapper/build-release.sh`.
 
@@ -353,15 +353,15 @@ Current implemented behavior:
 - rebuild the player-facing runtime package from `build/mister-clean-install` via `tools/mister/build-runtime-package.sh`
 - assemble a FAT-rooted stage at `build/mister-release/stage`
 - copy `README.txt` (from `tools/mister/release-readme.txt`) to the ZIP root
-- fail if the staged release contains `games/3sx/resources/SF33RD.AFS`, `games/3sx/config`,
-  `games/3sx/keymap`, or `games/3sx/logs`
-- write the final player ZIP to `build/mister-release/3SX-mister-rolling-pre-release.zip`
+- fail if the staged release contains `games/3s-arm/resources/SF33RD.AFS`, `games/3s-arm/config`,
+  `games/3s-arm/keymap`, or `games/3s-arm/logs`
+- write the final player ZIP to `build/mister-release/3S-ARM-mister-rolling-pre-release.zip`
 
 Player install flow:
 
 - extract the ZIP directly onto the MiSTer SD card root
-- add a legally obtained `SF33RD.AFS` at `/media/fat/games/3sx/resources/SF33RD.AFS`
-- add `[3SX] main=MiSTer_3SX` to `MiSTer.ini` if the section is not already present
+- add a legally obtained `SF33RD.AFS` at `/media/fat/games/3s-arm/resources/SF33RD.AFS`
+- add `[3S-ARM] main=MiSTer_3S-ARM` to `MiSTer.ini` if the section is not already present
 
 The local release publish entrypoint is `tools/mister-wrapper/publish-release.sh`.
 
@@ -369,12 +369,12 @@ Current implemented behavior:
 
 - move the `rolling-pre-release` tag to the current commit
 - create or update that GitHub pre-release with `gh`
-- replace only the existing `3SX-mister-*.zip` asset set on that release
+- replace only the existing `3S-ARM-mister-*.zip` asset set on that release
 
 Current remote tooling additions:
 
 - `tools/mister/misterctl.sh busy-status`
-- `tools/mister/misterctl.sh configure-3sx-ini`
+- `tools/mister/misterctl.sh configure-3s-arm-ini`
 - `tools/mister/misterctl.sh deploy-wrapper --src <wrapper-package-dir>`
 - `tools/mister/misterctl.sh deploy-wrapper --src <wrapper-package-dir> --artifacts-only`
 - `tools/mister/misterctl.sh probe-wrapper`
@@ -384,32 +384,32 @@ Current remote tooling additions:
 
 Wrapper deploys now sync only the wrapper-owned targets:
 
-- `/media/fat/MiSTer_3SX`
-- `/media/fat/_Other/3SX.rbf`
-- `/media/fat/games/3sx/`
+- `/media/fat/MiSTer_3S-ARM`
+- `/media/fat/_Other/3S-ARM.rbf`
+- `/media/fat/games/3s-arm/`
 
-Delete-scoped sync is only allowed inside `/media/fat/games/3sx/`, and `games/3sx/resources/SF33RD.AFS`
-plus the on-device `games/3sx/config` and `games/3sx/keymap` files are preserved the same way the
+Delete-scoped sync is only allowed inside `/media/fat/games/3s-arm/`, and `games/3s-arm/resources/SF33RD.AFS`
+plus the on-device `games/3s-arm/config` and `games/3s-arm/keymap` files are preserved the same way the
 existing runtime-only deploy path preserves `resources/SF33RD.AFS`.
 
-When another workflow is actively updating `/media/fat/games/3sx`, use `deploy-wrapper --artifacts-only`
-to stage just the wrapper-owned root artifacts (`MiSTer_3SX` and `_Other/3SX.rbf`) without replacing
+When another workflow is actively updating `/media/fat/games/3s-arm`, use `deploy-wrapper --artifacts-only`
+to stage just the wrapper-owned root artifacts (`MiSTer_3S-ARM` and `_Other/3S-ARM.rbf`) without replacing
 the runtime tree.
 
 Remote safety guardrails:
 
 - `deploy-wrapper` now rejects nonstandard `--remote-fat-root` values unless both `MISTER_UNSAFE_ALLOW_ANY_REMOTE_ROOT=1` and `MISTER_UNSAFE_CONFIRM_REMOTE_ROOT=<exact-path>` are set deliberately.
 - Even with that override, do not target `/`, `/media`, or another shared root. The wrapper owns only the three paths listed above.
-- `configure-3sx-ini` only accepts `/media/fat/MiSTer.ini` and `/media/fat/MiSTer_*.ini` by default, takes a timestamped backup before editing, and still checks `busy-status` before it writes.
-- `deploy-wrapper`, `probe-wrapper`, `smoke-wrapper`, and `run-wrapper` now perform a remote busy preflight and refuse to run if the target already shows an active `3sx`, `MiSTer_3SX`, `launch-osd.sh`, `run-3sx.sh`, `rsync`, `scp`, or `sftp-server` process. Use `busy-status` first when another agent may be active, and set `MISTER_ALLOW_BUSY_TARGET=1` only when you intentionally accept that collision risk.
+- `configure-3s-arm-ini` only accepts `/media/fat/MiSTer.ini` and `/media/fat/MiSTer_*.ini` by default, takes a timestamped backup before editing, and still checks `busy-status` before it writes.
+- `deploy-wrapper`, `probe-wrapper`, `smoke-wrapper`, and `run-wrapper` now perform a remote busy preflight and refuse to run if the target already shows an active `3s-arm`, `MiSTer_3S-ARM`, `launch-osd.sh`, `run-3s-arm.sh`, `rsync`, `scp`, or `sftp-server` process. Use `busy-status` first when another agent may be active, and set `MISTER_ALLOW_BUSY_TARGET=1` only when you intentionally accept that collision risk.
 - Use `probe-wrapper` and `smoke-wrapper` for validation; do not reach for raw `misterctl.sh exec` unless `MISTER_ALLOW_REMOTE_EXEC=1` is intentionally enabled for one-off maintenance.
 
 `probe-wrapper` runs the existing runtime `--probe-renderer-only` self-check through
-`MiSTer_3SX` by invoking:
+`MiSTer_3S-ARM` by invoking:
 
-- `/media/fat/MiSTer_3SX /media/fat/_Other/3SX.rbf '' --probe-renderer-only`
+- `/media/fat/MiSTer_3S-ARM /media/fat/_Other/3S-ARM.rbf '' --probe-renderer-only`
 
-with `THREESX_WRAPPER_FORCE=1` set on the remote side so the wrapper path can be exercised from SSH
+with `THIRDSARM_WRAPPER_FORCE=1` set on the remote side so the wrapper path can be exercised from SSH
 without going through OSD core selection first.
 
 Validated on device as of `2026-03-10`:
@@ -418,21 +418,21 @@ Validated on device as of `2026-03-10`:
 - `osd-wrapper.log` showed `forced_mode=1` and `child_exit=0`
 - `last-run.log` showed the expected SDL dummy/software + fbdev probe path
 - a forced missing-resource test returned `__WRAPPER_MISSING_AFS_RC__=1` and logged
-  `error=Missing /media/fat/games/3sx/resources/SF33RD.AFS`, and the archive was restored
+  `error=Missing /media/fat/games/3s-arm/resources/SF33RD.AFS`, and the archive was restored
   afterward
 - `tools/mister/misterctl.sh wrapper-status` after the successful probe and after the forced
-  missing-resource test showed no lingering `3sx` or `MiSTer_3SX` process
+  missing-resource test showed no lingering `3s-arm` or `MiSTer_3S-ARM` process
 
 Known caveat from the same validation pass:
 
-- SSH-launched normal-mode `MiSTer` / `MiSTer_3SX` attempts are not yet a reliable proxy for the
-  real `[3SX] main=MiSTer_3SX` handoff. The tested commands emitted only `ttyS1: 31250`, never
+- SSH-launched normal-mode `MiSTer` / `MiSTer_3S-ARM` attempts are not yet a reliable proxy for the
+  real `[3S-ARM] main=MiSTer_3S-ARM` handoff. The tested commands emitted only `ttyS1: 31250`, never
   reached the wrapper logger, and therefore did not validate the non-forced OSD/core launch path.
 
 `smoke-wrapper` uses the same entrypoint without extra runtime args and tails:
 
-- `/media/fat/games/3sx/logs/osd-wrapper.log`
-- `/media/fat/games/3sx/logs/last-run.log`
+- `/media/fat/games/3s-arm/logs/osd-wrapper.log`
+- `/media/fat/games/3s-arm/logs/last-run.log`
 
 `run-wrapper` is the safe path for deterministic wrapper-driven checks that need explicit runtime
 arguments without falling back to raw `misterctl.sh exec`. Example:
@@ -443,13 +443,13 @@ tools/mister/misterctl.sh run-wrapper \
   --runtime-arg --software-frame-parity-check
 ```
 
-`configure-3sx-ini` is the safe path for installing the minimal core-specific INI block without
+`configure-3s-arm-ini` is the safe path for installing the minimal core-specific INI block without
 hand-editing over SSH. Example:
 
 ```sh
-tools/mister/misterctl.sh configure-3sx-ini \
+tools/mister/misterctl.sh configure-3s-arm-ini \
   --ini /media/fat/MiSTer.ini \
-  --main MiSTer_3SX \
+  --main MiSTer_3S-ARM \
   --video-mode 384,240,60 \
   --vga-scaler 1
 ```
@@ -459,7 +459,7 @@ tools/mister/misterctl.sh configure-3sx-ini \
 Phase 1 does not replace the current runtime-only path:
 
 - `tools/mister/package.sh` remains the legacy runtime package builder
-- `/media/fat/games/3sx/launch-osd.sh` remains the fallback launcher
-- `/media/fat/games/3sx/run-3sx.sh` remains the direct runtime entrypoint
+- `/media/fat/games/3s-arm/launch-osd.sh` remains the fallback launcher
+- `/media/fat/games/3s-arm/run-3s-arm.sh` remains the direct runtime entrypoint
 
 The wrapper-core path must coexist with those tools until the new path is proven on device.

@@ -27,7 +27,7 @@ INCLUDE += -I./lib/serial_server/library
 
 BUILDDIR = bin
 
-PRJ = MiSTer_3SX
+PRJ = MiSTer_3S-ARM
 C_SRC =   $(wildcard *.c) \
           $(wildcard ./lib/miniz/*.c) \
           $(wildcard ./lib/md5/*.c) \

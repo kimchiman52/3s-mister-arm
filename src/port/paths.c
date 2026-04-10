@@ -15,7 +15,7 @@ static bool has_trailing_slash(const char* path) {
 const char* Paths_GetPrefPath() {
     if (pref_path == NULL) {
 #if defined(PORT_MISTER)
-        const char* override = getenv("THREESX_HOME");
+        const char* override = getenv("THIRDSARM_HOME");
 
         if (override != NULL && override[0] != '\0') {
             if (has_trailing_slash(override)) {
@@ -24,12 +24,12 @@ const char* Paths_GetPrefPath() {
                 SDL_asprintf(&pref_path, "%s/", override);
             }
         } else {
-            pref_path = SDL_strdup("/media/fat/games/3sx/");
+            pref_path = SDL_strdup("/media/fat/games/3s-arm/");
         }
 
         SDL_CreateDirectory(pref_path);
 #else
-        pref_path = SDL_GetPrefPath("CrowdedStreet", "3SX");
+        pref_path = SDL_GetPrefPath("CrowdedStreet", "3S-ARM");
 #endif
     }
 

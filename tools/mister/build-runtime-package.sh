@@ -14,7 +14,7 @@ Usage:
   tools/mister/build-runtime-package.sh [--install-prefix <dir>] [--output-dir <dir>]
 
 Purpose:
-  Build the player-facing MiSTer runtime package for /media/fat/games/3sx/
+  Build the player-facing MiSTer runtime package for /media/fat/games/3s-arm/
   from an existing clean MiSTer install prefix.
 
 Defaults:
@@ -40,7 +40,7 @@ assert_absent() {
 validate_runtime_package() {
     local runtime_root="$1"
 
-    [ -f "${runtime_root}/bin/3sx" ] || { echo "runtime binary missing from package: ${runtime_root}/bin/3sx" >&2; return 1; }
+    [ -f "${runtime_root}/bin/3s-arm" ] || { echo "runtime binary missing from package: ${runtime_root}/bin/3s-arm" >&2; return 1; }
 
     assert_absent "${runtime_root}/resources/SF33RD.AFS"
     assert_absent "${runtime_root}/config"

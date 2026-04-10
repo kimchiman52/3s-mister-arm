@@ -1,6 +1,6 @@
 # Native Analog Video: Technical Reference
 
-Authoritative reference for the FPGA native video output system in the 3SX MiSTer
+Authoritative reference for the FPGA native video output system in the 3S-ARM MiSTer
 port. Covers the complete signal path from ARM frame production through DDR3
 double-buffering, FPGA pixel readout, video timing generation, YC color encoding,
 and DAC output. Includes PLL design rationale, frame pacing architecture, S-Video
@@ -69,7 +69,7 @@ The system has three distinct video output paths:
 - `status[9] = 1` enables the FPGA native video reader
 - `cfg[15]` (set after HPS boot) gates the DDR3 bus mux to the native video reader
 - `use_nv = NATIVE_VID & cfg[15]` controls the mux in `menu.sv`
-- ARM sets `THREESX_NATIVE_VIDEO=1` (default) to enable `NativeVideoWriter_Init()`
+- ARM sets `THIRDSARM_NATIVE_VIDEO=1` (default) to enable `NativeVideoWriter_Init()`
 
 **DAC output mux** (`menu.sv` lines 650-655):
 - When `nv_active`: native video RGB drives VGA_R/G/B
@@ -579,7 +579,7 @@ See `docs/native-analog-svideo-plan.md` for full design rationale.
 
 ### S-Video Color
 
-1. **`vga_scaler=0` required** in MiSTer INI (both global and `[3SX]` section).
+1. **`vga_scaler=0` required** in MiSTer INI (both global and `[3S-ARM]` section).
    When `vga_scaler=1`, DAC routes through the scaler → plain RGB → grayscale.
 2. **NEVER set `vga_scaler=1`** in any INI configuration. This breaks S-Video
    color AND native video aspect ratio.
@@ -610,7 +610,7 @@ See `docs/native-analog-svideo-plan.md` for full design rationale.
 
 ### No S-Video color (grayscale)
 
-1. Check `vga_scaler=0` in INI (`MiSTer.ini` and `[3SX]` section)
+1. Check `vga_scaler=0` in INI (`MiSTer.ini` and `[3S-ARM]` section)
 2. Verify `yc_en=1` in YC config (check `video.cpp` logs)
 3. Check PHASE_INC matches pixel clock frequency
 4. Confirm PAL/NTSC detection correct (fps > 55 → NTSC)
@@ -625,7 +625,7 @@ See `docs/native-analog-svideo-plan.md` for full design rationale.
 
 - This was caused by the original shared PLL running at 59.6374 Hz vs CPS3's 59.59949 Hz
 - Fixed by dedicated video PLL (current: M=81/N=5/C=26, V-freq error = 1.4 μHz)
-- If still present: verify the new PLL bitstream (3SX.rbf) is deployed
+- If still present: verify the new PLL bitstream (3S-ARM.rbf) is deployed
 
 ### Sporadic frame drops under system load
 

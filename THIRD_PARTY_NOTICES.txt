@@ -1,4 +1,4 @@
-3SX Third-Party Notices
+3S-ARM Third-Party Notices
 ========================
 
 This product includes third-party software components.
@@ -8,7 +8,7 @@ libcdio / libiso9660
 Project: libcdio
 Upstream: https://github.com/libcdio/libcdio
 
-3SX links against:
+3S-ARM links against:
 - libcdio
 - libiso9660
 
@@ -24,7 +24,7 @@ SDL3
 Project: SDL3
 Upstream: https://github.com/libsdl-org/SDL
 
-3SX links against:
+3S-ARM links against:
 - SDL3
 
 License: zlib license, as provided by the SDL project.
@@ -37,7 +37,7 @@ zlib
 Project: zlib
 Upstream: https://zlib.net
 
-3SX links against:
+3S-ARM links against:
 - zlib
 
 License: zlib license, as provided by the zlib project.
@@ -50,7 +50,7 @@ FFmpeg
 Project: FFmpeg
 Upstream: https://ffmpeg.org
 
-3SX links against:
+3S-ARM links against:
 - libavcodec
 - libavformat
 - libavutil
@@ -66,7 +66,7 @@ GekkoNet
 Project: GekkoNet
 Upstream: https://github.com/HeatXD/GekkoNet
 
-3SX links against:
+3S-ARM links against:
 - libGekkoNet
 
 License: BSD 2-Clause, as provided by Jamie Meyer.
@@ -79,7 +79,7 @@ argparse
 Project: argparse
 Upstream: https://github.com/cofyc/argparse
 
-3SX links against:
+3S-ARM links against:
 - argparse
 
 License: MIT License, as provided by Yecheng Fu.
@@ -92,7 +92,7 @@ minizip-ng
 Project: minizip-ng
 Upstream: https://github.com/zlib-ng/minizip-ng
 
-3SX links against:
+3S-ARM links against:
 - libminizip-ng
 
 License: zlib license, as provided by Nathan Moinvaziri.

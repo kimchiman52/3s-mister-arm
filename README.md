@@ -1,4 +1,4 @@
-# 3SX — MiSTer FPGA Port
+# 3S-ARM — MiSTer FPGA Port
 ### Based on [crowded-street/3sx](https://github.com/crowded-street/3sx) — a multiplatform port of *Street Fighter III: 3rd Strike* built from a PS2 decompilation
 
 A vibe-coded hybrid ARM + FPGA port of *Street Fighter III: 3rd Strike*
@@ -44,7 +44,7 @@ Strike* or *Street Fighter Anniversary Collection* for PS2 to play.
 
 The MiSTer DE10-Nano is a Cyclone V SoC: a dual-core ARM Cortex-A9 at 800 MHz
 bolted to an FPGA fabric. Most MiSTer cores are pure FPGA — the game logic,
-rendering, and video output all happen in hardware. 3SX takes a different
+rendering, and video output all happen in hardware. 3S-ARM takes a different
 approach:
 
 ```
@@ -89,10 +89,10 @@ Extract a release ZIP onto the root of your MiSTer SD card. The archive is
 FAT-rooted and places files at:
 
 ```
-/media/fat/MiSTer_3SX                     HPS wrapper executable
-/media/fat/_Other/3SX.rbf                  FPGA bitstream
-/media/fat/games/3sx/
-  ├── bin/3sx                              Game binary (ARM)
+/media/fat/MiSTer_3S-ARM                     HPS wrapper executable
+/media/fat/_Other/3S-ARM.rbf                  FPGA bitstream
+/media/fat/games/3s-arm/
+  ├── bin/3s-arm                              Game binary (ARM)
   ├── lib/                                 Shared libraries (SDL3, etc.)
   ├── resources/                           (empty — you supply the game data)
   └── scripts/                             Launch helpers
@@ -100,25 +100,25 @@ FAT-rooted and places files at:
 
 > **⚠️ FTP users:** If transferring files via FileZilla or another FTP client,
 > set the transfer type to **Binary** (not Auto or ASCII). The default mode
-> corrupts extensionless binaries like `MiSTer_3SX` and `3sx`, causing the
+> corrupts extensionless binaries like `MiSTer_3S-ARM` and `3s-arm`, causing the
 > core to crash on launch.
 
 After extracting, place your legally obtained game archive:
 
 ```
-/media/fat/games/3sx/resources/SF33RD.AFS
+/media/fat/games/3s-arm/resources/SF33RD.AFS
 ```
 
 Then add this section to `/media/fat/MiSTer.ini`:
 
 ```ini
-[3SX]
-main=MiSTer_3SX
+[3S-ARM]
+main=MiSTer_3S-ARM
 video_mode=8    ; HDMI users: forces 1080p60 to avoid sync issues
 ```
 
 If `video_mode` is already set in your global INI settings, the per-core
-value here will override it for 3SX only.
+value here will override it for 3S-ARM only.
 
 ---
 
@@ -126,7 +126,7 @@ value here will override it for 3SX only.
 
 1. Boot MiSTer normally.
 2. Navigate to the **Other** core folder.
-3. Launch **3SX**.
+3. Launch **3S-ARM**.
 
 If the core immediately exits back to MiSTer, the most common cause is a
 missing `SF33RD.AFS`.
@@ -141,8 +141,8 @@ If you still cannot get a picture, try using the MiSTer scaler with a
 custom video mode:
 
 ```ini
-[3SX]
-main=MiSTer_3SX
+[3S-ARM]
+main=MiSTer_3S-ARM
 vga_scaler=1
 video_mode=384,22,38,51,224,16,3,21,7788
 ```
@@ -189,7 +189,7 @@ launches.
 
 **Note:** Not all DE10-Nano boards can run stably at 1200 MHz. If the
 game crashes or freezes after overclocking, SSH into your MiSTer and
-edit `/media/fat/games/3sx/config`. Find the `arm-clock` line and
+edit `/media/fat/games/3s-arm/config`. Find the `arm-clock` line and
 change it back to stock:
 
 ```
@@ -233,10 +233,10 @@ vendor/
 │       ├── yc_out.sv              S-Video / composite encoding
 │       └── video_mixer.sv         HDMI scaler path (ascal)
 ├── Main_MiSTer/                   HPS framework (ARM-side wrapper)
-│   └── overlays for 3SX:
-│       ├── threesx_main.cpp       Wrapper entry point
-│       ├── threesx_wrapper.cpp    Core integration, OSD, launch
-│       └── threesx_core_context.* Game context management
+│   └── overlays for 3S-ARM:
+│       ├── thirdsarm_main.cpp       Wrapper entry point
+│       ├── thirdsarm_wrapper.cpp    Core integration, OSD, launch
+│       └── thirdsarm_core_context.* Game context management
 └── (third-party libs are in third_party/, not vendored here)
 
 tools/
@@ -245,19 +245,19 @@ tools/
 │   ├── build-game.sh              Cross-compile game binary for ARM
 │   └── perf-sampler.sh            Performance telemetry capture
 └── mister-wrapper/
-    ├── build-hps.sh               Build MiSTer_3SX (HPS executable)
-    ├── build-core.sh              Build 3SX.rbf (Quartus FPGA synthesis)
+    ├── build-hps.sh               Build MiSTer_3S-ARM (HPS executable)
+    ├── build-core.sh              Build 3S-ARM.rbf (Quartus FPGA synthesis)
     └── build-release.sh           Package a release ZIP
 ```
 
 ### Wrapper Core
 
-The `MiSTer_3SX` HPS executable acts as a bridge between the MiSTer menu
+The `MiSTer_3S-ARM` HPS executable acts as a bridge between the MiSTer menu
 framework and the game. It:
 
-- Loads the FPGA bitstream (`3SX.rbf`)
+- Loads the FPGA bitstream (`3S-ARM.rbf`)
 - Initializes the native video path and audio
-- Launches the game binary (`/media/fat/games/3sx/bin/3sx`) via `execve()`
+- Launches the game binary (`/media/fat/games/3s-arm/bin/3s-arm`) via `execve()`
 - Manages the MiSTer OSD (on-screen display) overlay
 - Handles signal cleanup and console switching
 
@@ -377,8 +377,8 @@ includes:
 - **ARM C code** — SDL3 renderer, framebuffer presenter, native video writer,
   ALSA audio output, ADX decode pipeline, OSD menu integration, frame pacing,
   clock recovery, and all MiSTer-specific platform code in `src/port/`.
-- **HPS wrapper** — `threesx_main.cpp`, `threesx_wrapper.cpp`,
-  `threesx_core_context.cpp`, and all `Main_MiSTer` overlay modifications.
+- **HPS wrapper** — `thirdsarm_main.cpp`, `thirdsarm_wrapper.cpp`,
+  `thirdsarm_core_context.cpp`, and all `Main_MiSTer` overlay modifications.
 - **PLL design** — A dedicated integer-N video PLL producing 31.1538 MHz
   (50 MHz × 81/(5×26)), divided by 4 for a 7.7885 MHz pixel clock. This PLL
   is separate from the 100 MHz system PLL, which decouples video timing
@@ -417,7 +417,7 @@ See [docs/building.md](docs/building.md) for full instructions. Quick overview:
 tools/mister/build-game.sh
 ```
 
-Produces the ARM hard-float ELF at `build-mister/3sx`. Cross-compiles with
+Produces the ARM hard-float ELF at `build-mister/3s-arm`. Cross-compiles with
 clang targeting `cortex-a9` with NEON.
 
 ### FPGA Bitstream (Quartus 17)
@@ -426,7 +426,7 @@ clang targeting `cortex-a9` with NEON.
 tools/mister-wrapper/build-core.sh
 ```
 
-Produces `3SX.rbf`. Requires Intel Quartus 17.0 (Cyclone V support).
+Produces `3S-ARM.rbf`. Requires Intel Quartus 17.0 (Cyclone V support).
 
 ### HPS Wrapper
 
@@ -434,7 +434,7 @@ Produces `3SX.rbf`. Requires Intel Quartus 17.0 (Cyclone V support).
 tools/mister-wrapper/build-hps.sh
 ```
 
-Produces `MiSTer_3SX`.
+Produces `MiSTer_3S-ARM`.
 
 ### Release Package
 

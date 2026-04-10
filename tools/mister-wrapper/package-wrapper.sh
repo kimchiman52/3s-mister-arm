@@ -5,8 +5,8 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 OUTPUT_DIR="${OUTPUT_DIR:-${ROOT_DIR}/build/mister-wrapper-package}"
 RUNTIME_PACKAGE="${RUNTIME_PACKAGE:-${ROOT_DIR}/build/mister-clean-package}"
-HPS_BINARY="${HPS_BINARY:-${ROOT_DIR}/build/mister-wrapper-hps/MiSTer_3SX}"
-CORE_RBF="${CORE_RBF:-${ROOT_DIR}/build/mister-wrapper-core/3SX.rbf}"
+HPS_BINARY="${HPS_BINARY:-${ROOT_DIR}/build/mister-wrapper-hps/MiSTer_3S-ARM}"
+CORE_RBF="${CORE_RBF:-${ROOT_DIR}/build/mister-wrapper-core/3S-ARM.rbf}"
 
 usage() {
     cat <<EOF
@@ -17,9 +17,9 @@ Usage:
 
 Purpose:
   Assemble the full /media/fat-rooted wrapper package:
-  - /media/fat/_Other/3SX.rbf
-  - /media/fat/MiSTer_3SX
-  - /media/fat/games/3sx/...
+  - /media/fat/_Other/3S-ARM.rbf
+  - /media/fat/MiSTer_3S-ARM
+  - /media/fat/games/3s-arm/...
 
 Defaults:
   runtime_package=${RUNTIME_PACKAGE}
@@ -82,14 +82,14 @@ if [ "${check_only}" -eq 1 ]; then
 fi
 
 rm -rf "${OUTPUT_DIR}"
-mkdir -p "${OUTPUT_DIR}/_Other" "${OUTPUT_DIR}/games/3sx"
+mkdir -p "${OUTPUT_DIR}/_Other" "${OUTPUT_DIR}/games/3s-arm"
 
-cp "${HPS_BINARY}" "${OUTPUT_DIR}/MiSTer_3SX"
-cp "${CORE_RBF}" "${OUTPUT_DIR}/_Other/3SX.rbf"
-rsync -a "${RUNTIME_PACKAGE%/}/" "${OUTPUT_DIR}/games/3sx/"
+cp "${HPS_BINARY}" "${OUTPUT_DIR}/MiSTer_3S-ARM"
+cp "${CORE_RBF}" "${OUTPUT_DIR}/_Other/3S-ARM.rbf"
+rsync -a "${RUNTIME_PACKAGE%/}/" "${OUTPUT_DIR}/games/3s-arm/"
 
-chmod +x "${OUTPUT_DIR}/MiSTer_3SX"
+chmod +x "${OUTPUT_DIR}/MiSTer_3S-ARM"
 
 echo "packaged_root=${OUTPUT_DIR}"
-echo "packaged_hps=${OUTPUT_DIR}/MiSTer_3SX"
-echo "packaged_core=${OUTPUT_DIR}/_Other/3SX.rbf"
+echo "packaged_hps=${OUTPUT_DIR}/MiSTer_3S-ARM"
+echo "packaged_core=${OUTPUT_DIR}/_Other/3S-ARM.rbf"
