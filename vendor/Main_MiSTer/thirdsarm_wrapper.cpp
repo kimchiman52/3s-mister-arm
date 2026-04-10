@@ -121,6 +121,13 @@ enum RuntimeHoldToPauseMenu
 	kHoldToPauseMenuCount
 };
 
+enum RuntimeAspectRatioMenu
+{
+	kAspectRatio4x3 = 0,
+	kAspectRatioFull,
+	kAspectRatioMenuCount
+};
+
 enum FpsOverlayMode
 {
 	kFpsOverlayOff = 0,
@@ -138,6 +145,7 @@ int g_wrapper_arm_clock = kArmClockStock;
 int g_wrapper_arm_clock_active = kArmClockStock;
 int g_wrapper_game_mode = kGameModeConsole;
 int g_wrapper_hold_to_pause = kHoldToPauseOff;
+int g_wrapper_aspect_ratio = kAspectRatio4x3;
 int g_wrapper_restart_requested = 0;
 int g_wrapper_used_full_user_io_init = 0;
 static bool g_native_video_mode = false;
@@ -1181,6 +1189,90 @@ bool write_runtime_hold_to_pause_default(int mode)
 	return true;
 }
 
+int read_runtime_aspect_ratio_default()
+{
+	char value[64] = {};
+	if (!read_runtime_config_value("aspect-ratio", value, sizeof(value))) return kAspectRatio4x3;
+
+	if (!strcasecmp(value, "full")) return kAspectRatioFull;
+	return kAspectRatio4x3;
+}
+
+static const char *runtime_aspect_ratio_config_value(int mode)
+{
+	switch (mode)
+	{
+	case kAspectRatioFull: return "full";
+	default: return "4:3";
+	}
+}
+
+bool write_runtime_aspect_ratio_default(int mode)
+{
+	char path[PATH_MAX] = {};
+	char temp_path[PATH_MAX] = {};
+	snprintf(path, sizeof(path), "%s/config", kRuntimeHome);
+	snprintf(temp_path, sizeof(temp_path), "%s/config.tmp", kRuntimeHome);
+
+	FILE *in = fopen(path, "r");
+	FILE *out = fopen(temp_path, "w");
+	if (!out)
+	{
+		if (in) fclose(in);
+		return false;
+	}
+
+	bool wrote_value = false;
+	char line[256] = {};
+	if (in)
+	{
+		while (fgets(line, sizeof(line), in))
+		{
+			char inspect[256] = {};
+			snprintf(inspect, sizeof(inspect), "%s", line);
+
+			char *cursor = inspect;
+			while (*cursor && isspace((unsigned char)*cursor)) cursor++;
+			if (*cursor == '#')
+			{
+				fputs(line, out);
+				continue;
+			}
+
+			char *equals = strchr(cursor, '=');
+			if (equals)
+			{
+				*equals = 0;
+				trim_in_place(cursor);
+				if (!strcasecmp(cursor, "aspect-ratio"))
+				{
+					fprintf(out, "aspect-ratio = %s\n", runtime_aspect_ratio_config_value(mode));
+					wrote_value = true;
+					continue;
+				}
+			}
+
+			fputs(line, out);
+		}
+
+		fclose(in);
+	}
+
+	if (!wrote_value)
+	{
+		fprintf(out, "\naspect-ratio = %s\n", runtime_aspect_ratio_config_value(mode));
+	}
+
+	if (fclose(out) != 0) return false;
+	if (rename(temp_path, path) != 0)
+	{
+		remove(temp_path);
+		return false;
+	}
+
+	return true;
+}
+
 StartupScaleModeSelection resolve_startup_scale_mode()
 {
 	StartupScaleModeSelection selection = {};
@@ -1385,6 +1477,7 @@ void poll_status_changes(pid_t child)
 	static uint32_t prev_arm_clock = 0xFFFFFFFF;
 	static uint32_t prev_game_mode = 0xFFFFFFFF;
 	static uint32_t prev_hold_to_pause = 0xFFFFFFFF;
+	static uint32_t prev_aspect_ratio = 0xFFFFFFFF;
 
 	// --- Option bits: detect changes and apply ---
 
@@ -1486,6 +1579,18 @@ void poll_status_changes(pid_t child)
 		}
 	}
 
+	uint32_t aspect_ratio = user_io_status_get("[12]");
+	if (aspect_ratio != prev_aspect_ratio) {
+		prev_aspect_ratio = aspect_ratio;
+		int target = (int)aspect_ratio;
+		if (target != g_wrapper_aspect_ratio) {
+			write_runtime_aspect_ratio_default(target);
+			g_wrapper_aspect_ratio = target;
+			// No child signal: aspect ratio is pure FPGA/scaler state,
+			// the game does not read this setting.
+		}
+	}
+
 	// --- T-type triggers (Reset/Restart) ---
 	// HandleUI() pulses T bits (set 1 then 0) within a single call.
 	// user_io_status_trigger_take() captures the pulse via a sticky flag
@@ -1499,6 +1604,7 @@ void poll_status_changes(pid_t child)
 		user_io_status_set("[15]", 0);    // Ghost Res = Full (enum 0)
 		user_io_status_set("[18:16]", kGhostCount4); // Ghost Count default=4
 		user_io_status_set("[20:19]", 0); // Overclock = Stock
+		user_io_status_set("[12]", 0);    // Aspect Ratio = 4:3
 		user_io_status_set("[13]", 0);    // Game Mode = Console
 		user_io_status_set("[24]", 0);    // Hold to Pause = Off
 		prev_fps = 0xFFFFFFFF;
@@ -1508,6 +1614,7 @@ void poll_status_changes(pid_t child)
 		prev_arm_clock = 0xFFFFFFFF;
 		prev_game_mode = 0xFFFFFFFF;
 		prev_hold_to_pause = 0xFFFFFFFF;
+		prev_aspect_ratio = 0xFFFFFFFF;
 	}
 
 	if (triggers & (1u << 22)) {
@@ -1748,6 +1855,7 @@ int thirdsarm_wrapper_run(int argc, char *argv[])
 	g_wrapper_arm_clock_active = g_wrapper_arm_clock;
 	g_wrapper_game_mode = read_runtime_game_mode_default();
 	g_wrapper_hold_to_pause = read_runtime_hold_to_pause_default();
+	g_wrapper_aspect_ratio = read_runtime_aspect_ratio_default();
 	g_wrapper_restart_requested = 0;
 	g_wrapper_signal = 0;
 
@@ -1794,6 +1902,9 @@ int thirdsarm_wrapper_run(int argc, char *argv[])
 		user_io_status_set("[15]", (uint32_t)g_wrapper_ghost_resolution);
 		user_io_status_set("[18:16]", (uint32_t)g_wrapper_ghost_count);
 		user_io_status_set("[20:19]", (uint32_t)g_wrapper_arm_clock);
+		user_io_status_set("[12]", (uint32_t)g_wrapper_aspect_ratio);
+		user_io_status_set("[13]", (uint32_t)g_wrapper_game_mode);
+		user_io_status_set("[24]", (uint32_t)g_wrapper_hold_to_pause);
 	}
 
 	write_log_line(wrapper_log, "==== 3S-ARM wrapper launch ====");
@@ -2085,6 +2196,8 @@ int thirdsarm_wrapper_run(int argc, char *argv[])
 			user_io_status_set("[15]", (uint32_t)g_wrapper_ghost_resolution);
 			user_io_status_set("[18:16]", (uint32_t)g_wrapper_ghost_count);
 			user_io_status_set("[20:19]", (uint32_t)g_wrapper_arm_clock);
+			user_io_status_set("[12]", (uint32_t)g_wrapper_aspect_ratio);
+			user_io_status_set("[13]", (uint32_t)g_wrapper_game_mode);
 			user_io_status_set("[24]", (uint32_t)g_wrapper_hold_to_pause);
 
 			continue;
