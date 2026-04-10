@@ -748,7 +748,8 @@ void sag_union_1(PLW* wk) {
         /* fallthrough */
 
     case 4:
-        if ((wk->sa_stop_flag != 1) && (((PLW*)wk->wu.target_adrs)->sa_stop_flag != 1)) {
+        if ((wk->sa_stop_flag != 1) && (((PLW*)wk->wu.target_adrs)->sa_stop_flag != 1) &&
+            !(wk->spmv_ng_flag2 & DIP2_SA_GAUGE_NO_DEPLETE)) {
             wk->sa->gauge.i -= wk->sa->dtm * wk->sa->dtm_mul;
         }
 
@@ -965,7 +966,8 @@ void sag_union_ps2(PLW* wk) {
                 /* fallthrough */
 
             case 2:
-                if ((wk->sa_stop_flag != 1) && (((PLW*)wk->wu.target_adrs)->sa_stop_flag != 1)) {
+                if ((wk->sa_stop_flag != 1) && (((PLW*)wk->wu.target_adrs)->sa_stop_flag != 1) &&
+                    !(wk->spmv_ng_flag2 & DIP2_SA_GAUGE_NO_DEPLETE)) {
                     wk->sa->gauge.i -= wk->sa->dtm * wk->sa->dtm_mul;
                 }
 

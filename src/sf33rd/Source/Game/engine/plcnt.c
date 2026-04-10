@@ -672,7 +672,7 @@ void plcnt_move() {
         plw[0].wu.dm_vital = plw[1].wu.dm_vital = 0;
     }
 
-    if (Mode_Type == MODE_NORMAL_TRAINING && Training_Cursor == 0) {
+    if (Mode_Type == MODE_NORMAL_TRAINING) {
         plw[0].wu.dm_nodeathattack = 1;
         plw[1].wu.dm_nodeathattack = 1;
     }
