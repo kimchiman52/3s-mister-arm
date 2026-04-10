@@ -30,6 +30,7 @@ typedef struct AFS {
 typedef struct ReadRequest {
     bool initialized;
     bool close_queued;
+    bool close_pending;
     int index;
     int file_num;
     int sector;
@@ -168,11 +169,31 @@ bool AFS_Init(const char* file_path) {
     return init_asyncio();
 }
 
+static void process_asyncio_outcome(const SDL_AsyncIOOutcome* outcome);
+
 void AFS_Finish() {
     for (int i = 0; i < SDL_arraysize(requests); i++) {
         if (requests[i].initialized) {
             AFS_Close(i);
         }
+    }
+
+    // Drain any pending close completions before destroying the queue.
+    for (;;) {
+        bool any_pending = false;
+        for (int i = 0; i < SDL_arraysize(requests); i++) {
+            if (requests[i].close_queued) {
+                any_pending = true;
+                break;
+            }
+        }
+        if (!any_pending) break;
+
+        SDL_AsyncIOOutcome outcome;
+        if (!SDL_WaitAsyncIOResult(asyncio_queue, &outcome, -1)) {
+            break;
+        }
+        process_asyncio_outcome(&outcome);
     }
 
     SDL_free(afs.file_path);
@@ -235,7 +256,12 @@ static void process_asyncio_outcome(const SDL_AsyncIOOutcome* outcome) {
     case SDL_ASYNCIO_TASK_CLOSE:
         request->close_queued = false;
         request->asyncio = NULL;
-        request->state = AFS_READ_STATE_IDLE;
+
+        if (request->close_pending) {
+            SDL_zerop(request);
+        } else {
+            request->state = AFS_READ_STATE_IDLE;
+        }
         break;
 
     case SDL_ASYNCIO_TASK_WRITE:
@@ -385,21 +411,20 @@ void AFS_Close(AFSHandle handle) {
     }
 
     if (!queue_request_close(request)) {
+        // Close failed to queue -- still free the slot to avoid leaking it.
+        SDL_zerop(request);
         return;
     }
 
-    while (request->close_queued) {
-        SDL_AsyncIOOutcome outcome;
-        if (!SDL_WaitAsyncIOResult(asyncio_queue, &outcome, -1)) {
-            printf("SDL_WaitAsyncIOResult error: %s\n", SDL_GetError());
-            request->state = AFS_READ_STATE_ERROR;
-            return;
-        }
-
-        process_asyncio_outcome(&outcome);
+    if (request->close_queued) {
+        // Async close is in flight. Defer slot cleanup to AFS_RunServer()
+        // via process_asyncio_outcome() when the close completion arrives.
+        request->close_pending = true;
+    } else {
+        // No async IO was open (asyncio was NULL), close completed
+        // synchronously. Free the slot now.
+        SDL_zerop(request);
     }
-
-    SDL_zerop(request);
 }
 
 AFSReadState AFS_GetState(AFSHandle handle) {
