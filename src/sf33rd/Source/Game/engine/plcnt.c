@@ -1593,5 +1593,5 @@ void set_scrrrl() {
 }
 
 u32 get_arcade_flags(Character character) {
-    return omop_spmv_ng_table_arcade[CHAR_3SARM_TO_ARCADE(character)];
+    return omop_spmv_ng_table_arcade[CHAR_3SX_TO_ARCADE(character)];
 }
