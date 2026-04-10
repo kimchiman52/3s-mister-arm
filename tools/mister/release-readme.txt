@@ -1,5 +1,5 @@
-3S-ARM — Street Fighter III: 3rd Strike for MiSTer FPGA
-=======================================================
+3s-mister-arm — Street Fighter III: 3rd Strike for MiSTer FPGA
+==============================================================
 
 A hybrid ARM + FPGA port of 3rd Strike running on the MiSTer DE10-Nano.
 Game logic runs on the ARM CPU; the FPGA handles native video output,
@@ -48,9 +48,14 @@ INSTALLATION
 
      /media/fat/MiSTer_3S-ARM                  (HPS wrapper)
      /media/fat/_Other/3S-ARM.rbf              (FPGA bitstream)
-     /media/fat/games/3s-arm/bin/3s-arm            (game binary)
-     /media/fat/games/3s-arm/lib/               (shared libraries)
-     /media/fat/games/3s-arm/scripts/           (launch helpers)
+     /media/fat/games/3s-arm/bin/3s-arm        (game binary)
+     /media/fat/games/3s-arm/lib/              (shared libraries)
+     /media/fat/games/3s-arm/scripts/          (launch helpers)
+
+   ** FTP users: ** If transferring files via FileZilla or another
+   FTP client, set the transfer type to Binary (not Auto or ASCII).
+   The default mode corrupts extensionless binaries like MiSTer_3S-ARM
+   and 3s-arm, causing the core to crash on launch.
 
 2. Place your SF33RD.AFS file here:
 

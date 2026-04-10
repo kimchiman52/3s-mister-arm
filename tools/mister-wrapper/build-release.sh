@@ -12,7 +12,7 @@ HPS_BINARY="${HPS_BINARY:-${ROOT_DIR}/build/mister-wrapper-hps/MiSTer_3S-ARM}"
 CORE_RBF="${CORE_RBF:-${ROOT_DIR}/build/mister-wrapper-core/3S-ARM.rbf}"
 WORK_DIR="${WORK_DIR:-${ROOT_DIR}/build/mister-release}"
 STAGE_DIR="${STAGE_DIR:-${WORK_DIR}/stage}"
-OUTPUT_ZIP="${OUTPUT_ZIP:-${WORK_DIR}/3S-ARM-mister-rolling-pre-release.zip}"
+OUTPUT_ZIP="${OUTPUT_ZIP:-${WORK_DIR}/3s-mister-arm-rolling-pre-release.zip}"
 README_BASENAME="README.txt"
 
 usage() {
@@ -146,7 +146,7 @@ while [ "$#" -gt 0 ]; do
     --work-dir)
         WORK_DIR="$2"
         STAGE_DIR="${WORK_DIR}/stage"
-        OUTPUT_ZIP="${WORK_DIR}/3S-ARM-mister-rolling-pre-release.zip"
+        OUTPUT_ZIP="${WORK_DIR}/3s-mister-arm-rolling-pre-release.zip"
         shift 2
         ;;
     --stage-dir)
