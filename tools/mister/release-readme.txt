@@ -41,11 +41,6 @@ INSTALLATION
 
      [3S-ARM]
      main=MiSTer_3S-ARM
-     video_mode=8    ; HDMI users: forces 1080p60 to avoid sync issues
-
-   video_mode=8 sets HDMI to 1920x1080@60 for this core. Without it,
-   MiSTer's auto-detection can cause sync issues with 3S-ARM's native video
-   signal on some HDMI displays.
 
 
 CRT TROUBLESHOOTING

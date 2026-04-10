@@ -1,5 +1,7 @@
-# 3S-ARM — MiSTer FPGA Port
+# 3s-mister-arm — MiSTer FPGA Port
 ### Based on [crowded-street/3sx](https://github.com/crowded-street/3sx) — a multiplatform port of *Street Fighter III: 3rd Strike* built from a PS2 decompilation
+
+> **Note:** This project was formerly known as "3SX MiSTer." It has been renamed to **3s-mister-arm** to make clear that this is an **independent MiSTer port** — it is ***NOT*** an official release by the 3sx team. For support, please use this project's issue tracker — the 3sx team's Discord is not the right place for 3s-mister-arm questions.
 
 A vibe-coded hybrid ARM + FPGA port of *Street Fighter III: 3rd Strike*
 running on the [MiSTer FPGA](https://mister-devel.github.io/MkDocs_MiSTer/)
@@ -44,7 +46,7 @@ Strike* or *Street Fighter Anniversary Collection* for PS2 to play.
 
 The MiSTer DE10-Nano is a Cyclone V SoC: a dual-core ARM Cortex-A9 at 800 MHz
 bolted to an FPGA fabric. Most MiSTer cores are pure FPGA — the game logic,
-rendering, and video output all happen in hardware. 3S-ARM takes a different
+rendering, and video output all happen in hardware. 3s-mister-arm takes a different
 approach:
 
 ```
@@ -114,11 +116,7 @@ Then add this section to `/media/fat/MiSTer.ini`:
 ```ini
 [3S-ARM]
 main=MiSTer_3S-ARM
-video_mode=8    ; HDMI users: forces 1080p60 to avoid sync issues
 ```
-
-If `video_mode` is already set in your global INI settings, the per-core
-value here will override it for 3S-ARM only.
 
 ---
 
@@ -147,9 +145,22 @@ vga_scaler=1
 video_mode=384,22,38,51,224,16,3,21,7788
 ```
 
-This routes through the MiSTer scaler at 384x224 NTSC timing. If your
-CRT expects composite sync, also add `composite_sync=1`. Note:
+This routes through the MiSTer scaler at 384x224 NTSC timing. Then open
+the OSD (F12) and set **Aspect Ratio** to **Full** to avoid pillarboxing.
+If your CRT expects composite sync, also add `composite_sync=1`. Note:
 `vga_scaler=1` disables S-Video color output.
+
+### OSD Options
+
+Press F12 or the MiSTer menu button to open the OSD. All settings persist
+across launches.
+
+| Setting | Options | Effect |
+|---------|---------|--------|
+| **Game Mode** | Console / Arcade | **Console** (default) shows the normal title screen and menus. **Arcade** skips straight to the character select screen like a coin-op cabinet — no title screen, no mode select. This is a convenience setting for local play, not a gameplay accuracy toggle. |
+| **Hold to Pause** | Off / On | When **On**, you must hold Start to pause instead of tapping it. Useful in Arcade mode to prevent accidental pauses during play. |
+| **Button Check** | (trigger) | Opens an input verification screen showing real-time button presses for both players. Useful for tournament setups to confirm controller mappings. |
+| **Aspect Ratio** | 4:3 / Full | Switches between 4:3 and Full. Only relevant when using the MiSTer VGA scaler (`vga_scaler=1`); has no effect on the native video path. |
 
 ### Performance
 
@@ -233,7 +244,7 @@ vendor/
 │       ├── yc_out.sv              S-Video / composite encoding
 │       └── video_mixer.sv         HDMI scaler path (ascal)
 ├── Main_MiSTer/                   HPS framework (ARM-side wrapper)
-│   └── overlays for 3S-ARM:
+│   └── overlays for 3s-mister-arm:
 │       ├── thirdsarm_main.cpp       Wrapper entry point
 │       ├── thirdsarm_wrapper.cpp    Core integration, OSD, launch
 │       └── thirdsarm_core_context.* Game context management
