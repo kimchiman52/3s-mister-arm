@@ -1611,6 +1611,14 @@ void Loop_Demo(struct _TASK* /* unused */) {
         // Game00 with TASK_ENTRY running; reroute to Game12 with the
         // same state Game0_2 case 5 would produce for arcade mode, and
         // perform the texture teardown that Game0_2 cases 3-4 do.
+        //
+        // Advance Entry_Task to the "wait for Request_E_No" state
+        // (E_No[2]=2) that a title-screen Start press would normally
+        // reach via Entry_01_Sub. Without this, Entry_01 stays in case
+        // 1 polling for Start rising edges during character select,
+        // which breaks the 2P challenge flow (Entry_04 never runs) and
+        // also lets a character-confirm Start press trigger
+        // Entry_01_Sub and deactivate P2. Mirrors menu.c fallback.
         if (SDLApp_IsArcadeGameMode()) {
             TexRelease(601);
             title_tex_flag = 0;
@@ -1621,7 +1629,8 @@ void Loop_Demo(struct _TASK* /* unused */) {
             Mode_Type = MODE_ARCADE;
             Decide_PL(Champion);
             BGM_Request(65);
-            cpExitTask(TASK_ENTRY);
+            E_No[1] = 2;
+            E_No[2] = 2;
         }
 
         return;
