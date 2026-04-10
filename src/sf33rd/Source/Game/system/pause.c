@@ -56,7 +56,7 @@ void Pause_Task(struct _TASK* task_ptr) {
 void Pause_Check(struct _TASK* task_ptr) {
     PAUSE_X = 0;
 
-    if (SDLApp_IsArcadeGameMode()) {
+    if (SDLApp_IsHoldToPauseEnabled()) {
         for (int i = 0; i < 2; i++) {
             if (PLsw[i][0] & SWK_START) {
                 if (start_hold_counter[i] <= PAUSE_HOLD_FRAMES)

@@ -65,6 +65,7 @@ constexpr int kRuntimeSuperEffectQualityCycleSignal = SIGUSR2;
 #define kRuntimeGhostCountCycleSignal (SIGRTMIN + 1)
 #define kRuntimeArmClockCycleSignal (SIGRTMIN + 2)
 #define kRuntimeGameModeCycleSignal (SIGRTMIN + 3)
+#define kRuntimeHoldToPauseCycleSignal (SIGRTMIN + 4)
 
 enum RuntimeScaleModeMenu
 {
@@ -113,6 +114,13 @@ enum RuntimeGameModeMenu
 	kGameModeMenuCount
 };
 
+enum RuntimeHoldToPauseMenu
+{
+	kHoldToPauseOff = 0,
+	kHoldToPauseOn,
+	kHoldToPauseMenuCount
+};
+
 enum FpsOverlayMode
 {
 	kFpsOverlayOff = 0,
@@ -129,6 +137,7 @@ int g_wrapper_ghost_count = kGhostCount4;
 int g_wrapper_arm_clock = kArmClockStock;
 int g_wrapper_arm_clock_active = kArmClockStock;
 int g_wrapper_game_mode = kGameModeConsole;
+int g_wrapper_hold_to_pause = kHoldToPauseOff;
 int g_wrapper_restart_requested = 0;
 int g_wrapper_used_full_user_io_init = 0;
 static bool g_native_video_mode = false;
@@ -1088,6 +1097,90 @@ bool write_runtime_game_mode_default(int mode)
 	return true;
 }
 
+int read_runtime_hold_to_pause_default()
+{
+	char value[64] = {};
+	if (!read_runtime_config_value("hold-to-pause", value, sizeof(value))) return kHoldToPauseOff;
+
+	if (!strcasecmp(value, "on")) return kHoldToPauseOn;
+	return kHoldToPauseOff;
+}
+
+static const char *runtime_hold_to_pause_config_value(int mode)
+{
+	switch (mode)
+	{
+	case kHoldToPauseOn: return "on";
+	default: return "off";
+	}
+}
+
+bool write_runtime_hold_to_pause_default(int mode)
+{
+	char path[PATH_MAX] = {};
+	char temp_path[PATH_MAX] = {};
+	snprintf(path, sizeof(path), "%s/config", kRuntimeHome);
+	snprintf(temp_path, sizeof(temp_path), "%s/config.tmp", kRuntimeHome);
+
+	FILE *in = fopen(path, "r");
+	FILE *out = fopen(temp_path, "w");
+	if (!out)
+	{
+		if (in) fclose(in);
+		return false;
+	}
+
+	bool wrote_value = false;
+	char line[256] = {};
+	if (in)
+	{
+		while (fgets(line, sizeof(line), in))
+		{
+			char inspect[256] = {};
+			snprintf(inspect, sizeof(inspect), "%s", line);
+
+			char *cursor = inspect;
+			while (*cursor && isspace((unsigned char)*cursor)) cursor++;
+			if (*cursor == '#')
+			{
+				fputs(line, out);
+				continue;
+			}
+
+			char *equals = strchr(cursor, '=');
+			if (equals)
+			{
+				*equals = 0;
+				trim_in_place(cursor);
+				if (!strcasecmp(cursor, "hold-to-pause"))
+				{
+					fprintf(out, "hold-to-pause = %s\n", runtime_hold_to_pause_config_value(mode));
+					wrote_value = true;
+					continue;
+				}
+			}
+
+			fputs(line, out);
+		}
+
+		fclose(in);
+	}
+
+	if (!wrote_value)
+	{
+		fprintf(out, "\nhold-to-pause = %s\n", runtime_hold_to_pause_config_value(mode));
+	}
+
+	if (fclose(out) != 0) return false;
+	if (rename(temp_path, path) != 0)
+	{
+		remove(temp_path);
+		return false;
+	}
+
+	return true;
+}
+
 StartupScaleModeSelection resolve_startup_scale_mode()
 {
 	StartupScaleModeSelection selection = {};
@@ -1291,6 +1384,7 @@ void poll_status_changes(pid_t child)
 	static uint32_t prev_ghost_count = 0xFFFFFFFF;
 	static uint32_t prev_arm_clock = 0xFFFFFFFF;
 	static uint32_t prev_game_mode = 0xFFFFFFFF;
+	static uint32_t prev_hold_to_pause = 0xFFFFFFFF;
 
 	// --- Option bits: detect changes and apply ---
 
@@ -1381,6 +1475,17 @@ void poll_status_changes(pid_t child)
 		}
 	}
 
+	uint32_t hold_to_pause = user_io_status_get("[24]");
+	if (hold_to_pause != prev_hold_to_pause) {
+		prev_hold_to_pause = hold_to_pause;
+		int target = (int)hold_to_pause;
+		if (target != g_wrapper_hold_to_pause) {
+			write_runtime_hold_to_pause_default(target);
+			g_wrapper_hold_to_pause = target;
+			kill(child, kRuntimeHoldToPauseCycleSignal);
+		}
+	}
+
 	// --- T-type triggers (Reset/Restart) ---
 	// HandleUI() pulses T bits (set 1 then 0) within a single call.
 	// user_io_status_trigger_take() captures the pulse via a sticky flag
@@ -1395,12 +1500,14 @@ void poll_status_changes(pid_t child)
 		user_io_status_set("[18:16]", kGhostCount4); // Ghost Count default=4
 		user_io_status_set("[20:19]", 0); // Overclock = Stock
 		user_io_status_set("[13]", 0);    // Game Mode = Console
+		user_io_status_set("[24]", 0);    // Hold to Pause = Off
 		prev_fps = 0xFFFFFFFF;
 		prev_sa_activation = 0xFFFFFFFF;
 		prev_ghost_res = 0xFFFFFFFF;
 		prev_ghost_count = 0xFFFFFFFF;
 		prev_arm_clock = 0xFFFFFFFF;
 		prev_game_mode = 0xFFFFFFFF;
+		prev_hold_to_pause = 0xFFFFFFFF;
 	}
 
 	if (triggers & (1u << 22)) {
@@ -1606,7 +1713,11 @@ int wait_for_child(pid_t child, bool service_ui)
 			if (g_joy_shm)
 			{
 				uint32_t masks[MISTER_JOY_MAX_PLAYERS];
-				input_get_joy_mask(masks, MISTER_JOY_MAX_PLAYERS);
+				if (input_btncheck_active) {
+					memset(masks, 0, sizeof(masks));
+				} else {
+					input_get_joy_mask(masks, MISTER_JOY_MAX_PLAYERS);
+				}
 				for (int i = 0; i < MISTER_JOY_MAX_PLAYERS; i++)
 					g_joy_shm->joy_mask[i] = masks[i];
 			}
@@ -1636,6 +1747,7 @@ int thirdsarm_wrapper_run(int argc, char *argv[])
 	g_wrapper_arm_clock = read_runtime_arm_clock_default();
 	g_wrapper_arm_clock_active = g_wrapper_arm_clock;
 	g_wrapper_game_mode = read_runtime_game_mode_default();
+	g_wrapper_hold_to_pause = read_runtime_hold_to_pause_default();
 	g_wrapper_restart_requested = 0;
 	g_wrapper_signal = 0;
 
@@ -1973,6 +2085,7 @@ int thirdsarm_wrapper_run(int argc, char *argv[])
 			user_io_status_set("[15]", (uint32_t)g_wrapper_ghost_resolution);
 			user_io_status_set("[18:16]", (uint32_t)g_wrapper_ghost_count);
 			user_io_status_set("[20:19]", (uint32_t)g_wrapper_arm_clock);
+			user_io_status_set("[24]", (uint32_t)g_wrapper_hold_to_pause);
 
 			continue;
 		}

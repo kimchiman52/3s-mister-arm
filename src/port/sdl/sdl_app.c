@@ -161,6 +161,7 @@ int ghost_count_max = 4;
    Applied via sysfs scaling_max_freq.  Reset to stock on exit. */
 static int arm_clock_mode = 0;
 static bool game_mode_arcade = false;
+static bool hold_to_pause = false;
 #if defined(PORT_MISTER)
 /* Native video: RGB565 scratch buffer for ARGB8888-to-RGB565 conversion.
    384 * 224 * 2 = 172,032 bytes.  Sits in cached ARM memory so the conversion
@@ -9670,6 +9671,53 @@ bool SDLApp_IsArcadeGameMode(void) {
     return game_mode_arcade;
 }
 
+static void init_hold_to_pause(void) {
+    const char* raw_value = Config_GetString(CFG_KEY_HOLD_TO_PAUSE);
+    if (raw_value != NULL && SDL_strcasecmp(raw_value, "on") == 0) {
+        hold_to_pause = true;
+    } else {
+        hold_to_pause = false;
+    }
+}
+
+void SDLApp_CycleHoldToPause(void) {
+    const char* pref_path = Paths_GetPrefPath();
+    char* config_path = NULL;
+    SDL_asprintf(&config_path, "%sconfig", pref_path);
+    if (config_path != NULL) {
+        FILE* f = fopen(config_path, "r");
+        if (f != NULL) {
+            char line[256];
+            while (fgets(line, sizeof(line), f) != NULL) {
+                char* eq = SDL_strchr(line, '=');
+                if (eq == NULL) continue;
+                *eq = '\0';
+                char* key = line;
+                while (*key == ' ' || *key == '\t') key++;
+                char* key_end = key + SDL_strlen(key);
+                while (key_end > key && (key_end[-1] == ' ' || key_end[-1] == '\t')) key_end--;
+                *key_end = '\0';
+                if (SDL_strcmp(key, "hold-to-pause") != 0) continue;
+                char* val = eq + 1;
+                while (*val == ' ' || *val == '\t') val++;
+                char* val_end = val + SDL_strlen(val);
+                while (val_end > val && (val_end[-1] == ' ' || val_end[-1] == '\t' ||
+                       val_end[-1] == '\n' || val_end[-1] == '\r')) val_end--;
+                *val_end = '\0';
+                hold_to_pause = (SDL_strcasecmp(val, "on") == 0);
+                break;
+            }
+            fclose(f);
+        }
+        SDL_free(config_path);
+    }
+    backend_logf("Hold to pause: %s", hold_to_pause ? "on" : "off");
+}
+
+bool SDLApp_IsHoldToPauseEnabled(void) {
+    return hold_to_pause;
+}
+
 static bool init_window() {
     SDL_WindowFlags window_flags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY;
 
@@ -9802,6 +9850,7 @@ int SDLApp_FullInit() {
     init_ghost_count_max();
     init_arm_clock();
     init_game_mode();
+    init_hold_to_pause();
     init_show_fps_overlay();
 
     if (!SDL_Init(SDL_INIT_GAMEPAD)) {

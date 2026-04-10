@@ -28,6 +28,8 @@ int SDLApp_GetArmClock(void);
 void SDLApp_CycleArmClock(void);
 void SDLApp_CycleGameMode(void);
 bool SDLApp_IsArcadeGameMode(void);
+void SDLApp_CycleHoldToPause(void);
+bool SDLApp_IsHoldToPauseEnabled(void);
 
 static inline bool SDLApp_HasPerfTelemetry(void) {
     return ENABLE_PERF_TELEMETRY != 0;

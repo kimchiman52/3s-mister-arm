@@ -18,6 +18,7 @@
 #define CFG_KEY_GHOST_COUNT "ghost-count"
 #define CFG_KEY_ARM_CLOCK "arm-clock"
 #define CFG_KEY_GAME_MODE "game-mode"
+#define CFG_KEY_HOLD_TO_PAUSE "hold-to-pause"
 
 /// Initialize config system
 void Config_Init();

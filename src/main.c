@@ -96,6 +96,7 @@ static volatile sig_atomic_t ghost_resolution_cycle_requested = 0;
 static volatile sig_atomic_t ghost_count_cycle_requested = 0;
 static volatile sig_atomic_t arm_clock_cycle_requested = 0;
 static volatile sig_atomic_t game_mode_cycle_requested = 0;
+static volatile sig_atomic_t hold_to_pause_cycle_requested = 0;
 
 static u8* mppMalloc(u32 size) {
     return flAllocMemory(size);
@@ -132,6 +133,11 @@ static void on_shutdown_signal(int signo) {
         game_mode_cycle_requested = 1;
         return;
     }
+
+    if (signo == SIGRTMIN + 4) {
+        hold_to_pause_cycle_requested = 1;
+        return;
+    }
 #endif
 
     shutdown_signal = signo;
@@ -153,6 +159,7 @@ static void install_shutdown_signal_handlers() {
     sigaction(SIGRTMIN + 1, &action, NULL);
     sigaction(SIGRTMIN + 2, &action, NULL);
     sigaction(SIGRTMIN + 3, &action, NULL);
+    sigaction(SIGRTMIN + 4, &action, NULL);
 #endif
 }
 
@@ -167,6 +174,7 @@ static void restore_shutdown_signal_handlers() {
     signal(SIGRTMIN + 1, SIG_DFL);
     signal(SIGRTMIN + 2, SIG_DFL);
     signal(SIGRTMIN + 3, SIG_DFL);
+    signal(SIGRTMIN + 4, SIG_DFL);
 #endif
 }
 
@@ -526,6 +534,10 @@ static void handle_signal_requests() {
     if (game_mode_cycle_requested != 0) {
         game_mode_cycle_requested = 0;
         SDLApp_CycleGameMode();
+    }
+    if (hold_to_pause_cycle_requested != 0) {
+        hold_to_pause_cycle_requested = 0;
+        SDLApp_CycleHoldToPause();
     }
 }
 
