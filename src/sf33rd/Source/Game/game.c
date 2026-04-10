@@ -44,7 +44,6 @@
 #include "sf33rd/Source/Game/screen/ranking.h"
 #include "sf33rd/Source/Game/screen/sel_pl.h"
 #include "sf33rd/Source/Game/screen/win.h"
-#include "sf33rd/Source/Game/select_timer.h"
 #include "sf33rd/Source/Game/sound/se.h"
 #include "sf33rd/Source/Game/sound/sound3rd.h"
 #include "sf33rd/Source/Game/stage/bg.h"
@@ -329,7 +328,6 @@ void Game01() {
     BG_Draw_System();
     Basic_Sub();
     Setup_Play_Type();
-    SelectTimer_Run();
 
     switch (G_No[2]) {
     case 0:

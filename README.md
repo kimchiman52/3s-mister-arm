@@ -496,6 +496,7 @@ community live at:
 - [GekkoNet](https://github.com/HeatXD/GekkoNet) — P2P rollback netcode (desktop builds)
 - [FFmpeg](https://ffmpeg.org) — ADX audio codec (desktop builds)
 - [libcdio](https://github.com/libcdio/libcdio) — ISO reading (desktop builds)
+- [Dear ImGui](https://github.com/ocornut/imgui) — Debug UI
 - [zlib](https://zlib.net), [minizip-ng](https://github.com/zlib-ng/minizip-ng), [TF-PSA-Crypto](https://github.com/Mbed-TLS/TF-PSA-Crypto), [argparse](https://github.com/cofyc/argparse), [stb](https://github.com/nothings/stb)
 
 **AI (Vibe Coding)**

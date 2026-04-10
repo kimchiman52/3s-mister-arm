@@ -1,5 +1,6 @@
 #include "port/sdl/sdl_app.h"
 #include "common.h"
+#include "imgui/imgui_wrapper.h"
 #include "main.h"
 #include "port/config/config.h"
 #include "port/config/config_helpers.h"
@@ -7,6 +8,7 @@
 #include "port/paths.h"
 #include "port/sdl/netplay_screen.h"
 #include "port/sdl/netstats_renderer.h"
+#include "port/sdl/scanline_renderer.h"
 #include "port/sdl/sdl_debug_text.h"
 #include "port/sdl/fbdev_presenter.h"
 #include "port/sdl/native_video_writer.h"
@@ -139,6 +141,9 @@ static Uint64   pacer_overlay_max_jitter_us = 0;
 static Uint64   pacer_overlay_avg_jitter_us = 0;
 static Uint32   pacer_overlay_late_pct = 0;
 static Uint64   pacer_overlay_phase_us = 0;
+
+static FrameMetrics frame_metrics = { 0 };
+static Uint64 last_frame_end_time = 0;
 
 static bool should_save_screenshot = false;
 static Uint64 last_mouse_motion_time = 0;
@@ -8610,7 +8615,7 @@ static SDL_ScaleMode screen_texture_scale_mode() {
     case SCALEMODE_INTEGER:
         return SDL_SCALEMODE_NEAREST;
     default:
-      return SDL_SCALEMODE_INVALID;
+        return SDL_SCALEMODE_INVALID;
     }
 
     return SDL_SCALEMODE_NEAREST;
@@ -9884,6 +9889,7 @@ int SDLApp_FullInit() {
     backend_logf("Ghost resolution: %s", ghost_resolution_mode_name(ghost_resolution_mode));
     backend_logf("Ghost count max: %d", ghost_count_max);
     backend_logf("ARM clock: %s", arm_clock_mode_label(arm_clock_mode));
+    ScanlineRenderer_Init(renderer);
 
 #if DEBUG
     SDLDebugText_Initialize(renderer);
@@ -9905,6 +9911,10 @@ int SDLApp_FullInit() {
     }
 #endif
 
+#if DEBUG
+    ImGuiW_Init(window, renderer);
+#endif
+
     return 0;
 }
 
@@ -9918,6 +9928,12 @@ void SDLApp_Quit() {
     FBDevPresenter_Quit();
     destroy_native_screenshot_texture();
     SDL_DestroyTexture(screen_texture);
+    ScanlineRenderer_Destroy();
+
+#if DEBUG
+    ImGuiW_Finish();
+#endif
+
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
 #if ENABLE_PERF_TELEMETRY
@@ -9926,11 +9942,19 @@ void SDLApp_Quit() {
     SDL_Quit();
 }
 
-static void set_screenshot_flag_if_needed(SDL_KeyboardEvent* event) {
+// static void set_screenshot_flag_if_needed(SDL_KeyboardEvent* event) {
+//     if ((event->key == SDLK_GRAVE) && event->down && !event->repeat) {
+//         should_save_screenshot = true;
+//     }
+// }
+
+#if DEBUG
+static void toggle_debug_window_visibility(SDL_KeyboardEvent* event) {
     if ((event->key == SDLK_GRAVE) && event->down && !event->repeat) {
-        should_save_screenshot = true;
+        ImGuiW_ToggleVisivility();
     }
 }
+#endif
 
 static void handle_fullscreen_toggle(SDL_KeyboardEvent* event) {
     const bool is_alt_enter = (event->key == SDLK_RETURN) && (event->mod & SDL_KMOD_ALT);
@@ -9971,6 +9995,10 @@ bool SDLApp_PollEvents() {
     bool continue_running = true;
 
     while (SDL_PollEvent(&event)) {
+#if DEBUG
+        ImGuiW_ProcessEvent(&event);
+#endif
+
         switch (event.type) {
         case SDL_EVENT_GAMEPAD_ADDED:
         case SDL_EVENT_GAMEPAD_REMOVED:
@@ -9979,7 +10007,12 @@ bool SDLApp_PollEvents() {
 
         case SDL_EVENT_KEY_DOWN:
         case SDL_EVENT_KEY_UP:
-            set_screenshot_flag_if_needed(&event.key);
+            // set_screenshot_flag_if_needed(&event.key);
+
+#if DEBUG
+            toggle_debug_window_visibility(&event.key);
+#endif
+
             handle_fullscreen_toggle(&event.key);
             break;
 
@@ -10013,6 +10046,10 @@ void SDLApp_BeginFrame() {
 
     SDLMessageRenderer_BeginFrame();
     SDLGameRenderer_BeginFrame(perf_capture_collect_extended_stats());
+
+#if DEBUG
+    ImGuiW_BeginFrame();
+#endif
 }
 
 static void center_rect(SDL_FRect* rect, int win_w, int win_h) {
@@ -10210,6 +10247,19 @@ static void render_native_output_to_present_target(SDL_Texture* game_canvas, boo
     render_native_output_to_target(NULL, game_canvas, has_message_content, clear_bars);
 }
 
+static void update_metrics(Uint64 sleep_time) {
+    const Uint64 new_frame_end_time = SDL_GetTicksNS();
+    const Uint64 frame_time = new_frame_end_time - last_frame_end_time;
+    const float frame_time_ms = (float)frame_time / 1e6;
+
+    frame_metrics.frame_time[frame_metrics.head] = frame_time_ms;
+    frame_metrics.idle_time[frame_metrics.head] = (float)sleep_time / 1e6;
+    frame_metrics.fps[frame_metrics.head] = 1000 / frame_time_ms;
+
+    frame_metrics.head = (frame_metrics.head + 1) % SDL_arraysize(frame_metrics.frame_time);
+    last_frame_end_time = new_frame_end_time;
+}
+
 static void save_texture(SDL_Texture* texture, const char* filename) {
     SDL_SetRenderTarget(renderer, texture);
     const SDL_Surface* rendered_surface = SDL_RenderReadPixels(renderer, NULL);
@@ -10341,6 +10391,12 @@ void SDLApp_EndFrame() {
             // Render screen texture to screen
             SDL_SetRenderTarget(renderer, NULL);
             SDL_RenderTexture(renderer, screen_texture, NULL, NULL);
+
+            // Apply scanlines using a cached overlay texture.
+            int win_w, win_h;
+            SDL_GetRenderOutputSize(renderer, &win_w, &win_h);
+            const SDL_FRect game_rect = get_letterbox_rect(win_w, win_h);
+            ScanlineRenderer_Render(&game_rect);
         }
     }
 
@@ -10351,6 +10407,7 @@ void SDLApp_EndFrame() {
 #if DEBUG
     // Render debug text
     SDLDebugText_Render();
+    ImGuiW_EndFrame(renderer);
 #endif
     render_renderer_fps_overlay(onscreen_content_rect);
 
@@ -10489,6 +10546,7 @@ void SDLApp_EndFrame() {
     // hybrid sleep/busy-wait for sub-ms precision, and phase correction to
     // compensate for systematic OS scheduling lateness.
     Uint64 now = SDL_GetTicksNS();
+    Uint64 sleep_time = 0;
 
     if (native_video_writer_enabled) {
         if (frame_deadline == 0) {
@@ -10496,6 +10554,7 @@ void SDLApp_EndFrame() {
         }
 
         if (now < frame_deadline) {
+            sleep_time = frame_deadline - now;
             // native_video_writer_enabled is only true on PORT_MISTER builds,
             // so precise_delay_ns is always available here.
             precise_delay_ns(frame_deadline);
@@ -10547,7 +10606,8 @@ void SDLApp_EndFrame() {
         if (frame_deadline == 0)
             frame_deadline = now + target_frame_time_ns;
         if (now < frame_deadline) {
-            SDL_DelayNS(frame_deadline - now);
+            sleep_time = frame_deadline - now;
+            SDL_DelayNS(sleep_time);
             now = SDL_GetTicksNS();
         }
         frame_deadline += target_frame_time_ns;
@@ -11145,10 +11205,16 @@ void SDLApp_EndFrame() {
         }
     }
 #endif
+
+    update_metrics(sleep_time);
 }
 
 void SDLApp_Exit() {
     SDL_Event quit_event;
     quit_event.type = SDL_EVENT_QUIT;
     SDL_PushEvent(&quit_event);
+}
+
+const FrameMetrics* SDLApp_GetFrameMetrics() {
+    return &frame_metrics;
 }

@@ -55,6 +55,7 @@ static const ConfigEntry default_entries[] = {
     { .key = CFG_KEY_WINDOW_WIDTH, .type = CFG_INT, .value.i = DEFAULT_WINDOW_WIDTH },
     { .key = CFG_KEY_WINDOW_HEIGHT, .type = CFG_INT, .value.i = DEFAULT_WINDOW_HEIGHT },
     { .key = CFG_KEY_SCALEMODE, .type = CFG_STRING, .value.s = DEFAULT_SCALE_MODE },
+    { .key = CFG_KEY_SCANLINES, .type = CFG_INT, .value.i = 0 },
     { .key = CFG_DRAW_PLAYERS_ABOVE_HUD, .type = CFG_BOOL, .value.b = false },
     { .key = CFG_ARCADE_BALANCE, .type = CFG_BOOL, .value.b = false },
     { .key = CFG_KEY_SOFTWARE_FRAME_MODE, .type = CFG_STRING, .value.s = DEFAULT_SOFTWARE_FRAME_MODE },

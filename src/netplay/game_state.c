@@ -9,7 +9,6 @@
 #include "sf33rd/Source/Game/engine/slowf.h"
 #include "sf33rd/Source/Game/engine/spgauge.h"
 #include "sf33rd/Source/Game/engine/workuser.h"
-#include "sf33rd/Source/Game/select_timer.h"
 #include "sf33rd/Source/Game/stage/bg_data.h"
 #include "sf33rd/Source/Game/stage/ta_sub.h"
 #include "sf33rd/Source/Game/system/work_sys.h"
@@ -32,7 +31,6 @@ void GameState_Save(GameState* dst) {
     GS_SAVE(counter_color);
     GS_SAVE(mugen_flag);
     GS_SAVE(hoji_counter);
-    GS_SAVE(select_timer_state);
     GS_SAVE(Order);
     GS_SAVE(Order_Timer);
     GS_SAVE(Order_Dir);
@@ -474,6 +472,8 @@ void GameState_Save(GameState* dst) {
     // plcnt
 
     GS_SAVE(plw);
+    GS_SAVE(combo_type);
+    GS_SAVE(remake_power);
     GS_SAVE(zanzou_table);
     GS_SAVE(super_arts);
     GS_SAVE(piyori_type);
@@ -657,7 +657,6 @@ void GameState_Load(const GameState* src) {
     GS_LOAD(counter_color);
     GS_LOAD(mugen_flag);
     GS_LOAD(hoji_counter);
-    GS_LOAD(select_timer_state);
     GS_LOAD(Order);
     GS_LOAD(Order_Timer);
     GS_LOAD(Order_Dir);
@@ -1099,6 +1098,8 @@ void GameState_Load(const GameState* src) {
     // plcnt
 
     GS_LOAD(plw);
+    GS_LOAD(combo_type);
+    GS_LOAD(remake_power);
     GS_LOAD(zanzou_table);
     GS_LOAD(super_arts);
     GS_LOAD(piyori_type);

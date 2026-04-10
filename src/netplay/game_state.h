@@ -8,7 +8,6 @@
 #include "sf33rd/Source/Game/engine/stun.h"
 #include "sf33rd/Source/Game/engine/vital.h"
 #include "sf33rd/Source/Game/engine/workuser.h"
-#include "sf33rd/Source/Game/select_timer.h"
 #include "sf33rd/Source/Game/stage/bg.h"
 #include "structs.h"
 #include "types.h"
@@ -26,8 +25,6 @@ typedef struct GameState {
     u8 counter_color;
     bool mugen_flag;
     s8 hoji_counter;
-
-    SelectTimerState select_timer_state;
 
     u8 Order[148];
     u8 Order_Timer[148];
@@ -471,6 +468,8 @@ typedef struct GameState {
     // plcnt
 
     PLW plw[2];
+    ComboType combo_type[2];
+    ComboType remake_power[2];
     ZanzouTableEntry zanzou_table[2][48];
     SA_WORK super_arts[2];
     PiyoriType piyori_type[2];

@@ -131,69 +131,48 @@ fi
 # SDL3
 # -----------------------------
 
-SDL="SDL3-3.4.0"
+SDL_TAG="release-3.4.4"
 SDL_DIR="$THIRD_PARTY/sdl3"
 SDL_BUILD="$SDL_DIR/build"
 
 if [ -d "$SDL_BUILD" ]; then
     echo "SDL3 already built at $SDL_BUILD"
 else
-    echo "Building SDL3..."
-    mkdir -p "$SDL_DIR"
-    cd "$SDL_DIR"
+    echo "Building SDL3 at $SDL_BUILD..."
 
-    if [ ! -d "$SDL" ]; then
-        curl -L -O "https://libsdl.org/release/$SDL.tar.gz"
-        tar xf "$SDL.tar.gz"
+    mkdir -p "$SDL_BUILD"
+    SDL_SRC=$(mktemp -d)
+
+    git clone \
+        --branch "$SDL_TAG" \
+        --single-branch \
+        https://github.com/libsdl-org/SDL \
+        "$SDL_SRC"
+
+    if [ "$PROFILE" = "mister" ]; then
+        cmake -S "$SDL_SRC" -B "$SDL_SRC/cmake-build" \
+            -DCMAKE_INSTALL_PREFIX="$SDL_BUILD" \
+            -DBUILD_SHARED_LIBS=ON \
+            -DSDL_STATIC=OFF \
+            -DSDL_TESTS=OFF \
+            -DSDL_TEST_LIBRARY=OFF \
+            -DSDL_INSTALL_TESTS=OFF \
+            -DSDL_EXAMPLES=OFF \
+            -DSDL_UNIX_CONSOLE_BUILD=ON \
+            -DSDL_X11=OFF \
+            -DSDL_WAYLAND=OFF
+    else
+        cmake -S "$SDL_SRC" -B "$SDL_SRC/cmake-build" \
+            -DCMAKE_INSTALL_PREFIX="$SDL_BUILD" \
+            -DBUILD_SHARED_LIBS=ON \
+            -DSDL_STATIC=OFF
     fi
 
-    cd "$SDL"
+    cmake --build "$SDL_SRC/cmake-build" -j"$JOBS"
+    cmake --install "$SDL_SRC/cmake-build"
 
-    mkdir -p build
-    cd build
-
-    case "$OS" in
-        Darwin)
-            cmake .. \
-                -DCMAKE_INSTALL_PREFIX="$SDL_BUILD" \
-                -DBUILD_SHARED_LIBS=ON \
-                -DSDL_STATIC=OFF
-            ;;
-        Linux)
-            if [ "$PROFILE" = "mister" ]; then
-                cmake .. \
-                    -DCMAKE_INSTALL_PREFIX="$SDL_BUILD" \
-                    -DBUILD_SHARED_LIBS=ON \
-                    -DSDL_STATIC=OFF \
-                    -DSDL_TESTS=OFF \
-                    -DSDL_TEST_LIBRARY=OFF \
-                    -DSDL_INSTALL_TESTS=OFF \
-                    -DSDL_EXAMPLES=OFF \
-                    -DSDL_UNIX_CONSOLE_BUILD=ON \
-                    -DSDL_X11=OFF \
-                    -DSDL_WAYLAND=OFF
-            else
-                cmake .. \
-                    -DCMAKE_INSTALL_PREFIX="$SDL_BUILD" \
-                    -DBUILD_SHARED_LIBS=ON \
-                    -DSDL_STATIC=OFF
-            fi
-            ;;
-        MINGW*|MSYS*|CYGWIN*)
-            cmake .. \
-                -DCMAKE_INSTALL_PREFIX="$SDL_BUILD" \
-                -DBUILD_SHARED_LIBS=ON
-            ;;
-    esac
-
-    cmake --build . -j"$JOBS"
-    cmake --install .
+    rm -rf "$SDL_SRC"
     echo "SDL3 installed to $SDL_BUILD"
-
-    cd ../..
-    rm -rf "$SDL"
-    rm "$SDL.tar.gz"
-    cd "$ROOT_DIR"
 fi
 
 # -----------------------------
