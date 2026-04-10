@@ -1,9 +1,11 @@
 # 3s-mister-arm — MiSTer FPGA Port
 ### Based on [crowded-street/3sx](https://github.com/crowded-street/3sx) — a multiplatform port of *Street Fighter III: 3rd Strike* built from a PS2 decompilation
 
+> **⚠️ Releases temporarily taken down.** I've pulled the published releases while I figure some stuff out.
+
 > **Note:** This project was formerly known as "3SX MiSTer." It has been renamed to **3s-mister-arm** to make clear that this is an **independent MiSTer port** — it is ***NOT*** an official release by the 3sx team. For support, please use this project's issue tracker — the 3sx team's Discord is not the right place for 3s-mister-arm questions.
 >
-> **⚠️ Upgrading from a pre-rename build?** The INI section, wrapper
+> **Upgrading from a pre-rename build?** The INI section, wrapper
 > executable, and game data directory all changed. After extracting a
 > new release:
 >
