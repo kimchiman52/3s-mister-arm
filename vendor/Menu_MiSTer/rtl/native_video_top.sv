@@ -17,6 +17,10 @@ module native_video_top (
     input  wire        ce_pix,           // pixel enable (divide-by-4, ~7.7885 MHz)
     input  wire        reset,
 
+    // OSD position offsets (two's complement, passed to timing generator)
+    input  wire signed [3:0] h_offset,   // -8 to +7 pixels
+    input  wire signed [2:0] v_offset,   // -4 to +3 lines
+
     // DDR3 Avalon-MM master
     input  wire        ddr_busy,
     output wire  [7:0] ddr_burstcnt,
@@ -61,6 +65,9 @@ native_video_timing timing (
     .clk       (clk_vid),
     .ce_pix    (ce_pix),
     .reset     (reset),
+
+    .h_offset  (h_offset),
+    .v_offset  (v_offset),
 
     .hsync     (tim_hsync),
     .vsync     (tim_vsync),

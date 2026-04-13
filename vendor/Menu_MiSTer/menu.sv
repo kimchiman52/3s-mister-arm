@@ -239,6 +239,9 @@ localparam CONF_STR = {
 	"O[18:16],SA Ghost Count,0,1,2,3,4;",
 	"O[20:19],Overclock,Stock,1000MHz,1200MHz;",
 	"-;",
+	"O[28:25],H Position,0,+1,+2,+3,+4,+5,+6,+7,-8,-7,-6,-5,-4,-3,-2,-1;",
+	"O[31:29],V Position,0,+1,+2,+3,-4,-3,-2,-1;",
+	"-;",
 	"T[21],Reset to Default;",
 	"-;",
 	"T[22],Restart;",
@@ -642,6 +645,10 @@ native_video_top native_video
 	.clk_vid        (CLK_VIDEO),
 	.ce_pix         (ce_pix_div4),
 	.reset          (RESET),
+
+	// OSD position offsets (two's complement from status bits)
+	.h_offset       ($signed(status[28:25])),
+	.v_offset       ($signed(status[31:29])),
 
 	// DDR3 interface (directly to mux)
 	.ddr_busy       (DDRAM_BUSY),

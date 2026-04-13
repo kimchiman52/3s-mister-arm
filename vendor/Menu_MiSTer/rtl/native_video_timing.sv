@@ -8,8 +8,8 @@
 //  PLL: 50 MHz * 81/5 = 810 MHz VCO, /26 = 31.1538 MHz CLK_VIDEO
 //  Pixel clock: 31.1538 / 4 (CE_PIXEL) = 7.7885 MHz
 //
-//  H: 384 active + 22 FP + 38 sync + 51 BP = 495 total
-//  V: 224 active + 16 FP +  3 sync + 21 BP = 264 total
+//  H: 384 active + 23 FP + 38 sync + 50 BP = 495 total
+//  V: 224 active + 15 FP +  3 sync + 22 BP = 264 total
 //
 //  Frame rate: 7,788,462 / (495 * 264) = 59.5995 Hz
 //  H_freq: 7,788,462 / 495 = 15,734 Hz (NTSC standard, exact)
@@ -29,6 +29,11 @@ module native_video_timing (
     input  wire        ce_pix,     // pixel clock enable (normally 1)
     input  wire        reset,      // synchronous reset
 
+    // OSD position offsets (two's complement)
+    // Positive = shift image right/down (adds to BP, subtracts from FP)
+    input  wire signed [3:0] h_offset,  // -8 to +7 pixels
+    input  wire signed [2:0] v_offset,  // -4 to +3 lines
+
     output reg         hsync,      // active low
     output reg         vsync,      // active low
     output reg         hblank,
@@ -45,33 +50,39 @@ module native_video_timing (
 // Image centering notes:
 // The CRT positions the image based on sync-to-active timing.
 // Larger H_BP shifts image RIGHT, larger V_BP shifts image DOWN.
-// Previous values (H_BP=80, V_BP=34) shifted the image ~1.5" right
-// and ~1" down on a standard NTSC CRT.
+// Positive h_offset/v_offset = shift image right/down (adds to BP,
+// subtracts from FP).  H_TOTAL and V_TOTAL are always preserved.
 //
-// Standard NTSC horizontal blanking at 15.734 kHz:
-//   FP ~1.5us, Sync ~4.7us, BP ~4.5us (incl. colorburst)
-// At 7.789 MHz pixel clock: FP~12px, Sync~37px, BP~35px
+// Blanking defaults derived from Jotego CPS1/CPS2 ratios scaled to
+// 111 H blanking pixels and 40 V blanking lines.  Back porch is the
+// largest interval (matching real arcade hardware and CRT expectations).
 //
 // H_TOTAL=495, V_TOTAL=264: with dedicated video PLL (CLK_VIDEO=31.1538 MHz, CE_DIV=4):
 // pixel_clock = 7.7885 MHz, H_freq = 15,734 Hz (NTSC exact), refresh = 59.5995 Hz.
-// Reduced blanking fills the CRT screen better than H_TOTAL=512.
 localparam H_ACTIVE = 384;
-localparam H_FP     = 22;
+localparam H_FP     = 23;
 localparam H_SYNC   = 38;
-localparam H_BP     = 51;
-localparam H_TOTAL  = 495;   // 384+22+38+51
+localparam H_BP     = 50;
+localparam H_TOTAL  = 495;   // 384+23+38+50
 
 localparam V_ACTIVE = 224;
-localparam V_FP     = 16;
+localparam V_FP     = 15;
 localparam V_SYNC   = 3;
-localparam V_BP     = 21;
-localparam V_TOTAL  = 264;   // 224+16+3+21
+localparam V_BP     = 22;
+localparam V_TOTAL  = 264;   // 224+15+3+22
 
-// Derived boundaries
-localparam H_SYNC_START = H_ACTIVE + H_FP;        // 406
-localparam H_SYNC_END   = H_SYNC_START + H_SYNC;  // 444
-localparam V_SYNC_START = V_ACTIVE + V_FP;         // 240
-localparam V_SYNC_END   = V_SYNC_START + V_SYNC;   // 243
+// Derived boundaries — adjusted by OSD offsets.
+// Positive offset shifts image right/down: adds to BP, subtracts from FP.
+// Sync pulse width and totals are invariant.
+wire signed [5:0] h_off_ext = {{2{h_offset[3]}}, h_offset};  // sign-extend to 6 bits
+wire signed [4:0] v_off_ext = {{2{v_offset[2]}}, v_offset};  // sign-extend to 5 bits
+
+// FP shrinks and BP grows by offset (or vice versa); sync width is fixed.
+// Only FP adjustment is needed to compute sync start; BP is implicit from total.
+wire [9:0] h_sync_start = H_ACTIVE + (H_FP - h_off_ext);
+wire [9:0] h_sync_end   = h_sync_start + H_SYNC;
+wire [8:0] v_sync_start = V_ACTIVE + (V_FP - v_off_ext);
+wire [8:0] v_sync_end   = v_sync_start + V_SYNC;
 
 always @(posedge clk) begin
     if (reset) begin
@@ -113,9 +124,9 @@ always @(posedge clk) begin
             hblank <= 1'b0;
 
         // --- Horizontal sync (active low) ---
-        if (hcount == H_SYNC_START - 1)
+        if (hcount == h_sync_start - 1)
             hsync <= 1'b0;  // assert
-        else if (hcount == H_SYNC_END - 1)
+        else if (hcount == h_sync_end - 1)
             hsync <= 1'b1;  // deassert
 
         // --- Vertical blanking ---
@@ -129,9 +140,9 @@ always @(posedge clk) begin
 
         // --- Vertical sync (active low) ---
         if (hcount == H_TOTAL - 1) begin
-            if (vcount == V_SYNC_START - 1)
+            if (vcount == v_sync_start - 1)
                 vsync <= 1'b0;  // assert
-            else if (vcount == V_SYNC_END - 1)
+            else if (vcount == v_sync_end - 1)
                 vsync <= 1'b1;  // deassert
         end
 

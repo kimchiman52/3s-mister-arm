@@ -10,6 +10,10 @@
 - When touching MiSTer deploy helpers or docs, add path validation and dry-run guidance before adding convenience shortcuts.
 - Do not use `tools/mister/misterctl.sh exec` unless the task truly requires raw remote shell access; safer purpose-built subcommands are preferred.
 
+## Source of Truth
+
+- **Never edit files under `build/`.** The `build/` directory is gitignored and contains generated or copied artifacts. The tracked source of truth for FPGA wrapper files is `vendor/Menu_MiSTer/` (e.g. `menu.sv`, `rtl/`, `sys/`). If you see a file like `build/mister-wrapper-core/src/3S-ARM.sv`, the real source is `vendor/Menu_MiSTer/menu.sv`.
+
 ## Build
 
 - **Always use the telemetry flavor.** The performance difference is negligible and the debug FPS overlay is worth having on every build.
