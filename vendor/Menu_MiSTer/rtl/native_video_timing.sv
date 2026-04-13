@@ -34,8 +34,8 @@ module native_video_timing (
     input  wire signed [3:0] h_offset,  // -8 to +7 pixels
     input  wire signed [2:0] v_offset,  // -4 to +3 lines
 
-    output reg         hsync,      // active low
-    output reg         vsync,      // active low
+    output reg         hsync,      // active high (MiSTer convention)
+    output reg         vsync,      // active high (MiSTer convention)
     output reg         hblank,
     output reg         vblank,
     output reg         de,         // data enable = ~(hblank | vblank)
@@ -88,8 +88,8 @@ always @(posedge clk) begin
     if (reset) begin
         hcount    <= 10'd0;
         vcount    <= 9'd0;
-        hsync     <= 1'b1;  // inactive (active low)
-        vsync     <= 1'b1;  // inactive (active low)
+        hsync     <= 1'b0;  // inactive (active high)
+        vsync     <= 1'b0;  // inactive (active high)
         hblank    <= 1'b0;
         vblank    <= 1'b0;
         de        <= 1'b1;  // first pixel is visible
@@ -123,11 +123,11 @@ always @(posedge clk) begin
         else if (hcount == H_TOTAL - 1)
             hblank <= 1'b0;
 
-        // --- Horizontal sync (active low) ---
+        // --- Horizontal sync (active high) ---
         if (hcount == h_sync_start - 1)
-            hsync <= 1'b0;  // assert
+            hsync <= 1'b1;  // assert
         else if (hcount == h_sync_end - 1)
-            hsync <= 1'b1;  // deassert
+            hsync <= 1'b0;  // deassert
 
         // --- Vertical blanking ---
         // Transitions at the start of a new line (when hcount wraps)
@@ -138,12 +138,12 @@ always @(posedge clk) begin
                 vblank <= 1'b0;
         end
 
-        // --- Vertical sync (active low) ---
+        // --- Vertical sync (active high) ---
         if (hcount == H_TOTAL - 1) begin
             if (vcount == v_sync_start - 1)
-                vsync <= 1'b0;  // assert
+                vsync <= 1'b1;  // assert
             else if (vcount == v_sync_end - 1)
-                vsync <= 1'b1;  // deassert
+                vsync <= 1'b0;  // deassert
         end
 
         // --- New line pulse ---

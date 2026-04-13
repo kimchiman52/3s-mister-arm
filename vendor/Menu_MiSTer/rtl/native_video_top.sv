@@ -43,7 +43,7 @@ module native_video_top (
     // Control
     input  wire        enable,           // from ARM: activate native video
     output wire        active,           // module is outputting valid video
-    output wire        vsync_out         // active-low vsync for frame sync
+    output wire        vsync_out         // active-high vsync for frame sync
 );
 
 // =========================================================================
