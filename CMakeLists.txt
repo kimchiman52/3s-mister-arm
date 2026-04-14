@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.24)
 project(3s-arm LANGUAGES C CXX)
 
 include(${PROJECT_SOURCE_DIR}/cmake/imgui_sources.cmake)
+include(CheckCCompilerFlag)
+include(CheckCXXCompilerFlag)
 
 # ======================================
 # Options and platform setup
@@ -153,13 +155,33 @@ elseif(CMAKE_C_COMPILER_ID STREQUAL "GNU")
     )
 endif()
 
+function(thirdsarm_filter_supported_compile_flags output_var)
+    set(_supported_flags "")
+    foreach(_flag IN LISTS ARGN)
+        string(MAKE_C_IDENTIFIER "${_flag}" _flag_id)
+        set(_saved_required_flags "${CMAKE_REQUIRED_FLAGS}")
+        set(CMAKE_REQUIRED_FLAGS "${CMAKE_REQUIRED_FLAGS} -Werror")
+        check_c_compiler_flag("${_flag}" "THIRDSARM_HAVE_C_FLAG_${_flag_id}")
+        check_cxx_compiler_flag("${_flag}" "THIRDSARM_HAVE_CXX_FLAG_${_flag_id}")
+        set(CMAKE_REQUIRED_FLAGS "${_saved_required_flags}")
+
+        if(THIRDSARM_HAVE_C_FLAG_${_flag_id} AND THIRDSARM_HAVE_CXX_FLAG_${_flag_id})
+            list(APPEND _supported_flags "${_flag}")
+        endif()
+    endforeach()
+
+    set(${output_var} "${_supported_flags}" PARENT_SCOPE)
+endfunction()
+
+thirdsarm_filter_supported_compile_flags(SUPPORTED_DISABLED_WARNINGS ${DISABLED_WARNINGS})
+
 target_compile_options(3s-arm PRIVATE
     -Wall
     -Werror
 
     -fno-strict-aliasing
 
-    ${DISABLED_WARNINGS}
+    ${SUPPORTED_DISABLED_WARNINGS}
 
     $<$<CONFIG:Debug>:-Wno-unused-function>
     $<$<CONFIG:Debug>:-Wno-unused-variable>

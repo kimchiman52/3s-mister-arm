@@ -15,7 +15,7 @@ if [ ! -d "$INSTALL_PREFIX" ]; then
 fi
 
 rm -rf "$OUTPUT_DIR"
-mkdir -p "$OUTPUT_DIR/bin" "$OUTPUT_DIR/lib" "$OUTPUT_DIR/licenses" "$OUTPUT_DIR/scripts"
+mkdir -p "$OUTPUT_DIR/bin" "$OUTPUT_DIR/lib" "$OUTPUT_DIR/licenses" "$OUTPUT_DIR/resources" "$OUTPUT_DIR/scripts"
 
 if [ -f "$INSTALL_PREFIX/bin/3s-arm" ]; then
     cp "$INSTALL_PREFIX/bin/3s-arm" "$OUTPUT_DIR/bin/3s-arm"
@@ -31,6 +31,15 @@ if [ -d "$INSTALL_PREFIX/lib" ]; then
     rsync -a --no-owner --no-group "$INSTALL_PREFIX/lib/" "$OUTPUT_DIR/lib/"
 elif [ -d "$INSTALL_PREFIX/3S-ARM.app/Contents/Frameworks" ]; then
     rsync -a --no-owner --no-group "$INSTALL_PREFIX/3S-ARM.app/Contents/Frameworks/" "$OUTPUT_DIR/lib/"
+fi
+
+if [ -d "$OUTPUT_DIR/lib" ]; then
+    # MiSTer's /media/fat cannot store symlinks, so ship real files for SONAME aliases.
+    while IFS= read -r -d '' link_path; do
+        resolved_path="$(readlink -f "$link_path")"
+        rm -f "$link_path"
+        cp -p "$resolved_path" "$link_path"
+    done < <(find "$OUTPUT_DIR/lib" -type l -print0)
 fi
 
 if [ -d "$INSTALL_PREFIX/share/3s-arm/licenses" ]; then

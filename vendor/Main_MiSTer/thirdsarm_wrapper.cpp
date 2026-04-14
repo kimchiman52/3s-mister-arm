@@ -59,6 +59,7 @@ constexpr const char *kRuntimeScaleModeAutoMarker = "# thirdsarm-wrapper-scale-m
 constexpr const char *kMenuCore = "menu.rbf";
 constexpr const char *kMenuExec = "MiSTer";
 constexpr const char *kRuntimeTtySwitchEnv = "THIRDSARM_WRAPPER_USE_TTY2";
+constexpr const char *kRuntimeConsolePathEnv = "THIRDSARM_RUNTIME_TTY";
 constexpr int kRuntimeFpsToggleSignal = SIGUSR1;
 constexpr int kRuntimeSuperEffectQualityCycleSignal = SIGUSR2;
 #define kRuntimeGhostResolutionCycleSignal (SIGRTMIN)
@@ -163,6 +164,13 @@ struct StartupScaleModeSelection
 	char vga_mode[16] = {};
 };
 
+struct NativeVideoModeSelection
+{
+	bool requested = false;
+	bool enabled = false;
+	char reason[40] = {};
+};
+
 struct RuntimeConfigDefaultEntry
 {
 	const char *key;
@@ -235,12 +243,19 @@ void restore_console(int active_vt)
 	close(console_fd);
 }
 
+void format_runtime_tty_path(char *out, size_t out_size, int runtime_vt)
+{
+	if (!out || !out_size) return;
+	if (runtime_vt < 1) runtime_vt = 1;
+	snprintf(out, out_size, "/dev/tty%d", runtime_vt);
+}
+
 void restore_runtime_console_mode(FILE *wrapper_log, int runtime_vt)
 {
 	if (runtime_vt < 1) runtime_vt = 1;
 
 	char runtime_tty[32] = {};
-	snprintf(runtime_tty, sizeof(runtime_tty), "/dev/tty%d", runtime_vt);
+	format_runtime_tty_path(runtime_tty, sizeof(runtime_tty), runtime_vt);
 
 	int fd = open(runtime_tty, O_RDWR | O_CLOEXEC);
 	if (fd < 0)
@@ -1320,8 +1335,45 @@ StartupScaleModeSelection resolve_startup_scale_mode()
 	return selection;
 }
 
-void set_runtime_environment(const StartupScaleModeSelection &startup_scale_mode)
+static NativeVideoModeSelection resolve_native_video_mode(const StartupScaleModeSelection &startup_scale_mode)
 {
+	NativeVideoModeSelection selection = {};
+	const char *nv_env = getenv("THIRDSARM_NATIVE_VIDEO");
+	selection.requested = !nv_env || strcmp(nv_env, "0") != 0;
+	selection.enabled = selection.requested;
+
+	if (!selection.requested)
+	{
+		snprintf(selection.reason, sizeof(selection.reason), "env-disabled");
+		return selection;
+	}
+
+	if (startup_scale_mode.direct_video != 0)
+	{
+		snprintf(selection.reason, sizeof(selection.reason), "direct-video");
+		return selection;
+	}
+
+	if (startup_scale_mode.io_type == 0)
+	{
+		snprintf(selection.reason, sizeof(selection.reason), "analog-io");
+		return selection;
+	}
+
+	// Digital HDMI without direct video has no visible sink for the DDR3 native
+	// video path, so force the runtime back onto the fbdev/scaler path.
+	selection.enabled = false;
+	snprintf(selection.reason, sizeof(selection.reason), "digital-no-direct-video");
+	return selection;
+}
+
+void set_runtime_environment(const StartupScaleModeSelection &startup_scale_mode,
+                             const NativeVideoModeSelection &native_video_mode,
+                             int runtime_vt)
+{
+	char runtime_tty[32] = {};
+	format_runtime_tty_path(runtime_tty, sizeof(runtime_tty), runtime_vt);
+
 	setenv("THIRDSARM_HOME", kRuntimeHome, 1);
 	setenv("SDL_VIDEODRIVER", "dummy", 1);
 	setenv("SDL_VIDEO_DRIVER", "dummy", 1);
@@ -1335,6 +1387,8 @@ void set_runtime_environment(const StartupScaleModeSelection &startup_scale_mode
 		unsetenv(kRuntimeScaleModeEnv);
 	}
 
+	setenv("THIRDSARM_NATIVE_VIDEO", native_video_mode.enabled ? "1" : "0", 1);
+	setenv(kRuntimeConsolePathEnv, runtime_tty, 1);
 	setenv("LD_LIBRARY_PATH", kRuntimeLibDir, 1);
 }
 
@@ -1921,17 +1975,13 @@ int thirdsarm_wrapper_run(int argc, char *argv[])
 	int validation_rc = validate_runtime_paths(wrapper_log, active_vt, saved_stdout, saved_stderr);
 	if (validation_rc != 0) return validation_rc;
 
+	const StartupScaleModeSelection initial_startup_scale_mode = resolve_startup_scale_mode();
+	const NativeVideoModeSelection native_video_mode = resolve_native_video_mode(initial_startup_scale_mode);
 	const int runtime_vt = runtime_tty2_requested() ? 2 : active_vt;
-	/* Detect native video mode: when THIRDSARM_NATIVE_VIDEO=1, the game writes
-	   frames directly to DDR3 for the FPGA's native video reader instead of
-	   going through the Linux framebuffer scaler path.  In this mode we must
-	   NOT enable vga_fb or the FB scaler -- the core outputs video directly
-	   via its VGA_R/G/B pins using the native video timing generator.  We set
-	   status bit 9 to tell the FPGA to enable its native video reader. */
-	{
-		const char *nv_env = getenv("THIRDSARM_NATIVE_VIDEO");
-		g_native_video_mode = !nv_env || strcmp(nv_env, "0") != 0;
-	}
+	/* Resolve native video mode before touching the FPGA path. Direct video
+	   intentionally keeps the DDR3 native-video pipeline alive even on digital
+	   I/O because sys_top routes the core VGA output through HDMI in that mode. */
+	g_native_video_mode = native_video_mode.enabled;
 	video_set_native_video_enabled(g_native_video_mode);
 
 	if (!forced)
@@ -1961,7 +2011,28 @@ int thirdsarm_wrapper_run(int argc, char *argv[])
 	               runtime_vt,
 	               runtime_tty2_requested() ? "set" : "unset",
 	               active_vt);
-	write_log_line(wrapper_log, "native_video=%s", g_native_video_mode ? "enabled" : "disabled");
+	write_log_line(wrapper_log,
+	               "runtime_console_env %s=/dev/tty%d",
+	               kRuntimeConsolePathEnv,
+	               runtime_vt);
+	write_log_line(wrapper_log,
+	               "native_video requested=%d enabled=%d reason=%s direct_video=%d io_type=%d",
+	               native_video_mode.requested ? 1 : 0,
+	               native_video_mode.enabled ? 1 : 0,
+	               native_video_mode.reason,
+	               initial_startup_scale_mode.direct_video,
+	               initial_startup_scale_mode.io_type);
+	write_log_line(wrapper_log,
+	               "startup_scale_mode source=%s value=%s env=%s direct_video=%d vga_scaler=%d forced_scandoubler=%d io_type=%d vga_mode=%s vga_mode_int=%d",
+	               initial_startup_scale_mode.source,
+	               initial_startup_scale_mode.value,
+	               initial_startup_scale_mode.set_env ? kRuntimeScaleModeEnv : "unset",
+	               initial_startup_scale_mode.direct_video,
+	               initial_startup_scale_mode.vga_scaler,
+	               initial_startup_scale_mode.forced_scandoubler,
+	               initial_startup_scale_mode.io_type,
+	               initial_startup_scale_mode.vga_mode,
+	               initial_startup_scale_mode.vga_mode_int);
 
 	/* Create shared-memory region for joystick state visible to the game. */
 	int shm_fd = open(MISTER_JOY_SHM_PATH, O_RDWR | O_CREAT | O_TRUNC, 0644);
@@ -1989,19 +2060,7 @@ int thirdsarm_wrapper_run(int argc, char *argv[])
 	for (;;)
 	{
 		const StartupScaleModeSelection startup_scale_mode = resolve_startup_scale_mode();
-		write_log_line(wrapper_log,
-		               "startup_scale_mode source=%s value=%s env=%s direct_video=%d vga_scaler=%d forced_scandoubler=%d io_type=%d vga_mode=%s vga_mode_int=%d",
-		               startup_scale_mode.source,
-		               startup_scale_mode.value,
-		               startup_scale_mode.set_env ? kRuntimeScaleModeEnv : "unset",
-		               startup_scale_mode.direct_video,
-		               startup_scale_mode.vga_scaler,
-		               startup_scale_mode.forced_scandoubler,
-		               startup_scale_mode.io_type,
-		               startup_scale_mode.vga_mode,
-		               startup_scale_mode.vga_mode_int);
-
-		set_runtime_environment(startup_scale_mode);
+		set_runtime_environment(startup_scale_mode, native_video_mode, runtime_vt);
 
 		int last_run_fd = open(kLastRunLogPath, O_WRONLY | O_CREAT | O_TRUNC | O_APPEND | O_CLOEXEC, 0644);
 		if (last_run_fd < 0)
@@ -2015,6 +2074,14 @@ int thirdsarm_wrapper_run(int argc, char *argv[])
 		write_fd_line(last_run_fd, "cwd=%s", cwd_buffer);
 		write_fd_line(last_run_fd, "pgrp=%d sid=%d", getpgrp(), getsid(0));
 		write_fd_line(last_run_fd, "active_vt=tty%d", active_vt);
+		write_fd_line(last_run_fd, "runtime_console_env %s=/dev/tty%d", kRuntimeConsolePathEnv, runtime_vt);
+		write_fd_line(last_run_fd,
+		              "native_video requested=%d enabled=%d reason=%s direct_video=%d io_type=%d",
+		              native_video_mode.requested ? 1 : 0,
+		              native_video_mode.enabled ? 1 : 0,
+		              native_video_mode.reason,
+		              startup_scale_mode.direct_video,
+		              startup_scale_mode.io_type);
 		write_fd_line(last_run_fd,
 		              "startup_scale_mode source=%s value=%s env=%s direct_video=%d vga_scaler=%d forced_scandoubler=%d io_type=%d vga_mode=%s vga_mode_int=%d",
 		              startup_scale_mode.source,

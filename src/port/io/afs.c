@@ -371,19 +371,45 @@ void AFS_ReadSync(AFSHandle handle, int sectors, void* buf) {
     printf("📂 %d: read sync\n", handle);
 #endif
 
-    AFS_Read(handle, sectors, buf);
+    ReadRequest* request = &requests[handle];
+    const Uint64 offset = afs.entries[request->file_num].offset + request->sector * 2048;
+    const size_t bytes_to_read = (size_t)sectors * 2048;
 
-    SDL_AsyncIOOutcome outcome;
-
-    while (SDL_WaitAsyncIOResult(asyncio_queue, &outcome, -1)) {
-        process_asyncio_outcome(&outcome);
-
-        ReadRequest* request = (ReadRequest*)outcome.userdata;
-
-        if (request->index == handle) {
-            break;
-        }
+    if (request->close_queued) {
+        request->state = AFS_READ_STATE_ERROR;
+        return;
     }
+
+    SDL_IOStream* io = SDL_IOFromFile(afs.file_path, "rb");
+    if (io == NULL) {
+        printf("SDL_IOFromFile error: %s\n", SDL_GetError());
+        request->state = AFS_READ_STATE_ERROR;
+        return;
+    }
+
+    request->state = AFS_READ_STATE_READING;
+
+    if (SDL_SeekIO(io, (Sint64)offset, SDL_IO_SEEK_SET) < 0) {
+        printf("SDL_SeekIO error: %s\n", SDL_GetError());
+        SDL_CloseIO(io);
+        request->state = AFS_READ_STATE_ERROR;
+        return;
+    }
+
+    const size_t bytes_read = SDL_ReadIO(io, buf, bytes_to_read);
+    SDL_CloseIO(io);
+
+    if (bytes_read != bytes_to_read) {
+        printf("SDL_ReadIO error: expected %zu bytes, got %zu (%s)\n",
+               bytes_to_read,
+               bytes_read,
+               SDL_GetError());
+        request->state = AFS_READ_STATE_ERROR;
+        return;
+    }
+
+    request->sector += sectors;
+    request->state = AFS_READ_STATE_FINISHED;
 }
 
 void AFS_Stop(AFSHandle handle) {

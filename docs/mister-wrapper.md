@@ -52,6 +52,13 @@ to the VGA DAC, bypassing the core video path and YC encoder — causing graysca
 S-Video and wrong aspect ratio on CRT. Do not add `video_mode` overrides — native
 video timing is controlled by the core.
 
+Direct video is the intended digital-output path when you want the ARM-driven native
+video raster to reach HDMI. With `direct_video=1` (or `2` for DAC auto-detect), the
+wrapper keeps the DDR3 native-video path enabled even on digital I/O because MiSTer's
+HDMI direct-video mux forwards the core VGA signals. On digital HDMI without
+`direct_video`, the wrapper now falls back to the fbdev/scaler path instead of trying
+to drive an invisible native-video sink.
+
 ## Launch Contract
 
 The core-driven path is not allowed to hand-wave away the current MiSTer launcher behavior.
@@ -453,6 +460,14 @@ tools/mister/misterctl.sh configure-3s-arm-ini \
   --video-mode 384,240,60 \
   --vga-scaler 1
 ```
+
+Important:
+
+- If the MiSTer uses alternate profile INIs such as `MiSTer_SVID.ini`, `MiSTer_SUBC.ini`, or
+  `MiSTer_YPbr.ini`, add the same `[3S-ARM] main=MiSTer_3S-ARM` block to each active profile.
+- MiSTer reads only the selected `MiSTer*.ini` file for `cfg.main`; if an alternate profile lacks
+  the `3S-ARM` section, the core can appear to bounce straight back to the menu because the handoff
+  falls back to the default `MiSTer` executable instead of `MiSTer_3S-ARM`.
 
 ## Fallback Status
 

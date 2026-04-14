@@ -13,6 +13,7 @@
 #include <termios.h>
 #include <unistd.h>
 
+static const char* kRuntimeConsolePathEnv = "THIRDSARM_RUNTIME_TTY";
 static int console_fd = -1;
 static char console_path[128] = { 0 };
 static int saved_kd_mode = -1;
@@ -43,11 +44,50 @@ static int open_path(const char* path) {
     const int fd = open(path, O_RDWR);
 #endif
 
-    if (fd >= 0) {
+    return fd;
+}
+
+static int accept_console_fd(int fd, const char* path) {
+    int kd_mode = 0;
+
+    if (fd < 0) {
+        return -1;
+    }
+
+    if (ioctl(fd, KDGETMODE, &kd_mode) < 0) {
+        close(fd);
+        return -1;
+    }
+
+    if (path != NULL && path[0] != '\0') {
         snprintf(console_path, sizeof(console_path), "%s", path);
+    } else {
+        console_path[0] = '\0';
     }
 
     return fd;
+}
+
+static int open_console_path(const char* path) {
+    return accept_console_fd(open_path(path), path);
+}
+
+static bool requested_console_path(char* out_path, size_t out_path_len) {
+    const char* env_path = getenv(kRuntimeConsolePathEnv);
+
+    if (out_path == NULL || out_path_len == 0 || env_path == NULL || env_path[0] == '\0') {
+        return false;
+    }
+
+    if (env_path[0] == '/') {
+        return snprintf(out_path, out_path_len, "%s", env_path) > 0;
+    }
+
+    if (strncmp(env_path, "tty", 3) == 0) {
+        return snprintf(out_path, out_path_len, "/dev/%s", env_path) > 0;
+    }
+
+    return false;
 }
 
 static bool active_console_path(char* out_path, size_t out_path_len) {
@@ -99,14 +139,33 @@ static int open_stdio_tty(int stdio_fd) {
         return -1;
     }
 
-    return open_path(tty_path);
+    return open_console_path(tty_path);
 }
 
 static int open_console_fd(void) {
-    int fd = open_path("/dev/tty");
+    char requested_path[128] = { 0 };
+    char active_path[128] = { 0 };
+    int fd = -1;
 
-    if (fd >= 0) {
-        return fd;
+    console_path[0] = '\0';
+
+    if (requested_console_path(requested_path, sizeof(requested_path))) {
+        fd = open_console_path(requested_path);
+        if (fd >= 0) {
+            return fd;
+        }
+
+        fprintf(stderr, "ConsoleMode: requested console device %s was not a usable VT\n", requested_path);
+    }
+
+    /* On MiSTer wrapper launches, /dev/tty can resolve to a handle that opens
+       successfully but rejects KD/KB ioctls. Prefer the wrapper-selected or
+       active VT device (for example /dev/tty1) before falling back to aliases. */
+    if (active_console_path(active_path, sizeof(active_path))) {
+        fd = open_console_path(active_path);
+        if (fd >= 0) {
+            return fd;
+        }
     }
 
     fd = open_stdio_tty(STDIN_FILENO);
@@ -124,19 +183,15 @@ static int open_console_fd(void) {
         return fd;
     }
 
-    char active_path[128] = { 0 };
-
-    if (active_console_path(active_path, sizeof(active_path))) {
-        fd = open_path(active_path);
-        if (fd >= 0) {
-            return fd;
-        }
+    fd = open_console_path("/dev/tty");
+    if (fd >= 0) {
+        return fd;
     }
 
     const char* candidates[] = { "/dev/tty0", "/dev/console" };
 
     for (int i = 0; i < 2; i++) {
-        fd = open_path(candidates[i]);
+        fd = open_console_path(candidates[i]);
 
         if (fd >= 0) {
             return fd;
