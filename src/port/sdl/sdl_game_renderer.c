@@ -4340,13 +4340,9 @@ static SoftwareFrameFallbackReason classify_software_frame_fallback_reason(const
     }
 
     if (task->texture == NULL) {
-        SDL_FRect solid_rect;
-        Uint32 solid_color = 0;
-        if (try_resolve_solid_task_as_rect(task, &solid_rect, &solid_color) ||
-            try_resolve_solid_task_as_full_height_diagonal_strip(task, NULL)) {
-            return SOFTWARE_FRAME_FALLBACK_REASON_NONE;
-        }
-        return SOFTWARE_FRAME_FALLBACK_REASON_SOLID;
+        /* All solid geometry tasks can be rasterized: rects and diagonal strips
+           use fast paths; arbitrary quads fall back to triangle decomposition. */
+        return SOFTWARE_FRAME_FALLBACK_REASON_NONE;
     }
 
     return SOFTWARE_FRAME_FALLBACK_REASON_GEOMETRY;
@@ -8270,11 +8266,103 @@ static bool raster_textured_affine_quad_to_software_frame(const RenderTask* task
     return ok;
 }
 
+/* Rasterize a single solid-color triangle using scanline edge intersection.
+   Vertices are taken from task->vertices[i0/i1/i2].position; color from
+   the pre-packed ARGB in task->color. */
+static bool raster_solid_triangle_to_software_frame(const RenderTask* task, int i0, int i1, int i2) {
+    if ((task == NULL) || (software_frame_surface == NULL)) {
+        return false;
+    }
+
+    const float x0 = task->vertices[i0].position.x;
+    const float y0 = task->vertices[i0].position.y;
+    const float x1 = task->vertices[i1].position.x;
+    const float y1 = task->vertices[i1].position.y;
+    const float x2 = task->vertices[i2].position.x;
+    const float y2 = task->vertices[i2].position.y;
+
+    /* Degenerate triangle check. */
+    const float area = ((x1 - x0) * (y2 - y0)) - ((y1 - y0) * (x2 - x0));
+    if (SDL_fabsf(area) <= rect_task_epsilon) {
+        return true;
+    }
+
+    const int min_y = clamp_to_range((int)SDL_floorf(SDL_min(SDL_min(y0, y1), y2)), 0, cps3_height - 1);
+    const int max_y = clamp_to_range((int)SDL_ceilf(SDL_max(SDL_max(y0, y1), y2)) - 1, 0, cps3_height - 1);
+    if (max_y < min_y) {
+        return true;
+    }
+
+    const Uint32 color = task->color;
+    const Uint32 src_a = (color >> 24) & 0xFFu;
+    if (src_a == 0u) {
+        return true;
+    }
+
+    Uint32* dst_pixels = (Uint32*)software_frame_surface->pixels;
+    const int dst_pitch = software_frame_surface->pitch / (int)sizeof(Uint32);
+
+    const Uint32 inv_src_a = 255u - src_a;
+    const Uint32 src_r_premul = ((color >> 16) & 0xFFu) * src_a;
+    const Uint32 src_g_premul = ((color >> 8) & 0xFFu) * src_a;
+    const Uint32 src_b_premul = (color & 0xFFu) * src_a;
+
+    const float edge_x[3][2] = { {x0, x1}, {x1, x2}, {x2, x0} };
+    const float edge_y[3][2] = { {y0, y1}, {y1, y2}, {y2, y0} };
+
+    for (int y = min_y; y <= max_y; y++) {
+        const float py = (float)y + 0.5f;
+        float intersections[2];
+        int n = 0;
+
+        for (int e = 0; e < 3 && n < 2; e++) {
+            const float ey0 = edge_y[e][0];
+            const float ey1 = edge_y[e][1];
+            const float e_min = SDL_min(ey0, ey1);
+            const float e_max = SDL_max(ey0, ey1);
+            if (nearly_equal(ey0, ey1) || py < e_min || py >= e_max) {
+                continue;
+            }
+            const float t = (py - ey0) / (ey1 - ey0);
+            intersections[n++] = edge_x[e][0] + t * (edge_x[e][1] - edge_x[e][0]);
+        }
+
+        if (n < 2) {
+            continue;
+        }
+        if (intersections[0] > intersections[1]) {
+            const float tmp = intersections[0];
+            intersections[0] = intersections[1];
+            intersections[1] = tmp;
+        }
+
+        const int sx0 = clamp_to_range((int)SDL_ceilf(intersections[0] - 0.5f), 0, cps3_width);
+        const int sx1 = clamp_to_range((int)SDL_floorf(intersections[1] - 0.5f) + 1, 0, cps3_width);
+        if (sx1 <= sx0) {
+            continue;
+        }
+
+        Uint32* dst_row = dst_pixels + (y * dst_pitch);
+        const int span = sx1 - sx0;
+        if (src_a == 255u) {
+            fill_argb8888_span(dst_row + sx0, span, color);
+        } else {
+            for (int x = sx0; x < sx1; x++) {
+                dst_row[x] = blend_solid_argb8888(dst_row[x], src_a, inv_src_a,
+                                                   src_r_premul, src_g_premul, src_b_premul);
+            }
+        }
+    }
+
+    return true;
+}
+
 static bool raster_solid_task_to_software_frame(const RenderTask* task) {
     if ((task == NULL) || (software_frame_surface == NULL)) {
         return false;
     }
 
+    /* Fast path 1: full-height diagonal strip. */
     SoftwareFrameSolidDiagonalStrip diagonal_strip;
     if (try_resolve_solid_task_as_full_height_diagonal_strip(task, &diagonal_strip)) {
         const Uint64 sample_start_counter =
@@ -8287,32 +8375,49 @@ static bool raster_solid_task_to_software_frame(const RenderTask* task) {
         return ok;
     }
 
-    if ((task->dst_rect.w <= 0.0f) || (task->dst_rect.h <= 0.0f)) {
-        return true;  /* Zero-area rect is a valid no-op, not a failure. */
-    }
+    /* Fast path 2: axis-aligned rectangle (resolved from vertices). */
+    SDL_FRect solid_rect;
+    Uint32 solid_color = 0;
+    if (try_resolve_solid_task_as_rect(task, &solid_rect, &solid_color)) {
+        if ((solid_rect.w <= 0.0f) || (solid_rect.h <= 0.0f)) {
+            return true; /* Zero-area rect is a valid no-op. */
+        }
 
-    const int dst_x0 = clamp_to_range((int)SDL_floorf(task->dst_rect.x), 0, software_frame_surface->w);
-    const int dst_y0 = clamp_to_range((int)SDL_floorf(task->dst_rect.y), 0, software_frame_surface->h);
-    const int dst_x1 = clamp_to_range((int)SDL_ceilf(task->dst_rect.x + task->dst_rect.w), 0, software_frame_surface->w);
-    const int dst_y1 = clamp_to_range((int)SDL_ceilf(task->dst_rect.y + task->dst_rect.h), 0, software_frame_surface->h);
-    if ((dst_x1 <= dst_x0) || (dst_y1 <= dst_y0)) {
-        return true;
-    }
+        const int dst_x0 = clamp_to_range((int)SDL_floorf(solid_rect.x), 0, software_frame_surface->w);
+        const int dst_y0 = clamp_to_range((int)SDL_floorf(solid_rect.y), 0, software_frame_surface->h);
+        const int dst_x1 = clamp_to_range((int)SDL_ceilf(solid_rect.x + solid_rect.w), 0, software_frame_surface->w);
+        const int dst_y1 = clamp_to_range((int)SDL_ceilf(solid_rect.y + solid_rect.h), 0, software_frame_surface->h);
+        if ((dst_x1 <= dst_x0) || (dst_y1 <= dst_y0)) {
+            return true;
+        }
 
-    Uint32* dst_pixels = (Uint32*)software_frame_surface->pixels;
-    const int dst_pitch = software_frame_surface->pitch / (int)sizeof(Uint32);
-    const Uint32 src_a = (task->color >> 24) & 0xFFu;
-    if (src_a == 0u) {
-        return true;
-    }
+        Uint32* dst_pixels = (Uint32*)software_frame_surface->pixels;
+        const int dst_pitch = software_frame_surface->pitch / (int)sizeof(Uint32);
+        const Uint32 src_a = (solid_color >> 24) & 0xFFu;
+        if (src_a == 0u) {
+            return true;
+        }
 
-    const Uint64 sample_start_counter =
-        begin_perf_capture_raster_bucket_sample(SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_SOLID);
-    const int fill_width = dst_x1 - dst_x0;
-    if (src_a == 255u) {
-        for (int y = dst_y0; y < dst_y1; y++) {
-            Uint32* dst_row = dst_pixels + (y * dst_pitch) + dst_x0;
-            fill_argb8888_span(dst_row, fill_width, task->color);
+        const Uint64 sample_start_counter =
+            begin_perf_capture_raster_bucket_sample(SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_SOLID);
+        const int fill_width = dst_x1 - dst_x0;
+        if (src_a == 255u) {
+            for (int y = dst_y0; y < dst_y1; y++) {
+                Uint32* dst_row = dst_pixels + (y * dst_pitch) + dst_x0;
+                fill_argb8888_span(dst_row, fill_width, solid_color);
+            }
+        } else {
+            const Uint32 inv_src_a = 255u - src_a;
+            const Uint32 src_r_premul = ((solid_color >> 16) & 0xFFu) * src_a;
+            const Uint32 src_g_premul = ((solid_color >> 8) & 0xFFu) * src_a;
+            const Uint32 src_b_premul = (solid_color & 0xFFu) * src_a;
+            for (int y = dst_y0; y < dst_y1; y++) {
+                Uint32* dst_row = dst_pixels + (y * dst_pitch) + dst_x0;
+                for (int x = 0; x < fill_width; x++) {
+                    dst_row[x] = blend_solid_argb8888(dst_row[x], src_a, inv_src_a,
+                                                       src_r_premul, src_g_premul, src_b_premul);
+                }
+            }
         }
         note_perf_capture_raster_bucket_sample(SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_SOLID,
                                                task,
@@ -8321,24 +8426,19 @@ static bool raster_solid_task_to_software_frame(const RenderTask* task) {
         return true;
     }
 
-    const Uint32 inv_src_a = 255u - src_a;
-    const Uint32 src_r = (task->color >> 16) & 0xFFu;
-    const Uint32 src_g = (task->color >> 8) & 0xFFu;
-    const Uint32 src_b = task->color & 0xFFu;
-    const Uint32 src_r_premul = src_r * src_a;
-    const Uint32 src_g_premul = src_g * src_a;
-    const Uint32 src_b_premul = src_b * src_a;
-    for (int y = dst_y0; y < dst_y1; y++) {
-        Uint32* dst_row = dst_pixels + (y * dst_pitch) + dst_x0;
-        for (int x = 0; x < fill_width; x++) {
-            dst_row[x] =
-                blend_solid_argb8888(dst_row[x], src_a, inv_src_a, src_r_premul, src_g_premul, src_b_premul);
-        }
-    }
+    /* Fallback: arbitrary solid quad — decompose into 2 triangles (strip).
+       Vertices are in triangle-strip order (v0-v1 top, v2-v3 bottom), so the
+       shared diagonal is v1-v2, matching the textured affine quad path.
+       Color was pre-packed into task->color by the resolution loop. */
+    const Uint64 sample_start_counter =
+        begin_perf_capture_raster_bucket_sample(SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_SOLID);
+    const bool ok = raster_solid_triangle_to_software_frame(task, 0, 1, 2) &&
+                    raster_solid_triangle_to_software_frame(task, 2, 1, 3);
     note_perf_capture_raster_bucket_sample(SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_SOLID,
                                            task,
-                                           perf_capture_counter_delta_to_ns(sample_start_counter, SDL_GetPerformanceCounter()));
-    return true;
+                                           perf_capture_counter_delta_to_ns(
+                                               sample_start_counter, SDL_GetPerformanceCounter()));
+    return ok;
 }
 
 static bool render_frame_to_software_surface(void) {
@@ -8386,12 +8486,18 @@ static bool render_frame_to_software_surface(void) {
                 resolved_task.color = solid_color;
             } else {
                 SoftwareFrameSolidDiagonalStrip diagonal_strip;
-                if (!try_resolve_solid_task_as_full_height_diagonal_strip(task, &diagonal_strip)) {
-                    note_software_frame_eligibility(task, SOFTWARE_FRAME_FALLBACK_REASON_SOLID);
-                    frame_supported = false;
-                    continue;
+                if (try_resolve_solid_task_as_full_height_diagonal_strip(task, &diagonal_strip)) {
+                    resolved_task.color = diagonal_strip.color;
+                } else {
+                    /* Arbitrary solid quad — convert vertex color to packed ARGB
+                       for the solid triangle rasterizer.  All 4 vertices share
+                       the same color (uniform fill). */
+                    const SDL_FColor c = task->vertices[0].color;
+                    resolved_task.color = (((Uint32)SDL_roundf(c.a * 255.0f)) << 24) |
+                                          (((Uint32)SDL_roundf(c.r * 255.0f)) << 16) |
+                                          (((Uint32)SDL_roundf(c.g * 255.0f)) << 8) |
+                                          ((Uint32)SDL_roundf(c.b * 255.0f));
                 }
-                resolved_task.color = diagonal_strip.color;
             }
         }
 
