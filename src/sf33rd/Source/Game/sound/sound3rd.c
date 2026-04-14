@@ -49,6 +49,7 @@ u8 adx_EmSel[391168];
 s8 adx_stm_work[ADX_STM_WORK_SIZE];
 static u8* adx_IntroBgm = NULL;
 static int adx_IntroBgm_size = 0;
+static u8 adx_IntroBgmType = 0xFF;
 
 BGMTableEntry bgm_tableDC[68] = {
     { 0, 0, 0 },         { 16384, 58, 572 },  { 16385, 64, 588 },  { 16386, 64, 598 },  { 16387, 60, 616 },
@@ -194,19 +195,31 @@ void checkAdxFileLoaded() {
 }
 
 void preloadIntroBgm() {
-    if (adx_IntroBgm != NULL) {
+    if (adx_IntroBgm != NULL && adx_IntroBgmType == sys_w.bgm_type) {
         return;
+    }
+
+    if (adx_IntroBgm != NULL) {
+        free(adx_IntroBgm);
+        adx_IntroBgm = NULL;
+        adx_IntroBgm_size = 0;
     }
 
     int fnum = bgm_table[sys_w.bgm_type][67].fnum;
     unsigned int file_size = fsGetFileSize(fnum);
     size_t buff_size = (file_size + 2048 - 1) & ~(2048 - 1);
     adx_IntroBgm = (u8*)malloc(buff_size);
+    if (adx_IntroBgm == NULL) {
+        adx_IntroBgm_size = 0;
+        return;
+    }
     adx_IntroBgm_size = (int)file_size;
 
     AFSHandle handle = AFS_Open(fnum);
     AFS_ReadSync(handle, fsCalSectorSize(file_size), adx_IntroBgm);
     AFS_Close(handle);
+
+    adx_IntroBgmType = sys_w.bgm_type;
 }
 
 void Exit_sound_system() {
@@ -214,6 +227,7 @@ void Exit_sound_system() {
         free(adx_IntroBgm);
         adx_IntroBgm = NULL;
         adx_IntroBgm_size = 0;
+        adx_IntroBgmType = 0xFF;
     }
 
     if (system_init_level & 2) {
@@ -395,7 +409,7 @@ void BGM_Server() {
                     break;
 
                 default:
-                    if (bgm_exe.code == 67 && adx_IntroBgm != NULL) {
+                    if (bgm_exe.code == 67 && adx_IntroBgm != NULL && adx_IntroBgmType == sys_w.bgm_type) {
                         ADX_LoadMem(adx_IntroBgm, adx_IntroBgm_size);
                     } else {
                         ADX_LoadAfs(bgm_table[sys_w.bgm_type][bgm_exe.code].fnum);
@@ -403,7 +417,7 @@ void BGM_Server() {
                     break;
                 }
             } else {
-                if (bgm_exe.code == 67 && adx_IntroBgm != NULL) {
+                if (bgm_exe.code == 67 && adx_IntroBgm != NULL && adx_IntroBgmType == sys_w.bgm_type) {
                     ADX_LoadMem(adx_IntroBgm, adx_IntroBgm_size);
                 } else {
                     ADX_LoadAfs(bgm_table[sys_w.bgm_type][bgm_exe.code].fnum);
