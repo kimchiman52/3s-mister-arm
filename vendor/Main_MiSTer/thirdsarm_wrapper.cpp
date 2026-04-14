@@ -147,6 +147,8 @@ int g_wrapper_arm_clock_active = kArmClockStock;
 int g_wrapper_game_mode = kGameModeConsole;
 int g_wrapper_hold_to_pause = kHoldToPauseOff;
 int g_wrapper_aspect_ratio = kAspectRatio4x3;
+int g_wrapper_h_position = 0;
+int g_wrapper_v_position = 0;
 int g_wrapper_restart_requested = 0;
 int g_wrapper_used_full_user_io_init = 0;
 static bool g_native_video_mode = false;
@@ -1274,6 +1276,160 @@ bool write_runtime_aspect_ratio_default(int mode)
 	return true;
 }
 
+int read_runtime_h_position_default()
+{
+	char value[64] = {};
+	if (!read_runtime_config_value("h-position", value, sizeof(value))) return 0;
+
+	int val = atoi(value);
+	if (val < 0) val = 0;
+	if (val > 15) val = 15;
+	return val;
+}
+
+int read_runtime_v_position_default()
+{
+	char value[64] = {};
+	if (!read_runtime_config_value("v-position", value, sizeof(value))) return 0;
+
+	int val = atoi(value);
+	if (val < 0) val = 0;
+	if (val > 7) val = 7;
+	return val;
+}
+
+bool write_runtime_h_position_default(int value)
+{
+	char path[PATH_MAX] = {};
+	char temp_path[PATH_MAX] = {};
+	snprintf(path, sizeof(path), "%s/config", kRuntimeHome);
+	snprintf(temp_path, sizeof(temp_path), "%s/config.tmp", kRuntimeHome);
+
+	FILE *in = fopen(path, "r");
+	FILE *out = fopen(temp_path, "w");
+	if (!out)
+	{
+		if (in) fclose(in);
+		return false;
+	}
+
+	bool wrote_value = false;
+	char line[256] = {};
+	if (in)
+	{
+		while (fgets(line, sizeof(line), in))
+		{
+			char inspect[256] = {};
+			snprintf(inspect, sizeof(inspect), "%s", line);
+
+			char *cursor = inspect;
+			while (*cursor && isspace((unsigned char)*cursor)) cursor++;
+			if (*cursor == '#')
+			{
+				fputs(line, out);
+				continue;
+			}
+
+			char *equals = strchr(cursor, '=');
+			if (equals)
+			{
+				*equals = 0;
+				trim_in_place(cursor);
+				if (!strcasecmp(cursor, "h-position"))
+				{
+					fprintf(out, "h-position = %d\n", value);
+					wrote_value = true;
+					continue;
+				}
+			}
+
+			fputs(line, out);
+		}
+
+		fclose(in);
+	}
+
+	if (!wrote_value)
+	{
+		fprintf(out, "\nh-position = %d\n", value);
+	}
+
+	if (fclose(out) != 0) return false;
+	if (rename(temp_path, path) != 0)
+	{
+		remove(temp_path);
+		return false;
+	}
+
+	return true;
+}
+
+bool write_runtime_v_position_default(int value)
+{
+	char path[PATH_MAX] = {};
+	char temp_path[PATH_MAX] = {};
+	snprintf(path, sizeof(path), "%s/config", kRuntimeHome);
+	snprintf(temp_path, sizeof(temp_path), "%s/config.tmp", kRuntimeHome);
+
+	FILE *in = fopen(path, "r");
+	FILE *out = fopen(temp_path, "w");
+	if (!out)
+	{
+		if (in) fclose(in);
+		return false;
+	}
+
+	bool wrote_value = false;
+	char line[256] = {};
+	if (in)
+	{
+		while (fgets(line, sizeof(line), in))
+		{
+			char inspect[256] = {};
+			snprintf(inspect, sizeof(inspect), "%s", line);
+
+			char *cursor = inspect;
+			while (*cursor && isspace((unsigned char)*cursor)) cursor++;
+			if (*cursor == '#')
+			{
+				fputs(line, out);
+				continue;
+			}
+
+			char *equals = strchr(cursor, '=');
+			if (equals)
+			{
+				*equals = 0;
+				trim_in_place(cursor);
+				if (!strcasecmp(cursor, "v-position"))
+				{
+					fprintf(out, "v-position = %d\n", value);
+					wrote_value = true;
+					continue;
+				}
+			}
+
+			fputs(line, out);
+		}
+
+		fclose(in);
+	}
+
+	if (!wrote_value)
+	{
+		fprintf(out, "\nv-position = %d\n", value);
+	}
+
+	if (fclose(out) != 0) return false;
+	if (rename(temp_path, path) != 0)
+	{
+		remove(temp_path);
+		return false;
+	}
+
+	return true;
+}
+
 StartupScaleModeSelection resolve_startup_scale_mode()
 {
 	StartupScaleModeSelection selection = {};
@@ -1479,6 +1635,8 @@ void poll_status_changes(pid_t child)
 	static uint32_t prev_game_mode = 0xFFFFFFFF;
 	static uint32_t prev_hold_to_pause = 0xFFFFFFFF;
 	static uint32_t prev_aspect_ratio = 0xFFFFFFFF;
+	static uint32_t prev_h_position = 0xFFFFFFFF;
+	static uint32_t prev_v_position = 0xFFFFFFFF;
 
 	// --- Option bits: detect changes and apply ---
 
@@ -1592,6 +1750,28 @@ void poll_status_changes(pid_t child)
 		}
 	}
 
+	uint32_t h_position = user_io_status_get("[28:25]");
+	if (h_position != prev_h_position) {
+		prev_h_position = h_position;
+		int target = (int)h_position;
+		if (target != g_wrapper_h_position) {
+			write_runtime_h_position_default(target);
+			g_wrapper_h_position = target;
+			// No child signal: H position is pure FPGA timing state.
+		}
+	}
+
+	uint32_t v_position = user_io_status_get("[31:29]");
+	if (v_position != prev_v_position) {
+		prev_v_position = v_position;
+		int target = (int)v_position;
+		if (target != g_wrapper_v_position) {
+			write_runtime_v_position_default(target);
+			g_wrapper_v_position = target;
+			// No child signal: V position is pure FPGA timing state.
+		}
+	}
+
 	// --- T-type triggers (Reset/Restart) ---
 	// HandleUI() pulses T bits (set 1 then 0) within a single call.
 	// user_io_status_trigger_take() captures the pulse via a sticky flag
@@ -1608,6 +1788,8 @@ void poll_status_changes(pid_t child)
 		user_io_status_set("[12]", 0);    // Aspect Ratio = 4:3
 		user_io_status_set("[13]", 0);    // Game Mode = Console
 		user_io_status_set("[24]", 0);    // Hold to Pause = Off
+		user_io_status_set("[28:25]", 0); // H Position = 0
+		user_io_status_set("[31:29]", 0); // V Position = 0
 		prev_fps = 0xFFFFFFFF;
 		prev_sa_activation = 0xFFFFFFFF;
 		prev_ghost_res = 0xFFFFFFFF;
@@ -1616,6 +1798,8 @@ void poll_status_changes(pid_t child)
 		prev_game_mode = 0xFFFFFFFF;
 		prev_hold_to_pause = 0xFFFFFFFF;
 		prev_aspect_ratio = 0xFFFFFFFF;
+		prev_h_position = 0xFFFFFFFF;
+		prev_v_position = 0xFFFFFFFF;
 	}
 
 	if (triggers & (1u << 22)) {
@@ -1933,6 +2117,8 @@ int thirdsarm_wrapper_run(int argc, char *argv[])
 	g_wrapper_game_mode = read_runtime_game_mode_default();
 	g_wrapper_hold_to_pause = read_runtime_hold_to_pause_default();
 	g_wrapper_aspect_ratio = read_runtime_aspect_ratio_default();
+	g_wrapper_h_position = read_runtime_h_position_default();
+	g_wrapper_v_position = read_runtime_v_position_default();
 	g_wrapper_restart_requested = 0;
 	g_wrapper_signal = 0;
 
@@ -1982,6 +2168,8 @@ int thirdsarm_wrapper_run(int argc, char *argv[])
 		user_io_status_set("[12]", (uint32_t)g_wrapper_aspect_ratio);
 		user_io_status_set("[13]", (uint32_t)g_wrapper_game_mode);
 		user_io_status_set("[24]", (uint32_t)g_wrapper_hold_to_pause);
+		user_io_status_set("[28:25]", (uint32_t)g_wrapper_h_position);
+		user_io_status_set("[31:29]", (uint32_t)g_wrapper_v_position);
 	}
 
 	write_log_line(wrapper_log, "==== 3S-ARM wrapper launch ====");
@@ -2282,6 +2470,8 @@ int thirdsarm_wrapper_run(int argc, char *argv[])
 			user_io_status_set("[12]", (uint32_t)g_wrapper_aspect_ratio);
 			user_io_status_set("[13]", (uint32_t)g_wrapper_game_mode);
 			user_io_status_set("[24]", (uint32_t)g_wrapper_hold_to_pause);
+			user_io_status_set("[28:25]", (uint32_t)g_wrapper_h_position);
+			user_io_status_set("[31:29]", (uint32_t)g_wrapper_v_position);
 
 			continue;
 		}
