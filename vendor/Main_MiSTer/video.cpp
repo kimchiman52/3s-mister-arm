@@ -3088,7 +3088,6 @@ static void set_yc_mode()
 			}
 		}
 
-		spi_uio_cmd_cont(UIO_SET_YC_PAR);
 		// For traditional S-Video/CVBS modes, enable YC processing
 		// For subcarrier-only modes (RGB+subcarrier or direct video), keep yc_en=0
 		bool is_subcarrier_only = (cfg.vga_mode_int == 4);
@@ -3100,6 +3099,28 @@ static void set_yc_mode()
 			// Traditional YC modes: enable YC processing
 			yc_config = ((pal || cfg.ntsc_mode) ? 4 : 0) | ((cfg.vga_mode_int == 3) ? 3 : 1);
 		}
+		uint16_t subcarrier_enable = (cfg.vga_mode_int == 4) ? 1 : 0;
+
+		printf("YC_DEBUG: === set_yc_mode() ===\n");
+		printf("YC_DEBUG: INI: vga_mode_int=%d ntsc_mode=%d vga_scaler=%d direct_video=%d forced_scandoubler=%d\n",
+		       cfg.vga_mode_int, cfg.ntsc_mode, cfg.vga_scaler, cfg.direct_video, cfg.forced_scandoubler);
+		printf("YC_DEBUG: state: native_video=%d vga_fb=%d fb_native_analog_auto=%d\n",
+		       native_video_enabled ? 1 : 0, vga_fb_enabled ? 1 : 0, fb_native_analog_auto ? 1 : 0);
+		printf("YC_DEBUG: video_info: vtime=%d ctime=%d ptime=%d width=%d\n",
+		       current_video_info.vtime, current_video_info.ctime, current_video_info.ptime, current_video_info.width);
+		printf("YC_DEBUG: v_cur: Fpix=%.6f hact=%d hfp=%d hs=%d hbp=%d vact=%d vfp=%d vs=%d vbp=%d\n",
+		       v_cur.Fpix, (int)v_cur.param.hact, (int)v_cur.param.hfp, (int)v_cur.param.hs, (int)v_cur.param.hbp,
+		       (int)v_cur.param.vact, (int)v_cur.param.vfp, (int)v_cur.param.vs, (int)v_cur.param.vbp);
+		printf("YC_DEBUG: computed: fps=%.2f pal=%d CLK_REF=%.6f CLK_VIDEO=%.6f\n",
+		       fps, pal, CLK_REF, CLK_VIDEO);
+		printf("YC_DEBUG: output: yc_config=0x%X (yc_en=%d cvbs=%d pal_en=%d) PHASE_INC=0x%010llX (%lld)\n",
+		       yc_config, yc_config & 1, (yc_config >> 1) & 1, (yc_config >> 2) & 1,
+		       (unsigned long long)PHASE_INC, (long long)PHASE_INC);
+		printf("YC_DEBUG: output: COLORBURST_RANGE=0x%X (start=%d end=%d) subcarrier=%d\n",
+		       COLORBURST_RANGE, COLORBURST_START, COLORBURST_END, subcarrier_enable);
+		printf("YC_DEBUG: yc_key=%s\n", yc_key);
+
+		spi_uio_cmd_cont(UIO_SET_YC_PAR);
 		spi_w(yc_config);
 		spi_w(PHASE_INC);
 		spi_w(PHASE_INC >> 16);
@@ -3107,12 +3128,12 @@ static void set_yc_mode()
 		spi_w(COLORBURST_RANGE);
 		spi_w(COLORBURST_RANGE >> 16);
 		// Case 6: Send subcarrier enable flag
-		uint16_t subcarrier_enable = (cfg.vga_mode_int == 4) ? 1 : 0;
 		spi_w(subcarrier_enable);
 		DisableIO();
 	}
 	else
 	{
+		printf("YC_DEBUG: YC disabled (vga_mode_int=%d < 2)\n", cfg.vga_mode_int);
 		spi_uio_cmd8(UIO_SET_YC_PAR, 0);
 	}
 }
