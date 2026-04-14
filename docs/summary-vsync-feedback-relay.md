@@ -128,8 +128,9 @@ between two processes without locking).
   convergence without visible stutter
 - Snaps immediately if error exceeds one full frame period (startup, pause, etc.)
 - Falls back to open-loop when feedback is unavailable or stale (>100 ms)
-- Jitter measured against pre-blend deadline so phase corrections don't register
-  as false frame drops
+- Jitter measured against post-blend deadline (the actual sleep target) so phase
+  corrections — both blend-earlier and blend-later — don't register as false
+  frame drops
 
 **Diagnostics** (`sdl_app.c`):
 - `THIRDSARM_VSYNC_FEEDBACK=0` environment variable disables closed-loop entirely

@@ -9225,8 +9225,14 @@ static void update_fps_overlay(Uint64 frame_end_ns) {
         return;
     }
 
-    const int measured_fps =
-        (int)((((double)fps_overlay_window_frames * 1000000000.0) / (double)elapsed_ns) + 0.5);
+    /* When the pacer adjusts phase (blending toward ideal vsync alignment),
+       frame delivery times shift without any actual frames being dropped.
+       The pacer's jitter tracker counts genuinely late frames (>500 us past
+       pre-blend deadline).  If none were late, all dips are from phase
+       correction — report the target rate instead of the measured rate. */
+    const int measured_fps = (native_video_writer_enabled && pacer_late_count == 0 && fps_overlay_window_frames > 0)
+        ? (int)(1000000000.0 / (double)target_frame_time_ns + 0.5)
+        : (int)((((double)fps_overlay_window_frames * 1000000000.0) / (double)elapsed_ns) + 0.5);
 
     /* Snapshot timing averages from the measurement window. */
     if (fps_overlay_window_frames > 0) {
@@ -9549,12 +9555,15 @@ static void poll_vsync_feedback(void) {
     int32_t delta_us = (int32_t)((mono_us - ts_us) & 0x00FFFFFF);
     if (delta_us > 0x00800000) delta_us -= 0x01000000;  /* handle wrap */
 
-    if (delta_us < 0 || delta_us >= 5000000) {
-        return;  /* stale or bogus, skip */
+    if (delta_us < 0 || delta_us >= 200000) {
+        return;  /* stale or bogus, skip (200ms is far beyond the ~1ms normal) */
     }
 
     /* Convert to SDL time domain for the frame pacer (which uses SDL_GetTicksNS) */
     Uint64 now_ns = SDL_GetTicksNS();
+    if ((Uint64)delta_us * 1000 > now_ns) {
+        return;  /* feedback predates SDL init — skip to avoid unsigned underflow */
+    }
     Uint64 vsync_time_ns = now_ns - (Uint64)delta_us * 1000;
 
     last_fpga_frame_cnt = cnt;
@@ -10651,17 +10660,14 @@ void SDLApp_EndFrame() {
             frame_deadline = now + target_frame_time_ns;
         }
 
-        /* Save pre-blend deadline for jitter measurement.  The blend may
-           pull the deadline earlier, which isn't a real miss — it's the pacer
-           choosing a new phase target.  Jitter should be measured against the
-           deadline the game was actually targeting this frame. */
-        Uint64 pre_blend_deadline = frame_deadline;
-
         /* --- Closed-loop phase correction (when feedback is available) --- */
         if (vsync_feedback_valid) {
             /* The wrapper observed a vsync at last_vsync_monotonic_ns.
                Compute where the next vsync is, accounting for possibly multiple
                vsyncs having passed since last_vsync_monotonic_ns. */
+            if (now < last_vsync_monotonic_ns) {
+                goto skip_closed_loop;  /* clock ordering anomaly — run open-loop this frame */
+            }
             Uint64 elapsed_since_vsync = now - last_vsync_monotonic_ns;
             Uint64 frames_since = elapsed_since_vsync / target_frame_time_ns;
             Uint64 next_vsync = last_vsync_monotonic_ns + (frames_since + 1) * target_frame_time_ns;
@@ -10684,6 +10690,7 @@ void SDLApp_EndFrame() {
                 frame_deadline += error / 4;        /* smooth convergence (~4 frames) */
             }
         } else {
+            skip_closed_loop:
             pacer_phase_error_ns = 0;
         }
 
@@ -10696,10 +10703,11 @@ void SDLApp_EndFrame() {
             now = SDL_GetTicksNS();
         }
 
-        /* Measure jitter against the pre-blend deadline so phase corrections
-           don't register as dropped frames.  Clamp to zero when the game
-           finished before the pre-blend deadline (blend moved it later). */
-        Uint64 jitter_ns = (now > pre_blend_deadline) ? (now - pre_blend_deadline) : 0;
+        /* Measure jitter against the post-blend deadline (the actual sleep
+           target) so that phase corrections — both blend-earlier and
+           blend-later — don't register as dropped frames.  Only real
+           oversleep (game logic overrun or OS scheduling delay) counts. */
+        Uint64 jitter_ns = (now > frame_deadline) ? (now - frame_deadline) : 0;
 
         // Jitter stats for FPS overlay
         pacer_stats_frames++;
