@@ -19,6 +19,7 @@
 #include <sys/mman.h>
 #include <sys/prctl.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 #include <vector>
 
@@ -1625,11 +1626,50 @@ void poll_status_changes(pid_t child)
 }
 
 
+// --- Persistent DDR3 mapping for native video feedback ---
+static volatile uint8_t* g_nv_ddr3_base = nullptr;
+static int g_nv_ddr3_fd = -1;
+
+void open_native_video_ddr3()
+{
+	if (g_nv_ddr3_base) return;  // already open
+	g_nv_ddr3_fd = open("/dev/mem", O_RDWR | O_SYNC);
+	if (g_nv_ddr3_fd < 0) return;
+	g_nv_ddr3_base = (volatile uint8_t *)mmap(nullptr, 4096,
+		PROT_READ | PROT_WRITE, MAP_SHARED, g_nv_ddr3_fd, 0x3A000000);
+	if (g_nv_ddr3_base == MAP_FAILED)
+	{
+		g_nv_ddr3_base = nullptr;
+		close(g_nv_ddr3_fd);
+		g_nv_ddr3_fd = -1;
+	}
+}
+
+void close_native_video_ddr3()
+{
+	if (g_nv_ddr3_base)
+	{
+		munmap((void *)g_nv_ddr3_base, 4096);
+		g_nv_ddr3_base = nullptr;
+	}
+	if (g_nv_ddr3_fd >= 0)
+	{
+		close(g_nv_ddr3_fd);
+		g_nv_ddr3_fd = -1;
+	}
+}
+
 // Clear the DDR3 native video control word to prevent stale frame data.
-// Maps just the first page of the 0x3A000000 region, zeroes the 4-byte
-// control word, then unmaps.
+// Uses the persistent mapping if available, otherwise falls back to a
+// one-shot mmap/munmap.
 void clear_native_video_ddr3_ctrl()
 {
+	if (g_nv_ddr3_base)
+	{
+		*(volatile uint32_t *)g_nv_ddr3_base = 0;
+		return;
+	}
+
 	int fd = open("/dev/mem", O_RDWR | O_SYNC);
 	if (fd < 0) return;
 	void *map = mmap(nullptr, 4096, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0x3A000000);
@@ -1641,12 +1681,46 @@ void clear_native_video_ddr3_ctrl()
 	close(fd);
 }
 
+// --- Vsync feedback writer ---
+// Writes the FPGA frame counter + ARM timestamp to DDR3 so the game app
+// can do closed-loop phase locking.
+
+static uint8_t  g_vsync_fb_last_cnt = 0;
+static uint32_t g_vsync_fb_seq = 0;
+
+void write_vsync_feedback()
+{
+	if (!g_nv_ddr3_base || !fpga_vsync_timer) return;
+
+	uint8_t cnt = (uint8_t)global_frame_counter;
+	if (cnt == g_vsync_fb_last_cnt) return;  // no new vsync
+	g_vsync_fb_last_cnt = cnt;
+
+	struct timespec ts;
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	uint32_t us = (uint32_t)(ts.tv_sec * 1000000ULL + ts.tv_nsec / 1000) & 0x00FFFFFF;
+
+	volatile uint32_t *fb_word = (volatile uint32_t *)(g_nv_ddr3_base + 0x40);
+	volatile uint32_t *fb_seq  = (volatile uint32_t *)(g_nv_ddr3_base + 0x44);
+
+	g_vsync_fb_seq++;
+	*fb_word = (us << 8) | cnt;
+	*fb_seq  = g_vsync_fb_seq;
+}
+
+void reset_vsync_feedback()
+{
+	g_vsync_fb_last_cnt = 0;
+	g_vsync_fb_seq = 0;
+}
+
 void restart_to_menu(FILE *wrapper_log, int saved_stdout, int saved_stderr, int runtime_vt)
 {
 	write_log_line(wrapper_log, "return_to_menu=1");
 	if (g_native_video_mode)
 	{
 		clear_native_video_ddr3_ctrl();
+		close_native_video_ddr3();
 		user_io_status_set("[9]", 0);
 		video_set_native_video_enabled(false);
 		g_native_video_mode = false;
@@ -1702,6 +1776,7 @@ int show_error_and_return(const char *message, FILE *wrapper_log, int active_vt,
 		if (g_native_video_mode)
 		{
 			clear_native_video_ddr3_ctrl();
+			close_native_video_ddr3();
 			user_io_status_set("[9]", 0);
 			video_set_native_video_enabled(false);
 			g_native_video_mode = false;
@@ -1715,6 +1790,7 @@ int show_error_and_return(const char *message, FILE *wrapper_log, int active_vt,
 	if (g_native_video_mode)
 	{
 		clear_native_video_ddr3_ctrl();
+		close_native_video_ddr3();
 		user_io_status_set("[9]", 0);
 		video_set_native_video_enabled(false);
 		g_native_video_mode = false;
@@ -1815,6 +1891,7 @@ int wait_for_child(pid_t child, bool service_ui)
 		if (is_fpga_ready(1))
 		{
 			frame_timer();
+			write_vsync_feedback();
 			input_poll(0);
 
 			if (g_joy_shm)
@@ -1942,6 +2019,7 @@ int thirdsarm_wrapper_run(int argc, char *argv[])
 			/* Native video: do NOT enable the scaler/FB path.
 			   set_vga_fb(0) is already the default.  Clear any stale DDR3
 			   control word, then signal FPGA to start the native video reader. */
+			open_native_video_ddr3();
 			clear_native_video_ddr3_ctrl();
 			if (runtime_vt != active_vt) video_chvt(runtime_vt);
 			user_io_status_set("[9]", 1);
@@ -2157,6 +2235,7 @@ int thirdsarm_wrapper_run(int argc, char *argv[])
 			if (g_native_video_mode)
 			{
 				clear_native_video_ddr3_ctrl();
+				close_native_video_ddr3();
 				user_io_status_set("[9]", 0);
 				video_set_native_video_enabled(false);
 			}
@@ -2172,6 +2251,7 @@ int thirdsarm_wrapper_run(int argc, char *argv[])
 			if (g_native_video_mode)
 			{
 				clear_native_video_ddr3_ctrl();
+				close_native_video_ddr3();
 				user_io_status_set("[9]", 0);
 				video_set_native_video_enabled(false);
 			}
@@ -2186,7 +2266,10 @@ int thirdsarm_wrapper_run(int argc, char *argv[])
 		{
 			write_log_line(wrapper_log, "restart_runtime=1");
 			if (g_native_video_mode)
+			{
 				clear_native_video_ddr3_ctrl();
+				reset_vsync_feedback();
+			}
 			g_wrapper_restart_requested = 0;
 			g_wrapper_arm_clock_active = g_wrapper_arm_clock;
 

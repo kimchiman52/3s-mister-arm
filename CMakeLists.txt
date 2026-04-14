@@ -95,7 +95,7 @@ target_compile_definitions(3s-arm PRIVATE
     $<$<CONFIG:Release>:RELEASE>
     $<$<AND:$<CONFIG:Release>,$<NOT:$<BOOL:${PORT_MISTER}>>>:CHECKSUM>
 
-    _POSIX_C_SOURCE
+    _POSIX_C_SOURCE=200809L
     MEMCARD_DISABLED
 )
 

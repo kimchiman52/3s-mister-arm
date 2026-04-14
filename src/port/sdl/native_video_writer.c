@@ -48,9 +48,11 @@ bool NativeVideoWriter_Init(void) {
     frame_counter = 0;
     active_buf = 0;
 
-    /* Clear feedback word so ARM doesn't read stale data from a previous run */
+    /* Clear feedback words so ARM doesn't read stale data from a previous run */
     volatile uint32_t* feedback = (volatile uint32_t*)(ddr_base + NV_FEEDBACK_OFFSET);
     *feedback = 0;
+    volatile uint32_t* feedback_seq = (volatile uint32_t*)(ddr_base + NV_FEEDBACK_OFFSET + 4);
+    *feedback_seq = 0;
 
     return true;
 }
@@ -114,6 +116,12 @@ uint32_t NativeVideoWriter_ReadFeedback(void) {
     return *fb;
 }
 
+uint32_t NativeVideoWriter_ReadFeedbackSeq(void) {
+    if (!ddr_base) return 0;
+    volatile uint32_t* seq = (volatile uint32_t*)(ddr_base + NV_FEEDBACK_OFFSET + 4);
+    return *seq;
+}
+
 #else
 
 bool NativeVideoWriter_Init(void) {
@@ -135,6 +143,10 @@ bool NativeVideoWriter_IsActive(void) {
 }
 
 uint32_t NativeVideoWriter_ReadFeedback(void) {
+    return 0;
+}
+
+uint32_t NativeVideoWriter_ReadFeedbackSeq(void) {
     return 0;
 }
 

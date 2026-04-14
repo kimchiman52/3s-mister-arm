@@ -300,12 +300,18 @@ before the control word write (ARM strongly-ordered device memory).
 4. If same: stale → re-read previous buffer (shows last good frame)
 5. After 30 consecutive stale vblanks: deassert `frame_ready` (signal lost sync)
 
-### Feedback Word Format (offset 0x0040) [Part 2, planned]
+### Feedback Word Format (offset 0x0040)
+
+Written by the MiSTer wrapper (not the FPGA) to relay the FPGA's vblank
+counter to the game app for closed-loop phase locking.
 
 ```
-Bits [31:2]   vblank_counter     FPGA-side monotonic counter
-Bits [1:0]    buffer_status      0/1 = consumed buffer, 2 = stale re-read
+Offset 0x40:  bits[31:8] = ARM CLOCK_MONOTONIC timestamp (bottom 24 bits, microseconds)
+              bits[7:0]  = FPGA 8-bit frame counter (from UIO 0x42)
+Offset 0x44:  32-bit sequence number (monotonically increasing, for torn-read detection)
 ```
+
+See `docs/summary-vsync-feedback-relay.md` for full implementation details.
 
 ---
 
@@ -321,8 +327,6 @@ Bits [1:0]    buffer_status      0/1 = consumed buffer, 2 = stale re-read
 | `ST_POLL_CTRL` | Issue DDR3 burst read for control word |
 | `ST_WAIT_CTRL` | Wait for `ddr_dout_ready`, capture control word |
 | `ST_CHECK_CTRL` | Compare frame_counter, decide new/stale/no-frame |
-| `ST_WRITE_FEEDBACK` | Write vblank feedback to DDR3 [Part 2] |
-| `ST_WAIT_WR_ACK` | Wait for feedback write completion [Part 2] |
 | `ST_READ_LINE` | Issue DDR3 burst read for one scanline (96 beats) |
 | `ST_WAIT_LINE` | Capture DDR3 beats into FIFO, count to LINE_BURST |
 | `ST_LINE_DONE` | Advance line counter, decide preload/wait/done |
@@ -522,22 +526,18 @@ ARM:   targets NV_TARGET_FPS = TARGET_FPS = 59.59949 Hz
 Error: 1.4 μHz — one stale frame per ~8.2 days (effectively zero)
 ```
 
-Open-loop pacing with deadline-based sleep:
+Closed-loop phase locking with vsync feedback from the wrapper:
 
-```c
-// sdl_app.c frame pacing loop
-if (now < frame_deadline) {
-    SDL_DelayNS(frame_deadline - now);
-}
-frame_deadline += target_frame_time_ns;  // = 1e9 / NV_TARGET_FPS
-if (now > frame_deadline + target_frame_time_ns) {
-    frame_deadline = now + target_frame_time_ns;  // resync if >1 frame behind
-}
-```
+- Wrapper reads FPGA's 8-bit vblank counter via UIO 0x42 (~1 kHz poll rate)
+- Writes counter + CLOCK_MONOTONIC timestamp to DDR3 at 0x3A000040
+- Game app reads feedback, computes ideal deadline = next_vsync − 2 ms lead time
+- Blends frame_deadline toward ideal at 25% per frame (smooth convergence)
+- Falls back to open-loop when feedback is stale (>100 ms)
+- SCHED_FIFO + mlockall + hybrid sleep/busy-wait for sub-ms precision
+- Kill switch: `THIRDSARM_VSYNC_FEEDBACK=0`
+- Lead time tuning: `THIRDSARM_LEAD_TIME_US` (default 2000)
 
-**Remaining issue (not yet fixed):**
-- Sporadic stale frames on heavy stages from OS scheduling jitter (Part 2 target)
-- Manifests as "60fps on counter but feels skippy" under load
+See `docs/summary-vsync-feedback-relay.md` for full architecture.
 
 ---
 
@@ -629,9 +629,10 @@ See `docs/native-analog-svideo-plan.md` for full design rationale.
 
 ### Sporadic frame drops under system load
 
-- OS scheduling jitter delays `SDL_DelayNS()`, causing ARM to miss FPGA vblank
-- Part 2 (vsync feedback) will fix this — not yet implemented
-- Workaround: reduce background system load during gameplay
+- OS scheduling jitter delays wake-up, causing ARM to miss FPGA vblank
+- Fixed by closed-loop vsync phase lock (wrapper relays FPGA frame counter)
+- If still present: check backend.log for "closed-loop vsync feedback engaged"
+- Kill switch: set `THIRDSARM_VSYNC_FEEDBACK=0` to revert to open-loop
 
 ### Black screen with valid sync
 

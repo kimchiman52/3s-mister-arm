@@ -848,6 +848,14 @@ static Uint8 overlay_glyph_row(char ch, int row) {
     static const Uint8 glyph_eq[5] = { 0x0, 0x7, 0x0, 0x7, 0x0 };
     static const Uint8 glyph_lparen[5] = { 0x2, 0x4, 0x4, 0x4, 0x2 };
     static const Uint8 glyph_rparen[5] = { 0x2, 0x1, 0x1, 0x1, 0x2 };
+    static const Uint8 glyph_slash[5] = { 0x1, 0x1, 0x2, 0x4, 0x4 };
+    static const Uint8 glyph_pct[5] = { 0x5, 0x1, 0x2, 0x4, 0x5 };
+    static const Uint8 glyph_C[5] = { 0x7, 0x4, 0x4, 0x4, 0x7 };
+    static const Uint8 glyph_L[5] = { 0x4, 0x4, 0x4, 0x4, 0x7 };
+    static const Uint8 glyph_O[5] = { 0x7, 0x5, 0x5, 0x5, 0x7 };
+    static const Uint8 glyph_e[5] = { 0x0, 0x7, 0x5, 0x6, 0x3 };
+    static const Uint8 glyph_j[5] = { 0x1, 0x0, 0x1, 0x5, 0x2 };
+    static const Uint8 glyph_a[5] = { 0x0, 0x6, 0x5, 0x5, 0x7 };
 
     const Uint8* glyph = glyph_blank;
     switch (ch) {
@@ -934,6 +942,30 @@ static Uint8 overlay_glyph_row(char ch, int row) {
         break;
     case '=':
         glyph = glyph_eq;
+        break;
+    case '/':
+        glyph = glyph_slash;
+        break;
+    case '%':
+        glyph = glyph_pct;
+        break;
+    case 'C':
+        glyph = glyph_C;
+        break;
+    case 'L':
+        glyph = glyph_L;
+        break;
+    case 'O':
+        glyph = glyph_O;
+        break;
+    case 'e':
+        glyph = glyph_e;
+        break;
+    case 'j':
+        glyph = glyph_j;
+        break;
+    case 'a':
+        glyph = glyph_a;
         break;
     case ' ':
     default:
