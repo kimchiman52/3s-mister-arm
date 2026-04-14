@@ -203,8 +203,41 @@ assign VGA_F1 = 0;
 // without resampling — needed for clean pixels when vga_scaler=1 routes
 // analog output through ASCAL.  Has no effect on direct analog (vga_scaler=0).
 wire ar_full = status[12];
-assign VIDEO_ARX = ar_full ? 13'd0 : 13'd4;
-assign VIDEO_ARY = ar_full ? 13'd0 : 13'd3;
+
+// --- Vertical crop / integer scale (active on HDMI only, via video_freak) ---
+wire [11:0] vcrop_size = status[32] ? 12'd216 : 12'd0;
+
+// Crop offset: {vcopt,1'b0} doubles the 4-bit index to get even pixel offsets.
+// CONF_STR options: 0, 2, 4, 6, 8, 10, -12, -10, -8, -6, -4, -2
+wire [3:0] vcopt = status[36:33];
+reg  [4:0] vcrop_off;
+always @(posedge CLK_VIDEO) begin
+	vcrop_off <= (vcopt < 6) ? {vcopt,1'b0} : ({vcopt,1'b0} - 5'd24);
+end
+
+wire [1:0] vscale = status[38:37]; // 2 bits: menu exposes 4 of 5 SCALE modes; zero-extends to video_freak's 3-bit port
+
+wire [11:0] arx_in = ar_full ? 12'd0 : 12'd4;
+wire [11:0] ary_in = ar_full ? 12'd0 : 12'd3;
+
+video_freak video_freak
+(
+	.CLK_VIDEO   (CLK_VIDEO),
+	.CE_PIXEL    (CE_PIXEL),
+	.VGA_VS      (VGA_VS),
+	.HDMI_WIDTH  (HDMI_WIDTH),
+	.HDMI_HEIGHT (HDMI_HEIGHT),
+	.VGA_DE      (VGA_DE),
+	.VIDEO_ARX   (VIDEO_ARX),
+	.VIDEO_ARY   (VIDEO_ARY),
+
+	.VGA_DE_IN   (vga_de_raw),
+	.ARX         (arx_in),
+	.ARY         (ary_in),
+	.CROP_SIZE   (vcrop_size),
+	.CROP_OFF    (vcrop_off),
+	.SCALE       (vscale)
+);
 assign VGA_SCALER= 0;
 assign VGA_DISABLE = 0;
 
@@ -229,21 +262,23 @@ localparam CONF_STR = {
 	"MENU;UART31250,MIDI;",
 	"O[13],Game Mode,Console,Arcade;",
 	"O[24],Hold to Pause,Off,On;",
+	"O[11:10],FPS Counter,Off,FPS,Debug;",
 	"T[23],Button Check;",
 	"-;",
-	"O[11:10],FPS Counter,Off,FPS,Debug;",
 	"O[12],Aspect Ratio,4:3,Full;",
-	"-;",
-	"O[14],SA Activation,Full,Cached BG;",
-	"O[15],SA Ghost Res,Full,Half;",
-	"O[18:16],SA Ghost Count,0,1,2,3,4;",
-	"O[20:19],Overclock,Stock,1000MHz,1200MHz;",
-	"-;",
+	"O[32],Vertical Crop,Disabled,216p(5x);",
+	"O[36:33],Crop Offset,0,2,4,6,8,10,-12,-10,-8,-6,-4,-2;",
+	"O[38:37],Scale,Normal,V-Integer,Narrower HV-Integer,Wider HV-Integer;",
 	"O[28:25],H Position,0,+1,+2,+3,+4,+5,+6,+7,-8,-7,-6,-5,-4,-3,-2,-1;",
 	"O[31:29],V Position,0,+1,+2,+3,-4,-3,-2,-1;",
 	"-;",
-	"T[21],Reset to Default;",
+	"P1,Performance;",
+	"P1O[20:19],Overclock,Stock,1000MHz,1200MHz;",
+	"P1O[14],SA Activation,Full,Cached BG;",
+	"P1O[15],SA Ghost Res,Full,Half;",
+	"P1O[18:16],SA Ghost Count,0,1,2,3,4;",
 	"-;",
+	"T[21],Reset to Default;",
 	"T[22],Restart;",
 	"-;",
 	"J1,LP,MP,HP,LK,MK,HK,Select,Start;",
@@ -252,7 +287,7 @@ localparam CONF_STR = {
 };
 
 wire forced_scandoubler;
-wire [31:0] status;
+wire [38:0] status;
 
 hps_io #(.CONF_STR(CONF_STR), .CONF_STR_BRAM(1)) hps_io
 (
@@ -679,7 +714,8 @@ native_video_top native_video
 // When NATIVE_VID_ACTIVE, output native video timing (hs/vs/de) so the CRT
 // can lock onto valid sync immediately. Pixel data comes from nv_active
 // (frame_ready); until then, output black.
-assign VGA_DE  = NATIVE_VID_ACTIVE ? nv_de    : ~(HBlank | VBlank);
+// Raw DE before crop — this feeds into video_freak
+wire vga_de_raw = NATIVE_VID_ACTIVE ? nv_de : ~(HBlank | VBlank);
 assign VGA_HS  = NATIVE_VID_ACTIVE ? nv_hs    : HSync;
 assign VGA_VS  = NATIVE_VID_ACTIVE ? nv_vs    : VSync;
 assign VGA_R   = nv_active ? nv_r     : (NATIVE_VID_ACTIVE ? 8'd0 : comp_v);
