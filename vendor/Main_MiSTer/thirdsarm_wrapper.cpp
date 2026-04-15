@@ -2259,7 +2259,7 @@ int show_error_and_return(const char *message, FILE *wrapper_log, int active_vt,
 	video_fb_enable(0);
 	video_refresh_yc_mode();
 	show_wrapper_message(kCoreName, message);
-	usleep(1500 * 1000);
+	usleep(5000 * 1000);
 	disable_wrapper_osd();
 	restore_console(active_vt);
 	restart_to_menu(wrapper_log, saved_stdout, saved_stderr, active_vt);
@@ -2280,12 +2280,27 @@ int validate_runtime_paths(FILE *wrapper_log, int active_vt, int saved_stdout, i
 {
 	if (!FileExists(kRuntimeBinary, 0))
 	{
-		return show_error_and_return("Missing /media/fat/games/3s-arm/bin/3s-arm", wrapper_log, active_vt, saved_stdout, saved_stderr);
+		return show_error_and_return("Missing 3s-arm binary\nCheck /games/3s-arm/bin/", wrapper_log, active_vt, saved_stdout, saved_stderr);
 	}
 
 	if (!FileExists(kRuntimeArchive, 0))
 	{
-		return show_error_and_return("Missing /media/fat/games/3s-arm/resources/SF33RD.AFS", wrapper_log, active_vt, saved_stdout, saved_stderr);
+		return show_error_and_return("Missing SF33RD.AFS\nCheck /games/3s-arm/resources/", wrapper_log, active_vt, saved_stdout, saved_stderr);
+	}
+
+	{
+		FILE *f = fopen(kRuntimeArchive, "rb");
+		if (!f)
+		{
+			return show_error_and_return("Missing SF33RD.AFS\nCheck /games/3s-arm/resources/", wrapper_log, active_vt, saved_stdout, saved_stderr);
+		}
+		uint32_t magic = 0;
+		size_t n = fread(&magic, sizeof(magic), 1, f);
+		fclose(f);
+		if (n != 1 || magic != 0x00534641) // "AFS\0" little-endian
+		{
+			return show_error_and_return("Invalid SF33RD.AFS\nReplace the file and relaunch", wrapper_log, active_vt, saved_stdout, saved_stderr);
+		}
 	}
 
 	return 0;
