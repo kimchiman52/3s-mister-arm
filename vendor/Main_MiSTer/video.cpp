@@ -1801,8 +1801,15 @@ static int get_active_edid()
 
 	//Test if adv7513 senses hdmi clock. If not, don't bother with the edid query
 	int hpd_state = i2c_smbus_read_byte_data(fd, 0x42);
-	if (hpd_state < 0 || !(hpd_state & 0x20))
+	if (hpd_state < 0)
 	{
+		fprintf(stderr, "HDMI: HPD register read failed (i2c error), skipping EDID read\n");
+		i2c_close(fd);
+		return 0;
+	}
+	if (!(hpd_state & 0x20))
+	{
+		fprintf(stderr, "HDMI: monitor-sense not detected (reg0x42=0x%02X), skipping EDID read\n", (unsigned)hpd_state);
 		i2c_close(fd);
 		return 0;
 	}
@@ -2202,6 +2209,11 @@ static void video_set_mode(vmode_custom_t *v, double Fpix)
 	video_fb_config();
 
 	setShadowMask();
+
+	fprintf(stderr, "HDMI: mode set: %ux%u Fpix=%.3fMHz vic=%u pr=%u %chsync %cvsync\n",
+		v_cur.param.hact, v_cur.param.vact, v_cur.Fpix,
+		v_cur.param.vic, v_cur.param.pr,
+		v_cur.param.hpol ? '+' : '-', v_cur.param.vpol ? '+' : '-');
 }
 
 static int parse_custom_video_mode(char* vcfg, vmode_custom_t *v)
@@ -2629,6 +2641,7 @@ static void video_mode_load()
 		if (!has_explicit_video_mode_override())
 		{
 			vmode_def = get_edid_vmode(&v_def);
+			fprintf(stderr, "HDMI: video_mode_load: EDID query result=%d\n", vmode_def);
 		}
 
 		if (!vmode_def)
@@ -2636,6 +2649,8 @@ static void video_mode_load()
 			vmode_def = store_custom_video_mode(cfg.video_conf, &v_def);
 			vmode_pal = store_custom_video_mode(cfg.video_conf_pal, &v_pal);
 			vmode_ntsc = store_custom_video_mode(cfg.video_conf_ntsc, &v_ntsc);
+			fprintf(stderr, "HDMI: video_mode_load: fallback mode: vmode_def=%d res=%ux%u Fpix=%.3fMHz vic=%u\n",
+				vmode_def, v_def.param.hact, v_def.param.vact, v_def.Fpix, v_def.param.vic);
 		}
 	}
 }
@@ -2683,8 +2698,36 @@ void video_init()
 
 	fb_init();
 	hdmi_config_init();
+
+	{
+		int fd = i2c_open(0x39, 0);
+		if (fd >= 0)
+		{
+			int reg42 = i2c_smbus_read_byte_data(fd, 0x42);
+			int reg96 = i2c_smbus_read_byte_data(fd, 0x96);
+			if (reg42 >= 0 && reg96 >= 0)
+			{
+				fprintf(stderr, "HDMI: ADV7513 post-init: reg0x42=0x%02X (HPD=%d monsense=%d) reg0x96=0x%02X\n",
+					(unsigned)reg42, !!(reg42 & 0x40), !!(reg42 & 0x20), (unsigned)reg96);
+			}
+			else
+			{
+				fprintf(stderr, "HDMI: ADV7513 post-init register read failed (reg42=%d reg96=%d)\n", reg42, reg96);
+			}
+			i2c_close(fd);
+		}
+		else
+		{
+			fprintf(stderr, "HDMI: ADV7513 post-init readback failed (i2c open error)\n");
+		}
+	}
+
 	hdmi_config_set_hdr();
 	video_mode_load();
+
+	fprintf(stderr, "HDMI: cfg: vsync_adjust=%d vscale_mode=%d video_conf=\"%s\" dvi_mode=%d hdr=%d hdmi_game_mode=%d direct_video=%d vga_scaler=%d\n",
+		cfg.vsync_adjust, cfg.vscale_mode, cfg.video_conf, cfg.dvi_mode,
+		cfg.hdr, cfg.hdmi_game_mode, cfg.direct_video, cfg.vga_scaler);
 
 	has_gamma = spi_uio_cmd(UIO_SET_GAMMA);
 
@@ -3101,24 +3144,24 @@ static void set_yc_mode()
 		}
 		uint16_t subcarrier_enable = (cfg.vga_mode_int == 4) ? 1 : 0;
 
-		printf("YC_DEBUG: === set_yc_mode() ===\n");
-		printf("YC_DEBUG: INI: vga_mode_int=%d ntsc_mode=%d vga_scaler=%d direct_video=%d forced_scandoubler=%d\n",
+		fprintf(stderr, "YC_DEBUG: === set_yc_mode() ===\n");
+		fprintf(stderr, "YC_DEBUG: INI: vga_mode_int=%d ntsc_mode=%d vga_scaler=%d direct_video=%d forced_scandoubler=%d\n",
 		       cfg.vga_mode_int, cfg.ntsc_mode, cfg.vga_scaler, cfg.direct_video, cfg.forced_scandoubler);
-		printf("YC_DEBUG: state: native_video=%d vga_fb=%d fb_native_analog_auto=%d\n",
+		fprintf(stderr, "YC_DEBUG: state: native_video=%d vga_fb=%d fb_native_analog_auto=%d\n",
 		       native_video_enabled ? 1 : 0, vga_fb_enabled ? 1 : 0, fb_native_analog_auto ? 1 : 0);
-		printf("YC_DEBUG: video_info: vtime=%d ctime=%d ptime=%d width=%d\n",
+		fprintf(stderr, "YC_DEBUG: video_info: vtime=%d ctime=%d ptime=%d width=%d\n",
 		       current_video_info.vtime, current_video_info.ctime, current_video_info.ptime, current_video_info.width);
-		printf("YC_DEBUG: v_cur: Fpix=%.6f hact=%d hfp=%d hs=%d hbp=%d vact=%d vfp=%d vs=%d vbp=%d\n",
+		fprintf(stderr, "YC_DEBUG: v_cur: Fpix=%.6f hact=%d hfp=%d hs=%d hbp=%d vact=%d vfp=%d vs=%d vbp=%d\n",
 		       v_cur.Fpix, (int)v_cur.param.hact, (int)v_cur.param.hfp, (int)v_cur.param.hs, (int)v_cur.param.hbp,
 		       (int)v_cur.param.vact, (int)v_cur.param.vfp, (int)v_cur.param.vs, (int)v_cur.param.vbp);
-		printf("YC_DEBUG: computed: fps=%.2f pal=%d CLK_REF=%.6f CLK_VIDEO=%.6f\n",
+		fprintf(stderr, "YC_DEBUG: computed: fps=%.2f pal=%d CLK_REF=%.6f CLK_VIDEO=%.6f\n",
 		       fps, pal, CLK_REF, CLK_VIDEO);
-		printf("YC_DEBUG: output: yc_config=0x%X (yc_en=%d cvbs=%d pal_en=%d) PHASE_INC=0x%010llX (%lld)\n",
+		fprintf(stderr, "YC_DEBUG: output: yc_config=0x%X (yc_en=%d cvbs=%d pal_en=%d) PHASE_INC=0x%010llX (%lld)\n",
 		       yc_config, yc_config & 1, (yc_config >> 1) & 1, (yc_config >> 2) & 1,
 		       (unsigned long long)PHASE_INC, (long long)PHASE_INC);
-		printf("YC_DEBUG: output: COLORBURST_RANGE=0x%X (start=%d end=%d) subcarrier=%d\n",
+		fprintf(stderr, "YC_DEBUG: output: COLORBURST_RANGE=0x%X (start=%d end=%d) subcarrier=%d\n",
 		       COLORBURST_RANGE, COLORBURST_START, COLORBURST_END, subcarrier_enable);
-		printf("YC_DEBUG: yc_key=%s\n", yc_key);
+		fprintf(stderr, "YC_DEBUG: yc_key=%s\n", yc_key);
 
 		spi_uio_cmd_cont(UIO_SET_YC_PAR);
 		spi_w(yc_config);
@@ -3133,7 +3176,7 @@ static void set_yc_mode()
 	}
 	else
 	{
-		printf("YC_DEBUG: YC disabled (vga_mode_int=%d < 2)\n", cfg.vga_mode_int);
+		fprintf(stderr, "YC_DEBUG: YC disabled (vga_mode_int=%d < 2)\n", cfg.vga_mode_int);
 		spi_uio_cmd8(UIO_SET_YC_PAR, 0);
 	}
 }
@@ -3290,6 +3333,8 @@ void video_mode_adjust()
 		}
 		else
 		{
+			fprintf(stderr, "HDMI: mode change detected, no PLL reprogram (vsync_adjust=%d vscale_mode=%d)\n",
+				cfg.vsync_adjust, cfg.vscale_mode);
 			set_vfilter(1); // force update filters in case interlacing changed
 		}
 

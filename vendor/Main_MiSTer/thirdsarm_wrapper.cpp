@@ -2412,11 +2412,19 @@ int thirdsarm_wrapper_run(int argc, char *argv[])
 	char init_error[128] = {};
 	if (init_wrapper_context(forced, (argc > 1) ? argv[1] : nullptr, init_error, sizeof(init_error)) != 0)
 	{
+		/* Flush stdio before write_log_line — stdout/stderr and wrapper_log
+		   share the same file via dup2 but use separate FILE* buffers.
+		   Without this, framework printf output from init is overwritten. */
+		fflush(stdout);
+		fflush(stderr);
 		write_log_line(wrapper_log, "error=%s", init_error);
 		restore_stdio(saved_stdout, saved_stderr);
 		if (wrapper_log) fclose(wrapper_log);
 		return 1;
 	}
+	fflush(stdout);
+	fflush(stderr);
+	if (wrapper_log) fseek(wrapper_log, 0, SEEK_END);
 
 	int active_vt = get_active_vt();
 	char cwd_buffer[512] = {};
