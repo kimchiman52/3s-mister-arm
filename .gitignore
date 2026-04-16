@@ -25,3 +25,12 @@ artifacts/mister-port/logs/
 artifacts/mister-port/perf/*.json
 !artifacts/mister-port/perf/baseline.json
 artifacts/mister-port/perf/bolt-*.json
+
+# Quartus FPGA build artifacts (vendor/Menu_MiSTer)
+
+vendor/Menu_MiSTer/db/
+vendor/Menu_MiSTer/incremental_db/
+vendor/Menu_MiSTer/output_files/
+vendor/Menu_MiSTer/build_id.v
+vendor/Menu_MiSTer/c5_pin_model_dump.txt
+vendor/Menu_MiSTer/jtag.cdf

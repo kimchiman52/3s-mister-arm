@@ -6,3 +6,4 @@ set_global_assignment -name SYSTEMVERILOG_FILE menu.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/native_video_top.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/native_video_timing.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/native_video_reader.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/hsize.sv

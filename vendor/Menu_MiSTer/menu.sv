@@ -190,6 +190,7 @@ assign DDRAM_CLK = clk_sys;
 // Integer divider = zero pixel timing jitter.
 reg [1:0] ce_div;
 wire ce_pix_div4 = (ce_div == 2'd0);
+wire ce_pix2x = (ce_div[0] == 1'b0);
 always @(posedge CLK_VIDEO) begin
 	if (RESET) ce_div <= 2'd0;
 	else ce_div <= ce_div + 2'd1;
@@ -216,6 +217,22 @@ always @(posedge CLK_VIDEO) begin
 end
 
 wire [1:0] vscale = status[38:37]; // 2 bits: menu exposes 4 of 5 SCALE modes; zero-extends to video_freak's 3-bit port
+
+// Remap OSD index to signed 4-bit scale for hsize module.
+// CONF_STR assigns sequential indices 0-8 but the hsize summand uses
+// scale[3] as sign.  Indices 5-8 (negative labels) need their high bit set.
+wire [3:0] hsize_raw = status[42:39];
+reg  [3:0] hsize_scale;
+always @(*) begin
+    case (hsize_raw)
+        4'd5:    hsize_scale = 4'b1100; // -4
+        4'd6:    hsize_scale = 4'b1101; // -3
+        4'd7:    hsize_scale = 4'b1110; // -2
+        4'd8:    hsize_scale = 4'b1111; // -1
+        default: hsize_scale = hsize_raw;
+    endcase
+end
+wire       hsize_enable = (hsize_scale != 4'd0);
 
 wire [11:0] arx_in = ar_full ? 12'd0 : 12'd4;
 wire [11:0] ary_in = ar_full ? 12'd0 : 12'd3;
@@ -269,6 +286,7 @@ localparam CONF_STR = {
 	"O[32],Vertical Crop,Disabled,216p(5x);",
 	"O[36:33],Crop Offset,0,2,4,6,8,10,-12,-10,-8,-6,-4,-2;",
 	"O[38:37],Scale,Normal,V-Integer,Narrower HV-Integer,Wider HV-Integer;",
+	"O[42:39],H Size,0,+1,+2,+3,+4,-4,-3,-2,-1;",
 	"O[28:25],H Position,0,+1,+2,+3,+4,+5,+6,+7,-8,-7,-6,-5,-4,-3,-2,-1;",
 	"O[31:29],V Position,0,+1,+2,+3,-4,-3,-2,-1;",
 	"-;",
@@ -287,7 +305,7 @@ localparam CONF_STR = {
 };
 
 wire forced_scandoubler;
-wire [38:0] status;
+wire [42:0] status;
 
 hps_io #(.CONF_STR(CONF_STR), .CONF_STR_BRAM(1)) hps_io
 (
@@ -672,6 +690,7 @@ wire [7:0] comp_v = (cos_g >= rnd_c) ? {cos_g - rnd_c, 2'b00} : 8'd0;
 // --- Native video module ---
 wire [7:0] nv_r, nv_g, nv_b;
 wire       nv_hs, nv_vs, nv_de;
+wire       nv_hblank, nv_vblank;
 wire       nv_active;
 
 native_video_top native_video
@@ -703,6 +722,8 @@ native_video_top native_video
 	.vga_hs         (nv_hs),
 	.vga_vs         (nv_vs),
 	.vga_de         (nv_de),
+	.vga_hblank     (nv_hblank),
+	.vga_vblank     (nv_vblank),
 
 	// Control
 	.enable         (use_nv),
@@ -710,16 +731,35 @@ native_video_top native_video
 	.vsync_out      ()
 );
 
+// --- Horizontal size adjustment (line-buffer scaler, adapted from jtframe_hsize) ---
+wire [7:0] hs_nv_r, hs_nv_g, hs_nv_b;
+wire       hs_nv_hs, hs_nv_vs, hs_nv_hb, hs_nv_vb;
+
+hsize #(.COLORW(8)) hsize_inst (
+	.clk      (CLK_VIDEO),
+	.pxl_cen  (ce_pix_div4),
+	.pxl2_cen (ce_pix2x),
+	.scale    (hsize_scale),
+	.enable   (hsize_enable),
+	.r_in     (nv_r),  .g_in  (nv_g),  .b_in  (nv_b),
+	.HS_in    (nv_hs), .VS_in (nv_vs),
+	.HB_in    (nv_hblank), .VB_in (nv_vblank),
+	.HS_out   (hs_nv_hs), .VS_out(hs_nv_vs),
+	.HB_out   (hs_nv_hb), .VB_out(hs_nv_vb),
+	.r_out    (hs_nv_r), .g_out(hs_nv_g), .b_out(hs_nv_b)
+);
+
 // Mux VGA outputs: native video path vs. existing menu pattern
 // When NATIVE_VID_ACTIVE, output native video timing (hs/vs/de) so the CRT
 // can lock onto valid sync immediately. Pixel data comes from nv_active
 // (frame_ready); until then, output black.
 // Raw DE before crop — this feeds into video_freak
-wire vga_de_raw = NATIVE_VID_ACTIVE ? nv_de : ~(HBlank | VBlank);
-assign VGA_HS  = NATIVE_VID_ACTIVE ? nv_hs    : HSync;
-assign VGA_VS  = NATIVE_VID_ACTIVE ? nv_vs    : VSync;
-assign VGA_R   = nv_active ? nv_r     : (NATIVE_VID_ACTIVE ? 8'd0 : comp_v);
-assign VGA_G   = nv_active ? nv_g     : (NATIVE_VID_ACTIVE ? 8'd0 : comp_v);
-assign VGA_B   = nv_active ? nv_b     : (NATIVE_VID_ACTIVE ? 8'd0 : comp_v);
+wire hs_de = ~(hs_nv_hb | hs_nv_vb);
+wire vga_de_raw = NATIVE_VID_ACTIVE ? hs_de : ~(HBlank | VBlank);
+assign VGA_HS  = NATIVE_VID_ACTIVE ? hs_nv_hs : HSync;
+assign VGA_VS  = NATIVE_VID_ACTIVE ? hs_nv_vs : VSync;
+assign VGA_R   = nv_active ? hs_nv_r  : (NATIVE_VID_ACTIVE ? 8'd0 : comp_v);
+assign VGA_G   = nv_active ? hs_nv_g  : (NATIVE_VID_ACTIVE ? 8'd0 : comp_v);
+assign VGA_B   = nv_active ? hs_nv_b  : (NATIVE_VID_ACTIVE ? 8'd0 : comp_v);
 
 endmodule

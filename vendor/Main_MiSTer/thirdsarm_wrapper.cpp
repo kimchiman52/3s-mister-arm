@@ -152,6 +152,7 @@ int g_wrapper_v_position = 0;
 int g_wrapper_vertical_crop = 0;
 int g_wrapper_crop_offset = 0;
 int g_wrapper_scale = 0;
+int g_wrapper_h_size = 0;
 int g_wrapper_restart_requested = 0;
 int g_wrapper_used_full_user_io_init = 0;
 static bool g_native_video_mode = false;
@@ -1466,6 +1467,17 @@ int read_runtime_scale_default()
 	return val;
 }
 
+int read_runtime_h_size_default()
+{
+	char value[64] = {};
+	if (!read_runtime_config_value("h-size", value, sizeof(value))) return 0;
+
+	int val = atoi(value);
+	if (val < 0) val = 0;
+	if (val > 8) val = 8;
+	return val;
+}
+
 bool write_runtime_vertical_crop_default(int value)
 {
 	char path[PATH_MAX] = {};
@@ -1652,6 +1664,72 @@ bool write_runtime_scale_default(int value)
 	if (!wrote_value)
 	{
 		fprintf(out, "\nscale = %d\n", value);
+	}
+
+	if (fclose(out) != 0) return false;
+	if (rename(temp_path, path) != 0)
+	{
+		remove(temp_path);
+		return false;
+	}
+
+	return true;
+}
+
+bool write_runtime_h_size_default(int value)
+{
+	char path[PATH_MAX] = {};
+	char temp_path[PATH_MAX] = {};
+	snprintf(path, sizeof(path), "%s/config", kRuntimeHome);
+	snprintf(temp_path, sizeof(temp_path), "%s/config.tmp", kRuntimeHome);
+
+	FILE *in = fopen(path, "r");
+	FILE *out = fopen(temp_path, "w");
+	if (!out)
+	{
+		if (in) fclose(in);
+		return false;
+	}
+
+	bool wrote_value = false;
+	char line[256] = {};
+	if (in)
+	{
+		while (fgets(line, sizeof(line), in))
+		{
+			char inspect[256] = {};
+			snprintf(inspect, sizeof(inspect), "%s", line);
+
+			char *cursor = inspect;
+			while (*cursor && isspace((unsigned char)*cursor)) cursor++;
+			if (*cursor == '#')
+			{
+				fputs(line, out);
+				continue;
+			}
+
+			char *equals = strchr(cursor, '=');
+			if (equals)
+			{
+				*equals = 0;
+				trim_in_place(cursor);
+				if (!strcasecmp(cursor, "h-size"))
+				{
+					fprintf(out, "h-size = %d\n", value);
+					wrote_value = true;
+					continue;
+				}
+			}
+
+			fputs(line, out);
+		}
+
+		fclose(in);
+	}
+
+	if (!wrote_value)
+	{
+		fprintf(out, "\nh-size = %d\n", value);
 	}
 
 	if (fclose(out) != 0) return false;
@@ -1874,6 +1952,7 @@ void poll_status_changes(pid_t child)
 	static uint32_t prev_vertical_crop = 0xFFFFFFFF;
 	static uint32_t prev_crop_offset = 0xFFFFFFFF;
 	static uint32_t prev_scale = 0xFFFFFFFF;
+	static uint32_t prev_h_size = 0xFFFFFFFF;
 
 	// --- Option bits: detect changes and apply ---
 
@@ -2042,6 +2121,17 @@ void poll_status_changes(pid_t child)
 		}
 	}
 
+	uint32_t h_size = user_io_status_get("[42:39]");
+	if (h_size != prev_h_size) {
+		prev_h_size = h_size;
+		int target = (int)h_size;
+		if (target != g_wrapper_h_size) {
+			write_runtime_h_size_default(target);
+			g_wrapper_h_size = target;
+			// No child signal: H size is pure FPGA/scaler state.
+		}
+	}
+
 	// --- T-type triggers (Reset/Restart) ---
 	// HandleUI() pulses T bits (set 1 then 0) within a single call.
 	// user_io_status_trigger_take() captures the pulse via a sticky flag
@@ -2063,6 +2153,7 @@ void poll_status_changes(pid_t child)
 		user_io_status_set("[32]", 0);    // Vertical Crop = Disabled
 		user_io_status_set("[36:33]", 0); // Crop Offset = 0
 		user_io_status_set("[38:37]", 0); // Scale = Normal
+		user_io_status_set("[42:39]", 0); // H Size = 0
 		prev_fps = 0xFFFFFFFF;
 		prev_sa_activation = 0xFFFFFFFF;
 		prev_ghost_res = 0xFFFFFFFF;
@@ -2076,6 +2167,7 @@ void poll_status_changes(pid_t child)
 		prev_vertical_crop = 0xFFFFFFFF;
 		prev_crop_offset = 0xFFFFFFFF;
 		prev_scale = 0xFFFFFFFF;
+		prev_h_size = 0xFFFFFFFF;
 	}
 
 	if (triggers & (1u << 22)) {
@@ -2413,6 +2505,7 @@ int thirdsarm_wrapper_run(int argc, char *argv[])
 	g_wrapper_vertical_crop = read_runtime_vertical_crop_default();
 	g_wrapper_crop_offset = read_runtime_crop_offset_default();
 	g_wrapper_scale = read_runtime_scale_default();
+	g_wrapper_h_size = read_runtime_h_size_default();
 	g_wrapper_restart_requested = 0;
 	g_wrapper_signal = 0;
 
@@ -2475,6 +2568,7 @@ int thirdsarm_wrapper_run(int argc, char *argv[])
 		user_io_status_set("[32]", (uint32_t)g_wrapper_vertical_crop);
 		user_io_status_set("[36:33]", (uint32_t)g_wrapper_crop_offset);
 		user_io_status_set("[38:37]", (uint32_t)g_wrapper_scale);
+		user_io_status_set("[42:39]", (uint32_t)g_wrapper_h_size);
 	}
 
 	write_log_line(wrapper_log, "==== 3S-ARM wrapper launch ====");
@@ -2780,6 +2874,7 @@ int thirdsarm_wrapper_run(int argc, char *argv[])
 			user_io_status_set("[32]", (uint32_t)g_wrapper_vertical_crop);
 			user_io_status_set("[36:33]", (uint32_t)g_wrapper_crop_offset);
 			user_io_status_set("[38:37]", (uint32_t)g_wrapper_scale);
+			user_io_status_set("[42:39]", (uint32_t)g_wrapper_h_size);
 
 			continue;
 		}
