@@ -1042,6 +1042,13 @@ static SDL_Texture* get_texture() {
 }
 
 static void push_texture_to_destroy(SDL_Texture* texture) {
+    if (textures_to_destroy_count >= (int)SDL_arraysize(textures_to_destroy)) {
+        // Escape hatch: destroy inline rather than overflow the static array.
+        // Should not happen in practice; the 1024 slot queue drains every frame.
+        SDL_DestroyTexture(texture);
+        return;
+    }
+
     textures_to_destroy[textures_to_destroy_count] = texture;
     textures_to_destroy_count += 1;
     if (frame_stats_extended_enabled) {
@@ -1051,6 +1058,11 @@ static void push_texture_to_destroy(SDL_Texture* texture) {
 
 static void push_software_surface_to_destroy(SDL_Surface* surface) {
     if (surface == NULL) {
+        return;
+    }
+
+    if (software_surfaces_to_destroy_count >= (int)SDL_arraysize(software_surfaces_to_destroy)) {
+        SDL_DestroySurface(surface);
         return;
     }
 
@@ -1243,6 +1255,13 @@ static void destroy_textures() {
 #endif
     current_texture_binding_valid = false;
     current_texture_binding = 0;
+
+    // Submit any batched GL commands so the GPU starts processing them in
+    // parallel with this frame's CPU work, instead of all at Present time.
+    // Without this, SDL_DestroyTexture below blocks for multi-second stalls
+    // on transition frames when the GL command queue is deep (measured
+    // 4.6-8.1s on MiSTer's GLES driver).
+    SDL_FlushRenderer(_renderer);
 
     for (int i = 0; i < textures_to_destroy_count; i++) {
         SDL_DestroyTexture(textures_to_destroy[i]);
