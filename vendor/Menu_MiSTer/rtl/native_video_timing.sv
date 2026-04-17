@@ -32,7 +32,7 @@ module native_video_timing (
     // OSD position offsets (two's complement)
     // Positive = shift image right/down (adds to BP, subtracts from FP)
     input  wire signed [3:0] h_offset,  // -8 to +7 pixels
-    input  wire signed [2:0] v_offset,  // -4 to +3 lines
+    input  wire signed [3:0] v_offset,  // -8 to +7 lines
 
     output reg         hsync,      // active high (MiSTer convention)
     output reg         vsync,      // active high (MiSTer convention)
@@ -75,7 +75,7 @@ localparam V_TOTAL  = 264;   // 224+15+3+22
 // Positive offset shifts image right/down: adds to BP, subtracts from FP.
 // Sync pulse width and totals are invariant.
 wire signed [5:0] h_off_ext = {{2{h_offset[3]}}, h_offset};  // sign-extend to 6 bits
-wire signed [4:0] v_off_ext = {{2{v_offset[2]}}, v_offset};  // sign-extend to 5 bits
+wire signed [4:0] v_off_ext = {v_offset[3], v_offset};  // sign-extend to 5 bits
 
 // FP shrinks and BP grows by offset (or vice versa); sync width is fixed.
 // Only FP adjustment is needed to compute sync start; BP is implicit from total.

@@ -1294,12 +1294,30 @@ int read_runtime_h_position_default()
 int read_runtime_v_position_default()
 {
 	char value[64] = {};
-	if (!read_runtime_config_value("v-position", value, sizeof(value))) return 0;
 
-	int val = atoi(value);
-	if (val < 0) val = 0;
-	if (val > 7) val = 7;
-	return val;
+	// Prefer new 4-bit signed schema (values 0..15).
+	if (read_runtime_config_value("v-position-v2", value, sizeof(value)))
+	{
+		int val = atoi(value);
+		if (val < 0) val = 0;
+		if (val > 15) val = 15;
+		return val;
+	}
+
+	// Fall back to legacy 3-bit signed schema (values 0..7). Remap the
+	// old negative half (4..7 meant -4..-1) to the new negative half
+	// (12..15 = -4..-1 in 4-bit two's complement). Old positives (0..3)
+	// keep the same raw value.
+	if (read_runtime_config_value("v-position", value, sizeof(value)))
+	{
+		int val = atoi(value);
+		if (val < 0) val = 0;
+		if (val > 7) val = 7;
+		if (val >= 4) val += 8;
+		return val;
+	}
+
+	return 0;
 }
 
 bool write_runtime_h_position_default(int value)
@@ -1405,10 +1423,15 @@ bool write_runtime_v_position_default(int value)
 			{
 				*equals = 0;
 				trim_in_place(cursor);
+				if (!strcasecmp(cursor, "v-position-v2"))
+				{
+					fprintf(out, "v-position-v2 = %d\n", value);
+					wrote_value = true;
+					continue;
+				}
 				if (!strcasecmp(cursor, "v-position"))
 				{
-					fprintf(out, "v-position = %d\n", value);
-					wrote_value = true;
+					// Drop the legacy 3-bit key now that we write v-position-v2.
 					continue;
 				}
 			}
@@ -1421,7 +1444,7 @@ bool write_runtime_v_position_default(int value)
 
 	if (!wrote_value)
 	{
-		fprintf(out, "\nv-position = %d\n", value);
+		fprintf(out, "\nv-position-v2 = %d\n", value);
 	}
 
 	if (fclose(out) != 0) return false;
@@ -2077,7 +2100,7 @@ void poll_status_changes(pid_t child)
 		}
 	}
 
-	uint32_t v_position = user_io_status_get("[31:29]");
+	uint32_t v_position = user_io_status_get("[46:43]");
 	if (v_position != prev_v_position) {
 		prev_v_position = v_position;
 		int target = (int)v_position;
@@ -2149,7 +2172,7 @@ void poll_status_changes(pid_t child)
 		user_io_status_set("[13]", 0);    // Game Mode = Console
 		user_io_status_set("[24]", 0);    // Hold to Pause = Off
 		user_io_status_set("[28:25]", 0); // H Position = 0
-		user_io_status_set("[31:29]", 0); // V Position = 0
+		user_io_status_set("[46:43]", 0); // V Position = 0
 		user_io_status_set("[32]", 0);    // Vertical Crop = Disabled
 		user_io_status_set("[36:33]", 0); // Crop Offset = 0
 		user_io_status_set("[38:37]", 0); // Scale = Normal
@@ -2564,7 +2587,7 @@ int thirdsarm_wrapper_run(int argc, char *argv[])
 		user_io_status_set("[13]", (uint32_t)g_wrapper_game_mode);
 		user_io_status_set("[24]", (uint32_t)g_wrapper_hold_to_pause);
 		user_io_status_set("[28:25]", (uint32_t)g_wrapper_h_position);
-		user_io_status_set("[31:29]", (uint32_t)g_wrapper_v_position);
+		user_io_status_set("[46:43]", (uint32_t)g_wrapper_v_position);
 		user_io_status_set("[32]", (uint32_t)g_wrapper_vertical_crop);
 		user_io_status_set("[36:33]", (uint32_t)g_wrapper_crop_offset);
 		user_io_status_set("[38:37]", (uint32_t)g_wrapper_scale);
@@ -2870,7 +2893,7 @@ int thirdsarm_wrapper_run(int argc, char *argv[])
 			user_io_status_set("[13]", (uint32_t)g_wrapper_game_mode);
 			user_io_status_set("[24]", (uint32_t)g_wrapper_hold_to_pause);
 			user_io_status_set("[28:25]", (uint32_t)g_wrapper_h_position);
-			user_io_status_set("[31:29]", (uint32_t)g_wrapper_v_position);
+			user_io_status_set("[46:43]", (uint32_t)g_wrapper_v_position);
 			user_io_status_set("[32]", (uint32_t)g_wrapper_vertical_crop);
 			user_io_status_set("[36:33]", (uint32_t)g_wrapper_crop_offset);
 			user_io_status_set("[38:37]", (uint32_t)g_wrapper_scale);

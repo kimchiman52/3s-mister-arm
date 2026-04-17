@@ -288,7 +288,7 @@ localparam CONF_STR = {
 	"O[38:37],Scale,Normal,V-Integer,Narrower HV-Integer,Wider HV-Integer;",
 	"O[42:39],H Size,0,+1,+2,+3,+4,-4,-3,-2,-1;",
 	"O[28:25],H Position,0,+1,+2,+3,+4,+5,+6,+7,-8,-7,-6,-5,-4,-3,-2,-1;",
-	"O[31:29],V Position,0,+1,+2,+3,-4,-3,-2,-1;",
+	"O[46:43],V Position,0,+1,+2,+3,+4,+5,+6,+7,-8,-7,-6,-5,-4,-3,-2,-1;",
 	"-;",
 	"P1,Performance;",
 	"P1O[20:19],Overclock,Stock,1000MHz,1200MHz;",
@@ -305,7 +305,7 @@ localparam CONF_STR = {
 };
 
 wire forced_scandoubler;
-wire [42:0] status;
+wire [46:0] status;
 
 hps_io #(.CONF_STR(CONF_STR), .CONF_STR_BRAM(1)) hps_io
 (
@@ -702,7 +702,7 @@ native_video_top native_video
 
 	// OSD position offsets (two's complement from status bits)
 	.h_offset       ($signed(status[28:25])),
-	.v_offset       ($signed(status[31:29])),
+	.v_offset       ($signed(status[46:43])),
 
 	// DDR3 interface (directly to mux)
 	.ddr_busy       (DDRAM_BUSY),
