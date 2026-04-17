@@ -32,6 +32,23 @@ index a8d8bd8..04de3ac 100644
  							}
  						}
  					}
+@@ -2750,14 +2759,12 @@ void HandleUI(void)
+ 			int n;
+
++			if (menusub == 0) menusub = 2;
+ 			while(1)
+ 			{
+ 				n = 0;
+-				menumask = 0x7805d;
++				menumask = 0x7805c;
+
+ 				if (!menusub) firstmenu = 0;
+ 				adjvisible = 0;
+
+-				MenuWrite(n++, " Core                      \x16", menusub == 0, 0);
+-				MenuWrite(n++);
+-
+ 				if (cfg.osd_lock[0] && !cfg.osd_lock_time)
 @@ -6608,7 +6617,7 @@ void HandleUI(void)
  		/* system menu */
  		/******************************************************************/
