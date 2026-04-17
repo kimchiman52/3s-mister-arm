@@ -26,6 +26,8 @@ Commands:
   deploy --src <path>        Rsync a runtime package tree into the remote 3S-ARM root
   deploy-wrapper --src <p>   Sync wrapper-owned files into the remote /media/fat tree
     --artifacts-only         Copy only MiSTer_3S-ARM + 3S-ARM.rbf; leave games/3s-arm untouched
+    --wrapper-only           Copy only MiSTer_3S-ARM; leave 3S-ARM.rbf and games/3s-arm untouched
+    --core-only              Copy only 3S-ARM.rbf; leave MiSTer_3S-ARM and games/3s-arm untouched
   probe                      Run run-3s-arm.sh --probe-renderer-only
   smoke                      Run a bounded launch-osd.sh smoke and tail logs
   probe-wrapper              Run MiSTer_3S-ARM with --probe-renderer-only and tail wrapper logs
@@ -285,6 +287,14 @@ deploy-wrapper)
             ;;
         --artifacts-only)
             wrapper_deploy_mode="artifacts-only"
+            shift
+            ;;
+        --wrapper-only)
+            wrapper_deploy_mode="wrapper-only"
+            shift
+            ;;
+        --core-only)
+            wrapper_deploy_mode="core-only"
             shift
             ;;
         *)

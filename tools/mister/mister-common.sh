@@ -678,22 +678,30 @@ mister_rsync_deploy_wrapper() {
     local core_src="${wrapper_root}/_Other/3S-ARM.rbf"
     local hps_src="${wrapper_root}/MiSTer_3S-ARM"
 
-    [ -f "${hps_src}" ] || { echo "wrapper HPS binary not found in package: ${hps_src}" >&2; return 1; }
-    local have_core=0
-    if [ -f "${core_src}" ]; then
-        have_core=1
-    else
-        echo "note: wrapper core RBF not found in package: ${core_src} (skipping RBF deploy)" >&2
-    fi
-
     case "${deploy_mode}" in
-    full|artifacts-only)
+    full|artifacts-only|wrapper-only|core-only)
         ;;
     *)
         echo "unknown wrapper deploy mode: ${deploy_mode}" >&2
         return 1
         ;;
     esac
+
+    if [ "${deploy_mode}" != "core-only" ]; then
+        [ -f "${hps_src}" ] || { echo "wrapper HPS binary not found in package: ${hps_src}" >&2; return 1; }
+    fi
+
+    local have_core=0
+    if [ "${deploy_mode}" != "wrapper-only" ]; then
+        if [ -f "${core_src}" ]; then
+            have_core=1
+        elif [ "${deploy_mode}" = "core-only" ]; then
+            echo "wrapper core RBF not found in package: ${core_src}" >&2
+            return 1
+        else
+            echo "note: wrapper core RBF not found in package: ${core_src} (skipping RBF deploy)" >&2
+        fi
+    fi
 
     if [ "${deploy_mode}" = "full" ]; then
         [ -d "${runtime_src}" ] || { echo "wrapper runtime tree not found in package: ${runtime_src}" >&2; return 1; }
@@ -713,7 +721,9 @@ mister_rsync_deploy_wrapper() {
 
     if [ -n "${password}" ]; then
         mister_require_cmd expect || return $?
-        mister_rsync_expect_copy "${hps_src}" "${host}" "${user}" "${password}" "${dst_path%/}/"
+        if [ "${deploy_mode}" != "core-only" ]; then
+            mister_rsync_expect_copy "${hps_src}" "${host}" "${user}" "${password}" "${dst_path%/}/"
+        fi
         if [ "${have_core}" -eq 1 ]; then
             mister_rsync_expect_copy "${core_src}" "${host}" "${user}" "${password}" "${dst_path%/}/_Other/"
         fi
@@ -723,12 +733,14 @@ mister_rsync_deploy_wrapper() {
     else
         local rsync_shell
         rsync_shell="$(mister_rsync_ssh_key_only_command)"
-        rsync -av --omit-dir-times --no-perms --no-owner --no-group \
-            -e "${rsync_shell}" \
-            "${hps_src}" "${user}@${host}:${dst_path%/}/" || {
-            echo "MiSTer key-only wrapper upload failed; set MISTER_PASSWORD to use password auth or configure a working SSH key." >&2
-            return 1
-        }
+        if [ "${deploy_mode}" != "core-only" ]; then
+            rsync -av --omit-dir-times --no-perms --no-owner --no-group \
+                -e "${rsync_shell}" \
+                "${hps_src}" "${user}@${host}:${dst_path%/}/" || {
+                echo "MiSTer key-only wrapper upload failed; set MISTER_PASSWORD to use password auth or configure a working SSH key." >&2
+                return 1
+            }
+        fi
         if [ "${have_core}" -eq 1 ]; then
             rsync -av --omit-dir-times --no-perms --no-owner --no-group \
                 -e "${rsync_shell}" \
