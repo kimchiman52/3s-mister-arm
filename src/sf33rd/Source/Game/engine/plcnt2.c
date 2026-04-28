@@ -113,13 +113,13 @@ void plcnt_b_init() {
     case 2:
         pcon_rno[1] = 3;
 
-        if (plw[0].wu.operator) {
+        if (plw[0].wu.wu_operator) {
             paring_ctr_vs[0][0] = paring_ctr_ori[0];
         } else {
             paring_ctr_vs[0][0] = 0;
         }
 
-        if (plw[1].wu.operator) {
+        if (plw[1].wu.wu_operator) {
             paring_ctr_vs[0][1] = paring_ctr_ori[1];
         } else {
             paring_ctr_vs[0][1] = 0;
@@ -210,7 +210,7 @@ void plcnt_b_die() {
 s16 footwork_check_bns(s8 ix) {
     s16 rnum = 0;
 
-    if ((Bonus_Game_Flag == 20) && plw[ix].wu.operator == 0) {
+    if ((Bonus_Game_Flag == 20) && plw[ix].wu.wu_operator == 0) {
         return 1;
     }
 
@@ -224,7 +224,7 @@ s16 footwork_check_bns(s8 ix) {
 void setup_bs_scrrrl_bs() {
     s16 scrc = 512;
 
-    switch (plw[0].wu.operator + (plw[1].wu.operator * 2)) {
+    switch (plw[0].wu.wu_operator + (plw[1].wu.wu_operator * 2)) {
     case 1:
         bs_scrrrl[0][0] = scrc + bsmr_range_table[1][0][0];
         bs_scrrrl[0][1] = scrc - bsmr_range_table[1][0][1];
@@ -267,7 +267,7 @@ void move_player_work_bonus() {
         setup_bs_scrrrl_bs2();
     }
 
-    if (plw->wu.operator) {
+    if (plw->wu.wu_operator) {
         move_P1_move_P2_bonus(*bs_scrrrl);
         return;
     }

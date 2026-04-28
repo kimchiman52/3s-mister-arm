@@ -1,25 +1,87 @@
 #include "netplay/game_state.h"
+#include <unistd.h>
 #include "sf33rd/Source/Game/animation/appear.h"
 #include "sf33rd/Source/Game/animation/win_pl.h"
 #include "sf33rd/Source/Game/effect/eff56.h"
 #include "sf33rd/Source/Game/effect/effb2.h"
 #include "sf33rd/Source/Game/effect/effb8.h"
+#include "sf33rd/Source/Game/effect/effect.h"
+#include "sf33rd/Source/Game/ending/end_data.h"
 #include "sf33rd/Source/Game/engine/charset.h"
 #include "sf33rd/Source/Game/engine/plcnt.h"
 #include "sf33rd/Source/Game/engine/slowf.h"
 #include "sf33rd/Source/Game/engine/spgauge.h"
 #include "sf33rd/Source/Game/engine/workuser.h"
+#include "sf33rd/Source/Game/select_timer.h"
+#include "sf33rd/Source/Game/stage/bg.h"
 #include "sf33rd/Source/Game/stage/bg_data.h"
 #include "sf33rd/Source/Game/stage/ta_sub.h"
 #include "sf33rd/Source/Game/system/work_sys.h"
 #include "sf33rd/Source/Game/ui/count.h"
 #include "sf33rd/Source/Game/ui/sc_sub.h"
+#include "sf33rd/utils/djb2_hash.h"
+
+#include "gekkonet.h"
 
 #include <SDL3/SDL.h>
+#include <stdint.h>
+#include <stdio.h>
+
+// ============================================================================
+// Compile-time guard: sizeof(GameState) tripwire.
+// If this assert fires, a field was added or removed from GameState.
+// Steps: 1) Add the corresponding GS_SAVE/GS_LOAD line in this file.
+//        2) Update EXPECTED_GAME_STATE_SIZE to the new sizeof(GameState).
+// These values differ from 3sxtra's (17800 / 19376) because our fork keeps
+// combo_type, remake_power, and Disp_Input_History as top-level fields that
+// 3sxtra moved into PLW (research doc §5.4). The actual numbers are pinned
+// after the Phase 1 backfill by adjusting until the build compiles.
+// ============================================================================
+// Our sizes differ from 3sxtra's (17800 / 19376). Contributing structural
+// deltas (research doc §5.4 and §5.6) include:
+//   - PLW shrinkage on our side: 3sxtra embeds combo_type and remake_power
+//     inside PLW, so 3sxtra's PLW is 2 × 2 × sizeof(ComboType) larger.
+//   - Top-level additions on our side: combo_type[2], remake_power[2],
+//     Disp_Input_History as fork-exclusive GameState fields.
+//   - _TASK shrinkage on our side: ours lacks 3sxtra's callback_adrs
+//     (4 bytes × 11 task slots on 32-bit).
+//   - Padding effects from struct alignment.
+// The exact net bytes don't reconcile cleanly via casual arithmetic; the
+// 32-bit value below was pinned empirically from compiler output. Treat it
+// as ground truth and update via re-pinning whenever GameState changes.
+#if UINTPTR_MAX == 0xffffffff
+/* 17580 + 72 (chainex_check[2][36]) = 17652. Added 2026-04-24 when
+ * chainex_check was pulled into GameState to close a rollback-unsafe
+ * file-static escape (see GameState_Save comment). */
+#define EXPECTED_GAME_STATE_SIZE 17652
+#define EXPECTED_TASK_SIZE 16
+
+_Static_assert(sizeof(GameState) == EXPECTED_GAME_STATE_SIZE,
+               "sizeof(GameState) changed! Did you add/remove a field in game_state.h? "
+               "Update GS_SAVE/GS_LOAD in this file, then set EXPECTED_GAME_STATE_SIZE "
+               "to the new sizeof(GameState).");
+
+// Guard the task struct layout specifically — task[11] is saved/loaded wholesale
+// via GS_SAVE(task)/GS_LOAD(task), so any size change causes silent corruption.
+_Static_assert(sizeof(struct _TASK) == EXPECTED_TASK_SIZE,
+               "sizeof(struct _TASK) changed! This struct is saved/loaded wholesale "
+               "during netplay rollback. DO NOT change its layout without updating "
+               "GameState and verifying rollback compatibility.");
+#else
+// 64-bit build: tripwires are disabled because cross-arch determinism is
+// unsupported (see docs/research-3sxtra-netplay-port.md §9.7 and the
+// cross-arch research agent report). A MiSTer (32-bit) peer and a desktop
+// (64-bit) peer will desync on GekkoNet's SessionHealthMsg checksum within
+// seconds regardless of struct layout, so pinning the 64-bit expected size
+// is not a meaningful correctness check. Desktop builds exist for local
+// testing of the orchestrator/transport only.
+#endif
 
 #define GS_SAVE(member) SDL_memcpy(&dst->member, &member, sizeof(member))
 
 void GameState_Save(GameState* dst) {
+    if (!dst)
+        return;
     GS_SAVE(Scene_Cut);
     GS_SAVE(Time_Over);
     GS_SAVE(round_timer);
@@ -31,6 +93,7 @@ void GameState_Save(GameState* dst) {
     GS_SAVE(counter_color);
     GS_SAVE(mugen_flag);
     GS_SAVE(hoji_counter);
+    GS_SAVE(select_timer_state);
     GS_SAVE(Order);
     GS_SAVE(Order_Timer);
     GS_SAVE(Order_Dir);
@@ -519,6 +582,24 @@ void GameState_Save(GameState* dst) {
     // bg
 
     GS_SAVE(bg_w);
+    GS_SAVE(Screen_Switch);
+    GS_SAVE(Screen_Switch_Buffer);
+    GS_SAVE(rw_num);
+    GS_SAVE(rw_bg_flag);
+    GS_SAVE(tokusyu_stage);
+    GS_SAVE(rw_gbix);
+    GS_SAVE(stage_flash);
+    GS_SAVE(stage_ftimer);
+    GS_SAVE(yang_ix_plus);
+    GS_SAVE(yang_ix);
+    GS_SAVE(yang_timer);
+    GS_SAVE(ending_flag);
+    GS_SAVE(end_prm);
+    GS_SAVE(gouki_end_gbix);
+    GS_SAVE(rw3col_ptr);
+    GS_SAVE(bg_disp_off);
+    GS_SAVE(bgPalCodeOffset);
+    GS_SAVE(rw_dat);
 
     // charset
 
@@ -641,11 +722,55 @@ void GameState_Save(GameState* dst) {
     GS_SAVE(old_mes_no3);
     GS_SAVE(old_mes_no_pl);
     GS_SAVE(mes_timer);
+
+    // work_sys — rollback-critical system globals
+
+    GS_SAVE(bg_pos);
+    GS_SAVE(fm_pos);
+    GS_SAVE(bg_prm);
+    GS_SAVE(system_timer);
+    GS_SAVE(Gill_Appear_Flag);
+
+    // plcnt — DIP switch combat config
+
+    GS_SAVE(cmd_sel);
+    GS_SAVE(no_sa);
+
+    // sc_sub
+
+    GS_SAVE(Hnc_Num);
+
+    // ending
+
+    GS_SAVE(end_w);
+
+    // work_sys (extension)
+
+    GS_SAVE(scr_sc);
+    GS_SAVE(X_Adjust);
+    GS_SAVE(Y_Adjust);
+
+    // Additional globals
+
+    GS_SAVE(BgMATRIX);
+    GS_SAVE(vm_w);
+    GS_SAVE(ck_ex_option);
+    GS_SAVE(X_Adjust_Buff);
+    GS_SAVE(Y_Adjust_Buff);
+
+    /* chainex_check is an extern defined in sysdir.c. The GS_SAVE macro
+     * uses the bare name, so we declare it visible here. */
+    {
+        extern u8 chainex_check[2][36];
+        SDL_memcpy(&dst->chainex_check, chainex_check, sizeof(chainex_check));
+    }
 }
 
 #define GS_LOAD(member) SDL_memcpy(&member, &src->member, sizeof(member))
 
 void GameState_Load(const GameState* src) {
+    if (!src)
+        return;
     GS_LOAD(Scene_Cut);
     GS_LOAD(Time_Over);
     GS_LOAD(round_timer);
@@ -657,6 +782,7 @@ void GameState_Load(const GameState* src) {
     GS_LOAD(counter_color);
     GS_LOAD(mugen_flag);
     GS_LOAD(hoji_counter);
+    GS_LOAD(select_timer_state);
     GS_LOAD(Order);
     GS_LOAD(Order_Timer);
     GS_LOAD(Order_Dir);
@@ -1145,6 +1271,24 @@ void GameState_Load(const GameState* src) {
     // bg
 
     GS_LOAD(bg_w);
+    GS_LOAD(Screen_Switch);
+    GS_LOAD(Screen_Switch_Buffer);
+    GS_LOAD(rw_num);
+    GS_LOAD(rw_bg_flag);
+    GS_LOAD(tokusyu_stage);
+    GS_LOAD(rw_gbix);
+    GS_LOAD(stage_flash);
+    GS_LOAD(stage_ftimer);
+    GS_LOAD(yang_ix_plus);
+    GS_LOAD(yang_ix);
+    GS_LOAD(yang_timer);
+    GS_LOAD(ending_flag);
+    GS_LOAD(end_prm);
+    GS_LOAD(gouki_end_gbix);
+    GS_LOAD(rw3col_ptr);
+    GS_LOAD(bg_disp_off);
+    GS_LOAD(bgPalCodeOffset);
+    GS_LOAD(rw_dat);
 
     // charset
 
@@ -1267,4 +1411,903 @@ void GameState_Load(const GameState* src) {
     GS_LOAD(old_mes_no3);
     GS_LOAD(old_mes_no_pl);
     GS_LOAD(mes_timer);
+
+    // work_sys — rollback-critical system globals
+
+    GS_LOAD(bg_pos);
+    GS_LOAD(fm_pos);
+    GS_LOAD(bg_prm);
+    GS_LOAD(system_timer);
+    GS_LOAD(Gill_Appear_Flag);
+
+    // plcnt — DIP switch combat config
+
+    GS_LOAD(cmd_sel);
+    GS_LOAD(no_sa);
+
+    // sc_sub
+
+    GS_LOAD(Hnc_Num);
+
+    // ending
+
+    GS_LOAD(end_w);
+
+    // work_sys (extension)
+
+    GS_LOAD(scr_sc);
+    GS_LOAD(X_Adjust);
+    GS_LOAD(Y_Adjust);
+
+    // Additional globals
+
+    GS_LOAD(BgMATRIX);
+    GS_LOAD(vm_w);
+    GS_LOAD(ck_ex_option);
+    GS_LOAD(X_Adjust_Buff);
+    GS_LOAD(Y_Adjust_Buff);
+
+    /* chainex_check restore — see GameState_Save comment for rationale. */
+    {
+        extern u8 chainex_check[2][36];
+        SDL_memcpy(chainex_check, &src->chainex_check, sizeof(chainex_check));
+    }
 }
+
+// ============================================================================
+// Phase 3: focused checksum, sanitizers, desync dump.
+// Ported from /tmp/3sxtra/src/netplay/game_state.c:1447-1810.
+//
+// Key deltas from 3sxtra:
+//  - sanitize_plw_pointers also zeros p->cb and p->rp (our PLW-only fields;
+//    research doc §19 risk 2 — verbatim copy would leak heap pointers into
+//    the checksum and produce false-positive desyncs).
+//  - The focused whitelist explicitly hashes combo_type and remake_power
+//    (research doc §19 risk 1 — 3sxtra moved these into PLW; we kept them
+//    as top-level globals, so the PLW hash alone would miss damage-scaling
+//    drift).
+//  - Main checksum path is NOT behind #if DEBUG. Research §19 risk 5
+//    and §8.2: our Release MiSTer binary MUST have desync detection.
+//  - dump_desync_state + ring buffers were promoted out of #if DEBUG on
+//    2026-04-26 so telemetry builds capture pre-desync history when a
+//    session terminates abnormally — the recording is cheap and the dump
+//    only fires once per session (right before soft-reset to title).
+// ============================================================================
+
+#define SDL_copya(dst, src) SDL_memcpy(dst, src, sizeof(src))
+
+static int battle_start_frame = -1;
+
+/* Diagnostic ring buffers for desync triage. Promoted out of #if DEBUG
+ * 2026-04-26 — telemetry builds need to dump pre-desync history when a
+ * session terminates abnormally. Per-frame recording cost is small
+ * (~7 djb2s + ~36 scalar hashes + a few memcpys, all over memory we
+ * already touched for the combined checksum). Memory footprint is
+ * dominated by state_buffer at sizeof(State) * STATE_BUFFER_MAX
+ * (~2.6 MB on 32-bit), which is acceptable on the MiSTer's 1 GB RAM. */
+#define STATE_BUFFER_MAX 20
+
+// Per-subsystem checksums for faster desync triage.
+typedef struct {
+    uint32_t plw0;
+    uint32_t plw1;
+    uint32_t bg;
+    uint32_t tasks;
+    uint32_t effects;
+    uint32_t globals;
+    uint32_t combined;
+} SectionedChecksum;
+
+/* 2026-04-24 desync investigation — per-field hash of every scalar/array
+ * included in the combined checksum. Populated each frame; dumped at desync
+ * so diffing two peer dumps pinpoints the first-diverging field. */
+enum {
+    FH_Random_ix16, FH_Random_ix32,
+    FH_Random_ix16_ex, FH_Random_ix32_ex,
+    FH_Random_ix16_com, FH_Random_ix32_com,
+    FH_Random_ix16_ex_com, FH_Random_ix32_ex_com,
+    FH_Round_num, FH_Round_Level, FH_Round_Result,
+    FH_PL_Wins, FH_Conclusion_Type, FH_win_type,
+    FH_My_char, FH_Super_Arts,
+    FH_combo_type, FH_remake_power,
+    FH_Attack_Flag, FH_Counter_Attack, FH_Guard_Flag,
+    FH_Flip_Flag, FH_Lie_Flag, FH_Attack_Counter,
+    FH_Bullet_No, FH_Bullet_Counter, FH_paring_counter,
+    FH_Present_Mode, FH_VS_Stage,
+    FH_SLOW_timer, FH_SLOW_flag, FH_EXE_flag,
+    FH_super_arts, FH_piyori_type, FH_Max_vitality,
+    FH_chainex_check,
+    FH_COUNT
+};
+static const char* const FH_NAMES[FH_COUNT] = {
+    "Random_ix16", "Random_ix32",
+    "Random_ix16_ex", "Random_ix32_ex",
+    "Random_ix16_com", "Random_ix32_com",
+    "Random_ix16_ex_com", "Random_ix32_ex_com",
+    "Round_num", "Round_Level", "Round_Result",
+    "PL_Wins", "Conclusion_Type", "win_type",
+    "My_char", "Super_Arts",
+    "combo_type", "remake_power",
+    "Attack_Flag", "Counter_Attack", "Guard_Flag",
+    "Flip_Flag", "Lie_Flag", "Attack_Counter",
+    "Bullet_No", "Bullet_Counter", "paring_counter",
+    "Present_Mode", "VS_Stage",
+    "SLOW_timer", "SLOW_flag", "EXE_flag",
+    "super_arts", "piyori_type", "Max_vitality",
+    "chainex_check",
+};
+
+static State state_buffer[STATE_BUFFER_MAX];
+static SectionedChecksum saved_section_checksums[STATE_BUFFER_MAX];
+static PLW saved_plw_scratch[STATE_BUFFER_MAX][2];
+static uint32_t saved_field_hashes[STATE_BUFFER_MAX][FH_COUNT];
+
+/**
+ * @brief Snapshot the complete game state.
+ *
+ * @netplay_sync Called by save_state() on every GekkoSaveEvent. Copies both
+ * the GameState (via GameState_Save) and the EffectState (effect pool +
+ * free list) into dst.
+ */
+static void gather_state(State* dst) {
+    // GameState
+    GameState* gs = &dst->gs;
+    GameState_Save(gs);
+
+    // EffectState
+    EffectState* es = &dst->es;
+    SDL_copya(es->frw, frw);
+    SDL_copya(es->exec_tm, exec_tm);
+    SDL_copya(es->frwque, frwque);
+    SDL_copya(es->head_ix, head_ix);
+    SDL_copya(es->tail_ix, tail_ix);
+    es->frwctr = frwctr;
+    es->frwctr_min = frwctr_min;
+}
+
+/* === Sparse effect-pool save path (Option A) =====================
+ *
+ * Wire format (matches game_state.h's SPARSE_HEADER_BYTES layout):
+ *
+ *   offset  size  field
+ *   ------  ----  ----------------------------------------------------
+ *        0     N  GameState (sizeof(GameState))
+ *        N     2  s16 frwctr
+ *      N+2     2  s16 frwctr_min
+ *      N+4    16  s16 head_ix[8]
+ *     N+20    16  s16 tail_ix[8]
+ *     N+36    16  s16 exec_tm[8]
+ *     N+52   256  s16 frwque[128]
+ *    N+308    16  u8  active_mask[16]   (128 bits, slot index → bit)
+ *    N+324     2  u16 active_count      (popcount(active_mask))
+ *    N+326     2  u16 reserved          (zero, alignment pad)
+ *    N+328     M  u8  active_slots_data[active_count][1792]
+ *
+ * SPARSE_HEADER_BYTES = 328 (verified by _Static_assert below).
+ * The full size on the wire is sizeof(GameState) + 328 + active_count*1792.
+ * 2026-04-26: A `frw[]` byte-blob produced by this path is NEVER mixed with
+ * the legacy full-State byte-blob inside the same save buffer — load_state
+ * dispatches by total state_len.
+ */
+#define SPARSE_OFF_FRWCTR        0
+#define SPARSE_OFF_FRWCTR_MIN    2
+#define SPARSE_OFF_HEAD_IX       4
+#define SPARSE_OFF_TAIL_IX      20
+#define SPARSE_OFF_EXEC_TM      36
+#define SPARSE_OFF_FRWQUE       52
+#define SPARSE_OFF_ACTIVE_MASK 308
+#define SPARSE_OFF_ACTIVE_COUNT 324
+#define SPARSE_OFF_RESERVED    326
+#define SPARSE_OFF_PAYLOAD     328
+
+_Static_assert(SPARSE_OFF_PAYLOAD == SPARSE_HEADER_BYTES,
+               "Sparse-save header layout mismatch — update SPARSE_HEADER_BYTES "
+               "in game_state.h or the SPARSE_OFF_* offsets in game_state.c.");
+
+static bool s_sparse_effect_save_enabled = true;
+
+void Netplay_SetSparseEffectSaveEnabled(bool enabled) {
+    if (s_sparse_effect_save_enabled != enabled) {
+        SDL_Log("[netplay] sparse effect-pool save: %s",
+                enabled ? "ENABLED" : "DISABLED (full-state save)");
+    }
+    s_sparse_effect_save_enabled = enabled;
+}
+
+bool Netplay_GetSparseEffectSaveEnabled(void) {
+    return s_sparse_effect_save_enabled;
+}
+
+/* Pack the sparse wire format into out_buf, returning the number of bytes
+ * written. Reads from the live GameState (already gathered into gs_src)
+ * and the live effect-pool globals (frw, head_ix, etc.). */
+static unsigned int pack_sparse_state(unsigned char* out_buf,
+                                      const GameState* gs_src) {
+    /* GameState first — verbatim copy of the gathered scratch. */
+    SDL_memcpy(out_buf, gs_src, sizeof(GameState));
+    unsigned char* hdr = out_buf + sizeof(GameState);
+
+    /* Header scalars + arrays (all from live globals). */
+    SDL_memcpy(hdr + SPARSE_OFF_FRWCTR,     &frwctr,     sizeof(frwctr));
+    SDL_memcpy(hdr + SPARSE_OFF_FRWCTR_MIN, &frwctr_min, sizeof(frwctr_min));
+    SDL_memcpy(hdr + SPARSE_OFF_HEAD_IX, head_ix, sizeof(head_ix));
+    SDL_memcpy(hdr + SPARSE_OFF_TAIL_IX, tail_ix, sizeof(tail_ix));
+    SDL_memcpy(hdr + SPARSE_OFF_EXEC_TM, exec_tm, sizeof(exec_tm));
+    SDL_memcpy(hdr + SPARSE_OFF_FRWQUE,  frwque,  sizeof(frwque));
+
+    /* Build active_mask + payload by walking frw[] linearly. The canonical
+     * "active" predicate is be_flag != 0 — the same predicate the legacy
+     * save path's inactive-zero step at save_current_state:1676-1693 uses.
+     * Walking the head_ix linked lists would also work but linear is
+     * simpler and gives byte-stable slot ordering for the parity tests. */
+    unsigned char* mask = hdr + SPARSE_OFF_ACTIVE_MASK;
+    SDL_memset(mask, 0, 16);
+    unsigned char* payload = hdr + SPARSE_OFF_PAYLOAD;
+    uint16_t active_count = 0;
+    for (int i = 0; i < EFFECT_MAX; i++) {
+        const WORK* w = (const WORK*)frw[i];
+        if (w->be_flag != 0) {
+            mask[i >> 3] |= (unsigned char)(1u << (i & 7));
+            SDL_memcpy(payload, frw[i], SPARSE_FRW_SLOT_BYTES);
+            payload += SPARSE_FRW_SLOT_BYTES;
+            active_count++;
+        }
+    }
+    SDL_memcpy(hdr + SPARSE_OFF_ACTIVE_COUNT, &active_count, sizeof(active_count));
+    /* Zero the reserved/pad word so two peers see a deterministic image. */
+    SDL_memset(hdr + SPARSE_OFF_RESERVED, 0, 2);
+
+    return (unsigned int)(sizeof(GameState) + SPARSE_HEADER_BYTES +
+                          (size_t)active_count * SPARSE_FRW_SLOT_BYTES);
+}
+
+/* Reconstruct frw[] + the EffectState scalars from a sparse-format buffer.
+ * Returns true on success. On any structural failure (bad active_count vs
+ * popcount, buffer size mismatch) returns false and leaves the live
+ * globals untouched so the caller can fall back to a fatal-grade log. */
+static int popcount16_bytes(const unsigned char mask[16]) {
+    int n = 0;
+    for (int i = 0; i < 16; i++) {
+        unsigned char b = mask[i];
+        b = (unsigned char)((b & 0x55) + ((b >> 1) & 0x55));
+        b = (unsigned char)((b & 0x33) + ((b >> 2) & 0x33));
+        b = (unsigned char)((b & 0x0F) + ((b >> 4) & 0x0F));
+        n += b;
+    }
+    return n;
+}
+
+static bool unpack_sparse_state(const unsigned char* in_buf, unsigned int in_len) {
+    if (in_len < sizeof(GameState) + SPARSE_HEADER_BYTES) {
+        return false;
+    }
+    const unsigned char* hdr = in_buf + sizeof(GameState);
+    uint16_t active_count;
+    SDL_memcpy(&active_count, hdr + SPARSE_OFF_ACTIVE_COUNT, sizeof(active_count));
+    if (active_count > EFFECT_MAX) {
+        return false;
+    }
+    const size_t expected = sizeof(GameState) + SPARSE_HEADER_BYTES +
+                            (size_t)active_count * SPARSE_FRW_SLOT_BYTES;
+    if ((size_t)in_len != expected) {
+        return false;
+    }
+    const unsigned char* mask = hdr + SPARSE_OFF_ACTIVE_MASK;
+    if (popcount16_bytes(mask) != (int)active_count) {
+        return false;
+    }
+
+    /* GameState — caller already restored via GameState_Load(); we only
+     * touch the effect-pool globals here. */
+
+    /* Header scalars. */
+    SDL_memcpy(&frwctr,     hdr + SPARSE_OFF_FRWCTR,     sizeof(frwctr));
+    SDL_memcpy(&frwctr_min, hdr + SPARSE_OFF_FRWCTR_MIN, sizeof(frwctr_min));
+    SDL_memcpy(head_ix, hdr + SPARSE_OFF_HEAD_IX, sizeof(head_ix));
+    SDL_memcpy(tail_ix, hdr + SPARSE_OFF_TAIL_IX, sizeof(tail_ix));
+    SDL_memcpy(exec_tm, hdr + SPARSE_OFF_EXEC_TM, sizeof(exec_tm));
+    SDL_memcpy(frwque,  hdr + SPARSE_OFF_FRWQUE,  sizeof(frwque));
+
+    /* Reset frw[] to canonical empty state. Mirrors effect_work_init's
+     * post-SDL_zeroa pass (effect.c:88-99): each slot's myself = i,
+     * before = -1, behind = -1, everything else zero. This matches the
+     * legacy save path's per-slot inactive-zero (game_state.c:1676-1693)
+     * exactly. */
+    SDL_zeroa(frw);
+    for (int i = 0; i < EFFECT_MAX; i++) {
+        WORK* w = (WORK*)frw[i];
+        w->myself = (s16)i;
+        w->before = -1;
+        w->behind = -1;
+    }
+
+    /* Splat each active slot back from the payload, in slot-index order. */
+    const unsigned char* payload = hdr + SPARSE_OFF_PAYLOAD;
+    for (int i = 0; i < EFFECT_MAX; i++) {
+        if (mask[i >> 3] & (unsigned char)(1u << (i & 7))) {
+            SDL_memcpy(frw[i], payload, SPARSE_FRW_SLOT_BYTES);
+            payload += SPARSE_FRW_SLOT_BYTES;
+        }
+    }
+    return true;
+}
+
+/* Pack the legacy full-state wire format. Sized to sizeof(State); contents
+ * match what gather_state writes (header is the GameState then the full
+ * EffectState). Used both as the kill-switch path and as the safety
+ * fallback when the active-slot count exceeds SPARSE_CEILING_SLOTS. */
+static unsigned int pack_full_state(unsigned char* out_buf,
+                                    const State* scratch) {
+    SDL_memcpy(out_buf, scratch, sizeof(State));
+    return (unsigned int)sizeof(State);
+}
+
+// ============================================================================
+// Sanitizers — zero pointer fields and rendering-only bits so they don't
+// pollute the rollback checksum (ASLR makes pointers differ between peers).
+// Only ever called on scratch copies, never on live restore targets.
+// ============================================================================
+
+static void sanitize_work_pointers(WORK* w) {
+    w->target_adrs = NULL;
+    w->hit_adrs = NULL;
+    w->dmg_adrs = NULL;
+    w->suzi_offset = NULL;
+    SDL_zeroa(w->char_table);
+    w->se_random_table = NULL;
+    w->step_xy_table = NULL;
+    w->move_xy_table = NULL;
+    w->overlap_char_tbl = NULL;
+    w->olc_ix_table = NULL;
+    w->rival_catch_tbl = NULL;
+    w->curr_rca = NULL;
+    w->set_char_ad = NULL;
+    w->hit_ix_table = NULL;
+    w->body_adrs = NULL;
+    w->h_bod = NULL;
+    w->hand_adrs = NULL;
+    w->h_han = NULL;
+    w->dumm_adrs = NULL;
+    w->h_dumm = NULL;
+    w->catch_adrs = NULL;
+    w->h_cat = NULL;
+    w->caught_adrs = NULL;
+    w->h_cau = NULL;
+    w->attack_adrs = NULL;
+    w->h_att = NULL;
+    w->h_eat = NULL;
+    w->hosei_adrs = NULL;
+    w->h_hos = NULL;
+    w->att_ix_table = NULL;
+    w->my_effadrs = NULL;
+}
+
+/// Mask rendering-only bits/fields from WORK color fields (3sxtra surgical;
+/// matches /tmp/3sxtra/src/netplay/game_state.c:1513-1519).
+static void sanitize_work_rendering(WORK* w) {
+    w->current_colcd &= ~0x2000;
+    w->my_col_code &= ~0x2000;
+    w->colcd = 0; // Rendering-derived, not gameplay state
+    w->extra_col &= ~0x2000;
+    w->extra_col_2 &= ~0x2000;
+}
+
+/// Zero all pointer fields and mask rendering bits in a PLW struct.
+/// KEEP our cb/rp zeroing — those fields only exist in our PLW; verbatim
+/// 3sxtra copy would leak heap pointers into the checksum (research §19
+/// risk 2, tier-2 plan Phase 3 sub-task 2).
+static void sanitize_plw_pointers(PLW* p) {
+    sanitize_work_pointers(&p->wu);
+    sanitize_work_rendering(&p->wu);
+    p->cp = NULL;
+    p->dm_step_tbl = NULL;
+    p->as = NULL;
+    p->sa = NULL;
+    p->py = NULL;
+    // Our fork's PLW has these two; 3sxtra's does not.
+    p->cb = NULL;
+    p->rp = NULL;
+}
+
+/// Save state in state buffer (ring buffer for desync dump). Always-on
+/// 2026-04-26 — telemetry needs the same dump infrastructure as DEBUG.
+static State* note_state(const State* state, int frame) {
+    if (frame < 0) {
+        frame += STATE_BUFFER_MAX;
+    }
+    State* dst = &state_buffer[frame % STATE_BUFFER_MAX];
+    SDL_memcpy(dst, state, sizeof(State));
+    return dst;
+}
+
+/**
+ * @brief Save game state for rollback — GekkoNet callback backend.
+ *
+ * @netplay_sync Called by save_state() on every frame. Computes a focused
+ * gameplay checksum for desync detection in BOTH Debug and Release.
+ * In DEBUG builds, additionally saves per-subsystem checksums and PLW
+ * copies for binary comparison when a desync is detected.
+ *
+ * The checksum covers only a whitelist of gameplay-critical fields
+ * (PLW after pointer/rendering sanitization, RNG indices, round state,
+ * combat flags, slow-motion, super gauge, stun, PLUS combo_type and
+ * remake_power which are our fork-exclusive top-level globals).
+ * UI-only fields are saved but excluded from the hash.
+ *
+ * 2026-04-26 (Option A sparse save): this routine still writes a full
+ * sizeof(State) blob into `buffer`. After the sparse refactor, save_state
+ * uses an internal scratch buffer here for checksum + ring-buffer + dump
+ * bookkeeping, then re-encodes into Gekko's actual save buffer in either
+ * sparse or full format (see save_state below). The per-slot inactive-
+ * zero pass below remains useful for the *dump* artefact (so post-mortem
+ * State binaries don't contain stale-pointer noise in inactive slots),
+ * but is bypassed by the sparse wire format which simply omits inactive
+ * slots and reconstructs canonical empty on load.
+ */
+uint32_t save_current_state(void* buffer, int frame) {
+    State* dst = (State*)buffer;
+    gather_state(dst);
+
+    // Activate checksumming from the very first synced frame.
+    if (battle_start_frame < 0) {
+        battle_start_frame = frame;
+        SDL_Log("[netplay] checksumming active from frame %d (G_No[1]=%d)", frame, G_No[1]);
+    }
+
+    const bool checksumming_active = battle_start_frame >= 0;
+
+    note_state(dst, frame);
+
+    // Sanitize non-functional data in dst (safe for rollback restore):
+    // inactive effect slots, padding arrays, WORK_Other unused tails.
+    {
+        EffectState* es = &dst->es;
+        for (int i = 0; i < EFFECT_MAX; i++) {
+            WORK* w = (WORK*)es->frw[i];
+            if (w->be_flag == 0) {
+                s16 before = w->before;
+                s16 behind = w->behind;
+                s16 myself = w->myself;
+                SDL_memset(es->frw[i], 0, sizeof(es->frw[i]));
+                w->before = before;
+                w->behind = behind;
+                w->myself = myself;
+            } else {
+                SDL_zeroa(w->wrd_free);
+                WORK_Other* wo = (WORK_Other*)w;
+                SDL_zeroa(wo->et_free);
+            }
+        }
+        note_state(dst, frame);
+    }
+
+    if (checksumming_active) {
+        // === Focused gameplay checksum ===
+        // Hash ONLY gameplay-critical data, not the full 247KB State.
+
+        // --- Sanitized PLW copies ---
+        static PLW plw_scratch[2];
+        for (int p = 0; p < 2; p++) {
+            SDL_memcpy(&plw_scratch[p], &dst->gs.plw[p], sizeof(PLW));
+            sanitize_plw_pointers(&plw_scratch[p]);
+            sanitize_work_rendering(&plw_scratch[p].wu);
+
+            // Linked-list indices and timing differ per allocation order.
+            plw_scratch[p].wu.before = 0;
+            plw_scratch[p].wu.behind = 0;
+            plw_scratch[p].wu.myself = 0;
+            plw_scratch[p].wu.listix = 0;
+            plw_scratch[p].wu.timing = 0;
+
+            // Sweep remaining pointer-like values in PLW.
+            // Use fixed uint64_t stride so both 32-bit and 64-bit platforms
+            // scan the same bytes and produce identical checksums.
+            uint64_t* words = (uint64_t*)&plw_scratch[p];
+            const size_t count = sizeof(PLW) / sizeof(uint64_t);
+            for (size_t i = 0; i < count; i++) {
+                uint64_t v = words[i];
+                if (v > 0x100000000ULL && (v >> 47) == 0) {
+                    words[i] = 0;
+                }
+            }
+        }
+
+        // --- Build combined hash from PLW + whitelisted globals ---
+        const GameState* gs = &dst->gs;
+        uint32_t h = djb2_init();
+
+        // PLW (sanitized)
+        h = djb2_update_mem(h, (const uint8_t*)&plw_scratch[0], sizeof(PLW));
+        h = djb2_update_mem(h, (const uint8_t*)&plw_scratch[1], sizeof(PLW));
+
+        // RNG indices
+        h = djb2_update_mem(h, (const uint8_t*)&gs->Random_ix16, sizeof(gs->Random_ix16));
+        h = djb2_update_mem(h, (const uint8_t*)&gs->Random_ix32, sizeof(gs->Random_ix32));
+        h = djb2_update_mem(h, (const uint8_t*)&gs->Random_ix16_ex, sizeof(gs->Random_ix16_ex));
+        h = djb2_update_mem(h, (const uint8_t*)&gs->Random_ix32_ex, sizeof(gs->Random_ix32_ex));
+        h = djb2_update_mem(h, (const uint8_t*)&gs->Random_ix16_com, sizeof(gs->Random_ix16_com));
+        h = djb2_update_mem(h, (const uint8_t*)&gs->Random_ix32_com, sizeof(gs->Random_ix32_com));
+        h = djb2_update_mem(h, (const uint8_t*)&gs->Random_ix16_ex_com, sizeof(gs->Random_ix16_ex_com));
+        h = djb2_update_mem(h, (const uint8_t*)&gs->Random_ix32_ex_com, sizeof(gs->Random_ix32_ex_com));
+
+        // Round/match
+        h = djb2_update_mem(h, (const uint8_t*)&gs->Round_num, sizeof(gs->Round_num));
+        h = djb2_update_mem(h, (const uint8_t*)&gs->Round_Level, sizeof(gs->Round_Level));
+        h = djb2_update_mem(h, (const uint8_t*)&gs->Round_Result, sizeof(gs->Round_Result));
+        h = djb2_update_mem(h, (const uint8_t*)&gs->PL_Wins, sizeof(gs->PL_Wins));
+        h = djb2_update_mem(h, (const uint8_t*)&gs->Conclusion_Type, sizeof(gs->Conclusion_Type));
+        h = djb2_update_mem(h, (const uint8_t*)&gs->win_type, sizeof(gs->win_type));
+
+        // Player identity
+        h = djb2_update_mem(h, (const uint8_t*)&gs->My_char, sizeof(gs->My_char));
+        h = djb2_update_mem(h, (const uint8_t*)&gs->Super_Arts, sizeof(gs->Super_Arts));
+
+        // Our fork-exclusive top-level globals (NOT in 3sxtra's PLW hash).
+        // Research doc §19 risk 1: without this, damage scaling drift goes
+        // undetected.
+        h = djb2_update_mem(h, (const uint8_t*)&gs->combo_type, sizeof(gs->combo_type));
+        h = djb2_update_mem(h, (const uint8_t*)&gs->remake_power, sizeof(gs->remake_power));
+
+        // Combat flags
+        h = djb2_update_mem(h, (const uint8_t*)&gs->Attack_Flag, sizeof(gs->Attack_Flag));
+        h = djb2_update_mem(h, (const uint8_t*)&gs->Counter_Attack, sizeof(gs->Counter_Attack));
+        h = djb2_update_mem(h, (const uint8_t*)&gs->Guard_Flag, sizeof(gs->Guard_Flag));
+        h = djb2_update_mem(h, (const uint8_t*)&gs->Flip_Flag, sizeof(gs->Flip_Flag));
+        h = djb2_update_mem(h, (const uint8_t*)&gs->Lie_Flag, sizeof(gs->Lie_Flag));
+        h = djb2_update_mem(h, (const uint8_t*)&gs->Attack_Counter, sizeof(gs->Attack_Counter));
+        h = djb2_update_mem(h, (const uint8_t*)&gs->Bullet_No, sizeof(gs->Bullet_No));
+        h = djb2_update_mem(h, (const uint8_t*)&gs->Bullet_Counter, sizeof(gs->Bullet_Counter));
+        h = djb2_update_mem(h, (const uint8_t*)&gs->paring_counter, sizeof(gs->paring_counter));
+
+        // Game flow
+        h = djb2_update_mem(h, (const uint8_t*)&gs->Present_Mode, sizeof(gs->Present_Mode));
+        h = djb2_update_mem(h, (const uint8_t*)&gs->VS_Stage, sizeof(gs->VS_Stage));
+
+        // Slow motion
+        h = djb2_update_mem(h, (const uint8_t*)&gs->SLOW_timer, sizeof(gs->SLOW_timer));
+        h = djb2_update_mem(h, (const uint8_t*)&gs->SLOW_flag, sizeof(gs->SLOW_flag));
+        h = djb2_update_mem(h, (const uint8_t*)&gs->EXE_flag, sizeof(gs->EXE_flag));
+
+        // Super gauge / stun / vitality
+        h = djb2_update_mem(h, (const uint8_t*)&gs->super_arts, sizeof(gs->super_arts));
+        h = djb2_update_mem(h, (const uint8_t*)&gs->piyori_type, sizeof(gs->piyori_type));
+        h = djb2_update_mem(h, (const uint8_t*)&gs->Max_vitality, sizeof(gs->Max_vitality));
+
+        // chainex_check (EX-SA chain gating) — previously rollback-unsafe;
+        // now saved via GameState (see struct field). Hash the saved copy so
+        // cross-peer comparison catches any divergence just like plw_scratch.
+        h = djb2_update_mem(h, (const uint8_t*)&gs->chainex_check, sizeof(gs->chainex_check));
+
+        // Per-section checksums + per-field hashes for desync triage. Always-on
+        // 2026-04-26: telemetry consumes the same diagnostic surface as DEBUG.
+        SectionedChecksum sc;
+        uint32_t sh;
+        sh = djb2_init();
+        sh = djb2_update_mem(sh, (const uint8_t*)&plw_scratch[0], sizeof(PLW));
+        sc.plw0 = sh;
+        sh = djb2_init();
+        sh = djb2_update_mem(sh, (const uint8_t*)&plw_scratch[1], sizeof(PLW));
+        sc.plw1 = sh;
+        sc.bg = 0;
+        sc.tasks = 0;
+        sc.effects = 0;
+        sc.combined = h;
+        sc.globals = h ^ sc.plw0 ^ sc.plw1;
+        saved_section_checksums[frame % STATE_BUFFER_MAX] = sc;
+        SDL_memcpy(&saved_plw_scratch[frame % STATE_BUFFER_MAX][0], &plw_scratch[0], sizeof(PLW));
+        SDL_memcpy(&saved_plw_scratch[frame % STATE_BUFFER_MAX][1], &plw_scratch[1], sizeof(PLW));
+
+        /* Per-field hashes — 2026-04-24 desync diag. Each FH_* is djb2 of
+         * that field's raw bytes at this frame. Diff two peer dumps to find
+         * the first-diverging field. */
+        {
+            uint32_t* fh = saved_field_hashes[frame % STATE_BUFFER_MAX];
+#define HASHONE(ix, fld) do { \
+    uint32_t _s = djb2_init(); \
+    _s = djb2_update_mem(_s, (const uint8_t*)&(fld), sizeof(fld)); \
+    fh[ix] = _s; \
+} while (0)
+            HASHONE(FH_Random_ix16, gs->Random_ix16);
+            HASHONE(FH_Random_ix32, gs->Random_ix32);
+            HASHONE(FH_Random_ix16_ex, gs->Random_ix16_ex);
+            HASHONE(FH_Random_ix32_ex, gs->Random_ix32_ex);
+            HASHONE(FH_Random_ix16_com, gs->Random_ix16_com);
+            HASHONE(FH_Random_ix32_com, gs->Random_ix32_com);
+            HASHONE(FH_Random_ix16_ex_com, gs->Random_ix16_ex_com);
+            HASHONE(FH_Random_ix32_ex_com, gs->Random_ix32_ex_com);
+            HASHONE(FH_Round_num, gs->Round_num);
+            HASHONE(FH_Round_Level, gs->Round_Level);
+            HASHONE(FH_Round_Result, gs->Round_Result);
+            HASHONE(FH_PL_Wins, gs->PL_Wins);
+            HASHONE(FH_Conclusion_Type, gs->Conclusion_Type);
+            HASHONE(FH_win_type, gs->win_type);
+            HASHONE(FH_My_char, gs->My_char);
+            HASHONE(FH_Super_Arts, gs->Super_Arts);
+            HASHONE(FH_combo_type, gs->combo_type);
+            HASHONE(FH_remake_power, gs->remake_power);
+            HASHONE(FH_Attack_Flag, gs->Attack_Flag);
+            HASHONE(FH_Counter_Attack, gs->Counter_Attack);
+            HASHONE(FH_Guard_Flag, gs->Guard_Flag);
+            HASHONE(FH_Flip_Flag, gs->Flip_Flag);
+            HASHONE(FH_Lie_Flag, gs->Lie_Flag);
+            HASHONE(FH_Attack_Counter, gs->Attack_Counter);
+            HASHONE(FH_Bullet_No, gs->Bullet_No);
+            HASHONE(FH_Bullet_Counter, gs->Bullet_Counter);
+            HASHONE(FH_paring_counter, gs->paring_counter);
+            HASHONE(FH_Present_Mode, gs->Present_Mode);
+            HASHONE(FH_VS_Stage, gs->VS_Stage);
+            HASHONE(FH_SLOW_timer, gs->SLOW_timer);
+            HASHONE(FH_SLOW_flag, gs->SLOW_flag);
+            HASHONE(FH_EXE_flag, gs->EXE_flag);
+            HASHONE(FH_super_arts, gs->super_arts);
+            HASHONE(FH_piyori_type, gs->piyori_type);
+            HASHONE(FH_Max_vitality, gs->Max_vitality);
+            {
+                extern u8 chainex_check[2][36];
+                uint32_t _s = djb2_init();
+                _s = djb2_update_mem(_s, (const uint8_t*)chainex_check, sizeof(chainex_check));
+                fh[FH_chainex_check] = _s;
+            }
+#undef HASHONE
+        }
+        return h;
+    }
+    return 0;
+}
+
+/* save_state — Gekko-callback entry. Splits responsibilities:
+ *   1. save_current_state writes a full State into a scratch buffer for the
+ *      checksum/dump infrastructure (ring buffer, per-section checksums,
+ *      per-field hashes). This bookkeeping is unaffected by sparse-save.
+ *   2. We then re-encode that scratch into Gekko's actual save buffer in
+ *      either sparse or full format, depending on the runtime kill switch
+ *      AND the active-slot count.
+ *
+ * Two paths the sparse encoding is bypassed:
+ *   - kill switch off → full state.
+ *   - active count > SPARSE_CEILING_SLOTS → backend_logf warning + full
+ *     state (a "soft" overflow that's safe but blows past the ceiling
+ *     Gekko's ring is sized for; user MUST raise SPARSE_CEILING_SLOTS or
+ *     accept the rollback-buffer pressure for that frame). */
+static unsigned char s_save_scratch[sizeof(State)];
+
+void save_state(const GekkoGameEvent* event) {
+    /* (1) Always run the legacy path on a scratch State so the checksum +
+     * dump ring stays consistent regardless of sparse mode. */
+    State* scratch = (State*)s_save_scratch;
+    uint32_t h = save_current_state(scratch, event->data.save.frame);
+    *event->data.save.checksum = h;
+
+    /* (2) Encode into Gekko's buffer. */
+    unsigned char* dst = event->data.save.state;
+    unsigned int dst_len;
+
+    if (!s_sparse_effect_save_enabled) {
+        dst_len = pack_full_state(dst, scratch);
+    } else {
+        /* Active count = EFFECT_MAX - frwctr (live global). frwctr is
+         * already gathered into scratch->es by save_current_state, but
+         * reading the live value avoids a second indirection. */
+        int active = EFFECT_MAX - (int)frwctr;
+        if (active < 0 || active > SPARSE_CEILING_SLOTS) {
+            /* Safety net: fall back to full save for this frame. We log
+             * once per overrun threshold so a sustained busy stage doesn't
+             * spam serial. backend_logf is the same channel as the rest
+             * of the netplay diagnostics. */
+            static int last_warned_active = -1;
+            if (active != last_warned_active) {
+                SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                            "[netplay] sparse-save: active=%d exceeds ceiling %d "
+                            "for frame %d; falling back to full state. "
+                            "Raise SPARSE_CEILING_SLOTS in game_state.h.",
+                            active, SPARSE_CEILING_SLOTS, event->data.save.frame);
+                last_warned_active = active;
+            }
+            dst_len = pack_full_state(dst, scratch);
+        } else {
+            dst_len = pack_sparse_state(dst, &scratch->gs);
+        }
+    }
+    *event->data.save.state_len = dst_len;
+}
+
+void load_state(const State* src) {
+    const GameState* gs = &src->gs;
+    GameState_Load(gs);
+
+    const EffectState* es = &src->es;
+    SDL_copya(frw, es->frw);
+    SDL_copya(exec_tm, es->exec_tm);
+    SDL_copya(frwque, es->frwque);
+    SDL_copya(head_ix, es->head_ix);
+    SDL_copya(tail_ix, es->tail_ix);
+    frwctr = es->frwctr;
+    frwctr_min = es->frwctr_min;
+}
+
+/* load_state_from_event — dispatch by buffer size:
+ *   == sizeof(State)               → legacy full-state buffer.
+ *   else (matches sparse layout)   → sparse buffer.
+ *
+ * No-collision proof. The sparse format size is
+ *   sizeof(GameState) + SPARSE_HEADER_BYTES + active_count * SPARSE_FRW_SLOT_BYTES.
+ * Equality with sizeof(State) = sizeof(GameState) + sizeof(EffectState)
+ * would require SPARSE_HEADER_BYTES + active_count * SPARSE_FRW_SLOT_BYTES
+ * == sizeof(EffectState). Substituting EFFECT_MAX=128 and the layout:
+ *   sizeof(EffectState) = (2+2+16+16+16+256) + 128 * SPARSE_FRW_SLOT_BYTES
+ *                       = 308 + 128 * SPARSE_FRW_SLOT_BYTES.
+ * So we need 328 + N*1792 = 308 + 128*1792 → N*1792 = 229356 → N ≈ 127.99,
+ * not an integer for any allowed active_count in [0, 128]. The same math
+ * holds on 64-bit (1792 → 3584) by symmetry. Format detection is unambiguous
+ * within a single peer's bitness. */
+void load_state_from_event(const GekkoGameEvent* event) {
+    const unsigned char* src = event->data.load.state;
+    unsigned int len = event->data.load.state_len;
+
+    if (len == sizeof(State)) {
+        load_state((const State*)src);
+        return;
+    }
+
+    /* GameState restoration first (always at offset 0). */
+    GameState_Load((const GameState*)src);
+
+    if (!unpack_sparse_state(src, len)) {
+        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                     "[netplay] load_state_from_event: sparse buffer rejected "
+                     "(state_len=%u, expected sizeof(State)=%zu or sparse layout). "
+                     "Effect pool left untouched; rollback may diverge.",
+                     len, sizeof(State));
+    }
+}
+
+/**
+ * @brief Dump desync diagnostic data to the states/ directory.
+ *
+ * Writes:
+ *  1. states/desync_F<frame>.txt — per-section checksums + ring buffer.
+ *  2. states/desync_F<frame>_plw0.bin / _plw1.bin — sanitized PLW snapshots.
+ *  3. states/desync_F<frame>_state.bin — full State snapshot.
+ *
+ * Promoted out of #if DEBUG 2026-04-26 — telemetry builds also dump on
+ * desync. The ring buffers feeding this dump are populated unconditionally
+ * inside save_current_state(); the dump itself only fires once per session
+ * (right before the soft-reset back to title), so it has no per-frame cost.
+ */
+void dump_desync_state(int frame, uint32_t local_checksum, uint32_t remote_checksum) {
+    const int slot = frame % STATE_BUFFER_MAX;
+
+    /* Ensure states/ exists. Runtime CWD is the install bindir on
+     * MiSTer, so relative path lands at /media/fat/games/3s-arm/states/. */
+    SDL_CreateDirectory("states");
+
+    /* Per-process suffix so two peers on the same filesystem (Mac↔Mac
+     * loopback test) don't race on the same filenames. getpid() is
+     * unique between the two instances. */
+    const int proc_id = (int)getpid();
+
+    char path[256];
+    SDL_snprintf(path, sizeof(path), "states/desync_F%d_pid%d.txt", frame, proc_id);
+    FILE* f = fopen(path, "w");
+    if (f) {
+        fprintf(f, "=== DESYNC DETECTED ===\n");
+        fprintf(f, "Frame:           %d\n", frame);
+        fprintf(f, "Local checksum:  0x%08x\n", local_checksum);
+        fprintf(f, "Remote checksum: 0x%08x\n", remote_checksum);
+        fprintf(f, "STATE_BUFFER_MAX: %d\n", STATE_BUFFER_MAX);
+        fprintf(f, "sizeof(PLW): %zu  sizeof(State): %zu\n\n", sizeof(PLW), sizeof(State));
+
+        /* chainex_check dump — desync investigation 2026-04-24. If two peers'
+         * chainex_check differs at frame of desync, candidate 0a is confirmed. */
+        {
+            extern u8 chainex_check[2][36];
+            fprintf(f, "--- chainex_check[2][36] at desync frame ---\n");
+            for (int p = 0; p < 2; p++) {
+                fprintf(f, "  chainex_check[%d] = ", p);
+                for (int j = 0; j < 36; j++) {
+                    fprintf(f, "%02x ", (unsigned)chainex_check[p][j]);
+                }
+                fprintf(f, "\n");
+            }
+            fprintf(f, "\n");
+        }
+
+        /* RNG call counters. Peer with higher count = extra consumer. */
+        {
+            extern u32 g_random_32_calls;
+            extern u32 g_random_16_calls;
+            extern u32 g_random_32_ex_calls;
+            extern u32 g_random_16_ex_calls;
+            fprintf(f, "--- RNG call counters ---\n");
+            fprintf(f, "  random_32    calls = %u\n", g_random_32_calls);
+            fprintf(f, "  random_16    calls = %u\n", g_random_16_calls);
+            fprintf(f, "  random_32_ex calls = %u\n", g_random_32_ex_calls);
+            fprintf(f, "  random_16_ex calls = %u\n", g_random_16_ex_calls);
+            fprintf(f, "\n");
+        }
+        /* Per-field hash ring buffer — for diffing two peer dumps. The
+         * first field where the two peers' hashes differ (at the oldest
+         * frame in the window) is the divergence source. */
+        fprintf(f, "--- Per-field hashes (ring buffer, 20 frames) ---\n");
+        fprintf(f, "%8s", "frame");
+        for (int k = 0; k < FH_COUNT; k++) {
+            fprintf(f, " %18s", FH_NAMES[k]);
+        }
+        fprintf(f, "\n");
+        for (int i = 0; i < STATE_BUFFER_MAX; i++) {
+            int f_idx = (frame - STATE_BUFFER_MAX + 1 + i);
+            if (f_idx < 0) continue;
+            int s2 = f_idx % STATE_BUFFER_MAX;
+            fprintf(f, "%8d", f_idx);
+            for (int k = 0; k < FH_COUNT; k++) {
+                fprintf(f, " 0x%08x%8s", saved_field_hashes[s2][k], "");
+            }
+            fprintf(f, "%s\n", (f_idx == frame) ? " <== DESYNC" : "");
+        }
+        fprintf(f, "\n");
+
+        fprintf(f, "--- Per-section checksums (ring buffer) ---\n");
+        fprintf(f, "%8s  %10s  %10s  %10s  %10s  %10s  %10s  %10s\n",
+                "frame", "combined", "plw0", "plw1", "globals", "bg", "tasks", "effects");
+        const int window = STATE_BUFFER_MAX;
+        for (int i = 0; i < window; i++) {
+            int f_idx = (frame - window + 1 + i);
+            if (f_idx < 0)
+                continue;
+            int s = f_idx % STATE_BUFFER_MAX;
+            const SectionedChecksum* sc = &saved_section_checksums[s];
+            const char* marker = (f_idx == frame) ? " <== DESYNC" : "";
+            fprintf(f,
+                    "%8d  0x%08x  0x%08x  0x%08x  0x%08x  0x%08x  0x%08x  0x%08x%s\n",
+                    f_idx, sc->combined, sc->plw0, sc->plw1, sc->globals,
+                    sc->bg, sc->tasks, sc->effects, marker);
+        }
+        fclose(f);
+        SDL_Log("[desync] Wrote section checksums to %s", path);
+    } else {
+        SDL_Log("[desync] ERROR: Could not open %s for writing", path);
+    }
+
+    for (int p = 0; p < 2; p++) {
+        SDL_snprintf(path, sizeof(path), "states/desync_F%d_pid%d_plw%d.bin", frame, proc_id, p);
+        f = fopen(path, "wb");
+        if (f) {
+            fwrite(&saved_plw_scratch[slot][p], sizeof(PLW), 1, f);
+            fclose(f);
+            SDL_Log("[desync] Wrote PLW[%d] snapshot (%zu bytes) to %s", p, sizeof(PLW), path);
+        }
+    }
+
+    SDL_snprintf(path, sizeof(path), "states/desync_F%d_pid%d_state.bin", frame, proc_id);
+    f = fopen(path, "wb");
+    if (f) {
+        fwrite(&state_buffer[slot], sizeof(State), 1, f);
+        fclose(f);
+        SDL_Log("[desync] Wrote full State (%zu bytes) to %s", sizeof(State), path);
+    }
+}
+
+#ifdef ENABLE_NETPLAY_TESTS
+/* === Test-only trampolines for sparse-save unit tests ===========
+ *
+ * test_sparse_effect_save.c links against the game binary, but the
+ * sparse pack/unpack helpers are file-static. These trampolines expose
+ * them for the round-trip parity tests without leaking the wire format
+ * into the public header. Gated by the same ENABLE_NETPLAY_TESTS macro
+ * as the other Phase 6 test harnesses (test_event_queue, test_room_code,
+ * test_stun_mock). */
+unsigned int Netplay_Test_PackSparseState(unsigned char* out_buf,
+                                          const GameState* gs_src);
+bool Netplay_Test_UnpackSparseState(const unsigned char* in_buf,
+                                    unsigned int in_len);
+
+unsigned int Netplay_Test_PackSparseState(unsigned char* out_buf,
+                                          const GameState* gs_src) {
+    return pack_sparse_state(out_buf, gs_src);
+}
+
+bool Netplay_Test_UnpackSparseState(const unsigned char* in_buf,
+                                    unsigned int in_len) {
+    return unpack_sparse_state(in_buf, in_len);
+}
+#endif

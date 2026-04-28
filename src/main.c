@@ -3,7 +3,10 @@
 #include "args.h"
 #include "common.h"
 #include "configuration.h"
+#include "netplay/direct_p2p.h"
+#include "netplay/direct_p2p_handoff.h"
 #include "netplay/netplay.h"
+#include "netplay/netplay_nav.h"
 #include "port/sdl/sdl_app.h"
 #include "port/sdl/sdl_game_renderer.h"
 #include "sf33rd/AcrSDK/common/mlPAD.h"
@@ -62,6 +65,10 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#if !defined(_WIN32)
+#include <unistd.h>
+#endif
 
 typedef enum MainPhase {
     MAIN_PHASE_INIT,
@@ -102,6 +109,29 @@ static u8* mppMalloc(u32 size) {
     return flAllocMemory(size);
 }
 
+// Signal-safe: emit "[3sx] signal N\n" to stderr. Uses write() + manual
+// itoa because fprintf/printf are not async-signal-safe. Logs only once
+// per fatal-class signal so we can distinguish wrapper-kill (SIGTERM)
+// from internal abort in post-mortem wrapper logs.
+#if !defined(_WIN32)
+static void log_shutdown_signal_safe(int signo) {
+    char buf[32];
+    static const char prefix[] = "[3sx] signal ";
+    size_t pos = 0;
+    memcpy(buf, prefix, sizeof(prefix) - 1);
+    pos += sizeof(prefix) - 1;
+
+    int n = signo;
+    if (n < 0) { buf[pos++] = '-'; n = -n; }
+    char digits[8];
+    int d = 0;
+    do { digits[d++] = (char)('0' + (n % 10)); n /= 10; } while (n > 0 && d < (int)sizeof(digits));
+    while (d > 0) { buf[pos++] = digits[--d]; }
+    buf[pos++] = '\n';
+    (void)!write(STDERR_FILENO, buf, pos);
+}
+#endif
+
 static void on_shutdown_signal(int signo) {
     if (signo == SIGUSR1) {
         fps_toggle_requested = 1;
@@ -140,6 +170,9 @@ static void on_shutdown_signal(int signo) {
     }
 #endif
 
+#if !defined(_WIN32)
+    log_shutdown_signal_safe(signo);
+#endif
     shutdown_signal = signo;
 }
 
@@ -180,15 +213,124 @@ static void restore_shutdown_signal_handlers() {
 
 // Initialization
 
+#if defined(ENABLE_NETPLAY)
+/*
+ * Step 9 of docs/plan-stun-direct-p2p.md — Resolve the handoff source
+ * path (CLI flag takes priority, config-default HANDOFF_PATH is the
+ * fallback). Returns NULL when there's nothing to dispatch.
+ */
+static const char* resolve_direct_p2p_handoff_path(void) {
+    if (configuration.netplay.direct_p2p_handoff_set) {
+        return configuration.netplay.direct_p2p_handoff_path;
+    }
+    const char* cfg_path = DirectP2PHandoff_ConfigDefaultPath();
+    if (cfg_path == NULL || cfg_path[0] == '\0') {
+        return NULL;
+    }
+    if (!DirectP2PHandoff_FileExists(cfg_path)) {
+        return NULL;
+    }
+    return cfg_path;
+}
+
+/*
+ * Step 9 dispatch — read the handoff file, consume it (unlink), then
+ * invoke DirectP2P_BeginHost / DirectP2P_BeginJoin based on the parsed
+ * mode. main.c keeps both call sites visible so the dispatch wiring is
+ * greppable; the parsing itself lives in src/netplay/direct_p2p_handoff.c.
+ */
+static void dispatch_direct_p2p_handoff(void) {
+    const char* path = resolve_direct_p2p_handoff_path();
+    if (path == NULL) {
+        return;
+    }
+
+    DirectP2PHandoff handoff;
+    if (!DirectP2PHandoff_ReadFile(path, &handoff)) {
+        return;
+    }
+
+    /* One-shot: drop the file before we kick off a worker thread so a
+     * mid-session SIGKILL can't leave a stale handoff on disk. The
+     * wrapper's fork/execve ordering guarantees the file was fully
+     * written before this child even started, so unlink-then-dispatch
+     * is race-free. */
+    DirectP2PHandoff_Consume(path);
+
+    switch (handoff.mode) {
+    case DIRECT_P2P_HANDOFF_MODE_HOST:
+        fprintf(stderr, "[direct_p2p_handoff] dispatching Host (port=%d)\n", handoff.port);
+        DirectP2P_BeginHost(handoff.port);
+        break;
+    case DIRECT_P2P_HANDOFF_MODE_JOIN:
+        fprintf(stderr, "[direct_p2p_handoff] dispatching Join (peer_code=%s)\n", handoff.peer_code);
+        DirectP2P_BeginJoin(handoff.peer_code);
+        break;
+    case DIRECT_P2P_HANDOFF_MODE_NONE:
+    default:
+        break;
+    }
+}
+#endif
+
 static void set_netplay_params() {
 #if defined(ENABLE_NETPLAY)
     if (configuration.netplay.p2p_remote_ip != NULL) {
         Netplay_SetParams(configuration.netplay.p2p_local_player, configuration.netplay.p2p_remote_ip);
+        /* Netplay_SetParams already wired remote_ip, so the nav state
+         * machine's NAV_WAIT_ORCHESTRATOR state will see
+         * Netplay_IsRemoteIpSet() true immediately and only gate on
+         * the menu-nav frames above it. */
+        NetplayNav_Arm();
     } else if (configuration.netplay.matchmaking_ip != NULL) {
         Netplay_SetMatchmakingParams(configuration.netplay.matchmaking_ip, configuration.netplay.matchmaking_port);
+    } else {
+        /* Direct-P2P dispatch is deferred to the main game loop tick. The
+         * orchestrator's worker thread publishes state transitions the
+         * overlay renderer reads; if those happen before njUserInit()
+         * completes ppg_Initialize the overlay's SSPutStrPro path hits
+         * an uninitialized sprite bank and segfaults. Initialize the
+         * orchestrator here (no worker spawned) so DirectP2P_Tick has
+         * valid state from frame 0; the actual BeginHost/BeginJoin fires
+         * once on first tick. See defer_direct_p2p_handoff_tick(). */
+        DirectP2P_Init();
+        /* Arm nav ONLY when a handoff file actually exists — a normal
+         * cold OSD launch with no handoff is indistinguishable from the
+         * "netplay requested" case until we check the file system, and
+         * arming nav in the plain-boot case makes "CONNECTING..."
+         * appear and nav synthesize Start presses even though no peer
+         * is coming. resolve_direct_p2p_handoff_path() returns NULL
+         * when neither the --direct-p2p-handoff CLI flag was set nor
+         * the config default path has a file on disk. */
+        if (resolve_direct_p2p_handoff_path() != NULL) {
+            NetplayNav_Arm();
+        }
     }
 #endif
 }
+
+#if defined(ENABLE_NETPLAY)
+/* One-shot: on the first game-loop tick, read the handoff file and kick
+ * off Host/Join. By this point njUserInit() has run and the sprite bank
+ * / ppg list is ready, so any state transition the worker publishes can
+ * be safely rendered by the overlay. */
+static void defer_direct_p2p_handoff_tick(void) {
+    static bool dispatched = false;
+    if (dispatched) return;
+    dispatched = true;
+    if (configuration.netplay.matchmaking_ip != NULL) return;
+    if (configuration.netplay.p2p_remote_ip != NULL) {
+        // LAN/localhost direct-P2P path: Netplay_SetParams already wired
+        // remote_ip/local_port/remote_port via set_netplay_params, and
+        // set_netplay_params() also armed the nav state machine. The nav
+        // module now owns the Netplay_BeginDirectP2P() call — it fires
+        // only after Title -> Mode Select -> Versus have played out via
+        // injected Start presses so char-select init side-effects run.
+        return;
+    }
+    dispatch_direct_p2p_handoff();
+}
+#endif
 
 void cpInitTask() {
     memset(&task, 0, sizeof(task));
@@ -340,7 +482,7 @@ void njUserMain() {
     cpLoopTask();
 
     if ((Game_pause != 0x81) && (Mode_Type == MODE_VERSUS) && (Play_Mode == 1)) {
-        if ((plw[0].wu.operator == 0) && (CPU_Rec[0] == 0) && (Replay_Status[0] == 1)) {
+        if ((plw[0].wu.wu_operator == 0) && (CPU_Rec[0] == 0) && (Replay_Status[0] == 1)) {
             p1sw_0 = 0;
 
             Check_Replay_Status(0, 1);
@@ -351,7 +493,7 @@ void njUserMain() {
             }
         }
 
-        if ((plw[1].wu.operator == 0) && (CPU_Rec[1] == 0) && (Replay_Status[1] == 1)) {
+        if ((plw[1].wu.wu_operator == 0) && (CPU_Rec[1] == 0) && (Replay_Status[1] == 1)) {
             p2sw_0 = 0;
 
             Check_Replay_Status(1, 1);
@@ -441,6 +583,13 @@ static void game_step_0() {
     configure_slow_timer();
 #endif
 
+    /* Drive cold-launch menu navigation for netplay BEFORE p1sw_buff is
+     * latched. The nav state machine may inject SWK_START on this tick;
+     * if it does the rising-edge comparison ~p*sw_1 & p*sw_0 & SWK_START
+     * in Ck_Coin() / Entry_01() / Mode_Select() needs our injected bit
+     * to be present in p*sw_0 (the "current" snapshot). */
+    NetplayNav_Tick();
+
     if ((Play_Mode != 3 && Play_Mode != 1) || (Game_pause != 0x81)) {
         p1sw_1 = p1sw_0;
         p2sw_1 = p2sw_0;
@@ -474,6 +623,10 @@ static void game_step_0() {
         seqsAfterProcess();
         Netplay_TickMatchmaking();
         Netplay_TickDirectP2P();
+#if defined(ENABLE_NETPLAY)
+        defer_direct_p2p_handoff_tick();
+#endif
+        DirectP2P_Tick();
     }
 
     KnjFlush();
@@ -781,8 +934,101 @@ static int loop() {
     return exit_code;
 }
 
+// Phase 6 Step 2: forward-decl of the netplay event-queue test harness
+// (src/netplay/test_event_queue.c). Not in netplay.h — test-only symbol.
+// Only defined when ENABLE_NETPLAY is on; otherwise the CLI flag prints a
+// diagnostic and exits.
+#ifdef ENABLE_NETPLAY
+int Netplay_Test_EventQueue(void);
+// Phase 6 Step 8: forward-decl of the MIST handshake test harness
+// (src/netplay/test_mist_handshake.c). Same gating as above.
+int Netplay_Test_MistHandshake(void);
+// STUN direct P2P Step 2 (docs/plan-stun-direct-p2p.md): forward-decl
+// of the room-code codec test harness (src/netplay/test_room_code.c).
+// Same gating pattern as the other Phase 6 tests — ENABLE_NETPLAY gates
+// TU inclusion, ENABLE_NETPLAY_TESTS inside the TU gates the real body.
+int Netplay_Test_RoomCode(void);
+// STUN direct P2P Step 12 (docs/plan-stun-direct-p2p.md): forward-decl
+// of the STUN mock-server test harness (src/netplay/test_stun_mock.c).
+// Spawns a localhost UDP listener that echoes a crafted Binding Response
+// with XOR-MAPPED-ADDRESS, then verifies the client parses it correctly.
+// Also round-trips Stun_EncodeEndpoint / Stun_DecodeEndpoint.
+int Netplay_Test_StunMock(void);
+// perf(netplay) Option A: forward-decl of the sparse effect-pool save
+// round-trip parity test harness (src/netplay/test_sparse_effect_save.c).
+// Same gating pattern as the other Phase 6 tests.
+int Netplay_Test_SparseEffectSave(void);
+#endif
+
 int main(int argc, const char* argv[]) {
     read_args(argc, argv, &configuration);
+
+    if (configuration.test_netplay_event_queue) {
+#ifdef ENABLE_NETPLAY
+        return Netplay_Test_EventQueue();
+#else
+        fprintf(stderr,
+                "--test-netplay-event-queue requires a build with ENABLE_NETPLAY=ON.\n");
+        return 2;
+#endif
+    }
+
+    if (configuration.test_mist_handshake) {
+#ifdef ENABLE_NETPLAY
+        return Netplay_Test_MistHandshake();
+#else
+        fprintf(stderr,
+                "--test-mist-handshake requires a build with ENABLE_NETPLAY=ON.\n");
+        return 2;
+#endif
+    }
+
+    if (configuration.test_room_code) {
+#ifdef ENABLE_NETPLAY
+        return Netplay_Test_RoomCode();
+#else
+        fprintf(stderr,
+                "--test-room-code requires a build with ENABLE_NETPLAY=ON.\n");
+        return 2;
+#endif
+    }
+
+    if (configuration.test_stun_mock) {
+#ifdef ENABLE_NETPLAY
+        return Netplay_Test_StunMock();
+#else
+        fprintf(stderr,
+                "--test-stun-mock requires a build with ENABLE_NETPLAY=ON.\n");
+        return 2;
+#endif
+    }
+
+    if (configuration.test_sparse_effect_save) {
+#ifdef ENABLE_NETPLAY
+        return Netplay_Test_SparseEffectSave();
+#else
+        fprintf(stderr,
+                "--test-sparse-effect-save requires a build with ENABLE_NETPLAY=ON.\n");
+        return 2;
+#endif
+    }
+
+#if ENABLE_PERF_TELEMETRY
+    /* perf-2 P-2.A: --software-frame-parity-check runs the offline
+     * software-frame parity self-check (32 cases: 2 dst formats x 2
+     * palette flavors x 8 cases) and exits. Requires SDL_Init for
+     * surface allocation but NOT a renderer/window. */
+    if (configuration.perf.software_frame_parity_check) {
+        if (SDLApp_PreInit() != 0) {
+            fprintf(stderr,
+                    "--software-frame-parity-check: SDLApp_PreInit failed.\n");
+            return 2;
+        }
+        const bool ok = SDLApp_RunSoftwareFrameParityCheck();
+        return ok ? 0 : 1;
+    }
+#endif
+
     return loop();
 }
 

@@ -194,12 +194,12 @@ void Game_Manage_1st() {
     Round_Operator[0] = 0;
     Round_Operator[1] = 0;
 
-    if (plw[0].wu.operator) {
+    if (plw[0].wu.wu_operator) {
         Round_Operator[0] = 1;
         Final_Play_Type[0] = Play_Type;
     }
 
-    if (plw[1].wu.operator) {
+    if (plw[1].wu.wu_operator) {
         Round_Operator[1] = 1;
         Final_Play_Type[1] = Play_Type;
     }
@@ -235,7 +235,7 @@ void Game_Manage_1st() {
     if (Is_Training_Mode(Mode_Type)) {
         cpReadyTask(TASK_MENU, Menu_Task);
         task[TASK_MENU].r_no[0] = 7;
-        plw[New_Challenger].wu.operator = 0;
+        plw[New_Challenger].wu.wu_operator = 0;
         Operator_Status[New_Challenger] = 0;
         Lever_LR[0] = 0;
         Lever_LR[1] = 0;
@@ -534,7 +534,7 @@ void Game_Manage_3rd() {
 void setFinishType() {
     if (Play_Type == 0 && Mode_Type == MODE_ARCADE &&
         PL_Wins[Winner_id] >= save_w[Present_Mode].Battle_Number[Play_Type] && VS_Index[Winner_id] > 8 &&
-        plw[Winner_id].wu.operator != 0 && E_Number[Loser_id][0] != 2) {
+        plw[Winner_id].wu.wu_operator != 0 && E_Number[Loser_id][0] != 2) {
         E_Number[Loser_id][0] = 99;
     }
 
@@ -1212,7 +1212,7 @@ s32 Check_Ending() {
         Extra_Break = 0;
         Pause_ID = WINNER;
         End_PL = My_char[WINNER];
-        plw[WINNER].wu.operator = 0;
+        plw[WINNER].wu.wu_operator = 0;
         Operator_Status[WINNER] = 0;
         SsBgmControl(0, 0);
         Control_Time = 481;
@@ -1660,11 +1660,11 @@ void Quick_Entry() {
         return;
     }
 
-    if (plw[LOSER].wu.operator) {
+    if (plw[LOSER].wu.wu_operator) {
         Loser_Sub();
 
         if (Mode_Type != MODE_ARCADE) {
-            plw[LOSER].wu.operator = 1;
+            plw[LOSER].wu.wu_operator = 1;
         }
 
         Be_Continue();
@@ -1700,7 +1700,7 @@ s32 Check_Entry_Again() {
 }
 
 void Loser_Sub() {
-    plw[LOSER].wu.operator = 0;
+    plw[LOSER].wu.wu_operator = 0;
     Operator_Status[LOSER] = 0;
     Sel_PL_Complete[LOSER] = 0;
     Sel_Arts_Complete[LOSER] = 0;
@@ -1956,8 +1956,8 @@ void Game_Manage_12_0() {
 
     Complete_Judgement = 0;
     Music_Fade = 0;
-    Round_Operator[0] = plw[0].wu.operator;
-    Round_Operator[1] = plw[1].wu.operator;
+    Round_Operator[0] = plw[0].wu.wu_operator;
+    Round_Operator[1] = plw[1].wu.wu_operator;
     CP_No[0][0] = 0;
     CP_No[1][0] = 0;
 

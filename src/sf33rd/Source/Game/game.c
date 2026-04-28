@@ -331,7 +331,6 @@ void Game01() {
 
     switch (G_No[2]) {
     case 0:
-        Switch_Screen(1);
         G_No[2] += 1;
         S_No[0] = 0;
         S_No[1] = 0;
@@ -363,7 +362,6 @@ void Game01() {
         break;
 
     case 1:
-        Switch_Screen(1);
         G_No[2] += 1;
         break;
 
@@ -406,21 +404,21 @@ void Game01() {
                 E_No[3] = 0;
             } else {
                 Demo_Time_Stop = 1;
-                plw[0].wu.operator = 0;
+                plw[0].wu.wu_operator = 0;
                 Operator_Status[0] = 0;
-                plw[1].wu.operator = 0;
+                plw[1].wu.wu_operator = 0;
                 Operator_Status[1] = 0;
             }
 
-            if (plw[0].wu.operator != 0) {
+            if (plw[0].wu.wu_operator != 0) {
                 Sel_Arts_Complete[0] = -1;
             }
 
-            if (plw[1].wu.operator != 0) {
+            if (plw[1].wu.wu_operator != 0) {
                 Sel_Arts_Complete[1] = -1;
             }
 
-            if ((plw[0].wu.operator != 0) && (plw[1].wu.operator != 0)) {
+            if ((plw[0].wu.wu_operator != 0) && (plw[1].wu.wu_operator != 0)) {
                 Play_Type = 1;
             } else {
                 Play_Type = 0;
@@ -443,7 +441,6 @@ void Game2_0() {
     s16 ix;
 
     BG_Draw_System();
-    Switch_Screen(0);
 
     if (Check_LDREQ_Clear() == 0) {
         fatal_error("Load queue failed to drain in time");
@@ -461,7 +458,7 @@ void Game2_0() {
     case MODE_VERSUS:
         for (ix = 0; ix < 2; ix++) {
             if (save_w[1].Partner_Type[ix]) {
-                plw[ix].wu.operator = 0;
+                plw[ix].wu.wu_operator = 0;
                 Operator_Status[ix] = 0;
             }
         }
@@ -587,7 +584,6 @@ void Game2_2() {
     s16 i;
 
     BG_Draw_System();
-    Switch_Screen(0);
 
     if (Check_LDREQ_Clear() == 0) {
         fatal_error("Load queue failed to drain in time");
@@ -663,7 +659,6 @@ void Game2_5() {
 
     switch (G_No[3]) {
     case 0:
-        Switch_Screen(0);
         G_No[3] += 1;
         Stop_Update_Score = 0;
         HUD_Shift_Init();
@@ -1135,7 +1130,7 @@ void Game06() {
 
 void Request_Break_Sub(s16 PL_id) {
     if ((Request_Break[PL_id] != 0) && (Ck_Break_Into(0, 0, PL_id) != 0)) {
-        plw[PL_id].wu.operator = 1;
+        plw[PL_id].wu.wu_operator = 1;
         Operator_Status[PL_id] = 1;
     }
 }
@@ -1262,7 +1257,6 @@ void Game08() {
 
     switch (G_No[2]) {
     case 0:
-        Switch_Screen(0);
         G_No[2] = 1;
         Game_pause = 0;
         Final_Result_id = WINNER;
@@ -1301,8 +1295,8 @@ void Game08() {
             E_No[3] = 0;
             Clear_Personal_Data(0);
             Clear_Personal_Data(1);
-            plw[0].wu.operator = 0;
-            plw[1].wu.operator = 0;
+            plw[0].wu.wu_operator = 0;
+            plw[1].wu.wu_operator = 0;
             Operator_Status[0] = 0;
             Operator_Status[1] = 0;
             Last_Player_id = Player_Number = -1;
@@ -1479,7 +1473,6 @@ void Game10() {
 
     switch (G_No[2]) {
     case 0:
-        Switch_Screen(0);
         G_No[2] += 1;
         SC_No[0] = 0;
         SC_No[1] = 0;
@@ -1528,7 +1521,6 @@ void Game11() {
 
     switch (G_No[2]) {
     case 0:
-        Switch_Screen(0);
         G_No[2] += 1;
         SC_No[0] = 0;
         SC_No[1] = 0;
@@ -1871,10 +1863,10 @@ s16 Ck_Coin() {
         ToneDown(0xFF, 0);
         Request_LDREQ_Break();
         G_No[3] = 1;
-        plw[PL_id].wu.operator = 1;
+        plw[PL_id].wu.wu_operator = 1;
         Operator_Status[PL_id] = 1;
         Champion = PL_id;
-        plw[PL_id ^ 1].wu.operator = 0;
+        plw[PL_id ^ 1].wu.wu_operator = 0;
         Operator_Status[PL_id ^ 1] = 0;
         return 0;
     }

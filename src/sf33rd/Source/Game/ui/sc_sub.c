@@ -584,6 +584,16 @@ void SSPutStr(u16 x, u16 y, u8 atr, const s8* str, u16 priority) {
 }
 
 s32 SSPutStrPro(u16 flag, u16 x, u16 y, u8 atr, u32 vtxcol, const char* str) {
+    return SSPutStrProP(flag, x, y, atr, vtxcol, str, 2);
+}
+
+/* Variant that lets the caller pick an explicit priority slot (PrioBase
+ * index). Engine convention: PrioBase index is a Z depth — LOWER index
+ * is closer to camera (drawn in front). PrioBase[0] is used for
+ * transition wipes, [1] sits just above title/HUD layers, [2] is the
+ * HUD / "PRESS ANY BUTTON" default. Priority is clamped to PrioBase
+ * array bounds (128 slots). */
+s32 SSPutStrProP(u16 flag, u16 x, u16 y, u8 atr, u32 vtxcol, const char* str, u16 priority) {
     s32 usex;
     s16 step;
 
@@ -591,10 +601,12 @@ s32 SSPutStrPro(u16 flag, u16 x, u16 y, u8 atr, u32 vtxcol, const char* str) {
         return x;
     }
 
+    if (priority > 127) priority = 127;
+
     ppgSetupCurrentDataList(&ppgScrList);
     njColorBlendingMode(0, 1);
     scrscrntex[0].col = scrscrntex[3].col = vtxcol;
-    scrscrntex[0].z = scrscrntex[3].z = PrioBase[2];
+    scrscrntex[0].z = scrscrntex[3].z = PrioBase[priority];
     njSetPaletteBankNumG(1, atr & 0x3F);
 
     if (flag) {
@@ -1314,7 +1326,12 @@ s32 WipeIn(u8 type) {
 
             for (i = 0; i < 224; i += 8) {
                 wipe_p[0].y = wipe_p[1].y = i;
-                wipe_p[2].y = wipe_p[3].y = ((i + 8) - (WipeLimit + 1));
+                /* WipeLimit=0 must fully cover (8-px bands matching WipeOut's
+                   WipeLimit=7 final state); was (i+8)-(WipeLimit+1), which
+                   started at 7-px bands and exposed 1-px diagonal stripes of
+                   the underlying canvas for a single frame after the bridge
+                   black hold — visible as a blink at the wipe-IN entry. */
+                wipe_p[2].y = wipe_p[3].y = ((i + 8) - WipeLimit);
                 njDrawPolygon2D(&wipe_pc, 4, PrioBase[0], 32);
             }
         } else {
@@ -1323,7 +1340,7 @@ s32 WipeIn(u8 type) {
 
             for (i = -224; i < 384; i += 8) {
                 wipe_p[0].x = i;
-                wipe_p[1].x = ((i + 8) - (WipeLimit + 1));
+                wipe_p[1].x = ((i + 8) - WipeLimit);
                 wipe_p[2].x = 224.0f + wipe_p[0].x;
                 wipe_p[3].x = 224.0f + wipe_p[1].x;
                 njDrawPolygon2D(&wipe_pc, 4, PrioBase[0], 32);

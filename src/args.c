@@ -7,6 +7,7 @@
 #include <SDL3/SDL.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #define EXIT_CODE_RUNTIME_ERROR 1
 
@@ -137,9 +138,14 @@ static void verify_configuration(Configuration* configuration) {
         const NetplayConfiguration* netplay = &configuration->netplay;
         const bool p2p_specified = netplay->p2p_local_player > 0 || netplay->p2p_remote_ip != NULL;
         const bool matchmaking_specified = netplay->matchmaking_ip != NULL || netplay->matchmaking_port != 0;
+        const bool handoff_specified = netplay->direct_p2p_handoff_set;
 
         if (p2p_specified && matchmaking_specified) {
             error_out("Can't specify P2P and matchmaking at the same time.");
+        }
+
+        if (handoff_specified && (p2p_specified || matchmaking_specified)) {
+            error_out("--direct-p2p-handoff cannot be combined with --p2p-* or --matchmaking-* flags.");
         }
 
         if (p2p_specified) {
@@ -166,6 +172,13 @@ static void verify_configuration(Configuration* configuration) {
 }
 
 void read_args(int argc, const char* argv[], Configuration* configuration) {
+#if ENABLE_NETPLAY
+    /* Argparse writes a string option through `const char**`; the fixed-
+     * size `direct_p2p_handoff_path[256]` lives in NetplayConfiguration,
+     * so we bounce the arg through a pointer and copy below. */
+    const char* direct_p2p_handoff_arg = NULL;
+#endif
+
     struct argparse_option options[] = {
         OPT_HELP(),
 
@@ -182,6 +195,13 @@ void read_args(int argc, const char* argv[], Configuration* configuration) {
         OPT_STRING(0, "matchmaking-ip", &configuration->netplay.matchmaking_ip, "Matchmaking server IP.", NULL, 0, 0),
         OPT_INTEGER(
             0, "matchmaking-port", &configuration->netplay.matchmaking_port, "Matchmaking server port.", NULL, 0, 0),
+        OPT_STRING(0,
+                   "direct-p2p-handoff",
+                   &direct_p2p_handoff_arg,
+                   "Read a one-shot direct-P2P handoff file (mode=host|join, port, peer_code) and dispatch DirectP2P_BeginHost/BeginJoin after init. The file is unlinked after a successful read.",
+                   NULL,
+                   0,
+                   0),
 #endif
 
         OPT_GROUP("Diagnostics"),
@@ -193,6 +213,41 @@ void read_args(int argc, const char* argv[], Configuration* configuration) {
                     0,
                     0),
         OPT_BOOLEAN(0, "headless", &configuration->headless, "Run with non-interactive event handling.", NULL, 0, 0),
+        OPT_BOOLEAN(0,
+                    "test-netplay-event-queue",
+                    &configuration->test_netplay_event_queue,
+                    "Run the netplay event-queue test harness and exit.",
+                    NULL,
+                    0,
+                    0),
+        OPT_BOOLEAN(0,
+                    "test-mist-handshake",
+                    &configuration->test_mist_handshake,
+                    "Run the Layer 3 MIST arch-handshake test harness and exit. Requires ENABLE_NETPLAY=ON with -DENABLE_NETPLAY_TESTS.",
+                    NULL,
+                    0,
+                    0),
+        OPT_BOOLEAN(0,
+                    "test-room-code",
+                    &configuration->test_room_code,
+                    "Run the STUN room-code codec test harness and exit. Requires ENABLE_NETPLAY=ON with -DENABLE_NETPLAY_TESTS.",
+                    NULL,
+                    0,
+                    0),
+        OPT_BOOLEAN(0,
+                    "test-stun-mock",
+                    &configuration->test_stun_mock,
+                    "Run the STUN mock-server test harness and exit. Requires ENABLE_NETPLAY=ON with -DENABLE_NETPLAY_TESTS.",
+                    NULL,
+                    0,
+                    0),
+        OPT_BOOLEAN(0,
+                    "test-sparse-effect-save",
+                    &configuration->test_sparse_effect_save,
+                    "Run the sparse effect-pool save round-trip parity tests and exit. Requires ENABLE_NETPLAY=ON with -DENABLE_NETPLAY_TESTS.",
+                    NULL,
+                    0,
+                    0),
 #if ENABLE_PERF_TELEMETRY
         OPT_GROUP("Performance"),
         OPT_INTEGER(0,
@@ -382,6 +437,21 @@ void read_args(int argc, const char* argv[], Configuration* configuration) {
     struct argparse argparse;
     argparse_init(&argparse, options, NULL, 0);
     argparse_parse(&argparse, argc, argv);
+
+#if ENABLE_NETPLAY
+    /* Copy the direct-P2P handoff argv pointer into the fixed buffer and
+     * raise the flag. Longer paths get a hard error because the wrapper
+     * writes into a canonical tmpfs path that's always short; a path
+     * that doesn't fit is a bug in the caller, not silent truncation. */
+    if (direct_p2p_handoff_arg != NULL && direct_p2p_handoff_arg[0] != '\0') {
+        const size_t len = strlen(direct_p2p_handoff_arg);
+        if (len + 1 > sizeof(configuration->netplay.direct_p2p_handoff_path)) {
+            error_out("--direct-p2p-handoff path exceeds 255 bytes.");
+        }
+        memcpy(configuration->netplay.direct_p2p_handoff_path, direct_p2p_handoff_arg, len + 1);
+        configuration->netplay.direct_p2p_handoff_set = true;
+    }
+#endif
 
     verify_configuration(configuration);
 }

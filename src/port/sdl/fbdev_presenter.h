@@ -103,6 +103,10 @@ void FBDevPresenter_SetFPSOverlayText(const char* text);
 /// Used by the native video writer path which bypasses the fbdev presenter.
 void FBDevPresenter_ApplyFPSOverlayToBuffer(Uint32* pixels, int width, int height);
 
+/// perf-2: 565 sibling. Used when the canvas is RGB565 and fed directly to
+/// the native video writer.
+void FBDevPresenter_ApplyFPSOverlayToRGB565Buffer(Uint16* pixels, int width, int height);
+
 /// Human-readable presenter path name for perf output.
 const char* FBDevPresenter_PathName(FBDevPresenterPath path);
 

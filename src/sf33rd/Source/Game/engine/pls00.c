@@ -1700,7 +1700,7 @@ void process_damage(PLW* wk) { // 🟡
             }
 
             if (csw) {
-                if (wk->wu.operator == 0) {
+                if (wk->wu.wu_operator == 0) {
                     Next_Be_Free(wk);
                 }
 

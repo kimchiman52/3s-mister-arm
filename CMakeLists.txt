@@ -264,6 +264,12 @@ if(ENABLE_NETPLAY)
         ${GEKKONET_ROOT}/include
         ${SDL3_NET_ROOT}/include
     )
+    # Direct-P2P Step 4 (docs/plan-stun-direct-p2p.md): miniupnpc for UPnP
+    # port forwarding. pkg-config in the armhf cross sysroot provides the
+    # right -I / -l paths via PkgConfig::MINIUPNPC. HAVE_UPNP is set here
+    # so src/netplay/upnp.c compiles the real backend (not the no-op stub).
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(MINIUPNPC REQUIRED IMPORTED_TARGET miniupnpc)
 endif()
 
 target_link_libraries(3s-arm PRIVATE
@@ -285,7 +291,13 @@ if(ENABLE_NETPLAY)
     target_link_libraries(3s-arm PRIVATE
         "${GEKKONET_ROOT}/lib/libGekkoNet.a"
         "${SDL3_NET_ROOT}/lib/libSDL3_net.a"
+        PkgConfig::MINIUPNPC
     )
+    # Direct-P2P Step 4: HAVE_UPNP flips src/netplay/upnp.c from the no-op
+    # stubs to the miniupnpc-backed implementation. Gated inside the
+    # ENABLE_NETPLAY block so a non-netplay build neither links miniupnpc
+    # nor compiles upnp.c (glob filter excludes src/netplay/*.c above).
+    target_compile_definitions(3s-arm PRIVATE HAVE_UPNP)
 endif()
 
 if(APPLE)
@@ -412,6 +424,23 @@ elseif(UNIX)
 
     file(GLOB SDL3_SO "${SDL3_ROOT}/lib/libSDL3.so*")
     install(FILES ${SDL3_SO} DESTINATION lib)
+
+    if(ENABLE_NETPLAY)
+        # Direct-P2P Step 4 follow-up (docs/plan-stun-direct-p2p.md): the
+        # linked binary has libminiupnpc.so.17 in its NEEDED list and the
+        # MiSTer rootfs does not ship it. pkg_check_modules populated
+        # MINIUPNPC_LIBRARY_DIRS with the armhf cross sysroot libdir
+        # (e.g. /usr/lib/arm-linux-gnueabihf). Glob the SONAME symlink
+        # plus versioned real file and stage both under lib/ so the
+        # runtime sits next to libSDL3.so*.
+        foreach(_mu_dir IN LISTS MINIUPNPC_LIBRARY_DIRS)
+            file(GLOB _mu_so "${_mu_dir}/libminiupnpc.so*")
+            if(_mu_so)
+                install(FILES ${_mu_so} DESTINATION lib)
+                break()
+            endif()
+        endforeach()
+    endif()
 
     install(FILES
         ${PROJECT_LICENSE_FILES}

@@ -1,6 +1,7 @@
 #ifndef NETPLAY_GAME_STATE_H
 #define NETPLAY_GAME_STATE_H
 
+#include "sf33rd/Source/Game/effect/effect.h"
 #include "sf33rd/Source/Game/engine/cmb_win.h"
 #include "sf33rd/Source/Game/engine/grade.h"
 #include "sf33rd/Source/Game/engine/plcnt.h"
@@ -8,9 +9,22 @@
 #include "sf33rd/Source/Game/engine/stun.h"
 #include "sf33rd/Source/Game/engine/vital.h"
 #include "sf33rd/Source/Game/engine/workuser.h"
+#include "sf33rd/Source/Game/select_timer.h"
 #include "sf33rd/Source/Game/stage/bg.h"
 #include "structs.h"
 #include "types.h"
+
+#include <stdint.h>
+
+typedef struct EffectState {
+    s16 frwctr;
+    s16 frwctr_min;
+    s16 head_ix[8];
+    s16 tail_ix[8];
+    s16 exec_tm[8];
+    uintptr_t frw[EFFECT_MAX][448];
+    s16 frwque[EFFECT_MAX];
+} EffectState;
 
 typedef struct GameState {
     bool Scene_Cut;
@@ -25,6 +39,8 @@ typedef struct GameState {
     u8 counter_color;
     bool mugen_flag;
     s8 hoji_counter;
+
+    SelectTimerState select_timer_state;
 
     u8 Order[148];
     u8 Order_Timer[148];
@@ -515,6 +531,24 @@ typedef struct GameState {
     // bg
 
     BG bg_w;
+    u16 Screen_Switch;
+    u16 Screen_Switch_Buffer;
+    u8 rw_num;
+    u8 rw_bg_flag[4];
+    u8 tokusyu_stage;
+    s32 rw_gbix[13];
+    s8 stage_flash;
+    s8 stage_ftimer;
+    s32 yang_ix_plus;
+    s8 yang_ix;
+    s8 yang_timer;
+    u8 ending_flag;
+    BackgroundParameters end_prm[8];
+    u8 gouki_end_gbix[16];
+    const u32* rw3col_ptr;
+    u8 bg_disp_off;
+    s32 bgPalCodeOffset[8];
+    RW_DATA rw_dat[20];
 
     // charset
 
@@ -637,9 +671,127 @@ typedef struct GameState {
     s16 old_mes_no3;
     s16 old_mes_no_pl;
     s16 mes_timer;
+
+    // work_sys — rollback-critical system globals
+
+    BG_POS bg_pos[8];
+    FM_POS fm_pos[8];
+    BackgroundParameters bg_prm[8];
+    u32 system_timer;
+    s8 Gill_Appear_Flag;
+
+    // plcnt — DIP switch combat config
+
+    char cmd_sel[2];
+    char no_sa[2];
+
+    // sc_sub
+
+    s16 Hnc_Num;
+
+    // ending
+
+    END_W end_w;
+
+    // work_sys (extension)
+
+    f32 scr_sc;
+    s32 X_Adjust;
+    s32 Y_Adjust;
+
+    // Additional globals
+
+    MTX BgMATRIX[9];
+    struct _VM_W vm_w;
+    _EXTRA_OPTION ck_ex_option;
+    s32 X_Adjust_Buff[3];
+    s32 Y_Adjust_Buff[3];
+
+    /* EX-SA chain-ex gating flag. Per-player-per-gauge-index flag set when
+     * an EX-SA chain fires (pls03.c:169,211,276) and cleared on many SA
+     * state transitions (plcnt.c:1418, called from ~20 sites in pls00.c).
+     * Previously a file-static in sysdir.c that escaped rollback, causing
+     * desync on Mac↔Mac loopback + latency after ~15s of play. Added to
+     * GameState on 2026-04-24 so save/restore covers it. */
+    u8 chainex_check[2][36];
 } GameState;
+
+typedef struct State {
+    GameState gs;
+    EffectState es;
+} State;
+
+/* === Sparse effect-pool save (Option A) ===========================
+ *
+ * The effect work pool (EffectState.frw[128][448]) is 229,376 bytes —
+ * 93% of sizeof(State) on 32-bit. Empirical telemetry on stock MiSTer
+ * (Pk<N> overlay) recorded a peak of 57 simultaneously-active slots
+ * across full-roster super-art-heavy sessions. With 71 of 128 slots
+ * idle on average and the canonical "inactive" predicate (`be_flag==0`,
+ * with linked-list head_ix[8] as ground truth), we can serialize only
+ * the active slots and reconstruct the rest on load.
+ *
+ * SPARSE_CEILING_SLOTS  — worst-case # of active slots Gekko's ring
+ * sizes for. 70 ≈ 1.23 × empirical peak (deliberately tight). At save
+ * time, an active count > SPARSE_CEILING_SLOTS triggers the full-state
+ * fallback path (see save_current_state in game_state.c).
+ *
+ * SPARSE_FRW_SLOT_BYTES — per-slot payload size (matches the inner
+ * uintptr_t[448] dimension on either bitness). Wire-stable on a single
+ * peer; cross-arch netplay isn't supported so 32 vs 64 doesn't matter
+ * to interop.
+ *
+ * SPARSE_HEADER_BYTES   — fixed-size prefix: scalar EffectState
+ * fields + an active_mask + active_count.
+ *
+ * SPARSE_CEILING_BYTES  — buffer ceiling (sizeof(GameState) +
+ * SPARSE_HEADER_BYTES + 70 × SPARSE_FRW_SLOT_BYTES). Used as
+ * gekko_start config.state_size so the rollback ring buffer shrinks
+ * proportionally. Each Gekko save still reports its own variable
+ * state_len via GekkoSave.state_len, so the ceiling is just a max.
+ */
+#define SPARSE_CEILING_SLOTS 82
+#define SPARSE_FRW_SLOT_BYTES (sizeof(uintptr_t) * 448)
+/* Fixed-size header on the wire. Lays out frwctr/frwctr_min,
+ * head_ix/tail_ix/exec_tm/frwque, active_mask[16] (128-bit), and
+ * active_count (u16). Layout keeps strict 16-byte mask alignment
+ * after the s16 arrays so reading on either side of a save/load is
+ * trivially memcpy. The exact byte breakdown:
+ *   2 (frwctr) + 2 (frwctr_min)                         =   4
+ *   2*8 (head_ix) + 2*8 (tail_ix) + 2*8 (exec_tm)       =  48
+ *   2*128 (frwque)                                       = 256
+ *   16 (active_mask) + 2 (active_count) + 2 (pad)       =  20
+ *   total                                                = 328
+ */
+#define SPARSE_HEADER_BYTES 328
+#define SPARSE_CEILING_BYTES (sizeof(GameState) + SPARSE_HEADER_BYTES + \
+                              SPARSE_CEILING_SLOTS * SPARSE_FRW_SLOT_BYTES)
 
 void GameState_Save(GameState* dst);
 void GameState_Load(const GameState* src);
+
+// Rollback save/load public API (Track A Phase 3). These mirror 3sxtra's
+// signatures in /tmp/3sxtra/src/include/game_state.h:787-800.
+struct GekkoGameEvent;
+uint32_t save_current_state(void* buffer, int frame);
+void save_state(const struct GekkoGameEvent* event);
+void load_state(const struct State* src);
+void load_state_from_event(const struct GekkoGameEvent* event);
+
+/* Runtime kill switch for the sparse effect-pool save path (Option A).
+ * Defaults to true. When false, gather_state writes a full sizeof(State)
+ * blob exactly as the legacy path did, and load_state walks the matching
+ * format back in. The wire format is self-describing via state_len so
+ * mid-session toggles are safe (although the user-facing config knob is
+ * read once at startup, not per-frame). */
+void Netplay_SetSparseEffectSaveEnabled(bool enabled);
+bool Netplay_GetSparseEffectSaveEnabled(void);
+
+/* Promoted out of #if DEBUG 2026-04-26 so telemetry builds dump on desync.
+ * The ring buffers it reads (state_buffer, saved_section_checksums,
+ * saved_plw_scratch, saved_field_hashes) are populated unconditionally
+ * inside save_current_state(); the dump itself is a once-per-session,
+ * post-disconnect operation so it has no per-frame perf cost. */
+void dump_desync_state(int frame, uint32_t local_checksum, uint32_t remote_checksum);
 
 #endif

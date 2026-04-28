@@ -59,12 +59,6 @@ static bool file_exists(const char* path) {
 }
 
 #if defined(ENABLE_ISO_IMPORT)
-static bool check_if_file_present(const char* filename) {
-    char* file_path = Resources_GetPath(filename);
-    const bool result = file_exists(file_path);
-    SDL_free(file_path);
-    return result;
-}
 static void create_resources_directory() {
     char* path = Resources_GetPath(NULL);
     SDL_CreateDirectory(path);

@@ -85,11 +85,13 @@ rm -rf "${OUTPUT_DIR}"
 mkdir -p "${OUTPUT_DIR}/_Other" "${OUTPUT_DIR}/games/3s-arm"
 
 cp "${HPS_BINARY}" "${OUTPUT_DIR}/MiSTer_3S-ARM"
-cp "${CORE_RBF}" "${OUTPUT_DIR}/_Other/3S-ARM.rbf"
+core_date="$(date -r "${CORE_RBF}" +%Y%m%d)"
+core_dst="${OUTPUT_DIR}/_Other/3S-ARM_${core_date}.rbf"
+cp "${CORE_RBF}" "${core_dst}"
 rsync -a "${RUNTIME_PACKAGE%/}/" "${OUTPUT_DIR}/games/3s-arm/"
 
 chmod +x "${OUTPUT_DIR}/MiSTer_3S-ARM"
 
 echo "packaged_root=${OUTPUT_DIR}"
 echo "packaged_hps=${OUTPUT_DIR}/MiSTer_3S-ARM"
-echo "packaged_core=${OUTPUT_DIR}/_Other/3S-ARM.rbf"
+echo "packaged_core=${core_dst}"

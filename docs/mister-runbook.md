@@ -100,6 +100,18 @@ Build flavors:
 - `telemetry` is the developer/default flavor. It keeps `--perf-*`, `--software-frame-parity-check`, renderer/presenter breakdown capture, and the optimization workflow.
 - `clean` is the player-facing flavor. It compiles out perf capture CLI/plumbing and the always-on renderer/presenter telemetry bookkeeping used only for measurement.
 
+Netplay builds (experimental, `netplay` integration branch):
+
+- On-device netplay builds need `-DENABLE_NETPLAY=ON` (and, once the Phase 6 RmlUi lobby cascade lands, `-DENABLE_RMLUI=ON`) passed to cmake. See `docs/plan-netplay-port.md` §15 #8 for the `CFG_KEY_NETPLAY_*` runtime-config key convention that goes with these builds.
+- `tools/mister/build-game.sh` forwards an `EXTRA_CMAKE_ARGS` environment variable verbatim to the inner cmake configure step, so the canonical netplay-flavor MiSTer build is:
+
+    ```bash
+    EXTRA_CMAKE_ARGS="-DENABLE_NETPLAY=ON -DENABLE_RMLUI=ON" \
+        tools/mister/build-game.sh --flavor telemetry
+    ```
+
+  The inner build prints the final cmake invocation (including these extra `-D...` flags) so you can confirm they landed in the container log. `PORT_MISTER=ON` still defaults `ENABLE_NETPLAY` and `ENABLE_RMLUI` to OFF (see `CMakeLists.txt:25-42`), so the explicit overrides are required — the opt-in gate is intentional.
+
 Validated dual-flavor Docker build/package commands:
 
 ```bash

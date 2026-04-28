@@ -10,6 +10,19 @@ typedef struct NetplayConfiguration {
     const char* p2p_remote_ip;
     const char* matchmaking_ip;
     int matchmaking_port;
+    /* Step 9 of docs/plan-stun-direct-p2p.md: direct-P2P handoff path.
+     * When `direct_p2p_handoff_set` is true, main() reads the file at
+     * `direct_p2p_handoff_path` after SDL init + DirectP2P_Init and
+     * dispatches BeginHost/BeginJoin based on its contents. The fixed
+     * 256-byte buffer holds the CLI-supplied path; argparse populates
+     * it via a temporary `const char*` pointer copied in
+     * `verify_configuration`. When `direct_p2p_handoff_set` is false,
+     * main() still probes the config-default handoff path
+     * (CFG_KEY_NETPLAY_DIRECT_P2P_HANDOFF_PATH) — if that file exists
+     * the same dispatch runs, so the wrapper can either pass --direct-
+     * p2p-handoff explicitly or drop the file at the default path. */
+    bool direct_p2p_handoff_set;
+    char direct_p2p_handoff_path[256];
 } NetplayConfiguration;
 
 typedef struct TestRunnerConfiguration {
@@ -53,6 +66,42 @@ typedef struct Configuration {
 #endif
     bool probe_renderer_only;
     bool headless;
+    /* Phase 6 Step 2 (docs/plan-netplay-phase6.md): when true, main() runs
+     * the netplay event-queue test harness and exits. Honors the CLI flag
+     * --test-netplay-event-queue. The flag is parsed unconditionally so the
+     * CLI always accepts it, but the actual test is only compiled in when
+     * ENABLE_NETPLAY=ON && ENABLE_NETPLAY_TESTS is defined. OFF builds and
+     * tests-disabled builds print a diagnostic and exit 2 (see main.c
+     * dispatch and src/netplay/test_event_queue.c fallback). */
+    bool test_netplay_event_queue;
+    /* Phase 6 Step 8 (docs/plan-netplay-phase6.md): when true, main() runs
+     * the MIST handshake test harness and exits. Honors the CLI flag
+     * --test-mist-handshake. Parsed unconditionally; the real test body
+     * is only compiled in when ENABLE_NETPLAY=ON && ENABLE_NETPLAY_TESTS
+     * is defined (otherwise the stub returns 2). The test uses a
+     * localhost UDP socket pair; no external network dependency. */
+    bool test_mist_handshake;
+    /* Step 2 of docs/plan-stun-direct-p2p.md: when true, main() runs
+     * the room-code codec test harness and exits. Honors the CLI flag
+     * --test-room-code. Parsed unconditionally; the real test body is
+     * only compiled in when ENABLE_NETPLAY=ON && ENABLE_NETPLAY_TESTS
+     * is defined (otherwise the stub returns 2). The test is pure
+     * in-process — no socket or network dependency. */
+    bool test_room_code;
+    /* Step 12 of docs/plan-stun-direct-p2p.md: when true, main() runs
+     * the STUN mock-server test harness and exits. Honors the CLI flag
+     * --test-stun-mock. Parsed unconditionally; the real test body is
+     * only compiled in when ENABLE_NETPLAY=ON && ENABLE_NETPLAY_TESTS
+     * is defined (otherwise the stub returns 2). The test spins up a
+     * localhost UDP listener that speaks a canned STUN Binding
+     * Response with XOR-MAPPED-ADDRESS; no external network dep. */
+    bool test_stun_mock;
+    /* Sparse effect-pool save Option A — round-trip parity tests for the
+     * pack/unpack helpers in src/netplay/game_state.c. Honors the CLI flag
+     * --test-sparse-effect-save. Parsed unconditionally; real body is
+     * gated by ENABLE_NETPLAY=ON && ENABLE_NETPLAY_TESTS, otherwise the
+     * stub returns 2. Pure in-process — no GekkoNet session required. */
+    bool test_sparse_effect_save;
 } Configuration;
 
 #endif

@@ -154,7 +154,7 @@ if [ "${cross_build}" -eq 1 ]; then
 set -euxo pipefail
 dpkg --add-architecture armhf
 apt-get update
-apt-get install -y gcc-arm-linux-gnueabihf binutils-arm-linux-gnueabihf libc6-dev-armhf-cross libstdc++-10-dev-armhf-cross libasound2-dev:armhf zlib1g-dev:armhf
+apt-get install -y gcc-arm-linux-gnueabihf binutils-arm-linux-gnueabihf libc6-dev-armhf-cross libstdc++-10-dev-armhf-cross libasound2-dev:armhf zlib1g-dev:armhf libminiupnpc-dev:armhf
 "
 fi
 

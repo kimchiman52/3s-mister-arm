@@ -1,17 +1,179 @@
 diff --git a/menu.cpp b/menu.cpp
-index a8d8bd8..04de3ac 100644
+index a8d8bd8..e0aeac8 100644
 --- a/menu.cpp
 +++ b/menu.cpp
-@@ -120,6 +120,8 @@ enum MENU
+@@ -66,6 +66,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ #include "profiling.h"
+ #include "str_util.h"
+ #include "autofire.h"
++#include "thirdsarm_wrapper.h"
+ 
+ /*menu states*/
+ enum MENU
+@@ -120,6 +121,15 @@ enum MENU
  	MENU_LGCAL,
  	MENU_LGCAL1,
  	MENU_LGCAL2,
 +	MENU_BTNCHECK,
 +	MENU_BTNCHECK1,
++	MENU_DIRECT_P2P_ROOT,
++	MENU_DIRECT_P2P_ROOT1,
++	MENU_DIRECT_P2P_JOIN_ENTRY,
++	MENU_DIRECT_P2P_JOIN_ENTRY1,
++	MENU_DIRECT_P2P_JOIN_RECENT,
++	MENU_DIRECT_P2P_JOIN_RECENT1,
++	MENU_DIRECT_P2P_CONFIRM,
  	MENU_PROHIB_BTPAIR2,
  
  	MENU_SCRIPTS_PRE,
-@@ -2468,6 +2470,12 @@ void HandleUI(void)
+@@ -1066,6 +1074,146 @@ void build_advanced_map_summary(advancedButtonMap *abm, char *dest_str, size_t d
+ 	snprintf(dest_str, dest_size, "%s->%s", input_str, output_str);
+ }
+ 
++/* ------------------------------------------------------------------
++ * Direct-P2P OSD state (Step 10 of docs/plan-stun-direct-p2p.md)
++ *
++ * Process-local state backing the "Direct P2P" submenu. The peer-code
++ * buffer holds the 11-char ISO 7064 code (no dashes) being assembled
++ * via the on-screen keyboard below.
++ *
++ * Power-user knobs (CFG_KEY_NETPLAY_DIRECT_P2P_HOST_PORT and
++ * CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_UPNP) live in config.ini and are
++ * deliberately NOT exposed in the OSD — the default Host/Join flow is
++ * all the typical user sees. See docs/config.md.
++ *
++ * OSK layout: 6 columns x 7 rows. The first 6 rows spell out 0-9A-Z
++ * (36 chars) in order; row 6 holds the two action cells "BS" (erase
++ * last char) and "OK" (commit + transition to MENU_DIRECT_P2P_CONFIRM).
++ * All 11 code chars use the ISO 7064 MOD 37,36 alphabet (0-9A-Z) so
++ * every cell is needed — cannot drop I/L/O/U since the 11th (check)
++ * char may legally land on any of those.
++ * ------------------------------------------------------------------ */
++static int      g_dp2p_confirm_is_join = 0;
++
++static char     g_dp2p_code_buf[16];  /* 11 chars + slack + NUL */
++static int      g_dp2p_code_len     = 0;
++static int      g_dp2p_osk_row      = 0;
++static int      g_dp2p_osk_col      = 0;
++static int      g_dp2p_recent_sel   = 0;  /* cursor in Recently Joined list */
++
++#define DP2P_OSK_ROWS 7
++#define DP2P_OSK_COLS 6
++#define DP2P_CODE_CHAR_LEN 11
++#define DP2P_RECENT_MAX 10
++
++/* Row-major alphabet (0-9A-Z) then action cells on the final row. */
++static const char *direct_p2p_osk_cell(int row, int col)
++{
++	static char single[2] = {0, 0};
++	if (row >= 0 && row < 6)
++	{
++		int idx = row * DP2P_OSK_COLS + col; /* 0..35 */
++		if (idx < 10)
++		{
++			single[0] = (char)('0' + idx);
++			return single;
++		}
++		single[0] = (char)('A' + (idx - 10));
++		return single;
++	}
++	if (row == 6)
++	{
++		if (col == 0) return "BS";
++		if (col == 1) return "OK";
++		return " ";
++	}
++	return " ";
++}
++
++static char direct_p2p_osk_char_at(int row, int col)
++{
++	const char *c = direct_p2p_osk_cell(row, col);
++	if (strlen(c) == 1) return c[0];
++	return 0;
++}
++
++/* Dispatched from MENU_DIRECT_P2P_JOIN_ENTRY1 when the user presses A.
++ * Defined below (after the format helper) because it references the
++ * MENU_* enum values declared above and the file-scope `menustate`. */
++static void direct_p2p_osk_select(void);
++
++/* Compose the partial-code display line "   ABCDEFGH-IJK" with
++ * unfilled positions replaced by '_'. Writes NUL-terminated into out.
++ * The single dash at position 8 mirrors RoomCode_Encode's display
++ * layout (8-char prefix, dash, 2 payload chars + check digit). */
++static void direct_p2p_format_entry_display(char *out, size_t out_cap)
++{
++	size_t o = 0;
++	if (out_cap < 4) { if (out_cap) out[0] = '\0'; return; }
++	out[o++] = ' '; out[o++] = ' '; out[o++] = ' ';
++	for (int i = 0; i < DP2P_CODE_CHAR_LEN && o + 2 < out_cap; i++)
++	{
++		if (i == 8) out[o++] = '-';
++		if (i < g_dp2p_code_len) out[o++] = g_dp2p_code_buf[i];
++		else out[o++] = '_';
++	}
++	if (o < out_cap) out[o] = '\0';
++	else out[out_cap - 1] = '\0';
++}
++
++static void direct_p2p_osk_select(void)
++{
++	if (g_dp2p_osk_row == 6 && g_dp2p_osk_col == 0)
++	{
++		/* Backspace */
++		if (g_dp2p_code_len > 0)
++		{
++			g_dp2p_code_len--;
++			g_dp2p_code_buf[g_dp2p_code_len] = '\0';
++		}
++		menustate = MENU_DIRECT_P2P_JOIN_ENTRY;
++		return;
++	}
++	if (g_dp2p_osk_row == 6 && g_dp2p_osk_col == 1)
++	{
++		/* OK: commit only if the buffer holds a full 11-char code.
++		 * Checksum validation happens in the game via RoomCode_Decode
++		 * (Step 9 reader path); the wrapper forwards verbatim. */
++		if (g_dp2p_code_len == DP2P_CODE_CHAR_LEN)
++		{
++			g_dp2p_code_buf[g_dp2p_code_len] = '\0';
++			g_dp2p_confirm_is_join = 1;
++			menustate = MENU_DIRECT_P2P_CONFIRM;
++		}
++		return;
++	}
++	/* Alphanumeric cell. */
++	char ch = direct_p2p_osk_char_at(g_dp2p_osk_row, g_dp2p_osk_col);
++	if (!ch) return;
++	if (g_dp2p_code_len < DP2P_CODE_CHAR_LEN)
++	{
++		g_dp2p_code_buf[g_dp2p_code_len++] = ch;
++		g_dp2p_code_buf[g_dp2p_code_len] = '\0';
++	}
++	menustate = MENU_DIRECT_P2P_JOIN_ENTRY;
++}
++
++/* Render an epoch delta as a short "Xm/h/d ago" string or "just now" /
++ * "(unknown)" sentinel. Sized to fit alongside an 11-char code on a
++ * 28-column OSD row in the Recently Joined list. */
++static void direct_p2p_format_ago(long epoch, char *out, size_t out_cap)
++{
++	if (!out || out_cap == 0) return;
++	if (epoch <= 0) { snprintf(out, out_cap, "(unknown)"); return; }
++	long now = (long)time(NULL);
++	long delta = now - epoch;
++	if (delta < 0) delta = 0;
++	if (delta < 60)         snprintf(out, out_cap, "just now");
++	else if (delta < 3600)  snprintf(out, out_cap, "%ldm ago", delta / 60);
++	else if (delta < 86400) snprintf(out, out_cap, "%ldh ago", delta / 3600);
++	else                    snprintf(out, out_cap, "%ldd ago", delta / 86400);
++}
++
+ void HandleUI(void)
+ {
+ 	PROFILE_FUNCTION();
+@@ -2468,6 +2598,16 @@ void HandleUI(void)
  							int ex = (p[0] == 't') || (p[0] == 'r');
  							if (user_io_status_bits(p + 1, &bit, 0, ex) == 1)
  							{
@@ -19,12 +181,16 @@ index a8d8bd8..04de3ac 100644
 +								{
 +									menustate = MENU_BTNCHECK;
 +								}
++								else if (bit == 29 && p[0] == 'T')
++								{
++									menustate = MENU_DIRECT_P2P_ROOT;
++								}
 +								else
 +								{
  								const char *opt = p + 1;
  								if (!bit && (is_x86() || is_pcxt()))
  								{
-@@ -2506,6 +2514,7 @@ void HandleUI(void)
+@@ -2506,6 +2642,7 @@ void HandleUI(void)
  									menustate = MENU_GENERIC_MAIN1;
  									if (p[0] == 'R' || p[0] == 'r') menustate = MENU_NONE1;
  								}
@@ -32,24 +198,27 @@ index a8d8bd8..04de3ac 100644
  							}
  						}
  					}
-@@ -2750,14 +2759,12 @@ void HandleUI(void)
+@@ -2749,17 +2886,15 @@ void HandleUI(void)
+ 			parentstate = MENU_COMMON1;
  			int n;
-
+ 
 +			if (menusub == 0) menusub = 2;
  			while(1)
  			{
  				n = 0;
 -				menumask = 0x7805d;
 +				menumask = 0x7805c;
-
+ 
  				if (!menusub) firstmenu = 0;
  				adjvisible = 0;
-
+ 
 -				MenuWrite(n++, " Core                      \x16", menusub == 0, 0);
 -				MenuWrite(n++);
 -
  				if (cfg.osd_lock[0] && !cfg.osd_lock_time)
-@@ -6608,7 +6617,7 @@ void HandleUI(void)
+ 				{
+ 					MenuWrite(n++, " Lock OSD", menusub == 1, 0);
+@@ -6608,7 +6760,7 @@ void HandleUI(void)
  		/* system menu */
  		/******************************************************************/
  	case MENU_SYSTEM1:
@@ -58,7 +227,7 @@ index a8d8bd8..04de3ac 100644
  		{
  			menustate = MENU_NONE1;
  			break;
-@@ -6851,6 +6860,115 @@ void HandleUI(void)
+@@ -6851,6 +7003,352 @@ void HandleUI(void)
  		}
  		break;
  
@@ -168,6 +337,243 @@ index a8d8bd8..04de3ac 100644
 +				input_btncheck_active = 0;
 +				menustate = MENU_GENERIC_MAIN1;
 +			}
++		}
++		break;
++
++	/* ------------------------------------------------------------------
++	 * Direct-P2P OSD submenu (Step 10 of docs/plan-stun-direct-p2p.md).
++	 *
++	 * ROOT:   three-entry menu — Host Game, Join Game, Exit. The Host
++	 *         Port editor and Disable UPnP toggle that used to live
++	 *         here are available to power users through config.ini
++	 *         (CFG_KEY_NETPLAY_DIRECT_P2P_HOST_PORT /
++	 *         CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_UPNP); we keep the OSD
++	 *         minimal so the default Host/Join flow is one button press.
++	 * JOIN_ENTRY: 6x7 on-screen keyboard; A selects a cell, Dpad moves.
++	 *         Row 6 holds the BS / OK action cells. OK commits when the
++	 *         buffer holds a full 11-char code.
++	 * CONFIRM: write the handoff file (direct_p2p_handoff_host/join)
++	 *         then close the OSD. Step 11 handles the argv injection
++	 *         at the subsequent exec.
++	 * ------------------------------------------------------------------ */
++	case MENU_DIRECT_P2P_ROOT:
++		{
++			helptext_idx = 0;
++			OsdSetSize(16);
++			OsdSetTitle("Play Online", 0);
++			menustate = MENU_DIRECT_P2P_ROOT1;
++			parentstate = MENU_DIRECT_P2P_ROOT;
++			menumask = 0x0F;
++			int n = 0;
++			MenuWrite(n++);
++			MenuWrite(n++, " Host Game", menusub == 0, 0);
++			MenuWrite(n++, " Join Game", menusub == 1, 0);
++			MenuWrite(n++, " Recently Joined           \x16", menusub == 2, 0);
++			while (n < OsdGetSize() - 1) MenuWrite(n++);
++			MenuWrite(n++, STD_EXIT, menusub == 3, 0);
++		}
++		break;
++
++	case MENU_DIRECT_P2P_ROOT1:
++		if (menu)
++		{
++			menustate = MENU_NONE1;
++		}
++		else if (back)
++		{
++			menustate = MENU_COMMON1;
++			menusub = 5;
++		}
++		else if (select)
++		{
++			switch (menusub)
++			{
++			case 0:  /* Host Game */
++				g_dp2p_confirm_is_join = 0;
++				menustate = MENU_DIRECT_P2P_CONFIRM;
++				break;
++			case 1:  /* Join Game */
++				memset(g_dp2p_code_buf, 0, sizeof(g_dp2p_code_buf));
++				g_dp2p_code_len = 0;
++				g_dp2p_osk_row = 0;
++				g_dp2p_osk_col = 0;
++				menustate = MENU_DIRECT_P2P_JOIN_ENTRY;
++				break;
++			case 2:  /* Recently Joined */
++				g_dp2p_recent_sel = 0;
++				menustate = MENU_DIRECT_P2P_JOIN_RECENT;
++				break;
++			case 3:  /* Exit */
++				menustate = MENU_COMMON1;
++				menusub = 5;
++				break;
++			default:
++				break;
++			}
++		}
++		break;
++
++	case MENU_DIRECT_P2P_JOIN_ENTRY:
++		{
++			helptext_idx = 0;
++			OsdSetSize(16);
++			OsdSetTitle("Join: enter code", 0);
++			menustate = MENU_DIRECT_P2P_JOIN_ENTRY1;
++			parentstate = MENU_DIRECT_P2P_JOIN_ENTRY;
++			menumask = 0;
++			int n = 0;
++			direct_p2p_format_entry_display(s, sizeof(s));
++			OsdWrite(n++, s);
++			OsdWrite(n++);
++			for (int row = 0; row < DP2P_OSK_ROWS; row++)
++			{
++				char *w = s;
++				*w++ = ' '; *w++ = ' '; *w++ = ' ';
++				for (int col = 0; col < DP2P_OSK_COLS; col++)
++				{
++					int hl = (row == g_dp2p_osk_row && col == g_dp2p_osk_col);
++					if (hl) *w++ = '\x0c';
++					const char *cell = direct_p2p_osk_cell(row, col);
++					size_t clen = strlen(cell);
++					memcpy(w, cell, clen); w += clen;
++					if (hl) *w++ = '\x0c';
++					*w++ = ' ';
++					if (clen == 1) *w++ = ' ';
++				}
++				*w = '\0';
++				OsdWrite(n++, s);
++			}
++			OsdWrite(n++);
++			OsdWrite(n++, "  Dpad: move  A: select");
++			OsdWrite(n++, "  B/Back: cancel");
++			while (n < OsdGetSize()) OsdWrite(n++);
++		}
++		break;
++
++	case MENU_DIRECT_P2P_JOIN_ENTRY1:
++		if (menu || back)
++		{
++			menustate = MENU_DIRECT_P2P_ROOT;
++			menusub = 1;
++		}
++		else if (up)
++		{
++			g_dp2p_osk_row = (g_dp2p_osk_row + DP2P_OSK_ROWS - 1) % DP2P_OSK_ROWS;
++			menustate = MENU_DIRECT_P2P_JOIN_ENTRY;
++		}
++		else if (down)
++		{
++			g_dp2p_osk_row = (g_dp2p_osk_row + 1) % DP2P_OSK_ROWS;
++			menustate = MENU_DIRECT_P2P_JOIN_ENTRY;
++		}
++		else if (left)
++		{
++			g_dp2p_osk_col = (g_dp2p_osk_col + DP2P_OSK_COLS - 1) % DP2P_OSK_COLS;
++			menustate = MENU_DIRECT_P2P_JOIN_ENTRY;
++		}
++		else if (right)
++		{
++			g_dp2p_osk_col = (g_dp2p_osk_col + 1) % DP2P_OSK_COLS;
++			menustate = MENU_DIRECT_P2P_JOIN_ENTRY;
++		}
++		else if (select)
++		{
++			direct_p2p_osk_select();
++		}
++		break;
++
++	case MENU_DIRECT_P2P_JOIN_RECENT:
++		{
++			helptext_idx = 0;
++			OsdSetSize(16);
++			OsdSetTitle("Recently Joined", 0);
++			menustate = MENU_DIRECT_P2P_JOIN_RECENT1;
++			parentstate = MENU_DIRECT_P2P_JOIN_RECENT;
++			char codes[DP2P_RECENT_MAX][16];
++			long epochs[DP2P_RECENT_MAX];
++			int count = load_recent_joins(codes, epochs, DP2P_RECENT_MAX);
++			if (count == 0)
++			{
++				menumask = 0;
++				int n = 0;
++				OsdWrite(n++);
++				OsdWrite(n++, "  No recent joins yet.");
++				OsdWrite(n++);
++				OsdWrite(n++, "  Use Join Game to dial a");
++				OsdWrite(n++, "  code; it will appear here.");
++				while (n < OsdGetSize() - 1) OsdWrite(n++);
++				OsdWrite(n++, "  B/Back: return");
++			}
++			else
++			{
++				if (g_dp2p_recent_sel >= count) g_dp2p_recent_sel = count - 1;
++				menumask = (1U << count) - 1U;
++				int n = 0;
++				MenuWrite(n++);
++				for (int i = 0; i < count; i++)
++				{
++					char ago[16];
++					direct_p2p_format_ago(epochs[i], ago, sizeof(ago));
++					sprintf(s, " %-11s  %-10s", codes[i], ago);
++					MenuWrite(n++, s, g_dp2p_recent_sel == i, 0);
++				}
++				while (n < OsdGetSize() - 1) MenuWrite(n++);
++				OsdWrite(n++, "  A: join   B/Back: return");
++			}
++		}
++		break;
++
++	case MENU_DIRECT_P2P_JOIN_RECENT1:
++		if (menu || back)
++		{
++			menustate = MENU_DIRECT_P2P_ROOT;
++			menusub = 2;
++		}
++		else if (up || down || select)
++		{
++			char codes[DP2P_RECENT_MAX][16];
++			long epochs[DP2P_RECENT_MAX];
++			int count = load_recent_joins(codes, epochs, DP2P_RECENT_MAX);
++			if (count <= 0) break;
++			if (up)
++			{
++				g_dp2p_recent_sel = (g_dp2p_recent_sel + count - 1) % count;
++				menustate = MENU_DIRECT_P2P_JOIN_RECENT;
++			}
++			else if (down)
++			{
++				g_dp2p_recent_sel = (g_dp2p_recent_sel + 1) % count;
++				menustate = MENU_DIRECT_P2P_JOIN_RECENT;
++			}
++			else if (select)
++			{
++				if (g_dp2p_recent_sel >= 0 && g_dp2p_recent_sel < count)
++				{
++					strncpy(g_dp2p_code_buf, codes[g_dp2p_recent_sel],
++					        sizeof(g_dp2p_code_buf) - 1);
++					g_dp2p_code_buf[sizeof(g_dp2p_code_buf) - 1] = '\0';
++					g_dp2p_code_len = (int)strlen(g_dp2p_code_buf);
++					g_dp2p_confirm_is_join = 1;
++					menustate = MENU_DIRECT_P2P_CONFIRM;
++				}
++			}
++		}
++		break;
++
++	case MENU_DIRECT_P2P_CONFIRM:
++		if (g_dp2p_confirm_is_join)
++			direct_p2p_handoff_join(g_dp2p_code_buf);
++		else
++			direct_p2p_handoff_host();
++		if (g_direct_p2p_handoff_armed)
++		{
++			menustate = MENU_NONE1;
++			menusub = 0;
++		}
++		else
++		{
++			menustate = MENU_DIRECT_P2P_ROOT;
++			menusub = g_dp2p_confirm_is_join ? 1 : 0;
 +		}
 +		break;
 +

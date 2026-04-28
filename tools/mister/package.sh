@@ -39,12 +39,29 @@ elif [ -d "$INSTALL_PREFIX/3S-ARM.app/Contents/Resources/licenses" ]; then
     rsync -a --no-owner --no-group "$INSTALL_PREFIX/3S-ARM.app/Contents/Resources/licenses/" "$OUTPUT_DIR/licenses/"
 fi
 
+if [ -d "$INSTALL_PREFIX/share/3s-arm/assets" ]; then
+    mkdir -p "$OUTPUT_DIR/assets"
+    rsync -a --no-owner --no-group "$INSTALL_PREFIX/share/3s-arm/assets/" "$OUTPUT_DIR/assets/"
+fi
+
 cat > "$OUTPUT_DIR/scripts/run-3s-arm.sh" <<'LAUNCHER'
 #!/bin/sh
 set -eu
 
 SELF_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 APP_DIR="$(CDPATH= cd -- "${SELF_DIR}/.." && pwd)"
+
+# One-shot: ensure net.core.rmem_max is bumped at boot. Uses user-startup.sh
+# so it survives MiSTer OTA updates. Idempotent via the magic marker.
+if [ -w /media/fat/linux/user-startup.sh ] && ! grep -q '# 3S-ARM-NETPLAY-SYSCTL' /media/fat/linux/user-startup.sh 2>/dev/null; then
+    cat >> /media/fat/linux/user-startup.sh <<'SYSCTL_EOF'
+
+# 3S-ARM-NETPLAY-SYSCTL (added by 3s-arm first-run)
+sysctl -w net.core.rmem_max=524288 2>/dev/null || true
+SYSCTL_EOF
+fi
+# Best-effort apply to current boot (no-op if user-startup already ran).
+sysctl -w net.core.rmem_max=524288 2>/dev/null || true
 
 export THIRDSARM_HOME="${THIRDSARM_HOME:-$APP_DIR}"
 export LD_LIBRARY_PATH="$APP_DIR/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
@@ -63,6 +80,14 @@ LOG_DIR="$APP_DIR/logs"
 LOG_PATH="$LOG_DIR/last-run.log"
 
 mkdir -p "$LOG_DIR"
+
+# Rotate the previous session's logs so the next launch preserves them
+# instead of clobbering. This matters for post-mortem on netplay desyncs:
+# when a desync kicks one peer back to title and the wrapper then restarts
+# the runtime, the post-restart truncate would otherwise overwrite the
+# actual netplay-match log we need to root-cause the divergence.
+[ -f "$LOG_PATH" ] && mv -f "$LOG_PATH" "$LOG_DIR/last-run-prev.log" 2>/dev/null || true
+[ -f "$LOG_DIR/backend.log" ] && mv -f "$LOG_DIR/backend.log" "$LOG_DIR/backend-prev.log" 2>/dev/null || true
 
 # Keep OSD launches quiet on the text console; inspect logs/last-run.log for diagnostics.
 {

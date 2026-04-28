@@ -37,6 +37,15 @@ Defaults:
   - linux/arm/v7 is supported when the host has binfmt_misc/QEMU support and you
     explicitly want a native ARM container build.
 
+Environment:
+  EXTRA_CMAKE_ARGS                  Space-separated extra -D... flags forwarded
+                                    verbatim to the inner cmake configure step
+                                    (e.g. 'EXTRA_CMAKE_ARGS="-DENABLE_NETPLAY=ON"').
+                                    Values with embedded whitespace or shell
+                                    quoting are not supported; pass each
+                                    \`-Dkey=value\` as a separate whitespace-
+                                    delimited token.
+
 Outputs:
   telemetry -> build/mister-telemetry-install, build/mister-telemetry-package
   clean     -> build/mister-clean-install, build/mister-clean-package
@@ -97,12 +106,17 @@ require_cmd docker
 
 "${SETUP_CONTAINER_SCRIPT}" --container "${container_name}" --platform "${platform}"
 
-docker exec -i "${container_name}" bash -s -- "${platform}" "${flavor}" "${jobs}" <<'EOF'
+# EXTRA_CMAKE_ARGS is forwarded as a fourth positional into the heredoc below.
+# The heredoc uses <<'EOF' (single-quoted) so host-side variable expansion is
+# disabled; positional args are the only way to smuggle values in.
+docker exec -i "${container_name}" bash -s -- \
+    "${platform}" "${flavor}" "${jobs}" "${EXTRA_CMAKE_ARGS:-}" <<'EOF'
 set -euo pipefail
 
 platform="$1"
 flavor="$2"
 jobs="$3"
+extra_cmake_args="$4"
 llvm_version="${MISTER_LLVM_VERSION:-20}"
 workdir="/work-mister"
 
@@ -144,9 +158,22 @@ build_one() {
     local package_dir="build/mister-${flavor_name}-package"
     local binary_path="${install_dir}/bin/3s-arm"
 
+    # Split EXTRA_CMAKE_ARGS on whitespace into an array so each -D... token
+    # is passed as a distinct argv element (avoids quoting surprises when the
+    # string expands). An empty extra_cmake_args yields a zero-length array;
+    # "${extra_args[@]}" expands to zero words under bash 4.4+ (container
+    # ships bash 5.x), so the cmake invocation below stays well-formed even
+    # when no extras are set.
+    local extra_args=()
+    if [ -n "${extra_cmake_args}" ]; then
+        read -ra extra_args <<< "${extra_cmake_args}"
+    fi
+
+    echo "cmake (final invocation): cmake -S . -B ${build_dir} -DCMAKE_BUILD_TYPE=Release -DPORT_MISTER=ON -DENABLE_PERF_TELEMETRY=${telemetry_flag} ${cmake_target_args[*]-} ${extra_args[*]-}"
     cmake -S . -B "${build_dir}" -DCMAKE_BUILD_TYPE=Release -DPORT_MISTER=ON \
         -DENABLE_PERF_TELEMETRY="${telemetry_flag}" \
-        "${cmake_target_args[@]}"
+        "${cmake_target_args[@]}" \
+        "${extra_args[@]}"
     cmake --build "${build_dir}" --parallel "${jobs}"
     cmake --install "${build_dir}" --prefix "${install_dir}"
     tools/mister/package.sh "${install_dir}" "${package_dir}"

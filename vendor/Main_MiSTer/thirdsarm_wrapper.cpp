@@ -44,6 +44,12 @@ volatile sig_atomic_t g_child_pid = -1;
 
 static MisterJoyShm *g_joy_shm = nullptr;
 
+// Step 10/11 (docs/plan-stun-direct-p2p.md): direct-P2P handoff arm flag.
+// Declared with C linkage in thirdsarm_wrapper.h so the menu/OSD patch
+// (menu.cpp) and this TU see the same symbol. Defined here at namespace
+// scope (NOT inside the anonymous namespace) so it matches the header.
+extern "C" int g_direct_p2p_handoff_armed = 0;
+
 namespace {
 
 constexpr const char *kCoreName = "3S-ARM";
@@ -59,6 +65,7 @@ constexpr const char *kRuntimeScaleModeExplicitMarker = "# thirdsarm-wrapper-sca
 constexpr const char *kRuntimeScaleModeAutoMarker = "# thirdsarm-wrapper-scale-mode-auto";
 constexpr const char *kMenuCore = "menu.rbf";
 constexpr const char *kMenuExec = "MiSTer";
+constexpr const char *kDirectP2PHandoffPath = "/tmp/3s-arm-netplay.handoff";
 constexpr const char *kRuntimeTtySwitchEnv = "THIRDSARM_WRAPPER_USE_TTY2";
 constexpr int kRuntimeFpsToggleSignal = SIGUSR1;
 constexpr int kRuntimeSuperEffectQualityCycleSignal = SIGUSR2;
@@ -2511,6 +2518,238 @@ int wait_for_child(pid_t child, bool service_ui)
 
 }  // namespace
 
+// --- Direct-P2P handoff writers (Step 10 of docs/plan-stun-direct-p2p.md) ---
+//
+// These write the small intent file consumed by the game binary after
+// relaunch. Step 11 will read `g_direct_p2p_handoff_armed` inside the
+// child-fork block and inject `--direct-p2p-handoff <path>` into argv so
+// the game picks up the handoff file.
+
+namespace {
+
+// Arm the handoff flag, ask the wrapper loop to restart the runtime, and
+// SIGTERM the current child so it exits promptly instead of waiting for
+// the user to quit via the game's own menu.
+void direct_p2p_arm_and_restart()
+{
+	g_direct_p2p_handoff_armed = 1;
+	g_wrapper_restart_requested = 1;
+	pid_t pid = (pid_t)g_child_pid;
+	if (pid > 0) kill(pid, SIGTERM);
+}
+
+// On write failure, unlink the partially-written handoff so a subsequent
+// read won't pick up garbage.
+void direct_p2p_cleanup_failure(const char *fn, int err)
+{
+	fprintf(stderr, "[%s] write failed: %s\n", fn, strerror(err));
+	unlink(kDirectP2PHandoffPath);
+	// Do NOT arm the handoff flag or request restart — leave user at OSD.
+}
+
+bool direct_p2p_write_all(int fd, const char *buf, size_t len)
+{
+	while (len)
+	{
+		ssize_t n = write(fd, buf, len);
+		if (n < 0)
+		{
+			if (errno == EINTR) continue;
+			return false;
+		}
+		buf += (size_t)n;
+		len -= (size_t)n;
+	}
+	return true;
+}
+
+// Recent-joins history: persists the last N successfully-handed-off codes
+// so the "Recently Joined" OSD submenu can offer one-tap rejoin. Stored as
+// plain-text "<code> <epoch>\n" per line, most-recent-first. Writes are
+// atomic via tmpfile+rename so a crash mid-write leaves the old file intact.
+constexpr const char *kRecentJoinsDir  = "/media/fat/games/3s-arm/state";
+constexpr const char *kRecentJoinsPath = "/media/fat/games/3s-arm/state/recent_joins.txt";
+constexpr int kRecentJoinsMax = 10;
+constexpr int kRecentCodeBuf  = 16;  // matches g_dp2p_code_buf sizing
+
+struct RecentJoinsBuf
+{
+	char codes[kRecentJoinsMax][kRecentCodeBuf];
+	long epochs[kRecentJoinsMax];
+	int  count;
+};
+
+static int read_recent_joins_file(RecentJoinsBuf *out)
+{
+	out->count = 0;
+	FILE *fp = fopen(kRecentJoinsPath, "r");
+	if (!fp) return 0;
+	char line[128];
+	while (out->count < kRecentJoinsMax && fgets(line, sizeof(line), fp))
+	{
+		char code[kRecentCodeBuf] = {0};
+		long epoch = 0;
+		// Tolerate missing epoch (older format / hand-edit); epoch 0 → "unknown"
+		int got = sscanf(line, "%15s %ld", code, &epoch);
+		if (got < 1) continue;
+		if (!code[0]) continue;
+		int i = out->count++;
+		memcpy(out->codes[i], code, sizeof(out->codes[i]));
+		out->epochs[i] = epoch;
+	}
+	fclose(fp);
+	return out->count;
+}
+
+static bool write_recent_joins_file(const RecentJoinsBuf *in)
+{
+	(void)mkdir(kRecentJoinsDir, 0755);
+	char tmp_path[256];
+	snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", kRecentJoinsPath);
+	FILE *fp = fopen(tmp_path, "w");
+	if (!fp)
+	{
+		fprintf(stderr, "[recent_joins] open(%s): %s\n", tmp_path, strerror(errno));
+		return false;
+	}
+	for (int i = 0; i < in->count; i++)
+	{
+		if (!in->codes[i][0]) continue;
+		fprintf(fp, "%s %ld\n", in->codes[i], in->epochs[i]);
+	}
+	fflush(fp);
+	int fd = fileno(fp);
+	if (fd >= 0) (void)fsync(fd);
+	fclose(fp);
+	if (rename(tmp_path, kRecentJoinsPath) != 0)
+	{
+		fprintf(stderr, "[recent_joins] rename(%s -> %s): %s\n",
+		        tmp_path, kRecentJoinsPath, strerror(errno));
+		unlink(tmp_path);
+		return false;
+	}
+	return true;
+}
+
+}  // namespace
+
+extern "C" int load_recent_joins(char codes_out[][16], long epochs_out[], int max_entries)
+{
+	if (!codes_out || max_entries <= 0) return 0;
+	RecentJoinsBuf buf;
+	int n = read_recent_joins_file(&buf);
+	if (n > max_entries) n = max_entries;
+	for (int i = 0; i < n; i++)
+	{
+		memcpy(codes_out[i], buf.codes[i], 16);
+		if (epochs_out) epochs_out[i] = buf.epochs[i];
+	}
+	return n;
+}
+
+extern "C" void save_recent_join(const char *code)
+{
+	if (!code || !*code) return;
+	size_t clen = strnlen(code, kRecentCodeBuf);
+	if (clen == 0 || clen >= kRecentCodeBuf) return;
+
+	RecentJoinsBuf buf;
+	read_recent_joins_file(&buf);
+
+	// Dedupe: drop any existing entry matching this code. The new entry
+	// is prepended below, so a rejoined code moves to the top instead of
+	// duplicating or getting buried.
+	int write_idx = 0;
+	for (int i = 0; i < buf.count; i++)
+	{
+		if (strncmp(buf.codes[i], code, kRecentCodeBuf) == 0) continue;
+		if (write_idx != i)
+		{
+			memcpy(buf.codes[write_idx], buf.codes[i], kRecentCodeBuf);
+			buf.epochs[write_idx] = buf.epochs[i];
+		}
+		write_idx++;
+	}
+	buf.count = write_idx;
+
+	// Prepend new entry (shift existing entries down by one; drop last if full)
+	int keep = buf.count;
+	if (keep > kRecentJoinsMax - 1) keep = kRecentJoinsMax - 1;
+	for (int i = keep; i > 0; i--)
+	{
+		memcpy(buf.codes[i], buf.codes[i - 1], kRecentCodeBuf);
+		buf.epochs[i] = buf.epochs[i - 1];
+	}
+	memset(buf.codes[0], 0, kRecentCodeBuf);
+	memcpy(buf.codes[0], code, clen);
+	buf.epochs[0] = (long)time(nullptr);
+	buf.count = keep + 1;
+
+	(void)write_recent_joins_file(&buf);
+}
+
+extern "C" void direct_p2p_handoff_host(void)
+{
+	int fd = open(kDirectP2PHandoffPath,
+	              O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC,
+	              S_IRUSR | S_IWUSR);
+	if (fd < 0)
+	{
+		fprintf(stderr, "[direct_p2p_handoff_host] open(%s): %s\n",
+		        kDirectP2PHandoffPath, strerror(errno));
+		return;
+	}
+	static const char kPayload[] = "mode=host\n";
+	if (!direct_p2p_write_all(fd, kPayload, sizeof(kPayload) - 1))
+	{
+		int err = errno;
+		close(fd);
+		direct_p2p_cleanup_failure("direct_p2p_handoff_host", err);
+		return;
+	}
+	(void)fsync(fd);
+	close(fd);
+	direct_p2p_arm_and_restart();
+}
+
+extern "C" void direct_p2p_handoff_join(const char *code)
+{
+	if (!code || !*code)
+	{
+		fprintf(stderr, "[direct_p2p_handoff_join] null/empty code; ignored\n");
+		return;
+	}
+	int fd = open(kDirectP2PHandoffPath,
+	              O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC,
+	              S_IRUSR | S_IWUSR);
+	if (fd < 0)
+	{
+		fprintf(stderr, "[direct_p2p_handoff_join] open(%s): %s\n",
+		        kDirectP2PHandoffPath, strerror(errno));
+		return;
+	}
+	char line[64];
+	int n = snprintf(line, sizeof(line), "mode=join\npeer_code=%s\n", code);
+	if (n <= 0 || n >= (int)sizeof(line))
+	{
+		close(fd);
+		fprintf(stderr, "[direct_p2p_handoff_join] code too long; ignored\n");
+		unlink(kDirectP2PHandoffPath);
+		return;
+	}
+	if (!direct_p2p_write_all(fd, line, (size_t)n))
+	{
+		int err = errno;
+		close(fd);
+		direct_p2p_cleanup_failure("direct_p2p_handoff_join", err);
+		return;
+	}
+	(void)fsync(fd);
+	close(fd);
+	save_recent_join(code);
+	direct_p2p_arm_and_restart();
+}
+
 int thirdsarm_wrapper_run(int argc, char *argv[])
 {
 	const bool forced = force_requested();
@@ -2765,6 +3004,18 @@ int thirdsarm_wrapper_run(int argc, char *argv[])
 			std::vector<char *> child_argv;
 			child_argv.push_back(const_cast<char *>(kRuntimeBinary));
 			for (int i = 2; i < argc; ++i) child_argv.push_back(argv[i]);
+			// Step 11 (docs/plan-stun-direct-p2p.md): if the menu armed the
+			// direct-P2P handoff, inject `--direct-p2p-handoff <path>` so the
+			// game picks up the intent file written by
+			// direct_p2p_handoff_host()/_join(). Appended AFTER the user's
+			// argv[2..] forward and BEFORE the NULL terminator. The parent's
+			// copy of g_direct_p2p_handoff_armed is cleared post-fork so a
+			// subsequent relaunch does not re-inject the flag.
+			if (g_direct_p2p_handoff_armed)
+			{
+				child_argv.push_back(const_cast<char *>("--direct-p2p-handoff"));
+				child_argv.push_back(const_cast<char *>(kDirectP2PHandoffPath));
+			}
 			child_argv.push_back(nullptr);
 
 			execve(kRuntimeBinary, child_argv.data(), environ);
@@ -2776,6 +3027,15 @@ int thirdsarm_wrapper_run(int argc, char *argv[])
 
 		g_child_pid = child;
 		close(err_pipe[1]);
+
+		// Step 11 (docs/plan-stun-direct-p2p.md): consume the armed flag in
+		// the PARENT's address space. The child has its own copy-on-write
+		// copy (which it used just above to build child_argv) and will
+		// execve() momentarily, so clearing here only affects the wrapper's
+		// subsequent relaunch decisions. Without this, a second Host/Join
+		// cycle would re-inject the flag even if the user navigated the OSD
+		// back out of Direct-P2P.
+		g_direct_p2p_handoff_armed = 0;
 
 		int exec_errno = 0;
 		ssize_t exec_read = read(err_pipe[0], &exec_errno, sizeof(exec_errno));

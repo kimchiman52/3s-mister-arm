@@ -309,7 +309,7 @@ void eff09_2000(WORK_Other* ewk) {
 }
 
 void sean_ball_move(WORK_Other* ewk, u16 sw_work) {
-    if (!plw[ewk->master_id].wu.operator) {
+    if (!plw[ewk->master_id].wu.wu_operator) {
         return;
     }
 

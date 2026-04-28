@@ -102,6 +102,40 @@ static Uint32 blend_argb8888(Uint32 dst_pixel, Uint32 src_pixel) {
     return (out_a << 24) | ((Uint32)out_r << 16) | ((Uint32)out_g << 8) | (Uint32)out_b;
 }
 
+/* perf-2 565 sibling of blend_argb8888. The 565 canvas has no alpha
+ * channel, so the generic-α path of blend_argb8888 collapses to the
+ * dst_a==255 fast-path branch -- 854/854 live palettes are binary-α
+ * (item-1 telemetry), so the source is also α ∈ {0,255} in practice
+ * outside ABGR1555 paths. We mirror the dst_a==255 branch only; the
+ * final pack-565 is performed at store time. */
+static Uint16 blend_rgb565(Uint16 dst_pixel, Uint32 src_pixel) {
+    const Uint32 src_a = (src_pixel >> 24) & 0xFFu;
+    if (src_a == 0u) {
+        return dst_pixel;
+    }
+    if (src_a == 255u) {
+        const Uint32 r = (src_pixel >> 16) & 0xFFu;
+        const Uint32 g = (src_pixel >> 8) & 0xFFu;
+        const Uint32 b = src_pixel & 0xFFu;
+        return (Uint16)(((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3));
+    }
+    const Uint32 inv_src_a = 255u - src_a;
+    const Uint32 src_r = (src_pixel >> 16) & 0xFFu;
+    const Uint32 src_g = (src_pixel >> 8) & 0xFFu;
+    const Uint32 src_b = src_pixel & 0xFFu;
+    /* expand 565 dst to 8-bit channels via bit-replication */
+    const Uint32 d_r5 = (dst_pixel >> 11) & 0x1Fu;
+    const Uint32 d_g6 = (dst_pixel >> 5) & 0x3Fu;
+    const Uint32 d_b5 = dst_pixel & 0x1Fu;
+    const Uint32 dst_r = (d_r5 << 3) | (d_r5 >> 2);
+    const Uint32 dst_g = (d_g6 << 2) | (d_g6 >> 4);
+    const Uint32 dst_b = (d_b5 << 3) | (d_b5 >> 2);
+    const Uint32 out_r = ((src_r * src_a) + (dst_r * inv_src_a) + 128u) >> 8;
+    const Uint32 out_g = ((src_g * src_a) + (dst_g * inv_src_a) + 128u) >> 8;
+    const Uint32 out_b = ((src_b * src_a) + (dst_b * inv_src_a) + 128u) >> 8;
+    return (Uint16)(((out_r >> 3) << 11) | ((out_g >> 2) << 5) | (out_b >> 3));
+}
+
 typedef enum NonIntegerSourceAlphaClass {
     NON_INTEGER_SOURCE_ALPHA_CLASS_NONE = -1,
     NON_INTEGER_SOURCE_ALPHA_CLASS_TRANSPARENT = 0,
@@ -712,5 +746,94 @@ bool SDLSoftwareFrame_RasterNonIntegerLookupARGB8888(const SDL_FRect* dst_rect,
                 : 0u;
     }
 
+    return true;
+}
+
+/* perf-2 RGB565 sibling. Same lookup-table walk as the 8888 path, scalar
+ * 565 store. Drops the optional in-band telemetry (subrect alpha, reuse,
+ * lookup signatures) -- those are bookkeeping that 8888-mode profiling
+ * uses; on 565 we've already moved past that decision. */
+static inline Uint16 pack_rgb565_local(Uint32 argb) {
+    const Uint32 r = (argb >> 16) & 0xFFu;
+    const Uint32 g = (argb >> 8) & 0xFFu;
+    const Uint32 b = argb & 0xFFu;
+    return (Uint16)(((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3));
+}
+
+bool SDLSoftwareFrame_RasterNonIntegerLookupRGB565(const SDL_FRect* dst_rect,
+                                                    const SDL_FRect* src_uv_rect,
+                                                    SDL_FlipMode flip,
+                                                    Uint32 color,
+                                                    SDL_Surface* dst_surface,
+                                                    const SDL_Surface* src_surface) {
+    if ((dst_rect == NULL) || (src_uv_rect == NULL) || (dst_surface == NULL) || (src_surface == NULL) ||
+        (dst_rect->w <= 0.0f) || (dst_rect->h <= 0.0f) || (src_surface->w <= 0) || (src_surface->h <= 0)) {
+        return false;
+    }
+    if (dst_surface->format != SDL_PIXELFORMAT_RGB565) {
+        return false;
+    }
+
+    const int dst_x0 = clamp_to_range((int)SDL_floorf(dst_rect->x), 0, dst_surface->w);
+    const int dst_y0 = clamp_to_range((int)SDL_floorf(dst_rect->y), 0, dst_surface->h);
+    const int dst_x1 = clamp_to_range((int)SDL_ceilf(dst_rect->x + dst_rect->w), 0, dst_surface->w);
+    const int dst_y1 = clamp_to_range((int)SDL_ceilf(dst_rect->y + dst_rect->h), 0, dst_surface->h);
+    const int visible_w = dst_x1 - dst_x0;
+    const int visible_h = dst_y1 - dst_y0;
+    if ((visible_w <= 0) || (visible_h <= 0)) {
+        return true;
+    }
+    if ((visible_w > software_frame_lookup_max_width) || (visible_h > software_frame_lookup_max_height)) {
+        return false;
+    }
+
+    static int src_x_lookup[software_frame_lookup_max_width];
+    static int src_y_lookup[software_frame_lookup_max_height];
+    populate_non_integer_lookup(src_x_lookup,
+                                visible_w,
+                                dst_x0,
+                                dst_rect->x,
+                                dst_rect->w,
+                                src_uv_rect->x * (float)src_surface->w,
+                                src_uv_rect->w * (float)src_surface->w,
+                                src_surface->w - 1,
+                                (flip & SDL_FLIP_HORIZONTAL) != 0);
+    populate_non_integer_lookup(src_y_lookup,
+                                visible_h,
+                                dst_y0,
+                                dst_rect->y,
+                                dst_rect->h,
+                                src_uv_rect->y * (float)src_surface->h,
+                                src_uv_rect->h * (float)src_surface->h,
+                                src_surface->h - 1,
+                                (flip & SDL_FLIP_VERTICAL) != 0);
+
+    const Uint32* src_pixels = (const Uint32*)src_surface->pixels;
+    Uint16* dst_pixels = (Uint16*)dst_surface->pixels;
+    const int src_pitch = src_surface->pitch / (int)sizeof(Uint32);
+    const int dst_pitch = dst_surface->pitch / (int)sizeof(Uint16);
+    const bool apply_color_mod = color != 0xFFFFFFFFu;
+
+    for (int row = 0; row < visible_h; row++) {
+        const Uint32* src_row = src_pixels + (src_y_lookup[row] * src_pitch);
+        Uint16* dst_row = dst_pixels + ((dst_y0 + row) * dst_pitch) + dst_x0;
+        if (!apply_color_mod) {
+            for (int col = 0; col < visible_w; col++) {
+                const Uint32 src_pixel = src_row[src_x_lookup[col]];
+                const Uint32 src_a = (src_pixel >> 24) & 0xFFu;
+                if (src_a == 0u) { continue; }
+                if (src_a == 0xFFu) { dst_row[col] = pack_rgb565_local(src_pixel); continue; }
+                dst_row[col] = blend_rgb565(dst_row[col], src_pixel);
+            }
+            continue;
+        }
+        for (int col = 0; col < visible_w; col++) {
+            Uint32 src_pixel = modulate_argb8888(src_row[src_x_lookup[col]], color);
+            const Uint32 src_a = (src_pixel >> 24) & 0xFFu;
+            if (src_a == 0u) { continue; }
+            if (src_a == 0xFFu) { dst_row[col] = pack_rgb565_local(src_pixel); continue; }
+            dst_row[col] = blend_rgb565(dst_row[col], src_pixel);
+        }
+    }
     return true;
 }

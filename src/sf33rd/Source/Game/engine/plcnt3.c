@@ -102,7 +102,7 @@ void plcnt_b2_die() {
     case 2:
         complete_victory_pause();
 
-        if (plw[0].wu.operator) {
+        if (plw[0].wu.wu_operator) {
             plw[0].wu.routine_no[1] = 0;
             plw[0].wu.routine_no[2] = 40;
             plw[0].wu.routine_no[3] = 0;
@@ -110,7 +110,7 @@ void plcnt_b2_die() {
             plw[0].wu.routine_no[3] = 9;
         }
 
-        if (plw[1].wu.operator) {
+        if (plw[1].wu.wu_operator) {
             plw[1].wu.routine_no[1] = 0;
             plw[1].wu.routine_no[2] = 40;
             plw[1].wu.routine_no[3] = 0;

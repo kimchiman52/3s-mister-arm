@@ -7,10 +7,12 @@
 
 static char* pref_path = NULL;
 
+#if defined(PORT_MISTER)
 static bool has_trailing_slash(const char* path) {
     const size_t len = SDL_strlen(path);
     return len > 0 && path[len - 1] == '/';
 }
+#endif
 
 const char* Paths_GetPrefPath() {
     if (pref_path == NULL) {

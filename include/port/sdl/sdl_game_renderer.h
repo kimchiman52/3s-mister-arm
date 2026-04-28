@@ -202,6 +202,10 @@ typedef struct SDLGameRenderer_FrameStats {
     int hybrid_reason_geometry;
     int hybrid_reason_solid;
     SDLGameRenderer_SortStrategy sort_strategy;
+    /* perf-3 piece-A telemetry: count of frames in which qsort fired (the
+     * INSERTION-vs-QSORT split is recorded in `sort_strategy`, but a per-frame
+     * accumulator is useful for sizing the qsort cost in capture windows). */
+    Uint64 sort_qsort_invocations;
     int charsel_active_effects;
     int charsel_portrait_tiles;
     int charsel_plate_tiles;
@@ -239,6 +243,27 @@ typedef struct SDLGameRenderer_PerfCaptureRefreshTelemetry {
     Uint64 sampled_full_no_usable_dirty_rect_blit_ns;
     Uint64 sampled_full_oversized_dirty_rect_blit_calls;
     Uint64 sampled_full_oversized_dirty_rect_blit_ns;
+    Uint64 colorkey_loose_fast_path_hits;
+    Uint64 colorkey_loose_fast_path_skipped;
+    Uint64 colorkey_loose_fast_path_ineligible;
+    /* perf-2: RGB565 software_frame canvas. Increment in renderer kernels
+     * after the format-aware dispatch picks 565 vs 8888 paths. The third
+     * (present-path) counter `convert_pass_skipped_frames_counter` lives in
+     * sdl_app.c (P-2.5) and is emitted from there. */
+    Uint64 rgb565_canvas_kernel_hits;
+    Uint64 argb8888_canvas_kernel_hits;
+    /* perf-3 piece-B (8-pixel packed-store INDEX8->RGB565). Hit = 8 source
+     * pixels processed via the packed `pal_u32[i0] | (pal_u32[i1] << 16)`
+     * memcpy stores; skipped_ckey = the 8-pixel block had a colour-key index
+     * (any index byte == 0) so the path fell back to the per-pixel scalar
+     * tail for that block. */
+    Uint64 colorkey_packed_8px_hits;
+    Uint64 colorkey_packed_8px_skipped_ckey;
+    /* perf-3 piece-C (16-pixel NEON kernels for the RGB565 canvas). Hits are
+     * incremented per 16-pixel block consumed by the NEON path, separately
+     * for the INDEX8->565 direct-blit kernel and the solid-fill kernel. */
+    Uint64 neon_16px_direct_hits;
+    Uint64 neon_16px_solid_hits;
 } SDLGameRenderer_PerfCaptureRefreshTelemetry;
 
 typedef enum SDLGameRenderer_TextureLogicalSourceKind {
@@ -730,10 +755,41 @@ void SDLGameRenderer_SetPerfCaptureBasicFirstWindowOnsetExactHotFamilyAlphaOffpa
 void SDLGameRenderer_SetPerfCaptureBasicFirstWindowOnsetClusterAlphaOffpathEnabled(bool enabled);
 void SDLGameRenderer_SetPerfCaptureFastNonIntegerReuseTelemetryEnabled(bool enabled);
 void SDLGameRenderer_SetPerfCaptureFastNonIntegerSubrectAlphaTelemetryEnabled(bool enabled);
+void SDLGameRenderer_SetColorkeyLooseKernelEnabled(bool enabled);
+void SDLGameRenderer_SetRGB565CanvasEnabled(bool enabled);
+/* perf-3 piece-B kill switch: disables the 8-pixel packed-store INDEX8->565
+ * fast path (falls back to the existing scalar loose-form kernel). Default
+ * is true; intended for A/B parity testing without rebuild. */
+void SDLGameRenderer_SetSoftwarePalettePacked8pxEnabled(bool enabled);
+/* perf-3 piece-C kill switch: disables the 16-pixel NEON 565 direct-blit and
+ * solid-fill kernels (falls back to the 4-pixel kernel + scalar). Default
+ * is true. */
+void SDLGameRenderer_SetSoftwareNeon16pxEnabled(bool enabled);
 void SDLGameRenderer_BeginFrame(bool capture_extended_stats);
 void SDLGameRenderer_RenderFrame();
 void SDLGameRenderer_EndFrame();
 bool SDLGameRenderer_RunSoftwareFrameParityCheck(void);
+/* Test-only shim: invoke the INDEX8 fast-path kernel directly with a synthetic
+ * RenderTask. Used by software_frame_parity.c to validate the loose-form
+ * binary-α kernels. Returns true on success (kernel ran), false on rejection. */
+bool SDLGameRenderer_RunIndex8FastPathParityCase(SDL_Surface* index8_src,
+                                                 const Uint32* palette_lut,
+                                                 bool palette_is_binary_alpha,
+                                                 const SDL_FRect* dst_rect,
+                                                 const SDL_FRect* src_uv_rect,
+                                                 SDL_FlipMode flip,
+                                                 SDL_Surface* dst_surface);
+/* Test-only shim: build the same per-row/per-column src lookup table the
+ * production scaled INDEX8 kernel uses. Lets parity references use the
+ * production scaling formula instead of a re-implementation. */
+void SDLGameRenderer_PopulateScaledLookupTableForParity(int* out_lookup,
+                                                        int visible_count,
+                                                        int dst_origin,
+                                                        int dst_start,
+                                                        int dst_span,
+                                                        int src_origin,
+                                                        int src_span,
+                                                        bool flip);
 void SDLGameRenderer_ResetPerfCaptureRefreshTelemetry(void);
 void SDLGameRenderer_ResetPerfCaptureUnlockLocalityTelemetry(void);
 void SDLGameRenderer_ResetPerfCaptureTextureRenewTelemetry(void);
@@ -826,6 +882,29 @@ void SDLGameRenderer_GetFrameStats(SDLGameRenderer_FrameStats* out_stats);
 Uint64 SDLGameRenderer_GetTextureRefreshNs(void);
 Uint64 SDLGameRenderer_GetSortNs(void);
 Uint64 SDLGameRenderer_GetRasterNs(void);
+/* perf-3 piece-A: the `raster_ns` from GetRasterNs() is a wrapper covering
+ * the entire render_frame_to_software_surface() body; these split it into
+ * the classify+resolve pre-pass (Pass 1) and the merge+raster main loop
+ * (Pass 2) for finer-grained capture analysis. The two add up to roughly
+ * GetRasterNs() minus the surface-lock/unlock and the immediately-following
+ * fallback work. */
+Uint64 SDLGameRenderer_GetResolveNs(void);
+Uint64 SDLGameRenderer_GetRasterPassNs(void);
+/* perf-3 lightweight per-frame counter getters (read after RenderFrame).
+ * These return the packed-8px / NEON-16px direct-blit kernel hit counts and
+ * the qsort invocation count for the just-completed frame. Reset alongside
+ * the other per-frame counters in BeginFrame. Used by the FPS overlay's
+ * per-frame accumulator without paying the cost of GetFrameStats() or
+ * GetPerfCaptureRefreshTelemetry()'s full struct copy. */
+Uint64 SDLGameRenderer_GetPacked8PxHits(void);
+Uint64 SDLGameRenderer_GetNeon16PxDirectHits(void);
+Uint64 SDLGameRenderer_GetSortQsortInvocations(void);
+
+/* Issue #16 freeze diagnostics — temporary, remove once root cause is found.
+ * Per-frame counters reset by SDLGameRenderer_BeginFrame(). */
+Uint64 SDLGameRenderer_GetSADiagSnapshotNs(void);
+Uint64 SDLGameRenderer_GetSADiagRestoreNs(void);
+int    SDLGameRenderer_GetSADiagTextureCreates(void);
 
 /* SDL backend implementations of CRS_Renderer_ interface */
 void SDLGameRenderer_CreateTexture(unsigned int th);

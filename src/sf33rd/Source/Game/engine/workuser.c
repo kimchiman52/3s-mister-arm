@@ -6,6 +6,7 @@
 #include "sf33rd/Source/Game/engine/workuser.h"
 #include "common.h"
 #include "sf33rd/Source/Game/engine/cmd_data.h"
+#include "sf33rd/Source/Game/select_timer.h"
 #include "structs.h"
 
 bool Scene_Cut;
@@ -14,6 +15,7 @@ s8 Counter_hi;
 s8 Counter_low;
 s16 Unit_Of_Timer;
 s8 Select_Timer;
+SelectTimerState select_timer_state;
 s8 Cursor_X[2];
 s8 Cursor_Y[2];
 s8 Cursor_Y_Pos[2][4];

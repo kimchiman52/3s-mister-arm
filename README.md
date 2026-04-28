@@ -518,7 +518,7 @@ community live at:
 
 **Libraries**
 - [SDL3](https://github.com/libsdl-org/SDL) — Rendering, input, audio
-- [GekkoNet](https://github.com/HeatXD/GekkoNet) — P2P rollback netcode (desktop builds)
+- [GekkoNet](https://github.com/HeatXD/GekkoNet) — P2P rollback netcode (desktop builds; experimental MiSTer netplay work on `netplay` branch, see `docs/plan-netplay-port.md`)
 - [FFmpeg](https://ffmpeg.org) — ADX audio codec (desktop builds)
 - [libcdio](https://github.com/libcdio/libcdio) — ISO reading (desktop builds)
 - [Dear ImGui](https://github.com/ocornut/imgui) — Debug UI

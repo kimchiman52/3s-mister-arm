@@ -361,23 +361,23 @@ void Setup_Face_Sub() {
 }
 
 void Setup_Select_Status() {
-    if (plw[0].wu.operator) {
+    if (plw[0].wu.wu_operator) {
         Select_Status[0] = 1;
     } else {
         Select_Status[0] = 0;
     }
 
-    if (plw[1].wu.operator) {
+    if (plw[1].wu.wu_operator) {
         Select_Status[0] |= 2;
     }
 
-    if (Sel_Arts_Complete[0] != -1 && plw[0].wu.operator != 0) {
+    if (Sel_Arts_Complete[0] != -1 && plw[0].wu.wu_operator != 0) {
         Select_Status[1] = 1;
     } else {
         Select_Status[1] = 0;
     }
 
-    if (Sel_Arts_Complete[1] != -1 && plw[1].wu.operator != 0) {
+    if (Sel_Arts_Complete[1] != -1 && plw[1].wu.wu_operator != 0) {
         Select_Status[1] |= 2;
     }
 }
@@ -760,7 +760,7 @@ void Go_Away_Red_Lines() {
 void Player_Select_Control() {
     void (*PL_Sel_Jmp_Tbl[5])() = { PL_Sel_1st, PL_Sel_2nd, PL_Sel_3rd, PL_Sel_4th, PL_Sel_5th };
 
-    if (plw[ID2].wu.operator != 0) {
+    if (plw[ID2].wu.wu_operator != 0) {
         PL_Sel_Jmp_Tbl[SP_No[ID2][1]]();
     }
 }
@@ -885,7 +885,7 @@ void Setup_Plates(s8 PL_id, s16 Time) {
 void Sel_PL() {
     void (*Sel_PL_Jmp_Tbl[6])() = { Sel_PL_1st, Sel_PL_2nd, Sel_PL_3rd, Sel_PL_4th, Sel_PL_5th, Sel_PL_6th };
 
-    if (plw[ID].wu.operator != 0) {
+    if (plw[ID].wu.wu_operator != 0) {
         Sel_PL_Jmp_Tbl[SP_No[ID][0]]();
     }
 }
@@ -1085,7 +1085,7 @@ void Sel_PL_5th() {
         S_No[3] = 1;
     }
 
-    if (plw[0].wu.operator == 0 || plw[1].wu.operator == 0) {
+    if (plw[0].wu.wu_operator == 0 || plw[1].wu.wu_operator == 0) {
         Check_Boss(ID);
     }
 }
@@ -1538,11 +1538,11 @@ void Check_Exit() {
 }
 
 void Exit_1st() {
-    if (plw[0].wu.operator != 0 && Sel_Arts_Complete[0] >= 0) {
+    if (plw[0].wu.wu_operator != 0 && Sel_Arts_Complete[0] >= 0) {
         return;
     }
 
-    if (plw[1].wu.operator != 0 && Sel_Arts_Complete[1] >= 0) {
+    if (plw[1].wu.wu_operator != 0 && Sel_Arts_Complete[1] >= 0) {
         return;
     }
 
@@ -2028,7 +2028,19 @@ u8 Setup_Battle_Country() {
     }
 
     if (My_char[New_Challenger] == 17) {
-        return My_char[Champion];
+        /* 2026-04-24: Q (char 17 in the 3SX enum) has no playable home
+         * stage — its ROM data is remapped via bg_index_tbl[17]={4,4,4}
+         * and never meant to be loaded during match play. The original
+         * code returned `My_char[Champion]` (the opponent) assuming the
+         * arcade invariant Champion != New_Challenger held. In netplay,
+         * `setup_vs_mode` zeroes Champion but leaves New_Challenger at its
+         * BSS default 0, so both are 0 and this branch would return
+         * My_char[0] = 17 (Q's broken stage). Using (1 - New_Challenger)
+         * always returns the opposite player's slot, giving the opponent's
+         * stage regardless of whether the Champion/New_Challenger
+         * invariant is maintained. Identity in arcade mode (there
+         * Champion == 1 - New_Challenger); repairs the netplay case. */
+        return My_char[1 - New_Challenger];
     }
 
     return My_char[New_Challenger];

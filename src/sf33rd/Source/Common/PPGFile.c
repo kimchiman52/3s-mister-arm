@@ -1,9 +1,11 @@
 #include "sf33rd/Source/Common/PPGFile.h"
 #include "common.h"
-#include "rendering/game_renderer.h"
-#if PORT_MISTER
-#include "port/sdl/sdl_game_renderer.h"
+#if DEBUG
+#include "sf33rd/Source/Game/engine/workuser.h"
+#include <stdio.h>
 #endif
+#include "rendering/game_renderer.h"
+#include "port/sdl/sdl_game_renderer.h"
 #include "sf33rd/AcrSDK/common/plcommon.h"
 #include "sf33rd/AcrSDK/ps2/flps2render.h"
 #include "sf33rd/AcrSDK/ps2/flps2vram.h"
@@ -1841,28 +1843,83 @@ s32 ppgGetUsingPaletteHandle(Palette* pch, s32 ixNums) {
 
 s32 ppgCheckTextureNumber(Texture* tex, s32 num) {
     u16 ix;
+#if DEBUG
+    /* Black-BG investigation 2026-04-24 — sub-gate breakdown. Reset log
+     * budget on each Play_Game transition to catch per-match behavior. */
+    static int s_pctn_log = 0;
+    static int s_pctn_last_pg = -1;
+    if ((int)Play_Game != s_pctn_last_pg) {
+        s_pctn_log = 0;
+        s_pctn_last_pg = (int)Play_Game;
+    }
+    int dbg_fail_reason = 0; /* 0 ok, 1 null-tex, 2 be==0, 3 ix>=total, 4 handle==0 */
+    Texture* dbg_tex_in = tex;
+    Texture* dbg_tex_used;
+#endif
 
     if (tex == NULL) {
         tex = ppg_w.cur->tex;
 
         if (tex == NULL) {
+#if DEBUG
+            if (Play_Game == 1 && s_pctn_log < 64) {
+                fprintf(stderr, "[ppgCheckTextureNumber] num=%d FAIL:null-tex\n", (int)num);
+                s_pctn_log++;
+            }
+#endif
             return 0;
         }
     }
 
+#if DEBUG
+    dbg_tex_used = tex;
+#endif
+
     if (tex->be == 0) {
+#if DEBUG
+        if (s_pctn_log < 64) {
+            fprintf(stderr,
+                    "[ppgCheckTextureNumber] num=%d FAIL:be=0 tex=%p cur=%p\n",
+                    (int)num, (void*)dbg_tex_used, (void*)ppg_w.cur);
+            s_pctn_log++;
+        }
+#endif
         return 0;
     }
 
     ix = num - tex->ixNum1st;
 
     if (ix >= tex->total) {
+#if DEBUG
+        if (s_pctn_log < 64) {
+            fprintf(stderr,
+                    "[ppgCheckTextureNumber] num=%d FAIL:ix-range ix=%d total=%d first=%d\n",
+                    (int)num, (int)ix, (int)tex->total, (int)tex->ixNum1st);
+            s_pctn_log++;
+        }
+#endif
         return 0;
     }
 
     if (tex->handle[ix].b16[0]) {
+#if DEBUG
+        if (s_pctn_log < 64) {
+            fprintf(stderr,
+                    "[ppgCheckTextureNumber] num=%d OK ix=%d handle=%d\n",
+                    (int)num, (int)ix, (int)tex->handle[ix].b16[0]);
+            s_pctn_log++;
+        }
+#endif
         return 1;
     }
 
+#if DEBUG
+    if (s_pctn_log < 64) {
+        fprintf(stderr,
+                "[ppgCheckTextureNumber] num=%d FAIL:handle=0 ix=%d total=%d tex=%p\n",
+                (int)num, (int)ix, (int)tex->total, (void*)dbg_tex_used);
+        s_pctn_log++;
+    }
+#endif
     return 0;
 }

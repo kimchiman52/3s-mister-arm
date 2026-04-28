@@ -127,3 +127,72 @@ Comma-separated SDL renderer backend preference list passed via `SDL_HINT_RENDER
 
 Example:
 - `software`
+
+### Direct-P2P (`netplay-direct-p2p-*`)
+
+Runtime knobs for the STUN/UPnP-based direct-peer connect flow
+(docs/plan-stun-direct-p2p.md). Users coordinate the peer code
+out-of-band (text message, voice) and paste it into the wrapper OSD.
+
+`netplay-direct-p2p-host-port` (int, default `0`)
+- UDP port the host wants to bind for Direct-P2P. `0` means
+  OS-assigned ephemeral. Advisory — if the port is already bound the
+  OS falls back to ephemeral; the public port reported to the peer
+  is whatever the NAT maps it to, not what you requested.
+
+`netplay-direct-p2p-disable-upnp` (bool, default `false`)
+- Skip the UPnP IGD first-try path and go straight to STUN hole
+  punch. Set `true` if your router misbehaves on UPnP and fails
+  slowly (some routers reply to `UPNP_Discover` but then hang on
+  `AddPortMapping`). STUN fallback always runs regardless.
+
+`netplay-direct-p2p-last-peer-code` (string, no default)
+- Populated at runtime on a successful Join to enable quick-rejoin
+  on a "match lost" reconnect flow. Not persisted across runs in
+  this phase (Config_Save is a stub until a future cleanup).
+
+`netplay-direct-p2p-handoff-path` (string, default
+`/tmp/3s-arm-netplay.handoff`)
+- File the wrapper writes Host/Join intent into before exec'ing the
+  game binary. tmpfs path; contents are readable only by root (mode
+  `0600`) and consumed-and-unlinked by the game on first read.
+
+`netplay-direct-p2p-stun-timeout-ms` (int, default `4000`)
+- Upper bound on STUN discovery time per server. Upstream's default
+  is 2000 ms but congested public STUN sometimes needs more; 4000 ms
+  fully covers the four-server fallback chain's 2 s/server × 4 budget.
+  Lowering helps failover but risks false negatives on slow networks.
+
+### Netplay tuning
+
+`netplay-input-prediction-window` (int, default `8`)
+- GekkoNet rollback prediction window — max frames the local sim is
+  allowed to predict ahead of confirmed inputs and, on mispredict, the
+  max rollback depth. Lower values cut worst-case resim CPU (linear in
+  the window) at the cost of tolerating less input lag before the
+  client falls back to stutter. Upstream GekkoNet default is 10; we
+  use 8 by default tuned for stock-clock MiSTer (800 MHz, near-zero
+  headroom above 60 fps).
+
+`netplay-diag-enable` (bool, default `true`)
+- Master gate for session-tagged diagnostics: per-session UUID, UTC
+  timestamp, jitter, cumulative kb_sent/recv heartbeat extras, and the
+  post-disconnect desync state dump. Recording cost is paid in the
+  production codepath regardless; this knob is an emergency mute for
+  serial-console noise. Default `true` so a friend running a build for
+  a shared session contributes useful logs without having to opt in.
+
+`netplay-sparse-effect-save-enabled` (bool, default `true`)
+- Enable the Option A sparse effect-pool GameState save path. When on
+  (the default), each rollback save serializes only the active slots
+  of the effect work pool (frw[128]) and reconstructs canonical empty
+  slots on load. Typical per-frame state size drops from ~247 KB to
+  60–120 KB depending on activity, shrinking GekkoNet's per-save
+  checksum/transmission/load memcpy proportionally. Cross-peer desync
+  detection is unaffected (the focused checksum never walked frw[]).
+  Set `false` to force the legacy full-state save path for A/B parity
+  testing without rebuilding. Active-slot counts above the 70-slot
+  ceiling are auto-handled: the save falls back to a full-state pack
+  for that frame and emits a deduped warning. Empirical peak from the
+  on-device Pk\<N\> peak watcher across full-roster super-art-heavy
+  sessions was 57; the 70 ceiling is a deliberate ~1.23x margin.

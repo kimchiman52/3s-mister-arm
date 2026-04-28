@@ -45,7 +45,7 @@ void Player_move(PLW* wk, u16 lv_data) { // 🟡
     if (DAT_02016b6c == -1) {
         wk->cp->sw_lvbt = processed_lvbt(FUN_06092294(wk->wu.id));
     } else {
-        if (wk->wu.operator) {
+        if (wk->wu.wu_operator) {
             wk->cp->sw_lvbt = lv_data;
         } else {
             wk->cp->sw_lvbt = processed_lvbt(cpu_algorithm(wk));
@@ -56,7 +56,7 @@ void Player_move(PLW* wk, u16 lv_data) { // 🟡
         }
     }
 #else
-    if (wk->wu.operator) {
+    if (wk->wu.wu_operator) {
         wk->cp->sw_lvbt = lv_data;
     } else {
         wk->cp->sw_lvbt = processed_lvbt(cpu_algorithm(wk));

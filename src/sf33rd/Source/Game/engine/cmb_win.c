@@ -447,7 +447,7 @@ void combo_window_push(s8 PL, s8 KIND) {
 
         if (Mode_Type == MODE_VERSUS) {
             Score_Sub();
-        } else if (plw[PLS].wu.operator) {
+        } else if (plw[PLS].wu.wu_operator) {
             Score_Sub();
         }
 
@@ -463,7 +463,7 @@ void combo_window_push(s8 PL, s8 KIND) {
             cmst_buff[PL][cst_write[PL]].pts_flag = 1;
         } else if (Mode_Type == 5) {
             cmst_buff[PL][cst_write[PL]].pts_flag = 1;
-        } else if (plw[PLS].wu.operator) {
+        } else if (plw[PLS].wu.wu_operator) {
             cmst_buff[PL][cst_write[PL]].pts_flag = 1;
         } else {
             cmst_buff[PL][cst_write[PL]].pts_flag = 0;
@@ -635,7 +635,7 @@ void combo_window_trans(s8 PL) {
                         return;
                     }
 
-                    if (plw[PLS].wu.operator) {
+                    if (plw[PLS].wu.wu_operator) {
                         Score_Sub();
                         return;
                     }

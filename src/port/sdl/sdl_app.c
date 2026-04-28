@@ -8,6 +8,9 @@
 #include "port/paths.h"
 #include "port/sdl/netplay_screen.h"
 #include "port/sdl/netstats_renderer.h"
+#if defined(ENABLE_NETPLAY)
+#include "netplay/game_state.h"
+#endif
 #include "port/sdl/scanline_renderer.h"
 #include "port/sdl/sdl_debug_text.h"
 #include "port/sdl/fbdev_presenter.h"
@@ -100,7 +103,11 @@ static FpsOverlayMode fps_overlay_mode = FPS_OVERLAY_OFF;
 static Uint64 fps_overlay_window_start_ns = 0;
 static Uint32 fps_overlay_window_frames = 0;
 static int fps_overlay_value = 0;
-static char fps_overlay_label[128] = "";
+/* 256 bytes accommodates a two-line debug overlay (line 1 = legacy timing
+ * breakdown, line 2 = perf-3 metrics — resolve/raster_pass split + new-path
+ * hit rates). The two lines are separated by a single '\n' character which
+ * the renderer splits on. */
+static char fps_overlay_label[256] = "";
 
 /* Rolling-average timing breakdown for the FPS overlay (accumulated over the
    same 250 ms measurement window used for the FPS counter). */
@@ -114,6 +121,14 @@ static Uint64 fps_overlay_dsprsubmit_ns_accum = 0;
 static Uint64 fps_overlay_render_ns_accum = 0;
 static Uint64 fps_overlay_sort_ns_accum = 0;
 static Uint64 fps_overlay_raster_ns_accum = 0;
+/* perf-3 line-2 accumulators: resolve/raster_pass split + new-path hit
+ * counters. Both are window totals over the same 250 ms window as the legacy
+ * timing accumulators. */
+static Uint64 fps_overlay_resolve_ns_accum = 0;
+static Uint64 fps_overlay_raster_pass_ns_accum = 0;
+static Uint64 fps_overlay_packed_8px_hits_accum = 0;
+static Uint64 fps_overlay_neon_16px_direct_hits_accum = 0;
+static Uint64 fps_overlay_qsort_invocations_accum = 0;
 static Uint64 fps_overlay_present_ns_accum = 0;
 static Uint64 fps_overlay_frame_ns_accum = 0;
 static double fps_overlay_avg_update_ms = 0.0;
@@ -126,6 +141,17 @@ static double fps_overlay_avg_dsprsubmit_ms = 0.0;
 static double fps_overlay_avg_render_ms = 0.0;
 static double fps_overlay_avg_sort_ms = 0.0;
 static double fps_overlay_avg_raster_ms = 0.0;
+/* perf-3 line-2 averages. */
+static double fps_overlay_avg_resolve_ms = 0.0;
+static double fps_overlay_avg_raster_pass_ms = 0.0;
+static double fps_overlay_avg_packed_8px_per_frame = 0.0;
+static double fps_overlay_avg_neon_16px_per_frame = 0.0;
+static double fps_overlay_avg_qsort_per_frame = 0.0;
+/* Sticky max-active-effect-count peak watch — used to size GameState's
+ * effect work pool ceiling for sparse-save (Option A). Sampled every frame
+ * the overlay is in DEBUG mode; reset only when overlay mode toggles or
+ * the user reboots. Displayed as `e<peak>` on line 2 of the overlay. */
+static int fps_overlay_peak_active_effects = 0;
 static double fps_overlay_avg_present_ms = 0.0;
 static double fps_overlay_avg_frame_ms = 0.0;
 
@@ -141,12 +167,14 @@ static Uint32   pacer_overlay_late_pct = 0;
 static Uint64   pacer_overlay_phase_us = 0;
 
 /* Vsync feedback state (closed-loop phase lock) */
+#if defined(PORT_MISTER)
 static uint8_t  last_fpga_frame_cnt = 0;
-static Uint64   last_vsync_monotonic_ns = 0;  /* SDL_GetTicksNS at time of observation */
 static uint32_t last_feedback_seq = 0;
-static bool     vsync_feedback_valid = false;
 static Uint64   last_feedback_update_ns = 0;  /* for staleness detection */
 static bool     vsync_feedback_disabled = false;
+#endif
+static Uint64   last_vsync_monotonic_ns = 0;  /* SDL_GetTicksNS at time of observation */
+static bool     vsync_feedback_valid = false;
 static Uint64   lead_time_ns = 2000000;       /* default 2ms */
 static int64_t  pacer_phase_error_ns = 0;     /* for overlay display */
 
@@ -158,6 +186,12 @@ static Uint64 last_mouse_motion_time = 0;
 static const int mouse_hide_delay_ms = 2000; // 2 seconds
 static bool fbdev_presenter_enabled = false;
 static bool native_video_writer_enabled = false;
+/* perf-2: counts frames where the present path skipped the
+ * convert_argb8888_to_rgb565 pass because the canvas was already RGB565
+ * (writer fed frame->pixels directly). Owned here in sdl_app.c (P-2.5):
+ * the present-path decision is made here, not in the renderer. Emitted
+ * via the perf-capture JSON block alongside the renderer-side counters. */
+static Uint64 convert_pass_skipped_frames_counter = 0;
 static bool use_fbdev_only_present = false;
 static bool use_native_render_path = false;
 static bool software_frame_mode_enabled = false;
@@ -308,6 +342,12 @@ static Uint64 perf_frame_start_ns = 0;
 static Uint64 perf_update_start_ns = 0;
 static Uint64 perf_update_ns_total = 0;
 static Uint64 perf_render_ns_total = 0;
+/* perf-3 piece-A: per-window totals for the resolve/raster_pass split inside
+ * render_frame_to_software_surface(). Both reset alongside the other window
+ * totals; emitted in the perf-capture JSON. */
+static Uint64 perf_resolve_ns_total = 0;
+static Uint64 perf_raster_pass_ns_total = 0;
+static Uint64 perf_sort_qsort_invocations_total = 0;
 static Uint64 perf_present_ns_total = 0;
 static Uint64 perf_frame_work_ns_total = 0;
 static Uint64 perf_present_readback_ns_total = 0;
@@ -1293,6 +1333,9 @@ static void perf_capture_reset_storage(void) {
     perf_update_start_ns = 0;
     perf_update_ns_total = 0;
     perf_render_ns_total = 0;
+    perf_resolve_ns_total = 0;
+    perf_raster_pass_ns_total = 0;
+    perf_sort_qsort_invocations_total = 0;
     perf_present_ns_total = 0;
     perf_frame_work_ns_total = 0;
     perf_present_readback_ns_total = 0;
@@ -1620,6 +1663,9 @@ void SDLApp_ConfigurePerfCapture(int frame_count,
     perf_update_start_ns = 0;
     perf_update_ns_total = 0;
     perf_render_ns_total = 0;
+    perf_resolve_ns_total = 0;
+    perf_raster_pass_ns_total = 0;
+    perf_sort_qsort_invocations_total = 0;
     perf_present_ns_total = 0;
     perf_frame_work_ns_total = 0;
     perf_present_readback_ns_total = 0;
@@ -2971,6 +3017,10 @@ static void perf_capture_write_summary(void) {
     const double avg_frame_ms = ((double)perf_frame_work_ns_total / frame_count) / 1e6;
     const double avg_update_ms = ((double)perf_update_ns_total / frame_count) / 1e6;
     const double avg_render_ms = ((double)perf_render_ns_total / frame_count) / 1e6;
+    /* perf-3 piece-A: averages for the resolve/raster_pass split. */
+    const double avg_resolve_ms = ((double)perf_resolve_ns_total / frame_count) / 1e6;
+    const double avg_raster_pass_ms = ((double)perf_raster_pass_ns_total / frame_count) / 1e6;
+    const double avg_sort_qsort_invocations = (double)perf_sort_qsort_invocations_total / frame_count;
     const double avg_present_ms = ((double)perf_present_ns_total / frame_count) / 1e6;
     const double avg_present_readback_ms = ((double)perf_present_readback_ns_total / frame_count) / 1e6;
     const double avg_present_convert_ms = ((double)perf_present_convert_ns_total / frame_count) / 1e6;
@@ -5143,6 +5193,14 @@ static void perf_capture_write_summary(void) {
               avg_render_ms,
               min_render_ms,
               max_render_ms);
+    /* perf-3 piece-A: resolve/raster_pass split + qsort-invocations rate.
+     * resolve covers the classify+resolve pre-pass inside
+     * render_frame_to_software_surface(); raster_pass covers the merge+raster
+     * main loop. The two roughly sum to the wrapper raster_ns. */
+    io_printf(io, "    \"resolve\": {\"mean_ms\": %.4f},\n", avg_resolve_ms);
+    io_printf(io, "    \"raster_pass\": {\"mean_ms\": %.4f},\n", avg_raster_pass_ms);
+    io_printf(io, "    \"sort_qsort_invocations_per_frame\": %.4f,\n",
+              avg_sort_qsort_invocations);
     io_printf(io, "    \"present\": {\"mean_ms\": %.4f, \"min_ms\": %.4f, \"max_ms\": %.4f},\n",
               avg_present_ms,
               min_present_ms,
@@ -6063,6 +6121,32 @@ static void perf_capture_write_summary(void) {
                   : 0.0,
               sampled_refresh_partial_blit_total_ms,
               sampled_refresh_partial_blit_mean_ms);
+    io_printf(io,
+              "    \"colorkey_loose\": {"
+              "\"hits\": %llu, \"skipped\": %llu, \"ineligible\": %llu},\n",
+              (unsigned long long)refresh_telemetry.colorkey_loose_fast_path_hits,
+              (unsigned long long)refresh_telemetry.colorkey_loose_fast_path_skipped,
+              (unsigned long long)refresh_telemetry.colorkey_loose_fast_path_ineligible);
+    /* perf-2 telemetry. The third value (convert_pass_skipped) is owned by
+     * sdl_app.c (P-2.5) -- present-path decision -- so it is read directly
+     * from the local static, not the renderer struct. */
+    io_printf(io,
+              "    \"rgb565_canvas\": {"
+              "\"hits\": %llu, \"argb8888_hits\": %llu, \"convert_pass_skipped\": %llu},\n",
+              (unsigned long long)refresh_telemetry.rgb565_canvas_kernel_hits,
+              (unsigned long long)refresh_telemetry.argb8888_canvas_kernel_hits,
+              (unsigned long long)convert_pass_skipped_frames_counter);
+    /* perf-3 piece-B + piece-C telemetry. */
+    io_printf(io,
+              "    \"colorkey_packed_8px\": {"
+              "\"hits\": %llu, \"skipped_ckey\": %llu},\n",
+              (unsigned long long)refresh_telemetry.colorkey_packed_8px_hits,
+              (unsigned long long)refresh_telemetry.colorkey_packed_8px_skipped_ckey);
+    io_printf(io,
+              "    \"neon_16px\": {"
+              "\"direct_hits\": %llu, \"solid_hits\": %llu},\n",
+              (unsigned long long)refresh_telemetry.neon_16px_direct_hits,
+              (unsigned long long)refresh_telemetry.neon_16px_solid_hits);
     io_printf(io, "    \"software_frame_raster_bucket_sampling\": [");
     if (raster_bucket_timing_count > 0) {
         io_printf(io, "\n");
@@ -9122,8 +9206,19 @@ static void init_show_fps_overlay(void) {
     fps_overlay_render_ns_accum = 0;
     fps_overlay_sort_ns_accum = 0;
     fps_overlay_raster_ns_accum = 0;
+    fps_overlay_resolve_ns_accum = 0;
+    fps_overlay_raster_pass_ns_accum = 0;
+    fps_overlay_packed_8px_hits_accum = 0;
+    fps_overlay_neon_16px_direct_hits_accum = 0;
+    fps_overlay_qsort_invocations_accum = 0;
     fps_overlay_present_ns_accum = 0;
     fps_overlay_frame_ns_accum = 0;
+    fps_overlay_avg_resolve_ms = 0.0;
+    fps_overlay_avg_raster_pass_ms = 0.0;
+    fps_overlay_avg_packed_8px_per_frame = 0.0;
+    fps_overlay_avg_neon_16px_per_frame = 0.0;
+    fps_overlay_avg_qsort_per_frame = 0.0;
+    fps_overlay_peak_active_effects = 0;
     fps_overlay_avg_update_ms = 0.0;
     fps_overlay_avg_texrefresh_ms = 0.0;
     fps_overlay_avg_gamelogic_ms = 0.0;
@@ -9150,8 +9245,13 @@ static void publish_fps_overlay_label(void) {
     if (fps_overlay_mode == FPS_OVERLAY_FPS) {
         SDL_snprintf(fps_overlay_label, sizeof(fps_overlay_label), "%d", fps_overlay_value);
     } else if (fps_overlay_avg_frame_ms > 0.0) {
+        /* Two-line debug overlay separated by '\n'. Line 1 = legacy timing
+         * breakdown (pre-perf-3); line 2 = perf-3 split + new-path hit rates.
+         * The '\n' is split-and-rendered by both fbdev_presenter and the
+         * SDL_RenderDebugText path. */
         int n = SDL_snprintf(fps_overlay_label, sizeof(fps_overlay_label),
-                     "%2d U:%4.1f(T%4.1f G%4.1f S%4.1f D%4.1f[t%4.1f s%4.1f]) R:%4.1f(r%4.1f) =%5.1f",
+                     "%2d U:%4.1f(T%4.1f G%4.1f S%4.1f D%4.1f[t%4.1f s%4.1f]) R:%4.1f(r%4.1f) =%5.1f"
+                     "\nZ:%4.2f P:%4.2f pk%5.1fK n%5.1fK q%d Pk%3d",
                      fps_overlay_value,
                      fps_overlay_avg_update_ms,
                      fps_overlay_avg_texrefresh_ms,
@@ -9162,7 +9262,13 @@ static void publish_fps_overlay_label(void) {
                      fps_overlay_avg_dsprsubmit_ms,
                      fps_overlay_avg_render_ms,
                      fps_overlay_avg_raster_ms,
-                     fps_overlay_avg_frame_ms);
+                     fps_overlay_avg_frame_ms,
+                     fps_overlay_avg_resolve_ms,
+                     fps_overlay_avg_raster_pass_ms,
+                     fps_overlay_avg_packed_8px_per_frame / 1000.0,
+                     fps_overlay_avg_neon_16px_per_frame / 1000.0,
+                     fps_overlay_avg_qsort_per_frame >= 0.5 ? 1 : 0,
+                     fps_overlay_peak_active_effects);
         if (native_video_writer_enabled && n > 0 && (size_t)n < sizeof(fps_overlay_label)) {
             if (vsync_feedback_valid) {
                 SDL_snprintf(fps_overlay_label + n, sizeof(fps_overlay_label) - (size_t)n,
@@ -9192,6 +9298,9 @@ static void fps_overlay_accumulate_timing(Uint64 update_ns, Uint64 texrefresh_ns
                                           Uint64 gamelogic_ns, Uint64 spritesubmit_ns, Uint64 dispatch_ns,
                                           Uint64 dtexrenew_ns, Uint64 dsprsubmit_ns,
                                           Uint64 render_ns, Uint64 sort_ns, Uint64 raster_ns,
+                                          Uint64 resolve_ns, Uint64 raster_pass_ns,
+                                          Uint64 packed_8px_hits, Uint64 neon_16px_direct_hits,
+                                          Uint64 qsort_invocations,
                                           Uint64 present_ns, Uint64 frame_work_ns) {
     fps_overlay_update_ns_accum += update_ns;
     fps_overlay_texrefresh_ns_accum += texrefresh_ns;
@@ -9203,6 +9312,11 @@ static void fps_overlay_accumulate_timing(Uint64 update_ns, Uint64 texrefresh_ns
     fps_overlay_render_ns_accum += render_ns;
     fps_overlay_sort_ns_accum += sort_ns;
     fps_overlay_raster_ns_accum += raster_ns;
+    fps_overlay_resolve_ns_accum += resolve_ns;
+    fps_overlay_raster_pass_ns_accum += raster_pass_ns;
+    fps_overlay_packed_8px_hits_accum += packed_8px_hits;
+    fps_overlay_neon_16px_direct_hits_accum += neon_16px_direct_hits;
+    fps_overlay_qsort_invocations_accum += qsort_invocations;
     fps_overlay_present_ns_accum += present_ns;
     fps_overlay_frame_ns_accum += frame_work_ns;
 }
@@ -9247,6 +9361,11 @@ static void update_fps_overlay(Uint64 frame_end_ns) {
         fps_overlay_avg_render_ms = ((double)fps_overlay_render_ns_accum / n) / 1e6;
         fps_overlay_avg_sort_ms = ((double)fps_overlay_sort_ns_accum / n) / 1e6;
         fps_overlay_avg_raster_ms = ((double)fps_overlay_raster_ns_accum / n) / 1e6;
+        fps_overlay_avg_resolve_ms = ((double)fps_overlay_resolve_ns_accum / n) / 1e6;
+        fps_overlay_avg_raster_pass_ms = ((double)fps_overlay_raster_pass_ns_accum / n) / 1e6;
+        fps_overlay_avg_packed_8px_per_frame = (double)fps_overlay_packed_8px_hits_accum / n;
+        fps_overlay_avg_neon_16px_per_frame = (double)fps_overlay_neon_16px_direct_hits_accum / n;
+        fps_overlay_avg_qsort_per_frame = (double)fps_overlay_qsort_invocations_accum / n;
         fps_overlay_avg_present_ms = ((double)fps_overlay_present_ns_accum / n) / 1e6;
         fps_overlay_avg_frame_ms = ((double)fps_overlay_frame_ns_accum / n) / 1e6;
     }
@@ -9260,6 +9379,11 @@ static void update_fps_overlay(Uint64 frame_end_ns) {
     fps_overlay_render_ns_accum = 0;
     fps_overlay_sort_ns_accum = 0;
     fps_overlay_raster_ns_accum = 0;
+    fps_overlay_resolve_ns_accum = 0;
+    fps_overlay_raster_pass_ns_accum = 0;
+    fps_overlay_packed_8px_hits_accum = 0;
+    fps_overlay_neon_16px_direct_hits_accum = 0;
+    fps_overlay_qsort_invocations_accum = 0;
     fps_overlay_present_ns_accum = 0;
     fps_overlay_frame_ns_accum = 0;
 
@@ -9302,8 +9426,19 @@ static void reset_fps_overlay_state(void) {
     fps_overlay_render_ns_accum = 0;
     fps_overlay_sort_ns_accum = 0;
     fps_overlay_raster_ns_accum = 0;
+    fps_overlay_resolve_ns_accum = 0;
+    fps_overlay_raster_pass_ns_accum = 0;
+    fps_overlay_packed_8px_hits_accum = 0;
+    fps_overlay_neon_16px_direct_hits_accum = 0;
+    fps_overlay_qsort_invocations_accum = 0;
     fps_overlay_present_ns_accum = 0;
     fps_overlay_frame_ns_accum = 0;
+    fps_overlay_avg_resolve_ms = 0.0;
+    fps_overlay_avg_raster_pass_ms = 0.0;
+    fps_overlay_avg_packed_8px_per_frame = 0.0;
+    fps_overlay_avg_neon_16px_per_frame = 0.0;
+    fps_overlay_avg_qsort_per_frame = 0.0;
+    fps_overlay_peak_active_effects = 0;
     fps_overlay_avg_update_ms = 0.0;
     fps_overlay_avg_texrefresh_ms = 0.0;
     fps_overlay_avg_gamelogic_ms = 0.0;
@@ -9746,6 +9881,12 @@ bool SDLApp_IsArcadeGameMode(void) {
     return game_mode_arcade;
 }
 
+void SDLApp_ForceConsoleGameMode(void) {
+    /* Session-only override — does not rewrite the on-disk config. The
+     * next launch will re-read whatever the user has saved. */
+    game_mode_arcade = false;
+}
+
 static void init_hold_to_pause(void) {
     const char* raw_value = Config_GetString(CFG_KEY_HOLD_TO_PAUSE);
     if (raw_value != NULL && SDL_strcasecmp(raw_value, "on") == 0) {
@@ -9844,6 +9985,16 @@ static bool init_window() {
         if (!native_video_env || SDL_strcmp(native_video_env, "0") != 0) {
             native_video_writer_enabled = NativeVideoWriter_Init();
             backend_logf("Native video writer: %s", native_video_writer_enabled ? "enabled" : "disabled");
+
+            /* perf-2 P-1.2 guard: only enable the 565 canvas if the native
+             * video writer is actually available. The fbdev fallback path's
+             * software_frame_upload_texture is ARGB8888-only and would
+             * silently corrupt 565 frames. Default for rgb565_canvas_enabled
+             * is false everywhere; this is the one place that flips it on,
+             * and only when the writer init has succeeded. */
+            if (native_video_writer_enabled) {
+                SDLGameRenderer_SetRGB565CanvasEnabled(true);
+            }
 
             /* Match ARM frame pacing to the FPGA's pixel-clock-derived refresh
                rate.  With the dedicated video PLL (31.1538 MHz, 495x264),
@@ -9971,6 +10122,43 @@ int SDLApp_FullInit() {
     SDLGameRenderer_SetSuperEffectQualityMode(current_renderer_super_effect_quality_mode());
     SDLGameRenderer_SetGhostResolutionMode(ghost_resolution_mode);
     SDLGameRenderer_SetSABgCacheFramesRemaining(0);
+    if (Config_HasExplicitKey(CFG_KEY_COLORKEY_LOOSE_KERNEL_ENABLED)) {
+        SDLGameRenderer_SetColorkeyLooseKernelEnabled(Config_GetBool(CFG_KEY_COLORKEY_LOOSE_KERNEL_ENABLED));
+    }
+    /* perf-3 piece-B kill switch (default true; explicit override only). */
+    if (Config_HasExplicitKey(CFG_KEY_SOFTWARE_PALETTE_PACKED_8PX_ENABLED)) {
+        SDLGameRenderer_SetSoftwarePalettePacked8pxEnabled(
+            Config_GetBool(CFG_KEY_SOFTWARE_PALETTE_PACKED_8PX_ENABLED));
+    }
+    /* perf-3 piece-C kill switch (default true; explicit override only). */
+    if (Config_HasExplicitKey(CFG_KEY_SOFTWARE_NEON_16PX_ENABLED)) {
+        SDLGameRenderer_SetSoftwareNeon16pxEnabled(
+            Config_GetBool(CFG_KEY_SOFTWARE_NEON_16PX_ENABLED));
+    }
+    /* perf-2: user can always disable the 565 canvas via config.ini, but can
+     * only enable it when the native video writer is up (P-1.2 invariant). */
+    if (Config_HasExplicitKey(CFG_KEY_RGB565_CANVAS_ENABLED)) {
+        const bool requested = Config_GetBool(CFG_KEY_RGB565_CANVAS_ENABLED);
+        if (!requested) {
+            SDLGameRenderer_SetRGB565CanvasEnabled(false);
+        } else if (native_video_writer_enabled) {
+            SDLGameRenderer_SetRGB565CanvasEnabled(true);
+        } else {
+            backend_logf("rgb565-canvas-enabled=true ignored: native video "
+                         "writer is not available; canvas stays ARGB8888.");
+        }
+    }
+#if defined(ENABLE_NETPLAY)
+    /* Sparse effect-pool save (Option A) kill switch. Default true; explicit
+     * override only. Off forces the legacy full-state save path for A/B
+     * parity testing without rebuilding. */
+    if (Config_HasExplicitKey(CFG_KEY_NETPLAY_SPARSE_EFFECT_SAVE_ENABLED)) {
+        const bool enabled = Config_GetBool(CFG_KEY_NETPLAY_SPARSE_EFFECT_SAVE_ENABLED);
+        Netplay_SetSparseEffectSaveEnabled(enabled);
+        backend_logf("netplay-sparse-effect-save-enabled = %s",
+                     enabled ? "true" : "false");
+    }
+#endif
     backend_logf("Software frame mode: %s", software_frame_mode_name());
     backend_logf("Super effect quality: %s", super_effect_quality_mode_name(super_effect_quality_mode));
     backend_logf("Ghost resolution: %s", ghost_resolution_mode_name(ghost_resolution_mode));
@@ -10087,6 +10275,7 @@ bool SDLApp_PollEvents() {
 #if DEBUG
         ImGuiW_ProcessEvent(&event);
 #endif
+
 
         switch (event.type) {
         case SDL_EVENT_GAMEPAD_ADDED:
@@ -10233,9 +10422,36 @@ static void render_renderer_fps_overlay(const SDL_FRect* content_rect) {
     }
 
     const int scale = draw_rect.h >= 420.0f ? 2 : 1;
-    const int text_len = (int)SDL_strlen(fps_overlay_label);
-    const int text_w = text_len * 8 * scale;
-    const int text_h = 8 * scale;
+    /* Split fps_overlay_label on '\n' so each line renders independently —
+     * SDL_RenderDebugText draws a single line, embedded newlines render as
+     * garbage glyphs without this. Maximum 4 lines (more than enough for the
+     * current two-line debug overlay). */
+    const char* line_starts[4] = { fps_overlay_label, NULL, NULL, NULL };
+    int line_lengths[4] = { 0, 0, 0, 0 };
+    int line_count = 1;
+    {
+        const int label_len = (int)SDL_strlen(fps_overlay_label);
+        int line_start = 0;
+        for (int i = 0; i < label_len && line_count < 4; i++) {
+            if (fps_overlay_label[i] == '\n') {
+                line_lengths[line_count - 1] = i - line_start;
+                line_start = i + 1;
+                line_starts[line_count] = fps_overlay_label + line_start;
+                line_count++;
+            }
+        }
+        line_lengths[line_count - 1] = label_len - line_start;
+    }
+    int max_line_len = 0;
+    for (int i = 0; i < line_count; i++) {
+        if (line_lengths[i] > max_line_len) {
+            max_line_len = line_lengths[i];
+        }
+    }
+    const int text_w = max_line_len * 8 * scale;
+    const int line_h = 8 * scale;
+    const int line_gap = scale; /* small gap between stacked lines */
+    const int text_h = line_count * line_h + (line_count - 1) * line_gap;
     const int margin = SDL_max(10, scale * 4);
     float draw_x, draw_y;
     if (fps_overlay_mode == FPS_OVERLAY_FPS) {
@@ -10247,10 +10463,22 @@ static void render_renderer_fps_overlay(const SDL_FRect* content_rect) {
     }
 
     SDL_SetRenderScale(renderer, (float)scale, (float)scale);
-    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
-    SDL_RenderDebugText(renderer, (draw_x + 1.0f) / (float)scale, (draw_y + 1.0f) / (float)scale, fps_overlay_label);
-    SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
-    SDL_RenderDebugText(renderer, draw_x / (float)scale, draw_y / (float)scale, fps_overlay_label);
+    /* SDL_RenderDebugText takes a NUL-terminated string; we copy each split
+     * line into a small stack buffer, NUL-terminating at the embedded '\n'
+     * position for that line, then render. */
+    char line_buf[128];
+    for (int i = 0; i < line_count; i++) {
+        const int copy_len = line_lengths[i] < (int)sizeof(line_buf) - 1
+                                 ? line_lengths[i]
+                                 : (int)sizeof(line_buf) - 1;
+        SDL_memcpy(line_buf, line_starts[i], (size_t)copy_len);
+        line_buf[copy_len] = '\0';
+        const float line_y = draw_y + (float)(i * (line_h + line_gap));
+        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+        SDL_RenderDebugText(renderer, (draw_x + 1.0f) / (float)scale, (line_y + 1.0f) / (float)scale, line_buf);
+        SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
+        SDL_RenderDebugText(renderer, draw_x / (float)scale, line_y / (float)scale, line_buf);
+    }
     SDL_SetRenderScale(renderer, 1.0f, 1.0f);
 }
 
@@ -10511,17 +10739,33 @@ void SDLApp_EndFrame() {
     if (native_video_writer_enabled && SDLGameRenderer_HasSoftwareOwnedFrame()) {
         const SDL_Surface* frame = SDLGameRenderer_GetSoftwareFrameSurface();
         if (frame && frame->pixels && frame->w == 384 && frame->h == 224) {
-            if (fps_overlay_mode != FPS_OVERLAY_OFF) {
-                FBDevPresenter_ApplyFPSOverlayToBuffer(
-                    (Uint32*)frame->pixels, frame->w, frame->h);
+            /* perf-2: when the canvas is RGB565, point the writer directly
+             * at frame->pixels and skip the convert pass. The 8888 fallback
+             * still works because a non-565 canvas means the gate was off
+             * (writer-availability invariant) -- but here we're inside the
+             * `native_video_writer_enabled` branch, so 8888 is the legacy
+             * mode and we keep the convert-to-scratch path. */
+            if (frame->format == SDL_PIXELFORMAT_RGB565) {
+                if (fps_overlay_mode != FPS_OVERLAY_OFF) {
+                    FBDevPresenter_ApplyFPSOverlayToRGB565Buffer(
+                        (Uint16*)frame->pixels, frame->w, frame->h);
+                }
+                NativeVideoWriter_WriteFrame(
+                    (const uint16_t*)frame->pixels, 384, 224, frame->pitch);
+                convert_pass_skipped_frames_counter++;
+            } else {
+                if (fps_overlay_mode != FPS_OVERLAY_OFF) {
+                    FBDevPresenter_ApplyFPSOverlayToBuffer(
+                        (Uint32*)frame->pixels, frame->w, frame->h);
+                }
+                convert_argb8888_to_rgb565(
+                    (const uint32_t*)frame->pixels,
+                    native_video_rgb565_scratch,
+                    384 * 224);
+                NativeVideoWriter_WriteFrame(
+                    native_video_rgb565_scratch,
+                    384, 224, 384 * 2);
             }
-            convert_argb8888_to_rgb565(
-                (const uint32_t*)frame->pixels,
-                native_video_rgb565_scratch,
-                384 * 224);
-            NativeVideoWriter_WriteFrame(
-                native_video_rgb565_scratch,
-                384, 224, 384 * 2);
         } else {
             static bool nv_warned = false;
             if (!nv_warned) {
@@ -10576,6 +10820,12 @@ void SDLApp_EndFrame() {
         }
     }
 
+    /* NOTE: RmlUi render + composite moved upstream of the native video
+     * writer (see the ENABLE_RMLUI block above the native-video path). The
+     * old post-writer rmlui_wrapper_render() call targeted the window
+     * backbuffer, which is not on the MiSTer display pipeline — see
+     * feedback-rmlui-render-target.md for the architectural rationale. */
+
     if (!use_fbdev_only_present) {
         SDL_RenderPresent(renderer);
     }
@@ -10602,6 +10852,42 @@ void SDLApp_EndFrame() {
     const double dirty_hit_rate =
         presenter_tiles_total > 0 ? 1.0 - ((double)presenter_tiles_copied / (double)presenter_tiles_total) : 0.0;
 
+    /* Issue #16 freeze diagnostics — log frames that exceed 25 ms of work,
+       with SA bg-cache state and texture-cache miss count for that frame.
+       Temporary; remove once root cause is found. */
+    /* Frame-outlier logger threshold. Bumped from 25ms to 50ms because at the
+     * 8-frame netplay prediction window the worst-case rollback re-sim can
+     * legitimately push frames into the 25-30ms range; logging every one of
+     * those flooded backend.log and added disk-write latency in the hot path
+     * (a positive feedback loop with the rollback stutter). 50ms keeps the
+     * Issue #16 SA-freeze diagnostics intact since real freezes show 100ms+
+     * frames, while filtering out the routine rollback re-sim spikes. */
+    if (frame_work_ns > 50000000ULL) {
+        const Uint64 sa_diag_snapshot_ns = SDLGameRenderer_GetSADiagSnapshotNs();
+        const Uint64 sa_diag_restore_ns = SDLGameRenderer_GetSADiagRestoreNs();
+        const int    sa_diag_tex_creates = SDLGameRenderer_GetSADiagTextureCreates();
+#if defined(PORT_MISTER)
+        const int sa_active = sa_bg_cache_was_active ? 1 : 0;
+        const int sa_frame = sa_bg_cache_active_frame_index;
+        const int sa_remaining = sa_bg_cache_frames_remaining;
+#else
+        const int sa_active = 0;
+        const int sa_frame = 0;
+        const int sa_remaining = 0;
+#endif
+        backend_logf("FRAME OUTLIER: total=%.1fms update=%.1f render=%.1f present=%.1f sa_active=%d sa_frame=%d sa_remaining=%d snapshot=%.2f restore=%.2f tex_creates=%d",
+                     (double)frame_work_ns / 1e6,
+                     (double)update_ns / 1e6,
+                     (double)render_ns / 1e6,
+                     (double)present_ns / 1e6,
+                     sa_active,
+                     sa_frame,
+                     sa_remaining,
+                     (double)sa_diag_snapshot_ns / 1e6,
+                     (double)sa_diag_restore_ns / 1e6,
+                     sa_diag_tex_creates);
+    }
+
     /* Feed per-frame timing into the FPS overlay rolling accumulator so the
        overlay can display averaged component-breakdown values. */
     if (fps_overlay_mode == FPS_OVERLAY_DEBUG) {
@@ -10613,10 +10899,68 @@ void SDLApp_EndFrame() {
         const Uint64 dsprsubmit_ns = Mtrans_GetPerfSprSubmitNs();
         const Uint64 sort_ns = SDLGameRenderer_GetSortNs();
         const Uint64 raster_ns = SDLGameRenderer_GetRasterNs();
+        const Uint64 resolve_ns = SDLGameRenderer_GetResolveNs();
+        const Uint64 raster_pass_ns = SDLGameRenderer_GetRasterPassNs();
+        /* perf-3 hit/qsort counters are cumulative across all frames since
+         * the renderer was last reset (only the perf-sampler resets them).
+         * The overlay needs the per-frame delta, so track previous values
+         * and subtract. A non-monotonic reset (e.g. perf-sampler firing)
+         * shows up as a single-frame negative delta which we clamp to 0. */
+        static Uint64 prev_packed_8px_hits = 0;
+        static Uint64 prev_neon_16px_direct_hits = 0;
+        static Uint64 prev_qsort_invocations = 0;
+        const Uint64 cur_packed = SDLGameRenderer_GetPacked8PxHits();
+        const Uint64 cur_neon = SDLGameRenderer_GetNeon16PxDirectHits();
+        const Uint64 cur_qsort = SDLGameRenderer_GetSortQsortInvocations();
+        const Uint64 packed_8px_hits = (cur_packed >= prev_packed_8px_hits) ? (cur_packed - prev_packed_8px_hits) : 0;
+        const Uint64 neon_16px_direct_hits = (cur_neon >= prev_neon_16px_direct_hits) ? (cur_neon - prev_neon_16px_direct_hits) : 0;
+        const Uint64 qsort_invocations = (cur_qsort >= prev_qsort_invocations) ? (cur_qsort - prev_qsort_invocations) : 0;
+        prev_packed_8px_hits = cur_packed;
+        prev_neon_16px_direct_hits = cur_neon;
+        prev_qsort_invocations = cur_qsort;
+        /* Sticky peak of EFFECT_MAX - frwctr (active effect-pool slot count).
+         * Updated by seqsBeforeProcess every frame. Used to size the sparse
+         * GameState ceiling for Option A.
+         *
+         * Bug guard: charsel_active_effect_count is computed as
+         * EFFECT_MAX - frwctr, but frwctr is a static s16 that defaults to 0
+         * pre-init. seqsBeforeProcess runs before effect_work_init in some
+         * paths, so the formula yields a bogus 128 (= EFFECT_MAX) until init
+         * runs and sets frwctr = EFFECT_MAX. Without gating, the peak gets
+         * pinned at 128 forever from a frame zero or two of bogus reads.
+         *
+         * Gate: track whether we've seen frwctr == EFFECT_MAX (the post-init
+         * idle state) at least once. Until that's observed, ignore samples.
+         * After that, trust the reading (including a genuine 128 if the pool
+         * is fully allocated). */
+        {
+            extern int charsel_active_effect_count;
+            extern s16 frwctr;
+            static bool effect_pool_init_seen = false;
+            if (frwctr == 128 /* EFFECT_MAX */) {
+                effect_pool_init_seen = true;
+            }
+            /* Range-validate before peak-tracking. Observed in the wild:
+             * values up to ~1200 mid-rollback, which mathematically requires
+             * frwctr to be a negative s16 (~-1072), produced either by a
+             * pull_effect_work() overflow path or by a transient read during
+             * rollback re-sim mid-state-restore. Either way, anything outside
+             * [0, EFFECT_MAX] is not a real active-slot count, so don't let
+             * it pin the peak. */
+            const int sample = charsel_active_effect_count;
+            if (effect_pool_init_seen
+                && sample >= 0 && sample <= 128 /* EFFECT_MAX */
+                && sample > fps_overlay_peak_active_effects) {
+                fps_overlay_peak_active_effects = sample;
+            }
+        }
         fps_overlay_accumulate_timing(update_ns, texrefresh_ns,
                                       gamelogic_ns, spritesubmit_ns, dispatch_ns,
                                       dtexrenew_ns, dsprsubmit_ns,
                                       render_ns, sort_ns, raster_ns,
+                                      resolve_ns, raster_pass_ns,
+                                      packed_8px_hits, neon_16px_direct_hits,
+                                      qsort_invocations,
                                       present_ns, frame_work_ns);
     }
 #endif
@@ -10697,9 +11041,13 @@ void SDLApp_EndFrame() {
         /* Sleep until deadline */
         if (now < frame_deadline) {
             sleep_time = frame_deadline - now;
+#if defined(PORT_MISTER)
             // native_video_writer_enabled is only true on PORT_MISTER builds,
-            // so precise_delay_ns is always available here.
+            // and precise_delay_ns is only compiled there.
             precise_delay_ns(frame_deadline);
+#else
+            SDL_DelayNS(frame_deadline - now);
+#endif
             now = SDL_GetTicksNS();
         }
 
@@ -10966,6 +11314,11 @@ void SDLApp_EndFrame() {
 
         perf_update_ns_total += update_ns;
         perf_render_ns_total += render_ns;
+        /* perf-3 piece-A: pull the resolve/raster_pass split + qsort
+         * invocation count out of the renderer once per perf-capture frame. */
+        perf_resolve_ns_total += SDLGameRenderer_GetResolveNs();
+        perf_raster_pass_ns_total += SDLGameRenderer_GetRasterPassNs();
+        perf_sort_qsort_invocations_total += render_stats.sort_qsort_invocations;
         perf_present_ns_total += present_ns;
         perf_frame_work_ns_total += frame_work_ns;
         perf_present_readback_ns_total += presenter_stats.readback_ns;

@@ -36,6 +36,12 @@ int SDLApp_GetArmClock(void);
 void SDLApp_CycleArmClock(void);
 void SDLApp_CycleGameMode(void);
 bool SDLApp_IsArcadeGameMode(void);
+/* Force console-mode for the current session without touching the config
+ * file on disk. Used by netplay: the arcade path skips the menu and uses
+ * per-peer DIP switches that would desync, so cold-launch netplay must
+ * run through the console menu chain regardless of the user's saved
+ * preference. Does not persist across restarts. */
+void SDLApp_ForceConsoleGameMode(void);
 void SDLApp_CycleHoldToPause(void);
 bool SDLApp_IsHoldToPauseEnabled(void);
 

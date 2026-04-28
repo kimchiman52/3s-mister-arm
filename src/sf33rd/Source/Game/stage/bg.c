@@ -5,6 +5,9 @@
 
 #include "sf33rd/Source/Game/stage/bg.h"
 #include "common.h"
+#if DEBUG
+#include <stdio.h>
+#endif
 #include "sf33rd/AcrSDK/ps2/foundaps2.h"
 #include "sf33rd/Source/Common/MemMan.h"
 #include "sf33rd/Source/Common/PPGFile.h"
@@ -262,8 +265,56 @@ void Bg_Texture_Load_EX() {
     u32 assign2;
     u8 assign3;
 
+#if DEBUG
+    {
+        static int s_btle_count = 0;
+        extern const u8 stage_bgw_number[][3];
+        extern const u8 use_real_scr[];
+        extern const u8 rewrite_scr[];
+        s_btle_count++;
+        fprintf(stderr,
+                "[Bg_Texture_Load_EX] ENTRY #%d  bg_w.stage=%d  scrno=%d  "
+                "stage_bgw_number[stage]=[%d,%d,%d]  use_real_scr=%d  rewrite_scr=%d  "
+                "Screen_Switch=0x%x ssb=0x%x  "
+                "be=[%d,%d,%d,rw=%d,ake=%d,aka=%d]\n",
+                s_btle_count, (int)bg_w.stage, (int)bg_w.scrno,
+                (int)stage_bgw_number[bg_w.stage][0],
+                (int)stage_bgw_number[bg_w.stage][1],
+                (int)stage_bgw_number[bg_w.stage][2],
+                (int)use_real_scr[bg_w.stage],
+                (int)rewrite_scr[bg_w.stage],
+                (unsigned)Screen_Switch, (unsigned)Screen_Switch_Buffer,
+                (int)ppgBgTex[0].be, (int)ppgBgTex[1].be, (int)ppgBgTex[2].be,
+                (int)ppgRwBgTex.be, (int)ppgAkeTex.be, (int)ppgAkaneTex.be);
+    }
+#endif
+
     mmDebWriteTag("\nSTAGE\n\n");
     Bg_TexInit();
+
+    /* Rollback-safety: force tear-down of any pre-existing BG texture cache
+     * before re-populating. The PPG cache (ppgBgTex / ppgRwBgTex / ppgAkeTex
+     * / ppgAkaneTex) is NOT covered by netplay GameState save/restore. A
+     * GekkoLoadEvent can snap the simulation back to a frame where the cache
+     * disagrees with the restored game state — either `be==1` with a partial
+     * handle[] array (Bg_Texture_Load_EX was mid-flight when the rollback
+     * crossed it) or `be==0` but leaked pointers. Without this guard the
+     * subsequent ppgSetupTexChunk_1st skips or half-skips its work and the
+     * stage renders black for tiles whose handles were never re-written —
+     * see docs/fix-plan-bg-texture-rollback.md. ppgReleaseTextureHandle is
+     * a no-op on `be==0` textures, so the non-rollback path (Bg_Close via
+     * System_all_clear_Level_B has already cleared be) pays nothing. */
+    {
+        int _rbi;
+        for (_rbi = 0; _rbi < 3; _rbi++) {
+            if (ppgBgTex[_rbi].be) {
+                ppgReleaseTextureHandle(&ppgBgTex[_rbi], -1);
+            }
+        }
+        if (ppgRwBgTex.be)  ppgReleaseTextureHandle(&ppgRwBgTex,  -1);
+        if (ppgAkeTex.be)   ppgReleaseTextureHandle(&ppgAkeTex,   -1);
+        if (ppgAkaneTex.be) ppgReleaseTextureHandle(&ppgAkaneTex, -1);
+    }
 
     for (i = 0; i < 8; i++) {
         bgPalCodeOffset[i] = 0x12C;
@@ -314,6 +365,11 @@ void Bg_Texture_Load_EX() {
         ppgSetupTexChunk_1st(NULL, loadAdrs, loadSize, (stg * 64) + 0x84, 32, 0, 0);
         ppgSetupTexChunk_1st_Accnum(0, accnum);
 
+#if DEBUG
+        fprintf(stderr,
+                "[Bg_Texture_Load_EX] main-loop j=%d stg=%d tgbix=0x%08x tex=%p\n",
+                (int)j, (int)stg, (unsigned)tgbix, (void*)ppgBgList[stg].tex);
+#endif
         for (i = 0; i < 32; i++, assign2 = mask >>= 1) {
             if (tgbix & mask) {
                 accnum = ppgSetupTexChunk_2nd(NULL, i + ((stg * 64) + 0x84));
@@ -1143,6 +1199,25 @@ void bgDrawOneScreen(s32 bgnum, s32 gixbase, s32* xx, s32* yy, s32 /* unused */,
 }
 
 void bgDrawOneChip(s32 x, s32 y, s32 xs, s32 ys, s32 gbix, u32 vtxCol, s32 ofsPal) {
+#if DEBUG
+    /* Black-BG investigation 2026-04-24 — Experiment 1 (outer gate).
+     * Reset log budget on each Play_Game transition so we capture per-match
+     * (not just per-process) — different stages may behave differently. */
+    {
+        static int s_log_count = 0;
+        static int s_last_play_game = -1;
+        if ((int)Play_Game != s_last_play_game) {
+            s_log_count = 0;
+            s_last_play_game = (int)Play_Game;
+        }
+        if (Play_Game == 1 && s_log_count < 64) {
+            int dbg_check = ppgCheckTextureNumber(0, gbix);
+            fprintf(stderr, "[bgDrawOneChip] gbix=%d No_Trans=%d check=%d\n",
+                    (int)gbix, (int)No_Trans, dbg_check);
+            s_log_count++;
+        }
+    }
+#endif
     if ((No_Trans == 0) && ppgCheckTextureNumber(0, gbix)) {
         ppgCalScrPosition(x, y, xs, ys);
 
@@ -1421,6 +1496,11 @@ void Family_Set_W(s8 fmnm, s16 x, s16 y) {
 }
 
 void Bg_On_R(u16 s_prm) {
+#if DEBUG
+    fprintf(stderr, "[Bg_On_R] prm=0x%x  Screen_Switch: 0x%x -> 0x%x\n",
+            (unsigned)s_prm, (unsigned)Screen_Switch,
+            (unsigned)(Screen_Switch | s_prm));
+#endif
     Screen_Switch |= s_prm;
     Screen_Switch_Buffer = Screen_Switch;
 }

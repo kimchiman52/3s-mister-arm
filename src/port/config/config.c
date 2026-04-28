@@ -68,6 +68,16 @@ static const ConfigEntry default_entries[] = {
     { .key = CFG_KEY_SHOW_FPS, .type = CFG_STRING, .value.s = "off" },
     { .key = CFG_KEY_VIDEO_DRIVER_ORDER, .type = CFG_STRING, .value.s = DEFAULT_VIDEO_DRIVER_ORDER },
     { .key = CFG_KEY_RENDER_DRIVER_ORDER, .type = CFG_STRING, .value.s = DEFAULT_RENDER_DRIVER_ORDER },
+    /* Direct-P2P defaults (docs/plan-stun-direct-p2p.md Step 5). The 3
+     * runtime-populated keys (LAST_PEER_CODE + HOST_PORT at 0 + DISABLE_UPNP)
+     * are not here — they live in the entries[] at runtime only. HANDOFF_PATH
+     * default is the wrapper's canonical tmpfs path; STUN_TIMEOUT_MS budget
+     * bumped from upstream's 2000ms to 4000ms for congested public STUN. */
+    { .key = CFG_KEY_NETPLAY_DIRECT_P2P_HANDOFF_PATH, .type = CFG_STRING, .value.s = "/tmp/3s-arm-netplay.handoff" },
+    { .key = CFG_KEY_NETPLAY_DIRECT_P2P_STUN_TIMEOUT_MS, .type = CFG_INT, .value.i = 4000 },
+    { .key = CFG_KEY_NETPLAY_INPUT_PREDICTION_WINDOW, .type = CFG_INT, .value.i = 8 },
+    { .key = CFG_KEY_NETPLAY_DIAG_ENABLE, .type = CFG_BOOL, .value.b = true },
+    { .key = CFG_KEY_NETPLAY_SPARSE_EFFECT_SAVE_ENABLED, .type = CFG_BOOL, .value.b = true },
 };
 
 static ConfigEntry entries[CONFIG_ENTRIES_MAX] = { 0 };
@@ -240,4 +250,55 @@ const char* Config_GetString(const char* key) {
     }
 
     return entry->value.s;
+}
+
+/* Config_SetString updates the in-memory entries table so subsequent
+ * Config_GetString calls within the same session see the new value.
+ * Config_Save is currently a no-op with a warn-once log so callers have a
+ * stable symbol; real on-disk persistence is deferred until a caller
+ * needs it. Config_Init's write_defaults() still bootstraps an on-disk
+ * file so users can edit it manually as before. */
+
+void Config_SetString(const char* key, const char* value) {
+    if (key == NULL || value == NULL) {
+        return;
+    }
+
+    ConfigEntry* existing = find_entry_in_array(key, entries, entry_count);
+    if (existing != NULL) {
+        if (existing->type == CFG_STRING) {
+            char* dup = SDL_strdup(value);
+            if (dup == NULL) {
+                return;
+            }
+            SDL_free(existing->value.s);
+            existing->value.s = dup;
+        } else {
+            existing->type = CFG_STRING;
+            existing->value.s = SDL_strdup(value);
+        }
+        return;
+    }
+
+    if (entry_count >= CONFIG_ENTRIES_MAX) {
+        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                    "Config_SetString: entries table full (%d); dropping key '%s'",
+                    CONFIG_ENTRIES_MAX,
+                    key);
+        return;
+    }
+
+    ConfigEntry* entry = &entries[entry_count++];
+    entry->key = SDL_strdup(key);
+    entry->type = CFG_STRING;
+    entry->value.s = SDL_strdup(value);
+}
+
+void Config_Save(void) {
+    static bool warned = false;
+    if (!warned) {
+        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                    "Config_Save: in-memory only (stub); on-disk persistence not yet wired.");
+        warned = true;
+    }
 }

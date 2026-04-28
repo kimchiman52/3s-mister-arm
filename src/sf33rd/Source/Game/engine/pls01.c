@@ -95,7 +95,7 @@ void set_rl_waza(PLW* wk) { // 🟢
     s16 result;
 
     if (Bonus_Game_Flag == 20) {
-        if (wk->wu.operator != 0) {
+        if (wk->wu.wu_operator != 0) {
             if (wk->wu.xyz[0].disp.pos < bs2_hosei[0] || wk->wu.xyz[0].disp.pos > bs2_hosei[1]) {
                 goto end;
             }
@@ -132,7 +132,7 @@ s16 check_rl_on_car(PLW* wk) { // 🟢
         return 0;
     }
 
-    if (wk->wu.operator == 0) {
+    if (wk->wu.wu_operator == 0) {
         return 0;
     }
 

@@ -1,5 +1,8 @@
 #include "sf33rd/AcrSDK/ps2/flps2vram.h"
 #include "common.h"
+#if DEBUG
+#include <stdio.h>
+#endif
 #include "sf33rd/AcrSDK/common/memfound.h"
 #include "sf33rd/AcrSDK/common/plcommon.h"
 #include "sf33rd/AcrSDK/common/prilay.h"
@@ -169,6 +172,26 @@ u32 flPS2GetTextureHandle() {
     if (i == FL_TEXTURE_MAX) {
         flPS2SystemError(0, "ERROR flPS2GetTextureHandle flps2vram.c");
     }
+
+#if DEBUG
+    /* Black-BG investigation 2026-04-24 — Experiment 5b.
+     * Track handle allocation pool pressure. Log every 25th allocation and
+     * also any time we cross a high-water mark, so we can see if rollbacks
+     * are causing the pool to monotonically grow. */
+    {
+        static int s_alloc_count = 0;
+        static int s_high_water = 0;
+        s_alloc_count++;
+        if (i > s_high_water) {
+            s_high_water = i;
+        }
+        if (s_alloc_count <= 20 || (s_alloc_count % 25) == 0) {
+            fprintf(stderr,
+                    "[flPS2GetTextureHandle] alloc #%d slot=%d (high_water=%d / max=%d)\n",
+                    s_alloc_count, (int)i, s_high_water, (int)FL_TEXTURE_MAX);
+        }
+    }
+#endif
 
     return i + 1;
 }

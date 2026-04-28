@@ -675,7 +675,9 @@ mister_rsync_deploy_wrapper() {
 
     local wrapper_root="${src_path%/}"
     local runtime_src="${wrapper_root}/games/3s-arm/"
-    local core_src="${wrapper_root}/_Other/3S-ARM.rbf"
+    local core_src
+    core_src=$(find "${wrapper_root}/_Other" -maxdepth 1 -type f -name '3S-ARM*.rbf' 2>/dev/null | sort | tail -1)
+    : "${core_src:=${wrapper_root}/_Other/3S-ARM.rbf}"
     local hps_src="${wrapper_root}/MiSTer_3S-ARM"
 
     case "${deploy_mode}" in

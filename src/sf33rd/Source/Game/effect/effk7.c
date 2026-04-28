@@ -73,7 +73,7 @@ void K7_move_type_0(WORK_Other* ewk, PLW* mwk) {
         mwk->att_plus = 10;
         mwk->def_plus = 6;
 
-        if (mwk->wu.operator == 0) {
+        if (mwk->wu.wu_operator == 0) {
             Next_Be_Free(mwk);
         }
 
@@ -135,7 +135,7 @@ void K7_move_type_0(WORK_Other* ewk, PLW* mwk) {
         set_base_data_metamorphose(mwk, mwk->wu.id);
         metamor_color_restore(mwk->wu.id);
 
-        if (mwk->wu.operator == 0) {
+        if (mwk->wu.wu_operator == 0) {
             Next_Be_Free(mwk);
         }
 

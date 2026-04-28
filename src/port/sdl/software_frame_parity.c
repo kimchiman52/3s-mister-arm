@@ -33,6 +33,14 @@ static int clamp_to_range(int value, int min_value, int max_value) {
     return value;
 }
 
+/* Parity reference must mirror the kernel's exact arithmetic, NOT a more
+ * precise alternative. The kernel in software_frame_non_integer.c uses the
+ * fast `(x + 128u) >> 8` approximation for normalize-by-255 (introduced in
+ * the perf-2 software-renderer optimization pass for 60fps stability); using
+ * the slower `(x + 127u) / 255u` exact form here produces off-by-one diffs
+ * vs the kernel for partial-α blends and breaks the parity test (verify
+ * stage caught this on subpixel-upscale). Ground truth = what the kernel
+ * actually computes, so we match the >>8 form byte-for-byte. */
 static Uint32 modulate_argb8888(Uint32 pixel, Uint32 color) {
     const Uint32 src_a = (pixel >> 24) & 0xFFu;
     const Uint32 src_r = (pixel >> 16) & 0xFFu;
@@ -42,10 +50,10 @@ static Uint32 modulate_argb8888(Uint32 pixel, Uint32 color) {
     const Uint32 mod_r = (color >> 16) & 0xFFu;
     const Uint32 mod_g = (color >> 8) & 0xFFu;
     const Uint32 mod_b = color & 0xFFu;
-    const Uint32 out_a = (src_a * mod_a + 127u) / 255u;
-    const Uint32 out_r = (src_r * mod_r + 127u) / 255u;
-    const Uint32 out_g = (src_g * mod_g + 127u) / 255u;
-    const Uint32 out_b = (src_b * mod_b + 127u) / 255u;
+    const Uint32 out_a = (src_a * mod_a + 128u) >> 8;
+    const Uint32 out_r = (src_r * mod_r + 128u) >> 8;
+    const Uint32 out_g = (src_g * mod_g + 128u) >> 8;
+    const Uint32 out_b = (src_b * mod_b + 128u) >> 8;
     return (out_a << 24) | (out_r << 16) | (out_g << 8) | out_b;
 }
 
@@ -56,7 +64,7 @@ static Uint8 blend_argb8888_channel(Uint32 src_c, Uint32 src_a, Uint32 dst_c, Ui
 
     const Uint32 src_premul = src_c * src_a;
     const Uint32 dst_premul = dst_c * dst_a;
-    const Uint32 out_premul = src_premul + ((dst_premul * (255u - src_a) + 127u) / 255u);
+    const Uint32 out_premul = src_premul + ((dst_premul * (255u - src_a) + 128u) >> 8);
     return (Uint8)((out_premul + (out_a / 2u)) / out_a);
 }
 
@@ -78,13 +86,13 @@ static Uint32 blend_argb8888(Uint32 dst_pixel, Uint32 src_pixel) {
         const Uint32 dst_r = (dst_pixel >> 16) & 0xFFu;
         const Uint32 dst_g = (dst_pixel >> 8) & 0xFFu;
         const Uint32 dst_b = dst_pixel & 0xFFu;
-        const Uint32 out_r = ((src_r * src_a) + (dst_r * inv_src_a) + 127u) / 255u;
-        const Uint32 out_g = ((src_g * src_a) + (dst_g * inv_src_a) + 127u) / 255u;
-        const Uint32 out_b = ((src_b * src_a) + (dst_b * inv_src_a) + 127u) / 255u;
+        const Uint32 out_r = ((src_r * src_a) + (dst_r * inv_src_a) + 128u) >> 8;
+        const Uint32 out_g = ((src_g * src_a) + (dst_g * inv_src_a) + 128u) >> 8;
+        const Uint32 out_b = ((src_b * src_a) + (dst_b * inv_src_a) + 128u) >> 8;
         return 0xFF000000u | (out_r << 16) | (out_g << 8) | out_b;
     }
 
-    const Uint32 out_a = src_a + ((dst_a * (255u - src_a) + 127u) / 255u);
+    const Uint32 out_a = src_a + ((dst_a * (255u - src_a) + 128u) >> 8);
     const Uint32 src_r = (src_pixel >> 16) & 0xFFu;
     const Uint32 src_g = (src_pixel >> 8) & 0xFFu;
     const Uint32 src_b = src_pixel & 0xFFu;
@@ -180,28 +188,43 @@ static void raster_reference_non_integer_task(const SoftwareFrameParityTask* tas
     }
 }
 
+/* perf-2 P-1.1: format-agnostic per-row SDL_memcmp. The previous
+ * implementation cast to Uint32* and divided pitch by sizeof(Uint32),
+ * which read past row end on a 565 surface. This walk uses
+ * SDL_BYTESPERPIXEL(format) and per-surface pitch, correct for any
+ * pixel size SDL produces.
+ *
+ * Format mismatch between expected and actual is intentionally treated
+ * as a harness setup error: the parity matrix always allocates both
+ * surfaces with the same dst_formats[df].format, so cross-format diffs
+ * cannot occur in practice and would not be byte-comparable anyway. */
 static bool surfaces_match(const char* case_name, const SDL_Surface* expected, const SDL_Surface* actual) {
-    const Uint32* expected_pixels = (const Uint32*)expected->pixels;
-    const Uint32* actual_pixels = (const Uint32*)actual->pixels;
-    const int expected_pitch = expected->pitch / (int)sizeof(Uint32);
-    const int actual_pitch = actual->pitch / (int)sizeof(Uint32);
-
+    if ((expected->format != actual->format) ||
+        (expected->w != actual->w) ||
+        (expected->h != actual->h)) {
+        SDL_Log("Software-frame parity surface mismatch in %s: format/size differ "
+                "(expected %dx%d fmt 0x%x, actual %dx%d fmt 0x%x)",
+                case_name, expected->w, expected->h, (unsigned)expected->format,
+                actual->w, actual->h, (unsigned)actual->format);
+        return false;
+    }
+    const int bpp = (int)SDL_BYTESPERPIXEL(expected->format);
+    const size_t row_bytes = (size_t)expected->w * (size_t)bpp;
+    const Uint8* exp_row = (const Uint8*)expected->pixels;
+    const Uint8* act_row = (const Uint8*)actual->pixels;
     for (int y = 0; y < expected->h; y++) {
-        for (int x = 0; x < expected->w; x++) {
-            const Uint32 expected_pixel = expected_pixels[y * expected_pitch + x];
-            const Uint32 actual_pixel = actual_pixels[y * actual_pitch + x];
-            if (expected_pixel != actual_pixel) {
-                SDL_Log("Software-frame parity mismatch in %s at (%d,%d): expected=0x%08x actual=0x%08x",
-                        case_name,
-                        x,
-                        y,
-                        expected_pixel,
-                        actual_pixel);
-                return false;
+        if (SDL_memcmp(exp_row, act_row, row_bytes) != 0) {
+            for (int x = 0; x < expected->w; x++) {
+                if (SDL_memcmp(exp_row + (x * bpp), act_row + (x * bpp), (size_t)bpp) != 0) {
+                    SDL_Log("Software-frame parity mismatch in %s at (%d,%d) (bpp=%d)",
+                            case_name, x, y, bpp);
+                    return false;
+                }
             }
         }
+        exp_row += expected->pitch;
+        act_row += actual->pitch;
     }
-
     return true;
 }
 
@@ -225,6 +248,86 @@ static bool fill_index8_test_palette(SDL_Palette* palette) {
         colors[i].a = 255u;
     }
     return SDL_SetPaletteColors(palette, colors, 0, SDL_arraysize(colors));
+}
+
+/* Strict binary-α: palette[0].α=0; all others α=255. Mirrors the historical
+ * "color-key in slot 0" convention. */
+static bool fill_index8_test_palette_strict_binary_alpha(SDL_Palette* palette) {
+    SDL_Color colors[256];
+    for (int i = 0; i < SDL_arraysize(colors); i++) {
+        colors[i].r = (Uint8)((i * 37) & 0xFF);
+        colors[i].g = (Uint8)((i * 73 + 19) & 0xFF);
+        colors[i].b = (Uint8)((i * 29 + 101) & 0xFF);
+        colors[i].a = (i == 0) ? 0u : 255u;
+    }
+    return SDL_SetPaletteColors(palette, colors, 0, SDL_arraysize(colors));
+}
+
+/* Loose binary-α: multiple scattered α=0 indices (not just slot 0). Exercises
+ * the loose-form distinction — strict-form (i==0 skip) would render these
+ * incorrectly, loose-form ((α>>24)==0 skip) handles them. */
+static bool fill_index8_test_palette_loose_binary_alpha(SDL_Palette* palette) {
+    SDL_Color colors[256];
+    static const int transparent_indices[] = { 0, 7, 31, 63, 128, 200 };
+    for (int i = 0; i < SDL_arraysize(colors); i++) {
+        colors[i].r = (Uint8)((i * 37) & 0xFF);
+        colors[i].g = (Uint8)((i * 73 + 19) & 0xFF);
+        colors[i].b = (Uint8)((i * 29 + 101) & 0xFF);
+        colors[i].a = 255u;
+    }
+    for (int k = 0; k < (int)SDL_arraysize(transparent_indices); k++) {
+        colors[transparent_indices[k]].a = 0u;
+    }
+    return SDL_SetPaletteColors(palette, colors, 0, SDL_arraysize(colors));
+}
+
+/* Build the per-palette ARGB8888 LUT used by the renderer's INDEX8 fast path.
+ * This mirrors the renderer's build_software_palette_lut() shape so the parity
+ * shim sees the same lookup the production kernel sees. */
+static void build_test_palette_lut(const SDL_Palette* palette, Uint32* out_lut) {
+    const int n = palette->ncolors < 256 ? palette->ncolors : 256;
+    for (int i = 0; i < n; i++) {
+        const SDL_Color c = palette->colors[i];
+        out_lut[i] = ((Uint32)c.a << 24) | ((Uint32)c.r << 16) | ((Uint32)c.g << 8) | (Uint32)c.b;
+    }
+    for (int i = n; i < 256; i++) {
+        out_lut[i] = 0;
+    }
+}
+
+/* perf-2: 565 sibling. Mirrors the renderer's build_software_palette_lut()
+ * 565 build pass. Available for future 565 parity cases that need a parallel
+ * LUT565 (current cases derive 565 directly from LUT8888 via parity_pack_*). */
+static __attribute__((unused)) void build_test_palette_lut_565(const SDL_Palette* palette, Uint16* out_lut) {
+    const int n = palette->ncolors < 256 ? palette->ncolors : 256;
+    for (int i = 0; i < n; i++) {
+        const SDL_Color c = palette->colors[i];
+        out_lut[i] = (Uint16)(((Uint32)(c.r >> 3) << 11) |
+                              ((Uint32)(c.g >> 2) << 5) |
+                              ((Uint32)(c.b >> 3)));
+    }
+    for (int i = n; i < 256; i++) {
+        out_lut[i] = 0;
+    }
+}
+
+/* Local pack helper, duplicated here so the parity TU does not need to link
+ * against renderer internals. Same formula as pack_rgb565_from_argb. */
+static inline Uint16 parity_pack_rgb565_from_argb(Uint32 argb) {
+    const Uint32 r = (argb >> 16) & 0xFFu;
+    const Uint32 g = (argb >> 8) & 0xFFu;
+    const Uint32 b = argb & 0xFFu;
+    return (Uint16)(((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3));
+}
+
+static bool palette_is_binary_alpha(const Uint32* lut) {
+    for (int i = 0; i < 256; i++) {
+        const Uint32 a = (lut[i] >> 24) & 0xFFu;
+        if ((a != 0u) && (a != 0xFFu)) {
+            return false;
+        }
+    }
+    return true;
 }
 
 static void mutate_index8_test_source(SDL_Surface* surface, const SDL_Rect* rect, Uint8 salt) {
@@ -341,6 +444,274 @@ static bool run_software_source_refresh_parity_check(void) {
     return true;
 }
 
+typedef struct Index8FastPathCase {
+    const char* name;
+    SDL_FRect dst_rect;
+    SDL_FRect src_uv_rect;
+    SDL_FlipMode flip;
+} Index8FastPathCase;
+
+/* Reference: read INDEX8 bytes directly and look them up via the same `lut[]`
+ * the production kernel uses, then composite into the destination using the
+ * loose-form rule (α==0 keep dst, α==0xFF write src). The scaled branch builds
+ * src lookup tables via SDLGameRenderer_PopulateScaledLookupTableForParity() so
+ * the reference uses exactly the production scaling formula — no second
+ * algorithm masquerading as ground truth. */
+static bool raster_reference_index8_loose(SDL_Surface* index8_src,
+                                          const Uint32* lut,
+                                          const SDL_FRect* dst_rect,
+                                          const SDL_FRect* src_uv_rect,
+                                          SDL_FlipMode flip,
+                                          SDL_Surface* dst_surface) {
+    /* Compute integer src/dst rects identical to build_software_frame_fast_copy_plan(). */
+    const int dst_x = (int)SDL_roundf(dst_rect->x);
+    const int dst_y = (int)SDL_roundf(dst_rect->y);
+    const int dst_w = (int)SDL_roundf(dst_rect->w);
+    const int dst_h = (int)SDL_roundf(dst_rect->h);
+    const int src_x_int = (int)SDL_roundf(src_uv_rect->x * (float)index8_src->w);
+    const int src_y_int = (int)SDL_roundf(src_uv_rect->y * (float)index8_src->h);
+    const int src_w_int = (int)SDL_roundf(src_uv_rect->w * (float)index8_src->w);
+    const int src_h_int = (int)SDL_roundf(src_uv_rect->h * (float)index8_src->h);
+    if ((dst_w <= 0) || (dst_h <= 0) || (src_w_int <= 0) || (src_h_int <= 0)) {
+        return false;
+    }
+
+    const int dst_x0 = clamp_to_range(dst_x, 0, dst_surface->w);
+    const int dst_y0 = clamp_to_range(dst_y, 0, dst_surface->h);
+    const int dst_x1 = clamp_to_range(dst_x + dst_w, 0, dst_surface->w);
+    const int dst_y1 = clamp_to_range(dst_y + dst_h, 0, dst_surface->h);
+    const bool flip_h = (flip & SDL_FLIP_HORIZONTAL) != 0;
+    const bool flip_v = (flip & SDL_FLIP_VERTICAL) != 0;
+    const int clip_left = dst_x0 - dst_x;
+    const int clip_top = dst_y0 - dst_y;
+    const int visible_w = dst_x1 - dst_x0;
+    const int visible_h = dst_y1 - dst_y0;
+    const bool exact_copy = (src_w_int == dst_w) && (src_h_int == dst_h);
+
+    const Uint8* index8_pixels = (const Uint8*)index8_src->pixels;
+    const int index8_pitch = index8_src->pitch;
+    /* perf-2 P-2.3: format-aware pointer + pitch. The 565 branch must use
+     * Uint16* and pitch / sizeof(Uint16); the 8888 branch keeps the original
+     * Uint32*. The α-decide stays identical (read α from LUT8888); only
+     * pointer type / pitch divisor / store form differ. */
+    const bool dst_is_565 = (dst_surface->format == SDL_PIXELFORMAT_RGB565);
+    Uint32* dst_pixels = (Uint32*)dst_surface->pixels;
+    const int dst_pitch = dst_surface->pitch / (int)sizeof(Uint32);
+    Uint16* dst_pixels_16 = (Uint16*)dst_surface->pixels;
+    const int dst_pitch_16 = dst_surface->pitch / (int)sizeof(Uint16);
+
+    if (exact_copy) {
+        const int src_x_step = flip_h ? -1 : 1;
+        const int src_y_step = flip_v ? -1 : 1;
+        const int src_row0_x = flip_h ? (src_x_int + src_w_int - 1 - clip_left) : (src_x_int + clip_left);
+        const int src_row0_y = flip_v ? (src_y_int + src_h_int - 1 - clip_top) : (src_y_int + clip_top);
+        for (int row = 0; row < visible_h; row++) {
+            const Uint8* src_row = index8_pixels + ((src_row0_y + (row * src_y_step)) * index8_pitch);
+            int src_x = src_row0_x;
+            if (dst_is_565) {
+                Uint16* dst_row = dst_pixels_16 + ((dst_y0 + row) * dst_pitch_16) + dst_x0;
+                for (int col = 0; col < visible_w; col++) {
+                    const Uint32 src_pixel = lut[src_row[src_x]];
+                    if ((src_pixel >> 24) != 0u) { dst_row[col] = parity_pack_rgb565_from_argb(src_pixel); }
+                    src_x += src_x_step;
+                }
+            } else {
+                Uint32* dst_row = dst_pixels + ((dst_y0 + row) * dst_pitch) + dst_x0;
+                for (int col = 0; col < visible_w; col++) {
+                    const Uint32 src_pixel = lut[src_row[src_x]];
+                    if ((src_pixel >> 24) != 0u) { dst_row[col] = src_pixel; }
+                    src_x += src_x_step;
+                }
+            }
+        }
+    } else {
+        if ((visible_w > dst_surface->w) || (visible_h > dst_surface->h)) {
+            return false;
+        }
+        int* src_x_lookup = (int*)SDL_malloc((size_t)visible_w * sizeof(int));
+        int* src_y_lookup = (int*)SDL_malloc((size_t)visible_h * sizeof(int));
+        if ((src_x_lookup == NULL) || (src_y_lookup == NULL)) {
+            SDL_free(src_y_lookup);
+            SDL_free(src_x_lookup);
+            return false;
+        }
+        SDLGameRenderer_PopulateScaledLookupTableForParity(
+            src_x_lookup, visible_w, dst_x, dst_x0, dst_w, src_x_int, src_w_int, flip_h);
+        SDLGameRenderer_PopulateScaledLookupTableForParity(
+            src_y_lookup, visible_h, dst_y, dst_y0, dst_h, src_y_int, src_h_int, flip_v);
+        for (int row = 0; row < visible_h; row++) {
+            const Uint8* src_row = index8_pixels + (src_y_lookup[row] * index8_pitch);
+            if (dst_is_565) {
+                Uint16* dst_row = dst_pixels_16 + ((dst_y0 + row) * dst_pitch_16) + dst_x0;
+                for (int col = 0; col < visible_w; col++) {
+                    const Uint32 src_pixel = lut[src_row[src_x_lookup[col]]];
+                    if ((src_pixel >> 24) != 0u) { dst_row[col] = parity_pack_rgb565_from_argb(src_pixel); }
+                }
+            } else {
+                Uint32* dst_row = dst_pixels + ((dst_y0 + row) * dst_pitch) + dst_x0;
+                for (int col = 0; col < visible_w; col++) {
+                    const Uint32 src_pixel = lut[src_row[src_x_lookup[col]]];
+                    if ((src_pixel >> 24) != 0u) { dst_row[col] = src_pixel; }
+                }
+            }
+        }
+        SDL_free(src_y_lookup);
+        SDL_free(src_x_lookup);
+    }
+
+    return true;
+}
+
+static bool run_index8_fast_path_parity_check(void) {
+    /* dst_rect coords MUST be integer-valued floats: build_software_frame_fast_copy_plan
+     * runs `nearly_equal(SDL_roundf(v), v)` (epsilon 0.001) on each. UVs MUST also
+     * round-trip through `SDL_roundf(uv * src_dim)` to integers under that
+     * epsilon, otherwise the plan returns SOFTWARE_FRAME_FAST_COPY_RESULT_NON_INTEGER
+     * and the fast-path shim refuses the case. Source surface is 48x32; pick UVs
+     * that produce integer src rects at that resolution. */
+    static const Index8FastPathCase cases[] = {
+        { "exact-forward",    { 4.0f, 6.0f, 24.0f, 18.0f }, { 0.0f, 0.0f, 0.5f, 0.5625f }, SDL_FLIP_NONE },
+        { "exact-flip-h",     { 4.0f, 6.0f, 24.0f, 18.0f }, { 0.0f, 0.0f, 0.5f, 0.5625f }, SDL_FLIP_HORIZONTAL },
+        { "exact-flip-v",     { 4.0f, 6.0f, 24.0f, 18.0f }, { 0.0f, 0.0f, 0.5f, 0.5625f }, SDL_FLIP_VERTICAL },
+        { "exact-flip-both",  { 4.0f, 6.0f, 24.0f, 18.0f }, { 0.0f, 0.0f, 0.5f, 0.5625f }, SDL_FLIP_HORIZONTAL_AND_VERTICAL },
+        /* scaled-up: src 24x16 -> dst 36x28 (non-exact). UVs picked so 0.0625*48=3,
+         * 0.0625*32=2, 0.5*48=24, 0.5*32=16 are all exact integers. */
+        { "scaled-up",        { 2.0f, 2.0f, 36.0f, 28.0f }, { 0.0625f, 0.0625f, 0.5f, 0.5f }, SDL_FLIP_NONE },
+        { "scaled-down",      { 4.0f, 4.0f, 12.0f, 9.0f },  { 0.0f, 0.0f, 0.625f, 0.625f }, SDL_FLIP_NONE },
+        { "clip-top-left",    { -6.0f, -4.0f, 24.0f, 18.0f }, { 0.0f, 0.0f, 0.5f, 0.5625f }, SDL_FLIP_NONE },
+        { "clip-bottom-right",{ 30.0f, 22.0f, 24.0f, 18.0f }, { 0.0f, 0.0f, 0.5f, 0.5625f }, SDL_FLIP_NONE },
+    };
+
+    typedef struct PaletteFlavor {
+        const char* label;
+        bool (*fill)(SDL_Palette*);
+    } PaletteFlavor;
+    static const PaletteFlavor flavors[] = {
+        { "strict",  fill_index8_test_palette_strict_binary_alpha },
+        { "loose",   fill_index8_test_palette_loose_binary_alpha },
+    };
+
+    /* perf-2: parameterize on dst format. The harness now runs each case
+     * on both ARGB8888 and RGB565 destinations to validate both kernels. */
+    typedef struct DstFormatFlavor {
+        const char* label;
+        SDL_PixelFormat format;
+    } DstFormatFlavor;
+    static const DstFormatFlavor dst_formats[] = {
+        { "argb8888", SDL_PIXELFORMAT_ARGB8888 },
+        { "rgb565",   SDL_PIXELFORMAT_RGB565   },
+    };
+
+    const int src_w = 48;
+    const int src_h = 32;
+    const int dst_w = 64;
+    const int dst_h = 48;
+
+    int total_cases_ran = 0;
+
+    for (int df = 0; df < (int)SDL_arraysize(dst_formats); df++) {
+        for (int flavor_index = 0; flavor_index < (int)SDL_arraysize(flavors); flavor_index++) {
+            SDL_Surface* index8_src = SDL_CreateSurface(src_w, src_h, SDL_PIXELFORMAT_INDEX8);
+            SDL_Palette* palette = SDL_CreatePalette(256);
+            if ((index8_src == NULL) || (palette == NULL)) {
+                SDL_Log("Index8 fast-path parity setup failed (%s/%s): %s",
+                        dst_formats[df].label, flavors[flavor_index].label, SDL_GetError());
+                SDL_DestroyPalette(palette);
+                SDL_DestroySurface(index8_src);
+                return false;
+            }
+
+            fill_index8_test_source(index8_src);
+            if (!flavors[flavor_index].fill(palette) || !SDL_SetSurfacePalette(index8_src, palette)) {
+                SDL_Log("Index8 fast-path palette setup failed (%s/%s): %s",
+                        dst_formats[df].label, flavors[flavor_index].label, SDL_GetError());
+                SDL_DestroyPalette(palette);
+                SDL_DestroySurface(index8_src);
+                return false;
+            }
+
+            Uint32 lut[256];
+            build_test_palette_lut(palette, lut);
+            const bool is_binary_alpha = palette_is_binary_alpha(lut);
+            if (!is_binary_alpha) {
+                SDL_Log("Index8 fast-path parity: palette '%s' unexpectedly not binary-α", flavors[flavor_index].label);
+                SDL_DestroyPalette(palette);
+                SDL_DestroySurface(index8_src);
+                return false;
+            }
+
+            for (int case_index = 0; case_index < (int)SDL_arraysize(cases); case_index++) {
+                SDL_Surface* expected = SDL_CreateSurface(dst_w, dst_h, dst_formats[df].format);
+                SDL_Surface* actual   = SDL_CreateSurface(dst_w, dst_h, dst_formats[df].format);
+                if ((expected == NULL) || (actual == NULL)) {
+                    SDL_Log("Index8 fast-path parity dst-surface alloc failed: %s", SDL_GetError());
+                    SDL_DestroySurface(actual);
+                    SDL_DestroySurface(expected);
+                    SDL_DestroyPalette(palette);
+                    SDL_DestroySurface(index8_src);
+                    return false;
+                }
+                /* fill_test_destination assumes ARGB8888; on a 565 surface
+                 * we just zero-clear (loose-form fast path overwrites only
+                 * non-α==0 pixels, so the cleared pixels stay 0 and match
+                 * across expected/actual). */
+                if (dst_formats[df].format == SDL_PIXELFORMAT_ARGB8888) {
+                    fill_test_destination(expected, true);
+                    fill_test_destination(actual, true);
+                } else {
+                    SDL_memset(expected->pixels, 0, (size_t)expected->pitch * (size_t)expected->h);
+                    SDL_memset(actual->pixels, 0, (size_t)actual->pitch * (size_t)actual->h);
+                }
+
+                if (!raster_reference_index8_loose(index8_src, lut, &cases[case_index].dst_rect,
+                                                   &cases[case_index].src_uv_rect, cases[case_index].flip, expected)) {
+                    SDL_Log("Index8 fast-path parity reference build failed for %s/%s/%s",
+                            dst_formats[df].label, flavors[flavor_index].label, cases[case_index].name);
+                    SDL_DestroySurface(actual);
+                    SDL_DestroySurface(expected);
+                    SDL_DestroyPalette(palette);
+                    SDL_DestroySurface(index8_src);
+                    return false;
+                }
+
+                if (!SDLGameRenderer_RunIndex8FastPathParityCase(index8_src, lut, is_binary_alpha,
+                                                                &cases[case_index].dst_rect,
+                                                                &cases[case_index].src_uv_rect,
+                                                                cases[case_index].flip, actual)) {
+                    SDL_Log("Index8 fast-path parity shim rejected case %s/%s/%s",
+                            dst_formats[df].label, flavors[flavor_index].label, cases[case_index].name);
+                    SDL_DestroySurface(actual);
+                    SDL_DestroySurface(expected);
+                    SDL_DestroyPalette(palette);
+                    SDL_DestroySurface(index8_src);
+                    return false;
+                }
+
+                char case_label[96];
+                SDL_snprintf(case_label, sizeof(case_label), "index8/%s/%s/%s",
+                             dst_formats[df].label, flavors[flavor_index].label, cases[case_index].name);
+                if (!surfaces_match(case_label, expected, actual)) {
+                    SDL_DestroySurface(actual);
+                    SDL_DestroySurface(expected);
+                    SDL_DestroyPalette(palette);
+                    SDL_DestroySurface(index8_src);
+                    return false;
+                }
+
+                SDL_DestroySurface(actual);
+                SDL_DestroySurface(expected);
+                total_cases_ran++;
+            }
+
+            SDL_DestroyPalette(palette);
+            SDL_DestroySurface(index8_src);
+        }
+    }
+
+    SDL_Log("Index8 fast-path parity check passed: %d cases", total_cases_ran);
+    return true;
+}
+
 bool SDLGameRenderer_RunSoftwareFrameParityCheck(void) {
     static const SoftwareFrameParityTask cases[] = {
         { "subpixel-upscale", { 3.25f, 2.50f, 17.50f, 11.75f }, { 0.10f, 0.12f, 0.48f, 0.53f }, SDL_FLIP_NONE,
@@ -423,5 +794,8 @@ bool SDLGameRenderer_RunSoftwareFrameParityCheck(void) {
     SDL_DestroySurface(actual);
     SDL_DestroySurface(expected);
     SDL_DestroySurface(source);
-    return run_software_source_refresh_parity_check();
+    if (!run_software_source_refresh_parity_check()) {
+        return false;
+    }
+    return run_index8_fast_path_parity_check();
 }

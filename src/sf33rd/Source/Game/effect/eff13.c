@@ -1846,7 +1846,7 @@ s32 effect_13_init(WORK* wk, u8 data) {
     ewk->wu.be_flag = 1;
     ewk->wu.id = 13;
     ewk->wu.type = data;
-    ewk->wu.operator = wk->operator;
+    ewk->wu.wu_operator = wk->operator;
     ewk->wu.rl_flag = wk->rl_flag;
     ewk->wu.my_family = wk->my_family;
     ewk->wu.cgromtype = wk->cgromtype;

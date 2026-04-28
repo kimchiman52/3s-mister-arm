@@ -55,6 +55,15 @@ bool SDLSoftwareFrame_RasterNonIntegerLookupARGB8888(const SDL_FRect* dst_rect,
                                                      bool collect_reuse_telemetry,
                                                      bool collect_subrect_alpha_telemetry);
 
+/* perf-2 RGB565 sibling. Same shape as the 8888 entry but writes packed-565
+ * to dst_surface->pixels. dst_surface format must be SDL_PIXELFORMAT_RGB565. */
+bool SDLSoftwareFrame_RasterNonIntegerLookupRGB565(const SDL_FRect* dst_rect,
+                                                    const SDL_FRect* src_uv_rect,
+                                                    SDL_FlipMode flip,
+                                                    Uint32 color,
+                                                    SDL_Surface* dst_surface,
+                                                    const SDL_Surface* src_surface);
+
 bool SDLSoftwareFrame_AnalyzeNonIntegerSourceAlphaARGB8888(const SDL_FRect* dst_rect,
                                                            const SDL_Rect* src_rect,
                                                            SDL_FlipMode flip,

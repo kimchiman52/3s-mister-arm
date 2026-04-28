@@ -193,7 +193,14 @@ typedef struct {
     s8 be_flag;
     s8 disp_flag;
     u8 blink_timing;
-    u8 operator;
+    /*
+     * Renamed in Phase 6 Step 5 to avoid the C++ reserved-word
+     * collision (see docs/plan-netplay-phase6.md). C-only
+     * `#define operator wu_operator` at end of this header keeps
+     * legacy `.operator` call sites working until a post-phase6
+     * rename cleanup.
+     */
+    u8 wu_operator;
     u8 type;
     u8 charset_id;
     s16 work_id;
@@ -2207,5 +2214,10 @@ typedef union {
         s16 xh;
     } o;
 } SEA_WORK;
+
+#ifndef __cplusplus
+// TODO(post-phase6): remove once all call-sites renamed.
+#define operator wu_operator
+#endif
 
 #endif

@@ -5,6 +5,9 @@
 
 #include "sf33rd/Source/Game/system/sys_sub.h"
 #include "common.h"
+#if DEBUG
+#include <stdio.h>
+#endif
 #include "main.h"
 #include "netplay/netplay.h"
 #include "sf33rd/AcrSDK/common/mlPAD.h"
@@ -260,11 +263,11 @@ bool Cut_Cut_Cut() {
         return false;
     }
 
-    if (plw[0].wu.operator && (p1sw_0 & SWK_ATTACKS)) {
+    if (plw[0].wu.wu_operator && (p1sw_0 & SWK_ATTACKS)) {
         return true;
     }
 
-    if (plw[1].wu.operator && (p2sw_0 & SWK_ATTACKS)) {
+    if (plw[1].wu.wu_operator && (p2sw_0 & SWK_ATTACKS)) {
         return true;
     }
 
@@ -293,7 +296,7 @@ void Score_Sub() {
     }
 
     for (PL_id = 0; PL_id < 2; PL_id++) {
-        if ((Mode_Type != MODE_VERSUS && Mode_Type != MODE_REPLAY) && plw[PL_id].wu.operator == 0) {
+        if ((Mode_Type != MODE_VERSUS && Mode_Type != MODE_REPLAY) && plw[PL_id].wu.wu_operator == 0) {
             continue;
         }
 
@@ -449,7 +452,7 @@ s32 Setup_Target_PL() {
         return 0;
     }
 
-    if (plw[0].wu.operator) {
+    if (plw[0].wu.wu_operator) {
         return 0;
     }
 
@@ -902,6 +905,25 @@ void BG_Draw_System() {
     u16 s2;
     u16 s3;
 
+#if DEBUG
+    /* Black-BG investigation 2026-04-24 — Experiment 2.
+     * Reset log budget on each Play_Game transition so we capture per-match. */
+    {
+        static int s_dbg_count = 0;
+        static int s_last_play_game = -1;
+        if ((int)Play_Game != s_last_play_game) {
+            s_dbg_count = 0;
+            s_last_play_game = (int)Play_Game;
+        }
+        if (Play_Game == 1 && s_dbg_count < 32) {
+            fprintf(stderr,
+                    "[BG_Draw_System] ssb=0x%x bg_disp_off=%d Play_Game=%d\n",
+                    (unsigned)Screen_Switch_Buffer, (int)bg_disp_off, (int)Play_Game);
+            s_dbg_count++;
+        }
+    }
+#endif
+
     if (bg_disp_off == 0) {
         for (i = 0; i < 4; i++, s2 = mask *= 2) {
             if (Screen_Switch_Buffer & mask) {
@@ -973,11 +995,11 @@ s32 Cut_Cut_Sub(s16 xx) {
         return 1;
     }
 
-    if (plw[0].wu.operator && (p1sw_0 & SWK_ATTACKS)) {
+    if (plw[0].wu.wu_operator && (p1sw_0 & SWK_ATTACKS)) {
         return xx;
     }
 
-    if (plw[1].wu.operator && (p2sw_0 & SWK_ATTACKS)) {
+    if (plw[1].wu.wu_operator && (p2sw_0 & SWK_ATTACKS)) {
         return xx;
     }
 
@@ -1064,12 +1086,12 @@ void Check_Replay() {
         Replay_Status[0] = 1;
         Replay_Status[1] = 1;
 
-        if (plw[0].wu.operator == 0) {
+        if (plw[0].wu.wu_operator == 0) {
             Replay_Status[0] = 0;
             CP_No[0][0] = 0;
         }
 
-        if (plw[1].wu.operator == 0) {
+        if (plw[1].wu.wu_operator == 0) {
             Replay_Status[1] = 0;
             CP_No[1][0] = 0;
         }
@@ -1133,7 +1155,7 @@ void Setup_Replay_Header() {
         Rep_Game_Infor[10].player_infor[ix].my_char = My_char[ix];
         Rep_Game_Infor[10].player_infor[ix].sa = Super_Arts[ix];
         Rep_Game_Infor[10].player_infor[ix].color = Player_Color[ix];
-        Rep_Game_Infor[10].player_infor[ix].player_type = plw[ix].wu.operator;
+        Rep_Game_Infor[10].player_infor[ix].player_type = plw[ix].wu.wu_operator;
         Rep_Game_Infor[10].Vital_Handicap[ix] = Vital_Handicap[Present_Mode][ix];
     }
 
@@ -1303,7 +1325,7 @@ void Replay(s16 PL_id) {
         Demo_Timer[PL_id] = buff + 1;
     }
 
-    if (plw[PL_id].wu.operator == 0) {
+    if (plw[PL_id].wu.wu_operator == 0) {
         if (PL_id) {
             p2sw_0 = 0;
         } else {

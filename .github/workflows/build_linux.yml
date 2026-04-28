@@ -2,7 +2,7 @@ name: Build (Linux)
 
 on:
     pull_request:
-        branches: [ "main" ]
+        branches: [ "main", "netplay" ]
 
 jobs:
     build:
@@ -40,3 +40,54 @@ jobs:
             with:
                 name: build-log
                 path: build.log
+
+    build-netplay-explicit:
+        # F19 — netplay Track A review finding (2026-04-20).
+        # Sibling job that explicitly forces -DENABLE_NETPLAY=ON and
+        # -DENABLE_RMLUI=ON so any regression in either cascade
+        # (src/netplay/*.c, src/port/sdl/netplay_screen.*, the Phase 6
+        # RmlUi lobby TUs) surfaces in CI even if the desktop default ever
+        # flips to OFF. The existing `build` job already compiles netplay
+        # by default on Linux (see CMakeLists.txt:16); this is
+        # belt-and-suspenders coverage, plus it proves the full RmlUi
+        # source cascade compiles on Linux x86_64 before we start adding
+        # Phase 6 TUs.
+        # Note: full MiSTer-target verification still requires the Docker
+        # ARM cross-compile recipe (`EXTRA_CMAKE_ARGS=... tools/mister/
+        # build-game.sh --flavor telemetry`), which is not plumbed into
+        # GitHub Actions CI. That coverage gap is documented in
+        # docs/mister-runbook.md.
+        runs-on: ubuntu-latest
+
+        steps:
+          - name: Checkout repository
+            uses: actions/checkout@v4
+            with:
+                submodules: true
+
+          - name: Cache dependencies
+            uses: actions/cache@v4
+            with:
+                path: third_party
+                key: ${{ runner.os }}-deps-netplay-${{ hashFiles('build-deps.sh') }}
+
+          - name: Install dependencies
+            run: |
+                sudo apt update
+                sudo apt install -y $(cat tools/requirements-ubuntu.txt)
+                ./build-deps.sh
+            shell: bash
+
+          - name: Build for Linux (ENABLE_NETPLAY=ON ENABLE_RMLUI=ON explicit)
+            run: |
+                set -o pipefail
+                CC=clang CXX=clang++ cmake -B build-netplay -DCMAKE_BUILD_TYPE=Release -DENABLE_NETPLAY=ON -DENABLE_RMLUI=ON
+                cmake --build build-netplay --parallel 2>&1 | tee build-netplay.log
+            shell: bash
+
+          - name: Upload build log (netplay)
+            if: always()
+            uses: actions/upload-artifact@v4
+            with:
+                name: build-netplay-log
+                path: build-netplay.log

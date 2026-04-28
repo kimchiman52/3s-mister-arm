@@ -381,7 +381,7 @@ void check_body_touch2() {
     s16 dad2[4];
     s16 dad3[4];
 
-    if (plw[0].wu.operator) {
+    if (plw[0].wu.wu_operator) {
         hmw = &plw[0];
         cmw = &plw[1];
     } else {
@@ -452,7 +452,7 @@ s32 check_be_car_object() {
         return 1;
     }
 
-    if (plw[0].wu.operator) {
+    if (plw[0].wu.wu_operator) {
         com = &plw[1];
     } else {
         com = &plw[0];
@@ -614,7 +614,17 @@ s16 check_work_position(WORK* p1, WORK* p2) { // 🟡
     return num;
 }
 
+/* Call counters for desync investigation. Peer with higher call count for a
+ * given RNG family = extra consumer that broke sync. Promoted out of
+ * #if DEBUG 2026-04-26 so telemetry's dump_desync_state can read them.
+ * Each increment is one u32++ off the hot path's main work — negligible. */
+u32 g_random_32_calls = 0;
+u32 g_random_16_calls = 0;
+u32 g_random_32_ex_calls = 0;
+u32 g_random_16_ex_calls = 0;
+
 s32 random_32() { // 🟢
+    g_random_32_calls++;
     Random_ix32++;
 
     if (Debug_w[0x3B] == -32) {
@@ -626,6 +636,7 @@ s32 random_32() { // 🟢
 }
 
 s32 random_16() { // 🟢
+    g_random_16_calls++;
     Random_ix16++;
 
     if (Debug_w[0x3B] == -32) {
@@ -637,6 +648,7 @@ s32 random_16() { // 🟢
 }
 
 s32 random_32_ex() { // 🟢
+    g_random_32_ex_calls++;
     Random_ix32_ex++;
 
     if (Debug_w[0x3B] == -32) {
@@ -648,6 +660,7 @@ s32 random_32_ex() { // 🟢
 }
 
 s32 random_16_ex() {
+    g_random_16_ex_calls++;
     Random_ix16_ex++;
 
     if (Debug_w[0x3B] == -32) {
@@ -915,7 +928,7 @@ void add_sp_arts_gauge_hit_dm(PLW* wk) { // 🟢 Matches except for difficulty h
     if (asag != 0) {
         add_super_arts_gauge(wk->sa, wk->wu.id, asag / 3, wk->metamorphose);
 
-        if (emwk->wu.operator == 0) {
+        if (emwk->wu.wu_operator == 0) {
             asag += asagh_zuru[save_w[Present_Mode].Difficulty]; // TODO: figure out the default arcade difficulty
         }
 
@@ -925,7 +938,7 @@ void add_sp_arts_gauge_hit_dm(PLW* wk) { // 🟢 Matches except for difficulty h
 
         asag = cal_sa_gauge_waribiki(wk, asag);
 
-        if (emwk->wu.operator == 0 && Break_Into_CPU == 1) {
+        if (emwk->wu.wu_operator == 0 && Break_Into_CPU == 1) {
             asag = (asag * 120) / 100;
         }
 
@@ -975,7 +988,7 @@ void add_sp_arts_gauge_paring(PLW* wk) { // 🟡 Difficulty handling differs
     asag = _add_arts_gauge[emwk->player_number][wk->wu.dm_arts_point][3];
 
     if (asag != 0) {
-        if (wk->wu.operator == 0) {
+        if (wk->wu.wu_operator == 0) {
             asag += asagh_zuru[save_w[Present_Mode].Difficulty];
         }
 
@@ -1002,7 +1015,7 @@ void add_sp_arts_gauge_tokushu(PLW* wk) { // 🟢 Difficulty handling differs
         return;
     }
 
-    if (wk->wu.operator == 0) {
+    if (wk->wu.wu_operator == 0) {
         asag += asagh_zuru[save_w[Present_Mode].Difficulty];
     }
 
@@ -1026,7 +1039,7 @@ void add_sp_arts_gauge_ukemi(PLW* wk) { // 🟢 Difficulty handling differs
         return;
     }
 
-    if (wk->wu.operator == 0) {
+    if (wk->wu.wu_operator == 0) {
         asag += asagh_zuru[save_w[Present_Mode].Difficulty];
     }
 
@@ -1050,7 +1063,7 @@ void add_sp_arts_gauge_nagenuke(PLW* wk) { // 🟢 Difficulty handling differs
         return;
     }
 
-    if (wk->wu.operator == 0) {
+    if (wk->wu.wu_operator == 0) {
         asag += asagh_zuru[save_w[Present_Mode].Difficulty];
     }
 

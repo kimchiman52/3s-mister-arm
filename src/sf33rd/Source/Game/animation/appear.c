@@ -63,7 +63,7 @@ s32 home_visitor_check(PLW* wk) {
         if (Champion == wk->wu.id && wk->player_number == pl_num && pl_num != 8) {
             hv_type = 1;
         }
-    } else if (wk->wu.operator && wk->player_number == pl_num && pl_num != 8) {
+    } else if (wk->wu.wu_operator && wk->player_number == pl_num && pl_num != 8) {
         hv_type = 1;
     }
 
@@ -1261,7 +1261,7 @@ void Appear_23000(PLW* wk) {
 }
 
 void Appear_24000(PLW* wk) {
-    if (!wk->wu.operator) {
+    if (!wk->wu.wu_operator) {
         if (wk->wu.id) {
             wk->wu.xyz[0].disp.pos = bg_w.bgw[1].pos_x_work + 0xA8;
         } else {
@@ -1274,7 +1274,7 @@ void Appear_24000(PLW* wk) {
 }
 
 void Appear_25000(PLW* wk) {
-    if (!wk->wu.operator) {
+    if (!wk->wu.wu_operator) {
         wk->wu.xyz[0].disp.pos = bg_w.bgw[1].pos_x_work;
     }
 

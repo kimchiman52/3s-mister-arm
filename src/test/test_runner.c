@@ -34,28 +34,9 @@
 
 #define SWAP16(val) ((val << 8) | (val >> 8))
 
-typedef enum Character {
-    CHAR_GILL = 0,
-    CHAR_ALEX = 1,
-    CHAR_RYU = 2,
-    CHAR_YUN = 3,
-    CHAR_DUDLEY = 4,
-    CHAR_NECRO = 5,
-    CHAR_HUGO = 6,
-    CHAR_IBUKI = 7,
-    CHAR_ELENA = 8,
-    CHAR_ORO = 9,
-    CHAR_YANG = 10,
-    CHAR_KEN = 11,
-    CHAR_SEAN = 12,
-    CHAR_URIEN = 13,
-    CHAR_AKUMA = 14,
-    CHAR_CHUNLI = 15,
-    CHAR_MAKOTO = 16,
-    CHAR_Q = 17,
-    CHAR_TWELVE = 18,
-    CHAR_REMY = 19,
-} Character;
+/* Character enum comes from constants.h (included above). The local
+ * duplicate used to diverge slightly and was caught only when #if DEBUG
+ * was actually compiled. */
 
 typedef enum Phase {
     PHASE_INIT,
@@ -1084,12 +1065,9 @@ static void tap_button(SWKey button, int player) {
     *dst |= button;
 }
 
-static u16 read_u16(SDL_IOStream* io, Sint64 offset) {
-    u16 result;
-    SDL_SeekIO(io, offset, SDL_IO_SEEK_SET);
-    SDL_ReadIO(io, &result, 2);
-    return SWAP16(result);
-}
+/* read_u16 definition lives in test_runner_utils.c; included via the
+ * header. The local duplicate used SDL_ReadIO+SWAP16, utils uses
+ * SDL_ReadU16BE — semantically identical on our targets. */
 
 static u16 read_input_buff(SDL_IOStream* io, Sint64 offset) {
     const u16 raw_buff = read_u16(io, offset);

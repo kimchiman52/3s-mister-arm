@@ -3,6 +3,10 @@
 
 #include <stdbool.h>
 
+/* Forward declaration so netplay.h does not pull in <SDL3_net/SDL_net.h>.
+ * Mirrors upstream /tmp/3sxtra/src/netplay/netplay.h typedef hygiene. */
+struct NET_DatagramSocket;
+
 typedef struct NetworkStats {
     int delay;
     int ping;
@@ -18,8 +22,31 @@ typedef enum NetplaySessionState {
 } NetplaySessionState;
 
 void Netplay_SetParams(int player, const char* ip);
+// Override the remote UDP port chosen by Netplay_SetParams. Needed on the
+// direct-P2P orchestrator path where the STUN-translated peer port is only
+// known after hole-punch, not at SetParams time. See do_handoff() in
+// src/netplay/direct_p2p.c.
+void Netplay_SetRemotePort(unsigned short port);
+// True once remote_ip has been wired via Netplay_SetParams (LAN/localhost
+// path) OR via do_handoff() after the direct-P2P orchestrator completes
+// its UPnP+STUN hole-punch. Used by netplay_nav to gate NAV_START_NETPLAY
+// so the nav state machine doesn't call Netplay_BeginDirectP2P before
+// remote_ip is populated.
+bool Netplay_IsRemoteIpSet(void);
 void Netplay_BeginDirectP2P();
 void Netplay_TickDirectP2P();
+// Step 6 (docs/plan-stun-direct-p2p.md): pre-punched STUN socket handoff.
+// Mirrors upstream /tmp/3sxtra/src/netplay/netplay.c:808-814. Ownership
+// transfers to netplay.c; destroyed on session teardown. Calling twice
+// without an intervening teardown destroys the previously held socket
+// before replacing it. Pass NULL to clear.
+void Netplay_SetStunSocket(struct NET_DatagramSocket* socket);
+// Step 6 (docs/plan-stun-direct-p2p.md, P-2 #18): register a single
+// callback fired at the top of NETPLAY_SESSION_EXITING teardown, before
+// the STUN socket is destroyed. Used by the direct-P2P orchestrator
+// (Step 7) to release its UPnP mapping. Pass NULL to clear. The slot is
+// not cleared automatically — the callback persists across sessions.
+void Netplay_SetSessionTeardownCallback(void (*cb)(void));
 void Netplay_SetMatchmakingParams(const char* server_ip, int server_port);
 void Netplay_BeginMatchmaking();
 void Netplay_TickMatchmaking();
@@ -29,5 +56,23 @@ void Netplay_Run();
 NetplaySessionState Netplay_GetSessionState();
 void Netplay_HandleMenuExit();
 void Netplay_GetNetworkStats(NetworkStats* stats);
+
+// === 3SX-private extensions ===
+// Phase 6 Step 2: port of the 8-slot event queue from 3sxtra
+// (/tmp/3sxtra/src/netplay/netplay.h:37-51). See docs/plan-netplay-phase6.md
+// Step 2.
+
+typedef enum {
+    NETPLAY_EVENT_NONE = 0,
+    NETPLAY_EVENT_SYNCHRONIZING,
+    NETPLAY_EVENT_CONNECTED,
+    NETPLAY_EVENT_DISCONNECTED,
+} NetplayEventType;
+
+typedef struct {
+    NetplayEventType type;
+} NetplayEvent;
+
+bool Netplay_PollEvent(NetplayEvent* out);
 
 #endif

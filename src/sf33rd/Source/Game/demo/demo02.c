@@ -293,10 +293,10 @@ void Setup_Demo_Stage() {
 }
 
 void Setup_Select_Demo_PL() {
-    plw[0].wu.operator = 0;
-    plw[1].wu.operator = 0;
+    plw[0].wu.wu_operator = 0;
+    plw[1].wu.wu_operator = 0;
     Operator_Status[0] = 0;
     Operator_Status[1] = 0;
-    plw[Demo_PL_Data[Select_Demo_Index]].wu.operator = 1;
+    plw[Demo_PL_Data[Select_Demo_Index]].wu.wu_operator = 1;
     Operator_Status[Demo_PL_Data[Select_Demo_Index]] = 1;
 }

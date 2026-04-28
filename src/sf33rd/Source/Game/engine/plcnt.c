@@ -499,11 +499,11 @@ void init_app_10000() {
         plw[0].scr_pos_set_flag = plw[1].scr_pos_set_flag = 1;
 
         if (Play_Type == 0) {
-            if (plw[0].wu.operator) {
+            if (plw[0].wu.wu_operator) {
                 mpp_w.useChar[My_char[0]]++;
             }
 
-            if (plw[1].wu.operator) {
+            if (plw[1].wu.wu_operator) {
                 mpp_w.useChar[My_char[1]]++;
             }
         }
@@ -517,13 +517,13 @@ void init_app_10000() {
     case 2:
         pcon_rno[1] = 3;
 
-        if (plw[0].wu.operator) {
+        if (plw[0].wu.wu_operator) {
             paring_ctr_vs[0][0] = paring_ctr_ori[0];
         } else {
             paring_ctr_vs[0][0] = 0;
         }
 
-        if (plw[1].wu.operator) {
+        if (plw[1].wu.wu_operator) {
             paring_ctr_vs[0][1] = paring_ctr_ori[1];
         } else {
             paring_ctr_vs[0][1] = 0;
@@ -935,7 +935,7 @@ void move_player_work() {
         break;
 
     default:
-        switch (plw[0].wu.operator + (plw[1].wu.operator * 2)) {
+        switch (plw[0].wu.wu_operator + (plw[1].wu.wu_operator * 2)) {
         case 1:
             move_P1_move_P2();
             break;
@@ -1330,7 +1330,7 @@ void set_base_data(PLW* wk, s16 ix) {
     wk->wu.blink_timing = ix;
     wk->wu.id = ix;
     wk->wu.work_id = 1;
-    wk->wu.operator = Operator_Status[ix];
+    wk->wu.wu_operator = Operator_Status[ix];
     wk->wu.charset_id = plid_data[My_char[ix]];
     wk->wkey_flag = wk->dead_flag = 0;
     set_char_base_data(&wk->wu);

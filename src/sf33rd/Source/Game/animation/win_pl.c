@@ -1526,7 +1526,7 @@ void bonus_game_win_pause(PLW* wk) {
         win_rno[0] = win_rno[1] = 0;
 
         if (Bonus_Game_Flag == 20) {
-            if (wk->wu.operator) {
+            if (wk->wu.wu_operator) {
                 if (Time_Over) {
                     set_char_move_init(&wk->wu, 9, 67);
                 } else {
@@ -1540,7 +1540,7 @@ void bonus_game_win_pause(PLW* wk) {
             break;
         }
 
-        if (wk->wu.operator) {
+        if (wk->wu.wu_operator) {
             if (Bonus_Game_result == 20 || Bonus_Game_ex_result == 20) {
                 set_char_move_init(&wk->wu, 9, 65);
                 break;

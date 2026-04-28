@@ -72,7 +72,9 @@ validate_release_stage() {
     local stage_root="$1"
 
     [ -f "${stage_root}/MiSTer_3S-ARM" ] || { echo "missing staged HPS binary: ${stage_root}/MiSTer_3S-ARM" >&2; return 1; }
-    [ -f "${stage_root}/_Other/3S-ARM.rbf" ] || { echo "missing staged core: ${stage_root}/_Other/3S-ARM.rbf" >&2; return 1; }
+    local staged_rbfs
+    staged_rbfs=$(find "${stage_root}/_Other" -maxdepth 1 -type f -name '3S-ARM*.rbf' 2>/dev/null | wc -l | tr -d ' ')
+    [ "${staged_rbfs}" -ge 1 ] || { echo "missing staged core: ${stage_root}/_Other/3S-ARM*.rbf" >&2; return 1; }
     [ -f "${stage_root}/games/3s-arm/bin/3s-arm" ] || { echo "missing staged runtime binary: ${stage_root}/games/3s-arm/bin/3s-arm" >&2; return 1; }
     [ -d "${stage_root}/games/3s-arm/resources" ] || { echo "missing staged resources directory: ${stage_root}/games/3s-arm/resources" >&2; return 1; }
     [ -f "${stage_root}/${README_BASENAME}" ] || { echo "missing staged install README: ${stage_root}/${README_BASENAME}" >&2; return 1; }

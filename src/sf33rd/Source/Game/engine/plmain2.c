@@ -33,7 +33,7 @@ void (*const plmain_b_lv_00[5])(PLW* wk);
 void Player_move_bonus(PLW* wk, u16 lv_data) {
     s16 i;
 
-    if (wk->wu.operator) {
+    if (wk->wu.wu_operator) {
         if (wk->metamor_over) {
             wk->cp->sw_lvbt = 0;
         } else {
@@ -158,7 +158,7 @@ void player_mvbs_1000(PLW* wk) {
     case APPEAR_TYPE_UNKNOWN_2:
         wk->wu.routine_no[0] = 2;
 
-        if (Bonus_Game_Flag != 20 || wk->wu.operator) {
+        if (Bonus_Game_Flag != 20 || wk->wu.wu_operator) {
             wk->wu.routine_no[1] = 0;
             wk->wu.routine_no[2] = 0;
             wk->wu.routine_no[3] = 0;
@@ -169,7 +169,7 @@ void player_mvbs_1000(PLW* wk) {
         break;
     }
 
-    if ((wk->wu.operator == 0) && (Bonus_Game_Flag == 20)) {
+    if ((wk->wu.wu_operator == 0) && (Bonus_Game_Flag == 20)) {
         wk->wu.routine_no[1] = 0;
         wk->wu.routine_no[2] = 51;
         wk->wu.routine_no[3] = 0;
@@ -183,7 +183,7 @@ void player_mvbs_1000(PLW* wk) {
 void plmv_b_1010(PLW* wk) {
     wk->wu.routine_no[0] = 3;
 
-    if (Bonus_Game_Flag != 20 || wk->wu.operator) {
+    if (Bonus_Game_Flag != 20 || wk->wu.wu_operator) {
         wk->wu.routine_no[1] = 0;
         wk->wu.routine_no[2] = 1;
         wk->wu.routine_no[3] = 0;
@@ -205,7 +205,7 @@ void plmv_b_1020(PLW* wk, s16 step) {
 }
 
 void player_mvbs_2000(PLW* wk) {
-    if (Bonus_Game_Flag != 20 || wk->wu.operator) {
+    if (Bonus_Game_Flag != 20 || wk->wu.wu_operator) {
         if (wk->wu.routine_no[2] == 1) {
             wk->wu.routine_no[0] = 3;
             wk->wu.disp_flag = 1;

@@ -1,8 +1,12 @@
 #include "port/sdl/netplay_screen.h"
+#include "main.h"
+#include "netplay/direct_p2p.h"
 #include "netplay/matchmaking.h"
 #include "netplay/netplay.h"
+#include "netplay/netplay_nav.h"
 #include "sf33rd/Source/Game/system/work_sys.h"
 #include "sf33rd/Source/Game/ui/sc_sub.h"
+#include <SDL3/SDL.h>
 
 // Frames to hold the matchmaking message before switching to the next.
 #define MM_TEXT_HOLD_FRAMES 30
@@ -35,6 +39,43 @@ static const char* mm_message(MatchmakingState s) {
 void NetplayScreen_Render() {
     const NetplaySessionState ns = Netplay_GetSessionState();
     const MatchmakingState mm = Matchmaking_GetState();
+
+    // Direct-P2P orchestrator overlay (Step 8 of docs/plan-stun-direct-p2p.md).
+    // Only inspected while the netplay session is IDLE — once a session is
+    // live the direct_p2p module has already completed handoff and the
+    // in-game/match-found rendering below takes over. Direct-P2P is
+    // lobby-unaware (matchmaking stays IDLE throughout) so checking session
+    // state alone is sufficient. DirectP2P_DrawOverlay is a no-op when the
+    // orchestrator is idle, so the early-return is gated on the session
+    // check plus a cheap DirectP2P_GetState inspection to avoid swallowing
+    // the matchmaking render path when Direct-P2P isn't in play.
+    //
+    // This runs BEFORE the nav overlay below because on the handoff path
+    // the orchestrator draws its own richer overlay (HOSTING + room code,
+    // JOIN CONNECTING, HANDOFF, etc). Replacing that with a generic
+    // "CONNECTING..." would hide the room code the player needs to read.
+    if (ns == NETPLAY_SESSION_IDLE && DirectP2P_GetState() != DIRECT_P2P_IDLE) {
+        DirectP2P_DrawOverlay();
+        return;
+    }
+
+    // netplay_nav overlay. Nav runs from cold launch through the console-mode
+    // menu chain before the netplay session starts, which means the user sees
+    // attract → title → mode-select → char-select transition with no visible
+    // connection indicator unless we draw one. Show "CONNECTING..." for the
+    // whole duration nav is driving (NAV_WAIT_INIT through NAV_DRIVE_VS); the
+    // existing TRANSITIONING "Match found!" block below takes over once nav
+    // fires Netplay_BeginDirectP2P at NAV_START_NETPLAY.
+    //
+    // Gate on Init_Task having finished (task[TASK_INIT].condition==0). Nav
+    // arms inside set_netplay_params() which runs BEFORE sf3_init(), so
+    // NetplayScreen_Render fires on very early frames when the sprite bank
+    // and ppg list SSPutStrPro needs haven't been initialized yet and a
+    // draw call would null-deref.
+    if (NetplayNav_IsActive() && task[TASK_INIT].condition == 0) {
+        SSPutStrPro(1, 384, 2, 9, 0xFFFFFFFF, "CONNECTING...");
+        return;
+    }
 
     // While matchmaking is in progress show status text at the top of the
     // screen. This is safe at any time and doesn't require the full render pipeline.

@@ -97,6 +97,12 @@ typedef struct RenderTask {
 #if INDEX8_RASTERIZATION_ENABLED
     const Uint32* software_palette_lut;   /* Non-NULL when source is INDEX8 */
     bool software_source_is_index8;        /* Format discriminant */
+    bool software_palette_is_binary_alpha; /* Palette LUT has only α∈{0,255}; enables loose-form fast path */
+    /* perf-3 piece-B: stronger predicate -- index 0 is colour-key, all others
+     * are α==0xFF. Required for the 8-pixel packed-store kernel to be
+     * bit-identical to the scalar loose-form path. Implies
+     * software_palette_is_binary_alpha. */
+    bool software_palette_index0_is_ckey;
 #endif
     SDL_Vertex vertices[4];
     SDL_FRect dst_rect;
@@ -147,12 +153,18 @@ enum {
 static SDL_Renderer* _renderer = NULL;
 static SDL_Surface* software_frame_surface = NULL;
 static SDL_Texture* software_frame_upload_texture = NULL;
+#if defined(PORT_MISTER)
 static SDL_Surface* sa_bg_cache_surface = NULL;
 static bool sa_bg_cache_surface_valid = false;
 static int sa_bg_cache_snapshot_at_index = -1;
 static float sa_bg_cache_saved_scr_sc = 1.0f;
 static short sa_bg_cache_saved_adgjust_x = 0;
 static short sa_bg_cache_saved_adgjust_y = 0;
+#endif
+/* Issue #16 freeze diagnostics — temporary. */
+static Uint64 sa_diag_snapshot_ns = 0;
+static Uint64 sa_diag_restore_ns = 0;
+static int    sa_diag_texture_creates = 0;
 static bool software_frame_mode_active = false;
 static bool software_frame_direct_present_requested = false;
 static bool software_frame_surface_ready = false;
@@ -166,6 +178,23 @@ static int sa_bg_cache_frames_remaining = 0;
 static bool perf_capture_logical_identity_enabled = false;
 static bool perf_capture_fast_non_integer_reuse_telemetry_enabled = true;
 static bool perf_capture_fast_non_integer_subrect_alpha_telemetry_enabled = false;
+/* Runtime gate for the loose-form binary-α INDEX8 fast path (perf-1 plan).
+ * Default ON; can be flipped to false via config.ini key
+ * `colorkey-loose-kernel-enabled` for A/B without rebuild. */
+static bool colorkey_loose_kernel_enabled = true;
+/* perf-3 piece-B kill switch (8-pixel packed-store INDEX8->565 kernel).
+ * Default ON; runtime-flippable via SDLGameRenderer_SetSoftwarePalettePacked8pxEnabled. */
+static bool software_palette_packed_8px_enabled = true;
+/* perf-3 piece-C kill switch (16-pixel NEON 565 kernels).
+ * Default ON; runtime-flippable via SDLGameRenderer_SetSoftwareNeon16pxEnabled. */
+static bool software_neon_16px_enabled = true;
+/* Runtime gate for the RGB565 software-frame canvas (perf-2 plan).
+ * Default OFF unconditionally -- flipped to true at startup by sdl_app.c
+ * only after NativeVideoWriter_Init() returns true. The 565 canvas is
+ * unsafe on the fbdev fallback path (software_frame_upload_texture
+ * stays ARGB8888) so we only enable it when the native video writer
+ * path is the only consumer. See plan section 10 (P-1.2 mitigation). */
+static bool rgb565_canvas_enabled = false;
 static SDL_Surface* surfaces[FL_TEXTURE_MAX] = { NULL };
 static SDL_Palette* palettes[FL_PALETTE_MAX] = { NULL };
 #if INDEX8_RASTERIZATION_ENABLED
@@ -173,6 +202,28 @@ static SDL_Palette* palettes[FL_PALETTE_MAX] = { NULL };
  * FL_PALETTE_MAX is 1088, so this is 1088 * 1KB = ~1MB static allocation. */
 static Uint32 software_palette_lut[FL_PALETTE_MAX][256];
 static bool software_palette_lut_valid[FL_PALETTE_MAX] = { false };
+/* Per-palette eligibility for the loose-form binary-α fast path. True iff every
+ * entry's α is exactly 0 or 0xFF after build_software_palette_lut() runs. */
+static bool software_palette_lut_is_binary_alpha[FL_PALETTE_MAX] = { false };
+/* perf-3 piece-B: per-palette gate for the 8-pixel packed-store kernel.
+ * True iff the palette is "colour-key on index 0": entry 0 has α==0 AND
+ * every other entry (i != 0) has α==0xFF. This is the stronger invariant
+ * required for the packed-store path -- the scalar loose-form kernel gates
+ * stores on `palette_lut[idx] alpha != 0`, but the packed kernel gates on
+ * `idx != 0` (via any_byte_zero). The two are bit-identical only when this
+ * stronger predicate holds. Set in build_software_palette_lut(). */
+static bool software_palette_lut_index0_is_ckey[FL_PALETTE_MAX] = { false };
+/* Per-palette RGB565 LUT mirror for the 565 canvas mode (perf-2). 256
+ * entries x 2 B/entry x FL_PALETTE_MAX = 0.56 MB. Built alongside the
+ * ARGB LUT in build_software_palette_lut(); read by 565 kernels via
+ * in-kernel handle-based lookup keyed on HI_16_BITS(task->texture_binding). */
+static Uint16 software_palette_lut_565[FL_PALETTE_MAX][256];
+/* perf-3 piece-B: parallel u32 mirror of the 565 LUT. Each entry is the
+ * Uint16 565 value zero-extended into a Uint32 (high 16 bits == 0); the
+ * 8-pixel packed-store kernel synthesises packed Uint32 stores via
+ * `pal_u32[i0] | (pal_u32[i1] << 16)`. Built alongside the Uint16 mirror in
+ * build_software_palette_lut(); never read by other consumers. */
+static Uint32 software_palette_lut_565_u32[FL_PALETTE_MAX][256];
 #endif
 typedef enum CacheDirtyReason {
     CACHE_DIRTY_REASON_NONE = 0,
@@ -533,6 +584,10 @@ static SDL_Surface* current_software_source_surface = NULL;
 #if INDEX8_RASTERIZATION_ENABLED
 static const Uint32* current_software_palette_lut = NULL;
 static bool current_software_source_is_index8 = false;
+static bool current_software_palette_is_binary_alpha = false;
+/* perf-3 piece-B: parallel current state for the stronger packed-store
+ * predicate. Tracked alongside `current_software_palette_is_binary_alpha`. */
+static bool current_software_palette_index0_is_ckey = false;
 #endif
 static unsigned int current_texture_binding = 0;
 static bool current_texture_binding_valid = false;
@@ -569,6 +624,12 @@ static SDLGameRenderer_FrameStats frame_stats = { 0 };
 static Uint64 texture_refresh_ns_this_frame = 0;
 static Uint64 sort_ns_this_frame = 0;
 static Uint64 raster_ns_this_frame = 0;
+/* perf-3 piece-A: split of the raster wrapper-time into the two passes
+ * inside render_frame_to_software_surface(). resolve_ns covers the
+ * classify+resolve pre-pass; raster_pass_ns covers the merge+raster main
+ * loop. Both are reset in BeginFrame() and exposed via getters. */
+static Uint64 resolve_ns_this_frame = 0;
+static Uint64 raster_pass_ns_this_frame = 0;
 static SDL_Texture* submitted_texture_mod = NULL;
 static Uint32 submitted_texture_mod_color = 0;
 static bool submitted_texture_mod_valid = false;
@@ -914,6 +975,25 @@ static Uint32 modulate_argb8888_blue_tint(Uint32 pixel, Uint32 rg_factor, Uint32
 static bool is_ghost_sprite_color(Uint32 color);
 static Uint32 blend_argb8888(Uint32 dst_pixel, Uint32 src_pixel);
 static inline Uint32 blend_argb8888_opaque_dst(Uint32 dst_pixel, Uint32 src_pixel);
+/* perf-2 RGB565 primitives (defs further down). Forward decls so kernels
+ * earlier in the file can call them. */
+static inline Uint16 pack_rgb565_from_argb(Uint32 argb);
+static inline void expand_rgb565_to_argb_channels(Uint16 px, Uint32* out_r, Uint32* out_g, Uint32* out_b);
+static inline Uint16 blend_rgb565_opaque_dst(Uint16 dst_pixel, Uint32 src_argb);
+
+/* perf-3 piece-B helper: branchless test for "any byte in this Uint32 is
+ * 0x00". Adapted from the bit-twiddling-hacks zero-byte test. Used by the
+ * 8-pixel packed-store INDEX8->565 kernel to gate the colour-key fast path:
+ * if no source index is the colour-key (index 0), the kernel can store all
+ * 8 looked-up palette entries without the per-pixel `if (idx) dst = pal[idx]`
+ * branch. Returns non-zero iff (w & 0xFF == 0) OR ((w >> 8) & 0xFF == 0)
+ * OR ((w >> 16) & 0xFF == 0) OR ((w >> 24) == 0). */
+static inline bool any_byte_zero(uint32_t w) {
+    return ((w - 0x01010101u) & ~w & 0x80808080u) != 0u;
+}
+static void fill_rgb565_span(Uint16* dst_pixels, int pixel_count, Uint16 color);
+static Uint16 blend_solid_rgb565(Uint16 dst_pixel, Uint32 src_a, Uint32 inv_src_a,
+                                  Uint32 src_r_premul, Uint32 src_g_premul, Uint32 src_b_premul);
 static bool raster_full_height_diagonal_strip_to_software_frame(const SoftwareFrameSolidDiagonalStrip* strip,
                                                                 SDL_Surface* dst_surface);
 static bool raster_textured_parallelogram_to_software_frame(const RenderTask* task);
@@ -1081,6 +1161,8 @@ static int invalidate_texture_cache_for_texture_index(int texture_index, CacheDi
 #if INDEX8_RASTERIZATION_ENABLED
         current_software_palette_lut = NULL;
         current_software_source_is_index8 = false;
+        current_software_palette_is_binary_alpha = false;
+        current_software_palette_index0_is_ckey = false;
 #endif
         current_texture_binding_valid = false;
     }
@@ -1125,6 +1207,8 @@ static int invalidate_software_surface_cache_for_texture_index(int texture_index
 #if INDEX8_RASTERIZATION_ENABLED
         current_software_palette_lut = NULL;
         current_software_source_is_index8 = false;
+        current_software_palette_is_binary_alpha = false;
+        current_software_palette_index0_is_ckey = false;
 #endif
     }
 
@@ -1169,6 +1253,8 @@ static int invalidate_texture_cache_for_palette_handle(int palette_handle,
 #if INDEX8_RASTERIZATION_ENABLED
         current_software_palette_lut = NULL;
         current_software_source_is_index8 = false;
+        current_software_palette_is_binary_alpha = false;
+        current_software_palette_index0_is_ckey = false;
 #endif
         current_texture_binding_valid = false;
     }
@@ -1214,6 +1300,8 @@ static int invalidate_software_surface_cache_for_palette_handle(int palette_hand
 #if INDEX8_RASTERIZATION_ENABLED
         current_software_palette_lut = NULL;
         current_software_source_is_index8 = false;
+        current_software_palette_is_binary_alpha = false;
+        current_software_palette_index0_is_ckey = false;
 #endif
     }
 
@@ -1252,6 +1340,8 @@ static void destroy_textures() {
 #if INDEX8_RASTERIZATION_ENABLED
     current_software_palette_lut = NULL;
     current_software_source_is_index8 = false;
+    current_software_palette_is_binary_alpha = false;
+    current_software_palette_index0_is_ckey = false;
 #endif
     current_texture_binding_valid = false;
     current_texture_binding = 0;
@@ -3368,7 +3458,13 @@ static bool ensure_software_frame_surface(void) {
         return true;
     }
 
-    software_frame_surface = SDL_CreateSurface(cps3_width, cps3_height, SDL_PIXELFORMAT_ARGB8888);
+    /* perf-2: pick canvas format from the runtime gate. The gate is sticky
+     * once allocated (see SDLGameRenderer_SetRGB565CanvasEnabled comment).
+     * sdl_app.c flips the gate to true only after NativeVideoWriter_Init
+     * succeeds, so a 565 canvas implies the writer is up. */
+    const Uint32 format = rgb565_canvas_enabled ? SDL_PIXELFORMAT_RGB565
+                                                : SDL_PIXELFORMAT_ARGB8888;
+    software_frame_surface = SDL_CreateSurface(cps3_width, cps3_height, format);
     return software_frame_surface != NULL;
 }
 
@@ -3394,7 +3490,14 @@ static bool ensure_sa_bg_cache_surface(void) {
         return true;
     }
 
-    sa_bg_cache_surface = SDL_CreateSurface(cps3_width, cps3_height, SDL_PIXELFORMAT_ARGB8888);
+    /* perf-2: sa_bg_cache_surface follows the canvas format. The
+     * SDL_memcpy snapshot/restore is byte-count-driven and format-agnostic;
+     * the scaled restore has a 565 sibling below. */
+    const Uint32 format = (software_frame_surface != NULL)
+                          ? software_frame_surface->format
+                          : (rgb565_canvas_enabled ? SDL_PIXELFORMAT_RGB565
+                                                    : SDL_PIXELFORMAT_ARGB8888);
+    sa_bg_cache_surface = SDL_CreateSurface(cps3_width, cps3_height, format);
     return sa_bg_cache_surface != NULL;
 }
 #endif
@@ -3464,6 +3567,7 @@ static SDL_Texture* get_submit_texture_for_task(const RenderTask* task) {
     if (frame_stats_extended_enabled) {
         RENDERER_TELEMETRY(frame_stats.texture_creates += 1);
     }
+    sa_diag_texture_creates += 1;
     return texture;
 }
 
@@ -3610,6 +3714,7 @@ static Uint64 render_task_submitted_pixels(const RenderTask* task) {
 
    Source coordinates are clamped to edge pixels.  Integer-only inner
    loop for ARM performance. */
+#if defined(PORT_MISTER)
 static void sa_bg_cache_restore_background_scaled(float cached_sc, float current_sc,
                                                  int scroll_dx, int scroll_dy) {
     const int w = software_frame_surface->w;
@@ -3644,6 +3749,44 @@ static void sa_bg_cache_restore_background_scaled(float cached_sc, float current
         }
     }
 }
+
+/* perf-2 565 sibling. Same fixed-point math; the only differences are
+ * Uint16 pixel size and pitch divisor. 565 is opaque -- pixels are a
+ * straight copy with no blend. */
+static void sa_bg_cache_restore_background_scaled_565(float cached_sc, float current_sc,
+                                                      int scroll_dx, int scroll_dy) {
+    const int w = software_frame_surface->w;
+    const int h = software_frame_surface->h;
+    const int w_max = w - 1;
+    const int h_max = h - 1;
+    const float inv_rel = cached_sc / current_sc;
+
+    const int inv_rel_fp = (int)(inv_rel * 65536.0f);
+    const int offset_x_fp = (int)((float)scroll_dx * cached_sc * 65536.0f);
+    const int offset_y_fp = (int)((float)scroll_dy * cached_sc * 65536.0f);
+
+    const Uint16* src_pixels = (const Uint16*)sa_bg_cache_surface->pixels;
+    Uint16* dst_pixels = (Uint16*)software_frame_surface->pixels;
+    const int src_pitch2 = sa_bg_cache_surface->pitch / 2;
+    const int dst_pitch2 = software_frame_surface->pitch / 2;
+
+    for (int y = 0; y < h; y++) {
+        int src_y = (y * inv_rel_fp + offset_y_fp) >> 16;
+        if (src_y < 0) src_y = 0;
+        else if (src_y > h_max) src_y = h_max;
+        Uint16* dst_row = dst_pixels + y * dst_pitch2;
+        const Uint16* src_row = src_pixels + src_y * src_pitch2;
+        int sx_fp = offset_x_fp;
+        for (int x = 0; x < w; x++) {
+            int src_x = sx_fp >> 16;
+            if (src_x < 0) src_x = 0;
+            else if (src_x > w_max) src_x = w_max;
+            dst_row[x] = src_row[src_x];
+            sx_fp += inv_rel_fp;
+        }
+    }
+}
+#endif
 
 static void apply_super_effect_burst_reduction_after_sort(void) {
 #if defined(PORT_MISTER)
@@ -3705,17 +3848,29 @@ static void apply_super_effect_burst_reduction_after_sort(void) {
         const int scroll_dy = (int)scrn_adgjust_y - (int)sa_bg_cache_saved_adgjust_y;
         const bool needs_transform = (sa_bg_cache_saved_scr_sc != scr_sc) ||
                                      (scroll_dx != 0) || (scroll_dy != 0);
+        const Uint64 sa_diag_t0 = SDL_GetTicksNS();
         SDL_LockSurface(sa_bg_cache_surface);
         SDL_LockSurface(software_frame_surface);
         if (needs_transform) {
-            sa_bg_cache_restore_background_scaled(sa_bg_cache_saved_scr_sc, scr_sc,
-                                                scroll_dx, scroll_dy);
+            if (software_frame_surface->format == SDL_PIXELFORMAT_RGB565) {
+                sa_bg_cache_restore_background_scaled_565(sa_bg_cache_saved_scr_sc, scr_sc,
+                                                          scroll_dx, scroll_dy);
+            } else {
+                sa_bg_cache_restore_background_scaled(sa_bg_cache_saved_scr_sc, scr_sc,
+                                                    scroll_dx, scroll_dy);
+            }
         } else {
+            /* memcpy fast path is byte-count-driven so it works for both formats,
+             * but only as long as the cache surface format matches the canvas
+             * format. ensure_sa_bg_cache_surface() forces this invariant; this
+             * assert keeps it from drifting silently. */
+            SDL_assert(sa_bg_cache_surface->format == software_frame_surface->format);
             SDL_memcpy(software_frame_surface->pixels, sa_bg_cache_surface->pixels,
                        (size_t)software_frame_surface->pitch * software_frame_surface->h);
         }
         SDL_UnlockSurface(software_frame_surface);
         SDL_UnlockSurface(sa_bg_cache_surface);
+        sa_diag_restore_ns += SDL_GetTicksNS() - sa_diag_t0;
     }
 
     /* Drop background tile tasks but preserve any non-background tasks
@@ -5933,6 +6088,57 @@ static inline __attribute__((unused)) void neon_modulate_4pixels(
  * vtbl1_u8 with a shuffle index table, then do the blend math on all
  * channels simultaneously. Output alpha is forced to 0xFF. */
 
+/* --- NEON loose-form INDEX8 fast-path: per-lane α-zero select for 4 pixels ---
+ * Used by the perf-1 loose-form INDEX8 kernel when the bound palette has
+ * α∈{0,0xFF} only. For each lane: if α==0, keep dst; else write src. No
+ * source-over math, no multiplies. Argument order mirrors the in-tree
+ * vbslq_u8(mask, dst_bytes, result) precedent at sdl_game_renderer.c:6034. */
+static inline __attribute__((unused)) void neon_index8_loose_4pixels(const Uint32* src, Uint32* dst) {
+    const uint32x4_t src_v = vld1q_u32(src);
+    const uint32x4_t dst_v = vld1q_u32(dst);
+    /* α byte sits in the high 8 bits of each Uint32; shift to isolate. */
+    const uint32x4_t alpha_v = vshrq_n_u32(src_v, 24);
+    /* mask lanes set to 0xFFFFFFFF where α==0 (those keep dst); else 0 (take src). */
+    const uint32x4_t keep_dst_mask = vceqq_u32(alpha_v, vdupq_n_u32(0));
+    /* vbslq_uXX(mask, a, b): lanes where mask is set take from a; else b. */
+    vst1q_u32(dst, vbslq_u32(keep_dst_mask, dst_v, src_v));
+}
+
+/* --- perf-3 piece-C: 16-pixel NEON kernels for the RGB565 canvas ---
+ *
+ * `neon_direct_blit_16pixels_565`:
+ *   Writes 16 RGB565 pixels from a contiguous Uint16 source row. Used by the
+ *   565 INDEX8 loose fast path after the palette LUT lookup has already
+ *   produced 16 Uint16 source pixels (the index-byte-zero gating happens in
+ *   the caller, mirroring the 4-pixel path's caller-side α gate). Implemented
+ *   as 2x vld1q_u16/vst1q_u16 -- this is the simplest accelerator that
+ *   matches the brief's "produces RGB565 output" requirement; full
+ *   ARGB->565 deinterleave (vld4q_u8 + 565 pack) lives outside the
+ *   binary-α fast path which is already covered by piece B's packed store.
+ *
+ * `neon_fill_solid_16pixels_565`:
+ *   Fills 16 RGB565 pixels with a single colour. Used by `fill_rgb565_span`
+ *   for the solid-quad α==255 fast path. 8x vst1q_u16 of a precomputed
+ *   RGB565 splat.
+ *
+ * Both gated on `software_neon_16px_enabled` (default true). When disabled,
+ * dispatch falls through to the 4-pixel path / scalar loop.
+ *
+ * ARMv7-NEON only -- no AArch64-specific intrinsics. vld1q_u16/vst1q_u16
+ * are core NEON intrinsics supported on Cortex-A9. */
+static inline __attribute__((unused)) void neon_direct_blit_16pixels_565(const Uint16* src, Uint16* dst) {
+    const uint16x8_t a = vld1q_u16(src);
+    const uint16x8_t b = vld1q_u16(src + 8);
+    vst1q_u16(dst, a);
+    vst1q_u16(dst + 8, b);
+}
+
+static inline __attribute__((unused)) void neon_fill_solid_16pixels_565(Uint16* dst, Uint16 color) {
+    const uint16x8_t splat = vdupq_n_u16(color);
+    vst1q_u16(dst,      splat);
+    vst1q_u16(dst + 8,  splat);
+}
+
 static inline __attribute__((unused)) void neon_blend_4pixels(const Uint32* src, Uint32* dst) {
     /* Load 4 source and 4 destination pixels */
     const uint8x16_t src_bytes = vreinterpretq_u8_u32(vld1q_u32(src));
@@ -6111,8 +6317,25 @@ static bool try_fast_copy_fast_textured_task_to_software_frame(const RenderTask*
         (task->software_source_surface != NULL)) {
         const Uint32* palette_lut = task->software_palette_lut;
         const SDL_Surface* i8_surface = task->software_source_surface;
+        /* perf-2: format-aware dispatch on dst surface format. The 565 path
+         * derives the LUT565 in-kernel from task->texture_binding (strategy
+         * (b) from plan §6) -- no per-task LUT565 pointer is added. */
+        const bool dst_is_565 = (dst_surface->format == SDL_PIXELFORMAT_RGB565);
         Uint32* dst_pixels = (Uint32*)dst_surface->pixels;
         const int dst_pitch = dst_surface->pitch / (int)sizeof(Uint32);
+        Uint16* dst_pixels_16 = (Uint16*)dst_surface->pixels;
+        const int dst_pitch_16 = dst_surface->pitch / (int)sizeof(Uint16);
+        const Uint16* lut565 = NULL;
+        /* perf-3 piece-B: u32 mirror used by the 8-pixel packed-store kernel. */
+        const Uint32* lut565_u32 = NULL;
+        if (dst_is_565) {
+            const unsigned int palette_handle = HI_16_BITS(task->texture_binding);
+            if (palette_handle > 0u && palette_handle <= FL_PALETTE_MAX) {
+                lut565 = software_palette_lut_565[palette_handle - 1u];
+                lut565_u32 = software_palette_lut_565_u32[palette_handle - 1u];
+            }
+        }
+        (void)dst_pixels_16; (void)dst_pitch_16; (void)lut565; (void)lut565_u32;
 
         if ((plan->src_w == plan->dst_w) && (plan->src_h == plan->dst_h)) {
             /* --- INDEX8 exact copy --- */
@@ -6134,6 +6357,42 @@ static bool try_fast_copy_fast_textured_task_to_software_frame(const RenderTask*
                 const bool blue_tint = is_blue_tint_color(color);
                 const Uint32 rg_factor = (color >> 16) & 0xFFu;
                 const int row_step = ghost_half_res ? 2 : 1;
+
+                /* perf-2 565 sibling of the INDEX8 color-mod exact-copy path.
+                 * Scalar-only (no NEON 565 yet). Modulates from LUT8888
+                 * (strategy (b)) and packs to 565 at store time. */
+                if (dst_is_565) {
+                    RENDERER_TELEMETRY(perf_capture_refresh_telemetry.rgb565_canvas_kernel_hits++);
+                    for (int row = 0; row < plan->visible_h; row += row_step) {
+                        const Uint8* i8_row = index8_src_row(i8_surface, src_row0_y + (row * src_y_step));
+                        Uint16* dst_row = dst_pixels_16 + ((plan->dst_y0 + row) * dst_pitch_16) + plan->dst_x0;
+                        if ((row + row_step) < plan->visible_h) {
+                            __builtin_prefetch(index8_src_row(i8_surface, src_row0_y + ((row + row_step) * src_y_step)), 0, 0);
+                            __builtin_prefetch(dst_pixels_16 + ((plan->dst_y0 + row + row_step) * dst_pitch_16) + plan->dst_x0, 1, 0);
+                        }
+                        int src_x = src_row0_x;
+                        for (int col = 0; col < plan->visible_w; col++) {
+                            Uint32 src_pixel = blue_tint
+                                ? modulate_argb8888_blue_tint(palette_lut[i8_row[src_x]], rg_factor, mod_a)
+                                : modulate_argb8888(palette_lut[i8_row[src_x]], color);
+                            const Uint32 src_a = (src_pixel >> 24) & 0xFFu;
+                            if (src_a != 0u) {
+                                if (src_a == 0xFFu) {
+                                    dst_row[col] = pack_rgb565_from_argb(src_pixel);
+                                } else {
+                                    dst_row[col] = blend_rgb565_opaque_dst(dst_row[col], src_pixel);
+                                }
+                            }
+                            src_x += src_x_step;
+                        }
+                        if (ghost_half_res && ((row + 1) < plan->visible_h)) {
+                            Uint16* next_dst_row = dst_pixels_16 + ((plan->dst_y0 + row + 1) * dst_pitch_16) + plan->dst_x0;
+                            SDL_memcpy(next_dst_row, dst_row, (size_t)plan->visible_w * sizeof(Uint16));
+                        }
+                    }
+                    return true;
+                }
+                RENDERER_TELEMETRY(perf_capture_refresh_telemetry.argb8888_canvas_kernel_hits++);
 
 #if RENDERER_HAVE_NEON
                 if (src_x_step == 1) {
@@ -6218,6 +6477,246 @@ static bool try_fast_copy_fast_textured_task_to_software_frame(const RenderTask*
             }
 
             /* INDEX8 non-color-mod exact copy */
+
+            /* perf-2 565 sibling. The loose-form binary-α fast path uses
+             * LUT565 directly (the only kernel branch that does -- color-mod
+             * paths route through LUT8888 + modulate + pack). Fall-through
+             * 565 path uses LUT8888 + pack/blend per pixel. */
+            if (dst_is_565) {
+                RENDERER_TELEMETRY(perf_capture_refresh_telemetry.rgb565_canvas_kernel_hits++);
+                if (colorkey_loose_kernel_enabled && task->software_palette_is_binary_alpha && (lut565 != NULL)) {
+                    RENDERER_TELEMETRY(perf_capture_refresh_telemetry.colorkey_loose_fast_path_hits++);
+                    /* perf-3 piece-B: 8-pixel packed-store INDEX8->565 kernel.
+                     * Adapted from PR 243 sw_blit_indexed8_row_ckey_565. Loads 8 source
+                     * indices as two Uint32, gates the all-non-ckey block on
+                     * any_byte_zero(w0|w1)==false, and stores 4 packed pairs of
+                     * (pal_u32[i0] | (pal_u32[i1] << 16)) via memcpy (canvas is 16-bit
+                     * aligned so the alignment is safe). Bit-identical to the scalar
+                     * loose-form path: pal_u32[i] is `(Uint32)lut565[i]` with high 16
+                     * bits == 0, and the colour-key branch (`any_byte_zero` true)
+                     * falls back to a per-pixel `if (idx) dst = pal_u32[idx]` block.
+                     *
+                     * Kernel only fires when src_x_step == 1 (forward exact copy);
+                     * the flipped (src_x_step == -1) case takes the unchanged scalar
+                     * path below. The kill switch
+                     * `software_palette_packed_8px_enabled` (default ON) bypasses
+                     * the packed kernel for parity testing. */
+                    /* Packed-store path requires the stronger "index 0 is the
+                     * colour-key" invariant: the kernel uses any_byte_zero on
+                     * the index bytes, so non-zero indices must all have
+                     * α==0xFF and index 0 must have α==0. The scalar tail
+                     * loop below handles the relaxed case (binary-α only). */
+                    const bool packed_eligible = software_palette_packed_8px_enabled &&
+                                                 (src_x_step == 1) && (lut565_u32 != NULL) &&
+                                                 task->software_palette_index0_is_ckey;
+                    for (int row = 0; row < plan->visible_h; row++) {
+                        const Uint8* i8_row = index8_src_row(i8_surface, src_row0_y + (row * src_y_step));
+                        Uint16* dst_row = dst_pixels_16 + ((plan->dst_y0 + row) * dst_pitch_16) + plan->dst_x0;
+                        if ((row + 1) < plan->visible_h) {
+                            __builtin_prefetch(index8_src_row(i8_surface, src_row0_y + ((row + 1) * src_y_step)), 0, 0);
+                            __builtin_prefetch(dst_pixels_16 + ((plan->dst_y0 + row + 1) * dst_pitch_16) + plan->dst_x0, 1, 0);
+                        }
+                        int col = 0;
+                        if (packed_eligible) {
+                            const Uint8* row_idx_base = i8_row + src_row0_x;
+#if RENDERER_HAVE_NEON
+                            /* perf-3 piece-C: 16-pixel NEON variant of the
+                             * packed-store kernel. Same any_byte_zero gate as the
+                             * 8-pixel variant (applied to two Uint32 index words
+                             * = 16 indices), 16-entry palette gather into a
+                             * Uint16 staging buffer, then 2x vst1q_u16 via
+                             * neon_direct_blit_16pixels_565. Bit-identical to the
+                             * 8-pixel variant when both can fire (the same gate
+                             * conditions hold; only the inner loop width differs).
+                             *
+                             * Kill switch software_neon_16px_enabled drops back
+                             * to the 8-pixel scalar packed loop. */
+                            if (software_neon_16px_enabled) {
+                                for (; (col + 16) <= plan->visible_w; col += 16) {
+                                    uint32_t w0, w1, w2, w3;
+                                    SDL_memcpy(&w0, row_idx_base + col,      4);
+                                    SDL_memcpy(&w1, row_idx_base + col +  4, 4);
+                                    SDL_memcpy(&w2, row_idx_base + col +  8, 4);
+                                    SDL_memcpy(&w3, row_idx_base + col + 12, 4);
+                                    if (any_byte_zero(w0) || any_byte_zero(w1) ||
+                                        any_byte_zero(w2) || any_byte_zero(w3)) {
+                                        /* Defer to the 8-pixel block path which
+                                         * handles the colour-key fallback case. */
+                                        break;
+                                    }
+                                    /* All 16 indices non-ckey: gather into a 16-Uint16
+                                     * staging area, then NEON-store 2x 8 lanes. */
+                                    Uint16 stage[16];
+                                    stage[ 0] = (Uint16)lut565_u32[ w0        & 0xFFu];
+                                    stage[ 1] = (Uint16)lut565_u32[(w0 >>  8) & 0xFFu];
+                                    stage[ 2] = (Uint16)lut565_u32[(w0 >> 16) & 0xFFu];
+                                    stage[ 3] = (Uint16)lut565_u32[ w0 >> 24];
+                                    stage[ 4] = (Uint16)lut565_u32[ w1        & 0xFFu];
+                                    stage[ 5] = (Uint16)lut565_u32[(w1 >>  8) & 0xFFu];
+                                    stage[ 6] = (Uint16)lut565_u32[(w1 >> 16) & 0xFFu];
+                                    stage[ 7] = (Uint16)lut565_u32[ w1 >> 24];
+                                    stage[ 8] = (Uint16)lut565_u32[ w2        & 0xFFu];
+                                    stage[ 9] = (Uint16)lut565_u32[(w2 >>  8) & 0xFFu];
+                                    stage[10] = (Uint16)lut565_u32[(w2 >> 16) & 0xFFu];
+                                    stage[11] = (Uint16)lut565_u32[ w2 >> 24];
+                                    stage[12] = (Uint16)lut565_u32[ w3        & 0xFFu];
+                                    stage[13] = (Uint16)lut565_u32[(w3 >>  8) & 0xFFu];
+                                    stage[14] = (Uint16)lut565_u32[(w3 >> 16) & 0xFFu];
+                                    stage[15] = (Uint16)lut565_u32[ w3 >> 24];
+                                    neon_direct_blit_16pixels_565(stage, dst_row + col);
+                                    RENDERER_TELEMETRY(perf_capture_refresh_telemetry.neon_16px_direct_hits++);
+                                    /* Subsume two 8-pixel block hits for parity
+                                     * with the scalar packed path's accounting. */
+                                    RENDERER_TELEMETRY(perf_capture_refresh_telemetry.colorkey_packed_8px_hits += 2);
+                                }
+                            }
+#endif /* RENDERER_HAVE_NEON */
+                            for (; (col + 8) <= plan->visible_w; col += 8) {
+                                uint32_t w0, w1;
+                                SDL_memcpy(&w0, row_idx_base + col,     4);
+                                SDL_memcpy(&w1, row_idx_base + col + 4, 4);
+                                const uint32_t i0 = w0 & 0xFFu;
+                                const uint32_t i1 = (w0 >> 8) & 0xFFu;
+                                const uint32_t i2 = (w0 >> 16) & 0xFFu;
+                                const uint32_t i3 = w0 >> 24;
+                                const uint32_t i4 = w1 & 0xFFu;
+                                const uint32_t i5 = (w1 >> 8) & 0xFFu;
+                                const uint32_t i6 = (w1 >> 16) & 0xFFu;
+                                const uint32_t i7 = w1 >> 24;
+                                if (!any_byte_zero(w0) && !any_byte_zero(w1)) {
+                                    const uint32_t p01 = lut565_u32[i0] | (lut565_u32[i1] << 16);
+                                    const uint32_t p23 = lut565_u32[i2] | (lut565_u32[i3] << 16);
+                                    const uint32_t p45 = lut565_u32[i4] | (lut565_u32[i5] << 16);
+                                    const uint32_t p67 = lut565_u32[i6] | (lut565_u32[i7] << 16);
+                                    SDL_memcpy(dst_row + col + 0, &p01, 4);
+                                    SDL_memcpy(dst_row + col + 2, &p23, 4);
+                                    SDL_memcpy(dst_row + col + 4, &p45, 4);
+                                    SDL_memcpy(dst_row + col + 6, &p67, 4);
+                                    RENDERER_TELEMETRY(perf_capture_refresh_telemetry.colorkey_packed_8px_hits++);
+                                    continue;
+                                }
+                                /* Colour-key present in this 8-pixel block: fall back to
+                                 * per-pixel store. Match scalar path bit-exactly --
+                                 * use palette_lut alpha as the source-of-truth. */
+                                RENDERER_TELEMETRY(perf_capture_refresh_telemetry.colorkey_packed_8px_skipped_ckey++);
+                                if ((palette_lut[i0] >> 24) != 0u) dst_row[col + 0] = (Uint16)lut565_u32[i0];
+                                if ((palette_lut[i1] >> 24) != 0u) dst_row[col + 1] = (Uint16)lut565_u32[i1];
+                                if ((palette_lut[i2] >> 24) != 0u) dst_row[col + 2] = (Uint16)lut565_u32[i2];
+                                if ((palette_lut[i3] >> 24) != 0u) dst_row[col + 3] = (Uint16)lut565_u32[i3];
+                                if ((palette_lut[i4] >> 24) != 0u) dst_row[col + 4] = (Uint16)lut565_u32[i4];
+                                if ((palette_lut[i5] >> 24) != 0u) dst_row[col + 5] = (Uint16)lut565_u32[i5];
+                                if ((palette_lut[i6] >> 24) != 0u) dst_row[col + 6] = (Uint16)lut565_u32[i6];
+                                if ((palette_lut[i7] >> 24) != 0u) dst_row[col + 7] = (Uint16)lut565_u32[i7];
+                            }
+                        }
+                        /* Scalar tail (also handles src_x_step == -1 case in full). */
+                        int src_x = src_row0_x + (col * src_x_step);
+                        for (; col < plan->visible_w; col++) {
+                            const Uint8 idx = i8_row[src_x];
+                            /* alpha decision driven by LUT8888 (the source-of-truth
+                             * for the binary-α invariant); store from LUT565. */
+                            if ((palette_lut[idx] >> 24) != 0u) {
+                                dst_row[col] = lut565[idx];
+                            }
+                            src_x += src_x_step;
+                        }
+                    }
+                    return true;
+                }
+                if (task->software_palette_is_binary_alpha) {
+                    RENDERER_TELEMETRY(perf_capture_refresh_telemetry.colorkey_loose_fast_path_skipped++);
+                } else {
+                    RENDERER_TELEMETRY(perf_capture_refresh_telemetry.colorkey_loose_fast_path_ineligible++);
+                }
+                /* Fall-through: blend per-pixel via LUT8888 + pack. */
+                for (int row = 0; row < plan->visible_h; row++) {
+                    const Uint8* i8_row = index8_src_row(i8_surface, src_row0_y + (row * src_y_step));
+                    Uint16* dst_row = dst_pixels_16 + ((plan->dst_y0 + row) * dst_pitch_16) + plan->dst_x0;
+                    if ((row + 1) < plan->visible_h) {
+                        __builtin_prefetch(index8_src_row(i8_surface, src_row0_y + ((row + 1) * src_y_step)), 0, 0);
+                        __builtin_prefetch(dst_pixels_16 + ((plan->dst_y0 + row + 1) * dst_pitch_16) + plan->dst_x0, 1, 0);
+                    }
+                    int src_x = src_row0_x;
+                    for (int col = 0; col < plan->visible_w; col++) {
+                        const Uint32 src_pixel = palette_lut[i8_row[src_x]];
+                        const Uint32 src_a = (src_pixel >> 24) & 0xFFu;
+                        if (src_a != 0u) {
+                            if (src_a == 0xFFu) {
+                                dst_row[col] = pack_rgb565_from_argb(src_pixel);
+                            } else {
+                                dst_row[col] = blend_rgb565_opaque_dst(dst_row[col], src_pixel);
+                            }
+                        }
+                        src_x += src_x_step;
+                    }
+                }
+                return true;
+            }
+            RENDERER_TELEMETRY(perf_capture_refresh_telemetry.argb8888_canvas_kernel_hits++);
+
+            /* Loose-form binary-α fast path (perf-1 plan, scalar). Handles both
+             * flip directions via reused src_x_step. Mirrors prefetch pattern
+             * of the existing kernel. NEON variant lives below; scalar runs
+             * for the flipped case (src_x_step == -1) and on hosts without
+             * NEON. */
+#if RENDERER_HAVE_NEON
+            if (colorkey_loose_kernel_enabled && task->software_palette_is_binary_alpha &&
+                src_x_step == 1) {
+                RENDERER_TELEMETRY(perf_capture_refresh_telemetry.colorkey_loose_fast_path_hits++);
+                for (int row = 0; row < plan->visible_h; row++) {
+                    const Uint8* i8_row = index8_src_row(i8_surface, src_row0_y + (row * src_y_step));
+                    Uint32* dst_row = dst_pixels + ((plan->dst_y0 + row) * dst_pitch) + plan->dst_x0;
+                    if ((row + 1) < plan->visible_h) {
+                        __builtin_prefetch(index8_src_row(i8_surface, src_row0_y + ((row + 1) * src_y_step)), 0, 0);
+                        __builtin_prefetch(dst_pixels + ((plan->dst_y0 + row + 1) * dst_pitch) + plan->dst_x0, 1, 0);
+                    }
+                    int col = 0;
+                    for (; (col + 3) < plan->visible_w; col += 4) {
+                        const Uint32 gathered[4] = {
+                            palette_lut[i8_row[src_row0_x + col]],
+                            palette_lut[i8_row[src_row0_x + col + 1]],
+                            palette_lut[i8_row[src_row0_x + col + 2]],
+                            palette_lut[i8_row[src_row0_x + col + 3]]
+                        };
+                        /* All-α-zero short-circuit (matches existing kernel pattern) */
+                        if (((gathered[0] | gathered[1] | gathered[2] | gathered[3]) >> 24) == 0u) {
+                            continue;
+                        }
+                        neon_index8_loose_4pixels(gathered, dst_row + col);
+                    }
+                    /* Scalar tail */
+                    for (; col < plan->visible_w; col++) {
+                        const Uint32 src_pixel = palette_lut[i8_row[src_row0_x + col]];
+                        if ((src_pixel >> 24) != 0u) { dst_row[col] = src_pixel; }
+                    }
+                }
+                return true;
+            }
+#endif /* RENDERER_HAVE_NEON */
+            if (colorkey_loose_kernel_enabled && task->software_palette_is_binary_alpha) {
+                RENDERER_TELEMETRY(perf_capture_refresh_telemetry.colorkey_loose_fast_path_hits++);
+                for (int row = 0; row < plan->visible_h; row++) {
+                    const Uint8* i8_row = index8_src_row(i8_surface, src_row0_y + (row * src_y_step));
+                    Uint32* dst_row = dst_pixels + ((plan->dst_y0 + row) * dst_pitch) + plan->dst_x0;
+                    if ((row + 1) < plan->visible_h) {
+                        __builtin_prefetch(index8_src_row(i8_surface, src_row0_y + ((row + 1) * src_y_step)), 0, 0);
+                        __builtin_prefetch(dst_pixels + ((plan->dst_y0 + row + 1) * dst_pitch) + plan->dst_x0, 1, 0);
+                    }
+                    int src_x = src_row0_x;
+                    for (int col = 0; col < plan->visible_w; col++) {
+                        const Uint32 src_pixel = palette_lut[i8_row[src_x]];
+                        if ((src_pixel >> 24) != 0u) { dst_row[col] = src_pixel; }
+                        src_x += src_x_step;
+                    }
+                }
+                return true;
+            }
+            /* Fall-through path: kernel disabled or palette not binary-α. */
+            if (task->software_palette_is_binary_alpha) {
+                RENDERER_TELEMETRY(perf_capture_refresh_telemetry.colorkey_loose_fast_path_skipped++);
+            } else {
+                RENDERER_TELEMETRY(perf_capture_refresh_telemetry.colorkey_loose_fast_path_ineligible++);
+            }
 #if RENDERER_HAVE_NEON
             if (src_x_step == 1) {
                 for (int row = 0; row < plan->visible_h; row++) {
@@ -6289,6 +6788,75 @@ static bool try_fast_copy_fast_textured_task_to_software_frame(const RenderTask*
         populate_scaled_lookup_table(
             src_y_lookup, plan->visible_h, plan->dst_y, plan->dst_y0, plan->dst_h, plan->src_y, plan->src_h, plan->flip_v);
 
+        /* perf-2 565 sibling for INDEX8 scaled (loose-form fast path + fallback). */
+        if (dst_is_565) {
+            RENDERER_TELEMETRY(perf_capture_refresh_telemetry.rgb565_canvas_kernel_hits++);
+            if (colorkey_loose_kernel_enabled && task->software_palette_is_binary_alpha && (lut565 != NULL)) {
+                RENDERER_TELEMETRY(perf_capture_refresh_telemetry.colorkey_loose_fast_path_hits++);
+                for (int row = 0; row < plan->visible_h; row++) {
+                    const Uint8* i8_row = index8_src_row(i8_surface, src_y_lookup[row]);
+                    Uint16* dst_row = dst_pixels_16 + ((plan->dst_y0 + row) * dst_pitch_16) + plan->dst_x0;
+                    if ((row + 1) < plan->visible_h) {
+                        __builtin_prefetch(index8_src_row(i8_surface, src_y_lookup[row + 1]), 0, 0);
+                        __builtin_prefetch(dst_pixels_16 + ((plan->dst_y0 + row + 1) * dst_pitch_16) + plan->dst_x0, 1, 0);
+                    }
+                    for (int col = 0; col < plan->visible_w; col++) {
+                        const Uint8 idx = i8_row[src_x_lookup[col]];
+                        if ((palette_lut[idx] >> 24) != 0u) {
+                            dst_row[col] = lut565[idx];
+                        }
+                    }
+                }
+                return true;
+            }
+            if (task->software_palette_is_binary_alpha) {
+                RENDERER_TELEMETRY(perf_capture_refresh_telemetry.colorkey_loose_fast_path_skipped++);
+            } else {
+                RENDERER_TELEMETRY(perf_capture_refresh_telemetry.colorkey_loose_fast_path_ineligible++);
+            }
+            for (int row = 0; row < plan->visible_h; row++) {
+                const Uint8* i8_row = index8_src_row(i8_surface, src_y_lookup[row]);
+                Uint16* dst_row = dst_pixels_16 + ((plan->dst_y0 + row) * dst_pitch_16) + plan->dst_x0;
+                if ((row + 1) < plan->visible_h) {
+                    __builtin_prefetch(index8_src_row(i8_surface, src_y_lookup[row + 1]), 0, 0);
+                    __builtin_prefetch(dst_pixels_16 + ((plan->dst_y0 + row + 1) * dst_pitch_16) + plan->dst_x0, 1, 0);
+                }
+                for (int col = 0; col < plan->visible_w; col++) {
+                    const Uint32 src_pixel = palette_lut[i8_row[src_x_lookup[col]]];
+                    const Uint32 src_a = (src_pixel >> 24) & 0xFFu;
+                    if (src_a == 0u) { continue; }
+                    if (src_a == 0xFFu) { dst_row[col] = pack_rgb565_from_argb(src_pixel); continue; }
+                    dst_row[col] = blend_rgb565_opaque_dst(dst_row[col], src_pixel);
+                }
+            }
+            return true;
+        }
+        RENDERER_TELEMETRY(perf_capture_refresh_telemetry.argb8888_canvas_kernel_hits++);
+
+        /* Loose-form binary-α scaled fast path (perf-1 plan, scalar). */
+        if (colorkey_loose_kernel_enabled && task->software_palette_is_binary_alpha) {
+            RENDERER_TELEMETRY(perf_capture_refresh_telemetry.colorkey_loose_fast_path_hits++);
+            for (int row = 0; row < plan->visible_h; row++) {
+                const Uint8* i8_row = index8_src_row(i8_surface, src_y_lookup[row]);
+                Uint32* dst_row = dst_pixels + ((plan->dst_y0 + row) * dst_pitch) + plan->dst_x0;
+                if ((row + 1) < plan->visible_h) {
+                    __builtin_prefetch(index8_src_row(i8_surface, src_y_lookup[row + 1]), 0, 0);
+                    __builtin_prefetch(dst_pixels + ((plan->dst_y0 + row + 1) * dst_pitch) + plan->dst_x0, 1, 0);
+                }
+                for (int col = 0; col < plan->visible_w; col++) {
+                    const Uint32 src_pixel = palette_lut[i8_row[src_x_lookup[col]]];
+                    if ((src_pixel >> 24) != 0u) { dst_row[col] = src_pixel; }
+                }
+            }
+            return true;
+        }
+        /* Fall-through path: kernel disabled or palette not binary-α. */
+        if (task->software_palette_is_binary_alpha) {
+            RENDERER_TELEMETRY(perf_capture_refresh_telemetry.colorkey_loose_fast_path_skipped++);
+        } else {
+            RENDERER_TELEMETRY(perf_capture_refresh_telemetry.colorkey_loose_fast_path_ineligible++);
+        }
+
         for (int row = 0; row < plan->visible_h; row++) {
             const Uint8* i8_row = index8_src_row(i8_surface, src_y_lookup[row]);
             Uint32* dst_row = dst_pixels + ((plan->dst_y0 + row) * dst_pitch) + plan->dst_x0;
@@ -6309,6 +6877,87 @@ static bool try_fast_copy_fast_textured_task_to_software_frame(const RenderTask*
         return true;
     }
 #endif /* INDEX8_RASTERIZATION_ENABLED */
+
+    /* perf-2: 565 fallback for the ARGB-source fast-copy block. The ARGB
+     * source paths fire only for ABGR1555 cache and rare INDEX4LSB-via-cache
+     * tasks (the bulk of CPS3 sprites are INDEX8 and handled above). Keep
+     * this scalar; NEON 565 is a future optimization. */
+    if (dst_surface->format == SDL_PIXELFORMAT_RGB565) {
+        RENDERER_TELEMETRY(perf_capture_refresh_telemetry.rgb565_canvas_kernel_hits++);
+        const Uint32* src_pixels = (const Uint32*)src_surface->pixels;
+        Uint16* dst_pixels = (Uint16*)dst_surface->pixels;
+        const int src_pitch = src_surface->pitch / (int)sizeof(Uint32);
+        const int dst_pitch = dst_surface->pitch / (int)sizeof(Uint16);
+
+        const int clip_left = plan->dst_x0 - plan->dst_x;
+        const int clip_top = plan->dst_y0 - plan->dst_y;
+        const int src_x_step = plan->flip_h ? -1 : 1;
+        const int src_y_step = plan->flip_v ? -1 : 1;
+        const bool exact = (plan->src_w == plan->dst_w) && (plan->src_h == plan->dst_h);
+        if (exact) {
+            const int src_row0_x = plan->flip_h ? (plan->src_x + plan->src_w - 1 - clip_left) : (plan->src_x + clip_left);
+            const int src_row0_y = plan->flip_v ? (plan->src_y + plan->src_h - 1 - clip_top) : (plan->src_y + clip_top);
+            const Uint32 color = task->color;
+            const bool color_mod = plan->color_mod;
+            const bool blue_tint = color_mod && is_blue_tint_color(color);
+            const Uint32 rg_factor = (color >> 16) & 0xFFu;
+            const Uint32 mod_a = (color >> 24) & 0xFFu;
+            if (color_mod && (mod_a == 0u)) { return true; }
+            for (int row = 0; row < plan->visible_h; row++) {
+                const Uint32* src_row = src_pixels + ((src_row0_y + (row * src_y_step)) * src_pitch) + src_row0_x;
+                Uint16* dst_row = dst_pixels + ((plan->dst_y0 + row) * dst_pitch) + plan->dst_x0;
+                const Uint32* src_pixel_ptr = src_row;
+                for (int col = 0; col < plan->visible_w; col++) {
+                    Uint32 src_pixel = *src_pixel_ptr;
+                    if (color_mod) {
+                        src_pixel = blue_tint
+                            ? modulate_argb8888_blue_tint(src_pixel, rg_factor, mod_a)
+                            : modulate_argb8888(src_pixel, color);
+                    }
+                    const Uint32 src_a = (src_pixel >> 24) & 0xFFu;
+                    if (src_a != 0u) {
+                        if (src_a == 0xFFu) {
+                            dst_row[col] = pack_rgb565_from_argb(src_pixel);
+                        } else {
+                            dst_row[col] = blend_rgb565_opaque_dst(dst_row[col], src_pixel);
+                        }
+                    }
+                    src_pixel_ptr += src_x_step;
+                }
+            }
+        } else {
+            int src_x_lookup[cps3_width];
+            int src_y_lookup[cps3_height];
+            populate_scaled_lookup_table(
+                src_x_lookup, plan->visible_w, plan->dst_x, plan->dst_x0, plan->dst_w, plan->src_x, plan->src_w, plan->flip_h);
+            populate_scaled_lookup_table(
+                src_y_lookup, plan->visible_h, plan->dst_y, plan->dst_y0, plan->dst_h, plan->src_y, plan->src_h, plan->flip_v);
+            const Uint32 color = task->color;
+            const bool color_mod = plan->color_mod;
+            const bool blue_tint = color_mod && is_blue_tint_color(color);
+            const Uint32 rg_factor = (color >> 16) & 0xFFu;
+            const Uint32 mod_a = (color >> 24) & 0xFFu;
+            if (color_mod && (mod_a == 0u)) { return true; }
+            for (int row = 0; row < plan->visible_h; row++) {
+                const Uint32* src_row = src_pixels + (src_y_lookup[row] * src_pitch);
+                Uint16* dst_row = dst_pixels + ((plan->dst_y0 + row) * dst_pitch) + plan->dst_x0;
+                for (int col = 0; col < plan->visible_w; col++) {
+                    Uint32 src_pixel = src_row[src_x_lookup[col]];
+                    if (color_mod) {
+                        src_pixel = blue_tint
+                            ? modulate_argb8888_blue_tint(src_pixel, rg_factor, mod_a)
+                            : modulate_argb8888(src_pixel, color);
+                    }
+                    const Uint32 src_a = (src_pixel >> 24) & 0xFFu;
+                    if (src_a == 0u) { continue; }
+                    if (src_a == 0xFFu) { dst_row[col] = pack_rgb565_from_argb(src_pixel); continue; }
+                    dst_row[col] = blend_rgb565_opaque_dst(dst_row[col], src_pixel);
+                }
+            }
+        }
+        return true;
+    }
+    RENDERER_TELEMETRY(perf_capture_refresh_telemetry.argb8888_canvas_kernel_hits++);
 
     const Uint32* src_pixels = (const Uint32*)src_surface->pixels;
     Uint32* dst_pixels = (Uint32*)dst_surface->pixels;
@@ -6671,6 +7320,80 @@ static void fill_argb8888_span(Uint32* dst_pixels, int pixel_count, Uint32 color
     }
 }
 
+/* perf-2 RGB565 primitives. Pack/expand helpers + blend variants used by the
+ * 565 canvas kernels. The pack formula matches the existing scalar tail in
+ * sdl_app.c convert_argb8888_to_rgb565: 5/6/5 bits with truncation. The
+ * expand replicates the high bits to recover an 8-bit-ish channel for the
+ * blend math (standard ((c<<3)|(c>>2)) for 5-bit, ((c<<2)|(c>>4)) for 6-bit). */
+static inline Uint16 pack_rgb565_from_argb(Uint32 argb) {
+    const Uint32 r = (argb >> 16) & 0xFFu;
+    const Uint32 g = (argb >> 8) & 0xFFu;
+    const Uint32 b = argb & 0xFFu;
+    return (Uint16)(((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3));
+}
+
+static inline void expand_rgb565_to_argb_channels(Uint16 px,
+                                                  Uint32* out_r,
+                                                  Uint32* out_g,
+                                                  Uint32* out_b) {
+    const Uint32 r5 = (px >> 11) & 0x1Fu;
+    const Uint32 g6 = (px >> 5) & 0x3Fu;
+    const Uint32 b5 = px & 0x1Fu;
+    *out_r = (r5 << 3) | (r5 >> 2); /* 5 -> 8 bits, replicate high */
+    *out_g = (g6 << 2) | (g6 >> 4); /* 6 -> 8 bits */
+    *out_b = (b5 << 3) | (b5 >> 2); /* 5 -> 8 bits */
+}
+
+/* Source-over blend with opaque-dst assumption. Mirrors blend_argb8888_opaque_dst
+ * but reads/writes 565. Used by the 565 hot-path kernels for partial-α
+ * sources (color-mod synthesis or ABGR1555 partial-α). */
+static inline Uint16 blend_rgb565_opaque_dst(Uint16 dst_pixel, Uint32 src_argb) {
+    const Uint32 src_a = (src_argb >> 24) & 0xFFu;
+    if (src_a == 0u) {
+        return dst_pixel;
+    }
+    if (src_a == 255u) {
+        return pack_rgb565_from_argb(src_argb);
+    }
+    Uint32 dst_r, dst_g, dst_b;
+    expand_rgb565_to_argb_channels(dst_pixel, &dst_r, &dst_g, &dst_b);
+    const Uint32 src_r = (src_argb >> 16) & 0xFFu;
+    const Uint32 src_g = (src_argb >> 8) & 0xFFu;
+    const Uint32 src_b = src_argb & 0xFFu;
+    const Uint32 inv = 255u - src_a;
+    const Uint32 out_r = ((src_r * src_a) + (dst_r * inv) + 128u) >> 8;
+    const Uint32 out_g = ((src_g * src_a) + (dst_g * inv) + 128u) >> 8;
+    const Uint32 out_b = ((src_b * src_a) + (dst_b * inv) + 128u) >> 8;
+    return (Uint16)(((out_r >> 3) << 11) | ((out_g >> 2) << 5) | (out_b >> 3));
+}
+
+static void fill_rgb565_span(Uint16* dst_pixels, int pixel_count, Uint16 color) {
+    if ((dst_pixels == NULL) || (pixel_count <= 0)) {
+        return;
+    }
+    int x = 0;
+#if RENDERER_HAVE_NEON
+    /* perf-3 piece-C: NEON 16-pixel solid fill. Same store output as the
+     * scalar loop (16x identical Uint16 stores per iter) -> bit-identical.
+     * Kill switch falls through to the scalar path. */
+    if (software_neon_16px_enabled) {
+        for (; (x + 16) <= pixel_count; x += 16) {
+            neon_fill_solid_16pixels_565(dst_pixels + x, color);
+            RENDERER_TELEMETRY(perf_capture_refresh_telemetry.neon_16px_solid_hits++);
+        }
+    }
+#endif
+    for (; (x + 4) <= pixel_count; x += 4) {
+        dst_pixels[x] = color;
+        dst_pixels[x + 1] = color;
+        dst_pixels[x + 2] = color;
+        dst_pixels[x + 3] = color;
+    }
+    for (; x < pixel_count; x++) {
+        dst_pixels[x] = color;
+    }
+}
+
 static Uint32 blend_solid_argb8888(Uint32 dst_pixel,
                                    Uint32 src_a,
                                    Uint32 inv_src_a,
@@ -6706,14 +7429,32 @@ static Uint32 blend_solid_argb8888(Uint32 dst_pixel,
     return (out_a << 24) | (out_r << 16) | (out_g << 8) | out_b;
 }
 
+/* perf-2 565 sibling of blend_solid_argb8888. 565 has no destination α
+ * (the canvas is α-less by construction; the production canvas is cleared
+ * opaque so dst is always treated as 255). This mirrors only the dst_a==255
+ * fast-path branch of blend_solid_argb8888 -- the only branch fired in
+ * practice on the canvas. */
+static Uint16 blend_solid_rgb565(Uint16 dst_pixel,
+                                 Uint32 src_a,
+                                 Uint32 inv_src_a,
+                                 Uint32 src_r_premul,
+                                 Uint32 src_g_premul,
+                                 Uint32 src_b_premul) {
+    Uint32 dst_r, dst_g, dst_b;
+    expand_rgb565_to_argb_channels(dst_pixel, &dst_r, &dst_g, &dst_b);
+    const Uint32 out_r = (src_r_premul + (dst_r * inv_src_a) + 128u) >> 8;
+    const Uint32 out_g = (src_g_premul + (dst_g * inv_src_a) + 128u) >> 8;
+    const Uint32 out_b = (src_b_premul + (dst_b * inv_src_a) + 128u) >> 8;
+    (void)src_a; /* kept in signature for symmetry with blend_solid_argb8888 */
+    return (Uint16)(((out_r >> 3) << 11) | ((out_g >> 2) << 5) | (out_b >> 3));
+}
+
 static bool raster_full_height_diagonal_strip_to_software_frame(const SoftwareFrameSolidDiagonalStrip* strip,
                                                                 SDL_Surface* dst_surface) {
     if ((strip == NULL) || (dst_surface == NULL) || (strip->bottom_y <= strip->top_y)) {
         return false;
     }
 
-    Uint32* dst_pixels = (Uint32*)dst_surface->pixels;
-    const int dst_pitch = dst_surface->pitch / (int)sizeof(Uint32);
     const int dst_y0 = clamp_to_range(strip->top_y, 0, dst_surface->h);
     const int dst_y1 = clamp_to_range(strip->bottom_y, 0, dst_surface->h);
     if (dst_y1 <= dst_y0) {
@@ -6724,6 +7465,48 @@ static bool raster_full_height_diagonal_strip_to_software_frame(const SoftwareFr
     if (src_a == 0u) {
         return true;
     }
+
+    /* perf-2 565 sibling. Same control flow; per-format pixel size + fill/blend. */
+    if (dst_surface->format == SDL_PIXELFORMAT_RGB565) {
+        RENDERER_TELEMETRY(perf_capture_refresh_telemetry.rgb565_canvas_kernel_hits++);
+        Uint16* dst_pixels = (Uint16*)dst_surface->pixels;
+        const int dst_pitch = dst_surface->pitch / (int)sizeof(Uint16);
+        const Uint16 color565 = pack_rgb565_from_argb(strip->color);
+        if (src_a == 255u) {
+            for (int y = dst_y0; y < dst_y1; y++) {
+                const int row_offset = y - strip->top_y;
+                const int dst_x0 = clamp_to_range(strip->top_left_x + row_offset, 0, dst_surface->w);
+                const int dst_x1 = clamp_to_range(strip->top_right_x + row_offset, 0, dst_surface->w);
+                if (dst_x1 <= dst_x0) { continue; }
+                Uint16* dst_row = dst_pixels + (y * dst_pitch) + dst_x0;
+                fill_rgb565_span(dst_row, dst_x1 - dst_x0, color565);
+            }
+            return true;
+        }
+        const Uint32 inv_src_a = 255u - src_a;
+        const Uint32 src_r = (strip->color >> 16) & 0xFFu;
+        const Uint32 src_g = (strip->color >> 8) & 0xFFu;
+        const Uint32 src_b = strip->color & 0xFFu;
+        const Uint32 src_r_premul = src_r * src_a;
+        const Uint32 src_g_premul = src_g * src_a;
+        const Uint32 src_b_premul = src_b * src_a;
+        for (int y = dst_y0; y < dst_y1; y++) {
+            const int row_offset = y - strip->top_y;
+            const int dst_x0 = clamp_to_range(strip->top_left_x + row_offset, 0, dst_surface->w);
+            const int dst_x1 = clamp_to_range(strip->top_right_x + row_offset, 0, dst_surface->w);
+            if (dst_x1 <= dst_x0) { continue; }
+            Uint16* dst_row = dst_pixels + (y * dst_pitch) + dst_x0;
+            for (int x = 0; x < (dst_x1 - dst_x0); x++) {
+                dst_row[x] = blend_solid_rgb565(dst_row[x], src_a, inv_src_a,
+                                                src_r_premul, src_g_premul, src_b_premul);
+            }
+        }
+        return true;
+    }
+    RENDERER_TELEMETRY(perf_capture_refresh_telemetry.argb8888_canvas_kernel_hits++);
+
+    Uint32* dst_pixels = (Uint32*)dst_surface->pixels;
+    const int dst_pitch = dst_surface->pitch / (int)sizeof(Uint32);
 
     if (src_a == 255u) {
         for (int y = dst_y0; y < dst_y1; y++) {
@@ -7134,19 +7917,31 @@ static bool raster_textured_task_to_software_frame(const RenderTask* task) {
         SDLSoftwareFrame_NonIntegerTelemetry non_integer_telemetry;
         SDLSoftwareFrame_NonIntegerTelemetry* non_integer_telemetry_ptr =
             collect_phase_timing ? &non_integer_telemetry : NULL;
+        /* perf-2: dispatch on dst format. The 565 sibling drops the optional
+         * telemetry hooks (they are 8888-mode profiling features). */
+        const bool non_integer_dst_is_565 = (dst_surface->format == SDL_PIXELFORMAT_RGB565);
         if ((submitted_pixels >= software_frame_non_integer_lookup_threshold_pixels) &&
-            SDLSoftwareFrame_RasterNonIntegerLookupARGB8888(
-                &task->dst_rect,
-                &task->src_uv_rect,
-                task->flip,
-                task->color,
-                dst_surface,
-                src_surface,
-                non_integer_telemetry_ptr,
-                collect_phase_timing && (sample_start_counter != 0),
-                frame_stats_extended_enabled,
-                perf_capture_fast_non_integer_reuse_telemetry_enabled,
-                perf_capture_fast_non_integer_subrect_alpha_telemetry_enabled)) {
+            (non_integer_dst_is_565
+                ? SDLSoftwareFrame_RasterNonIntegerLookupRGB565(
+                      &task->dst_rect, &task->src_uv_rect, task->flip, task->color,
+                      dst_surface, src_surface)
+                : SDLSoftwareFrame_RasterNonIntegerLookupARGB8888(
+                      &task->dst_rect,
+                      &task->src_uv_rect,
+                      task->flip,
+                      task->color,
+                      dst_surface,
+                      src_surface,
+                      non_integer_telemetry_ptr,
+                      collect_phase_timing && (sample_start_counter != 0),
+                      frame_stats_extended_enabled,
+                      perf_capture_fast_non_integer_reuse_telemetry_enabled,
+                      perf_capture_fast_non_integer_subrect_alpha_telemetry_enabled))) {
+            if (non_integer_dst_is_565) {
+                RENDERER_TELEMETRY(perf_capture_refresh_telemetry.rgb565_canvas_kernel_hits++);
+            } else {
+                RENDERER_TELEMETRY(perf_capture_refresh_telemetry.argb8888_canvas_kernel_hits++);
+            }
             const Uint64 sampled_ns =
                 perf_capture_counter_delta_to_ns(sample_start_counter, SDL_GetPerformanceCounter());
             note_perf_capture_raster_bucket_sample(
@@ -7220,10 +8015,20 @@ static bool raster_textured_task_to_software_frame(const RenderTask* task) {
                     return true;
                 }
 
+                /* perf-2: format-aware dispatch on dst surface format. The
+                 * 8888 path uses Uint32 stores + NEON modulate; the 565
+                 * sibling is a scalar walker that runs the same per-pixel
+                 * blend math through pack_rgb565_from_argb /
+                 * blend_rgb565_opaque_dst. */
+                const bool cm_dst_is_565 = (dst_surface->format == SDL_PIXELFORMAT_RGB565);
                 const Uint32* cm_src_pixels = (const Uint32*)src_surface->pixels;
                 Uint32* cm_dst_pixels = (Uint32*)dst_surface->pixels;
+                Uint16* cm_dst_pixels_16 = (Uint16*)dst_surface->pixels;
                 const int cm_src_pitch = src_surface->pitch / (int)sizeof(Uint32);
                 const int cm_dst_pitch = dst_surface->pitch / (int)sizeof(Uint32);
+                const int cm_dst_pitch_16 = dst_surface->pitch / (int)sizeof(Uint16);
+                (void)cm_dst_pixels; (void)cm_dst_pitch;
+                (void)cm_dst_pixels_16; (void)cm_dst_pitch_16;
 
                 /* Build scaled lookup tables — same logic as the SCALED path */
                 int cm_src_x_lookup[cps3_width];
@@ -7255,6 +8060,7 @@ static bool raster_textured_task_to_software_frame(const RenderTask* task) {
                  * For 1:1 non-flipped sprites (common case), all lookup indices
                  * are consecutive, so we can skip the per-batch gather and use
                  * direct contiguous NEON loads instead. */
+#if RENDERER_HAVE_NEON
                 bool cm_src_x_contiguous = (cm_visible_w > 0);
                 const int cm_src_x_base = (cm_visible_w > 0) ? cm_src_x_lookup[0] : 0;
                 for (int ci = 1; ci < cm_visible_w; ci++) {
@@ -7263,72 +8069,101 @@ static bool raster_textured_task_to_software_frame(const RenderTask* task) {
                         break;
                     }
                 }
+#endif
 
                 const Uint64 cm_sample_start_counter =
                     begin_perf_capture_raster_bucket_sample(
                         SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_GENERIC_TEXTURED);
 
+                if (cm_dst_is_565) {
+                    /* perf-2 P-1.A: scalar 565 sibling. NEON 565 follow-up is
+                     * not in scope; correctness over throughput on this path. */
+                    RENDERER_TELEMETRY(perf_capture_refresh_telemetry.rgb565_canvas_kernel_hits++);
+                    for (int row = 0; row < cm_visible_h; row++) {
+                        const Uint32* cm_src_row = cm_src_pixels + (cm_src_y_lookup[row] * cm_src_pitch);
+                        Uint16* cm_dst_row_16 = cm_dst_pixels_16 + ((cm_dst_y0 + row) * cm_dst_pitch_16) + cm_dst_x0;
+
+                        if ((row + 1) < cm_visible_h) {
+                            __builtin_prefetch(cm_src_pixels + (cm_src_y_lookup[row + 1] * cm_src_pitch), 0, 0);
+                            __builtin_prefetch(cm_dst_pixels_16 + ((cm_dst_y0 + row + 1) * cm_dst_pitch_16) + cm_dst_x0, 1, 0);
+                        }
+
+                        for (int col = 0; col < cm_visible_w; col++) {
+                            const Uint32 raw_pixel = cm_src_row[cm_src_x_lookup[col]];
+                            if (((raw_pixel >> 24) & 0xFFu) == 0u) { continue; }
+                            Uint32 src_pixel = cm_blue_tint
+                                ? modulate_argb8888_blue_tint(raw_pixel, cm_rg_factor, cm_mod_a)
+                                : modulate_argb8888(raw_pixel, cm_color);
+                            const Uint32 src_a = (src_pixel >> 24) & 0xFFu;
+                            if (src_a == 0u) { continue; }
+                            if (src_a == 0xFFu) { cm_dst_row_16[col] = pack_rgb565_from_argb(src_pixel); continue; }
+                            cm_dst_row_16[col] = blend_rgb565_opaque_dst(cm_dst_row_16[col], src_pixel);
+                        }
+                    }
+                } else {
+                    RENDERER_TELEMETRY(perf_capture_refresh_telemetry.argb8888_canvas_kernel_hits++);
 #if RENDERER_HAVE_NEON
-                const NeonModulateState cm_neon_state = neon_modulate_init(cm_color);
+                    const NeonModulateState cm_neon_state = neon_modulate_init(cm_color);
 #endif
 
-                for (int row = 0; row < cm_visible_h; row++) {
-                    const Uint32* cm_src_row = cm_src_pixels + (cm_src_y_lookup[row] * cm_src_pitch);
-                    Uint32* cm_dst_row = cm_dst_pixels + ((cm_dst_y0 + row) * cm_dst_pitch) + cm_dst_x0;
+                    for (int row = 0; row < cm_visible_h; row++) {
+                        const Uint32* cm_src_row = cm_src_pixels + (cm_src_y_lookup[row] * cm_src_pitch);
+                        Uint32* cm_dst_row = cm_dst_pixels + ((cm_dst_y0 + row) * cm_dst_pitch) + cm_dst_x0;
 
-                    if ((row + 1) < cm_visible_h) {
-                        __builtin_prefetch(cm_src_pixels + (cm_src_y_lookup[row + 1] * cm_src_pitch), 0, 0);
-                        __builtin_prefetch(cm_dst_pixels + ((cm_dst_y0 + row + 1) * cm_dst_pitch) + cm_dst_x0, 1, 0);
-                    }
+                        if ((row + 1) < cm_visible_h) {
+                            __builtin_prefetch(cm_src_pixels + (cm_src_y_lookup[row + 1] * cm_src_pitch), 0, 0);
+                            __builtin_prefetch(cm_dst_pixels + ((cm_dst_y0 + row + 1) * cm_dst_pitch) + cm_dst_x0, 1, 0);
+                        }
 
-                    int col = 0;
+                        int col = 0;
 
 #if RENDERER_HAVE_NEON
-                    if (cm_src_x_contiguous) {
-                        /* Opt 12: Contiguous NEON fast path — direct load from
-                         * src_row + base + col, no gather needed. */
-                        const Uint32* cm_src_contiguous = cm_src_row + cm_src_x_base;
-                        for (; (col + 3) < cm_visible_w; col += 4) {
-                            neon_blend_modulate_4pixels(cm_src_contiguous + col, cm_dst_row + col, &cm_neon_state);
+                        if (cm_src_x_contiguous) {
+                            /* Opt 12: Contiguous NEON fast path — direct load from
+                             * src_row + base + col, no gather needed. */
+                            const Uint32* cm_src_contiguous = cm_src_row + cm_src_x_base;
+                            for (; (col + 3) < cm_visible_w; col += 4) {
+                                neon_blend_modulate_4pixels(cm_src_contiguous + col, cm_dst_row + col, &cm_neon_state);
+                            }
+                        } else {
+                            /* Gather path: load 4 individual pixels via lookup */
+                            for (; (col + 3) < cm_visible_w; col += 4) {
+                                const Uint32 gathered[4] = {
+                                    cm_src_row[cm_src_x_lookup[col]],
+                                    cm_src_row[cm_src_x_lookup[col + 1]],
+                                    cm_src_row[cm_src_x_lookup[col + 2]],
+                                    cm_src_row[cm_src_x_lookup[col + 3]]
+                                };
+                                /* Opt 4 (binary-alpha skip) at batch level: if all 4 raw
+                                 * alphas are 0, skip entire batch. */
+                                if (((gathered[0] | gathered[1] | gathered[2] | gathered[3]) >> 24) == 0u) {
+                                    continue;
+                                }
+                                neon_blend_modulate_4pixels(gathered, cm_dst_row + col, &cm_neon_state);
+                            }
                         }
-                    } else {
-                        /* Gather path: load 4 individual pixels via lookup */
-                        for (; (col + 3) < cm_visible_w; col += 4) {
-                            const Uint32 gathered[4] = {
-                                cm_src_row[cm_src_x_lookup[col]],
-                                cm_src_row[cm_src_x_lookup[col + 1]],
-                                cm_src_row[cm_src_x_lookup[col + 2]],
-                                cm_src_row[cm_src_x_lookup[col + 3]]
-                            };
-                            /* Opt 4 (binary-alpha skip) at batch level: if all 4 raw
-                             * alphas are 0, skip entire batch. */
-                            if (((gathered[0] | gathered[1] | gathered[2] | gathered[3]) >> 24) == 0u) {
+#endif
+
+                        /* Scalar tail (or full loop on non-NEON) */
+                        for (; col < cm_visible_w; col++) {
+                            const Uint32 raw_pixel = cm_src_row[cm_src_x_lookup[col]];
+                            /* Opt 4: skip modulation if raw alpha is 0 */
+                            if (((raw_pixel >> 24) & 0xFFu) == 0u) {
                                 continue;
                             }
-                            neon_blend_modulate_4pixels(gathered, cm_dst_row + col, &cm_neon_state);
+                            Uint32 src_pixel = cm_blue_tint
+                                ? modulate_argb8888_blue_tint(raw_pixel, cm_rg_factor, cm_mod_a)
+                                : modulate_argb8888(raw_pixel, cm_color);
+                            const Uint32 src_a = (src_pixel >> 24) & 0xFFu;
+                            if (src_a == 0u) {
+                                continue;
+                            }
+                            if (src_a == 0xFFu) {
+                                cm_dst_row[col] = src_pixel;
+                                continue;
+                            }
+                            cm_dst_row[col] = blend_argb8888_opaque_dst(cm_dst_row[col], src_pixel);
                         }
-                    }
-#endif
-
-                    /* Scalar tail (or full loop on non-NEON) */
-                    for (; col < cm_visible_w; col++) {
-                        const Uint32 raw_pixel = cm_src_row[cm_src_x_lookup[col]];
-                        /* Opt 4: skip modulation if raw alpha is 0 */
-                        if (((raw_pixel >> 24) & 0xFFu) == 0u) {
-                            continue;
-                        }
-                        Uint32 src_pixel = cm_blue_tint
-                            ? modulate_argb8888_blue_tint(raw_pixel, cm_rg_factor, cm_mod_a)
-                            : modulate_argb8888(raw_pixel, cm_color);
-                        const Uint32 src_a = (src_pixel >> 24) & 0xFFu;
-                        if (src_a == 0u) {
-                            continue;
-                        }
-                        if (src_a == 0xFFu) {
-                            cm_dst_row[col] = src_pixel;
-                            continue;
-                        }
-                        cm_dst_row[col] = blend_argb8888_opaque_dst(cm_dst_row[col], src_pixel);
                     }
                 }
 
@@ -7359,8 +8194,17 @@ static bool raster_textured_task_to_software_frame(const RenderTask* task) {
         const SDL_Surface* i8_surface = task->software_source_surface;
         const int i8_src_w = i8_surface->w;
         const int i8_src_h = i8_surface->h;
+        /* perf-2 P-1.B: format-aware dispatch on dst surface format. The
+         * 8888 path uses Uint32 stores + NEON; the 565 sibling is a scalar
+         * walker that runs the same per-pixel blend math through
+         * pack_rgb565_from_argb / blend_rgb565_opaque_dst. */
+        const bool i8_dst_is_565 = (dst_surface->format == SDL_PIXELFORMAT_RGB565);
         Uint32* i8_dst_pixels = (Uint32*)dst_surface->pixels;
+        Uint16* i8_dst_pixels_16 = (Uint16*)dst_surface->pixels;
         const int i8_dst_pitch = dst_surface->pitch / (int)sizeof(Uint32);
+        const int i8_dst_pitch_16 = dst_surface->pitch / (int)sizeof(Uint16);
+        (void)i8_dst_pixels; (void)i8_dst_pitch;
+        (void)i8_dst_pixels_16; (void)i8_dst_pitch_16;
         const bool i8_flip_h = (task->flip & SDL_FLIP_HORIZONTAL) != 0;
         const bool i8_flip_v = (task->flip & SDL_FLIP_VERTICAL) != 0;
         const bool i8_apply_color_mod = task->color != 0xFFFFFFFFu;
@@ -7398,6 +8242,7 @@ static bool raster_textured_task_to_software_frame(const RenderTask* task) {
         }
 
         /* Contiguous stride-1 detection for INDEX8 */
+#if RENDERER_HAVE_NEON
         bool i8_src_x_contiguous = (i8_visible_w > 0);
         const int i8_src_x_base = (i8_visible_w > 0) ? i8_src_x_lookup[0] : 0;
         for (int ci = 1; ci < i8_visible_w; ci++) {
@@ -7406,21 +8251,103 @@ static bool raster_textured_task_to_software_frame(const RenderTask* task) {
                 break;
             }
         }
-
-#if RENDERER_HAVE_NEON
-        const NeonModulateState i8_neon_state = i8_apply_color_mod ? neon_modulate_init(task->color) : (NeonModulateState){ .color_lo = { 0 }, .color_hi = { 0 } };
 #endif
 
-        for (int row = 0; row < i8_visible_h; row++) {
-            const Uint8* i8_row = index8_src_row(i8_surface, i8_src_y_lookup[row]);
-            Uint32* dst_row = i8_dst_pixels + ((dst_y0 + row) * i8_dst_pitch) + dst_x0;
+        if (i8_dst_is_565) {
+            /* perf-2 P-1.B: scalar 565 sibling. NEON 565 follow-up is not
+             * in scope; correctness over throughput on this fall-through. */
+            RENDERER_TELEMETRY(perf_capture_refresh_telemetry.rgb565_canvas_kernel_hits++);
+            for (int row = 0; row < i8_visible_h; row++) {
+                const Uint8* i8_row = index8_src_row(i8_surface, i8_src_y_lookup[row]);
+                Uint16* dst_row_16 = i8_dst_pixels_16 + ((dst_y0 + row) * i8_dst_pitch_16) + dst_x0;
 
-            if ((row + 1) < i8_visible_h) {
-                __builtin_prefetch(index8_src_row(i8_surface, i8_src_y_lookup[row + 1]), 0, 0);
-                __builtin_prefetch(i8_dst_pixels + ((dst_y0 + row + 1) * i8_dst_pitch) + dst_x0, 1, 0);
+                if ((row + 1) < i8_visible_h) {
+                    __builtin_prefetch(index8_src_row(i8_surface, i8_src_y_lookup[row + 1]), 0, 0);
+                    __builtin_prefetch(i8_dst_pixels_16 + ((dst_y0 + row + 1) * i8_dst_pitch_16) + dst_x0, 1, 0);
+                }
+
+                if (!i8_apply_color_mod) {
+                    for (int col = 0; col < i8_visible_w; col++) {
+                        const Uint32 src_pixel = palette_lut[i8_row[i8_src_x_lookup[col]]];
+                        const Uint32 src_a = (src_pixel >> 24) & 0xFFu;
+                        if (src_a == 0u) { continue; }
+                        if (src_a == 0xFFu) { dst_row_16[col] = pack_rgb565_from_argb(src_pixel); continue; }
+                        dst_row_16[col] = blend_rgb565_opaque_dst(dst_row_16[col], src_pixel);
+                    }
+                    continue;
+                }
+
+                /* INDEX8 color-mod path (565) */
+                for (int col = 0; col < i8_visible_w; col++) {
+                    const Uint32 raw_pixel = palette_lut[i8_row[i8_src_x_lookup[col]]];
+                    if (((raw_pixel >> 24) & 0xFFu) == 0u) { continue; }
+                    Uint32 src_pixel = i8_blue_tint
+                        ? modulate_argb8888_blue_tint(raw_pixel, i8_rg_factor, i8_mod_a)
+                        : modulate_argb8888(raw_pixel, task->color);
+                    const Uint32 src_a = (src_pixel >> 24) & 0xFFu;
+                    if (src_a == 0u) { continue; }
+                    if (src_a == 0xFFu) { dst_row_16[col] = pack_rgb565_from_argb(src_pixel); continue; }
+                    dst_row_16[col] = blend_rgb565_opaque_dst(dst_row_16[col], src_pixel);
+                }
             }
+        } else {
+            RENDERER_TELEMETRY(perf_capture_refresh_telemetry.argb8888_canvas_kernel_hits++);
+#if RENDERER_HAVE_NEON
+            const NeonModulateState i8_neon_state = i8_apply_color_mod ? neon_modulate_init(task->color) : (NeonModulateState){ .color_lo = { 0 }, .color_hi = { 0 } };
+#endif
 
-            if (!i8_apply_color_mod) {
+            for (int row = 0; row < i8_visible_h; row++) {
+                const Uint8* i8_row = index8_src_row(i8_surface, i8_src_y_lookup[row]);
+                Uint32* dst_row = i8_dst_pixels + ((dst_y0 + row) * i8_dst_pitch) + dst_x0;
+
+                if ((row + 1) < i8_visible_h) {
+                    __builtin_prefetch(index8_src_row(i8_surface, i8_src_y_lookup[row + 1]), 0, 0);
+                    __builtin_prefetch(i8_dst_pixels + ((dst_y0 + row + 1) * i8_dst_pitch) + dst_x0, 1, 0);
+                }
+
+                if (!i8_apply_color_mod) {
+                    int col = 0;
+#if RENDERER_HAVE_NEON
+                    if (i8_src_x_contiguous) {
+                        const Uint8* i8_contiguous = i8_row + i8_src_x_base;
+                        for (; (col + 3) < i8_visible_w; col += 4) {
+                            const Uint32 gathered[4] = {
+                                palette_lut[i8_contiguous[col]],
+                                palette_lut[i8_contiguous[col + 1]],
+                                palette_lut[i8_contiguous[col + 2]],
+                                palette_lut[i8_contiguous[col + 3]]
+                            };
+                            if (((gathered[0] | gathered[1] | gathered[2] | gathered[3]) >> 24) == 0u) {
+                                continue;
+                            }
+                            neon_blend_4pixels(gathered, dst_row + col);
+                        }
+                    } else {
+                        for (; (col + 3) < i8_visible_w; col += 4) {
+                            const Uint32 gathered[4] = {
+                                palette_lut[i8_row[i8_src_x_lookup[col]]],
+                                palette_lut[i8_row[i8_src_x_lookup[col + 1]]],
+                                palette_lut[i8_row[i8_src_x_lookup[col + 2]]],
+                                palette_lut[i8_row[i8_src_x_lookup[col + 3]]]
+                            };
+                            if (((gathered[0] | gathered[1] | gathered[2] | gathered[3]) >> 24) == 0u) {
+                                continue;
+                            }
+                            neon_blend_4pixels(gathered, dst_row + col);
+                        }
+                    }
+#endif
+                    for (; col < i8_visible_w; col++) {
+                        const Uint32 src_pixel = palette_lut[i8_row[i8_src_x_lookup[col]]];
+                        const Uint32 src_a = (src_pixel >> 24) & 0xFFu;
+                        if (src_a == 0u) { continue; }
+                        if (src_a == 0xFFu) { dst_row[col] = src_pixel; continue; }
+                        dst_row[col] = blend_argb8888_opaque_dst(dst_row[col], src_pixel);
+                    }
+                    continue;
+                }
+
+                /* INDEX8 color-mod path */
                 int col = 0;
 #if RENDERER_HAVE_NEON
                 if (i8_src_x_contiguous) {
@@ -7435,7 +8362,7 @@ static bool raster_textured_task_to_software_frame(const RenderTask* task) {
                         if (((gathered[0] | gathered[1] | gathered[2] | gathered[3]) >> 24) == 0u) {
                             continue;
                         }
-                        neon_blend_4pixels(gathered, dst_row + col);
+                        neon_blend_modulate_4pixels(gathered, dst_row + col, &i8_neon_state);
                     }
                 } else {
                     for (; (col + 3) < i8_visible_w; col += 4) {
@@ -7448,62 +8375,21 @@ static bool raster_textured_task_to_software_frame(const RenderTask* task) {
                         if (((gathered[0] | gathered[1] | gathered[2] | gathered[3]) >> 24) == 0u) {
                             continue;
                         }
-                        neon_blend_4pixels(gathered, dst_row + col);
+                        neon_blend_modulate_4pixels(gathered, dst_row + col, &i8_neon_state);
                     }
                 }
 #endif
                 for (; col < i8_visible_w; col++) {
-                    const Uint32 src_pixel = palette_lut[i8_row[i8_src_x_lookup[col]]];
+                    const Uint32 raw_pixel = palette_lut[i8_row[i8_src_x_lookup[col]]];
+                    if (((raw_pixel >> 24) & 0xFFu) == 0u) { continue; }
+                    Uint32 src_pixel = i8_blue_tint
+                        ? modulate_argb8888_blue_tint(raw_pixel, i8_rg_factor, i8_mod_a)
+                        : modulate_argb8888(raw_pixel, task->color);
                     const Uint32 src_a = (src_pixel >> 24) & 0xFFu;
                     if (src_a == 0u) { continue; }
                     if (src_a == 0xFFu) { dst_row[col] = src_pixel; continue; }
                     dst_row[col] = blend_argb8888_opaque_dst(dst_row[col], src_pixel);
                 }
-                continue;
-            }
-
-            /* INDEX8 color-mod path */
-            int col = 0;
-#if RENDERER_HAVE_NEON
-            if (i8_src_x_contiguous) {
-                const Uint8* i8_contiguous = i8_row + i8_src_x_base;
-                for (; (col + 3) < i8_visible_w; col += 4) {
-                    const Uint32 gathered[4] = {
-                        palette_lut[i8_contiguous[col]],
-                        palette_lut[i8_contiguous[col + 1]],
-                        palette_lut[i8_contiguous[col + 2]],
-                        palette_lut[i8_contiguous[col + 3]]
-                    };
-                    if (((gathered[0] | gathered[1] | gathered[2] | gathered[3]) >> 24) == 0u) {
-                        continue;
-                    }
-                    neon_blend_modulate_4pixels(gathered, dst_row + col, &i8_neon_state);
-                }
-            } else {
-                for (; (col + 3) < i8_visible_w; col += 4) {
-                    const Uint32 gathered[4] = {
-                        palette_lut[i8_row[i8_src_x_lookup[col]]],
-                        palette_lut[i8_row[i8_src_x_lookup[col + 1]]],
-                        palette_lut[i8_row[i8_src_x_lookup[col + 2]]],
-                        palette_lut[i8_row[i8_src_x_lookup[col + 3]]]
-                    };
-                    if (((gathered[0] | gathered[1] | gathered[2] | gathered[3]) >> 24) == 0u) {
-                        continue;
-                    }
-                    neon_blend_modulate_4pixels(gathered, dst_row + col, &i8_neon_state);
-                }
-            }
-#endif
-            for (; col < i8_visible_w; col++) {
-                const Uint32 raw_pixel = palette_lut[i8_row[i8_src_x_lookup[col]]];
-                if (((raw_pixel >> 24) & 0xFFu) == 0u) { continue; }
-                Uint32 src_pixel = i8_blue_tint
-                    ? modulate_argb8888_blue_tint(raw_pixel, i8_rg_factor, i8_mod_a)
-                    : modulate_argb8888(raw_pixel, task->color);
-                const Uint32 src_a = (src_pixel >> 24) & 0xFFu;
-                if (src_a == 0u) { continue; }
-                if (src_a == 0xFFu) { dst_row[col] = src_pixel; continue; }
-                dst_row[col] = blend_argb8888_opaque_dst(dst_row[col], src_pixel);
             }
         }
 
@@ -7523,6 +8409,71 @@ static bool raster_textured_task_to_software_frame(const RenderTask* task) {
         return true;
     }
 #endif /* INDEX8_RASTERIZATION_ENABLED */
+
+    /* perf-2: when canvas is 565, the NEON-heavy generic path below stores
+     * Uint32 directly. Run a scalar 565 sibling in that case (same control
+     * flow, packed-565 store at the end). NEON 565 follow-up is not in scope. */
+    const bool generic_dst_is_565 = (dst_surface->format == SDL_PIXELFORMAT_RGB565);
+    if (generic_dst_is_565) {
+        RENDERER_TELEMETRY(perf_capture_refresh_telemetry.rgb565_canvas_kernel_hits++);
+        const float src_x_start = task->src_uv_rect.x * (float)src_surface->w;
+        const float src_y_start = task->src_uv_rect.y * (float)src_surface->h;
+        const float src_x_span = task->src_uv_rect.w * (float)src_surface->w;
+        const float src_y_span = task->src_uv_rect.h * (float)src_surface->h;
+        const Uint32* src_pixels = (const Uint32*)src_surface->pixels;
+        Uint16* dst_pixels = (Uint16*)dst_surface->pixels;
+        const int src_pitch = src_surface->pitch / (int)sizeof(Uint32);
+        const int dst_pitch = dst_surface->pitch / (int)sizeof(Uint16);
+        const bool flip_h = (task->flip & SDL_FLIP_HORIZONTAL) != 0;
+        const bool flip_v = (task->flip & SDL_FLIP_VERTICAL) != 0;
+        const bool apply_color_mod = task->color != 0xFFFFFFFFu;
+        const bool blue_tint = apply_color_mod && is_blue_tint_color(task->color);
+        const Uint32 rg_factor = (task->color >> 16) & 0xFFu;
+        const Uint32 mod_a = (task->color >> 24) & 0xFFu;
+        const Uint64 sample_start = begin_perf_capture_raster_bucket_sample(
+            SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_GENERIC_TEXTURED);
+        const int visible_w = dst_x1 - dst_x0;
+        const int visible_h = dst_y1 - dst_y0;
+        for (int row = 0; row < visible_h; row++) {
+            const int y = dst_y0 + row;
+            float v = (((float)y + 0.5f) - task->dst_rect.y) / task->dst_rect.h;
+            v = SDL_max(0.0f, SDL_min(v, 0.999999f));
+            if (flip_v) { v = 1.0f - v; v = SDL_max(0.0f, SDL_min(v, 0.999999f)); }
+            const int src_y =
+                clamp_to_range((int)SDL_floorf(src_y_start + (v * src_y_span)), 0, src_surface->h - 1);
+            const Uint32* src_row = src_pixels + (src_y * src_pitch);
+            Uint16* dst_row = dst_pixels + (y * dst_pitch) + dst_x0;
+            for (int col = 0; col < visible_w; col++) {
+                const int x = dst_x0 + col;
+                float u = (((float)x + 0.5f) - task->dst_rect.x) / task->dst_rect.w;
+                u = SDL_max(0.0f, SDL_min(u, 0.999999f));
+                if (flip_h) { u = 1.0f - u; u = SDL_max(0.0f, SDL_min(u, 0.999999f)); }
+                const int src_x =
+                    clamp_to_range((int)SDL_floorf(src_x_start + (u * src_x_span)), 0, src_surface->w - 1);
+                Uint32 src_pixel = src_row[src_x];
+                if (apply_color_mod) {
+                    src_pixel = blue_tint
+                        ? modulate_argb8888_blue_tint(src_pixel, rg_factor, mod_a)
+                        : modulate_argb8888(src_pixel, task->color);
+                }
+                const Uint32 src_a = (src_pixel >> 24) & 0xFFu;
+                if (src_a == 0u) { continue; }
+                if (src_a == 0xFFu) { dst_row[col] = pack_rgb565_from_argb(src_pixel); continue; }
+                dst_row[col] = blend_rgb565_opaque_dst(dst_row[col], src_pixel);
+            }
+        }
+        const Uint64 sampled_ns = perf_capture_counter_delta_to_ns(sample_start, SDL_GetPerformanceCounter());
+        note_perf_capture_raster_bucket_sample(
+            SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_GENERIC_TEXTURED, task, sampled_ns);
+        if ((fast_copy_result != SOFTWARE_FRAME_FAST_COPY_RESULT_EXACT) &&
+            (fast_copy_result != SOFTWARE_FRAME_FAST_COPY_RESULT_SCALED)) {
+            note_software_frame_fast_copy_result(
+                task, fast_copy_result, NULL, dst_surface, non_integer_lookup_entries, sampled_ns);
+        }
+        if (src_locked) { SDL_UnlockSurface(src_surface); }
+        return true;
+    }
+    RENDERER_TELEMETRY(perf_capture_refresh_telemetry.argb8888_canvas_kernel_hits++);
 
     const float src_x_start = task->src_uv_rect.x * (float)src_surface->w;
     const float src_y_start = task->src_uv_rect.y * (float)src_surface->h;
@@ -7584,6 +8535,7 @@ static bool raster_textured_task_to_software_frame(const RenderTask* task) {
     /* Opt 12: Pre-scan generic lookup table for contiguous stride-1 layout.
      * For 1:1 non-flipped sprites (common case), all lookup indices are
      * consecutive, allowing direct contiguous NEON loads instead of gather. */
+#if RENDERER_HAVE_NEON
     bool generic_src_x_contiguous = (generic_visible_w > 0);
     const int generic_src_x_base = (generic_visible_w > 0) ? generic_src_x_lookup[0] : 0;
     for (int ci = 1; ci < generic_visible_w; ci++) {
@@ -7592,6 +8544,7 @@ static bool raster_textured_task_to_software_frame(const RenderTask* task) {
             break;
         }
     }
+#endif
 
 #if RENDERER_HAVE_NEON
     const NeonModulateState generic_neon_state = apply_color_mod ? neon_modulate_init(task->color) : (NeonModulateState){ .color_lo = { 0 }, .color_hi = { 0 } };
@@ -7739,8 +8692,13 @@ static bool raster_textured_parallelogram_to_software_frame(const RenderTask* ta
         src_locked = true;
     }
 
+    /* perf-2: format-aware dispatch on dst surface format. */
+    const bool dst_is_565_para = (software_frame_surface->format == SDL_PIXELFORMAT_RGB565);
     Uint32* dst_pixels = (Uint32*)software_frame_surface->pixels;
     const int dst_pitch = software_frame_surface->pitch / (int)sizeof(Uint32);
+    Uint16* dst_pixels_16 = (Uint16*)software_frame_surface->pixels;
+    const int dst_pitch_16 = software_frame_surface->pitch / (int)sizeof(Uint16);
+    (void)dst_pixels_16; (void)dst_pitch_16;
     const int shear_dx_total = parallelogram.bottom_left_x - parallelogram.top_left_x;
     const Uint64 sample_start_counter =
         begin_perf_capture_raster_bucket_sample(SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_GENERIC_TEXTURED);
@@ -7748,6 +8706,38 @@ static bool raster_textured_parallelogram_to_software_frame(const RenderTask* ta
 #if INDEX8_RASTERIZATION_ENABLED
     if (task->software_source_is_index8 && (task->software_palette_lut != NULL)) {
         const Uint32* palette_lut = task->software_palette_lut;
+        if (dst_is_565_para) {
+            RENDERER_TELEMETRY(perf_capture_refresh_telemetry.rgb565_canvas_kernel_hits++);
+            for (int row = 0; row < parallelogram.src_h; row++) {
+                const int dst_y = parallelogram.top_y + row;
+                if ((dst_y < 0) || (dst_y >= software_frame_surface->h)) { continue; }
+                const float row_start_f = (float)parallelogram.top_left_x +
+                                          ((((float)row + 0.5f) * (float)shear_dx_total) / (float)parallelogram.src_h);
+                const int unclipped_dst_x0 = (int)SDL_roundf(row_start_f);
+                const int unclipped_dst_x1 = unclipped_dst_x0 + parallelogram.src_w;
+                const int dst_x0 = clamp_to_range(unclipped_dst_x0, 0, software_frame_surface->w);
+                const int dst_x1 = clamp_to_range(unclipped_dst_x1, 0, software_frame_surface->w);
+                if (dst_x1 <= dst_x0) { continue; }
+                const int para_src_x0 = parallelogram.src_x + (dst_x0 - unclipped_dst_x0);
+                const int visible_w = dst_x1 - dst_x0;
+                const Uint8* i8_row = index8_src_row(src_surface, parallelogram.src_y + row);
+                Uint16* dst_row = dst_pixels_16 + (dst_y * dst_pitch_16) + dst_x0;
+                for (int col = 0; col < visible_w; col++) {
+                    const Uint32 src_pixel = palette_lut[i8_row[para_src_x0 + col]];
+                    const Uint32 src_a = (src_pixel >> 24) & 0xFFu;
+                    if (src_a == 0u) { continue; }
+                    if (src_a == 0xFFu) { dst_row[col] = pack_rgb565_from_argb(src_pixel); continue; }
+                    dst_row[col] = blend_rgb565_opaque_dst(dst_row[col], src_pixel);
+                }
+            }
+            note_perf_capture_raster_bucket_sample(SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_GENERIC_TEXTURED,
+                                                   task,
+                                                   perf_capture_counter_delta_to_ns(
+                                                       sample_start_counter, SDL_GetPerformanceCounter()));
+            if (src_locked) { SDL_UnlockSurface(src_surface); }
+            return true;
+        }
+        RENDERER_TELEMETRY(perf_capture_refresh_telemetry.argb8888_canvas_kernel_hits++);
         for (int row = 0; row < parallelogram.src_h; row++) {
             const int dst_y = parallelogram.top_y + row;
             if ((dst_y < 0) || (dst_y >= software_frame_surface->h)) { continue; }
@@ -7782,6 +8772,47 @@ static bool raster_textured_parallelogram_to_software_frame(const RenderTask* ta
     const Uint32* src_pixels = (const Uint32*)src_surface->pixels;
     const int src_pitch = src_surface->pitch / (int)sizeof(Uint32);
     const Uint64* full_opaque_row_mask = get_software_surface_full_opaque_row_mask(task->texture_binding, src_surface);
+
+    if (dst_is_565_para) {
+        RENDERER_TELEMETRY(perf_capture_refresh_telemetry.rgb565_canvas_kernel_hits++);
+        for (int row = 0; row < parallelogram.src_h; row++) {
+            const int dst_y = parallelogram.top_y + row;
+            if ((dst_y < 0) || (dst_y >= software_frame_surface->h)) { continue; }
+            const float row_start_f = (float)parallelogram.top_left_x +
+                                      ((((float)row + 0.5f) * (float)shear_dx_total) / (float)parallelogram.src_h);
+            const int unclipped_dst_x0 = (int)SDL_roundf(row_start_f);
+            const int unclipped_dst_x1 = unclipped_dst_x0 + parallelogram.src_w;
+            const int dst_x0 = clamp_to_range(unclipped_dst_x0, 0, software_frame_surface->w);
+            const int dst_x1 = clamp_to_range(unclipped_dst_x1, 0, software_frame_surface->w);
+            if (dst_x1 <= dst_x0) { continue; }
+            const int src_x0 = parallelogram.src_x + (dst_x0 - unclipped_dst_x0);
+            const int visible_w = dst_x1 - dst_x0;
+            const Uint32* src_row = src_pixels + ((parallelogram.src_y + row) * src_pitch) + src_x0;
+            Uint16* dst_row = dst_pixels_16 + (dst_y * dst_pitch_16) + dst_x0;
+            if ((full_opaque_row_mask != NULL) &&
+                (((full_opaque_row_mask[row >> 6] >> (row & 63)) & ((Uint64)1)) != 0)) {
+                /* opaque-row fast path: pack each pixel; cheaper than blend. */
+                for (int col = 0; col < visible_w; col++) {
+                    dst_row[col] = pack_rgb565_from_argb(src_row[col]);
+                }
+                continue;
+            }
+            for (int col = 0; col < visible_w; col++) {
+                const Uint32 src_pixel = src_row[col];
+                const Uint32 src_a = (src_pixel >> 24) & 0xFFu;
+                if (src_a == 0u) { continue; }
+                if (src_a == 0xFFu) { dst_row[col] = pack_rgb565_from_argb(src_pixel); continue; }
+                dst_row[col] = blend_rgb565_opaque_dst(dst_row[col], src_pixel);
+            }
+        }
+        note_perf_capture_raster_bucket_sample(SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_GENERIC_TEXTURED,
+                                               task,
+                                               perf_capture_counter_delta_to_ns(
+                                                   sample_start_counter, SDL_GetPerformanceCounter()));
+        if (src_locked) { SDL_UnlockSurface(src_surface); }
+        return true;
+    }
+    RENDERER_TELEMETRY(perf_capture_refresh_telemetry.argb8888_canvas_kernel_hits++);
 
     // The recovered Kyoto stage family is a same-size full-texture shear, so each visible row can
     // reuse the cached ARGB source row directly and only adjust the destination x offset.
@@ -7853,8 +8884,13 @@ static bool raster_textured_float_parallelogram_to_software_frame(const RenderTa
         src_locked = true;
     }
 
+    /* perf-2: format-aware dispatch. */
+    const bool dst_is_565_fp = (software_frame_surface->format == SDL_PIXELFORMAT_RGB565);
     Uint32* dst_pixels = (Uint32*)software_frame_surface->pixels;
     const int dst_pitch = software_frame_surface->pitch / (int)sizeof(Uint32);
+    Uint16* dst_pixels_16 = (Uint16*)software_frame_surface->pixels;
+    const int dst_pitch_16 = software_frame_surface->pitch / (int)sizeof(Uint16);
+    (void)dst_pixels_16; (void)dst_pitch_16;
     const float height = parallelogram.bottom_y - parallelogram.top_y;
     const float left_dx = parallelogram.bottom_left_x - parallelogram.top_left_x;
     const float right_dx = parallelogram.bottom_right_x - parallelogram.top_right_x;
@@ -7873,6 +8909,52 @@ static bool raster_textured_float_parallelogram_to_software_frame(const RenderTa
 #endif
     const Uint32* src_pixels = fp_is_index8 ? NULL : (const Uint32*)src_surface->pixels;
     const int src_pitch = fp_is_index8 ? 0 : (src_surface->pitch / (int)sizeof(Uint32));
+
+    if (dst_is_565_fp) {
+        RENDERER_TELEMETRY(perf_capture_refresh_telemetry.rgb565_canvas_kernel_hits++);
+        for (int dst_y = start_y; dst_y <= end_y; dst_y++) {
+            const float py = (float)dst_y + 0.5f;
+            float v = (py - parallelogram.top_y) / height;
+            v = SDL_max(0.0f, SDL_min(v, 0.999999f));
+            const float left_x = parallelogram.top_left_x + (v * left_dx);
+            const float right_x = parallelogram.top_right_x + (v * right_dx);
+            const float row_width = right_x - left_x;
+            if (row_width <= rect_task_epsilon) { continue; }
+            const int dst_x0 = clamp_to_range((int)SDL_ceilf(left_x - 0.5f), 0, software_frame_surface->w);
+            const int dst_x1 = clamp_to_range((int)SDL_floorf(right_x - 0.5f) + 1, 0, software_frame_surface->w);
+            if (dst_x1 <= dst_x0) { continue; }
+            const int src_y = parallelogram.src_y +
+                              clamp_to_range((int)SDL_floorf(v * (float)parallelogram.src_h), 0, parallelogram.src_h - 1);
+            Uint16* dst_row = dst_pixels_16 + (dst_y * dst_pitch_16);
+            const float src_step = (float)parallelogram.src_w / row_width;
+            float src_x_f = ((((float)dst_x0 + 0.5f) - left_x) * src_step);
+            for (int dst_x = dst_x0; dst_x < dst_x1; dst_x++) {
+                const int src_x = parallelogram.src_x +
+                                  clamp_to_range((int)SDL_floorf(src_x_f), 0, parallelogram.src_w - 1);
+                const Uint32 src_pixel = fp_is_index8
+                    ? fp_palette_lut[((const Uint8*)src_surface->pixels)[(src_y * src_surface->pitch) + src_x]]
+                    : src_pixels[(src_y * src_pitch) + src_x];
+                const Uint32 src_a = (src_pixel >> 24) & 0xFFu;
+                if (src_a == 0u) {
+                    src_x_f += src_step;
+                    continue;
+                }
+                if (src_a == 0xFFu) {
+                    dst_row[dst_x] = pack_rgb565_from_argb(src_pixel);
+                } else {
+                    dst_row[dst_x] = blend_rgb565_opaque_dst(dst_row[dst_x], src_pixel);
+                }
+                src_x_f += src_step;
+            }
+        }
+        note_perf_capture_raster_bucket_sample(SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_GENERIC_TEXTURED,
+                                               task,
+                                               perf_capture_counter_delta_to_ns(
+                                                   sample_start_counter, SDL_GetPerformanceCounter()));
+        if (src_locked) { SDL_UnlockSurface(src_surface); }
+        return true;
+    }
+    RENDERER_TELEMETRY(perf_capture_refresh_telemetry.argb8888_canvas_kernel_hits++);
 
     for (int dst_y = start_y; dst_y <= end_y; dst_y++) {
         const float py = (float)dst_y + 0.5f;
@@ -7958,8 +9040,47 @@ static bool raster_textured_float_triangle_to_software_frame(const SDL_Surface* 
 
     const float inv_area = 1.0f / area;
     const Uint32* src_pixels = (palette_lut != NULL) ? NULL : (const Uint32*)src_surface->pixels;
-    Uint32* dst_pixels = (Uint32*)software_frame_surface->pixels;
     const int src_pitch = (palette_lut != NULL) ? 0 : (src_surface->pitch / (int)sizeof(Uint32));
+    /* perf-2: format-aware dispatch on dst surface format. */
+    const bool dst_is_565 = (software_frame_surface->format == SDL_PIXELFORMAT_RGB565);
+    if (dst_is_565) {
+        RENDERER_TELEMETRY(perf_capture_refresh_telemetry.rgb565_canvas_kernel_hits++);
+        Uint16* dst_pixels = (Uint16*)software_frame_surface->pixels;
+        const int dst_pitch = software_frame_surface->pitch / (int)sizeof(Uint16);
+        for (int y = min_y; y <= max_y; y++) {
+            Uint16* dst_row = dst_pixels + (y * dst_pitch);
+            const float py = (float)y + 0.5f;
+            for (int x = min_x; x <= max_x; x++) {
+                const float px = (float)x + 0.5f;
+                const float w0 = ((x1 - px) * (y2 - py)) - ((y1 - py) * (x2 - px));
+                const float w1 = ((x2 - px) * (y0 - py)) - ((y2 - py) * (x0 - px));
+                const float w2 = ((x0 - px) * (y1 - py)) - ((y0 - py) * (x1 - px));
+                if (((area > 0.0f) && ((w0 < 0.0f) || (w1 < 0.0f) || (w2 < 0.0f))) ||
+                    ((area < 0.0f) && ((w0 > 0.0f) || (w1 > 0.0f) || (w2 > 0.0f)))) {
+                    continue;
+                }
+                const float alpha0 = w0 * inv_area;
+                const float alpha1 = w1 * inv_area;
+                const float alpha2 = w2 * inv_area;
+                const int src_x = clamp_to_range((int)SDL_floorf((alpha0 * quad->src_u[i0]) + (alpha1 * quad->src_u[i1]) +
+                                                                 (alpha2 * quad->src_u[i2])),
+                                                 0, src_surface->w - 1);
+                const int src_y = clamp_to_range((int)SDL_floorf((alpha0 * quad->src_v[i0]) + (alpha1 * quad->src_v[i1]) +
+                                                                 (alpha2 * quad->src_v[i2])),
+                                                 0, src_surface->h - 1);
+                const Uint32 src_pixel = (palette_lut != NULL)
+                    ? palette_lut[((const Uint8*)src_surface->pixels)[(src_y * src_surface->pitch) + src_x]]
+                    : src_pixels[(src_y * src_pitch) + src_x];
+                const Uint32 src_a = (src_pixel >> 24) & 0xFFu;
+                if (src_a == 0u) { continue; }
+                if (src_a == 0xFFu) { dst_row[x] = pack_rgb565_from_argb(src_pixel); continue; }
+                dst_row[x] = blend_rgb565_opaque_dst(dst_row[x], src_pixel);
+            }
+        }
+        return true;
+    }
+    RENDERER_TELEMETRY(perf_capture_refresh_telemetry.argb8888_canvas_kernel_hits++);
+    Uint32* dst_pixels = (Uint32*)software_frame_surface->pixels;
     const int dst_pitch = software_frame_surface->pitch / (int)sizeof(Uint32);
     for (int y = min_y; y <= max_y; y++) {
         Uint32* dst_row = dst_pixels + (y * dst_pitch);
@@ -8036,8 +9157,47 @@ static bool raster_textured_triangle_to_software_frame(const SDL_Surface* src_su
 
     const float inv_area = 1.0f / area;
     const Uint32* src_pixels = (palette_lut != NULL) ? NULL : (const Uint32*)src_surface->pixels;
-    Uint32* dst_pixels = (Uint32*)software_frame_surface->pixels;
     const int src_pitch = (palette_lut != NULL) ? 0 : (src_surface->pitch / (int)sizeof(Uint32));
+    /* perf-2: format-aware dispatch on dst surface format. */
+    const bool dst_is_565 = (software_frame_surface->format == SDL_PIXELFORMAT_RGB565);
+    if (dst_is_565) {
+        RENDERER_TELEMETRY(perf_capture_refresh_telemetry.rgb565_canvas_kernel_hits++);
+        Uint16* dst_pixels = (Uint16*)software_frame_surface->pixels;
+        const int dst_pitch = software_frame_surface->pitch / (int)sizeof(Uint16);
+        for (int y = min_y; y <= max_y; y++) {
+            Uint16* dst_row = dst_pixels + (y * dst_pitch);
+            const float py = (float)y + 0.5f;
+            for (int x = min_x; x <= max_x; x++) {
+                const float px = (float)x + 0.5f;
+                const float w0 = ((x1 - px) * (y2 - py)) - ((y1 - py) * (x2 - px));
+                const float w1 = ((x2 - px) * (y0 - py)) - ((y2 - py) * (x0 - px));
+                const float w2 = ((x0 - px) * (y1 - py)) - ((y0 - py) * (x1 - px));
+                if (((area > 0.0f) && ((w0 < 0.0f) || (w1 < 0.0f) || (w2 < 0.0f))) ||
+                    ((area < 0.0f) && ((w0 > 0.0f) || (w1 > 0.0f) || (w2 > 0.0f)))) {
+                    continue;
+                }
+                const float alpha0 = w0 * inv_area;
+                const float alpha1 = w1 * inv_area;
+                const float alpha2 = w2 * inv_area;
+                const int src_x = clamp_to_range((int)SDL_floorf((alpha0 * quad->src_u[i0]) + (alpha1 * quad->src_u[i1]) +
+                                                                 (alpha2 * quad->src_u[i2])),
+                                                 0, src_surface->w - 1);
+                const int src_y = clamp_to_range((int)SDL_floorf((alpha0 * quad->src_v[i0]) + (alpha1 * quad->src_v[i1]) +
+                                                                 (alpha2 * quad->src_v[i2])),
+                                                 0, src_surface->h - 1);
+                const Uint32 src_pixel = (palette_lut != NULL)
+                    ? palette_lut[((const Uint8*)src_surface->pixels)[(src_y * src_surface->pitch) + src_x]]
+                    : src_pixels[(src_y * src_pitch) + src_x];
+                const Uint32 src_a = (src_pixel >> 24) & 0xFFu;
+                if (src_a == 0u) { continue; }
+                if (src_a == 0xFFu) { dst_row[x] = pack_rgb565_from_argb(src_pixel); continue; }
+                dst_row[x] = blend_rgb565_opaque_dst(dst_row[x], src_pixel);
+            }
+        }
+        return true;
+    }
+    RENDERER_TELEMETRY(perf_capture_refresh_telemetry.argb8888_canvas_kernel_hits++);
+    Uint32* dst_pixels = (Uint32*)software_frame_surface->pixels;
     const int dst_pitch = software_frame_surface->pitch / (int)sizeof(Uint32);
     for (int y = min_y; y <= max_y; y++) {
         Uint32* dst_row = dst_pixels + (y * dst_pitch);
@@ -8100,10 +9260,61 @@ static bool raster_textured_translated_triangle_to_software_frame(const SDL_Surf
     }
 
     const Uint32* src_pixels = (palette_lut != NULL) ? NULL : (const Uint32*)src_surface->pixels;
-    Uint32* dst_pixels = (Uint32*)software_frame_surface->pixels;
     const int src_pitch = (palette_lut != NULL) ? 0 : (src_surface->pitch / (int)sizeof(Uint32));
-    const int dst_pitch = software_frame_surface->pitch / (int)sizeof(Uint32);
     const int indices[3] = { i0, i1, i2 };
+    /* perf-2: format-aware dispatch on dst surface format. */
+    const bool dst_is_565 = (software_frame_surface->format == SDL_PIXELFORMAT_RGB565);
+    if (dst_is_565) {
+        RENDERER_TELEMETRY(perf_capture_refresh_telemetry.rgb565_canvas_kernel_hits++);
+        Uint16* dst_pixels = (Uint16*)software_frame_surface->pixels;
+        const int dst_pitch = software_frame_surface->pitch / (int)sizeof(Uint16);
+        for (int y = min_y; y <= max_y; y++) {
+            const float py = (float)y + 0.5f;
+            float intersections[2] = { 0.0f, 0.0f };
+            int intersection_count = 0;
+            for (int edge_index = 0; edge_index < 3; edge_index++) {
+                const int start = indices[edge_index];
+                const int end = indices[(edge_index + 1) % 3];
+                const float y0 = (float)quad->dst_y[start];
+                const float y1 = (float)quad->dst_y[end];
+                if (nearly_equal(y0, y1)) { continue; }
+                const float edge_min_y = SDL_min(y0, y1);
+                const float edge_max_y = SDL_max(y0, y1);
+                if ((py < edge_min_y) || (py >= edge_max_y)) { continue; }
+                const float t = (py - y0) / (y1 - y0);
+                intersections[intersection_count++] =
+                    (float)quad->dst_x[start] + (t * (float)(quad->dst_x[end] - quad->dst_x[start]));
+                if (intersection_count == 2) { break; }
+            }
+            if (intersection_count < 2) { continue; }
+            if (intersections[0] > intersections[1]) {
+                const float swap = intersections[0];
+                intersections[0] = intersections[1];
+                intersections[1] = swap;
+            }
+            const int dst_x0 = clamp_to_range((int)SDL_ceilf(intersections[0] - 0.5f), 0, cps3_width);
+            const int dst_x1 = clamp_to_range((int)SDL_floorf(intersections[1] - 0.5f) + 1, 0, cps3_width);
+            if (dst_x1 <= dst_x0) { continue; }
+            const int src_y = y + quad->src_dy;
+            if ((src_y < 0) || (src_y >= src_surface->h)) { continue; }
+            Uint16* dst_row = dst_pixels + (y * dst_pitch);
+            for (int x = dst_x0; x < dst_x1; x++) {
+                const int src_x = x + quad->src_dx;
+                if ((src_x < 0) || (src_x >= src_surface->w)) { continue; }
+                const Uint32 src_pixel = (palette_lut != NULL)
+                    ? palette_lut[((const Uint8*)src_surface->pixels)[(src_y * src_surface->pitch) + src_x]]
+                    : src_pixels[(src_y * src_pitch) + src_x];
+                const Uint32 src_a = (src_pixel >> 24) & 0xFFu;
+                if (src_a == 0u) { continue; }
+                if (src_a == 0xFFu) { dst_row[x] = pack_rgb565_from_argb(src_pixel); continue; }
+                dst_row[x] = blend_rgb565_opaque_dst(dst_row[x], src_pixel);
+            }
+        }
+        return true;
+    }
+    RENDERER_TELEMETRY(perf_capture_refresh_telemetry.argb8888_canvas_kernel_hits++);
+    Uint32* dst_pixels = (Uint32*)software_frame_surface->pixels;
+    const int dst_pitch = software_frame_surface->pitch / (int)sizeof(Uint32);
     for (int y = min_y; y <= max_y; y++) {
         const float py = (float)y + 0.5f;
         float intersections[2] = { 0.0f, 0.0f };
@@ -8318,8 +9529,13 @@ static bool raster_solid_triangle_to_software_frame(const RenderTask* task, int 
         return true;
     }
 
+    /* perf-2: format-aware dispatch. */
+    const bool dst_is_565 = (software_frame_surface->format == SDL_PIXELFORMAT_RGB565);
     Uint32* dst_pixels = (Uint32*)software_frame_surface->pixels;
     const int dst_pitch = software_frame_surface->pitch / (int)sizeof(Uint32);
+    Uint16* dst_pixels_16 = (Uint16*)software_frame_surface->pixels;
+    const int dst_pitch_16 = software_frame_surface->pitch / (int)sizeof(Uint16);
+    const Uint16 color565 = pack_rgb565_from_argb(color);
 
     const Uint32 inv_src_a = 255u - src_a;
     const Uint32 src_r_premul = ((color >> 16) & 0xFFu) * src_a;
@@ -8328,6 +9544,12 @@ static bool raster_solid_triangle_to_software_frame(const RenderTask* task, int 
 
     const float edge_x[3][2] = { {x0, x1}, {x1, x2}, {x2, x0} };
     const float edge_y[3][2] = { {y0, y1}, {y1, y2}, {y2, y0} };
+
+    if (dst_is_565) {
+        RENDERER_TELEMETRY(perf_capture_refresh_telemetry.rgb565_canvas_kernel_hits++);
+    } else {
+        RENDERER_TELEMETRY(perf_capture_refresh_telemetry.argb8888_canvas_kernel_hits++);
+    }
 
     for (int y = min_y; y <= max_y; y++) {
         const float py = (float)y + 0.5f;
@@ -8360,15 +9582,27 @@ static bool raster_solid_triangle_to_software_frame(const RenderTask* task, int 
         if (sx1 <= sx0) {
             continue;
         }
-
-        Uint32* dst_row = dst_pixels + (y * dst_pitch);
         const int span = sx1 - sx0;
-        if (src_a == 255u) {
-            fill_argb8888_span(dst_row + sx0, span, color);
+
+        if (dst_is_565) {
+            Uint16* dst_row = dst_pixels_16 + (y * dst_pitch_16);
+            if (src_a == 255u) {
+                fill_rgb565_span(dst_row + sx0, span, color565);
+            } else {
+                for (int x = sx0; x < sx1; x++) {
+                    dst_row[x] = blend_solid_rgb565(dst_row[x], src_a, inv_src_a,
+                                                    src_r_premul, src_g_premul, src_b_premul);
+                }
+            }
         } else {
-            for (int x = sx0; x < sx1; x++) {
-                dst_row[x] = blend_solid_argb8888(dst_row[x], src_a, inv_src_a,
-                                                   src_r_premul, src_g_premul, src_b_premul);
+            Uint32* dst_row = dst_pixels + (y * dst_pitch);
+            if (src_a == 255u) {
+                fill_argb8888_span(dst_row + sx0, span, color);
+            } else {
+                for (int x = sx0; x < sx1; x++) {
+                    dst_row[x] = blend_solid_argb8888(dst_row[x], src_a, inv_src_a,
+                                                       src_r_premul, src_g_premul, src_b_premul);
+                }
             }
         }
     }
@@ -8410,8 +9644,6 @@ static bool raster_solid_task_to_software_frame(const RenderTask* task) {
             return true;
         }
 
-        Uint32* dst_pixels = (Uint32*)software_frame_surface->pixels;
-        const int dst_pitch = software_frame_surface->pitch / (int)sizeof(Uint32);
         const Uint32 src_a = (solid_color >> 24) & 0xFFu;
         if (src_a == 0u) {
             return true;
@@ -8420,21 +9652,50 @@ static bool raster_solid_task_to_software_frame(const RenderTask* task) {
         const Uint64 sample_start_counter =
             begin_perf_capture_raster_bucket_sample(SDL_GAME_RENDERER_PERF_CAPTURE_RASTER_BUCKET_SOLID);
         const int fill_width = dst_x1 - dst_x0;
-        if (src_a == 255u) {
-            for (int y = dst_y0; y < dst_y1; y++) {
-                Uint32* dst_row = dst_pixels + (y * dst_pitch) + dst_x0;
-                fill_argb8888_span(dst_row, fill_width, solid_color);
+        /* perf-2: format-aware dispatch on dst surface format. */
+        if (software_frame_surface->format == SDL_PIXELFORMAT_RGB565) {
+            RENDERER_TELEMETRY(perf_capture_refresh_telemetry.rgb565_canvas_kernel_hits++);
+            Uint16* dst_pixels = (Uint16*)software_frame_surface->pixels;
+            const int dst_pitch = software_frame_surface->pitch / (int)sizeof(Uint16);
+            const Uint16 color565 = pack_rgb565_from_argb(solid_color);
+            if (src_a == 255u) {
+                for (int y = dst_y0; y < dst_y1; y++) {
+                    Uint16* dst_row = dst_pixels + (y * dst_pitch) + dst_x0;
+                    fill_rgb565_span(dst_row, fill_width, color565);
+                }
+            } else {
+                const Uint32 inv_src_a = 255u - src_a;
+                const Uint32 src_r_premul = ((solid_color >> 16) & 0xFFu) * src_a;
+                const Uint32 src_g_premul = ((solid_color >> 8) & 0xFFu) * src_a;
+                const Uint32 src_b_premul = (solid_color & 0xFFu) * src_a;
+                for (int y = dst_y0; y < dst_y1; y++) {
+                    Uint16* dst_row = dst_pixels + (y * dst_pitch) + dst_x0;
+                    for (int x = 0; x < fill_width; x++) {
+                        dst_row[x] = blend_solid_rgb565(dst_row[x], src_a, inv_src_a,
+                                                        src_r_premul, src_g_premul, src_b_premul);
+                    }
+                }
             }
         } else {
-            const Uint32 inv_src_a = 255u - src_a;
-            const Uint32 src_r_premul = ((solid_color >> 16) & 0xFFu) * src_a;
-            const Uint32 src_g_premul = ((solid_color >> 8) & 0xFFu) * src_a;
-            const Uint32 src_b_premul = (solid_color & 0xFFu) * src_a;
-            for (int y = dst_y0; y < dst_y1; y++) {
-                Uint32* dst_row = dst_pixels + (y * dst_pitch) + dst_x0;
-                for (int x = 0; x < fill_width; x++) {
-                    dst_row[x] = blend_solid_argb8888(dst_row[x], src_a, inv_src_a,
-                                                       src_r_premul, src_g_premul, src_b_premul);
+            RENDERER_TELEMETRY(perf_capture_refresh_telemetry.argb8888_canvas_kernel_hits++);
+            Uint32* dst_pixels = (Uint32*)software_frame_surface->pixels;
+            const int dst_pitch = software_frame_surface->pitch / (int)sizeof(Uint32);
+            if (src_a == 255u) {
+                for (int y = dst_y0; y < dst_y1; y++) {
+                    Uint32* dst_row = dst_pixels + (y * dst_pitch) + dst_x0;
+                    fill_argb8888_span(dst_row, fill_width, solid_color);
+                }
+            } else {
+                const Uint32 inv_src_a = 255u - src_a;
+                const Uint32 src_r_premul = ((solid_color >> 16) & 0xFFu) * src_a;
+                const Uint32 src_g_premul = ((solid_color >> 8) & 0xFFu) * src_a;
+                const Uint32 src_b_premul = (solid_color & 0xFFu) * src_a;
+                for (int y = dst_y0; y < dst_y1; y++) {
+                    Uint32* dst_row = dst_pixels + (y * dst_pitch) + dst_x0;
+                    for (int x = 0; x < fill_width; x++) {
+                        dst_row[x] = blend_solid_argb8888(dst_row[x], src_a, inv_src_a,
+                                                           src_r_premul, src_g_premul, src_b_premul);
+                    }
                 }
             }
         }
@@ -8465,6 +9726,10 @@ static bool render_frame_to_software_surface(void) {
         return false;
     }
 
+    /* perf-3 piece-A: split the wrapper raster_ns into resolve_ns (this loop)
+     * and raster_pass_ns (the merge+raster loop below). The two should sum to
+     * roughly raster_ns minus the surface lock/unlock, which is negligible. */
+    const Uint64 resolve_t0 = SDL_GetTicksNS();
     bool frame_supported = true;
     for (int i = 0; i < render_task_count; i++) {
         const RenderTask* task = &render_tasks[i];
@@ -8534,6 +9799,11 @@ static bool render_frame_to_software_surface(void) {
         }
     }
 
+    /* perf-3 piece-A: close out the resolve-pass timing slot. Captured
+     * unconditionally so a fallback frame still measures the resolve cost
+     * (the next early-return covers it before raster_pass would start). */
+    resolve_ns_this_frame += SDL_GetTicksNS() - resolve_t0;
+
     if (!frame_supported) {
         return false;
     }
@@ -8546,6 +9816,8 @@ static bool render_frame_to_software_surface(void) {
         dst_locked = true;
     }
 
+    /* perf-3 piece-A: time the merge+raster main loop separately. */
+    const Uint64 raster_pass_t0 = SDL_GetTicksNS();
     for (int i = 0; i < render_task_count;) {
         RenderTask merged_task = software_frame_resolved_tasks[i];
         SoftwareFrameRectStripMergeAxis merge_axis = SOFTWARE_FRAME_RECT_STRIP_MERGE_AXIS_NONE;
@@ -8605,6 +9877,7 @@ static bool render_frame_to_software_surface(void) {
             (i >= sa_bg_cache_snapshot_at_index) &&
             !sa_bg_cache_surface_valid &&
             ensure_sa_bg_cache_surface()) {
+            const Uint64 sa_diag_t0 = SDL_GetTicksNS();
             if (SDL_LockSurface(sa_bg_cache_surface)) {
                 SDL_memcpy(sa_bg_cache_surface->pixels,
                            software_frame_surface->pixels,
@@ -8613,9 +9886,13 @@ static bool render_frame_to_software_surface(void) {
                 sa_bg_cache_surface_valid = true;
             }
             sa_bg_cache_snapshot_at_index = -1;
+            sa_diag_snapshot_ns += SDL_GetTicksNS() - sa_diag_t0;
         }
 #endif
     }
+
+    /* perf-3 piece-A: close out the raster-pass timing slot. */
+    raster_pass_ns_this_frame += SDL_GetTicksNS() - raster_pass_t0;
 
     if (dst_locked) {
         SDL_UnlockSurface(software_frame_surface);
@@ -8625,6 +9902,27 @@ static bool render_frame_to_software_surface(void) {
 
 static bool upload_software_frame_to_canvas(void) {
     if ((software_frame_surface == NULL) || !ensure_software_frame_upload_texture()) {
+        return false;
+    }
+
+    /* Defense-in-depth (perf-2 P-1.2): the upload path's
+     * software_frame_upload_texture is created SDL_PIXELFORMAT_ARGB8888 and
+     * has no 565 sibling. If a 565 canvas ever reaches this path,
+     * SDL_UpdateTexture would reinterpret 2-byte pixels as 4-byte and
+     * silently corrupt every frame. The §10 writer-availability guard in
+     * sdl_app.c (only flips rgb565_canvas_enabled = true after a successful
+     * NativeVideoWriter_Init) should prevent this from ever being reached;
+     * this check exists so a future regression bails rather than corrupts. */
+    if (software_frame_surface->format != SDL_PIXELFORMAT_ARGB8888) {
+        static bool warned = false;
+        if (!warned) {
+            SDL_Log("upload_software_frame_to_canvas: canvas format 0x%x is "
+                    "not ARGB8888; refusing to SDL_UpdateTexture into "
+                    "ARGB8888 staging texture (would corrupt). "
+                    "rgb565_canvas should not be enabled when the upload "
+                    "path runs.", (unsigned)software_frame_surface->format);
+            warned = true;
+        }
         return false;
     }
 
@@ -9180,6 +10478,107 @@ static void build_software_palette_lut(int palette_index, const SDL_Palette* pal
         lut[i] = 0;
     }
     software_palette_lut_valid[palette_index] = true;
+
+#if ENABLE_PERF_TELEMETRY
+    /* Palette alpha histogram — one-shot telemetry to determine whether live
+     * palettes match the "index 0 α=0, 1..N α=255" color-key pattern that
+     * underlies the proposed ckey fast path. See
+     * docs/research-renderer-external-comparison.md §5.1. Only logs when the
+     * histogram changes for a given palette handle, to keep the log readable. */
+    {
+        int alpha0 = 0, alpha255 = 0, alpha_mid = 0;
+        for (int i = 0; i < ncolors; i++) {
+            const Uint8 a = palette->colors[i].a;
+            if (a == 0) {
+                alpha0++;
+            } else if (a == 255) {
+                alpha255++;
+            } else {
+                alpha_mid++;
+            }
+        }
+        static bool seen[FL_PALETTE_MAX] = { false };
+        static int last_a0[FL_PALETTE_MAX];
+        static int last_a255[FL_PALETTE_MAX];
+        static int last_amid[FL_PALETTE_MAX];
+        static int last_first[FL_PALETTE_MAX];
+        const int first_a = (ncolors > 0) ? (int)palette->colors[0].a : -1;
+        const bool changed = !seen[palette_index] ||
+                             (last_a0[palette_index] != alpha0) ||
+                             (last_a255[palette_index] != alpha255) ||
+                             (last_amid[palette_index] != alpha_mid) ||
+                             (last_first[palette_index] != first_a);
+        if (changed) {
+            seen[palette_index] = true;
+            last_a0[palette_index] = alpha0;
+            last_a255[palette_index] = alpha255;
+            last_amid[palette_index] = alpha_mid;
+            last_first[palette_index] = first_a;
+            SDL_Log("palette_alpha_histogram ph=%d size=%d a0=%d a255=%d a_mid=%d first_a=%d",
+                    palette_index + 1, ncolors, alpha0, alpha255, alpha_mid, first_a);
+        }
+    }
+#endif
+
+    /* Mirror to 565 for the 565 canvas mode (perf-2). Reads the same
+     * SDL_Color entries; alpha not encoded in 565 -- alpha==0 is signalled
+     * via software_palette_lut_is_binary_alpha[] + LUT8888[i] alpha byte. */
+    Uint16* lut565 = software_palette_lut_565[palette_index];
+    /* perf-3 piece-B: u32 mirror of LUT565. Each entry is the 565 value
+     * zero-extended into a Uint32 (high 16 bits == 0); the 8-pixel
+     * packed-store kernel synthesises packed Uint32 stores via
+     * `pal_u32[i0] | (pal_u32[i1] << 16)`. Built in the same loop as
+     * LUT565 so dirty-gating cost is identical. */
+    Uint32* lut565_u32 = software_palette_lut_565_u32[palette_index];
+    for (int i = 0; i < ncolors && i < 256; i++) {
+        const SDL_Color* c = &palette->colors[i];
+        const Uint16 px565 = (Uint16)(((Uint32)(c->r >> 3) << 11) |
+                                      ((Uint32)(c->g >> 2) << 5)  |
+                                      ((Uint32)(c->b >> 3)));
+        lut565[i] = px565;
+        lut565_u32[i] = (Uint32)px565;
+    }
+    for (int i = ncolors; i < 256; i++) { lut565[i] = 0; lut565_u32[i] = 0u; }
+
+    /* Eligibility scan for the loose-form binary-α fast path: amortized once
+     * per palette unlock (not per-pixel). True when every LUT entry has α
+     * exactly 0 or 0xFF; false otherwise. Read at RenderTask binding time. */
+    bool is_binary_alpha = true;
+    for (int i = 0; i < 256; i++) {
+        const Uint32 a = (lut[i] >> 24) & 0xFFu;
+        if ((a != 0u) && (a != 0xFFu)) {
+            is_binary_alpha = false;
+            break;
+        }
+    }
+    software_palette_lut_is_binary_alpha[palette_index] = is_binary_alpha;
+    /* perf-3 piece-B: predicate for the 8-pixel packed-store kernel.
+     *
+     * Original (over-strict) form required entries 1..ncolors-1 ALL to have
+     * α==0xFF, but the live 3rd-Strike palettes (per palette_alpha_histogram
+     * telemetry, e.g. ph=33 a0=166 a255=90 first_a=0) are "binary-α with many
+     * α==0 entries spread across the LUT", not the strict "index 0 is the
+     * sole transparent slot" pattern. Under the strict form, the predicate
+     * never holds, so the kernel never fires.
+     *
+     * Relaxed predicate: `is_binary_alpha` AND `index 0 has α==0`. This
+     * matches the live invariant the kernel actually relies on: source-pixel
+     * indices that map to transparency are always index 0 (the colour-key
+     * convention used by sprite data), and the kernel's `any_byte_zero(w)`
+     * check on the index bytes already filters out blocks containing
+     * index-0 pixels. Other α==0 entries exist in the LUT but never appear
+     * in sprite source bytes -- they are unused slots. The any_byte_zero
+     * branch falls through to a per-pixel `(palette_lut[idx] >> 24) != 0u`
+     * check, which preserves bit-identity for the "row contains index 0"
+     * case. */
+    bool index0_is_ckey = is_binary_alpha;
+    if (index0_is_ckey) {
+        const Uint32 a0 = (lut[0] >> 24) & 0xFFu;
+        if (a0 != 0u) {
+            index0_is_ckey = false;
+        }
+    }
+    software_palette_lut_index0_is_ckey[palette_index] = index0_is_ckey;
 }
 #endif
 
@@ -9327,6 +10726,8 @@ void SDLGameRenderer_SetSoftwareFrameMode(bool enabled) {
 #if INDEX8_RASTERIZATION_ENABLED
         current_software_palette_lut = NULL;
         current_software_source_is_index8 = false;
+        current_software_palette_is_binary_alpha = false;
+        current_software_palette_index0_is_ckey = false;
 #endif
         current_texture_binding_valid = false;
         current_texture_binding = 0;
@@ -9401,6 +10802,28 @@ void SDLGameRenderer_SetPerfCaptureFastNonIntegerSubrectAlphaTelemetryEnabled(bo
     perf_capture_fast_non_integer_subrect_alpha_telemetry_enabled = enabled;
 }
 
+void SDLGameRenderer_SetColorkeyLooseKernelEnabled(bool enabled) {
+    colorkey_loose_kernel_enabled = enabled;
+}
+
+/* perf-3 piece-B kill switch (8-pixel packed-store INDEX8->565 kernel). */
+void SDLGameRenderer_SetSoftwarePalettePacked8pxEnabled(bool enabled) {
+    software_palette_packed_8px_enabled = enabled;
+}
+
+/* perf-3 piece-C kill switch (16-pixel NEON 565 kernels). */
+void SDLGameRenderer_SetSoftwareNeon16pxEnabled(bool enabled) {
+    software_neon_16px_enabled = enabled;
+}
+
+void SDLGameRenderer_SetRGB565CanvasEnabled(bool enabled) {
+    /* Sticky once the canvas has been allocated; flipping mid-run is
+     * undefined and not required (perf-2 plan §10). The
+     * ensure_software_frame_surface() at canvas-creation time is what
+     * picks the format; this gate is read once there. */
+    rgb565_canvas_enabled = enabled;
+}
+
 bool SDLGameRenderer_HasSoftwareOwnedFrame(void) {
     return software_frame_owned;
 }
@@ -9434,6 +10857,13 @@ void SDLGameRenderer_BeginFrame(bool capture_extended_stats) {
     texture_refresh_ns_this_frame = 0;
     sort_ns_this_frame = 0;
     raster_ns_this_frame = 0;
+    /* perf-3 piece-A: reset the resolve / raster-pass split alongside the
+     * existing wrapper raster_ns reset. */
+    resolve_ns_this_frame = 0;
+    raster_pass_ns_this_frame = 0;
+    sa_diag_snapshot_ns = 0;
+    sa_diag_restore_ns = 0;
+    sa_diag_texture_creates = 0;
     software_frame_direct_present_requested = false;
 #if ENABLE_PERF_TELEMETRY
     current_task_source = SDL_GAME_RENDERER_TASK_SOURCE_UNKNOWN;
@@ -9500,6 +10930,8 @@ void SDLGameRenderer_RenderFrame() {
                 insertion_sort_render_tasks();
             } else {
                 RENDERER_TELEMETRY(frame_stats.sort_strategy = SDL_GAME_RENDERER_SORT_QSORT);
+                /* perf-3 piece-A: per-frame qsort invocation counter. */
+                RENDERER_TELEMETRY(frame_stats.sort_qsort_invocations += 1);
                 qsort(render_tasks, render_task_count, sizeof(RenderTask), compare_render_tasks);
             }
         }
@@ -11203,6 +12635,44 @@ Uint64 SDLGameRenderer_GetRasterNs(void) {
     return raster_ns_this_frame;
 }
 
+/* perf-3 piece-A: split timing accessors. resolve covers the classify+resolve
+ * pre-pass; raster_pass covers the merge+raster main loop. Both are reset in
+ * BeginFrame() and accumulated inside render_frame_to_software_surface(). */
+Uint64 SDLGameRenderer_GetResolveNs(void) {
+    return resolve_ns_this_frame;
+}
+
+Uint64 SDLGameRenderer_GetRasterPassNs(void) {
+    return raster_pass_ns_this_frame;
+}
+
+/* perf-3 lightweight per-frame counter getters. The underlying counters
+ * live inside `perf_capture_refresh_telemetry` (packed/neon hit counts) and
+ * `frame_stats` (sort_qsort_invocations); both are reset by BeginFrame(). */
+Uint64 SDLGameRenderer_GetPacked8PxHits(void) {
+    return perf_capture_refresh_telemetry.colorkey_packed_8px_hits;
+}
+
+Uint64 SDLGameRenderer_GetNeon16PxDirectHits(void) {
+    return perf_capture_refresh_telemetry.neon_16px_direct_hits;
+}
+
+Uint64 SDLGameRenderer_GetSortQsortInvocations(void) {
+    return frame_stats.sort_qsort_invocations;
+}
+
+Uint64 SDLGameRenderer_GetSADiagSnapshotNs(void) {
+    return sa_diag_snapshot_ns;
+}
+
+Uint64 SDLGameRenderer_GetSADiagRestoreNs(void) {
+    return sa_diag_restore_ns;
+}
+
+int SDLGameRenderer_GetSADiagTextureCreates(void) {
+    return sa_diag_texture_creates;
+}
+
 void SDLGameRenderer_RecordTextureUnlockDirtyRect(unsigned int texture_handle,
                                                   int min_x,
                                                   int min_y,
@@ -11494,6 +12964,8 @@ void SDLGameRenderer_DestroyTexture(unsigned int texture_handle) {
             render_tasks[i].software_source_surface = NULL;
             render_tasks[i].software_source_is_index8 = false;
             render_tasks[i].software_palette_lut = NULL;
+            render_tasks[i].software_palette_is_binary_alpha = false;
+            render_tasks[i].software_palette_index0_is_ckey = false;
         }
     }
 #endif
@@ -11659,9 +13131,30 @@ void SDLGameRenderer_SetTexture(unsigned int th) {
         *runtime_dirty_reason_p = CACHE_DIRTY_REASON_NONE;
         clear_cache_dirty_state(dirty_state);
         RENDERER_TELEMETRY(frame_stats.texture_creates += 1);
+        sa_diag_texture_creates += 1;
     }
 
     push_texture(texture);
+
+#if ENABLE_PERF_TELEMETRY
+    /* One-shot software-path format census — logs the pixel format of every
+     * texture the software rasterizer actually sees. Purpose: determine whether
+     * INDEX4LSB, ABGR1555, or other non-INDEX8 formats ever reach the software
+     * path on live MiSTer gameplay. See
+     * docs/research-renderer-external-comparison.md §5.2. */
+    {
+        static bool soft_path_bind_logged[FL_TEXTURE_MAX] = { false };
+        if (software_frame_mode_active && (surface != NULL) &&
+            (texture_handle > 0) && (texture_handle <= FL_TEXTURE_MAX) &&
+            !soft_path_bind_logged[texture_handle - 1]) {
+            soft_path_bind_logged[texture_handle - 1] = true;
+            const char* fmt_name = SDL_GetPixelFormatName(surface->format);
+            SDL_Log("soft_path_bind th=%d fmt=%s w=%d h=%d palette=%d",
+                    texture_handle, fmt_name ? fmt_name : "(null)",
+                    surface->w, surface->h, palette_handle);
+        }
+    }
+#endif
 
 #if INDEX8_RASTERIZATION_ENABLED
     if (software_frame_mode_active && (surface != NULL) &&
@@ -11675,6 +13168,8 @@ void SDLGameRenderer_SetTexture(unsigned int th) {
         current_software_source_surface = (SDL_Surface*)surface;
         current_software_palette_lut = software_palette_lut[palette_handle - 1];
         current_software_source_is_index8 = true;
+        current_software_palette_is_binary_alpha = software_palette_lut_is_binary_alpha[palette_handle - 1];
+        current_software_palette_index0_is_ckey = software_palette_lut_index0_is_ckey[palette_handle - 1];
     } else {
         current_software_source_surface =
             software_frame_mode_active ? (software_source_surface != NULL ? software_source_surface
@@ -11682,6 +13177,8 @@ void SDLGameRenderer_SetTexture(unsigned int th) {
                                        : NULL;
         current_software_palette_lut = NULL;
         current_software_source_is_index8 = false;
+        current_software_palette_is_binary_alpha = false;
+        current_software_palette_index0_is_ckey = false;
     }
 #else
     current_software_source_surface =
@@ -11714,6 +13211,8 @@ static RenderTask* begin_quad_task(bool textured, float z) {
 #if INDEX8_RASTERIZATION_ENABLED
     task->software_palette_lut = textured ? current_software_palette_lut : NULL;
     task->software_source_is_index8 = textured && current_software_source_is_index8;
+    task->software_palette_is_binary_alpha = textured && current_software_palette_is_binary_alpha;
+    task->software_palette_index0_is_ckey = textured && current_software_palette_index0_is_ckey;
 #endif
     task->z = flPS2ConvScreenFZ(z);
 
@@ -12024,6 +13523,7 @@ void SDLGameRenderer_DrawSprites2Batch(const Sprite2* sprites,
 #if INDEX8_RASTERIZATION_ENABLED
         task->software_palette_lut = current_texture_binding_valid ? current_software_palette_lut : NULL;
         task->software_source_is_index8 = current_texture_binding_valid && current_software_source_is_index8;
+        task->software_palette_is_binary_alpha = current_texture_binding_valid && current_software_palette_is_binary_alpha;
 #endif
         task->z = flPS2ConvScreenFZ(s->v[0].z);
 
@@ -12185,6 +13685,7 @@ bool SDLGameRenderer_DrawInputHistoryGlyph(float x, float y, float z, SDLGameRen
 #if INDEX8_RASTERIZATION_ENABLED
     task->software_palette_lut = NULL;
     task->software_source_is_index8 = false;
+    task->software_palette_is_binary_alpha = false;
 #endif
     task->z = flPS2ConvScreenFZ(z);
 
@@ -12217,3 +13718,101 @@ bool SDLGameRenderer_DrawInputHistoryGlyph(float x, float y, float z, SDLGameRen
     push_render_task(task);
     return true;
 }
+
+#if INDEX8_RASTERIZATION_ENABLED
+/* Test-only shim for software_frame_parity.c. Builds a synthetic RenderTask
+ * pointing at an INDEX8 source + palette LUT, derives a fast-copy plan, and
+ * dispatches into try_fast_copy_fast_textured_task_to_software_frame() so the
+ * loose-form INDEX8 kernels (perf-1 plan, steps 2-4) are exercised on host.
+ * NOT used by gameplay code paths. */
+bool SDLGameRenderer_RunIndex8FastPathParityCase(SDL_Surface* index8_src,
+                                                 const Uint32* palette_lut,
+                                                 bool palette_is_binary_alpha,
+                                                 const SDL_FRect* dst_rect,
+                                                 const SDL_FRect* src_uv_rect,
+                                                 SDL_FlipMode flip,
+                                                 SDL_Surface* dst_surface) {
+    if ((index8_src == NULL) || (palette_lut == NULL) || (dst_rect == NULL) ||
+        (src_uv_rect == NULL) || (dst_surface == NULL)) {
+        return false;
+    }
+
+    /* perf-2: when dst is 565, the kernel reads LUT565 via
+     * HI_16_BITS(task->texture_binding). Populate the global LUT565 entry
+     * for handle 1 with a synthesized 565 mirror of palette_lut[], and bind
+     * the task to that handle. After the call, restore the entry to 0 so
+     * future tests are not contaminated. The 8888 LUT is passed via
+     * task->software_palette_lut as before. */
+    static const unsigned int parity_palette_handle = 1u;
+    Uint16 saved_lut565[256];
+    Uint32 saved_lut565_u32[256];
+    bool restored_lut565 = false;
+    if (dst_surface->format == SDL_PIXELFORMAT_RGB565) {
+        SDL_memcpy(saved_lut565,
+                   software_palette_lut_565[parity_palette_handle - 1u],
+                   sizeof(saved_lut565));
+        SDL_memcpy(saved_lut565_u32,
+                   software_palette_lut_565_u32[parity_palette_handle - 1u],
+                   sizeof(saved_lut565_u32));
+        restored_lut565 = true;
+        for (int i = 0; i < 256; i++) {
+            const Uint32 argb = palette_lut[i];
+            const Uint32 r = (argb >> 16) & 0xFFu;
+            const Uint32 g = (argb >> 8) & 0xFFu;
+            const Uint32 b = argb & 0xFFu;
+            const Uint16 px565 = (Uint16)(((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3));
+            software_palette_lut_565[parity_palette_handle - 1u][i] = px565;
+            software_palette_lut_565_u32[parity_palette_handle - 1u][i] = (Uint32)px565;
+        }
+    }
+
+    RenderTask task;
+    SDL_zero(task);
+    task.color = 0xFFFFFFFFu; /* identity modulation -> non-color-mod fast path */
+    task.software_source_surface = index8_src;
+    task.software_source_is_index8 = true;
+    task.software_palette_lut = palette_lut;
+    task.software_palette_is_binary_alpha = palette_is_binary_alpha;
+    task.texture_binding = (parity_palette_handle << 16); /* HI_16 = palette handle */
+    task.dst_rect = *dst_rect;
+    task.src_uv_rect = *src_uv_rect;
+    task.flip = flip;
+
+    SoftwareFrameFastCopyPlan plan;
+    SDL_zero(plan);
+    const SoftwareFrameFastCopyResult plan_result =
+        build_software_frame_fast_copy_plan(&task, dst_surface, index8_src, &plan);
+    if ((plan_result != SOFTWARE_FRAME_FAST_COPY_RESULT_EXACT) &&
+        (plan_result != SOFTWARE_FRAME_FAST_COPY_RESULT_SCALED)) {
+        if (restored_lut565) {
+            SDL_memcpy(software_palette_lut_565[parity_palette_handle - 1u],
+                       saved_lut565, sizeof(saved_lut565));
+        }
+        return false;
+    }
+
+    const bool ok = try_fast_copy_fast_textured_task_to_software_frame(&task, &plan, dst_surface, index8_src);
+    if (restored_lut565) {
+        SDL_memcpy(software_palette_lut_565[parity_palette_handle - 1u],
+                   saved_lut565, sizeof(saved_lut565));
+        SDL_memcpy(software_palette_lut_565_u32[parity_palette_handle - 1u],
+                   saved_lut565_u32, sizeof(saved_lut565_u32));
+    }
+    return ok;
+}
+
+/* Test-only shim exposing populate_scaled_lookup_table to software_frame_parity.c
+ * so parity references use exactly the same center-aware scaling formula the
+ * production kernel uses (avoids a second algorithm masquerading as ground
+ * truth). NOT used by gameplay code paths. */
+void SDLGameRenderer_PopulateScaledLookupTableForParity(int* out_lookup,
+                                                        int visible_count,
+                                                        int dst_origin,
+                                                        int dst_start,
+                                                        int dst_span,
+                                                        int src_origin,
+                                                        int src_span,
+                                                        bool flip) {
+    populate_scaled_lookup_table(out_lookup, visible_count, dst_origin, dst_start, dst_span, src_origin, src_span, flip);
+}
+#endif /* INDEX8_RASTERIZATION_ENABLED */
