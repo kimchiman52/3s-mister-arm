@@ -48,8 +48,19 @@ option(NETPLAY_TEST_HOOKS "Compile in test seams for direct_p2p.c (Step 6)" OFF)
 # xf86drm headers).
 option(PORT_ARM_FBDEV "Build pr-243's ARM Linux display backend (fbdev + DRM)" OFF)
 
+# Miyoo Mini Plus / OnionOS port profile (SigmaStar SSD202D, Cortex-A7
+# ARMv7 hard-float, Buildroot Buster glibc). Activates the MI_GFX
+# hardware-blitter presenter at src/platform/app/arm/arm_display_mi_gfx.c
+# and a 16bpp RGB565 software canvas. Mutually exclusive with
+# PORT_MISTER and PORT_ARM_FBDEV.
+option(PORT_MIYOO_MINI_PLUS "Build for Miyoo Mini Plus / OnionOS (MI_GFX presenter)" OFF)
+
 if(PORT_ARM_FBDEV AND PORT_MISTER)
     message(FATAL_ERROR "PORT_ARM_FBDEV and PORT_MISTER are mutually exclusive.")
+endif()
+
+if(PORT_MIYOO_MINI_PLUS AND (PORT_MISTER OR PORT_ARM_FBDEV))
+    message(FATAL_ERROR "PORT_MIYOO_MINI_PLUS is mutually exclusive with PORT_MISTER and PORT_ARM_FBDEV.")
 endif()
 
 message(STATUS "PORT_MISTER=${PORT_MISTER}")
@@ -61,6 +72,7 @@ message(STATUS "ENABLE_SDL_DIALOGS=${ENABLE_SDL_DIALOGS}")
 message(STATUS "ENABLE_MISTER_ARM_HARDENING=${ENABLE_MISTER_ARM_HARDENING}")
 message(STATUS "NETPLAY_TEST_HOOKS=${NETPLAY_TEST_HOOKS}")
 message(STATUS "PORT_ARM_FBDEV=${PORT_ARM_FBDEV}")
+message(STATUS "PORT_MIYOO_MINI_PLUS=${PORT_MIYOO_MINI_PLUS}")
 
 # ======================================
 # Include directories
@@ -112,7 +124,10 @@ target_compile_definitions(3s-arm PRIVATE
     $<$<CONFIG:Debug>:DEBUG>
 
     $<$<CONFIG:Release>:RELEASE>
-    $<$<AND:$<CONFIG:Release>,$<NOT:$<BOOL:${PORT_MISTER}>>>:CHECKSUM>
+    # CHECKSUM = SHA256 verify SF33RD.AFS at startup. Skip on PORT_MISTER
+    # (Cortex-A9 stock 800MHz is borderline) AND on PORT_MIYOO_MINI_PLUS
+    # (Cortex-A7 @ 1.2GHz on slow SD takes 60+ seconds, looks like a hang).
+    $<$<AND:$<CONFIG:Release>,$<NOT:$<OR:$<BOOL:${PORT_MISTER}>,$<BOOL:${PORT_MIYOO_MINI_PLUS}>>>>:CHECKSUM>
 
     _POSIX_C_SOURCE=200809L
     MEMCARD_DISABLED
@@ -169,6 +184,49 @@ if(PORT_ARM_FBDEV)
     pkg_check_modules(LIBDRM REQUIRED IMPORTED_TARGET libdrm)
     target_link_libraries(3s-arm PRIVATE PkgConfig::LIBDRM)
     message(STATUS "PORT_ARM_FBDEV=ON (pr-243 ARM Linux display backend; fbdev + DRM)")
+endif()
+
+if(PORT_MIYOO_MINI_PLUS)
+    # Miyoo Mini Plus profile: SigmaStar MI_GFX hardware-blitter presenter
+    # at src/platform/app/arm/arm_display_mi_gfx.c. Source canvas is
+    # RGB565 to match SDL3's giblet 16bpp canvas (CRS_SW_CANVAS_16BPP=1
+    # is set here, NOT in the shared block above — that block is
+    # PORT_MISTER-only). The SigmaStar BSP headers and prebuilt libs
+    # are vendored at vendor/sigmastar/{inc,lib}/. The deployed package
+    # does NOT bundle libmi_*.so; runtime resolves them from the
+    # device's /config/lib/ provided by the OnionOS firmware BSP.
+    target_compile_definitions(3s-arm PRIVATE
+        CRS_APP_DRIVER_ARM=1
+        CRS_ARM_HAVE_MI_GFX=1
+        CRS_SW_CANVAS_16BPP=1
+        PORT_MIYOO_MINI_PLUS)
+    target_include_directories(3s-arm PRIVATE
+        "${PROJECT_SOURCE_DIR}/vendor/sigmastar/inc")
+    # Link against the bare `libmi_*.so` filenames. The Miyoo Mini Plus
+    # OnionOS BSP exposes the runtime libs at `/config/lib/libmi_*.so`
+    # (verified on a v0.4-class Onion install via on-device probe) — no
+    # `.so.0` SONAME suffix on either the on-disk filenames or the
+    # working community ports' NEEDED entries. The vendored link-time
+    # stubs in vendor/sigmastar/lib/ have no DT_SONAME, so the linker
+    # writes the file basename `libmi_sys.so` (etc.) into NEEDED, which
+    # matches what the runtime loader will find under /config/lib/.
+    # libmi_ao.so is added for the direct MI_AO audio backend at
+    # src/port/sound/mi_ao_backend.c. Same link-time/runtime split as
+    # the other libmi_*.so: the vendored stub satisfies the link
+    # against MI_AO_* symbols and the runtime loader resolves
+    # libmi_ao.so from /config/lib/ on the device.
+    target_link_libraries(3s-arm PRIVATE
+        "${PROJECT_SOURCE_DIR}/vendor/sigmastar/lib/libmi_sys.so"
+        "${PROJECT_SOURCE_DIR}/vendor/sigmastar/lib/libmi_gfx.so"
+        "${PROJECT_SOURCE_DIR}/vendor/sigmastar/lib/libmi_common.so"
+        "${PROJECT_SOURCE_DIR}/vendor/sigmastar/lib/libmi_ao.so")
+    # pthread for the MI_AO audio backend's dedicated send thread.
+    # SDL3 already pulls libpthread transitively, but we link
+    # explicitly so the dependency is reflected in NEEDED entries
+    # regardless of SDL3 build options.
+    find_package(Threads REQUIRED)
+    target_link_libraries(3s-arm PRIVATE Threads::Threads)
+    message(STATUS "PORT_MIYOO_MINI_PLUS=ON (MI_GFX presenter; direct MI_AO audio backend; SDL3 dummy video; SigmaStar SDK vendored at vendor/sigmastar/)")
 endif()
 
 if(CMAKE_C_COMPILER_ID STREQUAL "Clang" OR CMAKE_C_COMPILER_ID STREQUAL "AppleClang")
@@ -248,10 +306,42 @@ if(PORT_MISTER AND ENABLE_MISTER_ARM_HARDENING)
     endif()
 endif()
 
-# MiSTer Release: aggressive optimisation — -O3 (Clang cross-build)
+# Miyoo Mini Plus hardening — Cortex-A7 (vs MiSTer's Cortex-A9) with
+# VFPv4 NEON. The FPU spec differs from MiSTer because Cortex-A7's
+# integrated FPU is VFPv4-D32, not VFPv3 like Cortex-A9. -mfloat-abi=hard
+# is required to link against the Buildroot hardfloat sysroot. These
+# flags are unconditional under PORT_MIYOO_MINI_PLUS (no
+# ENABLE_MIYOO_HARDENING toggle in Cut 1).
+if(PORT_MIYOO_MINI_PLUS)
+    if((CMAKE_C_COMPILER_ID STREQUAL "Clang") OR (CMAKE_C_COMPILER_ID STREQUAL "AppleClang") OR
+       (CMAKE_C_COMPILER_ID STREQUAL "GNU"))
+        target_compile_options(3s-arm PRIVATE
+            -mcpu=cortex-a7
+            -mfpu=neon-vfpv4
+            -mfloat-abi=hard
+        )
+        target_link_options(3s-arm PRIVATE
+            -mcpu=cortex-a7
+            -mfpu=neon-vfpv4
+            -mfloat-abi=hard
+        )
+        message(STATUS "Miyoo ARM hardening flags enabled: -mcpu=cortex-a7 -mfpu=neon-vfpv4 -mfloat-abi=hard")
+    endif()
+
+    # The Miyoo container ships clang-13 (no `-Wdeprecated-non-prototype`).
+    # Scope the meta-suppression to the Miyoo profile so Mac/MiSTer
+    # builds still surface unknown-warning typos as errors. Both Clang
+    # and AppleClang variants accept the option silently.
+    if((CMAKE_C_COMPILER_ID STREQUAL "Clang") OR (CMAKE_C_COMPILER_ID STREQUAL "AppleClang"))
+        target_compile_options(3s-arm PRIVATE -Wno-unknown-warning-option)
+    endif()
+endif()
+
+# MiSTer / Miyoo Release: aggressive optimisation — -O3 (cross-build).
 # Note: -flto=thin was removed because it triggers a linker segfault in
 # clang-20 during the ARM cross-build (Debian bullseye toolchain).
-if(PORT_MISTER)
+# Cortex-A7 is slower than Cortex-A9; -O3 is desired on Miyoo too.
+if(PORT_MISTER OR PORT_MIYOO_MINI_PLUS)
     target_compile_options(3s-arm PRIVATE
         $<$<CONFIG:Release>:-O3>
     )
@@ -284,7 +374,15 @@ set(THIRD_PARTY_DIR "${CMAKE_SOURCE_DIR}/third_party")
 find_package(ZLIB REQUIRED)
 
 set(FFMPEG_ROOT        "${THIRD_PARTY_DIR}/ffmpeg/build")
-set(SDL3_ROOT          "${THIRD_PARTY_DIR}/sdl3/build")
+if(PORT_MIYOO_MINI_PLUS)
+    # Miyoo Mini Plus uses a Buildroot Buster glibc cross-build of SDL3
+    # at third_party/sdl3-miyoo/ (separate from the MiSTer Bullseye
+    # cross-build at third_party/sdl3/). Built by build-deps.sh
+    # --profile miyoo.
+    set(SDL3_ROOT      "${THIRD_PARTY_DIR}/sdl3-miyoo/build")
+else()
+    set(SDL3_ROOT      "${THIRD_PARTY_DIR}/sdl3/build")
+endif()
 set(LIBCDIO_ROOT       "${THIRD_PARTY_DIR}/libcdio/build")
 set(GEKKONET_ROOT      "${THIRD_PARTY_DIR}/GekkoNet/build")
 set(SDL3_NET_ROOT      "${THIRD_PARTY_DIR}/SDL_net/build")

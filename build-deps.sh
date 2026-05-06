@@ -22,9 +22,9 @@ while [ "$#" -gt 0 ]; do
     esac
 done
 
-if [ "$PROFILE" != "desktop" ] && [ "$PROFILE" != "mister" ]; then
+if [ "$PROFILE" != "desktop" ] && [ "$PROFILE" != "mister" ] && [ "$PROFILE" != "miyoo" ]; then
     echo "Invalid profile: $PROFILE"
-    echo "Expected one of: desktop, mister"
+    echo "Expected one of: desktop, mister, miyoo"
     exit 1
 fi
 
@@ -45,12 +45,18 @@ fi
 # (either an arm-linux-gnueabihf-prefixed binary, or clang with an
 # ARM target in $CFLAGS). Override with MISTER_CC_IS_CROSS=1 if you
 # know what you are doing.
-if [ "$PROFILE" = "mister" ] && [ "${MISTER_CC_IS_CROSS:-0}" != "1" ]; then
+if { [ "$PROFILE" = "mister" ] || [ "$PROFILE" = "miyoo" ]; } && [ "${MISTER_CC_IS_CROSS:-0}" != "1" ]; then
     if [ -z "${CC:-}" ]; then
-        echo "ERROR: build-deps.sh --profile mister requires CC to be set to an ARM cross-compiler." >&2
-        echo "       Run inside the Docker cross-build container:" >&2
-        echo "         tools/mister/setup-build-container.sh" >&2
-        echo "         docker exec 3s-mister-arm-build bash -lc 'CC=clang-20 CXX=clang++-20 bash build-deps.sh --profile mister'" >&2
+        echo "ERROR: build-deps.sh --profile $PROFILE requires CC to be set to an ARM cross-compiler." >&2
+        if [ "$PROFILE" = "mister" ]; then
+            echo "       Run inside the Docker cross-build container:" >&2
+            echo "         tools/mister/setup-build-container.sh" >&2
+            echo "         docker exec 3s-mister-arm-build bash -lc 'CC=clang-20 CXX=clang++-20 bash build-deps.sh --profile mister'" >&2
+        else
+            echo "       Run inside the Docker cross-build container:" >&2
+            echo "         tools/miyoo/setup-build-container.sh" >&2
+            echo "         docker exec 3s-miyoo-arm-build bash -lc 'CC=arm-linux-gnueabihf-gcc CXX=arm-linux-gnueabihf-g++ bash build-deps.sh --profile miyoo'" >&2
+        fi
         echo "       Or set MISTER_CC_IS_CROSS=1 to bypass this guard." >&2
         exit 1
     fi
@@ -59,10 +65,9 @@ if [ "$PROFILE" = "mister" ] && [ "${MISTER_CC_IS_CROSS:-0}" != "1" ]; then
     cflags_combined="${CFLAGS:-} ${CC:-}"
     if ! echo "$cc_version_output" | grep -q -E 'arm-linux-gnueabihf|aarch64-linux' \
        && ! echo "$cflags_combined" | grep -q -E 'arm-linux-gnueabihf|aarch64-linux'; then
-        echo "ERROR: build-deps.sh --profile mister expected CC to target arm-linux-gnueabihf (or aarch64-linux)." >&2
+        echo "ERROR: build-deps.sh --profile $PROFILE expected CC to target arm-linux-gnueabihf (or aarch64-linux)." >&2
         echo "       Detected: CC='${CC}', version output did not match and \$CFLAGS lacks --target=arm-linux-gnueabihf." >&2
-        echo "       Run inside the Docker cross-build container (see tools/mister/build-game.sh for the canonical env)," >&2
-        echo "       or set MISTER_CC_IS_CROSS=1 to bypass this guard." >&2
+        echo "       Run inside the Docker cross-build container, or set MISTER_CC_IS_CROSS=1 to bypass this guard." >&2
         exit 1
     fi
 fi
@@ -171,14 +176,22 @@ fi
 # -----------------------------
 
 SDL_TAG="release-3.4.4"
-SDL_DIR="$THIRD_PARTY/sdl3"
+if [ "$PROFILE" = "miyoo" ]; then
+    # Miyoo uses a Buildroot Buster glibc cross-build of SDL3 separate
+    # from the MiSTer Bullseye build at third_party/sdl3/. CMakeLists.txt
+    # branches SDL3_ROOT to this path under PORT_MIYOO_MINI_PLUS.
+    SDL_DIR="$THIRD_PARTY/sdl3-miyoo"
+else
+    SDL_DIR="$THIRD_PARTY/sdl3"
+fi
 SDL_BUILD="$SDL_DIR/build"
 
-if [ -d "$SDL_BUILD" ]; then
+if [ -d "$SDL_BUILD/lib" ] && ls "$SDL_BUILD/lib"/libSDL3.so* >/dev/null 2>&1; then
     echo "SDL3 already built at $SDL_BUILD"
 else
     echo "Building SDL3 at $SDL_BUILD..."
 
+    rm -rf "$SDL_BUILD"
     mkdir -p "$SDL_BUILD"
     SDL_SRC=$(mktemp -d)
 
@@ -200,6 +213,31 @@ else
             -DSDL_UNIX_CONSOLE_BUILD=ON \
             -DSDL_X11=OFF \
             -DSDL_WAYLAND=OFF
+    elif [ "$PROFILE" = "miyoo" ]; then
+        # Miyoo Mini Plus runs OnionOS (Buildroot Buster) without
+        # X11/Wayland/KMSDRM. Video uses SDL_VIDEODRIVER=dummy at
+        # runtime; MI_GFX bypasses SDL for present. Audio uses the
+        # OSS /dev/dsp backend.
+        cmake -S "$SDL_SRC" -B "$SDL_SRC/cmake-build" \
+            -DCMAKE_INSTALL_PREFIX="$SDL_BUILD" \
+            -DBUILD_SHARED_LIBS=ON \
+            -DSDL_STATIC=OFF \
+            -DSDL_TESTS=OFF \
+            -DSDL_TEST_LIBRARY=OFF \
+            -DSDL_INSTALL_TESTS=OFF \
+            -DSDL_EXAMPLES=OFF \
+            -DSDL_UNIX_CONSOLE_BUILD=ON \
+            -DSDL_X11=OFF \
+            -DSDL_WAYLAND=OFF \
+            -DSDL_KMSDRM=OFF \
+            -DSDL_OPENGL=OFF \
+            -DSDL_OPENGLES=OFF \
+            -DSDL_VULKAN=OFF \
+            -DSDL_OSS=ON \
+            -DSDL_ALSA=OFF \
+            -DSDL_PIPEWIRE=OFF \
+            -DSDL_PULSEAUDIO=OFF \
+            -DSDL_JACK=OFF
     else
         cmake -S "$SDL_SRC" -B "$SDL_SRC/cmake-build" \
             -DCMAKE_INSTALL_PREFIX="$SDL_BUILD" \
@@ -222,7 +260,9 @@ GEKKONET_REF="7be848c"
 GEKKONET_DIR="$THIRD_PARTY/GekkoNet"
 GEKKONET_BUILD="$GEKKONET_DIR/build"
 
-if [ -d "$GEKKONET_BUILD" ]; then
+if [ "$PROFILE" = "miyoo" ]; then
+    echo "Skipping GekkoNet for profile '$PROFILE' (Cut 1 has ENABLE_NETPLAY=OFF)"
+elif [ -d "$GEKKONET_BUILD" ]; then
     echo "GekkoNet already built at $GEKKONET_BUILD"
 else
     echo "Building GekkoNet @ $GEKKONET_REF..."
@@ -254,7 +294,9 @@ SDL3_NET_REF="92022dc"
 SDL3_NET_DIR="$THIRD_PARTY/SDL_net"
 SDL3_NET_BUILD="$SDL3_NET_DIR/build"
 
-if [ -d "$SDL3_NET_BUILD" ]; then
+if [ "$PROFILE" = "miyoo" ]; then
+    echo "Skipping SDL3_net for profile '$PROFILE' (Cut 1 has ENABLE_NETPLAY=OFF)"
+elif [ -d "$SDL3_NET_BUILD" ]; then
     echo "SDL3_net already built at $SDL3_NET_BUILD"
 else
     echo "Building SDL3_net @ $SDL3_NET_REF..."

@@ -7,6 +7,11 @@
 
 #include <SDL3/SDL.h>
 
+#if defined(PORT_MIYOO_MINI_PLUS)
+#include "port/sound/mi_ao_backend.h"
+#include <stdlib.h>
+#endif
+
 #if defined(ENABLE_FFMPEG_ADX)
 #include <libavcodec/avcodec.h>
 #include <libavutil/avutil.h>
@@ -25,7 +30,7 @@
 #define DEFAULT_SAMPLE_RATE 48000
 #define N_CHANNELS 2
 #define BYTES_PER_SAMPLE 2
-#define MIN_QUEUED_DATA_MS 350
+#define MIN_QUEUED_DATA_MS 150
 
 #define TRACKS_MAX 10
 #define ADX_SAMPLES_PER_FRAME 32
@@ -108,7 +113,22 @@ static int min_queued_data_bytes() {
     return (int)((float)output_sample_rate * MIN_QUEUED_DATA_MS / 1000 * N_CHANNELS * BYTES_PER_SAMPLE);
 }
 
+#if defined(PORT_MIYOO_MINI_PLUS)
+/* On the direct MI_AO backend the SDL_AudioStream is unused; we use
+ * MIAO_QueuedFramesADX() as the equivalent of SDL_GetAudioStreamQueued
+ * for the ADX pacing math. Returns bytes (frames * 4) so the rest of
+ * the file can stay byte-oriented. */
+static int miao_queued_bytes(void) {
+    return MIAO_QueuedFramesADX() * N_CHANNELS * BYTES_PER_SAMPLE;
+}
+#endif
+
 static int stream_data_needed() {
+#if defined(PORT_MIYOO_MINI_PLUS)
+    if (MIAO_IsActive()) {
+        return min_queued_data_bytes() - miao_queued_bytes();
+    }
+#endif
     if (stream == NULL) {
         return 0;
     }
@@ -121,11 +141,33 @@ static bool stream_needs_data() {
 }
 
 static bool stream_is_empty() {
+#if defined(PORT_MIYOO_MINI_PLUS)
+    if (MIAO_IsActive()) {
+        return MIAO_QueuedFramesADX() <= 0;
+    }
+#endif
     if (stream == NULL) {
         return true;
     }
 
     return SDL_GetAudioStreamQueued(stream) <= 0;
+}
+
+/* Push interleaved s16 stereo to whichever backend is active. `bytes`
+ * is the byte count, matching SDL_PutAudioStreamData's length param. */
+static void adx_put_data(const void *data, int bytes) {
+#if defined(PORT_MIYOO_MINI_PLUS)
+    if (MIAO_IsActive()) {
+        const int frames = bytes / (N_CHANNELS * BYTES_PER_SAMPLE);
+        if (frames > 0) {
+            MIAO_PushADX((const int16_t *)data, frames);
+        }
+        return;
+    }
+#endif
+    if (stream != NULL) {
+        SDL_PutAudioStreamData(stream, data, bytes);
+    }
 }
 
 static void create_audio_stream(int sample_rate) {
@@ -135,6 +177,25 @@ static void create_audio_stream(int sample_rate) {
     }
 
     output_sample_rate = sample_rate;
+
+#if defined(PORT_MIYOO_MINI_PLUS)
+    if (MIAO_IsActive()) {
+        /* MI_AO is fixed at 48 kHz / stereo / s16le. ADX content with
+         * a non-48k native sample rate would need software resampling
+         * before MIAO_PushADX. The stock 3rd Strike audio is already
+         * 48 kHz so this path doesn't trigger in practice — log a
+         * warning if it ever does so the field can flag it. */
+        if (sample_rate != 48000) {
+            SDL_Log("ADX stream: %dHz != 48000 — MI_AO backend will not "
+                    "resample; audio will play at the wrong pitch",
+                    sample_rate);
+        } else {
+            SDL_Log("ADX: routing through direct MI_AO backend at %dHz", sample_rate);
+        }
+        return;
+    }
+#endif
+
     const SDL_AudioSpec spec = { .format = SDL_AUDIO_S16, .channels = N_CHANNELS, .freq = output_sample_rate };
     stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, NULL, NULL);
     if (stream == NULL) {
@@ -143,6 +204,17 @@ static void create_audio_stream(int sample_rate) {
     }
 
     SDL_ResumeAudioStreamDevice(stream);
+
+#if defined(PORT_MIYOO_MINI_PLUS)
+    {
+        SDL_AudioSpec src_spec, dst_spec;
+        if (SDL_GetAudioStreamFormat(stream, &src_spec, &dst_spec)) {
+            SDL_Log("ADX stream: src=%dHz/%dch/fmt=0x%x  dst=%dHz/%dch/fmt=0x%x",
+                    src_spec.freq, src_spec.channels, (unsigned)src_spec.format,
+                    dst_spec.freq, dst_spec.channels, (unsigned)dst_spec.format);
+        }
+    }
+#endif
 }
 
 #if defined(ENABLE_FFMPEG_ADX)
@@ -599,7 +671,7 @@ static void process_track(ADXTrack* track) {
                 if (samples_to_queue > 0) {
                     const int out_size = av_samples_get_buffer_size(
                         &out_linesize, out_channels, samples_to_queue, AV_SAMPLE_FMT_S16, 1);
-                    SDL_PutAudioStreamData(stream, out_buf, out_size);
+                    adx_put_data(out_buf, out_size);
                 }
 
                 av_freep(&out_buf);
@@ -623,7 +695,7 @@ static void process_track(ADXTrack* track) {
         const int samples_to_queue = samples_decoded - overflow;
 
         if (samples_to_queue > 0) {
-            SDL_PutAudioStreamData(stream, out_pcm, samples_to_queue * N_CHANNELS * BYTES_PER_SAMPLE);
+            adx_put_data(out_pcm, samples_to_queue * N_CHANNELS * BYTES_PER_SAMPLE);
         }
 #endif
     }
@@ -631,7 +703,7 @@ static void process_track(ADXTrack* track) {
     while (track_loop_filled(track) && stream_needs_data()) {
         const int available_data = track->loop_info.data_size - track->loop_info.position;
         const int data_to_queue = MIN(stream_data_needed(), available_data);
-        SDL_PutAudioStreamData(stream, track->loop_info.data + track->loop_info.position, data_to_queue);
+        adx_put_data(track->loop_info.data + track->loop_info.position, data_to_queue);
         track->loop_info.position += data_to_queue;
 
         if (track->loop_info.position == track->loop_info.data_size) {
@@ -768,6 +840,35 @@ void ADX_ProcessTracks() {
 }
 
 void ADX_Init() {
+#if defined(PORT_MIYOO_MINI_PLUS)
+    /* Bring up the direct MI_AO backend as early as possible so the
+     * subsequent create_audio_stream() call sees MIAO_IsActive() and
+     * skips opening an SDL3 audio stream. ADX_Init runs before
+     * SPU_Init in the engine boot order; without this proactive init,
+     * we would open /dev/dsp via SDL3 here and only later realise we
+     * wanted MI_AO. MIAO_Init is idempotent — SPU_Init's later call
+     * is a no-op if we already initialised here. The fallback toggle
+     * THIRDSARM_AUDIO_SDL=1 is honoured: when set, we skip MIAO_Init
+     * and ADX/SPU both stay on SDL3.
+     *
+     * timer_cb registration window: between this MIAO_Init (which
+     * starts the audio thread) and SPU_Init's later
+     * MIAO_RegisterTimerCB(workTick), the audio thread fires whatever
+     * cb is registered with the backend (initially NULL — see
+     * MIAO_FireTimerCB's NULL guard, equivalent to nullcb). This is
+     * benign: workTick only iterates emlShim's `active_voices` list,
+     * which is empty until the first emlShimStartSound() call (which
+     * cannot happen before emlShimInit() / SPU_Init() complete). So
+     * during the boot window every workTick invocation would have
+     * been a noop anyway. If a future change makes timer_cb perform
+     * deadline-sensitive setup at boot, this scheme needs revisiting
+     * — see review note P-1.A. */
+    if (!MIAO_ForceSDLFallback()) {
+        if (!MIAO_IsActive()) {
+            MIAO_Init();
+        }
+    }
+#endif
     create_audio_stream(DEFAULT_SAMPLE_RATE);
 }
 
@@ -781,6 +882,12 @@ void ADX_Exit() {
 }
 
 void ADX_Stop() {
+#if defined(PORT_MIYOO_MINI_PLUS)
+    if (MIAO_IsActive()) {
+        ADX_Pause(true);
+        MIAO_ClearADX();
+    } else
+#endif
     if (stream != NULL) {
         ADX_Pause(true);
         SDL_ClearAudioStream(stream);
@@ -796,7 +903,19 @@ void ADX_Stop() {
     has_tracks = false;
 }
 
+/* MI_AO has no per-channel pause analog, and the audio thread is
+ * always running. We track logical pause state ourselves so
+ * ADX_GetState can return STOP correctly. */
+#if defined(PORT_MIYOO_MINI_PLUS)
+static bool s_miao_adx_paused = true;
+#endif
+
 int ADX_IsPaused() {
+#if defined(PORT_MIYOO_MINI_PLUS)
+    if (MIAO_IsActive()) {
+        return s_miao_adx_paused ? 1 : 0;
+    }
+#endif
     if (stream == NULL) {
         return 1;
     }
@@ -805,6 +924,18 @@ int ADX_IsPaused() {
 }
 
 void ADX_Pause(int pause) {
+#if defined(PORT_MIYOO_MINI_PLUS)
+    if (MIAO_IsActive()) {
+        s_miao_adx_paused = (pause != 0);
+        if (pause) {
+            /* Drop whatever ADX has staged so resume doesn't replay
+             * stale samples — matches SDL_PauseAudioStreamDevice +
+             * SDL_ClearAudioStream pairing in ADX_Stop. */
+            MIAO_ClearADX();
+        }
+        return;
+    }
+#endif
     if (stream == NULL) {
         return;
     }
@@ -861,6 +992,13 @@ void ADX_LoadMem(void* buf, size_t size) {
 
 void ADX_SetOutVol(int volume) {
     const float gain = powf(10.0f, volume / 200.0f);
+
+#if defined(PORT_MIYOO_MINI_PLUS)
+    if (MIAO_IsActive()) {
+        MIAO_SetADXGain(gain);
+        return;
+    }
+#endif
 
     if (stream != NULL) {
         SDL_SetAudioStreamGain(stream, gain);

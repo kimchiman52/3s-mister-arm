@@ -3,7 +3,7 @@
 
 #include <SDL3/SDL.h>
 
-#define KEYMAP_CODES_PER_BUTTON 3
+#define KEYMAP_CODES_PER_BUTTON 4
 #define KEYMAP_BUTTON_COUNT 16
 
 typedef enum KeymapButton {

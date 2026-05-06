@@ -16,6 +16,14 @@
 #include "port/sdl/fps_overlay_compositor.h"
 #include "port/sdl/native_video_writer.h"
 #include "platform/video/software/software_renderer.h"
+#if defined(PORT_MIYOO_MINI_PLUS)
+/* PORT_ARM_FBDEV also defines CRS_APP_DRIVER_ARM but Cut 1 deliberately
+ * leaves the FBDEV/DRM Init/Shutdown wiring dormant — those paths exist
+ * for a future port but their ArmDisplay_Present call is also gated on
+ * PORT_MIYOO_MINI_PLUS only (see below). Gate Init/Shutdown here on the
+ * same flag so the two stay in lock-step. */
+#include "platform/app/arm/arm_display.h"
+#endif
 #include "port/sdl/sdl_message_renderer.h"
 #include "port/sdl/sdl_pad.h"
 #include "port/sound/adx.h"
@@ -48,6 +56,13 @@
 #if defined(__ARM_NEON) || defined(__ARM_NEON__)
 #include <arm_neon.h>
 #endif
+#endif
+
+#if defined(PORT_MIYOO_MINI_PLUS)
+#include <dirent.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <errno.h>
 #endif
 
 typedef enum ScaleMode {
@@ -1649,6 +1664,79 @@ static void log_backend_diagnostics() {
         const char* name = SDL_GetAudioDriver(i);
         backend_logf("  audio[%d]=%s", i, name != NULL ? name : "(null)");
     }
+
+    const char* current_video = SDL_GetCurrentVideoDriver();
+    backend_logf("Current video driver: %s", current_video != NULL ? current_video : "(null)");
+
+    int kbd_count = 0;
+    SDL_KeyboardID* kbds = SDL_GetKeyboards(&kbd_count);
+    backend_logf("Keyboards seen by SDL (%d):", kbd_count);
+    for (int i = 0; i < kbd_count; i++) {
+        const char* name = SDL_GetKeyboardNameForID(kbds[i]);
+        backend_logf("  kbd[%d] id=%u name=%s", i, (unsigned)kbds[i], name != NULL ? name : "(null)");
+    }
+    SDL_free(kbds);
+
+    int joy_count = 0;
+    SDL_JoystickID* joys = SDL_GetJoysticks(&joy_count);
+    backend_logf("Joysticks seen by SDL (%d):", joy_count);
+    for (int i = 0; i < joy_count; i++) {
+        const char* name = SDL_GetJoystickNameForID(joys[i]);
+        backend_logf("  joy[%d] id=%u name=%s isGamepad=%d", i, (unsigned)joys[i],
+                     name != NULL ? name : "(null)", SDL_IsGamepad(joys[i]) ? 1 : 0);
+    }
+    SDL_free(joys);
+
+    int pad_count = 0;
+    SDL_JoystickID* pads = SDL_GetGamepads(&pad_count);
+    backend_logf("Gamepads seen by SDL (%d):", pad_count);
+    for (int i = 0; i < pad_count; i++) {
+        const char* name = SDL_GetGamepadNameForID(pads[i]);
+        backend_logf("  pad[%d] id=%u name=%s", i, (unsigned)pads[i], name != NULL ? name : "(null)");
+    }
+    SDL_free(pads);
+
+#if defined(PORT_MIYOO_MINI_PLUS)
+    {
+        DIR* dir = opendir("/dev/input");
+        if (dir == NULL) {
+            backend_logf("/dev/input: opendir failed: %s", strerror(errno));
+        } else {
+            backend_logf("/dev/input contents:");
+            struct dirent* ent;
+            while ((ent = readdir(dir)) != NULL) {
+                if (ent->d_name[0] == '.') continue;
+                char path[256];
+                snprintf(path, sizeof(path), "/dev/input/%s", ent->d_name);
+                struct stat st;
+                int stat_rc = stat(path, &st);
+                int r_ok = access(path, R_OK);
+                int rw_ok = access(path, R_OK | W_OK);
+                backend_logf("  %s mode=%o stat_rc=%d r_ok=%d rw_ok=%d",
+                             path,
+                             stat_rc == 0 ? (unsigned)(st.st_mode & 0777) : 0,
+                             stat_rc, r_ok, rw_ok);
+            }
+            closedir(dir);
+        }
+        backend_logf("euid=%u egid=%u", (unsigned)geteuid(), (unsigned)getegid());
+
+        FILE* pf = fopen("/proc/bus/input/devices", "r");
+        if (pf == NULL) {
+            backend_logf("/proc/bus/input/devices: open failed: %s", strerror(errno));
+        } else {
+            backend_logf("---- /proc/bus/input/devices ----");
+            char line[512];
+            while (fgets(line, sizeof(line), pf) != NULL) {
+                size_t len = strlen(line);
+                if (len > 0 && line[len - 1] == '\n') line[len - 1] = '\0';
+                backend_logf("  %s", line);
+            }
+            backend_logf("---- end /proc/bus/input/devices ----");
+            fclose(pf);
+        }
+    }
+#endif
 }
 
 static const char* scale_mode_name(ScaleMode mode) {
@@ -1946,8 +2034,9 @@ static void init_scalemode() {
         scale_mode = parsed_scale_mode;
     }
 
-#if defined(PORT_MISTER)
-    // Soft-linear doubles internal target size and is too expensive on MiSTer CPU rendering path.
+#if defined(PORT_MISTER) || defined(PORT_MIYOO_MINI_PLUS)
+    // Soft-linear doubles internal target size and is too expensive on
+    // MiSTer (Cortex-A9) and Miyoo Mini Plus (Cortex-A7) CPU rendering paths.
     if (scale_mode == SCALEMODE_SOFT_LINEAR) {
         scale_mode = SCALEMODE_NEAREST;
     }
@@ -2004,7 +2093,7 @@ static SuperEffectQualityMode parse_super_effect_quality_mode(const char* raw_mo
 static void init_super_effect_quality_mode(void) {
     const char* raw_mode = Config_GetString(CFG_KEY_SUPER_EFFECT_QUALITY);
     if (raw_mode == NULL || raw_mode[0] == '\0') {
-#if defined(PORT_MISTER)
+#if defined(PORT_MISTER) || defined(PORT_MIYOO_MINI_PLUS)
         super_effect_quality_mode = SUPER_EFFECT_QUALITY_CACHED_BG;
 #else
         super_effect_quality_mode = SUPER_EFFECT_QUALITY_FULL;
@@ -2761,6 +2850,20 @@ static bool init_window() {
         use_native_render_path = true;
         backend_logf("Native render path: enabled (scale-mode=%s)", scale_mode_name(scale_mode));
     }
+#if defined(PORT_MIYOO_MINI_PLUS)
+    /* Force native render path on Miyoo regardless of scale mode. The
+     * dummy/evdev SDL3 video driver has no real on-screen surface, and
+     * ArmDisplay_Present consumes giblet's RGB565 canvas directly via
+     * MI_GFX. The non-native render path uploads the canvas to an SDL3
+     * internal screen_texture via SDL_UpdateTexture+SDL_RenderTexture
+     * (~27ms/frame at 1600 MHz) that is never read by anyone — pure
+     * waste. Native path skips that work and just does a couple of
+     * cheap SDL renderer calls that no-op on the dummy backend. */
+    if (!use_native_render_path) {
+        use_native_render_path = true;
+        backend_logf("Native render path: forced ON for Miyoo Mini Plus");
+    }
+#endif
 
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
     return true;
@@ -2770,14 +2873,20 @@ int SDLApp_PreInit() {
     SDL_SetAppMetadata(app_name, "0.1", NULL);
     SDL_SetHint(SDL_HINT_VIDEO_WAYLAND_PREFER_LIBDECOR, "1");
     SDL_SetHint(SDL_HINT_NO_SIGNAL_HANDLERS, "1");
-#if defined(PORT_MISTER)
-    // On MiSTer we often run without a focused desktop window; keep controller input active.
+#if defined(PORT_MISTER) || defined(PORT_MIYOO_MINI_PLUS)
+    // On MiSTer / Miyoo we run without a focused desktop window; keep controller input active.
     SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
-    // Prefer /dev/input/js* interface on lightweight Linux userspace where evdev focus can be problematic.
-    SDL_SetHint(SDL_HINT_JOYSTICK_LINUX_CLASSIC, "1");
     // Ensure console key events do not bleed into the underlying Linux VT while the game is running.
     SDL_SetHint(SDL_HINT_MUTE_CONSOLE_KEYBOARD, "1");
 #endif
+#if defined(PORT_MISTER)
+    // MiSTer wrapper exposes the gamepad as /dev/input/js0; prefer that.
+    SDL_SetHint(SDL_HINT_JOYSTICK_LINUX_CLASSIC, "1");
+#endif
+    // On Miyoo we deliberately do NOT set JOYSTICK_LINUX_CLASSIC: Onion's
+    // BSP exposes the gamepad as a /dev/input/event* (keyboard-emulating
+    // evdev device emitted by the keymon daemon), not as /dev/input/js*.
+    // SDL3's evdev gamepad backend is what we want here.
     apply_backend_hints();
 
     if (!SDL_Init(SDL_INIT_VIDEO)) {
@@ -2828,6 +2937,12 @@ int SDLApp_FullInit() {
 
     // Initialize rendering subsystems
     SDLMessageRenderer_Initialize(renderer);
+#if defined(PORT_MIYOO_MINI_PLUS)
+    if (!ArmDisplay_Init()) {
+        SDL_Log("ArmDisplay_Init failed");
+        return 1;
+    }
+#endif
     if (!SoftwareRenderer_Init(true /* nearest_filter */, 1 /* scale */)) {
         SDL_Log("SoftwareRenderer_Init failed");
         return 1;
@@ -2886,6 +3001,13 @@ void SDLApp_Quit() {
     apply_arm_clock(0);
     Config_Destroy();
     SoftwareRenderer_Quit();
+#if defined(PORT_MIYOO_MINI_PLUS)
+    /* ArmDisplay_Shutdown must run AFTER SoftwareRenderer_Quit so the
+     * MMA-allocated canvas (Miyoo zero-copy path) is freed via
+     * mi_gfx_free_canvas while MI_SYS is still initialized. Gated on
+     * PORT_MIYOO_MINI_PLUS to mirror the Init gate above. */
+    ArmDisplay_Shutdown();
+#endif
     if (giblet_present_texture != NULL) {
         SDL_DestroyTexture(giblet_present_texture);
         giblet_present_texture = NULL;
@@ -2953,6 +3075,61 @@ bool SDLApp_PollEvents() {
     bool continue_running = true;
 
     while (SDL_PollEvent(&event)) {
+#if defined(PORT_MIYOO_MINI_PLUS)
+        static int dbg_event_count = 0;
+        if (dbg_event_count < 500) {
+            switch (event.type) {
+            case SDL_EVENT_KEY_DOWN:
+            case SDL_EVENT_KEY_UP:
+                fprintf(stderr, "[ev] KEY_%s scancode=%d (%s) key=%d kbd_id=%u\n",
+                        event.type == SDL_EVENT_KEY_DOWN ? "DOWN" : "UP",
+                        (int)event.key.scancode, SDL_GetScancodeName(event.key.scancode),
+                        (int)event.key.key, (unsigned)event.key.which);
+                ++dbg_event_count;
+                break;
+            case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
+            case SDL_EVENT_GAMEPAD_BUTTON_UP:
+                fprintf(stderr, "[ev] PAD_%s button=%d which=%u\n",
+                        event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN ? "DOWN" : "UP",
+                        (int)event.gbutton.button, (unsigned)event.gbutton.which);
+                ++dbg_event_count;
+                break;
+            case SDL_EVENT_GAMEPAD_AXIS_MOTION:
+                fprintf(stderr, "[ev] PAD_AXIS axis=%d value=%d which=%u\n",
+                        (int)event.gaxis.axis, (int)event.gaxis.value, (unsigned)event.gaxis.which);
+                ++dbg_event_count;
+                break;
+            case SDL_EVENT_JOYSTICK_BUTTON_DOWN:
+            case SDL_EVENT_JOYSTICK_BUTTON_UP:
+                fprintf(stderr, "[ev] JOY_%s button=%d which=%u\n",
+                        event.type == SDL_EVENT_JOYSTICK_BUTTON_DOWN ? "DOWN" : "UP",
+                        (int)event.jbutton.button, (unsigned)event.jbutton.which);
+                ++dbg_event_count;
+                break;
+            case SDL_EVENT_JOYSTICK_HAT_MOTION:
+                fprintf(stderr, "[ev] JOY_HAT hat=%d value=%d which=%u\n",
+                        (int)event.jhat.hat, (int)event.jhat.value, (unsigned)event.jhat.which);
+                ++dbg_event_count;
+                break;
+            case SDL_EVENT_JOYSTICK_AXIS_MOTION:
+                fprintf(stderr, "[ev] JOY_AXIS axis=%d value=%d which=%u\n",
+                        (int)event.jaxis.axis, (int)event.jaxis.value, (unsigned)event.jaxis.which);
+                ++dbg_event_count;
+                break;
+            case SDL_EVENT_GAMEPAD_ADDED:
+            case SDL_EVENT_GAMEPAD_REMOVED:
+            case SDL_EVENT_JOYSTICK_ADDED:
+            case SDL_EVENT_JOYSTICK_REMOVED:
+            case SDL_EVENT_KEYBOARD_ADDED:
+            case SDL_EVENT_KEYBOARD_REMOVED:
+                fprintf(stderr, "[ev] device-event type=%u which=%u\n",
+                        (unsigned)event.type, (unsigned)event.gdevice.which);
+                ++dbg_event_count;
+                break;
+            }
+        }
+#endif
+
 #if DEBUG
         ImGuiW_ProcessEvent(&event);
 #endif
@@ -3242,9 +3419,10 @@ void SDLApp_EndFrame() {
     /* Per-frame giblet timing locals for the FPS overlay (u/r/p/t). Set at
      * the SoftwareRenderer_RenderFrame() and present call-sites below; read
      * at the bottom of this function for the overlay accumulator. Function-
-     * scoped so they reset to 0 every frame. */
-    Uint64 gib_render_ns_this_frame = 0;
-    Uint64 gib_present_ns_this_frame = 0;
+     * scoped so they reset to 0 every frame. Marked unused so the compile
+     * with ENABLE_PERF_TELEMETRY=OFF (Miyoo) doesn't trip -Werror. */
+    __attribute__((unused)) Uint64 gib_render_ns_this_frame = 0;
+    __attribute__((unused)) Uint64 gib_present_ns_this_frame = 0;
 
     // Run sound processing
     ADX_ProcessTracks();
@@ -3390,7 +3568,62 @@ void SDLApp_EndFrame() {
      * backbuffer, which is not on the MiSTer display pipeline — see
      * feedback-rmlui-render-target.md for the architectural rationale. */
 
+#if defined(PORT_MIYOO_MINI_PLUS)
+#if ENABLE_PERF_TELEMETRY
+    Uint64 miyoo_overlay_ns = 0;
+    Uint64 miyoo_armpresent_ns = 0;
+#endif
+    /* Giblet renderer present on Miyoo Mini Plus: feed giblet's RGB565
+     * canvas directly to MI_GFX via ArmDisplay_Present. The SDL3
+     * dummy video driver has no on-screen window; the SDL_RenderPresent
+     * call below is a no-op for this profile. */
+    {
+        int gw = 0, gh = 0, gpitch_bytes = 0;
+        const SWCanvasPixel* gcanvas = SoftwareRenderer_GetCanvas(&gw, &gh, &gpitch_bytes);
+        if (gcanvas && gw > 0 && gh > 0) {
+            if (fps_overlay_mode != FPS_OVERLAY_OFF) {
+#if ENABLE_PERF_TELEMETRY
+                const Uint64 ov_start = SDL_GetTicksNS();
+#endif
+                FPSOverlay_ApplyToRGB565Buffer((Uint16*)(uintptr_t)gcanvas, gw, gh);
+#if ENABLE_PERF_TELEMETRY
+                const Uint64 ov_end = SDL_GetTicksNS();
+                miyoo_overlay_ns = ov_end > ov_start ? (ov_end - ov_start) : 0;
+#endif
+            }
+#if ENABLE_PERF_TELEMETRY
+            const Uint64 ap_start = SDL_GetTicksNS();
+#endif
+            ArmDisplay_Present((const uint32_t*)gcanvas, gw, gh);
+#if ENABLE_PERF_TELEMETRY
+            const Uint64 ap_end = SDL_GetTicksNS();
+            miyoo_armpresent_ns = ap_end > ap_start ? (ap_end - ap_start) : 0;
+#endif
+        }
+    }
+#endif
+
+#if defined(PORT_MIYOO_MINI_PLUS) && ENABLE_PERF_TELEMETRY
+    const Uint64 sdl_present_start_ns = SDL_GetTicksNS();
+#endif
+#if !defined(PORT_MIYOO_MINI_PLUS)
     SDL_RenderPresent(renderer);
+#else
+    /* Skip SDL_RenderPresent on Miyoo: SDL3's dummy/evdev video driver
+     * has no on-screen window — the canvas is already on the panel via
+     * MI_GFX in ArmDisplay_Present above. SDL_RenderPresent costs ~27ms
+     * per frame on this stack (measured 2026-05-05 on Miyoo Mini Plus
+     * @1600MHz), apparently due to internal sync work in the software
+     * renderer with no real backbuffer to flip. Skipping it drops the
+     * frame budget from ~40ms to ~14ms in steady state. */
+    (void)renderer;
+#endif
+#if defined(PORT_MIYOO_MINI_PLUS) && ENABLE_PERF_TELEMETRY
+    const Uint64 sdl_present_end_ns = SDL_GetTicksNS();
+    const Uint64 miyoo_sdlpresent_ns = sdl_present_end_ns > sdl_present_start_ns
+                                           ? (sdl_present_end_ns - sdl_present_start_ns)
+                                           : 0;
+#endif
     (void)current_frame_surface_valid;
     (void)current_frame_canvas_valid;
 #if ENABLE_PERF_TELEMETRY
@@ -3408,6 +3641,61 @@ void SDLApp_EndFrame() {
                      (double)update_ns / 1e6,
                      (double)render_ns / 1e6,
                      (double)present_ns / 1e6);
+    }
+
+    /* Steady-state perf summary: 120-frame moving averages of u/r/p/t plus
+     * Miyoo per-call breakdown (overlay / ArmDisplay_Present / SDL_RenderPresent).
+     * Cadence matches mi_gfx_perf so the two summaries can be cross-referenced. */
+    {
+        static int      perf_avg_frames        = 0;
+        static Uint64   perf_avg_update_ns_sum = 0;
+        static Uint64   perf_avg_render_ns_sum = 0;
+        static Uint64   perf_avg_present_ns_sum = 0;
+        static Uint64   perf_avg_total_ns_sum  = 0;
+#if defined(PORT_MIYOO_MINI_PLUS)
+        static Uint64   perf_avg_overlay_ns_sum    = 0;
+        static Uint64   perf_avg_armpresent_ns_sum = 0;
+        static Uint64   perf_avg_sdlpresent_ns_sum = 0;
+#endif
+        perf_avg_frames++;
+        perf_avg_update_ns_sum  += update_ns;
+        perf_avg_render_ns_sum  += render_ns;
+        perf_avg_present_ns_sum += present_ns;
+        perf_avg_total_ns_sum   += frame_work_ns;
+#if defined(PORT_MIYOO_MINI_PLUS)
+        perf_avg_overlay_ns_sum    += miyoo_overlay_ns;
+        perf_avg_armpresent_ns_sum += miyoo_armpresent_ns;
+        perf_avg_sdlpresent_ns_sum += miyoo_sdlpresent_ns;
+#endif
+        if (perf_avg_frames >= 120) {
+            const double inv = 1.0 / (perf_avg_frames * 1e6);
+#if defined(PORT_MIYOO_MINI_PLUS)
+            backend_logf("[perf_avg] frames=%d  update=%.2f render=%.2f present=%.2f total=%.2f  ov=%.2f arm=%.2f sdlp=%.2f",
+                         perf_avg_frames,
+                         perf_avg_update_ns_sum * inv,
+                         perf_avg_render_ns_sum * inv,
+                         perf_avg_present_ns_sum * inv,
+                         perf_avg_total_ns_sum * inv,
+                         perf_avg_overlay_ns_sum * inv,
+                         perf_avg_armpresent_ns_sum * inv,
+                         perf_avg_sdlpresent_ns_sum * inv);
+            perf_avg_overlay_ns_sum    = 0;
+            perf_avg_armpresent_ns_sum = 0;
+            perf_avg_sdlpresent_ns_sum = 0;
+#else
+            backend_logf("[perf_avg] frames=%d  update=%.2f render=%.2f present=%.2f total=%.2f",
+                         perf_avg_frames,
+                         perf_avg_update_ns_sum * inv,
+                         perf_avg_render_ns_sum * inv,
+                         perf_avg_present_ns_sum * inv,
+                         perf_avg_total_ns_sum * inv);
+#endif
+            perf_avg_frames        = 0;
+            perf_avg_update_ns_sum = 0;
+            perf_avg_render_ns_sum = 0;
+            perf_avg_present_ns_sum = 0;
+            perf_avg_total_ns_sum  = 0;
+        }
     }
 
     /* Feed per-frame timing into the FPS overlay rolling accumulator so the

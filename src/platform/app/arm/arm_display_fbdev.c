@@ -1,4 +1,10 @@
-#if CRS_APP_DRIVER_ARM
+#if CRS_APP_DRIVER_ARM && !CRS_ARM_HAVE_MI_GFX
+
+// Under CRS_ARM_HAVE_MI_GFX (Miyoo profile) the fbdev backend is
+// disabled and never selected by arm_display.c — the canvas is RGB565
+// (CRS_SW_CANVAS_16BPP=1) and sw_present_scale_argb is only declared
+// when CRS_SW_CANVAS_16BPP is unset. Compile this file to an empty
+// translation unit on that profile.
 
 #include "platform/app/arm/arm_display.h"
 #include "platform/video/software/sw_blit.h"
@@ -130,4 +136,4 @@ void arm_display_fbdev_present(const uint32_t* argb_pixels, int src_w, int src_h
     sw_present_scale_argb(dst, fb_pitch_px, lb_w, lb_h, argb_pixels, src_w, src_w, src_h, fb_nearest_present);
 }
 
-#endif // CRS_APP_DRIVER_ARM
+#endif // CRS_APP_DRIVER_ARM && !CRS_ARM_HAVE_MI_GFX

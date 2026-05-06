@@ -14,6 +14,10 @@
 
 #include "stb/stb_ds.h"
 
+#if defined(PORT_MIYOO_MINI_PLUS) && CRS_ARM_HAVE_MI_GFX
+#include "platform/app/arm/arm_display_mi_gfx.h"
+#endif
+
 #include <libgraph.h>
 
 #include <stdio.h>
@@ -1630,7 +1634,22 @@ bool SoftwareRenderer_Init(bool nearest_filter, int scale) {
     arrsetcap(quads, QUADS_MAX);
 
     const size_t canvas_bytes = sizeof(SWCanvasPixel) * CANVAS_PITCH * CANVAS_H;
+#if defined(PORT_MIYOO_MINI_PLUS) && CRS_ARM_HAVE_MI_GFX
+    // Zero-copy: allocate via MI_SYS_MMA_Alloc so MI_GFX reads the
+    // canvas directly without an intermediate memcpy. Prototype lives
+    // in platform/app/arm/arm_display_mi_gfx.h (included above). The
+    // MI_SYS / MI_GFX subsystems must already be initialized — see
+    // sdl_app.c, which calls ArmDisplay_Init() before
+    // SoftwareRenderer_Init().
+    {
+        unsigned long long phy = 0;
+        if (!mi_gfx_alloc_canvas(canvas_bytes, (void**)&canvas, &phy)) {
+            return false;
+        }
+    }
+#else
     canvas = malloc(canvas_bytes);
+#endif
 
     if (canvas == NULL) {
         return false;
@@ -1657,7 +1676,11 @@ void SoftwareRenderer_Quit() {
 
     arrfree(quads);
     quads = NULL;
+#if defined(PORT_MIYOO_MINI_PLUS) && CRS_ARM_HAVE_MI_GFX
+    mi_gfx_free_canvas(canvas);
+#else
     free(canvas);
+#endif
     canvas = NULL;
 }
 

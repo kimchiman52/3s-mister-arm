@@ -4,9 +4,19 @@
 #include <SDL3/SDL.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #if defined(PORT_MISTER)
 #include <sched.h>
+#endif
+
+#if defined(PORT_MIYOO_MINI_PLUS)
+#include "port/sound/mi_ao_backend.h"
+/* The MI_AO backend's audio thread invokes the registered 250 Hz tick
+ * callback through this trampoline, called from inside SPU_GenerateInto
+ * every 192 samples. Kept private to mi_ao_backend.c via a forward
+ * declaration here. */
+extern void MIAO_FireTimerCB(void);
 #endif
 
 #define min(a, b) (((a) < (b)) ? (a) : (b))
@@ -343,6 +353,50 @@ void SPU_VoiceStart(int vnum, u32 start_addr) {
     v->nax = (v->nax + 1) & 0xfffff;
 }
 
+/* Generate `frames` interleaved-stereo s16 samples into `out`. Honours
+ * the soundLock contract used by emlShim and ticks the registered
+ * 250 Hz callback every 192 samples. Used by both the SDL3 audio
+ * callback (legacy / Mac / fallback) and the direct MI_AO audio thread
+ * on PORT_MIYOO_MINI_PLUS. */
+void SPU_GenerateInto(s16* out, int frames) {
+    static int cb_timer = 192;
+
+    int remaining = frames;
+    s16* p = out;
+
+    while (remaining > 0) {
+        // Keep audio lock hold time bounded so gameplay-thread calls that take
+        // soundLock (voice setup/key-off) do not stall for long stretches.
+        int batch_count = remaining < 256 ? remaining : 256;
+
+        SDL_LockMutex(soundLock);
+
+        for (int i = 0; i < batch_count; i++) {
+            SPU_Tick(p);
+            p += 2;
+
+            cb_timer--;
+            if (!cb_timer) {
+#if defined(PORT_MIYOO_MINI_PLUS)
+                /* Under the direct MI_AO backend the registered cb is
+                 * dispatched through MIAO_FireTimerCB so the audio
+                 * thread doesn't have to know about timer_cb's storage.
+                 * The backend's MIAO_RegisterTimerCB sets the same
+                 * function pointer that nullcb / SPU_Init's caller
+                 * provided, so this is a wash on the SDL3 path. */
+                MIAO_FireTimerCB();
+#else
+                timer_cb();
+#endif
+                cb_timer = 192;
+            }
+        }
+
+        SDL_UnlockMutex(soundLock);
+        remaining -= batch_count;
+    }
+}
+
 void SPU_SDL_CB(void* user, SDL_AudioStream* stream_cb, int additional_amount, int total_amount) {
 #if defined(PORT_MISTER)
     /* Boost audio thread to SCHED_FIFO priority 50 (above game thread's 49)
@@ -359,32 +413,10 @@ void SPU_SDL_CB(void* user, SDL_AudioStream* stream_cb, int additional_amount, i
     u32 samples_per_channel = (additional_amount / sizeof(s16)) >> 1;
     static s16 outbuf[4096] = {};
 
-    // We need to run the eml callbaack at 250hz
-    // 48000 / 250 = 192
-    static int cb_timer = 192;
-
     while (samples_per_channel) {
-        // Keep audio lock hold time bounded so gameplay-thread calls that take
-        // soundLock (voice setup/key-off) do not stall for long stretches.
         u32 batch_count = min(samples_per_channel, 256);
 
-        // TODO consider redesigning this whole system; emlshim and spu should
-        // probably run on the same thread so this lock can be removed entirely.
-        SDL_LockMutex(soundLock);
-
-        s16* p = outbuf;
-        for (int i = 0; i < batch_count; i++) {
-            SPU_Tick(p);
-            p += 2;
-
-            cb_timer--;
-            if (!cb_timer) {
-                timer_cb();
-                cb_timer = 192;
-            }
-        }
-
-        SDL_UnlockMutex(soundLock);
+        SPU_GenerateInto(outbuf, (int)batch_count);
         SDL_PutAudioStreamData(stream_cb, outbuf, (batch_count * sizeof(s16)) << 1);
         samples_per_channel -= batch_count;
     }
@@ -392,18 +424,67 @@ void SPU_SDL_CB(void* user, SDL_AudioStream* stream_cb, int additional_amount, i
 
 static void nullcb() {}
 
-void SPU_Init(void (*cb)()) {
-    SDL_AudioSpec spec;
+/* Initialise the bits of SPU state that the audio thread needs in
+ * order to call SPU_Tick safely: the voices array, the active mask,
+ * and the sound lock. Idempotent. Called at the top of SPU_Init and
+ * also (under PORT_MIYOO_MINI_PLUS) from MIAO_Init so the MI_AO
+ * audio thread can safely run before SPU_Init's own init code under
+ * the boot ordering where ADX_Init runs first.
+ *
+ * Does NOT install timer_cb — that one is set from SPU_Init proper
+ * once the engine knows what callback to use. The audio thread
+ * tolerates timer_cb == nullcb (default initialiser pointed below).
+ *
+ * Thread-safety contract: this function is called only from the boot
+ * thread, before MIAO_Init starts the audio thread. The static `done`
+ * guard is therefore safe without a mutex — no other thread is alive
+ * yet on either of the two real call paths (SPU_Init -> SPU_PreInit
+ * before any thread spawn, or MIAO_Init -> SPU_PreInit before
+ * pthread_create). Do not call from a thread other than the boot
+ * thread or `done` becomes a data race. */
+void SPU_PreInit(void) {
+    static bool done = false;
+    if (done) {
+        return;
+    }
+    timer_cb = nullcb;
+    memset(voices, 0, sizeof(voices));
+    active_voices = 0;
+    soundLock = SDL_CreateMutex();
+    done = true;
+}
 
+void SPU_Init(void (*cb)()) {
+    SPU_PreInit();
     timer_cb = cb;
     if (!cb) {
         timer_cb = nullcb;
     }
 
-    memset(voices, 0, sizeof(voices));
-    active_voices = 0;
-    soundLock = SDL_CreateMutex();
+#if defined(PORT_MIYOO_MINI_PLUS)
+    /* Direct MI_AO backend is the default on Miyoo Mini Plus / OnionOS.
+     * The kernel /dev/dsp shim doesn't translate sample rate into MI_AO
+     * (audio plays at the device default ~ half-speed) and SDL3+OSS
+     * fights audioserver for the device — both broken. We bypass them
+     * entirely.
+     *
+     * Set THIRDSARM_AUDIO_SDL=1 in the launch env to force the legacy
+     * SDL3 path for A/B comparison. The check is centralised in
+     * MIAO_ForceSDLFallback() so this and ADX_Init can't drift. */
+    if (!MIAO_ForceSDLFallback()) {
+        MIAO_RegisterTimerCB(timer_cb);
+        if (MIAO_Init()) {
+            SDL_Log("SPU: using direct MI_AO backend "
+                    "(THIRDSARM_AUDIO_SDL unset)");
+            return;
+        }
+        SDL_Log("SPU: MIAO_Init failed; falling back to SDL3 audio");
+    } else {
+        SDL_Log("SPU: THIRDSARM_AUDIO_SDL=1 — forcing SDL3 audio path");
+    }
+#endif
 
+    SDL_AudioSpec spec;
     spec.channels = 2;
     spec.format = SDL_AUDIO_S16;
     spec.freq = 48000;
@@ -415,6 +496,17 @@ void SPU_Init(void (*cb)()) {
     }
 
     SDL_ResumeAudioStreamDevice(stream);
+
+#if defined(PORT_MIYOO_MINI_PLUS)
+    {
+        SDL_AudioSpec src_spec, dst_spec;
+        if (SDL_GetAudioStreamFormat(stream, &src_spec, &dst_spec)) {
+            SDL_Log("SPU stream: src=%dHz/%dch/fmt=0x%x  dst=%dHz/%dch/fmt=0x%x",
+                    src_spec.freq, src_spec.channels, (unsigned)src_spec.format,
+                    dst_spec.freq, dst_spec.channels, (unsigned)dst_spec.format);
+        }
+    }
+#endif
 }
 
 void SPU_Upload(u32 dst, void* src, u32 size) {

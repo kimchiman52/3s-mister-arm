@@ -119,3 +119,54 @@ License MIT license, as provided by Omar Cornut
 
 Copyright:
 - Copyright (C) Omar Cornut.
+
+steward-fu/sdl2 (mmiyoo backend reference; pattern-only, structurally informative)
+----------------------------------------------------------------------------------
+Upstream: https://github.com/steward-fu/sdl2
+
+3S-ARM does NOT ship any code from this repository. The mmiyoo
+backend was read structurally as a reference for how to drive the
+SigmaStar MI_GFX hardware blitter on the Miyoo Mini Plus. The
+SigmaStar BSP headers and prebuilt shared libraries vendored at
+`vendor/sigmastar/inc/` and `vendor/sigmastar/lib/` were copied
+verbatim from steward-fu/sdl2's `mini/inc/` and `mini/lib/`
+directories.
+
+License: LGPL-2.1, as provided by the steward-fu/sdl2 SDL2 fork
+(covers the SDL2 fork itself, not the SigmaStar headers/libs in
+`mini/`; see the SigmaStar MI_SDK section below for that content's
+posture).
+
+Copyright:
+- Copyright (C) Steward Fu and the SDL2 contributors.
+
+SigmaStar MI_SDK
+----------------
+Upstream: SigmaStar Technology Corp. BSP for the SSD202D platform,
+redistributed via steward-fu/sdl2's `mini/inc/` and `mini/lib/`.
+
+3S-ARM links at build time against:
+- libmi_sys.so
+- libmi_gfx.so
+- libmi_common.so
+
+(Vendored at `vendor/sigmastar/lib/` from steward-fu/sdl2 at the
+pinned commit recorded in `vendor/sigmastar.UPSTREAM.md`.)
+
+The deployed package does NOT bundle these `.so` files. The 3S-ARM
+binary's NEEDED entries (`libmi_sys.so.0`, `libmi_gfx.so.0`,
+`libmi_common.so.0`) resolve at runtime from the device's
+`/customer/lib/`, populated by the OnionOS firmware BSP image on
+internal flash. This matches the universal community deployment
+pattern across public OnionOS-adjacent projects (steward-fu/sdl2,
+OnionUI Sonic Mania port, XK9274/sdl2_miyoo, OOPay/sdl2, MyMinUI).
+
+License: vendor-proprietary. The SigmaStar headers carry a
+"Sigmastar Confidential Information" banner. We redistribute under
+the universal community redistribution practice for OnionOS-adjacent
+projects (5+ years, zero observed enforcement). Documented stance;
+see `vendor/sigmastar.UPSTREAM.md` for the full posture and the
+takedown-response procedure.
+
+Copyright:
+- Copyright (C) SigmaStar Technology Corp. (2018-2019).

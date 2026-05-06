@@ -10,39 +10,97 @@
 
 // Backend entry points.
 
+// `__attribute__((unused))` on the stubs below because under
+// CRS_ARM_HAVE_MI_GFX the DRM/fbdev branches are never called and
+// -Werror=unused-function would otherwise reject them. The stubs only
+// exist so `ArmDisplay_Shutdown` / `_GetResolution` / `_Present` switch
+// arms compile when their backend is unavailable.
+#if defined(__GNUC__) || defined(__clang__)
+#define ARM_DISPLAY_MAYBE_UNUSED __attribute__((unused))
+#else
+#define ARM_DISPLAY_MAYBE_UNUSED
+#endif
+
 #if CRS_ARM_HAVE_DRM
 bool arm_display_drm_init();
 void arm_display_drm_shutdown();
 void arm_display_drm_get_resolution(int* out_width, int* out_height);
 void arm_display_drm_present(const uint32_t* argb_pixels, int w, int h);
 #else
-static inline bool arm_display_drm_init() {
+ARM_DISPLAY_MAYBE_UNUSED static inline bool arm_display_drm_init() {
     return false;
 }
 
-static inline void arm_display_drm_shutdown() {}
+ARM_DISPLAY_MAYBE_UNUSED static inline void arm_display_drm_shutdown() {}
 
-static inline void arm_display_drm_get_resolution(int* w, int* h) {
+ARM_DISPLAY_MAYBE_UNUSED static inline void arm_display_drm_get_resolution(int* w, int* h) {
     (void)w;
     (void)h;
 }
 
-static inline void arm_display_drm_present(const uint32_t* px, int w, int h) {
+ARM_DISPLAY_MAYBE_UNUSED static inline void arm_display_drm_present(const uint32_t* px, int w, int h) {
     (void)px;
     (void)w;
     (void)h;
 }
 #endif
 
+#if CRS_ARM_HAVE_MI_GFX
+bool arm_display_mi_gfx_init();
+void arm_display_mi_gfx_shutdown();
+void arm_display_mi_gfx_get_resolution(int* out_width, int* out_height);
+void arm_display_mi_gfx_present(const uint32_t* argb_pixels, int w, int h);
+#else
+ARM_DISPLAY_MAYBE_UNUSED static inline bool arm_display_mi_gfx_init() {
+    return false;
+}
+
+ARM_DISPLAY_MAYBE_UNUSED static inline void arm_display_mi_gfx_shutdown() {}
+
+ARM_DISPLAY_MAYBE_UNUSED static inline void arm_display_mi_gfx_get_resolution(int* w, int* h) {
+    (void)w;
+    (void)h;
+}
+
+ARM_DISPLAY_MAYBE_UNUSED static inline void arm_display_mi_gfx_present(const uint32_t* px, int w, int h) {
+    (void)px;
+    (void)w;
+    (void)h;
+}
+#endif
+
+// fbdev backend: present only when MI_GFX is not the active backend.
+// Mirror the DRM/MI_GFX symmetric pattern above so we don't rely on
+// optimizer DCE to elide the unresolved symbol references at -O0.
+#if !CRS_ARM_HAVE_MI_GFX
 bool arm_display_fbdev_init();
 void arm_display_fbdev_shutdown();
 void arm_display_fbdev_get_resolution(int* out_width, int* out_height);
 void arm_display_fbdev_present(const uint32_t* argb_pixels, int w, int h);
+#else
+ARM_DISPLAY_MAYBE_UNUSED static inline bool arm_display_fbdev_init() {
+    return false;
+}
+
+ARM_DISPLAY_MAYBE_UNUSED static inline void arm_display_fbdev_shutdown() {}
+
+ARM_DISPLAY_MAYBE_UNUSED static inline void arm_display_fbdev_get_resolution(int* w, int* h) {
+    (void)w;
+    (void)h;
+}
+
+ARM_DISPLAY_MAYBE_UNUSED static inline void arm_display_fbdev_present(const uint32_t* px, int w, int h) {
+    (void)px;
+    (void)w;
+    (void)h;
+}
+#endif
 
 typedef enum DisplayBackend {
     DISPLAY_BACKEND_NONE = 0,
     DISPLAY_BACKEND_DRM,
     DISPLAY_BACKEND_FBDEV,
+    DISPLAY_BACKEND_MI_GFX,
 } DisplayBackend;
 
 static DisplayBackend active_backend = DISPLAY_BACKEND_NONE;
@@ -54,6 +112,21 @@ static bool use_stretch_present() {
 }
 
 bool ArmDisplay_Init() {
+#if CRS_ARM_HAVE_MI_GFX
+    // Miyoo profile: the giblet canvas is RGB565 (CRS_SW_CANVAS_16BPP=1).
+    // The DRM and fbdev backends both write ARGB8888 to the framebuffer
+    // via sw_present_scale_argb; passing an RGB565 buffer through them
+    // produces garbage. MI_GFX is the only valid backend on this profile.
+    // Hard-fail on init failure rather than fall through.
+    if (arm_display_mi_gfx_init()) {
+        active_backend = DISPLAY_BACKEND_MI_GFX;
+        fprintf(stderr, "[arm_display] using MI_GFX backend\n");
+        return true;
+    }
+
+    fprintf(stderr, "[arm_display] MI_GFX init failed; no fallback under CRS_ARM_HAVE_MI_GFX\n");
+    return false;
+#else
     if (arm_display_drm_init()) {
         active_backend = DISPLAY_BACKEND_DRM;
         fprintf(stderr, "[arm_display] using DRM/KMS backend\n");
@@ -68,6 +141,7 @@ bool ArmDisplay_Init() {
 
     fprintf(stderr, "[arm_display] no display backend available\n");
     return false;
+#endif
 }
 
 void ArmDisplay_Shutdown() {
@@ -78,6 +152,10 @@ void ArmDisplay_Shutdown() {
 
     case DISPLAY_BACKEND_FBDEV:
         arm_display_fbdev_shutdown();
+        break;
+
+    case DISPLAY_BACKEND_MI_GFX:
+        arm_display_mi_gfx_shutdown();
         break;
 
     case DISPLAY_BACKEND_NONE:
@@ -95,6 +173,10 @@ void ArmDisplay_GetResolution(int* out_width, int* out_height) {
 
     case DISPLAY_BACKEND_FBDEV:
         arm_display_fbdev_get_resolution(out_width, out_height);
+        return;
+
+    case DISPLAY_BACKEND_MI_GFX:
+        arm_display_mi_gfx_get_resolution(out_width, out_height);
         return;
 
     case DISPLAY_BACKEND_NONE:
@@ -155,6 +237,10 @@ void ArmDisplay_Present(const uint32_t* argb_pixels, int w, int h) {
 
     case DISPLAY_BACKEND_FBDEV:
         arm_display_fbdev_present(argb_pixels, w, h);
+        return;
+
+    case DISPLAY_BACKEND_MI_GFX:
+        arm_display_mi_gfx_present(argb_pixels, w, h);
         return;
 
     case DISPLAY_BACKEND_NONE:

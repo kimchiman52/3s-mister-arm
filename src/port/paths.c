@@ -7,7 +7,7 @@
 
 static char* pref_path = NULL;
 
-#if defined(PORT_MISTER)
+#if defined(PORT_MISTER) || defined(PORT_MIYOO_MINI_PLUS)
 static bool has_trailing_slash(const char* path) {
     const size_t len = SDL_strlen(path);
     return len > 0 && path[len - 1] == '/';
@@ -16,7 +16,7 @@ static bool has_trailing_slash(const char* path) {
 
 const char* Paths_GetPrefPath() {
     if (pref_path == NULL) {
-#if defined(PORT_MISTER)
+#if defined(PORT_MISTER) || defined(PORT_MIYOO_MINI_PLUS)
         const char* override = getenv("THIRDSARM_HOME");
 
         if (override != NULL && override[0] != '\0') {
@@ -26,7 +26,11 @@ const char* Paths_GetPrefPath() {
                 SDL_asprintf(&pref_path, "%s/", override);
             }
         } else {
+#if defined(PORT_MISTER)
             pref_path = SDL_strdup("/media/fat/games/3s-arm/");
+#else
+            pref_path = SDL_strdup("/mnt/SDCARD/Roms/PORTS/Games/3s-arm/");
+#endif
         }
 
         SDL_CreateDirectory(pref_path);

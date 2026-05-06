@@ -15,9 +15,8 @@ __pycache__
 
 # Project
 
-build
-build-off
-build-giblet
+/build
+/build-*
 temp
 third_party
 states

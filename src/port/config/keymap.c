@@ -7,6 +7,30 @@
 #include <stdbool.h>
 #include <stdio.h>
 
+#if defined(PORT_MIYOO_MINI_PLUS)
+/* Miyoo Mini Plus / OnionOS — keymon emits keyboard scancodes for the
+ * physical buttons. Mapping below is Capcom-PS2-style for SF3 (punches
+ * top row Y/X/L1, kicks bottom row B/A/R1). The keymon scancodes are
+ * documented in OnionUI/Onion's keymon.c. */
+static const SDL_Scancode default_keymap[KEYMAP_BUTTON_COUNT][KEYMAP_CODES_PER_BUTTON] = {
+    { SDL_SCANCODE_UP },        // up      — D-pad up
+    { SDL_SCANCODE_DOWN },      // down    — D-pad down
+    { SDL_SCANCODE_LEFT },      // left    — D-pad left
+    { SDL_SCANCODE_RIGHT },     // right   — D-pad right
+    { SDL_SCANCODE_LSHIFT },    // north   — X button   → MP
+    { SDL_SCANCODE_LALT },      // west    — Y button   → LP
+    { SDL_SCANCODE_LCTRL },     // south   — B button   → LK
+    { SDL_SCANCODE_SPACE },     // east    — A button   → MK
+    { SDL_SCANCODE_E },         // L-shldr — L1 (KEY_E)         → HP
+    { SDL_SCANCODE_BACKSPACE }, // R-shldr — R1 (KEY_BACKSPACE) → HK (was T; swapped per user report)
+    { SDL_SCANCODE_TAB },       // L-trig  — L2 (KEY_TAB)       → 3P macro
+    { SDL_SCANCODE_T },         // R-trig  — R2 (KEY_T)         → 3K macro (was Backspace; swapped)
+    { SDL_SCANCODE_UNKNOWN },   // L-stick
+    { SDL_SCANCODE_UNKNOWN },   // R-stick
+    { SDL_SCANCODE_RCTRL },     // back    — Select
+    { SDL_SCANCODE_RETURN },    // start   — Start
+};
+#else
 static const SDL_Scancode default_keymap[KEYMAP_BUTTON_COUNT][KEYMAP_CODES_PER_BUTTON] = {
     { SDL_SCANCODE_UP, SDL_SCANCODE_W, SDL_SCANCODE_SPACE }, // up
     { SDL_SCANCODE_DOWN, SDL_SCANCODE_S },                   // down
@@ -25,6 +49,7 @@ static const SDL_Scancode default_keymap[KEYMAP_BUTTON_COUNT][KEYMAP_CODES_PER_B
     { SDL_SCANCODE_BACKSPACE },                              // back
     { SDL_SCANCODE_RETURN },                                 // start
 };
+#endif
 
 static SDL_Scancode keymap[KEYMAP_BUTTON_COUNT][KEYMAP_CODES_PER_BUTTON] = {};
 static bool initialized_buttons[KEYMAP_BUTTON_COUNT] = { false };
@@ -174,6 +199,18 @@ void Keymap_Init() {
     dict_read(f, dict_iterator);
     fclose(f);
     initialize_empty_buttons();
+
+    /* Diagnostic: dump parsed keymap so we can verify file→runtime
+     * binding. Log to stderr so it lands in launch.log. */
+    for (int i = 0; i < KEYMAP_BUTTON_COUNT; i++) {
+        SDL_Log("[keymap] %s =", get_button_name(i));
+        for (int j = 0; j < KEYMAP_CODES_PER_BUTTON; j++) {
+            SDL_Scancode c = keymap[i][j];
+            if (c != SDL_SCANCODE_UNKNOWN) {
+                SDL_Log("  [%d] %d (%s)", j, (int)c, SDL_GetScancodeName(c));
+            }
+        }
+    }
 }
 
 const SDL_Scancode* Keymap_GetScancodes(KeymapButton button) {

@@ -12,9 +12,15 @@ struct SPUVConf {
 
 extern SDL_Mutex* soundLock;
 
+void SPU_PreInit(void);
 void SPU_Init(void (*cb)());
 void SPU_Upload(u32 dst, void* src, u32 size);
 void SPU_Tick(s16* output);
+/* Generate `frames` interleaved-stereo s16 samples into `out`, taking
+ * soundLock and ticking the registered 250 Hz callback every 192
+ * samples. Used by the SDL3 audio callback and by the direct MI_AO
+ * audio backend on PORT_MIYOO_MINI_PLUS. */
+void SPU_GenerateInto(s16* out, int frames);
 void SPU_VoiceStart(int vnum, u32 start_addr);
 void SPU_VoiceGetConf(int vnum, struct SPUVConf* conf);
 void SPU_VoiceSetConf(int vnum, struct SPUVConf* conf);
