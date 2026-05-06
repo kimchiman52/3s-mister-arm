@@ -17,9 +17,6 @@
 #include <assert.h>
 #include <memory.h>
 
-#define ERR_STOP                                                                                                       \
-    while (1) {}
-
 static s32 flPS2ConvertTextureFromContext(plContext* lpcontext, FLTexture* lpflTexture, u32 type);
 u32 flPS2GetTextureSize(u32 format, s32 dw, s32 dh, s32 bnum);
 s32 flPS2LockTexture(Rect* /* unused */, FLTexture* lpflTexture, plContext* lpcontext, u32 flag, s32 /* unused */);
@@ -172,26 +169,6 @@ u32 flPS2GetTextureHandle() {
     if (i == FL_TEXTURE_MAX) {
         flPS2SystemError(0, "ERROR flPS2GetTextureHandle flps2vram.c");
     }
-
-#if DEBUG
-    /* Black-BG investigation 2026-04-24 — Experiment 5b.
-     * Track handle allocation pool pressure. Log every 25th allocation and
-     * also any time we cross a high-water mark, so we can see if rollbacks
-     * are causing the pool to monotonically grow. */
-    {
-        static int s_alloc_count = 0;
-        static int s_high_water = 0;
-        s_alloc_count++;
-        if (i > s_high_water) {
-            s_high_water = i;
-        }
-        if (s_alloc_count <= 20 || (s_alloc_count % 25) == 0) {
-            fprintf(stderr,
-                    "[flPS2GetTextureHandle] alloc #%d slot=%d (high_water=%d / max=%d)\n",
-                    s_alloc_count, (int)i, s_high_water, (int)FL_TEXTURE_MAX);
-        }
-    }
-#endif
 
     return i + 1;
 }

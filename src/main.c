@@ -98,9 +98,6 @@ static MainPhase phase = MAIN_PHASE_INIT;
 
 static volatile sig_atomic_t shutdown_signal = 0;
 static volatile sig_atomic_t fps_toggle_requested = 0;
-static volatile sig_atomic_t super_effect_quality_cycle_requested = 0;
-static volatile sig_atomic_t ghost_resolution_cycle_requested = 0;
-static volatile sig_atomic_t ghost_count_cycle_requested = 0;
 static volatile sig_atomic_t arm_clock_cycle_requested = 0;
 static volatile sig_atomic_t game_mode_cycle_requested = 0;
 static volatile sig_atomic_t hold_to_pause_cycle_requested = 0;
@@ -138,22 +135,7 @@ static void on_shutdown_signal(int signo) {
         return;
     }
 
-    if (signo == SIGUSR2) {
-        super_effect_quality_cycle_requested = 1;
-        return;
-    }
-
 #ifdef SIGRTMIN
-    if (signo == SIGRTMIN) {
-        ghost_resolution_cycle_requested = 1;
-        return;
-    }
-
-    if (signo == SIGRTMIN + 1) {
-        ghost_count_cycle_requested = 1;
-        return;
-    }
-
     if (signo == SIGRTMIN + 2) {
         arm_clock_cycle_requested = 1;
         return;
@@ -186,10 +168,7 @@ static void install_shutdown_signal_handlers() {
     sigaction(SIGHUP, &action, NULL);
     sigaction(SIGTERM, &action, NULL);
     sigaction(SIGUSR1, &action, NULL);
-    sigaction(SIGUSR2, &action, NULL);
 #ifdef SIGRTMIN
-    sigaction(SIGRTMIN, &action, NULL);
-    sigaction(SIGRTMIN + 1, &action, NULL);
     sigaction(SIGRTMIN + 2, &action, NULL);
     sigaction(SIGRTMIN + 3, &action, NULL);
     sigaction(SIGRTMIN + 4, &action, NULL);
@@ -201,10 +180,7 @@ static void restore_shutdown_signal_handlers() {
     signal(SIGHUP, SIG_DFL);
     signal(SIGTERM, SIG_DFL);
     signal(SIGUSR1, SIG_DFL);
-    signal(SIGUSR2, SIG_DFL);
 #ifdef SIGRTMIN
-    signal(SIGRTMIN, SIG_DFL);
-    signal(SIGRTMIN + 1, SIG_DFL);
     signal(SIGRTMIN + 2, SIG_DFL);
     signal(SIGRTMIN + 3, SIG_DFL);
     signal(SIGRTMIN + 4, SIG_DFL);
@@ -668,18 +644,6 @@ static void handle_signal_requests() {
         fps_toggle_requested = 0;
         SDLApp_ToggleFPSOverlay();
     }
-    if (super_effect_quality_cycle_requested != 0) {
-        super_effect_quality_cycle_requested = 0;
-        SDLApp_CycleSuperEffectQualityMode();
-    }
-    if (ghost_resolution_cycle_requested != 0) {
-        ghost_resolution_cycle_requested = 0;
-        SDLApp_CycleGhostResolutionMode();
-    }
-    if (ghost_count_cycle_requested != 0) {
-        ghost_count_cycle_requested = 0;
-        SDLApp_CycleGhostCountMax();
-    }
     if (arm_clock_cycle_requested != 0) {
         arm_clock_cycle_requested = 0;
         SDLApp_CycleArmClock();
@@ -706,9 +670,6 @@ static int loop() {
 
     shutdown_signal = 0;
     fps_toggle_requested = 0;
-    super_effect_quality_cycle_requested = 0;
-    ghost_resolution_cycle_requested = 0;
-    ghost_count_cycle_requested = 0;
     arm_clock_cycle_requested = 0;
     game_mode_cycle_requested = 0;
 
@@ -918,6 +879,15 @@ static int loop() {
         }
     }
 
+    // Tier-1 netplay diag — Item 10: SIGTERM flush hook. Runs after the
+    // main loop exits but before cleanup() (which tears SDL down). If a
+    // netplay session was active we dump the packet ring, capture a final
+    // /proc/net/snmp UDP-row delta, and close the per-session log file.
+    // No-op when no session was active.
+#if defined(ENABLE_NETPLAY)
+    Netplay_FlushDiagnostics();
+#endif
+
     cleanup();
 
     if (shutdown_handlers_installed) {
@@ -958,6 +928,13 @@ int Netplay_Test_StunMock(void);
 // round-trip parity test harness (src/netplay/test_sparse_effect_save.c).
 // Same gating pattern as the other Phase 6 tests.
 int Netplay_Test_SparseEffectSave(void);
+// Step 6 of docs/plan-bilateral-hole-punch.md: forward-decl of the
+// bilateral hole-punch protocol test harness
+// (src/netplay/test_bilateral_punch.c). Same gating pattern as the
+// other Phase 6 tests. Spawns a localhost UDP rendezvous mock and
+// exercises the REGISTER/POLL/DELIVER round-trip plus the LAN-bypass
+// table; no external network dep.
+int Netplay_Test_BilateralPunch(void);
 #endif
 
 int main(int argc, const char* argv[]) {
@@ -1009,6 +986,16 @@ int main(int argc, const char* argv[]) {
 #else
         fprintf(stderr,
                 "--test-sparse-effect-save requires a build with ENABLE_NETPLAY=ON.\n");
+        return 2;
+#endif
+    }
+
+    if (configuration.test_bilateral_punch) {
+#ifdef ENABLE_NETPLAY
+        return Netplay_Test_BilateralPunch();
+#else
+        fprintf(stderr,
+                "--test-bilateral-punch requires a build with ENABLE_NETPLAY=ON.\n");
         return 2;
 #endif
     }

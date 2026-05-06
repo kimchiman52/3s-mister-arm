@@ -6,6 +6,7 @@
 #include "netplay/mist_handshake.h"
 #include "netplay/net_tuning.h"
 #include "netplay/sdl_net_adapter.h"
+#include "port/paths.h"
 #include "port/sdl/sdl_app.h"
 #include "sf33rd/Source/Game/effect/effect.h"
 #include "sf33rd/Source/Game/engine/grade.h"
@@ -97,15 +98,175 @@ static SDL_AtomicInt s_diag_enabled;
 static uint32_t s_session_uuid = 0;
 static uint64_t s_session_started_unix_ms = 0;
 static uint64_t s_session_started_ticks_ms = 0;
-// Cumulative kb_sent / kb_received from the last heartbeat; used to compute
-// per-second deltas without changing GekkoNet's accounting.
-static float s_hb_last_kb_sent = 0.0f;
-static float s_hb_last_kb_received = 0.0f;
-static uint64_t s_hb_last_ticks_ms = 0;
 // Reason buffer populated by callsites that initiate teardown (peer drop,
 // desync, user cancel) and consumed by the EXITING-state session-end log.
 static char s_session_end_reason[64] = { 0 };
 static int s_session_end_frame = -1;
+
+// === Tier-1 netplay diag — Item 3: previous-snapshot per-packet counters ===
+// Item 3 keeps cumulative counters in sdl_net_adapter.c. The heartbeat
+// reports deltas; we hold the previous snapshot here so update_network_stats
+// can compute (cur - prev) once per second.
+static uint64_t s_hb_prev_pkt_tx[8] = { 0 };
+static uint64_t s_hb_prev_pkt_rx[8] = { 0 };
+
+// === Tier-1 netplay diag — Item 5: GekkoAdvanceEvent watchdog ===
+// Latched UTC ms of the most recent GekkoAdvanceEvent (Phase or rollback
+// — both count). If it has been > 250ms since the last advance and we
+// haven't yet reported this stall, emit a WATCHDOG line and latch the
+// reported flag so we don't spam. Reset the latch on the next advance.
+// 250ms ~= 15 frames at 60 Hz; healthy sessions never go that long
+// without an advance even on a heavy rollback chain.
+static uint64_t s_last_advance_utc_ms = 0;
+static bool     s_watchdog_latched = false;
+
+// === Tier-1 netplay diag — Item 6: rollback-depth bucket histogram ===
+// Counts of advance batches by `frames_rolled_back` value, reset on each
+// heartbeat snapshot. Buckets: 0, 1-2, 3-4, 5-7, 8+.
+static uint32_t s_rb_buckets[5] = { 0 };
+
+// === Tier-1 netplay diag — Item 7: buffered netplay log file ===
+// One FILE* opened at session start, fflush'd once per second (driven by
+// the heartbeat in update_network_stats), closed in the EXITING branch of
+// Netplay_Run. All netplay-tagged lines pass through netplay_logf() which
+// tees to SDL_Log + the file.
+static FILE* s_netplay_log = NULL;
+
+// === Tier-1 netplay diag — Item 9: /proc/net/snmp UDP-drop snapshots ===
+// Captured at session start, on peer-disconnect, and at session end. The
+// heartbeat doesn't sample this — it's relatively expensive (file read +
+// parse) and only useful for before/after deltas.
+typedef struct UdpSnmp {
+    bool valid;
+    uint64_t in_errors;
+    uint64_t rcvbuf_errors;
+    uint64_t no_ports;
+} UdpSnmp;
+static UdpSnmp s_udp_snmp_session_start = { 0 };
+
+// Read /proc/net/snmp and pull the InErrors, RcvbufErrors, NoPorts fields
+// out of the UDP row. Returns false (and leaves *out untouched apart from
+// `valid=false`) on any parse failure or if the file doesn't exist (e.g.
+// non-MiSTer host machines don't ship /proc/net/snmp). The format is two
+// lines per protocol: a header with field names followed by a values line.
+static bool read_proc_net_snmp_udp(UdpSnmp* out) {
+    if (out == NULL) {
+        return false;
+    }
+    out->valid = false;
+    FILE* f = fopen("/proc/net/snmp", "r");
+    if (f == NULL) {
+        return false;
+    }
+    char header[1024];
+    char values[1024];
+    bool got = false;
+    while (fgets(header, sizeof(header), f) != NULL) {
+        if (SDL_strncmp(header, "Udp:", 4) != 0) {
+            continue;
+        }
+        if (fgets(values, sizeof(values), f) == NULL) {
+            break;
+        }
+        if (SDL_strncmp(values, "Udp:", 4) != 0) {
+            // /proc/net/snmp pairs Udp: header / Udp: values lines.
+            // If the second line isn't a values line, give up.
+            break;
+        }
+        // Find indices of InErrors, RcvbufErrors, NoPorts in the header
+        // tokens. Token 0 is the literal "Udp:" prefix.
+        int idx_inerr = -1, idx_rcvbuf = -1, idx_noports = -1;
+        int hdr_n = 0;
+        char* save_h = NULL;
+        for (char* tok = SDL_strtok_r(header, " \t\r\n", &save_h);
+             tok != NULL && hdr_n < 64;
+             tok = SDL_strtok_r(NULL, " \t\r\n", &save_h)) {
+            if (SDL_strcmp(tok, "InErrors") == 0)      idx_inerr = hdr_n;
+            else if (SDL_strcmp(tok, "RcvbufErrors") == 0) idx_rcvbuf = hdr_n;
+            else if (SDL_strcmp(tok, "NoPorts") == 0)     idx_noports = hdr_n;
+            hdr_n++;
+        }
+        // Tokenize values; pull by index.
+        char* val_tokens[64];
+        int val_n = 0;
+        char* save_v = NULL;
+        for (char* tok = SDL_strtok_r(values, " \t\r\n", &save_v);
+             tok != NULL && val_n < 64;
+             tok = SDL_strtok_r(NULL, " \t\r\n", &save_v)) {
+            val_tokens[val_n++] = tok;
+        }
+        if (idx_inerr   >= 0 && idx_inerr   < val_n) out->in_errors      = (uint64_t)SDL_strtoull(val_tokens[idx_inerr],   NULL, 10);
+        if (idx_rcvbuf  >= 0 && idx_rcvbuf  < val_n) out->rcvbuf_errors  = (uint64_t)SDL_strtoull(val_tokens[idx_rcvbuf],  NULL, 10);
+        if (idx_noports >= 0 && idx_noports < val_n) out->no_ports       = (uint64_t)SDL_strtoull(val_tokens[idx_noports], NULL, 10);
+        out->valid = (idx_inerr >= 0 || idx_rcvbuf >= 0 || idx_noports >= 0);
+        got = true;
+        break;
+    }
+    fclose(f);
+    return got;
+}
+
+// Tee writer: the heartbeat and event lines go to both the system log
+// (via SDL_Log so existing log surfaces still receive them) and the
+// per-session netplay log file. Cheap — one fwrite per call once the
+// file is open.
+static void netplay_log_line(const char* line) {
+    SDL_Log("%s", line);
+    if (s_netplay_log != NULL) {
+        fputs(line, s_netplay_log);
+        fputc('\n', s_netplay_log);
+    }
+}
+
+// Opens <pref>/logs/netplay-<utc_ms>.log for the active session. Block
+// buffered (fflush is driven by the heartbeat at 1 Hz) so we avoid the
+// per-line fopen+fwrite+fclose pattern in backend_logf. The filename is
+// announced via SDL_Log at open time so post-mortem readers can find it
+// quickly.
+static void netplay_log_open(uint64_t utc_ms) {
+    if (s_netplay_log != NULL) {
+        return;
+    }
+    const char* pref = Paths_GetPrefPath();
+    if (pref == NULL || pref[0] == '\0') {
+        return;
+    }
+    char logs_dir[512];
+    SDL_snprintf(logs_dir, sizeof(logs_dir), "%slogs", pref);
+    SDL_CreateDirectory(logs_dir);
+    char path[640];
+    SDL_snprintf(path, sizeof(path), "%s/netplay-%llu.log",
+                 logs_dir, (unsigned long long)utc_ms);
+    s_netplay_log = fopen(path, "w");
+    if (s_netplay_log != NULL) {
+        // Block-buffered with a small buffer; we drive fflush from the heartbeat.
+        setvbuf(s_netplay_log, NULL, _IOFBF, 4096);
+        SDL_Log("[netplay sess=%08x] netplay log file: %s",
+                s_session_uuid, path);
+    } else {
+        SDL_Log("[netplay sess=%08x] failed to open netplay log: %s",
+                s_session_uuid, path);
+    }
+}
+
+static void netplay_log_close(void) {
+    if (s_netplay_log != NULL) {
+        fflush(s_netplay_log);
+        fclose(s_netplay_log);
+        s_netplay_log = NULL;
+    }
+}
+
+// UTC-ms helper used by the watchdog (Item 5), packet-ring (Item 4), and
+// session-start/-end logs. P-1.1 fix: use clock_gettime(CLOCK_REALTIME)
+// for full millisecond precision so timestamps cross-correlate exactly
+// with sdl_net_adapter.c's now_utc_ms (same source). On Linux this is a
+// vDSO-fast read with no syscall, identical perf profile to time(NULL).
+static inline uint64_t netplay_utc_ms(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    return (uint64_t)ts.tv_sec * 1000ULL + (uint64_t)(ts.tv_nsec / 1000000L);
+}
 
 // Phase 6 Step 8: lobby-session gate for Layer 3 MIST handshake.
 // Dormant since the RmlUi lobby UI was removed — no code path sets
@@ -564,17 +725,34 @@ static void configure_gekko() {
             s_session_uuid = 1;  // 0 reserved as "unset" sentinel.
         }
     }
-    s_session_started_unix_ms = (uint64_t)time(NULL) * 1000ULL;
+    s_session_started_unix_ms = netplay_utc_ms();
     s_session_started_ticks_ms = SDL_GetTicks();
-    s_hb_last_kb_sent = 0.0f;
-    s_hb_last_kb_received = 0.0f;
-    s_hb_last_ticks_ms = s_session_started_ticks_ms;
     s_session_end_reason[0] = '\0';
     s_session_end_frame = -1;
+    // Tier-1 netplay diag — Item 5 (watchdog): seed last-advance to "now" so
+    // the watchdog only fires once we've actually seen at least one advance
+    // followed by a real stall. Items 3/6: zero per-session counters.
+    s_last_advance_utc_ms = netplay_utc_ms();
+    s_watchdog_latched = false;
+    SDL_zeroa(s_hb_prev_pkt_tx);
+    SDL_zeroa(s_hb_prev_pkt_rx);
+    SDL_zeroa(s_rb_buckets);
+
+    // Tier-1 netplay diag — Item 7: open the per-session netplay log file.
+    // Block-buffered, fflush'd 1 Hz from the heartbeat. Filename includes
+    // the session-start unix ms so cross-peer pairing is just matching ms.
+    netplay_log_open(s_session_started_unix_ms);
+
+    // Tier-1 netplay diag — Item 9: capture /proc/net/snmp UDP-row baseline
+    // so peer-disconnect / session-end can emit deltas. Zeroed sample on
+    // non-MiSTer hosts (read returns false; valid stays false).
+    SDL_zero(s_udp_snmp_session_start);
+    read_proc_net_snmp_udp(&s_udp_snmp_session_start);
+
     SDL_Log("[netplay sess=%08x] session-start utc_ms=%llu pred_window=%d state_size=%zu role=%s",
             s_session_uuid,
             (unsigned long long)s_session_started_unix_ms,
-            cfg_pred_window,
+            (int)config.input_prediction_window,
             (size_t)sizeof(State),
             (player_number == 0) ? "host" : "joiner");
 
@@ -745,6 +923,30 @@ static void process_session() {
     u16 local_inputs = get_inputs();
     gekko_add_local_input(session, player_handle, &local_inputs);
 
+    // Tier-1 netplay diag — Item 5: GekkoAdvanceEvent watchdog. Fire once
+    // per stall episode if no advance has happened in 250 ms. This is the
+    // exact signal we lacked for the 17.6-min disconnect: friend's side
+    // stopped advancing, peer-disconnect waited 5s for the timeout, no
+    // logging in between. 250 ms = ~15 frames at 60 Hz; even a heavy
+    // rollback chain returns to advance well inside that window.
+    if (session_state == NETPLAY_SESSION_RUNNING && !s_watchdog_latched) {
+        const uint64_t now_ms = netplay_utc_ms();
+        if (now_ms > s_last_advance_utc_ms + 250) {
+            const uint64_t stall_ms = now_ms - s_last_advance_utc_ms;
+            char line[256];
+            SDL_snprintf(line, sizeof(line),
+                         "[netplay sess=%08x] WATCHDOG no-advance for %llu ms "
+                         "(last_frame=%d frames_behind=%.1f recent_rb=%d)",
+                         s_session_uuid,
+                         (unsigned long long)stall_ms,
+                         s_last_advance_frame,
+                         (double)frames_behind,
+                         (int)network_stats.rollback);
+            netplay_log_line(line);
+            s_watchdog_latched = true;
+        }
+    }
+
     int session_event_count = 0;
     GekkoSessionEvent** session_events = gekko_session_events(session, &session_event_count);
 
@@ -771,6 +973,33 @@ static void process_session() {
                     s_session_uuid, s_last_advance_frame);
             SDL_strlcpy(s_session_end_reason, "peer-disconnected", sizeof(s_session_end_reason));
             s_session_end_frame = s_last_advance_frame;
+
+            // Tier-1 netplay diag — Item 4: dump packet ring on disconnect
+            // so we capture the most recent ~512 packets when the 5-second
+            // GekkoNet timeout fires. Also Item 9: emit UDP-row deltas so
+            // we can tell whether the kernel was dropping packets in the
+            // silence window.
+            {
+                UdpSnmp now_snmp;
+                SDL_zero(now_snmp);
+                read_proc_net_snmp_udp(&now_snmp);
+                if (now_snmp.valid && s_udp_snmp_session_start.valid) {
+                    char line[256];
+                    SDL_snprintf(line, sizeof(line),
+                                 "[netplay sess=%08x] kernel-udp-stats: "
+                                 "in_errors=%llu rcvbuf_errs=%llu noport_errs=%llu",
+                                 s_session_uuid,
+                                 (unsigned long long)(now_snmp.in_errors      - s_udp_snmp_session_start.in_errors),
+                                 (unsigned long long)(now_snmp.rcvbuf_errors  - s_udp_snmp_session_start.rcvbuf_errors),
+                                 (unsigned long long)(now_snmp.no_ports       - s_udp_snmp_session_start.no_ports));
+                    netplay_log_line(line);
+                }
+                SDLNetAdapter_DumpPacketRing(
+                    netplay_utc_ms(),
+                    (player_number == 0) ? "host" : "joiner",
+                    s_session_uuid);
+            }
+
             push_event(NETPLAY_EVENT_DISCONNECTED);
             handle_disconnection();
             break;
@@ -780,6 +1009,12 @@ static void process_session() {
             SDL_Log("[netplay sess=%08x] event=session-started frame=%d",
                     s_session_uuid, s_last_advance_frame);
             session_state = NETPLAY_SESSION_RUNNING;
+            // P-2.1 fix: re-seed last-advance now so the watchdog clock
+            // starts from the RUNNING transition, not from CONNECTING-entry
+            // in configure_gekko(). Multi-second handshakes would otherwise
+            // make the first watchdog check after RUNNING fire spuriously.
+            s_last_advance_utc_ms = netplay_utc_ms();
+            s_watchdog_latched = false;
             break;
 
         case GekkoDesyncDetected:
@@ -798,6 +1033,14 @@ static void process_session() {
             if (SDL_GetAtomicInt(&s_diag_enabled)) {
                 dump_desync_state(frame, local_cs, remote_cs);
                 dump_input_history_on_desync(frame);
+                // Tier-1 netplay diag — Item 4: also dump the packet ring
+                // alongside the state/input dumps so all three artifacts
+                // come out together. Useful for "did we miss an Inputs
+                // packet right before the divergence?" investigations.
+                SDLNetAdapter_DumpPacketRing(
+                    netplay_utc_ms(),
+                    (player_number == 0) ? "host-desync" : "joiner-desync",
+                    s_session_uuid);
             }
             SDL_strlcpy(s_session_end_reason, "desync", sizeof(s_session_end_reason));
             s_session_end_frame = frame;
@@ -850,6 +1093,15 @@ static void process_events(bool drawing_allowed) {
             const bool rolling_back = event->data.adv.rolling_back;
             advance_game(event, drawing_allowed && !rolling_back);
             frames_rolled_back += rolling_back ? 1 : 0;
+            // Tier-1 netplay diag — Item 5: stamp UTC ms of the most recent
+            // advance regardless of whether it was the rolling-back leg.
+            // Rollback advances are still progress; an absence of any advance
+            // for >250 ms is what we want to flag.
+            s_last_advance_utc_ms = netplay_utc_ms();
+            if (s_watchdog_latched) {
+                // Reset the latch so the next stall episode emits.
+                s_watchdog_latched = false;
+            }
             break;
 
         case GekkoSaveEvent:
@@ -863,6 +1115,26 @@ static void process_events(bool drawing_allowed) {
     }
 
     frame_max_rollback = SDL_max(frame_max_rollback, frames_rolled_back);
+
+    // Tier-1 netplay diag — Item 6: bucket per-batch rollback depth. Done
+    // here (not inside the per-event switch) so a single update_session()
+    // call producing N rolling-back advances is counted as one rollback of
+    // depth N, matching what users observe.
+    if (frames_rolled_back > 0) {
+        // P-2.5 fix: bucket 0 is filled by the else branch below; the chain
+        // here only runs when frames_rolled_back >= 1, so a final `else b=0`
+        // would be unreachable.
+        int b;
+        if (frames_rolled_back >= 8)      b = 4;
+        else if (frames_rolled_back >= 5) b = 3;
+        else if (frames_rolled_back >= 3) b = 2;
+        else                              b = 1;  // 1..2
+        s_rb_buckets[b]++;
+    } else {
+        // Note: a "no rollback" advance batch still counts toward bucket 0
+        // so the histogram has a meaningful baseline (no-rb % per second).
+        s_rb_buckets[0]++;
+    }
 }
 
 static void step_logic(bool drawing_allowed) {
@@ -893,19 +1165,43 @@ static void update_network_stats() {
         // baseline stats still land — they cost nothing.
         if (session_state == NETPLAY_SESSION_RUNNING) {
             const bool diag = SDL_GetAtomicInt(&s_diag_enabled) != 0;
-            uint64_t now_ms = SDL_GetTicks();
-            float dt_s = (now_ms > s_hb_last_ticks_ms)
-                ? (float)(now_ms - s_hb_last_ticks_ms) / 1000.0f
-                : 1.0f;
-            float kbps_tx = (net_stats.kb_sent - s_hb_last_kb_sent) / dt_s;
-            float kbps_rx = (net_stats.kb_received - s_hb_last_kb_received) / dt_s;
-            s_hb_last_kb_sent = net_stats.kb_sent;
-            s_hb_last_kb_received = net_stats.kb_received;
-            s_hb_last_ticks_ms = now_ms;
 
+            // Tier-1 netplay diag — Item 2: kb_sent / kb_received are PER-SECOND
+            // rates (gekkonet net.h:136-137 — kb_sent_per_sec / kb_received_per_sec
+            // exposed via the GekkoNetworkStats accessor). Emit them as kbps_tx /
+            // kbps_rx directly; the previous code subtracted from cached "last"
+            // values, but the cached values were already rates, so the subtraction
+            // produced spurious zero-or-negative numbers. Drop the s_hb_last_kb_*
+            // statics entirely.
+            const float kbps_tx = net_stats.kb_sent;
+            const float kbps_rx = net_stats.kb_received;
+
+            // Tier-1 netplay diag — Item 3: per-packet-type delta counters.
+            uint64_t cur_tx[8] = { 0 }, cur_rx[8] = { 0 };
+            SDLNetAdapter_SnapshotCounters(cur_tx, cur_rx);
+            uint64_t d_tx[8], d_rx[8];
+            for (int k = 0; k < 8; k++) {
+                d_tx[k] = cur_tx[k] - s_hb_prev_pkt_tx[k];
+                d_rx[k] = cur_rx[k] - s_hb_prev_pkt_rx[k];
+            }
+            SDL_memcpy(s_hb_prev_pkt_tx, cur_tx, sizeof(s_hb_prev_pkt_tx));
+            SDL_memcpy(s_hb_prev_pkt_rx, cur_rx, sizeof(s_hb_prev_pkt_rx));
+
+            // Item 6: snapshot + reset rb_buckets so the heartbeat carries the
+            // delta since the last hb (matching the kbps semantics). Buckets
+            // 0..4 = rb depth 0, 1-2, 3-4, 5-7, 8+.
+            uint32_t rb_snap[5];
+            SDL_memcpy(rb_snap, s_rb_buckets, sizeof(rb_snap));
+            SDL_zeroa(s_rb_buckets);
+
+            char line[512];
             if (diag) {
-                fprintf(stderr,
-                        "[netplay sess=%08x] hb f=%d ping=%d jitter=%d kbps_tx=%.1f kbps_rx=%.1f rb=%d behind=%.1f\n",
+                SDL_snprintf(line, sizeof(line),
+                        "[netplay sess=%08x] hb f=%d ping=%d jitter=%d "
+                        "kbps_tx=%.1f kbps_rx=%.1f rb=%d behind=%.1f "
+                        "tx=I:%llu,A:%llu,SH:%llu,NH:%llu "
+                        "rx=I:%llu,A:%llu,SH:%llu,NH:%llu "
+                        "rb_hist=0:%u,1:%u,2:%u,3:%u,4:%u",
                         s_session_uuid,
                         s_last_advance_frame,
                         (int)network_stats.ping,
@@ -913,16 +1209,34 @@ static void update_network_stats() {
                         (double)kbps_tx,
                         (double)kbps_rx,
                         (int)network_stats.rollback,
-                        (double)frames_behind);
+                        (double)frames_behind,
+                        (unsigned long long)d_tx[1],   // Inputs
+                        (unsigned long long)d_tx[3],   // InputAck
+                        (unsigned long long)d_tx[6],   // SessionHealth
+                        (unsigned long long)d_tx[7],   // NetworkHealth
+                        (unsigned long long)d_rx[1],
+                        (unsigned long long)d_rx[3],
+                        (unsigned long long)d_rx[6],
+                        (unsigned long long)d_rx[7],
+                        rb_snap[0], rb_snap[1], rb_snap[2], rb_snap[3], rb_snap[4]);
             } else {
-                fprintf(stderr,
-                        "[netplay hb] f=%d ping=%d rb=%d behind=%.1f\n",
+                SDL_snprintf(line, sizeof(line),
+                        "[netplay hb] f=%d ping=%d rb=%d behind=%.1f",
                         s_last_advance_frame,
                         (int)network_stats.ping,
                         (int)network_stats.rollback,
                         (double)frames_behind);
             }
+            // Tier-1 netplay diag — Item 7: tee to the netplay log file.
+            // Keep stderr surface for tail -f / wrapper-log workflows.
+            fputs(line, stderr);
+            fputc('\n', stderr);
             fflush(stderr);
+            if (s_netplay_log != NULL) {
+                fputs(line, s_netplay_log);
+                fputc('\n', s_netplay_log);
+                fflush(s_netplay_log);
+            }
         }
 
         frame_max_rollback = 0;
@@ -1141,8 +1455,15 @@ void Netplay_Run() {
             if (session != NULL) {
                 gekko_network_stats(session, player_handle ^ 1, &final_stats);
             }
-            SDL_Log("[netplay sess=%08x] session-end reason=%s frame=%d duration_ms=%llu "
-                    "final_ping=%d final_jitter=%d kb_sent=%.1f kb_received=%.1f",
+            // Tier-1 netplay diag — Item 2: kb_sent / kb_received are PER-SECOND
+            // rates (gekkonet net.h:136-137), not session totals. Label the
+            // session-end fields explicitly as last-window rates so log
+            // consumers don't confuse them with cumulative bytes.
+            char line[512];
+            SDL_snprintf(line, sizeof(line),
+                    "[netplay sess=%08x] session-end reason=%s frame=%d duration_ms=%llu "
+                    "final_ping=%d final_jitter=%d "
+                    "last_window_kbps_tx=%.1f last_window_kbps_rx=%.1f",
                     s_session_uuid,
                     s_session_end_reason[0] ? s_session_end_reason : "unknown",
                     s_session_end_frame,
@@ -1151,6 +1472,34 @@ void Netplay_Run() {
                     (int)final_stats.jitter,
                     (double)final_stats.kb_sent,
                     (double)final_stats.kb_received);
+            netplay_log_line(line);
+
+            // Tier-1 netplay diag — Item 9: final UDP-row delta on session-end.
+            // P-1.2 fix: the peer-disconnect handler (process_session) already
+            // emits this exact SNMP delta line just before transitioning to
+            // EXITING. Skip it here to avoid double-logging the same numbers.
+            // For all other end reasons (desync, user-canceled, unknown) the
+            // disconnect handler did not run, so we still emit on this path.
+            if (SDL_strcmp(s_session_end_reason, "peer-disconnected") != 0) {
+                UdpSnmp end_snmp;
+                SDL_zero(end_snmp);
+                if (read_proc_net_snmp_udp(&end_snmp) && end_snmp.valid && s_udp_snmp_session_start.valid) {
+                    char snmp_line[256];
+                    SDL_snprintf(snmp_line, sizeof(snmp_line),
+                                 "[netplay sess=%08x] kernel-udp-stats: "
+                                 "in_errors=%llu rcvbuf_errs=%llu noport_errs=%llu",
+                                 s_session_uuid,
+                                 (unsigned long long)(end_snmp.in_errors      - s_udp_snmp_session_start.in_errors),
+                                 (unsigned long long)(end_snmp.rcvbuf_errors  - s_udp_snmp_session_start.rcvbuf_errors),
+                                 (unsigned long long)(end_snmp.no_ports       - s_udp_snmp_session_start.no_ports));
+                    netplay_log_line(snmp_line);
+                }
+            }
+
+            // Tier-1 netplay diag — Item 7: close the netplay log file once
+            // we've emitted session-end + the final SNMP delta.
+            netplay_log_close();
+
             s_session_uuid = 0;  // Mark closed so a stray re-entry doesn't double-log.
         }
 
@@ -1238,6 +1587,64 @@ void Netplay_SetStunSocket(struct NET_DatagramSocket* socket) {
 // Step 6 (plan P-2 #18) — single-slot teardown callback.
 void Netplay_SetSessionTeardownCallback(void (*cb)(void)) {
     session_teardown_cb = cb;
+}
+
+// === Tier-1 netplay diag — Item 10: SIGTERM flush hook ===
+// main.c calls this after its main loop exits but before SDL teardown so
+// the diagnostics survive wrapper-SIGTERM. Idempotent: a guard on
+// s_session_uuid keeps it from double-running if the regular EXITING path
+// already cleaned up.
+void Netplay_FlushDiagnostics(void) {
+    // No active session — nothing to flush. The s_session_uuid==0 sentinel
+    // is set in the EXITING branch after final-summary emission.
+    if (s_session_uuid == 0 && s_netplay_log == NULL) {
+        return;
+    }
+
+    if (s_session_uuid != 0) {
+        // Best-effort final heartbeat. We don't have fresh GekkoNetworkStats
+        // (the session may already be torn down or partially gone), so just
+        // record the last observed advance frame + frames_behind.
+        char line[256];
+        SDL_snprintf(line, sizeof(line),
+                     "[netplay sess=%08x] sigterm-flush last_frame=%d "
+                     "frames_behind=%.1f reason=%s",
+                     s_session_uuid,
+                     s_last_advance_frame,
+                     (double)frames_behind,
+                     s_session_end_reason[0] ? s_session_end_reason : "sigterm");
+        netplay_log_line(line);
+
+        // Item 9: SNMP UDP-row delta on shutdown.
+        UdpSnmp end_snmp;
+        SDL_zero(end_snmp);
+        if (read_proc_net_snmp_udp(&end_snmp) && end_snmp.valid && s_udp_snmp_session_start.valid) {
+            char snmp_line[256];
+            SDL_snprintf(snmp_line, sizeof(snmp_line),
+                         "[netplay sess=%08x] kernel-udp-stats: "
+                         "in_errors=%llu rcvbuf_errs=%llu noport_errs=%llu",
+                         s_session_uuid,
+                         (unsigned long long)(end_snmp.in_errors      - s_udp_snmp_session_start.in_errors),
+                         (unsigned long long)(end_snmp.rcvbuf_errors  - s_udp_snmp_session_start.rcvbuf_errors),
+                         (unsigned long long)(end_snmp.no_ports       - s_udp_snmp_session_start.no_ports));
+            netplay_log_line(snmp_line);
+        }
+
+        // Item 4: dump packet ring with a "sigterm" role tag so post-mortem
+        // readers can distinguish the dump source from peer-disconnect /
+        // desync dumps.
+        SDLNetAdapter_DumpPacketRing(
+            netplay_utc_ms(),
+            (player_number == 0) ? "host-sigterm" : "joiner-sigterm",
+            s_session_uuid);
+    }
+
+    // Item 7: flush + close the netplay log file.
+    netplay_log_close();
+
+    // P-2.2 fix: clear the session-uuid sentinel so a second call to this
+    // function is a no-op. Mirrors the EXITING branch's post-flush zeroing.
+    s_session_uuid = 0;
 }
 
 // === 3SX-private extensions ===

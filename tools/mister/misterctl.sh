@@ -51,15 +51,24 @@ user="${MISTER_USER:-root}"
 password="${MISTER_PASSWORD:-}"
 remote_root="${MISTER_ROOT:-/media/fat/games/3s-arm}"
 remote_fat_root="${MISTER_FAT_ROOT:-/media/fat}"
-wrapper_core_relpath="${MISTER_WRAPPER_CORE_RELPATH:-_Other/3S-ARM.rbf}"
+# Override with an explicit relative path (e.g. "_Other/3S-ARM_20260429.rbf")
+# when reproducing a specific build. Empty (default) → preflight resolves the
+# latest dated rbf at runtime via glob, matching the MiSTer cores convention.
+wrapper_core_relpath="${MISTER_WRAPPER_CORE_RELPATH:-}"
 
 wrapper_preflight_script() {
+    local explicit="${wrapper_core_relpath}"
     cat <<EOF
 if [ ! -x './MiSTer_3S-ARM' ]; then
   echo __WRAPPER_HPS_MISSING__
   exit 10
 fi
-if [ ! -f './${wrapper_core_relpath}' ]; then
+if [ -n '${explicit}' ]; then
+  WRAPPER_RBF='./${explicit}'
+else
+  WRAPPER_RBF=\$(ls -1t ./_Other/3S-ARM_*.rbf 2>/dev/null | head -1)
+fi
+if [ -z "\${WRAPPER_RBF}" ] || [ ! -f "\${WRAPPER_RBF}" ]; then
   echo __WRAPPER_RBF_MISSING__
   exit 11
 fi
@@ -347,7 +356,7 @@ probe-wrapper)
 set -e
 cd '${remote_fat_root}'
 $(wrapper_preflight_script)
-timeout 20 env THIRDSARM_WRAPPER_FORCE=1 ./MiSTer_3S-ARM './${wrapper_core_relpath}' '' --probe-renderer-only || rc=\$?
+timeout 20 env THIRDSARM_WRAPPER_FORCE=1 ./MiSTer_3S-ARM "\${WRAPPER_RBF}" '' --probe-renderer-only || rc=\$?
 printf '__WRAPPER_PROBE_RC__=%s\n' "\${rc:-0}"
 tail -n 80 ./games/3s-arm/logs/osd-wrapper.log || true
 tail -n 80 ./games/3s-arm/logs/last-run.log || true
@@ -363,7 +372,7 @@ smoke-wrapper)
 set -e
 cd '${remote_fat_root}'
 $(wrapper_preflight_script)
-timeout 20 env THIRDSARM_WRAPPER_FORCE=1 ./MiSTer_3S-ARM './${wrapper_core_relpath}' || rc=\$?
+timeout 20 env THIRDSARM_WRAPPER_FORCE=1 ./MiSTer_3S-ARM "\${WRAPPER_RBF}" || rc=\$?
 printf '__WRAPPER_RC__=%s\n' "\${rc:-0}"
 tail -n 80 ./games/3s-arm/logs/osd-wrapper.log || true
 tail -n 80 ./games/3s-arm/logs/last-run.log || true
@@ -416,7 +425,7 @@ run-wrapper)
 set -e
 cd '${remote_fat_root}'
 $(wrapper_preflight_script)
-${wrapper_timeout_prefix}env THIRDSARM_WRAPPER_FORCE=1 ./MiSTer_3S-ARM './${wrapper_core_relpath}' ''${runtime_args_invocation} || rc=\$?
+${wrapper_timeout_prefix}env THIRDSARM_WRAPPER_FORCE=1 ./MiSTer_3S-ARM "\${WRAPPER_RBF}" ''${runtime_args_invocation} || rc=\$?
 printf '__WRAPPER_RUN_RC__=%s\n' "\${rc:-0}"
 tail -n 80 ./games/3s-arm/logs/osd-wrapper.log || true
 tail -n 80 ./games/3s-arm/logs/last-run.log || true
@@ -436,8 +445,13 @@ if [ -x './MiSTer_3S-ARM' ]; then
 else
   echo __WRAPPER_HPS_MISSING__
 fi
-if [ -f './${wrapper_core_relpath}' ]; then
-  echo __WRAPPER_RBF_OK__
+if [ -n '${wrapper_core_relpath}' ]; then
+  WRAPPER_RBF='./${wrapper_core_relpath}'
+else
+  WRAPPER_RBF=\$(ls -1t ./_Other/3S-ARM_*.rbf 2>/dev/null | head -1)
+fi
+if [ -n "\${WRAPPER_RBF}" ] && [ -f "\${WRAPPER_RBF}" ]; then
+  printf '__WRAPPER_RBF_OK__=%s\n' "\${WRAPPER_RBF}"
 else
   echo __WRAPPER_RBF_MISSING__
 fi

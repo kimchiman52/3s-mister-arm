@@ -75,4 +75,15 @@ typedef struct {
 
 bool Netplay_PollEvent(NetplayEvent* out);
 
+// === Tier-1 netplay diag — Item 10: SIGTERM flush hook ===
+// Called from src/main.c after the main loop exits but before SDL teardown
+// so we capture diagnostics for wrapper-initiated SIGTERM scenarios. If
+// no session was active, this is a no-op. If one was active, it:
+//   - emits a final heartbeat-shaped line (best-effort, no per-second wait)
+//   - dumps the per-packet ring buffer to <pref>/states/
+//   - captures /proc/net/snmp UDP-row deltas
+//   - flushes and closes the per-session netplay log file
+// All file writes are guarded so a partial pref-path setup can't crash.
+void Netplay_FlushDiagnostics(void);
+
 #endif

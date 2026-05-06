@@ -248,6 +248,13 @@ void read_args(int argc, const char* argv[], Configuration* configuration) {
                     NULL,
                     0,
                     0),
+        OPT_BOOLEAN(0,
+                    "test-bilateral-punch",
+                    &configuration->test_bilateral_punch,
+                    "Run the bilateral hole-punch protocol unit tests and exit. Requires ENABLE_NETPLAY=ON with -DENABLE_NETPLAY_TESTS.",
+                    NULL,
+                    0,
+                    0),
 #if ENABLE_PERF_TELEMETRY
         OPT_GROUP("Performance"),
         OPT_INTEGER(0,

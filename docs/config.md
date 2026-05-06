@@ -57,6 +57,9 @@ Possible values:
 
 Controls MiSTer-only rendering optimization during super art activation.
 
+**Dev-only:** the OSD knob has been removed. Flip via `config.ini` for
+release builds; the runtime read path is preserved.
+
 Defaults:
 - MiSTer builds: `cached-bg`
 - Non-MiSTer builds: `full`
@@ -68,40 +71,6 @@ Possible values:
 Notes:
 - This setting is only active on MiSTer builds. On non-MiSTer builds the config key is parsed but behaves like `full`.
 - Detection uses `sa_stop_check()` (cinematic freeze signal) which fires for all characters and all super arts. A grace period of ~15 frames after the signal drops covers the zoom-out transition.
-
-### `ghost-resolution`
-
-Controls whether ghost/after-image sprites render at half resolution.
-
-Defaults:
-- `full`
-
-Possible values:
-- `full`: Ghost sprites render at normal resolution (no change from vanilla)
-- `half`: Ghost sprites render at 2x step in X and Y, duplicating pixels (~75% less pixel work)
-
-Notes:
-- Ghost sprites are the blue-tinted semi-transparent after-images that appear during super art activations.
-- The half-resolution mode is nearly imperceptible because the sprites are already translucent blurs.
-- On MiSTer, this can be toggled at runtime via the OSD menu.
-
-### `ghost-count`
-
-Controls the maximum number of ghost copies per activation.
-
-Defaults:
-- `4`
-
-Possible values:
-- `1`: Maximum 1 ghost copy per activation
-- `2`: Maximum 2 ghost copies per activation
-- `3`: Maximum 3 ghost copies per activation
-- `4`: No cap (vanilla behavior)
-
-Notes:
-- Lower values reduce sprite rendering cost during super art activations.
-- The cap applies to the `dmcal_d` value in the after-image effect system. Original values range 1-4 depending on the move.
-- On MiSTer, this can be toggled at runtime via the OSD menu.
 
 ### `show-fps`
 
@@ -163,6 +132,26 @@ out-of-band (text message, voice) and paste it into the wrapper OSD.
   fully covers the four-server fallback chain's 2 s/server × 4 budget.
   Lowering helps failover but risks false negatives on slow networks.
 
+`netplay-direct-p2p-disable-bilateral` (bool, default `false`)
+- If true, disables the bilateral hole-punch fallback. Direct-P2P will
+  terminate with "Cannot reach peer. Possible Symmetric NAT." on punch
+  timeout, matching behavior before the bilateral feature landed.
+
+`netplay-direct-p2p-signal-url` (string, default
+`udp://46.62.244.55:3478`)
+- Rendezvous server URL for bilateral hole-punch endpoint exchange.
+  Only used when the direct punch fails; never contacted on LAN sessions.
+  UDP scheme only.
+
+`netplay-direct-p2p-signal-budget-ms` (int, default `8000`)
+- Maximum wall-clock time spent waiting for the rendezvous server to
+  pair us with our peer before giving up and reporting bilateral failure.
+
+`netplay-direct-p2p-bilateral-punch-ms` (int, default `3000`)
+- Length of the bilateral Stun_HolePunch window, in milliseconds.
+  Longer than the initial direct punch window to accommodate post-
+  signaling clock skew between peers.
+
 ### Netplay tuning
 
 `netplay-input-prediction-window` (int, default `8`)
@@ -176,11 +165,13 @@ out-of-band (text message, voice) and paste it into the wrapper OSD.
 
 `netplay-diag-enable` (bool, default `true`)
 - Master gate for session-tagged diagnostics: per-session UUID, UTC
-  timestamp, jitter, cumulative kb_sent/recv heartbeat extras, and the
+  timestamp, jitter, kbps_tx/rx heartbeat extras, and the
   post-disconnect desync state dump. Recording cost is paid in the
   production codepath regardless; this knob is an emergency mute for
   serial-console noise. Default `true` so a friend running a build for
   a shared session contributes useful logs without having to opt in.
+- See [docs/netplay-diagnostics.md](netplay-diagnostics.md) for the
+  full set of instrumentation, log formats, and dump file locations.
 
 `netplay-sparse-effect-save-enabled` (bool, default `true`)
 - Enable the Option A sparse effect-pool GameState save path. When on

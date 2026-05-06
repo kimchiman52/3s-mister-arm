@@ -66,7 +66,21 @@ typedef enum {
     DIRECT_P2P_FAILED_SYMMETRIC,/* punch timed out — Symmetric NAT suspected */
     DIRECT_P2P_FAILED_STUN,     /* STUN discovery exhausted all servers */
     DIRECT_P2P_FAILED_PUNCH,    /* hole-punch failed for non-symmetric reason */
+    DIRECT_P2P_FALLBACK_SIGNALING,        /* using rendezvous server for endpoint exchange */
+    DIRECT_P2P_FALLBACK_BILATERAL_PUNCH,  /* bilateral hole-punch in flight after signaling */
+    DIRECT_P2P_FAILED_BILATERAL,          /* bilateral fallback exhausted; truly unreachable */
 } DirectP2PState;
+
+/* Role of the local end in the active session. Defined here (rather than
+ * in direct_p2p.c only) so other TUs (overlay, future test hooks) can
+ * branch on role via DirectP2P_GetRole without exposing the file-local
+ * Work struct. Values are kept stable because the overlay TU compiles
+ * separately. */
+typedef enum {
+    ROLE_NONE = 0,
+    ROLE_HOST,
+    ROLE_JOIN,
+} Role;
 
 #ifdef ENABLE_NETPLAY
 
@@ -102,6 +116,12 @@ void DirectP2P_Tick(void);
 /* Current state. Safe to call from any thread. */
 DirectP2PState DirectP2P_GetState(void);
 
+/* Current role of the local end. Returns ROLE_NONE when no session is
+ * active. Snapshot value — set once per BeginHost/BeginJoin and not
+ * mutated thereafter, so no atomic is required. Used by the overlay TU
+ * to branch the mode-label between HOSTING / CONNECTING. */
+Role DirectP2P_GetRole(void);
+
 /* Display-form 17-char room code, valid only while state ==
  * DIRECT_P2P_HOST_WAITING. Returns "" in all other states. Pointer is
  * into internal static storage — do not free or mutate. */
@@ -120,6 +140,40 @@ const char* DirectP2P_GetStatusText(void);
  * loop via NetplayScreen_Render; see src/port/sdl/netplay_screen.c. */
 void DirectP2P_DrawOverlay(void);
 
+#ifdef NETPLAY_TEST_HOOKS
+/* Step 6 of docs/plan-bilateral-hole-punch.md — test-only seam. The
+ * production translation unit defines these only when NETPLAY_TEST_HOOKS
+ * is on; tests in src/netplay/test_bilateral_punch.c override the two
+ * setters to install mocks for Stun_HolePunch / Rendezvous_Send without
+ * touching the network. The IsLanPeer accessor exposes the file-static
+ * direct_p2p_is_lan_peer for the LAN-bypass truth-table test.
+ *
+ * Including stun.h + SDL_net.h here is gated on NETPLAY_TEST_HOOKS so
+ * production builds don't pay the include cost. */
+#include "netplay/stun.h"
+
+#include <SDL3/SDL_atomic.h>
+#include <SDL3_net/SDL_net.h>
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+
+typedef bool (*DirectP2P_StunHolePunch_fn)(StunResult* local,
+                                           char* peer_ip,
+                                           uint16_t* peer_port,
+                                           int punch_duration_ms,
+                                           SDL_AtomicInt* cancel_flag);
+typedef bool (*DirectP2P_RendezvousSend_fn)(NET_DatagramSocket* sock,
+                                            NET_Address* target,
+                                            uint16_t target_port,
+                                            const uint8_t* pkt,
+                                            size_t pkt_len);
+
+void DirectP2P_TestHook_SetStunHolePunch(DirectP2P_StunHolePunch_fn fn);
+void DirectP2P_TestHook_SetRendezvousSend(DirectP2P_RendezvousSend_fn fn);
+bool DirectP2P_TestHook_IsLanPeer(const char* ip);
+#endif /* NETPLAY_TEST_HOOKS */
+
 #else /* !ENABLE_NETPLAY */
 
 /* When netplay is compiled out, direct_p2p.c is excluded from the build
@@ -133,6 +187,7 @@ static inline void DirectP2P_BeginJoin(const char* peer_code) { (void)peer_code;
 static inline void DirectP2P_Cancel(void) { }
 static inline void DirectP2P_Tick(void) { }
 static inline DirectP2PState DirectP2P_GetState(void) { return DIRECT_P2P_IDLE; }
+static inline Role DirectP2P_GetRole(void) { return ROLE_NONE; }
 static inline const char* DirectP2P_GetHostCode(void) { return ""; }
 static inline const char* DirectP2P_GetStatusText(void) { return ""; }
 static inline void DirectP2P_DrawOverlay(void) { }

@@ -15,8 +15,6 @@
 #define CFG_KEY_SHOW_FPS "show-fps"
 #define CFG_KEY_VIDEO_DRIVER_ORDER "video-driver-order"
 #define CFG_KEY_RENDER_DRIVER_ORDER "render-driver-order"
-#define CFG_KEY_GHOST_RESOLUTION "ghost-resolution"
-#define CFG_KEY_GHOST_COUNT "ghost-count"
 #define CFG_KEY_ARM_CLOCK "arm-clock"
 #define CFG_KEY_GAME_MODE "game-mode"
 #define CFG_KEY_HOLD_TO_PAUSE "hold-to-pause"
@@ -37,6 +35,18 @@
 #define CFG_KEY_NETPLAY_DIRECT_P2P_LAST_PEER_CODE "netplay-direct-p2p-last-peer-code"
 #define CFG_KEY_NETPLAY_DIRECT_P2P_HANDOFF_PATH "netplay-direct-p2p-handoff-path"
 #define CFG_KEY_NETPLAY_DIRECT_P2P_STUN_TIMEOUT_MS "netplay-direct-p2p-stun-timeout-ms"
+
+/* Bilateral hole-punch fallback (docs/plan-bilateral-hole-punch.md §Decision 6).
+ * DISABLE_BILATERAL is a kill switch back to today's FAILED_SYMMETRIC behavior;
+ * SIGNAL_URL points at the rendezvous server (udp://host:port form, placeholder
+ * hostname until Step 1 infrastructure lands); SIGNAL_BUDGET_MS bounds the
+ * REGISTER/POLL phase; BILATERAL_PUNCH_MS sizes the second Stun_HolePunch
+ * window (longer than the initial direct punch to absorb post-signaling
+ * clock skew between peers). */
+#define CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_BILATERAL "netplay-direct-p2p-disable-bilateral"
+#define CFG_KEY_NETPLAY_DIRECT_P2P_SIGNAL_URL "netplay-direct-p2p-signal-url"
+#define CFG_KEY_NETPLAY_DIRECT_P2P_SIGNAL_BUDGET_MS "netplay-direct-p2p-signal-budget-ms"
+#define CFG_KEY_NETPLAY_DIRECT_P2P_BILATERAL_PUNCH_MS "netplay-direct-p2p-bilateral-punch-ms"
 
 /* Rollback prediction window — max frames Gekko will predict ahead of
  * confirmed inputs and, on mispredict, the max rollback depth. Lower

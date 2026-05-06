@@ -227,7 +227,7 @@ index a8d8bd8..e0aeac8 100644
  		{
  			menustate = MENU_NONE1;
  			break;
-@@ -6851,6 +7003,352 @@ void HandleUI(void)
+@@ -6851,6 +7003,356 @@ void HandleUI(void)
  		}
  		break;
  
@@ -369,7 +369,11 @@ index a8d8bd8..e0aeac8 100644
 +			MenuWrite(n++, " Host Game", menusub == 0, 0);
 +			MenuWrite(n++, " Join Game", menusub == 1, 0);
 +			MenuWrite(n++, " Recently Joined           \x16", menusub == 2, 0);
-+			while (n < OsdGetSize() - 1) MenuWrite(n++);
++			while (n < OsdGetSize() - 5) MenuWrite(n++);
++			OsdWrite(n++, "  * Overclock for the");
++			OsdWrite(n++, "    smoothest experience.");
++			OsdWrite(n++, "    (Restart to apply.)");
++			OsdWrite(n++);
 +			MenuWrite(n++, STD_EXIT, menusub == 3, 0);
 +		}
 +		break;

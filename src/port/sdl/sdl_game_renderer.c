@@ -172,8 +172,6 @@ static bool software_frame_owned = false;
 static bool software_frame_uploaded = false;
 static SDLGameRenderer_SuperEffectQualityMode super_effect_quality_mode =
     SDL_GAME_RENDERER_SUPER_EFFECT_QUALITY_FULL;
-static SDLGameRenderer_GhostResolutionMode ghost_resolution_mode =
-    SDL_GAME_RENDERER_GHOST_RESOLUTION_FULL;
 static int sa_bg_cache_frames_remaining = 0;
 static bool perf_capture_logical_identity_enabled = false;
 static bool perf_capture_fast_non_integer_reuse_telemetry_enabled = true;
@@ -972,7 +970,6 @@ static void note_software_frame_fast_non_integer(const RenderTask* task,
 static Uint32 modulate_argb8888(Uint32 pixel, Uint32 color);
 static bool is_blue_tint_color(Uint32 color);
 static Uint32 modulate_argb8888_blue_tint(Uint32 pixel, Uint32 rg_factor, Uint32 mod_a);
-static bool is_ghost_sprite_color(Uint32 color);
 static Uint32 blend_argb8888(Uint32 dst_pixel, Uint32 src_pixel);
 static inline Uint32 blend_argb8888_opaque_dst(Uint32 dst_pixel, Uint32 src_pixel);
 /* perf-2 RGB565 primitives (defs further down). Forward decls so kernels
@@ -6278,18 +6275,6 @@ static inline void neon_blend_modulate_4pixels(
 }
 #endif /* RENDERER_HAVE_NEON */
 
-/* --- Optimization B: Ghost sprite detection for half-resolution rendering ---
- * Ghost/after-image sprites use bright_type[3] (blue tint) which produces
- * colors with B==0xFF, R==G, R<0xFF.  These semi-transparent blue overlays
- * can be rendered at half vertical resolution (process every other row,
- * memcpy to duplicate) with negligible visual impact since they're already
- * translucent blurs.  Row-only skip preserves the fused NEON modulate+blend
- * path for maximum per-row throughput. */
-static bool is_ghost_sprite_color(Uint32 color) {
-    /* Ghost sprites: blue-tinted (B=0xFF, R==G, R<0xFF) from bright_type[3]. */
-    return is_blue_tint_color(color);
-}
-
 #if INDEX8_RASTERIZATION_ENABLED
 /* Helper to get INDEX8 source row pointer from a surface. */
 static inline const Uint8* index8_src_row(const SDL_Surface* surface, int y) {
@@ -6352,23 +6337,20 @@ static bool try_fast_copy_fast_textured_task_to_software_frame(const RenderTask*
                 if (mod_a == 0u) {
                     return true;
                 }
-                const bool ghost_half_res = (ghost_resolution_mode == SDL_GAME_RENDERER_GHOST_RESOLUTION_HALF) &&
-                                            is_ghost_sprite_color(color);
                 const bool blue_tint = is_blue_tint_color(color);
                 const Uint32 rg_factor = (color >> 16) & 0xFFu;
-                const int row_step = ghost_half_res ? 2 : 1;
 
                 /* perf-2 565 sibling of the INDEX8 color-mod exact-copy path.
                  * Scalar-only (no NEON 565 yet). Modulates from LUT8888
                  * (strategy (b)) and packs to 565 at store time. */
                 if (dst_is_565) {
                     RENDERER_TELEMETRY(perf_capture_refresh_telemetry.rgb565_canvas_kernel_hits++);
-                    for (int row = 0; row < plan->visible_h; row += row_step) {
+                    for (int row = 0; row < plan->visible_h; row++) {
                         const Uint8* i8_row = index8_src_row(i8_surface, src_row0_y + (row * src_y_step));
                         Uint16* dst_row = dst_pixels_16 + ((plan->dst_y0 + row) * dst_pitch_16) + plan->dst_x0;
-                        if ((row + row_step) < plan->visible_h) {
-                            __builtin_prefetch(index8_src_row(i8_surface, src_row0_y + ((row + row_step) * src_y_step)), 0, 0);
-                            __builtin_prefetch(dst_pixels_16 + ((plan->dst_y0 + row + row_step) * dst_pitch_16) + plan->dst_x0, 1, 0);
+                        if ((row + 1) < plan->visible_h) {
+                            __builtin_prefetch(index8_src_row(i8_surface, src_row0_y + ((row + 1) * src_y_step)), 0, 0);
+                            __builtin_prefetch(dst_pixels_16 + ((plan->dst_y0 + row + 1) * dst_pitch_16) + plan->dst_x0, 1, 0);
                         }
                         int src_x = src_row0_x;
                         for (int col = 0; col < plan->visible_w; col++) {
@@ -6385,10 +6367,6 @@ static bool try_fast_copy_fast_textured_task_to_software_frame(const RenderTask*
                             }
                             src_x += src_x_step;
                         }
-                        if (ghost_half_res && ((row + 1) < plan->visible_h)) {
-                            Uint16* next_dst_row = dst_pixels_16 + ((plan->dst_y0 + row + 1) * dst_pitch_16) + plan->dst_x0;
-                            SDL_memcpy(next_dst_row, dst_row, (size_t)plan->visible_w * sizeof(Uint16));
-                        }
                     }
                     return true;
                 }
@@ -6399,13 +6377,13 @@ static bool try_fast_copy_fast_textured_task_to_software_frame(const RenderTask*
                     const NeonModulateState neon_state = neon_modulate_init(color);
                     const int visible_w = plan->visible_w;
 
-                    for (int row = 0; row < plan->visible_h; row += row_step) {
+                    for (int row = 0; row < plan->visible_h; row++) {
                         const Uint8* i8_row = index8_src_row(i8_surface, src_row0_y + (row * src_y_step));
                         Uint32* dst_row = dst_pixels + ((plan->dst_y0 + row) * dst_pitch) + plan->dst_x0;
 
-                        if ((row + row_step) < plan->visible_h) {
-                            __builtin_prefetch(index8_src_row(i8_surface, src_row0_y + ((row + row_step) * src_y_step)), 0, 0);
-                            __builtin_prefetch(dst_pixels + ((plan->dst_y0 + row + row_step) * dst_pitch) + plan->dst_x0, 1, 0);
+                        if ((row + 1) < plan->visible_h) {
+                            __builtin_prefetch(index8_src_row(i8_surface, src_row0_y + ((row + 1) * src_y_step)), 0, 0);
+                            __builtin_prefetch(dst_pixels + ((plan->dst_y0 + row + 1) * dst_pitch) + plan->dst_x0, 1, 0);
                         }
 
                         int col = 0;
@@ -6432,24 +6410,19 @@ static bool try_fast_copy_fast_textured_task_to_software_frame(const RenderTask*
                             if (src_a == 0xFFu) { dst_row[col] = src_pixel; continue; }
                             dst_row[col] = blend_argb8888_opaque_dst(dst_row[col], src_pixel);
                         }
-
-                        if (ghost_half_res && ((row + 1) < plan->visible_h)) {
-                            Uint32* next_dst_row = dst_pixels + ((plan->dst_y0 + row + 1) * dst_pitch) + plan->dst_x0;
-                            SDL_memcpy(next_dst_row, dst_row, (size_t)visible_w * sizeof(Uint32));
-                        }
                     }
                     return true;
                 }
 #endif /* RENDERER_HAVE_NEON */
 
                 /* INDEX8 scalar color-mod path */
-                for (int row = 0; row < plan->visible_h; row += row_step) {
+                for (int row = 0; row < plan->visible_h; row++) {
                     const Uint8* i8_row = index8_src_row(i8_surface, src_row0_y + (row * src_y_step));
                     Uint32* dst_row = dst_pixels + ((plan->dst_y0 + row) * dst_pitch) + plan->dst_x0;
 
-                    if ((row + row_step) < plan->visible_h) {
-                        __builtin_prefetch(index8_src_row(i8_surface, src_row0_y + ((row + row_step) * src_y_step)), 0, 0);
-                        __builtin_prefetch(dst_pixels + ((plan->dst_y0 + row + row_step) * dst_pitch) + plan->dst_x0, 1, 0);
+                    if ((row + 1) < plan->visible_h) {
+                        __builtin_prefetch(index8_src_row(i8_surface, src_row0_y + ((row + 1) * src_y_step)), 0, 0);
+                        __builtin_prefetch(dst_pixels + ((plan->dst_y0 + row + 1) * dst_pitch) + plan->dst_x0, 1, 0);
                     }
 
                     int src_x = src_row0_x;
@@ -6466,11 +6439,6 @@ static bool try_fast_copy_fast_textured_task_to_software_frame(const RenderTask*
                             }
                         }
                         src_x += src_x_step;
-                    }
-
-                    if (ghost_half_res && ((row + 1) < plan->visible_h)) {
-                        Uint32* next_dst_row = dst_pixels + ((plan->dst_y0 + row + 1) * dst_pitch) + plan->dst_x0;
-                        SDL_memcpy(next_dst_row, dst_row, (size_t)plan->visible_w * sizeof(Uint32));
                     }
                 }
                 return true;
@@ -6980,41 +6948,30 @@ static bool try_fast_copy_fast_textured_task_to_software_frame(const RenderTask*
             }
 
             /* Optimization B+D: detect ghost sprites (blue-tint from bright_type[3]).
-             * These get half-vertical-resolution rendering (when ghost-resolution=half)
-             * via row_step=2 + memcpy duplication, AND the fast blue-tint modulate. */
-            const bool ghost_half_res = (ghost_resolution_mode == SDL_GAME_RENDERER_GHOST_RESOLUTION_HALF) &&
-                                        is_ghost_sprite_color(color);
+             * Ghost rendering is always full-res; the legacy half-resolution
+             * path was removed. blue_tint detection still drives the fused
+             * modulate+blend kernel below. */
             const bool blue_tint = is_blue_tint_color(color);
             const Uint32 rg_factor = (color >> 16) & 0xFFu; /* R == G for blue tint */
 
 #if RENDERER_HAVE_NEON
             /* Optimization A: NEON fast path for non-flipped forward scan.
-             * Process 4 pixels at a time with NEON widening multiply.
-             * Ghost sprites additionally skip every other pixel (half-res). */
+             * Process 4 pixels at a time with NEON widening multiply. */
             if (src_x_step == 1) {
                 const NeonModulateState neon_state = neon_modulate_init(color);
                 const int visible_w = plan->visible_w;
-                /* For ghost half-res: process every other row too (fill from row above) */
-                const int row_step = ghost_half_res ? 2 : 1;
 
-                for (int row = 0; row < plan->visible_h; row += row_step) {
+                for (int row = 0; row < plan->visible_h; row++) {
                     const Uint32* src_row = src_pixels + ((src_row0_y + (row * src_y_step)) * src_pitch) + src_row0_x;
                     Uint32* dst_row = dst_pixels + ((plan->dst_y0 + row) * dst_pitch) + plan->dst_x0;
 
                     /* Prefetch next iteration's source and destination rows to hide L1/L2 miss latency. */
-                    if ((row + row_step) < plan->visible_h) {
-                        __builtin_prefetch(src_pixels + ((src_row0_y + ((row + row_step) * src_y_step)) * src_pitch) + src_row0_x, 0, 0);
-                        __builtin_prefetch(dst_pixels + ((plan->dst_y0 + row + row_step) * dst_pitch) + plan->dst_x0, 1, 0);
+                    if ((row + 1) < plan->visible_h) {
+                        __builtin_prefetch(src_pixels + ((src_row0_y + ((row + 1) * src_y_step)) * src_pitch) + src_row0_x, 0, 0);
+                        __builtin_prefetch(dst_pixels + ((plan->dst_y0 + row + 1) * dst_pitch) + plan->dst_x0, 1, 0);
                     }
 
                     int col = 0;
-
-                    /* Ghost half-res: row-only skip (row_step=2 above) with the
-                     * same fused NEON modulate+blend inner loop as full-res.
-                     * The previous column-skipping approach used gathered reads +
-                     * scalar blend which negated the savings.  Row-only halving
-                     * keeps contiguous NEON loads and the fused path, giving a
-                     * real ~50% reduction.  Rows are duplicated via memcpy below. */
 
                     /* Full-res NEON path: fused modulate+blend, 4 contiguous pixels at a time.
                      * neon_blend_modulate_4pixels handles alpha==0/255 edge cases branchlessly. */
@@ -7036,31 +6993,21 @@ static bool try_fast_copy_fast_textured_task_to_software_frame(const RenderTask*
                         }
                         dst_row[col] = blend_argb8888_opaque_dst(dst_row[col], src_pixel);
                     }
-
-                    /* Ghost half-res Y: duplicate this row to the next row */
-                    if (ghost_half_res && ((row + 1) < plan->visible_h)) {
-                        Uint32* next_dst_row = dst_pixels + ((plan->dst_y0 + row + 1) * dst_pitch) + plan->dst_x0;
-                        SDL_memcpy(next_dst_row, dst_row, (size_t)visible_w * sizeof(Uint32));
-                    }
                 }
                 return true;
             }
 #endif /* RENDERER_HAVE_NEON */
 
-            /* Scalar path: blue-tint fast path (Optimization D) or generic modulate.
-             * Ghost half-res uses row-only skip (no column skip) for same reason
-             * as the NEON path above — column skipping negated the savings. */
+            /* Scalar path: blue-tint fast path (Optimization D) or generic modulate. */
             {
-                const int row_step = ghost_half_res ? 2 : 1;
-
-                for (int row = 0; row < plan->visible_h; row += row_step) {
+                for (int row = 0; row < plan->visible_h; row++) {
                     const Uint32* src_row = src_pixels + ((src_row0_y + (row * src_y_step)) * src_pitch) + src_row0_x;
                     Uint32* dst_row = dst_pixels + ((plan->dst_y0 + row) * dst_pitch) + plan->dst_x0;
 
                     /* Prefetch next iteration's source and destination rows to hide L1/L2 miss latency. */
-                    if ((row + row_step) < plan->visible_h) {
-                        __builtin_prefetch(src_pixels + ((src_row0_y + ((row + row_step) * src_y_step)) * src_pitch) + src_row0_x, 0, 0);
-                        __builtin_prefetch(dst_pixels + ((plan->dst_y0 + row + row_step) * dst_pitch) + plan->dst_x0, 1, 0);
+                    if ((row + 1) < plan->visible_h) {
+                        __builtin_prefetch(src_pixels + ((src_row0_y + ((row + 1) * src_y_step)) * src_pitch) + src_row0_x, 0, 0);
+                        __builtin_prefetch(dst_pixels + ((plan->dst_y0 + row + 1) * dst_pitch) + plan->dst_x0, 1, 0);
                     }
 
                     const Uint32* src_pixel_ptr = src_row;
@@ -7079,12 +7026,6 @@ static bool try_fast_copy_fast_textured_task_to_software_frame(const RenderTask*
                             dst_row[col] = blend_argb8888_opaque_dst(dst_row[col], src_pixel);
                         }
                         src_pixel_ptr += src_x_step;
-                    }
-
-                    /* Ghost half-res Y: duplicate row */
-                    if (ghost_half_res && ((row + 1) < plan->visible_h)) {
-                        Uint32* next_dst_row = dst_pixels + ((plan->dst_y0 + row + 1) * dst_pitch) + plan->dst_x0;
-                        SDL_memcpy(next_dst_row, dst_row, (size_t)plan->visible_w * sizeof(Uint32));
                     }
                 }
             }
@@ -10479,46 +10420,12 @@ static void build_software_palette_lut(int palette_index, const SDL_Palette* pal
     }
     software_palette_lut_valid[palette_index] = true;
 
-#if ENABLE_PERF_TELEMETRY
-    /* Palette alpha histogram — one-shot telemetry to determine whether live
-     * palettes match the "index 0 α=0, 1..N α=255" color-key pattern that
-     * underlies the proposed ckey fast path. See
-     * docs/research-renderer-external-comparison.md §5.1. Only logs when the
-     * histogram changes for a given palette handle, to keep the log readable. */
-    {
-        int alpha0 = 0, alpha255 = 0, alpha_mid = 0;
-        for (int i = 0; i < ncolors; i++) {
-            const Uint8 a = palette->colors[i].a;
-            if (a == 0) {
-                alpha0++;
-            } else if (a == 255) {
-                alpha255++;
-            } else {
-                alpha_mid++;
-            }
-        }
-        static bool seen[FL_PALETTE_MAX] = { false };
-        static int last_a0[FL_PALETTE_MAX];
-        static int last_a255[FL_PALETTE_MAX];
-        static int last_amid[FL_PALETTE_MAX];
-        static int last_first[FL_PALETTE_MAX];
-        const int first_a = (ncolors > 0) ? (int)palette->colors[0].a : -1;
-        const bool changed = !seen[palette_index] ||
-                             (last_a0[palette_index] != alpha0) ||
-                             (last_a255[palette_index] != alpha255) ||
-                             (last_amid[palette_index] != alpha_mid) ||
-                             (last_first[palette_index] != first_a);
-        if (changed) {
-            seen[palette_index] = true;
-            last_a0[palette_index] = alpha0;
-            last_a255[palette_index] = alpha255;
-            last_amid[palette_index] = alpha_mid;
-            last_first[palette_index] = first_a;
-            SDL_Log("palette_alpha_histogram ph=%d size=%d a0=%d a255=%d a_mid=%d first_a=%d",
-                    palette_index + 1, ncolors, alpha0, alpha255, alpha_mid, first_a);
-        }
-    }
-#endif
+    /* Palette α histogram telemetry (perf-3 piece-B investigation) lived here
+     * and confirmed the "binary-α with many α==0 entries" invariant that
+     * shapes the relaxed `index0_is_ckey` predicate below. Mission complete;
+     * the print + its change-detection cache have been removed. The actual
+     * kernel-driving analysis (`is_binary_alpha`, `index0_is_ckey`) runs
+     * unchanged at the bottom of this function. */
 
     /* Mirror to 565 for the 565 canvas mode (perf-2). Reads the same
      * SDL_Color entries; alpha not encoded in 565 -- alpha==0 is signalled
@@ -10740,10 +10647,6 @@ void SDLGameRenderer_SetSoftwareFrameDirectPresentMode(bool enabled) {
 
 void SDLGameRenderer_SetSuperEffectQualityMode(SDLGameRenderer_SuperEffectQualityMode mode) {
     super_effect_quality_mode = mode;
-}
-
-void SDLGameRenderer_SetGhostResolutionMode(SDLGameRenderer_GhostResolutionMode mode) {
-    ghost_resolution_mode = mode;
 }
 
 void SDLGameRenderer_SetSABgCacheFramesRemaining(int frames_remaining) {

@@ -9,7 +9,11 @@ INSTALL_README_TEMPLATE="${ROOT_DIR}/tools/mister/release-readme.txt"
 RUNTIME_INSTALL_PREFIX="${RUNTIME_INSTALL_PREFIX:-${ROOT_DIR}/build/mister-clean-install}"
 RUNTIME_PACKAGE="${RUNTIME_PACKAGE:-${ROOT_DIR}/build/mister-runtime-package}"
 HPS_BINARY="${HPS_BINARY:-${ROOT_DIR}/build/mister-wrapper-hps/MiSTer_3S-ARM}"
-CORE_RBF="${CORE_RBF:-${ROOT_DIR}/build/mister-wrapper-core/3S-ARM.rbf}"
+default_core_rbf=""
+if [ -d "${ROOT_DIR}/build/mister-wrapper-core" ]; then
+    default_core_rbf="$(ls -1t "${ROOT_DIR}"/build/mister-wrapper-core/3S-ARM_*.rbf 2>/dev/null | head -1)"
+fi
+CORE_RBF="${CORE_RBF:-${default_core_rbf}}"
 WORK_DIR="${WORK_DIR:-${ROOT_DIR}/build/mister-release}"
 STAGE_DIR="${STAGE_DIR:-${WORK_DIR}/stage}"
 RELEASE_DATE="${RELEASE_DATE:-$(date +%Y-%m-%d)}"

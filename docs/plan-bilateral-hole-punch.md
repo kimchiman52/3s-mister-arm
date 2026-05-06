@@ -192,15 +192,26 @@ DIRECT_P2P_FAILED_BILATERAL,         // bilateral punch timed out — terminal
 **Transitions:**
 
 ```
-(host side)
-HOST_WAITING --(rendezvous DELIVER with peer)--> FALLBACK_BILATERAL_PUNCH
-HOST_WAITING --(rendezvous register thread 8s budget expired)--> HOST_WAITING (stay; passive echo still running)
-HOST_WAITING --(peer 3SX_PUNCH arrives)--> HANDOFF  (unchanged)
+(host side — gates checked first; default arrow fires if no gate matches)
+HOST_WAITING --(DELIVER with peer AND direct_p2p_ip_eq_normalized(peer_ip, stun.public_ip))--> FAILED_SYMMETRIC  [gate: host-side hairpin]
+HOST_WAITING --(DELIVER with peer AND direct_p2p_is_lan_peer(peer_ip))--> HOST_WAITING                            [gate: stay; LAN punch is a separate concern]
+HOST_WAITING --(rendezvous DNS resolve fails)--> HOST_WAITING                                                     [gate: stay; passive receive still running]
+HOST_WAITING --(rendezvous register thread 8s budget expired)--> HOST_WAITING                                     [gate: stay; passive echo still running]
+HOST_WAITING --(rendezvous DELIVER with peer)--> FALLBACK_BILATERAL_PUNCH                                         [default]
+HOST_WAITING --(peer 3SX_PUNCH arrives)--> HANDOFF                                                                [default; unchanged]
+
+(host side — bilateral-punch terminal; no gates)
 FALLBACK_BILATERAL_PUNCH --(Stun_HolePunch succeeds)--> HANDOFF
 FALLBACK_BILATERAL_PUNCH --(Stun_HolePunch fails)--> FAILED_BILATERAL
 
-(join side)
-JOIN_PUNCHING --(Stun_HolePunch fails)--> FALLBACK_SIGNALING          // was FAILED_SYMMETRIC
+(join side — gates checked first; default arrow fires if no gate matches)
+JOIN_PUNCHING --(Stun_HolePunch fails AND kill-switch=true)--> FAILED_SYMMETRIC                                                [gate: bilateral disabled]
+JOIN_PUNCHING --(Stun_HolePunch fails AND direct_p2p_is_lan_peer(peer_ip))--> FAILED_SYMMETRIC                                 [gate: LAN]
+JOIN_PUNCHING --(Stun_HolePunch fails AND direct_p2p_ip_eq_normalized(peer_ip, stun.public_ip))--> FAILED_SYMMETRIC            [gate: joiner-side hairpin]
+JOIN_PUNCHING --(Stun_HolePunch fails)--> FALLBACK_SIGNALING                                                                   [default; was FAILED_SYMMETRIC]
+
+(join side — fallback-signaling and bilateral-punch terminals; no further gates)
+FALLBACK_SIGNALING --(rendezvous DNS resolve fails)--> FAILED_BILATERAL
 FALLBACK_SIGNALING --(REGISTER never answered after 8s)--> FAILED_BILATERAL
 FALLBACK_SIGNALING --(DELIVER with peer)--> FALLBACK_BILATERAL_PUNCH
 FALLBACK_BILATERAL_PUNCH --(Stun_HolePunch succeeds)--> HANDOFF
@@ -211,6 +222,8 @@ FALLBACK_BILATERAL_PUNCH --(Stun_HolePunch fails)--> FAILED_BILATERAL
 The joiner's path previously landed there on punch failure; now it lands on `FALLBACK_SIGNALING` instead. **But `FAILED_SYMMETRIC` is NOT renamed/removed** — it's still a valid terminal when the user has the kill-switch config key set (bilateral disabled) OR when rendezvous is unreachable (REGISTER can't resolve the server / all sends fail). Rule of thumb: `FAILED_SYMMETRIC` means "direct punch failed and we chose not to try bilateral." `FAILED_BILATERAL` means "we tried bilateral and that also failed."
 
 Rename is tempting for clarity but blocks graceful degradation: a joiner with the kill-switch enabled (or an older build) still wants to show a meaningful terminal. Keep both.
+
+**`FALLBACK_SIGNALING` is joiner-only.** The host's REGISTER/POLL phase happens while the state remains `HOST_WAITING` — the rendezvous thread runs in parallel; the main thread continues receiving via `host_tick_receive`. The host transitions directly from `HOST_WAITING` to `FALLBACK_BILATERAL_PUNCH` on DELIVER. There is no host-side `set_state(FALLBACK_SIGNALING)` call. The diagram below reflects this.
 
 ---
 
@@ -277,7 +290,7 @@ Kill switch confirmed explicitly in the list.
 3. **LAN bypass rejection.** `direct_p2p_is_lan_peer("127.0.0.1")` → true. Same for `10.0.0.1`, `172.16.0.1`, `192.168.1.1`, `169.254.1.1`. Same for `8.8.8.8` → false. Ensures rendezvous gate works.
 4. **State-machine timing.** Drive `direct_p2p.c`'s state machine with a mock `Stun_HolePunch` that always fails on the first call and succeeds on the second. Assert: joiner transitions JOIN_PUNCHING → FALLBACK_SIGNALING → FALLBACK_BILATERAL_PUNCH → HANDOFF. This will need some test-only hooks; prefer lightweight function pointer injection via a `#ifdef NETPLAY_TEST_HOOKS` seam rather than rewriting the module.
 5. **Kill-switch honored.** With `disable-bilateral` true, joiner lands on `FAILED_SYMMETRIC` unchanged. No rendezvous traffic emitted (verify by mock server receiving zero packets).
-6. **DNS-fail fast-fail.** Configure `signal-url=udp://invalid.example:3478`; assert state lands on `FAILED_BILATERAL` within 1 second on the joiner (host stays HOST_WAITING per §Step 5). Verifies the rendezvous hostname-resolve happens once and bails immediately on failure rather than burning the 8-second budget.
+6. **DNS-fail fast-fail.** Configure `signal-url=udp://invalid.example:3478`; assert state lands on `FAILED_BILATERAL` within 1 second on the joiner (host stays HOST_WAITING per §Step 5b). Verifies the rendezvous hostname-resolve happens once and bails immediately on failure rather than burning the 8-second budget.
 
 **What requires humans:** actual bilateral punch over two separate symmetric NATs. That's a two-house test that no CI can do; documented in `docs/direct-p2p-smoke-plan.md` as a new section ("Bilateral smoke — two-home test"). Humans run it by: (a) both peers boot with `disable-bilateral=false` and a real rendezvous URL; (b) at least one peer is verifiably behind symmetric NAT (existing direct-P2P smoke plan documents how to verify); (c) observe `FALLBACK_BILATERAL_PUNCH` → `HANDOFF` on both sides via the overlay. Smoke-plan writeup is part of Step 7.
 
@@ -325,7 +338,10 @@ Kill switch confirmed explicitly in the list.
 | `DIRECT_P2P_FAILED_BILATERAL` | `"Could not reach peer after fallback. Try another network."` |
 
 **Mode labels (line 1 in `DirectP2P_DrawOverlay`):**
-- Line 1 already displays `HOSTING / CONNECTING / CONNECTED / ERROR` per `direct_p2p_overlay.c`. `FALLBACK_SIGNALING` and `FALLBACK_BILATERAL_PUNCH` map to `CONNECTING`. `FAILED_BILATERAL` maps to `ERROR`. No new mode labels.
+- Line 1 already displays `HOSTING / CONNECTING / CONNECTED / ERROR` per `direct_p2p_overlay.c`. The mapping branches on the active `Role` (the existing role field set in `BeginHost`/`BeginJoin`) so the host's overlay never flips from `HOSTING` → `CONNECTING` mid-session. `s_work` is `static` to `direct_p2p.c` (`direct_p2p.c:115`), so `direct_p2p_overlay.c` cannot read `s_work.role` directly. We expose a tiny accessor `Role DirectP2P_GetRole(void)` from `src/netplay/direct_p2p.h` that returns `s_work.role` as a snapshot value (no atomic needed; role is set once per `BeginHost`/`BeginJoin` at `direct_p2p.c:581` and `:633` and not mutated thereafter). `dp2p_overlay_mode_label` in `direct_p2p_overlay.c:45-67` calls `DirectP2P_GetRole()` to branch the mode label per role per the table below.
+  - **If role is `ROLE_HOST`:** `HOST_WAITING / FALLBACK_SIGNALING / FALLBACK_BILATERAL_PUNCH` all map to `"HOSTING"`. `HANDOFF` maps to `"CONNECTED"`. `FAILED_*` (including `FAILED_BILATERAL`) map to `"ERROR"`.
+  - **If role is `ROLE_JOIN`:** `JOIN_PUNCHING / FALLBACK_SIGNALING / FALLBACK_BILATERAL_PUNCH` all map to `"CONNECTING"`. `HANDOFF` maps to `"CONNECTED"`. `FAILED_*` (including `FAILED_BILATERAL`) map to `"ERROR"`.
+- The Status text strings (line 2) stay the same — those are fine to be NAT-aware regardless of role. No new mode labels are introduced.
 
 **Rationale for copy:** users who hit symmetric NAT know what it means (the word appeared in the old failure message). Leaving "Symmetric NAT" in the fallback status tells them the fallback engaged and why. Not a beginner-facing term, but beginners would have failed anyway under the old flow. Netplay screen (`src/port/sdl/netplay_screen.c`) needs no changes beyond what `DirectP2P_DrawOverlay` consumes — overlay reads from `DirectP2P_GetStatusText()`, unchanged.
 
@@ -385,7 +401,7 @@ Ordered by dependency. Steps 1 and 2 are deployable independently (infra + a new
 
 ---
 
-### Step 1 — Stand up the rendezvous server
+### Step 1 — Stand up the rendezvous server **[DONE 2026-04-26]**
 
 **Why:** the server must exist before any client code can be tested end-to-end. A single-host Node.js service is the cheapest path and matches the runtime used by 3sxtra (we do NOT ship our own lobby server in this repo — see `project-netplay-port-strategy.md`; we piggyback on 3sxtra's hosted lobby for matchmaking). This step introduces a NEW top-level tooling directory `tools/rendezvous-server/`.
 
@@ -438,7 +454,7 @@ Ordered by dependency. Steps 1 and 2 are deployable independently (infra + a new
 
 ---
 
-### Step 2 — Config keys + signal URL wiring
+### Step 2 — Config keys + signal URL wiring **[DONE 2026-04-26]**
 
 **Why:** the client reads the signaling URL and kill-switch from config. Defaults must land before Step 3's rendezvous code is written so the client can `Config_GetString(CFG_KEY_NETPLAY_DIRECT_P2P_SIGNAL_URL)` on day one. Also provides the kill-switch that gracefully degrades the whole feature.
 
@@ -468,9 +484,9 @@ Ordered by dependency. Steps 1 and 2 are deployable independently (infra + a new
 
 ---
 
-### Step 3 — Rendezvous client (pure, no state-machine integration)
+### Step 3 — Rendezvous client (pure, no state-machine integration) **[DONE 2026-04-26]**
 
-**Why:** build and unit-test the rendezvous protocol client in isolation before wiring it into `direct_p2p.c`. Keeps Step 5 small and gives us a test harness early.
+**Why:** build and unit-test the rendezvous protocol client in isolation before wiring it into `direct_p2p.c`. Keeps Steps 5a/5b/5c small and gives us a test harness early.
 
 **Read first:**
 - `/Users/sb/Developer/3sx-mister/src/netplay/stun.c` — the socket bind / resolve / send pattern on SDL3_net
@@ -487,7 +503,7 @@ Ordered by dependency. Steps 1 and 2 are deployable independently (infra + a new
   - `bool Rendezvous_BuildPoll(const uint8_t session_key[16], uint8_t out_pkt[28])` — 28-byte POLL packet.
   - `bool Rendezvous_ParseDeliver(const uint8_t* pkt, int len, const uint8_t expected_session_key[16], char out_peer_ip[64], uint16_t* out_peer_port)` — validates `len >= 32` + magic + version + key-match, writes peer tuple (`peer_ip` decoded from the 4-byte raw IPv4 field via `inet_ntop(AF_INET, ...)` for guaranteed dotted-quad form; port decoded from network to host order); returns false if peer fields are zero (meaning "server has nothing yet").
   - `bool Rendezvous_ParseSignalUrl(const char* url, char out_host[64], uint16_t* out_port)` — parses `udp://host:port` (reject anything else; error if no scheme, non-udp scheme, missing port).
-  - `bool Rendezvous_Send(NET_DatagramSocket* sock, NET_Address* target, uint16_t target_port, const uint8_t* pkt, size_t pkt_len)` — thin wrapper around `NET_SendDatagram`. Single named call site for production sends and the unit-test interpose point. Pure pass-through with optional `NETPLAY_TEST_HOOKS` indirection (Step 6 swaps the function pointer to a mock that records sends without touching the wire).
+  - `Rendezvous_Send` (the production send wrapper) is declared as a `static` helper in `direct_p2p.c` per the SDL_net-purity constraint; introduced in Step 5a.
   - Pure functions except for the SHA call, which transitively uses tf-psa-crypto via `sha256.h`. No SDL_net dependencies — for unit-testing. Actual network I/O stays in `direct_p2p.c`.
 - Update `CMakeLists.txt` — no change needed; glob picks up new `src/netplay/*.c` files automatically. tf-psa-crypto path is declared at `CMakeLists.txt:246`; the actual link line is at `CMakeLists.txt:278` (`target_link_libraries(... "${TF_PSA_CRYPTO_ROOT}/lib/libtfpsacrypto.a")`), so no new link dependency.
 
@@ -498,11 +514,11 @@ Ordered by dependency. Steps 1 and 2 are deployable independently (infra + a new
 - `grep -n 'utils/sha256.h' src/netplay/rendezvous.c` prints 1 line (confirm we pulled in the in-tree module).
 - Header-only static check: `#include "netplay/rendezvous.h"` from a scratch `.c` file compiles.
 
-**Depends on:** none. Step 5 will consume the config key declared in Step 2, but Step 3's deliverable (the pure `rendezvous.{c,h}` module) does not import from `config.h` — `Rendezvous_ParseSignalUrl` takes the URL as a `const char*` argument.
+**Depends on:** none. Step 5c will consume the config key declared in Step 2, but Step 3's deliverable (the pure `rendezvous.{c,h}` module) does not import from `config.h` — `Rendezvous_ParseSignalUrl` takes the URL as a `const char*` argument.
 
 **Do NOT:**
-- Add any `SDL_net` calls from inside `rendezvous.c`. Keep it pure (bytes in, bytes out, plus a URL parser). Networking lives in Step 5's state-machine integration.
-- Integrate with `direct_p2p.c` — that's Step 5.
+- Add any `SDL_net` calls from inside `rendezvous.c`. Keep it pure (bytes in, bytes out, plus a URL parser). Networking lives in Steps 5a/5b/5c's state-machine integration.
+- Integrate with `direct_p2p.c` — that's Steps 5a/5b/5c.
 - Create a new `src/netplay/sha256.{c,h}` or vendor one from `/tmp/3sxtra/`. The in-tree `src/utils/sha256.{c,h}` (tf-psa-crypto) is the only SHA we link.
 - Import any 3sxtra file. No `identity.c`, no `lobby_server.c`, no `discovery.c`, no `sha256.{c,h}`.
 
@@ -512,7 +528,7 @@ Ordered by dependency. Steps 1 and 2 are deployable independently (infra + a new
 
 ---
 
-### Step 4 — Harden the host passive-receive for rendezvous DELIVERs (no bilateral yet)
+### Step 4 — Harden the host passive-receive for rendezvous DELIVERs (no bilateral yet) **[DONE 2026-04-26]**
 
 **Why:** before spawning rendezvous threads, extend `host_tick_receive` to recognize rendezvous-shaped packets on the STUN socket without disturbing the `3SX_PUNCH` fast path. Split in its own step so a reviewer can confirm the fast path still works before any new threads appear.
 
@@ -523,7 +539,7 @@ Ordered by dependency. Steps 1 and 2 are deployable independently (infra + a new
 **Changes:**
 - Modify `src/netplay/direct_p2p.c`:
   - `host_tick_receive` — after reading a datagram, examine it:
-    - If `buflen >= 32` AND first 4 bytes == `'3SXR'` magic: hand to `try_handle_deliver()` (stub for now — just log and discard; full handling comes in Step 5). Minimum 32 matches DELIVER's wire size per §Decision 2; hosts never receive REGISTER (28B) or POLL (28B) packets — those are client→server only.
+    - If `buflen >= 32` AND first 4 bytes == `'3SXR'` magic: hand to `try_handle_deliver()` (stub for now — just log and discard; full handling comes in Step 5b). Minimum 32 matches DELIVER's wire size per §Decision 2; hosts never receive REGISTER (28B) or POLL (28B) packets — those are client→server only.
     - Otherwise: today's `3SX_PUNCH` echo + handoff path, unchanged.
   - Add `static bool try_handle_deliver(const uint8_t* pkt, int len)` stub that logs the magic/version/session-key match and returns true. Do NOT yet transition state or cancel rendezvous thread — this step only proves we can dispatch the packet type.
 
@@ -535,7 +551,7 @@ Ordered by dependency. Steps 1 and 2 are deployable independently (infra + a new
 **Depends on:** Step 3.
 
 **Do NOT:**
-- Add `DIRECT_P2P_FALLBACK_*` states yet — that's Step 5.
+- Add `DIRECT_P2P_FALLBACK_*` states yet — that's Step 5a.
 - Spawn any new threads.
 - Modify `join_thread_fn`.
 
@@ -544,71 +560,158 @@ Ordered by dependency. Steps 1 and 2 are deployable independently (infra + a new
 
 ---
 
-### Step 5 — State-machine additions + bilateral-punch integration
+### Step 5a — Foundation: enums, helpers, accessors, lifecycle rework (no behavior change) **[DONE 2026-04-26]**
 
-**Why:** the actual feature. Wire `FALLBACK_SIGNALING`, `FALLBACK_BILATERAL_PUNCH`, `FAILED_BILATERAL` into the state machine; spawn the host rendezvous thread; add joiner's fallback branch; handle DELIVER on main thread.
+**Why:** lay down the foundation pieces before any new threads or fallback transitions are wired up. Splitting Step 5 into 5a/5b/5c keeps each `/implement` cycle small enough to land cleanly. Step 5a is purely additive — it compiles green, but no fallback transitions fire yet, so existing direct-P2P fast-path behavior is unchanged.
 
 **Read first:**
-- `/Users/sb/Developer/3sx-mister/src/netplay/direct_p2p.c` (all of it — this step touches the state machine)
-- `/Users/sb/Developer/3sx-mister/src/netplay/direct_p2p.h` — enum additions
-- `/Users/sb/Developer/3sx-mister/src/netplay/direct_p2p_overlay.c` — to confirm which state labels need overlay mapping updates
-- §Decisions 3, 4, 5 of this plan
+- `/Users/sb/Developer/3sx-mister/src/netplay/direct_p2p.h` — enum, Role, public API
+- `/Users/sb/Developer/3sx-mister/src/netplay/direct_p2p.c` — `s_work` declaration (`:115`), `s_thread` declaration (`:117`), spawn sites (`:603-604` host, `:644-645` join), `DirectP2P_Cancel` (`:659-661` spin loop), teardown (`:466-478`)
+- `/Users/sb/Developer/3sx-mister/src/netplay/direct_p2p_overlay.c` — `dp2p_overlay_mode_label` switch (`:45-67`)
+- `/Users/sb/Developer/3sx-mister/src/netplay/stun.c` — cancel-honor pattern (`:407-411`), 10ms loop (`:454`)
+- §Decisions 3, 4, 5, 9 of this plan
 
 **Changes:**
 - `src/netplay/direct_p2p.h`:
-  - Add `DIRECT_P2P_FALLBACK_SIGNALING`, `DIRECT_P2P_FALLBACK_BILATERAL_PUNCH`, `DIRECT_P2P_FAILED_BILATERAL` to the enum, in that order, after the existing `DIRECT_P2P_FAILED_PUNCH` entry.
-  - Do NOT renumber existing values (additive only).
+  - Add `DIRECT_P2P_FALLBACK_SIGNALING`, `DIRECT_P2P_FALLBACK_BILATERAL_PUNCH`, `DIRECT_P2P_FAILED_BILATERAL` to the `DirectP2PState` enum, in that order, after the existing `DIRECT_P2P_FAILED_PUNCH` entry. Do NOT renumber existing values (additive only).
+  - Export `Role DirectP2P_GetRole(void);` accessor (the existing `Role` enum at `:79-81` with `ROLE_HOST` / `ROLE_JOIN`). Used by `direct_p2p_overlay.c` so the mode-label switch can branch on role without depending on the file-local `s_work` (which is `static` to `direct_p2p.c:115`).
 - `src/netplay/direct_p2p.c`:
+  - Add `Role DirectP2P_GetRole(void) { return s_work.role; }` — trivial accessor returning a snapshot value. No atomic needed; `s_work.role` is set once per `BeginHost`/`BeginJoin` (`direct_p2p.c:581` host / `:633` join) and not mutated thereafter.
   - Add `static bool direct_p2p_is_lan_peer(const char* ip)` — checks `127.0.0.1`, `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `169.254.0.0/16`. Returns true if LAN.
-  - Add `static bool direct_p2p_ip_eq_normalized(const char* a, const char* b)` — uses `inet_pton(AF_INET, ...)` on both, compares the resulting `uint32_t`; returns false if either fails to parse. Used by the hairpin gate to defend against form mismatches (e.g., `"1.2.3.4"` vs `"::ffff:1.2.3.4"`) even though Revision 1 of the wire format already guarantees DELIVER `peer_ip` is dotted-quad.
-  - Add atomics `s_rendezvous_cancel` and `s_bilateral_punch_cancel` (separate from `s_cancel` so cancellation of one phase doesn't accidentally signal another), thread handles `s_rendezvous_thread` and `s_bilateral_punch_thread`, and a parsed rendezvous endpoint cache in `s_work` (parsed `signal_url` → `(host, port)`). All three thread handles (`s_thread`, `s_rendezvous_thread`, `s_bilateral_punch_thread`) are mutually exclusive on the user-action axis (host vs. join) but coexist in time on the host path during the FALLBACK_BILATERAL_PUNCH phase. Cancel and teardown must check all three.
-  - Add `static int SDLCALL host_rendezvous_thread_fn(void* data)` — parses signal URL, resolves the rendezvous hostname **once** at thread start using the existing 100ms-bounded `NET_GetAddressStatus` polling pattern from `stun.c:272-275` (`stun.c:385-389` uses a longer 3000ms variant for peer addresses; we want the 100ms server-hostname variant.) If resolution fails (NULL or status != `NET_SUCCESS`), exit thread immediately (host: stay HOST_WAITING; do not retry — the 8-second budget is for peer-pairing, not DNS). Then the thread builds REGISTER/POLL packets and enqueues `(NET_RefAddress(target), payload[28])` tuples onto `s_rendezvous_send_q`. Main-thread drain in `DirectP2P_Tick` dequeues and invokes `Rendezvous_Send(s_work.stun.socket, target, target_port, pkt, 28)`, then `NET_UnrefAddress(target)`. The drain is the single producer-consumer barrier point; the rendezvous thread never calls `NET_SendDatagram` directly. Per §Decision 3, sending REGISTER from the STUN socket is required (the server records the packet's source endpoint, which must be the same STUN-visible `(ip, port)` the joiner will punch toward; a separate ephemeral socket would register the wrong endpoint).
+  - Add `static bool direct_p2p_ip_eq_normalized(const char* a, const char* b)` — uses `inet_pton(AF_INET, ...)` on both, compares the resulting `uint32_t`; returns false if either fails to parse. Used by the hairpin gate to defend against form mismatches (e.g., `"1.2.3.4"` vs `"::ffff:1.2.3.4"`) even though the wire format already guarantees DELIVER `peer_ip` is dotted-quad.
+  - Introduce `static bool Rendezvous_Send(NET_DatagramSocket* sock, NET_Address* target, uint16_t target_port, const uint8_t* pkt, size_t pkt_len)` — a thin wrapper around `NET_SendDatagram`. Lives in `direct_p2p.c` (the SDL_net-purity constraint on `rendezvous.{c,h}` keeps that module SDL_net-free). Single named call site for production sends and the unit-test interpose point (Step 6 swaps the function pointer to a mock under `NETPLAY_TEST_HOOKS`). The same symbol is used on both host (queue-drain) and joiner (inline) send paths — no callers in 5a, but the symbol exists.
+  - Add atomics `s_rendezvous_cancel` and `s_bilateral_punch_cancel` (separate from `s_cancel` so cancellation of one phase doesn't accidentally signal another), thread handles `s_rendezvous_thread` and `s_bilateral_punch_thread`, and a parsed rendezvous endpoint cache in `s_work` (parsed `signal_url` → `(host, port)`). All three thread handles (`s_thread`, `s_rendezvous_thread`, `s_bilateral_punch_thread`) are mutually exclusive on the user-action axis (host vs. join) but coexist in time on the host path during the FALLBACK_BILATERAL_PUNCH phase. Cancel and teardown must check all three (wired in this step; no spawns yet).
+  - **Cancel semantics — switch from detach to wait.** Drop `SDL_DetachThread(s_thread); s_thread = NULL;` at both `direct_p2p.c:603-604` (host spawn site, inside `DirectP2P_BeginHost`) and `direct_p2p.c:644-645` (join spawn site, inside `DirectP2P_BeginJoin`). Keep the handle in `s_thread` (declared as a single static handle at `direct_p2p.c:117` — host and join paths are mutually exclusive on the user-action axis, so one slot is sufficient). Modify `DirectP2P_Cancel` (currently spinning for IDLE at `direct_p2p.c:659-661`): set `s_cancel`, then `if (s_thread) { SDL_WaitThread(s_thread, NULL); s_thread = NULL; }`, then teardown. The same `DirectP2P_Cancel` must also set `s_rendezvous_cancel` and `s_bilateral_punch_cancel`, and `SDL_WaitThread` each of `s_rendezvous_thread` / `s_bilateral_punch_thread` if non-NULL. This eliminates a pre-existing race where the worker writes `s_work` after Cancel's `memset` at `direct_p2p.c:674`, and prepares the lifecycle for the new threads added in 5b/5c.
+  - **Natural-success exit — join `s_thread` on next BeginHost/BeginJoin and on teardown.** With `SDL_DetachThread` removed from the spawn sites, nothing nulls `s_thread` when the worker returns normally (success → `set_state(HANDOFF)` → return). A second `BeginHost`/`BeginJoin` call would then overwrite the handle without joining, leaking SDL3 thread state. Mitigation in two places: (1) at the start of `DirectP2P_BeginHost` and `DirectP2P_BeginJoin`, before `SDL_CreateThread`, do `if (s_thread != NULL) { SDL_WaitThread(s_thread, NULL); s_thread = NULL; }`. (2) `direct_p2p_on_teardown` joins `s_thread` if non-NULL alongside (the new) `s_rendezvous_thread` and `s_bilateral_punch_thread` — the worker may have published its terminal state via `set_state` and returned, leaving the handle un-joined.
+  - **Extend `direct_p2p_on_teardown`.** Set `s_rendezvous_cancel` and `s_bilateral_punch_cancel`, then `SDL_WaitThread` each of `s_thread` / `s_rendezvous_thread` / `s_bilateral_punch_thread` if non-NULL. Each new thread (added in 5b/5c) honors its cancel flag at the next loop iteration (rendezvous thread: between sends, max ~500ms; bilateral-punch thread: inside `Stun_HolePunch` cancel check at `stun.c:407-411`, which runs every iteration with `SDL_Delay(10)` between, so max ~10ms). Total teardown blocking is bounded at ~510ms in the worst case. If this proves too long for the calling render thread, gate the wait with a 1-second deadline and log+continue on timeout (worker memory leaks rather than races).
+  - Add `DirectP2P_Tick` skeleton cases for `FALLBACK_SIGNALING` (joiner-only — falls through to no-op, since joiner inlines the loop into its worker thread) and `FALLBACK_BILATERAL_PUNCH` (no-op skeleton; 5b will fill in the host bilateral-punch thread completion check). These cases compile but are unreachable in 5a because no transitions to those states fire yet.
+- `src/netplay/direct_p2p_overlay.c`:
+  - Map `DIRECT_P2P_FALLBACK_SIGNALING`, `DIRECT_P2P_FALLBACK_BILATERAL_PUNCH`, `DIRECT_P2P_FAILED_BILATERAL` per §Decision 9. The `dp2p_overlay_mode_label` switch (`:45-67`) calls `DirectP2P_GetRole()` to branch the mode label per role: `ROLE_HOST` → `"HOSTING"` for `HOST_WAITING / FALLBACK_SIGNALING / FALLBACK_BILATERAL_PUNCH`; `ROLE_JOIN` → `"CONNECTING"` for `JOIN_PUNCHING / FALLBACK_SIGNALING / FALLBACK_BILATERAL_PUNCH`. Both → `"ERROR"` for `FAILED_BILATERAL`.
+
+**Success criteria:**
+- `tools/mister/build-game.sh --flavor telemetry` builds clean.
+- `cmake --build build/host` builds clean (host).
+- `grep -n 'DirectP2P_GetRole' src/netplay/direct_p2p.{c,h}` prints ≥ 2 lines (one in the header, one in the implementation).
+- `grep -n 'direct_p2p_is_lan_peer\|direct_p2p_ip_eq_normalized\|Rendezvous_Send' src/netplay/direct_p2p.c` prints ≥ 3 lines.
+- `grep -n 'DIRECT_P2P_FALLBACK_SIGNALING\|DIRECT_P2P_FALLBACK_BILATERAL_PUNCH\|DIRECT_P2P_FAILED_BILATERAL' src/netplay/direct_p2p.h` prints exactly 3 lines (enum members).
+- `grep -n 'SDL_DetachThread' src/netplay/direct_p2p.c` returns 0 lines (the two detach sites are removed).
+- Existing direct-P2P fast path still succeeds: non-symmetric peers connect end-to-end. No `FALLBACK_*` state appears in any log line (because nothing transitions to those states yet).
+
+**Depends on:** Steps 2, 3, 4.
+
+**Do NOT:**
+- Spawn any new thread in 5a — `host_rendezvous_thread_fn` and `host_bilateral_punch_thread_fn` arrive in 5b. The thread handles and cancel atomics are declared in 5a but stay NULL/0 throughout.
+- Add any host-side fallback transition (`HOST_WAITING → FALLBACK_BILATERAL_PUNCH`); that's 5b.
+- Add any joiner-side fallback transition (`JOIN_PUNCHING → FALLBACK_SIGNALING`); that's 5c.
+- Modify `host_tick_receive`'s dispatch logic (Step 4 already added the magic-byte stub).
+- Touch `src/netplay/stun.c`, `src/netplay/netplay.c`, `src/netplay/netplay_nav.c`, or `vendor/Main_MiSTer/`.
+
+**If it fails:**
+- Thread join races at `DirectP2P_Cancel`: confirm `SDL_WaitThread` is called only when `s_thread != NULL`, and that the natural-success exit path doesn't double-join (the handle is nulled inside the wait branch).
+- Overlay regression: if direct-P2P sessions show blank or wrong mode labels, confirm `DirectP2P_GetRole()` is being called and that 5a's switch update still maps the existing pre-fallback states (`HOST_WAITING`, `JOIN_PUNCHING`, `HANDOFF`, `FAILED_*`) the same way they were before.
+- Build error from `inet_pton` unavailable: include `<arpa/inet.h>` on POSIX, `<ws2tcpip.h>` on Windows. Match what `src/netplay/stun.c` already includes for the same primitive.
+
+---
+
+### Step 5b — Host fallback path: rendezvous thread, send queue, DELIVER handler, bilateral-punch thread **[DONE 2026-04-26]**
+
+**Why:** with the foundation in place, wire up the host's fallback path so a host that fails the direct passive-receive can REGISTER with the rendezvous server, receive a DELIVER, and run a bilateral `Stun_HolePunch` against the joiner's endpoint. After 5b, the host fallback path is implemented and reachable; the joiner is still unchanged from today (joiner's fallback comes in 5c), so end-to-end fallback won't function until 5c lands.
+
+**Read first:**
+- `/Users/sb/Developer/3sx-mister/src/netplay/direct_p2p.c` — `host_thread_fn` (`:288-365`), `host_tick_receive` (`:516-552`), `try_handle_deliver` stub (added in Step 4), `do_handoff` (`:483`), `set_state(DIRECT_P2P_HANDOFF)` (`:547`)
+- `/Users/sb/Developer/3sx-mister/src/netplay/stun.c` — `Stun_HolePunch` (`:421` direct call site, `:438-442` peer in/out param overwrite, `:454` 10ms loop), `NET_GetAddressStatus` polling pattern (`:272-275` 100ms-bounded variant)
+- `/Users/sb/Developer/3sx-mister/src/netplay/rendezvous.h` — from Step 3
+- §Decisions 2, 3, 5, 9 of this plan
+
+**Changes:**
+- `src/netplay/direct_p2p.c`:
+  - Add the `s_rendezvous_send_q` SPSC ring per §Decision 3's concrete spec: 8 slots; slot type `struct { NET_Address* target; uint16_t target_port; uint8_t payload[28]; uint8_t payload_len; }`; producer `NET_RefAddress` before enqueue, drain `NET_UnrefAddress` after send (or after drop on overflow); `SDL_AtomicInt s_q_head` (consumer-write) and `SDL_AtomicInt s_q_tail` (producer-write); producer drops on overflow (returns false, increments `s_q_drops`, logs once per session via `SDL_Log`); drain rate up to 4 slots per tick.
+  - Add `static int SDLCALL host_rendezvous_thread_fn(void* data)` — parses signal URL, resolves the rendezvous hostname **once** at thread start using the existing 100ms-bounded `NET_GetAddressStatus` polling pattern from `stun.c:272-275` (`stun.c:385-389` uses a longer 3000ms variant for peer addresses; we want the 100ms server-hostname variant.) If resolution fails (NULL or status != `NET_SUCCESS`), exit thread immediately (host: stay HOST_WAITING; do not retry — the 8-second budget is for peer-pairing, not DNS). Then the thread builds REGISTER/POLL packets and enqueues `(NET_RefAddress(target), payload[28])` tuples onto `s_rendezvous_send_q`. The thread never calls `NET_SendDatagram` directly.
   - **Post-budget status update.** When `host_rendezvous_thread_fn` exits with no DELIVER received (8-second budget expired), it must set status to `"Waiting for peer (no peer detected - check that they're using a recent build)."` before exiting. **Do NOT change state** — host stays at `DIRECT_P2P_HOST_WAITING` so the passive receive path keeps running in case a late-arriving direct punch still works. Per §Decision 9, this is a status-only update.
-  - Update `host_thread_fn` to spawn `host_rendezvous_thread_fn` after publishing `HOST_WAITING` (unless `CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_BILATERAL` is true, or peer_ip will be LAN once learned — the latter check deferred to after DELIVER since we don't know peer yet).
+  - Wire `DirectP2P_Tick`'s `HOST_WAITING` branch to drain up to 4 slots from `s_rendezvous_send_q`, invoking `Rendezvous_Send(s_work.stun.socket, target, target_port, pkt, 28)` per slot, then `NET_UnrefAddress(target)`. Drain happens BEFORE `host_tick_receive` so the main thread is the sole socket-I/O actor during this phase. Per §Decision 3, sending REGISTER from the STUN socket is required (the server records the packet's source endpoint, which must be the same STUN-visible `(ip, port)` the joiner will punch toward; a separate ephemeral socket would register the wrong endpoint).
+  - Update `host_thread_fn` to spawn `host_rendezvous_thread_fn` after publishing `HOST_WAITING` (unless `CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_BILATERAL` is true). Per §Decision 5, the host stays in `HOST_WAITING` during REGISTER/POLL — there is no host-side `set_state(FALLBACK_SIGNALING)` call.
   - Flesh out `try_handle_deliver` from Step 4: parse with `Rendezvous_ParseDeliver`; if peer fields are non-zero and state is `HOST_WAITING`:
     - Set `s_work.peer_ip/peer_public_port` from DELIVER.
     - Signal `s_rendezvous_cancel` to stop the rendezvous thread.
     - If `direct_p2p_is_lan_peer(peer_ip)`: log, do NOT enter bilateral (we should have seen a direct punch already; something is weird. Stay in HOST_WAITING.)
     - **If `direct_p2p_ip_eq_normalized(peer_ip, s_work.stun.public_ip)`** (NAT-hairpin case — same public IP means same LAN behind broken loopback): log, transition to `FAILED_SYMMETRIC`. Rendezvous won't help because the router will fail to loop back the bilateral punch the same way it failed the fast path (per §Hard requirement 3(c)). Compare normalized — never `strcmp` on possibly-prefixed string forms.
     - Else: transition to `FALLBACK_BILATERAL_PUNCH`, spawn a short-lived `host_bilateral_punch_thread_fn` that calls `Stun_HolePunch`. Before calling `Stun_HolePunch`, the bilateral-punch thread copies `s_work.peer_ip` and `s_work.peer_public_port` into stack-local buffers (mirror `direct_p2p.c:418-420`'s pattern). `Stun_HolePunch` overwrites its in-out parameters at `stun.c:438,442` post-receive; passing `&s_work.peer_ip[0]` directly would race with `do_handoff`'s read of the same field on the main thread.
-  - Update `join_thread_fn`: on `Stun_HolePunch` failure, instead of immediate transition to `FAILED_SYMMETRIC`:
-    - If `CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_BILATERAL` is true OR `direct_p2p_is_lan_peer(s_work.peer_ip)` OR `direct_p2p_ip_eq_normalized(s_work.peer_ip, s_work.stun.public_ip)`: transition to `FAILED_SYMMETRIC` (unchanged).
-      - The third disjunct is the joiner-side hairpin gate, mirroring the host-side check at §Step 5 DELIVER handler. Hard Requirement 3(c) applies symmetrically to both sides: on the joiner, the gate fires after the joiner's STUN discovery completes (so `s_work.stun.public_ip` is populated) and before the FALLBACK_SIGNALING transition; on the host, it fires at DELIVER receive time.
-    - Else: transition to `FALLBACK_SIGNALING`; resolve the rendezvous hostname **once** at the start of this branch using the existing 100ms-bounded `NET_GetAddressStatus` polling pattern from `stun.c:272-275`. If resolution fails (NULL or status != `NET_SUCCESS`), transition immediately to `FAILED_BILATERAL` (do not retry — the 8-second budget is for peer-pairing, not DNS). Then inline-run the REGISTER/POLL loop for the configured budget; on DELIVER, transition to `FALLBACK_BILATERAL_PUNCH` and run `Stun_HolePunch` with `CFG_KEY_NETPLAY_DIRECT_P2P_BILATERAL_PUNCH_MS` budget; on DELIVER-never-arrived or second punch failure, `FAILED_BILATERAL`; on success, `HANDOFF`.
-      - The joiner's inline REGISTER/POLL loop calls `Rendezvous_Send(s_work.stun.socket, ...)` directly from the existing `join_thread_fn` worker thread. Joiner does not need a queue: its `s_work.stun.socket` has only one reader/writer (the worker itself). The same `Rendezvous_Send` symbol is used on both sides, so Step 6's interpose covers both.
-    - **Worker-lifetime note:** this extends `join_thread_fn`'s runtime from today's "publish state then exit immediately" contract (`direct_p2p.c:456-457`) by up to `signal_budget_ms + bilateral_punch_ms` (default 8000 + 3000 = 11 s) in the fallback path. The existing `DirectP2P_Cancel` grace period (500 ms loop at `direct_p2p.c:659-661`) is still adequate because `Stun_HolePunch` honors `&s_cancel` (see `stun.c:407-411`), and the inline REGISTER/POLL loop must also check `SDL_GetAtomicInt(&s_cancel)` between sends. The host worker (`direct_p2p.c:288, exits at :361-365`) similarly publishes HOST_WAITING and exits today; with this plan it remains short-lived (the rendezvous and bilateral-punch threads are spawned separately, not extensions of the host worker). Cancel/teardown must therefore wait on `s_rendezvous_thread` and `s_bilateral_punch_thread` independently of `s_thread`.
-  - **Cancel semantics — switch from detach to wait.** Drop `SDL_DetachThread(s_thread); s_thread = NULL;` at both `direct_p2p.c:603-604` (host spawn site, inside `DirectP2P_BeginHost`) and `direct_p2p.c:644-645` (join spawn site, inside `DirectP2P_BeginJoin`). Keep the handle in `s_thread` (declared as a single static handle at `direct_p2p.c:117` — host and join paths are mutually exclusive on the user-action axis, so one slot is sufficient). Modify `DirectP2P_Cancel` (currently spinning for IDLE at `direct_p2p.c:659-661`): set `s_cancel`, then `if (s_thread) { SDL_WaitThread(s_thread, NULL); s_thread = NULL; }`, then teardown. The same WaitThread call must also wait on `s_rendezvous_thread` and `s_bilateral_punch_thread` (declared next) if either is non-NULL. This eliminates a pre-existing race where the worker writes `s_work` after Cancel's memset (`direct_p2p.c:674`), and ensures all three new threads are joined before teardown.
-  - `DirectP2P_Cancel` — also sets `s_rendezvous_cancel`, joins the rendezvous thread if alive (via `SDL_WaitThread`), and joins the bilateral-punch thread if alive.
-  - **Worker-lifetime note.** `Stun_HolePunch` honors `&s_cancel` between sends (`stun.c:407-411`); the cancel-flag check fires once per loop iteration with `SDL_Delay(10)` between iterations (`stun.c:454`), so worst-case latency is ~10ms after the cancel atomic is set — well under the existing 500ms grace window. The inline REGISTER/POLL loop on the joiner must also check `SDL_GetAtomicInt(&s_cancel)` between sends so cancel propagates symmetrically.
-  - `DirectP2P_Tick` — add case for `FALLBACK_BILATERAL_PUNCH` on host: check if `host_bilateral_punch_thread_fn` has completed and handoff / fail accordingly. **This case must NOT call `host_tick_receive`** — per §Decision 3, the bilateral-punch thread exclusively owns `s_work.stun.socket` for reads during its `Stun_HolePunch` lifetime, so concurrent `NET_ReceiveDatagram` on the main thread would race. In concrete terms: the `FALLBACK_BILATERAL_PUNCH` case is thread-wait-only (check `SDL_WaitThreadTimeout` or an atomic "done" flag); it does not touch the STUN socket. Add a new `FALLBACK_SIGNALING` case too (for symmetry during the REGISTER/POLL phase on the host, reads are still on the main thread via `host_tick_receive`; the case falls through to the same behavior as `HOST_WAITING`). (Join-side inlines into the worker thread; no Tick changes needed on that path.)
-  - `direct_p2p_on_teardown` — set `s_rendezvous_cancel` and `s_bilateral_punch_cancel`, then `SDL_WaitThread` each non-NULL handle. Each thread honors its cancel flag at the next loop iteration (rendezvous thread: between sends, max ~500ms; bilateral-punch thread: inside `Stun_HolePunch` cancel check at `stun.c:407-411`, which runs every iteration with `SDL_Delay(10)` between, so max ~10ms). Total teardown blocking is bounded at ~510ms in the worst case. If this proves too long for the calling render thread, gate the wait with a 1-second deadline and log+continue on timeout (worker memory leaks rather than races).
-- `src/netplay/direct_p2p_overlay.c` — map new states to overlay labels per §Decision 9.
-- Update status strings via `set_status` on transitions per §Decision 9.
+      - **Writeback ordering on success.** When `Stun_HolePunch` returns true, copy the (possibly-updated) local `peer_ip` and `peer_port` BACK to `s_work.peer_ip` and `s_work.peer_public_port` BEFORE calling `set_state(DIRECT_P2P_HANDOFF)`. The main thread's `do_handoff` reads `s_work.peer_ip` at `direct_p2p.c:558`; if writeback happens after `set_state`, `do_handoff` reads the pre-punch endpoint and the connection will be misrouted. Mirror the join-side ordering at `direct_p2p.c:445-446` (writeback) → `:456` (set_state).
+  - Fill in `DirectP2P_Tick`'s `FALLBACK_BILATERAL_PUNCH` case (skeleton from 5a): check if `host_bilateral_punch_thread_fn` has completed and handoff / fail accordingly. **This case must NOT call `host_tick_receive`** — per §Decision 3, the bilateral-punch thread exclusively owns `s_work.stun.socket` for reads during its `Stun_HolePunch` lifetime, so concurrent `NET_ReceiveDatagram` on the main thread would race. In concrete terms: the case is thread-wait-only (check `SDL_WaitThreadTimeout` or an atomic "done" flag); it does not touch the STUN socket. **No host-side `FALLBACK_SIGNALING` Tick case is needed** — per §Decision 5, the host stays in `HOST_WAITING` during the REGISTER/POLL phase; the existing `HOST_WAITING` Tick branch (drains `s_rendezvous_send_q` then runs `host_tick_receive`) already covers it.
+  - Update status strings via `set_status` on the host transitions per §Decision 9 (`HOST_WAITING` post-budget; `FALLBACK_BILATERAL_PUNCH`).
 
 **Success criteria:**
 - `tools/mister/build-game.sh --flavor telemetry` builds clean.
 - `cmake --build build/host` builds clean (host).
-- `grep -n 'DIRECT_P2P_FALLBACK_SIGNALING\|DIRECT_P2P_FALLBACK_BILATERAL_PUNCH\|DIRECT_P2P_FAILED_BILATERAL' src/netplay/direct_p2p.c` prints ≥ 9 lines (decl + 3+ uses each).
-- Manual end-to-end probe in `docs/direct-p2p-smoke-plan.md` §Bilateral smoke — two-home test (this section is authored in Step 7; early Step 5 runs can log-grep manually for the five lines below): two-home test with one symmetric NAT shows logs `[direct_p2p] entering FALLBACK_SIGNALING`, `[direct_p2p] DELIVER received peer=<ip>:<port>`, `[direct_p2p] entering FALLBACK_BILATERAL_PUNCH`, `STUN: Hole punch SUCCESS`, `[direct_p2p] Handoff to netplay`.
-- Direct-P2P fast path still succeeds (non-symmetric peers): no `FALLBACK_SIGNALING` log line appears.
+- `grep -n 'host_rendezvous_thread_fn\|host_bilateral_punch_thread_fn\|s_rendezvous_send_q' src/netplay/direct_p2p.c` prints ≥ 3 lines.
+- Manual probe: with a (real or mock) rendezvous server reachable, host on a node behind symmetric NAT and confirm `[direct_p2p] DELIVER received peer=<ip>:<port>`, `[direct_p2p] entering FALLBACK_BILATERAL_PUNCH`, `STUN: Hole punch SUCCESS`, `[direct_p2p] Handoff to netplay` log lines fire on the host side. Joiner-side fallback is still pre-5c, so end-to-end fallback succeeds only if the joiner is on a non-symmetric NAT (host's bilateral punch reaches them before they time out).
+- Direct-P2P fast path still succeeds (non-symmetric peers): no `FALLBACK_BILATERAL_PUNCH` log line appears.
 
-**Depends on:** Steps 2, 3, 4.
+**Depends on:** Step 5a.
 
 **Do NOT:**
+- Touch `join_thread_fn` — joiner fallback comes in 5c.
 - Change `src/netplay/stun.c` or `stun.h`. `Stun_HolePunch` already handles bilateral correctly.
 - Change `src/netplay/netplay.c` — socket handoff is unchanged.
 - Change `src/netplay/netplay_nav.c` — nav just waits for `Netplay_IsRemoteIpSet`. That still fires at the exact same point (`do_handoff` call).
 - Touch any wrapper file in `vendor/Main_MiSTer/`. Wrapper knows nothing about bilateral punch.
-- Start a signaling thread on the joiner side — joiner's existing worker thread handles rendezvous inline. Only host needs a new thread because host's existing worker exits after publishing `HOST_WAITING`.
 
 **If it fails:**
 - Send-queue overflow: `s_rendezvous_send_q` has 8 slots and a per-tick drain bound of 4 (per §Decision 3 concrete spec). At a 500ms-cadence REGISTER/POLL loop the steady-state depth is ≤2; overflow would indicate the rendezvous thread is enqueuing faster than the main thread is draining. The producer drops on overflow (incrementing `s_q_drops` and logging once per session) rather than blocking, so a stuck drain doesn't deadlock the worker — verify the drain bound and the thread's send cadence in that case.
-- Thread join races at `DirectP2P_Cancel`: see the cancel-semantics changes in this step (drop `SDL_DetachThread`, switch Cancel to `SDL_WaitThread`).
-- If the state machine drops into `FALLBACK_SIGNALING` on LAN traffic: double-check `direct_p2p_is_lan_peer` is called before the fallback transition.
+- Concurrent `NET_ReceiveDatagram` on STUN socket during `FALLBACK_BILATERAL_PUNCH`: confirm `DirectP2P_Tick`'s case for that state does NOT call `host_tick_receive` and does NOT drain the send queue.
+- Thread join races on the new `s_rendezvous_thread` / `s_bilateral_punch_thread`: confirm 5a's `DirectP2P_Cancel` and `direct_p2p_on_teardown` extensions wait on each non-NULL handle.
 
 ---
 
-### Step 6 — Test harness (`--test-bilateral-punch`)
+### Step 5c — Joiner fallback path: inline REGISTER/POLL, hairpin gate, bilateral punch, status strings **[DONE 2026-04-26]**
+
+**Why:** finish the bilateral path by wiring the joiner's fallback branch. After 5c lands, both peers in a symmetric-NAT pair fall back through rendezvous → bilateral punch → handoff. End-to-end fallback works.
+
+**Read first:**
+- `/Users/sb/Developer/3sx-mister/src/netplay/direct_p2p.c` — `join_thread_fn` (`:372-458`), today's `Stun_HolePunch` failure path landing at `:435` (`set_state(DIRECT_P2P_FAILED_SYMMETRIC)`), worker exit at `:456-458`
+- `/Users/sb/Developer/3sx-mister/src/netplay/stun.c` — `NET_GetAddressStatus` polling pattern (`:272-275` 100ms-bounded variant)
+- `/Users/sb/Developer/3sx-mister/src/netplay/rendezvous.h` — from Step 3
+- `/Users/sb/Developer/3sx-mister/src/netplay/direct_p2p_overlay.c` — confirm the role-branching mode-label switch from 5a
+- §Decisions 4, 5, 9 of this plan
+
+**Changes:**
+- `src/netplay/direct_p2p.c`:
+  - Update `join_thread_fn`: on `Stun_HolePunch` failure, instead of immediate transition to `FAILED_SYMMETRIC`:
+    - If `CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_BILATERAL` is true OR `direct_p2p_is_lan_peer(s_work.peer_ip)` OR `direct_p2p_ip_eq_normalized(s_work.peer_ip, s_work.stun.public_ip)`: transition to `FAILED_SYMMETRIC` (unchanged).
+      - The third disjunct is the joiner-side hairpin gate, mirroring the host-side check at 5b's DELIVER handler. Hard Requirement 3(c) applies symmetrically to both sides: on the joiner, the gate fires post-STUN-discovery, post-`Stun_HolePunch`-failure, before the FALLBACK_SIGNALING transition (so `s_work.stun.public_ip` is populated and the direct punch has already been attempted); on the host, it fires at DELIVER receive time.
+    - Else: transition to `FALLBACK_SIGNALING`; resolve the rendezvous hostname **once** at the start of this branch using the existing 100ms-bounded `NET_GetAddressStatus` polling pattern from `stun.c:272-275`. If resolution fails (NULL or status != `NET_SUCCESS`), transition immediately to `FAILED_BILATERAL` (do not retry — the 8-second budget is for peer-pairing, not DNS). Then inline-run the REGISTER/POLL loop for the configured budget; on DELIVER, transition to `FALLBACK_BILATERAL_PUNCH` and run `Stun_HolePunch` with `CFG_KEY_NETPLAY_DIRECT_P2P_BILATERAL_PUNCH_MS` budget; on DELIVER-never-arrived or second punch failure, `FAILED_BILATERAL`; on success, `HANDOFF`.
+      - The joiner's inline REGISTER/POLL loop calls `Rendezvous_Send(s_work.stun.socket, ...)` directly from the existing `join_thread_fn` worker thread. Joiner does not need a queue: its `s_work.stun.socket` has only one reader/writer (the worker itself). The same `Rendezvous_Send` symbol is used on both sides, so Step 6's interpose covers both.
+    - **Worker-lifetime note:** this extends `join_thread_fn`'s runtime from today's "publish state then exit immediately" contract (`direct_p2p.c:456-457`) by up to `signal_budget_ms + bilateral_punch_ms` (default 8000 + 3000 = 11 s) in the fallback path. Cancel responsiveness comes from `SDL_WaitThread` after the cancel atomic is set (5a's lifecycle rework); the inline REGISTER/POLL loop must check `SDL_GetAtomicInt(&s_cancel)` between sends (no busier than every 100ms) so the worker exits within ~100ms of cancellation. `Stun_HolePunch` already honors `&s_cancel` between iterations at `stun.c:407-411`; the cancel-flag check fires once per loop iteration with `SDL_Delay(10)` between iterations (`stun.c:454`), so worst-case latency is ~10ms after the cancel atomic is set, well within the bounded `SDL_WaitThread` deadline (1 second per §Decision 3 / `direct_p2p_on_teardown`). The host worker (`direct_p2p.c:288, exits at :361-365`) similarly publishes HOST_WAITING and exits today; with this plan it remains short-lived (the rendezvous and bilateral-punch threads are spawned separately, not extensions of the host worker). Cancel/teardown waits on `s_rendezvous_thread` and `s_bilateral_punch_thread` independently of `s_thread`.
+  - Update status strings via `set_status` on joiner transitions per §Decision 9 (`FALLBACK_SIGNALING`, `FALLBACK_BILATERAL_PUNCH`, `FAILED_BILATERAL`).
+- `src/netplay/direct_p2p_overlay.c`:
+  - Re-verify the role-branching mode-label switch from 5a covers all the new states for `ROLE_JOIN`. `JOIN_PUNCHING / FALLBACK_SIGNALING / FALLBACK_BILATERAL_PUNCH` → `"CONNECTING"`; `HANDOFF` → `"CONNECTED"`; `FAILED_*` (including `FAILED_BILATERAL`) → `"ERROR"`. No new code expected here in 5c if 5a covered it; sanity-grep.
+
+**Success criteria:**
+- `tools/mister/build-game.sh --flavor telemetry` builds clean.
+- `cmake --build build/host` builds clean (host).
+- `grep -n 'DIRECT_P2P_FALLBACK_SIGNALING\|DIRECT_P2P_FALLBACK_BILATERAL_PUNCH\|DIRECT_P2P_FAILED_BILATERAL' src/netplay/direct_p2p.c` prints ≥ 9 lines (decl + 3+ uses each — counting host and join paths together).
+- Manual end-to-end probe in `docs/direct-p2p-smoke-plan.md` §Bilateral smoke — two-home test (this section is authored in Step 7; early Step 5c runs can log-grep manually for the five lines below): two-home test with one symmetric NAT shows logs `[direct_p2p] entering FALLBACK_SIGNALING`, `[direct_p2p] DELIVER received peer=<ip>:<port>`, `[direct_p2p] entering FALLBACK_BILATERAL_PUNCH`, `STUN: Hole punch SUCCESS`, `[direct_p2p] Handoff to netplay`.
+- Direct-P2P fast path still succeeds (non-symmetric peers): no `FALLBACK_SIGNALING` log line appears.
+- Kill-switch honored: with `netplay-direct-p2p-disable-bilateral=true`, joiner lands on `FAILED_SYMMETRIC` exactly as today.
+
+**Depends on:** Steps 5a, 5b.
+
+**Do NOT:**
+- Spawn a signaling thread on the joiner side — joiner's existing worker thread handles rendezvous inline. Only host needs new threads because host's existing worker exits after publishing `HOST_WAITING`.
+- Change `src/netplay/stun.c` or `stun.h`. `Stun_HolePunch` already handles bilateral correctly.
+- Change `src/netplay/netplay.c` — socket handoff is unchanged.
+- Change `src/netplay/netplay_nav.c` — nav just waits for `Netplay_IsRemoteIpSet`. That still fires at the exact same point (`do_handoff` call).
+- Touch any wrapper file in `vendor/Main_MiSTer/`. Wrapper knows nothing about bilateral punch.
+
+**If it fails:**
+- If the state machine drops into `FALLBACK_SIGNALING` on LAN traffic: double-check `direct_p2p_is_lan_peer` is called before the fallback transition.
+- If the joiner stays in `FALLBACK_SIGNALING` past the 8-second budget without transitioning to `FAILED_BILATERAL`: confirm the inline REGISTER/POLL loop honors the budget timer and that DNS resolution did not silently spin.
+- Hairpin gate failing-open on form mismatch: confirm the joiner's third-disjunct check uses `direct_p2p_ip_eq_normalized` and not `strcmp`.
+- Worker-lifetime cancel propagation: confirm the inline REGISTER/POLL loop checks `SDL_GetAtomicInt(&s_cancel)` between sends so a `DirectP2P_Cancel` during fallback exits within ~100ms.
+
+---
+
+### Step 6 — Test harness (`--test-bilateral-punch`) **[DONE 2026-04-26]**
 
 **Why:** automated tests for the rendezvous client and state-machine transitions. Covers Decision 7's CI split.
 
@@ -623,12 +726,12 @@ Ordered by dependency. Steps 1 and 2 are deployable independently (infra + a new
   1. Mock UDP rendezvous server + two mock clients verifying REGISTER → DELIVER flow.
   2. Session-key derivation stability (known vector).
   3. LAN bypass rejection table-driven over the 5 CIDR ranges + public IP.
-  4. State-machine drive using a test-only injection seam. Add a minimal seam in `direct_p2p.c` behind `#ifdef NETPLAY_TEST_HOOKS`: function pointer for `Stun_HolePunch` override (today a direct call at `direct_p2p.c:421`) + a `Rendezvous_Send` override (the helper introduced in Step 3). Both pointers default to the production implementations; tests swap them under `NETPLAY_TEST_HOOKS` to record calls without touching the network.
+  4. State-machine drive using a test-only injection seam. Add a minimal seam in `direct_p2p.c` behind `#ifdef NETPLAY_TEST_HOOKS`: function pointer for `Stun_HolePunch` override (today a direct call at `direct_p2p.c:421`) + a `Rendezvous_Send` override (the `static` helper defined in `direct_p2p.c`, introduced in Step 5a). Both pointers default to the production implementations; tests swap them under `NETPLAY_TEST_HOOKS` to record calls without touching the network.
   5. Kill-switch honored: set `Config_SetString(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_BILATERAL, "true")`, drive `BeginJoin`, observe terminal state is `FAILED_SYMMETRIC`, assert mock rendezvous server received zero packets.
-- **Modify `src/netplay/direct_p2p.c`** to add the `NETPLAY_TEST_HOOKS` seam that Test 4 depends on. Specifically: replace the direct `Stun_HolePunch(&s_work.stun, ...)` calls (at `direct_p2p.c:421` and the new host/join bilateral-punch call sites added in Step 5) with an indirection through a static function pointer that defaults to `Stun_HolePunch`. Under `-DNETPLAY_TEST_HOOKS`, the test harness sets the pointer to a mock. Same pattern for any new `Rendezvous_Send` helper introduced in Step 5. This is additive — production builds compile to an unchanged direct call when `NETPLAY_TEST_HOOKS` is undefined.
+- **Modify `src/netplay/direct_p2p.c`** to add the `NETPLAY_TEST_HOOKS` seam that Test 4 depends on. Specifically: replace the direct `Stun_HolePunch(&s_work.stun, ...)` calls (at `direct_p2p.c:421` and the new host/join bilateral-punch call sites added in Steps 5b/5c) with an indirection through a static function pointer that defaults to `Stun_HolePunch`. Under `-DNETPLAY_TEST_HOOKS`, the test harness sets the pointer to a mock. Same pattern for the `Rendezvous_Send` `static` helper introduced in Step 5a. This is additive — production builds compile to an unchanged direct call when `NETPLAY_TEST_HOOKS` is undefined.
 - Update `src/args.c` — register `--test-bilateral-punch` alongside existing `--test-*` flags. Add a new bool field `test_bilateral_punch` on the top-level `Configuration` struct (same pattern as `configuration->test_stun_mock`, `test_room_code`, `test_mist_handshake` at `src/args.c:217-243`).
 - Update `src/configuration.h` — add a new bool field `test_bilateral_punch` to the `Configuration` struct in `src/configuration.h:61-99`, mirroring the existing `test_stun_mock` / `test_room_code` / `test_mist_handshake` / `test_netplay_event_queue` pattern.
-- Update `src/main.c` — dispatch `Netplay_Test_BilateralPunch()` alongside the existing four test dispatchers around line 932+.
+- Update `src/main.c` — dispatch `Netplay_Test_BilateralPunch()` alongside the existing four test dispatchers at `:962-1000` (forward-decls begin at `:938`; the `if (configuration.test_*)` blocks start at `:962`).
 - Forward-declare `int Netplay_Test_BilateralPunch(void);` in the test-dispatch block per existing pattern.
 
 **Success criteria:**
@@ -637,7 +740,7 @@ Ordered by dependency. Steps 1 and 2 are deployable independently (infra + a new
 - `grep -n 'Netplay_Test_BilateralPunch\|test_bilateral_punch\|--test-bilateral-punch' src/ -r` prints ≥ 5 lines.
 - Test run completes in < 3 seconds (no real network I/O).
 
-**Depends on:** Steps 2, 3, 5.
+**Depends on:** Steps 2, 3, 5c.
 
 **Do NOT:**
 - Add network I/O against a live rendezvous server from tests. Use only in-process mock sockets on localhost.
@@ -650,7 +753,7 @@ Ordered by dependency. Steps 1 and 2 are deployable independently (infra + a new
 
 ---
 
-### Step 7 — Smoke plan + two-home test doc
+### Step 7 — Smoke plan + two-home test doc **[DONE 2026-04-26]**
 
 **Why:** Decision 7's human-driven verification needs a written procedure. Adds a section to the existing `docs/direct-p2p-smoke-plan.md` so it shows up when someone asks "how do I test netplay".
 
@@ -662,7 +765,7 @@ Ordered by dependency. Steps 1 and 2 are deployable independently (infra + a new
 - Extend `docs/direct-p2p-smoke-plan.md` with a new section "Bilateral smoke — two-home test":
   - Pre-reqs: two MiSTer units on different residential networks. At least one behind a known-symmetric NAT (confirmed via pre-existing direct-P2P smoke procedure).
   - Steps: boot both, Host on one, enter code on the other, observe the overlay transitions through `FALLBACK_SIGNALING` → `FALLBACK_BILATERAL_PUNCH` → `CONNECTED`.
-  - Expected log lines on both devices (specific SDL_Log messages from Step 5's code).
+  - Expected log lines on both devices (specific SDL_Log messages from Step 5b/5c's code).
   - Failure diagnostics: what to capture if `FALLBACK_BILATERAL` fires (tcpdump on the rendezvous server or on the client uplink, time-correlated client logs).
   - Kill-switch verification: set `netplay-direct-p2p-disable-bilateral=true` on one side, confirm the other side lands on `FAILED_BILATERAL` promptly (because the disabled side never REGISTERs and the server never pairs them).
 
@@ -671,18 +774,18 @@ Ordered by dependency. Steps 1 and 2 are deployable independently (infra + a new
 - Procedure is concrete enough that a non-author can follow it.
 - `grep -n 'Bilateral smoke\|FALLBACK_SIGNALING' docs/direct-p2p-smoke-plan.md` prints ≥ 3 lines.
 
-**Depends on:** Step 5.
+**Depends on:** Step 5c.
 
 **Do NOT:**
 - Rewrite existing sections of `docs/direct-p2p-smoke-plan.md` — only extend.
 - Add automated smoke scripts that require two MiSTer units. The test is inherently human-driven; don't fake automation.
 
 **If it fails:**
-- If the smoke procedure changes based on what actually worked in Step 5 (e.g., overlay text differs slightly), update the doc to match the code — code is ground truth.
+- If the smoke procedure changes based on what actually worked in Steps 5a/5b/5c (e.g., overlay text differs slightly), update the doc to match the code — code is ground truth.
 
 ---
 
-### Step 8 — End-to-end doc updates + memory note
+### Step 8 — End-to-end doc updates + memory note **[DONE 2026-04-26]**
 
 **Why:** the strategy memo and user-facing docs need to reflect the new fallback tier. Also adds a memory entry so future agents know bilateral exists.
 
@@ -702,7 +805,7 @@ Ordered by dependency. Steps 1 and 2 are deployable independently (infra + a new
 - `grep -n 'project-bilateral-hole-punch' /Users/sb/.claude/projects/-Users-sb-Developer-3sx-mister/memory/MEMORY.md` prints 1 line.
 - `grep -n 'bilateral\|FAILED_BILATERAL' docs/STUN-PORT-STATUS.md` prints ≥ 1 line.
 
-**Depends on:** Step 5 (must be complete and functional — docs follow code).
+**Depends on:** Step 5c (must be complete and functional — docs follow code).
 
 **Do NOT:**
 - Create per-state blog-post-length docs. Memory entries are 3-8 lines.
@@ -715,8 +818,8 @@ Ordered by dependency. Steps 1 and 2 are deployable independently (infra + a new
 
 ## Open questions deferred to review
 
-- ~~Does SDL3_net's `NET_ReceiveDatagram` truly tolerate concurrent sends from another thread on the same socket?~~ **Resolved by audit: SDL3_net's `pending_output` queue is unsynchronized (`/private/tmp/sdl_net_ref/src/SDL_net.c:2015`); design uses a main-thread send-drain queue (see §Decision 3, §Step 5).**
-- Rendezvous server IP for the default config: placeholder `rendezvous.3s-arm.example` — real DNS name must exist before Step 5 is shippable to users. Review should confirm we have infra budget / plan.
+- ~~Does SDL3_net's `NET_ReceiveDatagram` truly tolerate concurrent sends from another thread on the same socket?~~ **Resolved by audit: SDL3_net's `pending_output` queue is unsynchronized (`/private/tmp/sdl_net_ref/src/SDL_net.c:2015`); design uses a main-thread send-drain queue (see §Decision 3, §Step 5b).**
+- Rendezvous server IP for the default config: placeholder `rendezvous.3s-arm.example` — real DNS name must exist before Step 5c is shippable to users. Review should confirm we have infra budget / plan.
 - Should we also support rendezvous over IPv6? Rejected for MVP (MiSTer kernel has IPv6 disabled per `reference-mister-network-stack.md`), but review should confirm macOS host builds are OK sticking with IPv4-only signaling.
 - Kill-switch default (`false`) means bilateral is on by default from first deploy. Review: should we ship with `true` for the first public build so we can soak the rendezvous server, then flip to `false` via a later release?
 
@@ -726,12 +829,12 @@ Ordered by dependency. Steps 1 and 2 are deployable independently (infra + a new
 
 ```
 Step 1 (server)   ──┐
-                    ├─→ Step 3 (client) ─→ Step 4 (dispatch) ─→ Step 5 (integration) ─→ Step 6 (tests)
-Step 2 (config) ────┘                                                                  ├─→ Step 7 (smoke doc)
-                                                                                       └─→ Step 8 (memory + docs)
+                    ├─→ Step 3 (client) ─→ Step 4 (dispatch) ─→ Step 5a (foundation) ─→ Step 5b (host) ─→ Step 5c (joiner) ─→ Step 6 (tests)
+Step 2 (config) ────┘                                                                                                       ├─→ Step 7 (smoke doc)
+                                                                                                                            └─→ Step 8 (memory + docs)
 ```
 
-Steps 1 and 2 run in parallel. Steps 3 and 4 are serial. Step 5 depends on 2/3/4. Steps 6, 7, 8 depend on 5 and can run in parallel — but Step 7 (smoke) needs a running rendezvous server (Step 1 done and deployed), so scheduling-wise Step 7 lands last in practice even if Step 6 finishes first.
+Steps 1 and 2 run in parallel. Steps 3 and 4 are serial. Step 5a depends on 2/3/4; 5b depends on 5a; 5c depends on 5a/5b. Steps 6, 7, 8 depend on 5c and can run in parallel — but Step 7 (smoke) needs a running rendezvous server (Step 1 done and deployed), so scheduling-wise Step 7 lands last in practice even if Step 6 finishes first.
 
 ---
 
@@ -743,7 +846,9 @@ Steps 1 and 2 run in parallel. Steps 3 and 4 are serial. Step 5 depends on 2/3/4
 | 2 | Yes | No | No |
 | 3 | Yes | No | No |
 | 4 | Yes | No | Yes (regression check only) |
-| 5 | Yes | No | Yes (two-home) |
+| 5a | Yes | No | Yes (regression: fast path still works; no fallback transitions yet) |
+| 5b | Yes | No | Yes (host fallback reachable; full end-to-end requires non-symmetric joiner) |
+| 5c | Yes | No | Yes (two-home; full bilateral path) |
 | 6 | Yes (with `ENABLE_NETPLAY_TESTS`) | No | No |
 | 7 | No | No | Yes (two-home) |
 | 8 | No | No | No |
@@ -815,7 +920,7 @@ A third deep verification pass surfaced 19 additional findings (4 P-1, 7 P-2, 5 
 |------|-------------|------|
 | P-1.A Joiner-side hairpin gate missing | **Addressed in this round** | §Step 5 join_thread_fn fallback bullet extended to a three-way OR (kill-switch / LAN / `direct_p2p_ip_eq_normalized(s_work.peer_ip, s_work.stun.public_ip)`); §Hard requirement 3(c) updated to note the same compare runs symmetrically on host (DELIVER receive time) and joiner (post-STUN, pre-FALLBACK). |
 | P-1.B Host/join label swap on `SDL_DetachThread` + three-thread cleanup | **Addressed in this round** | §Step 5 cancel-semantics bullet now cites `direct_p2p.c:603-604` (host, in `DirectP2P_BeginHost`) and `:644-645` (join, in `DirectP2P_BeginJoin`); spells out three-thread cleanup model (`s_thread`, `s_rendezvous_thread`, `s_bilateral_punch_thread` — coexist on host path during FALLBACK_BILATERAL_PUNCH). NEW-4 disposition row updated to match. Adds separate `s_bilateral_punch_cancel` atomic. |
-| P-1.C `Rendezvous_Send` helper introduced as test seam | **Addressed in this round** | §Step 3 `rendezvous.{c,h}` API list adds `Rendezvous_Send` (thin pass-through over `NET_SendDatagram` with optional `NETPLAY_TEST_HOOKS` indirection). §Step 5 host_rendezvous_thread_fn bullet rewrites the queue tuple to carry `(NET_RefAddress(target), payload[28])` and routes the main-thread drain through `Rendezvous_Send`. §Step 5 join-side bullet calls `Rendezvous_Send` directly (no queue needed). §Step 6 Test 4 description references the helper. |
+| P-1.C `Rendezvous_Send` helper introduced as test seam | **Addressed in this round** | `Rendezvous_Send` is declared as a `static` helper in `direct_p2p.c` (per the SDL_net-purity constraint on `rendezvous.c`). §Step 3 forward-references it; §Step 5 introduces it next to the rendezvous queue/thread code; §Step 5 host_rendezvous_thread_fn bullet routes the main-thread drain through `Rendezvous_Send` and the queue tuple carries `(NET_RefAddress(target), payload[28])`; §Step 5 join-side bullet calls `Rendezvous_Send` directly (no queue needed). §Step 6 Test 4 description references the helper. |
 | P-1.D Drop unverifiable `/tmp/3sxtra/src/netplay/lobby_server.{c,h}` citations | **Addressed in this round** | §Decision 1 B-evaluation block reframed: cites `~/.claude/projects/-Users-sb-Developer-3sx-mister/memory/project-netplay-port-strategy.md` instead of unreadable upstream files; explicitly notes `/tmp/3sxtra/` recursively cleared (zero `.c`/`.h` files anywhere underneath). Review file gains an append-only correction in "Things verified correct" section noting the lobby_server.c / sha256.{c,h} entries are no longer reproducible. |
 | P-2.1 Concretize `s_rendezvous_send_q` spec | **Addressed in this round** | §Decision 3 queue paragraph rewritten with concrete spec: 8-slot SPSC ring; slot type carries `(NET_Address* target, uint16_t target_port, uint8_t payload[28], uint8_t payload_len)` with explicit `NET_RefAddress` / `NET_UnrefAddress` ownership rules; `SDL_AtomicInt` head/tail; producer drops on overflow with `s_q_drops` telemetry; drain rate up to 4 slots per tick. §Step 5 "If it fails" wording reconciled. |
 | P-2.2 `stun.c:386` "same idiom" misclaim | **Addressed in this round** | §Step 5 host_rendezvous_thread_fn DNS-resolve bullet replaces the parenthetical with a correct note: `stun.c:385-389` uses a longer 3000ms variant for peer addresses; we want the 100ms server-hostname variant from `stun.c:272-275`. |
@@ -831,3 +936,19 @@ A third deep verification pass surfaced 19 additional findings (4 P-1, 7 P-2, 5 
 | Nit-1 tf-psa-crypto link-line citation | **Addressed in this round** | §Step 3 CMakeLists.txt update bullet now distinguishes path declaration (`:246`) from link line (`:278`). |
 | Nit-2 Test URL reserved TLD | **Addressed in this round** | §Decision 7 Test 6 changed `udp://invalid.tld.example:3478` to `udp://invalid.example:3478` (RFC 2606 reserved TLD). |
 | Nit-3 Original review's `Stun_HolePunch` / `Stun_CloseSocket` swap | **Addressed in this round** | Per append-only convention, original review entry untouched; appended one-line nit to review's existing "Re-verification 2026-04-26" section noting `Stun_CloseSocket` is at `stun.h:28` and `Stun_HolePunch` at `stun.h:41-42`. |
+
+## Re-verification 2026-04-26 (round 4)
+
+Round-4 cold-read review surfaced 3 P-1 inconsistencies and 6 P-2 cleanup items against the post-round-3 plan; all addressed in this revision. Item labels are P-1.A..C / P-2.A..F to distinguish from earlier rounds. The big structural change in this round is splitting Step 5 into 5a / 5b / 5c (three flat steps; no umbrella).
+
+| Item | Disposition | Note |
+|------|-------------|------|
+| P-1.A `direct_p2p_overlay.c` cannot read `s_work.role`; access path unspecified | **Addressed in this round** | Added `Role DirectP2P_GetRole(void)` accessor to §Step 5a "Changes" (declared in `src/netplay/direct_p2p.h`, implemented in `src/netplay/direct_p2p.c` as a trivial snapshot returning `s_work.role`). §Decision 9 prose updated to specify `dp2p_overlay_mode_label` calls `DirectP2P_GetRole()` rather than reading `s_work.role` directly. New success-criterion grep added in §Step 5a (`grep -n 'DirectP2P_GetRole' src/netplay/direct_p2p.{c,h}` ≥ 2 lines). |
+| P-1.B Stale "500ms grace window" reference | **Addressed in this round** | Struck "well under the existing 500ms grace window" clause from the worker-lifetime note; replaced with "well within the bounded `SDL_WaitThread` deadline (1 second per §Decision 3 / `direct_p2p_on_teardown`)". The 500ms grace loop was deleted by the round-2 cancel-semantics rework, so the framing was stale. |
+| P-1.C Decision 5 host-side diagram inconsistent with §Step 5 host `FALLBACK_SIGNALING` Tick case | **Addressed in this round** | Applied Option B (host stays in `HOST_WAITING` during REGISTER/POLL): dropped the host-side `FALLBACK_SIGNALING` Tick case from §Step 5b; added clarifying prose to §Decision 5 that "`FALLBACK_SIGNALING` is joiner-only; the host's REGISTER/POLL phase happens while the state remains `HOST_WAITING` (rendezvous thread is parallel; main thread continues receiving via `host_tick_receive`)." The diagram already lacked a `HOST_WAITING → FALLBACK_SIGNALING` arrow, so Option B was self-consistent with the existing edges; the surrounding rendering was reordered separately per P-2.B (gates before defaults). |
+| P-2.A Step 5 size — split into 5a / 5b / 5c | **Addressed in this round** | Step 5 replaced with three flat steps (no umbrella): 5a foundation (enums, helpers, accessor, lifecycle rework — no behavior change), 5b host fallback (rendezvous thread, send queue, DELIVER handler, bilateral-punch thread), 5c joiner fallback (inline REGISTER/POLL, hairpin gate, bilateral punch, status strings). Each substep has all 8 required fields. Steps 6/7/8 re-scoped to depend on 5c. Dependency graph and build matrix updated to reflect the split. |
+| P-2.B Decision 5 diagram visual priority of gates over default arrows | **Addressed in this round** | Reordered the host-side and joiner-side transition tables so gated arrows appear before defaults within each origin state. Added a one-line annotation at the top of each cluster: "(gates checked first; default arrow fires if no gate matches)". |
+| P-2.C Overlapping worker-lifetime notes at `:591` and `:595` | **Addressed in this round** | Consolidated into a single Worker-lifetime note in §Step 5c (the inheritor of the join-side text). The unique content from the old `:595` bullet (`stun.c:454` cite, `SDL_Delay(10)` framing) is folded in; the redundant standalone bullet is removed. The "500ms grace window" framing dropped per P-1.B during consolidation. |
+| P-2.D Joiner-side hairpin gate firing-point description | **Addressed in this round** | Reworded §Step 5c (formerly §Step 5) joiner hairpin disjunct: "fires post-STUN-discovery, post-`Stun_HolePunch`-failure, before the FALLBACK_SIGNALING transition (so `s_work.stun.public_ip` is populated and the direct punch has already been attempted)." |
+| P-2.E Writeback ordering line cite `:455-457` → `:456` | **Addressed in this round** | Corrected the `set_state(DIRECT_P2P_HANDOFF)` cite in §Step 5b's writeback-ordering bullet to `direct_p2p.c:456` (verified). |
+| P-2.F Step 6 dispatch line cite "around 932+" → ":962-1000" | **Addressed in this round** | Corrected to ":962-1000" in §Step 6 main.c bullet (forward-decls begin at `:938`; the `if (configuration.test_*)` blocks start at `:962`). |

@@ -35,6 +35,13 @@ option(ENABLE_MISTER_ARM_HARDENING
        "Enable conservative ARMv7 hard-float/NEON flags for MiSTer-target builds"
        ${_ENABLE_MISTER_ARM_HARDENING_DEFAULT})
 
+# Step 6 of docs/plan-bilateral-hole-punch.md — function-pointer seam in
+# direct_p2p.c so test_bilateral_punch.c can mock Stun_HolePunch /
+# Rendezvous_Send. OFF by default; turn ON for the test build alongside
+# -DCMAKE_C_FLAGS=-DENABLE_NETPLAY_TESTS. With OFF, direct_p2p.c emits
+# byte-identical machine code to pre-Step-6 (no indirect calls).
+option(NETPLAY_TEST_HOOKS "Compile in test seams for direct_p2p.c (Step 6)" OFF)
+
 message(STATUS "PORT_MISTER=${PORT_MISTER}")
 message(STATUS "ENABLE_PERF_TELEMETRY=${ENABLE_PERF_TELEMETRY}")
 message(STATUS "ENABLE_NETPLAY=${ENABLE_NETPLAY}")
@@ -42,6 +49,7 @@ message(STATUS "ENABLE_ISO_IMPORT=${ENABLE_ISO_IMPORT}")
 message(STATUS "ENABLE_FFMPEG_ADX=${ENABLE_FFMPEG_ADX}")
 message(STATUS "ENABLE_SDL_DIALOGS=${ENABLE_SDL_DIALOGS}")
 message(STATUS "ENABLE_MISTER_ARM_HARDENING=${ENABLE_MISTER_ARM_HARDENING}")
+message(STATUS "NETPLAY_TEST_HOOKS=${NETPLAY_TEST_HOOKS}")
 
 # ======================================
 # Include directories
@@ -111,6 +119,10 @@ endif()
 
 if(ENABLE_NETPLAY)
     target_compile_definitions(3s-arm PRIVATE NETPLAY_ENABLED GEKKONET_STATIC GEKKONET_NO_ASIO ENABLE_NETPLAY)
+endif()
+
+if(NETPLAY_TEST_HOOKS)
+    target_compile_definitions(3s-arm PRIVATE NETPLAY_TEST_HOOKS)
 endif()
 
 if(ENABLE_ISO_IMPORT)

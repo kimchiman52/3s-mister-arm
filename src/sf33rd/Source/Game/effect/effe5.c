@@ -51,7 +51,7 @@ void setup_illusion_data(WORK_Other* ewk, PLW* mwk);
 
 /* Count active ghost sprites (E7=147 / E8=148) belonging to a player.
    Walks effect list 3 where all ghost sprites live.  Used to enforce
-   ghost_count_max as a hard cap on simultaneously-alive ghosts. */
+   the hardcoded 4-ghost cap on simultaneously-alive ghosts. */
 s16 count_active_ghosts(s16 player_id) {
     s16 count = 0;
     s16 aix = head_ix[3];

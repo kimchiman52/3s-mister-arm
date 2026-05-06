@@ -233,25 +233,27 @@ killed, clean stale artifacts from the Mac side before retrying:
 rm -rf build/mister-wrapper-core/src/db build/mister-wrapper-core/src/output_files
 ```
 
-Output: `build/mister-wrapper-core/src/output_files/3S-ARM.rbf` (visible from both inside the VM and on the Mac host).
+Output: `build/mister-wrapper-core/3S-ARM_YYYYMMDD.rbf` (visible from both inside the VM and on the Mac host). The Quartus stage produces an un-dated `src/output_files/3S-ARM.rbf` first; `build-core.sh` then renames the host-mirror copy with a date suffix matching the rbf's mtime, following the MiSTer cores convention so the firmware recognizes it as a versioned bitstream.
 
 Previous builds are also cached inside the VM at `/home/sb.linux/build/mister-wrapper-core/`.
 
 Build time: ~30-60 minutes (x86_64-emulated Colima QEMU VM).
 
-Deploy the FPGA core to MiSTer using `misterctl.sh`:
+Deploy the FPGA core to MiSTer using `misterctl.sh`. The deploy step must point at a wrapper-package tree (`MiSTer_3S-ARM` at the root + `_Other/3S-ARM_YYYYMMDD.rbf`); the staged release dir is the canonical source:
 
 ```bash
-MISTER_HOST=192.168.1.171 MISTER_USER=root MISTER_PASSWORD=1 \
-  tools/mister/misterctl.sh deploy-wrapper --src build/mister-wrapper-core --artifacts-only
+MISTER_HOST=192.168.1.188 MISTER_USER=root MISTER_PASSWORD=1 \
+  tools/mister/misterctl.sh deploy-wrapper --src build/mister-release/stage --artifacts-only
 ```
 
-Or manually (core only):
+Or manually (core only — preserves the date suffix):
 
 ```bash
-sshpass -p 1 scp build/mister-wrapper-core/src/output_files/3S-ARM.rbf \
-  root@192.168.1.171:/media/fat/_Other/3S-ARM.rbf
+rbf=$(ls -1t build/mister-wrapper-core/3S-ARM_*.rbf | head -1)
+sshpass -p 1 scp "$rbf" "root@192.168.1.188:/media/fat/_Other/$(basename "$rbf")"
 ```
+
+`misterctl.sh probe-wrapper` / `smoke-wrapper` / `run-wrapper` resolve the latest `_Other/3S-ARM_*.rbf` on-device automatically. To pin a specific build instead, set `MISTER_WRAPPER_CORE_RELPATH=_Other/3S-ARM_YYYYMMDD.rbf` before invoking.
 
 ## Package
 
@@ -398,6 +400,8 @@ rsync -avn --itemize-changes --delete --omit-dir-times --no-perms --no-owner --n
   --filter 'P config' \
   --exclude 'keymap' \
   --filter 'P keymap' \
+  --exclude 'state' \
+  --filter 'P state' \
   build/mister-clean-package/ root@192.168.1.171:/media/fat/games/3s-arm/
 ```
 

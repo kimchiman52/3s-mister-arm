@@ -1,5 +1,6 @@
 #include "sf33rd/Source/Common/PPGFile.h"
 #include "common.h"
+#include "main.h"
 #if DEBUG
 #include "sf33rd/Source/Game/engine/workuser.h"
 #include <stdio.h>
@@ -817,7 +818,12 @@ error_handler:
     }
 
     pch->handle = NULL;
-    while (1) {}
+    // originally while(1){} from arcade source; skip + log instead of hanging
+#if ENABLE_PERF_TELEMETRY
+    flLogOut("[ppgfile-skip] %s palette-load-failed total=%d c_mode=%d koCmpr=%d\n",
+             __func__, pch->total, pch->c_mode, koCmpr);
+#endif
+    return -1;
 }
 
 s32 ppgSetupPalChunkDir(Palette* pch, PPLFileHeader* ppl, u8* adrs, s32 ixNum1st, s32 /* unused */) {

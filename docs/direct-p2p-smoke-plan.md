@@ -205,6 +205,9 @@ Covered entirely by `--test-room-code`. Runs in ~10 ms, no network.
   follow-on work. Paste log evidence into the commit message.
 - Smoke B: CONDITIONAL. Include in the commit message as either
   "completed — outcome X" or "deferred — hotspot not available".
+- Bilateral smoke: CONDITIONAL. Include in the commit message as either
+  "completed — outcome X" or "deferred — rendezvous infra not deployed"
+  or "deferred — second network not available".
 
 ## What NOT to do
 
@@ -217,3 +220,169 @@ Covered entirely by `--test-room-code`. Runs in ~10 ms, no network.
   Per `feedback-no-rsync-delete.md`, this destroys game data.
 - Do not edit `menu.rbf`. Core RBF goes to
   `/media/fat/_Other/3S-ARM.rbf` per `docs/mister-runbook.md`.
+
+---
+
+## Bilateral smoke — two-home test (CONDITIONAL)
+
+Validates the symmetric-NAT bilateral hole-punch fallback added per
+`docs/plan-bilateral-hole-punch.md` (Steps 5b/5c). Joiner detects the
+direct-punch failure, transitions through `FALLBACK_SIGNALING`
+(REGISTER/POLL against the rendezvous server) into
+`FALLBACK_BILATERAL_PUNCH` (simultaneous Stun_HolePunch against the
+DELIVER-supplied peer endpoint), and on success arrives at HANDOFF.
+Real network and real symmetric NAT only — the offline
+`--test-bilateral-punch` harness covers the pure logic.
+
+### Pre-requisites
+
+- Two MiSTer units on **different residential networks** (different
+  ISPs / public IPs). At least one peer must sit behind a confirmed
+  symmetric NAT — verify ahead of time by running Smoke B on that
+  unit and observing `DIRECT_P2P_FAILED_SYMMETRIC` on the joiner.
+- Both peers running a build that includes the bilateral feature
+  (post-Step-5c on `netplay-direct-only`). Confirm via
+  `grep DIRECT_P2P_FALLBACK_SIGNALING` in the deployed build's log
+  output, or by checking that `--test-bilateral-punch` exits 0 on
+  both binaries.
+- Kill-switch off (default): `netplay-direct-p2p-disable-bilateral`
+  unset or `false` on both peers.
+- Reachable rendezvous server. The default
+  `udp://rendezvous.3s-arm.example:3478` is a placeholder sentinel —
+  the operator MUST replace it with the real signal URL on both peers
+  via `netplay-direct-p2p-signal-url` in
+  `/media/fat/games/3s-arm/config/config.ini` before running this
+  smoke. Confirm reachability with `nc -u <host> 3478` from a third
+  machine; an open UDP port returns no error.
+
+### Procedure
+
+1. Host side (MiSTer #1): OSD -> Netplay -> Direct P2P -> Host. Wait
+   for STATUS_READY. Code renders on-screen. Overlay shows
+   `Waiting for peer...`.
+2. Photograph the code; transcribe.
+3. Join side (MiSTer #2 — the symmetric-NAT peer): OSD -> Netplay ->
+   Direct P2P -> Join -> enter code.
+4. Joiner overlay observations (in order):
+   - `Discovering public endpoint...`
+   - `Connecting to peer...` (direct-punch attempt — expected to
+     fail on symmetric NAT)
+   - `Symmetric NAT - coordinating via rendezvous...`
+   - `Symmetric NAT - simultaneous hole punch...`
+   - `Connected via fallback. Starting session...`
+5. Host overlay observations (in order):
+   - `Waiting for peer...` (rendezvous resender spawns silently)
+   - On bilateral SUCCESS: `Bilateral punch succeeded - transferring socket...`
+6. Both MiSTers reach Gekko `CONNECTING` and the game starts.
+
+### Expected log lines
+
+Joiner (`tools/mister/misterctl.sh logs` on MiSTer #2):
+```
+[direct_p2p] joiner fallback: ...                      (intermediate, only on a transient failure path)
+[direct_p2p] joiner DELIVER received peer=<ip>:<port>
+[direct_p2p] joiner entering FALLBACK_BILATERAL_PUNCH peer=<ip>:<port> (budget=<n>ms)
+```
+(There is no separate `joiner bilateral punch SUCCESS` log; success is
+implied when the joiner publishes `set_status("Connected via fallback.
+Starting session...")` and transitions to `DIRECT_P2P_HANDOFF`.)
+
+Host (`tools/mister/misterctl.sh logs` on MiSTer #1):
+```
+[direct_p2p] HOST_WAITING published. Code=<code> public=<ip>:<port> (via UPnP|STUN)
+[direct_p2p] DELIVER received peer=<ip>:<port>
+[direct_p2p] entering FALLBACK_BILATERAL_PUNCH peer=<ip>:<port> (budget=<n>ms)
+[direct_p2p] bilateral punch SUCCESS - handoff pending
+[direct_p2p] Handoff to netplay: player=<n> peer=<ip>:<port>
+```
+(The host emits `[direct_p2p] DELIVER received peer=...` from the
+DELIVER handler; the joiner emits its own
+`[direct_p2p] joiner DELIVER received peer=...` from the inline
+REGISTER/POLL loop. Both strings are present in the source verbatim.)
+
+### Pass criteria
+
+- Both MiSTers reach Gekko `CONNECTING`.
+- Joiner log shows `joiner DELIVER received peer=...` followed by
+  `joiner entering FALLBACK_BILATERAL_PUNCH ...`.
+- Host log shows `DELIVER received peer=...`, then
+  `entering FALLBACK_BILATERAL_PUNCH ...`, then
+  `bilateral punch SUCCESS - handoff pending`.
+- No `DIRECT_P2P_FAILED_BILATERAL` terminal state on either peer.
+
+### Failure diagnostics
+
+- **`FAILED_BILATERAL` ("Could not reach peer after fallback. Try
+  another network.")** — rendezvous paired the peers but the bilateral
+  Stun_HolePunch did not converge within
+  `netplay-direct-p2p-bilateral-punch-ms` (default 3000ms). Capture:
+  - tcpdump on the rendezvous server (or its uplink) filtered to
+    UDP/3478 to confirm both peers REGISTERed and the server emitted
+    DELIVER to each.
+  - tcpdump on each MiSTer's uplink filtered to the peer's public IP
+    (read from the DELIVER log line) for the bilateral budget window.
+  - Both peers' STUN-discovered public IPs (search log for
+    `HOST_WAITING published. Code=... public=<ip>:<port>` on the host
+    and the equivalent joiner-side STUN result). If either peer's
+    public port shifted between STUN-discover and the DELIVER (port-
+    reallocating symmetric NAT), bilateral cannot succeed without port
+    prediction — out of scope per plan §11.
+- **Hairpin / `FAILED_SYMMETRIC` ("Cannot reach peer on this network.
+  (NAT loopback not supported.)")** — the host received a DELIVER
+  whose peer IP equals its own public IP, indicating both peers are
+  behind the same NAT. Bilateral is suppressed in this case (see
+  `direct_p2p.c` DELIVER handler hairpin guard). Move one peer to a
+  different network (LTE hotspot) and retry.
+- **Stuck on `Symmetric NAT - coordinating via rendezvous...`** for
+  longer than `netplay-direct-p2p-signal-budget-ms` (default 8000ms)
+  without progressing — the joiner could not reach the rendezvous
+  server. From a workstation: `dig <signal-host>` to confirm DNS,
+  `nc -u <signal-host> <signal-port>` to confirm the UDP path is open.
+  Server-side: confirm the listener is up
+  (`ss -ulnp | grep 3478` on the rendezvous host).
+
+### Kill-switch verification
+
+Validates that `netplay-direct-p2p-disable-bilateral=true`
+short-circuits the joiner and that the host's solo rendezvous loop
+times out cleanly.
+
+1. On the joiner: edit `/media/fat/games/3s-arm/config/config.ini`
+   and set `netplay-direct-p2p-disable-bilateral = 1`. Re-launch.
+2. Host: as in the main procedure, OSD -> Direct P2P -> Host.
+3. Joiner: enter code. Expected: joiner lands on
+   `DIRECT_P2P_FAILED_SYMMETRIC` promptly (within the direct-punch
+   budget; no rendezvous attempt). Joiner overlay shows
+   `Cannot reach peer. Possible Symmetric NAT.` Capture tcpdump on
+   the joiner uplink filtered to UDP/3478 — there must be **zero**
+   packets to the rendezvous server.
+4. Host: rendezvous resender runs for the signal-budget window
+   (default 8s), then host overlay flips to
+   `Waiting for peer (no peer detected - check that they're using a
+   recent build).` Host stays in `DIRECT_P2P_HOST_WAITING`; no
+   terminal failure.
+5. Revert: delete or set `netplay-direct-p2p-disable-bilateral = 0`
+   on the joiner so default behavior is restored for later smokes.
+
+### Notes
+
+- The bilateral path uses a role-branched mode label internally
+  (`joiner entering FALLBACK_BILATERAL_PUNCH` vs. plain
+  `entering FALLBACK_BILATERAL_PUNCH` from the host worker thread).
+  Both lines are valid; grep for the verbatim host string when
+  triaging host logs and the verbatim joiner string when triaging
+  joiner logs — do NOT collapse them.
+- Strict-port-allocation NATs (a.k.a. fully port-reallocating
+  symmetric NAT, where the public port changes per-destination) are
+  **out of scope** for this smoke. Bilateral hole-punch succeeds only
+  when each peer's NAT preserves the public port for the duration of
+  the bilateral budget. Per plan §11, port prediction and TURN are
+  not implemented; if both peers exhibit strict reallocation, the
+  expected outcome is a clean `FAILED_BILATERAL`.
+- This scenario is **CONDITIONAL** — it depends on a deployed
+  rendezvous server and access to two genuinely separate networks.
+  Defer with `deferred — rendezvous infra not deployed` or
+  `deferred — second network not available` in the commit message
+  if either is missing. Do NOT block bilateral feature commits on
+  this; the offline `--test-bilateral-punch` harness is the gating
+  test for code changes.

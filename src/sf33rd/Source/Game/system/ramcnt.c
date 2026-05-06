@@ -5,14 +5,12 @@
 
 #include "sf33rd/Source/Game/system/ramcnt.h"
 #include "common.h"
+#include "main.h"
 #include "sf33rd/AcrSDK/ps2/flps2debug.h"
 #include "sf33rd/AcrSDK/ps2/foundaps2.h"
 #include "sf33rd/Source/Common/MemMan.h"
 #include "sf33rd/Source/Game/debug/Debug.h"
 #include "sf33rd/Source/Game/rendering/texgroup.h"
-
-#define ERR_STOP                                                                                                       \
-    while (1) {}
 
 RCKeyWork rckey_work[RCKEY_WORK_MAX];
 _MEMMAN_OBJ rckey_mmobj;
@@ -58,7 +56,12 @@ void Push_ramcnt_key(s16 key) {
     if (rwk->use != 0) {
         if ((rwk->type == 8) || (rwk->type == 9)) {
             flLogOut("TEXCASH KEY PUSH ERROR\n");
-            ERR_STOP;
+            // originally ERR_STOP from arcade source; skip + log instead of hanging
+#if ENABLE_PERF_TELEMETRY
+            flLogOut("[ramcnt-skip] %s key=%d type=%d use=%d adr=0x%lx\n",
+                     __func__, (int)key, (int)rwk->type, (int)rwk->use, (unsigned long)rwk->adr);
+#endif
+            return;
         }
 
         Push_ramcnt_key_original_2(key);
@@ -73,7 +76,12 @@ void Push_ramcnt_key_original(s16 key) {
     if (rwk->use != 0) {
         if ((rwk->type != 8) && (rwk->type != 9)) {
             flLogOut("TEXCASH KEY PUSH ERROR2\n");
-            ERR_STOP;
+            // originally ERR_STOP from arcade source; skip + log instead of hanging
+#if ENABLE_PERF_TELEMETRY
+            flLogOut("[ramcnt-skip] %s key=%d type=%d use=%d adr=0x%lx\n",
+                     __func__, (int)key, (int)rwk->type, (int)rwk->use, (unsigned long)rwk->adr);
+#endif
+            return;
         }
 
         Push_ramcnt_key_original_2(key);
@@ -116,7 +124,11 @@ void Set_size_data_ramcnt_key(s16 key, u32 size) {
     if (key <= 0) {
         // An attempt was made to store a file size in an unused memory key.\n
         flLogOut("未使用のメモリキーへファイルサイズを格納しようとしました。\n");
-        ERR_STOP;
+        // originally ERR_STOP from arcade source; skip + log instead of hanging
+#if ENABLE_PERF_TELEMETRY
+        flLogOut("[ramcnt-skip] %s key=%d size=%u\n", __func__, (int)key, (unsigned)size);
+#endif
+        return;
     }
 
     rckey_work[key].size = size;
@@ -126,7 +138,11 @@ size_t Get_size_data_ramcnt_key(s16 key) {
     if (key <= 0) {
         // An attempt was made to get a file size from an unused memory key.\n
         flLogOut("未使用のメモリキーからファイルサイズを取得しようとしました。\n");
-        ERR_STOP;
+        // originally ERR_STOP from arcade source; skip + log instead of hanging
+#if ENABLE_PERF_TELEMETRY
+        flLogOut("[ramcnt-skip] %s key=%d (returning 0)\n", __func__, (int)key);
+#endif
+        return 0;
     }
 
     return rckey_work[key].size;
@@ -136,7 +152,11 @@ uintptr_t Get_ramcnt_address(s16 key) {
     if (key <= 0) {
         // An attempt was made to obtain an address from an unused memory key.\n
         flLogOut("未使用のメモリキーからアドレスを取得しようとしました。\n");
-        ERR_STOP;
+        // originally ERR_STOP from arcade source; skip + log instead of hanging
+#if ENABLE_PERF_TELEMETRY
+        flLogOut("[ramcnt-skip] %s key=%d (returning 0)\n", __func__, (int)key);
+#endif
+        return 0;
     }
 
     return rckey_work[key].adr;
@@ -177,7 +197,12 @@ s16 Pull_ramcnt_key(size_t memreq, u8 kokey, u8 group, u8 frre) {
     if (rckeyctr <= 0) {
         // There are not enough memory keys.\n
         flLogOut("メモリキーの個数が足りなくなりました。\n");
-        ERR_STOP;
+        // originally ERR_STOP from arcade source; skip + log instead of hanging
+#if ENABLE_PERF_TELEMETRY
+        flLogOut("[ramcnt-skip] %s rckeyctr=%d memreq=%zu kokey=%u group=%u\n",
+                 __func__, (int)rckeyctr, memreq, (unsigned)kokey, (unsigned)group);
+#endif
+        return -1;
     }
 
     key = rckeyque[(rckeyctr -= 1)];
@@ -204,7 +229,12 @@ s16 Pull_ramcnt_key(size_t memreq, u8 kokey, u8 group, u8 frre) {
         rckeyque[rckeyctr++] = key;
         // Failed to allocate memory.\n
         flLogOut("メモリの確保に失敗しました。\n");
-        ERR_STOP;
+        // originally ERR_STOP from arcade source; skip + log instead of hanging
+#if ENABLE_PERF_TELEMETRY
+        flLogOut("[ramcnt-skip] %s alloc-failed key=%d memreq=%zu kokey=%u group=%u frre=%u\n",
+                 __func__, (int)key, memreq, (unsigned)kokey, (unsigned)group, (unsigned)frre);
+#endif
+        return -1;
     }
 
     rwk->use = 1;

@@ -101,7 +101,7 @@ This contradicts the explicit user feedback memo `feedback-debug-build-for-live-
 1. Add `#define CFG_KEY_COLORKEY_LOOSE_KERNEL_ENABLED "colorkey-loose-kernel-enabled"` next to existing keys.
 2. Call `SDLGameRenderer_SetColorkeyLooseKernelEnabled(Config_GetBool(CFG_KEY_COLORKEY_LOOSE_KERNEL_ENABLED))` in `sdl_app.c` startup, gated on `Config_HasExplicitKey(...)` so the default-ON behavior persists when the key is absent.
 
-This is the same pattern used for `CFG_KEY_FULLSCREEN` (line 9807), and `SDLGameRenderer_SetSuperEffectQualityMode` (line 9979) and `SDLGameRenderer_SetGhostResolutionMode` (line 9980) at startup.
+This is the same pattern used for `CFG_KEY_FULLSCREEN` (line 9807) and `SDLGameRenderer_SetSuperEffectQualityMode` (line 9979) at startup. (`SDLGameRenderer_SetGhostResolutionMode` was removed in `d9dfe736` when the ghost-resolution knob was retired.)
 
 **Fix:** promote the runtime config key from "out of scope, maybe later" to a step (either as part of step 2 alongside the runtime bool, or as its own brief step before step 7). The cost is roughly ~10 lines spread across two files and removes the need to edit-and-rebuild for baseline capture.
 

@@ -42,12 +42,25 @@
 // four user-facing categories so the player immediately knows whether
 // we are hosting, joining, connected, or failing. The detailed message
 // is on line 3 via DirectP2P_GetStatusText().
+//
+// The fallback states (FALLBACK_SIGNALING, FALLBACK_BILATERAL_PUNCH)
+// can fire on either role's path, so the label branches on
+// DirectP2P_GetRole() rather than mapping the state alone. The pre-
+// fallback states (HOST_WAITING is host-only by construction,
+// JOIN_PUNCHING is join-only) are also routed through the role check
+// for symmetry; their behavior is unchanged from before 5a because the
+// role is set once per BeginHost/BeginJoin to match.
 static const char* dp2p_overlay_mode_label(DirectP2PState s) {
+    Role role = DirectP2P_GetRole();
     switch (s) {
     case DIRECT_P2P_UPNP_PROBE:
     case DIRECT_P2P_STUN_DISCOVER:
+        return (role == ROLE_JOIN) ? "CONNECTING" : "HOSTING";
+
     case DIRECT_P2P_HOST_WAITING:
-        return "HOSTING";
+    case DIRECT_P2P_FALLBACK_SIGNALING:
+    case DIRECT_P2P_FALLBACK_BILATERAL_PUNCH:
+        return (role == ROLE_HOST) ? "HOSTING" : "CONNECTING";
 
     case DIRECT_P2P_JOIN_PUNCHING:
         return "CONNECTING";
@@ -58,6 +71,7 @@ static const char* dp2p_overlay_mode_label(DirectP2PState s) {
     case DIRECT_P2P_FAILED_SYMMETRIC:
     case DIRECT_P2P_FAILED_STUN:
     case DIRECT_P2P_FAILED_PUNCH:
+    case DIRECT_P2P_FAILED_BILATERAL:
         return "ERROR";
 
     case DIRECT_P2P_IDLE:

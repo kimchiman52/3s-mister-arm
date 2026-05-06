@@ -25,6 +25,9 @@ typedef struct ConfigEntry {
     const char* key;
     ConfigType type;
     ConfigValue value;
+    bool coerced; /* true once find_entry has coerced this read entry to match
+                   * the default's type; used to log once and to skip repeat
+                   * coercion attempts on subsequent Config_Get* calls. */
 } ConfigEntry;
 
 #if defined(PORT_MISTER)
@@ -43,9 +46,12 @@ typedef struct ConfigEntry {
 #define DEFAULT_SOFTWARE_FRAME_MODE "off"
 #endif
 
+/* DEFAULT_SUPER_EFFECT_QUALITY = "full" is the table-level default, but
+ * init_super_effect_quality_mode() in src/port/sdl/sdl_app.c overrides it
+ * to "cached-bg" on MiSTer when the key is absent on disk. The OSD knob
+ * was removed; this key is dev-only — flip via config.ini for release
+ * builds. See docs/config.md for the full chain. */
 #define DEFAULT_SUPER_EFFECT_QUALITY "full"
-#define DEFAULT_GHOST_RESOLUTION "full"
-#define DEFAULT_GHOST_COUNT "4"
 #define DEFAULT_ARM_CLOCK "800"
 #define DEFAULT_GAME_MODE "console"
 #define DEFAULT_HOLD_TO_PAUSE "off"
@@ -60,8 +66,6 @@ static const ConfigEntry default_entries[] = {
     { .key = CFG_ARCADE_BALANCE, .type = CFG_BOOL, .value.b = false },
     { .key = CFG_KEY_SOFTWARE_FRAME_MODE, .type = CFG_STRING, .value.s = DEFAULT_SOFTWARE_FRAME_MODE },
     { .key = CFG_KEY_SUPER_EFFECT_QUALITY, .type = CFG_STRING, .value.s = DEFAULT_SUPER_EFFECT_QUALITY },
-    { .key = CFG_KEY_GHOST_RESOLUTION, .type = CFG_STRING, .value.s = DEFAULT_GHOST_RESOLUTION },
-    { .key = CFG_KEY_GHOST_COUNT, .type = CFG_STRING, .value.s = DEFAULT_GHOST_COUNT },
     { .key = CFG_KEY_ARM_CLOCK, .type = CFG_STRING, .value.s = DEFAULT_ARM_CLOCK },
     { .key = CFG_KEY_GAME_MODE, .type = CFG_STRING, .value.s = DEFAULT_GAME_MODE },
     { .key = CFG_KEY_HOLD_TO_PAUSE, .type = CFG_STRING, .value.s = DEFAULT_HOLD_TO_PAUSE },
@@ -75,6 +79,12 @@ static const ConfigEntry default_entries[] = {
      * bumped from upstream's 2000ms to 4000ms for congested public STUN. */
     { .key = CFG_KEY_NETPLAY_DIRECT_P2P_HANDOFF_PATH, .type = CFG_STRING, .value.s = "/tmp/3s-arm-netplay.handoff" },
     { .key = CFG_KEY_NETPLAY_DIRECT_P2P_STUN_TIMEOUT_MS, .type = CFG_INT, .value.i = 4000 },
+    /* Bilateral hole-punch fallback defaults (docs/plan-bilateral-hole-punch.md
+     * Decision 6). SIGNAL_URL points at the live rendezvous server. */
+    { .key = CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_BILATERAL, .type = CFG_BOOL, .value.b = false },
+    { .key = CFG_KEY_NETPLAY_DIRECT_P2P_SIGNAL_URL, .type = CFG_STRING, .value.s = "udp://46.62.244.55:3478" },
+    { .key = CFG_KEY_NETPLAY_DIRECT_P2P_SIGNAL_BUDGET_MS, .type = CFG_INT, .value.i = 8000 },
+    { .key = CFG_KEY_NETPLAY_DIRECT_P2P_BILATERAL_PUNCH_MS, .type = CFG_INT, .value.i = 3000 },
     { .key = CFG_KEY_NETPLAY_INPUT_PREDICTION_WINDOW, .type = CFG_INT, .value.i = 8 },
     { .key = CFG_KEY_NETPLAY_DIAG_ENABLE, .type = CFG_BOOL, .value.b = true },
     { .key = CFG_KEY_NETPLAY_SPARSE_EFFECT_SAVE_ENABLED, .type = CFG_BOOL, .value.b = true },
@@ -107,14 +117,142 @@ static ConfigEntry* find_entry_in_array(const char* key, const ConfigEntry* arra
     return NULL;
 }
 
+static const char* type_name(ConfigType type) {
+    switch (type) {
+    case CFG_BOOL:
+        return "bool";
+    case CFG_INT:
+        return "int";
+    case CFG_STRING:
+        return "string";
+    }
+    return "?";
+}
+
+/* Attempt to coerce a read entry's value into the expected default type,
+ * mutating the entry in place. Returns true if coercion succeeded (or was a
+ * no-op because types already match), false if the user's value cannot be
+ * reasonably interpreted as the target type — caller should fall back to the
+ * default in that case.
+ *
+ * Mutating in place (rather than duplicating) keeps the storage lifetime
+ * tied to the existing entries[] table, which Config_Destroy already cleans
+ * up. The .coerced flag suppresses repeat work and repeat logging. */
+static bool coerce_entry(ConfigEntry* read_entry, ConfigType target_type) {
+    if (read_entry->type == target_type) {
+        return true;
+    }
+    if (read_entry->coerced) {
+        /* Already attempted; type either matches now or we left it alone
+         * because coercion was impossible. The caller's type check on the
+         * returned entry will sort it out. */
+        return read_entry->type == target_type;
+    }
+
+    const ConfigType from_type = read_entry->type;
+    bool ok = false;
+
+    switch (target_type) {
+    case CFG_STRING: {
+        char buf[32];
+        const char* coerced_str = NULL;
+        if (from_type == CFG_INT) {
+            SDL_snprintf(buf, sizeof(buf), "%d", read_entry->value.i);
+            coerced_str = buf;
+        } else if (from_type == CFG_BOOL) {
+            coerced_str = read_entry->value.b ? "true" : "false";
+        }
+        if (coerced_str != NULL) {
+            char* dup = SDL_strdup(coerced_str);
+            if (dup != NULL) {
+                read_entry->type = CFG_STRING;
+                read_entry->value.s = dup;
+                ok = true;
+            }
+        }
+        break;
+    }
+
+    case CFG_INT: {
+        if (from_type == CFG_BOOL) {
+            read_entry->value.i = read_entry->value.b ? 1 : 0;
+            read_entry->type = CFG_INT;
+            ok = true;
+        } else if (from_type == CFG_STRING) {
+            const char* s = read_entry->value.s;
+            if (s != NULL && is_int(s)) {
+                int parsed = SDL_atoi(s);
+                SDL_free(read_entry->value.s);
+                read_entry->value.i = parsed;
+                read_entry->type = CFG_INT;
+                ok = true;
+            }
+            /* If the string isn't a clean integer (e.g. "banana"), leave the
+             * entry untouched and report failure so caller uses default. */
+        }
+        break;
+    }
+
+    case CFG_BOOL: {
+        if (from_type == CFG_INT) {
+            read_entry->value.b = read_entry->value.i != 0;
+            read_entry->type = CFG_BOOL;
+            ok = true;
+        } else if (from_type == CFG_STRING) {
+            const char* s = read_entry->value.s;
+            if (s != NULL) {
+                bool parsed = false;
+                bool matched = false;
+                if (SDL_strcasecmp(s, "true") == 0 || SDL_strcasecmp(s, "yes") == 0 ||
+                    SDL_strcmp(s, "1") == 0) {
+                    parsed = true;
+                    matched = true;
+                } else if (SDL_strcasecmp(s, "false") == 0 || SDL_strcasecmp(s, "no") == 0 ||
+                           SDL_strcmp(s, "0") == 0) {
+                    parsed = false;
+                    matched = true;
+                }
+                if (matched) {
+                    SDL_free(read_entry->value.s);
+                    read_entry->value.b = parsed;
+                    read_entry->type = CFG_BOOL;
+                    ok = true;
+                }
+            }
+        }
+        break;
+    }
+    }
+
+    /* Mark coerced regardless of success: a failed coercion (e.g. garbage
+     * string for an int key) should not be retried on every Config_Get* and
+     * should not re-log every call. */
+    read_entry->coerced = true;
+
+    if (ok) {
+        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                    "Config: coerced %s value for key '%s' to default type %s",
+                    type_name(from_type),
+                    read_entry->key,
+                    type_name(target_type));
+    }
+
+    return ok;
+}
+
 static ConfigEntry* find_entry(const char* key) {
     ConfigEntry* default_entry = find_entry_in_array(key, default_entries, SDL_arraysize(default_entries));
     ConfigEntry* read_entry = find_entry_in_array(key, entries, entry_count);
 
     if (read_entry != NULL) {
         if (default_entry != NULL && read_entry->type != default_entry->type) {
-            // If we expect a certain type and the one we read from config is unexpected, let's use the default entry
-            // instead
+            // Type mismatch: try to coerce the user's value into the default's
+            // type so their override isn't silently swallowed (e.g. arm-clock
+            // = 1200 parsed as CFG_INT vs CFG_STRING default "800"). Fall
+            // back to the default only if coercion is genuinely impossible.
+            if (coerce_entry(read_entry, default_entry->type)) {
+                return read_entry;
+            }
             return default_entry;
         } else {
             return read_entry;
@@ -170,6 +308,7 @@ static bool dict_iterator(const char* key, const char* value) {
 
     ConfigEntry* entry = &entries[entry_count];
     entry->key = SDL_strdup(key);
+    entry->coerced = false;
 
     const bool is_true = SDL_strcmp(value, "true") == 0;
     const bool is_false = SDL_strcmp(value, "false") == 0;
@@ -277,6 +416,7 @@ void Config_SetString(const char* key, const char* value) {
             existing->type = CFG_STRING;
             existing->value.s = SDL_strdup(value);
         }
+        existing->coerced = false; /* fresh user value; allow re-coercion if needed later */
         return;
     }
 

@@ -68,9 +68,6 @@ constexpr const char *kMenuExec = "MiSTer";
 constexpr const char *kDirectP2PHandoffPath = "/tmp/3s-arm-netplay.handoff";
 constexpr const char *kRuntimeTtySwitchEnv = "THIRDSARM_WRAPPER_USE_TTY2";
 constexpr int kRuntimeFpsToggleSignal = SIGUSR1;
-constexpr int kRuntimeSuperEffectQualityCycleSignal = SIGUSR2;
-#define kRuntimeGhostResolutionCycleSignal (SIGRTMIN)
-#define kRuntimeGhostCountCycleSignal (SIGRTMIN + 1)
 #define kRuntimeArmClockCycleSignal (SIGRTMIN + 2)
 #define kRuntimeGameModeCycleSignal (SIGRTMIN + 3)
 #define kRuntimeHoldToPauseCycleSignal (SIGRTMIN + 4)
@@ -88,23 +85,6 @@ enum RuntimeSuperEffectQualityMenu
 	kSuperEffectQualityFull = 0,
 	kSuperEffectQualityCachedBg,
 	kSuperEffectQualityMenuCount
-};
-
-enum RuntimeGhostResolutionMenu
-{
-	kGhostResolutionFull = 0,
-	kGhostResolutionHalf,
-	kGhostResolutionMenuCount
-};
-
-enum RuntimeGhostCountMenu
-{
-	kGhostCount0 = 0,
-	kGhostCount1,
-	kGhostCount2,
-	kGhostCount3,
-	kGhostCount4,
-	kGhostCountMenuCount
 };
 
 enum RuntimeArmClockMenu
@@ -146,9 +126,10 @@ enum FpsOverlayMode
 
 volatile sig_atomic_t g_wrapper_signal = 0;
 int g_wrapper_fps_mode = kFpsOverlayOff;
+// Dev-only: seeded from 3S-ARM.CFG via read_runtime_super_effect_quality_default()
+// so the on-disk config flow round-trips. The OSD bit ([14]) was retired; this
+// value is no longer pushed to the FPGA or read at runtime.
 int g_wrapper_super_effect_quality = kSuperEffectQualityCachedBg;
-int g_wrapper_ghost_resolution = kGhostResolutionFull;
-int g_wrapper_ghost_count = kGhostCount4;
 int g_wrapper_arm_clock = kArmClockStock;
 int g_wrapper_arm_clock_active = kArmClockStock;
 int g_wrapper_game_mode = kGameModeConsole;
@@ -694,249 +675,6 @@ bool write_runtime_scale_mode_default(int mode)
 	else if ((mode == kScaleModeAuto) && !wrote_scale_mode_auto_marker)
 	{
 		fprintf(out, "%s\n", kRuntimeScaleModeAutoMarker);
-	}
-
-	if (fclose(out) != 0) return false;
-	if (rename(temp_path, path) != 0)
-	{
-		remove(temp_path);
-		return false;
-	}
-
-	return true;
-}
-
-bool write_runtime_super_effect_quality_default(int mode)
-{
-	char path[PATH_MAX] = {};
-	char temp_path[PATH_MAX] = {};
-	snprintf(path, sizeof(path), "%s/config", kRuntimeHome);
-	snprintf(temp_path, sizeof(temp_path), "%s/config.tmp", kRuntimeHome);
-
-	FILE *in = fopen(path, "r");
-	FILE *out = fopen(temp_path, "w");
-	if (!out)
-	{
-		if (in) fclose(in);
-		return false;
-	}
-
-	bool wrote_value = false;
-	char line[256] = {};
-	if (in)
-	{
-		while (fgets(line, sizeof(line), in))
-		{
-			char inspect[256] = {};
-			snprintf(inspect, sizeof(inspect), "%s", line);
-
-			char *cursor = inspect;
-			while (*cursor && isspace((unsigned char)*cursor)) cursor++;
-			if (*cursor == '#')
-			{
-				fputs(line, out);
-				continue;
-			}
-
-			char *equals = strchr(cursor, '=');
-			if (equals)
-			{
-				*equals = 0;
-				trim_in_place(cursor);
-				if (!strcasecmp(cursor, "super-effect-quality"))
-				{
-					fprintf(out, "super-effect-quality = %s\n", runtime_super_effect_quality_config_value(mode));
-					wrote_value = true;
-					continue;
-				}
-			}
-
-			fputs(line, out);
-		}
-
-		fclose(in);
-	}
-
-	if (!wrote_value)
-	{
-		fprintf(out, "\nsuper-effect-quality = %s\n", runtime_super_effect_quality_config_value(mode));
-	}
-
-	if (fclose(out) != 0) return false;
-	if (rename(temp_path, path) != 0)
-	{
-		remove(temp_path);
-		return false;
-	}
-
-	return true;
-}
-
-int read_runtime_ghost_resolution_default()
-{
-	char value[64] = {};
-	if (!read_runtime_config_value("ghost-resolution", value, sizeof(value))) return kGhostResolutionFull;
-
-	if (!strcasecmp(value, "half")) return kGhostResolutionHalf;
-	return kGhostResolutionFull;
-}
-
-
-static const char *runtime_ghost_resolution_config_value(int mode)
-{
-	switch (mode)
-	{
-	case kGhostResolutionHalf: return "half";
-	default: return "full";
-	}
-}
-
-bool write_runtime_ghost_resolution_default(int mode)
-{
-	char path[PATH_MAX] = {};
-	char temp_path[PATH_MAX] = {};
-	snprintf(path, sizeof(path), "%s/config", kRuntimeHome);
-	snprintf(temp_path, sizeof(temp_path), "%s/config.tmp", kRuntimeHome);
-
-	FILE *in = fopen(path, "r");
-	FILE *out = fopen(temp_path, "w");
-	if (!out)
-	{
-		if (in) fclose(in);
-		return false;
-	}
-
-	bool wrote_value = false;
-	char line[256] = {};
-	if (in)
-	{
-		while (fgets(line, sizeof(line), in))
-		{
-			char inspect[256] = {};
-			snprintf(inspect, sizeof(inspect), "%s", line);
-
-			char *cursor = inspect;
-			while (*cursor && isspace((unsigned char)*cursor)) cursor++;
-			if (*cursor == '#')
-			{
-				fputs(line, out);
-				continue;
-			}
-
-			char *equals = strchr(cursor, '=');
-			if (equals)
-			{
-				*equals = 0;
-				trim_in_place(cursor);
-				if (!strcasecmp(cursor, "ghost-resolution"))
-				{
-					fprintf(out, "ghost-resolution = %s\n", runtime_ghost_resolution_config_value(mode));
-					wrote_value = true;
-					continue;
-				}
-			}
-
-			fputs(line, out);
-		}
-
-		fclose(in);
-	}
-
-	if (!wrote_value)
-	{
-		fprintf(out, "\nghost-resolution = %s\n", runtime_ghost_resolution_config_value(mode));
-	}
-
-	if (fclose(out) != 0) return false;
-	if (rename(temp_path, path) != 0)
-	{
-		remove(temp_path);
-		return false;
-	}
-
-	return true;
-}
-
-int read_runtime_ghost_count_default()
-{
-	char value[64] = {};
-	if (!read_runtime_config_value("ghost-count", value, sizeof(value))) return kGhostCount4;
-
-	int val = atoi(value);
-	if (val == 0) return kGhostCount0;
-	if (val == 1) return kGhostCount1;
-	if (val == 2) return kGhostCount2;
-	if (val == 3) return kGhostCount3;
-	return kGhostCount4;
-}
-
-
-static const char *runtime_ghost_count_config_value(int mode)
-{
-	switch (mode)
-	{
-	case kGhostCount0: return "0";
-	case kGhostCount1: return "1";
-	case kGhostCount2: return "2";
-	case kGhostCount3: return "3";
-	default: return "4";
-	}
-}
-
-bool write_runtime_ghost_count_default(int mode)
-{
-	char path[PATH_MAX] = {};
-	char temp_path[PATH_MAX] = {};
-	snprintf(path, sizeof(path), "%s/config", kRuntimeHome);
-	snprintf(temp_path, sizeof(temp_path), "%s/config.tmp", kRuntimeHome);
-
-	FILE *in = fopen(path, "r");
-	FILE *out = fopen(temp_path, "w");
-	if (!out)
-	{
-		if (in) fclose(in);
-		return false;
-	}
-
-	bool wrote_value = false;
-	char line[256] = {};
-	if (in)
-	{
-		while (fgets(line, sizeof(line), in))
-		{
-			char inspect[256] = {};
-			snprintf(inspect, sizeof(inspect), "%s", line);
-
-			char *cursor = inspect;
-			while (*cursor && isspace((unsigned char)*cursor)) cursor++;
-			if (*cursor == '#')
-			{
-				fputs(line, out);
-				continue;
-			}
-
-			char *equals = strchr(cursor, '=');
-			if (equals)
-			{
-				*equals = 0;
-				trim_in_place(cursor);
-				if (!strcasecmp(cursor, "ghost-count"))
-				{
-					fprintf(out, "ghost-count = %s\n", runtime_ghost_count_config_value(mode));
-					wrote_value = true;
-					continue;
-				}
-			}
-
-			fputs(line, out);
-		}
-
-		fclose(in);
-	}
-
-	if (!wrote_value)
-	{
-		fprintf(out, "\nghost-count = %s\n", runtime_ghost_count_config_value(mode));
 	}
 
 	if (fclose(out) != 0) return false;
@@ -1970,9 +1708,6 @@ void poll_status_changes(pid_t child)
 	// Initialized to 0xFFFFFFFF so the first poll detects
 	// the seeded values and sends appropriate cycle signals.
 	static uint32_t prev_fps = 0xFFFFFFFF;
-	static uint32_t prev_sa_activation = 0xFFFFFFFF;
-	static uint32_t prev_ghost_res = 0xFFFFFFFF;
-	static uint32_t prev_ghost_count = 0xFFFFFFFF;
 	static uint32_t prev_arm_clock = 0xFFFFFFFF;
 	static uint32_t prev_game_mode = 0xFFFFFFFF;
 	static uint32_t prev_hold_to_pause = 0xFFFFFFFF;
@@ -2000,52 +1735,6 @@ void poll_status_changes(pid_t child)
 			g_wrapper_fps_mode = target;
 			for (int i = 0; i < toggles; i++)
 				kill(child, kRuntimeFpsToggleSignal);
-		}
-	}
-
-	uint32_t sa_activation = user_io_status_get("[14]");
-	if (sa_activation != prev_sa_activation) {
-		prev_sa_activation = sa_activation;
-		// Enum values match CONF_STR option order (0=Full, 1=CachedBg)
-		int target = (int)sa_activation;
-		if (target != g_wrapper_super_effect_quality) {
-			write_runtime_super_effect_quality_default(target);
-			int cycles = (target - g_wrapper_super_effect_quality
-			              + kSuperEffectQualityMenuCount)
-			             % kSuperEffectQualityMenuCount;
-			g_wrapper_super_effect_quality = target;
-			for (int i = 0; i < cycles; i++)
-				kill(child, kRuntimeSuperEffectQualityCycleSignal);
-		}
-	}
-
-	uint32_t ghost_res = user_io_status_get("[15]");
-	if (ghost_res != prev_ghost_res) {
-		prev_ghost_res = ghost_res;
-		int target = (int)ghost_res;
-		if (target != g_wrapper_ghost_resolution) {
-			write_runtime_ghost_resolution_default(target);
-			int cycles = (target - g_wrapper_ghost_resolution
-			              + kGhostResolutionMenuCount)
-			             % kGhostResolutionMenuCount;
-			g_wrapper_ghost_resolution = target;
-			for (int i = 0; i < cycles; i++)
-				kill(child, kRuntimeGhostResolutionCycleSignal);
-		}
-	}
-
-	uint32_t ghost_count = user_io_status_get("[18:16]");
-	if (ghost_count != prev_ghost_count) {
-		prev_ghost_count = ghost_count;
-		int target = (int)ghost_count;
-		if (target != g_wrapper_ghost_count) {
-			write_runtime_ghost_count_default(target);
-			int cycles = (target - g_wrapper_ghost_count
-			              + kGhostCountMenuCount)
-			             % kGhostCountMenuCount;
-			g_wrapper_ghost_count = target;
-			for (int i = 0; i < cycles; i++)
-				kill(child, kRuntimeGhostCountCycleSignal);
 		}
 	}
 
@@ -2171,9 +1860,6 @@ void poll_status_changes(pid_t child)
 	if (triggers & (1u << 21)) {
 		// Reset to Default
 		user_io_status_set("[11:10]", 0); // FPS off
-		user_io_status_set("[14]", kSuperEffectQualityCachedBg); // SA default=CachedBg
-		user_io_status_set("[15]", 0);    // Ghost Res = Full (enum 0)
-		user_io_status_set("[18:16]", kGhostCount4); // Ghost Count default=4
 		user_io_status_set("[20:19]", 0); // Overclock = Stock
 		user_io_status_set("[12]", 0);    // Aspect Ratio = 4:3
 		user_io_status_set("[13]", 0);    // Game Mode = Console
@@ -2185,9 +1871,6 @@ void poll_status_changes(pid_t child)
 		user_io_status_set("[38:37]", 0); // Scale = Normal
 		user_io_status_set("[42:39]", 0); // H Size = 0
 		prev_fps = 0xFFFFFFFF;
-		prev_sa_activation = 0xFFFFFFFF;
-		prev_ghost_res = 0xFFFFFFFF;
-		prev_ghost_count = 0xFFFFFFFF;
 		prev_arm_clock = 0xFFFFFFFF;
 		prev_game_mode = 0xFFFFFFFF;
 		prev_hold_to_pause = 0xFFFFFFFF;
@@ -2755,8 +2438,6 @@ int thirdsarm_wrapper_run(int argc, char *argv[])
 	const bool forced = force_requested();
 	g_wrapper_fps_mode = read_runtime_fps_default();
 	g_wrapper_super_effect_quality = read_runtime_super_effect_quality_default();
-	g_wrapper_ghost_resolution = read_runtime_ghost_resolution_default();
-	g_wrapper_ghost_count = read_runtime_ghost_count_default();
 	g_wrapper_arm_clock = read_runtime_arm_clock_default();
 	g_wrapper_arm_clock_active = g_wrapper_arm_clock;
 	g_wrapper_game_mode = read_runtime_game_mode_default();
@@ -2818,9 +2499,6 @@ int thirdsarm_wrapper_run(int argc, char *argv[])
 	if (g_wrapper_used_full_user_io_init)
 	{
 		user_io_status_set("[11:10]", (uint32_t)g_wrapper_fps_mode);
-		user_io_status_set("[14]", (uint32_t)g_wrapper_super_effect_quality);
-		user_io_status_set("[15]", (uint32_t)g_wrapper_ghost_resolution);
-		user_io_status_set("[18:16]", (uint32_t)g_wrapper_ghost_count);
 		user_io_status_set("[20:19]", (uint32_t)g_wrapper_arm_clock);
 		user_io_status_set("[12]", (uint32_t)g_wrapper_aspect_ratio);
 		user_io_status_set("[13]", (uint32_t)g_wrapper_game_mode);
@@ -3145,9 +2823,6 @@ int thirdsarm_wrapper_run(int argc, char *argv[])
 
 			// Re-seed status bits so the menu reflects current values after restart
 			user_io_status_set("[11:10]", (uint32_t)g_wrapper_fps_mode);
-			user_io_status_set("[14]", (uint32_t)g_wrapper_super_effect_quality);
-			user_io_status_set("[15]", (uint32_t)g_wrapper_ghost_resolution);
-			user_io_status_set("[18:16]", (uint32_t)g_wrapper_ghost_count);
 			user_io_status_set("[20:19]", (uint32_t)g_wrapper_arm_clock);
 			user_io_status_set("[12]", (uint32_t)g_wrapper_aspect_ratio);
 			user_io_status_set("[13]", (uint32_t)g_wrapper_game_mode);

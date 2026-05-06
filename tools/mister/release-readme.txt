@@ -24,7 +24,8 @@ directory all changed. After extracting the new release:
 
 3. You can delete the old /media/fat/MiSTer_3SX wrapper and
    /media/fat/_Other/3SX.rbf bitstream — the new release ships as
-   MiSTer_3S-ARM and 3S-ARM.rbf.
+   MiSTer_3S-ARM and 3S-ARM_YYYYMMDD.rbf (date-suffixed per the
+   MiSTer cores convention).
 
 
 REQUIREMENTS
@@ -47,7 +48,7 @@ INSTALLATION
    The archive is structured so files land in the right places:
 
      /media/fat/MiSTer_3S-ARM                  (HPS wrapper)
-     /media/fat/_Other/3S-ARM.rbf              (FPGA bitstream)
+     /media/fat/_Other/3S-ARM_YYYYMMDD.rbf     (FPGA bitstream — dated)
      /media/fat/games/3s-arm/bin/3s-arm        (game binary)
      /media/fat/games/3s-arm/lib/              (shared libraries)
      /media/fat/games/3s-arm/scripts/          (launch helpers)

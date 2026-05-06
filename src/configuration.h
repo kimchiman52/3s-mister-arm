@@ -102,6 +102,14 @@ typedef struct Configuration {
      * gated by ENABLE_NETPLAY=ON && ENABLE_NETPLAY_TESTS, otherwise the
      * stub returns 2. Pure in-process — no GekkoNet session required. */
     bool test_sparse_effect_save;
+    /* Step 6 of docs/plan-bilateral-hole-punch.md: when true, main() runs
+     * the bilateral hole-punch test harness and exits. Honors the CLI flag
+     * --test-bilateral-punch. Parsed unconditionally; the real test body
+     * is only compiled in when ENABLE_NETPLAY=ON && ENABLE_NETPLAY_TESTS
+     * is defined (otherwise the stub returns 2). The test exercises the
+     * rendezvous wire codec, session-key derivation, LAN-bypass table,
+     * and the kill-switch config gate; uses only localhost UDP sockets. */
+    bool test_bilateral_punch;
 } Configuration;
 
 #endif

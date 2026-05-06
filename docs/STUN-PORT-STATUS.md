@@ -142,6 +142,17 @@ Per `docs/direct-p2p-smoke-plan.md`:
    "Cannot reach peer. Possible Symmetric NAT."). No TURN fallback
    per locked decision.
 
+## Bilateral hole-punch fallback (post-snapshot)
+
+A bilateral hole-punch fallback now layers on top of `FAILED_SYMMETRIC`:
+both peers register with a lightweight rendezvous server and fire
+`Stun_HolePunch` simultaneously, adding `DIRECT_P2P_RENDEZVOUS_REGISTER`,
+`DIRECT_P2P_RENDEZVOUS_WAIT`, `DIRECT_P2P_BILATERAL_PUNCH`, and
+`DIRECT_P2P_FAILED_BILATERAL` states. Kill switch:
+`netplay-direct-p2p-disable-bilateral=true` restores the legacy
+`FAILED_SYMMETRIC` terminal. See `docs/plan-bilateral-hole-punch.md` and
+`docs/direct-p2p-smoke-plan.md`.
+
 ## Commit log tail
 
 ```

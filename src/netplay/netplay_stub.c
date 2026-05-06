@@ -77,3 +77,6 @@ bool Netplay_PollEvent(NetplayEvent* out) {
     (void)out;
     return false;
 }
+
+void Netplay_FlushDiagnostics(void) {
+}

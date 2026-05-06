@@ -28,11 +28,13 @@ Usage:
   tools/mister-wrapper/build-core.sh [--seed menu]
 
 Purpose:
-  Build the minimal FPGA wrapper core that produces ${PROJECT_NAME}.rbf from the
-  pinned wrapper-core template seed.
+  Build the minimal FPGA wrapper core that produces ${PROJECT_NAME}_YYYYMMDD.rbf
+  from the pinned wrapper-core template seed. The date suffix is the mtime of
+  the Quartus output and follows the MiSTer cores convention so the firmware
+  recognizes it as a versioned bitstream.
 
 Planned output:
-  ${OUTPUT_DIR}/${PROJECT_NAME}.rbf
+  ${OUTPUT_DIR}/${PROJECT_NAME}_YYYYMMDD.rbf
 
 Default seed:
   ${CORE_SEED}
@@ -171,7 +173,10 @@ build_project() {
     fi
 
     [ -f "${staged_rbf}" ] || { echo "missing built RBF: ${staged_rbf}" >&2; return 1; }
-    cp "${staged_rbf}" "${OUTPUT_DIR}/${PROJECT_NAME}.rbf"
+    local rbf_date
+    rbf_date="$(date -r "${staged_rbf}" +%Y%m%d)"
+    rm -f "${OUTPUT_DIR}/${PROJECT_NAME}_"*.rbf
+    cp "${staged_rbf}" "${OUTPUT_DIR}/${PROJECT_NAME}_${rbf_date}.rbf"
 }
 
 build_docker_image() {
@@ -207,7 +212,10 @@ build_project_in_docker() {
 
     local staged_rbf="${BUILD_SRC_DIR}/output_files/${PROJECT_NAME}.rbf"
     [ -f "${staged_rbf}" ] || { echo "missing built RBF after Docker compile: ${staged_rbf}" >&2; return 1; }
-    cp "${staged_rbf}" "${OUTPUT_DIR}/${PROJECT_NAME}.rbf"
+    local rbf_date
+    rbf_date="$(date -r "${staged_rbf}" +%Y%m%d)"
+    rm -f "${OUTPUT_DIR}/${PROJECT_NAME}_"*.rbf
+    cp "${staged_rbf}" "${OUTPUT_DIR}/${PROJECT_NAME}_${rbf_date}.rbf"
 }
 
 COMMAND=""

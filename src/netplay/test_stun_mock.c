@@ -57,6 +57,10 @@ typedef int socklen_t;
 #include <unistd.h>
 #endif
 
+#ifndef INADDR_LOOPBACK
+#define INADDR_LOOPBACK ((in_addr_t)0x7F000001)
+#endif
+
 #define STUN_BINDING_REQUEST 0x0001
 #define STUN_BINDING_RESPONSE 0x0101
 #define STUN_MAGIC_COOKIE 0x2112A442

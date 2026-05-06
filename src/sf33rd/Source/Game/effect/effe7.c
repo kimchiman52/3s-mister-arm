@@ -108,13 +108,10 @@ s32 effect_E7_init(WORK_Other* ek, PLW* mk) {
     WORK_Other* ewk;
     s16 ix;
 
-    /* Enforce active ghost count limit (ghost_count_max, default 4 = vanilla).
+    /* Enforce active ghost count limit (vanilla = 4 simultaneous per player).
        Suppress the spawn when the per-player cap is already reached. */
-    {
-        extern int ghost_count_max;
-        if (count_active_ghosts(mk->wu.id) >= ghost_count_max) {
-            return -1;
-        }
+    if (count_active_ghosts(mk->wu.id) >= 4) {
+        return -1;
     }
 
     if ((ix = pull_effect_work(3)) == -1) {

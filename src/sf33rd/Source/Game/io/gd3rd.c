@@ -5,6 +5,7 @@
 
 #include "sf33rd/Source/Game/io/gd3rd.h"
 #include "common.h"
+#include "main.h"
 #include "port/utils.h"
 #include "sf33rd/AcrSDK/MiddleWare/PS2/CapSndEng/cse.h"
 #include "sf33rd/AcrSDK/ps2/flps2debug.h"
@@ -154,11 +155,22 @@ s32 load_it_use_any_key2(u16 fnum, void** adrs, s16* key, u8 kokey, u8 group) {
 
     if (fnum >= AFS_GetFileCount()) {
         flLogOut("ファイルナンバーに異常があります。ファイル番号：%d\n", fnum);
-        while (1) {}
+        // originally while(1){} from arcade source; skip + log instead of hanging
+#if ENABLE_PERF_TELEMETRY
+        flLogOut("[gd3rd-skip] %s fnum-out-of-range fnum=%d max=%d\n", __func__, fnum, AFS_GetFileCount());
+#endif
+        return 0;
     }
 
     size = fsGetFileSize(fnum);
     *key = Pull_ramcnt_key(fsCalSectorSize(size) << 11, kokey, group, 0);
+    if (*key < 0) {
+#if ENABLE_PERF_TELEMETRY
+        flLogOut("[gd3rd-skip] %s pull-ramcnt-key-failed fnum=%d size=%u kokey=%d group=%d\n",
+                 __func__, fnum, size, kokey, group);
+#endif
+        return 0;
+    }
     *adrs = (void*)Get_ramcnt_address(*key);
 
     err = load_it_use_this_key(fnum, *key);

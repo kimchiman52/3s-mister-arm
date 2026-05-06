@@ -186,51 +186,7 @@ across launches.
 | **Hold to Pause** | Off / On | When **On**, you must hold Start to pause instead of tapping it. Useful in Arcade mode to prevent accidental pauses during play. |
 | **Button Check** | (trigger) | Opens an input verification screen showing real-time button presses for both players. Useful for tournament setups to confirm controller mappings. |
 | **Aspect Ratio** | 4:3 / Full | Switches between 4:3 and Full. Only relevant when using the MiSTer VGA scaler (`vga_scaler=1`); has no effect on the native video path. |
-
-### Performance
-
-The game runs at 60 FPS during normal gameplay at stock 800 MHz. Frame
-rate drops can occur in two main situations: **stages with complex
-animated backgrounds** (e.g. Remy's and Chun-Li's stages), and **super art
-activations**, which layer multiple translucent ghost sprites and
-effects on top of the scene.
-
-All performance settings are accessible from the **OSD menu** (press
-F12 or the MiSTer menu button) and persist across launches.
-
-#### Super Art Settings
-
-These settings reduce rendering work during super art activations:
-
-| Setting | Options | Effect |
-|---------|---------|--------|
-| **SA Activation** | Full / Cached BG | **Cached BG** snapshots the background once when a super art activates, skipping per-frame background re-rendering for the duration. Significant FPS improvement during supers on animated stages. |
-| **SA Ghost Res** | Full / Half | **Half** renders ghost (after-image) sprites at half vertical resolution. Reduces ghost rendering cost by ~50%. |
-| **SA Ghost Count** | 0–4 | Limits the maximum simultaneous ghost sprites per player. Default is 4 (vanilla). Reducing this directly reduces the number of translucent sprites composited per frame. |
-
-For the best balance of visual fidelity and performance, try **Cached BG**
-with ghost count at **3** or **4**. For maximum performance on demanding
-scenes, combine **Cached BG** + **Half** ghost resolution + a lower ghost
-count.
-
-#### Overclock
-
-The ARM CPU defaults to **stock 800 MHz**. Overclocking to 1000 or
-1200 MHz can help maintain 60 FPS during heavy scenes.
-
-You can cycle between 800 MHz (stock), 1000 MHz, and 1200 MHz from the
-OSD menu. The new clock speed takes effect on the next game restart
-(shown with a `*` in the OSD until applied). The setting persists across
-launches.
-
-**Note:** Not all DE10-Nano boards can run stably at 1200 MHz. If the
-game crashes or freezes after overclocking, SSH into your MiSTer and
-edit `/media/fat/games/3s-arm/config`. Find the `arm-clock` line and
-change it back to stock:
-
-```
-arm-clock = 800
-```
+| **Overclock** | Stock / 1000 MHz / 1200 MHz | ARM CPU clock. Defaults to **stock 800 MHz**. Overclocking helps maintain 60 FPS during heavy scenes (super art activations, complex animated stages). The new clock speed takes effect on the next game restart and persists across launches. **Note:** not all DE10-Nano boards run stably at 1200 MHz. If the game crashes or freezes after overclocking, SSH in and edit `/media/fat/games/3s-arm/config` to set `arm-clock = 800`. |
 
 ---
 

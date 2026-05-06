@@ -353,10 +353,10 @@ frame of memory traffic. At 60 Hz that is ~31 MB/s of bus traffic eliminated.
 acceptable or unacceptable — requires A/B comparison if undertaken.
 
 **Specific precision-sensitive callers to audit:**
-- Ghost-sprite half-resolution mode (`ghost_resolution_mode`, `is_ghost_sprite_color`,
-  `modulate_argb8888_blue_tint`) — uses `modulate_argb8888_blue_tint` with a `rg_factor`
-  derived from the modulation color. Already an approximation; additional 565 quantization
-  may or may not be visible.
+- Blue-tint modulation (`modulate_argb8888_blue_tint`) — uses a `rg_factor` derived from the
+  modulation color. Already an approximation; additional 565 quantization may or may not be
+  visible. (Historically also hit the now-retired ghost half-resolution mode, removed in
+  `d9dfe736` along with `ghost_resolution_mode` / `is_ghost_sprite_color`.)
 
 **Verdict:** Mechanically feasible. No format-contradiction blockers once RmlUi's absence is
 confirmed (done — §2.12). The work is duplicating ~5 pixel primitives, adding a 565 palette

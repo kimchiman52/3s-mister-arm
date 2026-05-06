@@ -1,0 +1,19 @@
+{
+  "name": "rendezvous-server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "3SX UDP rendezvous server for bilateral hole-punch endpoint exchange.",
+  "main": "rendezvous-server.js",
+  "bin": {
+    "rendezvous-server": "rendezvous-server.js"
+  },
+  "scripts": {
+    "start": "node rendezvous-server.js 3478",
+    "test": "node __test_protocol.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {},
+  "license": "AGPL-3.0-or-later"
+}

@@ -45,6 +45,10 @@ typedef int socklen_t;
 #include <unistd.h>
 #endif
 
+#ifndef INADDR_LOOPBACK
+#define INADDR_LOOPBACK ((in_addr_t)0x7F000001)
+#endif
+
 typedef enum {
     PEER_ACK,      /* reply to the first hello with an ack */
     PEER_REJECT,   /* reply with a reject */

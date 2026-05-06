@@ -175,6 +175,9 @@ void q_ldreq_texture_group(REQ* curr) {
             if (bsd->ix1st == 1 || bsd->ix1st == 2) {
                 switch (rckey_work[curr->lds->key].type) {
                 case 3:
+#if ENABLE_PERF_TELEMETRY
+                    flLogOut("[texgroup-trace] case=3 key=%d id=%d apfn=%d\n", curr->lds->key, curr->id, bsd->apfn);
+#endif
                     if (curr->id) {
                         rckey_work[curr->lds->key].type = 5;
                     }
@@ -182,6 +185,9 @@ void q_ldreq_texture_group(REQ* curr) {
                     break;
 
                 case 4:
+#if ENABLE_PERF_TELEMETRY
+                    flLogOut("[texgroup-trace] case=4 key=%d id=%d apfn=%d\n", curr->lds->key, curr->id, bsd->apfn);
+#endif
                     if (curr->id == 0) {
                         rckey_work[curr->lds->key].type = 5;
                     }
@@ -189,6 +195,9 @@ void q_ldreq_texture_group(REQ* curr) {
                     break;
 
                 case 5:
+#if ENABLE_PERF_TELEMETRY
+                    flLogOut("[texgroup-trace] case=5 key=%d id=%d apfn=%d\n", curr->lds->key, curr->id, bsd->apfn);
+#endif
                     break;
                 }
 
@@ -200,7 +209,12 @@ void q_ldreq_texture_group(REQ* curr) {
 
                 // A duplicate transfer occurred. File number: %d\n
                 flLogOut("二重転送が発生しました。ファイル番号：%d\n", bsd->apfn);
-                while (1) {}
+                // originally while(1){} from arcade source; skip + log + be=2 (case-4 error convention) instead of hanging
+                flLogOut("[texgroup-skip] %s dup-transfer key=%d type=%d id=%d ix=%d apfn=%d kokey=%d\n",
+                         __func__, curr->lds->key, rckey_work[curr->lds->key].type,
+                         curr->id, curr->ix, bsd->apfn, curr->kokey);
+                curr->be = 2;
+                return;
             }
 
             rckey_work[curr->lds->key].type = curr->kokey;
@@ -354,7 +368,9 @@ void reservMemKeySelObj() {
     lds->key = Pull_ramcnt_key(size, 0xD, 0, 1);
 
     if (lds->key < 0) {
-        while (1) {}
+        // originally while(1){} from arcade source; skip + log instead of hanging
+        flLogOut("[texgroup-skip] %s key-alloc-failed key=%d size=%d\n", __func__, lds->key, size);
+        return;
     }
 }
 

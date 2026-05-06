@@ -67,10 +67,10 @@ Bundled in a single commit targeting the CPS3 game engine code. These address CP
 
 ### 2.4 Ghost Sprite Count Limiting
 
-- **What**: Add configurable `ghost_count_max` (default 4, matching vanilla CPS3) to cap simultaneously-alive ghost/afterimage sprites per player. Excess spawn requests are silently suppressed.
+- **What**: Cap simultaneously-alive ghost/afterimage sprites per player at 4 (vanilla CPS3 cap). Excess spawn requests are silently suppressed in `effect_E7_init` / `effect_E8_init`.
 - **Why**: Ghost sprites (Genei-Jin trails, afterimages) are the single most expensive effect. Each ghost is a full character sprite re-render. Uncapped, they can reach 8-12 simultaneous instances.
-- **Impact**: Caps worst-case ghost sprite load. At default=4, matches arcade behavior while preventing runaway render cost.
-- **Commit**: `121b87cd`
+- **Impact**: Caps worst-case ghost sprite load at the arcade default while preventing runaway render cost.
+- **Commits**: `121b87cd` (originally configurable via `ghost_count_max` / `CFG_KEY_GHOST_COUNT`); `d9dfe736` (knob retired, cap hardcoded to 4 once perf was stable enough that tuning it was unnecessary).
 - **Files**: `src/sf33rd/Source/Game/effect/effe5.c`, `src/sf33rd/Source/Game/effect/effe7.c`, `src/sf33rd/Source/Game/effect/effe8.c`
 
 ### 2.5 Static Jump Tables

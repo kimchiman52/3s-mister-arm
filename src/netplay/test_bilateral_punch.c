@@ -1,0 +1,824 @@
+/*
+ * test_bilateral_punch.c — Step 6 test harness for
+ * docs/plan-bilateral-hole-punch.md.
+ *
+ * Five tests in one TU:
+ *
+ *   (1) Mock UDP rendezvous-server REGISTER/DELIVER round-trip — two
+ *       mock clients register with the same session key against an
+ *       in-process mock server bound on 127.0.0.1; once both are
+ *       registered, each receives a DELIVER carrying the OTHER client's
+ *       (127.0.0.1, port) tuple, parsed via Rendezvous_ParseDeliver.
+ *   (2) Session-key derivation stability — same inputs, same key;
+ *       ip_be == 0 returns false.
+ *   (3) LAN-bypass truth table — DirectP2P_TestHook_IsLanPeer over the
+ *       documented private/loopback/link-local ranges and a sample of
+ *       non-LAN public addresses.
+ *   (4) Simplified protocol round-trip — REGISTER + POLL + DELIVER end
+ *       to end against the same mock server. (See comment block at the
+ *       Test 4 driver: a full state-machine drive would require a real
+ *       STUN server and is deferred to Step 7 manual smoke tests.)
+ *   (5) Kill-switch parser-level test — verifies the
+ *       CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_BILATERAL default reads back
+ *       through Config_GetBool. The config layer exposes no
+ *       Config_SetBool today, so a programmatic flip-and-readback would
+ *       require either a Config_SetBool addition or rewriting the on-
+ *       disk config.ini and reinitializing — both out of scope for this
+ *       harness. The actual gate logic in join_thread_fn is exercised by
+ *       Step 7 manual smoke testing.
+ *
+ * Gated behind ENABLE_NETPLAY_TESTS. Mirrors test_stun_mock.c's pattern
+ * (mock server in helper thread; localhost UDP; SDL3 sockets here are
+ * raw POSIX/Winsock since the production rendezvous client does not
+ * touch SDL_net for the wire codec). Enable with:
+ *   EXTRA_CMAKE_ARGS="-DENABLE_NETPLAY=ON \
+ *                     -DCMAKE_C_FLAGS='-DENABLE_NETPLAY_TESTS -DNETPLAY_TEST_HOOKS'"
+ */
+
+#include <stdio.h>
+
+#ifdef ENABLE_NETPLAY_TESTS
+
+#include "netplay/direct_p2p.h"
+#include "netplay/rendezvous.h"
+#include "port/config/config.h"
+
+#include <SDL3/SDL.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <string.h>
+#include <time.h>
+
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+typedef int socklen_t;
+#else
+#include <arpa/inet.h>
+#include <fcntl.h>
+#include <netinet/in.h>
+#include <sys/select.h>
+#include <sys/socket.h>
+#include <unistd.h>
+#endif
+
+#ifndef INADDR_LOOPBACK
+#define INADDR_LOOPBACK ((in_addr_t)0x7F000001)
+#endif
+
+/* Wire constants must mirror rendezvous.c — duplicated locally so this
+ * TU is independent of rendezvous.c's file-statics. */
+#define REND_MAGIC_BYTES_0 0x33u  /* '3' */
+#define REND_MAGIC_BYTES_1 0x53u  /* 'S' */
+#define REND_MAGIC_BYTES_2 0x58u  /* 'X' */
+#define REND_MAGIC_BYTES_3 0x52u  /* 'R' */
+#define REND_VERSION       1
+#define REND_TYPE_REGISTER 1
+#define REND_TYPE_DELIVER  2
+#define REND_TYPE_POLL     3
+
+#define REND_REGISTER_LEN  28
+#define REND_DELIVER_LEN   32
+#define REND_KEY_LEN       16
+
+static int fail_count = 0;
+
+static void fail_at(const char* file, int line, const char* tag, const char* why) {
+    fprintf(stderr, "[test_bilateral_punch] FAIL: %s:%d: %s: %s\n",
+            file, line, tag, why);
+    fail_count++;
+}
+
+#define FAIL(tag, why) fail_at(__FILE__, __LINE__, (tag), (why))
+
+#define EXPECT_TRUE(tag, cond) do { \
+    if (!(cond)) { fail_at(__FILE__, __LINE__, (tag), "expected true: " #cond); } \
+} while (0)
+
+#define EXPECT_FALSE(tag, cond) do { \
+    if ((cond)) { fail_at(__FILE__, __LINE__, (tag), "expected false: " #cond); } \
+} while (0)
+
+/* --- localhost UDP socket helpers ------------------------------------- */
+
+static int open_udp_on_localhost(unsigned short* out_port) {
+#ifdef _WIN32
+    WSADATA wsa;
+    WSAStartup(MAKEWORD(2, 2), &wsa);
+#endif
+    int s = socket(AF_INET, SOCK_DGRAM, 0);
+    if (s < 0) return -1;
+    int one = 1;
+    (void)setsockopt(s, SOL_SOCKET, SO_REUSEADDR, (const char*)&one, sizeof(one));
+    struct sockaddr_in a;
+    memset(&a, 0, sizeof(a));
+    a.sin_family = AF_INET;
+    a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    a.sin_port = 0;
+    if (bind(s, (struct sockaddr*)&a, sizeof(a)) != 0) {
+#ifdef _WIN32
+        closesocket(s);
+#else
+        close(s);
+#endif
+        return -1;
+    }
+    socklen_t sl = sizeof(a);
+    getsockname(s, (struct sockaddr*)&a, &sl);
+    *out_port = ntohs(a.sin_port);
+    return s;
+}
+
+static void close_sock(int s) {
+#ifdef _WIN32
+    closesocket(s);
+#else
+    close(s);
+#endif
+}
+
+/* --- Mock rendezvous server ------------------------------------------- */
+
+/* Tracks two registered endpoints keyed by session_key. When a second
+ * REGISTER for the same key arrives we send each side the OTHER side's
+ * endpoint via a DELIVER packet. POLL packets receive a DELIVER if both
+ * are registered, else a "pending" DELIVER (peer 0.0.0.0:0).
+ *
+ * Single key in the mock — the test only registers one session at a
+ * time. */
+typedef struct {
+    bool                used;
+    uint8_t             key[REND_KEY_LEN];
+    struct sockaddr_in  ep[2];          /* up to two endpoints */
+    int                 ep_count;
+    uint16_t            ep_public_port[2];
+} MockSession;
+
+typedef struct {
+    int             sock;
+    volatile bool   stop;
+    MockSession     session;
+} MockServerCtx;
+
+/* Build a DELIVER packet for `peer` (or zeros if peer is NULL meaning
+ * "not yet registered"). Returns the 32-byte packet length. */
+static int build_deliver(uint8_t out[REND_DELIVER_LEN],
+                         const uint8_t key[REND_KEY_LEN],
+                         const struct sockaddr_in* peer,
+                         uint16_t peer_public_port) {
+    memset(out, 0, REND_DELIVER_LEN);
+    out[0] = REND_MAGIC_BYTES_0;
+    out[1] = REND_MAGIC_BYTES_1;
+    out[2] = REND_MAGIC_BYTES_2;
+    out[3] = REND_MAGIC_BYTES_3;
+    out[4] = (uint8_t)REND_VERSION;
+    out[5] = (uint8_t)REND_TYPE_DELIVER;
+    /* reserved [6..7] = 0 */
+    memcpy(&out[8], key, REND_KEY_LEN);
+    if (peer) {
+        /* peer_ip raw 4 bytes at out[24..27] (network byte order). */
+        memcpy(&out[24], &peer->sin_addr.s_addr, 4);
+        /* peer_port BE at out[28..29]. */
+        out[28] = (uint8_t)((peer_public_port >> 8) & 0xFFu);
+        out[29] = (uint8_t)(peer_public_port & 0xFFu);
+    }
+    /* reserved2 [30..31] = 0 */
+    return REND_DELIVER_LEN;
+}
+
+static int SDLCALL mock_server_thread(void* arg) {
+    MockServerCtx* ctx = (MockServerCtx*)arg;
+    const long long start = (long long)time(NULL);
+
+    for (;;) {
+        if (ctx->stop) return 0;
+        if ((long long)time(NULL) - start > 5) return 0;
+
+        fd_set rfds;
+        FD_ZERO(&rfds);
+        FD_SET(ctx->sock, &rfds);
+        struct timeval tv = { 0, 50 * 1000 };
+        const int rc = select(ctx->sock + 1, &rfds, NULL, NULL, &tv);
+        if (rc <= 0) continue;
+
+        uint8_t buf[128];
+        struct sockaddr_in src;
+        socklen_t sl = sizeof(src);
+        const int n = (int)recvfrom(ctx->sock, (char*)buf, sizeof(buf), 0,
+                                    (struct sockaddr*)&src, &sl);
+        if (n < REND_REGISTER_LEN) continue;
+
+        /* Validate magic + version. */
+        if (buf[0] != REND_MAGIC_BYTES_0 || buf[1] != REND_MAGIC_BYTES_1 ||
+            buf[2] != REND_MAGIC_BYTES_2 || buf[3] != REND_MAGIC_BYTES_3 ||
+            buf[4] != REND_VERSION) {
+            continue;
+        }
+        const uint8_t type = buf[5];
+        if (type != REND_TYPE_REGISTER && type != REND_TYPE_POLL) continue;
+
+        const uint8_t* req_key = &buf[8];
+
+        /* Bind / find session by key. */
+        MockSession* s = &ctx->session;
+        if (!s->used) {
+            memcpy(s->key, req_key, REND_KEY_LEN);
+            s->used = true;
+            s->ep_count = 0;
+        } else if (memcmp(s->key, req_key, REND_KEY_LEN) != 0) {
+            /* Different session — ignore in this minimal mock. */
+            continue;
+        }
+
+        /* On REGISTER, record this endpoint if new. The "public_port"
+         * carried in the REGISTER packet is at offset 24..25 (BE). The
+         * mock stores it but, for the localhost test, the actual sender
+         * port (src.sin_port) is what the peer needs to send back to. We
+         * use src.sin_port for the DELIVER's peer_port so the mock
+         * clients can send-and-recv against each other. */
+        uint16_t my_pub_port = 0;
+        if (type == REND_TYPE_REGISTER) {
+            my_pub_port = (uint16_t)(((uint16_t)buf[24] << 8) | buf[25]);
+            /* Have we seen this src endpoint? */
+            int idx = -1;
+            for (int i = 0; i < s->ep_count; ++i) {
+                if (s->ep[i].sin_addr.s_addr == src.sin_addr.s_addr &&
+                    s->ep[i].sin_port == src.sin_port) {
+                    idx = i;
+                    break;
+                }
+            }
+            if (idx < 0 && s->ep_count < 2) {
+                s->ep[s->ep_count] = src;
+                s->ep_public_port[s->ep_count] = my_pub_port;
+                s->ep_count++;
+            }
+        }
+        (void)my_pub_port;
+
+        /* Send a DELIVER back to `src`. If 2 endpoints are registered,
+         * the DELIVER carries the OTHER endpoint. Otherwise carries
+         * 0.0.0.0:0 ("not yet registered"). */
+        const struct sockaddr_in* peer = NULL;
+        uint16_t peer_pub_port = 0;
+        if (s->ep_count == 2) {
+            for (int i = 0; i < 2; ++i) {
+                if (s->ep[i].sin_addr.s_addr == src.sin_addr.s_addr &&
+                    s->ep[i].sin_port == src.sin_port) {
+                    const int other = 1 - i;
+                    peer = &s->ep[other];
+                    /* Use the actual bound port the peer is reading on
+                     * (src.sin_port for the OTHER endpoint), not the
+                     * REGISTER-claimed public port — for the localhost
+                     * test these are the same when register-port-claim
+                     * matches the bound port. The test passes the bound
+                     * port as the REGISTER claim, so either works. */
+                    peer_pub_port = ntohs(s->ep[other].sin_port);
+                    break;
+                }
+            }
+        }
+
+        uint8_t reply[REND_DELIVER_LEN];
+        int rl = build_deliver(reply, s->key, peer, peer_pub_port);
+        sendto(ctx->sock, (const char*)reply, rl, 0,
+               (struct sockaddr*)&src, sl);
+    }
+}
+
+/* --- Test 1: REGISTER/DELIVER round-trip ------------------------------ */
+
+static int test_register_deliver(void) {
+    fprintf(stderr, "[test_bilateral_punch] test 1: REGISTER/DELIVER round-trip\n");
+
+    unsigned short server_port = 0, client_a_port = 0, client_b_port = 0;
+    int server_sock  = open_udp_on_localhost(&server_port);
+    int client_a     = open_udp_on_localhost(&client_a_port);
+    int client_b     = open_udp_on_localhost(&client_b_port);
+    if (server_sock < 0 || client_a < 0 || client_b < 0) {
+        FAIL("test1", "failed to bind localhost UDP sockets");
+        if (server_sock >= 0) close_sock(server_sock);
+        if (client_a >= 0)    close_sock(client_a);
+        if (client_b >= 0)    close_sock(client_b);
+        return 1;
+    }
+
+    MockServerCtx ctx;
+    memset(&ctx, 0, sizeof(ctx));
+    ctx.sock = server_sock;
+    ctx.stop = false;
+
+    SDL_Thread* tid = SDL_CreateThread(mock_server_thread, "rendezvous_mock", &ctx);
+    if (!tid) {
+        FAIL("test1", "SDL_CreateThread failed");
+        close_sock(server_sock);
+        close_sock(client_a);
+        close_sock(client_b);
+        return 1;
+    }
+
+    /* Derive a session key that both clients share. */
+    uint8_t key[REND_KEY_LEN];
+    if (!Rendezvous_DeriveSessionKey(0x01020304u, 1234, key)) {
+        FAIL("test1", "Rendezvous_DeriveSessionKey returned false");
+        goto cleanup_fail;
+    }
+
+    /* Build REGISTER packets. Each client claims its own bound port as
+     * its public port — the mock will echo that back inside the DELIVER. */
+    uint8_t reg_a[REND_REGISTER_LEN];
+    uint8_t reg_b[REND_REGISTER_LEN];
+    if (!Rendezvous_BuildRegister(client_a_port, key, reg_a) ||
+        !Rendezvous_BuildRegister(client_b_port, key, reg_b)) {
+        FAIL("test1", "Rendezvous_BuildRegister returned false");
+        goto cleanup_fail;
+    }
+
+    struct sockaddr_in srv;
+    memset(&srv, 0, sizeof(srv));
+    srv.sin_family = AF_INET;
+    srv.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    srv.sin_port = htons(server_port);
+
+    /* A registers first; B registers ~50ms later so the DELIVER A
+     * receives arrives only after B has been seen. */
+    if (sendto(client_a, (const char*)reg_a, REND_REGISTER_LEN, 0,
+               (struct sockaddr*)&srv, sizeof(srv)) != REND_REGISTER_LEN) {
+        FAIL("test1", "sendto(client_a, REGISTER) failed");
+        goto cleanup_fail;
+    }
+    SDL_Delay(50);
+
+    /* Drain the "pending" DELIVER A receives (if any) before B registers. */
+    {
+        uint8_t drop[REND_DELIVER_LEN];
+        struct sockaddr_in from;
+        socklen_t fl = sizeof(from);
+        fd_set rfds;
+        FD_ZERO(&rfds);
+        FD_SET(client_a, &rfds);
+        struct timeval tv = { 0, 50 * 1000 };
+        if (select(client_a + 1, &rfds, NULL, NULL, &tv) > 0) {
+            (void)recvfrom(client_a, (char*)drop, sizeof(drop), 0,
+                           (struct sockaddr*)&from, &fl);
+        }
+    }
+
+    if (sendto(client_b, (const char*)reg_b, REND_REGISTER_LEN, 0,
+               (struct sockaddr*)&srv, sizeof(srv)) != REND_REGISTER_LEN) {
+        FAIL("test1", "sendto(client_b, REGISTER) failed");
+        goto cleanup_fail;
+    }
+    SDL_Delay(50);
+
+    /* Both peers should now receive a DELIVER carrying the OTHER's
+     * (127.0.0.1, port). B's DELIVER arrives first (its REGISTER was
+     * the second one, so it pairs immediately). A may need a second
+     * REGISTER to receive the pairing — re-send to coax a fresh
+     * DELIVER. */
+    if (sendto(client_a, (const char*)reg_a, REND_REGISTER_LEN, 0,
+               (struct sockaddr*)&srv, sizeof(srv)) != REND_REGISTER_LEN) {
+        FAIL("test1", "sendto(client_a, REGISTER 2nd) failed");
+        goto cleanup_fail;
+    }
+
+    /* Wait up to 500ms for each side's DELIVER. */
+    char a_peer_ip[64] = { 0 };
+    uint16_t a_peer_port = 0;
+    char b_peer_ip[64] = { 0 };
+    uint16_t b_peer_port = 0;
+
+    for (int side = 0; side < 2; ++side) {
+        const int sk = (side == 0) ? client_a : client_b;
+        char* out_ip = (side == 0) ? a_peer_ip : b_peer_ip;
+        uint16_t* out_port = (side == 0) ? &a_peer_port : &b_peer_port;
+
+        const long long deadline = (long long)time(NULL) * 1000LL + 500LL;
+        bool got = false;
+        while (!got) {
+            const long long now = (long long)time(NULL) * 1000LL;
+            if (now >= deadline) break;
+            fd_set rfds;
+            FD_ZERO(&rfds);
+            FD_SET(sk, &rfds);
+            struct timeval tv = { 0, 50 * 1000 };
+            const int rc = select(sk + 1, &rfds, NULL, NULL, &tv);
+            if (rc <= 0) continue;
+
+            uint8_t buf[REND_DELIVER_LEN];
+            struct sockaddr_in from;
+            socklen_t fl = sizeof(from);
+            const int n = (int)recvfrom(sk, (char*)buf, sizeof(buf), 0,
+                                        (struct sockaddr*)&from, &fl);
+            if (n < REND_DELIVER_LEN) continue;
+            if (Rendezvous_ParseDeliver(buf, n, key, out_ip, out_port)) {
+                got = true;
+            }
+        }
+        if (!got) {
+            fprintf(stderr,
+                    "[test_bilateral_punch] FAIL: %s:%d: test1: side %d timeout waiting for DELIVER\n",
+                    __FILE__, __LINE__, side);
+            fail_count++;
+            goto cleanup_fail;
+        }
+    }
+
+    /* A's DELIVER should carry B's bound port; B's should carry A's. */
+    if (strcmp(a_peer_ip, "127.0.0.1") != 0 || a_peer_port != client_b_port) {
+        fprintf(stderr,
+                "[test_bilateral_punch] FAIL: test1: A got %s:%u, expected 127.0.0.1:%u\n",
+                a_peer_ip, (unsigned)a_peer_port, (unsigned)client_b_port);
+        fail_count++;
+        goto cleanup_fail;
+    }
+    if (strcmp(b_peer_ip, "127.0.0.1") != 0 || b_peer_port != client_a_port) {
+        fprintf(stderr,
+                "[test_bilateral_punch] FAIL: test1: B got %s:%u, expected 127.0.0.1:%u\n",
+                b_peer_ip, (unsigned)b_peer_port, (unsigned)client_a_port);
+        fail_count++;
+        goto cleanup_fail;
+    }
+
+    fprintf(stderr,
+            "[test_bilateral_punch] test 1 OK: A<->B paired at 127.0.0.1:%u and :%u\n",
+            (unsigned)client_a_port, (unsigned)client_b_port);
+
+    /* Clean shutdown: stop flag, send a wake-up packet so the server
+     * thread breaks out of select promptly, join. */
+    ctx.stop = true;
+    {
+        uint8_t wake = 0;
+        sendto(client_a, (const char*)&wake, 1, 0,
+               (struct sockaddr*)&srv, sizeof(srv));
+    }
+    SDL_WaitThread(tid, NULL);
+    close_sock(server_sock);
+    close_sock(client_a);
+    close_sock(client_b);
+    return 0;
+
+cleanup_fail:
+    ctx.stop = true;
+    {
+        uint8_t wake = 0;
+        sendto(client_a, (const char*)&wake, 1, 0,
+               (struct sockaddr*)&srv, sizeof(srv));
+    }
+    SDL_WaitThread(tid, NULL);
+    close_sock(server_sock);
+    close_sock(client_a);
+    close_sock(client_b);
+    return 1;
+}
+
+/* --- Test 2: session-key derivation stability ------------------------- */
+
+static int test_session_key_stability(void) {
+    fprintf(stderr, "[test_bilateral_punch] test 2: session-key stability\n");
+
+    uint8_t k1[REND_KEY_LEN];
+    uint8_t k2[REND_KEY_LEN];
+    EXPECT_TRUE("test2", Rendezvous_DeriveSessionKey(0x0A0B0C0Du, 12345, k1));
+    EXPECT_TRUE("test2", Rendezvous_DeriveSessionKey(0x0A0B0C0Du, 12345, k2));
+    if (memcmp(k1, k2, REND_KEY_LEN) != 0) {
+        FAIL("test2", "deterministic derivation produced different keys");
+        return 1;
+    }
+
+    /* Different ip yields different key. */
+    uint8_t k3[REND_KEY_LEN];
+    EXPECT_TRUE("test2", Rendezvous_DeriveSessionKey(0x0A0B0C0Eu, 12345, k3));
+    if (memcmp(k1, k3, REND_KEY_LEN) == 0) {
+        FAIL("test2", "different ip produced identical key (collision)");
+        return 1;
+    }
+
+    /* ip_be == 0 must return false. */
+    uint8_t k4[REND_KEY_LEN];
+    if (Rendezvous_DeriveSessionKey(0u, 12345, k4)) {
+        FAIL("test2", "ip_be=0 should return false");
+        return 1;
+    }
+
+    fprintf(stderr, "[test_bilateral_punch] test 2 OK\n");
+    return 0;
+}
+
+/* --- Test 3: LAN-bypass truth table ----------------------------------- */
+
+static int test_lan_bypass(void) {
+    fprintf(stderr, "[test_bilateral_punch] test 3: LAN bypass table\n");
+
+    /* Truth table per direct_p2p.c:direct_p2p_is_lan_peer ranges. */
+    struct {
+        const char* ip;
+        bool expect;
+    } cases[] = {
+        { "127.0.0.1",       true  },
+        { "10.0.0.1",        true  },
+        { "172.16.0.1",      true  },
+        { "172.31.255.255",  true  },
+        { "192.168.1.1",     true  },
+        { "169.254.0.1",     true  },
+        { "8.8.8.8",         false },
+        { "1.2.3.4",         false },
+        { "172.32.0.1",      false },
+        { "192.169.0.1",     false },
+    };
+    const int N = (int)(sizeof(cases) / sizeof(cases[0]));
+    int local_fails = 0;
+    for (int i = 0; i < N; ++i) {
+        const bool got = DirectP2P_TestHook_IsLanPeer(cases[i].ip);
+        if (got != cases[i].expect) {
+            fprintf(stderr,
+                    "[test_bilateral_punch] FAIL: test3: %s -> %s, expected %s\n",
+                    cases[i].ip,
+                    got ? "true" : "false",
+                    cases[i].expect ? "true" : "false");
+            local_fails++;
+        }
+    }
+    if (local_fails > 0) {
+        fail_count += local_fails;
+        return 1;
+    }
+
+    fprintf(stderr, "[test_bilateral_punch] test 3 OK (%d cases)\n", N);
+    return 0;
+}
+
+/* --- Test 4: simplified protocol round-trip --------------------------- */
+
+/*
+ * Per the Step 6 spec: a full state-machine drive (BeginJoin + observed
+ * terminal state) requires reading the joiner's STUN-discovered public
+ * IP and a real STUN server, neither of which we want in CI. This test
+ * therefore exercises the rendezvous-client API end-to-end against the
+ * mock server: REGISTER, then POLL, with each step receiving a DELIVER
+ * parsed by Rendezvous_ParseDeliver. Test 1 already covers the
+ * REGISTER/DELIVER pairing semantics; this test adds the POLL step.
+ */
+static int test_protocol_round_trip(void) {
+    fprintf(stderr, "[test_bilateral_punch] test 4: REGISTER + POLL round-trip\n");
+
+    unsigned short server_port = 0, client_port = 0, peer_port = 0;
+    int server_sock = open_udp_on_localhost(&server_port);
+    int client_sock = open_udp_on_localhost(&client_port);
+    int peer_sock   = open_udp_on_localhost(&peer_port);
+    if (server_sock < 0 || client_sock < 0 || peer_sock < 0) {
+        FAIL("test4", "failed to bind localhost UDP sockets");
+        if (server_sock >= 0) close_sock(server_sock);
+        if (client_sock >= 0) close_sock(client_sock);
+        if (peer_sock   >= 0) close_sock(peer_sock);
+        return 1;
+    }
+
+    MockServerCtx ctx;
+    memset(&ctx, 0, sizeof(ctx));
+    ctx.sock = server_sock;
+    ctx.stop = false;
+
+    SDL_Thread* tid = SDL_CreateThread(mock_server_thread, "rendezvous_mock4", &ctx);
+    if (!tid) {
+        FAIL("test4", "SDL_CreateThread failed");
+        close_sock(server_sock);
+        close_sock(client_sock);
+        close_sock(peer_sock);
+        return 1;
+    }
+
+    uint8_t key[REND_KEY_LEN];
+    if (!Rendezvous_DeriveSessionKey(0x01020304u, 4321, key)) {
+        FAIL("test4", "DeriveSessionKey returned false");
+        goto cleanup_fail;
+    }
+
+    struct sockaddr_in srv;
+    memset(&srv, 0, sizeof(srv));
+    srv.sin_family = AF_INET;
+    srv.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    srv.sin_port = htons(server_port);
+
+    /* (a) Register peer first so the client's REGISTER pairs immediately. */
+    {
+        uint8_t reg_p[REND_REGISTER_LEN];
+        if (!Rendezvous_BuildRegister(peer_port, key, reg_p)) {
+            FAIL("test4", "BuildRegister(peer) failed");
+            goto cleanup_fail;
+        }
+        if (sendto(peer_sock, (const char*)reg_p, REND_REGISTER_LEN, 0,
+                   (struct sockaddr*)&srv, sizeof(srv)) != REND_REGISTER_LEN) {
+            FAIL("test4", "sendto(peer REGISTER) failed");
+            goto cleanup_fail;
+        }
+        /* Drain peer's pending DELIVER. */
+        SDL_Delay(50);
+        uint8_t drop[REND_DELIVER_LEN];
+        struct sockaddr_in from;
+        socklen_t fl = sizeof(from);
+        fd_set rfds;
+        FD_ZERO(&rfds);
+        FD_SET(peer_sock, &rfds);
+        struct timeval tv = { 0, 50 * 1000 };
+        if (select(peer_sock + 1, &rfds, NULL, NULL, &tv) > 0) {
+            (void)recvfrom(peer_sock, (char*)drop, sizeof(drop), 0,
+                           (struct sockaddr*)&from, &fl);
+        }
+    }
+
+    /* (b) Client REGISTER -> expect DELIVER with peer info. */
+    {
+        uint8_t reg_c[REND_REGISTER_LEN];
+        if (!Rendezvous_BuildRegister(client_port, key, reg_c)) {
+            FAIL("test4", "BuildRegister(client) failed");
+            goto cleanup_fail;
+        }
+        if (sendto(client_sock, (const char*)reg_c, REND_REGISTER_LEN, 0,
+                   (struct sockaddr*)&srv, sizeof(srv)) != REND_REGISTER_LEN) {
+            FAIL("test4", "sendto(client REGISTER) failed");
+            goto cleanup_fail;
+        }
+
+        char peer_ip_str[64] = { 0 };
+        uint16_t parsed_peer_port = 0;
+        const long long deadline = (long long)time(NULL) * 1000LL + 500LL;
+        bool got = false;
+        while (!got) {
+            const long long now = (long long)time(NULL) * 1000LL;
+            if (now >= deadline) break;
+            fd_set rfds;
+            FD_ZERO(&rfds);
+            FD_SET(client_sock, &rfds);
+            struct timeval tv = { 0, 50 * 1000 };
+            if (select(client_sock + 1, &rfds, NULL, NULL, &tv) <= 0) continue;
+            uint8_t buf[REND_DELIVER_LEN];
+            struct sockaddr_in from;
+            socklen_t fl = sizeof(from);
+            const int n = (int)recvfrom(client_sock, (char*)buf, sizeof(buf), 0,
+                                        (struct sockaddr*)&from, &fl);
+            if (n < REND_DELIVER_LEN) continue;
+            if (Rendezvous_ParseDeliver(buf, n, key, peer_ip_str, &parsed_peer_port)) {
+                got = true;
+            }
+        }
+        if (!got) {
+            FAIL("test4", "REGISTER step: timeout waiting for paired DELIVER");
+            goto cleanup_fail;
+        }
+        if (strcmp(peer_ip_str, "127.0.0.1") != 0 || parsed_peer_port != peer_port) {
+            fprintf(stderr,
+                    "[test_bilateral_punch] FAIL: test4 REGISTER step: got %s:%u, expected 127.0.0.1:%u\n",
+                    peer_ip_str, (unsigned)parsed_peer_port, (unsigned)peer_port);
+            fail_count++;
+            goto cleanup_fail;
+        }
+    }
+
+    /* (c) Client POLL -> expect DELIVER with peer info (already paired). */
+    {
+        uint8_t poll_c[REND_REGISTER_LEN];
+        if (!Rendezvous_BuildPoll(key, poll_c)) {
+            FAIL("test4", "BuildPoll failed");
+            goto cleanup_fail;
+        }
+        if (sendto(client_sock, (const char*)poll_c, REND_REGISTER_LEN, 0,
+                   (struct sockaddr*)&srv, sizeof(srv)) != REND_REGISTER_LEN) {
+            FAIL("test4", "sendto(client POLL) failed");
+            goto cleanup_fail;
+        }
+
+        char peer_ip_str[64] = { 0 };
+        uint16_t parsed_peer_port = 0;
+        const long long deadline = (long long)time(NULL) * 1000LL + 500LL;
+        bool got = false;
+        while (!got) {
+            const long long now = (long long)time(NULL) * 1000LL;
+            if (now >= deadline) break;
+            fd_set rfds;
+            FD_ZERO(&rfds);
+            FD_SET(client_sock, &rfds);
+            struct timeval tv = { 0, 50 * 1000 };
+            if (select(client_sock + 1, &rfds, NULL, NULL, &tv) <= 0) continue;
+            uint8_t buf[REND_DELIVER_LEN];
+            struct sockaddr_in from;
+            socklen_t fl = sizeof(from);
+            const int n = (int)recvfrom(client_sock, (char*)buf, sizeof(buf), 0,
+                                        (struct sockaddr*)&from, &fl);
+            if (n < REND_DELIVER_LEN) continue;
+            if (Rendezvous_ParseDeliver(buf, n, key, peer_ip_str, &parsed_peer_port)) {
+                got = true;
+            }
+        }
+        if (!got) {
+            FAIL("test4", "POLL step: timeout waiting for DELIVER");
+            goto cleanup_fail;
+        }
+        if (strcmp(peer_ip_str, "127.0.0.1") != 0 || parsed_peer_port != peer_port) {
+            fprintf(stderr,
+                    "[test_bilateral_punch] FAIL: test4 POLL step: got %s:%u, expected 127.0.0.1:%u\n",
+                    peer_ip_str, (unsigned)parsed_peer_port, (unsigned)peer_port);
+            fail_count++;
+            goto cleanup_fail;
+        }
+    }
+
+    fprintf(stderr, "[test_bilateral_punch] test 4 OK\n");
+
+    ctx.stop = true;
+    {
+        uint8_t wake = 0;
+        sendto(client_sock, (const char*)&wake, 1, 0,
+               (struct sockaddr*)&srv, sizeof(srv));
+    }
+    SDL_WaitThread(tid, NULL);
+    close_sock(server_sock);
+    close_sock(client_sock);
+    close_sock(peer_sock);
+    return 0;
+
+cleanup_fail:
+    ctx.stop = true;
+    {
+        uint8_t wake = 0;
+        sendto(client_sock, (const char*)&wake, 1, 0,
+               (struct sockaddr*)&srv, sizeof(srv));
+    }
+    SDL_WaitThread(tid, NULL);
+    close_sock(server_sock);
+    close_sock(client_sock);
+    close_sock(peer_sock);
+    return 1;
+}
+
+/* --- Test 5: kill-switch parser-level test ---------------------------- */
+
+/*
+ * Simplification: there is no Config_SetBool API today (config.c only
+ * exposes Config_SetString; bools are loaded from disk by dict_iterator
+ * detecting the literal strings "true"/"false"). A full programmatic
+ * round-trip would require either adding Config_SetBool or rewriting
+ * config.ini and reinitializing — both beyond Step 6's scope. Instead,
+ * we verify (a) the default value is reachable through Config_GetBool
+ * (returns false, matching the documented kill-switch default at
+ * config.c:81 — "off until user opts out"), and (b) the API does not
+ * crash on a bogus key. The actual DISABLE_BILATERAL gate path in
+ * join_thread_fn is exercised by Step 7 manual smoke testing.
+ */
+static int test_kill_switch_round_trip(void) {
+    fprintf(stderr, "[test_bilateral_punch] test 5: kill-switch config gate\n");
+
+    /* Default must be false (bilateral fallback ENABLED out of the box). */
+    const bool default_disabled =
+        Config_GetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_BILATERAL);
+    if (default_disabled) {
+        fprintf(stderr,
+                "[test_bilateral_punch] FAIL: test5: default DISABLE_BILATERAL "
+                "should be false (bilateral fallback enabled by default), got true\n");
+        fail_count++;
+        return 1;
+    }
+
+    /* Bogus key must return false (the documented Config_GetBool fallback). */
+    const bool bogus = Config_GetBool("netplay-bogus-key-no-such-thing");
+    if (bogus) {
+        FAIL("test5", "Config_GetBool on unknown key returned true");
+        return 1;
+    }
+
+    fprintf(stderr,
+            "[test_bilateral_punch] test 5 OK (default=false; programmatic flip "
+            "deferred — no Config_SetBool API)\n");
+    return 0;
+}
+
+/* --- Entry point ------------------------------------------------------ */
+
+int Netplay_Test_BilateralPunch(void) {
+    fail_count = 0;
+
+    int rc = 0;
+    rc |= test_register_deliver();
+    rc |= test_session_key_stability();
+    rc |= test_lan_bypass();
+    rc |= test_protocol_round_trip();
+    rc |= test_kill_switch_round_trip();
+
+    if (fail_count > 0 || rc != 0) {
+        fprintf(stderr, "[test_bilateral_punch] %d failure(s)\n", fail_count);
+        return 1;
+    }
+    fprintf(stderr, "[test_bilateral_punch] OK\n");
+    return 0;
+}
+
+#else /* !ENABLE_NETPLAY_TESTS */
+
+int Netplay_Test_BilateralPunch(void) {
+    fprintf(stderr,
+            "[test_bilateral_punch] not compiled in; rebuild with "
+            "-DENABLE_NETPLAY_TESTS to enable.\n");
+    return 2;
+}
+
+#endif /* ENABLE_NETPLAY_TESTS */

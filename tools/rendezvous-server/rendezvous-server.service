@@ -1,0 +1,15 @@
+[Unit]
+Description=3SX rendezvous server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/bin/node /opt/rendezvous-server/rendezvous-server.js 3478
+Restart=always
+User=rendezvous
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+
+[Install]
+WantedBy=multi-user.target

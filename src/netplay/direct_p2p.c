@@ -29,6 +29,7 @@
  */
 
 #include "netplay/direct_p2p.h"
+#include "netplay/rendezvous.h"
 
 /* This whole translation unit is netplay-only. The CMake glob excludes
  * direct_p2p.c from NETPLAY=OFF builds, and direct_p2p.h provides
@@ -47,6 +48,7 @@
 #include <SDL3/SDL.h>
 #include <SDL3_net/SDL_net.h>
 
+#include <limits.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -74,11 +76,8 @@
 
 /* --- module state ------------------------------------------------------ */
 
-typedef enum {
-    ROLE_NONE = 0,
-    ROLE_HOST,
-    ROLE_JOIN,
-} Role;
+/* Role enum lives in direct_p2p.h so direct_p2p_overlay.c can branch on
+ * DirectP2P_GetRole without depending on the file-local Work struct. */
 
 typedef struct {
     Role role;
@@ -102,6 +101,12 @@ typedef struct {
     /* Host-side published room code — valid while state ==
      * DIRECT_P2P_HOST_WAITING. */
     char host_code[ROOM_CODE_BUF_LEN];
+
+    /* Parsed rendezvous endpoint cache; populated in BeginHost/BeginJoin
+     * once 5b/5c land. Holds the result of parsing the signal-url config
+     * value (host:port). Both fields zero in 5a — no callers yet. */
+    char     signal_host[64];
+    uint16_t signal_port;
 } Work;
 
 static SDL_AtomicInt s_state = { DIRECT_P2P_IDLE };
@@ -115,6 +120,25 @@ static SDL_AtomicInt s_cancel = { 0 };
 static Work s_work;
 
 static SDL_Thread* s_thread = NULL;
+
+/* Bilateral hole-punch fallback: separate cancel atomics per phase so
+ * cancelling one phase doesn't accidentally signal another. Thread
+ * handles are mutually exclusive on the user-action axis (host vs.
+ * join) but coexist in time on the host path during the
+ * FALLBACK_BILATERAL_PUNCH phase. Both stay NULL in 5a — no spawns
+ * happen until 5b/5c. Cancel and teardown still join all three. */
+static SDL_AtomicInt s_rendezvous_cancel = { 0 };
+static SDL_AtomicInt s_bilateral_punch_cancel = { 0 };
+static SDL_Thread* s_rendezvous_thread = NULL;
+static SDL_Thread* s_bilateral_punch_thread = NULL;
+
+/* Bilateral-punch worker -> Tick handoff signal. The worker thread cannot
+ * call do_handoff (which invokes Netplay_SetParams / Netplay_SetRemotePort
+ * / Netplay_SetStunSocket — main-thread-only). Instead, on punch SUCCESS
+ * the worker writes peer_ip/peer_public_port back to s_work, sets this
+ * flag, and exits. Tick's FALLBACK_BILATERAL_PUNCH case observes the flag
+ * on the next frame, joins the worker, and runs do_handoff inline. */
+static SDL_AtomicInt s_bilateral_handoff_pending = { 0 };
 
 /* Set by the worker right before it publishes a FAILED_* or
  * HOST_WAITING state so the status-text reader sees the fresh message
@@ -160,6 +184,197 @@ static bool cancel_requested(void) {
     return SDL_GetAtomicInt(&s_cancel) != 0;
 }
 
+/* Returns true when ip is in a private/loopback/link-local IPv4 range.
+ * Used by the bilateral-punch fallback (5b/5c) to short-circuit
+ * rendezvous when the peer turns out to be on the same LAN — direct
+ * STUN-discovered punch is the right path there, not the public
+ * rendezvous server. */
+static bool direct_p2p_is_lan_peer(const char* ip) {
+    if (!ip || !*ip) return false;
+    struct in_addr addr;
+    if (inet_pton(AF_INET, ip, &addr) != 1) return false;
+    uint32_t a = ntohl(addr.s_addr);
+    /* 127.0.0.0/8 */
+    if ((a & 0xFF000000u) == 0x7F000000u) return true;
+    /* 10.0.0.0/8 */
+    if ((a & 0xFF000000u) == 0x0A000000u) return true;
+    /* 172.16.0.0/12 */
+    if ((a & 0xFFF00000u) == 0xAC100000u) return true;
+    /* 192.168.0.0/16 */
+    if ((a & 0xFFFF0000u) == 0xC0A80000u) return true;
+    /* 169.254.0.0/16 (link-local) */
+    if ((a & 0xFFFF0000u) == 0xA9FE0000u) return true;
+    return false;
+}
+
+/* Equality check that normalizes both inputs through inet_pton so two
+ * dotted-quad strings that differ only in formatting (leading zeros,
+ * embedded whitespace handling, IPv4-mapped-v6 like "::ffff:1.2.3.4")
+ * still compare equal. Returns false if either input fails to parse as
+ * IPv4. Used by the hairpin gate in 5b/5c. */
+static bool direct_p2p_ip_eq_normalized(const char* a, const char* b) {
+    if (!a || !b) return false;
+    struct in_addr aa, bb;
+    if (inet_pton(AF_INET, a, &aa) != 1) return false;
+    if (inet_pton(AF_INET, b, &bb) != 1) return false;
+    return aa.s_addr == bb.s_addr;
+}
+
+/*
+ * Production send wrapper. Lives in direct_p2p.c (not rendezvous.c) so
+ * rendezvous.c stays SDL_net-pure. Step 6 wraps this in a function-pointer
+ * seam so the bilateral-punch unit tests can interpose without touching
+ * the network. See NETPLAY_TEST_HOOKS block below.
+ */
+static bool Rendezvous_Send(NET_DatagramSocket* sock, NET_Address* target,
+                            uint16_t target_port, const uint8_t* pkt,
+                            size_t pkt_len) {
+    if (!sock || !target || !pkt || pkt_len == 0 || pkt_len > INT_MAX) return false;
+    return NET_SendDatagram(sock, target, target_port, pkt, (int)pkt_len);
+}
+
+/*
+ * NETPLAY_TEST_HOOKS — function-pointer seam (Step 6 of
+ * docs/plan-bilateral-hole-punch.md).
+ *
+ * Production builds (without -DNETPLAY_TEST_HOOKS) keep the call sites as
+ * direct calls, so the resulting object code is byte-identical to
+ * pre-Step-6. Test builds (-DNETPLAY_TEST_HOOKS) replace the direct calls
+ * with indirect calls through s_stun_hole_punch_impl /
+ * s_rendezvous_send_impl, which test_bilateral_punch.c can override via
+ * the DirectP2P_TestHook_Set* setters.
+ *
+ * Signatures must match the productions exactly:
+ *   bool Stun_HolePunch(StunResult*, char*, uint16_t*, int, SDL_AtomicInt*);
+ *   bool Rendezvous_Send(NET_DatagramSocket*, NET_Address*, uint16_t,
+ *                        const uint8_t*, size_t);
+ */
+#ifdef NETPLAY_TEST_HOOKS
+/* Public typedefs are declared in direct_p2p.h. The local function
+ * pointers default to the production functions; test_bilateral_punch.c
+ * overrides them via DirectP2P_TestHook_Set*. */
+static DirectP2P_StunHolePunch_fn  s_stun_hole_punch_impl  = Stun_HolePunch;
+static DirectP2P_RendezvousSend_fn s_rendezvous_send_impl  = Rendezvous_Send;
+
+#define STUN_HOLE_PUNCH(stun, peer_ip, peer_port, duration_ms, cancel) \
+    s_stun_hole_punch_impl((stun), (peer_ip), (peer_port), (duration_ms), (cancel))
+#define RENDEZVOUS_SEND(sock, target, target_port, pkt, pkt_len) \
+    s_rendezvous_send_impl((sock), (target), (target_port), (pkt), (pkt_len))
+
+void DirectP2P_TestHook_SetStunHolePunch(DirectP2P_StunHolePunch_fn fn) {
+    s_stun_hole_punch_impl = (fn != NULL) ? fn : Stun_HolePunch;
+}
+void DirectP2P_TestHook_SetRendezvousSend(DirectP2P_RendezvousSend_fn fn) {
+    s_rendezvous_send_impl = (fn != NULL) ? fn : Rendezvous_Send;
+}
+bool DirectP2P_TestHook_IsLanPeer(const char* ip) {
+    return direct_p2p_is_lan_peer(ip);
+}
+#else
+#define STUN_HOLE_PUNCH(stun, peer_ip, peer_port, duration_ms, cancel) \
+    Stun_HolePunch((stun), (peer_ip), (peer_port), (duration_ms), (cancel))
+#define RENDEZVOUS_SEND(sock, target, target_port, pkt, pkt_len) \
+    Rendezvous_Send((sock), (target), (target_port), (pkt), (pkt_len))
+#endif /* NETPLAY_TEST_HOOKS */
+
+/* --- rendezvous send queue (SPSC ring) --------------------------------- */
+
+/* Per plan §Decision 3: the rendezvous worker thread does not call
+ * NET_SendDatagram directly. It enqueues (NET_RefAddress'd target, payload)
+ * tuples here and the main thread drains the queue from DirectP2P_Tick's
+ * HOST_WAITING branch, calling Rendezvous_Send (and NET_UnrefAddress).
+ * This keeps the STUN socket main-thread-owned during HOST_WAITING — the
+ * same socket the magic-byte gate in host_tick_receive reads from. The
+ * single-producer / single-consumer invariant is enforced by the
+ * lifecycle: only host_rendezvous_thread_fn produces, only Tick consumes.
+ *
+ * Ring math: 8 slots; head moves on consume, tail moves on produce; a
+ * full ring is (tail - head) == capacity; an empty ring is
+ * (tail - head) == 0. We rely on uint32_t wraparound for the difference
+ * — distance is always < capacity by construction.
+ */
+#define REND_Q_CAPACITY 8u
+
+typedef struct {
+    NET_Address* target;       /* NET_RefAddress'd by producer; consumer Unrefs after send */
+    uint16_t     target_port;  /* host order, matches NET_SendDatagram */
+    uint8_t      payload[28];  /* REGISTER or POLL packet */
+    uint8_t      payload_len;  /* always 28 in practice; future-proof */
+} RendezvousSendSlot;
+
+static RendezvousSendSlot s_rendezvous_send_q[REND_Q_CAPACITY];
+static SDL_AtomicInt s_q_head = { 0 };  /* consumer-write (drain) */
+static SDL_AtomicInt s_q_tail = { 0 };  /* producer-write (enqueue) */
+static SDL_AtomicInt s_q_drops = { 0 }; /* producer-incremented; logged once per session */
+static SDL_AtomicInt s_q_drops_logged = { 0 };
+
+/* Producer: returns false on full-ring (drop). Caller should already have
+ * NET_RefAddress'd `target`; on overflow, the caller is responsible for
+ * NET_UnrefAddress'ing it (we do NOT auto-unref here, so producer stays
+ * trivially side-effect-free on its own Refcount). */
+static bool rend_q_enqueue(NET_Address* target, uint16_t target_port,
+                           const uint8_t* payload, uint8_t payload_len) {
+    int head = SDL_GetAtomicInt(&s_q_head);
+    int tail = SDL_GetAtomicInt(&s_q_tail);
+    /* SPSC invariant guarantees |tail-head| <= REND_Q_CAPACITY, so a plain
+     * unsigned subtraction (with natural wraparound) yields the depth
+     * without needing a mask. */
+    int depth = (int)((unsigned)(tail - head));
+    if (depth >= (int)REND_Q_CAPACITY) {
+        int drops = SDL_AddAtomicInt(&s_q_drops, 1) + 1;
+        if (SDL_CompareAndSwapAtomicInt(&s_q_drops_logged, 0, 1)) {
+            SDL_Log("[direct_p2p] WARNING: rendezvous send queue overflowed "
+                    "(drops=%d). Main-thread drain may be stalled.", drops);
+        }
+        return false;
+    }
+    RendezvousSendSlot* slot = &s_rendezvous_send_q[(unsigned)tail % REND_Q_CAPACITY];
+    slot->target = target;
+    slot->target_port = target_port;
+    if (payload_len > sizeof(slot->payload)) payload_len = (uint8_t)sizeof(slot->payload);
+    memcpy(slot->payload, payload, payload_len);
+    slot->payload_len = payload_len;
+    /* Publish: bump tail AFTER slot is fully written. */
+    SDL_SetAtomicInt(&s_q_tail, tail + 1);
+    return true;
+}
+
+/* Consumer: drain up to `max_slots` items. Sends each via Rendezvous_Send
+ * and Unrefs the target. Called from DirectP2P_Tick (main thread). */
+static void rend_q_drain(NET_DatagramSocket* sock, int max_slots) {
+    if (sock == NULL) {
+        /* No socket — but slots may have been enqueued. Still drain to
+         * release the NET_Address refs; just skip the send. */
+    }
+    for (int i = 0; i < max_slots; ++i) {
+        int head = SDL_GetAtomicInt(&s_q_head);
+        int tail = SDL_GetAtomicInt(&s_q_tail);
+        if (head == tail) return;  /* empty */
+        RendezvousSendSlot* slot = &s_rendezvous_send_q[(unsigned)head % REND_Q_CAPACITY];
+        NET_Address* target = slot->target;
+        uint16_t target_port = slot->target_port;
+        uint8_t payload[28];
+        memcpy(payload, slot->payload, sizeof(payload));
+        uint8_t payload_len = slot->payload_len;
+        /* Consume: bump head BEFORE we use the slot's pointers (post-bump
+         * the producer may overwrite the slot — that's fine, we already
+         * copied the payload and saved target/target_port locally). */
+        SDL_SetAtomicInt(&s_q_head, head + 1);
+        if (sock != NULL && target != NULL) {
+            (void)RENDEZVOUS_SEND(sock, target, target_port, payload, payload_len);
+        }
+        if (target != NULL) {
+            NET_UnrefAddress(target);
+        }
+    }
+}
+
+/* Drain the queue and Unref any pending targets without sending. Used at
+ * teardown / cancel so we don't leak NET_Address refs. */
+static void rend_q_purge(void) {
+    rend_q_drain(NULL, (int)REND_Q_CAPACITY);
+}
+
 /* NOTE on CFG_KEY_NETPLAY_DIRECT_P2P_STUN_TIMEOUT_MS: the current
  * Stun_Discover API has its own hard-coded 2s-per-server internal
  * budget (see src/netplay/stun.c:281-284) and does not accept a
@@ -195,7 +410,6 @@ typedef struct {
     bool ok;
 } UpnpJob;
 
-static int SDLCALL upnp_worker_fn(void* data) __attribute__((unused));
 static int SDLCALL upnp_worker_fn(void* data) {
     UpnpJob* job = (UpnpJob*)data;
     memset(&job->result, 0, sizeof(job->result));
@@ -220,7 +434,7 @@ static bool try_upnp(uint16_t internal_port, uint16_t preferred_external) {
     if (Config_GetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_UPNP)) {
         return false;
     }
-    set_status("Opening port forward via UPnP...");
+    set_status("Preparing...");
 
     /* Wrap Upnp_AddMapping with a wall-clock budget. miniupnpc's internal
      * SSDP discovery alone can consume up to UPNP_DISCOVER_TIMEOUT_MS
@@ -282,6 +496,177 @@ static uint32_t ipv4_str_to_be(const char* ip) {
     return (uint32_t)in.s_addr;
 }
 
+/* --- bilateral fallback: host-side threads ----------------------------- */
+
+/* Resolve `host` to a NET_Address with a 100ms-bounded poll, mirroring
+ * stun.c:272-275. Caller must NET_UnrefAddress on success. Returns NULL
+ * on resolve failure. */
+static NET_Address* resolve_with_short_poll(const char* host) {
+    NET_Address* addr = NET_ResolveHostname(host);
+    if (!addr) return NULL;
+    int wait_attempts = 0;
+    while (NET_GetAddressStatus(addr) == NET_WAITING && wait_attempts < 100) {
+        SDL_Delay(1);
+        wait_attempts++;
+    }
+    if (NET_GetAddressStatus(addr) != NET_SUCCESS) {
+        NET_UnrefAddress(addr);
+        return NULL;
+    }
+    return addr;
+}
+
+/* Host rendezvous worker: parses signal-url, resolves once, then loops
+ * sending REGISTER/POLL via the s_rendezvous_send_q until either
+ * s_rendezvous_cancel is set (DELIVER arrived; main thread cancelled us)
+ * or the signal-budget elapses. On budget-expiry without cancel, updates
+ * status to inform the user no peer was detected; per §Decision 9 this
+ * does NOT change state — host stays HOST_WAITING so a late-arriving
+ * direct punch still works. */
+static int SDLCALL host_rendezvous_thread_fn(void* data) {
+    (void)data;
+
+    /* 1) Parse signal URL from config. */
+    const char* signal_url = Config_GetString(CFG_KEY_NETPLAY_DIRECT_P2P_SIGNAL_URL);
+    if (signal_url == NULL || signal_url[0] == '\0') {
+        SDL_Log("[direct_p2p] rendezvous: no signal URL configured; fallback disabled");
+        return 0;
+    }
+    char host[64] = { 0 };
+    uint16_t port = 0;
+    if (!Rendezvous_ParseSignalUrl(signal_url, host, &port)) {
+        SDL_Log("[direct_p2p] rendezvous: malformed signal URL '%s'; fallback disabled",
+                signal_url);
+        return 0;
+    }
+    SDL_strlcpy(s_work.signal_host, host, sizeof(s_work.signal_host));
+    s_work.signal_port = port;
+
+    /* 2) Resolve hostname once at thread start (100ms-bounded poll —
+     * mirror stun.c:272-275). Per the plan, resolve failure exits
+     * immediately; the 8-second budget is for peer-pairing, not DNS. */
+    NET_Address* signal_addr = resolve_with_short_poll(host);
+    if (!signal_addr) {
+        SDL_Log("[direct_p2p] rendezvous: failed to resolve %s; fallback disabled", host);
+        return 0;
+    }
+
+    /* 3) Derive session key from OUR public endpoint — the same one the
+     * room code encodes. */
+    uint8_t session_key[16];
+    uint32_t ip_be = ipv4_str_to_be(s_work.stun.public_ip);
+    if (!Rendezvous_DeriveSessionKey(ip_be, s_work.stun.public_port, session_key)) {
+        SDL_Log("[direct_p2p] rendezvous: failed to derive session key");
+        NET_UnrefAddress(signal_addr);
+        return 0;
+    }
+
+    /* 4) Build REGISTER once — payload is constant across resends. */
+    uint8_t register_pkt[28];
+    if (!Rendezvous_BuildRegister(s_work.stun.public_port, session_key, register_pkt)) {
+        SDL_Log("[direct_p2p] rendezvous: failed to build REGISTER packet");
+        NET_UnrefAddress(signal_addr);
+        return 0;
+    }
+
+    /* 5) Resend loop. 500ms cadence; 8s default budget (configurable).
+     * Cancel-flag check happens between sends so worst-case latency to
+     * exit on cancel is ~50ms (the inner 50ms sleep tick). */
+    int budget_ms = Config_GetInt(CFG_KEY_NETPLAY_DIRECT_P2P_SIGNAL_BUDGET_MS);
+    if (budget_ms <= 0) budget_ms = 8000;
+    const uint32_t start = SDL_GetTicks();
+    uint32_t last_send = 0;
+    while ((int)(SDL_GetTicks() - start) < budget_ms) {
+        if (SDL_GetAtomicInt(&s_rendezvous_cancel)) {
+            /* Main thread received DELIVER (or shutdown). Exit cleanly. */
+            NET_UnrefAddress(signal_addr);
+            return 0;
+        }
+        uint32_t now = SDL_GetTicks();
+        if (last_send == 0 || (now - last_send) >= 500u) {
+            /* Producer must Ref before enqueue; consumer Unrefs after
+             * send. On enqueue failure (queue full) we Unref ourselves. */
+            NET_Address* ref = NET_RefAddress(signal_addr);
+            if (ref) {
+                if (!rend_q_enqueue(ref, port, register_pkt, sizeof(register_pkt))) {
+                    NET_UnrefAddress(ref);
+                }
+            }
+            last_send = now;
+        }
+        SDL_Delay(50);
+    }
+
+    /* 6) Budget expired without DELIVER. Update status (state stays
+     * HOST_WAITING per §Decision 9). */
+    if (!SDL_GetAtomicInt(&s_rendezvous_cancel)) {
+        set_status("Waiting for player 2...");
+        SDL_Log("[direct_p2p] rendezvous: 8s budget expired; no DELIVER received");
+    }
+
+    NET_UnrefAddress(signal_addr);
+    return 0;
+}
+
+/* Host bilateral-punch worker: takes a stack-local copy of peer_ip /
+ * peer_port (mirror :418-420 / :493-495 patterns), runs Stun_HolePunch
+ * with the configured bilateral budget, and on success writes the
+ * (possibly-updated) endpoint BACK to s_work BEFORE transitioning to
+ * HANDOFF (mirror :518-521 -> :531). On failure: FAILED_BILATERAL.
+ *
+ * §Decision 3: while this thread runs, the STUN socket is exclusively
+ * read/written by Stun_HolePunch on this thread. The main-thread Tick
+ * MUST NOT call host_tick_receive or drain s_rendezvous_send_q during
+ * FALLBACK_BILATERAL_PUNCH — see DirectP2P_Tick's case for that state. */
+static int SDLCALL host_bilateral_punch_thread_fn(void* data) {
+    (void)data;
+
+    /* Stack-locals: Stun_HolePunch overwrites *peer_ip / *peer_port at
+     * stun.c:438-442 with the post-NAT-translation source endpoint. The
+     * main thread reads s_work.peer_ip in do_handoff; passing &s_work...
+     * directly would race. */
+    char peer_ip[64];
+    SDL_strlcpy(peer_ip, s_work.peer_ip, sizeof(peer_ip));
+    uint16_t peer_port = s_work.peer_public_port;
+
+    int budget_ms = Config_GetInt(CFG_KEY_NETPLAY_DIRECT_P2P_BILATERAL_PUNCH_MS);
+    if (budget_ms <= 0) budget_ms = 3000;
+
+    set_status("Connecting...");
+    SDL_Log("[direct_p2p] entering FALLBACK_BILATERAL_PUNCH peer=%s:%u (budget=%dms)",
+            peer_ip, (unsigned)peer_port, budget_ms);
+
+    bool punched = STUN_HOLE_PUNCH(&s_work.stun, peer_ip, &peer_port,
+                                   budget_ms, &s_bilateral_punch_cancel);
+    if (SDL_GetAtomicInt(&s_bilateral_punch_cancel) || cancel_requested()) {
+        /* Cancelled: leave state untouched if a terminal state has already
+         * been published by another path; otherwise drop to IDLE-ish via
+         * Cancel's own teardown. The DirectP2P_Cancel path joins this
+         * thread before tearing down s_work, so we just exit. */
+        return 0;
+    }
+    if (!punched) {
+        set_status("Could not connect. Try a different network.");
+        set_state(DIRECT_P2P_FAILED_BILATERAL);
+        return 0;
+    }
+
+    /* Writeback BEFORE signaling — main-thread do_handoff reads
+     * s_work.peer_ip/peer_public_port and we want the post-punch values. */
+    SDL_strlcpy(s_work.peer_ip, peer_ip, sizeof(s_work.peer_ip));
+    s_work.peer_public_port = peer_port;
+
+    set_status("Connecting...");
+    /* Cannot set_state(DIRECT_P2P_HANDOFF) here: do_handoff calls
+     * Netplay_SetParams / Netplay_SetRemotePort / Netplay_SetStunSocket
+     * which are main-thread-only. Stay in FALLBACK_BILATERAL_PUNCH and
+     * raise s_bilateral_handoff_pending so the next Tick observes us,
+     * joins this thread, and runs do_handoff on the main thread. */
+    SDL_SetAtomicInt(&s_bilateral_handoff_pending, 1);
+    SDL_Log("[direct_p2p] bilateral punch SUCCESS - handoff pending");
+    return 0;
+}
+
 /* Host worker: UPnP (optional) -> STUN discover -> publish room code ->
  * transition to HOST_WAITING. The main-thread Tick then owns the wait
  * for the first inbound datagram. */
@@ -324,7 +709,7 @@ static int SDLCALL host_thread_fn(void* data) {
      * session takes. NET_Init is idempotent. */
     NET_Init();
     set_state(DIRECT_P2P_STUN_DISCOVER);
-    set_status("Discovering public endpoint...");
+    set_status("Preparing...");
     bool stun_ok = Stun_Discover(&s_work.stun, local_port);
     if (cancel_requested()) {
         Stun_CloseSocket(&s_work.stun);
@@ -333,7 +718,7 @@ static int SDLCALL host_thread_fn(void* data) {
         return 0;
     }
     if (!stun_ok) {
-        set_status("STUN discovery failed.");
+        set_status("Connection failed. Try again.");
         set_state(DIRECT_P2P_FAILED_STUN);
         return 0;
     }
@@ -349,19 +734,48 @@ static int SDLCALL host_thread_fn(void* data) {
     if (ip_be == 0 ||
         !RoomCode_Encode(ip_be, pub_port, s_work.host_code)) {
         Stun_CloseSocket(&s_work.stun);
-        set_status("Failed to encode room code.");
+        set_status("Connection failed. Try again.");
         set_state(DIRECT_P2P_FAILED_STUN);
         return 0;
     }
 
     /* 4) Publish — Tick() will now drain the STUN socket non-blockingly
      * until a peer punches through. The room code renders on overlay
-     * line 2 via DirectP2P_GetHostCode(); this status goes on line 3. */
-    set_status("Waiting for peer...");
+     * line 2 via DirectP2P_GetHostCode(); this status goes on line 3.
+     *
+     * Cancel-flag race fix: clear s_rendezvous_cancel and
+     * s_bilateral_punch_cancel BEFORE publishing HOST_WAITING. Once Tick
+     * sees HOST_WAITING it can call host_tick_receive -> try_handle_deliver
+     * which raises s_rendezvous_cancel as its DELIVER signal. If we
+     * cleared after publishing, that signal could be clobbered by us
+     * here. Clear-before-publish ensures any subsequent set-by-DELIVER
+     * survives. */
+    SDL_SetAtomicInt(&s_rendezvous_cancel, 0);
+    SDL_SetAtomicInt(&s_bilateral_punch_cancel, 0);
+
+    set_status("Waiting for player 2...");
     set_state(DIRECT_P2P_HOST_WAITING);
     SDL_Log("[direct_p2p] HOST_WAITING published. Code=%s public=%s:%u (via %s)",
             s_work.host_code, s_work.stun.public_ip, (unsigned)pub_port,
             upnp_ok ? "UPnP" : "STUN");
+
+    /* 5) Bilateral fallback: spawn the rendezvous-resender thread unless
+     * the kill switch is set. The thread enqueues REGISTER packets onto
+     * s_rendezvous_send_q; the main thread drains them in Tick's
+     * HOST_WAITING branch. Per §Decision 5 the host stays in
+     * HOST_WAITING during this phase — there's no host-side
+     * FALLBACK_SIGNALING transition.
+     *
+     * Note: s_rendezvous_cancel was cleared above (before HOST_WAITING
+     * publish) to avoid clobbering a try_handle_deliver-set value. */
+    if (!Config_GetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_BILATERAL)) {
+        s_rendezvous_thread = SDL_CreateThread(host_rendezvous_thread_fn,
+                                               "DirectP2PRendezvous", NULL);
+        if (s_rendezvous_thread == NULL) {
+            SDL_Log("[direct_p2p] WARNING: failed to spawn rendezvous thread; "
+                    "fallback disabled this session");
+        }
+    }
     return 0;
 }
 
@@ -378,7 +792,7 @@ static int SDLCALL join_thread_fn(void* data) {
     /* Idempotent NET_Init — Stun_Discover assumes we've called it. */
     NET_Init();
     set_state(DIRECT_P2P_STUN_DISCOVER);
-    set_status("Discovering public endpoint...");
+    set_status("Preparing...");
     bool stun_ok = Stun_Discover(&s_work.stun, 0);
     if (cancel_requested()) {
         Stun_CloseSocket(&s_work.stun);
@@ -387,7 +801,7 @@ static int SDLCALL join_thread_fn(void* data) {
         return 0;
     }
     if (!stun_ok) {
-        set_status("STUN discovery failed.");
+        set_status("Connection failed. Try again.");
         set_state(DIRECT_P2P_FAILED_STUN);
         return 0;
     }
@@ -414,12 +828,12 @@ static int SDLCALL join_thread_fn(void* data) {
      * peer_ip/peer_port in place with the translated endpoint the host
      * actually reaches us from. */
     set_state(DIRECT_P2P_JOIN_PUNCHING);
-    set_status("Connecting to peer...");
+    set_status("Connecting...");
     char punch_peer_ip[64];
     SDL_strlcpy(punch_peer_ip, s_work.peer_ip, sizeof(punch_peer_ip));
     uint16_t punch_peer_port = s_work.peer_public_port;
-    bool punched = Stun_HolePunch(&s_work.stun, punch_peer_ip, &punch_peer_port,
-                                  2500, &s_cancel);
+    bool punched = STUN_HOLE_PUNCH(&s_work.stun, punch_peer_ip, &punch_peer_port,
+                                   2500, &s_cancel);
     if (cancel_requested()) {
         Stun_CloseSocket(&s_work.stun);
         set_status("Cancelled.");
@@ -427,12 +841,224 @@ static int SDLCALL join_thread_fn(void* data) {
         return 0;
     }
     if (!punched) {
-        Stun_CloseSocket(&s_work.stun);
-        /* If we got here via STUN (UPnP not tried on Join side), a
-         * punch timeout most plausibly means Symmetric NAT on one of
-         * the peers. No TURN fallback (locked decision #3). */
-        set_status("Cannot reach peer. Possible Symmetric NAT.");
-        set_state(DIRECT_P2P_FAILED_SYMMETRIC);
+        /* Direct punch failed. Three-way bypass before attempting the
+         * bilateral rendezvous fallback:
+         *   (a) kill switch — user disabled bilateral fallback;
+         *   (b) LAN peer — we should have reached a private-subnet peer
+         *       directly, public rendezvous is the wrong path;
+         *   (c) hairpin — peer's public IP equals our own, meaning a
+         *       same-LAN router that lacks NAT loopback. The bilateral
+         *       punch would loopback through the same broken router and
+         *       fail identically (Hard Requirement 3(c)).
+         * Each bypass takes the legacy FAILED_SYMMETRIC path with an
+         * appropriate status. The original "Possible Symmetric NAT"
+         * string is preserved for the kill-switch / LAN cases since the
+         * underlying diagnosis is unchanged. */
+        if (Config_GetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_BILATERAL)) {
+            Stun_CloseSocket(&s_work.stun);
+            set_status("Could not connect. Try a different network.");
+            set_state(DIRECT_P2P_FAILED_SYMMETRIC);
+            return 0;
+        }
+        if (direct_p2p_is_lan_peer(s_work.peer_ip)) {
+            Stun_CloseSocket(&s_work.stun);
+            set_status("Could not connect. Try a different network.");
+            set_state(DIRECT_P2P_FAILED_SYMMETRIC);
+            return 0;
+        }
+        if (s_work.stun.public_ip[0] != '\0' &&
+            direct_p2p_ip_eq_normalized(s_work.peer_ip, s_work.stun.public_ip)) {
+            Stun_CloseSocket(&s_work.stun);
+            set_status("Could not connect. Try a different network.");
+            set_state(DIRECT_P2P_FAILED_SYMMETRIC);
+            return 0;
+        }
+
+        /* Bilateral fallback (joiner side). Per §Decision 4, the joiner
+         * runs the rendezvous REGISTER/POLL loop INLINE in this worker
+         * thread instead of spawning a producer/queue split — its STUN
+         * socket has only one reader/writer (this thread), so direct
+         * Rendezvous_Send calls are race-free.
+         *
+         * Flow: FALLBACK_SIGNALING -> resolve signal URL -> derive
+         * session key -> resend REGISTER every 500ms while reading non-
+         * blocking, watching for a 32+ byte '3SXR' DELIVER. On valid
+         * DELIVER -> FALLBACK_BILATERAL_PUNCH -> Stun_HolePunch (bilateral
+         * budget) -> HANDOFF or FAILED_BILATERAL. */
+        set_status("Connecting...");
+        set_state(DIRECT_P2P_FALLBACK_SIGNALING);
+
+        /* 1) Parse signal URL. */
+        const char* signal_url = Config_GetString(CFG_KEY_NETPLAY_DIRECT_P2P_SIGNAL_URL);
+        if (signal_url == NULL || signal_url[0] == '\0') {
+            SDL_Log("[direct_p2p] joiner fallback: no signal URL configured");
+            Stun_CloseSocket(&s_work.stun);
+            set_status("Could not connect. Try a different network.");
+            set_state(DIRECT_P2P_FAILED_BILATERAL);
+            return 0;
+        }
+        char signal_host[64] = { 0 };
+        uint16_t signal_port = 0;
+        if (!Rendezvous_ParseSignalUrl(signal_url, signal_host, &signal_port)) {
+            SDL_Log("[direct_p2p] joiner fallback: malformed signal URL '%s'", signal_url);
+            Stun_CloseSocket(&s_work.stun);
+            set_status("Could not connect. Try a different network.");
+            set_state(DIRECT_P2P_FAILED_BILATERAL);
+            return 0;
+        }
+
+        /* 2) Resolve hostname (100ms-bounded poll, mirror stun.c:272-275). */
+        NET_Address* signal_addr = resolve_with_short_poll(signal_host);
+        if (!signal_addr) {
+            SDL_Log("[direct_p2p] joiner fallback: failed to resolve %s", signal_host);
+            Stun_CloseSocket(&s_work.stun);
+            set_status("Could not connect. Try a different network.");
+            set_state(DIRECT_P2P_FAILED_BILATERAL);
+            return 0;
+        }
+
+        /* 3) Derive session key from the HOST's public endpoint, decoded
+         * from the room code into peer_ip / peer_public_port. The host
+         * registered with the rendezvous using the same hash, and the
+         * server pairs entries by literal session_key equality — so both
+         * sides MUST hash the host's tuple to wind up in the same slot. */
+        uint8_t session_key[16];
+        uint32_t host_ip_be = ipv4_str_to_be(s_work.peer_ip);
+        if (!Rendezvous_DeriveSessionKey(host_ip_be, s_work.peer_public_port, session_key)) {
+            SDL_Log("[direct_p2p] joiner fallback: failed to derive session key");
+            NET_UnrefAddress(signal_addr);
+            Stun_CloseSocket(&s_work.stun);
+            set_status("Could not connect. Try a different network.");
+            set_state(DIRECT_P2P_FAILED_BILATERAL);
+            return 0;
+        }
+
+        /* 4) Build REGISTER once — payload is constant across resends. */
+        uint8_t register_pkt[28];
+        if (!Rendezvous_BuildRegister(s_work.stun.public_port, session_key, register_pkt)) {
+            SDL_Log("[direct_p2p] joiner fallback: failed to build REGISTER packet");
+            NET_UnrefAddress(signal_addr);
+            Stun_CloseSocket(&s_work.stun);
+            set_status("Could not connect. Try a different network.");
+            set_state(DIRECT_P2P_FAILED_BILATERAL);
+            return 0;
+        }
+
+        /* 5) Inline REGISTER/POLL + DELIVER receive loop. 500ms send
+         * cadence; 8s default budget (configurable). 50ms inner sleep so
+         * the cancel check has ~50ms granularity. Direct Rendezvous_Send
+         * is safe here because this thread is the sole reader/writer of
+         * the STUN socket. */
+        int signal_budget_ms = Config_GetInt(CFG_KEY_NETPLAY_DIRECT_P2P_SIGNAL_BUDGET_MS);
+        if (signal_budget_ms <= 0) signal_budget_ms = 8000;
+        int bilateral_budget_ms = Config_GetInt(CFG_KEY_NETPLAY_DIRECT_P2P_BILATERAL_PUNCH_MS);
+        if (bilateral_budget_ms <= 0) bilateral_budget_ms = 3000;
+
+        char fb_peer_ip[64] = { 0 };
+        uint16_t fb_peer_port = 0;
+        bool got_deliver = false;
+
+        const uint32_t signal_start = SDL_GetTicks();
+        uint32_t last_send = 0;
+        while ((int)(SDL_GetTicks() - signal_start) < signal_budget_ms) {
+            if (cancel_requested()) {
+                NET_UnrefAddress(signal_addr);
+                Stun_CloseSocket(&s_work.stun);
+                set_status("Cancelled.");
+                set_state(DIRECT_P2P_IDLE);
+                return 0;
+            }
+
+            uint32_t now = SDL_GetTicks();
+            if (last_send == 0 || (now - last_send) >= 500u) {
+                (void)RENDEZVOUS_SEND(s_work.stun.socket, signal_addr,
+                                      signal_port, register_pkt, sizeof(register_pkt));
+                last_send = now;
+            }
+
+            /* Non-blocking receive — mirror host_tick_receive's call
+             * convention. NET_ReceiveDatagram returns success/failure as
+             * bool; a successful call with no datagram available leaves
+             * dgram == NULL. */
+            NET_Datagram* dgram = NULL;
+            if (NET_ReceiveDatagram(s_work.stun.socket, &dgram) && dgram != NULL) {
+                if (dgram->buflen >= 32 &&
+                    dgram->buf[0] == 0x33 && dgram->buf[1] == 0x53 &&
+                    dgram->buf[2] == 0x58 && dgram->buf[3] == 0x52) {
+                    char parsed_ip[64] = { 0 };
+                    uint16_t parsed_port = 0;
+                    if (Rendezvous_ParseDeliver(dgram->buf, dgram->buflen,
+                                                session_key, parsed_ip, &parsed_port) &&
+                        parsed_ip[0] != '\0' && parsed_port != 0) {
+                        SDL_strlcpy(fb_peer_ip, parsed_ip, sizeof(fb_peer_ip));
+                        fb_peer_port = parsed_port;
+                        got_deliver = true;
+                        SDL_Log("[direct_p2p] joiner DELIVER received peer=%s:%u",
+                                fb_peer_ip, (unsigned)fb_peer_port);
+                    }
+                }
+                /* Non-DELIVER packets (stale punch echoes, garbage) are
+                 * dropped — no echo here; this loop is rendezvous-only. */
+                NET_DestroyDatagram(dgram);
+                if (got_deliver) break;
+            }
+
+            SDL_Delay(50);
+        }
+
+        NET_UnrefAddress(signal_addr);
+
+        if (!got_deliver) {
+            SDL_Log("[direct_p2p] joiner fallback: signal budget expired without DELIVER");
+            Stun_CloseSocket(&s_work.stun);
+            set_status("Could not connect. Try a different network.");
+            set_state(DIRECT_P2P_FAILED_BILATERAL);
+            return 0;
+        }
+
+        /* 6) Bilateral hole-punch with a stack-local copy of the peer
+         * endpoint (Stun_HolePunch overwrites *peer_ip / *peer_port with
+         * the post-NAT-translation source on success — mirrors the
+         * direct-path locals at :788-790). */
+        char bp_peer_ip[64];
+        SDL_strlcpy(bp_peer_ip, fb_peer_ip, sizeof(bp_peer_ip));
+        uint16_t bp_peer_port = fb_peer_port;
+
+        set_status("Connecting...");
+        set_state(DIRECT_P2P_FALLBACK_BILATERAL_PUNCH);
+        SDL_Log("[direct_p2p] joiner entering FALLBACK_BILATERAL_PUNCH peer=%s:%u (budget=%dms)",
+                bp_peer_ip, (unsigned)bp_peer_port, bilateral_budget_ms);
+
+        bool bilateral_punched = STUN_HOLE_PUNCH(&s_work.stun, bp_peer_ip,
+                                                 &bp_peer_port,
+                                                 bilateral_budget_ms, &s_cancel);
+        if (cancel_requested()) {
+            Stun_CloseSocket(&s_work.stun);
+            set_status("Cancelled.");
+            set_state(DIRECT_P2P_IDLE);
+            return 0;
+        }
+        if (!bilateral_punched) {
+            Stun_CloseSocket(&s_work.stun);
+            set_status("Could not connect. Try a different network.");
+            set_state(DIRECT_P2P_FAILED_BILATERAL);
+            return 0;
+        }
+
+        /* 7) Bilateral punch succeeded. Writeback BEFORE set_state(HANDOFF)
+         * — Tick reads s_work.peer_ip/peer_public_port in join_tick_handoff,
+         * so the post-punch translated endpoint must be visible by the
+         * time HANDOFF is observed. Persist the room code and fall through
+         * to the existing HANDOFF publish below. */
+        SDL_strlcpy(s_work.peer_ip, bp_peer_ip, sizeof(s_work.peer_ip));
+        s_work.peer_public_port = bp_peer_port;
+
+        if (s_work.peer_code[0] != '\0') {
+            Config_SetString(CFG_KEY_NETPLAY_DIRECT_P2P_LAST_PEER_CODE, s_work.peer_code);
+        }
+
+        set_status("Connected!");
+        set_state(DIRECT_P2P_HANDOFF);
         return 0;
     }
 
@@ -452,7 +1078,7 @@ static int SDLCALL join_thread_fn(void* data) {
 
     /* Worker is done; Tick will observe HANDOFF and drive the
      * netplay.c handoff on the main thread. */
-    set_status("Connected. Starting session...");
+    set_status("Connected!");
     set_state(DIRECT_P2P_HANDOFF);
     return 0;
 }
@@ -464,6 +1090,23 @@ static int SDLCALL join_thread_fn(void* data) {
  * miniupnpc can cleanly deregister. Safe to call when no mapping is
  * active. */
 static void direct_p2p_on_teardown(void) {
+    /* Signal any still-running worker(s) to exit, then join. The natural-
+     * success exit path returns from the worker without nulling the
+     * handle (5a switched the spawn sites away from SDL_DetachThread),
+     * so teardown owns the join responsibility for both the orchestrator
+     * worker and the new (5b/5c) rendezvous / bilateral-punch threads. */
+    SDL_SetAtomicInt(&s_cancel, 1);
+    SDL_SetAtomicInt(&s_rendezvous_cancel, 1);
+    SDL_SetAtomicInt(&s_bilateral_punch_cancel, 1);
+    if (s_thread)                  { SDL_WaitThread(s_thread,                  NULL); s_thread                  = NULL; }
+    if (s_rendezvous_thread)       { SDL_WaitThread(s_rendezvous_thread,       NULL); s_rendezvous_thread       = NULL; }
+    if (s_bilateral_punch_thread)  { SDL_WaitThread(s_bilateral_punch_thread,  NULL); s_bilateral_punch_thread  = NULL; }
+
+    /* Producer threads are joined; release any pending NET_Address refs
+     * still in the rendezvous send queue (consumer never gets to drain
+     * after teardown). */
+    rend_q_purge();
+
     if (s_upnp_mapping.active) {
         Upnp_RemoveMapping(&s_upnp_mapping);
         memset(&s_upnp_mapping, 0, sizeof(s_upnp_mapping));
@@ -505,6 +1148,103 @@ static void do_handoff(int player, const char* peer_ip, uint16_t peer_port) {
     SDL_Log("[direct_p2p] handoff complete — nav state machine will start netplay session");
 }
 
+/*
+ * DELIVER handler — invoked from host_tick_receive after the magic-byte
+ * gate. Parses the packet against our session key (derived from our own
+ * public endpoint, same as the rendezvous thread). On a valid DELIVER
+ * with a non-zero peer endpoint, transitions out of HOST_WAITING per
+ * the bilateral fallback flow:
+ *   - LAN peer => stay HOST_WAITING (we should have seen a direct punch
+ *     already; rendezvous via public infra is the wrong path).
+ *   - Hairpin (peer public IP == our public IP) => FAILED_SYMMETRIC; the
+ *     router that broke the direct punch will also break the bilateral
+ *     punch (Hard Requirement 3(c)).
+ *   - Otherwise => stash peer endpoint, signal rendezvous-cancel,
+ *     transition to FALLBACK_BILATERAL_PUNCH and spawn the
+ *     bilateral-punch worker thread.
+ *
+ * Returns true iff the packet was a recognized DELIVER (whether or not
+ * we acted on it) so the caller knows it consumed the datagram.
+ */
+static bool try_handle_deliver(const uint8_t* pkt, int len) {
+    /* Only honor DELIVER while we're still in HOST_WAITING. After we've
+     * transitioned to FALLBACK_BILATERAL_PUNCH (or any terminal) a stale
+     * DELIVER from the server is a no-op. */
+    if (get_state() != DIRECT_P2P_HOST_WAITING) {
+        return true;
+    }
+
+    /* Derive the session key from our own public endpoint — the same
+     * derivation the rendezvous thread does and the joiner does. */
+    uint32_t ip_be = ipv4_str_to_be(s_work.stun.public_ip);
+    uint8_t session_key[16];
+    if (!Rendezvous_DeriveSessionKey(ip_be, s_work.stun.public_port, session_key)) {
+        SDL_Log("[direct_p2p] DELIVER drop: failed to derive session key");
+        return true;
+    }
+
+    char peer_ip[64] = { 0 };
+    uint16_t peer_port = 0;
+    if (!Rendezvous_ParseDeliver(pkt, len, session_key, peer_ip, &peer_port)) {
+        /* Malformed, wrong session, or "peer not yet registered" sentinel —
+         * any of which the rendezvous thread will retry past. No action. */
+        return true;
+    }
+
+    SDL_Log("[direct_p2p] DELIVER received peer=%s:%u", peer_ip, (unsigned)peer_port);
+
+    /* Stop the rendezvous resender — we have what we need from the server. */
+    SDL_SetAtomicInt(&s_rendezvous_cancel, 1);
+
+    /* LAN bypass: if the rendezvous-delivered peer is on a private
+     * subnet, we should have seen a direct punch already. Something is
+     * weird (firewall blocking the LAN path? mismatched configs?). Stay
+     * in HOST_WAITING and let the user retry / the direct path catch up. */
+    if (direct_p2p_is_lan_peer(peer_ip)) {
+        SDL_Log("[direct_p2p] DELIVER peer is LAN (%s); staying HOST_WAITING — "
+                "direct path should already have completed.", peer_ip);
+        return true;
+    }
+
+    /* Hairpin gate: peer public IP == our public IP. If the router broke
+     * the direct-punch loopback it will break the bilateral punch the
+     * same way (per §Hard requirement 3(c)). Compare normalized so
+     * formatting differences don't bypass the check. */
+    if (direct_p2p_ip_eq_normalized(peer_ip, s_work.stun.public_ip)) {
+        SDL_Log("[direct_p2p] DELIVER hairpin (peer %s == self %s); "
+                "router lacks NAT loopback. Failing without bilateral retry.",
+                peer_ip, s_work.stun.public_ip);
+        set_status("Could not connect. Try a different network.");
+        set_state(DIRECT_P2P_FAILED_SYMMETRIC);
+        return true;
+    }
+
+    /* Stash the peer endpoint so the bilateral-punch thread can copy
+     * stack-locals from it. The thread overwrites these on success
+     * before transitioning to HANDOFF. */
+    SDL_strlcpy(s_work.peer_ip, peer_ip, sizeof(s_work.peer_ip));
+    s_work.peer_public_port = peer_port;
+
+    /* Transition + spawn the bilateral-punch worker. The thread itself
+     * publishes HANDOFF / FAILED_BILATERAL when it completes. */
+    set_state(DIRECT_P2P_FALLBACK_BILATERAL_PUNCH);
+    SDL_SetAtomicInt(&s_bilateral_punch_cancel, 0);
+    /* Natural-success guard: if a previous bilateral-punch worker exited
+     * without being detached, join it now before clobbering the handle. */
+    if (s_bilateral_punch_thread != NULL) {
+        SDL_WaitThread(s_bilateral_punch_thread, NULL);
+        s_bilateral_punch_thread = NULL;
+    }
+    s_bilateral_punch_thread = SDL_CreateThread(host_bilateral_punch_thread_fn,
+                                                "DirectP2PBilateral", NULL);
+    if (s_bilateral_punch_thread == NULL) {
+        SDL_Log("[direct_p2p] failed to spawn bilateral-punch thread");
+        set_status("Connection failed. Try again.");
+        set_state(DIRECT_P2P_FAILED_BILATERAL);
+    }
+    return true;
+}
+
 /* Host-side per-frame drain. Returns true once a valid inbound datagram
  * has been received and the handoff was executed. The first inbound
  * packet on a direct-P2P Host socket is the joiner's Stun_HolePunch
@@ -520,6 +1260,18 @@ static bool host_tick_receive(void) {
     NET_Datagram* dgram = NULL;
     if (!NET_ReceiveDatagram(s_work.stun.socket, &dgram) || dgram == NULL) {
         return false;
+    }
+    /* Rendezvous DELIVER: 32+ bytes starting with '3SXR' magic
+     * (0x33535852 BE). Hosts only ever receive DELIVER (server -> host);
+     * REGISTER and POLL are client -> server only. Gate this BEFORE the
+     * peer-endpoint capture and echo below so a DELIVER from the
+     * rendezvous server is not mistaken for a peer punch probe. */
+    if (dgram->buflen >= 32 &&
+        dgram->buf[0] == 0x33 && dgram->buf[1] == 0x53 &&
+        dgram->buf[2] == 0x58 && dgram->buf[3] == 0x52) {
+        try_handle_deliver(dgram->buf, dgram->buflen);
+        NET_DestroyDatagram(dgram);
+        return true;
     }
     /* Capture the source endpoint — this is who we'll talk to. The
      * socket's internal "connected peer" state gets set when
@@ -543,7 +1295,7 @@ static bool host_tick_receive(void) {
     s_work.peer_public_port = src_port;
 
     SDL_Log("[direct_p2p] Host received first inbound from %s:%u", src_ip, src_port);
-    set_status("Connected. Starting session...");
+    set_status("Connected!");
     set_state(DIRECT_P2P_HANDOFF);
 
     /* Host is player 1 (player_number = 0). */
@@ -564,6 +1316,14 @@ void DirectP2P_Init(void) {
     if (s_init_done) return;
     SDL_SetAtomicInt(&s_state, (int)DIRECT_P2P_IDLE);
     SDL_SetAtomicInt(&s_cancel, 0);
+    SDL_SetAtomicInt(&s_rendezvous_cancel, 0);
+    SDL_SetAtomicInt(&s_bilateral_punch_cancel, 0);
+    SDL_SetAtomicInt(&s_bilateral_handoff_pending, 0);
+    SDL_SetAtomicInt(&s_q_head, 0);
+    SDL_SetAtomicInt(&s_q_tail, 0);
+    SDL_SetAtomicInt(&s_q_drops, 0);
+    SDL_SetAtomicInt(&s_q_drops_logged, 0);
+    memset(s_rendezvous_send_q, 0, sizeof(s_rendezvous_send_q));
     memset(&s_work, 0, sizeof(s_work));
     memset(&s_upnp_mapping, 0, sizeof(s_upnp_mapping));
     s_status[0] = '\0';
@@ -576,7 +1336,20 @@ void DirectP2P_BeginHost(int preferred_port) {
     if (get_state() != DIRECT_P2P_IDLE) {
         return;
     }
+    /* Natural-success exit guard: if a previous worker returned without
+     * being detached (5a switched from detach to wait), join its handle
+     * before clobbering it. Safe when s_thread is NULL. */
+    if (s_thread != NULL) {
+        SDL_WaitThread(s_thread, NULL);
+        s_thread = NULL;
+    }
+
     SDL_SetAtomicInt(&s_cancel, 0);
+    SDL_SetAtomicInt(&s_rendezvous_cancel, 0);
+    SDL_SetAtomicInt(&s_bilateral_punch_cancel, 0);
+    SDL_SetAtomicInt(&s_bilateral_handoff_pending, 0);
+    SDL_SetAtomicInt(&s_q_drops, 0);
+    SDL_SetAtomicInt(&s_q_drops_logged, 0);
     memset(&s_work, 0, sizeof(s_work));
     s_work.role = ROLE_HOST;
     s_work.preferred_port = preferred_port;
@@ -596,12 +1369,13 @@ void DirectP2P_BeginHost(int preferred_port) {
     }
     s_thread = SDL_CreateThread(host_thread_fn, "DirectP2PHost", NULL);
     if (s_thread == NULL) {
-        set_status("Failed to start Host thread.");
+        set_status("Connection failed. Try again.");
         set_state(DIRECT_P2P_FAILED_STUN);
         return;
     }
-    SDL_DetachThread(s_thread);
-    s_thread = NULL; /* detached — worker owns its own lifetime */
+    /* Worker handle retained — DirectP2P_Cancel and direct_p2p_on_teardown
+     * SDL_WaitThread it. Natural-success exit is joined on next
+     * BeginHost/BeginJoin via the guard above, or on teardown. */
 }
 
 void DirectP2P_BeginJoin(const char* peer_code) {
@@ -628,7 +1402,18 @@ void DirectP2P_BeginJoin(const char* peer_code) {
         return;
     }
 
+    /* Natural-success exit guard: see BeginHost for the rationale. */
+    if (s_thread != NULL) {
+        SDL_WaitThread(s_thread, NULL);
+        s_thread = NULL;
+    }
+
     SDL_SetAtomicInt(&s_cancel, 0);
+    SDL_SetAtomicInt(&s_rendezvous_cancel, 0);
+    SDL_SetAtomicInt(&s_bilateral_punch_cancel, 0);
+    SDL_SetAtomicInt(&s_bilateral_handoff_pending, 0);
+    SDL_SetAtomicInt(&s_q_drops, 0);
+    SDL_SetAtomicInt(&s_q_drops_logged, 0);
     memset(&s_work, 0, sizeof(s_work));
     s_work.role = ROLE_JOIN;
     SDL_strlcpy(s_work.peer_code, peer_code, sizeof(s_work.peer_code));
@@ -637,12 +1422,11 @@ void DirectP2P_BeginJoin(const char* peer_code) {
 
     s_thread = SDL_CreateThread(join_thread_fn, "DirectP2PJoin", NULL);
     if (s_thread == NULL) {
-        set_status("Failed to start Join thread.");
+        set_status("Connection failed. Try again.");
         set_state(DIRECT_P2P_FAILED_STUN);
         return;
     }
-    SDL_DetachThread(s_thread);
-    s_thread = NULL;
+    /* Worker handle retained — see BeginHost. */
 }
 
 void DirectP2P_Cancel(void) {
@@ -650,15 +1434,23 @@ void DirectP2P_Cancel(void) {
     if (st == DIRECT_P2P_IDLE || st == DIRECT_P2P_HANDOFF) return;
 
     SDL_SetAtomicInt(&s_cancel, 1);
+    SDL_SetAtomicInt(&s_rendezvous_cancel, 1);
+    SDL_SetAtomicInt(&s_bilateral_punch_cancel, 1);
 
-    /* Short grace period for the worker to observe the flag. In the
-     * worst case the worker is inside a Stun_Discover resolve and has
-     * to let its 2s timeout expire; we don't block the game loop on
-     * that — future Tick() calls will see the IDLE transition when it
-     * lands. */
-    for (int i = 0; i < 50 && get_state() != DIRECT_P2P_IDLE; i++) {
-        SDL_Delay(10);
-    }
+    /* Wait for any in-flight worker(s) to observe the cancel flag and
+     * exit. Replaces the prior spin-on-state loop — joining the actual
+     * thread handle eliminates the race where the worker writes s_work
+     * after the memset below. Each worker honors its cancel flag at the
+     * next loop iteration; worst-case blocking is bounded by the
+     * longest cancel-check interval among the active workers (~2s for
+     * Stun_Discover, ~10ms inside Stun_HolePunch). */
+    if (s_thread)                  { SDL_WaitThread(s_thread,                  NULL); s_thread                  = NULL; }
+    if (s_rendezvous_thread)       { SDL_WaitThread(s_rendezvous_thread,       NULL); s_rendezvous_thread       = NULL; }
+    if (s_bilateral_punch_thread)  { SDL_WaitThread(s_bilateral_punch_thread,  NULL); s_bilateral_punch_thread  = NULL; }
+
+    /* Producer threads are joined; release any pending NET_Address refs
+     * still in the rendezvous send queue. */
+    rend_q_purge();
 
     /* Tear down any retained resources: the worker may already have
      * populated s_work.stun and then observed cancel after publishing
@@ -687,16 +1479,29 @@ void DirectP2P_Tick(void) {
         return;
 
     case DIRECT_P2P_HOST_WAITING:
-        /* Drain the STUN socket non-blockingly until a peer arrives. */
+        /* Drain the rendezvous send queue first (up to 4 slots per tick
+         * per §Decision 3) so REGISTER/POLL packets enqueued by the
+         * rendezvous worker reach the wire from the main thread (the
+         * STUN socket's sole I/O actor during this phase). Then poll for
+         * inbound — peer punch OR rendezvous DELIVER. */
+        rend_q_drain(s_work.stun.socket, 4);
         host_tick_receive();
         return;
 
     case DIRECT_P2P_HANDOFF:
-        /* Two entry points land us here:
-         *   - Host path: host_tick_receive() already executed the
-         *     handoff and left state at HANDOFF. The netplay session
-         *     is now running; nothing more to do. Leave state at
-         *     HANDOFF; teardown resets it via direct_p2p_on_teardown.
+        /* Three entry points land us here:
+         *   - Host direct path: host_tick_receive() already executed
+         *     the handoff inline (main thread) and left state at
+         *     HANDOFF. The netplay session is now running; nothing
+         *     more to do. Leave state at HANDOFF; teardown resets it
+         *     via direct_p2p_on_teardown.
+         *   - Host bilateral fallback: the bilateral worker writes
+         *     peer endpoint back to s_work and raises
+         *     s_bilateral_handoff_pending while staying in
+         *     FALLBACK_BILATERAL_PUNCH. Tick's
+         *     FALLBACK_BILATERAL_PUNCH case (below) runs do_handoff
+         *     and publishes HANDOFF — by the time we land here the
+         *     handoff has already executed.
          *   - Join path: the worker published HANDOFF but the actual
          *     Netplay_BeginDirectP2P call has to happen on the main
          *     thread (Netplay internals are not thread-safe). Detect
@@ -715,11 +1520,65 @@ void DirectP2P_Tick(void) {
          * caller (menu) will eventually issue DirectP2P_Cancel to
          * return to IDLE. */
         return;
+
+    case DIRECT_P2P_FALLBACK_SIGNALING:
+        /* Joiner inlines the rendezvous loop into its worker thread, so
+         * there's nothing for Tick to drive on the joiner side. The
+         * host's REGISTER/POLL phase happens while state is still
+         * HOST_WAITING; this case is unreachable in 5a (no transitions
+         * to it yet) and remains a no-op skeleton until 5b/5c. */
+        return;
+
+    case DIRECT_P2P_FALLBACK_BILATERAL_PUNCH:
+        /* The bilateral-punch worker thread (host_bilateral_punch_thread_fn)
+         * exclusively owns s_work.stun.socket for reads/writes via
+         * Stun_HolePunch during this phase. Per §Decision 3, the main
+         * thread MUST NOT call host_tick_receive (concurrent
+         * NET_ReceiveDatagram on the same socket is a race) and MUST NOT
+         * drain the rendezvous queue (rendezvous resends are stopped by
+         * the s_rendezvous_cancel signal raised in try_handle_deliver).
+         *
+         * On punch SUCCESS the worker raises s_bilateral_handoff_pending
+         * (after writing peer_ip/peer_public_port back to s_work) and
+         * exits without changing state — do_handoff invokes
+         * Netplay_SetParams / Netplay_SetRemotePort / Netplay_SetStunSocket
+         * which are main-thread-only. We pick up that signal here, join
+         * the worker so its handle is reclaimed and s_work reads are
+         * race-free, then run do_handoff inline. do_handoff itself does
+         * NOT publish HANDOFF (mirroring the direct-path convention at
+         * host_tick_receive:1014/1017), so we set_state HANDOFF after.
+         *
+         * On punch FAILURE the worker publishes FAILED_BILATERAL itself
+         * and we never observe the pending flag — that path is handled
+         * by the FAILED_BILATERAL terminal case. */
+        if (SDL_GetAtomicInt(&s_bilateral_handoff_pending) != 0) {
+            SDL_SetAtomicInt(&s_bilateral_handoff_pending, 0);
+            if (s_bilateral_punch_thread != NULL) {
+                SDL_WaitThread(s_bilateral_punch_thread, NULL);
+                s_bilateral_punch_thread = NULL;
+            }
+            set_state(DIRECT_P2P_HANDOFF);
+            /* Host is player 1 (player_number = 0). */
+            do_handoff(1, s_work.peer_ip, s_work.peer_public_port);
+        }
+        return;
+
+    case DIRECT_P2P_FAILED_BILATERAL:
+        /* Terminal — bilateral fallback exhausted. No work; the menu
+         * will issue DirectP2P_Cancel to return to IDLE. */
+        return;
     }
 }
 
 DirectP2PState DirectP2P_GetState(void) {
     return get_state();
+}
+
+Role DirectP2P_GetRole(void) {
+    /* Snapshot value — set once per BeginHost/BeginJoin and not mutated
+     * thereafter. No atomic needed; a stale read across the BeginHost ->
+     * worker transition is at worst one frame of overlay miscategorization. */
+    return s_work.role;
 }
 
 const char* DirectP2P_GetHostCode(void) {
