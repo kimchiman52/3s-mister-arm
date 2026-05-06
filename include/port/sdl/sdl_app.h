@@ -2,7 +2,6 @@
 #define SDL_APP_H
 
 #include "port/build_config.h"
-#include "port/sdl/sdl_game_renderer.h"
 #include <SDL3/SDL.h>
 
 #define TARGET_FPS 59.59949
@@ -43,8 +42,6 @@ static inline bool SDLApp_HasPerfTelemetry(void) {
 }
 
 #if ENABLE_PERF_TELEMETRY
-bool SDLApp_RunSoftwareFrameParityCheck(void);
-
 /// Configure optional frame-stage perf capture.
 /// `frame_count` <= 0 disables capture.
 void SDLApp_ConfigurePerfCapture(
@@ -61,10 +58,6 @@ void SDLApp_ConfigurePerfCapture(
     bool enable_subrect_alpha_telemetry);
 bool SDLApp_IsPerfRuntimeStateActive(const char* runtime_state_name);
 #else
-static inline bool SDLApp_RunSoftwareFrameParityCheck(void) {
-    return false;
-}
-
 static inline void
 SDLApp_ConfigurePerfCapture(int frame_count,
                             const char* output_path,

@@ -42,6 +42,16 @@ option(ENABLE_MISTER_ARM_HARDENING
 # byte-identical machine code to pre-Step-6 (no indirect calls).
 option(NETPLAY_TEST_HOOKS "Compile in test seams for direct_p2p.c (Step 6)" OFF)
 
+# pr-243 ARM Linux display backend (fbdev + DRM/KMS) for non-MiSTer ARM Linux
+# targets (Pi-class, handheld Linux, etc.). Mutually exclusive with PORT_MISTER.
+# libdrm-dev must be available at build time on the target sysroot (libdrm +
+# xf86drm headers).
+option(PORT_ARM_FBDEV "Build pr-243's ARM Linux display backend (fbdev + DRM)" OFF)
+
+if(PORT_ARM_FBDEV AND PORT_MISTER)
+    message(FATAL_ERROR "PORT_ARM_FBDEV and PORT_MISTER are mutually exclusive.")
+endif()
+
 message(STATUS "PORT_MISTER=${PORT_MISTER}")
 message(STATUS "ENABLE_PERF_TELEMETRY=${ENABLE_PERF_TELEMETRY}")
 message(STATUS "ENABLE_NETPLAY=${ENABLE_NETPLAY}")
@@ -50,6 +60,7 @@ message(STATUS "ENABLE_FFMPEG_ADX=${ENABLE_FFMPEG_ADX}")
 message(STATUS "ENABLE_SDL_DIALOGS=${ENABLE_SDL_DIALOGS}")
 message(STATUS "ENABLE_MISTER_ARM_HARDENING=${ENABLE_MISTER_ARM_HARDENING}")
 message(STATUS "NETPLAY_TEST_HOOKS=${NETPLAY_TEST_HOOKS}")
+message(STATUS "PORT_ARM_FBDEV=${PORT_ARM_FBDEV}")
 
 # ======================================
 # Include directories
@@ -135,6 +146,29 @@ endif()
 
 if(ENABLE_SDL_DIALOGS)
     target_compile_definitions(3s-arm PRIVATE ENABLE_SDL_DIALOGS)
+endif()
+
+target_compile_definitions(3s-arm PRIVATE
+    CRS_VIDEO_DRIVER_SOFTWARE=1
+    CRS_SW_INDEXED8_KERNEL_DEFAULT='b')
+if(PORT_MISTER)
+    # 16bpp RGB565 canvas — matches the FPGA DDR3 native_video_writer
+    # 16bpp scanout. Other targets (Mac, PORT_ARM_FBDEV) use the default
+    # 32bpp ARGB8888 canvas.
+    target_compile_definitions(3s-arm PRIVATE CRS_SW_CANVAS_16BPP=1)
+endif()
+
+if(PORT_ARM_FBDEV)
+    # pr-243 ARM Linux display backend. Files live under src/platform/app/arm/
+    # and are gated by `#if CRS_APP_DRIVER_ARM` — they compile to empty TUs
+    # on every other build profile.
+    target_compile_definitions(3s-arm PRIVATE
+        CRS_APP_DRIVER_ARM=1
+        CRS_ARM_HAVE_DRM=1)
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(LIBDRM REQUIRED IMPORTED_TARGET libdrm)
+    target_link_libraries(3s-arm PRIVATE PkgConfig::LIBDRM)
+    message(STATUS "PORT_ARM_FBDEV=ON (pr-243 ARM Linux display backend; fbdev + DRM)")
 endif()
 
 if(CMAKE_C_COMPILER_ID STREQUAL "Clang" OR CMAKE_C_COMPILER_ID STREQUAL "AppleClang")

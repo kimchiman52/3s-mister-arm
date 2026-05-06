@@ -2,6 +2,7 @@
 #define INPUT_HISTORY_GLYPH_DATA_H
 
 #define INPUT_HISTORY_GLYPH_SIZE 8
+#define INPUT_HISTORY_GLYPH_COUNT 10
 
 // Tone map in row-major order:
 // 0 = transparent, 1 = edge tone, 2 = face tone.

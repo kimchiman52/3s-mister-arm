@@ -6,7 +6,6 @@
 #include <stdio.h>
 #endif
 #include "rendering/game_renderer.h"
-#include "port/sdl/sdl_game_renderer.h"
 #include "sf33rd/AcrSDK/common/plcommon.h"
 #include "sf33rd/AcrSDK/ps2/flps2render.h"
 #include "sf33rd/AcrSDK/ps2/flps2vram.h"
@@ -339,9 +338,7 @@ void ppgWriteQuadOnly(Vertex* pos, u32 col, u32 texCode) {
         prm.t[i].t = pos[i].t;
     }
 
-    SDLGameRenderer_SetTaskSource(SDL_GAME_RENDERER_TASK_SOURCE_PPG);
     Renderer_DrawTexturedQuad(&prm, col);
-    SDLGameRenderer_SetTaskSource(SDL_GAME_RENDERER_TASK_SOURCE_UNKNOWN);
 }
 
 void ppgWriteQuadOnly2(Vertex* pos, u32 col, u32 texCode) {
@@ -360,9 +357,7 @@ void ppgWriteQuadOnly2(Vertex* pos, u32 col, u32 texCode) {
     prm.t[3].s = pos[3].s;
     prm.t[3].t = pos[3].t;
 
-    SDLGameRenderer_SetTaskSource(SDL_GAME_RENDERER_TASK_SOURCE_PPG);
     Renderer_DrawSprite(&prm, col);
-    SDLGameRenderer_SetTaskSource(SDL_GAME_RENDERER_TASK_SOURCE_UNKNOWN);
 }
 
 s32 ppgWriteQuadWithST_B(Vertex* pos, u32 col, PPGDataList* tb, s32 tix, s32 cix) {
@@ -981,13 +976,6 @@ s32 ppgSetupTexChunkSeqs(Texture* tch, PPGFileHeader* ppg, u8* adrs, s32 ixNum1s
             goto error_handler;
         }
 
-        SDLGameRenderer_RecordTextureLogicalIdentity(tch->handle[i].b16[0],
-                                                     SDL_GAME_RENDERER_TEXTURE_LOGICAL_SOURCE_PPG_SEQS,
-                                                     tch->ixNum1st + i,
-                                                     tch->ixNum1st,
-                                                     i,
-                                                     -1,
-                                                     tch->total);
         ppgConfigureRenewDirtyTracking(tch->handle[i].b16[0], tch->ixNum1st, i, tch->total);
 
         adrs += tch->srcSize;
@@ -1034,9 +1022,6 @@ void ppgRenewDotDataSeqs(Texture* tch, u32 gix, u32* srcRam, u32 code, u32 size)
             tch->handle[ix].b16[1] |= 0x2000;
             SDL_Rect renew_rect = { 0, 0, 0, 0 };
             const bool have_renew_rect = ppgDecodeRenewChunkRect(code, size, &renew_rect);
-#if ENABLE_PERF_TELEMETRY
-            const bool capture_texture_renew = SDLGameRenderer_IsPerfCaptureExtendedStatsEnabled();
-#endif
 
             switch (size) {
             case 0x40:
@@ -1130,13 +1115,6 @@ void ppgRenewDotDataSeqs(Texture* tch, u32 gix, u32* srcRam, u32 code, u32 size)
                 ppgAccumulateRenewDirtyRect(tch->handle[ix].b16[0], &renew_rect);
                 ppgAccumulateRenewDirtyTileMask(tch->handle[ix].b16[0], &renew_rect);
             }
-
-#if ENABLE_PERF_TELEMETRY
-            if (capture_texture_renew && have_renew_rect) {
-                SDLGameRenderer_RecordTextureRenewChunk(
-                    tch->handle[ix].b16[0], renew_rect.x, renew_rect.y, renew_rect.w, renew_rect.h);
-            }
-#endif
         }
     }
 }
@@ -1172,9 +1150,6 @@ s32 ppgRenewTexChunkSeqs(Texture* tch) {
     s32 i;
     s32* srcRam;
     s32* dstRam;
-#if ENABLE_PERF_TELEMETRY
-    const bool capture_texture_renew = SDLGameRenderer_IsPerfCaptureExtendedStatsEnabled();
-#endif
 
     if (tch == NULL) {
         tch = ppg_w.cur->tex;
@@ -1197,11 +1172,6 @@ s32 ppgRenewTexChunkSeqs(Texture* tch) {
             const bool have_renew_dirty_tile_mask =
                 ppgConsumeRenewDirtyTileMask(texture_handle, &renew_dirty_tile_mask);
             tch->handle[i].b16[1] &= 0xDFFF;
-#if ENABLE_PERF_TELEMETRY
-            if (capture_texture_renew) {
-                SDLGameRenderer_RecordTextureRenewBatch(texture_handle);
-            }
-#endif
             flLockTexture(NULL, texture_handle, &bits, 3);
             dstRam = bits.ptr;
             srcRam = (s32*)(tch->srcAdrs + tch->srcSize * i);
@@ -1224,18 +1194,8 @@ s32 ppgRenewTexChunkSeqs(Texture* tch) {
             }
 
             flUnlockTexture(texture_handle);
-            if (have_renew_dirty_rect) {
-                // Replace the pre-invalidation compare bbox with the exact direct-write renew bbox.
-                SDLGameRenderer_ClearTextureUnlockDirtyRect(texture_handle);
-                if (have_renew_dirty_tile_mask) {
-                    SDLGameRenderer_RecordTextureUnlockDirtyTileMask(texture_handle, renew_dirty_tile_mask);
-                }
-                SDLGameRenderer_RecordTextureUnlockDirtyRect(texture_handle,
-                                                            renew_dirty_rect.x,
-                                                            renew_dirty_rect.y,
-                                                            renew_dirty_rect.x + renew_dirty_rect.w - 1,
-                                                            renew_dirty_rect.y + renew_dirty_rect.h - 1);
-            }
+            (void)have_renew_dirty_tile_mask;
+            (void)renew_dirty_tile_mask;
         }
     }
 
@@ -1448,13 +1408,6 @@ s32 ppgSetupTexChunk_3rd(Texture* tch, s32 ixNum, u32 attribute) {
         while (1) {}
     }
 
-    SDLGameRenderer_RecordTextureLogicalIdentity(hnof->b16[0],
-                                                 SDL_GAME_RENDERER_TEXTURE_LOGICAL_SOURCE_PPG_CHUNK,
-                                                 ixNum,
-                                                 tch->ixNum1st,
-                                                 ixNum - tch->ixNum1st,
-                                                 hnof->b16[1] & 0xFFF,
-                                                 tch->total);
     ppgConfigureRenewDirtyTracking(hnof->b16[0], tch->ixNum1st, ixNum - tch->ixNum1st, tch->total);
 
     return 1;

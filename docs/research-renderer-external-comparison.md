@@ -1,5 +1,13 @@
 # Research — Rendering pipeline vs. external 6 ms/frame reference
 
+> **Post-Phase-C update (2026-05-03):** `src/port/sdl/fbdev_presenter.{c,h}`
+> have been removed. References below to `FBDevPresenter_*` /
+> `fbdev_presenter` describe the path as it existed at the time of this
+> research and remain useful for understanding the comparison; the
+> equivalent live symbols today are in
+> `src/port/sdl/fps_overlay_compositor.c` (`FPSOverlay_*` API) and
+> `src/port/sdl/native_video_writer.c`.
+
 **Date:** 2026-04-24
 **Scope:** Compare our MiSTer (ARM Cortex-A9) software rendering pipeline against a detailed
 design writeup from an external engineer whose ARM MiSTer-class port reportedly averages 6 ms

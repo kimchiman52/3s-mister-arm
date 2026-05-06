@@ -6,7 +6,7 @@
 #include "sf33rd/Source/Game/ui/sc_sub.h"
 #include "common.h"
 #include "rendering/game_renderer.h"
-#include "port/sdl/sdl_game_renderer.h"
+#include <SDL3/SDL.h>
 #include "sf33rd/AcrSDK/common/pad.h"
 #include "sf33rd/AcrSDK/ps2/flps2render.h"
 #include "sf33rd/AcrSDK/ps2/foundaps2.h"
@@ -54,7 +54,7 @@ typedef struct {
 
 typedef struct {
     u16 mask;
-    SDLGameRenderer_InputHistoryGlyph glyph;
+    Renderer_InputHistoryGlyph glyph;
     const char* fallback_label;
     u8 gr;
 } TrainingInputButtonLabel;
@@ -68,12 +68,12 @@ static const char* training_input_direction_labels[16] = {
     " ", "^", "v", ".", "<", "^<", "v<", ".", ">", "^>", "v>", ".", ".", ".", ".", "."
 };
 static const TrainingInputButtonLabel training_input_button_labels[] = {
-    { SWK_WEST, SDL_GAME_RENDERER_INPUT_GLYPH_PUNCH, "P", TRAINING_INPUT_HISTORY_GR_BLUE },
-    { SWK_NORTH, SDL_GAME_RENDERER_INPUT_GLYPH_PUNCH, "P", TRAINING_INPUT_HISTORY_GR_YELLOW },
-    { SWK_RIGHT_SHOULDER, SDL_GAME_RENDERER_INPUT_GLYPH_PUNCH, "P", TRAINING_INPUT_HISTORY_GR_RED },
-    { SWK_SOUTH, SDL_GAME_RENDERER_INPUT_GLYPH_KICK, "K", TRAINING_INPUT_HISTORY_GR_BLUE },
-    { SWK_EAST, SDL_GAME_RENDERER_INPUT_GLYPH_KICK, "K", TRAINING_INPUT_HISTORY_GR_YELLOW },
-    { SWK_RIGHT_TRIGGER, SDL_GAME_RENDERER_INPUT_GLYPH_KICK, "K", TRAINING_INPUT_HISTORY_GR_RED },
+    { SWK_WEST, RENDERER_INPUT_GLYPH_PUNCH, "P", TRAINING_INPUT_HISTORY_GR_BLUE },
+    { SWK_NORTH, RENDERER_INPUT_GLYPH_PUNCH, "P", TRAINING_INPUT_HISTORY_GR_YELLOW },
+    { SWK_RIGHT_SHOULDER, RENDERER_INPUT_GLYPH_PUNCH, "P", TRAINING_INPUT_HISTORY_GR_RED },
+    { SWK_SOUTH, RENDERER_INPUT_GLYPH_KICK, "K", TRAINING_INPUT_HISTORY_GR_BLUE },
+    { SWK_EAST, RENDERER_INPUT_GLYPH_KICK, "K", TRAINING_INPUT_HISTORY_GR_YELLOW },
+    { SWK_RIGHT_TRIGGER, RENDERER_INPUT_GLYPH_KICK, "K", TRAINING_INPUT_HISTORY_GR_RED },
 };
 
 /// Trim values for ASCII characters (high nibble = left trim, low nibble = right trim)
@@ -218,26 +218,26 @@ static const char* training_input_direction_string(u16 input) {
     return training_input_direction_labels[input & 0xF];
 }
 
-static SDLGameRenderer_InputHistoryGlyph training_input_direction_glyph(u16 input) {
+static Renderer_InputHistoryGlyph training_input_direction_glyph(u16 input) {
     switch (input & 0xF) {
     case 1:
-        return SDL_GAME_RENDERER_INPUT_GLYPH_UP;
+        return RENDERER_INPUT_GLYPH_UP;
     case 2:
-        return SDL_GAME_RENDERER_INPUT_GLYPH_DOWN;
+        return RENDERER_INPUT_GLYPH_DOWN;
     case 4:
-        return SDL_GAME_RENDERER_INPUT_GLYPH_LEFT;
+        return RENDERER_INPUT_GLYPH_LEFT;
     case 5:
-        return SDL_GAME_RENDERER_INPUT_GLYPH_UP_LEFT;
+        return RENDERER_INPUT_GLYPH_UP_LEFT;
     case 6:
-        return SDL_GAME_RENDERER_INPUT_GLYPH_DOWN_LEFT;
+        return RENDERER_INPUT_GLYPH_DOWN_LEFT;
     case 8:
-        return SDL_GAME_RENDERER_INPUT_GLYPH_RIGHT;
+        return RENDERER_INPUT_GLYPH_RIGHT;
     case 9:
-        return SDL_GAME_RENDERER_INPUT_GLYPH_UP_RIGHT;
+        return RENDERER_INPUT_GLYPH_UP_RIGHT;
     case 10:
-        return SDL_GAME_RENDERER_INPUT_GLYPH_DOWN_RIGHT;
+        return RENDERER_INPUT_GLYPH_DOWN_RIGHT;
     default:
-        return SDL_GAME_RENDERER_INPUT_GLYPH_COUNT;
+        return RENDERER_INPUT_GLYPH_COUNT;
     }
 }
 
@@ -251,11 +251,11 @@ static void draw_training_input_buttons(s32 x, s32 y, u16 input) {
             continue;
         }
 
-        button_drawn = SDLGameRenderer_DrawInputHistoryGlyph(
+        button_drawn = Renderer_DrawInputHistoryGlyph(
             (float)x,
             (float)y,
             PrioBase[TRAINING_INPUT_HISTORY_TEXT_PRIORITY],
-            training_input_button_labels[i].glyph,
+            (int)training_input_button_labels[i].glyph,
             bigger_col_tbl[training_input_button_labels[i].gr][0]);
 
         if (!button_drawn) {
@@ -328,7 +328,7 @@ static void draw_training_input_history() {
     u16 i;
     u16 input;
     u16 buttons;
-    SDLGameRenderer_InputHistoryGlyph direction_glyph;
+    Renderer_InputHistoryGlyph direction_glyph;
     bool direction_drawn;
     u8 player_id;
 
@@ -357,13 +357,13 @@ static void draw_training_input_history() {
                         TRAINING_INPUT_HISTORY_TEXT_PRIORITY);
         direction_x = line_x + ((s32)SDL_strlen(line_buffer) * TRAINING_INPUT_HISTORY_CHAR_WIDTH);
 
-        if (direction_glyph != SDL_GAME_RENDERER_INPUT_GLYPH_COUNT) {
+        if (direction_glyph != RENDERER_INPUT_GLYPH_COUNT) {
             direction_drawn =
-                SDLGameRenderer_DrawInputHistoryGlyph((float)direction_x,
-                                                      (float)line_y,
-                                                      PrioBase[TRAINING_INPUT_HISTORY_TEXT_PRIORITY],
-                                                      direction_glyph,
-                                                      bigger_col_tbl[TRAINING_INPUT_HISTORY_GR_WHITE][0]);
+                Renderer_DrawInputHistoryGlyph((float)direction_x,
+                                               (float)line_y,
+                                               PrioBase[TRAINING_INPUT_HISTORY_TEXT_PRIORITY],
+                                               (int)direction_glyph,
+                                               bigger_col_tbl[TRAINING_INPUT_HISTORY_GR_WHITE][0]);
         }
 
         if (!direction_drawn) {
@@ -2556,9 +2556,7 @@ void dispButtonImage(s32 px, s32 py, s32 pz, s32 sx, s32 sy, s32 cl, s32 ix) {
     prm.t[0].t = scrnAddTex1UV[ix][1] / 128.0f;
     prm.t[3].t = (scrnAddTex1UV[ix][1] + scrnAddTex1UV[ix][3]) / 128.0f;
     flSetRenderState(FLRENDER_TEXSTAGE0, prm.tex_code);
-    SDLGameRenderer_SetTaskSource(SDL_GAME_RENDERER_TASK_SOURCE_UI_DIRECT);
     Renderer_DrawSprite(&prm, oricol.color);
-    SDLGameRenderer_SetTaskSource(SDL_GAME_RENDERER_TASK_SOURCE_UNKNOWN);
 }
 
 void dispButtonImage2(s32 px, s32 py, s32 pz, s32 sx, s32 sy, s32 cl, s32 ix) {
@@ -2582,9 +2580,7 @@ void dispButtonImage2(s32 px, s32 py, s32 pz, s32 sx, s32 sy, s32 cl, s32 ix) {
     prm.t[0].t = scrnAddTex1UV[ix][1] / 128.0f;
     prm.t[3].t = (scrnAddTex1UV[ix][1] + scrnAddTex1UV[ix][3]) / 128.0f;
     flSetRenderState(FLRENDER_TEXSTAGE0, prm.tex_code);
-    SDLGameRenderer_SetTaskSource(SDL_GAME_RENDERER_TASK_SOURCE_UI_DIRECT);
     Renderer_DrawSprite(&prm, oricol.color);
-    SDLGameRenderer_SetTaskSource(SDL_GAME_RENDERER_TASK_SOURCE_UNKNOWN);
 }
 
 void dispSaveLoadTitle(void* ewk) {
@@ -2619,9 +2615,7 @@ void dispSaveLoadTitle(void* ewk) {
     for (i = 0; i < 3; i++) {
         njCalcPoint(NULL, (Vec3*)&pos[0], &prm.v[0]);
         njCalcPoint(NULL, (Vec3*)&pos[1], &prm.v[3]);
-        SDLGameRenderer_SetTaskSource(SDL_GAME_RENDERER_TASK_SOURCE_UI_DIRECT);
         Renderer_DrawSprite(&prm, oricol.color);
-        SDLGameRenderer_SetTaskSource(SDL_GAME_RENDERER_TASK_SOURCE_UNKNOWN);
         step_t += 36.0f;
         prm.t[0].t = prm.t[3].t;
         prm.t[3].t = step_t / 128.0f;

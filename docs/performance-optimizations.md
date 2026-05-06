@@ -1,5 +1,12 @@
 # Performance Optimizations Since v0.1.0
 
+> **Post-Phase-C update (2026-05-03):** `src/port/sdl/fbdev_presenter.{c,h}`
+> have been removed. Per-section references below are historical (each
+> records the file that held a given optimization at the time it landed).
+> The current MiSTer present path is `src/port/sdl/native_video_writer.c`,
+> and the FPS overlay rasterizer lives in
+> `src/port/sdl/fps_overlay_compositor.c` (`FPSOverlay_*` API).
+
 Street Fighter III: 3rd Strike (CPS3) on MiSTer FPGA — ARM Cortex-A9 @ 800MHz
 
 **Baseline (pre-optimization):** ~28 FPS on heavy stages, ~40 FPS character select
@@ -449,7 +456,8 @@ These commits do not directly improve performance but were essential for identif
 |------|------|
 | `src/port/sdl/sdl_game_renderer.c` | Software rasterizer, render task management, texture cache |
 | `src/port/sdl/software_frame_non_integer.c` | Non-integer gather rasterizer (hot path) |
-| `src/port/sdl/fbdev_presenter.c` | FPS overlay, framebuffer presentation |
+| `src/port/sdl/native_video_writer.c` | FPGA native video DDR3 direct-write present path |
+| `src/port/sdl/fps_overlay_compositor.c` | FPS overlay rasterizer (`FPSOverlay_*` API) |
 | `src/sf33rd/Source/Common/PPGFile.c` | PPG texture system, dirty-rect tracking |
 | `src/sf33rd/Source/Game/rendering/mtrans.c` | MTS tile cache lookups, sprite dispatch |
 | `src/sf33rd/Source/Game/rendering/mts_hash.h` | Hash table + free-list helpers |

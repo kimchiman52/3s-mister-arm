@@ -1,5 +1,12 @@
 # Implementation Specification: FPGA Native Video Output
 
+> **Post-Phase-C update (2026-05-03):** `src/port/sdl/fbdev_presenter.{c,h}`
+> have been removed. References below to `fbdev_presenter` (file paths,
+> `FBDevPresenter_Present*` calls, NEON helpers) are historical context for
+> the path this spec replaced. The shipped MiSTer build uses
+> `src/port/sdl/native_video_writer.c` for DDR3 direct write and
+> `src/port/sdl/fps_overlay_compositor.c` (`FPSOverlay_*` API) for FPS overlay.
+
 ## Status: Implementation Spec (Ready for Build)
 
 This spec was derived from `docs/design-fpga-native-video.md` and a thorough

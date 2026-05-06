@@ -1,5 +1,12 @@
 # Design: FPGA Native Video Output for ARM-Rendered Content
 
+> **Post-Phase-C update (2026-05-03):** `src/port/sdl/fbdev_presenter.{c,h}`
+> have been removed. The "Current Architecture" sections below describe the
+> historical scaler-based path that this design replaced; references to
+> `fbdev_presenter` are retained for context only. The shipped MiSTer build
+> uses `src/port/sdl/native_video_writer.c` (DDR3 direct write) plus
+> `src/port/sdl/fps_overlay_compositor.c` for the FPS overlay.
+
 ## Status: Design Phase
 
 ## Problem Statement

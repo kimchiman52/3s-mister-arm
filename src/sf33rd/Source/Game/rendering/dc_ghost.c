@@ -6,7 +6,6 @@
 #include "sf33rd/Source/Game/rendering/dc_ghost.h"
 #include "common.h"
 #include "rendering/game_renderer.h"
-#include "port/sdl/sdl_game_renderer.h"
 #include "sf33rd/AcrSDK/ps2/flps2render.h"
 #include "sf33rd/AcrSDK/ps2/foundaps2.h"
 #include "sf33rd/Source/Common/PPGFile.h"
@@ -175,9 +174,7 @@ void njdp2d_draw() {
                 prm.v[j] = njdp2d_w.prim[i].v[j];
             }
 
-            SDLGameRenderer_SetTaskSource(SDL_GAME_RENDERER_TASK_SOURCE_SOLID);
             Renderer_DrawSolidQuad(&prm, njdp2d_w.prim[i].col);
-            SDLGameRenderer_SetTaskSource(SDL_GAME_RENDERER_TASK_SOURCE_UNKNOWN);
             break;
 
         case 1:

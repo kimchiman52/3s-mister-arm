@@ -48,7 +48,7 @@ void SDLMessageRenderer_BeginFrame() {
         canvas_needs_clear = true;
     }
 
-    // SDLGameRenderer_BeginFrame switches to the game canvas once per frame.
+    // SoftwareRenderer_RenderFrame produces the game canvas once per frame.
     message_target_bound = false;
     has_content = false;
 }

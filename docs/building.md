@@ -104,3 +104,12 @@ CC=clang CXX=clang++ cmake -S . -B build/mister -DCMAKE_BUILD_TYPE=Release -DPOR
 cmake --build build/mister --parallel
 cmake --install build/mister --prefix build/mister-install
 ```
+
+## Giblet PR #243 software renderer (experimental)
+
+The renderer at `src/platform/video/software/` (originally a port of
+crowded-street/3sx#243 by gibletto / Paul Connolly) is the sole
+rendering backend on every supported platform — Mac host build and
+MiSTer cross build. The legacy `SDLGameRenderer` path was deleted in
+Phase D (see `docs/plan-giblet-wholesale-rip.md`). No build flag is
+required.

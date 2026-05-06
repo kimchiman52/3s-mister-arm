@@ -8,7 +8,6 @@
 #include "netplay/netplay.h"
 #include "netplay/netplay_nav.h"
 #include "port/sdl/sdl_app.h"
-#include "port/sdl/sdl_game_renderer.h"
 #include "sf33rd/AcrSDK/common/mlPAD.h"
 #include "sf33rd/AcrSDK/ps2/flps2debug.h"
 #include "sf33rd/AcrSDK/ps2/flps2etc.h"
@@ -673,14 +672,6 @@ static int loop() {
     arm_clock_cycle_requested = 0;
     game_mode_cycle_requested = 0;
 
-#if ENABLE_PERF_TELEMETRY
-    if (configuration.perf.frame_count > 0 && !configuration.perf.basic_mode &&
-        (configuration.perf.wait_for_gameplay || configuration.perf.wait_for_test_phase != NULL ||
-         configuration.perf.wait_for_runtime_state != NULL)) {
-        SDLGameRenderer_SetPerfCaptureLogicalIdentityEnabled(true);
-    }
-#endif
-
     while (is_running && shutdown_signal == 0) {
         switch (phase) {
         case MAIN_PHASE_INIT:
@@ -999,22 +990,6 @@ int main(int argc, const char* argv[]) {
         return 2;
 #endif
     }
-
-#if ENABLE_PERF_TELEMETRY
-    /* perf-2 P-2.A: --software-frame-parity-check runs the offline
-     * software-frame parity self-check (32 cases: 2 dst formats x 2
-     * palette flavors x 8 cases) and exits. Requires SDL_Init for
-     * surface allocation but NOT a renderer/window. */
-    if (configuration.perf.software_frame_parity_check) {
-        if (SDLApp_PreInit() != 0) {
-            fprintf(stderr,
-                    "--software-frame-parity-check: SDLApp_PreInit failed.\n");
-            return 2;
-        }
-        const bool ok = SDLApp_RunSoftwareFrameParityCheck();
-        return ok ? 0 : 1;
-    }
-#endif
 
     return loop();
 }
