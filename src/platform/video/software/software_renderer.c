@@ -260,10 +260,11 @@ static void sort_quads_fast() {
     memcpy(quads, sort_scratch, n * sizeof(SWQuad));
 }
 
-#if CRS_SW_DEDUP_FS_SOLIDS
-// Reuse `index` as a dead flag after sorting.
+// Reuse `index` as a dead flag (set by Destroy-time pending-quad walk and by
+// the optional fullscreen-solid dedup pass).
 #define SW_QUAD_DEAD UINT32_MAX
 
+#if CRS_SW_DEDUP_FS_SOLIDS
 static bool quad_is_opaque_fullscreen_solid(const SWQuad* q) {
     if (q->texture_spec.texture_index >= 0)
         return false;
@@ -482,7 +483,107 @@ static QuadExtents quad_extents(const SWQuad* q, int band_y0, int band_y1) {
     return e;
 }
 
+static bool rasterize_solid_parallelogram(const SWQuad* q, RBCtx* ctx) {
+    const float edge_eps = 0.5f;
+
+    int idx[4] = { 0, 1, 2, 3 };
+    for (int i = 0; i < 3; i++) {
+        for (int j = i + 1; j < 4; j++) {
+            const float yi = q->positions[idx[i]].y, yj = q->positions[idx[j]].y;
+            const float xi = q->positions[idx[i]].x, xj = q->positions[idx[j]].x;
+
+            if (yj < yi || (yj == yi && xj < xi)) {
+                const int tmp = idx[i];
+                idx[i] = idx[j];
+                idx[j] = tmp;
+            }
+        }
+    }
+
+    const int tl = idx[0], tr = idx[1], bl = idx[2], br = idx[3];
+    const float plx = q->positions[tl].x, ply = q->positions[tl].y;
+    const float prx = q->positions[tr].x, pry = q->positions[tr].y;
+    const float blx = q->positions[bl].x, bly = q->positions[bl].y;
+    const float brx = q->positions[br].x, bry = q->positions[br].y;
+
+    if (!nearly_equalf(pry, ply, edge_eps) || !nearly_equalf(bry, bly, edge_eps) || bly <= ply) {
+        return false;
+    }
+
+    const float e1x = prx - plx;
+    const float e2x = blx - plx;
+    const float e2y = bly - ply;
+    const float expected_brx = prx + e2x;
+    const float expected_bry = pry + e2y;
+
+    if (e1x <= edge_eps) {
+        return false;
+    }
+
+    if (!nearly_equalf(brx, expected_brx, edge_eps) || !nearly_equalf(bry, expected_bry, edge_eps)) {
+        return false;
+    }
+
+    int y0 = round_nearest(ply);
+    int y1 = round_nearest(bly);
+
+    if (y0 < ctx->band_y0) {
+        y0 = ctx->band_y0;
+    }
+
+    if (y1 > ctx->band_y1) {
+        y1 = ctx->band_y1;
+    }
+
+    if (y0 >= y1) {
+        return false;
+    }
+
+    const uint32_t color = q->modulate;
+
+    for (int y = y0; y < y1; y++) {
+        const float v_frac = ((float)y + 0.5f - ply) / e2y;
+        const float left_edge_x = plx + v_frac * e2x;
+        const float right_edge_x = left_edge_x + e1x;
+
+        int x0 = round_nearest(left_edge_x);
+        int x1 = round_nearest(right_edge_x);
+
+        if (x0 < 0) {
+            x0 = 0;
+        }
+
+        if (x1 > CANVAS_W) {
+            x1 = CANVAS_W;
+        }
+
+        if (x0 >= x1) {
+            continue;
+        }
+
+        sw_fill_solid_row(canvas + y * CANVAS_PITCH + x0, color, x1 - x0);
+    }
+
+    return true;
+}
+
 static void rasterize_solid(const SWQuad* q, RBCtx* ctx) {
+    const float edge_eps = 0.5f;
+    const float p0x = q->positions[0].x, p0y = q->positions[0].y;
+    const float p1x = q->positions[1].x, p1y = q->positions[1].y;
+    const float p2x = q->positions[2].x, p2y = q->positions[2].y;
+    const float p3x = q->positions[3].x, p3y = q->positions[3].y;
+    const bool row_major_aabb = nearly_equalf(p0y, p1y, edge_eps) && nearly_equalf(p2y, p3y, edge_eps) &&
+                                nearly_equalf(p0x, p2x, edge_eps) && nearly_equalf(p1x, p3x, edge_eps);
+    const bool col_major_aabb = nearly_equalf(p0x, p1x, edge_eps) && nearly_equalf(p2x, p3x, edge_eps) &&
+                                nearly_equalf(p0y, p2y, edge_eps) && nearly_equalf(p1y, p3y, edge_eps);
+
+    if (!row_major_aabb && !col_major_aabb) {
+        if (rasterize_solid_parallelogram(q, ctx)) {
+            return;
+        }
+    }
+
     const QuadExtents e = quad_extents(q, ctx->band_y0, ctx->band_y1);
 
     if (e.x1 <= e.x0 || e.y1 <= e.y0) {
@@ -1273,13 +1374,12 @@ static void render_band(RBCtx* ctx) {
     clear_band(ctx);
 
     const int n = (int)arrlen(quads);
+
     for (int i = 0; i < n; i++) {
         const SWQuad* q = &quads[i];
 
-#if CRS_SW_DEDUP_FS_SOLIDS
         if (q->index == SW_QUAD_DEAD)
             continue;
-#endif
 
         if (q->ui_bitmap != NULL) {
             rasterize_ui_bitmap(q, ctx);
@@ -1359,8 +1459,31 @@ void Renderer_CreateTexture(unsigned int th) {
 }
 
 void Renderer_DestroyTexture(unsigned int texture_handle) {
-    (void)texture_handle;
-    // Match the GL backend: texture slots are reused in place.
+    const int texture_index = LO_16_BITS(texture_handle) - 1;
+
+    if (texture_index < 0 || texture_index >= FL_TEXTURE_MAX) {
+        return;
+    }
+
+    SWTexture* slot = &textures[texture_index];
+
+    if (slot->converted != NULL) {
+        free(slot->converted);
+        slot->converted = NULL;
+    }
+
+    slot->pixels = NULL;
+
+    // Mimic the prior renderer's pending-task NULL-walk: any quad already
+    // queued that referenced this slot becomes a no-op for this frame, so
+    // its sampling does not see freshly-recreated-but-not-yet-populated
+    // texture memory during scene transitions.
+    const int qn = (int)arrlen(quads);
+    for (int i = 0; i < qn; i++) {
+        if (quads[i].texture_spec.texture_index == texture_index) {
+            quads[i].index = SW_QUAD_DEAD;
+        }
+    }
 }
 
 void Renderer_UnlockTexture(unsigned int th) {
