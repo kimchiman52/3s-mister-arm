@@ -31,6 +31,7 @@
 ## Memory Index
 
 - Load [docs/mister-runbook.md](docs/mister-runbook.md) when building, packaging, deploying, probing, or perf-sampling the MiSTer runtime on device. **This is the most important doc for fresh agents doing MiSTer work.**
+- Load [docs/miyoo-runbook.md](docs/miyoo-runbook.md) when building, packaging, or deploying the Miyoo Mini Plus / OnionOS port (SSH at root@192.168.1.190).
 - Load [docs/building.md](docs/building.md) when you need baseline host build commands, MiSTer profile setup, or the desktop-vs-MiSTer build split.
 - Load [docs/performance-optimizations.md](docs/performance-optimizations.md) when investigating performance, understanding optimization history, or planning new perf work.
 - Load [docs/mister-wrapper.md](docs/mister-wrapper.md) when working on the `3S-ARM.rbf` + `MiSTer_3S-ARM` wrapper-core path, wrapper packaging, or wrapper deploy/smoke commands.

@@ -14,8 +14,9 @@ set -euo pipefail
 #   <OUTPUT_DIR>/Roms/PORTS/Shortcuts/Action/3s-arm.port   # OSD entry
 #   <OUTPUT_DIR>/Roms/PORTS/Imgs/PUT_3S_ARM_PNG_HERE.txt   # icon placeholder
 #
-# Install via:
-#   rsync -a build/miyoo-package/ /Volumes/<SD>/
+# Deploy via:
+#   tools/miyoo/deploy.sh                          # SSH/rsync to device
+#   rsync -a build/miyoo-package/ /Volumes/<SD>/   # SD-card fallback
 #
 # IMPORTANT: libmi_*.so are NOT bundled. Runtime resolves
 # libmi_sys.so / libmi_gfx.so / libmi_common.so from the device's
@@ -289,5 +290,7 @@ echo "Miyoo package created at: $OUTPUT_DIR"
 echo "Layout (relative to SD card root):"
 ( cd "$OUTPUT_DIR" && find Roms -maxdepth 5 -mindepth 1 \( -type f -o -type l \) | sort )
 echo ""
-echo "Install:"
+echo "Deploy (SSH, default):"
+echo "  tools/miyoo/deploy.sh --src $OUTPUT_DIR"
+echo "Deploy (SD-card fallback):"
 echo "  rsync -a $OUTPUT_DIR/ /Volumes/<SD-CARD>/"

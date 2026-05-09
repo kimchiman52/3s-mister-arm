@@ -27,8 +27,9 @@ Purpose:
   Cross-compile the 3s-arm binary for the Miyoo Mini Plus / OnionOS
   inside a Buildroot-glibc Docker container, then package into
   build/miyoo-package/ as a tree mirroring the SD card root.
-  Install via:
-      rsync -a build/miyoo-package/ /Volumes/<SD>/
+  Deploy via:
+      tools/miyoo/deploy.sh                  # SSH/rsync to 192.168.1.190
+      rsync -a build/miyoo-package/ /Volumes/<SD>/   # SD-card fallback
   Resulting on-SD layout:
       Roms/PORTS/Games/3s-arm/                    (binary, lib, launch.sh, ...)
       Roms/PORTS/Shortcuts/Action/3s-arm.port     (OnionOS Ports menu entry)
