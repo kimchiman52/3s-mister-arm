@@ -1,0 +1,176 @@
+# Twelve Super Art 1 (X.N.D.L.) — EX/Supers program, supers wave S6.
+# Satellite corpus (auto-discovered by run-suite.sh's corpus-*.yaml glob, own
+# golden/twelve-sa1.tsv once registered) — corpus-twelve.yaml/corpus-twelve-
+# ex.yaml are untouched.
+#
+# Scope: <sp>/exsuper/step0-universe.tsv row "twelve 40 X.N.D.L." (sa_slot 1,
+# exclusion_flag ASSERTABLE, move_shape_notes "MULTIHIT_CITED (X.N.D.L.
+# A=76 (G5))"). Oracle: docs/arcade-frame-data/twelve.json (md5
+# 988a8990c264119260ca85a5e7bd465d, same file corpus-twelve.yaml/corpus-
+# twelve-ex.yaml already pin, re-verified unchanged this session). Oracle
+# row: Startup=4, Hit=76, Recovery=35, Block_advantage=-29,
+# Hit_advantage="-" (non-numeric).
+#
+# Meter: sa_gauge:3 (MAXIMUM, per authoring-policy.md's non-install-super
+# default) + super_art:0 (0-indexed SA1). Twelve's own SA1/SA2/SA3 slot
+# mapping (0/1/2) confirmed cross-move in the sibling corpora authored this
+# same session (corpus-twelve-sa2.yaml's X.F.L.A.T. lands cleanly at
+# super_art:1, corpus-twelve-sa3.yaml's X.C.O.P.Y. at super_art:2 by
+# elimination) — no ambiguity.
+#
+# Motion (identity confirmed this session by S/adv-match probe, CORPUS-
+# AUTHORING.md Phase 5 "motion-probe method", first attempt): "motion 2qcf
+# HP" — same double-quarter-circle-forward + Fierce Punch primitive already
+# used across the program's punch-keyed SA1/SA3 family (Ryu/Ken/Yun/Akuma/
+# Chun-Li). Landed a genuine super dispatch on the first try: BLOCK adv=-29
+# is an EXACT match to twelve.json's own Block_advantage=-29 (a unique
+# value among every Twelve move measured in this program so far) — decisive
+# identity confirmation, no fallback probing needed.
+#
+# Shape (this session, <sp>/sa-twelve/run-sa1-solo56/trace.log +
+# run-sa1-solo-hit/trace.log, both TRUE isolated single-entry corpora):
+# proj=1, box_runs=0 — a proj-split shape (the "ground lightning" travels as
+# a spawned effect, Twelve's own att_box tensor stays empty), same class as
+# Ryu SA1/Akuma SA1/Chun-Li SA1's own punch-keyed fireball supers.
+#
+# PREDECESSOR-ORDERING TRAP HIT LIVE THIS SESSION (§12.1 row 2, "momentum
+# bleed / teleport corruption after a connecting dash/projectile special"):
+# an initial combined 3-entry probe (WHIFF-attempt first, dummy:none/
+# dist:250 — which itself connected as a HIT, not a whiff, per the WHIFF-
+# UNREACHABLE finding below) corrupted the FOLLOWING BLOCK entry's own
+# requested dist:close teleport (measured real dist=101 instead of 56,
+# S=0/A=62/R=5/adv=-29 instead of the true isolated S=3). Every number
+# below is from a TRUE single-entry isolated corpus (no predecessor at
+# all), confirmed reproducible 3 independent times for the BLOCK numbers
+# (original 2-leg identity probe, solo dist:100, solo dist:close) and once
+# for HIT — S=3/A=62/R=5 identically every time a fresh corpus's FIRST
+# entry uses this move, S=0 was the corrupted-residue artifact, not the
+# real reading.
+#
+# WHIFF-UNREACHABLE (projectile precedent, authoring-policy.md Ruling 1):
+# proj=1 confirmed above — "Projectile supers (Ryu SA1 class) never have a
+# meaningful strike-whiff leg at ground ranges (the tama travels to the
+# dummy)". Empirically corroborated this session: a dist:250/dummy:none
+# attempt scripted as a WHIFF probe instead connected as a real HIT
+# (kd=1), matching the same always-connects behavior documented for every
+# other punch-keyed fireball super in this program. No WHIFF leg shipped;
+# coverage comes from the BLOCK/HIT legs below (Ruling 1's own fallback
+# language for this move class).
+#
+# Admissibility census (mechanical, from FRAME_TRACE columns — authoring-
+# policy.md Ruling 2), both isolated single-entry probes this session:
+# (1) Single-FINAL integrity: exactly one MOVE_START/FINAL pair in each
+#     probe's own window (run-sa1-solo56: F51-120; run-sa1-solo-hit:
+#     F51-182), no bleed.
+# (2) Flash-overlap census: 0 nonzero sastop ticks in either window
+#     (mechanical awk census this session over both traces).
+# (3) Contact-A juggle check: PASSES trivially — HIT-leg A=62 == BLOCK-leg
+#     A=62 (path-independent, matching the proj-split shape's own
+#     "displayed A is lever-independent" behavior, §13.17), but see the A
+#     DISPOSITION below for why it is not asserted regardless.
+# (4) Shape record: proj=1, box_runs=0, both legs.
+#
+# S DISPOSITION — measured != oracle, rep-stable, live oracle: assert the
+# ORACLE value with a dated xfail note (akuma-sa2 idiom, per this session's
+# own established convention for a small, stable, comparable divergence).
+# Measured S=3 (proj_spawn_raw=3, athok=2, first_active_raw=event_raw=3 —
+# both internal ticks AGREE with each other, ruling out the separate
+# §12.2.4 "S-divergence" cell-load-vs-arm-tick class, which requires those
+# two ticks to DISAGREE) vs oracle Startup=4 (-1), reproduced identically
+# on BOTH legs across 3 independent isolated runs this session. UNCLASSIFIED
+# (no established Phase 6 bucket or §12.2.4 registry row matches this exact
+# internally-self-consistent-but-1-short-of-oracle shape) — flagged for
+# follow-up, not a new invented mechanism claim.
+#
+# A/R DISPOSITION — OMITTED on both legs (not asserted, not xfailed as a
+# guess), matching the Akuma SA1 Messatsu Gou Hadou precedent EXACTLY (the
+# program's first MULTIHIT_CITED test, step0-universe.tsv's own pre-
+# registered candidate class for this row). Measured A=62 (proj_a) vs
+# oracle Hit=76 (-14, path-independent — same on BLOCK/HIT); measured R=5
+# vs oracle Recovery=35 (-30). T=69 (raw_len) both legs, self-consistent
+# with the measured S+A+R=70 (~T, ordinary rounding) — i.e. the ENGINE's
+# own captured window totals ~69-70 ticks, far short of the oracle's own
+# implied S+A+R=115 total. HYPOTHESIS ONLY, UNCONFIRMED (same posture as
+# Akuma SA1's own writeup): a multi-strike "ground lightning" super most
+# likely has its oracle Hit=76 published as a CUMULATIVE total across the
+# whole multihit sequence, while the engine's proj_a/recovery_pf measure
+# only one representative dispatch/window — a different measurement basis,
+# not an accounting bug. No per-tick ledger trace taken this session to
+# confirm (out of this pass's scope). This is the SECOND test of a
+# MULTIHIT_CITED-tagged row in the program (after Akuma SA1); the shared
+# "OMIT, large non-established-bucket gap" disposition and the same
+# "different measurement basis" hypothesis both recur, upgrading this from
+# a single sighting toward a named population-level pattern (2 of the 3
+# MULTIHIT_CITED rows in step0-universe.tsv now measured; Ibuki Kasumi
+# Suzaku remains, out of this session's scope). UNLIKE Akuma SA1, this
+# move's R ALSO diverges by a large margin (Akuma SA1's R was never
+# comparable — akuma.json's Recovery field for that row is the literal
+# "N/A" string) — bundled under the same MULTIHIT hypothesis rather than
+# separately quarantined, since no evidence distinguishes a separate
+# mechanism for R specifically.
+#
+# adv DISPOSITION — exact match, both legs where comparable. BLOCK adv=-29
+# (identical to oracle Block_advantage=-29) — the identity-confirming value
+# cited above. HIT has no comparable oracle field (twelve.json's
+# Hit_advantage for this row is the literal string "-").
+#
+# ORDERING NOTE (§12.1 row 2, "momentum bleed / teleport corruption after a
+# connecting dash/projectile special" — the SAME trap X.F.L.A.T. hits in
+# the sibling corpus-twelve-sa2.yaml this session): X.N.D.L. ALWAYS
+# connects at ground range (WHIFF-UNREACHABLE above), so BOTH legs here are
+# connecting casts — whichever leg runs SECOND in this file measures a
+# corrupted teleport (verified empirically this session: swapping BLOCK/HIT
+# order just flips which entry reads the corrupted S=0/real-dist~101
+# instead of the true S=3/real-dist~56or101; a 1200-frame inter_entry_wait
+# does NOT fix it — this is a position/teleport corruption, not a settling-
+# time issue). FIX: a plain buffer entry (`press LP`, a mundane whiff normal
+# from a DIFFERENT, non-projectile move family) is inserted between the two
+# X.N.D.L. casts — verified this session (<sp>/sa-twelve/test-sa1-buffer-
+# run/trace.log) to fully clear the residue, both legs then measuring the
+# TRUE isolated S=3/A=62/R=5 values byte-identically. Same fix shape as the
+# N.D.L. (EX) precedent in corpus-twelve-ex.yaml (there, a whole sibling
+# move's own section serves as the buffer; here a single throwaway jab
+# entry suffices since X.N.D.L. is this file's only move). The buffer entry
+# itself is not part of this file's own scope (Jab is already fully
+# covered in corpus-twelve.yaml) and asserts nothing.
+character: twelve
+oracle: twelve.json
+super_art: 0
+sa_gauge: 3
+inter_entry_wait: 500
+entries:
+
+- label: twelve-sa1-block
+  setup: { dist: close, dummy: stand }
+  input: "motion 2qcf HP"
+  qjson: { name: "X.N.D.L." }
+  outcome: BLOCK
+  # Measured (isolated, 3x reproduced): S=3 A=62(OMITTED) R=5(OMITTED)
+  # adv=-29 (proj=1, box_runs=0, T=69). adv oracle-exact (identity anchor).
+  # S=3 vs oracle 4 (-1, rep-stable) asserted at the oracle value per the
+  # akuma-sa2 idiom (see S DISPOSITION above). No expect.A/R: see A/R
+  # DISPOSITION above (MULTIHIT-basis-mismatch hypothesis, OMITTED not
+  # xfailed-as-a-guess).
+  expect: { S: from-qjson, adv: from-qjson, xfail: "[HONEST-FLOOR CENSUS 2026-07-14, opus-substitute / WANTS FABLE RE-REVIEW] TERMINAL CLASS = CAPABILITY-GATED-remaining (proj-split S; ORACLE-TABLE-INTERNAL-INCONSISTENCY). The CAP-3 projectile instrument (CAPTURE.md CAP-3 session; <sp>/zero/cap3/phase2-report.md) now SEES the X.N.D.L. projectile box directly - no capability gap remains, the -1 is real. NON-SURGICAL: proj-split/fit.md 1-2 proves the engine's S=proj_s is BYTE-IDENTICAL between this XFAIL row and the PASS row ryu-sa1 (both engine S=3; ryu oracle 3 PASSes, twelve oracle 4 XFAILs) - the published tables count projectile Startup on DIFFERENT conventions (strictly-before vs spawn-slot) with NO engine-visible discriminant; a broad S+=1 flips 6 but regresses 8 (ryu/akuma/necro/sean). Golden stays oracle=4, XFAIL. Prior disposition (unchanged): S measured=3 vs oracle Startup=4 (-1), reproduced identically on BOTH legs across 3 independent isolated single-entry runs this session (2026-07-13). Internally self-consistent (first_active_raw==event_raw==3, proj_spawn_raw=3, athok=2 — no cell-load-vs-arm-tick disagreement, ruling out the §12.2.4 S-divergence registry class). UNCLASSIFIED, no established Phase 6 bucket fits; flagged for follow-up. adv is oracle-exact (-29), the identity-confirming value. A/R are OMITTED entirely from this expect block (not xfailed) — see file header A/R DISPOSITION (MULTIHIT_CITED basis-mismatch hypothesis, Akuma SA1 precedent)." }
+
+# Buffer entry — see file header ORDERING NOTE. Clears the connecting-cast
+# teleport residue X.N.D.L.'s own BLOCK entry above leaves behind, so the
+# HIT entry below measures its own true isolated numbers. Not part of this
+# file's own scope (Jab is already fully covered in corpus-twelve.yaml);
+# asserts nothing.
+- label: twelve-sa1-buffer-jab
+  setup: { dist: 250, dummy: none }
+  input: "press LP"
+  qjson: { name: "Jab" }
+  outcome: WHIFF
+
+- label: twelve-sa1-hit
+  setup: { dist: close, dummy: none }
+  input: "motion 2qcf HP"
+  qjson: { name: "X.N.D.L." }
+  outcome: HIT
+  # Measured (isolated): S=3 A=62(OMITTED, ==BLOCK, path-independent)
+  # R=5(OMITTED) adv=+62 (dummy:none non-blocking artifact, not comparable
+  # — twelve.json's Hit_advantage is the literal "-") kd=1 (proj=1,
+  # box_runs=0, T=69). Same S finding as BLOCK (see file header).
+  expect: { S: from-qjson, kd: 1, xfail: "[HONEST-FLOOR CENSUS 2026-07-14, opus-substitute / WANTS FABLE RE-REVIEW] TERMINAL CLASS = CAPABILITY-GATED-remaining (proj-split S; ORACLE-TABLE-INTERNAL-INCONSISTENCY). Same as the BLOCK leg: CAP-3 sees the projectile box; the -1 is the byte-identical-to-ryu-sa1 published-table convention split (proj-split/fit.md), no engine-visible discriminant, S+=1 regresses 8. Golden stays oracle=4, XFAIL. Prior disposition (unchanged): Same S divergence as twelve-sa1-block (measured=3 vs oracle=4, -1, rep-stable, UNCLASSIFIED) — see that entry's own xfail note and the file header S DISPOSITION. A/R OMITTED (MULTIHIT_CITED basis-mismatch hypothesis, same as BLOCK); A=62 here equals BLOCK's own A=62 (path-independent, juggle check trivially passes) but is not asserted regardless, per the file header A/R DISPOSITION. No expect.adv (Hit_advantage literal \"-\")." }

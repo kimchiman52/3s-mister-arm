@@ -35,6 +35,8 @@
 #include "sf33rd/Source/Game/system/sys_sub.h"
 #include "sf33rd/Source/Game/system/sys_sub2.h"
 #include "sf33rd/Source/Game/system/work_sys.h"
+#include "sf33rd/Source/Game/ui/frame_data_overlay.h"
+#include "sf33rd/Source/Game/ui/frame_trace.h"
 #include "sf33rd/Source/Game/ui/sc_sub.h"
 #include "sf33rd/Source/PS2/mc/knjsub.h"
 #include "sf33rd/Source/PS2/mc/mcsub.h"
@@ -84,6 +86,7 @@ Configuration configuration = {
             .characters = { -1, -1 },
             .super_arts = { -1, -1 },
             .initial_super_full = false,
+            .training_sa_gauge = -1,
             .preserve_game_transition = false,
             .delay_gameplay_inputs_until_active = false,
             .stage = -1,
@@ -538,6 +541,17 @@ static void configure_slow_timer() {
 static void game_step_0() {
     AFS_RunServer();
 
+    /* Reset the engine's per-frame "active hitbox" capture flag before
+     * the engine tick runs. set_jugde_area() will set it during the
+     * tick if cg_ja.atix != 0 for either player. */
+    fd_engine_hitbox_active[0] = 0;
+    fd_engine_hitbox_active[1] = 0;
+    /* CONTACT-2 Step 1 diagnostics (design.md §1.3 G4): same reset contract
+     * as fd_engine_hitbox_active above — zero before njUserMain() runs so
+     * check_leap_attack() (pls03.c) can set it fresh this frame only. */
+    fd_engine_move_is_uoh[0] = 0;
+    fd_engine_move_is_uoh[1] = 0;
+
     flSetRenderState(FLRENDER_BACKCOLOR, 0xFF000000);
 
 #if DEBUG
@@ -603,6 +617,9 @@ static void game_step_0() {
 #endif
         DirectP2P_Tick();
     }
+
+    frame_data_overlay_tick();
+    frame_trace_tick();
 
     KnjFlush();
     disp_effect_work();

@@ -1,0 +1,9 @@
+label	verdict	outcome	n	S	A	R	adv	kd
+chunli-exkik-block	PASS	BLOCK	1	15	3	41	-7	0
+chunli-exkik-hit	PASS	HIT	1	15	3	41	-6	0
+chunli-exhaz-block	PASS	BLOCK	1	31	1	18	-2	0
+chunli-exhaz-hit	PASS	HIT	1	31	1	18	+60	1
+chunli-exhaz-whiff	PASS	WHIFF	1	31	1	18	+0	0
+chunli-exsbk-block	PASS	BLOCK	1	12	10	22	-8	0
+chunli-exsbk-hit	PASS	HIT	1	12	10	21	+70	1
+chunli-exsbk-whiff	PASS	WHIFF	1	12	10	22	+0	0

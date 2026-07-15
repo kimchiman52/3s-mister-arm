@@ -1,0 +1,136 @@
+# Alex Super Art 1 (Hyper Bomb / Reverse Hyper Bomb) — EX/Supers program,
+# supers wave S5. Satellite corpus (auto-discovered by run-suite.sh's
+# corpus-*.yaml glob, own golden/alex-sa1.tsv once registered) —
+# corpus-alex.yaml/corpus-alex-ex.yaml are untouched. Repo @ 3592f10b
+# (branch frame-data-on-mister), tree touched only by this file +
+# corpus-alex-sa2.yaml/corpus-alex-sa3.yaml + their goldens (sibling wave
+# agents' own disjoint corpora, e.g. corpus-elena-sa*.yaml/corpus-necro-
+# sa*.yaml/corpus-oro-sa1.yaml, not touched). FDH_SKIP_BUILD=1 throughout
+# (build/host confirmed current at session start via `find src -newer
+# build/host/.../3S-ARM`, empty), own isolated rundirs under <sp>/sa-alex/.
+#
+# Scope: step0-universe.tsv rows 51-52 (alex sa_slot 1): "Hyper Bomb"
+# (index 51, GRAB, S=1/A=2/R=33/block_adv="-") and "Reverse Hyper Bomb"
+# (index 52, GRAB, same slot, byte-identical S=1/A=2/R=33/block_adv="-" —
+# the universe table's own note reads "GRAB(Hyper Bomb (x2: fwd+reverse
+# share SA1))"). Oracle: docs/arcade-frame-data/alex.json (md5
+# f324fa3a68b748f7fb0f2c92c3e72db6, same file corpus-alex.yaml/corpus-alex-
+# ex.yaml already pin, re-verified unchanged this session).
+#
+# IDENTITY (S/A/R-match probe, CORPUS-AUTHORING.md Phase 5), this session's
+# own isolated 2-candidate probe (<sp>/sa-alex/run-probe1/trace.log):
+# super_art:0 (0-indexed SA1) + the EXISTING 360-degree cardinal-4 `hold`
+# rotation idiom (Hugo Moonsault Press/Meat Squasher precedent,
+# corpus-hugo.yaml:401-475, "hold RIGHT 2; hold DOWN 2; hold LEFT 2; hold
+# UP 2; hold RIGHT+<btn> 2") + LP lands a move whose measured S=1/A=2/R=33
+# match Hyper Bomb's oracle row EXACTLY on a clean WHIFF — unambiguous (no
+# other Alex oracle row reads Startup=1 except its own Reverse variant, see
+# below). No compile_corpus.py change; the existing hold-chain primitive
+# expresses this cleanly, matching the Hugo 360-macro-verdict precedent
+# ("cardinal-4 suffices, no new macro needed").
+#
+# REVERSE HYPER BOMB — NOT SEPARATELY DISTINGUISHABLE, documented (not
+# guessed). This session ALSO tried the mirrored counter-clockwise rotation
+# ("hold LEFT 2; hold DOWN 2; hold RIGHT 2; hold UP 2; hold LEFT+LP 2; wait
+# 1", <sp>/sa-alex/run-probe1/trace.log entry 2) on the theory that rotation
+# direction selects fwd-vs-reverse (matching the real game's Zangief-style
+# SPD/Reverse-SPD input convention) — it produced a BYTE-IDENTICAL WHIFF
+# reading (S=1/A=2/R=33/T=36/cgix=24, same as the clockwise candidate,
+# reproduced across both entries in the same trace). FRAME_TRACE carries no
+# move-name/move-id column (only S/A/R/adv/kd/box diagnostics — confirmed
+# by reading every column in both FINAL lines), and alex.json's own Hyper
+# Bomb/Reverse Hyper Bomb rows are THEMSELVES byte-identical on every field
+# this harness tracks (S=1/A=2/R=33/Block_advantage="-"/Hit_advantage="-"
+# for both; they differ only in Damage 88 vs 99/Stun 18 vs 26, neither
+# tracked by FRAME_TRACE) — there is no engine signal available through
+# this harness that could ever discriminate which named variant fired,
+# even in principle. Per the Ryu SA2 "Shin Shoryuken (Far)" OUT-OF-SCOPE-
+# WITH-NOTE precedent (corpus-ryu-sa2.yaml:11-16, a second same-slot oracle
+# row not separately probed), Reverse Hyper Bomb's own coverage is achieved
+# by the SAME three measured entries below (both rows assert to the exact
+# same numeric values) — not forced into a fake distinction, not a second
+# probed entry.
+#
+# Meter: sa_gauge:3 (MAXIMUM, per authoring-policy.md's meter policy
+# default for non-install supers).
+#
+# GRAB, CONFIRMED UNBLOCKABLE (Class 3 connected-grab precedent,
+# docs/frame-data-synthesis.md §13.10, same posture as Hugo Moonsault
+# Press/Meat Squasher and corpus-alex.yaml's own Power Bomb/Spiral D.D.T.
+# sections): `alex-sa1-unblockable-probe` below places a GUARDING dummy
+# (`dummy: stand`) at dist:68 (alex.json's own Throw_range for this row)
+# and still gets a full HIT capture (kd=1), BYTE-IDENTICAL in every
+# asserted field to the `dummy: none` HIT entry — the guard has zero
+# effect, confirming this is a genuine command grab, not a blockable
+# special.
+#
+# R DE-ASSERTED on both HIT legs (BUFFER-1, 2026-07-13 idiom, same as
+# corpus-hugo.yaml's Moonsault Press/Meat Squasher sections post-16737236):
+# alex.json publishes NO Block_advantage/Hit_advantage for Hyper Bomb
+# (both "-", non-numeric) — the post-capture span is
+# ended_by_partner_release with no arcade oracle to compare against
+# (§13.10, reopened by the FD_CAPTURE_LEN 72->256 raise). Measured R=195 on
+# both HIT/unblockable-probe legs (raw_sat=0, T=198 — genuinely unsaturated,
+# a real measured full partner-release span, not a capture-bound artifact)
+# — recorded here for the record, not asserted, per the same "no oracle
+# either way" posture as the Hugo grabs.
+#
+# Admissibility census (per-entry, mechanical, from FRAME_TRACE columns —
+# authoring-policy.md Ruling 2), this session's own 3-entry combined probe
+# (<sp>/sa-alex/run-probe6-sa1-legs/trace.log, inter_entry_wait:500 — the
+# SAME setup/input/outcome triple shipped below, verified single-FINAL
+# integrity and clean ordering: WHIFF first leaves no knockdown residue, so
+# the two subsequent HIT legs' teleports land cleanly, no predecessor-
+# ordering corruption observed here unlike SA3 below):
+# (1) Single-FINAL integrity: exactly one MOVE_START/FINAL pair per entry's
+#     own window (grep census this session), no bleed between entries.
+# (2) Flash-overlap census: 0 nonzero-sastop ticks in [MOVE_START F, FINAL
+#     F] on all three legs (mechanical awk census this session) — flash-
+#     free, matches every population checked so far.
+# (3) Contact-A juggle check: N/A in the Ruling-2-check-3 sense (no
+#     separate BLOCK leg exists — this move is unblockable by construction,
+#     so "stand" and "none" dummy legs both connect identically; the
+#     unblockable-probe/hit legs' own byte-identical A=2 across both is the
+#     relevant cross-check here, and it passes trivially).
+# (4) Shape record: WHIFF box_runs=0/box_a=0/busyr=-1 (no att_box ever
+#     opens on a clean whiff); HIT/unblockable-probe box_runs=0/box_a=0/
+#     busyr=-1 both (the grab's own capture path doesn't route through the
+#     att_box tensor at all — matches the Hugo grab family's own shape
+#     record).
+character: alex
+oracle: alex.json
+super_art: 0
+sa_gauge: 3
+inter_entry_wait: 500
+entries:
+
+- label: alex-sa1-whiff
+  setup: { dist: 250, dummy: none }
+  input: "hold RIGHT 2; hold DOWN 2; hold LEFT 2; hold UP 2; hold RIGHT+LP 2; wait 1"
+  qjson: { name: "Hyper Bomb" }
+  outcome: WHIFF
+  # Measured S=1 A=2 R=33 (box_runs=0, T=36), oracle-exact on all three
+  # asserted fields — the identity-confirming measurement (see header).
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: alex-sa1-unblockable-probe
+  setup: { dist: 68, dummy: stand }
+  input: "hold RIGHT 2; hold DOWN 2; hold LEFT 2; hold UP 2; hold RIGHT+LP 2; wait 150"
+  qjson: { name: "Hyper Bomb" }
+  outcome: HIT
+  # dist:68 = alex.json's own Throw_range for this row. Measured S=1 A=2
+  # R=195 (NOT asserted, see R DE-ASSERTED above) adv=+93 kd=1 (raw_sat=0,
+  # T=198 — genuine unsaturated post-capture span). S/A oracle-exact;
+  # guard has zero effect (a `dummy: stand` guarding input still gets
+  # thrown) — confirms unblockable command grab, not a blockable special.
+  expect: { S: from-qjson, A: from-qjson, kd: 1 }
+
+- label: alex-sa1-hit
+  setup: { dist: close, dummy: none }
+  input: "hold RIGHT 2; hold DOWN 2; hold LEFT 2; hold UP 2; hold RIGHT+LP 2; wait 150"
+  qjson: { name: "Hyper Bomb" }
+  outcome: HIT
+  # Measured S=1 A=2 R=195 (NOT asserted, same basis as the unblockable-
+  # probe above) adv=+93 kd=1 — byte-identical to the unblockable-probe
+  # entry, confirming rep-stability regardless of the dummy's guard state.
+  expect: { S: from-qjson, A: from-qjson, kd: 1 }

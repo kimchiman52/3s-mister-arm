@@ -1,0 +1,4 @@
+label	verdict	outcome	n	S	A	R	adv	kd
+chunli-sa3-block	PASS	BLOCK	1	2	16	52	-30	0
+chunli-sa3-hit	PASS	HIT	1	2	16	52	+27	1
+chunli-sa3-whiff	PASS	WHIFF	1	2	16	46	+0	0

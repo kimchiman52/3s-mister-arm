@@ -1,0 +1,942 @@
+# Ibuki frame-data corpus (cast rollout, user-directed 2026-07-08).
+# Generated/consumed by tools/frame-data/compile_corpus.py against
+# docs/arcade-frame-data/ibuki.json (fetched 2026-07-08 from
+# https://raw.githubusercontent.com/Coccis77/thirdstrikedatabot/master/json/ibuki.json,
+# md5 e011a003c2bb9644d50e9bc435267b00). CHARACTER_IDS key is "ibuki"
+# (compile_corpus.py:44, id=7).
+#
+# SCOPE (user-directed 2026-07-08, cast rollout): normals ladder (all
+# BLOCK-reachable rows + six-button close HIT sample + WHIFF sample at 250 +
+# six crouching BLOCK rows) + all SIX command normals (Back+Strong,
+# Towards+Short, Towards+Forward, Back+Forward, Down-Towards+Forward,
+# Towards+Roundhouse - BLOCK+WHIFF each) + UOH (WHIFF/BLOCK/HIT) + Throw
+# (WHIFF/HIT) + negative control + ground specials probe (ONE session
+# budget): Raida (Jab) [hcb+P, task-flagged "Class 3 precedent" - empirically
+# turned out to be a BLOCKABLE special, not the unblockable-grab shape seen
+# elsewhere in this repo - see section below], Kasumi Gake [qcf+K,
+# confirmed movement-only/zero-active], Tsumuji (Short) [qcb+K, multi-hit
+# kicks], Kubiori [motion verified live to be hcf+P, NOT hcf+K as the task's
+# tentative guess suggested - see section below], Kazekiri (Short)
+# [dp-shape hold-chain + K, connects vs both standing and non-guarding
+# dummies]. EXCLUDED per task: Kunai (airborne-capable projectile - the
+# harness attacker cannot be scripted to jump for the air variant, and the
+# grounded variant is out of this rollout's one-session budget), Hien
+# (dash-in kick special, not in the task's specials list), all supers/EX,
+# and all target-chain follow-ups out of Kasumi Gake (Kasumi Suzaku/Yoroi
+# Doushi/Missed grab (Chi Blast)/Yami Shigure) - none of these are landed by
+# a single press per the task's own target-chain exclusion.
+#
+# MOVE-NAME MAPPING / ENUMERATION (read the full ibuki.json before authoring,
+# per CORPUS-AUTHORING.md Phase 1): 62 rows total. Every "Name" string was
+# read exactly once via `python3 -c "import json; ..."` against the fetched
+# file - see the per-section comments below for which named rows exist for
+# each family and which are absent.
+#
+# FAR-NORMAL COVERAGE (a FOURTH distinct far-normal-gap shape in this repo,
+# distinct from Yun/Oro/Yang's own gaps): ibuki.json has Far Jab/Far
+# Fierce/Far Roundhouse but NO Far Strong, NO Far Short, NO Far Forward -
+# verified against every Name string in the fetched oracle. MP/LK/MK's WHIFF
+# rows below cite their own single row (Strong/Short/Forward), same
+# convention as corpus-yang.yaml's Jab/Short/Roundhouse WHIFF entries.
+#
+# CROUCHING-HIT-ROW GAP: none of ibuki.json's six crouching rows are
+# Hit_advantage="D" (all numeric or the literal "-") - BLOCK only per the
+# non-D-row convention (no separate crouching HIT/WHIFF entries), same
+# posture as corpus-yang.yaml's crjab/crstrong/crfierce/crshort/crforward.
+#
+# COMMAND-NORMAL COUNT: ibuki.json has SIX Towards/Back-prefixed rows (Back +
+# Strong, Towards + Short, Towards + Forward, Back + Forward, Down-Towards +
+# Forward, Towards + Roundhouse) - more than any other character in this
+# repo so far, flagged in-task ("Ibuki has many command normals"). None are
+# Hit_advantage="D" - each gets BLOCK+WHIFF per the non-D-row convention;
+# two of the six (Down-Towards+Forward, Towards+Roundhouse) additionally get
+# a HIT probe entry because it was the HIT-vs-BLOCK-vs-WHIFF comparison that
+# surfaced/classified a real R divergence for each (same discipline as the
+# Ken Towards-Roundhouse WHIFF-row precedent in CORPUS-AUTHORING.md Phase 4 -
+# "adding the WHIFF row is what surfaced the divergence").
+#
+# Every expect below is pinned against a live trace
+# (tools/frame-data/run.sh tools/frame-data/corpus-ibuki.yaml).
+character: ibuki
+oracle: ibuki.json
+inter_entry_wait: 150
+entries:
+
+# --- Standing normals, BLOCK (dummy: stand) ---------------------------------
+
+- label: ibuki-jab-block
+  setup: { dist: close, dummy: stand }
+  input: "press LP"
+  qjson: { name: "Jab" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: ibuki-farjab-block
+  setup: { dist: 100, dummy: stand }
+  input: "press LP"
+  qjson: { name: "Far Jab" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: ibuki-strong-block
+  setup: { dist: close, dummy: stand }
+  input: "press MP"
+  qjson: { name: "Strong" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: ibuki-fierce-block
+  setup: { dist: close, dummy: stand }
+  input: "press HP"
+  qjson: { name: "Fierce" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: ibuki-farfierce-block
+  setup: { dist: 100, dummy: stand }
+  input: "press HP"
+  qjson: { name: "Far Fierce" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: ibuki-short-block
+  setup: { dist: close, dummy: stand }
+  input: "press LK"
+  qjson: { name: "Short" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# Issue #17 shape (a1): lever-F-tested (fd_restore_revoked_declared_credit
+# forced 0 on a scratch build, src/sf33rd/Source/Game/engine/charset.c:507,
+# reverted via `git checkout` before this comment was written, same-binary
+# protocol) and confirmed UNCHANGED (A=1 both ways on BLOCK and HIT below) -
+# no revoke fires, ruling out a lever-F regression, credit unrecoverable per
+# synthesis §13.11 "what stays unrecoverable"; measured A=1 vs arcade 4;
+# S/R/adv exact.
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=1 is the
+# engine-truth credit actually accrued on the BLOCK path - issue #17 shape (a1):
+# lever-F-tested (fd_restore_revoked_declared_credit forced 0 on a scratch
+# build, reverted before commit) and confirmed UNCHANGED - no revoke fires.
+# Arcade (whiff-canonical, from-qjson) A=4 - preserved here per the
+# convention. S/R/adv remain arcade-exact (from-qjson).
+- label: ibuki-forward-block
+  setup: { dist: close, dummy: stand }
+  input: "press MK"
+  qjson: { name: "Forward" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: 1, R: from-qjson, adv: from-qjson }
+
+- label: ibuki-roundhouse-block
+  setup: { dist: close, dummy: stand }
+  input: "press HK"
+  qjson: { name: "Roundhouse" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: ibuki-farroundhouse-block
+  setup: { dist: 100, dummy: stand }
+  input: "press HK"
+  qjson: { name: "Far Roundhouse" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# --- HIT sample per button family (dummy: none, close range) ---------------
+
+- label: ibuki-jab-hit
+  setup: { dist: close, dummy: none }
+  input: "press LP"
+  qjson: { name: "Jab" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: ibuki-strong-hit
+  setup: { dist: close, dummy: none }
+  input: "press MP"
+  qjson: { name: "Strong" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: ibuki-fierce-hit
+  setup: { dist: close, dummy: none }
+  input: "press HP"
+  qjson: { name: "Fierce" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: ibuki-short-hit
+  setup: { dist: close, dummy: none }
+  input: "press LK"
+  qjson: { name: "Short" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# Same shape (a1) as ibuki-forward-block above (identical mechanism,
+# consistent A=1 on both BLOCK and HIT, lever-F-tested unchanged).
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=1 is the
+# engine-truth credit actually accrued on the HIT path - same issue #17 shape
+# (a1) as ibuki-forward-block. Arcade (whiff-canonical, from-qjson) A=4 -
+# preserved here per the convention. S/R/adv remain arcade-exact (from-qjson).
+- label: ibuki-forward-hit
+  setup: { dist: close, dummy: none }
+  input: "press MK"
+  qjson: { name: "Forward" }
+  outcome: HIT
+  expect: { S: from-qjson, A: 1, R: from-qjson, adv: from-qjson }
+
+# Roundhouse's Hit_advantage is the literal string "-" in ibuki.json (no
+# published numeric hit-adv) - no expect.adv.
+- label: ibuki-roundhouse-hit
+  setup: { dist: close, dummy: none }
+  input: "press HK"
+  qjson: { name: "Roundhouse" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# --- WHIFF sample per button family (dummy: none, dist 250) -----------------
+# LP/HP/HK cite their own Far row (Far Jab/Far Fierce/Far Roundhouse exist);
+# MP/LK/MK have no Far row (see file header) - their WHIFF cites their own
+# single row, same convention as corpus-yang.yaml's Jab/Short/Roundhouse.
+# All six match ibuki.json exactly (no divergence anywhere in this section) -
+# the calibration surface holds throughout, per CORPUS-AUTHORING.md Phase 4.
+
+- label: ibuki-lp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press LP"
+  qjson: { name: "Far Jab" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: ibuki-mp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press MP"
+  qjson: { name: "Strong" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: ibuki-hp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press HP"
+  qjson: { name: "Far Fierce" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: ibuki-lk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press LK"
+  qjson: { name: "Short" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: ibuki-mk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press MK"
+  qjson: { name: "Forward" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: ibuki-hk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press HK"
+  qjson: { name: "Far Roundhouse" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# --- Crouching normals, BLOCK (dummy: stand) --------------------------------
+# See file header CROUCHING-HIT-ROW GAP - BLOCK only, no D-marked row exists.
+
+- label: ibuki-crjab-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+LP"
+  qjson: { name: "Crouching Jab" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=5 is the
+# engine-truth credit actually accrued on the BLOCK path - issue #17 shape
+# (a1): lever-F-tested (same scratch build/batch as ibuki-forward-block) and
+# confirmed UNCHANGED (A=5 both ways) - no revoke fires. Arcade (whiff-
+# canonical, from-qjson) A=7 - preserved here per the convention. S/R/adv
+# remain arcade-exact (from-qjson).
+- label: ibuki-crstrong-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+MP"
+  qjson: { name: "Crouching Strong" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: 5, R: from-qjson, adv: from-qjson }
+
+- label: ibuki-crfierce-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+HP"
+  qjson: { name: "Crouching Fierce" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: ibuki-crshort-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+LK"
+  qjson: { name: "Crouching Short" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: ibuki-crforward-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+MK"
+  qjson: { name: "Crouching Forward" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: ibuki-crroundhouse-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+HK"
+  qjson: { name: "Crouching Roundhouse" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# --- Command normals, BLOCK + WHIFF -----------------------------------------
+# See file header COMMAND-NORMAL COUNT - all six are non-D rows, BLOCK+WHIFF
+# only.
+
+- label: ibuki-backstrong-block
+  setup: { dist: close, dummy: stand }
+  input: "press LEFT+MP"
+  qjson: { name: "Back + Strong" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: ibuki-backstrong-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press LEFT+MP"
+  qjson: { name: "Back + Strong" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: ibuki-twdsshort-block
+  setup: { dist: close, dummy: stand }
+  input: "press RIGHT+LK"
+  qjson: { name: "Towards + Short" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: ibuki-twdsshort-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press RIGHT+LK"
+  qjson: { name: "Towards + Short" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# §13.17 RE-ANCHOR-1 (2026-07-11), citation-only: this BLOCK leg's own
+# measured R=4 is untouched (lever N never applies to BLOCK; zero contact
+# drift, confirmed by the pre-drift census). `from-qjson` is no longer
+# citable for it though — the underlying oracle field (Towards + Forward
+# Recovery=4) is the SAME field the WHIFF leg below used to cite, and
+# that field is now ERRATA'd wrong for whiff-actionability (see the
+# WHIFF entry's own comment). This leg's 4 is engine-measured contact
+# truth that happens to numerically coincide with the old oracle figure,
+# not an endorsement of it — converted to a literal per the "measured
+# contact truth stays asserted as literals" rule (§6.3 ladder disposition
+# text), same treatment as the urien-headbutt block/hit legs below.
+- label: ibuki-twdsforward-block
+  setup: { dist: close, dummy: stand }
+  input: "press RIGHT+MK"
+  qjson: { name: "Towards + Forward" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: 4, adv: from-qjson }
+
+# §13.17 RE-ANCHOR-1 OUTCOME A (2026-07-11): ERRATA — `ibuki.json`
+# "Towards + Forward" Recovery 4->1. This row was one of two currently-
+# PASS, arcade-exact windows the census found lever N would move away
+# from their oracle value (Criterion 1 failure, `<sp>/reanchor/
+# census-report.md`); Session-5 hardware actionability probe (busy-edge
+# read confirmed 1, alternating-input probe accepted a new move exactly
+# at the busy edge, `<sp>/capture/session5-results.md`) proved the
+# oracle's 4 counts a 3-frame actionable residue as recovery — the SAME
+# signature as the urien-headbutt family (§13.17). `from-qjson` is no
+# longer citable for this row; R is now a literal, the third/fourth
+# instance of the oracle-error class after Dragon Smash-mp and the
+# headbutt trio.
+- label: ibuki-twdsforward-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press RIGHT+MK"
+  qjson: { name: "Towards + Forward" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: 1 }
+
+- label: ibuki-backforward-block
+  setup: { dist: close, dummy: stand }
+  input: "press LEFT+MK"
+  qjson: { name: "Back + Forward" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: ibuki-backforward-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press LEFT+MK"
+  qjson: { name: "Back + Forward" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# NEW FINDING (flagged 2026-07-08, UNCLASSIFIED): a BLOCK-only R surplus,
+# exactly 2x the clean value (measured R=18 vs arcade/WHIFF's matching 9).
+# A companion HIT probe (isolated single-entry corpus, inter_entry_wait=300,
+# not committed as a corpus entry since this is a non-D row) measured
+# R=9 - IDENTICAL to WHIFF, ruling out a "landing-clocked, both BLOCK and
+# HIT read high" shape (Phase 6 item 4, the Hugo-Roundhouse family) since
+# HIT here reads clean. Trace facts: BLOCK T=36 (S+A+R=6+11+18=35, a 1-tick
+# gap), cut=0, endrel=0 (no §13.5.1 cut, no partner-release - the ordinary
+# r1-transition end); WHIFF T=26 (S+A+R=26 exact) and HIT T=27
+# (S+A+R=6+11+9=26, 1-tick gap) both cut=0 too - so ALL THREE outcomes end
+# via the same plain r1-transition mechanism (no cut/endrel fires anywhere),
+# yet BLOCK's raw_len (T=36) is genuinely ~10 raw frames longer than
+# WHIFF/HIT's (~26-27). A exact on all three (A=11). Does not fit any
+# Phase-6 bucket (1-5): not a Contact-A undercount (A is exact), not a
+# HIT-R divergence (HIT itself is clean here), not Class 3 (not a grab), not
+# Hugo-Roundhouse (HIT doesn't read high), not residual item 18(b) (that
+# bucket is WHIFF-specific and requires cut=1; here WHIFF is exact and
+# cut=0 throughout). TRACE OBSERVATION ONLY, no mechanism claimed: flagged
+# to orchestrator/user for follow-up classification.
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): R=18 is
+# the engine-truth recovery actually played on the BLOCK path - SWEEP-2
+# (2026-07-10) FULL CONVERT, xfail REMOVED. The former "sign-coherent
+# candidate" note above is UPGRADED to a full F2 R-surplus corollary
+# (§13.13:5145-5147) membership: wholesale recovery-window replacement
+# closes EXACTLY under the window's measured counting rule - branch cells
+# 108(4)+114(4)+120(5)+126(4)+132(1)=18 vs whiff-only cells
+# 60(2)+66(3)+72(2)+78(1)+84(1)=9; +9 exact (P2 direct, run-ibuki
+# GT=423-464, classification sweep #2 fable-grade audit). A companion
+# isolated HIT probe measured R=9, identical to WHIFF (ruling out Phase 6
+# item 4). Arcade (whiff-canonical) R=9 - superseded per the convention.
+# A/S/adv remain arcade-exact (from-qjson).
+- label: ibuki-dtwdsforward-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+RIGHT+MK"
+  qjson: { name: "Down-Towards + Forward" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: 18, adv: from-qjson }
+
+- label: ibuki-dtwdsforward-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press DOWN+RIGHT+MK"
+  qjson: { name: "Down-Towards + Forward" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# NEW FINDING classified as Phase 6 item 4 (Hugo-Roundhouse family): A exact
+# on all three outcomes (A=1); R reads high (+1) on BOTH BLOCK (measured 22
+# vs arcade/WHIFF 21) and a companion isolated HIT probe (also measured 22),
+# with WHIFF itself exact (21) - the defining shape of this bucket ("a move
+# whose end is pinned by the outcome-independent jumping_union_process
+# rather than the chain", docs/frame-data-synthesis.md §13.11 Hugo
+# Roundhouse addendum). Trace: BLOCK T=35 (S+A+R=12+1+22=35 exact, cut=0),
+# WHIFF T=34 (S+A+R=34 exact, cut=0), HIT T=35 (S+A+R=35 exact, cut=0) - all
+# self-consistent, no cut/endrel fires anywhere; the +1 surplus is baked
+# into T itself on contact.
+# §13.13 contact-path convention (CONV-2 scope extension, 2026-07-10, user
+# decision): R=22 is the engine-truth recovery actually played on the
+# BLOCK path - family F5, item 4 (Hugo-Roundhouse family,
+# docs/frame-data-synthesis.md §13.11 addendum, sweep-2 item-4 join): R
+# reads high (+1) on BOTH BLOCK (measured 22) and HIT (companion isolated
+# probe, also measured 22) vs WHIFF's exact 21 - the defining shape.
+# Trace: BLOCK T=35 (S+A+R=35 exact, cut=0); WHIFF T=34 (S+A+R=34 exact,
+# cut=0). A/S exact (A=1, S=12). Evidence is a same-tick skip of active
+# cell 60 plus a landing-wait sentinel cell 108 (cgctr=250), byte-
+# identical BLOCK/HIT (s2 file header §8); the prior §A-offset caveat in
+# first-audit C#21 is RESOLVED by the corrected window counting rule (no
+# boundary term exists). DATED CORRECTION (§13.17 RE-ANCHOR-1,
+# 2026-07-11): the "arcade (whiff-canonical, from-qjson) R=21" citation
+# above is stale — under OUTCOME A the whiff-actionability figure is 18,
+# not 21 (see the WHIFF entry's own comment below); this BLOCK leg's own
+# literal 22 does not move (contact-leg R is untouched by lever N, zero
+# contact drift per the census) and its "+1 surplus over whiff" framing
+# is now "+4 over the corrected whiff 18", same engine mechanism, just a
+# different oracle-vs-truth baseline.
+- label: ibuki-twdsroundhouse-block
+  setup: { dist: close, dummy: stand }
+  input: "press RIGHT+HK"
+  qjson: { name: "Towards + Roundhouse" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: 22, adv: from-qjson }
+
+# §13.17 RE-ANCHOR-1 OUTCOME A (2026-07-11): ERRATA — `ibuki.json`
+# "Towards + Roundhouse" Recovery 21->18. The second of the two
+# currently-PASS census counterexamples (Criterion 1 failure,
+# `<sp>/reanchor/census-report.md`); Session-5 actionability probe
+# confirmed 18 (busy-edge read + alternating-input probe both agree,
+# `<sp>/capture/session5-results.md`) — same 3-frame-residue signature as
+# ibuki-twdsforward-whiff and the urien-headbutt family. `from-qjson` no
+# longer citable; R is now a literal.
+- label: ibuki-twdsroundhouse-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press RIGHT+HK"
+  qjson: { name: "Towards + Roundhouse" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: 18 }
+
+# --- UOH (press MP+MK) ------------------------------------------------------
+# ibuki.json's UOH row publishes S=15/A=10/R=5 - the same numbers as
+# q/dudley/chunli/akuma/oro/yang.json's own UOH row (shared move data across
+# the cast, per those files' own headers).
+#
+# A: §13.11 declared-truth displayed-A convention (docs/frame-data-
+# synthesis.md §13.11, q-uoh-samef-block/-hit precedent) - measured A=11
+# uniformly on all three outcomes (the engine's declared active credit,
+# cells summing to 11) vs arcade's whiff-visible 10. Asserted as an explicit
+# 11 below (NOT from-qjson, which would resolve to 10) - a plain PASS under
+# the convention, not an xfail, same as every other UOH entry in this repo.
+#
+# R: a THREE-WAY divergence, distinct per outcome (does not match the
+# Yang/Yun item-18(c) uniform-overshoot shape, nor Q's clean
+# WHIFF-diverges/BLOCK-exact/HIT-Class-2 shape):
+#   - WHIFF measures R=3 vs arcade 5 (T=29, S+A+R=29 exact, cut=1,
+#     anchor_a=11 matching engine_a=11) - this leg IS the familiar residual
+#     item 18(b) grounded-cleanup whiff-R-truncation shape (identical
+#     mechanism/values to q-uoh-whiff-r) - xfailed citing that bucket.
+#   - BLOCK measures R=6 vs arcade 5 (T=33, S+A+R=32, a 1-tick gap; cut=1,
+#     anchor_a=11 matching engine_a=11) - an OVERSHOOT despite the same
+#     cut=1/anchor-match signature as the WHIFF undershoot. Does not fit
+#     Q's Class 2 (§13.7.3) since that bucket requires BLOCK to match
+#     arcade exactly with only HIT diverging - here BLOCK itself diverges.
+#     UNCLASSIFIED, flagged for follow-up.
+#   - HIT measures R=4 vs arcade 5 (T=29, S+A+R=30, cut=1, anchor_a=11
+#     matching engine_a=11) - a smaller undershoot than WHIFF's, different
+#     from both WHIFF and BLOCK. UNCLASSIFIED, flagged for follow-up.
+# SECTION ACCOUNTING: 3/3 xfail on R (100%, all three outcomes) - crosses
+# the Phase 7 >50%-of-section threshold. Orchestrator sign-off 2026-07-08:
+# GRANTED per review recommendation (A=11 declared-truth correct and
+# path-independent; whiff R = legitimate item-18(b) residual; block/hit R
+# legs honest UNCLASSIFIED). User review pending (overnight autonomous run).
+# UPDATE (2026-07-11, G1 grant executed): BLOCK/HIT R legs reclassified
+# CONFIRMED-PENDING-GRANT (sweep #3, new §12.2.4 "Contact-outcome hold/skip
+# differential" row) then GRANTED by the user same day (§13.13 family F12) -
+# see ibuki-uoh-block/-hit below, now plain PASS. WHIFF stays the lone xfail
+# in this section (item 18(b), unaffected by the grant).
+
+# §13.17 RE-ANCHOR-1 + AMENDMENT (2026-07-11): item-18 CLOSED for this row AND A: 11 -> 10 (rule adopted 2026-07-11: \"whiff active-frames come from the raw hitbox count\" — user grant, docs/plan-frame-data-completion.md OVERLAY RE-ANCHOR §6.2; Session-4 hardware capture, docs/arcade-frame-data/CAPTURE.md, box-A=10 both reps, ibuki.json UOH Hit=10). Levers O/N now measure A=10, R=5, both arcade/oracle-exact. Prior xfail evidence, RELOCATED not deleted: "residual item 18(b) whiff-R truncation (docs/frame-data-synthesis.md item 18(b), q-uoh-whiff-r precedent): measured R=3 vs arcade 5; trace T=29, S+A+R=29 exact, cut=1, anchor_a=11 matching engine_a=11. A asserted as the §13.11 declared-truth value (11, not arcade's whiff-visible 10) - see section comment."
+- label: ibuki-uoh-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press MP+MK"
+  qjson: { name: "Universal Overhead" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: 10, R: from-qjson }
+
+# §13.13 contact-path convention (NEW family F12, "Contact-outcome hold/skip
+# differential", GRANTED 2026-07-11 - user grant 2026-07-11, following the
+# orchestrator's recommendation review): R=6 is the engine-truth recovery
+# actually played on the BLOCK path. Per-tick closure from the preserved s12
+# trace (F136-163): +2 REAL ticks at the hitstop-exit cell cgix28 (block
+# holds cgctr=2 for 3 rows post-thaw, F147-149, vs hit's 1 row; active_pf 12
+# vs 10 - inside the jatix=101 active window, masked in displayed A by the
+# §13.11 anchor_a=11 convention), plus +2 in the R window (block plays
+# cgix40's cgctr=1 tick + the 1-tick cgix44 sentinel, F158-159); cleanup
+# cgix0 identical 3v3. T differential +4 and R differential +2 close
+# exactly, zero residual against whiff-anchored arithmetic (S+active_pf+R=T).
+# NOT F2 (divergence partly inside the real active window, a mixed
+# A/R-redistribution shape), NOT F6 (enumerated to chunli only, requires
+# whiff-exact R; ibuki whiff R=3 vs arcade 5), NOT §12.2.1/F4 (synthesis's
+# own NOT-members line predates this sweep). Arcade Recovery 5
+# (ibuki.json Universal Overhead) preserved in this comment. A stays the
+# §13.11 declared-truth value (11); WHIFF (ibuki-uoh-whiff) is unaffected
+# and stays excluded (item 18(b), §13.13 excl 1).
+#
+# CORRECTED 2026-07-13 (UOH-CLOSURE lever T, docs/frame-data-synthesis.md
+# §13.20; <sp>/zero/arcade-s7/session-report.md): the F12 "engine-truth
+# hold/skip" R=6 above was the pre-lever-T legacy recovery_pf tally, not a
+# hardware-confirmed value. Real arcade (2 reps byte-identical,
+# actionability-probe-confirmed at fc 257620, zero early acceptance)
+# measures R=7, matching this engine's own busy-edge/lever-R construction
+# exactly (lever T, frame_data_overlay.c). Re-literaled to the arcade
+# value; the F12 hold/skip mechanism narrative above still explains why
+# the legacy tally read 6, but the busy-edge construction is what the
+# character actually plays out to on real hardware. A stays 11 (§13.11
+# declared-truth, unaffected by lever T - A does not change, design §5).
+- label: ibuki-uoh-block
+  setup: { dist: close, dummy: stand }
+  input: "press MP+MK"
+  qjson: { name: "Universal Overhead" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: 11, R: 7 }
+
+# §13.13 contact-path convention (F12, "Contact-outcome hold/skip
+# differential", GRANTED 2026-07-11): R=4 is the engine-truth recovery
+# played on the HIT path - same mechanism as ibuki-uoh-block (F185-208
+# re-read): hit skips both the +2 hitstop-exit hold at cgix28 (cgctr=2 held
+# 1 row only, F195-197) and the +2 R-window cgix40/cgix44 transitional
+# cells (F204 -> F205 straight to cgix0); T/R differential closes exactly.
+# Arcade Recovery 5 preserved. See ibuki-uoh-block's comment for the full
+# mechanism.
+#
+# CORRECTED 2026-07-13 (UOH-CLOSURE lever T, docs/frame-data-synthesis.md
+# §13.20; <sp>/zero/arcade-s7/session-report.md): same correction as
+# ibuki-uoh-block - real arcade (2 reps byte-identical) measures R=5, one
+# tick below the block leg's corrected 7, matching this engine's own
+# busy-edge/lever-R construction exactly. Re-literaled; A stays 11
+# (unaffected, design §5).
+- label: ibuki-uoh-hit
+  setup: { dist: close, dummy: none }
+  input: "press MP+MK"
+  qjson: { name: "Universal Overhead" }
+  outcome: HIT
+  expect: { S: from-qjson, A: 11, R: 5 }
+
+# --- Throw (LP+LK) -----------------------------------------------------------
+# ibuki.json's Throw_range is 16px - dist:close (56px) sits OUTSIDE it; using
+# an explicit dist per the ken/yun/oro/yang precedent.
+
+- label: ibuki-throw-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press LP+LK"
+  qjson: { name: "Throw" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# §13.10 Class 3 connected-grab, non-saturated partner-release sub-case
+# (same mechanism as corpus-oro.yaml's oro-niouriki-lp-hit / corpus-
+# yang.yaml's yang-zenpou-lk-hit): T=25, endrel=1 fires (T is nowhere near
+# FD_METER_LEN=72, ruling out the saturated sub-case). R = T - S - A =
+# 25-2-1 = 22, a DERIVED value, self-consistent with the trace (re-derive if
+# this regresses) - asserted as a plain-PASS literal citing §13.10 Class 3,
+# NOT from-qjson (ibuki.json's Recovery=21 is the whiff-path figure,
+# directly captured by ibuki-throw-whiff above, exact match). adv
+# intentionally unchecked - ibuki.json's Hit_advantage/Crouch_hit_advantage
+# are both "D" (KD), same posture as every other Throw entry in this repo.
+- label: ibuki-throw-hit
+  setup: { dist: 16, dummy: none }
+  input: "press LP+LK; wait 90"
+  qjson: { name: "Throw" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: 22, kd: 1 }
+
+# --- Ground specials probe (ONE session budget) -----------------------------
+
+# --- Raida (Jab), motion hcb + P --------------------------------------------
+# Landed via the EXISTING `motion hcb <btn>` macro - FIRST probe attempt
+# (S=4 matches ibuki.json's Raida (Jab) row exactly, unambiguous vs
+# Strong/Fierce's own distinct S values of 5/6). WHIFF is completely clean
+# (S=4/A=3/R=28, all exact).
+#
+# STRUCTURAL FINDING: despite carrying a Throw_range field (44px) like a
+# command grab, Raida is empirically a BLOCKABLE special, not an unblockable
+# command grab (unlike every other Throw_range-bearing move probed
+# elsewhere in this repo) - verified live: `dummy: stand` at dist=44
+# produces a genuine BLOCK outcome (not a HIT/kd=1 grab-capture), and its
+# measured adv=-5 matches ibuki.json's own published Block_advantage=-5
+# for Raida (Jab) EXACTLY.
+#
+# BLOCK: S/A/adv all match arcade exactly (S=4, A=3, adv=-5) - only R
+# diverges. NEW FINDING, UNCLASSIFIED (flagged 2026-07-08): measured R=17
+# vs arcade 28 (the same 28 that WHIFF matches exactly). Trace: T=22,
+# S+A+R(measured)=24 (T is 2 LESS than the sum - the opposite-direction gap
+# from the more common 1-tick-over pattern seen elsewhere in this corpus);
+# cut=0, endrel=0 (the ordinary r1-transition end, no cut/partner-release
+# mechanism fires). Does not fit any Phase-6 bucket (not Contact-A
+# undercount - A is exact; not Class 3's HIT-R formula - that's endrel/cut
+# bounded and neither fires here on BLOCK). TRACE OBSERVATION ONLY, no
+# mechanism claimed: flagged to orchestrator/user for follow-up
+# classification.
+#
+# HIT: §13.10 Class 3 connected-grab, non-saturated partner-release
+# sub-case (same formula as ibuki-throw-hit above, despite Raida being
+# blockable rather than a pure grab - the post-capture end mechanism is
+# identical): T=31, endrel=1 fires. R = T - S - A = 31-4-3 = 24, a DERIVED
+# value, self-consistent with the trace - asserted as a plain-PASS literal
+# citing §13.10 Class 3, not from-qjson (arcade R=28 is the whiff-path
+# figure, captured exactly by the WHIFF entry above). kd=1 explicit
+# (ibuki.json's Hit_advantage for Raida (Jab) is the literal "-", no
+# oracle KD marker, but the engine sets kd=1 live).
+
+- label: ibuki-raida-lp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "motion hcb LP"
+  qjson: { name: "Raida (Jab)" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): R=17 is
+# the engine-truth recovery actually played on the BLOCK path - SWEEP-2
+# (2026-07-10) FULL CONVERT, xfail REMOVED. The former "sign-coherent
+# candidate" note above is UPGRADED to a full F2 proper (§12.2.2) membership:
+# a skip/branch signature is now recorded - cell 24/30 skip (cell 30 carried
+# 11 R-ticks in the whiff chain), shared cells 42(4)+48(3)+54(3)+60(1); -11
+# exact (P2 direct, run-ibuki GT=177-208, classification sweep #2 fable-grade
+# audit - the first audit's "skip=14 vs deficit=11" conflated cell 24's
+# ACTIVE ticks with R content). Arcade (whiff-canonical) R=28 - superseded
+# per the convention. S/A/adv remain arcade-exact (from-qjson).
+- label: ibuki-raida-lp-block
+  setup: { dist: 44, dummy: stand }
+  input: "motion hcb LP"
+  qjson: { name: "Raida (Jab)" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: 17, adv: from-qjson }
+
+- label: ibuki-raida-lp-hit
+  setup: { dist: 44, dummy: none }
+  input: "motion hcb LP; wait 60"
+  qjson: { name: "Raida (Jab)" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: 24, kd: 1 }
+
+# --- Kasumi Gake, motion qcf + K ---------------------------------------------
+# Landed via the EXISTING `motion qcf <btn>` macro - FIRST probe attempt.
+# ibuki.json's "Kasumi Gake" row has Startup="20/22/25" (a three-way
+# strength-split range string, not a plain int - explicit literal per the
+# Hugo Meat Squasher range-string precedent, CORPUS-AUTHORING.md Phase 3)
+# and every OTHER field is the literal "-" (no Hit/Recovery/adv published at
+# all). Measured via LK: S=20 (the FIRST of the three published values,
+# consistent with a K-strength selecting the startup variant, same shape as
+# Hien's/Kazekiri's own strength-indexed rows elsewhere in this oracle).
+#
+# CONFIRMED movement-only (task's own prediction, verified live): a real
+# FINAL fires with ZERO active frames (A=0, R=0, engine_a=0, use_hatt=0,
+# first_active_raw=-1) - same shape as corpus-akuma.yaml's Ashura Senkuu /
+# corpus-dudley.yaml's Ducking Rush. Unlike Ashura Senkuu (which had a
+# single published numeric Recovery to xfail against under the
+# measurement-semantics convention), Kasumi Gake's Hit/Recovery/adv fields
+# are ALL "-" - there is nothing numeric to assert or xfail beyond S, same
+# posture as Dudley's Ducking Rush ("ZERO frame data... expect: {} only
+# checks the outcome"). `expect` below asserts only the explicit S=20
+# literal; A/R are NOT asserted (not comparable - no oracle figure exists).
+
+- label: ibuki-kasumigake-lk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "motion qcf LK"
+  qjson: { name: "Kasumi Gake" }
+  outcome: WHIFF
+  expect: { S: 20 }
+
+# --- Tsumuji (Short), motion qcb + K -----------------------------------------
+# Landed via the EXISTING `motion qcb <btn>` macro - FIRST probe attempt
+# (S=11 matches ibuki.json's Tsumuji (Short) row exactly, unambiguous vs
+# Forward/Roundhouse/EX's own distinct S values of 13/14/7). A multi-hit
+# spin kick - the oracle's single S/A/R row appears to describe the overall
+# window (see BLOCK's large T-vs-sum gap below, a hallmark of multi-hit
+# moves whose S/A/R decomposition covers only the first-hit window while T
+# spans the full multi-hit animation).
+#
+# WHIFF and HIT are both completely clean (S=11/A=2/R=19 exact on both,
+# adv on HIT measured +0 - not cross-checked, ibuki.json's Hit_advantage for
+# this row is the literal "-").
+#
+# BLOCK: S/A/adv all match arcade exactly (S=11, A=2, adv=-4) - only R
+# diverges. NEW FINDING, UNCLASSIFIED (flagged 2026-07-08): measured R=21
+# vs arcade/WHIFF/HIT's matching 19. Trace: T=49, S+A+R(measured)=34 - a
+# 15-frame gap, much larger than the 1-tick gaps seen elsewhere in this
+# corpus, consistent with genuine multi-hit blockstun extending the total
+# raw_len well past the first-hit S/A/R window; cut=0, endrel=0 (the
+# ordinary r1-transition end, no cut/partner-release mechanism fires). Does
+# not fit any Phase-6 bucket (WHIFF and HIT both read clean, ruling out
+# Class 2/item-18(b)/Hugo-Roundhouse, all of which require a diverging
+# WHIFF or a diverging HIT alongside BLOCK). TRACE OBSERVATION ONLY, no
+# mechanism claimed beyond the multi-hit-blockstun hypothesis (HYPOTHESIS
+# ONLY, not confirmed): flagged to orchestrator/user for follow-up
+# classification.
+
+- label: ibuki-tsumuji-lk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "motion qcb LK"
+  qjson: { name: "Tsumuji (Short)" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): R=21 is
+# the engine-truth recovery actually played on the BLOCK path - SWEEP-2
+# (2026-07-10) FULL CONVERT, xfail REMOVED. F2 R-surplus corollary
+# (§13.13:5145-5147): BLOCK-only branch closes EXACTLY under the window's
+# measured counting rule (this is the H-C multi-hit-blockstun hypothesis
+# REFUTED - the actual mechanism is a recorded branch, not raw_len creep) -
+# branch cells 168(1)+174(1)+180(1)+186(1)+192(1)+198(2)+204(2)+210(2)=11 vs
+# whiff-only cells 222..258(7x1)+264(2)=9, shared 270(2)+276(3)+282(4)+
+#288(1); +2 exact (P2 direct, run-ibuki, classification sweep #2 fable-grade
+# audit; BLOCK-only branch, HIT identical to WHIFF - HIT PASSes R=19).
+# Arcade (whiff-canonical) R=19 - superseded per the convention. S/A/adv
+# remain arcade-exact (from-qjson).
+- label: ibuki-tsumuji-lk-block
+  setup: { dist: close, dummy: stand }
+  input: "motion qcb LK"
+  qjson: { name: "Tsumuji (Short)" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: 21, adv: from-qjson }
+
+- label: ibuki-tsumuji-lk-hit
+  setup: { dist: close, dummy: none }
+  input: "motion qcb LK"
+  qjson: { name: "Tsumuji (Short)" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# --- Kubiori, motion hcf + P --------------------------------------------------
+# SECTION ACCOUNTING (Phase 7): was 3/3 entries xfail (100%) - >50% threshold.
+# Orchestrator sign-off 2026-07-08: GRANTED per review recommendation
+# (2 legs documented item-18(b); 1 leg Oro-Oniyama-posture incomparability
+# with the named specials-reachability gap). User review pending.
+# MASK-1 UPDATE (2026-07-11): the HIT leg's oracle-field-incomparability
+# now field-masks (docs/frame-data-synthesis.md §13.15) rather than
+# keeping arcade figures asserted-and-xfailed. Section is now 2/3 xfail
+# (WHIFF/BLOCK stay item-18(b), untouched by this update), 1/3
+# masked-PASS (HIT) - see the FIELD-MASKED comment directly above that
+# entry below.
+# MOTION VERIFICATION (task flagged "hcf+K? verify vs oracle" as a tentative
+# guess - CONFIRMED WRONG, verify-vs-oracle discipline applied): `motion hcf
+# LK` reproduces the EXACT same S=20/A=0/R=0 signature as Kasumi Gake above
+# (byte-identical) - the down/down-forward/forward tail of the hcf motion
+# apparently buffers into the plain qcf+K read, so hcf+K just re-fires
+# Kasumi Gake, not a distinct move. `motion hcf LP` instead lands a
+# genuinely distinct state: S=14/A=11 match the FIRST value in ibuki.json's
+# own three-way-split Kubiori row EXACTLY (Startup="14<br>15<br>17",
+# Hit="11<br>12<br>14", Recovery="15<br>18<br>19" - a Jab/Strong/Fierce
+# strength split bundled into one row, range-string fields per the Hugo
+# Meat Squasher precedent - explicit literals with comments below, never
+# from-qjson). CONFIRMED MOTION: Kubiori is hcf+P (Jab strength via LP), NOT
+# hcf+K.
+#
+# STRUCTURAL FINDING (two-phase move, UNCLASSIFIED, flagged 2026-07-08):
+# `motion hcf LP` against `dummy: stand` (dist=40, matching ibuki.json's
+# Throw_range=40) produces a BLOCK outcome with S=14/A=11/R=8 - IDENTICAL to
+# the WHIFF numbers below (byte-identical S/A/R). Trace: T=33-34
+# (self-consistent, S+A+R=33 on WHIFF exactly; T=34 on BLOCK, a 1-tick gap),
+# cut=1, anchor_a=11 matching engine_a=11 on both - the familiar residual
+# item 18(b) grounded-cleanup whiff-R-truncation shape (measured R=8 vs the
+# published first-triplet Recovery=15) - xfailed citing that bucket on both
+# WHIFF and BLOCK.
+#
+# Against `dummy: none` at the SAME setup, the move instead reads a wholly
+# different signature: S=14/A=1/R=39/adv=+94/kd=1, self-consistent
+# (T=54=S+A+R exactly), endrel=1 fires (a genuine post-capture end, same
+# mechanism as ibuki-throw-hit/ibuki-raida-lp-hit above). This value is
+# STABLE across a distance sweep (tested dist=10/20/30/35/40, all
+# dummy:none - every one reproduced the IDENTICAL S=14/A=1/R=39/adv=+94/kd=1
+# signature). Investigation finding: the hcf motion's initial BACK-hold
+# phase walks the attacker away from the corner-relative starting position
+# before the FORWARD snap, and the measured MOVE_START `dist` field reads
+# ~48-49px regardless of the requested setup.dist (10 through 40 all
+# converged to the same post-motion separation) - a SPECIALS-REACHABILITY
+# GAP precedent (Urien Metallic-Sphere-Jab / Oro Human-Pillar-Driver
+# precedent for a dash-in special whose true engagement distance cannot be
+# set directly via corpus setup.dist).
+#
+# The A=1/R=39 signature does NOT match ibuki.json's published Kubiori row
+# at any strength (Hit triplet 11/12/14, Recovery triplet 15/18/19) - ORACLE
+# FIELD INCOMPARABILITY is the most defensible read (Oro Oniyama precedent
+# posture): A=1 matches the UNIVERSAL Throw-family "Hit=1" pattern seen on
+# every character's own Throw row in this repo (HYPOTHESIS ONLY, not
+# confirmed): ibuki.json's published Kubiori row may describe an initial
+# blockable strike/setup phase (what the BLOCK/WHIFF entries above measure),
+# distinct from this dummy:none path's actual grab-catch-and-throw phase,
+# which the oracle does not separately publish. UNCLASSIFIED - no existing
+# Phase-6 bucket describes "a command grab whose published oracle row
+# appears to describe a precursor strike phase, not the catch phase" -
+# flagged to orchestrator/user for follow-up classification. expect below
+# keeps the measured values as explicit literals (no oracle figure to
+# assert against) with the incomparability recorded in xfail, same posture
+# as corpus-oro.yaml's oro-oniyama-lp-* family.
+
+- label: ibuki-kubiori-lp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "motion hcf LP"
+  qjson: { name: "Kubiori" }
+  outcome: WHIFF
+  expect: { S: 14, A: 11, R: 15, xfail: "[HONEST-FLOOR CENSUS 2026-07-14, opus-substitute / WANTS FABLE RE-REVIEW] TERMINAL CLASS = OVERLAY-DISPLAY-DIVERGENCE (two-phase move; harness reads phase-1 R vs the oracle's strike-phase; item-18 census-adjudicated EXCLUSION, terminal). residual item 18(b) whiff-R truncation (docs/frame-data-synthesis.md item 18(b), same shape as ibuki-uoh-whiff): measured R=8 vs the first (Jab-strength) value in ibuki.json's three-way-split Recovery field (15<br>18<br>19, range-string per the Hugo Meat Squasher precedent - explicit literal, not from-qjson); trace T=33, S+A+R=33 exact, cut=1, anchor_a=11 matching engine_a=11. S/A match the first-triplet Startup/Hit values exactly (14, 11) - see section comment for the full motion-verification/two-phase-move discussion. RE-CITED 2026-07-11 (§13.17 RE-ANCHOR-1, census-adjudicated, `<sp>/reanchor/census-report.md` 'Kubiori disposition'): EXCLUDED from levers N/O, not decided by this program - the twin construction finds ZERO raw-box-active frames anywhere in this window (busy goes 0->3->771 and stays 771 for 160+ frames, all four att_box slots zero throughout); the pre-existing box_count>0 gate (§2.2/§2.3, not a new rule) correctly excludes it, since Kubiori's real A=11 comes through a different engine mechanism than the four-slot att_box array. Stays xfail at measured R=8; item-18 does NOT close for this row." }
+
+- label: ibuki-kubiori-lp-block
+  setup: { dist: 40, dummy: stand }
+  input: "motion hcf LP"
+  qjson: { name: "Kubiori" }
+  outcome: BLOCK
+  expect: { S: 14, A: 11, R: 15, xfail: "[HONEST-FLOOR CENSUS 2026-07-14, opus-substitute / WANTS FABLE RE-REVIEW] TERMINAL CLASS = OVERLAY-DISPLAY-DIVERGENCE (two-phase move; harness reads phase-1 R vs the oracle's strike-phase; item-18 census-adjudicated EXCLUSION, terminal). same residual item 18(b) shape as ibuki-kubiori-lp-whiff (byte-identical S/A/R): measured R=8 vs first-triplet arcade Recovery=15; trace T=34 (1-tick gap from S+A+R=33), cut=1, anchor_a=11 matching engine_a=11. S/A exact (14, 11). RE-CITED 2026-07-11 (§13.17 RE-ANCHOR-1): moves in lockstep with ibuki-kubiori-lp-whiff's own census-adjudicated EXCLUSION (see that entry's comment) - stays xfail, unchanged." }
+
+# FIELD-MASKED (ERRATA): A and R not asserted - ibuki.json "Kubiori"
+# publishes one strike/setup-phase row (Startup 14/15/17, Hit 11/12/14,
+# Recovery 15/18/19, Jab/Strong/Fierce triplet) that this dummy:none leg's
+# grab catch-and-throw phase cannot be compared against on those two
+# fields: A=1 matches the universal Throw-family "Hit=1" pattern (HIT
+# oracle-incomparable), not the strike-phase Hit=11 the WHIFF/BLOCK legs
+# above measure; R=39 is the post-capture throw recovery (T=54=S+A+R
+# exact, endrel=1), not the strike-phase Recovery=15. Verdict STRUCTURAL,
+# docs/arcade-frame-data/ERRATA.md §3 (two-phase move; the two-phase
+# hypothesis - published row = precursor strike phase, this leg = the
+# actual catch-and-throw phase - is corroborated by both EventHubs and
+# FAT-3S independently reproducing the oracle's strike-phase figures,
+# HYPOTHESIS ONLY on the phase-split mechanism itself, not confirmed).
+# Comparable fields: S=14 (oracle first-triplet Startup=14 == measured
+# exactly - startup precedes the phase split, shared by both phases, and
+# identifies the move on all three legs) and kd=1 (explicit corpus
+# authorship, measured kd=1 exact) both assert as explicit literals.
+# NOT asserted (unchanged from before this mask): adv (Hit_advantage='-'
+# in ibuki.json; measured +94). SPECIALS-REACHABILITY GAP (hcf's
+# back-hold walk converges the true engagement distance to ~48-49px
+# regardless of requested setup.dist, same class as the Urien/Oro
+# dash-grab precedent) and the phase-split HYPOTHESIS remain recorded
+# here, unresolved - see the section comment above for the full
+# motion-verification/two-phase-move discussion. Masked-field drift
+# stays golden-pinned (golden.py measured columns). MASK-1, user
+# decision 2026-07-11, docs/frame-data-synthesis.md §13.15.
+- label: ibuki-kubiori-lp-hit
+  setup: { dist: 40, dummy: none }
+  input: "motion hcf LP; wait 90"
+  qjson: { name: "Kubiori" }
+  outcome: HIT
+  expect: { S: 14, kd: 1 }
+
+# --- Kazekiri (Short), DP-shape hold-chain + K -------------------------------
+# SECTION ACCOUNTING (Phase 7): 3/3 entries xfail (100%) - >50% threshold.
+# Orchestrator sign-off 2026-07-08: GRANTED per review recommendation (clean
+# item-18(c)-shape no-cut uniform overshoot, Yang/Yun-precedent signature).
+# User review pending.
+# Landed via the EXISTING DP-shape hold-chain (Oro Jinchu Nobori precedent,
+# `hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LK 2; wait 1`) -
+# FIRST probe attempt (S=4 matches ibuki.json's Kazekiri (Short) row exactly,
+# unambiguous vs Forward/RH/EX's own distinct S values of 6/8/4 - EX shares
+# S=4 but is out of scope). CONNECTS vs BOTH a standing (guarding) dummy and
+# a non-guarding dummy (task's own "may connect vs standing, probe" -
+# confirmed: this is a genuine, blockable anti-air-capable strike, not
+# whiff-only vs a grounded target). A exact on all three outcomes (A=12,
+# matching ibuki.json's Kazekiri (Short) Hit field exactly). BLOCK's
+# adv=-20 matches ibuki.json's published Block_advantage=-20 exactly.
+#
+# R: item 18(c) (docs/frame-data-synthesis.md item 18(c), Yang/Yun UOH
+# precedent for this exact shape - NOT the yang-senkyuutai cut=1-overshoot
+# shape the task flagged as a possibility, since the trace facts here show
+# cut=0 throughout, ruling that mechanism out): measured R=29 vs arcade 26,
+# an OVERSHOOT, UNIFORM across all three outcomes (WHIFF/BLOCK/HIT all read
+# 29). Trace: WHIFF T=45 (S+A+R=45 exact, cut=0, anchor_a=-1 - no §13.5.1
+# cut fires, the grounded fresh-edge gate correctly refuses to anchor);
+# BLOCK T=45 (S+A+R=45 exact, cut=0); HIT T=45 (S+A+R=45 exact, cut=0) - all
+# three reach the SAME natural r1-edge end with no anchor anywhere, reading
+# uniformly above arcade. Same shape/bucket as ibuki-uoh-whiff's sibling
+# entries are NOT (those are cut=1); this is the clean no-cut overshoot
+# bucket instead.
+
+# §13.17 RE-ANCHOR-1 (2026-07-11): item-18 CLOSED for this row — lever N now measures R=26, matching arcade (both revisions) and oracle exactly. Prior xfail evidence, RELOCATED not deleted: "item 18(c) (docs/frame-data-synthesis.md item 18(c), Yang/Yun UOH precedent): measured R=29 vs arcade 26 on WHIFF itself, an OVERSHOOT (cut=0, anchor_a=-1 - the grounded fresh-edge gate correctly refuses to anchor, natural r1-edge end reads above arcade); T=45, S+A+R=45 exact. S/A exact (S=4, A=12). RE-CITED 2026-07-10 (ENGINE-7 census): guard-rearm retime FALSIFIED as a general rule (1,039-window census; this move's own arcade-end==rearm+0 signature is byte-identical to urien-headbutt's arcade-end==rearm+3 - no discriminator separates the pair; see docs/frame-data-synthesis.md §13.5.1b second dated correction + §12.2.4); stays xfail, no lever. RE-CITED 2026-07-11 (CAPTURE-1, docs/arcade-frame-data/CAPTURE.md): live arcade hardware plays R=26 on this exact whiff recipe (F,D,DF,F+LK), byte-identical to the oracle - the table is confirmed right, the +3 overshoot is confirmed engine-side (item-18 register DATED REFRAME, synthesis §13.13 exclusion item 2). Stays xfail at measured 29; no lever. RE-CITED 2026-07-11 (LAYER-1): layer RESOLVED (a): twin R=26 == arcade both revisions (990512 REFERENCE + 990608, docs/frame-data-synthesis.md Sec13.16)."
+- label: ibuki-kazekiri-lk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LK 2; wait 1"
+  qjson: { name: "Kazekiri (Short)" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: ibuki-kazekiri-lk-block
+  setup: { dist: close, dummy: stand }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LK 2; wait 1"
+  qjson: { name: "Kazekiri (Short)" }
+  outcome: BLOCK
+  # RESOLVED 2026-07-13 (CONTACT-2, lever R): the R clause above (item
+  # 18(c), byte-identical R=29 vs arcade 26) is closed — lever R's
+  # busy-edge construction (`fd_contact_busy_edge_r`, frame_data_overlay.c
+  # §13.19) measures this contact leg at R=26 natively (`busyr=26`,
+  # design.md §3.4), landing exactly on the arcade/oracle value already
+  # confirmed for the WHIFF leg (CAPTURE-1). xfail removed; PASS.
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: ibuki-kazekiri-lk-hit
+  setup: { dist: close, dummy: none }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LK 2; wait 1"
+  qjson: { name: "Kazekiri (Short)" }
+  outcome: HIT
+  # RESOLVED 2026-07-13 (CONTACT-2, lever R): same closure as the BLOCK
+  # leg above — busy-edge R=26, oracle-exact. xfail removed; PASS.
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# --- Negative control (plan section 1.8 item 5 precedent) ------------------
+
+- label: ibuki-jump-none
+  setup: { dist: 250, dummy: none }
+  input: "press UP"
+  outcome: NONE

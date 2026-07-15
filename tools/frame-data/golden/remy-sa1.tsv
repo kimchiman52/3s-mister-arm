@@ -1,0 +1,5 @@
+label	verdict	outcome	n	S	A	R	adv	kd
+remy-sa1-block	XFAIL	BLOCK	1	0	20	66	+3	0
+remy-sa1-hit-close	XFAIL	HIT	1	0	20	66	+4	0
+remy-sa1-hit-mid	XFAIL	HIT	1	0	74	66	+21	0
+remy-sa1-hit-far	XFAIL	HIT	1	0	127	66	+20	0

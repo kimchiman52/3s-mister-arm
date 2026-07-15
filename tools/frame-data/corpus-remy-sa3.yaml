@@ -1,0 +1,112 @@
+# Remy Super Art 3 (Blue Nocturne) — EX/Supers program, supers wave S6
+# (authoring-policy.md Ruling 5 fan-out; step0-universe.tsv row 103, remy
+# SA3, sa_slot 3, exclusion_flag ASSERTABLE). Satellite corpus (auto-
+# discovered by run-suite.sh's corpus-*.yaml glob, own golden/remy-sa3.tsv)
+# — corpus-remy.yaml/corpus-remy-ex.yaml/corpus-remy-sa1.yaml/corpus-
+# remy-sa2.yaml are untouched.
+#
+# Oracle: docs/arcade-frame-data/remy.json (same file the other three Remy
+# corpora already pin, md5 3ab25a67f9b0b85aa1a7501c850b6289 — unchanged).
+# Oracle row ("Blue Nocturne"): Startup=0, Hit=21, Recovery=27,
+# Block_advantage="-" (non-numeric), Parry.High=false, Parry.Low=false.
+# Remy has NO arcade capture session yet (the one cast member without one)
+# — no arcade-hardware evidence cited anywhere in this file.
+#
+# MOVE SHAPE (task-directed): Blue Nocturne is a COUNTER super — Remy
+# enters a counter stance that only attacks if he is struck while in it; it
+# is NOT a self-initiated strike the way SA1/SA2 are. Meter: sa_gauge:3
+# (MAXIMUM) + super_art:2 (0-indexed SA3 slot).
+#
+# MOTION IDENTITY (S-match probe this session). "motion 2qcf HK" against
+# super_art:2 lands a distinctive shape on the FIRST attempt: a genuine
+# WHIFF with S=48/A=0/R=0 (T=48, engine_a=0, use_hatt=0, first_active_raw=
+# -1, event_raw=-1, box_runs=0, busyr=-1 — i.e. no active-hitbox signal
+# EVER detected during the whole 48-tick window), reproduced BYTE-
+# IDENTICAL at a second, independent distance/guard-mode combination (see
+# below) — the "nothing ever fires" shape is exactly what a counter stance
+# that is never triggered should look like, and no other Remy move in this
+# repo produces this signature. "motion 2qcf HP" against the same
+# super_art:2 slot instead produces the SAME plain physical Fierce Punch
+# fallback as SA2's own HP probe (S=6 A=7 R=8 adv=+3, matching remy.json's
+# Fierce row) — confirming HK, not HP, is Blue Nocturne's trigger button,
+# same kick-group pattern as SA2 (probe log: <sp>/sa-remy/run-probe-sa3-id/
+# trace.log, entries probe-sa3-hp/-hk).
+#
+# ============================================================================
+# TRIGGERED-COUNTER PATH — HARNESS CAPABILITY GAP (task-directed, NOT
+# fabricated). remy.json's own Hit=21/Recovery=27 almost certainly describe
+# the COUNTER-ATTACK's own frame data once the stance is actually
+# triggered (Remy gets struck while countering and retaliates) — a
+# fundamentally different measurement than "how long does the untouched
+# stance itself last." Reaching that triggered path requires the dummy to
+# actively attack Remy while he holds the counter stance. This harness's
+# script directive set is W/L/P/G/Q only (input_script.c:26-30,
+# authoring-policy.md E-5) — there is NO dummy-attack directive, and the
+# dummy is otherwise driven passively by guard-mode/AI, never scripted to
+# throw an attack on cue. The triggered path is therefore OUT OF SCOPE for
+# this corpus: documented here as a genuine harness capability gap, not
+# guessed at, not asserted, and not silently omitted without explanation
+# (per the task's own explicit instruction for this exact move). No entry
+# in this file claims to exercise the triggered counter-attack.
+#
+# ============================================================================
+# STANCE-WHIFF LEG (the only reachable leg, the WHIFF-analog per the task's
+# own framing: "the counter-stance activation is the WHIFF-analog"). Two
+# independent probes this session (<sp>/sa-remy/run-probe-sa3-legs/
+# trace.log, entries sa3-stand [dist:close, dummy:stand] and sa3-far
+# [dist:300 dist_mode:centered, dummy:none]) both measure BYTE-IDENTICAL
+# S=48 A=0 R=0 T=48 adv=+0, outcome=WHIFF — fully distance-invariant and
+# guard-mode-invariant, confirming this is a fixed-duration stance timeout,
+# not anything geometry-dependent. This matches an ALREADY-DOCUMENTED
+# named shape in this repo — docs/frame-data-synthesis.md:3366's
+# "parry-counter HK whiff (no engine active signal)": "Engine bypasses
+# cg_ja.atix/cg_att_ix/h_att for one of [the move]'s active windows;
+# classifier sees nothing" — the overlay's S/A/R classifier has no
+# "committed counter-stance window" category, so with zero active-signal
+# ticks ever recorded it folds the ENTIRE 48-tick span into S rather than
+# splitting a stance-entry/committed-window/timeout-recovery breakdown.
+# The measured S=48 is therefore NOT a startup-only figure comparable to
+# remy.json's own Startup=0 (which almost certainly describes the
+# triggered counter-attack's own near-instant reaction time, not the
+# stance's own idle duration) — no field in this leg maps to any oracle
+# column. Per the same evidence-over-assumption discipline as the SA1/SA2
+# files in this batch, NO expect fields are asserted here (not S, not A,
+# not R, not adv) rather than forcing a comparison the two measurements
+# don't actually share a referent for. The entry is still shipped (not
+# omitted outright) so the move's outcome/shape stays under regression
+# coverage — a future engine change that alters this signature would show
+# up in the golden diff even without an oracle assertion.
+#
+# Admissibility census (Ruling 2, mechanical). Cross-distance/guard-mode
+# confirmation this session used an isolated 2-entry probe (<sp>/sa-remy/
+# run-probe-sa3-legs/trace.log: F=51-99 dummy:stand dist:close, F=473-612
+# dummy:none dist:300 centered — both byte-identical S=48/A=0/R=0/T=48).
+# The shipped entry's own run (<sp>/sa-remy/final-sa3-run1/trace.log): (1)
+# single-FINAL integrity — exactly one FINAL in the entry's own window
+# (F=51-99), no bleed (mechanical grep census: 1 MOVE_START/1 FINAL
+# annotation, matching the 1 shipped entry exactly). (2) flash-overlap
+# census: 0 nonzero `sastop` ticks in the window (awk census this
+# session: 0/49 — flash-free). (3) contact-A juggle check: N/A — no A is
+# ever asserted for this leg (see STANCE-WHIFF LEG above). (4) shape
+# record: proj=0, box_runs=0 — no hitbox tensor of any kind ever engages,
+# consistent with a pure defensive stance that never fires.
+character: remy
+oracle: remy.json
+super_art: 2
+sa_gauge: 3
+inter_entry_wait: 500
+entries:
+
+- label: remy-sa3-counter-whiff
+  setup: { dist: close, dummy: none }
+  input: "motion 2qcf HK"
+  qjson: { name: "Blue Nocturne" }
+  outcome: WHIFF
+  # Measured S=48 A=0 R=0 adv=+0 (T=48, engine_a=0, use_hatt=0, box_runs=0,
+  # proj=0) — the untriggered counter-stance timeout. No expect fields:
+  # see file header STANCE-WHIFF LEG / TRIGGERED-COUNTER PATH notes; none
+  # of remy.json's Startup=0/Hit=21/Recovery=27 columns share a referent
+  # with this measurement (they describe the triggered counter-attack,
+  # which this harness has no primitive to reach — a documented capability
+  # gap, not a divergence to classify).
+  expect: {}

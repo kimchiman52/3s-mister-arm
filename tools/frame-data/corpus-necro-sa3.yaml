@@ -1,0 +1,165 @@
+# Necro Super Art 3 (Electric Snake) — EX/Supers program, supers wave S4.
+# Satellite corpus (auto-discovered by run-suite.sh's corpus-*.yaml glob, own
+# golden/necro-sa3.tsv once registered) — corpus-necro.yaml/corpus-necro-ex.yaml/
+# corpus-necro-sa1.yaml/corpus-necro-sa2.yaml are untouched. Sibling agents
+# authoring other characters' SA slots concurrently this same wave,
+# file-disjoint.
+#
+# Scope: step0-universe.tsv row 74 (necro index 55, "Electric Snake", sa_slot
+# 3, S=3/A="-" (non-numeric)/R=39/block_adv=-11, ASSERTABLE, per task's own
+# description a long-range multihit).
+#
+# Oracle: docs/arcade-frame-data/necro.json (same file corpus-necro.yaml/
+# corpus-necro-ex.yaml/corpus-necro-sa1.yaml/corpus-necro-sa2.yaml already
+# pin, md5 6484539d4c2f834daa4a7aef70c3342b — re-read this session,
+# byte-identical row content for "Electric Snake": Startup=3, Hit="-",
+# Recovery=39, Block_advantage=-11, Hit_advantage="-").
+#
+# IDENTITY (S-match probe, CORPUS-AUTHORING.md Phase 5), this session:
+# super_art:2 (0-indexed SA3) + `motion 2qcf HP` lands a move whose measured
+# S=3/adv=-11 match Electric Snake's oracle row EXACTLY (`<sp>/sa-necro/
+# run-probe-sa2/trace.log`), on the FIRST candidate tried — unambiguous (S=3
+# is unique among Necro's own super rows: Magnetic Storm S=1, Slam Dance
+# S=2). NOTE: the very same `motion 2qcf HP` input is shared by all three of
+# Necro's SA slots (identified by `super_art:` alone, per the established
+# Ryu/Ken-SA-pilot convention that button-group, not motion shape, tracks
+# the move's own punch/kick flavor — all three of Necro's supers happen to
+# be punch-flavored).
+#
+# Meter: sa_gauge:3 (MAXIMUM, per authoring-policy.md's meter policy default
+# for non-install supers).
+#
+# ============================================================================
+# NO WHIFF LEG — PROJECTILE PRECEDENT (Ruling 1: "Projectile supers ...
+# never have a meaningful strike-whiff leg at ground ranges"). Every FINAL
+# line for this move carries `proj=1` (with a nonzero `proj_a`/
+# `proj_spawn_raw`) on every leg tried — this is a genuine proj-split shape
+# (the "snake" is animated as a ground-hugging lunge but is engine-tracked
+# via the projectile system, not the att_box tensor: `box_runs=0`,
+# `use_hatt=0` on every leg). Binary-searched this session (3 attempts, at
+# the ceiling of Ruling 1's own "(a) ADOPTED" tooling): dist:300 anchored
+# (achieved dist=197 at MOVE_START after the motion's own walk-in) CONNECTS
+# (outcome=HIT, S=3 exact); dist:310 dist_mode:centered (achieved dist=246)
+# ALSO CONNECTS (outcome=HIT, S=3 exact) — confirmed genuinely unreachable
+# at both of this harness's own distance ceilings, matching the Ryu SA1/SA3
+# Hadouken-family precedent exactly ("the tama travels to the dummy").
+# Coverage for this move comes from the BLOCK/HIT legs below, per Ruling 1's
+# fallback language.
+#
+# ============================================================================
+# HARNESS LIMITATION — SECOND-DISPATCH S CORRUPTION (NEW sighting this
+# session, SAME CLASS as corpus-necro.yaml's own documented "repeat-same-
+# move-connect contamination" finding for Standing Fierce, now confirmed on
+# a SECOND move for this character). Because Electric Snake never whiffs at
+# any distance this harness can express (see above), BOTH of its legs are
+# always-connecting dispatches — exactly the precondition corpus-necro.yaml
+# identifies as triggering this class ("Necro's Fierce is unusually prone to
+# exposing this because it never whiffs at any tested distance ... the
+# failure is specifically the SECOND-IN-A-ROW dispatch of the same move
+# connecting"). Confirmed this session (isolated single-entry probes are
+# clean on BOTH legs individually: `<sp>/sa-necro/run-probe-sa2-iso-
+# blockclose/trace.log` S=3, `run-probe-sa2-iso-hit/trace.log` S=3; but ANY
+# 2-entry combined run of this move — tried at inter_entry_wait 500 AND 900,
+# tried in BOTH orderings BLOCK-then-HIT and HIT-then-BLOCK, tried with an
+# interposed `press UP`/outcome:NONE neutral entry between them — measures
+# S=0 (spurious) on whichever entry is dispatched SECOND, while every other
+# field (A/R/adv) on that same second entry stays byte-identical to its own
+# isolated-probe value). This is a read-only corruption of the S field
+# specifically, not a real second execution path: A/R/adv on the corrupted
+# entry are unaffected and still trustworthy. ENTRY ORDER BELOW IS
+# DELIBERATE (HIT first, BLOCK second) to maximize assertable coverage: HIT
+# keeps its own clean S (its only assertable numeric field, since A is
+# non-numeric in the oracle and R is quarantined below); BLOCK loses its own
+# S assertion to this corruption but keeps adv (the field that actually
+# matters for a BLOCK leg, and is entirely unaffected by the corruption).
+# Flagged as a NEW harness-limitations register candidate (2nd sighting,
+# same character, different move) — wants follow-up (characterize whether
+# this is Necro-specific or a cast-wide always-connecting-move artifact).
+#
+# ============================================================================
+# R — QUARANTINED (OMITTED), both legs, unexplained proj-timing divergence.
+# Measured R=51 on BOTH the BLOCK-close and HIT-close legs (byte-identical
+# between outcomes at the same distance — rules out an outcome-keyed HIT-
+# vs-BLOCK mechanism, e.g. Phase-6 Class 1/2/3, none of which fit a value
+# that doesn't change between HIT and BLOCK). A second BLOCK probe at
+# dist:150 (`<sp>/sa-necro/run-probe-sa2-iso-blockfar/trace.log`) measures
+# R=48 instead (and adv=-8, ALSO diverging from the oracle's -11 exact match
+# at close range) — confirming R (and, at this specific distance, adv) DOES
+# vary with the projectile's own travel distance, a genuine proj-timing
+# property (same class of mechanism as this program's own Ryu SA3 Denjin
+# Hadouken A-varies-with-distance finding), but NEITHER tested distance (51
+# @ dist=47, 48 @ dist=96) matches the oracle's own Recovery=39 — no tested
+# geometry reproduces it. Does not fit any Phase-6 R bucket (Class 1 needs a
+# HIT-vs-BLOCK differential, not present; Class 2/3 don't apply to a
+# proj-split shape). QUARANTINED (omitted, not xfailed — no mechanism
+# identified to cite) on both legs; the two failed recipes (close/far
+# distance) are logged here per the per-move quarantine rule. This is the
+# batch's ONLY quarantine seed (well under the >=3-same-shape STOP
+# threshold) — the shipped entries below use the CLOSE-distance measurement
+# throughout (dist:close per this repo's own convention default, and the
+# distance at which S/adv both happen to be oracle-exact wherever
+# measurable).
+#
+# Admissibility census (per-entry, mechanical, from FRAME_TRACE columns —
+# authoring-policy.md Ruling 2), this session's own isolated single-entry
+# probes (`<sp>/sa-necro/run-probe-sa2-iso-hit/trace.log`,
+# `run-probe-sa2-iso-blockclose/trace.log` — the SAME setup/input/outcome
+# pair shipped below, cross-checked against the combined HIT-then-BLOCK run
+# for every field except S per the harness-limitation finding above):
+# (1) Single-FINAL integrity: exactly one MOVE_START/FINAL pair per entry's
+#     own isolated window, mechanical grep census, no merges.
+# (2) Flash-overlap census (sastop gate): 0 nonzero `sastop` ticks in either
+#     leg's own [MOVE_START F, FINAL F] window (142 rows HIT, 61 rows BLOCK,
+#     awk census this session, combined-run trace) — flash-free.
+# (3) Contact-A juggle check: N/A — necro.json's Hit field is the literal
+#     string "-" for this row (same non-numeric-oracle-field reasoning as
+#     corpus-ryu-sa1.yaml's own Shinkuu Hadouken section), so A is never
+#     asserted on either leg and the juggle check has nothing to gate.
+# (4) Shape record: box_runs=0 on both legs (proj=1, proj_a=7 both legs at
+#     dist:close) — a genuine proj-split move (see NO WHIFF LEG section
+#     above), same tracked-via-projectile-system shape as this program's
+#     Ryu SA1/SA3 Hadouken family, just for a ground-hugging "snake" attack
+#     instead of an airborne fireball.
+character: necro
+oracle: necro.json
+super_art: 2
+sa_gauge: 3
+inter_entry_wait: 500
+entries:
+
+- label: necro-sa3-hit
+  setup: { dist: close, dummy: none }
+  input: "motion 2qcf HP"
+  qjson: { name: "Electric Snake" }
+  outcome: HIT
+  # Measured S=3 A=7 R=51 adv=+81 (proj=1, proj_a=7, box_runs=0) —
+  # S oracle-exact (this move's own S is dispatch-order-clean since it is
+  # ordered FIRST in this file, per the file header HARNESS LIMITATION
+  # section). No expect.A: necro.json's Hit field is the literal string "-"
+  # for this row (from-qjson would raise a CompileError on a non-numeric
+  # oracle field). R is NOT asserted — see file header R — QUARANTINED
+  # (measured 51, oracle 39, no matching geometry found). No expect.adv:
+  # necro.json's Hit_advantage for this row is also the literal string "-"
+  # (kd=1 measured, adv=+81, large and consistent with a genuine knockdown,
+  # not cross-checked).
+  expect: { S: from-qjson }
+
+- label: necro-sa3-block
+  setup: { dist: close, dummy: stand }
+  input: "motion 2qcf HP"
+  qjson: { name: "Electric Snake" }
+  outcome: BLOCK
+  # Measured (isolated) S=3 A=7 R=51 adv=-11 (proj=1, proj_a=7,
+  # box_runs=0) — adv oracle-exact (Block_advantage=-11). S is NOT
+  # asserted here: this is the SECOND connecting dispatch of Electric Snake
+  # in this file's own script session, and the file header HARNESS
+  # LIMITATION section documents a confirmed S-field-only corruption on any
+  # second dispatch (measures a spurious S=0 while A/R/adv stay correct and
+  # reproducible) — this is a known read artifact, NOT the real value, so it
+  # is omitted rather than asserted or xfailed (S's own true value, 3, is
+  # already confirmed via the necro-sa3-hit entry above and the isolated
+  # single-entry probe). No expect.A (non-numeric oracle field, same as the
+  # HIT leg). R is NOT asserted — see file header R — QUARANTINED (measured
+  # 51, byte-identical to the HIT leg's own value at the same distance,
+  # oracle 39, no matching geometry found).
+  expect: { adv: from-qjson }

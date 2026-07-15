@@ -1,0 +1,3 @@
+label	verdict	outcome	n	S	A	R	adv	kd
+akuma-sa1-block	PASS	BLOCK	1	2	13	49	-13	0
+akuma-sa1-hit	PASS	HIT	1	2	13	49	+76	1

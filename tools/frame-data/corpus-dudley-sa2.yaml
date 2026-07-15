@@ -1,0 +1,123 @@
+# Dudley Super Art 2 (Rolling Thunder) — EX/Supers program, supers wave S2
+# (authoring-policy.md Ruling 5 fan-out). Satellite corpus (auto-discovered
+# by run-suite.sh's corpus-*.yaml glob, own golden/dudley-sa2.tsv once
+# registered) — corpus-dudley.yaml/corpus-dudley-ex.yaml and the sibling
+# corpus-dudley-sa1.yaml/corpus-dudley-sa3.yaml are untouched.
+#
+# Scope: step0-universe.tsv (dudley SA2, "Rolling Thunder", sa_slot 2).
+# Oracle: docs/arcade-frame-data/dudley.json (md5
+# 8e0341d62b9470212bce8105eaf1a73e, same file corpus-dudley.yaml/
+# corpus-dudley-ex.yaml/corpus-dudley-sa1.yaml already pin, re-verified
+# unchanged this session). Oracle row: Startup=1, Hit=17, Recovery=20,
+# Block_advantage="-" (non-numeric), Hit_advantage="-" (non-numeric) — no
+# `adv` assert anywhere in this file, same convention as this move family's
+# own EX/base rows.
+#
+# Meter: sa_gauge:3 (MAXIMUM) + super_art:1 (0-indexed SA2). Identity
+# confirmed this session by S-value match: dudley.json's Startup=1 is unique
+# to Rolling Thunder among every Dudley move (checked live this session,
+# full-file scan) — unambiguous identification, not assumed.
+#
+# Motion: "motion 2qcf HP" — landed on the FIRST candidate tried (same
+# punch-group primitive as corpus-dudley-sa1.yaml's own Rocket Uppercut). A
+# second candidate, "motion 2qcf HK", instead landed the SAME unrelated
+# normal this session's sibling SA1/SA3 probes also hit (S=12 A=4 R=16
+# adv=-2, byte-identical across all three super_art selections) — ruling out
+# a button-group ambiguity.
+#
+# Admissibility census (per-entry, mechanical, from FRAME_TRACE columns —
+# authoring-policy.md Ruling 2), this session's own isolated 3-entry probe
+# run (<sp>/sa-dudley/run-probe-sa2-full/trace.log, inter_entry_wait:250):
+# (1) Single-FINAL integrity — exactly one MOVE_START/FINAL pair per entry
+# (WHIFF F51-114; BLOCK F314-392; HIT F444-609), mechanical census this
+# session, no bleed between entries.
+# (2) Flash-overlap census: 0 nonzero-sastop ticks in [MOVE_START F, FINAL F]
+# on all three legs (0/63 WHIFF, 0/78 BLOCK, 0/165 HIT — python census over
+# every data row this session) — flash-free.
+# (3) Contact-A juggle check (HIT legs only): HIT-leg engine_a=16 vs
+# BLOCK-leg engine_a=16 — PASSES (equal) — HIT-leg A is admissible by the
+# mechanical gate, same instrument as BLOCK (both still xfail'd on the value
+# itself, see A DISPOSITION below).
+# (4) Shape record: box_runs=5 (WHIFF, genuinely multi-run — only when
+# uninterrupted by an outcome, matching this program's own established
+# guidance for this shoryuken/flurry-style super family), 1 (BLOCK), 1
+# (HIT) — the WHIFF-only multi-run shape Ken SA1/Ryu SA2 also measured.
+#
+# A DISPOSITION (BLOCK/HIT — xfail, unconfirmed Phase 6 bucket-1 shape-(a1)
+# CANDIDATE, NOT the ESCALATED whiff-inclusive shape this file's own SA1
+# sibling hit). Measured legacy-displayed engine_a=16 on BOTH BLOCK and HIT
+# (oracle Hit=17, a uniform -1 undercount), while WHIFF reads engine_a=17 =
+# oracle EXACTLY (plain PASS, see the WHIFF entry) — a genuine
+# contact-vs-whiff differential (17 on whiff, 16 on contact), the textbook
+# precondition for CORPUS-AUTHORING.md Phase 6 bucket 1's shape-(a1)/(a2)
+# family ("the contact tick jumps cg_ix past one or more declared-active
+# cells... so their credit never enters fd_engine_active_count"). This is
+# the SAME direction/magnitude (-1 undercount, contact-only) as this move's
+# own EX-CONTACT-R sibling investigation's M2 group signature (excontact-
+# r-findings.md §2: "contact enters parallel recovery cells... or loses
+# later box runs" — the same outcome-dependent-chart-content architecture,
+# applied here to A instead of R) and is directionally consistent with
+# Dudley's OWN already-established Machine Gun Blow -2-uniform undercount
+# (corpus-dudley.yaml, §13.13 (a1), lever-F-tested UNCHANGED) — but per
+# CORPUS-AUTHORING.md's own bar ("a new sighting needs the same-tick
+# recovery skip/branch visible in its trace... otherwise it is only a
+# candidate"), this is a DIFFERENT move/chart and no lever-F toggle test was
+# performed this session (FDH_SKIP_BUILD=1 throughout, zero rebuilds
+# authorized) — so it stays an unconfirmed CANDIDATE, xfail'd (true oracle
+# value kept in expect, per house rule), not converted, flagged for
+# orchestrator/user follow-up (a lever-F toggle re-run would settle shape-
+# (a1) vs a lever-F-regression signal).
+#
+# R DISPOSITION: fully oracle-exact on ALL THREE legs (WHIFF/BLOCK/HIT all
+# measure R=20=oracle Recovery exactly). T=55 on the contact legs, well
+# under FD_METER_LEN=72 — NO M1 saturation risk for this move (unlike this
+# file's own SA1 sibling), so R needs no quarantine anywhere. Plain PASS.
+#
+# WHIFF: REACHABLE on the FIRST attempt (dist:300, dist_mode:centered).
+# MOVE_START's own annotation reads dist=237 (walk-in ~63px consumed from
+# the requested 300) — still clears Rolling Thunder's own short reach. No
+# further binary search attempted (comfortably WHIFF-reachable on the first
+# try).
+# ORDERING NOTE (Phase 5 "Predecessor-outcome ordering" trap): the WHIFF
+# entry is placed FIRST, ahead of the knockdown-producing HIT leg (kd=1),
+# matching this file's own SA1 sibling and the established Ken SA1
+# precedent.
+character: dudley
+oracle: dudley.json
+super_art: 1
+sa_gauge: 3
+inter_entry_wait: 250
+entries:
+
+- label: dudley-sa2-whiff
+  setup: { dist: 300, dist_mode: centered, dummy: none }
+  input: "motion 2qcf HP"
+  qjson: { name: "Rolling Thunder" }
+  outcome: WHIFF
+  # Measured S=1 A=17 R=20 (box_runs=5, box_a=17, T=63; MOVE_START dist=237,
+  # ~63px walk-in). All three fields oracle-exact — this is the leg that
+  # rules out CORPUS-AUTHORING.md Phase 6 bucket 1 needing a lever-F toggle
+  # test to establish the contact-vs-whiff differential (WHIFF clean here,
+  # BLOCK/HIT both -1 below) rather than resolve it outright.
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: dudley-sa2-block
+  setup: { dist: close, dummy: stand }
+  input: "motion 2qcf HP"
+  qjson: { name: "Rolling Thunder" }
+  outcome: BLOCK
+  # Measured S=1 A=16(xfail, see A DISPOSITION above) R=20 (box_runs=1,
+  # box_a=14, busyr=20, T=55). S/R oracle-exact.
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, xfail: "[HONEST-FLOOR CENSUS 2026-07-14, opus-substitute / WANTS FABLE RE-REVIEW] TERMINAL CLASS = OVERLAY-DISPLAY-DIVERGENCE (contact-A undercount, whiff-anchored). Arcade-true = 17: this move's own WHIFF leg reads engine_a=17 == oracle exactly (a genuine contact-vs-whiff differential). NON-SURGICAL: lever-F (fd_restore_revoked_declared_credit) diagnosed INERT for this shape (Dudley MGB same-char lever-F-UNCHANGED; the -1 is a cgix-skip/reset-race, not a revoke) and it shares the contact-A 113-regression census (contactA/design). Golden stays oracle=17, XFAIL. Prior disposition (unchanged): Phase 6 bucket-1 shape-(a1) CANDIDATE (flagged 2026-07-13, needs a lever-F toggle re-run to convert): measured engine_a=16 vs oracle Hit=17 (-1 undercount), contact-only (this move's own WHIFF leg reads engine_a=17=oracle exactly, so a genuine contact-vs-whiff differential exists here, unlike this file's own SA1 sibling's whiff-inclusive ESCALATED shape). Directionally consistent with Dudley's own established Machine Gun Blow -2-uniform undercount (corpus-dudley.yaml, lever-F-tested UNCHANGED) and with excontact-r-findings.md's M2 outcome-dependent-chart-content group, but this is a different move/chart and no lever-F toggle test was run this session (FDH_SKIP_BUILD=1, zero rebuilds authorized) - stays an unconfirmed candidate, not converted, flagged for orchestrator/user follow-up." }
+
+- label: dudley-sa2-hit
+  setup: { dist: close, dummy: none }
+  input: "motion 2qcf HP"
+  qjson: { name: "Rolling Thunder" }
+  outcome: HIT
+  # HIT-leg A juggle check PASSES (16==BLOCK's 16) — admissible per Ruling 2
+  # check 3, but the value itself still diverges from oracle (same -1
+  # undercount as BLOCK). Measured S=1 A=16(xfail, same disposition as
+  # BLOCK) R=20 (box_runs=1, box_a=14, busyr=20, T=55, kd=1). S/R
+  # oracle-exact.
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, xfail: "[HONEST-FLOOR CENSUS 2026-07-14, opus-substitute / WANTS FABLE RE-REVIEW] TERMINAL CLASS = OVERLAY-DISPLAY-DIVERGENCE (contact-A undercount, whiff-anchored). Same as the BLOCK leg (juggle 16==16): arcade-true=17 via this move's own WHIFF leg (engine_a=17==oracle); lever-F INERT, 113-regression non-surgical. Golden stays oracle=17, XFAIL. Prior disposition (unchanged): Phase 6 bucket-1 shape-(a1) CANDIDATE (flagged 2026-07-13) - same -1 undercount as the BLOCK leg (measured engine_a=16 vs oracle 17), juggle check PASSES (HIT engine_a=16==BLOCK engine_a=16) so this leg is admissible under Ruling 2 check 3, but the value itself still diverges from oracle. See dudley-sa2-block's own xfail string for the full disposition (unconfirmed candidate, needs a lever-F toggle re-run, flagged for follow-up)." }

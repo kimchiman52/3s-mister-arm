@@ -1,0 +1,159 @@
+# Elena Super Art 3 (Healing) — EX/Supers program, supers wave S4 (Elena's
+# three SA slots; sibling wave-S4 characters authored concurrently by other
+# agents, file-disjoint). Satellite corpus (auto-discovered by
+# run-suite.sh's corpus-*.yaml glob, own golden/elena-sa3.tsv once
+# registered) — corpus-elena.yaml/corpus-elena-ex.yaml/corpus-elena-sa1.yaml/
+# corpus-elena-sa2.yaml are untouched.
+#
+# Scope: step0-universe.tsv row 38 (elena SA3, "Healing", sa_slot 3,
+# exclusion_flag INSTALL_MAXIMUM, "INSTALL/TIMED(Healing R=15)"). Oracle:
+# docs/arcade-frame-data/elena.json (md5 763929513f271e2bf05c7177d12346d8,
+# unchanged, same file the other three Elena corpora already pin). Oracle
+# row: Startup="-", Hit="-", Recovery=15, Block_advantage="-",
+# Hit_advantage="-" — Recovery is the ONLY numeric field (S_numeric=N/
+# A_numeric=N/R_numeric=Y/block_adv_numeric=N per step0-universe.tsv's own
+# census, re-verified live this session by reading elena.json's own
+# "Healing" row in full). This is a DIFFERENT shape from every other
+# INSTALL_MAXIMUM row measured so far in this program: Yun SA3 Genei
+# Jin/Q Total Destruction/Sei-ei Enbu all publish a numeric Startup with
+# everything else non-numeric (the "activation-only" shape); Makoto SA3
+# Tanden Renki/Oro Kishin Riki publish NOTHING numeric at all (the
+# "fully-nonnumeric" shape). Healing publishes numeric Recovery and
+# nothing else — the harness's own measurement of this move (below) shows
+# WHY: this is a genuine self-heal move whose oracle Recovery likely
+# describes the heal-channel's own real total duration, a quantity this
+# harness's r1-transition-based MOVE_START/FINAL instrumentation cannot
+# observe on a non-attacking, non-standard-attack-routine super (see R
+# DISPOSITION below) — the same class of harness gap Tanden Renki's own
+# corpus documents, just on a different oracle field.
+#
+# Meter: sa_gauge:3 (MAXIMUM — per authoring-policy.md's meter policy,
+# installs/multi-stock MUST use MAXIMUM, never INFINITY, so the timed
+# gauge-drain the oracle's own R=15 presumably describes is not frozen or
+# masked).
+#
+# IDENTITY — confirmed by ELIMINATION + a reproducible context-independent
+# activation-only signal (same discipline as `corpus-makoto-sa3.yaml`'s own
+# Tanden Renki and `corpus-yun-sa3.yaml`'s own Genei Jin), not by an
+# S-match probe (impossible here — the oracle has no numeric Startup to
+# match against). super_art:0 (Spinning Beat, S=0 exact) and super_art:1
+# (Brave Dance, S=0 exact) are independently confirmed in the sibling
+# corpora this session (corpus-elena-sa1.yaml/corpus-elena-sa2.yaml) —
+# super_art:2 is the only remaining slot of the three bounded by
+# compile_corpus.py's resolve_super_art (0-2 inclusive), so it is Healing
+# by elimination (Elena has exactly 3 SA slots, no EXTRA/JUDGMENT rows for
+# this character per step0-universe.tsv).
+#
+# MOTION-BUTTON PROBE (this session, <sp>/sa-elena/run-probe3/trace.log):
+# super_art:2 + "motion 2qcf HP" produced a genuine MOVE_START/FINAL with
+# ZERO tracked active window (S=51 A=0 R=0, box_runs=0, box_a=0, busyr=-1
+# sentinel, active_pf=0) — the SAME qualitative "activation, no attack"
+# shape as Genei Jin's own S=9/A=0/R=0/box_runs=0/busyr=-1 signature
+# (`corpus-yun-sa3.yaml`), just a different (larger) magnitude. By
+# contrast, super_art:2 + "motion 2qcf HK" produced a REAL attack window
+# (S=3 A=7 R=40, box_runs=1, box_a=8, busyr=40) closely matching
+# elena.json's own "Scratch Wheel (EX)" row (S=3/A=8/R=42) — a DP-shape
+# special misfire, same class as `corpus-makoto-sa3.yaml`'s own documented
+# cross-index Fukiage/Towards-Roundhouse misfires (the "2qcf" macro's own
+# directional sub-sequence apparently satisfies a DP-shape special's input
+# buffer before the second quarter-circle completes; Elena's own Scratch
+# Wheel is independently confirmed DP-hold-chain-shaped in
+# corpus-elena.yaml's own MOTION VERIFICATION section). This CONFIRMS the
+# punch button (not kick) is this slot's own super input — matching the
+# punch-tier convention every other install-shaped SA3 in this program
+# uses (Genei Jin, Denjin Hadouken, X.C.O.P.Y., Sei-ei Enbu all punch-
+# keyed) — and rules out the kick button producing anything but a
+# misfired special.
+#
+# CONTEXT-INDEPENDENCE (this session, <sp>/sa-elena/run-probe6-sa3-keep/
+# trace.log, three independent contexts: dist:close/dummy:stand, dist:300
+# dist_mode:centered/dummy:stand, dist:close/dummy:none): S=51 A=0 R=0
+# adv=+0 IDENTICALLY in all three (box_runs=0, box_a=0, busyr=-1,
+# active_pf=0, T=51, natend=0 — byte-identical FINAL fields across every
+# context). This confirms empirically (matching the Genei Jin precedent's
+# own three-context check) that the activation genuinely never attacks
+# regardless of range or guard context — there is no distance/dummy
+# combination in which this move connects, blocks, or whiffs differently.
+#
+# Admissibility census (mechanical, from FRAME_TRACE columns — authoring-
+# policy.md Ruling 2), all three probe contexts (<sp>/sa-elena/
+# run-probe6-sa3-keep/trace.log): (1) single-FINAL integrity — exactly one
+# MOVE_START and one FINAL in each entry's own window (F58-109, F168-219,
+# F278-329), no bleed (python census this session). (2) Flash-overlap
+# census: 0 nonzero-sastop ticks in every window (0/52 each — python
+# census this session). (3) contact-A juggle check: N/A — no A is ever
+# asserted (see A/R DISPOSITION below). (4) shape record: proj=0,
+# box_runs=0 in every context — a true single-instant activation with no
+# tracked attack geometry at all, identical to Genei Jin's own shape
+# record.
+#
+# S / A / adv DISPOSITION: not assertable — elena.json's Startup/Hit/
+# Block_advantage/Hit_advantage fields for this row are all the literal
+# string "-" (from-qjson would raise CompileError on any of them). The
+# measured S=51/A=0/adv=+0 are the engine's own "activation, no active
+# window" sentinel values (matching Genei Jin's own A=0/adv=+0 sentinel
+# exactly), not oracle-comparable quantities — same posture as
+# `corpus-yun-sa3.yaml`'s own S/A/R/adv DISPOSITION note for every
+# non-Startup field.
+#
+# R DISPOSITION — structurally unmeasurable by this harness, NOT a
+# quarantine (no oracle-contradicting value is ever produced; nothing is
+# ever asserted). elena.json's own Recovery=15 is numeric — unlike Genei
+# Jin/Q Total Destruction/Sei-ei Enbu, where the corresponding oracle
+# field is "-" and there is nothing to compare against at all. But this
+# harness's measured R for the activation-only shape is structurally
+# pinned to the "no active window" sentinel (R=0, reproduced identically
+# across all three contexts, T=51 well under FD_CAPTURE_LEN=256 — not a
+# capture-truncation artifact), which measures a categorically different
+# quantity than the oracle's own Recovery=15 (almost certainly the real
+# self-heal channel's total duration/recovery, a state the overlay's own
+# r1-routine-transition-based MOVE_START/FINAL heuristic cannot observe
+# for an install/stance-type move that reprograms a different internal
+# state field than the standard attack routine number — the same
+# reasoning `corpus-makoto-sa3.yaml`'s own Tanden Renki section applies to
+# its own total instrumentation blackout, here manifesting as a
+# real-but-empty tracked window instead of no window at all). Per this
+# batch's own instruction ("measure only what's measurable... never force
+# A/R semantics onto a non-attack"), R is NOT asserted (not `from-qjson`,
+# not an explicit literal, not xfailed) — there is no per-tick mechanism
+# trace to cite a specific classification, so this is documented here as
+# an out-of-scope structural gap rather than guessed at or force-fit into
+# any Phase-6 bucket. Flagged for follow-up: does the arcade's own R=15
+# describe the heal-channel duration, the post-heal recovery, or
+# something else entirely? Not adjudicated this session (no build
+# available to add a diagnostic probe for the install's own internal
+# state field).
+#
+# DISPOSITION: single canonical entry at outcome:WHIFF (the harness's own
+# literal classification for a zero-active-window move, matching Genei
+# Jin's own convention) — NOT outcome:NONE (Tanden Renki's own convention
+# for a TOTAL zero-FINAL/zero-MOVE_START blackout, which this move does
+# NOT have: a real, reproducible MOVE_START/FINAL pair exists here, just
+# with an empty tracked active window). No `expect` fields at all: every
+# oracle field usable via from-qjson is either non-numeric ("-") or
+# measures a categorically different quantity than what this harness's
+# activation-only shape can observe (R, see above) — only the outcome
+# shape itself (a context-independent, reproducible zero-active-window
+# activation) is asserted.
+character: elena
+oracle: elena.json
+super_art: 2
+sa_gauge: 3
+inter_entry_wait: 500
+entries:
+
+- label: elena-sa3-healing-activation
+  setup: { dist: close, dummy: stand }
+  input: "motion 2qcf HP"
+  qjson: { name: "Healing" }
+  outcome: WHIFF
+  # Measured S=51 A=0 R=0 adv=+0 (box_runs=0, box_a=0, busyr=-1,
+  # active_pf=0, T=51) — context-independently identical across
+  # dist:close/dummy:stand, dist:300 centered/dummy:stand, and
+  # dist:close/dummy:none (see CONTEXT-INDEPENDENCE above). No expect
+  # fields: elena.json's Startup/Hit/Block_advantage/Hit_advantage are all
+  # the literal string "-" (from-qjson would raise CompileError), and the
+  # only numeric oracle field (Recovery=15) is not comparable to this
+  # shape's own R=0 sentinel (see R DISPOSITION above) — the install's own
+  # heal-channel duration/effects are out of scope, documented gap, not
+  # guessed.

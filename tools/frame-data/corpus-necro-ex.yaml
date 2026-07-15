@@ -1,0 +1,250 @@
+# Necro EX moves corpus — EX/Supers program, wave 5 fan-out (Ruling 5's
+# per-character EX satellite batches, <sp>/exsuper/authoring-policy.md).
+# Satellite corpus (auto-discovered by run-suite.sh's corpus-*.yaml glob, own
+# golden/necro-ex.tsv) — the main corpus-necro.yaml is untouched.
+#
+# Oracle: docs/arcade-frame-data/necro.json (md5 6484539d4c2f834daa4a7aef70c3342b,
+# same file corpus-necro.yaml already pins — re-verified unchanged this
+# session, byte-identical row content for indices 44/48/52).
+#
+# Scope: Necro's 3 EX rows per <sp>/exsuper/step0-universe.tsv rows 69-71 (all
+# three ASSERTABLE): Spinning Punch (EX), Flying Viper (EX), Raging Cobra
+# (EX). Magnetic Storm/Slam Dance/Electric Snake (supers, step0 rows 72-74)
+# are OUT OF SCOPE for this file (EX-only per this task's own directive).
+#
+# Motion recipes (hand-expanded hold-chains, reusing corpus-necro.yaml's own
+# already-confirmed base-move motions verbatim, chording the final step with
+# two same-type buttons per the wave-1..4 EX-pilot convention — punch moves
+# get LP+HP, kick moves get LK+HK):
+#   - Spinning Punch (EX): base is `motion hcf <P>` (corpus-necro.yaml MOTION
+#     VERIFICATION section) — hand-expanded hcf shape, chord LP+HP:
+#     `hold LEFT 2; hold LEFT+DOWN 2; hold DOWN 2; hold DOWN+RIGHT 2; hold
+#     RIGHT+LP+HP 2; wait 1`
+#   - Flying Viper (EX): base is `motion qcb <P>` — hand-expanded qcb shape,
+#     chord LP+HP: `hold DOWN 2; hold DOWN+LEFT 2; hold LEFT+LP+HP 2; wait 1`
+#   - Raging Cobra (EX): base is `motion hcb <K>` — hand-expanded hcb shape,
+#     chord LK+HK: `hold RIGHT 2; hold RIGHT+DOWN 2; hold DOWN 2; hold
+#     DOWN+LEFT 2; hold LEFT+LK+HK 2; wait 1`
+# All three landed the correct EX move on the FIRST probe attempt (S-value
+# match against necro.json's own EX rows: S=8/24/25 respectively, exact,
+# each distinct from its own base-move S — Spinning Punch (Jab) S=6, Flying
+# Viper (Jab) S=26, Raging Cobra (Short) S=23 — confirming the EX dispatch,
+# not a plain-strength fallback).
+#
+# sa_gauge: 3 (MAXIMUM, per authoring-policy.md's meter policy — EX moves are
+# meter-metered, 1 stock/activation; training mode's default starting gauge
+# is not guaranteed full, the Ryu EX pilot's own load-bearing finding).
+#
+# inter_entry_wait: 250 (matching the wave-1..4 settled value). Single-FINAL
+# integrity confirmed across all 5 authoring probe sessions this run (every
+# MOVE_START/FINAL pair alternates cleanly, zero merges, checked directly
+# against each session's own trace.log).
+#
+# Admissibility census (per-entry, mechanical, from FRAME_TRACE columns —
+# authoring-policy.md Ruling 2), all 8 shipped entries below:
+#   (1) Single-FINAL integrity: confirmed, no merges, across all 5 scratch
+#       probe sessions this authoring run (direct trace inspection).
+#   (2) Flash-overlap census (sastop gate): 0 nonzero `sastop` ticks across
+#       EVERY data row of every probe trace this session (mechanical awk
+#       census, not sampled, 5 separate trace.log files) — EX moves are
+#       flash-free, confirmed not assumed.
+#   (3) Contact-A juggle check (HIT legs only): Spinning Punch (EX) N/A (BLOCK
+#       A=17 == HIT A=17, byte-identical, no divergence in A at all). Raging
+#       Cobra (EX) N/A (BLOCK A=4 == HIT A=4, byte-identical). Flying Viper
+#       (EX) PASSES (BLOCK A=10 == HIT A=10 == crouch-probe A=10, all
+#       identical) — admissible, though the shared value itself diverges from
+#       oracle (see FLYING VIPER SUM-PRESERVING A/R FINDING below).
+#   (4) Shape record (diagnostic only): all three moves are single-run on
+#       every leg (box_runs=1, proj=0, confirmed from every FINAL line this
+#       session) — none of Necro's three EX moves reproduce the Ruling-3
+#       genuinely-multi-run shape seen on Ken/Ryu's own EX Tatsumaki.
+#
+# ============================================================================
+# SPINNING PUNCH (EX) / RAGING COBRA (EX) — WHIFF-UNREACHABLE (structural,
+# same class as corpus-necro.yaml's own STANDING FIERCE finding and
+# corpus-dudley-ex.yaml's Machine Gun Blow (EX) precedent). Both moves
+# CONNECT (outcome=HIT) at every distance tried, including the hard ceilings:
+# dist=300 (anchored DIST_MAX) AND dist=310/dist_mode:centered
+# (CENTERED_DIST_MAX) — both requests measured HIT with byte-identical S/A/R
+# to the close-range HIT below, confirming this is a genuine move-reach fact
+# (both moves' own stretchy-limb/lunging travel exceeds every distance this
+# harness can express), not a harness geometry artifact. No WHIFF entry
+# shipped for either move; coverage comes from the BLOCK/HIT legs below, per
+# Ruling 1.
+#
+# ============================================================================
+# SPINNING PUNCH (EX) — HIT-R Class-1 conversion (own-trace recovery-chain
+# recount, per wave-5 guidance item 3: "HIT-only R deficit with BLOCK
+# oracle-exact ... dump the recovery chain from the rundir's own trace.log
+# the same session and convert under §13.10 ... instead of quarantining").
+# BLOCK is fully oracle-exact (S=8 A=17 R=23 adv=-9, all four fields).
+# HIT measures S=8 A=17 R=21 (a clean -2 deficit, oracle 23) — reproduced
+# IDENTICALLY at two independent distances (close-range dummy:none, raw_len=68;
+# and the far-connect dummy:none attempt at dist=300/310, raw_len=72,
+# saturation-adjacent but not truncating: T=72=FD_METER_LEN exactly yet
+# busyr=21 matches the displayed R=21 exactly, ruling out M1 instrument
+# truncation per wave-5 guidance item 1 — both legs agree on 21, not on
+# oracle's 23, so this is a genuine engine value, not a clipped one).
+# Recovery-chain recount from the close-range trace (this entry's own
+# preserved rundir, run1/trace.log): BLOCK's raw_len=70 vs HIT's raw_len=68,
+# a direct 2-tick differential exactly equal to the R deficit (23-21=2) —
+# the BLOCK-path tail plays one additional 2-tick recovery cell (P1 cgix
+# 300->306->312, three rows) that the HIT-path tail does not (P1 cgix
+# 44->48->52->56->60, converging to idle two rows sooner at the equivalent
+# offset). Textbook §13.10 Class 1 (hit-branch recovery chain, a genuinely
+# shorter parallel chain on HIT, not a defender-hitstun effect) — FULL
+# CONVERT, asserted as measured engine truth citing the convention, plain
+# PASS. Arcade (whiff-canonical, from-qjson) R=23 preserved in the entry
+# comment per the convention.
+character: necro
+oracle: necro.json
+inter_entry_wait: 250
+sa_gauge: 3
+entries:
+
+# --- Spinning Punch (EX), motion hcf + LP+HP chord --------------------------
+# Census: single-FINAL, sastop=0, box_runs=1, proj=0 (both legs).
+# WHIFF-UNREACHABLE(dist=300 anchored AND dist=310 centered, both connect) —
+# see file header. No WHIFF entry shipped.
+
+- label: necro-exspinpunch-block
+  setup: { dist: close, dummy: stand }
+  input: "hold LEFT 2; hold LEFT+DOWN 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LP+HP 2; wait 1"
+  qjson: { name: "Spinning Punch (EX)" }
+  outcome: BLOCK
+  # Measured S=8 A=17 R=23 adv=-9 — oracle-exact on all four fields
+  # (necro.json Spinning Punch (EX): Startup=8, Hit=17, Recovery=23,
+  # Block_advantage=-9).
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# §13.10 Class 1 HIT-R conversion (own-trace recovery-chain recount, see file
+# header) — FULL CONVERT, R=21 asserted as measured engine truth. Arcade
+# (whiff-canonical) R=23 preserved here per the convention. kd=1 measured
+# (adv=+70, large, consistent with a genuine knockdown); necro.json's own
+# Hit_advantage is the literal "-" for this row, so kd stays unasserted (same
+# posture as every other "-"-Hit_advantage special in corpus-necro.yaml —
+# e.g. necro-spinpunch-lp-hit's own base-move precedent).
+- label: necro-exspinpunch-hit
+  setup: { dist: close, dummy: none }
+  input: "hold LEFT 2; hold LEFT+DOWN 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LP+HP 2; wait 60"
+  qjson: { name: "Spinning Punch (EX)" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: 21 }
+
+# --- Raging Cobra (EX), motion hcb + LK+HK chord ----------------------------
+# Census: single-FINAL, sastop=0, box_runs=1, proj=0 (both legs). Fully clean
+# on every checked field, no divergence anywhere — same "genuinely clean
+# special" shape as corpus-necro.yaml's own base-move Raging Cobra section.
+# WHIFF-UNREACHABLE(dist=300 anchored AND dist=310 centered, both connect) —
+# see file header. No WHIFF entry shipped.
+
+- label: necro-exragingcobra-block
+  setup: { dist: close, dummy: stand }
+  input: "hold RIGHT 2; hold RIGHT+DOWN 2; hold DOWN 2; hold DOWN+LEFT 2; hold LEFT+LK+HK 2; wait 1"
+  qjson: { name: "Raging Cobra (EX)" }
+  outcome: BLOCK
+  # Measured S=25 A=4 R=17 adv=-3 — oracle-exact on all four fields
+  # (necro.json Raging Cobra (EX): Startup=25, Hit=4, Recovery=17,
+  # Block_advantage=-3).
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: necro-exragingcobra-hit
+  setup: { dist: close, dummy: none }
+  input: "hold RIGHT 2; hold RIGHT+DOWN 2; hold DOWN 2; hold DOWN+LEFT 2; hold LEFT+LK+HK 2; wait 60"
+  qjson: { name: "Raging Cobra (EX)" }
+  outcome: HIT
+  # Measured S=25 A=4 R=17 — oracle-exact, byte-identical to BLOCK/the
+  # unreachable-WHIFF-attempt's own numbers. kd=1 measured (adv=+55, large,
+  # consistent with a genuine knockdown); necro.json's own Hit_advantage is
+  # "-" for this row, not cross-checked (same posture as the base move's own
+  # necro-ragingcobra-lk-hit precedent, which also leaves kd unasserted here).
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# --- Flying Viper (EX), motion qcb + LP+HP chord ----------------------------
+# Census: single-FINAL, sastop=0, box_runs=1, proj=0 (all three legs). WHIFF
+# is fully clean and reachable at dist:250 (unlike the base Jab, which needed
+# dist:90 for BLOCK/HIT — see below for why EX's own connecting range differs
+# entirely from the base move's).
+#
+# CONNECTING-DISTANCE FINDING (wave-5 guidance item 2, "recognize-inheritance
+# ... test don't inherit blindly" — the base move's own dist:90 working value
+# does NOT carry over to EX). Binary-searched this session: dist:56/30/40/90/
+# 100/110/120 (dummy:stand) all WHIFF; dist:130 through dist:230 (101px of
+# range) ALL connect with the IDENTICAL measured shape (S=24 A=10 R=9 adv=+2),
+# confirmed at 130/150/180/210/230 — a stable, distance-independent
+# connecting value once past the ~125px threshold, not the Yang-Senkyuutai-
+# style "distance scales the measured field" shape (that would show DIFFERENT
+# numbers at different connecting distances; this shows the SAME numbers
+# across a 100px window). dist:130 is used below (closest-to-base-convention
+# working value, matching the binary-search discipline). dummy:none's own
+# connecting window is narrower: dist:150 WHIFFS for dummy:none (byte-identical
+# to the dist:250 WHIFF baseline) while dist:130 dummy:none connects — a real
+# guard-stance-dependent hurtbox-size difference, not investigated further
+# (out of this session's budget; recorded as a trace fact only).
+#
+# FLYING VIPER SUM-PRESERVING A/R FINDING (NEW sighting this session, §12.2.4
+# registry "sum-preserving A/R boundary shift" class — see
+# CORPUS-AUTHORING.md Phase 6's closing paragraph / the SWEEP-3 zesshou
+# precedent for the same-named bucket). BLOCK/HIT/crouch-probe all measure
+# S=24 A=10 R=9 adv=+2 vs oracle's own S=24 A=5 R=14 adv=+2 (necro.json
+# Flying Viper (EX): Startup=24, Hit=5, Recovery=14, Block_advantage=2) — S
+# and adv are BOTH exact, but A and R trade +5/-5 with each other
+# (10+9=19=5+14 exactly, T=S+A+R=43 both ways, self-consistent). This is a
+# DIFFERENT divergence shape from the base Jab's own candidate item-4 R
+# surplus (CANDIDATE, R+2 only, S/A both exact there) — tested, not
+# inherited: the EX leg does NOT reproduce the base's own R-surplus-only
+# shape at all. UNCLASSIFIED, cited to the closest-matching registered
+# §12.2.4 bucket (a new sighting of that named class, not yet ledger-traced
+# to convert — "candidates never convert" per Phase 6's own discipline).
+# Also NOTABLE: unlike the base Jab's own genuine DEFENDER-STANCE-CONDITIONAL
+# finding (corpus-necro.yaml FLYING VIPER FINDING 3, a real -4/+4 R/adv swing
+# between stand/crouch guard), the EX crouch-probe below is BYTE-IDENTICAL to
+# the stand-guard BLOCK entry (S=24 A=10 R=9 adv=+2 both) — EX does NOT
+# inherit the base's stance-conditional behavior at all, a second confirmed
+# instance of "test don't inherit blindly" this move alone.
+
+- label: necro-exflyingviper-whiff
+  setup: { dist: 250, dummy: none }
+  input: "hold DOWN 2; hold DOWN+LEFT 2; hold LEFT+LP+HP 2; wait 1"
+  qjson: { name: "Flying Viper (EX)" }
+  outcome: WHIFF
+  # Measured S=24 A=5 R=14 — oracle-exact on all three fields (necro.json
+  # Flying Viper (EX): Startup=24, Hit=5, Recovery=14). The calibration
+  # surface holds; only the contact legs below diverge.
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: necro-exflyingviper-block
+  setup: { dist: 130, dummy: stand }
+  input: "hold DOWN 2; hold DOWN+LEFT 2; hold LEFT+LP+HP 2; wait 1"
+  qjson: { name: "Flying Viper (EX)" }
+  outcome: BLOCK
+  # S/adv exact (S=24, adv=+2 matching Block_advantage=2 exactly); A/R
+  # measured as engine truth 10/9 — see file header SUM-PRESERVING finding.
+  # expect keeps the true arcade A/R (5/14) per Phase 3 discipline (this is
+  # NOT an adopted §13.10/§13.11/§13.13 convention, so the measured value is
+  # NOT substituted into expect); the mismatch is carried in xfail below.
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson, xfail: "[HONEST-FLOOR CENSUS 2026-07-14, opus-substitute / WANTS FABLE RE-REVIEW] TERMINAL CLASS = ENGINE-DIVERGENCE (sum-preserving A/R, whiff-anchored A). Arcade-true A=5/R=14: the WHIFF sibling PASSes at A=5/R=14==oracle, distance-independent past ~125px. NON-SURGICAL: the EX box stays active through the two negative-hstop freeze episodes (box_a=10 vs whiff 5), frz-strict=9 != oracle 5, no busy-edge signal reaches 5 (whiff-anchored only); R closed to 10 via lever R but still != oracle 14, A untouched. Golden stays oracle=5/14, XFAIL. Prior disposition (unchanged): NOTE UPDATED 2026-07-13 (CONTACT-2, lever R, design.md §8.3.1): golden R 9->10 — lever R's busy-edge construction (`fd_contact_busy_edge_r`, frame_data_overlay.c §13.19) measures this contact leg directly at R=10 (trace-verified: the EX move's two negative-hstop freeze episodes both terminate before the final raw-box ticks, so the R window is freeze-free — a structurally different freeze placement than the base move, whose freeze run extends past its last box frame). R is no longer the T-S-A sum-preservation complement described below; A (10, unchanged) remains untouched and still diverges from oracle 5 regardless. Row stays XFAIL (10 != oracle 14; A=10 != 5 either way). Prior history (RELOCATED not deleted, T/A arithmetic now describes the LEGACY recovery_pf diagnostic only): UNCLASSIFIED sum-preserving A/R boundary shift (flagged 2026-07-12, new sighting, cited to the closest-matching registered §12.2.4 bucket per CORPUS-AUTHORING.md Phase 6's closing paragraph and the SWEEP-3 zesshou precedent for the same-named class — NOT a confirmed mechanism, NOT ledger-traced, candidates in this bucket never convert). Measured A=10/R=9 (legacy) vs arcade A=5/R=14; T=43=S+A+R both ways (10+9=19=5+14 exactly, under the legacy tally), a genuine trade between the two fields, not an independent divergence in either. Reproduced identically across a 100px connecting-distance window (130/150/180/210/230, see file header CONNECTING-DISTANCE FINDING) — distance-independent once past the ~125px threshold, ruling out a Yang-Senkyuutai-style distance-scaled-field shape. Distinct from the base Jab's own CANDIDATE item-4 R-surplus shape (corpus-necro.yaml necro-flyingviper-lp-block, R+2 only, S/A exact there) — tested per wave-5 guidance item 2, does NOT inherit that shape." }
+
+- label: necro-exflyingviper-hit
+  setup: { dist: 130, dummy: none }
+  input: "hold DOWN 2; hold DOWN+LEFT 2; hold LEFT+LP+HP 2; wait 60"
+  qjson: { name: "Flying Viper (EX)" }
+  outcome: HIT
+  # HIT-leg A (10) equals the BLOCK-leg's displayed A (10) — juggle check
+  # passes (Ruling 2 check 3), admissible either way since the divergence is
+  # the same shared shape regardless. S exact (S=24). Same sum-preserving A/R
+  # finding as the BLOCK leg above (byte-identical shape, kd=0 measured, no
+  # knockdown). expect keeps the true arcade A/R (5/14), per Phase 3
+  # discipline (see the BLOCK leg's own comment above for why).
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, xfail: "[HONEST-FLOOR CENSUS 2026-07-14, opus-substitute / WANTS FABLE RE-REVIEW] TERMINAL CLASS = ENGINE-DIVERGENCE (sum-preserving A/R, whiff-anchored A). Juggle 10==10; arcade-true A=5/R=14 via the WHIFF sibling; whiff-anchored, no busy-edge signal reaches 5, R closed to 10 via lever R but still != oracle 14. Golden stays oracle=5/14, XFAIL. Prior disposition (unchanged): NOTE UPDATED 2026-07-13 (CONTACT-2, lever R): same golden churn as necro-exflyingviper-block (R 9->10, busy-edge measurement, trace-verified freeze-free window). A (10) untouched, still != oracle 5. Row stays XFAIL. Prior history (RELOCATED not deleted): same UNCLASSIFIED sum-preserving A/R boundary shift as necro-exflyingviper-block (see file header) — byte-identical measured shape (S=24 A=10 R=9 under the legacy tally), same §12.2.4 candidate citation, not ledger-traced, not converted." }
+
+# See file header FLYING VIPER SUM-PRESERVING A/R FINDING's second paragraph —
+# byte-identical to the stand-guard BLOCK entry above (unlike the base Jab's
+# own genuine stance-conditional R/adv swing), confirming EX does NOT inherit
+# that behavior.
+- label: necro-exflyingviper-crouch-probe
+  setup: { dist: 130, dummy: crouch }
+  input: "hold DOWN 2; hold DOWN+LEFT 2; hold LEFT+LP+HP 2; wait 1"
+  qjson: { name: "Flying Viper (EX)" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson, xfail: "[HONEST-FLOOR CENSUS 2026-07-14, opus-substitute / WANTS FABLE RE-REVIEW] TERMINAL CLASS = ENGINE-DIVERGENCE (sum-preserving A/R, whiff-anchored A). Byte-identical to the stand-BLOCK leg (NO stance-conditionality on EX, unlike the base Jab): arcade-true A=5/R=14 via the WHIFF sibling; whiff-anchored, no busy-edge signal reaches 5. Golden stays oracle=5/14, XFAIL. Prior disposition (unchanged): NOTE UPDATED 2026-07-13 (CONTACT-2, lever R): same golden churn as necro-exflyingviper-block (R 9->10, busy-edge measurement). A (10) untouched, still != oracle 5. Row stays XFAIL. Prior history (RELOCATED not deleted): same UNCLASSIFIED sum-preserving A/R boundary shift as necro-exflyingviper-block (see file header) — byte-identical measured shape (S=24 A=10 R=9 adv=+2 under the legacy tally) to the stand-guard BLOCK entry, confirming NO defender-stance-conditional behavior on this EX move (unlike the base Jab's own genuine -4/+4 stand-vs-crouch swing, corpus-necro.yaml FLYING VIPER FINDING 3) — tested per wave-5 guidance item 2, does not inherit that shape either." }

@@ -1,0 +1,148 @@
+# Sean Super Art 2 (Shoryuu Cannon) — EX/Supers program, supers wave S5.
+# Satellite corpus (auto-discovered by run-suite.sh's corpus-*.yaml glob,
+# own golden/sean-sa2.tsv once registered) — the main corpus-sean.yaml/
+# corpus-sean-ex.yaml are untouched.
+#
+# Scope: <sp>/exsuper/step0-universe.tsv row "sean 51 Shoryuu Cannon"
+# (sa_slot 2, exclusion_flag ASSERTABLE). Oracle:
+# docs/arcade-frame-data/sean.json (md5 74c5ccf033e22b8b0176fe0399ac621b,
+# unchanged, same file corpus-sean.yaml/corpus-sean-ex.yaml/
+# corpus-sean-sa1.yaml already pin). Oracle row: Startup=0, Hit=36,
+# Recovery=36, Block_advantage=-43, Hit_advantage="-" (non-numeric).
+#
+# Meter: sa_gauge:3 (MAXIMUM, per authoring-policy.md's non-install-super
+# default) + super_art:1 (0-indexed SA2).
+#
+# Motion (identity confirmed this session, first attempt tried:
+# <sp>/sa-sean/run-sa2-id/trace.log): "motion 2qcf HP" — S=0/R=36/adv=-43
+# ALL THREE oracle-exact on the first candidate, unambiguous identification
+# (a double-DP hold-chain + HP, the Ryu SA2/Akuma SA2 precedent recipe,
+# landed byte-identical numbers, confirming both recipes dispatch the same
+# move). A companion candidate, "motion 2qcf HK" (and its own double-DP
+# hold-chain + HK variant), instead landed Sean's OWN Ryuubi Kyaku (HK)
+# base special (S=25, matching corpus-sean-ex.yaml's own Ryuubi Kyaku (EX)
+# S=25 reading) which WHIFFED at dist:close — ruled out, not the SA2
+# identity.
+#
+# MASH DIMENSION — out of scope, documented, not authored (same posture
+# as corpus-ken-sa2.yaml's own Shinryuken finding). Shoryuu Cannon is a
+# mash-enhanced super per the task brief ("mash-for-extra-hits property");
+# sean.json's own row (read in full this session) carries no separate
+# numeric field for a mashed variant, and the harness has no mash/
+# rapid-re-tap directive (authoring-policy.md E-5: script directives are
+# W/L/P/G/Q only, input_script.c:26-30). This corpus authors only the
+# unmashed single-tap baseline, matching the oracle row's own single-value
+# shape.
+#
+# Admissibility census (mechanical, from FRAME_TRACE columns — authoring-
+# policy.md Ruling 2), this session's own isolated 3-entry probe run
+# (<sp>/sa-sean/run-sa2-full/trace.log, inter_entry_wait:500, WHIFF ordered
+# first per the Ken SA1/SA2 ordering-trap lesson — a HIT leg's own
+# knockdown predecessor can silently no-op a later WHIFF teleport):
+# (1) Single-FINAL integrity: exactly one FINAL inside each entry's own
+# window (WHIFF F51-141; BLOCK F564-676; HIT F1077-1267), no bleed, values
+# sane. T=90/91/91 — well under FD_CAPTURE_LEN=256, no capture-saturation
+# risk (this move needed no BUFFER-1 relief).
+# (2) Flash-overlap census: 0 nonzero-sastop ticks in [MOVE_START F,
+# FINAL F] on all three legs (0/92 WHIFF F51-141, 0/114 BLOCK F564-676,
+# 0/192 HIT F1077-1267 — awk census this session) — flash-free.
+# (3) Contact-A juggle check (HIT leg): HIT-leg A=29 == BLOCK-leg A=29 —
+# PASSES (mechanically eligible), but see A DISPOSITION below for why the
+# shared value is still not asserted (magnitude, not eligibility, is the
+# blocker).
+# (4) Shape record: box_runs=2 (WHIFF), box_runs=1 (BLOCK), box_runs=2
+# (HIT) — a genuinely multi-run rising-uppercut chart on WHIFF/HIT
+# (matching the task brief's own "MULTIHIT-shaped" prediction), single-run
+# on BLOCK only. box_a=36/busyr=36 on WHIFF (both agree with oracle
+# EXACTLY) — diagnostic only per Ruling 2 (box_runs=2 declines lever O,
+# which is gated on box_runs==1), does not license overriding the
+# legacy-displayed A=29 on this leg.
+#
+# A DISPOSITION (all three legs — a NEW finding this session, matching the
+# MULTIHIT_CITED shape named in the task brief and the akuma-sa1/ibuki/
+# twelve precedent class, though this specific row is not itself
+# pre-tagged MULTIHIT_CITED in step0-universe.tsv). Measured legacy-
+# displayed A=29 uniformly on WHIFF/BLOCK/HIT (path-independent) against
+# oracle Hit=36 — a 7-unit gap, categorically larger than every ±1
+# Phase-6 A-bucket (buckets 1/7/8, the §13.11/SA-WHIFF-A declared-credit
+# families) and closer in size/shape to corpus-akuma-sa1.yaml's own
+# Messatsu Gou Hadou A finding (proj_a=13 vs oracle 42, "HYPOTHESIS ONLY,
+# UNCONFIRMED... a different measurement basis, not an accounting bug").
+# Here the box tensor IS tracked (unlike Akuma SA1's pure-projectile
+# shape) and box_a/busyr both read 36 = oracle EXACTLY on the WHIFF leg —
+# but this is diagnostic-only (Ruling 2 E-4: box/busy agreement is
+# corroborating, not licensing, on a leg where the multi-run gate
+# (box_runs==1) declines) and the SAME 29 appears path-independently on
+# BLOCK/HIT too, where the box diagnostic is unavailable/differs (box_a=37
+# BLOCK, box_a=37 HIT — both agreeing with each other but not with the
+# legacy 29 either). Per the "wrong values never ship as if expected"
+# house rule, and because the 7-unit gap is far outside any established
+# ±1 bucket's shape: A is OMITTED (not asserted, not xfailed as a guess)
+# on all three legs, logged here as UNCLASSIFIED for follow-up — same
+# disposition class as Akuma SA1's own MULTIHIT finding. HYPOTHESIS ONLY,
+# UNCONFIRMED: a multi-hit rising uppercut plausibly credits one
+# representative active window (or the legacy declared-credit path's own
+# accounting) while the oracle's Hit=36 cites a cumulative total across
+# the whole multi-hit sequence — a different measurement basis, not an
+# accounting bug; no per-tick ledger trace taken this session to confirm.
+#
+# R: fully assertable, all three legs (R=36 exact on WHIFF/BLOCK/HIT,
+# no divergence, no M1/capture-saturation risk at T=90/91/91 well under
+# FD_CAPTURE_LEN=256) — the cleanest of Sean's three SA slots on this
+# field.
+character: sean
+oracle: sean.json
+super_art: 1
+sa_gauge: 3
+inter_entry_wait: 500
+entries:
+
+- label: sean-sa2-whiff
+  setup: { dist: 300, dummy: stand, dist_mode: centered }
+  input: "motion 2qcf HP"
+  qjson: { name: "Shoryuu Cannon" }
+  outcome: WHIFF
+  # Measured S=0 A=30 (was 29 pre-ENGINE-D2 — this leg is a same-tick D2
+  # member too, +1 delta, but 30 is still nowhere near oracle 36; OMITTED,
+  # not asserted - see A DISPOSITION above) R=36 (box_runs=2, box_a=36,
+  # busyr=36, T=90). S/R both oracle-exact. No expect.xfail: A is
+  # genuinely OMITTED (field absent from expect entirely), not xfailed -
+  # the akuma-sa1 MULTIHIT precedent's own disposition (a large categorical
+  # gap, not a +/-1 bucket candidate), documented in the header A
+  # DISPOSITION above rather than as a per-entry xfail string. box_runs=2
+  # (genuinely multi-run) declines the box_runs==1-gated lever O, so the
+  # legacy declared-credit value displays rather than box_a/busyr (both of
+  # which read 36 = oracle exactly here, diagnostic only per Ruling 2 E-4 -
+  # not licensed to override on a multi-run leg).
+  expect: { S: from-qjson, R: from-qjson }
+
+- label: sean-sa2-block
+  setup: { dist: close, dummy: stand }
+  input: "motion 2qcf HP"
+  qjson: { name: "Shoryuu Cannon" }
+  outcome: BLOCK
+  # Measured S=0 A=30 (was 29 pre-ENGINE-D2, same A DISPOSITION as WHIFF)
+  # R=36 adv=-43 (box_runs=1, box_a=37, busyr=36, T=91). S/R/adv all
+  # oracle-exact, ruling out a wrong-move/wrong-window read - only A is
+  # affected, same as the WHIFF entry above. box_runs=1 here (single-run,
+  # unlike WHIFF/HIT's box_runs=2) - box_a=37 disagrees with both the
+  # legacy 30 and the WHIFF leg's own box_a=36, an additional internal
+  # inconsistency noted but not chased further (out of this session's
+  # no-build scope).
+  expect: { S: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: sean-sa2-hit
+  setup: { dist: close, dummy: none }
+  input: "motion 2qcf HP"
+  qjson: { name: "Shoryuu Cannon" }
+  outcome: HIT
+  # Measured S=0 A=30 (was 29 pre-ENGINE-D2, same A DISPOSITION) R=36
+  # adv=+82 kd=1 (box_runs=2, box_a=37, busyr=36, T=91). S/R both
+  # oracle-exact. Contact-A juggle check (Ruling 2 check 3) PASSES (HIT
+  # A=30 == BLOCK A=30) but a passing juggle check only makes the value
+  # ELIGIBLE to compare - it does not make it correct, so A stays omitted
+  # here too, not asserted as a plain PASS. No expect.adv: sean.json's
+  # Hit_advantage for this row is the literal string "-". kd=1 is a
+  # genuine observed knockdown (kdr2=18 at the FINAL tick), explicit per
+  # Phase 3 (never from-qjson).
+  expect: { S: from-qjson, R: from-qjson, kd: 1 }

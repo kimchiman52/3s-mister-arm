@@ -10,9 +10,24 @@
 #include "sf33rd/Source/Game/system/work_sys.h"
 #include "sf33rd/Source/Game/ui/sc_sub.h"
 
-const u8 Contents_Check_Data_A3[25] = { 0, 0, 1, 1, 1, 1, 0, 1, 1, 1, 1, 0, 1, 1, 1, 1, 0, 1, 1, 1, 1, 0, 0, 1, 1 };
+const u8 Contents_Check_Data_A3[26] = { 0, 0, 1, 1, 1, 1, 0, 1, 1, 1, 1, 0, 1, 1, 1, 1, 0, 1, 1, 1, 1, 0, 0, 1, 1, 1 };
 
-s8* Letter_Data_A3[25][9] = {
+/* Phase 5 hygiene item 4 (docs/plan-frame-data-harness.md): row 6 (the
+ * training-option submenu, "S.A.GAUGE".."EXIT") lost its trailing NULL
+ * sentinel when "FRAME DATA" was added (commit 118f7350), filling all 9
+ * of the row's fixed slots with real strings. This is safe without a
+ * sentinel: nothing iterates Letter_Data_A3 rows looking for NULL to
+ * find the end. Every reader indexes by an explicit, hardcoded bound
+ * that was updated in lockstep with this row in the same commit —
+ * effect_A3_move() (below) does `Letter_Data_A3[type][ix]` with `ix`
+ * supplied by the caller, and Training_Option()'s setup loop
+ * (menu.c: `for (ix = 0, ...; ix < 9; ix++) effect_A3_init(0, 6, ix, ix,
+ * ...)`) plus its cursor bound (`Dummy_Move_Sub(task_ptr, Champion, 0,
+ * 1, 8)`, max index 8) both assume exactly 9 populated entries. No other
+ * row shares this array (each row is looked up only by its own type's
+ * dedicated, hardcoded loop bound elsewhere in menu.c), so a dense row
+ * with no free slot for a sentinel does not regress any consumer. */
+s8* Letter_Data_A3[26][9] = {
     { "RESUME",
       "DUMMY RECORDING",
       "REPLAY",
@@ -41,9 +56,9 @@ s8* Letter_Data_A3[25][9] = {
       "DIFFICULTY$............$L        $H",
       "HITBOXES$..............",
       "INPUT HISTORY$.........",
+      "FRAME DATA$............",
       "DEFAULT SETTING",
-      "EXIT",
-      NULL },
+      "EXIT" },
     { "NORMAL", "MAX START", "INFINITY", "MAXIMUM", NULL, NULL, NULL, NULL, NULL },
     { "OFF", "ON", NULL, NULL, NULL, NULL, NULL, NULL, NULL },
     { "$ *", "$ **", "$ ***", "$ ****", NULL, NULL, NULL, NULL, NULL },
@@ -76,6 +91,7 @@ s8* Letter_Data_A3[25][9] = {
     { "NORMAL", "MAX START", "INFINITY", "MAXIMUM", NULL, NULL, NULL, NULL, NULL },
     { "RECORDING", "TRAINING", NULL, NULL, NULL, NULL, NULL, NULL, NULL },
     { "REPLAY DATA", "FINISHED$!", NULL, NULL, NULL, NULL, NULL, NULL, NULL },
+    { "OFF", "ON", NULL, NULL, NULL, NULL, NULL, NULL, NULL },
     { "OFF", "ON", NULL, NULL, NULL, NULL, NULL, NULL, NULL },
     { "OFF", "ON", NULL, NULL, NULL, NULL, NULL, NULL, NULL }
 };

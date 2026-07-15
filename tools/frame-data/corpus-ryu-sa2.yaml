@@ -1,0 +1,164 @@
+# Ryu Super Art 2 (Shin Shoryuken) — EX/Supers program, supers wave S1
+# (authoring-policy.md Ruling 5). Satellite corpus (auto-discovered by
+# run-suite.sh's corpus-*.yaml glob, own golden/ryu-sa2.tsv once registered)
+# — corpus-ryu.yaml/corpus-ryu-ex.yaml/corpus-ryu-sa1.yaml are untouched.
+#
+# Scope: step0-universe.tsv row 110 (ryu SA2, "Shin Shoryuken", sa_slot 2).
+# Oracle: docs/arcade-frame-data/ryu.json (md5 cd0f6c79b0735c46e3074f02fb2f5d51,
+# same file the other three ryu corpora already pin — re-verified unchanged
+# this session). Oracle row: Startup=0, Hit=13, Recovery=35,
+# Block_advantage=-25, Hit_advantage="-" (non-numeric).
+#
+# OUT-OF-SCOPE-WITH-NOTE: ryu.json also carries a second "Shin Shoryuken
+# (Far)" row at the SAME sa_slot (step0-universe.tsv row 111: Startup=0,
+# Hit=13, Recovery=35, Block_advantage=-27) — the identical move measured at
+# a farther connecting range (not a separate input/motion). Not probed this
+# session (would need its own dist binary-search between the whiff threshold
+# below and the close/near connecting range measured here, out of this
+# session's ≤16-run budget for two supers) — documented gap, not guessed.
+#
+# Meter: sa_gauge:3 (MAXIMUM) + super_art:1 (0-indexed SA2 slot — SA1 is 0,
+# confirmed in corpus-ryu-sa1.yaml; SA2=1 here, SA3=2 in corpus-ryu-sa3.yaml).
+#
+# Motion (identified this session by S-value match against oracle's
+# distinctive Startup=0 signature — no existing Ryu corpus has an S=0 move,
+# making it an unambiguous identity check): double dragon-punch motion
+# (623623+P), landed on the FIRST candidate tried via a direction-only
+# hold-chain with the punch chorded onto the final down-forward step —
+# "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT 2; hold DOWN 2;
+# hold DOWN+RIGHT+HP 2; wait 1". Raw probe: <sp>/exsuper/sa-ryu/run-probe1/
+# trace.log (isolated single-entry candidate check, S=0 matched immediately).
+#
+# WHIFF IS REACHABLE (unlike the sibling pilot's ken-sa3/chunli-sa2, both
+# WHIFF-UNREACHABLE) — Shin Shoryuken is a short-reach, stationary DP-style
+# anti-air super with zero forward travel, matching Ruling 1's own
+# pre-registered "short-reach supers" likely-whiffable class. Confirmed at
+# dist:150 (dist_mode:centered) on the first attempt, outcome=WHIFF.
+#
+# Admissibility census (per-entry, mechanical, from FRAME_TRACE columns —
+# authoring-policy.md Ruling 2), this session's own isolated 3-entry probe
+# run (<sp>/exsuper/sa-ryu/run-probe2-sa2/trace.log, inter_entry_wait:600):
+# (1) single-FINAL integrity — exactly one FINAL in each entry's own window
+# (BLOCK: F51-178; HIT: F664-979; WHIFF: F1031-1080), no bleed between
+# entries; T well under FD_METER_LEN=72 on every leg (T=48/63/49 — no M1
+# saturation risk). (2) zero nonzero-sastop ticks in [MOVE_START row-F,
+# FINAL row-F] on all three legs (0/88 BLOCK F51-138, 0/225 HIT F664-888,
+# 0/154 WHIFF F1031-1184 — awk census this session, flash-free measurement).
+# (3) contact-A juggle check: HIT-leg engine A=14 vs BLOCK-leg engine A=12 —
+# FAILS (14≠12), so per Ruling 2 check 3 the HIT-leg A is documented-
+# unasserted (same shape as the Ken SA3/Chun-Li SA2 pilot precedent: a HIT
+# leg on a multi-hit super re-fires the juggle and inflates A). Per that
+# same pilot precedent (both Ken SA3 and Chun-Li SA2 asserted "S only" on
+# their own juggle-failing HIT legs), this entry follows suit — S only.
+# (4) shape record: proj=0 all legs; box_runs=0 (BLOCK/HIT) vs box_runs=2
+# (WHIFF) — a genuinely multi-run WHIFF window (the first this program has
+# measured; box_runs=0 on the contact legs reflects the "use_hatt=1"
+# hit-detection path, not att_box, on contact).
+#
+# A DISPOSITION — RETRACTED §13.11 CITATION, RESOLVED AS ENGINE-D2 instead
+# (2026-07-13). This entry previously cited path-independent A=12 (BLOCK
+# engine_a=12, WHIFF engine_a=12) against oracle's 13 as the §13.11
+# "declared engine credit" convention, asserted as a plain-PASS literal
+# `A: 12` on both legs (the reasoning: displayed A always reads
+# `fd_engine_active_count[atk_idx]` regardless of `use_hatt`, and
+# path-independence across legs was treated as itself the defining,
+# confirming property of §13.11). That framing is WRONG: SA-WHIFF-A/D2
+# (docs/frame-data-synthesis.md §12.2.4) is ALSO path-independent by
+# construction (it fires identically on every leg of a move, confirmed
+# directly on Ken SA1/Akuma SA2/Alex SA2/Ibuki SA2, all in this same
+# cleanup) — so path-independence alone cannot discriminate genuine
+# declared-credit truth from a race artifact; it is necessary but not
+# sufficient, and this file previously treated it as sufficient. A
+# per-tick reset-site probe this session (`FDO_D2_PROBE`,
+# `frame_data_overlay.c`'s MOVE_START reset) settles it: BOTH the BLOCK
+# and WHIFF legs fire the D2 race (BLOCK is a NEWLY-DISCOVERED probe-only
+# member — a same-tick MID-TICK cgix transit the offline trace scan is
+# structurally blind to, since the frame-trace data row only records
+# end-of-tick state; `<sp>/zero/d2/probe/ryu-sa2/trace.log:72-73` shows
+# `D2PROBE GT=99 prev_cgix=30 prev_tick=99 prev_add=1 same_tick=1` while
+# the MOVE_START row itself reads `cgix=66 cgctr=250` — cell 30, the SAME
+# cell the WHIFF leg visibly enters at its own MOVE_START, was entered and
+# left inside a single Game_timer tick). "Was a genuine §13.11 declared-
+# credit value" was itself the race artifact, plain and simple — the
+# literal `A: 12` on both BLOCK and WHIFF asserted a wrong value as if
+# expected, in violation of house law ("wrong values never ship as if
+# expected").
+#
+# ENGINE-D2 FIX LANDED (lever S, 2026-07-13): `fd_movestart_same_tick_
+# credit_hold` (`frame_data_overlay.c`) preserves the same-tick cell's
+# credit. Post-fix measured A=13 == oracle exactly on BOTH BLOCK and WHIFF
+# (BLOCK: preserve +1, post-T active-cell adds sum to 12 == pre-fix
+# engine_a exactly, cross-checked, never re-enters cell 30 ⇒ 12→13 ==
+# oracle; WHIFF: same mechanism, the visible MOVE_START-tick entry). Both
+# legs' literal `A: 12` now convert to `A: from-qjson`, plain PASS.
+#
+# HIT-leg A is a SEPARATE, unaffected finding — post-fix measured A=15
+# (was 14; this leg is also a probe-only D2 member, preserve +1, post-T
+# adds sum to 14 == pre-fix exactly, no re-entry). It still does NOT equal
+# the BLOCK leg's post-fix A (15 != 13) — contact-A juggle check (Ruling 2
+# check 3) still FAILS, still documented-unasserted (same shape as the Ken
+# SA3 HIT-vs-BLOCK juggle-failing precedent) — S only, unchanged
+# disposition. HIT-leg R (measured 40, vs BLOCK/WHIFF's oracle-exact 35,
+# unaffected by lever S) still does NOT fit any Phase-6 HIT-R bucket —
+# stays QUARANTINED (omitted), unchanged HYPOTHESIS-ONLY finding.
+character: ryu
+oracle: ryu.json
+super_art: 1
+sa_gauge: 3
+inter_entry_wait: 600
+entries:
+
+- label: ryu-sa2-block
+  setup: { dist: close, dummy: stand }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT+HP 2; wait 1"
+  qjson: { name: "Shin Shoryuken" }
+  outcome: BLOCK
+  # Measured S=0 A=13 (was 12 pre-ENGINE-D2 — see A DISPOSITION above; a
+  # probe-only mid-tick D2 member, not a genuine §13.11 declared-credit
+  # value as previously claimed) R=35 adv=-25 (engine_a=13, box_a=12,
+  # box_runs=0). S/A/R/adv all oracle-exact. ENGINE-D2 (2026-07-13): A
+  # literal converted to from-qjson, plain PASS.
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: ryu-sa2-hit
+  setup: { dist: close, dummy: none }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT+HP 2; wait 1"
+  qjson: { name: "Shin Shoryuken" }
+  outcome: HIT
+  # Measured S=0 A=15 (was 14 pre-ENGINE-D2 — this leg is also a probe-only
+  # D2 member, see A DISPOSITION above; value-only refresh, A stays
+  # unasserted) R=40 adv=+100 kd=1 (box_runs=0). S oracle-exact (only field
+  # asserted). A (15) still does NOT equal the BLOCK leg's post-fix A (13)
+  # — contact-A juggle check (Ruling 2 check 3) still FAILS,
+  # documented-unasserted (same shape as the Ken SA3 HIT A=27-vs-BLOCK-A=9
+  # pilot precedent, both of which also asserted "S only" on their own
+  # juggle-failing HIT legs). R (40, unaffected by lever S) does not match
+  # the BLOCK/WHIFF R (35, oracle-exact on both) and does not fit any
+  # Phase-6 HIT-R bucket (Class 1 requires a SHORTER hit-branch recovery,
+  # not longer) — stays QUARANTINED (omitted), unchanged HYPOTHESIS-ONLY
+  # finding: possibly genuine juggle/knockdown-continuation extension on
+  # this multi-hit super's HIT leg; T=63 rules out M1 meter-saturation
+  # (FD_METER_LEN=72).
+  expect: { S: from-qjson }
+
+- label: ryu-sa2-whiff
+  setup: { dist: 150, dummy: none, dist_mode: centered }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT+HP 2; wait 1"
+  qjson: { name: "Shin Shoryuken" }
+  outcome: WHIFF
+  # Binary search: dist=150 (centered) reached WHIFF on the first attempt —
+  # Shin Shoryuken is a stationary short-reach DP-style anti-air super
+  # (zero forward travel), matching Ruling 1's pre-registered "short-reach
+  # supers" likely-whiffable class exactly. Measured S=0 A=13 (was 12
+  # pre-ENGINE-D2 — see A DISPOSITION above; this is the visible,
+  # trace-scan-detected D2 member, the MOVE_START-tick entry itself) R=35
+  # (box_a=13, box_runs=2 — a genuinely multi-run whiff window, the first
+  # this program has measured). S/A/R all oracle-exact. §13.17's lever O
+  # (raw-box WHIFF override) does NOT apply here, since its own gate
+  # requires box_runs==1 and this window measures box_runs=2; with that
+  # gate declined, the WHIFF leg falls through to the plain declared-
+  # credit value, now matching oracle post-ENGINE-D2 exactly the same way
+  # the BLOCK leg does (not §13.11's path-independence — both legs are D2
+  # members instead, retracted citation above). ENGINE-D2 (2026-07-13): A
+  # literal converted to from-qjson, plain PASS.
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }

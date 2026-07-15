@@ -1,0 +1,247 @@
+# Hugo EX moves corpus — EX/Supers program, wave 6 (FINAL EX wave, Ruling 5's
+# per-character EX satellite batches, <sp>/exsuper/authoring-policy.md).
+# Satellite corpus (auto-discovered by run-suite.sh's corpus-*.yaml glob, own
+# golden/hugo-ex.tsv) — the main corpus-hugo.yaml is untouched.
+#
+# Oracle: docs/arcade-frame-data/hugo.json (md5 8bd525542b815dd0c228605bffc51523,
+# same file corpus-hugo.yaml already pins at line 4 — re-verified byte-identical
+# this session, `md5` against the committed file).
+#
+# Scope: Hugo's 2 EX rows per <sp>/exsuper/step0-universe.tsv rows 39-40 (both
+# ASSERTABLE): Giant Palm Bomber (EX), Monster Lariat (EX). This is Hugo's
+# COMPLETE EX-class universe (step0's Hugo block is rows 39-45: after the two
+# EX rows above, everything else - Gigas Breaker, Megaton Press x3, Hammer
+# Frenzy - is class=SUPER, out of scope for this EX-only task). No command-grab
+# EX row exists for Hugo at all (the Shootdown Backbreaker / Moonsault Press /
+# Meat Squasher families in corpus-hugo.yaml are base-strength-only command
+# grabs with no EX variant in hugo.json) - so none of this program's grab-family
+# handling applies here; both moves below are plain (non-grab) specials.
+#
+# MOTION DISCOVERY (2026-07-12, this session — corpus-hugo.yaml's own base
+# corpus does NOT contain Giant Palm Bomber or Monster Lariat at any strength,
+# so there is no in-repo base-move precedent for either family's real motion;
+# unlike every other wave-5/6 EX satellite, this was a from-scratch discovery,
+# not a "reuse the base move's own confirmed motion" job).
+#
+# Real-arcade documentation (EventHubs/SuperCombo Wiki convention) calls both
+# families CHARGE moves ("charge-back, forward + P" / "charge-back, forward +
+# K"). That documented shape was tried FIRST and FAILED decisively: `motion
+# charge-back 45 then-forward LP` (matching corpus-q.yaml's own working 45f
+# charge precedent and corpus-remy.yaml's 60f precedent) landed plain Jab
+# (S=4 A=4 R=8, exact match to hugo.json's OWN "Jab" row) instead of Giant Palm
+# Bomber (Jab) (oracle S=17 A=2 R=9); `motion charge-back 45 then-forward LK`
+# landed plain Short (S=5 A=4 R=9, exact) instead of Monster Lariat (Short)
+# (oracle S=11 A=5). Re-tried at charge-back 100 frames (2.2x the working Q/
+# Remy value) for the EX chord specifically - byte-IDENTICAL wrong result
+# (S=14 A=4 R=33, exactly hugo.json's "Towards + Fierce" row) at BOTH 45 and
+# 100 frames, proving charge duration is not the variable: the charge-back-
+# then-forward shape simply does not drive these two Hugo moves in this
+# engine's implementation, contrary to real-arcade documentation. (The
+# byte-identical wrong result at two different charge durations is itself the
+# tell: a "Towards + X" command-normal dispatch is duration-independent by
+# construction - forward+button off ANY non-forward stance - which is exactly
+# what fired both times, meaning the charge FSM was never actually reached.)
+#
+# Per this program's own established discovery method (CORPUS-AUTHORING.md
+# Phase 5 "motion-probe method": try existing macros first, S-value match
+# against the oracle is ground truth), the four remaining already-expressible
+# `motion` macros were batch-probed against hugo.json's OWN Giant Palm Bomber
+# (Jab)/Monster Lariat (Short) rows (not the EX rows yet, to keep the S-match
+# signal clean against a single, non-range Startup value each):
+#   - Giant Palm Bomber (Jab): qcf FAILS (lands plain Jab, same wrong-move
+#     signature as the failed charge attempt); qcb PASSES (S=17 A=2 R=9,
+#     exact); hcb PASSES (S=17 A=2 R=9, exact - hcb's path subsumes qcb's
+#     final quarter, consistent with this engine's documented partial-circle
+#     input leniency, corpus-hugo.yaml's own 360-grab precedent); hcf FAILS
+#     (same wrong-move signature).
+#   - Monster Lariat (Short): qcf PASSES (S=11 A=5 R=21, R=21 is the FLOOR of
+#     hugo.json's own range "21 ~ 25" for this row - same range-floor shape as
+#     Meat Squasher, see corpus-hugo.yaml's own Meat Squasher section); qcb
+#     FAILS (wrong-move signature); hcb FAILS (wrong-move signature, a THIRD
+#     distinct wrong move this time - S=7 A=2 R=36, matching none of Hugo's
+#     six-button normals directly, not investigated further since hcb is not
+#     the shipped recipe); hcf PASSES (S=11 A=5 R=21, exact - hcf's path
+#     subsumes qcf's final quarter, same leniency as GPB's qcb/hcb pair).
+# CONCLUSION: Giant Palm Bomber = qcb (quarter-circle back) + P; Monster
+# Lariat = qcf (quarter-circle forward) + K. NOT charge moves in this engine's
+# implementation, despite real-arcade documentation calling them charge - the
+# established methodology (S-value match against the oracle, not memory of
+# real-game notation) is exactly what caught this; corroborated at qcb PASSES
+# / hcb PASSES for GPB and qcf/hcf for ML (the redundant-macro cross-check the
+# `motion` probe naturally provides). `motion` requires a single button, so
+# the EX chord below is a hand-expanded hold-chain of the SAME qcb/qcf shape
+# (`_motion_steps`, compile_corpus.py:256-275), chording the final step with
+# two same-type buttons per the wave-1..6 EX-pilot convention (punch moves get
+# LP+HP, kick moves get LK+HK) - confirmed landing the correct EX move on the
+# FIRST chorded attempt (S-value match against hugo.json's own EX rows: S=22/
+# S=6 respectively, each distinct from its own base-move Jab/Short S=17/11,
+# confirming genuine EX dispatch, not a plain-strength fallback):
+#   - Giant Palm Bomber (EX), chord LP+HP: `hold DOWN 2; hold DOWN+LEFT 2;
+#     hold LEFT+LP+HP 2; wait 1`
+#   - Monster Lariat (EX), chord LK+HK: `hold DOWN 2; hold DOWN+RIGHT 2; hold
+#     RIGHT+LK+HK 2; wait 1`
+#
+# sa_gauge: 3 (MAXIMUM, per authoring-policy.md's meter policy — EX moves are
+# meter-metered, 1 stock/activation; training mode's default starting gauge is
+# not guaranteed full, the Ryu EX pilot's own load-bearing finding).
+#
+# inter_entry_wait: 250 (matching the wave-1..6 settled value). Single-FINAL
+# integrity confirmed directly against every probe trace this session (exactly
+# one FINAL per SCRIPT window, in order, zero merges — checked by grepping
+# every FINAL/SCRIPT annotation, not sampled).
+#
+# Admissibility census (per-entry, mechanical, from FRAME_TRACE columns —
+# authoring-policy.md Ruling 2), all 6 shipped entries below:
+#   (1) Single-FINAL integrity: confirmed, no merges, across all 6 scratch
+#       probe sessions this authoring run (direct trace inspection, every
+#       SCRIPT/MOVE_START/FINAL triple accounted for).
+#   (2) Flash-overlap census (sastop gate): 0 nonzero `sastop` ticks across
+#       EVERY data row of the shipping-candidate probe traces this session
+#       (mechanical awk census over the full column, not sampled) — EX moves
+#       are flash-free, confirmed not assumed.
+#   (3) Contact-A juggle check (HIT legs only): Giant Palm Bomber (EX) PASSES
+#       (BLOCK A=3 == HIT A=3, byte-identical) — admissible. Monster Lariat
+#       (EX) FAILS (BLOCK A=6 != HIT A=2) — see MONSTER LARIAT HIT-A FINDING
+#       below; A is NOT asserted from-qjson on the HIT leg for this reason.
+#   (4) Shape record (diagnostic only): Giant Palm Bomber (EX) is box_runs=2 on
+#       both BLOCK/HIT (multi-run, proj=0). Monster Lariat (EX) is box_runs=1
+#       on WHIFF/BLOCK but box_runs=0 on HIT (no att-box tensor at all on that
+#       leg — a "no att-box, legacy-path-only" shape, same signature
+#       excontact-r-findings.md §1.8 records for Makoto Hayate EX). proj=0 on
+#       every leg of both moves (no projectile shape).
+#
+# ============================================================================
+# GIANT PALM BOMBER (EX) — §12.2.2 R-surplus corollary (BLOCK+HIT, both legs
+# identical +1). WHIFF is oracle-exact on all three fields (S=22 A=3 R=10,
+# `<sp>/ex-hugo/run5/trace.log` F=37 FINAL). BLOCK and HIT both measure R=11
+# (oracle 10, a consistent +1 surplus present on BOTH contact outcomes, absent
+# on WHIFF) - the same "contact enters ONE extra recovery cell that WHIFF
+# never plays" shape already established for Dudley Jet Uppercut (EX) BLOCK
+# R+1 and Q Dashing Leg Attack (EX) BLOCK R+1
+# (`<sp>/exsuper/excontact-r-findings.md` §1.4 / `<sp>/exsuper/q-ex-report.md`
+# "Dashing Leg Attack (EX)" section) - same +1 magnitude, same "contact-branch
+# content insertion" mechanism by direct analogy. Not independently re-traced
+# per-tick cell-by-cell this session (budget); rundir preserved at
+# `<sp>/ex-hugo/run6/trace.log` (BLOCK F=56 FINAL, HIT F=207 FINAL) if a
+# stronger per-tick citation is wanted later. A is oracle-exact on all three
+# legs (S=22 A=3 everywhere) - no undercount/overcount on this field at all,
+# unlike Monster Lariat below. HIT kd=1 measured (adv=+104, large, genuine
+# knockdown); hugo.json's own Hit_advantage is the literal "-" for this row
+# (same as every other Hugo special whose Cancel.Super_art=true - a launcher-
+# class move with no fixed hit advantage), so adv stays unasserted on HIT.
+character: hugo
+oracle: hugo.json
+inter_entry_wait: 250
+sa_gauge: 3
+entries:
+
+- label: h-exgpb-whiff
+  setup: { dist: 250, dummy: none }
+  input: "hold DOWN 2; hold DOWN+LEFT 2; hold LEFT+LP+HP 2; wait 1"
+  qjson: { name: "Giant Palm Bomber (EX)" }
+  outcome: WHIFF
+  # Measured S=22 A=3 R=10 — oracle-exact on all three fields (hugo.json
+  # Giant Palm Bomber (EX): Startup=22, Hit=3, Recovery=10). The calibration
+  # surface holds; only the contact legs below diverge (R+1 only).
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: h-exgpb-block
+  setup: { dist: close, dummy: stand }
+  input: "hold DOWN 2; hold DOWN+LEFT 2; hold LEFT+LP+HP 2; wait 1"
+  qjson: { name: "Giant Palm Bomber (EX)" }
+  outcome: BLOCK
+  # §12.2.2 R-surplus corollary (see file header) — R=11 asserted as measured
+  # engine truth, by direct analogy to the converted Dudley Jet Uppercut (EX)
+  # BLOCK R+1 / Q Dashing Leg Attack (EX) BLOCK R+1 precedents (same +1
+  # magnitude). Arcade (whiff-canonical, from-qjson) R=10 — preserved in this
+  # comment per the convention. S/A/adv all oracle-exact (S=22 A=3 adv=+10).
+  expect: { S: from-qjson, A: from-qjson, R: 11, adv: from-qjson }
+
+- label: h-exgpb-hit
+  setup: { dist: close, dummy: none }
+  input: "hold DOWN 2; hold DOWN+LEFT 2; hold LEFT+LP+HP 2; wait 60"
+  qjson: { name: "Giant Palm Bomber (EX)" }
+  outcome: HIT
+  # Same §12.2.2 R-surplus corollary as h-exgpb-block above — R=11, identical
+  # magnitude/shape on both outcomes (arcade R=10 preserved in that entry's
+  # comment). A(3) == BLOCK leg's A(3) — juggle check (Ruling 2 item 3)
+  # passes, S/A both oracle-exact. kd=1 measured (adv=+104, large, genuine
+  # knockdown); hugo.json's own Hit_advantage is the literal "-" for this row
+  # (same posture as every launcher-class Hugo special — Cancel.Super_art=
+  # true on every Giant Palm Bomber strength), so adv is not asserted here.
+  expect: { S: from-qjson, A: from-qjson, R: 11, kd: 1 }
+
+# ============================================================================
+# MONSTER LARIAT (EX) — Recovery is a RANGE STRING in the oracle ("31 ~ 35",
+# hugo.json), same shape as corpus-hugo.yaml's own Meat Squasher family
+# (Startup ranges) — per that precedent and CORPUS-AUTHORING.md Phase 3
+# ("explicit literal + comment for range-string... fields"), R below is
+# always an explicit int, never from-qjson (which would raise a CompileError
+# against a non-numeric field). Measured R sits at the FLOOR (31) on WHIFF and
+# BLOCK, and at the CEILING (35) on HIT — all three values are INSIDE the
+# published range, so none of the three legs is a genuine divergence on R;
+# this is the same "distance/contact-dependent value inside the arcade range"
+# shape as Meat Squasher, not a new finding. S/A are single numeric values in
+# the oracle (Startup=6, Hit=6) and DO use from-qjson where admissible.
+#
+# MONSTER LARIAT HIT-A FINDING (NEW sighting this session). WHIFF and BLOCK
+# both measure A=6 (oracle-exact, `<sp>/ex-hugo/run5/trace.log` F=300 FINAL;
+# `<sp>/ex-hugo/run6/trace.log` F=271 FINAL) but HIT measures A=2
+# (`<sp>/ex-hugo/run6/trace.log` F=404 FINAL) — the juggle check (Ruling 2
+# item 3) FAILS (BLOCK A=6 != HIT A=2), so A is NOT asserted from-qjson on the
+# HIT leg; `expect` keeps the true arcade value (6) per Phase 3 discipline,
+# carried as an xfail rather than a rewritten expect. Per-tick trace citation
+# (raw facts, own preserved rundir, `<sp>/ex-hugo/run6/trace.log` lines
+# 208-222 (BLOCK) vs 272-279 (HIT)): both legs share an IDENTICAL same-tick
+# `P1.cgix` jump 12->216->220 immediately after their own MOVE_START (BLOCK
+# F=210, HIT F=274) — but from there BLOCK continues into `P1.cgix=140` with
+# `P1.jatix=48` (line 214), while HIT continues into `P1.cgix=164` with
+# `P1.jatix=0` (line 278), coincident with `P2.hstop=1` (genuine defender
+# hitstop, confirming real contact) firing on the SAME tick as the jatix
+# divergence. This is consistent with (but not confirmed as) the registered
+# Phase 6 bucket-1 "contact-A undercount, shape (a1)/(a2)" family (a same-tick
+# transit that skips or bypasses declared-active credit) — HYPOTHESIS ONLY,
+# not verified against a lever-F toggle build (out of this session's no-build
+# scope) and not cross-checked against the exact hitcheck.c call site, so it
+# is cited as a CANDIDATE, not converted under §13.13. UNCLASSIFIED (flagged
+# 2026-07-12, needs follow-up classification — a lever-F toggle test on a
+# scratch build, or a hitcheck.c call-site trace, would settle shape (a1) vs
+# (a2) vs a genuinely new bypass shape). Flagged to the orchestrator/user for
+# follow-up per CORPUS-AUTHORING.md Phase 6's own discipline for a
+# no-bucket-confirmed divergence. kd=1 measured on HIT (adv=+69, large,
+# genuine knockdown); hugo.json's own Hit_advantage is the literal "-" for
+# this row (same posture as Giant Palm Bomber above), so adv is not asserted.
+
+- label: h-exml-whiff
+  setup: { dist: 250, dummy: none }
+  input: "hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LK+HK 2; wait 1"
+  qjson: { name: "Monster Lariat (EX)" }
+  outcome: WHIFF
+  # Measured S=6 A=6 R=31 — S/A oracle-exact; R=31 is the FLOOR of hugo.json's
+  # own range "31 ~ 35" for this row (explicit literal, see file header).
+  expect: { S: from-qjson, A: from-qjson, R: 31 }
+
+- label: h-exml-block
+  setup: { dist: close, dummy: stand }
+  input: "hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LK+HK 2; wait 1"
+  qjson: { name: "Monster Lariat (EX)" }
+  outcome: BLOCK
+  # Measured S=6 A=6 R=31 adv=-22 — S/A/adv oracle-exact; R=31 is the FLOOR of
+  # the range (byte-identical to the WHIFF leg above, i.e. no contact-side R
+  # effect on this move at all — unlike Giant Palm Bomber's own +1 surplus).
+  expect: { S: from-qjson, A: from-qjson, R: 31, adv: from-qjson }
+
+- label: h-exml-hit
+  setup: { dist: close, dummy: none }
+  input: "hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LK+HK 2; wait 60"
+  qjson: { name: "Monster Lariat (EX)" }
+  outcome: HIT
+  # See file header MONSTER LARIAT HIT-A FINDING. S oracle-exact (S=6). A
+  # measured 2 vs the true arcade value 6 (juggle check fails against the
+  # BLOCK leg's own A=6) — expect keeps the true arcade A per Phase 3
+  # discipline; the divergence is carried in xfail, not substituted into
+  # expect. R=35 is the CEILING of hugo.json's own range "31 ~ 35" (explicit
+  # literal, inside the published range, not itself a divergence). kd=1
+  # measured (adv=+69, large, genuine knockdown; hugo.json's own
+  # Hit_advantage is "-" for this row, not asserted).
+  expect: { S: from-qjson, A: from-qjson, R: 35, kd: 1, xfail: "[HONEST-FLOOR CENSUS 2026-07-14, opus-substitute / WANTS FABLE RE-REVIEW] TERMINAL CLASS = OVERLAY-DISPLAY-DIVERGENCE (contact-A undercount, sibling-anchored). Arcade-true = 6: both the BLOCK and WHIFF siblings PASS at A=6 == oracle. NON-SURGICAL: HIT-only truncation - the defender hitstop reroutes attacker cgix to 164 (jatix=0) and the box vanishes (box_a=0); no local contact-tape signal reaches the sibling's 6, same 113-regression non-re-anchorable class (contactA/design). Golden stays oracle=6, XFAIL. Prior disposition (unchanged): UNCLASSIFIED contact-A undercount (flagged 2026-07-12, new sighting, needs follow-up classification). Measured A=2 vs true arcade A=6 (juggle check fails: BLOCK leg's own A=6 != this HIT leg's A=2, Ruling 2 item 3). Per-tick trace citation (own preserved rundir, <sp>/ex-hugo/run6/trace.log lines 208-222 BLOCK vs 272-279 HIT): both legs share an identical same-tick P1.cgix jump 12->216->220 right after their own MOVE_START, then diverge — BLOCK continues to cgix=140 with jatix=48 (line 214), HIT continues to cgix=164 with jatix=0 (line 278), coincident with P2.hstop=1 (genuine defender hitstop) on the same tick as the jatix divergence. Consistent with (but NOT confirmed as) the registered Phase 6 bucket-1 contact-A-undercount shape (a1)/(a2) family — HYPOTHESIS ONLY, not verified against a lever-F toggle build (no-build session scope) or a hitcheck.c call-site trace. Cited as a CANDIDATE only, not converted under §13.13. Flagged to the orchestrator/user for follow-up classification." }

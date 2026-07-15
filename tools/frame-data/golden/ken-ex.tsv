@@ -1,0 +1,8 @@
+label	verdict	outcome	n	S	A	R	adv	kd
+ken-exhad-block	PASS	BLOCK	1	11	5	38	-6	0
+ken-exhad-hit	PASS	HIT	1	11	5	38	+85	1
+ken-exsrk-block	PASS	BLOCK	1	1	20	38	-36	0
+ken-exsrk-hit	PASS	HIT	1	1	20	38	+57	1
+ken-exsrk-whiff	PASS	WHIFF	1	1	20	38	+0	0
+ken-extatsu-block	PASS	BLOCK	1	4	21	13	-3	0
+ken-extatsu-hit	PASS	HIT	1	4	21	13	-1	0

@@ -1,0 +1,774 @@
+# Yang frame-data corpus (cast rollout, user-directed 2026-07-08).
+# Generated/consumed by tools/frame-data/compile_corpus.py against
+# docs/arcade-frame-data/yang.json (fetched 2026-07-08 from
+# https://raw.githubusercontent.com/Coccis77/thirdstrikedatabot/master/json/yang.json,
+# md5 4701f59a68fb49caa9ebaaefaeb40674). CHARACTER_IDS key is "yang"
+# (compile_corpus.py:47, id=10).
+#
+# SCOPE (user-directed 2026-07-08, cast rollout): normals ladder (six-button
+# close BLOCK/HIT + WHIFF sample + three far-normal BLOCK rows + all six
+# crouching BLOCK + HIT for the two "D"-marked rows + the one Towards+X
+# command normal BLOCK+WHIFF) + UOH (WHIFF/BLOCK/HIT) + Throw (WHIFF/HIT) +
+# negative control + ground specials probe (ONE session budget): Tourou Zan
+# (yang.json's "Tourou Zan (Jab/Strong/Fierce/EX)", rekka, qcf+P, Jab
+# strength only - PLUS a rekka-chain probe testing whether
+# repeated/alternating punch presses after the first rekka land a 2nd/3rd
+# hit), Senkyuutai (yang.json's "Senkyuutai (Short/Forward/RH/EX)", qcf+K,
+# Short strength only), Byakko Soushouda (single-row palm special, qcb+P),
+# Zenpou Tenshin (command roll-grab, motion hcb+K - Yun precedent, `motion
+# hcb <K>` macro, already implemented for Chun-Li's Hazan Shu, zero new
+# code). ALL FOUR specials landed on the FIRST motion-probe attempt (S
+# values match yang.json's own Startup fields exactly: 8/8/21/7
+# respectively) - zero compile_corpus.py changes. EXCLUDED per task: Dive
+# Kicks (airborne - the harness dummy/attacker cannot be scripted to jump)
+# and all supers/EX (Sei-ei Enbu is Yang's SA; Tourou Zan (EX)/Senkyuutai
+# (EX) also excluded). Kaihou (Short/Forward/RH), Raishin Mahhaken, and
+# Tenshin Senkyuutai are not in this rollout's specials list - not probed,
+# documented as an open gap (same posture as prior characters' out-of-scope
+# specials).
+#
+# REKKA-CHAIN FINDING (Tourou Zan): probed BOTH a same-button repeated-press
+# chain (`motion qcf LP; press LP; press LP`) and an alternating-punch chain
+# (`motion qcf LP; press MP; press HP`) against a BLOCKING dummy - both
+# produce numbers BYTE-IDENTICAL to the single-rekka BLOCK entry
+# (S=8/A=5/R=22/adv=-1, one FINAL only in the window either way). Per the
+# task's own fallback instruction ("if only the first rekka lands cleanly,
+# author that and document"): only the FIRST hit of Tourou Zan lands within
+# either probed chain shape: no second/third rekka hit was observed. Only
+# the single-hit Jab-strength entries are authored below; the chain probes
+# themselves are not committed as corpus entries (they duplicate the
+# single-hit numbers exactly and add no new signal).
+#
+
+# FAR-NORMAL COVERAGE: yang.json has "Far Strong"/"Far Fierce"/"Far Forward"
+# rows but NO "Far Jab"/"Far Short"/"Far Roundhouse" - verified by reading
+# every Name string in the fetched oracle. This is a THIRD far-normal-gap
+# shape in this repo (distinct from Oro's missing-Fierce/Roundhouse-only and
+# Yun's missing-Short/Roundhouse-only): Yang additionally lacks Far Jab,
+# which every other far-normal-bearing oracle in this repo (ryu/ken/akuma/
+# chunli/oro/q/yun) carries. Jab/Short/Roundhouse WHIFF-at-250 below cite
+# their own single row, same convention as Oro's Fierce/Roundhouse.
+#
+# THROW NAMING: yang.json carries THREE throw-family rows - "Neutral Throw"
+# (idx 26), "Back Throw" (idx 27), "Towards Throw" (idx 28) - the same
+# three-way split as ken.json, all numerically identical
+# (S=2/Hit=1/Recovery=21/Block_advantage=0/Hit_advantage="D"/Throw_range=18).
+# "Neutral Throw" used below (plain `press LP+LK`, no direction), same
+# convention as corpus-ken.yaml's ken-throw-hit.
+#
+# D-NOTATION: yang.json marks THREE rows Hit_advantage="D" - standing
+# Forward (idx 14), Crouching Roundhouse (idx 19), and the throw family (all
+# three throw rows). kd is explicit-only (never from-qjson, Phase 3
+# discipline) - each measured live independently below.
+#
+# yang.json's Startup/Hit/Recovery/*_advantage fields are JSON strings; only
+# genuinely non-numeric fields ("-", "D") need an explicit literal.
+#
+# Every expect below is pinned against a live trace
+# (tools/frame-data/run.sh tools/frame-data/corpus-yang.yaml).
+character: yang
+oracle: yang.json
+inter_entry_wait: 150
+entries:
+
+# --- Standing normals, BLOCK (dummy: stand) ---------------------------------
+
+# Issue #17 shape (a1): lever-F-tested (fd_restore_revoked_declared_credit
+# forced 0 on a scratch build, src/sf33rd/Source/Game/engine/charset.c:507,
+# reverted via `git checkout` before this comment was written, same-binary
+# protocol) and confirmed UNCHANGED (A=1 both ways) - no revoke fires, ruling
+# out a lever-F regression, credit unrecoverable per synthesis §13.11 "what
+# stays unrecoverable"; measured A=1 vs arcade 2; S/R/adv exact.
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=1 is the
+# engine-truth credit actually accrued on the BLOCK path - issue #17 shape (a1):
+# lever-F-tested (fd_restore_revoked_declared_credit forced 0 on a scratch
+# build, reverted before commit) and confirmed UNCHANGED - no revoke fires.
+# Arcade (whiff-canonical, from-qjson) A=2 - preserved here per the
+# convention. S/R/adv remain arcade-exact (from-qjson).
+- label: yang-jab-block
+  setup: { dist: close, dummy: stand }
+  input: "press LP"
+  qjson: { name: "Jab" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: 1, R: from-qjson, adv: from-qjson }
+
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=1 is the
+# engine-truth credit actually accrued on the BLOCK path - same shape (a1)
+# family as yang-jab-block, lever-F-tested UNCHANGED (same scratch build/
+# batch). Arcade (whiff-canonical, from-qjson) A=3 - preserved here per the
+# convention. S/R/adv remain arcade-exact (from-qjson).
+- label: yang-strong-block
+  setup: { dist: close, dummy: stand }
+  input: "press MP"
+  qjson: { name: "Strong" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: 1, R: from-qjson, adv: from-qjson }
+
+- label: yang-farstrong-block
+  setup: { dist: 100, dummy: stand }
+  input: "press MP"
+  qjson: { name: "Far Strong" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# ISSUE #17 CENSUS shape (b) member: A=6 matches yang.json exactly (plain
+# PASS) but lever-F-off (same scratch build/batch) drops it to A=5 - the
+# restore is ACTIVELY doing work here, per the §13.11 convention this is a
+# plain PASS in the real binary, no xfail (Oro Crouching Forward /
+# Crouching Fierce precedent for a shape-(b) member landing as a clean
+# pass).
+- label: yang-fierce-block
+  setup: { dist: close, dummy: stand }
+  input: "press HP"
+  qjson: { name: "Fierce" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# Same shape (a1) family - lever-F-tested UNCHANGED (A=1 both ways).
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=1 is the
+# engine-truth credit actually accrued on the BLOCK path - issue #17 shape (a1):
+# lever-F-tested (same scratch build/batch as yang-jab-block) and confirmed
+# UNCHANGED. Arcade (whiff-canonical, from-qjson) A=6 - preserved here per the
+# convention. S/R/adv remain arcade-exact (from-qjson).
+- label: yang-farfierce-block
+  setup: { dist: 100, dummy: stand }
+  input: "press HP"
+  qjson: { name: "Far Fierce" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: 1, R: from-qjson, adv: from-qjson }
+
+- label: yang-short-block
+  setup: { dist: close, dummy: stand }
+  input: "press LK"
+  qjson: { name: "Short" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# NEW FINDING (flagged 2026-07-08, UNCLASSIFIED, no Phase-6 bucket covers an
+# S-side divergence - every existing bucket in this repo's runbook is A- or
+# R-shaped). Isolated single-entry re-verification (Phase 5 discipline,
+# inter_entry_wait=300, nothing else in the corpus) reproduces the SAME
+# facts, ruling out label-bleed: measured S=5 vs arcade S=7 on BOTH BLOCK
+# and HIT (yang-forward-hit below), A/R/adv all exact (A=5, R=15, adv=-2).
+# Trace facts (identical on both outcomes): first_active_raw=5 (what S is
+# read from) vs event_raw=7 (the raw tick the contact/block event actually
+# registers on, which matches the oracle's declared S=7 exactly) - i.e. the
+# engine's own first declared-active raw tick is 2 ticks earlier than the
+# tick where contact can register. No WHIFF baseline exists to further
+# triangulate (dist=250 auto-selects the FAR Forward animation instead, per
+# this file's own farforward-block/-whiff entries, which have their own,
+# clean, unrelated S=9 - not the same move). HYPOTHESES ONLY (none
+# confirmed): (1) a real "meaty" mechanic where 2 declared-active raw ticks
+# genuinely cannot connect against a stationary target before the effective
+# hitbox arrives; (2) an engine S-measurement artifact reading
+# first-active-raw instead of first-contact-capable-raw. Neither verified;
+# flagged to orchestrator/user for follow-up classification.
+- label: yang-forward-block
+  setup: { dist: close, dummy: stand }
+  input: "press MK"
+  qjson: { name: "Forward" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson, xfail: "RULING 2026-07-14 (YANG-RULING, opus-substitute / WANTS FABLE RE-REVIEW; user ruling 2026-07-14): this is a STARTUP dispute, not an open mechanism question - S measures 5 vs oracle 7 (A/R/adv all agree, A=5/R=15/adv=-2). Both values are physically real on hardware (CAPTURE-1, below): the attack box appears at tick 6 (0-indexed first_active_raw=5) but the box cannot connect until tick 8 (event_raw=7). The actionability criterion - the tape's frz-onset signal (hitstop-onset timing), cross-validated against the same-anchor close-LP freeze-latency control (docs/arcade-frame-data/CAPTURE.md's own close-LP tape) and the source discriminator (h_att_set fires on cell load, charset.c:2989-2997, unconditional on atix!=0, TWO TICKS BEFORE att_hit_ok arms, charset.c:2938 via set_new_attnum()) - picks S=7 (oracle, the arm/contact tick) as the ACTIONABLE value: the box exists but cannot do anything until att_hit_ok arms, so tick 7 is the first frame genuinely usable as 'Startup 1' by arcade convention. S=5 (this engine's own first_active_raw cell-load reading) is REAL but INERT - a box that physically exists 2 ticks before it can act. The ENGINE-6 census (RE-CITED below) already proved there is no code discriminator that generalizes this pick (remy-crfierce/twelve-backforward key Startup on the cell-load tick instead, byte-identical engine shape, no falsifiable rule) - so this is a genuine convention choice between two hardware-real quantities, not a bug with an undiscovered fix. Per the user's 2026-07-14 ruling: asserts the oracle S=7 (actionable value), NO code override/lever ships, stays XFAIL. Golden unchanged (already asserted from-qjson=7 pre-ruling). Prior audit trail (RELOCATED not deleted): NEW FINDING, UNCLASSIFIED (flagged 2026-07-08, needs follow-up classification): S-side divergence, no Phase-6 bucket covers this (all five are A/R-shaped). Isolated single-entry re-verified (inter_entry_wait=300), ruling out label-bleed. Measured S=5 vs arcade 7; A/R/adv exact (A=5, R=15, adv=-2). Trace: first_active_raw=5 (S's source) vs event_raw=7 (contact tick, matching oracle S exactly), identical on yang-forward-hit. No WHIFF baseline exists (dist=250 auto-selects the separate Far Forward animation, which is clean and unrelated). HYPOTHESES ONLY, none confirmed: (1) a genuine 'meaty' 2-tick non-connecting active window; (2) an S-measurement artifact (first-active-raw vs first-contact-capable-raw). Flagged to orchestrator for follow-up classification REGISTERED 2026-07-09 (classification sweep): this is the repo's first S-divergence class, now registered in docs/frame-data-synthesis.md §12.2.4 (S-divergence: first_active_raw < event_raw) - registry entry only, mechanism still UNCLASSIFIED. RE-CITED 2026-07-10 (classification sweep #2 fable-grade audit): CONFIRMED as ENGINE-6 candidate ('general-classifier S anchor ignores att_hit_ok') by trace+source - h_att_set fires on cell load (charset.c:2989-2997, unconditional on atix!=0) two ticks before att_hit_ok arms (charset.c:2938 via set_new_attnum()); the engine's real collision loop gates on BOTH (hitcheck.c:1618-1621) and never box-tests at F=5-6; ENGINE-4/lever-J already fixed the identical pair on the projectile path (s6-findings, H2 proven). Fix shape: lever-J-style max(first_active, athok_armed) anchor for the non-projectile path. Own future /plan+/implement cycle; stays xfail. RE-CITED 2026-07-10 (ENGINE-6 census): S divergence CONFIRMED as arcade keying Startup on the arm tick for THIS move (arm=7 matches arcade exactly), but the general max(first_active, athok_armed) fix is FALSIFIED as a universal rule (1,039-window census; two other currently-PASS arcade-exact families, remy-crfierce and twelve-backforward, key Startup on the cell-load tick instead for a byte-identical engine shape - no discriminator; see docs/frame-data-synthesis.md §12.2.4 ENGINE-6 CENSUS-FALSIFIED row); stays xfail, no lever. RE-CITED 2026-07-11 (CAPTURE-1, hardware confirmation, docs/arcade-frame-data/CAPTURE.md): live arcade capture on close MK (with a same-anchor close-LP freeze-latency control validating hitstop-onset sampling) measured the attack box physically appearing at move tick 6 (matching this engine's own first_active_raw=5 cell-load reading, 0-indexed) but NOT connecting until tick 8 (matching arcade's own published S=7 / this engine's event_raw=7 arm-tick reading) - the dummy sat adjacent the whole time, so the box existed for 2 real ticks (6,7) before it could connect. BOTH numbers are physically real on hardware: this is direct hardware confirmation of the ENGINE-6 census conclusion (arcade keys Startup on the arm/contact tick, not the cell-load tick, for this specific move) - not a new finding, a proof of the existing one. Stays xfail at measured S=5; no lever (ENGINE-6 census-falsified as a universal rule stands unchanged)." }
+
+- label: yang-farforward-block
+  setup: { dist: 100, dummy: stand }
+  input: "press MK"
+  qjson: { name: "Far Forward" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: yang-roundhouse-block
+  setup: { dist: close, dummy: stand }
+  input: "press HK"
+  qjson: { name: "Roundhouse" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# --- HIT sample per button family (dummy: none, close range) ---------------
+
+# Same shape (a1) family as yang-jab-block (identical mechanism, A=1 on
+# both BLOCK and HIT, lever-F-tested unchanged).
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=1 is the
+# engine-truth credit actually accrued on the HIT path - same issue #17 shape
+# (a1) as yang-jab-block. Arcade (whiff-canonical, from-qjson) A=2 -
+# preserved here per the convention. S/R/adv remain arcade-exact (from-qjson).
+- label: yang-jab-hit
+  setup: { dist: close, dummy: none }
+  input: "press LP"
+  qjson: { name: "Jab" }
+  outcome: HIT
+  expect: { S: from-qjson, A: 1, R: from-qjson, adv: from-qjson }
+
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=1 is the
+# engine-truth credit actually accrued on the HIT path - same issue #17 shape
+# (a1) as yang-strong-block. Arcade (whiff-canonical, from-qjson) A=3 -
+# preserved here per the convention. S/R/adv remain arcade-exact (from-qjson).
+- label: yang-strong-hit
+  setup: { dist: close, dummy: none }
+  input: "press MP"
+  qjson: { name: "Strong" }
+  outcome: HIT
+  expect: { S: from-qjson, A: 1, R: from-qjson, adv: from-qjson }
+
+# Shape (b) census member (see yang-fierce-block) - plain PASS, no xfail.
+- label: yang-fierce-hit
+  setup: { dist: close, dummy: none }
+  input: "press HP"
+  qjson: { name: "Fierce" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: yang-short-hit
+  setup: { dist: close, dummy: none }
+  input: "press LK"
+  qjson: { name: "Short" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# D-NOTATION-VS-LIVE-KD FINDING — RESOLVED 2026-07-09 (§13.6.2b,
+# ENGINE-3): Forward's Hit_advantage is the literal string "D" in
+# yang.json, and kd now measures 1 live, matching arcade - the shipped
+# predicate was simply blind to this move's r2=18 down-family traversal,
+# not facing a genuine oracle/engine divergence (same dissolved finding
+# as corpus-yun.yaml's standing Forward / corpus-oro.yaml's standing
+# Strong). kd is explicit-only (never from-qjson, Phase 3 discipline),
+# asserted at the measured (now arcade-true) value. Also carries the
+# same NEW S-side UNCLASSIFIED finding as yang-forward-block above
+# (identical trace facts: first_active_raw=5, event_raw=7, S=5 vs arcade
+# 7) - see that entry's xfail string / file header for the full
+# discussion.
+- label: yang-forward-hit
+  setup: { dist: close, dummy: none }
+  input: "press MK"
+  qjson: { name: "Forward" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, kd: 1, xfail: "RULING 2026-07-14 (YANG-RULING, opus-substitute / WANTS FABLE RE-REVIEW; user ruling 2026-07-14): same STARTUP dispute as yang-forward-block, not an open mechanism question - S measures 5 vs oracle 7 (A/R agree, A=5/R=15). The actionability criterion (the tape's frz-onset signal, cross-validated vs the close-LP control + charset.c:2938/2989 - see yang-forward-block's comment for the full mechanism) picks S=7 (oracle, the arm/contact tick) as the ACTIONABLE value; S=5 is real-but-inert (the box exists 2 ticks before it can act). ENGINE-6 census proved no code discriminator generalizes this pick. Per the user's 2026-07-14 ruling: asserts oracle S=7, NO override ships, stays XFAIL. Golden unchanged (already asserted from-qjson=7 pre-ruling). Prior audit trail (RELOCATED not deleted): same NEW S-side UNCLASSIFIED finding as yang-forward-block (flagged 2026-07-08): measured S=5 vs arcade 7 (first_active_raw=5 vs event_raw=7 in the trace); A/R exact (A=5, R=15). REGISTERED 2026-07-09 in synthesis §12.2.4 (S-divergence class, see yang-forward-block); mechanism still UNCLASSIFIED. kd RE-ASSERTED 0->1 2026-07-09 (§13.6.2b, ENGINE-3, see file header) - now measures 1, matching yang.json's Hit_advantage='D'; unrelated to and unaffected by this S-side clause. RE-CITED 2026-07-10 (classification sweep #2): same ENGINE-6 candidate confirmation as yang-forward-block (S=5 vs 7); own future /plan+/implement cycle; stays xfail. RE-CITED 2026-07-10 (ENGINE-6 census): same falsification as yang-forward-block - S divergence CONFIRMED as arcade keying Startup on the arm tick for THIS move, but the general max(first_active, athok_armed) fix is FALSIFIED as a universal rule (1,039-window census; remy-crfierce/twelve-backforward counterexamples key Startup on the cell-load tick instead - no discriminator; see docs/frame-data-synthesis.md §12.2.4 ENGINE-6 CENSUS-FALSIFIED row); stays xfail, no lever. RE-CITED 2026-07-11 (CAPTURE-1): same hardware confirmation as yang-forward-block (docs/arcade-frame-data/CAPTURE.md) - box appears tick 6, first connects tick 8, both real; direct hardware proof of the ENGINE-6 census conclusion. Stays xfail." }
+
+- label: yang-roundhouse-hit
+  setup: { dist: close, dummy: none }
+  input: "press HK"
+  qjson: { name: "Roundhouse" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# --- WHIFF sample per button family (dummy: none, dist 250) -----------------
+# Jab/Short/Roundhouse have no distinct Far row (see file header) - their
+# WHIFF cites their own single row, same convention as Oro's Fierce/RH.
+
+- label: yang-lp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press LP"
+  qjson: { name: "Jab" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: yang-mp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press MP"
+  qjson: { name: "Far Strong" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: yang-hp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press HP"
+  qjson: { name: "Far Fierce" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: yang-lk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press LK"
+  qjson: { name: "Short" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: yang-mk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press MK"
+  qjson: { name: "Far Forward" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: yang-hk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press HK"
+  qjson: { name: "Roundhouse" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# --- Crouching normals, BLOCK (dummy: stand) --------------------------------
+
+# Same shape (a1) family (see yang-jab-block) - lever-F-tested UNCHANGED
+# (A=1 both ways).
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=1 is the
+# engine-truth credit actually accrued on the BLOCK path - issue #17 shape (a1):
+# lever-F-tested (same scratch build/batch as yang-jab-block) and confirmed
+# UNCHANGED. Arcade (whiff-canonical, from-qjson) A=2 - preserved here per the
+# convention. S/R/adv remain arcade-exact (from-qjson).
+- label: yang-crjab-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+LP"
+  qjson: { name: "Crouching Jab" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: 1, R: from-qjson, adv: from-qjson }
+
+- label: yang-crstrong-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+MP"
+  qjson: { name: "Crouching Strong" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# ISSUE #17 CENSUS shape (b) member (A=10 exact, plain PASS; lever-F-off
+# drops it to A=9) - see yang-fierce-block for the convention.
+- label: yang-crfierce-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+HP"
+  qjson: { name: "Crouching Fierce" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: yang-crshort-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+LK"
+  qjson: { name: "Crouching Short" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# ISSUE #17 CENSUS shape (b) member (A=2 exact, plain PASS; lever-F-off
+# drops it to A=1) - the SAME move name as corpus-oro.yaml's own
+# oro-crforward-block shape-(b) precedent.
+- label: yang-crforward-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+MK"
+  qjson: { name: "Crouching Forward" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: yang-crroundhouse-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+HK"
+  qjson: { name: "Crouching Roundhouse" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# Crouching Roundhouse is Hit_advantage="D" in yang.json - kd measured live.
+- label: yang-crroundhouse-hit
+  setup: { dist: close, dummy: none }
+  input: "press DOWN+HK"
+  qjson: { name: "Crouching Roundhouse" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, kd: 1 }
+
+# --- Command normal (Towards + Forward, the ONLY Towards+X row) ------------
+# Not "D"-annotated (Hit_advantage numeric, 0) - BLOCK+WHIFF only, per the
+# Dudley/Makoto/Urien/Akuma/Oro precedent (no separate HIT entry for a
+# non-D row).
+
+# RESOLVED 2026-07-09 (§13.5.1b guard-rearm commit gate, lever H). Was:
+# residual item 18(b) whiff-R truncation (§13.5.1a split), measured R=3 vs
+# arcade 8, IDENTICAL on BOTH BLOCK and WHIFF - trace-confirmed a lever-H
+# false cut (guard_flag stayed 3 for the whole post-anchor tail on both
+# outcomes, never re-arming before the natural r1 edge, cut=1,
+# anchor_a=6=engine_a=6). The gate now correctly refuses this commit; both
+# outcomes finalize at the natural r1 edge and measure R=8, arcade-exact
+# (S=19, A=6 unchanged). adv on BLOCK now measures -1, also arcade-exact
+# (was previously asserted via from-qjson and drifting; now silently
+# passes). See docs/frame-data-synthesis.md §13.5.1b.
+- label: yang-twdsmk-block
+  setup: { dist: close, dummy: stand }
+  input: "press RIGHT+MK"
+  qjson: { name: "Towards + Forward" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: yang-twdsmk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press RIGHT+MK"
+  qjson: { name: "Towards + Forward" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# --- UOH (press MP+MK) ------------------------------------------------------
+# yang.json's Block_advantage/Hit_advantage for UOH are both "-" - no
+# expect.adv. S=15/A=10/R=5 - the same numbers as q/dudley/chunli/akuma/
+# oro.json's own UOH row.
+#
+# R, all three outcomes: NEW SUB-FINDING item 18(c) (docs/frame-data-
+# synthesis.md item 18(c), corpus-yun.yaml's yun-uoh-whiff/-block/-hit
+# precedent for this exact shape): measured R OVERSHOOTS arcade's uniform 5
+# on every outcome (WHIFF R=9, BLOCK R=14, HIT R=12), with cut=0 on WHIFF
+# (no §13.5.1 cut fires - the grounded fresh-edge gate correctly refuses to
+# anchor, same as Yun's UOH post-§13.5.1a) - opposite sign from residual
+# item 18(b), do NOT fold into that bucket.
+#
+# A, BLOCK/HIT only (WHIFF's A=10 is exact - no #17 finding on the clean
+# whiff): the established a1+partial-(b) COMPOUND bucket - the same shape
+# Makoto's crstrong/crshort carry (corpus-makoto.yaml, orchestrator-ruled
+# "BENIGN NOVEL COMPOUND" 2026-07-08: the restore re-adds exactly the
+# revoked amount, the residual gap is pure a1 skip loss which lever F never
+# claimed to recover). Re-cited to that precedent per review 2026-07-08
+# (was first drafted as a novel third shape). Lever-F-tested (same scratch
+# build/batch):
+# real binary measures A=8 (still short of arcade's 10); lever-F-OFF drops
+# it further to A=6. This means the restore IS actively contributing (+2,
+# ruling out a clean shape (a1) skip-jump, which would read UNCHANGED with
+# the lever off) but does NOT fully recover the declared credit the way a
+# clean shape (b) member does (which reads the FULL arcade value with the
+# lever on, a plain PASS) - the Makoto-compound partial-restore signature.
+# Residual A gap (8 vs 10) remains a documented divergence; trace
+# observation only, no further mechanism claimed beyond the lever-F delta.
+# SECTION ACCOUNTING: 3/3 xfail on R (100%, all three outcomes), 2/3 xfail
+# additionally on A (BLOCK/HIT) - >50% of this section xfails.
+# Orchestrator sign-off 2026-07-08: GRANTED (A-side = established Makoto
+# compound bucket; R-side = UNCLASSIFIED overshoot honestly hedged, kin to
+# the Senkyuutai cut=1-overshoot finding). User review pending (overnight
+# autonomous run).
+
+# UPDATE (2026-07-10, CONV-2): the A-side compound now converts under
+# §13.13 family F11 - yang-uoh-block/-hit assert A=8 as a PARTIAL
+# (item-18(c) R clause stays xfail unchanged, R=14/12 vs arcade 5).
+
+# §13.17 RE-ANCHOR-1 (2026-07-11): item-18 CLOSED for this row — lever N
+# now measures R=5, matching arcade/oracle exactly (the overshoot is
+# resolved by the busy-edge construction, not the natural-end/cut
+# machinery this xfail's ENGINE-7 discussion was about). Prior xfail
+# evidence, RELOCATED not deleted: "NEW SUB-FINDING item 18(c) (docs/
+# frame-data-synthesis.md item 18(c), corpus-yun.yaml yun-uoh-whiff
+# precedent): measured R=9 vs arcade 5, an OVERSHOOT (cut=0, no §13.5.1
+# cut fires - grounded fresh-edge gate correctly refuses to anchor);
+# opposite sign from residual item 18(b), do NOT fold into that bucket.
+# S=15/A=10 exact (no #17 A-side finding on the clean whiff). RE-CITED
+# 2026-07-10 (ENGINE-7 census): guard-rearm retime FALSIFIED as a general
+# rule (1,039-window census; this move's own arcade-end==rearm+0
+# signature is the same cghi=1 post-landing-tail signature class as
+# urien-headbutt (+3) and remy-uoh (+1) - not byte-identical to either
+# (own rearm gap=4 vs headbutt's 3); matched-gap canonical partner:
+# remy-uoh; see §13.5.1b second dated correction + §12.2.4); stays xfail,
+# no lever."
+- label: yang-uoh-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press MP+MK"
+  qjson: { name: "Universal Overhead" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# §13.13 contact-path convention (CONV-2 scope extension, 2026-07-10, user
+# decision), family F11 - partial-restore compound displayed A (see
+# section comment above): A=8 is the engine-truth credit actually accrued
+# on the BLOCK path. Decomposition: arcade A=10, measured A=8, lever-F
+# ON=8/OFF=6 (restore delta +2, proving the restore IS contributing but
+# does not fully recover the declared credit), residual unrecoverable
+# remainder=2 (bucket-level shape-(a1) attribution, per §13.13 exclusion
+# item 7's own registered text plus the §12.2.1 NOT-members line,
+# docs/frame-data-synthesis.md:692-693 - no per-entry ledger was run for
+# yang, same bucket-level attribution as makoto/twelve). Arcade
+# (whiff-canonical, from-qjson) A=10 - preserved here per the convention.
+# CONVERTED 2026-07-13 (UOH-CLOSURE lever T, docs/frame-data-synthesis.md
+# §13.20; <sp>/zero/arcade-s9/session-report.md BLOCK legs, box
+# 265738-265753 (raw 16, yang's own outlier signature), busy768=265764,
+# probe-confirmed exact fc 265764, zero early acceptance): the item 18(c)
+# "R-overshoot" residual above is CLOSED, not excluded - "arcade 5" was
+# never this leg's true value. Real hardware measures R=10 (yang's own
+# structural outlier: this engine's busy-edge/lever-R construction is
+# itself 10 for yang, not the flat 4 every other XFAIL-18-bucket
+# character gets - confirmed real, not an engine quirk), matching lever T
+# exactly. XFAIL->PASS: R re-literaled to 10; A stays 8 (= arcade measured
+# exactly on BLOCK, unaffected by lever T, design §5).
+- label: yang-uoh-block
+  setup: { dist: close, dummy: stand }
+  input: "press MP+MK"
+  qjson: { name: "Universal Overhead" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: 8, R: 10 }
+
+# §13.13 contact-path convention (CONV-2 scope extension, 2026-07-10, user
+# decision), family F11 - partial-restore compound displayed A, same
+# decomposition as yang-uoh-block: A=8 is the engine-truth credit actually
+# accrued on the HIT path (arcade A=10, lever-F ON=8/OFF=6, residual
+# unrecoverable remainder=2, bucket-level attribution per §13.13 exclusion
+# item 7 / §12.2.1 NOT-members line, docs/frame-data-synthesis.md:692-693).
+# Arcade (whiff-canonical, from-qjson) A=10 - preserved here per the
+# convention.
+# CONVERTED 2026-07-13 (UOH-CLOSURE lever T, docs/frame-data-synthesis.md
+# §13.20; <sp>/zero/arcade-s9/session-report.md HIT legs, box
+# 265738-265751 (raw 14), busy768=265760, probe-confirmed exact fc
+# 265760): same closure as yang-uoh-block - real hardware measures R=8
+# (yang's own outlier value, one tick below the block leg's corrected 10),
+# matching lever T exactly. XFAIL->PASS: R re-literaled to 8; A stays 8
+# (engine-truth, unaffected by lever T, design §5; arcade measured A=6,
+# dated data line only, not asserted).
+- label: yang-uoh-hit
+  setup: { dist: close, dummy: none }
+  input: "press MP+MK"
+  qjson: { name: "Universal Overhead" }
+  outcome: HIT
+  expect: { S: from-qjson, A: 8, R: 8 }
+
+# --- Throw (LP+LK) -----------------------------------------------------------
+# yang.json's Throw_range is 18px - dist:close (56px) sits OUTSIDE it; using
+# dist:18 per the ken/yun/oro precedent. "Neutral Throw" used (plain press,
+# no direction), matching corpus-ken.yaml's ken-throw-hit convention.
+
+- label: yang-throw-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press LP+LK"
+  qjson: { name: "Neutral Throw" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# HIT-R display convention (docs/frame-data-synthesis.md §13.10, Class 3
+# connected grab, SATURATED sub-case) - same mechanism as
+# corpus-ken.yaml's ken-throw-hit / corpus-yun.yaml's yun-throw-hit: T=71
+# confirms saturation at FD_METER_LEN-1 (frame_data_overlay.c:42), so
+# R = (FD_METER_LEN-1) - S - A = 71-2-1 = 68, a DERIVED value - re-derive if
+# FD_METER_LEN ever changes. S/A match yang.json's Neutral Throw row
+# exactly; adv intentionally unasserted (Hit_advantage="D", non-numeric).
+# WAIT-WINDOW NOTE (same trap as corpus-yun.yaml's yun-throw-hit): the
+# original "wait 60" left the entry's own window too short for this grab's
+# FINAL to fire (NO-DATA), and the never-firing FINAL then bled into the
+# FOLLOWING entry's window (yang-jump-none read a spurious unexpected HIT
+# with this move's exact S=2/A=1/R=68/adv=+102 signature) - the same
+# label-bleed shape as corpus-oro.yaml's original Throw finding. Isolated
+# re-verification (Phase 5 discipline) confirmed "wait 90" is sufficient
+# (inter_entry_wait stays 150, unlike Oro's fix which also bumped the
+# corpus-wide default).
+- label: yang-throw-hit
+  setup: { dist: 18, dummy: none }
+  input: "press LP+LK; wait 90"
+  qjson: { name: "Neutral Throw" }
+  outcome: HIT
+  # BUFFER-1 (2026-07-13): the FD_CAPTURE_LEN 72->256 raise un-caps this
+  # partner-release throw's raw[] capture — post-fix measured R=136 (was
+  # 68). No arcade oracle exists for this post-contact span (same class
+  # as the Hugo grab HIT convention, §13.10). R DE-ASSERTED; flagged for
+  # follow-up (a previously-untracked row, outside the M1 register).
+  expect: { S: from-qjson, A: from-qjson, kd: 1 }
+
+# --- Ground specials probe (ONE session budget) -----------------------------
+
+# --- Tourou Zan (Jab), motion qcf + P (rekka) -------------------------------
+# Landed via the EXISTING `motion qcf <btn>` macro (Ryu/Ken Hadouken
+# precedent) - FIRST probe attempt (S=8 matches yang.json's Tourou Zan (Jab)
+# row exactly). Completely clean: every S/A/R/adv matches yang.json exactly
+# on WHIFF/BLOCK/HIT. See file header REKKA-CHAIN FINDING: neither a
+# same-button repeated-press chain nor an alternating-punch chain produced
+# a second/third hit - only the single Jab-strength hit is authored here.
+
+- label: yang-tourou-lp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "motion qcf LP"
+  qjson: { name: "Tourou Zan (Jab)" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: yang-tourou-lp-block
+  setup: { dist: close, dummy: stand }
+  input: "motion qcf LP"
+  qjson: { name: "Tourou Zan (Jab)" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: yang-tourou-lp-hit
+  setup: { dist: close, dummy: none }
+  input: "motion qcf LP"
+  qjson: { name: "Tourou Zan (Jab)" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# --- Senkyuutai (Short), motion qcf + K -------------------------------------
+# Landed via the EXISTING `motion qcf <btn>` macro - FIRST probe attempt
+# (S=8 matches yang.json's Senkyuutai (Short) row exactly, unambiguous vs
+# Forward/RH/EX's own distinct S values of 16/29/29). S/A exact on all three
+# outcomes (S=8, A=8).
+#
+# NEW FINDING, UNCLASSIFIED (flagged 2026-07-08, no Phase-6 bucket fits): R
+# OVERSHOOTS arcade's 34 by a uniform +4 (measured R=38) IDENTICALLY on
+# WHIFF/BLOCK/HIT, WITH cut=1 firing and anchor_a=8 (matching engine_a=8
+# exactly) on every outcome. This does not fit item 18(b) (that bucket is
+# specifically an UNDERSHOOT with a cut committing early) nor item 18(c)
+# (that bucket is specifically a NO-CUT, cut=0, overshoot) - here cut=1
+# actively fires yet the result still overshoots, a combination not
+# described by either. Does not fit Phase 6 item 4 (Hugo-Roundhouse family)
+# either - that bucket requires a clean WHIFF, and here WHIFF itself
+# overshoots identically to BLOCK/HIT. TRACE OBSERVATION ONLY, no mechanism
+# claimed: flagged to orchestrator/user for follow-up classification.
+
+# §13.17 RE-ANCHOR-1 (2026-07-11): item-18 CLOSED for this row (the
+# cut-committed overshoot class) — lever N now measures R=34, matching
+# arcade/oracle exactly (busy-edge R sidesteps the cut/rearm machinery
+# entirely — a uniform, from-scratch construction, not a retimed cut
+# endpoint; this is why lever N is not "ENGINE-7 redux", §0.1 of the
+# re-anchor plan). Prior xfail evidence, RELOCATED not deleted: "NEW
+# FINDING, UNCLASSIFIED (flagged 2026-07-08): R OVERSHOOTS arcade 34 by
+# +4 (measured 38) on WHIFF itself; trace cut=1, anchor_a=8 (matches
+# engine_a=8). Does not fit item 18(b) (undershoot-only) or item 18(c)
+# (cut=0-only) or Phase 6 item 4 (requires clean WHIFF). S/A exact (S=8,
+# A=8). REGISTERED 2026-07-09 in synthesis §12.2.4 as the cut-committed
+# whiff R-overshoot class. RE-CITED 2026-07-10 (classification sweep #2):
+# CONFIRMED as ENGINE-7 candidate (rearm at reset+6, anchor at reset+10,
+# gap=overshoot=4 exactly). RE-CITED 2026-07-10 (ENGINE-7 census):
+# guard-rearm retime FALSIFIED as a general rule (arcade end = rearm on
+# only 4 of 7 rearm-gap moves); stays xfail, no lever. RE-CITED
+# 2026-07-11 (CAPTURE-1): live arcade hardware plays R=34 on this exact
+# WHIFF recipe, byte-identical to the oracle - the +4 overshoot is
+# confirmed engine-side. RE-CITED 2026-07-11 (LAYER-1): layer RESOLVED
+# (a): twin gflg-R=34 == arcade both revisions (990512 REFERENCE +
+# 990608); lever-K rejection unchanged (different construction)."
+- label: yang-senkyuutai-lk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "motion qcf LK"
+  qjson: { name: "Senkyuutai (Short)" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: yang-senkyuutai-lk-block
+  setup: { dist: close, dummy: stand }
+  input: "motion qcf LK"
+  qjson: { name: "Senkyuutai (Short)" }
+  outcome: BLOCK
+  # NARROWED 2026-07-13 (CONTACT-2, lever R): the R clause of the
+  # UNCLASSIFIED R-overshoot finding below is CLOSED — lever R's
+  # busy-edge construction (`fd_contact_busy_edge_r`, frame_data_overlay.c
+  # §13.19) measures this contact leg at R=34 natively, oracle-exact
+  # (was 38 vs arcade/oracle 34 under the legacy recovery_pf tally). The
+  # adv clause remains open (measured -29 vs arcade -35, an
+  # attacker_idle-downstream question, out of this design's scope) — row
+  # stays XFAIL on adv alone. Prior history, RELOCATED not deleted: "same
+  # NEW UNCLASSIFIED R-overshoot finding as yang-senkyuutai-lk-whiff
+  # (flagged 2026-07-08): measured R=38 vs arcade 34, adv -29 vs arcade
+  # -35 as a downstream consequence; trace cut=1, anchor_a=8 (matches
+  # engine_a=8); S/A exact (S=8, A=8) REGISTERED 2026-07-09 in synthesis
+  # §12.2.4 (cut-committed whiff R-overshoot, see
+  # yang-senkyuutai-lk-whiff; NOT item 18(c)). RE-CITED 2026-07-10
+  # (classification sweep #2): same ENGINE-7 candidate confirmation as
+  # yang-senkyuutai-lk-whiff, same §13.5.1b:1428 dated correction; own
+  # future /plan+/implement cycle; stays xfail. RE-CITED 2026-07-10
+  # (ENGINE-7 census): guard-rearm retime FALSIFIED as a general rule
+  # (1,039-window census; arcade end = rearm on only 4 of 7 rearm-gap
+  # moves; see §13.5.1b second dated correction + §12.2.4); stays xfail,
+  # no lever. RE-CITED 2026-07-11 (CAPTURE-1): same live-hardware R=34
+  # confirmation as yang-senkyuutai-lk-whiff (docs/arcade-frame-data/
+  # CAPTURE.md) - engine-side, tables confirmed right. Stays xfail.
+  # RE-CITED 2026-07-11 (LAYER-1): same layer-RESOLVED (a) finding as
+  # yang-senkyuutai-lk-whiff (docs/frame-data-synthesis.md Sec13.16)."
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson, xfail: "RECLASSIFIED 2026-07-14, TERMINAL-NON-SURGICAL (was 'attacker_idle re-anchoring out of scope') - <sp>/zero/adv/plan.md §3-4.1, opus-substitute / WANTS FABLE RE-REVIEW: adv = defender_idle - attacker_idle (frame_data_overlay.c:1243) is arcade-exact on 600/607 currently-asserting adv rows - this is one of only 4 rows with a non-uniform-delta divergence (+6, matching yang-exsenkyuutai-block; the other 2 are akuma-sa3-block/chunli-sa1-block at +1). The critical gate (any adv re-anchor candidate must offline-fit against EVERY currently-PASS adv row with zero regression) KILLS every candidate rule tried: adv:=-(R+1) or adv-=6 (both fix this row + its EX sibling but regress 86 other lever-R-firing rows that are currently correct); a flat adv-=1 (regresses 600 rows, the CONTACT-A failure shape). No census signal (koc, uoh, leverT, hsab, mR, hsib) distinguishes this row from the 86 correct lever-R rows sharing the same signal profile - isolating it would require per-move (n=1) hardcoding of the Senkyuutai family, which this program's policy forbids (ENGINE-5/6/7 precedent). The busy edge (lever R's own actionable proxy) points the WRONG direction for a fix: R went 38->34 via lever R (busy edge is EARLIER than attacker_idle), but the oracle wants adv to be MORE negative (-35), which would require the attacker anchor to be LATER, not earlier - refuted by direction, not just by regression count. Deferred, not abandoned: a fix needs a NEW instrumented diagnostic (a build task) that fires only on this move family and fit-proves zero regression across all 607 adv rows - out of this design's own read-only scope. Golden unchanged; adv stays asserted at oracle=-35, measured=-29, XFAIL. R clause CLOSED 2026-07-13 (CONTACT-2, lever R): busy-edge R=34, oracle-exact." }
+
+- label: yang-senkyuutai-lk-hit
+  setup: { dist: close, dummy: none }
+  input: "motion qcf LK"
+  qjson: { name: "Senkyuutai (Short)" }
+  outcome: HIT
+  # RESOLVED 2026-07-13 (CONTACT-2, lever R): the R clause below (measured
+  # R=38 vs arcade/oracle 34) is closed — busy-edge R=34, oracle-exact
+  # (design.md §3.1, native-observed §3.4). No adv clause on this leg.
+  # xfail removed; PASS. Prior history, RELOCATED not deleted: "same NEW
+  # UNCLASSIFIED R-overshoot finding as yang-senkyuutai-lk-whiff (flagged
+  # 2026-07-08): measured R=38 vs arcade 34; trace cut=1, anchor_a=8
+  # (matches engine_a=8); S/A exact (S=8, A=8) REGISTERED 2026-07-09 in
+  # synthesis §12.2.4 (cut-committed whiff R-overshoot, see
+  # yang-senkyuutai-lk-whiff; NOT item 18(c)). RE-CITED 2026-07-10
+  # (classification sweep #2): same ENGINE-7 candidate confirmation as
+  # yang-senkyuutai-lk-whiff, same §13.5.1b:1428 dated correction; own
+  # future /plan+/implement cycle; stays xfail. RE-CITED 2026-07-10
+  # (ENGINE-7 census): guard-rearm retime FALSIFIED as a general rule
+  # (1,039-window census; arcade end = rearm on only 4 of 7 rearm-gap
+  # moves; see §13.5.1b second dated correction + §12.2.4); stays xfail,
+  # no lever. RE-CITED 2026-07-11 (CAPTURE-1): same live-hardware R=34
+  # confirmation as yang-senkyuutai-lk-whiff (docs/arcade-frame-data/
+  # CAPTURE.md) - engine-side, tables confirmed right. Stays xfail."
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# --- Byakko Soushouda (palm), motion qcb + P --------------------------------
+# Single-row special (no Jab/Strong/Fierce split in yang.json) - landed via
+# the EXISTING `motion qcb <btn>` macro with LP - FIRST probe attempt (S=21
+# matches yang.json's Byakko Soushouda row exactly). WHIFF is completely
+# clean (S/A/R match exactly). BLOCK/HIT show a classic issue #17 shape
+# (a1) A-undercount.
+
+- label: yang-byakko-lp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "motion qcb LP"
+  qjson: { name: "Byakko Soushouda" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# Issue #17 shape (a1): lever-F-tested (fd_restore_revoked_declared_credit
+# forced 0 on a scratch build, reverted before commit, same-binary
+# protocol) and confirmed UNCHANGED (A=6 both ways) - no revoke fires,
+# ruling out a lever-F regression, credit unrecoverable per synthesis
+# §13.11; measured A=6 vs arcade 13 (roughly half); S/R/adv exact.
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=6 is the
+# engine-truth credit actually accrued on the BLOCK path - issue #17 shape (a1):
+# lever-F-tested (fd_restore_revoked_declared_credit forced 0 on a scratch
+# build, reverted before commit) and confirmed UNCHANGED - no revoke fires.
+# Arcade (whiff-canonical, from-qjson) A=13 - preserved here per the
+# convention. S/R/adv remain arcade-exact (from-qjson).
+- label: yang-byakko-lp-block
+  setup: { dist: close, dummy: stand }
+  input: "motion qcb LP"
+  qjson: { name: "Byakko Soushouda" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: 6, R: from-qjson, adv: from-qjson }
+
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=6 is the
+# engine-truth credit actually accrued on the HIT path - same issue #17 shape
+# (a1) as yang-byakko-lp-block (identical mechanism, consistent A=6 on both
+# BLOCK and HIT, lever-F-tested unchanged). Arcade (whiff-canonical,
+# from-qjson) A=13 - preserved here per the convention. S/R remain
+# arcade-exact (from-qjson).
+- label: yang-byakko-lp-hit
+  setup: { dist: close, dummy: none }
+  input: "motion qcb LP"
+  qjson: { name: "Byakko Soushouda" }
+  outcome: HIT
+  expect: { S: from-qjson, A: 6, R: from-qjson }
+
+# --- Zenpou Tenshin (command roll-grab), motion hcb + K ---------------------
+# Landed via the EXISTING `motion hcb <K>` macro (Chun-Li Hazan Shu / Yun
+# Zenpou Tenshin precedent, zero new code) - FIRST probe attempt (S=7
+# matches yang.json's Zenpou Tenshin row exactly). An UNBLOCKABLE command
+# grab - verified live that `dummy: stand` produces the IDENTICAL HIT
+# outcome/numbers as `dummy: none` (S=7 A=2 R=44 kd=1 on both), so no
+# separate BLOCK entry exists for this move (same shape as Hugo's 360-grab
+# family / Yun's own Zenpou Tenshin). §13.10 Class 3 (connected grab,
+# non-saturated partner-release sub-case): T=53, endrel=1 fires (the plain
+# §13.6.1 partner-release path, NOT saturated - T=53 is nowhere near
+# FD_METER_LEN=72). R = T - S - A = 53 - 7 - 2 = 44, a DERIVED value from
+# the live trace (re-measure if this regresses) - asserted as a plain-PASS
+# literal per the §13.10 convention (ryu/ken/chunli/yun-throw-hit /
+# yun-zenpou-tenshin-hit precedent). Arcade R=26 is the whiff-path figure
+# (yang-zenpou-lk-whiff below matches yang.json's Recovery=26 exactly). S/A
+# match yang.json's Zenpou Tenshin row exactly (S=7, A=2); Block_advantage/
+# Hit_advantage are both the literal string "-" - no expect.adv anywhere in
+# this section. NOTE: yang.json's own numbers for this move (S=7, A=2,
+# whiff R=26, HIT-derived R=44, T=53, endrel=1) are BYTE-IDENTICAL to
+# corpus-yun.yaml's own Zenpou Tenshin measurements - consistent with the
+# two characters sharing this command grab's underlying move data (twins).
+
+- label: yang-zenpou-lk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "motion hcb LK"
+  qjson: { name: "Zenpou Tenshin" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# §13.10 Class 3 connected-grab, endrel-bounded derived value (see section
+# comment above): measured R=44 (T=53, endrel=1, R=T-S-A=53-7-2=44), same
+# formula as yun-zenpou-tenshin-hit. Verified live: dummy:stand produces
+# the IDENTICAL HIT outcome/numbers - an unblockable command grab, so no
+# separate BLOCK entry exists for this move.
+- label: yang-zenpou-lk-hit
+  setup: { dist: close, dummy: none }
+  input: "motion hcb LK; wait 60"
+  qjson: { name: "Zenpou Tenshin" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: 44, kd: 1 }
+
+# --- Negative control (plan section 1.8 item 5 precedent) ------------------
+
+- label: yang-jump-none
+  setup: { dist: 250, dummy: none }
+  input: "press UP"
+  outcome: NONE

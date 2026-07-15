@@ -1,0 +1,133 @@
+# Dudley Super Art 3 (Corkscrew Blow) — EX/Supers program, supers wave S2
+# (authoring-policy.md Ruling 5 fan-out). Satellite corpus (auto-discovered
+# by run-suite.sh's corpus-*.yaml glob, own golden/dudley-sa3.tsv once
+# registered) — corpus-dudley.yaml/corpus-dudley-ex.yaml and the sibling
+# corpus-dudley-sa1.yaml/corpus-dudley-sa2.yaml are untouched.
+#
+# Scope: step0-universe.tsv (dudley SA3, "Corkscrew Blow", sa_slot 3).
+# Oracle: docs/arcade-frame-data/dudley.json (md5
+# 8e0341d62b9470212bce8105eaf1a73e, same file corpus-dudley.yaml/
+# corpus-dudley-ex.yaml/corpus-dudley-sa1.yaml/corpus-dudley-sa2.yaml already
+# pin, re-verified unchanged this session). Oracle row: Startup=0, Hit=10,
+# Recovery=24, Block_advantage="-" (non-numeric), Hit_advantage="-"
+# (non-numeric) — no `adv` assert anywhere in this file, same convention as
+# this move family's own EX/base rows.
+#
+# Meter: sa_gauge:3 (MAXIMUM) + super_art:2 (0-indexed SA3). Identity
+# confirmed this session by S-value match: dudley.json has exactly TWO
+# Startup=0 rows — Rocket Uppercut (Hit=40, Recovery=31, this file's own
+# corpus-dudley-sa1.yaml sibling) and Corkscrew Blow (Hit=10, Recovery=24) —
+# so S alone does not disambiguate. This entry's own measured A (~9-10) sits
+# on Corkscrew Blow's own oracle Hit=10, nowhere near Rocket Uppercut's 40,
+# confirming identity independently of slot position
+# (<sp>/sa-dudley/run-probe-sa3/trace.log, entry "probe-sa3-hp").
+#
+# Motion: "motion 2qcf HP" — landed on the FIRST candidate tried (same
+# punch-group primitive as this file's own SA1/SA2 siblings). A second
+# candidate, "motion 2qcf HK", instead landed the SAME unrelated normal this
+# session's sibling SA1/SA2 probes also hit (S=12 A=4 R=16 adv=-2,
+# byte-identical across all three super_art selections) — ruling out a
+# button-group ambiguity.
+#
+# Admissibility census (per-entry, mechanical, from FRAME_TRACE columns —
+# authoring-policy.md Ruling 2), this session's own isolated 3-entry probe
+# run (<sp>/sa-dudley/run-probe-sa3-full/trace.log, inter_entry_wait:250):
+# (1) Single-FINAL integrity — exactly one MOVE_START/FINAL pair per entry
+# (WHIFF F51-85; BLOCK F314-372; HIT F424-546), mechanical census this
+# session, no bleed between entries.
+# (2) Flash-overlap census: 0 nonzero-sastop ticks in [MOVE_START F, FINAL F]
+# on all three legs (0/34 WHIFF, 0/58 BLOCK, 0/122 HIT — python census over
+# every data row this session) — flash-free.
+# (3) Contact-A juggle check (HIT legs only): HIT-leg engine_a=9 vs
+# BLOCK-leg engine_a=9 — PASSES (equal) — HIT-leg A is admissible by the
+# mechanical gate, same instrument as BLOCK (both still xfail'd on the value
+# itself, see A DISPOSITION below).
+# (4) Shape record: box_runs=1 on ALL THREE legs — a clean single-run shape
+# throughout (matches the Chun-Li SA2/Ryu SA1 pilot precedent's own "clean
+# single-run" class, not the multi-run shoryuken/flurry shape this file's
+# own SA1/SA2 siblings show).
+#
+# A DISPOSITION — RESOLVED (ENGINE-D2, lever S, 2026-07-13; supersedes the
+# "Phase 6 bucket-1 shape-(a1) CANDIDATE" framing below, kept for the
+# record). Measured legacy-displayed engine_a=9 on BOTH BLOCK and HIT
+# (oracle Hit=10, a uniform -1 undercount) was the `fd_reset_move()`
+# MOVE_START-vs-`char_move()` same-tick race (docs/frame-data-synthesis.md
+# §12.2.4 SA-WHIFF-A/D2), NOT an independent Phase 6 bucket-1 shape — the
+# lever-F toggle test this candidate was waiting on turned out to be the
+# wrong lever; ENGINE-D2's lever S is the actual fix. Post-fix measured
+# A=10 == oracle exactly on BOTH BLOCK and HIT (the WHIFF leg's own
+# DISPLAYED A already read 10 via §13.17's lever O raw-box override,
+# gated on box_runs==1 — see the WHIFF entry's own comment; only its
+# internal engine_a diagnostic moves 9->10, no displayed-value change).
+# A is now asserted `from-qjson` on all three legs, plain PASS — xfail
+# removed from BLOCK/HIT.
+#
+# Retained historical framing (superseded): the WHIFF/contact engine_a
+# differential (10 displayed via lever O vs 9 underlying on WHIFF, 9 both
+# displayed and underlying on BLOCK/HIT pre-fix) was the textbook
+# precondition for CORPUS-AUTHORING.md Phase 6 bucket 1's shape-(a1)/(a2)
+# family, directionally consistent with Dudley's own Machine Gun Blow -2
+# undercount (corpus-dudley.yaml, §13.13 (a1), lever-F-tested UNCHANGED —
+# that negative result correctly ruled out lever F specifically, not every
+# possible mechanism) and excontact-r-findings.md's M2 group. ENGINE-D2
+# is now the confirmed mechanism instead.
+#
+# R DISPOSITION: fully oracle-exact on ALL THREE legs (WHIFF/BLOCK/HIT all
+# measure R=24=oracle Recovery exactly). T=34/35/35 on the three legs, well
+# under FD_METER_LEN=72 — NO M1 saturation risk for this move (unlike this
+# file's own SA1 sibling), so R needs no quarantine anywhere. Plain PASS.
+#
+# WHIFF: REACHABLE on the FIRST attempt (dist:300, dist_mode:centered).
+# MOVE_START's own annotation reads dist=297 (walk-in only ~3px) —
+# Corkscrew Blow is a genuinely stationary super with almost no forward
+# travel before its own MOVE_START, matching the Chun-Li SA3 Tensei Ranka
+# precedent's own near-zero walk-in shape almost exactly. No further binary
+# search attempted (comfortably WHIFF-reachable on the first try).
+# ORDERING NOTE (Phase 5 "Predecessor-outcome ordering" trap): the WHIFF
+# entry is placed FIRST, ahead of the knockdown-producing HIT leg (kd=1),
+# matching this file's own SA1/SA2 siblings and the established Ken SA1
+# precedent.
+character: dudley
+oracle: dudley.json
+super_art: 2
+sa_gauge: 3
+inter_entry_wait: 250
+entries:
+
+- label: dudley-sa3-whiff
+  setup: { dist: 300, dist_mode: centered, dummy: none }
+  input: "motion 2qcf HP"
+  qjson: { name: "Corkscrew Blow" }
+  outcome: WHIFF
+  # Measured S=0 A=10 R=24 (box_runs=1, box_a=10, engine_a=9->10 post-
+  # ENGINE-D2 lever S — the displayed A=10 comes through §13.17's lever O
+  # raw-box override, gated on box_runs==1, so this leg's DISPLAYED value
+  # was already oracle-exact before the fix; the fix only changes the
+  # internal engine_a diagnostic, see A DISPOSITION above; T=34; MOVE_START
+  # dist=297, ~3px walk-in). All three fields oracle-exact.
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: dudley-sa3-block
+  setup: { dist: close, dummy: stand }
+  input: "motion 2qcf HP"
+  qjson: { name: "Corkscrew Blow" }
+  outcome: BLOCK
+  # Measured S=0 A=10 (was 9 pre-ENGINE-D2, see A DISPOSITION above — now
+  # RESOLVED, oracle-exact) R=24 (box_runs=1, box_a=11, busyr=24, T=35).
+  # S/A/R oracle-exact. ENGINE-D2 (2026-07-13): A now asserted from-qjson,
+  # plain PASS (xfail removed — supersedes the retracted "Phase 6 bucket-1
+  # shape-(a1) CANDIDATE" framing).
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: dudley-sa3-hit
+  setup: { dist: close, dummy: none }
+  input: "motion 2qcf HP"
+  qjson: { name: "Corkscrew Blow" }
+  outcome: HIT
+  # HIT-leg A juggle check PASSES (10==BLOCK's 10 post-fix) — admissible per
+  # Ruling 2 check 3, and the value itself now matches oracle (see A
+  # DISPOSITION above). Measured S=0 A=10 (was 9 pre-ENGINE-D2, same
+  # resolution as BLOCK) R=24 (box_runs=1, box_a=11, busyr=24, T=35, kd=1).
+  # S/A/R oracle-exact. ENGINE-D2 (2026-07-13): A now asserted from-qjson,
+  # plain PASS (xfail removed).
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }

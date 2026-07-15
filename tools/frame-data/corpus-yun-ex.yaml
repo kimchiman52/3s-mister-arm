@@ -1,0 +1,260 @@
+# Yun EX moves corpus -- EX/Supers program, wave 2 fan-out (Ruling 5's
+# per-character EX satellite batches, <sp>/exsuper/authoring-policy.md).
+# Satellite corpus (auto-discovered by run-suite.sh's corpus-*.yaml glob, own
+# golden/yun-ex.tsv) -- the main corpus-yun.yaml is untouched.
+#
+# Scope: Yun's 3 ground EX rows per <sp>/exsuper/step0-universe.tsv (rows
+# 142-144): Tetsu Zankou (EX), Zesshou Hohou (EX), Nishou Kyaku (EX). Yun has
+# NO air-variant EX row in step0-universe (unlike Ryu/Ken/Alex/etc.) -- all
+# three of his EX rows are ASSERTABLE, in scope. Oracle:
+# docs/arcade-frame-data/yun.json (md5 cc49322b0fcd04e617f22b0410a658fa, same
+# file corpus-yun.yaml already pins -- re-verified unchanged this session).
+# All three EX rows carry the parenthesized "(EX)" suffix in yun.json's own
+# `Name` field (Ryu-oracle convention, not Ken's bare-string one) -- verified
+# live this session, per CORPUS-AUTHORING.md Phase 1's "always open the
+# fetched oracle and read the exact string" rule.
+#
+# Motion recipes (Phase 5 motion-probe method, re-using corpus-yun.yaml's own
+# base-move macros with the final step's button chorded to LP+HP / LK+HK --
+# same 2-button-chord workaround the Ryu/Ken EX pilots used, since
+# cmd_motion only accepts a single button token and 'hold's chord parser
+# takes '+'-joined tokens):
+#   - Tetsu Zankou (EX) (shoulder, DP-shape hold-chain -- same base-move
+#     primitive as corpus-yun.yaml's own `yun-tetsu-*` entries, Ken
+#     Shoryuken / Hugo Shootdown Backbreaker precedent): `hold RIGHT 2; hold
+#     DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LP+HP 2; wait 1`. Landed on the
+#     FIRST attempt (S=10 matches yun.json's Tetsu Zankou (EX) row exactly,
+#     unambiguous -- distinct from every other Tetsu Zankou/Zesshou
+#     Hohou/Nishou Kyaku strength's own S value).
+#   - Zesshou Hohou (EX) (lunge punch, qcf-shape -- corpus-yun.yaml's own
+#     base move uses the plain unchorded `motion qcf <btn>` macro, but
+#     `cmd_motion` rejects a '+'-joined button token, so this entry
+#     reproduces qcf's own _motion_steps sequence by hand with the final
+#     step chorded, identical workaround to Ryu/Ken's EX Hadouken): `hold
+#     DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LP+HP 2; wait 1`. Landed on the
+#     FIRST attempt (S=13 matches yun.json's Zesshou Hohou (EX) row exactly
+#     -- same S as the base move's own Fierce strength, an expected shared
+#     signature since qjson: { name: "Zesshou Hohou (EX)" } disambiguates
+#     unambiguously by name regardless).
+#   - Nishou Kyaku (EX) (upkicks, DP-shape hold-chain -- same primitive as
+#     corpus-yun.yaml's own `yun-nishou-*` entries): `hold RIGHT 2; hold
+#     DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LK+HK 2; wait 1`. Landed on the
+#     FIRST attempt (S=4 matches yun.json's Nishou Kyaku (EX) row exactly).
+#
+# dist_mode: centered (EX/Supers tooling micro-batch) used on Tetsu Zankou
+# (EX)'s whiff binary-search probes only (both attempts still connected --
+# see that section's own WHIFF-UNREACHABLE note); Nishou Kyaku (EX)'s WHIFF
+# leg reuses corpus-yun.yaml's own base-move anchored dist=300 recipe
+# unchanged (already proven reachable there).
+#
+# ORDERING NOTE (§12.1 row 2 "teleport clamps / momentum bleed after
+# connecting dash specials", corpus-q.yaml/corpus-yun.yaml precedent): a
+# first-draft probe placed each move's own WHIFF entry AFTER its own
+# connecting HIT entry (and, separately, after a PRIOR move's connecting HIT
+# entry) -- both placements read a badly clamped MOVE_START separation
+# (dist=71 requested 150; dist=92/94 requested 250/280) and produced a false
+# HIT-shaped read that looked like a genuine reach problem at first. Isolated
+# single/first-entry re-verification (Phase 5 discipline) confirmed the TRUE
+# reachability picture used below: Tetsu Zankou (EX) and Zesshou Hohou (EX)
+# are genuinely WHIFF-UNREACHABLE even as each move's own corpus's FIRST
+# entry (zero preceding contamination possible) at dist=280-305px centered
+# -- a real move-reach fact, not an ordering artifact. Nishou Kyaku (EX)'s
+# WHIFF leg is placed ahead of its own BLOCK/HIT legs in the final corpus
+# below, matching corpus-yun.yaml's own base-move ordering discipline.
+#
+# Admissibility census (per-entry, mechanical, from FRAME_TRACE columns --
+# authoring-policy.md Ruling 2), all 7 shipped entries below:
+# (1) Single-FINAL integrity: exactly one FINAL per entry's own window, no
+#     label-bleed, at inter_entry_wait:250 -- confirmed by direct inspection
+#     of the final corpus's own trace (7 MOVE_START/FINAL pairs, cleanly
+#     alternating, one per entry, zero merges).
+# (2) Flash-overlap census (sastop gate): 0 nonzero sastop ticks across the
+#     ENTIRE trace (mechanical awk census over every data row, not sampled)
+#     -- EX moves are flash-free, confirmed mechanically, not assumed.
+# (3) Contact-A juggle check (HIT-leg A admissible only if it equals the
+#     BLOCK-leg's A): Tetsu Zankou (EX) (13==13) and Nishou Kyaku (EX)
+#     (6==6, non-numeric-adv on WHIFF/HIT doesn't affect the check) BOTH
+#     PASS. Zesshou Hohou (EX)'s A is a documented UNCLASSIFIED divergence
+#     on BOTH legs (measured 16==16, matching BETWEEN the two legs, but NOT
+#     matching the oracle on either) -- the juggle check itself passes
+#     (HIT A equals BLOCK A), it is the oracle comparison that diverges; see
+#     that section's own xfail string.
+# (4) Shape record: Tetsu Zankou (EX) is single-run (box_runs=1, both
+#     contact legs); Zesshou Hohou (EX) is single-run (box_runs=1, both
+#     contact legs, proj=0 -- a melee lunge, not a projectile, despite the
+#     qcf-shape motion); Nishou Kyaku (EX) is GENUINELY multi-run on its
+#     WHIFF/BLOCK legs (box_runs=2 -- the double-kick move's second hit
+#     registering as its own box run) but single-run on HIT (box_runs=1) --
+#     the Ruling 3 shape (same class as Ken SA3 / Ryu's own EX Tatsumaki /
+#     Ken's own EX Tatsumaki), but like Ken's EX Tatsumaki, WITH ZERO
+#     divergence: every field is oracle-exact on all three legs regardless
+#     of box_runs, so multi-run alone does not by itself license a
+#     quarantine here.
+#
+# RESULT: Tetsu Zankou (EX) and Nishou Kyaku (EX) are fully oracle-exact on
+# every asserted field, every leg -- ZERO divergences. Zesshou Hohou (EX)
+# carries ONE UNCLASSIFIED finding (A/R sum-preserving boundary shift,
+# identical measured signature to corpus-yun.yaml's own base-move Zesshou
+# Hohou (Fierce) UNCLASSIFIED entry) on both its BLOCK and HIT legs -- NOT a
+# program quarantine (Ruling 3's quarantine machinery is for multi-run
+# supers; this is a Phase-6-style contact divergence with no confirmed
+# bucket, so it ships xfail per the house "wrong values never ship as if
+# correct" rule, exactly like its base-move sibling). Two WHIFF-UNREACHABLE
+# moves (Tetsu Zankou (EX), Zesshou Hohou (EX)), one clean WHIFF (Nishou
+# Kyaku (EX)).
+character: yun
+oracle: yun.json
+inter_entry_wait: 250
+# sa_gauge: MAXIMUM (3) per authoring-policy.md's meter policy -- EX moves
+# are meter-metered (1 stock/activation, G3) and training mode's default
+# starting gauge is not guaranteed full/nonzero (the Ryu EX pilot's own
+# finding, re-confirmed this session: a corpus with no sa_gauge key landed
+# the plain-strength fallback instead of the EX move on the first attempt).
+# MAXIMUM (not INFINITY) per policy default for ordinary (non-install) EX
+# moves.
+sa_gauge: 3
+entries:
+
+# --- Tetsu Zankou (EX) (shoulder, DP-shape hold-chain) ----------------------
+# WHIFF-UNREACHABLE(dist=310 requested / 305 achieved at MOVE_START --
+# CENTERED_DIST_MAX's practical ceiling). Binary search, each attempt
+# isolated (this move's own corpus's FIRST entry, zero preceding
+# contamination): dist=280 centered achieved a clean 275px separation and
+# STILL connected (outcome HIT); dist=310 centered (the hard cap) achieved
+# 305px and ALSO connected (S=10 A=13 R=19 adv=+85, a clean single-run HIT --
+# box_runs=1, not a shape/census problem). Root cause: Tetsu Zankou (EX)'s
+# own forward-lunging shoulder charge simply covers the ENTIRE centered
+# ceiling and connects -- a pure move-reach fact (same shape as Ken's EX
+# Tatsumaki / Yun's own base-move Zesshou Hohou (Fierce)/Tetsu Zankou
+# (Fierce) SPECIALS-REACHABILITY GAP), not a harness placement/ordering
+# artifact (both isolated reads showed clean, near-full achieved
+# separation). No further binary search attempted (310 is the hard
+# compile-time cap for dist_mode:centered; nothing higher is scriptable).
+# Coverage for this move's WHIFF path is out of reach in this harness;
+# coverage instead comes from the BLOCK/HIT legs below (both fully
+# oracle-exact on S/A/R/adv), per Ruling 1 ("its coverage comes from Ruling
+# 2's contact legs + S"). Census: single-FINAL, sastop=0, box_runs=1,
+# proj=0 (both legs).
+
+- label: yun-extetsu-block
+  setup: { dist: close, dummy: stand }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LP+HP 2; wait 1"
+  qjson: { name: "Tetsu Zankou (EX)" }
+  outcome: BLOCK
+  # Measured S=10 A=13 R=19 adv=-7 (box_runs=1, proj=0), oracle-exact on all
+  # four fields (yun.json Tetsu Zankou (EX): Startup=10, Hit=13,
+  # Recovery=19, Block_advantage=-7). BLOCK-leg A needs no juggle check
+  # (Ruling 2: it IS the validated legacy instrument) -- logged here as the
+  # cross-check anchor for the HIT leg below.
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: yun-extetsu-hit
+  setup: { dist: close, dummy: none }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LP+HP 2; wait 1"
+  qjson: { name: "Tetsu Zankou (EX)" }
+  outcome: HIT
+  # Measured S=10 A=13 R=19 -- HIT-leg A (13) equals the BLOCK-leg's
+  # displayed A (13), so the juggle check (Ruling 2 check 3) passes and A is
+  # admissible here. No expect.adv (Hit_advantage is the literal string "-"
+  # for this row in yun.json, same as every other Tetsu Zankou strength).
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# --- Zesshou Hohou (EX) (lunge punch, qcf-shape hold-chain) -----------------
+# WHIFF-UNREACHABLE(dist=280 requested/achieved, this move's own corpus's
+# FIRST entry -- zero ordering contamination). Root cause: same
+# SPECIALS-REACHABILITY GAP as corpus-yun.yaml's own base-move Zesshou Hohou
+# (Fierce) entry (that move's Fierce strength also still connects even at
+# dist=300 anchored, the harness's max scriptable anchored distance) -- the
+# EX variant inherits the same lunge-punch travel distance. No further
+# binary search attempted beyond the isolated 280px clean read (this move's
+# own base-move sibling already established the reach-gap shape; the EX
+# variant's forward travel is, if anything, longer under EX properties, not
+# shorter). Coverage for this move's WHIFF path comes from the BLOCK/HIT
+# legs below, per Ruling 1. Census: single-FINAL, sastop=0, box_runs=1,
+# proj=0 (both legs).
+#
+# UNCLASSIFIED (flagged 2026-07-12, needs follow-up classification): a
+# sum-preserving A/R boundary shift, IDENTICAL signature to
+# corpus-yun.yaml's own base-move `yun-zesshou-hp-block`/`-hit` entries
+# (Zesshou Hohou (Fierce)) -- measured A=16 vs oracle 15 (+1), R=11 vs
+# oracle 12 (-1), S+A+R totals unchanged (oracle's own 13+15+12=40,
+# measured 13+16+11=40, same total), identical on BOTH BLOCK and HIT. adv
+# is oracle-exact (-2) on BLOCK. Sign-incoherent with issue #17 shape (a1)
+# (which only ever LOSES
+# credit, i.e. undercounts A -- this is an overcount) and does not fit
+# Phase 6's Class 1 or item 4 (both require A exact, which this entry does
+# not have). No clean WHIFF baseline exists for this move to further
+# triangulate (see the WHIFF-UNREACHABLE note above -- same harness-gap
+# shape as the base-move sibling, which also has no WHIFF baseline for the
+# same structural reason). This is very plausibly the SAME underlying
+# engine mechanism as the base move's own registered UNCLASSIFIED finding
+# (docs/frame-data-synthesis.md §12.2.4's sum-preserving A/R boundary-shift
+# family, linked there with remy-cbk-lk-block) since the EX variant shares
+# the base Fierce-strength move's exact chart/animation family -- but per
+# Ruling 2/Phase 6's own discipline ("candidates NEVER convert" without
+# their own recorded signature), this EX-specific sighting is authored as
+# its own xfail rather than silently assumed identical to its base-move
+# cousin; a per-tick credit-ledger trace confirming the same mechanism is
+# follow-up work, not done this session (budget-bounded). Trace observation
+# only, no mechanism claimed beyond the base-move precedent's own framing;
+# flagged to orchestrator for follow-up classification alongside the
+# existing base-move UNCLASSIFIED entry.
+
+- label: yun-exzesshou-block
+  setup: { dist: close, dummy: stand }
+  input: "hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LP+HP 2; wait 1"
+  qjson: { name: "Zesshou Hohou (EX)" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson, xfail: "[HONEST-FLOOR CENSUS 2026-07-14, opus-substitute / WANTS FABLE RE-REVIEW] TERMINAL CLASS = CONVENTION/RULED (mapping-ambiguous). A measured 16 vs oracle 15 (+1); R closed by lever R (=12, oracle-exact). Inherits the base Zesshou Hohou (Fierce) mapping: the arcade -1 is 2-way ambiguous (cell78 declared-over-real bank OR cell60 freeze-extension tick) and the discriminating WHIFF is harness-unreachable (specials-reachability gap). NON-SURGICAL: lever-F tested UNCHANGED, both A=15 and A=16 defensible, no discriminator - terminal-convention no-conversion (same posture as base yun-zesshou). Golden stays oracle=15, XFAIL. Prior disposition (unchanged): NARROWED 2026-07-13 (CONTACT-2, lever R, design.md §8.3.6): the R clause is CLOSED -- lever R's busy-edge construction (`fd_contact_busy_edge_r`, frame_data_overlay.c §13.19) measures this contact leg at R=12, oracle-exact, byte-identical shape to the sanctioned base `yun-zesshou-hp` conversion (corpus-yun.yaml, §5 item 4). The A clause (16 vs oracle 15) is untouched and remains the sole open clause; row stays XFAIL on A alone. Prior history (RELOCATED not deleted): UNCLASSIFIED (flagged 2026-07-12, needs follow-up classification; see this section's own header comment): a sum-preserving A/R boundary shift, identical signature to corpus-yun.yaml's own yun-zesshou-hp-block (Zesshou Hohou (Fierce)) -- measured A=16 vs oracle 15 (+1), R=11 vs oracle 12 (-1) under the legacy tally, S+A+R total unchanged (40 either way); adv exact (-2). Sign-incoherent with issue #17 shape (a1) (which only ever loses credit) and does not fit Phase 6 Class 1 or item 4 (both require A exact). No clean WHIFF baseline exists for this move (WHIFF-UNREACHABLE, same harness-gap shape as the base-move sibling). Very plausibly the same mechanism as the base move's own registered UNCLASSIFIED finding (docs/frame-data-synthesis.md §12.2.4 sum-preserving A/R boundary-shift family) but authored as its own sighting per the 'candidates never convert without their own recorded signature' discipline -- a per-tick credit-ledger trace is follow-up work, not done this session. Trace observation only, no mechanism claimed; flagged to orchestrator for follow-up classification." }
+
+- label: yun-exzesshou-hit
+  setup: { dist: close, dummy: none }
+  input: "hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LP+HP 2; wait 1"
+  qjson: { name: "Zesshou Hohou (EX)" }
+  outcome: HIT
+  # HIT-leg A (16) equals the BLOCK-leg's A (16) -- the juggle check
+  # (Ruling 2 check 3) passes; the divergence is against the ORACLE on both
+  # legs identically, not a juggle artifact. No expect.adv (Hit_advantage
+  # "-").
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, xfail: "[HONEST-FLOOR CENSUS 2026-07-14, opus-substitute / WANTS FABLE RE-REVIEW] TERMINAL CLASS = CONVENTION/RULED (mapping-ambiguous). Same as yun-exzesshou-block (juggle 16==16), inheriting the base Zesshou 2-way-ambiguous mapping; R closed by lever R=12; no discriminating whiff; terminal-convention no-conversion. Golden stays oracle=15, XFAIL. Prior disposition (unchanged): NARROWED 2026-07-13 (CONTACT-2, lever R): same R-clause closure as yun-exzesshou-block (busy-edge R=12, oracle-exact). A clause (16 vs oracle 15) untouched, stays XFAIL on A alone. Prior history (RELOCATED not deleted): same UNCLASSIFIED sum-preserving A/R boundary shift as yun-exzesshou-block (identical measured A=16/R=11 legacy vs oracle 15/12) -- see that entry's xfail string / this section's own header comment for the full discussion." }
+
+# --- Nishou Kyaku (EX) (upkicks, DP-shape hold-chain) -----------------------
+# Reuses corpus-yun.yaml's own base-move WHIFF recipe (dist=300, anchored,
+# dummy:none) unchanged -- already proven reachable for this move family
+# (all three base strengths whiff cleanly at 300 but connect at 250).
+# Census: single-FINAL, sastop=0, proj=0 -- the ONLY one of Yun's three EX
+# moves with a genuine, reachable WHIFF leg. GENUINELY multi-run on
+# WHIFF/BLOCK (box_runs=2 -- the double-kick's second hit registers its own
+# box run) but single-run on HIT (box_runs=1); see this file's header
+# Ruling-2 census item (4) -- zero divergence on any field regardless.
+
+- label: yun-exnishou-whiff
+  setup: { dist: 300, dummy: none }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LK+HK 2; wait 1"
+  qjson: { name: "Nishou Kyaku (EX)" }
+  outcome: WHIFF
+  # Measured S=4 A=6 R=29 (box_runs=2, box_a=6, busyr=29), oracle-exact on
+  # all three -- confirms WHIFF as the calibration surface per Phase 4 (the
+  # same values the BLOCK/HIT legs below also read).
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: yun-exnishou-block
+  setup: { dist: close, dummy: stand }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LK+HK 2; wait 1"
+  qjson: { name: "Nishou Kyaku (EX)" }
+  outcome: BLOCK
+  # Measured S=4 A=6 R=29 adv=-28 (box_runs=2, box_a=7, busyr=29, proj=0),
+  # oracle-exact on all four fields (yun.json Nishou Kyaku (EX)). BLOCK-leg
+  # A needs no juggle check -- logged as the cross-check anchor for the HIT
+  # leg below.
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: yun-exnishou-hit
+  setup: { dist: close, dummy: none }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LK+HK 2; wait 1"
+  qjson: { name: "Nishou Kyaku (EX)" }
+  outcome: HIT
+  # Measured S=4 A=6 R=29 -- HIT-leg A (6) equals the BLOCK-leg's A (6), so
+  # the juggle check (Ruling 2 check 3) passes and A is admissible. No
+  # expect.adv (Hit_advantage "-").
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }

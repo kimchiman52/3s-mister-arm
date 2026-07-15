@@ -1,0 +1,9 @@
+label	verdict	outcome	n	S	A	R	adv	kd
+necro-exspinpunch-block	PASS	BLOCK	1	8	17	23	-9	0
+necro-exspinpunch-hit	PASS	HIT	1	8	17	21	+70	1
+necro-exragingcobra-block	PASS	BLOCK	1	25	4	17	-3	0
+necro-exragingcobra-hit	PASS	HIT	1	25	4	17	+55	1
+necro-exflyingviper-whiff	PASS	WHIFF	1	24	5	14	+0	0
+necro-exflyingviper-block	XFAIL	BLOCK	1	24	10	10	+2	0
+necro-exflyingviper-hit	XFAIL	HIT	1	24	10	10	+2	0
+necro-exflyingviper-crouch-probe	XFAIL	BLOCK	1	24	10	10	+2	0

@@ -1,0 +1,169 @@
+# Elena Super Art 2 (Brave Dance) — EX/Supers program, supers wave S4
+# (Elena's three SA slots; sibling wave-S4 characters authored concurrently
+# by other agents, file-disjoint). Satellite corpus (auto-discovered by
+# run-suite.sh's corpus-*.yaml glob, own golden/elena-sa2.tsv once
+# registered) — corpus-elena.yaml/corpus-elena-ex.yaml/corpus-elena-sa1.yaml
+# are untouched.
+#
+# Scope: step0-universe.tsv row 37 (elena SA2, "Brave Dance", sa_slot 2,
+# exclusion_flag ASSERTABLE). Oracle: docs/arcade-frame-data/elena.json (md5
+# 763929513f271e2bf05c7177d12346d8, unchanged, same file corpus-elena.yaml/
+# corpus-elena-ex.yaml/corpus-elena-sa1.yaml already pin). Oracle row:
+# Startup=0, Hit=15, Recovery=14, Block_advantage=-12, Hit_advantage="-"
+# (non-numeric).
+#
+# Meter: sa_gauge:3 (MAXIMUM, per authoring-policy.md's meter policy default
+# for non-install supers).
+#
+# IDENTITY / MOTION (S-value motion-probe method, same discipline as
+# corpus-elena-sa1.yaml — elena.json has no Common_name data at all).
+# super_art:1 + "motion 2qcf HK" landed S=0/A=15/R=14 on the first attempt
+# (this session, <sp>/sa-elena/run-probe2/trace.log, WHIFF-context read) —
+# S=0/R=14 is an exact, unambiguous match to this row's own oracle
+# Startup=0/Recovery=14 (distinct from sibling SA1 Spinning Beat's own
+# R=43, ruling out an accidental same-slot re-hit). Kick-group super, same
+# family convention as SA1. The punch-group control probe (super_art:1 +
+# "motion 2qcf HP") fell to the SAME unrelated normal already seen at
+# super_art:0's own punch control (S=13/A=4/R=19) — confirms the punch
+# button is not slot-dependent for this fallback, ruling out an
+# accidental cross-index match.
+#
+# WHIFF IS REACHABLE at dist:300 (dist_mode:centered) — confirmed on the
+# first attempt this session (<sp>/sa-elena/run-probe5-sa2/trace.log).
+#
+# Admissibility census (per-entry, mechanical, from FRAME_TRACE columns —
+# authoring-policy.md Ruling 2), this session's own isolated 3-entry probe
+# run (<sp>/sa-elena/run-probe5-sa2-keep/trace.log, inter_entry_wait:500,
+# ordered WHIFF/BLOCK/HIT per the same predecessor-outcome-ordering
+# avoidance as corpus-elena-sa1.yaml):
+# (1) Single-FINAL integrity: exactly one MOVE_START and one FINAL inside
+#     each entry's own window (WHIFF F54-83, BLOCK F567-725, HIT
+#     F780-1003), no bleed between entries (python census this session).
+# (2) Flash-overlap (sastop) census: 0 nonzero ticks in every entry's own
+#     window (0/30 WHIFF, 0/159 BLOCK, 0/224 HIT — python census this
+#     session) — flash-free on all three legs.
+# (3) Contact-A juggle check (HIT legs only): HIT-leg A=22 == BLOCK-leg
+#     A=22 — PASSES (both contact legs agree with each other) but neither
+#     matches the oracle nor this move's own clean WHIFF (15) — see the A
+#     DISPOSITION below.
+# (4) Shape record: WHIFF box_runs=1, box_a=15, busyr=14 (a clean
+#     single-run whiff, oracle-exact on every field); BLOCK/HIT BOTH
+#     box_runs=0 (unlike SA1's own box_runs=1 contact legs — a genuinely
+#     different shape, the contact legs here never register a tracked
+#     att_box run at all), box_a=20/20 (disagreeing with their own
+#     engine_a=22/22 on both contact legs — see the A DISPOSITION below).
+#
+# S DISPOSITION: assertable, all three legs — S=0 exact, unique alongside
+# sibling SA1's own S=0 (disambiguated by R, see IDENTITY above).
+#
+# WHIFF is FULLY CLEAN: S=0/A=15/R=14, all three fields oracle-exact,
+# assertable without qualification — the cleanest of Elena's three SA
+# slots measured this session (no SA-WHIFF-A signature on this move: the
+# A undercount seen on sibling SA1 does NOT reproduce here, since this
+# move's own WHIFF reads the oracle value exactly rather than a uniform
+# -1 undercount).
+#
+# adv DISPOSITION: BLOCK adv=-12, exact oracle match — assertable,
+# independently of the A/R quarantines below (same pattern already seen
+# on sibling SA1's own BLOCK leg and on this program's own Ryu SA2/Ken
+# SA2 precedents: adv can stay oracle-exact even when A/R do not). HIT:
+# elena.json's Hit_advantage for this row is the literal string "-" —
+# not asserted; kd=1 asserted plainly (independent engine observation).
+#
+# A DISPOSITION — NEW ONE-OFF, box_a/engine_a internal disagreement
+# (2026-07-13, supers wave S4). BLOCK/HIT both measure A=22 (uniform
+# across the two contact legs) against oracle 15 and this move's own
+# clean WHIFF=15 — but UNLIKE the "Contact-only A-overcount, box-backed"
+# family (`sean-exdragonsmash-block/-hit`, docs/frame-data-synthesis.md
+# §12.2.4, whose defining bar is `box_a == engine_a` on the diverging
+# legs), this move's own `box_a` (20/20) DISAGREES with its own
+# `engine_a` (22/22) on BOTH contact legs — the OPPOSITE signature,
+# explicitly refused §12.2.3/box-backed membership by the same
+# by-definition test that already refused Yun SA2 Sourai Rengeki's own
+# BLOCK leg (`box_a=14` vs `engine_a=17`, same synthesis doc section).
+# This entry's own box_a/engine_a disagreement joins that exact shape as
+# a SECOND member (Yun SA2, Elena SA2) — below the ≥3 threshold, NOT a
+# systemic trigger by itself. A is OMITTED (not xfailed) on both BLOCK
+# and HIT, per that shape's own established disposition; no lever-F
+# toggle test run (no build performed this session).
+#
+# ENGINE-D2 EVALUATION (lever S, 2026-07-13 — golden UNCHANGED on all
+# three legs, no expect edits in this file). WHIFF is the visible fire
+# member (fire=1; reset-site probe `same_tick=1` at GT=102): engine_a
+# moves 14->15 internal-only, but the displayed A stays 15 (lever-O
+# box-backed, box_a=15/box_runs=1), unaffected by the internal shift.
+# HIT is the probe-only member (probe `same_tick=1`, `prev_add=0` at
+# GT=1128 — a sentinel-cell mid-tick entry left by end of tick, never
+# re-entered) ⇒ lever S's preserve computes delta=0 exactly ⇒ engine_a
+# and the displayed A are byte-identical pre/post-fix. BLOCK is NOT a
+# member (`same_tick=0` at this leg's own reset-site probe — step-1
+# §3's stale-stamp rejection example). Displayed values are unchanged
+# on all three legs; only WHIFF's internal engine_a diagnostic moves
+# (14->15).
+#
+# R DISPOSITION — THIRD MEMBER, crosses the ≥3 systemic threshold
+# (2026-07-13, supers wave S4), FLAGGED FOR ORCHESTRATOR ATTENTION.
+# BLOCK R=29, HIT R=17 — both a legacy R-surplus above this move's own
+# oracle-exact WHIFF/oracle value (14), on BOTH contact legs, with
+# `busyr` NOT recounting to oracle either (busyr=29 on BLOCK, busyr=17 on
+# HIT — busyr agrees with the diverging LEGACY value on each leg, not
+# with the oracle, ruling out M1/capture-truncation as the mechanism).
+# This is the IDENTICAL shape already on record twice in
+# `docs/frame-data-synthesis.md` §12.2.4 — Chun-Li SA3 Tensei Ranka
+# BLOCK+HIT R (measured 48 vs oracle 46, busyr=62 both legs) and Yun SA1
+# You Hou BLOCK+HIT R (measured 63 vs oracle 36) — both explicitly
+# described there as "a clean M1-fitting (or clean) WHIFF leg coexisting
+# with a busyr-disagreeing R-surplus on the two contact legs of the SAME
+# move." Elena SA2 Brave Dance reproduces this exact pattern a THIRD
+# time, crossing authoring-policy.md's own "≥3 same-shaped anomalies ⇒
+# stop and flag systemic" threshold for this specific shape. Per the
+# established per-member disposition (OMITTED, not xfailed, on both
+# existing members), R is OMITTED on BLOCK and HIT here too — this
+# session does not invent a new mechanism or attempt a fix (no build
+# available), but the threshold crossing is recorded here explicitly and
+# repeated in the batch report/final message for orchestrator judgment:
+# this shape ("WHIFF-clean, BLOCK+HIT legacy-R-surplus not recounted by
+# busyr") now has 3 named members (Chun-Li SA3, Yun SA1, Elena SA2) and
+# may warrant its own investigation rather than continued per-move
+# quarantine.
+character: elena
+oracle: elena.json
+super_art: 1
+sa_gauge: 3
+inter_entry_wait: 500
+entries:
+
+- label: elena-sa2-whiff
+  setup: { dist: 300, dist_mode: centered, dummy: stand }
+  input: "motion 2qcf HK"
+  qjson: { name: "Brave Dance" }
+  outcome: WHIFF
+  # Measured S=0 A=15 R=14 (box_runs=1, box_a=15, busyr=14, T=29). Fully
+  # oracle-exact on every field — clean single-run whiff.
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: elena-sa2-block
+  setup: { dist: close, dummy: stand }
+  input: "motion 2qcf HK"
+  qjson: { name: "Brave Dance" }
+  outcome: BLOCK
+  # Measured S=0 A=22 R=29 adv=-12 (box_runs=0, box_a=20, engine_a=22,
+  # busyr=29, T=119). S/adv oracle-exact. A OMITTED (box_a/engine_a
+  # internal-disagreement one-off, 2nd member — see A DISPOSITION above).
+  # R OMITTED (WHIFF-clean+contact-surplus shape, 3rd member, THRESHOLD
+  # CROSSED — see R DISPOSITION above).
+  expect: { S: from-qjson, adv: from-qjson }
+
+- label: elena-sa2-hit
+  setup: { dist: close, dummy: none }
+  input: "motion 2qcf HK"
+  qjson: { name: "Brave Dance" }
+  outcome: HIT
+  # Measured S=0 A=22 R=17 adv=+77 kd=1 (box_runs=0, box_a=20,
+  # engine_a=22, busyr=17, T=107). S oracle-exact; contact-A juggle check
+  # (Ruling 2 check 3) PASSES (HIT A=22 == BLOCK A=22) but does not
+  # license an assert against the oracle — A OMITTED (see A DISPOSITION
+  # above). R OMITTED (same shape as BLOCK — see R DISPOSITION above). No
+  # expect.adv: elena.json's Hit_advantage for this row is the literal
+  # string "-".
+  expect: { S: from-qjson, kd: 1 }

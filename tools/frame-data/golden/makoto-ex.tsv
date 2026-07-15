@@ -1,0 +1,10 @@
+label	verdict	outcome	n	S	A	R	adv	kd
+makoto-exhayate-block	PASS	BLOCK	1	17	3	20	+2	0
+makoto-exhayate-hit	PASS	HIT	1	17	3	20	+78	1
+makoto-exfukiage-whiff	PASS	WHIFF	1	11	8	26	+0	0
+makoto-exoroshi-whiff	PASS	WHIFF	1	13	7	17	+0	0
+makoto-exoroshi-block	PASS	BLOCK	1	13	7	17	+4	0
+makoto-exoroshi-hit	PASS	HIT	1	13	7	17	+60	1
+makoto-extsurugi-whiff	PASS	WHIFF	1	15	4	9	+0	0
+makoto-extsurugi-block	PASS	BLOCK	1	15	4	10	+7	0
+makoto-extsurugi-hit	PASS	HIT	1	15	4	10	+65	1

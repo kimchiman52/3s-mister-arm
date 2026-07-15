@@ -1,0 +1,132 @@
+# Yang Super Art 1 (Raishin Mahhaken) — EX/Supers program, supers wave S3
+# (Yang's three SA slots, authored this session; ibuki/makoto authored
+# concurrently by sibling agents on their own worktrees, file-disjoint).
+# Satellite corpus (auto-discovered by run-suite.sh's corpus-*.yaml glob,
+# own golden/yang-sa1.tsv once registered) — corpus-yang.yaml/corpus-yang-
+# ex.yaml/corpus-yang-sa2.yaml/corpus-yang-sa3.yaml are untouched.
+#
+# Scope: <sp>/exsuper/step0-universe.tsv row 139 (yang SA1, "Raishin
+# Mahhaken", sa_slot 1, naive sequential grouping — no Common_name label).
+# Oracle: docs/arcade-frame-data/yang.json (md5 4701f59a68fb49caa9ebaaefaeb40674,
+# same file corpus-yang.yaml/corpus-yang-ex.yaml already pin — re-verified
+# unchanged this session). Oracle row: Startup=6, Hit=4, Recovery=36,
+# Block_advantage=1, Hit_advantage="-" (non-numeric).
+#
+# Meter: sa_gauge:3 (MAXIMUM, per authoring-policy.md's non-install-super
+# default) + super_art:0 (0-indexed SA1 slot — SA2=1/SA3=2 in the sibling
+# corpora this session, confirmed by cross-move S-match: super_art:1 lands
+# Tenshin Senkyuutai's S=0, super_art:2 lands Sei-ei Enbu's S=15).
+#
+# Motion (identity confirmed this session by S-match probe, CORPUS-
+# AUTHORING.md Phase 5): "motion 2qcf HP" — same punch-fireball-family
+# primitive already confirmed for Ryu SA1/SA3, Ken SA1/SA2, Chun-Li SA1,
+# Yun SA1/SA3, and this same character's own base Tourou Zan/Tourou Zan
+# (EX) rekka. Landed S=6 exact on the FIRST candidate tried
+# (<sp>/sa-yang/run-probe1/trace.log) — no fallback probing needed.
+#
+# WHIFF IS REACHABLE at dist:300 (dist_mode:centered) — confirmed on the
+# first distance tried (Raishin Mahhaken is a rushing multi-hit palm strike
+# with finite forward travel, unlike this character's own Senkyuutai family
+# which is WHIFF-UNREACHABLE at the same ceiling per corpus-yang-sa2.yaml
+# and corpus-yang-ex.yaml's own Senkyuutai (EX) finding).
+#
+# Admissibility census (per-entry, mechanical, from FRAME_TRACE columns —
+# authoring-policy.md Ruling 2), this session's own isolated 3-entry probe
+# run (<sp>/sa-yang/run-probe2-sa1full/trace.log, inter_entry_wait:500):
+# (1) Single-FINAL integrity: exactly one MOVE_START/FINAL pair per entry,
+# non-overlapping windows (WHIFF F51-97, BLOCK F564-618, HIT F670-843), no
+# bleed between entries. T=46/44/85 — well under FD_METER_LEN=72 on WHIFF/
+# BLOCK; HIT's T=85 exceeds 72 but its own busyr (37) matches its own
+# displayed R (37) exactly (self-consistent, not M1-style truncation — M1
+# shows displayed R *below* busyr, not equal).
+# (2) Flash-overlap census: 0 nonzero sastop ticks in every entry's own
+# [MOVE_START F, FINAL F] window (0/47 WHIFF, 0/55 BLOCK, 0/174 HIT — python
+# census this session, scoped per-entry not file-wide) — flash-free,
+# matches every population checked so far.
+# (3) Contact-A juggle check (HIT leg): HIT engine_a=13 vs BLOCK engine_a=2
+# — FAILS (13≠2), so per Ruling 2 check 3 the HIT-leg A is documented-
+# unasserted (same shape as the Ryu SA2/Ken SA3/Chun-Li SA2 pilot
+# precedent: a HIT leg on a multi-hit super re-fires the juggle and
+# inflates A far past the BLOCK-leg's own credited value).
+# (4) Shape record: proj=0, box_runs=1 on all three legs (a clean
+# single-run shape throughout, unlike this character's own SA2 sibling).
+#
+# A DISPOSITION — BLOCK leg fits CORPUS-AUTHORING.md Phase 6 bucket 1
+# ("Contact-A undercount": measured A < oracle A, S/R/adv all exact,
+# clean WHIFF baseline) EXACTLY: WHIFF A=4 is oracle-exact (4==4, the
+# required "clean whiff" baseline bucket 1/7/8 both need), BLOCK A=2
+# undercounts against that same clean baseline while S(6)/R(36)/adv(+1)
+# all stay oracle-exact on BLOCK — the textbook shape of an already-
+# ADOPTED, already-shipped convention (§13.13, precedent: `ryu-far-strong-
+# block`, `ryu-crmk-block`, `h-short-block/-hit`, `h-forward-block/-hit`).
+# Per that convention's disposition, BLOCK's A is asserted as the measured
+# engine-truth value (2), plain PASS, citing §13.13 — NOT the oracle's 4.
+# CAVEAT (logged, not hidden): CORPUS-AUTHORING.md's own text names a
+# practical shape-(a)-vs-(b) discriminator (toggle `lever F` on a scratch
+# build) as "still required before citing §13.13" for a fresh sighting;
+# this session's task constraints forbid any rebuild (`FDH_SKIP_BUILD=1`,
+# no `src/` edits), so that toggle was NOT independently re-run here. The
+# citation rests on the shape match being complete and unambiguous (every
+# one of bucket 1's stated criteria holds), consistent with how this same
+# program's own sibling sessions cite already-adopted conventions (e.g.
+# corpus-ryu-sa2.yaml's §13.11 citation) without re-deriving the mechanism
+# from scratch each time — flagged here for orchestrator follow-up if a
+# fresh toggle confirmation is wanted. HIT-leg A is OMITTED regardless (see
+# juggle-check failure above), so this caveat only bears on the BLOCK
+# entry's A assert.
+#
+# R DISPOSITION — HIT leg (measured 37 vs BLOCK/WHIFF's oracle-exact 36,
+# a uniform +1) does NOT fit CORPUS-AUTHORING.md's §13.10 HIT-R Class 1
+# bucket (Class 1 requires a genuinely SHORTER hit-branch recovery; this is
+# +1 LONGER, same "wrong direction" disqualifier the Ryu SA2 pilot's own
+# HIT-R finding already recorded for its own super). Internally
+# self-consistent (HIT's own busyr=37 matches its own displayed R=37
+# exactly — not an M1 shape) but does not match any other established
+# Phase-6 R bucket either. QUARANTINED (omitted, not xfailed): logged here
+# as a new, small-magnitude (+1) unclassified finding, HYPOTHESIS ONLY —
+# possibly the same class of small residual contact-variance bucket 5's
+# own text tolerates on other moves (`chunli-farroundhouse-block`,
+# `ken-tatsu-lk-block/-hit`, both "±1 contact-variance" residuals, never
+# asserted equal to oracle there either).
+character: yang
+oracle: yang.json
+super_art: 0
+sa_gauge: 3
+inter_entry_wait: 500
+entries:
+
+- label: yang-sa1-whiff
+  setup: { dist: 300, dist_mode: centered, dummy: none }
+  input: "motion 2qcf HP"
+  qjson: { name: "Raishin Mahhaken" }
+  outcome: WHIFF
+  # Measured S=6 A=4 R=36 (box_runs=1, box_a=4, busyr=36, T=46), oracle-exact
+  # on all three fields — the clean baseline the BLOCK leg's own A
+  # DISPOSITION cites above.
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: yang-sa1-block
+  setup: { dist: close, dummy: stand }
+  input: "motion 2qcf HP"
+  qjson: { name: "Raishin Mahhaken" }
+  outcome: BLOCK
+  # Measured S=6 A=2 R=36 adv=+1 (engine_a=2, box_a=2, busyr=36, box_runs=1,
+  # T=44). S/R/adv oracle-exact. A=2 (vs oracle 4, vs this move's own clean
+  # WHIFF baseline of 4) is Phase 6 bucket 1's "Contact-A undercount" shape
+  # — asserted as the measured engine-truth value (2), plain PASS citing
+  # §13.13 (see A DISPOSITION above for the full discussion and its logged
+  # caveat).
+  expect: { S: from-qjson, A: 2, R: from-qjson, adv: from-qjson }
+
+- label: yang-sa1-hit
+  setup: { dist: close, dummy: none }
+  input: "motion 2qcf HP"
+  qjson: { name: "Raishin Mahhaken" }
+  outcome: HIT
+  # Measured S=6 A=13(NOT asserted, see A DISPOSITION — juggle check fails,
+  # 13≠BLOCK's 2) R=37(NOT asserted, see R DISPOSITION — new +1
+  # unclassified HIT-R finding, self-consistent busyr=37 but doesn't fit
+  # any established §13.10 class) kd=1 (box_runs=1, box_a=13, busyr=37,
+  # T=85). S oracle-exact (only field asserted). No expect.adv:
+  # yang.json's Hit_advantage for this row is the literal string "-".
+  expect: { S: from-qjson, kd: 1 }

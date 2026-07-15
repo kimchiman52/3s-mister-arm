@@ -1,0 +1,156 @@
+# Makoto Super Art 1 (Seichuusen Godanzuki) — EX/Supers program, supers wave
+# S3 fan-out (Ruling 5's per-character SA satellite batches, <sp>/exsuper/
+# authoring-policy.md; Makoto's own three SA slots, authored together —
+# yang/ibuki authored concurrently by sibling agents, file-disjoint).
+# Satellite corpus (auto-discovered by run-suite.sh's corpus-*.yaml glob, own
+# golden/makoto-sa1.tsv once registered) — corpus-makoto.yaml/corpus-makoto-
+# ex.yaml are untouched.
+#
+# Scope: step0-universe.tsv row 66 (makoto SA1, "Seichuusen Godanzuki",
+# sa_slot 1, exclusion_flag ASSERTABLE). Oracle: docs/arcade-frame-data/
+# makoto.json (md5 8805245ff0ccb492ff78cc00027a4d4d, same file corpus-
+# makoto.yaml/corpus-makoto-ex.yaml already pin — re-verified unchanged this
+# session). Oracle row: Startup=0, Hit=3, Recovery=65, Block_advantage=-17,
+# Hit_advantage="-" (non-numeric).
+#
+# Meter: sa_gauge:3 (MAXIMUM, per authoring-policy.md's meter policy default
+# for non-install supers) + super_art:0 (0-indexed SA1). Identity confirmed
+# this session by S-match probe (CORPUS-AUTHORING.md Phase 5 "motion-probe
+# method"): <sp>/sa-makoto/run-probe-sa0-hp/trace.log, "motion 2qcf HP"
+# against super_art:0 lands S=0/A=3/R=65/adv=+0 on a genuine WHIFF — all
+# three numeric fields oracle-exact on the FIRST attempt (punch-group
+# button, matching the "Godanzuki" finishing-punch name), unambiguous
+# identification, not assumed.
+#
+# Motion (identity confirmed this session): "motion 2qcf HP" — double-
+# quarter-circle-forward + Fierce Punch, same primitive already used for
+# Ryu/Ken/Chun-Li/Akuma/Dudley/Yun SA1 (punch-group super family).
+#
+# CROSS-INDEX CONTROLS (this session, used to disambiguate SA2/SA3 in the
+# sibling files, recorded here for completeness): super_art:0 + "motion 2qcf
+# HK" (wrong button for this slot) falls back to a plain "Towards Roundhouse"
+# command normal (S=22/A=3/R=25, exact match to makoto.json's own row) —
+# mundane, expected, unrelated to SA identity (<sp>/sa-makoto/run-ctrl-sa0-
+# hk/trace.log).
+#
+# Admissibility census (per-entry, mechanical, from FRAME_TRACE columns —
+# authoring-policy.md Ruling 2), this session's isolated single-entry/two-
+# entry probes (<sp>/sa-makoto/run-probe-sa0-hp/trace.log [WHIFF],
+# run-sa1-legs/trace.log + run-sa1-legs-rep2/trace.log [BLOCK+HIT,
+# determinism-verified byte-identical FINAL lines across two independent
+# runs]):
+# (1) Single-FINAL integrity — exactly one MOVE_START and one FINAL in each
+#     entry's own window (WHIFF: F=11-119 solo; BLOCK: F=51-124; HIT:
+#     F=176-439, own entry after BLOCK with inter_entry_wait:500, zero
+#     bleed) — mechanical grep census this session.
+# (2) Flash-overlap census (the sastop gate): 0 nonzero sastop ticks in
+#     [MOVE_START F, FINAL F] on every leg (WHIFF 0/108; BLOCK 0/74 within
+#     [51,124]; HIT 0/264 within [176,439] — awk census this session). This
+#     move is flash-free, matching every population checked so far
+#     (contrast with corpus-makoto-sa2.yaml's own Abare Tosanami finding,
+#     which is NOT flash-free — see that file's header for the new
+#     systemic-candidate writeup).
+# (3) Contact-A juggle check (HIT leg only): HIT A=13 vs BLOCK A=1 — FAILS
+#     (13 != 1). Per Ruling 2 check 3, HIT-leg A is inadmissible regardless
+#     of its own value; see A DISPOSITION below.
+# (4) Shape record: BLOCK box_runs=0/box_a=0/busyr=-1 (sentinel — no
+#     att_box run and no busy-edge ever latched, despite active_pf=1 real
+#     active tick: this 5-hit rekka super's own attack property appears to
+#     be driven by a pure declared/engine_a-independent path, not a
+#     physical att_box tensor — a genuinely different shape from Ken SA3's
+#     real box_runs=12 multi-run tensor, logged as a raw fact, no mechanism
+#     claimed); HIT box_runs=1/box_a=13/busyr=133 (kd=1 knockdown, a real
+#     post-contact continuation span, not comparable to BLOCK's shape).
+#
+# R/A DISPOSITION. Both BLOCK and HIT contact legs diverge from oracle;
+# rep-stability confirmed via two independent full runs (byte-identical
+# FINAL lines, <sp>/sa-makoto/run-sa1-legs/trace.log vs run-sa1-legs-rep2/
+# trace.log) before any assertion below, per this batch's own "confirm the
+# reading" bar.
+#   BLOCK: measured A=1 vs oracle 3 (-2), R=71 vs oracle 65 (+6). busyr=-1
+#     (sentinel, no busy-edge diagnostic possible — this is NOT the Chun-Li
+#     SA2/Ken SA1 M1-truncation shape, since raw_sat=0 confirms this is a
+#     complete, un-truncated 72-tick measurement, not a capture-depth
+#     artifact). No established Phase 6 bucket covers a BLOCK-leg A+R pair
+#     diverging together on a box_runs=0 declared-only attack. Per this
+#     batch's disposition rule (confirmed rep-stable/deterministic
+#     divergence with a live numeric oracle, elena-exspinscythe/akuma-sa2
+#     idiom): the ORACLE value is asserted for both A and R, xfailed with
+#     the measured value recorded — not omitted, not silently substituted.
+#   HIT: A=13 (14 post-ENGINE-D2) fails its own juggle check (!= BLOCK's 1)
+#     — inadmissible per Ruling 2 check 3, OMITTED regardless of the value
+#     itself (contact-A juggle failures are documented-unasserted by
+#     construction, same idiom as corpus-ryu-sa2.yaml's own HIT-A finding).
+#     R=133 (kd=1) is a genuine post-knockdown continuation span — a
+#     structurally DIFFERENT quantity than oracle's own whiff-canonical
+#     Recovery=65 (the same "R stops being the same measurable thing once a
+#     knockdown continuation is in play" shape already logged for corpus-
+#     ryu-sa2.yaml's own HIT-R: "measured R=40 vs oracle-exact 35... does
+#     not fit any Phase-6 HIT-R bucket... Logged as UNCLASSIFIED"). OMITTED
+#     (not xfailed), documented here, not guessed at.
+#
+# ENGINE-D2 EVALUATION (lever S, 2026-07-13). This corpus is a full
+# ENGINE-D2 member set, all three legs: WHIFF fires visibly but is
+# lever-O-shielded (box_a=3, box_runs=1 ⇒ displayed 3 unchanged; internal
+# engine_a 2->3, now == oracle Hit=3); HIT fires visibly, golden A 13->14
+# value-only (unasserted, verdict stays PASS, see above); BLOCK fires
+# PROBE-ONLY (mid-tick transit, same class as ryu-sa2's own probe-only
+# amendment) with delta=0 real effect (preserve +1 but ZERO post-T active
+# cells ⇒ engine_a 0->1, displayed A stays 1 via the active_pf fallback —
+# effective_a's source flips active_pf->engine_a but the VALUE is
+# identical, negative-confirmed, no golden change; xfail A=1 vs 3 stays
+# unchanged). Golden UNCHANGED on WHIFF/BLOCK; HIT's own golden drift is
+# value-only (A column moves, verdict stays PASS since A was never
+# asserted).
+character: makoto
+oracle: makoto.json
+super_art: 0
+sa_gauge: 3
+inter_entry_wait: 500
+entries:
+
+- label: makoto-sa1-whiff
+  setup: { dist: 250, dummy: none }
+  input: "motion 2qcf HP"
+  qjson: { name: "Seichuusen Godanzuki" }
+  outcome: WHIFF
+  # Measured S=0 A=3 R=65 adv=+0 (box_runs=1, box_a=3, busyr=65, T=68,
+  # raw_sat=0) — S/A/R all oracle-exact, a completely clean leg, zero
+  # divergence of any kind. No expect.adv: from-qjson is a CompileError on
+  # outcome WHIFF (q.json has no whiff-advantage field).
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: makoto-sa1-block
+  setup: { dist: close, dummy: stand }
+  input: "motion 2qcf HP"
+  qjson: { name: "Seichuusen Godanzuki" }
+  outcome: BLOCK
+  # Measured S=0 A=1 R=71 adv=-17 (box_runs=0, box_a=0, busyr=-1 sentinel,
+  # active_pf=1, T=72, raw_sat=0 — a complete, un-truncated measurement).
+  # S/adv oracle-exact. A and R both diverge (see A/R DISPOSITION above) —
+  # confirmed rep-stable/deterministic across two independent full runs;
+  # asserted at the ORACLE value (from-qjson) as xfail, measured value
+  # recorded here, not silently substituted or omitted.
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson, xfail: "[HONEST-FLOOR CENSUS 2026-07-14, opus-substitute / WANTS FABLE RE-REVIEW] TERMINAL CLASS = OVERLAY-DISPLAY-DIVERGENCE (5-hit rekka declared-path, whiff-anchored). Arcade-true = A3/R65: the WHIFF sibling PASSes at A=3/R=65 == oracle. NON-SURGICAL: this rekka super tracks attack via a pure declared/engine_a path (engine_a=0, active_pf=1, box_a=0, busyr=-1 sentinel) with no att_box tensor to anchor a busy-edge lever; declared-credit drops 2 and the chart runs 6 longer, no census signal isolates it. Golden stays oracle=3/65, XFAIL. Prior disposition (unchanged): BLOCK-leg A/R divergence, UNCLASSIFIED (no established Phase 6 bucket), authored 2026-07-13 (date added 2026-07-13, EXSUPER-1 closing cleanup — missing from the original note): measured A=1 vs oracle 3 (-2), measured R=71 vs oracle 65 (+6). box_runs=0/box_a=0/busyr=-1 (sentinel) — this 5-hit rekka super's own attack property is tracked via a pure declared/engine_a-independent path (engine_a=0 while active_pf=1), not a physical att_box tensor, so the busyr diagnostic has nothing to corroborate either way (not the M1 capture-truncation shape — raw_sat=0 confirms a complete 72-tick measurement, not a truncation artifact). Confirmed rep-stable across two independent runs (byte-identical FINAL lines) before this assertion. No per-tick declared-credit ledger trace taken this session (no-build constraint); flagged for follow-up classification." }
+
+- label: makoto-sa1-hit
+  setup: { dist: close, dummy: none }
+  input: "motion 2qcf HP"
+  qjson: { name: "Seichuusen Godanzuki" }
+  outcome: HIT
+  # Measured S=0 A=14 (was 13 pre-ENGINE-D2, lever S — value-only refresh,
+  # not asserted here regardless, see below) R=133 adv=+10 kd=1
+  # (box_runs=1, box_a=13, busyr=133, T=215, raw_sat=0 — a complete,
+  # un-truncated 215-tick measurement). S oracle-exact. No expect.A:
+  # contact-A juggle check (Ruling 2 check 3) FAILS (measured HIT A=14 !=
+  # BLOCK A=1) — inadmissible regardless of the value, same idiom as
+  # corpus-ryu-sa2.yaml's own HIT-A finding. No expect.R: this is a genuine
+  # post-knockdown continuation span (kd=1), structurally a different
+  # quantity than oracle's whiff-canonical Recovery=65 — OMITTED,
+  # UNCLASSIFIED, same posture as corpus-ryu-sa2.yaml's own "new finding,
+  # quarantined" HIT-R (see R DISPOSITION above). No expect.adv:
+  # makoto.json's Hit_advantage for this row is the literal string "-".
+  # ENGINE-D2 EVALUATION (2026-07-13): this leg is a same-tick D2 member
+  # (visible in the trace scan); the measured-A drift is internal
+  # bookkeeping only — the verdict stays PASS (A was never asserted here).
+  expect: { S: from-qjson, kd: 1 }

@@ -1,0 +1,4 @@
+label	verdict	outcome	n	S	A	R	adv	kd
+akuma-sa2-whiff	PASS	WHIFF	1	0	24	37	+0	0
+akuma-sa2-block	PASS	BLOCK	1	0	24	37	-25	0
+akuma-sa2-hit	PASS	HIT	1	0	24	37	+76	1

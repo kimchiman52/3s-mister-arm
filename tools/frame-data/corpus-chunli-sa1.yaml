@@ -1,0 +1,171 @@
+# Chun-Li Super Art 1 (Kikoshou) — EX/Supers program, supers wave S1
+# (authoring-policy.md Ruling 5 fan-out, following the chunli-sa2/ken-sa3/
+# ryu-sa1 pilot trio). Satellite corpus (auto-discovered by run-suite.sh's
+# corpus-*.yaml glob, own golden/chunli-sa1.tsv once registered) — the main
+# corpus-chunli.yaml/corpus-chunli-ex.yaml and the sibling corpus-chunli-
+# sa2.yaml/corpus-chunli-sa3.yaml are untouched.
+#
+# Scope: step0-universe.tsv row 21 (chunli SA1, "Kikoshou", sa_slot 1).
+# Oracle: docs/arcade-frame-data/chunli.json (md5 f2237f518c4d915ba454a2fe475aa342,
+# same file corpus-chunli.yaml/corpus-chunli-ex.yaml/corpus-chunli-sa2.yaml
+# already pin, re-verified unchanged this session). Oracle row: Startup=0,
+# Hit=20, Recovery=48, Block_advantage=-39, Hit_advantage="-" (non-numeric).
+#
+# Meter: sa_gauge:3 (MAXIMUM) + super_art:0 (0-indexed SA1 — this program's
+# own index scheme confirmed by corpus-chunli-sa2.yaml's super_art:1
+# for SA2, re-confirmed this session by super_art:0 landing S=0=oracle here
+# and super_art:2 landing S=2=oracle for SA3 in the sibling corpus).
+#
+# Motion (identity found empirically this session via a 5-button sweep,
+# <sp>/sa-chunli/run-probe2-sa1-buttons/trace.log — NOT the naively-expected
+# "2qcf HK" that worked for Chun SA2/Ken SA3): "motion 2qcf HP". "2qcf HK"
+# (the sibling pilot's own button) lands an unrelated normal instead
+# (measured S=12, nowhere near oracle S=0). Sweeping the other 5 buttons
+# with super_art:0 held constant: HP/MP/LP all land S=0=oracle-exact
+# identically (S=0 A=19 R=41 adv=+36 on all three, byte-identical FINAL
+# lines); MK lands a different unrelated normal (S=11); LK lands yet another
+# (S=3). Canonical button chosen: HP (matches Ryu SA1's own any-punch
+# convention; MP/LP would measure identically per this session's own sweep).
+#
+# Admissibility census (per-entry, mechanical, from FRAME_TRACE columns —
+# authoring-policy.md Ruling 2), this session's own isolated 3-entry probe
+# run (<sp>/sa-chunli/run-probe3-sa1/trace.log, inter_entry_wait:500,
+# button confirmed via the sweep above):
+# (1) Single-FINAL integrity — exactly one FINAL inside each entry's own
+# window (BLOCK F51-146; HIT F564-720; WHIFF F1077-1183), each FINAL's own
+# move_start_F matches its entry's MOVE_START annotation frame, no bleed.
+# (2) Flash-overlap census: 0 nonzero-sastop ticks in [MOVE_START F, FINAL
+# F] on all three legs (0/96 BLOCK, 0/157 HIT, 0/107 WHIFF — awk census this
+# session) — flash-free measurement on every leg, matches every population
+# checked in this program so far.
+# (3) Contact-A juggle check (HIT legs only): HIT-leg A=19 vs BLOCK-leg
+# A=19 — PASSES (identical, unlike Ken SA3/Chun SA2's own failing juggle
+# checks) — HIT-leg A is therefore admissible, same instrument as BLOCK.
+# (4) Shape record: box_runs=4 (BLOCK), 4 (HIT), 11 (WHIFF) — genuinely
+# MULTI-RUN on every leg (Ruling 3 applies, same class as Ken SA3, not the
+# clean single-run shape Chun SA2/Ryu SA1 had). box_a=21 (BLOCK/HIT), 20
+# (WHIFF); busyr=48 on ALL THREE legs (diagnostics only, Ruling 2 — but see
+# R DISPOSITION below, where busyr is the load-bearing signal).
+#
+# S DISPOSITION: S=0 on all three legs, oracle-exact (Startup=0) — a rare,
+# genuinely stationary big-hitbox super (step0-universe.tsv's own
+# move_shape_notes flagged this as "a genuine whiff candidate," confirmed
+# below). Assertable everywhere per Ruling 3's lever-independent E-3 rule.
+#
+# R DISPOSITION (all three legs — the SAME M1 raw-capture-saturation
+# mechanism named for Ken SA3/Dudley MGB (EX)/Chun-Li SA2, now independently
+# confirmed on a FOURTH move, all three of ITS legs at once). T=72=
+# FD_METER_LEN exactly on BLOCK/HIT/WHIFF; legacy-displayed R reads 41/41/42
+# respectively (all clipped), while busyr reads 48/48/48 — EXACTLY oracle
+# Recovery=48 on every single leg (docs/frame-data-synthesis.md's own "M1
+# register — class growth" note, updated this session: was 5 legs across 3
+# moves, now 8 legs across 4 moves — see that note for the full roster).
+# This is the cleanest M1 sighting yet: unlike Ken SA3 (busyr matched only
+# on the BLOCK leg's own preserved trace) or Chun SA2 (busyr matched on
+# both legs but T just barely reached 72), Kikoshou's busyr matches oracle
+# on ALL THREE legs including WHIFF, with T=72 saturated identically
+# everywhere. Per Ruling 2 (E-1/E-4), a busyr/oracle match is NOT license to
+# assert R via that diagnostic on ANY leg (busy/box agreement was shown to
+# be the exception, not a rule; the validated instrument is the legacy
+# displayed path, which is truncated here on every leg). R is therefore
+# OMITTED on all three legs (not asserted, not guessed) — the established
+# "omit with the M1 citation" idiom, not a new quarantine seed.
+#
+# A DISPOSITION — RESOLVED (ENGINE-D2, lever S, 2026-07-13; supersedes the
+# UNCLASSIFIED framing below, kept for the record). The uniform -1
+# undercount on BLOCK/HIT/WHIFF alike (measured legacy A=19 vs oracle
+# Hit=20, reproducing on the WHIFF leg — the fact that originally ruled
+# out every Phase-6 contact-only bucket) is the `fd_reset_move()`
+# MOVE_START-vs-`char_move()` same-tick race named SA-WHIFF-A/D2
+# (docs/frame-data-synthesis.md §12.2.4) — this row's own prior HYPOTHESIS
+# ("possibly M1-adjacent, T=72 saturated on every leg") was a plausible but
+# wrong guess; the actual mechanism is D2, unrelated to M1 capture
+# saturation. Fixed by lever S. Post-fix measured A=20 == oracle exactly
+# on all three legs. A is now asserted `from-qjson` on WHIFF/HIT (their
+# xfail was A-only — see the per-entry comments), plain PASS.
+#
+# adv DISPOSITION — REMAINS OPEN, unaffected by ENGINE-D2 (lever S touches
+# only the engine's declared-active-cell accumulator, never advantage/idle-
+# frame timing). BLOCK adv measured -38 vs oracle Block_advantage=-39 (off
+# by +1) — still does not match any established bucket (not the "Block-adv
+# anomaly, S/A/R exact" registry row: R is independently quarantined here,
+# not exact). BLOCK's own xfail note is rewritten to reflect the split:
+# the A clause is resolved by ENGINE-D2, the adv clause stays UNCLASSIFIED,
+# flagged for follow-up (a new docs/frame-data-synthesis.md §12.2.4
+# registry row, out of this corpus-authoring pass's scope to add).
+#
+# WHIFF FINDING (program-significant): this is a GENUINE super WHIFF,
+# reached on the very first max-distance probe (dist:300 dist_mode:centered,
+# 10px inside CENTERED_DIST_MAX=310). MOVE_START's own annotation reads
+# dist=163 (not 300) — this move's own pre-MOVE_START walk-in consumes only
+# ~137px of the requested separation (much less than Chun SA2's own
+# +198px/Ken SA3's own +42px, consistent with Kikoshou being a genuinely
+# stationary super with little to no forward motion during its own input
+# window), and the ~163px effective separation left EXCEEDS Kikoshou's own
+# short reach — outcome=WHIFF confirmed (not a census/shape problem: S=0
+# still matches oracle exactly on this leg, ruling out a wrong-move read).
+# This resolves authoring-policy.md Ruling 4 item 2 ("One genuine super
+# WHIFF ground truth... 2b could not reach one") for THIS specific move —
+# the harness's own lever-N busy-0 anchor question (O-A) can now be checked
+# against a real super WHIFF rather than only normals/EX moves, though that
+# deeper lever-N confirmation itself is out of this authoring pass's scope
+# (flagged for the 2c/arcade session per Ruling 4). No further binary search
+# attempted: a clean WHIFF on the first max-distance try is sufficient
+# confirmation, same posture as the pilot trio's own single-probe
+# WHIFF-UNREACHABLE calls.
+character: chunli
+oracle: chunli.json
+super_art: 0
+sa_gauge: 3
+inter_entry_wait: 500
+entries:
+
+- label: chunli-sa1-block
+  setup: { dist: close, dummy: stand }
+  input: "motion 2qcf HP"
+  qjson: { name: "Kikoshou" }
+  outcome: BLOCK
+  # Measured S=0 A=20 (was 19 pre-ENGINE-D2, see A DISPOSITION above — now
+  # RESOLVED, oracle-exact) R=41(NOT asserted, see R DISPOSITION above)
+  # adv=-38(xfail, still open — see adv DISPOSITION above) (box_runs=4,
+  # box_a=21, busyr=48, T=72). S/A oracle-exact; adv stays -1 off.
+  # BUFFER-1 (2026-07-13): R now asserted from-qjson — capture raise
+  # un-truncates; post-fix measured R=48 == busyr == oracle exactly on
+  # all three legs. ENGINE-D2 (2026-07-13): A clause resolved (see A
+  # DISPOSITION above); adv clause remains open — xfail stays (verdict
+  # stays XFAIL on the adv clause), note reworded below.
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson, xfail: "RECLASSIFIED 2026-07-14, TERMINAL-NON-SURGICAL (was adv-only UNCLASSIFIED) - <sp>/zero/adv/plan.md §2 D-f / §4.2, opus-substitute / WANTS FABLE RE-REVIEW: adv off by 1 (measured -38 vs oracle -39), the same undiagnosed class as akuma-sa3-block (leverR does not fire here either, A-clause already closed by lever S/ENGINE-D2 - see prior history below). adv = defender_idle - attacker_idle is arcade-exact on 600/607 currently-asserting adv rows; this is one of only 4 divergent rows. The critical gate (any adv re-anchor candidate must offline-fit against EVERY currently-PASS adv row with zero regression) KILLS the only broad candidate available: a flat adv-=1 fixes this row + akuma-sa3-block but regresses 600 other currently-correct adv rows (the CONTACT-A failure shape). No census signal isolates this row's +1 idle-timing offset from the 600 correct rows; per-move hardcoding is policy-forbidden. The +1 mechanism itself remains genuinely undiagnosed (no per-tick idle-ledger trace has ever been taken). Deferred pending a new instrumented diagnostic (build task) that fit-proves zero regression across all 607 adv rows - out of this design's read-only scope. Golden unchanged; adv stays asserted at oracle=-39, measured=-38, XFAIL. Prior history (RELOCATED not deleted): ENGINE-D2 A-clause resolved 2026-07-13 (was combined A+adv UNCLASSIFIED, see A/adv DISPOSITION above): the A clause (measured legacy A=19 vs oracle 20) is RESOLVED by ENGINE-D2's lever S (frame_data_overlay.c fd_movestart_same_tick_credit_hold) - post-fix A=20 == oracle exactly, same mechanism reproduced identically on the HIT/WHIFF legs (both now plain PASS on A)." }
+
+- label: chunli-sa1-hit
+  setup: { dist: close, dummy: none }
+  input: "motion 2qcf HP"
+  qjson: { name: "Kikoshou" }
+  outcome: HIT
+  # Measured S=0 A=20 (was 19 pre-ENGINE-D2, same resolution as BLOCK -
+  # juggle check PASSES, HIT A=20==BLOCK A=20 post-fix) R=41(NOT asserted,
+  # see R DISPOSITION above) (box_runs=4, box_a=21, busyr=48, kd=1, T=72).
+  # S/A oracle-exact. No expect.adv: chunli.json's Hit_advantage for this
+  # row is the literal string "-". BUFFER-1 (2026-07-13): R now asserted
+  # from-qjson, same basis as BLOCK. ENGINE-D2 (2026-07-13): A xfail
+  # removed, plain PASS (only clause on this leg was A, no adv assert here).
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: chunli-sa1-whiff
+  setup: { dist: 300, dist_mode: centered, dummy: none }
+  input: "motion 2qcf HP"
+  qjson: { name: "Kikoshou" }
+  outcome: WHIFF
+  # GENUINE WHIFF (see WHIFF FINDING above) - MOVE_START dist=163 (walk-in
+  # ~137px consumed from the requested 300), still exceeds Kikoshou's own
+  # short reach. Measured S=0 A=20 (was 19 pre-ENGINE-D2, same resolution
+  # as BLOCK/HIT - this WHIFF-leg reproduction is what originally ruled out
+  # a contact-only mechanism, correctly pointing at a whiff-inclusive race
+  # instead of a Phase-6 contact bucket) R=42(NOT asserted, see R
+  # DISPOSITION above - busyr=48=oracle exactly on this leg too)
+  # (box_runs=11, box_a=20, busyr=48, T=72). S/A oracle-exact. No
+  # expect.adv: WHIFF has no oracle whiff-advantage field (from-qjson would
+  # raise CompileError on WHIFF outcome, same reasoning as every other
+  # WHIFF entry in this program).
+  # BUFFER-1 (2026-07-13): R now asserted from-qjson, same basis as
+  # BLOCK/HIT. ENGINE-D2 (2026-07-13): A xfail removed, plain PASS.
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }

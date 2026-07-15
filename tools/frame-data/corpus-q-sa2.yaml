@@ -1,0 +1,189 @@
+# Q Super Art 2 (Deadly Double Combination) — EX/Supers program, supers
+# wave S6 (Q's three SA slots; sibling agents authoring other characters'
+# SA corpora concurrently in this wave, file-disjoint). Satellite corpus
+# (auto-discovered by run-suite.sh's corpus-*.yaml glob, own
+# golden/q-sa2.tsv once registered) — corpus-q.yaml/corpus-q-ex.yaml/
+# corpus-q-sa1.yaml/corpus-q-sa3.yaml are untouched.
+#
+# Scope: step0-universe.tsv row 91 (q SA2, "Deadly Double Combination",
+# sa_slot 2, exclusion_flag ASSERTABLE). Oracle: docs/arcade-frame-data/
+# q.json (md5 e4251d598ad2b24d755219be1a58b0b2, unchanged, same file
+# corpus-q.yaml/corpus-q-ex.yaml/corpus-q-sa1.yaml already pin). Oracle
+# row: Startup=1, Hit=1, Recovery=65, Block_advantage=-25,
+# Hit_advantage="-" (non-numeric).
+#
+# Meter: sa_gauge:3 (MAXIMUM) + super_art:1 (0-indexed SA2). Identity
+# confirmed this session by S-match probe: "motion 2qcf HP" against
+# super_art:1 lands qjson.name="Deadly Double Combination" with S=1 exact
+# on all three probed legs (close-range HIT, close-range BLOCK, far-range
+# WHIFF) — SAME motion primitive (2qcf + Fierce Punch) as SA1's own
+# Critical Combo Attack, differentiated purely by the super_art config,
+# not by a different real-game input. Cross-checked button-invariance
+# directly: "motion 2qcf LP" at the identical setup measures byte-
+# identical S=1/A=2/R=73/adv=+118 to the HP attempt — button strength
+# does not gate identity for this super either (same finding as SA1).
+#
+# MOTION-PROBE LEDGER (Phase 5 "motion-probe method" — every candidate
+# tried this session before landing on 2qcf+P, recorded per the "don't
+# declare impossible without trying" discipline):
+#   1. "motion 2qcf HK" (super_art:1) -> falls through to a plain
+#      Roundhouse (S=20/A=5/R=28/adv=-10, exact match to that normal's own
+#      oracle row) — kick-group input does not register as any special or
+#      super for this character (cross-confirmed on SA1 above with
+#      "2qcf LK" -> Short).
+#   2. "motion hcb HK" (super_art:1) -> falls through to the REAL special
+#      Capture and Deadly Blow (RH) (S=14/A=2/R=46, exact match to that
+#      move's own oracle row) — hcb+K is a genuine, already-mapped special
+#      input (this character's own CnDB family, corpus-q.yaml's own
+#      q-cndb-* section), so it takes priority over any super lookup.
+#   3. A hand-rolled "double-hcb" hold-chain (RIGHT/RIGHT+DOWN/DOWN/
+#      DOWN+LEFT/LEFT ×2, final chord LEFT+HK, all MOTION_STEP_FRAMES=2
+#      per step — structurally the doubled-hcb analogue of how "2qcf" is
+#      itself coded in compile_corpus.py's _motion_steps, i.e. a qcf-style
+#      repeat with no neutral reset between the two half-circles) ->
+#      STILL falls through to Capture and Deadly Blow (RH), byte-identical
+#      to attempt 2 — the engine recognizes and fires the first completed
+#      hcb as the ordinary special before the second half-circle ever
+#      completes; there is no "doubled hcb" super gesture to find here.
+#   4. "motion 2qcb HP" (super_art:0, tried while investigating the
+#      Far/Close Grab JUDGMENT rows below) -> falls through to an
+#      unidentified normal/special (S=9/A=3/R=21/adv=+1), byte-identical to
+#      attempt 5 below — neither 2qcb nor hcb register a punch-button
+#      super/special distinct from whatever this fallback is.
+#   5. "motion hcb HP" (super_art:0) -> same fallback as attempt 4
+#      (S=9/A=3/R=21/adv=+1) — confirms attempts 4/5 both land the SAME
+#      ordinary move regardless of which back-motion family precedes the
+#      punch, i.e. neither primitive is doing anything super-related.
+#   6. "motion 2qcf HP" (super_art:1, the eventual identity) -> lands
+#      Deadly Double Combination cleanly, S=1 exact, on the FIRST attempt
+#      with this specific primitive.
+#
+# JUDGMENT ROWS "Far Grab" (S=12) / "Close Grab" (S=6) — step0-
+# universe.tsv rows 93/94, flagged "candidate SA1 or SA2, no
+# Common_name label, no adjacency evidence (appears after SA3 in table)".
+# UNRESOLVED after this session's investigation — NOT shipped under
+# either slot. Evidence gathered (all negative):
+#   - SA1 (Critical Combo Attack, super_art:0): "motion 2qcf HP" landed
+#     the move's own canonical row (S=5) on close/far/BLOCK/HIT alike,
+#     never S=12/6. "motion 2qcf LK" fell to a plain Short (S=4), not
+#     Far/Close Grab. "motion hcb HP" / "motion 2qcb HP" both fell to the
+#     SAME unidentified S=9 fallback (motion-probe attempts 4/5 above),
+#     not Far/Close Grab either.
+#   - SA2 (Deadly Double Combination, super_art:1): S=1 measured
+#     IDENTICALLY at dist:close (HIT) and dist:far (WHIFF) — the
+#     move's own startup is range-INVARIANT for this specific input,
+#     which rules out Far Grab/Close Grab being a range-conditional
+#     startup variant of THIS SAME super (a range-triggered variant would
+#     have shown a startup shift between the two tested distances; it did
+#     not — S=1 held exactly at both). Kick-strength and hcb/2hcb variants
+#     (motion-probe attempts 1-3 above) fell through to ordinary specials,
+#     never to Far/Close Grab.
+#   - Guard-denied-catch hypothesis (the Ibuki Chi Blast precedent,
+#     ibuki-sa-report.md: a guarding dummy against a dash-grab-catch move
+#     can reveal a DIFFERENT named oracle row) tested directly on both
+#     slots' own BLOCK legs (dummy:stand) — both landed their own
+#     canonical row (SA1 S=5, SA2 S=1), never Far/Close Grab.
+#   - Q's own basic throw family ("Neutral Throw"/"Throw", both S=2) and
+#     command-grab special (Capture and Deadly Blow, S=12/13/14 across
+#     Short/Forward/RH) were checked against the oracle directly — none
+#     match Far Grab(12)/Close Grab(6) as a byte-identical row beyond
+#     CnDB(Short)'s own S=12 being a numeric coincidence with Far Grab's
+#     S=12 (different Hit/Recovery: CnDB Short is 2/42, Far Grab is
+#     1/39 — NOT the same row).
+# Per the quarantine discipline ("Quarantine = OMIT + log with failed
+# recipes; NEVER an unexplained xfail"), both rows are left UNCONFIRMED —
+# neither forced into this corpus nor into corpus-q-sa1.yaml. Flagged for
+# orchestrator/user follow-up: possibly a genuinely new motion primitive
+# this harness cannot express yet (no 2c arcade cross-check available this
+# session), or a data-provenance question about these two oracle rows
+# themselves (both appear after Total Destruction/SA3 in q.json's own row
+# order, unlike every other SA1/SA2/SA3 grouping in this program, which is
+# the SAME positional anomaly step0's own note already flagged — observed,
+# not itself resolved).
+#
+# Admissibility census (per-entry, mechanical, from FRAME_TRACE columns —
+# authoring-policy.md Ruling 2), this session's own isolated single-entry
+# probes (<sp>/sa-q/run-probe-sa2e/trace.log [HIT], run-probe-sa2-block/
+# trace.log [BLOCK], run-probe-sa2-far/trace.log [WHIFF]): (1)
+# single-FINAL integrity — exactly one MOVE_START/FINAL pair per probe,
+# mechanical grep census, all clean. (2) Flash-overlap census: 0 nonzero-
+# sastop ticks in [MOVE_START F, FINAL F] on all three legs. (3)
+# Contact-A juggle check: HIT A=2 vs BLOCK A=1 — FAILS (not equal) — per
+# Ruling 2 item 3, the HIT-leg A assert is therefore INADMISSIBLE; A is
+# OMITTED on the HIT leg only (WHIFF/BLOCK both read A=1, oracle-exact,
+# fully assertable). (4) Shape record: WHIFF box_runs=1/box_a=1/busyr=65
+# (a genuine tracked attack window, busyr=oracle exactly); BLOCK/HIT both
+# box_runs=0/box_a=0/busyr=-1 (NO attack-box tensor at all once the
+# capture connects — this super switches to grab/capture-state tracking
+# on contact, losing the ordinary att_box census entirely; consistent with
+# the character notes' own "two-part capture-then-slam" framing). endrel=0
+# on both contact legs (ruling out the "endrel/no-oracle" structural-
+# incomparability case flagged in the character notes — both legs ARE
+# oracle-comparable, this is a genuine value divergence, not a structural
+# mismatch).
+#
+# R DISPOSITION — WHIFF clean (oracle-exact), BOTH contact legs OMITTED,
+# a further member of the already-SYSTEMIC "legacy-R-surplus" register.
+# Measured: WHIFF R=65 (=oracle exactly, T=67 no saturation, busyr=65=
+# oracle exactly — a genuinely clean, non-M1, fully-tracked leg). BLOCK
+# R=77 / HIT R=73 — BOTH a legacy-displayed surplus ABOVE the oracle/
+# WHIFF-clean value of 65, with busyr UNAVAILABLE on both (-1, box_runs=0
+# per the shape record above — a stronger form of "non-recounting" than
+# the prior members' own busyr-disagrees-but-exists shape, since here
+# there is no att_box tensor at all once the capture fires). This is the
+# SAME diagnostic signature authoring-policy.md's own established idiom
+# names: "legacy-R-surplus systemic shape (WHIFF-clean R + contact-leg R
+# surplus, busyr non-recounting)" — already a SYSTEMIC, ≥3-member register
+# per docs/frame-data-synthesis.md §12.2.4 (Chun-Li SA3 Tensei Ranka
+# BLOCK+HIT, measured 48 vs oracle 46, busyr=62 both; Yun SA1 You Hou
+# BLOCK+HIT, measured 63 vs oracle 36, busyr=109/105; Elena SA2 Brave
+# Dance BLOCK+HIT, measured 29/17 vs oracle 14, busyr=29/17 — the THIRD
+# member, explicitly named as crossing the ≥3-systemic threshold in
+# corpus-elena-sa2.yaml's own header). Q SA2 Deadly Double Combination is
+# a FOURTH reproduction of this exact pattern (WHIFF-clean + contact-leg
+# R-surplus + busyr not corroborating the oracle) — per the register's own
+# established per-member disposition, R is OMITTED (not xfailed) on both
+# BLOCK and HIT here too. No new mechanism invented or fix attempted this
+# no-build session; this is a further data point for the already-flagged
+# systemic register, not a fresh escalation trigger (the ≥3 bar was
+# already crossed by the Elena SA2 sighting per that corpus's own header).
+character: q
+oracle: q.json
+super_art: 1
+sa_gauge: 3
+inter_entry_wait: 500
+entries:
+
+- label: q-sa2-whiff
+  setup: { dist: far, dummy: none }
+  input: "motion 2qcf HP"
+  qjson: { name: "Deadly Double Combination" }
+  outcome: WHIFF
+  # Measured S=1 A=1 R=65 adv=+0 (box_runs=1, box_a=1, busyr=65, T=67,
+  # MOVE_START dist=129 — a reachable grab-class WHIFF per
+  # authoring-policy.md Ruling 1's pre-registered grab-super class). S/A/R
+  # ALL oracle-exact — this leg is also the WHIFF-clean anchor for the R
+  # DISPOSITION above. No expect.adv: from-qjson is a CompileError on
+  # outcome WHIFF (q.json has no whiff-advantage field).
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: q-sa2-block
+  setup: { dist: close, dummy: stand }
+  input: "motion 2qcf HP"
+  qjson: { name: "Deadly Double Combination" }
+  outcome: BLOCK
+  # Measured S=1 A=1 R=77(OMITTED, see R DISPOSITION above) adv=-25
+  # (box_runs=0, box_a=0, busyr=-1, T=79). S/A/adv all oracle-exact.
+  expect: { S: from-qjson, A: from-qjson, adv: from-qjson }
+
+- label: q-sa2-hit
+  setup: { dist: close, dummy: none }
+  input: "motion 2qcf HP"
+  qjson: { name: "Deadly Double Combination" }
+  outcome: HIT
+  # Measured S=1 A=2(OMITTED, juggle check FAILS — see admissibility
+  # census above) R=73(OMITTED, see R DISPOSITION above) kd=1 (box_runs=0,
+  # box_a=0, busyr=-1, T=75). S oracle-exact. No expect.adv: q.json's
+  # Hit_advantage for this row is the literal string "-" (from-qjson would
+  # raise CompileError).
+  expect: { S: from-qjson }

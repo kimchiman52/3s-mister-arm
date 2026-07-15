@@ -348,8 +348,19 @@ void Game01() {
         Stop_Combo = 0;
 
         if (Mode_Type != MODE_NETWORK) {
-            Random_ix32 = Interrupt_Timer;
-            Random_ix32_ex = Interrupt_Timer;
+#if DEBUG
+            /* Step H3 (docs/plan-frame-data-harness.md section 1.5): the
+             * frame-data test harness needs byte-identical RNG state
+             * across runs of the same scripted .fdi input. Reuse network
+             * mode's zeroing instead of duplicating it. */
+            if (configuration.test.pin_rng) {
+                Setup_Net_Random_ix();
+            } else
+#endif
+            {
+                Random_ix32 = Interrupt_Timer;
+                Random_ix32_ex = Interrupt_Timer;
+            }
         } else {
             Setup_Net_Random_ix();
             All_Clear_Timer();

@@ -326,6 +326,7 @@ u8 Pause_Down;
 u8 Training_ID;
 u8 Disp_Attack_Data;
 u8 Disp_Input_History;
+u8 Disp_Frame_Data;
 u8 Record_Data_Tr;
 u8 End_Training;
 s8 Menu_Page_Buff;
@@ -336,6 +337,58 @@ u8 Training_Menu_From_Pause;
 u8 Training_Auto_Start;
 s8 Lag_Timer;
 u8* Lag_Ptr;
+
+/* Phase 5 hygiene item 7 (docs/plan-frame-data-harness.md): the fd_*
+ * globals below back the training-mode-only frame-data overlay
+ * (frame_data_overlay.c) and its engine hooks (charset.c char_move()/
+ * check_cm_extended_code()). Netplay scope: sim-write-only — nothing
+ * in the engine or netplay reads these back into game state (they are
+ * consumed only by the overlay's own draw/tick and by frame_trace.c's
+ * diagnostic dump), so writing them poses no desync risk under
+ * GekkoNet rollback. Their *values* are meaningless across a rollback,
+ * though: a rollback re-simulates frames whose char_move() calls will
+ * re-run and overwrite these same slots, so a value read mid-rollback
+ * (there is no such read path today) would not correspond to any
+ * single simulated timeline. They are also excluded from
+ * GameState/EffectState serialization (netplay/game_state.c) for the
+ * same reason — there's nothing here that needs to survive a save/load
+ * round-trip.
+ *
+ * Phase 6A (docs/plan-frame-data-harness.md's follow-on, see the
+ * /tmp/phase6-nonq-plan.md "arcade-split" projectile design): the two
+ * fd_engine_proj_* arrays below extend this exact same sim-write-only
+ * property to attacker-owned projectile effect WORKs (eff13.c "tama").
+ * They are indexed by the OWNING PLAYER's id (master_id, 0/1) — never by
+ * the effect WORK's own id (which is the constant 13 for every eff13
+ * instance) — so they compose with the existing per-player array shape.
+ * Same netplay/rollback/serialization reasoning as above applies
+ * unchanged: written only by charset.c's char_move() and eff13.c's
+ * effect_13_init(), read only by frame_data_overlay.c's tick/finalize,
+ * never fed back into simulated game state.
+ *
+ * §13.12 (ENGINE-4, added 2026-07-09): fd_engine_proj_hitok/_cut/_natend
+ * extend the same contract to the tama's hit-check-gated arming tick and
+ * its chart-natural-vs-cut kill reason — written by charset.c's char_move()
+ * effect-WORK branch (hitok, natend) and eff13.c's kotp_00000/kotp_13000
+ * erase-transition sites (cut); read/cleared only by frame_data_overlay.c
+ * (cut is also read internally by charset.c's own natend write-gate — see
+ * workuser.h for why the overlay re-checks it independently at consume
+ * time). fd_engine_proj_hitok_armed is a charset.c-internal edge-detector,
+ * never read outside charset.c itself. See workuser.h for the per-array
+ * semantics. */
+u8 fd_engine_hitbox_active[2];
+u8 fd_engine_move_is_uoh[2];
+u8 fd_engine_active_count[2];
+u8 fd_engine_proj_spawned[2];
+u8 fd_engine_proj_active_count[2];
+u8 fd_engine_proj_hitok[2];
+u8 fd_engine_proj_hitok_armed[2];
+u8 fd_engine_proj_cut[2];
+u8 fd_engine_proj_natend[2];
+s16 fd_prev_active_cgix[2] = { -1, -1 };
+u16 fd_prev_active_cgix_tick[2] = { 0, 0 };
+u8  fd_prev_active_cgix_add[2] = { 0, 0 };
+u8  fd_prev_active_cgix_jatix[2] = { 0, 0 };
 u8 CPU_Time_Lag[2];
 u8 Forbid_Reset;
 u8 CPU_Rec[2];

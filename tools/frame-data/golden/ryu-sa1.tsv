@@ -1,0 +1,3 @@
+label	verdict	outcome	n	S	A	R	adv	kd
+ryu-sa1-block	PASS	BLOCK	1	3	11	49	-12	0
+ryu-sa1-hit	PASS	HIT	1	3	11	49	+87	1

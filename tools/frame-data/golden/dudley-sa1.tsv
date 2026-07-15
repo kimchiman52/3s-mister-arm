@@ -1,0 +1,4 @@
+label	verdict	outcome	n	S	A	R	adv	kd
+dudley-sa1-whiff	PASS	WHIFF	1	0	40	31	+0	0
+dudley-sa1-block	PASS	BLOCK	1	0	40	31	-31	0
+dudley-sa1-hit	PASS	HIT	1	0	39	31	+92	1

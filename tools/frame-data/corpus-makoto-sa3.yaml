@@ -1,0 +1,116 @@
+# Makoto Super Art 3 (Tanden Renki) — EX/Supers program, supers wave S3
+# fan-out (Makoto's own three SA slots, authored together with corpus-
+# makoto-sa1.yaml/-sa2.yaml). Satellite corpus (auto-discovered by
+# run-suite.sh's corpus-*.yaml glob, own golden/makoto-sa3.tsv once
+# registered) — corpus-makoto.yaml/corpus-makoto-ex.yaml are untouched.
+#
+# Scope: step0-universe.tsv row 68 (makoto SA3, "Tanden Renki", sa_slot 3,
+# exclusion_flag NONNUMERIC — ALL of S/A/R/block_adv are S_numeric=N/
+# A_numeric=N/R_numeric=N/block_adv_numeric=N in the universe census, i.e.
+# makoto.json publishes the literal string "-" for every single one of
+# Startup/Hit/Recovery/Block_advantage/Hit_advantage on this row — verified
+# live this session (docs/arcade-frame-data/makoto.json, "Tanden Renki"
+# entry). This is the SAME shape as Oro's own Kishin Riki install-stance
+# row (step0-universe.tsv row 80, also exclusion_flag NONNUMERIC) — unlike
+# the INSTALL_MAXIMUM install supers elsewhere in the universe (Yun Genei
+# Jin S=9, Q Total Destruction S=18, etc.), which publish at least one
+# numeric Startup figure for their activation. Tanden Renki has NOTHING
+# numeric published anywhere in its oracle row — per this batch's own
+# instruction ("measure what IS measurable... OMIT inapplicable fields with
+# a note rather than forcing A/R semantics onto a non-attack"), this file
+# measures what the harness CAN observe and documents the rest, rather than
+# fabricating an oracle comparison that does not exist.
+#
+# IDENTITY — confirmed BY ELIMINATION + a reproducible null-signal, not by
+# an S-match probe (impossible here, since oracle has no numeric S to match
+# against). super_art:0 (Seichuusen Godanzuki, S=0 exact) and super_art:1
+# (Abare Tosanami, S=14 exact) are independently confirmed in the sibling
+# corpora this session — super_art:2 is the only remaining slot of the
+# three bounded by compile_corpus.py's resolve_super_art (0-2 inclusive),
+# so it is Tanden Renki by elimination (Makoto has exactly 3 SA slots, no
+# EXTRA/JUDGMENT rows for this character per step0-universe.tsv).
+#
+# REPRODUCIBLE NULL-SIGNAL EVIDENCE (this session, <sp>/sa-makoto/
+# run-probe-sa2-{hp,lp,mp}/trace.log, three independent single-entry
+# probes, super_art:2, dist:250/dummy:none): "motion 2qcf LP" / "motion
+# 2qcf MP" / "motion 2qcf HP" ALL produce the IDENTICAL result — zero
+# MOVE_START annotations, zero FINAL lines, trace.log ending abruptly at
+# F=86 with P1.r1 transitioning 4->0 (a return to true neutral, the
+# OPPOSITE direction from a move-start edge) after cycling through what
+# reads as an ordinary walk/idle animation loop the entire time (cgix
+# cycling 54->...->216->12->18, never entering a tracked attack routine).
+# check_frame_data.py itself reports this as "(no data)"/"NO-DATA" for a
+# normal outcome expectation — this is a REPRODUCIBLE 3-for-3 result across
+# all three punch strengths, not a one-off.
+#
+# CROSS-INDEX CONTROLS (this session, ruling out "wrong button just gets
+# silently eaten" as the general explanation): (1) super_art:0
+# (Seichuusen, punch-keyed) + "motion 2qcf HK" (wrong button) falls back to
+# a MUNDANE, FULLY MEASURABLE "Towards Roundhouse" command normal (S=22/
+# A=3/R=25, exact oracle match, <sp>/sa-makoto/run-ctrl-sa0-hk/trace.log).
+# (2) super_art:1 (Abare Tosanami, kick-keyed) + "motion 2qcf HP" (wrong
+# button) ALSO falls back to something fully measurable — NOT a mundane
+# normal this time but an accidentally-triggered "Fukiage Fierce" special
+# (S=14/A=8/R=26, exact oracle match to that OTHER special move,
+# <sp>/sa-makoto/run-ctrl-sa1-hp/trace.log) — the qcf motion's own
+# DOWN/DOWN+FWD/FWD components apparently satisfy Fukiage's DP-shape
+# buffer closely enough to misfire it. (3) super_art:2 + "motion 2qcf HK"
+# (kick, wrong button for this slot) falls back to the SAME mundane
+# "Towards Roundhouse" as control (1) (S=22/A=3/R=25 exact,
+# <sp>/sa-makoto/run-probe-sa2-hk/trace.log) — confirming index:2 itself
+# is not "broken" or globally inert (kick-button recognition works
+# completely normally at this index; only the punch-tier motion is
+# swallowed with no fallback of any kind).
+#
+# TAKEN TOGETHER: at every OTHER index/button combination tested this
+# session (6 total: idx0+HP=own super, idx0+HK=fallback normal,
+# idx1+HK=own super, idx1+HP=fallback special, idx2+HK=fallback normal),
+# the engine ALWAYS produces SOME measurable, trackable result — either the
+# equipped super itself or a clearly-identifiable fallback move. Only
+# idx2+Punch (all three strengths) produces NOTHING trackable at all. The
+# most parsimonious reading: idx2+Punch (2qcf+P) IS the correct, recognized
+# input for Tanden Renki (matching real-game community frame data's own
+# 236236+P convention for this move, and matching the punch-tier "-keyed"
+# pattern SA1/SA3 share in this game the same way Ryu/Ken/Yun's own
+# punch-keyed SA1/SA3 pairs do) — the motion IS being consumed by the
+# engine's own special-move recognition, it just never touches the
+# overlay's r1-based MOVE_START heuristic (`frame_data_overlay.c` watches
+# for an attacker-routine transition; an install/stance-switch move that
+# reprograms a DIFFERENT internal state field, not the standard attack
+# routine number, would produce exactly this null-signal shape). This is
+# NOT independently proven at the instrumentation level (no build was
+# available this session to add a diagnostic probe) — it is the best-
+# supported reading of the reproducible evidence above, stated as such,
+# not as a settled fact.
+#
+# DISTINCT FROM GENEI JIN. corpus-yun-sa3.yaml's own Genei Jin (Yun SA3,
+# also an install) DOES cross the overlay's MOVE_START threshold (S=9/A=0/
+# R=0/box_runs=0, a real-but-empty tracked window) and has one numeric
+# oracle field (Startup=9) to assert. Tanden Renki is a STRICTLY DEEPER
+# harness gap: no MOVE_START at all (not even a trackable empty window),
+# AND no numeric oracle field to assert even if one existed. The two moves
+# should not be conflated — this file's own null result is a harness
+# instrumentation gap for this specific move's activation state machine,
+# not evidence that Tanden Renki "does nothing" in the actual game.
+#
+# DISPOSITION: outcome: NONE (the same zero-FINAL convention
+# corpus-makoto.yaml's own negative control uses, `check_frame_data.py`'s
+# `_evaluate_none_entry`) — but this is NOT a true negative control in the
+# same sense as a bare jump (nothing attack-related was ever attempted).
+# It is the confirmed-by-elimination activation input for a real selected
+# super whose own state-machine transition the harness's r1-based overlay
+# cannot observe. No S/A/R/adv/kd field is asserted (nothing is
+# measurable, nothing is oracle-comparable) — this is the one Makoto SA
+# slot with zero numeric coverage of any kind, matching step0-universe.tsv's
+# own NONNUMERIC classification for this row exactly.
+character: makoto
+oracle: makoto.json
+super_art: 2
+sa_gauge: 3
+inter_entry_wait: 500
+entries:
+
+- label: makoto-sa3-tanden-renki-activation
+  setup: { dist: 250, dummy: none }
+  input: "motion 2qcf HP"
+  outcome: NONE

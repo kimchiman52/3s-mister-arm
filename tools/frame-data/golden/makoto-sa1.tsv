@@ -1,0 +1,4 @@
+label	verdict	outcome	n	S	A	R	adv	kd
+makoto-sa1-whiff	PASS	WHIFF	1	0	3	65	+0	0
+makoto-sa1-block	XFAIL	BLOCK	1	0	1	71	-17	0
+makoto-sa1-hit	PASS	HIT	1	0	14	133	+10	1

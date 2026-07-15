@@ -1,0 +1,105 @@
+# Q Super Art 3 (Total Destruction) — EX/Supers program, supers wave S6
+# (Q's three SA slots; sibling agents authoring other characters' SA
+# corpora concurrently in this wave, file-disjoint). Satellite corpus
+# (auto-discovered by run-suite.sh's corpus-*.yaml glob, own
+# golden/q-sa3.tsv once registered) — corpus-q.yaml/corpus-q-ex.yaml/
+# corpus-q-sa1.yaml/corpus-q-sa2.yaml are untouched.
+#
+# Scope: step0-universe.tsv row 92 (q SA3, "Total Destruction", sa_slot 3,
+# exclusion_flag INSTALL_MAXIMUM, "INSTALL/TIMED(Total Destruction S=18)").
+# Oracle: docs/arcade-frame-data/q.json (md5
+# e4251d598ad2b24d755219be1a58b0b2, unchanged, same file corpus-q.yaml/
+# corpus-q-ex.yaml/corpus-q-sa1.yaml/corpus-q-sa2.yaml already pin).
+# Oracle row: Startup=18, Hit="-", Recovery="-", Block_advantage="-",
+# Hit_advantage="-" (ALL non-numeric except Startup) — Q's own
+# self-destruct-armor install, per the character notes' own framing
+# ("Total Destruction is an INSTALL (Q self-destruct arm) whose detonation
+# is a separate input").
+#
+# INSTALL DISPOSITION (matching corpus-yun-sa3.yaml's own Genei Jin
+# precedent, corpus-akuma-sa3.yaml's Messatsu Gou Rasen precedent, and the
+# character notes' own guidance to "pick whichever signature actually
+# matches"): sa_gauge:3 (MAXIMUM, per src/args.c:436's own "1=MAX START,
+# 2=INFINITY, 3=MAXIMUM" enumeration) — NOT sa_gauge:2 (INFINITY), which
+# would keep the meter topped up indefinitely and either prevent a timed
+# install's own gauge-drain countdown from ever completing or misrepresent
+# its drain rate. MAXIMUM starts the gauge full and lets it drain normally
+# once Total Destruction is active, matching every other install-super
+# corpus's own meter policy in this program. Only the ACTIVATION's own
+# measurable frame data (S=18) is authored here; the armor's own duration,
+# damage-buff effect, and the SEPARATE detonation input (per the character
+# notes) are OUT OF SCOPE for this corpus — no oracle row exists for the
+# detonation in step0-universe.tsv (only ONE q.json row, "Total
+# Destruction", covers this slot), so there is nothing to measure or
+# document a gap against beyond the activation itself, matching the
+# already-established "document the gap, don't guess" posture used
+# throughout this program's install-super corpora.
+#
+# Meter: sa_gauge:3 (MAXIMUM) + super_art:2 (0-indexed SA3). Identity
+# confirmed this session by S-match probe (CORPUS-AUTHORING.md Phase 5):
+# "motion 2qcf HP" — the SAME punch-group primitive already used for Q's
+# own SA1 (Critical Combo Attack) and SA2 (Deadly Double Combination),
+# differentiated purely by the super_art config — landed on the FIRST
+# attempt, S=18 exact and unique among every Q move measured this session
+# (SA1 S=5, SA2 S=1 — no ambiguity with either sibling slot).
+#
+# ACTIVATION-ONLY SHAPE (this session's own probes,
+# <sp>/sa-q/run-probe-sa3/trace.log [dist:close/dummy:stand] and
+# run-probe-sa3-ctx/trace.log [dist:300 centered/dummy:none]): S=18 A=0
+# R=0 adv=+0 IDENTICALLY in both contexts. box_runs=0, box_a=0, busyr=-1
+# (sentinel: no active window ever recorded), active_pf=0, T=18 (raw_len=
+# 18, no saturation risk — a short, clean capture). This confirms
+# empirically (matching q.json's own non-numeric "-" fields for every
+# column but Startup) that Total Destruction's activation genuinely never
+# attacks: the harness measures the SAME zero-active result at point-blank
+# range against a standing dummy and at the max-centered ceiling against
+# no dummy at all — no distance or guard context changes anything. Per the
+# batch's own install-super convention, the single canonical entry below
+# is authored at outcome:WHIFF (the harness's own literal classification
+# for a zero-active-window move), matching corpus-yun-sa3.yaml's and
+# corpus-akuma-sa3.yaml's own precedent exactly.
+#
+# Admissibility census (mechanical, from FRAME_TRACE columns — authoring-
+# policy.md Ruling 2), both probe contexts: (1) single-FINAL integrity —
+# exactly one FINAL in each entry's own window (F51-91, F51-99 relative to
+# each isolated probe's own script start), no bleed. (2) Flash-overlap
+# census: 0 nonzero-sastop ticks in either window (mechanical grep census
+# this session). (3) Contact-A juggle check: N/A — no A is ever asserted
+# (q.json's Hit field for this row is the literal string "-", from-qjson
+# would raise CompileError; the measured A=0 is the engine's own "no
+# active window" sentinel, not a real active-frame count to defend with a
+# juggle check). (4) Shape record: proj=0, box_runs=0 in both contexts —
+# a true single-instant activation with no tracked attack geometry at all,
+# matching every other install-super shape recorded in this program.
+#
+# S DISPOSITION: S=18 across both probed contexts, oracle-exact
+# (Startup=18) and a unique signature among every Q move measured this
+# session. Assertable per authoring-policy.md Ruling 3's lever-independent
+# E-3 rule (S's display rule is lever-independent regardless of shape).
+# No other field is asserted: q.json's Hit/Recovery/Block_advantage/
+# Hit_advantage are all the literal string "-" for this row (from-qjson
+# would raise CompileError on any of them), and the harness's own measured
+# A=0/R=0/adv=+0 are the engine's "nothing happened" sentinel values for a
+# non-attacking activation, not comparable numeric quantities to assert
+# against a non-numeric oracle field.
+character: q
+oracle: q.json
+super_art: 2
+sa_gauge: 3
+inter_entry_wait: 250
+entries:
+
+- label: q-sa3-activation
+  setup: { dist: close, dummy: stand }
+  input: "motion 2qcf HP"
+  qjson: { name: "Total Destruction" }
+  outcome: WHIFF
+  # Measured S=18 A=0 R=0 adv=+0 (box_runs=0, box_a=0, busyr=-1, T=18,
+  # active_pf=0) — context-independently identical across dist:close/
+  # dummy:stand and dist:300 centered/dummy:none (see ACTIVATION-ONLY
+  # SHAPE above). S oracle-exact (the only numeric field q.json's Total
+  # Destruction row publishes). No expect.A/R/adv: every other oracle
+  # field for this row is the literal string "-" (from-qjson would raise
+  # CompileError) — the install's own duration/detonation are out of
+  # scope per the INSTALL DISPOSITION note above.
+  expect: { S: from-qjson }

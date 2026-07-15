@@ -1,0 +1,4 @@
+label	verdict	outcome	n	S	A	R	adv	kd
+ryu-sa2-block	PASS	BLOCK	1	0	13	35	-25	0
+ryu-sa2-hit	PASS	HIT	1	0	15	40	+100	1
+ryu-sa2-whiff	PASS	WHIFF	1	0	13	35	+0	0

@@ -1,0 +1,130 @@
+# Q Super Art 1 (Critical Combo Attack) — EX/Supers program, supers wave S6
+# (Q's three SA slots, sibling agents authoring other characters' SA
+# corpora concurrently in this wave, file-disjoint). Satellite corpus
+# (auto-discovered by run-suite.sh's corpus-*.yaml glob, own
+# golden/q-sa1.tsv once registered) — corpus-q.yaml/corpus-q-ex.yaml are
+# untouched.
+#
+# Scope: step0-universe.tsv row 90 (q SA1, "Critical Combo Attack", sa_slot
+# 1, exclusion_flag ASSERTABLE, "By position/elimination (not
+# Common_name-labeled)"). Oracle: docs/arcade-frame-data/q.json (md5
+# e4251d598ad2b24d755219be1a58b0b2 per CORPUS-AUTHORING.md Phase 1,
+# re-verified unchanged this session — same file corpus-q.yaml/
+# corpus-q-ex.yaml already use). Oracle row: Startup=5, Hit=16,
+# Recovery=31, Block_advantage=-19, Hit_advantage="-" (non-numeric).
+#
+# Meter: sa_gauge:3 (MAXIMUM, per authoring-policy.md's meter policy
+# default for non-install supers) + super_art:0 (0-indexed SA1).
+#
+# Motion (identity confirmed this session by S-match probe, CORPUS-
+# AUTHORING.md Phase 5 "motion-probe method"): "motion 2qcf HP" — landed
+# on the FIRST candidate tried, confirmed by S=5 matching q.json's
+# Critical Combo Attack row exactly (unique among every Q move measured
+# this session — no ambiguity). Button strength does not gate identity:
+# this session separately confirmed a bare kick-strength attempt
+# ("motion 2qcf LK") does NOT land any super at all — it falls through to
+# a plain Short (S=4/A=4/R=8, exact match to that normal's own oracle
+# row), i.e. the harness recognizes only a punch-group input for this
+# character's supers (cross-checked identically on SA2 below).
+#
+# WHIFF-UNREACHABLE(dist=310 tried [also 300], dist_mode:centered,
+# dummy:none) — Critical Combo Attack is a rushing multi-hit combo
+# (box_runs=3 on HIT) that connects at every distance up to and including
+# the hard CENTERED_DIST_MAX=310 ceiling (MOVE_START dist=274 achieved at
+# the dist:310 request, ~36px walk-in consumed before the tracked window
+# opens; dist:300 achieved MOVE_START dist=264, same always-connects
+# result) — a pure move-reach fact (per authoring-policy.md Ruling 1's
+# pre-registered "short-reach supers... class membership is probed, never
+# asserted from memory" — here the OPPOSITE class member, a rush super
+# whose reach exceeds the harness's whole reachable ceiling). No WHIFF
+# entry shipped; coverage comes from the BLOCK/HIT legs below, per
+# Ruling 1's own WHIFF-UNREACHABLE fallback language.
+#
+# JUDGMENT ROWS NOT RESOLVED TO THIS SLOT (step0-universe.tsv rows 93/94,
+# "Far Grab" S=12 / "Close Grab" S=6, both flagged "candidate SA1 or SA2,
+# no Common_name label, no adjacency evidence"): this session probed
+# exhaustively for either row against SA1's own identity and found no
+# match — see corpus-q-sa2.yaml's own header for the full failed-recipe
+# ledger (shared investigation, not duplicated verbatim here). Both rows
+# remain UNCONFIRMED/UNRESOLVED after this session; NOT shipped under
+# either SA1 or SA2, flagged for orchestrator follow-up.
+#
+# Admissibility census (per-entry, mechanical, from FRAME_TRACE columns —
+# authoring-policy.md Ruling 2), this session's own isolated single-entry
+# probes (<sp>/sa-q/run-probe-sa0/trace.log [HIT-at-max-distance, SHAPE-
+# confirmed-always-connects], run-probe-sa1-w310/trace.log [same, 2nd
+# distance], run-probe-sa1-block/trace.log [BLOCK]): (1) single-FINAL
+# integrity — exactly one MOVE_START/FINAL pair per isolated probe,
+# mechanical grep census this session, all clean (no merges). (2)
+# Flash-overlap census: 0 nonzero-sastop ticks in [MOVE_START F, FINAL F]
+# on both shipped legs — flash-free measurement, matches every population
+# checked so far in this program. (3) Contact-A juggle check: HIT A=15 ==
+# BLOCK A=15 — PASSES (equal on both legs), but the shared value still
+# does not match the oracle (16) — see A DISPOSITION below; the juggle
+# check's role here is only to confirm the two legs read a CONSISTENT
+# wrong value, not to license an assert on its own. (4) Shape record:
+# BLOCK box_runs=1/box_a=16/busyr=31; HIT box_runs=3/box_a=16/busyr=31 —
+# busyr matches the oracle R exactly on both legs (corroborating the R
+# assert below); box_a=16 on both legs ALSO matches the oracle A exactly,
+# even though the legacy-displayed engine_a reads 15 on both — recorded as
+# a diagnostic cross-check per Ruling 2 item 4, not itself sufficient to
+# license an A assert (see below).
+#
+# S/R DISPOSITION — clean, both legs. S=5 exact (both), R=31 exact (both,
+# busyr=31=oracle corroborating). adv=-19 exact (BLOCK only; q.json's
+# Hit_advantage for this row is the literal string "-", so no HIT-leg adv
+# assert — from-qjson would raise CompileError).
+#
+# A DISPOSITION — OMITTED on both legs, CANDIDATE (not converted) §13.13
+# shape (a1). Measured engine-displayed A=15 vs oracle 16 (both legs,
+# uniform -1 undercount) while box_a=16 (=oracle) on both legs — the
+# classic skip-jump signature (§13.13, CORPUS-AUTHORING.md Phase 6 bucket
+# 1(a1)): a same-tick cg_ix advance that skips one declared-active cell's
+# credit from the legacy engine_a accumulator while box_a's own tensor
+# recount still tallies it. Phase 6's own text requires EITHER a per-entry
+# lever-F toggle test on a scratch build OR an already-established
+# same-shape precedent IN THIS CHARACTER'S OWN corpora before citing
+# §13.13 as a converted, normative PASS (see the discriminator paragraph
+# and the Ibuki Tsumuji (EX) precedent, which reused an already-validated
+# same-character §13.13 (a1) member from corpus-ibuki.yaml rather than
+# re-deriving it). Neither condition holds here: this is a no-rebuild
+# session (task constraint — build/host confirmed current, no scratch
+# instrumentation performed), and grep census this session of both
+# corpus-q.yaml and corpus-q-ex.yaml finds ZERO existing §13.13 citations
+# for this character to reuse. Additionally, Critical Combo Attack's own
+# WHIFF leg is UNREACHABLE (above), so the bucket's own "contact-only"
+# precondition (a clean WHIFF cross-check ruling out a whiff-inclusive
+# shape, per the Ken SA1 ESCALATED-finding precedent) cannot be confirmed
+# either way. Per the "candidates NEVER convert" rule (Phase 6, buckets
+# 1/7/8 all state this explicitly), A is OMITTED (not asserted, not
+# xfailed) on both legs and logged here as an UNCLASSIFIED-CANDIDATE,
+# flagged for follow-up once either a build-based lever-F test or a
+# genuine WHIFF measurement becomes available for this move.
+character: q
+oracle: q.json
+super_art: 0
+sa_gauge: 3
+inter_entry_wait: 500
+entries:
+
+- label: q-sa1-block
+  setup: { dist: close, dummy: stand }
+  input: "motion 2qcf HP"
+  qjson: { name: "Critical Combo Attack" }
+  outcome: BLOCK
+  # Measured S=5 A=15(OMITTED, see A DISPOSITION above) R=31 adv=-19
+  # (box_runs=1, box_a=16, busyr=31, T=95). S/R/adv all oracle-exact.
+  expect: { S: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: q-sa1-hit
+  setup: { dist: close, dummy: none }
+  input: "motion 2qcf HP"
+  qjson: { name: "Critical Combo Attack" }
+  outcome: HIT
+  # Measured S=5 A=15(OMITTED, see A DISPOSITION above) R=31 kd=1
+  # (box_runs=3, box_a=16, busyr=31, T=95). S/R both oracle-exact. Juggle
+  # check (Ruling 2 item 3): HIT A=15 == BLOCK A=15 — consistent value
+  # across legs, but see A DISPOSITION above for why this alone does not
+  # license an assert. No expect.adv: q.json's Hit_advantage for this row
+  # is the literal string "-" (from-qjson would raise CompileError).
+  expect: { S: from-qjson, R: from-qjson }

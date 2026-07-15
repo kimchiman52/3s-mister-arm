@@ -285,8 +285,8 @@ Output layout:
 - `build/mister-clean-package/scripts/run-3s-arm.sh`
 - `build/mister-telemetry-package/scripts/launch-osd.sh`
 - `build/mister-clean-package/scripts/launch-osd.sh`
-- `build/mister-telemetry-package/run-3s-arm.sh` and `build/mister-telemetry-package/launch-osd.sh` are compatibility wrappers
-- `build/mister-clean-package/run-3s-arm.sh` and `build/mister-clean-package/launch-osd.sh` are compatibility wrappers
+- The launchers live under `scripts/` only (`scripts/run-3s-arm.sh`, `scripts/launch-osd.sh`); `package.sh` no longer emits top-level compatibility wrappers. `misterctl.sh probe`/`smoke` invoke the `scripts/` paths directly.
+- The visible MiSTer OSD menu entry `/media/fat/Scripts/3S-ARM.sh` is NOT part of the package — `misterctl.sh deploy` (re)creates it on-device as a thin wrapper that `exec`s `<remote_root>/scripts/launch-osd.sh`. A game-only `deploy` therefore refreshes the OSD launcher; it does not preserve any hand-authored `/media/fat/Scripts/3S-ARM*.sh` variants (e.g. per-stage training shortcuts), which must be recreated separately.
 
 ## Player Release Zip
 
@@ -437,7 +437,7 @@ For OSD launchers (`/media/fat/Scripts/*.sh`), call:
 ```
 
 This keeps stdout/stderr out of the text console and writes logs to `/media/fat/games/3s-arm/logs/last-run.log`.
-`/media/fat/Scripts/3S-ARM.sh` delegates to the packaged OSD launcher, which forces SDL dummy video + software renderer for stable stock-MiSTer OSD startup; fbdev presenter handles on-screen output. The top-level `run-3s-arm.sh` and `launch-osd.sh` remain the user-facing app-local wrappers.
+`/media/fat/Scripts/3S-ARM.sh` delegates to the packaged OSD launcher, which forces SDL dummy video + software renderer for stable stock-MiSTer OSD startup; fbdev presenter handles on-screen output. The app-local launchers live under `scripts/` (`scripts/run-3s-arm.sh`, `scripts/launch-osd.sh`); `/media/fat/Scripts/3S-ARM.sh` execs `scripts/launch-osd.sh`.
 
 Generated OSD wrapper:
 

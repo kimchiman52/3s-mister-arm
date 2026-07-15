@@ -1,0 +1,4 @@
+label	verdict	outcome	n	S	A	R	adv	kd
+ken-sa1-whiff	PASS	WHIFF	1	0	34	45	+0	0
+ken-sa1-block	PASS	BLOCK	1	0	34	45	-38	0
+ken-sa1-hit	PASS	HIT	1	0	34	45	+72	1

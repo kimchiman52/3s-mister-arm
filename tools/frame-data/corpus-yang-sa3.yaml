@@ -1,0 +1,98 @@
+# Yang Super Art 3 (Sei-ei Enbu) — EX/Supers program, supers wave S3.
+# Satellite corpus (auto-discovered by run-suite.sh's corpus-*.yaml glob,
+# own golden/yang-sa3.tsv once registered) — corpus-yang.yaml/corpus-yang-
+# ex.yaml/corpus-yang-sa1.yaml/corpus-yang-sa2.yaml are untouched.
+#
+# Scope: <sp>/exsuper/step0-universe.tsv row 141 (yang SA3, "Sei-ei Enbu",
+# sa_slot 3, exclusion_flag INSTALL_MAXIMUM, "INSTALL/TIMED(Sei-ei Enbu
+# S=15)", naive sequential grouping — no Common_name label). Oracle:
+# docs/arcade-frame-data/yang.json (md5 4701f59a68fb49caa9ebaaefaeb40674,
+# unchanged, same file the sibling yang corpora already pin). Oracle row:
+# Startup=15, Hit="-", Recovery="-", Block_advantage="-",
+# Hit_advantage="-" (ALL non-numeric except Startup), Parry:{High:false,
+# Low:false} — the same "genuinely non-attacking activation" signature as
+# corpus-yun-sa3.yaml's own Genei Jin row.
+#
+# INSTALL DISPOSITION (per authoring-policy.md Ruling 5: SA3 is an INSTALL
+# super -> sa_gauge:3 MAXIMUM, the timed-install drain stays intact;
+# INFINITY would freeze the timer and is FORBIDDEN for installs, per this
+# character's own base corpus's INFINITY-vs-MAXIMUM discussion and every
+# sibling install-super corpus's identical choice). The assertable quantity
+# is the ACTIVATION's own S; the install's own speed-up duration/effects
+# are OUT OF SCOPE with this note, same posture as corpus-yun-sa3.yaml's
+# own Genei Jin precedent and corpus-ryu-sa3.yaml's own Denjin Hadouken
+# "document the gap" precedent.
+#
+# Meter: sa_gauge:3 (MAXIMUM) + super_art:2 (0-indexed SA3 slot — SA1=0/
+# SA2=1 in the sibling corpora this session, cross-move-confirmed: SA1's
+# own super_art:0 landed Raishin Mahhaken's S=6, SA2's own super_art:1
+# landed Tenshin Senkyuutai's S=0).
+#
+# Motion (identity confirmed this session by S-match probe): "motion 2qcf
+# HP" — the same punch-fireball-family primitive already confirmed for
+# Yun SA3 Genei Jin (Yang's own genre-lineage twin's install super, an
+# identical shape: a non-attacking speed/priority-window install
+# activation). Landed S=15 exact on the FIRST candidate tried
+# (<sp>/sa-yang/run-probe4-sa3/trace.log) — no fallback probing needed.
+#
+# ACTIVATION-ONLY SHAPE (this session's own probe,
+# <sp>/sa-yang/run-probe4-sa3/trace.log +
+# <sp>/sa-yang/run-probe7-sa3ctx/trace.log — three independent contexts:
+# dist:close/dummy:stand, dist:300 centered/dummy:stand, dist:close/
+# dummy:none): S=15 A=0 R=0 adv=+0 IDENTICALLY in all three, distance- and
+# dummy-independent (matching corpus-yun-sa3.yaml's own three-context
+# confirmation methodology exactly). box_runs=0, box_a=0, T=16/16/16 (no
+# saturation risk, a short clean capture). This confirms empirically (not
+# merely from the oracle's own non-numeric "-" fields and Parry:
+# {High:false,Low:false}) that Sei-ei Enbu's activation genuinely never
+# attacks: the harness measures the SAME zero-active result whether the
+# dummy is standing at point-blank, standing at max-centered range, or
+# absent entirely.
+#
+# Admissibility census (mechanical, from FRAME_TRACE columns —
+# authoring-policy.md Ruling 2), all three probe contexts: (1) single-FINAL
+# integrity — exactly one MOVE_START/FINAL pair per context, no bleed
+# (F51-66 identity probe; F51-66/F118-133 the two-context confirmation
+# run). (2) Flash-overlap census: 0 nonzero-sastop ticks in every window
+# (0/16 each — python census this session, scoped per-entry). (3)
+# contact-A juggle check: N/A — no A is ever asserted (yang.json's Hit/
+# Recovery/Block_advantage/Hit_advantage are all the literal string "-"
+# for this row; the measured A=0 is itself the "no active window"
+# sentinel, not a real active-frame count to defend with a juggle check).
+# (4) shape record: proj=0, box_runs=0 in every context — a true
+# single-instant activation with no tracked attack geometry at all, same
+# shape as Yun SA3's own Genei Jin.
+#
+# S DISPOSITION: S=15 across all three probed contexts, oracle-exact
+# (Startup=15) and a unique signature among every Yang move measured this
+# session (Raishin Mahhaken S=6, Tenshin Senkyuutai S=0 — no ambiguity
+# with either sibling super). Assertable per authoring-policy.md Ruling 3's
+# lever-independent E-3 rule. No other field is asserted: yang.json's Hit/
+# Recovery/Block_advantage/Hit_advantage for this row are all the literal
+# string "-" (from-qjson would raise CompileError on any of them), and the
+# harness's own measured A=0/R=0/adv=+0 are the engine's "nothing
+# happened" sentinel values for a non-attacking activation, not comparable
+# numeric quantities to assert against a non-numeric oracle field. The
+# install's own duration/effects are out of scope per the INSTALL
+# DISPOSITION note above.
+character: yang
+oracle: yang.json
+super_art: 2
+sa_gauge: 3
+inter_entry_wait: 500
+entries:
+
+- label: yang-sa3-activation
+  setup: { dist: close, dummy: stand }
+  input: "motion 2qcf HP"
+  qjson: { name: "Sei-ei Enbu" }
+  outcome: WHIFF
+  # Measured S=15 A=0 R=0 adv=+0 (box_runs=0, box_a=0, T=16) —
+  # context-independently identical across dist:close/dummy:stand,
+  # dist:300 centered/dummy:stand, and dist:close/dummy:none (see
+  # ACTIVATION-ONLY SHAPE above). S oracle-exact (the only numeric field
+  # yang.json's Sei-ei Enbu row publishes). No expect.A/R/adv: every other
+  # oracle field for this row is the literal string "-" (from-qjson would
+  # raise CompileError) — the install's own duration/effects are out of
+  # scope per the INSTALL DISPOSITION note above.
+  expect: { S: from-qjson }

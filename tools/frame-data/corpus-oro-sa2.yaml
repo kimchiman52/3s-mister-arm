@@ -1,0 +1,168 @@
+# Oro Super Art 2 (Yagyou Dama family) — EX/Supers program, supers wave S4.
+# Satellite corpus (auto-discovered by run-suite.sh's corpus-*.yaml glob, own
+# golden/oro-sa2.tsv once registered) — corpus-oro.yaml/corpus-oro-ex.yaml
+# are untouched. Repo @ 16737236 (branch frame-data-on-mister). FDH_SKIP_
+# BUILD=1 throughout, own isolated rundirs under <sp>/sa-oro/.
+#
+# Scope: step0-universe.tsv rows 84-85 (oro sa_slot 2): "Yagyou Dama" (index
+# 55) and "EX Yagyou Dama" (index 56, "2-stock SA2 variant" per the plan's
+# own G9 prose — classified as a super by the boundary rule, not an EX
+# special). Oracle: docs/arcade-frame-data/oro.json (md5
+# 9917bd5e9773c514eef58c5a4431bb47, unchanged this session).
+#
+# IDENTITY: super_art:1 (0-indexed SA2) + sa_gauge:3 (MAXIMUM). Plain
+# "motion 2qcf HP" gives S=28 exact match to Yagyou Dama's own oracle
+# Startup=28 on every leg (<sp>/sa-oro/run-sa2-id, run-sa2-full) — a slow,
+# screen-traveling projectile per authoring-policy.md's own character note
+# ("SA2 Yagyou Dama = slow projectile"), proj=1/box_runs=0 confirmed in
+# every FINAL line.
+#
+# --- Yagyou Dama (plain) ---------------------------------------------------
+# A single clean super WHIFF exists (dist:250, dummy:none,
+# <sp>/sa-oro/run-sa2-full): S=28 A=21 R=19 adv=+0 — S AND A both EXACT
+# oracle matches (Startup=28/Hit=21) on the unsaturated whiff baseline
+# (T=47). oro.json's Recovery/Block_advantage for this row are both the
+# literal string "-" (from-qjson would raise CompileError on either) — R
+# is never assertable regardless of the measured value.
+#
+# CONTACT-LEG A IS TRAVEL-DEPENDENT (new finding, OMITTED not xfailed —
+# no established Phase 6 bucket fits a value that varies by distance
+# rather than sitting at one fixed contact-vs-whiff differential). Three
+# independent measurements this session (<sp>/sa-oro/run-sa2-full):
+#   - dist:close (56, achieved ~69 at MOVE_START) BLOCK: A=11
+#   - dist:close HIT: A=11 (same as BLOCK — path-independent AT THIS ONE
+#     distance, but see below)
+#   - dist:150 BLOCK (isolation cross-check, not shipped as its own entry):
+#     A=28 — a THIRD distinct value at a THIRD distance
+# Against the clean WHIFF baseline's A=21, none of the three contact-range
+# readings (11 at close, 28 at dist:150) is a stable single "contact value"
+# — this is a travel-distance-dependent measurement (proj_a scales with how
+# far the slow orb has traveled before intercepting the dummy), the same
+# shape family as corpus-oro-ex.yaml's own Sun Disk Palm (EX Low) §12.2.4
+# "proj-split late-despawn" finding and this repo's Sean/Yang SA2
+# MULTIHIT-shaped distance-dependent A precedent. A is OMITTED on both
+# shipped contact legs (BLOCK/HIT, both at dist:close), logged here as
+# UNCLASSIFIED for follow-up rather than forced to any single value. S
+# stays assertable on every leg (path-independent, Ruling 3's lever-
+# independent E-3 rule). No expect.adv: oro.json's Block_advantage for this
+# row is the literal string "-".
+#
+# --- EX Yagyou Dama (2-stock SA2 variant) -----------------------------------
+# Chorded 2-punch hold-chain (same workaround as corpus-oro-sa1.yaml's own
+# EX Kishin Riki — `motion`'s button argument doesn't accept a '+'-joined
+# chord): `hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT 2; hold DOWN 2; hold
+# DOWN+RIGHT 2; hold RIGHT+LP+HP 2; wait 1`. S=27 EXACT match to oro.json's
+# "EX Yagyou Dama" oracle Startup=27 on EVERY attempt at every distance
+# tried (dist:close and dist:250 alike, <sp>/sa-oro/run-sa2-ex,
+# run-sa2ex-block-iso, run-sa2ex-hit-iso, run-sa2ex-far{,2}) — unambiguous
+# identification.
+#
+# REACHABILITY-INVERSION FINDING (new, isolated-probe-confirmed, NOT an
+# ordering-trap artifact — cross-checked in total isolation per Phase 5
+# discipline): this move WHIFFS at dist:close (56px) and CONNECTS at
+# dist:250, the OPPOSITE of every other move in this program. Isolated
+# single-entry re-verification (<sp>/sa-oro/run-sa2ex-block-iso,
+# run-sa2ex-hit-iso) confirms dist:close genuinely WHIFFS regardless of
+# dummy guard state (both dummy:stand and dummy:none at dist:close read
+# outcome=WHIFF, S=27/A=54/R=50/adv=+0) — not a residual-knockdown
+# ordering artifact from a preceding entry. Isolated dist:250 re-
+# verification (<sp>/sa-oro/run-sa2ex-far-block, run-sa2ex-far-hit)
+# confirms it genuinely CONNECTS there (BLOCK S=27/A=111/R=50/adv=+73; HIT
+# S=27/A=111/R=50/adv=+75, kd unconfirmed not asserted) — a slow-travel orb
+# whose hitbox apparently isn't live yet at close range (flies over/past a
+# point-blank target before its own active window opens), the inverse-
+# direction sibling of corpus-oro.yaml's own documented "Sun Disk Palm
+# Strong/Fierce" SPECIALS-REACHABILITY GAP (same disposition class:
+# document the gap, don't guess further input variations — authorized by
+# CORPUS-AUTHORING.md Phase 5's own register).
+#
+# A DISPOSITION: WHIFF-leg A=54 is close to (but not exact against)
+# oro.json's Hit=52 (a 2-unit gap) — NOT asserted (no established bucket
+# covers a small, single, whiff-leg-only near-miss with no contact-leg
+# cross-check available in the same range regime). Contact-leg
+# (dist:250) A=111 is path-independent across BLOCK/HIT (111==111) but far
+# from oracle's 52 — also OMITTED, same travel-dependent-inflation shape
+# as the plain Yagyou Dama's own contact-A finding above (a second,
+# independent sighting of the same shape family on this character, single
+# session — not yet a 3rd-sighting systemic trigger). S is the only field
+# asserted on every EX Yagyou Dama leg. No expect.adv: oro.json's Block_
+# advantage for this row is the literal string "-" (and Hit_advantage is
+# "-" on every row in this whole program per the plan's own G9 census).
+#
+# Admissibility census (mechanical, from FRAME_TRACE columns — authoring-
+# policy.md Ruling 2), run over the final 6-entry corpus below
+# (<sp>/sa-oro/run-sa2-final/trace.log): (1) single-FINAL integrity — one
+# MOVE_START/FINAL pair per entry, confirmed via annotation grep, no bleed
+# despite the reachability-inversion shape (each entry independently
+# isolated during discovery, per Phase 5). (2) Flash-overlap (sastop)
+# census: 0 nonzero ticks in every entry's own [MOVE_START F, FINAL F]
+# window — flash-free. (3) Contact-A juggle check: N/A in the OMIT sense —
+# A is never asserted on any contact leg of either move, so there is
+# nothing to juggle-check against. (4) Shape record: Yagyou Dama proj=1/
+# box_runs=0 all three legs; EX Yagyou Dama proj=1/box_runs=0 all three
+# legs (a slow-orb projectile the whole way through, both plain and EX).
+character: oro
+oracle: oro.json
+super_art: 1
+sa_gauge: 3
+inter_entry_wait: 500
+entries:
+
+- label: oro-sa2-whiff
+  setup: { dist: 250, dummy: none }
+  input: "motion 2qcf HP"
+  qjson: { name: "Yagyou Dama" }
+  outcome: WHIFF
+  # Measured S=28 A=21 R=19 adv=+0 — S/A both oracle-exact, clean super
+  # WHIFF, T=47 unsaturated. No expect.R: oro.json's Recovery for this row
+  # is the literal string "-".
+  expect: { S: from-qjson, A: from-qjson }
+
+- label: oro-sa2-block
+  setup: { dist: close, dummy: stand }
+  input: "motion 2qcf HP"
+  qjson: { name: "Yagyou Dama" }
+  outcome: BLOCK
+  # Measured S=28 A=11(NOT asserted, travel-dependent — see header) R=19
+  # adv=+27. S oracle-exact. No expect.A/adv: see the header's
+  # CONTACT-LEG A IS TRAVEL-DEPENDENT finding; oro.json's Block_advantage
+  # is the literal string "-" regardless.
+  expect: { S: from-qjson }
+
+- label: oro-sa2-hit
+  setup: { dist: close, dummy: none }
+  input: "motion 2qcf HP"
+  qjson: { name: "Yagyou Dama" }
+  outcome: HIT
+  # Measured S=28 A=11(NOT asserted, same finding as BLOCK) R=19 adv=+28
+  # kd=0. S oracle-exact.
+  expect: { S: from-qjson }
+
+- label: oro-sa2ex-whiff
+  setup: { dist: close, dummy: none }
+  input: "hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LP+HP 2; wait 1"
+  qjson: { name: "EX Yagyou Dama" }
+  outcome: WHIFF
+  # Measured S=27 A=54(NOT asserted, near-miss vs oracle 52 — see header)
+  # R=50 adv=+0. S oracle-exact. This is the REACHABILITY-INVERSION whiff
+  # leg (genuinely whiffs at close range — isolation-confirmed, see header).
+  expect: { S: from-qjson }
+
+- label: oro-sa2ex-block
+  setup: { dist: 250, dummy: stand }
+  input: "hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LP+HP 2; wait 1"
+  qjson: { name: "EX Yagyou Dama" }
+  outcome: BLOCK
+  # Measured S=27 A=111(NOT asserted, travel-dependent inflation — see
+  # header) R=50 adv=+73. S oracle-exact. REACHABILITY-INVERSION connect
+  # leg (genuinely connects at dist:250, isolation-confirmed).
+  expect: { S: from-qjson }
+
+- label: oro-sa2ex-hit
+  setup: { dist: 250, dummy: none }
+  input: "hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LP+HP 2; wait 1"
+  qjson: { name: "EX Yagyou Dama" }
+  outcome: HIT
+  # Measured S=27 A=111(NOT asserted, same finding as BLOCK) R=50 adv=+75.
+  # S oracle-exact.
+  expect: { S: from-qjson }

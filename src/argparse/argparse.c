@@ -55,14 +55,20 @@ argparse_getvalue(struct argparse *self, const struct argparse_option *opt,
         goto skipped;
     switch (opt->type) {
     case ARGPARSE_OPT_BOOLEAN:
-        if (flags & OPT_UNSET) {
-            *(int *)opt->value = *(int *)opt->value - 1;
-        } else {
-            *(int *)opt->value = *(int *)opt->value + 1;
-        }
-        if (*(int *)opt->value < 0) {
-            *(int *)opt->value = 0;
-        }
+        /* Every ARGPARSE_OPT_BOOLEAN call site in this repo (src/args.c)
+         * binds `value` to a 1-byte `bool` (or an `int` field that is
+         * only ever 0/1) inside `Configuration`/`TestRunnerConfiguration`
+         * /`PerfCaptureConfiguration`, never to a counted `int`. The
+         * original vendor code did `*(int *)opt->value +/- 1`, a 4-byte
+         * read-modify-write through a pointer to a 1-byte object. For any
+         * `bool` field followed by another `bool` field (e.g. the tail of
+         * `Configuration`, configuration.h) this silently read and wrote
+         * up to 3 bytes of unrelated struct memory; for the last `bool`
+         * field in the struct it read/wrote past the end of the object
+         * entirely. Degrade to the set-1/clear-0 semantics every call
+         * site here actually observes, through a single byte — this is
+         * also endianness-independent, unlike the removed 4-byte form. */
+        *(unsigned char *)opt->value = (flags & OPT_UNSET) ? 0 : 1;
         break;
     case ARGPARSE_OPT_BIT:
         if (flags & OPT_UNSET) {

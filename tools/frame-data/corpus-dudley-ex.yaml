@@ -1,0 +1,286 @@
+# Dudley EX moves corpus — EX/Supers program, wave 2 fan-out (Ruling 5's
+# per-character EX satellite batches, <sp>/exsuper/authoring-policy.md).
+# Satellite corpus (auto-discovered by run-suite.sh's corpus-*.yaml glob, own
+# golden/dudley-ex.tsv) — the main corpus-dudley.yaml is untouched.
+#
+# Oracle: docs/arcade-frame-data/dudley.json (md5
+# 8e0341d62b9470212bce8105eaf1a73e, same file corpus-dudley.yaml already
+# pins — re-verified unchanged this session).
+#
+# Scope: Dudley's 4 EX rows per <sp>/exsuper/step0-universe.tsv (rows 24/26/
+# 27/rows near 30/34/41/45): Jet Uppercut (EX), Machine Gun Blow (EX), Short
+# Swing Blow (EX) — all three landed, all ASSERTABLE per step0. Cross Counter
+# (EX) is step0 exclusion_flag=NONNUMERIC_UNACCOUNTED — dudley.json has ZERO
+# frame data for Cross Counter at ANY strength (Jab/Strong/Fierce/EX all read
+# the literal string "-" on every field, confirmed live this session,
+# `python3 -c "import json; ..."` dump of dudley.json), the SAME structural
+# gap corpus-dudley.yaml's own header already documents for the non-EX Cross
+# Counter family — no entries authored for it, nothing numeric exists to
+# assert (header note only, matching the precedent's own "not audited" call).
+#
+# Motion recipes (Phase 5 motion-probe method, reusing the EXACT chorded
+# macros the wave-1 EX pilots proved for the same qcf/dp-hold-chain/hcf/hcb
+# primitives; also reusing corpus-dudley.yaml's own established base-move
+# recipes verbatim, chording the final step with two same-type buttons):
+#   - Jet Uppercut (EX): DP-shape hold-chain (identical shape to
+#     corpus-dudley.yaml's own `hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2;
+#     hold RIGHT+<btn> 2; wait 1`), final step chorded LP+HP (punch move,
+#     same convention as Ryu EX Shoryuken / Ken EX Shoryuken):
+#     `hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LP+HP 2; wait 1`
+#   - Machine Gun Blow (EX): hcf shape (corpus-dudley.yaml's own base move
+#     uses `motion hcf <btn>`; the macro cannot itself chord two buttons, so
+#     hand-expanded into the same primitives the macro expands to — identical
+#     technique to corpus-chunli-ex.yaml's Kikkoken (EX)/Hazan Shu (EX)),
+#     final step chorded LP+HP:
+#     `hold LEFT 2; hold LEFT+DOWN 2; hold DOWN 2; hold DOWN+RIGHT 2; hold
+#     RIGHT+LP+HP 2; wait 1`
+#   - Short Swing Blow (EX): hcb shape, final step chorded LK+HK (kick move,
+#     same convention as Ken/Ryu EX Tatsumaki):
+#     `hold RIGHT 2; hold RIGHT+DOWN 2; hold DOWN 2; hold DOWN+LEFT 2; hold
+#     LEFT+LK+HK 2; wait 1`
+# All three landed the correct EX move on the FIRST probe attempt (S-value
+# match against dudley.json's EX rows: S=3/16/17 respectively, exact) — no
+# disambiguation needed.
+#
+# sa_gauge: 3 (MAXIMUM, per authoring-policy.md's meter policy — EX moves are
+# meter-metered, 1 stock/activation; training mode's default starting gauge
+# is not guaranteed full/nonzero, the Ryu EX pilot's own load-bearing
+# finding). Confirmed necessary here too: no strength-independent motion
+# collision risk since Dudley has no plain-input specials sharing these
+# shapes at non-EX strength that would silently substitute.
+#
+# inter_entry_wait: 250 (matching the wave-1 settled value, per the Ryu EX
+# pilot's own label-bleed finding at 150) — confirmed clean single-FINAL
+# integrity across the whole 9-entry authoring probe (isolated re-verified
+# for the two suspicious R-divergence entries below, see census).
+#
+# ORDERING NOTE (§12.1 row 1 precedent, corpus-hugo.yaml/corpus-dudley.yaml's
+# own convention): the sole WHIFF entry (Jet Uppercut) is placed FIRST,
+# before any connecting BLOCK/HIT entry, avoiding the teleport-corruption
+# trap a connecting HIT leaves for a following distance-sensitive WHIFF.
+#
+# Admissibility census (per-entry, mechanical, from FRAME_TRACE columns —
+# authoring-policy.md Ruling 2), all 7 shipped entries below:
+#   (1) Single-FINAL integrity: 9 MOVE_START/FINAL annotation pairs, cleanly
+#       alternating, zero merges, across the full authoring probe covering
+#       all three moves' WHIFF/BLOCK/HIT legs — confirmed at
+#       inter_entry_wait:250 (direct trace inspection, this session).
+#   (2) Flash-overlap census (sastop gate): 0 nonzero `sastop` ticks across
+#       the ENTIRE trace (mechanical awk census over every data row, not
+#       sampled) — EX moves are flash-free, confirmed, not assumed.
+#   (3) Contact-A juggle check (HIT-leg A admissible only if it equals the
+#       BLOCK-leg's displayed A): Machine Gun Blow (EX) PASSES (BLOCK A=15 ==
+#       HIT A=15). Jet Uppercut (EX) FAILS (BLOCK A=21 != HIT A=13) — same
+#       shape as the Ryu EX pilot's own Joudan Sokutou Geri precedent and
+#       this exact move family's own already-flagged per-strength A
+#       irregularity (corpus-dudley.yaml's "JET UPPERCUT FINDING" header
+#       block) — HIT-leg A is documented-unasserted, not shipped. Short
+#       Swing Blow (EX) PASSES (BLOCK A=10 == HIT A=10) but has no oracle
+#       Hit_advantage/Recovery to gate on regardless.
+#   (4) Shape record (diagnostic only): all three moves are single-run on
+#       every leg (box_runs=1, proj=0) — none of Dudley's three EX moves
+#       reproduce the Ruling-3 genuinely-multi-run shape seen on Ken/Ryu's
+#       own EX Tatsumaki Senpuu Kyaku.
+#
+# Result: 7 entries shipped, all PASS. 2 quarantined R fields (program
+# QUARANTINE #3 and #4 — Ken SA3 BLOCK R+10 is #1, Ryu EX Tatsumaki BLOCK/HIT
+# R is #2, both #2's legs counted together as one named quarantine per its
+# own report), both R-only, both omitted rather than xfailed per the plan's
+# PER-MOVE QUARANTINE rule. 2 WHIFF-UNREACHABLE moves (Machine Gun Blow,
+# Short Swing Blow) — Jet Uppercut is the only move with a shipped WHIFF leg.
+character: dudley
+oracle: dudley.json
+inter_entry_wait: 250
+sa_gauge: 3
+entries:
+
+# --- Jet Uppercut (EX) — DP-shape hold-chain, single-run, no flash ---------
+# Census: single-FINAL, sastop=0, box_runs=1, proj=0 (all three legs).
+# WHIFF resolved (post-§13.5.1a grounded fresh-edge cut fix, same as
+# corpus-dudley.yaml's own base-move Jet Uppercut WHIFF section) — fully
+# oracle-exact on all three fields, matching the base move's own precedent
+# that WHIFF is arcade-exact for this move family.
+
+- label: dudley-exjetup-whiff
+  setup: { dist: 250, dummy: none }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LP+HP 2; wait 1"
+  qjson: { name: "Jet Uppercut (EX)" }
+  outcome: WHIFF
+  # Measured S=3 A=21 R=34 — oracle-exact on all three (dudley.json Jet
+  # Uppercut (EX): Startup=3, Hit=21, Recovery=34), matching the base move's
+  # own resolved WHIFF baseline shape (corpus-dudley.yaml's Jet Uppercut
+  # WHIFF section, all three strengths).
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# RESOLVED (EX-CONTACT-R disposition #1, exsuper/excontact-r-findings.md
+# §3 item 1 / §12.2.2 R-surplus corollary): BLOCK R measured 35 vs oracle 34
+# (+1 surplus). Per-tick recovery-chain recount from this entry's own
+# preserved trace shows the WHIFF and BLOCK chains are IDENTICAL through
+# cgix=162, then BLOCK plays ONE extra recovery cell (cgix=168, 1 tick) that
+# WHIFF never plays — the +1 = the extra cell exactly (findings file
+# §1.4). This is the §12.2.2 R-SURPLUS corollary shape (contact-branch
+# content insertion), whose converted precedents include
+# `urien-exvkd-block/-hit` (R 29, own-trace-confirmed 2026-07-12 isolated
+# re-run) and `urien-exchariot-mk-block` (R 27 surplus-converted) — the
+# bucket's own-recorded-signature bar is met from the preserved trace.
+# Arcade (whiff-canonical) R=34 preserved here per the convention.
+- label: dudley-exjetup-block
+  setup: { dist: close, dummy: stand }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LP+HP 2; wait 1"
+  qjson: { name: "Jet Uppercut (EX)" }
+  outcome: BLOCK
+  # Measured S=3 A=21 R=35 adv=-37. S/A/adv oracle-exact (dudley.json Jet
+  # Uppercut (EX): Startup=3, Hit=21, Block_advantage=-37). R=35 asserted
+  # (arcade 34; +1 = one extra recovery cell, §12.2.2 R-surplus corollary,
+  # see comment above).
+  expect: { S: from-qjson, A: from-qjson, R: 35, adv: from-qjson }
+
+# HIT-leg A juggle check FAILS (BLOCK A=21 != HIT A=13, measured) — same
+# irregular per-strength A shape corpus-dudley.yaml's own "JET UPPERCUT
+# FINDING" header block already flags for the base move's three strengths
+# (a genuine sign-flipping A pattern across strength/outcome combinations).
+# A is documented-unasserted here, not shipped (Ruling 2 check 3).
+#
+# §13.10 HIT-R convention (established member — same move, same mechanism,
+# reproducing an ALREADY-ADJUDICATED value, not a new candidate): R=23 is
+# the engine-truth recovery played on the HIT path. This is the EXACT SAME
+# numeric value corpus-dudley.yaml's own `dudley-jetup-hp-hit` (Fierce)
+# entry already ships as a plain PASS citing "§13.10 HIT-R convention
+# (adopted 2026-07-10, §13.10-compliance conversion, F2b)" — the genuine
+# Class 1 hit-branch recovery-chain reduction below the arcade/WHIFF/BLOCK
+# figure of 34 (post-§13.5.1a fix baseline), reproduced here on the EX
+# strength variant of the identical move. Arcade (whiff-canonical) R=34
+# preserved in this comment per the convention.
+- label: dudley-exjetup-hit
+  setup: { dist: close, dummy: none }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LP+HP 2; wait 1"
+  qjson: { name: "Jet Uppercut (EX)" }
+  outcome: HIT
+  expect: { S: from-qjson, R: 23 }
+
+# --- Machine Gun Blow (EX) — hcf shape, single-run, no flash ---------------
+# Census: single-FINAL, sastop=0, box_runs=1, proj=0 (both legs).
+# WHIFF-UNREACHABLE(dist=310 requested/centered, dist=306 achieved at
+# MOVE_START — the hard CENTERED_DIST_MAX cap, no walk-in: MGB's hcf shape
+# opens on a BACK hold, which walks P1 AWAY from the dummy, so the achieved
+# 306px is essentially the full requested separation). Still connects
+# (outcome HIT) at this near-maximal separation — a pure move-reach fact,
+# same class as corpus-dudley.yaml's own "SPECIALS-REACHABILITY GAP" note
+# for Machine Gun Blow (Fierce), which ALSO never whiffs within DIST_MAX=300
+# anchored; EX (the strongest variant) inherits and exceeds that same
+# reach. No further binary search attempted (310 is dist_mode:centered's
+# hard compile-time cap). Coverage for this move's WHIFF path comes instead
+# from the BLOCK/HIT legs below (S/A both oracle-exact), per Ruling 1.
+
+# §13.13 (a1) established convention — reproduces the IDENTICAL uniform -2
+# A-undercount magnitude corpus-dudley.yaml's own Machine Gun Blow section
+# already ships as a lever-F-tested-UNCHANGED plain PASS for all three base
+# strengths (Jab A=6/oracle 8, Strong A=8/oracle 10, Fierce A=11/oracle 13 —
+# every one exactly -2). EX measures A=15/oracle 17, the SAME -2 offset, on
+# BOTH legs identically (BLOCK A=15 == HIT A=15, juggle check PASSES) — the
+# same signature (uniform, both-outcome-identical undercount) as the
+# already-adjudicated base-move family, not re-lever-F-tested for the EX
+# strength specifically this session (budget-bounded) but cited by direct
+# analogy to the SAME move's own established mechanism rather than a
+# different move's signature match. adv is oracle-exact (-15).
+#
+# EX-CONTACT-R DISPOSITION (exsuper/excontact-r-findings.md §1.2/§3 item 3;
+# M1 — FD_METER_LEN=72 saturation, first PROVEN contact-leg casualty of this
+# instrument limit): BLOCK R measured 25 vs oracle 28 (-3 deficit). Raw
+# FINAL: `S=16 A=15 R=25 T=72 ... box_a=14 busyr=28 box_runs=1`. busyr=28 =
+# oracle 28 EXACTLY. Recount from the same preserved trace: wall window
+# F=470..592 = 123 ticks, 74 non-frozen; non-frozen through last hatt
+# (F=564) = 46; non-frozen post-active span = 28 = oracle exact. 46+28=74 >
+# 72: the raw[] capture (`FD_METER_LEN=72`, frame_data_overlay.c:42)
+# saturates and the displayed R clips to 25. The -3 = exactly the ticks lost
+# past the cap — instrument truncation, engine and oracle agree. R stays
+# OMITTED here (25 is a truncated reading, not an engine-truth value; do not
+# assert a clipped R — see the M1 note in §13.10's Class-3 FD_METER_LEN
+# coupling neighborhood) — S/A/adv still ship, fully oracle-exact.
+- label: dudley-exmgb-block
+  setup: { dist: close, dummy: stand }
+  input: "hold LEFT 2; hold LEFT+DOWN 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LP+HP 2; wait 1"
+  qjson: { name: "Machine Gun Blow (EX)" }
+  outcome: BLOCK
+  # Measured S=16 A=15 R=25 (busyr=28=oracle) adv=-15 (oracle-exact).
+  # BUFFER-1 (2026-07-13): R now asserted from-qjson — the FD_CAPTURE_LEN
+  # 72->256 raise un-truncates raw[] capture; post-fix measured R=28 ==
+  # busyr == oracle exactly (M1 register CLOSED-FIXED entry, this was the
+  # program's very first proven M1 leg).
+  expect: { S: from-qjson, A: 15, R: from-qjson, adv: from-qjson }
+
+# RESOLVED (EX-CONTACT-R disposition #2, exsuper/excontact-r-findings.md
+# §3 item 2 / §13.10 Class 1, F2b-compliance form): HIT R measured 13 vs
+# oracle 28 (-15 deficit). Recovery chains cell-by-cell from this entry's
+# own preserved trace (cgix/cghi): BLOCK 222/42(1) 234/42(20) 246/43(4)
+# 252/43(2) 258/9(1) = 28; HIT 222/42(1) 240/42(5) 246/43(4) 252/43(2)
+# 258/9(1) = 13. Same cghi label sequence (42,43,9); HIT swaps the 20-tick
+# dwell cell 234 for a parallel 5-tick cell 240, converging at 246.
+# Differential 15 = the R delta exactly (28-13). kd=1 on HIT. §13.10 Class-1
+# hit-branch shape, signature recorded from the entry's own trace (findings
+# file §1.3) — BLOCK's own divergence (see the entry above) is a separate
+# instrument artifact (M1), not a branch anomaly, so it does not break the
+# Class-1 precondition here.
+- label: dudley-exmgb-hit
+  setup: { dist: close, dummy: none }
+  input: "hold LEFT 2; hold LEFT+DOWN 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LP+HP 2; wait 1"
+  qjson: { name: "Machine Gun Blow (EX)" }
+  outcome: HIT
+  # HIT-leg A juggle check PASSES (15 == BLOCK's 15) — admissible per Ruling
+  # 2 check 3. R=13 asserted (arcade 28; §13.10 Class 1 hit-branch deficit,
+  # recorded same-tick cell swap, see comment above).
+  expect: { S: from-qjson, A: 15, R: 13 }
+
+# --- Short Swing Blow (EX) — hcb shape, single-run, no flash ---------------
+# Census: single-FINAL, sastop=0, box_runs=1, proj=0 (both legs). dudley.json
+# has NO numeric Recovery/Block_advantage/Hit_advantage for this move at ANY
+# strength (all "-", same as corpus-dudley.yaml's own base-move Short Swing
+# Blow section) — only S/A are ever assertable, on any leg.
+#
+# WHIFF-UNREACHABLE(dist=310 requested/centered, effective separation only
+# 158px at MOVE_START — the hcb shape's own early FORWARD-hold steps walk P1
+# TOWARD the dummy before curling to BACK, consuming ~152px of the requested
+# 310 before the move even starts, same walk-in root cause as the Ryu EX
+# pilot's own Joudan Sokutou Geri precedent, not a hard-ceiling move-reach
+# fact like Machine Gun Blow (EX) above). Even the anchored dist:250 attempt
+# (walk-in to ~136px) still connected. No further binary search attempted
+# (310 is the hard centered cap; a larger request cannot reduce the walk-in
+# consumption, which is proportional to the motion's own fixed step timing,
+# not the requested distance). Coverage for this move's WHIFF path comes
+# instead from the BLOCK/HIT legs below (S/A both oracle-exact and mutually
+# consistent), per Ruling 1.
+
+- label: dudley-exssb-block
+  setup: { dist: close, dummy: stand }
+  input: "hold RIGHT 2; hold RIGHT+DOWN 2; hold DOWN 2; hold DOWN+LEFT 2; hold LEFT+LK+HK 2; wait 1"
+  qjson: { name: "Short Swing Blow (EX)" }
+  outcome: BLOCK
+  # Measured S=17 A=10, oracle-exact (dudley.json Short Swing Blow (EX):
+  # Startup=17, Hit=10). No expect.R/adv — both non-numeric oracle fields
+  # ("-"), same reasoning as corpus-dudley.yaml's own base-move section.
+  expect: { S: from-qjson, A: from-qjson }
+
+- label: dudley-exssb-hit
+  setup: { dist: close, dummy: none }
+  input: "hold RIGHT 2; hold RIGHT+DOWN 2; hold DOWN 2; hold DOWN+LEFT 2; hold LEFT+LK+HK 2; wait 1"
+  qjson: { name: "Short Swing Blow (EX)" }
+  outcome: HIT
+  # Measured S=17 A=10 — HIT-leg A (10) equals the BLOCK-leg's displayed A
+  # (10), juggle check passes (admissible either way, since it's oracle-exact
+  # regardless). No expect.R/adv (non-numeric).
+  expect: { S: from-qjson, A: from-qjson }
+
+# --- Cross Counter (EX) — NONNUMERIC_UNACCOUNTED, no entries ---------------
+# dudley.json has ZERO frame data for Cross Counter at ANY strength,
+# including EX (Startup/Hit/Recovery/Block_advantage/Hit_advantage are all
+# the literal string "-", confirmed live this session by direct oracle
+# dump) — the identical structural gap corpus-dudley.yaml's own header
+# already documents for Jab/Strong/Fierce Cross Counter (a counter-stance
+# reversal with no active hitbox of its own unless it counters an incoming
+# attack, which this harness's dummy cannot be scripted to throw). No
+# numeric field exists anywhere for `expect` to assert, and the base move's
+# own WHIFF-only probe (dudley-crosscounter-lp-whiff, `expect: {}`) already
+# covers the outcome-only baseline for this family at Jab strength — nothing
+# new to add at EX strength beyond that already-shipped precedent. No entry
+# authored here, per step0-universe.tsv's own NONNUMERIC_UNACCOUNTED
+# classification for this row.

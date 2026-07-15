@@ -1,0 +1,560 @@
+# Hugo frame-data corpus (Phase 6 Step 6, docs/plan-frame-data-harness.md
+# Phase 6 charter + /tmp/phase6-nonq-plan.md Step 6). Generated/consumed by
+# tools/frame-data/compile_corpus.py against docs/arcade-frame-data/hugo.json
+# (fetched Step 3, md5 8bd525542b815dd0c228605bffc51523).
+#
+# Scope: a normals baseline (BLOCK/HIT/WHIFF sample + crouching + a command
+# normal + negative control) PLUS Hugo's three command-grab families
+# (Shootdown Backbreaker, Moonsault Press, Meat Squasher) - the strongest
+# regression exercise the CnDB machinery (finalize's §13.6/13.6.1/13.6.2
+# levers) gets outside Q. Authored empirically against a live headless run,
+# same discipline as corpus-ryu.yaml - every expect below was pinned by
+# reading the actual trace, not guessed from hugo.json alone.
+#
+# Known harness limitations hit in this file (P-teleport no-op during
+# knockdown tails; SDB HIT/BLOCK unreachable): see the consolidated
+# "Harness limitations register", docs/frame-data-synthesis.md §12.1.
+#
+# --- Step 6a discovery: motion decoding (2026-07-07) ------------------------
+#
+# cmd_data.c's p6_cmd_28..33 bytecode was NOT hand-decoded (the check_0..26
+# FSM in cmd_main.c interleaves per-node type/lever/window fields at
+# variable offsets - the same "non-obvious lever-bit encoding" the
+# docs/frame-data-synthesis.md §13.6 CnDB reinvestigation already flagged;
+# static decoding two more slots for Hugo was not a productive use of this
+# step given the plan's own discovery method is empirical S-value matching
+# against the oracle, same as that reinvestigation did for Q's kow=24/26/28).
+# Instead, per this plan's Step 6 instruction ("probe each grab via a
+# throwaway corpus"), every candidate motion below was verified live and
+# matched against hugo.json's Startup (and, where numeric, Hit/Recovery)
+# columns - S is the ground truth signal, exactly as the repo's established
+# methodology uses it (see docs/frame-data-synthesis.md §13.6 item 5's own
+# "human-readable names... rest on the S-frame match against q.json, not a
+# static source enumeration").
+#
+# The compiler's existing `motion hcb <BTN>` macro (the motion
+# docs/frame-data-synthesis.md:1174 associates with "Hugo's HCB+K
+# p6_cmd_33") was tried FIRST, per the plan. Result: inconsistent/no-signal
+# for Hugo - `motion hcb LK`/`hcb HK` produced NO MOVE_START at all (r1
+# never left 0) and `hcb MK` produced an unidentifiable r1=4 move (S=7,
+# matching nothing in hugo.json) - unlike Q's CnDB, where the identical
+# macro cleanly reproduces S=12/13/14. Conclusion: the byte-pattern
+# similarity the synthesis doc's §13.6 item 1 draws between p12_cmd_31 and
+# p6_cmd_33 (both showing the "5,4,5,6,23" sub-sequence, also present
+# verbatim in Ryu's DP-motion p1_cmd_33) is evidence the table SHAPE
+# (header + r1-window + short lever list + terminator) recurs across
+# characters, not evidence the three slots share one literal motion - Hugo's
+# actual command-grab motions are NOT HCB.
+#
+# What DOES land Hugo's grabs, verified live via `hold`/`wait` primitive
+# chains (already-expressible input, no compiler change - see the 360
+# verdict below):
+#   - Shootdown Backbreaker (Short/Forward/RH): forward, down, down-forward
+#     + LK/MK/HK (`hold RIGHT N; hold DOWN N; hold DOWN+RIGHT N; hold
+#     RIGHT+<K> N`) - a DP-shaped input, per the real-arcade documented
+#     command for this move (EventHubs/SuperCombo Wiki: "f,d,df+K"). Lands
+#     an r1=4, cgix=12, kow=24 move whose S/A/R (5/9/30, 17/10/25, 12/12/29
+#     for Short/Forward/RH) match hugo.json EXACTLY for all three strengths,
+#     all three fields, zero divergence (see the grab section below - the
+#     cleanest three-for-three arcade match found this session).
+#   - Moonsault Press (Jab/Strong/Fierce) and Meat Squasher (Short/Forward/
+#     RH): a 360-degree rotation + P/K respectively. Tested BOTH a full
+#     8-way rotation (`hold RIGHT 2; hold DOWN+RIGHT 2; hold DOWN 2; hold
+#     DOWN+LEFT 2; hold LEFT 2; hold UP+LEFT 2; hold UP 2; hold UP+RIGHT 2;
+#     hold RIGHT+<btn> 2`) and a cardinal-only 4-way rotation (`hold RIGHT
+#     2; hold DOWN 2; hold LEFT 2; hold UP 2; hold RIGHT+<btn> 2`) in
+#     isolation (single-entry corpora, to rule out label bleed from a
+#     stuck prior move - see below) - BOTH land the IDENTICAL move
+#     (byte-identical S/A/R/r1/r2/cgix/kow), confirming 3S's documented
+#     input leniency (partial-circle acceptance) applies here: a full
+#     360 is not required, cardinal-4 suffices. LP/MP/HP all land Moonsault
+#     Press (S=2 A=2, matching hugo.json's identical Startup/Hit=2/2 for
+#     all three strengths exactly); LK/MK/HK all land Meat Squasher
+#     (S=21/31/44 close-range, matching the FLOOR of hugo.json's range
+#     strings "21~24"/"31~52"/"44~67" exactly - see the Meat Squasher
+#     section below for the range-vs-distance finding).
+#
+# CAUTION discovered while probing (methodology note, not a corpus bug):
+# a 360-shape move that doesn't finalize within its own SCRIPT window (the
+# 8-way rotation's first attempt ran into this) leaves g_cur.active latched
+# TRUE, which blocks the next entry's MOVE_START - the eventual FINAL then
+# gets annotated under whatever SCRIPT label happens to be current when it
+# fires, silently misattributing the result. Every number in this file's
+# comments and expects was re-verified in an ISOLATED single-entry corpus
+# (large inter_entry_wait, nothing after it) before being trusted - the
+# multi-entry probe corpus alone would have produced a false attribution
+# for at least two of these entries.
+#
+# 360 MACRO VERDICT: not added. Per this plan's own Step 6 criterion ("...
+# extend _motion_steps ONLY IF the probe shows hcb/hcf sequences don't
+# trigger a required grab" AND no other expressible sequence lands it) -
+# hcb/hcf indeed fail, but a `hold`-chain (an EXISTING primitive, already
+# in compile_corpus.py, no new code) lands both 360 families exactly, so
+# the "no expressible sequence" condition is false. compile_corpus.py is
+# UNCHANGED by this step - the cardinal-4 `hold` chain above is used
+# directly in the entries below instead of a new macro.
+#
+# GRAB PRESENTATION CLASSES (r1=4 metered vs r1=2/3 is_throw, per the
+# frame_data_overlay.c:830-834 MOVE_START classifier): every Hugo grab
+# tested this session - Shootdown Backbreaker (all 3), Moonsault Press
+# (all 3), Meat Squasher (all 3), AND the plain Throw (LP+LK, verified as
+# a sanity check: r1=4, S=2 A=1 R=68, same shape as q-throw-hit/
+# ryu-throw-hit) - opens at attacker r1=4 (CnDB-like, metered, real FINAL
+# emitted). NONE opened at r1=2/3 (is_throw, no FINAL, `fd_finalize()`
+# early-returns before the numeric annotate). The plan's anticipated
+# "is_throw-opening grab, scope out of corpus" case (§Step 6 item 4) is
+# therefore a KNOWN GAP THAT DID NOT MATERIALIZE for Hugo's grab family as
+# tested here - not because the is_throw path was worked around, but
+# because empirically no tested Hugo grab takes it. (Untested Hugo throws -
+# Ultra Throw, Gigas Breaker - were not probed: Gigas is on the plan's
+# Do-Not list; Ultra Throw simply isn't in Step 6's discovery list (SDB /
+# Moonsault / Meat Squasher only). So this is not a claim that NO Hugo move
+# is ever is_throw-opening, only that none of the nine grab entries below
+# are.)
+#
+# STOP-rule accounting (plan Step 6: >50% of grab entries failing = stop):
+# at authoring time, 6 of 11 grab entries (55%) were xfail - ALL six were
+# the grab-HIT rows of the then-undiagnosed HIT-R divergence family
+# (synthesis open issue 15; q-throw-hit / ryu-throw-hit precedent), with
+# S/A/kd exact on every one. The rule's stated concern (grab presentation
+# - is_throw vs metered) did not materialize: every tested grab is
+# metered r1=4 with a real FINAL. Accepted explicitly by the orchestrator
+# 2026-07-07 as cited-xfail coverage, not xfail-spam.
+#
+# UPDATE (Step 5, 2026-07-07): issue #15 is now RESOLVED
+# (docs/frame-data-synthesis.md §13.10, oracle-convention adopted, no
+# overlay change) - all 6 of these grab-HIT entries flip to plain PASS
+# asserting the measured convention value; 0 of 11 grab entries are xfail
+# after this step.
+character: hugo
+oracle: hugo.json
+inter_entry_wait: 200
+entries:
+
+# --- Normals baseline, BLOCK (dummy: stand, dist: close) --------------------
+# Six-button close-range sample, same discipline as corpus-ryu.yaml's
+# A-undercount-on-contact audit (docs/frame-data-synthesis.md issue #17,
+# the engine-wide same-tick contact-advance finding - see corpus-ryu.yaml's
+# file header for the full root-cause). Two shapes of divergence show up
+# for Hugo: the familiar A-undercount (Short/Forward), and the SAME
+# issue-#17 mechanism manifesting on R instead of A on Roundhouse (R reads
+# +2 vs arcade on BOTH BLOCK and HIT while WHIFF is exact). Classified
+# 2026-07-07 (plan Step 4): the contact tick's cg_extdat=0x80 advance
+# collapses 2 declared-active anim ticks, and because st.RH's move end is
+# landing-clocked (jumping_union_process, pls01.c:767 - outcome-
+# independent, fires at move tick 34 on all three outcomes) rather than
+# chain-clocked, the freed ticks re-materialize as 2 extra no-hitbox
+# pre-landing frames counted as R, while A survives via entry-credit +
+# distinct transit jatix (no 13.7.4 revoke). Full tick table: synthesis
+# item 17, Hugo Roundhouse addendum.
+
+# UPDATE (2026-07-10, CONV-2): the user decision has been taken -
+# h-roundhouse-block/-hit convert to a plain PASS under §13.13 family
+# F5, asserting the engine-truth R=30 (the freed declared-active ticks
+# tally as RECOVERY on the played chain). 0 of 2 Roundhouse entries
+# remain xfail.
+
+- label: h-jab-block
+  setup: { dist: close, dummy: stand }
+  input: "press LP"
+  qjson: { name: "Jab" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: h-strong-block
+  setup: { dist: close, dummy: stand }
+  input: "press MP"
+  qjson: { name: "Strong" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: h-fierce-block
+  setup: { dist: close, dummy: stand }
+  input: "press HP"
+  qjson: { name: "Fierce" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=1 is the
+# engine-truth credit actually accrued on the BLOCK path - issue #17 shape (a1):
+# declared active cells skipped on contact are never dispatched, credit
+# unrecoverable (synthesis §13.11). Arcade (whiff-canonical, from-qjson) A=4 -
+# preserved here per the convention. S/R/adv remain arcade-exact (from-qjson).
+- label: h-short-block
+  setup: { dist: close, dummy: stand }
+  input: "press LK"
+  qjson: { name: "Short" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: 1, R: from-qjson, adv: from-qjson }
+
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=5 is the
+# engine-truth credit actually accrued on the BLOCK path - issue #17 shape (a1):
+# declared active cells skipped on contact are never dispatched, credit
+# unrecoverable (synthesis §13.11). Arcade (whiff-canonical, from-qjson) A=6 -
+# preserved here per the convention. S/R/adv remain arcade-exact (from-qjson).
+- label: h-forward-block
+  setup: { dist: close, dummy: stand }
+  input: "press MK"
+  qjson: { name: "Forward" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: 5, R: from-qjson, adv: from-qjson }
+
+# §13.13 contact-path convention (CONV-2 scope extension, 2026-07-10, user
+# decision): R=30 is the engine-truth recovery actually played on the
+# BLOCK path - family F5, item-17 Hugo Roundhouse family (cg_extdat=0x80
+# same-tick contact advance, hitcheck.c:727-729), R-side manifestation on
+# a landing-clocked move (classified 2026-07-07, plan Step 4 - see
+# synthesis item 17's Hugo Roundhouse addendum for the tick table): the
+# contact tick collapses 2 declared-active anim ticks (cell 28 ctr=2 plays
+# 1 tick, cell 32 enters the same tick), and because the move's end is
+# pinned by the outcome-independent jumping_union_process landing check
+# (pls01.c:767, fires at move tick 34 on WHIFF/BLOCK/HIT alike), the freed
+# 2 ticks idle in the no-hitbox pre-landing cell 44 and tally as RECOVERY.
+# S/A/adv all match exactly (A=8 survives: entry-credited 2+3+3, transit
+# jatix 14->15 so the 13.7.4 revoke is gated off). Arcade (whiff-
+# canonical, from-qjson) R=28 - preserved here per the convention; WHIFF
+# (h-roundhouse-whiff below) reads the exact arcade R=28 with the
+# identical input.
+- label: h-roundhouse-block
+  setup: { dist: close, dummy: stand }
+  input: "press HK"
+  qjson: { name: "Roundhouse" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: 30, adv: from-qjson }
+
+# --- HIT sample (dummy: none, dist: close) ----------------------------------
+
+- label: h-jab-hit
+  setup: { dist: close, dummy: none }
+  input: "press LP"
+  qjson: { name: "Jab" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: h-fierce-hit
+  setup: { dist: close, dummy: none }
+  input: "press HP"
+  qjson: { name: "Fierce" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# HIT-R display convention (docs/frame-data-synthesis.md §13.10, Class 1
+# hit-branch recovery chain) - R=8 is the actually-played post-active
+# recovery chain on HIT, not the WHIFF/BLOCK-matching arcade figure (12);
+# not a defect, see §13.10 for the full tick-table proof (adv=+0 matches
+# hugo.json's Hit_advantage exactly, only reproducible via this shorter
+# chain).
+- label: h-strong-hit
+  setup: { dist: close, dummy: none }
+  input: "press MP"
+  qjson: { name: "Strong" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: 8, adv: from-qjson }
+
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=1 is the
+# engine-truth credit actually accrued on the HIT path - issue #17 shape (a1):
+# declared active cells skipped on contact are never dispatched, credit
+# unrecoverable (synthesis §13.11); same divergence as h-short-block, HIT
+# side. Arcade (whiff-canonical, from-qjson) A=4 - preserved here per the
+# convention. S/R/adv remain arcade-exact (from-qjson).
+- label: h-short-hit
+  setup: { dist: close, dummy: none }
+  input: "press LK"
+  qjson: { name: "Short" }
+  outcome: HIT
+  expect: { S: from-qjson, A: 1, R: from-qjson, adv: from-qjson }
+
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=5 is the
+# engine-truth credit actually accrued on the HIT path - issue #17 shape (a1):
+# declared active cells skipped on contact are never dispatched, credit
+# unrecoverable (synthesis §13.11), same as h-forward-block. Arcade (whiff-
+# canonical, from-qjson) A=6 - preserved here per the convention. R already
+# asserts the pre-existing §13.10 HIT-R convention value (20; arcade
+# block-canonical figure is 23, preserved above in this same comment). S/adv
+# remain arcade-exact (from-qjson).
+- label: h-forward-hit
+  setup: { dist: close, dummy: none }
+  input: "press MK"
+  qjson: { name: "Forward" }
+  outcome: HIT
+  expect: { S: from-qjson, A: 5, R: 20, adv: from-qjson }
+
+# §13.13 contact-path convention (CONV-2 scope extension, 2026-07-10, user
+# decision): R=30 is the engine-truth recovery actually played on the HIT
+# path - family F5, same classified mechanism as h-roundhouse-block (see
+# that entry's comment + synthesis item 17's Hugo Roundhouse addendum):
+# identical structure trace-verified on HIT (contact GT=262 same-tick
+# 28->32, extdat=0x80; landing at move tick 34); S/A/adv all match
+# exactly. Arcade (whiff-canonical, from-qjson) R=28 - preserved here per
+# the convention.
+- label: h-roundhouse-hit
+  setup: { dist: close, dummy: none }
+  input: "press HK"
+  qjson: { name: "Roundhouse" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: 30, adv: from-qjson }
+
+# --- WHIFF sample (dummy: none, dist: 250) ----------------------------------
+# Both entries below match arcade exactly, INCLUDING Roundhouse whose
+# BLOCK/HIT entries are xfailed above - confirms the divergence is
+# contact-tick-specific (the cg_extdat=0x80 contact advance never fires on
+# whiff), not a WHIFF-path bug, same shape as corpus-ryu.yaml's "WHIFF is
+# always exact" note.
+
+- label: h-jab-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press LP"
+  qjson: { name: "Jab" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: h-roundhouse-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press HK"
+  qjson: { name: "Roundhouse" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# --- Crouching normals, BLOCK (dummy: stand, dist: close) -------------------
+# All three match arcade exactly - no divergence found among Hugo's tested
+# crouching normals (unlike Ryu, where cr.MK/cr.HK carried A-undercount).
+
+- label: h-crshort-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+LK"
+  qjson: { name: "Crouching Short" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: h-crforward-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+MK"
+  qjson: { name: "Crouching Forward" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: h-crfierce-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+HP"
+  qjson: { name: "Crouching Fierce" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# --- Command normal (Towards + Fierce), BLOCK -------------------------------
+
+- label: h-twdshp-block
+  setup: { dist: close, dummy: stand }
+  input: "press RIGHT+HP"
+  qjson: { name: "Towards + Fierce" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# --- Negative control --------------------------------------------------------
+
+- label: h-jump-none
+  setup: { dist: 250, dummy: none }
+  input: "press UP"
+  outcome: NONE
+
+# --- Shootdown Backbreaker (command grab, DP-shape input) -------------------
+# Motion: forward, down, down-forward + LK/MK/HK (see file header). This is
+# the CLEANEST arcade match found this session: S, A, AND R all match
+# hugo.json exactly for all three strengths, zero divergence.
+#
+# Outcome is WHIFF against ANY grounded dummy configuration - verified at
+# dist 20/55/250 and BOTH dummy:stand and dummy:none, always the identical
+# S/A/R. This move never connects on the ground. hugo.json lists
+# Block_advantage="-" AND Hit_advantage="-" for all three SDB rows (unlike
+# every other move in this file, which has at least one numeric advantage
+# field) - the plan's own Step 6 Do-Not list independently names "airborne-
+# grab (SDB vs airborne dummy - dummy can't jump)" as an explicit scope cut,
+# which is exactly consistent with what this session measured: Shootdown
+# Backbreaker is Hugo's anti-air command grab (real-arcade name origin -
+# "shoot down" a jumping opponent), and the harness's dummy cannot be
+# scripted to jump (G-directive AI only, not frame-scriptable, same
+# constraint noted for Ryu's hadouken WHIFF entries in corpus-ryu.yaml).
+# A genuine HIT/BLOCK assertion for this move is therefore out of scope -
+# documented here as a known gap, not attempted - and WHIFF (with its
+# exact S/A/R match) is the only reachable, honestly-assertable outcome.
+
+- label: h-sdb-short-whiff
+  setup: { dist: close, dummy: none }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LK 2; wait 1"
+  qjson: { name: "Shootdown Backbreaker (Short)" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: h-sdb-forward-whiff
+  setup: { dist: close, dummy: none }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+MK 2; wait 1"
+  qjson: { name: "Shootdown Backbreaker (Forward)" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: h-sdb-rh-whiff
+  setup: { dist: close, dummy: none }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+HK 2; wait 1"
+  qjson: { name: "Shootdown Backbreaker (RH)" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# --- Moonsault Press (360 + P, command grab) --------------------------------
+# Motion: cardinal-4 rotation + LP/MP/HP (see file header 360 verdict - no
+# compiler change). hugo.json lists identical Startup=2/Hit=2/Recovery=36
+# for all three strengths; measured S/A match exactly for all three
+# (A=2 - contact IS registered, unlike Ryu's hadouken which has no player-
+# side attack signal at all; this is a real melee grab, not a projectile,
+# so none of the Phase 6A arcade-split machinery is involved: proj=0 on
+# every FINAL line below). Unblockable (hugo.json Block_advantage="-";
+# verified live: connects as HIT even with dummy:stand, i.e. a standing
+# "guard" input does not stop it - the throw-bypasses-block mechanism
+# already established for Q's CnDB/normal Throw). kd:1 per the CnDB
+# precedent (Hit_advantage="-" -> explicit kd, same as corpus-q.yaml's
+# q-cndb-*-hit / corpus-ryu.yaml's ryu-throw-hit).
+#
+# R diverges on HIT (measured 67 vs arcade 36) but is EXACT on WHIFF
+# (h-moonsault-lp-whiff below: R=36) - the §13.10 HIT-R display
+# convention (docs/frame-data-synthesis.md, Class 3 connected grab):
+# arcade R is the whiff-path figure (captured exactly below); on HIT the
+# grab connects and the overlay measures the real post-capture throw
+# sequence instead, bounded here by the §13.6.1 partner-release path
+# AND raw[] saturation at the FD_METER_LEN=72 cap (`frame_data_overlay.c:
+# 42`) - the real capture-to-release span (102 wall ticks) exceeds the
+# 72-cell buffer, so R saturates at `(FD_METER_LEN-1) - S - A = 71-2-2 =
+# 67` for all three strengths (identical Startup/Hit=2/2 in hugo.json).
+# This R expect is therefore a DERIVED value, not an independent
+# constant: it moves in lockstep with FD_METER_LEN if that constant ever
+# changes, and must be re-derived from the formula above, not
+# re-measured from scratch.
+
+- label: h-moonsault-lp-hit
+  setup: { dist: close, dummy: none }
+  input: "hold RIGHT 2; hold DOWN 2; hold LEFT 2; hold UP 2; hold RIGHT+LP 2; wait 1"
+  qjson: { name: "Moonsault Press (Jab)" }
+  outcome: HIT
+  # BUFFER-1 (2026-07-13): the FD_CAPTURE_LEN 72->256 raise un-caps this
+  # partner-release grab's raw[] capture — the `(FD_METER_LEN-1)-S-A`
+  # derived-convention formula above (§13.10, "Raising FD_METER_LEN to
+  # un-saturate the Hugo grabs was considered and rejected... it would
+  # only trade one convention's R for another with no arcade oracle
+  # either way") is now STALE: this fix trades exactly that rejected
+  # trade, as a side effect of the M1 raise. Post-fix measured R=99 (was
+  # 67); the three Moonsault buttons no longer share one uniform value
+  # (100/98 on MP/HP below) since each button's true post-release span
+  # differs slightly. R DE-ASSERTED (not re-derived to a new formula this
+  # cycle — no arcade oracle exists for this post-contact span either
+  # way, same as before); flagged prominently for orchestrator/user
+  # review — this REOPENS the §13.10 "No FD_METER_LEN resize" decision,
+  # not merely a re-measurement.
+  expect: { S: from-qjson, A: from-qjson, kd: 1 }
+
+- label: h-moonsault-mp-hit
+  setup: { dist: close, dummy: none }
+  input: "hold RIGHT 2; hold DOWN 2; hold LEFT 2; hold UP 2; hold RIGHT+MP 2; wait 1"
+  qjson: { name: "Moonsault Press (Strong)" }
+  outcome: HIT
+  # BUFFER-1 (2026-07-13): same de-assert as h-moonsault-lp-hit above.
+  # Post-fix measured R=100 (was 67).
+  expect: { S: from-qjson, A: from-qjson, kd: 1 }
+
+- label: h-moonsault-hp-hit
+  setup: { dist: close, dummy: none }
+  input: "hold RIGHT 2; hold DOWN 2; hold LEFT 2; hold UP 2; hold RIGHT+HP 2; wait 1"
+  qjson: { name: "Moonsault Press (Fierce)" }
+  outcome: HIT
+  # BUFFER-1 (2026-07-13): same de-assert as h-moonsault-lp-hit above.
+  # Post-fix measured R=98 (was 67).
+  expect: { S: from-qjson, A: from-qjson, kd: 1 }
+
+- label: h-moonsault-lp-whiff
+  setup: { dist: 200, dummy: none }
+  input: "hold RIGHT 2; hold DOWN 2; hold LEFT 2; hold UP 2; hold RIGHT+LP 2; wait 1"
+  qjson: { name: "Moonsault Press (Jab)" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# --- Meat Squasher (360 + K, command grab, RUNNING) -------------------------
+# Motion: cardinal-4 rotation + LK/MK/HK (see file header 360 verdict).
+# hugo.json's Startup is a RANGE STRING ("21 ~ 24" / "31 ~ 52" / "44 ~ 67")
+# for all three strengths - Meat Squasher visibly runs Hugo forward as part
+# of its startup (matches its pl06_exatt_table dispatch name,
+# Att_PL06_HASHIRI_NAGE, literally "running throw" - src/sf33rd/Source/Game/
+# engine/plpat06.c:189-206), so Startup genuinely varies with how far Hugo
+# has to travel to reach the opponent. Measured LIVE at dist:close (56):
+# S=21/31/44 - exactly the FLOOR of each range. Measured at dist=200:
+# Short's S rises to 24 (the CEILING of its range, and it WHIFFS there -
+# see below) while Forward/RH still connect at dist=200 (S=38 for Forward,
+# still mid-range; RH stays at 44, its own floor, reach not yet exhausted
+# at this distance) - confirms the range is a real distance-dependent
+# quantity, not corpus noise. Per the plan's authorization ("explicit S:
+# observed value inside the arcade range, comment the range"), S below is
+# always an explicit literal (from-qjson would not compile against a
+# non-numeric field), not from-qjson.
+#
+# A matches hugo.json exactly (2) for all three strengths at both close and
+# far range. R diverges on HIT the same §13.10 HIT-R display convention way
+# as Moonsault Press above (Class 3 connected grab, measured 48/38/25 vs
+# arcade 30/33/36 for Short/Forward/RH) but is EXACT on WHIFF
+# (h-meatsquasher-short-whiff: R=30, matching arcade exactly at S=24).
+# Unblockable/kd:1, same CnDB-precedent reasoning as Moonsault Press. The
+# divergence isn't uniformly larger or smaller than arcade - this is now
+# resolved (§13.10): all three HIT rows below saturate at the
+# FD_METER_LEN=72 cap the same way Moonsault does, `R = (FD_METER_LEN-1) -
+# S - A = 71 - S - 2` (zero residual: 67=71-2-2 covers Moonsault above;
+# 48=71-21-2, 38=71-31-2, 25=71-44-2 cover Short/Forward/RH below) - RH's
+# R (25) sits BELOW arcade specifically because its large S(=44) eats most
+# of the fixed 71-cell budget, while the smaller-S grabs leave more of the
+# budget for R. Each R expect below is therefore a DERIVED value tied to
+# FD_METER_LEN (`frame_data_overlay.c:42`), not an independent constant -
+# it moves in lockstep if that constant ever changes.
+
+# h-meatsquasher-short-whiff is authored FIRST in this section (immediately
+# after h-moonsault-lp-whiff above, another WHIFF) rather than after a HIT
+# entry - discovered empirically this session: teleporting straight to
+# dist=200 right after a HIT grab (defender still mid-knockdown-recovery,
+# kd=1, adv=+133 means ~263 raw ticks of residual recovery from move-start)
+# stomps the P-directive's position write before it can stick (observed:
+# the compiled `P 424 624` line executed but MOVE_START still read dist=52,
+# identical to the prior HIT entry's position - the teleport silently
+# no-op'd), even with a generous trailing wait. A WHIFF predecessor leaves
+# no knockdown residue at all, so the teleport lands cleanly - same fix
+# shape as corpus-q.yaml's CnDB section trailing-wait note, but here the
+# fix is predecessor-outcome ordering, not just a longer wait.
+
+- label: h-meatsquasher-short-whiff
+  setup: { dist: 200, dummy: none }
+  input: "hold RIGHT 2; hold DOWN 2; hold LEFT 2; hold UP 2; hold RIGHT+LK 2; wait 100"
+  qjson: { name: "Meat Squasher (Short)" }
+  outcome: WHIFF
+  expect: { S: 24, A: from-qjson, R: from-qjson }
+
+# R=48 is meter-cap-bounded: (FD_METER_LEN-1) - S - A = 71-21-2 = 48
+# (FD_METER_LEN=72, frame_data_overlay.c:42) - see the section header
+# comment above for the full §13.10 Class 3 argument; this expect moves
+# in lockstep with FD_METER_LEN if that constant ever changes.
+- label: h-meatsquasher-short-hit
+  setup: { dist: close, dummy: none }
+  input: "hold RIGHT 2; hold DOWN 2; hold LEFT 2; hold UP 2; hold RIGHT+LK 2; wait 100"
+  qjson: { name: "Meat Squasher (Short)" }
+  outcome: HIT
+  # BUFFER-1 (2026-07-13): same §13.10-reopening de-assert as the
+  # Moonsault section above (the FD_CAPTURE_LEN raise trades this
+  # convention formula for the true, but still oracle-less, post-release
+  # span). Post-fix measured R=84 (was the derived 48). R DE-ASSERTED.
+  expect: { S: 21, A: from-qjson, kd: 1 }
+
+- label: h-meatsquasher-forward-hit
+  setup: { dist: close, dummy: none }
+  input: "hold RIGHT 2; hold DOWN 2; hold LEFT 2; hold UP 2; hold RIGHT+MK 2; wait 100"
+  qjson: { name: "Meat Squasher (Forward)" }
+  outcome: HIT
+  # BUFFER-1 (2026-07-13): same de-assert. Post-fix measured R=80 (was 38).
+  expect: { S: 31, A: from-qjson, kd: 1 }
+
+- label: h-meatsquasher-rh-hit
+  setup: { dist: close, dummy: none }
+  input: "hold RIGHT 2; hold DOWN 2; hold LEFT 2; hold UP 2; hold RIGHT+HK 2; wait 100"
+  qjson: { name: "Meat Squasher (RH)" }
+  outcome: HIT
+  # BUFFER-1 (2026-07-13): same de-assert. Post-fix measured R=84 (was 25).
+  expect: { S: 44, A: from-qjson, kd: 1 }

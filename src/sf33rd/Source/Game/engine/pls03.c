@@ -1105,6 +1105,12 @@ s32 check_leap_attack(PLW* wk) { // 🟡
         wk->as = &_asstbl_lv_D010[wk->player_number];
     }
 
+    /* CONTACT-2 Step 1 (2026-07-13, diagnostics only — design.md §1.3 G4):
+     * dispatch tag for the frame-data overlay's UOH exclusion. This is the
+     * unique Universal-Overhead entry point; the flag is set the instant
+     * this move is actually dispatched, right before the routine_no
+     * assignment that produces the r1 0->4 edge the overlay detects. */
+    fd_engine_move_is_uoh[wk->wu.id] = 1;
     hissatsu_setup_union(wk, wk->cp->waza_r[14][0]);
     return 1;
 }

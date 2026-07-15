@@ -1,0 +1,130 @@
+# Sean Super Art 1 (Hadou Burst) — EX/Supers program, supers wave S5.
+# Satellite corpus (auto-discovered by run-suite.sh's corpus-*.yaml glob,
+# own golden/sean-sa1.tsv once registered) — the main corpus-sean.yaml/
+# corpus-sean-ex.yaml are untouched.
+#
+# Scope: <sp>/exsuper/step0-universe.tsv row "sean 50 Hadou Burst" (sa_slot
+# 1, exclusion_flag ASSERTABLE). Oracle: docs/arcade-frame-data/sean.json
+# (md5 74c5ccf033e22b8b0176fe0399ac621b, same file corpus-sean.yaml/
+# corpus-sean-ex.yaml already pin, re-verified unchanged this session).
+# Oracle row: Startup=2, Hit="-" (literal, non-numeric), Recovery=61,
+# Block_advantage=-29, Hit_advantage="-" (non-numeric).
+#
+# Meter: sa_gauge:3 (MAXIMUM, per authoring-policy.md's non-install-super
+# default) + super_art:0 (0-indexed SA1).
+#
+# Motion: "motion 2qcf LP" — already CONFIRMED in corpus-sean.yaml's own
+# "ZENTEN / SEAN ROLL" section (a prior session's third motion candidate
+# while identifying Sean Roll: "`2qcf LP` was tried as a third candidate
+# and instead landed Hadou Burst (the SA1 super — proj=1, S=2/R=61 exact
+# match to sean.json's Hadou Burst row"). Re-confirmed this session
+# (<sp>/sa-sean/run-sa1-id/trace.log): S=2 exact, adv=-29 exact on BLOCK —
+# unambiguous identification (R does NOT reproduce the prior session's
+# R=61 reading at this session's own dist:close — see R DISPOSITION below;
+# S/adv both being exact independently confirms this is the right move,
+# ruling out a wrong-move/wrong-window read).
+#
+# Projectile shape (proj=1, box_runs=0 both legs, natend=1 both legs) — the
+# tama carries its own hitbox and despawns naturally; Sean's own att_box
+# tensor stays empty the whole tracked window, matching the Ryu SA1/Akuma
+# SA1 precedent exactly. No WHIFF leg — projectile precedent
+# (authoring-policy.md Ruling 1 / Sean-specific task note): "SA1 Hadou
+# Burst is a PROJECTILE super... WHIFF may be unreachable-by-design like
+# Necro SA3/hadouken family — if both dist ceilings connect, document and
+# author HIT/BLOCK only." Confirmed this session: dist:close/far(175)/
+# 300(centered) all connect (outcome never WHIFFs at any tested ground
+# range) — see the R-vs-distance sweep below, which used exactly this
+# ceiling probe. Coverage comes from the BLOCK/HIT legs below (S
+# lever-independent per Ruling 3's E-3; R per its own disposition below).
+#
+# Admissibility census (mechanical, from FRAME_TRACE columns — authoring-
+# policy.md Ruling 2), this session's own isolated probe runs
+# (<sp>/sa-sean/run-sa1-id/trace.log, inter_entry_wait:500):
+# (1) Single-FINAL integrity: exactly one FINAL inside each entry's own
+# window (BLOCK F51-114; HIT F166-274), no bleed, values sane. T=63 both
+# legs — well under FD_CAPTURE_LEN=256 (post-BUFFER-1), no capture-
+# saturation risk.
+# (2) Flash-overlap census: N/A in the usual sense — Sean's own attack
+# tensor is empty throughout (proj=1, box_runs=0), same measurement
+# context as Ryu SA1/Akuma SA1's own projectile shape; no per-tick sastop
+# census was run for this proj-split entry (no box/busy path exists to
+# gate for a pure projectile — same posture as the Ryu SA1/Akuma SA1
+# precedent files, neither of which ran a separate sastop census on their
+# own proj=1 legs).
+# (3) Contact-A juggle check: N/A — sean.json's own Hit field for this row
+# is the literal string "-" (from-qjson would raise CompileError on a
+# non-numeric oracle field, same reasoning as corpus-ryu.yaml's Hadouken
+# section, corpus-ryu-ex.yaml's EX Hadouken section, and corpus-ryu-sa1.
+# yaml/corpus-akuma-sa1.yaml's own SA1 sections) — no A is ever asserted
+# on either leg, so the juggle check has nothing to gate.
+# (4) Shape record: proj=1, box_runs=0 both legs (matches Ryu SA1/Akuma
+# SA1's own projectile shape exactly).
+#
+# R DISPOSITION (both legs — a NEW finding this session, but matching an
+# EXISTING registered class: docs/frame-data-synthesis.md's "Proj-split
+# late-despawn contact R/adv collapse" row (~line 935, `oro-exsundisklow-
+# block/-hit`, EX-CONTACT-R disposition M3), now independently observed on
+# a SUPER for the first time). A distance sweep this session
+# (<sp>/sa-sean/run-sa1-dist{,2}/trace.log) shows measured legacy R is
+# travel-distance-DEPENDENT, not the constant-across-distance shape Ryu
+# SA1/Akuma SA1's own Hadouken-family supers show: R=59 at dist:close(56px)
+# /20/5 (identical plateau, rep-stable across three sampled distances —
+# not a noise artifact), R=53 at dist:far(175px), R=46 at dist:300
+# (centered) — adv correspondingly reads -29/-23/-16, and A (proj_a) reads
+# 3/9/16 — all three fields shrink/grow together as travel distance grows,
+# the same "R = post-despawn attacker-busy remainder, shrinking as more of
+# the fixed total window is consumed by projectile travel" arithmetic
+# `oro-exsundisklow` already established (`natend=1` confirmed on every
+# leg here too — the tama despawns naturally on contact rather than being
+# cut short by the hit itself). Unlike `oro-exsundisklow`, this move has NO
+# WHIFF leg to fall back on for a clean R read (the projectile-precedent
+# WHIFF-unreachable policy above), so R has no leg on which the oracle
+# value is directly reproducible. adv IS exact at the near-range plateau
+# (dist:close/20/5 all give adv=-29 = oracle Block_advantage exactly,
+# confirming close-range is the oracle's own intended calibration distance
+# for this row, same convention as every other BLOCK entry in this
+# program) — but R at that SAME plateau (59) does not match oracle (61),
+# a 2-tick gap that is rep-stable (identical across three sampled
+# distances at the plateau) rather than a one-off misread. No busyr
+# diagnostic is available to corroborate either value (box_runs=0 for a
+# proj-split move, `busyr=-1` sentinel on every leg — the Chun-Li SA2
+# BLOCK unassert idiom does not apply here, since there is no busyr
+# reading to differ from oracle in the first place). Per this rep-stable-
+# with-a-live-oracle-value disposition (the akuma-sa2 idiom, generalized
+# from A to R here): R is asserted as the TRUE oracle value via
+# `from-qjson`, with `expect.xfail` recording the measured 59 and the
+# proj-split late-despawn mechanism — a second named member of the
+# `oro-exsundisklow` class (docs/frame-data-synthesis.md ~line 935),
+# first sighting on a super rather than an EX move. Flagged for follow-up
+# (the class's own R-clause is still "structurally unassertable on
+# contact" per that row's own text; Sean's case additionally lacks any
+# WHIFF fallback).
+character: sean
+oracle: sean.json
+super_art: 0
+sa_gauge: 3
+inter_entry_wait: 500
+entries:
+
+- label: sean-sa1-block
+  setup: { dist: close, dummy: stand }
+  input: "motion 2qcf LP"
+  qjson: { name: "Hadou Burst" }
+  outcome: BLOCK
+  # Measured S=2 A=3(oracle Hit="-" non-numeric, never asserted) R=59
+  # adv=-29 (proj=1, box_runs=0, natend=1, T=63). S/adv both oracle-exact.
+  # R DISPOSITION above: oracle value (61) asserted via from-qjson, xfail
+  # records the measured 59 (proj-split late-despawn class, second member
+  # of the oro-exsundisklow row).
+  expect: { S: from-qjson, R: from-qjson, adv: from-qjson, xfail: "[HONEST-FLOOR CENSUS 2026-07-14, opus-substitute / WANTS FABLE RE-REVIEW] TERMINAL CLASS = REACHABILITY-GAP (proj-split, no reachable whiff). proj-split late-despawn R collapse, rep-stable across dist close/20/5 (natend=1); adv=-29 is oracle-exact at the same plateau, confirming close is the oracle's calibration distance. NON-SURGICAL: Hadou Burst is a Hadouken-family projectile super with NO reachable whiff to fall back on for a clean R read, and box_runs=0/busyr=-1 leaves no busy-edge diagnostic; opposite sign to ibuki-sa3 (+2) so no uniform proj-R offset exists (proj-split/fit.md 3). Golden stays oracle=61, XFAIL. Prior disposition (unchanged): Proj-split late-despawn R collapse (docs/frame-data-synthesis.md ~line 935, oro-exsundisklow-block/-hit class, second member/first-super sighting, 2026-07-13): measured legacy R=59 vs oracle 61, rep-stable across dist:close(56px)/20/5 (identical plateau, three distances sampled) — NOT a one-off misread. natend=1 (tama despawns naturally on contact, not cut short by the hit). adv=-29 IS oracle-exact at this same plateau, confirming close range is the oracle's own calibration distance; only R diverges. No busyr diagnostic available to corroborate either value (proj-split shape reads box_runs=0/busyr=-1 sentinel on every leg) — the Chun-Li SA2 BLOCK unassert idiom does not apply (there is no busyr reading to differ from oracle). Unlike oro-exsundisklow, this move has no WHIFF leg to fall back on for a clean R read (Hadouken-family projectile WHIFF-unreachable-by-design). Flagged for follow-up." }
+
+- label: sean-sa1-hit
+  setup: { dist: close, dummy: none }
+  input: "motion 2qcf LP"
+  qjson: { name: "Hadou Burst" }
+  outcome: HIT
+  # Measured S=2 A=3 R=59 adv=+45(oracle Hit_advantage="-" non-numeric,
+  # never asserted) (proj=1, box_runs=0, natend=1, T=63). S oracle-exact.
+  # Same R DISPOSITION as BLOCK (measured 59 reproduces identically on
+  # this leg too — path-independent, same plateau).
+  expect: { S: from-qjson, R: from-qjson, xfail: "[HONEST-FLOOR CENSUS 2026-07-14, opus-substitute / WANTS FABLE RE-REVIEW] TERMINAL CLASS = REACHABILITY-GAP (proj-split, no reachable whiff). Same as the BLOCK leg (path-independent plateau): proj-split late-despawn -2, no reachable Hadouken-family whiff, no busy-edge corroboration. Golden stays oracle=61, XFAIL. Prior disposition (unchanged): Same proj-split late-despawn R collapse as sean-sa1-block above (measured 59 vs oracle 61, rep-stable, no busyr corroboration available, no WHIFF fallback for this projectile-family super)." }

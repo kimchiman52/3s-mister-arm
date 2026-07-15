@@ -1,0 +1,101 @@
+# Oro Super Art 3 (Tengu Stones) — EX/Supers program, supers wave S4.
+# Satellite corpus (auto-discovered by run-suite.sh's corpus-*.yaml glob, own
+# golden/oro-sa3.tsv once registered) — corpus-oro.yaml/corpus-oro-ex.yaml
+# are untouched. Repo @ 16737236 (branch frame-data-on-mister). FDH_SKIP_
+# BUILD=1 throughout, own isolated rundirs under <sp>/sa-oro/.
+#
+# Scope: step0-universe.tsv row 86 (oro sa_slot 3, index 57): "Tengu Stones
+# (Both Versions)" — INSTALL_MAXIMUM, install super spawning orbiting
+# objects per authoring-policy.md's own character note ("SA3 Tengu Stone =
+# install spawning orbiting objects — activation measurable, orbit
+# behavior likely OMIT territory"). Oracle: docs/arcade-frame-data/
+# oro.json (md5 9917bd5e9773c514eef58c5a4431bb47, unchanged this session).
+# oro.json's row: Startup=16, every other field the literal string "-"
+# (Hit/Recovery/Block_advantage all non-numeric).
+#
+# IDENTITY: super_art:2 (0-indexed SA3) + sa_gauge:3 (MAXIMUM, per the
+# install-super policy — never INFINITY). "motion 2qcf HP" (also confirmed
+# button-invariant against LP, and dist-invariant close vs 250,
+# <sp>/sa-oro/run-sa3-id-v4, run-sa3-sweep) gives a reproducible, proj-split
+# activation: `outcome=WHIFF S=0 A=48-49 R=16 T=16 proj=1 proj_spawn_raw=0`.
+# Cross-index controls (super_art:1 "motion 2qcf HP" -> Yagyou Dama's own
+# S=28 exact; super_art:0 -> Kishin Riki's own S=16 exact) confirm SA
+# selection is genuinely discriminating and this measurement is specific
+# to SA3, not a slot-selection artifact. Kick-strength inputs at
+# super_art:2 (LK/MK/HK) instead fall through to the unrelated Jinchu
+# Nobori Short/Forward/RH signatures (S=27/31/34, exact oracle matches for
+# those OTHER rows, <sp>/sa-oro/run-sa3-sweep) — confirms punches are the
+# genuine SA3 dispatch and this isn't a generic fallback.
+#
+# UNCLASSIFIED FINDING — the harness's own "S"/"R" columns appear
+# field-swapped relative to oro.json's single published field for this
+# move (flagged for orchestrator follow-up, NOT resolved this session, NOT
+# guessed at). oro.json publishes exactly one numeric field, "Startup":16.
+# The harness's own displayed S (per Ruling 3's E-3 rule, S = max(proj_spawn,
+# proj_athok) on the proj-split branch) reads 0 here (proj_spawn_raw=0,
+# athok=-1/unset) — NOT 16. The harness's displayed R (the attacker's own
+# post-spawn busy remainder) instead reads 16 — the exact numeric value
+# oro.json calls "Startup" — reproduced identically across every context
+# tried (dist:close/dummy:stand, dist:close/dummy:none, dist:250/dummy:none,
+# <sp>/sa-oro/run-sa3-id-v4, run-sa3-sweep). HYPOTHESIS, UNCONFIRMED: this
+# install's own 16-frame windup may occur entirely BEFORE the harness's own
+# r1-edge MOVE_START detection fires (i.e. the orbiting stones are already
+# "spawned" — proj_spawn_raw=0 — by the time tracking begins, so the true
+# pre-spawn windup the oracle calls Startup is invisible to the S column
+# and instead shows up as extra busy-recovery time in R once the attacker
+# returns to idle). This is a plausible but UNVERIFIED mechanism (no build
+# was authorized this session to instrument routine_no/r1 transitions
+# directly) — per the house "no invented mechanism ships as fact" rule,
+# NEITHER S NOR R is asserted. Asserting R=16 as an explicit literal would
+# require confirming this field-correspondence hypothesis first; asserting
+# S via from-qjson would assert a value (0) that plainly fails against the
+# oracle's 16. Logged here as a new, single-sighting UNCLASSIFIED
+# structural finding (not yet a 3rd-instance systemic trigger) for
+# orchestrator/user follow-up — does oracle "Startup" correspond to this
+# harness's own R field rather than S on proj-split INSTALL supers
+# specifically, or is this coincidental?
+#
+# proj_a (displayed as "A") is 48 at dist:close/dummy:stand, 48 at
+# dist:close/dummy:none, 49 at dist:250/dummy:none — window-length-dependent
+# (the orbiting stones' own active tracking accumulates for however long
+# the tracked window stays open, matching the header's own "orbit behavior
+# likely OMIT territory" prediction exactly) rather than a fixed per-move
+# property. A is not comparable to any oro.json field (Hit is the literal
+# "-" for this row) and is not asserted, for this reason alone independent
+# of the S/R finding above.
+#
+# Single activation entry authored (WHIFF outcome — a real FINAL fires,
+# unlike Makoto's true Tanden Renki null-signal, so outcome NONE would be
+# wrong here). Nothing asserted: oro.json's only numeric field (Startup)
+# does not match this harness's own S column (see finding above), and
+# every other field is non-numeric.
+#
+# Admissibility census (mechanical, from FRAME_TRACE columns — authoring-
+# policy.md Ruling 2), run over the final corpus below
+# (<sp>/sa-oro/run-sa3-final/trace.log): (1) single-FINAL integrity — one
+# MOVE_START/FINAL pair, confirmed via annotation grep. (2) Flash-overlap
+# (sastop) census: 0 nonzero ticks in [MOVE_START F, FINAL F] — flash-free,
+# matches every population checked so far in this program. (3) Contact-A
+# juggle check: N/A (no A ever asserted). (4) Shape record: proj=1,
+# proj_spawn_raw=0, box_runs=0 — a genuine proj-split install, not a
+# declared-only zero-active shape like Kishin Riki's own activation.
+character: oro
+oracle: oro.json
+super_art: 2
+sa_gauge: 3
+inter_entry_wait: 500
+entries:
+
+- label: oro-sa3-activation
+  setup: { dist: close, dummy: stand }
+  input: "motion 2qcf HP"
+  qjson: { name: "Tengu Stones (Both Versions)" }
+  outcome: WHIFF
+  # Measured S=0 A=48 R=16 adv=+0 (T=16, proj=1, proj_spawn_raw=0,
+  # box_runs=0), reproduced across 3 independent dist/dummy contexts this
+  # session. Nothing asserted — see the header's UNCLASSIFIED FINDING
+  # (oracle's own Startup=16 doesn't match this harness's S column; R
+  # coincidentally reads 16 but that field-correspondence is unconfirmed,
+  # not shipped as an assertion) and the proj_a window-length-dependence
+  # note (A is not a stable per-move property here).
+  expect: { }

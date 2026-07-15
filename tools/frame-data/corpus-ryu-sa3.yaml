@@ -1,0 +1,123 @@
+# Ryu Super Art 3 (Denjin Hadouken) — EX/Supers program, supers wave S1
+# (authoring-policy.md Ruling 5). Satellite corpus (auto-discovered by
+# run-suite.sh's corpus-*.yaml glob, own golden/ryu-sa3.tsv once registered)
+# — corpus-ryu.yaml/corpus-ryu-ex.yaml/corpus-ryu-sa1.yaml/corpus-ryu-sa2.yaml
+# are untouched.
+#
+# Scope: step0-universe.tsv row 112 (ryu SA3, "Denjin Hadouken", sa_slot 3,
+# INSTALL/TIMED per its exclusion_flag). Oracle: docs/arcade-frame-data/
+# ryu.json (md5 cd0f6c79b0735c46e3074f02fb2f5d51, same file the other three
+# ryu corpora already pin — re-verified unchanged this session). Oracle row:
+# Startup=3, Hit="-" (non-numeric), Recovery=51, Block_advantage=0,
+# Hit_advantage="-" (non-numeric).
+#
+# CHARGE DIMENSION — OUT-OF-SCOPE-WITH-NOTE (per authoring-policy.md's
+# instruction for this move specifically): Denjin Hadouken is a
+# CHARGEABLE super — holding a punch button charges a more powerful
+# release. This corpus authors only the UNCHARGED IMMEDIATE-RELEASE
+# variant (no pre-hold before the QCFx2 motion) as the canonical row,
+# matching the oracle's own single row (no separate "charged" row exists
+# in ryu.json — step0-universe.tsv's own INSTALL/TIMED(Denjin Hadouken
+# S=3/R=51) note names exactly this row). The charge mechanic's own effect
+# on frame data (if any) is NOT probed this session — documented gap, not
+# guessed, per Phase 5's own DHA-long-charge precedent ("recipe unknown —
+# document the gap, don't guess the input").
+#
+# Meter: sa_gauge:3 (MAXIMUM) + super_art:2 (0-indexed SA3 slot — SA1=0,
+# SA2=1 per corpus-ryu-sa1.yaml/corpus-ryu-sa2.yaml).
+#
+# Motion: same family as SA1 Shinkuu Hadouken — "motion 2qcf HP" (double
+# quarter-circle-forward + Fierce Punch, uncharged/immediate release, no
+# pre-hold). Confirmed by S=3/R=51 matching ryu.json's Denjin Hadouken row
+# EXACTLY on every attempt this session (a unique signature among Ryu's
+# Hadouken family: Jab/Strong/Fierce Hadouken S=10 R=36; EX Hadouken S=9
+# R=36; Shinkuu Hadouken S=3 R=49 — R=51 is unique to Denjin), so despite
+# the BLOCK-leg finding below, the move IDENTITY is not in question.
+#
+# proj-split shape (proj=1, matches SA1 Shinkuu Hadouken and corpus-
+# ryu-ex.yaml's EX Hadouken exactly) — no WHIFF leg, same already-decided
+# projectile precedent as SA1/EX Hadouken (authoring-policy.md Ruling 1:
+# "Projectile supers... never have a meaningful strike-whiff leg at ground
+# ranges... authored on the proj-split path exactly like the shipped
+# projectile rows").
+#
+# NEW FINDING this session — BLOCK LEG UNREACHABLE (quarantined, omitted,
+# not shipped as an entry, same disposition class as Ken SA3's R+10 —
+# "quarantined by name", not silently dropped, not xfailed). Three
+# independent attempts, all against a guard-mode dummy whose gflg (guard
+# state) DID reach 3 (actively guarding) during the projectile's active
+# window, still registered outcome=HIT, never BLOCK:
+#   1. dist:close (56px), dummy:stand -> HIT, S=3 A=3 R=51 adv=-31
+#      (<sp>/exsuper/sa-ryu/run-probe3-sa3/trace.log, entry "probe-sa3-block")
+#   2. dist:far (175px), dummy:stand -> HIT, S=3 A=16 R=51 adv=-18
+#      (<sp>/exsuper/sa-ryu/run-probe4-sa3-block/trace.log) — ruling out a
+#      too-close/reaction-window artifact (farther separation gives the
+#      guard-AI more projectile travel time to react; outcome unchanged)
+#   3. dist:close (56px), dummy:crouch -> HIT, S=3 A=3 R=51 adv=-31
+#      (<sp>/exsuper/sa-ryu/run-probe5-sa3-crouch/trace.log) — ruling out a
+#      guard-posture mismatch (oracle's Parry:{High:true,Low:false} would
+#      predict either posture blocks; crouch was tried since Parry-High/Low
+#      isn't guaranteed to alias block-direction 1:1 in this engine)
+# S=3/R=51 exact on all three attempts confirm the correct move is being
+# hit every time (not a fallback move); only the outcome/A/adv vary with
+# distance, consistent with a projectile whose measured columns are travel-
+# time-dependent (proj_a scales with distance: 3 at close, 16 at far), not
+# with a motion-identity problem. This is a genuinely new finding — not a
+# re-measurement of any known family in CORPUS-AUTHORING.md's Phase 6 tree
+# or docs/frame-data-synthesis.md's §12.1/§12.2 registers — logged here and
+# in <sp>/exsuper/ryu-sa-report.md for follow-up (candidate for Ruling 4's
+# 2c arcade session: is Denjin Hadouken's uncharged release genuinely
+# unblockable in the arcade too, or is this a harness-side guard-AI/
+# projectile-collision gap specific to this move? Not adjudicated this
+# session — no build available to instrument/toggle any mechanism, per this
+# session's own no-build constraint). Coverage for this move instead comes
+# from the HIT leg below, per Ruling 1's own "its coverage comes from
+# Ruling 2's contact legs + S" fallback language (BLOCK genuinely
+# unreachable is treated the same as WHIFF-unreachable for coverage
+# purposes here, since projectile supers have no whiff leg either).
+#
+# DOMAIN CHECK (supers wave S1 integration, 2026-07-13): the game-design
+# claim that Denjin Hadouken is unblockable-by-design (parry-only) was
+# checked against the oracle's own row rather than assumed. ryu.json's
+# Denjin Hadouken row (docs/arcade-frame-data/ryu.json:1906) publishes
+# Block_advantage="0" — a NUMERIC value, not the non-numeric "-" sentinel
+# this same row uses for Hit and Hit_advantage (both above). A numeric
+# Block_advantage means the oracle's own data model treats this move as
+# blockable (at 0 advantage on block), contradicting the unblockable-by-
+# design hypothesis at the primary-source level. Per authoring-policy.md's
+# evidence-over-assumption stance, this rules out re-filing the BLOCK-leg
+# gap as "structurally nonexistent for an unblockable move" — the oracle's
+# numeric 0 is itself now the anomaly to resolve, alongside the harness's
+# own always-HIT-never-BLOCK reading, in the Ruling 4 2c arcade session
+# referenced above. Disposition unchanged: QUARANTINED (omitted, not
+# shipped, not re-classified as unblockable-by-design).
+#
+# Admissibility census (mechanical, from FRAME_TRACE columns — authoring-
+# policy.md Ruling 2), HIT leg (<sp>/exsuper/sa-ryu/run-probe3-sa3/
+# trace.log, entry "probe-sa3-hit", inter_entry_wait:500): (1) single-FINAL
+# integrity — exactly one FINAL in the entry's own window (F157-211), no
+# bleed from the preceding entry. (2) zero nonzero-sastop ticks in
+# [MOVE_START row-F157, FINAL row-F211] (0/55 — awk census this session,
+# flash-free measurement). (3) contact-A juggle check: N/A — ryu.json's Hit
+# field for this row is the literal string "-" (same non-numeric-oracle-
+# field reasoning as SA1/EX Hadouken), so no A is ever asserted and the
+# juggle check has nothing to gate. (4) shape record: proj=1, box_runs=0,
+# proj_a=3, T=54 (well under FD_METER_LEN=72, no M1 saturation risk).
+character: ryu
+oracle: ryu.json
+super_art: 2
+sa_gauge: 3
+inter_entry_wait: 500
+entries:
+
+- label: ryu-sa3-hit
+  setup: { dist: close, dummy: none }
+  input: "motion 2qcf HP"
+  qjson: { name: "Denjin Hadouken" }
+  outcome: HIT
+  # Measured S=3 R=51 (proj=1, proj_a=3, box_runs=0, T=54), oracle-exact on
+  # both asserted fields. No expect.A: ryu.json's Hit field for this row is
+  # the literal string "-" (from-qjson would raise CompileError on a
+  # non-numeric oracle field, same reasoning as SA1/EX Hadouken). No
+  # expect.adv: Hit_advantage is also "-" for this row.
+  expect: { S: from-qjson, R: from-qjson }

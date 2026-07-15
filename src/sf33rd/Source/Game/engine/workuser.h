@@ -84,6 +84,153 @@ extern const u8* Free_Ptr[2];
 extern u8* Lag_Ptr;
 extern u16* Demo_Ptr[2];
 
+/* Set by the engine in set_jugde_area() when cg_ja.atix != 0 for a
+ * player WORK. Read by the frame-data overlay; reset by main.c at the
+ * start of each game frame. Captures the engine's true "active hitbox
+ * this frame" signal even when cg_ja.atix gets reset before our overlay
+ * tick runs (which is what happens for some kicks like Q close MK). */
+extern u8 fd_engine_hitbox_active[2];
+
+/* CONTACT-2 Step 1 (2026-07-13, diagnostics only — design.md §1.3 G4):
+ * set to 1 by check_leap_attack() (pls03.c) the instant it dispatches the
+ * Universal-Overhead move, right before hissatsu_setup_union() — the same
+ * engine tick that produces the r1 0->4 edge the overlay's MOVE_START
+ * detector sees (hissatsu_setup_union writes routine_no[1]=4 directly).
+ * Reset every frame by main.c's game_step_0(), alongside
+ * fd_engine_hitbox_active, BEFORE njUserMain() runs each frame — same
+ * precedent/contract as that array. Read (and latched into
+ * g_cur.move_is_uoh) by frame_data_overlay_tick()'s MOVE_START block; never
+ * read anywhere else. Preferred (assumption-free) form of the G4 UOH
+ * dispatch tag; the cmoa.koc==5 && cmoa.ix==waza_r[14][0] fallback compare
+ * is also computed and printed (MOVE_START `uoh_fb=%d`) for cross-check. */
+extern u8 fd_engine_move_is_uoh[2];
+
+/* Accumulated by char_move() across all cells with non-zero cg_ja.atix
+ * during a move. Each active cell contributes its freshly-loaded cgctr
+ * value (its arcade-table "active frames" share). Sum matches the
+ * canonical arcade A. Cleared by the overlay on r1: 0→4 transition. */
+extern u8 fd_engine_active_count[2];
+
+/* Tracks the cgix of the most recently counted active cell, so we don't
+ * re-add the same cell's cgctr across multiple char_move calls within
+ * its display window. */
+extern s16 fd_prev_active_cgix[2];
+
+/* Same-tick cgix-transit revoke (§13.7.4). When the cell-data dispatch
+ * advances cg_ix multiple times within a single Game_timer tick (e.g.
+ * Q's UOH cgix=16→20 on one game frame), the old cell has no visible
+ * duration — its cgctr was consumed by the same-tick advance. Track the
+ * Game_timer at which the previous transit's `add` was applied, plus the
+ * size of that add, so the next transit on the same tick can revoke it
+ * before counting the new cell. The jatix gate (added 2026-05-04) limits
+ * the revoke to phantom transits where both calls share the same hitbox
+ * (jatix), so legitimate "different hitbox per call" same-tick advances
+ * (cr.MK, st.Far Forward) keep both contributions. */
+extern u16 fd_prev_active_cgix_tick[2];
+extern u8  fd_prev_active_cgix_add[2];
+extern u8  fd_prev_active_cgix_jatix[2];
+
+/* Phase 6A "arcade-split" projectile design (/tmp/phase6-nonq-plan.md §2).
+ * Indexed by the OWNING PLAYER's id (master_id, 0/1) — never by the
+ * projectile effect WORK's own id (always 13 for eff13.c "tama"
+ * instances). Set by eff13.c's effect_13_init() (spawn) and charset.c's
+ * char_move() (active-tick accumulation); consumed and reset by the
+ * overlay (frame_data_overlay.c). Same sim-write-only / no-desync-risk
+ * property as the arrays above — see the workuser.c definition comment. */
+
+/* Set to 1 by effect_13_init() when a player-owned ("wk->work_id == 1")
+ * projectile spawns, indexed by the owning player's id. Consumed (and
+ * cleared for the next move) by the overlay tick the same frame it's
+ * observed, to latch the move's proj_spawn_slot/proj_seen fields. */
+extern u8 fd_engine_proj_spawned[2];
+
+/* Accumulated by char_move()'s effect-WORK branch across all ticks where
+ * a player-owned projectile's cg_ja.atix is non-zero. Simple +1-per-tick
+ * (not the player accumulator's cgctr-weighted cell-duration arithmetic —
+ * Phase 6A Step 1 discovery found the simpler form sufficient since this
+ * count is display-only, never asserted against the arcade oracle).
+ * Saturating u8. Cleared by the overlay on the owning player's MOVE_START,
+ * same as fd_engine_active_count. */
+extern u8 fd_engine_proj_active_count[2];
+
+/* §13.12 (ENGINE-4): "hit-checkable projectile split" arcade-anchor
+ * arrays. Same shape/indexing/reset/rollback contract as the two arrays
+ * above (owning-player-id-indexed, write-only overlay feed, cleared by
+ * the overlay on MOVE_START). Set by charset.c's char_move() effect-WORK
+ * branch (hitok/natend) and eff13.c's tama chart routines (cut). Read
+ * (and cleared) by frame_data_overlay.c's tick side, pre-raw[]-append.
+ *
+ * fd_engine_proj_hitok: set to 1 on the RISING EDGE of "cg_ja.atix != 0
+ * AND att_hit_ok != 0" — the exact pair hitcheck.c's attack_hit_check()
+ * gates the hit-check on (hitcheck.c:1618-1623). Edge-triggered (see
+ * fd_engine_proj_hitok_armed below), not level-triggered: a WHIFF tama's
+ * att_hit_ok stays 1 for the rest of its flight (hitcheck.c only clears
+ * it on a confirmed hit), so re-asserting this every tick the pair holds
+ * would keep re-arming it long after the overlay already consumed it
+ * once — including into a LATER move, if this tama outlives the move
+ * boundary (measured: N.D.L.'s WHIFF leg does exactly this). The overlay
+ * latches the FIRST such edge's slot as proj_athok_slot, used alongside
+ * proj_spawn_slot to anchor S = max(spawn, athok) — N.D.L.'s tama arms
+ * athok two chart cells after atix, fireballs arm it at birth (so
+ * max() is a no-op for them).
+ *
+ * fd_engine_proj_hitok_armed: internal edge-detector for
+ * fd_engine_proj_hitok, not consumed by the overlay. Tracks whether the
+ * owning player's tama was hit-checkable on the PREVIOUS tick, so
+ * fd_engine_proj_hitok is written only on the 0->1 transition. Cleared
+ * whenever cg_ja.atix reads 0 (not hit-checkable this tick) so the NEXT
+ * genuine arm — this tama re-arming, or a brand new tama's own first arm
+ * after the next MOVE_START zeroes it — is seen as a fresh edge.
+ *
+ * fd_engine_proj_cut: the engine's own KILL-REASON latch. Set to 1 (and
+ * never cleared until the next MOVE_START) the moment a player-owned
+ * tama's chart is retired to an erase chart, for ANY reason — chart end,
+ * ground touch, life_time/off-screen timeout, or on-hit/on-deflect
+ * consumption once vital depletes (kotp_00000's four erase transitions,
+ * eff13.c ~:315-363). Deliberately NOT set by kotp_13000's (N.D.L.'s)
+ * consumption handler (eff13.c ~:1592-1608) — that path clears
+ * att_hit_ok and keeps calling char_move() on the SAME chart, so its
+ * eventual atix->0 edge is chart-natural, not a cut. Read twice: once by
+ * charset.c (write-time gate on fd_engine_proj_natend) and once more by
+ * the overlay at consume time (frame_data_overlay.c) — the second read
+ * is not redundant, for two same-invocation (not cross-tick) reasons: on
+ * a confirmed hit, set_char_move_init(erase)'s own internal char_move()
+ * call (charset.c:126, called from eff13.c:365/367/370) runs — and can
+ * false-latch fd_engine_proj_natend — before fd_tama_chart_cut()
+ * (eff13.c:377) records the cut, a few statements later in the SAME
+ * kotp_00000 invocation (measured on ryu-had's contact tick: atix=0,
+ * hit_flag!=0, cut still 0 at that point); and separately, kotp_00000's
+ * own case-0 cut sites call fd_tama_chart_cut() strictly AFTER the
+ * char_move() call that first shows atix==0, also within the SAME
+ * invocation. Either way, the overlay's read (strictly after that whole
+ * engine tick's njUserMain() pass has finished, including any
+ * later-in-the-same-call cut) sees the fully-settled value where
+ * charset.c's write-time read might not. In review, dropping either
+ * read alone left the golden suite green; dropping both reproduced
+ * exactly a 12-row regression (ryu-had and chunli-kik, R off by 2) — the
+ * double read is defense-in-depth, not redundant.
+ *
+ * fd_engine_proj_natend: set to 1 by charset.c's tama branch on the tick
+ * a player-owned tama's cg_ja.atix goes 0 after having been active AND
+ * hf.hit_flag is 0 AND fd_engine_proj_cut is still 0 for that tama's
+ * owner — i.e. the chart reached its own scripted end without ever being
+ * cut or being mid-consumption. The hf.hit_flag==0 clause excludes the
+ * same-invocation window between a confirmed hit's consumption dispatch
+ * (case 1's own char_move(), charset.c:126) and its cut actually being
+ * recorded a few statements later in that SAME kotp_00000 call (see
+ * fd_engine_proj_cut above); it never affects N.D.L., whose own hit_flag
+ * is long cleared by the time its true mid-chart atix->0 edge arrives.
+ * The overlay latches this into proj_natural_end (gated on having seen
+ * an active tick this
+ * move — a natend from a PRIOR move's still-flying tama must not leak
+ * forward — AND on fd_engine_proj_cut still reading 0 at consume time),
+ * which selects the declared-active-window R formula over the
+ * fire-and-forget meter_len-minus-S form. */
+extern u8 fd_engine_proj_hitok[2];
+extern u8 fd_engine_proj_hitok_armed[2];
+extern u8 fd_engine_proj_cut[2];
+extern u8 fd_engine_proj_natend[2];
+
 // MARK: - Serialized
 
 extern u8 Order[148];
@@ -409,6 +556,7 @@ extern u8 Pause_Down;
 extern u8 Training_ID;
 extern u8 Disp_Attack_Data;
 extern u8 Disp_Input_History;
+extern u8 Disp_Frame_Data;
 extern u8 Record_Data_Tr;
 extern u8 End_Training;
 extern s8 Menu_Page_Buff;
@@ -416,6 +564,9 @@ extern u8 Reset_Bootrom;
 extern u8 Decide_ID;
 extern s8 Training_Cursor;
 extern u8 Training_Menu_From_Pause;
+/* What input to force on the training dummy each frame; re-read every
+ * frame by Control_Player_Tr() (menu.c). See DummyAction above. */
+extern u8 control_pl_rno;
 extern u8 Training_Auto_Start;
 extern s8 Lag_Timer;
 extern u8 CPU_Time_Lag[2];

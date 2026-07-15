@@ -1,0 +1,97 @@
+# Akuma Super Art 1 (Messatsu Gou Hadou) — EX/Supers program, supers wave S2.
+# Satellite corpus (auto-discovered by run-suite.sh's corpus-*.yaml glob, own
+# golden/akuma-sa1.tsv once registered) — the main corpus-akuma.yaml is
+# untouched. Akuma has no EX meter/moves (his gauge is supers-only), so there
+# is no corpus-akuma-ex.yaml sibling — consistent with tools/frame-data/
+# corpus-akuma.yaml's own scope.
+#
+# Scope: <sp>/exsuper/step0-universe.tsv row "akuma 50 Messatsu Gou Hadou"
+# (sa_slot 1). Oracle: docs/arcade-frame-data/akuma.json (md5
+# 0add1a92a2bdaa58f370f285abeb4d49, pinned in corpus-akuma.yaml's own header,
+# re-verified unchanged this session). Oracle row: Startup=2, Hit=42,
+# Recovery="N/A" (literal, non-numeric), Block_advantage=-13,
+# Hit_advantage="-" (non-numeric).
+#
+# Meter: sa_gauge:3 (MAXIMUM, per authoring-policy.md's non-install-super
+# default) + super_art:0 (0-indexed SA1).
+#
+# Motion (identity confirmed this session, first attempt): "motion 2qcf HP"
+# — the same fireball-family macro corpus-akuma.yaml's own "Gou Hadouken"
+# section already uses per strength, doubled per the Ryu SA1/Ken SA3 pilot
+# precedent. S=2 exact on both legs, adv=-13 exact on BLOCK — unambiguous
+# identification, no fallback probing needed
+# (<sp>/sa-akuma/run-probe-sa1/trace.log).
+#
+# Projectile shape (proj=1, box_runs=0 both legs) — the tama carries its own
+# hitbox; Akuma's own att_box tensor stays empty the whole tracked window,
+# matching the Ryu SA1/2b precedent exactly. No WHIFF leg — projectile
+# precedent (authoring-policy.md Ruling 1): "Projectile supers (Ryu SA1
+# class) never have a meaningful strike-whiff leg at ground ranges (the tama
+# travels to the dummy)"; not re-probed this session (already-decided
+# policy). Coverage comes from the BLOCK/HIT legs below.
+#
+# Admissibility census (mechanical, from FRAME_TRACE columns — authoring-
+# policy.md Ruling 2), this session's own isolated 2-entry probe run
+# (<sp>/sa-akuma/run-probe-sa1/trace.log, inter_entry_wait:500):
+# (1) Single-FINAL integrity: exactly one FINAL inside each entry's own
+# window (BLOCK F57-108; HIT F166-293), no bleed, values sane. T=51 both
+# legs — well under FD_METER_LEN=72, no M1 saturation risk on this move.
+# (2) Flash-overlap census: 0 nonzero-sastop ticks in [MOVE_START F, FINAL
+# F] on both legs (0/52 BLOCK, 0/128 HIT — awk census this session) —
+# flash-free, matches every population checked so far.
+# (3) Contact-A juggle check: N/A in the usual sense (both legs measure the
+# SAME A=13 path-independently, so there is no BLOCK-vs-HIT differential to
+# gate on) — see the A DISPOSITION below for why A is not asserted anyway.
+# (4) Shape record: proj=1, box_runs=0 both legs.
+#
+# A DISPOSITION (both legs — a NEW finding this session, but PRE-REGISTERED
+# in step0-universe.tsv's own move_shape_notes column: "MULTIHIT_CITED
+# (Messatsu Gou Hadou A=42 (G5))"). Measured proj_a=13 identically on BOTH
+# legs (path-independent) against oracle Hit=42 — a large (29-unit) gap,
+# categorically different in size from every established Phase 6 A-bucket
+# (those are ±1 contact-only over/undercounts; this is neither contact-only
+# nor small). T=51 on both legs rules out the M1 raw-capture-saturation
+# mechanism (FD_METER_LEN=72, not reached). HYPOTHESIS ONLY, UNCONFIRMED:
+# Messatsu Gou Hadou is a multi-orb burst fireball (unlike Ryu Shinkuu
+# Hadouken's single tama); `proj_a` most likely measures one representative
+# orb's own active window while the oracle's Hit=42 cites a cumulative
+# total across the whole burst — a different measurement basis, not an
+# accounting bug. No per-tick ledger trace taken this session to confirm
+# (out of this pass's scope). Per the established "wrong values never ship
+# as if expected" house rule, and because the gap is far outside any
+# established bucket's shape, A is OMITTED (not asserted, not xfailed as a
+# guess) on both legs, logged here as UNCLASSIFIED for follow-up — the same
+# disposition class as Ryu SA2's own HIT-leg R finding (authoring-policy.md
+# precedent: an unclassified divergence with no established bucket is
+# omitted and flagged, not guessed at). This is the FIRST test of a
+# MULTIHIT_CITED-tagged row in the whole program (two more exist in
+# step0-universe.tsv: ibuki Kasumi Suzaku, twelve X.N.D.L. — not this
+# session's scope) — if their own A fields show the same large-gap,
+# path-independent shape, that would upgrade this from a single sighting to
+# a named population-level convention; not attempted here.
+character: akuma
+oracle: akuma.json
+super_art: 0
+sa_gauge: 3
+inter_entry_wait: 500
+entries:
+
+- label: akuma-sa1-block
+  setup: { dist: close, dummy: stand }
+  input: "motion 2qcf HP"
+  qjson: { name: "Messatsu Gou Hadou" }
+  outcome: BLOCK
+  # Measured S=2 A=13(NOT asserted, see A DISPOSITION above) R=49
+  # (non-numeric oracle field, never asserted) adv=-13 (proj=1, box_runs=0,
+  # T=51). S/adv oracle-exact.
+  expect: { S: from-qjson, adv: from-qjson }
+
+- label: akuma-sa1-hit
+  setup: { dist: close, dummy: none }
+  input: "motion 2qcf HP"
+  qjson: { name: "Messatsu Gou Hadou" }
+  outcome: HIT
+  # Measured S=2 A=13(NOT asserted, same A DISPOSITION) R=49 (non-numeric
+  # oracle field) (proj=1, box_runs=0, T=51). S oracle-exact. No expect.adv:
+  # akuma.json's Hit_advantage for this row is the literal string "-".
+  expect: { S: from-qjson }

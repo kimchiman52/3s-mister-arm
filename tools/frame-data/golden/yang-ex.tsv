@@ -1,0 +1,6 @@
+label	verdict	outcome	n	S	A	R	adv	kd
+yang-exsenkyuutai-block	XFAIL	BLOCK	1	29	8	25	-20	0
+yang-extourou-whiff	PASS	WHIFF	1	7	2	26	+0	0
+yang-extourou-block	PASS	BLOCK	1	7	2	26	-4	0
+yang-extourou-hit	PASS	HIT	1	7	2	26	-2	0
+yang-exsenkyuutai-hit	PASS	HIT	1	29	8	25	+78	1

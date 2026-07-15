@@ -1,0 +1,14 @@
+label	verdict	outcome	n	S	A	R	adv	kd
+elena-exmalletsmash-whiff	PASS	WHIFF	1	21	4	10	+0	0
+elena-exmalletsmash-block	PASS	BLOCK	1	21	4	10	+5	0
+elena-exmalletsmash-hit	PASS	HIT	1	21	4	10	+5	0
+elena-exscratchwheel-whiff	PASS	WHIFF	1	3	8	42	+0	0
+elena-exscratchwheel-block	PASS	BLOCK	1	3	8	42	-26	0
+elena-exscratchwheel-hit	PASS	HIT	1	3	8	42	+73	1
+elena-exspinscythe-block	XFAIL	BLOCK	1	10	8	41	-15	0
+elena-exspinscythe-hit	PASS	HIT	1	10	8	30	+92	1
+elena-exlynxtail-whiff	PASS	WHIFF	1	10	22	25	+0	0
+elena-exlynxtail-block	PASS	BLOCK	1	10	22	25	-27	0
+elena-exlynxtail-hit	PASS	HIT	1	10	22	25	+81	1
+elena-exrhinohorn-block	PASS	BLOCK	1	11	13	15	-2	0
+elena-exrhinohorn-hit	PASS	HIT	1	11	13	15	+72	1

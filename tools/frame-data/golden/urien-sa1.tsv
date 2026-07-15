@@ -1,0 +1,3 @@
+label	verdict	outcome	n	S	A	R	adv	kd
+urien-sa1-block	XFAIL	BLOCK	1	0	55	24	-18	0
+urien-sa1-hit	PASS	HIT	1	0	55	14	+59	1

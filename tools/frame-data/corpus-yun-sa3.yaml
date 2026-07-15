@@ -1,0 +1,115 @@
+# Yun Super Art 3 (Genei Jin) — EX/Supers program, supers wave S2 (Yun's
+# three SA slots; akuma/dudley authored concurrently by sibling agents,
+# file-disjoint). Satellite corpus (auto-discovered by run-suite.sh's
+# corpus-*.yaml glob, own golden/yun-sa3.tsv once registered) —
+# corpus-yun.yaml/corpus-yun-ex.yaml/corpus-yun-sa1.yaml/corpus-yun-
+# sa2.yaml are untouched.
+#
+# Scope: step0-universe.tsv row 147 (yun SA3, "Genei Jin", sa_slot 3,
+# exclusion_flag INSTALL_MAXIMUM, "INSTALL/TIMED(Genei Jin S=9)", naive
+# sequential grouping - no Common_name label). Oracle: docs/arcade-
+# frame-data/yun.json (md5 cc49322b0fcd04e617f22b0410a658fa, same file
+# corpus-yun.yaml/corpus-yun-ex.yaml/corpus-yun-sa1.yaml/corpus-yun-
+# sa2.yaml already pin - re-verified unchanged this session). Oracle row:
+# Startup=9, Hit="-", Recovery="-", Block_advantage="-",
+# Hit_advantage="-" (ALL non-numeric except Startup), Parry:{High:false,
+# Low:false} (unlike corpus-ryu-sa3.yaml's own Denjin Hadouken, whose
+# oracle row is INSTALL/TIMED-flagged too but publishes full numeric
+# A/R/adv fields for an actual projectile attack - Genei Jin's activation
+# genuinely has NO attack property at all, matching its Parry-both-false
+# row).
+#
+# INSTALL DISPOSITION (per this batch's authoring policy: "SA3 GENEI JIN
+# is an INSTALL super -> use sa_gauge:3 (MAXIMUM - the timed-install drain
+# stays intact; INFINITY would freeze the timer, FORBIDDEN for installs);
+# the assertable quantity is the ACTIVATION's own S (and any published
+# numeric fields); the install's duration/effects are out of scope with a
+# note"). sa_gauge:3 (MAXIMUM) used, NOT sa_gauge:2 (INFINITY per
+# src/args.c:436's own "1=MAX START, 2=INFINITY, 3=MAXIMUM" enumeration) -
+# INFINITY would keep the meter topped up indefinitely, which for a
+# TIMED install would either prevent the install's own gauge-drain
+# countdown from ever completing or misrepresent the drain rate; MAXIMUM
+# starts the gauge full and lets it drain normally once Genei Jin is
+# active, matching every other supers-wave corpus's own meter policy.
+# Genei Jin's own install effects (extended combo/priority window, the
+# timed duration, the post-install recovery state) are OUT OF SCOPE for
+# this corpus - only the ACTIVATION's own measurable frame data (S=9) is
+# authored; documented gap, not guessed, same posture as corpus-ryu-
+# sa3.yaml's own DHA-style "document the gap" precedent.
+#
+# Meter: sa_gauge:3 (MAXIMUM) + super_art:2 (0-indexed SA3 - Yun's own
+# index scheme confirmed cross-move: super_art:0/1 landed You Hou's S=0/
+# Sourai Rengeki's S=3 in the sibling corpus-yun-sa1.yaml/corpus-yun-
+# sa2.yaml, super_art:2 here lands S=9, oracle-exact and unique among
+# every Yun move measured this session).
+#
+# Motion (identity confirmed this session by S-match probe, CORPUS-
+# AUTHORING.md Phase 5 "motion-probe method"): "motion 2qcf HP" — same
+# double-quarter-circle-forward + Fierce Punch primitive already used for
+# Yun SA1/Ryu SA1/SA3/Ken SA1/Chun-Li SA1 (punch-group super family).
+#
+# ACTIVATION-ONLY SHAPE (this session's own probe,
+# <sp>/sa-yun/run-probe4-sa3/trace.log, three independent contexts —
+# dist:close/dummy:stand, dist:300 dist_mode:centered/dummy:stand,
+# dist:close/dummy:none): S=9 A=0 R=0 adv=+0 IDENTICALLY in all three,
+# distance- and dummy-independent. box_runs=0, box_a=0, busyr=-1
+# (sentinel: no active window ever recorded), active_pf=0, T=9 (raw_len=9,
+# no saturation - a short, clean capture, not a truncated one). This
+# confirms empirically (not merely from the oracle's own non-numeric "-"
+# fields and Parry:{High:false,Low:false}) that Genei Jin's activation
+# genuinely never attacks: the harness measures the SAME zero-active
+# result whether the dummy is standing at point-blank, standing at
+# max-centered range, or absent entirely — there is no distance or guard
+# context in which this move connects, blocks, or whiffs against a target
+# in any way that differs from any other. Per the batch's own guidance
+# ("likely whiff-context — the activation itself doesn't attack"), the
+# single canonical entry below is authored at outcome:WHIFF (the harness's
+# own literal classification for a zero-active-window move), with a
+# standing dummy present at close range (an arbitrary but harmless choice
+# given the confirmed context-independence — any of the three probed
+# contexts measures identically).
+#
+# Admissibility census (mechanical, from FRAME_TRACE columns - authoring-
+# policy.md Ruling 2), all three probe contexts
+# (<sp>/sa-yun/run-probe4-sa3/trace.log): (1) single-FINAL integrity -
+# exactly one FINAL in each entry's own window (F65-74, F140-149,
+# F215-224), no bleed. (2) Flash-overlap census: 0 nonzero-sastop ticks in
+# every window (0/10 each - python census this session). (3) contact-A
+# juggle check: N/A - no A is ever asserted (oracle's Hit field for this
+# row is the literal string "-", from-qjson would raise CompileError; the
+# measured A=0 is itself the "no active window" sentinel, not a real
+# active-frame count to defend with a juggle check). (4) shape record:
+# proj=0, box_runs=0 in every context - a true single-instant activation
+# with no tracked attack geometry at all.
+#
+# S DISPOSITION: S=9 across all three probed contexts, oracle-exact
+# (Startup=9) and a unique signature among every Yun move measured this
+# session (You Hou S=0, Sourai Rengeki S=3 - no ambiguity with either
+# sibling super). Assertable per Ruling 3's lever-independent E-3 rule.
+# No other field is asserted: yun.json's Hit/Recovery/Block_advantage/
+# Hit_advantage are all the literal string "-" for this row (from-qjson
+# would raise CompileError on any of them), and the harness's own measured
+# A=0/R=0/adv=+0 are the engine's "nothing happened" sentinel values for a
+# non-attacking activation, not comparable numeric quantities to assert
+# against a non-numeric oracle field.
+character: yun
+oracle: yun.json
+super_art: 2
+sa_gauge: 3
+inter_entry_wait: 250
+entries:
+
+- label: yun-sa3-activation
+  setup: { dist: close, dummy: stand }
+  input: "motion 2qcf HP"
+  qjson: { name: "Genei Jin" }
+  outcome: WHIFF
+  # Measured S=9 A=0 R=0 adv=+0 (box_runs=0, box_a=0, busyr=-1, T=9,
+  # active_pf=0) - context-independently identical across dist:close/
+  # dummy:stand, dist:300 centered/dummy:stand, and dist:close/dummy:none
+  # (see ACTIVATION-ONLY SHAPE above). S oracle-exact (the only numeric
+  # field yun.json's Genei Jin row publishes). No expect.A/R/adv: every
+  # other oracle field for this row is the literal string "-"
+  # (from-qjson would raise CompileError) - the install's own duration/
+  # effects are out of scope per the INSTALL DISPOSITION note above.
+  expect: { S: from-qjson }

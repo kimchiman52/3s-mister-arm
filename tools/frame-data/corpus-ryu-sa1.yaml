@@ -1,0 +1,84 @@
+# Ryu Super Art 1 (Shinkuu Hadouken) — EX/Supers program, SUPERS PILOT trio
+# (authoring-policy.md Ruling 5: "Pilot trio: chunli-sa2, ken-sa3, ryu-sa1 —
+# the 2b-probed shapes: single-run, multi-run, proj-split"). Ryu is the
+# proj-split shape. Satellite corpus (auto-discovered by run-suite.sh's
+# corpus-*.yaml glob, own golden/ryu-sa1.tsv once registered) — the main
+# corpus-ryu.yaml and corpus-ryu-ex.yaml are untouched.
+#
+# Scope: step0-universe.tsv row 109 (ryu SA1, "Shinkuu Hadouken", sa_slot 1).
+# Oracle: docs/arcade-frame-data/ryu.json (md5 cd0f6c79b0735c46e3074f02fb2f5d51,
+# same file corpus-ryu.yaml/corpus-ryu-ex.yaml already pin). Oracle row:
+# Startup=3, Hit="-" (non-numeric), Recovery=49, Block_advantage=-12,
+# Hit_advantage="-" (non-numeric).
+#
+# Meter: sa_gauge:3 (MAXIMUM, per authoring-policy.md's meter policy default
+# for non-install supers) + super_art:0 (0-indexed SA1, confirmed identity by
+# step2b's own S/R match, re-confirmed this session).
+#
+# Motion (identity confirmed step2b, re-confirmed this session): "motion
+# 2qcf HP" — canonical fireball-style double-quarter-circle-forward + Fierce
+# Punch.
+#
+# No WHIFF leg — projectile precedent (authoring-policy.md Ruling 1):
+# "Projectile supers (Ryu SA1 class) never have a meaningful strike-whiff
+# leg at ground ranges (the tama travels to the dummy); they are authored on
+# the proj-split path exactly like the 45 shipped projectile rows (S/R
+# proven oracle-exact on SA1, 2b §2/§4)." Matches corpus-ryu.yaml's own
+# Hadouken section and corpus-ryu-ex.yaml's EX Hadouken section, both of
+# which document the same reachable-whiff gap for any Ryu fireball. Not
+# probed again this session (an already-decided policy, not a fresh
+# question) — SA1's own coverage comes from the BLOCK/HIT legs below (S
+# assertable everywhere per Ruling 3's lever-independent E-3 rule, R
+# assertable both legs since it's spawn/travel-anchored not outcome-
+# dependent, per corpus-ryu.yaml's own Hadouken precedent).
+#
+# Admissibility census (per-entry, mechanical, from FRAME_TRACE columns —
+# authoring-policy.md Ruling 2), this session's own isolated 2-entry probe
+# run (<sp>/exsuper/sa-pilot/ryu/run-probe1/trace.log, inter_entry_wait:500):
+# (1) single-FINAL integrity — exactly one FINAL in each entry's own window
+# (BLOCK: F51-103; HIT: F155-294, the next/last entry so open-ended), no
+# other FINAL bleeds into either window; T=52 well under the FD_METER_LEN=72
+# saturation cap on both legs (no M1 truncation risk, unlike Ken SA3/Chun
+# SA2 below). (2) zero nonzero-sastop ticks in [MOVE_START row-F, FINAL
+# row-F] on both legs (0/53 BLOCK, 0/140 HIT — awk census this session,
+# flash-free measurement, matches step2a-report.md's own finding for every
+# population checked so far). (3) contact-A juggle check: N/A — ryu.json's
+# Hit field is the literal string "-" for this row (same non-numeric-
+# oracle-field reasoning as corpus-ryu.yaml's non-EX Hadouken section and
+# corpus-ryu-ex.yaml's EX Hadouken section) — from-qjson would not compile,
+# so no A is ever asserted on either leg and the juggle check has nothing to
+# gate. (4) shape record: proj=1, box_runs=0 (both legs) — the projectile
+# carries its own hitbox via fd_engine_proj_active_count, Ryu's own body
+# att_box tensor stays empty the whole tracked window (matches the plan's
+# own prediction and step2b §2 item 3 exactly).
+character: ryu
+oracle: ryu.json
+super_art: 0
+sa_gauge: 3
+inter_entry_wait: 500
+entries:
+
+- label: ryu-sa1-block
+  setup: { dist: close, dummy: stand }
+  input: "motion 2qcf HP"
+  qjson: { name: "Shinkuu Hadouken" }
+  outcome: BLOCK
+  # Measured S=3 R=49 adv=-12 (proj=1, proj_a=11, box_runs=0), oracle-exact
+  # on all three asserted fields. No expect.A: ryu.json's Hit field for this
+  # row is the literal string "-" (from-qjson would raise CompileError on a
+  # non-numeric oracle field, same reasoning as corpus-ryu.yaml's Hadouken
+  # section and corpus-ryu-ex.yaml's EX Hadouken section).
+  expect: { S: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: ryu-sa1-hit
+  setup: { dist: close, dummy: none }
+  input: "motion 2qcf HP"
+  qjson: { name: "Shinkuu Hadouken" }
+  outcome: HIT
+  # Measured S=3 R=49 (proj=1, proj_a=11, box_runs=0), oracle-exact on both
+  # asserted fields. No expect.A (non-numeric oracle field, same as BLOCK
+  # leg) and no expect.adv: ryu.json's Hit_advantage for this row is also
+  # the literal string "-" (confirmed this session — same "-" pattern as
+  # every Hadouken-family row already documented in corpus-ryu.yaml/
+  # corpus-ryu-ex.yaml).
+  expect: { S: from-qjson, R: from-qjson }

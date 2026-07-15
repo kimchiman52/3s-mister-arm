@@ -1,0 +1,195 @@
+# Remy Super Art 1 (Light of Justice) — EX/Supers program, supers wave S6
+# (authoring-policy.md Ruling 5 fan-out; step0-universe.tsv row 101, remy
+# SA1, sa_slot 1, exclusion_flag INSTALL_MAXIMUM — see the INSTALL_MAXIMUM
+# FLAG NOTE below for why this move ships as an ordinary proj-split super,
+# not a stance/install). Satellite corpus (auto-discovered by run-suite.sh's
+# corpus-*.yaml glob, own golden/remy-sa1.tsv) — corpus-remy.yaml/corpus-
+# remy-ex.yaml are untouched.
+#
+# Oracle: docs/arcade-frame-data/remy.json (same file corpus-remy.yaml/
+# corpus-remy-ex.yaml already pin, md5 3ab25a67f9b0b85aa1a7501c850b6289 —
+# re-verified unchanged this session). Oracle row (docs/arcade-frame-data/
+# remy.json, "Light of Justice"): Startup=1, Hit="-" (non-numeric literal),
+# Recovery="N/A" (non-numeric literal, distinct from the plain "-" sentinel
+# used elsewhere), Block_advantage=3 (numeric). Remy has NO arcade capture
+# session yet (the one cast member without one, per this wave's binding
+# spec) — no arcade-hardware evidence is cited anywhere in this file.
+#
+# INSTALL_MAXIMUM FLAG NOTE: step0-universe.tsv's own derivation script
+# flags this row INSTALL/TIMED (same as ryu SA3 Denjin Hadouken, another
+# chargeable-release super whose Recovery field is likewise not a plain
+# numeric column) purely because Recovery reads the non-numeric "N/A"
+# literal, not because Light of Justice is a stance/install move. Empirical
+# behavior this session confirms it fires and connects immediately (proj=1,
+# box_runs=0, a genuine projectile-barrage shape, matching the task's own
+# pre-registered "PROJECTILE barrage" hypothesis) — nothing resembling an
+# install/timed stance. sa_gauge:3 (MAXIMUM) is used per this program's
+# blanket policy for every SA satellite, independent of this flag.
+#
+# Meter: sa_gauge:3 (MAXIMUM) + super_art:0 (0-indexed SA1 slot, matching
+# the SA1=0/SA2=1/SA3=2 convention already established by corpus-ryu-sa{1,
+# 2,3}.yaml / corpus-ken-sa{1,2,3}.yaml).
+#
+# MOTION IDENTITY (S-match + adv-match probe this session, per the task's
+# own directive: "Remy is a charge character but his supers are motion
+# inputs — try motion 2qcf ... families first"). "motion 2qcf HP" against
+# super_art:0 fires a proj=1/box_runs=0 barrage on the FIRST attempt tried
+# (no charge motion needed, confirming the task's hint) — identity is
+# CONFIRMED independently of the S divergence below by the BLOCK leg's
+# adv=+3, an EXACT, distinctive match to remy.json's own Block_advantage=3
+# (a rare, small value unlikely to coincide with any other move by chance).
+# "motion 2qcf HK" against the same super_art:0 slot instead produces a
+# plain physical Roundhouse Kick fallback (measured S=7 A=3 R=13 adv=+5,
+# exactly matching corpus-remy.yaml's own remy-roundhouse-hit/-block A=3
+# §13.13 engine-truth convention and remy.json's own Roundhouse row
+# Startup=7/Recovery=13/Hit_advantage=5) — confirming HP, not HK, is
+# Light of Justice's trigger button (probe log: <sp>/sa-remy/run-probe-
+# sa1-id/trace.log, entries probe-sa1-hp/-hk).
+#
+# proj-split shape (proj=1, box_runs=0 on every leg/distance tested) — no
+# WHIFF leg, per authoring-policy.md Ruling 1's already-decided projectile
+# precedent ("Projectile supers... never have a meaningful strike-whiff leg
+# at ground ranges... authored on the proj-split path"), matching corpus-
+# ryu-sa1.yaml/corpus-ryu-sa3.yaml's own Hadouken-family disposition. Not
+# re-probed for a whiff this session (an already-decided policy question,
+# not a fresh one) — coverage comes from the BLOCK/HIT legs below.
+#
+# ============================================================================
+# S FINDING (NEW, single-member, 2026-07-13) — reproducible 1-tick
+# divergence, all four legs/distances tested, oracle asserted per the
+# rep-stable/live-oracle idiom (Chun-Li SA2/akuma-sa2 dated-note pattern).
+# Measured S=0 on EVERY leg tried (BLOCK dist:close 56px; HIT dist:close
+# 56px, dist:150 (MOVE_START dist=115 post-walk-in), dist:300 dist_mode:
+# centered (MOVE_START dist=201 post-walk-in)) vs remy.json's own
+# Startup=1 — a small, constant, distance-invariant one-tick gap, never 0
+# variance-free with distance the way A is (see A/R note below). Traced to
+# source: every FINAL line in this population reads `proj_spawn_raw=0`
+# identically regardless of leg/distance, and this proj-split shape's own
+# display rule is `startup = proj_s` (authoring-policy.md E-3) — i.e. the
+# engine's own declared spawn-frame constant for this move genuinely IS 0,
+# not a measurement race or a wrong-move artifact (ruled out by the
+# independent adv=+3 identity confirmation above). This does not match any
+# established Phase-6 bucket (not an A/R bucket; the only S-specific
+# precedent found in this repo, docs/frame-data-synthesis.md:3366's
+# "parry-counter HK whiff, no engine active signal", is a DIFFERENT shape
+# — that population dumps the WHOLE undetected window into S, this one
+# dumps a specific declared spawn constant that is simply 1 tick short of
+# the oracle's own published Startup). Only ONE member sighted this
+# session (not systemic, no ≥3-same-shape stop triggered). Per the rep-
+# stable + live-oracle idiom, S is shipped `from-qjson` (oracle value 1)
+# with a dated xfail note on every entry below, rather than silently
+# omitted or silently asserted at the wrong measured value — flagged here
+# for orchestrator/user follow-up classification.
+#
+# A/R NOTE: remy.json's Hit field is the literal string "-" and Recovery
+# is the literal string "N/A" for this row — both non-numeric, so
+# from-qjson would raise CompileError on either (same reasoning as every
+# other projectile section in this repo, e.g. corpus-ryu-sa1.yaml's own
+# Shinkuu Hadouken). No expect.A/expect.R anywhere in this file, for any
+# leg — this holds independently of the travel-distance finding below,
+# since neither field is ever oracle-comparable regardless of its measured
+# value.
+#
+# ============================================================================
+# TRAVEL-DISTANCE-DEPENDENT A FINDING (matches the pre-registered Oro SA2/
+# Urien SA2/Sean SA1 projectile-super class, authoring-policy.md's own
+# "sample >=3 distances before dispositioning" instruction — sampled here
+# for the first time on Remy). Three distances probed this session
+# (<sp>/sa-remy/run-probe-sa1-legs/trace.log): dist:close (56px, MOVE_START
+# dist=44) -> A=20; dist:150 (MOVE_START dist=115, ~35px walk-in) -> A=74;
+# dist:300 dist_mode:centered (MOVE_START dist=201, ~99px walk-in) -> A=127.
+# A scales strongly with the target's distance at MOVE_START — consistent
+# with a genuine multi-projectile barrage where more of the volley's
+# individual bolts remain in flight (and keep re-hitting/hitstunning the
+# target) the farther away the target starts, exactly the shape this
+# task's own header predicted ("PROJECTILE barrage... travel-distance A/R
+# likely"). R, by contrast, is travel-INDEPENDENT here: R=66 exactly on
+# ALL THREE distances (T=66 on every leg too) — Remy's own recovery is
+# anchored to the barrage's own fixed animation length, not to when/
+# whether it connects, matching corpus-ryu-sa1.yaml's own Hadouken-family
+# R precedent. Moot for corpus purposes either way since neither A nor R
+# is ever oracle-comparable for this row (see A/R NOTE above) — logged here
+# purely as a diagnostic finding, not a gate.
+#
+# Admissibility census (Ruling 2, mechanical, from this file's own shipped
+# run, <sp>/sa-remy/final-sa1-run1/trace.log, inter_entry_wait:500): (1)
+# single-FINAL integrity — exactly one FINAL in each entry's own window
+# (BLOCK F=51-120; HIT-close F=172-242; HIT-mid F=294-381; HIT-far
+# F=433-519), no bleed between entries (mechanical grep census: 4
+# MOVE_START/4 FINAL annotations, matching the 4 shipped entries exactly);
+# T=66 on every leg, well under FD_METER_LEN=72/FD_CAPTURE_LEN=256, no
+# saturation risk anywhere. (2) flash-overlap census: 0 nonzero `sastop`
+# ticks in every entry's own [MOVE_START F, FINAL F] window (awk census
+# this session: 0/70 BLOCK, 0/71 HIT-close, 0/88 HIT-mid, 0/87 HIT-far —
+# flash-free on all four legs). (3) contact-A juggle check:
+# N/A — remy.json's Hit field is the literal "-" for this row, so no A is
+# ever asserted and the juggle check has nothing to gate (same reasoning
+# as corpus-ryu-sa1.yaml/corpus-ryu-sa3.yaml). (4) shape record: proj=1,
+# box_runs=0 on every leg/distance — the projectile carries its own
+# hitbox via fd_engine_proj_active_count, Remy's own body att_box tensor
+# stays empty throughout, matching the established proj-split shape.
+#
+# SECTION ACCOUNTING (Phase 7): 4/4 entries carry the S xfail above
+# (100% xfail) — crosses the >50%-of-section threshold. Flagged here for
+# orchestrator/user review per the established >50%-section-accounting
+# convention (corpus-hugo.yaml/corpus-remy.yaml precedent) — NOT
+# self-granted by this implementing agent.
+character: remy
+oracle: remy.json
+super_art: 0
+sa_gauge: 3
+inter_entry_wait: 500
+entries:
+
+- label: remy-sa1-block
+  setup: { dist: close, dummy: stand }
+  input: "motion 2qcf HP"
+  qjson: { name: "Light of Justice" }
+  outcome: BLOCK
+  # Measured S=0 A=20 R=66 adv=+3 (proj=1, proj_a=20, box_runs=0). adv is
+  # EXACT (remy.json Block_advantage=3) — the identity-confirming field.
+  # S is the NEW single-member finding above (measured 0 vs oracle 1,
+  # rep-stable across every leg/distance tried, no established bucket
+  # match) — asserted at the oracle value per the rep-stable/live-oracle
+  # idiom, xfail'd rather than silently omitted or wrongly asserted.
+  expect: { S: from-qjson, adv: from-qjson, xfail: "[HONEST-FLOOR CENSUS 2026-07-14, opus-substitute / WANTS FABLE RE-REVIEW] TERMINAL CLASS = CAPABILITY-GATED-remaining (proj-split S; ORACLE-TABLE-INTERNAL-INCONSISTENCY). CAP-3 sees the Light of Justice projectile box (CAPTURE.md CAP-3 session; cap3/phase2-report.md). NON-SURGICAL: the spawn lands on the MOVE_START frame so the pre-append slot-0 latch reads engine 0 vs strictly-before 1 (proj-split/fit.md 1); the narrow slot-0->post-append fix regresses urien-sa2 R (90 vs oracle 91) - same published-table convention split as twelve-sa1, no engine discriminant. Golden stays oracle=1, XFAIL. Prior disposition (unchanged): NEW single-member S finding (2026-07-13): measured S=0 on every leg/distance tried vs remy.json Startup=1 (a reproducible, distance-invariant 1-tick gap, traced to proj_spawn_raw=0 identically across the whole population — see file header S FINDING). Only 1 sighting this session, not systemic. adv=+3 is the oracle-exact identity-confirming field, unaffected." }
+
+- label: remy-sa1-hit-close
+  setup: { dist: close, dummy: none }
+  input: "motion 2qcf HP"
+  qjson: { name: "Light of Justice" }
+  outcome: HIT
+  # Measured S=0 A=20 R=66 (proj=1, proj_a=20, box_runs=0). Same S finding
+  # as remy-sa1-block above. No expect.A/expect.R (non-numeric oracle
+  # fields, see file header A/R NOTE); no expect.adv (remy.json's
+  # Hit_advantage is also non-numeric "-" for this row).
+  expect: { S: from-qjson, xfail: "[HONEST-FLOOR CENSUS 2026-07-14, opus-substitute / WANTS FABLE RE-REVIEW] TERMINAL CLASS = CAPABILITY-GATED-remaining (proj-split S; ORACLE-TABLE-INTERNAL-INCONSISTENCY). See remy-sa1-block: CAP-3 sees the projectile box; the -1 is the slot-0-latch/published-convention split, non-surgical. Golden stays oracle=1, XFAIL. Prior disposition (unchanged): Same S finding as remy-sa1-block (measured S=0 vs oracle 1) — see file header S FINDING." }
+
+- label: remy-sa1-hit-mid
+  setup: { dist: 150, dummy: none }
+  input: "motion 2qcf HP"
+  qjson: { name: "Light of Justice" }
+  outcome: HIT
+  # Measured S=0 A=74 R=66 (proj=1, proj_a=74, box_runs=0, MOVE_START
+  # dist=115 post-walk-in). A scales up strongly vs the close leg's own
+  # A=20 — see file header TRAVEL-DISTANCE-DEPENDENT A FINDING (diagnostic
+  # only, A is never oracle-comparable for this row either way). Same S
+  # finding as remy-sa1-block.
+  expect: { S: from-qjson, xfail: "[HONEST-FLOOR CENSUS 2026-07-14, opus-substitute / WANTS FABLE RE-REVIEW] TERMINAL CLASS = CAPABILITY-GATED-remaining (proj-split S; ORACLE-TABLE-INTERNAL-INCONSISTENCY). See remy-sa1-block: CAP-3 sees the projectile box; the -1 is the slot-0-latch/published-convention split, non-surgical. Golden stays oracle=1, XFAIL. Prior disposition (unchanged): Same S finding as remy-sa1-block (measured S=0 vs oracle 1) — see file header S FINDING." }
+
+- label: remy-sa1-hit-far
+  setup: { dist: 300, dist_mode: centered, dummy: none }
+  input: "motion 2qcf HP"
+  qjson: { name: "Light of Justice" }
+  outcome: HIT
+  # Measured S=0 A=127 R=66 (proj=1, proj_a=127, box_runs=0, MOVE_START
+  # dist=201 post-walk-in — the dist_mode:centered near-ceiling attempt).
+  # A scales up further still (20 -> 74 -> 127 across the three sampled
+  # distances) — third and final datapoint for the TRAVEL-DISTANCE-
+  # DEPENDENT A FINDING (file header), satisfying the ">=3 distances
+  # before dispositioning" instruction. Still HIT, never WHIFF, even at
+  # this near-ceiling separation — confirms the projectile precedent (no
+  # meaningful ground-range whiff exists for this move, matching Ryu SA1/
+  # SA3's own already-decided disposition). Same S finding as
+  # remy-sa1-block.
+  expect: { S: from-qjson, xfail: "[HONEST-FLOOR CENSUS 2026-07-14, opus-substitute / WANTS FABLE RE-REVIEW] TERMINAL CLASS = CAPABILITY-GATED-remaining (proj-split S; ORACLE-TABLE-INTERNAL-INCONSISTENCY). See remy-sa1-block: CAP-3 sees the projectile box; the -1 is the slot-0-latch/published-convention split, non-surgical. Golden stays oracle=1, XFAIL. Prior disposition (unchanged): Same S finding as remy-sa1-block (measured S=0 vs oracle 1) — see file header S FINDING." }

@@ -1,0 +1,4 @@
+label	verdict	outcome	n	S	A	R	adv	kd
+elena-sa2-whiff	PASS	WHIFF	1	0	15	14	+0	0
+elena-sa2-block	PASS	BLOCK	1	0	22	29	-12	0
+elena-sa2-hit	PASS	HIT	1	0	22	17	+77	1

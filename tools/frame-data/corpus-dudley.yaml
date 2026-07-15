@@ -1,0 +1,1107 @@
+# Dudley frame-data corpus (cast rollout, user-directed 2026-07-08).
+# Generated/consumed by tools/frame-data/compile_corpus.py against
+# docs/arcade-frame-data/dudley.json (fetched 2026-07-08 from
+# https://raw.githubusercontent.com/Coccis77/thirdstrikedatabot/master/json/dudley.json,
+# md5 8e0341d62b9470212bce8105eaf1a73e).
+#
+# NAMING NOTE (runbook Phase 1 caution re: throw-family naming varying per
+# character): dudley.json's throw-family rows are "Neutral Throw" and a bare
+# "Throw" - the SAME two-row shape as yun.json (a 5th confirmed shape overall
+# once ryu/q's bare "Throw", ken's 3-way split, makoto's "Neutral Throw" +
+# "Back & Towards Throw" pair are counted). Both rows share identical
+# Startup=2/Hit=1/Recovery=21/Throw_range=20 (Block_advantage/Hit_advantage
+# are both the literal string "-" for both rows) - verified against the
+# fetched oracle, not assumed.
+#
+# NO "Far X" ROWS: like makoto.json, dudley.json has exactly one row per
+# standing-normal button (Jab/Strong/Fierce/Short/Forward/Roundhouse) - no
+# separate close/far split. Verified live: dist=250 throws the SAME
+# close-range animation for every button and simply fails to connect (WHIFF,
+# not a distinct far animation).
+#
+# FIVE of SIX Towards+X command normals exist in the oracle (Jab/Strong/
+# Fierce/Forward/Roundhouse) - no "Towards + Short" row. All five are audited
+# below with their own WHIFF row per Phase 4.
+#
+# dudley.json's Startup/Hit/Recovery/*_advantage fields are JSON strings
+# (e.g. "Startup": "3") - resolve_from_qjson's `int(raw)` cast
+# (compile_corpus.py:432-448) handles this transparently; only genuinely
+# non-numeric fields ("-", "D", range strings like "21/20/22" or "-5 ~ +7")
+# need an explicit literal or an outright skip.
+#
+# SCOPE (user-directed 2026-07-08, cast rollout): normals ladder (six-button
+# close BLOCK/HIT + WHIFF sample + crouching + all five Towards+X command
+# normals each with BLOCK+WHIFF) + UOH + Throw + negative control + ground
+# specials probe (one session budget): Machine Gun Blow (hcf+P, three
+# strengths), Jet Uppercut (dp-shape hold-chain + P, three strengths), Short
+# Swing Blow (hcb+K, three strengths), Cross Counter (hcb+P, three strengths
+# - counter-stance reversal, oracle carries ZERO frame data for any strength,
+# see that section), Ducking (hcf+K - movement into a stance, not an attack,
+# see that section). NO supers/EX (Jet Uppercut EX / Machine Gun Blow EX /
+# Short Swing Blow EX / Cross Counter EX / Rocket Uppercut / Rolling Thunder /
+# Corkscrew Blow all excluded per task scope). No airborne moves (Jumping
+# Jab/Strong/Fierce/Short/Forward/Roundhouse excluded - the harness
+# dummy/attacker cannot be scripted to jump, known gap
+# docs/frame-data-synthesis.md §12.1). Taunt is not audited (not a
+# frame-data-relevant move for this rollout).
+#
+# Every expect below was pinned against a live trace
+# (tools/frame-data/run.sh tools/frame-data/corpus-dudley.yaml), with every
+# suspicious/ambiguous finding re-verified in an isolated single-entry probe
+# corpus per the runbook's Phase 5 "known traps" discipline before being
+# trusted.
+#
+# ============================================================================
+# ISSUE #17 FAMILY CENSUS (per runbook Phase 6 / item 6 instruction). Every
+# A-divergence below was lever-F-tested in ONE batched scratch build
+# (fd_restore_revoked_declared_credit forced to 0 in
+# src/sf33rd/Source/Game/engine/charset.c:507, whole corpus re-run once,
+# reverted via `git checkout` + rebuild + re-verified green before this
+# commit, same-binary protocol throughout).
+#
+#   NEWLY-CONFIRMED SHAPE (b) MEMBERS (lever-F ACTIVELY RESTORING credit;
+#   plain PASS in the real binary, no xfail - the lever-F-off scratch build
+#   is what reveals the dependency): dudley-jab-block/-hit (A=2 exact match
+#   in the real binary; lever-F-off drops to A=1), dudley-fierce-block/-hit
+#   (A=3 exact; lever-F-off drops to A=2), dudley-twdslp-block (Towards+Jab,
+#   A=2 exact; lever-F-off drops to A=1). Every other standing/crouching/
+#   command normal not listed here (Strong/Short/Forward/Roundhouse and
+#   their crouching/command-normal counterparts) was UNCHANGED by lever-F-off
+#   (no revoke ever fires - these simply never diverged from arcade).
+#
+#   PURE SHAPE (a1) skip-jump, lever-F-tested UNCHANGED (credit
+#   unrecoverable, synthesis §13.11 "what stays unrecoverable"):
+#     - dudley-crforward-block/-hit: measured A=1 vs arcade 3; S/adv exact
+#       both outcomes; WHIFF (dudley-crforward-whiff) is exact, confirming
+#       contact-specificity.
+#     - dudley-crroundhouse-block/-hit: measured A=1 vs arcade 3; WHIFF
+#       (dudley-crroundhouse-whiff) is exact.
+#     - dudley-mgb-{lp,mp,hp}-block/-hit (Machine Gun Blow, all three
+#       strengths, both outcomes): measured A = arcade A - 2 UNIFORMLY
+#       (Jab 8->6, Strong 10->8, Fierce 13->11), identical between BLOCK and
+#       HIT for each strength; WHIFF is exact for Jab/Strong (Fierce has no
+#       clean WHIFF baseline, see the SPECIALS-REACHABILITY GAP note below,
+#       but BLOCK's own exact `adv` match for all three strengths
+#       corroborates correct move identification independent of WHIFF).
+#   All of the above: lever-F-off left every entry's A value UNCHANGED - no
+#   revoke fires for any of them, ruling OUT a lever-F regression, confirming
+#   pure shape (a1).
+#
+#   NOT LEVER-F DEPENDENT, NOT SHAPE (a1) EITHER (independent OVERCOUNTS -
+#   see the UOH and Jet Uppercut sections below for the individual findings;
+#   summarized here since shape (a1)/(b) only describe UNDERCOUNTS and
+#   neither applies cleanly):
+#     - dudley-uoh-whiff/-block/-hit: RE-DISPOSITIONED 2026-07-08
+#       (orchestrator review, FIX-FIRST verdict) to the §13.11 declared-truth
+#       displayed-A convention (docs/frame-data-synthesis.md §13.11,
+#       precedent chunli-uoh-block/-whiff/-hit, corpus-chunli.yaml:54-98) -
+#       NOT an UNCLASSIFIED A-overcount. Measured A=14 identically on ALL
+#       THREE outcomes including a clean WHIFF - the same whiff-persistent,
+#       path-independent shape as the chunli/q precedent. An earlier draft of
+#       this bullet excluded the §13.11 disposition on a dwellbrk=0-based
+#       argument; that reasoning was FACTUALLY UNSOUND and is retracted (see
+#       the UOH section below for the full retraction) - `cghi1_dwell_broken`
+#       gates the SEPARATE §13.9.4 anchor-A snapshot path, not the §13.11
+#       restore trigger. All three entries now assert A=14 explicitly; each
+#       stays xfail narrowed to its own R-side clause only - see the UOH
+#       section below.
+#     - dudley-jetup-*-block/-hit (Jet Uppercut, all three strengths):
+#       measured A diverges from arcade in BOTH directions depending on
+#       strength/outcome (BLOCK overcounts uniformly by +4 in the real
+#       binary; HIT is non-uniform: Jab overcounts +8, Strong matches
+#       arcade exactly, Fierce UNDERCOUNTS -4) - NOT a clean shape (a1)
+#       (which only ever loses credit) or shape (b) (which only ever fully
+#       restores to an exact arcade match). Lever-F-tested and behaves
+#       UNUSUALLY: it partially fires on SOME of these already-diverging
+#       entries (BLOCK Jab/Fierce and HIT Jab/Fierce all drop by exactly 2
+#       when lever-F is forced off; BLOCK Strong and HIT Strong are
+#       UNCHANGED by lever-F-off) - a genuinely novel interaction where the
+#       lever's own +2-credit mechanism sometimes WORSENS an existing
+#       overcount (BLOCK Jab/Fierce) and sometimes partially CLOSES an
+#       existing undercount (HIT Fierce), rather than the established
+#       "either fully restores an arcade-exact match (b) or never fires
+#       (a1)" dichotomy. FLAGGED PROMINENTLY (not a routine UNCLASSIFIED) -
+#       this does not match any precedent in this repo and is called out
+#       explicitly for orchestrator attention; see the Jet Uppercut section
+#       below for the full per-strength/per-outcome data table.
+#
+#   No other #17-family divergence was found on any other normal, crouching
+#   normal, command normal, Throw, or Short Swing Blow entry (every other
+#   entry's A matches dudley.json exactly).
+# ============================================================================
+#
+# >50%-XFAIL SECTION ACCOUNTING (plan Step 7 / corpus-hugo.yaml precedent:
+# >50% of a section xfailing requires explicit orchestrator/user sign-off
+# before being accepted as audit output, not self-approved - per this
+# rollout's own divergence-discipline instructions, these are flagged
+# NOT-YET-GRANTED here rather than self-signed-off):
+#
+#   - Crouching normals, HIT: 2/2 xfail (100%) - dudley-crforward-hit,
+#     dudley-crroundhouse-hit. Both are the established issue-#17 shape-(a1)
+#     family (lever-F-tested) stacked with an R-side finding (one
+#     UNCLASSIFIED surplus, one §13.10-Class-1-generalized deficit) - not
+#     novel-mechanism spam, but the R clauses include one genuinely
+#     unclassified sign. ORCHESTRATOR SIGN-OFF 2026-07-08: GRANTED
+#     (established a1 + one flagged UNCLASSIFIED R-surplus). User review
+#     pending (overnight autonomous run).
+#     UPDATE (2026-07-10, §13.13): still 2/2 xfail (100%) - the A-clause on
+#     both entries now converts to a plain-PASS assertion citing §13.13;
+#     the R-clause (UNCLASSIFIED surplus / unregistered §12.2.2 candidate)
+#     is the sole remaining xfail content, narrowed accordingly.
+#   - UOH: 3/3 xfail (100%) - dudley-uoh-whiff/-block/-hit. RE-DISPOSITIONED
+#     2026-07-08 (see ISSUE #17 CENSUS above + the UOH section below): A is
+#     resolved to the §13.11 declared-truth convention (A=14 asserted
+#     explicitly, no longer UNCLASSIFIED); each entry's xfail is narrowed to
+#     its own R clause only (whiff = item 18 truncation; block/hit = a
+#     no-HIT-vs-BLOCK-differential R deficit, kept UNCLASSIFIED-hedged).
+#     ORCHESTRATOR SIGN-OFF 2026-07-08: GRANTED post-reconciliation (A
+#     resolved to §13.11; R clauses item-18/UNCLASSIFIED-hedged). User review
+#     pending (overnight autonomous run).
+#   - Machine Gun Blow, BLOCK+HIT: 6/6 xfail (100%) - all three strengths'
+#     BLOCK and HIT entries (WHIFF is clean for Jab/Strong, excluded from
+#     this count; Fierce has no WHIFF entry at all, a harness reach-gap not
+#     an xfail). The A-side is a clean, lever-F-tested shape (a1) census
+#     member (established family, precedent: Ryu/Ken/Makoto/Yun corpora); the
+#     R-side splits cleanly into "no divergence" (Jab) and established
+#     §13.10 Class 1 (Strong/Fierce HIT only). ORCHESTRATOR SIGN-OFF
+#     2026-07-08: GRANTED (established a1 + §13.10 Class 1). User review
+#     pending (overnight autonomous run).
+#     UPDATE (2026-07-10, §13.13): NOW 0/6 xfail - all six entries convert
+#     to a plain PASS (A citing §13.13 on all six; Strong/Fierce HIT's R
+#     additionally citing §13.10 as part of the same FULL conversion, since
+#     both clauses were already established members). Section RESOLVED.
+#   - Jet Uppercut, WHIFF: NOW 0/3 xfail (UPDATED 2026-07-08) - RESOLVED
+#     by the §13.5.1a grounded fresh-edge cut gate (the old uniform -10
+#     was a §13.5.1 shape-B false cut, same as Ken/Akuma Shoryuken);
+#     R=29/28/32 arcade-exact, plain PASS, sign-off request withdrawn.
+#   - Jet Uppercut, BLOCK+HIT: 6/6 xfail (100%) - see the file header JET
+#     UPPERCUT FINDING block and the FLAGGED (not routine UNCLASSIFIED)
+#     framing on each entry. This is the WEAKEST sign-off candidate of the
+#     five: the A-side is non-uniform across strengths/outcomes (overcount,
+#     exact match, and undercount all appear), and lever-F's own behavior on
+#     this move (adding +2 credit that sometimes worsens an overcount and
+#     sometimes partially closes an undercount) does not match any prior
+#     character's #17 pattern. ORCHESTRATOR SIGN-OFF 2026-07-08: GRANTED
+#     WITH CAVEAT - lever-F ruled BENIGN with structural proof (restore ≡
+#     inside-revoke-block, delta = prior_add exactly; the separate base
+#     A-overcount stays UNCLASSIFIED); flagged HIGH on the user-review list
+#     alongside Makoto's Hayate. User review pending (overnight autonomous
+#     run).
+#     UPDATE (2026-07-10, §13.13): NOW 5/6 xfail - dudley-jetup-mp-hit
+#     converts to a plain PASS (its R-clause is an unhedged §13.10 Class-1
+#     member with A itself already an exact arcade match, F2b compliance).
+#     dudley-jetup-lp-hit/-hp-hit narrow to their A-clause only (R-clause
+#     converts, same F2b compliance). The three BLOCK entries and the
+#     base A-overcount candidate stay xfail unchanged - still CAVEAT/
+#     UNCLASSIFIED, not re-traced.
+# ============================================================================
+character: dudley
+oracle: dudley.json
+inter_entry_wait: 150
+entries:
+
+# --- Standing normals, BLOCK (dummy: stand, dist close) ---------------------
+
+- label: dudley-jab-block
+  setup: { dist: close, dummy: stand }
+  input: "press LP"
+  qjson: { name: "Jab" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: dudley-strong-block
+  setup: { dist: close, dummy: stand }
+  input: "press MP"
+  qjson: { name: "Strong" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: dudley-fierce-block
+  setup: { dist: close, dummy: stand }
+  input: "press HP"
+  qjson: { name: "Fierce" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: dudley-short-block
+  setup: { dist: close, dummy: stand }
+  input: "press LK"
+  qjson: { name: "Short" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: dudley-forward-block
+  setup: { dist: close, dummy: stand }
+  input: "press MK"
+  qjson: { name: "Forward" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: dudley-roundhouse-block
+  setup: { dist: close, dummy: stand }
+  input: "press HK"
+  qjson: { name: "Roundhouse" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# --- HIT sample per button family (dummy: none, close range) ---------------
+
+- label: dudley-jab-hit
+  setup: { dist: close, dummy: none }
+  input: "press LP"
+  qjson: { name: "Jab" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: dudley-strong-hit
+  setup: { dist: close, dummy: none }
+  input: "press MP"
+  qjson: { name: "Strong" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: dudley-fierce-hit
+  setup: { dist: close, dummy: none }
+  input: "press HP"
+  qjson: { name: "Fierce" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: dudley-short-hit
+  setup: { dist: close, dummy: none }
+  input: "press LK"
+  qjson: { name: "Short" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: dudley-forward-hit
+  setup: { dist: close, dummy: none }
+  input: "press MK"
+  qjson: { name: "Forward" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: dudley-roundhouse-hit
+  setup: { dist: close, dummy: none }
+  input: "press HK"
+  qjson: { name: "Roundhouse" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# --- WHIFF sample per button family (dummy: none, dist 250) -----------------
+# No distinct "Far X" rows exist in dudley.json for any button (see file
+# header) - every WHIFF entry below cites the SAME qjson.name as its
+# BLOCK/HIT sibling.
+
+- label: dudley-lp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press LP"
+  qjson: { name: "Jab" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: dudley-mp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press MP"
+  qjson: { name: "Strong" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: dudley-hp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press HP"
+  qjson: { name: "Fierce" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: dudley-lk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press LK"
+  qjson: { name: "Short" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: dudley-mk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press MK"
+  qjson: { name: "Forward" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: dudley-hk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press HK"
+  qjson: { name: "Roundhouse" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# --- Crouching normals, BLOCK (dummy: stand) --------------------------------
+
+- label: dudley-crjab-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+LP"
+  qjson: { name: "Crouching Jab" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: dudley-crstrong-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+MP"
+  qjson: { name: "Crouching Strong" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: dudley-crfierce-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+HP"
+  qjson: { name: "Crouching Fierce" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: dudley-crshort-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+LK"
+  qjson: { name: "Crouching Short" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# Crouching Forward is one of dudley.json's TWO knockdown-annotated
+# crouching normals (Hit_advantage="D", non-numeric) - kd is explicit-only
+# (never from-qjson, Phase 3 discipline), asserted at the measured live
+# value.
+- label: dudley-crforward-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press DOWN+MK"
+  qjson: { name: "Crouching Forward" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=1 is the
+# engine-truth credit actually accrued on the BLOCK path - clause (1): issue #17
+# shape (a1), lever-F-tested UNCHANGED (fd_restore_revoked_declared_credit
+# forced 0 on a scratch build, whole-corpus batch, reverted before commit); no
+# revoke fires here. WHIFF (dudley-crforward-whiff) is exact, confirming
+# contact-specificity. Arcade (whiff-canonical, from-qjson) A=3 - preserved
+# here per the convention.
+#
+# SWEEP-2 (2026-07-10) FULL CONVERT: R=25 also now asserts the engine-truth
+# value, xfail REMOVED. The former clause (2) "sign-incoherent R-side SURPLUS"
+# is RESOLVED by classification sweep #2's fable-grade audit: the "sign-
+# incoherent with Class 1" framing was an artifact of the first audit's
+# undercounted tally, not a genuine anomaly. F2 R-surplus corollary
+# (§13.13:5145-5147): branch content closes EXACTLY under the window's
+# measured counting rule (hitstop-frozen cells resume contributing real
+# ticks after they thaw) - postthaw-inclusive branch cells
+# 102(2)+108(2)+114(4)=8 vs whiff-only cells 30(2)+36(3)=5, shared 42..72=17;
+# +3 exact (rule-transfer recount, s2 dudley trace). Byte-identical on HIT.
+# Arcade (whiff-canonical) R=22 - superseded per the convention. S/adv remain
+# arcade-exact (from-qjson).
+- label: dudley-crforward-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+MK"
+  qjson: { name: "Crouching Forward" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: 1, R: 25, adv: from-qjson }
+
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=1 is the
+# engine-truth credit actually accrued on the HIT path - sibling-reference:
+# same clause (1) disposition as dudley-crforward-block (identical A=1,
+# lever-F-tested UNCHANGED). Arcade (whiff-canonical, from-qjson) A=3 -
+# preserved here per the convention.
+#
+# SWEEP-2 (2026-07-10) FULL CONVERT: R=25 also now asserts the engine-truth
+# value, xfail REMOVED - byte-identical branch to dudley-crforward-block (same
+# +3 exact closure, rule-transfer recount). Arcade (whiff-canonical) R=22 -
+# superseded per the convention. S/adv remain arcade-exact (from-qjson).
+- label: dudley-crforward-hit
+  setup: { dist: close, dummy: none }
+  input: "press DOWN+MK"
+  qjson: { name: "Crouching Forward" }
+  outcome: HIT
+  expect: { S: from-qjson, A: 1, R: 25, kd: 1 }
+
+- label: dudley-crroundhouse-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press DOWN+HK"
+  qjson: { name: "Crouching Roundhouse" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=1 is the
+# engine-truth credit actually accrued on the BLOCK path - clause (1): issue #17
+# shape (a1), lever-F-tested UNCHANGED (whole-corpus batch, reverted before
+# commit); no revoke fires. WHIFF (dudley-crroundhouse-whiff) is exact,
+# confirming contact-specificity. Arcade (whiff-canonical, from-qjson) A=3 -
+# preserved here per the convention. adv remains arcade-exact (from-qjson).
+#
+# SWEEP-2 (2026-07-10) FULL CONVERT: R=15 also now asserts the engine-truth
+# value, xfail REMOVED. The former "unregistered §12.2.2 candidate" precedent
+# cite is UPGRADED to a full membership by classification sweep #2's
+# fable-grade audit: F2 proper (§12.2.2), R-window closure exact - contact-only
+# cell 174(1)=1 vs whiff-only cells 66(4)+72(3)=7, shared cells 78..114=14;
+# -6 exact (rule-transfer recount, s1 dudley trace, branch recorded at
+# cells 156-174). Byte-identical on HIT. Arcade (whiff-canonical) R=21 -
+# superseded per the convention.
+- label: dudley-crroundhouse-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+HK"
+  qjson: { name: "Crouching Roundhouse" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: 1, R: 15, adv: from-qjson }
+
+# Crouching Roundhouse's Hit_advantage is ALSO the literal string "D" in
+# dudley.json - the "D"-notation-vs-live-kd inconsistency previously
+# documented here (citing Yun's standing Forward / Towards+Fierce) is
+# RESOLVED 2026-07-09 (§13.6.2b, ENGINE-3): kd now measures 1 live,
+# matching dudley.json - the shipped predicate was simply blind to this
+# move's r2=18 down-family traversal, not facing a genuine oracle/engine
+# divergence. kd is explicit-only (never from-qjson, Phase 3 discipline)
+# - asserted here at the measured (now arcade-true) value. Both of
+# dudley.json's "D"-annotated crouching normals (this one and Crouching
+# Forward above) now read kd=1 live.
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=1 is the
+# engine-truth credit actually accrued on the HIT path - sibling-reference:
+# same clause (1) disposition as dudley-crroundhouse-block (identical A=1).
+# Arcade (whiff-canonical, from-qjson) A=3 - preserved here per the
+# convention. adv remains arcade-exact (from-qjson).
+#
+# SWEEP-2 (2026-07-10) FULL CONVERT: R=15 also now asserts the engine-truth
+# value, xfail REMOVED - byte-identical branch to dudley-crroundhouse-block
+# (same -6 exact closure). Arcade (whiff-canonical) R=21 - superseded per the
+# convention. kd RE-ASSERTED 0->1 2026-07-09 (§13.6.2b, see file header) - now
+# measures 1, matching arcade; unrelated to and unaffected by this A/R
+# disposition.
+- label: dudley-crroundhouse-hit
+  setup: { dist: close, dummy: none }
+  input: "press DOWN+HK"
+  qjson: { name: "Crouching Roundhouse" }
+  outcome: HIT
+  expect: { S: from-qjson, A: 1, R: 15, kd: 1 }
+
+# --- Command normals (Towards + button), BLOCK + WHIFF ----------------------
+# dudley.json has FIVE distinct Towards+X rows (Jab/Strong/Fierce/Forward/
+# Roundhouse - no "Towards + Short") - each audited with its own WHIFF row
+# per Phase 4's mandatory whiff-vs-table rule.
+
+- label: dudley-twdslp-block
+  setup: { dist: close, dummy: stand }
+  input: "press RIGHT+LP"
+  qjson: { name: "Towards + Jab" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: dudley-twdslp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press RIGHT+LP"
+  qjson: { name: "Towards + Jab" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: dudley-twdsmp-block
+  setup: { dist: close, dummy: stand }
+  input: "press RIGHT+MP"
+  qjson: { name: "Towards + Strong" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: dudley-twdsmp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press RIGHT+MP"
+  qjson: { name: "Towards + Strong" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: dudley-twdshp-block
+  setup: { dist: close, dummy: stand }
+  input: "press RIGHT+HP"
+  qjson: { name: "Towards + Fierce" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: dudley-twdshp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press RIGHT+HP"
+  qjson: { name: "Towards + Fierce" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: dudley-twdsmk-block
+  setup: { dist: close, dummy: stand }
+  input: "press RIGHT+MK"
+  qjson: { name: "Towards + Forward" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: dudley-twdsmk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press RIGHT+MK"
+  qjson: { name: "Towards + Forward" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: dudley-twdshk-block
+  setup: { dist: close, dummy: stand }
+  input: "press RIGHT+HK"
+  qjson: { name: "Towards + Roundhouse" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: dudley-twdshk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press RIGHT+HK"
+  qjson: { name: "Towards + Roundhouse" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# --- UOH (press MP+MK) ------------------------------------------------------
+# dudley.json's Block_advantage/Hit_advantage for Universal Overhead are both
+# range strings ("-5 ~ +7", "0 ~ +8") - no expect.adv asserted (same
+# convention as every other range-string field in this repo). R=5 is a
+# single numeric value (from-qjson usable).
+#
+# UOH FINDING - RE-DISPOSITIONED 2026-07-08 (orchestrator review, FIX-FIRST
+# verdict): S=15 matches dudley.json's Universal Overhead row exactly on all
+# three outcomes (unambiguous identification).
+#   A-side: RESOLVED to the §13.11 declared-truth displayed-A convention
+#   (docs/frame-data-synthesis.md §13.11, precedent chunli-uoh-block/-whiff/
+#   -hit, corpus-chunli.yaml:54-98) - NOT an UNCLASSIFIED overcount. Measured
+#   A=14 identically on ALL THREE outcomes (WHIFF included) is exactly the
+#   whiff-persistent, path-independent signature §13.11 defines: the
+#   engine's declared credit is a single number that does not move with
+#   path, and dudley.json's arcade 10 is read as the whiff-VISIBLE tick
+#   count, not the declared credit - two different numbers measuring
+#   different things (§13.11's own "two cancelling minus-ones" rationale),
+#   the same shape as the chunli/q precedent.
+#     RETRACTED REASONING: an earlier draft of this finding excluded the
+#     §13.11 disposition on the grounds that "anchor_a=14 matches engine_a
+#     exactly and cut=1 fires on all three outcomes, but dwellbrk=0
+#     throughout - NOT matching the §13.11 declared-truth convention's own
+#     trigger condition (`cut_committed && cghi1_dwell_broken && anchor_a>0`,
+#     frame_data_overlay.c:561-565)". That reasoning was FACTUALLY UNSOUND
+#     and is retracted here. `cghi1_dwell_broken` at frame_data_overlay.c:
+#     561-565 gates `use_anchor_a`, the SEPARATE §13.9.4 anchor-A
+#     snapshot-selection mechanism used only for the same-r1=4-retrigger
+#     scenario (choosing `engine_a_at_cut_anchor` over the live
+#     accumulator) - it has no bearing on whether the §13.11 restore itself
+#     fires. The §13.11 restore's actual trigger is the same-tick
+#     same-jatix revoke condition in charset.c:472-481
+#     (`fd_prev_active_cgix_tick[wk->id] == Game_timer &&
+#     fd_prev_active_cgix_add[wk->id] > 0 && fd_prev_active_cgix_jatix[
+#     wk->id] == new_jatix`), which is independently confirmed firing here
+#     (cut=1 on all three outcomes); anchor_a=14 matching engine_a=14 is
+#     merely corroborating evidence, not the gate condition itself.
+#   Lever-F-tested (fd_restore_revoked_declared_credit forced 0, whole-corpus
+#   batch) and confirmed UNCHANGED (A=14 all three ways) - consistent with
+#   §13.11's own path-independence self-check.
+#   NOT YET independently re-verified against a per-cell cgctr decomposition
+#   summing to 14 the way q-uoh-whiff's own 1+2+2+3+3=11 was counted
+#   cell-by-cell (the same named follow-up as chunli-uoh-whiff,
+#   corpus-chunli.yaml:74-79) - if the cells do not sum to 14, this reverts
+#   to a flagged double-accrual investigation rather than a clean §13.11
+#   disposition.
+#   R-side, per-path (unaffected by the A-side reconciliation above, kept
+#   exactly as originally measured): WHIFF R=3 vs arcade 5 - fits item 18
+#   (whiff-R anim-reset/cut truncation, docs/frame-data-synthesis.md item 18)
+#   cleanly, present on WHIFF itself (the q-uoh-whiff-r pattern,
+#   corpus-q.yaml:651-656). BLOCK R=2 and HIT R=2 are IDENTICAL (no
+#   HIT-vs-BLOCK differential at all) - this does NOT fit §13.10 Class 2
+#   (UOH's own established mechanism, which specifically requires HIT to sit
+#   below BLOCK by some delta; here they are equal) - kept UNCLASSIFIED,
+#   hedged, dated 2026-07-08.
+#   Trace facts (raw observations): cut=1 and dwellbrk=0 on all three
+#   outcomes; T(raw_len)=29 (whiff) / 33 (block) / 29 (hit); anchor_a=14
+#   matches engine_a=14 throughout. dwellbrk=0 is expected and unremarkable
+#   here (the §13.9.4 retrigger scenario it gates never occurs in these
+#   single-press entries) and carries no implication for the A-side
+#   disposition above.
+
+# §13.17 RE-ANCHOR-1 + AMENDMENT (2026-07-11): item-18 CLOSED for this
+# row AND A: 14 -> 10 (rule adopted 2026-07-11: "whiff active-frames come
+# from the raw hitbox count" — user grant, docs/plan-frame-data-
+# completion.md OVERLAY RE-ANCHOR §6.2; Session-4 hardware capture,
+# docs/arcade-frame-data/CAPTURE.md, box-A=10 both reps, dudley.json UOH
+# Hit=10). Levers O/N now measure A=10, R=5, both arcade/oracle-exact.
+# Prior xfail evidence, RELOCATED not deleted: "R-side only (A resolved
+# to the §13.11 declared-truth convention, see file header UOH FINDING
+# block and the chunli-uoh precedent corpus-chunli.yaml:54-98 - A=14 is
+# asserted directly, not xfailed): issue #17 item 18 whiff-R truncation
+# (q-uoh-whiff-r pattern, corpus-q.yaml:651-656) - measured R=3 vs arcade
+# 5 on WHIFF itself. Trace facts: cut=1, dwellbrk=0, anchor_a=14 (matches
+# engine_a=14), T=29; dwellbrk=0 is expected here (the §13.9.4 retrigger
+# scenario it gates does not occur in a single press) and has no bearing
+# on the A-side §13.11 disposition."
+- label: dudley-uoh-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press MP+MK"
+  qjson: { name: "Universal Overhead" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: 10, R: from-qjson }
+
+# CONVERTED 2026-07-13 (UOH-CLOSURE lever T, docs/frame-data-synthesis.md
+# §13.20; <sp>/zero/arcade-s9/session-report.md BLOCK legs, box
+# 265771-265792, busy768=265797, probe-confirmed exact fc 265797, zero
+# early acceptance): the "no HIT-vs-BLOCK differential" UNCLASSIFIED-R
+# finding above is CLOSED, not merely hedged. "Arcade 5" was never this
+# leg's true value - real hardware measures R=4, matching this engine's
+# own busy-edge/lever-R construction exactly (lever T), which likewise
+# predicts NO HIT-vs-BLOCK differential (both 4) - the old finding's own
+# observation is exactly what the mechanism predicts. XFAIL->PASS: R
+# re-literaled to 4; A stays 14 (= arcade measured exactly, unaffected by
+# lever T, design §5).
+- label: dudley-uoh-block
+  setup: { dist: close, dummy: stand }
+  input: "press MP+MK"
+  qjson: { name: "Universal Overhead" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: 14, R: 4 }
+
+# CONVERTED 2026-07-13 (UOH-CLOSURE lever T, docs/frame-data-synthesis.md
+# §13.20; <sp>/zero/arcade-s9/session-report.md HIT legs, box
+# 265771-265788, busy768=265793): same closure as dudley-uoh-block - real
+# arcade R=4. XFAIL->PASS: R re-literaled to 4; A stays 14 (= arcade
+# measured exactly, unaffected by lever T, design §5).
+- label: dudley-uoh-hit
+  setup: { dist: close, dummy: none }
+  input: "press MP+MK"
+  qjson: { name: "Universal Overhead" }
+  outcome: HIT
+  expect: { S: from-qjson, A: 14, R: 4 }
+
+# --- Ground specials: WHIFF identification block ----------------------------
+# ORDERING NOTE (§12.1 row 2 "teleport clamps / momentum bleed after
+# connecting dash specials" precedent, corpus-yun.yaml's own ORDERING NOTE
+# for Tetsu Zankou): ALL of this rollout's specials' WHIFF entries are
+# grouped together HERE, ahead of any of their own BLOCK/HIT (connecting)
+# entries - verified live that placing a connecting Jet Uppercut HIT
+# immediately before a distance-sensitive WHIFF entry (Short Swing Blow, in
+# an earlier draft) corrupted that WHIFF's teleport into a bogus HIT/SHAPE
+# read; grouping every specials WHIFF baseline into one contiguous block
+# before any specials BLOCK/HIT reproduces the clean reads confirmed during
+# authoring.
+
+- label: dudley-mgb-lp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "motion hcf LP"
+  qjson: { name: "Machine Gun Blow (Jab)" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: dudley-mgb-mp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "motion hcf MP"
+  qjson: { name: "Machine Gun Blow (Strong)" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# NO WHIFF entry for Machine Gun Blow (Fierce): verified live it STILL
+# CONNECTS (outcome=HIT, S=17 A=11 R=16) even at dist=300, the harness's max
+# scriptable distance (DIST_MAX, compile_corpus.py:91) - the same
+# SPECIALS-REACHABILITY GAP shape as corpus-yun.yaml's Zesshou Hohou
+# Fierce / Tetsu Zankou Fierce (a lunging Fierce-strength variant that
+# travels farther than any scriptable distance). Jab/Strong above DO whiff
+# cleanly within DIST_MAX, proving this is a reach limit and not a
+# move-identification failure.
+
+# Jet Uppercut WHIFF - RESOLVED 2026-07-08 (§13.5.1a grounded fresh-edge
+# cut gate, docs/frame-data-synthesis.md §13.5.1a): the old uniform -10
+# (measured R=19/18/22 vs arcade 29/28/32) was a §13.5.1 shape-B false cut
+# (landing-tick label flip on an airborne move - the Ken/Akuma Shoryuken
+# sibling case). Post-fix R=29/28/32 EXACT - xfails removed, plain PASS.
+
+- label: dudley-jetup-lp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LP 2; wait 1"
+  qjson: { name: "Jet Uppercut (Jab)" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: dudley-jetup-mp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+MP 2; wait 1"
+  qjson: { name: "Jet Uppercut (Strong)" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: dudley-jetup-hp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+HP 2; wait 1"
+  qjson: { name: "Jet Uppercut (Fierce)" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: dudley-ssb-lk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "motion hcb LK"
+  qjson: { name: "Short Swing Blow (Short)" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: dudley-ssb-mk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "motion hcb MK"
+  qjson: { name: "Short Swing Blow (Forward)" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: dudley-ssb-hk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "motion hcb HK"
+  qjson: { name: "Short Swing Blow (RH)" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# dudley.json has ZERO frame data for Cross Counter at any strength
+# (Startup/Hit/Recovery/Block_advantage/Hit_advantage are all the literal
+# string "-", for Jab/Strong/Fierce/EX alike) - there is nothing for
+# `expect` to assert via from-qjson or an explicit literal at all;
+# `expect: {}` only checks the outcome. CONFIRMED WHIFF-ONLY (task's own
+# prediction, verified live): this is a counter-stance reversal that
+# produces no active hitbox of its own unless it successfully counters an
+# incoming attack - both `dummy: stand` and `dummy: none` (neither of which
+# ever attacks P1 in this harness) read a clean WHIFF (S=72, i.e. the
+# stance simply times out with zero active frames, not a real move).
+# BLOCK/HIT are therefore an accepted harness gap for this move family (the
+# harness dummy cannot be scripted to attack), not audited - only Jab is
+# probed below (Strong/Fierce/EX would read identically, same zero-data
+# oracle rows).
+
+- label: dudley-crosscounter-lp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "motion hcb LP"
+  qjson: { name: "Cross Counter (Jab)" }
+  outcome: WHIFF
+  expect: {}
+
+# dudley.json's "Ducking Rush" row (the stance-entry move itself) has ZERO
+# frame data (all dashes) - `expect: {}` only checks the outcome, same
+# reasoning as Cross Counter above. CONFIRMED movement-only (task's own
+# prediction, verified live): this input enters a ducking stance with no
+# active hitbox of its own (S=18, a clean WHIFF against both `dummy: stand`
+# and `dummy: none` - a real FINAL DOES fire, but with zero active frames,
+# not "no FINAL at all"). The follow-up attacks out of the stance ("Ducking
+# Straight"/"Ducking Upper", each with their own oracle rows) are a distinct,
+# separately-chained input not covered by this rollout's one-session budget
+# for this move family - documented as an open gap, not probed.
+
+- label: dudley-ducking-whiff
+  setup: { dist: 250, dummy: none }
+  input: "motion hcf LK"
+  qjson: { name: "Ducking Rush" }
+  outcome: WHIFF
+  expect: {}
+
+# --- Machine Gun Blow (rushing punches), motion hcf - BLOCK + HIT ----------
+# A-side: issue #17 shape (a1), uniform -2 vs arcade across all three
+# strengths, identical between BLOCK and HIT for each strength (see file
+# header ISSUE #17 CENSUS; lever-F-tested UNCHANGED for all six entries).
+# R-side: Jab shows NO divergence at all (BLOCK/HIT/WHIFF all exact); Strong
+# and Fierce follow the classic §13.10 Class 1 hit-branch recovery chain
+# shape - BLOCK R matches arcade exactly, only HIT R diverges shorter.
+
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=6 is the
+# engine-truth credit actually accrued on the BLOCK path - issue #17 shape (a1),
+# lever-F-tested UNCHANGED (fd_restore_revoked_declared_credit forced 0 on a
+# scratch build, whole-corpus batch, reverted before commit); no revoke fires.
+# WHIFF (dudley-mgb-lp-whiff) is exact, confirming contact-specificity. Arcade
+# (whiff-canonical, from-qjson) A=8 - preserved here per the convention. S/R/adv
+# remain arcade-exact (from-qjson).
+- label: dudley-mgb-lp-block
+  setup: { dist: close, dummy: stand }
+  input: "motion hcf LP"
+  qjson: { name: "Machine Gun Blow (Jab)" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: 6, R: from-qjson, adv: from-qjson }
+
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=8 is the
+# engine-truth credit actually accrued on the BLOCK path - issue #17 shape (a1),
+# same family as dudley-mgb-lp-block, lever-F-tested UNCHANGED. R/adv are
+# already arcade-exact here (R=24 matches WHIFF exactly - the §13.10 Class 1
+# divergence for this strength is HIT-only, see dudley-mgb-mp-hit). Arcade
+# (whiff-canonical, from-qjson) A=10 - preserved here per the convention.
+- label: dudley-mgb-mp-block
+  setup: { dist: close, dummy: stand }
+  input: "motion hcf MP"
+  qjson: { name: "Machine Gun Blow (Strong)" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: 8, R: from-qjson, adv: from-qjson }
+
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=11 is the
+# engine-truth credit actually accrued on the BLOCK path - issue #17 shape (a1),
+# same family as dudley-mgb-lp-block, lever-F-tested UNCHANGED. R/adv are
+# already arcade-exact here (R=30, no clean WHIFF baseline exists for this
+# strength - see SPECIALS-REACHABILITY GAP note above - but the exact adv
+# match corroborates correct identification). Arcade (whiff-canonical,
+# from-qjson) A=13 - preserved here per the convention.
+- label: dudley-mgb-hp-block
+  setup: { dist: close, dummy: stand }
+  input: "motion hcf HP"
+  qjson: { name: "Machine Gun Blow (Fierce)" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: 11, R: from-qjson, adv: from-qjson }
+
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=6 is the
+# engine-truth credit actually accrued on the HIT path - same issue #17 shape
+# (a1) as dudley-mgb-lp-block (identical A=6 on both outcomes, lever-F-tested
+# UNCHANGED). Arcade (whiff-canonical, from-qjson) A=8 - preserved here per the
+# convention. R remains arcade-exact (from-qjson) - Jab shows no R-side
+# divergence at all, unlike Strong/Fierce below.
+- label: dudley-mgb-lp-hit
+  setup: { dist: close, dummy: none }
+  input: "motion hcf LP"
+  qjson: { name: "Machine Gun Blow (Jab)" }
+  outcome: HIT
+  expect: { S: from-qjson, A: 6, R: from-qjson }
+
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): both
+# clauses are established members and convert together, plain PASS. (1) A=8 is
+# the engine-truth credit accrued on the HIT path - same issue #17 shape (a1)
+# as dudley-mgb-mp-block (identical A=8, lever-F-tested UNCHANGED). Arcade
+# A=10 preserved. (2) R=16 is the engine-truth recovery played on the HIT path
+# - §13.10 Class 1 hit-branch recovery chain (BLOCK-confirmed arcade R=24,
+# dudley-mgb-mp-block's own R is exact; BLOCK/WHIFF match arcade, only HIT
+# diverges shorter, the textbook Class 1 shape). Arcade R=24 preserved.
+- label: dudley-mgb-mp-hit
+  setup: { dist: close, dummy: none }
+  input: "motion hcf MP"
+  qjson: { name: "Machine Gun Blow (Strong)" }
+  outcome: HIT
+  expect: { S: from-qjson, A: 8, R: 16 }
+
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): both
+# clauses are established members and convert together, plain PASS. (1) A=11
+# is the engine-truth credit accrued on the HIT path - same issue #17 shape
+# (a1) as dudley-mgb-hp-block (identical A=11, lever-F-tested UNCHANGED).
+# Arcade A=13 preserved. (2) R=16 is the engine-truth recovery played on the
+# HIT path - §13.10 Class 1 hit-branch recovery chain (BLOCK-confirmed arcade
+# R=30, dudley-mgb-hp-block's own R is exact; same shape as Strong above, only
+# HIT diverges shorter). Arcade R=30 preserved.
+- label: dudley-mgb-hp-hit
+  setup: { dist: close, dummy: none }
+  input: "motion hcf HP"
+  qjson: { name: "Machine Gun Blow (Fierce)" }
+  outcome: HIT
+  expect: { S: from-qjson, A: 11, R: 16 }
+
+# --- Jet Uppercut (anti-air DP), DP-shape hold-chain - BLOCK + HIT ----------
+# Landed via the EXISTING DP-shape hold-chain (same recipe as Ken's
+# Shoryuken / Yun's Tetsu Zankou / Makoto's Fukiage). UNLIKE Makoto's
+# Fukiage / Hugo's Shootdown Backbreaker, this move DOES connect against a
+# grounded standing/non-jumping dummy - verified live (BLOCK/HIT both
+# produce a real FINAL, not a SHAPE mismatch) - so BLOCK/HIT are NOT a
+# harness-gap for this move; all three outcomes are audited (WHIFF above,
+# BLOCK/HIT below).
+#
+# JET UPPERCUT FINDING - FLAGGED PROMINENTLY (not a routine UNCLASSIFIED;
+# see file header ISSUE #17 CENSUS). S matches dudley.json exactly on every
+# strength/outcome (unambiguous identification). Full data table (measured
+# A / arcade A / lever-F-off A):
+#   BLOCK: Jab 12/8/10 (+4 real-binary, +2 residual with lever off)
+#          Strong 20/16/20 (+4 real-binary, UNCHANGED with lever off)
+#          Fierce 25/21/23 (+4 real-binary, +2 residual with lever off)
+#   HIT:   Jab 16/8/14 (+8 real-binary, +6 residual with lever off)
+#          Strong 16/16/16 (EXACT MATCH, both with and without lever - no
+#                            divergence at all for this strength/outcome)
+#          Fierce 17/21/15 (-4 real-binary UNDERCOUNT, -6 with lever off)
+# BLOCK's own A-overcount is a UNIFORM +4 across all three strengths in the
+# real binary. HIT is NOT uniform at all: Jab overcounts (+8), Strong is
+# exact (no divergence), Fierce UNDERCOUNTS (-4) - a genuine sign flip
+# across strengths on the same outcome, something no prior character's #17
+# finding has shown. Lever-F's own behavior is equally irregular: it adds
+# exactly 2 units of credit on BLOCK-Jab/BLOCK-Fierce/HIT-Jab/HIT-Fierce
+# (sometimes WORSENING an already-overcounting entry, sometimes partially
+# CLOSING an undercount - the SAME +2 magnitude, opposite net effect
+# depending on which side of arcade the pre-lever value sits) while doing
+# NOTHING AT ALL on BLOCK-Strong/HIT-Strong. This does not match the
+# established "either fully restores to an arcade-exact match (shape b) or
+# never fires (shape a1)" dichotomy from any prior character - flagged here
+# explicitly for orchestrator attention rather than filed as a routine
+# UNCLASSIFIED, per the runbook's "reappearance of a shape-(b)-looking
+# pattern in a new, non-conforming shape is a regression signal" spirit
+# (Phase 6), even though this is an overcount context rather than the
+# documented undercount one.
+#
+# CROSS-REF 2026-07-09 (classification sweep): the contact-only
+# A-overcount legs (BLOCK +4 uniform, HIT-Jab +8) are candidate members of
+# the contact-branch declared-credit A-overcount family, docs/frame-data-
+# synthesis.md §12.2.3 (mechanism trace-PROVEN on ken-forward: the contact
+# tick re-routes the chart onto an outcome-specific branch whose EXTRA
+# declared-active cells each bank their declared ctr - outcome-dependent
+# wrong values = different branch cells, which would also accommodate this
+# move's per-strength sign flips if each strength/outcome pair branches
+# differently). Candidate only - signature-matched, NOT re-traced here;
+# the HIT-Fierce UNDERCOUNT leg would equally fit as an (a1)-style branch
+# that skips declared cells. The lever-F irregularity note above stands
+# unchanged. All legs stay FLAGGED/UNCLASSIFIED pending a per-strength
+# ledger trace.
+#
+# R-side, separately - UPDATED 2026-07-08 (§13.5.1a cut gate): the old
+# WHIFF/BLOCK baseline (19/18/22) was a §13.5.1 shape-B false cut
+# (landing-tick label flip on an airborne move, docs/frame-data-
+# synthesis.md §13.5.1a), now RESOLVED - WHIFF and BLOCK both read the
+# arcade-exact 29/28/32 (whiff xfails removed, plain PASS; block entries
+# stay xfail on their A clauses only). HIT's R (re-cited: 19/21/23, was
+# 9/11/13) still sits well below that baseline - the same §13.10 Class 1
+# hit-branch shape as Machine Gun Blow Strong/Fierce above (the genuine
+# reduction that remains after the false-cut component was removed).
+#
+# SWEEP-2 (2026-07-10, classification sweep #2 fable-grade audit) DISPOSITION:
+# the contact A-overcount legs are the F3 own-ledger bar met (§13.13:5179-
+# 5184) - own-ledger [P1ledger] reconciliation from s3-rundir/run-dudley/
+# run.log: an inserted cell 36(add=4) appears uniformly on all three BLOCK
+# legs (Jab 8->12, Strong 16->20, Fierce 21->25, +4 exact) and, with a
+# further re-route, on HIT Jab (8->16, +8: insert 36(4) + re-route
+# 48/60/66->120/144/150) and HIT Fierce (21->17, -4: insert 36(4) + re-route
+# into the SHORTER 168/192/198 chain, same one-mechanism re-route as F1).
+# All five FULL CONVERT (xfail removed): dudley-jetup-lp/mp/hp-block,
+# dudley-jetup-lp-hit, dudley-jetup-hp-hit. HIT Strong (dudley-jetup-mp-hit)
+# was already an exact arcade match, untouched (already asserted). This
+# retires the "irregular, does not match established shape-b/a1 dichotomy"
+# framing above for the five converted legs - the F3 mechanism explains the
+# per-strength/per-outcome sign variety exactly; the file header's own
+# per-strength table stands as the historical record of the pre-sweep
+# measurement (not rewritten).
+
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=12 is
+# the engine-truth credit actually accrued on the BLOCK path. SWEEP-2
+# (2026-07-10) FULL CONVERT, xfail REMOVED: F3 (§13.13:5179-5184) own-ledger
+# bar met - inserted cell 36(add=4) uniformly on all three BLOCK legs (own
+# ledger, s3-rundir/run-dudley/run.log), +4 exact vs arcade 8 (see file
+# header JET UPPERCUT FINDING block's 2026-07-10 SWEEP-2 DISPOSITION
+# addendum for the full per-strength table). R remains arcade-exact
+# (from-qjson, resolved 2026-07-08 by §13.5.1a).
+- label: dudley-jetup-lp-block
+  setup: { dist: close, dummy: stand }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LP 2; wait 1"
+  qjson: { name: "Jet Uppercut (Jab)" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: 12, R: from-qjson, adv: from-qjson }
+
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=20 is
+# the engine-truth credit actually accrued on the BLOCK path - same F3
+# inserted-cell-36(add=4) mechanism as dudley-jetup-lp-block, +4 exact vs
+# arcade 16. SWEEP-2 (2026-07-10) FULL CONVERT, xfail REMOVED. R remains
+# arcade-exact (from-qjson).
+- label: dudley-jetup-mp-block
+  setup: { dist: close, dummy: stand }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+MP 2; wait 1"
+  qjson: { name: "Jet Uppercut (Strong)" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: 20, R: from-qjson, adv: from-qjson }
+
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=25 is
+# the engine-truth credit actually accrued on the BLOCK path - same F3
+# inserted-cell-36(add=4) mechanism as dudley-jetup-lp-block, +4 exact vs
+# arcade 21. SWEEP-2 (2026-07-10) FULL CONVERT, xfail REMOVED. R remains
+# arcade-exact (from-qjson).
+- label: dudley-jetup-hp-block
+  setup: { dist: close, dummy: stand }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+HP 2; wait 1"
+  qjson: { name: "Jet Uppercut (Fierce)" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: 25, R: from-qjson, adv: from-qjson }
+
+# §13.10 HIT-R convention (adopted 2026-07-10, §13.10-compliance conversion,
+# F2b): R=19 is the engine-truth recovery actually played on the HIT path -
+# still well below the arcade/WHIFF figure of 29, the genuine Class 1
+# hit-branch reduction (WHIFF/BLOCK now read the arcade-exact 29 per the
+# 2026-07-08 §13.5.1a cut-gate fix). Arcade (whiff-canonical) R=29 - preserved
+# here per the convention.
+#
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=16 is
+# ALSO now the engine-truth value - SWEEP-2 (2026-07-10) FULL CONVERT, xfail
+# REMOVED. F3 own ledger (s3-rundir/run-dudley/run.log): +8 = insert cell
+# 36(add=4) + re-route 48/60/66->120/144/150 loop, vs arcade 8 (LARGER than
+# the BLOCK-side +4 for the same strength since the re-route also fires here -
+# see file header JET UPPERCUT FINDING block's SWEEP-2 DISPOSITION addendum).
+- label: dudley-jetup-lp-hit
+  setup: { dist: close, dummy: none }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LP 2; wait 1"
+  qjson: { name: "Jet Uppercut (Jab)" }
+  outcome: HIT
+  expect: { S: from-qjson, A: 16, R: 19 }
+
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): R=21 is
+# the engine-truth recovery actually played on the HIT path - §13.10 Class 1
+# hit-branch recovery chain ONLY (A itself is an EXACT match to arcade here,
+# 16=16, both with and without lever-F - the only clean A reading anywhere in
+# this move's BLOCK/HIT table, see file header); still well below the
+# arcade/WHIFF figure of 28, the genuine Class 1 hit-branch reduction (WHIFF/
+# BLOCK now read the arcade-exact 28 per the 2026-07-08 §13.5.1a cut-gate
+# fix), same as Machine Gun Blow Strong/Fierce above. Arcade (whiff-canonical)
+# R=28 - preserved here per the convention. A remains arcade-exact (from-qjson).
+- label: dudley-jetup-mp-hit
+  setup: { dist: close, dummy: none }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+MP 2; wait 1"
+  qjson: { name: "Jet Uppercut (Strong)" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: 21 }
+
+# §13.10 HIT-R convention (adopted 2026-07-10, §13.10-compliance conversion,
+# F2b): R=23 is the engine-truth recovery actually played on the HIT path -
+# still well below the arcade/WHIFF figure of 32, the genuine Class 1
+# hit-branch reduction (WHIFF/BLOCK now read the arcade-exact 32 per the
+# 2026-07-08 §13.5.1a cut-gate fix). Arcade (whiff-canonical) R=32 -
+# preserved here per the convention.
+#
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=17 is
+# ALSO now the engine-truth value - SWEEP-2 (2026-07-10) FULL CONVERT, xfail
+# REMOVED. F3 own ledger (s3-rundir/run-dudley/run.log): -4 = insert cell
+# 36(add=4) + re-route into the SHORTER 168/192/198 chain (the sign flips
+# here, unlike Jab's overcount, since the re-route lands on a shorter chain
+# for this strength/outcome), vs arcade 21 - same one-mechanism re-route as
+# the F1-direction Jab-hit finding; see file header JET UPPERCUT FINDING
+# block's SWEEP-2 DISPOSITION addendum.
+- label: dudley-jetup-hp-hit
+  setup: { dist: close, dummy: none }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+HP 2; wait 1"
+  qjson: { name: "Jet Uppercut (Fierce)" }
+  outcome: HIT
+  expect: { S: from-qjson, A: 17, R: 23 }
+
+# --- Throw (LP+LK) -----------------------------------------------------------
+# dudley.json's Throw_range field is 20px for both throw-family rows (see
+# file header naming note). ORDERING NOTE (§12.1 row 1 "predecessor-outcome
+# ordering" precedent, corpus-hugo.yaml:439-450): Throw is deliberately
+# placed LAST (immediately before the negative control) rather than in its
+# conventional position right after UOH - a connecting command-grab's
+# residual knockdown-recovery ticks corrupted the FOLLOWING entry's distance
+# teleport when Throw sat mid-corpus (verified live: the entry immediately
+# after it read a bled-over, mislabeled FINAL from Throw's own delayed
+# grab-check window, the exact g_cur.active-latch mechanism Phase 5 warns
+# about). Nothing distance-sensitive follows Throw now except the negative
+# control, which only checks for the ABSENCE of a FINAL and is unaffected.
+#
+# DISTANCE/TIMING NOTE: dist:20 (exactly Throw_range) and dist:18 both
+# proved unreliable in isolated probing (dist:18 produced NO-DATA; dist:20
+# connected but with a garbage `adv` reading) - dist:8 through dist:16 all
+# connected identically and cleanly. dist:12 is used below (consistent with
+# this repo's existing command-grab convention, corpus-makoto.yaml's
+# Karakusa / corpus-yun.yaml's Zenpou Tenshin). The HIT entry's own `wait`
+# was also widened from the 90-frame Makoto/Yun precedent to 110 frames:
+# an isolated probe measured this grab's own FINAL firing at raw_len=72
+# (T=72, one frame beyond Ken/Hugo's usual T=71 saturation ceiling) roughly
+# 250 frames after MOVE_START - with the default 150-frame
+# `inter_entry_wait`, a 90-frame post-press wait leaves only ~243 frames of
+# window, just short of the ~251 frames actually needed; 110 frames
+# comfortably covers it.
+
+- label: dudley-throw-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press LP+LK"
+  qjson: { name: "Neutral Throw" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: dudley-throw-hit
+  setup: { dist: 12, dummy: none }
+  input: "press LP+LK; wait 110"
+  qjson: { name: "Neutral Throw" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, kd: 1 }
+
+# --- Negative control (plan section 1.8 item 5 precedent) ------------------
+
+- label: dudley-jump-none
+  setup: { dist: 250, dummy: none }
+  input: "press UP"
+  outcome: NONE

@@ -28,13 +28,34 @@ typedef struct NetplayConfiguration {
 typedef struct TestRunnerConfiguration {
     bool enabled;
     const char* states_path;
+    /* Phase 1 Step H1 (docs/plan-frame-data-harness.md section 1.3):
+     * optional path to a line-oriented `.fdi` input script played back by
+     * src/test/input_script.c once training-mode gameplay has started.
+     * Mutually exclusive in practice with states_path (input_script takes
+     * priority in TestRunner_Prologue's PHASE_GAME branch when set). */
+    const char* input_script_path;
     const char* scene_preset;
     int characters[2];
     int super_arts[2];
     bool initial_super_full;
+    /* EX/Supers program Step 1 (docs/plan-frame-data-completion.md's
+     * exsuper plan): -1 (unset, the default) means "don't touch the
+     * training S.A.GAUGE menu cell" — zero gameplay behavior. 0-3 mirror
+     * the game's own training menu options (NORMAL/MAX START/INFINITY/
+     * MAXIMUM, `effe3.c:95-123`'s switch on `Training[*].contents[0][1][0]`)
+     * and are pinned every frame by apply_training_sa_gauge_overrides()
+     * in test_runner.c, alongside a forced init_E3_flag re-latch. */
+    int training_sa_gauge;
     int preserve_game_transition;
     int delay_gameplay_inputs_until_active;
     int stage;
+    /* Phase 1 Step H3 (docs/plan-frame-data-harness.md section 1.5): when
+     * true, the training-mode RNG reseed in game.c's Game01() zeroes
+     * Random_ix16/32/_ex via Setup_Net_Random_ix() instead of seeding
+     * Random_ix32/_ex from Interrupt_Timer, so two harness runs with the
+     * same input script produce byte-identical FINAL annotation
+     * sequences. Only takes effect in #if DEBUG builds. */
+    bool pin_rng;
 } TestRunnerConfiguration;
 
 #if ENABLE_PERF_TELEMETRY

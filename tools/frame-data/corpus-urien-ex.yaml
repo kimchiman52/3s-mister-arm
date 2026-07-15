@@ -1,0 +1,397 @@
+# Urien EX moves corpus — EX/Supers program, wave 4 fan-out (Ruling 5's
+# per-character EX satellite batches, <sp>/exsuper/authoring-policy.md).
+# Satellite corpus (auto-discovered by run-suite.sh's corpus-*.yaml glob, own
+# golden/urien-ex.tsv) — the main corpus-urien.yaml is untouched.
+#
+# Oracle: docs/arcade-frame-data/urien.json (md5
+# 5feea97b78d5c40f4af226bbb0bab288, same file corpus-urien.yaml already pins
+# — re-verified unchanged this session).
+#
+# Scope: Urien's 4 EX rows per <sp>/exsuper/step0-universe.tsv (indices 28/30/
+# 34/38), all ASSERTABLE: Metallic Sphere (EX), Violence Knee Drop (EX),
+# Chariot rush (EX), Headbutt (EX). Urien's SA rows (Tyrant Punish/Temporal
+# Thunder/Aegis Reflector/Aegis Reflector (EX)) are out of scope for this
+# EX-first satellite (supers land in their own later wave per Ruling 5).
+#
+# Motion recipes (Phase 5 motion-probe method, reusing corpus-urien.yaml's own
+# established base-move recipes verbatim, hand-expanded into `hold` primitives
+# to chord the final step with two same-type buttons — the `motion` macro
+# cannot itself chord two buttons, `compile_corpus.py` cmd_motion arms take a
+# single button token):
+#   - Metallic Sphere (EX): qcf shape (corpus-urien.yaml's own base move uses
+#     `motion qcf <btn>`), hand-expanded, final step chorded LP+HP (punch
+#     move, same convention as every other EX fireball in this program —
+#     Ryu EX Hadouken / Chun-Li EX Kikkoken):
+#     `hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LP+HP 2; wait 1`
+#   - Violence Knee Drop (EX): charge-down-then-up shape (corpus-urien.yaml's
+#     own base move uses `motion charge-down 60 then-up <btn>`), hand-
+#     expanded (charge-down's macro arm takes a single button;
+#     CHARGE_SNAP_FRAMES=2), final step chorded LK+HK (kick move):
+#     `hold DOWN 60; hold UP+LK+HK 2; wait 1`
+#   - Chariot rush (EX): charge-back-then-forward shape (corpus-urien.yaml's
+#     own base move uses `motion charge-back 60 then-forward <btn>`), hand-
+#     expanded (BACK/FORWARD are internal aliases for LEFT/RIGHT —
+#     `bits_for_token` only recognizes the literal direction tokens, not the
+#     FORWARD/BACK Python constants), final step chorded LK+HK:
+#     `hold LEFT 60; hold RIGHT+LK+HK 2; wait 1`
+#   - Headbutt (EX): charge-down-then-up shape (corpus-urien.yaml's own base
+#     move uses `motion charge-down 60 then-up <btn>`), hand-expanded, final
+#     step chorded LP+HP:
+#     `hold DOWN 60; hold UP+LP+HP 2; wait 1`
+# All four landed the correct EX move on the FIRST probe attempt (S-value
+# match against urien.json's EX rows: S=14/26/6/9 respectively, exact) — no
+# disambiguation needed. No air-input recipe needed (none of Urien's 4 EX
+# rows are air variants per step0-universe.tsv).
+#
+# sa_gauge: 3 (MAXIMUM, per authoring-policy.md's meter policy — EX moves are
+# meter-metered, 1 stock/activation; training mode's default starting gauge
+# is not guaranteed full/nonzero, the Ryu EX pilot's own load-bearing
+# finding).
+#
+# inter_entry_wait: 250 (matching the wave-2/3 settled value) — confirmed
+# clean single-FINAL integrity across the whole authoring probe (12
+# MOVE_START/FINAL annotation pairs, cleanly alternating, zero merges,
+# `<sp>/ex-urien/run-probe1/trace.log`).
+#
+# ORDERING NOTE (§12.1 row 2 "teleport clamps / momentum bleed after
+# connecting dash specials" precedent — corpus-urien.yaml's own Chariot rush
+# section already documents this trap for the SAME move family): Chariot
+# rush (EX) is a genuinely screen-crossing dash special (measured
+# distance-INDEPENDENT contact, see below) that leaves a momentum residue
+# corrupting the NEXT entry's distance-sensitive teleport if that entry
+# follows it directly. Discovered live this session: in the first authoring
+# probe (order msphere/vkd/chariot/headbutt, WHIFF-block-then-BLOCK/HIT-
+# sections layout), Headbutt (EX)'s WHIFF entry — placed immediately after
+# Chariot rush (EX)'s own WHIFF-shaped (but actually-connecting) entry —
+# measured a severely short achieved MOVE_START `dist` (106/136/105 px
+# against requested 250/300/310, three separate probe runs, all corrupted)
+# and read a false "SPECIALS-REACHABILITY GAP" (outcome=HIT). An ISOLATED
+# single-entry re-verification (Phase 5 "known traps" discipline — nothing
+# precedes the entry) at both dist:250 and dist:310/centered measured a
+# clean achieved dist (250/303 respectively, matching the request) and a
+# genuine WHIFF: S=9 A=4 R=12, reproducible identically at both distances
+# and both isolated re-runs. Headbutt (EX)'s WHIFF is therefore REACHABLE —
+# the "unreachable" reading was a harness ordering artifact, not a move-reach
+# fact. Fix: place Headbutt (EX)'s WHIFF entry FIRST in this corpus (nothing
+# precedes it) and keep every connecting-dash entry (Chariot rush (EX)
+# BLOCK/HIT) ordered so nothing distance-sensitive follows it — the
+# remaining entries below are all dist:close BLOCK/HIT pairs (already
+# empirically verified immune to this residue in the same tested order:
+# Metallic Sphere -> Violence Knee Drop -> Chariot rush -> Headbutt,
+# reproducing corpus-urien.yaml's own section order for these four moves).
+#
+# WHIFF-UNREACHABLE (3 of 4 moves; Ruling 1, honest structural bound, not a
+# probe gap — each confirmed at THREE distances: dist:250 anchored, dist:300
+# anchored (DIST_MAX), and dist:310 dist_mode:centered (CENTERED_DIST_MAX,
+# the true measured ceiling), <sp>/ex-urien/run-probe1/run-probe2/run-probe3):
+#   - Metallic Sphere (EX): connects (outcome=HIT) identically at all three
+#     distances (S=14, R=55 exact match to the oracle's own row even in this
+#     "wrong shape" HIT read at every distance) — the SAME
+#     SPECIALS-REACHABILITY GAP shape corpus-urien.yaml's own base Metallic
+#     Sphere (Jab) already documents (a projectile that reaches the full
+#     scriptable range and still connects). Achieved MOVE_START dist=303 at
+#     the 310-centered attempt (7px walk-in, negligible — a projectile-reach
+#     fact, not a placement issue). Coverage comes from the BLOCK/HIT legs
+#     below (both fully oracle-exact), per Ruling 1.
+#   - Violence Knee Drop (EX): connects identically at all three distances
+#     (S=26, A=3, R=29 — bit-identical across dist:250/300/310-centered,
+#     `<sp>/ex-urien/run-probe1/2/3/trace.log`). Achieved MOVE_START
+#     dist=306 at the 310-centered attempt (4px walk-in, negligible — the
+#     charge-down shape has no horizontal component). Coverage comes from
+#     the BLOCK/HIT legs below, per Ruling 1.
+#   - Chariot rush (EX): connects identically at all three distances (S=6,
+#     A=27, R=19 for the HIT-shaped read — bit-identical across
+#     dist:250/300/310-centered). Achieved MOVE_START dist=316 at the
+#     310-centered attempt — ABOVE the requested 310 (the 60-frame
+#     charge-back hold walks P1 AWAY from the dummy, growing the separation,
+#     the opposite direction from a walk-in) — and the dash STILL connects
+#     at 316px, confirming this is a genuine screen-crossing reach fact, not
+#     a harness placement shortfall. A dedicated far-distance re-probe
+#     (dist:250, standing/none dummy, `<sp>/ex-urien/run-probe2.yaml`)
+#     independently confirms A/R are IDENTICAL at close and far contact
+#     (A=27 both; BLOCK R=28 both; HIT R=19 both) — this move's #17-family A
+#     finding (see below) is distance-INDEPENDENT, unlike the base move's own
+#     distance-DEPENDENT Chariot rush (RH) shape. Coverage comes from the
+#     BLOCK/HIT legs below, per Ruling 1.
+#
+# ISSUE #17 FAMILY CENSUS (per runbook Phase 6 / CORPUS-AUTHORING.md item 6
+# instruction). No lever-F scratch-build test was run this session
+# (budget-bounded) — both A-undercounts below are cited by DIRECT ANALOGY to
+# this exact move family's own already-lever-F-tested-and-converted §13.13
+# entries in corpus-urien.yaml (same qualitative signature: uniform,
+# BLOCK==HIT-identical undercount, same direction as every established
+# shape-(a1) member), same citation discipline as corpus-dudley-ex.yaml's
+# Machine Gun Blow (EX) treatment ("cited by direct analogy... not
+# re-lever-F-tested for the EX strength specifically this session
+# (budget-bounded)").
+#   - Violence Knee Drop (EX): A=3 vs oracle 5 (-2), identical on BLOCK and
+#     HIT (juggle check PASSES). corpus-urien.yaml's own Violence Knee Drop
+#     already ships this exact shape at a different magnitude (A=4 vs
+#     oracle 12, -8, lever-F-tested UNCHANGED, §13.13-converted) — same
+#     move, same direction, smaller EX-specific deficit. Cited by analogy;
+#     asserts the measured A=3 citing §13.13.
+#   - Chariot rush (EX): A=27 vs oracle 34 (-7), identical on BLOCK and HIT
+#     (juggle check PASSES), and — per the WHIFF-UNREACHABLE note above —
+#     confirmed distance-INDEPENDENT this session (unlike the base move's
+#     own Chariot rush (RH), whose #17 shape is distance-DEPENDENT: A=6
+#     close vs A=15 exact far). This is a qualitatively different variant of
+#     the same family (uniform vs. distance-gated), so the analogy is to the
+#     family's DIRECTION (undercount, both-outcome-identical) rather than an
+#     exact reproduction of RH's own mechanism — flagged here for a future
+#     ledger trace if a stricter citation bar is ever wanted, but treated as
+#     an established-family member for this batch per the same-move
+#     same-direction bar Dudley-ex's precedent set. Asserts the measured
+#     A=27 citing §13.13.
+#   - Metallic Sphere (EX) / Headbutt (EX): no #17-family divergence — A is
+#     non-numeric in the oracle for Metallic Sphere (no assert either way);
+#     Headbutt (EX)'s A is fully oracle-exact on every leg (see below).
+#
+# §13.17 RE-ANCHOR-1 CITATION (by analogy — the SAME exact -3 magnitude as
+# an already-established member of this move family): Headbutt (EX)'s WHIFF
+# leg measures R=12 vs oracle 15 (-3). corpus-urien.yaml's own three base
+# Headbutt strengths (Jab/Strong/Fierce) already ship this EXACT -3
+# magnitude as a plain-PASS literal citing "§13.17 RE-ANCHOR-1" (Session-4/5
+# arcade-hardware busy-edge capture: the move accepts a new input exactly 3
+# ticks before the oracle's own whiff-actionable point, the same rno3==3
+# residue signature as ibuki-twdsforward/-twdsroundhouse-whiff) — R=16/15/16
+# vs oracle 19/18/19, all -3. Headbutt (EX) reproduces the identical -3
+# offset (oracle 15 -> measured 12), same move, same mechanism family, not
+# independently re-captured on arcade hardware this session (budget-bounded)
+# but cited by direct analogy per the same discipline used above for the
+# #17-family entries. R asserts the literal 12 (not `from-qjson`, not
+# `xfail` — plain PASS per the convention's own treatment of this move
+# family). Headbutt (EX)'s BLOCK/HIT legs are UNAFFECTED (R=15, exactly
+# matching the oracle on both contact legs, same as the base move's own
+# BLOCK/HIT legs — RE-ANCHOR-1 never touches contact-leg R, zero contact
+# drift, matching corpus-urien.yaml's own citation).
+#
+# Admissibility census (per-entry, mechanical, from FRAME_TRACE columns —
+# authoring-policy.md Ruling 2), all 9 shipped entries below:
+#   (1) Single-FINAL integrity: 12 MOVE_START/FINAL annotation pairs,
+#       cleanly alternating, zero merges, in the main authoring probe
+#       (`<sp>/ex-urien/run-probe1/trace.log`); the Headbutt (EX) WHIFF
+#       entry was additionally re-verified in TWO separate isolated
+#       single-entry corpora (dist:310-centered and dist:250, each its own
+#       1-pair trace) per the ORDERING NOTE above.
+#   (2) Flash-overlap census (sastop gate): 0 nonzero `sastop` ticks across
+#       EVERY data row of EVERY probe run this session (probe1: 1036 rows,
+#       probe2: 528, probe3: 404, probe4: 374 — mechanical `awk` census over
+#       the full trace each time, not sampled) — EX moves are flash-free,
+#       confirmed, not assumed.
+#   (3) Contact-A juggle check (HIT-leg A admissible only if it equals the
+#       BLOCK-leg's displayed A): Violence Knee Drop (EX) PASSES (BLOCK A=3
+#       == HIT A=3). Chariot rush (EX) PASSES (BLOCK A=27 == HIT A=27).
+#       Headbutt (EX) PASSES (BLOCK A=4 == HIT A=4, both also oracle-exact).
+#       Metallic Sphere (EX) has no oracle A field to gate on (non-numeric).
+#   (4) Shape record (diagnostic only): all four moves are single-run on
+#       every leg (box_runs=1). Metallic Sphere (EX) is the only proj=1
+#       entry (proj_a=6, proj_spawn_raw=14 — the projectile arcade-split,
+#       ENGINE-4/lever-J, routes correctly for this move, same as the base
+#       move's own three strengths); the other three moves are proj=0
+#       (ordinary attacker-hitbox strikes), none reproduce the Ruling-3
+#       genuinely-multi-run shape seen on Ken/Ryu's own EX Tatsumaki.
+#
+# Result: 9 entries shipped (1 WHIFF + 4 BLOCK/HIT pairs), all PASS. 2
+# quarantined R fields (program QUARANTINE #5 and #6 — Ken SA3 BLOCK R+10 is
+# #1, Ryu EX Tatsumaki BLOCK/HIT R is #2, Dudley EX Jet Uppercut BLOCK R is
+# #3, Dudley EX Machine Gun Blow BLOCK+HIT R is #4), both R-only, both
+# omitted rather than xfailed per the plan's PER-MOVE QUARANTINE rule (2
+# quarantines this batch, well under the 3-same-shape STOP threshold — and
+# the two are different moves with different signs/magnitudes, not a
+# repeating shape). 3 WHIFF-UNREACHABLE moves (Metallic Sphere, Violence
+# Knee Drop, Chariot rush) — Headbutt is the only move with a shipped WHIFF
+# leg, landed only after an ordering-artifact correction (see ORDERING NOTE).
+character: urien
+oracle: urien.json
+inter_entry_wait: 250
+sa_gauge: 3
+entries:
+
+# --- Headbutt (EX) WHIFF — placed FIRST, see ORDERING NOTE above -----------
+# Census: single-FINAL (isolated re-verify ×2), sastop=0, box_runs=1, proj=0.
+
+- label: urien-exheadbutt-whiff
+  setup: { dist: 250, dummy: none }
+  input: "hold DOWN 60; hold UP+LP+HP 2; wait 1"
+  qjson: { name: "Headbutt (EX)" }
+  outcome: WHIFF
+  # Measured S=9 A=4 R=12 — S/A oracle-exact (urien.json Headbutt (EX):
+  # Startup=9, Hit=4). R=12 vs oracle 15 (-3) asserts the measured literal
+  # citing §13.17 RE-ANCHOR-1 by analogy (see file header) — the identical
+  # -3 magnitude corpus-urien.yaml's own three base Headbutt strengths
+  # already ship as a plain PASS. Reproduced byte-identical across two
+  # isolated re-runs (dist:310-centered and dist:250) and this in-corpus
+  # placement.
+  expect: { S: from-qjson, A: from-qjson, R: 12 }
+
+# --- Metallic Sphere (EX) BLOCK/HIT — qcf-shape, single-run, no flash ------
+# Census: single-FINAL, sastop=0, box_runs=1, proj=1 (proj-split lever-J
+# routing confirmed correct, same as this move's three base strengths).
+# WHIFF-UNREACHABLE(dist=310 centered achieved, 303px, 7px walk-in) — see
+# file header. Fully oracle-exact on both contact legs, no divergence.
+
+- label: urien-exmsphere-block
+  setup: { dist: close, dummy: stand }
+  input: "hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LP+HP 2; wait 1"
+  qjson: { name: "Metallic Sphere (EX)" }
+  outcome: BLOCK
+  # Measured S=14 R=55 adv=-16 — all three asserted fields oracle-exact
+  # (urien.json Metallic Sphere (EX): Startup=14, Recovery=55,
+  # Block_advantage=-16). No expect.A (Hit_advantage/Hit field is the
+  # literal string "-" for this move, same as its three base strengths).
+  expect: { S: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: urien-exmsphere-hit
+  setup: { dist: close, dummy: none }
+  input: "hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LP+HP 2; wait 1"
+  qjson: { name: "Metallic Sphere (EX)" }
+  outcome: HIT
+  # Measured S=14 R=55 — both oracle-exact. No expect.A (non-numeric).
+  expect: { S: from-qjson, R: from-qjson }
+
+# --- Violence Knee Drop (EX) BLOCK/HIT — charge-down-then-up, single-run,
+# no flash -------------------------------------------------------------------
+# Census: single-FINAL, sastop=0, box_runs=1, proj=0 (both legs).
+# WHIFF-UNREACHABLE(dist=310 centered achieved, 306px, 4px walk-in) — see
+# file header.
+
+# §13.13 (a1)-by-analogy (see file header ISSUE #17 FAMILY CENSUS): A=3 is
+# the engine-truth credit actually accrued on the BLOCK path (measured
+# identically on HIT — juggle check passes). Arcade (whiff-canonical,
+# from-qjson) A=5 preserved here per the convention, cited by direct analogy
+# to this exact move's own already-converted base-strength entry (a
+# different magnitude, same direction/shape, not independently
+# lever-F-tested this session). adv is oracle-exact (-14).
+#
+# RESOLVED (EX-CONTACT-R disposition, exsuper/excontact-r-findings.md §3
+# item 7 / §1.6 / M2 surplus-by-inheritance): R measured 29 vs oracle 7
+# (+22 surplus), IDENTICAL on BLOCK and HIT. Isolated no-build re-run
+# (2026-07-12, current binary; rundir preserved) recorded the EX move's own
+# per-tick recovery-branch chain (P1 cgix/cghi): BLOCK and HIT are
+# BYTE-IDENTICAL through the entire chain (8/87(3) 12/88(3) 16/89(2)
+# 20/89(2) 24/89(2) 28/89(2) 32/89(2) 36/89(2) 40/89(2) 44/89(2) 48/89(1)
+# 52/89(1) 56/89(1) 60/90(1) 68/91(10) 76/90(2) 88/92(17) 96/93(3) 100/93(3)
+# 104/94(2) 108/141(3) 112/142(3) 116/142(8), then reset 0/1(3) 4/1(3)
+# 8/1(1)) — matching the base move's own already-TRACE-PROVEN mechanism
+# exactly (`docs/frame-data-synthesis.md` §12.2.2 SWEEP-2 update): "a 25-
+# tick parallel recovery branch verified raw ... byte-identical to the
+# BLOCK leg, absent from WHIFF" — the EX signature (identical-both-legs
+# surplus, adv exact, WHIFF-unreachable) matches; magnitude differs only by
+# branch content (+22 vs +25), exactly what the mechanism predicts varies
+# per chart. Bucket 7's own-recorded-signature bar ("own recorded
+# skip/branch signature") is now met from this move's own trace. R=29
+# converts on both legs (arcade 7 whiff-canonical, quoted below).
+- label: urien-exvkd-block
+  setup: { dist: close, dummy: stand }
+  input: "hold DOWN 60; hold UP+LK+HK 2; wait 1"
+  qjson: { name: "Violence Knee Drop (EX)" }
+  outcome: BLOCK
+  # R=29 asserted (arcade 7; +22 = identical-both-legs parallel recovery
+  # branch, F2 R-corollary by inheritance from the base move — see comment
+  # above).
+  expect: { S: from-qjson, A: 3, R: 29, adv: from-qjson }
+
+- label: urien-exvkd-hit
+  setup: { dist: close, dummy: none }
+  input: "hold DOWN 60; hold UP+LK+HK 2; wait 1"
+  qjson: { name: "Violence Knee Drop (EX)" }
+  outcome: HIT
+  # HIT-leg A juggle check PASSES (3 == BLOCK's 3) — admissible per Ruling 2
+  # check 3. R=29 asserted — same branch chain as BLOCK, byte-identical
+  # (see comment above; arcade 7).
+  expect: { S: from-qjson, A: 3, R: 29 }
+
+# --- Chariot rush (EX) BLOCK/HIT — charge-back-then-forward, single-run,
+# no flash --------------------------------------------------------------------
+# Census: single-FINAL, sastop=0, box_runs=1, proj=0 (both legs).
+# WHIFF-UNREACHABLE(dist=310 centered achieved, 316px — a walk-AWAY past the
+# request, not a walk-in; the dash still connects even there) — see file
+# header. A/R independently re-confirmed distance-INDEPENDENT via a
+# dedicated far-distance probe (dist:250 standing/none dummy) — identical
+# A=27 both distances, identical R=28(BLOCK)/19(HIT) both distances.
+
+# §13.13 (a1)-by-analogy (see file header ISSUE #17 FAMILY CENSUS): A=27 is
+# the engine-truth credit actually accrued on the BLOCK path (measured
+# identically on HIT and at both close and far contact distances — juggle
+# check passes, distance-independence confirmed). Arcade (whiff-canonical,
+# from-qjson) A=34 preserved here per the convention, cited by analogy to
+# this move's own already-converted base-strength (RH) entry's #17
+# direction — flagged as a distance-INDEPENDENT variant of that
+# distance-DEPENDENT mechanism (a qualitative difference, not re-ledger-
+# traced this session, budget-bounded). adv is oracle-exact (-9).
+#
+# RESOLVED (EX-CONTACT-R disposition, exsuper/excontact-r-findings.md §3
+# item 8 / §1.7 / M2 deficit, outcome-split branches): R measured 28
+# (BLOCK, oracle 39, -11) and 19 (HIT, oracle 39, -20) — non-identical
+# between legs. Isolated no-build re-run (2026-07-12, current binary;
+# rundir preserved) recorded the EX move's own per-tick recovery chain (P1
+# cgix/cghi, run-length): both legs are IDENTICAL through 8/136(2) 12/124(2)
+# 16/124(2) 20/125(4) 24/125(8) 28/126(5) 32/126(6) 36/126(5) (34 shared
+# ticks, same cghi label sequence 136/124/125/126), then BLOCK branches to
+# 124/124(10) 128/124(4) 132/127(4) 136/127(9) 140/127(4) 144/127(3) while
+# HIT branches to 96/124(10) 100/124(3) 104/127(3) 108/127(4) 112/127(2)
+# 116/127(2) — same cghi label sequence (124, then 127) on both legs, but
+# BLOCK enters the post-shared chain at cgix=124 and HIT enters at cgix=96,
+# a recorded same-tick outcome-split branch entry — the §12.2.2-deficit
+# "guard and hit branch to different cells" shape (same signature class as
+# `dudley-exmgb-hit`/`ibuki-exkazekiri-hit` above), confirmed from this
+# move's own trace rather than by base-family analogy alone. A already
+# converts §13.13 (a1)-by-analogy (base family precedent; base Chariot
+# family has converted members on both R signs). Measured R reproduces the
+# shipped values exactly (28/19) — R converts on both legs.
+- label: urien-exchariot-block
+  setup: { dist: close, dummy: stand }
+  input: "hold LEFT 60; hold RIGHT+LK+HK 2; wait 1"
+  qjson: { name: "Chariot rush (EX)" }
+  outcome: BLOCK
+  # R=28 asserted (arcade 39; -11 = outcome-split branch entry, §12.2.2-
+  # deficit shape — see comment above).
+  expect: { S: from-qjson, A: 27, R: 28, adv: from-qjson }
+
+- label: urien-exchariot-hit
+  setup: { dist: close, dummy: none }
+  input: "hold LEFT 60; hold RIGHT+LK+HK 2; wait 1"
+  qjson: { name: "Chariot rush (EX)" }
+  outcome: HIT
+  # HIT-leg A juggle check PASSES (27 == BLOCK's 27) — admissible per Ruling
+  # 2 check 3. R=19 asserted (arcade 39; -20, same outcome-split branch
+  # family as BLOCK — see comment above).
+  expect: { S: from-qjson, A: 27, R: 19 }
+
+# --- Headbutt (EX) BLOCK/HIT — charge-down-then-up, single-run, no flash --
+# Census: single-FINAL, sastop=0, box_runs=1, proj=0 (both legs). Used to
+# be fully oracle-exact on every asserted field — no #17-family
+# divergence, unlike Violence Knee Drop (EX)/Chariot rush (EX) above
+# (same as the base move's own BLOCK/HIT legs, which are also fully
+# clean). Only the WHIFF leg (see the very first entry in this file)
+# used to carry the §13.17 RE-ANCHOR-1 citation.
+# CONVERTED 2026-07-13 (CONTACT-2 §8.3.7, lever R): these were the ONE
+# pre-registered blocker in the design — a currently-PASS oracle-exact R
+# that only an unproven whiff-family analogy (not a capture) predicted
+# would move 15->12. Arcade Session 10 (`<sp>/zero/arcade-s10/
+# session-report.md`) resolved it: both legs captured on real hardware
+# (2 reps byte-identical each, actionability-probe-confirmed) measure
+# R=12, Branch A — matching lever R's busy-edge prediction and the same
+# -3 offset already established for base Headbutt (Session 6/TRACK-A)
+# and this move's own WHIFF leg (also newly hardware-confirmed at R=12
+# this same session). R converts from `from-qjson`/15 to the literal 12
+# with this citation; rows stay PASS.
+
+- label: urien-exheadbutt-block
+  setup: { dist: close, dummy: stand }
+  input: "hold DOWN 60; hold UP+LP+HP 2; wait 1"
+  qjson: { name: "Headbutt (EX)" }
+  outcome: BLOCK
+  # Measured S=9 A=4 R=12 adv=-1 — S/A/adv oracle-exact (urien.json
+  # Headbutt (EX): Startup=9, Hit=4, Block_advantage=-1); R is the
+  # arcade-captured contact value (session 10), not the stale oracle 15.
+  expect: { S: from-qjson, A: from-qjson, R: 12, adv: from-qjson }
+
+- label: urien-exheadbutt-hit
+  setup: { dist: close, dummy: none }
+  input: "hold DOWN 60; hold UP+LP+HP 2; wait 1"
+  qjson: { name: "Headbutt (EX)" }
+  outcome: HIT
+  # Measured S=9 A=4 R=12 — S/A oracle-exact; R is the arcade-captured
+  # contact value (session 10), not the stale oracle 15.
+  expect: { S: from-qjson, A: from-qjson, R: 12 }

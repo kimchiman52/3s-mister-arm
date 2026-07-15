@@ -1,0 +1,797 @@
+# Ken frame-data corpus (Step 11, docs/plan-frame-data-completion.md Part C).
+# Generated/consumed by tools/frame-data/compile_corpus.py against
+# docs/arcade-frame-data/ken.json (fetched 2026-07-08 from
+# https://raw.githubusercontent.com/Coccis77/thirdstrikedatabot/master/json/ken.json,
+# md5 c2776abd0d106d7949db64d3cec62d7a).
+#
+# Scope (plan Step 11): normals ladder (six-button close BLOCK/HIT + WHIFF
+# sample + crouching + command normals) + UOH + Throw + Hadouken BLOCK/HIT
+# x3 strengths (exercises lever D's arcade-split machinery on a second
+# character, zero compiler work - motion qcf already lands it) + Shoryuken
+# + Tatsumaki Senpuu Kyaku (both probed and landed with EXISTING primitives,
+# see the "Shoryuken/Tatsu probe" section below - zero compile_corpus.py
+# changes) + negative control. NO supers/EX (Step 13's charter).
+#
+# Every expect below was pinned against a live trace, most in ISOLATED
+# single-entry re-verification corpora per the runbook's Phase 5 "known
+# traps" discipline (a stuck/late-finalizing move silently misattributes
+# its FINAL to whatever SCRIPT label is current when it eventually fires -
+# same Hugo label-bleed lesson). Two entries in this file were caught by
+# exactly that trap during authoring and had to be re-measured in isolation
+# before being trusted: ken-throw-hit (multi-entry batch read "no data" at
+# setup.dist:close/56 - outside Ken's own ken.json Throw_range=24 - fixed by
+# using dist:24, matching corpus-ryu.yaml's ryu-throw-hit precedent exactly)
+# and ken-had-lp-block (multi-entry batch showed a bogus outcome=HIT
+# S=2 A=1 R=68 reading - actually the PRECEDING throw-hit's belated FINAL
+# bleeding into this window, proven by the S=2/A=1/R=68/kd=1/endrel=1
+# signature matching Neutral Throw's Class-3 saturation formula exactly;
+# re-verified in isolation to get the true Hadouken numbers).
+#
+# ============================================================================
+# ISSUE #17 FAMILY CENSUS (re-checked per the runbook's item 6 instruction).
+# Per the 2026-07-07 lever-F declared-truth restore (docs/frame-data-
+# synthesis.md §13.11), Ken shows ZERO shape-(b) (same-jatix same-tick
+# revoke, now-restored) undercounts - every A-divergence found here was
+# lever-F-tested (fd_restore_revoked_declared_credit forced to 0 on a
+# scratch build, reverted via git checkout before this commit, same-binary
+# protocol) and confirmed UNCHANGED by the mutation, meaning no revoke fired
+# for any of them - i.e. no lever-F regression signal. Three are classified
+# shape (a1) skip-jump (existing family, unrecoverable):
+#   - ken-far-strong-block: cgix jumps 8->20 same tick (GT step), skipping
+#     the intermediate declared cell(s); measured A=1 vs arcade 3; S/R/adv
+#     exact. Lever-F test: A=1 unchanged with the restore disabled.
+#   - ken-roundhouse-block/-hit: cgix jumps 24->36 same tick (12-unit skip);
+#     measured A=3 vs arcade 6 on BOTH block and hit (consistent, unlike the
+#     Forward finding below). Lever-F test: A=3 unchanged.
+#   - ken-crforward-block: cgix jumps 8->24 same tick (16-unit skip, the
+#     largest observed for Ken); measured A=1 vs arcade 5. Lever-F test:
+#     A=1 unchanged.
+#
+# TWO GENUINELY NEW #17-FAMILY VARIANTS (do not fit any of the five Phase-6
+# decision-tree buckets - flagged here for orchestrator/user review, per
+# the "if a divergence doesn't fit any of the five buckets... plausibly a
+# genuinely new finding" instruction. NEITHER is a whiff divergence
+# (WHIFF matches ken.json exactly for both moves, ruling out Phase 4's STOP
+# condition) and NEITHER is shape-(b)-looking (both lever-F-independent
+# where tested), so neither trips a hard STOP - but both are new shapes not
+# previously seen on Ryu/Hugo and are surfaced here rather than silently
+# bucketed):
+#   - ken-forward-block/-hit: UNCLASSIFIED (flagged 2026-07-08, needs
+#     follow-up classification) - an A-OVERCOUNT (the mirror of every
+#     previously known #17 member, which all undercount). Measured BLOCK
+#     A=10 vs arcade 7 (+3); HIT A=8 vs arcade 7 (+1) - NOT the same value
+#     between block/hit, unlike every other #17 member in this repo
+#     (Ryu/Hugo's members always show an IDENTICAL wrong A regardless of
+#     outcome). P2.dcnt/dstop show only one hitstun/blockstun pulse (a
+#     single countdown -9..0, never resetting), ruling out a genuine
+#     multi-hit move. S/R/adv exact on both outcomes; WHIFF (ken-mk-whiff)
+#     is exact (A=7), confirming contact-specificity. TRACE OBSERVATION
+#     ONLY, mechanism not established: a same-tick cg_ix jump at the
+#     contact tick (16->32) is present, but a skip-jump of this shape LOSES
+#     declared credit and cannot itself produce an overcount - citing it as
+#     the cause would be sign-incoherent with the observed +A, so it is
+#     recorded here as a bare trace fact, not a mechanism. Candidate
+#     mechanisms are HYPOTHESES ONLY, neither verified: (1) double-crediting
+#     via a re-entered cell (the same declared cell counted twice rather
+#     than skipped), or (2) a §13.11-style declared-vs-visible difference on
+#     the contact path, inverted relative to the usual undercount direction.
+#     Flagged to orchestrator for follow-up classification.
+#   - ken-twdshk-block: UNCLASSIFIED (flagged 2026-07-08, needs follow-up
+#     classification) - an R-side DEFICIT on the command normal Towards
+#     Roundhouse (measured R=14 vs arcade table/WHIFF-confirmed R=18, a
+#     4-frame shortfall) with S/A/adv all exact. WHIFF (ken-twdshk-whiff) is
+#     exact (R=18), confirming contact-specificity and ruling out Phase 4's
+#     whiff-divergence STOP. TRACE OBSERVATION: a large same-tick cg_ix jump
+#     (12->56, 44 units) at the CONTACT tick (does not affect A here) plus a
+#     SECOND same-tick jump deep in the RECOVERY portion (76->104, 28 units)
+#     with no further contact - the second jump correlates with the 4-tick
+#     shortfall vs the arcade-implied length. Mechanism not established -
+#     HYPOTHESES ONLY: (1) this mirrors shape (a1)'s skip-jump mechanism
+#     (declared cells never dispatched) but landing on a RECOVERY-only cell
+#     instead of an active cell, manifesting as R instead of A; or (2) an
+#     inverse-sign kinship to the Hugo Roundhouse landing-clocked family
+#     (synthesis §13.11 Hugo addendum, which reads R high rather than low) -
+#     here reading low instead. Neither hypothesis confirmed; flagged to
+#     orchestrator for follow-up classification.
+#
+# BOTH FINDINGS CLASSIFIED 2026-07-09 (classification sweep, per-tick +
+# credit-ledger traces on both moves; docs/frame-data-synthesis.md §12.2):
+#   - ken-forward-block/-hit = §12.2.3 "contact-branch declared-credit
+#     A-overcount", MECHANISM ESTABLISHED on this very move: the same-tick
+#     contact advance re-routes the chart onto an outcome-specific branch
+#     containing EXTRA declared-active cells. Ledger: whiff 20(add=4) ->
+#     44(add=3) = 7 exact; BLOCK banks 20's 4 then branches through
+#     32(add=2) -> 36(add=1) -> 44(add=3) = 10; HIT branches through
+#     36(add=1) only = 8. The block-vs-hit different wrong values = guard
+#     and hit branch to DIFFERENT cells. Sign-coherent with #17 after all:
+#     (a1) branches skip declared-active cells (undercount), this branch
+#     inserts them (overcount).
+#   - ken-twdshk-block = §12.2.2 / §13.10 Class 1 generalized-to-contact,
+#     MECHANISM ESTABLISHED on this very move: the 76->104 recovery jump is
+#     a parallel, genuinely SHORTER contact-recovery branch (whiff chain
+#     84(3)/88(4)/92(5)/96(5) = 17 declared ticks + 1 terminal-cell tick =
+#     R=18; block chain 104(2)/108(3)/112(4)/116(4) = 13 + the same
+#     terminal tick = R=14; deficit -4 = the branch-length differential
+#     exactly). Measured
+#     adv=-1 = arcade exact - the arcade's live-measured advantage embeds
+#     the shorter contact recovery while its R column is whiff-canonical,
+#     which is precisely §13.10 Class 1's posture (chunli-crfierce
+#     precedent). Entries below re-cited; still xfail, arcade whiff-
+#     canonical R stays in expect.
+#   UPDATE (2026-07-10, §13.13): ken-twdshk-block converts to a plain PASS
+#   asserting the measured R=14, citing §13.13 (see the entry's own
+#   comment) - the "still xfail" sentence above is superseded.
+# ============================================================================
+#
+# SHORYUKEN/TATSU PROBE (budget: one session, per the plan's Step 11 scope).
+# Both moves were landed with ALREADY-EXPRESSIBLE primitives - zero
+# compile_corpus.py changes:
+#   - Shoryuken: a DP-shape hold-chain (forward, down, down-forward + P),
+#     the exact same recipe corpus-hugo.yaml used for Shootdown Backbreaker
+#     ("hold RIGHT N; hold DOWN N; hold DOWN+RIGHT N; hold RIGHT+<btn> N").
+#     S/A match Shoryuken Jab's ken.json row EXACTLY (Startup=2, Hit=8) on
+#     WHIFF, BLOCK, and HIT alike - unambiguous move identification.
+#   - Tatsumaki Senpuu Kyaku: the EXISTING `motion qcb <K>` macro (already
+#     used nowhere else in this repo, but already implemented in
+#     compile_corpus.py's _motion_steps - no new code). S/A match
+#     Tatsumaki Senpuu Kyaku Short's row EXACTLY (Startup=6, Hit=7) on
+#     WHIFF, BLOCK, and HIT alike.
+# R status, UPDATED 2026-07-08 (§13.5.1a grounded fresh-edge cut gate):
+#   - Shoryuken: RESOLVED. The old measured R=19 (vs arcade 26, uniform
+#     across whiff/block/hit) was a §13.5.1 shape-B false cut (landing-tick
+#     label flip on an airborne move, see docs/frame-data-synthesis.md
+#     §13.5.1a). Post-fix R=26 EXACT on all three outcomes - xfails
+#     removed, plain PASS.
+#   - Tatsu: still diverges on every outcome including WHIFF (measured
+#     R=9 whiff / R=10 block+hit vs arcade 14) - RESIDUAL item 18(b)
+#     (grounded fresh-edge early-cut, the q-uoh-whiff-r precedent), NOT
+#     an unexplained whiff divergence (Phase 4's STOP condition is for an
+#     UNEXPLAINED divergence; this fits the documented residual bucket).
+#     R stays asserted as documented xfail against ken.json's arcade
+#     value, per that bucket's convention (arcade value stays in expect
+#     via from-qjson, measured wrong value goes in the xfail string).
+# adv is deliberately UNASSERTED across both sections - the measured adv
+# values are not yet trustworthy on these specials (Shoryuken's own
+# HIT-side reading is +86-style garbage) and were not separately verified
+# this session; see each section's own comment block for detail.
+#
+# STOP-RULE ACCOUNTING (plan Step 7 / corpus-hugo.yaml precedent: >50% of a
+# section xfailing requires explicit orchestrator/user sign-off before
+# being accepted as audit output, not self-approved), UPDATED 2026-07-08:
+# the Shoryuken section is now 0/3 xfail (RESOLVED by the §13.5.1a cut
+# gate - R=26 arcade-exact on all three outcomes, plain PASS; the old
+# sign-off flag is withdrawn). The Tatsumaki section remains 3/3 xfail
+# (100%) - residual item 18(b) grounded fresh-edge early-cut, not a
+# move-identification failure (S/A match the oracle exactly on every
+# entry). Flagged here explicitly per the runbook's "don't self-approve"
+# instruction. Every other section in this file is well under the 50%
+# threshold (see the per-section xfail counts in the PR description /
+# implementation report).
+#
+# Orchestrator sign-off 2026-07-08: sections ACCEPTED with documentation per
+# review recommendation (S/A oracle-exact on every outcome, single
+# R-divergence axis, whiff-confirmed, item-18-classified - profile stronger
+# than the Hugo-grab 55% precedent). User review pending (overnight
+# autonomous run).
+character: ken
+oracle: ken.json
+inter_entry_wait: 200
+entries:
+
+# --- Close/far normals, BLOCK (dummy: stand) --------------------------------
+
+- label: ken-jab-block
+  setup: { dist: close, dummy: stand }
+  input: "press LP"
+  qjson: { name: "Jab" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# Far Jab's actual reach does not extend to dist=100 (verified live:
+# outcome=WHIFF there, not BLOCK) - binary-searched: dist 80/90 both
+# connect identically (S=5 A=3 R=4 adv=+4, exact arcade match); dist=90
+# kept as the closest-to-corpus-ryu.yaml-convention working value (Ryu's
+# own Far Jab used the identical dist=90).
+- label: ken-far-jab-block
+  setup: { dist: 90, dummy: stand }
+  input: "press LP"
+  qjson: { name: "Far Jab" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: ken-strong-block
+  setup: { dist: close, dummy: stand }
+  input: "press MP"
+  qjson: { name: "Strong" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# Far Strong: dist=110 whiffs (verified live); dist=90/100 both connect
+# with identical numbers - dist=100 kept (matches corpus-ryu.yaml's own
+# Far Strong distance exactly).
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=1 is the
+# engine-truth credit actually accrued on the BLOCK path - issue #17 shape (a1):
+# the contact tick jump-advances cg_ix 8->20 same tick, skipping declared
+# active cell(s) never dispatched by any code (synthesis §13.11 'what stays
+# unrecoverable'); lever-F-tested (fd_restore_revoked_declared_credit forced 0
+# on a scratch build, reverted before commit) and confirmed UNCHANGED - no
+# revoke fires. Arcade (whiff-canonical, from-qjson) A=3 - preserved here per
+# the convention. S/R/adv remain arcade-exact (from-qjson).
+- label: ken-far-strong-block
+  setup: { dist: 100, dummy: stand }
+  input: "press MP"
+  qjson: { name: "Far Strong" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: 1, R: from-qjson, adv: from-qjson }
+
+- label: ken-fierce-block
+  setup: { dist: close, dummy: stand }
+  input: "press HP"
+  qjson: { name: "Fierce" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# Far Fierce: no divergence found at any of dist 90/100/110 (all three
+# connect with identical exact-arcade numbers); dist=100 kept for symmetry
+# with Far Strong above.
+- label: ken-far-fierce-block
+  setup: { dist: 100, dummy: stand }
+  input: "press HP"
+  qjson: { name: "Far Fierce" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: ken-short-block
+  setup: { dist: close, dummy: stand }
+  input: "press LK"
+  qjson: { name: "Short" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# UNCLASSIFIED (flagged 2026-07-08, needs follow-up classification; see
+# file header "TWO GENUINELY NEW #17-FAMILY VARIANTS" block) - an
+# A-OVERCOUNT, the mirror of every previously known #17 member. Re-verified
+# in isolation (inter_entry_wait:200, single entry): measured A=10 vs
+# arcade 7, S/R/adv exact. P2.dcnt/dstop show a single hitstun pulse only
+# (not a genuine multi-hit move). WHIFF (ken-mk-whiff below) is exact at
+# A=7, confirming contact-specificity. Mechanism not established - see the
+# file header for the trace-observation-vs-hypothesis discussion.
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=10 is
+# the engine-truth credit actually accrued on the BLOCK path - contact-branch
+# declared-credit A-overcount (§12.2.3, MECHANISM ESTABLISHED by credit-ledger
+# trace on this very move, the F3 registry anchor: docs/frame-data-synthesis.md
+# §12.2.3): the same-tick contact advance re-routes the chart onto a
+# guard-specific branch with EXTRA declared-active cells - ledger: whiff
+# 20(add=4) -> 44(add=3) = A=7 exact; BLOCK banks 20's declared 4 then branches
+# 32(add=2) -> 36(add=1) -> 44(add=3) = A=10. Sign-coherent with #17: shape
+# (a1) branches SKIP declared-active cells (undercount), this branch INSERTS
+# them (overcount). Arcade (whiff-canonical, from-qjson) A=7 - preserved here
+# per the convention (supersedes the old "displayed-A canonicalization is an
+# open convention question" note - §13.13 answers that question). S/R/adv
+# remain arcade-exact (from-qjson); WHIFF exact (ken-mk-whiff).
+- label: ken-forward-block
+  setup: { dist: close, dummy: stand }
+  input: "press MK"
+  qjson: { name: "Forward" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: 10, R: from-qjson, adv: from-qjson }
+
+# NEW #17-family variant, R-side (see file header block). S/A exact;
+# measured R=19 vs the arcade table/WHIFF-confirmed 18 - wait, confirmed
+# via ken-roundhouse-whiff below to be exact match, R divergence does NOT
+# apply to plain Roundhouse (only Towards Roundhouse, see ken-twdshk-block)
+# - Roundhouse's own divergence is the classic shape (a1) A-undercount.
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=3 is the
+# engine-truth credit actually accrued on the BLOCK path - issue #17 shape (a1):
+# the contact tick jump-advances cg_ix 24->36 same tick, skipping a declared
+# active cell never dispatched by any code (synthesis §13.11); lever-F-tested
+# and confirmed UNCHANGED (no revoke fires). Arcade (whiff-canonical,
+# from-qjson) A=6 - preserved here per the convention, consistent between
+# BLOCK and HIT (see ken-roundhouse-hit). S/R/adv remain arcade-exact
+# (from-qjson).
+- label: ken-roundhouse-block
+  setup: { dist: close, dummy: stand }
+  input: "press HK"
+  qjson: { name: "Roundhouse" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: 3, R: from-qjson, adv: from-qjson }
+
+# --- HIT sample per button family (dummy: none, close range) ---------------
+
+- label: ken-jab-hit
+  setup: { dist: close, dummy: none }
+  input: "press LP"
+  qjson: { name: "Jab" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: ken-strong-hit
+  setup: { dist: close, dummy: none }
+  input: "press MP"
+  qjson: { name: "Strong" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: ken-fierce-hit
+  setup: { dist: close, dummy: none }
+  input: "press HP"
+  qjson: { name: "Fierce" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: ken-short-hit
+  setup: { dist: close, dummy: none }
+  input: "press LK"
+  qjson: { name: "Short" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# UNCLASSIFIED, HIT side - see ken-forward-block's comment. Measured A=8 vs
+# arcade 7 (+1) - a SMALLER overcount than the BLOCK-side +3, confirming
+# the wrong value is NOT consistent between outcomes for this move (unlike
+# every other #17 member). S/R/adv exact.
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=8 is the
+# engine-truth credit actually accrued on the HIT path - contact-branch
+# declared-credit A-overcount, HIT leg (§12.2.3, MECHANISM ESTABLISHED by
+# credit-ledger trace on this very move, the F3 registry anchor): HIT branches
+# to a DIFFERENT cell than guard - ledger: 20(add=4) -> 36(add=1) -> 44(add=3)
+# = A=8 (BLOCK reads 10 via its own branch through 32+36). The formerly
+# "unprecedented" outcome-dependent wrong values are the branch contents.
+# Arcade (whiff-canonical, from-qjson) A=7 - preserved here per the
+# convention. S/R/adv remain arcade-exact (from-qjson); WHIFF exact
+# (ken-mk-whiff).
+- label: ken-forward-hit
+  setup: { dist: close, dummy: none }
+  input: "press MK"
+  qjson: { name: "Forward" }
+  outcome: HIT
+  expect: { S: from-qjson, A: 8, R: from-qjson, adv: from-qjson }
+
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=3 is the
+# engine-truth credit actually accrued on the HIT path - issue #17 shape (a1),
+# same mechanism as ken-roundhouse-block (cg_ix skip-jump, lever-F-tested
+# unchanged), consistent with the BLOCK-side reading. Arcade (whiff-canonical,
+# from-qjson) A=6 - preserved here per the convention. S/R/adv remain
+# arcade-exact (from-qjson).
+- label: ken-roundhouse-hit
+  setup: { dist: close, dummy: none }
+  input: "press HK"
+  qjson: { name: "Roundhouse" }
+  outcome: HIT
+  expect: { S: from-qjson, A: 3, R: from-qjson, adv: from-qjson }
+
+# --- WHIFF sample per button family (dummy: none, dist 250) -----------------
+# All six entries below match ken.json exactly, including for Forward and
+# Roundhouse whose BLOCK/HIT entries above are xfailed - confirms both
+# divergence families found above (the new A-overcount, and the familiar
+# shape (a1) A-undercount) are contact-tick-specific, not WHIFF-path bugs,
+# same discipline as corpus-ryu.yaml/corpus-hugo.yaml's own WHIFF sections.
+
+- label: ken-lp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press LP"
+  qjson: { name: "Far Jab" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: ken-mp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press MP"
+  qjson: { name: "Far Strong" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: ken-hp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press HP"
+  qjson: { name: "Far Fierce" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: ken-lk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press LK"
+  qjson: { name: "Short" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: ken-mk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press MK"
+  qjson: { name: "Forward" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: ken-hk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press HK"
+  qjson: { name: "Roundhouse" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# --- Crouching normals, BLOCK (dummy: stand) --------------------------------
+
+- label: ken-crjab-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+LP"
+  qjson: { name: "Crouching Jab" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: ken-crstrong-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+MP"
+  qjson: { name: "Crouching Strong" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: ken-crfierce-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+HP"
+  qjson: { name: "Crouching Fierce" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: ken-crshort-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+LK"
+  qjson: { name: "Crouching Short" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# Largest observed shape (a1) gap on Ken: cg_ix skip-jumps 8->24 same tick
+# (16-unit skip). Lever-F-tested and confirmed UNCHANGED (no revoke fires).
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=1 is the
+# engine-truth credit actually accrued on the BLOCK path - issue #17 shape (a1):
+# the contact tick jump-advances cg_ix 8->24 same tick, skipping declared
+# active cell(s) never dispatched by any code (synthesis §13.11); lever-F-
+# tested (fd_restore_revoked_declared_credit forced 0) and confirmed
+# UNCHANGED. Arcade (whiff-canonical, from-qjson) A=5 (largest gap observed
+# for Ken) - preserved here per the convention. S/R/adv remain arcade-exact
+# (from-qjson).
+- label: ken-crforward-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+MK"
+  qjson: { name: "Crouching Forward" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: 1, R: from-qjson, adv: from-qjson }
+
+- label: ken-crroundhouse-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+HK"
+  qjson: { name: "Crouching Roundhouse" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# Crouching Roundhouse is a knockdown normal (ken.json Hit_advantage="D",
+# non-numeric) - same shape as corpus-q.yaml's q-crhk-hit/q-fierce-hit
+# lever-E kd precedent; re-checked here per the runbook's item 6
+# instruction (re-check known families on a new character). S/A match
+# exactly; kd explicit (never from-qjson, per Phase 3 discipline); adv
+# intentionally unasserted (non-numeric oracle field).
+- label: ken-crroundhouse-hit
+  setup: { dist: close, dummy: none }
+  input: "press DOWN+HK"
+  qjson: { name: "Crouching Roundhouse" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, kd: 1 }
+
+# --- Command normals (Towards + button), BLOCK + WHIFF ----------------------
+# WHIFF rows added here beyond corpus-ryu.yaml/corpus-hugo.yaml's own
+# command-normal sections (neither authored an explicit WHIFF row for
+# their Towards+X entries) - Phase 4's mandatory whiff-vs-table rule
+# applies to every audited move, and doing so here is what surfaced the
+# Towards Roundhouse R-divergence below (see file header). Runbook gap:
+# flagged in the implementation report for the runbook to be amended.
+
+- label: ken-twdsmk-block
+  setup: { dist: close, dummy: stand }
+  input: "press RIGHT+MK"
+  qjson: { name: "Towards Forward" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: ken-twdsmk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press RIGHT+MK"
+  qjson: { name: "Towards Forward" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# UNCLASSIFIED, R-side deficit (see file header block). S/A/adv exact;
+# measured R=14 vs the arcade table AND ken-twdshk-whiff's own
+# WHIFF-confirmed R=18 (a 4-frame shortfall). Trace shows a large same-tick
+# cg_ix jump at contact (12->56, no A effect) plus a SECOND same-tick jump
+# deep in the recovery-only portion (76->104) which correlates with the
+# shortfall - mechanism not established, see file header for the
+# hypothesis discussion.
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): R=14 is
+# the engine-truth recovery actually played on the BLOCK path - §12.2.2
+# contact-branch recovery shortening, MECHANISM ESTABLISHED by per-tick trace
+# on this very move (docs/frame-data-synthesis.md §12.2.2): the 76->104 jump
+# enters a parallel, genuinely SHORTER recovery branch (whiff 84(3)/88(4)/
+# 92(5)/96(5) + terminal tick = R=18 exact; block 104(2)/108(3)/112(4)/116(4)
+# + terminal tick = R=14; deficit -4 = branch-length differential exactly).
+# adv=-1 already embeds the short contact recovery (arcade's live-measured
+# advantage). Arcade (whiff-canonical) R=18 - preserved here per the
+# convention. S/A/adv remain arcade-exact (from-qjson).
+- label: ken-twdshk-block
+  setup: { dist: close, dummy: stand }
+  input: "press RIGHT+HK"
+  qjson: { name: "Towards Roundhouse" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: 14, adv: from-qjson }
+
+- label: ken-twdshk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press RIGHT+HK"
+  qjson: { name: "Towards Roundhouse" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# --- UOH (press MP+MK) ------------------------------------------------------
+# ken.json lists a range string for Block_advantage/Hit_advantage ("-5 ~ 0"
+# / "0 ~ +7") - same shape as corpus-ryu.yaml's ryu-uoh-block - no
+# expect.adv. S/A/R all match ken.json exactly (15/8/7), no divergence.
+
+# CORRECTED 2026-07-13 (UOH-CLOSURE lever T, docs/frame-data-synthesis.md
+# §13.20 SESSION 11 branch A; <sp>/zero/arcade-s11/session-report.md):
+# from-qjson (R=7, whiff-canonical) was a coincidental match - session 8's
+# original BLOCK capture at this value was retroactively proven a WHIFF
+# (dummy walked back out of range pre-contact; whiff-shaped raw-box-length
+# + zero-freeze signature, §13.20 §2.2). Session 11 re-captured this leg
+# with the dummy cornered (walkback impossible) and a mandatory in-tape
+# contact witness (attacker frz 8->0 overlapping a freeze-extended 18-raw
+# box window, vs the 8-raw whiff-canonical signature): real arcade R=8,
+# matching this engine's own busy-edge/lever-R construction exactly (lever
+# T). Re-literaled to the arcade value; probe-confirmed actionable at fc
+# 263414, zero early acceptance.
+- label: ken-uoh-block
+  setup: { dist: close, dummy: stand }
+  input: "press MP+MK"
+  qjson: { name: "Universal Overhead" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: 8 }
+
+# NEW ROW 2026-07-13 (UOH-CLOSURE lever T, docs/frame-data-synthesis.md
+# §13.20 §4.1/§6, KEN-UOH-HIT confirmatory step): ken's UOH HIT leg had no
+# corpus row before this payload. Native trace confirmation (this
+# program's own harness, <sp>/zero/uoh-fit/rundir-ken-hit/trace.log FINAL,
+# F=38): outcome=HIT S=15 A=8 R=5(legacy) T=29 busyr=6 hsab=0 uoh=1 koc=5,
+# 2 reps byte-identical - executed against the Step-1-instrumented binary,
+# no STOP (design §6). hsib=8/leverT_pred=6 (freeze-overlap count /
+# predicted busy-edge R) confirmed separately at <sp>/zero/uoh-fit/step1/
+# rundirs-scratch/ken-hit-r1/trace.log FINAL (r1=r2 byte-identical,
+# ken-hit-diff.txt empty) - the UOH-CLOSURE Step-1-fully-instrumented
+# rerun of the same recipe, matching the rundir-ken-hit capture above on
+# every shared field (S/A/R/T/busyr/hsab/uoh/koc) and additionally
+# carrying the hsib/leverT_pred keys that build lacked. Arcade
+# confirmation: <sp>/zero/arcade-s8/session-report.md HIT legs ("Ken
+# 15/8/6"), valid contact (frz=8 in-box, p1life 155) - arcade R=6 matches
+# the native busy-edge value exactly. A=8 asserted (= from-qjson = engine,
+# unaffected by lever T, design §5).
+- label: ken-uoh-hit
+  setup: { dist: close, dummy: none }
+  input: "press MP+MK"
+  qjson: { name: "Universal Overhead" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: 6 }
+
+# --- Throw (LP+LK) ----------------------------------------------------------
+# ken.json's throw-family rows are named "Neutral Throw"/"Back Throw"/
+# "Towards Throw" (not bare "Throw" like ryu.json/q.json) - a naming
+# difference worth flagging for the runbook (future characters may use yet
+# another convention; always verify the exact Name string against the
+# fetched oracle rather than assuming "Throw").
+
+# dist:24 matches ken.json's own Throw_range field (24px) and
+# corpus-ryu.yaml's ryu-throw-whiff/-hit precedent exactly - dist:close
+# (56px) is OUTSIDE Ken's throw range and does not reproduce a clean grab
+# (see the file header's label-bleed note). Matches ken.json exactly.
+- label: ken-throw-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press LP+LK"
+  qjson: { name: "Neutral Throw" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# HIT-R display convention (docs/frame-data-synthesis.md §13.10, Class 3
+# connected grab, SATURATED sub-case) - same mechanism as
+# corpus-ryu.yaml's ryu-throw-hit / corpus-hugo.yaml's grab family: T=71
+# confirms saturation at FD_METER_LEN-1 (frame_data_overlay.c:42), so
+# R = (FD_METER_LEN-1) - S - A = 71-2-1 = 68 is a DERIVED value, not an
+# independent constant - re-derive if FD_METER_LEN ever changes. S/A match
+# ken.json's Neutral Throw row exactly; adv intentionally unasserted
+# (Hit_advantage="D", non-numeric, same as q-throw-hit/ryu-throw-hit).
+- label: ken-throw-hit
+  setup: { dist: 24, dummy: none }
+  input: "press LP+LK; wait 60"
+  qjson: { name: "Neutral Throw" }
+  outcome: HIT
+  # BUFFER-1 (2026-07-13): the FD_CAPTURE_LEN 72->256 raise un-caps this
+  # partner-release throw's raw[] capture — post-fix measured R=128 (was
+  # 68). No arcade oracle exists for this post-contact span (same class
+  # as the Hugo grab HIT convention, §13.10). R DE-ASSERTED (was a stale
+  # capture-bound convention value); flagged for follow-up (a
+  # previously-untracked row, outside the plan's 24-leg M1 register).
+  expect: { S: from-qjson, A: from-qjson, kd: 1 }
+
+# --- Hadouken (projectile), motion qcf ---------------------------------------
+# Exercises the arcade-split machinery (lever D, 468cb84c) on a SECOND
+# character - the plan's own rationale for scheduling Ken next. Zero
+# compiler work: motion qcf already lands it exactly as it does for Ryu.
+# ken.json's Hadouken Jab/Strong/Fierce rows share identical
+# Startup=11/Recovery=38/Block_advantage=-11 (Hit field is the literal
+# string "-" for all three - not asserted, same non-numeric-oracle-field
+# reasoning as corpus-ryu.yaml's Hadouken section; from-qjson would not
+# compile against it). Confirmed strength-independent and re-verified in
+# an isolated single-entry corpus (this session's label-bleed trap, see
+# file header) - all three strengths match exactly, zero divergence.
+# HIT entries omit expect.adv (Hit_advantage is also "-" for every row);
+# the measured adv=-10 (vs the BLOCK row's -11) is a one-frame-off-point-
+# blank-assumption shape, not investigated further, same as
+# corpus-ryu.yaml's own Hadouken HIT section.
+#
+# WHIFF is NOT attempted here, same reasoning as corpus-ryu.yaml: a
+# fireball travels full-screen and still connects at any scriptable
+# distance against a non-jumping dummy - known harness gap, not a corpus
+# entry (see docs/frame-data-synthesis.md §12.1).
+
+- label: ken-had-lp-block
+  setup: { dist: close, dummy: stand }
+  input: "motion qcf LP"
+  qjson: { name: "Hadouken Jab" }
+  outcome: BLOCK
+  expect: { S: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: ken-had-mp-block
+  setup: { dist: close, dummy: stand }
+  input: "motion qcf MP"
+  qjson: { name: "Hadouken Strong" }
+  outcome: BLOCK
+  expect: { S: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: ken-had-hp-block
+  setup: { dist: close, dummy: stand }
+  input: "motion qcf HP"
+  qjson: { name: "Hadouken Fierce" }
+  outcome: BLOCK
+  expect: { S: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: ken-had-lp-hit
+  setup: { dist: close, dummy: none }
+  input: "motion qcf LP"
+  qjson: { name: "Hadouken Jab" }
+  outcome: HIT
+  expect: { S: from-qjson, R: from-qjson }
+
+- label: ken-had-mp-hit
+  setup: { dist: close, dummy: none }
+  input: "motion qcf MP"
+  qjson: { name: "Hadouken Strong" }
+  outcome: HIT
+  expect: { S: from-qjson, R: from-qjson }
+
+- label: ken-had-hp-hit
+  setup: { dist: close, dummy: none }
+  input: "motion qcf HP"
+  qjson: { name: "Hadouken Fierce" }
+  outcome: HIT
+  expect: { S: from-qjson, R: from-qjson }
+
+# --- Shoryuken (DP-shape hold-chain probe) -----------------------------------
+# See file header "SHORYUKEN/TATSU PROBE" + "STOP-RULE ACCOUNTING" blocks -
+# landed via the Hugo-SDB-precedent hold-chain (already-expressible, zero
+# compiler work). S/A match ken.json's Shoryuken Jab row EXACTLY on all
+# three outcomes (Startup=2, Hit=8) - unambiguous identification.
+# R RESOLVED 2026-07-08 (§13.5.1a grounded fresh-edge cut gate,
+# docs/frame-data-synthesis.md §13.5.1a): the old measured R=19 (uniform
+# across whiff/block/hit) was a §13.5.1 shape-B false cut - Shoryuken is
+# airborne and its chart flips cgix 44->4 / cghi 87->1 ON the landing
+# tick, which the legacy level-test anchor mistook for a cleanup tail.
+# The edge gate refuses that anchor (transition on the reset tick itself,
+# prev tick pre-reset AND airborne) and the natural r1-edge end now reads
+# R=26 EXACT on all three outcomes - xfails removed, plain PASS.
+#
+# adv is deliberately UNASSERTED across this entire section (matching the
+# Tatsu section's own omission below): the measured adv values are not yet
+# trustworthy on these specials (the raw HIT-side reading is +86-style
+# garbage, nowhere near a plausible frame-advantage number) and were not
+# separately verified - only S/A/R are asserted.
+
+- label: ken-srk-lp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LP 2; wait 1"
+  qjson: { name: "Shoryuken Jab" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: ken-srk-lp-block
+  setup: { dist: close, dummy: stand }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LP 2; wait 1"
+  qjson: { name: "Shoryuken Jab" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: ken-srk-lp-hit
+  setup: { dist: close, dummy: none }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LP 2; wait 1"
+  qjson: { name: "Shoryuken Jab" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# --- Tatsumaki Senpuu Kyaku (motion qcb, EXISTING macro) ---------------------
+# Landed via the EXISTING `motion qcb <K>` macro (already implemented in
+# compile_corpus.py's _motion_steps, unused by any prior corpus but zero
+# new code). S/A match ken.json's Tatsumaki Senpuu Kyaku Short row EXACTLY
+# (Startup=6, Hit=7) on all three outcomes - unambiguous identification.
+#
+# WHIFF-R TRUNCATION RESOLVED 2026-07-09 (§13.5.1b guard-rearm commit
+# gate, lever H). Was: residual item 18(b) whiff-R truncation on all three
+# outcomes (whiff=9, block/hit=10, vs arcade 14) - trace-confirmed a
+# lever-H false cut (guard_flag stayed 3 for the whole post-anchor tail,
+# never re-arming before the natural r1 edge). The gate now correctly
+# refuses this commit; all three outcomes finalize at the natural r1 edge,
+# extending R by +5. WHIFF now measures R=14, arcade-exact - plain PASS.
+# BLOCK/HIT now measure R=15 (one tick ABOVE whiff, the same 1-frame
+# block/hit-vs-whiff difference already documented pre-fix, now landing on
+# a residual +1 vs arcade 14 instead of a -4 undershoot) - stay xfail on
+# that narrower clause; the block-branch mechanism itself was never
+# investigated (outside the original session's probe budget) and remains
+# so. See docs/frame-data-synthesis.md §13.5.1b.
+#
+# adv is deliberately UNASSERTED across this entire section (matching the
+# Shoryuken section's own omission above): the measured adv values are not
+# yet trustworthy on these specials (Shoryuken's own HIT-side reading is
+# +86-style garbage - the same family of special-move adv measurement is
+# not separately verified this session) - only S/A/R are asserted.
+
+- label: ken-tatsu-lk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "motion qcb LK"
+  qjson: { name: "Tatsumaki Senpuu Kyaku Short" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# §13.13 contact-path convention (CONV-2 scope extension, 2026-07-10, user
+# decision): R=15 is the engine-truth recovery actually played on the
+# BLOCK path - family F8, §12.2.4 contact-mutated declared cell duration
+# (first audit §E.3, per-tick decomposition, rule-transfer recount, s2 ken
+# trace, raw_len=38 reproduced on all 3 legs): no branch/skip cells
+# anywhere; cell 28's declared cgctr mutates 3->1 on contact (same
+# jatix=56), raw T conserved at 38 on all legs, and the +1 R materializes
+# as cell 48 counting 2 ticks on contact vs whiff's 1. No F2 signature
+# exists. RESOLVED 2026-07-09 (§13.5.1b, see file header): the prior
+# whiff-R-truncation clause is GONE (R was 10, is now 15, +5 from the
+# gate refusing the false cut) - this +1 contact-variance is the only
+# remaining clause. S/A exact. Arcade (whiff-canonical, from-qjson) R=14
+# - preserved here per the convention. adv never asserted (F-2 constraint;
+# Block_advantage is numeric in ken.json but the R-variance's downstream
+# effect on adv was not separately verified).
+- label: ken-tatsu-lk-block
+  setup: { dist: close, dummy: stand }
+  input: "motion qcb LK"
+  qjson: { name: "Tatsumaki Senpuu Kyaku Short" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: 15 }
+
+# §13.13 contact-path convention (CONV-2 scope extension, 2026-07-10, user
+# decision): R=15 is the engine-truth recovery actually played on the HIT
+# path - family F8, same §12.2.4 'contact-mutated declared cell duration'
+# mechanism as ken-tatsu-lk-block, same per-tick decomposition (matches
+# the BLOCK-side reading exactly). S/A exact. Arcade (whiff-canonical,
+# from-qjson) R=14 - preserved here per the convention. adv never
+# asserted (Hit_advantage="-" in ken.json).
+- label: ken-tatsu-lk-hit
+  setup: { dist: close, dummy: none }
+  input: "motion qcb LK"
+  qjson: { name: "Tatsumaki Senpuu Kyaku Short" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: 15 }
+
+# --- Negative control (plan section 1.8 item 5 precedent) ------------------
+
+- label: ken-jump-none
+  setup: { dist: 250, dummy: none }
+  input: "press UP"
+  outcome: NONE

@@ -1,0 +1,4 @@
+label	verdict	outcome	n	S	A	R	adv	kd
+yun-sa1-whiff	PASS	WHIFF	1	0	16	36	+0	0
+yun-sa1-block	PASS	BLOCK	1	0	10	97	-27	0
+yun-sa1-hit	PASS	HIT	1	0	10	93	+97	1

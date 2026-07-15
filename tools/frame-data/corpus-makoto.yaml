@@ -1,0 +1,933 @@
+# Makoto frame-data corpus (cast rollout, user-directed 2026-07-08).
+# Generated/consumed by tools/frame-data/compile_corpus.py against
+# docs/arcade-frame-data/makoto.json (fetched 2026-07-08 from
+# https://raw.githubusercontent.com/Coccis77/thirdstrikedatabot/master/json/makoto.json,
+# md5 8805245ff0ccb492ff78cc00027a4d4d).
+#
+# NAMING NOTE (runbook Phase 1 caution re: throw-family naming varying per
+# character): makoto.json's throw-family rows are "Neutral Throw" and "Back &
+# Towards Throw" - a FOURTH naming shape beyond ryu.json/q.json's single bare
+# "Throw", ken.json's three-way Neutral/Back/Towards split, and yun.json's
+# Neutral Throw + bare Throw pair. Both rows share identical Startup=2/Hit=1/
+# Recovery=21/Block_advantage=0/Hit_advantage="D"/Throw_range=20 - verified
+# against the fetched oracle, not assumed.
+#
+# NO "Far X" ROWS: unlike ryu.json/ken.json, makoto.json has no distinct
+# "Far Jab"/"Far Strong"/etc. rows for any of the six standing normals - the
+# oracle has exactly one row per button (Jab/Strong/Fierce/Short/Forward/
+# Roundhouse), same gap shape as yun.json's missing Far Short/Far Roundhouse
+# (corpus-yun.yaml:422-425, 440-442) generalized here to ALL SIX standing
+# normals. Verified live: dist=250 throws the SAME close-range animation for
+# every button and simply fails to connect (WHIFF, not a distinct far
+# animation) - each WHIFF entry below cites the identical qjson.name as its
+# BLOCK/HIT sibling.
+#
+# makoto.json's Startup/Hit/Recovery/*_advantage fields are JSON strings
+# (e.g. "Startup": "4") - resolve_from_qjson's `int(raw)` cast
+# (compile_corpus.py:432-448) handles this transparently; only genuinely
+# non-numeric fields ("-", "D") need an explicit literal.
+#
+# SCOPE (user-directed 2026-07-08, cast rollout): normals ladder (six-button
+# close BLOCK/HIT + WHIFF sample + crouching + ALL SIX command normals
+# Towards+Jab/Strong/Fierce/Short/Forward/Roundhouse, each with its own WHIFF
+# row per Phase 4) + Throw + negative control + ground specials probe (one
+# session budget): Hayate (lunge punch, motion qcf + P - lands cleanly on
+# WHIFF, see the file header HAYATE COMPOUND FINDING for its BLOCK/HIT
+# divergence), Fukiage (anti-air, DP-shape hold-chain + P - BLOCK/HIT
+# unreachable vs a grounded dummy, accepted gap, see that section), Oroshi
+# (overhead chop - task description said "qcf+K"; EMPIRICALLY WRONG, the
+# real recipe is motion hcb/qcb + P, see that section's CORRECTION note),
+# Karakusa (command grab, motion hcb + K). EXCLUDED per task: Tsurugi (air
+# dive kick - the harness dummy/attacker cannot be scripted to jump, known
+# gap docs/frame-data-synthesis.md §12.1) and Seichuusen Godanzuki/Abare
+# Tosanami/Tanden Renki/all EX variants (supers/EX are Step 13's charter, not
+# this rollout's). Taunt is not audited (not a frame-data-relevant move for
+# this rollout).
+#
+# Every expect below was pinned against a live trace
+# (tools/frame-data/run.sh tools/frame-data/corpus-makoto.yaml), with every
+# suspicious/ambiguous finding re-verified in an isolated single-entry probe
+# corpus per the runbook's Phase 5 "known traps" discipline before being
+# trusted.
+#
+# ============================================================================
+# ISSUE #17 FAMILY CENSUS (per runbook item 6 / Phase 6 instruction). Every
+# A-divergence below was lever-F-tested in ONE batched scratch build
+# (fd_restore_revoked_declared_credit forced to 0 in
+# src/sf33rd/Source/Game/engine/charset.c:507, whole corpus re-run once,
+# reverted via `git checkout` + rebuild + re-verified green before this
+# commit, same-binary protocol throughout).
+#
+#   PURE SHAPE (a1) skip-jump, lever-F-tested UNCHANGED (credit unrecoverable,
+#   synthesis §13.11 "what stays unrecoverable"):
+#     - makoto-jab-block/-hit: measured A=4 vs arcade 6; S/R/adv exact both
+#       outcomes. Representative raw-trace citation: cgix jumps 4->16 same
+#       tick (GT 41->42, a 12-unit skip) during the active window;
+#       engine_a settles at 4, never recovers the skipped cell(s)' credit.
+#     - makoto-strong-block/-hit: measured A=5 vs arcade 11 (the LARGEST
+#       single-move gap found this session, -6). Representative citation:
+#       cgix jumps 12->28 same tick (GT 198->199, a 16-unit skip) at the
+#       contact tick; engine_a settles at 5.
+#     - makoto-short-block/-hit: measured A=1 vs arcade 5.
+#     - makoto-forward-block/-hit: measured A=3 vs arcade 5.
+#     - makoto-roundhouse-block/-hit: measured A=6 vs arcade 9.
+#     - makoto-crforward-block: measured A=5 vs arcade 8.
+#     - makoto-twdsmp-block (Towards Strong): measured A=4 vs arcade 6.
+#     - makoto-twdshp-block (Towards Fierce): measured A=8 vs arcade 12.
+#     - makoto-twdslk-block (Towards Short): measured A=4 vs arcade 6.
+#   All of the above: WHIFF is exact for the same button (see the WHIFF
+#   section below), confirming contact-specificity, and lever-F-off left
+#   every one of these entries' A value UNCHANGED - no revoke fires for any
+#   of them, ruling OUT a lever-F regression, confirming pure shape (a1).
+#
+#   SHAPE (b) — lever-F ACTIVELY RESTORING credit (plain PASS in the real
+#   binary; the lever-F-off scratch build is what reveals the dependency):
+#     - makoto-crjab-block: A=4 EXACT match to arcade in the real binary
+#       (plain PASS, no xfail). Lever-F-off drops it to A=3 - the restore is
+#       doing genuine, load-bearing work here (Ryu had 11 such members;
+#       Makoto's cr.Jab is the first confirmed shape-(b) member found on
+#       this character).
+#     - makoto-twdshk-block/-hit (Towards Roundhouse): A=3 EXACT match to
+#       arcade in the real binary on BOTH outcomes (plain PASS, no xfail).
+#       Lever-F-off drops both to A=2 - same shape-(b) dependency,
+#       consistent between BLOCK and HIT.
+#
+#   COMPOUND (unrecoverable shape-(a1) loss STACKED WITH a partial shape-(b)
+#   restore that doesn't fully close the gap) - no prior character exhibited
+#   a PARTIAL shape-(b) restore: Ryu's 11 shape-(b) members (corpus-ryu.yaml)
+#   were all fully restored to an exact arcade match; Ken and Yun have zero
+#   shape-(b) members (corpus-ken.yaml:33; corpus-yun.yaml has none). The
+#   nearest precedents are Yun's a1+Class-1-R compound (corpus-yun.yaml
+#   yun-farfierce-block / yun-roundhouse-block/-hit: issue #17 shape (a1)
+#   stacked with a §13.10 Class 1 R-deficit) and Chun-Li's whiff-trunc+a1
+#   compound (corpus-chunli.yaml chunli-hazan-lk-block/-hit: whiff-R-
+#   truncation stacked with a lever-F-tested shape (a1) A-undercount) - both
+#   of those are two DIFFERENT established buckets stacked together, not a
+#   partial restore within a SINGLE bucket, so Makoto's cr.Strong/cr.Short
+#   compound below remains the first of its shape:
+#     - makoto-crstrong-block: measured A=4 vs arcade 7 in the real binary
+#       (xfail). Lever-F-off drops it further to A=3 - one unit of credit IS
+#       being actively restored by lever F (the shape-(b) component), but
+#       three units remain permanently unrecoverable (the shape-(a1)
+#       component) - net result stays 3 short of arcade either way.
+#     - makoto-crshort-block: measured A=4 vs arcade 6 (xfail). Same
+#       compound pattern: lever-F-off drops it to A=3 (1 unit restored,
+#       2 units unrecoverable).
+#   Orchestrator ruling 2026-07-08: BENIGN NOVEL COMPOUND, not a lever-F
+#   regression - lever-F-off drops A by exactly the revoked amount (1) and
+#   lever-F-on restores exactly that amount (the lever doing precisely its
+#   documented job); the residual 3-unit gap is pure shape-(a1) skip-jump
+#   loss, which lever F never claimed to recover. Phase-6 STOP-and-report
+#   satisfied by this recorded ruling. User review pending.
+#
+#   UPDATE (2026-07-10, CONV-2): the "(xfail)" parentheticals on both
+#   makoto-crstrong-block and makoto-crshort-block above are now stale -
+#   this compound now converts under §13.13 family F11 (partial-restore
+#   compound displayed A). Both entries assert A=4 as a plain PASS; see
+#   each entry's own comment for the full lever decomposition.
+#
+#   No other #17-family divergence was found on any other normal, crouching
+#   normal, command normal, Throw, Oroshi, Karakusa, or Fukiage entry (every
+#   other entry's A matches makoto.json exactly). Hayate's own A-undercount
+#   (see the separate "HAYATE" finding below) was ALSO lever-F-tested and
+#   confirmed UNCHANGED, ruling out a lever-F regression there too - but its
+#   accompanying R-divergence doesn't fit any of Phase 6's five buckets, so
+#   the whole finding is kept UNCLASSIFIED rather than filed under shape
+#   (a1) alone.
+# ============================================================================
+#
+# >50%-XFAIL SECTION ACCOUNTING (plan Step 7 / corpus-hugo.yaml precedent:
+# >50% of a section xfailing requires explicit orchestrator/user sign-off
+# before being accepted as audit output, not self-approved). Three sections
+# in this file exceed the Phase-7 threshold:
+#
+#   - Standing normals, BLOCK: 5/6 xfail (83%) - makoto-jab-block,
+#     -strong-block, -short-block, -forward-block, -roundhouse-block all
+#     xfail (only -fierce-block is a plain PASS).
+#     Orchestrator sign-off 2026-07-08: GRANTED - all members are the
+#     established issue-#17 shape-(a1) family (lever-F-tested), not novel
+#     spam; precedent: Ryu corpus acceptance. User review pending (overnight
+#     autonomous run).
+#     UPDATE (2026-07-10, §13.13): NOW 0/6 xfail - all five convert to a
+#     plain PASS asserting the measured A citing §13.13. Section RESOLVED.
+#
+#   - Standing normals, HIT: 5/6 xfail (83%) - makoto-jab-hit, -strong-hit,
+#     -short-hit, -forward-hit, -roundhouse-hit all xfail (only -fierce-hit
+#     is a plain PASS).
+#     Orchestrator sign-off 2026-07-08: GRANTED - all members are the
+#     established issue-#17 shape-(a1) family (lever-F-tested), not novel
+#     spam; precedent: Ryu corpus acceptance. User review pending (overnight
+#     autonomous run).
+#     UPDATE (2026-07-10, §13.13): NOW 0/6 xfail - all five convert to a
+#     plain PASS asserting the measured A citing §13.13. Section RESOLVED.
+#
+#   - Hayate, BLOCK+HIT: 6/6 xfail (100%) - all three strengths' BLOCK and
+#     HIT entries (WHIFF is clean on all three strengths, excluded from
+#     this count).
+#     Orchestrator sign-off 2026-07-08: GRANTED WITH CAVEAT - this is the
+#     weakest grant of the run: the R divergence is UNCLASSIFIED
+#     (sign-flipping +8 BLOCK / -4 HIT), whiff and S exact, isolated-probe
+#     re-verified. Flagged TOP of the user-review list. User review pending
+#     (overnight autonomous run).
+# ============================================================================
+character: makoto
+oracle: makoto.json
+inter_entry_wait: 150
+entries:
+
+# --- Standing normals, BLOCK (dummy: stand, dist close) ---------------------
+
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=4 is the
+# engine-truth credit actually accrued on the BLOCK path - issue #17 shape (a1):
+# cgix jumps 4->16 same tick (GT 41->42, a 12-unit skip) during the active
+# window, skipping declared active cell(s) never dispatched by any code
+# (synthesis §13.11); lever-F-tested (fd_restore_revoked_declared_credit
+# forced 0 on a scratch build, reverted before commit) and confirmed
+# UNCHANGED. Arcade (whiff-canonical, from-qjson) A=6 - preserved here per the
+# convention. S/R/adv remain arcade-exact (from-qjson).
+- label: makoto-jab-block
+  setup: { dist: close, dummy: stand }
+  input: "press LP"
+  qjson: { name: "Jab" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: 4, R: from-qjson, adv: from-qjson }
+
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=5 is the
+# engine-truth credit actually accrued on the BLOCK path - issue #17 shape (a1):
+# cgix jumps 12->28 same tick (GT 198->199, a 16-unit skip) at the contact
+# tick (synthesis §13.11); lever-F-tested and confirmed UNCHANGED. Arcade
+# (whiff-canonical, from-qjson) A=11 (the largest single-move gap found this
+# session) - preserved here per the convention. S/R/adv remain arcade-exact
+# (from-qjson).
+- label: makoto-strong-block
+  setup: { dist: close, dummy: stand }
+  input: "press MP"
+  qjson: { name: "Strong" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: 5, R: from-qjson, adv: from-qjson }
+
+- label: makoto-fierce-block
+  setup: { dist: close, dummy: stand }
+  input: "press HP"
+  qjson: { name: "Fierce" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=1 is the
+# engine-truth credit actually accrued on the BLOCK path - issue #17 shape
+# (a1), same family as makoto-jab-block (cgix same-tick skip-jump, lever-F-
+# tested UNCHANGED). Arcade (whiff-canonical, from-qjson) A=5 - preserved here
+# per the convention. S/R/adv remain arcade-exact (from-qjson).
+- label: makoto-short-block
+  setup: { dist: close, dummy: stand }
+  input: "press LK"
+  qjson: { name: "Short" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: 1, R: from-qjson, adv: from-qjson }
+
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=3 is the
+# engine-truth credit actually accrued on the BLOCK path - issue #17 shape
+# (a1), same family as makoto-jab-block (lever-F-tested UNCHANGED). Arcade
+# (whiff-canonical, from-qjson) A=5 - preserved here per the convention.
+# S/R/adv remain arcade-exact (from-qjson).
+- label: makoto-forward-block
+  setup: { dist: close, dummy: stand }
+  input: "press MK"
+  qjson: { name: "Forward" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: 3, R: from-qjson, adv: from-qjson }
+
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=6 is the
+# engine-truth credit actually accrued on the BLOCK path - issue #17 shape
+# (a1), same family as makoto-jab-block (lever-F-tested UNCHANGED). Arcade
+# (whiff-canonical, from-qjson) A=9 - preserved here per the convention.
+# S/R/adv remain arcade-exact (from-qjson).
+- label: makoto-roundhouse-block
+  setup: { dist: close, dummy: stand }
+  input: "press HK"
+  qjson: { name: "Roundhouse" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: 6, R: from-qjson, adv: from-qjson }
+
+# --- HIT sample per button family (dummy: none, close range) ---------------
+
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=4 is the
+# engine-truth credit actually accrued on the HIT path - same issue #17 shape
+# (a1) as makoto-jab-block (identical A=4 on both BLOCK and HIT, lever-F-
+# tested UNCHANGED). Arcade (whiff-canonical, from-qjson) A=6 - preserved here
+# per the convention. S/R/adv remain arcade-exact (from-qjson).
+- label: makoto-jab-hit
+  setup: { dist: close, dummy: none }
+  input: "press LP"
+  qjson: { name: "Jab" }
+  outcome: HIT
+  expect: { S: from-qjson, A: 4, R: from-qjson, adv: from-qjson }
+
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=5 is the
+# engine-truth credit actually accrued on the HIT path - same issue #17 shape
+# (a1) as makoto-strong-block (identical A=5 on both outcomes, lever-F-tested
+# UNCHANGED). Arcade (whiff-canonical, from-qjson) A=11 - preserved here per
+# the convention. S/R/adv remain arcade-exact (from-qjson).
+- label: makoto-strong-hit
+  setup: { dist: close, dummy: none }
+  input: "press MP"
+  qjson: { name: "Strong" }
+  outcome: HIT
+  expect: { S: from-qjson, A: 5, R: from-qjson, adv: from-qjson }
+
+- label: makoto-fierce-hit
+  setup: { dist: close, dummy: none }
+  input: "press HP"
+  qjson: { name: "Fierce" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=1 is the
+# engine-truth credit actually accrued on the HIT path - same issue #17 shape
+# (a1) as makoto-short-block (identical A=1, lever-F-tested UNCHANGED). Arcade
+# (whiff-canonical, from-qjson) A=5 - preserved here per the convention.
+# S/R/adv remain arcade-exact (from-qjson).
+- label: makoto-short-hit
+  setup: { dist: close, dummy: none }
+  input: "press LK"
+  qjson: { name: "Short" }
+  outcome: HIT
+  expect: { S: from-qjson, A: 1, R: from-qjson, adv: from-qjson }
+
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=3 is the
+# engine-truth credit actually accrued on the HIT path - same issue #17 shape
+# (a1) as makoto-forward-block (identical A=3, lever-F-tested UNCHANGED).
+# Arcade (whiff-canonical, from-qjson) A=5 - preserved here per the
+# convention. S/R/adv remain arcade-exact (from-qjson).
+- label: makoto-forward-hit
+  setup: { dist: close, dummy: none }
+  input: "press MK"
+  qjson: { name: "Forward" }
+  outcome: HIT
+  expect: { S: from-qjson, A: 3, R: from-qjson, adv: from-qjson }
+
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=6 is the
+# engine-truth credit actually accrued on the HIT path - same issue #17 shape
+# (a1) as makoto-roundhouse-block (identical A=6, lever-F-tested UNCHANGED).
+# Arcade (whiff-canonical, from-qjson) A=9 - preserved here per the
+# convention. S/R/adv remain arcade-exact (from-qjson).
+- label: makoto-roundhouse-hit
+  setup: { dist: close, dummy: none }
+  input: "press HK"
+  qjson: { name: "Roundhouse" }
+  outcome: HIT
+  expect: { S: from-qjson, A: 6, R: from-qjson, adv: from-qjson }
+
+# --- WHIFF sample per button family (dummy: none, dist 250) -----------------
+# No distinct "Far X" rows exist in makoto.json for any button (see file
+# header) - every WHIFF entry below cites the SAME qjson.name as its
+# BLOCK/HIT sibling.
+
+- label: makoto-lp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press LP"
+  qjson: { name: "Jab" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: makoto-mp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press MP"
+  qjson: { name: "Strong" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: makoto-hp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press HP"
+  qjson: { name: "Fierce" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: makoto-lk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press LK"
+  qjson: { name: "Short" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: makoto-mk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press MK"
+  qjson: { name: "Forward" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: makoto-hk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press HK"
+  qjson: { name: "Roundhouse" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# --- Crouching normals, BLOCK (dummy: stand) --------------------------------
+
+# Shape (b): A=4 is an EXACT arcade match in the real binary (plain PASS) -
+# lever-F-tested (fd_restore_revoked_declared_credit forced 0, whole-corpus
+# batch, reverted before commit) and confirmed the restore is ACTIVELY
+# firing here (A drops to 3 with the restore disabled). Makoto's first
+# confirmed shape-(b) member (Ryu had 11; Ken/Yun had zero).
+- label: makoto-crjab-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+LP"
+  qjson: { name: "Crouching Jab" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# §13.13 contact-path convention (CONV-2 scope extension, 2026-07-10, user
+# decision), family F11 - partial-restore compound displayed A (see file
+# header ISSUE #17 CENSUS): A=4 is the engine-truth credit actually
+# accrued on the BLOCK path - unrecoverable shape (a1) loss stacked with a
+# PARTIAL shape-(b) restore. Decomposition: arcade A=7, measured A=4,
+# lever-F ON=4/OFF=3 (one unit IS being actively restored by lever F, the
+# restore delta), residual unrecoverable remainder=3 (pure shape-(a1)
+# skip-jump loss, which lever F never claimed to recover). Orchestrator
+# ruling 2026-07-08: BENIGN NOVEL COMPOUND, not a lever-F regression.
+# S/R/adv remain arcade-exact (from-qjson). Arcade (whiff-canonical,
+# from-qjson) A=7 - preserved here per the convention.
+- label: makoto-crstrong-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+MP"
+  qjson: { name: "Crouching Strong" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: 4, R: from-qjson, adv: from-qjson }
+
+- label: makoto-crfierce-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+HP"
+  qjson: { name: "Crouching Fierce" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# §13.13 contact-path convention (CONV-2 scope extension, 2026-07-10, user
+# decision), family F11 - partial-restore compound displayed A, same shape
+# as makoto-crstrong-block (see file header ISSUE #17 CENSUS + that
+# entry's comment): A=4 is the engine-truth credit actually accrued on the
+# BLOCK path. Decomposition: arcade A=6, measured A=4, lever-F ON=4/OFF=3
+# (restore delta +1), residual unrecoverable remainder=2 (pure shape-(a1)
+# skip-jump loss). Orchestrator ruling 2026-07-08: BENIGN NOVEL COMPOUND,
+# not a lever-F regression. S/R/adv remain arcade-exact (from-qjson).
+# Arcade (whiff-canonical, from-qjson) A=6 - preserved here per the
+# convention.
+- label: makoto-crshort-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+LK"
+  qjson: { name: "Crouching Short" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: 4, R: from-qjson, adv: from-qjson }
+
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=5 is the
+# engine-truth credit actually accrued on the BLOCK path - issue #17 shape
+# (a1), pure (lever-F-tested UNCHANGED, unlike crstrong/crshort above). Arcade
+# (whiff-canonical, from-qjson) A=8 - preserved here per the convention.
+# S/R/adv remain arcade-exact (from-qjson).
+- label: makoto-crforward-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+MK"
+  qjson: { name: "Crouching Forward" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: 5, R: from-qjson, adv: from-qjson }
+
+- label: makoto-crroundhouse-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+HK"
+  qjson: { name: "Crouching Roundhouse" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# Crouching Fierce is makoto.json's knockdown crouching normal
+# (Hit_advantage="D", non-numeric) - UNLIKE ken.json/yun.json where
+# Crouching Roundhouse carries that role. kd is explicit-only (never
+# from-qjson, Phase 3 discipline); asserted at the measured live value.
+- label: makoto-crfierce-hit
+  setup: { dist: close, dummy: none }
+  input: "press DOWN+HP"
+  qjson: { name: "Crouching Fierce" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, kd: 1 }
+
+- label: makoto-crroundhouse-hit
+  setup: { dist: close, dummy: none }
+  input: "press DOWN+HK"
+  qjson: { name: "Crouching Roundhouse" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# --- Command normals (Towards + button), BLOCK + WHIFF ----------------------
+# makoto.json has SIX distinct Towards+X rows (Jab/Strong/Fierce/Short/
+# Forward/Roundhouse) - more than any prior corpus in this repo - each
+# audited with its own WHIFF row per Phase 4's mandatory whiff-vs-table rule.
+
+- label: makoto-twdslp-block
+  setup: { dist: close, dummy: stand }
+  input: "press RIGHT+LP"
+  qjson: { name: "Towards Jab" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: makoto-twdslp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press RIGHT+LP"
+  qjson: { name: "Towards Jab" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=4 is the
+# engine-truth credit actually accrued on the BLOCK path - issue #17 shape
+# (a1), pure (lever-F-tested UNCHANGED, see file header ISSUE #17 CENSUS).
+# Arcade (whiff-canonical, from-qjson) A=6 - preserved here per the
+# convention. S/R/adv remain arcade-exact (from-qjson); WHIFF is exact
+# (makoto-twdsmp-whiff), confirming contact-specificity.
+- label: makoto-twdsmp-block
+  setup: { dist: close, dummy: stand }
+  input: "press RIGHT+MP"
+  qjson: { name: "Towards Strong" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: 4, R: from-qjson, adv: from-qjson }
+
+- label: makoto-twdsmp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press RIGHT+MP"
+  qjson: { name: "Towards Strong" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# NOTE: makoto.json also has a "Towards Fierce complete" row (Startup=16,
+# Hit=23, Recovery=13, Common_name "6HP complete, 6HP HP HP") - a
+# rekka-style repeated-HP-press chain, not a held button. Probed this
+# session with three repeat-press timings (`press RIGHT+HP; wait N; press
+# HP; wait N; press HP` for N=1/4/8, isolated WHIFF probes): N=1 and N=4
+# both landed the SAME plain "Towards Fierce" numbers below (S=16/A=12/R=16)
+# - the repeat presses did not chain into the second/third hit at all; N=8
+# produced a different, unrecognized reading (S=16/A=25/R=3, not matching
+# any named row in makoto.json) rather than the "complete" row's own
+# numbers. The correct recipe was NOT found this session - documented as an
+# open gap (wants-follow-up), same posture as the runbook's DHA
+# long-charge-variant precedent (§12.1 register row 1): not guessed, not
+# fabricated, three genuine attempts recorded and none landed it.
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=8 is the
+# engine-truth credit actually accrued on the BLOCK path - issue #17 shape
+# (a1), pure (lever-F-tested UNCHANGED). Arcade (whiff-canonical, from-qjson)
+# A=12 - preserved here per the convention. S/R/adv remain arcade-exact
+# (from-qjson); WHIFF is exact (makoto-twdshp-whiff).
+- label: makoto-twdshp-block
+  setup: { dist: close, dummy: stand }
+  input: "press RIGHT+HP"
+  qjson: { name: "Towards Fierce" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: 8, R: from-qjson, adv: from-qjson }
+
+- label: makoto-twdshp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press RIGHT+HP"
+  qjson: { name: "Towards Fierce" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=4 is the
+# engine-truth credit actually accrued on the BLOCK path - issue #17 shape
+# (a1), pure (lever-F-tested UNCHANGED). Arcade (whiff-canonical, from-qjson)
+# A=6 - preserved here per the convention. S/R/adv remain arcade-exact
+# (from-qjson); WHIFF is exact (makoto-twdslk-whiff).
+- label: makoto-twdslk-block
+  setup: { dist: close, dummy: stand }
+  input: "press RIGHT+LK"
+  qjson: { name: "Towards Short" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: 4, R: from-qjson, adv: from-qjson }
+
+- label: makoto-twdslk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press RIGHT+LK"
+  qjson: { name: "Towards Short" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: makoto-twdsmk-block
+  setup: { dist: close, dummy: stand }
+  input: "press RIGHT+MK"
+  qjson: { name: "Towards Forward" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: makoto-twdsmk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press RIGHT+MK"
+  qjson: { name: "Towards Forward" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# Towards Roundhouse is makoto.json's OTHER knockdown-annotated move
+# (Hit_advantage="D") - kd asserted at the measured live value. Shape (b):
+# A=3 is an EXACT arcade match on BOTH BLOCK and HIT in the real binary
+# (plain PASS, no xfail) - lever-F-tested (whole-corpus batch) and confirmed
+# the restore is ACTIVELY firing here (lever-F-off drops both to A=2, see
+# file header ISSUE #17 CENSUS).
+- label: makoto-twdshk-block
+  setup: { dist: close, dummy: stand }
+  input: "press RIGHT+HK"
+  qjson: { name: "Towards Roundhouse" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: makoto-twdshk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press RIGHT+HK"
+  qjson: { name: "Towards Roundhouse" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: makoto-twdshk-hit
+  setup: { dist: close, dummy: none }
+  input: "press RIGHT+HK"
+  qjson: { name: "Towards Roundhouse" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, kd: 1 }
+
+# --- Throw (LP+LK) -----------------------------------------------------------
+# makoto.json's Throw_range field is 20px for both throw-family rows (see
+# file header naming note) - close (56px) sits OUTSIDE this, same trap as
+# corpus-ken.yaml's ken-throw-hit / corpus-yun.yaml's yun-throw-hit;
+# dist:20 used below.
+
+- label: makoto-throw-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press LP+LK"
+  qjson: { name: "Neutral Throw" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# HIT-R display convention (docs/frame-data-synthesis.md §13.10, Class 3
+# connected grab, NON-saturated endrel sub-case, same shape as
+# corpus-yun.yaml's yun-zenpou-tenshin-hit / corpus-chunli.yaml's
+# chunli-throw-hit): T=46, endrel=1 (the plain §13.6.1 partner-release path,
+# NOT saturated - T sits well below FD_METER_LEN-1=71). R = T - S - A =
+# 46-2-1 = 43, a DERIVED value from the live trace - re-measure if this ever
+# regresses. Arcade R=21 is the whiff-path figure (makoto-throw-whiff above
+# matches makoto.json's Recovery=21 exactly). adv unasserted (Hit_advantage
+# ="D" in makoto.json, non-numeric, same convention as every other throw in
+# this repo).
+- label: makoto-throw-hit
+  setup: { dist: 20, dummy: none }
+  input: "press LP+LK; wait 90"
+  qjson: { name: "Neutral Throw" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: 43, kd: 1 }
+
+# --- Hayate (lunge punch), motion qcf ---------------------------------------
+# Landed via the EXISTING `motion qcf <btn>` macro (same primitive as
+# Ryu/Ken's Hadouken) - FIRST probe attempt, zero compile_corpus.py changes;
+# S/A/R match makoto.json's Hayate Jab/Strong/Fierce rows EXACTLY on WHIFF
+# for all three strengths (unambiguous move identification).
+#
+# HAYATE COMPOUND FINDING (UNCLASSIFIED, flagged 2026-07-08, needs
+# follow-up classification): BLOCK/HIT show a compound divergence not
+# covered by any Phase 6 bucket, re-verified in ISOLATED single-entry probe
+# corpora (Phase 5 discipline) to rule out corpus-ordering/momentum-bleed
+# contamination from the preceding connecting entry (§12.1 register row 2) -
+# the SAME wrong values reproduce in isolation, ruling that out:
+#   (1) A-undercount: measured A=3 vs arcade 6, IDENTICAL across all three
+#       strengths and both BLOCK/HIT. Lever-F-tested (whole-corpus batch,
+#       fd_restore_revoked_declared_credit forced 0) and confirmed
+#       UNCHANGED - no revoke fires, ruling out a lever-F regression. This
+#       clause alone would be a plain shape (a1).
+#   (2) R-divergence with OPPOSITE SIGNS between outcomes - this is what
+#       breaks every established bucket: BLOCK R=32 (a +8 SURPLUS vs arcade
+#       24) but HIT R=20 (a -4 DEFICIT vs the same arcade 24). Class 1 (§13.10)
+#       requires BLOCK to match arcade exactly with only HIT diverging
+#       shorter - here BOTH diverge, in different directions. Class 3 is
+#       grab-specific (Hayate is a connecting strike, not a grab - it can be
+#       blocked, as the BLOCK entries below demonstrate). No established
+#       bucket covers a strike whose R sits above arcade on BLOCK and below
+#       arcade on HIT simultaneously.
+#   TRACE FACTS (raw observations, isolated re-verification, both
+#   BLOCK/HIT): cut=0 and endrel=0 on both outcomes (ruling out the Class 3
+#   grab-release/cut mechanisms entirely - this move ends via the plain
+#   "chain runs out" path, same general family as Class 1's hit-branch
+#   chains, but Class 1 never shows a BLOCK-side deviation). BLOCK:
+#   T=39, engine_a=3, anchor_a=-1 (re-cited 2026-07-08: was 3 pre-§13.5.1a;
+#   the never-committed anchor no longer arms under the grounded fresh-edge
+#   cut gate - diagnostic-only, S/A/R/adv unchanged, the pre-declared E2
+#   exception). HIT: T=27, engine_a=3, anchor_a=3. WHIFF
+#   is exact for all three strengths (contact-specific, ruling out Phase 4's
+#   unexplained-whiff STOP condition).
+#   No mechanism is claimed - this is recorded as a trace observation only,
+#   flagged to the orchestrator/user for follow-up classification.
+
+- label: makoto-hayate-lp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "motion qcf LP"
+  qjson: { name: "Hayate Jab" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: makoto-hayate-mp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "motion qcf MP"
+  qjson: { name: "Hayate Strong" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: makoto-hayate-hp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "motion qcf HP"
+  qjson: { name: "Hayate Fierce" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# §13.13 contact-path convention (adopted 2026-07-10, classification sweep #2
+# fable-grade audit, disposition (a)-PARTIAL under F1): A=3 is the
+# engine-truth credit actually banked on the BLOCK path - shape (a1)
+# skip-jump, own ledger (s5-rundir/run-makoto): whiff credits
+# 16(add=3)+20(add=3)=6=arcade; both contact outcomes bank only cell
+# 16(3)=3 - cgix=20 never credited, deficit = the skipped cell's declared
+# duration exactly; lever-F already tested UNCHANGED, the F1 bar is met.
+# Arcade (whiff-canonical, from-qjson) A=6 - preserved here per the
+# convention. FULL CONVERT sweep #3 (2026-07-11, F2, §13.13): R=32 is the
+# engine-truth recovery actually played on the BLOCK path - own per-tick
+# recount (s5-rundir/run-makoto preserved P2tick stream, audit-recounted
+# classification sweep #3): R window = post-thaw GT183-214 =
+# 24(4)+28(2)+40(2)+44(2)+48(2)+dwell60(19)+0(1)=32; whiff R window =
+# 24(4)+28(2)+0(2)+4(2)+8(2)+dwell20(11)+0(1)=24 arcade-exact; +8 = dwell
+# differential exactly (19 vs 11 ticks), the 40/44/48 detour (6 ticks)
+# exactly replaces whiff's 0/4/8 (6 ticks) - branch/skip declared-tick
+# differential == divergence exactly, the F2 bar met as written (own
+# recorded skip/branch cgix signature for this move). Arcade Recovery: 24
+# (makoto.json Hayate Jab) preserved in this comment. adv -12 stays
+# from-qjson (arcade-exact). S/adv remain arcade-exact.
+- label: makoto-hayate-lp-block
+  setup: { dist: close, dummy: stand }
+  input: "motion qcf LP"
+  qjson: { name: "Hayate Jab" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: 3, R: 32, adv: from-qjson }
+
+# §13.13 contact-path convention (disposition (a)-PARTIAL under F1): same
+# F1 conversion as makoto-hayate-lp-block - A=3 engine-truth on the BLOCK
+# path vs arcade 6 (from-qjson), identical own-ledger mechanism. FULL
+# CONVERT sweep #3 (2026-07-11, F2, §13.13): R=32 engine-truth, identical
+# per-tick recount mechanism as makoto-hayate-lp-block, converted here
+# under the same already-shipped cross-strength convention as this move's
+# own sweep-2 F1 A-conversion (probe LP only, cite strength-identity from
+# the strings - corpus-makoto mp/hp entries cite the lp header; golden
+# A/R/adv identical across strengths, only S differs and S is arcade-exact
+# per strength - the same move id at three charge levels, not a sibling-
+# move cite). Arcade Recovery 24 preserved. See makoto-hayate-lp-block's
+# header for the full per-tick discussion.
+- label: makoto-hayate-mp-block
+  setup: { dist: close, dummy: stand }
+  input: "motion qcf MP"
+  qjson: { name: "Hayate Strong" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: 3, R: 32, adv: from-qjson }
+
+# §13.13 contact-path convention (disposition (a)-PARTIAL under F1): same
+# F1 conversion as makoto-hayate-lp-block - A=3 engine-truth on the BLOCK
+# path vs arcade 6 (from-qjson), identical own-ledger mechanism. FULL
+# CONVERT sweep #3 (2026-07-11, F2, §13.13): R=32 engine-truth, identical
+# per-tick recount mechanism as makoto-hayate-lp-block, converted here
+# under the same already-shipped cross-strength convention as this move's
+# own sweep-2 F1 A-conversion (probe LP only, cite strength-identity from
+# the strings; golden A/R/adv identical across strengths, only S differs
+# and S is arcade-exact per strength). Arcade Recovery 24 preserved. See
+# makoto-hayate-lp-block's header for the full per-tick discussion.
+- label: makoto-hayate-hp-block
+  setup: { dist: close, dummy: stand }
+  input: "motion qcf HP"
+  qjson: { name: "Hayate Fierce" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: 3, R: 32, adv: from-qjson }
+
+# §13.13 contact-path convention (adopted 2026-07-10, classification sweep #2
+# fable-grade audit, disposition (a)-PARTIAL under F1): A=3 is the
+# engine-truth credit actually banked on the HIT path - same F1
+# own-ledger mechanism as makoto-hayate-lp-block (own ledger,
+# s5-rundir/run-makoto: whiff credits 16(add=3)+20(add=3)=6=arcade; both
+# contact outcomes bank only cell 16(3)=3; skip = deficit exact). Arcade
+# (whiff-canonical, from-qjson) A=6 - preserved here per the convention.
+# FULL CONVERT sweep #3 (2026-07-11, F2, §13.13): R=20 is the engine-truth
+# recovery actually played on the HIT path - own per-tick recount
+# (s5-rundir/run-makoto preserved P2tick stream, audit-recounted
+# classification sweep #3): R window = post-thaw GT310-329 =
+# 24(4)+28(2)+0(2)+dwell12(11)+0(1)=20; -4 = whiff's cgix4+cgix8 cells
+# (2+2 ticks) skipped outright, dwell unchanged (cgix12, 11 ticks =
+# whiff's own 11) - branch/skip declared-tick differential == divergence
+# exactly, the F2 bar met as written. Arcade Recovery: 24 (makoto.json
+# Hayate Jab) preserved in this comment. S remains arcade-exact.
+- label: makoto-hayate-lp-hit
+  setup: { dist: close, dummy: none }
+  input: "motion qcf LP"
+  qjson: { name: "Hayate Jab" }
+  outcome: HIT
+  expect: { S: from-qjson, A: 3, R: 20 }
+
+# §13.13 contact-path convention (disposition (a)-PARTIAL under F1): same
+# F1 conversion as makoto-hayate-lp-hit - A=3 engine-truth on the HIT path
+# vs arcade 6 (from-qjson), identical own-ledger mechanism. FULL CONVERT
+# sweep #3 (2026-07-11, F2, §13.13): R=20 engine-truth, identical per-tick
+# recount mechanism as makoto-hayate-lp-hit, converted here under the same
+# already-shipped cross-strength convention as this move's own sweep-2 F1
+# A-conversion (probe LP only, cite strength-identity from the strings;
+# golden A/R/adv identical across strengths, only S differs and S is
+# arcade-exact per strength). Arcade Recovery 24 preserved. See
+# makoto-hayate-lp-hit's header for the full per-tick discussion.
+- label: makoto-hayate-mp-hit
+  setup: { dist: close, dummy: none }
+  input: "motion qcf MP"
+  qjson: { name: "Hayate Strong" }
+  outcome: HIT
+  expect: { S: from-qjson, A: 3, R: 20 }
+
+# §13.13 contact-path convention (disposition (a)-PARTIAL under F1): same
+# F1 conversion as makoto-hayate-lp-hit - A=3 engine-truth on the HIT path
+# vs arcade 6 (from-qjson), identical own-ledger mechanism. FULL CONVERT
+# sweep #3 (2026-07-11, F2, §13.13): R=20 engine-truth, identical per-tick
+# recount mechanism as makoto-hayate-lp-hit, converted here under the same
+# already-shipped cross-strength convention as this move's own sweep-2 F1
+# A-conversion (probe LP only, cite strength-identity from the strings;
+# golden A/R/adv identical across strengths, only S differs and S is
+# arcade-exact per strength). Arcade Recovery 24 preserved. See
+# makoto-hayate-lp-hit's header for the full per-tick discussion.
+- label: makoto-hayate-hp-hit
+  setup: { dist: close, dummy: none }
+  input: "motion qcf HP"
+  qjson: { name: "Hayate Fierce" }
+  outcome: HIT
+  expect: { S: from-qjson, A: 3, R: 20 }
+
+# --- Fukiage (anti-air uppercut), DP-shape hold-chain -----------------------
+# Landed via the EXISTING DP-shape hold-chain (same recipe as Ken's
+# Shoryuken / Yun's Tetsu Zankou / Hugo's Shootdown Backbreaker) -
+# already-expressible, no compiler change attempted first. S/A/R match
+# makoto.json's Fukiage Jab/Strong/Fierce rows EXACTLY on WHIFF for all
+# three strengths (unambiguous identification), completely clean - zero
+# divergence.
+#
+# BLOCK/HIT UNREACHABLE (accepted harness gap, task description's own
+# prediction confirmed): Fukiage is an anti-air uppercut that never
+# connects against a grounded standing/non-jumping dummy - BOTH a BLOCK
+# attempt (dist:close, dummy:stand) and a HIT attempt (dist:close,
+# dummy:none) verified live as SHAPE mismatches (outcome reads WHIFF
+# instead), so no BLOCK/HIT entries are authored for this move - same
+# structural gap as the runbook's SDB precedent (§12.1 register row 2:
+# "SDB HIT/BLOCK unreachable - the harness dummy can't be scripted to jump;
+# WHIFF is the only assertable outcome for anti-air-only grabs (accepted)"),
+# generalized here to an anti-air STRIKE rather than a grab.
+
+- label: makoto-fukiage-lp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LP 2; wait 1"
+  qjson: { name: "Fukiage Jab" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: makoto-fukiage-mp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+MP 2; wait 1"
+  qjson: { name: "Fukiage Strong" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: makoto-fukiage-hp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+HP 2; wait 1"
+  qjson: { name: "Fukiage Fierce" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# --- Oroshi (overhead chop), motion hcb + P ---------------------------------
+# CORRECTION (task description said "qcf+K" - empirically WRONG, verified
+# this session): `motion qcf LK` produced S=6/A=6/R=13/adv=-5 on BLOCK - an
+# EXACT match to makoto.json's "Towards Short" row, not Oroshi Jab (S=19/
+# A=7/R=17) - qcf's final step (FORWARD+LK held) was simply read as the
+# plain Towards+Short command normal; the qcf motion window never
+# registered a special at all. makoto.json's own naming convention is the
+# tell in hindsight: Oroshi uses "Jab/Strong/Fierce" (punch-tier) naming,
+# the SAME convention as Hayate/Fukiage (both confirmed punch-button moves)
+# - NOT "Short/Forward/Roundhouse" (kick-tier) naming like Tsurugi/Karakusa
+# (both confirmed kick-button moves). Probed `motion hcb LP` and `motion qcb
+# LP` side by side: BOTH landed IDENTICAL exact-arcade numbers
+# (S=19/A=7/R=17 WHIFF, matching Oroshi Jab exactly) - `hcb` (half-circle
+# back) is used below as the canonical recipe; `qcb` also works but is not
+# separately asserted. Zero compile_corpus.py changes (existing `motion hcb`
+# macro, already used for Karakusa/Zenpou-Tenshin-style command grabs
+# elsewhere in this repo). Completely clean on every outcome tested - S/A/R/
+# adv all match makoto.json exactly, zero divergence of any kind.
+
+- label: makoto-oroshi-lp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "motion hcb LP"
+  qjson: { name: "Oroshi Jab" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: makoto-oroshi-mp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "motion hcb MP"
+  qjson: { name: "Oroshi Strong" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: makoto-oroshi-hp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "motion hcb HP"
+  qjson: { name: "Oroshi Fierce" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: makoto-oroshi-lp-block
+  setup: { dist: close, dummy: stand }
+  input: "motion hcb LP"
+  qjson: { name: "Oroshi Jab" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: makoto-oroshi-lp-hit
+  setup: { dist: close, dummy: none }
+  input: "motion hcb LP"
+  qjson: { name: "Oroshi Jab" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# --- Karakusa (command grab), motion hcb + K --------------------------------
+
+- label: makoto-karakusa-lk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "motion hcb LK"
+  qjson: { name: "Karakusa Short" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# HIT-R display convention (docs/frame-data-synthesis.md §13.10, Class 3
+# connected grab, SATURATED sub-case) - same mechanism as
+# corpus-ken.yaml's ken-throw-hit / corpus-yun.yaml's yun-throw-hit: T=71
+# confirms saturation at FD_METER_LEN-1 (frame_data_overlay.c:42, despite
+# endrel=1 also firing per the trace - saturation is what actually bounds
+# this span since raw_len hit the cap before the release path did), so
+# R = (FD_METER_LEN-1) - S - A = 71-7-3 = 61, a DERIVED value from the live
+# trace - re-derive if FD_METER_LEN ever changes. S/A match makoto.json's
+# Karakusa Short row exactly; adv unasserted (no Hit_advantage field for
+# Karakusa in makoto.json).
+- label: makoto-karakusa-lk-hit
+  setup: { dist: 12, dummy: none }
+  input: "motion hcb LK; wait 40"
+  qjson: { name: "Karakusa Short" }
+  outcome: HIT
+  # BUFFER-1 (2026-07-13): the FD_CAPTURE_LEN 72->256 raise un-caps this
+  # partner-release grab's raw[] capture — post-fix measured R=133 (was
+  # 61). No arcade oracle exists for this post-contact span (same class
+  # as the Hugo grab HIT convention, §13.10). R DE-ASSERTED; flagged for
+  # follow-up (a previously-untracked row, outside the M1 register).
+  expect: { S: from-qjson, A: from-qjson }
+
+# --- Negative control (plan section 1.8 item 5 precedent) ------------------
+
+- label: makoto-jump-none
+  setup: { dist: 250, dummy: none }
+  input: "press UP"
+  outcome: NONE

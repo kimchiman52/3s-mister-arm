@@ -1,0 +1,3 @@
+label	verdict	outcome	n	S	A	R	adv	kd
+chunli-sa2-block	XFAIL	BLOCK	1	2	20	38	-23	0
+chunli-sa2-hit	PASS	HIT	1	2	19	35	+79	1

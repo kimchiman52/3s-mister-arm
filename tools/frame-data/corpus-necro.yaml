@@ -1,0 +1,914 @@
+# Necro frame-data corpus (cast rollout). Generated/consumed by
+# tools/frame-data/compile_corpus.py against docs/arcade-frame-data/necro.json
+# (fetched 2026-07-08 from
+# https://raw.githubusercontent.com/Coccis77/thirdstrikedatabot/master/json/necro.json,
+# md5 6484539d4c2f834daa4a7aef70c3342b - verified by re-fetching and hashing
+# the response twice, byte-identical both times). CHARACTER_IDS key is
+# "necro" (id=5, compile_corpus.py:42).
+#
+# Scope (task-directed 2026-07-08): normals ladder (six-button close
+# BLOCK/HIT + WHIFF sample + crouching, incl. Crouching Roundhouse's own
+# KD row) + two command normals (Back + Forward, Down Back + Fierce) w/
+# whiff rows + UOH (WHIFF+BLOCK+HIT) + Throw + negative control + a
+# ONE-SESSION ground specials probe covering all five task-named moves:
+# Snake Fang (task guess hcf+K CONFIRMED), Electric Shock/"Denji Blast"
+# (task guess "mash P" - INEXPRESSIBLE, see ELECTRIC SHOCK / DENJI BLAST
+# below, no entries), Flying Viper (task guess qcf+P - WRONG, confirmed
+# qcb+P instead), Raging Cobra/"Rising Cobra" (task guess qcf+K - WRONG,
+# confirmed hcb+K instead), Spinning Punch/"Tornado Hook" (task guess
+# qcb+P - WRONG, confirmed hcf+P instead - qcb+P is Flying Viper's own
+# motion, not Spinning Punch's). NO supers/EX (Spinning Punch EX, Flying
+# Viper EX, Raging Cobra EX, Magnetic Storm, Slam Dance all excluded -
+# necro.json rows 44/48/52/53/54).
+#
+# Every expect below was pinned against a live trace
+# (tools/frame-data/run.sh tools/frame-data/corpus-necro.yaml); every
+# suspicious finding (the two Flying Viper R divergences, the Crouching
+# Roundhouse KD big-number match, the Snake Fang/Raging Cobra/Spinning
+# Punch HIT-R findings, the two overhead-label contradictions) was
+# independently re-verified in an isolated single-entry probe corpus
+# (inter_entry_wait 200-300, nothing crowding any entry) per
+# CORPUS-AUTHORING.md Phase 5 - every isolated number was BYTE-IDENTICAL to
+# the batched-corpus measurement, ruling out §12.1-style ordering/residue
+# contamination for all of them.
+#
+# ============================================================================
+# MOTION VERIFICATION (task flagged all four non-Electric-Shock specials'
+# motions as tentative guesses - verify-vs-oracle discipline applied via the
+# S/A/R-value motion-probe method, CORPUS-AUTHORING.md Phase 5, since
+# necro.json's Common_name is empty for every one of its 56 rows - same GAP
+# as corpus-elena.yaml, verified programmatically):
+#   - Snake Fang (Short): task's hcf+K guess CONFIRMED. S=12/A=1/R=28 exact
+#     match to necro.json's row on WHIFF, unambiguous (qcf+K, hcb+K, and a
+#     charge-back-then-forward+K probe all instead landed the plain "Short"
+#     normal, S=4/A=1/R=9 - only hcf+K produced the special).
+#   - Raging Cobra (Short): task's own "qcf+K" guess for this move (labeled
+#     "Rising Cobra" in the task) was WRONG - qcf+K instead lands the plain
+#     "Short" normal (S=4/A=1/R=9). hcb+K is the real motion: S=23/A=4/R=17
+#     exact match to necro.json's row, discovered when an hcb+K probe aimed
+#     at ruling out Snake Fang candidates landed Raging Cobra's numbers by
+#     coincidence, then independently re-confirmed with an explicit hcb+K
+#     probe under the Raging Cobra qjson name.
+#   - Flying Viper (Jab): task's own "qcf+P" guess was WRONG - qcf+P instead
+#     lands the plain "Jab" normal (S=5/A=1/R=8). qcb+P is the real motion:
+#     S=26/A=5/R=17 exact match to necro.json's row on WHIFF. hcb+P ALSO
+#     lands Flying Viper with byte-identical numbers - not a second distinct
+#     motion, but a buffer-tail-overlap artifact (hcb's own step sequence
+#     ends FORWARD, FORWARD+DOWN, DOWN, DOWN+BACK, BACK+btn - its final
+#     three steps, DOWN/DOWN+BACK/BACK+btn, are EXACTLY qcb's own three
+#     steps, so any hcb performed also satisfies a trailing qcb pattern).
+#     qcb+P is used below as the canonical, minimal motion.
+#   - Spinning Punch (Jab) ["Tornado Hook" in the task]: the task's own
+#     "qcb+P" guess for this move was WRONG (qcb+P is Flying Viper's own
+#     motion, confirmed above) - hcf+P is the real motion: S=6/A=8/R=13
+#     exact match to necro.json's row on WHIFF (hcb+P, 2qcf+P, a
+#     charge-back-then-forward+P probe, and a charge-down-then-up+P probe
+#     were all also tried and ruled out - hcb+P and charge-back-then-forward
+#     both landed the plain "Jab" normal; 2qcf+P landed a near-miss S=6/A=6/
+#     R=16 that does not exactly match any oracle row and was discarded as
+#     motion-timing noise, not a distinct move; charge-down-then-up+P also
+#     landed plain "Jab").
+#
+# ============================================================================
+# ELECTRIC SHOCK / "DENJI BLAST" - INEXPRESSIBLE WITH CURRENT PRIMITIVES
+# (task flagged this as "mash P?" and asked to check expressibility with
+# hold/press chains, documenting if inexpressible - same posture and same
+# outcome as corpus-chunli.yaml's Hyakuretsu Kyaku precedent, which was
+# similarly abandoned rather than escalated to a compile_corpus.py change).
+# SEVEN distinct attempts were tried this session, all with already-
+# expressible primitives (per CORPUS-AUTHORING.md Phase 5's "try existing
+# macros/hold-chains before concluding a new macro is needed" - and per the
+# Hyakuretsu precedent's own reasoning, this isn't even a motion-macro
+# problem, so escalating to `_motion_steps` would not help regardless):
+#   1. `hold LP 60; wait 1` (a 60-frame charge-hold then release) -> plain
+#      Jab (S=5/A=1/R=8, necro.json's Jab row exactly) - holding a punch
+#      button, however long, dispatches the ordinary Jab immediately on
+#      press; the hold has no bearing on move selection in this build.
+#   2. Three sequential `press LP` commands (~9 frames total, the Chun-Li
+#      Hyakuretsu precedent's own first attempt) -> plain Jab, identical
+#      numbers.
+#   3. A tighter five-tap `hold LP 1; wait 1` x5 chain (~10 frames total)
+#      -> plain Jab, identical numbers.
+#   4. A `hold LP 150; wait 1` 150-frame long-hold -> still plain Jab,
+#      identical numbers (rules out a longer charge-threshold theory).
+#   5. An alternating `press LP; press MP; press HP` x2 chain (6 presses) ->
+#      TWO FINALs in the window, the first matching plain Jab exactly
+#      (S=5/A=1/R=8) - the chain fires multiple separate normals rather
+#      than composing into a special.
+#   6. A simultaneous `press LP+MP+HP` three-punch chord -> plain "Fierce"
+#      (S=15/A=1/R=28, adv=-11 exactly matching necro.json's Fierce row's
+#      own Hit_advantage=-11 on a HIT-outcome probe) - a simultaneous
+#      multi-punch chord resolves to the single highest-priority button in
+#      this build, not a special-move dispatch.
+#   7. A tight three-button alternating chain with 1-frame holds and no
+#      explicit releases (`hold LP 1; hold MP 1; hold HP 1;` x2 + wait) ->
+#      plain Jab again (only the first button's press registers as a true
+#      edge without an intervening release).
+# Every attempt read back as an ordinary normal, never as Electric Shock.
+# This looks like the same same-button/same-family rapid-re-input buffer or
+# target-combo timing window the Hyakuretsu precedent describes ("a
+# same-button re-input buffer/target-combo timing window distinct from
+# anything this repo's existing primitives were built to express") -
+# properly characterizing it (binary-searching the actual input-buffer
+# window in cmd_data.c or equivalent, or determining whether it is in fact a
+# true "mash" count-based special rather than a hold/charge one) is out of
+# this session's one-probe budget. Documented as OUT OF SCOPE / wants-
+# follow-up, no entries below for it, no oracle edit, no compiler change.
+#
+# ============================================================================
+# ISSUE #17 / STANDARD-DIVERGENCE FAMILY CENSUS: see each entry's own
+# comment below for its specific classification (this corpus's normals
+# ladder turned out fully clean - no issue #17 A-undercount anywhere in the
+# six-button standing/crouching ladder, confirmed by direct comparison
+# against necro.json on every BLOCK/HIT/WHIFF row).
+#
+# ============================================================================
+# TWO OVERHEAD-LABEL CONTRADICTIONS (task-relevant verify-vs-assumption
+# findings, same posture as corpus-elena.yaml's Mallet Smash finding):
+# necro.json's Parry.Low=False on "Back + Forward" (Parry High=True/Low=
+# False - the oracle's own overhead-attack shape, "must block standing")
+# and on Flying Viper (same Parry shape) would suggest both should whiff or
+# read differently against a crouching guard. Empirically:
+#   - Back + Forward: a dummy:crouch probe at dist:close measures
+#     BYTE-IDENTICAL BLOCK numbers to the dummy:stand probe (S=5/A=1/R=10/
+#     adv=+3, both matching necro.json's row exactly) - Necro's crouching
+#     guard blocks this move exactly like standing guard, contradicting the
+#     oracle's overhead-implied shape. NOT asserted as an engine bug here -
+#     a documented empirical finding only (trace fact, no mechanism
+#     claimed), same posture as the Elena precedent.
+#   - Flying Viper: see the FLYING VIPER GUARD-STANCE R DIVERGENCE section
+#     below - this one differs from the Back + Forward finding in that the
+#     crouching guard DOES block Flying Viper (also contradicting the
+#     overhead-implied Parry shape) but with a MEASURABLY DIFFERENT R/adv
+#     than the standing-guard BLOCK, not merely a byte-identical repeat.
+#
+# Snake Fang was ALSO probed crouching (dummy:crouch) despite its own
+# Parry shape being High=False/Low=False (not an overhead-vs-low
+# distinction at all - Parry False/False conventionally signals
+# parry-immunity, closer to a grab, not a stance requirement) and measured
+# BYTE-IDENTICAL to its own standing BLOCK (S=12/A=1/R=28/adv=-13 both) -
+# this confirms Snake Fang is a genuine BLOCKABLE move (not an unblockable
+# command grab, despite carrying a Throw_range=56 oracle field - same
+# "blockable grab" shape as corpus-ibuki.yaml's own Raida precedent, which
+# was similarly task-flagged as a Class-3-grab candidate and turned out
+# blockable) with NO stance-dependent behavior at all (unlike Flying
+# Viper's own genuine stance-conditional R below).
+#
+# ============================================================================
+# FLYING VIPER — TWO STACKED FINDINGS
+#
+# FINDING 1: DISTANCE-REACHABILITY GAP (structural, not a divergence).
+# dist:close (56px) WHIFFS against both a dummy:stand AND a dummy:none
+# target (S=26/A=5/R=17, byte-identical to the dist:250 WHIFF baseline) -
+# Flying Viper's own hurtbox/travel arc does not reach a target at the
+# close-range convention distance. Binary-searched (isolated probe corpus):
+# dist=70 through dist=150 all connect cleanly (BLOCK S=26/A=5/R=19/adv=-3);
+# dist=175 whiffs again. dist:90 is used below (the ryu-farjab-style
+# closest-to-convention working value, per CORPUS-AUTHORING.md Phase 2's
+# own "binary-search the actual connecting distance rather than assuming"
+# guidance).
+#
+# FINDING 2: R-side contact surplus, present on BOTH standing-guard BLOCK
+# and dummy:none HIT (R=19 vs arcade Recovery=17, a uniform +2), while WHIFF
+# is fully clean at R=17 exact - the calibration surface holds and only the
+# two contact outcomes diverge. S/A are exact on every leg (S=26, A=5).
+# Trace: BLOCK cut=0/dwellbrk=0/anchor_a=-1 (T=46, S+A+R=50, a 4-frame gap);
+# HIT byte-identical trace shape (T=46, cut=0/anchor_a=-1). This resembles
+# Phase 6 item 4 (Hugo-Roundhouse: "A exact, R reads HIGH on both BLOCK and
+# HIT, WHIFF exact") in SHAPE, but item 4's own mechanism
+# (`cg_extdat=0x80` same-tick contact advance, `hitcheck.c:727-729`, on a
+# move whose end is pinned by the outcome-independent
+# `jumping_union_process`) has not been independently verified here (no
+# static-code confirmation was performed this session - TRACE OBSERVATION
+# ONLY). Flagged as a CANDIDATE item-4 member (not asserted as confirmed);
+# xfail cites item 4 as the closest-shape bucket with an explicit caveat
+# that the underlying mechanism is unconfirmed for this specific move.
+#
+# FINDING 3 (STACKED ON TOP OF FINDING 2, defender-stance-conditional):
+# unlike every other divergence in this corpus, Flying Viper's OWN BLOCK
+# outcome differs by DEFENDER STANCE - dummy:stand BLOCK measures R=19/
+# adv=-3 (Finding 2's own contact-surplus number), but a dummy:crouch probe
+# at the SAME dist:90 measures R=15/adv=+1 instead - a genuine -4/+4 swing
+# purely from the defender's guard stance, with S/A unchanged (S=26/A=5
+# both). Both crouch and stand legs show cut=0/dwellbrk=0/anchor_a=-1 (the
+# ordinary r1-transition end, no §13.5.1 mechanism engaged either way) - so
+# this is NOT a cut-window-compression shape (Class 2/§13.7.3 requires
+# cut=1); the attacker's own recovery genuinely plays out differently
+# keyed off the DEFENDER'S STANCE rather than the HIT-vs-BLOCK outcome
+# (unlike every Class-1 hit-branch-chain member, which keys off outcome,
+# not stance). Does not fit any existing Phase-6 bucket (not #17 - A is
+# exact everywhere; not Class 1/2/3 of §13.10 - those are HIT-R families
+# keyed off outcome, this is a BLOCK-vs-BLOCK differential keyed off
+# stance; not item 4 in isolation - item 4 has no stance-conditional
+# clause). TRACE OBSERVATION ONLY, no mechanism claimed beyond what's
+# stated: flagged to orchestrator/user for follow-up classification,
+# UNCLASSIFIED (flagged 2026-07-08).
+#
+# ============================================================================
+# STANDING FIERCE — WHIFF UNREACHABLE (structural, discovered live). At
+# dist:250 dummy:none, Fierce CONNECTS (outcome=HIT, S=15/A=1/R=28/adv=-11,
+# exact match to necro.json's own Fierce row) instead of whiffing - an
+# isolated solo re-verification (nothing preceding, per Phase 5) confirmed
+# dist:300 (DIST_MAX) ALSO connects cleanly with byte-identical numbers when
+# it is the FIRST Fierce dispatch in a session. Necro's Fierce has a
+# stretchy-limb reach that never whiffs against a grounded target anywhere
+# in this harness's expressible distance range - the same "WHIFF
+# unreachable" structural shape as corpus-elena.yaml's Rhino Horn /
+# corpus-ryu.yaml's Hadouken precedents (§12.1 register row 3), just for an
+# ordinary standing normal instead of a special. The other five standing
+# normals (Jab/Strong/Short/Forward/Roundhouse) all whiff cleanly at
+# dist:250 as expected - this is Fierce-specific. `necro-hp-whiff` below is
+# authored as a HIT structural-finding entry (its own true measured
+# outcome, per Phase 3's "never guess the desired value"), not a WHIFF. A
+# planned second confirmation at DIST_MAX was attempted and abandoned after
+# exposing a SEPARATE contamination mechanism - see the NEW HARNESS-
+# LIMITATION FINDING comment further below (repeat-same-move-connect
+# contamination), not shipped as its own entry.
+#
+# ============================================================================
+# THROW HIT — UNREACHABLE (NEW structural harness-limitation finding,
+# 2026-07-08, GENERIC not throw-specific - see below). necro.json's
+# Throw_range=26px. Five distinct requested distances (9, 20, 26, 30, 42)
+# were tried for necro-throw-hit's own dummy:none HIT leg; EVERY one
+# produced the identical S=2/A=1/R=58/T=61/adv=+85/kd=0 result, and in every
+# case the trace's own MOVE_START line showed the ACTUAL achieved distance
+# was NOT the requested one - it clustered at 39, 42, 42, 44, 44
+# respectively (P1 and P2 symmetrically pushed apart from the requested
+# teleport, by an amount that SHRINKS as the requested gap grows: -15/+15
+# at dist:9, -8/+8 at dist:26) - i.e. the harness's `P` teleport converges
+# toward a ~39-44px floor separation regardless of how tight a gap is
+# requested, well outside necro.json's own Throw_range=26. Control test: a
+# plain `press DOWN+LP` (Crouching Jab, NOT a grab) requested at dist:9 shows
+# the IDENTICAL floor (MOVE_START measures dist=39, not 9) while still
+# measuring a fully clean, arcade-exact BLOCK (S=6/A=1/R=4/adv=+5) - proving
+# this is a GENERIC teleport/collision-separation floor, not a Throw-input
+# side effect (Crouching Jab's own large reach simply absorbs the 39px gap
+# without changing its outcome, unlike Throw whose real capture range is
+# narrower than the floor). This floor is NOT documented anywhere in
+# compile_corpus.py's own CAVEAT comment (which only documents a MAXIMUM
+# clamp around dist=320-332 for over-large requests, `compile_corpus.py:84-91`)
+# - it is a previously-undiscovered MINIMUM, found here because Necro's own
+# Throw_range (26px) is the first oracle value in this repo's cast-rollout
+# session tight enough to fall entirely inside it. Whether this floor is
+# Necro-specific (a wider collision box) or applies to every character
+# (in which case some already-shipped very-tight-Throw_range corpora
+# elsewhere in this repo may warrant a second look) was NOT tested this
+# session (out of budget - would require probing other characters). Per
+# Phase 4's STOP-rule discipline, the measured S=2/A=1/R=58/kd=0 numbers
+# are NOT the genuine capture sequence (Throw's own r1=4/r2=14 dispatch and
+# unique S=2 fire, but the actual defender is never within grab range, so
+# whatever produces the HIT outcome is some other engagement, not a real
+# capture) - `necro-throw-hit` is THEREFORE OMITTED from this corpus
+# (same posture as corpus-hugo.yaml's SDB "HIT/BLOCK unreachable...
+# accepted" precedent, `CORPUS-AUTHORING.md` §12.1 register row 3) rather
+# than asserting a misleading wrong value. `necro-throw-whiff` (dist:250,
+# fully clean, exact oracle match) is the only assertable Throw outcome for
+# this character. Flagged to orchestrator/user as a NEW, previously-
+# undocumented harness-limitations register candidate (wants follow-up:
+# characterize the floor's exact formula and cross-character scope).
+#
+# ============================================================================
+# RAGING COBRA / SPINNING PUNCH / SNAKE FANG — HIT-R findings (§13.10 Class
+# 3-shaped, connected-grab-adjacent).
+#   - Snake Fang (Short): BLOCK is fully clean (S=12/A=1/R=28/adv=-13, exact
+#     match on every field). HIT shows a genuine R divergence (measured
+#     R=41 vs arcade/WHIFF's own clean R=28) with `endrel=1` firing (§13.6.1
+#     partner-release) and cut=0/anchor_a=-1 (no §13.5.1 mechanism) -
+#     `T=54=S+A+R` exactly, a DERIVED, self-consistent value (`R = T-S-A =
+#     54-12-1 = 41`), the SAME non-saturated partner-release sub-case as
+#     corpus-ibuki.yaml's ibuki-throw-hit / corpus-remy.yaml's
+#     remy-throw-hit (both cited there as §13.10 Class 3) - despite Snake
+#     Fang being a genuinely BLOCKABLE strike rather than an unblockable
+#     command grab (see the OVERHEAD-LABEL/blockable-grab discussion
+#     above), it shares the exact Class-3 HIT-R mechanism once it connects.
+#     kd=1 measured directly (engine-reported, matching a huge adv=+120 -
+#     necro.json's own Hit_advantage is the literal "-" for this row, not
+#     cross-checked numerically, same posture as every other "-"-Hit_
+#     advantage special in this repo).
+#   - Raging Cobra (Short): BLOCK and HIT are BOTH fully clean on S/A/R
+#     (S=23/A=4/R=17 all three legs, matching necro.json exactly; BLOCK
+#     adv=-5 also matches Block_advantage=-5 exactly). kd was previously
+#     measured 0 here; RESOLVED 2026-07-09 (§13.6.2b, ENGINE-3): kd now
+#     measures 1 live - the shipped predicate was simply blind to this
+#     move's down-family traversal, not a genuine oracle/engine
+#     divergence. necro.json's own Hit_advantage is still the literal "-"
+#     for this row (no published ground truth claims a knockdown), so kd
+#     stays unasserted either way (unlike corpus-remy.yaml's
+#     remy-crfierce-hit, whose own oracle Hit_advantage="D" WAS a
+#     ground-truth contradiction - Raging Cobra has no such contradiction
+#     to report). adv=+53 on HIT is large but not cross-checked (same "-"
+#     convention). No divergence anywhere in this move's own frame-data
+#     fields - a fully clean special.
+#   - Spinning Punch (Jab): BLOCK is fully clean (S=6/A=8/R=13/adv=+1,
+#     matching necro.json's Block_advantage=1 exactly). HIT is ALSO fully
+#     clean on S/A/R (S=6/A=8/R=13, byte-identical to BLOCK/WHIFF) with
+#     kd=1 measured (adv=+78, large, consistent with a genuine knockdown;
+#     necro.json's own Hit_advantage is "-" for this row, not cross-
+#     checked). Trace curiosity (NOT a divergence, since every checked
+#     field is exact): the HIT FINAL line carries `cut=0` but a non-(-1)
+#     `anchor_a=8` (matching `engine_a=8` exactly) - normally `cut=0`
+#     entries in this repo show `anchor_a=-1` (no §13.5.1 anchor point
+#     recorded at all); here an anchor was apparently computed but the
+#     ordinary r1-transition still won the race (both mechanisms agreeing
+#     on the same numeric R=13, so no actual divergence results). Recorded
+#     as a trace observation only, not investigated further (out of this
+#     session's probe budget) since it produces no measurable divergence.
+#
+# ============================================================================
+# CROUCHING ROUNDHOUSE — KD big-number convention (clean, no divergence).
+# necro.json's Crouching Roundhouse Hit_advantage="31" (numeric, the same
+# "large-number-on-knockdown" convention as corpus-elena.yaml's own
+# Crouching Roundhouse Hit_advantage=34 / corpus-akuma.yaml's
+# akuma-crroundhouse-hit precedent) - measured live: adv=+31 AND kd=1, an
+# exact oracle match, so adv IS asserted from-qjson here (same posture as
+# the Elena/Akuma precedent). S/A/R are exact on BLOCK/WHIFF/HIT
+# (S=13/A=1/R=27 all three legs, matching necro.json's Startup=13/
+# Hit=1/Recovery=27 precisely). No divergence anywhere in this move.
+character: necro
+oracle: necro.json
+inter_entry_wait: 150
+entries:
+
+# --- Standing normals, BLOCK (dummy: stand) --------------------------------
+
+- label: necro-jab-block
+  setup: { dist: close, dummy: stand }
+  input: "press LP"
+  qjson: { name: "Jab" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: necro-strong-block
+  setup: { dist: close, dummy: stand }
+  input: "press MP"
+  qjson: { name: "Strong" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: necro-fierce-block
+  setup: { dist: close, dummy: stand }
+  input: "press HP"
+  qjson: { name: "Fierce" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: necro-short-block
+  setup: { dist: close, dummy: stand }
+  input: "press LK"
+  qjson: { name: "Short" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: necro-forward-block
+  setup: { dist: close, dummy: stand }
+  input: "press MK"
+  qjson: { name: "Forward" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: necro-roundhouse-block
+  setup: { dist: close, dummy: stand }
+  input: "press HK"
+  qjson: { name: "Roundhouse" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# --- HIT sample per button family (dummy: none, close range) ---------------
+
+- label: necro-jab-hit
+  setup: { dist: close, dummy: none }
+  input: "press LP"
+  qjson: { name: "Jab" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: necro-strong-hit
+  setup: { dist: close, dummy: none }
+  input: "press MP"
+  qjson: { name: "Strong" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: necro-fierce-hit
+  setup: { dist: close, dummy: none }
+  input: "press HP"
+  qjson: { name: "Fierce" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: necro-short-hit
+  setup: { dist: close, dummy: none }
+  input: "press LK"
+  qjson: { name: "Short" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: necro-forward-hit
+  setup: { dist: close, dummy: none }
+  input: "press MK"
+  qjson: { name: "Forward" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: necro-roundhouse-hit
+  setup: { dist: close, dummy: none }
+  input: "press HK"
+  qjson: { name: "Roundhouse" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# --- WHIFF sample per button family (dummy: none, dist 250) -----------------
+# necro.json has ZERO "Far"-prefixed rows (verified across all 56 Name
+# strings) - same shape as corpus-elena.yaml. Every WHIFF entry below cites
+# its own single standing-normal row.
+
+- label: necro-lp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press LP"
+  qjson: { name: "Jab" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: necro-mp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press MP"
+  qjson: { name: "Strong" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# See file header STANDING FIERCE — WHIFF UNREACHABLE. Fierce CONNECTS at
+# dist:250 (S/A/R/adv all matching necro.json's own Fierce row exactly) -
+# this is its own true measured outcome, not a whiff, per Phase 3
+# discipline. Confirmed again at DIST_MAX below.
+- label: necro-hp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press HP"
+  qjson: { name: "Fierce" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: necro-lk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press LK"
+  qjson: { name: "Short" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: necro-mk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press MK"
+  qjson: { name: "Forward" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: necro-hk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press HK"
+  qjson: { name: "Roundhouse" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# NEW HARNESS-LIMITATION FINDING, 2026-07-08 (repeat-same-move-connect
+# contamination - distinct from the standard §12.1 register): a planned
+# `necro-hp-farhit-probe` entry (dist:300, to confirm the WHIFF-unreachable
+# finding above holds at DIST_MAX) is OMITTED after being independently
+# reproduced as UNRELIABLE, not merely an ordering artifact fixable by
+# reshuffling. Evidence: (1) placed immediately after necro-hp-whiff in an
+# earlier draft -> spurious WHIFF; (2) moved here, separated from
+# necro-hp-whiff by the other five buttons' own WHIFF entries (the standard
+# §12.1 "order distance-sensitive entries away from a same-move connect"
+# workaround) -> STILL a spurious WHIFF (MOVE_START showed the requested
+# dist:300 teleport itself landing short, at dist:284 - a stage-bound-style
+# clamp, not the §12.1 mechanism); (3) an isolated TWO-entry solo corpus
+# (dist:284 then dist:300, nothing else, inter_entry_wait 300) reproduced
+# the SAME shape - the FIRST Fierce dispatch (dist:284) read a clean HIT,
+# the SECOND (dist:300) read a spurious WHIFF - proving this is triggered
+# by ANY second Fierce-connect following an already-connected Fierce
+# dispatch, independent of which specific distances are involved and
+# independent of standard §12.1 ordering fixes (150-300 frame neutral
+# gaps didn't help either). A single, isolated dist:300 probe with NOTHING
+# preceding it (no prior Fierce connect at all) DOES read a clean HIT
+# (S=15/A=1/R=28/adv=-11, exact oracle match) - confirming Fierce itself
+# reaches dist:300 fine; the failure is specifically the SECOND-IN-A-ROW
+# dispatch of the same move connecting. Necro's Fierce is unusually prone
+# to exposing this because it never whiffs at any tested distance (see
+# above), making repeat-connects trivial to trigger; whether this
+# mechanism affects other moves/characters was not tested (out of this
+# session's budget). `necro-hp-whiff` above (the FIRST Fierce-connect
+# after necro-fierce-hit) is unaffected and stands as the corpus's
+# documented WHIFF-unreachable finding; the redundant DIST_MAX
+# reconfirmation is dropped rather than shipping an unreliable entry.
+# Flagged to orchestrator/user as a NEW harness-limitations register
+# candidate, wants follow-up (characterize the repeat-connect mechanism).
+
+# --- Crouching normals, BLOCK (dummy: stand) --------------------------------
+
+- label: necro-crjab-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+LP"
+  qjson: { name: "Crouching Jab" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: necro-crstrong-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+MP"
+  qjson: { name: "Crouching Strong" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: necro-crfierce-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+HP"
+  qjson: { name: "Crouching Fierce" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: necro-crshort-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+LK"
+  qjson: { name: "Crouching Short" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: necro-crforward-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+MK"
+  qjson: { name: "Crouching Forward" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# Crouching Roundhouse is a KD row (necro.json Hit_advantage="31", numeric
+# big-number convention - see file header) - gets WHIFF+HIT in addition to
+# BLOCK, per Phase 4's mandatory whiff-vs-table rule. Fully clean on all
+# three outcomes (see file header CROUCHING ROUNDHOUSE section).
+- label: necro-crroundhouse-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+HK"
+  qjson: { name: "Crouching Roundhouse" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: necro-crroundhouse-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press DOWN+HK"
+  qjson: { name: "Crouching Roundhouse" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: necro-crroundhouse-hit
+  setup: { dist: close, dummy: none }
+  input: "press DOWN+HK; wait 60"
+  qjson: { name: "Crouching Roundhouse" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson, kd: 1 }
+
+# --- Command normals ---------------------------------------------------------
+# necro.json has SEVEN Back/Down-Back-prefixed rows (Back + Jab/Strong/
+# Fierce/Short/Forward/Roundhouse, Down Back + Fierce) - verified against
+# every Name string in the fetched oracle. Two representative families
+# chosen per task scope: Back + Forward (non-KD, overhead-shaped per
+# Parry High=True/Low=False - see file header OVERHEAD-LABEL CONTRADICTION)
+# and Down Back + Fierce (the one KD row among the seven, Hit_advantage=
+# "D" literal).
+
+- label: necro-backforward-block
+  setup: { dist: close, dummy: stand }
+  input: "press LEFT+MK"
+  qjson: { name: "Back + Forward" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: necro-backforward-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press LEFT+MK"
+  qjson: { name: "Back + Forward" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# See file header TWO OVERHEAD-LABEL CONTRADICTIONS - a dummy:crouch probe
+# at dist:close measures BYTE-IDENTICAL numbers to the dummy:stand BLOCK
+# entry above (S=5/A=1/R=10/adv=+3, both matching necro.json exactly),
+# contradicting the oracle's own Parry.Low=False overhead-implied shape.
+# NOT an xfail - a genuine, documented empirical finding (trace fact only).
+- label: necro-backforward-crouch-probe
+  setup: { dist: close, dummy: crouch }
+  input: "press LEFT+MK"
+  qjson: { name: "Back + Forward" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: necro-dbfierce-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+LEFT+HP"
+  qjson: { name: "Down Back + Fierce" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: necro-dbfierce-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press DOWN+LEFT+HP"
+  qjson: { name: "Down Back + Fierce" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# necro.json's Hit_advantage="D" literal for this row (genuine KD
+# convention, like Q/Ryu's own "D" rows) - kd=1 measured correctly here
+# (NOT an ENGINE-3 gap; contrast with corpus-remy.yaml's remy-crfierce-hit,
+# whose own "D" row DID miss the predicate). adv is NOT asserted (same "D"
+# non-numeric convention as every other literal-"D" HIT entry in this
+# repo).
+- label: necro-dbfierce-hit
+  setup: { dist: close, dummy: none }
+  input: "press DOWN+LEFT+HP; wait 60"
+  qjson: { name: "Down Back + Fierce" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, kd: 1 }
+
+# --- UOH (press MP+MK) ------------------------------------------------------
+# necro.json's Universal Overhead: S=15/A=10/R=5 - the SAME numbers as
+# every other character's own UOH row in this repo (shared move data across
+# the cast). Block_advantage/Hit_advantage are both the literal "-" - no
+# expect.adv, same posture as every other UOH entry in this repo.
+#
+# THREE-WAY shape, the SAME recurring bucket as corpus-alex.yaml's alex-uoh /
+# corpus-elena.yaml's elena-uoh (explicitly cited there as "the Alex bucket") -
+# NOT a new mechanism. Measured: WHIFF R=3/A=10 (cut=1, anchor_a=10=engine_a,
+# T=29=S+A+R exact - item 18(b) grounded-cleanup whiff-R-truncation, ibuki-
+# uoh-whiff/q-uoh-whiff-r precedent); BLOCK A=12/R=2 (cut=1, anchor_a=12=
+# engine_a, T=33 vs S+A+R=32, 1-tick gap - the A-overcount diverges ALONE
+# here, matching alex-uoh-block/elena-uoh-block's own shape exactly); HIT
+# A=10/R=2 (cut=1, anchor_a=10=engine_a, T=29 vs S+A+R=30, 1-tick gap - A
+# matches WHIFF not BLOCK, R matches BLOCK not WHIFF, same three-way split
+# as the Alex/Elena precedent). Same R triplet (3/2/2) as Elena's own
+# elena-uoh finding exactly.
+# MECHANISM ESTABLISHED 2026-07-09 (classification sweep, credit-ledger
+# trace on THIS character - docs/frame-data-synthesis.md §12.2.1 "UOH
+# landing-clocked active tail"): the active phase ends at LANDING, not by
+# declared counters - a declared 2f cell (cgix=24) then an open-ended
+# sentinel cell (cgix=28, cgctr=250) crediting 1/real tick until landing.
+# WHIFF: 2 + 8 sentinel ticks = A=10 = arcade. BLOCK: guard freezes the
+# attacker chart 10 ticks (8 hitstop + 2 guard-hold at cgctr=1) but delays
+# the landing 12 - the mismatch = 2 extra real sentinel ticks = A=12. HIT:
+# freeze (8) = landing delay (8) - A=10 = whiff. R triplet 3/2/2 = the
+# §13.5.1 grounded-cleanup cut on all legs (whiff leg item 18(b)); contact
+# legs play the cleanup cell one tick shorter (landing-vs-char_move
+# alignment). See §12.2.1 for the full ledger excerpts.
+# SECTION ACCOUNTING (Phase 7): 3/3 entries carry a divergence (100% xfail)
+# - crosses the >50%-of-section threshold. Given this is the SAME recurring
+# Alex-bucket shape already flagged and orchestrator-signed-off on Alex's
+# and Elena's own corpora, authored as xfail-and-flagged rather than
+# re-litigated. GRANTED by orchestrator at commit 2026-07-08 (review-verified: UOH = recurring Alex/Elena bucket, exact Elena match; Flying Viper = clean whiff + two real divergences incl. the NEW stance-conditional R class, logged for the synthesis register). User review pending (overnight autonomous run) (implementing agent does not self-grant;
+# orchestrator grants at commit per the >50%-section accounting convention).
+
+# UPDATE (2026-07-10, CONV-2): necro-uoh-block converts PARTIAL under
+# §13.13 family F4 (A=12; R-triplet clause R=2 vs arcade 5 stays xfail,
+# 18(b)-cut, meter-suspect). necro-uoh-whiff and necro-uoh-hit stay
+# fully xfail untouched (whiff exclusion; HIT's A already arcade-exact,
+# no convertible clause).
+
+# §13.17 RE-ANCHOR-1 (2026-07-11): item-18 CLOSED for this row — lever N
+# now measures R=5, matching arcade/oracle exactly. Prior xfail evidence,
+# RELOCATED not deleted: "item 18(b) grounded-cleanup whiff-R-truncation
+# (docs/frame-data-synthesis.md item 18(b), ibuki-uoh-whiff/q-uoh-whiff-r
+# precedent; family mechanism established 2026-07-09, synthesis §12.2.1
+# UOH landing-clocked active tail - see section comment): measured R=3 vs
+# arcade 5; trace T=29, S+A+R=29 exact, cut=1, anchor_a=10 matching
+# engine_a=10. S/A exact (S=15, A=10)."
+- label: necro-uoh-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press MP+MK"
+  qjson: { name: "Universal Overhead" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# §13.13 contact-path convention (CONV-2 scope extension, 2026-07-10, user
+# decision), family F4 - §12.2.1 UOH landing-clocked A (contact legs, the
+# sentinel-shape ledger exemplar; recurring bucket w/ alex/elena/twelve):
+# A=12 is the engine-truth credit actually accrued on the BLOCK path -
+# the +2 = two extra real sentinel ticks (guard freezes the chart 10
+# ticks but delays the landing 12, see section comment). Trace: T=33,
+# S+A+R=32 (1-tick gap), cut=1, anchor_a=12 matching engine_a=12. S exact
+# (S=15). Arcade (whiff-canonical, from-qjson) A=10 - preserved here per
+# the convention.
+# CONVERTED 2026-07-13 (UOH-CLOSURE lever T, docs/frame-data-synthesis.md
+# §13.20; <sp>/zero/arcade-s9/session-report.md BLOCK legs, box
+# 265266-265287, busy768=265292, probe-confirmed exact fc 265292, zero
+# early acceptance): real arcade R=4, matching this engine's own
+# busy-edge/lever-R construction exactly. XFAIL->PASS: R re-literaled to
+# 4; A stays 12 (engine-truth, unaffected by lever T, design §5; arcade
+# measured A=14, dated data line only, not asserted).
+- label: necro-uoh-block
+  setup: { dist: close, dummy: stand }
+  input: "press MP+MK"
+  qjson: { name: "Universal Overhead" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: 12, R: 4 }
+
+# CONVERTED 2026-07-13 (UOH-CLOSURE lever T, docs/frame-data-synthesis.md
+# §13.20; <sp>/zero/arcade-s9/session-report.md HIT legs, box
+# 265266-265283, busy768=265288, probe-confirmed exact fc 265288): real
+# arcade R=4, matching this engine's own busy-edge/lever-R construction
+# exactly. XFAIL->PASS: R re-literaled to 4; A stays from-qjson (=10, =
+# arcade measured exactly, unaffected by lever T, design §5).
+- label: necro-uoh-hit
+  setup: { dist: close, dummy: none }
+  input: "press MP+MK"
+  qjson: { name: "Universal Overhead" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: 4 }
+
+# --- Throw (LP+LK) -----------------------------------------------------------
+# necro.json has THREE throw-family rows (Throw/Back + Throw/Reverse Throw,
+# all byte-identical on S/Hit/Recovery/Throw_range=26/Block_advantage=0) -
+# same three-way naming shape as corpus-ken.yaml's Neutral/Back/Towards
+# split, but Necro's variants are named differently (plain "Throw"/"Back +
+# Throw"/"Reverse Throw"). Bare "Throw" used per the ryu/q/chunli/remy/elena
+# bare-"Throw" convention. See file header THROW HIT — UNREACHABLE: the
+# HIT leg is OMITTED (structural reachability gap, not a numeric
+# divergence) - WHIFF (dist:250, fully clean) is the only assertable
+# outcome for this move in this corpus.
+
+- label: necro-throw-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press LP+LK"
+  qjson: { name: "Throw" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# --- Ground specials probe (ONE session budget) -----------------------------
+# See file header for the full MOTION VERIFICATION discussion and each
+# move's own findings writeup. Order below places the two grab-adjacent
+# moves (Throw above, Snake Fang below) away from the middle of the
+# distance-sensitive WHIFF entries, per the §12.1 "order distance-sensitive
+# WHIFF entries before always-connecting/residue-leaving moves" workaround
+# - Raging Cobra, Flying Viper, and Spinning Punch (all ordinary blockable
+# specials, no grab residue) come first; Snake Fang (the one move in this
+# corpus with `endrel=1` partner-release, Class-3-shaped) is LAST.
+
+# --- Raging Cobra (Short), motion hcb + K -----------------------------------
+# See file header MOTION VERIFICATION + RAGING COBRA section. Fully clean
+# on every checked field (S=23/A=4/R=17 all three legs; BLOCK adv=-5 exact
+# match). kd was previously measured 0 here, NOT asserted as wrong
+# (necro.json's own Hit_advantage is "-" for this row - no ground-truth
+# contradiction to report, unlike remy-crfierce-hit's own literal "D").
+# RESOLVED 2026-07-09 (§13.6.2b, ENGINE-3): kd now measures 1 live - the
+# shipped predicate was simply blind to this move's down-family
+# traversal; still left unasserted (same "-"-Hit_advantage posture).
+
+- label: necro-ragingcobra-lk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "motion hcb LK"
+  qjson: { name: "Raging Cobra (Short)" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: necro-ragingcobra-lk-block
+  setup: { dist: close, dummy: stand }
+  input: "motion hcb LK"
+  qjson: { name: "Raging Cobra (Short)" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: necro-ragingcobra-lk-hit
+  setup: { dist: close, dummy: none }
+  input: "motion hcb LK; wait 60"
+  qjson: { name: "Raging Cobra (Short)" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# --- Flying Viper (Jab), motion qcb + P -------------------------------------
+# See file header MOTION VERIFICATION + FLYING VIPER (two stacked findings).
+# dist:close (56px) WHIFFS (distance-reachability gap) - dist:90 is used
+# for BLOCK/HIT/crouch-probe below (binary-searched connecting range,
+# dist:70-150 all confirmed clean; dist:175 whiffs again).
+# SECTION ACCOUNTING (Phase 7): 3/4 entries carry a divergence (75% xfail;
+# WHIFF itself is fully clean, the calibration surface holds) - crosses the
+# >50%-of-section threshold. BLOCK/HIT share the CANDIDATE item-4-shaped R
+# surplus (Finding 2, hedged - the item-4 mechanism itself was not
+# independently confirmed this session); the crouch-probe carries a
+# separate UNCLASSIFIED stance-conditional R (Finding 3, no bucket fits).
+# GRANTED by orchestrator at commit 2026-07-08 (review-verified: UOH = recurring Alex/Elena bucket, exact Elena match; Flying Viper = clean whiff + two real divergences incl. the NEW stance-conditional R class, logged for the synthesis register). User review pending (overnight autonomous run) (implementing agent does not self-grant; orchestrator
+# grants at commit per the >50%-section accounting convention, Hugo-grab /
+# Remy/Elena precedent).
+
+- label: necro-flyingviper-lp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "motion qcb LP"
+  qjson: { name: "Flying Viper (Jab)" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: necro-flyingviper-lp-block
+  setup: { dist: 90, dummy: stand }
+  input: "motion qcb LP"
+  qjson: { name: "Flying Viper (Jab)" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson, xfail: "[HONEST-FLOOR CENSUS 2026-07-14, opus-substitute / WANTS FABLE RE-REVIEW] TERMINAL CLASS = ENGINE-DIVERGENCE (recovery-chain +2, whiff-anchored). Arcade-true=17: the WHIFF sibling PASSes at R=17==oracle; R = raw_len-event_raw-1 reproduces both this leg (19) and the crouch-probe (15) from one pinned-meter mechanism. NON-SURGICAL: F5/item-4 membership REFUTED (no cgix same-tick advance; freed-tick arithmetic doesn't close) - a genuine engine recovery-length behavior, not a display artifact, with no gating signal. Golden stays oracle=17, XFAIL. Prior disposition (unchanged): CANDIDATE item-4-shaped R surplus (A exact, R reads HIGH on both BLOCK and HIT, WHIFF exact - see file header FLYING VIPER FINDING 2 for the full discussion): measured R=19 vs arcade/WHIFF's own clean R=17 (a uniform +2). S/A exact (S=26, A=5). Trace: cut=0/dwellbrk=0/anchor_a=-1 (the ordinary r1-transition end, no §13.5.1 mechanism), T=46 vs S+A+R=50 (a 4-frame gap). Resembles Phase 6 item 4 (Hugo-Roundhouse) in SHAPE only - item 4's own cg_extdat=0x80 mechanism was NOT independently confirmed for this move this session (no static-code check performed); cited as the closest-shape bucket with this caveat, not as a confirmed match. adv matches arcade Block_advantage=-3 exactly despite the R surplus - the R+2 does not perturb adv here, unlike the stance-conditional clause below. REGISTERED 2026-07-09 (classification sweep) in synthesis §12.2.4 as the defender-stance-conditional attacker-R class (single member cast-wide); mechanism still UNCLASSIFIED. RE-CITED 2026-07-10 (classification sweep #2, disposition (b) per the fable-grade audit): item-4-kinship annotation UPGRADED with a pinned-meter identity - R = raw_len - event_raw - 1 reproduces BOTH this leg's R=19 (event_raw=26) and necro-flyingviper-lp-crouch-probe's R=15 (event_raw=30) from one mechanism; raw_len/T pinned at 46 and atk_idle at start+55 on all three contact legs (outcome- AND stance-independent). HONESTY CAVEAT: active_pf splits (1 here/hit vs 5 crouch) - two different routes to the same pinned length; cg_extdat=0x80 not statically confirmed. Stays xfail; §12.2.4 stub enriched. FLIP REFUSED, ENRICHED sweep #3 (2026-07-11, classification sweep #3 fable-grade audit): F5 membership (item-4 Hugo-Roundhouse landing-clocked family) tested and REFUSED - F5's bar requires a trace-proven same-tick contact advance whose freed declared-active ticks tally as RECOVERY, and neither prong survives the raw trace: no cgix advance exists (cells 32/36 play out inside a freeze that is ALREADY RUNNING on cell32's first row, hstop=-10 there, athok never sets - a freeze-consumption variant, not the F5 same-tick advance), and the freed-tick arithmetic does not close (5 declared - 1 active_pf = 4 freed vs an R surplus of only +2; whiff raw_len 48 vs contact 46 unexplained). Variant-shaped, not-per-tick-closed - CONV-2 (ii) bars conversion (this entry's own operative word above is 'CANDIDATE item-4-shaped', and candidates never convert). NEW enrichment (genuinely new evidence this sweep): the terminal tail (cell44 full 3 -> cell48 full 4 -> cell52 sentinel -> idle -> FINAL) is now verified cell-for-cell identical across ALL THREE contact legs (first per-tick confirmation of the landing-pinned end); crouch's event_raw 26->30 (+4) shift confirmed in-trace (clean athok=1 active window, freeze starting at cell36). NEW open residual recorded honestly: whiff's own chart cuts mid-cell44 (1 of 3 declared) and ends at raw 48 vs the contact legs' pinned 46 - the direction of 'shortening' is whiff-side and unreconciled. Stays XFAIL." }
+
+# See file header FLYING VIPER FINDING 3 (defender-stance-conditional R,
+# stacked on top of Finding 2's own contact-surplus number): a dummy:crouch
+# probe at the SAME dist:90 measures a GENUINELY DIFFERENT R/adv than the
+# dummy:stand BLOCK entry above (R=15/adv=+1 here vs R=19/adv=-3 there) -
+# not a byte-identical repeat like the Back + Forward overhead-label
+# finding. Authored with its own true measured values (not the stand-BLOCK
+# entry's numbers), per Phase 3's "never guess the desired value"
+# discipline.
+- label: necro-flyingviper-lp-crouch-probe
+  setup: { dist: 90, dummy: crouch }
+  input: "motion qcb LP"
+  qjson: { name: "Flying Viper (Jab)" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson, xfail: "[HONEST-FLOOR CENSUS 2026-07-14, opus-substitute / WANTS FABLE RE-REVIEW] TERMINAL CLASS = ENGINE-DIVERGENCE (defender-stance-conditional recovery). A genuine -4/+4 swing keyed purely off defender guard stance (R=15/adv=+1 here vs the stand-BLOCK's R=19/adv=-3 at identical dist:90), S/A unchanged. NON-SURGICAL: a real engine artifact an override would hide, plus a scenario-validity question (crouch-blocking an overhead contradicts necro.json Parry.Low); no Phase-6 bucket, no gating signal. Golden stays oracle=17, XFAIL. Prior disposition (unchanged): UNCLASSIFIED (flagged 2026-07-08, see file header FLYING VIPER FINDING 3 - defender-stance-conditional attacker R): measured R=15/adv=+1 here vs the dummy:stand BLOCK entry's own measured R=19/adv=-3 at the identical dist:90 (both entries diverge from arcade R=17/Block_advantage=-3, but by DIFFERENT amounts) - a genuine -4/+4 swing keyed purely off defender guard stance, with S/A unchanged (S=26, A=5 both). Both legs show cut=0/dwellbrk=0/anchor_a=-1 (ordinary r1-transition end, no §13.5.1 mechanism either way) - rules out a cut-window-compression (Class 2/§13.7.3) explanation, which requires cut=1. Does not fit any existing Phase-6 bucket. TRACE OBSERVATION ONLY, no mechanism claimed. Also contradicts necro.json's own Parry.Low=False overhead-implied shape (a crouching guard should not block this move at all under that reading, yet it does, with different numbers from standing block) - see file header TWO OVERHEAD-LABEL CONTRADICTIONS. Flagged to orchestrator for follow-up classification. RE-CITED 2026-07-10 (classification sweep #2, disposition (b)): same pinned-meter identity as necro-flyingviper-lp-block - R = raw_len - event_raw - 1 reproduces this leg's R=15 from event_raw=30 (crouch), same mechanism as the R=19/event_raw=26 stand/hit legs; raw_len/T pinned at 46, atk_idle at start+55, outcome- and stance-independent. HONESTY CAVEAT: active_pf=5 here (vs 1 on stand/hit) - a different route to the same pinned length; cg_extdat=0x80 not statically confirmed. Stays xfail. ENRICHED rider sweep #3 (2026-07-11, classification sweep #3 fable-grade audit): same F5-membership-REFUSED enrichment as necro-flyingviper-lp-block/-hit (see those entries' xfail strings) - the terminal tail now verified cell-identical across all three contact legs; this leg's own signature is the clean athok=1 active window with the freeze starting at cell36 (the +4 event_raw shift, 26->30), distinct from stand/hit's freeze-at-first-active-tick shape (active_pf=1 fingerprint). This adv clause has no family of its own and rides the same enriched row; untouched otherwise. Stays xfail." }
+
+- label: necro-flyingviper-lp-hit
+  setup: { dist: 90, dummy: none }
+  input: "motion qcb LP; wait 60"
+  qjson: { name: "Flying Viper (Jab)" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, xfail: "[HONEST-FLOOR CENSUS 2026-07-14, opus-substitute / WANTS FABLE RE-REVIEW] TERMINAL CLASS = ENGINE-DIVERGENCE (recovery-chain +2, whiff-anchored). Byte-identical to the BLOCK leg: whiff sibling PASSes at R=17==oracle; F5/item-4 REFUTED; genuine engine recovery-length behavior, no gating signal. Golden stays oracle=17, XFAIL. Prior disposition (unchanged): same CANDIDATE item-4-shaped R surplus as necro-flyingviper-lp-block (see file header FLYING VIPER FINDING 2): measured R=19 vs arcade/WHIFF's own clean R=17; S/A exact (S=26, A=5). Trace byte-identical shape to the BLOCK leg (T=46, cut=0/dwellbrk=0/anchor_a=-1). kd was previously measured 0 here; RESOLVED 2026-07-09 (§13.6.2b, ENGINE-3): kd now measures 1 live (the shipped predicate was blind to this move's down-family traversal), still not cross-checked (necro.json's own Hit_advantage is '-' for this row). RE-CITED 2026-07-10 (classification sweep #2, disposition (b)): same pinned-meter identity as necro-flyingviper-lp-block (R = raw_len - event_raw - 1, event_raw=26, outcome-independent - identical to the BLOCK leg). FLIP REFUSED, ENRICHED sweep #3 (2026-07-11, classification sweep #3 fable-grade audit): F5 membership (item-4 Hugo-Roundhouse landing-clocked family) tested and REFUSED - F5's bar requires a trace-proven same-tick contact advance whose freed declared-active ticks tally as RECOVERY, and neither prong survives the raw trace: no cgix advance exists (cells 32/36 play out inside a freeze that is ALREADY RUNNING on cell32's first row, hstop=-10 there, athok never sets - a freeze-consumption variant, not the F5 same-tick advance), and the freed-tick arithmetic does not close (5 declared - 1 active_pf = 4 freed vs an R surplus of only +2; whiff raw_len 48 vs contact 46 unexplained). Variant-shaped, not-per-tick-closed - CONV-2 (ii) bars conversion (this entry's own operative word above is 'CANDIDATE item-4-shaped', and candidates never convert). NEW enrichment (genuinely new evidence this sweep): the terminal tail (cell44 full 3 -> cell48 full 4 -> cell52 sentinel -> idle -> FINAL) is now verified cell-for-cell identical across ALL THREE contact legs (first per-tick confirmation of the landing-pinned end); crouch's event_raw 26->30 (+4) shift confirmed in-trace (clean athok=1 active window, freeze starting at cell36). NEW open residual recorded honestly: whiff's own chart cuts mid-cell44 (1 of 3 declared) and ends at raw 48 vs the contact legs' pinned 46 - the direction of 'shortening' is whiff-side and unreconciled. Stays XFAIL." }
+
+# --- Spinning Punch (Jab), motion hcf + P -----------------------------------
+# See file header MOTION VERIFICATION + RAGING COBRA / SPINNING PUNCH /
+# SNAKE FANG section. Fully clean on every checked field (S=6/A=8/R=13 all
+# three legs; BLOCK adv=+1 exact match). kd=1 measured on HIT (large
+# adv=+78, necro.json's own Hit_advantage is "-" for this row, not
+# cross-checked).
+
+- label: necro-spinpunch-lp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "motion hcf LP"
+  qjson: { name: "Spinning Punch (Jab)" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: necro-spinpunch-lp-block
+  setup: { dist: close, dummy: stand }
+  input: "motion hcf LP"
+  qjson: { name: "Spinning Punch (Jab)" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: necro-spinpunch-lp-hit
+  setup: { dist: close, dummy: none }
+  input: "motion hcf LP; wait 60"
+  qjson: { name: "Spinning Punch (Jab)" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, kd: 1 }
+
+# --- Snake Fang (Short), motion hcf + K --------------------------------------
+# See file header MOTION VERIFICATION + OVERHEAD-LABEL/blockable-grab
+# discussion + RAGING COBRA / SPINNING PUNCH / SNAKE FANG section. Ordered
+# LAST (with only the negative control after it) since it is this corpus's
+# one Class-3-shaped `endrel=1` connected-grab-adjacent move.
+
+- label: necro-snakefang-lk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "motion hcf LK"
+  qjson: { name: "Snake Fang (Short)" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: necro-snakefang-lk-block
+  setup: { dist: close, dummy: stand }
+  input: "motion hcf LK"
+  qjson: { name: "Snake Fang (Short)" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# See file header - dummy:crouch measures BYTE-IDENTICAL numbers to the
+# dummy:stand BLOCK entry above (confirms Snake Fang is NOT stance-
+# dependent, unlike Flying Viper's own genuine stance-conditional R).
+- label: necro-snakefang-lk-crouch-probe
+  setup: { dist: close, dummy: crouch }
+  input: "motion hcf LK"
+  qjson: { name: "Snake Fang (Short)" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# §13.10 Class 3 connected-grab, non-saturated partner-release sub-case
+# (same mechanism as corpus-ibuki.yaml's ibuki-throw-hit / corpus-remy.yaml's
+# remy-throw-hit, despite Snake Fang being empirically BLOCKABLE rather
+# than an unblockable command grab - see file header): T=54, endrel=1
+# fires (T is nowhere near FD_METER_LEN=72, ruling out the saturated
+# sub-case). R = T - S - A = 54-12-1 = 41, a DERIVED value, self-consistent
+# with the trace (re-derive if this regresses) - asserted as a plain-PASS
+# literal citing §13.10 Class 3, NOT from-qjson (necro.json's Recovery=28
+# is the whiff/block-path figure, directly captured by
+# necro-snakefang-lk-whiff/-block above, exact match both). kd=1 measured
+# directly (adv=+120, huge, consistent with a genuine knockdown); adv
+# intentionally unchecked (necro.json's Hit_advantage is the literal "-"
+# for this row).
+- label: necro-snakefang-lk-hit
+  setup: { dist: close, dummy: none }
+  input: "motion hcf LK; wait 90"
+  qjson: { name: "Snake Fang (Short)" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: 41, kd: 1 }
+
+# --- Negative control (plan section 1.8 item 5 precedent) ------------------
+
+- label: necro-jump-none
+  setup: { dist: 250, dummy: none }
+  input: "press UP"
+  outcome: NONE

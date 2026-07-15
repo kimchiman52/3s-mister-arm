@@ -1,0 +1,112 @@
+# Necro Super Art 2 (Slam Dance) — EX/Supers program, supers wave S4.
+# Satellite corpus (auto-discovered by run-suite.sh's corpus-*.yaml glob, own
+# golden/necro-sa2.tsv once registered) — corpus-necro.yaml/corpus-necro-ex.yaml/
+# corpus-necro-sa1.yaml are untouched. Sibling agents authoring other
+# characters' SA slots concurrently this same wave, file-disjoint.
+#
+# Scope: step0-universe.tsv row 73 (necro index 54, "Slam Dance", sa_slot 2,
+# S=2/A=6/R=8/block_adv="-" (non-numeric), ASSERTABLE, per task's own
+# description a command-GRAB super).
+#
+# Oracle: docs/arcade-frame-data/necro.json (same file corpus-necro.yaml/
+# corpus-necro-ex.yaml/corpus-necro-sa1.yaml already pin, md5
+# 6484539d4c2f834daa4a7aef70c3342b — re-read this session, byte-identical row
+# content for "Slam Dance": Startup=2, Hit=6, Recovery=8, Block_advantage="-",
+# Hit_advantage="-", Throw_range=61).
+#
+# IDENTITY (S-match probe, CORPUS-AUTHORING.md Phase 5), this session:
+# super_art:1 (0-indexed SA2) + `motion 2qcf HP` lands a move whose measured
+# S=2/A=6 match Slam Dance's oracle row EXACTLY (`<sp>/sa-necro/run-probe-
+# sa1/trace.log`), on the FIRST candidate tried — unambiguous (S=2 is unique
+# among Necro's own super rows: Magnetic Storm S=1, Electric Snake S=3).
+# Notably, the identity probe itself (against a STANDING dummy, requesting
+# outcome=BLOCK) registered outcome=HIT instead — direct, immediate
+# confirmation this is a genuine unblockable command grab (task's own
+# GRAB(Slam Dance) framing), not merely a label.
+#
+# Meter: sa_gauge:3 (MAXIMUM, per authoring-policy.md's meter policy default
+# for non-install supers).
+#
+# GRAB WHIFF-BASELINE (per Ruling 1's pre-registered "grab supers whiff by
+# construction at any beyond-throw-range distance" class, and the
+# corpus-ibuki-sa2.yaml Yoroi Doushi precedent for the WHIFF-at-dist:300
+# convention): dist:300 dummy:none WHIFFS cleanly, matching the oracle's own
+# S=2/A=6/R=8 EXACTLY (all three fields) — this is the load-bearing finding
+# of this corpus: oracle Recovery=8 corresponds to the WHIFF-leg recovery
+# figure specifically, a completely different quantity from the HIT-leg's
+# own post-catch span (see below) — same "whiff-canonical R, contact R is a
+# different mechanism" split this program has already documented on Ryu's
+# own Hadouken family, just with an unusually large gap here (8 vs 133) due
+# to the catch-and-throw animation's own length.
+#
+# HIT-LEG R — NO ORACLE (§13.10 reopened by commit 16737236, per this wave's
+# own binding note). Measured R=133 (`<sp>/sa-necro/run-probe-sa1-full/
+# trace.log`, `endrel=1` — the ended_by_partner_release window, §13.10 Class
+# 3), reproduced identically across both the isolated single-entry probe and
+# the combined 2-entry corpus run (byte-identical, no ordering sensitivity —
+# this move genuinely whiffs at range, which appears to inoculate it against
+# the repeat-connect contamination this character's own SA3 corpus
+# documents). This 133-frame span is the true measured post-catch-to-
+# partner-release duration, NOT the same quantity as the oracle's own
+# Recovery=8 (which the WHIFF leg above already captures exactly) — the two
+# numbers describe genuinely different windows of the move (whiff-path
+#"recovery if you miss the grab" vs hit-path "how long the catch/throw
+# animation actually holds", the ended_by_partner_release class this program
+# has no oracle field for). R is therefore OMITTED (not quarantined, not
+# xfailed — there is no oracle value this measurement could be judged
+# against) on the HIT leg only; the measured value is recorded here for the
+# record and for any future arcade-adjudication session (Ruling 4).
+#
+# Admissibility census (per-entry, mechanical, from FRAME_TRACE columns —
+# authoring-policy.md Ruling 2), this session's own 2-entry combined probe
+# (`<sp>/sa-necro/run-probe-sa1-full/trace.log`, inter_entry_wait:500 — the
+# SAME setup/input/outcome pair shipped below):
+# (1) Single-FINAL integrity: exactly one MOVE_START/FINAL pair inside each
+#     entry's own window (WHIFF F51-67, HIT F564-791), mechanical grep
+#     census, no bleed between entries.
+# (2) Flash-overlap census (sastop gate): 0 nonzero `sastop` ticks in either
+#     entry's own [MOVE_START F, FINAL F] window (17 rows WHIFF, 228 rows
+#     HIT, awk census this session) — flash-free.
+# (3) Contact-A juggle check: N/A in the traditional sense (no BLOCK leg
+#     exists for this unblockable grab to cross-check against) — HIT-leg A
+#     (6) happens to equal the oracle's own Hit=6 exactly regardless.
+# (4) Shape record: box_runs=0 on both legs (proj=0) — this move's active
+#     window is not tracked via the att_box tensor at all (a grab-catch
+#     mechanism, not a conventional strike hitbox); busyr/box_a are both
+#     -1/0 respectively on the HIT leg, so the diagnostic has nothing to
+#     cross-check there (expected, per Ruling 2 point 4 — diagnostic only,
+#     not a gate).
+character: necro
+oracle: necro.json
+super_art: 1
+sa_gauge: 3
+inter_entry_wait: 500
+entries:
+
+- label: necro-sa2-whiff
+  setup: { dist: 300, dummy: none }
+  input: "motion 2qcf HP"
+  qjson: { name: "Slam Dance" }
+  outcome: WHIFF
+  # Measured S=2 A=6 R=8 — oracle-exact on all three fields (necro.json
+  # Slam Dance: Startup=2, Hit=6, Recovery=8). This is the corpus's only
+  # assertable R for this move — see file header HIT-LEG R section for why
+  # the HIT leg's own R is a structurally different, un-oracled quantity.
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: necro-sa2-hit
+  setup: { dist: close, dummy: none }
+  input: "motion 2qcf HP"
+  qjson: { name: "Slam Dance" }
+  outcome: HIT
+  # Measured S=2 A=6 R=133 (endrel=1, ended_by_partner_release, T=141) —
+  # S/A oracle-exact. R is NOT asserted (see file header HIT-LEG R — NO
+  # ORACLE): 133 is the genuine measured catch-to-release span, but
+  # necro.json's Recovery=8 is a different quantity already captured
+  # exactly by necro-sa2-whiff above; there is no oracle figure to compare
+  # this 133 against (§13.10 reopened by commit 16737236). kd=1 measured
+  # (adv=+86, large, consistent with a genuine knockdown); necro.json's own
+  # Hit_advantage is "-" for this row, not cross-checked, and
+  # Block_advantage is also "-" (no BLOCK leg exists — genuine unblockable
+  # command grab, confirmed live during the identity probe above).
+  expect: { S: from-qjson, A: from-qjson }

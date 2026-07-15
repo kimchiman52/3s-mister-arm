@@ -1622,6 +1622,12 @@ void attack_hit_check() {
                 continue;
             }
 
+            /* Engine confirms attacker has live hitbox data this frame
+             * (atix != 0 AND att_hit_ok != 0). Capture it for the overlay. */
+            if (mad->work_id == 1 && (mad->id == 0 || mad->id == 1)) {
+                fd_engine_hitbox_active[mad->id] = 1;
+            }
+
             if (!(mad->att.dipsw & 2) ||
                 (!(sad->att.dipsw & 2) && (sad->work_id == 1 || !(((WORK_Other*)sad)->refrected)))) {
                 if ((mad->work_id != 1 && mad->work_id != 8) || !(sad->att.dipsw & 2)) {

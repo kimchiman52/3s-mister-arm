@@ -1,0 +1,147 @@
+# Ken Super Art 2 (Shinryuken) — EX/Supers program, SUPERS WAVE S1 batch
+# (Ken's remaining two SA slots, authored alongside corpus-ken-sa1.yaml;
+# ryu/chunli supers authored concurrently by sibling agents, file-disjoint).
+# Satellite corpus (auto-discovered by run-suite.sh's corpus-*.yaml glob,
+# own golden/ken-sa2.tsv once registered) — corpus-ken.yaml/corpus-ken-ex.yaml/
+# corpus-ken-sa3.yaml are untouched.
+#
+# Scope: step0-universe.tsv row 53 (ken SA2, "Shinryuken", sa_slot 2).
+# Oracle: docs/arcade-frame-data/ken.json (md5 c2776abd0d106d7949db64d3cec62d7a,
+# unchanged, same file corpus-ken.yaml/corpus-ken-ex.yaml/corpus-ken-sa3.yaml
+# already pin). Oracle row: Startup=1, Hit=36, Recovery=61,
+# Block_advantage=-80, Hit_advantage="-" (non-numeric).
+#
+# Meter: sa_gauge:3 (MAXIMUM, per authoring-policy.md's meter policy default
+# for non-install supers) + super_art:1 (0-indexed SA2). Identity confirmed
+# this session by S-match probe (CORPUS-AUTHORING.md Phase 5 "motion-probe
+# method"): <sp>/sa-ken/run-probe-sa2/trace.log, "motion 2qcf HK" against
+# super_art:1 lands qjson.name="Shinryuken" with measured S=1, A=36, and
+# adv=-80, all three oracle-exact — unambiguous identification, not assumed.
+#
+# Motion (identity confirmed this session, not assumed from genre memory):
+# "motion 2qcf HK" — double-quarter-circle-forward + Roundhouse Kick, same
+# primitive already used for Ken SA3 (kick-group super).
+#
+# MASH DIMENSION — out of scope, documented, not authored. Shinryuken is
+# known in this game's genre lineage as a mash-enhanced super (extra button
+# presses during the move add hits/damage in the source material this
+# oracle is transcribed from); ken.json's own row (checked this session,
+# full entry read) carries no separate numeric field for a mashed variant —
+# only single Startup/Hit/Recovery/Block_advantage/Hit_advantage columns,
+# identical in shape to every other super row in the file. This corpus
+# therefore authors only the unmashed baseline (a single scripted button
+# tap per the "motion 2qcf HK" macro), which is what the S/A/R/adv fields
+# below measure and what the oracle row itself is structured to describe.
+# The harness has no mash/rapid-re-tap directive to express a mashed input
+# even if a separate oracle figure existed: authoring-policy.md E-5 records
+# the full script directive set as W/L/P/G/Q only (input_script.c:26-30,
+# re-confirmed this session) — no dummy/rapid-input directive — and
+# corpus-chunli-ex.yaml's own Hyakuretsu Kyaku (EX) finding ("same-button/
+# chord re-input buffer timing window this harness's primitives don't
+# express") already documents this exact class of structural gap for a
+# different character's mash-shaped move. The mash dimension is therefore
+# named here as an out-of-scope structural gap, same class as that
+# precedent, not a fresh guess.
+#
+# Admissibility census (per-entry, mechanical, from FRAME_TRACE columns —
+# authoring-policy.md Ruling 2), this session's isolated single-entry probes
+# (<sp>/sa-ken/run-probe-sa2/trace.log [BLOCK], run-probe-sa2-hit/trace.log
+# [HIT], run-probe-sa2-whiff/trace.log [WHIFF], inter_entry_wait:500 each):
+# (1) Single-FINAL integrity — exactly one MOVE_START and one FINAL in each
+# probe's own trace (mechanical grep census this session: 1/1 on all three).
+# (2) Flash-overlap census: 0 nonzero-sastop ticks in [MOVE_START F, FINAL F]
+# on all three legs (0/111 BLOCK, 0/198 HIT, 0/99 WHIFF — awk census this
+# session) — flash-free measurement, matches every population checked so
+# far.
+# (3) Contact-A juggle check (HIT legs only): HIT-leg A=36 vs BLOCK-leg
+# A=36 — PASSES (equal), and both equal the oracle exactly (36) — a clean
+# shape, no divergence to classify (unlike Ken SA1's own A finding above,
+# or Ken SA3's own HIT-A juggle-check failure).
+# (4) Shape record: BLOCK box_runs=1/box_a=37/busyr=61; HIT box_runs=1/
+# box_a=37/busyr=61; WHIFF box_runs=1/box_a=36/busyr=61 — single-run on
+# EVERY leg including whiff (cleaner than Ken SA1's own multi-run-on-whiff
+# shape), matching the pilot's Chun-Li SA2/Ken-SA3-BLOCK single-run class.
+#
+# A: fully assertable, all three legs (S=1, A=36 exact everywhere,
+# adv=-80 exact on BLOCK) — no divergence, no quarantine, no candidate
+# classification needed. The cleanest of Ken's three SA slots measured
+# so far on the A field specifically.
+#
+# R DISPOSITION — PARTIAL, a new shape not seen on SA1/SA3/Chun-Li SA2.
+# BLOCK/HIT: the SAME M1 mechanism (excontact-r-findings.md/authoring-
+# policy.md Ruling 3). T=72=FD_METER_LEN exactly on both legs; busyr
+# recounts to 61 = oracle EXACTLY (BLOCK busyr=61, HIT busyr=61) while the
+# legacy-displayed R reads 34 on both legs — well below oracle 61. Per
+# Ruling 2 (E-1/E-4), busyr/oracle agreement is not license to assert R via
+# that diagnostic on a contact leg; R is OMITTED on BLOCK and HIT (same
+# "omit with the M1 citation" idiom, not a new independent quarantine
+# seed). WHIFF: UNAFFECTED — measured legacy-displayed R=61 on the WHIFF
+# leg EQUALS busyr=61 EQUALS oracle 61 exactly, with T=72 present in the
+# trace but not actually truncating the legacy value for this leg (unlike
+# Ken SA1's own WHIFF leg, where legacy R stays truncated even at T=72 on
+# a clean whiff). R is therefore ASSERTABLE on the WHIFF leg only — a new
+# datapoint refining the M1 story: the raw-capture saturation flag (T=72)
+# does not universally imply legacy-R truncation on every leg of every
+# move; here it only manifests once contact/hitstop enters the picture
+# (BLOCK/HIT), leaving a clean whiff-leg R fully recoverable.
+#
+# WHIFF: REACHABLE (unlike Ken SA3/Chun-Li SA2's own WHIFF-UNREACHABLE
+# findings, and matching Ken SA1's own new finding above). Probe
+# (<sp>/sa-ken/run-probe-sa2-whiff/trace.log): dist:300 dist_mode:centered
+# (10px inside CENTERED_DIST_MAX=310). MOVE_START's own annotation reads
+# dist=299 (walk-in only ~1px) — Shinryuken, like Shoryu Reppa, is a
+# stationary rising-spin-kick super with minimal forward travel before its
+# own MOVE_START, unlike the rushing-kick/dash-in supers previously
+# measured (Ken SA3, Chun-Li SA2). outcome=WHIFF confirmed (no contact). No
+# further binary search attempted (already comfortably WHIFF-reachable at
+# the near-ceiling probe distance).
+# ORDERING NOTE (Phase 5 "Predecessor-outcome ordering" trap, applied
+# preemptively this session after hitting it live on corpus-ken-sa1.yaml):
+# the WHIFF entry is ordered FIRST, ahead of BLOCK/HIT, so its own dist:300
+# teleport is never preceded by a knockdown (kd=1) HIT leg's residual
+# recovery ticks (same mechanism as the documented Meat Squasher ordering
+# precedent, `corpus-hugo.yaml:439-450`, and as measured directly on Ken
+# SA1's own first-attempt SHAPE mismatch this session).
+character: ken
+oracle: ken.json
+super_art: 1
+sa_gauge: 3
+inter_entry_wait: 500
+entries:
+
+- label: ken-sa2-whiff
+  setup: { dist: 300, dist_mode: centered, dummy: stand }
+  input: "motion 2qcf HK"
+  qjson: { name: "Shinryuken" }
+  outcome: WHIFF
+  # Measured S=1 A=36 R=61 adv=+0 (box_runs=1, box_a=36, busyr=61, T=72;
+  # MOVE_START dist=299, ~1px walk-in). S/A/R all oracle-exact — R is
+  # assertable HERE despite being OMITTED on BLOCK/HIT (see R DISPOSITION
+  # above: the M1 truncation does not reach this leg). No expect.adv:
+  # from-qjson is a CompileError on outcome WHIFF (q.json has no
+  # whiff-advantage field).
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: ken-sa2-block
+  setup: { dist: close, dummy: stand }
+  input: "motion 2qcf HK"
+  qjson: { name: "Shinryuken" }
+  outcome: BLOCK
+  # Measured S=1 A=36 R=34(NOT asserted, see R DISPOSITION above) adv=-80
+  # (box_runs=1, box_a=37, busyr=61, T=72). S/A/adv all oracle-exact.
+  # BUFFER-1 (2026-07-13): R now asserted from-qjson — capture raise
+  # un-truncates; post-fix measured R=61 == busyr == oracle exactly.
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: ken-sa2-hit
+  setup: { dist: close, dummy: none }
+  input: "motion 2qcf HK"
+  qjson: { name: "Shinryuken" }
+  outcome: HIT
+  # Measured S=1 A=36 R=34(NOT asserted, see R DISPOSITION above) adv=+63
+  # kd=1 (box_runs=1, box_a=37, busyr=61, T=72). S/A both oracle-exact;
+  # contact-A juggle check (Ruling 2 check 3) PASSES (HIT A=36 == BLOCK
+  # A=36). No expect.adv: ken.json's Hit_advantage for this row is the
+  # literal string "-". BUFFER-1 (2026-07-13): R now asserted from-qjson,
+  # same basis as BLOCK.
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }

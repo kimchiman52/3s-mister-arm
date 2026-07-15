@@ -1,0 +1,214 @@
+# Yang EX moves corpus -- EX/Supers program, wave 3 fan-out (Ruling 5's
+# per-character EX satellite batches, <sp>/exsuper/authoring-policy.md).
+# Satellite corpus (auto-discovered by run-suite.sh's corpus-*.yaml glob, own
+# golden/yang-ex.tsv) -- the main corpus-yang.yaml is untouched.
+#
+# Scope: Yang's 2 ground EX rows per <sp>/exsuper/step0-universe.tsv (rows
+# 137-138): Tourou Zan (EX), Senkyuutai (EX). Both ASSERTABLE, in scope. Yang
+# has no third ground EX row and no air-variant EX row in step0-universe (his
+# supers -- Raishin Mahhaken, Tenshin Senkyuutai, Sei-ei Enbu -- are out of
+# scope, separate program phase). Oracle: docs/arcade-frame-data/yang.json
+# (md5 4701f59a68fb49caa9ebaaefaeb40674, same file corpus-yang.yaml already
+# pins -- re-verified unchanged this session). Both EX rows carry the
+# parenthesized "(EX)" suffix in yang.json's own `Name` field (Ryu-oracle
+# convention).
+#
+# Motion recipes (Phase 5 motion-probe method, re-using corpus-yang.yaml's own
+# base-move `motion qcf <btn>` macro unrolled by hand with the final step's
+# button chorded -- same 2-button-chord workaround every prior EX batch used,
+# since `cmd_motion` only accepts a single button token and `hold`'s chord
+# parser takes '+'-joined tokens):
+#   - Tourou Zan (EX) (rekka punch, qcf-shape): `hold DOWN 2; hold DOWN+RIGHT
+#     2; hold RIGHT+LP+HP 2; wait 1`. Landed on the FIRST attempt (S=7
+#     matches yang.json's Tourou Zan (EX) row exactly -- distinct from every
+#     other Tourou Zan strength's own S=8).
+#   - Senkyuutai (EX) (spinning kick, qcf-shape): `hold DOWN 2; hold
+#     DOWN+RIGHT 2; hold RIGHT+LK+HK 2; wait 1`. Landed on the FIRST attempt
+#     (S=29 at the correct test distance -- see the DISTANCE-DEPENDENT-S trap
+#     below -- matches yang.json's Senkyuutai (EX) row exactly, byte-identical
+#     to Senkyuutai (RH)'s own S=29/A=8/R=25/adv=-26, an expected shared
+#     signature since qjson: { name: "Senkyuutai (EX)" } disambiguates
+#     unambiguously by name regardless).
+#
+# sa_gauge: 3 (MAXIMUM, per authoring-policy.md's meter policy) at the
+# corpus top level -- EX moves are meter-metered (1 stock/activation, G3) and
+# training mode's default starting gauge is not guaranteed full/nonzero (the
+# Ryu EX pilot's own finding, re-confirmed by every subsequent EX batch: a
+# corpus with no sa_gauge key lands the plain-strength fallback instead of the
+# EX move on the first attempt). MAXIMUM (not INFINITY) per policy default for
+# ordinary (non-install) EX moves.
+#
+# DISTANCE-DEPENDENT-S TRAP (new authoring finding, this batch): Senkyuutai
+# (EX) is a forward-traveling multi-part spinning kick whose FIRST contact
+# tick (first_active_raw, the field the overlay's displayed S is read from)
+# is genuinely distance-dependent -- confirmed by direct binary-search probe:
+# dist=41 (close, anchored) -> S=3; dist=87 (centered) -> S=11; dist=286-302
+# (centered, near CENTERED_DIST_MAX=310) -> S=29 (exact match to
+# yang.json's Senkyuutai (EX) Startup=29). This is NOT the same mechanism as
+# corpus-yang.yaml's own registered yang-forward ENGINE-6 S-divergence
+# (first_active_raw vs event_raw disagreeing at a FIXED distance) -- here
+# first_active_raw ITSELF scales with achieved separation, consistent with a
+# real forward-traveling hitbox that needs real elapsed frames to physically
+# reach a farther target before it can register contact. The oracle's own
+# Startup=29 corresponds almost exactly to the harness's maximum reachable
+# centered separation (~300px), i.e. yang.json's own test convention for this
+# move was evidently a near-max-range connect, not the standard six-button
+# "close" (56px) ladder distance. Per CORPUS-AUTHORING.md Phase 2's own
+# "binary-search the actual connecting distance" allowance (Ryu's Far Jab
+# precedent, dist=90 not "close"), both BLOCK and HIT below use
+# `dist: 310, dist_mode: centered` (NOT "close") to reproduce the oracle's own
+# S=29 exactly -- using "close" instead measures a real but off-oracle S=3,
+# a harness/oracle test-distance mismatch, not a divergence worth xfailing.
+#
+# WHIFF-UNREACHABLE(dist=310 centered, ~286-302px achieved) -- Senkyuutai
+# (EX) connects at every distance tried, dummy:none AND dummy:stand, up to
+# the hard CENTERED_DIST_MAX cap (a genuine move-reach fact -- this move
+# travels essentially full-screen). Coverage for this move comes from its
+# BLOCK/HIT legs + S, per Ruling 1.
+#
+# ORDERING TRAP (new authoring finding, this batch -- §12.1 row 2 "teleport
+# clamps / momentum bleed after connecting dash specials", corpus-q.yaml/
+# corpus-yun.yaml precedent, generalized here): placing Senkyuutai (EX)'s own
+# BLOCK and HIT legs back-to-back (in either order) corrupts the SECOND
+# entry's own teleport -- measured MOVE_START dist=161 instead of the
+# requested ~300+ (confirmed at inter_entry_wait 250 AND 500; raising the
+# wait alone does NOT fix a position-clamp corruption, only a recovery-STATE
+# one, consistent with the existing ruling's "only partially re-converges
+# over SEVERAL following entries" wording). Root cause: Senkyuutai (EX)'s own
+# post-connect state (a large-damage, near-full-screen-crossing hit) leaves
+# residual momentum that the very next entry's teleport call cannot fully
+# clear in one hop. Fix (verified this session): reorder so Senkyuutai
+# (EX)'s BLOCK leg runs FIRST in the corpus (zero prior contamination
+# possible) and its HIT leg runs LAST, separated by all three of Tourou Zan
+# (EX)'s own legs as a 3-entry buffer -- both Senkyuutai legs then read
+# S=29/A=8 exactly, byte-identical to their own isolated single-entry probe
+# reads. Determinism (2 back-to-back runs, this exact ordering,
+# `FDH_KEEP_RUNDIR=1`, distinct `FDH_RUNDIR`s): byte-identical trace.log and
+# expected.json (`diff` exit 0 on both).
+#
+# Admissibility census (per-entry, mechanical, from FRAME_TRACE columns --
+# authoring-policy.md Ruling 2), all 5 shipped entries below:
+# (1) Single-FINAL integrity: 5 SCRIPT/MOVE_START/FINAL groups, each FINAL's
+#     own move_start_F equal to that entry's own MOVE_START annotation frame,
+#     zero merges, at inter_entry_wait:250 (confirmed by direct inspection of
+#     the final corpus's own trace, the ordering-fixed run).
+# (2) Flash-overlap census (sastop gate): 0 nonzero sastop ticks across the
+#     ENTIRE trace (mechanical awk census over every one of 575 data rows,
+#     not sampled) -- EX moves are flash-free, confirmed mechanically.
+# (3) Contact-A juggle check (HIT-leg A admissible only if it equals the
+#     BLOCK-leg's A): Senkyuutai (EX) PASSES (8==8). Tourou Zan (EX) needs no
+#     juggle check on A (its HIT leg's A is independently oracle-exact, no
+#     BLOCK-vs-HIT gate required -- both simply match yang.json directly).
+# (4) Shape record: both moves are single-run on every leg (box_runs=1,
+#     proj=0) -- neither reproduces the Ruling-3 genuinely-multi-run shape
+#     seen on Ken/Ryu/Yun's own EX Tatsumaki-class moves.
+#
+# RESULT: Tourou Zan (EX) is fully oracle-exact on every asserted field,
+# every leg (S=7/A=2/R=26, adv=-4 on BLOCK) -- ZERO divergences. Senkyuutai
+# (EX) has S/A oracle-exact on both legs (S=29/A=8) but its R
+# CONTACT-LEG-ONLY overshoots the oracle by a uniform +4 (measured 29 vs
+# oracle 25) on BOTH BLOCK and HIT -- the IDENTICAL +4-magnitude
+# cut-committed-overshoot shape already registered for this exact character's
+# own base-move Senkyuutai (Short) BLOCK/HIT legs in corpus-yang.yaml
+# (cut=1, anchor_a=8=engine_a=8 there too), which stay xfail there per
+# §13.17 RE-ANCHOR-1's own explicit "Contact-leg scope" exclusion (lever N's
+# busy-edge fix resolved only the WHIFF leg for that family; contact legs
+# were named out of scope). Since Senkyuutai (EX) has NO reachable WHIFF leg
+# at all (WHIFF-UNREACHABLE, above), both of its shipped legs are contact
+# legs, both out of RE-ANCHOR-1's scope, both stay xfail on R (and, on BLOCK,
+# the downstream adv consequence) -- not a new finding, the same family cited
+# by name, same magnitude.
+character: yang
+oracle: yang.json
+inter_entry_wait: 250
+sa_gauge: 3
+entries:
+
+# --- Senkyuutai (EX), BLOCK leg FIRST (ordering trap fix, see header) -------
+# dist:310 centered (NOT "close" -- see DISTANCE-DEPENDENT-S trap above):
+# achieved ~302px at MOVE_START, reproducing yang.json's own Startup=29
+# exactly. Census: single-FINAL, sastop=0, box_runs=1, proj=0.
+
+- label: yang-exsenkyuutai-block
+  setup: { dist: 310, dummy: stand, dist_mode: centered }
+  input: "hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LK+HK 2; wait 1"
+  qjson: { name: "Senkyuutai (EX)" }
+  outcome: BLOCK
+  # Measured S=29 A=8 R=29 adv=-20 (box_runs=1, box_a=9, busyr=25, proj=0,
+  # cut=1, anchor_a=8=engine_a=8). S/A oracle-exact (yang.json Senkyuutai
+  # (EX): Startup=29, Hit=8). R and adv are the SAME +4-magnitude
+  # cut-committed-overshoot family already registered for this character's
+  # own Senkyuutai (Short) BLOCK/HIT legs (corpus-yang.yaml's
+  # yang-senkyuutai-lk-block/-hit, §13.17 RE-ANCHOR-1's "Contact-leg scope"
+  # exclusion -- lever N's busy-edge fix resolved only that family's WHIFF
+  # leg; contact legs there stay xfail at the identical +4 overshoot). Here
+  # there is no WHIFF leg at all (WHIFF-UNREACHABLE, see header) so BOTH
+  # shipped legs are contact legs, both citing the same established,
+  # contact-leg-scope-excluded bucket by name -- not a new UNCLASSIFIED
+  # finding.
+  # NARROWED 2026-07-13 (CONTACT-2, lever R, design.md §5 item 2): the R
+  # clause below is CLOSED — lever R's busy-edge construction
+  # (`fd_contact_busy_edge_r`, frame_data_overlay.c §13.19) measures this
+  # contact leg at R=25 natively (busyr=25, oracle-exact), covered by the
+  # rule on its own contact tape even though this move has no WHIFF
+  # sibling (design.md §5 item 2 / §3.4). The adv clause remains open
+  # (measured -20 vs oracle -26, attacker_idle re-anchoring out of scope)
+  # — row stays XFAIL on adv alone.
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson, xfail: "RECLASSIFIED 2026-07-14, TERMINAL-NON-SURGICAL (was 'attacker_idle re-anchoring out of scope') - <sp>/zero/adv/plan.md §3-4.1, opus-substitute / WANTS FABLE RE-REVIEW: same +6 idle-divergence family as yang-senkyuutai-lk-block (corpus-yang.yaml) - adv = defender_idle - attacker_idle is arcade-exact on 600/607 currently-asserting rows; this row and its base-move sibling are 2 of only 4 non-uniform-delta divergences (+6 here and on the base move; the other 2, akuma-sa3-block/chunli-sa1-block, are +1). The critical gate (any adv re-anchor candidate must offline-fit against EVERY currently-PASS adv row with zero regression) KILLS every candidate rule: adv:=-(R+1) or adv-=6 both regress 86 other currently-correct lever-R-firing rows; a flat adv-=1 regresses 600 rows. No census signal isolates this row from the 86 correct lever-R rows sharing its signal profile; per-move hardcoding is policy-forbidden. The busy edge (this move's own lever R) points the WRONG direction: R went to 25 via the busy edge (earlier than attacker_idle), but the oracle wants adv MORE negative (-26), requiring a LATER attacker anchor - refuted by direction. Deferred pending a new instrumented diagnostic (build task), out of this design's read-only scope. Golden unchanged; adv stays asserted at oracle=-26, measured=-20, XFAIL. R clause CLOSED 2026-07-13 (CONTACT-2, lever R): busy-edge R=25, oracle-exact, covered on this move's own contact tape (no WHIFF sibling). Prior history (RELOCATED not deleted): same +4 cut-committed R-overshoot family already registered for this character's own Senkyuutai (Short) BLOCK leg (corpus-yang.yaml yang-senkyuutai-lk-block, cut=1, anchor_a=8=engine_a=8) -- measured R=29 vs oracle 25 (+4), adv -20 vs oracle -26 as a downstream consequence; S/A oracle-exact (S=29, A=8)." }
+
+# --- Tourou Zan (EX) (rekka punch, qcf-shape) -- also serves as the ordering
+# buffer between Senkyuutai (EX)'s BLOCK and HIT legs (see header's ORDERING
+# TRAP note). Fully oracle-exact on every field, every leg. Census:
+# single-FINAL, sastop=0, box_runs=1, proj=0 (all three legs).
+
+- label: yang-extourou-whiff
+  setup: { dist: 250, dummy: none }
+  input: "hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LP+HP 2; wait 1"
+  qjson: { name: "Tourou Zan (EX)" }
+  outcome: WHIFF
+  # Measured S=7 A=2 R=26 (box_runs=1, box_a=2, busyr=26, proj=0),
+  # oracle-exact on all three fields -- confirms WHIFF as the calibration
+  # surface per Phase 4.
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: yang-extourou-block
+  setup: { dist: close, dummy: stand }
+  input: "hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LP+HP 2; wait 1"
+  qjson: { name: "Tourou Zan (EX)" }
+  outcome: BLOCK
+  # Measured S=7 A=2 R=26 adv=-4 (box_runs=1, box_a=3, busyr=26, proj=0),
+  # oracle-exact on all four fields (yang.json Tourou Zan (EX):
+  # Startup=7, Hit=2, Recovery=26, Block_advantage=-4).
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: yang-extourou-hit
+  setup: { dist: close, dummy: none }
+  input: "hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LP+HP 2; wait 1"
+  qjson: { name: "Tourou Zan (EX)" }
+  outcome: HIT
+  # Measured S=7 A=2 R=26, oracle-exact. No expect.adv (Hit_advantage is the
+  # literal string "-" for this row in yang.json, same as every other Tourou
+  # Zan strength in corpus-yang.yaml).
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# --- Senkyuutai (EX), HIT leg LAST (ordering trap fix, see header) ---------
+# dist:310 centered, same reasoning as the BLOCK leg above. Census:
+# single-FINAL, sastop=0, box_runs=1, proj=0.
+
+- label: yang-exsenkyuutai-hit
+  setup: { dist: 310, dummy: none, dist_mode: centered }
+  input: "hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LK+HK 2; wait 1"
+  qjson: { name: "Senkyuutai (EX)" }
+  outcome: HIT
+  # Measured S=29 A=8 R=29 kd=1 (box_runs=1, box_a=9, busyr=25, proj=0,
+  # cut=1, anchor_a=8=engine_a=8). HIT-leg A (8) equals the BLOCK-leg's
+  # displayed A (8) -- the juggle check (Ruling 2 check 3) passes. S/A
+  # oracle-exact; R is the same +4 cut-committed-overshoot family as the
+  # BLOCK leg above (measured 29 vs oracle 25). No expect.adv
+  # (Hit_advantage is the literal string "-" for this row in yang.json).
+  # RESOLVED 2026-07-13 (CONTACT-2, lever R, design.md §5 item 2): the R
+  # clause below (measured R=29 vs oracle 25) is closed — busy-edge R=25,
+  # oracle-exact, covered by the rule on this move's own contact tape. No
+  # adv clause on this leg (Hit_advantage is "-" in the oracle). xfail
+  # removed; PASS.
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, kd: 1 }

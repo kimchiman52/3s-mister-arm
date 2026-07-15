@@ -1,0 +1,122 @@
+# Hugo Super Art 2 (Megaton Press, LK/MK/HK) — EX/Supers program, supers
+# wave S6. Satellite corpus (auto-discovered by run-suite.sh's corpus-*.yaml
+# glob, own golden/hugo-sa2.tsv once registered) — corpus-hugo.yaml/corpus-
+# hugo-ex.yaml/corpus-hugo-sa1.yaml/corpus-hugo-sa3.yaml are untouched.
+# Repo @ a385799e (branch frame-data-on-mister). FDH_SKIP_BUILD=1 throughout,
+# own isolated rundirs under <sp>/sa-hugo/.
+#
+# Scope: step0-universe.tsv rows (hugo SA2, "Megaton Press (LK/MK/HK)",
+# sa_slot 2 — three button-strength variants sharing one SA slot, same
+# multi-button-family shape as Hugo's own Shootdown Backbreaker/Meat
+# Squasher in corpus-hugo.yaml). Oracle: docs/arcade-frame-data/hugo.json
+# (md5 8bd525542b815dd0c228605bffc51523, unchanged). Oracle rows 44-46:
+# LK Startup=2/Hit=12/Recovery=30/Block_advantage=0/Throw_range=51; MK
+# Startup=4/Hit=16/Recovery=34/Block_advantage=0; HK Startup=6/Hit=20/
+# Recovery=36/Block_advantage=0 (all three numerically blockable, adv=0
+# every strength — unlike SA1/other Hugo grabs, this is a genuinely
+# blockable strike-shaped super despite the Throw_range field, per
+# hugo.json's own Parry row reading High=false/Low=false — parry-immune,
+# not throw-immune).
+#
+# Meter: sa_gauge:3 (MAXIMUM) + super_art:1 (0-indexed SA2).
+#
+# IDENTITY + MOTION — NOT a 720 rotation (unlike SA1 Gigas Breaker). A
+# static source-reading investigation this session found Hugo's SA2 command
+# slot is `p6_cmd_21` (`src/sf33rd/Source/Game/engine/cmd_data.c:270`), a
+# `check_0` EXACT-SEQUENTIAL-LEVER-MATCH type (`w_lvr=-32766`), structurally
+# different from SA1's true two-node rotation-counter chain — i.e. a
+# sequential DP-shaped motion, not a rotation. Empirically confirmed this
+# session: a single cardinal-4 360+K always re-triggers the EXISTING Meat
+# Squasher special instead (`<sp>/sa-hugo/run-probe6/trace.log`: LK read
+# S=24/A=2, the exact WHIFF-ceiling value corpus-hugo.yaml's own Meat
+# Squasher section documents for dist=200; MK/HK connected at S=37/S=44,
+# again Meat Squasher's own mid-range/floor values) — Megaton Press must be
+# something Meat Squasher's own 360+K special can never collide with. A
+# double-cardinal-4-rotation attempt (mirroring SA1's own recipe, even at
+# the SA1-winning 1-frame pace) STILL only re-triggered Meat Squasher
+# (`<sp>/sa-hugo/run-probe15/trace.log`) — ruling out "just a slower 720"
+# for this slot specifically. The WINNING candidate
+# (`<sp>/sa-hugo/run-probe17/trace.log`, `h-sa2-p17-double-dp-lk`): a
+# DOUBLE DP-SHAPE — TWO chained "forward, down, down-forward" passes (the
+# same shape as Shootdown Backbreaker's own established recipe, corpus-
+# hugo.yaml:52-59, just repeated twice) + K, at 1-frame-per-direction pace
+# (matching the same jump-interference-avoidance discipline SA1 needed):
+# `hold RIGHT 1; hold DOWN 1; hold DOWN+RIGHT 1; hold RIGHT 1; hold DOWN 1;
+# hold DOWN+RIGHT 1; hold RIGHT+<K> 1; wait 1` — landed S=2/A=12/R=30 exact
+# oracle match for LK on the FIRST attempt of this shape, and MK/HK (same
+# recipe, button swapped) matched exactly too
+# (`<sp>/sa-hugo/run-probe18/trace.log`), all three PASS on the first
+# post-identification try. No compile_corpus.py change — the existing
+# `hold` primitive expresses this cleanly, same "no new macro needed"
+# verdict as every other Hugo grab family.
+#
+# WHIFF — all three strengths ship clean, exact oracle matches (S/A/R,
+# `<sp>/sa-hugo/run-probe17/trace.log` LK, `run-probe18/trace.log` MK/HK).
+#
+# BLOCK/HIT — UNREACHABLE against ANY grounded dummy, at ANY distance.
+# Per the binding spec's own pre-registered hint ("SA2 Megaton Press is a
+# leaping press... anti-air components may whiff a grounded dummy"): this
+# session swept dist ∈ {20, 30, 40 (SA1 cross-check only), 45, 50, 80, 120,
+# close(56), far(175)} × dummy ∈ {none, stand, crouch} for LK (plus a
+# dedicated close-range check for HK) — EVERY combination read outcome=
+# WHIFF, byte-identical to the plain-WHIFF baseline numbers (S=2/A=12/R=30
+# for LK, S=6/A=20/R=36 for HK) — i.e. the dummy is never actually struck,
+# not merely "struck but misclassified." (`<sp>/sa-hugo/run-probe18/
+# trace.log` close+stand/none; `run-probe19/trace.log` dist 45/30;
+# `run-probe20/trace.log` dist 80/120/far, HK close; `run-probe21/
+# trace.log` crouch+close, both HIT and BLOCK outcome declarations.) This
+# is consistent with Megaton Press genuinely being an anti-air/leaping
+# attack whose landing hitbox does not reach a standing or crouching body
+# at ground level — this harness's `setup.dummy` only supports `none`/
+# `stand`/`crouch` (`compile_corpus.py`'s `GUARD_MODES`, no scriptable
+# "airborne dummy" state exists, and `authoring-policy.md`'s own E-5 census
+# confirms the script directive set — W/L/P/G/Q — has no dummy-jump
+# primitive either), so testing the one geometry that might actually
+# connect (a jumping/airborne opponent) is out of scope for this harness,
+# not merely untried. Documented here as a structural WHIFF-only coverage
+# gap, not forced and not guessed at.
+#
+# Admissibility census (mechanical, from FRAME_TRACE columns, this
+# session's own isolated probes, inter_entry_wait:500 throughout):
+# (1) single-FINAL integrity — exactly one MOVE_START/FINAL pair per
+# entry's own window on every probe re-used below. (2) flash-overlap
+# census: 0 nonzero-sastop ticks in each entry's own [MOVE_START F,
+# FINAL F] window (mechanical awk census this session) — flash-free on
+# all three shipped WHIFF entries. (3) contact-A juggle check: N/A (no
+# HIT leg exists, see BLOCK/HIT UNREACHABLE above). (4) shape record: all
+# three legs box_runs=1, proj=0 — a genuine single-run body hitbox, no
+# projectile component, matching a leaping-strike (not command-grab)
+# shape.
+character: hugo
+oracle: hugo.json
+super_art: 1
+sa_gauge: 3
+inter_entry_wait: 500
+entries:
+
+- label: h-sa2-megaton-lk-whiff
+  setup: { dist: 200, dummy: none }
+  input: "hold RIGHT 1; hold DOWN 1; hold DOWN+RIGHT 1; hold RIGHT 1; hold DOWN 1; hold DOWN+RIGHT 1; hold RIGHT+LK 1; wait 1"
+  qjson: { name: "Megaton Press (LK)" }
+  outcome: WHIFF
+  # Measured S=2 A=12 R=30 (box_runs=1), exact oracle match on all three
+  # fields — the identity-confirming measurement (see header).
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: h-sa2-megaton-mk-whiff
+  setup: { dist: 200, dummy: none }
+  input: "hold RIGHT 1; hold DOWN 1; hold DOWN+RIGHT 1; hold RIGHT 1; hold DOWN 1; hold DOWN+RIGHT 1; hold RIGHT+MK 1; wait 1"
+  qjson: { name: "Megaton Press (MK)" }
+  outcome: WHIFF
+  # Measured S=4 A=16 R=34 (box_runs=1), exact oracle match on all three
+  # fields.
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: h-sa2-megaton-hk-whiff
+  setup: { dist: 200, dummy: none }
+  input: "hold RIGHT 1; hold DOWN 1; hold DOWN+RIGHT 1; hold RIGHT 1; hold DOWN 1; hold DOWN+RIGHT 1; hold RIGHT+HK 1; wait 1"
+  qjson: { name: "Megaton Press (HK)" }
+  outcome: WHIFF
+  # Measured S=6 A=20 R=36 (box_runs=1), exact oracle match on all three
+  # fields.
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }

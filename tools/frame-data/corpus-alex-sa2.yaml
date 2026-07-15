@@ -1,0 +1,154 @@
+# Alex Super Art 2 (Boomerang Raid) — EX/Supers program, supers wave S5.
+# Satellite corpus (auto-discovered by run-suite.sh's corpus-*.yaml glob,
+# own golden/alex-sa2.tsv once registered) — corpus-alex.yaml/corpus-alex-
+# ex.yaml/corpus-alex-sa1.yaml are untouched.
+#
+# Scope: step0-universe.tsv row 53 (alex sa_slot 2, "Boomerang Raid",
+# S=0/A=14/R=41/block_adv="-", ASSERTABLE, not GRAB-flagged). Oracle:
+# docs/arcade-frame-data/alex.json (md5 f324fa3a68b748f7fb0f2c92c3e72db6,
+# unchanged this session, same file the other two Alex SA corpora pin).
+# alex.json's own Boomerang Raid row carries `"Parry": {"High": true, "Low":
+# false}` — genuinely parryable/blockable (UNLIKE Hyper Bomb/Reverse Hyper
+# Bomb's own `Parry: {false, false}`), so this move is a real strike, not a
+# grab, despite sharing the "Throw_range" field name with the SA1/SA3 rows
+# (that field is populated on every Alex SA row here, grab or not — not a
+# grab signal by itself; the Parry booleans are the actual discriminator).
+#
+# IDENTITY (S/A/R-match probe, CORPUS-AUTHORING.md Phase 5), this session's
+# own isolated 2-candidate probe (<sp>/sa-alex/run-probe2-sa2/trace.log):
+# super_art:1 (0-indexed SA2) + `motion 2qcf HP` lands S=0/R=41, matching
+# Boomerang Raid's oracle Startup=0/Recovery=41 EXACTLY (only A is off by
+# one, see A DISPOSITION below) — unambiguous (S=0 is a unique signature
+# among every Alex oracle row). The sibling candidate `motion 2qcf HK`
+# produces an UNRELATED fallback signature (S=8/A=12/R=33, matching neither
+# Boomerang Raid nor any other Alex SA row) — confirms HP, not HK, is the
+# correct button for this super (same fallback signature independently
+# reproduced on the SA3 corpus's own HK candidate, see corpus-alex-sa3.yaml
+# — kick strength simply doesn't route to either super-art input, it falls
+# through to an unrelated shared special/normal).
+#
+# Meter: sa_gauge:3 (MAXIMUM, per authoring-policy.md's meter policy
+# default for non-install supers).
+#
+# A DISPOSITION — SA-WHIFF-A (§12.2.4, docs/frame-data-synthesis.md:972/
+# :978), a 5th member. Measured A=13 vs oracle 14 (-1), reproduced IDENTICALLY
+# on ALL THREE legs including a clean WHIFF (box_runs=4 on WHIFF/BLOCK,
+# box_runs=1 on HIT — see R DISPOSITION below for what that split affects).
+# alex.json publishes no numeric Block_advantage/Hit_advantage for this row
+# (both "-"), so the adv-coupling discriminator that splits SA-WHIFF-A into
+# "shape A" (adv-exact/no-coupling-observable) vs "shape B" (adv co-shifts)
+# has nothing to test — same posture as Dudley SA1 Rocket Uppercut's own
+# placement in shape A ("shape A by the absence of any observed coupling,
+# not by assumption", synthesis.md:972). Contact-A juggle check (Ruling 2
+# check 3): HIT-leg A(13) == BLOCK-leg A(13) — PASSES.
+#
+# CORRECTED (2026-07-13, EXSUPER-1 closing cleanup, SA-WHIFF-A/D2
+# disposition, docs/frame-data-synthesis.md §12.2.4 :978). This file
+# previously asserted the measured value as a literal `13`, plain PASS on
+# all three legs, framed as "matching how corpus-ryu-sa2.yaml's own -1 A
+# undercount was shipped" — that framing is WRONG: house law is wrong
+# values never ship, and the D2 register's own ruling is that NO conversion
+# ships this cycle. A per-leg offline declared-credit ledger walk
+# (charset.c:454-541 accumulator, isolated single-entry re-probe of each
+# leg, <sp>/exsuper/review/probes/, window extended past the naive
+# FINAL-line move_start_F/atk_idle_F bounds through the true end of the
+# jatix/jcaix-live span — this move's own multi-run shape means those
+# fields under-report the window; the extended total is unchanged across
+# extension margins 0-50 ticks past the true end, so this is not a
+# Dudley-style commit-tick ambiguity) gives ledger total=**14 == oracle
+# EXACTLY** on all three legs, NOT the displayed 13 — the same D2 signature
+# already confirmed on Ken SA1/Akuma SA2 (`fd_reset_move()`'s MOVE_START-
+# vs-`char_move()` tick-ordering race silently zeroing the first active
+# cell's credit, net -1 vs a race-free implementation). Zero hitstop ticks
+# inside the WHIFF leg's own jatix-live window (0/14 ticks); BLOCK/HIT do
+# carry hitstop (18/32 and 30/43 ticks respectively) but the ledger total is
+# unaffected (14 on both, same as WHIFF) — this move's hitstop does not
+# corrupt the per-cell credit snapshot the way Remy SA2's own hitstop-heavy
+# shape does (see corpus-remy-sa2.yaml's own A DISPOSITION for the contrast).
+# Per the D2 register: displayed 13 was the race artifact, not a genuine
+# engine-vs-oracle divergence.
+#
+# ENGINE-D2 FIX LANDED (lever S, 2026-07-13): `fd_movestart_same_tick_
+# credit_hold` (`frame_data_overlay.c`) preserves the same-tick cell's
+# credit instead of zeroing it. Post-fix measured A=14 == oracle exactly on
+# all three legs — the ledger walk's own prediction confirmed byte-for-byte
+# by the actual fix. A is now asserted `from-qjson`, plain PASS on all
+# three legs — the xfail-at-oracle interim disposition above is retired.
+#
+# R DISPOSITION — WHIFF/BLOCK clean and oracle-exact (R=41 both, box_runs=4
+# — a multi-run whiff/block window, declining §13.17 lever N/O by Ruling
+# 3's own box_runs==1 gate, correctly falling through to the plain legacy
+# value). HIT leg's own legacy R reads 77 post-ENGINE-D2 (was 78 pre-fix —
+# an endrel co-move, R = meter_len-S-effective_a, `frame_data_overlay.c:
+# 1022-1024`; busyr=87, T=91, raw_sat=0 — NOT an M1 saturation case) — a
+# genuine surplus over the clean WHIFF/BLOCK value, and busyr itself does
+# not recount to the oracle either (87 != 41).
+# This is the NAMED "legacy-R-surplus systemic shape" (WHIFF-clean R +
+# contact-leg R surplus, busyr non-recounting — Chun-Li SA3/Yun SA1/Elena
+# SA2 precedent, authoring-policy.md's own citable-signature list): per
+# that already-adopted SYSTEMIC disposition, the HIT-leg R is OMITTED
+# (documented-unasserted, not xfailed, not quarantined-as-new) with this
+# note naming the register; this becomes (at least) a 4th member. BLOCK's
+# own R stays fully asserted (clean, matches WHIFF).
+#
+# Admissibility census (per-entry, mechanical, from FRAME_TRACE columns —
+# authoring-policy.md Ruling 2), this session's own 3-entry combined probe
+# (<sp>/sa-alex/run-probe7-sa2-legs/trace.log, inter_entry_wait:500 — the
+# SAME setup/input/outcome triple shipped below):
+# (1) Single-FINAL integrity: exactly one MOVE_START/FINAL pair per entry's
+#     own window (grep census this session), no bleed between entries.
+# (2) Flash-overlap census: 0 nonzero-sastop ticks in [MOVE_START F, FINAL
+#     F] on all three legs (mechanical awk census this session) — flash-
+#     free, matches every population checked so far.
+# (3) Contact-A juggle check: HIT A(13) == BLOCK A(13) — PASSES (see A
+#     DISPOSITION above).
+# (4) Shape record: WHIFF box_runs=4/box_a=12/busyr=61; BLOCK box_runs=4/
+#     box_a=13/busyr=61; HIT box_runs=1/box_a=13/busyr=87 — the multi-run
+#     WHIFF/BLOCK shape declines lever N/O by construction (Ruling 3),
+#     while HIT collapses to a genuine single-run window (its own busyr
+#     disagreeing with oracle is EXPECTED per Ruling 2/E-4, not itself a
+#     fresh divergence — the R DISPOSITION above is about the DISPLAYED
+#     legacy R, not this diagnostic).
+character: alex
+oracle: alex.json
+super_art: 1
+sa_gauge: 3
+inter_entry_wait: 500
+entries:
+
+- label: alex-sa2-whiff
+  setup: { dist: 250, dummy: none }
+  input: "motion 2qcf HP"
+  qjson: { name: "Boomerang Raid" }
+  outcome: WHIFF
+  # Measured S=0 A=14 (was 13 pre-ENGINE-D2, ledger walk correctly
+  # predicted this exact value, see SA-WHIFF-A/D2 disposition above) R=41
+  # (box_runs=4, T=100). S/A/R oracle-exact. ENGINE-D2 (2026-07-13): fix
+  # landed (lever S, `frame_data_overlay.c`); A xfail removed, plain PASS.
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: alex-sa2-block
+  setup: { dist: close, dummy: stand }
+  input: "motion 2qcf HP"
+  qjson: { name: "Boomerang Raid" }
+  outcome: BLOCK
+  # Measured S=0 A=14 (was 13 pre-ENGINE-D2, same finding as WHIFF) R=41
+  # adv=-44 (box_runs=4, T=101). S/A/R oracle-exact. No expect.adv:
+  # alex.json's Block_advantage for this row is the literal string "-"
+  # (from-qjson would raise CompileError). ENGINE-D2 (2026-07-13): A xfail
+  # removed, plain PASS.
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: alex-sa2-hit
+  setup: { dist: close, dummy: none }
+  input: "motion 2qcf HP"
+  qjson: { name: "Boomerang Raid" }
+  outcome: HIT
+  # Measured S=0 A=14 (was 13 pre-ENGINE-D2) R=77 (OMITTED, was 78 pre-fix
+  # — see R DISPOSITION above, legacy-R-surplus systemic shape, endrel
+  # co-move per ENGINE-D2's own R = meter_len-S-effective_a relation;
+  # busyr also non-recounting to oracle) adv=+86 (box_runs=1, T=91,
+  # raw_sat=0). S/A oracle-exact; contact-A juggle check PASSES
+  # (HIT==BLOCK==14, both now plain PASS). ENGINE-D2 (2026-07-13): A xfail
+  # removed.
+  expect: { S: from-qjson, A: from-qjson }

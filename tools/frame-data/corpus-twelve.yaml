@@ -1,0 +1,1098 @@
+# Twelve frame-data corpus (cast rollout). Generated/consumed by
+# tools/frame-data/compile_corpus.py against docs/arcade-frame-data/twelve.json
+# (fetched 2026-07-08 from
+# https://raw.githubusercontent.com/Coccis77/thirdstrikedatabot/master/json/twelve.json,
+# md5 988a8990c264119260ca85a5e7bd465d - verified by fetching the URL TWICE
+# independently and hashing both responses, byte-identical both times).
+# CHARACTER_IDS key is "twelve" (id=18, compile_corpus.py:55).
+#
+# Scope (task-directed 2026-07-08): normals ladder (six-button close
+# BLOCK/HIT + WHIFF sample + crouching, incl. Far Strong's own distance
+# calibration) + one command normal (Back + Forward, the only Back/Towards/
+# Down-Back-prefixed row twelve.json has) w/ BLOCK+WHIFF+crouch-probe + UOH
+# (WHIFF+BLOCK+HIT) + Throw (WHIFF+HIT) + negative control + a ONE-SESSION
+# ground specials probe covering all three task-named moves: N.D.L. (task
+# guess qcf+P CONFIRMED, all three strengths, but see the NEW S/R-DIVERGENCE
+# finding below), A.X.E. (task guess qcb+P CONFIRMED, all three strengths),
+# D.R.A. (motion UNDETERMINED after an extensive attempt budget - see D.R.A.
+# — MOTION NOT FOUND below; NO entries shipped for it). NO supers/EX
+# (N.D.L. EX, A.X.E. EX, Air A.X.E. (incl. its own EX), D.R.A. EX,
+# X.N.D.L./X.F.L.A.T./X.C.O.P.Y. all excluded - twelve.json rows
+# 27/31/32-35/39/40-44; X.C.O.P.Y. is Twelve's copy-stance Super Art, out of
+# scope per the task's own note).
+#
+# Every expect below was pinned against a live trace
+# (tools/frame-data/run.sh tools/frame-data/corpus-twelve.yaml); every
+# suspicious finding (all six ground-specials families, Crouching Strong,
+# Crouching Fierce, Crouching Roundhouse's own HIT leg, the A.X.E./overhead-
+# label crouch-probe) was independently re-verified in an isolated
+# single-entry probe corpus (inter_entry_wait 200-300, nothing crowding any
+# entry) per CORPUS-AUTHORING.md Phase 5 - every isolated number was
+# BYTE-IDENTICAL to the batched-corpus measurement, ruling out §12.1-style
+# ordering/residue contamination for all of them.
+#
+# ============================================================================
+# MOTION VERIFICATION (all three ground specials' motions were task-flagged
+# as needing verification; S/A/adv-value motion-probe method,
+# CORPUS-AUTHORING.md Phase 5):
+#   - N.D.L.: task's own "qcf+P" guess CONFIRMED for all three strengths.
+#     Trace proof of identity (not merely a plausible whiff): the engine's
+#     own `proj_a` field (the projectile-owner accumulator) reads EXACTLY
+#     11/13/13 for Jab/Strong/Fierce - matching twelve.json's own Hit=11/13/
+#     13 for the three N.D.L. rows precisely, and distinct from every plain
+#     normal's own Hit value (3/4/4 for Jab/Strong/Fierce) - ruling out an
+#     accidental normal-move read. The move also latches `proj=1` (the
+#     engine's own projectile-spawn flag), confirming it is implemented as a
+#     spawned-effect move (the task's own "possibly projectile-like" guess),
+#     same class of move as Ryu's Hadouken. See N.D.L. S/R-DIVERGENCE —
+#     RESOLVED below (§13.12, ENGINE-4, lever J) for the divergence this
+#     projectile-split machinery originally produced on this specific move
+#     and how it was fixed.
+#   - A.X.E.: task's own "qcb+P" guess CONFIRMED for all three strengths.
+#     S/A/R match twelve.json's own A.X.E. rows exactly on WHIFF for all
+#     three strengths (Jab S=6/A=11/R=15, Strong S=10/A=11/R=16, Fierce
+#     S=14/A=11/R=17) - unlike N.D.L., A.X.E. uses the GENERIC per-frame
+#     accumulator (`use_hatt=1`, `proj=0` throughout), not the projectile
+#     machinery, despite being an "arm swing" move (confirmed via the same
+#     trace fields).
+#   - D.R.A.: motion UNDETERMINED. See D.R.A. — MOTION NOT FOUND below.
+#
+# ============================================================================
+# D.R.A. — MOTION NOT FOUND (task flagged this as possibly airborne-only;
+# same posture as corpus-necro.yaml's Electric Shock precedent - an
+# extensive, budget-bounded attempt list, all with already-expressible
+# primitives per CORPUS-AUTHORING.md Phase 5's "try existing macros/hold-
+# chains before concluding a new macro is needed"). twelve.json's D.R.A.
+# rows (Short/Forward/RH) all carry real numeric Recovery values (20/20/20),
+# unlike Air A.X.E.'s own rows (all Recovery="-") - so D.R.A. is very
+# unlikely to be a pure air-only move (a true air-only special in this
+# oracle's own convention reports no ground recovery at all); the
+# UNDETERMINED verdict here is a motion-identification gap, not a confirmed
+# airborne-exclusion. TWELVE attempts tried this session:
+#   1-5. `motion qcf LK/MK/HK` (task's own kick-strength guess, since
+#      D.R.A.'s row names - Short/Forward/RH - are this game's kick-strength
+#      convention) -> ALL landed the plain standing kick normal instead
+#      (qcf+LK -> Short S=3/A=2/R=10, exact match to the plain "Short" row;
+#      qcf+MK -> Forward S=6/A=5/R=13, matching "Forward" - itself carrying
+#      its own separate #17 A-undercount, see below; qcf+HK -> Roundhouse
+#      S=17/A=3/R=25, exact match to plain "Roundhouse").
+#   6-8. `motion qcb LK` / `hcb LK` / `hcf LK` -> all landed plain Short
+#      again (S=3/A=2/R=10).
+#   9. `motion 2qcf LK` -> plain Short again.
+#   10. A hand-built dp-shape hold-chain (RIGHT, DOWN, DOWN+RIGHT, then
+#      DOWN+RIGHT+LK) -> landed plain CROUCHING Short (S=3/A=4/R=8, exact
+#      match to the "Crouching Short" row) - the chain simply ends crouching
+#      with a kick press, not a distinct special.
+#   11-13. Three A.X.E.-then-follow-up-kick chains (qcb+LP, wait 3 frames,
+#      then LK/MK/HK respectively - probing whether D.R.A. is a target-combo
+#      continuation of A.X.E. rather than a raw motion) -> all three read
+#      back as the SAME single A.X.E. (Jab) HIT FINAL (S=6/A=8/R=12,
+#      matching axe-jab-hit's own numbers exactly) with no second FINAL in
+#      the window - inconclusive (either the follow-up press never landed
+#      inside a cancel window, or it silently failed to dispatch); not
+#      investigated further this session.
+#   14-17. Four airborne attempts (`hold UP 30` then `press LK`; `hold UP 15`
+#      then `motion qcf LK`; `hold UP 4` then `motion qcf LK`; `hold UP+RIGHT
+#      15` then `motion qcf LK`) -> all four landed plain "Jumping Short"
+#      (S=2/A=20, matching twelve.json's own Jumping Short row; R read 14/15/
+#      27 respectively - landing-lag noise against Jumping Short's own
+#      literal "-" Recovery field, not a genuine third value).
+# Every attempt read back as an already-named move (a plain normal, a
+# crouching normal, D.R.A.'s own suspected A.X.E.-chain sibling misread as
+# A.X.E. itself, or Jumping Short), never as a distinct D.R.A. dispatch.
+# Documented as OUT OF SCOPE / wants-follow-up, no entries below for D.R.A.,
+# no oracle edit, no compiler change - same posture as corpus-necro.yaml's
+# Electric Shock and this runbook's own DHA-long-charge precedent.
+#
+# ============================================================================
+# N.D.L. S/R-DIVERGENCE — RESOLVED 2026-07-09 (§13.12, ENGINE-4, design
+# E4-A′, lever J). Was: all three strengths (WHIFF included) measured S
+# undershooting arcade by a uniform 3 (Jab/Strong S=12 vs arcade 15, Fierce
+# S=13 vs arcade 16) and R overshooting by 12-14 (Jab R=26/Strong R=30/
+# Fierce R=34 vs arcade 14/16/20), while `proj_a` (11/13/13) and BLOCK
+# advantage (-5/-9/-13, matching twelve.json's own Badv exactly) both
+# already confirmed correct move identity and correct wall-clock timing —
+# the fault was isolated to the ENGINE'S OWN S/R decomposition of that
+# timing, not a misidentification.
+#
+# Root cause (traced 2026-07-09): the shipped `use_proj_split` anchors (S =
+# proj_spawn_slot, R = meter_len - proj_spawn_slot) were validated only
+# against Hadouken-style fire-and-forget fireballs, whose hit-check arms
+# (`att_hit_ok`) the SAME tick they spawn. N.D.L. (kind_of_tama=13,
+# kotp_13000) arms two chart cells AFTER its own spawn — a genuine
+# "hit-checkable projectile split" the old anchors couldn't see — and its
+# consumption handler never cuts the chart to an erase chart (unlike every
+# fireball ending, which always does), so its recovery window is a
+# chart-natural end, not a fire-and-forget budget.
+#
+# Fix: S' = max(proj_spawn_slot, proj_athok_slot) — anchored on the tama's
+# own hit-check-gated arming tick (fd_engine_proj_hitok, hitcheck.c's own
+# atix!=0 && att_hit_ok!=0 gate) whenever it lands later than spawn. R', on
+# a chart-natural end (fd_engine_proj_natend, gated on the engine's own
+# chart-cut kill-reason latch fd_engine_proj_cut never having fired), is
+# instead meter_len - (proj_firstact_slot + proj_a) — the declared
+# active-window form. Both anchors reproduce all 9 arcade values exactly
+# (S=15/15/16, R=14/16/20 for Jab/Strong/Fierce) and are measured
+# byte-identical on all 45 other proj=1 rows across 7 fireball characters
+# (every fireball ending is a cut, so the new anchors are a no-op for
+# them). See docs/frame-data-synthesis.md §13.12 for the full mechanism,
+# the chart-cut discriminator, and the R-gate falsification ledger.
+# S/R/verdict below now read plain PASS (xfail keys removed) in every
+# entry; A and adv were already exact throughout and are unaffected.
+#
+# ============================================================================
+# A.X.E. (JAB ONLY) — PARTIAL-RESTORE COMPOUND, re-cited 2026-07-09 to the
+# Makoto BENIGN NOVEL COMPOUND bucket (corpus-makoto.yaml:108-121 file
+# header + 317/336 makoto-crstrong-block/makoto-crshort-block entries,
+# orchestrator-ruled BENIGN 2026-07-08) - same re-cite posture as
+# corpus-yang.yaml's yang-uoh A-side finding, re-cited to that same Makoto
+# precedent per review 2026-07-08 after first being drafted as a novel
+# third shape; the author's precedent survey here missed Makoto on first
+# pass. A.X.E. (Jab) alone (NOT Strong or Fierce, which read A=11 exact on
+# BLOCK/WHIFF, matching twelve.json precisely) measures A=8 on BOTH BLOCK
+# and HIT vs arcade A=11, with S/R/adv all exact otherwise (S=6, R=15 block
+# / R=12 hit matching the Class-1 HIT-R family below, Badv=-5 exact).
+# Lever-F-tested this session (fd_restore_revoked_declared_credit forced to
+# 0 on a scratch build at src/sf33rd/Source/Game/engine/charset.c:507,
+# single-entry re-run, reverted via `git checkout` + rebuild + re-verified
+# green before this commit, same-binary protocol throughout):
+# axe-jab-block/-hit BOTH CHANGE from A=8 (shipped, restore ON) to A=7
+# (restore OFF) - a lever-F delta of exactly 1, exactly the revoked amount,
+# the lever doing precisely its documented job. This is the SAME shape as
+# Makoto's own crstrong/crshort compound (there: ON=4/OFF=3 vs arcade 7;
+# here: ON=8/OFF=7 vs arcade 11) - a shape-(a1) unrecoverable skip-jump loss
+# stacked with a partial shape-(b) restore that recovers exactly the 1 unit
+# lever F revoked, leaving a residual gap (3 units here, 11-8) that is pure
+# shape-(a1) skip-jump loss which lever F never claimed to recover - not a
+# new, undocumented partial-restore sub-case. (A.X.E. Strong/Fierce were NOT
+# lever-F tested since their own A already reads exact - no revoke-adjacent
+# symptom to test.)
+#
+# ============================================================================
+# ISSUE #17 CENSUS (per CORPUS-AUTHORING.md Phase 6 item 1's discriminator,
+# lever-F-tested in ONE batched scratch build, same protocol as above):
+#   - UNCHANGED by the lever-F toggle (shape (a1), unrecoverable per §13.11 -
+#     stay xfail): twelve-forward-block/-hit (A=5/4 vs arcade 6),
+#     twelve-crstrong-block/-hit (A=1 vs arcade 2). All four carry
+#     cut=0/dwellbrk=0/anchor_a=-1 in their FINAL trace (the ordinary
+#     r1-transition end, no §13.5.1 anchor involved).
+#     UPDATE (2026-07-10, §13.13): all four now assert the measured A
+#     citing §13.13, plain PASS. twelve-forward-hit's stacked §13.10 R
+#     clause (see HIT-R DIVERGENCES below) is an equally-established
+#     member and converts too, in the same FULL entry. twelve-crstrong-
+#     block narrows to its OTHER stacked clause (a separate, unrelated
+#     UNCLASSIFIED R-surplus, still xfail) - see that entry's comment.
+#   - CHANGED by the lever-F toggle (shape-(b)-looking but INCOMPLETE - see
+#     the dedicated A.X.E. finding above, NOT a routine shape (b)):
+#     twelve-axe-jab-block/-hit (A=8, would be A=7 with the restore off,
+#     but the oracle wants 11).
+#   - UNAFFECTED either way (clean, no revoke ever fires): every WHIFF entry
+#     in the normals ladder, twelve-jab-block/-hit, twelve-strong-block/-hit,
+#     twelve-farstrong-block, twelve-fierce-block/-hit, twelve-short-block/
+#     -hit, twelve-roundhouse-block (A clean; -hit has its own separate
+#     Class-1 R-only divergence below), twelve-crjab-block,
+#     twelve-crshort-block, twelve-crforward-block, twelve-crroundhouse-*,
+#     A.X.E. Strong/Fierce (all three legs).
+#
+# ============================================================================
+# HIT-R DIVERGENCES (§13.10 Class 1 shape - the attacker's own animation
+# plays a genuinely shorter parallel recovery chain on HIT; A exact on the
+# pure members, cut=0/dwellbrk=0/anchor_a=-1 throughout, no §13.5.1
+# mechanism engaged on any of these):
+#   - twelve-roundhouse-hit (PURE): A=3 exact; R=17 vs arcade/BLOCK/WHIFF's
+#     own clean R=25 (an 8-frame Class-1 undershoot). adv=-1 exact
+#     (Hadv=-1).
+#   - twelve-forward-hit (STACKED with the #17 shape-(a1) A-undercount
+#     above): A=4 (vs BLOCK's own already-undercounted A=5, vs arcade 6);
+#     R=12 vs BLOCK/WHIFF's own clean R=13 (a further 1-frame Class-1
+#     undershoot on top of the #17 undercount). adv=-1 exact (Hadv=-1).
+#   - A.X.E. (Jab/Strong/Fierce, all three -hit legs): R=12 UNIFORMLY across
+#     all three strengths on HIT, vs each strength's own clean WHIFF/BLOCK R
+#     (15/16/17 respectively) - a genuine per-strength Class-1 undershoot
+#     (3/4/5 frames respectively), landing on the SAME absolute R=12
+#     regardless of strength (a trace curiosity, not investigated further -
+#     may simply reflect a shared recovery-chain floor across strengths).
+#     A is exact on Strong/Fierce; Jab's own A=8 is the separate,
+#     already-cited partial-restore finding above (both BLOCK and HIT share
+#     that A=8, so the Class-1 R clause is the ONLY new fact HIT itself
+#     adds for Jab).
+#   UPDATE (2026-07-10, §13.10 HIT-R convention): twelve-roundhouse-hit,
+#   twelve-axe-strong-hit, and twelve-axe-fierce-hit convert to a plain
+#   PASS asserting the measured R, citing §13.10 directly (F2b compliance -
+#   these are canonical Class-1 members, not new §13.13 scope).
+#   twelve-forward-hit's R clause converts too, but citing §13.13 in the
+#   same entry as its A clause (both were §13.13/F1 + F2b members, so the
+#   whole entry converts together). A.X.E. Jab stays xfail (its own A
+#   clause is the unrelated, EXCLUDED Makoto-compound bucket).
+#   SWEEP-2 UPDATE (2026-07-10, classification sweep #2 fable-grade audit):
+#   twelve-axe-jab-hit's own R clause (F-5, OUT-4 audit item, pre-approved)
+#   converts to `R: 12` (golden-measured, matching the clean WHIFF/BLOCK
+#   baseline's own deficit) - its comment header uses this §13.10 HIT-R
+#   convention notation, NOT §13.13 (this is §13.10 compliance, not new
+#   scope), and the entry's xfail is re-prefixed `NARROWED 2026-07-10
+#   (§13.10 compliance, F2b):` keeping only its A-clause (the Makoto-bucket
+#   compound, A=8 vs 11) as the sole remaining clause. See the entry itself
+#   below.
+#
+# ============================================================================
+# NEW FINDING: CROUCHING FIERCE — CONTACT A-OVERCOUNT (UNCLASSIFIED,
+# sign-incoherent with issue #17 - mirror-image shape, same posture as
+# corpus-ken.yaml's ken-forward-block/-hit precedent, "an A-overcount, the
+# mirror of every previously known #17 undercount"). WHIFF is fully clean
+# (S=10/A=7/R=18, exact match to twelve.json). BLOCK measures A=18 (vs
+# clean/arcade 7 - an ELEVEN-frame overcount) with R=18 (exact, matching
+# WHIFF) and adv=-8 (exact, matching Badv=-8). HIT ALSO measures A=18 (same
+# overcount as BLOCK) but R=13 (vs BLOCK/WHIFF's own clean R=18 - a Class-1-
+# shaped 5-frame HIT-side undershoot stacked on top of the A-overcount);
+# adv=-1 exact (matching Hadv=-1). Trace: cut=0/dwellbrk=0/anchor_a=-1 on
+# both contact legs (no §13.5.1 mechanism); `active_pf` reads 19 (one more
+# than the displayed `engine_a=18`) on both BLOCK and HIT - a trace
+# curiosity (an internal sentinel/off-by-one) that does not itself change
+# the displayed value, not investigated further. Byte-identical in the
+# isolated single-entry re-verification. Does not fit any existing Phase-6
+# bucket (not #17 - wrong sign; not Class 1/2/3 R alone - A itself diverges
+# too; not item 4 - requires A exact). HYPOTHESES ONLY, none confirmed.
+# Flagged to orchestrator/user for follow-up classification.
+#
+# SWEEP-2 DISPOSITION (2026-07-10, classification sweep #2 fable-grade
+# audit): BOTH legs FULL CONVERT, xfail REMOVED. F3 (§13.13:5179-5184),
+# own-ledger bar met (s3-rundir/run-twelve/run.log): BLOCK's A=18 is a
+# 12-cell insert (own ledger, +11 net vs arcade 7: 12 inserted - 1
+# displaced cell 44). HIT ALSO carries the same insert (A=18) PLUS a
+# stacked F2 hit-branch R clause (R->13): hit-branch cells 136-156 close
+# -5 exact vs whiff-only cells 108-128, shared cell 160(1) (P2 direct,
+# run-twelve GT=284-337 - this is the Step-1 cross-ref clause, ruled here
+# exactly as the plan assigned). See the entries below.
+#
+# ============================================================================
+# NEW FINDING: CROUCHING STRONG — STACKED #17 UNDERCOUNT + A NOVEL
+# BLOCK-ONLY R-SURPLUS (UNCLASSIFIED for the R clause; the A clause is
+# ordinary #17 shape (a1), see the census above). WHIFF is fully clean
+# (S=5/A=2/R=10, exact match). BLOCK measures A=1 (the #17 undercount,
+# lever-F-tested UNCHANGED) AND R=15 (vs the clean WHIFF/HIT's own R=10 - a
+# 5-frame BLOCK-ONLY surplus); adv=-2 exact (Badv=-2). HIT measures the SAME
+# A=1 undercount but R=10 (matching WHIFF's own clean value, NOT BLOCK's
+# R=15); adv=+4 exact (Hadv=4). Trace: T=21 on BLOCK (5+1+15, self-
+# consistent) vs T=16 on HIT (5+1+10, self-consistent) - the attacker's own
+# wall-clock animation genuinely runs 5 frames LONGER when this move is
+# blocked than when it hits, the MIRROR IMAGE of every established Class-1
+# member (which is always HIT-shorter, never BLOCK-longer). cut=0/
+# dwellbrk=0/anchor_a=-1 on both legs (no §13.5.1 mechanism engaged either
+# way). Byte-identical in the isolated single-entry re-verification (both
+# BLOCK and HIT re-run in isolation). Does not fit any existing Phase-6
+# bucket (the #17 A-clause is a known, cited family; the R-clause is a new,
+# unnamed "BLOCK-R-surplus" shape with no precedent in this repo - Class 1/2
+# only ever describe a HIT-side change). HYPOTHESIS ONLY: the attacker's own
+# recovery animation may genuinely branch on defender outcome the same way
+# Class-1 members do, just in the opposite direction for this specific
+# move. Flagged to orchestrator/user for follow-up classification.
+#
+# ============================================================================
+# NEW FINDING: CROUCHING ROUNDHOUSE — HIT-ONLY CONTACT A-OVERCOUNT
+# (UNCLASSIFIED; KD row, kd=1 measured correctly matching twelve.json's
+# Hit_advantage="D"). WHIFF and BLOCK are both fully clean and byte-
+# identical to each other (S=13/A=6/R=25, exact match to twelve.json;
+# BLOCK adv=-11 exact matching Badv=-11). HIT measures A=10 (vs the clean
+# WHIFF/BLOCK's own A=6 - a 4-frame contact-only overcount, present ONLY on
+# HIT, unlike Crouching Fierce's own overcount above which hits BOTH BLOCK
+# and HIT) with R=25 (exact, matching WHIFF/BLOCK - no Class-1 R clause
+# here, unlike Crouching Fierce). adv=+24 not cross-checked (Hit_advantage
+# is the literal "D", non-numeric convention). Trace: cut=0/dwellbrk=0/
+# anchor_a=-1 (no §13.5.1 mechanism); `active_pf=11` vs displayed
+# `engine_a=10` on HIT (same off-by-one trace curiosity as Crouching
+# Fierce). Byte-identical in the isolated single-entry re-verification. Does
+# not fit any existing Phase-6 bucket (not #17 - wrong sign; not item 4 -
+# requires R to diverge, here R is exact). HYPOTHESES ONLY, none confirmed.
+# Flagged to orchestrator/user for follow-up classification.
+#
+# SWEEP-2 DISPOSITION (2026-07-10, classification sweep #2 fable-grade
+# audit): FULL CONVERT, xfail REMOVED. F3 (§13.13:5179-5184), own-ledger bar
+# met (s3-rundir/run-twelve/run.log): four add=2 branch cells replace four
+# add=1 cells exactly, +4 vs arcade 6 (24(1)+28(1)+60(2)+64(2)+68(2)+72(2)=10
+# vs whiff/block's 24+28+36+40+48+52 (6x1)=6). See the entry below.
+#
+# ============================================================================
+# FAR STRONG — DISTANCE CALIBRATION. dist:100 (the convention used
+# elsewhere in this repo for a "Far" strength-2 normal) still lands the
+# CLOSE-range Strong (S=6, not Far Strong's own S=9) - the reach boundary
+# sits strictly between 100 and 120px. Binary-searched (isolated probe
+# corpus): dist 120/130/140/150 all read S=9/A=4/R=13/adv=-2, an EXACT match
+# to twelve.json's own Far Strong row on every field. dist:120 (the
+# closest-to-convention working value) is used below, per
+# CORPUS-AUTHORING.md Phase 2's "binary-search the actual connecting
+# distance rather than assuming" guidance (same posture as
+# corpus-ryu.yaml's own Far Jab dist:90 precedent).
+#
+# ============================================================================
+# A.X.E. — OVERHEAD-LABEL CONTRADICTION (task-relevant verify-vs-assumption
+# finding, same posture as corpus-necro.yaml's Back+Forward finding and
+# corpus-remy.yaml's Light of Virtue crouch-probe). twelve.json publishes
+# Parry: {High: true, Low: false} for all three A.X.E. strengths - the
+# oracle's own overhead-attack shape ("must block standing"). Empirically: a
+# dummy:crouch probe for A.X.E. (Jab) at the SAME dist:close as the
+# dummy:stand BLOCK entry measures BYTE-IDENTICAL numbers (S=6/A=8/R=15/
+# adv=-5, both carrying the same A.X.E.-Jab-specific partial-restore finding
+# above) - Twelve's crouching guard blocks this move exactly like standing
+# guard, contradicting the oracle's overhead-implied shape. NOT asserted as
+# an engine bug here - a documented empirical finding only (trace fact, no
+# mechanism claimed), same posture as every prior overhead-label-
+# contradiction precedent in this repo.
+#
+# By contrast, Back + Forward (this corpus's own command normal) publishes
+# Parry: {High: true, Low: true} in twelve.json - i.e. it is NOT
+# oracle-labeled as an overhead at all, so its own crouch-probe reading
+# BYTE-IDENTICAL to its standing BLOCK (S=5/A=5/R=14/adv=-2, both exact
+# matches to twelve.json) is the EXPECTED behavior for a genuine mid-hitting
+# move, not a contradiction - included below for completeness, not as a
+# finding.
+#
+# ============================================================================
+# UOH FINDING (item 18(b) + a companion A-clause) - the SAME recurring
+# Alex/Elena/Necro bucket, BYTE-IDENTICAL numbers to corpus-necro.yaml's own
+# necro-uoh-* entries. twelve.json's Universal Overhead: S=15/A=10/R=5 - the
+# SAME numbers as every other UOH-sharing character in this repo.
+# Block_advantage/Hit_advantage are both the literal "-" - no expect.adv.
+# Measured: WHIFF R=3/A=10 (cut=1, anchor_a=10=engine_a, T=29=S+A+R exact -
+# item 18(b) grounded-cleanup whiff-R-truncation, necro-uoh-whiff/
+# ibuki-uoh-whiff precedent); BLOCK A=12/R=2 (cut=1, anchor_a=12=engine_a,
+# T=33 vs S+A+R=32, 1-tick gap - the A-overcount diverges ALONE here,
+# matching the Alex/Elena/Necro bucket's own shape exactly); HIT A=10/R=2
+# (cut=1, anchor_a=10=engine_a, T=29 vs S+A+R=30, 1-tick gap - A matches
+# WHIFF not BLOCK, R matches BLOCK not WHIFF, same three-way split as the
+# precedent). Not re-litigated as a new finding - same recurring bucket,
+# cited by precedent.
+# SECTION ACCOUNTING (Phase 7): 3/3 entries carry a divergence (100% xfail)
+# - crosses the >50%-of-section threshold. GRANTED by orchestrator at commit 2026-07-09 (review-verified: A.X.E.-Jab = Makoto compound; N.D.L. = ENGINE-4 machinery limitation; UOH = recurring bucket; crouching trio = hedged UNCLASSIFIED w/ ken-forward kinship). User review pending (overnight autonomous run) (this is the
+# implementing agent's own corpus authorship - the orchestrator grants at
+# commit per the >50%-section accounting convention; this section is the
+# SAME recurring, already-orchestrator-reviewed Alex/Elena/Necro bucket, so
+# the grant should be routine, but is not self-issued here).
+#
+# ============================================================================
+# THROW — §13.10 CLASS 3, SATURATED GRAB (same shape as Hugo's own grabs).
+# twelve.json has TWO throw-family rows ("Neutral Throw" and "Throw"),
+# byte-identical on every numeric field (S=2/A=1/R=21/Badv=0/Hadv=D/
+# Throw_range=13) - "Throw" used per the ryu/q/chunli/remy/necro bare-
+# "Throw" convention. dist:13 used for the HIT leg (Throw_range=13, well
+# inside the ken-throw-hit dist:close trap radius). T=71 (saturated at
+# FD_METER_LEN-1), endrel=1 fires - R = (FD_METER_LEN-1) - S - A =
+# 71-2-1 = 68, a DERIVED value asserted as a plain-PASS literal (NOT
+# from-qjson; twelve.json's Recovery=21 is the whiff-path figure, directly
+# captured by twelve-throw-whiff, exact match). kd=1 measured directly
+# (adv=+65, huge, consistent with a genuine knockdown; adv not cross-checked
+# per the literal-"D" Hit_advantage convention).
+#
+# ============================================================================
+character: twelve
+oracle: twelve.json
+inter_entry_wait: 150
+entries:
+
+# --- Standing normals, BLOCK (dummy: stand) --------------------------------
+
+- label: twelve-jab-block
+  setup: { dist: close, dummy: stand }
+  input: "press LP"
+  qjson: { name: "Jab" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: twelve-strong-block
+  setup: { dist: close, dummy: stand }
+  input: "press MP"
+  qjson: { name: "Strong" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# See file header FAR STRONG — DISTANCE CALIBRATION: dist:100 still lands
+# close-range Strong (boundary is strictly between 100-120); dist:120 is the
+# closest-to-convention value confirmed to land the distinct Far Strong row.
+- label: twelve-farstrong-block
+  setup: { dist: 120, dummy: stand }
+  input: "press MP"
+  qjson: { name: "Far Strong" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: twelve-fierce-block
+  setup: { dist: close, dummy: stand }
+  input: "press HP"
+  qjson: { name: "Fierce" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: twelve-short-block
+  setup: { dist: close, dummy: stand }
+  input: "press LK"
+  qjson: { name: "Short" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# Issue #17 shape (a1), lever-F-tested UNCHANGED (see file header ISSUE #17
+# CENSUS): measured A=5 vs arcade 6; S/R/adv exact.
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=5 is the
+# engine-truth credit actually accrued on the BLOCK path - issue #17 shape (a1):
+# lever-F-tested (fd_restore_revoked_declared_credit forced 0 on a scratch
+# build, reverted before commit) and confirmed UNCHANGED - no revoke fires.
+# Arcade (whiff-canonical, from-qjson) A=6 - preserved here per the
+# convention. S/R/adv remain arcade-exact (from-qjson); cut=0/dwellbrk=0/
+# anchor_a=-1 (ordinary r1-transition end).
+- label: twelve-forward-block
+  setup: { dist: close, dummy: stand }
+  input: "press MK"
+  qjson: { name: "Forward" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: 5, R: from-qjson, adv: from-qjson }
+
+- label: twelve-roundhouse-block
+  setup: { dist: close, dummy: stand }
+  input: "press HK"
+  qjson: { name: "Roundhouse" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# --- HIT sample per button family (dummy: none, close range) ---------------
+
+- label: twelve-jab-hit
+  setup: { dist: close, dummy: none }
+  input: "press LP"
+  qjson: { name: "Jab" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: twelve-strong-hit
+  setup: { dist: close, dummy: none }
+  input: "press MP"
+  qjson: { name: "Strong" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: twelve-fierce-hit
+  setup: { dist: close, dummy: none }
+  input: "press HP"
+  qjson: { name: "Fierce" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: twelve-short-hit
+  setup: { dist: close, dummy: none }
+  input: "press LK"
+  qjson: { name: "Short" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# Issue #17 shape (a1) STACKED with a Class-1 HIT-R divergence (see file
+# header HIT-R DIVERGENCES): measured A=4 vs arcade 6 (lever-F-tested
+# UNCHANGED, same census as twelve-forward-block); R=12 vs BLOCK/WHIFF's own
+# clean R=13. adv exact (Hadv=-1).
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): both
+# clauses are established members and convert together, plain PASS. (1) A=4 is
+# the engine-truth credit accrued on the HIT path - issue #17 shape (a1),
+# lever-F-tested UNCHANGED, same as twelve-forward-block. Arcade A=6
+# preserved. (2) R=12 is the engine-truth recovery played on the HIT path -
+# §13.10 Class 1 HIT-R divergence, BLOCK/WHIFF's own clean R=13 (BLOCK-
+# confirmed arcade-exact). Arcade R=13 preserved. adv remains arcade-exact
+# (from-qjson).
+- label: twelve-forward-hit
+  setup: { dist: close, dummy: none }
+  input: "press MK"
+  qjson: { name: "Forward" }
+  outcome: HIT
+  expect: { S: from-qjson, A: 4, R: 12, adv: from-qjson }
+
+# Class-1 HIT-R divergence (§13.10), A exact (pure, not stacked with #17).
+# §13.10 HIT-R convention (adopted 2026-07-10, §13.10-compliance conversion,
+# F2b): R=17 is the engine-truth recovery actually played on the HIT path -
+# attacker's own shorter hit-branch recovery chain (an 8-frame undershoot vs
+# arcade/BLOCK/WHIFF's own clean R=25); cut=0/dwellbrk=0/anchor_a=-1 (no
+# §13.5.1 mechanism). Arcade (whiff-canonical) R=25 - preserved here per the
+# convention. S/A/adv remain arcade-exact (from-qjson).
+- label: twelve-roundhouse-hit
+  setup: { dist: close, dummy: none }
+  input: "press HK"
+  qjson: { name: "Roundhouse" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: 17, adv: from-qjson }
+
+# --- WHIFF sample per button family (dummy: none, dist 250) -----------------
+# twelve.json has a Far row ONLY for Strong (unlike Ryu/Remy, which have
+# more Far-prefixed rows) - Strong's WHIFF below cites "Far Strong"; every
+# other button cites its own single row. All six match arcade exactly,
+# confirming the calibration surface holds (CORPUS-AUTHORING.md Phase 4),
+# including for Forward/Roundhouse whose close-range BLOCK/HIT entries
+# above carry their own divergences.
+
+- label: twelve-lp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press LP"
+  qjson: { name: "Jab" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: twelve-mp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press MP"
+  qjson: { name: "Far Strong" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: twelve-hp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press HP"
+  qjson: { name: "Fierce" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: twelve-lk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press LK"
+  qjson: { name: "Short" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: twelve-mk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press MK"
+  qjson: { name: "Forward" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: twelve-hk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press HK"
+  qjson: { name: "Roundhouse" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# --- Crouching normals, BLOCK (dummy: stand) --------------------------------
+
+- label: twelve-crjab-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+LP"
+  qjson: { name: "Crouching Jab" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# See file header NEW FINDING: CROUCHING STRONG. WHIFF/BLOCK/HIT all added
+# below (Phase 4/5 discipline for a divergent move) rather than BLOCK-only.
+# SECTION ACCOUNTING (Phase 7): 2/3 entries carry a divergence (67% xfail;
+# WHIFF itself is clean) - crosses the >50%-of-section threshold.
+# GRANTED by orchestrator at commit 2026-07-09 (review-verified: A.X.E.-Jab = Makoto compound; N.D.L. = ENGINE-4 machinery limitation; UOH = recurring bucket; crouching trio = hedged UNCLASSIFIED w/ ken-forward kinship). User review pending (overnight autonomous run) (orchestrator grants at commit; see file header NEW
+# FINDING: CROUCHING STRONG for the full #17 shape-(a1) + BLOCK-only-R-
+# surplus compound writeup).
+# UPDATE (2026-07-10, §13.13): NOW 1/3 xfail (33%, below threshold) -
+# twelve-crstrong-hit fully resolves (its R matches WHIFF exactly, no
+# stacked issue) and converts to a plain PASS. twelve-crstrong-block
+# narrows to its BLOCK-only R-surplus clause only (still UNCLASSIFIED).
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=1 is the
+# engine-truth credit actually accrued on the BLOCK path - issue #17 shape
+# (a1) A-undercount, lever-F-tested UNCHANGED. Arcade (whiff-canonical,
+# from-qjson) A=2 - preserved here per the convention. adv remains
+# arcade-exact (from-qjson). R stays xfail below (residual clause, EXCLUDED
+# §12.2.3 R-side-corollary candidate, "the mirror image of an ordinary Class-1
+# HIT-shorter chain" - NEW, UNCLASSIFIED, no mechanism claimed).
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): R=15
+# ALSO now asserts the engine-truth value. SWEEP-2 (2026-07-10) FULL
+# CONVERT, xfail REMOVED. The former "NEW, UNCLASSIFIED BLOCK-only
+# R-surplus" is UPGRADED to a full F2 R-surplus corollary (§13.13:5145-5147)
+# membership by classification sweep #2's fable-grade audit: branch cells
+# 52(2 R-ticks post-thaw)+56(2)+60(3)+64(3)+68(2)+72(2)=14 vs whiff-only
+# cells 24(1)+28(2)+32(2)+36(2)+40(1)+44(1)=9, shared cell 76(1); +5 exact
+# (P2 direct, run-twelve GT=836-865 - HIT control rejoins the whiff chain,
+# R=10 exact, unaffected). Arcade (whiff-canonical) R=10 - superseded per
+# the convention.
+- label: twelve-crstrong-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+MP"
+  qjson: { name: "Crouching Strong" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: 1, R: 15, adv: from-qjson }
+
+- label: twelve-crstrong-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press DOWN+MP"
+  qjson: { name: "Crouching Strong" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=1 is the
+# engine-truth credit actually accrued on the HIT path - same #17 shape (a1)
+# A-undercount as twelve-crstrong-block, lever-F-tested UNCHANGED; R=10 here
+# MATCHES the clean WHIFF value exactly (NOT BLOCK's own R=15 surplus - see
+# file header NEW FINDING: CROUCHING STRONG), so this entry has no residual
+# clause. Arcade (whiff-canonical, from-qjson) A=2 - preserved here per the
+# convention. S/R/adv remain arcade-exact (from-qjson).
+- label: twelve-crstrong-hit
+  setup: { dist: close, dummy: none }
+  input: "press DOWN+MP"
+  qjson: { name: "Crouching Strong" }
+  outcome: HIT
+  expect: { S: from-qjson, A: 1, R: from-qjson, adv: from-qjson }
+
+# See file header NEW FINDING: CROUCHING FIERCE. WHIFF/BLOCK/HIT all added
+# below (divergent move, Phase 4/5 discipline).
+# SECTION ACCOUNTING (Phase 7): 2/3 entries carry a divergence (67% xfail;
+# WHIFF itself is clean) - crosses the >50%-of-section threshold.
+# GRANTED by orchestrator at commit 2026-07-09 (review-verified: A.X.E.-Jab = Makoto compound; N.D.L. = ENGINE-4 machinery limitation; UOH = recurring bucket; crouching trio = hedged UNCLASSIFIED w/ ken-forward kinship). User review pending (overnight autonomous run) (orchestrator grants at commit; see file header NEW
+# FINDING: CROUCHING FIERCE for the full A-overcount + stacked Class-1
+# HIT-R writeup).
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=18 is
+# the engine-truth value on the BLOCK path. SWEEP-2 (2026-07-10) FULL
+# CONVERT, xfail REMOVED. F3 (§13.13:5179-5184), own-ledger bar met (see
+# file header NEW FINDING: CROUCHING FIERCE's SWEEP-2 DISPOSITION addendum):
+# a 12-cell insert (own ledger, s3-rundir/run-twelve/run.log), net +11 vs
+# arcade 7 (12 inserted - 1 displaced cell 44). R/S/adv remain arcade-exact
+# (from-qjson).
+- label: twelve-crfierce-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+HP"
+  qjson: { name: "Crouching Fierce" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: 18, R: from-qjson, adv: from-qjson }
+
+- label: twelve-crfierce-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press DOWN+HP"
+  qjson: { name: "Crouching Fierce" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=18
+# ALSO now the engine-truth value on the HIT path - same F3 12-cell insert
+# ledger as twelve-crfierce-block. SWEEP-2 (2026-07-10) FULL CONVERT, xfail
+# REMOVED. PLUS the stacked hit-branch R clause (R->13, F2): hit-branch
+# cells 136(2)+140(2)+144(2)+148(2)+152(2)+156(2)=12 vs whiff-only cells
+# 108(3)+112(3)+116(3)+120(3)+124(3)+128(2)=17, shared cell 160(1); -5 exact
+# (P2 direct, run-twelve GT=284-337). adv remains arcade-exact.
+- label: twelve-crfierce-hit
+  setup: { dist: close, dummy: none }
+  input: "press DOWN+HP"
+  qjson: { name: "Crouching Fierce" }
+  outcome: HIT
+  expect: { S: from-qjson, A: 18, R: 13, adv: from-qjson }
+
+- label: twelve-crshort-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+LK"
+  qjson: { name: "Crouching Short" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: twelve-crforward-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+MK"
+  qjson: { name: "Crouching Forward" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# Crouching Roundhouse is a KD row (twelve.json Hit_advantage="D") - gets
+# WHIFF+HIT in addition to BLOCK, per Phase 4's mandatory whiff-vs-table
+# rule. BLOCK/WHIFF are fully clean (no #17, no revoke fires); see file
+# header NEW FINDING: CROUCHING ROUNDHOUSE for the HIT-only A-overcount.
+- label: twelve-crroundhouse-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+HK"
+  qjson: { name: "Crouching Roundhouse" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: twelve-crroundhouse-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press DOWN+HK"
+  qjson: { name: "Crouching Roundhouse" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=10 is
+# the engine-truth value. SWEEP-2 (2026-07-10) FULL CONVERT, xfail REMOVED.
+# F3 (§13.13:5179-5184), own-ledger bar met (see file header NEW FINDING:
+# CROUCHING ROUNDHOUSE's SWEEP-2 DISPOSITION addendum): four add=2 branch
+# cells replace four add=1 cells exactly, +4 vs arcade 6. R remains
+# arcade-exact (no stacked Class-1 R clause here).
+- label: twelve-crroundhouse-hit
+  setup: { dist: close, dummy: none }
+  input: "press DOWN+HK; wait 60"
+  qjson: { name: "Crouching Roundhouse" }
+  outcome: HIT
+  expect: { S: from-qjson, A: 10, R: from-qjson, kd: 1 }
+
+# --- Command normal (Back + Forward), BLOCK + WHIFF + crouch-probe ----------
+# twelve.json has exactly ONE Back/Towards/Down-Back-prefixed row - "Back +
+# Forward" - verified against every Name string in the fetched oracle.
+# Non-KD (Hit_advantage=-1, numeric) - BLOCK+WHIFF only, per the Dudley/
+# Makoto/Urien/Akuma/Oro/Alex/Elena/Necro non-D-row precedent. See file
+# header A.X.E. — OVERHEAD-LABEL CONTRADICTION for why this move's own
+# crouch-probe is NOT a contradiction (twelve.json's own Parry: {High:true,
+# Low:true} does not label it an overhead at all).
+
+- label: twelve-backforward-block
+  setup: { dist: close, dummy: stand }
+  input: "press LEFT+MK"
+  qjson: { name: "Back + Forward" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: twelve-backforward-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press LEFT+MK"
+  qjson: { name: "Back + Forward" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: twelve-backforward-crouch-probe
+  setup: { dist: close, dummy: crouch }
+  input: "press LEFT+MK"
+  qjson: { name: "Back + Forward" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# --- UOH (press MP+MK) ------------------------------------------------------
+# See file header UOH FINDING - the same recurring Alex/Elena/Necro bucket,
+# byte-identical to corpus-necro.yaml's own necro-uoh-* numbers.
+# SECTION ACCOUNTING (Phase 7): 3/3 entries carry a divergence (100%
+# xfail) - crosses the >50%-of-section threshold. GRANTED by orchestrator at commit 2026-07-09 (review-verified: A.X.E.-Jab = Makoto compound; N.D.L. = ENGINE-4 machinery limitation; UOH = recurring bucket; crouching trio = hedged UNCLASSIFIED w/ ken-forward kinship). User review pending (overnight autonomous run)
+# (orchestrator grants at commit per the >50%-section accounting
+# convention - this is the SAME already-reviewed recurring bucket, not a
+# new one).
+
+# UPDATE (2026-07-10, CONV-2): twelve-uoh-block converts PARTIAL under
+# §13.13 family F4 (A=12; R-triplet clause R=2 vs arcade 5 stays xfail,
+# 18(b)-cut, meter-suspect). twelve-uoh-whiff and twelve-uoh-hit stay
+# fully xfail untouched (whiff exclusion; HIT's A already arcade-exact,
+# no convertible clause).
+
+# §13.17 RE-ANCHOR-1 (2026-07-11): item-18 CLOSED for this row — lever N
+# now measures R=5, matching arcade/oracle exactly. Prior xfail evidence,
+# RELOCATED not deleted: "item 18(b) grounded-cleanup whiff-R-truncation
+# (docs/frame-data-synthesis.md item 18(b), necro-uoh-whiff/ibuki-uoh-
+# whiff precedent; family mechanism established 2026-07-09, synthesis
+# §12.2.1 UOH landing-clocked active tail, ledger-traced on necro w/
+# byte-identical signature): measured R=3 vs arcade 5; trace T=29,
+# S+A+R=29 exact, cut=1, anchor_a=10 matching engine_a=10. S/A exact
+# (S=15, A=10)."
+- label: twelve-uoh-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press MP+MK"
+  qjson: { name: "Universal Overhead" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# §13.13 contact-path convention (CONV-2 scope extension, 2026-07-10, user
+# decision), family F4 - §12.2.1 UOH landing-clocked A (contact legs,
+# sentinel shape): A=12 is the engine-truth credit actually accrued on
+# the BLOCK path (docs/frame-data-synthesis.md §12.2.1, MECHANISM
+# ESTABLISHED 2026-07-09 - ledger-traced on necro, this entry
+# byte-identical: sentinel active cell credits 1/real tick until
+# landing; guard freezes the chart 10 ticks but delays the landing 12,
+# the 2-tick mismatch = the +2). Trace: T=33, S+A+R=32 (1-tick gap),
+# cut=1, anchor_a=12 matching engine_a=12. S exact (S=15). Arcade
+# (whiff-canonical, from-qjson) A=10 - preserved here per the
+# convention.
+# CONVERTED 2026-07-13 (UOH-CLOSURE lever T, docs/frame-data-synthesis.md
+# §13.20; <sp>/zero/arcade-s9/session-report.md BLOCK legs, box
+# 265440-265461, busy768=265466, probe-confirmed exact fc 265466, zero
+# early acceptance): real arcade R=4, matching this engine's own
+# busy-edge/lever-R construction exactly. XFAIL->PASS: R re-literaled to
+# 4; A stays 12 (engine-truth, unaffected by lever T, design §5; arcade
+# measured A=14, dated data line only, not asserted).
+- label: twelve-uoh-block
+  setup: { dist: close, dummy: stand }
+  input: "press MP+MK"
+  qjson: { name: "Universal Overhead" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: 12, R: 4 }
+
+# CONVERTED 2026-07-13 (UOH-CLOSURE lever T, docs/frame-data-synthesis.md
+# §13.20; <sp>/zero/arcade-s9/session-report.md HIT legs, box
+# 265440-265457, busy768=265462, probe-confirmed exact fc 265462): real
+# arcade R=4, matching this engine's own busy-edge/lever-R construction
+# exactly. XFAIL->PASS: R re-literaled to 4; A stays from-qjson (=10, =
+# arcade measured exactly, unaffected by lever T, design §5).
+- label: twelve-uoh-hit
+  setup: { dist: close, dummy: none }
+  input: "press MP+MK"
+  qjson: { name: "Universal Overhead" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: 4 }
+
+# --- Throw (LP+LK) -----------------------------------------------------------
+# See file header THROW — §13.10 CLASS 3, SATURATED GRAB.
+
+- label: twelve-throw-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press LP+LK"
+  qjson: { name: "Throw" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: twelve-throw-hit
+  setup: { dist: 13, dummy: none }
+  input: "press LP+LK; wait 90"
+  qjson: { name: "Throw" }
+  outcome: HIT
+  # BUFFER-1 (2026-07-13): the FD_CAPTURE_LEN 72->256 raise un-caps this
+  # partner-release throw's raw[] capture — post-fix measured R=155 (was
+  # 68). No arcade oracle exists for this post-contact span (same class
+  # as the Hugo grab HIT convention, §13.10). R DE-ASSERTED; flagged for
+  # follow-up (a previously-untracked row, outside the M1 register).
+  expect: { S: from-qjson, A: from-qjson, kd: 1 }
+
+# --- Ground specials probe (ONE session budget) -----------------------------
+# See file header for the full MOTION VERIFICATION, D.R.A. — MOTION NOT
+# FOUND, A.X.E. (JAB ONLY) — POSSIBLE LEVER-F PARTIAL-RESTORE REGRESSION
+# SIGNAL, and N.D.L. S/R-DIVERGENCE — RESOLVED writeups. Order below
+# places A.X.E. (no residue, no partner-release) before N.D.L. (also no
+# residue, but the projectile-split machinery is the more novel finding) -
+# neither leaves grab-style residue, so strict §12.1 grab-avoidance ordering
+# does not apply here; Throw above is already the corpus's own last
+# residue-leaving move.
+
+# --- A.X.E. (Jab), motion qcb + P -------------------------------------------
+# See file header MOTION VERIFICATION, the A.X.E. (JAB ONLY) lever-F finding,
+# HIT-R DIVERGENCES (Class 1, uniform R=12), and the OVERHEAD-LABEL
+# CONTRADICTION crouch-probe writeup.
+# SECTION ACCOUNTING (Phase 7): 3/4 entries carry a divergence (75% xfail;
+# WHIFF itself is fully clean, the calibration surface holds). NOT-YET-
+# GRANTED (orchestrator grants at commit; this section carries the A.X.E.
+# (Jab) PARTIAL-RESTORE COMPOUND finding above, re-cited 2026-07-09 to the
+# Makoto BENIGN NOVEL COMPOUND bucket - see file header).
+
+# UPDATE (2026-07-10, CONV-2): the A.X.E. (Jab) PARTIAL-RESTORE COMPOUND
+# finding now converts under §13.13 family F11 - twelve-axe-jab-block/
+# -hit/-crouch-probe all assert A=8 as a plain PASS (block/crouch-probe
+# FULL; hit's R clause was already asserted under F2b, so hit is now
+# fully PASS too). SECTION ACCOUNTING note above (3/4 entries carry a
+# divergence) is now historical - 0/4 entries remain xfail in this
+# section.
+
+- label: twelve-axe-jab-whiff
+  setup: { dist: 250, dummy: none }
+  input: "motion qcb LP"
+  qjson: { name: "A.X.E. (Jab)" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# §13.13 contact-path convention (CONV-2 scope extension, 2026-07-10, user
+# decision), family F11 - partial-restore compound displayed A, re-cited
+# 2026-07-09 to the Makoto BENIGN NOVEL COMPOUND bucket (corpus-
+# makoto.yaml:108-121, 317-336; same posture as corpus-yang.yaml's
+# yang-uoh A-side finding - see file header): A=8 is the engine-truth
+# credit actually accrued on the BLOCK path. Decomposition: arcade A=11,
+# measured A=8, lever-F ON=8/OFF=7 (restore delta +1, exactly the revoked
+# amount, the lever doing precisely its documented job), residual
+# unrecoverable remainder=3 (pure shape-(a1) skip-jump loss). S/R/adv
+# exact (S=6, R=15, adv=-5 matching Badv=-5). cut=0/dwellbrk=0/
+# anchor_a=-1. Arcade (whiff-canonical, from-qjson) A=11 - preserved here
+# per the convention.
+- label: twelve-axe-jab-block
+  setup: { dist: close, dummy: stand }
+  input: "motion qcb LP"
+  qjson: { name: "A.X.E. (Jab)" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: 8, R: from-qjson, adv: from-qjson }
+
+# §13.10 HIT-R convention (adopted 2026-07-10, §13.10-compliance conversion,
+# F2b; F-5, OUT-4 pre-approved audit item, zero-trace narrow): R=12 is the
+# engine-truth recovery actually played on the HIT path - the same Class-1
+# HIT-R divergence already cited above (see file header HIT-R DIVERGENCES),
+# asserted as an explicit literal (golden-measured, matching the clean
+# WHIFF/BLOCK sibling's own R=15 baseline). Arcade (whiff-canonical) R=15 -
+# preserved via the WHIFF/BLOCK siblings.
+# §13.13 contact-path convention (CONV-2 scope extension, 2026-07-10, user
+# decision), family F11 - partial-restore compound displayed A, same
+# PARTIAL-RESTORE COMPOUND finding as twelve-axe-jab-block (measured A=8
+# vs arcade 11, re-cited 2026-07-09 to the Makoto BENIGN NOVEL COMPOUND
+# bucket - corpus-makoto.yaml:108-121, 317-336; see file header): A=8 is
+# the engine-truth credit actually accrued on the HIT path, same
+# decomposition as the BLOCK entry (ON=8/OFF=7, residual unrecoverable
+# remainder=3). Arcade (whiff-canonical) A=11 - preserved here per the
+# convention. adv not asserted (twelve.json's Hit_advantage is the literal
+# '-' for A.X.E. rows, so this key is omitted; measured -1 recorded here
+# as a trace fact only).
+- label: twelve-axe-jab-hit
+  setup: { dist: close, dummy: none }
+  input: "motion qcb LP"
+  qjson: { name: "A.X.E. (Jab)" }
+  outcome: HIT
+  expect: { S: from-qjson, A: 8, R: 12 }
+
+# See file header A.X.E. — OVERHEAD-LABEL CONTRADICTION: measures
+# BYTE-IDENTICAL to the dummy:stand BLOCK entry above (S=6/A=8/R=15/
+# adv=-5), despite twelve.json's own Parry.Low=False overhead-implied shape
+# saying this move should not connect against a crouching guard at all.
+# Carries the SAME partial-restore A finding as twelve-axe-jab-block (not a
+# second, independent divergence - the crouch-probe simply repeats the
+# standing BLOCK reading), documented here as a trace fact, not a
+# separately-mechanized finding.
+# §13.13 contact-path convention (CONV-2 scope extension, 2026-07-10, user
+# decision), family F11 - partial-restore compound displayed A, same
+# PARTIAL-RESTORE COMPOUND finding as twelve-axe-jab-block (measured A=8
+# vs arcade 11, re-cited 2026-07-09 to the Makoto BENIGN NOVEL COMPOUND
+# bucket - corpus-makoto.yaml:108-121, 317-336; see file header): A=8 is
+# the engine-truth credit actually accrued on this path, same
+# decomposition as the BLOCK entry (ON=8/OFF=7, residual unrecoverable
+# remainder=3). S/R/adv remain arcade-exact (from-qjson, S=6/R=15/adv=-5).
+# Arcade (whiff-canonical, from-qjson) A=11 - preserved here per the
+# convention.
+- label: twelve-axe-jab-crouch-probe
+  setup: { dist: close, dummy: crouch }
+  input: "motion qcb LP"
+  qjson: { name: "A.X.E. (Jab)" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: 8, R: from-qjson, adv: from-qjson }
+
+# --- A.X.E. (Strong), motion qcb + P -----------------------------------------
+# A clean (matches arcade exactly on WHIFF/BLOCK, unlike Jab's own partial-
+# restore finding above); only the Class-1 HIT-R divergence applies here
+# (see file header HIT-R DIVERGENCES, uniform R=12 across all three
+# strengths).
+
+- label: twelve-axe-strong-whiff
+  setup: { dist: 250, dummy: none }
+  input: "motion qcb MP"
+  qjson: { name: "A.X.E. (Strong)" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: twelve-axe-strong-block
+  setup: { dist: close, dummy: stand }
+  input: "motion qcb MP"
+  qjson: { name: "A.X.E. (Strong)" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# §13.10 HIT-R convention (adopted 2026-07-10, §13.10-compliance conversion,
+# F2b): R=12 is the engine-truth recovery actually played on the HIT path (A
+# exact here, unlike Jab's own stacked partial-restore finding - see file
+# header HIT-R DIVERGENCES). Arcade (whiff-canonical) R=16 - preserved here
+# per the convention. S/A remain arcade-exact (from-qjson). adv not asserted
+# (Hit_advantage literal '-' for A.X.E. rows; measured -1, trace fact only).
+- label: twelve-axe-strong-hit
+  setup: { dist: close, dummy: none }
+  input: "motion qcb MP"
+  qjson: { name: "A.X.E. (Strong)" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: 12 }
+
+# --- A.X.E. (Fierce), motion qcb + P -----------------------------------------
+# Same clean-A shape as Strong above; only the Class-1 HIT-R divergence.
+
+- label: twelve-axe-fierce-whiff
+  setup: { dist: 250, dummy: none }
+  input: "motion qcb HP"
+  qjson: { name: "A.X.E. (Fierce)" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: twelve-axe-fierce-block
+  setup: { dist: close, dummy: stand }
+  input: "motion qcb HP"
+  qjson: { name: "A.X.E. (Fierce)" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# §13.10 HIT-R convention (adopted 2026-07-10, §13.10-compliance conversion,
+# F2b): R=12 is the engine-truth recovery actually played on the HIT path (A
+# exact - see file header HIT-R DIVERGENCES). Arcade (whiff-canonical) R=17 -
+# preserved here per the convention. S/A remain arcade-exact (from-qjson).
+# adv not asserted (Hit_advantage literal '-' for A.X.E. rows; measured -1,
+# trace fact only).
+- label: twelve-axe-fierce-hit
+  setup: { dist: close, dummy: none }
+  input: "motion qcb HP"
+  qjson: { name: "A.X.E. (Fierce)" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: 12 }
+
+# --- N.D.L. (Jab), motion qcf + P --------------------------------------------
+# See file header N.D.L. S/R-DIVERGENCE — RESOLVED for the full writeup
+# (§13.12, ENGINE-4, lever J). dist:close (56) connects (inside the
+# exact-adv-match plateau, adv=-5 matching Badv=-5 exactly); dist:250
+# whiffs. All three entries now read plain PASS (S=15/A=11/R=14 on all
+# three outcomes, arcade-exact).
+
+- label: twelve-ndl-jab-whiff
+  setup: { dist: 250, dummy: none }
+  input: "motion qcf LP"
+  qjson: { name: "N.D.L. (Jab)" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: twelve-ndl-jab-block
+  setup: { dist: close, dummy: stand }
+  input: "motion qcf LP"
+  qjson: { name: "N.D.L. (Jab)" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: twelve-ndl-jab-hit
+  setup: { dist: close, dummy: none }
+  input: "motion qcf LP"
+  qjson: { name: "N.D.L. (Jab)" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# --- N.D.L. (Strong), motion qcf + P -----------------------------------------
+# Whiffs at dist<=110, connects (BLOCK/HIT) at dist 120-200 (dist:150 used
+# below, well inside that window); whiffs again at dist:250 (used as the
+# WHIFF entry - a genuine per-strength travel-range window, see file
+# header). RESOLVED 2026-07-09 (§13.12, ENGINE-4, lever J, same fix as
+# N.D.L. (Jab) above and N.D.L. (Fierce) below) - all three entries now
+# read plain PASS (S=15/A=13/R=16 on all three outcomes, arcade-exact).
+
+- label: twelve-ndl-strong-whiff
+  setup: { dist: 250, dummy: none }
+  input: "motion qcf MP"
+  qjson: { name: "N.D.L. (Strong)" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: twelve-ndl-strong-block
+  setup: { dist: 150, dummy: stand }
+  input: "motion qcf MP"
+  qjson: { name: "N.D.L. (Strong)" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: twelve-ndl-strong-hit
+  setup: { dist: 150, dummy: none }
+  input: "motion qcf MP"
+  qjson: { name: "N.D.L. (Strong)" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# --- N.D.L. (Fierce), motion qcf + P -----------------------------------------
+# Whiffs at dist<=175, connects (BLOCK/HIT) at dist 200-250 (dist:250 used
+# below); dist:90 used for the WHIFF entry since dist:250 itself connects
+# for this strength (the widest per-strength travel range of the three).
+# RESOLVED 2026-07-09 (§13.12, ENGINE-4, lever J, same fix as N.D.L. (Jab)/
+# (Strong) above) - all three entries now read plain PASS (S=16/A=13/R=20
+# on all three outcomes, arcade-exact).
+
+- label: twelve-ndl-fierce-whiff
+  setup: { dist: 90, dummy: none }
+  input: "motion qcf HP"
+  qjson: { name: "N.D.L. (Fierce)" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: twelve-ndl-fierce-block
+  setup: { dist: 250, dummy: stand }
+  input: "motion qcf HP"
+  qjson: { name: "N.D.L. (Fierce)" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: twelve-ndl-fierce-hit
+  setup: { dist: 250, dummy: none }
+  input: "motion qcf HP"
+  qjson: { name: "N.D.L. (Fierce)" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# --- Negative control (plan section 1.8 item 5 precedent) ------------------
+
+- label: twelve-jump-none
+  setup: { dist: 250, dummy: none }
+  input: "press UP"
+  outcome: NONE

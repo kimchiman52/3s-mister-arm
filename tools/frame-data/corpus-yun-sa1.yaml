@@ -1,0 +1,153 @@
+# Yun Super Art 1 (You Hou) — EX/Supers program, supers wave S2 (Yun's
+# three SA slots; akuma/dudley authored concurrently by sibling agents,
+# file-disjoint). Satellite corpus (auto-discovered by run-suite.sh's
+# corpus-*.yaml glob, own golden/yun-sa1.tsv once registered) —
+# corpus-yun.yaml/corpus-yun-ex.yaml are untouched.
+#
+# Scope: step0-universe.tsv row 145 (yun SA1, "You Hou", sa_slot 1, naive
+# sequential grouping - no Common_name label). Oracle: docs/arcade-frame-
+# data/yun.json (md5 cc49322b0fcd04e617f22b0410a658fa, same file corpus-
+# yun.yaml/corpus-yun-ex.yaml already pin - re-verified unchanged this
+# session). Oracle row: Startup=0, Hit=16, Recovery=36,
+# Block_advantage=-27, Hit_advantage="-" (non-numeric).
+#
+# Meter: sa_gauge:3 (MAXIMUM, per authoring-policy.md's meter policy
+# default for non-install supers) + super_art:0 (0-indexed SA1). Identity
+# confirmed this session by S-match probe (CORPUS-AUTHORING.md Phase 5
+# "motion-probe method"): <sp>/sa-yun/run-probe1-sa1/trace.log, "motion
+# 2qcf HP" against super_art:0 lands S=0 and BLOCK adv=-27, both
+# oracle-exact — unambiguous identification.
+#
+# Motion: "motion 2qcf HP" — double-quarter-circle-forward + Fierce
+# Punch, same primitive already used for Ryu SA1/Ken SA1/Chun-Li SA1
+# (punch-group super).
+#
+# Admissibility census (per-entry, mechanical, from FRAME_TRACE columns —
+# authoring-policy.md Ruling 2), this session's own isolated 3-entry probe
+# run (<sp>/sa-yun/run-probe1-sa1/trace.log, inter_entry_wait:500 for the
+# probe; re-verified at this corpus's own inter_entry_wait:250 below with
+# byte-identical FINAL numbers on the final/determinism runs):
+# (1) Single-FINAL integrity — exactly one FINAL inside each entry's own
+# window (WHIFF F51-158; BLOCK F564-685; HIT F737-951), no bleed between
+# entries. (2) Flash-overlap census: 0 nonzero-sastop ticks in
+# [MOVE_START F, FINAL F] on all three legs (0/108 WHIFF, 0/122 BLOCK,
+# 0/215 HIT — awk/python census this session) — flash-free measurement,
+# matches every population checked in this program so far. (3) Contact-A
+# juggle check (HIT legs only): HIT-leg A=9 vs BLOCK-leg A=9 — PASSES
+# (equal), admissible by the mechanical gate, but see A DISPOSITION below
+# for why the value itself is still not asserted. (4) Shape record: WHIFF
+# box_runs=3/box_a=16/busyr=36 (genuinely multi-run whiff window, matching
+# Ryu SA2's own multi-run-whiff shape); BLOCK box_runs=1/box_a=9/busyr=109;
+# HIT box_runs=1/box_a=9/busyr=105.
+#
+# S DISPOSITION: S=0 on all three legs, oracle-exact (Startup=0).
+# Assertable everywhere per Ruling 3's lever-independent E-3 rule.
+#
+# adv DISPOSITION (BLOCK only): measured -27, oracle Block_advantage=-27
+# EXACT. Plain PASS. No expect.adv on HIT (yun.json's Hit_advantage for
+# this row is the literal string "-") or WHIFF (no oracle whiff-advantage
+# field exists; from-qjson would raise CompileError on outcome WHIFF).
+#
+# A DISPOSITION — WHIFF RESOLVED (ENGINE-D2, lever S, 2026-07-13; BLOCK/HIT
+# stay OMITTED, unchanged residual — see below). Measured WHIFF A=15
+# (engine_a=15, box_a=16) vs oracle Hit=16 was the `fd_reset_move()`
+# MOVE_START-vs-`char_move()` same-tick race (docs/frame-data-synthesis.md
+# §12.2.4 SA-WHIFF-A/D2) — NOT the §13.11 declared-credit shape this entry
+# originally speculated it might resemble. Fixed by lever S
+# (`fd_movestart_same_tick_credit_hold`, `frame_data_overlay.c`). Post-fix
+# measured WHIFF A=16 == oracle exactly. A is now asserted `from-qjson` on
+# the WHIFF leg, plain PASS.
+#
+# BLOCK/HIT A=9->10 post-fix (ENGINE-D2 fires on these legs too — same-tick
+# race, +1 delta) but still a MUCH larger residual gap from oracle's 16
+# (measured 10, still -6) than the WHIFF leg's now-resolved -1 — NOT
+# path-independent across legs even post-fix (WHIFF=16, BLOCK/HIT=10
+# disagree with EACH OTHER, not just with oracle), so this is NOT the same
+# finding as WHIFF's — it is a SEPARATE, still-open residual, unaffected by
+# ENGINE-D2's own resolution of the WHIFF leg's own -1. A stays OMITTED on
+# BLOCK/HIT rather than xfailed with an unconfirmed mechanism claim.
+# HYPOTHESES ONLY (unconfirmed): (a) a second, contact-only A-reducing
+# mechanism stacked on top of the (now-fixed) D2 race; (b) a single
+# not-yet-understood mechanism whose contact/whiff split doesn't match any
+# registered shape. Flagged for orchestrator/user follow-up classification
+# (a new docs/frame-data-synthesis.md §12.2.4 registry row candidate).
+#
+# R DISPOSITION (per-leg, two DIFFERENT divergence shapes on the same
+# move — quarantine=OMIT+log on all three legs):
+# - WHIFF: legacy R=1 vs oracle Recovery=36 (drastically truncated),
+#   busyr=36 = oracle EXACTLY, T=72=FD_METER_LEN (raw[] capture
+#   saturation). This is the clean, established M1 raw-capture-saturation
+#   signature (same mechanism named for Ken SA3/Dudley MGB (EX)/Chun-Li
+#   SA2/SA1/SA3/Ken SA1/SA2 — see excontact-r-findings.md /
+#   authoring-policy.md Ruling 3 / the "M1 register — class growth"
+#   note). Per Ruling 2 (E-1/E-4), a busyr/oracle match is NOT license to
+#   assert R via that diagnostic — R is OMITTED, cited as a further M1
+#   confirmation, not a new independent quarantine seed.
+# - BLOCK/HIT: legacy R=63 on BOTH legs (a SURPLUS over oracle 36, not a
+#   truncation — the opposite direction from M1), busyr=109 (BLOCK)/105
+#   (HIT) — NEITHER recounts to oracle 36, so this is NOT a clean M1
+#   reading on these legs (busyr disagreement is the decisive fact ruling
+#   M1 out here, same reasoning as the Chun-Li SA3 BLOCK/HIT precedent's
+#   own R-surplus-not-M1 shape: legacy R=48 vs oracle 46 there, busyr=62
+#   disagreeing). R is OMITTED on both legs, UNCLASSIFIED, flagged
+#   2026-07-13 for follow-up classification (a new docs/frame-data-
+#   synthesis.md §12.2.4 registry row) — not force-cited as M1, per the
+#   "quarantine=OMIT+log" idiom, not guessed at.
+#
+# WHIFF: REACHABLE at dist:300 (dist_mode:centered, 10px inside
+# CENTERED_DIST_MAX=310) — matching the Ken SA1/SA2/Ryu SA2 precedent of
+# stationary/short-travel supers reaching WHIFF cleanly, unlike the
+# pilot's own rushing-super WHIFF-UNREACHABLE findings.
+character: yun
+oracle: yun.json
+super_art: 0
+sa_gauge: 3
+inter_entry_wait: 250
+entries:
+
+- label: yun-sa1-whiff
+  setup: { dist: 300, dist_mode: centered, dummy: stand }
+  input: "motion 2qcf HP"
+  qjson: { name: "You Hou" }
+  outcome: WHIFF
+  # Measured S=0 A=16 (was 15 pre-ENGINE-D2, see A DISPOSITION above — now
+  # RESOLVED, oracle-exact) R=1(OMITTED, see R DISPOSITION above;
+  # busyr=36=oracle exactly, clean M1 signature) adv=+0 (box_runs=3,
+  # box_a=16, busyr=36, T=72). S/A oracle-exact. No expect.adv: from-qjson
+  # is a CompileError on outcome WHIFF (yun.json has no whiff-advantage
+  # field). BUFFER-1 (2026-07-13): R now asserted from-qjson — capture
+  # raise un-truncates; post-fix measured R=36 == busyr == oracle exactly.
+  # ENGINE-D2 (2026-07-13): A now asserted from-qjson too. BLOCK/HIT below
+  # are the separate, still-open residual, unconverted by this fix.
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: yun-sa1-block
+  setup: { dist: close, dummy: stand }
+  input: "motion 2qcf HP"
+  qjson: { name: "You Hou" }
+  outcome: BLOCK
+  # Measured S=0 A=10 (was 9 pre-ENGINE-D2 — ENGINE-D2 fires here too, +1
+  # delta, but the residual -6 gap from oracle 16 remains, see A
+  # DISPOSITION above — stays OMITTED, a SEPARATE open finding from the
+  # WHIFF leg's own resolved -1) R=97(OMITTED, see R DISPOSITION above)
+  # adv=-27 (box_runs=1, box_a=9, busyr=109, T=72). S/adv both
+  # oracle-exact. BUFFER-1 (2026-07-13): non-M1 R-surplus shape (busyr
+  # never corroborated oracle here) — post-raise measured value R=97 (was
+  # 63) — still not asserted, still UNCLASSIFIED.
+  expect: { S: from-qjson, adv: from-qjson }
+
+- label: yun-sa1-hit
+  setup: { dist: close, dummy: none }
+  input: "motion 2qcf HP"
+  qjson: { name: "You Hou" }
+  outcome: HIT
+  # Measured S=0 A=10 (was 9 pre-ENGINE-D2, same residual as BLOCK; juggle
+  # check PASSES — HIT-A==BLOCK-A==10 — admissible by the mechanical gate
+  # but still not asserted, since the underlying value diverges from
+  # oracle and from the move's own WHIFF baseline) R=93(OMITTED, see R
+  # DISPOSITION above) adv=+97 kd=1 (box_runs=1, box_a=9, busyr=105,
+  # T=72). S oracle-exact. No expect.adv: yun.json's Hit_advantage for
+  # this row is the literal string "-". BUFFER-1 (2026-07-13): non-M1
+  # R-surplus shape (same as BLOCK) — post-raise measured value R=93 (was
+  # 63) — still not asserted.
+  expect: { S: from-qjson }

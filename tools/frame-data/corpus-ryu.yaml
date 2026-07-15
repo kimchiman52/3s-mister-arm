@@ -1,0 +1,517 @@
+# Ryu frame-data corpus (Phase 6 Step 4, docs/plan-frame-data-harness.md
+# Phase 6 charter + /tmp/phase6-nonq-plan.md Step 4). Generated/consumed by
+# tools/frame-data/compile_corpus.py against docs/arcade-frame-data/ryu.json
+# (fetched Step 3, md5 cd0f6c79b0735c46e3074f02fb2f5d51).
+#
+# Scope: Ryu normals (Step 4) PLUS Hadouken LP/MP/HP projectile entries
+# (Step 5, exercising the arcade-split machinery from Steps 1-2 - see
+# "Hadouken (projectile)" section below). Still NO shoryuken/tatsu/joudan/
+# EX/super entries - those are scope creep beyond Step 5's charter (any
+# non-hadouken move that spawns an effect WORK can extend this file later).
+# Authored empirically against a live headless run per this repo's
+# established discipline (see corpus-q.yaml) - every expect below was pinned
+# by reading the actual trace, not guessed from ryu.json alone.
+#
+# Known harness limitations hit in this file (fireball WHIFF unreachable;
+# hadouken block-adv plateau boundary 121-149 unscanned): see the
+# consolidated "Harness limitations register",
+# docs/frame-data-synthesis.md §12.1.
+#
+# MAJOR FINDING (2026-07-07, first run of this corpus): a systemic "A
+# (active-frame count) undercounts on contact" divergence affects roughly
+# half of Ryu's basic normals - Strong/Far Strong/Fierce/Far Fierce/Far
+# Jab/Forward/Roundhouse/Crouching Forward/Towards+Fierce all show engine_a
+# (the displayed A) measurably LOWER than ryu.json on BLOCK and HIT alike,
+# while Jab/Short/Far Forward/Crouching Roundhouse/Towards+Strong/UOH (and
+# EVERY WHIFF entry, for every button) match arcade exactly. This is NOT a
+# corpus-authoring artifact:
+#   - Verified independent of input timing: re-ran ryu-strong-block with
+#     `hold MP 20` instead of the standard 2-frame `press` - identical
+#     engine_a=2 result (vs arcade A=4).
+#   - Verified independent of outcome: BLOCK and HIT entries for the same
+#     move show the identical wrong A.
+#   - Root-caused via direct [CM]/GT trace inspection: on the CONTACT
+#     tick, the engine advances the attacker's cell chain a SECOND time
+#     within the same Game_timer tick, in two shapes. (a) Skip-to-
+#     recovery: Far Strong GT=136 contacts on cgix=8, same tick jumps to
+#     recovery cgix=16 - the second declared active cell (cgix=12,
+#     jatix=6, 3 frames, which plays in full on WHIFF at GT=230-232) is
+#     never entered, so its credit never accrues (A=1 vs arcade 4). (b)
+#     Same-jatix transit: Strong GT=43 credits cell 12 (jatix=4, ctr=2,
+#     +2 frames), then same-tick advances to pat-consecutive cell 16
+#     (same jatix=4), tripping the §13.7.4 same-tick jatix-gated revoke
+#     which discards those 2 frames (A=2 vs arcade 4; without the revoke
+#     this move reads 4 exact - jatix identity alone can't tell UOH's
+#     phantom transit from a contact-collapsed cell arcade still
+#     counts). Contrast: cr.HK's settle cell shares cghi/jatix with its
+#     active cel but is entered on a LATER tick (GT=324->336, across
+#     hitstop) - no same-tick advance, no revoke, A=5 exact. So it is
+#     tick timing, not cghi/jatix sameness, that decides correct vs.
+#     undercounted. WHIFF is always exact: no contact means no same-tick
+#     branch at all.
+#   - Scope correction: this is NOT "unlike Q." The identical same-tick
+#     contact-advance fires for Q too (Q Strong BLOCK GT=50: cgix
+#     30->36, same tick, see docs/frame-data-synthesis.md §13.7.4). Q's
+#     corpus reads green only because Q's animation data gives each
+#     transited cell a distinct jatix (5->6->7), so the §13.7.4 revoke
+#     never fires and the continuation chain's remaining actives
+#     (1+2+2=5) all get credited - an animation-data-dependent escape,
+#     not proof the mechanism is Ryu-only. The finding is engine-wide.
+#     Any future fix must NOT simply disable the §13.7.4 revoke - that
+#     regresses q-uoh-samef-block/q-uoh-1f-block back to the documented
+#     mutation FAIL (A=11).
+# Per the Phase 6 plan's Step 4 guidance ("genuinely divergent entries:
+# xfail + a finding note - this is an AUDIT, divergence is a result, not a
+# blocker"), every affected entry below keeps its expect.A as the REAL
+# arcade value (from-qjson) and is marked xfail with the measured wrong
+# value - the wrong engine number is never substituted in as if it were
+# now "expected".
+#
+# UPDATE (2026-07-07, §13.11 declared-truth displayed-A convention adopted -
+# user decision on the issue #17 Step-1 escalation): the shape-(b) members
+# above (Far Jab/Strong/Fierce/Far Fierce/Forward/Roundhouse-block+hit, plus
+# Crouching Short - census-resolved this session as shape (b), see
+# ryu-crlk-block's own comment) are RESOLVED, not xfail anymore. The §13.7.4
+# revoke's subtraction is now immediately restored by a gated flag
+# (charset.c fd_restore_revoked_declared_credit - mutation lever F), so
+# these entries read their exact arcade A and are plain PASS. The shape-(a)
+# members (Far Strong/Crouching Forward/Towards+Fierce - skip-jump (a1) and
+# char_move-bypass (a2)) are a DIFFERENT mechanism: their declared active
+# cells are never dispatched by any code at all, so there is no accumulator
+# subtraction to restore - the credit is unrecoverable. They stay xfail
+# (see each entry's own comment; synthesis §13.11 "what stays
+# unrecoverable"). The closing instruction two paragraphs above is now
+# SUPERSEDED: A=11 IS the §13.11 expect for q-uoh-samef-block/q-uoh-1f-block
+# now, not a mutation-FAIL value - the revoke stays in the code with its
+# subtraction cancelled by the gated restore (lever F), and disabling the
+# revoke itself (lever A) is expected to change nothing (path-independence
+# invariant; see docs/plan-frame-data-completion.md's E3 lever table).
+#
+# UPDATE (2026-07-10, §13.13): ryu-far-strong-block, ryu-crmk-block, and
+# ryu-twdshp-block (the three shape-(a) members named above, "Far Strong/
+# Crouching Forward/Towards+Fierce") convert to a plain PASS asserting the
+# measured A citing §13.13 (see each entry's own comment) - the "They stay
+# xfail" sentence above is superseded. Ryu now reads 37 PASS / 0 XFAIL.
+character: ryu
+oracle: ryu.json
+inter_entry_wait: 90
+entries:
+
+# --- Close/far normals, BLOCK (dummy: stand) --------------------------------
+
+- label: ryu-jab-block
+  setup: { dist: close, dummy: stand }
+  input: "press LP"
+  qjson: { name: "Jab" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# Far Jab's actual reach does not extend to dist=100 (the convention used by
+# corpus-q.yaml's Far-Jab-equivalent, which is a different character's move
+# data) - dist=100 whiffed here (verified live: outcome=WHIFF, not the
+# corpus-authoring assumption of BLOCK). Binary-searched: dist 70/75/80/90
+# all connect; dist=90 kept as the closest-to-Q-convention working value.
+- label: ryu-far-jab-block
+  setup: { dist: 90, dummy: stand }
+  input: "press LP"
+  qjson: { name: "Far Jab" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: ryu-strong-block
+  setup: { dist: close, dummy: stand }
+  input: "press MP"
+  qjson: { name: "Strong" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=1 is the
+# engine-truth credit actually accrued on the BLOCK path - issue #17 shape (a1):
+# the contact tick jump-advances 8->16 past declared active cell 12 (ctr=3,
+# jatix=6), which is never dispatched by any code - its declared credit never
+# enters the runtime (synthesis §13.11 'what stays unrecoverable' + plan Step 1
+# findings). Arcade (whiff-canonical, from-qjson) A=4 - preserved here per the
+# convention. S/R/adv remain arcade-exact (from-qjson).
+- label: ryu-far-strong-block
+  setup: { dist: 100, dummy: stand }
+  input: "press MP"
+  qjson: { name: "Far Strong" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: 1, R: from-qjson, adv: from-qjson }
+
+- label: ryu-fierce-block
+  setup: { dist: close, dummy: stand }
+  input: "press HP"
+  qjson: { name: "Fierce" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: ryu-far-fierce-block
+  setup: { dist: 100, dummy: stand }
+  input: "press HP"
+  qjson: { name: "Far Fierce" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: ryu-short-block
+  setup: { dist: close, dummy: stand }
+  input: "press LK"
+  qjson: { name: "Short" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: ryu-forward-block
+  setup: { dist: close, dummy: stand }
+  input: "press MK"
+  qjson: { name: "Forward" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: ryu-far-forward-block
+  setup: { dist: 100, dummy: stand }
+  input: "press MK"
+  qjson: { name: "Far Forward" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: ryu-roundhouse-block
+  setup: { dist: close, dummy: stand }
+  input: "press HK"
+  qjson: { name: "Roundhouse" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# --- HIT sample per button family (dummy: none, close range) ---------------
+
+- label: ryu-jab-hit
+  setup: { dist: close, dummy: none }
+  input: "press LP"
+  qjson: { name: "Jab" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: ryu-strong-hit
+  setup: { dist: close, dummy: none }
+  input: "press MP"
+  qjson: { name: "Strong" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: ryu-fierce-hit
+  setup: { dist: close, dummy: none }
+  input: "press HP"
+  qjson: { name: "Fierce" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: ryu-short-hit
+  setup: { dist: close, dummy: none }
+  input: "press LK"
+  qjson: { name: "Short" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: ryu-forward-hit
+  setup: { dist: close, dummy: none }
+  input: "press MK"
+  qjson: { name: "Forward" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: ryu-roundhouse-hit
+  setup: { dist: close, dummy: none }
+  input: "press HK"
+  qjson: { name: "Roundhouse" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# --- WHIFF sample per button family (dummy: none, dist 250) -----------------
+# At range, the far-reach variant plays for LP/MP/HP/MK (ryu.json has
+# distinct Far Jab/Far Strong/Far Fierce/Far Forward rows); LK/HK have no
+# far variant in ryu.json, same shape as corpus-q.yaml's q-lk-whiff/q-hk-whiff.
+# All six WHIFF entries below match arcade exactly, including for the same
+# buttons (Strong/Fierce/Forward/Roundhouse) whose BLOCK/HIT entries above
+# were xfailed until the 2026-07-07 §13.11 convention + lever-F restore
+# landed - the A-undercount-on-contact finding is contact-specific
+# (hitstop-related) and does not affect WHIFF's active-frame accounting.
+
+- label: ryu-lp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press LP"
+  qjson: { name: "Far Jab" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: ryu-mp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press MP"
+  qjson: { name: "Far Strong" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: ryu-hp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press HP"
+  qjson: { name: "Far Fierce" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: ryu-lk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press LK"
+  qjson: { name: "Short" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: ryu-mk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press MK"
+  qjson: { name: "Far Forward" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: ryu-hk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press HK"
+  qjson: { name: "Roundhouse" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# --- Crouching normals, BLOCK (dummy: stand) --------------------------------
+
+# Same root cause as corpus-q.yaml's q-crlk-block/q-crlk-hit was, issue #14
+# (SHIPPED 2026-07-07): cr.LK vs. a guarding dummy now classifies BLOCK
+# correctly (S/R/adv exact) under the widened dm_stop != 0 event edge. A
+# residual, unrelated divergence used to remain here (the A-undercount-on-
+# contact finding, issue #17) - UPDATE (2026-07-07): census-resolved this
+# session as shape (b) (same-jatix same-tick revoke, rev=1 at GT=2089;
+# Step 1's diagnosis had left this entry untraced, unlike the other 10
+# shape-(b) members). Under the §13.11 declared-truth displayed-A convention
+# (docs/frame-data-synthesis.md §13.11), the §13.7.4 revoke's subtraction is
+# restored (charset.c fd_restore_revoked_declared_credit - mutation lever
+# F), so this entry now reads its exact arcade A=3 and is a plain PASS.
+- label: ryu-crlk-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+LK"
+  qjson: { name: "Crouching Short" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=1 is the
+# engine-truth credit actually accrued on the BLOCK path - issue #17 shape (a1):
+# the contact tick jump-advances past declared active cells that are never
+# dispatched by any code - their declared credit never enters the runtime
+# (synthesis §13.11 'what stays unrecoverable' + plan Step 1 findings); skipped
+# cells 16(2)+20(2). Arcade (whiff-canonical, from-qjson) A=5 (largest observed
+# gap) - preserved here per the convention. S/R/adv remain arcade-exact (from-qjson).
+- label: ryu-crmk-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+MK"
+  qjson: { name: "Crouching Forward" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: 1, R: from-qjson, adv: from-qjson }
+
+- label: ryu-crhk-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+HK"
+  qjson: { name: "Crouching Roundhouse" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# --- Command normals (Towards + button), BLOCK ------------------------------
+
+- label: ryu-twdsmp-block
+  setup: { dist: close, dummy: stand }
+  input: "press RIGHT+MP"
+  qjson: { name: "Towards + Strong" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=4 is the
+# engine-truth credit actually accrued on the BLOCK path - issue #17 shape (a2):
+# hit_pattern_extdat_check case 0x41 (hitcheck.c:743-752) parks cg_ix past
+# declared cell 40 (ctr=2) without ever calling char_move (synthesis §13.11).
+# Arcade (whiff-canonical, from-qjson) A=6 - preserved here per the convention.
+# S/R/adv remain arcade-exact (from-qjson).
+- label: ryu-twdshp-block
+  setup: { dist: close, dummy: stand }
+  input: "press RIGHT+HP"
+  qjson: { name: "Towards + Fierce" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: 4, R: from-qjson, adv: from-qjson }
+
+# --- UOH (press MP+MK) ------------------------------------------------------
+# q.json/ryu.json both list "-" for Block_advantage/Hit_advantage on UOH -
+# same as corpus-q.yaml's q-uoh-samef-block - no expect.adv.
+# census 2026-07-07: no same-jatix transit in Ryu's UOH data - the §13.11
+# restore does not touch this entry.
+
+# CORRECTED 2026-07-13 (UOH-CLOSURE lever T, docs/frame-data-synthesis.md
+# §13.20 SESSION 11 branch A; <sp>/zero/arcade-s11/session-report.md):
+# from-qjson (R=6, whiff-canonical) was a coincidental match - session 8's
+# original BLOCK capture at this value was retroactively proven a WHIFF
+# (dummy walked back out of range pre-contact; whiff-shaped raw-box-length
+# + zero-freeze signature, §13.20 §2.2). Session 11 re-captured this leg
+# with the dummy cornered (walkback impossible) and a mandatory in-tape
+# contact witness (attacker frz 8->0 overlapping a freeze-extended 19-raw
+# box window, vs the 9-raw whiff-canonical signature): real arcade R=7,
+# matching this engine's own busy-edge/lever-R construction exactly (lever
+# T). Re-literaled to the arcade value; probe-confirmed actionable at fc
+# 276133, zero early acceptance.
+- label: ryu-uoh-block
+  setup: { dist: close, dummy: stand }
+  input: "press MP+MK"
+  qjson: { name: "Universal Overhead" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: 7 }
+
+# NEW ROW 2026-07-13 (UOH-CLOSURE lever T, docs/frame-data-synthesis.md
+# §13.20 §4.1/§6): ryu's UOH HIT leg had no corpus row before this payload.
+# Native trace confirmation (this program's own harness, RYU-UOH-HIT step,
+# <sp>/uoh-fit/rundir-ryu-hit/trace.log FINAL): S=15 A=9 R=4(legacy)
+# busyr=5 hsab=0 uoh=1 koc=5, 2 reps byte-identical. Arcade confirmation:
+# <sp>/zero/arcade-s8/session-report.md HIT legs ("Ryu 15/9/5"), valid
+# contact (frz=8 in-box, p1life 155) - arcade R=5 matches the native
+# busy-edge value exactly. A=9 asserted (= from-qjson = engine, unaffected
+# by lever T, design §5).
+- label: ryu-uoh-hit
+  setup: { dist: close, dummy: none }
+  input: "press MP+MK"
+  qjson: { name: "Universal Overhead" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: 5 }
+
+# --- Throw (LP+LK) ----------------------------------------------------------
+
+# Throw WHIFF: new Step 5 diagnosis anchor entry (2026-07-07,
+# docs/frame-data-synthesis.md §13.10) - proves §13.10 Class 3's claim
+# that arcade "Recovery" for a connected grab is the whiff-path figure.
+# Matches ryu.json exactly on all three fields (2/1/21).
+- label: ryu-throw-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press LP+LK"
+  qjson: { name: "Throw" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# HIT-R display convention (docs/frame-data-synthesis.md §13.10, Class 3
+# connected grab) - same mechanism as corpus-q.yaml's q-throw-hit: on HIT
+# the grab connects and the overlay measures the real post-capture throw
+# sequence instead, bounded by the §13.6.1 partner-release path
+# (`endrel=1`, R = meter_len - S - A = 41-2-1 = 38). ryu.json's documented
+# 21 is the whiff-path figure, now also directly captured above by
+# ryu-throw-whiff. S/A match ryu.json's Throw row exactly; adv
+# intentionally unchecked (Hit_advantage=45 is not the observed +82 -
+# same large-number-on-knockdown convention noted for Q's throw/CnDB HIT
+# outcomes, not asserted here).
+- label: ryu-throw-hit
+  setup: { dist: 24, dummy: none }
+  input: "press LP+LK; wait 60"
+  qjson: { name: "Throw" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: 38, kd: 1 }
+
+# --- Hadouken (projectile), Step 5 -----------------------------------------
+# Exercises the arcade-split machinery landed in 468cb84c (Steps 1-2): the
+# player WORK never fires its own cg_ja.atix for a fireball (the attack lives
+# on the eff13 "tama" effect WORK instead), so the overlay anchors S/R on the
+# projectile-spawn frame (proj_seen && !use_hatt) rather than the generic
+# per-frame tally. Verified live (this session): spawn slot 10, meter_len 46
+# for LP/MP/HP alike -> S=10 R=36 T=46, exactly ryu.json's Hadouken row for
+# all three strengths (Jab/Strong/Fierce share identical Startup=10/
+# Recovery=36/Block_advantage=-9 in ryu.json - the projectile's spawn timing
+# and travel don't depend on strength). NO expect.A anywhere in this section:
+# ryu.json's "Hit" (active-frame) field is the literal string "-" for every
+# Hadouken row, and Startup/Recovery are the only fields the harness can
+# assert - see compile_corpus.py's resolve_from_qjson, which raises
+# CompileError on a non-numeric oracle field, so expect.A:from-qjson is not
+# just unhelpful here, it doesn't compile.
+#
+# Distance calibration (Block_advantage is measured DISTANCE-DEPENDENT, not
+# a corpus-authoring artifact - verified this session by scanning
+# setup.dist 56/70/80/90/96/100/110/120/150/171/200/250 for LP hadouken vs a
+# standing dummy): adv holds EXACTLY at ryu.json's Block_advantage=-9 at all
+# 8 scanned dists 56-120 (the plateau boundary between 120 and 150 was not
+# located; 121-149 unscanned), then drifts positive as dist grows
+# further (adv=-3 at dist=150, +1 at 171, +8 at 200, +20 at 250 - later
+# projectile contact eats into the window before the arcade table's assumed
+# point-blank connect). `dist: close` (=56, this file's existing convention)
+# sits well inside the exact-match plateau, so BLOCK entries assert
+# expect.adv: from-qjson (Block_advantage="-9" in ryu.json, numeric, so
+# from-qjson resolves cleanly - no hardcoded -9 needed). Confirmed
+# strength-independent: LP/MP/HP all read adv=-9 at dist:close, S=10 R=36,
+# in two separate runs (byte-identical).
+#
+# HIT entries omit expect.adv entirely: ryu.json's Hit_advantage for every
+# Hadouken row is also the literal string "-" (same non-numeric-oracle-field
+# reasoning as expect.A above) - from-qjson would raise CompileError, and no
+# explicit value is asserted in its place (an omitted field is honest; the
+# measured adv=-8 at dist:close, HIT, all three strengths, is recorded here
+# only as a finding, never as a shipped expectation: the measured -8 vs the
+# BLOCK row's point-blank -9 analogue is the same "one frame off the assumed
+# point-blank" shape as the BLOCK-side plateau boundary, not investigated
+# further - out of scope for Step 5, which only asserts what ryu.json gives
+# numerically).
+#
+# WHIFF is explicitly NOT attempted here (plan P6): a hadouken travels
+# full-screen and still connects with a standing dummy even at dist=250-300
+# (verified during Steps 1-2's probe and reconfirmed this session at
+# dist=250 BLOCK, which still connects, adv=+20) - the dummy cannot be
+# scripted to jump or duck under it (G-directive AI only, not
+# frame-scriptable), so there is no reachable WHIFF window for a fireball
+# in this harness. Documented as a known gap, not a corpus entry.
+#
+# EX hadouken, Shinkuu/Denjin Hadouken, and any other special that spawns an
+# effect WORK (shoryuken/tatsu) are out of scope for Step 5 (meter
+# management / multi-hit supers unscoped; non-projectile specials are scope
+# creep per the parent plan's Step 4/5 Do-Not lists) - not attempted, no
+# entries below for them.
+
+- label: ryu-had-lp-block
+  setup: { dist: close, dummy: stand }
+  input: "motion qcf LP"
+  qjson: { name: "Hadouken (Jab)" }
+  outcome: BLOCK
+  expect: { S: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: ryu-had-mp-block
+  setup: { dist: close, dummy: stand }
+  input: "motion qcf MP"
+  qjson: { name: "Hadouken (Strong)" }
+  outcome: BLOCK
+  expect: { S: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: ryu-had-hp-block
+  setup: { dist: close, dummy: stand }
+  input: "motion qcf HP"
+  qjson: { name: "Hadouken (Fierce)" }
+  outcome: BLOCK
+  expect: { S: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: ryu-had-lp-hit
+  setup: { dist: close, dummy: none }
+  input: "motion qcf LP"
+  qjson: { name: "Hadouken (Jab)" }
+  outcome: HIT
+  expect: { S: from-qjson, R: from-qjson }
+
+- label: ryu-had-mp-hit
+  setup: { dist: close, dummy: none }
+  input: "motion qcf MP"
+  qjson: { name: "Hadouken (Strong)" }
+  outcome: HIT
+  expect: { S: from-qjson, R: from-qjson }
+
+- label: ryu-had-hp-hit
+  setup: { dist: close, dummy: none }
+  input: "motion qcf HP"
+  qjson: { name: "Hadouken (Fierce)" }
+  outcome: HIT
+  expect: { S: from-qjson, R: from-qjson }
+
+# --- Negative control (plan section 1.8 item 5 precedent) ------------------
+
+- label: ryu-jump-none
+  setup: { dist: 250, dummy: none }
+  input: "press UP"
+  outcome: NONE

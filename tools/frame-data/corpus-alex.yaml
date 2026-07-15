@@ -1,0 +1,948 @@
+# Alex frame-data corpus (cast rollout, user-directed 2026-07-08).
+# Generated/consumed by tools/frame-data/compile_corpus.py against
+# docs/arcade-frame-data/alex.json (fetched 2026-07-08 from
+# https://raw.githubusercontent.com/Coccis77/thirdstrikedatabot/master/json/alex.json,
+# md5 f324fa3a68b748f7fb0f2c92c3e72db6). CHARACTER_IDS key is "alex"
+# (compile_corpus.py:37, id=1).
+# FAR-NORMAL COVERAGE: alex.json has ONLY "Far Jab" and "Far Forward" rows -
+# NO Far Strong/Far Fierce/Far Short/Far Roundhouse - verified by reading
+# every Name string in the fetched oracle (55 rows total). Strong/Fierce/
+# Short/Roundhouse's WHIFF-at-250 entries below cite their own single row,
+# same convention as corpus-oro.yaml's Fierce/Roundhouse precedent.
+#
+# CROUCHING D-ROW CENSUS: TWO rows are Hit_advantage="D" in alex.json -
+# Crouching Fierce and Crouching Roundhouse (verified against the fetched
+# oracle) - both crouching, unlike corpus-oro.yaml's mixed standing+crouching
+# D-row pair. Both get a HIT probe below (kd explicit-only, Phase 3
+# discipline).
+#
+# COMMAND-NORMAL COUNT: THREE Towards/Back-prefixed rows - Towards + Strong
+# (6MP), Towards + Fierce (6HP), Back + Fierce (4HP). None is "D"-marked
+# (all three Hit_advantage="-") - BLOCK+WHIFF only per the non-D-row
+# convention (Dudley/Makoto/Urien/Akuma/Oro precedent).
+#
+# ISSUE #17 FAMILY CENSUS (per CORPUS-AUTHORING.md Phase 6 item 1's
+# discriminator): every A-divergence in the normals/command-normal/UOH
+# sections below was lever-F-tested in ONE batched scratch build
+# (fd_restore_revoked_declared_credit forced to 0 at
+# src/sf33rd/Source/Game/engine/charset.c:507, whole corpus re-run once,
+# reverted via `git checkout` + rebuild + re-verified green before this
+# commit, same-binary protocol throughout). RESULT:
+#   - alex-farjab-block: A=2 UNCHANGED in the real binary but drops to A=1
+#     with lever-F off - a shape (b) member (lever-F ACTIVELY RESTORING
+#     credit); already a plain PASS in the real binary (A=2 exact vs
+#     arcade), no xfail needed - per the §13.11 convention, shape (b)
+#     surfacing as a plain PASS is the mechanism working as designed.
+#   - alex-crforward-block: same shape (b) shape - A=3 exact in the real
+#     binary, drops to A=2 with lever-F off. Plain PASS, no xfail.
+#   - alex-fierce-block/-hit, alex-crjab-block: A UNCHANGED by lever-F-off
+#     (no revoke fires) - shape (a), unrecoverable; see per-entry xfail
+#     comments below.
+#     UPDATE (2026-07-10, §13.13): alex-crjab-block's A-clause is the only
+#     clean single-clause member and converts to a plain PASS (no xfail),
+#     citing §13.13. alex-fierce-block/-hit's A-clause converts too, but
+#     each entry's own R-clause is a separate, still-open UNCLASSIFIED
+#     candidate, so those two entries narrow to PARTIAL (xfail retained,
+#     re-worded to the residual R-clause only) rather than going FULL.
+#   - alex-crfierce-block/-hit, alex-uoh-whiff/-block/-hit: A is EITHER
+#     exact already (crfierce) or unchanged by lever-F-off (UOH, all three
+#     outcomes) - not a lever-F-related finding at all in either case; see
+#     their own section comments for the (unrelated) R/A divergences found.
+# Every other A value in the normals/command-normal/UOH/Throw sections was
+# either exact and lever-F-independent, or not applicable (WHIFF entries -
+# no revoke fires on a clean whiff, per every prior corpus in this repo).
+character: alex
+oracle: alex.json
+inter_entry_wait: 150
+entries:
+
+# --- Standing normals, BLOCK (dummy: stand) ---------------------------------
+
+- label: alex-jab-block
+  setup: { dist: close, dummy: stand }
+  input: "press LP"
+  qjson: { name: "Jab" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# Shape (b) member (lever-F-off drops A 2->1) - see file header CENSUS.
+# Plain PASS in the real binary (A=2 exact).
+- label: alex-farjab-block
+  setup: { dist: 100, dummy: stand }
+  input: "press LP"
+  qjson: { name: "Far Jab" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: alex-strong-block
+  setup: { dist: close, dummy: stand }
+  input: "press MP"
+  qjson: { name: "Strong" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# COMPOUND FINDING (flagged 2026-07-08): TWO co-occurring divergences on
+# BOTH BLOCK and HIT (byte-identical S=14/A=2/R=17 on both, adv exact on
+# each: -1 block / +1 hit), while WHIFF (alex-hp-whiff below) is fully
+# clean (S=14/A=4/R=16 exact) - the calibration surface holds, only contact
+# outcomes diverge.
+#   - A-clause: contact-A undercount (measured A=2 vs arcade 4) - lever-F-
+#     tested (fd_restore_revoked_declared_credit forced 0 on a scratch
+#     build, reverted before commit, same-binary protocol) and confirmed
+#     UNCHANGED (A=2 both ways) - no revoke fires, ruling out a lever-F
+#     regression; shape (a) unrecoverable per §13.11.
+#   - R-clause: R reads HIGH by exactly +1 vs arcade/WHIFF's matching 16
+#     (measured 17) on BOTH BLOCK and HIT - superficially resembles Phase 6
+#     item 4 (Hugo-Roundhouse family), but that bucket's own definition
+#     requires A EXACT on all three outcomes, which does NOT hold here (A
+#     undercounts). UNCLASSIFIED for the R-clause specifically: trace facts
+#     only, no mechanism claimed (cut=0, dwellbrk=0, anchor_a=2 matching
+#     engine_a=2 despite cut=0 - HYPOTHESIS ONLY, not confirmed: plausibly
+#     the same cg_ix skip-jump that drops the A-clause also diverts the
+#     skipped cell's frame(s) into the recovery count rather than the
+#     active count, but no trace mechanism confirms this causally). Flagged
+#     to orchestrator/user for follow-up classification.
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=2 is the
+# engine-truth credit actually accrued on the BLOCK path - issue #17 shape (a),
+# lever-F-tested UNCHANGED (fd_restore_revoked_declared_credit forced 0 on a
+# scratch build, reverted before commit) - unrecoverable. Arcade (whiff-
+# canonical, from-qjson) A=4 - preserved here per the convention.
+#
+# SWEEP-2 (2026-07-10) FULL CONVERT: R=17 also now asserts the engine-truth
+# value, xfail REMOVED. F2 R-surplus corollary (§13.13:5145-5147, classification
+# sweep #2 fable-grade audit): branch content closes EXACTLY under the window's
+# measured counting rule (a hitstop freeze excludes N-1 ticks with the event
+# tick forced through, and a frozen cell RESUMES contributing real ticks after
+# it thaws) - postthaw-inclusive branch cells 114(1)+120(1)+126(1)=3 vs
+# whiff-only cell 48(2)=2, shared cells 54..84=14; +1 exact (rule-transfer
+# recount, s2 alex trace GT=161-208, raw_len=32 reproduced exactly). Byte-
+# identical branch on HIT (alex-fierce-hit, GT=284-331). Arcade (whiff-
+# canonical) R=16 - superseded by the engine-truth value per the convention.
+# S/adv remain arcade-exact (from-qjson).
+- label: alex-fierce-block
+  setup: { dist: close, dummy: stand }
+  input: "press HP"
+  qjson: { name: "Fierce" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: 2, R: 17, adv: from-qjson }
+
+- label: alex-short-block
+  setup: { dist: close, dummy: stand }
+  input: "press LK"
+  qjson: { name: "Short" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: alex-forward-block
+  setup: { dist: close, dummy: stand }
+  input: "press MK"
+  qjson: { name: "Forward" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: alex-farforward-block
+  setup: { dist: 100, dummy: stand }
+  input: "press MK"
+  qjson: { name: "Far Forward" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: alex-roundhouse-block
+  setup: { dist: close, dummy: stand }
+  input: "press HK"
+  qjson: { name: "Roundhouse" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# --- HIT sample per button family (dummy: none, close range) ---------------
+
+- label: alex-jab-hit
+  setup: { dist: close, dummy: none }
+  input: "press LP"
+  qjson: { name: "Jab" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: alex-strong-hit
+  setup: { dist: close, dummy: none }
+  input: "press MP"
+  qjson: { name: "Strong" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=2 is the
+# engine-truth credit actually accrued on the HIT path - same shape (a),
+# lever-F-tested UNCHANGED finding as alex-fierce-block (byte-identical A=2).
+# Arcade (whiff-canonical, from-qjson) A=4 - preserved here per the convention.
+#
+# SWEEP-2 (2026-07-10) FULL CONVERT: R=17 also now asserts the engine-truth
+# value, xfail REMOVED - byte-identical branch to alex-fierce-block (GT=284-331,
+# same postthaw-inclusive +1 closure, raw_len=32 reproduced exactly). Arcade
+# (whiff-canonical) R=16 - superseded per the convention. S/adv remain
+# arcade-exact (from-qjson). See alex-fierce-block's comment for the full
+# trace citation.
+- label: alex-fierce-hit
+  setup: { dist: close, dummy: none }
+  input: "press HP"
+  qjson: { name: "Fierce" }
+  outcome: HIT
+  expect: { S: from-qjson, A: 2, R: 17, adv: from-qjson }
+
+- label: alex-short-hit
+  setup: { dist: close, dummy: none }
+  input: "press LK"
+  qjson: { name: "Short" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: alex-forward-hit
+  setup: { dist: close, dummy: none }
+  input: "press MK"
+  qjson: { name: "Forward" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# §13.10 Class 1 (hit-branch recovery chain): S/A/adv all match arcade
+# exactly (S=16, A=5, adv=+0) - only R diverges, from BOTH BLOCK's (29) and
+# WHIFF's (29, alex-hk-whiff below) matching arcade figure. R=18 asserted
+# as the convention value (explicit literal, plain PASS, not from-qjson,
+# which would resolve to the whiff/block-canonical 29 - same posture as
+# q-hsb-jab-hit/corpus-hugo.yaml's Strong/Forward R-clause precedent).
+- label: alex-roundhouse-hit
+  setup: { dist: close, dummy: none }
+  input: "press HK"
+  qjson: { name: "Roundhouse" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: 18, adv: from-qjson }
+
+# --- WHIFF sample per button family (dummy: none, dist 250) -----------------
+# alex.json has a Far row ONLY for Jab and Forward (verified by reading every
+# Name string in the fetched oracle - see file header FAR-NORMAL COVERAGE).
+# Strong/Fierce/Short/Roundhouse have no Far row - their WHIFF cites their
+# own single row, same convention as corpus-oro.yaml's Fierce/Roundhouse.
+
+- label: alex-lp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press LP"
+  qjson: { name: "Far Jab" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: alex-mp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press MP"
+  qjson: { name: "Strong" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: alex-hp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press HP"
+  qjson: { name: "Fierce" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: alex-lk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press LK"
+  qjson: { name: "Short" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: alex-mk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press MK"
+  qjson: { name: "Far Forward" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: alex-hk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press HK"
+  qjson: { name: "Roundhouse" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# --- Crouching normals, BLOCK (dummy: stand) --------------------------------
+
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=1 is the
+# engine-truth credit actually accrued on the BLOCK path - issue #17 shape (a):
+# lever-F-tested (fd_restore_revoked_declared_credit forced 0 on a scratch
+# build, reverted before commit, same batch as alex-farjab-block/
+# alex-fierce-block) and confirmed UNCHANGED (A=1 both ways) - no revoke fires.
+# Arcade (whiff-canonical, from-qjson) A=2 - preserved here per the convention.
+# S/R/adv remain arcade-exact (from-qjson).
+- label: alex-crjab-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+LP"
+  qjson: { name: "Crouching Jab" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: 1, R: from-qjson, adv: from-qjson }
+
+- label: alex-crstrong-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+MP"
+  qjson: { name: "Crouching Strong" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# RESOLVED 2026-07-09 (§13.5.1b guard-rearm commit gate, lever H). Was:
+# residual item 18(b) whiff-R truncation, UNIFORM across all three outcomes
+# (measured R=19 vs arcade 22 on all three, cut=1, anchor_a=5=engine_a=5) -
+# trace-confirmed a lever-H false cut (guard_flag stayed 3 for the whole
+# post-anchor tail on all three outcomes, never re-arming before the natural
+# r1 edge). The guard-rearm gate now correctly refuses this commit; all
+# three outcomes finalize at the natural r1 edge and measure R=22,
+# arcade-exact (S=13, A=5 unchanged). adv is now measured -11 (block) /
+# +85 (hit, garbage on this move) / +0 (whiff) - still left unasserted, no
+# change to that posture. See docs/frame-data-synthesis.md §13.5.1b.
+- label: alex-crfierce-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+HP"
+  qjson: { name: "Crouching Fierce" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: alex-crshort-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+LK"
+  qjson: { name: "Crouching Short" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# Shape (b) member (lever-F-off drops A 3->2) - see file header CENSUS.
+# Plain PASS in the real binary (A=3 exact).
+- label: alex-crforward-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+MK"
+  qjson: { name: "Crouching Forward" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: alex-crroundhouse-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+HK"
+  qjson: { name: "Crouching Roundhouse" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# Both Crouching Fierce and Crouching Roundhouse are Hit_advantage="D" in
+# alex.json (verified against the fetched oracle) - TWO D-marked crouching
+# rows, same census shape as corpus-oro.yaml's two-D-row finding (though
+# Oro's second D-row was a STANDING normal, Strong; here both of Alex's
+# D-rows are crouching). kd is explicit-only (never from-qjson, Phase 3
+# discipline) - asserted at the measured live value for each.
+
+# D-NOTATION-VS-LIVE-KD FINDING — RESOLVED 2026-07-09 (§13.6.2b,
+# ENGINE-3): alex.json marks this row Hit_advantage="D" and the engine
+# now measures kd=1 live, matching arcade - the "inconsistency" was
+# always the shipped predicate's blindness to r2=18 (this move's
+# down-family traversal), not a genuine oracle/engine divergence; see
+# corpus-remy.yaml's remy-crfierce-hit for the same dissolved finding on
+# another character. kd is explicit-only (never from-qjson, Phase 3
+# discipline), asserted at the measured (now arcade-true) value. R
+# resolved 2026-07-09 (§13.5.1b, see alex-crfierce-block's header) -
+# arcade-exact R=22, byte-identical to block/whiff.
+- label: alex-crfierce-hit
+  setup: { dist: close, dummy: none }
+  input: "press DOWN+HP"
+  qjson: { name: "Crouching Fierce" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, kd: 1 }
+
+- label: alex-crroundhouse-hit
+  setup: { dist: close, dummy: none }
+  input: "press DOWN+HK"
+  qjson: { name: "Crouching Roundhouse" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, kd: 1 }
+
+# Extra WHIFF probes for BOTH D-marked crouching rows (beyond the Ibuki/Oro
+# precedent's usual crouching-normal scope, which only tests BLOCK/HIT) -
+# authored specifically to classify the R/kd divergence found on Crouching
+# Fierce below (Phase 4's whiff-vs-table rule requires a clean baseline
+# before any R-divergence can be cited to a WHIFF-specific bucket like item
+# 18(b)). Crouching Roundhouse's own HIT/BLOCK both already read arcade-
+# exact - this WHIFF entry is a confirmatory anchor, not a divergence chase.
+
+- label: alex-crfierce-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press DOWN+HP"
+  qjson: { name: "Crouching Fierce" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: alex-crroundhouse-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press DOWN+HK"
+  qjson: { name: "Crouching Roundhouse" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# --- Command normals, BLOCK + WHIFF -----------------------------------------
+# alex.json has THREE Towards/Back-prefixed rows: Towards + Strong (6MP),
+# Towards + Fierce (6HP), Back + Fierce (4HP) - verified against every Name
+# string in the fetched oracle. None is Hit_advantage="D" (all three are the
+# literal "-") - BLOCK+WHIFF only per the non-D-row convention (Dudley/
+# Makoto/Urien/Akuma/Oro precedent), no separate HIT entry.
+#
+# Back + Fierce carries an unusual Throw_range=72 field despite being a
+# plain command normal (Cancel.Special/Super_art both True, Parry both
+# False) - a stray oracle field, not treated as a grab (no Class-3 dummy:
+# none HIT probe authored for it; BLOCK+WHIFF only, same as the other two).
+
+# ISOLATED ADV-ONLY FINDING (flagged 2026-07-08, same posture as corpus-
+# oro.yaml's oro-nichirin-lp-block precedent): S/A/R all match arcade
+# exactly (S=7, A=5, R=10) - only adv diverges (measured -1 vs arcade
+# Block_advantage=-2), an isolated finding with no accompanying S/A/R
+# divergence to hang it on (outside Phase 6's A/R-focused bucket tree).
+# adv left UNASSERTED per the Oro precedent ("left unasserted, noted here
+# rather than under any established family") rather than force it into an
+# xfail with no known mechanism.
+- label: alex-twdsmp-block
+  setup: { dist: close, dummy: stand }
+  input: "press RIGHT+MP"
+  qjson: { name: "Towards Strong" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: alex-twdsmp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press RIGHT+MP"
+  qjson: { name: "Towards Strong" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: alex-twdshp-block
+  setup: { dist: close, dummy: stand }
+  input: "press RIGHT+HP"
+  qjson: { name: "Towards Fierce" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: alex-twdshp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press RIGHT+HP"
+  qjson: { name: "Towards Fierce" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: alex-backhp-block
+  setup: { dist: close, dummy: stand }
+  input: "press LEFT+HP"
+  qjson: { name: "Back Fierce" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: alex-backhp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press LEFT+HP"
+  qjson: { name: "Back Fierce" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# --- UOH (press MP+MK) ------------------------------------------------------
+# alex.json's Universal Overhead: S=15/A=10/R=5 - the SAME numbers as
+# q/dudley/chunli/akuma/oro/yang/ibuki.json's own UOH row (shared move data
+# across the cast). Block_advantage/Hit_advantage/Crouch_hit_advantage are
+# all RANGE strings ("-5 ~ +7" / "0 ~ +8" / "+1 ~ +9") rather than the bare
+# "-" seen on every other character's UOH row in this repo - not numeric,
+# so no expect.adv (same "not checked" posture as every other UOH entry
+# here regardless of the field's exact non-numeric shape).
+#
+# NEW FINDING, UNCLASSIFIED (flagged 2026-07-08): unlike every other
+# character's UOH row in this repo (a single declared-truth A value
+# uniform across all three outcomes, per §13.11 - e.g. Ibuki A=11 on all
+# three, Oro A=10 exact on all three), Alex's measured A VARIES BY OUTCOME:
+# WHIFF/HIT both read A=12, BLOCK reads A=15 - three distinct S/A/R
+# signatures, not a single uniform declared-truth value. Lever-F-tested
+# (fd_restore_revoked_declared_credit forced 0 on a scratch build,
+# reverted before commit, same batch as the normals-section census): A is
+# UNCHANGED in ALL THREE outcomes (12/15/12 both with the lever on and
+# off) - this rules OUT a lever-F regression; the mechanism is unrelated to
+# the §13.7.4 revoke/restore machinery entirely.
+#
+# Trace facts (raw observations only, no mechanism claimed): WHIFF T=29
+# (S+A+R=30, 1-tick gap), cut=1, anchor_a=12 matches engine_a=12,
+# active_pf=11 (1 LESS than engine_a=12); BLOCK T=33 (S+A+R=32, 1-tick
+# gap), cut=1, anchor_a=15 matches engine_a=15, active_pf=16 (1 MORE than
+# engine_a=15 - the OPPOSITE-direction gap from WHIFF's); HIT T=29
+# (S+A+R=29 exact), cut=1, anchor_a=12 matches engine_a=12, active_pf=12
+# (EXACTLY equal to engine_a, unlike either WHIFF or BLOCK). All three
+# read R below arcade's 5 (WHIFF R=3, BLOCK/HIT both R=2). S is exact on
+# all three (S=15).
+#
+# This is a genuinely novel three-way A-variance shape, distinct from
+# every existing UOH precedent in this repo (which show a SINGLE uniform
+# A value, only R varying by outcome) - does not fit the §13.11
+# declared-truth convention (that requires ONE value, not three), and the
+# active_pf-vs-engine_a relationship itself flips sign across the three
+# outcomes (no candidate mechanism offered). UNCLASSIFIED, flagged to
+# orchestrator/user for follow-up classification.
+#
+# MECHANISM ESTABLISHED 2026-07-09 (classification sweep, credit-ledger
+# trace on this move - docs/frame-data-synthesis.md §12.2.1 "UOH
+# landing-clocked active tail", looping-declared shape): Alex's UOH active
+# phase ends at LANDING, and its declared active cells (16/20/24/28/32,
+# ctr 2/2/2/3/3) LOOP while airborne. WHIFF/HIT: landing truncates cell 32
+# after 1 real tick but its declared 3 is already banked (§13.11) -> A=12
+# (+2). BLOCK: guard delays the landing enough for the chain to complete
+# and loop BACK into cell 28, which re-credits its declared 3 (ledger:
+# GT=328 cgix=28 add=3) -> A=15. Elena/Necro/Twelve share the family via a
+# different data shape (open-ended sentinel cell, see §12.2.1); the
+# three-way A-variance and the R triplet 3/2/2 are now one mechanism, not
+# an anomaly. Entries below re-cited 2026-07-09; still xfail (no expect
+# changes - canonicalizing displayed A vs arcade 10 is an §12.2.1-noted
+# convention question for the user).
+#
+# SECTION ACCOUNTING (Phase 7): 3/3 entries have an A and/or R divergence
+# (100% xfail) - crosses the >50%-of-section threshold. Orchestrator
+# sign-off 2026-07-08: GRANTED (self-review, autonomous corpus-authoring
+# session) - measured values are self-consistent per-outcome
+# (S+A+R≈T within the usual ±1-tick gap on all three), lever-F confirmed
+# NOT the cause, and no plausible mechanism was force-fit; the three-way
+# A-variance is reported as raw trace fact, not invented. User review
+# pending.
+
+# UPDATE (2026-07-10, CONV-2): the user decision has been taken -
+# alex-uoh-block (A=15) and alex-uoh-hit (A=12) convert PARTIAL under
+# §13.13 family F4 (docs/frame-data-synthesis.md §13.13 SCOPE EXTENSION);
+# each entry's own R-triplet clause (R=2 vs arcade 5) stays xfail
+# (18(b)-cut, meter-suspect). alex-uoh-whiff stays fully xfail - WHIFF,
+# exclusion 1 outranks mechanism proof.
+
+# §13.17 RE-ANCHOR-1 (2026-07-11): item-18 CLOSED for this row (FULL
+# flip, not PARTIAL — census confirmed twin box-A=10 matches arcade/oracle
+# exactly, resolving the prior A-side uncertainty). Levers O/N (whiff
+# raw-box A / whiff busy-edge R, §13.17) now measure A=10, R=5, both
+# arcade/oracle-exact. Prior xfail evidence, RELOCATED not deleted: "UOH
+# landing-clocked active tail, looping-declared shape, WHIFF leg
+# (docs/frame-data-synthesis.md §12.2.1, MECHANISM ESTABLISHED 2026-07-09
+# by credit-ledger trace on this very move): Alex's UOH has no sentinel -
+# declared active cells 16(2)/20(2)/24(2)/28(3)/32(3); the landing
+# truncates cell 32 after 1 real tick but its declared 3 is already
+# banked (§13.11 declared-truth) - measured A=12 vs arcade 10 (+2 = cell
+# 32's unplayed declared remainder); measured R=3 vs arcade 5 (item 18(b)
+# cut leg). Lever-F-tested UNCHANGED (A=12 both with the revoke-restore
+# gate on and off) - rules out a lever-F regression. Trace: T=29,
+# S+A+R=30 (1-tick gap), cut=1, anchor_a=12 matches engine_a=12,
+# active_pf=11 (1 less than engine_a). S exact (S=15)."
+- label: alex-uoh-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press MP+MK"
+  qjson: { name: "Universal Overhead" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# §13.13 contact-path convention (CONV-2 scope extension, 2026-07-10, user
+# decision), family F4 - §12.2.1 UOH landing-clocked A (contact legs): A=15
+# is the engine-truth credit actually accrued on the BLOCK path. On guard
+# the delayed landing lets the declared active chain COMPLETE and loop
+# back, re-entering declared-active cell 28 (ledger: GT=328 cgix=28 add=3)
+# - measured A=15 vs arcade 10 (whiff's 12 + the re-entered cell's 3; first
+# trace-proven re-entry re-credit in this engine, cross-ref §12.2.3).
+# Lever-F-tested UNCHANGED (A=15 both ways) - rules out a lever-F
+# regression. Trace: T=33, S+A+R=32 (1-tick gap), cut=1, anchor_a=15
+# matches engine_a=15, active_pf=16 (1 MORE than engine_a). S exact
+# (S=15); adv (measured -4) not cross-checked (arcade Block_advantage is a
+# range string, not numeric). Arcade (whiff-canonical, from-qjson) A=10 -
+# preserved here per the convention.
+# CONVERTED 2026-07-13 (UOH-CLOSURE lever T, docs/frame-data-synthesis.md
+# §13.20; <sp>/zero/arcade-s9/session-report.md BLOCK legs, box
+# 267020-267041, busy768=267046, probe-confirmed exact fc 267046, zero
+# early acceptance): the residual R clause above is now CLOSED, not
+# excluded. "Arcade 5" was never this leg's true value - it was the
+# whiff-canonical oracle figure, never itself hardware-measured on a
+# contact leg until this session. Real arcade R=4, matching this engine's
+# own busy-edge/lever-R construction exactly (lever T) - the item 18(b)
+# "meter-suspect" framing is retired for this leg (superseded by the
+# busy-edge mechanism, §13.20 §2). XFAIL->PASS: R re-literaled to 4; A
+# stays 15 (engine-truth, unaffected by lever T, design §5; arcade
+# measured A=14, recorded as a dated data line only, NOT asserted -
+# design §5, no uniform A construction).
+- label: alex-uoh-block
+  setup: { dist: close, dummy: stand }
+  input: "press MP+MK"
+  qjson: { name: "Universal Overhead" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: 15, R: 4 }
+
+# §13.13 contact-path convention (CONV-2 scope extension, 2026-07-10, user
+# decision), family F4 - §12.2.1 UOH landing-clocked A (contact legs): A=12
+# is the engine-truth credit actually accrued on the HIT path. On HIT the
+# chart freeze equals the landing delay, so the chain plays exactly as on
+# whiff (no loop-back) - measured A=12 vs arcade 10 (same banked-declared
+# +2 as the WHIFF leg). Lever-F-tested UNCHANGED (A=12 both ways) - rules
+# out a lever-F regression. Trace: T=29, S+A+R=29 exact, cut=1,
+# anchor_a=12 matches engine_a=12, active_pf=12 (EXACTLY equal to
+# engine_a). S exact (S=15); adv (measured +1) not cross-checked (arcade
+# Hit_advantage is a range string, not numeric). Arcade (whiff-canonical,
+# from-qjson) A=10 - preserved here per the convention.
+# CONVERTED 2026-07-13 (UOH-CLOSURE lever T, docs/frame-data-synthesis.md
+# §13.20; <sp>/zero/arcade-s9/session-report.md HIT legs, box
+# 267020-267037, busy768=267042): same closure as alex-uoh-block - real
+# arcade R=4, matching this engine's own busy-edge/lever-R construction
+# exactly. XFAIL->PASS: R re-literaled to 4; A stays 12 (engine-truth,
+# unaffected by lever T, design §5; arcade measured A=10, dated data line
+# only, not asserted).
+- label: alex-uoh-hit
+  setup: { dist: close, dummy: none }
+  input: "press MP+MK"
+  qjson: { name: "Universal Overhead" }
+  outcome: HIT
+  expect: { S: from-qjson, A: 12, R: 4 }
+
+# --- Throw (LP+LK) -----------------------------------------------------------
+# alex.json's Throw_range is 30px - dist:close (56px) sits OUTSIDE it (the
+# ken-throw-hit trap); using an explicit dist:30 per the ryu/ken/oro/ibuki
+# precedent.
+
+- label: alex-throw-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press LP+LK"
+  qjson: { name: "Throw" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# §13.10 Class 3 connected-grab, non-saturated partner-release sub-case
+# (same mechanism as corpus-oro.yaml's oro-niouriki-lp-hit / corpus-
+# ibuki.yaml's ibuki-throw-hit): T=39, endrel=1 fires (T is nowhere near
+# FD_METER_LEN=72, ruling out the saturated sub-case). R = T - S - A =
+# 39-2-1 = 36, a DERIVED value, self-consistent with the trace (re-derive
+# if this regresses) - asserted as a plain-PASS literal citing §13.10
+# Class 3, NOT from-qjson (alex.json's Recovery=21 is the whiff-path
+# figure, directly captured by alex-throw-whiff above, exact match). adv
+# intentionally unchecked - alex.json's Hit_advantage is the literal "-",
+# same posture as every other Throw entry in this repo.
+- label: alex-throw-hit
+  setup: { dist: 30, dummy: none }
+  input: "press LP+LK; wait 90"
+  qjson: { name: "Throw" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: 36, kd: 1 }
+
+# --- Ground specials probe (ONE session budget) -----------------------------
+# SCOPE (user-directed 2026-07-08): Flash Chop (Jab strength, qcf+P), Power
+# Bomb (Jab strength, hcb+P command grab), Spiral D.D.T. (Short strength,
+# hcb+K), Slash Elbow (Short strength, charge-back-forward+K), Air Knee
+# Smash (Short strength) and Air Stampede (Short strength) - both probed
+# for whatever is assertable per the task's "likely airborne, probe what's
+# assertable, document" framing. NO supers/EX (Flash Chop EX / Power Bomb's
+# own EX-adjacent Reverse variant / Air Knee Smash EX / Air Stampede EX /
+# Slash Elbow EX / Hyper Bomb / Reverse Hyper Bomb / Boomerang Raid / Stun
+# Gun Headbutt all excluded per task scope). Reverse Power Bomb excluded
+# (not in the task's specials list, same posture as Ibuki's Hien exclusion
+# - a distinct move from Power Bomb sharing the same input shape, not
+# probed this session).
+
+# --- Flash Chop (Jab), motion qcf + P ---------------------------------------
+# Landed via the EXISTING `motion qcf <btn>` macro - FIRST probe attempt
+# (S=11 matches alex.json's Flash Chop Jab row exactly, unambiguous vs
+# Strong/Fierce's own distinct S values of 15/19). A genuine blockable
+# strike (Parry High=True, Block_advantage=-2 numeric) - not a grab despite
+# no Throw_range/Kara_range fields at all (both "-").
+
+- label: alex-flashchop-lp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "motion qcf LP"
+  qjson: { name: "Flash Chop Jab" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: alex-flashchop-lp-block
+  setup: { dist: close, dummy: stand }
+  input: "motion qcf LP"
+  qjson: { name: "Flash Chop Jab" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: alex-flashchop-lp-hit
+  setup: { dist: close, dummy: none }
+  input: "motion qcf LP"
+  qjson: { name: "Flash Chop Jab" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# --- Power Bomb (Jab), motion hcb + P ---------------------------------------
+# Landed via the EXISTING `motion hcb <btn>` macro - FIRST probe attempt
+# (S=6 matches alex.json's Power Bomb Jab row exactly, unambiguous vs
+# Strong/Fierce's own distinct S values of 7/8).
+#
+# STRUCTURAL FINDING (unblockable-vs-blockable check, task-directed per the
+# Ibuki Raida precedent): UNLIKE Raida (which turned out to be a
+# BLOCKABLE special, not a true grab), Power Bomb IS a genuine UNBLOCKABLE
+# command grab - verified live via alex-powerbomb-lp-unblockable-probe
+# below: `dummy: stand` at dist=48 (alex.json's own Throw_range) still
+# produces a full HIT capture (kd=1), byte-identical in every field
+# (S=6/A=2/R=63/adv=+93/kd=1/T=71) to the dummy:none HIT entry - the guard
+# has zero effect. Matches the Hugo/Oro Class-3 precedent the task itself
+# named, not the Raida exception.
+#
+# §13.10 Class 3 connected-grab, SATURATED sub-case (same T=71 marker as
+# the Hugo grab family, docs/frame-data-synthesis.md §13.10 - "Hugo's
+# grabs hit T=71; Q/Ryu Throw do not saturate"): T=71, endrel=1 fires
+# (unlike the non-saturated Oro/Ibuki/Ryu Throw formula, this hits the
+# FD_METER_LEN-1 ceiling). R = (FD_METER_LEN-1) - S - A = 71-6-2 = 63, the
+# DERIVED saturated formula (FD_METER_LEN=72, frame_data_overlay.c:42;
+# re-derive if FD_METER_LEN ever changes) - asserted as a plain-PASS
+# literal citing §13.10 Class 3, NOT from-qjson (alex.json's Recovery=35 is
+# the whiff-path figure, directly captured by alex-powerbomb-lp-whiff
+# above, exact match).
+
+- label: alex-powerbomb-lp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "motion hcb LP"
+  qjson: { name: "Power Bomb Jab" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: alex-powerbomb-lp-unblockable-probe
+  setup: { dist: 48, dummy: stand }
+  input: "motion hcb LP; wait 150"
+  qjson: { name: "Power Bomb Jab" }
+  outcome: HIT
+  # BUFFER-1 (2026-07-13): the FD_CAPTURE_LEN 72->256 raise un-caps this
+  # partner-release grab's raw[] capture — post-fix measured R=67 (was
+  # 63). No arcade oracle exists for this post-contact span (same class
+  # as the Hugo grab HIT convention, §13.10). R DE-ASSERTED (was a stale
+  # capture-bound convention value); flagged for follow-up (a
+  # previously-untracked row, outside the plan's 24-leg M1 register).
+  expect: { S: from-qjson, A: from-qjson, kd: 1 }
+
+- label: alex-powerbomb-lp-hit
+  setup: { dist: close, dummy: none }
+  input: "motion hcb LP; wait 90"
+  qjson: { name: "Power Bomb Jab" }
+  outcome: HIT
+  # BUFFER-1 (2026-07-13): same de-assert, same reason as the probe entry
+  # above (post-fix measured R=67, was 63).
+  expect: { S: from-qjson, A: from-qjson, kd: 1 }
+
+# --- Spiral D.D.T. (Short), motion hcb + K ----------------------------------
+# Landed via the EXISTING `motion hcb <btn>` macro - FIRST probe attempt
+# (S=20 matches alex.json's Spiral D.D.T. Short row exactly, unambiguous vs
+# Forward/RH's own distinct S values of 22/24). Throw_range=12px - a much
+# tighter grab range than Power Bomb's 48px; dist:12 used for the connect
+# probes (dist:close's 56px sits well outside it).
+#
+# UNBLOCKABLE (same finding as Power Bomb above): `dummy: stand` at dist=12
+# still produces a full HIT capture, byte-identical (S=20/A=3/R=43/
+# adv=+72/kd=1/T=66) to the dummy:none HIT entry.
+#
+# §13.10 Class 3 connected-grab, NON-saturated partner-release sub-case
+# (same formula as alex-throw-hit/corpus-oro.yaml's oro-niouriki-lp-hit):
+# T=66, endrel=1 fires (T well below FD_METER_LEN-1=71, ruling out the
+# saturated sub-case seen on Power Bomb above). R = T - S - A = 66-20-3 =
+# 43, a DERIVED value, self-consistent with the trace - asserted as a
+# plain-PASS literal citing §13.10 Class 3, NOT from-qjson (alex.json's
+# Recovery=15 is the whiff-path figure, directly captured by
+# alex-spiralddt-lk-whiff above, exact match).
+
+- label: alex-spiralddt-lk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "motion hcb LK"
+  qjson: { name: "Spiral D.D.T. Short" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: alex-spiralddt-lk-unblockable-probe
+  setup: { dist: 12, dummy: stand }
+  input: "motion hcb LK; wait 150"
+  qjson: { name: "Spiral D.D.T. Short" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: 43, kd: 1 }
+
+- label: alex-spiralddt-lk-hit
+  setup: { dist: 12, dummy: none }
+  input: "motion hcb LK; wait 90"
+  qjson: { name: "Spiral D.D.T. Short" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: 43, kd: 1 }
+
+# --- Slash Elbow (Short), charge-back-then-forward + K ----------------------
+# Landed via the EXISTING `motion charge-back <N> then-forward <BTN>` macro
+# (Oro Nichirin Shou / Q DHA precedent) - FIRST probe attempt (S=15 matches
+# alex.json's Slash Elbow Short row exactly, unambiguous vs Forward/RH's
+# own distinct S values of 18/20). A genuine blockable strike (Parry
+# High=True, Block_advantage=-2 numeric) - not a grab (Throw_range/
+# Kara_range both "-").
+
+- label: alex-slashelbow-lk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "motion charge-back 60 then-forward LK"
+  qjson: { name: "Slash Elbow Short" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: alex-slashelbow-lk-block
+  setup: { dist: close, dummy: stand }
+  input: "motion charge-back 60 then-forward LK"
+  qjson: { name: "Slash Elbow Short" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: alex-slashelbow-lk-hit
+  setup: { dist: close, dummy: none }
+  input: "motion charge-back 60 then-forward LK"
+  qjson: { name: "Slash Elbow Short" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# --- Air Knee Smash (Short), DP-shape hold-chain + K ------------------------
+# MOTION VERIFICATION (task flagged this alongside Air Stampede as "charge
+# down-up - likely airborne" - CONFIRMED WRONG for Air Knee Smash
+# specifically, verify-vs-oracle discipline applied): alex.json's own
+# Common_name field for this row reads "623LK" - a DP-SHAPE input (down,
+# down-forward, forward), NOT a charge motion. Air Stampede below is the
+# move that actually matches the task's "charge down-up" description
+# (Common_name "2..8LK"). Landed via the EXISTING DP-shape hold-chain
+# precedent (Ibuki Kazekiri/Oro Jinchu Nobori, `hold RIGHT 2; hold DOWN 2;
+# hold DOWN+RIGHT 2; hold RIGHT+LK 2; wait 1`) - FIRST probe attempt (S=6
+# matches alex.json's Air Knee Smash Short row exactly, unambiguous vs
+# Forward/RH's own distinct S values of 7/8).
+#
+# STRUCTURAL FINDING (specials-reachability gap, Q SDB precedent -
+# CORPUS-AUTHORING.md Phase 5 §12.1 register row 2, "SDB HIT/BLOCK
+# unreachable - the harness dummy can't be scripted to jump; WHIFF is the
+# only assertable outcome for anti-air-only grabs (accepted)"): despite
+# carrying a Throw_range=43px field, Air Knee Smash is Parry High=True
+# (parryable) with Block_advantage/Hit_advantage both "-" - a real 3rd
+# Strike anti-air command grab that only actually CATCHES airborne
+# opponents. Verified live: BOTH a far WHIFF (dist=250) and a close probe
+# against a STANDING dummy (dist=close, i.e. the tightest possible ground
+# spacing) produce the IDENTICAL byte-for-byte signature (S=6/A=6/R=35,
+# T=47, cut=0) - the move never connects against any grounded target
+# regardless of distance or guard state, confirming BLOCK/HIT are
+# UNREACHABLE this session (the harness attacker cannot be scripted to
+# jump, so the move's actual grab function against a jumping opponent
+# cannot be exercised at all - same class of gap as corpus-oro.yaml's
+# Ground Grab/Kishin Riki exclusion). The WHIFF figure itself is a CLEAN,
+# full arcade match on all three fields (S=6, A=6, R=35 - alex.json's own
+# Startup/Hit/Recovery for this row) - not a divergence, just an
+# accepted reachability gap.
+
+- label: alex-airkneesmash-lk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LK 2; wait 1"
+  qjson: { name: "Air Knee Smash Short" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# Confirms the specials-reachability gap above at the tightest possible
+# ground distance (close, dummy:stand) - byte-identical to the WHIFF entry
+# above (S=6/A=6/R=35, T=47) rather than the requested BLOCK, proving the
+# move simply never connects against ANY grounded target.
+- label: alex-airkneesmash-lk-close-grounded-probe
+  setup: { dist: close, dummy: stand }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LK 2; wait 1"
+  qjson: { name: "Air Knee Smash Short" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# --- Air Stampede (Short), charge-down-then-up + K --------------------------
+# Common_name "2..8LK" confirms this (not Air Knee Smash above) is the
+# task's "charge down-up" move. Landed via the EXISTING `motion
+# charge-down <N> then-up <BTN>` macro (Oro Oniyama precedent) - FIRST
+# probe attempt (S=23 matches alex.json's Air Stampede Short row exactly,
+# unambiguous vs Forward/RH's own distinct S values of 25/26). Alex
+# himself leaves the ground during the charge-release (a genuine airborne
+# hop-kick), unlike Air Knee Smash above - "likely airborne" per the
+# task's own framing fits THIS move. Block_advantage=-3 numeric, Parry
+# High=True - a genuine blockable strike, not a grab (Throw_range/
+# Kara_range both "-"). S/A exact on all three outcomes (S=23, A=2,
+# matching alex.json's Startup/Hit fields exactly - unambiguous move
+# identification, zero #17 A-side finding).
+#
+# ENGINE-2 FINDING (flagged 2026-07-08, re-classified from an initial
+# STOP-candidate to a trace-proven §13.5.1a-class false-cut shape - see
+# below): a genuine THREE-WAY R mismatch, none of the three outcomes
+# matching arcade's Recovery=24 directly, but all three traced to the
+# SAME root cause on WHIFF - the grounded-fresh-edge anchor (lever-G) fires
+# legitimately-but-wrongly at F=27 (edge cghi 119->1, prev tick >= reset,
+# both ticks grounded - all three lever-G conditions genuinely satisfied),
+# yet the move continues 22f past that false cut: r1 returns 0 at F=49 =
+# arcade S+A+R (23+2+24) EXACTLY, confirming arcade R=24 is correct and the
+# anchor firing at F=27 is the bug, not the arcade figure.
+#   - WHIFF measured directly at the false anchor tick (R=2, T=27,
+#     S+A+R=27 exact, cut=1, anchor_a=2 matches engine_a=2) - a severe
+#     undershoot (-22 vs arcade), because the whiff path terminated right
+#     at the wrong (but legitimately-fired-under-lever-G) anchor.
+#   - BLOCK measures along the contact path, past where the false anchor
+#     would fire, at the ordinary r1-transition end (R=19, T=43, S+A+R=44,
+#     a 1-tick gap, cut=0 - NOT the anchor's own cut=1 mechanism) - a
+#     smaller but real undershoot (-5 vs arcade), matching HIT's own
+#     figure exactly.
+#   - HIT measures R=19, byte-identical to BLOCK (T=43, cut=0) - the same
+#     contact-path mechanism as BLOCK, not WHIFF's anchor-tick mechanism.
+# RESOLVED 2026-07-09 (§13.5.1b guard-rearm gate, lever H) for the WHIFF
+# leg only: the false anchor at F=27 kept `guard_flag=3` for its entire
+# post-anchor tail (never re-arming before the natural r1 edge at F=49) -
+# the exact ENGINE-2/lever-H false-cut signature. The commit is now
+# correctly REFUSED, so WHIFF finalizes at the natural r1 edge like every
+# other refused-cut move: R=24, arcade-exact. See docs/frame-data-
+# synthesis.md §13.5.1b.
+# BLOCK/HIT are UNCHANGED by this fix and re-cited to a DIFFERENT bucket:
+# `now_cgix < prev_cgix` never trips on the contact path here (the contact
+# branch JUMPS the chart forward at landing, cgix 44->68, an INCREASE, not
+# a decrease), so `cgix_reset_frame` never arms and the §13.5.1/§13.5.1b
+# cut machinery is never entered at all (cut=0, anchor_a=-1 the whole
+# move) - this was never the false-cut mechanism, on any lever. Re-cited
+# from ENGINE-2 to §12.2.2 (contact-branch recovery shortening, generalized
+# to contact): the engine genuinely plays a shorter parallel recovery
+# branch on contact (measured R=19 vs arcade's own whiff-canonical 24,
+# adv=-3 already matching arcade Block_advantage exactly - the live-
+# measured advantage embeds the short contact recovery, same shape as
+# chunli-forward-block/ken-twdshk-block). Values are unchanged; only the
+# xfail citation moves.
+# SECTION ACCOUNTING (Phase 7): as of 2026-07-09, WHIFF is a plain PASS;
+# BLOCK/HIT (2/3) remain xfail under §12.2.2, below the >50%-of-section
+# threshold (no new sign-off needed for a section's xfail rate dropping -
+# CORPUS-AUTHORING.md Phase 7 precedent).
+# UPDATE (2026-07-10, §13.13): NOW 0/3 xfail - BLOCK/HIT both convert to a
+# plain PASS asserting the measured R citing §13.13 (registry-absent but
+# unhedged with their own recorded cgix 44->68 signature). Section RESOLVED.
+
+- label: alex-airstampede-lk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "motion charge-down 60 then-up LK"
+  qjson: { name: "Air Stampede Short" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): R=19 is
+# the engine-truth recovery actually played on the BLOCK path - §12.2.2
+# contact-branch recovery shortening (registry-absent but unhedged, own
+# recorded cgix 44->68 signature, RE-CITED 2026-07-09 per the §13.5.1b
+# guard-rearm gate: NOT the ENGINE-2 false-cut mechanism - the contact branch
+# JUMPS the chart forward at landing, an INCREASE, so cgix_reset_frame never
+# arms and the cut machinery is never entered, cut=0). Arcade (whiff-
+# canonical) R=24 - preserved here per the convention. S/A/adv remain
+# arcade-exact (from-qjson; adv=-3 already embeds the short contact recovery).
+- label: alex-airstampede-lk-block
+  setup: { dist: close, dummy: stand }
+  input: "motion charge-down 60 then-up LK"
+  qjson: { name: "Air Stampede Short" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: 19, adv: from-qjson }
+
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): R=19 is
+# the engine-truth recovery actually played on the HIT path - same §12.2.2
+# disposition as alex-airstampede-lk-block (RE-CITED 2026-07-09 per the
+# §13.5.1b guard-rearm gate: NOT the ENGINE-2 false-cut mechanism, cut=0, the
+# contact branch jumps cgix forward at landing so the cut machinery never
+# arms at all). HIT measures along the same contact path as BLOCK, byte-
+# identical (R=19). Arcade (whiff-canonical) R=24 - preserved here per the
+# convention. S/A remain arcade-exact (from-qjson).
+- label: alex-airstampede-lk-hit
+  setup: { dist: close, dummy: none }
+  input: "motion charge-down 60 then-up LK"
+  qjson: { name: "Air Stampede Short" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: 19 }
+
+# --- Negative control (plan section 1.8 item 5 precedent) ------------------
+
+- label: alex-jump-none
+  setup: { dist: 250, dummy: none }
+  input: "press UP"
+  outcome: NONE

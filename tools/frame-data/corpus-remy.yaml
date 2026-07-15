@@ -1,0 +1,1062 @@
+# Remy frame-data corpus (cast rollout). Generated/consumed by
+# tools/frame-data/compile_corpus.py against docs/arcade-frame-data/remy.json
+# (fetched 2026-07-08 from
+# https://raw.githubusercontent.com/Coccis77/thirdstrikedatabot/master/json/remy.json,
+# md5 3ab25a67f9b0b85aa1a7501c850b6289 - verified by re-fetching and hashing
+# the response, byte-identical). CHARACTER_IDS key is "remy" (id=19,
+# compile_corpus.py:58).
+#
+# Scope (task-directed 2026-07-08): normals ladder (six-button close
+# BLOCK/HIT + WHIFF sample + crouching + one command normal) + UOH
+# (WHIFF+BLOCK+HIT) + Throw + negative control + a ONE-SESSION ground
+# specials probe: Light of Virtue high (P, charge-back-then-forward) AND
+# low (K, charge-back-then-forward) - the FIRST charge-motion projectile in
+# this repo's lever-D census (every prior probe - Ryu/Ken Hadouken, Chun-Li
+# Kikkoken - used a qcf/hcf motion instead) - Rising Rage Flash
+# (charge-down-then-up + K, an ENGINE-2 landing-false-cut candidate) and
+# Cold Blue Kick (qcb + K). NO supers/EX (Light of Virtue EX High/EX Low,
+# Rising Rage Flash EX, Cold Blue Kick EX, Light of Justice/Supreme Rising
+# Rage Flash/Blue Nocturne all excluded - remy.json rows 32/33/37/38/42/46
+# /47/48/49).
+#
+# Every expect below was pinned against a live trace
+# (tools/frame-data/run.sh tools/frame-data/corpus-remy.yaml); every
+# suspicious finding (the Light of Virtue crouch-probe SHAPE flip, the
+# Crouching Fierce kd-miss, the Crouching Roundhouse BLOCK adv anomaly, the
+# UOH/Rising Rage Flash/Cold Blue Kick divergences) was independently
+# re-verified in an isolated single-entry probe corpus (inter_entry_wait
+# 300, nothing crowding any entry) per CORPUS-AUTHORING.md Phase 5 - every
+# isolated number was BYTE-IDENTICAL to the batched-corpus measurement,
+# ruling out §12.1-style ordering/residue contamination for all of them.
+#
+# THROW NAMING (Phase 1 caution re: throw-family naming varying per
+# character): remy.json has TWO throw-family rows, "Neutral Throw" (row 25)
+# and "Throw" (row 26) - unlike Ken's Neutral/Back/Towards three-way split,
+# Remy has no Back/Towards variant. Both rows are BYTE-IDENTICAL on every
+# numeric field (S=2 A=1 R=21 Block_advantage=0 Hit_advantage=D
+# Throw_range=9 Kara_range=15) - verified by reading both rows in the
+# fetched oracle - so which row name is cited is a moot distinction for
+# every asserted field below; "Throw" is used per the ryu.json/q.json/
+# chunli.json bare-"Throw" convention.
+#
+# ============================================================================
+# ISSUE #17 FAMILY CENSUS (per CORPUS-AUTHORING.md Phase 6 item 1's
+# discriminator, lever-F-tested in ONE batched scratch build:
+# fd_restore_revoked_declared_credit forced to 0 at
+# src/sf33rd/Source/Game/engine/charset.c:507, whole corpus re-run once,
+# reverted via `git checkout` + rebuild + re-verified green before this
+# commit, same-binary protocol throughout):
+#
+#   - UNCHANGED by the lever-F toggle (shape (a), unrecoverable per §13.11 -
+#     stay xfail): remy-strong-block/-hit (A=2 vs arcade 5),
+#     remy-farstrong-block (A=1 vs arcade 3), remy-farfierce-block (A=2 vs
+#     arcade 5), remy-farforward-block (A=3 vs arcade 5),
+#     remy-roundhouse-block/-hit (A=3 vs arcade 7), remy-twdsforward-block
+#     (A=1 vs arcade 3). All eight carry cut=0/dwellbrk=0/anchor_a=-1 in
+#     their FINAL trace (the ordinary r1-transition end, no §13.5.1 anchor
+#     involved) - the accumulator itself simply never receives the skipped
+#     cells' credit.
+#   UPDATE (2026-07-10, §13.13): all eight "stay xfail" entries just named
+#   (remy-strong-block/-hit, remy-farstrong-block, remy-farfierce-block,
+#   remy-farforward-block, remy-roundhouse-block/-hit, remy-twdsforward-
+#   block) convert to a plain PASS asserting the measured A citing §13.13
+#   (see each entry's own comment) - none of the eight remain xfail.
+#   - CHANGED by the lever-F toggle (shape (b), restore load-bearing - stay
+#     plain PASS, already green with the shipped fix): remy-short-block/-hit
+#     (A=5->3 with the restore off), remy-farshort-block (A=5->4),
+#     remy-forward-block/-hit (A=6->4), remy-crjab-block (A=2->1),
+#     remy-crshort-block (A=4->3), remy-crforward-block (A=5->4) - the
+#     §13.7.4 revoke fires for these but the restore (lever F, ON by
+#     default in the shipped tree) immediately gives the credit back, so
+#     they read arcade-exact today without any xfail.
+#   - UNAFFECTED either way (clean, no revoke ever fires): remy-jab-block/
+#     -hit, remy-farjab-block, remy-fierce-block/-hit, remy-farfierce
+#     -[block only differs, see above]... remy-farroundhouse-block,
+#     remy-crstrong-block, remy-crfierce-block/-whiff/-hit (frame-data
+#     fields only; its own kd finding, RESOLVED 2026-07-09, is below),
+#     remy-crroundhouse-whiff/-hit, remy-twdsforward-whiff, and every WHIFF
+#     entry in the normals ladder.
+#
+# ============================================================================
+# STRIKE-KD PREDICATE GAP, Crouching Fierce — RESOLVED 2026-07-09
+# (§13.6.2b, ENGINE-3, tools/frame-data lever I): remy-crfierce-hit now
+# measures kd=1, matching remy.json's Hit_advantage="D" (adv=+93, a huge
+# post-recovery gap consistent with a genuine knockdown; def_idle_F=4881
+# vs atk_idle_F=4788 in the batched run, byte-identical in the isolated
+# re-verification at def_idle_F=501 vs atk_idle_F=408, F=169 window).
+# CORRECTION to the original finding below: the hand-decode of
+# trace.log's per-tick columns (frame_trace.c's P2.r1/P2.r2) misread
+# Crouching Fierce's sampling-point cell as P2.r1=1/P2.r2=1; the
+# code-emitted diagnostic added for the §13.6.2b census (`kdmask`/`dlr2`)
+# instead traces P2.r1=1/P2.r2=18 at that exact point — squarely inside
+# the measured down-family set `{14..23} ∪ {27,28}`
+# (`fd_r2_is_down_family()`, frame_data_overlay.c). §13.6.2b's per-tick
+# latch is timing-immune to which of the two readings was correct here:
+# r2=18 is in the set whether read at the last raw[] cell (lever E's
+# widened anchor alone already suffices for this row) or, redundantly,
+# at any earlier tick the latch observes. Arcade's "D" was right all
+# along — the shipped predicate was simply blind to r2=18, not facing a
+# genuine timing race. This is one of the two entries whose `xfail` this
+# fix removes entirely (the other is corpus-sean.yaml's
+# sean-twdshk-hit). kd stays asserted at 1 (explicit per Phase 3
+# discipline - never from-qjson); adv is NOT asserted (remy.json's
+# Hit_advantage is the literal "D", non-numeric, same
+# large-number-on-knockdown convention as every other "D"-row HIT entry in
+# this repo).
+#
+# ============================================================================
+# CROUCHING ROUNDHOUSE BLOCK-ADVANTAGE ANOMALY - RESOLVED 2026-07-11
+# (ENGINE-9, lever M fd_adv_last_stun_exit, synthesis §13.14):
+# remy-crroundhouse-block used to measure adv=-41 vs arcade
+# Block_advantage=-11 with S/A/R all EXACT (S=9/A=7/R=21) and
+# cut=0/dwellbrk=0/anchor_a=-1 (no §13.5.1 mechanism engaged) - the
+# divergence was confined entirely to adv. ROOT CAUSE (census-proven, not
+# the file's original attacker-tail hypothesis): Crouching Roundhouse is a
+# TWO-CONTACT move whose defender exits blockstun BETWEEN the contacts
+# (contact 1 F=1628 trace-basis, first exit F=1652, contact 2 F=1658,
+# final exit F=1682, atk idle F=1693); the overlay's defender_idle latch
+# was write-once, froze the FIRST exit, and adv = 1652-1693 = -41. The
+# lever-M re-arm (frame_data_overlay.c §13.14 block: event HIT/BLOCK
+# latched + defender_idle>=0 + cgix_reset_frame<0 same-chart gate + fresh
+# dm_stop 0->nonzero edge + dn->r1==1) re-opens the latch on contact 2 so
+# the FINAL exit anchors adv = 1682-1693 = -11 == remy.json EXACTLY.
+# Census evidence (e9-census.tsv/-report.md, 1039 windows, RUNG 0): the
+# M1 re-arm population is EXACTLY this window; only 2 windows suite-wide
+# even have a 2-episode stun topology (this one + q-uoh-chain-retrigger,
+# which the cgix-reset gate correctly refuses - its tap-1 landing reset at
+# F=5585 precedes tap-2's contact at F=5604); zero drift anywhere else;
+# adv_pred >= adv_today monotonicity confirmed on all 1039. The earlier
+# "untallied post-recovery tail" hypothesis in this header was WRONG - the
+# attacker anchor was always correct; the defect was the DEFENDER anchor.
+# The entry now asserts adv: from-qjson (=-11) with no xfail.
+#
+# ============================================================================
+# UOH FINDING (item 18(c) R-clause + a separate, only-superficially-similar
+# A-clause). remy.json's Universal Overhead: S=15/A=10/R=5 - the SAME
+# numbers as q/dudley/chunli/akuma/oro/yang/ibuki/alex/elena/yun.json's own
+# UOH row (shared move data across the cast).
+#   R-CLAUSE: all three outcomes measure cut=0/dwellbrk=0/anchor_a=-1 (the
+#   §13.5.1 grounded-fresh-edge gate never anchors for this move at all) yet
+#   R still reads ABOVE the oracle on every leg (WHIFF R=10, BLOCK R=9, HIT
+#   R=9, vs arcade 5) - T is self-consistent with S+A+R on WHIFF (36=36
+#   exact) and within the usual ±1-3-tick gap on BLOCK/HIT (T=40 vs sum 37;
+#   T=36 vs sum 35). This is EXACTLY the synthesis item 18(c) signature
+#   (docs/frame-data-synthesis.md line 3506, "Yun UOH no-cut R overshoot":
+#   "gate correctly refuses to anchor... natural r1-edge end reads ABOVE
+#   the oracle") - cite item 18(c), NOT residual item 18(b) (which requires
+#   an early CUT, cut=1; here cut=0 throughout, the opposite signature).
+#   R is kept in `expect` at the true arcade value (from-qjson); each
+#   xfail string cites item 18(c) plus the measured value.
+#   A-CLAUSE (separate, NOT item 18(c) - that bucket's own Yun precedent has
+#   A EXACT on all three legs, unlike here): measured A=11 (WHIFF/HIT,
+#   share one value) vs A=13 (BLOCK, diverges alone) vs arcade 10. This
+#   WHIFF/HIT-share-one-value / BLOCK-diverges-alone SHAPE superficially
+#   resembles the Alex/Elena UOH A-bucket - but that bucket's own defining
+#   trait is cut=1 firing on all three legs (the §13.5.1 anchor actively
+#   engages); Remy's UOH never engages that anchor at all (cut=0
+#   throughout). The two are therefore NOT confirmed to share a mechanism -
+#   noting the shape kinship as a HYPOTHESIS ONLY, explicitly flagged as
+#   possibly coincidental (a different underlying cause producing a
+#   similar-looking three-way split). A=11 does not qualify for the §13.11
+#   declared-truth convention either (that convention requires the SAME
+#   displayed A on all three legs, path-independent - BLOCK's extra +2
+#   breaks path-independence here). UNCLASSIFIED, flagged 2026-07-08 for
+#   follow-up classification.
+#
+# SWEEP-2 (2026-07-10, classification sweep #2 fable-grade audit) DISPOSITION:
+# the A-clause's own re-entry chain is now ledger-decomposed (s4 own ledger):
+# whiff/hit visit 16->24->28->32->24 (one genuine re-entry, ea=11); BLOCK
+# adds one more loop (->28, ea=13). +1 (whiff/hit) and +3 (block) vs arcade
+# 10 both explained by re-entry counts; cut=0 excludes §12.2.1 membership.
+# NEW §12.2.4 row: "no-cut re-entry re-crediting" (docs/frame-data-
+# synthesis.md §12.2.4), the third UOH A-variant in this repo, distinct from
+# §12.2.1's sentinel and looping-declared shapes. Stays xfail; R-clauses
+# (item 18(c)) remain OUT-1 unchanged, untouched by this disposition.
+#
+# UPDATE (2026-07-10, CONV-2): remy-uoh-block (A=13) and remy-uoh-hit
+# (A=11) convert PARTIAL under §13.13 family F9 (§12.2.4 no-cut re-entry
+# re-crediting); each entry's item-18(c) R clause stays xfail (meter-
+# suspect, unchanged). remy-uoh-whiff's A clause is the same established
+# mechanism but stays fully xfail (WHIFF exclusion).
+# SECTION ACCOUNTING (Phase 7): 3/3 entries carry a divergence (100%
+# xfail) - crosses the >50%-of-section threshold. GRANTED by orchestrator at commit 2026-07-08 (review-verified: RRF=ENGINE-2 established class; UOH=item-18(c) R + hedged UNCLASSIFIED A; CBK=hedged UNCLASSIFIED, no bucket fits). User review pending (overnight autonomous run) (the
+# orchestrator grants at commit, not the implementing agent) - flagged
+# explicitly per the >50%-section accounting convention (plan Step 7 /
+# corpus-hugo.yaml precedent). Byte-identical in the isolated
+# re-verification (all three legs, same-batch numbers).
+#
+# ============================================================================
+# LIGHT OF VIRTUE HIGH/LOW FINDING (task-directed verification). Charge-back
+# -then-forward + P/K, the FIRST charge-motion projectile probed in this
+# repo's lever-D (projectile arcade-split) census - landed on the FIRST
+# probe attempt via the EXISTING `motion charge-back <N> then-forward <BTN>`
+# macro, zero compiler work. S/R are EXACT on every reachable outcome for
+# BOTH strengths tested (Jab: S=9/R=22 on WHIFF/BLOCK/HIT all three; Short:
+# S=11/R=26 on WHIFF/BLOCK/HIT all three) - remy.json's "Hit" field is the
+# literal string "-" for every Light of Virtue row (same non-numeric-field
+# reasoning as every other projectile section in this repo), so no
+# expect.A anywhere in this section. This is a clean, fully-confirmed
+# lever-D pass on a SEVENTH character and the first charge-projectile shape.
+#
+# HIGH/LOW STRUCTURAL FINDING (verified empirically, NOT from remy.json's
+# Parry fields - Light of Virtue Jab/Strong/Fierce AND Short/Forward/RH all
+# publish the IDENTICAL Parry High=true/Low=false in the oracle, so parry
+# data alone does not distinguish them): a dummy:crouch probe at dist:close
+# for BOTH strengths (same setup shape as corpus-elena.yaml's Mallet Smash
+# overhead-label probe) shows a genuine, reproducible split -
+#   - Light of Virtue (Jab, the P-strength representative): the
+#     dummy:crouch probe measures outcome=WHIFF (S=9/A=24/R=22, identical
+#     to the dummy:none WHIFF entry) - the projectile passes OVER a
+#     crouching defender entirely. This is a real outcome-SHAPE difference
+#     from the dummy:stand BLOCK entry, confirmed byte-identical in the
+#     Phase-5 isolated re-verification (own probe corpus, inter_entry_wait
+#     300). Light of Virtue (P) is therefore a genuine HIGH-only attack in
+#     this engine build.
+#   - Light of Virtue (Short, the K-strength representative): the
+#     dummy:crouch probe measures outcome=BLOCK (matching the dummy:stand
+#     BLOCK entry's own outcome) - the projectile connects/blocks against a
+#     crouching guard exactly as it does against a standing guard. Light of
+#     Virtue (K) is therefore a low/mid attack that does not care about
+#     stance in this engine build.
+# This is the empirically-demonstrated arcade high/low split the task
+# asked to verify - P goes over crouchers, K does not.
+#
+# ADV ANOMALY (NEW, UNCLASSIFIED, all four block-outcome entries):
+# remy-lov-lp-block/remy-lov-lk-block/remy-lov-lk-crouch-probe all measure
+# S/R exact but adv far above the oracle (Jab: measured +23 vs arcade +5;
+# Short: measured +17 vs arcade +1 on stand, +15 vs +1 on crouch). Trace:
+# cut=0/dwellbrk=0/anchor_a=-1 on every one (no §13.5.1 mechanism engaged -
+# ruling out ENGINE-2/item-18 framing); T always equals S+R exactly (the
+# lever-D projectile branch's own formula, e.g. Jab-block T=31=9+22), and
+# atk_idle_F = move_start_F + T exactly in every case (so R itself, and the
+# attacker's own idle timing, are both fully self-consistent) - but
+# def_idle_F lands well AFTER atk_idle_F (Jab: +23 frames; Short: +17/+15
+# frames), the opposite of the small, arcade-matching gap Ryu/Chun-Li's own
+# qcf/hcf-motion projectiles show (corpus-ryu.yaml's Hadouken BLOCK entries
+# and corpus-chunli.yaml's Kikkoken BLOCK entries both assert adv:
+# from-qjson and pass exactly). HYPOTHESIS ONLY: Light of Virtue's
+# defender-side blockstun timer may be anchored to a later event (e.g. a
+# projectile-travel/impact tick rather than the spawn tick S/R are
+# anchored to) that the qcf/hcf-motion precedents don't exhibit at this
+# magnitude - not independently confirmed. Flagged 2026-07-08 for follow-up
+# classification; S/R stay asserted (exact matches), only adv is xfailed
+# per entry, keeping the arcade value in `expect`.
+#
+# ============================================================================
+# RISING RAGE FLASH: ENGINE-2 CONFIRMED (task-directed check). Landed via
+# the EXISTING `motion charge-down <N> then-up <BTN>` macro (Hugo SDB/
+# Chun-Li SBK precedent), Short strength, S=3 matching remy.json exactly on
+# all three outcomes (unambiguous identification). The raw per-tick trace
+# shows a genuine airborne rising-kick parabola on ALL THREE outcomes
+# (P1.y climbs 0->12, peaking mid-arc, then descends back to y=0 at the
+# landing tick) - and ALL THREE outcomes' FINAL lines carry cut=1 with
+# anchor_a EXACTLY matching engine_a (WHIFF: anchor_a=3=engine_a=3; BLOCK/
+# HIT: anchor_a=4=engine_a=4) - the identical "false cut committed at a
+# grounded cghi=1 edge while genuine recovery continues under cghi=1"
+# signature as corpus-alex.yaml's alex-airstampede-lk-* and
+# corpus-elena.yaml's elena-scratchwheel-lk-* (both cited by name in the
+# task as the ENGINE-2 precedent). R undershoots the oracle identically
+# across all three (measured R=29 vs arcade R=32, a uniform -3) - the
+# true r1-edge (uncut) recovery is longer than what the false cut reports,
+# same direction and shape as the ENGINE-2 precedent moves. Ship as xfail
+# per the ENGINE-2 deferral (arcade values asserted, not the measured
+# wrong ones). Byte-identical in the Phase-5 isolated re-verification.
+#
+# SEPARATE, STACKED A-CLAUSE (NOT part of the ENGINE-2 signature itself):
+# WHIFF measures A=3 (exact, matching arcade); BLOCK/HIT both measure A=4
+# (a contact-specific +1 over WHIFF's own clean value, and over arcade).
+# This additional A+1 rides on top of the same cut=1/anchor_a=engine_a
+# ENGINE-2 trace, so it is cited together with the R-truncation in each
+# contact entry's xfail string rather than as a separate class - no
+# established bucket names this exact "ENGINE-2 R-truncation stacked with a
+# contact A+1" combination; flagged as an open sub-finding within the
+# ENGINE-2 citation.
+# SECTION ACCOUNTING (Phase 7): 3/3 entries xfail (100%) - crosses the
+# >50%-of-section threshold. GRANTED by orchestrator at commit 2026-07-08 (review-verified: RRF=ENGINE-2 established class; UOH=item-18(c) R + hedged UNCLASSIFIED A; CBK=hedged UNCLASSIFIED, no bucket fits). User review pending (overnight autonomous run) (the orchestrator grants at
+# commit) - flagged per the >50%-section accounting convention, same
+# posture as corpus-elena.yaml's Scratch Wheel section.
+#
+# ============================================================================
+# COLD BLUE KICK (NEW, UNCLASSIFIED). Landed via the EXISTING `motion qcb
+# <BTN>` macro, Short strength, S=17 matching remy.json exactly on all
+# three outcomes. cut=0/dwellbrk=0/anchor_a=-1 on every leg (no §13.5.1
+# mechanism engaged - NOT an ENGINE-2/item-18(b) shape despite this move
+# also being described as a kick with airborne-looking recovery; ruled out
+# by the trace fields directly). Two distinct, stacked divergences:
+#   - WHIFF shows a small, SUM-PRESERVING boundary variance: measured
+#     A=11/R=9 vs arcade A=10/R=10 (a +1/-1 swap - as if one frame moved
+#     from the recovery count into the active count); T=37 is
+#     self-consistent with BOTH the measured (17+11+9=37) and the
+#     oracle-implied (17+10+10=37) decomposition - the total animation
+#     length is unchanged, only the S/A boundary tick's classification
+#     differs.
+#   - BLOCK/HIT show a LARGER, additional contact-specific A overcount:
+#     measured A=14 (vs WHIFF's own A=11, and vs arcade 10) with R=9 (same
+#     as WHIFF); T=38 no longer equals S+A+R exactly (17+14+9=40, a
+#     2-frame gap, unlike WHIFF's exact match) - a genuinely different,
+#     larger divergence stacked on top of the WHIFF-level variance, not
+#     merely "the same WHIFF finding carried over." adv is unaffected
+#     (BLOCK's adv=-4 matches remy.json's Block_advantage=-4 exactly).
+# Does not fit any existing Phase-6 bucket (not #17 - that's an
+# UNDERcount, this OVERcounts; not §13.11 - A differs by leg, breaking
+# path-independence; not Hugo-Roundhouse item 4 - that requires A EXACT
+# with only R diverging). Flagged to orchestrator/user for follow-up
+# classification (flagged 2026-07-08). S is exact everywhere; R stays
+# asserted at the true arcade value; A is xfailed with the measured value
+# in every entry's citation.
+# SECTION ACCOUNTING (Phase 7): 3/3 entries xfail (100%) - crosses the
+# >50%-of-section threshold. GRANTED by orchestrator at commit 2026-07-08 (review-verified: RRF=ENGINE-2 established class; UOH=item-18(c) R + hedged UNCLASSIFIED A; CBK=hedged UNCLASSIFIED, no bucket fits). User review pending (overnight autonomous run) (the orchestrator grants at
+# commit). Byte-identical in the Phase-5 isolated re-verification.
+# ============================================================================
+character: remy
+oracle: remy.json
+inter_entry_wait: 150
+entries:
+
+# --- Close/far normals, BLOCK (dummy: stand) --------------------------------
+
+- label: remy-jab-block
+  setup: { dist: close, dummy: stand }
+  input: "press LP"
+  qjson: { name: "Jab" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: remy-farjab-block
+  setup: { dist: 90, dummy: stand }
+  input: "press LP"
+  qjson: { name: "Far Jab" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# Issue #17 shape (a): lever-F-tested (fd_restore_revoked_declared_credit
+# forced to 0 on a scratch build, reverted before commit) and confirmed
+# UNCHANGED (A=2 both ways) - no revoke fires, ruling out a lever-F
+# regression, credit unrecoverable per §13.11; measured A=2 vs arcade 5;
+# S/R/adv exact. cut=0/dwellbrk=0/anchor_a=-1 (ordinary r1-transition end).
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=2 is the
+# engine-truth credit actually accrued on the BLOCK path - issue #17 shape (a):
+# lever-F-tested (fd_restore_revoked_declared_credit forced 0 on a scratch
+# build, reverted before commit) and confirmed UNCHANGED - no revoke fires
+# (ENGINE-3 strike-KD predicate timing-race gap, tracker row added
+# 2026-07-08, is an unrelated cross-reference and unaffected by this
+# conversion). Arcade (whiff-canonical, from-qjson) A=5 - preserved here per
+# the convention. S/R/adv remain arcade-exact (from-qjson).
+- label: remy-strong-block
+  setup: { dist: close, dummy: stand }
+  input: "press MP"
+  qjson: { name: "Strong" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: 2, R: from-qjson, adv: from-qjson }
+
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=1 is the
+# engine-truth credit actually accrued on the BLOCK path - same issue #17
+# shape (a) as remy-strong-block; lever-F-tested (same batch) and confirmed
+# UNCHANGED. Arcade (whiff-canonical, from-qjson) A=3 - preserved here per the
+# convention. S/R/adv remain arcade-exact (from-qjson).
+- label: remy-farstrong-block
+  setup: { dist: 100, dummy: stand }
+  input: "press MP"
+  qjson: { name: "Far Strong" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: 1, R: from-qjson, adv: from-qjson }
+
+- label: remy-fierce-block
+  setup: { dist: close, dummy: stand }
+  input: "press HP"
+  qjson: { name: "Fierce" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# Same issue #17 shape (a) as remy-strong-block above.
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=2 is the
+# engine-truth credit actually accrued on the BLOCK path - same issue #17
+# shape (a) as remy-strong-block; lever-F-tested (same batch) and confirmed
+# UNCHANGED. Arcade (whiff-canonical, from-qjson) A=5 - preserved here per the
+# convention. S/R/adv remain arcade-exact (from-qjson).
+- label: remy-farfierce-block
+  setup: { dist: 100, dummy: stand }
+  input: "press HP"
+  qjson: { name: "Far Fierce" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: 2, R: from-qjson, adv: from-qjson }
+
+# Issue #17 shape (b): lever-F-tested and confirmed CHANGED (A=5->3 with
+# the restore forced off) - the §13.7.4 revoke fires but the shipped
+# restore (lever F, ON by default) immediately gives the credit back, so
+# this reads arcade-exact today. Plain PASS, no xfail.
+- label: remy-short-block
+  setup: { dist: close, dummy: stand }
+  input: "press LK"
+  qjson: { name: "Short" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# Same issue #17 shape (b) as remy-short-block above (A=5->4 with the
+# restore forced off) - plain PASS.
+- label: remy-farshort-block
+  setup: { dist: 90, dummy: stand }
+  input: "press LK"
+  qjson: { name: "Far Short" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# Same issue #17 shape (b) as remy-short-block above (A=6->4 with the
+# restore forced off) - plain PASS.
+- label: remy-forward-block
+  setup: { dist: close, dummy: stand }
+  input: "press MK"
+  qjson: { name: "Forward" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# Issue #17 shape (a) (UNCHANGED by the lever-F toggle) - unlike close
+# Forward above, which is shape (b).
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=3 is the
+# engine-truth credit actually accrued on the BLOCK path - issue #17 shape (a):
+# lever-F-tested (same batch) and confirmed UNCHANGED - no revoke fires.
+# Arcade (whiff-canonical, from-qjson) A=5 - preserved here per the
+# convention. S/R/adv remain arcade-exact (from-qjson).
+- label: remy-farforward-block
+  setup: { dist: 100, dummy: stand }
+  input: "press MK"
+  qjson: { name: "Far Forward" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: 3, R: from-qjson, adv: from-qjson }
+
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=3 is the
+# engine-truth credit actually accrued on the BLOCK path - issue #17 shape (a)
+# (UNCHANGED by the lever-F toggle). Arcade (whiff-canonical, from-qjson) A=7
+# - preserved here per the convention. S/R/adv remain arcade-exact (from-qjson).
+- label: remy-roundhouse-block
+  setup: { dist: close, dummy: stand }
+  input: "press HK"
+  qjson: { name: "Roundhouse" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: 3, R: from-qjson, adv: from-qjson }
+
+- label: remy-farroundhouse-block
+  setup: { dist: 100, dummy: stand }
+  input: "press HK"
+  qjson: { name: "Far Roundhouse" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# --- HIT sample per button family (dummy: none, close range) ---------------
+
+- label: remy-jab-hit
+  setup: { dist: close, dummy: none }
+  input: "press LP"
+  qjson: { name: "Jab" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# Same issue #17 shape (a) as remy-strong-block.
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=2 is the
+# engine-truth credit actually accrued on the HIT path - same issue #17 shape
+# (a) as remy-strong-block; lever-F-tested (same batch) and confirmed
+# UNCHANGED. Arcade (whiff-canonical, from-qjson) A=5 - preserved here per the
+# convention. S/R/adv remain arcade-exact (from-qjson).
+- label: remy-strong-hit
+  setup: { dist: close, dummy: none }
+  input: "press MP"
+  qjson: { name: "Strong" }
+  outcome: HIT
+  expect: { S: from-qjson, A: 2, R: from-qjson, adv: from-qjson }
+
+- label: remy-fierce-hit
+  setup: { dist: close, dummy: none }
+  input: "press HP"
+  qjson: { name: "Fierce" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# Same issue #17 shape (b) as remy-short-block - plain PASS.
+- label: remy-short-hit
+  setup: { dist: close, dummy: none }
+  input: "press LK"
+  qjson: { name: "Short" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# Same issue #17 shape (b) as remy-short-block - plain PASS.
+- label: remy-forward-hit
+  setup: { dist: close, dummy: none }
+  input: "press MK"
+  qjson: { name: "Forward" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# Same issue #17 shape (a) as remy-roundhouse-block.
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=3 is the
+# engine-truth credit actually accrued on the HIT path - same issue #17 shape
+# (a) as remy-roundhouse-block; lever-F-tested (same batch) and confirmed
+# UNCHANGED. Arcade (whiff-canonical, from-qjson) A=7 - preserved here per the
+# convention. S/R/adv remain arcade-exact (from-qjson).
+- label: remy-roundhouse-hit
+  setup: { dist: close, dummy: none }
+  input: "press HK"
+  qjson: { name: "Roundhouse" }
+  outcome: HIT
+  expect: { S: from-qjson, A: 3, R: from-qjson, adv: from-qjson }
+
+# --- WHIFF sample per button family (dummy: none, dist 250) -----------------
+# remy.json has Far rows for ALL SIX standing normals (unlike Ryu, which
+# lacks Far Short/Far Roundhouse) - each WHIFF entry below cites its own
+# Far-prefixed row. All six match arcade exactly, including for the buttons
+# whose close-range BLOCK/HIT entries above are xfailed under issue #17 -
+# confirms the calibration surface holds (CORPUS-AUTHORING.md Phase 4).
+
+- label: remy-lp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press LP"
+  qjson: { name: "Far Jab" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: remy-mp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press MP"
+  qjson: { name: "Far Strong" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: remy-hp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press HP"
+  qjson: { name: "Far Fierce" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: remy-lk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press LK"
+  qjson: { name: "Far Short" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: remy-mk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press MK"
+  qjson: { name: "Far Forward" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: remy-hk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press HK"
+  qjson: { name: "Far Roundhouse" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# --- Crouching normals, BLOCK (dummy: stand) --------------------------------
+
+# Issue #17 shape (b) (A=2->1 with the restore forced off) - plain PASS.
+- label: remy-crjab-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+LP"
+  qjson: { name: "Crouching Jab" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: remy-crstrong-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+MP"
+  qjson: { name: "Crouching Strong" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# Crouching Fierce is a KD row (remy.json Hit_advantage="D") - gets
+# WHIFF+HIT in addition to BLOCK, per Phase 4's mandatory whiff-vs-table
+# rule. BLOCK itself is fully clean (no #17 divergence, no revoke fires).
+# See file header STRIKE-KD PREDICATE GAP for the HIT-leg's now-RESOLVED
+# kd finding (§13.6.2b).
+- label: remy-crfierce-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+HP"
+  qjson: { name: "Crouching Fierce" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# Issue #17 shape (b) (A=4->3 with the restore forced off) - plain PASS.
+- label: remy-crshort-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+LK"
+  qjson: { name: "Crouching Short" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# Issue #17 shape (b) (A=5->4 with the restore forced off) - plain PASS.
+- label: remy-crforward-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+MK"
+  qjson: { name: "Crouching Forward" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# Crouching Roundhouse is ALSO a KD row (remy.json Hit_advantage="D") -
+# gets WHIFF+HIT in addition to BLOCK. See file header CROUCHING
+# ROUNDHOUSE BLOCK-ADVANTAGE ANOMALY (RESOLVED) for the full history.
+# RESOLVED 2026-07-11 (ENGINE-9, lever M fd_adv_last_stun_exit, synthesis
+# §13.14): two-contact move; the overlay's write-once def_idle latch
+# anchored adv on blockstun exit #1 (first exit F=1652 trace-basis) giving
+# adv=-41; the lever-M re-arm (5-conjunct same-chart re-entry signal,
+# frame_data_overlay.c §13.14 block) re-opens the latch on contact #2
+# (F=1658) so the FINAL exit (F=1682) anchors adv = -11 == remy.json
+# Block_advantage EXACTLY. Census (e9-census, 2026-07-11, RUNG 0): 1039
+# windows, re-arm population under shipped M1 is exactly this window
+# (singleton); zero no-op-branch drift; monotonicity (adv_pred >=
+# adv_today) empirically confirmed 1039/1039. Historical evidence
+# (pre-fix): measured adv=-41, S/A/R exact (S=9/A=7/R=21), T=53 vs
+# S+A+R=37, cut=0/dwellbrk=0/anchor_a=-1 (no §13.5.1 mechanism),
+# def_idle_F 41f before atk_idle_F; flagged 2026-07-08, registered
+# 2026-07-09 in synthesis §12.2.4, confirmed ENGINE-9 candidate 2026-07-10
+# (frame_data_overlay.c first-edge gate + event latch; s11-findings
+# member 1). S/A/R were never affected (defect was DEFENDER-anchor only).
+- label: remy-crroundhouse-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+HK"
+  qjson: { name: "Crouching Roundhouse" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: remy-crfierce-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press DOWN+HP"
+  qjson: { name: "Crouching Fierce" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# See file header STRIKE-KD PREDICATE GAP (RESOLVED, §13.6.2b). S/A/R/kd
+# are all exact (matching remy.json's Crouching Fierce row); adv is
+# intentionally NOT asserted (remy.json's Hit_advantage is the literal
+# "D", non-numeric - same convention as every other "D"-row HIT entry).
+- label: remy-crfierce-hit
+  setup: { dist: close, dummy: none }
+  input: "press DOWN+HP; wait 60"
+  qjson: { name: "Crouching Fierce" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, kd: 1 }
+
+- label: remy-crroundhouse-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press DOWN+HK"
+  qjson: { name: "Crouching Roundhouse" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# kd=1 and adv=+12 both correct here - Crouching Roundhouse's last raw[]
+# cell samples P2.r1=1/P2.r2=16, squarely inside the down-family set
+# (same as remy-crfierce-hit above, now also RESOLVED to kd=1 via r2=18).
+# adv is not cross-checked (remy.json's Hit_advantage is the literal "D").
+- label: remy-crroundhouse-hit
+  setup: { dist: close, dummy: none }
+  input: "press DOWN+HK; wait 60"
+  qjson: { name: "Crouching Roundhouse" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, kd: 1 }
+
+# --- Command normal (Towards + Forward), BLOCK + WHIFF ----------------------
+# remy.json has exactly ONE Towards/Back/Down-Towards-prefixed row -
+# "Towards + Forward" - verified against every Name string in the fetched
+# oracle. Non-KD (Hit_advantage=-6, numeric) - BLOCK+WHIFF only, per the
+# Dudley/Makoto/Urien/Akuma/Oro/Alex/Elena non-D-row precedent.
+
+# Issue #17 shape (a) (UNCHANGED by the lever-F toggle).
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=1 is the
+# engine-truth credit actually accrued on the BLOCK path - issue #17 shape (a):
+# lever-F-tested (same batch) and confirmed UNCHANGED - no revoke fires.
+# Arcade (whiff-canonical, from-qjson) A=3 - preserved here per the
+# convention. S/R/adv remain arcade-exact (from-qjson).
+- label: remy-twdsforward-block
+  setup: { dist: close, dummy: stand }
+  input: "press RIGHT+MK"
+  qjson: { name: "Towards + Forward" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: 1, R: from-qjson, adv: from-qjson }
+
+- label: remy-twdsforward-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press RIGHT+MK"
+  qjson: { name: "Towards + Forward" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# --- UOH (press MP+MK) ------------------------------------------------------
+# See file header UOH FINDING. remy.json's Universal Overhead: S=15/A=10/
+# R=5 - the SAME numbers as q/dudley/chunli/akuma/oro/yang/ibuki/alex/
+# elena/yun.json's own UOH row (shared move data across the cast).
+# Block_advantage/Hit_advantage are both the literal "-" (not numeric) - no
+# expect.adv.
+# SECTION ACCOUNTING (Phase 7): 3/3 entries carry an R divergence (100%
+# xfail) - crosses the >50%-of-section threshold. GRANTED by orchestrator at commit 2026-07-08 (review-verified: RRF=ENGINE-2 established class; UOH=item-18(c) R + hedged UNCLASSIFIED A; CBK=hedged UNCLASSIFIED, no bucket fits). User review pending (overnight autonomous run) (the
+# orchestrator grants at commit, not the implementing agent).
+
+# §13.17 RE-ANCHOR-1 (2026-07-11): item-18 CLOSED for this row (FULL
+# flip, both A and R clauses) — levers O/N now measure A=10, R=5, both
+# arcade/oracle-exact. Prior xfail evidence, RELOCATED not deleted:
+# "R-CLAUSE: item 18(c) no-cut R overshoot (docs/frame-data-synthesis.md
+# line 3506, yun-uoh-whiff precedent) - measured R=10 vs arcade 5;
+# cut=0/dwellbrk=0/anchor_a=-1 (the §13.5.1 gate never anchors), T=36=
+# S+A+R exactly (self-consistent). A-CLAUSE (separate, see file header
+# UOH FINDING): measured A=11 vs arcade 10 - shares this value with
+# remy-uoh-hit (not remy-uoh-block's own A=13); superficial shape kinship
+# to the Alex/Elena UOH bucket noted as HYPOTHESIS ONLY (that bucket
+# requires cut=1, which does not fire here - a different mechanism may be
+# responsible). S exact (S=15). RE-CITED 2026-07-10 (classification sweep
+# #2, disposition (b)): A-clause routed to the §12.2.4 'no-cut re-entry
+# re-crediting' row - own ledger shows a genuine re-entry (16->24->28->32
+# ->24, ea=11 whiff/hit), no invented mechanism. R-clause (item 18(c))
+# untouched. RE-CITED 2026-07-10 (ENGINE-7 census): guard-rearm retime
+# FALSIFIED as a general rule; stays xfail, no lever. RE-CITE 2026-07-11
+# (LAYER-1): arcade 990512 15/10/5 == oracle (docs/arcade-frame-data/
+# CAPTURE.md's Session 3); twin 15/10/5 (docs/frame-data-synthesis.md
+# §13.16); both A and R clauses (a) OVERLAY/METER."
+- label: remy-uoh-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press MP+MK"
+  qjson: { name: "Universal Overhead" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# §13.13 contact-path convention (CONV-2 scope extension, 2026-07-10, user
+# decision), family F9 - §12.2.4 no-cut re-entry re-crediting A: A=13 is
+# the engine-truth credit actually accrued on the BLOCK path (see file
+# header UOH FINDING). Own ledger (s4): BLOCK adds one further re-entry
+# loop (->28, ea=13) vs whiff/hit's single re-entry (ea=11), explaining
+# the +3-vs-arcade/+2-vs-siblings delta exactly - diverges ALONE here
+# (does not match remy-uoh-whiff/-hit's own shared A=11); adv also drifts
+# (measured -11, not cross-checked since Block_advantage='-' non-numeric).
+# S exact (S=15). Arcade (whiff-canonical, from-qjson) A=10 - preserved
+# here per the convention.
+# CONVERTED 2026-07-13 (UOH-CLOSURE lever T, docs/frame-data-synthesis.md
+# §13.20; <sp>/zero/arcade-s9/session-report.md BLOCK legs, box
+# 265528-265549, busy768=265554, probe-confirmed exact fc 265554, zero
+# early acceptance): the item 18(c) "no-cut R overshoot" residual above is
+# CLOSED, not excluded. "Arcade 5" was never this leg's true value - real
+# hardware measures R=4, matching this engine's own busy-edge/lever-R
+# construction exactly (lever T) - NOT golden's own prior R=9 (legacy
+# recovery_pf), which the whole ENGINE-7 census already found had no
+# principled arcade-exact target. XFAIL->PASS: R re-literaled to 4; A
+# stays 13 (engine-truth, unaffected by lever T, design §5; arcade
+# measured A=14, dated data line only, not asserted).
+- label: remy-uoh-block
+  setup: { dist: close, dummy: stand }
+  input: "press MP+MK"
+  qjson: { name: "Universal Overhead" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: 13, R: 4 }
+
+# §13.13 contact-path convention (CONV-2 scope extension, 2026-07-10, user
+# decision), family F9 - §12.2.4 no-cut re-entry re-crediting A: A=11 is
+# the engine-truth credit actually accrued on the HIT path (see file
+# header UOH FINDING). Own ledger (s4): same single-re-entry chain
+# (16->24->28->32->24, ea=11) as remy-uoh-whiff - shares this value with
+# the whiff leg (not remy-uoh-block's own A=13). S exact (S=15). Arcade
+# (whiff-canonical, from-qjson) A=10 - preserved here per the convention.
+# CONVERTED 2026-07-13 (UOH-CLOSURE lever T, docs/frame-data-synthesis.md
+# §13.20; <sp>/zero/arcade-s9/session-report.md HIT legs, box
+# 265528-265545, busy768=265550, probe-confirmed exact fc 265550): same
+# closure as remy-uoh-block - real arcade R=4, matching this engine's own
+# busy-edge/lever-R construction exactly. XFAIL->PASS: R re-literaled to
+# 4; A stays 11 (engine-truth, unaffected by lever T, design §5; arcade
+# measured A=10, dated data line only, not asserted).
+- label: remy-uoh-hit
+  setup: { dist: close, dummy: none }
+  input: "press MP+MK"
+  qjson: { name: "Universal Overhead" }
+  outcome: HIT
+  expect: { S: from-qjson, A: 11, R: 4 }
+
+# --- Throw (LP+LK) -----------------------------------------------------------
+# remy.json's Throw_range=9px - dist:close (56px) sits OUTSIDE it (the
+# ken-throw-hit trap); using an explicit dist:9 per the ryu/ken/oro/ibuki/
+# alex/elena precedent. See file header THROW NAMING for why "Throw" (not
+# "Neutral Throw") is cited.
+
+- label: remy-throw-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press LP+LK"
+  qjson: { name: "Throw" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# §13.10 Class 3 connected-grab, non-saturated partner-release sub-case
+# (same mechanism as corpus-elena.yaml's elena-throw-hit / corpus-oro.yaml's
+# oro-niouriki-lp-hit): T=25, endrel=1 fires (T is nowhere near
+# FD_METER_LEN=72, ruling out the saturated sub-case). R = T - S - A =
+# 25-2-1 = 22, a DERIVED value, self-consistent with the trace (re-derive
+# if this regresses) - asserted as a plain-PASS literal citing §13.10
+# Class 3, NOT from-qjson (remy.json's Recovery=21 is the whiff-path
+# figure, directly captured by remy-throw-whiff above, exact match). adv
+# intentionally unchecked - remy.json's Hit_advantage="D" (KD big-number
+# convention; measured adv=+152, not cross-checked, same posture as every
+# other "D"-row Throw in this repo).
+- label: remy-throw-hit
+  setup: { dist: 9, dummy: none }
+  input: "press LP+LK; wait 90"
+  qjson: { name: "Throw" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: 22, kd: 1 }
+
+# --- Ground specials probe (ONE session budget) -----------------------------
+# See file header for the full LIGHT OF VIRTUE HIGH/LOW FINDING, RISING
+# RAGE FLASH: ENGINE-2 CONFIRMED, and COLD BLUE KICK writeups.
+
+# --- Light of Virtue (Jab), motion charge-back then-forward + P ------------
+# The P-strength representative. S=9/R=22 exact on every reachable outcome
+# (lever-D projectile arcade-split PASS, first charge-motion projectile in
+# this repo). The dummy:crouch probe measures a genuine WHIFF (not BLOCK) -
+# see file header HIGH/LOW STRUCTURAL FINDING.
+
+- label: remy-lov-lp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "motion charge-back 60 then-forward LP"
+  qjson: { name: "Light of Virtue (Jab)" }
+  outcome: WHIFF
+  expect: { S: from-qjson, R: from-qjson }
+
+# §13.13 contact-path convention (CONV-2 scope extension, 2026-07-10, user
+# decision), family F10 - projectile travel-time displayed adv: adv=+23 is
+# the engine-truth advantage actually realized on the BLOCK path at this
+# entry's pinned distance. Trace: cut=0/dwellbrk=0/anchor_a=-1 (no §13.5.1
+# mechanism), T=31=S+R exactly (the lever-D projectile formula),
+# atk_idle_F=move_start_F+T exactly (6788=6757+31) - def_idle_F=6811, 23
+# frames after atk_idle_F. Mechanism ESTABLISHED (classification sweep #2):
+# measured adv = arcade adv + projectile travel ticks (this leg's
+# travel=18 -> +23 vs +5), closed exactly; blockstun anatomy identical (27
+# ticks post-contact) and the attacker anchor is exact. NORMATIVE
+# STATEMENT (§13.13 SCOPE EXTENSION, F10): the displayed adv on a
+# projectile contact leg embeds the projectile's real travel time on the
+# observed path - the realized advantage at the corpus-pinned distance;
+# the value is valid only at this entry's pinned `dist: close` and
+# requires re-measurement if `dist` changes. Arcade (whiff-canonical,
+# from-qjson, travel-0 canonical) adv=+5 - preserved here per the
+# convention. S/R remain arcade-exact (from-qjson).
+- label: remy-lov-lp-block
+  setup: { dist: close, dummy: stand }
+  input: "motion charge-back 60 then-forward LP"
+  qjson: { name: "Light of Virtue (Jab)" }
+  outcome: BLOCK
+  expect: { S: from-qjson, R: from-qjson, adv: 23 }
+
+# STRUCTURAL FINDING (task described this as needing high/low verification -
+# verify-vs-assumption discipline applied): a dummy:crouch probe at
+# dist:close produces a genuine WHIFF outcome (S=9/A=24/R=22, byte-
+# identical to the dummy:none WHIFF entry above), NOT the initially-assumed
+# BLOCK - Light of Virtue (P) passes clean OVER a crouching defender.
+# Confirmed byte-identical in the Phase-5 isolated re-verification (own
+# probe corpus). Authored below with its own true measured outcome
+# (WHIFF), per Phase 3's "never guess the desired value" discipline - NOT
+# an xfail (a real, documented high-attack finding, same posture as
+# corpus-elena.yaml's Mallet Smash overhead-label finding).
+- label: remy-lov-lp-crouch-probe
+  setup: { dist: close, dummy: crouch }
+  input: "motion charge-back 60 then-forward LP"
+  qjson: { name: "Light of Virtue (Jab)" }
+  outcome: WHIFF
+  expect: { S: from-qjson, R: from-qjson }
+
+- label: remy-lov-lp-hit
+  setup: { dist: close, dummy: none }
+  input: "motion charge-back 60 then-forward LP"
+  qjson: { name: "Light of Virtue (Jab)" }
+  outcome: HIT
+  expect: { S: from-qjson, R: from-qjson }
+
+# --- Light of Virtue (Short), motion charge-back then-forward + K ----------
+# The K-strength representative. S=11/R=26 exact on every reachable
+# outcome. Unlike the Jab (P) probe above, the dummy:crouch probe here
+# measures a genuine BLOCK (matching the dummy:stand outcome) - see file
+# header HIGH/LOW STRUCTURAL FINDING: Light of Virtue (K) is a low/mid
+# attack that connects/blocks regardless of stance.
+
+- label: remy-lov-lk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "motion charge-back 60 then-forward LK"
+  qjson: { name: "Light of Virtue (Short)" }
+  outcome: WHIFF
+  expect: { S: from-qjson, R: from-qjson }
+
+# §13.13 contact-path convention (CONV-2 scope extension, 2026-07-10, user
+# decision), family F10 - projectile travel-time displayed adv: adv=+17 is
+# the engine-truth advantage actually realized on the BLOCK path at this
+# entry's pinned distance, same mechanism as remy-lov-lp-block (see that
+# entry's comment for the full trace + NORMATIVE STATEMENT): S/R exact
+# (S=11/R=26); T=37=S+R exactly, atk_idle_F=move_start_F+T exactly
+# (7646=7609+37) - def_idle_F=7663, 17 frames after atk_idle_F; travel=16
+# -> +17 vs +1, closed exactly. Arcade (whiff-canonical, from-qjson,
+# travel-0 canonical) adv=+1 - preserved here per the convention.
+- label: remy-lov-lk-block
+  setup: { dist: close, dummy: stand }
+  input: "motion charge-back 60 then-forward LK"
+  qjson: { name: "Light of Virtue (Short)" }
+  outcome: BLOCK
+  expect: { S: from-qjson, R: from-qjson, adv: 17 }
+
+# STRUCTURAL FINDING: dummy:crouch measures BLOCK (matching the
+# dummy:stand outcome above), confirming Light of Virtue (K) connects
+# against a crouching guard the same as a standing guard - the low/mid
+# counterpart to the Jab(P) probe's WHIFF above. adv carries the same
+# ADV ANOMALY as remy-lov-lk-block (a slightly smaller but still large
+# gap); S/R stay exact.
+# §13.13 contact-path convention (CONV-2 scope extension, 2026-07-10, user
+# decision), family F10 - projectile travel-time displayed adv: adv=+15 is
+# the engine-truth advantage actually realized on the BLOCK path at this
+# entry's pinned distance, same mechanism as remy-lov-lp-block/-lk-block
+# (see remy-lov-lp-block's comment for the full trace + NORMATIVE
+# STATEMENT, the third and final remy-lov member): S/R exact (S=11/R=26);
+# T=37=S+R exactly, atk_idle_F=move_start_F+T exactly (7859=7822+37) -
+# def_idle_F=7874, 15 frames after atk_idle_F; travel=14 -> +15 vs +1,
+# closed exactly. Arcade (whiff-canonical, from-qjson, travel-0 canonical)
+# adv=+1 - preserved here per the convention.
+- label: remy-lov-lk-crouch-probe
+  setup: { dist: close, dummy: crouch }
+  input: "motion charge-back 60 then-forward LK"
+  qjson: { name: "Light of Virtue (Short)" }
+  outcome: BLOCK
+  expect: { S: from-qjson, R: from-qjson, adv: 15 }
+
+- label: remy-lov-lk-hit
+  setup: { dist: close, dummy: none }
+  input: "motion charge-back 60 then-forward LK"
+  qjson: { name: "Light of Virtue (Short)" }
+  outcome: HIT
+  expect: { S: from-qjson, R: from-qjson }
+
+# --- Rising Rage Flash (Short), motion charge-down then-up + K --------------
+# See file header RISING RAGE FLASH: ENGINE-2 CONFIRMED. Landed via the
+# EXISTING `motion charge-down <N> then-up <BTN>` macro. S=3 matches
+# remy.json's Rising Rage Flash (Short) row exactly on all three outcomes.
+# ENGINE-2 R CLAUSE RESOLVED 2026-07-09 (§13.5.1b guard-rearm commit gate,
+# lever H): the false cut kept guard_flag=3 for the whole post-anchor tail
+# on all three outcomes (never re-arming before the natural r1 edge) - the
+# gate now correctly refuses the commit, so all three outcomes finalize at
+# the natural edge and measure R=32, arcade-exact. WHIFF is now a plain
+# PASS. BLOCK/HIT still measure A=4 (a separate, stacked contact-specific
+# A+1 clause, §12.2.3 candidate, untouched by this fix) vs the
+# WHIFF-confirmed/arcade A=3, so they stay xfail on that clause alone; adv
+# on BLOCK now measures -17, arcade-exact, still correctly asserted via
+# from-qjson (R and adv both silently pass now - only A flags). See
+# docs/frame-data-synthesis.md §13.5.1b.
+# SECTION ACCOUNTING (Phase 7): as of 2026-07-09, 1/3 (WHIFF) is a plain
+# PASS; BLOCK/HIT (2/3) remain xfail on the A+1 clause, below the
+# >50%-of-section threshold (no new sign-off needed for a section's xfail
+# rate dropping - CORPUS-AUTHORING.md Phase 7 precedent).
+
+- label: remy-rrf-lk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "motion charge-down 60 then-up LK"
+  qjson: { name: "Rising Rage Flash (Short)" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=4 is
+# the engine-truth value. SWEEP-2 (2026-07-10) FULL CONVERT, xfail REMOVED.
+# RESOLVED 2026-07-09 (§13.5.1b, see file header): the ENGINE-2 R clause was
+# already GONE (R measures 32, arcade-exact; adv -17, arcade-exact). The
+# remaining A-clause is now F3 (§13.13:5179-5184), own-ledger bar met: branch
+# cells 56(1)+60(1)+64(1)=3 replace displaced cell 20(2) exactly, +1 vs
+# arcade 3 (P2/own-ledger, classification sweep #2 fable-grade audit). S
+# exact (S=3).
+- label: remy-rrf-lk-block
+  setup: { dist: close, dummy: stand }
+  input: "motion charge-down 60 then-up LK"
+  qjson: { name: "Rising Rage Flash (Short)" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: 4, R: from-qjson, adv: from-qjson }
+
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=4 is
+# the engine-truth value - byte-identical F3 branch as remy-rrf-lk-block.
+# SWEEP-2 (2026-07-10) FULL CONVERT, xfail REMOVED. R remains arcade-exact
+# (resolved 2026-07-09 by §13.5.1b). S exact (S=3).
+- label: remy-rrf-lk-hit
+  setup: { dist: close, dummy: none }
+  input: "motion charge-down 60 then-up LK"
+  qjson: { name: "Rising Rage Flash (Short)" }
+  outcome: HIT
+  expect: { S: from-qjson, A: 4, R: from-qjson }
+
+# --- Cold Blue Kick (Short), motion qcb + K ----------------------------------
+# See file header COLD BLUE KICK. Landed via the EXISTING `motion qcb
+# <BTN>` macro. S=17 matches remy.json's Cold Blue Kick (Short) row exactly
+# on all three outcomes.
+# SECTION ACCOUNTING (Phase 7): 3/3 entries xfail (100%) - crosses the
+# >50%-of-section threshold. GRANTED by orchestrator at commit 2026-07-08 (review-verified: RRF=ENGINE-2 established class; UOH=item-18(c) R + hedged UNCLASSIFIED A; CBK=hedged UNCLASSIFIED, no bucket fits). User review pending (overnight autonomous run) (the orchestrator grants at
+# commit, not the implementing agent).
+# UPDATE (2026-07-11, G2 grant partially executed): CBK's mechanism class
+# ("Same-tick interior-transition credit banking", §13.13 family F13) was
+# CONFIRMED-PENDING-GRANT at sweep #3 then GRANTED by the user same day -
+# user grant 2026-07-11 text: "G2 = the same-tick credit-banking class
+# (remy-cbk + elena-lynxtail-A) becomes a granted family." This grants the
+# banking mechanism itself, not the SEPARATE, still-UNCLASSIFIED whiff-level
+# +/-1 boundary shift (remy-cbk-lk-whiff's own F=1207 finding) that the
+# grant list's own text makes a standing precondition for converting THIS
+# move's contact legs ("convert only if the user ALSO accepts the
+# whiff-level +/-1 boundary shift ... as displayed engine truth ... else
+# narrow only"). The 2026-07-11 grant does not state that acceptance, so
+# the precondition is unmet: remy-cbk-lk-block/-hit stay fully XFAIL,
+# UNCONVERTED (not even narrowed - the two mechanisms are numerically
+# entangled, see each entry's own xfail string for why no partial literal
+# is assertable). elena-lynxtail-lk-hit/-block DO convert under this same
+# grant (see corpus-elena.yaml) - the entanglement above is specific to
+# CBK's stacked whiff-boundary dependency, not to F13 generally.
+#
+# DATED NOTE (2026-07-11, LAYER-1, Sec2.4 verbatim): arcade+twin measure
+# 17/10/10 == oracle (docs/arcade-frame-data/CAPTURE.md's new Session 3;
+# docs/frame-data-synthesis.md Sec13.16) - the F=1207 boundary tick is an
+# overlay/meter artifact, not engine truth. The G2 CBK precondition above is
+# VOID (unsatisfiable - accepting it would enshrine a measured-wrong value,
+# house rule); the pending +2 CBK flips are cancelled as a grant question,
+# re-routed to the OVERLAY RE-ANCHOR program (docs/plan-frame-data-completion.md's
+# LAYER-1 tracker row). remy-cbk-lk-whiff/-block/-hit stay xfail at oracle
+# values pending the meter fix.
+
+# §13.17 RE-ANCHOR-1 (2026-07-11): item-18 CLOSED for this row (G2-VOID
+# route, per the section comment above) — levers O/N now measure A=10,
+# R=10, both arcade/oracle-exact (the F=1207 boundary-tick artifact is
+# gone; box-A/busy-edge R read straight through it). Prior xfail
+# evidence, RELOCATED not deleted: "NEW FINDING, UNCLASSIFIED (flagged
+# 2026-07-08, see file header COLD BLUE KICK): a small, SUM-PRESERVING
+# A/R boundary variance - measured A=11/R=9 vs arcade A=10/R=10 (a +1/-1
+# swap); T=37 is self-consistent with BOTH the measured (17+11+9) and
+# oracle-implied (17+10+10) decomposition - total animation length
+# unchanged. cut=0/dwellbrk=0/anchor_a=-1 (no §13.5.1 mechanism - NOT an
+# ENGINE-2/item-18(b) shape). S exact (S=17). REGISTERED 2026-07-09 in
+# synthesis §12.2.4: LINKED with yun-zesshou-hp-block/-hit as the
+# two-character sum-preserving A/R boundary-shift family (+/-1 A/R swap,
+# S+A+R conserved, cut=0); mechanism still UNCLASSIFIED. RE-CITED
+# 2026-07-10 (classification sweep #2, disposition (b)): a single
+# boundary tick is now PROVEN (F=1207, the last-hatt tick at the
+# anim-chain reset, no hitstop, active_pf==engine_a==11). RE-CITED
+# 2026-07-11 (LAYER-1): arcade 990512 whiff = 17/10/10 == oracle, twin =
+# 17/10/10 too (docs/frame-data-synthesis.md §13.16) - the F=1207
+# boundary tick is a meter artifact. G2 CBK precondition VOID by
+# measurement."
+- label: remy-cbk-lk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "motion qcb LK"
+  qjson: { name: "Cold Blue Kick (Short)" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: remy-cbk-lk-block
+  setup: { dist: close, dummy: stand }
+  input: "motion qcb LK"
+  qjson: { name: "Cold Blue Kick (Short)" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson, xfail: "RECLASSIFIED 2026-07-14, ARCADE-CONFIRMED METER-OVERCOUNT (was UNCLASSIFIED) - <sp>/zero/contactA/design.md + <sp>/zero/arcade-s12/session-report.md, opus-substitute / WANTS FABLE RE-REVIEW: session-12 hardware capture proved arcade active-frames == ORACLE (10) for this leg - the overlay's displayed A=14 over-counts via the stacked +1 hitstop-boundary tick plus the F13 same-tick declared-credit banking (see prior history below for the mechanism). A frz-excluded strict re-anchor (box_a_frz, counting only box-active-and-not-frozen ticks) WAS designed and full-universe census-tested: it reproduces oracle exactly on this row and 5 siblings, but is engine-signal-INDISTINGUISHABLE from 113 other currently-PASS contact-A rows it would regress (structural-twin proof: ken-srk-lp-block and sean-dragonsmash-mp-block are byte-identical on every gate signal yet need the OPPOSITE (displayed, not strict) value) - NON-SURGICAL, no lever ships. Oracle STANDS; this is now a TERMINAL-KNOWN-VALUE row (true value known and hardware-confirmed, display is a proven meter artifact, no suite-safe blind lever exists to correct it) - not an open classification question. Golden unchanged; A stays asserted at oracle=10, measured=14, XFAIL. R clause CLOSED 2026-07-13 (CONTACT-2, lever R): busy-edge R=10, oracle-exact (was 9, `fd_contact_busy_edge_r`, frame_data_overlay.c §13.19). Prior history (RELOCATED not deleted): LARGER, additional contact-specific A overcount on top of remy-cbk-lk-whiff's own small boundary variance (see file header): measured A=14 vs WHIFF's own A=11 (and vs arcade 10), R=9 (same as WHIFF, pre-lever-R); T=38 vs S+A+R=40 (a 2-frame gap, unlike WHIFF's exact match) - a genuinely different, larger divergence, not merely the WHIFF finding carried over. cut=0/dwellbrk=0/anchor_a=-1. adv unaffected (measured -4, matching arcade Block_advantage=-4 exactly). S exact (S=17). Flagged to orchestrator for follow-up. REGISTERED-note CORRECTED 2026-07-09 (sweep review): the §12.2.4 sum-preserving A/R boundary-shift family member is the WHIFF leg (remy-cbk-lk-whiff: A=11/R=9 vs 10/10, S+A+R conserved) — THIS block entry is NOT the registered shape; it carries a genuinely larger stacked divergence (A=14 vs 10, 2-frame T gap) on top of the whiff's registered shift; mechanism still UNCLASSIFIED. RE-CITED 2026-07-10 (classification sweep #2, disposition (e) per the fable-grade audit): tried (s7) - active_pf(12) != engine_a(14), T != S+A+R by +2, hitstop-entangled; the documented in_hitstop skip is intentional design, not a bug. F3 bar unmet - no ledger was run for CBK (not in the window's six runs). Hand-off: a future ledger session is the named next probe. UPGRADED (e)->(b) CONFIRMED-PENDING-GRANT sweep #3 (2026-07-11, classification sweep #3 fable-grade audit): the named ledger session RAN (s3w) - same-tick interior-transition credit banking: within one Game_timer tick the chart passes 52->44->4, re-entering cell 44 and banking its declared 3 a second time while the frame snapshot only ever observes the tick's final cgix (ledger GT3393/GT3415, snapshot cgix=4 at GT3415); A=14 = whiff's own 11 + 3 phantom credit, exact both legs; resolves active_pf(12)!=engine_a(14) and T!=S+A+R(+2). PROVEN, not hedged; new class registered: §12.2.4 'Same-tick interior-transition credit banking' (CONFIRMED-PENDING-GRANT, E8-governance route - a newly-proven mechanism with no at-grant-time family; never self-converts). NOTE the stacked dependency: this WHIFF leg's own +/-1 boundary shift (A11/R9 vs arcade 10/10, boundary tick F=1207 proven, mechanism still UNCLASSIFIED) is a SEPARATE, stacked piece - full conversion of this BLOCK leg (A:14, R:9) requires the user to accept both pieces as displayed engine truth; the grant-list entry says so. G2 GRANT EXECUTED 2026-07-11 (user grant 2026-07-11, following the orchestrator's recommendation review), DEPENDENCY UNMET, STAYS UNCONVERTED: the user's grant text is 'the same-tick credit-banking class (remy-cbk + elena-lynxtail-A) becomes a granted family' - this grants the banking mechanism (§13.13 family F13) but does not additionally state acceptance of remy-cbk-lk-whiff's own SEPARATE +/-1 boundary-shift finding, which the grant list's own stated dependency requires ALSO be accepted before converting this leg. Per that dependency read literally, this entry stays fully XFAIL - no literal changes (A/R remain from-qjson); this is the 'else narrow only' branch of the grant list, and here 'narrow' resolves to no partial assertion at all, because A=14 and R=9 are numerically entangled with the un-granted boundary shift (A=14 = 10 + 1 boundary + 3 phantom - asserting 14 without the boundary piece would silently smuggle in the un-granted +1) and no independently-assertable sub-value survives without it. RE-CITED 2026-07-11 (LAYER-1): arcade+twin measure 17/10/10 == oracle on the sibling whiff (docs/frame-data-synthesis.md Sec13.16) - the boundary shift this leg's conversion depended on is now a measured-wrong meter artifact, not engine truth; the G2 precondition is VOID, not merely unmet. Entry stays fully XFAIL at oracle values pending the meter fix." }
+
+- label: remy-cbk-lk-hit
+  setup: { dist: close, dummy: none }
+  input: "motion qcb LK"
+  qjson: { name: "Cold Blue Kick (Short)" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, xfail: "RECLASSIFIED 2026-07-14, ARCADE-CONFIRMED METER-OVERCOUNT (was UNCLASSIFIED) - <sp>/zero/contactA/design.md + <sp>/zero/arcade-s12/session-report.md, opus-substitute / WANTS FABLE RE-REVIEW: same finding as remy-cbk-lk-block - session-12 hardware capture proved arcade active-frames == ORACLE (10); the overlay's displayed A=14 over-counts via the stacked +1 hitstop-boundary tick plus F13 same-tick declared-credit banking. A frz-excluded strict re-anchor was designed and full-universe census-tested: reproduces oracle on this row and 5 siblings, but is engine-signal-INDISTINGUISHABLE from 113 other currently-PASS contact-A rows it would regress (structural-twin proof: ken-srk-lp-block / sean-dragonsmash-mp-block need the OPPOSITE value on byte-identical gate signals) - NON-SURGICAL, no lever ships. Oracle STANDS; TERMINAL-KNOWN-VALUE (true value hardware-confirmed, no suite-safe blind lever exists). Golden unchanged. R clause CLOSED 2026-07-13 (CONTACT-2, lever R): busy-edge R=10, oracle-exact (was 9). Prior history (RELOCATED not deleted): same COMPOUND finding as remy-cbk-lk-block (A=14 vs WHIFF's own A=11/arcade 10, R=9, pre-lever-R); cut=0/dwellbrk=0/anchor_a=-1. S exact (S=17). adv not cross-checked (remy.json's Hit_advantage is '-' for this row). RE-CITED 2026-07-10 (classification sweep #2, disposition (e)): same hand-off posture as remy-cbk-lk-block (F3 bar unmet, no ledger run this session; future ledger session is the named next probe). UPGRADED (e)->(b) CONFIRMED-PENDING-GRANT sweep #3 (2026-07-11, classification sweep #3 fable-grade audit): same ledger session (s3w) as remy-cbk-lk-block - same-tick interior-transition credit banking, identical at GT3700/3713/3716/3719/3722 (phantom re-credit of cell 44 at GT3722); A=14 = whiff 11 + 3 phantom, exact. Same new §12.2.4 'Same-tick interior-transition credit banking' class (CONFIRMED-PENDING-GRANT, E8-governance route) as remy-cbk-lk-block - see that entry's comment for the full mechanism and the stacked whiff-boundary-shift caveat (both pieces required for a full grant of this leg). G2 GRANT EXECUTED 2026-07-11, DEPENDENCY UNMET, STAYS UNCONVERTED: same disposition as remy-cbk-lk-block - the 2026-07-11 grant text ('the same-tick credit-banking class ... becomes a granted family') grants F13 but not the separate whiff-level boundary-shift acceptance the grant list makes a precondition for THIS leg; entry stays fully XFAIL, no literal change. RE-CITED 2026-07-11 (LAYER-1): same VOID-precondition finding as remy-cbk-lk-block (arcade+twin 17/10/10 == oracle on the sibling whiff, docs/frame-data-synthesis.md Sec13.16). Entry stays fully XFAIL at oracle values pending the meter fix." }
+
+# --- Negative control (plan section 1.8 item 5 precedent) ------------------
+
+- label: remy-jump-none
+  setup: { dist: 250, dummy: none }
+  input: "press UP"
+  outcome: NONE

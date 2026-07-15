@@ -1,0 +1,373 @@
+# Ibuki EX moves corpus — EX/Supers program, wave 2 fan-out (Ruling 5's
+# per-character EX satellite batches, <sp>/exsuper/authoring-policy.md).
+# Satellite corpus (auto-discovered by run-suite.sh's corpus-*.yaml glob, own
+# golden/ibuki-ex.tsv) — the main corpus-ibuki.yaml is untouched. Siblings
+# authoring dudley-ex/yun-ex concurrently, file-disjoint.
+#
+# Oracle: docs/arcade-frame-data/ibuki.json (CHARACTER_IDS id=7, same file
+# corpus-ibuki.yaml already pins). Every "Name" string below was read exactly
+# once via `python3 -c "import json; ..."` against the fetched oracle (Phase 1
+# rule) — confirmed the "(EX)" parenthesized suffix convention (matching
+# ryu.json, unlike ken.json's bare names): "Kunai (EX)", "Hien (EX)",
+# "Kubiori (EX)", "Kazekiri (EX)", "Tsumuji (EX)".
+#
+# SCOPE: Ibuki's 5 ground EX rows per <sp>/exsuper/step0-universe.tsv (rows
+# 46-50): Kunai (EX), Hien (EX), Kubiori (EX), Kazekiri (EX), Tsumuji (EX).
+# No air-variant rows exist in Ibuki's EX set (none flagged AIR_DEFERRED).
+# The step0 JUDGMENT flag on "Missed grab (Chi Blast)" (row 60) is a
+# SUPER-side slot-identity question, out of scope for this EX batch.
+#
+# Two of the five (Kunai (EX), Hien (EX)) are MOTION NOT FOUND this session
+# (see the dedicated section below, same posture as corpus-sean.yaml's Tackle
+# / corpus-twelve.yaml's D.R.A. precedents) — no entries shipped for either.
+# Three landed: Kubiori (EX), Kazekiri (EX), Tsumuji (EX).
+#
+# sa_gauge: 3 (MAXIMUM, per authoring-policy.md's meter policy — EX moves are
+# meter-metered, training mode's default starting gauge is not guaranteed
+# full/nonzero, the Ryu EX pilot's own load-bearing finding). Confirmed
+# necessary here too: all three landed chords fire the EX variant (not the
+# plain equivalent) at sa_gauge:3 on first probe (S-value match against
+# ibuki.json's own EX rows, exact on all three: S=15/4/7).
+#
+# inter_entry_wait: 350 (raised from the wave-1 precedent's 250) — Kubiori
+# (EX)'s own two-phase catch-and-throw leg (T=57, the longest-duration entry
+# in this batch) left residual sastop activity bleeding past a 250-frame gap
+# in this session's own probing (see the CENSUS section below); 350 was
+# sufficient to restore clean single-FINAL integrity for every SHIPPED entry
+# (Kazekiri/Tsumuji fully clean at 350; Kubiori's own two legs are internally
+# self-consistent and their one residual sastop footprint does not touch any
+# field this corpus asserts — see CENSUS).
+#
+# ============================================================================
+# MOTION NOT FOUND — Kunai (EX) (oracle S=8) and Hien (EX) (oracle S=26).
+# Corpus-ibuki.yaml's own mains header already flagged both as out of THAT
+# rollout's scope (Kunai: "grounded variant... out of budget"; Hien: "dash-in
+# kick special, not in the task's specials list") — neither had an
+# established motion idiom to reuse, so both were probed fresh this session
+# with already-expressible primitives only (CORPUS-AUTHORING.md Phase 5 gate:
+# extend `_motion_steps` only after exhausting what exists; not attempted).
+#
+# Kunai (EX) — TEN distinct candidate inputs tried (punch chord LP+HP on the
+# final step throughout), all at dist:250 dummy:none:
+#   1. `motion qcb LP+HP`         -> Far Fierce fallback (S=13/A=4/R=14,
+#      exact match to ibuki.json's own Far Fierce row) x3 (also produced by
+#      candidates 5 double-tap and 6 charge-down — see below).
+#   2. `motion hcb LP+HP`         -> Raida (Fierce) (S=6/A=7/R=32, exact
+#      match) — hcb's own tail collides with Raida's real motion.
+#   3. `motion qcf LP+HP`         -> connects as a HIT at dist:250 itself
+#      (S=15/A=6/R=41/adv=+145, kd=1) — NOT Kunai (S doesn't match 8); this
+#      dash-in/high-adv signature instead resembles the Kubiori-grab family
+#      (adv=+145 matches Kubiori (EX)'s own catch-phase adv exactly), a
+#      plausible qcf-into-hcf-tail collision (same class as the Sean-Tackle
+#      precedent's own hcf/qcf tail-collision findings) — not chased further,
+#      out of scope (not Kunai either way).
+#   4. `press RIGHT; press RIGHT+LP+HP` (double-tap forward)
+#                                 -> Far Fierce fallback (same as #1).
+#   5. `hold DOWN 45; hold UP+LP+HP` (charge-down-then-up)
+#                                 -> Far Fierce fallback (same as #1).
+#   6. `hold DOWN+LEFT 45; hold UP+RIGHT+LP+HP` (diagonal charge, down-back
+#      to up-forward)            -> Far Fierce fallback (same as #1).
+#   7. `hold LEFT 45; hold UP+RIGHT+LP+HP` (diagonal charge, back to
+#      up-forward)               -> Far Fierce fallback (same as #1).
+#   8. `press LP+HP` (no direction at all)
+#                                 -> Far Fierce fallback (same as #1).
+#   9. `hold DOWN+RIGHT 45; hold UP+LEFT+LP+HP` (opposite diagonal charge,
+#      down-forward to up-back)  -> Far Fierce fallback (same as #1).
+#   10. `hold LEFT 45; hold RIGHT+LP+HP` (charge-back-then-forward)
+#                                 -> Far Fierce fallback (same as #1).
+# Every axis/diagonal charge shape, every already-implemented motion
+# (qcf/qcb/hcb), double-tap, and a bare press were exhausted without landing
+# S=8. Documented as OUT OF SCOPE / MOTION NOT FOUND, no entries shipped, no
+# oracle edit, no compiler change.
+#
+# Hien (EX) — ELEVEN distinct candidate inputs tried (kick chord LK+HK on the
+# final step throughout), all at dist:250 dummy:none:
+#   1. `press RIGHT; press RIGHT+LK+HK` (double-tap forward)
+#                                 -> Towards + Roundhouse fallback (S=12/A=1/
+#      R=18) — the chord's own RIGHT+HK component satisfies that command
+#      normal's input pattern regardless of the preceding tap.
+#   2. `motion 2qcf LK+HK`        -> Kazekiri (EX) itself (S=4/A=11/R=33,
+#      exact match) — 2qcf's own tail collides with the DP-shape recognition
+#      (same tail-collision class as Sean-Tackle's own findings).
+#   3. `hold LEFT 45; hold RIGHT+LK+HK` (charge-back-then-forward)
+#                                 -> Towards + Roundhouse fallback (same as
+#      #1 — the RIGHT+HK snap satisfies the command normal identically).
+#   4. `hold DOWN 45; hold UP+LK+HK` (charge-down-then-up)
+#                                 -> Far Roundhouse fallback (S=9/A=3/R=21,
+#      exact match, dist:250 selects the "far" HK priority normal).
+#   5. `press RIGHT; press RIGHT; press RIGHT+LK+HK` (triple-tap)
+#                                 -> NO FINAL inside its own script window at
+#      inter_entry_wait:250 OR :400 (isolated single-entry retest, both
+#      producing NO-DATA) — inconclusive, not investigated further (budget).
+#   6-9. Kasumi-Gake-dash-then-follow-up-kick hypothesis (`motion qcf LK+HK`
+#      then a second `press LK+HK` after a 0/6/12/20-frame gap): all FOUR gap
+#      values produced the IDENTICAL S=25/A=0/R=0 zero-active signature — the
+#      THIRD (Fierce-strength) value of Kasumi Gake's own three-way Startup
+#      split ("20/22/25") — i.e. the follow-up press simply re-buffers a
+#      fresh Kasumi Gake, not a distinct Hien dispatch.
+#   10. `press LEFT; press RIGHT+LK+HK` (back-then-forward tap)
+#                                 -> Towards + Roundhouse fallback (same as
+#      #1/#3).
+#   11. `hold RIGHT 6; wait 3; hold RIGHT+LK+HK` (slower double-tap, explicit
+#      neutral gap)              -> Towards + Roundhouse fallback (same as
+#      #1/#3/#10).
+# Every already-implemented motion (qcf/qcb/hcb/hcf-adjacent via 2qcf),
+# double/triple-tap at multiple cadences, both charge shapes, and a
+# dash-into-follow-up-kick hypothesis were exhausted without landing S=26.
+# Documented as OUT OF SCOPE / MOTION NOT FOUND, no entries shipped, no
+# oracle edit, no compiler change.
+# ============================================================================
+#
+# 2026-07-12 CLASSIFICATION CROSS-CHECK (wave-2 integration gate,
+# <sp>/exsuper/step0-universe.tsv rows 46/47): both MOTION NOT FOUND findings
+# above were re-examined against a "step0 classification miss, not a real
+# motion gap" hypothesis (do the two moves need AIR_DEFERRED/context-deferred
+# reclassification instead of remaining bare ASSERTABLE?).
+#
+# Kunai (EX) — RECLASSIFIED AIR_DEFERRED. corpus-ibuki.yaml's own mains
+# header (lines 21-23, authored 2026-07-08, predates this program) already
+# calls Kunai an "airborne-capable projectile - the harness attacker cannot
+# be scripted to jump for the air variant". This session's 10 exhausted
+# ground-motion candidates (every axis/diagonal charge, qcf/qcb/hcb,
+# double-tap, bare press) landing zero hits on S=8 is the EX-side
+# reproduction of that SAME pre-existing harness gap, not a fresh
+# motion-primitive gap. Kunai's Name has no "air" substring, so
+# derive_universe.py's is_air name-pattern regex never caught it (the same
+# blind spot Step 4 already named-and-fixed once, manually, for Akuma's
+# Tenma Gou Zankuu via AIR_SUPER_EXPLICIT) — a genuine Step 0 classification
+# miss. step0-universe.tsv row 46 (ibuki index 39) exclusion_flag corrected
+# ASSERTABLE -> AIR_DEFERRED, with a dated citation comment in its own
+# move_shape_notes column.
+#
+# Hien (EX) — NOT reclassified, stays ASSERTABLE. corpus-ibuki.yaml's own
+# mains header calls Hien a "dash-in kick special" with no air-context claim
+# anywhere (unlike Kunai's explicit "airborne-capable" language) — no
+# primary-source evidence supports an air-context miss. The alternative
+# "command-context/followup-move" hypothesis (is Hien only reachable as a
+# Kasumi Gake follow-up, like Kasumi Suzaku/Yoroi Doushi/Yami Shigure?) was
+# directly tested this session (candidates 6-9: a fresh Kasumi Gake dash
+# followed by a second kick press after a 0/6/12/20-frame gap) and
+# DISCONFIRMED — all four gap values produced Kasumi Gake's own S=25
+# (its Fierce-strength value, the third of its "20/22/25" range string),
+# never Hien's S=26. Verdict: genuine motion-primitive gap (the correct
+# ground-level input for Hien is simply not yet found among this harness's
+# expressible primitives), not a Step 0 classification error.
+# step0-universe.tsv row 47 (ibuki index 46) left ASSERTABLE, unchanged
+# exclusion_flag, with a dated REVIEWED note recording the disconfirmed
+# hypothesis so it isn't re-litigated.
+# ============================================================================
+#
+# Motion recipes for the THREE landed moves (S-value match against
+# ibuki.json's own EX rows, exact and unambiguous on first probe — reusing
+# corpus-ibuki.yaml's own verified mains motion idioms, final step chorded
+# with two buttons of the same family per the Ryu/Ken/Chunli EX precedent):
+#   - Kubiori (EX): `hold LEFT 2; hold LEFT+DOWN 2; hold DOWN 2; hold
+#     DOWN+RIGHT 2; hold RIGHT+LP+HP 2; wait 1` — hcf's own step sequence
+#     (mains' own CONFIRMED MOTION: hcf+P, Jab strength via LP), two punches
+#     chorded onto the final step. Landed S=15, exact match, first attempt.
+#   - Kazekiri (EX): `hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold
+#     RIGHT+LK+HK 2; wait 1` — the DP-shape hold-chain (mains' own precedent
+#     for Kazekiri (Short)), two kicks chorded onto the final step. Landed
+#     S=4, exact match, first attempt.
+#   - Tsumuji (EX): `hold DOWN 2; hold DOWN+LEFT 2; hold LEFT+LK+HK 2; wait
+#     1` — qcb's own step sequence (mains' own precedent for Tsumuji
+#     (Short)), two kicks chorded onto the final step. Landed S=7, exact
+#     match, first attempt.
+#
+# ============================================================================
+# CENSUS (per authoring-policy.md Ruling 2, mechanical, from FRAME_TRACE
+# columns), all 7 shipped entries below:
+#
+# (1) Single-FINAL integrity: confirmed clean at inter_entry_wait:350 for
+#     every SHIPPED entry (10 MOVE_START/FINAL annotation pairs across the
+#     9-entry authoring run — one extra pair belongs to Kubiori's own
+#     WHIFF-UNREACHABLE attempt, not shipped; every shipped entry's own
+#     window contains exactly one FINAL, no label-bleed).
+# (2) Flash-overlap census (sastop gate): 18 nonzero sastop ticks found in
+#     the whole authoring trace, in TWO clusters of 9 — BOTH confined to
+#     Kubiori (EX)'s own two windows: the unshipped WHIFF-UNREACHABLE attempt
+#     (dist:250, itself not shipped — see WHIFF-UNREACHABLE note below) and
+#     the field-masked HIT leg's own pre-move-start span (F=482-536, before
+#     that entry's real move_start_F=722 — a residual tail from the
+#     PRECEDING BLOCK entry's own recovery, not from the HIT leg's real
+#     active window). Kazekiri (EX) and Tsumuji (EX)'s entire windows (all
+#     three legs each) are sastop=0 throughout — mechanically confirmed, not
+#     assumed. Net effect on SHIPPED, ASSERTED fields: ZERO — Kubiori's own
+#     shipped HIT leg only asserts S/kd (field-masked, see below), so this
+#     residual footprint touches no comparable field anywhere in this corpus.
+# (3) Contact-A juggle check (HIT-leg A admissible only if it equals the
+#     BLOCK-leg's displayed A): Kazekiri (EX) BLOCK A=11 == HIT A=11, PASS.
+#     Tsumuji (EX) BLOCK A=3 == HIT A=3, PASS (both legs share the SAME
+#     established undercount vs oracle Hit=4 — see that section's own
+#     comment). Kubiori (EX)'s BLOCK-leg A=10 needs no juggle check (Ruling
+#     2: it IS the validated legacy instrument); its HIT-leg A is FIELD-
+#     MASKED (oracle-incomparable, same structural finding as mains'
+#     ibuki-kubiori-lp-hit), so no juggle check applies there either.
+# (4) Shape record: Kubiori (EX) is box_runs=0 on BOTH legs (matches mains'
+#     own census-adjudicated finding that Kubiori's real A never comes
+#     through the four-slot att_box array — a different engine mechanism
+#     entirely, §13.17 RE-ANCHOR-1 'Kubiori disposition'). Kazekiri (EX) is
+#     single-run (box_runs=1, all three legs). Tsumuji (EX) is single-run on
+#     the two SHIPPED legs (box_runs=1, BLOCK/HIT) — its own unshipped
+#     WHIFF-UNREACHABLE attempt reads box_runs=4 (genuinely multi-hit
+#     forward-traveling, the Ruling-3-adjacent shape that explains why the
+#     move cannot whiff at any reachable harness distance, see below).
+# ============================================================================
+
+character: ibuki
+oracle: ibuki.json
+inter_entry_wait: 350
+sa_gauge: 3
+entries:
+
+# --- Kubiori (EX), motion hcf + P (chord LP+HP) -----------------------------
+# Two-phase move, SAME structural shape as mains' own base Kubiori (grab-
+# family precedent applied per task direction): the oracle's single
+# published row (Startup=15, Hit=10, Recovery=19, Block_advantage=-27)
+# describes an initial blockable STRIKE phase; the dummy:none catch-and-throw
+# phase is a distinct signature the oracle does not separately publish (same
+# hypothesis as mains' own Kubiori section).
+#
+# WHIFF-UNREACHABLE(dist=310 centered / dist=300 anchored / dist=250
+# anchored, all tried, all connect) — binary search confirmed EX Kubiori's
+# own hcf dash-in convergence reaches EVERY distance this harness can
+# script, unlike the base (non-EX) Kubiori (whose own WHIFF entry cleanly
+# misses at dist:250, per mains). The EX version's forward lunge evidently
+# covers materially more ground than the base version — a genuine EX-move
+# property difference, not a harness artifact (same class of finding as Ken
+# EX Tatsumaki's own WHIFF-UNREACHABLE: "the move's own... reach... covers
+# the ENTIRE centered ceiling and still connects"). No WHIFF leg shipped;
+# coverage comes from the BLOCK/HIT legs below, per Ruling 1.
+
+- label: ibuki-exkubiori-block
+  setup: { dist: 40, dummy: stand }
+  input: "hold LEFT 2; hold LEFT+DOWN 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LP+HP 2; wait 1"
+  qjson: { name: "Kubiori (EX)" }
+  outcome: BLOCK
+  # Measured S=15 A=10 (box_runs=0, cut=1, anchor_a=10 matching engine_a=10)
+  # — S/A both oracle-exact (ibuki.json Kubiori (EX): Startup=15, Hit=10).
+  # R (measured 10) and adv (measured -6) both diverge from the oracle
+  # (Recovery=19, Block_advantage=-27) — the SAME item-18(b) whiff-R-
+  # truncation shape mains' own Kubiori disposition already established
+  # (cut=1/anchor-match signature identical to ibuki-kubiori-lp-block/-whiff)
+  # and the SAME census-adjudicated lever-N/O exclusion (§13.17 RE-ANCHOR-1:
+  # box_count=0 throughout this window, all four att_box slots zero — the
+  # pre-existing box_count>0 gate correctly excludes it). Per this program's
+  # own quarantine convention (authoring-policy.md Ruling 3: unexplained
+  # divergences omitted from the corpus, logged in the report, not shipped as
+  # an xfail-with-string the way the mains corpus does for this same family)
+  # R and adv are OMITTED here rather than xfailed — the mechanism is
+  # identified (item 18(b), the same one mains already names), so this is a
+  # documented omission, not a fresh unexplained quarantine.
+  expect: { S: from-qjson, A: from-qjson }
+
+- label: ibuki-exkubiori-hit
+  setup: { dist: 40, dummy: none }
+  input: "hold LEFT 2; hold LEFT+DOWN 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LP+HP 2; wait 1; wait 90"
+  qjson: { name: "Kubiori (EX)" }
+  outcome: HIT
+  # FIELD-MASKED (same posture as mains' ibuki-kubiori-lp-hit): measured
+  # S=15 A=2 R=40 adv=+145 kd=1 (box_runs=0, cut=0, endrel=1 — the genuine
+  # post-capture end mechanism, same as ibuki-throw-hit/ibuki-raida-lp-hit/
+  # mains' own Kubiori catch phase). A/R/adv are NOT comparable against
+  # ibuki.json's published row (that row describes the strike/setup phase
+  # the BLOCK leg above measures, not this catch-and-throw phase) — same
+  # two-phase-move structural finding mains already established, now
+  # reproduced identically on the EX row. S=15 (shared by both phases,
+  # oracle-exact) and kd=1 (explicit, engine-measured) are the only
+  # comparable/assertable fields.
+  expect: { S: from-qjson, kd: 1 }
+
+# --- Kazekiri (EX), DP-shape hold-chain + K chord (LK+HK) -------------------
+# Single-run (box_runs=1, all three legs). WHIFF and BLOCK are fully
+# oracle-exact on every field (S/A/R, plus adv on BLOCK). HIT diverges on R
+# only.
+
+- label: ibuki-exkazekiri-whiff
+  setup: { dist: 250, dummy: none }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LK+HK 2; wait 1"
+  qjson: { name: "Kazekiri (EX)" }
+  outcome: WHIFF
+  # Measured S=4 A=11 R=33 (box_runs=1, cut=0, anchor_a=-1 — no §13.5.1 cut,
+  # the grounded fresh-edge gate correctly refuses to anchor), oracle-exact
+  # on all three (ibuki.json Kazekiri (EX): Startup=4, Hit=11, Recovery=33).
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: ibuki-exkazekiri-block
+  setup: { dist: close, dummy: stand }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LK+HK 2; wait 1"
+  qjson: { name: "Kazekiri (EX)" }
+  outcome: BLOCK
+  # Measured S=4 A=11 R=33 adv=-21 (box_runs=1, cut=0), oracle-exact on ALL
+  # FOUR fields (ibuki.json Kazekiri (EX) Block_advantage=-21). BLOCK-leg A
+  # needs no juggle check (Ruling 2: it IS the validated legacy instrument)
+  # — logged as the cross-check anchor for the HIT leg below.
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: ibuki-exkazekiri-hit
+  setup: { dist: close, dummy: none }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LK+HK 2; wait 1"
+  qjson: { name: "Kazekiri (EX)" }
+  outcome: HIT
+  # RESOLVED (EX-CONTACT-R disposition #4, exsuper/excontact-r-findings.md
+  # §3 item 4 / §1.5 / §13.10 Class 1): Measured S=4 A=11 R=29 (box_runs=1,
+  # cut=0). S/A oracle-exact; HIT-leg A (11) equals the BLOCK-leg's displayed
+  # A (11), juggle check (Ruling 2 check 3) PASSES. R diverges from the
+  # BLOCK/WHIFF legs' own oracle-exact 33 (measured 29 here). Post-active
+  # entry, same-tick after the shared last active cell (cgix=96, cghi=234,
+  # identical actives F873-892 vs F930-948): BLOCK walks 96->cgix=120
+  # cghi=235...reset cghi=1...r1=0 (=33); HIT walks 96->cgix=186 cghi=235
+  # ...reset cghi=1...r1=0 (=29). Same cghi label sequence (235, 236,
+  # 1-cleanup); HIT enters the chain 66 cgix-units further along — a
+  # recorded same-tick recovery-branch signature, textbook §13.10 Class-1
+  # conversion (BLOCK is arcade-exact; the EX move does NOT inherit the base
+  # move's separate ENGINE-7-censused item 18(c) uniform +3 shape — verified,
+  # EX WHIFF/BLOCK R=33 exact). No expect.adv: ibuki.json's Hit_advantage
+  # for this row is "-" (non-numeric). kd=0 measured, no kd assert needed.
+  expect: { S: from-qjson, A: from-qjson, R: 29 }
+
+# --- Tsumuji (EX), motion qcb + K chord (LK+HK) -----------------------------
+# Single-run on both shipped legs (box_runs=1). BLOCK/HIT both oracle-exact
+# on S/R (and adv on BLOCK); A undercounts by 1 on BOTH legs identically —
+# the SAME §13.13 contact-path declared-credit shape (a1) mains' own
+# ibuki-forward-block/ibuki-crstrong-block already established for this
+# character (measured engine-truth value asserted as an explicit literal,
+# not from-qjson, with the arcade figure preserved in this comment).
+#
+# WHIFF-UNREACHABLE(dist=310 centered / dist=300 anchored / dist=250
+# anchored, all tried, all connect as HIT) — binary search confirmed this
+# move's own multi-hit forward-traveling spin (box_runs=4 on the attempt)
+# covers the ENTIRE centered ceiling and still connects, the identical shape
+# to Ken EX Tatsumaki's own WHIFF-UNREACHABLE finding (and, within this same
+# batch, Kubiori (EX)'s own dash-in reach). No WHIFF leg shipped; coverage
+# comes from the BLOCK/HIT legs below, per Ruling 1.
+
+- label: ibuki-extsumuji-block
+  setup: { dist: close, dummy: stand }
+  input: "hold DOWN 2; hold DOWN+LEFT 2; hold LEFT+LK+HK 2; wait 1"
+  qjson: { name: "Tsumuji (EX)" }
+  outcome: BLOCK
+  # Measured S=7 A=3 R=28 adv=-11 (box_runs=1, cut=0, dwellbrk=1,
+  # anchor_a=2). S/R/adv oracle-exact (ibuki.json Tsumuji (EX): Startup=7,
+  # Recovery=28, Block_advantage=-11). A (measured 3) is 1 BELOW the
+  # oracle's Hit=4 — the same §13.13 shape (a1) declared-credit undercount
+  # as ibuki-forward-block/ibuki-crstrong-block/ibuki-forward-hit in mains'
+  # own corpus (measured value is the engine-truth credit actually accrued;
+  # arcade's whiff-canonical 4 preserved here per that same convention) —
+  # asserted as an explicit literal, NOT from-qjson (which would resolve to
+  # 4 and fail). BLOCK-leg A needs no juggle check (Ruling 2: it IS the
+  # validated legacy instrument) — logged as the cross-check anchor below.
+  expect: { S: from-qjson, A: 3, R: from-qjson, adv: from-qjson }
+
+- label: ibuki-extsumuji-hit
+  setup: { dist: close, dummy: none }
+  input: "hold DOWN 2; hold DOWN+LEFT 2; hold LEFT+LK+HK 2; wait 1"
+  qjson: { name: "Tsumuji (EX)" }
+  outcome: HIT
+  # Measured S=7 A=3 R=28 kd=1 (box_runs=1, cut=0, dwellbrk=1, anchor_a=2) —
+  # byte-identical S/A/R to the BLOCK leg above. HIT-leg A (3) equals the
+  # BLOCK-leg's displayed A (3), juggle check (Ruling 2 check 3) PASSES —
+  # same §13.13 shape (a1) undercount, same explicit-literal treatment. S/R
+  # oracle-exact. No expect.adv (Hit_advantage "-" in ibuki.json, confirmed
+  # live this session).
+  expect: { S: from-qjson, A: 3, R: from-qjson, kd: 1 }

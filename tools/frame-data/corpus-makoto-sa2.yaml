@@ -1,0 +1,177 @@
+# Makoto Super Art 2 (Abare Tosanami) — EX/Supers program, supers wave S3
+# fan-out (Makoto's own three SA slots, authored together with corpus-
+# makoto-sa1.yaml/-sa3.yaml). Satellite corpus (auto-discovered by
+# run-suite.sh's corpus-*.yaml glob, own golden/makoto-sa2.tsv once
+# registered) — corpus-makoto.yaml/corpus-makoto-ex.yaml are untouched.
+#
+# Scope: step0-universe.tsv row 67 (makoto SA2, "Abare Tosanami", sa_slot 2,
+# exclusion_flag ASSERTABLE, S_numeric=N). Oracle: docs/arcade-frame-data/
+# makoto.json (md5 8805245ff0ccb492ff78cc00027a4d4d, unchanged, same file
+# corpus-makoto-sa1.yaml pins). Oracle row: Startup="14 + 0" (a two-phase
+# dash-then-attack notation, NOT a plain int — compile_corpus.py's
+# resolve_from_qjson does `int(raw)`, which raises ValueError on this
+# string; confirmed live this session, matches step0-universe.tsv's own
+# S_numeric=N flag for this row), Hit=5, Recovery=25, Block_advantage=-20,
+# Hit_advantage="-" (non-numeric).
+#
+# Meter: sa_gauge:3 (MAXIMUM) + super_art:1 (0-indexed SA2). Identity
+# confirmed this session by S-match probe (CORPUS-AUTHORING.md Phase 5
+# "motion-probe method"): <sp>/sa-makoto/run-probe-sa1-hk/trace.log,
+# "motion 2qcf HK" against super_art:1 at dist:250/dummy:none measures
+# S=14 — matching the LEADING INTEGER of oracle's own "14 + 0" Startup
+# string exactly, on the first attempt (kick-group button, matching the
+# rushing-elbow "Abare" name) — reproduced identically (S=14) on every
+# leg/distance probed this session (5 independent contexts: dist=250/100/
+# 150/200/300-centered, both dummy:stand and dummy:none), unambiguous
+# identification, not assumed.
+#
+# Motion (identity confirmed this session): "motion 2qcf HK" — double-
+# quarter-circle-forward + Roundhouse Kick, kick-group super family.
+#
+# S: NOT ASSERTABLE (any leg). makoto.json's own Startup field for this
+# row is the literal string "14 + 0" — from-qjson raises CompileError on a
+# non-numeric field (same reasoning as every other non-numeric-oracle-field
+# case in this repo). The measured raw S=14 (the leading integer) is
+# recorded per-entry below as a diagnostic only, matching the S_numeric=N
+# classification already recorded in step0-universe.tsv — not a fresh
+# finding, a confirmed-live re-statement of the pre-registered gap.
+#
+# REACHABILITY / ORDERING (Phase 5 "known traps", hit live this session).
+# A combined 3-entry probe (WHIFF at dist:300 centered, then BLOCK at
+# dist:close, then HIT at dist:close) produced a SHAPE cascade: the WHIFF
+# entry itself connected as BLOCK (dist:300 was not far enough — Abare
+# Tosanami is a long-travel rushing super, matching its own
+# Cancel:{Dash:true} oracle flag), and the resulting residual state
+# corrupted BOTH subsequent entries (<sp>/sa-makoto/run-sa2-legs/
+# trace.log) — re-verified in ISOLATED single-entry probes per Phase 5
+# discipline. The isolated re-run revealed the true, counterintuitive
+# shape: dist:close (56px) is what genuinely WHIFFS (the rush's own active
+# window doesn't engage until Makoto has already traveled some distance —
+# at 56px she rushes clean past the standing dummy, active_pf=10 real
+# active ticks recorded with zero contact, box_runs=1/box_a=9/busyr=25),
+# while dist:100/150/200/300(centered) ALL connect identically (S=14
+# A=24 R=32 adv=-60 on every one of the four distances tried, BLOCK
+# outcome) — this rushing super's reachable-contact band is roughly
+# 100-300px, with only point-blank range producing a genuine whiff. WHIFF
+# is therefore REACHABLE, but at the OPPOSITE end of the distance range
+# from the usual convention (close, not far) — ordered FIRST in this file
+# regardless, since it has no predecessor to leave residual state (same
+# "Predecessor-outcome ordering" precaution as every other SA corpus in
+# this wave).
+#
+# FLASH-OVERLAP FINDING — NEW SHAPE, first sighting in this program
+# (systemic-candidate, flagged prominently per authoring-policy.md's
+# admissibility census check 2). Every prior population checked in this
+# program (2a: 10/10 segments; 2b: 3 pilot supers; every SA corpus
+# authored in waves S1/S2; corpus-makoto-sa1.yaml's own two contact legs
+# this session) measured 0 nonzero sastop ticks inside its own
+# [MOVE_START F, FINAL F] window — Abare Tosanami is the FIRST move ever
+# measured in this program where that is NOT true. WHIFF/BLOCK/HIT all
+# show a long CONTIGUOUS run of sastop=1 overlapping their own active
+# window (WHIFF: F14-59 inside its own [0,59] window, 46/49 nonzero;
+# BLOCK: F14-64 inside [0,157], 51/157 nonzero; HIT: same F14-64 span
+# inside [0,240], 51/240 nonzero — awk census this session, all three
+# rep-stability-confirmed via independent re-runs). Traced to source:
+# `frame_data_overlay_tick()` (frame_data_overlay.c:1179-1181) contains
+# `if (sa_stop_check() != 0) return; /* super-freeze: don't advance
+# accounting */` — i.e., whenever sa_stop_check() reads nonzero, the ENTIRE
+# per-tick bookkeeping pass (box tracking, active-tick counting, busy-edge
+# latching) is skipped outright for that tick. This is NOT a cosmetic flag:
+# it is a real accounting gap — 51 real game-ticks of this move's own
+# active+early-recovery span were never seen by the tracker at all. Per
+# authoring-policy.md Ruling 2's own admissibility-census rule 2 ("If
+# nonzero: the entry has entered the unvalidated overlay-skips-flash
+# regime — the affected A/R/adv fields are inadmissible for that entry
+# (documented-unasserted, header note), S remains assertable, and the
+# occurrence is logged toward the systemic-pattern counter"): A/R/adv are
+# OMITTED (documented-unasserted, NOT xfailed — xfail would imply "we
+# trust this measurement and it happens to be wrong"; here the measurement
+# itself is admitted incomplete by the overlay's own construction) on ALL
+# THREE legs of this move. This is a SINGLE occurrence (one move, one
+# shape) — below the ≥3-same-shape STOP threshold — but is flagged here
+# prominently as a first-of-kind, program-wide finding for orchestrator
+# follow-up: is this specific to Abare Tosanami's own unusually long
+# flash/freeze duration (14+0's own two-phase dash-then-attack startup
+# notation is consistent with an extended pre-attack freeze that outlasts
+# other supers' own flash), or a harness-side gap that could recur on
+# other long-flash supers not yet measured? Not adjudicated this session
+# (no build available). kd is NOT subject to this gate (an independent,
+# discrete r1-transition-based observation per `fd_is_knockdown_at_atk_idle`,
+# not an accumulated per-tick count) and is asserted normally on HIT.
+#
+# Admissibility census (remaining items, mechanical, from FRAME_TRACE
+# columns): (1) Single-FINAL integrity — exactly one MOVE_START/FINAL per
+# entry's own isolated probe (all legs re-verified in isolation this
+# session after the ordering-trap discovery). (2) Flash-overlap: see
+# FINDING above (FAILS on all 3 legs — first sighting). (3) Contact-A
+# juggle check: HIT A=24 == BLOCK A=24 — PASSES (equal), moot regardless
+# since both are inadmissible per the flash-overlap gate. (4) Shape
+# record: BLOCK box_runs=1/box_a=19/busyr=32 (busyr==measured legacy R=32
+# exactly — corroborating but NOT licensing per Ruling 2, doubly moot
+# here given the flash-overlap gate already governs disposition); HIT
+# box_runs=1/box_a=19/busyr=6 (busyr==measured legacy R=6 exactly, kd=1);
+# WHIFF box_runs=1/box_a=9/busyr=25 (busyr==measured legacy R=25, which
+# ALSO equals oracle Recovery=25 exactly — see WHIFF R DISPOSITION below).
+#
+# WHIFF R IS THE ONE EXCEPTION — asserted. Measured R=25 (legacy) ==
+# busyr=25 == oracle Recovery=25, all three agree exactly. Even though this
+# leg's own window also shows the sastop flash-overlap (F14-59 nonzero),
+# the R figure this leg produces happens to be oracle-exact regardless —
+# asserted as a plain PASS citing the exact match, per this batch's own
+# "measured R == oracle -> assert from-qjson" rule (this takes priority
+# over the flash-overlap OMIT default specifically because the value is
+# independently confirmed correct, not merely "not proven wrong"). A on
+# this same WHIFF leg (measured 9) is NOT similarly exact (oracle 5) and
+# stays OMITTED per the flash-overlap gate, same as the contact legs.
+character: makoto
+oracle: makoto.json
+super_art: 1
+sa_gauge: 3
+inter_entry_wait: 500
+entries:
+
+- label: makoto-sa2-whiff
+  setup: { dist: close, dummy: none }
+  input: "motion 2qcf HK"
+  qjson: { name: "Abare Tosanami" }
+  outcome: WHIFF
+  # Measured S=14(raw, oracle non-numeric "14 + 0", not asserted) A=9(vs
+  # oracle 5, OMITTED per FLASH-OVERLAP FINDING above) R=25(box_runs=1,
+  # box_a=9, busyr=25, T=48, raw_sat=0) — R is oracle-exact (25==25) and
+  # asserted despite the flash-overlap present in this same window (see
+  # WHIFF R IS THE ONE EXCEPTION above). Genuine whiff: at dist:close this
+  # rushing super's own active window (active_pf=10) starts too late to
+  # catch a dummy standing this near, rushing clean past it.
+  expect: { R: from-qjson }
+
+- label: makoto-sa2-block
+  setup: { dist: 150, dummy: stand }
+  input: "motion 2qcf HK"
+  qjson: { name: "Abare Tosanami" }
+  outcome: BLOCK
+  # Measured S=14(raw, not asserted) A=24 R=32 adv=-60 (box_runs=1,
+  # box_a=19, busyr=32, T=114, raw_sat=0). ALL of A/R/adv OMITTED per the
+  # FLASH-OVERLAP FINDING above (sastop nonzero F14-64 inside this entry's
+  # own [0,157] window — the overlay's per-tick accounting was skipped for
+  # 51 real ticks of this move's own active+early-recovery span, per
+  # `frame_data_overlay.c:1179-1181`). Rep-stability confirmed via two
+  # independent runs at dist:100/150/200 (all four distances tested
+  # measure the identical S=14/A=24/R=32/adv=-60 signature) before this
+  # disposition. Not xfailed: the measurement is admitted-incomplete by
+  # construction, not merely "confirmed wrong."
+  expect: {}
+
+- label: makoto-sa2-hit
+  setup: { dist: 250, dummy: none }
+  input: "motion 2qcf HK"
+  qjson: { name: "Abare Tosanami" }
+  outcome: HIT
+  # Measured S=14(raw, not asserted) A=24 R=6 adv=+109 kd=1 (box_runs=1,
+  # box_a=19, busyr=6, T=88, raw_sat=0). Contact-A juggle check PASSES
+  # (HIT A=24 == BLOCK A=24) but is moot: A/R/adv OMITTED per the same
+  # FLASH-OVERLAP FINDING (sastop nonzero F14-64 inside this entry's own
+  # [0,240] window). kd is asserted normally (an independent, discrete
+  # engine observation not subject to the per-tick accounting-skip gate).
+  # No expect.adv regardless: makoto.json's Hit_advantage for this row is
+  # the literal string "-".
+  expect: { kd: 1 }

@@ -281,6 +281,9 @@ deploy)
 set -e
 mkdir -p '${remote_root}/logs'
 rm -f /media/fat/Scripts/3S-ARM.sh '/media/fat/Scripts/3S-ARM_Training_Yun_Ryu_Ryu_Stage.sh' '/media/fat/Scripts/3S-ARM Training Yun Ryu Ryu Stage.sh'
+mkdir -p /media/fat/Scripts
+printf '%s\n' '#!/bin/sh' 'set -eu' 'exec ${remote_root}/scripts/launch-osd.sh "\$@"' > /media/fat/Scripts/3S-ARM.sh
+chmod +x /media/fat/Scripts/3S-ARM.sh
 EOF
 )
     mister_ssh_exec "${host}" "${user}" "${password}" "${wrapper_cmd}"
@@ -330,9 +333,18 @@ deploy-wrapper)
     ;;
 probe)
     mister_require_safe_runtime_root "${remote_root}"
+    probe_cmd=$(cat <<EOF
+set -e
+cd '${remote_root}'
+rm -f logs/last-run.log
+timeout 20 ./scripts/run-3s-arm.sh --probe-renderer-only || rc=\$?
+printf '__PROBE_RC__=%s\n' "\${rc:-0}"
+tail -n 40 logs/backend.log || true
+EOF
+)
     mister_lock_acquire
     mister_require_target_idle "${host}" "${user}" "${password}" "probe"
-    mister_ssh_exec "${host}" "${user}" "${password}" "'${remote_root}/run-3s-arm.sh' --probe-renderer-only"
+    mister_ssh_exec "${host}" "${user}" "${password}" "${probe_cmd}"
     ;;
 smoke)
     mister_require_safe_runtime_root "${remote_root}"

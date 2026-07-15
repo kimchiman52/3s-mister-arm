@@ -1,0 +1,357 @@
+# Oro EX moves corpus - EX/Supers program, wave 4 fan-out
+# (<sp>/exsuper/authoring-policy.md). Satellite corpus (auto-discovered by
+# run-suite.sh's corpus-*.yaml glob, own golden/oro-ex.tsv) - the main
+# corpus-oro.yaml is untouched. Repo @ 4244a1a2. Sibling agents authored
+# urien-ex/alex-ex concurrently this session, file-disjoint. Zero builds
+# this session (FDH_SKIP_BUILD=1 throughout); own isolated rundirs under
+# <sp>/ex-oro/run-{probe1..9,draft1}.
+#
+# Oracle: docs/arcade-frame-data/oro.json, md5 9917bd5e9773c514eef58c5a4431bb47
+# (re-verified this session, matches corpus-oro.yaml's own pin at its
+# line 1-6).
+#
+# SCOPE: Oro has exactly 5 class=EX rows in step0-universe.tsv (rows
+# 39/43/44/48/50): Oniyama (EX), Sun Disk Palm (EX Low), Sun Disk Palm (EX
+# High), Jinchu Nobori (EX), Air Jinchu Nobori (EX). Step0 flagged a trap
+# for this batch ("numeric EX Kishin Riki rows under his SA1 slot - check
+# their CLASS carefully") - verified directly: step0 row 54 "EX Kishin
+# Riki" is class=SUPER, sa_slot=1 (the 2-stock SA1 variant per its own
+# SLOT-NOTE), NOT class=EX - correctly EXCLUDED from this corpus's scope.
+# 4 of the 5 EX rows are authored below; Sun Disk Palm (EX High) is
+# documented as an unresolved-input-recipe gap (see its own section) -
+# same disposition class as the repo's existing Q Dashing-Head-Attack
+# long-charge-variant gap (CORPUS-AUTHORING.md Phase 5 register: "document
+# the gap, don't guess the input, wants-follow-up").
+#
+# Air Jinchu Nobori (EX) IS authored (WHIFF only) rather than deferred as
+# AIR_DEFERRED, per this batch's brief: air EX moves are reachable via
+# `press UP; wait 3; motion ...` (Makoto Tsurugi EX precedent,
+# corpus-makoto-ex.yaml's own TSURUGI JUMP-PRECONDITION FINDING) - verified
+# to identify the correct move here too (S=8/A=7 exact oro.json match), not
+# assumed from the Makoto precedent.
+#
+# Motion recipes (Phase 5 motion-probe method - S-value match against the
+# oracle, empirically confirmed this session, not recalled from memory):
+#   - Oniyama (EX): `hold DOWN 60; hold UP+LP+HP 2; wait 1` - the base
+#     Oniyama family's own charge-down-then-up macro
+#     (corpus-oro.yaml's `motion charge-down 60 then-up LP`) with the
+#     final step's button chorded to LP+HP (cmd_motion's charge-down macro
+#     only accepts a single button token; `hold`'s chord parser takes
+#     '+'-joined tokens - identical workaround to corpus-ryu-ex.yaml's own
+#     EX Hadouken/Shoryuken precedent). Confirmed via probe1
+#     (<sp>/ex-oro/run-probe1): S=5/A=25, exact match to oro.json's
+#     Oniyama (EX) row.
+#   - Sun Disk Palm (EX Low): `hold LEFT 60; hold RIGHT+LP+HP 2; wait 1` -
+#     the base family's own charge-back-then-forward macro
+#     (`motion charge-back 60 then-forward HP`), same chord workaround.
+#     Confirmed via probe1: S=15, exact match to oro.json's Sun Disk Palm
+#     (EX Low) row; also confirmed insensitive to which two punches are
+#     chorded (LP+MP and MP+HP both reproduce S=15 identically, probe2) and
+#     to charge duration (60/90/150 frames all reproduce S=15, probe4) -
+#     i.e. this really is the canonical charge-back-then-forward input,
+#     not a coincidental partial match.
+#   - Sun Disk Palm (EX High): UNRESOLVED - see its own section below.
+#     NOT authored.
+#   - Jinchu Nobori (EX): `hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2;
+#     hold RIGHT+LK+HK 2; wait 1` - the base family's own DP-shape
+#     hold-chain (corpus-oro.yaml's Jinchu Nobori (Short) recipe), two
+#     kicks chorded onto the final step. Confirmed via probe1: S=31/A=12,
+#     exact match to oro.json's Jinchu Nobori (EX) row.
+#   - Air Jinchu Nobori (EX): `press UP; wait 3; hold RIGHT 2; hold DOWN 2;
+#     hold DOWN+RIGHT 2; hold RIGHT+LK+HK 2; wait 1` - the Makoto Tsurugi
+#     EX jump-preamble precedent applied to Oro's own DP-shape chain.
+#     Confirmed via probe1 and draft1 (<sp>/ex-oro/run-draft1): S=8/A=7,
+#     exact match to oro.json's Air Jinchu Nobori (EX) row (distinct from
+#     both the grounded Jinchu Nobori (EX)'s S=31 and the non-EX Air Jinchu
+#     Nobori's S=8/A=6 - unambiguous identification). Grounded execution of
+#     the identical chord (no jump preamble) instead reproduces the
+#     GROUNDED EX move's own S=31/A=12/R=0 signature (probe6,
+#     `oro-exairjinchu-d70-nojump`) - confirming the jump preamble is what
+#     selects the air variant, not incidental.
+#
+# Admissibility census (per-entry, mechanical, from FRAME_TRACE columns -
+# authoring-policy.md Ruling 2), run over the full draft1 corpus
+# (<sp>/ex-oro/run-draft1/trace.log`, 12 entries: all except Air Jinchu
+# Nobori's BLOCK/HIT, which never produced a FINAL at all - see that
+# section): (1) single-FINAL integrity - a Python census over every
+# entry's [SCRIPT-label, next-SCRIPT-label) window found exactly one
+# FINAL per entry, zero merges; (2) sastop census - zero nonzero sastop
+# ticks in any entry's window (expected: EX moves carry no super flash);
+# (3) HIT-leg contact-A juggle check (HIT A asserted only if it equals the
+# BLOCK leg's own displayed A) - passes on every move that has both legs
+# (Oniyama 25==25, Sun Disk Palm Low 26==26, Jinchu Nobori 12==12); (4)
+# shape record: Oniyama EX box_runs=1/proj=0 (all 3 legs); Sun Disk Palm EX
+# Low box_runs=0/proj=1 (a genuine projectile, all 3 legs - proj_a
+# 26-29); Jinchu Nobori EX box_runs=1/proj=0 (BLOCK/HIT legs).
+character: oro
+oracle: oro.json
+inter_entry_wait: 250
+sa_gauge: 3
+entries:
+
+# --- Oniyama (EX) (teleport-strike, charge-down-then-up+2P) -----------------
+# ORACLE-FIELD-INCOMPARABILITY (not a divergence, same family as the base
+# corpus's own Oniyama (Jab/Strong/Fierce) rows): oro.json's Recovery field
+# for Oniyama (EX) is NEGATIVE (-43), structurally incapable of matching
+# this harness's R metric (always >=0, a post-active tick count) - the
+# same MASK-1 disposition already adopted for the base corpus
+# (corpus-oro.yaml lines ~727-820, ERRATA.md §2, user decision 2026-07-11).
+# Measured R=42/43 (WHIFF/HIT vs BLOCK, self-consistent T=S+A+R=71-72 each
+# time, cut=1 on all three) and adv=+0/-47/+52 (WHIFF/BLOCK/HIT) - neither
+# field asserted, per the identical base-family convention (which omits
+# both R and adv, not just R, for this move family - corpus-oro.yaml's own
+# oro-oniyama-lp-* entries assert only S/A). S=5/A=25 are EXACT matches to
+# oro.json's Oniyama (EX) row on all three outcomes - unambiguous
+# identification, zero #17-family A-side finding (HIT-leg A (25) equals
+# the BLOCK-leg's A (25), juggle check trivially passes). kd measures 1 on
+# HIT (oracle Hit_advantage="-", no oracle KD marker - not asserted, same
+# as the base family's own precedent for this reason). Census: single-
+# FINAL, sastop=0, box_runs=1, proj=0 (all three legs).
+# UPDATED 2026-07-13 (CONTACT-2, lever R, design.md §8.3.2): the BLOCK/HIT
+# legs' displayed R churns 42->43 - lever R's busy-edge construction
+# (`fd_contact_busy_edge_r`, frame_data_overlay.c §13.19) now measures
+# both contact legs at R=43, landing exactly on the WHIFF leg's own
+# already-displayed R=43 (lever N busy-edge) - the same family-internal
+# corroboration as the base `oro-oniyama-lp` pre-authorized drift (28->29)
+# just below in corpus-oro.yaml. R stays unasserted this payload (MASK-1
+# convention, oracle Recovery=-43 structurally incomparable); rows stay
+# PASS on S/A, verdict-inert.
+
+- label: oro-exoniyama-whiff
+  setup: { dist: 250, dummy: none }
+  input: "hold DOWN 60; hold UP+LP+HP 2; wait 1"
+  qjson: { name: "Oniyama (EX)" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson }
+
+- label: oro-exoniyama-block
+  setup: { dist: close, dummy: stand }
+  input: "hold DOWN 60; hold UP+LP+HP 2; wait 1"
+  qjson: { name: "Oniyama (EX)" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson }
+
+- label: oro-exoniyama-hit
+  setup: { dist: close, dummy: none }
+  input: "hold DOWN 60; hold UP+LP+HP 2; wait 1"
+  qjson: { name: "Oniyama (EX)" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson }
+
+# --- Sun Disk Palm (EX Low) (short-range projectile, charge-back-then-
+#     forward+2P) --------------------------------------------------------
+# REACHABILITY NOTE: this move is a short-range palm strike, not a
+# screen-crossing fireball, despite dispatching through the same generic
+# Att_HADOUKEN function as the base family's Jab/Strong/Fierce (confirmed
+# via source read this session, src/sf33rd/Source/Game/engine/
+# plpatuni.c:118-136 - Att_HADOUKEN is a reused generic "spawn whatever
+# hitbox wk->as already resolved" dispatcher, not fireball-specific). The
+# base corpus's own header documents an identical reachability shape for
+# the non-EX rows ("only Jab actually connects against a standing dummy
+# anywhere in the scriptable range... Strong/Fierce WHIFF identically at
+# EVERY tested distance", corpus-oro.yaml ~line 625) - EX Low shares Jab's
+# own R=27 signature exactly (oro.json: Jab Recovery=27, EX Low
+# Recovery=27), consistent with EX Low being Jab-tier reach, and it does
+# connect at dist:close here, matching that expectation.
+#
+# WHIFF is oracle-exact on both comparable fields (S/R). A is never
+# assertable (oro.json's Hit field for every Sun Disk Palm row, including
+# EX Low, is the non-numeric literal "-", verified directly - same
+# reasoning as every Hadouken-family/projectile row in this repo).
+#
+# RESOLVED (EX-CONTACT-R disposition #6, exsuper/excontact-r-findings.md
+# §3 item 6 / §1.10 / M3 — new §12.2.4 registry row "proj-split
+# late-despawn contact R/adv collapse", docs/frame-data-synthesis.md).
+# Raw FINALs (<sp>/ex-oro/run-final1/trace.log): WHIFF (S=15 A=29 R=27
+# T=42 proj=1 proj_a=29 proj_spawn_raw=15 natend=0); BLOCK (S=15 A=26 R=2
+# T=42 adv=+21 first_active_raw=35 proj_a=26 natend=1); HIT (S=15 A=26 R=2
+# T=42 adv=+22 first_active_raw=35 proj_a=26 natend=1). Attacker's own busy
+# total T=42 on ALL THREE legs; WHIFF R=27 = oracle 27 exact -> the
+# oracle's Recovery is the attacker's post-throw recovery, path-
+# independent. On contact the slow disk connects at raw 35 (travel =
+# 35-15 = 20 ticks) and despawns NATURALLY at raw 41 (natend=1); the
+# §13.12 proj-split A window runs to despawn, leaving R = the
+# post-despawn attacker-busy remainder = 2 - purely display semantics of
+# lever J on a projectile whose lifetime outlives the attacker's recovery
+# (the base Sun Disk Jab, fast/instant contact, measures R=27 exact on all
+# legs - corpus-oro.yaml Nichirin section - confirming the despawn-time
+# dependence). adv: measured 21 = arcade Block_advantage 1 + travel 20
+# EXACTLY - the already-converted remy-lov F10 arithmetic (measured adv =
+# arcade adv + projectile travel ticks, §12.2.4 Block-adv row, three
+# members closed exactly, docs/frame-data-synthesis.md line ~5824). HIT
+# +22 = the 1-tick hitstun differential. R stays omitted on both contact
+# legs - structurally unassertable for this move class (asserted instead
+# via the WHIFF leg above, which is exact); adv converts to the measured
+# literal (F10-signature member, same arithmetic, quotable). Census:
+# single-FINAL, sastop=0, box_runs=0, proj=1 (all three legs).
+
+- label: oro-exsundisklow-whiff
+  setup: { dist: 250, dummy: stand }
+  input: "hold LEFT 60; hold RIGHT+LP+HP 2; wait 1"
+  qjson: { name: "Sun Disk Palm (EX Low)" }
+  outcome: WHIFF
+  expect: { S: from-qjson, R: from-qjson }
+
+- label: oro-exsundisklow-block
+  setup: { dist: close, dummy: stand }
+  input: "hold LEFT 60; hold RIGHT+LP+HP 2; wait 1"
+  qjson: { name: "Sun Disk Palm (EX Low)" }
+  outcome: BLOCK
+  # adv=21 asserted (arcade 1 + travel 20, F10 arithmetic; see comment
+  # above). R omitted (M3 — structurally lives on the WHIFF leg).
+  expect: { S: from-qjson, adv: 21 }
+
+- label: oro-exsundisklow-hit
+  setup: { dist: close, dummy: none }
+  input: "hold LEFT 60; hold RIGHT+LP+HP 2; wait 1"
+  qjson: { name: "Sun Disk Palm (EX Low)" }
+  outcome: HIT
+  # adv=22 asserted (BLOCK's 21 + 1-tick hitstun differential; see comment
+  # above). R omitted (M3 — structurally lives on the WHIFF leg).
+  expect: { S: from-qjson, adv: 22 }
+
+# --- Sun Disk Palm (EX High) - UNRESOLVED INPUT RECIPE, NOT AUTHORED -------
+# oro.json's Startup=21/Recovery=37 row has no confirmed input this
+# session, despite an extensive empirical search (per Phase 5's own
+# motion-probe method - S-value match against the oracle - since the
+# decompiled source could not settle it: src/sf33rd/Source/Game/engine/
+# plpatuni.c's Att_HADOUKEN/Att_HADOUKEN2 carry no input logic at all, and
+# the upstream command-table entries that select between the 5
+# Att_HADOUKEN-dispatching routines (cmd_data.c's p9_cmd_* arrays) are
+# opaque numeric direction/timing codes that a static read could not
+# fully decode - a dedicated research pass confirmed the two remaining
+# entries' motion decodes to "a jitter-tolerant Down/Down-Back charge
+# region, no specific release direction enforced by the table itself,"
+# but could NOT identify the actual per-strength dispatch mechanism (the
+# per-character exsa_g_ix/nmsa_g_ix assignment table was not found).
+# CANDIDATES TRIED AND RULED OUT (9 distinct inputs, <sp>/ex-oro/
+# run-probe{1,2,3,4,5}): forward+UP chord at the charge-release
+# (S=17/WHIFF - identified as a misfired plain standing Fierce, oro.json
+# Fierce S=17/A=3/R=19 exact match, i.e. no special recognized at all);
+# forward+DOWN chord (S=6 - a misfired Crouching Jab/Short-shaped normal);
+# LP+MP chord and MP+HP chord at the release (both reproduce EX Low's own
+# S=15 exactly - punch-pair choice does not select High); charge-down-
+# then-up+2P (S=5 - lands Oniyama (EX) instead, a different move
+# entirely); crouch-charge+crouch-release, stand-charge+crouch-release,
+# crouch-charge+stand-release (misfire/Low, no High signature); charge
+# duration 20f (misfire, same Fierce signature as the forward+DOWN
+# attempt), 90f, 150f (both reproduce Low's S=15/R=27 exactly - longer
+# charge does not select High); a post-activation buffered UP tap after
+# Low's own release (still reproduces Low); genuine diagonal down-back-
+# charge-then-up-forward-release (Oniyama again) and its mirror
+# up-back-charge-then-down-forward-release (S=9/A=4/R=24, unidentified,
+# not a Sun Disk Palm signature either way). Same disposition class as
+# this repo's existing Q Dashing Head Attack long-charge-variant gap
+# (CORPUS-AUTHORING.md Phase 5 register row 1: "recipe unknown - document
+# the gap, don't guess the input, wants-follow-up") - flagged to the
+# orchestrator/user for follow-up, not guessed, not silently dropped.
+
+# --- Jinchu Nobori (EX) (DP-shape uppercut, hold-chain+2K) ------------------
+# WHIFF-UNREACHABLE(dist=304, walk_in=~6px) - Ruling 1's honest-bound
+# convention. Unlike the base non-EX Jinchu Nobori (Short), which whiffs
+# cleanly at dist=250 (corpus-oro.yaml's own oro-jinchu-lk-whiff), the EX
+# version connects at every harness-reachable distance tried: anchored
+# dist=300 (MOVE_START reads dist=248, i.e. this move's own DP-chain
+# walk-in consumes ~52px of the requested gap - still connects, outcome
+# HIT) and dist_mode:centered dist=310 (re-verified ISOLATED per the
+# momentum-bleed trap below - MOVE_START reads dist=304, walk_in only
+# ~6px this time - STILL connects). This is the honest engine-geometry
+# ceiling; coverage instead comes from the BLOCK/HIT legs + S, per Ruling
+# 1's own stated fallback ("its coverage comes from Ruling 2's contact
+# legs + S").
+#
+# MOMENTUM-BLEED TRAP HIT AND WORKED AROUND (authoring-policy.md §12.1
+# row 2): a first attempt at the centered-310 whiff probe placed it
+# immediately after a connecting HIT entry in the same corpus and read a
+# corrupted MOVE_START dist=114 (not 310) - re-run in total isolation
+# (nothing before it, <sp>/ex-oro/run-probe9) gave the clean dist=304
+# reading quoted above; the final corpus below keeps every WHIFF-shaped
+# attempt out of scope entirely rather than risk the same corruption in
+# the shipped ladder.
+#
+# BLOCK/HIT R: xfail, citing ENGINE-8 CLOSED (docs/plan-frame-data-
+# completion.md's ENGINE-8 row; full closure record at corpus-oro.yaml's
+# own Jinchu Nobori (Short) section, ~line 780-895) - the SAME established
+# mechanism, re-confirmed by trace signature on THIS EX variant rather
+# than assumed from the sibling move: at the BLOCK leg's FINAL
+# (<sp>/ex-oro/run-draft1/trace.log F=1209), P1.r1 already reads 0
+# (Player_normal dispatch) several rows before the FINAL fires, with
+# P1.cghi=14 - the exact generic airborne-neutral-jump family ENGINE-8
+# identified for the non-EX move, and P1.cgix sits at 128-132 (a
+# discontinuous jump matching the sibling's own "cgix jump into cghi=14"
+# signature) while P1.y stays nonzero (134-145, confirming still-airborne,
+# not grounded-idle). Sharing this mechanism is expected, not
+# coincidental: Oro's own decompiled source gives the EX version its own
+# DEDICATED dispatch function, `Att_JINNCHUUWATARI_EX`
+# (src/sf33rd/Source/Game/engine/plpat09.c:227), immediately adjacent to
+# the base `Att_JINNCHUUWATARI` in the same dispatch table - the two are
+# siblings of the identical move family, not unrelated moves that happen
+# to share a symptom. Measured R=0 vs oracle 16 on both legs (T=41=S+A+R
+# self-consistent, cut=0 - matches the non-EX move's own R=0/cut=0
+# signature exactly). S=31/A=12 exact on both legs (HIT-leg A (12) equals
+# BLOCK-leg A (12), juggle check passes). BLOCK adv is EXACT (measured
+# +16, oro.json Block_advantage=16) - same "adv anchored at the bounce"
+# coherence witness ENGINE-8 already established for the sibling move.
+# HIT: oracle Hit_advantage="-" (no oracle KD marker) - kd not asserted,
+# same as the sibling move's own precedent. Census: single-FINAL,
+# sastop=0, box_runs=1, proj=0 (both legs).
+
+- label: oro-exjinchu-block
+  setup: { dist: close, dummy: stand }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LK+HK 2; wait 1"
+  qjson: { name: "Jinchu Nobori (EX)" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: 52, adv: from-qjson, xfail: "[HONEST-FLOOR CENSUS 2026-07-14, opus-substitute / WANTS FABLE RE-REVIEW] TERMINAL CLASS = ENGINE-DIVERGENCE (busy-edge never latches natively; arcade-measured R). RE-ANCHORED 2026-07-14 (ENGINE-JINCHU, lever U, `<sp>/zero/jinchu/plan.md`; Session 6, `<sp>/zero/arcade-track-a/session-report.md`): arcade EX BLOCK measures R=52, asymmetric against the base-LK's symmetric 33/33 (block>hit by 18f, session-report lines 100-104) - supersedes the stale oracle Recovery=16 (FALSIFIED, see docs/arcade-frame-data/ERRATA.md; the oracle's single `Recovery` field is structurally unable to hold the 34/52 HIT/BLOCK split). This leg stays OUTSIDE lever U's reach: like the base `oro-jinchu-lk-block`, the busy 771->768 edge NEVER latches natively on this leg (`busyr=-1`), so `fd_busy_edge_valid` is false and lever R's gate (including the new lever-U G7 disjunct) predicts pred=-1 regardless - mechanically unmeasurable via any busy-edge instrument, an honest engine-vs-arcade divergence, NOT a code-fixable miss. Golden stays untouched at 0/legacy. adv is EXACT (measured +16 == oro.json Block_advantage=16), the same bounce-anchored coherence witness ENGINE-8 already established. Prior history (RELOCATED not deleted): ENGINE-8 CLOSED (docs/plan-frame-data-completion.md's ENGINE-8 row; full closure record at corpus-oro.yaml's own Jinchu Nobori (Short) section) rested on the oracle's Recovery=16, which Session 6 has now falsified as the arcade truth (arcade is 52, not 16) - the closure's own mechanism finding (same signature as the non-EX sibling: P1.r1 already 0/Player_normal dispatch, P1.cghi=14 airborne-neutral-jump family, P1.cgix discontinuous 128-132 jump, P1.y nonzero/never grounded, <sp>/ex-oro/run-draft1/trace.log F=1209) stands unchanged and is exactly why this leg (unlike its HIT sibling) cannot be reached by any busy-edge lever. S=31/A=12 exact. Zero code shipped against this leg; stays xfail with arcade-measured R=52 (was 16), same disposition as the base-LK sibling." }
+
+- label: oro-exjinchu-hit
+  setup: { dist: close, dummy: none }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LK+HK 2; wait 1"
+  qjson: { name: "Jinchu Nobori (EX)" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: 34, xfail: "[HONEST-FLOOR CENSUS 2026-07-14, opus-substitute / WANTS FABLE RE-REVIEW] TERMINAL CLASS = ENGINE-DIVERGENCE (lever U fires but engine recovers 1 frame faster than arcade; genuine 1-frame divergence). RE-ANCHORED 2026-07-14 (ENGINE-JINCHU, lever U, `<sp>/zero/jinchu/plan.md`; Session 6, `<sp>/zero/arcade-track-a/session-report.md`): arcade EX HIT measures R=34, asymmetric against this leg's own BLOCK sibling (R=52) and 1 frame past the base-LK HIT's symmetric 33 - supersedes the stale oracle Recovery=16 (FALSIFIED, see docs/arcade-frame-data/ERRATA.md; the oracle's single `Recovery` field is structurally unable to hold the 34/52 HIT/BLOCK split). Lever U now FIRES on this leg (same engine-identical gate-firer shape as the base-LK HIT: busyr=33, koc=5, box_runs=1, recovery_pf==0 - no engine signal separates the two HIT legs, so lever U fires on both or neither, design.md §9): the overlay display MOVES 0 -> 33 (busy_edge_frame - box_last - 1 = 33, engine-honest, far closer to arcade 34 than the prior 0) but this row STAYS XFAIL - 33 != 34, a genuine 1-frame divergence, not a code-fixable miss (native box_runs=1 vs arcade's 3 active runs/25 raw box frames means the engine's box_last anchor is not hardware's; the engine recovers 1 frame faster than the arcade unit). Golden is engine-truth (33); this expect.R is arcade-truth (34) - independent checks, legitimately differing, same established precedent as UOH-CLOSURE's 'expect.R-literal artifact'. NOT an XPASS (engine 33 != expect 34). Prior history (RELOCATED not deleted): ENGINE-8 CLOSED, same posture and mechanism as oro-exjinchu-block above (see that entry's own comment for the full trace citation) - independently re-traced on this HIT leg's own rows, same r1=0/cghi=14/discontinuous-cgix/still-airborne signature; this was the first and only census member directly contradicted by an arcade capture (RE-CITED 2026-07-13, CONTACT-2 D2 adjudication), now resolved by Session 6 as a genuine 1-frame engine/arcade divergence rather than an open question. S=31/A=12 exact - HIT-leg A (12) equals the BLOCK-leg's A (12), juggle check (Ruling 2 check 3) passes. adv (measured +98) not cross-checked: oro.json Hit_advantage is '-' for this row (no oracle KD marker either - kd=1 measured live but not asserted, same as the sibling move's own precedent for this reason). Zero code shipped this design beyond lever U; stays xfail with arcade-measured R=34 (was 16)." }
+
+# --- Air Jinchu Nobori (EX) (airborne DP-shape uppercut, jump-preamble+
+#     hold-chain+2K) --------------------------------------------------------
+# BLOCK/HIT UNREACHABLE - confirmed via an exhaustive sweep, not assumed:
+# 7 distinct (distance, dummy-guard-mode) combinations were tried against
+# a REACTIVE dummy (<sp>/ex-oro/run-probe6, run-probe7): dist 56/90/130/
+# 180/220/250/300 with dummy:stand, plus dist=180 with dummy:crouch - EVERY
+# one reads outcome=WHIFF with the identical S=8/A=7/R=43 signature (the
+# move never even reaches the box_runs>=1/athok-fires state a real contact
+# would show). The SAME distance (250) with dummy:none instead connects
+# cleanly (outcome=HIT, draft1's own oro-exairjinchu-whiff entry below) -
+# isolating the variable to the dummy's own guard-AI reaction, not
+# distance: a reactive dummy (stand or crouch) evades this specific air
+# move at every tested range, matching this repo's own accepted SDB
+# precedent shape (CORPUS-AUTHORING.md Phase 5 register row 2: "SDB
+# HIT/BLOCK unreachable - the harness dummy can't be scripted to jump;
+# WHIFF is the only assertable outcome for anti-air-only [moves]
+# (accepted)") - same disposition, WHIFF is the only assertable outcome
+# for this move in this harness.
+#
+# WHIFF: S=8/A=7 exact match to oro.json's Air Jinchu Nobori (EX) row
+# (identity unambiguous - distinct from every other Oro special's own
+# S-signature). R measured 44 (T=61, cut=0) vs oro.json's Recovery=30 - an
+# UNEXPLAINED divergence with NO cross-check leg available (BLOCK/HIT are
+# both structurally unreachable per above, so WHIFF cannot be corroborated
+# against a contact leg the way every other move in this file is).
+# CORPUS-AUTHORING.md Phase 4's own STOP rule applies in spirit ("an
+# unexplained whiff divergence is a STOP, not an xfail... halt, report the
+# finding, get orchestrator/user input") - this session has no synchronous
+# orchestrator channel, so the conservative action is taken instead:
+# expect.R is OMITTED (not asserted, not xfailed with an invented
+# mechanism) and this finding is flagged prominently here and in
+# oro-ex-report.md for orchestrator/user follow-up, per Phase 6's final
+# fallback rule ("a no-bucket-fits divergence is xfail + UNCLASSIFIED,
+# never a new invented mechanism claim... flagged... for follow-up") -
+# no hypothesis is offered for the R gap since none was investigated this
+# session (budget-bounded, not guessed). S/A stay asserted (exact,
+# reproducible across every one of the 8 distance/dummy variants tried).
+# Census: single-FINAL, sastop=0, box_runs=2, proj=0.
+
+- label: oro-exairjinchu-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press UP; wait 3; hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LK+HK 2; wait 1"
+  qjson: { name: "Air Jinchu Nobori (EX)" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson }

@@ -1,0 +1,151 @@
+# Twelve Super Art 3 (X.C.O.P.Y.) — EX/Supers program, supers wave S6.
+# Satellite corpus (auto-discovered by run-suite.sh's corpus-*.yaml glob, own
+# golden/twelve-sa3.tsv once registered) — corpus-twelve.yaml/corpus-twelve-
+# ex.yaml/corpus-twelve-sa1.yaml/corpus-twelve-sa2.yaml are untouched.
+#
+# Scope: <sp>/exsuper/step0-universe.tsv rows "twelve 43 X.C.O.P.Y."
+# (sa_slot 3, INSTALL_MAXIMUM, "INSTALL/TIMED(X.C.O.P.Y. (activation)
+# S=12)") and "twelve 44 X.C.O.P.Y." (2nd row, INSTALL_MAXIMUM,
+# "INSTALL/TIMED(X.C.O.P.Y. (2nd row) S=73)"). Both rows share the IDENTICAL
+# Name string "X.C.O.P.Y." in twelve.json (duplicate names — needs
+# qjson.index per the q.json "Dashing Head Attack" precedent,
+# CORPUS-AUTHORING.md Phase 1). Oracle: docs/arcade-frame-data/twelve.json
+# (md5 988a8990c264119260ca85a5e7bd465d, unchanged, re-verified this
+# session). Oracle row 43 (index 0): Startup=12, Hit/Recovery/
+# Block_advantage/Hit_advantage all literal "-". Oracle row 44 (index 1):
+# Startup=73, same all-"-" shape otherwise.
+#
+# Meter: sa_gauge:3 (MAXIMUM — per authoring-policy.md's install-super
+# policy; INFINITY is FORBIDDEN for installs, it would freeze the timer)
+# + super_art:2 (0-indexed SA3).
+#
+# X.C.O.P.Y. is a TRANSFORM install (copies the opponent's moveset) with no
+# attack property of its own, per the task's own framing. Per that framing's
+# own precedent split ("Tanden Renki null-entry if no MOVE_START fires;
+# Genei Jin/Aegis activation-entry if one does"): a real MOVE_START/FINAL
+# pair DOES fire here (unlike Makoto Tanden Renki's own zero-signal null
+# case) — this file follows the Genei Jin/Aegis Reflector activation-entry
+# precedent, NOT the Tanden Renki NONE-outcome precedent.
+#
+# IDENTITY — confirmed BY ELIMINATION (Twelve has exactly 3 SA slots per
+# step0-universe.tsv, no EXTRA/JUDGMENT rows; SA1=X.N.D.L. and SA2=
+# X.F.L.A.T. are independently identified at super_art:0/1 in the sibling
+# corpora authored this same session, leaving super_art:2 as X.C.O.P.Y. by
+# elimination — same standard as the Makoto SA3 Tanden Renki precedent's own
+# "by elimination" identity confirmation) PLUS a reproducible, distinctive,
+# non-zero measured signature (below) — stronger evidence than Tanden
+# Renki's own pure-elimination case, since here the oracle has at least one
+# live numeric Startup field to compare against (even though it doesn't
+# match exactly — see S DISPOSITION).
+#
+# MOTION / REPRODUCIBILITY (this session, <sp>/sa-twelve/run-sa3-multi/,
+# run-sa3-iso/, run-sa3-ctx/, run-sa3-2ndrow/ trace.logs): "motion 2qcf LP"
+# and "motion 2qcf HP" BOTH measure the IDENTICAL S=17/A=0/R=0/T=17 signature
+# — a real MOVE_START->FINAL pair with a genuinely EMPTY tracked active
+# window (box_runs=0), matching the Genei Jin/Aegis Reflector "activation,
+# no active window" class exactly. Confirmed context-independent across 4
+# probes: dist:250/dummy:none (LP, HP), dist:close/dummy:stand (LP,
+# isolated), and reproduced again with an extra 200-frame post-input wait
+# appended (no second FINAL ever appears within the same dispatch — see
+# the OUT-OF-SCOPE note below). "motion 2qcf HK"/"MK"/"MP"/"LK"/"2qcb HP"
+# all fall through to unrelated, clearly-identifiable fallback moves
+# (Roundhouse S=17/A=3/R=25 exact on HK; A.X.E. (Strong) S=14/A=11/R=17
+# exact on 2qcb+HP; other kick strengths land smaller unidentified normals
+# with real nonzero A/R, clearly NOT the empty-activation shape) — confirms
+# the punch-only, strength-invariant dispatch is specific to this slot, not
+# a globally-triggerable fallback.
+#
+# OUT OF SCOPE — the oracle's own SECOND row ("2nd row", Startup=73) was
+# explicitly tested for this session (appending "; wait 200" after the LP
+# dispatch, run-sa3-2ndrow/trace.log) — NO second MOVE_START/FINAL cycle
+# ever appears within or after the same activation's own window; the
+# harness measures only the single T=17 signature every time, regardless of
+# how much additional neutral time is scripted afterward. Per this
+# program's own install-super convention (Genei Jin/Aegis Reflector/Healing/
+# Sei-ei Enbu: "the install's own duration/effects are out of scope,
+# documented gap, not guessed"), the "2nd row" — most plausibly the
+# install's own total copy-duration/cooldown rather than a second
+# independently-dispatchable event — is OUT OF SCOPE for this corpus, same
+# posture as every other install super's own duration/effects. No entry
+# below attempts to assert or approximate row 44's Startup=73; only row 43
+# (index 0, the activation) is referenced.
+#
+# Admissibility census (mechanical, from FRAME_TRACE columns — authoring-
+# policy.md Ruling 2), all 4 probes this session:
+# (1) Single-FINAL integrity: exactly one MOVE_START/FINAL pair per probe's
+#     own window in every isolated run (run-sa3-iso's own 2-entry corpus:
+#     F86-103 for LP, F104-139 for the OTHER-move MK control, no bleed
+#     between them — confirmed via direct awk window census this session).
+# (2) Flash-overlap census: 0 nonzero sastop ticks in the LP activation's
+#     own window (0/18, awk census this session, run-sa3-census/trace.log).
+# (3) Contact-A juggle check: N/A — no A is ever asserted (oracle's Hit
+#     field for both rows is the literal string "-", and the measured A=0
+#     is itself the "no active window" sentinel, not a real active-frame
+#     count to juggle-check) — matching Genei Jin/Aegis Reflector's own
+#     posture exactly.
+# (4) Shape record: proj=0, box_runs=0, T=17 in every context — a true
+#     single-instant activation with no tracked attack geometry at all.
+#
+# S DISPOSITION — RE-DISPOSITIONED 2026-07-14 (INSTALL-SUPER ADJUDICATION,
+# <sp>/zero/install-adj/adjudication.md §2, opus-substitute / WANTS FABLE
+# RE-REVIEW): DOCUMENTED TERMINAL DIVERGENCE, not an open UNCLASSIFIED
+# item. X.C.O.P.Y. is a genuine TWO-SUB-PHASE activation
+# (sa-twelve/run-sa3-multi/trace.log F=86-102): sub-phase 1 is F=86-95
+# (10 frames, pat_status=22, cgix 52->56->60->64); at F=96 cg_ix RESETS
+# 64->0 and pat_status resets 22->0 (a distinct animation restart); sub-
+# phase 2 is F=96-102 (7 frames, pat=0, cgix restarts 0->4->8->12). r1
+# stays =4 across the F=96 boundary (never returns to 0), so the engine's
+# r1-idle heuristic cannot subdivide the two phases and faithfully reports
+# the FULL two-phase span (10+7=17). Oracle row-43 Startup=12 counts only
+# sub-phase 1 — which is exactly why twelve.json publishes X.C.O.P.Y. as
+# TWO rows (Startup 12 + row-44's 73): the move genuinely has two chart
+# segments; the engine's r1 granularity is coarser than the oracle's
+# per-segment split. The engine is ARCADE-FAITHFUL here, not buggy: the
+# identical finalize path (§1 of the adjudication) matches oracle EXACTLY
+# for the three single-phase sibling installs in this same program (Yun
+# Genei Jin 9=9, Q Total Destruction 18=18, Yang Sei-ei Enbu 15=15) — 3/5
+# installs hit oracle exactly on this path, proving the measurement
+# mechanism is correct; only this move's genuine two-phase structure
+# produces the +5. NO suite-safe lever reproduces 12: the only internal
+# signal (cgix-reset-while-r1=4) sits at frame offset 10, not 12, and
+# "cgix resets while r1 unchanged" is not a general idle signal (looped/
+# chained animations legitimately reset cgix mid-move) — gating on it
+# would risk truncating other moves' windows; a fix would require
+# hardcoding Twelve specifically, which this program's policy forbids. Do
+# NOT adopt the real arcade actionable-return (~95f, session-6/7,
+# arcade-s7/session-report.md:214) — that is a THIRD quantity, categorically
+# larger than both engine and oracle for the whole install family (see
+# adjudication.md §6); folding it in would redefine the install-family
+# oracle-Startup convention and break the 3 currently-exact siblings.
+# Stays XFAIL as an honest engine-vs-chart-granularity divergence — a
+# terminal, not a lever candidate. Golden value unchanged (S still
+# asserted at oracle=12, still fails at measured=17).
+#
+# A/R/adv DISPOSITION — NOT assertable, matching Genei Jin/Aegis Reflector/
+# Sei-ei Enbu's own precedent exactly: twelve.json's Hit/Recovery/
+# Block_advantage/Hit_advantage fields for row 43 are ALL the literal string
+# "-" (from-qjson would raise CompileError on any of them). The harness's
+# own measured A=0/R=0/adv=+0 are the engine's "nothing happened" sentinel
+# values for a non-attacking activation, not comparable numeric quantities.
+character: twelve
+oracle: twelve.json
+super_art: 2
+sa_gauge: 3
+inter_entry_wait: 500
+entries:
+
+- label: twelve-sa3-activation
+  setup: { dist: close, dummy: stand }
+  input: "motion 2qcf LP"
+  qjson: { name: "X.C.O.P.Y.", index: 0 }
+  outcome: WHIFF
+  # Measured S=17 (IDENTICAL across 4 independent contexts this session,
+  # see file header) A=0 R=0 adv=+0 (box_runs=0, proj=0, T=17) — a true,
+  # context-independent single-instant activation with no attack property,
+  # matching Genei Jin/Aegis Reflector's own shape exactly. No expect.A/R/
+  # adv: twelve.json's own fields for this row are all the literal "-" (see
+  # file header A/R/adv DISPOSITION). S diverges from oracle's Startup=12
+  # (+5, rep-stable) — asserted at the oracle value; see file header S
+  # DISPOSITION for the 2026-07-14 DOCUMENTED TERMINAL DIVERGENCE ruling
+  # (two-sub-phase activation, no suite-safe lever, engine arcade-faithful).
+  expect: { S: from-qjson, xfail: "DOCUMENTED TERMINAL DIVERGENCE (RE-DISPOSITIONED 2026-07-14, <sp>/zero/install-adj/adjudication.md §2, opus-substitute / WANTS FABLE RE-REVIEW; supersedes the 2026-07-13 UNCLASSIFIED framing). S measured=17 vs oracle row-43 Startup=12 (+5). X.C.O.P.Y. is a genuine two-sub-phase activation (sa-twelve/run-sa3-multi/trace.log F=86-102): sub-phase 1 F=86-95 (pat_status=22, cgix 52->64), then a cgix 64->0 reset + pat_status 22->0 at F=96 (a distinct animation restart), then sub-phase 2 F=96-102 (pat=0, cgix restarts 0->12). r1 stays =4 across the F=96 boundary (never returns to 0), so the engine's r1-idle heuristic cannot subdivide the two phases and faithfully reports the FULL two-phase span (10+7=17); oracle row-43 counts only sub-phase 1 (12) - which is why twelve.json publishes this move as TWO rows (Startup 12 + row-44's 73). The identical finalize path matches oracle EXACTLY for the three single-phase sibling installs in this program (Yun Genei Jin 9=9, Q Total Destruction 18=18, Yang Sei-ei Enbu 15=15), proving the measurement is arcade-faithful - the +5 is a genuine chart-granularity vs r1-granularity difference specific to this two-phase move, not an overlay bug. No suite-safe lever reproduces 12: the only internal signal (cgix-reset-while-r1=4) sits at frame offset 10 not 12, and 'cgix resets while r1 unchanged' is not a general idle signal (looped/chained animations legitimately reset cgix mid-move) - a fix would require hardcoding Twelve specifically, forbidden by this program's policy. Real arcade actionable-return is ~95f (session-6/7, arcade-s7/session-report.md:214) - a THIRD quantity, categorically larger than both engine and oracle for the whole install family; deliberately NOT adopted (would redefine the install-family oracle-Startup convention and break the 3 currently-exact siblings). Stays XFAIL as an honest engine-vs-chart-granularity divergence, not a lever candidate. A/R/adv are not assertable at all (oracle fields are the literal string \"-\"; measured A=0/R=0/adv=+0 are the engine's own \"nothing happened\" sentinel, per file header A/R/adv DISPOSITION)." }

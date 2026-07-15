@@ -1,0 +1,8 @@
+label	verdict	outcome	n	S	A	R	adv	kd
+ibuki-exkubiori-block	PASS	BLOCK	1	15	10	10	-6	0
+ibuki-exkubiori-hit	PASS	HIT	1	15	2	40	+145	1
+ibuki-exkazekiri-whiff	PASS	WHIFF	1	4	11	33	+0	0
+ibuki-exkazekiri-block	PASS	BLOCK	1	4	11	33	-21	0
+ibuki-exkazekiri-hit	PASS	HIT	1	4	11	29	-15	0
+ibuki-extsumuji-block	PASS	BLOCK	1	7	3	28	-11	0
+ibuki-extsumuji-hit	PASS	HIT	1	7	3	28	+63	1

@@ -1,0 +1,365 @@
+# Remy EX moves corpus — EX/Supers program, wave-6 fan-out (FINAL EX wave;
+# Ruling 5, <sp>/exsuper/authoring-policy.md; EXSUPER-1 tracker row,
+# docs/plan-frame-data-completion.md). Satellite corpus (auto-discovered by
+# run-suite.sh's corpus-*.yaml glob, own golden/remy-ex.tsv) — the main
+# corpus-remy.yaml is untouched.
+#
+# Oracle: docs/arcade-frame-data/remy.json (same file corpus-remy.yaml
+# already pins, md5 3ab25a67f9b0b85aa1a7501c850b6289 — not re-fetched this
+# session, reusing the existing pin). Scope: Remy's EX-class rows per
+# <sp>/exsuper/step0-universe.tsv — rows 32/33/37/38 (Light of Virtue (EX
+# High)/(EX Low), each name appearing TWICE with different Recovery/
+# Block_advantage — see the LOV DUPLICATE-ROW FINDING below), row 42
+# (Rising Rage Flash (EX)), row 46 (Cold Blue Kick (EX)). Remy's three
+# supers (Light of Justice, Supreme Rising Rage Flash, Blue Nocturne) are
+# SUPER-class, out of scope for this EX corpus.
+#
+# Every expect below was pinned against a live trace of the FINAL entry
+# order shipped in this file (tools/frame-data/run.sh
+# tools/frame-data/corpus-remy-ex.yaml) — see the ORDERING FINDING below for
+# why entry order here is load-bearing, not cosmetic. Determinism confirmed
+# x2 (two independent runs, byte-identical FINAL lines for all 13 asserting
+# entries).
+#
+# ============================================================================
+# ORDERING FINDING (NEW harness limitation, this session) — LOV-FAMILY
+# ADJACENCY CORRUPTION. A Light of Virtue EX attempt (High OR Low strength,
+# ANY outcome including a clean WHIFF with zero contact) leaves the move-id's
+# own engine state such that the VERY NEXT Light-of-Virtue-family attempt's
+# MOVE_START never registers: the trace instead reports a degenerate FINAL
+# (S=0, a fixed A/R/adv signature byte-identical across every reproduction —
+# e.g. S=0 A=66 R=0 adv=+20 recurred identically in three independent scratch
+# probes at inter_entry_wait 250/300/600, ruling out a settle-time race —
+# this is a stable misattribution, not noise). A DIFFERENT move family
+# (Rising Rage Flash / Cold Blue Kick, tested here) is immune both ways: it
+# always re-syncs cleanly regardless of what preceded it, and its own
+# contact never poisons a LOV attempt that follows it. Confirmed empirically
+# (5 scratch probes, <sp>/ex-remy/probe1..8*.yaml, run1..8): a plain,
+# larger inter_entry_wait does NOT fix it (probe3, wait=600, same exact
+# corrupted reading) — only a different-family spacer between every pair of
+# LOV-family entries does. This file's entry order alternates every LOV
+# entry with an RRF-EX or CBK-EX entry for exactly this reason; do not
+# reorder without re-verifying (a determinism/reorder regression here would
+# silently misattribute an entry's own numbers to the wrong move, worse than
+# a simple FAIL). Flagged for the tooling program's own §12.1-style register
+# (harness limitation, not an engine/oracle divergence) — no fix attempted
+# here (out of this satellite's scope; RRF/CBK spacers make every needed
+# leg reachable without one).
+#
+# ============================================================================
+# LOV DUPLICATE-ROW FINDING (the wave-5-flagged "hotspot", resolved
+# empirically, NOT by assumption — same class as the already-documented DHA
+# fast/long-charge duplicate-Name rows, CORPUS-AUTHORING.md Phase 1).
+# remy.json has TWO rows each for "Light of Virtue (EX High)" (index 0 =
+# row 32: Recovery=24/Block_advantage=4; index 1 = row 37: Recovery=28/
+# Block_advantage=0) and "Light of Virtue (EX Low)" (index 0 = row 33:
+# Recovery=24/Block_advantage=4; index 1 = row 38: Recovery=28/
+# Block_advantage=0) — Startup=8 identical on all four, so S cannot
+# disambiguate. This repo's ONLY known motion recipe for LOV EX (charge-back
+# 60 then-forward, final button chorded per the strength — see MOTION
+# RECIPES below) empirically reaches:
+#   - EX High -> index 0 (row 32, R=24/adv=4) — measured R=24 exactly on
+#     WHIFF/BLOCK/HIT, no divergence. Ships with the DEFAULT qjson index
+#     (index omitted = 0).
+#   - EX Low -> index 1 (row 38, R=28/adv=0) — measured R=28 exactly on
+#     BLOCK/crouch/HIT (LOV Low's own WHIFF is unreachable, see below), no
+#     divergence. Ships with explicit `qjson: {index: 1}`.
+# The OTHER duplicate row for each strength (EX High row 37, EX Low row 33)
+# has NO known recipe to reach with this harness — same disposition as the
+# already-accepted "DHA long-charge variant recipe unknown" gap
+# (CORPUS-AUTHORING.md Phase 5 known-traps register): documented here as an
+# honest gap, not guessed at, not asserted.
+#
+# ============================================================================
+# MOTION RECIPES (Phase 5 motion-probe method, reusing corpus-remy.yaml's
+# own established base-move motion identities — "motion charge-back 60
+# then-forward <BTN>" for Light of Virtue, "motion charge-down 60 then-up
+# <BTN>" for Rising Rage Flash, "motion qcb <BTN>" for Cold Blue Kick — with
+# the final step's button replaced by a two-button chord via `hold`,
+# identical workaround to every sibling EX corpus in this program since
+# `cmd_motion` only accepts a single button token per motion arm while
+# `hold`'s chord parser takes '+'-joined tokens):
+#   - Light of Virtue (EX High): `hold LEFT 60; hold RIGHT+LP+HP 2; wait 1`
+#     — same 60-frame charge as corpus-remy.yaml's own LOV Jab/Short
+#     entries, two punches chorded onto the snap step.
+#   - Light of Virtue (EX Low): `hold LEFT 60; hold RIGHT+LK+HK 2; wait 1`
+#     — same shape, two kicks chorded on.
+#   - Rising Rage Flash (EX): `hold DOWN 60; hold UP+LK+HK 2; wait 1` — same
+#     60-frame charge as corpus-remy.yaml's own RRF (Short) entry (K-only
+#     family per remy.json — Short/Forward/RH/EX all K-strength, no P
+#     variant exists), two kicks chorded on.
+#   - Cold Blue Kick (EX): `hold DOWN 2; hold DOWN+LEFT 2; hold LEFT+LK+HK 2;
+#     wait 1` — manual qcb step sequence (DOWN/DOWN+LEFT/LEFT, mirroring
+#     `motion qcb <BTN>`'s own internal steps since P1 faces right, so "qcb"
+#     is DOWN then DOWN+BACK then BACK), two kicks chorded onto the final
+#     step (CBK is also K-only per remy.json).
+#
+# ============================================================================
+# LOV EX HIGH — STRUCTURAL FINDING (verify-vs-assumption discipline, same
+# method as corpus-remy.yaml's own base-LOV High/Low crouch probes). The
+# BASE (non-EX) Light of Virtue (P) passes clean OVER a crouching defender
+# (corpus-remy.yaml's own remy-lov-lp-crouch-probe: genuine WHIFF). The EX
+# High version does NOT inherit this — a dummy:crouch probe at dist:close
+# measures a genuine BLOCK (S=8, matching the standing-BLOCK leg's own S;
+# A=66/R=0/adv=+20, notably NOT matching the standing-BLOCK leg's own A=36/
+# R=24/adv=+21 — a real, reproducible difference between guard states,
+# confirmed byte-identical in an isolated single-entry re-verification with
+# zero predecessor, <sp>/ex-remy/probe6.yaml). EX High is therefore a
+# genuine mid/overhead-capable attack that connects against crouchers in
+# this engine build — the opposite structural fact from its own base move,
+# exactly the "test, don't inherit blindly" result the wave-5 guidance
+# names. R/adv are NOT asserted for the crouch leg (no oracle field is
+# comparable to this guard-state-specific value; only S is safely
+# assertable, same posture as any structural-finding entry with no numeric
+# oracle counterpart).
+#
+# LOV EX LOW — WHIFF-UNREACHABLE (Ruling 1). At dist:250 (dummy:none) the
+# projectile connects (outcome HIT, not WHIFF — S=8 A=70 R=36 adv=+37,
+# scratch probe1/4/5). Re-tested at the dist_mode:centered hard ceiling
+# (dist:310, achieved ~330px separation) and it STILL connects
+# (<sp>/ex-remy/probe7.yaml: S=8 A=70 R=28 adv=+37) — a genuine reach fact
+# (same class as Dudley Machine Gun Blow (EX) / Q Dashing Leg Attack (EX)
+# both exceeding their own base move's whiff-reachable range), not a
+# harness defect. No WHIFF entry is shipped for this move; its S/R coverage
+# comes entirely from the BLOCK/crouch/HIT legs below (R=28 exact on every
+# reachable leg, no divergence at all — see the F10 note below). Cold Blue
+# Kick (EX) shows the SAME reach-extension shape at dist:250 (connects,
+# S=18 A=12-15 R=9 adv=+72-78 depending on trace position) but DOES
+# genuinely whiff at the dist_mode:centered ceiling (dist:310 — S=18 A=9
+# R=10 adv=+0, exact oracle match, <sp>/ex-remy/probe7.yaml) — shipped at
+# that distance below.
+#
+# ============================================================================
+# LOV EX (High + Low) — R/adv DISPOSITION (F10 travel-time family, already
+# established — corpus-remy.yaml's own base LOV Jab/Short BLOCK entries are
+# the precedent, "§13.13 SCOPE EXTENSION, F10": measured adv = arcade adv +
+# projectile travel ticks). R is oracle-exact on EVERY reachable leg for
+# BOTH strengths (WHIFF/BLOCK/HIT all R=24 for High; BLOCK/crouch/HIT all
+# R=28 for Low) — unlike Oro's Sun Disk Palm (EX Low) M3 late-despawn
+# collapse (excontact-r-findings.md §1.10), Remy's own EX LOV projectile
+# does NOT reproduce that collapse; R stays the plain canonical value on
+# every leg, asserted via from-qjson throughout. adv on BLOCK legs is the
+# F10 realized-advantage literal (arcade adv + travel, valid only at this
+# entry's own pinned `dist: close`): High BLOCK measured +21 = arcade
+# Block_advantage 4 + travel 17; Low BLOCK measured +14 = arcade
+# Block_advantage 0 (row 38) + travel 14. HIT-leg adv is never checked
+# (remy.json's Hit_advantage is the literal "-" for every Light of Virtue
+# row, same non-numeric-field convention as every other projectile section
+# in this repo — matches corpus-remy.yaml's own base LOV HIT entries). A is
+# never asserted anywhere in this section (same "-" Hit field).
+#
+# ============================================================================
+# RISING RAGE FLASH (EX) — clean WHIFF, UNCLASSIFIED contact-only A+R joint
+# deficit (adv exact). WHIFF measures S=6 A=5 R=41, oracle-exact on all
+# three fields (remy.json row 42: Startup=6, Hit=5, Recovery=41) — the
+# trace's own cut=0/dwellbrk=0 confirms this leg does NOT reproduce the
+# base (non-EX) Rising Rage Flash's own "ENGINE-2" false-cut signature
+# (corpus-remy.yaml's own base RRF section: cut=1 with anchor_a=engine_a on
+# ALL THREE legs, a uniform -3 R undershoot even on WHIFF) — EX's WHIFF is
+# fully clean, a genuine "test, don't inherit" divergence from its base.
+# BLOCK/HIT both measure A=3/R=38 (down from WHIFF's own A=5/R=41 — a joint
+# 2-tick/3-tick deficit together, not just one field), while adv is
+# oracle-exact on BLOCK (measured -21 = remy.json Block_advantage exactly).
+# The trace shows cut=0/anchor_a=engine_a on every leg (a genuine natural
+# r1-edge finalize, not a false-cut artifact) — the A/R deficit is real
+# contact-branch content, not an instrument misread. This does NOT match
+# Phase-6 bucket 7 ("Contact-only R-deficit with S/A/adv exact") since A
+# also diverges here, nor bucket 1 (A-only) since R also diverges; it also
+# does NOT match the base move's own established §12.2.3 F3 A-OVERCOUNT
+# shape (remy-rrf-lk-block/-hit, corpus-remy.yaml) since that member
+# OVERcounts (+1) relative to ITS OWN oracle A=3, while this EX member
+# UNDERcounts (-2) relative to ITS OWN oracle A=5 — opposite sign, a
+# different shape, exactly the "test, don't inherit" outcome the wave-5
+# guidance warned this family might not show. Contact-A juggle check
+# (Ruling 2 item 3): BLOCK A=3 == HIT A=3, PASS, admissible. UNCLASSIFIED,
+# flagged 2026-07-12 for follow-up classification. HYPOTHESIS ONLY (not
+# confirmed): a genuinely shorter contact-branch chart trims frames from
+# both the active and recovery counts together on contact, while adv
+# (computed independently from idle-timestamp deltas) still lands at the
+# correct value regardless of which chart played. S/adv stay asserted
+# (from-qjson, exact); A/R are xfailed at the arcade values.
+#
+# ============================================================================
+# COLD BLUE KICK (EX) — clean WHIFF (unlike its base), contact-only A+R
+# shift kept conservatively XFAIL by base-family precedent (adv exact).
+# WHIFF (at dist_mode:centered 310, the reachable distance — see the
+# WHIFF-UNREACHABLE note above) measures S=18 A=9 R=10, oracle-exact on all
+# three fields (remy.json row 46: Startup=18, Hit=9, Recovery=10) — notably
+# CLEAN, unlike the base (non-EX) Cold Blue Kick's own WHIFF, which carries
+# a small "+1/-1 sum-preserving boundary variance" (corpus-remy.yaml:
+# A=11/R=9 vs arcade 10/10). BLOCK/HIT both measure A=11/R=9 (up 2 / down 1
+# from the EX WHIFF's own clean A=9/R=10), while adv is oracle-exact on
+# BLOCK (measured -1 = remy.json Block_advantage exactly). Contact-A juggle
+# check: BLOCK A=11 == HIT A=11, PASS, admissible. Per the wave-5 guidance's
+# own instruction to read the base family before classifying ("Remy CBK
+# (EX) — base cbk contact legs are the same-tick interior-transition
+# credit-banking row"): the base move's OWN contact-leg divergence was
+# provisionally classified as "same-tick interior-transition credit
+# banking" (§12.2.4, CONFIRMED-PENDING-GRANT) but its conversion was
+# ultimately left FULLY XFAIL (2026-07-11 LAYER-1 finding: an
+# arcade+twin hardware capture proved the base WHIFF's own boundary-tick
+# reading was a meter/overlay artifact, not engine truth — "G2 CBK
+# precondition VOID... stays xfail at oracle values pending the meter
+# fix," corpus-remy.yaml's own COLD BLUE KICK section). This EX leg's own
+# WHIFF does NOT carry that same boundary-tick artifact (it is fully
+# clean) — a genuinely different, simpler shape (test, don't inherit
+# blindly) — but given the base family's own resolution stayed
+# unconverted pending an overlay/meter-side fix that has not landed, this
+# EX leg is kept to the SAME conservative disposition rather than
+# asserting a value that may prove to be a related meter artifact once
+# investigated. UNCLASSIFIED (hedged kinship to the base family's §12.2.4
+# row, NOT asserted as confirmed identical), flagged 2026-07-12 for
+# follow-up. S/adv stay asserted (from-qjson, exact); A/R are xfailed at
+# the arcade values.
+#
+# ============================================================================
+# ADMISSIBILITY CENSUS (Ruling 2, mechanical, from the shipped file's own
+# trace — confirmed on TWO independent runs, byte-identical FINAL lines):
+#   (1) Single-FINAL integrity: exactly 13 FINAL annotations for the 13
+#       asserting entries (one each), zero for the NONE negative control —
+#       no label-bleed anywhere in the SHIPPED order (the ordering finding
+#       above is what made this possible).
+#   (2) Flash-overlap census (sastop gate): 0 nonzero `sastop` data-row
+#       ticks across the entire trace (awk census, header/docstring lines
+#       excluded) — EX moves confirmed flash-free.
+#   (3) Contact-A juggle check: RRF-EX BLOCK A=3 == HIT A=3, PASS; CBK-EX
+#       BLOCK A=11 == HIT A=11, PASS. LOV EX has no assertable A (oracle
+#       Hit field is "-" for every Light of Virtue row), so the check is
+#       moot there — not a gate failure.
+#   (4) Shape record: LOV EX (High/Low) is proj=1/box_runs=0 on every leg
+#       (projectile-split path, matching its own base move's own shape).
+#       RRF-EX and CBK-EX are both proj=0/box_runs=1 (single-run contact)
+#       on every leg.
+character: remy
+oracle: remy.json
+inter_entry_wait: 250
+sa_gauge: 3
+entries:
+
+# --- Light of Virtue (EX High), motion charge-back 60 then-forward LP+HP --
+
+- label: remy-lov-exhigh-whiff
+  setup: { dist: 250, dummy: none }
+  input: "hold LEFT 60; hold RIGHT+LP+HP 2; wait 1"
+  qjson: { name: "Light of Virtue (EX High)" }
+  outcome: WHIFF
+  expect: { S: from-qjson, R: from-qjson }
+
+# --- Rising Rage Flash (EX) WHIFF — SPACER (ordering finding, see header) --
+
+- label: remy-rrf-ex-whiff
+  setup: { dist: 250, dummy: none }
+  input: "hold DOWN 60; hold UP+LK+HK 2; wait 1"
+  qjson: { name: "Rising Rage Flash (EX)" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: remy-lov-exhigh-block
+  setup: { dist: close, dummy: stand }
+  input: "hold LEFT 60; hold RIGHT+LP+HP 2; wait 1"
+  qjson: { name: "Light of Virtue (EX High)" }
+  outcome: BLOCK
+  expect: { S: from-qjson, R: from-qjson, adv: 21 }
+
+# --- Rising Rage Flash (EX) BLOCK — SPACER ---------------------------------
+# UNCLASSIFIED contact-only A+R joint deficit (see header) - S/adv only.
+
+- label: remy-rrf-ex-block
+  setup: { dist: close, dummy: stand }
+  input: "hold DOWN 60; hold UP+LK+HK 2; wait 1"
+  qjson: { name: "Rising Rage Flash (EX)" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson, xfail: "[HONEST-FLOOR CENSUS 2026-07-14, opus-substitute / WANTS FABLE RE-REVIEW] TERMINAL CLASS = OVERLAY-DISPLAY-DIVERGENCE (contact A+R joint deficit, whiff-anchored). Arcade-true = A5/R41: this move's own clean WHIFF sibling PASSes at A=5/R=41 == oracle; adv=-21 is oracle-exact. NON-SURGICAL: the contact-branch chart is genuinely shorter on both fields together (box_a=3 vs whiff 5); no local contact-tape signal reaches the whiff value (same non-re-anchorable class as contactA/design). Golden stays oracle=5/41, XFAIL. Prior disposition (unchanged): UNCLASSIFIED contact-only A+R joint deficit (flagged 2026-07-12): measured A=3/R=38 vs this move's own clean WHIFF A=5/R=41 (arcade-exact); adv=-21 matches remy.json Block_advantage exactly. Trace: cut=0/dwellbrk=0/anchor_a=engine_a=3 on every leg (a genuine natural r1-edge finalize, NOT the base move's own ENGINE-2 false-cut shape - this EX leg's WHIFF is fully clean, ruling that out). Does not fit Phase-6 bucket 7 (requires A exact) or bucket 1 (requires R exact) since BOTH fields diverge together; does not match the base move's own established §12.2.3 F3 A-OVERCOUNT precedent (remy-rrf-lk-block, corpus-remy.yaml) since that member OVERcounts relative to its own oracle A, while this EX member UNDERcounts relative to its own oracle A=5 - opposite sign, a different shape (test, don't inherit blindly, per the wave-5 guidance). Contact-A juggle check (Ruling 2 item 3): BLOCK A=3 == HIT A=3, PASS, admissible. HYPOTHESIS ONLY, not confirmed: a genuinely shorter contact-branch chart trims frames from both the active and recovery counts together, while adv (computed from idle-timestamp deltas independently) still lands correctly. Flagged for follow-up classification." }
+
+- label: remy-lov-exhigh-crouch
+  setup: { dist: close, dummy: crouch }
+  input: "hold LEFT 60; hold RIGHT+LP+HP 2; wait 1"
+  qjson: { name: "Light of Virtue (EX High)" }
+  outcome: BLOCK
+  expect: { S: from-qjson }
+
+# --- Rising Rage Flash (EX) HIT — SPACER -----------------------------------
+# Same UNCLASSIFIED shape as the BLOCK leg above (A=3/R=38, matching BLOCK's
+# own displayed A - juggle check passes, admissible). adv not cross-checked
+# (remy.json Hit_advantage is "-" for this row); the measured +78 is the
+# large-number KD convention already used throughout corpus-remy.yaml
+# (kd=1, kdr2=18, a genuine knockdown).
+
+- label: remy-rrf-ex-hit
+  setup: { dist: close, dummy: none }
+  input: "hold DOWN 60; hold UP+LK+HK 2; wait 1"
+  qjson: { name: "Rising Rage Flash (EX)" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, kd: 1, xfail: "[HONEST-FLOOR CENSUS 2026-07-14, opus-substitute / WANTS FABLE RE-REVIEW] TERMINAL CLASS = OVERLAY-DISPLAY-DIVERGENCE (contact A+R joint deficit, whiff-anchored). Same as the BLOCK leg (juggle 3==3): arcade-true A5/R41 via this move's clean WHIFF sibling; non-surgical whiff-anchored. Golden stays oracle=5/41, XFAIL. Prior disposition (unchanged): Same UNCLASSIFIED contact-only A+R joint deficit as remy-rrf-ex-block (measured A=3/R=38 vs this move's own clean-WHIFF A=5/R=41); A(3) equals the BLOCK leg's displayed A(3), juggle check PASSES, admissible. See remy-rrf-ex-block's comment for the full trace citation and HYPOTHESES-ONLY note - same disposition, flagged 2026-07-12." }
+
+- label: remy-lov-exhigh-hit
+  setup: { dist: close, dummy: none }
+  input: "hold LEFT 60; hold RIGHT+LP+HP 2; wait 1"
+  qjson: { name: "Light of Virtue (EX High)" }
+  outcome: HIT
+  expect: { S: from-qjson, R: from-qjson }
+
+# --- Cold Blue Kick (EX) WHIFF — SPACER (dist_mode:centered, see header) ---
+
+- label: remy-cbk-ex-whiff
+  setup: { dist: 310, dummy: none, dist_mode: centered }
+  input: "hold DOWN 2; hold DOWN+LEFT 2; hold LEFT+LK+HK 2; wait 1"
+  qjson: { name: "Cold Blue Kick (EX)" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# --- Light of Virtue (EX Low), motion charge-back 60 then-forward LK+HK ---
+# qjson.index:1 - see LOV DUPLICATE-ROW FINDING (header): this recipe
+# empirically reaches row 38 (R=28/adv=0), not row 33 (R=24/adv=4, the
+# qjson default index=0, unreachable with any known recipe).
+
+- label: remy-lov-exlow-block
+  setup: { dist: close, dummy: stand }
+  input: "hold LEFT 60; hold RIGHT+LK+HK 2; wait 1"
+  qjson: { name: "Light of Virtue (EX Low)", index: 1 }
+  outcome: BLOCK
+  expect: { S: from-qjson, R: from-qjson, adv: 14 }
+
+# --- Cold Blue Kick (EX) BLOCK — SPACER ------------------------------------
+# UNCLASSIFIED contact-only A+R shift (see header) - S/adv only.
+
+- label: remy-cbk-ex-block
+  setup: { dist: close, dummy: stand }
+  input: "hold DOWN 2; hold DOWN+LEFT 2; hold LEFT+LK+HK 2; wait 1"
+  qjson: { name: "Cold Blue Kick (EX)" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson, xfail: "RECLASSIFIED 2026-07-14, ARCADE-CONFIRMED METER-OVERCOUNT (was UNCLASSIFIED) - <sp>/zero/contactA/design.md + <sp>/zero/arcade-s12/session-report.md, opus-substitute / WANTS FABLE RE-REVIEW: session-12 hardware capture proved arcade active-frames == ORACLE (9) for this leg; the overlay's displayed A=11 over-counts via the same F13 same-tick declared-credit-banking family as the base remy-cbk rows (corpus-remy.yaml) stacked with a +1 hitstop-boundary tick. A frz-excluded strict re-anchor was designed and full-universe census-tested: reproduces oracle on this row and 5 siblings, but is engine-signal-INDISTINGUISHABLE from 113 other currently-PASS contact-A rows it would regress (structural-twin proof: ken-srk-lp-block / sean-dragonsmash-mp-block need the OPPOSITE value on byte-identical gate signals) - NON-SURGICAL, no lever ships. Oracle STANDS; TERMINAL-KNOWN-VALUE (true value hardware-confirmed, no suite-safe blind lever exists). Golden unchanged; A stays asserted at oracle=9, measured=11, XFAIL. R clause CLOSED 2026-07-13 (CONTACT-2, lever R, design.md §8.3.3): lever R's busy-edge construction (`fd_contact_busy_edge_r`, frame_data_overlay.c §13.19) measures this contact leg at R=10, landing exactly on this move's own clean-WHIFF oracle value (byte-identical shape to the sanctioned base `remy-cbk-lk` conversion, corpus-remy.yaml). Prior history (RELOCATED not deleted): UNCLASSIFIED contact-only A+R shift (flagged 2026-07-12), kept conservatively XFAIL by base-family precedent: measured A=11/R=9 (legacy) vs this move's own clean WHIFF A=9/R=10 (arcade-exact, unlike the BASE move's own WHIFF which carries a small +1/-1 boundary variance, corpus-remy.yaml); adv=-1 matches remy.json Block_advantage exactly. Contact-A juggle check: BLOCK A=11 == HIT A=11, PASS, admissible. Per wave-5 guidance ('base cbk contact legs are the same-tick interior-transition credit-banking row'): the base move's own contact-leg divergence was provisionally classified under that §12.2.4 mechanism (CONFIRMED-PENDING-GRANT) but its conversion was ultimately left FULLY XFAIL - a 2026-07-11 LAYER-1 arcade+twin hardware capture proved the base WHIFF's own boundary-tick reading was a meter/overlay artifact, not engine truth ('G2 CBK precondition VOID... stays xfail at oracle values pending the meter fix', corpus-remy.yaml's COLD BLUE KICK section). This EX leg's own WHIFF is fully clean (no boundary-tick artifact) - a genuinely simpler, different shape (test, don't inherit blindly) - but given the base family's own unconverted, pending-meter-fix disposition, this EX leg stays conservatively XFAIL rather than asserting a value that may prove to be a related meter artifact once investigated. Flagged for follow-up classification." }
+
+- label: remy-lov-exlow-crouch
+  setup: { dist: close, dummy: crouch }
+  input: "hold LEFT 60; hold RIGHT+LK+HK 2; wait 1"
+  qjson: { name: "Light of Virtue (EX Low)", index: 1 }
+  outcome: BLOCK
+  expect: { S: from-qjson, R: from-qjson, adv: 14 }
+
+# --- Cold Blue Kick (EX) HIT — SPACER --------------------------------------
+# Same UNCLASSIFIED shape as the BLOCK leg above (A=11/R=9, matching
+# BLOCK's own displayed A - juggle check passes). adv not cross-checked
+# (remy.json Hit_advantage is "-"); measured +72 is the large-number KD
+# convention (kd=1, kdr2=19, genuine knockdown).
+
+- label: remy-cbk-ex-hit
+  setup: { dist: close, dummy: none }
+  input: "hold DOWN 2; hold DOWN+LEFT 2; hold LEFT+LK+HK 2; wait 1"
+  qjson: { name: "Cold Blue Kick (EX)" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, kd: 1, xfail: "RECLASSIFIED 2026-07-14, ARCADE-CONFIRMED METER-OVERCOUNT (was UNCLASSIFIED) - <sp>/zero/contactA/design.md + <sp>/zero/arcade-s12/session-report.md, opus-substitute / WANTS FABLE RE-REVIEW: same finding as remy-cbk-ex-block - session-12 hardware capture proved arcade active-frames == ORACLE (9); the overlay's displayed A=11 over-counts via the same F13 credit-banking family stacked with a +1 hitstop-boundary tick. A frz-excluded strict re-anchor was designed and full-universe census-tested: reproduces oracle on this row and 5 siblings, but is engine-signal-INDISTINGUISHABLE from 113 other currently-PASS contact-A rows it would regress (structural-twin proof: ken-srk-lp-block / sean-dragonsmash-mp-block need the OPPOSITE value on byte-identical gate signals) - NON-SURGICAL, no lever ships. Oracle STANDS; TERMINAL-KNOWN-VALUE. Golden unchanged. R clause CLOSED 2026-07-13 (CONTACT-2): same R-clause closure as remy-cbk-ex-block (busy-edge R=10, oracle-exact). Prior history (RELOCATED not deleted): same UNCLASSIFIED contact-only A+R shift as remy-cbk-ex-block (measured A=11/R=9 legacy vs this move's own clean-WHIFF A=9/R=10); A(11) equals the BLOCK leg's displayed A(11), juggle check PASSES, admissible. See remy-cbk-ex-block's comment for the full trace citation and base-family kinship note." }
+
+- label: remy-lov-exlow-hit
+  setup: { dist: close, dummy: none }
+  input: "hold LEFT 60; hold RIGHT+LK+HK 2; wait 1"
+  qjson: { name: "Light of Virtue (EX Low)", index: 1 }
+  outcome: HIT
+  expect: { S: from-qjson, R: from-qjson }
+
+# --- Negative control (plan section 1.8 item 5 precedent) ------------------
+
+- label: remy-jump-none
+  setup: { dist: 250, dummy: none }
+  input: "press UP"
+  outcome: NONE

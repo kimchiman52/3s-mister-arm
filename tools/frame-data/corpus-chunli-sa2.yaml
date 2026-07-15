@@ -1,0 +1,148 @@
+# Chun-Li Super Art 2 (Houyoku Sen) — EX/Supers program, SUPERS PILOT trio
+# (authoring-policy.md Ruling 5: "Pilot trio: chunli-sa2, ken-sa3, ryu-sa1 —
+# the 2b-probed shapes: single-run, multi-run, proj-split"). Chun-Li is the
+# clean single-run shape (box_runs=1). Satellite corpus (auto-discovered by
+# run-suite.sh's corpus-*.yaml glob, own golden/chunli-sa2.tsv once
+# registered) — the main corpus-chunli.yaml/corpus-chunli-ex.yaml are
+# untouched.
+#
+# Scope: step0-universe.tsv row 22 (chunli SA2, "Houyoku Sen", sa_slot 2).
+# Oracle: docs/arcade-frame-data/chunli.json (md5 pinned in
+# corpus-chunli.yaml's own header; re-verified unchanged this session).
+# Oracle row: Startup=2, Hit=19, Recovery=35, Block_advantage=-23,
+# Hit_advantage="-" (non-numeric).
+#
+# Meter: sa_gauge:3 (MAXIMUM) + super_art:1 (0-indexed SA2, identity
+# confirmed by step2b's own 6-button motion sweep, re-confirmed this
+# session).
+#
+# Motion (identity found empirically in step2b, NOT the naively-expected
+# back-motion): "motion 2qcf HK". The first bet ("2qcb HK"/"2qcb LK",
+# back-motion double-QCB) falls back to bare normals — Houyoku Sen is
+# qcf-qcf, same shape as Ken/Ryu's own SAs, not qcb-qcb (step2b §2, 6-button
+# sweep, `<sp>/exsuper/2b/corpus-chunli-sa2-probe.yaml`). Reproduced this
+# session with "2qcf HK" landing S=2 both legs — identity confirmed, not
+# assumed from the plan's naive naming.
+#
+# Admissibility census (per-entry, mechanical, from FRAME_TRACE columns —
+# authoring-policy.md Ruling 2), this session's own isolated 2-entry probe
+# run (<sp>/exsuper/sa-pilot/chunli/run-probe1/trace.log,
+# inter_entry_wait:500) plus a dedicated WHIFF probe (run-probe2):
+# (1) Single-FINAL integrity — exactly one FINAL inside each entry's own
+# window (BLOCK F51-196; HIT F248-468, the last entry, open-ended), values
+# sane and consistent with step2b's own preserved measurement on the same
+# move (box_a=19/busyr=35 on the HIT leg here reproduces step2b's own
+# box_a=19/busyr=35 exactly). (2) Flash-overlap census: 0 nonzero-sastop
+# ticks in [MOVE_START row-F, FINAL row-F] on both legs (0/146 BLOCK
+# F51-196, 0/221 HIT F248-468 — awk census this session) — flash-free
+# measurement, matches step2a-report.md/step2b §3's own finding, now
+# extended to this move's BLOCK leg specifically (2b only measured its own
+# HIT/full-combo leg). (3) Contact-A juggle check (HIT legs only): HIT-leg
+# legacy-displayed A=19 vs BLOCK-leg legacy-displayed A=20 — FAILS (they are
+# NOT equal, the mirror-image of the Ken SA3/Ryu EX Joudan shape: here BLOCK
+# reads the surplus, not HIT). HIT-leg A is therefore documented-unasserted
+# (omitted) per the same policy, even though 19 happens to equal the oracle
+# exactly — the juggle check is a mechanical proxy gate, not an oracle
+# lookup, and does not get an oracle-match exception. (4) Shape record:
+# box_runs=1 on BOTH legs (box_a=20 BLOCK, box_a=19 HIT, busyr=38 BLOCK,
+# busyr=35 HIT) — the clean single-run shape this pilot's third leg was
+# picked to exercise; box_a/busyr are diagnostics only (Ruling 2), not
+# licensed to assert directly on a contact leg.
+#
+# A DISPOSITION (BLOCK leg only — a NEW finding this session, not previously
+# recorded). Measured legacy-displayed A=20 on BLOCK vs oracle/box_a=19 (a
+# +1 overcount; adv=-23 and S=2 are both oracle-exact on the same leg,
+# ruling out a wrong-move/wrong-window read). Shape matches CORPUS-
+# AUTHORING.md Phase 6 bucket 8 ("Contact-only A-OVERCOUNT with S/adv
+# exact... different wrong values per outcome = different branch cells")
+# by signature only — no per-tick declared-credit ledger trace was taken
+# this session to confirm the mechanism (out of this pilot's scope; the
+# bucket's own bar requires "its own ledger trace before citing the
+# mechanism as established," same as every other unconverted bucket-8
+# sighting, e.g. `sean-ryuubi-*`/`dudley-jetup-*` before their own SWEEP-2
+# conversions). Classified as an unconfirmed bucket-8 CANDIDATE, xfailed
+# (not converted, not omitted — A is a comparable, numeric oracle field,
+# so FIELD-MASK does not apply either): expect.A keeps the true oracle
+# value (19) via from-qjson, expect.xfail records the measured 20.
+#
+# R DISPOSITION (both legs — the SAME M1 mechanism excontact-r-findings.md
+# already named for Ken SA3, now independently confirmed on a SECOND move).
+# Legacy-displayed R reads 0 on BOTH legs, with T=72=FD_METER_LEN exactly
+# on both (raw[] capture saturation) — the busyr diagnostic gives the real
+# candidate: BLOCK busyr=38, HIT busyr=35 (=oracle EXACTLY, reproducing
+# step2b's own box_a=19/busyr=35 reading on the HIT leg byte-for-byte). Per
+# Ruling 2 (E-1/E-4), a busyr/oracle match is NOT license to assert R via
+# that diagnostic on a contact leg — box/busy agreement was shown
+# (CONTACT-1, E-4) to be the exception, not a rule, and the validated
+# contact instrument is the legacy displayed path, which is truncated here.
+# R is therefore OMITTED on both legs (not asserted, not guessed) — the
+# same "omit with the M1 citation" idiom used for Ken SA3 below, now a
+# second named member of the same instrument-saturation class (not a new
+# quarantine seed: this is the SAME mechanism excontact-r-findings.md
+# already resolved for Dudley MGB (EX) BLOCK and Ken SA3 BLOCK, just newly
+# observed on this move).
+#
+# WHIFF-UNREACHABLE(dist=300 centered, walk_in=198px) — Ruling 1's honest-
+# bound convention, PRE-REGISTERED as the expected outcome for this move
+# specifically ("advancing 2qcf supers with large walk-in (Chun SA2 +199px
+# => <=~130px effective) will mostly land in the WHIFF-UNREACHABLE bucket").
+# Probe (<sp>/exsuper/sa-pilot/chunli/run-probe2/trace.log): dist:300
+# dist_mode:centered (10px inside CENTERED_DIST_MAX=310) still connects
+# (outcome=HIT S=2 A=19 adv=+79 — same shape as the HIT leg above, not a
+# census/shape problem). MOVE_START's own annotation reads dist=102 (not
+# 300) — this move's own pre-MOVE_START walk-in consumes ~198px of the
+# requested separation, reproducing 2b's own +199px measurement almost
+# exactly (this time under centered rather than anchored placement); the
+# ~102px effective separation left is well inside Houyoku Sen's own reach
+# (it connects even at plain dist:close=56px per the BLOCK/HIT legs above).
+# No further binary search attempted — matches Ruling 1's own prediction
+# for this exact move by name, so a single near-max probe is sufficient to
+# confirm rather than refute it. Coverage for this move instead comes from
+# the BLOCK/HIT legs above, per Ruling 1 ("its coverage comes from
+# Ruling 2's contact legs + S").
+character: chunli
+oracle: chunli.json
+super_art: 1
+sa_gauge: 3
+inter_entry_wait: 500
+entries:
+
+- label: chunli-sa2-block
+  setup: { dist: close, dummy: stand }
+  input: "motion 2qcf HK"
+  qjson: { name: "Houyoku Sen" }
+  outcome: BLOCK
+  # Measured S=2 A=20 R=0(NOT asserted, see R DISPOSITION above) adv=-23
+  # (box_runs=1, box_a=20, busyr=38, T=72). S/adv oracle-exact; A is a
+  # CANDIDATE bucket-8 overcount (see A DISPOSITION above) — arcade A=19 is
+  # asserted, measured 20 is xfailed, not silently substituted.
+  # BUFFER-1 (2026-07-13, corrected): capture raise un-truncates; post-fix
+  # measured R=38 = engine-busy count (busyr); published table says
+  # Recovery=35 (docs/arcade-frame-data/chunli.json, Houyoku Sen) -
+  # non-oracle-equal, same disposition family as yun-sa1 block/hit. R left
+  # unasserted pending divergence classification (the busyr==oracle
+  # equality does NOT hold on this leg, unlike the other 21 clean M1
+  # conversions - do not assert it just because this entry's existing
+  # A-overcount xfail umbrella would silently absorb the mismatch).
+  expect: { S: from-qjson, A: from-qjson, adv: from-qjson, xfail: "[HONEST-FLOOR CENSUS 2026-07-14, opus-substitute / WANTS FABLE RE-REVIEW] TERMINAL CLASS = TERMINAL-NON-SURGICAL (contact-A overcount, 113-regression). Arcade s12=19 (docs/arcade-frame-data/CAPTURE.md Session 12; <sp>/zero/contactA/design.md 1.1): box_a_frz strict=19 == oracle == arcade - the oracle IS the arcade-true active value, the overlay over-counts by the +1 hitstop-boundary tick. NON-SURGICAL: the frz-excluded re-anchor is engine-signal-INDISTINGUISHABLE from 113 currently-PASS contact rows it would regress (structural-twins ken-srk-lp / sean-dragonsmash-mp, contactA/design 3-4); a block-only special-case is banned. Golden stays oracle=19, XFAIL. Prior disposition (unchanged): CANDIDATE contact-only A-overcount, unconfirmed (CORPUS-AUTHORING.md Phase 6 bucket 8 shape by signature only: S=2/adv=-23 both oracle-exact, measured A=20 vs oracle 19, a +1 overcount). No per-tick declared-credit ledger trace taken this session to confirm the mechanism - stays a candidate, not converted, per the bucket's own bar (candidates never convert without their own ledger trace). box_a=20 (legacy A and the diagnostic agree exactly, ruling out a legacy-vs-diagnostic split) at box_runs=1 (single contiguous run, T=72=FD_METER_LEN)." }
+
+- label: chunli-sa2-hit
+  setup: { dist: close, dummy: none }
+  input: "motion 2qcf HK"
+  qjson: { name: "Houyoku Sen" }
+  outcome: HIT
+  # Measured S=2 A=19 R=0(NOT asserted, see R DISPOSITION above) adv=+79
+  # (box_runs=1, box_a=19, busyr=35, kd=1, T=72) - reproduces step2b's own
+  # box_a=19/busyr=35 reading on this same move byte-for-byte. S
+  # oracle-exact. A is NOT asserted despite reading the oracle-exact value
+  # (19): the contact-A juggle check (Ruling 2 check 3) FAILS (measured
+  # HIT A=19 != BLOCK A=20) - documented-unasserted per policy, a
+  # mechanical gate, not an oracle lookup. No expect.adv: chunli.json's
+  # Hit_advantage for this row is the literal string "-". BUFFER-1
+  # (2026-07-13): R now asserted from-qjson — post-fix measured R=35 ==
+  # busyr == oracle exactly.
+  expect: { S: from-qjson, R: from-qjson }
+
+# No WHIFF entry for Houyoku Sen - see the
+# WHIFF-UNREACHABLE(dist=300 centered, walk_in=198px) note in this
+# section's header above.

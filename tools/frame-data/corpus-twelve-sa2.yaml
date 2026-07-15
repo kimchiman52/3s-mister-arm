@@ -1,0 +1,231 @@
+# Twelve Super Art 2 (X.F.L.A.T.) — EX/Supers program, supers wave S6.
+# Satellite corpus (auto-discovered by run-suite.sh's corpus-*.yaml glob, own
+# golden/twelve-sa2.tsv once registered) — corpus-twelve.yaml/corpus-twelve-
+# ex.yaml/corpus-twelve-sa1.yaml are untouched.
+#
+# Scope: <sp>/exsuper/step0-universe.tsv rows "twelve 41 X.F.L.A.T." (ground
+# hit, sa_slot 2, ASSERTABLE) and "twelve 42 X.F.L.A.T. (Air hit)" (sa_slot 2,
+# AIR_DEFERRED — see the AIR-VARIANT COVERAGE note below for why this batch's
+# own recipe already measures a grounded contact, not the air-hit variant).
+# Oracle: docs/arcade-frame-data/twelve.json (md5
+# 988a8990c264119260ca85a5e7bd465d, unchanged, re-verified this session).
+# Oracle row 41 ("X.F.L.A.T."): Startup=1, Hit=12, Recovery=49,
+# Block_advantage=-24, Hit_advantage="-". Row 42 ("X.F.L.A.T. (Air hit)"):
+# Startup=1, Hit=12, Recovery=49, Block_advantage="-" (non-numeric — an
+# airborne opponent cannot block), Hit_advantage="-". The two rows share
+# IDENTICAL S/A/R; `qjson: { name: "X.F.L.A.T." }` unambiguously resolves to
+# row 41 (the two rows have DIFFERENT Name strings, no index needed).
+#
+# Meter: sa_gauge:3 (MAXIMUM) + super_art:1 (0-indexed SA2).
+#
+# IDENTITY / MOTION — task's own hint ("very likely AIR-ONLY — try the air
+# idiom EARLY") tested first, per instruction. Ground "motion 2qcf HP" at
+# super_art:1 measured S=16/A=13/R=20 — an EXACT match to the BASE special
+# N.D.L. (Fierce) (twelve.json), not a super at all: 2qcf+P is ALSO N.D.L.'s
+# own ground-special recognition, so it simply re-triggers the special
+# rather than ever reaching super dispatch (confirmed via
+# <sp>/sa-twelve/run-sa2-id/trace.log). The air idiom (`press UP; wait 3;
+# motion ...`, Makoto Tsurugi EX / Oro Air Jinchu Nobori / Twelve's own Air
+# A.X.E. (EX) precedent) landed on the SECOND button tried:
+# `press UP; wait 3; motion 2qcf HK` measured S=1 — a UNIQUE signature among
+# every Twelve move probed in this program (oracle Startup=1, exact match),
+# confirmed via <sp>/sa-twelve/run-sa2-multi/trace.log then isolated 3x
+# (run-sa2-iso, run-sa2-solo-{block,hit,whiff}).
+#
+# TRAVEL-DISTANCE-DEPENDENT CONTACT GEOMETRY (citable signature, per this
+# wave's own authoring-policy.md guidance: "sample >=3 distances before
+# dispositioning"). This move is a genuine air-dive/lunge: Twelve travels a
+# real forward distance during the animation before any hitbox becomes
+# live. Sampled this session (dummy:none throughout, isolated single-entry
+# unless noted):
+#   dist:close(56, real~56)         -> WHIFF S=1 A=12 R=49 (no contact —
+#                                       the dive box activates PAST this
+#                                       range, sailing over a point-blank
+#                                       target)
+#   dist:90/120/150/200/250(anchored, dummy:none) -> ALL WHIFF, S=1
+#                                       A=11-12 R=49 (identical shape,
+#                                       run-sa2-dist.stdout)
+#   dist:220/200(centered,dummy:stand, run in sequence after a connecting
+#                predecessor) -> real dist REDUCED to 113/49 by the same
+#                §12.1-row-2 "momentum bleed after a connecting dash
+#                special" trap X.N.D.L. also hit this session (this move's
+#                own animation displaces Twelve forward even on a clean
+#                WHIFF, corrupting ANY subsequent entry's own teleport —
+#                every number in this file is from a TRUE isolated
+#                single-entry corpus, no predecessor, to sidestep this)
+#   dist:250(centered, real UNREDUCED 250, isolated)  -> CONNECTS: BLOCK
+#                                       S=1 A=2 R=48 adv=-26; HIT S=1
+#                                       A=16 R=77 adv=+50 kd=1
+# 3+ distinct real separations sampled (56/90-250 anchored / 250-centered);
+# the WHIFF/connect boundary sits somewhere between ~168px and 250px real
+# separation (not pinned further — not required for this batch, a working
+# reproducible recipe for each leg is).
+#
+# WHIFF IS THE CLEAN CALIBRATION SURFACE (CORPUS-AUTHORING.md Phase 4) —
+# S/A/R ALL oracle-exact on the WHIFF leg (S=1/A=12/R=49, matching BOTH
+# oracle rows' shared S/A/R precisely). This is the strongest evidence in
+# this whole file: the oracle's own published A/R for this move are the
+# WHIFF-canonical/declared values; BOTH contact legs (BLOCK/HIT) measure
+# DIFFERENT numbers due to contact-triggered mechanisms (see A/R/adv
+# DISPOSITION below).
+#
+# AIR-VARIANT COVERAGE — the default training dummy is grounded/standing;
+# this batch's own connecting-contact recipe (dist:250 centered) therefore
+# measures oracle row 41 (grounded-hit X.F.L.A.T.), not row 42 (X.F.L.A.T.
+# (Air hit), block_adv non-numeric — that variant requires an airborne
+# defender, which this harness cannot script per the program's own
+# AIR_DEFERRED convention for dummy-side airborne contexts). Row 42 stays
+# out of scope, documented not guessed, same posture as every other
+# AIR_DEFERRED row in this program.
+#
+# Admissibility census (mechanical, from FRAME_TRACE columns — authoring-
+# policy.md Ruling 2), all 3 TRUE isolated single-entry probes this session
+# (run-sa2-solo-{whiff,block,hit}):
+# (1) Single-FINAL integrity: exactly one MOVE_START/FINAL pair per probe's
+#     own window, no bleed.
+# (2) Flash-overlap census: 0 nonzero sastop ticks in any window (awk
+#     census this session).
+# (3) Contact-A juggle check (HIT leg): HIT A=16 vs BLOCK A=2 — FAILS
+#     (16 != 2), so HIT-leg A is INADMISSIBLE regardless of its own
+#     divergence from oracle — consistent with OMITTING it.
+# (4) Shape record: box_runs=1 all three legs, proj=0 (this is a real body
+#     attack, not a spawned projectile, despite the large travel distance).
+#
+# A/R/adv DISPOSITION (BLOCK leg) — per this wave's own established idioms:
+#   R: LANDED 2026-07-13 (CONTACT-2, lever R, design.md §8.3.4): lever R's
+#      busy-edge construction (`fd_contact_busy_edge_r`, frame_data_overlay.c
+#      §13.19) wires this diagnostic directly into the display — measured R
+#      is now 49 (was 48 under the legacy recovery_pf tally), equal to
+#      oracle Recovery=49 EXACTLY. Golden churn 48->49, verdict-inert (stays
+#      PASS on S). R stays UNASSERTED this payload per the corpus's own
+#      recorded discipline below (box/busy agreement was corroborating, not
+#      licensing, at authoring time — asserting from-qjson post-lever is a
+#      legitimate follow-up, not smuggled in here). Prior history (RELOCATED
+#      not deleted): measured legacy R=48 vs oracle Recovery=49 (-1);
+#      busyr=49 == oracle EXACTLY. Per the Chun-Li SA2 BLOCK precedent
+#      (authoring-policy.md E-1/Ruling 2): leave R UNASSERTED (not xfailed,
+#      not asserted) with this dated (2026-07-13) note naming both
+#      measured=48 and busyr=oracle=49 — box/busy agreement is
+#      corroborating, not licensing, per Ruling 2's own discipline
+#      (box_a/busyr diagnostics are recorded, not a contact-leg assert
+#      basis).
+#   A: measured legacy A=2 vs oracle Hit=12 (-10, box_a=12==oracle but same
+#      non-license reasoning as R). This is a LARGE gap (not a ±1 shape-a1
+#      undercount), most plausibly explained by this move's own heavy
+#      self-hitstop on a big damaging dive-slam super (most of its 12
+#      declared-active ticks occur DURING hitstop once contact freezes the
+#      chart, so engine_a's hitstop-exclusion — frame_data_overlay.c:1580/
+#      1596/1631 — credits only 2 of them) — HYPOTHESIS ONLY, not per-tick
+#      ledger-confirmed this session. No established Phase 6 bucket fits a
+#      gap this large. OMITTED (not xfailed), UNCLASSIFIED, flagged for
+#      follow-up.
+#   adv: measured -26 vs oracle -24 (-2). Small in isolation, but bundled
+#      with A/R above rather than independently xfailed: no confirmed
+#      mechanism isolates adv's own -2 from the same contact-accounting
+#      shape already affecting A/R on this leg, and asserting it via the
+#      akuma-sa2 small-gap idiom would imply more confidence in a clean,
+#      independent -2 divergence than the evidence supports here. OMITTED,
+#      same UNCLASSIFIED flag as A/R.
+# HIT leg: A fails the juggle check (see census item 3) — OMITTED.
+#   LANDED 2026-07-13 (CONTACT-2, lever R, design.md §8.3.5): R is now 63
+#   (was 77 under the legacy recovery_pf tally) — the busy-edge value,
+#   verdict-inert golden churn (stays PASS on S/kd). Caveat recorded: R=63
+#   is NOT itself arcade-confirmed (this leg's HIT has no oracle
+#   cross-check, Hit_advantage="-"; oracle 49 is the WHIFF/BLOCK-shaped
+#   figure, which the BLOCK leg's busy-edge hits exactly, §8.3.4 — the
+#   mechanism's corroboration on this very move). R stays OMITTED, no
+#   established bucket, listed as an OPTIONAL add-on for a future arcade
+#   capture batch (not blocking). Prior history (RELOCATED not deleted):
+#   R=77 does not busyr-recount to oracle (busyr=63, neither 63 nor 77
+#   equals oracle 49, under the legacy tally) — OMITTED, no established
+#   bucket. adv=+50 is a dummy:none non-blocking artifact, not comparable
+#   to any oracle field regardless. Only S and kd are assertable on this
+#   leg.
+#
+# ORDERING NOTE (§12.1 row 2, "momentum bleed / teleport corruption after a
+# connecting dash/projectile special" — the SAME trap X.N.D.L. hits in the
+# sibling corpus-twelve-sa1.yaml this session). X.F.L.A.T.'s own animation
+# displaces Twelve forward EVEN ON A CLEAN WHIFF (not just on contact), so
+# every leg in this file drifts the NEXT entry's own teleport somewhat, and
+# a leg that actually CONNECTS (BLOCK/HIT) corrupts the following entry's
+# teleport badly enough to flip its outcome entirely (verified this
+# session: without a buffer, the HIT entry placed directly after a
+# connecting BLOCK measured outcome=WHIFF instead of HIT — a full SHAPE
+# mismatch, <sp>/sa-twelve/final-sa2-run1.stdout). FIX (verified this
+# session, <sp>/sa-twelve/test-sa2-buffer-run/trace.log): a plain buffer
+# entry (`press LP`, a mundane whiff normal from a different move family)
+# inserted after WHIFF and after BLOCK restores HIT's own true connecting
+# geometry (S=1/A=16/R=77/adv=+50, byte-identical to the fully-isolated
+# reading). The BLOCK leg's own adv shifts by exactly 1 tick with the
+# buffer in place (-27 instead of the fully-isolated -26 — WHIFF's own
+# small forward creep before the first buffer clears it) — immaterial
+# since adv is OMITTED on this leg regardless (see A/R/adv DISPOSITION
+# above); the comment below documents the ACTUAL shipped/golden-captured
+# value (-27), not the isolated one, to keep this file self-consistent
+# with what `--update-golden` will record.
+character: twelve
+oracle: twelve.json
+super_art: 1
+sa_gauge: 3
+inter_entry_wait: 500
+entries:
+
+- label: twelve-sa2-whiff
+  setup: { dist: close, dummy: none }
+  input: "press UP; wait 3; motion 2qcf HK"
+  qjson: { name: "X.F.L.A.T." }
+  outcome: WHIFF
+  # Measured (isolated AND as shipped, first entry — no predecessor):
+  # S=1 A=12 R=49 adv=+0 (box_runs=1, proj=0). ALL THREE oracle-exact — the
+  # clean calibration surface (Phase 4). No expect.adv on WHIFF (from-qjson
+  # is a CompileError for this outcome).
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# Buffer entry — see file header ORDERING NOTE. Clears the residual forward
+# drift WHIFF's own animation leaves behind so BLOCK below measures its own
+# (near-)true geometry. Not part of this file's own scope; asserts nothing.
+- label: twelve-sa2-buffer-jab-1
+  setup: { dist: 250, dummy: none }
+  input: "press LP"
+  qjson: { name: "Jab" }
+  outcome: WHIFF
+
+- label: twelve-sa2-block
+  setup: { dist: 250, dist_mode: centered, dummy: stand }
+  input: "press UP; wait 3; motion 2qcf HK"
+  qjson: { name: "X.F.L.A.T." }
+  outcome: BLOCK
+  # Measured (as shipped, post-buffer real separation 250, post lever R):
+  # S=1 A=2(OMITTED) R=49(UNASSERTED, was 48 pre-lever-R) adv=-27(OMITTED)
+  # (box_a=12, busyr=49, box_runs=1, proj=0). S oracle-exact; R now equals
+  # busyr/oracle exactly (design.md §8.3.4). See file header A/R/adv
+  # DISPOSITION for the full writeup of why the other three fields are
+  # deliberately left out of this expect block (not guessed, not xfailed),
+  # and the ORDERING NOTE for why adv reads -27 here vs -26 in full
+  # isolation (immaterial, OMITTED either way).
+  expect: { S: from-qjson }
+
+# Buffer entry — see file header ORDERING NOTE. Clears the connecting-cast
+# teleport residue BLOCK above leaves behind so HIT below measures its own
+# true connecting geometry (without this, HIT flips to a WHIFF SHAPE
+# mismatch — verified this session). Not part of this file's own scope;
+# asserts nothing.
+- label: twelve-sa2-buffer-jab-2
+  setup: { dist: 250, dummy: none }
+  input: "press LP"
+  qjson: { name: "Jab" }
+  outcome: WHIFF
+
+- label: twelve-sa2-hit
+  setup: { dist: 250, dist_mode: centered, dummy: none }
+  input: "press UP; wait 3; motion 2qcf HK"
+  qjson: { name: "X.F.L.A.T." }
+  outcome: HIT
+  # Measured (post-buffer, real separation 250, byte-identical to the fully
+  # isolated reading, post lever R): S=1 A=16(OMITTED, fails juggle check
+  # vs BLOCK's A=2) R=63(OMITTED, was 77 pre-lever-R) adv=+50(dummy:none
+  # artifact, not comparable) kd=1 (box_a=22, busyr=63, box_runs=1, proj=0).
+  # R now equals busyr exactly (design.md §8.3.5). Only S and kd are
+  # assertable — see file header A/R/adv DISPOSITION. No expect.adv
+  # (Hit_advantage literal "-" on the oracle row regardless).
+  expect: { S: from-qjson, kd: 1 }

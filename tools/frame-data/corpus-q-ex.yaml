@@ -1,0 +1,253 @@
+# Q EX moves corpus — EX/Supers program, wave-5 fan-out (Ruling 5,
+# <sp>/exsuper/authoring-policy.md; EXSUPER-1 tracker row,
+# docs/plan-frame-data-completion.md). Satellite corpus (auto-discovered by
+# run-suite.sh's corpus-*.yaml glob, own golden/q-ex.tsv) — the main
+# corpus-q.yaml is untouched.
+#
+# Oracle: docs/arcade-frame-data/q.json (same file corpus-q.yaml already
+# pins). Scope: Q's 3 EX rows per <sp>/exsuper/step0-universe.tsv (rows 30,
+# 37, 41): Dashing Head Attack (EX), Dashing Leg Attack (EX), High Speed
+# Barrage (EX). All three landed. Q has no other EX-class rows (Capture and
+# Deadly Blow and Universal Overhead have no "(EX)" entry in q.json — both
+# are fully out of scope for this corpus; UOH's own divergence story is
+# already resolved in corpus-q.yaml itself and not reopened here).
+#
+# Motion recipes (Phase 5 motion-probe method, reusing corpus-q.yaml's own
+# established base-move identities — "motion charge-back 45 then-forward
+# <BTN>" for Dashing Head/Leg Attack, "motion hcb <BTN>" for High Speed
+# Barrage — with the final step's button replaced by a two-button chord,
+# identical workaround to every sibling EX corpus in this program since
+# `cmd_motion` only accepts a single button token per motion arm while
+# `hold`'s chord parser takes '+'-joined tokens):
+#   - Dashing Head Attack (EX): `hold LEFT 45; hold RIGHT+LP+HP 2; wait 1` —
+#     same 45-frame charge duration as corpus-q.yaml's own DHA whiff entries
+#     (`q-dha-jab-whiff` etc.), two punches chorded onto the snap step.
+#   - Dashing Leg Attack (EX): `hold LEFT 45; hold RIGHT+LK+HK 2; wait 1` —
+#     same shape, two kicks chorded on.
+#   - High Speed Barrage (EX): `hold RIGHT 2; hold RIGHT+DOWN 2; hold DOWN 2;
+#     hold DOWN+LEFT 2; hold LEFT+LP+HP 2; wait 1` — hcb's own step sequence
+#     (FORWARD/DOWN-FORWARD/DOWN/DOWN-BACK, i.e. RIGHT/RIGHT+DOWN/DOWN/
+#     DOWN+LEFT since P1 faces right), two punches chorded onto the final
+#     step (matches corpus-q.yaml's own `motion hcb <BTN>` HSB entries).
+#
+# ORDERING (load-bearing — corpus-q.yaml's own header already documents this
+# harness limitation for Q specifically: "P1 teleport corruption after
+# connecting dash specials"). Empirically reproduced again this session: an
+# entry whose own dash/rush actually CONNECTS (BLOCK or HIT — both leave
+# residual forward momentum) corrupts the FOLLOWING entry's P1 teleport if
+# that next entry needs a large `dist_mode:centered` separation for a WHIFF
+# check. First attempt (whiff legs ordered per-move, immediately after each
+# move's own BLOCK/HIT) reproduced it directly: `q-dla-ex-whiff` immediately
+# after `q-dla-ex-hit` (a connecting dash) measured MOVE_START dist=207
+# instead of the requested/expected ~310-330 and spuriously connected;
+# reordering fixed it. Every WHIFF-sensitive entry below is grouped FIRST
+# (before any BLOCK/HIT), and even within that group `q-hsb-ex-whiff` is
+# placed before `q-dha-ex-whiff` — `q-dha-ex-whiff` itself is genuinely
+# WHIFF-UNREACHABLE-adjacent-safe (its own 45f back-charge fully overrides
+# any prior residual momentum, see its own entry comment) but a THIRD whiff
+# attempt for Dashing Leg Attack was found to be WHIFF-UNREACHABLE even from
+# a clean start (see the header note before the BLOCK section) — placing it
+# last in the whiff group (so nothing whiff-sensitive follows it) avoids
+# corrupting anything else, and it is not shipped as an entry at all. BLOCK/
+# HIT entries (all `dist: close`) were confirmed insensitive to this
+# corruption (byte-identical readings regardless of what preceded them,
+# checked directly in-trace this session) so their own internal order is
+# unconstrained; kept as BLOCK-group-then-HIT-group per the rest of the
+# program's convention.
+#
+# Admissibility census (per-entry, mechanical, from FRAME_TRACE columns —
+# authoring-policy.md Ruling 2), the shipped 8 entries below, confirmed on
+# TWO independent runs (determinism x2 — FINAL lines byte-identical across
+# both):
+#   (1) Single-FINAL integrity: every entry's SCRIPT-bounded trace window
+#       contains exactly one FINAL annotation, at inter_entry_wait:250 — no
+#       label-bleed on either run.
+#   (2) Flash-overlap census (sastop gate): 0 nonzero `sastop` ticks across
+#       the ENTIRE trace of both authoring runs (awk census over every data
+#       row) — EX moves are flash-free, confirmed mechanically.
+#   (3) Contact-A juggle check (HIT-leg A admissible only if it equals the
+#       BLOCK-leg's displayed A): Dashing Head Attack (EX) BLOCK A=3 == HIT
+#       A=3, PASS. Dashing Leg Attack (EX) BLOCK A=4 == HIT A=4, PASS. High
+#       Speed Barrage (EX) BLOCK A=11 == HIT A=11, PASS. All three admissible
+#       (matches corpus-q.yaml's own base-move convention of A being a
+#       path-independent oracle-exact value here, not a juggle-inflated one).
+#   (4) Shape record (diagnostic, not a gate): all three moves are
+#       single-run contact legs (box_runs=1, box_a=4/3/12 on BLOCK+HIT for
+#       DHA/DLA/HSB respectively, proj=0) — EXCEPT High Speed Barrage (EX)'s
+#       own WHIFF leg, which is genuinely multi-run (box_runs=7, box_a=11) —
+#       the same "contact-leg box-run reduction" shape Ruling 2/the EX-
+#       CONTACT-R findings file already registers for Ryu EX Tatsumaki
+#       (multi-run WHIFF collapsing to single-run on contact); harmless here
+#       since HSB (EX)'s displayed R is never asserted on any leg (see M1
+#       note below) so there is no R field for the shape to land on.
+#
+# Result: one plain-PASS move (Dashing Head Attack (EX) — BLOCK/WHIFF
+# oracle-exact, HIT R converted under the existing §13.10 Class-1 hit-branch
+# convention), one small-surplus + hit-branch-deficit move (Dashing Leg
+# Attack (EX) — matches its own base DLA RH's shape exactly, as the wave-5
+# guidance predicted), and one M1 FD_METER_LEN=72 saturation move (High
+# Speed Barrage (EX) — the base HSB family's own "Class-1 multi-hit" flag
+# from the wave-5 guidance called this correctly; displayed R clips on
+# every leg, busyr recovers the true oracle-exact figure on all three).
+character: q
+oracle: q.json
+inter_entry_wait: 250
+sa_gauge: 3
+entries:
+
+# --- High Speed Barrage (EX) WHIFF — placed first (see ORDERING note above)
+# M1 FD_METER_LEN=72 saturation (exsuper/excontact-r-findings.md §1.2/§5
+# item 1 — the wave-5 guidance's own named watch-list entry, "Q HSB (EX)
+# (base HSB is Class-1 multi-hit)", confirmed). Measured S=6 A=11 R=7
+# T=72 (raw_len=72=FD_METER_LEN exactly, box_runs=7 genuinely multi-run on
+# this leg, busyr=36). q.json High Speed Barrage (EX): Startup=6, Hit=11,
+# Recovery=36. busyr=36 = oracle Recovery EXACTLY on this WHIFF leg (same
+# MGB-EX precedent shape the wave-5 guidance names) — the raw[] capture
+# window saturates before the true recovery span finishes, so the legacy
+# displayed R (7) undercounts drastically; R is OMITTED here, not asserted
+# and not quarantined (M1 disposition, same convention as
+# corpus-dudley-ex.yaml's Machine Gun Blow (EX) BLOCK leg). S/A both
+# oracle-exact and asserted normally. MOVE_START dist=221 (requested 250
+# centered; hcb's own initial FORWARD-hold step walks P1 toward the dummy
+# ~29px before the move starts — the per-move "walk-in" Ruling 1 names for
+# advancing motions).
+- label: q-hsb-ex-whiff
+  setup: { dist: 250, dummy: none, dist_mode: centered }
+  input: "hold RIGHT 2; hold RIGHT+DOWN 2; hold DOWN 2; hold DOWN+LEFT 2; hold LEFT+LP+HP 2; wait 1"
+  qjson: { name: "High Speed Barrage (EX)" }
+  outcome: WHIFF
+  # BUFFER-1 (2026-07-13): R now asserted from-qjson — the FD_CAPTURE_LEN
+  # 72->256 raise un-truncates raw[] capture; post-fix measured R=36 ==
+  # busyr == oracle exactly (same M1 mechanism as the header comment
+  # above already names, just not tracked in the SA-supers M1 register).
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# --- Dashing Head Attack (EX) WHIFF ----------------------------------------
+# Plain oracle-exact PASS on all three fields (q.json Dashing Head Attack
+# (EX): Startup=14, Hit=3, Recovery=36) — no saturation, no divergence.
+# MOVE_START dist=310 (requested 250 centered; the 45-frame charge-back hold
+# walks P1 further backward during the charge, ADDING ~60px of separation
+# beyond the requested anchor — Ruling 1's "BACK charge walks away during
+# input" bonus, the same mechanism corpus-q.yaml's own DHA whiff entries
+# rely on). box_a=3, busyr=36, box_runs=1, proj=0.
+- label: q-dha-ex-whiff
+  setup: { dist: 250, dummy: none, dist_mode: centered }
+  input: "hold LEFT 45; hold RIGHT+LP+HP 2; wait 1"
+  qjson: { name: "Dashing Head Attack (EX)" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# WHIFF-UNREACHABLE(dist=310 requested/centered — CENTERED_DIST_MAX, the
+# hard compile-time cap — achieved ~330px at MOVE_START via the same
+# charge-back backward-walk bonus seen on the Dashing Head Attack (EX) whiff
+# above: requested centered anchor 345, measured atk_x=325, i.e. the charge
+# ADDS to separation here too). Still connects (outcome HIT, S=26 A=4 R=22
+# adv=+69 kd=1 — the identical numbers its own HIT leg below reads) even at
+# this near-maximal separation: a pure move-reach fact (Dashing Leg Attack's
+# dash reach is long — corpus-q.yaml's own header already documents the
+# non-EX RH variant connecting at anchored DIST_MAX=300; EX inherits and
+# exceeds that same reach, same class as corpus-dudley-ex.yaml's Machine Gun
+# Blow (EX)), not a walk-in-consumption artifact like the Ryu EX Joudan
+# Sokutou Geri / Dudley Short Swing Blow precedents (those lost separation
+# to their own pre-MOVE_START walk; this move's charge instead gains
+# separation and it is still not enough). No further binary search attempted
+# (310 is dist_mode:centered's hard cap). Coverage for this move's WHIFF
+# path instead comes from the BLOCK/HIT legs below, per Ruling 1. No entry
+# shipped for it.
+
+# --- Dashing Head Attack (EX) BLOCK ----------------------------------------
+# Plain oracle-exact PASS on all four fields (q.json: Startup=14, Hit=3,
+# Recovery=36, Block_advantage=-21). box_a=4, busyr=36, box_runs=1, proj=0.
+- label: q-dha-ex-block
+  setup: { dist: close, dummy: stand }
+  input: "hold LEFT 45; hold RIGHT+LP+HP 2; wait 1"
+  qjson: { name: "Dashing Head Attack (EX)" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# --- Dashing Leg Attack (EX) BLOCK ------------------------------------------
+# S/A/adv oracle-exact (q.json: Startup=26, Hit=4, Block_advantage=-18). R
+# measured 35 vs oracle 34 (+1 surplus) — the §12.2.2 R-SURPLUS corollary
+# shape (contact-branch content insertion: BLOCK plays one extra recovery
+# cell the WHIFF/oracle path never plays), same +1 magnitude and shape as
+# the already-solved Dudley Jet Uppercut (EX) BLOCK R+1 precedent
+# (exsuper/excontact-r-findings.md §1.4 — "BLOCK plays ONE extra recovery
+# cell... that is the §12.2.2 R-SURPLUS corollary shape"); classified by
+# direct analogy to that established mechanism rather than a fresh per-tick
+# cgix/cghi dump this session (budget) — the rundir is preserved
+# (<sp>/ex-q/run6-final/trace.log) if a stronger per-tick citation is
+# wanted later. box_a=3, busyr=51, box_runs=1, proj=0.
+- label: q-dla-ex-block
+  setup: { dist: close, dummy: stand }
+  input: "hold LEFT 45; hold RIGHT+LK+HK 2; wait 1"
+  qjson: { name: "Dashing Leg Attack (EX)" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: 35, adv: from-qjson }
+
+# --- High Speed Barrage (EX) BLOCK -----------------------------------------
+# M1 FD_METER_LEN=72 saturation (see the WHIFF leg's comment above) — S/A/
+# adv oracle-exact (q.json: Startup=6, Hit=11, Block_advantage=-23); R
+# measured 6 (busyr=36=oracle exactly), OMITTED here (clipped, not
+# engine-truth — same disposition as the WHIFF leg). box_a=12, busyr=36,
+# box_runs=1 (contrast the WHIFF leg's box_runs=7 — contact-leg box-run
+# reduction, diagnostic only, no field it can land on since R is unasserted
+# on this move). proj=0.
+- label: q-hsb-ex-block
+  setup: { dist: close, dummy: stand }
+  input: "hold RIGHT 2; hold RIGHT+DOWN 2; hold DOWN 2; hold DOWN+LEFT 2; hold LEFT+LP+HP 2; wait 1"
+  qjson: { name: "High Speed Barrage (EX)" }
+  outcome: BLOCK
+  # BUFFER-1 (2026-07-13): R now asserted from-qjson, same basis as WHIFF.
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# --- Dashing Head Attack (EX) HIT -------------------------------------------
+# S/A oracle-exact; A (3) equals the BLOCK leg's displayed A (3) — juggle
+# check (Ruling 2 check 3) PASSES, admissible. R measured 18 vs oracle/
+# BLOCK-leg 36 (exactly half) — the §13.10 Class-1 hit-branch shape (a
+# genuinely shorter parallel recovery chain plays on HIT than on BLOCK,
+# same family as corpus-q.yaml's own base-move HSB/DLA-RH HIT-R entries and
+# every other Class-1 conversion in this program) — asserted as the
+# convention value, not xfail. Base Dashing Head Attack (Fierce) in
+# corpus-q.yaml does NOT show this split (its own HIT matched q.json
+# exactly) — EX gaining a hit-branch split its base lacks is the expected
+# "test, don't inherit" outcome (wave-5 guidance item 2), not a
+# contradiction. adv unasserted (Hit_advantage is "-" in q.json, same as
+# every Q move's HIT leg); the measured +106 is the large-number KD
+# convention already used throughout corpus-q.yaml (e.g. q-throw-hit,
+# q-crhk-hit), covered here by kd:1 (kdr2=18, a genuine buttobi knockdown).
+- label: q-dha-ex-hit
+  setup: { dist: close, dummy: none }
+  input: "hold LEFT 45; hold RIGHT+LP+HP 2; wait 1"
+  qjson: { name: "Dashing Head Attack (EX)" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: 18, kd: 1 }
+
+# --- Dashing Leg Attack (EX) HIT --------------------------------------------
+# S/A oracle-exact; A (4) equals the BLOCK leg's displayed A (4), juggle
+# check PASSES. R measured 22 vs oracle 34 — same §13.10 Class-1 hit-branch
+# shape as above, and exactly the wave-5 guidance's own prediction for this
+# move ("Q DLA (EX) — base is DLA RH which is §13.10 Class 1 KD member:
+# expect HIT-R short, kd=1" — corpus-q.yaml's own `q-dla-rh-hit` entry is
+# the base-move precedent this inherits, R=24/oracle 31 there, same shape).
+# kd=1 (kdr2=19, buttobi); adv unasserted (Hit_advantage "-").
+- label: q-dla-ex-hit
+  setup: { dist: close, dummy: none }
+  input: "hold LEFT 45; hold RIGHT+LK+HK 2; wait 1"
+  qjson: { name: "Dashing Leg Attack (EX)" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: 22, kd: 1 }
+
+# --- High Speed Barrage (EX) HIT -------------------------------------------
+# M1 FD_METER_LEN=72 saturation, identical shape to the WHIFF/BLOCK legs
+# above — S/A oracle-exact; A (11) equals the BLOCK leg's displayed A (11),
+# juggle check PASSES. R measured 6 (busyr=36=oracle exactly), OMITTED
+# (clipped). kd=1 (kdr2=18, buttobi); adv unasserted (Hit_advantage "-"),
+# measured +73 is the same large-number KD convention as every other Q HIT
+# entry.
+- label: q-hsb-ex-hit
+  setup: { dist: close, dummy: none }
+  input: "hold RIGHT 2; hold RIGHT+DOWN 2; hold DOWN 2; hold DOWN+LEFT 2; hold LEFT+LP+HP 2; wait 1"
+  qjson: { name: "High Speed Barrage (EX)" }
+  outcome: HIT
+  # BUFFER-1 (2026-07-13): R now asserted from-qjson, same basis as WHIFF/BLOCK.
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, kd: 1 }

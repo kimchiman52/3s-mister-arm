@@ -1,0 +1,9 @@
+label	verdict	outcome	n	S	A	R	adv	kd
+q-hsb-ex-whiff	PASS	WHIFF	1	6	11	36	+0	0
+q-dha-ex-whiff	PASS	WHIFF	1	14	3	36	+0	0
+q-dha-ex-block	PASS	BLOCK	1	14	3	36	-21	0
+q-dla-ex-block	PASS	BLOCK	1	26	4	35	-18	0
+q-hsb-ex-block	PASS	BLOCK	1	6	11	36	-23	0
+q-dha-ex-hit	PASS	HIT	1	14	3	18	+106	1
+q-dla-ex-hit	PASS	HIT	1	26	4	22	+69	1
+q-hsb-ex-hit	PASS	HIT	1	6	11	36	+73	1

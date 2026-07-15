@@ -1,0 +1,120 @@
+# Akuma Super Art 2 (Messatsu Gou Shoryuu) — EX/Supers program, supers wave
+# S2. Satellite corpus (auto-discovered by run-suite.sh's corpus-*.yaml
+# glob, own golden/akuma-sa2.tsv once registered) — the main
+# corpus-akuma.yaml is untouched.
+#
+# Scope: <sp>/exsuper/step0-universe.tsv row "akuma 52 Messatsu Gou Shoryuu"
+# (sa_slot 2). Oracle: docs/arcade-frame-data/akuma.json (md5
+# 0add1a92a2bdaa58f370f285abeb4d49, unchanged). Oracle row: Startup=0,
+# Hit=24, Recovery=37, Block_advantage=-25, Hit_advantage="-" (non-numeric).
+#
+# Meter: sa_gauge:3 (MAXIMUM) + super_art:1 (0-indexed SA2).
+#
+# Motion (identity confirmed this session, first attempt): the double-DP
+# hold-chain, exactly the Ryu SA2 Shin Shoryuken precedent doubled onto
+# Akuma's own "Gou Shoryuken" DP-shape macro (corpus-akuma.yaml), ending in
+# HP: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT 2; hold DOWN
+# 2; hold DOWN+RIGHT+HP 2; wait 1". S=0 exact on all three legs — a unique
+# signature among Akuma's own moves (no other row reads S=0), unambiguous
+# identification (<sp>/sa-akuma/run-probe-sa2/trace.log).
+#
+# Entries ordered WHIFF/BLOCK/HIT (WHIFF first) per the Ken SA1/SA2
+# ordering-trap lesson (a HIT leg's own knockdown predecessor can silently
+# no-op a later WHIFF teleport) — applied preemptively, not re-discovered.
+#
+# WHIFF: REACHABLE at dist:300 (dist_mode:centered), first attempt — a
+# short-reach, near-stationary DP-family super, matching Ruling 1's own
+# pre-registered "short-reach supers" likely-whiffable class and the Ryu
+# SA2/Ken SA1/SA2 precedent (all DP-family supers in this program have been
+# WHIFF-reachable so far).
+#
+# Admissibility census (mechanical, from FRAME_TRACE columns — authoring-
+# policy.md Ruling 2), this session's own isolated 3-entry probe run
+# (<sp>/sa-akuma/run-probe-sa2/trace.log, inter_entry_wait:500):
+# (1) Single-FINAL integrity: exactly one FINAL inside each entry's own
+# window (WHIFF F51-140; BLOCK F564-731; HIT F783-1026), no bleed, values
+# sane. T=72=FD_METER_LEN exactly on all three legs (M1 saturation risk —
+# see R DISPOSITION below).
+# (2) Flash-overlap census: 0 nonzero-sastop ticks in [MOVE_START F, FINAL
+# F] on all three legs (0/90 WHIFF, 0/168 BLOCK, 0/244 HIT — awk census
+# this session) — flash-free.
+# (3) Contact-A juggle check (HIT leg): HIT-leg A=23 == BLOCK-leg A=23 —
+# PASSES (mechanically eligible), but see A DISPOSITION below for why the
+# shared value is still not asserted as a plain PASS.
+# (4) Shape record: box_runs=1 on all three legs (clean single-run shape,
+# the Chun-Li SA2/Ryu SA1-pilot class, not the Ken SA3/Ryu SA2 genuinely
+# multi-run class).
+#
+# A DISPOSITION — RESOLVED (ENGINE-D2, lever S, 2026-07-13; supersedes the
+# UNCLASSIFIED framing below, kept for the record). The uniform -1
+# undercount on WHIFF/BLOCK/HIT alike (measured A=23 path-independently vs
+# oracle Hit=24, reproduced on a clean WHIFF) is the `fd_reset_move()`
+# MOVE_START-vs-`char_move()` same-tick race named SA-WHIFF-A/D2
+# (docs/frame-data-synthesis.md §12.2.4) — the SAME mechanism this entry
+# originally speculated might connect to Chun-Li SA1 Kikoshou's own
+# uniform -1 (that speculation is now confirmed: Chun-Li SA1's own A
+# clause is also resolved by ENGINE-D2, see corpus-chunli-sa1.yaml). Fixed
+# by lever S (`fd_movestart_same_tick_credit_hold`, `frame_data_overlay.c`).
+# Post-fix measured A=24 == oracle exactly on all three legs. A is now
+# asserted `from-qjson` on all three legs, plain PASS — xfail removed.
+#
+# R DISPOSITION (all three legs — the SAME M1 mechanism excontact-r-
+# findings.md/authoring-policy.md Ruling 3 already named for Ken SA3, now
+# independently reconfirmed on a further move). Legacy-displayed R reads
+# 20 (WHIFF) / 21 (BLOCK) / 21 (HIT), all with T=72=FD_METER_LEN exactly —
+# raw[] capture saturation. The busyr diagnostic recounts to 37 on all
+# three legs = oracle Recovery EXACTLY (matching the M1 signature's own
+# defining property: the true post-active span is recoverable from busyr
+# even though the legacy displayed path truncates). Per Ruling 2 (E-1/E-4),
+# a busyr/oracle match is not license to assert R via that diagnostic on a
+# contact or whiff leg — the validated instrument is the legacy path, which
+# is truncated here. R is therefore OMITTED on all three legs (not
+# asserted, not guessed) — NOT a new quarantine seed, the same
+# "omit with the M1 citation" idiom now extended to a further move.
+character: akuma
+oracle: akuma.json
+super_art: 1
+sa_gauge: 3
+inter_entry_wait: 500
+entries:
+
+- label: akuma-sa2-whiff
+  setup: { dist: 300, dummy: none, dist_mode: centered }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT+HP 2; wait 1"
+  qjson: { name: "Messatsu Gou Shoryuu" }
+  outcome: WHIFF
+  # Measured S=0 A=24 (was 23 pre-ENGINE-D2, see A DISPOSITION above — now
+  # RESOLVED, oracle-exact) R=20(NOT asserted, see R DISPOSITION)
+  # (box_runs=1, T=72). S/A oracle-exact.
+  # BUFFER-1 (2026-07-13): R now asserted from-qjson — FD_CAPTURE_LEN
+  # 72->256 raise un-truncates raw[] capture; post-fix measured R=37 ==
+  # busyr (see this file's R DISPOSITION above) == oracle exactly. See
+  # docs/frame-data-synthesis.md §12.2.4 M1 register CLOSED-FIXED entry.
+  # ENGINE-D2 (2026-07-13): A xfail removed, now plain PASS (see A
+  # DISPOSITION above — SA-WHIFF-A/D2, resolved).
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: akuma-sa2-block
+  setup: { dist: close, dummy: stand }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT+HP 2; wait 1"
+  qjson: { name: "Messatsu Gou Shoryuu" }
+  outcome: BLOCK
+  # Measured S=0 A=24 (was 23 pre-ENGINE-D2, see A DISPOSITION above — now
+  # RESOLVED) R=21(NOT asserted, see R DISPOSITION) adv=-25 (box_runs=1,
+  # T=72). S/A/adv oracle-exact. ENGINE-D2 (2026-07-13): A xfail removed,
+  # now plain PASS — same resolution as WHIFF.
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: akuma-sa2-hit
+  setup: { dist: close, dummy: none }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT+HP 2; wait 1"
+  qjson: { name: "Messatsu Gou Shoryuu" }
+  outcome: HIT
+  # Measured S=0 A=24 (was 23 pre-ENGINE-D2) R=21(NOT asserted, same R
+  # DISPOSITION) adv=+76 kd=1 (box_runs=1, T=72). S/A oracle-exact.
+  # Contact-A juggle check PASSES (HIT A=24 == BLOCK A=24) and the value
+  # now matches oracle, so A is a plain PASS here too. No expect.adv:
+  # akuma.json's Hit_advantage for this row is the literal string "-".
+  # BUFFER-1 (2026-07-13): R now asserted from-qjson, same basis as
+  # WHIFF/BLOCK. ENGINE-D2 (2026-07-13): A xfail removed.
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }

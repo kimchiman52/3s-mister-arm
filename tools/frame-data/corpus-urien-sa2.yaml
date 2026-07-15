@@ -1,0 +1,139 @@
+# Urien Super Art 2 (Temporal Thunder) — EX/Supers program, supers wave S5.
+# Satellite corpus (auto-discovered by run-suite.sh's corpus-*.yaml glob, own
+# golden/urien-sa2.tsv once registered) — corpus-urien.yaml/corpus-urien-
+# ex.yaml/corpus-urien-sa1.yaml are untouched.
+#
+# Scope: step0-universe.tsv row "urien 40 Temporal Thunder" (sa_slot 2).
+# Oracle: docs/arcade-frame-data/urien.json (md5
+# 5feea97b78d5c40f4af226bbb0bab288, same file the other Urien corpora
+# already pin, re-verified unchanged this session). Oracle row: Startup=1,
+# Hit=75, Recovery=91, Block_advantage=-36, Hit_advantage="-" (non-numeric).
+#
+# IDENTITY (S-match probe, this session): super_art:1 (0-indexed SA2) +
+# "motion 2qcf HP" lands a move whose R=91/adv=-36 match Temporal Thunder's
+# own oracle row EXACTLY (a unique R/adv pair among every Urien row) —
+# unambiguous identification despite S itself diverging (see S DISPOSITION
+# below). Kick-button cross-check ("motion 2qcf HK" at this slot) falls
+# through to the same unrelated non-super signature seen at super_art:0
+# (S=17/A=6/R=20) — confirms the kick button is not this SA's own input.
+# Motion landed on the FIRST attempt tried (same punch-tier 2qcf primitive
+# as SA1).
+#
+# Meter: sa_gauge:3 (MAXIMUM), per authoring-policy.md's meter policy for
+# non-install supers.
+#
+# SHAPE: proj=1 (proj-split path) on every leg — Temporal Thunder is a
+# screen-filling lightning-storm effect, not a legacy attacker-hitbox
+# strike (box_runs=0 throughout, matching the Ryu SA1/SA3-class projectile
+# shape, not Urien's own SA1's multi-run box-tracked shape).
+#
+# WHIFF-UNREACHABLE(dist=310 centered, achieved dist=302, walk_in=8px):
+# confirmed via binary search per Ruling 1 (2 probes): `dist:300
+# dist_mode:centered` (achieved dist=297) connects (outcome=HIT, S=0 A=85
+# R=5 adv=+122); `dist:310 dist_mode:centered` (the harness's own measured
+# ceiling, achieved dist=302) STILL connects (outcome=HIT, S=0 A=83 R=7
+# adv=+120) - a genuine full-screen-reach engine fact (matching a lightning
+# storm's own effective coverage), not a placement shortfall. Per Ruling 1,
+# no WHIFF entry is shipped; coverage comes from the BLOCK/HIT legs below.
+# (The far-connect A/R readings above are themselves the corroborating
+# evidence for the A DISPOSITION note below - proj_a scales sharply with
+# achieved travel distance for this move: 11 close, 83-85 far.)
+#
+# Admissibility census (mechanical, from FRAME_TRACE columns — authoring-
+# policy.md Ruling 2), this session's own 3-entry probe run
+# (<sp>/sa-urien/run-sa1-full/trace.log, inter_entry_wait:500 - the
+# WHIFF-attempt entry is the connecting-whiff-ceiling probe above, not
+# shipped):
+# (1) Single-FINAL integrity: exactly one MOVE_START/FINAL pair per entry's
+#     own window (BLOCK F320-411; HIT F465-611), no bleed (python census
+#     this session, cross-checked against each FINAL's own move_start_F).
+# (2) Flash-overlap census: 0 nonzero `sastop` ticks in [MOVE_START F,
+#     FINAL F] on the shipped BLOCK/HIT windows (0/92 BLOCK, 0/147 HIT —
+#     python census this session).
+# (3) Contact-A juggle check (HIT leg): HIT-leg A=11 == BLOCK-leg A=11 —
+#     PASSES (mechanically eligible; see A DISPOSITION below for why the
+#     shared value still isn't the oracle's own Hit=75).
+# (4) Shape record: proj=1/box_runs=0 on every leg (the projectile carries
+#     its own hit tracking via fd_engine_proj_active_count; Urien's own
+#     body att_box tensor stays empty the whole tracked window on this
+#     move, matching the Ryu SA1/SA3-class projectile-split shape exactly).
+#
+# S DISPOSITION (all legs) — stable, NOT position-noisy (cross-checked
+# against the Ibuki Yami Shigure S-field position-noise precedent, which
+# this is explicitly NOT an instance of): measured S=0 identically across
+# EVERY configuration tried this session (BLOCK at dist:close, HIT at
+# dist:close, the connecting-whiff-attempt at dist:300 centered, AND the
+# dist:310-centered ceiling probe - 4 independent script positions/
+# distances, all S=0) against oracle Startup=1 (-1, a single-tick
+# divergence). This is a proj-split-path (`proj=1`) S reading (E-3's own
+# rule: "S = proj_s" on this path) - a DIFFERENT code path from the
+# registered §12.2.4 "S-divergence" row's own discriminator
+# (`first_active_raw` vs `event_raw`, specific to the `use_hatt=1`/`proj=0`
+# general-classifier path per that row's own ENGINE-6 census), so that row
+# does not apply here. No established Phase 6 bucket covers a proj-split
+# S-1 divergence. UNCLASSIFIED, no mechanism claimed - asserted at the true
+# oracle value (1) via from-qjson with an xfail carrying the measured 0,
+# flagged for follow-up.
+#
+# A DISPOSITION (BLOCK/HIT legs) — a genuine, large, distance-scaling
+# divergence, NOT a routine ±1-2 declared-credit undercount (rules out
+# every Phase 6 contact-A bucket, all of which are magnitude-1/2 shapes).
+# Measured A=11 at close range (both BLOCK and HIT, juggle check passes),
+# but A SCALES SHARPLY with the achieved contact distance: A=85 at the
+# connecting-whiff-attempt's ~297px achieved separation, A=83 at the
+# dist:310-centered ceiling's ~302px achieved separation (see the
+# WHIFF-UNREACHABLE note above) - both readings measured this session,
+# not guessed. Oracle Hit=75 sits BETWEEN the close (11) and far (83-85)
+# readings, consistent with a genuine multi-hit lightning-storm effect
+# whose total credited hit count depends on how far the projectile travels
+# before making contact (more zap-ticks accrue over a longer flight) - the
+# same KIND of distance-scaling projectile-A shape already documented for
+# Ryu SA3 Denjin Hadouken (2b/wave-S1: "proj_a scales with travel: 3 close,
+# 16 far"), though not the same bucket/character and not independently
+# confirmed as the identical mechanism. No binary search was run to hunt
+# for a specific distance producing exactly 75 (would risk cherry-picking
+# a "reachable" figure rather than reporting what was actually measured,
+# per the "never force" discipline) - this is reported as an honest range,
+# not resolved to a point value. Asserted at the true oracle value (75) via
+# from-qjson with an xfail carrying both measured readings, UNCLASSIFIED,
+# flagged for follow-up (does a specific canonical distance reproduce 75
+# exactly? not determined this session).
+#
+# R/adv DISPOSITION — FULLY oracle-exact, no divergence. R=91 measured
+# IDENTICALLY on BLOCK and HIT, exactly matching oracle Recovery=91 (a
+# projectile-split R that is spawn/travel-anchored, not outcome-dependent -
+# same reasoning as corpus-ryu-sa1.yaml's own Shinkuu Hadouken precedent).
+# adv=-36 measured on BLOCK, exactly matching oracle Block_advantage=-36.
+# Both asserted as plain PASS fields (from-qjson), no xfail needed on
+# either.
+character: urien
+oracle: urien.json
+super_art: 1
+sa_gauge: 3
+inter_entry_wait: 500
+entries:
+
+- label: urien-sa2-block
+  setup: { dist: close, dummy: stand }
+  input: "motion 2qcf HP"
+  qjson: { name: "Temporal Thunder" }
+  outcome: BLOCK
+  # Measured S=0 A=11 R=91 adv=-36 (proj=1, proj_a=11, box_runs=0, T=91).
+  # R/adv oracle-exact, plain PASS. S/A both diverge (see header
+  # dispositions) - arcade values (1/75) asserted via from-qjson, measured
+  # values (0/11) carried in the xfail.
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson, xfail: "[HONEST-FLOOR CENSUS 2026-07-14, opus-substitute / WANTS FABLE RE-REVIEW] TERMINAL CLASS = ORACLE-TABLE-INTERNAL-INCONSISTENCY (S) + TERMINAL-DIVERGENCE (A). CAP-3 hardware (cap3/phase2-report.md Target 4): arcade attacker T=144 is FLAT across 6x spacing (refutes the engine 11->83 distance-scaling A); the projectile box-active window is travel-dependent 34/85/105 (close/mid/far); oracle A=75 is a defensible mid-flight representative, NOT a flat quantity, and engine A=11 matches NO arcade quantity. NON-SURGICAL: the oracle is internally over-budget on S - oracle S+R = 1+91 = 92 > T=91 (the whole measured window); proj_s=0 gives R=91 right/S=0 wrong, proj_s=1 gives S=1 right/R=90 wrong, no single spawn-slot satisfies both oracle fields (proj-split/fit.md 1.4); A has no canonical target. Golden stays 1/75, XFAIL. Prior disposition (unchanged): S DISPOSITION: measured S=0 vs oracle 1 (-1), stable across every configuration tried this session (proj-split path, E-3's own S=proj_s rule) - UNCLASSIFIED, no established Phase 6 bucket (the registered S-divergence row's own discriminator is specific to the use_hatt/general-classifier path, not this move's proj=1 path). A DISPOSITION: measured A=11 at this close range vs oracle 75 - a genuine distance-scaling divergence, NOT a routine declared-credit undercount (this session also measured A=85/83 at far/max-ceiling contact, see the header's own WHIFF-UNREACHABLE note) - UNCLASSIFIED, same class of finding as Ryu SA3 Denjin Hadouken's own proj_a-distance-scaling observation, not independently confirmed as the same mechanism. Both flagged for follow-up classification." }
+
+- label: urien-sa2-hit
+  setup: { dist: close, dummy: none }
+  input: "motion 2qcf HP"
+  qjson: { name: "Temporal Thunder" }
+  outcome: HIT
+  # Measured S=0 A=11 R=91 adv=+55 kd=1 (proj=1, proj_a=11, box_runs=0,
+  # T=91). R oracle-exact (same as BLOCK - a spawn/travel-anchored
+  # projectile R, not outcome-dependent), plain PASS. Contact-A juggle
+  # check (Ruling 2 check 3) PASSES (HIT A=11 == BLOCK A=11) - same
+  # distance-scaling A finding as BLOCK, asserted by direct analogy. No
+  # expect.adv: urien.json's Hit_advantage for this row is the literal
+  # string "-".
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, kd: 1, xfail: "[HONEST-FLOOR CENSUS 2026-07-14, opus-substitute / WANTS FABLE RE-REVIEW] TERMINAL CLASS = ORACLE-TABLE-INTERNAL-INCONSISTENCY (S) + TERMINAL-DIVERGENCE (A). Same as BLOCK (juggle 11==11): arcade T flat 144, projectile-active travel-dependent 34/85/105, oracle S+R=92>T=91 internally over-budget, engine A=11 matches no arcade quantity (cap3/phase2-report.md, proj-split/fit.md). Golden stays 1/75, XFAIL. Prior disposition (unchanged): Same S/A dispositions as the BLOCK leg above (measured S=0 vs oracle 1; measured A=11 vs oracle 75, distance-scaling, juggle check PASSES 11==11) - both UNCLASSIFIED, asserted by direct analogy to BLOCK. R is fully oracle-exact on this leg too (91==91, plain), not part of this xfail." }

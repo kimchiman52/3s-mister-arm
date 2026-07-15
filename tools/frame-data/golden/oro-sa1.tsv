@@ -1,0 +1,4 @@
+label	verdict	outcome	n	S	A	R	adv	kd
+oro-sa1-kishinriki-whiff	PASS	WHIFF	1	16	0	0	+0	0
+oro-sa1-exkishin-whiff	PASS	WHIFF	1	11	1	25	+0	0
+oro-sa1-exkishin-hit	PASS	HIT	1	11	1	225	+78	1

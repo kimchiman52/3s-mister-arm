@@ -1,0 +1,154 @@
+# Dudley Super Art 1 (Rocket Uppercut) — EX/Supers program, supers wave S2
+# (authoring-policy.md Ruling 5 fan-out). Satellite corpus (auto-discovered by
+# run-suite.sh's corpus-*.yaml glob, own golden/dudley-sa1.tsv once
+# registered) — corpus-dudley.yaml/corpus-dudley-ex.yaml and the sibling
+# corpus-dudley-sa2.yaml/corpus-dudley-sa3.yaml are untouched.
+#
+# Scope: step0-universe.tsv (dudley SA1, "Rocket Uppercut", sa_slot 1).
+# Oracle: docs/arcade-frame-data/dudley.json (md5
+# 8e0341d62b9470212bce8105eaf1a73e, same file corpus-dudley.yaml/
+# corpus-dudley-ex.yaml already pin, re-verified unchanged this session).
+# Oracle row: Startup=0, Hit=40, Recovery=31, Block_advantage="-" (non-
+# numeric), Hit_advantage="-" (non-numeric) — no `adv` assert anywhere in
+# this file, same convention as every EX row this move family already ships
+# (corpus-dudley.yaml/corpus-dudley-ex.yaml's own Jet Uppercut/MGB/SSB
+# sections all carry non-numeric Block_advantage/Hit_advantage too).
+#
+# Meter: sa_gauge:3 (MAXIMUM) + super_art:0 (0-indexed SA1, this program's
+# own established indexing scheme). Identity confirmed this session by
+# S-value match against dudley.json's own Startup=0 signature (this repo's
+# Phase 5 motion-probe method): dudley.json has exactly TWO Startup=0 rows —
+# Rocket Uppercut (Hit=40, Recovery=31) and Corkscrew Blow (Hit=10,
+# Recovery=24) — so S alone does not disambiguate. This entry's own measured
+# A (~39, see below) sits close to Rocket Uppercut's 40, nowhere near
+# Corkscrew's 10, confirming identity independently of slot position
+# (<sp>/sa-dudley/run-probe-sa1/trace.log, entry "probe-sa1-hp").
+#
+# Motion: "motion 2qcf HP" — landed on the FIRST candidate tried (punch-group
+# 2qcf, same primitive as Ryu/Ken/Chun-Li SA1's own convention). A second
+# candidate, "motion 2qcf HK", was tried in the same probe and instead landed
+# an unrelated normal (S=12 A=4 R=16 adv=-2 — an IDENTICAL reading across all
+# three of this session's super_art selections 0/1/2, confirming it is a
+# generic non-super move, not a fallback super) — ruling out a button-group
+# ambiguity for this move family.
+#
+# Admissibility census (per-entry, mechanical, from FRAME_TRACE columns —
+# authoring-policy.md Ruling 2), this session's own isolated 3-entry probe
+# run (<sp>/sa-dudley/run-probe-sa1-full/trace.log, inter_entry_wait:250):
+# (1) Single-FINAL integrity — exactly one MOVE_START/FINAL pair per entry
+# (WHIFF F51-152; BLOCK F314-447; HIT F577-839), mechanical census this
+# session, no bleed between entries.
+# (2) Flash-overlap census: 0 nonzero-sastop ticks in [MOVE_START F, FINAL F]
+# on all three legs (0/101 WHIFF, 0/133 BLOCK, 0/262 HIT — python census over
+# every data row this session) — flash-free, matches every population
+# checked in this program so far.
+# (3) Contact-A juggle check (HIT legs only): HIT-leg engine_a=38 vs
+# BLOCK-leg engine_a=39 — FAILS (38≠39) — moot regardless, see A DISPOSITION
+# below (A is unassertable on every leg for an independent reason).
+# (4) Shape record: box_runs=3 (WHIFF), 1 (BLOCK), 2 (HIT) — genuinely
+# multi-run when uninterrupted by an outcome (matches the established
+# "expect multi-run boxes on this shoryuken/flurry-style super family"
+# guidance, same shape as Ken SA1's own Shoryureppa).
+#
+# A DISPOSITION — PARTIALLY RESOLVED (ENGINE-D2, lever S, 2026-07-13), same
+# mechanism as Ken SA1's own Shoryureppa precedent (docs/frame-data-
+# synthesis.md §12.2.4 SA-WHIFF-A/D2): the uniform WHIFF/BLOCK -1 undercount
+# (measured engine_a=39 identically on both, oracle Hit=40) was the
+# `fd_reset_move()` MOVE_START-vs-`char_move()` same-tick race, now fixed by
+# lever S (`fd_movestart_same_tick_credit_hold`, `frame_data_overlay.c`).
+# Post-fix: WHIFF and BLOCK both measure A=40 == oracle exactly — asserted
+# `from-qjson`, plain PASS, no longer OMITTED. HIT is a SEPARATE, NOT-fully-
+# resolved residual: post-fix measured A=39 (was 38), still one short of
+# oracle's 40 and still failing its own juggle check against BLOCK's 40 (39
+# != 40) — this residual -1 is NOT the D2 race (D2 already fired and is
+# preserved on this leg too; the remaining gap is a distinct, still-open
+# finding, not folded into the SA-WHIFF-A/D2 closure). HIT's A stays OMITTED,
+# recorded as its own open note below, per the D2 fix-plan's own explicit
+# instruction not to convert this leg.
+#
+# R DISPOSITION (all three legs — M1 instrument quarantine, the SAME
+# raw-capture-saturation mechanism excontact-r-findings.md already names and
+# RESOLVES for Dudley's own Machine Gun Blow (EX) BLOCK leg, §1.2/§3 item 3:
+# "busyr=28 = oracle 28 EXACTLY... the raw[] capture saturates at
+# FD_METER_LEN=72 and the displayed R is clipped... Instrument truncation;
+# engine and oracle agree" — now independently reproduced on THIS Dudley
+# super, on all THREE of its legs at once). T=72=FD_METER_LEN exactly on
+# WHIFF/BLOCK/HIT; the busyr diagnostic recounts to 31 = oracle Recovery
+# EXACTLY on all three legs (WHIFF busyr=31, BLOCK busyr=31, HIT busyr=31)
+# while the legacy-displayed R reads 2/7/0 respectively — all clipped, all
+# well below oracle 31. Per Ruling 2 (E-1/E-4), a busyr/oracle match is NOT
+# license to assert R via that diagnostic on any leg — the validated contact
+# instrument is the legacy displayed path, which truncates here on every leg
+# including whiff (the same "whiff-inclusive M1" datapoint Ken SA1's own
+# Shoryureppa first established for this program: "even an uncontested whiff
+# exceeds the FD_METER_LEN=72 capture window" for this shoryuken/flurry-style
+# super shape). R is therefore OMITTED on all three legs (not asserted, not
+# guessed) — the established "omit with the M1 citation" idiom, discharging
+# this move from the EX-CONTACT-R umbrella exactly as excontact-r-findings.md
+# §3 item 3 already resolved for this same character's EX move (same
+# mechanism, oracle vindicated, not a new quarantine seed).
+#
+# WHIFF: REACHABLE on the FIRST attempt (dist:300, dist_mode:centered).
+# MOVE_START's own annotation reads dist=281 (walk-in only ~19px) — Rocket
+# Uppercut is a stationary, short-reach DP-style anti-air super with minimal
+# forward travel before its own MOVE_START, matching Ruling 1's own
+# pre-registered "short-reach supers" likely-whiffable class and this
+# program's own Ryu SA1(EX)/Ken SA1/Chun-Li SA1 precedent shapes. No further
+# binary search attempted (already comfortably WHIFF-reachable on the first
+# near-ceiling probe).
+# ORDERING NOTE (Phase 5 "Predecessor-outcome ordering" trap): the WHIFF
+# entry is placed FIRST, ahead of the knockdown-producing HIT leg (kd=1),
+# per the established Ken SA1 precedent (a HIT-then-WHIFF ordering left
+# residual knockdown-recovery ticks that silently no-op a following
+# distance-sensitive teleport on that character's own corpus) — avoided
+# here preemptively, confirmed clean on the verification run below.
+character: dudley
+oracle: dudley.json
+super_art: 0
+sa_gauge: 3
+inter_entry_wait: 250
+entries:
+
+- label: dudley-sa1-whiff
+  setup: { dist: 300, dist_mode: centered, dummy: none }
+  input: "motion 2qcf HP"
+  qjson: { name: "Rocket Uppercut" }
+  outcome: WHIFF
+  # Measured S=0 A=40 (was 39 pre-ENGINE-D2, see A DISPOSITION above — now
+  # RESOLVED, oracle-exact) R=2(OMITTED, see R DISPOSITION above;
+  # busyr=31=oracle exactly, legacy R still truncated even on a clean whiff)
+  # (box_runs=3, box_a=40, T=72; MOVE_START dist=281, ~19px walk-in). S/A
+  # oracle-exact. BUFFER-1 (2026-07-13): R now asserted from-qjson —
+  # capture raise un-truncates; post-fix measured R=31 == busyr == oracle
+  # exactly on all three legs. ENGINE-D2 (2026-07-13): A now asserted
+  # from-qjson too (dudley-sa1-hit stays OMITTED, separate residual finding).
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: dudley-sa1-block
+  setup: { dist: close, dummy: stand }
+  input: "motion 2qcf HP"
+  qjson: { name: "Rocket Uppercut" }
+  outcome: BLOCK
+  # Measured S=0 A=40 (was 39 pre-ENGINE-D2, see A DISPOSITION above — now
+  # RESOLVED, oracle-exact) R=7(OMITTED, see R DISPOSITION above)
+  # (box_runs=1, box_a=35, busyr=31, T=72). S/A oracle-exact. No expect.adv:
+  # dudley.json's Block_advantage for this row is the literal string "-".
+  # BUFFER-1 (2026-07-13): R now asserted from-qjson, same basis as WHIFF.
+  # ENGINE-D2 (2026-07-13): A now asserted from-qjson too.
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: dudley-sa1-hit
+  setup: { dist: close, dummy: none }
+  input: "motion 2qcf HP"
+  qjson: { name: "Rocket Uppercut" }
+  outcome: HIT
+  # Measured S=0 A=39 (was 38 pre-ENGINE-D2; ENGINE-D2's lever S fires on
+  # this leg too, but a SEPARATE, still-open -1 residual remains — still
+  # independently fails its own juggle check against BLOCK's post-fix 40,
+  # item 3 above) R=0(OMITTED, see R DISPOSITION above) (box_runs=2,
+  # box_a=37, busyr=31, T=72, kd=1). S oracle-exact; A stays OMITTED (see A
+  # DISPOSITION above — this residual is NOT folded into the SA-WHIFF-A/D2
+  # closure). No expect.adv: dudley.json's Hit_advantage for this row is
+  # the literal string "-". BUFFER-1 (2026-07-13): R now asserted
+  # from-qjson, same basis as WHIFF/BLOCK.
+  expect: { S: from-qjson, R: from-qjson }

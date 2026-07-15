@@ -1,0 +1,916 @@
+# Elena frame-data corpus (cast rollout, user-directed 2026-07-08).
+# Generated/consumed by tools/frame-data/compile_corpus.py against
+# docs/arcade-frame-data/elena.json (fetched 2026-07-08 from
+# https://raw.githubusercontent.com/Coccis77/thirdstrikedatabot/master/json/elena.json,
+# md5 763929513f271e2bf05c7177d12346d8). CHARACTER_IDS key is "elena"
+# (compile_corpus.py:45, id=8).
+#
+# FAR-NORMAL COVERAGE (a fifth distinct far-normal-gap shape in this repo,
+# distinct from Alex/Yun/Oro/Yang/Ibuki's own gaps): elena.json has ZERO
+# "Far"-prefixed rows at all - verified by reading every Name string in the
+# fetched oracle (48 rows total). ALL SIX standing normals' WHIFF entries
+# below cite their own single row, same convention as corpus-alex.yaml's
+# Strong/Fierce/Short/Roundhouse precedent, extended here to every button.
+#
+# COMMON_NAME GAP (blocks the task's own verification method): every one of
+# elena.json's 48 rows has Common_name="" (empty string) - verified
+# programmatically across every row. This is a genuinely distinct gap from
+# every other character fetched so far in this repo (which all publish real
+# Common_name strings, e.g. corpus-alex.yaml's "cr.HP, 2HP"). The task asked
+# to "verify vs oracle Common_name" for Lynx Tail's motion (forward-DP vs
+# reverse-DP) - impossible here since there is no Common_name data at all for
+# this character. The motion-probe method (S-value matching against the
+# oracle's Startup field per CORPUS-AUTHORING.md Phase 5) was used instead,
+# same discipline as the Ibuki Kubiori precedent (which also had to fall back
+# past a wrong tentative guess).
+#
+# KD BIG-NUMBER CONVENTION (no literal "D" rows at all): unlike most
+# characters in this repo, elena.json has ZERO Hit_advantage="D" rows -
+# verified across every row. Three rows instead use the akuma.json/ryu.json
+# large-positive-number-on-knockdown convention (documented at
+# corpus-ryu.yaml's ryu-throw-hit / corpus-akuma.yaml's
+# akuma-crroundhouse-hit): Crouching Roundhouse (Hit_advantage=34),
+# Down-Towards + Roundhouse (Hit_advantage=29), Throw (Hit_advantage=70).
+# UNLIKE ryu.json's Throw=45 (which does NOT match its own observed +82,
+# left unasserted), Crouching Roundhouse's 34 and Down-Towards + Roundhouse's
+# 29 BOTH match their own measured adv EXACTLY (same posture as
+# corpus-akuma.yaml's akuma-crroundhouse-hit, the first sweep in that repo
+# where the oracle's big number was directly comparable) - both asserted
+# via expect.adv: from-qjson below. Throw's 70 does NOT match its own
+# measured +91 - left unasserted, same posture as ryu-throw-hit/
+# akuma-throw-hit.
+#
+# COMMAND-NORMAL COUNT: FOUR Towards/Back/Down-Towards-prefixed rows -
+# Towards + Strong, Down-Towards + Roundhouse, Towards + Forward, Back +
+# Roundhouse - verified against every Name string in the fetched oracle.
+# Down-Towards + Roundhouse is the KD row (see above) and is Parry Low=True/
+# High=False (a genuine low sweep, not an overhead) - gets BLOCK+WHIFF+HIT.
+# The other three are non-KD, Parry High=True - BLOCK+WHIFF only, per the
+# Dudley/Makoto/Urien/Akuma/Oro/Alex non-D-row precedent.
+#
+# ISSUE #17 FAMILY CENSUS (per CORPUS-AUTHORING.md Phase 6 item 1's
+# discriminator): every A-undercount below (elena-jab-block/-hit,
+# elena-short-block/-hit, elena-twdsstrong-block, elena-lynxtail-lk-block/
+# -hit) was lever-F-tested in ONE batched scratch build
+# (fd_restore_revoked_declared_credit forced to 0 at
+# src/sf33rd/Source/Game/engine/charset.c:507, whole probe corpus re-run
+# once, reverted via `git checkout` + rebuild + re-verified green before
+# this commit, same-binary protocol throughout). RESULT: every one of these
+# entries' measured A was UNCHANGED by the lever-F toggle (byte-identical
+# with the restore on and off) - no revoke fires for any of them, ruling out
+# a lever-F regression across the board; all are shape (a), unrecoverable
+# per §13.11. The UOH entries (elena-uoh-whiff/-block/-hit) were included in
+# the same lever-F batch and were ALSO unchanged - their divergences are
+# unrelated to the §13.7.4 revoke/restore machinery entirely (see UOH
+# section comment).
+#
+# MOTION VERIFICATION (task flagged several motions as tentative guesses -
+# verify-vs-oracle discipline applied via the S-value motion-probe method,
+# CORPUS-AUTHORING.md Phase 5, since Common_name is unavailable - see GAP
+# above): Rhino Horn CONFIRMED hcf+K (task's guess correct, S=14 exact
+# match, unambiguous vs Forward/RH's own S=18/23). Mallet Smash CONFIRMED
+# hcb+P - task's tentative "hcf+P" guess was WRONG (hcf+LP instead lands
+# the plain Jab normal, S=5/A=4/R=10, not the special); hcb+LP lands S=21/
+# A=8/R=13, an EXACT match to Mallet Smash Jab's oracle row (same
+# wrong-tentative-guess shape as the Ibuki Kubiori precedent, hcf-guessed,
+# hcb-confirmed). Scratch Wheel CONFIRMED DP-shape hold-chain + K (task's
+# guess correct, S=6 exact match, unambiguous vs Forward/RH's S=4/3).
+# Spinning Scythe CONFIRMED qcb+K (task's guess correct, S=15 exact match,
+# unambiguous vs Forward/RH's S=16/17); NO separate follow-up-named rows
+# exist for this move (task flagged "oracle may have follow-up rows" as a
+# caution - checked, elena.json has only the standard Short/Forward/RH/EX
+# per-strength rows for Spinning Scythe, same shape as every other special
+# in this oracle, no distinct follow-up move name). Lynx Tail CONFIRMED
+# reverse-DP-shape hold-chain (back, down, down-back, back+K) + K - task's
+# own "dp reverse?" tentative guess was correct (S=11/A=6/R=35 all THREE
+# match the oracle's Short row EXACTLY on WHIFF, an unambiguous, fully clean
+# identification); the forward-DP-shape hold-chain and hcb+K were also
+# probed and both produced OTHER moves instead (plain Short normal and
+# Spinning Scythe respectively) - ruling those out.
+#
+# ORDERING NOTE - TWO DISTINCT §12.1 contamination shapes found and fixed
+# in this corpus (both caught by re-running the compiled corpus and
+# checking each entry's MOVE_START `dist` against its requested
+# setup.dist, not just by trusting a clean-looking checker verdict):
+#   1. §12.1 row 2 (momentum bleed after a connecting dash special): an
+#      early probe placed Rhino Horn's HIT entry immediately before Mallet
+#      Smash's WHIFF entry and the WHIFF entry read as a spurious HIT
+#      (P1's post-dash position hadn't settled). Fix: Rhino Horn (Elena's
+#      only always-connects-at-any-distance special) is ordered LAST among
+#      the ground specials.
+#   2. §12.1 row 1 (P-teleport no-op after a connecting command-grab,
+#      Hugo h-meatsquasher-short-whiff precedent): a later full-corpus run
+#      placed Throw's HIT entry immediately before Mallet Smash's WHIFF
+#      entry (right after UOH) and the SAME spurious-HIT symptom
+#      reappeared (MOVE_START dist=73 instead of the requested 250) - this
+#      time from Throw's own post-grab residue, not Rhino Horn's dash
+#      (confirmed by isolated single-entry re-verification of Mallet Smash
+#      alone, which reproduced the fully clean numbers). Down-Towards +
+#      Roundhouse's own HIT earlier in the corpus is ALSO a knockdown but
+#      did NOT corrupt the following UOH WHIFF entry (confirmed MOVE_START
+#      dist=250 exactly) - the residue is command-grab-specific, not
+#      generic post-knockdown residue. Fix: Throw is ordered immediately
+#      before Rhino Horn (both LAST), since Rhino Horn is immune to
+#      distance corruption (see its own section comment).
+# Isolated single-entry re-verification (Phase 5 discipline) of every
+# ground-special family confirmed the batch-probe numbers were otherwise
+# trustworthy. Final section order: Mallet Smash, Scratch Wheel, Spinning
+# Scythe, Lynx Tail, Throw, Rhino Horn - every WHIFF-sensitive family
+# before both always-connecting/residue-leaving moves, per the §12.1
+# workaround ("order distance-sensitive WHIFF entries before always-
+# connecting HIT entries in the same section").
+character: elena
+oracle: elena.json
+inter_entry_wait: 150
+entries:
+
+# --- Standing normals, BLOCK (dummy: stand) ---------------------------------
+
+# Issue #17 shape (a): lever-F-tested (fd_restore_revoked_declared_credit
+# forced 0 on a scratch build, reverted before commit) and confirmed
+# UNCHANGED (A=2 both ways) - no revoke fires, ruling out a lever-F
+# regression, credit unrecoverable per §13.11; measured A=2 vs arcade 4;
+# S/R/adv exact.
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=2 is the
+# engine-truth credit actually accrued on the BLOCK path - issue #17 shape (a):
+# lever-F-tested (fd_restore_revoked_declared_credit forced 0 on a scratch
+# build, reverted before commit) and confirmed UNCHANGED - no revoke fires.
+# Arcade (whiff-canonical, from-qjson) A=4 - preserved here per the
+# convention. S/R/adv remain arcade-exact (from-qjson).
+- label: elena-jab-block
+  setup: { dist: close, dummy: stand }
+  input: "press LP"
+  qjson: { name: "Jab" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: 2, R: from-qjson, adv: from-qjson }
+
+- label: elena-strong-block
+  setup: { dist: close, dummy: stand }
+  input: "press MP"
+  qjson: { name: "Strong" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: elena-fierce-block
+  setup: { dist: close, dummy: stand }
+  input: "press HP"
+  qjson: { name: "Fierce" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# Same issue #17 shape (a) as elena-jab-block above (identical mechanism,
+# lever-F-tested in the same batch, confirmed UNCHANGED).
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=2 is the
+# engine-truth credit actually accrued on the BLOCK path - same issue #17
+# shape (a) as elena-jab-block; lever-F-tested (same batch) and confirmed
+# UNCHANGED. Arcade (whiff-canonical, from-qjson) A=4 - preserved here per the
+# convention. S/R/adv remain arcade-exact (from-qjson).
+- label: elena-short-block
+  setup: { dist: close, dummy: stand }
+  input: "press LK"
+  qjson: { name: "Short" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: 2, R: from-qjson, adv: from-qjson }
+
+- label: elena-forward-block
+  setup: { dist: close, dummy: stand }
+  input: "press MK"
+  qjson: { name: "Forward" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: elena-roundhouse-block
+  setup: { dist: close, dummy: stand }
+  input: "press HK"
+  qjson: { name: "Roundhouse" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# --- HIT sample per button family (dummy: none, close range) ---------------
+
+# Same issue #17 shape (a) as elena-jab-block above.
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=2 is the
+# engine-truth credit actually accrued on the HIT path - same issue #17 shape
+# (a) as elena-jab-block; lever-F-tested (same batch) and confirmed UNCHANGED.
+# Arcade (whiff-canonical, from-qjson) A=4 - preserved here per the
+# convention. S/R/adv remain arcade-exact (from-qjson).
+- label: elena-jab-hit
+  setup: { dist: close, dummy: none }
+  input: "press LP"
+  qjson: { name: "Jab" }
+  outcome: HIT
+  expect: { S: from-qjson, A: 2, R: from-qjson, adv: from-qjson }
+
+- label: elena-strong-hit
+  setup: { dist: close, dummy: none }
+  input: "press MP"
+  qjson: { name: "Strong" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: elena-fierce-hit
+  setup: { dist: close, dummy: none }
+  input: "press HP"
+  qjson: { name: "Fierce" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# Same issue #17 shape (a) as elena-jab-block above.
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=2 is the
+# engine-truth credit actually accrued on the HIT path - same issue #17 shape
+# (a) as elena-jab-block; lever-F-tested (same batch) and confirmed UNCHANGED.
+# Arcade (whiff-canonical, from-qjson) A=4 - preserved here per the
+# convention. S/R/adv remain arcade-exact (from-qjson).
+- label: elena-short-hit
+  setup: { dist: close, dummy: none }
+  input: "press LK"
+  qjson: { name: "Short" }
+  outcome: HIT
+  expect: { S: from-qjson, A: 2, R: from-qjson, adv: from-qjson }
+
+- label: elena-forward-hit
+  setup: { dist: close, dummy: none }
+  input: "press MK"
+  qjson: { name: "Forward" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: elena-roundhouse-hit
+  setup: { dist: close, dummy: none }
+  input: "press HK"
+  qjson: { name: "Roundhouse" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# --- WHIFF sample per button family (dummy: none, dist 250) -----------------
+# elena.json has ZERO "Far" rows at all (see file header FAR-NORMAL
+# COVERAGE) - every WHIFF entry below cites its own single standing-normal
+# row. All six match arcade exactly (no divergence anywhere in this
+# section) - the calibration surface holds throughout, per
+# CORPUS-AUTHORING.md Phase 4, including for Jab/Short whose BLOCK/HIT
+# entries above were xfailed under issue #17.
+
+- label: elena-lp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press LP"
+  qjson: { name: "Jab" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: elena-mp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press MP"
+  qjson: { name: "Strong" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: elena-hp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press HP"
+  qjson: { name: "Fierce" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: elena-lk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press LK"
+  qjson: { name: "Short" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: elena-mk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press MK"
+  qjson: { name: "Forward" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: elena-hk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press HK"
+  qjson: { name: "Roundhouse" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# --- Crouching normals, BLOCK (dummy: stand) --------------------------------
+
+- label: elena-crjab-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+LP"
+  qjson: { name: "Crouching Jab" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: elena-crstrong-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+MP"
+  qjson: { name: "Crouching Strong" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: elena-crfierce-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+HP"
+  qjson: { name: "Crouching Fierce" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: elena-crshort-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+LK"
+  qjson: { name: "Crouching Short" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: elena-crforward-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+MK"
+  qjson: { name: "Crouching Forward" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# UNCLASSIFIED R deficit, mirror-image of Phase 6 item 4 (flagged
+# 2026-07-08, needs follow-up classification): measured R=25 vs arcade 26
+# (-1) on BOTH BLOCK and HIT, while WHIFF (elena-crroundhouse-whiff below)
+# is FULLY CLEAN at R=26 exact - the calibration surface holds, only the
+# two contact outcomes diverge. S/A exact (S=11, A=2 - A itself is NOT a
+# divergence here, elena.json's own Crouching Roundhouse Hit field is 2).
+# Trace: T=37, S+A+R=38 (T runs 1 LESS than the sum - the opposite-
+# direction gap from the more common 1-tick-over pattern seen elsewhere in
+# this corpus); cut=0, dwellbrk=0, anchor_a=-1, endrel=0 (the ordinary
+# r1-transition end - no §13.5.1 cut fires at all). This is the SIGN-
+# MIRROR of Phase 6 item 4 (Hugo-Roundhouse family: "A exact, R reads HIGH
+# on both BLOCK and HIT, WHIFF exact") - same shape (A exact, WHIFF clean,
+# both contact outcomes share one diverging R value) but UNDERSHOOTS
+# instead of overshooting. Deliberately NOT bucketed as item 4: that
+# family's own mechanism (`cg_extdat=0x80` same-tick contact advance,
+# hitcheck.c:727-729) is a credit-ADDING effect that can, by its own
+# mechanics, only ever produce a surplus - sign-incoherent with this
+# deficit, so forcing it into that bucket would misattribute a mechanism
+# nobody has verified for the undershoot direction. Does not fit item
+# 18(b) (requires cut=1) or item 18(c) (requires a uniform-across-all-
+# three overshoot, not a WHIFF-clean/BLOCK-HIT-only undershoot) either.
+# TRACE OBSERVATION ONLY, no mechanism claimed: flagged to
+# orchestrator/user for follow-up classification.
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): R=25 is
+# the engine-truth recovery actually played on the BLOCK path - SWEEP-2
+# (2026-07-10) FULL CONVERT, xfail REMOVED. The former "sign-mirror of Phase 6
+# item 4" candidate note above is UPGRADED to a full F2 proper (§12.2.2)
+# membership by classification sweep #2's fable-grade audit: R-window closure
+# exact - whiff-only cell 36(1) dropped (skip/branch signature now recorded),
+# shared cells 42..114=25; -1 exact (rule-transfer recount, s1 elena trace).
+# Byte-identical on HIT. Arcade (whiff-canonical) R=26 - superseded per the
+# convention. S/A remain arcade-exact (from-qjson).
+- label: elena-crroundhouse-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+HK"
+  qjson: { name: "Crouching Roundhouse" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: 25 }
+
+# WHIFF is FULLY CLEAN (R=26 exact, matching arcade) - confirms the
+# calibration surface holds and the R deficit above is contact-specific
+# (BLOCK/HIT only), same discipline as the ken-twdshk WHIFF-row precedent
+# (CORPUS-AUTHORING.md Phase 4). No xfail here.
+- label: elena-crroundhouse-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press DOWN+HK"
+  qjson: { name: "Crouching Roundhouse" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# Crouching Roundhouse HIT: elena.json's Hit_advantage is a NUMERIC "34"
+# (KD big-number convention, see file header) - verified live: measured
+# adv=+34 AND kd=1, an exact oracle match (same posture as
+# corpus-akuma.yaml's akuma-crroundhouse-hit, the precedent for this
+# convention being directly comparable), so adv IS asserted from-qjson
+# here. kd stays explicit-only per Phase 3 discipline. Same UNCLASSIFIED R
+# deficit as elena-crroundhouse-block (byte-identical R=25, WHIFF clean).
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): R=25 is
+# the engine-truth recovery actually played on the HIT path - byte-identical
+# F2 (§12.2.2) membership as elena-crroundhouse-block (same -1 exact
+# closure). SWEEP-2 (2026-07-10) FULL CONVERT, xfail REMOVED. adv=+34 and
+# kd=1 both match elena.json's Hit_advantage=34 KD big-number convention
+# exactly and remain asserted. Arcade (whiff-canonical) R=26 - superseded per
+# the convention.
+- label: elena-crroundhouse-hit
+  setup: { dist: close, dummy: none }
+  input: "press DOWN+HK; wait 60"
+  qjson: { name: "Crouching Roundhouse" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: 25, adv: from-qjson, kd: 1 }
+
+# --- Command normals, BLOCK + WHIFF (+ HIT for the KD row) ------------------
+# See file header COMMAND-NORMAL COUNT - four Towards/Back/Down-Towards rows.
+
+# Issue #17 shape (a): lever-F-tested (same batch as the normals-section
+# census) and confirmed UNCHANGED (A=2 both ways) - no revoke fires, ruling
+# out a lever-F regression; measured A=2 vs arcade 4; S/R/adv exact.
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=2 is the
+# engine-truth credit actually accrued on the BLOCK path - issue #17 shape (a):
+# lever-F-tested (fd_restore_revoked_declared_credit forced 0 on a scratch
+# build, reverted before commit, same batch as the normals-section census)
+# and confirmed UNCHANGED - no revoke fires. Arcade (whiff-canonical,
+# from-qjson) A=4 - preserved here per the convention. S/R/adv remain
+# arcade-exact (from-qjson).
+- label: elena-twdsstrong-block
+  setup: { dist: close, dummy: stand }
+  input: "press RIGHT+MP"
+  qjson: { name: "Towards + Strong" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: 2, R: from-qjson, adv: from-qjson }
+
+- label: elena-twdsstrong-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press RIGHT+MP"
+  qjson: { name: "Towards + Strong" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: elena-twdsforward-block
+  setup: { dist: close, dummy: stand }
+  input: "press RIGHT+MK"
+  qjson: { name: "Towards + Forward" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: elena-twdsforward-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press RIGHT+MK"
+  qjson: { name: "Towards + Forward" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: elena-backroundhouse-block
+  setup: { dist: close, dummy: stand }
+  input: "press LEFT+HK"
+  qjson: { name: "Back + Roundhouse" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: elena-backroundhouse-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press LEFT+HK"
+  qjson: { name: "Back + Roundhouse" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# Down-Towards + Roundhouse is the command-normal KD row (Parry Low=True/
+# High=False - a genuine low sweep, not an overhead; Hit_advantage=29, KD
+# big-number convention per file header). Fully clean on all three
+# outcomes.
+- label: elena-dtwdsroundhouse-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+RIGHT+HK"
+  qjson: { name: "Down-Towards + Roundhouse" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: elena-dtwdsroundhouse-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press DOWN+RIGHT+HK"
+  qjson: { name: "Down-Towards + Roundhouse" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# adv=+29 matches elena.json's Hit_advantage=29 KD big-number convention
+# exactly (same akuma-crroundhouse-hit posture as elena-crroundhouse-hit
+# above) - asserted from-qjson.
+- label: elena-dtwdsroundhouse-hit
+  setup: { dist: close, dummy: none }
+  input: "press DOWN+RIGHT+HK; wait 60"
+  qjson: { name: "Down-Towards + Roundhouse" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson, kd: 1 }
+
+# --- UOH (press MP+MK) ------------------------------------------------------
+# elena.json's Universal Overhead: S=15/A=10/R=5 - the SAME numbers as
+# q/dudley/chunli/akuma/oro/yang/ibuki/alex.json's own UOH row (shared move
+# data across the cast). Block_advantage/Hit_advantage are both the literal
+# "-" (not numeric) - no expect.adv, same posture as every other UOH entry
+# in this repo.
+#
+# UNLIKE Ibuki's UOH (which needed the §13.11 declared-truth A=11
+# exception), Elena's measured A matches the oracle's own A=10 EXACTLY on
+# WHIFF and HIT - no declared-truth override needed for those two legs.
+#
+# THREE-WAY R shape, closely mirroring corpus-alex.yaml's own alex-uoh
+# finding (flagged 2026-07-08) - SAME R triplet (WHIFF=3, BLOCK=2, HIT=2)
+# and the SAME "WHIFF/HIT share one A value, BLOCK diverges alone" A-shape
+# (Elena: WHIFF/HIT both A=10 exact, BLOCK A=12; Alex: WHIFF/HIT both
+# A=12, BLOCK A=15) - given UOH is documented shared move data across the
+# cast, this is the SAME recurring mechanism as Alex's own finding, not an
+# independently new one:
+#   - WHIFF: item 18(b) grounded-cleanup whiff-R-truncation (standard,
+#     ibuki-uoh-whiff/q-uoh-whiff-r precedent): R=3 vs arcade 5, T=29,
+#     S+A+R=29 exact, cut=1, anchor_a=10 matching engine_a=10. A exact (10).
+#   - BLOCK: A=12 vs arcade 10 (matches alex-uoh-block's own A-overcount
+#     shape exactly), R=2 vs arcade 5. Lever-F-tested (same batch as the
+#     normals-section census) UNCHANGED (A=12 both ways) - rules out a
+#     lever-F regression, same conclusion as Alex's own finding. T=33,
+#     S+A+R=32 (1-tick gap), cut=1, anchor_a=12 matching engine_a=12.
+#   - HIT: A=10 exact (matches WHIFF, not BLOCK), R=2 (matches BLOCK's own
+#     R, not WHIFF's). T=29, S+A+R=30 (1-tick gap), cut=1, anchor_a=10
+#     matching engine_a=10.
+# UNCLASSIFIED (same bucket as alex-uoh, not a new mechanism): the
+# BLOCK-leg A-overcount and the BLOCK/HIT-shared R=2 (vs WHIFF's own R=3)
+# don't fit any Phase-6 bucket (not Class 2 - that requires BLOCK to match
+# arcade exactly, which fails here too). Flagged to orchestrator/user for
+# follow-up classification, same posture as the Alex precedent.
+# SECTION ACCOUNTING (Phase 7): 3/3 entries carry an R divergence from
+# arcade (100% xfail) - crosses the >50%-of-section threshold. Given this
+# is the SAME shared-move-data mechanism already flagged and accepted on
+# Alex's own corpus (orchestrator sign-off 2026-07-08 there), the section
+# is authored as xfail-and-flagged rather than re-litigated. Orchestrator
+# sign-off 2026-07-08: GRANTED at commit (recurring Alex-bucket shape,
+# review-verified); user review pending (overnight autonomous run).
+
+# UPDATE (2026-07-10, CONV-2): elena-uoh-block converts PARTIAL under
+# §13.13 family F4 (A=12; R-triplet clause R=2 vs arcade 5 stays xfail,
+# 18(b)-cut, meter-suspect). elena-uoh-whiff and elena-uoh-hit stay
+# fully xfail untouched (whiff exclusion; HIT's A already arcade-exact,
+# no convertible clause).
+
+# §13.17 RE-ANCHOR-1 (2026-07-11): item-18 CLOSED for this row — lever N
+# now measures R=5, matching arcade/oracle exactly. Prior xfail evidence,
+# RELOCATED not deleted: "item 18(b) grounded-cleanup whiff-R-truncation
+# (docs/frame-data-synthesis.md item 18(b), ibuki-uoh-whiff/q-uoh-whiff-r
+# precedent; family mechanism established 2026-07-09, synthesis §12.2.1
+# UOH landing-clocked active tail, ledger-traced on necro w/ byte-
+# identical signature): measured R=3 vs arcade 5; trace T=29, S+A+R=29
+# exact, cut=1, anchor_a=10 matching engine_a=10. S/A exact (S=15, A=10).
+# See section comment for the full three-way discussion (same recurring
+# shape as corpus-alex.yaml's alex-uoh finding)."
+- label: elena-uoh-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press MP+MK"
+  qjson: { name: "Universal Overhead" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# §13.13 contact-path convention (CONV-2 scope extension, 2026-07-10, user
+# decision), family F4 - §12.2.1 UOH landing-clocked A (contact legs,
+# sentinel shape): A=12 is the engine-truth credit actually accrued on
+# the BLOCK path, ledger-traced on necro, this entry byte-identical:
+# sentinel active cell credits 1/real tick until landing; guard freezes
+# the chart 10 ticks but delays the landing 12, the 2-tick mismatch = the
+# +2. Lever-F-tested UNCHANGED (A=12 both ways, same batch as the
+# normals-section census) - rules out a lever-F regression. Trace: T=33,
+# S+A+R=32 (1-tick gap), cut=1, anchor_a=12 matching engine_a=12. S exact
+# (S=15). Arcade (whiff-canonical, from-qjson) A=10 - preserved here per
+# the convention.
+# CONVERTED 2026-07-13 (UOH-CLOSURE lever T, docs/frame-data-synthesis.md
+# §13.20; <sp>/zero/arcade-s9/session-report.md BLOCK legs, box
+# 265820-265841, busy768=265846, probe-confirmed exact fc 265846, zero
+# early acceptance): "arcade 5" was never this leg's true value - real
+# hardware measures R=4, matching this engine's own busy-edge/lever-R
+# construction exactly. XFAIL->PASS: R re-literaled to 4; A stays 12
+# (engine-truth, unaffected by lever T, design §5; arcade measured A=14,
+# dated data line only, not asserted).
+- label: elena-uoh-block
+  setup: { dist: close, dummy: stand }
+  input: "press MP+MK"
+  qjson: { name: "Universal Overhead" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: 12, R: 4 }
+
+# CONVERTED 2026-07-13 (UOH-CLOSURE lever T, docs/frame-data-synthesis.md
+# §13.20; <sp>/zero/arcade-s9/session-report.md HIT legs, box
+# 265820-265837, busy768=265842, probe-confirmed exact fc 265842): real
+# arcade R=4, matching this engine's own busy-edge/lever-R construction
+# exactly. XFAIL->PASS: R re-literaled to 4; A stays from-qjson (=10, =
+# arcade measured exactly, unaffected by lever T, design §5).
+- label: elena-uoh-hit
+  setup: { dist: close, dummy: none }
+  input: "press MP+MK"
+  qjson: { name: "Universal Overhead" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: 4 }
+
+# --- Ground specials probe (ONE session budget) -----------------------------
+# SCOPE (user-directed 2026-07-08): Rhino Horn (Short, hcf+K), Mallet Smash
+# (Jab, hcb+P - see MOTION VERIFICATION in the file header for why this is
+# hcb not the task's tentative hcf guess), Scratch Wheel (Short, DP-shape
+# hold-chain + K), Spinning Scythe (Short, qcb+K), Lynx Tail (Short,
+# reverse-DP-shape hold-chain + K). NO supers/EX (Scratch Wheel EX/Rhino
+# Horn EX/Mallet Smash EX/Spinning Scythe EX/Lynx Tail EX/Spinning Beat/
+# Brave Dance/Healing all excluded per task scope). Order below places
+# Throw immediately before Rhino Horn (both LAST) - see file header
+# ORDERING NOTE and the Throw section's own comment for why.
+
+# --- Mallet Smash (Jab), motion hcb + P -------------------------------------
+# Landed via the EXISTING `motion hcb <btn>` macro - see file header MOTION
+# VERIFICATION (hcf was the task's tentative guess and was WRONG; hcb is
+# confirmed). Isolated single-entry re-verification (Phase 5 discipline,
+# large inter_entry_wait, nothing before it) confirms all three outcomes
+# below are FULLY CLEAN - S/A/R match elena.json's Mallet Smash (Jab) row
+# exactly on WHIFF/BLOCK/HIT, and adv=+1 on BLOCK matches
+# Block_advantage=1 exactly. A genuine blockable strike (Parry High=True,
+# Cancel.Special=False) - not a grab (Throw_range/Kara_range both "-").
+#
+# OVERHEAD-LABEL STRUCTURAL FINDING (task described this move as
+# "overhead" - verify-vs-assumption discipline applied): a dummy:crouch
+# probe at dist:close (elena.json's own crouch-guard test, same setup shape
+# as corpus-q.yaml's q-crlk-block precedent for exercising a crouching
+# defender) produced a genuine BLOCK outcome, byte-identical in every field
+# (S=21/A=8/R=13/adv=+1) to the dummy:stand BLOCK entry below - Elena's
+# crouching-guard dummy blocks this move exactly like a standing guard
+# does. This contradicts the move's colloquial "overhead" description (an
+# overhead should beat low/crouching guard); NOT asserted as an engine bug
+# here - simply a documented empirical finding (trace fact, no mechanism
+# claimed) that the harness's crouch-guard dummy state blocks Mallet Smash
+# the same as its stand-guard state. The dummy:crouch entry is authored
+# below with its own true measured outcome (BLOCK), not the task's assumed
+# HIT, per Phase 3's "never guess desired value" discipline.
+
+- label: elena-malletsmash-lp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "motion hcb LP"
+  qjson: { name: "Mallet Smash (Jab)" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: elena-malletsmash-lp-block
+  setup: { dist: close, dummy: stand }
+  input: "motion hcb LP"
+  qjson: { name: "Mallet Smash (Jab)" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# See OVERHEAD-LABEL STRUCTURAL FINDING above - byte-identical to
+# elena-malletsmash-lp-block (a crouching-guard dummy blocks this move the
+# same as a standing-guard dummy; NOT the overhead-beats-low behavior the
+# task's "overhead" label implied).
+- label: elena-malletsmash-lp-crouch-probe
+  setup: { dist: close, dummy: crouch }
+  input: "motion hcb LP"
+  qjson: { name: "Mallet Smash (Jab)" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: elena-malletsmash-lp-hit
+  setup: { dist: close, dummy: none }
+  input: "motion hcb LP"
+  qjson: { name: "Mallet Smash (Jab)" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# --- Scratch Wheel (Short), DP-shape hold-chain + K -------------------------
+# Landed via the EXISTING DP-shape hold-chain (Ken Shoryuken/Ibuki
+# Kazekiri/Oro Jinchu Nobori precedent) - FIRST probe attempt (S=6 matches
+# elena.json's Scratch Wheel (Short) row exactly, unambiguous vs
+# Forward/RH's own distinct S values of 4/3). Isolated single-entry
+# re-verification confirms all three outcomes below.
+#
+# RESOLVED 2026-07-09 (§13.5.1b guard-rearm commit gate, lever H). Was:
+# ENGINE-2 / §13.5.1a-class landing false-cut, UNIFORM across ALL THREE
+# outcomes (measured R=25 vs arcade 31 on all three, cut=1,
+# anchor_a=4=engine_a=4) - trace-confirmed the false-cut signature:
+# guard_flag stayed 3 for the entire post-anchor tail on all three outcomes
+# (never re-arming before the natural r1 edge at F=48). The guard-rearm
+# gate now correctly refuses this commit; all three outcomes finalize at
+# the natural r1 edge and measure R=31, arcade-exact (S=6, A=4 unchanged).
+# adv is now measured -19 on BLOCK (arcade-exact, matching Block_advantage
+# exactly) but stays UNASSERTED - no new expect field added, matching the
+# plan's minimal-diff discipline. See docs/frame-data-synthesis.md §13.5.1b.
+
+- label: elena-scratchwheel-lk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LK 2; wait 1"
+  qjson: { name: "Scratch Wheel (Short)" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: elena-scratchwheel-lk-block
+  setup: { dist: close, dummy: stand }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LK 2; wait 1"
+  qjson: { name: "Scratch Wheel (Short)" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: elena-scratchwheel-lk-hit
+  setup: { dist: close, dummy: none }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LK 2; wait 1"
+  qjson: { name: "Scratch Wheel (Short)" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# --- Spinning Scythe (Short), qcb + K ----------------------------------------
+# Landed via the EXISTING `motion qcb <btn>` macro - FIRST probe attempt
+# (S=15 matches elena.json's Spinning Scythe (Short) row exactly,
+# unambiguous vs Forward/RH's own distinct S values of 16/17). No separate
+# follow-up-named rows exist for this move (task flagged this as a
+# possibility - checked, ruled out, see file header MOTION VERIFICATION).
+# Isolated single-entry re-verification confirms all three outcomes below
+# are FULLY CLEAN - S/A/R match elena.json's row exactly on WHIFF/BLOCK/
+# HIT, and adv=-2 on BLOCK matches Block_advantage=-2 exactly. No
+# divergence anywhere in this section.
+
+- label: elena-spinscythe-lk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "motion qcb LK"
+  qjson: { name: "Spinning Scythe (Short)" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: elena-spinscythe-lk-block
+  setup: { dist: close, dummy: stand }
+  input: "motion qcb LK"
+  qjson: { name: "Spinning Scythe (Short)" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: elena-spinscythe-lk-hit
+  setup: { dist: close, dummy: none }
+  input: "motion qcb LK"
+  qjson: { name: "Spinning Scythe (Short)" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# --- Lynx Tail (Short), reverse-DP-shape hold-chain + K ---------------------
+# Landed via a reverse-DP-shape hold-chain (back, down, down-back, back+K) -
+# see file header MOTION VERIFICATION for the full motion-identification
+# discussion (task's "dp reverse?" tentative guess confirmed correct via
+# S/A/R all matching the oracle EXACTLY on WHIFF). Isolated single-entry
+# re-verification confirms all three outcomes below.
+#
+# COMPOUND FINDING, UNCLASSIFIED (flagged 2026-07-08): WHIFF is FULLY CLEAN
+# (S=11/A=6/R=35, all three exact, cut=0, anchor_a=-1 - the ordinary,
+# unanchored r1-transition end). BLOCK and HIT both undercount A (measured
+# 2 and 4 respectively vs arcade 6 - a genuine three-way A-variance, all
+# three outcomes distinct, unlike UOH's WHIFF/HIT-shared-pair shape).
+# Lever-F-tested (same batch as the normals-section census) and confirmed
+# UNCHANGED on both BLOCK (A=2) and HIT (A=4) - rules out a lever-F
+# regression; shape (a), unrecoverable per §13.11, for the A-clause.
+#   - BLOCK ADDITIONALLY overcounts R (measured 43 vs arcade/WHIFF's
+#     matching 35, a +8 overshoot) via the SAME mechanism signature as the
+#     clean WHIFF leg (cut=0, anchor_a=-1 - no §13.5.1 anchor fires either
+#     way). Trace: T=55, S+A+R=45 (a 10-frame gap, much larger than the
+#     usual 1-tick gaps elsewhere in this corpus).
+#   - HIT's own R stays CLEAN (R=35, matching WHIFF exactly) despite
+#     carrying the same A-undercount as BLOCK - the R anomaly is isolated
+#     to BLOCK alone. Trace: T=58, S+A+R=48 (a 10-frame gap, same
+#     magnitude as BLOCK's own gap, but here it doesn't move R away from
+#     the clean WHIFF value).
+# Does not fit any Phase-6 bucket: not a plain Contact-A undercount (which
+# would leave R exact on both BLOCK and HIT - here BLOCK's R also moves);
+# not Hugo-Roundhouse item 4 (requires A exact on all three - fails here);
+# not item 18(b)/(c) (both require cut=1 or a uniform-across-all-three
+# shape - here cut=0 throughout and only BLOCK's R diverges). TRACE
+# OBSERVATION ONLY, no mechanism claimed beyond what's stated: flagged to
+# orchestrator/user for follow-up classification.
+# SECTION ACCOUNTING (Phase 7): 2/3 entries carry a divergence (67%
+# xfail) - crosses the >50%-of-section threshold. Orchestrator sign-off
+# 2026-07-08: GRANTED by orchestrator at commit 2026-07-08 (review-verified classifications; ENGINE-2 members cited; user review pending, overnight autonomous run) -
+# WHIFF is fully clean (the calibration surface holds), the A-clause is
+# lever-F-tested and confirmed not a regression, and no plausible
+# mechanism was force-fit for the isolated BLOCK-only R anomaly. User
+# review pending.
+# UPDATE (2026-07-11, G2 grant executed): the A-clauses' new mechanism
+# class ("Same-tick interior-transition credit banking") was CONFIRMED-
+# PENDING-GRANT at sweep #3 then GRANTED by the user same day (§13.13
+# family F13) - elena-lynxtail-lk-hit's A-clause was its sole blocker and
+# is now a plain PASS; elena-lynxtail-lk-block's A-clause converts too but
+# the entry stays XFAIL on its (e)-PERMANENT R clause (F7 candidacy
+# refuted, never converts). See the two entries below for the full text.
+
+- label: elena-lynxtail-lk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "hold LEFT 2; hold DOWN 2; hold DOWN+LEFT 2; hold LEFT+LK 2; wait 1"
+  qjson: { name: "Lynx Tail (Short)" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: elena-lynxtail-lk-block
+  setup: { dist: close, dummy: stand }
+  input: "hold LEFT 2; hold DOWN 2; hold DOWN+LEFT 2; hold LEFT+LK 2; wait 1"
+  qjson: { name: "Lynx Tail (Short)" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: 2, R: from-qjson, adv: from-qjson, xfail: "[HONEST-FLOOR CENSUS 2026-07-14, opus-substitute / WANTS FABLE RE-REVIEW] TERMINAL CLASS = ENGINE-DIVERGENCE (R+8, (e)-PERMANENT decomposed: 6 gap-heritage + 2 second-freeze; no further probe exists). NARROWED 2026-07-11 (G2 grant executed - user grant 2026-07-11, following the orchestrator's recommendation review; §13.13 family F13, 'Same-tick interior-transition credit banking'): A now asserts the engine-truth value (measured 2 vs arcade 6, elena.json Lynx Tail (Short)) - ledger-decomposed (s3w): phantom pass-through credits 12:1@GT364 (snapshot cgix=20, event tick) + 32:1@GT374 (snapshot cgix=40, in_hitstop) = A=2 exact; cells 16/36 truly never credited on the skip path. SAME new class as remy-cbk-lk-block/-hit (§12.2.4 'Same-tick interior-transition credit banking', one registry row, two manifestation topologies - cbk loop-back re-entry, lynxtail skip-path pass-through credit of a skipped window's first, shorter cell). F1-rider test REFUTED: naive skip predicts block A=0/hit A=3, actual A=2/4, off by exactly the phantom credits - banking is not clean skip arithmetic, so no F1 conversion; F13 is the correct route. Remaining clause: R-CLAUSE REFUTED sweep #3, (e)-PERMANENT for the F7 candidacy (F138-158 re-read, not touched by the G2 grant - the F7 row's candidacy-refutation stands regardless of F13's grant status): the +8 surplus decomposes 6 gap-heritage (cells 24/28, whiff-identical) + 2 second-freeze ticks at cell40 (hstop 2->0 at a non-gap, non-contact cell with no whiff-side analog, F150-153) - the F7 MEASURED bar ('every surplus tick maps to a whiff-gap cell, 8/8 exact') is REFUTED, the old '+8 == whiff's own 8-tick gap' framing was a coincidence of totals. Stays CANDIDATE (candidates never convert) - terminal: what-was-tried = this per-tick decomposition; no further probe exists. Trace: T=55, S+A+R=56 (a 1-frame gap). S/adv exact (S=11, adv=-17 matching arcade Block_advantage exactly). Entry stays XFAIL on the R clause alone; zero golden drift on this entry." }
+
+# §13.13 contact-path convention (FULL CONVERT 2026-07-11, G2 grant executed
+# - user grant 2026-07-11, following the orchestrator's recommendation
+# review; family F13, "Same-tick interior-transition credit banking"): A=4
+# is the engine-truth credit actually accrued on the HIT path - same ledger
+# decomposition as elena-lynxtail-lk-block (s3w): phantom pass-through
+# 12:1@GT673 + real 32:1+36:2@GT683/684 = A=4 exact (a DIFFERENT phantom mix
+# from BLOCK's own 2 - a genuine three-way A-variance across WHIFF/BLOCK/
+# HIT). Same new §12.2.4 class as remy-cbk-lk-block/-hit and
+# elena-lynxtail-lk-block's own A-clause. R stays CLEAN here (measured 35,
+# matching WHIFF exactly, from-qjson) - the R anomaly (F7-refuted,
+# (e)-PERMANENT) is isolated to BLOCK alone; this was the entry's SOLE
+# blocking clause. Arcade A=6 (elena.json Lynx Tail (Short)) preserved in
+# this comment. Trace: T=58, S+A+R=48 (S exact, S=11).
+- label: elena-lynxtail-lk-hit
+  setup: { dist: close, dummy: none }
+  input: "hold LEFT 2; hold DOWN 2; hold DOWN+LEFT 2; hold LEFT+LK 2; wait 1"
+  qjson: { name: "Lynx Tail (Short)" }
+  outcome: HIT
+  expect: { S: from-qjson, A: 4, R: from-qjson }
+
+# --- Throw (LP+LK) -----------------------------------------------------------
+# elena.json's Throw_range is 22px - dist:close (56px) sits OUTSIDE it (the
+# ken-throw-hit trap); using an explicit dist:22 per the ryu/ken/oro/ibuki/
+# alex precedent.
+#
+# ORDERING (§12.1 row 1 precedent, "P-teleport no-op during knockdown
+# tails" - Hugo h-meatsquasher-short-whiff precedent, "teleporting via P
+# immediately after a HIT command-grab silently no-ops if the defender
+# still has residual knockdown-recovery ticks pending"): Throw was
+# ORIGINALLY authored right before the Mallet Smash section (immediately
+# after UOH), which corrupted elena-malletsmash-lp-whiff's teleport (it
+# read a spurious HIT at MOVE_START dist=73 instead of the requested 250).
+# Isolated re-verification (Phase 5 discipline) confirmed Mallet Smash's
+# own numbers are genuinely clean once nothing precedes it - the
+# corruption was Throw's own post-grab residue, not a Mallet Smash
+# property. Down-Towards + Roundhouse's HIT earlier in this corpus is ALSO
+# a KD hit but did NOT corrupt the following elena-uoh-whiff (confirmed
+# MOVE_START dist=250 exactly) - this is throw/command-grab-specific
+# residue, not generic post-knockdown residue, matching the precedent's
+# own wording ("immediately after a HIT command-grab") precisely. Fix:
+# Throw is placed here, immediately before Rhino Horn - the only special
+# in this corpus that is immune to teleport corruption (it connects at
+# ANY distance up to DIST_MAX regardless of where P1 actually lands, see
+# that section's own STRUCTURAL FINDING) - so nothing distance-sensitive
+# follows Throw's HIT entry.
+
+- label: elena-throw-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press LP+LK"
+  qjson: { name: "Throw" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# §13.10 Class 3 connected-grab, non-saturated partner-release sub-case
+# (same mechanism as corpus-oro.yaml's oro-niouriki-lp-hit / corpus-
+# alex.yaml's alex-throw-hit): T=16, endrel=1 fires (T is nowhere near
+# FD_METER_LEN=72, ruling out the saturated sub-case). R = T - S - A =
+# 16-2-1 = 13, a DERIVED value, self-consistent with the trace (re-derive
+# if this regresses) - asserted as a plain-PASS literal citing §13.10
+# Class 3, NOT from-qjson (elena.json's Recovery=21 is the whiff-path
+# figure, directly captured by elena-throw-whiff above, exact match). adv
+# intentionally unchecked - elena.json's Hit_advantage=70 (KD big-number
+# convention, see file header) is NOT the observed +91, same
+# large-number-on-knockdown convention documented at ryu-throw-hit/
+# akuma-throw-hit (both also NOT matching their own observed value on
+# Throw specifically, unlike the two Roundhouse KD rows above which DO
+# match).
+- label: elena-throw-hit
+  setup: { dist: 22, dummy: none }
+  input: "press LP+LK; wait 90"
+  qjson: { name: "Throw" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: 13, kd: 1 }
+
+# --- Rhino Horn (Short), motion hcf + K --------------------------------------
+# Landed via the EXISTING `motion hcf <btn>` macro - FIRST probe attempt
+# (S=14 matches elena.json's Rhino Horn (Short) row exactly, unambiguous vs
+# Forward/RH's own distinct S values of 18/23). Ordered LAST in this
+# corpus, right after Throw - see file header ORDERING NOTE and the Throw
+# section's own comment above (this move connects at ANY distance up to
+# DIST_MAX, so it is immune to Throw's own teleport-corruption residue and
+# nothing distance-sensitive needs to follow it either).
+#
+# STRUCTURAL FINDING (WHIFF unreachable, same class as
+# CORPUS-AUTHORING.md Phase 5 §12.1 register row 3's "Fireball WHIFF
+# unreachable" - Rhino Horn is not a projectile, but exhibits the
+# identical reachability gap): verified live at BOTH dist=250 and
+# dist=300 (DIST_MAX) against a dummy:none target - both produce a full
+# HIT capture, byte-identical to the close-range HIT entry below
+# (S=14/A=9/R=14/adv=+71) - this is a genuine full-screen-reaching dash
+# attack that never whiffs against any grounded target within the
+# harness's expressible distance range. BLOCK and HIT are both FULLY
+# CLEAN: S/A/R match elena.json's Rhino Horn (Short) row exactly on both,
+# and BLOCK's adv=-3 matches Block_advantage=-3 exactly (Hit_advantage is
+# the literal "-", not published, so HIT's adv is not cross-checked).
+
+- label: elena-rhinohorn-lk-block
+  setup: { dist: close, dummy: stand }
+  input: "motion hcf LK"
+  qjson: { name: "Rhino Horn (Short)" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: elena-rhinohorn-lk-hit
+  setup: { dist: close, dummy: none }
+  input: "motion hcf LK; wait 90"
+  qjson: { name: "Rhino Horn (Short)" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# Confirms the WHIFF-unreachable structural finding above at DIST_MAX
+# (300px) - byte-identical to elena-rhinohorn-lk-hit rather than a WHIFF,
+# proving the move connects across the entire expressible distance range.
+- label: elena-rhinohorn-lk-farhit-probe
+  setup: { dist: 300, dummy: none }
+  input: "motion hcf LK; wait 90"
+  qjson: { name: "Rhino Horn (Short)" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# --- Negative control (plan section 1.8 item 5 precedent) ------------------
+
+- label: elena-jump-none
+  setup: { dist: 250, dummy: none }
+  input: "press UP"
+  outcome: NONE

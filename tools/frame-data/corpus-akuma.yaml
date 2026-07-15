@@ -1,0 +1,850 @@
+# Akuma (Gouki) frame-data corpus (cast rollout, user-directed 2026-07-08).
+# Generated/consumed by tools/frame-data/compile_corpus.py against
+# docs/arcade-frame-data/akuma.json (fetched 2026-07-08 from
+# https://raw.githubusercontent.com/Coccis77/thirdstrikedatabot/master/json/akuma.json,
+# md5 0add1a92a2bdaa58f370f285abeb4d49). CHARACTER_IDS key is "akuma"
+# (compile_corpus.py:51, id=14) - the game's internal Character enum spells
+# this character "Gouki" (src/constants.h, the pl14*/eff* source files), but
+# the oracle repo and this corpus's `character:` key/label prefix both use
+# "akuma" throughout.
+#
+# NAMING NOTE (runbook Phase 1 caution re: throw-family naming varying per
+# character): akuma.json's throw-family rows are a bare "Throw" and "Back
+# Throw" (NOT "Neutral Throw" - a third distinct convention after
+# ryu/q's bare "Throw" and ken/urien's "Neutral Throw"). Both rows share
+# Startup=2/Hit=1/Recovery=21/Throw_range=24/Block_advantage=0;
+# Hit_advantage is NUMERIC for both (45 / 70) rather than the "D" literal -
+# the same shape as ryu.json's own Throw row (Hit_advantage=45), whose
+# corpus precedent (ryu-throw-hit) documents the observed live adv (+82)
+# NOT matching that 45 and leaves adv unasserted ("large-number-on-
+# knockdown convention"). Verified against the fetched oracle, not assumed.
+#
+# FAR-NORMAL COVERAGE: akuma.json has Far Jab/Far Strong/Far Fierce/Far
+# Forward/Far Roundhouse rows (no Far Short - same single-row-Short gap as
+# ken.json/ryu.json). All five Far rows are audited (BLOCK, and as the
+# dist-250 WHIFF-sample row for their button).
+#
+# ALL SIX crouching normals exist. Crouching Roundhouse's Hit_advantage is
+# a NUMERIC "28" (not the "D" literal ken.json uses for the identical
+# sweep) - verified live: measured adv=+28 with kd=1 on HIT, an exact
+# oracle match, so adv IS asserted from-qjson on akuma-crroundhouse-hit
+# (unlike every "D"-oracle sweep precedent, where adv is unassertable).
+#
+# ONLY ONE Towards+X command normal exists: "Towards Strong" (no other
+# Towards rows). Audited with BLOCK+WHIFF per Phase 4; not "D"-annotated,
+# so no command-normal HIT entry (Dudley/Makoto/Urien precedent).
+#
+# akuma.json's numeric fields are JSON strings ("Startup": "3") -
+# resolve_from_qjson's int() cast handles this; only genuinely non-numeric
+# fields ("-") need an explicit literal or an outright skip.
+#
+# SCOPE (user-directed 2026-07-08, cast rollout): shoto ladder (six-button
+# close BLOCK/HIT + WHIFF sample + five far-normal BLOCK rows + all six
+# crouching BLOCK + Crouching Roundhouse HIT + the one Towards+X command
+# normal BLOCK+WHIFF) + UOH (WHIFF/BLOCK/HIT) + Throw (WHIFF/HIT) +
+# negative control + specials probe (ONE session budget): Gou Hadouken
+# (motion qcf + P, three strengths BLOCK+HIT - exercises the projectile
+# arcade-split lever D on a FIFTH character; akuma.json has only ONE
+# undifferentiated "Gou Hadouken" row shared by all three strengths,
+# unlike ryu.json/ken.json's per-strength rows), Gou Shoryuken (DP-shape
+# hold-chain, Jab strength only per the Ken-precedent one-strength
+# budget - akuma.json splits Shoryuken by strength with Startup 3/2/1 for
+# Jab/Strong/Fierce), Tatsumaki Zankuu Kyaku (GROUND version, motion qcb +
+# K, Short strength only, existing macro - the "Air Tatsumaki Zankuu
+# Kyaku" rows are a separate airborne-only family, out of scope), Hyakki
+# Shuu (demon flip, DP-shape hold-chain + K - despite the task's
+# "partially airborne" caution, ALL THREE outcomes proved fully assertable
+# with zero divergence, see that section), Ashura Senkuu (teleport,
+# movement-only, DP-shape hold-chain + 3P chord - Dudley Ducking Rush
+# precedent, see that section for the four-variant probe record and what
+# is/isn't assertable). Zankuu Hadouken (air fireball) EXCLUDED per the
+# task instruction (airborne - the attacker cannot be scripted to jump,
+# docs/frame-data-synthesis.md §12.1). NO supers/EX/Raging Demon (Messatsu
+# Gou Hadou / Tenma Gou Zankuu / Messatsu Gou Shoryuu / Messatsu Gou Rasen
+# (Ground/Air) / Shun Goku Sastu [oracle's own spelling] / Kongou
+# Kokuretsu Zan all excluded per the task charter). Shakunetsu Hadouken
+# (three strength rows) is NOT in the task's specials list - not probed.
+# Hyakki Goushou/Goujin/Gousai (the demon flip's own followup attacks,
+# each with their own oracle rows) are a separately-inputted family out of
+# this session's budget - documented as an open gap, not probed. Dive
+# Kick (air-to-ground, thrown mid-jump only) excluded for the same
+# cannot-script-a-jump reason as every Jumping/Neutral Jumping row.
+#
+# Every expect below was pinned against a live trace
+# (tools/frame-data/run.sh tools/frame-data/corpus-akuma.yaml), and every
+# quoted measured value below was re-reconciled against the FINAL
+# full-corpus run of this session (per the Urien review-cycle lesson:
+# values quoted from earlier isolated probes are re-checked against the
+# last run before commit, never carried forward stale).
+#
+# ============================================================================
+# ISSUE #17 FAMILY CENSUS (per runbook Phase 6 / item 6 instruction). Every
+# A-divergence AND every clean-passing A was lever-F-tested in ONE batched
+# scratch build (fd_restore_revoked_declared_credit forced to 0 at
+# src/sf33rd/Source/Game/engine/charset.c:507, whole corpus re-run once,
+# reverted via `git checkout` + rebuild + re-verified green before this
+# commit, same-binary protocol throughout).
+#
+#   SHAPE (b) MEMBERS (lever-F ACTIVELY RESTORING credit; plain PASS in the
+#   real binary, no xfail - the lever-F-off scratch build is what reveals
+#   the dependency; per the runbook, shape (b) appearing as a plain PASS is
+#   the §13.11 convention working as designed - the regression signal would
+#   be these entries FAILING in the real binary, which they do not). NINE
+#   entries:
+#     - akuma-far-jab-block (A=3 exact; lever-F-off drops to A=2)
+#     - akuma-strong-block/-hit (A=4 exact; lever-F-off drops to A=2)
+#     - akuma-fierce-block/-hit (A=4 exact; lever-F-off drops to A=3)
+#     - akuma-far-fierce-block (A=5 exact; lever-F-off drops to A=4)
+#     - akuma-far-roundhouse-block (A=5 exact; lever-F-off drops to A=3)
+#     - akuma-crjab-block (A=3 exact; lever-F-off drops to A=2)
+#     - akuma-crshort-block (A=3 exact; lever-F-off drops to A=2)
+#
+#   PURE SHAPE (a1) skip-jump, lever-F-tested UNCHANGED (credit
+#   unrecoverable, synthesis §13.11 "what stays unrecoverable"):
+#     - akuma-far-strong-block: contact tick jump-advances cg_ix 4->16
+#       same tick, skipping declared active cell(s); measured A=1 vs
+#       arcade 4; S/R/adv exact.
+#     - akuma-crforward-block: contact tick jump-advances cg_ix 8->24 same
+#       tick (16-unit skip); measured A=1 vs arcade 5; S/R/adv exact.
+#
+#   Every other asserted A in this file was UNCHANGED by lever-F-off AND
+#   matches arcade in the real binary (no revoke fires; never diverged).
+# ============================================================================
+#
+# >50%-XFAIL SECTION ACCOUNTING (plan Step 7 / corpus-hugo.yaml precedent:
+# >50% of a section xfailing requires explicit orchestrator/user sign-off,
+# not self-approval). UPDATED 2026-07-08 (§13.5.1a cut gate):
+#   - Gou Shoryuken: NOW 0/3 xfail - RESOLVED by the §13.5.1a grounded
+#     fresh-edge cut gate (the old uniform R=18 vs arcade 26 was a
+#     §13.5.1 shape-B false cut, same as Ken Shoryuken); R=26 arcade-exact
+#     on all three outcomes, plain PASS, sign-off request withdrawn.
+#   - Tatsumaki Zankuu Kyaku (ground, Short): 3/3 xfail (100%) - same
+#     single-axis item-18 whiff-R truncation (measured R=12 vs arcade 17,
+#     uniform across WHIFF/BLOCK/HIT - unlike Ken's Tatsu, which had a
+#     1-frame block/hit-vs-whiff wrinkle, Akuma's is perfectly uniform);
+#     S/A exact on every outcome. Same profile as the SIGNED-OFF
+#     corpus-ken.yaml Tatsu section. GRANTED (orchestrator sign-off 2026-07-08 per review recommendation: single-axis item-18, S/A oracle-exact all outcomes, identical to the signed-off Ken SRK/Tatsu precedent). User review pending (overnight autonomous run).
+# At-threshold note (50%, not over): the command-normal section is 1/2
+# xfail (akuma-twdsmp-block UNCLASSIFIED R-deficit; its WHIFF row is
+# exact) - listed here for visibility, does not itself trip the rule.
+# UPDATE (2026-07-10, §13.13): akuma-twdsmp-block converts to a plain PASS
+# asserting the measured R=20, citing §13.13 - it is now a CLASSIFIED
+# §12.2.2 member (see the entry's own comment), not UNCLASSIFIED. The
+# command-normal section is 0/2 xfail now, not 1/2.
+# ============================================================================
+character: akuma
+oracle: akuma.json
+inter_entry_wait: 150
+entries:
+
+# --- Standing normals, BLOCK (dummy: stand; close + far rows) ---------------
+
+- label: akuma-jab-block
+  setup: { dist: close, dummy: stand }
+  input: "press LP"
+  qjson: { name: "Jab" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# dist=90 lands the Far Jab animation (S=4 A=3 R=4 adv=+4, exact arcade
+# match) - same distance as corpus-ryu.yaml/corpus-ken.yaml's own Far Jab.
+# Shape (b) member (lever-F restore load-bearing) - see file header CENSUS.
+- label: akuma-far-jab-block
+  setup: { dist: 90, dummy: stand }
+  input: "press LP"
+  qjson: { name: "Far Jab" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# Shape (b) member (lever-F-off drops A 4->2) - see file header CENSUS.
+- label: akuma-strong-block
+  setup: { dist: close, dummy: stand }
+  input: "press MP"
+  qjson: { name: "Strong" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=1 is the
+# engine-truth credit actually accrued on the BLOCK path - issue #17 shape (a1):
+# the contact tick jump-advances cg_ix 4->16 same tick, skipping declared active
+# cell(s) never dispatched by any code (synthesis §13.11 'what stays
+# unrecoverable'); lever-F-tested (fd_restore_revoked_declared_credit forced 0
+# on a scratch build, whole-corpus batch, reverted before commit) and confirmed
+# UNCHANGED (A=1 with the restore disabled too) - no revoke fires here. Arcade
+# (whiff-canonical, from-qjson) A=4 - preserved here per the convention. S/R/adv
+# remain arcade-exact (from-qjson).
+- label: akuma-far-strong-block
+  setup: { dist: 100, dummy: stand }
+  input: "press MP"
+  qjson: { name: "Far Strong" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: 1, R: from-qjson, adv: from-qjson }
+
+# Shape (b) member (lever-F-off drops A 4->3) - see file header CENSUS.
+- label: akuma-fierce-block
+  setup: { dist: close, dummy: stand }
+  input: "press HP"
+  qjson: { name: "Fierce" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# Shape (b) member (lever-F-off drops A 5->4) - see file header CENSUS.
+- label: akuma-far-fierce-block
+  setup: { dist: 100, dummy: stand }
+  input: "press HP"
+  qjson: { name: "Far Fierce" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: akuma-short-block
+  setup: { dist: close, dummy: stand }
+  input: "press LK"
+  qjson: { name: "Short" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: akuma-forward-block
+  setup: { dist: close, dummy: stand }
+  input: "press MK"
+  qjson: { name: "Forward" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: akuma-far-forward-block
+  setup: { dist: 100, dummy: stand }
+  input: "press MK"
+  qjson: { name: "Far Forward" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# CLOSE ROUNDHOUSE R FINDING (UNCLASSIFIED, flagged 2026-07-08, needs
+# follow-up classification): measured R=19 vs arcade 25 (-6) on BOTH BLOCK
+# and HIT identically; S/A/adv exact on both. NO clean WHIFF baseline is
+# reachable for the CLOSE Roundhouse animation - a dedicated placement
+# probe (dist=65/75/85/95, isolated scratch corpus) showed dist<=75 still
+# CONNECTS with the close animation (S=5 A=8) while dist>=85 switches to
+# the FAR Roundhouse animation (S=9 A=5, whose own dist-250 WHIFF row
+# below is exact) - so whether the -6 is an item-18-style truncation
+# (which would normally be whiff-confirmed) cannot be established for this
+# move. Does NOT fit Phase 6 item 4 (Hugo-Roundhouse family reads R HIGH,
+# this reads LOW), does not fit §13.10 Class 1 (BLOCK diverges too), and
+# is not a whiff divergence (no whiff observable - Phase 4's STOP rule not
+# tripped). Trace facts (raw observations, IDENTICAL on both outcomes):
+# T=36, raw_len=36, cut=0, dwellbrk=0, endrel=0; TWO same-tick cg_ix
+# jumps - 4->12 EARLY in startup (2 ticks after MOVE_START, before
+# contact; A is exact so it demonstrably costs nothing) and 24->32 DEEP
+# in the recovery-only portion (well after the active window closes) -
+# the same two-jump signature ken-twdshk-block's trace showed alongside
+# its own R deficit. Noted as trace facts only, not a mechanism.
+# HYPOTHESES ONLY (unverified, same candidates as ken-twdshk-block): (1)
+# a recovery-cell skip-jump analogue of shape (a1) (declared recovery
+# cells never dispatched, manifesting as R instead of A - the 24->32
+# jump would be the site), or (2) an item-18-like anim-cut truncation on
+# the recovery tail that a whiff row would confirm if one were
+# reachable. Flagged to orchestrator for follow-up.
+# CLASSIFIED 2026-07-09 (classification sweep, fresh per-tick trace on
+# this move; docs/frame-data-synthesis.md §12.2.2): member of the
+# contact-branch recovery-shortening family = §13.10 Class 1 generalized-
+# to-contact (mechanism trace-PROVEN on ken-twdshk-block and
+# akuma-twdsmp-block; this move shows the identical signature - the
+# recovery jump 24->32 fires identically on BLOCK and HIT, R=19 both,
+# T=36 both, S/A/adv exact). The earlier "does not fit Class 1 (BLOCK
+# diverges too)" objection is retired: chunli-crfierce already
+# generalized Class 1 to contact (BLOCK+HIT both shortened). Because the
+# close animation has no reachable whiff, the -6 rests on the arcade
+# table figure rather than a same-animation whiff row - membership is by
+# identical mechanism signature, stated as such in the entries below.
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): R=19 is
+# the engine-truth recovery actually played on the BLOCK path per the
+# CLASSIFIED §12.2.2 finding above. Arcade (whiff-canonical) R=25 - preserved
+# here per the convention. S/A/adv remain arcade-exact (from-qjson).
+- label: akuma-roundhouse-block
+  setup: { dist: close, dummy: stand }
+  input: "press HK"
+  qjson: { name: "Roundhouse" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: 19, adv: from-qjson }
+
+# Shape (b) member (lever-F-off drops A 5->3) - see file header CENSUS.
+- label: akuma-far-roundhouse-block
+  setup: { dist: 100, dummy: stand }
+  input: "press HK"
+  qjson: { name: "Far Roundhouse" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# --- HIT sample per button family (dummy: none, close range) ---------------
+
+- label: akuma-jab-hit
+  setup: { dist: close, dummy: none }
+  input: "press LP"
+  qjson: { name: "Jab" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# Shape (b) member (lever-F-off drops A 4->2, same as its BLOCK sibling).
+- label: akuma-strong-hit
+  setup: { dist: close, dummy: none }
+  input: "press MP"
+  qjson: { name: "Strong" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# Shape (b) member (lever-F-off drops A 4->3, same as its BLOCK sibling).
+- label: akuma-fierce-hit
+  setup: { dist: close, dummy: none }
+  input: "press HP"
+  qjson: { name: "Fierce" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: akuma-short-hit
+  setup: { dist: close, dummy: none }
+  input: "press LK"
+  qjson: { name: "Short" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: akuma-forward-hit
+  setup: { dist: close, dummy: none }
+  input: "press MK"
+  qjson: { name: "Forward" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): R=19 is
+# the engine-truth recovery actually played on the HIT path, same classified
+# §12.2.2 finding as akuma-roundhouse-block (see the CLOSE ROUNDHOUSE R
+# FINDING comment above). Arcade (whiff-canonical) R=25 - preserved here per
+# the convention. S/A/adv remain arcade-exact (from-qjson).
+- label: akuma-roundhouse-hit
+  setup: { dist: close, dummy: none }
+  input: "press HK"
+  qjson: { name: "Roundhouse" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: 19, adv: from-qjson }
+
+# --- WHIFF sample per button family (dummy: none, dist 250) -----------------
+# All six entries below match akuma.json exactly - including HK, whose
+# close-animation BLOCK/HIT rows above carry the UNCLASSIFIED R deficit
+# (the whiff at 250 plays the FAR animation, a different oracle row - it
+# confirms the far row, not the close row; see the CLOSE ROUNDHOUSE R
+# FINDING for why the close row has no whiff baseline at all). Short has
+# no Far row in akuma.json (single-row button) - its WHIFF cites the same
+# row as its close entries, same as corpus-ken.yaml's ken-lk-whiff.
+
+- label: akuma-lp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press LP"
+  qjson: { name: "Far Jab" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: akuma-mp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press MP"
+  qjson: { name: "Far Strong" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: akuma-hp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press HP"
+  qjson: { name: "Far Fierce" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: akuma-lk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press LK"
+  qjson: { name: "Short" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: akuma-mk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press MK"
+  qjson: { name: "Far Forward" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: akuma-hk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press HK"
+  qjson: { name: "Far Roundhouse" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# --- Crouching normals, BLOCK (dummy: stand) --------------------------------
+
+# Shape (b) member (lever-F-off drops A 3->2) - see file header CENSUS.
+- label: akuma-crjab-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+LP"
+  qjson: { name: "Crouching Jab" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: akuma-crstrong-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+MP"
+  qjson: { name: "Crouching Strong" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: akuma-crfierce-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+HP"
+  qjson: { name: "Crouching Fierce" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# Shape (b) member (lever-F-off drops A 3->2) - see file header CENSUS.
+- label: akuma-crshort-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+LK"
+  qjson: { name: "Crouching Short" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=1 is the
+# engine-truth credit actually accrued on the BLOCK path - issue #17 shape (a1):
+# the contact tick jump-advances cg_ix 8->24 same tick (16-unit skip), skipping
+# declared active cell(s) never dispatched by any code (synthesis §13.11);
+# lever-F-tested (fd_restore_revoked_declared_credit forced 0 on a scratch
+# build, whole-corpus batch, reverted before commit) and confirmed UNCHANGED
+# (A=1 either way) - no revoke fires. Arcade (whiff-canonical, from-qjson) A=5
+# - preserved here per the convention. S/R/adv remain arcade-exact (from-qjson).
+- label: akuma-crforward-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+MK"
+  qjson: { name: "Crouching Forward" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: 1, R: from-qjson, adv: from-qjson }
+
+- label: akuma-crroundhouse-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+HK"
+  qjson: { name: "Crouching Roundhouse" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# Crouching Roundhouse HIT: akuma.json's Hit_advantage is a NUMERIC "28"
+# (not the "D" literal ken.json uses for the identical sweep) - verified
+# live: measured adv=+28 AND kd=1, an exact oracle match on every field,
+# so adv IS asserted from-qjson here (first sweep in this repo where the
+# oracle publishes the knockdown advantage as a comparable number). kd
+# stays explicit-only per Phase 3 discipline (compile_corpus.py rejects
+# kd: from-qjson outright).
+- label: akuma-crroundhouse-hit
+  setup: { dist: close, dummy: none }
+  input: "press DOWN+HK"
+  qjson: { name: "Crouching Roundhouse" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson, kd: 1 }
+
+# --- Command normal (Towards Strong - akuma.json's ONLY Towards+X row) ------
+# Not "D"-annotated (numeric Hit_advantage) so no separate HIT entry, per
+# the Dudley/Makoto/Urien precedent. WHIFF row per Phase 4's unconditional
+# whiff-vs-table rule - and it is what confirms the BLOCK entry's R
+# deficit below is contact-specific (the ken-twdshk lesson exactly).
+
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): R=20 is
+# the engine-truth recovery actually played on the BLOCK path - §12.2.2
+# MECHANISM ESTABLISHED by per-tick trace on this move: the contact-tick jump
+# 16->28 lands past recovery cell 24 (declared ctr=2); the -2 deficit = the
+# skipped cell's declared duration exactly (docs/frame-data-synthesis.md
+# §12.2.2; ken-twdshk-block is the family's branch-variant exemplar). Arcade
+# (whiff-canonical) R=22 - preserved here per the convention. S/A/adv remain
+# arcade-exact (from-qjson; adv=-1 embeds the short contact recovery already).
+- label: akuma-twdsmp-block
+  setup: { dist: close, dummy: stand }
+  input: "press RIGHT+MP"
+  qjson: { name: "Towards Strong" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: 20, adv: from-qjson }
+
+- label: akuma-twdsmp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press RIGHT+MP"
+  qjson: { name: "Towards Strong" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# --- UOH (press MP+MK) ------------------------------------------------------
+# akuma.json's Block_advantage/Hit_advantage for Universal Overhead are
+# both "-" - no expect.adv (same as every other UOH row in this repo).
+# S=15/A=8/R=7 in akuma.json. A=8 measured EXACTLY on all three outcomes
+# (whiff/block/hit alike) - no §13.11 A-side finding of any kind for this
+# character's UOH (also explicitly checked for the Urien same-cell
+# self-loop blind-spot shape: measured A is not below oracle here, so the
+# below-oracle decomposition question never arises). R is per-path:
+#   - WHIFF R=6 vs arcade 7: item 18 whiff-R anim-reset/cut truncation
+#     (q-uoh-whiff-r precedent) - xfail.
+#   - BLOCK R=7: EXACT arcade match, plain PASS.
+#   - HIT R=5 vs BLOCK's 7: the textbook §13.10 Class 2 UOH cut-window
+#     compression (HIT sits BELOW BLOCK by a real hitstun-vs-blockstun
+#     differential, §13.7.3) - convention value asserted as an explicit
+#     literal, plain PASS per the q-uoh-samef-hit precedent
+#     (corpus-q.yaml, "plain PASS asserting the convention value, not
+#     xfail"); arcade's whiff/block-canonical R=7 stays here in the
+#     comment. Trace facts: cut=1 on all three outcomes, dwellbrk=0,
+#     anchor_a=8 (matches engine_a=8), T=29 whiff / 33 block / 29 hit.
+
+# §13.17 RE-ANCHOR-1 (2026-07-11): item-18 CLOSED for this row — lever N
+# (whiff busy-edge R, docs/frame-data-synthesis.md §13.17) now measures
+# R=7, matching arcade/oracle exactly. Prior xfail evidence, RELOCATED
+# not deleted: "issue #17 item 18 whiff-R truncation (q-uoh-whiff-r
+# precedent): measured R=6 vs arcade 7 on WHIFF itself; S/A exact (A=8
+# matches arcade on all three UOH outcomes - no §13.11 A-side finding for
+# this character). Trace facts: cut=1, dwellbrk=0, anchor_a=8, T=29. RE-
+# CITE 2026-07-11 (LAYER-1): arcade 990512 R=7 == oracle
+# (docs/arcade-frame-data/CAPTURE.md's Session 3); twin R=7
+# (docs/frame-data-synthesis.md §13.16); (a) OVERLAY/METER."
+- label: akuma-uoh-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press MP+MK"
+  qjson: { name: "Universal Overhead" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# RE-CITED 2026-07-11 (LAYER-1): live arcade hardware (990512) confirms this
+# move's whiff-canonical R=7 directly (see akuma-uoh-whiff's own xfail string)
+# - arcade==oracle, layer RESOLVED (a), docs/frame-data-synthesis.md Sec13.16.
+# This BLOCK leg's own R=5 (Sec13.10 Class 2 convention) is unaffected, untouched.
+#
+# CORRECTED 2026-07-13 (UOH-CLOSURE lever T, docs/frame-data-synthesis.md
+# §13.20; <sp>/zero/arcade-s7/session-report.md): from-qjson (R=7, the
+# whiff-canonical oracle figure) was NEVER this leg's true arcade value -
+# it was a coincidence that the shipped engine display (legacy recovery_pf
+# = 7) happened to match the whiff oracle. Real hardware (2 reps
+# byte-identical, actionability-probe-confirmed at fc 247479, zero early
+# acceptance) measures R=8, matching this engine's own busy-edge/lever-R
+# construction (lever T, frame_data_overlay.c) exactly. Re-literaled to the
+# arcade value; PASS unaffected by the lever-T wire-in (busyr now IS the
+# display).
+- label: akuma-uoh-block
+  setup: { dist: close, dummy: stand }
+  input: "press MP+MK"
+  qjson: { name: "Universal Overhead" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: 8 }
+
+# R: 5 is the §13.10 Class 2 convention value (see the UOH section comment
+# above) - arcade/whiff-block-canonical R is 7 (from-qjson would resolve to
+# it); the -2 differential vs akuma-uoh-block's own exact R=7 is the
+# §13.7.3 hitstun-vs-blockstun cut-window compression, UOH-specific.
+# RE-CITED 2026-07-11 (LAYER-1): live arcade hardware (990512) confirms this
+# move's whiff-canonical R=7 directly (see akuma-uoh-whiff's own xfail string)
+# - arcade==oracle, layer RESOLVED (a), docs/frame-data-synthesis.md Sec13.16.
+#
+# CORRECTED 2026-07-13 (UOH-CLOSURE lever T, docs/frame-data-synthesis.md
+# §13.20; <sp>/zero/arcade-s7/session-report.md): the §13.10 Class 2
+# "convention value" (5) was a construction on top of a stale premise (that
+# UOH contact R is whiff-canonical, minus the hitstun/blockstun cut). Real
+# hardware (2 reps byte-identical) measures R=6, matching this engine's own
+# busy-edge/lever-R construction exactly - one tick below akuma-uoh-block's
+# corrected 8, the real HIT/BLOCK differential (not a whiff-derived one).
+# Re-literaled to the arcade value; the §13.7.3 cut-window-compression
+# narrative is retired for this leg (superseded by the busy-edge mechanism,
+# docs/frame-data-synthesis.md §13.20 §2).
+- label: akuma-uoh-hit
+  setup: { dist: close, dummy: none }
+  input: "press MP+MK"
+  qjson: { name: "Universal Overhead" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: 6 }
+
+# --- Throw (LP+LK) -----------------------------------------------------------
+# akuma.json's Throw_range is 24px - dist:close (56px) sits OUTSIDE it
+# (ken-throw-hit trap); dist:24 matches the oracle field and the
+# ryu/ken/urien precedent. Throw placed near the end (only the specials'
+# own WHIFF-safe entries and the negative control follow the HIT entry's
+# knockdown residue - §12.1 row 1 posture, same as the Dudley/Urien
+# Throw-late layout).
+
+- label: akuma-throw-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press LP+LK"
+  qjson: { name: "Throw" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# HIT-R display convention (docs/frame-data-synthesis.md §13.10, Class 3
+# connected grab, partner-release sub-case - NOT the saturated
+# ken-throw-hit sub-case): T=41 (nowhere near FD_METER_LEN=72) and
+# endrel=1 fires per the trace, so R = meter_len - S - A = 41-2-1 = 38, a
+# DERIVED value from the live trace - the same numbers as ryu-throw-hit
+# (also T=41/R=38). akuma.json's Recovery=21 is the whiff-path figure,
+# directly captured by akuma-throw-whiff above (exact). S/A match the
+# Throw row exactly; adv intentionally unchecked - akuma.json's
+# Hit_advantage=45 is NOT the observed +82, the same
+# large-number-on-knockdown convention documented at ryu-throw-hit
+# (ryu.json also publishes 45 against an observed +82).
+- label: akuma-throw-hit
+  setup: { dist: 24, dummy: none }
+  input: "press LP+LK; wait 60"
+  qjson: { name: "Throw" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: 38, kd: 1 }
+
+# --- Gou Hadouken (projectile), motion qcf -----------------------------------
+# Exercises the projectile arcade-split machinery (lever D, 468cb84c) on a
+# FIFTH character (Ryu Hadouken / Ken Hadouken / Chun-Li Kikkoken / Urien
+# Metallic Sphere precedents). akuma.json has only ONE undifferentiated
+# "Gou Hadouken" row shared by all three strengths - all three cite the
+# SAME qjson.name, so the three-strength match below confirms
+# strength-independence against one shared row. Hit/Hit_advantage are "-"
+# (non-numeric): no expect.A/adv on HIT entries (the measured HIT adv=-10
+# vs BLOCK's -11 is the same one-frame-off-point-blank shape as
+# corpus-ryu.yaml/corpus-ken.yaml's Hadouken HIT sections, not
+# investigated further). All six entries below match akuma.json exactly -
+# zero divergence.
+#
+# WHIFF is NOT attempted: a fireball travels full-screen and still
+# connects at every scriptable distance against a non-jumping dummy -
+# known harness gap (docs/frame-data-synthesis.md §12.1), not a corpus
+# entry, same as every other projectile section in this repo.
+
+- label: akuma-had-lp-block
+  setup: { dist: close, dummy: stand }
+  input: "motion qcf LP"
+  qjson: { name: "Gou Hadouken" }
+  outcome: BLOCK
+  expect: { S: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: akuma-had-mp-block
+  setup: { dist: close, dummy: stand }
+  input: "motion qcf MP"
+  qjson: { name: "Gou Hadouken" }
+  outcome: BLOCK
+  expect: { S: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: akuma-had-hp-block
+  setup: { dist: close, dummy: stand }
+  input: "motion qcf HP"
+  qjson: { name: "Gou Hadouken" }
+  outcome: BLOCK
+  expect: { S: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: akuma-had-lp-hit
+  setup: { dist: close, dummy: none }
+  input: "motion qcf LP"
+  qjson: { name: "Gou Hadouken" }
+  outcome: HIT
+  expect: { S: from-qjson, R: from-qjson }
+
+- label: akuma-had-mp-hit
+  setup: { dist: close, dummy: none }
+  input: "motion qcf MP"
+  qjson: { name: "Gou Hadouken" }
+  outcome: HIT
+  expect: { S: from-qjson, R: from-qjson }
+
+- label: akuma-had-hp-hit
+  setup: { dist: close, dummy: none }
+  input: "motion qcf HP"
+  qjson: { name: "Gou Hadouken" }
+  outcome: HIT
+  expect: { S: from-qjson, R: from-qjson }
+
+# --- Gou Shoryuken (DP-shape hold-chain, Jab strength only) ------------------
+# Landed via the EXISTING DP-shape hold-chain (Ken Shoryuken / Dudley Jet
+# Uppercut precedent), zero compiler work. S=3/A=14 match akuma.json's Gou
+# Shoryuken Jab row EXACTLY on all three outcomes - unambiguous
+# identification (akuma.json splits by strength, Startup 3/2/1 for
+# Jab/Strong/Fierce; only Jab probed per the Ken-precedent one-strength
+# budget). R RESOLVED 2026-07-08 (§13.5.1a grounded fresh-edge cut gate,
+# docs/frame-data-synthesis.md §13.5.1a): the old measured R=18 (vs arcade
+# 26, identical on whiff/block/hit) was a §13.5.1 shape-B false cut
+# (landing-tick label flip on an airborne move - the Ken Shoryuken
+# sibling case). Post-fix R=26 EXACT on all three outcomes - xfails
+# removed, plain PASS. The old BLOCK-side adv drift resolved with it
+# (measured -24, matching akuma.json exactly, up from the truncated -16).
+#
+# adv is deliberately UNASSERTED across this section (Ken SRK/Tatsu
+# precedent): the measured HIT-side adv reading is +72-style garbage
+# (large-number-on-knockdown-adjacent shape, not a plausible frame
+# advantage) - not separately verified; only S/A/R are asserted.
+# kd unasserted. Previously measured kd=0 on this HIT (the harness's
+# strike-KD predicate did not latch for this move's juggle knockdown).
+# RESOLVED 2026-07-09 (§13.6.2b, ENGINE-3): kd now measures 1 live - the
+# shipped predicate was simply blind to this move's down-family
+# traversal, not a genuine oracle/engine divergence. Still left
+# unasserted here: akuma.json's own Hit_advantage for this row is the
+# non-numeric "-" (no oracle KD marker to check against), the same
+# posture as every other "-"-Hit_advantage special in this repo.
+
+- label: akuma-srk-lp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LP 2; wait 1"
+  qjson: { name: "Gou Shoryuken Jab" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: akuma-srk-lp-block
+  setup: { dist: close, dummy: stand }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LP 2; wait 1"
+  qjson: { name: "Gou Shoryuken Jab" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: akuma-srk-lp-hit
+  setup: { dist: close, dummy: none }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LP 2; wait 1"
+  qjson: { name: "Gou Shoryuken Jab" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# --- Tatsumaki Zankuu Kyaku (ground, motion qcb, Short strength only) --------
+# Landed via the EXISTING `motion qcb <K>` macro (Ken Tatsu precedent).
+# GROUND version only - the "Air Tatsumaki Zankuu Kyaku" rows are a
+# separate airborne-only family, out of scope. S=11/A=4 match akuma.json's
+# Tatsumaki Zankuu Kyaku Short row EXACTLY on all three outcomes -
+# unambiguous identification.
+#
+# RESOLVED 2026-07-09 (§13.5.1b guard-rearm commit gate, lever H). Was:
+# residual item 18(b) whiff-R truncation, PERFECTLY UNIFORM across
+# whiff/block/hit (measured R=12 vs arcade 17 on all three, cut=1,
+# anchor_a=4=engine_a=4) - trace-confirmed a lever-H false cut (guard_flag
+# stayed 3 for the whole post-anchor tail on all three outcomes, never
+# re-arming before the natural r1 edge). The gate now correctly refuses
+# this commit; all three outcomes finalize at the natural r1 edge and
+# measure R=17, arcade-exact (S=11, A=4 unchanged). BLOCK's adv now
+# measures -12, arcade-exact, but stays UNASSERTED (no new expect field
+# added). HIT's adv is still +86-style garbage; kd stays unasserted.
+# Previously measured kd=0 here too; RESOLVED 2026-07-09 (§13.6.2b,
+# ENGINE-3): kd now measures 1 live - the shipped predicate was blind to
+# this move's down-family traversal, not a genuine oracle/engine
+# divergence. akuma.json's own Hit_advantage for this row is the
+# non-numeric "-", so kd is still not asserted (no oracle KD marker to
+# check against). See docs/frame-data-synthesis.md §13.5.1b and §13.6.2b.
+
+- label: akuma-tatsu-lk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "motion qcb LK"
+  qjson: { name: "Tatsumaki Zankuu Kyaku Short" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: akuma-tatsu-lk-block
+  setup: { dist: close, dummy: stand }
+  input: "motion qcb LK"
+  qjson: { name: "Tatsumaki Zankuu Kyaku Short" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: akuma-tatsu-lk-hit
+  setup: { dist: close, dummy: none }
+  input: "motion qcb LK"
+  qjson: { name: "Tatsumaki Zankuu Kyaku Short" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# --- Hyakki Shuu (demon flip, DP-shape hold-chain + K) -----------------------
+# The task flagged this move "partially airborne - document what's
+# assertable"; the empirical answer is EVERYTHING in its oracle row: all
+# three outcomes (WHIFF/BLOCK/HIT) produce clean, deterministic FINALs
+# with S=40/A=15/R=13 matching akuma.json EXACTLY, and BLOCK's adv=-11
+# also matches exactly - zero divergence anywhere in this section, no
+# airborne-related harness gap materialized (the flip arc launches and
+# lands within one scripted window; landing recovery is captured by the
+# same meter, T=68 on all three outcomes). The flip's own FLIP-KICK
+# hitbox (the Hyakki Shuu oracle row itself) is what connects at
+# dist:close; the Goushou/Goujin/Gousai followup attacks (separate oracle
+# rows, separate mid-flip inputs) are a distinct family outside this
+# session's budget - open gap, not probed.
+#
+# HYAKKI SHUU KD FINDING: measured kd=1 on HIT despite akuma.json's
+# Hit_advantage being "-" (no "D" annotation - the oracle simply carries
+# no knockdown marker for this row). Same oracle-notation-vs-live-kd
+# inconsistency direction as corpus-urien.yaml's HEADBUTT KD FINDING
+# (live knockdown with no oracle annotation); kd asserted at the measured
+# value, explicit-only per Phase 3.
+
+- label: akuma-hyakki-lk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LK 2; wait 1"
+  qjson: { name: "Hyakki Shuu" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: akuma-hyakki-lk-block
+  setup: { dist: close, dummy: stand }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LK 2; wait 1"
+  qjson: { name: "Hyakki Shuu" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: akuma-hyakki-lk-hit
+  setup: { dist: close, dummy: none }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LK 2; wait 1"
+  qjson: { name: "Hyakki Shuu" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, kd: 1 }
+
+# --- Ashura Senkuu (teleport, DP-shape hold-chain + 3P chord) ----------------
+# CONFIRMED movement-only: a real FINAL fires with ZERO active frames
+# (nearest precedents: Dudley Ducking Rush, corpus-dudley.yaml:676-681 —
+# but note that one has a zero-data oracle row, so its expect:{} was
+# trivially correct; Ashura's oracle publishes numeric Recovery=9, so per
+# review ruling 2026-07-08 this entry asserts R and xfails the degenerate
+# measurement, the Urien-VKD information-preserving posture)
+# (first_active_raw=-1, engine_a=0, active_pf=0, A=0) - the teleport never
+# produces a hitbox. RECIPE (probed this session, isolated scratch
+# corpus): the arcade command is dp or reverse-dp + 3P/3K; a DP-shape
+# hold-chain ending in the LP+MP+HP chord lands it (hold's chord parser
+# takes arbitrary N-button chords - no compiler change). All FOUR variants
+# were probed and land the SAME move state (MOVE_START r1=4 r2=23 on every
+# variant - a state no other move in this corpus shows) with four distinct
+# total durations: dp+3P T=72, dp+3K T=59, revdp+3P T=51, revdp+3K T=49 -
+# consistent with Ashura Senkuu's four travel-distance variants. A plain
+# `motion qcf`+single-P does NOT land it (probed: qcf+3P chord read a Gou
+# Hadouken FINAL - proj=1, S=8/R=38 - i.e. the qcf parse wins; qcb+3P read
+# Far Fierce, qcb+3K read a Roundhouse Tatsu; the DP shape is required).
+#
+# WHAT IS ASSERTABLE: outcome=WHIFF only (expect: {} - the FINAL firing
+# with zero active frames and no contact IS the assertion). akuma.json's
+# single numeric field, Recovery=9, is NOT comparable in this harness: the
+# overlay's R counts post-ACTIVE ticks, and a zero-active-frame move has
+# no active anchor - its whole duration classifies as startup (measured
+# S=T=72, A=0, R=0 for the dp+3P variant; the meter saturates at
+# FD_METER_LEN=72 since the full teleport runs ~75 raw frames,
+# atk_idle_F - move_start_F). This is a measurement-semantics gap (the
+# S/A/R decomposition is degenerate without an active window) - NOT a
+# timing divergence.
+# MASK-1 UPDATE (2026-07-11): per review ruling 2026-07-08 the arcade R
+# used to stay asserted with the gap recorded in the xfail string. The
+# user has since adopted per-entry field masking for ERRATA-STRUCTURAL
+# rows (docs/frame-data-synthesis.md §13.15) - R is now dropped from
+# expect entirely (never substituted, never re-added) rather than kept
+# asserted-and-xfailed; see the FIELD-MASKED comment directly below.
+
+# FIELD-MASKED (ERRATA): R not asserted - akuma.json "Ashura Senkuu"
+# Recovery=9 (the row's only numeric field) is structurally incomparable
+# with this harness's R metric: a zero-active-frame move (no hitbox ever
+# fires) has no active-window anchor for the S/A/R decomposition, so the
+# whole duration reads as saturated startup (measured S=T=72, A=0, R=0;
+# FD_METER_LEN=72 saturation, true raw duration ~75 frames). Verdict
+# STRUCTURAL, docs/arcade-frame-data/ERRATA.md §1 (two independent
+# external sources, EventHubs + FAT-3S, both confirm Recovery=9 - the
+# oracle figure itself is not in dispute; the incomparability is entirely
+# in this harness's own measurement model). Comparable field: outcome=WHIFF
+# + finals=1 only (the FINAL firing with zero active frames IS the
+# assertion - `expect: {}`, same precedent as corpus-dudley.yaml's
+# dudley-ducking-whiff). Masked-field drift stays golden-pinned
+# (golden.py measured columns). MASK-1, user decision 2026-07-11,
+# docs/frame-data-synthesis.md §13.15.
+- label: akuma-ashura-whiff
+  setup: { dist: 250, dummy: none }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LP+MP+HP 2; wait 1"
+  qjson: { name: "Ashura Senkuu" }
+  outcome: WHIFF
+  expect: {}
+
+# --- Negative control (plan section 1.8 item 5 precedent) ------------------
+
+- label: akuma-jump-none
+  setup: { dist: 250, dummy: none }
+  input: "press UP"
+  outcome: NONE

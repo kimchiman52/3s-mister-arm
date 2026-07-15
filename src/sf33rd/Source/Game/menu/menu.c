@@ -4085,13 +4085,16 @@ void Wait_Pause_in_Tr(struct _TASK* task_ptr) {
             if (Present_Mode == 4) {
                 Disp_Attack_Data = Training->contents[0][1][1];
                 Disp_Input_History = Training[0].contents[0][1][5];
+                Disp_Frame_Data = Training[0].contents[0][1][6];
             } else {
                 Disp_Attack_Data = 0;
                 Disp_Input_History = 0;
+                Disp_Frame_Data = 0;
             }
         } else {
             Disp_Attack_Data = 0;
             Disp_Input_History = 0;
+            Disp_Frame_Data = 0;
         }
 
         /* fallthrough */
@@ -4153,6 +4156,7 @@ void Wait_Pause_in_Tr(struct _TASK* task_ptr) {
             Pause_Down = 0;
             Disp_Attack_Data = Training->contents[0][1][1];
             Disp_Input_History = Training[0].contents[0][1][5];
+            Disp_Frame_Data = Training[0].contents[0][1][6];
 
             for (ix = 0; ix < 4; ix++) {
                 Menu_Suicide[ix] = 1;
@@ -4276,6 +4280,7 @@ void Setup_Tr_Pause(struct _TASK* task_ptr) {
     Cursor_Y_Pos[0][0] = 0;
     Disp_Attack_Data = 0;
     Disp_Input_History = 0;
+    Disp_Frame_Data = 0;
     Game_pause = 0x81;
     Pause_Down = 1;
     Menu_Suicide[0] = 1;
@@ -5105,13 +5110,13 @@ void Training_Option(struct _TASK* task_ptr) {
         Menu_Suicide[0] = 1;
         Training_Index = 3;
 
-        for (ix = 0, s6 = y = 72; ix < 8; ix++, s5 = y += 16) {
+        for (ix = 0, s6 = y = 48; ix < 9; ix++, s5 = y += 16) {
             effect_A3_init(0, 6, ix, ix, 1, 48, y, 1);
         }
 
         {
-            static const s16 option_groups[] = { 7, 8, 9, 10, 23, 24 };
-            for (ix = 0, y = 72, s4 = group = 7; ix < 6; ix++, s3 = y += 16) {
+            static const s16 option_groups[] = { 7, 8, 9, 10, 23, 24, 25 };
+            for (ix = 0, y = 48, s4 = group = 7; ix < 7; ix++, s3 = y += 16) {
                 effect_A3_init(0, option_groups[ix], ix, ix, 1, 230, y, 1);
             }
         }
@@ -5119,9 +5124,9 @@ void Training_Option(struct _TASK* task_ptr) {
         break;
 
     case 1:
-        Dummy_Move_Sub(task_ptr, Champion, 0, 1, 7);
+        Dummy_Move_Sub(task_ptr, Champion, 0, 1, 8);
 
-        if (Menu_Cursor_Y[0] == 6 && IO_Result & 0x100) {
+        if (Menu_Cursor_Y[0] == 7 && IO_Result & 0x100) {
             Default_Training_Option();
             SE_selected();
             break;
@@ -5165,8 +5170,8 @@ void Dummy_Move_Sub(struct _TASK* task_ptr, s16 PL_id, s16 id, s16 type, s16 max
     }
 }
 
-const u8 Menu_Max_Data_Tr[2][2][8] = { { { 4, 6, 2, 2, 0, 0, 0, 0 }, { 3, 1, 3, 7, 1, 1, 0, 0 } },
-                                       { { 2, 3, 1, 3, 0, 0, 0, 0 }, { 0, 0, 0, 0, 0, 0, 0, 0 } } };
+const u8 Menu_Max_Data_Tr[2][2][9] = { { { 4, 6, 2, 2, 0, 0, 0, 0, 0 }, { 3, 1, 3, 7, 1, 1, 1, 0, 0 } },
+                                       { { 2, 3, 1, 3, 0, 0, 0, 0, 0 }, { 0, 0, 0, 0, 0, 0, 0, 0, 0 } } };
 
 static bool is_data_plus_hitboxes_option_selected() {
     return Training[0].contents[0][1][4] != 0;
@@ -5556,7 +5561,7 @@ void Default_Training_Data(s32 flag) {
 
     for (ix = 0; ix < 2; ix++) {
         for (ix2 = 0; ix2 < 2; ix2++) {
-            for (ix3 = 0; ix3 < 6; ix3++) {
+            for (ix3 = 0; ix3 < 7; ix3++) {
                 Training[0].contents[ix][ix2][ix3] = 0;
             }
         }
@@ -5569,6 +5574,7 @@ void Default_Training_Data(s32 flag) {
     Training[2] = Training[0];
     Disp_Attack_Data = 0;
     Disp_Input_History = 0;
+    Disp_Frame_Data = 0;
 
     if (flag == 0) {
         if (TrainingConfig_Load()) {
@@ -5583,6 +5589,7 @@ void Default_Training_Option() {
     Training->contents[0][1][1] = 0;
     Training->contents[0][1][4] = 0;
     Training->contents[0][1][5] = 0;
+    Training->contents[0][1][6] = 0;
     Training->contents[0][1][2] = save_w->Damage_Level;
     Training->contents[0][1][3] = save_w->Difficulty;
     save_w[Present_Mode].Damage_Level = save_w->Damage_Level;
@@ -5590,6 +5597,7 @@ void Default_Training_Option() {
     Training[2] = Training[0];
     Disp_Attack_Data = 0;
     Disp_Input_History = 0;
+    Disp_Frame_Data = 0;
 }
 
 void Wait_Replay_Load(struct _TASK* task_ptr) {}

@@ -1,0 +1,4 @@
+label	verdict	outcome	n	S	A	R	adv	kd
+sean-sa2-whiff	PASS	WHIFF	1	0	30	36	+0	0
+sean-sa2-block	PASS	BLOCK	1	0	30	36	-43	0
+sean-sa2-hit	PASS	HIT	1	0	30	36	+82	1

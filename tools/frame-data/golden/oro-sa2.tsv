@@ -1,0 +1,7 @@
+label	verdict	outcome	n	S	A	R	adv	kd
+oro-sa2-whiff	PASS	WHIFF	1	28	21	19	+0	0
+oro-sa2-block	PASS	BLOCK	1	28	11	19	+27	0
+oro-sa2-hit	PASS	HIT	1	28	11	19	+28	0
+oro-sa2ex-whiff	PASS	WHIFF	1	27	54	50	+0	0
+oro-sa2ex-block	PASS	BLOCK	1	27	111	50	+73	0
+oro-sa2ex-hit	PASS	HIT	1	27	111	50	+75	0

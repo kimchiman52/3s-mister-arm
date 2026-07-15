@@ -1,0 +1,149 @@
+# Urien Super Art 1 (Tyrant Punish) — EX/Supers program, supers wave S5.
+# Satellite corpus (auto-discovered by run-suite.sh's corpus-*.yaml glob, own
+# golden/urien-sa1.tsv once registered) — corpus-urien.yaml/corpus-urien-
+# ex.yaml are untouched.
+#
+# Scope: step0-universe.tsv row "urien 39 Tyrant Punish" (sa_slot 1). Oracle:
+# docs/arcade-frame-data/urien.json (md5 5feea97b78d5c40f4af226bbb0bab288,
+# same file corpus-urien.yaml/corpus-urien-ex.yaml already pin, re-verified
+# unchanged this session). Oracle row: Startup=0, Hit=55, Recovery=23,
+# Block_advantage=-18, Hit_advantage="-" (non-numeric).
+#
+# IDENTITY (S-match probe, this session): super_art:0 (0-indexed SA1) +
+# "motion 2qcf HP" lands S=0 identically on every leg (unambiguous — no other
+# Urien move in this session's probing reads S=0 under super_art:0's own
+# selection). Kick-button cross-check ("motion 2qcf HK" at the same slot)
+# falls through to an unrelated non-super signature (S=17/A=6/R=20,
+# reproduced identically at super_art:1 too — confirms the kick button is
+# not this SA's own input at either slot, a routing-sanity check, not a
+# candidate). Motion landed on the FIRST attempt tried (punch-tier 2qcf,
+# matching the Ryu/Ken/Akuma/Chun-Li SA punch-group convention).
+#
+# Meter: sa_gauge:3 (MAXIMUM), per authoring-policy.md's meter policy for
+# non-install supers.
+#
+# SHAPE: genuinely multi-run under the real att_box tensor — box_runs=4
+# (BLOCK/HIT) / 5 (the connecting whiff-attempt below), matching Ruling 3's
+# Ken-SA3-class treatment (lever N/O decline by design on any multi-run
+# leg, `frame_data_overlay.c:816`) — S is lever-independent (E-3) and
+# assertable regardless; A is assertable on BLOCK via the legacy declared-
+# credit path per Ruling 3.
+#
+# WHIFF-UNREACHABLE(dist=310 centered, achieved dist=278, walk_in=32px):
+# Tyrant Punish is a screen-crossing rushing super (confirmed empirically,
+# not assumed from genre memory — the oracle's own naming and this move's
+# own reach behavior match a dashing-tackle shape). Binary-searched per
+# Ruling 1: `dist:300 dist_mode:centered` (achieved dist=273) still connects
+# (outcome=HIT); `dist:310 dist_mode:centered` (the harness's own measured
+# true ceiling, achieved dist=278) STILL connects (outcome=HIT, S=0 A=54
+# R=14 adv=+55, byte-consistent with the shipped HIT leg's own A/R values
+# below) — 2 probes, both HIT, confirming this is a genuine engine-reach
+# fact and not a placement/harness shortfall (the achieved separation at the
+# ceiling, 278px, is not meaningfully different from the anchored 273px
+# attempt). Per Ruling 1's honest-bound convention, no WHIFF entry is
+# shipped; coverage comes from the BLOCK/HIT legs below.
+#
+# Admissibility census (mechanical, from FRAME_TRACE columns — authoring-
+# policy.md Ruling 2), this session's own 3-entry probe run
+# (<sp>/sa-urien/run-sa0-full/trace.log, inter_entry_wait:500 — the WHIFF-
+# attempt entry is the connecting-whiff-ceiling probe above, not shipped):
+# (1) Single-FINAL integrity: exactly one MOVE_START/FINAL pair per entry's
+#     own window (BLOCK F279-413; HIT F465-649), no bleed (python census
+#     this session, cross-checked against each FINAL's own move_start_F).
+# (2) Flash-overlap census: 0 nonzero `sastop` ticks in [MOVE_START F,
+#     FINAL F] on the shipped BLOCK/HIT windows (0/135 BLOCK, 0/185 HIT —
+#     python census this session). The connecting-whiff-ceiling probe's OWN
+#     window does carry a 51-tick nonzero-sastop burst, but it fires
+#     strictly AFTER that entry's own FINAL (F=228-278, following FINAL at
+#     F=227) — a post-hit victory/impact-flash effect outside the tracked
+#     [MOVE_START, FINAL] span, not a contact-window flash overlap; that
+#     entry isn't shipped regardless (WHIFF-UNREACHABLE).
+# (3) Contact-A juggle check (HIT leg): HIT-leg A=54 == BLOCK-leg A=54 —
+#     PASSES (mechanically eligible for HIT-leg A per Ruling 2 check 3; see
+#     the A DISPOSITION below for why the shared value is still not a clean
+#     oracle match).
+# (4) Shape record: box_runs=4 on both BLOCK and HIT (genuinely multi-run,
+#     Ruling 3's Ken-SA3-class shape, not the Chun-Li-SA2/Ryu-SA1-pilot
+#     clean single-run class).
+#
+# A/R DISPOSITION (BLOCK leg) — SUM-PRESERVING A/R BOUNDARY SHIFT, PARTIALLY
+# RESOLVED (ENGINE-D2, lever S, 2026-07-13 — the A half of this an EXISTING
+# registered one-off, CORPUS-AUTHORING.md Phase 6 / §12.2.4,
+# `docs/frame-data-synthesis.md:909`; the sum-conservation framing below is
+# now KNOWN-STALE, see the correction after it). Pre-fix: measured A=54 vs
+# oracle 55 (-1) and R=24 vs oracle 23 (+1) on the SAME leg, with adv=-18
+# exact and cut=0. Conservation check pre-fix: measured S+A+R = 0+54+24 =
+# 78; oracle S+A+R = 0+55+23 = 78 — CONSERVED, which was read as
+# confirming the same shape as the row's existing two members
+# (`remy-cbk-lk-whiff`, `yun-zesshou-hp-block/-hit`).
+#
+# ENGINE-D2 FIX LANDED (lever S, `fd_movestart_same_tick_credit_hold`,
+# `frame_data_overlay.c`, 2026-07-13): this leg is a same-tick D2 member —
+# A's own -1 was the D2 race, NOT (or not only) the sum-preserving
+# boundary-shift mechanism. Post-fix measured A=55 == oracle exactly; R is
+# UNAFFECTED by lever S (R is not touched by the engine's declared-active-
+# cell accumulator lever S gates) and stays measured R=24 vs oracle 23.
+# CONSEQUENCE: the sum-conservation narrative BREAKS post-fix — measured
+# S+A+R = 0+55+24 = 79 vs oracle 78, no longer conserved. This means the
+# pre-fix "conserved" reading was itself a coincidence of two independent,
+# unrelated divergences (D2's A-race and the R-boundary-shift/other-cause)
+# summing to a conserved total, not evidence of one single sum-preserving
+# mechanism. A converts to plain PASS (asserted `from-qjson`, now
+# oracle-exact); R stays xfailed, UNCLASSIFIED, on its own remaining
+# clause — this leg is NOT a fourth "sum-preserving A/R boundary shift"
+# sighting after all; the note is reworded to the evidenced post-fix state
+# below.
+#
+# A DISPOSITION (HIT leg) — RESOLVED (ENGINE-D2, lever S). Measured A=54
+# pre-fix, identical to BLOCK (juggle check passes) — same D2 same-tick
+# race, not a genuine declared-credit path-independence signature as
+# previously framed. Post-fix measured A=55 == oracle exactly. A is now
+# asserted `from-qjson`, plain PASS — the 12th XFAIL→PASS conversion of
+# this fix (one more than the fix-plan's own provisional "up to 11").
+#
+# R DISPOSITION (HIT leg) — NOT asserted, left UNCLASSIFIED without a
+# citation. Measured R=14, genuinely and substantially shorter than the
+# BLOCK leg's own measured R=24 (a ~10-tick differential) — superficially
+# resembling a Phase 6 bucket 2 "HIT-R divergence, Class 1" shape (S/A held
+# constant across legs, R differs), but that bucket's own precedent set
+# requires the reference BLOCK/WHIFF leg to be independently oracle-exact
+# before citing a clean HIT-side conventional value; here the BLOCK leg's
+# own R is itself the sum-preserving-shift finding above (not oracle-exact),
+# so there is no clean arcade-anchored baseline to measure the HIT leg's
+# divergence against. Per the "never force a mechanism onto an ambiguous
+# stacked finding" discipline, R is left unasserted on this leg rather than
+# citing §13.10 on a compromised anchor — flagged here for follow-up
+# classification, not guessed at.
+character: urien
+oracle: urien.json
+super_art: 0
+sa_gauge: 3
+inter_entry_wait: 500
+entries:
+
+- label: urien-sa1-block
+  setup: { dist: close, dummy: stand }
+  input: "motion 2qcf HP"
+  qjson: { name: "Tyrant Punish" }
+  outcome: BLOCK
+  # Measured S=0 A=55 (was 54 pre-ENGINE-D2, now RESOLVED, oracle-exact)
+  # R=24 (unaffected by lever S, still xfail — oracle 23) adv=-18
+  # (box_runs=4, engine_a=55, T=103, cut=0). S/A/adv oracle-exact; R stays
+  # the open clause.
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson, xfail: "[HONEST-FLOOR CENSUS 2026-07-14, opus-substitute / WANTS FABLE RE-REVIEW] TERMINAL CLASS = TERMINAL-NON-SURGICAL (R off-by-1, no discriminator). No hardware value beyond oracle; A closed by lever S (=55, oracle-exact). NON-SURGICAL: the 'sum-preserving A/R' framing is KNOWN-STALE post-D2 (S+A+R=79 vs oracle 78), busyr=24 is the wrong value with no discriminator, a blind -1 regresses. Golden stays oracle=23, XFAIL. Prior disposition (unchanged): R-only, post-ENGINE-D2 (2026-07-13; supersedes the 'Sum-preserving A/R boundary shift' framing above, which is now KNOWN-STALE — see the A/R DISPOSITION header note for the full reasoning). The A clause is RESOLVED by ENGINE-D2's lever S (frame_data_overlay.c fd_movestart_same_tick_credit_hold): post-fix A=55 == oracle exactly, this leg was a same-tick D2 member, not a sum-preserving-shift member on the A side. The R clause REMAINS OPEN and is unaffected by lever S (R is not touched by the engine's declared-active-cell accumulator): measured R=24 vs oracle 23 (+1). The sum-conservation narrative this xfail previously cited (S+A+R=78 both sides) NO LONGER HOLDS post-fix: measured S+A+R = 0+55+24 = 79 vs oracle 78 (0+55+23) - the pre-fix 'conservation' was a coincidence of the D2 race's own -1 and this leg's independent R divergence summing to a conserved total, not evidence of one single boundary-shift mechanism. R stays UNCLASSIFIED, xfailed at the oracle value, flagged for follow-up." }
+
+- label: urien-sa1-hit
+  setup: { dist: close, dummy: none }
+  input: "motion 2qcf HP"
+  qjson: { name: "Tyrant Punish" }
+  outcome: HIT
+  # Measured S=0 A=55 (was 54 pre-ENGINE-D2, see A DISPOSITION above — now
+  # RESOLVED, oracle-exact) R=14 adv=+59 kd=1 (box_runs=4, T=94). S/A
+  # oracle-exact. Contact-A juggle check (Ruling 2 check 3) PASSES (HIT
+  # A=55 == BLOCK A=55). No expect.adv: urien.json's Hit_advantage for this
+  # row is the literal string "-". R is NOT asserted (see R DISPOSITION
+  # (HIT leg) in the header - unaffected by lever S, no clean
+  # oracle-anchored baseline to classify the BLOCK-vs-HIT R differential
+  # against). ENGINE-D2 (2026-07-13): A xfail removed, plain PASS — the
+  # 12th XFAIL→PASS conversion.
+  expect: { S: from-qjson, A: from-qjson, kd: 1 }

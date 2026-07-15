@@ -1,0 +1,309 @@
+# Makoto EX moves corpus — EX/Supers program, wave 3 fan-out (Ruling 5's
+# per-character EX satellite batches, <sp>/exsuper/authoring-policy.md).
+# Satellite corpus (auto-discovered by run-suite.sh's corpus-*.yaml glob, own
+# golden/makoto-ex.tsv) — the main corpus-makoto.yaml is untouched.
+#
+# Scope: Makoto's 4 ground EX rows per <sp>/exsuper/step0-universe.tsv (rows
+# 36/40/44/48, all class=EX, all ASSERTABLE, none AIR_DEFERRED): Hayate EX,
+# Fukiage EX, Oroshi EX, Tsurugi EX. Karakusa has NO EX row in makoto.json
+# (verified live against the fetched oracle — the command-grab-family
+# handling precedent this batch was briefed to expect turned out not to
+# apply: Karakusa's 3 strength rows (index 49-51) are followed directly by
+# the SUPER block boundary at index 52, no EX row in between). Oracle:
+# docs/arcade-frame-data/makoto.json (md5 8805245ff0ccb492ff78cc00027a4d4d,
+# same file corpus-makoto.yaml already pins — re-verified unchanged this
+# session). makoto.json's EX row `Name` fields have NO parenthesized "(EX)"
+# suffix (bare "Hayate EX" / "Fukiage EX" / "Oroshi EX" / "Tsurugi EX"),
+# same convention as ken.json, unlike ryu.json's "(EX)" parenthesized form —
+# verified live, not assumed.
+#
+# Motion recipes (Phase 5 motion-probe method — S-value match against the
+# oracle; `cmwd_motion` can't chord two buttons on the final step, so every
+# EX recipe below is a manual `hold`-chain mirroring corpus-makoto.yaml's own
+# base-move macros with the final step's button chorded to BOTH strengths of
+# the pressed type, same workaround as corpus-ken-ex.yaml/corpus-ryu-ex.yaml):
+#   - Hayate EX (236PP): `hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LP+HP 2;
+#     wait 1` — corpus-makoto.yaml's own `motion qcf <btn>` sequence for
+#     Hayate, chorded.
+#   - Fukiage EX (623PP): `hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold
+#     RIGHT+LP+HP 2; wait 1` — corpus-makoto.yaml's own DP hold-chain for
+#     Fukiage, chorded.
+#   - Oroshi EX (214PP): `hold DOWN 2; hold DOWN+LEFT 2; hold LEFT+LP+HP 2;
+#     wait 1` — the qcb-shape half of corpus-makoto.yaml's own
+#     hcb/qcb-both-work finding for Oroshi (`motion hcb LP` / `motion qcb
+#     LP`), chorded.
+#   - Tsurugi EX (a.214KK): see the TSURUGI JUMP-PRECONDITION FINDING below —
+#     `press UP; wait 3; hold DOWN 2; hold DOWN+LEFT 2; hold LEFT+LK+HK 2;
+#     wait 1`.
+# All four landed on the FIRST or SECOND attempt (S-value match against
+# makoto.json's own EX rows: S=17/11/13/15 respectively, exact) — zero
+# compile_corpus.py changes, zero builds this session (FDH_SKIP_BUILD=1
+# throughout, own isolated FDH_RUNDIR per probe under
+# <sp>/ex-makoto/run-probe{1,2,3,4}).
+#
+# ============================================================================
+# TSURUGI JUMP-PRECONDITION FINDING (fact-checked this session, corrects an
+# untested assumption inherited from corpus-makoto.yaml). The mains corpus's
+# own header excludes Tsurugi entirely with the claim "the harness
+# dummy/attacker cannot be scripted to jump" (citing the SDB anti-air-grab
+# gap, docs/frame-data-synthesis.md §12.1) — but that citation does not
+# actually mention Tsurugi anywhere (grepped this session, zero hits), and
+# the SDB precedent is about the DEFENDER needing to jump into an anti-air
+# grab, a different mechanism than an ATTACKER special that itself requires
+# being airborne. This session tested the assumption directly rather than
+# inheriting it:
+#   1. `motion qcb LK` (grounded, no jump) at dist=250 did NOT land Tsurugi
+#      Short (S=14/A=4 expected) — it read S=4/A=5/R=12, an EXACT match to
+#      plain standing "Short" (makoto.json row 16), i.e. the qcb motion
+#      window was never recognized as a special at all; only the trailing
+#      LK press registered (probe1, label probe-tsurugi-lk-whiff).
+#   2. `hold DOWN 2; hold DOWN+LEFT 2; hold LEFT+LK+HK 2; wait 1` (grounded
+#      EX chord, no jump) similarly did NOT land Tsurugi EX — it read
+#      S=11/A=9/R=13, an EXACT match to plain standing "Roundhouse"
+#      (makoto.json row 18), i.e. the two-kick chord with a bare BACK hold
+#      was read as a plain HK press (probe1, label probe-tsurugi-ex-whiff).
+#   3. `press UP; wait 3; motion qcb LK` (jump first, THEN the qcb+K motion
+#      while airborne) DID land the real move: S=14/A=4, an EXACT match to
+#      Tsurugi Short (probe3, label probe-tsurugi-jump-lk-whiff) — R=24 was
+#      also read but makoto.json's Recovery field for every Tsurugi row is
+#      the non-numeric literal "-", so there is no oracle figure to compare
+#      it against.
+# Common_name confirms the "a." prefix is genuinely distinct from every
+# other Makoto special in makoto.json (Hayate/Fukiage/Oroshi/Karakusa all
+# have bare numpad-notation Common_names with no letter prefix; only the 4
+# Tsurugi rows carry "a.214LK"/"a.214MK"/"a.214HK"/"a.214KK" — the same
+# single-letter-prefix family as "n.j." (neutral jump) and "j." (jump), by
+# this convention's own internal consistency), so "a." plausibly denotes an
+# airborne-only input classification specific to this move family — this
+# session's live result is consistent with that reading, though the
+# database's own prefix-naming convention was not independently documented
+# anywhere else in this repo to confirm it beyond this behavioral test.
+# CONCLUSION: Tsurugi (base and EX) IS reachable in this harness via a
+# `press UP; wait N` preamble before the motion — the mains corpus's
+# blanket exclusion was an UNTESTED assumption, not a verified harness gap.
+# This finding is logged here for the orchestrator; corpus-makoto.yaml
+# itself is out of this task's scope (file-disjoint) and is left untouched.
+# ============================================================================
+#
+# Admissibility census (per-entry, mechanical, from FRAME_TRACE columns —
+# authoring-policy.md Ruling 2), all entries below:
+# (1) Single-FINAL integrity: exactly one FINAL per entry's own window in
+#     every probe run (probe1: 5 entries, 5 FINALs; probe2: 7 entries, 7
+#     FINALs; probe4: 3 entries, 3 FINALs — mechanical grep -c "FINAL" minus
+#     the one doc-comment false-positive line every trace.log header
+#     contains, cross-checked against each entry's own move_start_F ==
+#     MOVE_START annotation frame), all at inter_entry_wait:250 (matching
+#     the Ryu/Ken EX pilot's own settled value) — zero merges.
+# (2) Flash-overlap census (sastop gate): 0 nonzero sastop ticks across
+#     EVERY data row in every probe trace (mechanical awk census excluding
+#     comment/header lines, not sampled — 1269+980+421 data rows checked) —
+#     EX moves are flash-free, confirmed, not assumed.
+# (3) Contact-A juggle check (HIT legs only): Oroshi EX (7==7) and Tsurugi EX
+#     (4==4) BOTH PASS. Hayate EX (3==3) also passes the equality check, but
+#     its A is quarantined below for an unrelated reason (see that section).
+#     Fukiage EX has no HIT leg to check (BLOCK/HIT unreachable).
+# (4) Shape record: all four moves are single-run, non-projectile
+#     (box_runs=1, proj=0) on every leg checked — no multi-run (Ruling 3)
+#     or proj-split (§13.12) shape on this character's EX set.
+#
+# RESULT: 2 clean moves (Fukiage EX, Oroshi EX — every asserted field
+# oracle-exact), 1 quarantine (Hayate EX A+R on both BLOCK/HIT, logged
+# below with the full trace citation), 1 partial quarantine (Tsurugi EX
+# BLOCK adv only — S/A clean on every leg). Zero builds, zero lever-F
+# toggle tests performed this session (none needed/available under the
+# no-build constraint) — every quarantine below is a raw trace-fact
+# citation, not a claimed mechanism.
+character: makoto
+oracle: makoto.json
+inter_entry_wait: 250
+sa_gauge: 3
+entries:
+
+# --- Hayate EX (lunge punch, full-screen range) -----------------------------
+# WHIFF-UNREACHABLE(dist=310, centered ceiling; dist=250 anchored also
+# connects) — Ruling 1's honest-bound convention. Binary search: dist=250
+# (anchored, probe1 probe-hayate-ex-whiff) connected (outcome HIT, not
+# WHIFF); dist=310 (centered, the hard CENTERED_DIST_MAX cap, probe2
+# probe-hayate-ex-whiff-centered) ALSO connected — MOVE_START reads dist=307
+# (the ordinary ~3px engine-clamp shortfall, not a walk-in consumption; this
+# entry's own script has no preamble before the qcf-shape input). Root
+# cause: Hayate EX genuinely travels the full stage width (matches this
+# move's real-game "full-screen EX Hayate" reputation) — a pure move-reach
+# fact, not a harness placement artifact. No further binary search attempted
+# (310 is the hard compile-time cap for dist_mode:centered). Coverage for
+# this move's WHIFF path is out of reach in this harness; coverage instead
+# comes from the BLOCK/HIT legs below (S/adv oracle-exact where assertable),
+# per Ruling 1.
+#
+# RESOLVED (EX-CONTACT-R disposition #5, exsuper/excontact-r-findings.md
+# §3 item 5 / §1.8): A converts now, R after an offline F2 recount — both
+# per the entry's own recorded signature. Measured A=3 vs oracle A=6 on both
+# outcomes (S/adv remain oracle-exact). Own trace citation (run-probe2/
+# trace.log, cgix=col5/cghi=col7/cgctr=col30):
+#   BLOCK leg (F=124 MOVE_START -> F=171 FINAL): cgix climbs 4->8->12->16
+#   uniformly (+4/tick, matching cgctr's declared per-cell duration), then
+#   jumps 16->24 same tick (a +8 same-tick advance, one declared cell
+#   skipped — the same shape family as the base-Hayate skip-jump already
+#   established in corpus-makoto.yaml's ISSUE #17 CENSUS), then 28->40
+#   (+12, two cells skipped), then 40->52 (+12, two more cells skipped),
+#   before resetting to 0 at F=168 (chart end, immediately preceding FINAL
+#   at F=171). Three same-tick skips total on this leg.
+#   HIT leg (F=172 MOVE_START -> F=295 FINAL): IDENTICAL opening sequence
+#   through cgix=40 (same two skips), but then the chart branches early
+#   (cgix resets to 0 at F=203 with cghi jumping to 166 — a contact-triggered
+#   branch, not the same natural end-of-chart reset the BLOCK leg took at
+#   cgix=52) into a SEPARATE ascending sub-chart (cgix 20->32->36->44->48,
+#   cghi reset to 1, new cgctr=4) that runs until FINAL at F=295 — i.e. HIT
+#   takes a genuinely different post-contact recovery branch than BLOCK.
+#   Both outcomes' final R value (20) is IDENTICAL despite the different
+#   chart paths. F2 RECOUNT (this disposition): base-move family row is
+#   CLOSED as F2 in docs/frame-data-synthesis.md §12.2.4 Hayate row —
+#   "BLOCK +8 = dwell cell 19 ticks vs whiff's 11; HIT -4 = whiff's cgix4+
+#   cgix8 cells (2+2) skipped outright" — and base HIT ships R=20, the SAME
+#   measured value as both EX legs here. A=3 equals the base family's own
+#   established F1 engine-truth literal (corpus-makoto.yaml
+#   makoto-hayate-lp-block A: 3, own ledger: "whiff credits 16(3)+20(3)=6=
+#   arcade; BOTH contact outcomes credit only 16(3)=3"). Phase-6 bucket 1's
+#   written bar ("a per-entry lever-F toggle test, or an explicit
+#   skip/bypass trace citation") is met here by the citation above, recorded
+#   from the entry's own run — the equality (both legs measure R=20,
+#   matching the closed base-family HIT figure) settles the F2 recount.
+#   A converts citing §13.13 (a1) via this recorded skip citation + base-
+#   family F1 identity; R converts citing §12.2.4 Hayate-compound-closure by
+#   extension (base HIT R=20 identity is corroborating, not sufficient
+#   alone — the citation above is what meets the bar).
+- label: makoto-exhayate-block
+  setup: { dist: close, dummy: stand }
+  input: "hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LP+HP 2; wait 1"
+  qjson: { name: "Hayate EX" }
+  outcome: BLOCK
+  # Measured S=17 A=3 R=20 adv=+2 (box_runs=0 legacy-path shape same as
+  # corpus-makoto.yaml's own Hayate section, proj=0). S/adv oracle-exact
+  # (makoto.json Hayate EX: Startup=17, Block_advantage=2). A=3/R=20 asserted
+  # — see the disposition note above (arcade A=6, R=24).
+  expect: { S: from-qjson, A: 3, R: 20, adv: from-qjson }
+
+- label: makoto-exhayate-hit
+  setup: { dist: close, dummy: none }
+  input: "hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LP+HP 2; wait 1"
+  qjson: { name: "Hayate EX" }
+  outcome: HIT
+  # Measured S=17 A=3 R=20 (kd=1). S oracle-exact. No expect.adv
+  # (Hit_advantage is "-" for this row, confirmed live). A=3 (juggle check
+  # trivially passes, 3==3) / R=20 asserted — see the disposition note above.
+  expect: { S: from-qjson, A: 3, R: 20 }
+
+# --- Fukiage EX (anti-air uppercut) -----------------------------------------
+# Landed via the EXISTING DP-shape hold-chain (same recipe as
+# corpus-makoto.yaml's own Fukiage section, chorded to two punches). WHIFF
+# is completely clean — S=11/A=8/R=26, EXACT match to makoto.json's Fukiage
+# EX row, zero divergence.
+#
+# BLOCK/HIT UNREACHABLE (verified live this session, not re-assumed from the
+# base move): both a BLOCK attempt (dist:close, dummy:stand,
+# probe-fukiage-ex-block) and a HIT attempt (dist:close, dummy:none,
+# probe-fukiage-ex-hit) read as SHAPE mismatches — outcome measured WHIFF
+# instead of BLOCK/HIT in both cases (S=11/A=8/R=26, the same WHIFF numbers)
+# — same structural gap as corpus-makoto.yaml's own base-Fukiage precedent
+# (an anti-air uppercut that never connects against a grounded
+# standing/non-jumping dummy) and the runbook's SDB register precedent
+# (§12.1 row 2). No BLOCK/HIT entries are authored for this move.
+- label: makoto-exfukiage-whiff
+  setup: { dist: 250, dummy: none }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LP+HP 2; wait 1"
+  qjson: { name: "Fukiage EX" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# --- Oroshi EX (overhead chop) ----------------------------------------------
+# Landed via the qcb-shape hold-chain (the qcb half of
+# corpus-makoto.yaml's own hcb/qcb-both-work Oroshi finding, chorded to two
+# punches). Completely clean on every outcome tested — S/A/R/adv all match
+# makoto.json's Oroshi EX row exactly, zero divergence of any kind (the
+# cleanest of the four moves in this batch, matching corpus-makoto.yaml's
+# own characterization of the base Oroshi family).
+- label: makoto-exoroshi-whiff
+  setup: { dist: 250, dummy: none }
+  input: "hold DOWN 2; hold DOWN+LEFT 2; hold LEFT+LP+HP 2; wait 1"
+  qjson: { name: "Oroshi EX" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: makoto-exoroshi-block
+  setup: { dist: close, dummy: stand }
+  input: "hold DOWN 2; hold DOWN+LEFT 2; hold LEFT+LP+HP 2; wait 1"
+  qjson: { name: "Oroshi EX" }
+  outcome: BLOCK
+  # Measured S=13 A=7 R=17 adv=+4 (box_runs=1, box_a=7, busyr=17, proj=0),
+  # oracle-exact on all four fields (makoto.json Oroshi EX). BLOCK-leg A
+  # needs no juggle check (Ruling 2: it IS the validated legacy instrument)
+  # — logged here as the cross-check anchor for the HIT leg below.
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: makoto-exoroshi-hit
+  setup: { dist: close, dummy: none }
+  input: "hold DOWN 2; hold DOWN+LEFT 2; hold LEFT+LP+HP 2; wait 1"
+  qjson: { name: "Oroshi EX" }
+  outcome: HIT
+  # Measured S=13 A=7 R=17 (kd=1) — HIT-leg A (7) equals the BLOCK-leg's
+  # displayed A (7), so the juggle check (Ruling 2 check 3) passes and A is
+  # admissible here. No expect.adv (Hit_advantage "-").
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# --- Tsurugi EX (hop kick, airborne-only input) -----------------------------
+# See the TSURUGI JUMP-PRECONDITION FINDING in the file header for why this
+# move needs a `press UP; wait 3` preamble before the qcb-shape+KK chord (the
+# grounded-only recipe every other move in this file uses does NOT land this
+# move — it silently falls back to a plain button press instead, verified
+# live). Once airborne, the recipe lands cleanly: S=15/A=4, EXACT match to
+# makoto.json's Tsurugi EX row on WHIFF. makoto.json's Recovery field is the
+# non-numeric literal "-" for every Tsurugi row (all 4 strengths + EX,
+# verified live) — R is never assertable for this move family, same
+# non-numeric-oracle-field reasoning as every Hadouken-family row in this
+# repo (from-qjson would not compile).
+- label: makoto-extsurugi-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press UP; wait 3; hold DOWN 2; hold DOWN+LEFT 2; hold LEFT+LK+HK 2; wait 1"
+  qjson: { name: "Tsurugi EX" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson }
+
+# QUARANTINE (adv only; OMIT+log). STAYS quarantined — EX-CONTACT-R
+# disposition (exsuper/excontact-r-findings.md §3 item 10 / §1.11): M4
+# honest residue, REMOVED from the EX-CONTACT-R member list (this move
+# never belonged to the "unexplained contact R" shape — makoto.json's
+# Recovery field is the non-numeric literal "-" for the whole Tsurugi
+# family, so no oracle R exists to diverge from; this entry is adv-only).
+# Measured adv=+7 vs oracle Block_advantage=3 (S/A remain oracle-exact:
+# S=15, A=4, matching the WHIFF leg above exactly — the contact-A juggle
+# check trivially passes, 4==4 vs the HIT leg below). Raw trace facts
+# (run-probe4/trace.log): BLOCK-leg R=10 vs the WHIFF leg's R=9 (a genuine
+# +1 contact-only R difference — small, but non-zero) and T=29 (vs whiff
+# T=28); event_raw=16 fires on this leg (absent on WHIFF, event_raw=-1) — a
+# defender-contact event that WHIFF never reaches, consistent with this
+# being a genuinely airborne move interacting with the defender's guard
+# state differently than a grounded move would. No established registry row
+# matches "airborne-attacker BLOCK adv anomaly" (M4, no bucket) — stays
+# quarantined-enriched (candidate observation for any future airborne-EX
+# register), not converted.
+- label: makoto-extsurugi-block
+  setup: { dist: close, dummy: stand }
+  input: "press UP; wait 3; hold DOWN 2; hold DOWN+LEFT 2; hold LEFT+LK+HK 2; wait 1"
+  qjson: { name: "Tsurugi EX" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson }
+
+- label: makoto-extsurugi-hit
+  setup: { dist: close, dummy: none }
+  input: "press UP; wait 3; hold DOWN 2; hold DOWN+LEFT 2; hold LEFT+LK+HK 2; wait 1"
+  qjson: { name: "Tsurugi EX" }
+  outcome: HIT
+  # Measured S=15 A=4 (kd=1) — HIT-leg A (4) equals the BLOCK-leg's A (4),
+  # juggle check passes. No expect.R (non-numeric oracle field, see file
+  # header) and no expect.adv (Hit_advantage "-").
+  expect: { S: from-qjson, A: from-qjson }
+
+# No negative control appended: matching corpus-ryu-ex.yaml's/
+# corpus-ken-ex.yaml's own precedent (the EX/Supers satellite-corpus shape
+# omits it — the negative control is a main per-character corpus convention,
+# CORPUS-AUTHORING.md Phase 2).

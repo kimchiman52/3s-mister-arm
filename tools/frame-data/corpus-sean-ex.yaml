@@ -1,0 +1,303 @@
+# Sean EX moves corpus — EX/Supers program, wave 5
+# (<sp>/exsuper/authoring-policy.md Ruling 5 fan-out;
+# <sp>/exsuper/excontact-r-findings.md §5 wave-5 guidance). Satellite corpus
+# (auto-discovered by run-suite.sh's corpus-*.yaml glob, own golden/sean-ex.tsv
+# — not created this session per task scope); the main corpus-sean.yaml is
+# untouched.
+#
+# Scope: Sean's 4 EX rows per <sp>/exsuper/step0-universe.tsv (rows 39/43/45/
+# 49, all ASSERTABLE): Ryuubi Kyaku (EX), Tornado Kick (EX), Tackle (EX),
+# Dragon Smash (EX). Sean's 3 SUPER rows (Hadou Burst/Shoryuu Cannon/Hyper
+# Tornado) are OUT OF SCOPE for this batch (supers program, separate wave).
+# Oracle: docs/arcade-frame-data/sean.json (md5 74c5ccf033e22b8b0176fe0399ac621b,
+# same file corpus-sean.yaml already pins — re-verified unchanged this
+# session). Every "Name" string below (Ryuubi Kyaku (EX)/Tornado Kick (EX)/
+# Tackle (EX)/Dragon Smash (EX)) was verified against the fetched sean.json's
+# own Name field before use; Hit_advantage is the literal "-" on all four
+# rows (no expect.adv on any HIT leg, same as corpus-ryu-ex.yaml's own
+# Hadouken (EX) precedent). kd is explicit-only, observed live (never
+# from-qjson, CORPUS-AUTHORING.md Phase 3) — only Dragon Smash (EX)'s own HIT
+# leg measures a genuine down-family kd; see that entry.
+#
+# Motion recipes (Phase 5 motion-probe method): three of the four EX moves
+# inherit their motion directly from corpus-sean.yaml's own confirmed base-
+# move identifications — read, not re-probed from scratch, per
+# CORPUS-AUTHORING.md's own "try existing macros first" guidance:
+#   - Ryuubi Kyaku (EX): base confirmed `motion qcf <K>` (corpus-sean.yaml
+#     RYUUBI KYAKU CLASSIFICATION section) — EX chord: `hold DOWN 2; hold
+#     DOWN+RIGHT 2; hold RIGHT+LK+HK 2; wait 1` (two kicks chorded onto the
+#     final step, same workaround as corpus-ryu-ex.yaml's EX Tatsumaki).
+#   - Tornado Kick (EX): base confirmed `motion qcb <K>` (corpus-sean.yaml
+#     TORNADO KICK section) — EX chord: `hold DOWN 2; hold DOWN+LEFT 2; hold
+#     LEFT+LK+HK 2; wait 1`.
+#   - Dragon Smash (EX): base confirmed `motion dp-hold-chain <P>` (corpus-
+#     sean.yaml NEW FINDING: DRAGON SMASH STRONG section, dp-shape hold-chain)
+#     — EX chord: `hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold
+#     RIGHT+LP+HP 2; wait 1`, same recipe as corpus-ryu-ex.yaml's own EX
+#     Shoryuken.
+#   - Tackle (EX): base motion is UNIDENTIFIED — see TACKLE (EX) — MOTION
+#     STILL NOT FOUND below.
+#
+# Admissibility census (per-entry, mechanical, from FRAME_TRACE columns —
+# authoring-policy.md Ruling 2): every entry below was checked for (1)
+# single-FINAL integrity (exactly one FINAL in the entry's window, its
+# move_start_F == the entry's own MOVE_START) — confirmed at
+# inter_entry_wait:250 (the same value the EX/Supers program's Ryu pilot
+# converged on after its own label-bleed lesson; used from the first attempt
+# here, no bleed observed), (2) zero nonzero-sastop ticks in [MOVE_START,
+# max(atk_idle,def_idle)] — expected 0 since EX moves carry no super flash
+# (G4); confirmed 0 across every entry (awk census over the full trace),
+# (3) the HIT-leg contact-A juggle check (HIT A asserted only if it equals
+# the BLOCK leg's displayed A for the same move) — passes on all three
+# authored moves (each HIT leg's A equals its own BLOCK leg's A), (4) shape
+# record (box_runs/box_a/busyr/proj), logged per entry below. All three
+# authored moves are single-run (box_runs=1, proj=0) on every leg — none of
+# the wave-5 saturation-check watch-list shapes (raw_len=72 FD_METER_LEN
+# clipping) applies to any Sean EX move.
+#
+# Recognize-inheritance test (wave-5 guidance item 2 — "test, don't inherit
+# blindly," the Kazekiri-EX counter-example): tested per move, not assumed:
+#   - Ryuubi Kyaku (EX) DOES inherit the base's own §12.2.3/§13.13 F3
+#     contact-branch A-overcount (base: A=10 vs arcade 8 on LK/MK legs,
+#     "inserted cell 68(add=2)" own-ledger signature) — this EX leg's own
+#     trace independently reproduces the identical signature and magnitude
+#     (box_a=9 < engine_a=10, a +1-real/+1-declared-only split over the
+#     oracle's A=8, the same shape bucket 8 defines) on BOTH BLOCK and HIT.
+#     Converted here too, citing the same established F3 family.
+#   - Tornado Kick (EX) and Dragon Smash (EX) do NOT inherit anything from
+#     their own bases (Tornado Kick's base is fully clean; Dragon Smash's
+#     base divergence is an unrelated oracle-data-entry defect, CAPTURE-1
+#     RESOLVED) — each was independently measured. Tornado Kick (EX) came
+#     back fully oracle-exact. Dragon Smash (EX) surfaced a NEW, EX-specific
+#     contact-only A-overcount with no established family match (see that
+#     section) — documented UNCLASSIFIED, not force-fit into F3.
+character: sean
+oracle: sean.json
+inter_entry_wait: 250
+sa_gauge: 3
+entries:
+
+# --- Ryuubi Kyaku (EX) (motion qcf + LK+HK chord) --------------------------
+# Census: single-FINAL, sastop=0, box_runs=1, proj=0 (all three legs).
+
+# §13.13 F3 contact-path convention: A=10 is the engine-truth credit accrued
+# on the BLOCK path. Own-trace verification (not assumed from the base):
+# FINAL shows box_a=9 (real box-tracked active ticks) vs engine_a=10
+# (displayed/declared-credit A) vs oracle A=8 — the identical "+1 real /
+# +1 declared-only" split, and the identical +2-over-oracle magnitude, as
+# corpus-sean.yaml's own established sean-ryuubi-lk/mk-block/-hit F3
+# conversion (own ledger: "inserted cell 68(add=2)"). This is the EX
+# variant of that same converted family, independently confirmed on this
+# leg's own trace rather than inherited blindly. Arcade (whiff-canonical,
+# from-qjson) A=8 preserved in the comment per convention. S/R/adv remain
+# arcade-exact (from-qjson).
+- label: sean-exryuubi-block
+  setup: { dist: close, dummy: stand }
+  input: "hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LK+HK 2; wait 1"
+  qjson: { name: "Ryuubi Kyaku (EX)" }
+  outcome: BLOCK
+  # Measured S=25 A=10 R=15 adv=-1 (box_runs=1, box_a=9, busyr=15, engine_a=10,
+  # proj=0). S/R/adv oracle-exact (arcade A=8).
+  expect: { S: from-qjson, A: 10, R: from-qjson, adv: from-qjson }
+
+# §13.13 F3: same inserted-cell-68 mechanism as the BLOCK leg above (own
+# trace: box_a=9 < engine_a=10, oracle A=8). HIT-leg A (10) equals the
+# BLOCK-leg's displayed A (10), so the juggle check (Ruling 2 check 3)
+# passes and A is admissible.
+- label: sean-exryuubi-hit
+  setup: { dist: close, dummy: none }
+  input: "hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LK+HK 2; wait 1"
+  qjson: { name: "Ryuubi Kyaku (EX)" }
+  outcome: HIT
+  # Measured S=25 A=10 R=15 (box_runs=1, box_a=9, busyr=15, engine_a=10,
+  # proj=0). S/R oracle-exact (arcade A=8; no expect.adv, Hit_advantage="-").
+  expect: { S: from-qjson, A: 10, R: from-qjson }
+
+# WHIFF-UNREACHABLE(dist=310 centered, walk_in=3px) — Ruling 1's honest-bound
+# convention. Binary search: dist=300 centered connected (outcome HIT);
+# dist=310 centered (CENTERED_DIST_MAX, the compile-time ceiling) ALSO
+# connected — MOVE_START reads dist=307 (the requested 310 minus this move's
+# own ~3px pre-MOVE_START walk-in, negligible), i.e. this EX flip-kick's own
+# reach genuinely exceeds the harness's maximum achievable ground separation,
+# the same traveling-move harness-gap bucket as base Ryuubi's own HK strength
+# (WHIFF-unreachable even at anchored dist:300, corpus-sean.yaml file header
+# HK WHIFF UNREACHABLE). No declared-WHIFF entry shipped for this reason (a
+# declared-WHIFF entry that HITs was authored and then removed, same
+# discipline as corpus-sean.yaml's own sean-ryuubi-hk-whiff removal).
+# Coverage for this move comes from the BLOCK/HIT legs above + S, per Ruling
+# 1 ("its coverage comes from Ruling 2's contact legs + S").
+
+# --- Tornado Kick (EX) (motion qcb + LK+HK chord) --------------------------
+# Census: single-FINAL, sastop=0, box_runs=1, proj=0 (all three legs) — the
+# wave-5 guidance's own "base tornado-hk-block is the multi-hit exemplar"
+# note refers to the base RH strength's own multi-run box_runs shape (a
+# diagnostic-only trace fact, Ruling 2 item 4, not itself a divergence); this
+# EX move's own trace is single-run on its BLOCK/HIT legs (its own dist:310
+# WHIFF-search attempt below happened to read box_runs=3, also non-divergent
+# — see that note).
+
+- label: sean-extornado-block
+  setup: { dist: close, dummy: stand }
+  input: "hold DOWN 2; hold DOWN+LEFT 2; hold LEFT+LK+HK 2; wait 1"
+  qjson: { name: "Tornado Kick (EX)" }
+  outcome: BLOCK
+  # Measured S=9 A=11 R=17 adv=-3 (box_runs=1, box_a=11, busyr=17, proj=0),
+  # oracle-exact on all four fields.
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: sean-extornado-hit
+  setup: { dist: close, dummy: none }
+  input: "hold DOWN 2; hold DOWN+LEFT 2; hold LEFT+LK+HK 2; wait 1"
+  qjson: { name: "Tornado Kick (EX)" }
+  outcome: HIT
+  # Measured S=9 A=11 R=17, oracle-exact. HIT-leg A (11) equals the BLOCK
+  # leg's displayed A (11) — juggle check passes.
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# WHIFF-UNREACHABLE(dist=310 centered, walk_in=55px) — Ruling 1's honest-
+# bound convention. Binary search: dist=250 centered connected (box_runs=3,
+# a diagnostic-only shape difference from the BLOCK/HIT legs' box_runs=1,
+# non-divergent since engine_a=11 still matches oracle exactly regardless);
+# dist=310 centered (CENTERED_DIST_MAX ceiling) ALSO connected — MOVE_START
+# reads dist=255 (this move's own forward travel consumes ~55px of the
+# requested 310 before MOVE_START), same traveling-kick harness-gap bucket
+# as base Tornado Kick's own Forward/RH strengths (WHIFF-unreachable even at
+# anchored dist:300, corpus-sean.yaml file header TORNADO KICK section). No
+# declared-WHIFF entry shipped for this reason. Coverage for this move comes
+# from the BLOCK/HIT legs above + S, per Ruling 1.
+
+# --- Dragon Smash (EX) (motion dp-hold-chain + LP+HP chord) ----------------
+# Census: single-FINAL, sastop=0, box_runs=1, proj=0 (all three legs).
+
+- label: sean-exdragonsmash-whiff
+  setup: { dist: 250, dummy: none }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LP+HP 2; wait 1"
+  qjson: { name: "Dragon Smash (EX)" }
+  outcome: WHIFF
+  # Measured S=8 A=12 R=42, oracle-exact on all three fields (box_a=12,
+  # engine_a=12, box_runs=1 — box and declared credit AGREE here, unlike
+  # the BLOCK/HIT legs below). Same anchored dist:250 the base Dragon
+  # Smash's own WHIFF legs use — this move has negligible forward travel,
+  # unlike Ryuubi/Tornado, so dist_mode:centered is not needed. WHIFF is the
+  # calibration surface (Phase 4) and confirms the BLOCK/HIT legs' A
+  # divergence below is a genuine contact-only finding, not a corpus-wide
+  # motion/gauge problem.
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# UNCLASSIFIED contact-only A-overcount (flagged this session, needs
+# follow-up classification) — a NEW finding, not an inherited one (base
+# Dragon Smash's only divergence is the unrelated Strong-row oracle-data
+# defect, CAPTURE-1 RESOLVED; Jab/Fierce are fully clean). Measured A=13 vs
+# arcade 12 on BOTH BLOCK and HIT (the WHIFF leg above is clean at A=12,
+# ruling out a motion/gauge-wide problem — this is contact-only). TRACE
+# OBSERVATION: box_a=13 EQUALS engine_a=13 on this leg (both agree with each
+# other, both +1 over the WHIFF/oracle A=12) — this does NOT match the
+# established §12.2.3/§13.13 F3 signature (which requires box_a < engine_a,
+# a declared-credit cell WITHOUT real box backing, per sean-exryuubi-block's
+# own signature above); here the extra credit has genuine box-tracked
+# backing, a different shape. HYPOTHESES ONLY, neither confirmed: (1) a
+# genuine extra real active tick fires only on the contact branch (a
+# same-tick contact advance re-routing onto a branch with one more real
+# active cell, distinct from F3's declared-only insertion), or (2) some
+# other contact-tick mechanism this session did not isolate further (no
+# lever-F toggle test was run — this session is a NEVER-build session per
+# task scope, so the standard shape-(a)-vs-(b) discriminator was not
+# available). R/adv both stay arcade-exact on both legs, so this is an
+# isolated A-clause finding, not a compound one. Flagged to the
+# orchestrator/user for follow-up classification (does not meet any Phase 6
+# bucket's own-ledger/lever-F bar for conversion — "candidates NEVER
+# convert" without one). Not a quarantine (nothing here needs omitting —
+# the divergence stays visible as xfail, same posture as every other
+# no-bucket-fits sighting in this program).
+- label: sean-exdragonsmash-block
+  setup: { dist: close, dummy: stand }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LP+HP 2; wait 1"
+  qjson: { name: "Dragon Smash (EX)" }
+  outcome: BLOCK
+  # Measured S=8 A=13 R=42 adv=-37 (box_runs=1, box_a=13, busyr=42,
+  # engine_a=13, proj=0). S/R/adv oracle-exact; A diverges (see above).
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson, xfail: "RECLASSIFIED 2026-07-14, ARCADE-CONFIRMED METER-OVERCOUNT (was UNCLASSIFIED) - <sp>/zero/contactA/design.md + <sp>/zero/arcade-s12/session-report.md, opus-substitute / WANTS FABLE RE-REVIEW: session-12 hardware capture proved arcade active-frames == ORACLE (12) for this leg; the overlay's displayed A=13 over-counts via a +1 hitstop-boundary tick (box_a=13==engine_a=13, the contact frame that starts hitstop is itself box-active and gets counted - a strict frz-excluded count reads 12, exact). A frz-excluded strict re-anchor (box_a_frz) was designed and full-universe census-tested: reproduces oracle on this row and 5 siblings, but is engine-signal-INDISTINGUISHABLE from 113 other currently-PASS contact-A rows it would regress (structural-twin proof: ken-srk-lp-block / sean-dragonsmash-mp-block need the OPPOSITE value on byte-identical gate signals, including CAPTURE.md's own hardware-measured A=8 on the sean-dragonsmash-mp structural twin) - NON-SURGICAL, no lever ships. Oracle STANDS; TERMINAL-KNOWN-VALUE (true value hardware-confirmed, no suite-safe blind lever exists). Golden unchanged; A stays asserted at oracle=12, measured=13, XFAIL. R/adv both stay arcade-exact. Prior history (RELOCATED not deleted): measured A=13 vs arcade A=12, contact-only (WHIFF leg above is clean at A=12). box_a=13 == engine_a=13 on this leg (real box backing agrees with the declared credit) — does NOT match the established §12.2.3/§13.13 F3 signature (box_a < engine_a, declared-credit-without-box-backing), which is the shape sean-exryuubi-block/-hit convert under above." }
+
+- label: sean-exdragonsmash-hit
+  setup: { dist: close, dummy: none }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LP+HP 2; wait 1"
+  qjson: { name: "Dragon Smash (EX)" }
+  outcome: HIT
+  # Measured S=8 A=13 R=42 kd=1 (box_runs=1, box_a=13, busyr=42, engine_a=13,
+  # proj=0). S/R oracle-exact (no expect.adv, Hit_advantage="-"); A diverges,
+  # same UNCLASSIFIED shape as the BLOCK leg (HIT-leg A (13) equals the
+  # BLOCK-leg's displayed A (13), so per Ruling 2 check 3 this is the SAME
+  # contact-branch shape carried across both legs, not a separate juggle
+  # artifact). kd=1 is a genuine live observation (explicit-only per Phase 3
+  # — sean.json's own Hit_advantage="-" for this row is non-numeric and is
+  # never used to infer kd; the engine's own down-family read at the
+  # measurement tick is the sole source) — this move genuinely knocks down
+  # on hit.
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, kd: 1, xfail: "RECLASSIFIED 2026-07-14, ARCADE-CONFIRMED METER-OVERCOUNT (was UNCLASSIFIED) - <sp>/zero/contactA/design.md + <sp>/zero/arcade-s12/session-report.md, opus-substitute / WANTS FABLE RE-REVIEW: same finding as sean-exdragonsmash-block - session-12 hardware capture proved arcade active-frames == ORACLE (12); the overlay's displayed A=13 over-counts via a +1 hitstop-boundary tick. A frz-excluded strict re-anchor was designed and full-universe census-tested: reproduces oracle on this row and 5 siblings, but is engine-signal-INDISTINGUISHABLE from 113 other currently-PASS contact-A rows it would regress (structural-twin proof: ken-srk-lp-block / sean-dragonsmash-mp-block need the OPPOSITE value on byte-identical gate signals) - NON-SURGICAL, no lever ships. Oracle STANDS; TERMINAL-KNOWN-VALUE. Golden unchanged. R stays arcade-exact. Prior history (RELOCATED not deleted): measured A=13 vs arcade A=12, same contact-branch shape as sean-exdragonsmash-block (box_a=13 == engine_a=13, not the F3 declared-credit-without-backing signature). HIT-leg A (13) equals the BLOCK-leg's own displayed A (13) per the Ruling 2 check-3 juggle check, confirming this is the SAME per-move shape on both contact legs, not an independent HIT-only artifact." }
+
+# --- Tackle (EX) — MOTION STILL NOT FOUND, OUT OF SCOPE --------------------
+# Base Tackle's own motion is UNIDENTIFIED — corpus-sean.yaml's own
+# "SEAN TACKLE — MOTION NOT FOUND" section documents an exhaustive
+# 14-candidate K-button session-budget search (every already-expressible
+# motion primitive: qcf/qcb/hcb/hcf/2qcf, both charge shapes, DP/reverse-DP
+# hold-chains, double/triple-tap, N-button chord), every attempt reading back
+# as an already-named move; its separate Zenten/Sean Roll investigation
+# additionally ruled out qcb+P/hcb+P (=Roll), 2qcf+P (=Hadou Burst), and both
+# charge shapes+P (=plain Jab).
+#
+# This session ran a further bounded probe of the remaining untried P-button
+# candidates (scratch corpus, not shipped —
+# <sp>/ex-sean/probe-tackle.yaml + probe-tackle-run2/trace.log), identifying
+# each result by its own r1/r2/kow signature and S/A/R triple against
+# sean.json, not by guesswork:
+#   1. `motion hcf LP` -> S=23 A=0 R=0 (zero-active), r1=4/r2=22/kow=8 — an
+#      UNIDENTIFIED zero-active state, distinct from BOTH Sean Roll's own
+#      confirmed identity (r2=20) and Dragon Smash's own confirmed identity
+#      (r2=24, corpus-sean.yaml file header) — most likely a walk/stance
+#      transition spuriously tripping the r1:0->nonzero MOVE_START detector,
+#      not a real attack dispatch (Tackle's own oracle declares Hit=2, i.e. a
+#      genuine nonzero active window is expected even on a clean whiff, per
+#      every OTHER real Sean special's own whiff-clean A>0 precedent — a
+#      zero-active read is the wrong shape for this move). Not asserted to
+#      be any specific identified move; ruled out as Tackle on this basis.
+#   2. `press RIGHT; press RIGHT+LP` (double-tap forward + P, mirrors the
+#      mains session's own double-tap-forward-K attempt) -> S=3 A=2 R=5,
+#      r1=4/r2=0 (a plain normal, no special-routine state) — EXACT match to
+#      sean.json's own Jab row (3/2/5).
+#   3. A reverse-DP hold-chain + LP (RIGHT, DOWN, DOWN+LEFT, LEFT+LP) ->
+#      S=28 A=0 R=0, r1=4/r2=20 — r2=20 is an EXACT identity match to Sean
+#      Roll's own confirmed dispatch (corpus-sean.yaml ZENTEN section); S=28
+#      matches Sean Roll (Jab)'s own T=28 exactly. The reverse-DP hold-chain's
+#      own tail (DOWN, DOWN+LEFT, LEFT) is qcb-compatible, the same
+#      tail-collision mechanism the mains session already documented for the
+#      K-button case (reverse-DP+LK -> Tornado Kick Short via its own
+#      qcb-compatible tail).
+#   4. `press LP+MP+HP` (three-punch chord, mirrors the mains session's own
+#      three-kick-chord attempt) -> S=9 A=4 R=19, r1=4/r2=0 (plain normal) —
+#      EXACT match to sean.json's own Far Fierce row (9/4/19), a
+#      priority/reach fallback given P1's post-walk distance, same shape as
+#      the mains K-chord's own Far Roundhouse fallback.
+#   5. A doubled qcf+chord sequence (probing whether Tackle needs a
+#      "2qcf"-style doubled input) -> S=21 A=7 R=25, r1=4/r2=0 (plain normal)
+#      — EXACT match to sean.json's own Towards + Fierce row (21/7/25): the
+#      forward-held run before the final chord dispatched the command normal
+#      instead of any special.
+# Every candidate resolved to an already-identified state (Jab, Sean Roll,
+# Far Fierce, Towards + Fierce, or an unidentified non-attack zero-active
+# transition) — zero distinct Tackle dispatch, the same outcome shape as
+# every one of the mains session's own 14 K-button attempts. Combined with
+# the Zenten section's own prior P-button results, EVERY already-expressible
+# motion primitive this harness supports (qcf/qcb/hcb/hcf/2qcf, both charge
+# shapes, DP/reverse-DP hold-chains, double/triple-tap, N-button chords) has
+# now been tried on BOTH button families for this move, across two
+# authoring sessions, with zero distinct Tackle dispatch.
+#
+# No entries below for Tackle (EX) (nor its base, still absent from
+# corpus-sean.yaml), no oracle edit, no compiler change. Same posture as
+# corpus-twelve.yaml's D.R.A. and corpus-necro.yaml's Electric Shock
+# precedents: documented OUT OF SCOPE, quarantine=OMIT+log. If Tackle is
+# ever revisited, the next step is almost certainly a genuinely new
+# `_motion_steps` primitive (e.g. a raw dash-cancel shape) — out of this
+# session's own scope regardless (the task's "touch NOTHING else"
+# constraint forbids editing compile_corpus.py even where the Phase-5
+# "extend only if exhausted" gate would otherwise be met).

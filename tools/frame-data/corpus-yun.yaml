@@ -1,0 +1,1048 @@
+# Yun frame-data corpus (cast rollout, user-directed 2026-07-08).
+# Generated/consumed by tools/frame-data/compile_corpus.py against
+# docs/arcade-frame-data/yun.json (fetched 2026-07-08 from
+# https://raw.githubusercontent.com/Coccis77/thirdstrikedatabot/master/json/yun.json,
+# md5 cc49322b0fcd04e617f22b0410a658fa).
+#
+# NAMING NOTE (runbook Phase 1 caution re: throw-family naming varying per
+# character): yun.json carries TWO throw-family rows - "Neutral Throw"
+# (index 26) and a bare "Throw" (index 27) - a THIRD naming shape beyond
+# ryu.json/q.json's single bare "Throw" and ken.json's three-way
+# Neutral/Back/Towards split. Both rows share identical Startup=2/Hit=1/
+# Recovery=21/Block_advantage=0/Hit_advantage="D"/Throw_range=18 - they only
+# differ in Damage/Stun/Bar_gain (fields this corpus doesn't assert), so
+# either name is numerically interchangeable for this file's purposes;
+# "Neutral Throw" is used below for consistency with the other qjson.name
+# strings (verified against the fetched oracle, not assumed).
+#
+# yun.json's Startup/Hit/Recovery/*_advantage fields are JSON strings (e.g.
+# "Startup": "3") rather than the bare ints seen in some other oracles -
+# resolve_from_qjson's `int(raw)` cast (compile_corpus.py:432-448) handles
+# this transparently; only genuinely non-numeric fields ("-", "D") need an
+# explicit literal, same discipline as every other corpus in this repo.
+#
+# SCOPE (user-directed 2026-07-08, cast rollout): normals ladder (six-button
+# close BLOCK/HIT + WHIFF sample + crouching + command normals with their own
+# WHIFF rows, per Phase 4) + UOH + Throw + negative control + ground specials
+# probe (one session budget): Zesshou Hohou (lunge punch, qcf+P), Tetsu
+# Zankou (shoulder, motion-probed - DP-shape hold-chain, same recipe as the
+# Ken Shoryuken / Hugo Shootdown Backbreaker precedent - landed on the FIRST
+# probe attempt), Nishou Kyaku (upkicks, DP-shape hold-chain + kick), Zenpou
+# Tenshin (command roll-grab, motion-probed - `motion hcb <K>` landed on the
+# FIRST probe attempt, same macro as Chun-Li's Hazan Shu). ALL FOUR targeted
+# specials landed with ALREADY-EXPRESSIBLE primitives - zero
+# compile_corpus.py changes. EXCLUDED per task: Dive Kicks (airborne - the
+# harness dummy/attacker cannot be scripted to jump, known gap
+# docs/frame-data-synthesis.md §12.1) and Genei-Jin/You Hou/Sourai
+# Rengeki/all EX variants (supers/EX are Step 13a/13b's charter, not this
+# rollout's). Kobokushi (a target-combo-adjacent move, not named in this
+# rollout's scope) is also not audited here.
+#
+# Every expect below was pinned against a live trace
+# (tools/frame-data/run.sh tools/frame-data/corpus-yun.yaml), with every
+# suspicious/ambiguous finding re-verified in an isolated single-entry probe
+# corpus per the runbook's Phase 5 "known traps" discipline before being
+# trusted.
+#
+# ============================================================================
+# ISSUE #17 FAMILY CENSUS (per runbook item 6 / Phase 6 instruction). Every
+# A-divergence below was lever-F-tested (fd_restore_revoked_declared_credit
+# forced to 0 on a scratch build, src/sf33rd/Source/Game/engine/charset.c:507,
+# reverted via `git checkout` + rebuild + re-verified green before this
+# commit, same-binary protocol throughout, batched per Phase 8's
+# same-binary discipline).
+#
+#   - yun-strong-block/-hit: classic shape (a1) skip-jump A-undercount.
+#     Measured A=1 vs arcade 3; S/R/adv exact on both outcomes. Lever-F test:
+#     A=1 UNCHANGED with the restore forced off - no revoke fires here,
+#     ruling OUT a lever-F regression, confirming shape (a1) (credit
+#     unrecoverable, synthesis §13.11 "what stays unrecoverable").
+#
+#   - yun-crjab-block: same shape (a1) family. Measured A=1 vs arcade 2;
+#     S/R/adv exact. Lever-F test: A=1 UNCHANGED.
+#
+#   - yun-roundhouse-block/-hit: COMPOUND finding, two independent
+#     divergences stacked on the same move:
+#       (1) shape (a1) A-undercount: measured A=2 vs arcade 4 on BOTH BLOCK
+#           and HIT (consistent between outcomes). Lever-F test: A=2
+#           UNCHANGED - shape (a1), not a lever-F regression.
+#       (2) ADDITIONALLY an R-side deficit: measured R=21 vs the
+#           WHIFF-confirmed arcade R=22 (yun-hk-whiff below matches
+#           yun.json's Recovery=22 exactly) on BOTH BLOCK and HIT identically
+#           - §13.10 Class 1 (hit-branch/contact recovery-chain family),
+#           generalized here to "on contact" rather than "on HIT" alone
+#           (the Chun-Li chunli-crfierce-hit precedent for this
+#           generalization, corpus-chunli.yaml:120-135, since the WHIFF
+#           baseline independently confirms the true arcade R, licensing the
+#           established §13.10 Class 1 bucket instead of leaving this
+#           UNCLASSIFIED).
+#
+#   - yun-farfierce-block: the SAME compound shape as Roundhouse above:
+#       (1) shape (a1) A-undercount: measured A=1 vs arcade 2. Lever-F test:
+#           A=1 UNCHANGED.
+#       (2) §13.10 Class 1 R-deficit (generalized to "on contact"): measured
+#           R=21 vs the WHIFF-confirmed arcade R=23 (yun-hp-whiff below
+#           matches exactly).
+#
+#   - yun-crfierce-block: a THIRD compound finding, but with a twist on
+#     clause (2):
+#       (1) shape (a1) A-undercount: measured A=2 vs arcade 4. Lever-F test:
+#           A=2 UNCHANGED (same batch, same scratch build).
+#       (2) an R-side SURPLUS (not a deficit): measured R=16 vs the
+#           WHIFF-confirmed arcade R=15 (yun-crfierce-whiff below matches
+#           yun.json's Recovery=15 exactly) - the OPPOSITE sign from clause
+#           (2) above and from every §13.10 Class 1 precedent in this repo
+#           (Class 1 is defined as "genuinely SHORTER," never longer).
+#           Doesn't fit Phase 6 item 4 (Hugo Roundhouse "R-side contact
+#           surplus" family) either - that bucket explicitly requires A
+#           EXACT, and here A is NOT exact (shape (a1) undercount, clause 1
+#           above). UNCLASSIFIED (flagged 2026-07-08, needs follow-up
+#           classification) - TRACE OBSERVATION ONLY: the R-surplus is
+#           contact-specific (WHIFF is clean) and sign-INCOHERENT with every
+#           established R-divergence bucket in this file; no mechanism
+#           claimed. Flagged to orchestrator for follow-up classification.
+#
+#   No other #17-family divergence was found on any other normal, crouching
+#   normal, command normal, UOH's S, Throw, or any of the four audited
+#   specials (every other entry's A matches yun.json exactly).
+#
+#   UPDATE (2026-07-10, §13.13): yun-strong-block/-hit and yun-crjab-block
+#   (pure, single-clause shape (a1)) convert to a plain PASS asserting the
+#   measured A citing §13.13. yun-roundhouse-block/-hit, yun-farfierce-block,
+#   and yun-crfierce-block (all COMPOUND) narrow to their clause-(2) R-side
+#   finding only - the shape-(a1) A-clause converts citing §13.13 in each,
+#   but clause (2) does NOT: the roundhouse/farfierce R-deficit cites only a
+#   precedent (no recorded skip/branch cgix signature of its own, yun absent
+#   from the §12.2.2 registry) and fails the membership bar; the crfierce
+#   R-surplus stays the same UNCLASSIFIED §12.2.3 R-side-corollary candidate
+#   it always was. Both re-worded as unregistered candidates, flagged to the
+#   investigation backlog (see each entry's own comment for detail).
+# ============================================================================
+#
+# COMMAND-NORMAL R-DEFICIT (yun-twdsmk-block/-whiff): Towards + Forward shows
+# an R divergence PRESENT ON WHIFF ITSELF - measured R=3 vs arcade R=8,
+# IDENTICAL on both WHIFF and BLOCK (S=19/A=6 exact on both) - this is the
+# Phase 6 item 5 "whiff-R truncation" bucket (docs/frame-data-synthesis.md
+# item 18), the same clean-constant-across-outcomes shape as Ken's
+# Shoryuken/Tatsu and Chun-Li's Hazan Shu, here observed on a COMMAND NORMAL
+# for the first time in this repo (worth flagging for the runbook - Phase 4's
+# WHIFF-row-for-command-normals rule is what surfaced this). Because the
+# divergence is present on WHIFF itself (not contact-only), it is NOT the
+# same "UNCLASSIFIED w/ kinship-hypothesis" shape as Ken's twdshk-block or
+# Chun-Li's forward-block (both of those were contact-only, WHIFF-clean,
+# which is what forced them into the kinship-hypothesis UNCLASSIFIED bucket
+# instead). adv also drifts on BLOCK (measured +4 vs arcade -1) as a
+# downstream consequence of the same truncation, cited in the same xfail
+# string, same convention as Chun-Li's Far Roundhouse.
+#
+# ============================================================================
+# UOH FINDING - RE-CITED 2026-07-08 (§13.5.1a grounded fresh-edge cut
+# gate; supersedes the same-day per-path RECLASSIFICATION, whose values
+# and cut-window framing described the pre-fix false cut).
+# (yun-uoh-whiff/-block/-hit). S=15/A=9 match yun.json's Universal
+# Overhead row EXACTLY on all three outcomes (unambiguous identification;
+# A exact everywhere, no issue-#17 clause). The divergence is entirely on
+# R, and its SIGN FLIPPED with the §13.5.1a fix:
+#   - Pre-fix (legacy level-test anchor): measured R=1/4/2
+#     (whiff/block/hit) vs arcade's uniform 6 - an UNDERSHOOT produced by
+#     a §13.5.1 cut (cut=1, anchor_a=9 in the old traces).
+#   - Post-fix: Yun UOH's chart flips to cghi=1 ACROSS ITS LANDING TICK
+#     (shape B geometry), so the grounded fresh-edge gate correctly
+#     refuses to anchor - no cut fires (cut=0) - and the natural r1-edge
+#     end now reads R=10 (whiff) / R=12 (block, adv -9) / R=10 (hit,
+#     adv -4): an OVERSHOOT vs arcade's 6 on every outcome.
+# NEW SUB-FINDING, UNCLASSIFIED-pending (docs/frame-data-synthesis.md
+# item 18(c)): a former item-18 member whose NO-CUT value overshoots the
+# oracle - the opposite sign from residual item 18(b) (grounded
+# fresh-edge early-cut), so it must NOT be folded into that bucket; and
+# not a §13.5.1a false-cut either (the gate's refusal is correct - the
+# old cut was the trace-proven shape-B misfire). Where the oracle's 6
+# comes from is the open question; no mechanism hypothesized.
+# SECTION ACCOUNTING: still 100% xfail on the R field (3/3) - now a
+# single UNCLASSIFIED-pending sub-finding (item 18(c)) across all three
+# outcomes, flagged for orchestrator/user follow-up.
+# ============================================================================
+#
+# ZESSHOU HOHOU FIERCE (yun-zesshou-hp-block/-hit): a SUM-PRESERVING A/R
+# boundary shift - measured A=16 vs arcade 15 (+1) and R=11 vs arcade 12
+# (-1), identical on BOTH BLOCK and HIT (S+A+R totals 40 either way: the
+# oracle's 13+15+12 and the measured 13+16+11). Does not fit shape (a1)
+# (that mechanism only ever LOSES declared credit, i.e. undercounts A -
+# sign-incoherent with this move's +1 overcount), Class 1 (A is not exact
+# here), or item 4's Hugo-Roundhouse bucket (A is not exact there either).
+# No clean WHIFF baseline exists for this specific strength to further
+# triangulate (see the "SPECIALS-REACHABILITY GAP" note below - Zesshou
+# Hohou Fierce is a harness-gap move for WHIFF, same as Q/Ryu's Hadouken).
+# Lever-F tested (fd_restore_revoked_declared_credit forced 0 on the same
+# scratch build as the census above) and confirmed UNCHANGED (A=16 both
+# ways) - ruling out a lever-F regression, though this is an overcount so
+# lever F's own mechanism (a credit RESTORE) was never a plausible cause in
+# the first place. UNCLASSIFIED (flagged 2026-07-08, needs follow-up
+# classification) - TRACE OBSERVATION ONLY, no mechanism claimed; flagged to
+# orchestrator for follow-up classification.
+#
+# NISHOU KYAKU (all three strengths): RESOLVED 2026-07-08 (§13.5.1a
+# grounded fresh-edge cut gate, docs/frame-data-synthesis.md §13.5.1a).
+# The old uniform -9 (Short 25->16, Forward 26->17, RH 28->19, identical
+# across WHIFF/BLOCK/HIT) was a §13.5.1 shape-B false cut with a nuance:
+# Nishou Kyaku's cgix decrease happens MID-AIR (anim loop 144<->138) and
+# the landing goes straight to cghi=1 (280->1 across the landing tick) -
+# the case that falsified the sticky-airborne candidate fix and forced
+# the grounded fresh-edge rule (condition 3: prev tick airborne -> no
+# anchor). Post-fix R=25/26/28 EXACT on every outcome, BLOCK adv
+# -25/-26/-28 exact - all 9 xfails removed, plain PASS, section 0/9,
+# sign-off request withdrawn. (S/A were exact throughout: S=4/6/8, A=6.)
+#
+# ZENPOU TENSHIN (motion hcb LK): an UNBLOCKABLE command grab - verified live
+# that `dummy: stand` and `dummy: none` produce the IDENTICAL HIT outcome and
+# numbers (S=7 A=2 R=44 kd=1 on both), so no separate BLOCK entry exists for
+# this move (same shape as Hugo's 360-command-grab family - guard does not
+# stop it). §13.10 Class 3 (connected grab): T=53 (not saturated - Ryu/Q
+# Throw's non-saturated sub-case, not Hugo/Ken's saturated one), endrel=1
+# fires (the plain §13.6.1 partner-release path). R = T - S - A = 53-7-2 =
+# 44, a DERIVED value from the live trace (re-measure if this regresses).
+# Arcade R=26 is the whiff-path figure (yun-zenpou-tenshin-whiff below
+# matches yun.json's Recovery=26 exactly). S/A match yun.json's Zenpou
+# Tenshin row exactly (S=7, A=2); Block_advantage/Hit_advantage are both the
+# literal string "-" (non-numeric) - no expect.adv anywhere in this section.
+#
+# TETSU ZANKOU (Jab/Strong) + ZESSHOU HOHOU (Jab/Strong): completely clean,
+# zero divergence of any kind - every S/A/R/adv matches yun.json exactly on
+# every outcome tested (WHIFF/BLOCK/HIT).
+#
+# SPECIALS-REACHABILITY GAP (Zesshou Hohou Fierce, Tetsu Zankou Fierce): both
+# are lunging/dashing attacks whose Fierce-strength variant travels farther
+# than the harness's max scriptable teleport distance (DIST_MAX=300px,
+# compile_corpus.py:91) and STILL CONNECTS even at dist=300 (verified live -
+# outcome reads HIT, not WHIFF, at the maximum distance the compiler allows)
+# - the same structural harness gap as Q/Ryu's Hadouken WHIFF
+# (docs/frame-data-synthesis.md §12.1: "a projectile/lunge travels farther
+# than any scriptable distance and still connects against a non-jumping
+# dummy"). No WHIFF entry is authored for either move's Fierce strength;
+# their Jab/Strong siblings (which DO whiff cleanly within DIST_MAX) prove
+# this is a reach limit, not a move-identification failure - BLOCK/HIT S/A/R
+# for both Fierce variants were captured and audited normally (see the
+# per-move sections below and the ISSUE #17 CENSUS / boundary-shift findings
+# above).
+character: yun
+oracle: yun.json
+inter_entry_wait: 150
+entries:
+
+# --- Close/far normals, BLOCK (dummy: stand) --------------------------------
+
+- label: yun-jab-block
+  setup: { dist: close, dummy: stand }
+  input: "press LP"
+  qjson: { name: "Jab" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: yun-farjab-block
+  setup: { dist: 90, dummy: stand }
+  input: "press LP"
+  qjson: { name: "Far Jab" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# Issue #17 shape (a1): lever-F-tested (fd_restore_revoked_declared_credit
+# forced 0 on a scratch build, reverted before commit) and confirmed
+# UNCHANGED - no revoke fires, ruling out a lever-F regression; measured
+# A=1 vs arcade 3, credit unrecoverable (synthesis §13.11); S/R/adv exact.
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=1 is the
+# engine-truth credit actually accrued on the BLOCK path - issue #17 shape (a1):
+# contact-tick cg_ix skip-jump past a declared active cell never dispatched
+# by any code (synthesis §13.11 'what stays unrecoverable'); lever-F-tested
+# (fd_restore_revoked_declared_credit forced 0 on a scratch build, reverted
+# before commit) and confirmed UNCHANGED - no revoke fires. Arcade (whiff-
+# canonical, from-qjson) A=3 - preserved here per the convention. S/R/adv
+# remain arcade-exact (from-qjson).
+- label: yun-strong-block
+  setup: { dist: close, dummy: stand }
+  input: "press MP"
+  qjson: { name: "Strong" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: 1, R: from-qjson, adv: from-qjson }
+
+- label: yun-farstrong-block
+  setup: { dist: 100, dummy: stand }
+  input: "press MP"
+  qjson: { name: "Far Strong" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: yun-fierce-block
+  setup: { dist: close, dummy: stand }
+  input: "press HP"
+  qjson: { name: "Fierce" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=1 is the
+# engine-truth credit actually accrued on the BLOCK path - issue #17 shape
+# (a1), lever-F-tested and confirmed UNCHANGED (see file header ISSUE #17
+# CENSUS). Arcade (whiff-canonical, from-qjson) A=2 - preserved here per the
+# convention. adv remains arcade-exact (from-qjson).
+#
+# SWEEP-2 (2026-07-10) FULL CONVERT: R=21 also now asserts the engine-truth
+# value, xfail REMOVED. The former "unregistered §12.2.2 candidate" precedent
+# cite is UPGRADED to a full F2 proper (§12.2.2) membership by
+# classification sweep #2's fable-grade audit: R-window closure exact -
+# whiff-only cell 54(2) dropped (skip/branch signature now recorded), shared
+# cells 60(12)+66(4)+72(4)+78(1); -2 exact (P2 direct, run-yun). Arcade
+# (whiff-canonical) R=23 - superseded per the convention.
+- label: yun-farfierce-block
+  setup: { dist: 100, dummy: stand }
+  input: "press HP"
+  qjson: { name: "Far Fierce" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: 1, R: 21, adv: from-qjson }
+
+- label: yun-short-block
+  setup: { dist: close, dummy: stand }
+  input: "press LK"
+  qjson: { name: "Short" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: yun-forward-block
+  setup: { dist: close, dummy: stand }
+  input: "press MK"
+  qjson: { name: "Forward" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: yun-farforward-block
+  setup: { dist: 100, dummy: stand }
+  input: "press MK"
+  qjson: { name: "Far Forward" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# COMPOUND (see file header ISSUE #17 CENSUS): (1) shape (a1) A-undercount,
+# lever-F-tested and confirmed UNCHANGED - measured A=2 vs arcade 4,
+# consistent between BLOCK and HIT; (2) §13.10 Class 1 R-deficit generalized
+# to "on contact" (yun-hk-whiff below confirms the clean arcade R=22
+# baseline) - measured R=21 on BOTH BLOCK and HIT.
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=2 is the
+# engine-truth credit actually accrued on the BLOCK path - issue #17 shape
+# (a1), lever-F-tested and confirmed UNCHANGED (see file header). Arcade
+# (whiff-canonical, from-qjson) A=4 - preserved here per the convention. adv
+# remains arcade-exact (from-qjson).
+#
+# SWEEP-2 (2026-07-10) FULL CONVERT: R=21 also now asserts the engine-truth
+# value, xfail REMOVED. The former "unregistered §12.2.2 candidate" precedent
+# cite is UPGRADED to a full F2 proper (§12.2.2) membership: R-window closure
+# exact - whiff-only cell 60(1) dropped (skip/branch signature now recorded),
+# shared cells 66..96=21; -1 exact (P2 direct, run-yun, classification sweep
+# #2 fable-grade audit). Byte-identical on HIT. Arcade (whiff-canonical)
+# R=22 - superseded per the convention.
+- label: yun-roundhouse-block
+  setup: { dist: close, dummy: stand }
+  input: "press HK"
+  qjson: { name: "Roundhouse" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: 2, R: 21, adv: from-qjson }
+
+# --- HIT sample per button family (dummy: none, close range) ---------------
+
+- label: yun-jab-hit
+  setup: { dist: close, dummy: none }
+  input: "press LP"
+  qjson: { name: "Jab" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=1 is the
+# engine-truth credit actually accrued on the HIT path - same issue #17 shape
+# (a1) as yun-strong-block (identical mechanism, consistent A=1 on both
+# BLOCK and HIT, lever-F-tested unchanged). Arcade (whiff-canonical,
+# from-qjson) A=3 - preserved here per the convention. S/R/adv remain
+# arcade-exact (from-qjson).
+- label: yun-strong-hit
+  setup: { dist: close, dummy: none }
+  input: "press MP"
+  qjson: { name: "Strong" }
+  outcome: HIT
+  expect: { S: from-qjson, A: 1, R: from-qjson, adv: from-qjson }
+
+- label: yun-fierce-hit
+  setup: { dist: close, dummy: none }
+  input: "press HP"
+  qjson: { name: "Fierce" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: yun-short-hit
+  setup: { dist: close, dummy: none }
+  input: "press LK"
+  qjson: { name: "Short" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# Forward's Hit_advantage is the literal string "D" in yun.json (the same
+# notation Roundhouse/Crouching Roundhouse/Towards+Fierce carry).
+# RESOLVED 2026-07-09 (§13.6.2b, ENGINE-3): standing Forward's HIT now
+# measures kd=1 live, matching yun.json - the previously-documented
+# "D"-notation-vs-live-kd inconsistency was the shipped predicate's
+# blindness to this move's r2=18 down-family traversal, not a genuine
+# oracle/engine divergence. kd is explicit-only (never from-qjson, Phase 3
+# discipline) - asserted here at the measured (now arcade-true) value. Of
+# yun.json's four "D"-annotated ground normals/command-normals, all four
+# (Roundhouse, Crouching Roundhouse, Forward here, and Towards+Fierce /
+# yun-twdshp-hit below) now read kd=1 live.
+- label: yun-forward-hit
+  setup: { dist: close, dummy: none }
+  input: "press MK"
+  qjson: { name: "Forward" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, kd: 1 }
+
+# Same COMPOUND finding as yun-roundhouse-block (shape (a1) + §13.10 Class 1,
+# see that entry's xfail string / file header). kd=1 confirmed live (as of
+# §13.6.2b, 2026-07-09, so is Forward above - see that entry's comment).
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=2 is the
+# engine-truth credit actually accrued on the HIT path - same shape (a1)
+# finding as yun-roundhouse-block. Arcade (whiff-canonical, from-qjson) A=4 -
+# preserved here per the convention. kd remains arcade-exact.
+#
+# SWEEP-2 (2026-07-10) FULL CONVERT: R=21 also now asserts the engine-truth
+# value, xfail REMOVED - byte-identical F2 (§12.2.2) branch as
+# yun-roundhouse-block (same -1 exact closure). Arcade (whiff-canonical)
+# R=22 - superseded per the convention.
+- label: yun-roundhouse-hit
+  setup: { dist: close, dummy: none }
+  input: "press HK"
+  qjson: { name: "Roundhouse" }
+  outcome: HIT
+  expect: { S: from-qjson, A: 2, R: 21, kd: 1 }
+
+# --- WHIFF sample per button family (dummy: none, dist 250) -----------------
+
+- label: yun-lp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press LP"
+  qjson: { name: "Far Jab" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: yun-mp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press MP"
+  qjson: { name: "Far Strong" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# Confirms yun-farfierce-block/-hit's §13.10 Class 1 R baseline (R=23 exact)
+# despite the contact-side compound xfail above - contact-tick-specific,
+# same discipline as every prior corpus in this repo.
+- label: yun-hp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press HP"
+  qjson: { name: "Far Fierce" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# yun.json has no distinct "Far Short" row (same gap shape as Chun-Li's
+# Strong/Fierce/Short - see corpus-chunli.yaml file header) - verified live
+# that dist:250 Short throws the SAME close-range "Short" animation and
+# simply fails to connect (WHIFF, not a distinct far animation).
+- label: yun-lk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press LK"
+  qjson: { name: "Short" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: yun-mk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press MK"
+  qjson: { name: "Far Forward" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# yun.json has no distinct "Far Roundhouse" row either - same reasoning as
+# Short above, verified live. Confirms yun-roundhouse-block/-hit's §13.10
+# Class 1 R baseline (R=22 exact) despite the contact-side compound xfail.
+- label: yun-hk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press HK"
+  qjson: { name: "Roundhouse" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# --- Crouching normals, BLOCK (dummy: stand) --------------------------------
+
+# Issue #17 shape (a1): lever-F-tested (same scratch build/batch as
+# yun-strong-block etc.) and confirmed UNCHANGED - measured A=1 vs arcade 2;
+# S/R/adv exact.
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=1 is the
+# engine-truth credit actually accrued on the BLOCK path - issue #17 shape (a1):
+# lever-F-tested (fd_restore_revoked_declared_credit forced 0 on a scratch
+# build, reverted before commit) and confirmed UNCHANGED - no revoke fires.
+# Arcade (whiff-canonical, from-qjson) A=2 - preserved here per the
+# convention. S/R/adv remain arcade-exact (from-qjson).
+- label: yun-crjab-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+LP"
+  qjson: { name: "Crouching Jab" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: 1, R: from-qjson, adv: from-qjson }
+
+- label: yun-crstrong-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+MP"
+  qjson: { name: "Crouching Strong" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# COMPOUND, both clauses NOW CONVERTED (see file header ISSUE #17 CENSUS
+# for the A-side lever-F test): (1) shape (a1) A-undercount, lever-F-tested
+# and confirmed UNCHANGED - measured A=2 vs arcade 4, converted under
+# §13.13 family F1/CONV-C13; (2) an R-side SURPLUS (not deficit) vs the
+# WHIFF-confirmed arcade R=15 (yun-crfierce-whiff below) - measured R=16,
+# the OPPOSITE sign from every §13.10 Class 1 precedent and not covered by
+# item 4's Hugo-Roundhouse bucket (which requires A exact); WITHDRAWN
+# §12.2.3-R-corollary framing (2026-07-09 re-cite) superseded 2026-07-10
+# by a P2 direct recount (run-yun GT=776-813) that MEASURED the actual
+# mechanism: the +1 is NOT branch content - it is whiff's own inter-active
+# gap cell 40 (jatix=0) surviving as the single unfrozen gap tick (GT=787),
+# counted in the R window only because contact skips the remaining active
+# cells 44/48; the rest of the gap (cells 20-36) is excluded by the
+# negative-hstop guard freeze (hstop=-6..-1, GT=781-786). Block
+# Rwin=40(1)+52(5)+56(5)+60(4)+64(1)=16 exact; whiff Rwin=52(5)+56(5)+
+# 60(4)+64(1)=15. Routed to §12.2.4's "contact-skip R-window
+# reclassification" class, MEASURED member.
+# §13.13 contact-path convention (CONV-2 scope extension, 2026-07-10, user
+# decision): A=2 (family F1, converted in an earlier cycle) and R=16
+# (family F7, converted this cycle) are the engine-truth values actually
+# accrued/played on the BLOCK path. Arcade (whiff-canonical, from-qjson)
+# A=4 / R=15 - both preserved here per the convention. adv remains
+# arcade-exact (from-qjson). The CANDIDATE sibling of this F7 class,
+# `elena-lynxtail-lk-block`'s R clause ("not per-tick closed"), does NOT
+# convert - candidates never convert under this or any §13.13 family.
+- label: yun-crfierce-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+HP"
+  qjson: { name: "Crouching Fierce" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: 2, R: 16, adv: from-qjson }
+
+- label: yun-crshort-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+LK"
+  qjson: { name: "Crouching Short" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: yun-crforward-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+MK"
+  qjson: { name: "Crouching Forward" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: yun-crroundhouse-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+HK"
+  qjson: { name: "Crouching Roundhouse" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# Crouching Roundhouse is a knockdown normal (yun.json Hit_advantage="D",
+# non-numeric) - same shape as corpus-ken.yaml/corpus-chunli.yaml's own
+# crouching-roundhouse-hit precedent; kd=1 confirmed live. kd explicit;
+# adv unasserted (non-numeric oracle field).
+- label: yun-crroundhouse-hit
+  setup: { dist: close, dummy: none }
+  input: "press DOWN+HK"
+  qjson: { name: "Crouching Roundhouse" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, kd: 1 }
+
+# Baseline confirmation for yun-crfierce-block's UNCLASSIFIED R-surplus
+# clause above - matches yun.json exactly.
+- label: yun-crfierce-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press DOWN+HP"
+  qjson: { name: "Crouching Fierce" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# --- Command normals (Towards + Forward / Towards + Fierce), BLOCK+WHIFF ---
+# WHIFF rows per Phase 4's mandatory whiff-vs-table rule for command normals
+# (the Ken Towards Roundhouse / Chun-Li Towards Forward precedent).
+
+# RESOLVED 2026-07-09 (§13.5.1b guard-rearm commit gate, lever H). Was:
+# item 18 "whiff-R truncation" bucket, first observed on a COMMAND NORMAL
+# in this repo, measured R=3 vs arcade R=8, IDENTICAL on WHIFF and BLOCK -
+# trace-confirmed a lever-H false cut (guard_flag stayed 3 for the whole
+# post-anchor tail on both outcomes, never re-arming before the natural r1
+# edge). The gate now correctly refuses this commit; both outcomes
+# finalize at the natural r1 edge and measure R=8, arcade-exact (S=19,
+# A=6 unchanged). adv on BLOCK now measures -1, also arcade-exact (was
+# previously asserted via from-qjson and drifting; now silently passes).
+# See docs/frame-data-synthesis.md §13.5.1b.
+- label: yun-twdsmk-block
+  setup: { dist: close, dummy: stand }
+  input: "press RIGHT+MK"
+  qjson: { name: "Towards + Forward" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: yun-twdsmk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press RIGHT+MK"
+  qjson: { name: "Towards + Forward" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# Towards + Fierce's Hit_advantage is the literal string "D" in yun.json.
+# RESOLVED 2026-07-09 (§13.6.2b, ENGINE-3): kd now measures 1 live,
+# matching yun.json, same dissolved finding as standing Forward above
+# (see yun-forward-hit's comment for the full discussion). kd asserted at
+# the measured (now arcade-true) value (explicit-only field, Phase 3
+# discipline). S/A/R/adv all match yun.json exactly on every outcome -
+# zero frame-data divergence for this move.
+- label: yun-twdshp-block
+  setup: { dist: close, dummy: stand }
+  input: "press RIGHT+HP"
+  qjson: { name: "Towards + Fierce" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: yun-twdshp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press RIGHT+HP"
+  qjson: { name: "Towards + Fierce" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: yun-twdshp-hit
+  setup: { dist: close, dummy: none }
+  input: "press RIGHT+HP"
+  qjson: { name: "Towards + Fierce" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, kd: 1 }
+
+# --- UOH (press MP+MK) ------------------------------------------------------
+# See file header "UOH FINDING" block - RE-CITED 2026-07-08 (§13.5.1a cut
+# gate). S=15/A=9 match yun.json's Universal Overhead row EXACTLY on all
+# three outcomes (NOT an issue #17 A-divergence - A is exact everywhere).
+# R now OVERSHOOTS per path: WHIFF=10 / BLOCK=12 / HIT=10 vs arcade's
+# uniform 6 (pre-fix the same entries UNDERSHOT at 1/4/2 via a §13.5.1
+# false cut - Yun UOH's chart flips to cghi=1 across its landing, shape B,
+# and the grounded fresh-edge gate now correctly refuses that anchor,
+# cut=0). NEW SUB-FINDING, UNCLASSIFIED-pending (synthesis item 18(c)) -
+# not residual item 18(b), not a false cut. Arcade R=6 is kept in `expect`
+# via from-qjson (never substituted with a measured wrong value per house
+# rule); the measured values and full citation are in each entry's xfail
+# string. THIS SECTION IS STILL 100% XFAIL ON THE R FIELD (3/3), per the
+# >50%-section accounting note (plan Step 7 / corpus-hugo.yaml precedent).
+
+# §13.17 RE-ANCHOR-1 (2026-07-11): item-18 CLOSED for this row (the
+# no-cut overshoot class, item 18(c)) — lever N now measures R=6,
+# matching arcade/oracle exactly. Prior xfail evidence, RELOCATED not
+# deleted (condensed): "RE-CITED 2026-07-08 (§13.5.1a cut gate): measured R=10 vs
+# arcade 6 - the value OVERSHOOTS the oracle now (was R=1 pre-§13.5.1a,
+# an undershoot). Yun UOH's chart flips to cghi=1 across its landing, so
+# the grounded fresh-edge gate correctly refuses to anchor (no cut fires,
+# cut=0) and the natural r1-edge end reads ABOVE arcade. S=15/A=9 exact,
+# unambiguous identification. RE-CITED 2026-07-10 (ENGINE-7 census):
+# guard-rearm retime FALSIFIED as a general rule; stays xfail, no lever.
+# RE-CITE 2026-07-11 (LAYER-1): arcade 990512 R=6 == oracle (docs/
+# arcade-frame-data/CAPTURE.md's Session 3); twin R=6 (docs/frame-data-
+# synthesis.md §13.16); overlay 10 is a meter artifact - overshoot sign
+# also (a). Layer RESOLVED."
+- label: yun-uoh-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press MP+MK"
+  qjson: { name: "Universal Overhead" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# Prior xfail evidence, RELOCATED not deleted: "RE-CITED 2026-07-08
+# (§13.5.1a cut gate; see file header 'UOH FINDING' block): measured R=12
+# vs arcade 6, adv -9 vs arcade -1 - OVERSHOOTS the oracle now (was
+# R=4/adv -1-ish undershoot pre-§13.5.1a; the old Class 2 cut-window
+# framing described the false cut and is retired for this move). The gate
+# correctly refuses to anchor (Yun UOH's chart flips to cghi=1 across its
+# landing; cut=0) and the natural r1-edge end reads ABOVE arcade. NEW
+# SUB-FINDING, UNCLASSIFIED-pending (synthesis item 18(c)); do NOT fold
+# into residual item 18(b). S=15/A=9 exact. RE-CITED 2026-07-10 (ENGINE-7
+# census): guard-rearm retime FALSIFIED as a general rule; stays xfail, no
+# lever. RE-CITED 2026-07-11 (§13.17 RE-ANCHOR-1): the whiff sibling
+# (yun-uoh-whiff) is resolved - lever N now measures it arcade/oracle-exact
+# (R=6), item 18(c) CLOSED for that leg. This leg is a CONTACT outcome,
+# explicitly OUT of RE-ANCHOR-1's scope. Stays xfail at measured R=12
+# pending dedicated contact-leg instrumentation, unaffected by this ship."
+#
+# CONVERTED 2026-07-13 (UOH-CLOSURE lever T, docs/frame-data-synthesis.md
+# §13.20; <sp>/zero/arcade-s7/session-report.md, akuma/yun/ibuki UOH
+# contact settlement, probe-confirmed exact fc 253608, zero early
+# acceptance): the item 18(c) "OVERSHOOTS the oracle" UNCLASSIFIED-pending
+# finding above is CLOSED - real arcade R=8, matching this engine's own
+# busy-edge/lever-R construction exactly (lever T), NOT the legacy
+# recovery_pf=12 the golden previously carried. XFAIL->PASS: R
+# re-literaled to 8; A stays from-qjson (=9, = arcade measured exactly,
+# unaffected by lever T, design §5).
+- label: yun-uoh-block
+  setup: { dist: close, dummy: stand }
+  input: "press MP+MK"
+  qjson: { name: "Universal Overhead" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: 8 }
+
+# Prior xfail evidence, RELOCATED not deleted: "RE-CITED 2026-07-08
+# (§13.5.1a cut gate; see file header 'UOH FINDING' block): measured R=10
+# vs arcade 6, adv -4 vs arcade +4 - OVERSHOOTS the oracle now (was R=2
+# pre-§13.5.1a; the old Class 2 cut-window framing described the false
+# cut and is retired for this move). The gate correctly refuses to anchor
+# (cut=0) and the natural r1-edge end reads ABOVE arcade. NEW
+# SUB-FINDING, UNCLASSIFIED-pending (synthesis item 18(c)); do NOT fold
+# into residual item 18(b). S=15/A=9 exact. RE-CITED 2026-07-10 (ENGINE-7
+# census): guard-rearm retime FALSIFIED as a general rule; stays xfail, no
+# lever. RE-CITED 2026-07-11 (§13.17 RE-ANCHOR-1): same re-cite as
+# yun-uoh-block - the whiff sibling (yun-uoh-whiff) is resolved (R=6, item
+# 18(c) CLOSED for that leg); this leg is a CONTACT outcome, explicitly
+# OUT of RE-ANCHOR-1's scope. Stays xfail at measured R=10 pending
+# dedicated contact-leg instrumentation, unaffected by this ship."
+#
+# CONVERTED 2026-07-13 (UOH-CLOSURE lever T, docs/frame-data-synthesis.md
+# §13.20; <sp>/zero/arcade-s7/session-report.md HIT legs, probe not run
+# this session, byte-identical x2): same closure as yun-uoh-block - real
+# arcade R=6, matching this engine's own busy-edge/lever-R construction
+# exactly. XFAIL->PASS: R re-literaled to 6; A stays from-qjson (=9, =
+# arcade measured exactly, unaffected by lever T, design §5).
+- label: yun-uoh-hit
+  setup: { dist: close, dummy: none }
+  input: "press MP+MK"
+  qjson: { name: "Universal Overhead" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: 6 }
+
+# --- Throw (LP+LK) -----------------------------------------------------------
+# yun.json's Throw_range field is 18px for both throw-family rows (see file
+# header naming note) - close (56px) sits OUTSIDE this, same trap as
+# corpus-ken.yaml's ken-throw-hit / corpus-chunli.yaml's chunli-throw-hit;
+# dist:18 used below. The HIT entry needs a longer post-press wait than the
+# Ken/Chun-Li precedent's "wait 60" - Yun's Neutral Throw SATURATES
+# (T=71=FD_METER_LEN-1, R=68 derived per the Class 3 saturated-grab formula)
+# and 60 frames is not enough margin for the FINAL to fire within its own
+# window; isolated re-verification (Phase 5 discipline) confirmed "wait 90"
+# is sufficient and the entry's own FINAL fires cleanly (a plain
+# insufficient-wait authoring mistake, NOT a distance/pushback issue - a
+# battery of dist 10/14/16/18/20 probes all connected the grab identically
+# with a 90-frame wait, ruling out any close-range pushback interaction).
+
+- label: yun-throw-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press LP+LK"
+  qjson: { name: "Neutral Throw" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# HIT-R display convention (docs/frame-data-synthesis.md §13.10, Class 3
+# connected grab, SATURATED sub-case) - same mechanism as corpus-ken.yaml's
+# ken-throw-hit: T=71 confirms saturation at FD_METER_LEN-1
+# (frame_data_overlay.c:42), so R = (FD_METER_LEN-1) - S - A = 71-2-1 = 68 is
+# a DERIVED value, not an independent constant - re-derive if FD_METER_LEN
+# ever changes. S/A match yun.json's Neutral Throw row exactly; adv
+# intentionally unasserted (Hit_advantage="D", non-numeric, same convention
+# as ken-throw-hit/chunli-throw-hit/ryu-throw-hit).
+- label: yun-throw-hit
+  setup: { dist: 18, dummy: none }
+  input: "press LP+LK; wait 90"
+  qjson: { name: "Neutral Throw" }
+  outcome: HIT
+  # BUFFER-1 (2026-07-13): the FD_CAPTURE_LEN 72->256 raise un-caps this
+  # partner-release throw's raw[] capture — post-fix measured R=136 (was
+  # 68). No arcade oracle exists for this post-contact span (same class
+  # as the Hugo grab HIT convention, §13.10). R DE-ASSERTED; flagged for
+  # follow-up (a previously-untracked row, outside the M1 register).
+  expect: { S: from-qjson, A: from-qjson, kd: 1 }
+
+# --- Zesshou Hohou (lunge punch), motion qcf --------------------------------
+# Landed via the EXISTING `motion qcf <btn>` macro (same primitive as
+# Ryu/Ken's Hadouken) - FIRST probe attempt, zero compile_corpus.py changes.
+# Jab/Strong are completely clean (zero divergence, every field matches
+# yun.json exactly on WHIFF/BLOCK/HIT). Fierce shows the file header's
+# "sum-preserving A/R boundary shift" UNCLASSIFIED finding on BLOCK/HIT, and
+# has NO WHIFF entry - see the file header "SPECIALS-REACHABILITY GAP" note
+# (the move still connects even at dist=300, the harness's max scriptable
+# distance).
+
+- label: yun-zesshou-lp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "motion qcf LP"
+  qjson: { name: "Zesshou Hohou (Jab)" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: yun-zesshou-mp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "motion qcf MP"
+  qjson: { name: "Zesshou Hohou (Strong)" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# ORDERING NOTE (§12.1 row 2 "teleport clamps / momentum bleed after
+# connecting dash specials", corpus-q.yaml precedent): the two Tetsu Zankou
+# WHIFF entries live HERE - before ANY special's connecting entry - because
+# in an earlier draft they sat after the three connecting Zesshou lunges and
+# their requested dist=250 silently collapsed to an actual 78/124px at
+# MOVE_START (P1's x had drifted to 596/550 vs the 424 teleport base),
+# flipping both to a bogus HIT/SHAPE verdict. Both were verified clean
+# WHIFF at dist=250 in isolated probe corpora; keeping them ahead of the
+# contact entries reproduces that clean read in the full corpus.
+
+- label: yun-tetsu-lp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LP 2; wait 1"
+  qjson: { name: "Tetsu Zankou (Jab)" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: yun-tetsu-mp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+MP 2; wait 1"
+  qjson: { name: "Tetsu Zankou (Strong)" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: yun-zesshou-lp-block
+  setup: { dist: close, dummy: stand }
+  input: "motion qcf LP"
+  qjson: { name: "Zesshou Hohou (Jab)" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: yun-zesshou-mp-block
+  setup: { dist: close, dummy: stand }
+  input: "motion qcf MP"
+  qjson: { name: "Zesshou Hohou (Strong)" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# UNCLASSIFIED (see file header "ZESSHOU HOHOU FIERCE" block): sum-preserving
+# A/R boundary shift, measured A=16/R=11 vs arcade A=15/R=12 (adv exact at
+# -11). Lever-F-tested and confirmed UNCHANGED (not a plausible lever-F
+# mechanism anyway, since this is an overcount not undercount). No WHIFF
+# baseline exists for this strength (harness-gap move, see file header).
+- label: yun-zesshou-hp-block
+  setup: { dist: close, dummy: stand }
+  input: "motion qcf HP"
+  qjson: { name: "Zesshou Hohou (Fierce)" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson, xfail: "[HONEST-FLOOR CENSUS 2026-07-14, opus-substitute / WANTS FABLE RE-REVIEW] TERMINAL CLASS = CONVENTION/RULED (mapping 2-way ambiguous; enriched-(b) honest terminal, no-conversion). NOTE UPDATED 2026-07-13 (CONTACT-2, lever R, design.md §5 item 4/§8.6): R is no longer the T-S-A sum-preservation complement described below - lever R's busy-edge construction (`fd_contact_busy_edge_r`, frame_data_overlay.c §13.19) measures this contact leg directly at R=12, which happens to equal the oracle/arcade value (golden churn 11->12). The A clause (16 vs arcade 15) is untouched and remains the sole open clause; row stays XFAIL, no verdict change - TRACK-P's no-conversion stance on the A/mapping ambiguity below is preserved as-is. Prior history (RELOCATED not deleted, T/A arithmetic now describes the LEGACY diagnostic only, not the displayed value): UNCLASSIFIED (flagged 2026-07-08, needs follow-up classification; see file header 'ZESSHOU HOHOU FIERCE' block): a sum-preserving A/R boundary shift - measured A=16 vs arcade 15 (+1), R=11 vs arcade 12 (-1) under the legacy recovery_pf tally, S+A+R totals unchanged (40 either way); adv exact (-11). Sign-incoherent with shape (a1) (which only ever loses credit) and does not fit Class 1 or item 4 (both require A exact). Lever-F-tested (fd_restore_revoked_declared_credit forced 0) and confirmed UNCHANGED. No clean WHIFF baseline exists for this strength (harness-gap move, see file header 'SPECIALS-REACHABILITY GAP'). Trace observation only, no mechanism claimed; flagged to orchestrator for follow-up classification REGISTERED 2026-07-09 (classification sweep) in synthesis §12.2.4: LINKED with remy-cbk-lk-block (corpus-remy.yaml) as a two-character sum-preserving A/R boundary-shift family - identical signature; mechanism still UNCLASSIFIED. RE-CITED 2026-07-10 (classification sweep #2, disposition (e) per the fable-grade audit): tried (s7) - opposite-direction active_pf(17)/engine_a(16) split, S+A+R=T-1; no whiff baseline exists (harness-gap move); unresolvable without a ledger. DATED CORRECTION (s7, relayed via corpus-remy.yaml's remy-cbk-lk-whiff re-cite): the 'family-of-two, same signature' framing with remy-cbk-lk-block is WRONG - remy-cbk-lk-whiff (the actual sum-preserving/self-consistent member) is a WHIFF leg; this BLOCK entry and remy-cbk-lk-block/-hit are NOT sum-preserving in the T=S+A+R sense (T != S+A+R on all of them). ENRICHED, (c)-CITED sweep #3 (2026-07-11, classification sweep #3 fable-grade audit): the ledger RAN (s3w) - A=16 = engine credit ledger exactly (60:4+66:5+72:5+78:2; cell78 banks its declared 2, plays 1 real tick; cell60 plays 5 real ticks vs declared 4 across the freeze-extension); R=11 = T-S-A of conserved T=40 (=arcade's own 13+15+12). Arcade-mapping is TWO-WAY AMBIGUOUS (arcade's -1 could be the cell78 declared-over-real bank OR the cell60 freeze-extension tick, and the discriminating whiff baseline is harness-unreachable, SPECIALS-REACHABILITY gap) - deliberately NOT offered a conversion option (would risk shipping a wrong story); enriched-(b) is the honest terminal state, NOT pending-grant-for-conversion. DIAGNOSTIC finding routed to ENGINE-10 candidate row (docs/plan-frame-data-completion.md): at the active-window tail, h_att_set outlives jatix by exactly one tick (GT76 jatix=0/hatt=1, clears GT77), no credit event fires at the lag tick, and the overlay's hatt-based active_pf (17) therefore reads +1 vs engine_a (16) - a one-tick boundary disagreement between two internal active-end signals. DIAGNOSTIC-ONLY: displayed A=16 is engine_a (jatix/declared-grounded) and R=11 is the T-S-A complement, so aligning active_pf to the jatix boundary would change ZERO displayed values, zero goldens, zero gameplay. Stays xfail; NOT on the conversion grant list." }
+
+- label: yun-zesshou-lp-hit
+  setup: { dist: close, dummy: none }
+  input: "motion qcf LP"
+  qjson: { name: "Zesshou Hohou (Jab)" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: yun-zesshou-mp-hit
+  setup: { dist: close, dummy: none }
+  input: "motion qcf MP"
+  qjson: { name: "Zesshou Hohou (Strong)" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: yun-zesshou-hp-hit
+  setup: { dist: close, dummy: none }
+  input: "motion qcf HP"
+  qjson: { name: "Zesshou Hohou (Fierce)" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, xfail: "[HONEST-FLOOR CENSUS 2026-07-14, opus-substitute / WANTS FABLE RE-REVIEW] TERMINAL CLASS = CONVENTION/RULED (mapping 2-way ambiguous; enriched-(b) honest terminal, no-conversion). NOTE UPDATED 2026-07-13 (CONTACT-2, lever R): same golden churn as yun-zesshou-hp-block (R 11->12, busy-edge measurement, oracle-exact); A clause (16 vs arcade 15) untouched, stays XFAIL, no verdict change. Prior history (RELOCATED not deleted): same UNCLASSIFIED sum-preserving A/R boundary shift as yun-zesshou-hp-block (identical measured A=16/R=11 vs arcade 15/12, pre-lever-R) - see that entry's xfail string / file header for the full discussion REGISTERED 2026-07-09 in synthesis §12.2.4 (sum-preserving A/R boundary-shift family, see yun-zesshou-hp-block). RE-CITED 2026-07-10 (classification sweep #2, disposition (e)): same hand-off posture as yun-zesshou-hp-block (tried s7, unresolvable without a ledger) and same dated T!=S+A+R correction. ENRICHED, (c)-CITED sweep #3 (2026-07-11, classification sweep #3 fable-grade audit): same ledger closure as yun-zesshou-hp-block (s3w, GT362-382 leg) - A=16 = 60:4+66:5+72:5+78:2 exactly, R=11 = T-S-A of conserved T=40; same two-way-ambiguous arcade mapping (no conversion offered) and same ENGINE-10 diagnostic cite (h_att_set outlives jatix by one tick, GT383/GT384, active_pf 17 vs engine_a 16, zero displayed effect) - see that entry's xfail string for the full mechanism. Stays xfail; NOT on the conversion grant list." }
+
+# --- Tetsu Zankou (shoulder), DP-shape hold-chain (EXISTING primitive) ------
+# Motion-probed per the runbook's Phase 5 discipline (tried a DP-shape
+# hold-chain first, same recipe as Ken's Shoryuken / Hugo's Shootdown
+# Backbreaker) - landed on the FIRST probe attempt (S=14 matched Jab's
+# yun.json row exactly, unambiguous identification; hcb/qcb/hcf/charge-back
+# candidates were also tried and produced DIFFERENT S values matching other,
+# unrelated moves - see the "did not land" note below). Jab/Strong are
+# completely clean (zero divergence on every outcome). Fierce is also clean
+# on BLOCK/HIT (S/A/R/adv all match yun.json exactly) but has NO WHIFF entry
+# - same harness-gap shape as Zesshou Hohou Fierce (still connects at
+# dist=300).
+#
+# Candidates tried and NOT used for Tetsu Zankou (each landed a real,
+# different, correctly-identified move by its own S value, ruling them out
+# rather than leaving Tetsu Zankou unidentified): `motion hcb`/`motion qcb`
+# both landed S=24 (Kobokushi, out of this rollout's scope); `motion hcf`
+# landed S=7 (Zesshou Hohou Jab); `motion charge-back N then-forward` landed
+# S=4 (plain Short).
+
+# (The Tetsu Zankou Jab/Strong WHIFF entries live ABOVE, before the Zesshou
+# contact entries - see the ORDERING NOTE in the Zesshou section: after
+# connecting lunges, a requested dist=250 silently collapses via the §12.1
+# momentum-bleed clamp and flips them to a bogus HIT.)
+
+- label: yun-tetsu-lp-block
+  setup: { dist: close, dummy: stand }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LP 2; wait 1"
+  qjson: { name: "Tetsu Zankou (Jab)" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: yun-tetsu-mp-block
+  setup: { dist: close, dummy: stand }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+MP 2; wait 1"
+  qjson: { name: "Tetsu Zankou (Strong)" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: yun-tetsu-hp-block
+  setup: { dist: close, dummy: stand }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+HP 2; wait 1"
+  qjson: { name: "Tetsu Zankou (Fierce)" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: yun-tetsu-lp-hit
+  setup: { dist: close, dummy: none }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LP 2; wait 1"
+  qjson: { name: "Tetsu Zankou (Jab)" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: yun-tetsu-mp-hit
+  setup: { dist: close, dummy: none }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+MP 2; wait 1"
+  qjson: { name: "Tetsu Zankou (Strong)" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: yun-tetsu-hp-hit
+  setup: { dist: close, dummy: none }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+HP 2; wait 1"
+  qjson: { name: "Tetsu Zankou (Fierce)" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# --- Nishou Kyaku (upkicks), DP-shape hold-chain (EXISTING primitive) -------
+# Same DP-shape hold-chain recipe as Tetsu Zankou above, landed on the FIRST
+# probe attempt for all three strengths (S=4/6/8 match yun.json's
+# Short/Forward/RH rows exactly, unambiguous identification). WHIFF requires
+# dist=300 (NOT 250 - all three strengths connect at 250, a genuinely
+# longer-reaching traveling special; verified at 300 they cleanly whiff).
+# See file header "NISHOU KYAKU" block: RESOLVED 2026-07-08 by the
+# §13.5.1a grounded fresh-edge cut gate - the old uniform -9 was a
+# §13.5.1 shape-B false cut (mid-air anim dip + landing straight to
+# cghi=1, the case that forced the grounded-edge rule). R=25/26/28 and
+# BLOCK adv -25/-26/-28 now EXACT on every outcome - all 9 xfails
+# removed, plain PASS.
+
+- label: yun-nishou-short-whiff
+  setup: { dist: 300, dummy: none }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LK 2; wait 1"
+  qjson: { name: "Nishou Kyaku (Short)" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: yun-nishou-forward-whiff
+  setup: { dist: 300, dummy: none }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+MK 2; wait 1"
+  qjson: { name: "Nishou Kyaku (Forward)" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: yun-nishou-rh-whiff
+  setup: { dist: 300, dummy: none }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+HK 2; wait 1"
+  qjson: { name: "Nishou Kyaku (RH)" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: yun-nishou-short-block
+  setup: { dist: close, dummy: stand }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LK 2; wait 1"
+  qjson: { name: "Nishou Kyaku (Short)" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: yun-nishou-forward-block
+  setup: { dist: close, dummy: stand }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+MK 2; wait 1"
+  qjson: { name: "Nishou Kyaku (Forward)" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: yun-nishou-rh-block
+  setup: { dist: close, dummy: stand }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+HK 2; wait 1"
+  qjson: { name: "Nishou Kyaku (RH)" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: yun-nishou-short-hit
+  setup: { dist: close, dummy: none }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LK 2; wait 1"
+  qjson: { name: "Nishou Kyaku (Short)" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: yun-nishou-forward-hit
+  setup: { dist: close, dummy: none }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+MK 2; wait 1"
+  qjson: { name: "Nishou Kyaku (Forward)" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: yun-nishou-rh-hit
+  setup: { dist: close, dummy: none }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+HK 2; wait 1"
+  qjson: { name: "Nishou Kyaku (RH)" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# --- Zenpou Tenshin (command roll-grab), motion hcb (EXISTING macro) --------
+# Landed via the EXISTING `motion hcb <K>` macro (already implemented in
+# compile_corpus.py's _motion_steps for Chun-Li's Hazan Shu, unused for Yun
+# anywhere else in this repo, zero new code) - FIRST probe attempt (S=7
+# matches yun.json's Zenpou Tenshin row exactly). See file header "ZENPOU
+# TENSHIN" block: an UNBLOCKABLE command grab (dummy:stand and dummy:none
+# produce the IDENTICAL HIT outcome/numbers - verified live, no separate
+# BLOCK entry exists for this move). §13.10 Class 3 (connected grab,
+# non-saturated partner-release sub-case, T=53, endrel=1): arcade R=26 is
+# the whiff-path figure; HIT R=44 is a DERIVED value (T-S-A=53-7-2=44).
+# Block_advantage/Hit_advantage are both the literal string "-" in
+# yun.json - no expect.adv anywhere in this section.
+
+- label: yun-zenpou-tenshin-whiff
+  setup: { dist: 250, dummy: none }
+  input: "motion hcb LK"
+  qjson: { name: "Zenpou Tenshin" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# HIT-R display convention (docs/frame-data-synthesis.md §13.10, Class 3
+# connected grab, NON-saturated partner-release sub-case: T=53 - nowhere
+# near FD_METER_LEN=72's saturation - and endrel=1 fires per the trace, the
+# plain §13.6.1 partner-release path, same sub-case as chunli-throw-hit /
+# ryu-throw-hit, NOT ken-throw-hit's saturated formula). Arcade R=26 is the
+# whiff-path figure (yun-zenpou-tenshin-whiff above matches yun.json's
+# Recovery=26 exactly, the Phase 4 baseline this Class-3 citation needs).
+# R = T - S - A = 53 - 7 - 2 = 44, a DERIVED value from the live trace -
+# re-measure if this ever regresses. Asserted directly per the §13.10
+# convention (plain PASS, not xfail - the ken/chunli/ryu-throw-hit
+# precedent). Verified live: dummy:stand produces the IDENTICAL HIT
+# outcome/numbers - an unblockable command grab, same shape as Hugo's 360
+# grab family, so no separate BLOCK entry exists for this move. adv
+# unasserted (Hit_advantage="-" in yun.json, non-numeric).
+- label: yun-zenpou-tenshin-hit
+  setup: { dist: 12, dummy: none }
+  input: "motion hcb LK; wait 40"
+  qjson: { name: "Zenpou Tenshin" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: 44, kd: 1 }
+
+# --- Negative control (plan section 1.8 item 5 precedent) ------------------
+
+- label: yun-jump-none
+  setup: { dist: 250, dummy: none }
+  input: "press UP"
+  outcome: NONE

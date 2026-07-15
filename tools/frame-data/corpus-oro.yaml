@@ -1,0 +1,1009 @@
+# Oro frame-data corpus (cast rollout, user-directed 2026-07-08).
+# Generated/consumed by tools/frame-data/compile_corpus.py against
+# docs/arcade-frame-data/oro.json (fetched 2026-07-08 from
+# https://raw.githubusercontent.com/Coccis77/thirdstrikedatabot/master/json/oro.json,
+# md5 9917bd5e9773c514eef58c5a4431bb47). CHARACTER_IDS key is "oro"
+# (compile_corpus.py:46, id=9).
+#
+# NAMING NOTE (runbook Phase 1 caution re: throw-family naming varying per
+# character): oro.json's throw-family row is a bare "Throw" (there is no
+# "Back + Throw" row for Oro, unlike akuma.json's Jab/Back split) -
+# Startup=2/Hit=1/Recovery=21/Throw_range=24/Hit_advantage="D" - the same
+# shape as ryu.json/q.json's own bare "Throw". Verified against the fetched
+# oracle, not assumed.
+#
+# FAR-NORMAL COVERAGE: oro.json has "Far Jab"/"Far Strong"/"Far Short"/
+# "Far Forward" rows but NO "Far Fierce"/"Far Roundhouse" (the inverse gap
+# from ken.json/ryu.json/akuma.json, which lack a Far Short instead) -
+# verified by reading every Name string in the fetched oracle. Fierce/
+# Roundhouse's WHIFF-at-250 entries below cite their own single row, same
+# as corpus-akuma.yaml's akuma-lk-whiff precedent for a button without a
+# Far row.
+#
+# ALL SIX crouching normals exist. Crouching Roundhouse is Hit_advantage=
+# "D" (oro.json) - HIT-tested for kd below. FINDING: standing Strong is
+# ALSO Hit_advantage="D" in oro.json (a second "D"-annotated row, on a
+# STANDING normal - not seen in any prior corpus in this repo) - also
+# HIT-tested for kd. GATE 2 CORRECTION (2026-07-08): Crouching Strong's
+# Hit_advantage is actually the numeric "-4" (NOT "D" - the original
+# corpus-authoring pass mis-read this field); see the D-NOTATION-VS-LIVE-KD
+# FINDING below for the corrected two-row census.
+#
+# ONLY ONE Towards+X command normal exists: "Towards + Strong" (no other
+# Towards rows). Not "D"-annotated (Hit_advantage numeric, -4), audited
+# with BLOCK+WHIFF per Phase 4 (Dudley/Makoto/Urien/Akuma precedent - no
+# separate command-normal HIT entry for a non-"D" row).
+#
+# oro.json's numeric fields are JSON strings ("Startup": "2") -
+# resolve_from_qjson's int() cast handles this; only genuinely non-numeric
+# fields ("-", "D") need an explicit literal or an outright skip.
+#
+# D-NOTATION-VS-LIVE-KD FINDING (CORRECTED 2026-07-08, Gate 2 review;
+# RESOLVED 2026-07-09, §13.6.2b ENGINE-3): oro.json marks TWO rows
+# Hit_advantage="D" (standing Strong, Crouching Roundhouse) - NOT three.
+# The original corpus-authoring pass fabricated a third member (Crouching
+# Strong); the fetched oracle's Crouching Strong row is Hit_advantage=
+# "-4", a plain numeric value, not "D" - verified directly against the
+# committed docs/arcade-frame-data/oro.json. Both "D"-marked rows now
+# measure kd=1 live, matching oro.json - standing Strong's previously-
+# documented kd=0 miss was the shipped predicate's blindness to this
+# move's r2=18 down-family traversal, not a genuine oracle/engine
+# divergence (same dissolved finding as corpus-urien.yaml's Crouching
+# Fierce and corpus-yun.yaml/corpus-dudley.yaml's own precedents). kd is
+# explicit-only (never from-qjson, Phase 3 discipline), asserted below at
+# the measured (now arcade-true) value for each of the two rows
+# independently (S/A/R all otherwise exact on both, no other divergence).
+# Crouching Strong, being a plain numeric Hit_advantage row, is tested
+# like any other non-"D" HIT entry (adv: from-qjson, no special kd
+# framing) - see its entry below.
+#
+# SCOPE (user-directed 2026-07-08, cast rollout): normals ladder (six-button
+# close BLOCK/HIT + WHIFF sample + four far-normal BLOCK rows + all six
+# crouching BLOCK + HIT for the two "D"-marked rows + the one Towards+X
+# command normal BLOCK+WHIFF) + UOH (WHIFF/BLOCK/HIT) + Throw (WHIFF/HIT) +
+# negative control + ground specials probe (ONE session budget): Niou Riki
+# (oro.json's "Human Pillar Driver (Jab/Strong/Fierce)", hcb+P command
+# grab - §13.10 Class 3 precedent, Jab strength only), Nichirin Shou
+# (oro.json's "Sun Disk Palm (Jab/Strong/Fierce)", charge-back-then-
+# forward+P projectile - exercises the projectile arcade-split lever D on a
+# SIXTH character), Oni Yanma (oro.json's "Oniyama (Jab)", charge-down-
+# then-up+P), Jinchuu Watari / Hitobashira Nobori (oro.json's "Jinchu
+# Nobori (Short/Forward/RH)", dp-shape hold-chain + K, Short strength
+# only). NO supers/EX (Tengu Stones (Both Versions) / EX Kishin Riki / EX
+# Yagyou Dama / Oniyama (EX) / Sun Disk Palm (EX Low/High) / Jinchu Nobori
+# (EX) / Air Jinchu Nobori (EX) all excluded per task scope). No airborne
+# moves (every Jumping/Neutral Jumping row, Air Throw, Air Grab, Air Jinchu
+# Nobori, Air Jinchu Nobori (EX) excluded - the harness dummy/attacker
+# cannot be scripted to jump, docs/frame-data-synthesis.md §12.1). Ground
+# Grab / Kishin Riki (all-"-" fields, an SA-adjacent charge move) / Yagyou
+# Dama are NOT in the task's specials list - not probed, documented as an
+# open gap (same posture as Akuma's Hyakki Goushou/Goujin/Gousai followups
+# being out of session budget).
+#
+# MOVE-NAME MAPPING (verified via the decompiled source, NOT translation
+# guesswork): src/sf33rd/Source/Game/engine/plpat09.c's pl09_exatt_table
+# (line 390) names Oro's DP-shape special dispatch function
+# `Att_JINNCHUUWATARI` (ground) / `Att_KUUCHUUJINNCHUUWATARI` (airborne,
+# "Kuuchuu" = airborne prefix) - directly corroborating "Jinchuu Watari" =
+# oro.json's "Jinchu Nobori" family (the airborne dispatch name's own
+# "Kuuchuu" prefix matches oro.json's separate "Air Jinchu Nobori" row
+# exactly). The same table's `Att_KUUCHUUNICHIRINSHOU` (air Nichirin Shou)
+# sits alongside FIVE `Att_HADOUKEN`-dispatched slots (indices 0/3/4/5/6) -
+# matching oro.json's five Sun Disk Palm rows (Jab/Strong/Fierce/EX Low/EX
+# High) exactly, confirming "Nichirin Shou" (ground) = "Sun Disk Palm".
+# "Niou Riki" and "Oni Yanma" have no literal function-name match anywhere
+# in src/sf33rd (grepped case-insensitively for "niou"/"oniyama"/
+# "kishinriki"/"jinchu") - their mapping to "Human Pillar Driver" (the
+# only oracle row with a large Throw_range=62, i.e. the only remaining
+# grab-shaped row) and "Oniyama" (the only remaining strike-shaped row
+# with a numeric Hit field and no Throw_range) respectively is by
+# elimination + live motion-probe confirmation (S/Hit field exact match on
+# every measured outcome), per the runbook's own "S-value matching against
+# the oracle is the ground truth signal for did I land the right move"
+# method - not a translation assumption.
+#
+# Every expect below was pinned against a live trace
+# (tools/frame-data/run.sh tools/frame-data/corpus-oro.yaml), and every
+# quoted measured value below was re-reconciled against the FINAL
+# full-corpus run of this session (per the Urien/Akuma review-cycle
+# lesson: values quoted from earlier isolated probes are re-checked
+# against the last run before commit, never carried forward stale).
+#
+# ============================================================================
+# ISSUE #17 FAMILY CENSUS (per runbook Phase 6 / item 6 instruction). Every
+# A-divergence AND every clean-passing A was lever-F-tested in ONE batched
+# scratch build (fd_restore_revoked_declared_credit forced to 0 at
+# src/sf33rd/Source/Game/engine/charset.c:507, whole corpus re-run once,
+# reverted via `git checkout` + rebuild + re-verified green before this
+# commit, same-binary protocol throughout).
+#
+# RESULT: every standing normal, far-normal, command normal, UOH, Throw,
+# and Niou Riki A field measured EXACTLY matches oro.json (where numeric)
+# on every outcome AND was lever-F-tested UNCHANGED - no shape (a1)
+# skip-jump members anywhere in this corpus. TWO shape (b) members found
+# (lever-F ACTIVELY RESTORING credit; plain PASS in the real binary, no
+# xfail - the lever-F-off scratch build is what reveals the dependency;
+# per the runbook, shape (b) appearing as a plain PASS is the §13.11
+# convention working as designed):
+#   - oro-crforward-block (A=4 exact; lever-F-off drops to A=2).
+#   - oro-jinchu-lk-block / oro-jinchu-lk-hit (A=6 exact; lever-F-off
+#     drops to A=4 on BOTH BLOCK and HIT - oro-jinchu-lk-whiff's own A=6
+#     is UNCHANGED by lever-F-off, i.e. no revoke fires on the clean
+#     whiff, only on contact). This is a new piece of evidence for the
+#     Jinchu Nobori UNCLASSIFIED R finding below: the SAME contact tick
+#     that trips the §13.7.4 revoke/lever-F restore on BLOCK/HIT (but not
+#     WHIFF) is a plausible shared root with the R=0 collapse and cut=0
+#     also only appearing on BLOCK/HIT (not WHIFF's cut=1/R=6) - reported
+#     as a raw correlation, NOT a proven causal mechanism (Phase 6's "no
+#     invented mechanism" discipline); see the Jinchu Nobori section
+#     comment.
+# Every other A value in this file (all remaining standing/crouching/
+# command normals, UOH, Throw, Niou Riki) was UNCHANGED by lever-F-off.
+# ============================================================================
+#
+# >50%-XFAIL SECTION ACCOUNTING (plan Step 7 / corpus-hugo.yaml precedent:
+# >50% of a section xfailing requires explicit orchestrator/user sign-off,
+# not self-approval):
+#   - Jinchu Nobori (Short): RECONCILED 2026-07-08 (§13.5.1a cut-gate fix,
+#     lever G) - was 3/3 xfail (100%), now 2/3 xfail (67%, BLOCK/HIT only).
+#     The former three-way mismatch's WHIFF leg (R=6 vs arcade 19, no
+#     internal truncation signature) was itself a §13.5.1 shape-B false cut
+#     (landing-tick label flip); under the fixed grounded-fresh-edge gate
+#     WHIFF now runs to its natural r1-edge end and measures R=19 exact -
+#     xfail removed, plain PASS. BLOCK/HIT are UNCHANGED by the fix
+#     (byte-identical FINAL: R=0, T=35, cut=0, a different still-
+#     unexplained end mechanism) - still >50%, still FLAGGED, see the
+#     section comment for full trace facts. Orchestrator sign-off
+#     2026-07-08: GRANTED (post-cut-fix reconciliation; residual two-way
+#     BLOCK/HIT R=0 truncation, mechanism still unidentified, correlated-
+#     but-not-proven-causal with the §13.7.4 A-side shape-(b) revoke).
+#     User review pending (overnight autonomous run).
+#   - Niou Riki (Human Pillar Driver, Jab): RESOLVED 2026-07-08 (§13.5.1a
+#     cut-gate fix, lever G) - was 3/3 xfail (100%), now 0/3. The WHIFF
+#     divergence that contradicted §13.10 Class 3's "WHIFF always matches
+#     arcade exactly" axiom was a §13.5.1 shape-A false cut (chart already
+#     at cghi=1 when the mid-anim cgix dip fired); under the fix WHIFF/
+#     BLOCK both measure arcade-exact (R=29, BLOCK adv=-15) and the axiom
+#     holds after all. HIT (formerly xfail, R=44 vs the whiff-baseline
+#     expect) now satisfies the §13.10 Class 3 connected-grab convention's
+#     own precondition (a whiff baseline matching arcade exactly) and is
+#     asserted as the sanctioned derived value (R=44, endrel-bounded,
+#     T-S-A=55-9-2). Sign-off request WITHDRAWN - section no longer trips
+#     the >50% rule. See the section comment for full trace facts.
+#   - UOH: 1/3 xfail (33%, WHIFF only - BLOCK/HIT are plain PASS, HIT via
+#     the established §13.10 Class 2 convention value) - below the 50%
+#     threshold, listed here for visibility only, does not trip the rule.
+#     UNCHANGED by the 2026-07-08 cut-gate fix (byte-identical FINAL:
+#     R=4 vs arcade 5, cut=1) - re-cited to residual item 18(b) (the
+#     §13.5.1a split's "genuine grounded fresh-edge cleanup cut, earlier
+#     than the oracle's actionable point" bucket; see
+#     docs/frame-data-synthesis.md item 18(b) and the UOH section comment).
+#   - Oniyama (Jab): 3/3 xfail (100%) - but NOT a divergence in the usual
+#     sense: oro.json's own Recovery field for this move is NEGATIVE
+#     (-29), structurally incapable of matching this harness's
+#     never-negative R metric; S/A are clean exact matches on all three
+#     outcomes and R is a self-consistent, reproducible, non-degenerate
+#     measurement (S+A+R=T exactly, cut=1) - the xfail exists only because
+#     oro.json publishes an incomparable field, not because anything is
+#     wrong. UNCHANGED by the 2026-07-08 cut-gate fix (byte-identical
+#     FINAL on all three outcomes). Orchestrator sign-off 2026-07-08:
+#     GRANTED (oracle-field-incomparability, not a harness/engine
+#     divergence; measured values self-consistent and reproducible across
+#     all three outcomes). User review pending (overnight autonomous run).
+# ============================================================================
+character: oro
+oracle: oro.json
+inter_entry_wait: 200
+entries:
+
+# --- Standing normals, BLOCK (dummy: stand; close + far rows) ---------------
+
+- label: oro-jab-block
+  setup: { dist: close, dummy: stand }
+  input: "press LP"
+  qjson: { name: "Jab" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: oro-far-jab-block
+  setup: { dist: 90, dummy: stand }
+  input: "press LP"
+  qjson: { name: "Far Jab" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: oro-strong-block
+  setup: { dist: close, dummy: stand }
+  input: "press MP"
+  qjson: { name: "Strong" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: oro-far-strong-block
+  setup: { dist: 100, dummy: stand }
+  input: "press MP"
+  qjson: { name: "Far Strong" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: oro-fierce-block
+  setup: { dist: close, dummy: stand }
+  input: "press HP"
+  qjson: { name: "Fierce" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: oro-short-block
+  setup: { dist: close, dummy: stand }
+  input: "press LK"
+  qjson: { name: "Short" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: oro-far-short-block
+  setup: { dist: 90, dummy: stand }
+  input: "press LK"
+  qjson: { name: "Far Short" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: oro-forward-block
+  setup: { dist: close, dummy: stand }
+  input: "press MK"
+  qjson: { name: "Forward" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: oro-far-forward-block
+  setup: { dist: 100, dummy: stand }
+  input: "press MK"
+  qjson: { name: "Far Forward" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: oro-roundhouse-block
+  setup: { dist: close, dummy: stand }
+  input: "press HK"
+  qjson: { name: "Roundhouse" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# --- HIT sample per button family (dummy: none, close range) ---------------
+# oro.json's "Strong" row is Hit_advantage="D" (knockdown-annotated) - see
+# the D-NOTATION-VS-LIVE-KD FINDING in the file header (RESOLVED
+# 2026-07-09, §13.6.2b): measured live this now sets the engine's
+# knockdown flag (kd=1), matching arcade. kd is explicit-only (never
+# from-qjson, Phase 3 discipline); no expect.adv on this entry
+# (Hit_advantage non-numeric).
+
+- label: oro-jab-hit
+  setup: { dist: close, dummy: none }
+  input: "press LP"
+  qjson: { name: "Jab" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: oro-strong-hit
+  setup: { dist: close, dummy: none }
+  input: "press MP"
+  qjson: { name: "Strong" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, kd: 1 }
+
+- label: oro-fierce-hit
+  setup: { dist: close, dummy: none }
+  input: "press HP"
+  qjson: { name: "Fierce" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: oro-short-hit
+  setup: { dist: close, dummy: none }
+  input: "press LK"
+  qjson: { name: "Short" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: oro-forward-hit
+  setup: { dist: close, dummy: none }
+  input: "press MK"
+  qjson: { name: "Forward" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: oro-roundhouse-hit
+  setup: { dist: close, dummy: none }
+  input: "press HK"
+  qjson: { name: "Roundhouse" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# --- WHIFF sample per button family (dummy: none, dist 250) -----------------
+# Fierce/Roundhouse have no Far row in oro.json (single-row buttons) - their
+# WHIFF cites the same row as their close entries, same as
+# corpus-ken.yaml's ken-lk-whiff / corpus-akuma.yaml's akuma-lk-whiff.
+# All six entries below match oro.json exactly.
+
+- label: oro-lp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press LP"
+  qjson: { name: "Far Jab" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: oro-mp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press MP"
+  qjson: { name: "Far Strong" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: oro-hp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press HP"
+  qjson: { name: "Fierce" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: oro-lk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press LK"
+  qjson: { name: "Far Short" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: oro-mk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press MK"
+  qjson: { name: "Far Forward" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: oro-hk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press HK"
+  qjson: { name: "Roundhouse" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# --- Crouching normals, BLOCK (dummy: stand) --------------------------------
+
+- label: oro-crjab-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+LP"
+  qjson: { name: "Crouching Jab" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: oro-crstrong-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+MP"
+  qjson: { name: "Crouching Strong" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: oro-crfierce-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+HP"
+  qjson: { name: "Crouching Fierce" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: oro-crshort-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+LK"
+  qjson: { name: "Crouching Short" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# Shape (b) member (lever-F-off drops A 4->2) - see file header CENSUS.
+- label: oro-crforward-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+MK"
+  qjson: { name: "Crouching Forward" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: oro-crroundhouse-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+HK"
+  qjson: { name: "Crouching Roundhouse" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# Only Crouching Roundhouse is "D"-annotated (Hit_advantage="D") in
+# oro.json - kd explicit-only, asserted at the measured live value. See the
+# D-NOTATION-VS-LIVE-KD FINDING in the file header: Crouching Roundhouse
+# measures kd=1 (matches "D"). Crouching Strong's Hit_advantage is a plain
+# numeric "-4" (GATE 2 CORRECTION 2026-07-08 - NOT "D"; see file header),
+# so it is tested like any other non-"D" HIT entry below (adv: from-qjson,
+# no kd assertion) - measured adv=-4 matches oro.json exactly.
+
+- label: oro-crstrong-hit
+  setup: { dist: close, dummy: none }
+  input: "press DOWN+MP"
+  qjson: { name: "Crouching Strong" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: oro-crroundhouse-hit
+  setup: { dist: close, dummy: none }
+  input: "press DOWN+HK"
+  qjson: { name: "Crouching Roundhouse" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, kd: 1 }
+
+# --- Command normal (Towards + Strong - oro.json's ONLY Towards+X row) -----
+# Not "D"-annotated (numeric Hit_advantage=-4) so no separate HIT entry,
+# per the Dudley/Makoto/Urien/Akuma precedent. WHIFF row per Phase 4's
+# unconditional whiff-vs-table rule. Both entries match oro.json exactly.
+
+- label: oro-twdsmp-block
+  setup: { dist: close, dummy: stand }
+  input: "press RIGHT+MP"
+  qjson: { name: "Towards + Strong" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: oro-twdsmp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press RIGHT+MP"
+  qjson: { name: "Towards + Strong" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# --- UOH (press MP+MK) ------------------------------------------------------
+# oro.json's Block_advantage/Hit_advantage for Universal Overhead are both
+# "-" - no expect.adv (same convention as every other UOH row in this
+# repo). S=15/A=10/R=5 in oro.json - the SAME numbers as
+# q.json/dudley.json/chunli.json/akuma.json's own UOH row. A=10 measured
+# EXACTLY on all three outcomes (whiff/block/hit alike, T=S+A+R self-
+# consistent on WHIFF) - no §17/§13.11 A-side finding of any kind (also
+# explicitly checked for the Urien same-cell self-loop blind-spot shape:
+# active_pf on BLOCK reads 13 vs engine_a=10, a 3-tick gap similar in
+# SHAPE to Urien's self-loop, but here engine_a already matches oracle
+# exactly so it has no effect on the shipped A value - noted, not chased
+# further since it changes nothing assertable). R is per-path:
+#   - WHIFF R=4 vs arcade 5: residual item 18(b) whiff-R anim-reset/cut
+#     truncation (q-uoh-whiff-r precedent, T=29=S+A+R exactly, cut=1) -
+#     xfail. UNCHANGED by the 2026-07-08 §13.5.1a cut-gate fix (lever G):
+#     byte-identical FINAL - this is a genuine grounded fresh-edge cleanup
+#     cut whose cut point sits earlier than the oracle's actionable point,
+#     not one of the two false-cut shapes the fix killed (see
+#     docs/frame-data-synthesis.md item 18(b)).
+#   - BLOCK R=5: EXACT arcade match, plain PASS.
+#   - HIT R=3 vs BLOCK's 5: the textbook §13.10 Class 2 UOH cut-window
+#     compression (HIT sits BELOW BLOCK by a real hitstun-vs-blockstun
+#     differential, §13.7.3) - convention value asserted as an explicit
+#     literal, plain PASS per the q-uoh-samef-hit/akuma-uoh-hit precedent;
+#     arcade's whiff/block-canonical R=5 stays here in the comment.
+
+# §13.17 RE-ANCHOR-1 (2026-07-11): item-18 CLOSED for this row — lever N
+# now measures R=5, matching arcade/oracle exactly. Prior xfail evidence,
+# RELOCATED not deleted: "residual item 18(b) whiff-R truncation
+# (§13.5.1a split, docs/frame-data-synthesis.md item 18; q-uoh-whiff-r
+# precedent): measured R=4 vs arcade 5 on WHIFF itself; S/A exact (S=15
+# A=10, matches arcade on all three UOH outcomes - no §13.11 A-side
+# finding for this character). Trace facts: cut=1, dwellbrk=0, anchor_a=10
+# (matches engine_a=10), T=29=S+A+R exactly. UNCHANGED by the 2026-07-08
+# cut-gate fix (byte-identical FINAL) - a genuine grounded fresh-edge
+# cleanup cut, not one of the fixed false-cut shapes."
+- label: oro-uoh-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press MP+MK"
+  qjson: { name: "Universal Overhead" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# RE-CITED 2026-07-11 (LAYER-1): live arcade hardware (990512) confirms this
+# move's whiff-canonical R=5 directly (see oro-uoh-whiff's own xfail string) -
+# arcade==oracle, layer RESOLVED (a), docs/frame-data-synthesis.md Sec13.16.
+# This BLOCK leg's own R=3 (Sec13.10 Class 2 convention) is unaffected, untouched.
+#
+# CORRECTED 2026-07-13 (UOH-CLOSURE lever T, docs/frame-data-synthesis.md
+# §13.20 SESSION 11 branch A; <sp>/zero/arcade-s11/session-report.md):
+# from-qjson (R=5, whiff-canonical) was a coincidental match - session 8's
+# original BLOCK capture at this value was retroactively proven a WHIFF
+# (dummy walked back out of range pre-contact; whiff-shaped raw-box-length
+# + zero-freeze signature, §13.20 §2.2). Session 11 re-captured this leg
+# with the dummy cornered (walkback impossible) and a mandatory in-tape
+# contact witness (attacker frz 8->0 overlapping a freeze-extended 20-raw
+# box window, vs the 10-raw whiff-canonical signature): real arcade R=6,
+# matching this engine's own busy-edge/lever-R construction exactly (lever
+# T). Re-literaled to the arcade value; probe-confirmed actionable at fc
+# 262851, zero early acceptance.
+- label: oro-uoh-block
+  setup: { dist: close, dummy: stand }
+  input: "press MP+MK"
+  qjson: { name: "Universal Overhead" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: 6 }
+
+# R: 3 is the §13.10 Class 2 convention value (see the UOH section comment
+# above) - arcade/whiff-block-canonical R is 5 (from-qjson would resolve
+# to it); the -2 differential vs oro-uoh-block's own exact R=5 is the
+# §13.7.3 hitstun-vs-blockstun cut-window compression, UOH-specific.
+# RE-CITED 2026-07-11 (LAYER-1): live arcade hardware (990512) confirms this
+# move's whiff-canonical R=5 directly (see oro-uoh-whiff's own xfail string) -
+# arcade==oracle, layer RESOLVED (a), docs/frame-data-synthesis.md Sec13.16.
+#
+# CORRECTED 2026-07-13 (UOH-CLOSURE lever T, docs/frame-data-synthesis.md
+# §13.20; <sp>/zero/arcade-s8/session-report.md HIT legs, valid contact:
+# frz=8 in-box, p1life 155): the §13.10 Class 2 convention value (3) is
+# superseded - real arcade measures R=4, matching this engine's own
+# busy-edge/lever-R construction exactly. Re-literaled to the arcade
+# value; the §13.7.3 cut-window-compression narrative is retired for this
+# leg (superseded by the busy-edge mechanism).
+- label: oro-uoh-hit
+  setup: { dist: close, dummy: none }
+  input: "press MP+MK"
+  qjson: { name: "Universal Overhead" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: 4 }
+
+# --- Throw (LP+LK) -----------------------------------------------------------
+# oro.json's Throw_range is 24px - dist:close (56px) sits OUTSIDE it
+# (ken-throw-hit trap); dist:24 matches the oracle field and the
+# ryu/ken/urien/akuma precedent. LABEL-BLEED NOTE (Hugo lesson,
+# CORPUS-AUTHORING.md Phase 5): this grab's HIT sequence saturates the
+# raw[] buffer (T=72=FD_METER_LEN, isolated single-entry probe) and takes
+# ~267 real frames to finalize from MOVE_START - longer than this entry's
+# own window at the corpus's original inter_entry_wait=150 (+63 explicit
+# frames = 213 total), which caused its FINAL to fire LATE and get
+# silently misattributed to the FOLLOWING entry (oro-jump-none read a
+# spurious unexpected HIT with the exact S=2/A=1/R=69/adv=+107 signature
+# of this move, while this entry itself read NO-DATA) - reproduced and
+# root-caused via an isolated single-entry re-verification per Phase 5
+# discipline. Fixed by (a) bumping this corpus's global inter_entry_wait
+# 150->200 and (b) bumping this entry's own explicit wait 60->150 (total
+# window now 303 frames, comfortably above the ~267 needed).
+
+- label: oro-throw-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press LP+LK"
+  qjson: { name: "Throw" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# HIT-R display convention (docs/frame-data-synthesis.md §13.10, Class 3
+# connected grab): T=72 (raw_len saturates at FD_METER_LEN=72), endrel=0,
+# cut=0 - the meter runs out before either the §13.5.1 cut or the §13.6.1
+# partner-release mechanism fires, so R = T - S - A = 72-2-1 = 69, a
+# DERIVED value (same FD_METER_LEN coupling as the Hugo grab family,
+# §13.10 Class 3, just without the endrel -1 trim since endrel never
+# fires here - T stays at the full 72 rather than Hugo's trimmed 71).
+# oro.json's Recovery=21 is the whiff-path figure, directly captured by
+# oro-throw-whiff above (exact). adv intentionally unchecked - oro.json's
+# Hit_advantage="D" (KD), observed +107 matches the CnDB/command-throw KD
+# convention (same posture as every other Throw entry in this repo).
+- label: oro-throw-hit
+  setup: { dist: 24, dummy: none }
+  input: "press LP+LK; wait 150"
+  qjson: { name: "Throw" }
+  outcome: HIT
+  # BUFFER-1 (2026-07-13): the FD_CAPTURE_LEN 72->256 raise un-caps this
+  # partner-release throw's raw[] capture (previously hit the 72-cell cap)
+  # — post-fix the true capture-to-release span is captured, R measured
+  # 157 (was 69). No arcade oracle exists for this post-contact span
+  # (same class as the already-documented Hugo grab HIT convention,
+  # §13.10) — R DE-ASSERTED (was a stale capture-bound convention value)
+  # rather than shipping a now-wrong number; flagged for follow-up (a
+  # previously-untracked row, outside the plan's 24-leg M1 register).
+  expect: { S: from-qjson, A: from-qjson, kd: 1 }
+
+# --- Ground specials probe (ONE session budget) -----------------------------
+# See the file header MOVE-NAME MAPPING paragraph for the source-code
+# cross-reference (src/sf33rd/Source/Game/engine/plpat09.c pl09_exatt_table)
+# grounding each name mapping below.
+
+# --- Niou Riki (Human Pillar Driver, Jab), motion hcb + P -------------------
+# RESOLVED 2026-07-08 (§13.5.1a cut-gate fix, lever G - see
+# docs/frame-data-synthesis.md §13.5.1a and the cut-fix plan §4/§9). The
+# former STOP-tier finding (WHIFF R=11 vs arcade 29, no internal truncation
+# signature, T=22=S+A+R=9+2+11 exactly, cut=1 - directly contradicting
+# §13.10 Class 3's "every whiff baseline captured matches arcade exactly"
+# axiom) was itself a §13.5.1 shape-A false cut: the chart was already
+# sitting at cghi=1 when a mid-anim cgix dip fired (GT=68), so the legacy
+# level-test anchor committed a spurious early cut instead of letting the
+# move run to its true r1 edge at GT=86. Under the fixed grounded-fresh-
+# edge gate no anchor ever fires (no post-reset transition into cghi=1
+# exists after the reset), so the move now runs to its natural r1-edge end:
+# WHIFF measures R=29 (T=40=S+A+R=9+2+29 exactly, cut=0) and BLOCK measures
+# R=29/adv=-15 (T=41, a 1-tick gap from S+A+R=40, cut=0) - BOTH exact
+# arcade matches (adv=-15 is oro.json's own published Block_advantage).
+# The axiom holds after all; xfail removed on both entries, plain PASS.
+# S=9/A=2 match oro.json's Human Pillar Driver (Jab) row EXACTLY on all
+# three outcomes throughout (unambiguous identification, zero #17 A-side
+# finding, unaffected by this fix).
+#
+# oro-niouriki-lp-hit: the §13.10 Class 3 connected-grab convention's own
+# precondition (a whiff baseline that matches arcade exactly) is now
+# satisfied (see above), so the sanctioned treatment applies: measured
+# R=44 (T=55, endrel=1, R=T-S-A=55-9-2=44 - a mechanically self-consistent
+# endrel-bounded derivation, same formula as ryu-throw-hit/oro-throw-hit)
+# is asserted as a plain-PASS literal citing §13.10 Class 3. kd=1 explicit
+# (arcade Hit_advantage='-', no oracle KD marker, but the engine sets
+# kd=1 live - explicit-only per Phase 3). adv unchecked, same posture as
+# every other Class 3 HIT entry in this repo.
+#
+# SPECIALS-REACHABILITY GAP (secondary finding, Urien Metallic-Sphere-Jab/
+# Chariot-RH precedent, UNCHANGED by this fix): the dash-grab STILL
+# CONNECTS (outcome=HIT) at dist=70 and dist=100 - a clean WHIFF is only
+# reachable at dist>=150 (150/250/300 all read identically), confirmed via
+# isolated probe.
+
+- label: oro-niouriki-lp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "motion hcb LP"
+  qjson: { name: "Human Pillar Driver (Jab)" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: oro-niouriki-lp-block
+  setup: { dist: close, dummy: stand }
+  input: "motion hcb LP"
+  qjson: { name: "Human Pillar Driver (Jab)" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# §13.10 Class 3 connected-grab, endrel-bounded derived value (see section
+# comment above): measured R=44 (T=55, endrel=1, R=T-S-A=55-9-2=44), same
+# formula as ryu-throw-hit/oro-throw-hit. Asserted as a plain-PASS literal
+# now that the whiff-baseline precondition is satisfied (RESOLVED above).
+- label: oro-niouriki-lp-hit
+  setup: { dist: close, dummy: none }
+  input: "motion hcb LP; wait 60"
+  qjson: { name: "Human Pillar Driver (Jab)" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: 44, kd: 1 }
+
+# --- Nichirin Shou (Sun Disk Palm), motion charge-back-then-forward + P ----
+# Exercises the projectile arcade-split machinery (lever D, 468cb84c) on a
+# SIXTH character (Ryu Hadouken / Ken Hadouken / Chun-Li Kikkoken / Urien
+# Metallic Sphere / Akuma Gou Hadouken precedents) - CONFIRMED: the
+# isolated MP-strength trace reads use_hatt=0, proj=1, proj_a=27,
+# proj_spawn_raw=15, i.e. the projectile-classification path fires
+# correctly for this move regardless of whether it connects. Landed via
+# the existing `motion charge-back <N> then-forward <BTN>` macro (Q's
+# DHA/Chun-Li's SBK/Urien's Chariot rush precedent).
+#
+# REACHABILITY FINDING: only Jab (LP) actually connects against a
+# standing dummy anywhere in the scriptable range - verified at dist:close
+# (BLOCK). Strong (MP) and Fierce (HP) WHIFF identically at EVERY tested
+# distance from dist:close (56) through dist:300 (DIST_MAX) - a 6-distance
+# isolated probe (56/70/100/150/200/300 for MP, 56/300 for HP) reproduces
+# the exact same S/A/R/T signature every time (MP: S=15 A=27 R=25 T=40;
+# HP: S=13 A=25 R=23), matching oro.json's own Startup/Recovery fields
+# EXACTLY for both strengths (confirming correct move identification
+# despite the non-connection) - an ACCEPTED SPECIALS-REACHABILITY GAP
+# (inverse direction from the usual "fireball always connects, WHIFF
+# unreachable" shape - here Strong/Fierce never connect, WHIFF-only is the
+# only assertable outcome for those two strengths), same posture as
+# corpus-urien.yaml's Chariot rush (Short) BLOCK/HIT gap
+# (docs/plan-frame-data-completion.md §12.1 register row 3 precedent:
+# documenting the gap rather than guessing further input variations is
+# explicitly authorized).
+#
+# Jab's own BLOCK/HIT/WHIFF all match oro.json's Recovery=27 EXACTLY
+# (S/R clean on all three outcomes, T=S+A+R self-consistent throughout) -
+# only its BLOCK adv diverges (measured +2 vs arcade Block_advantage=-6),
+# an isolated, unclassified adv-only finding with no accompanying S/A/R
+# divergence to hang it on (outside Phase 6's A/R-focused bucket tree) -
+# left unasserted, noted here rather than under any established family.
+
+- label: oro-nichirin-lp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "motion charge-back 60 then-forward LP"
+  qjson: { name: "Sun Disk Palm (Jab)" }
+  outcome: WHIFF
+  expect: { S: from-qjson, R: from-qjson }
+
+- label: oro-nichirin-lp-block
+  setup: { dist: close, dummy: stand }
+  input: "motion charge-back 60 then-forward LP"
+  qjson: { name: "Sun Disk Palm (Jab)" }
+  outcome: BLOCK
+  expect: { S: from-qjson, R: from-qjson }
+
+- label: oro-nichirin-lp-hit
+  setup: { dist: close, dummy: none }
+  input: "motion charge-back 60 then-forward LP"
+  qjson: { name: "Sun Disk Palm (Jab)" }
+  outcome: HIT
+  expect: { S: from-qjson, R: from-qjson }
+
+- label: oro-nichirin-mp-whiff
+  setup: { dist: 250, dummy: stand }
+  input: "motion charge-back 60 then-forward MP"
+  qjson: { name: "Sun Disk Palm (Strong)" }
+  outcome: WHIFF
+  expect: { S: from-qjson, R: from-qjson }
+
+- label: oro-nichirin-hp-whiff
+  setup: { dist: 250, dummy: stand }
+  input: "motion charge-back 60 then-forward HP"
+  qjson: { name: "Sun Disk Palm (Fierce)" }
+  outcome: WHIFF
+  expect: { S: from-qjson, R: from-qjson }
+
+# --- Oni Yanma (Oniyama, Jab), motion charge-down-then-up + P ---------------
+# ORACLE-FIELD-INCOMPARABILITY (not a divergence): oro.json's Recovery
+# field for every Oniyama row is NEGATIVE (-29 Jab / -30 Strong / -33
+# Fierce / -43 EX) - a shape not seen anywhere else in this repo's
+# oracles, and structurally incapable of matching this harness's R metric
+# (always >= 0 by construction, a post-active tick count). S=6/A=10 match
+# oro.json's Oniyama (Jab) row EXACTLY on all three outcomes (unambiguous
+# identification, zero #17 A-side finding). R=28 is measured IDENTICALLY
+# on WHIFF/BLOCK/HIT, and is fully self-consistent (S+A+R=44=T exactly,
+# cut=1 fires normally on all three) - this is NOT the Akuma Ashura Senkuu
+# shape (that was a genuinely degenerate zero-active measurement); Oniyama
+# has a completely ordinary, well-formed active window, just compared
+# against an oracle field that itself cannot be a recovery-frame count.
+# UNCHANGED by the 2026-07-08 §13.5.1a cut-gate fix (byte-identical FINAL
+# on all three outcomes). This section was 3/3 xfail (100%, >50% threshold)
+# - Orchestrator sign-off 2026-07-08: GRANTED (oracle-field-
+# incomparability, not a harness/engine divergence; measured values
+# self-consistent and reproducible across all three outcomes). User review
+# pending (overnight autonomous run).
+# MASK-1 UPDATE (2026-07-11): expect.R used to stay from-qjson (kept
+# asserted-and-xfailed) per the never-substitute-a-wrong-value discipline.
+# The user has since adopted per-entry field masking for ERRATA-STRUCTURAL
+# rows (docs/frame-data-synthesis.md §13.15) - R is now DROPPED from
+# expect on all three legs (never substituted, never re-added), leaving
+# S/A asserted and PASSing. Section is now 0/3 xfail, 3/3 PASS-with-
+# masked-R; see each leg's own FIELD-MASKED comment below.
+
+# FIELD-MASKED (ERRATA): R not asserted - oro.json "Oniyama (Jab)"
+# Recovery=-29 is negative and structurally incomparable with this
+# harness's R metric (>=0 post-active tick count). Verdict STRUCTURAL,
+# docs/arcade-frame-data/ERRATA.md §2 (2-of-3 majority: oro.json itself +
+# FAT-3S both independently show negative Recovery; only the older
+# EventHubs source disagrees). Oracle R=-29; measured R=28 (identical on
+# WHIFF/BLOCK/HIT, S+A+R=44=T exact, cut=1). Comparable fields S=6/A=10
+# assert (from-qjson) and PASS. Masked-field drift stays golden-pinned
+# (golden.py measured columns). MASK-1, user decision 2026-07-11,
+# docs/frame-data-synthesis.md §13.15.
+- label: oro-oniyama-lp-whiff
+# RE-CITED 2026-07-11 (LAYER-1, docs/frame-data-synthesis.md Sec13.15 dated
+# note; docs/arcade-frame-data/ERRATA.md Sec2 dated update): hardware (990512)
+# + twin both measure R=29; golden-pinned 28 was a one-tick meter artifact, not
+# a clean reading; mask STAYS (oracle notation still negative, still
+# incomparable with this harness's R metric). §13.17 RE-ANCHOR-1 (2026-07-11):
+# the predicted meter fix has now landed (lever N, whiff busy-edge R) — the
+# masked golden-pinned R cell drifts 28->29 in this commit, EXPECTED per the
+# dated note above; the mask itself is unaffected (still no R literal
+# asserted; S/A unchanged).
+
+  setup: { dist: 250, dummy: none }
+  input: "motion charge-down 60 then-up LP"
+  qjson: { name: "Oniyama (Jab)" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson }
+
+# FIELD-MASKED (ERRATA): R not asserted - same oracle-field-incomparability
+# as oro-oniyama-lp-whiff (oro.json Recovery=-29, ERRATA.md §2). Measured
+# R=28, identical to the whiff figure (T=44=S+A+R exactly, cut=1). S/A
+# exact, asserted (from-qjson). adv stays unasserted, unchanged: oracle
+# Block_advantage=-34 for this move family's Jab row (own errata-verified
+# correction: the -34 figure is Jab's, not Strong/Fierce's as an earlier
+# corpus comment mis-cited - see ERRATA.md §2's "corpus-comment
+# inaccuracy" note) shares the same negative-recovery incomparability;
+# measured -21, recorded here, not asserted. MASK-1, user decision
+# 2026-07-11, docs/frame-data-synthesis.md §13.15.
+- label: oro-oniyama-lp-block
+# RE-CITED 2026-07-11 (LAYER-1, docs/frame-data-synthesis.md Sec13.15 dated
+# note; docs/arcade-frame-data/ERRATA.md Sec2 dated update): hardware (990512)
+# + twin both measure R=29; golden-pinned 28 is a one-tick meter artifact, not
+# a clean reading; mask STAYS (oracle notation still negative, still
+# incomparable with this harness's R metric). Expect golden-pinned masked
+# drift 28->29 when a future meter fix lands. LANDING 2026-07-13 (CONTACT-2, lever R): lever R's busy-edge construction (`fd_contact_busy_edge_r`, frame_data_overlay.c §13.19) IS that meter fix on this leg's own contact tape - measured R now 29 (was 28); golden churn rides this commit, verdict-inert (R stays unasserted, mask unchanged), rows stay PASS.
+
+  setup: { dist: close, dummy: stand }
+  input: "motion charge-down 60 then-up LP"
+  qjson: { name: "Oniyama (Jab)" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson }
+
+# FIELD-MASKED (ERRATA): R not asserted - same oracle-field-incomparability
+# as oro-oniyama-lp-whiff (oro.json Recovery=-29, ERRATA.md §2). Measured
+# R=28, identical to whiff/block (T=44=S+A+R exactly, cut=1). S/A exact,
+# asserted (from-qjson). kd was previously measured 0 here - RESOLVED
+# 2026-07-09 (§13.6.2b, ENGINE-3): kd now measures 1 live (the shipped
+# predicate was blind to this move's down-family traversal), still not
+# asserted (Hit_advantage='-', no oracle KD marker either); adv not
+# asserted (large-number-on-knockdown-adjacent shape, measured +75, not
+# separately verified). MASK-1, user decision 2026-07-11,
+# docs/frame-data-synthesis.md §13.15.
+- label: oro-oniyama-lp-hit
+# RE-CITED 2026-07-11 (LAYER-1, docs/frame-data-synthesis.md Sec13.15 dated
+# note; docs/arcade-frame-data/ERRATA.md Sec2 dated update): hardware (990512)
+# + twin both measure R=29; golden-pinned 28 is a one-tick meter artifact, not
+# a clean reading; mask STAYS (oracle notation still negative, still
+# incomparable with this harness's R metric). Expect golden-pinned masked
+# drift 28->29 when a future meter fix lands. LANDING 2026-07-13 (CONTACT-2, lever R): lever R's busy-edge construction (`fd_contact_busy_edge_r`, frame_data_overlay.c §13.19) IS that meter fix on this leg's own contact tape - measured R now 29 (was 28); golden churn rides this commit, verdict-inert (R stays unasserted, mask unchanged), rows stay PASS.
+
+  setup: { dist: close, dummy: none }
+  input: "motion charge-down 60 then-up LP"
+  qjson: { name: "Oniyama (Jab)" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson }
+
+# --- Jinchuu Watari / Hitobashira Nobori (Jinchu Nobori, Short) -------------
+# DP-shape hold-chain + K (Ken Shoryuken/Dudley Jet Uppercut/Akuma Hyakki
+# Shuu precedent). Task flagged this "likely airborne-ish - document what
+# is assertable"; empirically S=27/A=6 match oro.json's Jinchu Nobori
+# (Short) row EXACTLY on all three outcomes (unambiguous identification).
+# A-SIDE: WHIFF's A=6 was lever-F-tested UNCHANGED (no revoke fires on a
+# clean whiff), but BLOCK/HIT are shape (b) members (lever-F ACTIVELY
+# RESTORING credit - lever-F-off drops both to A=4; see file header
+# CENSUS) - plain PASS in the real binary, no A-side xfail, per the §13.11
+# convention.
+#
+# R: RECONCILED 2026-07-08 (§13.5.1a cut-gate fix, lever G). The former
+# three-way mismatch's WHIFF leg (R=6 vs arcade 19, only a 3-tick internal
+# gap accounting for 3 of the 13-frame deficit) was itself a §13.5.1
+# shape-B false cut: the reset tick was the ONLY transition into cghi=1,
+# so the grounded-fresh-edge gate correctly refuses to anchor there (see
+# docs/frame-data-synthesis.md §13.5.1a). Under the fix WHIFF now runs to
+# its natural r1-edge end and measures R=19 (T=55, S+A+R=52, a 3-tick
+# internal gap - same shape as oro-uoh-whiff's own gap - cut=0) - EXACT
+# arcade match. xfail removed, plain PASS.
+#
+# BLOCK/HIT are UNCHANGED by this fix (byte-identical FINAL): R=0 (full
+# truncation to zero, the Urien VKD "EXTREME case" shape), T=35, S+A=33
+# (a 2-tick gap), cut=0 (does NOT fire) - a qualitatively different, still
+# unexplained end mechanism than WHIFF's r1-edge end. This is now a
+# TWO-WAY mismatch (BLOCK=HIT=0 vs arcade 19), not three-way - still
+# FLAGGED, same posture as corpus-urien.yaml's Violence Knee Drop finding.
+# CORRELATION (raw fact, NOT a proven mechanism, UNCHANGED by this fix):
+# the same BLOCK/HIT contact tick that trips the §13.7.4 revoke/lever-F
+# restore (the A-side shape-(b) finding above) is a plausible shared root
+# with the R=0 collapse and cut=0 - both only appear on BLOCK/HIT, never
+# on WHIFF. This is reported as a correlation observed in the trace, not a
+# confirmed causal claim (Phase 6's "no invented mechanism" discipline).
+# UNCLASSIFIED (re-scoped 2026-07-08, needs orchestrator/user review): does
+# not fit item 18(b) (that bucket is a genuine grounded fresh-edge cut,
+# whereas cut=0 here means no §13.5.1 cut fires at all); does not fit any
+# Class 1/2/3 HIT-R bucket (BLOCK shows the SAME deficit as HIT, ruling
+# those out by definition); does not fit Phase 6 item 4 (that family reads
+# R HIGH, this reads LOW). HYPOTHESES NONE OFFERED beyond the correlation
+# above - reported as raw trace facts for orchestrator/user disposition.
+#
+# ENGINE-8 CLOSED 2026-07-11 (ARCADE-WHIFF-CANONICAL / NO-CODE-FIX-EXISTS,
+# engine8-plan.md Step 1, autonomous per pre-registered branch (c) - probe
+# REFUTED actionability): the move does NOT play "recovery-like content"
+# after the last active tick - at the tick after the last hitbox-active
+# frame the engine ENDS the move routine and hands the attacker back to
+# normal control, airborne (r1 4->0 = Player_normal dispatch, `plmain.c:332`
+# over the table at `plmain.c:1134`; cghi=14 is the generic
+# airborne-neutral animation family a plain jump also occupies - confirmed
+# by an in-corpus negative control, `oro-jump-none`, which emits ZERO trace
+# rows for a whole scripted jump). TWO ERRATA in the prior s9-derived
+# figures this row carried, corrected here (both re-verified this pass
+# directly against raw trace rows, not re-quoted):
+#   Erratum 1 (BLOCK "16 frames to idle" - FALSE): the BLOCK chart NEVER
+#   reaches idle inside the observable window. The row s9 read as "chart
+#   reaches idle, 16 frames after r1-clear" is the DEFENDER's own columns
+#   (P2 cgix=0/cghi=237, P2 exiting blockstun) on the window's last row,
+#   which is P1 (attacker) cgix=132/cghi=14/y=140 - still airborne, still
+#   mid-tail. The window ends there only because the DEFENDER going idle
+#   is what stops the trace (`frame_trace.c:156-163` snap_is_active, both
+#   sides idle -> no more rows). "16" is the count of rows visible before
+#   truncation, not a frames-to-idle measurement.
+#   Erratum 2 (HIT "31 frames", r2 mis-stated across the landing segment):
+#   r1 clears F=318 (r2=6 at the bounce, held through the fall); F=350 is
+#   the first landing-tick row (cgix=0/cghi=1), 32 ticks after r1-clear,
+#   r2 STILL 6 at this exact tick; r2 flips 6->2 at the VERY NEXT tick,
+#   F=353, and F=353-366 plays the landing animation at r2=2 (NOT "r2
+#   still 6", a prior draft's error, corrected here); the stable idle loop
+#   (r2=1) only starts at F=370, 52 ticks after r1-clear. "31" was neither
+#   figure; "genuine idle" it was not.
+#   Neither erratum revives R=19 - both corrected counts are FURTHER from
+#   19, not closer.
+# ANCHOR ARITHMETIC (engine8-plan.md §3, re-verified independently this
+# pass by a fresh 1,058-window census, `e8-census.tsv`/`e8-census-report.md`):
+# every candidate end anchor was measured - r1-clear (today, R=0), first
+# chart-idle label (BLOCK: unobservable/truncated, >=16 visible, window
+# ends at the defender's own idle exit before the chart ever gets there;
+# HIT: 32), touchdown (~33-41 by rise/fall symmetry), stable-idle loop
+# (HIT: 52, exact census match to the plan's hand-derived figure; BLOCK:
+# >=53 conservative) - NONE lands on arcade's 19, and a suite-wide
+# pure-chart-idle anchor would REGRESS the currently arcade-exact WHIFF
+# leg (its own chart reaches cghi=1 at F=42, 13 ticks before r1 correctly,
+# arcade-exactly clears at F=55 - re-verified directly against
+# s9-rundir/trace.log this pass; pure-idle would read R~=6 vs 19). adv is
+# anchored at the bounce and is EXACT to arcade's own Block_advantage=16 -
+# only coherent if the attacker is treated as done at the bounce, which is
+# exactly what the engine does.
+# ACTIONABILITY PROBE (engine8-plan.md §6, `e8-airact.yaml`/
+# `e8-probe-rundir/trace.log`, `FDH_SKIP_BUILD=1`, current binary):
+# 4 staggered air-normal (MK) presses at the BLOCK leg's own post-bounce
+# tail (~bounce+1/+4/+12/+24 ticks, each independently located via its
+# `sw_new` input-rising-edge marker). 3 of the 4 (immediate/+1-tick,
+# early/+4, mid/+12) have a directly observed press edge, each landing
+# exactly at its intended offset and showing the press REGISTERED at the
+# input-system level but producing ZERO gameplay effect - r1/athok/hatt/
+# jatix/cghi all unchanged. The 4th (late, +24) has no observed press
+# edge at all: its trace segment TRUNCATES at bounce+15/16, before the
+# intended press tick, matching the `oro-jump-none` "zero rows for a
+# genuinely inactive stretch" signature - its negative read is INFERRED,
+# not observed. The character stays in the neutral-fall state throughout
+# the 3 observed variants. The `e8-jumpMK-control` positive control (same
+# MK tap during a plain neutral jump) DOES show the full actionability
+# signature cleanly (athok 0->1, hatt 0->1, jatix nonzero, its own tracked
+# WHIFF S=4/A=8/R=33) - proving the probe methodology sound and the
+# negative read genuine, not a miss. Per the plan's pre-registered readout
+# table: control-positive + 3 directly observed negatives
+# (immediate/early/mid, incl. the decisive +1-tick) + late
+# truncated-before-press -> inferred negative -> NOT-ACTIONABLE ->
+# branch (c).
+# CENSUS (same artifacts): the airborne-at-r1-clear population beyond
+# these two entries is 3 throw/command-grab windows (`oro-throw-hit`,
+# `alex-powerbomb-lp-hit`/`-unblockable-probe`, `ibuki-kubiori-lp-hit`) -
+# named as same-shape CANDIDATES, not members: `oro-throw-hit` reads clean
+# but is mechanistically DIFFERENT (cghi=6, no cgix/cghi discontinuity at
+# its release tick - the already-documented §13.10 Class 3 connected-grab
+# R-derivation via raw_len saturation, not a chart-idle measurement at
+# all); the other two are tooling-inconclusive (command-grab multi-phase
+# r1 shape, flagged by the census's own FINAL-cross-check sanity gate, not
+# asserted either way). None is PASS-arcade-exact at R>0 while
+# airborne-released (both PASS members assert an explicit derived R
+# literal, never compared to arcade; the XFAIL member isn't PASS at all) -
+# no census-contradiction of the model, no STOP triggered.
+# VERDICT: **CLOSED - ARCADE-WHIFF-CANONICAL / NO-CODE-FIX-EXISTS.** Arcade's
+# Recovery=19 is the whiff-canonical figure (measured exactly on
+# oro-jinchu-lk-whiff); no anchor exists anywhere in the engine's own
+# per-tick state that reaches it on a contact leg, and the actionability
+# probe forecloses the "r1=0 secretly means live" reading that would have
+# made a different display defensible. Zero code shipped, zero expect/
+# golden changes - entries below stay XFAIL with arcade values. See
+# docs/plan-frame-data-completion.md's ENGINE-8 row and
+# docs/frame-data-synthesis.md's §12.2.4 "Two-way contact R=0" row for the
+# full closure record.
+
+- label: oro-jinchu-lk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LK 2; wait 1"
+  qjson: { name: "Jinchu Nobori (Short)" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: oro-jinchu-lk-block
+  setup: { dist: close, dummy: stand }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LK 2; wait 1"
+  qjson: { name: "Jinchu Nobori (Short)" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: 33, adv: from-qjson, xfail: "[HONEST-FLOOR CENSUS 2026-07-14, opus-substitute / WANTS FABLE RE-REVIEW] TERMINAL CLASS = ENGINE-DIVERGENCE (busy-edge never latches natively; arcade-measured R). RE-ANCHORED 2026-07-14 (ENGINE-JINCHU, lever U, `<sp>/zero/jinchu/plan.md`; Session 6, `<sp>/zero/arcade-track-a/session-report.md`): arcade base-LK BLOCK measures R=33, symmetric with the HIT leg's own 33 - supersedes ENGINE-8's oracle-derived R=19 closure (FALSIFIED for the HIT leg; see docs/arcade-frame-data/ERRATA.md and docs/plan-frame-data-completion.md's ENGINE-8 row). This leg stays OUTSIDE lever U's reach: the busy 771->768 edge NEVER latches natively on this leg (`busyr=-1`, D1, `step1/spot-checks.txt:32`), so `fd_busy_edge_valid` is false and lever R's gate (including the new lever-U G7 disjunct) predicts pred=-1 regardless - mechanically unmeasurable via any busy-edge instrument, an honest engine-vs-arcade divergence, NOT a code-fixable miss. Golden stays untouched at 0/legacy. adv is EXACT (measured +16 == oro.json Block_advantage=16), the same bounce-anchored coherence witness ENGINE-8 already established. Prior history (RELOCATED not deleted): ENGINE-8 CLOSED 2026-07-11 (ARCADE-WHIFF-CANONICAL / NO-CODE-FIX-EXISTS, engine8-plan.md Step 1; full record preserved verbatim in the section comment above) rested on the oracle's R=19, which Session 6 has now falsified as the arcade truth (arcade is 33, not 19) - the closure's own mechanism finding (no in-engine recovery anchor, airborne Player_normal handoff, r1 4->0 concurrent with discontinuous cgix 80->120 into cghi=14) stands unchanged and is exactly why this leg (unlike its HIT sibling) cannot be reached by any busy-edge lever: the busy edge never latches here at all. Zero code shipped against this leg; stays xfail with arcade-measured R=33 (was 19)." }
+
+- label: oro-jinchu-lk-hit
+  setup: { dist: close, dummy: none }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LK 2; wait 1"
+  qjson: { name: "Jinchu Nobori (Short)" }
+  outcome: HIT
+  # RE-ANCHORED 2026-07-14 (ENGINE-JINCHU, lever U, `<sp>/zero/jinchu/plan.md`):
+  # R=33 arcade (Session 6, `<sp>/zero/arcade-track-a/session-report.md`,
+  # base-LK HIT, symmetric with the BLOCK leg's own 33), engine-exact via
+  # lever U (fd_jinchu_bounce_recovery_r admits this recovery_pf==0
+  # gate-firer past lever R's G7) - ENGINE-8's "NO-CODE-FIX-EXISTS / stays
+  # xfail at oracle R=19" closure is FALSIFIED for this leg (see
+  # docs/arcade-frame-data/ERRATA.md and docs/plan-frame-data-completion.md's
+  # ENGINE-8 row); the BLOCK sibling stays unmeasurable/xfail (busyr=-1,
+  # see that entry). adv unasserted (oro.json Hit_advantage is "D"/knockdown,
+  # no numeric assertion possible; kd=1 measured, stands as-is, unasserted
+  # same as before).
+  expect: { S: from-qjson, A: from-qjson, R: 33 }
+
+# --- Negative control (plan section 1.8 item 5 precedent) ------------------
+# Moved to the file end 2026-07-08 (review recommendation): a negative
+# control is more robust placed after every real-move entry (rather than
+# immediately after oro-throw-hit, its original position) so it cannot be
+# accidentally targeted by a late-firing FINAL from a preceding entry (see
+# the LABEL-BLEED NOTE on the Throw section above for the mechanism this
+# guards against; the underlying fix there - wait-window bumps - already
+# neutralizes the specific throw-hit/jump-none adjacency, this reordering
+# is defense in depth, not a correctness requirement).
+
+- label: oro-jump-none
+  setup: { dist: 250, dummy: none }
+  input: "press UP"
+  outcome: NONE

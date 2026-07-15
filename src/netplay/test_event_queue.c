@@ -7,7 +7,11 @@
  * Both the trampoline and this test body are gated behind
  * ENABLE_NETPLAY_TESTS so release builds don't carry the symbol. Enable
  * with:
- *   EXTRA_CMAKE_ARGS="-DENABLE_NETPLAY=ON -DCMAKE_C_FLAGS=-DENABLE_NETPLAY_TESTS"
+ *   EXTRA_CMAKE_ARGS="-DENABLE_NETPLAY=ON \
+ *                     -DCMAKE_C_FLAGS='-DENABLE_NETPLAY_TESTS -DNETPLAY_TEST_HOOKS'"
+ * (NETPLAY_TEST_HOOKS is required because this build links every
+ * src/netplay/test_*.c TU, including test_bilateral_punch.c, which needs
+ * that macro to declare DirectP2P_TestHook_IsLanPeer.)
  * When the macro is undefined the TU still links but the entry point
  * prints a diagnostic and returns non-zero.
  */

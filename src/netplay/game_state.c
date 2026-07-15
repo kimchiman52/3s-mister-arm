@@ -401,6 +401,7 @@ void GameState_Save(GameState* dst) {
     GS_SAVE(Training_ID);
     GS_SAVE(Disp_Attack_Data);
     GS_SAVE(Disp_Input_History);
+    GS_SAVE(Disp_Frame_Data);
     GS_SAVE(Record_Data_Tr);
     GS_SAVE(End_Training);
     GS_SAVE(Menu_Page_Buff);
@@ -1090,6 +1091,7 @@ void GameState_Load(const GameState* src) {
     GS_LOAD(Training_ID);
     GS_LOAD(Disp_Attack_Data);
     GS_LOAD(Disp_Input_History);
+    GS_LOAD(Disp_Frame_Data);
     GS_LOAD(Record_Data_Tr);
     GS_LOAD(End_Training);
     GS_LOAD(Menu_Page_Buff);

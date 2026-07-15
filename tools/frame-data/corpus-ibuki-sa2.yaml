@@ -1,0 +1,197 @@
+# Ibuki Super Art 2 (Yoroi Doushi) — EX/Supers program, supers wave S3.
+# Satellite corpus (auto-discovered by run-suite.sh's corpus-*.yaml glob, own
+# golden/ibuki-sa2.tsv once registered) — the main corpus-ibuki.yaml and
+# corpus-ibuki-ex.yaml are untouched. Sibling agents authoring yang-sa*/
+# makoto-sa* concurrently this same wave, file-disjoint.
+#
+# Scope: step0-universe.tsv row 59 (ibuki index 59, "Yoroi Doushi", sa_slot
+# 2, GRAB, S=0/A=15/R=65/block_adv="-") PLUS row 60 (ibuki index 60, "Missed
+# grab (Chi Blast)", sa_slot JUDGMENT, S=0/A=15/R=65/block_adv=-54) — this
+# session RESOLVES the JUDGMENT flag (see below).
+#
+# Oracle: docs/arcade-frame-data/ibuki.json (same file corpus-ibuki.yaml/
+# corpus-ibuki-ex.yaml already pin, md5 e011a003c2bb9644d50e9bc435267b00 per
+# corpus-ibuki.yaml's own header, unchanged this session).
+#
+# IDENTITY (S-match probe, CORPUS-AUTHORING.md Phase 5), this session:
+# super_art:1 (0-indexed SA2) + `motion 2qcf HP` lands a move whose measured
+# S=0/R=65 match Yoroi Doushi's oracle row EXACTLY (`<sp>/sa-ibuki/run-probe-
+# sa2/trace.log`, `<sp>/sa-ibuki/run-probe-sa2-far/trace.log`) — a unique
+# signature among Ibuki's own oracle rows (only Yoroi Doushi/Missed grab (Chi
+# Blast) share Startup=0). Motion landed on the FIRST candidate tried among
+# the established 2qcf-family idiom (matching Ryu/Ken SA pilots' own "motion
+# 2qcf <btn>" convention).
+#
+# ============================================================================
+# JUDGMENT ROW RESOLVED: "Missed grab (Chi Blast)" (step0-universe.tsv row
+# 60) IS confirmed this session to be Yoroi Doushi's own guard-denied
+# follow-up strike — NOT a separate super, NOT a separate slot. Mechanism
+# (measured `<sp>/sa-ibuki/run-probe-sa2-hitconfirm/trace.log`, re-confirmed
+# `<sp>/sa-ibuki/run-probe-sa2-chiblast/trace.log` and `-distcheck/
+# trace.log`, 4 independent distances 100/120/150/175 all agreeing): the
+# SAME `motion 2qcf HP` input, against a GUARDING dummy (`setup.dummy:
+# stand`) within Ibuki's dash-grab's own reach, produces a BLOCKABLE strike
+# (not a plain miss) whose S/A/R/adv read S=0 A=15 R=65 adv=-54 — an EXACT,
+# four-field match to ibuki.json's own "Missed grab (Chi Blast)" row
+# (Startup=0, Hit=15, Recovery=65, Block_advantage=-54) at dist:100/150
+# specifically (dist:175 measures a slightly different adv=-59, an edge
+# effect near the strike's own outer range — dist:100/150 sit cleanly
+# inside it, confirmed reproducible on BOTH). Against a NON-guarding dummy
+# at the SAME ranges, the identical input instead connects as the real
+# GRAB (a genuine catch, kd=1, S=0/A=15/R=65 exact match to Yoroi Doushi's
+# OWN oracle row) — i.e. Ibuki's SA2 dash-catch has TWO outcomes depending
+# on whether the target is guarding: guard denies the throw and eats a
+# blockable "Chi Blast" strike instead; a non-guarding target gets thrown
+# outright. This is the real in-engine mechanism the JUDGMENT flag asked
+# about — CONFIRMED, not merely a plausible candidate.
+# ============================================================================
+#
+# Meter: sa_gauge:3 (MAXIMUM), per authoring-policy.md's meter policy for
+# non-install supers.
+#
+# Admissibility census (per authoring-policy.md Ruling 2, mechanical, from
+# FRAME_TRACE columns), this session's own combined probe run
+# (`<sp>/sa-ibuki/run-probe-sa2-hc/trace.log`, inter_entry_wait:500, the
+# SAME setup/input/outcome triple shipped below):
+# (1) Single-FINAL integrity: exactly one MOVE_START/FINAL pair per entry's
+#     own window (grep census this session), no bleed between entries.
+# (2) Flash-overlap census (sastop gate): 156 nonzero sastop ticks total in
+#     the combined trace, but EVERY one falls in the PRE-MOVE_START neutral
+#     gap between entries (residual recovery tail from the PRECEDING
+#     entry bleeding into the inter_entry_wait span — same class as
+#     corpus-ibuki-ex.yaml's own documented Kubiori (EX) finding), never
+#     inside any entry's own [MOVE_START F, FINAL F] window. Zero effect on
+#     any asserted field — mechanically confirmed (Python range-census this
+#     session): ranges (0,51)/(513,564)/(716,767), all strictly before their
+#     following entry's own MOVE_START annotation.
+# (3) Contact-A juggle check: N/A in the traditional sense — the WHIFF/BLOCK
+#     legs here are the CLEAN legs (WHIFF is a genuine miss; the "BLOCK" leg
+#     is the Chi Blast strike, not a defender-static cross-check for the HIT
+#     leg's own A — Yoroi Doushi is a GRAB, so the HIT leg's A comes from an
+#     entirely different mechanism, the actual catch, not a juggle re-fire).
+#     HIT-leg A (15) happens to equal the oracle Yoroi Doushi row's own A
+#     (15) exactly regardless.
+# (4) Shape record: WHIFF box_runs=9 (busyr=65, engine_a=14 — a genuine
+#     §13.13-style declared-credit undercount vs the oracle's 15, box_a
+#     matches oracle exactly); BLOCK(chi-blast)/HIT both box_runs=2
+#     (box_a=16, one ABOVE the legacy-displayed 15 — the reverse-direction
+#     cross-check diagnostic, expected to disagree per Ruling 2's own "not a
+#     gate" language for this diagnostic). Ruling 3 applies (box_runs>1 on
+#     more than one leg): S assertable all legs (lever-independent, E-3); A
+#     assertable per-leg per what's actually displayed; R assertable
+#     (busyr=65 == oracle on every leg where computed).
+character: ibuki
+oracle: ibuki.json
+super_art: 1
+sa_gauge: 3
+inter_entry_wait: 500
+entries:
+
+- label: ibuki-sa2-whiff
+  setup: { dist: 300, dummy: none }
+  input: "motion 2qcf HP"
+  qjson: { name: "Yoroi Doushi" }
+  outcome: WHIFF
+  # Measured S=0 A=15 (was 14 pre-ENGINE-D2) R=65 (box_runs=9, box_a=14
+  # unaffected — a raw diagnostic lever S does not touch, busyr=65,
+  # engine_a=15) — S/A/R all oracle-exact post-fix.
+  #
+  # CORRECTED (2026-07-13, EXSUPER-1 closing cleanup). This entry previously
+  # cited "the established §13.13 declared-credit undercount shape" as its
+  # rationale and shipped the measured value as a plain-PASS literal — both
+  # wrong. §13.13 (docs/frame-data-synthesis.md §13.13, "the meter shows the
+  # played chain") is a CONTACT-PATH-ONLY convention and cannot license a
+  # divergence on this GENUINE WHIFF leg (no contact, no played chain to
+  # show). This is actually the SA-WHIFF-A/D2 shape (docs/frame-data-
+  # synthesis.md §12.2.4 :972/:978): a uniform -1 A undercount reproduced on
+  # a clean whiff, the same signature as Ken SA1/Dudley SA1/Akuma SA2/Alex
+  # SA2. An offline declared-credit ledger walk (charset.c:454-541
+  # accumulator, isolated single-entry re-probe, <sp>/exsuper/review/
+  # probes/ibuki-sa2-whiff.yaml, clean/untruncated window — jatix/jcaix are
+  # 0 for 30+ ticks past atk_idle_F, zero hitstop ticks anywhere in the
+  # jatix-live window) gave ledger total=**15 == oracle EXACTLY**, NOT the
+  # then-displayed 14 — the D2 signature (`fd_reset_move()` MOVE_START-vs-
+  # `char_move()` tick-ordering race).
+  #
+  # ENGINE-D2 FIX LANDED (lever S, 2026-07-13): the ledger walk's own
+  # prediction confirmed byte-for-byte — post-fix measured A=15 == oracle
+  # exactly. A is now asserted `from-qjson`, plain PASS — the xfail-at-
+  # oracle interim disposition above is retired.
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: ibuki-sa2-chiblast-block
+  setup: { dist: 100, dummy: stand }
+  input: "motion 2qcf HP"
+  qjson: { name: "Missed grab (Chi Blast)" }
+  outcome: BLOCK
+  # JUDGMENT ROW RESOLUTION (see header): this is Yoroi Doushi's own
+  # guard-denied follow-up strike, not a separate super/slot. Measured
+  # (pre-ENGINE-D2) S=0 A=15 R=65 adv=-54 (box_runs=2, box_a=16, busyr=65)
+  # — ALL FOUR fields oracle-exact against ibuki.json's "Missed grab (Chi
+  # Blast)" row (Startup=0, Hit=15, Recovery=65, Block_advantage=-54).
+  # Re-confirmed at dist:120/150/175 (`<sp>/sa-ibuki/run-probe-sa2-
+  # distcheck/trace.log`, `run-probe-sa2-chi/trace.log`) — dist:100/150
+  # both reproduce this exact four-field match; dist:175 sits at the
+  # strike's own outer edge (adv=-59, a documented edge effect, not
+  # shipped).
+  #
+  # ENGINE-D2 PASS→XFAIL FLIP (lever S, 2026-07-13, ORCHESTRATOR SIGN-OFF
+  # GRANTED — see d2-fix-plan.md §3/§6 R10). This is a same-tick D2 member
+  # (freeze-deferred MOVE_START, jatix=49/jcaix=11 on the reset-site probe)
+  # — lever S preserves the first cell's credit, moving measured A from 15
+  # to 16, ONE ABOVE oracle's 15. This flip was pre-registered and
+  # orchestrator-approved, not accidental: post-fix `engine_a == box_a ==
+  # 16` exactly, which is precisely the registered "contact-only A-
+  # overcount, box-backed" class bar (docs/frame-data-synthesis.md
+  # §12.2.4, sean-exdragonsmash-block/-hit precedent). The pre-fix
+  # coincidentally-correct A=15 reading was itself two canceling bugs
+  # (the D2 race's own -1 masking this contact-overcount class's own +1),
+  # not a genuine engine-oracle agreement — the fix un-masks the
+  # pre-existing overcount rather than introducing a new one. A now ships
+  # xfail-at-oracle, joining that class as a new member.
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson, xfail: "[HONEST-FLOOR CENSUS 2026-07-14, opus-substitute / WANTS FABLE RE-REVIEW] TERMINAL CLASS = TERMINAL-NON-SURGICAL (training-mode-only, not arcade-reproducible). NO arcade truth to override to: this guard-denied Chi Blast follow-up needs the training-mode ALL-GUARD throw-immunity and is NOT arcade-reproducible (contactA/design 5.3; CAPTURE.md Session 12 Ibuki) - measured A=16 is not a normal-play quantity. NON-SURGICAL: a box-backed contact-overcount (12.2.4) sharing the 113-regression census, with no arcade value to re-pin to. Golden stays oracle=15, XFAIL. Prior disposition (unchanged): Contact-only A-overcount, box-backed (docs/frame-data-synthesis.md §12.2.4, sean-exdragonsmash-block/-hit precedent) — unmasked by the ENGINE-D2 fix (lever S, 2026-07-13, ORCHESTRATOR SIGN-OFF GRANTED, d2-fix-plan.md §3/§6 R10): measured A=16 vs oracle 15 (+1), post-fix engine_a==box_a==16 exactly, the class's own defining bar. Pre-fix this leg coincidentally read A=15 (oracle-exact) because the D2 race's own -1 canceled this contact-overcount class's own +1 on the SAME leg — two independent bugs summing to zero, not a genuine agreement. The D2 fix corrects the race; the pre-existing box-backed overcount is what remains, now visible and xfailed at the true oracle value." }
+
+- label: ibuki-sa2-hit
+  setup: { dist: 100, dummy: none }
+  input: "motion 2qcf HP"
+  qjson: { name: "Yoroi Doushi" }
+  outcome: HIT
+  # Genuine grab catch (same input/range as the BLOCK-equivalent entry
+  # above, against a NON-guarding dummy instead). Measured (pre-ENGINE-D2)
+  # S=0 A=15 R=65 kd=1 (box_runs=2, box_a=16, busyr=65) — S/A/R ALL
+  # oracle-exact against Yoroi Doushi's own row (no §13.13 undercount at
+  # this distance, unlike the WHIFF leg above — box_runs=2 here vs
+  # box_runs=9 on WHIFF, a different box-traversal shape per Ruling 2 item
+  # 4's "not a gate, diagnostic only" framing). No expect.adv: ibuki.json's
+  # Hit_advantage for this row is the literal string "-" (non-numeric).
+  # Ordered LAST (Phase 5 "Predecessor-outcome ordering" trap) since this
+  # is the only kd=1 entry in this corpus.
+  #
+  # ENGINE-D2 PASS→XFAIL FLIP (lever S, 2026-07-13, ORCHESTRATOR SIGN-OFF
+  # GRANTED, same class/sign-off as ibuki-sa2-chiblast-block above): this
+  # is the SAME same-tick D2 member (genuine grab catch, not the guard-
+  # denied strike, but the same dash-catch first-cell credit) — post-fix
+  # measured A=16 vs oracle 15, engine_a==box_a==16, the registered
+  # "contact-only A-overcount, box-backed" class bar. See the BLOCK-
+  # equivalent entry's own note for the full two-canceling-bugs evidence
+  # chain (this leg's own pre-fix A=15 was likewise the D2 race's -1
+  # canceling this class's own +1, not a genuine agreement).
+  #
+  # GRAB-HIT R ASSERT NOTE (2026-07-13, EXSUPER-1 closing cleanup, P-2
+  # verification): this is a GRAB super, so the BUFFER-1 capture-depth-raise
+  # side effect that DE-ASSERTED R on every `ended_by_partner_release`
+  # (endrel=1) command-throw/grab HIT row across the suite
+  # (docs/frame-data-synthesis.md §12.2.4 :976 — Hugo's six grab rows,
+  # ken-throw-hit, makoto-karakusa-lk-hit, oro-throw-hit, twelve-throw-hit,
+  # yang-throw-hit, yun-throw-hit, alex-powerbomb-lp-hit/-unblockable-probe)
+  # might be expected to apply here too. VERIFIED against this entry's own
+  # trace FINAL line before keeping the assert: `endrel=0` on this leg
+  # (Yoroi Doushi's dash-catch does not set the `ended_by_partner_release`
+  # flag the way those other command-throws do), so it was never actually
+  # in scope for that de-assert side effect to begin with — this is not an
+  # exception carved out of that rule, it is simply a different `endrel`
+  # state. Separately, and on its own independent merits: measured R=65 ==
+  # ibuki.json's own oracle Recovery=65 EXACTLY (box_a=16/busyr=65 both
+  # corroborate), so the assert is correct regardless of the endrel
+  # question — kept as `from-qjson`, not de-asserted.
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, kd: 1, xfail: "[HONEST-FLOOR CENSUS 2026-07-14, opus-substitute / WANTS FABLE RE-REVIEW] TERMINAL CLASS = TERMINAL-NON-SURGICAL (contact-A overcount, 113-regression). Arcade s12=15 (CAPTURE.md Session 12): box_a_frz=15 == oracle == arcade. NON-SURGICAL: shares the contact-A 113-regression census (contactA/design 5.3); additionally the grab's overlay att_box sees only 16 frames vs the arcade 64-frame throw flurry, so the raw-box identity breaks and the row is engine-indistinguishable from the 113. Golden stays oracle=15, XFAIL. Prior disposition (unchanged): Contact-only A-overcount, box-backed (docs/frame-data-synthesis.md §12.2.4, sean-exdragonsmash-block/-hit precedent) — unmasked by the ENGINE-D2 fix (lever S, 2026-07-13, ORCHESTRATOR SIGN-OFF GRANTED, d2-fix-plan.md §3/§6 R10): measured A=16 vs oracle 15 (+1), post-fix engine_a==box_a==16 exactly. Same class/sign-off as ibuki-sa2-chiblast-block's own xfail note (two-canceling-bugs evidence chain: the D2 race's -1 was canceling this class's own +1 pre-fix, not a genuine agreement). R stays asserted from-qjson (lever S does not affect R; endrel=0 on this leg, see the GRAB-HIT R ASSERT NOTE below)." }

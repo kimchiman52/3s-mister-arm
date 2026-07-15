@@ -1,0 +1,123 @@
+# Akuma Super Art 3 (Messatsu Gou Rasen (Ground)) — EX/Supers program,
+# supers wave S2. Satellite corpus (auto-discovered by run-suite.sh's
+# corpus-*.yaml glob, own golden/akuma-sa3.tsv once registered) — the main
+# corpus-akuma.yaml is untouched.
+#
+# Scope: <sp>/exsuper/step0-universe.tsv row "akuma 53 Messatsu Gou Rasen
+# (Ground)" (sa_slot 3, Common_name "Super Art 3, SA3" — confirmed via the
+# fetched oracle row itself, NOT the air variant "Messatsu Gou Rasen (Air)"
+# which is a separate AIR_DEFERRED row). Oracle: docs/arcade-frame-data/
+# akuma.json (md5 0add1a92a2bdaa58f370f285abeb4d49, unchanged). Oracle row:
+# Startup=3, Hit=22, Recovery=51, Block_advantage=-76, Hit_advantage="-"
+# (non-numeric).
+#
+# Meter: sa_gauge:3 (MAXIMUM) + super_art:2 (0-indexed SA3).
+#
+# Motion — IDENTITY CORRECTION this session (a real finding, not an
+# assumption): the naive guess ("motion 2qcb HK", doubling the GROUND
+# Tatsumaki Zankuu Kyaku special's own qcb-direction macro per
+# corpus-akuma.yaml's precedent) does NOT land the super — it lands the
+# REGULAR "Tatsumaki Zankuu Kyaku Roundhouse" special instead (measured
+# S=2/A=18/R=10/Badv=-5, an EXACT match against that row in the fetched
+# oracle — confirmed by name-matching every Startup=2/3 row in akuma.json
+# this session, not guessed). A 4-candidate sweep
+# (<sp>/sa-akuma/run-probe-sa3-sweep/trace.log: a slower hand-rolled qcb
+# chain, a qcb chain with a fuller final chord, "2qcb LK" — all three still
+# land a regular Tatsumaki variant) confirmed the qcb DIRECTION itself is
+# the problem, not chord/timing details. The candidate that lands the
+# super: "motion 2qcf HK" — double quarter-circle FORWARD (not back) + HK.
+# S=3/A=22 exact, adv=-75 (near oracle -76) on the first try with this
+# motion (<sp>/sa-akuma/run-probe-sa3-sweep/trace.log entry
+# sweep-c-2qcf-hk). Re-confirmed on a dedicated 3-leg probe
+# (<sp>/sa-akuma/run-probe-sa3-v2/trace.log). This is a genuinely different
+# input FAMILY than the move's own regular-special counterpart (forward vs.
+# back motion) — a real per-move fact, not a harness artifact.
+#
+# Entries ordered WHIFF/BLOCK/HIT (WHIFF first) per the ordering-trap
+# lesson.
+#
+# WHIFF: REACHABLE at dist:300 (dist_mode:centered), first attempt with the
+# corrected motion — S=3/A=22 both exact against oracle.
+#
+# Admissibility census (mechanical, from FRAME_TRACE columns — authoring-
+# policy.md Ruling 2), this session's own isolated 3-entry probe run
+# (<sp>/sa-akuma/run-probe-sa3-v2/trace.log, inter_entry_wait:500):
+# (1) Single-FINAL integrity: exactly one FINAL inside each entry's own
+# window (WHIFF F51-150; BLOCK F564-671; HIT F1077-1284), no bleed, values
+# sane. T=72=FD_METER_LEN exactly on all three legs (M1 saturation — see R
+# DISPOSITION below).
+# (2) Flash-overlap census: 0 nonzero-sastop ticks in [MOVE_START F, FINAL
+# F] on all three legs (0/100 WHIFF, 0/108 BLOCK, 0/208 HIT — awk census
+# this session) — flash-free.
+# (3) Contact-A juggle check (HIT leg): HIT-leg A=22 == BLOCK-leg A=22 —
+# PASSES, AND the shared value is oracle-exact (22==22) — a fully clean
+# result, asserted on all three legs.
+# (4) Shape record: box_runs=21 (WHIFF) / 19 (BLOCK) / 10 (HIT) — genuinely
+# multi-run (the Ken SA3/Ryu SA2 class, box_runs>1 on every leg including
+# WHIFF), so this move stays on the legacy path throughout by construction
+# (E-2/Ruling 3), never eligible for lever N/O on any leg.
+#
+# adv DISPOSITION (BLOCK leg only — a NEW finding this session). Measured
+# adv=-75 vs oracle Block_advantage=-76 — a 1-frame near-miss, on the SAME
+# leg where S=3/A=22 are both oracle-exact (rules out a wrong-move/wrong-
+# window read). No established Phase 6 bucket addresses an adv-specific
+# divergence (the tree's buckets are all A- or R-shaped); this is the FIRST
+# adv divergence observed anywhere in the pilot trio + wave-S1 + this
+# session's own akuma work — every prior multi-run super's BLOCK adv
+# (Ken SA3 -11, Chun-Li SA1/SA2/SA3 all exact) has been oracle-exact
+# despite the SAME T=72/M1 R-truncation co-occurring on those same moves,
+# so this -1 is not simply "the M1 mechanism reaching adv" by precedent —
+# it is a genuinely new, UNCLASSIFIED shape on this specific move.
+# Comparable, numeric oracle field (not field-mask eligible): XFAILED, true
+# oracle value (-76) kept in expect, measured value (-75) recorded in the
+# xfail note, flagged for follow-up (no per-tick ledger trace taken this
+# session).
+#
+# R DISPOSITION (all three legs — the SAME M1 mechanism, a further named
+# member, not a new quarantine seed). Legacy-displayed R reads 24 (WHIFF) /
+# 23 (BLOCK) / 23 (HIT), all T=72=FD_METER_LEN exactly. busyr recounts to
+# 51 on ALL THREE legs = oracle Recovery EXACTLY — the M1 signature.
+# Per Ruling 2 (E-1/E-4) a busyr/oracle match does not license asserting R
+# via that diagnostic. R is OMITTED on all three legs (not asserted, not
+# guessed) — the established "omit with the M1 citation" idiom.
+character: akuma
+oracle: akuma.json
+super_art: 2
+sa_gauge: 3
+inter_entry_wait: 500
+entries:
+
+- label: akuma-sa3-whiff
+  setup: { dist: 300, dummy: none, dist_mode: centered }
+  input: "motion 2qcf HK"
+  qjson: { name: "Messatsu Gou Rasen (Ground)" }
+  outcome: WHIFF
+  # Measured S=3 A=22 R=24(NOT asserted, see R DISPOSITION) (box_runs=21,
+  # T=72). S/A both oracle-exact. GENUINE WHIFF (not WHIFF-UNREACHABLE).
+  # BUFFER-1 (2026-07-13): R now asserted from-qjson — capture raise
+  # un-truncates; post-fix measured R=51 == busyr == oracle exactly.
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: akuma-sa3-block
+  setup: { dist: close, dummy: stand }
+  input: "motion 2qcf HK"
+  qjson: { name: "Messatsu Gou Rasen (Ground)" }
+  outcome: BLOCK
+  # Measured S=3 A=22 R=23(NOT asserted, see R DISPOSITION) adv=-75(xfail,
+  # see adv DISPOSITION) (box_runs=19, T=72). S/A oracle-exact; arcade
+  # adv=-76 is asserted, measured -75 is xfailed, not silently substituted.
+  # BUFFER-1 (2026-07-13): R now asserted from-qjson, same basis as WHIFF.
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson, xfail: "RECLASSIFIED 2026-07-14, TERMINAL-NON-SURGICAL (was UNCLASSIFIED) - <sp>/zero/adv/plan.md §2 D-f / §4.2, opus-substitute / WANTS FABLE RE-REVIEW: adv off by 1 (measured -75 vs oracle -76). adv = defender_idle - attacker_idle (frame_data_overlay.c:1243) is arcade-exact on 600/607 currently-asserting adv rows; this is one of only 4 divergent rows (a different structural class from the yang-senkyuutai +6 family - here lever R does NOT fire, leverR_pred=-1, the recovery is the M1/T=72-truncated super path, so `-(R+1)` doesn't even apply: -(51+1)=-52 != -76). The critical gate (any adv re-anchor candidate must offline-fit against EVERY currently-PASS adv row with zero regression) KILLS the only broad candidate available: a flat adv-=1 fixes this row + chunli-sa1-block but regresses 600 other currently-correct adv rows (the CONTACT-A failure shape). No census signal isolates this row's +1 idle-timing offset from the 600 correct rows; per-move hardcoding is policy-forbidden. S=3/A=22 both oracle-exact on this same leg, ruling out a wrong-move/wrong-window read - the +1 mechanism itself remains genuinely undiagnosed (no per-tick idle-ledger trace has ever been taken). Deferred pending a new instrumented diagnostic (build task) that fit-proves zero regression across all 607 adv rows - out of this design's read-only scope. Golden unchanged; adv stays asserted at oracle=-76, measured=-75, XFAIL." }
+
+- label: akuma-sa3-hit
+  setup: { dist: close, dummy: none }
+  input: "motion 2qcf HK"
+  qjson: { name: "Messatsu Gou Rasen (Ground)" }
+  outcome: HIT
+  # Measured S=3 A=22 R=23(NOT asserted, same R DISPOSITION) adv=+74 kd=1
+  # (box_runs=10, T=72). S oracle-exact. Contact-A juggle check PASSES
+  # (HIT A=22 == BLOCK A=22) AND the shared value is oracle-exact — asserted
+  # as a plain PASS. No expect.adv: akuma.json's Hit_advantage for this row
+  # is the literal string "-". BUFFER-1 (2026-07-13): R now asserted
+  # from-qjson, same basis as WHIFF/BLOCK.
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }

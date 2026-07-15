@@ -1,0 +1,1244 @@
+# Urien frame-data corpus (cast rollout, user-directed 2026-07-08).
+# Generated/consumed by tools/frame-data/compile_corpus.py against
+# docs/arcade-frame-data/urien.json (fetched 2026-07-08 from
+# https://raw.githubusercontent.com/Coccis77/thirdstrikedatabot/master/json/urien.json,
+# md5 5feea97b78d5c40f4af226bbb0bab288).
+#
+# NAMING NOTE (runbook Phase 1 caution re: throw-family naming varying per
+# character): urien.json's throw-family rows are "Neutral Throw" and a bare
+# "Throw" - the SAME two-row shape as dudley.json/yun.json. Both rows share
+# identical Startup=2/Hit=1/Recovery=21/Throw_range=26 (Block_advantage=0,
+# Hit_advantage="D" for both) - verified against the fetched oracle, not
+# assumed. "Neutral Throw" is used below, per that precedent.
+#
+# NO "Far X" ROWS: like dudley.json/makoto.json, urien.json has exactly one
+# row per standing-normal button (Jab/Strong/Fierce/Short/Forward/
+# Roundhouse) - no separate close/far split. Verified live: dist=250 throws
+# the SAME close-range animation for every button and simply fails to
+# connect (WHIFF, not a distinct far animation).
+#
+# ALL SIX crouching normals exist (Jab/Strong/Fierce/Short/Forward/
+# Roundhouse) - unlike Dudley/Ryu, urien.json has a complete crouching set.
+# Crouching Fierce AND Crouching Roundhouse are BOTH "D"-annotated
+# (Hit_advantage="D") - the same two-D-row shape as Dudley (Crouching
+# Forward + Crouching Roundhouse); both are HIT-tested for kd below.
+#
+# THREE of SIX Towards+X command normals exist (Strong/Fierce/Forward) - no
+# Towards+Jab/Short/Roundhouse rows. All three are audited below with their
+# own WHIFF row per Phase 4; none is "D"-annotated (Hit_advantage is numeric
+# for all three), so no separate command-normal HIT entry is authored,
+# matching the Dudley/Makoto precedent (HIT is only added for a "D"-marked
+# command normal).
+#
+# urien.json's Startup/Hit/Recovery/*_advantage fields are JSON strings
+# (e.g. "Startup": "4") - resolve_from_qjson's `int(raw)` cast
+# (compile_corpus.py:432-448) handles this transparently; only genuinely
+# non-numeric fields ("-", "D") need an explicit literal or an outright
+# skip.
+#
+# SCOPE (user-directed 2026-07-08, cast rollout): normals ladder (six-button
+# close BLOCK/HIT + WHIFF sample + crouching BLOCK for all six + HIT for the
+# two "D"-marked crouching normals + all three Towards+X command normals
+# each with BLOCK+WHIFF) + UOH + Throw + negative control + ground specials
+# probe (one session budget): Metallic Sphere (projectile, motion qcf + P,
+# three strengths - verified vs oracle below, also exercises the projectile
+# arcade-split lever D on a FOURTH character, see the specials section),
+# Chariot rush (task-named "Chariot Tackle" - oracle's actual Name string is
+# "Chariot rush (Short/Forward/RH)", charge-back-then-forward + K, three
+# strengths, landed via the existing `motion charge-back N then-forward
+# <BTN>` macro, same charge-duration convention as Chun-Li's SBK/Q's DHA
+# precedent - Short's own BLOCK/HIT are an accepted harness reachability
+# gap, WHIFF only, see that section), Headbutt (task-named "Dangerous
+# Headbutt" - oracle's actual Name string is "Headbutt (Jab/Strong/Fierce)",
+# charge-down-then-up + P, three strengths, landed via the existing
+# `motion charge-down N then-up <BTN>` macro), Violence Knee Drop
+# (charge-down-then-up + K - urien.json
+# has only ONE row for this move, no strength split, unlike Metallic
+# Sphere/Chariot rush/Headbutt - a single Short-button probe is used, see
+# that section). NO supers/EX (Aegis Reflector / Aegis Reflector (EX) /
+# Metallic Sphere (EX) / Chariot rush (EX) / Headbutt (EX) / Violence Knee
+# Drop (EX) / Temporal Thunder / Tyrant Punish all excluded per task scope -
+# Aegis Reflector is Urien's SA, excluded per the task's own instruction; the
+# rest are EX/SA-adjacent and out of this rollout's charter). No airborne
+# moves (Jumping Jab/Strong/Fierce/Short/Forward/Roundhouse excluded - the
+# harness dummy/attacker cannot be scripted to jump, known gap
+# docs/frame-data-synthesis.md §12.1). Taunt is not audited (not a
+# frame-data-relevant move for this rollout).
+#
+# Every expect below was pinned against a live trace
+# (tools/frame-data/run.sh tools/frame-data/corpus-urien.yaml), with every
+# suspicious/ambiguous finding re-verified in an isolated single-entry probe
+# corpus per the runbook's Phase 5 "known traps" discipline before being
+# trusted.
+#
+# ============================================================================
+# ISSUE #17 FAMILY CENSUS (per runbook Phase 6 / item 6 instruction). Every
+# A-divergence below was lever-F-tested in ONE batched scratch build
+# (fd_restore_revoked_declared_credit forced to 0 in
+# src/sf33rd/Source/Game/engine/charset.c:507, whole corpus re-run once,
+# reverted via `git checkout` + rebuild + re-verified green before this
+# commit, same-binary protocol throughout).
+#
+#   NEWLY-CONFIRMED SHAPE (b) MEMBERS (lever-F ACTIVELY RESTORING credit;
+#   plain PASS in the real binary, no xfail - the lever-F-off scratch build
+#   is what reveals the dependency): urien-jab-block/-hit (A=2 exact match
+#   in the real binary; lever-F-off drops to A=1), urien-strong-block/-hit
+#   (A=5 exact; lever-F-off drops to A=3), urien-crforward-block (A=3
+#   exact; lever-F-off drops to A=2), urien-crroundhouse-block/-hit (A=3
+#   exact; lever-F-off drops to A=2). Every other standing/crouching normal
+#   not listed here (Fierce/Short/Forward/Roundhouse and their crouching
+#   counterparts, plus all three command normals) was UNCHANGED by
+#   lever-F-off (no revoke ever fires - these simply never diverged from
+#   arcade).
+#
+#   PURE SHAPE (a1) skip-jump, lever-F-tested UNCHANGED (credit
+#   unrecoverable, synthesis §13.11 "what stays unrecoverable"):
+#     - urien-crstrong-block: measured A=2 vs arcade 4; S/R/adv exact.
+#     - urien-chariot-hk-block/-hit (Chariot rush RH, at dist=close only -
+#       see the CHARIOT RUSH (RH) FINDING comment in the specials section,
+#       a NEW distance-dependent variant of this shape): measured A=6 vs
+#       arcade 15 when contact happens close/early in the dash; the SAME
+#       move measures A=15 EXACT when contact happens far/late (dist=250 or
+#       300). RE-PINNED 2026-07-08 (Step 3 review fix): the corpus
+#       previously stated A=3 here - re-verified live (full-corpus run
+#       ×2, plus an isolated single-entry probe at dist=close and again at
+#       dist=20/30/40/50, six placements total) and every one of those six
+#       measurements reads A=6, never A=3; the "3" figure could not be
+#       reproduced anywhere and is not carried forward as a probe-session
+#       observation (no evidence it is a genuine distinct data point).
+#     - urien-vkd-lk-block/-hit (Violence Knee Drop): measured A=4 vs
+#       arcade 12 (stacked with an UNCLASSIFIED R-side finding - see the
+#       VIOLENCE KNEE DROP FINDING comment, FLAGGED PROMINENTLY).
+#       RE-PINNED 2026-07-08 (Step 3 review fix): the corpus previously
+#       stated A=5 R=24 anchor_a=5 here - re-verified live (full-corpus
+#       run ×2) and the actual measured values are A=4 R=25 anchor_a=4.
+#   UPDATE (2026-07-10, §13.13): all four pure-shape-(a1) entries in this
+#   census (urien-crstrong-block, urien-chariot-hk-block/-hit,
+#   urien-vkd-lk-block/-hit) now assert the measured A citing §13.13. This
+#   is unrecoverable-by-accumulator, not unrecoverable-forever - §13.13
+#   makes the measured value normative. urien-crstrong-block converts to a
+#   full plain PASS; the other three narrow to their own stacked R clause
+#   (still xfail, unchanged mechanism).
+#
+#   §13.11 DECLARED-TRUTH DISPLAYED-A CONVENTION (docs/frame-data-synthesis.md
+#   §13.11) - REVISITED 2026-07-08 (Step 3 review fix), FLOOR APPLIED, NOT
+#   adopted as convention for this move: urien-uoh-whiff/-block/-hit measure
+#   A=9 identically on all three outcomes (whiff-persistent, path-
+#   independent) - the raw lever-F census below is unchanged and still
+#   accurate. Lever-F-off leaves WHIFF's A UNCHANGED at 9 (no revoke fires
+#   on a clean whiff - the declared sum is naturally 9 with no contact
+#   mechanism involved at all) but drops BLOCK/HIT from 9 to 6 (the revoke
+#   fires on contact and the lever restores it back up to match WHIFF
+#   exactly) - path-independence itself checks out. HOWEVER: a trace-first
+#   investigation (FRAME_CM_LOG=1 [CM]/[CMX] per-cell walk on an isolated
+#   urien-uoh-whiff probe, reproduced byte-identical on 2 runs, no source
+#   change - this is the existing read-only DEBUG-gated instrumentation at
+#   charset.c:580/608, charset.c itself is untouched) shows the declared
+#   sum of 9 is NOT a coherent "declared truth" for this move: it is
+#   cg_ix=20 (add=3, GT=53) + cg_ix=24 (add=3, GT=56) + cg_ix=28 (add=3,
+#   GT=59) = 9, matching engine_a/anchor_a exactly and matching S=15's
+#   startup boundary (MOVE_START GT=38, first active cell GT=53, 15
+#   ticks) - but cg_ix=28 then LOOPS BACK TO ITSELF via its own
+#   extended-code branch ([CMX] GT=62 cgix=32 code=50 -> cgix=28 code=768,
+#   i.e. check_cm_extended_code's cg_next_ix jump lands back on the same
+#   cell) for two further ticks (GT=62 ctr=3, GT=63 ctr=2) with athok=1
+#   jatix=45 identical to the credited pass - genuinely active, visibly-
+#   playing frames - before a same-tick transit out at GT=63 (new_jatix=0,
+#   so the §13.7.4 revoke/restore never even attempts to fire, per its own
+#   `new_jatix != 0` gate). Because the accumulator only credits a cell on
+#   a cg_ix CHANGE (never on a same-cg_ix reload), these 2 extra ticks are
+#   never counted - a DIFFERENT mechanism than anything §13.7.4/§13.11
+#   already handles (those are cross-cell same-tick transits; this is a
+#   same-cell self-loop). Independent corroboration: the FINAL line's own
+#   already-computed `active_pf` field (frame_data_overlay.c's per-frame
+#   ACTIVE/CONTACT classifier, entirely separate from engine_a) reads 11
+#   for this exact trace - ABOVE arcade's 10, not below, and consistent
+#   with 9 (entry-credited) + 2 (uncredited self-loop ticks) = 11. So the
+#   fully-inclusive engine-visible active window is 11, sitting ABOVE
+#   urien.json's 10 - the same direction every other §13.11 precedent
+#   character shows (Q/Chun-Li/Dudley all read above their oracle
+#   figures); the anomalous "9, below oracle" reading is an artifact of
+#   the accumulator's blind spot for self-looping cells, not a stable
+#   declared-truth number. This does NOT cleanly support adopting A=9 as
+#   declared-truth, so the FLOOR applies here (plan Step 7 disposition):
+#   all three UOH entries' A reverts to from-qjson (10, urien.json's
+#   published figure); the measured 9 (and this decomposition) is kept as
+#   an UNCLASSIFIED-pending finding in each entry's own xfail clause,
+#   dated 2026-07-08, rather than asserted as the shipped value. NOT-YET-
+#   GRANTED - orchestrator/user sign-off pending on this disposition too.
+#
+#   No other #17-family divergence was found on any other normal, crouching
+#   normal, command normal, Metallic Sphere, or Throw entry (every other
+#   entry's A matches urien.json exactly, or is not asserted where the
+#   oracle field is non-numeric).
+# ============================================================================
+#
+# >50%-XFAIL SECTION ACCOUNTING (plan Step 7 / corpus-hugo.yaml precedent:
+# >50% of a section xfailing requires explicit orchestrator/user sign-off
+# before being accepted as audit output, not self-approved - per this
+# rollout's own divergence-discipline instructions, these are flagged
+# GRANTED (orchestrator sign-off 2026-07-08, post-review-fix: all values re-pinned to committed-binary output; UOH floored to UNCLASSIFIED-pending w/ self-loop decomposition; Chariot RH + VKD flagged HIGH on the user-review list). User review pending (overnight autonomous run) here rather than self-signed-off):
+#
+#   - UOH: 3/3 xfail (100%) - urien-uoh-whiff/-block/-hit. RE-DISPOSITIONED
+#     2026-07-08 (Step 3 review fix, FLOOR applied): A is NOT resolved to
+#     the §13.11 declared-truth convention here - a trace decomposition
+#     showed the measured A=9 is an accumulator blind-spot artifact (a
+#     same-cg_ix self-loop cell whose extra active ticks are never
+#     entry-credited; active_pf=11 independently reads ABOVE oracle, not
+#     below), not a coherent declared-truth number, so A reverts to
+#     from-qjson (10, urien.json's figure) per the floor. Each entry's
+#     xfail now carries BOTH an A-side clause (UNCLASSIFIED-pending,
+#     dated 2026-07-08, decomposition evidence) and its own R clause
+#     (whiff = item 18 truncation; block/hit = a no-HIT-vs-BLOCK-
+#     differential R deficit, kept UNCLASSIFIED-hedged, same shape as the
+#     Dudley UOH precedent). GRANTED (orchestrator sign-off 2026-07-08, post-review-fix: all values re-pinned to committed-binary output; UOH floored to UNCLASSIFIED-pending w/ self-loop decomposition; Chariot RH + VKD flagged HIGH on the user-review list). User review pending (overnight autonomous run) - orchestrator/user sign-off
+#     pending.
+#   - Headbutt, WHIFF+BLOCK+HIT: NOW 1/9 xfail (UPDATED 2026-07-08,
+#     §13.5.1a cut gate) - the old uniform -5 R truncation on all nine
+#     entries was a §13.5.1 false cut, RESOLVED by the grounded
+#     fresh-edge gate: R=19/18/19 arcade-exact on WHIFF/BLOCK and on
+#     lp/mp HIT (8 entries plain PASS, xfails removed; the HEADBUTT KD
+#     FINDING stands - kd=1 asserted at the measured value, no oracle
+#     "D" annotation, now inside plain-PASS entries). The single
+#     remaining xfail is urien-headbutt-hp-hit: in full-corpus order it
+#     reads outcome=WHIFF on BOTH the post-fix build and the lever-G
+#     legacy-control build (NOT gate-caused; its fragile dist=70
+#     connect window - 6-placement probe history: 40/70/110 connect,
+#     90/130/150/56 whiff - does not reproduce in corpus order this
+#     session) - re-cited EXPLICITLY as an outcome anomaly pending a
+#     fresh placement probe. Sign-off scope reduced accordingly.
+#     UPDATE (2026-07-11, HEADBUTT-DEFER fix landed): NOW 0/9 xfail (100%
+#     resolved) - a WHIFF spacer entry (urien-headbutt-hp-hit-spacer-whiff)
+#     inserted immediately before urien-headbutt-hp-hit resolves the
+#     post-knockdown contact-residue window (synthesis §12.1 row 8);
+#     re-measured outcome=HIT, S=12/A=6/R=19/kd=1, arcade-exact, plain
+#     PASS. See the entry's own FIX LANDED comment for the full mechanism
+#     + re-measure citation.
+#   - Chariot rush, WHIFF: NOW 0/2 xfail (UPDATED 2026-07-08) - RESOLVED
+#     by the §13.5.1a cut gate (R=25/26 arcade-exact, plain PASS; RH
+#     still has no WHIFF entry, the accepted SPECIALS-REACHABILITY GAP).
+#   - Chariot rush, BLOCK+HIT: 4/4 xfail (100%, Short's BLOCK/HIT are a
+#     SEPARATE accepted harness gap, not counted here - see the CHARIOT
+#     RUSH (SHORT) BLOCK/HIT comment) - Forward's BLOCK+HIT are an
+#     established, single-clause item-18 (+ Class 1 for HIT) R finding;
+#     RH's BLOCK+HIT are the FLAGGED distance-dependent shape (a1) A
+#     finding (see the CHARIOT RUSH (RH) FINDING comment) plus an open,
+#     unclassified R observation with no clean whiff baseline.
+#     GRANTED (orchestrator sign-off 2026-07-08, post-review-fix: all values re-pinned to committed-binary output; UOH floored to UNCLASSIFIED-pending w/ self-loop decomposition; Chariot RH + VKD flagged HIGH on the user-review list). User review pending (overnight autonomous run) - orchestrator/user sign-off pending, RH specifically
+#     flagged HIGH given its novel distance-dependent mechanism.
+#     UPDATE (2026-07-10, §13.10 HIT-R convention): NOW 3/4 xfail (75%) -
+#     urien-chariot-mk-hit (Forward's HIT) converts to a plain PASS
+#     asserting the measured R citing §13.10 directly (F2b compliance).
+#     urien-chariot-hk-block/-hit (RH) narrow to their A-clause converting
+#     citing §13.13, R-clause (open unclassified observation) staying xfail.
+#     CAP-4 PROBE (2026-07-14): still 3/4 xfail, UNCHANGED - `dist_mode:
+#     centered` at its own 310 ceiling (~322-328px, more separation than any
+#     prior RH probe) was tried as a possible whiff-force lever (see the
+#     CAP-4 PROBE comment in the specials section above the WHIFF entries)
+#     and STILL CONNECTS (measured live: outcome=HIT S=13 A=15 R=20). No
+#     per-strength whiff baseline exists for RH via distance manipulation in
+#     this harness, period - confirmed empirically now, not just by the
+#     earlier anchored-only probe. The R-clause stays an open, unclassified
+#     observation; no engine-truth conversion is made without a whiff
+#     anchor.
+#   - Violence Knee Drop, WHIFF+BLOCK+HIT: 3/3 xfail (100%) - the FLAGGED
+#     PROMINENTLY finding (established shape-(a1) A-undercount stacked with
+#     a genuinely novel three-way R mismatch across WHIFF/BLOCK/HIT, no
+#     established bucket fits the R side). GRANTED (orchestrator sign-off 2026-07-08, post-review-fix: all values re-pinned to committed-binary output; UOH floored to UNCLASSIFIED-pending w/ self-loop decomposition; Chariot RH + VKD flagged HIGH on the user-review list). User review pending (overnight autonomous run) - orchestrator/
+#     user sign-off pending, flagged HIGH on the user-review list alongside
+#     Chariot rush (RH) and Makoto's Hayate / Dudley's Jet Uppercut.
+#     UPDATE (2026-07-10, §13.13): still 3/3 xfail (100%) - the WHIFF entry
+#     is unaffected (out of scope); BLOCK/HIT's A-clause now converts
+#     citing §13.13 (shape (a1), pure), narrowing each xfail to the
+#     remaining three-way R-mismatch clause only (still UNCLASSIFIED).
+# ============================================================================
+character: urien
+oracle: urien.json
+inter_entry_wait: 150
+entries:
+
+# --- Standing normals, BLOCK (dummy: stand, dist close) ---------------------
+
+- label: urien-jab-block
+  setup: { dist: close, dummy: stand }
+  input: "press LP"
+  qjson: { name: "Jab" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: urien-strong-block
+  setup: { dist: close, dummy: stand }
+  input: "press MP"
+  qjson: { name: "Strong" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: urien-fierce-block
+  setup: { dist: close, dummy: stand }
+  input: "press HP"
+  qjson: { name: "Fierce" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: urien-short-block
+  setup: { dist: close, dummy: stand }
+  input: "press LK"
+  qjson: { name: "Short" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: urien-forward-block
+  setup: { dist: close, dummy: stand }
+  input: "press MK"
+  qjson: { name: "Forward" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: urien-roundhouse-block
+  setup: { dist: close, dummy: stand }
+  input: "press HK"
+  qjson: { name: "Roundhouse" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# --- HIT sample per button family (dummy: none, close range) ---------------
+
+- label: urien-jab-hit
+  setup: { dist: close, dummy: none }
+  input: "press LP"
+  qjson: { name: "Jab" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: urien-strong-hit
+  setup: { dist: close, dummy: none }
+  input: "press MP"
+  qjson: { name: "Strong" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: urien-fierce-hit
+  setup: { dist: close, dummy: none }
+  input: "press HP"
+  qjson: { name: "Fierce" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: urien-short-hit
+  setup: { dist: close, dummy: none }
+  input: "press LK"
+  qjson: { name: "Short" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: urien-forward-hit
+  setup: { dist: close, dummy: none }
+  input: "press MK"
+  qjson: { name: "Forward" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: urien-roundhouse-hit
+  setup: { dist: close, dummy: none }
+  input: "press HK"
+  qjson: { name: "Roundhouse" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# --- WHIFF sample per button family (dummy: none, dist 250) -----------------
+# No distinct "Far X" rows exist in urien.json for any button (see file
+# header) - every WHIFF entry below cites the SAME qjson.name as its
+# BLOCK/HIT sibling.
+
+- label: urien-lp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press LP"
+  qjson: { name: "Jab" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: urien-mp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press MP"
+  qjson: { name: "Strong" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: urien-hp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press HP"
+  qjson: { name: "Fierce" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: urien-lk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press LK"
+  qjson: { name: "Short" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: urien-mk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press MK"
+  qjson: { name: "Forward" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: urien-hk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press HK"
+  qjson: { name: "Roundhouse" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# --- Crouching normals, BLOCK (dummy: stand) --------------------------------
+
+- label: urien-crjab-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+LP"
+  qjson: { name: "Crouching Jab" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=2 is the
+# engine-truth credit actually accrued on the BLOCK path - issue #17 shape
+# (a1), pure (lever-F-tested UNCHANGED). Arcade (whiff-canonical, from-qjson)
+# A=4 - preserved here per the convention. S/R/adv remain arcade-exact
+# (from-qjson).
+- label: urien-crstrong-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+MP"
+  qjson: { name: "Crouching Strong" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: 2, R: from-qjson, adv: from-qjson }
+
+- label: urien-crshort-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+LK"
+  qjson: { name: "Crouching Short" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: urien-crforward-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+MK"
+  qjson: { name: "Crouching Forward" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# Crouching Fierce is one of urien.json's TWO knockdown-annotated crouching
+# normals (Hit_advantage="D", non-numeric) - kd is explicit-only (never
+# from-qjson, Phase 3 discipline), asserted at the measured live value.
+- label: urien-crfierce-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+HP"
+  qjson: { name: "Crouching Fierce" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# §13.10 HIT-R convention (adopted 2026-07-10, §13.10-compliance conversion,
+# F2b): R=22 is the engine-truth recovery actually played on the HIT path -
+# BLOCK-confirmed arcade R=25 (urien-crfierce-block's own R is exact). Arcade
+# (whiff-canonical) R=25 - preserved here per the convention. S/A remain
+# arcade-exact (from-qjson) both outcomes. (kd RE-ASSERTED 0->1 2026-07-09,
+# §13.6.2b, ENGINE-3: the "D"-notation-vs-live-kd inconsistency this xfail
+# previously also carried - urien.json's Crouching Fierce is Hit_advantage="D"
+# but measured kd=0 - was DISSOLVED; kd now measures 1 live, matching arcade,
+# unrelated to and unaffected by this R conversion.)
+- label: urien-crfierce-hit
+  setup: { dist: close, dummy: none }
+  input: "press DOWN+HP"
+  qjson: { name: "Crouching Fierce" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: 22, kd: 1 }
+
+- label: urien-crroundhouse-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+HK"
+  qjson: { name: "Crouching Roundhouse" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: urien-crroundhouse-hit
+  setup: { dist: close, dummy: none }
+  input: "press DOWN+HK"
+  qjson: { name: "Crouching Roundhouse" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, kd: 1 }
+
+# --- Command normals (Towards + button), BLOCK + WHIFF ----------------------
+# urien.json has THREE distinct Towards+X rows (Strong/Fierce/Forward - no
+# Towards+Jab/Short/Roundhouse) - each audited with its own WHIFF row per
+# Phase 4's mandatory whiff-vs-table rule.
+
+- label: urien-twdsmp-block
+  setup: { dist: close, dummy: stand }
+  input: "press RIGHT+MP"
+  qjson: { name: "Towards + Strong" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: urien-twdsmp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press RIGHT+MP"
+  qjson: { name: "Towards + Strong" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: urien-twdshp-block
+  setup: { dist: close, dummy: stand }
+  input: "press RIGHT+HP"
+  qjson: { name: "Towards + Fierce" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: urien-twdshp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press RIGHT+HP"
+  qjson: { name: "Towards + Fierce" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: urien-twdsmk-block
+  setup: { dist: close, dummy: stand }
+  input: "press RIGHT+MK"
+  qjson: { name: "Towards + Forward" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: urien-twdsmk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press RIGHT+MK"
+  qjson: { name: "Towards + Forward" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# --- UOH (press MP+MK) ------------------------------------------------------
+# urien.json's Block_advantage/Hit_advantage for Universal Overhead are both
+# the literal string "-" - no expect.adv asserted (same convention as every
+# other "-"-advantage UOH row in this repo). S=15/A=10/R=5 in urien.json -
+# the SAME numbers as q.json/dudley.json/chunli.json's own UOH row.
+#
+# UOH FINDING - RE-DISPOSITIONED 2026-07-08 (Step 3 review fix): NOT a
+# §13.11 declared-truth plain-PASS (docs/frame-data-synthesis.md §13.11,
+# precedent chunli-uoh-block/-whiff/-hit, corpus-chunli.yaml:54-98;
+# dudley-uoh-whiff/-block/-hit, corpus-dudley.yaml:489-544) - see the file
+# header ISSUE #17 FAMILY CENSUS §13.11 paragraph for the full
+# trace-decomposition writeup. S=15 matches urien.json's Universal
+# Overhead row exactly on all three outcomes (unambiguous identification).
+# Measured A=9 identically on ALL THREE outcomes (WHIFF included) -
+# whiff-persistent, path-independent: cut=1 fires on all three outcomes,
+# dwellbrk=0, anchor_a=9 matches engine_a=9 throughout - superficially the
+# same trace-fact signature as the chunli/dudley/q precedent. HOWEVER a
+# per-cell [CM]/[CMX] decomposition (FRAME_CM_LOG=1, existing read-only
+# DEBUG instrumentation, no source change) shows this 9 is an accumulator
+# blind-spot artifact, not a coherent declared-truth number: cg_ix=20/24/28
+# each entry-credit 3 (=9 total, matching S=15's startup boundary exactly)
+# but cg_ix=28 then loops back to itself via its own extended-code branch
+# for 2 further genuinely-active (athok=1, jatix=45) ticks that the
+# entry-only accumulator never credits (no cg_ix CHANGE, so no add fires) -
+# and the FINAL line's own independently-computed `active_pf` field (the
+# per-frame ACTIVE/CONTACT classifier, unrelated to engine_a) reads 11 for
+# this exact trace, ABOVE urien.json's 10, consistent with 9+2=11. So the
+# fully-inclusive engine-visible window is 11 (above oracle, matching every
+# other §13.11 precedent's direction), and the anomalous "9, below oracle"
+# reading is the blind spot, not a stable number. FLOOR APPLIED (plan Step
+# 7): A reverts to from-qjson (10) on all three entries below; the
+# measured 9 and this decomposition are kept as an UNCLASSIFIED-pending
+# A-side xfail clause, dated 2026-07-08, rather than asserted as the
+# shipped displayed value.
+#   R-side, per-path (unaffected by the A-side disposition above): WHIFF
+# R=3 vs arcade 5 - fits item 18 (whiff-R anim-reset/cut truncation,
+# docs/frame-data-synthesis.md item 18) cleanly, present on WHIFF itself.
+# BLOCK R=2 and HIT R=2 are IDENTICAL (no HIT-vs-BLOCK differential at
+# all) - this does NOT fit §13.10 Class 2 (UOH's own established
+# mechanism, which specifically requires HIT to sit below BLOCK by some
+# delta; here they are equal) - kept UNCLASSIFIED, hedged, dated
+# 2026-07-08, same shape as dudley-uoh-block/-hit
+# (corpus-dudley.yaml:529-537).
+#   Lever-F-tested (fd_restore_revoked_declared_credit forced 0 on a
+# scratch build, whole-corpus batch, reverted before commit) - see file
+# header ISSUE #17 FAMILY CENSUS for the result (still accurate; the
+# lever-F census is unaffected by the A-side re-disposition above).
+#
+# SWEEP-2 DISPOSITION (2026-07-10, classification sweep #2 fable-grade
+# audit): the A-side UNCLASSIFIED-pending finding above is CONFIRMED as
+# ENGINE-5 candidate ("accumulator blind to same-cgix non-sentinel
+# self-loop"): own ledger shows exactly 3 credit events (cgix 20/24/28,
+# add=3 each), engine_a plateaus at 9 on all three legs while active_pf=11;
+# cell 28 (cgctr=3, non-sentinel) self-loops without a cgix change so
+# neither crediting gate fires (s4-findings.md; gate pair in charset.c
+# char_move()). Affected: urien-uoh-whiff/-block/-hit A-clauses (uniform
+# -2 vs the fully-inclusive active_pf=11 reading). Fix cycle: census of
+# self-looping charts, lever gauntlet, possible new lever; re-measure
+# urien-uoh. R-clauses remain hedged UNCLASSIFIED-R per their own strings
+# (OUT-1 anchor); not touched by this A-side row.
+# UPDATE (2026-07-10, ENGINE-5 closure): the prospective fix cycle above is
+# retired — ENGINE-5 CLOSED ARCADE-INTERMEDIATE without a census (arcade
+# A=10 sits strictly between measured 9 / played 11 / declared 12; no
+# principled target). See the entries' own re-cites below + synthesis
+# ENGINE-5 closure record; convention grant (11 vs 12) on the user-review list.
+# UPDATE (2026-07-11, CAPTURE-1): the grant question above is closed, not
+# merely repeated — live arcade hardware (docs/arcade-frame-data/CAPTURE.md)
+# was captured directly and measured A=10/whiff R=5, confirming (not just
+# citing) urien.json's own row. G3 CLOSED DECLINED (synthesis ENGINE-5
+# closure note): no engine-reachable quantity (9/11/12) equals arcade's 10,
+# so neither grant option is offered. See PORT-DIVERGENCE-1 (synthesis
+# §13.13 exclusion item 2) for the layer-unknown finding this feeds.
+
+# §13.17 RE-ANCHOR-1 (2026-07-11): item-18 CLOSED for this row (FULL flip) — levers O/N now measure A=10, R=5, both arcade/oracle-exact (ENGINE-5's A-side dissolves per its own dated correction; PORT-DIVERGENCE-1 stays retracted). Prior xfail evidence, RELOCATED not deleted: "RE-DISPOSITIONED 2026-07-08 (Step 3 review fix, FLOOR applied - see the UOH FINDING comment above): (1) A-side UNCLASSIFIED-pending: measured A=9 vs arcade (from-qjson) 10 - a trace decomposition (cg_ix=20/24/28, add=3 each = 9 = engine_a/anchor_a) shows this is an accumulator blind spot (a same-cg_ix self-loop at cg_ix=28 adds 2 further uncredited active ticks; the FINAL line's own active_pf=11 confirms the fully-inclusive window sits ABOVE oracle, not below), so this is NOT adopted as §13.11 declared-truth; every prior §13.11 character reads above its oracle figure, never below, which is itself evidence this 9 is not a stable number. (2) issue #17 item 18 whiff-R truncation - measured R=3 vs arcade 5 on WHIFF itself. Trace facts: cut=1, dwellbrk=0, anchor_a=9 (matches engine_a=9), T=29. RE-CITED 2026-07-10 (classification sweep #2, disposition (c) per the fable-grade audit): the A-clause is CONFIRMED as ENGINE-5 candidate (see file header UOH FINDING's SWEEP-2 DISPOSITION addendum) - own future /plan+/implement cycle, own re-measure gate. R-clause (item 18) untouched, stays hedged UNCLASSIFIED-R. RE-CITED 2026-07-10 (ENGINE-5 CLOSED - ARCADE-INTERMEDIATE / NO-PRINCIPLED-TARGET, orchestrator ruling, docs/plan-frame-data-completion.md ENGINE-5 row + docs/frame-data-synthesis.md Sec12.2.4 'Same-cgix non-sentinel self-loop' row): arcade A=10 (urien.json:808-812) re-verified directly, sitting strictly between measured 9 (this entry - self-loop re-dispatch uncredited), played-ticks 11 (active_pf), and declared-with-selfloop 12 (Sec13.11-literal re-dispatch entry credit). The dispatch-vs-dwell mechanism (charset.c:439-444/:675-712) is sound and closed; only the credit-amount FIX TARGET is unreachable by a principled rule - the sole rule reaching 10 is an n=1-overfitted ownership claim, pre-registered REJECTED (same shape ENGINE-6/ENGINE-7 rejected). Closed without a census cycle. Flagged, not decided here: a possible future USER convention grant (display 11 played-truth or 12 declared-truth) is queued on the user-review list, Phase-4-adjacent. Stays xfail at measured 9; no lever ships. RE-CITED 2026-07-11 (CAPTURE-1, G3 CLOSED DECLINED, docs/frame-data-synthesis.md ENGINE-5 closure note + docs/arcade-frame-data/CAPTURE.md): live arcade hardware capture (Fightcade FBNeo + Lua bridge, 2 byte-identical reps) confirms A=10 and whiff R=5 directly, not just the oracle JSON - this engine has no reachable quantity (9/11/12) equal to arcade's 10, so the flagged 11-vs-12 grant is DECLINED, not merely re-deferred: displaying 11 would now knowingly disagree with confirmed-real arcade. Whiff R also directly re-measured: arcade plays 5, matching oracle exactly, vs this leg's measured 3 - PORT-DIVERGENCE-1 (synthesis Sec13.13 exclusion item 2), layer (port vs overlay) explicitly unknown. Stays xfail at measured 9 / R=3; no display convention adopted. RE-CITED 2026-07-11 (LAYER-1): layer RESOLVED (a) OVERLAY/METER, not layer-unknown - a convention-twin engine-raw probe (docs/frame-data-synthesis.md Sec13.16) measures this move's RAW frames at S15/A10/R5, identical to arcade on both revisions (990512 REFERENCE + 990608); PORT-DIVERGENCE-1 is RETRACTED (docs/frame-data-synthesis.md's dated retraction, Sec13.13 exclusion item 2) - 'no reachable quantity equals 10' was true only of the OVERLAY's credit accounting, raw box-A=10 is a fifth, engine-native quantity. Stays xfail at measured 9/R=3, pending the OVERLAY RE-ANCHOR program (docs/plan-frame-data-completion.md's LAYER-1 tracker row, user-gated)."
+- label: urien-uoh-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press MP+MK"
+  qjson: { name: "Universal Overhead" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: urien-uoh-block
+  setup: { dist: close, dummy: stand }
+  input: "press MP+MK"
+  qjson: { name: "Universal Overhead" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: 4, xfail: "[HONEST-FLOOR CENSUS 2026-07-14, opus-substitute / WANTS FABLE RE-REVIEW] TERMINAL CLASS = OVERLAY-DISPLAY-DIVERGENCE (accumulator blind-spot; A=9 vs arcade 10). Arcade A=10 hardware-confirmed (CAPTURE.md, urien.json:808-812); the overlay's same-cgix self-loop accumulator plateaus at 9. NON-SURGICAL: ENGINE-5 CLOSED / grant DECLINED - arcade 10 sits strictly between every reachable engine quantity (9 measured / 11 played / 12 declared) so no principled rule lands on 10; contact-leg, out of RE-ANCHOR-1's whiff-only scope. NARROWED 2026-07-13 (UOH-CLOSURE lever T, docs/frame-data-synthesis.md §13.20; <sp>/zero/arcade-s9/session-report.md BLOCK legs, box 265408-265429, busy768=265434, probe-confirmed exact fc 265434): the R clause is CLOSED at arcade, not merely hedged - real hardware measures R=4, matching this engine's own busy-edge/lever-R construction exactly (lever T); expect.R re-literaled from from-qjson (5, whiff-canonical, never this leg's true value) to the literal 4. This leg stays XFAIL, narrowed to the A-side clause ONLY (measured A=9 vs arcade 10, ENGINE-5 CLOSED / grant DECLINED, EXCLUDED from lever T's scope per design §5 - A does not change anywhere in this payload). Full prior history preserved verbatim, superseded only on the R-clause closure: RE-DISPOSITIONED 2026-07-08 (Step 3 review fix, FLOOR applied - see the UOH FINDING comment above): (1) same A-side UNCLASSIFIED-pending finding as urien-uoh-whiff (measured A=9 vs arcade 10, accumulator blind-spot decomposition, active_pf=11 above oracle). (2) R-side UNCLASSIFIED: measured R=2 vs arcade 5, IDENTICAL to urien-uoh-hit's own R=2 - no HIT-vs-BLOCK differential at all, which rules out §13.10 Class 2. Kept UNCLASSIFIED-R, hedged, dated 2026-07-08 - no mechanism claimed. Trace facts: cut=1, dwellbrk=0, anchor_a=9 (matches engine_a=9), T=33. RE-CITED 2026-07-10 (classification sweep #2, disposition (c)): A-clause CONFIRMED as ENGINE-5 candidate, same posture as urien-uoh-whiff. R-clause stays hedged UNCLASSIFIED-R, untouched. RE-CITED 2026-07-10 (ENGINE-5 CLOSED - ARCADE-INTERMEDIATE / NO-PRINCIPLED-TARGET, same closure as urien-uoh-whiff): arcade A=10 re-verified (urien.json:808-812), strictly between measured 9 (this leg), played-ticks 11, declared-with-selfloop 12; mechanism sound and closed, fix target unreachable by a principled rule (n=1-overfitted ownership claim REJECTED, same shape as ENGINE-6/ENGINE-7). Closed without a census cycle; possible future USER convention grant (11 or 12) flagged, not decided here. Stays xfail at measured 9; R-clause untouched. RE-CITED 2026-07-11 (CAPTURE-1, G3 CLOSED DECLINED): same arcade-hardware A=10 confirmation as urien-uoh-whiff (docs/arcade-frame-data/CAPTURE.md) - the 11-vs-12 grant is DECLINED, not re-deferred. This leg's own R clause (measured R=2, hedged UNCLASSIFIED, no HIT-vs-BLOCK differential) was not itself re-measured by the capture (the rig captured the whiff recipe only) and stays exactly as hedged above, unchanged. RE-CITED 2026-07-11 (LAYER-1): same layer-RESOLVED (a) finding as urien-uoh-whiff (docs/frame-data-synthesis.md Sec13.16) - PORT-DIVERGENCE-1 retracted. This leg's own R=2 clause (hedged UNCLASSIFIED, no HIT-vs-BLOCK differential) remains untested on hardware - the capture measured the whiff recipe only. RE-CITED 2026-07-11 (§13.17 RE-ANCHOR-1): the whiff sibling (urien-uoh-whiff) is now fully resolved - lever N/O measure it arcade/oracle-exact (A=10, R=5), plain PASS, item 18 CLOSED FULL for that leg. This leg is a CONTACT outcome, explicitly OUT of RE-ANCHOR-1's scope (§13.17 'Contact-leg scope' - the twin instrument is not validated on contact S/A; busy-R would not fix the remaining contact xfails anyway). Stays xfail at measured A=9/R=2 pending dedicated contact-leg instrumentation, unaffected by this ship." }
+
+- label: urien-uoh-hit
+  setup: { dist: close, dummy: none }
+  input: "press MP+MK"
+  qjson: { name: "Universal Overhead" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: 4, xfail: "[HONEST-FLOOR CENSUS 2026-07-14, opus-substitute / WANTS FABLE RE-REVIEW] TERMINAL CLASS = OVERLAY-DISPLAY-DIVERGENCE (accumulator blind-spot; A=9 vs arcade 10). Arcade A=10 hardware-confirmed (CAPTURE.md); ENGINE-5 CLOSED / grant DECLINED (9<10<11<12, no principled target); contact-leg, out of RE-ANCHOR-1 whiff-only scope. NARROWED 2026-07-13 (UOH-CLOSURE lever T, docs/frame-data-synthesis.md §13.20; <sp>/zero/arcade-s9/session-report.md HIT legs, box 265408-265425, busy768=265430): same R-clause closure as urien-uoh-block - real arcade R=4, matching this engine's own busy-edge/lever-R construction exactly; expect.R re-literaled to 4. Stays XFAIL, narrowed to the same A-side-only residual as urien-uoh-block (measured A=9 vs arcade 10, ENGINE-5 CLOSED / grant DECLINED, EXCLUDED from lever T's scope - design §5, A does not change). Full prior history preserved verbatim, superseded only on the R-clause closure: RE-DISPOSITIONED 2026-07-08 (Step 3 review fix, FLOOR applied - see the UOH FINDING comment above): (1) same A-side UNCLASSIFIED-pending finding as urien-uoh-whiff (measured A=9 vs arcade 10, accumulator blind-spot decomposition, active_pf=11 above oracle). (2) same R-side-only finding as urien-uoh-block: measured R=2 vs arcade 5, no HIT-vs-BLOCK differential. Trace facts: cut=1, dwellbrk=0, anchor_a=9 (matches engine_a=9), T=29. RE-CITED 2026-07-10 (classification sweep #2, disposition (c)): A-clause CONFIRMED as ENGINE-5 candidate, same posture as urien-uoh-whiff/-block. R-clause stays hedged UNCLASSIFIED-R, untouched. RE-CITED 2026-07-10 (ENGINE-5 CLOSED - ARCADE-INTERMEDIATE / NO-PRINCIPLED-TARGET, same closure as urien-uoh-whiff/-block): arcade A=10 re-verified (urien.json:808-812), strictly between measured 9 (this leg), played-ticks 11, declared-with-selfloop 12; mechanism sound and closed, fix target unreachable by a principled rule (n=1-overfitted ownership claim REJECTED, same shape as ENGINE-6/ENGINE-7). Closed without a census cycle; possible future USER convention grant (11 or 12) flagged, not decided here. Stays xfail at measured 9; R-clause untouched. RE-CITED 2026-07-11 (CAPTURE-1, G3 CLOSED DECLINED): same arcade-hardware A=10 confirmation as urien-uoh-whiff/-block (docs/arcade-frame-data/CAPTURE.md) - the 11-vs-12 grant is DECLINED, not re-deferred. This leg's own R clause (measured R=2, hedged UNCLASSIFIED, no HIT-vs-BLOCK differential) was not itself re-measured by the capture and stays exactly as hedged above, unchanged. RE-CITED 2026-07-11 (LAYER-1): same layer-RESOLVED (a) finding as urien-uoh-whiff (docs/frame-data-synthesis.md Sec13.16) - PORT-DIVERGENCE-1 retracted. This leg's own R clause remains untested on hardware - the capture measured the whiff recipe only. RE-CITED 2026-07-11 (§13.17 RE-ANCHOR-1): same re-cite as urien-uoh-block - the whiff sibling (urien-uoh-whiff) is now fully resolved (A=10, R=5, plain PASS, item 18 CLOSED FULL); this leg is a CONTACT outcome, explicitly OUT of RE-ANCHOR-1's scope (§13.17 'Contact-leg scope'). Stays xfail at measured A=9/R=2 pending dedicated contact-leg instrumentation, unaffected by this ship." }
+
+# --- Ground specials: WHIFF identification block ----------------------------
+# ORDERING NOTE (§12.1 row 2 "teleport clamps / momentum bleed after
+# connecting dash specials" precedent, corpus-dudley.yaml/corpus-yun.yaml's
+# own ORDERING NOTE): all of this rollout's specials' WHIFF entries are
+# grouped together HERE, ahead of any of their own BLOCK/HIT (connecting)
+# entries.
+
+# NO WHIFF entry for Metallic Sphere (Jab): verified live it STILL CONNECTS
+# (outcome=HIT, S=14 A=31 R=39) even at dist=300, the harness's max
+# scriptable distance (DIST_MAX, compile_corpus.py:91) - the same
+# SPECIALS-REACHABILITY GAP shape as corpus-dudley.yaml's Machine Gun Blow
+# Fierce / corpus-ryu.yaml's Hadouken (a projectile that travels the full
+# scriptable distance and still connects), except here it is the WEAKEST
+# strength (Jab) that fails to whiff rather than the strongest - S/R still
+# match urien.json's Metallic Sphere (Jab) row EXACTLY even in this
+# "wrong shape" HIT read (S=14, R=39, both at dist=250 and dist=300),
+# proving correct move identification and confirming the projectile
+# arcade-split (proj_seen && !use_hatt) fires correctly for this entry too
+# (proj=1, proj_a matches S, proj_spawn_raw=14) - only the WHIFF outcome
+# itself is unreachable. Strong/Fierce below DO whiff cleanly within
+# DIST_MAX, proving this is a reach limit and not a move-identification
+# failure.
+
+- label: urien-msphere-mp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "motion qcf MP"
+  qjson: { name: "Metallic Sphere (Strong)" }
+  outcome: WHIFF
+  expect: { S: from-qjson, R: from-qjson }
+
+- label: urien-msphere-hp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "motion qcf HP"
+  qjson: { name: "Metallic Sphere (Fierce)" }
+  outcome: WHIFF
+  expect: { S: from-qjson, R: from-qjson }
+
+# DISTANCE NOTE (runbook Phase 2 "binary-search the actual connecting
+# distance" precedent, ryu-far-jab-block dist=90): Chariot rush (Short)'s
+# dash does NOT reach dist=close (56px) at all - verified live it reads a
+# clean WHIFF there. An isolated probe (S=7 A=10 R=23 at dist=20/30/40/50
+# alike) suggested a narrow reach window just below 56px, but this did
+# NOT reproduce inside the full corpus at any of five different
+# placements/predecessors tried (see the CHARIOT RUSH (SHORT) BLOCK/HIT
+# ACCEPTED HARNESS GAP comment below for the full diagnosis) - Short's
+# BLOCK/HIT are therefore not asserted anywhere in this corpus; WHIFF
+# (this entry) is the only reachable, honestly-assertable outcome.
+- label: urien-chariot-lk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "motion charge-back 60 then-forward LK"
+  qjson: { name: "Chariot rush (Short)" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: urien-chariot-mk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "motion charge-back 60 then-forward MK"
+  qjson: { name: "Chariot rush (Forward)" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# NO WHIFF entry for Chariot rush (RH) at ANCHORED dist_mode: verified live
+# it STILL CONNECTS (outcome=HIT, S=13 A=15 R=17) even at dist=300, the
+# anchored harness's max scriptable distance (DIST_MAX) - the same
+# SPECIALS-REACHABILITY GAP shape as Metallic Sphere (Jab) above. Notably
+# S=13/A=15 is an EXACT match to urien.json's Chariot rush (RH) row at this
+# far contact distance - see the BLOCK/HIT section below, where the SAME
+# move measured at dist:close instead undercounts A to 3 (later re-pinned to
+# 6, see the ISSUE #17 FAMILY CENSUS above), a genuinely distance-dependent
+# divergence (discussed there in full).
+#
+# CAP-4 PROBE (2026-07-14): `dist_mode: centered` (never tried for chariot;
+# every other chariot leg uses anchored placement) recovers ~76px of
+# additional separation over anchored DIST_MAX (compile_corpus.py:105-117,
+# CENTERED_DIST_MAX=310, ~328px achievable vs anchored's ~252px) - PLUS the
+# 60-frame charge-back hold walks Urien backward with more room to do so
+# before hitting the stage bound when centered (P1 starts ~345 vs anchored's
+# 424-pinned-near-bound), so the effective separation at dash-fire was
+# hypothesized to possibly exceed 328px materially (feasibility.md §2.5).
+# MEASURED (isolated single-entry probe, `dist: 310, dummy: none, dist_mode:
+# centered`, `<sp>/zero/cap4/rundir-probe1/trace.log` F=3048 window):
+# MOVE_START reads atk_x=333 def_x=655 dist=322 - i.e. the dash-fire
+# separation DID grow past the anchored ceiling, close to the ~328px
+# theoretical max - but Chariot rush (RH) STILL CONNECTS at this
+# near-maximum achievable separation: `outcome=HIT S=13 A=15 R=20 T=48
+# adv=-2` (FINAL line, F=3167). RESULT: centered dist_mode does NOT produce
+# a WHIFF for this strength even at its own hard ceiling (310/~322-328px) -
+# the SPECIALS-REACHABILITY GAP is now empirically confirmed (not merely
+# inferred from the anchored-only probe above) to hold across BOTH
+# placement modes: RH's dash reach genuinely covers the full stage-position
+# envelope this harness can produce. No WHIFF entry is added for this
+# strength - per this corpus's own "documenting the gap rather than
+# guessing" precedent (see the CHARIOT RUSH (SHORT) BLOCK/HIT ACCEPTED
+# HARNESS GAP comment below), a probe entry that can never assert WHIFF is
+# not carried forward as a corpus row. A forced whiff (if ever pursued)
+# would need a new no-collision dummy mode (input_script.c +
+# compile_corpus.py GUARD_MODES) - out of scope for this pass; the
+# BLOCK/HIT contact legs below stay exactly as they were (xfail, R an open
+# unclassified observation) since no clean per-strength whiff baseline
+# exists to anchor an engine-truth R conversion. Incidentally, this probe
+# IS a second independent measurement of the far-contact HIT case (A=15
+# exact, same as the pre-fix dist=250/300 probe cited in the CHARIOT RUSH
+# (RH) FINDING comment below) and reads R=20 - identical to the existing
+# close-contact `urien-chariot-hk-hit` measurement (A=6, R=20) despite the
+# very different A/distance - suggestive that R=20 is distance-independent
+# on the HIT path, but this is an aside, not a whiff baseline, and does not
+# by itself meet the discipline's bar for a conversion (no oracle-27
+# whiff-canonical anchor was reached).
+
+# Headbutt: RESOLVED 2026-07-08 (§13.5.1a grounded fresh-edge cut gate,
+# docs/frame-data-synthesis.md §13.5.1a). The old uniform -5 (Jab 19->14,
+# Strong 18->13, Fierce 19->14, inherited unchanged onto BLOCK/HIT) was a
+# §13.5.1 false cut - post-fix R=19/18/19 EXACT on every strength and
+# outcome; whiff/block/lp-mp-hit xfails removed, plain PASS. S/A exact on
+# every strength (no #17 A-side divergence at all for this move, unlike
+# Chariot rush/Violence Knee Drop below - lever-F-tested UNCHANGED for
+# every Headbutt A field, see file header ISSUE #17 FAMILY CENSUS).
+
+# §13.17 RE-ANCHOR-1 OUTCOME A (2026-07-11), per-strength ERRATA (each
+# strength evaluated against its OWN oracle value, never a uniform 19 -
+# `urien.json`: Jab Recovery=19, Strong Recovery=18, Fierce Recovery=19):
+# Session-4 busy-edge capture (990512, docs/arcade-frame-data/CAPTURE.md
+# Session 4 Target 1) measured busy-R 16/15/16, and the Session-5
+# actionability probe (`<sp>/capture/session5-results.md`) confirmed all
+# three strengths accept a new input exactly at the busy edge (edge+0,
+# not edge+3) - the same 3-tick post-edge rno3==3 residue signature as
+# ibuki-twdsforward/-twdsroundhouse-whiff. `from-qjson` no longer citable
+# for whiff R on any of the three; each strength's R is now its own
+# literal, matching Session-4/5's own measurement for that strength. The
+# BLOCK/HIT contact legs below keep their measured values as literals too
+# (§13.17: `from-qjson` non-citable there as well, since it was the same
+# field). RESOLVED 2026-07-13 (CONTACT-2, lever R): the "SEPARATE,
+# unmeasured question" this comment used to leave open - whether arcade's
+# contact-leg R is also 3 lower than the stale 19/18/19 oracle - is
+# answered below: Session 6/TRACK-A (`<sp>/zero/arcade-track-a/
+# session-report.md`) captured the BLOCK/HIT contact legs on real
+# hardware at R=16/15/16 per strength, the identical -3 offset already
+# established on WHIFF. Lever R (`fd_contact_busy_edge_r`,
+# frame_data_overlay.c §13.19) computes the same busy-edge arithmetic on
+# the CONTACT side that lever N already computes on WHIFF and byte-
+# matches this capture; CONTACT-2 Step 2 wires it into the display and
+# converts the BLOCK/HIT literals below from the stale 19/18/19 to the
+# arcade-confirmed 16/15/16.
+- label: urien-headbutt-lp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "motion charge-down 60 then-up LP"
+  qjson: { name: "Headbutt (Jab)" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: 16 }
+
+- label: urien-headbutt-mp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "motion charge-down 60 then-up MP"
+  qjson: { name: "Headbutt (Strong)" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: 15 }
+
+- label: urien-headbutt-hp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "motion charge-down 60 then-up HP"
+  qjson: { name: "Headbutt (Fierce)" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: 16 }
+
+# Violence Knee Drop - see the FLAGGED PROMINENTLY finding in the BLOCK/HIT
+# section below for the full R discussion. S/A match urien.json's
+# single Violence Knee Drop row exactly on WHIFF (unambiguous
+# identification); R RE-CITED 2026-07-08 (§13.5.1a cut gate): the old
+# extreme R=0 was a §13.5.1 false cut - post-fix WHIFF reads R=6 vs
+# arcade 7, a -1 residual item-18(b) early-cut.
+# §13.17 RE-ANCHOR-1 (2026-07-11): item-18 CLOSED for this row — lever N now measures R=7, matching arcade/oracle exactly. Prior xfail evidence, RELOCATED not deleted: "RE-CITED 2026-07-08 (§13.5.1a cut gate): measured R=6 vs arcade 7 - the old EXTREME R=0 was a §13.5.1 false cut, now refused by the grounded fresh-edge gate, and the deficit collapses from -7 to -1. The residual -1 is a residual item 18(b) grounded fresh-edge early-cut (q-uoh-whiff-r precedent shape); S/A exact (S=24, A=12). See urien-vkd-lk-block/-hit below for the FLAGGED compound finding this feeds into"
+- label: urien-vkd-lk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "motion charge-down 60 then-up LK"
+  qjson: { name: "Violence Knee Drop" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# CHARIOT RUSH (SHORT) BLOCK/HIT - ACCEPTED HARNESS GAP (not constructed,
+# five live placements tried and none reliably connect - documented per
+# the runbook's DHA-long-charge-variant precedent, §12.1 register row 3:
+# "documenting the gap rather than guessing the input recipe is explicitly
+# authorized"). Root cause, diagnosed via isolated single-entry MOVE_START
+# traces: `setup.dist` sets P1/P2's separation at the moment this entry's
+# script begins, BEFORE the 60-frame charge-back hold plays out - but
+# holding BACK for that long visibly walks Urien backward in the interim
+# (confirmed by comparing MOVE_START's own `dist` field to the requested
+# value: urien-chariot-mk-block requests dist=56 but MOVE_START reads
+# dist=225; urien-chariot-lk-block at dist=40 read dist=196-236 across
+# five different placements/predecessors - a consistent ~+170-180px
+# growth regardless of which move precedes it, ruling out a predecessor-
+# residue explanation). MK/RH's own dash reach is long enough to close a
+# ~225px gap regardless (confirmed working at dist:close in every run);
+# Short's dash reach is not - it needs the POST-charge gap small enough to
+# close, but the ~170-180px charge-walk growth is itself not perfectly
+# reproducible run-to-run (varied by ~40px across the five placements
+# tried: 196, 225, 236...), so no single requested `setup.dist` value was
+# found to reliably land within Short's reach. WHIFF (urien-chariot-lk-
+# whiff above) is the only assertable outcome for this strength - S/A
+# match urien.json's Chariot rush (Short) row exactly there, confirming
+# correct move identification independent of this reachability gap.
+
+# --- Metallic Sphere (projectile), motion qcf + P ---------------------------
+# Exercises the projectile arcade-split machinery (proj_seen && !use_hatt,
+# frame_data_overlay.c:446) on a FOURTH character (precedent: Ryu Hadouken,
+# corpus-ryu.yaml; Q's Dashing Head Attack is a different mechanism). S/R
+# from-qjson; Hit_advantage is the literal string "-" for every Metallic
+# Sphere row (same as Hadouken's non-numeric Hit field) - no expect.A
+# anywhere in this section.
+
+- label: urien-msphere-lp-block
+  setup: { dist: close, dummy: stand }
+  input: "motion qcf LP"
+  qjson: { name: "Metallic Sphere (Jab)" }
+  outcome: BLOCK
+  expect: { S: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: urien-msphere-mp-block
+  setup: { dist: close, dummy: stand }
+  input: "motion qcf MP"
+  qjson: { name: "Metallic Sphere (Strong)" }
+  outcome: BLOCK
+  expect: { S: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: urien-msphere-hp-block
+  setup: { dist: close, dummy: stand }
+  input: "motion qcf HP"
+  qjson: { name: "Metallic Sphere (Fierce)" }
+  outcome: BLOCK
+  expect: { S: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: urien-msphere-lp-hit
+  setup: { dist: close, dummy: none }
+  input: "motion qcf LP"
+  qjson: { name: "Metallic Sphere (Jab)" }
+  outcome: HIT
+  expect: { S: from-qjson, R: from-qjson }
+
+- label: urien-msphere-mp-hit
+  setup: { dist: close, dummy: none }
+  input: "motion qcf MP"
+  qjson: { name: "Metallic Sphere (Strong)" }
+  outcome: HIT
+  expect: { S: from-qjson, R: from-qjson }
+
+- label: urien-msphere-hp-hit
+  setup: { dist: close, dummy: none }
+  input: "motion qcf HP"
+  qjson: { name: "Metallic Sphere (Fierce)" }
+  outcome: HIT
+  expect: { S: from-qjson, R: from-qjson }
+
+# --- Chariot rush (charge-back-then-forward + K), task-named "Chariot Tackle"
+# Landed via the EXISTING `motion charge-back <N> then-forward <BTN>` macro
+# (Q's Dashing Head Attack precedent, corpus-q.yaml), 60-frame charge (same
+# convention as Chun-Li's Spinning Bird Kick / Q's DHA).
+#
+# NOTE: LK (Short) has NO BLOCK/HIT entries in this section (only MK/
+# Forward and HK/RH below) - see the CHARIOT RUSH (SHORT) BLOCK/HIT
+# ACCEPTED HARNESS GAP comment in the ground-specials WHIFF-identification
+# section above (immediately after urien-vkd-lk-whiff) for the full
+# diagnosis: five live placements were tried and none reliably connect
+# Short's dash within the harness's single-teleport-per-entry primitive.
+# MK/RH both connect reliably at dist:close in every placement tried, so
+# only Short is affected - this is a strength-specific reachability gap,
+# not a general Chariot rush problem.
+
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): R=27 is
+# the engine-truth recovery actually played on the BLOCK path - SWEEP-2
+# (2026-07-10) FULL CONVERT, xfail REMOVED. The former "small unexplained +1
+# residual" is UPGRADED to a full F2 R-surplus corollary (§13.13:5145-5147)
+# membership by classification sweep #2's fable-grade audit: branch closes
+# EXACTLY under the window's measured counting rule - postthaw-inclusive
+# branch cells 92-postthaw(1)+96(3)+100(4)+104(9)+108(4)+112(3)=24 vs
+# whiff-only cells 36(1)+40(3)+44(4)+48(8)+52(4)+56(3)=23, shared cells
+# 0(2)+4(1); +1 exact (P2 direct, run-urien GT=650-707 - the first audit's
+# "23=23" omitted cell 92's post-thaw tick). DATED CORRECTION: the prior
+# xfail's "adv -11 vs arcade -12" comparison was FALSE - urien.json's
+# Chariot rush (Forward) Block_advantage is -11 exactly (verified), so adv
+# is arcade-exact; only R diverges. Arcade (whiff-canonical) R=26 -
+# superseded per the convention. S/A/adv remain arcade-exact (from-qjson).
+- label: urien-chariot-mk-block
+  setup: { dist: close, dummy: stand }
+  input: "motion charge-back 60 then-forward MK"
+  qjson: { name: "Chariot rush (Forward)" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: 27, adv: from-qjson }
+
+# CHARIOT RUSH (RH) FINDING - FLAGGED PROMINENTLY (distance-dependent A
+# divergence, not a routine issue #17 member; see file header ISSUE #17
+# FAMILY CENSUS). S=13 matches urien.json's Chariot rush (RH) row exactly
+# at EVERY tested distance (unambiguous identification everywhere). No
+# clean WHIFF baseline exists for this strength - verified live it STILL
+# CONNECTS even at dist=300 (DIST_MAX), the same SPECIALS-REACHABILITY GAP
+# shape as Metallic Sphere (Jab) above - but critically, A behaves
+# DIFFERENTLY depending on how far along the dash contact occurs:
+#   - Contact FAR (dist=250 or dist=300, near the end of the dash's
+#     travel): A=15, an EXACT match to arcade. Measured identically at
+#     both distances (isolated probe).
+#   - Contact CLOSE (dist=close/56, near the start of the dash's active
+#     window): A=6, a large undercount vs arcade 15 (-9) - lever-F-tested
+#     (fd_restore_revoked_declared_credit forced 0 on a scratch build,
+#     whole-corpus batch, reverted before commit) and confirmed UNCHANGED,
+#     ruling out a lever-F regression, confirming this is shape (a1)
+#     (skip-jump, unrecoverable) at close range specifically.
+# RE-PINNED 2026-07-08 (Step 3 review fix): this comment previously read
+# "A=3" for the close-contact case. Re-verified live on two full-corpus
+# runs plus a dedicated isolated-probe session (single-entry probe at
+# dist=close, then a further four placements at dist=20/30/40/50 - six
+# placements total, all in this same close-range regime) and every one
+# measures A=6, never A=3 - the "3" figure did not reproduce anywhere
+# tested and is not carried forward as a genuine probe-session data
+# point (only two verified values exist for this move: 6 close, 15 far).
+# This is the FIRST distance-dependent #17 finding in this repo: the same
+# move's declared-credit skip-jump only fires when contact happens early
+# in the cg_ix chain (close range), not when it happens later (far
+# range, near the end of the dash where the chain has already progressed
+# past the skip point) - consistent with shape (a1)'s established
+# mechanism (a same-tick cg_ix jump past declared cell(s)), just newly
+# observed to depend on WHERE in the chain contact lands rather than
+# always firing. R RE-CITED 2026-07-08 (§13.5.1a cut gate): now reads
+# R=28/20 at dist=close BLOCK/HIT (was 25/17 pre-fix - a false-cut
+# component was removed) but still does not match arcade (27) and there
+# is no clean whiff to anchor an R classification against - noted as an
+# open, unresolved R-side observation rather than filed under any
+# established bucket. (The pre-fix far-contact probe figures, R=17 at
+# dist=250/300, predate the gate and were not re-probed.)
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=6 is the
+# engine-truth credit actually accrued on the BLOCK path at dist=close (contact
+# happens early in the dash's cg_ix chain, distance-dependent issue #17 shape
+# (a1); RE-PINNED 2026-07-08, re-verified on 2 full-corpus runs plus a
+# 5-placement isolated probe, all reading A=6; the SAME move measures A=15
+# EXACT at dist=250/300, contact happens late in the chain past the skip
+# point; lever-F-tested UNCHANGED at dist=close, confirming pure (a1)).
+# Arcade (whiff-canonical, from-qjson) A=15 - preserved here per the
+# convention. adv remains arcade-exact (from-qjson). R stays xfail below
+# (residual clause, EXCLUDED open unclassified observation - no clean WHIFF
+# baseline exists for this strength, SPECIALS-REACHABILITY GAP).
+- label: urien-chariot-hk-block
+  setup: { dist: close, dummy: stand }
+  input: "motion charge-back 60 then-forward HK"
+  qjson: { name: "Chariot rush (RH)" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: 6, R: from-qjson, adv: from-qjson, xfail: "[HONEST-FLOOR CENSUS 2026-07-14, opus-substitute / WANTS FABLE RE-REVIEW] TERMINAL CLASS = REACHABILITY-GAP (whiff unproducible). No hardware whiff value is obtainable: CAP-4 (<sp>/zero/cap4/chariot-impl-report.md) forced a centered-mode whiff at the harness DIST_MAX ceiling (dist=322 at dash-fire, more separation than any prior probe) and Chariot rush RH STILL CONNECTS (outcome=HIT, not WHIFF) - the specials-reachability gap is empirically confirmed across the entire achievable placement envelope, not inferred. NON-SURGICAL: no clean WHIFF baseline exists to anchor the engine-truth R; the only remaining route is a new no-collision dummy-harness driver mode (feasibility.md 2.5), out of scope. Golden stays oracle, XFAIL. Prior disposition (unchanged): NARROWED 2026-07-10 (§13.13): A now asserts the engine-truth value (see entry comment); remaining clause: R-side also diverges (RE-CITED 2026-07-08 per the §13.5.1a cut gate: measured 28 vs arcade 27, was 25 pre-fix) but no clean WHIFF baseline exists for this strength (SPECIALS-REACHABILITY GAP, connects even at DIST_MAX) - R left as an open, unclassified observation. RE-CITED 2026-07-10 (classification sweep #2, disposition (d) per the fable-grade audit): routed to docs/frame-data-synthesis.md §12.1 NEW ROW 7 (no reachable WHIFF window across 8 distances spanning 56-300; DIST_MAX hard ceiling; SPECIALS-REACHABILITY shape of rows 4/5). No corpus text change beyond this pointer; stays xfail." }
+
+# §13.10 HIT-R convention (adopted 2026-07-10, §13.10-compliance conversion,
+# F2b): R=19 is the engine-truth recovery actually played on the HIT path
+# (RE-CITED 2026-07-08 per the §13.5.1a cut gate, the false-cut component is
+# resolved - WHIFF now reads the arcade-exact 26 and BLOCK 27); still well
+# below the arcade/BLOCK figure, the genuine Class 1 hit-branch reduction
+# that remains. Arcade (whiff-canonical) R=26 - preserved here per the
+# convention. S/A remain arcade-exact (from-qjson).
+- label: urien-chariot-mk-hit
+  setup: { dist: close, dummy: none }
+  input: "motion charge-back 60 then-forward MK"
+  qjson: { name: "Chariot rush (Forward)" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: 19 }
+
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=6 is the
+# engine-truth credit actually accrued on the HIT path - same distance-
+# dependent shape (a1) as urien-chariot-hk-block. Arcade (whiff-canonical,
+# from-qjson) A=15 - preserved here per the convention. R stays xfail below
+# (residual clause, same EXCLUDED open unclassified observation as
+# urien-chariot-hk-block).
+- label: urien-chariot-hk-hit
+  setup: { dist: close, dummy: none }
+  input: "motion charge-back 60 then-forward HK"
+  qjson: { name: "Chariot rush (RH)" }
+  outcome: HIT
+  expect: { S: from-qjson, A: 6, R: from-qjson, xfail: "[HONEST-FLOOR CENSUS 2026-07-14, opus-substitute / WANTS FABLE RE-REVIEW] TERMINAL CLASS = REACHABILITY-GAP (whiff unproducible). Same as the BLOCK leg: CAP-4 confirmed the RH dash still connects at dist=322 (no WHIFF) so no clean R baseline exists; non-surgical (needs a no-collision dummy mode). Golden stays oracle, XFAIL. Prior disposition (unchanged): NARROWED 2026-07-10 (§13.13): A now asserts the engine-truth value (see entry comment); remaining clause: R RE-CITED 2026-07-08 (§13.5.1a cut gate): measured R=20 (was 17 pre-fix; vs arcade 27, no clean whiff baseline exists for this strength, left as an open unclassified observation). RE-CITED 2026-07-10 (classification sweep #2, disposition (d)): same §12.1 NEW ROW 7 pointer as urien-chariot-hk-block. No corpus text change beyond this pointer; stays xfail." }
+
+# --- Headbutt (charge-down-then-up + P), task-named "Dangerous Headbutt" ---
+# Landed via the EXISTING `motion charge-down <N> then-up <BTN>` macro (same
+# recipe as Chun-Li's Spinning Bird Kick / Ken's Shoryuken-shape chains),
+# 60-frame charge.
+
+# §13.17 RE-ANCHOR-1 (2026-07-11), citation-only conversion: these BLOCK
+# legs' own measured R (19/18/19 per strength, see the WHIFF entries' own
+# comment for the OUTCOME A story) used to be untouched — lever N never
+# applies to BLOCK, zero contact drift, census-confirmed. `from-qjson` is
+# no longer citable, since the underlying oracle field is the SAME one
+# the WHIFF legs used to cite and that field is now ERRATA'd wrong for
+# whiff-actionability.
+# CONVERTED 2026-07-13 (CONTACT-2, lever R, §1.3/§8.6): the "whether
+# arcade's own contact-leg R is also 3 lower than displayed" question
+# this comment used to leave open is now answered. Session 6/TRACK-A
+# (`<sp>/zero/arcade-track-a/session-report.md`) captured all three
+# BLOCK legs on real hardware at R=16/15/16 (a uniform -3 from the stale
+# 19/18/19 oracle), byte-matching lever R's busy-edge construction
+# (`fd_contact_busy_edge_r`, frame_data_overlay.c §13.19). Literals below
+# converted 19/18/19 -> 16/15/16 with this citation; rows stay PASS.
+- label: urien-headbutt-lp-block
+  setup: { dist: close, dummy: stand }
+  input: "motion charge-down 60 then-up LP"
+  qjson: { name: "Headbutt (Jab)" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: 16, adv: from-qjson }
+
+- label: urien-headbutt-mp-block
+  setup: { dist: close, dummy: stand }
+  input: "motion charge-down 60 then-up MP"
+  qjson: { name: "Headbutt (Strong)" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: 15, adv: from-qjson }
+
+- label: urien-headbutt-hp-block
+  setup: { dist: close, dummy: stand }
+  input: "motion charge-down 60 then-up HP"
+  qjson: { name: "Headbutt (Fierce)" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: 16, adv: from-qjson }
+
+# HEADBUTT KD FINDING: urien.json's Headbutt rows all have Hit_advantage="-"
+# (non-numeric, NOT "D" - i.e. the oracle does not annotate this move as a
+# knockdown for any strength) but measured LIVE all three strengths DO set
+# the engine's knockdown flag (kd=1, uniform). This used to be the OPPOSITE
+# direction of the "D"-notation-vs-live-kd inconsistency documented for
+# Dudley's Crouching Roundhouse / Yun's standing Forward (those cases used
+# to have oracle "D" but live kd=0, while Headbutt had no "D" annotation at
+# all yet measured kd=1 live). RESOLVED 2026-07-09 (§13.6.2b, ENGINE-3):
+# both Dudley's Crouching Roundhouse and Yun's standing Forward now also
+# measure kd=1 live, matching their own "D" annotations - the shipped
+# predicate was simply blind to their down-family traversal, not a genuine
+# oracle/engine divergence, so the contrast this finding drew no longer
+# holds (Headbutt's own kd=1 reading is unchanged either way). kd is
+# explicit-only (never from-qjson, Phase 3 discipline); asserted here at
+# the measured value for all three strengths.
+# §13.17 RE-ANCHOR-1 (2026-07-11), citation-only conversion — same
+# treatment as the BLOCK legs above.
+# CONVERTED 2026-07-13 (CONTACT-2, lever R, §1.3/§8.6): Session 6/TRACK-A
+# (`<sp>/zero/arcade-track-a/session-report.md`) captured all three HIT
+# legs on real hardware at R=16/15/16, the same -3 offset as the BLOCK
+# legs above, byte-matching lever R's busy-edge construction. Literals
+# below converted 19/18/19 -> 16/15/16 with this citation; rows stay PASS.
+- label: urien-headbutt-lp-hit
+  setup: { dist: close, dummy: none }
+  input: "motion charge-down 60 then-up LP"
+  qjson: { name: "Headbutt (Jab)" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: 16, kd: 1 }
+
+- label: urien-headbutt-mp-hit
+  setup: { dist: close, dummy: none }
+  input: "motion charge-down 60 then-up MP"
+  qjson: { name: "Headbutt (Strong)" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: 15, kd: 1 }
+
+# HEADBUTT HP-HIT SPACER (2026-07-11, HEADBUTT-DEFER fix, own re-measure
+# gate - docs/plan-frame-data-completion.md HEADBUTT-DEFER row / synthesis
+# §12.1 row 8): urien-headbutt-mp-hit above is a connecting knockdown HIT.
+# Per s13-findings (classification sweep #2, 2026-07-10), a
+# distance-sensitive entry placed immediately after a connecting knockdown
+# HIT can WHIFF from post-knockdown contact-residue even though its
+# P-teleport reads the exact requested distance (NOT the P-teleport-no-op
+# class - rows 1/2 - position is always correct here; only contact
+# registration fails). Root cause: the defender needs more elapsed frames
+# past its own def_idle flag than that flag alone guarantees (threshold
+# bracketed 53..~206 frames past def_idle, s13-findings RUNs 2-5). Two
+# candidate fixes were independently verified (s13-findings RUN 4/RUN 5)
+# to restore the byte-identical isolated baseline (S=12/A=6/R=19/kd=1):
+# (a) a WHIFF spacer entry between the knockdown predecessor and the
+# distance-sensitive target, or (b) raising this corpus's top-level
+# inter_entry_wait 150->400. Chosen: (a) - it touches only this one
+# couplet (the corpus's other 62 entries keep byte-identical timing,
+# unlike (b), which would re-pace every entry in the file), and it matches
+# this repo's established row-1 idiom (corpus-hugo.yaml's
+# h-meatsquasher-short-whiff reordering comment: "a WHIFF predecessor
+# leaves no knockdown residue at all, so the teleport lands cleanly").
+# Recipe: the identical guaranteed-WHIFF "press LP" at dist=250 already
+# used by urien-lp-whiff above, re-run here under its own label purely for
+# its spacing side effect (a jab whiffs cleanly at 250px, leaving no
+# contact residue of its own before urien-headbutt-hp-hit's teleport and
+# attack).
+- label: urien-headbutt-hp-hit-spacer-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press LP"
+  qjson: { name: "Jab" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# DIST NOTE (2026-07-08, Step 3 review fix - MASKED SHAPE FAILURE
+# corrected): this entry previously used dist=close (56px, the same
+# setup as every lp/mp-hit sibling) but Fierce headbutt does NOT connect
+# there - it measures outcome=WHIFF, kd=0 at that distance, a shape
+# mismatch that a purely-numeric xfail string had been silently hiding
+# (the old text asserted "R=14 matches BLOCK/WHIFF exactly" without ever
+# stating the outcome itself was wrong). Re-verified: urien-headbutt-hp-
+# block (above) genuinely connects as BLOCK at dist=close - only the HIT
+# path was affected. A short probe (6 placements: dist=40/70/90/110/130/
+# 150) found dist=40/70/110 connect (outcome=HIT) while dist=90/130/150
+# (and close/56) whiff - dist=70 was picked and reproduced deterministically
+# on 2 separate runs (byte-identical S=12 A=6 R=14 kd=1).
+# UPDATE 2026-07-08 (§13.5.1a session): in FULL-CORPUS order this entry
+# reads outcome=WHIFF, kd=0 on BOTH builds measured this session - the
+# post-fix build (R=19) AND the lever-G legacy-level-test control build
+# (R=14, byte-equivalent to the pre-fix binary) - so the outcome anomaly
+# is NOT caused by the cut gate; the gate only changed R (14->19). The
+# dist=70 HIT verification above evidently held in isolated probes but
+# does not reproduce in full-corpus order this session. Stated EXPLICITLY
+# per this note's own history; the xfail below carries the outcome
+# anomaly as its first clause. Needs a fresh placement probe.
+# FIX LANDED (2026-07-11, HEADBUTT-DEFER, own re-measure gate): the
+# urien-headbutt-hp-hit-spacer-whiff entry above (inserted immediately
+# before this entry) resolves the outcome anomaly - re-measured in
+# full-corpus order with the spacer in place: outcome=HIT, S=12 A=6 R=19
+# kd=1, byte-identical to the isolated baseline (s13-findings RUN 2) and
+# to the WHIFF-spacer candidate-fix probe (s13-findings RUN 4). S/A/R
+# match docs/arcade-frame-data/urien.json's Headbutt (Fierce) row exactly
+# (Startup=12/Hit=6/Recovery=19); kd stays explicit (not from-qjson, same
+# as the lp/mp-hit siblings - Hit_advantage is "-" in the oracle, so no
+# adv is asserted here either, same shape as those siblings). Plain PASS;
+# xfail removed.
+# §13.17 RE-ANCHOR-1 (2026-07-11), citation-only conversion, same
+# treatment as urien-headbutt-lp/mp-hit above.
+# CONVERTED 2026-07-13 (CONTACT-2, lever R, §1.3/§8.6): Session 6/TRACK-A
+# (`<sp>/zero/arcade-track-a/session-report.md`) measured this leg on
+# real hardware at R=16, the same -3 offset as its lp/mp-hit siblings and
+# the BLOCK legs above; converted 19 -> 16 with this citation, byte-
+# matching lever R's busy-edge construction. Stays PASS.
+- label: urien-headbutt-hp-hit
+  setup: { dist: 70, dummy: none }
+  input: "motion charge-down 60 then-up HP"
+  qjson: { name: "Headbutt (Fierce)" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: 16, kd: 1 }
+
+# --- Violence Knee Drop (charge-down-then-up + K) ---------------------------
+# urien.json has only ONE row for this move (no strength split) - a single
+# Short-button probe is used below; Strong/Fierce would presumably read
+# identically (same oracle row) but are not separately probed per this
+# rollout's one-session budget.
+
+# VIOLENCE KNEE DROP FINDING - FLAGGED PROMINENTLY (not a routine
+# UNCLASSIFIED; see file header ISSUE #17 FAMILY CENSUS). S matches
+# urien.json exactly on every outcome (S=24, unambiguous identification).
+# RE-PINNED 2026-07-08 (Step 3 review fix): this comment previously read
+# A=5/R=24/anchor_a=5 throughout - re-verified live on two full-corpus
+# runs and the actual measured values are A=4/R=25/anchor_a=4; every
+# other qualitative claim below (shape, lever-F result, mechanism)
+# remains correct, only the specific numbers change.
+#   A-side: contact undercount, measured 4 vs arcade 12 (-8) on BOTH BLOCK
+# and HIT identically; lever-F-tested (fd_restore_revoked_declared_credit
+# forced 0 on a scratch build, whole-corpus batch, reverted before commit)
+# and confirmed UNCHANGED - no revoke fires, ruling out a lever-F
+# regression, confirming pure shape (a1) for the A clause alone.
+#   R-side, RE-CITED 2026-07-08 (§13.5.1a cut gate - the old readings
+# 0/25/25 contained a false-cut component, now removed): WHIFF R=6 (vs
+# arcade 7, a -1 residual item-18(b) early-cut, see urien-vkd-lk-whiff),
+# BLOCK R=32 (a +25 SURPLUS vs arcade, and a +26 surplus vs the WHIFF
+# figure - the opposite sign and vastly larger magnitude than any
+# established R-surplus precedent; adv -17 vs arcade -16), HIT R=32
+# (identical to BLOCK, no further HIT-specific effect). Still three
+# mutually-inconsistent R readings (6/32/32). This does not fit Phase 6
+# item 4 (Hugo-Roundhouse R-surplus bucket, which requires A EXACT - fails
+# here since A already undercounts), does not fit §13.10 Class 1 (requires
+# BLOCK to match arcade or its own whiff baseline - neither holds; BLOCK's
+# R is neither arcade's 7 nor WHIFF's 6), and does not fit Class 3
+# (not a grab). UNCLASSIFIED, no mechanism claimed, flagged to
+# orchestrator/user for follow-up classification, dated 2026-07-08.
+
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=4 is the
+# engine-truth credit actually accrued on the BLOCK path - issue #17 shape
+# (a1), pure, lever-F-tested UNCHANGED (see the VIOLENCE KNEE DROP FINDING
+# comment above). Arcade (whiff-canonical, from-qjson) A=12 - preserved here
+# per the convention. adv remains arcade-exact (from-qjson). NARROW sweep #3
+# (2026-07-11, F2, §13.13): R=32 is the engine-truth recovery played on the
+# BLOCK path - branch cgix 68(3)/72(3)/76(2)/80(3)/84(3)/88(11) = 25 ticks,
+# all jatix=0, byte-identical to the HIT leg (s12-rundir/run-urien-full
+# F5033-5057), absent from WHIFF (cgix histogram F3771-3815), entered only
+# via the cgix60 hitstop exit; R = branch 25 + cleanup 7 = 32; contact R -
+# arcade Recovery 7 = +25 = branch exactly - the F2 bar met as written.
+# Arcade Recovery 7 preserved. R clause CLOSED; the residual clause below is
+# now adv only (measured -17 vs arcade Block_advantage -16, a pre-existing
+# 1-tick residual - §12.1 row 9).
+- label: urien-vkd-lk-block
+  setup: { dist: close, dummy: stand }
+  input: "motion charge-down 60 then-up LK"
+  qjson: { name: "Violence Knee Drop" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: 4, R: 32, adv: from-qjson, xfail: "DOCUMENTED HARNESS-BUNDLE-CONTEXT ARTIFACT (RE-DISPOSITIONED 2026-07-14, <sp>/zero/harness-bleed/footprint.md, opus-substitute / WANTS FABLE RE-REVIEW). The isolated single-entry run measures adv=-16 (arcade-exact); the bundled full-suite run reads the bled adv=-17 asserted here, because the dummy's idle-breathing cell phase (charset.c:2982 hurtbox pulse) drifts with run position - which entry precedes this one in the corpus tape shifts the dummy's phase at contact. A global dummy-idle-reset (snapshot+restore plw[1].wu.{cg_ix,cg_ctr,cg_next_ix} at every corpus-entry label) was reconstructed and full-suite-tested this session: REJECTED as net-negative - it fixes only this row's sibling (sean-ryuubi-hk-block) but regresses 4 other rows off arcade (urien-msphere-hp-block, urien-crroundhouse-block, alex-crroundhouse-hit, yun-nishou-forward-hit - three of them make legitimately-connecting moves wrongly WHIFF). Stays XFAIL asserting the arcade value (adv=-16 via from-qjson); the corpus-frozen literal R=32/A=4 is the bundled-context engine-truth value per §13.13 (unaffected by this finding). urien-vkd-lk-block ADDITIONALLY carries an absolute-clock timing residual on top of the bundle-context bleed (the 1-tick adv swap is not fully explained by dummy-phase alone). harness-bleed/footprint.md classifies the companion urien-vkd-lk-HIT row's A/R clause (not this BLOCK adv clause) as the one row needing an arcade capture to resolve definitively. Golden unchanged. Prior audit trail (RELOCATED not deleted): NARROWED 2026-07-11 (classification sweep #3, F2, §13.13): R clause CLOSED this sweep (see entry comment) - same 25-tick branch proof as urien-vkd-lk-hit (byte-identical both contact legs). Prior R-side-UNCLASSIFIED history (RE-CITED 2026-07-08 §13.5.1a cut gate; RE-CITED 2026-07-10 classification sweep #2 disposition (e), the isolated-bundle A=5/R=31/adv=-16 vs full-corpus A=4/R=32/adv=-17 1-tick swap, §12.1 NEW ROW 9) preserved for the audit trail, not deleted - the R clause it described is now resolved." }
+
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=4 is the
+# engine-truth credit actually accrued on the HIT path - same FLAGGED finding
+# as urien-vkd-lk-block (identical A=4, lever-F-tested UNCHANGED on the A
+# clause). Arcade (whiff-canonical, from-qjson) A=12 - preserved here per the
+# convention. FULL CONVERT sweep #3 (2026-07-11, F2 R-corollary, §13.13):
+# R=32 is the engine-truth recovery played on the HIT path - 25-tick parallel
+# recovery branch verified raw: cgix 68(3)/72(3)/76(2)/80(3)/84(3)/88(11),
+# all jatix=0, byte-identical to the BLOCK leg (s12-rundir/run-urien-full
+# F5105-5129, uniq -c confirmed 3/3/2/3/3/11), absent from WHIFF (cgix
+# histogram F3771-3815 contains no 68/72/76/80/84/88 at all), entered only
+# via the cgix60 hitstop exit (hstop 10->0, F5022-5032); R = branch 25 +
+# cleanup 7 = 32; contact R - arcade Recovery 7 = +25 = branch exactly - the
+# F2 R-corollary bar met as written. Arcade Recovery 7 preserved. This
+# entry's expect carries no adv key (Hit_advantage is unasserted) - nothing
+# else blocks the convert; xfail removed entirely.
+- label: urien-vkd-lk-hit
+  setup: { dist: close, dummy: none }
+  input: "motion charge-down 60 then-up LK"
+  qjson: { name: "Violence Knee Drop" }
+  outcome: HIT
+  expect: { S: from-qjson, A: 4, R: 32 }
+
+# --- Throw (LP+LK) -----------------------------------------------------------
+# urien.json's Throw_range field is 26px for both throw-family rows (see
+# file header naming note) - close (56px) sits OUTSIDE this range, same trap
+# as corpus-ken.yaml's ken-throw-hit / corpus-makoto.yaml's
+# makoto-throw-hit. Placed LAST (nothing distance-sensitive follows it
+# except the negative control) per the Dudley Throw-last precedent
+# (corpus-dudley.yaml:822-833).
+
+- label: urien-throw-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press LP+LK"
+  qjson: { name: "Neutral Throw" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: urien-throw-hit
+  setup: { dist: 20, dummy: none }
+  input: "press LP+LK; wait 90"
+  qjson: { name: "Neutral Throw" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, kd: 1 }
+
+# --- Negative control (plan section 1.8 item 5 precedent) ------------------
+
+- label: urien-jump-none
+  setup: { dist: 250, dummy: none }
+  input: "press UP"
+  outcome: NONE

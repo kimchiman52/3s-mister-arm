@@ -1,0 +1,4 @@
+label	verdict	outcome	n	S	A	R	adv	kd
+necro-sa1-whiff	PASS	WHIFF	1	1	18	22	+0	0
+necro-sa1-block	PASS	BLOCK	1	1	18	22	-12	0
+necro-sa1-hit	PASS	HIT	1	1	18	22	+77	1

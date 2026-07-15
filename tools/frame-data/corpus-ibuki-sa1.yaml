@@ -1,0 +1,132 @@
+# Ibuki Super Art 1 (Kasumi Suzaku) — EX/Supers program, supers wave S3
+# (REOPENED same-session after coordinator feedback: the initial 32-candidate
+# ground sweep was closed as MOTION NOT FOUND, but Kasumi Suzaku is an
+# AIR-ONLY activation — the air-input idiom landed it on the FIRST air
+# recipe tried; the ground closure was a documentation-gap trap, same class
+# as Kunai (EX)'s own AIR_DEFERRED reclassification).
+# Satellite corpus (auto-discovered by run-suite.sh's corpus-*.yaml glob, own
+# golden/ibuki-sa1.tsv once registered) — the main corpus-ibuki.yaml and
+# corpus-ibuki-ex.yaml are untouched.
+#
+# Scope: step0-universe.tsv row 58 (ibuki index 58, "Kasumi Suzaku", sa_slot
+# 1, S=3/A=87/R="N/A" literal/block_adv=-10, MULTIHIT_CITED(A=87, G5)).
+#
+# Oracle: docs/arcade-frame-data/ibuki.json (same file the other three Ibuki
+# corpora pin).
+#
+# IDENTITY (S-match-family probe, CORPUS-AUTHORING.md Phase 5, adapted to
+# the air context): super_art:0 (0-indexed SA1) + the air idiom
+# `press UP; wait 3; motion 2qcf LP` lands a move whose measured A=87
+# matches Kasumi Suzaku's oracle Hit=87 EXACTLY (MULTIHIT_CITED, the
+# largest active figure in Ibuki's whole oracle file — unambiguous; no
+# other Ibuki move is within 30 frames of it) on a clean WHIFF at dist:310
+# centered (`<sp>/sa-ibuki/run-probe-sa1-air3/trace.log`) and again on a
+# far HIT (`run-probe-sa1-air2/trace.log`). proj=1 throughout (proj-split
+# path — the rain of kunai is a projectile volley). The move is AIR-ONLY:
+# 32 grounded candidate inputs across every expressible motion primitive
+# had previously produced only fallback normals or dead inputs (the full
+# table is preserved in `<sp>/exsuper/ibuki-sa-report.md` as the
+# negative-evidence record); the FIRST air-idiom candidate landed it.
+#
+# STRENGTH DIMENSION (measured, load-bearing for leg selection): the button
+# strength changes the kunai-rain shape/angle — HP reads A=72-75, MP A=81,
+# LP A=87 (each rep-stable for its own configuration; `<sp>/sa-ibuki/
+# run-probe-sa1-air{1,2}/trace.log`). LP is the strength whose declared
+# volley matches the oracle's own A=87 exactly, so LP is the authored
+# canonical strength here (the oracle publishes a single row with no
+# strength triplet; its A=87 corresponds to the LP volley as measured).
+#
+# S — OMITTED all legs (same position/timing-noise family as
+# corpus-ibuki-sa3.yaml's own dated S-FIELD POSITION-NOISE finding,
+# 2026-07-13, plus an air-specific second driver): measured proj-split S
+# (`proj_spawn_raw`) read 0/2/6 across this session's configurations,
+# varying BOTH with the achieved teleport position (the documented
+# anchored-mode E-6/E-7 artifact) AND with the airborne frame at which the
+# super fires within the jump arc (wait 2/3/4/5/10 sweep:
+# `<sp>/sa-ibuki/run-probe-sa1-air1/trace.log`). Oracle Startup=3 was
+# never stably reproduced (0/2/6 observed); no single value is a stable
+# move property under this harness's jump-timing quantization, so S is
+# omitted (documented-unasserted), not xfailed with a moving target.
+#
+# R — OMITTED all legs, structural: ibuki.json's Recovery for this row is
+# the literal string "N/A" (non-numeric; from-qjson raises CompileError
+# by design). Measured R reads 0-3 on rain-completes-before-landing legs
+# and 26 on the point-blank BLOCK leg (landing-recovery-dominated) — the
+# oracle's own "N/A" posture (an air super whose "recovery" is landing-
+# dependent, not a chart property) matches what the harness measures.
+#
+# CONTACT-LEG A/adv — OMITTED, projectile-contact scaling (established
+# class, not a fresh anomaly): on contact legs the displayed A is proj_a
+# (proj-split path), which scales with travel/contact geometry — measured
+# A=42/adv=-14 at dist 40-56, A=75/adv=-22 at 100, A=85/adv=-35 at 130,
+# A=87/adv=-7 on one far-HIT configuration (`<sp>/sa-ibuki/
+# run-probe-sa1-air{3,4}/trace.log`) — the SAME distance-scaling property
+# corpus-ryu-sa1.yaml/corpus-ryu-sa3.yaml's Denjin section already
+# document for projectile supers ("proj_a scales with travel: 3 close, 16
+# far... a projectile-timing property"). The oracle's Block_advantage=-10
+# was not reproduced at any spacing tried (closest: -14 at point-blank);
+# there is no stable harness value to assert or to xfail against — the
+# oracle figure evidently keys a specific arcade measurement geometry this
+# distance sweep did not locate. adv/A are omitted on contact legs
+# (documented here with the full measured sweep), asserted ONLY on the
+# WHIFF leg where the declared volley is travel-independent and
+# oracle-exact.
+#
+# Admissibility census (per authoring-policy.md Ruling 2), this session's
+# final-corpus verification runs (2 runs, byte-identical trace.log):
+# (1) Single-FINAL integrity: exactly one MOVE_START/FINAL pair per entry's
+#     own window, no bleed.
+# (2) Flash-overlap census: 0 nonzero sastop ticks inside every entry's own
+#     [MOVE_START, FINAL] window (mechanical awk census; the super flash
+#     resolves before MOVE_START on every leg).
+# (3) Contact-A juggle check: N/A as a gate — contact-leg A is omitted
+#     outright per the projectile-contact scaling note above (HIT A=75 vs
+#     BLOCK A=42 don't match each other either, consistent with per-leg
+#     geometry, not a juggle re-fire question).
+# (4) Shape record: proj=1, box_runs=0, busyr=-1 on ALL legs (pure
+#     proj-split volley; Ibuki's own body att_box stays empty) — same
+#     shape family as Ryu SA1.
+character: ibuki
+oracle: ibuki.json
+super_art: 0
+sa_gauge: 3
+inter_entry_wait: 500
+entries:
+
+- label: ibuki-sa1-whiff
+  setup: { dist: 310, dist_mode: centered, dummy: none }
+  input: "press UP; wait 3; motion 2qcf LP"
+  qjson: { name: "Kasumi Suzaku" }
+  outcome: WHIFF
+  # Measured S=2(omitted, see header) A=87 R=0(omitted, oracle "N/A")
+  # (proj=1, proj_a=87, box_runs=0). A=87 oracle-EXACT (MULTIHIT_CITED
+  # A=87 per step0's G5 citation) — the full declared kunai volley,
+  # travel-independent on a clean whiff. The one oracle-exact anchor
+  # field for this move.
+  expect: { A: from-qjson }
+
+- label: ibuki-sa1-block
+  setup: { dist: close, dummy: stand }
+  input: "press UP; wait 3; motion 2qcf LP"
+  qjson: { name: "Kasumi Suzaku" }
+  outcome: BLOCK
+  # Point-blank blocked rain. Measured S=0 A=42 R=26 adv=-14 — ALL numeric
+  # fields omitted per the header's S-noise / R-"N/A" / projectile-contact
+  # scaling notes (adv=-14 here vs oracle -10; A=42 is the point-blank
+  # partial volley, not the declared 87). Outcome-only assert: confirms
+  # Phase 4's contact/BLOCK reachability; the measured values stay
+  # golden-pinned via golden/ibuki-sa1.tsv so any drift still trips
+  # --check-golden.
+  expect: {}
+
+- label: ibuki-sa1-hit
+  setup: { dist: 100, dummy: none }
+  input: "press UP; wait 3; motion 2qcf LP"
+  qjson: { name: "Kasumi Suzaku" }
+  outcome: HIT
+  # Mid-range connecting rain. Measured S=0 A=75 R=0 adv=-20 kd=0 — same
+  # omission rationale as the BLOCK leg (projectile-contact scaling; A=75
+  # is the dist-100 partial volley). Outcome-only assert; values
+  # golden-pinned. kd=0 measured (the rain juggles but does not knock
+  # down at this spacing) — no kd assert needed.
+  expect: {}

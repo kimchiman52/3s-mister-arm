@@ -1,0 +1,15 @@
+label	verdict	outcome	n	S	A	R	adv	kd
+remy-lov-exhigh-whiff	PASS	WHIFF	1	8	52	24	+0	0
+remy-rrf-ex-whiff	PASS	WHIFF	1	6	5	41	+0	0
+remy-lov-exhigh-block	PASS	BLOCK	1	8	36	24	+21	0
+remy-rrf-ex-block	XFAIL	BLOCK	1	6	3	38	-21	0
+remy-lov-exhigh-crouch	PASS	BLOCK	1	8	66	0	+20	0
+remy-rrf-ex-hit	XFAIL	HIT	1	6	3	38	+78	1
+remy-lov-exhigh-hit	PASS	HIT	1	8	29	24	+18	0
+remy-cbk-ex-whiff	PASS	WHIFF	1	18	9	10	+0	0
+remy-lov-exlow-block	PASS	BLOCK	1	8	31	28	+14	0
+remy-cbk-ex-block	XFAIL	BLOCK	1	18	11	10	-1	0
+remy-lov-exlow-crouch	PASS	BLOCK	1	8	30	28	+14	0
+remy-cbk-ex-hit	XFAIL	HIT	1	18	11	10	+72	1
+remy-lov-exlow-hit	PASS	HIT	1	8	24	28	+11	0
+remy-jump-none	PASS	-	0	-	-	-	-	-

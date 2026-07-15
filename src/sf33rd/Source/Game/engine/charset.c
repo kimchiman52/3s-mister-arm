@@ -4,6 +4,8 @@
  */
 
 #include "sf33rd/Source/Game/engine/charset.h"
+#include <stdio.h>
+#include <stdlib.h>
 #include "arcade/arcade_balance.h"
 #include "common.h"
 #include "constants.h"
@@ -25,6 +27,30 @@
 #define LO_2_BYTES(_val) (((s16*)&_val)[0])
 #define HI_2_BYTES(_val) (((s16*)&_val)[1])
 #define WK_AS_PLW ((PLW*)wk)
+
+#if DEBUG
+/* Phase 5 hygiene item 1 (docs/plan-frame-data-harness.md): the [CM]/
+ * [CMX] stderr logs below fire per char_move()/check_cm_extended_code()
+ * call for P1 in every mode (netplay/arcade included). `#if DEBUG`
+ * already strips them from Release builds entirely (CMakeLists.txt
+ * only defines DEBUG for the Debug config; MiSTer telemetry/clean
+ * flavors build Release, so the format strings and fprintf calls don't
+ * exist in the shipped ARM binary — verified via
+ * `strings ... | grep -c '[CM] GT='` == 0). Within a DEBUG build
+ * (host `build/host`, or a DEBUG-flavor MiSTer build) they're further
+ * gated at runtime behind the FRAME_CM_LOG env var, default off, so
+ * ordinary DEBUG-build testing/harness runs (which don't set the var)
+ * don't get the per-frame stderr spam either. Set FRAME_CM_LOG=1 to
+ * reproduce the §Phase 4.1 diagnosis stderr-capture workflow. */
+static int frame_cm_log_enabled(void) {
+    static int cached = -1;
+    if (cached < 0) {
+        const char* v = getenv("FRAME_CM_LOG");
+        cached = (v != NULL && v[0] != '\0' && v[0] != '0') ? 1 : 0;
+    }
+    return cached;
+}
+#endif
 
 u16 att_req = 0;
 
@@ -416,6 +442,234 @@ void char_move(WORK* wk) {
     if (--wk->cg_ctr == 0) {
         check_cm_extended_code(wk);
     }
+
+    if (wk->work_id == 1 && (wk->id == 0 || wk->id == 1)) {
+        if (wk->cg_ja.atix != 0 || wk->cg_ja.caix != 0) {
+            /* Catch (caix) box is active during command throws — Q's
+             * Capture and Deadly Blow uses caix exclusively (no atix).
+             * Treat it as an active-hitbox signal for accumulator purposes
+             * so the overlay's engine_a sum reflects the canonical arcade
+             * A for throws too. (§13.6) */
+            fd_engine_hitbox_active[wk->id] = 1;
+            s32 add = 0;
+            if (wk->cg_ix != fd_prev_active_cgix[wk->id]) {
+                /* §13.7.4 same-tick cgix-transit revoke, jatix-gated.
+                 * When the cell-data dispatch advances cg_ix again within
+                 * the same Game_timer tick (Q's UOH cgix=16→20 on one
+                 * game frame), the prior cell had no visible duration if
+                 * BOTH calls share the same jatix (same hitbox continued
+                 * across the phantom transit). Revoke the prior add only
+                 * when jatix matches — when jatix differs (cr.MK
+                 * cgix=12→16 jatix=24→25, st.Far Forward jatix=11→12),
+                 * the two cells are distinct active hitboxes that arcade
+                 * counts independently, and the revoke must NOT fire.
+                 * Saturating floor at 0. */
+                const s16 new_jatix_s = wk->cg_ja.atix;
+                const u8 new_jatix = (new_jatix_s < 0) ? 0
+                                   : (new_jatix_s > 255) ? (u8)255
+                                   : (u8)new_jatix_s;
+                if (fd_prev_active_cgix_tick[wk->id] == Game_timer
+                    && fd_prev_active_cgix_add[wk->id] > 0
+                    && fd_prev_active_cgix_jatix[wk->id] == new_jatix
+                    && new_jatix != 0) {
+                    const u8 prior_add = fd_prev_active_cgix_add[wk->id];
+                    if (fd_engine_active_count[wk->id] >= prior_add) {
+                        fd_engine_active_count[wk->id] = (u8)(fd_engine_active_count[wk->id] - prior_add);
+                    } else {
+                        fd_engine_active_count[wk->id] = 0;
+                    }
+                    fd_prev_active_cgix_add[wk->id] = 0;
+
+                    /* §13.11 declared-truth (engine-truth) displayed-A
+                     * convention (adopted 2026-07-07, user decision on the
+                     * issue-#17 Step-1 escalation — see
+                     * docs/frame-data-synthesis.md §13.11): the credit the
+                     * revoke just discarded is restored immediately, so the
+                     * displayed A always equals the animation data's declared
+                     * active credit, path-independently — contact can no
+                     * longer destroy already-elapsed declared credit. The
+                     * revoke's bookkeeping above is kept byte-identical
+                     * (tick/add/jatix state, and the subtract itself) so its
+                     * history and lever remain inspectable; only the count is
+                     * made whole again. The subtract-then-restore pair is
+                     * exact: prior_add was added to this same counter earlier
+                     * in the move and nothing clears it mid-engine-tick (the
+                     * overlay's MOVE_START reset runs in the overlay tick,
+                     * main.c:615, strictly after the engine tick, main.c:603),
+                     * so the pre-subtract value is always >= prior_add.
+                     * Mutation lever F (docs/plan-frame-data-harness.md
+                     * §1.9 item 3, the mutation-test acceptance criterion):
+                     * force the gate below false to regress to the
+                     * pre-convention (revoked) display — flags exactly the 5 Q
+                     * UOH entries (A=10) and 11 Ryu shape-(b) entries at their
+                     * old measured A; Hugo has no revoke sites (census
+                     * 2026-07-07). */
+                    const int fd_restore_revoked_declared_credit = 1;
+                    if (fd_restore_revoked_declared_credit) {
+                        s32 rsum = (s32)fd_engine_active_count[wk->id] + prior_add;
+                        if (rsum > 255) rsum = 255;
+                        fd_engine_active_count[wk->id] = (u8)rsum;
+                    }
+                }
+                /* New active cell entered. Normal cells contribute their
+                 * freshly-loaded cgctr (the cell's natural duration).
+                 * Sentinel cells (cgctr >= 200, e.g. HP cgix=40 cgctr=250)
+                 * stay until an external trigger advances cg_ix — actual
+                 * duration varies per move (close HP = 10f, back+HP = 8f),
+                 * so the entry just counts as 1 and additional frames are
+                 * counted per char_move call in the else-if below. */
+                s16 ctr = wk->cg_ctr;
+                if (ctr < 1)            ctr = 1;
+                else if (ctr >= 200)    ctr = 0;    /* sentinel: entry frame overlaps previous cell's exit; don't count it. Rest tallied per-frame below. */
+                else if (ctr > 30)      ctr = 30;
+                add = ctr;
+                fd_prev_active_cgix[wk->id] = wk->cg_ix;
+                fd_prev_active_cgix_tick[wk->id] = Game_timer;
+                fd_prev_active_cgix_add[wk->id] = (add > 255) ? (u8)255 : (u8)add;
+                fd_prev_active_cgix_jatix[wk->id] = new_jatix;
+            } else if (wk->cg_ctr >= 200) {
+                /* Same sentinel cell still active and char_move ran this
+                 * tick (hitstop frames are skipped — char_move doesn't
+                 * run during hitstop, so this naturally only fires on
+                 * frames that genuinely elapse on the cell). */
+                add = 1;
+            }
+            if (add > 0) {
+                s32 sum = (s32)fd_engine_active_count[wk->id] + add;
+                if (sum > 255) sum = 255;
+                fd_engine_active_count[wk->id] = (u8)sum;
+            }
+        }
+    } else if (wk->id == 13) {
+        /* Phase 6A "arcade-split" projectile design
+         * (/tmp/phase6-nonq-plan.md §2/Step 2). wk->id == 13 uniquely
+         * identifies an eff13.c "tama" projectile WORK (no other effect
+         * module uses that id) regardless of its own work_id, which
+         * varies per tama_data entry (0/2/4/32 observed) and is never 1 —
+         * so this branch and the player branch above are mutually
+         * exclusive by construction; no `wk->work_id != 1` check needed.
+         *
+         * Owner-attributed, saturating +1-per-live-tick accumulator (NOT
+         * the player branch's cgctr-weighted cell-duration arithmetic —
+         * Step 1 discovery traced a live hadouken and found char_move()
+         * calls once per game tick during flight with a contiguous
+         * cg_ja.atix != 0 run from spawn to contact; the display-only
+         * projectile "A" this feeds is never asserted against the arcade
+         * oracle (q.json-style tables give "-" for a fireball's Hit
+         * field), so the extra precision the player path needs to survive
+         * sub-framed/hitstop-stretched active cells isn't needed here).
+         * Indexed by the OWNING PLAYER's id (master_id), never by this
+         * WORK's own id (always 13) — see workuser.h's fd_engine_proj_*
+         * comments. */
+        const WORK_Other* eowk = (const WORK_Other*)wk;
+        if (eowk->master_work_id == 1
+            && (eowk->master_id == 0 || eowk->master_id == 1)
+            && wk->cg_ja.atix != 0) {
+            u8* const cnt = &fd_engine_proj_active_count[eowk->master_id];
+            if (*cnt < 255) {
+                (*cnt)++;
+            }
+
+            /* §13.12 (ENGINE-4): hit-checkable projectile split — latch
+             * the exact pair hitcheck.c's attack_hit_check() gates the
+             * hit-check on (atix != 0 AND att_hit_ok != 0,
+             * hitcheck.c:1618-1623). Written only on the RISING EDGE
+             * (fd_engine_proj_hitok_armed 0->1) rather than re-asserted
+             * every tick the pair holds: a WHIFF tama's att_hit_ok stays
+             * 1 for its whole remaining flight (hitcheck.c only clears it
+             * on an actual confirmed hit), so a level-triggered write
+             * would keep re-arming this flag on every subsequent tick —
+             * including well after the overlay already consumed it once
+             * this move, and even into a LATER move if this tama outlives
+             * the move boundary (measured: N.D.L.'s WHIFF leg does
+             * exactly this, corrupting the NEXT move's proj_athok_slot
+             * via the MOVE_START slot-0 rescue). The overlay consumes
+             * this once per move (frame_data_overlay.c, pre-raw[]-append)
+             * to anchor S = max(proj_spawn_slot, proj_athok_slot); a
+             * fireball arms this the same tick it spawns (athok offset =
+             * spawn slot - 1), N.D.L. arms it two chart cells after its
+             * own atix. */
+            const bool hit_checkable_now = (wk->att_hit_ok != 0);
+            if (hit_checkable_now && !fd_engine_proj_hitok_armed[eowk->master_id]) {
+                fd_engine_proj_hitok[eowk->master_id] = 1;
+            }
+            fd_engine_proj_hitok_armed[eowk->master_id] = hit_checkable_now ? 1 : 0;
+        } else if (eowk->master_work_id == 1
+                   && (eowk->master_id == 0 || eowk->master_id == 1)
+                   && wk->cg_ja.atix == 0
+                   && fd_engine_proj_active_count[eowk->master_id] != 0
+                   && wk->hf.hit_flag == 0
+                   && fd_engine_proj_cut[eowk->master_id] == 0) {
+            /* §13.12 (ENGINE-4): chart-natural-end latch. This tama was
+             * active at least once (the accumulator above is nonzero)
+             * and its owning eff13.c routine never cut its chart to an
+             * erase chart (fd_engine_proj_cut, set only by
+             * fd_tama_chart_cut() at the five kotp_00000/kotp_13000
+             * erase transitions) before this atix->0 tick — so the edge
+             * is the chart's own scripted expiry, not a hit/deflect/
+             * ground/timeout retirement. Every kind-0 (fireball) ending
+             * is a cut, but on an on-hit consumption (kotp_00000 case 1)
+             * the false-write opportunity is a same-invocation ordering
+             * hazard, not a cross-tick one: set_char_move_init(erase)
+             * (eff13.c:365/367/370, the erdf/erht/erex branches) runs its
+             * OWN internal char_move() call (charset.c:126) — i.e. THIS
+             * function, re-entered on the fresh erase chart (atix reset
+             * to 0) — while wu.hf.hit_flag is still set (not cleared
+             * until eff13.c:398) and before fd_tama_chart_cut()
+             * (eff13.c:377) has run, all within the SAME kotp_00000
+             * invocation, just a few statements earlier. Requiring
+             * hf.hit_flag==0 excludes exactly this in-flight-to-
+             * consumption window without affecting N.D.L. (kind-13): its
+             * own hit_flag is long since cleared (kotp_13000's
+             * consumption handler clears it the same tick it fires,
+             * eff13.c ~:1615-ish) by the time its true mid-chart atix->0
+             * edge arrives many ticks later. The overlay's own
+             * consumption re-checks fd_engine_proj_cut once more at read
+             * time (frame_data_overlay.c) as a second, independent guard
+             * against the case-0-internal cut sites (chart-end/ground/
+             * timeout): those carry hit_flag==0 throughout (case 0 is
+             * only entered when hit_flag was false at this tick's
+             * kotp_00000 entry), so the hit_flag clause above is a no-op
+             * for them — char_move() (where this check runs) always
+             * executes strictly before the fd_tama_chart_cut() call that
+             * follows it in the SAME kotp_00000 invocation. kind-13
+             * consumption clears att_hit_ok but keeps calling char_move()
+             * on the SAME chart, so its atix->0 edge lands here on every
+             * leg, WHIFF or CONNECT alike. Guard ablation (review):
+             * dropping either guard alone leaves the golden suite green
+             * — each masks the whole in-corpus race by itself; dropping
+             * BOTH reproduces it, flipping exactly ryu-had (R 36->34,
+             * all 6 legs) and chunli-kik (R -2, all 6 legs) and nothing
+             * else in the current 19-corpus population — the double
+             * guard is deliberate defense-in-depth, not redundancy. */
+            fd_engine_proj_natend[eowk->master_id] = 1;
+        }
+        if (eowk->master_work_id == 1
+            && (eowk->master_id == 0 || eowk->master_id == 1)
+            && wk->cg_ja.atix == 0) {
+            /* Edge-detector reset: not hit-checkable this tick, so the
+             * NEXT tick a fresh atix!=0 && att_hit_ok!=0 pair appears
+             * (this tama re-arming, or — after the next MOVE_START zeroes
+             * this array — a brand new tama's own first arm) is a
+             * genuine rising edge again. */
+            fd_engine_proj_hitok_armed[eowk->master_id] = 0;
+        }
+    }
+
+#if DEBUG
+    /* DEBUG, FRAME_CM_LOG=1 only: log every char_move call for player 1 —
+     * covering attack AND any frames after r1 leaves attack state, so we
+     * can see the engine state at the move-end transition. See the
+     * frame_cm_log_enabled() comment above for the gating rationale. */
+    if (frame_cm_log_enabled() && wk->work_id == 1 && wk->id == 0) {
+        fprintf(stderr,
+            "[CM] GT=%u r1=%d cgix=%d cgctr=%d cghi=%u jatix=%u cgatt=%d athok=%u cgcancel=%u patst=%u kow=%u\n",
+            (unsigned)Game_timer, (int)wk->routine_no[1], (int)wk->cg_ix, (int)wk->cg_ctr,
+            (unsigned)wk->cg_hit_ix, (unsigned)wk->cg_ja.atix,
+            (int)wk->cg_att_ix, (unsigned)wk->att_hit_ok,
+            (unsigned)wk->cg_cancel, (unsigned)wk->pat_status, (unsigned)wk->kow);
+    }
+#endif
 }
 
 void check_cm_extended_code(WORK* wk) {
@@ -429,6 +683,20 @@ void check_cm_extended_code(WORK* wk) {
 
     while (1) {
         cpc = (UNK11*)(wk->set_char_ad + wk->cg_ix);
+
+#if DEBUG
+        /* DEBUG, FRAME_CM_LOG=1 only: log every cell-data extended-code
+         * dispatch for player 1. Discriminates "comm_wca = arcade-counted
+         * recovery anim" vs "comm_jmp/comm_ret = uncounted neutral return"
+         * needed for §13.5.2 HSB recovery investigation. */
+        if (frame_cm_log_enabled() && wk->work_id == 1 && wk->id == 0) {
+            fprintf(stderr,
+                "[CMX] GT=%u r1=%d cgix=%d code=%u koc=%u ix=%u pat=%u\n",
+                (unsigned)Game_timer, (int)wk->routine_no[1], (int)wk->cg_ix,
+                (unsigned)cpc->code, (unsigned)cpc->koc,
+                (unsigned)cpc->ix, (unsigned)cpc->pat);
+        }
+#endif
 
         if (cpc->code >= 0x100) {
             check_cgd_patdat(wk);
@@ -2717,6 +2985,16 @@ void set_jugde_area(WORK* wk) {
     wk->h_att = wk->attack_adrs + wk->cg_ja.atix;
     wk->h_hos = wk->hosei_adrs + wk->cg_ja.hoix;
     wk->h_han = wk->hand_adrs + (wk->cg_ja.bhix + wk->cg_ja.haix);
+
+    /* Capture the engine's "active hitbox" signal at the moment cg_ja
+     * is loaded — by the time the per-frame overlay runs, cg_ja.atix
+     * has been reset on certain moves. Includes caix (catch hitbox) so
+     * command throws like Q's Capture and Deadly Blow register too. */
+    if (wk->work_id == 1
+        && (wk->cg_ja.atix != 0 || wk->cg_ja.caix != 0)
+        && (wk->id == 0 || wk->id == 1)) {
+        fd_engine_hitbox_active[wk->id] = 1;
+    }
 }
 
 void get_char_data_zanzou(WORK* wk) {

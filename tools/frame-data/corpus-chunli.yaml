@@ -1,0 +1,864 @@
+# Chun-Li frame-data corpus (Step 12, docs/plan-frame-data-completion.md Part
+# C). Generated/consumed by tools/frame-data/compile_corpus.py against
+# docs/arcade-frame-data/chunli.json (fetched 2026-07-08 from
+# https://raw.githubusercontent.com/Coccis77/thirdstrikedatabot/master/json/chunli.json,
+# md5 f2237f518c4d915ba454a2fe475aa342).
+#
+# NAMING NOTE (runbook Phase 1 caution re: throw-family naming varying per
+# character - generalizes here too): chunli.json's projectile is named
+# "Kikkoken" (double-k), NOT "Kikouken" as the plan/task description spelled
+# it - verified by reading the fetched oracle's exact Name strings rather
+# than porting a guessed spelling forward. Every `qjson.name` below is
+# copied verbatim from the fetched file. The throw-family row is a bare
+# "Throw" (matching ryu.json/q.json's convention, NOT ken.json's three-way
+# Neutral/Back/Towards split) - also verified against the fetched file
+# rather than assumed.
+#
+# Scope (plan Step 12): normals ladder (six-button close BLOCK/HIT + WHIFF
+# sample + crouching + one command normal, WHIFF included per Phase 4) + UOH
+# (BLOCK+WHIFF+HIT - WHIFF added beyond the Ryu/Ken precedent, see the
+# "RUNBOOK GAP" note below) + Throw + Kikkoken BLOCK/HIT x3 strengths
+# (motion hcf - the projectile arcade-split lever D on a THIRD character,
+# zero compiler work, landed on first probe, completely clean) + Hazan Shu
+# (motion hcb, landed on first probe) + Spinning Bird Kick (motion
+# charge-down N then-up, landed on first probe, completely clean) +
+# negative control. Hyakuretsu Kyaku was probed with existing primitives per
+# the runbook's one-probe-session budget and NOT landed - see "SPECIALS
+# PROBE LOG" below. NO supers/EX (Step 13's charter; her SA2 Houyoku Sen is
+# that step's natural target, not this one's).
+#
+# Every expect below was pinned against a live trace (tools/frame-data/run.sh
+# tools/frame-data/corpus-chunli.yaml), with every suspicious finding
+# re-verified in an isolated single-entry probe corpus per the runbook's
+# Phase 5 "known traps" discipline before being trusted.
+#
+# ============================================================================
+# ISSUE #17 FAMILY RE-CHECK (per runbook item 6 / Phase 6 instruction).
+# Chun-Li is a different rig/animation-data family from the shoto twins
+# (Ryu/Ken). Findings, each independently lever-F-tested
+# (fd_restore_revoked_declared_credit forced to 0 on a scratch build,
+# reverted via `git checkout` + rebuild + re-verified green before this
+# commit, same-binary protocol throughout):
+#
+#   - chunli-short-block/-hit: classic shape (a1) skip-jump A-undercount.
+#     Raw trace (isolated re-verification, dist:close/40, dummy:stand):
+#     GT852 cgix=12 (cghi=85, ctr=1) -> GT853 cgix=36 (cghi=88, jatix=63,
+#     ctr=3), a SAME-TICK 24-unit skip past whatever declared cell(s) would
+#     have occupied cgix 18-30 - never dispatched by any code, so their
+#     declared credit never enters fd_engine_active_count (synthesis §13.11
+#     "what stays unrecoverable"). Measured A=1 vs arcade 5 (largest gap
+#     found this session); S/R/adv exact. Lever-F test: A=1 UNCHANGED with
+#     fd_restore_revoked_declared_credit forced 0 - no revoke fired here,
+#     ruling OUT a lever-F regression, confirming shape (a1).
+#
+#   - chunli-uoh-block/-whiff/-hit: RE-DISPOSITIONED 2026-07-08 (orchestrator
+#     review, FIX-FIRST verdict) to the §13.11 declared-truth displayed-A
+#     convention (docs/frame-data-synthesis.md §13.11, precedent q-uoh-whiff
+#     corpus-q.yaml:636-641) - NOT an A-overcount, and NOT the same shape as
+#     Ken's UNCLASSIFIED ken-forward-block/-hit finding this section
+#     originally analogized to (that precedent is contact-only/WHIFF-exact -
+#     the wrong precedent for a finding whose defining trait is the
+#     opposite). The §13.11 signature here is whiff-persistence +
+#     path-independence: measured A=14 identically on ALL THREE outcomes
+#     including a clean WHIFF (dist 250, dummy none, isolated
+#     re-verification) - the same "declared credit is a single number that
+#     does not move with path" shape as q-uoh-whiff's
+#     declared-11-vs-visible-10. chunli.json's arcade 10 is read as the
+#     whiff-VISIBLE tick count, not the declared credit - two different
+#     numbers measuring different things, per §13.11's rationale (not a
+#     mis-mapped chunli.json row either: S=15 matches the oracle's Universal
+#     Overhead row exactly and there is only one UOH row in chunli.json, so
+#     this is not a name/index collision). All three entries now assert
+#     A=14 explicitly (chunli-uoh-whiff plain-PASSes on all three fields;
+#     -block/-hit keep A=14 alongside their own unrelated R finding below).
+#     NOT YET independently re-verified against a per-cell cgctr
+#     decomposition summing to 14 the way q-uoh-whiff's own declared credit
+#     (1+2+2+3+3=11) was counted cell-by-cell - that decomposition is the
+#     named follow-up (if the cells do not sum to 14, this reverts to a
+#     flagged double-accrual investigation rather than a clean §13.11
+#     disposition).
+#     SEPARATELY, R shows its own small contact-specific deficit (measured
+#     R=4 vs arcade 5 on BLOCK/HIT, WHIFF R=5 exact) - independent of the
+#     A-side §13.11 disposition above (WHIFF's R is clean while BLOCK/HIT's
+#     is not). This is NOT §13.7.3/Class-2 (that mechanism is HIT-only, a
+#     defender hitstun-vs-blockstun differential that produces a
+#     BLOCK-vs-HIT R divergence; here the R=4 deficit is identical on BOTH
+#     BLOCK and HIT, so it cannot be that mechanism). Kept hedged:
+#     Class-1-shaped (§13.10 contact recovery-chain family) or
+#     unclassified-R - HYPOTHESIS ONLY, not conclusively distinguished;
+#     flagged 2026-07-08 for follow-up classification. -block/-hit each keep
+#     a narrowed xfail citing only this R clause.
+#
+#     ORCHESTRATOR SIGN-OFF 2026-07-08: ACCEPTED with documentation (R-deficit
+#     documented+hedged above, A resolved to the §13.11 convention). This
+#     section is now 2/3 xfail (chunli-uoh-block/-hit, R-clause only;
+#     chunli-uoh-whiff is a plain PASS) - per the >50% STOP-rule accounting
+#     convention (plan Step 7 / corpus-hugo.yaml precedent) this is flagged
+#     explicitly rather than self-approved. User review pending (overnight
+#     autonomous run).
+#
+#     UPDATE (2026-07-10, CONV-2): the paragraph above is now stale - both
+#     chunli-uoh-block/-hit converted FULL under §13.13 family F6 (§12.2.1
+#     R-triplet whiff-exact variant, R=4); this section is now 0/3 xfail
+#     (chunli-uoh-whiff/-block/-hit all plain PASS).
+#
+#   - chunli-forward-block/-hit: an R-side deficit (S/A/adv exact; measured
+#     R=24 vs arcade 25, both BLOCK and HIT). Raw trace (both entries):
+#     cgix=84 (cghi=67, ctr=1) -> cgix=96 (cghi=67, ctr=6) same tick - a
+#     12-unit skip WITHIN the same declared cghi group (unlike shape (a1)'s
+#     cross-cghi skip), landing on what only affects the recovery tail (A
+#     is unaffected - already correct). Close-range Forward has no
+#     reachable clean WHIFF of its OWN animation (dist=250 auto-selects the
+#     distinct Far Forward row instead, same harness-gap shape as fireball
+#     WHIFF/SDB - see the gap register), so this cannot be independently
+#     confirmed against a whiff baseline the way chunli-crfierce-hit's Class-1
+#     assignment below could be. UNCLASSIFIED (flagged 2026-07-08, needs
+#     follow-up classification) - HYPOTHESIS ONLY, kinship noted to Ken's
+#     ken-twdshk-block finding (corpus-ken.yaml:414-426, "mirrors shape
+#     (a1)'s skip-jump mechanism but landing on a RECOVERY-only cell instead
+#     of an active cell, manifesting as R instead of A") - this is a SECOND
+#     character now showing the same trace shape, which is itself worth
+#     flagging (raises confidence this is a real, recurring engine mechanism)
+#     but is NOT independently re-verified here and is reported as a kinship
+#     observation only, not a confirmed shared cause.
+#
+#   - chunli-crfierce-hit (BLOCK too - see its own entry): §13.10 Class 1
+#     (hit-branch/contact recovery-chain family) - measured R=17 vs the
+#     WHIFF-confirmed arcade R=22 on BOTH BLOCK and HIT (chunli-crfierce-whiff
+#     below matches chunli.json's Recovery=22 exactly, confirming the WHIFF
+#     baseline per Phase 4's rule and placing this outside Phase 4's STOP
+#     condition). S/A/adv exact on all three outcomes. Raw trace: a
+#     same-tick skip from cghi=226 to cghi=228 (cghi=227's declared cell
+#     never dispatched) - mechanically the same KIND of skip as
+#     chunli-forward-block's finding above, but here a clean WHIFF baseline
+#     is independently confirmed, which is what licenses citing the
+#     established §13.10 Class 1 bucket instead of leaving this
+#     UNCLASSIFIED (Class 1 is defined as "the attacker's own animation
+#     plays a genuinely shorter parallel recovery chain on contact" -
+#     generalized here to "on contact" rather than "on HIT" specifically,
+#     since BOTH BLOCK and HIT show the identical shortened R here, unlike
+#     the Ryu/Hugo Class-1 precedents which were HIT-only).
+#
+#   - chunli-farroundhouse-block/chunli-hk-whiff: Phase 6 item 5 / synthesis
+#     item 18 "whiff-R truncation" bucket (same as Ken's Shoryuken/Tatsu
+#     precedent) - S/A EXACT on both outcomes (S=12, A=1, matching
+#     chunli.json's Far Roundhouse row); R diverges on WHIFF ITSELF (measured
+#     10 vs arcade 15), ruling this OUT of Phase 4's "unexplained whiff
+#     divergence = STOP" clause because it fits this already-documented,
+#     already-accepted bucket. BLOCK reads a slightly different R (11 vs
+#     WHIFF's 10, a 1-frame block/whiff variance) - same small-variance shape
+#     as Ken's Tatsumaki Senpuu Kyaku section (whiff R=9, block/hit R=10).
+#     adv also drifts on BLOCK (measured +5 vs arcade 0) as a downstream
+#     consequence of the same R-truncation, not a separately-classified
+#     divergence - both R and adv are kept in `expect` at their true arcade
+#     values (from-qjson) and cited together in one xfail string.
+#
+#   - Hazan Shu Short (motion hcb LK): a COMPOUND divergence. S=22 matches
+#     chunli.json's Startup exactly on WHIFF, BLOCK, and HIT alike -
+#     unambiguous move identification (same S-value-matching discipline as
+#     every prior motion probe in this repo). Two independent divergences
+#     stack on top of that clean identification:
+#       (1) whiff-R-truncation (item 18, same bucket as Far Roundhouse
+#           above and Ken's Shoryuken/Tatsu): measured R=15 vs arcade 18 on
+#           WHIFF ITSELF, S/A exact on whiff (A=3, matching chunli.json's
+#           Hazan Shu Short Hit=3).
+#       (2) ADDITIONALLY, a contact-specific A-undercount on BLOCK/HIT not
+#           present on WHIFF (measured A=1 vs the WHIFF-confirmed A=3) -
+#           lever-F tested (fd_restore_revoked_declared_credit forced 0 on
+#           a scratch build, reverted before this commit) and confirmed
+#           UNCHANGED (A=1 both ways), so this is shape (a1) skip-jump,
+#           same family as chunli-short-block above, stacked with (1).
+#     Both divergences are cited together in each contact entry's xfail
+#     string; the WHIFF entry only carries (1).
+#
+#   No other #17-family or UNCLASSIFIED-family divergence was found on any
+#   other normal, command normal, UOH's S, Throw, or Kikkoken/SBK.
+# ============================================================================
+#
+# RUNBOOK GAP (flagged for the runbook, per its own "report any gap back into
+# it" instruction): neither corpus-ryu.yaml nor corpus-ken.yaml authored a
+# UOH WHIFF entry - Phase 4's mandatory whiff-vs-table rule was applied here
+# for the first time to UOH and is what surfaced the whiff-persistent A
+# finding above (had only BLOCK/HIT been tested, this would have looked
+# like an ordinary contact-tick #17-family member instead of the
+# structurally distinct whiff-present finding it actually is - now
+# re-dispositioned to the §13.11 declared-truth convention, see file
+# header). Recommend the
+# runbook's Phase 2 ladder text be amended to call out UOH explicitly
+# alongside command normals as needing a WHIFF row.
+#
+# SPECIALS PROBE LOG (budget: one session, per the plan's Step 12 scope).
+# Kikkoken (motion hcf), Hazan Shu (motion hcb), and Spinning Bird Kick
+# (motion charge-down N then-up) were ALL landed with already-expressible
+# primitives - zero compile_corpus.py changes. Chun-Li's own motion numpad
+# notation confirms this cleanly: Kikkoken's in-game motion (41236+P, i.e.
+# back/down-back/down/down-forward/forward) is literally the existing `hcf`
+# macro's step sequence; Hazan Shu's (63214+K, forward/down-forward/
+# down/down-back/back) is literally the existing `hcb` macro's step
+# sequence. Neither needed a new macro or a hold-chain workaround.
+#
+# Hyakuretsu Kyaku (Common_name "LK-LK-LK", a rapid same-button-mash special,
+# not a directional motion) was NOT landed this session. Two attempts with
+# already-expressible primitives were tried and abandoned rather than
+# escalated to a compile_corpus.py change (per the runbook's "extend
+# _motion_steps ONLY IF no expressible sequence lands the move" - this
+# isn't even a motion-macro problem, so that escalation path doesn't apply
+# here regardless): (1) three sequential `press LK` commands (2-frame hold +
+# 1-frame release each, ~9 frames total) and (2) a tighter `hold LK 1; wait
+# 1` x3 tap-chain (~6 frames total) both read back as a single plain "Short"
+# (S=3 A=1 R=9, chunli.json's Short row, matching chunli-short-block's own
+# shape-(a1)-undercounted numbers) - i.e. only the first tap ever registers
+# as an attack; the chain-into-Hyakuretsu condition never triggers. This
+# looks like a same-button re-input buffer/target-combo timing window
+# distinct from anything this repo's existing primitives were built to
+# express (unlike a DP-shape hold-chain or an existing motion macro,
+# already-available building blocks don't obviously compose into "N
+# same-button taps within an unknown short window"), and probing that
+# properly (binary-searching the actual input-buffer window in cmd_data.c or
+# equivalent) is out of this session's one-probe budget. Documented as
+# OUT OF SCOPE / wants-follow-up, no entries below for it, no oracle edit,
+# no compiler change.
+character: chunli
+oracle: chunli.json
+inter_entry_wait: 150
+entries:
+
+# --- Close/far normals, BLOCK (dummy: stand) --------------------------------
+
+# Jab: dist:close (56px) plays the FAR JAB animation instead of the true
+# close-range Jab (verified live: measured S=3 A=5 R=4 at dist:close, an
+# EXACT match to chunli.json's Far Jab row, not Jab) - Chun-Li's near/far
+# animation-select threshold sits closer in than Ryu/Ken's. Binary-searched
+# (isolated probe corpus): dist=55 still plays Far Jab; dist=50 plays the
+# true close Jab (S=2 A=2 R=6, exact match) and is stable down to dist=1.
+# dist=50 kept as the closest-to-56-convention working value.
+- label: chunli-jab-block
+  setup: { dist: 50, dummy: stand }
+  input: "press LP"
+  qjson: { name: "Jab" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# Far Jab: dist=90 (corpus-ryu.yaml/corpus-ken.yaml's own Far Jab convention)
+# connects and matches chunli.json's Far Jab row exactly.
+- label: chunli-farjab-block
+  setup: { dist: 90, dummy: stand }
+  input: "press LP"
+  qjson: { name: "Far Jab" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: chunli-strong-block
+  setup: { dist: close, dummy: stand }
+  input: "press MP"
+  qjson: { name: "Strong" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: chunli-fierce-block
+  setup: { dist: close, dummy: stand }
+  input: "press HP"
+  qjson: { name: "Fierce" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# Short: unlike Jab, dist:close plays the CORRECT "Short" animation (S/R
+# match chunli.json exactly at both dist:close and dist:40 - not a distance
+# artifact) - see file header for the A-undercount finding (shape a1,
+# lever-F tested and confirmed unchanged).
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=1 is the
+# engine-truth credit actually accrued on the BLOCK path - issue #17 shape (a1):
+# the contact tick jump-advances cg_ix 12->36 same tick (GT852->853), skipping
+# declared active cell(s) never dispatched by any code (synthesis §13.11 'what
+# stays unrecoverable'); lever-F-tested (fd_restore_revoked_declared_credit
+# forced to 0 on a scratch build, reverted before commit) and confirmed
+# UNCHANGED - no revoke fires. Arcade (whiff-canonical, from-qjson) A=5
+# (largest gap found this session) - preserved here per the convention. S/R/adv
+# remain arcade-exact (from-qjson); not a distance artifact (identical at
+# dist:close and dist:40).
+- label: chunli-short-block
+  setup: { dist: close, dummy: stand }
+  input: "press LK"
+  qjson: { name: "Short" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: 1, R: from-qjson, adv: from-qjson }
+
+# Forward: R-side deficit, see file header UNCLASSIFIED discussion (kinship
+# to ken-twdshk-block, NOT independently re-verified as the same mechanism).
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): R=24 is
+# the engine-truth recovery actually played on the BLOCK path - CLASSIFIED
+# 2026-07-09: §12.2.2 contact-branch recovery shortening, signature member:
+# the same-tick recovery skip cgix=84->96 (within cghi=67, does not touch A)
+# is the family's skip-variant signature, mechanism trace-PROVEN 2026-07-09 on
+# ken-twdshk-block (branch variant) and akuma-twdsmp-block (skip variant). No
+# same-animation whiff reachable (dist=250 auto-selects Far Forward); chunli-
+# crfierce (same file) is the whiff-confirmed precedent. Arcade (whiff-
+# canonical) R=25 - preserved here per the convention. S/A/adv remain
+# arcade-exact (from-qjson).
+- label: chunli-forward-block
+  setup: { dist: close, dummy: stand }
+  input: "press MK"
+  qjson: { name: "Forward" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: 24, adv: from-qjson }
+
+# Far Forward: dist=100 (corpus-ryu.yaml Far Strong/Fierce convention value)
+# connects and matches chunli.json's Far Forward row exactly.
+- label: chunli-farforward-block
+  setup: { dist: 100, dummy: stand }
+  input: "press MK"
+  qjson: { name: "Far Forward" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: chunli-roundhouse-block
+  setup: { dist: close, dummy: stand }
+  input: "press HK"
+  qjson: { name: "Roundhouse" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# Far Roundhouse: RESOLVED 2026-07-09 (§13.5.1b guard-rearm commit gate,
+# lever H) - was the whiff-R-truncation bucket (item 18), trace-confirmed
+# a lever-H false cut (guard_flag stayed 3 for the whole post-anchor tail,
+# never re-arming before the natural r1 edge). The gate now correctly
+# refuses the commit, extending R by +5; adv resolves to arcade-exact (0)
+# in the same move. What remains is a narrower +1 block-variance clause
+# (R=16 vs the now arcade-exact whiff R=15, chunli-hk-whiff below) - same
+# small-variance shape as Ken's Tatsu section. See docs/frame-data-
+# synthesis.md §13.5.1b.
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): R=16 is
+# the engine-truth recovery actually played on the BLOCK path - SWEEP-2
+# (2026-07-10) FULL CONVERT, xfail REMOVED. F2 R-surplus corollary
+# (§13.13:5145-5147, classification sweep #2 fable-grade audit): branch
+# content closes EXACTLY under the window's measured counting rule -
+# postthaw-inclusive branch cells 32(2)+36(2)+40-sentinel(3)=7 vs
+# whiff-only cells 24(2)+28(2)+32(2)=6, shared 0/4/8/12/16=9; +1 exact
+# (rule-transfer recount, s2 chunli trace GT=161-201, raw_len=29
+# reproduced exactly). RESOLVED 2026-07-09 (§13.5.1b) previously removed
+# this move's whiff-R-truncation/adv clauses (see file header); this was
+# the residual +1 block-variance clause discussed there, now closed. Arcade
+# (whiff-canonical, from-qjson) R=15 - superseded by the engine-truth value
+# per the convention. S/A/adv remain arcade-exact (from-qjson).
+- label: chunli-farroundhouse-block
+  setup: { dist: 100, dummy: stand }
+  input: "press HK"
+  qjson: { name: "Far Roundhouse" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: 16, adv: from-qjson }
+
+# --- HIT sample per button family (dummy: none, close range) ---------------
+
+- label: chunli-jab-hit
+  setup: { dist: 50, dummy: none }
+  input: "press LP"
+  qjson: { name: "Jab" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: chunli-strong-hit
+  setup: { dist: close, dummy: none }
+  input: "press MP"
+  qjson: { name: "Strong" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: chunli-fierce-hit
+  setup: { dist: close, dummy: none }
+  input: "press HP"
+  qjson: { name: "Fierce" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=1 is the
+# engine-truth credit actually accrued on the HIT path - same issue #17 shape
+# (a1) as chunli-short-block (identical mechanism, consistent A=1 on both
+# BLOCK and HIT). Arcade (whiff-canonical, from-qjson) A=5 - preserved here per
+# the convention. S/R/adv remain arcade-exact (from-qjson).
+- label: chunli-short-hit
+  setup: { dist: close, dummy: none }
+  input: "press LK"
+  qjson: { name: "Short" }
+  outcome: HIT
+  expect: { S: from-qjson, A: 1, R: from-qjson, adv: from-qjson }
+
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): R=24 is
+# the engine-truth recovery actually played on the HIT path - same §12.2.2
+# signature-member finding as chunli-forward-block (identical cgix=84->96
+# same-cghi recovery skip). Arcade (whiff-canonical) R=25 - preserved here per
+# the convention. S/A/adv remain arcade-exact (from-qjson); see
+# chunli-forward-block's comment for the full citation.
+- label: chunli-forward-hit
+  setup: { dist: close, dummy: none }
+  input: "press MK"
+  qjson: { name: "Forward" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: 24, adv: from-qjson }
+
+- label: chunli-roundhouse-hit
+  setup: { dist: close, dummy: none }
+  input: "press HK"
+  qjson: { name: "Roundhouse" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# --- WHIFF sample per button family (dummy: none, dist 250) -----------------
+# Unlike Ryu/Ken (every punch/kick has a distinct far-reach row), chunli.json
+# only lists Far variants for Jab/Forward/Roundhouse - Strong/Fierce/Short
+# have no far row at all, so at range those three throw the SAME animation
+# as their close row and simply fail to connect (verified live: WHIFF, not a
+# distinct far animation) - qjson.name below is each move's own close-range
+# row for that reason, not a fabricated "Far Strong"/"Far Fierce"/"Far Short"
+# that does not exist in the oracle. All six entries below match chunli.json
+# exactly, including for Forward/Roundhouse whose close-range BLOCK/HIT
+# entries above are xfailed - confirms the contact-tick-specificity of the
+# Forward finding (Roundhouse's own WHIFF is clean since plain Roundhouse
+# has no divergence at all; only Far Roundhouse's WHIFF diverges, see above).
+
+- label: chunli-lp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press LP"
+  qjson: { name: "Far Jab" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: chunli-mp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press MP"
+  qjson: { name: "Strong" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: chunli-hp-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press HP"
+  qjson: { name: "Fierce" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# Short's WHIFF is exact (A=5, matching chunli.json) despite its close-range
+# BLOCK/HIT entries above being shape-(a1) xfailed - confirms
+# contact-specificity, same discipline as every prior corpus in this repo.
+- label: chunli-lk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press LK"
+  qjson: { name: "Short" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: chunli-mk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press MK"
+  qjson: { name: "Far Forward" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# hk-whiff: RESOLVED 2026-07-09 (§13.5.1b guard-rearm commit gate, lever
+# H) - see chunli-farroundhouse-block above / file header. Was whiff-R
+# truncation (item 18); now arcade-exact R=15 (gate refuses the lever-H
+# false cut that used to truncate this WHIFF leg itself).
+- label: chunli-hk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press HK"
+  qjson: { name: "Far Roundhouse" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# --- Crouching normals, BLOCK (dummy: stand) --------------------------------
+
+- label: chunli-crjab-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+LP"
+  qjson: { name: "Crouching Jab" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: chunli-crstrong-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+MP"
+  qjson: { name: "Crouching Strong" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): R=17 is
+# the engine-truth recovery actually played on the BLOCK path - §12.2.2
+# contact-branch recovery shortening (hit-branch/contact recovery-chain
+# family, generalized here to "on contact" since BOTH BLOCK and HIT show the
+# identical shortened R, not HIT alone; this is the registry's own precedent
+# anchor, docs/frame-data-synthesis.md:707-709). Raw trace: same-tick skip
+# cghi=226->228 (cghi=227's declared cell never dispatched), independently
+# confirmed against a clean WHIFF baseline (chunli-crfierce-whiff below
+# matches chunli.json exactly). Arcade (whiff-canonical) R=22 - preserved here
+# per the convention. S/A/adv remain arcade-exact (from-qjson).
+- label: chunli-crfierce-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+HP"
+  qjson: { name: "Crouching Fierce" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: 17, adv: from-qjson }
+
+- label: chunli-crshort-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+LK"
+  qjson: { name: "Crouching Short" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: chunli-crforward-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+MK"
+  qjson: { name: "Crouching Forward" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: chunli-crroundhouse-block
+  setup: { dist: close, dummy: stand }
+  input: "press DOWN+HK"
+  qjson: { name: "Crouching Roundhouse" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# Crouching Roundhouse is a knockdown normal (chunli.json Hit_advantage="D",
+# non-numeric) - same shape as corpus-q.yaml's q-crhk-hit/q-fierce-hit
+# lever-E kd precedent, re-checked here per the runbook's item 6 instruction.
+# kd is explicit (never from-qjson, Phase 3 discipline); adv intentionally
+# unasserted (non-numeric oracle field).
+- label: chunli-crroundhouse-hit
+  setup: { dist: close, dummy: none }
+  input: "press DOWN+HK"
+  qjson: { name: "Crouching Roundhouse" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, kd: 1 }
+
+# Crouching Fierce WHIFF: the baseline confirmation for chunli-crfierce-block/
+# -hit's §13.10 Class 1 classification above - matches chunli.json exactly.
+- label: chunli-crfierce-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press DOWN+HP"
+  qjson: { name: "Crouching Fierce" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): R=17 is
+# the engine-truth recovery actually played on the HIT path - same §12.2.2
+# registry-anchor finding as chunli-crfierce-block (identical measured R=17 on
+# both outcomes; membership comes from the block sibling's registry anchor,
+# docs/frame-data-synthesis.md:707-709, not an independent §13.10 HIT-only
+# citation). Arcade (whiff-canonical) R=22 - preserved here per the
+# convention. S/A/adv remain arcade-exact (from-qjson); see
+# chunli-crfierce-block's comment for the full trace citation.
+- label: chunli-crfierce-hit
+  setup: { dist: close, dummy: none }
+  input: "press DOWN+HP"
+  qjson: { name: "Crouching Fierce" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: 17, adv: from-qjson }
+
+# --- Command normal (Towards + Forward, 6MK), BLOCK + WHIFF -----------------
+# WHIFF row per Phase 4's mandatory whiff-vs-table rule for command normals
+# (the Ken Towards Roundhouse precedent - corpus-ken.yaml:392-398).
+
+- label: chunli-twdsmk-block
+  setup: { dist: close, dummy: stand }
+  input: "press RIGHT+MK"
+  qjson: { name: "Towards Forward" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: chunli-twdsmk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press RIGHT+MK"
+  qjson: { name: "Towards Forward" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# --- UOH (press MP+MK) ------------------------------------------------------
+# chunli.json lists range strings for Block_advantage/Hit_advantage
+# ("-5 ~ +7" / "0 ~ +8") - same shape as corpus-ryu.yaml's ryu-uoh-block -
+# no expect.adv on any of the three outcomes below.
+#
+# RUNBOOK GAP: neither corpus-ryu.yaml nor corpus-ken.yaml authored a UOH
+# WHIFF row - added here for the first time (see file header "RUNBOOK GAP"
+# note) and is what surfaced the whiff-persistent A finding below, now
+# re-dispositioned to the §13.11 declared-truth convention (A=14, plain PASS
+# on chunli-uoh-whiff). See the file header's full "ISSUE #17 FAMILY
+# RE-CHECK" discussion for the §13.11 disposition + the separate, still-open,
+# hedged R deficit found on BLOCK/HIT only.
+
+# chunli-uoh-whiff: §13.11 declared-truth displayed-A convention
+# (docs/frame-data-synthesis.md §13.11, precedent q-uoh-whiff
+# corpus-q.yaml:636-641) - re-dispositioned 2026-07-08 from an "UNCLASSIFIED
+# A-overcount" filing to this convention; see file header for the full
+# discussion. Displayed A=14 is the declared credit, path-independent across
+# WHIFF/BLOCK/HIT (matches this entry's own BLOCK/HIT siblings below
+# exactly); chunli.json's arcade 10 is the whiff-VISIBLE tick count, not the
+# declared credit - the same "two numbers, both real, measuring different
+# things" story as q-uoh-whiff's declared-11-vs-visible-10. S/R exact
+# (S=15, R=5, both matching chunli.json). Plain PASS regression guard, now
+# asserting the convention value. NOT YET independently re-verified against
+# a per-cell cgctr decomposition summing to 14 the way q-uoh-whiff's own
+# 1+2+2+3+3=11 was counted cell-by-cell - that decomposition is the named
+# follow-up (if the cells do not sum to 14, this reverts to a flagged
+# double-accrual investigation).
+# §13.17 AMENDMENT (2026-07-11, rule adopted 2026-07-11: "whiff active-
+# frames come from the raw hitbox count" — user grant, docs/plan-
+# frame-data-completion.md OVERLAY RE-ANCHOR §6.2). A: 14 -> 10. Lever O
+# (whiff raw-box A) now displays the raw box-frame count instead of the
+# declared-credit accumulator on this WHIFF leg; 10 matches arcade/oracle
+# exactly (chunli.json UOH Hit=10; Session-4 hardware capture,
+# docs/arcade-frame-data/CAPTURE.md, box-A=10 both reps). The prior
+# literal (14, declared credit, see the comment above) stays asserted on
+# the BLOCK/HIT contact legs below — untouched, §13.11 contact-path
+# convention is out of scope of this amendment. R stays 5 (already
+# arcade-exact; twin/golden agreed before this program).
+- label: chunli-uoh-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press MP+MK"
+  qjson: { name: "Universal Overhead" }
+  outcome: WHIFF
+  expect: { S: 15, A: 10, R: 5 }
+
+# §13.13 contact-path convention (CONV-2 scope extension, 2026-07-10, user
+# decision): R=4 is the engine-truth recovery actually played on the
+# BLOCK path - family F6, §12.2.1 R-triplet whiff-exact variant (this
+# move's whiff R=5 is arcade-exact, unlike the alex/elena/necro/twelve
+# UOH family whose whiff legs stay item 18(b)-truncated). Per-tick trace
+# (s12-audit-rulings.md §B.1, s1-rundir/run-chunli/trace.log): all three
+# legs cut=1, anchor_a=14=engine_a (the §12.2.1 R-triplet precondition);
+# WHIFF's first grounded cleanup cell cgix=0 (cgctr=1) holds TWO ticks
+# (GT=63, GT=64), BLOCK holds ONE tick (GT=198) - one fewer cleanup tick
+# = the -1 R. A resolved to the §13.11 declared-truth convention above
+# (see file header and chunli-uoh-whiff), asserted directly at 14, not
+# part of this clause. NOT §13.7.3/Class-2 (that mechanism is HIT-only; R
+# diverges identically on BOTH BLOCK and HIT here). Arcade (whiff-
+# canonical, from-qjson) R=5 - preserved here per the convention.
+#
+# RE-CITED 2026-07-13 (UOH-CLOSURE lever T, docs/frame-data-synthesis.md
+# §13.20 SESSION 11; <sp>/zero/arcade-s11/session-report.md "Chun-Li
+# disposition"): this is the ONE row across the whole UOH-CLOSURE program
+# where legacy recovery_pf and the busy-edge/lever-T construction already
+# agree (both 4), so display is invariant either way. It was also the one
+# row session 8's own (voided, since-proven-whiff) capture found genuinely
+# divergent, reading 5 - matching chunli's whiff-canonical oracle, not
+# either computed value. Session 11 re-captured this leg with the
+# mandatory contact witness (attacker frz 8->0 overlapping a 22-raw-frame
+# freeze-extended box, vs the 10-raw whiff-canonical signature): real
+# arcade R=4, byte-identical x2, probe-confirmed exact at fc 261722.
+# Session 8's "5" reading is confirmed a whiff artifact, identical
+# mechanism to the other five s8 BLOCK legs. Per the design's own
+# pre-registered branch table (§4.2): capture=4 means stays PASS, NO
+# exception needed - the pre-registered PASS->XFAIL-asserted-at-5
+# exception does NOT apply. R stays 4, untouched; this note documents the
+# hardware backing, no golden/expect change.
+- label: chunli-uoh-block
+  setup: { dist: close, dummy: stand }
+  input: "press MP+MK"
+  qjson: { name: "Universal Overhead" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: 14, R: 4 }
+
+# §13.13 contact-path convention (CONV-2 scope extension, 2026-07-10, user
+# decision): R=4 is the engine-truth recovery actually played on the HIT
+# path - family F6, same §12.2.1 R-triplet whiff-exact-variant mechanism
+# as chunli-uoh-block (per-tick trace, s12-audit-rulings.md §B.1,
+# s1-rundir/run-chunli/trace.log: cleanup cell cgix=0 holds ONE tick on
+# HIT, GT=317, vs TWO ticks on WHIFF, GT=63/64 - one fewer cleanup tick,
+# identical on both contact outcomes). A resolved to the §13.11 convention
+# above, asserted directly at 14. Arcade (whiff-canonical, from-qjson) R=5
+# - preserved here per the convention.
+#
+# RE-CITED 2026-07-13 (UOH-CLOSURE lever T, docs/frame-data-synthesis.md
+# §13.20; <sp>/zero/arcade-s8/session-report.md HIT legs, valid contact:
+# frz=8 in-box, p1life 155): this leg's arcade R=4 was already
+# hardware-backed by session 8's valid HIT capture (unlike the BLOCK leg
+# above, whose s8 capture was later proven a whiff) - matches legacy AND
+# the busy-edge/lever-T construction (both 4), display-invariant. No
+# value change; note added for completeness of the family-closure record.
+- label: chunli-uoh-hit
+  setup: { dist: close, dummy: none }
+  input: "press MP+MK"
+  qjson: { name: "Universal Overhead" }
+  outcome: HIT
+  expect: { S: from-qjson, A: 14, R: 4 }
+
+# --- Throw (LP+LK) -----------------------------------------------------------
+# chunli.json's throw-family row is named bare "Throw" (same as ryu.json/
+# q.json, unlike ken.json's three-way split) - verified against the fetched
+# oracle rather than assumed. Throw_range=26px - close (56px) sits OUTSIDE
+# this, same trap as corpus-ken.yaml's ken-throw-hit; dist:26 used below.
+
+- label: chunli-throw-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press LP+LK"
+  qjson: { name: "Throw" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# HIT-R display convention (docs/frame-data-synthesis.md §13.10, Class 3
+# connected grab) - same mechanism as corpus-ryu.yaml's ryu-throw-hit
+# (NOT the saturated corpus-ken.yaml's ken-throw-hit sub-case: T=44 here,
+# nowhere near FD_METER_LEN=72, and endrel=1 fires per the trace, so this
+# is the plain §13.6.1 partner-release path, not saturation). R = meter_len
+# - S - A = 44-2-1 = 41, a DERIVED value from the live trace, re-measure if
+# this ever regresses. S/A match chunli.json's Throw row exactly; adv
+# intentionally unchecked (Hit_advantage="-" in chunli.json, non-numeric,
+# same large-number-on-knockdown convention as ryu-throw-hit/ken-throw-hit).
+- label: chunli-throw-hit
+  setup: { dist: 26, dummy: none }
+  input: "press LP+LK; wait 60"
+  qjson: { name: "Throw" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: 41, kd: 1 }
+
+# --- Kikkoken (projectile), motion hcf ---------------------------------------
+# Exercises the arcade-split machinery (lever D, 468cb84c) on a THIRD
+# character - the plan's own rationale for scheduling Kikkoken here.
+# Kikkoken's own in-game motion (41236+P, i.e. back, down-back, down,
+# down-forward, forward) maps EXACTLY onto the EXISTING `motion hcf <btn>`
+# macro (compile_corpus.py's _motion_steps: BACK, BACK|DOWN, DOWN,
+# DOWN|FORWARD, then FORWARD+btn - literally 4,1,2,3,6) - landed on the
+# FIRST probe attempt, zero compiler work, zero new macro, and completely
+# clean (every S/R/adv below matches chunli.json exactly, no divergence of
+# any kind). This is a genuinely different motion shape from Ryu/Ken's
+# Hadouken (motion qcf), so it is a non-QCF probe of the arcade-split
+# machinery per the plan's Step 12 rationale. chunli.json's Hit field is
+# the literal string "-" for every Kikkoken row (same non-numeric-oracle-
+# field reasoning as corpus-ryu.yaml's Hadouken section) - no expect.A.
+#
+# WHIFF is NOT attempted here, same harness-gap reasoning as
+# corpus-ryu.yaml's Hadouken section (gap register #5,
+# docs/frame-data-synthesis.md §12.1): a projectile travels full-screen and
+# still connects against a standing/non-jumping dummy at any scriptable
+# distance - the dummy cannot be scripted to jump or duck under it. Not
+# re-scanned this session (identical structural gap, not character-specific).
+
+- label: chunli-kik-lp-block
+  setup: { dist: close, dummy: stand }
+  input: "motion hcf LP"
+  qjson: { name: "Kikkoken Jab" }
+  outcome: BLOCK
+  expect: { S: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: chunli-kik-mp-block
+  setup: { dist: close, dummy: stand }
+  input: "motion hcf MP"
+  qjson: { name: "Kikkoken Strong" }
+  outcome: BLOCK
+  expect: { S: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: chunli-kik-hp-block
+  setup: { dist: close, dummy: stand }
+  input: "motion hcf HP"
+  qjson: { name: "Kikkoken Fierce" }
+  outcome: BLOCK
+  expect: { S: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: chunli-kik-lp-hit
+  setup: { dist: close, dummy: none }
+  input: "motion hcf LP"
+  qjson: { name: "Kikkoken Jab" }
+  outcome: HIT
+  expect: { S: from-qjson, R: from-qjson }
+
+- label: chunli-kik-mp-hit
+  setup: { dist: close, dummy: none }
+  input: "motion hcf MP"
+  qjson: { name: "Kikkoken Strong" }
+  outcome: HIT
+  expect: { S: from-qjson, R: from-qjson }
+
+- label: chunli-kik-hp-hit
+  setup: { dist: close, dummy: none }
+  input: "motion hcf HP"
+  qjson: { name: "Kikkoken Fierce" }
+  outcome: HIT
+  expect: { S: from-qjson, R: from-qjson }
+
+# --- Hazan Shu (motion hcb, EXISTING macro) ---------------------------------
+# Landed via the EXISTING `motion hcb <K>` macro (already implemented in
+# compile_corpus.py's _motion_steps for High Speed Barrage in corpus-q.yaml,
+# unused for a KICK button anywhere else in this repo, but zero new code).
+# S=22 matches chunli.json's Hazan Shu Short row EXACTLY on all three
+# outcomes - unambiguous identification.
+#
+# WHIFF-R-TRUNCATION CLAUSE RESOLVED 2026-07-09 (§13.5.1b guard-rearm
+# commit gate, lever H): was a COMPOUND divergence (whiff-R-truncation
+# stacked with a lever-F-tested shape (a1) contact A-undercount);
+# trace-confirmed the R clause was a lever-H false cut (guard_flag stayed
+# 3 for the whole post-anchor tail on all three outcomes, never re-arming
+# before the natural r1 edge). The gate now correctly refuses this commit;
+# all three outcomes finalize at the natural r1 edge and measure R=18,
+# arcade-exact (+3 extension) - WHIFF is now a plain PASS. BLOCK/HIT's adv
+# also resolves to arcade-exact (-2) in the same move but stays UNASSERTED
+# (no new expect field added). The UNRELATED shape (a1) contact A-undercount
+# (measured A=1 vs the WHIFF-confirmed/arcade A=3, lever-F-tested and
+# confirmed unchanged, same family as chunli-short-block) is untouched by
+# this fix and keeps BLOCK/HIT xfail on that clause alone. See
+# docs/frame-data-synthesis.md §13.5.1b.
+
+- label: chunli-hazan-lk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "motion hcb LK"
+  qjson: { name: "Hazan Shu Short" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=1 is the
+# engine-truth credit actually accrued on the BLOCK path - RESOLVED 2026-07-09
+# (§13.5.1b) removed this entry's whiff-R-truncation clause (R/adv now
+# silently arcade-exact); what remains is the UNRELATED shape (a1) contact
+# A-undercount, lever-F-tested UNCHANGED (fd_restore_revoked_declared_credit
+# forced 0 on a scratch build, reverted before commit), same family as
+# chunli-short-block. Arcade (whiff-canonical, from-qjson) A=3 - preserved
+# here per the convention. S/R/adv remain arcade-exact (from-qjson).
+- label: chunli-hazan-lk-block
+  setup: { dist: close, dummy: stand }
+  input: "motion hcb LK"
+  qjson: { name: "Hazan Shu Short" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: 1, R: from-qjson, adv: from-qjson }
+
+# §13.13 contact-path convention (adopted 2026-07-10, user decision): A=1 is the
+# engine-truth credit actually accrued on the HIT path - same RESOLVED
+# 2026-07-09 (§13.5.1b) disposition as chunli-hazan-lk-block (whiff-R-
+# truncation clause GONE, R silently arcade-exact); what remains is the same
+# UNRELATED shape (a1) contact A-undercount. Arcade (whiff-canonical,
+# from-qjson) A=3 - preserved here per the convention. S/R remain arcade-exact
+# (from-qjson).
+- label: chunli-hazan-lk-hit
+  setup: { dist: close, dummy: none }
+  input: "motion hcb LK"
+  qjson: { name: "Hazan Shu Short" }
+  outcome: HIT
+  expect: { S: from-qjson, A: 1, R: from-qjson }
+
+# --- Spinning Bird Kick (motion charge-down N then-up, EXISTING macro) ------
+# Landed via the EXISTING `motion charge-down <N> then-up <BTN>` macro
+# (Hugo SDB / q.json DHA precedent, already implemented, zero new code).
+# S=12 A=4 match chunli.json's Spinning Bird Kick Short row EXACTLY on BOTH
+# WHIFF and BLOCK - completely clean, no divergence of any kind (unlike
+# Kikkoken/Hazan Shu, this special shows zero #17-family or whiff-truncation
+# issues). chunli.json's Recovery/Block_advantage/Hit_advantage fields are
+# all the literal string "-" for every SBK row (non-numeric, same reasoning
+# as the Hadouken/Kikkoken sections) - no expect.R/adv anywhere below.
+
+- label: chunli-sbk-lk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "motion charge-down 45 then-up LK"
+  qjson: { name: "Spinning Bird Kick Short" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson }
+
+- label: chunli-sbk-lk-block
+  setup: { dist: close, dummy: stand }
+  input: "motion charge-down 45 then-up LK"
+  qjson: { name: "Spinning Bird Kick Short" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson }
+
+# --- Negative control (plan section 1.8 item 5 precedent) ------------------
+
+- label: chunli-jump-none
+  setup: { dist: 250, dummy: none }
+  input: "press UP"
+  outcome: NONE

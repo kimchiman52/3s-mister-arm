@@ -1,0 +1,6 @@
+label	verdict	outcome	n	S	A	R	adv	kd
+twelve-sa2-whiff	PASS	WHIFF	1	1	12	49	+0	0
+twelve-sa2-buffer-jab-1	PASS	WHIFF	1	3	3	7	+0	0
+twelve-sa2-block	PASS	BLOCK	1	1	2	49	-27	0
+twelve-sa2-buffer-jab-2	PASS	WHIFF	1	3	3	7	+0	0
+twelve-sa2-hit	PASS	HIT	1	1	16	63	+50	1

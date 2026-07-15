@@ -289,6 +289,17 @@ void set_tengu_init_pos(WORK* ewk, WORK* mwk) {
     ewk->xyz[1].disp.pos = ewk->direction;
 }
 
+/* §13.12 (ENGINE-4): overlay-feed kill-reason latch — this player-owned
+ * tama's chart is being retired to an erase chart (any cause: consumed,
+ * deflected, grounded, timed out, chart end). Write-only overlay feed
+ * (fd_engine_proj_* class); guard mirrors charset.c's tama branch. */
+static void fd_tama_chart_cut(WORK_Other* ewk) {
+    if (ewk->master_work_id == 1
+        && (ewk->master_id == 0 || ewk->master_id == 1)) {
+        fd_engine_proj_cut[ewk->master_id] = 1;
+    }
+}
+
 void kotp_00000(WORK_Other* ewk, TAMA* twk) {
     if (ewk->wu.hf.hit_flag) {
         ewk->wu.routine_no[1] = 1;
@@ -315,6 +326,7 @@ void kotp_00000(WORK_Other* ewk, TAMA* twk) {
             set_char_move_init(&ewk->wu, 0, twk->ernm);
             ewk->wu.routine_no[1] = 2;
             ewk->wu.routine_no[2] = 0;
+            fd_tama_chart_cut(ewk); /* §13.12 (ENGINE-4): chart-end -> ernm */
             break;
         }
 
@@ -327,6 +339,7 @@ void kotp_00000(WORK_Other* ewk, TAMA* twk) {
             ewk->wu.routine_no[1] = 2;
             ewk->wu.routine_no[2] = 1;
             ewk->wu.xyz[1].disp.pos = -ewk->wu.cg_jphos;
+            fd_tama_chart_cut(ewk); /* §13.12 (ENGINE-4): ground touch -> erex */
             break;
         }
 
@@ -339,6 +352,7 @@ void kotp_00000(WORK_Other* ewk, TAMA* twk) {
         set_char_move_init(&ewk->wu, 0, twk->ernm);
         ewk->wu.routine_no[1] = 2;
         ewk->wu.routine_no[2] = 0;
+        fd_tama_chart_cut(ewk); /* §13.12 (ENGINE-4): life_time/off-screen -> ernm */
         break;
 
     case 1:
@@ -360,6 +374,7 @@ void kotp_00000(WORK_Other* ewk, TAMA* twk) {
             ewk->wu.routine_no[2] = 1;
             ewk->wu.kage_flag = 0;
             ewk->wu.hit_stop = 0;
+            fd_tama_chart_cut(ewk); /* §13.12 (ENGINE-4): consumption -> erht/erdf/erex */
         } else {
             ewk->wu.routine_no[1] = 0;
 
@@ -1577,6 +1592,7 @@ void kotp_13000(WORK_Other* ewk, TAMA* twk) {
             set_char_move_init(&ewk->wu, 0, twk->ernm);
             ewk->wu.routine_no[1] = 2;
             ewk->wu.routine_no[2] = 0;
+            fd_tama_chart_cut(ewk); /* §13.12 (ENGINE-4): chart-end -> ernm */
             break;
         }
 
@@ -1589,6 +1605,12 @@ void kotp_13000(WORK_Other* ewk, TAMA* twk) {
         break;
 
     case 1:
+        /* §13.12 (ENGINE-4): consumption does NOT cut the chart — this is
+         * precisely the no-cut path the R gate keys on. att_hit_ok is
+         * cleared (a consumable hit permission) but char_move() keeps
+         * running on the SAME chart every tick (case 2 below) until the
+         * chart's own scripted end, so fd_engine_proj_cut must stay 0
+         * here (deliberately no fd_tama_chart_cut() call). */
         ewk->wu.vital_new -= ewk->wu.dm_vital;
         ewk->wu.dm_vital = 0;
 
@@ -1864,6 +1886,19 @@ s32 effect_13_init(WORK* wk, u8 data) {
         ewk->wu.olc_work_ix[1] = ((PLW*)wk)->tk_nage;
         ewk->wu.olc_work_ix[2] = ((PLW*)wk)->tk_kizetsu;
         ewk->wu.olc_work_ix[3] = wk->routine_no[1];
+
+        /* Phase 6A "arcade-split" projectile design
+         * (/tmp/phase6-nonq-plan.md §2/Step 2): flag a fresh player-owned
+         * projectile spawn for the overlay to consume this same tick and
+         * latch as the move's S/R release boundary. Checked against the
+         * CALLER wk (the player, work_id == 1 here) — the new effect
+         * WORK's own work_id doesn't become tama->my_wkid until
+         * effect_13_move()'s first tick, so it can't be used at this
+         * call site. Deliberately does NOT run on the `else` branch
+         * above (a projectile spawning a nested effect) — only a
+         * top-level player-initiated spawn should retrigger the overlay's
+         * spawn-consume latch. */
+        fd_engine_proj_spawned[wk->id] = 1;
     } else {
         ewk->master_player = ((WORK_Other*)wk)->master_player;
         ewk->master_id = ((WORK_Other*)wk)->master_id;

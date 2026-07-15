@@ -1,0 +1,145 @@
+# Yang Super Art 2 (Tenshin Senkyuutai) — EX/Supers program, supers wave S3.
+# Satellite corpus (auto-discovered by run-suite.sh's corpus-*.yaml glob,
+# own golden/yang-sa2.tsv once registered) — corpus-yang.yaml/corpus-yang-
+# ex.yaml/corpus-yang-sa1.yaml/corpus-yang-sa3.yaml are untouched.
+#
+# Scope: <sp>/exsuper/step0-universe.tsv row 140 (yang SA2, "Tenshin
+# Senkyuutai", sa_slot 2, naive sequential grouping — no Common_name
+# label). Oracle: docs/arcade-frame-data/yang.json (md5
+# 4701f59a68fb49caa9ebaaefaeb40674, unchanged, same file the sibling yang
+# corpora already pin). Oracle row: Startup=0, Hit=59, Recovery=57,
+# Block_advantage=-69, Hit_advantage="-" (non-numeric).
+#
+# Meter: sa_gauge:3 (MAXIMUM) + super_art:1 (0-indexed SA2 slot — SA1=0 in
+# corpus-yang-sa1.yaml, SA3=2 in corpus-yang-sa3.yaml).
+#
+# Motion (identity confirmed this session by S-match probe against this
+# oracle row's distinctive Startup=0 signature — unique among every Yang
+# move in yang.json, an unambiguous identity check): double dragon-punch
+# hold-chain + HK (same DP-family primitive already confirmed for Ryu SA2,
+# a multi-hit rising anti-air super family) — "hold RIGHT 2; hold DOWN 2;
+# hold DOWN+RIGHT 2; hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT+HK 2;
+# wait 1". Landed S=0 exact on the FIRST candidate tried
+# (<sp>/sa-yang/run-probe3-sa2/trace.log) — no fallback probing needed.
+#
+# WHIFF-UNREACHABLE(dist=310 centered, dummy:none, ~max achieved) — two
+# independent probes (dist:300 and the harness's own CENTERED_DIST_MAX=310)
+# BOTH connect as HIT, never WHIFF (<sp>/sa-yang/run-probe5-sa2full/
+# trace.log entry probe-sa2-whiff [dist:300, measured HIT A=40 R=42
+# adv=+82]; <sp>/sa-yang/run-probe6-sa2whiffmax/trace.log [dist:310,
+# measured HIT A=41 R=42 adv=+82]). This is the SA-upgrade of the same base
+# move family as corpus-yang-ex.yaml's own Senkyuutai (EX), which is
+# ALREADY documented WHIFF-UNREACHABLE at this same ceiling for the
+# identical reason (essentially full-screen reach) — consistent, not a
+# fresh surprise. Coverage for this move comes from its BLOCK/HIT legs + S,
+# per authoring-policy.md Ruling 1's fallback language.
+#
+# Admissibility census (per-entry, mechanical, from FRAME_TRACE columns —
+# authoring-policy.md Ruling 2), this session's own isolated probe runs
+# (<sp>/sa-yang/run-probe5-sa2full/trace.log for BLOCK/HIT, scoped
+# per-entry not file-wide): (1) Single-FINAL integrity: exactly one
+# MOVE_START/FINAL pair per entry, non-overlapping windows (BLOCK
+# F338-459, HIT F851-1067), no bleed. T=94/77 — well under FD_METER_LEN=72
+# is FALSE for BLOCK (T=94>72) but its own busyr (57) matches its own
+# displayed R (57) exactly, self-consistent (not an M1-style truncation
+# shape — M1 shows displayed R strictly below busyr). (2) Flash-overlap
+# census: 0 nonzero sastop ticks in either entry's own [MOVE_START F,
+# FINAL F] window (0/122 BLOCK, 0/217 HIT — python census this session,
+# scoped per-entry) — flash-free. (3) Contact-A juggle check: N/A in the
+# usual sense — both legs' A are OMITTED regardless of the juggle
+# comparison (see A DISPOSITION below), so there is nothing to gate on
+# (same posture as corpus-akuma-sa1.yaml's own "(3) N/A ... see the A
+# DISPOSITION below for why A is not asserted anyway"). (4) Shape record:
+# proj=0 both legs; box_runs=4 (BLOCK) vs box_runs=1 (HIT) — a genuinely
+# multi-run BLOCK window (a multi-hit kick barrage playing out across
+# several separate active windows against a static guarding dummy) vs a
+# single contiguous HIT window (the barrage ending sooner once it knocks
+# the dummy down, per kd=1).
+#
+# A DISPOSITION (both legs) — a NEW MULTIHIT-shaped finding this session,
+# NOT pre-flagged MULTIHIT_CITED in step0-universe.tsv's own
+# move_shape_notes column for this row (unlike Ibuki Kasumi Suzaku/Akuma
+# Messatsu Gou Hadou/Twelve X.N.D.L., which ARE so flagged) but showing the
+# identical large-gap, non-contact-only shape those rows already
+# established: measured A=21 (BLOCK, dist:close) / A=20 (HIT, dist:close)
+# / A=40 (the dist:300 WHIFF-attempt-turned-HIT) / A=41 (the dist:310
+# WHIFF-attempt-turned-HIT) against oracle Hit=59 — four DIFFERENT values
+# across four contexts, not even path-independent the way corpus-akuma-
+# sa1.yaml's own A=13-both-legs sighting was. The measured A is genuinely
+# DISTANCE-DEPENDENT (20 at dist:close climbing to 41 at dist:310 centered)
+# — consistent with a traveling multi-hit kick barrage connecting more of
+# its own individual hits the farther the dummy needs to be chased across
+# the screen, the same underlying shape as this character's own
+# corpus-yang-ex.yaml "DISTANCE-DEPENDENT-S" finding for Senkyuutai (EX),
+# just manifesting on A instead of S here. No single candidate value (nor
+# a stable per-leg pair) exists to assert under any established Phase 6
+# A-bucket (1/7/8 all require a clean, single-valued WHIFF baseline, which
+# this move has none of — WHIFF is itself unreachable). Per the same
+# "wrong values never ship as if expected" house rule Akuma SA1's own A
+# DISPOSITION already cites, A is OMITTED (not asserted, not xfailed as a
+# guess) on BOTH legs, logged here as UNCLASSIFIED for follow-up — a
+# second population member for the MULTIHIT-shaped bucket, upgrading it
+# from Akuma SA1's single sighting (not itself a new bucket adoption
+# decision — that call is the orchestrator's, per this program's own
+# governance route for new families).
+#
+# R DISPOSITION — BLOCK leg R=57 is oracle-exact (busyr=57 agrees); this
+# leg self-excludes from lever R via box_runs=4 (CONTACT-2 gate requires
+# box_runs==1), untouched by both ENGINE-D2 and this design.
+# UPDATED 2026-07-13 (CONTACT-2, lever R, design.md §8.4, D4 adjudication):
+# the HIT leg's displayed R churns 42->40 — lever R wires the busy-edge
+# construction (`fd_contact_busy_edge_r`, frame_data_overlay.c §13.19)
+# directly into the display on this leg (box_runs=1, koc=5, hsab=0), so
+# displayed R now EQUALS its own busyr (40) — the "+2 internal wrinkle"
+# below dissolves (there is no longer an internal disagreement, since
+# displayed IS busyr). Verified cell-isolated from ENGINE-D2's own A fix
+# (lever S): `engine_a=21` (D2's accumulator, already landed) alongside
+# `box_a=21 busyr=40 box_runs=1 hsab=0` on the same native FINAL
+# (`step1/spot-checks.txt` D4 exhibit) — lever R's value derives only from
+# the box/busy trackers, never `engine_a`, so this commit's diff on this
+# row touches the R cell only; A stays at D2's already-landed 21. R stays
+# OMITTED this payload (still no clean §13.10 bucket fit vs the -17
+# BLOCK-vs-HIT gap, still no whiff-canonical cross-check), golden churn
+# 42->40 verdict-inert (stays PASS on S/kd). Prior history (RELOCATED not
+# deleted): HIT leg R=42 vs BLOCK/oracle's 57 (a large -15 gap) does NOT
+# cleanly fit §13.10 Class 1 (hit-branch recovery chains, "genuinely
+# shorter parallel recovery" — the direction matches here, unlike this
+# character's own SA1 HIT-R+1 finding, but this bucket's disposition
+# requires a whiff-canonical cross-check this move cannot supply, since
+# WHIFF is unreachable) and its own busyr (40) did NOT even match its own
+# displayed R (42, under the legacy tally) — a further +2 internal wrinkle
+# on top of the -15 BLOCK-vs-HIT gap, unlike SA1's own HIT-R finding (which
+# WAS internally self-consistent, busyr==displayed there). QUARANTINED
+# (omitted, not xfailed): logged as a new, unclassified finding, HYPOTHESIS
+# ONLY — same disposition class as Ryu SA2's own HIT-leg R quarantine (a
+# multi-hit super's HIT-leg R diverging from its BLOCK-leg oracle-exact
+# figure with no clean bucket fit).
+character: yang
+oracle: yang.json
+super_art: 1
+sa_gauge: 3
+inter_entry_wait: 500
+entries:
+
+- label: yang-sa2-block
+  setup: { dist: close, dummy: stand }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT+HK 2; wait 1"
+  qjson: { name: "Tenshin Senkyuutai" }
+  outcome: BLOCK
+  # Measured S=0 A=22 (was 21 pre-ENGINE-D2 — this leg is a same-tick D2
+  # member too, +1 delta, but still nowhere near oracle 59; NOT asserted,
+  # see A DISPOSITION above) R=57 adv=-69 (box_runs=4, box_a=23, busyr=57,
+  # T=94). S/R/adv oracle-exact.
+  expect: { S: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: yang-sa2-hit
+  setup: { dist: close, dummy: none }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT+HK 2; wait 1"
+  qjson: { name: "Tenshin Senkyuutai" }
+  outcome: HIT
+  # Measured S=0 A=21 (D2/lever S, already landed, unaffected by lever R)
+  # R=40(NOT asserted, was 42 pre-lever-R, see R DISPOSITION — now equals
+  # its own busyr exactly) kd=1 (box_runs=1, box_a=21, busyr=40, T=77;
+  # engine_a=21). S oracle-exact (only field asserted). No expect.adv:
+  # yang.json's Hit_advantage for this row is the literal string "-".
+  expect: { S: from-qjson, kd: 1 }

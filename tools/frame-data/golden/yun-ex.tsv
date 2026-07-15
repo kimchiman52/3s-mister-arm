@@ -1,0 +1,8 @@
+label	verdict	outcome	n	S	A	R	adv	kd
+yun-extetsu-block	PASS	BLOCK	1	10	13	19	-7	0
+yun-extetsu-hit	PASS	HIT	1	10	13	19	+85	1
+yun-exzesshou-block	XFAIL	BLOCK	1	13	16	12	-2	0
+yun-exzesshou-hit	XFAIL	HIT	1	13	16	12	+72	1
+yun-exnishou-whiff	PASS	WHIFF	1	4	6	29	+0	0
+yun-exnishou-block	PASS	BLOCK	1	4	6	29	-28	0
+yun-exnishou-hit	PASS	HIT	1	4	6	29	+89	1

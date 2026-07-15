@@ -1,0 +1,7 @@
+label	verdict	outcome	n	S	A	R	adv	kd
+h-exgpb-whiff	PASS	WHIFF	1	22	3	10	+0	0
+h-exgpb-block	PASS	BLOCK	1	22	3	11	+10	0
+h-exgpb-hit	PASS	HIT	1	22	3	11	+104	1
+h-exml-whiff	PASS	WHIFF	1	6	6	31	+0	0
+h-exml-block	PASS	BLOCK	1	6	6	31	-22	0
+h-exml-hit	XFAIL	HIT	1	6	2	35	+69	1

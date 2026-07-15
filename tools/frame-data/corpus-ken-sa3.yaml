@@ -1,0 +1,151 @@
+# Ken Super Art 3 (Shipuujinrai Kyaku) — EX/Supers program, SUPERS PILOT
+# trio (authoring-policy.md Ruling 5: "Pilot trio: chunli-sa2, ken-sa3,
+# ryu-sa1 — the 2b-probed shapes: single-run, multi-run, proj-split"). Ken
+# is the GENUINE multi-run shape (box_runs=12 under the real att_box tensor,
+# 2b §2 Q2 — not an hatt-proxy artifact) and the program's one live value
+# dispute (Ken SA3 BLOCK R+10). Satellite corpus (auto-discovered by
+# run-suite.sh's corpus-*.yaml glob, own golden/ken-sa3.tsv once
+# registered) — the main corpus-ken.yaml/corpus-ken-ex.yaml are untouched.
+#
+# Scope: step0-universe.tsv row 61 (ken SA3, "Shipuujinrai Kyaku", sa_slot
+# 3). Oracle: docs/arcade-frame-data/ken.json (md5
+# c2776abd0d106d7949db64d3cec62d7a, same file corpus-ken.yaml/corpus-ken-
+# ex.yaml already pin). Oracle row: Startup=1, Hit=9, Recovery=27,
+# Block_advantage=-11, Hit_advantage="-" (non-numeric).
+#
+# Meter: sa_gauge:3 (MAXIMUM) + super_art:2 (0-indexed SA3, identity
+# confirmed by step2b's own S=1 match, re-confirmed this session).
+#
+# Motion (identity confirmed step2b, re-confirmed this session): "motion
+# 2qcf HK".
+#
+# Admissibility census (per-entry, mechanical, from FRAME_TRACE columns —
+# authoring-policy.md Ruling 2), this session's own isolated 2-entry probe
+# run (<sp>/exsuper/sa-pilot/ken/run-probe1/trace.log, inter_entry_wait:500)
+# plus a dedicated WHIFF probe (run-probe2):
+# (1) Single-FINAL integrity — exactly one FINAL inside each entry's own
+# window (BLOCK F51-149; HIT F201-422, the last entry, open-ended), values
+# sane and consistent with 2b's own preserved measurements (BLOCK S=1 A=9
+# R=37 adv=-11 reproduces excontact-r-findings.md §1.1's preserved trace
+# byte-for-byte; HIT S=1 A=27 adv=+72 kd=1 reproduces 2b's own merged-entry
+# reading almost exactly, R=1 here vs R=0 there — both a long way from
+# oracle 27, same M1-family shape, not a new number). NOTE (finding, not
+# a defect): the FINAL line's own `move_start_F` diagnostic field is NOT
+# the same clock as the trace row's own `F=` annotation prefix — they are
+# two distinct file-scope `g_local_frame` counters in two different
+# translation units (`frame_data_overlay.c` vs `frame_trace.c`), confirmed
+# by reading both call sites this session
+# (`frame_data_overlay.c:1183`/`:1101-1109` vs `frame_trace.c:282,297`);
+# the overlay's own counter additionally stalls on every
+# `sa_stop_check()`-gated tick (`frame_data_overlay.c:1152-1154`) while the
+# trace row counter only increments on row-emission ticks. The single-FINAL
+# check that actually matters in practice — exactly one FINAL per entry's
+# own row-F window, sane value continuity — is unaffected and passes
+# cleanly; this is flagged here as an observation for whoever next
+# leans on this specific wording in the policy doc, not treated as a
+# merge/label-bleed defect (no such defect: box_a/busyr/S/A/adv/kd all sit
+# exactly where 2b's own preserved data says they should).
+# (2) Flash-overlap census: 0 nonzero-sastop ticks in [MOVE_START row-F,
+# FINAL row-F] on both legs (0/99 BLOCK F51-149, 0/222 HIT F201-422 — awk
+# census this session) and on the WHIFF-attempt probe below — flash-free
+# measurement, matches step2a-report.md's finding for every population
+# checked so far, now extended to a THIRD independently-measured leg.
+# (3) Contact-A juggle check (HIT legs only): HIT-leg A=27 vs BLOCK-leg
+# A=9 — FAILS (identical shape to the excontact-r-findings.md-documented
+# precedent that motivated this exact check: "Ken SA3 HIT A=27 vs BLOCK
+# A=9(=oracle)"). HIT-leg A is therefore documented-unasserted (omitted),
+# not quarantined — this is exactly what the check exists to catch.
+# (4) Shape record: BLOCK box_runs=1/box_a=6/busyr=45 (single contiguous
+# active run before BLOCK's own outcome resolves — the flurry's later
+# hits never register once the first is guarded); HIT box_runs=10/
+# box_a=24/busyr=11 (genuinely multi-run under the real att_box tensor,
+# corroborating 2b's own box_runs=12 reading on a related but not
+# identical capture — same shape, minor run-count variance between
+# reps). Both legs stay on the LEGACY path regardless of box_runs (E-2:
+# contact legs never take lever N/O by construction; box_runs>1 also
+# independently disqualifies lever N/O's own gate per Ruling 3).
+#
+# R DISPOSITION (Ruling 3's named quarantine, both legs — NOT a fresh
+# finding, re-confirmed this session): excontact-r-findings.md §1.1 solved
+# the BLOCK leg offline as M1 (FD_METER_LEN=72 raw-capture saturation +
+# legacy multi-run window misplacement) — the true post-last-active span
+# recounts to 27 = oracle EXACTLY on 3/3 preserved reps, while the legacy
+# window that actually gets displayed opens mid-run-sequence and reads 37
+# (measured again this session, byte-identical: S=1 A=9 R=37 adv=-11,
+# T=72=FD_METER_LEN exactly). adv=-11 is oracle-exact (the adv anchor
+# already sees the true recovery end; the +10 lives entirely inside the
+# legacy R computation, a path the sastop signal never touches — Ruling 3,
+# step2a Q2). The HIT leg's own displayed R (1, vs oracle 27) is the SAME
+# named quarantine, not a second independent one (T=72 saturated
+# identically) — no mechanism re-derivation attempted this session beyond
+# what excontact-r-findings.md already established for this move.
+# R is therefore OMITTED on both legs (not asserted, not xfailed as a
+# guess) per the established idiom: "omit with the M1 citation" — this IS
+# the program's one pre-registered quarantine seed
+# ("Expected quarantine seed: exactly 1 (Ken SA3 BLOCK R)",
+# authoring-policy.md coverage estimate), now recorded for both legs of
+# the same move under one name.
+#
+# WHIFF-UNREACHABLE(dist=300 centered, walk_in=42px) — Ruling 1's honest-
+# bound convention. Probe (<sp>/exsuper/sa-pilot/ken/run-probe2/trace.log):
+# dist:300 dist_mode:centered (10px inside CENTERED_DIST_MAX=310, the
+# practical ceiling for this tooling batch) still connects (outcome=HIT
+# S=1 A=27 R=2 adv=+72 — same full-combo shape as the HIT leg above, not a
+# census/shape problem). MOVE_START's own annotation reads dist=258 (not
+# 300) — this move's own pre-MOVE_START walk-in consumes ~42px of the
+# requested separation (matching 2b's own +42px measurement almost
+# exactly, this time under centered rather than anchored placement), and
+# Shipuujinrai Kyaku's own rushing-kick reach still exceeds the ~258px
+# effective separation that leaves. No further binary search attempted
+# (10px of headroom left below CENTERED_DIST_MAX; not expected to change
+# the outcome, same posture as the ryu-exjsg precedent for another
+# WHIFF-UNREACHABLE forward-motion special). Coverage for this move
+# instead comes from the BLOCK/HIT legs above, per Ruling 1 ("its coverage
+# comes from Ruling 2's contact legs + S").
+character: ken
+oracle: ken.json
+super_art: 2
+sa_gauge: 3
+inter_entry_wait: 500
+entries:
+
+- label: ken-sa3-block
+  setup: { dist: close, dummy: stand }
+  input: "motion 2qcf HK"
+  qjson: { name: "Shipuujinrai Kyaku" }
+  outcome: BLOCK
+  # Measured S=1 A=9 R=37(NOT asserted, see R DISPOSITION above) adv=-11
+  # (box_runs=1, box_a=6, busyr=45). S/A/adv oracle-exact.
+  # BUFFER-1 (2026-07-13) — QUARANTINE NOT RESOLVED, unlike every other M1
+  # member: the FD_CAPTURE_LEN 72->256 raise was built and measured on this
+  # leg; displayed R stayed BYTE-IDENTICAL at 37 (no drift at all in the
+  # full-suite pre-drift diff), NOT the offline-recounted 27 this file's own
+  # R DISPOSITION cites (excontact-r-findings.md §1.1). This means BLOCK's
+  # own append genuinely stops at the same real point regardless of capture
+  # depth — it was never actually capture-truncated by FD_METER_LEN=72 the
+  # way the other 22 M1 legs were, contradicting the prior offline recount's
+  # premise for this specific leg. R stays OMITTED, unconverted; this is now
+  # an open, still-unexplained discrepancy (BUFFER-1 census finding,
+  # reported for orchestrator/user follow-up), not silently forced to 27.
+  expect: { S: from-qjson, A: from-qjson, adv: from-qjson }
+
+- label: ken-sa3-hit
+  setup: { dist: close, dummy: none }
+  input: "motion 2qcf HK"
+  qjson: { name: "Shipuujinrai Kyaku" }
+  outcome: HIT
+  # Measured S=1 A=27 R=1(NOT asserted, see R DISPOSITION above) adv=+72
+  # (box_runs=10, box_a=24, busyr=11, kd=1). S oracle-exact. A is NOT
+  # asserted: the contact-A juggle check (Ruling 2 check 3) FAILS
+  # (measured HIT A=27 != BLOCK A=9) — documented-unasserted per policy,
+  # not quarantined, the same class as the Ryu EX Joudan Sokutou Geri
+  # precedent (corpus-ryu-ex.yaml `ryu-exjsg-hit`). No expect.adv:
+  # ken.json's Hit_advantage for this row is the literal string "-".
+  # BUFFER-1 (2026-07-13) — same open discrepancy as BLOCK above: post-fix
+  # measured R=11 (drifted from 1, but NOT the offline-recounted 27). R
+  # stays OMITTED; not converted; flagged alongside BLOCK.
+  expect: { S: from-qjson }
+
+# No WHIFF entry for Shipuujinrai Kyaku — see the
+# WHIFF-UNREACHABLE(dist=300 centered, walk_in=42px) note in this section's
+# header above.

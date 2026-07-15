@@ -5,7 +5,11 @@
  * RoomCode_Decode, then checks that single-character typos and
  * bogus input are rejected. Gated behind ENABLE_NETPLAY_TESTS so
  * release builds don't carry the symbol. Enable with:
- *   EXTRA_CMAKE_ARGS="-DENABLE_NETPLAY=ON -DCMAKE_C_FLAGS=-DENABLE_NETPLAY_TESTS"
+ *   EXTRA_CMAKE_ARGS="-DENABLE_NETPLAY=ON \
+ *                     -DCMAKE_C_FLAGS='-DENABLE_NETPLAY_TESTS -DNETPLAY_TEST_HOOKS'"
+ * (NETPLAY_TEST_HOOKS is required because this build links every
+ * src/netplay/test_*.c TU, including test_bilateral_punch.c, which needs
+ * that macro to declare DirectP2P_TestHook_IsLanPeer.)
  * Mirrors src/netplay/test_event_queue.c pattern.
  */
 

@@ -1,0 +1,266 @@
+# Ryu EX moves corpus — EX/Supers program, Ryu EX pilot (Ruling 5's "pilot =
+# 1 character" wall-time datapoint, <sp>/exsuper/authoring-policy.md).
+# Satellite corpus (auto-discovered by run-suite.sh's corpus-*.yaml glob, own
+# golden/ryu-ex.tsv) — the main corpus-ryu.yaml is untouched.
+#
+# Scope: Ryu's 4 ground EX rows per <sp>/exsuper/step0-universe.tsv (rows
+# 104-107; row 108 Air Tatsumaki EX is AIR_DEFERRED, out of scope this
+# program per Step 3.4): Hadouken (EX) [the proven EX-projectile shape,
+# proj-split lever-J routing, §13.12], Shoryuken (EX), Tatsumaki Senpuu Kyaku
+# (EX), Joudan Sokutou Geri (EX). Oracle: docs/arcade-frame-data/ryu.json
+# (md5 cd0f6c79b0735c46e3074f02fb2f5d51, same file corpus-ryu.yaml already
+# pins — re-verified unchanged this session).
+#
+# Motion recipes (Phase 5 motion-probe method — S-value match against the
+# oracle, not recalled from memory):
+#   - EX Hadouken: `hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LP+HP 2; wait 1`
+#     — qcf's own _motion_steps sequence with the final step's button
+#     replaced by a two-punch chord (cmd_motion only accepts a single button
+#     token; `hold`'s chord parser takes '+'-joined tokens) — identical
+#     workaround to the one that landed Ken's EX Hadouken oracle-exact in the
+#     Step-13 spike (<sp>/step13/corpus-ex-had.yaml).
+#   - EX Shoryuken: `hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold
+#     RIGHT+LP+HP 2; wait 1` — the dp hold-chain precedent already shipped
+#     for Ken's own Shoryuken family (corpus-ken.yaml `ken-srk-lp-*`), two
+#     punches chorded onto the final step.
+#   - EX Tatsumaki Senpuu Kyaku: `hold DOWN 2; hold DOWN+LEFT 2; hold
+#     LEFT+LK+HK 2; wait 1` — qcb's sequence (Ken's own Tatsumaki uses plain
+#     `motion qcb <btn>`, corpus-ken.yaml `ken-tatsu-lk-*`), two kicks
+#     chorded onto the final step.
+#   - EX Joudan Sokutou Geri: `hold LEFT 2; hold LEFT+DOWN 2; hold DOWN 2;
+#     hold DOWN+RIGHT 2; hold RIGHT+LK+HK 2; wait 1` — hcf's sequence, two
+#     kicks chorded onto the final step. Ryu has NO existing corpus entry for
+#     this move (corpus-ryu.yaml's own header: "Still NO shoryuken/tatsu/
+#     joudan/EX/super entries"), so the base (non-EX) motion had no
+#     in-repo precedent either; identity was established this session by a
+#     5-candidate motion probe (hcb/hcf/dp-hold-chain/reverse-dp-hold-chain/
+#     qcb, all Forward/MK strength — S=13 is a signature unique among Ryu's
+#     other specials: Hadouken S=10, Shoryuken S=3, Tatsumaki
+#     Forward/RH S=11). `motion hcf MK` alone was the only candidate whose
+#     FINAL read S=13/R=27, matching ryu.json's Joudan Sokutou Geri
+#     (Forward) row exactly on both fields (the other 4 candidates all
+#     reproduced Tatsumaki Forward's S=11/A=10/R=19 signature instead, or an
+#     unrelated S=4/A=5/R=11 read for the dp-hold-chain) — confirmed hcf is
+#     the real motion, not assumed.
+#
+# dist_mode: centered (EX/Supers tooling micro-batch, this same commit) is
+# used on every WHIFF leg below — the first real usage of the feature
+# outside its own probe. Per-move binary search recorded in each entry's
+# own comment.
+#
+# Admissibility census (per-entry, mechanical, from FRAME_TRACE columns —
+# authoring-policy.md Ruling 2): every entry below was checked for (1)
+# single-FINAL integrity (exactly one FINAL in the entry's window, its
+# move_start_F == the entry's own MOVE_START) — the first full-corpus run at
+# inter_entry_wait:150 showed a genuine label-bleed on ryu-exjsg-hit (0
+# FINALs in its own window, its real FINAL landing one window late inside
+# ryu-exjsg-whiff's - the classic Hugo lesson, Phase 5), root-caused to
+# Joudan's own HIT recovery not settling before the next entry's MOVE_START
+# at that wait value; inter_entry_wait raised to 250 (isolated
+# re-verification confirmed clean single-FINAL-per-entry at 250, matching
+# this corpus's final wait value), (2) zero nonzero-sastop ticks in
+# [MOVE_START, max(atk_idle,def_idle)] — expected 0 since EX moves carry no
+# super flash (G4) — confirmed 0 across every entry (awk census over the
+# full trace), (3) the HIT-leg contact-A juggle check (HIT A asserted only
+# if it equals the BLOCK leg's displayed A for the same move) — Shoryuken
+# (19==19) and Tatsumaki (12==12) pass; Joudan FAILS (HIT-leg engine A=1 vs
+# BLOCK-leg A=4 - a juggle re-fire inflates/deflates the HIT-leg A exactly
+# per Ruling 2's own Ken-SA3 precedent shape), so ryu-exjsg-hit's A is
+# documented-unasserted rather than pinned, per policy - not a program
+# quarantine entry, since Ruling 2 anticipates and routinely handles this
+# exact shape, (4) shape record (box_runs/box_a/busyr/proj), logged per
+# entry below. Hadouken (EX) is the proj-split shape (proj=1, box_runs=0);
+# Shoryuken (EX) and Joudan Sokutou Geri (EX) are single-run (box_runs=1)
+# on every leg; Tatsumaki Senpuu Kyaku (EX) is GENUINELY multi-run
+# (box_runs=4/2/6 on BLOCK/HIT/WHIFF respectively) — the Ruling 3 multi-run
+# shape (same class as Ken SA3), which is why its contact-leg R diverges
+# from its own oracle-exact WHIFF figure (see that entry's own comment: a
+# named quarantine, not a silent gap).
+character: ryu
+oracle: ryu.json
+inter_entry_wait: 250
+# sa_gauge: MAXIMUM (3) per authoring-policy.md's meter policy - EX moves
+# are meter-metered (1 stock/activation, G3), and training mode's default
+# starting gauge is not guaranteed full/nonzero (confirmed empirically this
+# session: the FIRST authoring run, with no sa_gauge key at all, landed
+# EX Hadouken/EX Shoryuken/EX Tatsumaki as their plain (non-EX) fallback on
+# every attempt - measured values matched the ordinary Hadouken/Shoryuken
+# (Fierce)/Tatsumaki (RH) rows exactly, not the EX row - confirming the
+# 2-button chord alone is not sufficient without gauge). MAXIMUM (not
+# INFINITY) per policy default for ordinary (non-install) EX/supers.
+sa_gauge: 3
+entries:
+
+# --- EX Hadouken (projectile, proj-split lever-J shape, §13.12) ------------
+# No WHIFF leg: same documented gap as corpus-ryu.yaml's own Hadouken
+# section ("a hadouken travels full-screen and still connects with a
+# standing dummy... the dummy cannot be scripted to jump or duck under it")
+# — a projectile has no reachable ground-range whiff in this harness,
+# EX or otherwise. Census: single-FINAL, sastop=0, box_runs=1, proj=1 (both
+# legs).
+
+- label: ryu-exhad-block
+  setup: { dist: close, dummy: stand }
+  input: "hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LP+HP 2; wait 1"
+  qjson: { name: "Hadouken (EX)" }
+  outcome: BLOCK
+  # Measured S=9 R=36 adv=+0 (box_runs=0, proj=1, proj_a=5), oracle-exact on
+  # all three asserted fields (matches ryu.json Hadouken (EX): Startup=9,
+  # Recovery=36, Block_advantage=0). No expect.A: ryu.json's Hit field for
+  # this row is the literal string "-" (same non-numeric-oracle-field
+  # reasoning as corpus-ryu.yaml's non-EX Hadouken section) — from-qjson
+  # would not compile.
+  expect: { S: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: ryu-exhad-hit
+  setup: { dist: close, dummy: none }
+  input: "hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LP+HP 2; wait 1"
+  qjson: { name: "Hadouken (EX)" }
+  outcome: HIT
+  # Measured S=9 R=36, oracle-exact. No expect.A (non-numeric oracle field,
+  # same as BLOCK leg) and no expect.adv (Hit_advantage is "-" for this row,
+  # confirmed this session — G9's "Hit_advantage is '-' on ALL 146 rows"
+  # holds here too).
+  expect: { S: from-qjson, R: from-qjson }
+
+# --- EX Shoryuken (ordinary single-run contact leg, no flash) --------------
+# Census: single-FINAL, sastop=0, box_runs=1, proj=0 (all three legs).
+
+- label: ryu-exsrk-block
+  setup: { dist: close, dummy: stand }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LP+HP 2; wait 1"
+  qjson: { name: "Shoryuken (EX)" }
+  outcome: BLOCK
+  # Measured S=2 A=19 R=38 adv=-37 (box_runs=1, box_a=20, busyr=38, proj=0),
+  # oracle-exact on all four fields (ryu.json Shoryuken (EX)). BLOCK-leg A
+  # needs no juggle check (Ruling 2: it IS the validated legacy instrument)
+  # — logged here as the cross-check anchor for the HIT leg below.
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: ryu-exsrk-hit
+  setup: { dist: close, dummy: none }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LP+HP 2; wait 1"
+  qjson: { name: "Shoryuken (EX)" }
+  outcome: HIT
+  # Measured S=2 A=19 R=38 — HIT-leg A (19) equals the BLOCK-leg's displayed
+  # A (19), so the juggle check (Ruling 2 check 3) passes and A is
+  # admissible here. No expect.adv (Hit_advantage "-").
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: ryu-exsrk-whiff
+  setup: { dist: 150, dummy: none, dist_mode: centered }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LP+HP 2; wait 1"
+  qjson: { name: "Shoryuken (EX)" }
+  outcome: WHIFF
+  # Binary search: dist=150 (centered) is the first value tried — Shoryuken
+  # is a short-reach anti-air DP, expected to whiff easily well inside the
+  # centered ceiling. Measured S=2 A=19 R=38, oracle-exact on all three —
+  # confirms WHIFF as the calibration surface per Phase 4 (the same values
+  # the BLOCK/HIT legs above also read).
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# --- EX Tatsumaki Senpuu Kyaku (ordinary single-run contact leg) -----------
+# Forward-advancing hurricane kick — needs real separation for a genuine
+# whiff (Ruling 1's per-move walk-in accounting), hence dist_mode:centered.
+# Census: single-FINAL, sastop=0, box_runs=1, proj=0 (all three legs).
+
+- label: ryu-extatsu-block
+  setup: { dist: close, dummy: stand }
+  input: "hold DOWN 2; hold DOWN+LEFT 2; hold LEFT+LK+HK 2; wait 1"
+  qjson: { name: "Tatsumaki Senpuu Kyaku (EX)" }
+  outcome: BLOCK
+  # RESOLVED (EX-CONTACT-R disposition, exsuper/excontact-r-findings.md
+  # §3 item 9 / §1.9 — NEW §12.2.4 registry row "contact-leg box-run loss,
+  # multi-hit"). Measured S=10 A=12 R=14 adv=-4 (box_runs=4, box_a=10,
+  # busyr=14, proj=0). S/A/adv oracle-exact; R is NOT (measured 14 vs
+  # oracle 11 — the same WHIFF leg below reads R=11 exactly). Isolated
+  # no-build re-run (2026-07-12, current binary, real box_a/busyr/box_runs
+  # fields) confirms the diagnostics reproduce byte-for-byte: the number of
+  # real box runs drops with contact (6 WHIFF -> 4 BLOCK -> 2 HIT) and R
+  # grows by exactly the missing runs' span (11 -> 14 -> 16); R equals
+  # busyr in every leg (busyr=R exactly on all three), i.e. this is real
+  # active-content loss on contact, not a window-accounting artifact. Arcade
+  # R=11 is whiff-canonical (its own whiff leg proves it exactly). This is
+  # the active-side mirror of §12.2.2's recovery-content differential — no
+  # existing registry row stated it before this disposition; it is now
+  # registered as a new §12.2.4 sub-shape. (Ken SA3 is the same family
+  # umbrella on the legacy path, adjudicated in the same session — see
+  # docs/plan-frame-data-completion.md EXSUPER-1 tracker row for the
+  # M1 root-cause writeup; SA3 itself ships no corpus entry.)
+  expect: { S: from-qjson, A: from-qjson, R: 14, adv: from-qjson }
+
+- label: ryu-extatsu-hit
+  setup: { dist: close, dummy: none }
+  input: "hold DOWN 2; hold DOWN+LEFT 2; hold LEFT+LK+HK 2; wait 1"
+  qjson: { name: "Tatsumaki Senpuu Kyaku (EX)" }
+  outcome: HIT
+  # Measured S=10 A=12 R=16 (box_runs=2, box_a=8, busyr=16, proj=0). HIT-leg
+  # A (12) equals the BLOCK-leg's A (12), so the juggle check (Ruling 2
+  # check 3) passes and A is admissible. R=16 asserted — same "contact-leg
+  # box-run loss" §12.2.4 row as the BLOCK leg above (busyr=R=16 exactly;
+  # box_runs=2, the further-reduced run count on HIT).
+  expect: { S: from-qjson, A: from-qjson, R: 16 }
+
+- label: ryu-extatsu-whiff
+  setup: { dist: 250, dummy: none, dist_mode: centered }
+  input: "hold DOWN 2; hold DOWN+LEFT 2; hold LEFT+LK+HK 2; wait 1"
+  qjson: { name: "Tatsumaki Senpuu Kyaku (EX)" }
+  outcome: WHIFF
+  # Binary search: dist=250 (centered) reached WHIFF on the first try —
+  # Tatsumaki's own forward travel during the move covers a large fraction
+  # of a smaller gap, so the extra ~70-80px dist_mode:centered recovers
+  # over anchored placement (Ruling 1) is exactly what makes this leg
+  # reachable at all inside CENTERED_DIST_MAX=310. Measured S=10 A=12 R=11,
+  # oracle-exact on all three fields (box_runs=6, box_a=12, busyr=11,
+  # proj=0) — WHIFF is the calibration surface (Phase 4) and confirms the
+  # BLOCK/HIT legs' R quarantine above is a genuine contact-only divergence,
+  # not a corpus-wide motion/gauge problem.
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# --- EX Joudan Sokutou Geri (ordinary single-run contact leg) --------------
+# Census: single-FINAL, sastop=0, box_runs=1, proj=0 (both legs below).
+#
+# WHIFF-UNREACHABLE(dist=300, walk_in=83px) — Ruling 1's honest-bound
+# convention, documented not silently dropped. Binary search: dist=200
+# (centered) connected (outcome HIT); dist=300 (centered, 10px inside
+# CENTERED_DIST_MAX=310, the practical ceiling for this tooling batch) ALSO
+# connected (measured S=13 A=4 R=27 adv=+98, box_a=2, busyr=39, box_runs=1 —
+# a clean single-run HIT, not a shape/census problem). Root cause: Joudan's
+# own EX input sequence (`hold LEFT ...; hold RIGHT+LK+HK`) walks P1 back
+# then lunges forward well before MOVE_START — the MOVE_START annotation on
+# the dist=300 attempt reads dist=217 (not 300), i.e. this move's own
+# pre-MOVE_START walk-in consumes ~83px of the requested separation (the
+# same "per-move walk-in" accounting Ruling 1 names for advancing supers,
+# here on an EX special with real forward travel) — this is the honest
+# ceiling(~310) minus walk-in(~83) ≈ 227px effective separation, and the
+# move's own reach still exceeds that. No further binary search attempted
+# (10px of headroom left below CENTERED_DIST_MAX; not expected to change
+# the outcome, per Ruling 1's own precedent for other advancing moves).
+# Coverage for this move instead comes from the BLOCK/HIT legs below, per
+# Ruling 1 ("its coverage comes from Ruling 2's contact legs + S").
+
+- label: ryu-exjsg-block
+  setup: { dist: close, dummy: stand }
+  input: "hold LEFT 2; hold LEFT+DOWN 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LK+HK 2; wait 1"
+  qjson: { name: "Joudan Sokutou Geri (EX)" }
+  outcome: BLOCK
+  # Measured S=13 A=4 R=27 adv=-12 (box_runs=1, box_a=4, busyr=27, proj=0),
+  # oracle-exact on all four fields.
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: ryu-exjsg-hit
+  setup: { dist: close, dummy: none }
+  input: "hold LEFT 2; hold LEFT+DOWN 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LK+HK 2; wait 1"
+  qjson: { name: "Joudan Sokutou Geri (EX)" }
+  outcome: HIT
+  # Measured S=13 A=1 R=27 (box_runs=1). R is oracle-exact; S is
+  # oracle-exact. A (measured 1) does NOT equal the BLOCK leg's A (4) - the
+  # contact-A juggle check (Ruling 2 check 3) FAILS, so expect.A is
+  # deliberately omitted (documented-unasserted per policy, not quarantined
+  # - this exact shape is what the juggle check exists to catch, same class
+  # as the Ken SA3 HIT A=27-vs-BLOCK-A=9 precedent that motivated the check).
+  expect: { S: from-qjson, R: from-qjson }
+
+# No WHIFF entry for Joudan Sokutou Geri (EX) — see the
+# WHIFF-UNREACHABLE(dist=300, walk_in=83px) note in this section's header
+# above.

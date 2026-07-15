@@ -1,0 +1,3 @@
+label	verdict	outcome	n	S	A	R	adv	kd
+q-sa1-block	PASS	BLOCK	1	5	15	31	-19	0
+q-sa1-hit	PASS	HIT	1	5	15	31	+83	1

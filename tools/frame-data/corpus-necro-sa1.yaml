@@ -1,0 +1,99 @@
+# Necro Super Art 1 (Magnetic Storm) — EX/Supers program, supers wave S4.
+# Satellite corpus (auto-discovered by run-suite.sh's corpus-*.yaml glob, own
+# golden/necro-sa1.tsv once registered) — corpus-necro.yaml/corpus-necro-ex.yaml
+# are untouched. Sibling agents authoring other characters' SA slots
+# concurrently this same wave, file-disjoint.
+#
+# Scope: step0-universe.tsv row 72 (necro index 53, "Magnetic Storm", sa_slot
+# 1, S=1/A=18/R=22/block_adv=-12, ASSERTABLE).
+#
+# Oracle: docs/arcade-frame-data/necro.json (same file corpus-necro.yaml/
+# corpus-necro-ex.yaml already pin, md5 6484539d4c2f834daa4a7aef70c3342b per
+# corpus-necro.yaml's own header — re-read this session, byte-identical row
+# content for "Magnetic Storm": Startup=1, Hit=18, Recovery=22,
+# Block_advantage=-12, Hit_advantage="-", Crouch_hit_advantage="-").
+#
+# IDENTITY (S-match probe, CORPUS-AUTHORING.md Phase 5), this session:
+# super_art:0 (0-indexed SA1) + `motion 2qcf HP` lands a move whose measured
+# S=1/A=18/R=22/adv=-12 match Magnetic Storm's oracle row EXACTLY, all four
+# fields, on the FIRST candidate tried (`<sp>/sa-necro/run-probe1/trace.log`)
+# — unambiguous identification (S=1 is a unique Startup value among Necro's
+# own super rows: Slam Dance S=2, Electric Snake S=3), not assumed. Motion
+# landed on the first attempt, matching the established "motion 2qcf <btn>"
+# convention (Ryu/Ken/Chun-Li SA pilots).
+#
+# Meter: sa_gauge:3 (MAXIMUM, per authoring-policy.md's meter policy default
+# for non-install supers).
+#
+# SHAPE: fully clean on every leg and every checked field — no divergence,
+# no quarantine, no xfail anywhere in this corpus. Multihit-shaped per the
+# task's own pre-registered expectation (§13.11-style declared-credit A),
+# but the declared A (18) matches oracle exactly on all three legs with no
+# undercount to classify.
+#
+# Admissibility census (per-entry, mechanical, from FRAME_TRACE columns —
+# authoring-policy.md Ruling 2), this session's own 3-entry combined probe
+# (`<sp>/sa-necro/run-probe-sa0-full/trace.log`, inter_entry_wait:500 — the
+# SAME setup/input/outcome triple shipped below, re-verified byte-identical
+# to the isolated single-entry probes):
+# (1) Single-FINAL integrity: exactly one MOVE_START/FINAL pair inside each
+#     entry's own window (WHIFF F57-98, BLOCK F570-623, HIT F681-811),
+#     mechanical grep census, no bleed between entries — this move does NOT
+#     exhibit the repeat-connect contamination Electric Snake's own SA3
+#     corpus documents (this move genuinely whiffs, which appears to
+#     inoculate against that mechanism, consistent with corpus-necro.yaml's
+#     own Fierce finding: "Necro's Fierce is unusually prone to exposing
+#     this because it never whiffs at any tested distance").
+# (2) Flash-overlap census (sastop gate): 0 nonzero `sastop` ticks in every
+#     entry's own [MOVE_START F, FINAL F] window (awk census this session,
+#     all three legs) — flash-free, matches every population checked so far.
+# (3) Contact-A juggle check (HIT legs only): HIT-leg A (18) equals the
+#     BLOCK-leg's own displayed A (18) exactly — PASSES, and both equal the
+#     oracle exactly (18) — a clean shape, no divergence to classify.
+# (4) Shape record: box_runs=1 on every leg (box_a=18 WHIFF, box_a=15
+#     BLOCK/HIT — box_a/busyr disagreement on contact legs is EXPECTED per
+#     Ruling 2/E-4, not itself a divergence since the legacy-displayed A=18
+#     is what's asserted, oracle-exact); busyr=22 on every leg, matching the
+#     legacy-displayed R=22 exactly (also oracle-exact); proj=0 throughout
+#     (a genuine ground-melee multihit, not a proj-split shape, unlike this
+#     character's own SA3).
+character: necro
+oracle: necro.json
+super_art: 0
+sa_gauge: 3
+inter_entry_wait: 500
+entries:
+
+- label: necro-sa1-whiff
+  setup: { dist: 250, dummy: none }
+  input: "motion 2qcf HP"
+  qjson: { name: "Magnetic Storm" }
+  outcome: WHIFF
+  # Measured S=1 A=18 R=22 (box_runs=1, box_a=18, busyr=22) — oracle-exact
+  # on all three fields, no divergence.
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: necro-sa1-block
+  setup: { dist: close, dummy: stand }
+  input: "motion 2qcf HP"
+  qjson: { name: "Magnetic Storm" }
+  outcome: BLOCK
+  # Measured S=1 A=18 R=22 adv=-12 (box_runs=1, box_a=15, busyr=22) —
+  # oracle-exact on all four fields, no divergence. box_a=15 vs the
+  # legacy-displayed/asserted A=18 is the EXPECTED contact-leg diagnostic
+  # disagreement (Ruling 2/E-4), not itself a divergence.
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: necro-sa1-hit
+  setup: { dist: close, dummy: none }
+  input: "motion 2qcf HP"
+  qjson: { name: "Magnetic Storm" }
+  outcome: HIT
+  # Measured S=1 A=18 R=22 (box_runs=1, box_a=15, busyr=22) — oracle-exact
+  # on all three asserted fields. Contact-A juggle check (Ruling 2 check 3)
+  # PASSES: HIT A=18 == BLOCK A=18. No expect.adv: necro.json's
+  # Hit_advantage for this row is the literal string "-" (kd=1 measured,
+  # adv=+77, large and consistent with a genuine knockdown, but not
+  # cross-checked — same "-"-Hit_advantage convention as every other
+  # non-numeric-Hit_advantage entry in this repo).
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }

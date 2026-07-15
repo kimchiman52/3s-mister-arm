@@ -1,0 +1,3 @@
+label	verdict	outcome	n	S	A	R	adv	kd
+remy-sa2-block	PASS	BLOCK	1	0	16	50	-29	0
+remy-sa2-hit	PASS	HIT	1	0	16	50	+65	1

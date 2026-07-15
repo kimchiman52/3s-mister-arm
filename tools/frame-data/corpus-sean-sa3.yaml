@@ -1,0 +1,171 @@
+# Sean Super Art 3 (Hyper Tornado) — EX/Supers program, supers wave S5.
+# Satellite corpus (auto-discovered by run-suite.sh's corpus-*.yaml glob,
+# own golden/sean-sa3.tsv once registered) — the main corpus-sean.yaml/
+# corpus-sean-ex.yaml are untouched.
+#
+# Scope: <sp>/exsuper/step0-universe.tsv row "sean 52 Hyper Tornado"
+# (sa_slot 3, exclusion_flag ASSERTABLE). Oracle:
+# docs/arcade-frame-data/sean.json (md5 74c5ccf033e22b8b0176fe0399ac621b,
+# unchanged, same file every other Sean corpus already pins). Oracle row:
+# Startup=1, Hit=14, Recovery=53, Block_advantage=-31,
+# Hit_advantage="-" (non-numeric).
+#
+# Meter: sa_gauge:3 (MAXIMUM, per authoring-policy.md's non-install-super
+# default) + super_art:2 (0-indexed SA3).
+#
+# Motion (identity confirmed this session: <sp>/sa-sean/run-sa3-id/
+# trace.log): "motion 2qcf HP" — S=1/R=53/adv=-31 ALL THREE oracle-exact
+# on the third candidate tried. Two qcb-family candidates were tried first
+# ("motion 2qcb LK" -> S=11, "motion 2qcb HK" -> S=16 — both wrong moves,
+# most likely Sean's own Tornado Kick base special at two strengths,
+# ruled out) before "motion 2qcf HP" (the SAME macro that dispatches SA1/
+# SA2, differing only by the super_art slot selected) landed the correct
+# move unambiguously.
+#
+# Task brief flagged this move as "the cinematic multihit — watch for
+# flash-overlap." Checked directly, NOT assumed: the mechanical
+# flash-overlap census (below) reads 0 nonzero sastop ticks on EVERY leg
+# of this move, in both the identity-probe run and the full 3-leg run —
+# flash-overlap is explicitly RULED OUT as the explanation for this move's
+# own A/R divergences (see A/R DISPOSITION below for what the trace does
+# show instead).
+#
+# Admissibility census (mechanical, from FRAME_TRACE columns — authoring-
+# policy.md Ruling 2), this session's own isolated 3-entry probe run
+# (<sp>/sa-sean/run-sa3-full/trace.log, inter_entry_wait:500, WHIFF
+# ordered first per the Ken SA1/SA2 ordering-trap lesson):
+# (1) Single-FINAL integrity: exactly one FINAL inside each entry's own
+# window (WHIFF F51-119; BLOCK F564-624; HIT F676-895), no bleed, values
+# sane. T=68/55/97 — well under FD_CAPTURE_LEN=256, no capture-saturation
+# risk.
+# (2) Flash-overlap census: 0 nonzero-sastop ticks in [MOVE_START F,
+# FINAL F] on all three legs (0/68 WHIFF F51-119, 0/60 BLOCK F564-624,
+# 0/219 HIT F676-895 — awk census this session, both the identity-probe
+# run and this full run independently) — flash-free. This RULES OUT the
+# Makoto SA2 flash-overlap-inadmissible convention for this move; the
+# divergences below are a different, genuinely new finding.
+# (3) Contact-A juggle check (HIT leg): HIT-leg A=30 vs BLOCK-leg A=2 —
+# FAILS BADLY (not even close to equal, the largest juggle-check gap
+# observed anywhere in this program so far). HIT-leg A is therefore
+# inadmissible by the mechanical gate alone, independent of either value's
+# own relationship to the oracle.
+# (4) Shape record: box_runs=1 (WHIFF, box_a=14/busyr=53, both = oracle
+# exactly), box_runs=0 (BLOCK, box_a=0/busyr=-1 sentinel — no box activity
+# tracked at all on this leg), box_runs=1 (HIT, box_a=26/busyr=22 — box_a
+# disagrees with the leg's own displayed/legacy A=30, an internal
+# disagreement noted below).
+#
+# A/R DISPOSITION — a genuinely NEW, compound finding this session (no
+# existing bucket fits cleanly; each field is dispositioned on its own
+# evidence, not force-fit into one narrative):
+#
+# WHIFF is FULLY CLEAN: S=1/A=14/R=53 all oracle-exact (box_runs=1 single-
+# run, lever O legitimately overrides the legacy path with box_a=14, which
+# is corroborated by busyr=53 too) — this is the calibration surface
+# (Phase 4) and it measures perfectly, ruling out a wrong-move/motion
+# problem for the whole entry.
+#
+# BLOCK: A=2 vs oracle 14 (a 12-unit undercount, box_runs=0 — no box/busy
+# diagnostic exists on this leg at all to corroborate or refute either
+# number). R=53 and adv=-31 are BOTH oracle-exact on this SAME leg, ruling
+# out a wrong-move/wrong-window read for the entry as a whole — only A is
+# affected. HYPOTHESIS ONLY, UNCONFIRMED: since box_runs=0 here (vs
+# box_runs=1 on the clean WHIFF leg), the connecting block appears to cut
+# the box census off almost immediately (S=1 is very early, leaving
+# little runway before the BLOCK event fires) — consistent with a
+# cinematic multi-hit sequence where only the FIRST hit's declared credit
+# survives once the outcome resolves, while WHIFF's clean single-run
+# window captures the full multi-hit total. No per-tick ledger trace was
+# taken this session to confirm (no-build-session scope). Per the "wrong
+# values never ship as if expected" house rule and the magnitude being far
+# outside any +/-1 Phase-6 bucket: A is OMITTED (not xfailed) on this leg,
+# UNCLASSIFIED, flagged for follow-up — same disposition class as
+# corpus-akuma-sa1.yaml's own MULTIHIT finding and this file's own SA2
+# sibling above, though the specific mechanism differs (box_runs collapse
+# vs a uniform path-independent value).
+#
+# HIT: A=30 vs oracle 14 (an 16-unit OVERCOUNT, the mirror direction from
+# BLOCK's undercount) AND fails its own contact-A juggle check against
+# BLOCK (30 != 2, admissibility census item 3 above) — inadmissible by the
+# mechanical gate alone, independent of the oracle comparison. Additional
+# internal disagreement noted: this leg's own box_a=26 disagrees with its
+# own displayed/legacy A=30 (a further split, distinct from — but
+# structurally similar in KIND to — the "Yun SA2 Sourai Rengeki BLOCK
+# box_a/engine_a internal disagreement" one-off registered in
+# docs/frame-data-synthesis.md (~line 970); NOT claimed as the same
+# mechanism, just the same general "displayed value disagrees with its own
+# box diagnostic" shape, now a second sighting across the whole program —
+# still below the ≥3-threshold, not converted). A is OMITTED (not
+# xfailed) on this leg, UNCLASSIFIED, flagged for follow-up.
+#
+# HIT's R=22 vs oracle 53 (a 31-unit undercount) — but busyr=22 on this
+# SAME leg (box_runs=1, corroborating the measured 22 exactly, just not
+# the oracle). This is the SAME shape as the Chun-Li SA2 BLOCK precedent
+# named in this wave's task brief (measured == busyr but != oracle): R is
+# therefore LEFT UNASSERTED (not xfailed, not omitted-and-silent — the
+# busyr=22 reading is recorded here as a dated note, 2026-07-13) rather
+# than either asserting the wrong value or guessing the oracle is simply
+# "right" with no diagnostic support. A genuine kd=1 knockdown fires on
+# this leg (kdr2=18 at the FINAL tick) — plausibly the post-knockdown
+# recovery measurement basis genuinely differs from the oracle's own
+# whiff/block-anchored Recovery=53, the same general shape as Phase 6
+# bucket 2's Class-3 connected-grab R (arcade R is the whiff-path figure;
+# HIT R measures a different real post-connect sequence) — but this move
+# is not a grab, so it is not claimed as that bucket; logged as its own
+# UNCLASSIFIED, busyr-corroborated non-assert.
+#
+# BLOCK's R=53 and adv=-31, by contrast, are fully oracle-exact and
+# asserted normally (see BLOCK entry below) — the R/adv divergence is
+# HIT-leg-specific, not a whole-move R problem.
+character: sean
+oracle: sean.json
+super_art: 2
+sa_gauge: 3
+inter_entry_wait: 500
+entries:
+
+- label: sean-sa3-whiff
+  setup: { dist: 300, dummy: stand, dist_mode: centered }
+  input: "motion 2qcf HP"
+  qjson: { name: "Hyper Tornado" }
+  outcome: WHIFF
+  # Measured S=1 A=14 R=53 (box_runs=1, box_a=14, busyr=53, T=68). ALL
+  # THREE oracle-exact — the calibration surface for this move, fully
+  # clean. box_runs=1 legitimately licenses lever O's box_a override here
+  # (unlike SA2's own box_runs=2 whiff above).
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: sean-sa3-block
+  setup: { dist: close, dummy: stand }
+  input: "motion 2qcf HP"
+  qjson: { name: "Hyper Tornado" }
+  outcome: BLOCK
+  # Measured S=1 A=2(OMITTED, not asserted - see A/R DISPOSITION above)
+  # R=53 adv=-31 (box_runs=0, box_a=0, busyr=-1 sentinel, T=55). S/R/adv
+  # all oracle-exact; only A diverges on this leg, and A is genuinely
+  # OMITTED (field absent from expect entirely, not xfailed) - the full
+  # reasoning (12-unit undercount, no box/busy diagnostic on this leg,
+  # flash-overlap census CLEAN so that convention does not apply, the
+  # cinematic-multihit HYPOTHESIS ONLY explanation) is in the header A/R
+  # DISPOSITION above rather than a per-entry xfail string.
+  expect: { S: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: sean-sa3-hit
+  setup: { dist: close, dummy: none }
+  input: "motion 2qcf HP"
+  qjson: { name: "Hyper Tornado" }
+  outcome: HIT
+  # Measured S=1 A=30(OMITTED) R=22(UNASSERTED, busyr-corroborated but !=
+  # oracle - Chun-Li SA2 BLOCK precedent, dated 2026-07-13) adv=+57
+  # (oracle Hit_advantage="-" non-numeric, never asserted) kd=1
+  # (box_runs=1, box_a=26, busyr=22, T=97). S oracle-exact; A and R both
+  # diverge on this leg, and BOTH are genuinely OMITTED/left unasserted
+  # (neither field appears in expect below, neither is xfailed) - the
+  # full per-field reasoning (A: 16-unit overcount, contact-A juggle
+  # check FAILS BADLY against BLOCK's A=2, box_a=26 disagrees with its
+  # own displayed A=30; R: measured==busyr==22 but != oracle 53, same
+  # shape as the Chun-Li SA2 BLOCK precedent) is in the header A/R
+  # DISPOSITION above rather than per-entry xfail strings. kd=1 is a
+  # genuine observed knockdown (kdr2=18 at the FINAL tick), explicit per
+  # Phase 3 (never from-qjson).
+  expect: { S: from-qjson, kd: 1 }

@@ -1,0 +1,237 @@
+# Chun-Li EX moves corpus — EX/Supers program, wave-1 fan-out (Ruling 5,
+# <sp>/exsuper/authoring-policy.md). Satellite corpus (auto-discovered by
+# run-suite.sh's corpus-*.yaml glob, own golden/chunli-ex.tsv) — the main
+# corpus-chunli.yaml is untouched.
+#
+# Oracle: docs/arcade-frame-data/chunli.json (md5 f2237f518c4d915ba454a2fe475aa342,
+# same file corpus-chunli.yaml already pins — re-verified unchanged this
+# session).
+#
+# Scope: Chun-Li's 4 EX rows per <sp>/exsuper/step0-universe.tsv (rows 38, 42,
+# 46, 50): Kikkoken (EX) [projectile, proj-split lever-J routing, §13.12, same
+# shape as Ryu EX Hadouken], Hazan Shu (EX), Spinning Bird Kick (EX) — all
+# three landed clean, oracle-exact on every numeric field checked. Hyakuretsu
+# Kyaku (EX) was NOT landed this session — see "OUT OF SCOPE" note below.
+#
+# Motion recipes (Phase 5 motion-probe method — S-value match against the
+# oracle, not recalled from memory). Chun-Li's motions were already
+# established in corpus-chunli.yaml's own "SPECIALS PROBE LOG" (Kikkoken =
+# motion hcf, Hazan Shu = motion hcb, Spinning Bird Kick = motion charge-down
+# N then-up) — reused here with the final step's button replaced by a
+# two-button chord (identical workaround to Ryu/Ken's own EX entries):
+#   - Kikkoken (EX): `hold LEFT 2; hold LEFT+DOWN 2; hold DOWN 2; hold
+#     DOWN+RIGHT 2; hold RIGHT+LP+HP 2; wait 1` — hcf's own step sequence
+#     (BACK/DOWN-BACK/DOWN/DOWN-FORWARD/FORWARD, i.e. LEFT/LEFT+DOWN/DOWN/
+#     DOWN+RIGHT/RIGHT since P1 faces right), two punches chorded onto the
+#     final step.
+#   - Hazan Shu (EX): `hold RIGHT 2; hold RIGHT+DOWN 2; hold DOWN 2; hold
+#     DOWN+LEFT 2; hold LEFT+LK+HK 2; wait 1` — hcb's own step sequence
+#     (FORWARD/DOWN-FORWARD/DOWN/DOWN-BACK/BACK), two kicks chorded onto the
+#     final step.
+#   - Spinning Bird Kick (EX): `hold DOWN 45; hold UP+LK+HK 2; wait 1` — the
+#     existing `motion charge-down <N> then-up <BTN>` macro cannot itself
+#     chord two buttons (`cmd_motion`'s charge-down arm takes a single button
+#     token), so it is hand-expanded into the same two `hold` primitives the
+#     macro itself expands to, with the final step's button replaced by a
+#     two-kick chord — same charge duration (45 frames) as
+#     corpus-chunli.yaml's own `chunli-sbk-lk-whiff`/`-block` precedent.
+#
+# sa_gauge: 3 (MAXIMUM, per authoring-policy.md's meter policy — EX moves are
+# meter-metered, 1 stock/activation; training mode's default starting gauge
+# is not guaranteed full/nonzero, per the Ryu EX pilot's own load-bearing
+# finding). Confirmed necessary here too: all three chords land cleanly at
+# sa_gauge:3 with oracle-exact numbers on first probe.
+#
+# Admissibility census (per-entry, mechanical, from FRAME_TRACE columns —
+# authoring-policy.md Ruling 2), all 8 shipped entries below:
+#   (1) Single-FINAL integrity: every entry's SCRIPT-bounded trace window
+#       contains exactly one FINAL annotation — confirmed at
+#       inter_entry_wait:250 across both authoring runs (no label-bleed,
+#       unlike the Ryu EX pilot's inter_entry_wait:150 trap).
+#   (2) Flash-overlap census (sastop gate): 0 nonzero `sastop` ticks across
+#       the ENTIRE trace of both authoring runs (awk census over every data
+#       row) — EX moves are flash-free, confirmed mechanically.
+#   (3) Contact-A juggle check (HIT-leg A admissible only if it equals the
+#       BLOCK-leg's displayed A): Hazan Shu (EX) BLOCK A=1 == HIT A=1, PASS.
+#       Spinning Bird Kick (EX) BLOCK A=10 == HIT A=10 == WHIFF A=10, PASS.
+#       Kikkoken (EX)'s A field is non-numeric in the oracle (Hit: "-"), so
+#       no assert and no juggle check needed (measured A=3 identically on
+#       BLOCK/HIT, informational only).
+#   (4) Shape record (diagnostic, not a gate): Kikkoken (EX) is the
+#       proj-split shape (proj=1, proj_a=3, box_runs=0, both legs — identical
+#       shape to Ryu EX Hadouken). Hazan Shu (EX) is single-run (box_runs=0
+#       on BLOCK/HIT, box_runs=1 on WHIFF). Spinning Bird Kick (EX) is
+#       GENUINELY multi-run (box_runs=3/1/5 on BLOCK/HIT/WHIFF respectively)
+#       — the Ruling 3 shape (same class as Ken SA3/Ryu EX Tatsumaki) — but
+#       unlike those two, this move ships NO R/adv assert at all (the
+#       oracle's own Recovery/Block_advantage/Hit_advantage fields are the
+#       literal string "-" for every Spinning Bird Kick row, same as the
+#       non-EX SBK section in corpus-chunli.yaml), so there is no field for
+#       the multi-run shape's R-divergence risk to land on — S/A are
+#       oracle-exact identically across all three legs (A=10 on BLOCK, HIT,
+#       AND WHIFF), so no quarantine was needed here (contrast Ryu EX
+#       Tatsumaki, whose oracle DOES publish a numeric R and which quarantined
+#       its own contact-leg R surplus).
+#
+# Result: every entry below is a plain oracle-exact PASS. No divergence of
+# any Phase 6 family was found on any of the three landed moves — the
+# cleanest EX batch measured so far in this program (contrast Ryu EX's one
+# quarantine + one WHIFF-UNREACHABLE + one documented-unasserted HIT-A).
+#
+# OUT OF SCOPE — Hyakuretsu Kyaku (EX) NOT LANDED this session. Oracle:
+# Startup=3, Hit=4 (Common_name "KK-KK-KK", a rapid two-kick-chord mash
+# special, no directional motion component — matches corpus-chunli.yaml's own
+# "SPECIALS PROBE LOG" precedent for the non-EX Hyakuretsu Kyaku family,
+# which was ALSO not landed, for the identical reason: "not even a
+# motion-macro problem... already-available building blocks don't obviously
+# compose into 'N same-button taps within an unknown short window'").
+# Two attempts this session with already-expressible primitives, both
+# measuring back as a plain standing Roundhouse (oracle-identified: Startup=4
+# Hit=9 Recovery=12 Block_advantage=-3, exact match to chunli.json's
+# "Roundhouse" row — NOT any Hyakuretsu Kyaku variant, confirmed by direct
+# oracle lookup, not assumed):
+#   (1) a single two-kick chord (`hold LK+HK 2; wait 1`, no motion, one tap).
+#   (2) a three-tap chord mash with explicit gaps (`hold LK+HK 2; wait 4;
+#       hold LK+HK 2; wait 4; hold LK+HK 2; wait 1`, mirroring the base
+#       move's own "LK-LK-LK" three-tap Common_name pattern).
+# Both attempts produced byte-identical measured numbers, confirming only
+# the FIRST input registers (same "single-tap-only, chain-into-Hyakuretsu
+# never triggers" finding corpus-chunli.yaml's header already documents for
+# the non-EX family) and that the resulting move is the highest-priority
+# single-button normal (HK), not a special — the chord is not being
+# recognized as a special-move activation at all absent a directional-motion
+# component. This is consistent with the oracle's own Common_name notation
+# convention (Spinning Bird Kick's "2..8LK" explicitly marks its directional
+# charge component; Hyakuretsu Kyaku's bare "LK-LK-LK"/EX "KK-KK-KK" carries
+# none), which argues against a hidden directional prerequisite (e.g. a
+# crouch-tap) being the missing ingredient. Properly probing the actual
+# input-buffer recognition window (in cmd_data.c or equivalent) is out of
+# this session's budget, exactly as corpus-chunli.yaml's own header
+# documents for the non-EX version. Documented as OUT OF SCOPE /
+# wants-follow-up, no entries below for it, no oracle edit, no compiler
+# change.
+character: chunli
+oracle: chunli.json
+inter_entry_wait: 250
+sa_gauge: 3
+entries:
+
+# --- Kikkoken (EX) — projectile, proj-split lever-J shape, §13.12 ----------
+# No WHIFF leg: same documented gap as corpus-chunli.yaml's own Kikkoken
+# section and corpus-ryu-ex.yaml's own EX Hadouken section — a projectile
+# travels full-screen and still connects with a standing dummy; the dummy
+# cannot be scripted to jump or duck under it, so there is no reachable
+# ground-range whiff for a projectile in this harness, EX or otherwise.
+# Census: single-FINAL, sastop=0, box_runs=0, proj=1 (both legs).
+
+- label: chunli-exkik-block
+  setup: { dist: close, dummy: stand }
+  input: "hold LEFT 2; hold LEFT+DOWN 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LP+HP 2; wait 1"
+  qjson: { name: "Kikkoken EX" }
+  outcome: BLOCK
+  # Measured S=15 R=41 adv=-7 (proj=1, proj_a=3, box_runs=0), oracle-exact on
+  # all three asserted fields (chunli.json Kikkoken EX: Startup=15,
+  # Recovery=41, Block_advantage=-7). No expect.A: chunli.json's Hit field
+  # for this row is the literal string "-" (same non-numeric-oracle-field
+  # reasoning as corpus-chunli.yaml's non-EX Kikkoken section) — from-qjson
+  # would not compile.
+  expect: { S: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: chunli-exkik-hit
+  setup: { dist: close, dummy: none }
+  input: "hold LEFT 2; hold LEFT+DOWN 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LP+HP 2; wait 1"
+  qjson: { name: "Kikkoken EX" }
+  outcome: HIT
+  # Measured S=15 R=41, oracle-exact. No expect.A (non-numeric oracle field,
+  # same as BLOCK leg) and no expect.adv (Hit_advantage is "-" for this row).
+  expect: { S: from-qjson, R: from-qjson }
+
+# --- Hazan Shu (EX) — single-run contact leg, no flash ---------------------
+# Census: single-FINAL, sastop=0, box_runs=0 (BLOCK/HIT) / 1 (WHIFF), proj=0
+# (all three legs).
+
+- label: chunli-exhaz-block
+  setup: { dist: close, dummy: stand }
+  input: "hold RIGHT 2; hold RIGHT+DOWN 2; hold DOWN 2; hold DOWN+LEFT 2; hold LEFT+LK+HK 2; wait 1"
+  qjson: { name: "Hazan Shu EX" }
+  outcome: BLOCK
+  # Measured S=31 A=1 R=18 adv=-2, oracle-exact on all four fields
+  # (chunli.json Hazan Shu EX: Startup=31, Hit=1, Recovery=18,
+  # Block_advantage=-2). Unlike corpus-chunli.yaml's non-EX Hazan Shu Short
+  # section (whose A=1 is a shape-(a1) contact undercount vs an oracle A=3),
+  # this EX row's own oracle Hit field IS 1 — a genuine oracle-exact match,
+  # not the same divergence. BLOCK-leg A needs no juggle check (Ruling 2: it
+  # IS the validated legacy instrument) — logged here as the cross-check
+  # anchor for the HIT leg below.
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: chunli-exhaz-hit
+  setup: { dist: close, dummy: none }
+  input: "hold RIGHT 2; hold RIGHT+DOWN 2; hold DOWN 2; hold DOWN+LEFT 2; hold LEFT+LK+HK 2; wait 1"
+  qjson: { name: "Hazan Shu EX" }
+  outcome: HIT
+  # Measured S=31 A=1 R=18 — HIT-leg A (1) equals the BLOCK-leg's displayed A
+  # (1), so the juggle check (Ruling 2 check 3) passes and A is admissible
+  # here. No expect.adv (Hit_advantage "-").
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: chunli-exhaz-whiff
+  setup: { dist: 250, dummy: none }
+  input: "hold RIGHT 2; hold RIGHT+DOWN 2; hold DOWN 2; hold DOWN+LEFT 2; hold LEFT+LK+HK 2; wait 1"
+  qjson: { name: "Hazan Shu EX" }
+  outcome: WHIFF
+  # dist:250 anchored (same value corpus-chunli.yaml's own
+  # chunli-hazan-lk-whiff uses) reached WHIFF on the first try — no
+  # dist_mode:centered needed. Measured S=31 A=1 R=18, oracle-exact on all
+  # three — confirms WHIFF as the calibration surface (Phase 4) and shows NO
+  # whiff-R-truncation on the EX row (contrast the non-EX Hazan Shu Short
+  # section's own item-18 whiff-R-truncation finding, since resolved per
+  # §13.5.1b — this EX row was clean from the first probe, no truncation of
+  # any kind).
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# --- Spinning Bird Kick (EX) — genuinely multi-run, no numeric R/adv -------
+# Census: single-FINAL, sastop=0, box_runs=3 (BLOCK) / 1 (HIT) / 5 (WHIFF —
+# the Ruling 3 multi-run shape), proj=0 (all three legs). Despite the
+# multi-run shape, chunli.json's Recovery/Block_advantage/Hit_advantage
+# fields are all the literal string "-" for every Spinning Bird Kick row
+# (same as corpus-chunli.yaml's own non-EX SBK section) — there is no
+# numeric R/adv field for a multi-run contact-leg divergence to land on, so
+# no quarantine risk here (contrast corpus-ryu-ex.yaml's EX Tatsumaki, whose
+# oracle DOES publish a numeric R and which quarantined a contact-leg R
+# surplus). A is oracle-exact identically across all three legs (10 on
+# BLOCK, HIT, and WHIFF) — clean.
+
+- label: chunli-exsbk-block
+  setup: { dist: close, dummy: stand }
+  input: "hold DOWN 45; hold UP+LK+HK 2; wait 1"
+  qjson: { name: "Spinning Bird Kick EX" }
+  outcome: BLOCK
+  # Measured S=12 A=10 (box_runs=3, box_a=9, busyr=22), oracle-exact on both
+  # asserted fields (chunli.json Spinning Bird Kick EX: Startup=12, Hit=10).
+  # No expect.R/adv: both fields are "-" in the oracle (non-numeric), same
+  # reasoning as the non-EX SBK section.
+  expect: { S: from-qjson, A: from-qjson }
+
+- label: chunli-exsbk-hit
+  setup: { dist: close, dummy: none }
+  input: "hold DOWN 45; hold UP+LK+HK 2; wait 1"
+  qjson: { name: "Spinning Bird Kick EX" }
+  outcome: HIT
+  # Measured S=12 A=10 (box_runs=1) — HIT-leg A (10) equals the BLOCK-leg's
+  # displayed A (10), juggle check passes.
+  expect: { S: from-qjson, A: from-qjson }
+
+- label: chunli-exsbk-whiff
+  setup: { dist: 250, dummy: none }
+  input: "hold DOWN 45; hold UP+LK+HK 2; wait 1"
+  qjson: { name: "Spinning Bird Kick EX" }
+  outcome: WHIFF
+  # dist:250 anchored (same value corpus-chunli.yaml's own
+  # chunli-sbk-lk-whiff uses) reached WHIFF on the first try. Measured S=12
+  # A=10 (box_runs=5, the highest box_runs count of any leg — confirms this
+  # move is genuinely multi-run, not a census artifact), oracle-exact on
+  # both asserted fields — WHIFF is the calibration surface (Phase 4) and
+  # confirms the BLOCK/HIT legs' A above is not a corpus-wide motion/gauge
+  # problem.
+  expect: { S: from-qjson, A: from-qjson }

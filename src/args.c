@@ -35,7 +35,8 @@ static bool is_supported_test_scene_preset(const char* preset) {
            SDL_strcmp(preset, "chunli-sa2-repeat") == 0 ||
            SDL_strcmp(preset, "chunli-sa2-repeat-pressure") == 0 ||
            SDL_strcmp(preset, "basic-exchange") == 0 || SDL_strcmp(preset, "pressure-exchange") == 0 ||
-           SDL_strcmp(preset, "left-corner-ryu-stage") == 0 || SDL_strcmp(preset, "training-yun-ryu-ryu-stage") == 0;
+           SDL_strcmp(preset, "left-corner-ryu-stage") == 0 || SDL_strcmp(preset, "training-yun-ryu-ryu-stage") == 0 ||
+           SDL_strcmp(preset, "training-frame-data") == 0;
 }
 
 #if ENABLE_PERF_TELEMETRY
@@ -122,6 +123,9 @@ static void verify_configuration(Configuration* configuration) {
     if (test->super_arts[1] != -1 && (test->super_arts[1] < 0 || test->super_arts[1] > 2)) {
         error_out_with_code("--test-p2-super-art must be between 0 and 2.", EXIT_CODE_RUNTIME_ERROR);
     }
+    if (test->training_sa_gauge != -1 && (test->training_sa_gauge < 0 || test->training_sa_gauge > 3)) {
+        error_out_with_code("--test-training-sa-gauge must be between 0 and 3.", EXIT_CODE_RUNTIME_ERROR);
+    }
     if (test->stage != -1 && !is_supported_test_stage(test->stage)) {
         error_out_with_code("--test-stage must be between 0 and 19 (excluding 17).", EXIT_CODE_RUNTIME_ERROR);
     }
@@ -129,7 +133,8 @@ static void verify_configuration(Configuration* configuration) {
         error_out_with_code("--test-scene-preset must be one of stage-heavy, effect-heavy, super-heavy, "
                             "yun-sa3-repeat, yun-sa3-repeat-pressure, q-sa1-repeat, q-sa1-repeat-pressure, "
                             "ken-sa3-repeat, ken-sa3-repeat-pressure, chunli-sa2-repeat, chunli-sa2-repeat-pressure, "
-                            "basic-exchange, pressure-exchange, left-corner-ryu-stage, or training-yun-ryu-ryu-stage.",
+                            "basic-exchange, pressure-exchange, left-corner-ryu-stage, training-yun-ryu-ryu-stage, "
+                            "or training-frame-data.",
                             EXIT_CODE_RUNTIME_ERROR);
     }
 
@@ -375,9 +380,17 @@ void read_args(int argc, const char* argv[], Configuration* configuration) {
                    0,
                    0),
         OPT_STRING(0,
+                   "test-input-script",
+                   &configuration->test.input_script_path,
+                   "Optional path to a line-oriented .fdi input script played back once training-mode "
+                   "gameplay has started (see docs/plan-frame-data-harness.md section 1.3).",
+                   NULL,
+                   0,
+                   0),
+        OPT_STRING(0,
                    "test-scene-preset",
                    &configuration->test.scene_preset,
-                   "Optional named scripted gameplay preset (stage-heavy, effect-heavy, super-heavy, yun-sa3-repeat, yun-sa3-repeat-pressure, q-sa1-repeat, q-sa1-repeat-pressure, ken-sa3-repeat, ken-sa3-repeat-pressure, chunli-sa2-repeat, chunli-sa2-repeat-pressure, basic-exchange, pressure-exchange, left-corner-ryu-stage, training-yun-ryu-ryu-stage).",
+                   "Optional named scripted gameplay preset (stage-heavy, effect-heavy, super-heavy, yun-sa3-repeat, yun-sa3-repeat-pressure, q-sa1-repeat, q-sa1-repeat-pressure, ken-sa3-repeat, ken-sa3-repeat-pressure, chunli-sa2-repeat, chunli-sa2-repeat-pressure, basic-exchange, pressure-exchange, left-corner-ryu-stage, training-yun-ryu-ryu-stage, training-frame-data).",
                    NULL,
                    0,
                    0),
@@ -416,6 +429,16 @@ void read_args(int argc, const char* argv[], Configuration* configuration) {
                     NULL,
                     0,
                     0),
+        OPT_INTEGER(0,
+                    "test-training-sa-gauge",
+                    &configuration->test.training_sa_gauge,
+                    "Pin the training-mode S.A.GAUGE menu option every frame (0=NORMAL, "
+                    "1=MAX START, 2=INFINITY, 3=MAXIMUM), re-latching init_E3_flag so the "
+                    "engine re-reads it. Unset (default) leaves the menu cell untouched. "
+                    "Requires a #if DEBUG build.",
+                    NULL,
+                    0,
+                    0),
         OPT_BOOLEAN(0,
                     "test-preserve-game-transition",
                     &configuration->test.preserve_game_transition,
@@ -434,6 +457,14 @@ void read_args(int argc, const char* argv[], Configuration* configuration) {
                     "test-stage",
                     &configuration->test.stage,
                     "Override stage for the default test runner path (0-19, excluding 17).",
+                    NULL,
+                    0,
+                    0),
+        OPT_BOOLEAN(0,
+                    "test-pin-rng",
+                    &configuration->test.pin_rng,
+                    "Pin the training-mode RNG seed to zero (like network mode) instead of seeding from "
+                    "Interrupt_Timer, so scripted harness runs are deterministic. Requires a #if DEBUG build.",
                     NULL,
                     0,
                     0),

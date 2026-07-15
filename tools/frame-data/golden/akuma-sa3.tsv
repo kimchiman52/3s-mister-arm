@@ -1,0 +1,4 @@
+label	verdict	outcome	n	S	A	R	adv	kd
+akuma-sa3-whiff	PASS	WHIFF	1	3	22	51	+0	0
+akuma-sa3-block	XFAIL	BLOCK	1	3	22	51	-75	0
+akuma-sa3-hit	PASS	HIT	1	3	22	51	+74	1

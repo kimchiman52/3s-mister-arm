@@ -12,8 +12,10 @@
 #include "sf33rd/Source/Game/io/gd3rd.h"
 #include "sf33rd/Source/Game/stage/bg.h"
 #include "sf33rd/Source/Game/system/sys_sub.h"
+#include "sf33rd/Source/Game/system/sysdir.h"
 #include "sf33rd/Source/Game/system/work_sys.h"
 #include "sf33rd/Source/Game/ui/sc_sub.h"
+#include "test/input_script.h"
 #include "test/replay_game.h"
 #include "test/test_runner_compare.h"
 #include "test/test_runner_utils.h"
@@ -65,6 +67,7 @@ typedef enum TestScenePreset {
     TEST_SCENE_PRESET_PRESSURE_EXCHANGE,
     TEST_SCENE_PRESET_LEFT_CORNER_RYU_STAGE,
     TEST_SCENE_PRESET_TRAINING_YUN_RYU_RYU_STAGE,
+    TEST_SCENE_PRESET_TRAINING_FRAME_DATA,
 } TestScenePreset;
 
 static const Uint8 character_to_cursor[20][2] = { { 7, 1 }, { 1, 0 }, { 5, 2 }, { 6, 1 }, { 3, 2 }, { 4, 0 }, { 1, 2 },
@@ -177,6 +180,9 @@ static TestScenePreset resolve_scene_preset(const char* preset_name) {
     }
     if (SDL_strcmp(preset_name, "training-yun-ryu-ryu-stage") == 0) {
         return TEST_SCENE_PRESET_TRAINING_YUN_RYU_RYU_STAGE;
+    }
+    if (SDL_strcmp(preset_name, "training-frame-data") == 0) {
+        return TEST_SCENE_PRESET_TRAINING_FRAME_DATA;
     }
 
     return TEST_SCENE_PRESET_NONE;
@@ -713,7 +719,8 @@ static u16 training_yun_ryu_ryu_stage_script_input(int player, int local_frame) 
 }
 
 static bool scene_preset_uses_training_mode(void) {
-    return scene_preset == TEST_SCENE_PRESET_TRAINING_YUN_RYU_RYU_STAGE;
+    return scene_preset == TEST_SCENE_PRESET_TRAINING_YUN_RYU_RYU_STAGE ||
+           scene_preset == TEST_SCENE_PRESET_TRAINING_FRAME_DATA;
 }
 
 static bool training_mode_gameplay_started(void) {
@@ -722,7 +729,7 @@ static bool training_mode_gameplay_started(void) {
 }
 
 static void maybe_force_training_scene_character_and_super_state(void) {
-    if (scene_preset != TEST_SCENE_PRESET_TRAINING_YUN_RYU_RYU_STAGE) {
+    if (!scene_preset_uses_training_mode()) {
         return;
     }
 
@@ -745,7 +752,7 @@ static void maybe_force_training_scene_character_and_super_state(void) {
 }
 
 static void maybe_force_training_scene_super_confirm(void) {
-    if (scene_preset != TEST_SCENE_PRESET_TRAINING_YUN_RYU_RYU_STAGE) {
+    if (!scene_preset_uses_training_mode()) {
         return;
     }
 
@@ -850,13 +857,35 @@ static void apply_scene_preset_defaults() {
         stage = scene_preset_training_yun_ryu_ryu_stage;
         break;
 
+    case TEST_SCENE_PRESET_TRAINING_FRAME_DATA:
+        /* H2 (docs/plan-frame-data-harness.md section 1.4): reuses the
+         * training-yun-ryu-ryu-stage boot machinery. Defaults P1=Q,
+         * P2=Ken; --test-p1-character/--test-p2-character/--test-stage
+         * override these below in initialize_default_data() (same
+         * generic override path every other preset already goes
+         * through). */
+        characters[0] = CHAR_Q;
+        characters[1] = CHAR_KEN;
+        selected_super_arts[0] = 0;
+        selected_super_arts[1] = 0;
+        stage = scene_preset_training_yun_ryu_ryu_stage;
+        break;
+
     case TEST_SCENE_PRESET_NONE:
         break;
     }
 }
 
 static void apply_scene_preset_inputs() {
-    if (scene_preset == TEST_SCENE_PRESET_NONE || scene_preset == TEST_SCENE_PRESET_STAGE_HEAVY) {
+    if (scene_preset == TEST_SCENE_PRESET_NONE || scene_preset == TEST_SCENE_PRESET_STAGE_HEAVY ||
+        scene_preset == TEST_SCENE_PRESET_TRAINING_FRAME_DATA) {
+        /* training-frame-data has no built-in scripted input pattern of
+         * its own (unlike training-yun-ryu-ryu-stage below) - it exists
+         * to be driven by --test-input-script. This branch only matters
+         * if the preset is selected without a script, in which case a
+         * no-op is the correct fallback (this function isn't even
+         * reached when an input script is loaded - see PHASE_GAME in
+         * TestRunner_Prologue). */
         p1sw_buff = 0;
         p2sw_buff = 0;
         return;
@@ -976,6 +1005,92 @@ static void apply_initial_super_full_overrides() {
     }
 }
 
+/* EX/Supers program Step 1 (exsuper plan, G1/G2), revised per the STOP
+ * report (<sp>/exsuper/step1-report.md): pins the training-mode S.A.GAUGE
+ * menu option every frame, mirroring TestRunner_Epilogue's
+ * Training[0/2].contents[0][1][6] "FRAME DATA" pin below. Two independent
+ * hazards make a one-shot menu-cell write unsafe: (1) menu.c:4620
+ * (`Training[0] = Training[2]`) copies over Training[0] on training-mode
+ * menu entry, which can clobber a Training[0]-only poke landing before that
+ * copy — writing both slots every frame survives it regardless of
+ * ordering; (2) effect_E3_init (plcnt.c:1302-1307) consumes init_E3_flag on
+ * its own schedule before this override gets a turn on the very first
+ * latch, so the flag needs at least one re-arm to land the poke at all.
+ *
+ * What changed from the first attempt: holding init_E3_flag = 1 EVERY
+ * frame (forever, not just until the first correct latch) turned out to be
+ * destructive. effect_E3_move is a 2-state loop (effe3.c:20-142): routine 0
+ * consumes the flag and recomputes spmv_ng_flag2 from the pinned menu cell
+ * (correct), falls through into routine 1 the same tick (flag now 0) — but
+ * held-every-frame re-armed it again before the *next* tick, so routine 1's
+ * own check (effe3.c:137-141: "if init_E3_flag==1, restore
+ * spmv_ng_flag/2 from the E3-init-time backup, loop back to 0") fired on
+ * that next tick and reverted the correct value it had just computed. This
+ * repeated every 2 frames forever, and the diagnostic print below caught it
+ * directly: spmv_ng_flag2 oscillated between the correct freshly-latched
+ * pattern and the stale pre-latch backup pattern for the entire run,
+ * suppressing super recognition regardless of stock level.
+ *
+ * Fix: make the re-arm EDGE-TRIGGERED. Each frame, compare the *observed*
+ * spmv_ng_flag2 against the pattern effe3.c's own switch on
+ * Training[0].contents[0][1][0] guarantees once latched (only the bits that
+ * switch actually clears/sets for the pinned gauge value — see
+ * training_sa_gauge_expected_flag2() below). Only set init_E3_flag = 1 when
+ * that comparison mismatches. Once the first re-arm lands the correct
+ * latch, the comparison matches on the very next frame and this stops
+ * re-arming — init_E3_flag stays at the 0 that case 0 already left it at,
+ * so routine 1's restore-from-backup branch never fires again, and the
+ * latch holds stable. If something later actually changes the observed
+ * state away from the expected pattern (e.g. the menu.c:4620 copy landing
+ * with a stale Training[2] on some future entry), the mismatch reappears
+ * and this re-arms again — bounded, not open-loop. Unset (-1, the default)
+ * is still a hard no-op: zero gameplay behavior when the flag is not
+ * passed. */
+static uint32_t training_sa_gauge_expected_flag2(int gauge, uint32_t* mask_out) {
+    /* Mirrors the clear-mask/set-mask pairs from effe3.c:95-123 for each
+     * Training[0].contents[0][1][0] case. known_mask is the set of bits
+     * that case's switch arm deterministically pins (cleared bits ->
+     * expected 0, OR'd bits -> expected 1); bits the switch arm never
+     * touches are left out of the mask (don't-care), matching each case's
+     * actual clear+OR pattern rather than assuming a full overwrite. */
+    switch (gauge) {
+    case 0: /* NORMAL: |= 0xD0000, no clear */
+        *mask_out = 0xD0000;
+        return 0xD0000;
+    case 1: /* MAX START: &= 0xFFFBFFFF, |= 0x90000 */
+        *mask_out = 0xD0000;
+        return 0x90000;
+    case 2: /* INFINITY: &= 0xFFFEFFFF, |= 0xC0000 | DIP2_SA_GAUGE_NO_DEPLETE */
+        *mask_out = 0xD0000 | DIP2_SA_GAUGE_NO_DEPLETE;
+        return 0xC0000 | DIP2_SA_GAUGE_NO_DEPLETE;
+    case 3: /* MAXIMUM: &= 0xFFF7FFFF, |= 0x50000 */
+        *mask_out = 0xD0000;
+        return 0x50000;
+    default:
+        *mask_out = 0;
+        return 0;
+    }
+}
+
+static void apply_training_sa_gauge_overrides() {
+    if (configuration.test.training_sa_gauge < 0) {
+        return;
+    }
+
+    Training[0].contents[0][1][0] = configuration.test.training_sa_gauge;
+    Training[2].contents[0][1][0] = configuration.test.training_sa_gauge;
+
+    uint32_t mask = 0;
+    uint32_t expected = training_sa_gauge_expected_flag2(configuration.test.training_sa_gauge, &mask);
+
+    if (mask != 0 && (plw[0].spmv_ng_flag2 & mask) != expected) {
+        plw[0].init_E3_flag = 1;
+    }
+    if (mask != 0 && (plw[1].spmv_ng_flag2 & mask) != expected) {
+        plw[1].init_E3_flag = 1;
+    }
+}
+
 static void apply_scene_preset_super_refill_overrides() {
     if (!scene_preset_uses_repeat_second_super() || scene_preset_repeat_second_super_ready) {
         return;
@@ -1087,6 +1202,12 @@ static u16 read_input_buff(SDL_IOStream* io, Sint64 offset) {
 
 static void initialize_data() {
     initialize_default_data();
+
+    const char* input_script_path = configuration.test.input_script_path;
+    if (input_script_path != NULL && input_script_path[0] != '\0') {
+        InputScript_Load(input_script_path);
+        InputScript_RequireTrainingModePreset(scene_preset_uses_training_mode());
+    }
 
     const char* base_path = configuration.test.states_path;
 
@@ -1332,7 +1453,14 @@ void TestRunner_Prologue() {
 
         apply_initial_super_full_overrides();
         apply_scene_preset_super_refill_overrides();
-        if (inputs_index < inputs_total) {
+        if (InputScript_IsLoaded()) {
+            if (training_mode_gameplay_started()) {
+                InputScript_Tick(&p1sw_buff, &p2sw_buff);
+            } else {
+                p1sw_buff = 0;
+                p2sw_buff = 0;
+            }
+        } else if (inputs_index < inputs_total) {
             p1sw_buff = inputs[inputs_index][0];
             p2sw_buff = inputs[inputs_index][1];
             inputs_index += 1;
@@ -1349,6 +1477,30 @@ void TestRunner_Prologue() {
 void TestRunner_Epilogue() {
     frame += 1;
     update_player_super_art_activation_state();
+
+    /* Phase 5 hygiene item 2/3 (docs/plan-frame-data-harness.md):
+     * frame_trace_tick()/frame_data_overlay_tick() are now additionally
+     * gated on Disp_Frame_Data, so the harness needs the training-menu
+     * "FRAME DATA" option to actually be on for this run. Rather than
+     * writing Disp_Frame_Data directly (it's a one-shot latch, not
+     * re-derived per frame), pin the persisted config cell it's latched
+     * from — Training[0/2].contents[0][1][6] — every frame, the same
+     * pattern input_script_apply_guard_mode() already uses for the
+     * dummy's guard/stance slots. Wait_Pause_in_Tr (menu.c) reads this
+     * cell exactly once, at the menu->gameplay transition
+     * (Allow_a_battle_f: 0->1), and assigns it to Disp_Frame_Data for
+     * real, so this rides the production code path instead of fighting
+     * it. Runs after njUserMain() (main.c's game_step_1, which calls
+     * this) so it survives Default_Training_Data(0)'s one-time
+     * contents-zeroing on the same frame training mode is entered, and
+     * is in place well before Wait_Pause_in_Tr's one-shot read at round
+     * start. */
+    if (scene_preset == TEST_SCENE_PRESET_TRAINING_FRAME_DATA) {
+        Training[0].contents[0][1][6] = 1;
+        Training[2].contents[0][1][6] = 1;
+    }
+
+    apply_training_sa_gauge_overrides();
 
     if (phase == PHASE_GAME) {
         if (configuration.test.delay_gameplay_inputs_until_active && !gameplay_input_active()) {

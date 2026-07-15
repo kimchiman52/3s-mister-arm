@@ -1,0 +1,156 @@
+# Yun Super Art 2 (Sourai Rengeki) — EX/Supers program, supers wave S2
+# (Yun's three SA slots; akuma/dudley authored concurrently by sibling
+# agents, file-disjoint). Satellite corpus (auto-discovered by
+# run-suite.sh's corpus-*.yaml glob, own golden/yun-sa2.tsv once
+# registered) — corpus-yun.yaml/corpus-yun-ex.yaml/corpus-yun-sa1.yaml are
+# untouched.
+#
+# Scope: step0-universe.tsv row 146 (yun SA2, "Sourai Rengeki", sa_slot 2,
+# naive sequential grouping - no Common_name label). Oracle: docs/arcade-
+# frame-data/yun.json (md5 cc49322b0fcd04e617f22b0410a658fa, same file
+# corpus-yun.yaml/corpus-yun-ex.yaml/corpus-yun-sa1.yaml already pin -
+# re-verified unchanged this session). Oracle row: Startup=3, Hit=5,
+# Recovery=25, Block_advantage=-18, Hit_advantage="-" (non-numeric).
+#
+# Meter: sa_gauge:3 (MAXIMUM) + super_art:1 (0-indexed SA2 - Yun's own
+# index scheme confirmed cross-move: super_art:0 landed You Hou's S=0 in
+# the sibling corpus-yun-sa1.yaml, super_art:1 here lands S=3, super_art:2
+# lands S=9 in corpus-yun-sa3.yaml).
+#
+# Motion (identity found empirically this session via a 5-button sweep,
+# <sp>/sa-yun/run-probe2b-sweep/trace.log — NOT the naively-expected kick
+# button): "motion 2qcf HP". "2qcf HK"/"2qcf LK"/"2qcf MK" (the
+# real-game-genre expectation for a kick-named rekka super) each land an
+# UNRELATED special move instead — Nishou Kyaku (RH)/(Short)/(Forward)
+# respectively (S=8/A=6/R=28/adv=-28, S=4/A=6/R=25/adv=-25, S=6/A=6/R=26/
+# adv=-26 - all three exact-matched against yun.json's own three Nishou
+# Kyaku strength rows, ruling out any motion-identity ambiguity: the
+# double-QCF's own kick-ending sub-motion gets intercepted by Nishou
+# Kyaku's single-QCF+K recognition before the super's own input completes,
+# for every kick strength tried). Sweeping the three punch buttons instead
+# (dist:close, dummy:stand, BLOCK outcome, <sp>/sa-yun/run-probe2b-sweep/
+# trace.log): LP/MP/HP all land S=3/A=17/R=5/adv=-27 identically
+# (button-invariant, T=72=FD_METER_LEN saturated, dwellbrk=1/anchor_a=11 -
+# a super-shaped signature, not a per-strength-varying normal/special).
+# S=3 is the ONLY oracle Startup value matching Sourai Rengeki specifically
+# (cross-checked against every other yun.json row with Startup=3 or
+# Recovery=5 - none is button-invariant or T=72-saturated the way this
+# move is). Canonical button chosen: HP (matches Ryu SA1/Ken SA1/Chun-Li
+# SA1's own any-punch convention; MP/LP would measure identically per this
+# session's own sweep). Re-run on a dedicated WHIFF leg
+# (<sp>/sa-yun/run-probe3-sa2-hp/trace.log) then measured S=3/A=5/R=25 -
+# ALL THREE exactly matching the oracle row - which is the decisive
+# confirmation this is genuinely Sourai Rengeki (a normal-special row
+# could not coincidentally match all three of a specific super's oracle
+# fields at once).
+#
+# Admissibility census (per-entry, mechanical, from FRAME_TRACE columns —
+# authoring-policy.md Ruling 2), this session's own isolated 3-entry probe
+# run (<sp>/sa-yun/run-probe3-sa2-hp/trace.log, inter_entry_wait:500 for
+# the probe; re-verified at this corpus's own inter_entry_wait:250 below
+# with byte-identical FINAL numbers on the final/determinism runs):
+# (1) Single-FINAL integrity — exactly one FINAL inside each entry's own
+# window (WHIFF F54-101; BLOCK F567-683; HIT F1080-1269), no bleed between
+# entries. (2) Flash-overlap census: 0 nonzero-sastop ticks in
+# [MOVE_START F, FINAL F] on all three legs (0/48 WHIFF, 0/117 BLOCK,
+# 0/190 HIT — python census this session) — flash-free measurement,
+# matches every population checked in this program so far. (3) Contact-A
+# juggle check (HIT legs only): HIT-leg A=17 vs BLOCK-leg A=17 — PASSES
+# (equal), admissible by the mechanical gate, but see A DISPOSITION below
+# for why the value itself is still not asserted. (4) Shape record: WHIFF
+# box_runs=2/box_a=5/busyr=25/T=47 (unsaturated, clean); BLOCK
+# box_runs=2/box_a=14/busyr=32/T=72 (saturated); HIT box_runs=1/box_a=12/
+# busyr=56/T=72 (saturated).
+#
+# S DISPOSITION: S=3 on all three legs, oracle-exact (Startup=3).
+# Assertable everywhere per Ruling 3's lever-independent E-3 rule.
+#
+# WHIFF FINDING (program-significant): this is a GENUINE, fully clean
+# super WHIFF — S=3/A=5/R=25 ALL THREE oracle-exact (T=47, well under
+# FD_METER_LEN=72, no saturation risk at all). Reached at dist:300
+# (dist_mode:centered, 10px inside CENTERED_DIST_MAX=310); MOVE_START's
+# own annotation reads dist=240 (walk-in ~60px, moderate). This resolves
+# authoring-policy.md Ruling 4 item 2 for this move independently of the
+# Ryu SA2/Chun-Li SA1/SA3 precedents already on record.
+#
+# A DISPOSITION (BLOCK/HIT — quarantine=OMIT+log, no established Phase-6
+# bucket confidently fits, no build available to run a lever-F toggle
+# test). Measured BLOCK/HIT A=17 (juggle check PASSES: HIT==BLOCK==17)
+# vs the clean WHIFF baseline A=5 (=oracle exactly) — a genuine
+# contact-only divergence, in principle a Phase 6 bucket-8 "contact-only
+# A-OVERCOUNT" candidate SHAPE. But unlike Chun-Li SA2's own bucket-8
+# candidate (where box_a agreed with the legacy-displayed A on the
+# diverging leg), here BLOCK's own box_a=14 does NOT equal its own
+# engine_a=17 (they disagree with EACH OTHER, not just with oracle) - an
+# internal inconsistency that doesn't match bucket 8's own established
+# signature cleanly. No per-tick ledger trace or lever-F toggle test was
+# performed this session (zero-build constraint). Per this batch's
+# "quarantine=OMIT+log" disposition rule, A is OMITTED on both contact
+# legs rather than xfailed with an unconfirmed mechanism claim — flagged
+# for orchestrator/user follow-up classification (a new docs/frame-data-
+# synthesis.md §12.2.4 registry row candidate, distinguishable from the
+# established bucket-8 members by its own box_a/engine_a internal split).
+#
+# adv DISPOSITION (BLOCK — quarantine=OMIT+log). Measured -27 vs oracle
+# Block_advantage=-18 (a genuine divergence, not exact unlike the sibling
+# corpus-yun-sa1.yaml's own BLOCK adv which happened to land exact).
+# Does not match the "block-adv anomaly, S/A/R exact except adv" registry
+# row (§12.2.4): A and R are NOT exact here either, so that row's own bar
+# fails on multiple counts. OMITTED, UNCLASSIFIED, flagged 2026-07-13 for
+# follow-up classification alongside the A/R findings on this same leg —
+# not force-cited as any established bucket.
+#
+# R DISPOSITION (BLOCK/HIT — quarantine=OMIT+log). Measured R=5 on both
+# contact legs vs the clean WHIFF/oracle value 25 (a contact-only
+# truncation). T=72=FD_METER_LEN saturated on both contact legs (WHIFF is
+# NOT saturated, T=47) — superficially M1-shaped, but busyr=32 (BLOCK)/56
+# (HIT) does NOT recount to oracle 25 on EITHER leg (the decisive fact
+# that rules out a clean M1 reading, same discriminator used for the
+# sibling corpus-yun-sa1.yaml's own BLOCK/HIT R finding and the Chun-Li
+# SA3 precedent). OMITTED, UNCLASSIFIED, flagged 2026-07-13 for follow-up
+# classification (a new docs/frame-data-synthesis.md §12.2.4 registry
+# row) — not force-cited as M1, not guessed at.
+character: yun
+oracle: yun.json
+super_art: 1
+sa_gauge: 3
+inter_entry_wait: 250
+entries:
+
+- label: yun-sa2-whiff
+  setup: { dist: 300, dist_mode: centered, dummy: stand }
+  input: "motion 2qcf HP"
+  qjson: { name: "Sourai Rengeki" }
+  outcome: WHIFF
+  # Measured S=3 A=5 R=25 adv=+0 (box_runs=2, box_a=5, busyr=25, T=47 -
+  # unsaturated). S/A/R ALL oracle-exact - see WHIFF FINDING above. No
+  # expect.adv: from-qjson is a CompileError on outcome WHIFF (yun.json
+  # has no whiff-advantage field).
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: yun-sa2-block
+  setup: { dist: close, dummy: stand }
+  input: "motion 2qcf HP"
+  qjson: { name: "Sourai Rengeki" }
+  outcome: BLOCK
+  # Measured S=3 A=17(OMITTED, see A DISPOSITION above) R=5(OMITTED, see R
+  # DISPOSITION above) adv=-27(OMITTED, see adv DISPOSITION above)
+  # (box_runs=2, box_a=14, busyr=32, T=72). S oracle-exact (only field
+  # asserted on this leg). BUFFER-1 (2026-07-13): non-M1 R-surplus shape
+  # (busyr never corroborated oracle here). Post-raise measured value:
+  # R=32 (was 5) — still not asserted, still UNCLASSIFIED.
+  expect: { S: from-qjson }
+
+- label: yun-sa2-hit
+  setup: { dist: close, dummy: none }
+  input: "motion 2qcf HP"
+  qjson: { name: "Sourai Rengeki" }
+  outcome: HIT
+  # Measured S=3 A=17(OMITTED, see A DISPOSITION above; juggle check
+  # PASSES — HIT-A==BLOCK-A==17 — admissible by the mechanical gate but
+  # still not asserted) R=5(OMITTED, see R DISPOSITION above) adv=+59
+  # kd=1 (box_runs=1, box_a=12, busyr=56, T=72). S oracle-exact. No
+  # expect.adv: yun.json's Hit_advantage for this row is the literal
+  # string "-". BUFFER-1 (2026-07-13): non-M1 shape (same as BLOCK).
+  # Post-raise measured value: R=42 (was 5) — still not asserted.
+  expect: { S: from-qjson }

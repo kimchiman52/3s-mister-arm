@@ -1,0 +1,364 @@
+# Elena EX moves corpus — EX/Supers program, wave 3 fan-out (Ruling 5's
+# per-character EX satellite batches, <sp>/exsuper/authoring-policy.md).
+# Satellite corpus (auto-discovered by run-suite.sh's corpus-*.yaml glob, own
+# golden/elena-ex.tsv) — the main corpus-elena.yaml is untouched. Siblings
+# authoring yang-ex/makoto-ex concurrently, file-disjoint.
+#
+# Oracle: docs/arcade-frame-data/elena.json (md5 763929513f271e2bf05c7177d12346d8,
+# same file corpus-elena.yaml already pins, CHARACTER_IDS id=8). Every "Name"
+# string below was read exactly once via `python3 -c "import json; ..."`
+# against the fetched oracle (Phase 1 rule) — confirmed the plain "(EX)"
+# parenthesized suffix convention (matching corpus-elena.yaml's own mains
+# Short/Forward/RH suffix pattern): "Mallet Smash (EX)", "Scratch Wheel (EX)",
+# "Spinning Scythe (EX)", "Lynx Tail (EX)", "Rhino Horn (EX)".
+#
+# SCOPE: Elena's 5 ground EX rows per <sp>/exsuper/step0-universe.tsv (rows
+# 28/32/36/40/44): Scratch Wheel (EX), Rhino Horn (EX), Mallet Smash (EX),
+# Spinning Scythe (EX), Lynx Tail (EX). No air-variant rows exist in Elena's
+# EX set (none flagged AIR_DEFERRED in step0). All five landed this session —
+# zero MOTION NOT FOUND, since every EX move reuses an already-verified mains
+# motion idiom (corpus-elena.yaml's own MOTION VERIFICATION section), two-
+# button-chorded onto the final step per the Ryu/Ken/Chunli/Ibuki EX
+# precedent (`cmd_motion` only accepts a single button token for the
+# `motion hcb/hcf/qcb <btn>` macros — `bits_for_token` rejects a "+"-joined
+# string — so every hcb/hcf-based recipe below is hand-expanded into its
+# underlying `hold` step sequence, identical translation to every prior EX
+# corpus in this program).
+#
+# sa_gauge: 3 (MAXIMUM, per authoring-policy.md's meter policy — EX moves are
+# meter-metered, training mode's default starting gauge is not guaranteed
+# full/nonzero). Confirmed necessary here too: all five landed chords fire
+# the EX variant (not the plain equivalent) at sa_gauge:3 on first probe
+# (S-value match against elena.json's own EX rows, exact and unambiguous on
+# every one: S=21/3/10/10/11 for Mallet Smash/Scratch Wheel/Spinning Scythe/
+# Lynx Tail/Rhino Horn respectively — each distinct from every other
+# strength's own S value for that move family, ruling out an accidental
+# plain-strength match).
+#
+# inter_entry_wait: 250 (matches wave-1's precedent; no entry-merge issue
+# found this session at this value — single-FINAL integrity confirmed
+# clean across every probe run, see CENSUS below).
+#
+# Motion recipes (S-value match against elena.json's own EX rows, exact and
+# unambiguous on first probe — reusing corpus-elena.yaml's own verified mains
+# motion idioms, hand-expanded where the base idiom was a `motion <name>`
+# macro since those reject a "+"-joined chord token):
+#   - Mallet Smash (EX): `hold RIGHT 2; hold RIGHT+DOWN 2; hold DOWN 2; hold
+#     DOWN+LEFT 2; hold LEFT+LP+HP 2; wait 1` — hcb's own step sequence
+#     (mains' own CONFIRMED MOTION: hcb+P, Jab strength via LP — the task's
+#     original tentative "hcf+P" guess was WRONG for the base move too, see
+#     corpus-elena.yaml's own MOTION VERIFICATION), two punches chorded onto
+#     the final step. Landed S=21, exact match, first attempt.
+#   - Scratch Wheel (EX): `hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold
+#     RIGHT+LK+HK 2; wait 1` — the DP-shape hold-chain (mains' own precedent
+#     for Scratch Wheel (Short)), two kicks chorded onto the final step.
+#     Landed S=3, exact match, first attempt.
+#   - Spinning Scythe (EX): `hold DOWN 2; hold DOWN+LEFT 2; hold LEFT+LK+HK 2;
+#     wait 1` — qcb's own step sequence (mains' own precedent for Spinning
+#     Scythe (Short), `motion qcb <btn>`), two kicks chorded onto the final
+#     step. Landed S=10, exact match, first attempt.
+#   - Lynx Tail (EX): `hold LEFT 2; hold DOWN 2; hold DOWN+LEFT 2; hold
+#     LEFT+LK+HK 2; wait 1` — the reverse-DP-shape hold-chain (mains' own
+#     precedent for Lynx Tail (Short) — task's own historical "dp reverse?"
+#     tentative guess, confirmed correct in corpus-elena.yaml), two kicks
+#     chorded onto the final step. Landed S=10, exact match, first attempt.
+#   - Rhino Horn (EX): `hold LEFT 2; hold LEFT+DOWN 2; hold DOWN 2; hold
+#     DOWN+RIGHT 2; hold RIGHT+LK+HK 2; wait 1` — hcf's own step sequence
+#     (mains' own precedent, `motion hcf <btn>`), two kicks chorded onto the
+#     final step. Landed S=11, exact match, first attempt.
+#
+# ============================================================================
+# STRUCTURAL FINDING — Mallet Smash (EX) has a MINIMUM engagement distance,
+# the opposite of a typical dash-in special (binary-searched this session,
+# 3 probe batches): setup.dist values 10/20/40/56("close")/70 ALL measured
+# MOVE_START dist in the 47-64px band and WHIFFED (S=21/A=4/R=10, exact
+# match to elena.json's own EX row, on every failed attempt — confirming
+# correct move identification throughout, not a motion miss); setup.dist
+# 100/150/200 all measured MOVE_START dist in the 95-195px band and
+# CONNECTED (BLOCK: S=21/A=4/R=10/adv=+5, exact match on all four fields,
+# byte-identical at all three distances). The connect/whiff boundary sits
+# strictly between measured dist=64 (whiff) and dist=95 (connect) — Mallet
+# Smash (EX)'s own dash evidently needs run-up room to build to full
+# forward speed before its (much narrower, A=4 vs the Jab strength's A=8)
+# active window can reach a target; starting already close causes the dash
+# to carry Elena's hurtbox past the dummy before the hitbox activates (the
+# same class of "too-close whiff" already documented for certain dash
+# specials elsewhere in this program, here manifesting on the CONNECT side
+# rather than the reach-ceiling side). dist:100 is used below for BLOCK/HIT
+# (NOT the "close" keyword, which sits inside the dead band) — isolated
+# single-entry re-verification (Phase 5 discipline) at dist:100 confirms
+# HIT is fully clean (exit 0, see BUDGET below).
+# ============================================================================
+#
+# STRUCTURAL FINDING — Spinning Scythe (EX) and Rhino Horn (EX) are both
+# WHIFF-UNREACHABLE (same class as Ibuki Tsumuji (EX)/Kubiori (EX), Ken EX
+# Tatsumaki, and this character's OWN base Rhino Horn precedent):
+#   - Rhino Horn (EX): verified live at dist=250 AND dist=300 (DIST_MAX)
+#     against a dummy:none target — BOTH produce a full HIT capture,
+#     byte-identical S=11/A=13/R=15 (exact match to elena.json's EX row on
+#     every field). Same "full-screen-reaching dash attack that never
+#     whiffs against any grounded target" structural property as the base
+#     (non-EX) Rhino Horn documented in corpus-elena.yaml's own section —
+#     the EX version inherits it unchanged.
+#   - Spinning Scythe (EX): verified live at dist=250 AND dist=300 — BOTH
+#     produce a full HIT capture (S=10/A=8 exact match; R differs by
+#     distance: R=19 at dist=250-measured-245... — actually measured at
+#     both far distances the leg reads a SHORTER R than the close-range
+#     legs below, consistent with a genuinely multi-hit forward-traveling
+#     spin (box_runs=4 on the far attempt) whose total duration/hitstop
+#     interaction differs by engagement range; not itself asserted, this
+#     far-hit reading is a reachability probe only, not a shipped entry).
+#     Same class as Ibuki Tsumuji (EX)'s own WHIFF-UNREACHABLE finding
+#     (a multi-hit forward-traveling special whose reach covers the entire
+#     centered/anchored ceiling this harness can express).
+# No WHIFF leg shipped for either move; coverage comes from the BLOCK/HIT
+# legs below, per authoring-policy.md Ruling 1.
+# ============================================================================
+#
+# UNCLASSIFIED FINDING, flagged for orchestrator/user follow-up — Lynx Tail
+# (EX)'s own Recovery field is not reliably measurable by this harness on
+# ANY leg (WHIFF/BLOCK/HIT all affected), confirmed reproducible across TWO
+# independent runs (a first batched probe and a second fully isolated
+# single-entry re-run, Phase 5 discipline — byte-identical R=7 on both
+# BLOCK and HIT in both runs). S and A are NOT affected — both are
+# oracle-exact (S=10, A=22, matching elena.json's Lynx Tail (EX) row
+# exactly) on every leg in every run, including the WHIFF attempt, so the
+# move-identification/calibration concern Phase 4 raises for an unexplained
+# WHIFF divergence does not extend to this move's S/A fields specifically;
+# it is R (and R-derived adv) alone that is broken, uniformly, everywhere.
+#
+# TRACE OBSERVATION ONLY, no mechanism claimed: every affected FINAL line
+# reads T=72 exactly, matching the compile-time constant FD_METER_LEN
+# (frame_data_overlay.c:42, `raw[FD_METER_LEN]`) — and `frame_data_overlay.c`
+# 's own comment at the recovery-computation site (~line 1005) states this
+# construction explicitly: "T ... Saturates at FD_METER_LEN for moves whose
+# raw[] capture window is the limiting factor." Reading the raw per-tick
+# rows immediately preceding each affected FINAL (both the WHIFF attempt and
+# the isolated BLOCK re-verification) shows P1.r1 still 4 (not yet returned
+# to idle) and P1.cgix still monotonically increasing at the LAST recorded
+# tick before FINAL fires — i.e., the observer's own raw[]-based recovery
+# tracking (`recovery_pf`, the legacy fallback path actually taken here:
+# cut=0, dwellbrk=0, anchor_a=-1, endrel=0, ended_by_partner_release=false,
+# and lever N's gate does not apply on a contact leg) had not detected a
+# natural end when the tick loop stopped. HYPOTHESIS ONLY (not confirmed):
+# a control probe on the SAME session (Spinning Scythe (EX) BLOCK) also
+# reads T=72 with cgix still climbing at its own last tick, yet its R=31
+# IS oracle-exact — so "T=72 with cgix still rising" is not BY ITSELF
+# sufficient to prove truncation in general; something about Lynx Tail
+# (EX)'s specific combination of a much larger A (22 vs Spinning Scythe's 8)
+# and/or its own recovery_pf accumulation differs in a way not
+# root-caused this session. Does not fit any Phase-6 bucket (no cut=1, no
+# uniform-across-all-three-outcomes value the way item 18(b)/(c) require,
+# no A-side symptom at all). R and adv are OMITTED (documented-unasserted,
+# NOT quarantined — same disposition as `ibuki-exkazekiri-hit`'s own R
+# clause, "Ruling 2 anticipates this shape routinely") on all three legs;
+# S/A/kd (kd is an independent, uncorrupted engine observation) remain
+# assertable. Flagged for follow-up: does elena.json's own Recovery=25 fit
+# inside a corrected accounting, or is this move's real total genuinely
+# longer than FD_METER_LEN allows this harness to observe at all?
+# ============================================================================
+#
+# CENSUS (per authoring-policy.md Ruling 2, mechanical, from FRAME_TRACE
+# columns), all 9 shipped entries below:
+#
+# (1) Single-FINAL integrity: confirmed clean at inter_entry_wait:250 for
+#     every SHIPPED entry across every probe batch this session (no
+#     label-bleed; every entry's own FINAL move_start_F matched its own
+#     MOVE_START annotation, modulo the Lynx Tail two-MOVE_START-reads
+#     shape below).
+# (2) Flash-overlap census (sastop gate): ZERO nonzero sastop ticks found
+#     across the ENTIRE authoring session (every probe rundir's trace.log
+#     awk-scanned; 0/0 across ~35 total entries run this session, batched
+#     and isolated alike) — mechanically confirmed, not assumed. Net effect
+#     on shipped/asserted fields: none possible (the gate never engaged).
+# (3) Contact-A juggle check (HIT-leg A admissible only if it equals the
+#     BLOCK-leg's displayed A): PASSES on all five moves — Mallet Smash
+#     (EX) 4==4, Scratch Wheel (EX) 8==8, Spinning Scythe (EX) 8==8, Lynx
+#     Tail (EX) 22==22, Rhino Horn (EX) 13==13. Every move's HIT-leg A is
+#     therefore fully admissible AND oracle-exact on all five.
+# (4) Shape record: Mallet Smash (EX) and Scratch Wheel (EX) are single-run
+#     (box_runs=1, all legs). Spinning Scythe (EX) is single-run on its two
+#     shipped legs (box_runs=1 BLOCK/HIT) but genuinely multi-run on its own
+#     unshipped far-distance reachability probe (box_runs=4) — explains the
+#     WHIFF-UNREACHABLE finding (a real multi-hit forward-traveling spin,
+#     same shape as Ibuki Tsumuji (EX)). Lynx Tail (EX) is box_runs=2 (BLOCK)
+#     / 1 (HIT) on its shipped legs, box_runs=5 on its own unshipped WHIFF
+#     attempt. Rhino Horn (EX) is box_runs=2 (BLOCK, close) / 3 (both far-HIT
+#     reachability reads) — a Ruling-3-adjacent multi-run shape, consistent
+#     with the base (non-EX) Rhino Horn's own always-connects dash-attack
+#     property; every field on every leg is nonetheless oracle-exact, so
+#     Ruling 3's per-field quarantine machinery finds nothing to quarantine
+#     here.
+# ============================================================================
+
+character: elena
+oracle: elena.json
+inter_entry_wait: 250
+sa_gauge: 3
+entries:
+
+# --- Mallet Smash (EX), motion hcb + P chord (LP+HP) ------------------------
+# Single-run (box_runs=1, all legs). Fully oracle-exact on every field, every
+# leg — WHIFF/BLOCK/HIT all clean, zero divergence. See STRUCTURAL FINDING
+# above for the MINIMUM-engagement-distance quirk (dist:100 used for
+# BLOCK/HIT below, NOT "close" — "close"=56px sits inside the confirmed
+# whiff-only dead band of ~47-64px).
+
+- label: elena-exmalletsmash-whiff
+  setup: { dist: 250, dummy: none }
+  input: "hold RIGHT 2; hold RIGHT+DOWN 2; hold DOWN 2; hold DOWN+LEFT 2; hold LEFT+LP+HP 2; wait 1"
+  qjson: { name: "Mallet Smash (EX)" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: elena-exmalletsmash-block
+  setup: { dist: 100, dummy: stand }
+  input: "hold RIGHT 2; hold RIGHT+DOWN 2; hold DOWN 2; hold DOWN+LEFT 2; hold LEFT+LP+HP 2; wait 1"
+  qjson: { name: "Mallet Smash (EX)" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# Isolated single-entry re-verification (Phase 5 discipline, large
+# inter_entry_wait, nothing before it in its own probe corpus) confirmed
+# this exact number: exit 0, S=21/A=4/R=10/adv=+5, byte-identical to the
+# batched read above.
+- label: elena-exmalletsmash-hit
+  setup: { dist: 100, dummy: none }
+  input: "hold RIGHT 2; hold RIGHT+DOWN 2; hold DOWN 2; hold DOWN+LEFT 2; hold LEFT+LP+HP 2; wait 1; wait 90"
+  qjson: { name: "Mallet Smash (EX)" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# --- Scratch Wheel (EX), DP-shape hold-chain + K chord (LK+HK) --------------
+# Single-run (box_runs=1, all legs). Fully oracle-exact on every field, every
+# leg — WHIFF/BLOCK/HIT all clean, zero divergence anywhere.
+
+- label: elena-exscratchwheel-whiff
+  setup: { dist: 250, dummy: none }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LK+HK 2; wait 1"
+  qjson: { name: "Scratch Wheel (EX)" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: elena-exscratchwheel-block
+  setup: { dist: close, dummy: stand }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LK+HK 2; wait 1"
+  qjson: { name: "Scratch Wheel (EX)" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: elena-exscratchwheel-hit
+  setup: { dist: close, dummy: none }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LK+HK 2; wait 1"
+  qjson: { name: "Scratch Wheel (EX)" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# --- Spinning Scythe (EX), motion qcb + K chord (LK+HK) ---------------------
+# Single-run (box_runs=1, both shipped legs). BLOCK is fully oracle-exact on
+# every field. HIT diverges on R only, by exactly 1 frame.
+#
+# WHIFF-UNREACHABLE(dist=250 / dist=300, both tried, both connect as HIT) —
+# see STRUCTURAL FINDING above. No WHIFF leg shipped; coverage comes from
+# BLOCK/HIT below, per Ruling 1.
+
+- label: elena-exspinscythe-block
+  setup: { dist: close, dummy: stand }
+  input: "hold DOWN 2; hold DOWN+LEFT 2; hold LEFT+LK+HK 2; wait 1"
+  qjson: { name: "Spinning Scythe (EX)" }
+  outcome: BLOCK
+  # BUFFER-1 (2026-07-13): the FD_CAPTURE_LEN 72->256 raise un-truncates
+  # this leg's raw[] capture, which previously happened to land on the
+  # oracle-exact value by coincidence — post-fix measured R=41 (busyr=43)
+  # vs oracle 31 (elena.json Spinning Scythe (EX) Recovery). Confirmed
+  # divergence with a live oracle: asserted the ORACLE value (from-qjson)
+  # as xfail rather than de-asserting or shipping the now-wrong engine
+  # value, same idiom as corpus-akuma-sa2.yaml's A-clause. Capture-depth-
+  # raise exposed; divergence class UNCLASSIFIED — no per-tick ledger
+  # trace taken this session; a previously-undocumented row affected by
+  # this fix, outside the M1 register's tracked 24-leg list. See
+  # docs/frame-data-synthesis.md §12.2.4 for the matching sighting row
+  # (also flags the pre-existing :947 label/description conflict on
+  # `elena-lynxtail-lk-block` vs "Spinning Scythe (EX)").
+  expect: { S: from-qjson, A: from-qjson, adv: from-qjson, R: from-qjson, xfail: "[HONEST-FLOOR CENSUS 2026-07-14, opus-substitute / WANTS FABLE RE-REVIEW] TERMINAL CLASS = ENGINE-DIVERGENCE (block-vs-hit recovery). No separate hardware capture; the HIT sibling PASSes at R=30 (raw_len=71/busyr=32) while this BLOCK leg reads raw_len=82/busyr=43 - a genuine BLOCK-vs-HIT engine recovery-chain difference (R+10), not a display convention. NON-SURGICAL: exposed only once FD_CAPTURE_LEN was raised past 72 (the old cap coincidentally truncated to oracle 31); needs a per-tick recovery-chain ledger (possibly capture-depth/harness), no lever isolates it and an override would paper over the divergence. Golden stays oracle=31, XFAIL. Prior disposition (unchanged): BUFFER-1 capture-depth-raise regression, UNCLASSIFIED (2026-07-13): measured R=41 (busyr=43) vs oracle 31 (elena.json Spinning Scythe (EX) Recovery=31) - previously PASSED at the old FD_CAPTURE_LEN=72 cap by coincidence (R=31 == oracle), now exposed as a genuine engine/oracle divergence once the capture window is long enough to observe the leg's true recovery span. Oracle value asserted per house rule (wrong values never ship); no per-tick declared-credit ledger trace taken this session to identify the mechanism - stays UNCLASSIFIED, flagged for follow-up." }
+
+# §13.10 Class 1 HIT-R divergence (hit-branch recovery chain): measured
+# R=30, a genuine 1-frame-shorter total vs the BLOCK leg's own oracle-exact
+# R=31 (T=71 here vs BLOCK's T=72, cut=0/dwellbrk=0/anchor_a=-1 on both,
+# no §13.5.1 mechanism engaged). Per the 2026-07-10 F2b compliance note
+# ("cite §13.10 HIT-R convention directly... a plain PASS"), the measured
+# value is asserted as an explicit literal (NOT from-qjson, which would
+# resolve to 31 and fail) — arcade's own whiff/block-canonical R=31
+# preserved in this comment. S/A both oracle-exact; contact-A juggle check
+# (Ruling 2 check 3) PASSES (A=8 on both BLOCK and HIT). No expect.adv:
+# elena.json's Hit_advantage for this row is "-" (non-numeric).
+- label: elena-exspinscythe-hit
+  setup: { dist: close, dummy: none }
+  input: "hold DOWN 2; hold DOWN+LEFT 2; hold LEFT+LK+HK 2; wait 1"
+  qjson: { name: "Spinning Scythe (EX)" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: 30 }
+
+# --- Lynx Tail (EX), reverse-DP-shape hold-chain + K chord (LK+HK) ----------
+# See the UNCLASSIFIED FINDING above (flagged for orchestrator/user
+# follow-up): R is not reliably measurable on this move by this harness, on
+# ANY leg — R/adv are OMITTED (documented-unasserted) on all three legs
+# below; S/A are oracle-exact everywhere and remain fully assertable. kd is
+# an independent engine observation, unaffected, asserted on HIT.
+
+- label: elena-exlynxtail-whiff
+  setup: { dist: 250, dummy: none }
+  input: "hold LEFT 2; hold DOWN 2; hold DOWN+LEFT 2; hold LEFT+LK+HK 2; wait 1"
+  qjson: { name: "Lynx Tail (EX)" }
+  outcome: WHIFF
+  # BUFFER-1 (2026-07-13): this leg's own capture window was ALSO
+  # extended by the raise (contrary to this move's earlier "control
+  # negative, not truncated" reading) — post-raise measured R=25 (was 0).
+  # Still not asserted (R stays out of scope, per the UNCLASSIFIED FINDING
+  # above); recorded here as a new measured value only.
+  expect: { S: from-qjson, A: from-qjson }
+
+- label: elena-exlynxtail-block
+  setup: { dist: close, dummy: stand }
+  input: "hold LEFT 2; hold DOWN 2; hold DOWN+LEFT 2; hold LEFT+LK+HK 2; wait 1"
+  qjson: { name: "Lynx Tail (EX)" }
+  outcome: BLOCK
+  # BUFFER-1 (2026-07-13): same as WHIFF — post-raise measured R=25 (was 7).
+  expect: { S: from-qjson, A: from-qjson }
+
+# Isolated single-entry re-verification (Phase 5 discipline) confirmed this
+# exact shape reproducible: byte-identical S=10/A=22/R=7/kd=1 in both the
+# batched and isolated runs.
+- label: elena-exlynxtail-hit
+  setup: { dist: close, dummy: none }
+  input: "hold LEFT 2; hold DOWN 2; hold DOWN+LEFT 2; hold LEFT+LK+HK 2; wait 1"
+  qjson: { name: "Lynx Tail (EX)" }
+  outcome: HIT
+  # BUFFER-1 (2026-07-13): same as WHIFF/BLOCK — post-raise measured
+  # R=25 (was 7).
+  expect: { S: from-qjson, A: from-qjson, kd: 1 }
+
+# --- Rhino Horn (EX), motion hcf + K chord (LK+HK) --------------------------
+# Fully oracle-exact on every field, every leg. See STRUCTURAL FINDING above
+# for the WHIFF-UNREACHABLE confirmation (inherits the base (non-EX) Rhino
+# Horn's own always-connects dash-attack property, corpus-elena.yaml's own
+# section). Ordered LAST in this corpus — same §12.1-workaround convention
+# as corpus-elena.yaml's own file header ORDERING NOTE (an always-connecting
+# dash special immediately followed by nothing distance-sensitive) — no
+# residue issue found this session regardless (every entry above measured
+# its own requested setup.dist cleanly at MOVE_START), but the ordering is
+# kept as a defensive precedent match.
+
+- label: elena-exrhinohorn-block
+  setup: { dist: close, dummy: stand }
+  input: "hold LEFT 2; hold LEFT+DOWN 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LK+HK 2; wait 1"
+  qjson: { name: "Rhino Horn (EX)" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: elena-exrhinohorn-hit
+  setup: { dist: 300, dummy: none }
+  input: "hold LEFT 2; hold LEFT+DOWN 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LK+HK 2; wait 1; wait 90"
+  qjson: { name: "Rhino Horn (EX)" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }

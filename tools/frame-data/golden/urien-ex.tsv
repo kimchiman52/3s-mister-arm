@@ -1,0 +1,10 @@
+label	verdict	outcome	n	S	A	R	adv	kd
+urien-exheadbutt-whiff	PASS	WHIFF	1	9	4	12	+0	0
+urien-exmsphere-block	PASS	BLOCK	1	14	6	55	-16	0
+urien-exmsphere-hit	PASS	HIT	1	14	6	55	-15	0
+urien-exvkd-block	PASS	BLOCK	1	26	3	29	-14	0
+urien-exvkd-hit	PASS	HIT	1	26	3	29	-14	0
+urien-exchariot-block	PASS	BLOCK	1	6	27	28	-9	0
+urien-exchariot-hit	PASS	HIT	1	6	27	19	+2	0
+urien-exheadbutt-block	PASS	BLOCK	1	9	4	12	-1	0
+urien-exheadbutt-hit	PASS	HIT	1	9	4	12	+92	1

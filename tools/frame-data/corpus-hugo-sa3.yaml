@@ -1,0 +1,104 @@
+# Hugo Super Art 3 (Hammer Frenzy) — EX/Supers program, supers wave S6.
+# Satellite corpus (auto-discovered by run-suite.sh's corpus-*.yaml glob,
+# own golden/hugo-sa3.tsv once registered) — corpus-hugo.yaml/corpus-hugo-
+# ex.yaml/corpus-hugo-sa1.yaml/corpus-hugo-sa2.yaml are untouched.
+# Repo @ a385799e (branch frame-data-on-mister). FDH_SKIP_BUILD=1 throughout,
+# own isolated rundirs under <sp>/sa-hugo/.
+#
+# Scope: step0-universe.tsv row (hugo SA3, "Hammer Frenzy", sa_slot 3,
+# multihit strike rush). Oracle: docs/arcade-frame-data/hugo.json (md5
+# 8bd525542b815dd0c228605bffc51523, unchanged). Oracle row 47: Startup=4,
+# Hit=18, Recovery=47, Block_advantage=-29, Parry High=true/Low=true
+# (ordinary blockable/parryable strike, unlike Hugo's grab SAs).
+#
+# Meter: sa_gauge:3 (MAXIMUM) + super_art:2 (0-indexed SA3).
+#
+# IDENTITY + MOTION — landed on the FIRST candidate tried:
+# "motion 2qcf LP" (double-quarter-circle-forward + Jab, the canonical
+# non-grab-super motion this program has used for the rushing-strike SA
+# slot on every other character this wave). `<sp>/sa-hugo/run-probe7/
+# trace.log`: dist:200, dummy:none — measured S=4, exact oracle match, on
+# the very first attempt; no fallback probing needed (unlike Hugo's own
+# grab SAs above).
+#
+# A DIVERGES ON HIT ONLY (a genuine MULTIHIT-shape juggle-check failure,
+# per authoring-policy.md Ruling 2 check 3, NOT the same finding as SA1's
+# unexplained WHIFF-A gap) — this is the "MULTIHIT A undercounts" citable
+# signature the binding spec pre-registered as possible for this move.
+# `<sp>/sa-hugo/run-probe7/trace.log` (button-strength sweep, dist:200,
+# all three connect from this range — a genuinely long-reaching rushing
+# super): LP reads A=18 (exact oracle match) on both the identity probe and
+# the dedicated BLOCK/HIT legs below; MP/HP both read A=15 (undercount) at
+# the same distance — LP is used throughout below since it is the one
+# button strength that reads cleanly. On the shipped HIT leg specifically
+# (`<sp>/sa-hugo/run-probe8/trace.log`, `h-sa3-probe-hit`): measured A=15
+# (box_a=11, busyr=47) vs the BLOCK leg's own A=18 (box_a=15, busyr=47,
+# exact oracle match) — the contact-A juggle check (Ruling 2 check 3)
+# FAILS (HIT A=15 != BLOCK A=18), so A is OMITTED on the HIT leg only
+# (same disposition class as Ken SA3's own HIT-A juggle-check failure,
+# authoring-policy.md's Ruling 2). S and R both stay oracle-exact on HIT
+# (S=4, R=47 — R has no juggle-check requirement, only A does).
+#
+# WHIFF-UNREACHABLE(dist=310 centered / 300 anchored, walk_in=16px). This
+# is a long-range rushing multi-hit super — it connects at EVERY distance
+# tried, including both harness ceilings: dist:200 (identity probe,
+# outcome=HIT), dist:300 anchored (`<sp>/sa-hugo/run-probe9/trace.log`,
+# MOVE_START dist=216, ~84px walk-in, still outcome=HIT), and dist:310
+# centered (the CENTERED_DIST_MAX ceiling, MOVE_START dist=294, only
+# ~16px walk-in — the closest this harness can get to "no walk-in at all"
+# — STILL outcome=HIT, S=4/A=18/R=47 exact). Per authoring-policy.md
+# Ruling 1's own named-gap convention: "a super whose whiff is unreachable
+# at the post-(a) ceiling gets a named WHIFF-UNREACHABLE(...) header
+# note... an honest structural bound, not a silent gap." Coverage for this
+# move comes entirely from the BLOCK/HIT legs below, per Ruling 1's own
+# fallback language.
+#
+# ORDERING (Phase 5 "Predecessor-outcome ordering" trap, corpus-hugo.yaml:
+# 439-450 precedent): BLOCK (kd=0) is ordered FIRST, HIT (kd=1) LAST — a
+# knockdown leg's own residual recovery ticks can stomp a SUBSEQUENT
+# entry's teleport, so nothing follows HIT in this file. Verified clean in
+# the combined 3-entry probe this session (`<sp>/sa-hugo/run-probe8/
+# trace.log`, WHIFF/BLOCK/HIT order — WHIFF is dropped from the shipped
+# corpus per WHIFF-UNREACHABLE above, leaving BLOCK-then-HIT, the same
+# relative order that probe already exercised without incident).
+#
+# Admissibility census (mechanical, from FRAME_TRACE columns, this
+# session's own combined probe, `<sp>/sa-hugo/run-probe8/trace.log`,
+# inter_entry_wait:500): (1) single-FINAL integrity — exactly one
+# MOVE_START/FINAL pair per entry's own window, both legs. (2)
+# flash-overlap census: 0 nonzero-sastop ticks in each entry's own
+# [MOVE_START F, FINAL F] window (mechanical awk census this session) —
+# flash-free on both shipped legs. (3) contact-A juggle check: FAILS on
+# HIT (15 != 18), PASSES trivially on BLOCK (no cross-check needed, BLOCK
+# IS the validated legacy instrument per Ruling 2) — see A DIVERGES note
+# above. (4) shape record: BLOCK box_runs=1/box_a=15/busyr=47; HIT
+# box_runs=4/box_a=18/busyr=47 (genuinely multi-run on HIT, matching this
+# move's own multihit-rush shape — busyr agreeing with oracle on BOTH legs
+# is a corroborating diagnostic only, per Ruling 2 E-4, not independent
+# licensing for any additional assert).
+character: hugo
+oracle: hugo.json
+super_art: 2
+sa_gauge: 3
+inter_entry_wait: 500
+entries:
+
+- label: h-sa3-hammerfrenzy-block
+  setup: { dist: close, dummy: stand }
+  input: "motion 2qcf LP"
+  qjson: { name: "Hammer Frenzy" }
+  outcome: BLOCK
+  # Measured S=4 A=18 R=47 adv=-29 (box_runs=1, box_a=15, busyr=47), exact
+  # oracle match on all four asserted fields.
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: h-sa3-hammerfrenzy-hit
+  setup: { dist: close, dummy: none }
+  input: "motion 2qcf LP"
+  qjson: { name: "Hammer Frenzy" }
+  outcome: HIT
+  # Measured S=4 A=15 R=47 adv=+65 kd=1 (box_runs=4, box_a=11, busyr=47).
+  # S/R oracle-exact. A OMITTED: contact-A juggle check (Ruling 2 check 3)
+  # FAILS — HIT A=15 != BLOCK A=18 (see header) — a multihit-shape
+  # juggle-inflation/undercount, not asserted.
+  expect: { S: from-qjson, R: from-qjson, kd: 1 }

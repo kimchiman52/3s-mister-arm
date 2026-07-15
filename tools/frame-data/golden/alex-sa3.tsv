@@ -1,0 +1,4 @@
+label	verdict	outcome	n	S	A	R	adv	kd
+alex-sa3-unblockable-probe	PASS	HIT	1	24	2	72	+209	1
+alex-sa3-whiff	XFAIL	WHIFF	1	24	3	16	+0	0
+alex-sa3-hit	PASS	HIT	1	24	2	72	+169	1

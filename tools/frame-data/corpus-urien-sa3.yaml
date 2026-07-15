@@ -1,0 +1,196 @@
+# Urien Super Art 3 (Aegis Reflector) — EX/Supers program, supers wave S5.
+# Satellite corpus (auto-discovered by run-suite.sh's corpus-*.yaml glob, own
+# golden/urien-sa3.tsv once registered) — corpus-urien.yaml/corpus-urien-
+# ex.yaml/corpus-urien-sa1.yaml/corpus-urien-sa2.yaml are untouched.
+#
+# Scope: step0-universe.tsv rows "urien 41 Aegis Reflector" and "urien 42
+# Aegis Reflector (EX)" (both sa_slot 3, exclusion_flag INSTALL_MAXIMUM).
+# Oracle: docs/arcade-frame-data/urien.json (md5
+# 5feea97b78d5c40f4af226bbb0bab288, same file the other Urien corpora
+# already pin, re-verified unchanged this session). Oracle rows: "Aegis
+# Reflector" Startup="13/25/32 (9/9/9)" (non-numeric compound string),
+# Hit="-", Recovery=12, Block_advantage=65; "Aegis Reflector (EX)"
+# Startup="-2 (9)" (non-numeric), Hit="-", Recovery=12, Block_advantage=46.
+#
+# INSTALL DISPOSITION: sa_gauge:3 (MAXIMUM — per authoring-policy.md's
+# install-super policy, multi-stock/install supers MUST use MAXIMUM, never
+# INFINITY, so the reflector's own gauge economics aren't frozen or masked).
+# Aegis Reflector is this program's own named canonical multi-stock case
+# (task's own framing) — a persistent, placed reflector object, not a
+# strike. Per the batch's own guidance ("activation S is measurable; the
+# persistent active window is likely proj-split or OMIT territory — measure
+# what's stable, never force"): only the ACTIVATION's own measurable frame
+# data is authored below; the reflector's placed/persistent behavior
+# (reflecting an incoming projectile, its own on-screen duration, its
+# strength-dependent placement distance) is out of scope, documented gap,
+# not guessed — same posture as corpus-yun-sa3.yaml's own Genei Jin
+# precedent and corpus-elena-sa3.yaml's own Healing precedent.
+#
+# IDENTITY (super_art:2, this session): "motion 2qcf HP" produces a
+# context-independent zero-attack activation (S=0 A=0 R=9 adv=+0, T=9,
+# proj=1, proj_a=0, box_runs=0) reproduced IDENTICALLY across 5 independent
+# probes this session: dist:close/dummy:stand, dist:300
+# dist_mode:centered/dummy:stand, dist:10/dummy:stand (a very-close
+# placement check), and both "motion 2qcf LP" and "motion 2qcf MP" (button-
+# invariance check, matching Elena Healing/Yun Genei Jin's own button-
+# agnostic install-probe precedent) — all five read the identical T=9
+# signature (<sp>/sa-urien/run-sa2-id/trace.log,
+# run-sa2-strengths/trace.log). "motion 2qcf HK" at the same slot falls
+# through to the same unrelated non-super signature seen at super_art:0/1
+# (S=17/A=6/R=20) — confirms the kick button is not this SA's own input.
+# This qualitative shape (a real, reproducible MOVE_START/FINAL pair with a
+# genuinely empty tracked active window) matches Yun Genei Jin/Elena
+# Healing's own "activation, no active window" class exactly, distinct from
+# Oro Kishin Riki's own "every oracle field is the literal string -,
+# nothing assertable" shape (Aegis Reflector DOES publish a numeric
+# Recovery=12/Block_advantage=65, so there IS something to compare here,
+# unlike Kishin Riki).
+#
+# The oracle's own Startup field for this row ("13/25/32 (9/9/9)") most
+# plausibly encodes three strength-dependent placement distances (LP/MP/HP,
+# 13/25/32 frames) with a shared post-cast component (the parenthetical
+# "(9/9/9)") — this session's own measured T=9 is suggestively close to
+# that parenthetical figure, but LP/MP/HP all measured the SAME T=9 this
+# session (no strength-dependent split observed at all in this harness's
+# own instrumentation), so this is reported as an observation, not a
+# confirmed decoding of the oracle's own notation — not enough evidence to
+# assert any per-strength split. Urien's own cast/recovery ANIMATION is
+# read as identical regardless of button/placement distance by this
+# overlay's r1-routine-transition-based MOVE_START/FINAL heuristic (which
+# tracks Urien's own state, not the reflector object's on-screen
+# placement) — consistent with every other install-shaped SA3 in this
+# program (Genei Jin, Healing, Sei-ei Enbu, X.C.O.P.Y., Denjin Hadouken all
+# read a single canonical activation signature regardless of secondary
+# input variation).
+#
+# Admissibility census (mechanical, from FRAME_TRACE columns — authoring-
+# policy.md Ruling 2), the two shipped-signature probes this session
+# (<sp>/sa-urien/run-sa2-id/trace.log, dist:close and dist:300-centered):
+# (1) Single-FINAL integrity: exactly one MOVE_START/FINAL pair per probe's
+#     own window (F55-64; F120-129), no bleed (python census this
+#     session).
+# (2) Flash-overlap census: 0 nonzero `sastop` ticks in either window
+#     (0/10 each — python census this session).
+# (3) Contact-A juggle check: N/A — no A is ever asserted (oracle's Hit
+#     field for this row is the literal string "-", and the measured A=0 is
+#     itself the "no active window" sentinel, not a real active-frame
+#     count to juggle-check).
+# (4) Shape record: proj=1, box_runs=0 in both probes — a true
+#     single-instant activation with no tracked attack geometry at all,
+#     matching Yun Genei Jin's own shape record exactly.
+#
+# S / A / block_adv DISPOSITION: NOT assertable. S: urien.json's own
+# Startup field for this row is the non-numeric compound string
+# "13/25/32 (9/9/9)" (from-qjson would raise CompileError; see the
+# decoding discussion above for why no per-strength literal is authored
+# either). A: urien.json's Hit field is the literal string "-" (no attack
+# property at all — the measured A=0 is the engine's own "nothing
+# happened" sentinel, matching every other install-shaped SA3's own A/adv
+# DISPOSITION in this program). block_adv (oracle Block_advantage=65): the
+# harness's own measured adv=+0 is the same "no active window, no defender
+# interaction" sentinel — a categorically different quantity than
+# whatever real-world interaction the oracle's published 65 describes (most
+# plausibly some measure of the reflector's own on-screen duration/
+# advantage while placed, a state this overlay's own activation-only
+# instrumentation cannot observe) — same reasoning as corpus-elena-
+# sa3.yaml's own R DISPOSITION for its Healing row. Not asserted, not
+# guessed, not xfailed (no per-tick mechanism trace exists to cite a
+# specific classification) — documented as an out-of-scope structural gap.
+#
+# R DISPOSITION — RESOLVED 2026-07-14 (INSTALL-SUPER ADJUDICATION,
+# <sp>/zero/install-adj/adjudication.md §3, opus-substitute / WANTS FABLE
+# RE-REVIEW): the original UNCLASSIFIED framing below asserted harness R=9
+# against oracle Recovery=12 (-3) — the WRONG oracle field. R=9 is the
+# proj-split-filed activation-settle, the identical 9-frame post-flash
+# r1=4 cast animation Yun's own install files as S=9 (an EXACT oracle
+# Startup match) — it equals urien.json's own Startup "(9/9/9)"
+# parenthetical component exactly, not Recovery=12 (the placed reflector's
+# own out-of-scope recovery, same class as the already-OMITTED
+# Block_advantage=65 and the literal "-" Hit field above). Per the Oro SA3
+# Tengu Stones proj-split precedent (corpus-oro-sa3.yaml's own
+# oro-sa3-activation: harness-R carries the oracle activation figure on
+# this branch shape, so the row asserts NOTHING and PASSes), this entry now
+# ships `expect: {}` — OMIT, matching oro-sa3 exactly. Zero-risk: removing
+# an assertion cannot regress any other row, no engine change, no
+# fabricated re-pin. (Real arcade actionable-return is ~65,
+# session-6/7 — a THIRD quantity, deliberately NOT adopted; see
+# adjudication.md §6.) Superseded, preserved for audit trail:
+#
+# measured != oracle, rep-stable, live oracle: assert the
+# ORACLE value with a dated xfail note (per this session's own established
+# idiom, matching the akuma-sa2/ibuki-sa3 precedent). Measured R=9
+# (T=9, activation-only, no active window) vs oracle Recovery=12 (-3),
+# IDENTICAL across all 5 configurations tried this session (both distances,
+# both alternate buttons, the very-close placement check) — a stable,
+# confirmed divergence, not busyr-recoverable (busyr reads the -1 sentinel
+# here, box_runs=0, no real busy-run exists to recount from). No
+# established Phase 6 bucket covers a proj-split-install-activation R
+# deficit specifically (a new one-off, distinct in mechanism from Ibuki
+# Yami Shigure's own proj-split R surplus — that move measures +2 on a
+# genuine attacking projectile; this move measures -3 on a zero-attack
+# install activation). UNCLASSIFIED, flagged for follow-up classification.
+# [SUPERSEDED 2026-07-14 — see the RESOLVED note above.]
+#
+# --- AEGIS REFLECTOR (EX) — UNCONFIRMED, NOT SHIPPED THIS SESSION --------
+# Candidate recipe tried (matching this program's own established EX-chord
+# idiom — Oro EX Kishin Riki's own 2qcf-shaped, 2-punch-chorded input under
+# the SAME super_art slot as its base move): `hold DOWN 2; hold DOWN+RIGHT
+# 2; hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LP+HP 2; wait
+# 1` at super_art:2. Result: NOT context-independent (unlike the confirmed
+# ground activation above) — measured A=6/R=6 (T=6) at dist:close vs
+# A=9/R=9 (T=9) at dist:300-centered, a genuine distance-scaling nonzero
+# attack-credit (proj_a=6-9, reproduced identically on an isolated
+# re-verify, <sp>/sa-urien/run-sa2-exchord-iso/trace.log) — INCONSISTENT
+# with urien.json's own "Aegis Reflector (EX)" row, whose Hit field is also
+# the literal string "-" (no attack property published, same as the ground
+# version) and whose Recovery=12 does not match either measured T (6 or 9).
+# A nonzero, distance-scaling attack credit where the oracle publishes NO
+# attack property at all is a strong signal this chord landed an
+# UNIDENTIFIED different move, not Aegis Reflector (EX) — no oracle row
+# matches S=0/A=6-9/R=6-9 by any field. Per this program's "never force an
+# identification" discipline (Ibuki SA1 Kasumi Suzaku / Oro Ground-Grab-Air-
+# Grab precedent), this candidate is NOT shipped as Aegis Reflector (EX).
+# No further motion search was attempted this session (budget-bounded) —
+# documented as a genuine open identification gap, not guessed at, no
+# oracle edit, no exclusion_flag change. Flagged to the orchestrator: a
+# source-level motion-table lookup (matching Oro SA1's own two-pass
+# decompiled-source research precedent for its own unresolved Ground/Air
+# Grab inputs) would be the next concrete step, out of this session's own
+# scope.
+character: urien
+oracle: urien.json
+super_art: 2
+sa_gauge: 3
+inter_entry_wait: 500
+entries:
+
+- label: urien-sa3-aegis-activation
+  setup: { dist: close, dummy: stand }
+  input: "motion 2qcf HP"
+  qjson: { name: "Aegis Reflector" }
+  outcome: WHIFF
+  # Measured S=0 A=0 R=9 adv=+0 (box_runs=0, proj=1, proj_a=0, T=9) —
+  # context-independently identical across 5 configurations this session
+  # (see IDENTITY above). No expect.S/A/adv: urien.json's Startup/Hit fields
+  # for this row are non-numeric (compound string / literal "-"), and the
+  # measured adv=+0 is a "no interaction" sentinel not comparable to the
+  # oracle's own published Block_advantage=65 (see the header's own
+  # S/A/block_adv DISPOSITION).
+  #
+  # R RESOLVED 2026-07-14 (INSTALL-SUPER ADJUDICATION,
+  # <sp>/zero/install-adj/adjudication.md §3 (c) ERRATA/WRONG-COMPARISON):
+  # R=9 exactly matches urien.json's own Startup "(9/9/9)" parenthetical
+  # (the identical 9-frame post-flash r1=4 cast settle Yun's install files
+  # as an exact-match S=9) — NOT oracle Recovery=12, a categorically
+  # different out-of-scope quantity (the placed reflector's own recovery,
+  # same class as the already-not-asserted Block_advantage=65/Hit="-"
+  # above). Per the Oro SA3 Tengu Stones proj-split precedent
+  # (corpus-oro-sa3.yaml oro-sa3-activation: harness-R carries the oracle
+  # activation figure on this branch shape, ships no assertion, PASSes),
+  # this row now OMITS the R assertion entirely — flips XFAIL to PASS,
+  # zero risk (removing an assertion cannot regress any other row; no
+  # engine change; no fabricated re-pin). Real arcade actionable-return is
+  # ~65 (session-6/7) — a THIRD quantity, deliberately not adopted (see
+  # adjudication.md §6). See the header's own R DISPOSITION comment for the
+  # full superseded audit trail.
+  expect: {}

@@ -1,0 +1,4 @@
+label	verdict	outcome	n	S	A	R	adv	kd
+ibuki-sa2-whiff	PASS	WHIFF	1	0	15	65	+0	0
+ibuki-sa2-chiblast-block	XFAIL	BLOCK	1	0	16	65	-54	0
+ibuki-sa2-hit	XFAIL	HIT	1	0	16	65	+21	1

@@ -1,0 +1,11 @@
+label	verdict	outcome	n	S	A	R	adv	kd
+ryu-exhad-block	PASS	BLOCK	1	9	5	36	+0	0
+ryu-exhad-hit	PASS	HIT	1	9	5	36	+91	1
+ryu-exsrk-block	PASS	BLOCK	1	2	19	38	-37	0
+ryu-exsrk-hit	PASS	HIT	1	2	19	38	+62	1
+ryu-exsrk-whiff	PASS	WHIFF	1	2	19	38	+0	0
+ryu-extatsu-block	PASS	BLOCK	1	10	12	14	-4	0
+ryu-extatsu-hit	PASS	HIT	1	10	12	16	+71	1
+ryu-extatsu-whiff	PASS	WHIFF	1	10	12	11	+0	0
+ryu-exjsg-block	PASS	BLOCK	1	13	4	27	-12	0
+ryu-exjsg-hit	PASS	HIT	1	13	1	27	+104	1

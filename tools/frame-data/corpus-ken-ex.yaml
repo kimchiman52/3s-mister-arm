@@ -1,0 +1,203 @@
+# Ken EX moves corpus — EX/Supers program, wave 1 fan-out (Ruling 5's
+# per-character EX satellite batches, <sp>/exsuper/authoring-policy.md).
+# Satellite corpus (auto-discovered by run-suite.sh's corpus-*.yaml glob, own
+# golden/ken-ex.tsv) — the main corpus-ken.yaml is untouched.
+#
+# Scope: Ken's 3 ground EX rows per <sp>/exsuper/step0-universe.tsv (rows
+# 55-57): Hadouken EX [the proven EX-projectile shape, proj-split lever-J
+# routing, §13.12], Shoryuken EX, Tatsumaki Senpuu Kyaku EX. Row 58 (Air
+# Tatsumaki Senpuu Kyaku (EX)) is AIR_DEFERRED, out of scope this program.
+# Oracle: docs/arcade-frame-data/ken.json (md5 c2776abd0d106d7949db64d3cec62d7a,
+# same file corpus-ken.yaml already pins — re-verified unchanged this
+# session). Unlike ryu.json/oracle's own EX rows, ken.json's `Name` field for
+# these three moves has NO parenthesized "(EX)" suffix — verified live against
+# the fetched oracle rather than assumed from the Ryu EX pilot's convention
+# (per CORPUS-AUTHORING.md Phase 1's "always open the fetched oracle and read
+# the exact string" rule): "Hadouken EX", "Shoryuken EX", "Tatsumaki Senpuu
+# Kyaku EX" (bare, no parens).
+#
+# Motion recipes (Phase 5 motion-probe method, re-using the EXACT chorded
+# macros the Ryu EX pilot proved for the same underlying qcf/dp-hold-chain/qcb
+# primitives — same engine, same input parser, zero probing needed for
+# move identification since Ken's own base moves already use the identical
+# unchorded recipes in corpus-ken.yaml: `motion qcf <btn>` for Hadouken,
+# the DP hold-chain for Shoryuken, `motion qcb <btn>` for Tatsumaki):
+#   - EX Hadouken: `hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LP+HP 2; wait 1`
+#   - EX Shoryuken: `hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold
+#     RIGHT+LP+HP 2; wait 1`
+#   - EX Tatsumaki Senpuu Kyaku: `hold DOWN 2; hold DOWN+LEFT 2; hold
+#     LEFT+LK+HK 2; wait 1`
+# All three landed the correct EX move on the FIRST attempt (S-value match
+# against ken.json's EX rows: S=11/1/4 respectively, exact) — no
+# disambiguation needed.
+#
+# dist_mode: centered (EX/Supers tooling micro-batch) used on the Shoryuken
+# WHIFF leg and the Tatsumaki whiff binary search (see that section's own
+# comment for the WHIFF-UNREACHABLE finding).
+#
+# Admissibility census (per-entry, mechanical, from FRAME_TRACE columns —
+# authoring-policy.md Ruling 2), all 7 shipped entries below:
+# (1) Single-FINAL integrity: exactly one FINAL per entry's own window, no
+#     label-bleed, at inter_entry_wait:250 (matching the Ryu EX pilot's own
+#     settled value) — confirmed by direct inspection of the isolated probe
+#     trace (8 MOVE_START/FINAL pairs, cleanly alternating, one per entry,
+#     zero merges) covering all 3 moves' BLOCK/HIT legs plus Shoryuken's
+#     WHIFF leg in one file.
+# (2) Flash-overlap census (sastop gate): 0 nonzero sastop ticks across the
+#     ENTIRE trace (mechanical `awk` census over every row, not sampled) —
+#     EX moves are flash-free, confirmed, not assumed.
+# (3) Contact-A juggle check (HIT-leg A admissible only if it equals the
+#     BLOCK-leg's A): Shoryuken EX (20==20) and Tatsumaki EX (21==21) BOTH
+#     PASS — every HIT-leg A shipped below is admissible, unlike the Ryu EX
+#     pilot's Joudan Sokutou Geri (which failed this check). Hadouken EX has
+#     no A check to apply (ken.json's Hit field is the non-numeric literal
+#     "-" for this row, same as every other Hadouken-family row in this
+#     repo — from-qjson would not compile, so A is never asserted on either
+#     leg regardless of the juggle outcome).
+# (4) Shape record: Hadouken EX is the proj-split shape (proj=1, box_runs=0,
+#     matching Ryu's/Ken's own base Hadouken sections exactly); Shoryuken EX
+#     is single-run (box_runs=1, all three legs); Tatsumaki Senpuu Kyaku EX
+#     is GENUINELY multi-run (box_runs=6, both contact legs) — the Ruling 3
+#     multi-run shape (same class as Ken SA3 / Ryu's own EX Tatsumaki) — but
+#     UNLIKE both of those precedents, Ken's EX Tatsumaki R is fully
+#     oracle-exact on both contact legs (measured R=13 == ken.json R=13,
+#     see that section's own comment) — no quarantine needed here, multi-run
+#     alone does not imply a divergence.
+#
+# RESULT: every asserted field on every shipped entry is oracle-exact.
+# ZERO divergences, ZERO quarantines, ZERO documented-unasserted fields this
+# batch (a cleaner outcome than the Ryu EX pilot, which had one quarantine
+# and one documented-unasserted HIT-A) — this program's EX moves continue to
+# be flash-free and measurement-identical to the shipped normal-move
+# population (authoring-policy.md Ruling 2's own framing).
+character: ken
+oracle: ken.json
+inter_entry_wait: 250
+# sa_gauge: MAXIMUM (3) per authoring-policy.md's meter policy - EX moves are
+# meter-metered (1 stock/activation) and training mode's default starting
+# gauge is not guaranteed full/nonzero (the Ryu EX pilot's own finding, not
+# re-derived here — MAXIMUM per policy default for ordinary (non-install)
+# EX moves).
+sa_gauge: 3
+entries:
+
+# --- EX Hadouken (projectile, proj-split lever-J shape, §13.12) ------------
+# No WHIFF leg: same documented gap as corpus-ken.yaml's own Hadouken section
+# and corpus-ryu-ex.yaml's EX Hadouken section — a projectile travels
+# full-screen and still connects with a standing dummy at any scriptable
+# ground distance, so there is no reachable ground-range whiff in this
+# harness for any Hadouken variant. Census: single-FINAL, sastop=0,
+# box_runs=0, proj=1 (both legs).
+
+- label: ken-exhad-block
+  setup: { dist: close, dummy: stand }
+  input: "hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LP+HP 2; wait 1"
+  qjson: { name: "Hadouken EX" }
+  outcome: BLOCK
+  # Measured S=11 R=38 adv=-6 (box_runs=0, proj=1, proj_a=5), oracle-exact on
+  # all three asserted fields (ken.json Hadouken EX: Startup=11, Recovery=38,
+  # Block_advantage=-6). No expect.A: ken.json's Hit field for this row is
+  # the literal string "-" (same non-numeric-oracle-field reasoning as
+  # corpus-ken.yaml's own Hadouken section and corpus-ryu-ex.yaml's EX
+  # Hadouken) - from-qjson would not compile.
+  expect: { S: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: ken-exhad-hit
+  setup: { dist: close, dummy: none }
+  input: "hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LP+HP 2; wait 1"
+  qjson: { name: "Hadouken EX" }
+  outcome: HIT
+  # Measured S=11 R=38, oracle-exact. No expect.A (non-numeric oracle field,
+  # same as BLOCK leg) and no expect.adv (Hit_advantage is "-" for this row,
+  # confirmed live this session).
+  expect: { S: from-qjson, R: from-qjson }
+
+# --- EX Shoryuken (ordinary single-run contact leg, no flash) --------------
+# Census: single-FINAL, sastop=0, box_runs=1, proj=0 (all three legs).
+
+- label: ken-exsrk-block
+  setup: { dist: close, dummy: stand }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LP+HP 2; wait 1"
+  qjson: { name: "Shoryuken EX" }
+  outcome: BLOCK
+  # Measured S=1 A=20 R=38 adv=-36 (box_runs=1, box_a=21, busyr=38, proj=0),
+  # oracle-exact on all four fields (ken.json Shoryuken EX). BLOCK-leg A
+  # needs no juggle check (Ruling 2: it IS the validated legacy instrument) —
+  # logged here as the cross-check anchor for the HIT leg below.
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: ken-exsrk-hit
+  setup: { dist: close, dummy: none }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LP+HP 2; wait 1"
+  qjson: { name: "Shoryuken EX" }
+  outcome: HIT
+  # Measured S=1 A=20 R=38 — HIT-leg A (20) equals the BLOCK-leg's displayed
+  # A (20), so the juggle check (Ruling 2 check 3) passes and A is
+  # admissible here. No expect.adv (Hit_advantage "-").
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: ken-exsrk-whiff
+  setup: { dist: 150, dummy: none, dist_mode: centered }
+  input: "hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LP+HP 2; wait 1"
+  qjson: { name: "Shoryuken EX" }
+  outcome: WHIFF
+  # Binary search: dist=150 (centered) is the first value tried — Shoryuken
+  # is a short-reach anti-air DP, expected to whiff easily well inside the
+  # centered ceiling (same as corpus-ryu-ex.yaml's EX Shoryuken WHIFF entry,
+  # which reached WHIFF at the identical dist=150). Measured S=1 A=20 R=38,
+  # oracle-exact on all three — confirms WHIFF as the calibration surface
+  # per Phase 4 (the same values the BLOCK/HIT legs above also read).
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# --- EX Tatsumaki Senpuu Kyaku (ordinary contact legs; WHIFF-UNREACHABLE) --
+# Census: single-FINAL, sastop=0, box_runs=6 (GENUINELY multi-run, both
+# contact legs — the Ruling 3 shape, same class as Ken SA3/Ryu's own EX
+# Tatsumaki), proj=0.
+
+- label: ken-extatsu-block
+  setup: { dist: close, dummy: stand }
+  input: "hold DOWN 2; hold DOWN+LEFT 2; hold LEFT+LK+HK 2; wait 1"
+  qjson: { name: "Tatsumaki Senpuu Kyaku EX" }
+  outcome: BLOCK
+  # Measured S=4 A=21 R=13 adv=-3 (box_runs=6, box_a=22, busyr=13, proj=0),
+  # oracle-exact on ALL FOUR fields (ken.json Tatsumaki Senpuu Kyaku EX).
+  # Unlike corpus-ryu-ex.yaml's own EX Tatsumaki (which QUARANTINED its R —
+  # measured 14/16 vs oracle 11), Ken's EX Tatsumaki R matches exactly here;
+  # genuine multi-run (box_runs=6) does not by itself imply a divergence.
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: ken-extatsu-hit
+  setup: { dist: close, dummy: none }
+  input: "hold DOWN 2; hold DOWN+LEFT 2; hold LEFT+LK+HK 2; wait 1"
+  qjson: { name: "Tatsumaki Senpuu Kyaku EX" }
+  outcome: HIT
+  # Measured S=4 A=21 R=13 (box_runs=6, box_a=22, busyr=13). HIT-leg A (21)
+  # equals the BLOCK-leg's A (21), so the juggle check (Ruling 2 check 3)
+  # passes and A is admissible. R is also oracle-exact here (13==13, same as
+  # BLOCK leg above). No expect.adv (Hit_advantage "-").
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# WHIFF-UNREACHABLE(dist=310 requested, dist=307 achieved at MOVE_START —
+# CENTERED_DIST_MAX's practical ceiling) — Ruling 1's honest-bound
+# convention, documented not silently dropped. Binary search: dist=250
+# (centered) connected (outcome HIT, same result as the BLOCK/HIT legs
+# above); dist=310 (centered, the hard CENTERED_DIST_MAX cap) ALSO connected
+# — read directly off the trace's own MOVE_START annotation
+# (atk_x=348 def_x=655, dist=307, essentially the full requested separation
+# with only the ordinary ~3px engine-clamp shortfall, NOT a walk-in
+# consumption — this entry's own script has no back-hold/preamble before the
+# qcb-shape input, unlike Ryu's EX Joudan Sokutou Geri whose walk-back
+# consumed ~83px before MOVE_START). Root cause here is different from that
+# precedent: Ken's EX Tatsumaki's own multi-hit forward-traveling spin
+# (box_runs=6, a genuinely multi-run active phase) covers the ENTIRE
+# centered ceiling and still connects — a pure move-reach fact, not a
+# harness placement artifact. No further binary search attempted (310 is
+# the hard compile-time cap for dist_mode:centered; nothing higher is
+# scriptable). Coverage for this move's WHIFF path is out of reach in this
+# harness; coverage instead comes from the BLOCK/HIT legs above (both fully
+# oracle-exact on S/A/R/adv), per Ruling 1 ("its coverage comes from Ruling
+# 2's contact legs + S").
+#
+# No negative control appended: matching corpus-ryu-ex.yaml's own precedent
+# (the EX/Supers satellite-corpus shape omits it — the negative control is a
+# main per-character corpus convention, CORPUS-AUTHORING.md Phase 2).

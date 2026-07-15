@@ -350,6 +350,7 @@ typedef struct GameState {
     u8 Training_ID;
     u8 Disp_Attack_Data;
     u8 Disp_Input_History;
+    u8 Disp_Frame_Data;
     u8 Record_Data_Tr;
     u8 End_Training;
     s8 Menu_Page_Buff;
@@ -732,9 +733,9 @@ typedef struct State {
  * the active slots and reconstruct the rest on load.
  *
  * SPARSE_CEILING_SLOTS  — worst-case # of active slots Gekko's ring
- * sizes for. 70 ≈ 1.23 × empirical peak (deliberately tight). At save
- * time, an active count > SPARSE_CEILING_SLOTS triggers the full-state
- * fallback path (see save_current_state in game_state.c).
+ * sizes for. 82 ≈ 1.44 × empirical peak. At save time, an active count
+ * > SPARSE_CEILING_SLOTS triggers the full-state fallback path (see
+ * save_current_state in game_state.c).
  *
  * SPARSE_FRW_SLOT_BYTES — per-slot payload size (matches the inner
  * uintptr_t[448] dimension on either bitness). Wire-stable on a single
@@ -745,11 +746,24 @@ typedef struct State {
  * fields + an active_mask + active_count.
  *
  * SPARSE_CEILING_BYTES  — buffer ceiling (sizeof(GameState) +
- * SPARSE_HEADER_BYTES + 70 × SPARSE_FRW_SLOT_BYTES). Used as
+ * SPARSE_HEADER_BYTES + 82 × SPARSE_FRW_SLOT_BYTES). Used as
  * gekko_start config.state_size so the rollback ring buffer shrinks
  * proportionally. Each Gekko save still reports its own variable
  * state_len via GekkoSave.state_len, so the ceiling is just a max.
  */
+/* Phase 5 hygiene item 5 (docs/plan-frame-data-harness.md): this was
+ * bumped 82 -> 100 by cce9095a ("chore(netplay): bump
+ * SPARSE_CEILING_SLOTS 82 -> 100"), whose own commit message says the
+ * motivation was "headroom for the in-flight lobby-mvp state
+ * additions". That lobby feature was abandoned — netplay.c:272-273
+ * ("Dormant since the RmlUi lobby UI was removed — no code path sets
+ * s_lobby_session = true anymore") confirms no lobby-derived GameState
+ * fields ever landed that would grow the effect-pool active-slot peak.
+ * The frame-data overlay work this bump got squashed alongside
+ * (a386e057) only added a 1-byte Disp_Frame_Data scalar to GameState,
+ * not additional concurrent effect-pool slots — it doesn't motivate 100
+ * either. Reverted to the original empirically-derived 82 (see comment
+ * above: peak observed 57, 82 ≈ 1.44 × that peak). */
 #define SPARSE_CEILING_SLOTS 82
 #define SPARSE_FRW_SLOT_BYTES (sizeof(uintptr_t) * 448)
 /* Fixed-size header on the wire. Lays out frwctr/frwctr_min,

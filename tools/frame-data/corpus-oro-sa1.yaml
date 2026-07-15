@@ -1,0 +1,214 @@
+# Oro Super Art 1 (Kishin Riki family) — EX/Supers program, supers wave S4.
+# Satellite corpus (auto-discovered by run-suite.sh's corpus-*.yaml glob, own
+# golden/oro-sa1.tsv once registered) — corpus-oro.yaml/corpus-oro-ex.yaml are
+# untouched. Repo @ 16737236 (branch frame-data-on-mister), tree touched only
+# by this file + corpus-oro-sa2.yaml/corpus-oro-sa3.yaml + their goldens
+# (sibling agents' own disjoint files not touched). FDH_SKIP_BUILD=1
+# throughout (build/host confirmed current at session start), own isolated
+# rundirs under <sp>/sa-oro/.
+#
+# Scope: step0-universe.tsv rows 80-83 (oro sa_slot 1): "Kishin Riki"
+# (index 51, NONNUMERIC — install stance activation), "Ground Grab" (index
+# 52, GRAB, JUDGMENT), "Air Grab" (index 53, GRAB+AIR_DEFERRED, JUDGMENT),
+# "EX Kishin Riki" (index 54, "2-stock SA1 variant" per the plan's own G9
+# prose, exsuper-plan.md:216 — NOT an EX special, classified as a super by
+# the boundary rule). Oracle: docs/arcade-frame-data/oro.json (md5
+# 9917bd5e9773c514eef58c5a4431bb47, same file corpus-oro.yaml/corpus-oro-
+# ex.yaml already pin, re-verified unchanged this session).
+#
+# IDENTITY (S-match probe, all three moves below landed on their first
+# motion attempt): super_art:0 (0-indexed SA1) + sa_gauge:3 (MAXIMUM — per
+# authoring-policy.md's install-super policy: Kishin Riki IS an install and
+# MUST use MAXIMUM, never INFINITY, or the timed-install's own gauge drain
+# freezes). Plain "motion 2qcf HP" (also confirmed button-invariant against
+# LP) gives a pure zero-active install-activation FINAL (S=16, A=0, R=0,
+# T=16, box_runs=0, proj=0) — this is Kishin Riki itself, identical whether
+# the dummy is at point-blank range (dist=1, isolated probe,
+# <sp>/sa-oro/run-sa1-gg2) or absent — it never auto-grabs on its own.
+# Cross-index control (super_art:1, motion 2qcf HP): S=28 A=11 exact match to
+# Yagyou Dama's own oracle row (<sp>/sa-oro/run-sa2-id) — confirms super-art
+# selection is genuinely discriminating per slot, not a harness no-op.
+#
+# --- Kishin Riki (install-stance activation, NONNUMERIC per step0) --------
+# oro.json's ONLY entry with every field the literal string "-" other than
+# Tanden Renki (corpus-makoto-sa3.yaml precedent) — but UNLIKE Tanden Renki,
+# a real FINAL DOES fire here (S=16 measured live, T=16, cut=0, active_pf=0)
+# — this is NOT a true zero-FINAL null-signal (outcome NONE would be wrong;
+# WHIFF with nothing asserted is the correct shape, matching the "install
+# with at least one live numeric field, just none of them oracle-published"
+# posture the plan's own G9 prose names for Genei Jin/Sei-ei Enbu, except
+# here the oracle simply never publishes ANY number for this specific row —
+# so unlike those two, nothing is assertable here at all). Reproduced
+# identically across dummy:stand/dummy:none and dist 1/10/20/56/250 (5
+# independent contexts, <sp>/sa-oro/run-sa1-id, run-sa1-gg2). No expect
+# fields: every oro.json field for "Kishin Riki" is the literal "-"
+# (from-qjson would raise CompileError on any of S/A/R/adv).
+#
+# --- Ground Grab / Air Grab: MOTION NOT FOUND (documented, not shipped) ----
+# Exhaustive good-faith search this session, matching the Ibuki SA1 Kasumi
+# Suzaku precedent's own posture (ibuki-sa-report.md): both empirical
+# probing AND two dedicated decompiled-source research passes came up empty.
+#
+# Empirical candidates tried, all under super_art:0 (12 distinct probes,
+# <sp>/sa-oro/run-sa1-gg{1,2,3,4,5}):
+#   1. Plain "motion 2qcf {LP,MP,HP}" at dist 1/10/20/56/250, dummy:none —
+#      ALWAYS reproduces Kishin Riki's own S=16/A=0/R=0 signature, at every
+#      distance including point-blank (dist=1). A collision/walk-in floor
+#      keeps the ACHIEVED separation at MOVE_START to ~63px regardless of
+#      how close the setup dist requests (dist:1/10/20 all settled at
+#      dist=63 by MOVE_START, <sp>/sa-oro/run-sa1-gg2/trace.log) — the
+#      2qcf motion's own FORWARD/DOWN+FORWARD holding steps walk the
+#      attacker into the dummy and the engine's own collision separation
+#      pushes them back apart before the move can ever register a target
+#      within Ground Grab's oracle Throw_range=28.
+#   2. Plain "motion 2qcf {LK,MK,HK}" — all three fall through to the
+#      generic DP-shape special family instead (Jinchu Nobori Short/
+#      Forward/RH signatures, S=27/31/34 matching those oracle rows
+#      EXACTLY — confirms kicks route to an unrelated command, not any
+#      grab variant).
+#   3. "motion 2qcf HP; wait 5; press LP+LK" (activate-then-throw
+#      sequencing hypothesis) — the harness's own single-entry model tracks
+#      exactly one MOVE_START->FINAL pair per entry; the FINAL fired
+#      immediately after the plain activation (F=67) and no second
+#      MOVE_START ever appeared for the trailing throw press within the
+#      same tracked window (<sp>/sa-oro/run-sa1-gg1/trace.log) — this
+#      two-step framing is not expressible as a single measurable entry
+#      under this harness's per-entry model, and even if it were, EX Kishin
+#      Riki's own atomic (single-input) grab (see below) suggests the real
+#      mechanism isn't "activate, then separately grab" at all.
+#   4. Plain "press LP+LK" (ordinary Throw button) at super_art:0 selected,
+#      dist:24/250 — reproduces ordinary Throw's own S=2/A=1/R=21 signature
+#      exactly (<sp>/sa-oro/run-sa1-gg3) — selecting SA1 does NOT passively
+#      upgrade the normal throw command.
+#   5. "motion hcb LP" (Niou Riki's own dash-grab motion) at super_art:0 —
+#      reproduces base Niou Riki's own S=9/A=2/R=29 signature exactly
+#      (<sp>/sa-oro/run-sa1-gg4) — SA1 selection does not alter this move
+#      either.
+#   6. "press UP; wait 3; motion 2qcf HP" (air-context idiom, Makoto
+#      Tsurugi EX / this repo's own established convention) at super_art:0
+#      — produced an unidentified S=7/A=4/R=18 signature matching NO oracle
+#      row exactly (not Air Grab's own S=5/A=4; A alone coincides but S
+#      doesn't) — inconclusive, not a confirmed identification either way.
+#
+# Source-level research (two dedicated read-only passes this session):
+# Oro's full exatt table (`pl09_exatt_table[18]`, plpat09.c:390-395) has
+# exactly ONE Kishin-Riki-family entry beyond the shared/generic rows:
+# index 12 `Att_PL09_EX_KISHINRIKI` (dtm_mul=16, plpat09.c:355-388 — this is
+# what EX Kishin Riki's own chorded input dispatches to, confirmed below)
+# and index 14 `Att_PL09_TOKUSHUKOUDOU` (plpat09.c:174-225, literally
+# "tokushu koudou" = "special action" — a pure gauge-building routine,
+# `add_sp_arts_gauge_tokushu`, with ZERO throw/attack logic of any kind —
+# this is the plain Kishin Riki activation, confirming it structurally
+# CANNOT ever grab on its own, matching every empirical probe above). No
+# separate "Ground Grab"/"Air Grab" dispatch function exists anywhere in
+# `plpat09.c`/`plpatuni.c` (grepped for NIGIRI/TSUKAMI/GURABU/GRAB/HOLD:
+# zero matches), and Oro's own command-table rows in `cmd_data.c` for SA1
+# (`p9_cmd_28`/`_29`/`_30`/`_31`) resolve only to the two already-confirmed
+# entries (plain + EX Kishin Riki) — two further waza numbers (46/47) exist
+# outside the valid `routine_no[2]-16` dispatch range and route through an
+# unidentified separate mechanism neither research pass could resolve.
+#
+# DISPOSITION: documented as OUT OF SCOPE / MOTION NOT FOUND, matching the
+# Ibuki SA1 Kasumi Suzaku precedent exactly — no entries shipped for Ground
+# Grab or Air Grab, no oracle edit, no exclusion_flag change (this is a
+# genuine motion-primitive gap under this harness's expressible input
+# surface + per-entry model, not a Step-0 classification miss).
+#
+# --- EX Kishin Riki (2-stock SA1 variant — genuinely an atomic grab) ------
+# Chorded 2-punch version of the SAME hold-chain shape (manual hold-chain,
+# not `motion 2qcf`, since `motion`'s own button argument doesn't accept a
+# '+'-joined chord — identical workaround to corpus-ryu-ex.yaml's EX
+# Hadouken/EX Shoryuken precedent and this character's own corpus-oro-
+# ex.yaml Oniyama (EX)/Jinchu Nobori (EX) sections): `hold DOWN 2; hold
+# DOWN+RIGHT 2; hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold
+# RIGHT+LP+HP 2; wait 1`. Confirmed button-agnostic (LP+HP and MP+HP both
+# reproduce the identical S=11/A=1 signature, <sp>/sa-oro/run-sa1-ex).
+# Unlike plain Kishin Riki, this chorded input DOES immediately grab a
+# nearby target in ONE atomic action (no separate follow-up needed) — S=11/
+# A=1 EXACT match to oro.json's "EX Kishin Riki" row (Startup=11, Hit=1) on
+# every attempt. This is a genuine command grab (§13.10 grab-convention
+# family), same class as Oro's own Ground/Air Grab per the plan's G9 prose
+# ("Oro Ground/Air Grab follow the Phase-4 grab convention") — WHIFF is the
+# comparable leg, per that same convention.
+#
+# WHIFF (dist:250, dummy:none, <sp>/sa-oro/run-sa1-exwhiff): S=11 A=1 R=25
+# adv=+0 — ALL THREE numeric oro.json fields (Startup=11/Hit=1/Recovery=25)
+# EXACT on the whiff-path baseline. Plain PASS, all three from-qjson.
+#
+# HIT (dist:close, dummy:none — confirmed connecting at the achieved
+# separation, <sp>/sa-oro/run-sa1-ex2): S=11 A=1 R=225(NOT asserted, see
+# below) adv=+78 kd=1. S/A both oracle-exact (same values as WHIFF,
+# path-independent). R DISPOSITION: this is one of Oro's own §13.10
+# command-grab moves (per authoring-policy.md's own character-specific
+# note) — the post-contact grab span has no arcade oracle to compare
+# against (oro.json's Recovery=25 is the WHIFF-path figure, already matched
+# exactly above); measured R=225 is the true post-capture-to-release span
+# under the now-256-cell capture buffer (commit 16737236's "post-capture-
+# raise convention" — same class as corpus-oro.yaml's own oro-throw-hit
+# BUFFER-1 note and oro-niouriki-lp-hit's own endrel-bounded derivation,
+# except here there is no prior 72-buffer value to compare a "was X, now Y"
+# drift against since this row was never authored before this session).
+# R stays UNASSERTED, not forced to any value. No expect.adv: oro.json's
+# EX Kishin Riki Block_advantage is the literal string "-" (BLOCK leg not
+# separately authored — no oracle field exists to check it against beyond
+# what the WHIFF leg's own R/S/A already cover, and this move's own
+# reachability shape (an atomic grab, not a strike) makes a separate BLOCK
+# leg redundant with the HIT leg's own connecting-range confirmation).
+#
+# Admissibility census (mechanical, from FRAME_TRACE columns — authoring-
+# policy.md Ruling 2), run over the final 3-entry corpus below
+# (<sp>/sa-oro/run-sa1-final/trace.log): (1) single-FINAL integrity — one
+# MOVE_START/FINAL pair per entry, non-overlapping windows, confirmed via
+# annotation grep. (2) Flash-overlap (sastop) census: 0 nonzero ticks in
+# every entry's own [MOVE_START F, FINAL F] window — flash-free, matches
+# every population checked so far in this program. (3) Contact-A juggle
+# check: N/A (EX Kishin Riki's HIT-leg A already equals its own WHIFF-leg A
+# path-independently, and it's a grab not a strike-juggle scenario; Kishin
+# Riki's own activation never asserts A at all). (4) Shape record: Kishin
+# Riki box_runs=0/proj=0 (pure declared-only, zero-active); EX Kishin Riki
+# box_runs=0/proj=0 both legs (also a declared-only shape, not a physical
+# att_box tensor — a grab's own hit registration doesn't route through the
+# box tracker).
+character: oro
+oracle: oro.json
+super_art: 0
+sa_gauge: 3
+inter_entry_wait: 500
+entries:
+
+- label: oro-sa1-kishinriki-whiff
+  setup: { dist: close, dummy: stand }
+  input: "motion 2qcf HP"
+  qjson: { name: "Kishin Riki" }
+  outcome: WHIFF
+  # Measured S=16 A=0 R=0 adv=+0 (T=16, box_runs=0, proj=0, active_pf=0),
+  # reproduced identically across 5 independent dist/dummy contexts this
+  # session. No expect fields: every oro.json field for this row is the
+  # literal string "-" (from-qjson would raise CompileError on any of
+  # S/A/R/adv) — nothing is assertable, per the header's own KISHIN RIKI
+  # section.
+  expect: { }
+
+- label: oro-sa1-exkishin-whiff
+  setup: { dist: 250, dummy: none }
+  input: "hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LP+HP 2; wait 1"
+  qjson: { name: "EX Kishin Riki" }
+  outcome: WHIFF
+  # Measured S=11 A=1 R=25 adv=+0 — ALL THREE numeric oro.json fields exact
+  # (Startup=11/Hit=1/Recovery=25). Plain PASS.
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: oro-sa1-exkishin-hit
+  setup: { dist: close, dummy: none }
+  input: "hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LP+HP 2; wait 1"
+  qjson: { name: "EX Kishin Riki" }
+  outcome: HIT
+  # Measured S=11 A=1 R=225(NOT asserted, see the header's R DISPOSITION)
+  # adv=+78 kd=1. S/A both oracle-exact (path-independent, same as WHIFF).
+  # R is the true post-capture command-grab span (no arcade oracle exists
+  # for it — oro.json's Recovery=25 is the whiff-path figure, already
+  # matched exactly on the WHIFF entry above) — post-capture-raise
+  # convention (commit 16737236), same class as corpus-oro.yaml's own
+  # oro-throw-hit BUFFER-1 note. No expect.adv: oro.json's Block_advantage
+  # for this row is the literal string "-".
+  expect: { S: from-qjson, A: from-qjson }

@@ -1,0 +1,32 @@
+# Tiny smoke corpus for the frame-data harness itself (docs/plan-frame-data-harness.md
+# section 1.7, Step H5). This pins harness plumbing (build -> compile -> run -> check),
+# NOT arcade truth for the full character - that's the real tools/frame-data/corpus-q.yaml
+# (Step H6). All three entries below were empirically verified against a live headless
+# run on 2026-07-06 (see the H5 implementation report for the exact commands/output).
+#
+# Two of the three entries (close-lp-hit-vs-none, close-lp-block-vs-stand) resolve their
+# S/A/R/adv via `from-qjson` against the real docs/arcade-frame-data/q.json "Jab" entry
+# (Startup=4, Hit=4, Recovery=6, Hit_advantage=2, Block_advantage=2) - this doubles as the
+# from-qjson code path exercise the plan asks for, using real data rather than a synthetic
+# fixture, since it happens to match the harness's observed close-range numbers exactly.
+# The third entry (far-lp-whiff) uses explicit ints instead, to exercise that path too.
+
+- label: close-lp-hit-vs-none
+  setup: { dist: close, dummy: none }
+  input: "press LP"
+  qjson: { name: "Jab" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: close-lp-block-vs-stand
+  setup: { dist: close, dummy: stand }
+  input: "press LP"
+  qjson: { name: "Jab" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: far-lp-whiff
+  setup: { dist: far, dummy: none }
+  input: "press LP"
+  outcome: WHIFF
+  expect: { S: 6, A: 4, R: 4 }

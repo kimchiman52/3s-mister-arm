@@ -1,0 +1,4 @@
+label	verdict	outcome	n	S	A	R	adv	kd
+h-sa2-megaton-lk-whiff	PASS	WHIFF	1	2	12	30	+0	0
+h-sa2-megaton-mk-whiff	PASS	WHIFF	1	4	16	34	+0	0
+h-sa2-megaton-hk-whiff	PASS	WHIFF	1	6	20	36	+0	0

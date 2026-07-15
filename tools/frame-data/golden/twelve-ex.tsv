@@ -1,0 +1,9 @@
+label	verdict	outcome	n	S	A	R	adv	kd
+twelve-exndl-hit	PASS	HIT	1	14	13	15	+95	1
+twelve-exaxe-whiff	PASS	WHIFF	1	8	11	14	+0	0
+twelve-exaxe-block	PASS	BLOCK	1	8	11	14	-4	0
+twelve-exaxe-hit	PASS	HIT	1	8	11	12	-1	0
+twelve-exndl-block	PASS	BLOCK	1	14	13	15	+0	0
+twelve-exairaxe-whiff	PASS	WHIFF	1	6	10	22	+0	0
+twelve-exairaxe-block	PASS	BLOCK	1	6	10	22	-11	0
+twelve-exairaxe-hit	PASS	HIT	1	6	10	22	-17	0

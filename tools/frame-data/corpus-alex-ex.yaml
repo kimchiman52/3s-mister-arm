@@ -1,0 +1,152 @@
+# Alex EX moves corpus — EX/Supers program, wave 4 (<sp>/exsuper/authoring-
+# policy.md). Satellite corpus (auto-discovered by run-suite.sh's
+# corpus-*.yaml glob, own golden/alex-ex.tsv, born by the orchestrator at
+# wave-commit time — not authored here). The main corpus-alex.yaml is
+# untouched.
+#
+# Scope: Alex's 4 ground-EX rows per <sp>/exsuper/step0-universe.tsv (rows
+# 29/39/43/47): Flash Chop EX (ASSERTABLE, shipped WHIFF+BLOCK+HIT below),
+# Air Knee Smash EX (row 39, AIR_DEFERRED — out of scope this program, same
+# posture as Ken's Air Tatsumaki EX / Akuma's Tenma Gou Zankuu precedent),
+# Air Stampede EX (row 43, AIR_DEFERRED — out of scope, same posture),
+# Slash Elbow EX (ASSERTABLE, shipped WHIFF-only — see its own section for
+# the confirmed BLOCK/HIT reachability gap). Alex's 4 supers (Hyper Bomb /
+# Reverse Hyper Bomb / Boomerang Raid / Stun Gun Headbutt, rows 51-54) are
+# `class=SUPER`, a separate out-of-scope program phase, not touched here.
+# Oracle: docs/arcade-frame-data/alex.json, md5
+# f324fa3a68b748f7fb0f2c92c3e72db6 (re-verified unchanged this session,
+# matches corpus-alex.yaml's own pin).
+#
+# sa_gauge: 3 (MAXIMUM, per authoring-policy.md's meter default for
+# ordinary non-install EX/supers — never INFINITY). `inter_entry_wait: 250`
+# per this program's settled convention (no label-bleed observed across the
+# full 6-entry combined run this session).
+#
+# Motion recipes (Phase 5 motion-probe method — S-value match against the
+# oracle, not recalled from memory):
+#   - Flash Chop EX (Common_name "236PP", verified against the fetched
+#     oracle): `hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LP+HP 2; wait 1`
+#     — corpus-alex.yaml's own `motion qcf <btn>` sequence for the base
+#     Flash Chop family, hand-expanded (cmd_motion's `motion qcf` only
+#     accepts a single button token) with the final step's button replaced
+#     by a two-punch chord — identical workaround to corpus-ryu-ex.yaml's
+#     EX Hadouken / corpus-ken-ex.yaml's EX Hadouken precedent. Landed on
+#     the FIRST probe attempt: S=9 matches alex.json's Flash Chop EX row
+#     exactly, unambiguous vs the base Jab/Strong/Fierce variants' own
+#     distinct S values of 11/15/19.
+#   - Slash Elbow EX (Common_name "4..6PP", verified against the fetched
+#     oracle — NOTE: the base (non-EX) Slash Elbow family is KICK-based
+#     (LK/MK/HK, `corpus-alex.yaml`'s own `alex-slashelbow-lk-*` section,
+#     Common_name "4..6LK"/"4..6MK"/"4..6HK"), but the EX variant's own
+#     Common_name is unambiguously "4..6PP" — a genuine button-family
+#     switch from kick to punch on the EX version, confirmed against the
+#     fetched oracle, not assumed from the base variants' own convention):
+#     `hold LEFT 60; hold RIGHT+LP+HP 2; wait 1` — a manual hand-expansion
+#     of `cmd_motion`'s own `charge-back <N> then-forward <BTN>` macro
+#     (`(BACK, charge_frames), (FORWARD|btn, CHARGE_SNAP_FRAMES), (0,
+#     PRESS_RELEASE_FRAMES)`, `compile_corpus.py:297-304`), needed because
+#     that macro only accepts a single trailing button token — reproduced
+#     by hand with the final step's button replaced by a two-punch chord
+#     (LEFT/RIGHT used directly, not the literal tokens "BACK"/"FORWARD",
+#     which `parse_chord` does not recognize — `compile_corpus.py:150-152`
+#     aliases FORWARD=RIGHT/BACK=LEFT only for the macro layer's own
+#     internal use). Landed on the FIRST probe attempt: S=9 matches
+#     alex.json's Slash Elbow EX row exactly, unambiguous vs the base
+#     Short/Forward/Roundhouse variants' own distinct S values of 15/18/20.
+#
+# Admissibility census (per authoring-policy.md Ruling 2), all 4 shipped
+# entries: single-FINAL integrity held throughout (one combined 6-entry
+# probe run at inter_entry_wait:250 — the corpus below is that same
+# 4-entry shipped subset, in the same relative order — every FINAL's own
+# move_start_F matched its entry's own MOVE_START, zero merges). sastop
+# census: 0 nonzero ticks across the whole trace (EX moves are flash-free,
+# confirmed mechanically, not assumed). Contact-A juggle check: Flash Chop
+# EX's HIT leg needs no such check (its A is independently oracle-exact
+# against alex.json directly, S=9/A=4 matching on WHIFF/BLOCK/HIT alike).
+# Shape record: Flash Chop EX single-run on every leg (box_runs=1, proj=0).
+# Slash Elbow EX's own WHIFF entry is also box_runs=1 (a single-run chart,
+# not the Ruling-3 multi-run shape).
+character: alex
+oracle: alex.json
+inter_entry_wait: 250
+sa_gauge: 3
+entries:
+
+# --- Flash Chop EX (qcf + PP), fully oracle-exact on every leg -------------
+# S=9/A=4/R=15 exact on all three outcomes; adv=-1 exact on BLOCK — no
+# divergence of any kind found this session (matches the base Flash Chop
+# family's own clean signature, corpus-alex.yaml's `alex-flashchop-lp-*`
+# section, which is likewise fully oracle-exact).
+
+- label: alex-exflashchop-whiff
+  setup: { dist: 250, dummy: none }
+  input: "hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LP+HP 2; wait 1"
+  qjson: { name: "Flash Chop EX" }
+  outcome: WHIFF
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: alex-exflashchop-block
+  setup: { dist: close, dummy: stand }
+  input: "hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LP+HP 2; wait 1"
+  qjson: { name: "Flash Chop EX" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: alex-exflashchop-hit
+  setup: { dist: close, dummy: none }
+  input: "hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LP+HP 2; wait 1"
+  qjson: { name: "Flash Chop EX" }
+  outcome: HIT
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# --- Slash Elbow EX (charge-back-then-forward + PP), WHIFF-ONLY ------------
+# STRUCTURAL FINDING (specials-reachability gap, same class as
+# corpus-alex.yaml's own Air Knee Smash section / the Q SDB precedent,
+# CORPUS-AUTHORING.md Phase 5 §12.1 register row 2): BLOCK/HIT are
+# UNREACHABLE this session. Three distinct probes, all WHIFF, byte-
+# identical S=9/A=4/R=17 (T=30, cut=0):
+#   1. `setup.dist: 20` (tightest explicit request tried) — MOVE_START
+#      measured effective separation 157px.
+#   2. `setup.dist: close` (56px) with the standard 60-frame charge —
+#      MOVE_START measured effective separation 168px.
+#   3. `setup.dist: close` with a LONGER 90-frame charge (more backward
+#      walk-in, a worse case) — MOVE_START measured effective separation
+#      231px.
+# Direct apples-to-apples control: the BASE (non-EX) Slash Elbow Short
+# (LK) entry, run in the same session with the IDENTICAL 60-frame
+# charge-back-then-forward macro shape, measures MOVE_START effective
+# separation 168px — the SAME distance as probe #2 above — and CONNECTS
+# (BLOCK, S=15/A=1/R=17/adv=-2, exact match to corpus-alex.yaml's own
+# shipped `alex-slashelbow-lk-block`, golden-confirmed). Slash Elbow EX,
+# at that identical 168px gap, still WHIFFs. This rules out a harness
+# placement/walk-in artifact (the base and EX attempts share the same
+# post-charge geometry) and confirms a genuine move-property difference:
+# Slash Elbow EX's own forward travel/hitbox reach is markedly shorter
+# than the base kick variants' (Common_name confirms the EX version is
+# punch-based, "4..6PP" vs the base's "4..6LK/MK/HK" - a real button-
+# family switch, not just a strength tier, which is consistent with a
+# genuinely different move property set). No BLOCK/HIT entry is shipped;
+# WHIFF is the only assertable outcome, an accepted reachability gap, not
+# a divergence.
+#
+# WHIFF-leg A/R DIVERGENCE, UNCLASSIFIED (flagged this session, needs
+# follow-up classification): alex.json's own Hit(=Active) field for this
+# row is the non-numeric multi-hit notation "6*1" (not resolvable via
+# `expect.A: from-qjson`) and Recovery=23. Measured (all three probes,
+# byte-identical): A=4, R=17, T=30 (S+A+R=30 exactly, no tick gap needing
+# an anchor at all), `cut=0`, `dwellbrk=0`, `anchor_a=-1`, `box_a=4`,
+# `busyr=17`, `box_runs=1`. `cut=0` rules out every §13.5.1/§13.5.1b/item-
+# 18(b) cut-family bucket (all of which require `cut=1`); no other Phase-6
+# bucket matches a WHIFF-leg divergence with a self-consistent S+A+R=T and
+# no cut event. No mechanism is claimed — this is raw trace fact only,
+# flagged to orchestrator/user for follow-up. Only S (exact, unambiguous
+# move-ID signal) is asserted below; A/R are deliberately OMITTED from
+# `expect` (not asserted as a guessed or wrong number, not xfailed against
+# an unexplained mechanism).
+
+- label: alex-exslashelbow-whiff
+  setup: { dist: 250, dummy: none }
+  input: "hold LEFT 60; hold RIGHT+LP+HP 2; wait 1"
+  qjson: { name: "Slash Elbow EX" }
+  outcome: WHIFF
+  expect: { S: from-qjson }

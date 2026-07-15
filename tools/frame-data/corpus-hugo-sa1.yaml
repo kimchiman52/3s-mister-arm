@@ -1,0 +1,145 @@
+# Hugo Super Art 1 (Gigas Breaker) — EX/Supers program, supers wave S6.
+# Satellite corpus (auto-discovered by run-suite.sh's corpus-*.yaml glob,
+# own golden/hugo-sa1.tsv once registered) — corpus-hugo.yaml/corpus-hugo-
+# ex.yaml are untouched. Repo @ a385799e (branch frame-data-on-mister), tree
+# touched only by this file + corpus-hugo-sa2.yaml/corpus-hugo-sa3.yaml +
+# their goldens (sibling wave agents' own disjoint corpora, not touched).
+# FDH_SKIP_BUILD=1 throughout (build/host confirmed current at session start
+# via `find src -newer build/host/.../3S-ARM`, empty), own isolated rundirs
+# under <sp>/sa-hugo/.
+#
+# Scope: step0-universe.tsv row (hugo SA1, "Gigas Breaker", sa_slot 1, GRAB).
+# Oracle: docs/arcade-frame-data/hugo.json (md5 8bd525542b815dd0c228605bffc51523,
+# same file corpus-hugo.yaml/corpus-hugo-ex.yaml already pin, re-verified
+# unchanged this session). Oracle row 43: Startup=0, Hit=2, Recovery=36,
+# Block_advantage="-" (unblockable), Throw_range=55.
+#
+# Meter: sa_gauge:3 (MAXIMUM, per authoring-policy.md's meter policy default
+# for non-install supers) + super_art:0 (0-indexed SA1).
+#
+# IDENTITY + MOTION — genuinely a 720 (two chained 360s), confirmed via a
+# static source-reading investigation this session (read-only, no src/
+# changes): Hugo's SA1 command slot is `p6_cmd_20` (src/sf33rd/Source/Game/
+# engine/cmd_data.c:268), a TRUE two-node `check_6` rotation-counter chain
+# (each node independently requires all 4 pure-cardinal direction bits, the
+# first node's completion does NOT fire `command_ok()` — it silently resets
+# and hands off to a second, identical node; only the second node's
+# completion fires `command_ok()`) — genuinely different from Hugo's other
+# 360 command grabs (Moonsault Press/Meat Squasher, single-node, corpus-
+# hugo.yaml:401-475/476-561), which is WHY a single cardinal-4 rotation +
+# button always re-triggers Moonsault Press instead (confirmed empirically:
+# every single-360+P attempt this session read Moonsault's own S=2/A=2/R=36
+# signature exactly, never Gigas's S=0).
+#
+# THE JUMP-INTERFERENCE TRAP (found and resolved this session — a genuine
+# harness/input-timing hazard, not a motion-shape question). A naive double
+# cardinal-4 hold-chain at 2-13 frames per direction ("hold RIGHT N; hold
+# DOWN N; hold LEFT N; hold UP N;" x2 + "hold RIGHT+LP N") never lands Gigas
+# Breaker — it reliably produces a stable-but-oracle-unmatched read
+# (S≈3, A=11 for LP-final / A=16 for LK-final), CONFIRMED (not guessed) to
+# be Hugo's own Jumping Jab/Jumping Short firing instead, via a direct
+# control probe this session: `press UP; wait 15; press LP` independently
+# reproduces the exact same S=3/A=11 read, and `press UP; wait 15; press LK`
+# reproduces S=3/A=16 — byte-identical to the "mystery" reads. Mechanism
+# (confirmed via a second read-only source investigation): Hugo's Moonsault
+# Press special (`p6_cmd_28`) and Gigas Breaker's SA (`p6_cmd_20`) both gate
+# their punch-button consumption on a single-frame input EDGE (`sw_chg`,
+# `cmd_main.c:1643`, `sw_now | (sw_old & ~sw_0)` — true only on the exact
+# frame a button is pressed or released, never on a held frame), armed for
+# exactly `reset[]=12` frames after each slot's own `command_ok()` fires
+# (`cmd_data.c:268/284`, both literally 12) and decaying by exactly -1/frame
+# thereafter (`cmd_main.c:1527-1533`) — with NO character-specific gauge/
+# arming asymmetry between Hugo and any other tested character's SA1
+# (confirmed by directly diffing Hugo's vs Alex's `super_arts_data[20][4]`
+# SA-index-0 row, `plcnt.c:165/189-192`: byte-identical `nmsa_g_ix=20,
+# gauge_type=0, store_max=1, dtm=65536` for both). At slow paces, Hugo
+# visibly commits to an actual jump before the second rotation ever
+# completes (the first rotation's own UP press is a real jump input that
+# nothing suppresses, since completing only rotation 1 of `p6_cmd_20` is an
+# internal FSM handoff, not a recognized command that could cancel the
+# queued jump) — the trailing button then executes as an aerial attack.
+# FIX: 1-FRAME-PER-DIRECTION holds for the entire double-rotation
+# (`hold RIGHT 1; hold DOWN 1; hold LEFT 1; hold UP 1;` x2 +
+# `hold RIGHT+LP 1; wait 1`) completes both rotations and presents the
+# button's rising edge fast enough that Hugo never actually leaves the
+# ground (confirmed: WHIFF leg below reads a real grounded S=0, not an
+# aerial S=3) — `pls00.c`'s dispatch order checks Super Arts before
+# Specials every frame (`check_super_arts_attack` before
+# `check_special_attack`), so once both `p6_cmd_20`'s and `p6_cmd_28`'s
+# windows are simultaneously open with the same qualifying edge, Gigas
+# (SA) wins the race by check order. This exact 1-frame recipe is the
+# working idiom for BOTH Hugo grab SAs needing a 720 — see corpus-
+# hugo-sa2.yaml for its own (DP-shaped, not rotation-shaped) double-motion
+# equivalent.
+#
+# WHIFF — the only leg this session could ship a numeric readout for.
+# `<sp>/sa-hugo/run-probe13/trace.log`: dist:200, dummy:none, 1-frame
+# double-rotation + LP. Measured S=0 (box_runs=0, T=37) — the UNIQUE
+# Startup=0 signature this session confirmed matches NO other Hugo move —
+# and R=36, BOTH exact oracle matches. A DIVERGES: measured 1 (engine_a=0,
+# box_a=0 — no att_box tensor ever opens on this WHIFF, same "no body
+# hitbox, projectile-like declared-credit" shape as Alex's own Hyper Bomb
+# WHIFF, corpus-alex-sa1.yaml:107-114 — but Alex's own identical shape read
+# an EXACT A=2 match, not 1) vs oracle's 2. UNEXPLAINED, no known Phase-6
+# bucket or citable signature fits (not MULTIHIT_CITED, no flash present,
+# not a busy-edge/box construction — this WHIFF never opens att_box at
+# all). A is OMITTED (not asserted, not xfailed) per the quarantine
+# convention — logged here for the record, flagged for orchestrator
+# follow-up: measured=1, oracle=2, mechanism unknown.
+#
+# HIT — UNREACHABLE for ANY numeric readout (not merely an unasserted-R
+# situation; a stronger structural gap than the binding spec's own
+# `ended_by_partner_release` framing anticipated). Every HIT attempt this
+# session (`<sp>/sa-hugo/run-probe16/trace.log` dist:40/close;
+# `run-probe22/trace.log` dist:50/20/dummy:crouch — 5 distances, both guard
+# states, all with the SAME winning 1-frame recipe that cleanly lands the
+# WHIFF leg) opens at **r1=2** (`MOVE_START ... r1=2 ... cgix=276 kow=60`,
+# stable across every attempt, dist stabilizes to ~52 at MOVE_START
+# regardless of the requested teleport distance — the rotation input's own
+# forward walk-in converges there). Per corpus-hugo.yaml's own "GRAB
+# PRESENTATION CLASSES" note (`corpus-hugo.yaml:97-113`): r1=4 is the
+# metered/CnDB-like path where `fd_finalize()` actually computes and emits
+# a FINAL line; r1=2/3 is the `is_throw` path where `fd_finalize()`
+# early-returns BEFORE any numeric annotation — a case the plan's own Step
+# 6 anticipated but had never actually been observed on any of Hugo's other
+# nine tested grab entries (all nine open at r1=4). **Gigas Breaker's HIT
+# leg is the first confirmed occurrence of this anticipated-but-unobserved
+# gap** — there is no FINAL line to read at all, at any distance/guard
+# combination tried, so there is no "true span to measure and not force" in
+# the sense the binding spec's own note anticipated (that framing presumed
+# a numeric readout would exist, just without an oracle to check it
+# against) — this is a harder gap, a complete absence of instrumentation
+# on this leg. Flagged prominently for orchestrator judgment: this
+# contradicts the task brief's HIT-leg framing and needs a decision on
+# whether further harness work (out of this agent's scope — src/ and
+# tools/frame-data/*.py are both off-limits this wave) could ever recover
+# it, or whether it stays a permanently-documented gap like SDB's own
+# HIT/BLOCK-unreachable precedent (corpus-hugo.yaml:360-378).
+#
+# Admissibility census (mechanical, from FRAME_TRACE columns, this
+# session's own isolated single-entry probe, `<sp>/sa-hugo/run-probe13/
+# trace.log`, inter_entry_wait:500): (1) single-FINAL integrity — exactly
+# one MOVE_START/FINAL pair in the entry's own window. (2) flash-overlap
+# census: 0 nonzero-sastop ticks in [MOVE_START F, FINAL F] (0/38) —
+# flash-free. (3) contact-A juggle check: N/A (no HIT leg exists to
+# cross-check against). (4) shape record: box_runs=0/box_a=0/busyr=-1,
+# proj=0 — no att_box tensor opens on this WHIFF at all (a genuine grab,
+# not a projectile, but the windup itself carries no attacker hitbox until
+# the (unreachable) capture moment).
+character: hugo
+oracle: hugo.json
+super_art: 0
+sa_gauge: 3
+inter_entry_wait: 500
+entries:
+
+- label: h-sa1-gigas-whiff
+  setup: { dist: 200, dummy: none }
+  input: "hold RIGHT 1; hold DOWN 1; hold LEFT 1; hold UP 1; hold RIGHT 1; hold DOWN 1; hold LEFT 1; hold UP 1; hold RIGHT+LP 1; wait 1"
+  qjson: { name: "Gigas Breaker" }
+  outcome: WHIFF
+  # Measured S=0 A=1 R=36 (box_runs=0, box_a=0, T=37). S/R oracle-exact
+  # (S=0 the unique zero-startup signature confirming identity). A OMITTED:
+  # measured 1 vs oracle 2, unexplained (see header) — not asserted, not
+  # xfailed, logged for follow-up.
+  expect: { S: from-qjson, R: from-qjson }

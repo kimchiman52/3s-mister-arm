@@ -1,0 +1,5 @@
+label	verdict	outcome	n	S	A	R	adv	kd
+alex-exflashchop-whiff	PASS	WHIFF	1	9	4	15	+0	0
+alex-exflashchop-block	PASS	BLOCK	1	9	4	15	-1	0
+alex-exflashchop-hit	PASS	HIT	1	9	4	15	+76	1
+alex-exslashelbow-whiff	PASS	WHIFF	1	9	4	17	+0	0

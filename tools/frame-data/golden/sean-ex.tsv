@@ -1,0 +1,8 @@
+label	verdict	outcome	n	S	A	R	adv	kd
+sean-exryuubi-block	PASS	BLOCK	1	25	10	15	-1	0
+sean-exryuubi-hit	PASS	HIT	1	25	10	15	-1	0
+sean-extornado-block	PASS	BLOCK	1	9	11	17	-3	0
+sean-extornado-hit	PASS	HIT	1	9	11	17	-1	0
+sean-exdragonsmash-whiff	PASS	WHIFF	1	8	12	42	+0	0
+sean-exdragonsmash-block	XFAIL	BLOCK	1	8	13	42	-37	0
+sean-exdragonsmash-hit	XFAIL	HIT	1	8	13	42	+60	1

@@ -1,0 +1,183 @@
+# Remy Super Art 2 (Supreme Rising Rage Flash) — EX/Supers program, supers
+# wave S6 (authoring-policy.md Ruling 5 fan-out; step0-universe.tsv row 102,
+# remy SA2, sa_slot 2, exclusion_flag ASSERTABLE). Satellite corpus (auto-
+# discovered by run-suite.sh's corpus-*.yaml glob, own golden/remy-sa2.tsv)
+# — corpus-remy.yaml/corpus-remy-ex.yaml/corpus-remy-sa1.yaml are untouched.
+#
+# Oracle: docs/arcade-frame-data/remy.json (same file corpus-remy.yaml/
+# corpus-remy-ex.yaml/corpus-remy-sa1.yaml already pin, md5
+# 3ab25a67f9b0b85aa1a7501c850b6289 — unchanged). Oracle row ("Supreme Rising
+# Rage Flash"): Startup=0, Hit=16, Recovery=53, Block_advantage=-29,
+# Hit_advantage="-" (non-numeric). Remy has NO arcade capture session yet
+# (the one cast member without one) — no arcade-hardware evidence cited.
+#
+# Meter: sa_gauge:3 (MAXIMUM) + super_art:1 (0-indexed SA2 slot).
+#
+# MOTION IDENTITY (S-match probe this session, per the task's own directive
+# to try qcf-family motions first despite Remy being a charge character for
+# his specials). "motion 2qcf HK" against super_art:1 fires a genuine
+# multi-hit rising-kick super on the FIRST attempt (box_runs=1 at close
+# range, a physical body-hitbox move — proj=0 throughout, unlike SA1's
+# barrage), matching the task's own "multihit rising kick" hypothesis. S=0
+# matches remy.json's Startup=0 EXACTLY on both legs, and the BLOCK leg's
+# adv=-29 is an EXACT, distinctive match to Block_advantage=-29 — both
+# independently confirm identity. "motion 2qcf HP" against the same
+# super_art:1 slot instead produces a plain physical Fierce Punch fallback
+# (measured S=6 A=7 R=8 adv=+3, exactly matching remy.json's own Fierce row
+# Startup=6/Hit=7/Recovery=8/Hit_advantage=3) — confirming HK, not HP, is
+# Supreme Rising Rage Flash's trigger button (probe log: <sp>/sa-remy/
+# run-probe-sa2-id/trace.log, entries probe-sa2-hp/-hk), the same kick-
+# group-for-a-rising-kick-super pattern already seen on Ken SA2 Shinryuken
+# (corpus-ken-sa2.yaml's own "motion 2qcf HK").
+#
+# ============================================================================
+# WHIFF-UNREACHABLE (authoring-policy.md Ruling 1's own pre-registered
+# "advancing 2qcf supers with large walk-in... mostly land in the WHIFF-
+# UNREACHABLE bucket"). Probed at dist:300, dist_mode:centered (the
+# established near-ceiling attempt, matching every sibling SA-satellite's
+# own convention) — MOVE_START itself only reaches dist=157 (a ~143px
+# walk-in consumed during the "motion 2qcf HK" sequence's own forward-
+# diagonal steps, the same walk-in-eats-the-requested-separation mechanism
+# Ruling 1 names for Chun-Li SA2's own +199px case). Outcome still measures
+# HIT (S=0 A=15 R=50 adv=+65 kd=1, byte-identical to the close-range HIT
+# leg below, box_runs=2 instead of 1 — the move itself rushes/travels
+# forward and closes the remaining ~157px gap, connecting identically
+# regardless of starting separation). No further binary search attempted:
+# dist:300 centered is already this program's own established near-ceiling
+# probe (10px inside the ~310px CENTERED_DIST_MAX per corpus-ken-sa2.yaml's
+# own citation), so no larger separation is available to try. Named per
+# Ruling 1's own convention: WHIFF-UNREACHABLE(dist=300 centered, walk_in=
+# ~143px, effective_separation=157px, still connects) — an honest
+# structural bound, not a silent gap. Coverage for this move comes from the
+# BLOCK/HIT legs below, per Ruling 1's own fallback language.
+#
+# ============================================================================
+# A DISPOSITION — CORRECTED (2026-07-13, EXSUPER-1 closing cleanup, P-1
+# corrective). This file previously cited §13.11's declared-credit
+# convention and asserted A=15 as a plain PASS on both legs, reasoning that
+# "path-independence across BLOCK and HIT is itself the defining, confirming
+# property of this convention." That reasoning does not hold: the
+# `fd_reset_move()` MOVE_START-vs-`char_move()` tick-ordering race
+# documented at docs/frame-data-synthesis.md §12.2.4 :978 (SA-WHIFF-A/D2)
+# is ALSO path-independent by construction — it fires identically on every
+# leg of a move, including WHIFF (confirmed directly on Alex SA2/Ibuki SA2/
+# Ken SA1/Akuma SA2, this same cleanup) — so path-independence alone cannot
+# discriminate a genuine declared-credit truth from a race artifact; it is
+# necessary but not sufficient, and this file previously treated it as
+# sufficient.
+#
+# An offline declared-credit ledger walk was run to settle it (charset.c:
+# 454-541 accumulator, isolated single-entry re-probe of each leg,
+# <sp>/exsuper/review/probes/remy-sa2-{block,hit}.yaml, clean/untruncated
+# window per the tail check — jatix/jcaix are 0 for 30+ ticks past
+# atk_idle_F on both legs). Result at the time: ledger total=10 on BOTH
+# legs — matching NEITHER the displayed engine_a=15 NOR the oracle 16, this
+# move being heavily hitstop-entangled (40/50 jatix-live ticks carry
+# nonzero P1.hstop on BOTH legs, vs 0/14-30/43 on Alex SA2's own
+# clean-ledger legs).
+#
+# CORRECTED (ENGINE-D2 closure, 2026-07-13): the ledger-walk total=10 was
+# ITSELF WRONG, not a genuine third value — arithmetically self-refuting
+# for a credit-DROPPING race. `fd_movestart_same_tick_credit_hold`'s own
+# mechanism can only ZERO or PRESERVE a cell's credit, never inflate it
+# (`frame_data_overlay.c`'s reset-site branch either preserves
+# `fd_prev_active_cgix_add[i]` exactly or zeroes it) — so the true engine
+# ledger total can never be BELOW the displayed value, only at or above it.
+# A ledger total (10) strictly LESS than the displayed value (15) is
+# therefore impossible for this mechanism, proving the offline ledger
+# walk's OWN model diverged (the naive charset.c cg_ctr-snapshot model
+# under-credits hitstop-frozen cells, per the hitstop-entanglement note
+# below), not the accumulator math it was trying to measure. The correct
+# comparison is the mechanical ENGINE-D2 delta (+1, the same-tick preserve
+# on this move's first active cell) applied directly to the pre-fix
+# displayed value: 15+1=16 == oracle exactly — reproduced by the actual
+# fix (not merely predicted): post-fix measured A=16 on both legs.
+# Hitstop-entanglement note (retained, explains the FLAWED ledger walk,
+# not the true value): the per-cell cg_ctr snapshot at cell-entry reads 1
+# throughout even though hitstop extends each cell's real-time dwell to ~5
+# ticks, so the naive charset.c accumulator model under-credits relative
+# to what the live engine_a accumulator actually computes for a
+# hitstop-frozen cell — the same class of limitation the Q2/D2 walk
+# flagged for Dudley SA1's own cghi-dwell commit-state-machine
+# (docs/frame-data-synthesis.md §12.2.4 :978).
+#
+# A is now asserted `from-qjson` on both legs, plain PASS — no longer
+# OMITTED. The synthesis-docs "ledger-neither (10)" record is corrected by
+# this note.
+#
+# R DISPOSITION — Chun-Li SA2 BLOCK precedent (measured==busyr!=oracle,
+# left UNASSERTED with a dated note, per this wave's own binding-spec idiom
+# for the post-BUFFER-1 (FD_CAPTURE_LEN=256) capture regime). Measured
+# R=50 on BOTH legs, and busyr=50 on BOTH legs (self-consistent, no
+# truncation artifact — the capture-depth raise's own M1 fix already ruled
+# out the old FD_METER_LEN=72 saturation story here, T=97 well under the
+# new FD_CAPTURE_LEN=256 cap) — but 50 != remy.json's own Recovery=53. This
+# is exactly the "measured != oracle but == busyr" shape the wave's own
+# binding spec names (dated 2026-07-13, same disposition family as
+# corpus-chunli-sa2.yaml's own BLOCK-leg R, docs/frame-data-synthesis.md:
+# 976's "chunli-sa2-block is the register's 22nd leg and does NOT
+# convert"). R is left OUT of `expect` on both legs (not xfailed at the
+# oracle value, not silently asserted at the wrong measured one) pending
+# divergence classification.
+#
+# kd NOTE: HIT leg measures a genuine knockdown (kd=1, adv=+65 — the
+# large-number-on-knockdown shape used throughout this repo). remy.json's
+# own Hit_advantage for this row is the plain non-numeric "-" (not the "D"
+# sentinel some other rows use), consistent with every super in this
+# program (supers never carry a numeric/D-flagged Hit_advantage) — kd is
+# asserted here as explicit corpus authorship (compile_corpus.py: "kd
+# expectations are explicit corpus authorship", never from-qjson),
+# independent of how remy.json happens to label the field.
+#
+# Admissibility census (Ruling 2, mechanical, from this file's own shipped
+# run, <sp>/sa-remy/final-sa2-run1/trace.log, inter_entry_wait:500): (1)
+# single-FINAL integrity — exactly one FINAL in each entry's own window
+# (BLOCK F=51-187; HIT F=239-440), no bleed (mechanical grep census: 2
+# MOVE_START/2 FINAL annotations, matching the 2 shipped entries exactly).
+# (2) flash-overlap census: 0 nonzero `sastop` ticks in both entries' own
+# [MOVE_START F, FINAL F] windows (awk census this session: 0/137 BLOCK,
+# 0/202 HIT — flash-free on both legs). (3) contact-A juggle check:
+# PASSES (see A DISPOSITION above). (4) shape
+# record: BLOCK box_runs=1/box_a=11/busyr=50; HIT box_runs=1/box_a=11/
+# busyr=50 at close range (box_runs=2 at the far whiff-attempt distance,
+# diagnostic-only per Ruling 2 item 4, not gating).
+#
+# ORDERING NOTE (Phase 5 "Predecessor-outcome ordering" trap): the HIT
+# entry (kd=1, a genuine knockdown) is ordered LAST in this file, so no
+# later entry's own teleport can be corrupted by its residual recovery
+# ticks (same precautionary ordering already applied throughout this
+# program, e.g. corpus-ken-sa2.yaml's own header note).
+character: remy
+oracle: remy.json
+super_art: 1
+sa_gauge: 3
+inter_entry_wait: 500
+entries:
+
+- label: remy-sa2-block
+  setup: { dist: close, dummy: stand }
+  input: "motion 2qcf HK"
+  qjson: { name: "Supreme Rising Rage Flash" }
+  outcome: BLOCK
+  # Measured S=0 A=16 (was 15 pre-ENGINE-D2, see file header A DISPOSITION
+  # — now RESOLVED, oracle-exact; the interim ledger-walk "10" reading was
+  # itself flawed, not a genuine third value) R=50 adv=-29 (box_runs=1,
+  # box_a=11, busyr=50, engine_a=16, use_hatt=1). S/A/adv oracle-exact. R
+  # OMITTED (file header R DISPOSITION: measured == busyr == 50 != oracle
+  # 53, Chun-Li SA2 BLOCK precedent, dated 2026-07-13). ENGINE-D2
+  # (2026-07-13): A now asserted from-qjson.
+  expect: { S: from-qjson, A: from-qjson, adv: from-qjson }
+
+- label: remy-sa2-hit
+  setup: { dist: close, dummy: none }
+  input: "motion 2qcf HK"
+  qjson: { name: "Supreme Rising Rage Flash" }
+  outcome: HIT
+  # Measured S=0 A=16 (was 15 pre-ENGINE-D2, same resolution as BLOCK) R=50
+  # adv=+65 kd=1 (box_runs=1, box_a=11, busyr=50, engine_a=16, use_hatt=1).
+  # S/A oracle-exact. R OMITTED, same R DISPOSITION as remy-sa2-block. No
+  # expect.adv (remy.json's Hit_advantage is the non-numeric "-" for this
+  # row). kd=1 is a direct, explicit measurement (genuine knockdown,
+  # adv=+65) — see file header kd NOTE. ENGINE-D2 (2026-07-13): A now
+  # asserted from-qjson.
+  expect: { S: from-qjson, A: from-qjson, kd: 1 }

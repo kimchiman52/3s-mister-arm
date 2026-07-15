@@ -1,0 +1,200 @@
+# Ibuki Super Art 3 (Yami Shigure) — EX/Supers program, supers wave S3.
+# Satellite corpus (auto-discovered by run-suite.sh's corpus-*.yaml glob, own
+# golden/ibuki-sa3.tsv once registered) — the main corpus-ibuki.yaml and
+# corpus-ibuki-ex.yaml are untouched.
+#
+# Scope: step0-universe.tsv row 61 (ibuki index 61, "Yami Shigure", sa_slot
+# 3, S=2/A=3/R=30/block_adv="-10 ~ -6").
+#
+# Oracle: docs/arcade-frame-data/ibuki.json (same file corpus-ibuki.yaml/
+# corpus-ibuki-ex.yaml/corpus-ibuki-sa2.yaml already pin).
+#
+# IDENTITY (S-match probe, CORPUS-AUTHORING.md Phase 5), this session:
+# super_art:2 (0-indexed SA3) + `motion 2qcf HP` lands a move whose measured
+# A=3 matches Yami Shigure's oracle Hit=3 EXACTLY and reproducibly across
+# every configuration tried this session (7+ distinct distance/dummy/order
+# combinations, `<sp>/sa-ibuki/run-probe-sa3*/trace.log`) — a unique
+# signature among Ibuki's own oracle rows (no other Ibuki move combines
+# Hit=3 with Recovery in the low-30s). Motion landed on the FIRST candidate
+# tried among the established 2qcf-family idiom. Confirmed via `proj=1` in
+# the trace on the WHIFF/BLOCK legs: this is a PROJECTILE-SPLIT super
+# (matches the Ryu SA1/SA3 shape) — but see the DUAL-PATH HIT FINDING below
+# for what happens at point-blank range, and the S-FIELD POSITION-NOISE
+# FINDING for a harness-geometry artifact discovered this session.
+#
+# ============================================================================
+# S-FIELD POSITION-NOISE FINDING (new this session, NOT asserted, OMITTED —
+# not the same shape as any registered Phase 6 bucket): the proj-split S
+# field (E-3: "S = proj_s" on this path) measures 0 or 3 depending on the
+# EXACT achieved teleport distance/script position, NOT on any stable
+# per-move property — same WHIFF-leg script (`dist:310 dist_mode:centered
+# dummy:none`) read S=3 both as a solo first entry and inside the final
+# 3-entry corpus (deterministic FOR a given script), but the BLOCK leg
+# (`dist:200 dummy:stand`) read S=3 when run as an isolated single-entry
+# corpus (`<sp>/sa-ibuki/run-probe-sa3-iso-block/trace.log`) yet S=0 when
+# run as entry #2 of the shipped 3-entry order
+# (`<sp>/sa-ibuki/run-probe-sa3-final3/trace.log`, re-run twice,
+# byte-identical both times — this IS deterministic per exact script, the
+# noise is script-position-dependent, not truly random). Root cause
+# (confirmed, not guessed): anchored-mode teleports achieve LESS than the
+# requested gap when they are the corpus's very first entry (measured
+# dist=267 achieved for the same `dist:300 dummy:none` request that
+# achieves dist=309 as a later entry, `<sp>/sa-ibuki/run-final-sa3-1/
+# trace.log` vs `run-probe-sa3-hit/trace.log`) — a genuine, position-
+# dependent instance of the already-documented anchored-placement ceiling
+# (`compile_corpus.py`'s own NUMERIC_BASE_X/DIST_MAX comment, Ruling 1's
+# E-6/E-7), not previously characterized as ALSO varying by entry position
+# within a single corpus. Because the DOWNSTREAM effect here is a moving
+# target for S specifically (not a fixed wrong number the way §13.13's a1
+# undercount or §12.2.4's S-divergence bucket are), asserting any single
+# xfail value for S would misrepresent an artifact of achieved-position
+# noise as if it were a stable divergence. A and R are UNAFFECTED by this
+# noise (A=3 exact and R=32 identical across every one of the 7+
+# configurations tried, including both the noisy-S and non-noisy-S
+# readings) — this is the discriminator that separates "genuine move
+# property" (A, R) from "harness position-achievement artifact" (S) here.
+# S is OMITTED (documented-unasserted) on every leg below; this finding is
+# flagged to the orchestrator as a harness-tooling observation, not a
+# per-move divergence — it may be worth a `dist_mode: centered`-style fix
+# applied earlier in the corpus (the WHIFF leg below already uses
+# `dist_mode: centered`, which is what makes ITS OWN S reproducible at 3;
+# the BLOCK leg's own S is the one still exposed to the anchored-mode
+# position-noise, since it uses plain `dist: 200` anchored).
+#
+# R DIVERGENCE (stable, xfailed — NOT position-noisy): measured R=32 vs
+# oracle Recovery=30, IDENTICAL across all 7+ configurations tried this
+# session regardless of distance, dummy mode, or script position (the
+# clean discriminator vs the S finding above). Per this program's own
+# quarantine discipline (a rep-stable, confirmable divergence against a
+# live oracle row): asserted as the ORACLE value (from-qjson) with an
+# `xfail` note carrying the measured value and trace citations
+# (elena-exspinscythe/akuma-sa2 idiom per authoring-policy.md's own
+# established-idioms list) — not omitted, not invented a mechanism for.
+# Trace fact only (not a confirmed mechanism, no established Phase 6
+# bucket matches: this is a proj-split R, and no existing bucket covers a
+# proj-split R surplus specifically): UNCLASSIFIED, flagged for follow-up.
+#
+# adv (BLOCK leg only): ibuki.json's Block_advantage for this row is the
+# literal RANGE STRING "-10 ~ -6" (non-numeric, from-qjson raises
+# CompileError) — matches the Meat Squasher/DHA range-string convention
+# (CORPUS-AUTHORING.md Phase 3). Measured value in the shipped 3-entry
+# script is -6 (the range's OWN upper/less-negative boundary, exactly) —
+# every value measured this session (-6/-9/-10, across different script
+# positions) sits cleanly inside the oracle's own documented range.
+# Asserted as an explicit literal (the SHIPPED script's own measured
+# value), oracle range preserved in the comment — not an xfail, since the
+# oracle itself documents this as a range and the measured value is a
+# genuine member of it.
+#
+# ============================================================================
+# DUAL-PATH HIT FINDING (point-blank connect switches code paths, new
+# finding this session): at any distance/dummy combination where the
+# strike actually CONNECTS against a non-guarding dummy (tested dist:40/
+# 100/150, dummy:none), the measured trace shows `proj=0` (NOT 1) — the
+# HIT leg resolves through the LEGACY box-tracking path (`use_hatt=1`,
+# `box_runs=2`, `box_a=2`, `busyr=47`), not the proj-split path the
+# WHIFF/BLOCK legs above use. This produces wildly different numbers
+# (S=3 A=50 R=44 adv=+49, box_a=2 but legacy engine_a=50) that do NOT
+# correspond to the WHIFF/BLOCK legs' clean A=3/R=32 shape at all — the
+# contact-A juggle check (Ruling 2 item 3: HIT-leg A admissible only if it
+# equals the BLOCK-leg's own displayed A) FAILS outright (50 != 3, not
+# even close). Independently, the mechanical flash-overlap census (Ruling
+# 2 item 2) finds nonzero `sastop` ticks INSIDE this entry's own
+# [MOVE_START, FINAL] window (F=66-90 inside [51,227] in the isolating
+# probe) — the ONLY leg in this whole session's probing with a sastop hit
+# inside its own tracked span (every WHIFF/BLOCK leg is clean). TWO
+# independent reasons the HIT leg's A/R/adv are inadmissible (different
+# code path entirely, AND a live flash overlap) — both point the same
+# direction, so A/R/adv are OMITTED (documented-unasserted) on the HIT leg
+# below, not xfailed with an invented mechanism. S is likewise omitted on
+# this leg (same S-FIELD POSITION/PATH-NOISE posture as above — this leg's
+# S comes from a THIRD distinct variable, `first_active_raw` on the legacy
+# path, not `proj_spawn_raw`). Only outcome=HIT and kd are asserted,
+# confirming Phase 4's mandatory contact-reachability check is satisfied.
+# ============================================================================
+#
+# WHIFF REACHABILITY: initially measured WHIFF-UNREACHABLE-looking at
+# `dist:300` anchored (achieved only ~267-309px depending on script
+# position, and Yami Shigure's own projectile connects up to ~270px) —
+# resolved by switching to `dist_mode: centered` (Ruling 1's own adopted
+# tooling fix): `dist:310 dist_mode:centered` achieves a genuine dist=312
+# (no clamp) and cleanly WHIFFS (`<sp>/sa-ibuki/run-probe-sa3-centered/
+# trace.log`). This is NOT a WHIFF-UNREACHABLE projectile after all — the
+# earlier confusion was purely the anchored-mode position-achievement
+# ceiling (E-6/E-7), not a genuine full-screen-reaching fireball; centered
+# mode reaches comfortably past its real range.
+#
+# Meter: sa_gauge:3 (MAXIMUM), per authoring-policy.md's meter policy for
+# non-install supers.
+#
+# Admissibility census (per authoring-policy.md Ruling 2), this session's
+# `<sp>/sa-ibuki/run-probe-sa3-final3/trace.log` (the exact setup/input/
+# outcome triples shipped below, inter_entry_wait:500, re-run twice
+# byte-identical):
+# (1) Single-FINAL integrity: exactly one MOVE_START/FINAL pair per entry's
+#     own window, no bleed.
+# (2) Flash-overlap census: HIT leg carries a live sastop hit inside its
+#     own window (see DUAL-PATH HIT FINDING above). WHIFF/BLOCK legs are
+#     clean (0 nonzero ticks inside their own windows).
+# (3) Contact-A juggle check (HIT only): FAILS (50 != BLOCK's 3) — A
+#     omitted on HIT accordingly.
+# (4) Shape record: WHIFF/BLOCK both box_runs=0 (proj-split path, proj=1,
+#     A read from `proj_a`, not `box_a`/`engine_a`); HIT box_runs=2
+#     (legacy path, proj=0) — a different engine mechanism per leg.
+character: ibuki
+oracle: ibuki.json
+super_art: 2
+sa_gauge: 3
+inter_entry_wait: 500
+entries:
+
+- label: ibuki-sa3-whiff
+  setup: { dist: 310, dist_mode: centered, dummy: none }
+  input: "motion 2qcf HP"
+  qjson: { name: "Yami Shigure" }
+  outcome: WHIFF
+  # proj=1 (proj-split path), proj_a=3. A oracle-exact (3). S OMITTED (see
+  # S-FIELD POSITION-NOISE FINDING above). R diverges (measured 32 vs
+  # oracle 30, stable) — see R DIVERGENCE above.
+  expect:
+    A: from-qjson
+    R: from-qjson
+    xfail: "[HONEST-FLOOR CENSUS 2026-07-14, opus-substitute / WANTS FABLE RE-REVIEW] TERMINAL CLASS = CAPABILITY-GATED-remaining (proj-split R). arcade R=30 = last-projbox->busy-edge (proj-split/fit.md 3); +2 = projectile post-spawn active window counted as recovery; opposite-sign to sean-sa1, no uniform proj-R offset, no box_last signal (box_runs=0). Golden stays oracle=30, XFAIL. Prior disposition (unchanged): UNCLASSIFIED (flagged 2026-07-13, needs follow-up classification): proj-split R reads 2 frames above the oracle on this leg (measured R=32 vs oracle Recovery=30), reproduced IDENTICALLY across every distance/dummy/script-position configuration tried this session (7+ configurations, <sp>/sa-ibuki/run-probe-sa3*/trace.log) - a stable, confirmed divergence, unlike this move's own S field (see this corpus's header, S is omitted not xfailed - S is position-noisy, R is not). No established Phase 6 bucket covers a proj-split R surplus. Flagged to the orchestrator for follow-up classification."
+
+- label: ibuki-sa3-block
+  setup: { dist: 200, dummy: stand }
+  input: "motion 2qcf HP"
+  qjson: { name: "Yami Shigure" }
+  outcome: BLOCK
+  # proj=1 (proj-split path), same shape as WHIFF above. A oracle-exact
+  # (3). adv: ibuki.json's Block_advantage for this row is the literal
+  # range string "-10 ~ -6" (non-numeric, from-qjson would raise
+  # CompileError) — measured -6 sits at the range's own upper boundary
+  # exactly (this session also measured -9/-10 at other script positions,
+  # all inside the same range — see header). Asserted as an explicit
+  # literal per the Meat Squasher/DHA range-string convention. S OMITTED
+  # (position-noise finding, see header — this leg's own S reads 0 in
+  # this exact script position, 3 when run in isolation; neither is a
+  # stable move property). R: same stable xfail-carrying divergence as
+  # the WHIFF leg above.
+  expect:
+    A: from-qjson
+    R: from-qjson
+    adv: -6
+    xfail: "[HONEST-FLOOR CENSUS 2026-07-14, opus-substitute / WANTS FABLE RE-REVIEW] TERMINAL CLASS = CAPABILITY-GATED-remaining (proj-split R). CAP-3-adjacent hardware (proj-split/fit.md 3): arcade R=30 = last-projbox->busy-edge; the +2 is the projectile's own post-spawn active window the fire-and-forget form counts as recovery. NON-SURGICAL: opposite sign to sean-sa1 (-2) so no uniform offset reconciles them; the exact PASS rows (ryu-sa1 R=49, ryu-sa3 R=51, urien-sa2 R=91) use the same fire-and-forget form; no projectile box_last signal exists (box_runs=0). Golden stays oracle=30, XFAIL. Prior disposition (unchanged): UNCLASSIFIED (flagged 2026-07-13, needs follow-up classification): same stable proj-split R surplus as ibuki-sa3-whiff (measured R=32 vs oracle Recovery=30) - see that entry's comment and this corpus's header for the full trace citation. adv is NOT part of this xfail (it is an explicit literal within the oracle's own documented -10~-6 range, asserted separately, not from-qjson)."
+
+- label: ibuki-sa3-hit
+  setup: { dist: 150, dummy: none }
+  input: "motion 2qcf HP"
+  qjson: { name: "Yami Shigure" }
+  outcome: HIT
+  # DUAL-PATH HIT FINDING (see header): proj=0 here (legacy box-tracking
+  # path, NOT the proj-split path WHIFF/BLOCK use) - a genuinely different
+  # engine mechanism at point-blank range, confirmed by both a failed
+  # contact-A juggle check (measured A=50 vs BLOCK's A=3) AND a live
+  # sastop flash-overlap inside this entry's own tracked window. S/A/R/adv
+  # all OMITTED (documented-unasserted, not xfailed with an invented
+  # mechanism) - only outcome=HIT (confirming Phase 4's mandatory
+  # contact-reachability check) and kd are asserted. Ordered LAST (Phase 5
+  # ordering trap) since this is the only kd=1 entry in this corpus.
+  expect: { kd: 1 }

@@ -17,7 +17,11 @@
  * Gated behind ENABLE_NETPLAY_TESTS; under #else the entry point prints
  * "not compiled in" and returns 2. Mirrors test_event_queue.c pattern.
  * Enable with:
- *   EXTRA_CMAKE_ARGS="-DENABLE_NETPLAY=ON -DCMAKE_C_FLAGS=-DENABLE_NETPLAY_TESTS"
+ *   EXTRA_CMAKE_ARGS="-DENABLE_NETPLAY=ON \
+ *                     -DCMAKE_C_FLAGS='-DENABLE_NETPLAY_TESTS -DNETPLAY_TEST_HOOKS'"
+ * (NETPLAY_TEST_HOOKS is required because this build links every
+ * src/netplay/test_*.c TU, including test_bilateral_punch.c, which needs
+ * that macro to declare DirectP2P_TestHook_IsLanPeer.)
  */
 
 #include <stdio.h>

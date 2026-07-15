@@ -4,6 +4,7 @@
  */
 
 #include "sf33rd/Source/Game/ui/sc_sub.h"
+#include "sf33rd/Source/Game/ui/frame_data_overlay.h"
 #include "common.h"
 #include "rendering/game_renderer.h"
 #include <SDL3/SDL.h>
@@ -2432,6 +2433,13 @@ void Training_Data_Disp() {
     if (Disp_Input_History) {
         update_training_input_history();
         draw_training_input_history();
+    }
+
+    /* Tick is driven from main.c game_step_0() so it runs every game frame
+     * and can't miss 1-frame edges (cg_att_ix>0, dm_stop=-15) that happen
+     * during No_Trans-skipped frames. Only the draw lives here. */
+    if (Disp_Frame_Data) {
+        frame_data_overlay_draw();
     }
 
     if (Disp_Attack_Data == 0) {

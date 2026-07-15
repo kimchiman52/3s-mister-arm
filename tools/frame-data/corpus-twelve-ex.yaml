@@ -1,0 +1,313 @@
+# Twelve EX moves corpus — EX/Supers program, wave 6 (final EX wave) fan-out
+# (Ruling 5's per-character EX satellite batches,
+# <sp>/exsuper/authoring-policy.md; <sp> =
+# /private/tmp/claude-501/-Users-sb-Developer-3sx-mister/366c1099-7dcb-4315-9f14-bc47b4f8f46e/scratchpad).
+# Satellite corpus (auto-discovered by run-suite.sh's corpus-*.yaml glob, own
+# golden/twelve-ex.tsv) — the main corpus-twelve.yaml is untouched.
+#
+# Scope: Twelve's 4 class=EX rows per <sp>/exsuper/step0-universe.tsv (twelve
+# index 27/31/35/39): N.D.L. (EX) [ASSERTABLE, proj-split shape — see the
+# §13.12/lever-J note below], A.X.E. (EX) [ASSERTABLE], Air A.X.E. (EX)
+# [named AIR_DEFERRED in the TSV pending an air-idiom test — TESTED this
+# session and LANDS, see below], D.R.A. (EX) [NOT AUTHORED — mains input-gap
+# precedent, see below]. X.C.O.P.Y. (twelve index 43/44) is Twelve's Super
+# Art, out of EX scope per the task's own note.
+# Oracle: docs/arcade-frame-data/twelve.json (md5 988a8990c264119260ca85a5e7bd465d
+# — same file corpus-twelve.yaml already pins, re-verified unchanged this
+# session via `md5 docs/arcade-frame-data/twelve.json`). Read directly this
+# session (python3 json.load + row dump) for exact Name strings and field
+# values:
+#   N.D.L. (EX)       Startup=14 Hit=13 Recovery=15 Block_advantage=0  Hit_advantage=-
+#   A.X.E. (EX)       Startup=8  Hit=11 Recovery=14 Block_advantage=-4 Hit_advantage=-
+#   Air A.X.E. (EX)   Startup=6  Hit=10 Recovery=-  Block_advantage=-  Hit_advantage=-
+#   D.R.A. (EX)       Startup=6  Hit=15 Recovery=21 Block_advantage=-2 Hit_advantage=-
+#
+# Motion recipes (Phase 5 motion-probe method; base moves' own motions per
+# corpus-twelve.yaml's own MOTION VERIFICATION section: N.D.L. is
+# `motion qcf <P>`, A.X.E. is `motion qcb <P>` — both single-button macros,
+# so the EX chord needs a manual hold-chain mirroring `_motion_steps`
+# (compile_corpus.py:256-275) with a chorded final press, same recipe shape
+# as corpus-ken-ex.yaml's own EX Hadouken/Tatsumaki):
+#   - N.D.L. (EX):     `hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LP+HP 2; wait 1`
+#   - A.X.E. (EX):      `hold DOWN 2; hold DOWN+LEFT 2; hold LEFT+LP+HP 2; wait 1`
+#   - Air A.X.E. (EX):  `press UP; wait 3; hold DOWN 2; hold DOWN+LEFT 2;
+#                        hold LEFT+LP+HP 2; wait 1` (the Makoto Tsurugi
+#                        EX / Oro Air Jinchu Nobori (EX) air-input idiom —
+#                        jump first, then perform the ground special's own
+#                        motion while airborne).
+# All three landed the correct EX move on the FIRST attempt (S-value match
+# against twelve.json's own EX rows: S=14/8/6 respectively, each unique
+# among Twelve's own move set at the tested distance — exact match, no
+# disambiguation needed). Sastop (flash) census: 0 nonzero ticks across
+# every probed window (mechanical awk census over the full trace, not
+# sampled) — EX moves are flash-free, confirmed not assumed.
+#
+# ============================================================================
+# N.D.L. (EX) — DISTANCE-DEPENDENT CONNECT MECHANISM (empirical finding, not
+# a divergence — care taken per this wave's own directive, given N.D.L. was
+# ENGINE-4's validation case for the proj-split S'=max(proj_spawn_slot,
+# proj_athok_slot) formula, corpus-twelve.yaml's own N.D.L. S/R-DIVERGENCE —
+# RESOLVED section, §13.12/lever-J). This EX variant is ALSO proj=1
+# (box_runs=0, same spawned-effect shape as the base three N.D.L. strengths
+# and every Hadouken-class move in this repo).
+#
+# Four ground-range points were probed this session (dummy:none throughout):
+#   dist:56  (close)            -> HIT, S=11, trace: athok=0,  proj_spawn_raw=11
+#   dist:250 (anchored, exact)  -> HIT, S=14, trace: athok=14, proj_spawn_raw=11
+#   dist:300 (anchored, real 267px) -> HIT, S=11, trace: athok=0, proj_spawn_raw=11
+#   dist:310 (centered, real 234px) -> HIT, S=11, trace: athok=0, proj_spawn_raw=11
+# At every tested point the move CONNECTS (no whiff reachable anywhere in
+# the scriptable range — see WHIFF-UNREACHABLE below) — but the DECLARED
+# hit-check-gated cell (`athok`, the lever-J fix's own `proj_athok_slot`)
+# only arms at the real dist:250 point; everywhere else the connect resolves
+# on the earlier `proj_spawn_raw=11` cell alone (athok reads 0, i.e. never
+# independently armed within the move's own window), so S = max(11, 0) = 11
+# instead of max(11, 14) = 14. This is the SAME formula the lever-J fix
+# already established for the base moves (compile_corpus.py's own S' =
+# max(proj_spawn_slot, proj_athok_slot)) operating correctly in both regimes
+# — it is not a new engine defect, just two genuinely different connect
+# geometries for the same move. twelve.json's own declared Startup=14
+# matches ONLY the real-dist-250 regime exactly (all three of S/A/R, see
+# the HIT entry below) — so dist:250, not dist:close, is the calibrated
+# HIT test point for this move (Phase 2's "binary-search the actual
+# connecting distance" discipline, same posture as corpus-twelve.yaml's own
+# Far Strong dist:120 calibration). BLOCK (dummy:stand) was only probed at
+# dist:close and is ALREADY oracle-exact there on all four fields (see
+# below) — no BLOCK-side calibration issue found.
+#
+# WHIFF-UNREACHABLE(dist=56/250/300-anchored/310-centered, all four connect)
+# — the move connects at every scriptable ground distance tried, spanning
+# the harness's full anchored+centered range; no ground whiff leg is shipped
+# for this move (same documented-gap posture as every other Hadouken-class
+# EX move in this program — corpus-ken-ex.yaml's/corpus-ryu-ex.yaml's own
+# EX Hadouken sections). Coverage instead comes from the BLOCK+HIT legs
+# below (both fully oracle-exact on every field arcade publishes). Contrast:
+# the BASE (non-EX) N.D.L. Jab/Strong DO whiff at dist:250 exactly
+# (corpus-twelve.yaml's own twelve-ndl-jab-whiff/twelve-ndl-strong-whiff) —
+# the EX variant's own connect geometry evidently covers a wider range than
+# its non-EX counterparts (an EX-buff-to-range trace fact, not investigated
+# further this session, not asserted as a mechanism claim).
+#
+# ============================================================================
+# D.R.A. (EX) — NOT AUTHORED, same MOTION NOT FOUND posture as
+# corpus-twelve.yaml's own D.R.A. — MOTION NOT FOUND section (that session's
+# 17-attempt budget already exhausted every single-button motion primitive
+# expressible for the ground base move: qcf/qcb/hcb/hcf/2qcf LK/MK/HK, a
+# dp-shape hold-chain, three A.X.E.-then-follow-up-kick chains, and four
+# airborne attempts — none landed a distinct D.R.A. dispatch). This session
+# tried the EX-chorded (LK+HK) version of the three motion shapes ONLY the
+# mains session did NOT already chord-test, all at dist:250/dummy:none:
+#   `hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LK+HK 2; wait 1`   (qcf+LK+HK)
+#   `hold RIGHT 2; hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LK+HK 2; wait 1` (dp-shape+LK+HK)
+#   `hold RIGHT 2; hold RIGHT+DOWN 2; hold DOWN 2; hold DOWN+LEFT 2; hold LEFT+LK+HK 2; wait 1` (hcb+LK+HK)
+# ALL THREE landed the exact same result: S=17 A=3 R=25, a byte-identical
+# match to twelve.json's own plain "Roundhouse" row (corpus-twelve.yaml's
+# own twelve-hk-whiff: S=17/A=3/R=25) — the LK+HK chord simply resolves to
+# the single strongest button (HK) for dispatch purposes, exactly the same
+# "lands the plain standing kick normal instead" failure mode the mains
+# session already documented for bare `qcf HK`. No entries shipped for
+# D.R.A. (EX); no oracle edit, no compiler change, no further motion budget
+# spent this session (per the task's own "if EX-DRA also can't land, cite
+# it" instruction) — same OUT OF SCOPE / wants-follow-up posture as the
+# mains corpus's own D.R.A. finding.
+#
+# ============================================================================
+# Admissibility census (per-entry, mechanical, from FRAME_TRACE columns —
+# authoring-policy.md Ruling 2), all 8 shipped entries below:
+# (1) Single-FINAL integrity: exactly one MOVE_START/FINAL pair per entry's
+#     own window, confirmed by direct `awk` census over both probe traces
+#     (14 entries total probed across two sessions, zero merges,
+#     inter_entry_wait:250 throughout).
+# (2) Flash-overlap census (sastop gate): 0 nonzero sastop ticks across
+#     BOTH entire probe traces (mechanical awk census, not sampled) — EX
+#     moves are flash-free, confirmed not assumed.
+# (3) Contact-A juggle check (HIT legs only): A.X.E. (EX) HIT A=11 ==
+#     BLOCK A=11 PASSES; Air A.X.E. (EX) HIT A=10 == BLOCK A=10 PASSES —
+#     both HIT-leg A asserts below are admissible. N.D.L. (EX) has no A
+#     check to apply (twelve.json's Hit field is the non-numeric literal
+#     "-" for this row, same as every Hadouken-class row in this repo —
+#     from-qjson would not compile, so A is never asserted on either leg).
+# (4) Shape record: N.D.L. (EX) is the proj-split shape (proj=1,
+#     box_runs=0, matching corpus-twelve.yaml's own base N.D.L. sections
+#     exactly); A.X.E. (EX) and Air A.X.E. (EX) are both single-run
+#     (box_runs=1, proj=0, all legs).
+#
+# RESULT: every asserted field on every shipped entry is oracle-exact except
+# A.X.E. (EX) HIT's R clause, which converts under the already-established
+# §13.10 Class 1 HIT-R convention (see that entry's own comment) — ZERO
+# quarantines, ZERO documented-unasserted fields this batch (the cleanest
+# possible outcome: matches corpus-ken-ex.yaml's own zero-divergence result,
+# plus one clean §13.10 F2b-style convert).
+character: twelve
+oracle: twelve.json
+inter_entry_wait: 250
+# sa_gauge: MAXIMUM (3) per authoring-policy.md's meter policy — EX moves are
+# meter-metered (1 stock/activation) and training mode's default starting
+# gauge is not guaranteed full/nonzero (the Ryu EX pilot's own finding).
+sa_gauge: 3
+entries:
+
+# --- N.D.L. (EX) (proj-split, §13.12/lever-J shape) -------------------------
+# No WHIFF leg: see file header WHIFF-UNREACHABLE finding (four ground
+# points tried, all connect). Census: single-FINAL, sastop=0, box_runs=0,
+# proj=1 (both legs).
+#
+# ORDERING NOTE (§12.1-style predecessor residue, discovered this session,
+# TWO round-trips): each of twelve-exndl-hit/-block measures oracle-exact
+# (S=14/athok=14) in total isolation, but WHICHEVER of the pair is placed
+# SECOND, immediately after the other, measures S=11/athok=0 instead — first
+# attempt shipped HIT-then-BLOCK and BLOCK failed (S=11); reordering to
+# BLOCK-then-HIT just flips WHICH entry fails (HIT then measured S=11) —
+# same achieved MOVE_START geometry in every failing case
+# (atk_x=424/def_x=674 or 480, real distance unchanged), so this is a
+# genuine predecessor-cast residue corrupting the athok-arm mechanism on
+# ANY immediately-following N.D.L. (EX) cast, independent of which leg or
+# outcome runs second (not a BLOCK-specific or HIT-specific effect) — the
+# same class of trap as corpus-hugo.yaml's `h-meatsquasher-short-whiff`
+# predecessor-ordering comment and corpus-urien-ex.yaml's
+# WHIFF-leg-moved-to-run-first fix, but here neither simple pairwise order
+# resolves it. FIX: twelve-exndl-hit runs first (isolated, matching its own
+# solo measurement); twelve-exndl-block is moved DOWN past the entire
+# A.X.E. (EX) section (3 entries, a non-projectile special) so it is no
+# longer immediately adjacent to the HIT cast — that section is the buffer
+# that clears the residue (re-verified oracle-exact in this shipped
+# position, see that entry's own comment below).
+
+- label: twelve-exndl-hit
+  setup: { dist: 250, dummy: none }
+  input: "hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LP+HP 2; wait 1"
+  qjson: { name: "N.D.L. (EX)" }
+  outcome: HIT
+  # See file header N.D.L. (EX) — DISTANCE-DEPENDENT CONNECT MECHANISM and
+  # this section's own ORDERING NOTE: dist:250 is the calibrated point
+  # (athok=14 arms) when run first/isolated — dist:close/300/310, OR this
+  # exact entry run immediately after a predecessor N.D.L. (EX) cast (either
+  # outcome), all measure S=11 instead (athok=0, spawn-cell-only connect),
+  # which does NOT match the oracle. Shipped FIRST in this file (isolated
+  # from any predecessor N.D.L. (EX) cast). Measured here: S=14 A=13 R=15
+  # (trace: athok=14, proj_spawn_raw=11, proj_a=13, box_runs=0, proj=1),
+  # oracle-exact on all three asserted fields. No expect.adv (twelve.json's
+  # Hit_advantage is the literal "-" for this row; measured adv=+95, a
+  # dummy:none non-blocking artifact, not a comparable figure).
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# --- A.X.E. (EX) (single-run, no flash) -------------------------------------
+# Census: single-FINAL, sastop=0, box_runs=1, proj=0 (all three legs).
+
+- label: twelve-exaxe-whiff
+  setup: { dist: 250, dummy: none }
+  input: "hold DOWN 2; hold DOWN+LEFT 2; hold LEFT+LP+HP 2; wait 1"
+  qjson: { name: "A.X.E. (EX)" }
+  outcome: WHIFF
+  # Measured S=8 A=11 R=14, oracle-exact on all three (twelve.json A.X.E.
+  # (EX): Startup=8, Hit=11, Recovery=14). Confirms WHIFF as the
+  # calibration surface (CORPUS-AUTHORING.md Phase 4) — this move's own A
+  # is clean here (unlike the base A.X.E. (Jab)'s own partial-restore
+  # compound, corpus-twelve.yaml's A.X.E. (JAB ONLY) finding; the EX
+  # variant is a single, unstrengthed row with no such compound).
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: twelve-exaxe-block
+  setup: { dist: close, dummy: stand }
+  input: "hold DOWN 2; hold DOWN+LEFT 2; hold LEFT+LP+HP 2; wait 1"
+  qjson: { name: "A.X.E. (EX)" }
+  outcome: BLOCK
+  # Measured S=8 A=11 R=14 adv=-4 (box_runs=1, box_a=12, busyr=14, proj=0),
+  # oracle-exact on ALL FOUR fields. BLOCK-leg A needs no juggle check
+  # (Ruling 2: it IS the validated legacy instrument) — logged here as the
+  # cross-check anchor for the HIT leg below.
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: twelve-exaxe-hit
+  setup: { dist: close, dummy: none }
+  input: "hold DOWN 2; hold DOWN+LEFT 2; hold LEFT+LP+HP 2; wait 1"
+  qjson: { name: "A.X.E. (EX)" }
+  outcome: HIT
+  # Measured S=8 A=11 R=12 adv=-1 (box_runs=1, box_a=12, busyr=12, proj=0).
+  # S/A exact (A=11 equals the BLOCK-leg's own A=11, so the juggle check —
+  # Ruling 2 check 3 — passes and A is admissible).
+  # §13.10 HIT-R convention (Class 1 hit-branch recovery chain; wave-5
+  # guidance item 2's recognize-inheritance check — TESTED not assumed):
+  # this is the SAME uniform R=12 HIT-R divergence corpus-twelve.yaml's own
+  # HIT-R DIVERGENCES section already established for ALL THREE base A.X.E.
+  # strengths (Jab/Strong/Fierce all measure R=12 on HIT regardless of
+  # their own strength-specific WHIFF/BLOCK R of 15/16/17) — the EX variant
+  # inherits the identical absolute R=12 value against its own WHIFF/BLOCK
+  # R=14, confirmed from this entry's own trace (own-recorded-signature bar
+  # met: R=12 is not a guess, it is this exact leg's own measured FINAL).
+  # R=12 asserted as engine-truth per the established §13.10-compliance
+  # (F2b) convention; arcade (whiff-canonical) R=14 preserved here in
+  # comment. No expect.adv (Hit_advantage literal "-").
+  expect: { S: from-qjson, A: from-qjson, R: 12 }
+
+- label: twelve-exndl-block
+  setup: { dist: close, dummy: stand }
+  input: "hold DOWN 2; hold DOWN+RIGHT 2; hold RIGHT+LP+HP 2; wait 1"
+  qjson: { name: "N.D.L. (EX)" }
+  outcome: BLOCK
+  # Placed here (after the whole A.X.E. (EX) section, not immediately after
+  # its own HIT sibling above) per this file's own ORDERING NOTE — the
+  # A.X.E. (EX) section's three entries are the buffer that clears the
+  # predecessor-cast residue a second immediately-adjacent N.D.L. (EX) cast
+  # otherwise triggers (see that note for the full writeup). Measured S=14
+  # A=13 R=15 adv=+0 (trace: athok=14, proj_spawn_raw=11, proj_a=13,
+  # box_runs=0, proj=1) — oracle-exact on ALL FOUR fields (twelve.json
+  # N.D.L. (EX): Startup=14, Hit=13, Recovery=15, Block_advantage=0).
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# --- Air A.X.E. (EX) (air-input idiom; single-run, no flash) ----------------
+# FIRST FULLY-REACHABLE air-EX move in this program (contrast: Oro Air
+# Jinchu Nobori (EX), the program's first air-move entry, had its own
+# BLOCK/HIT confirmed structurally UNREACHABLE — this move's BLOCK+HIT both
+# land cleanly). Reached via the `press UP; wait 3; motion ...` air-input
+# idiom (Makoto Tsurugi EX / Oro Air Jinchu Nobori precedent) performing
+# A.X.E. (EX)'s own ground motion (qcb+P chord) while airborne — the TSV's
+# own AIR_DEFERRED carve-out for this row is now empirically superseded per
+# the task's own "author air-EX rows ONLY if the air idiom lands them"
+# instruction. Census: single-FINAL, sastop=0, box_runs=1, proj=0 (all
+# three legs). twelve.json's Recovery/Block_advantage/Hit_advantage fields
+# for this row are ALL the literal "-" (only Startup/Hit are numeric) — R
+# and adv are never asserted below (from-qjson would not compile); measured
+# values are recorded as trace facts only, not cross-checked.
+
+- label: twelve-exairaxe-whiff
+  setup: { dist: 250, dummy: none }
+  input: "press UP; wait 3; hold DOWN 2; hold DOWN+LEFT 2; hold LEFT+LP+HP 2; wait 1"
+  qjson: { name: "Air A.X.E. (EX)" }
+  outcome: WHIFF
+  # Measured S=6 A=10 R=22 (box_runs=1, proj=0). S/A oracle-exact
+  # (twelve.json Air A.X.E. (EX): Startup=6, Hit=10) — distinct from the
+  # ground A.X.E. (EX)'s own S=8/A=11 (confirms this is genuinely the air
+  # variant, not an accidental ground-move read). No expect.R (Recovery is
+  # literal "-"); measured R=22 recorded as a trace fact only.
+  expect: { S: from-qjson, A: from-qjson }
+
+- label: twelve-exairaxe-block
+  setup: { dist: close, dummy: stand }
+  input: "press UP; wait 3; hold DOWN 2; hold DOWN+LEFT 2; hold LEFT+LP+HP 2; wait 1"
+  qjson: { name: "Air A.X.E. (EX)" }
+  outcome: BLOCK
+  # Measured S=6 A=10 R=22 adv=-11 (box_runs=1, box_a=11, busyr=22,
+  # proj=0), matching the WHIFF leg's own S=6/A=10/R=22 byte-identically —
+  # S/A oracle-exact, no divergence. No expect.R/expect.adv (Recovery and
+  # Block_advantage are both literal "-" for this row); measured values
+  # recorded as trace facts only.
+  expect: { S: from-qjson, A: from-qjson }
+
+- label: twelve-exairaxe-hit
+  setup: { dist: close, dummy: none }
+  input: "press UP; wait 3; hold DOWN 2; hold DOWN+LEFT 2; hold LEFT+LP+HP 2; wait 1"
+  qjson: { name: "Air A.X.E. (EX)" }
+  outcome: HIT
+  # Measured S=6 A=10 R=22 adv=-17 (box_runs=1, box_a=11, busyr=22,
+  # proj=0) — HIT-leg A (10) equals the BLOCK-leg's A (10), so the juggle
+  # check (Ruling 2 check 3) passes and A is admissible; R also matches
+  # BLOCK/WHIFF's own clean R=22 exactly (no divergence at all on this
+  # move — the cleanest possible air-EX result in the program so far).
+  # No expect.R/expect.adv (Recovery and Hit_advantage both literal "-");
+  # measured values recorded as trace facts only.
+  expect: { S: from-qjson, A: from-qjson }
+
+# No negative control appended: matching corpus-ken-ex.yaml's own precedent
+# (the EX/Supers satellite-corpus shape omits it — the negative control is a
+# main per-character corpus convention, CORPUS-AUTHORING.md Phase 2).

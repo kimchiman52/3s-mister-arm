@@ -1,0 +1,1725 @@
+[
+  {
+    "Name": "Jab",
+    "Common_name": "",
+    "Startup": "4",
+    "Hit": "4",
+    "Recovery": "4",
+    "Block_advantage": "3",
+    "Hit_advantage": "3",
+    "Crouch_hit_advantage": "3",
+    "Cancel": {
+      "Super_art": true,
+      "Special": true,
+      "Self": false,
+      "Chain": false,
+      "Dash": false,
+      "High_jump": false
+    },
+    "Parry": {
+      "High": true,
+      "Low": true
+    },
+    "Kara_range": "0",
+    "Throw_range": "-",
+    "Damage": "5",
+    "Stun": "3",
+    "Bar_gain_attacker": {
+      "Whiff": "0",
+      "Hit": "2",
+      "Block": "1"
+    },
+    "Bar_gain_opponent": {
+      "Hit": "0",
+      "Block": "0"
+    }
+  },
+  {
+    "Name": "Strong",
+    "Common_name": "",
+    "Startup": "5",
+    "Hit": "5",
+    "Recovery": "8",
+    "Block_advantage": "5",
+    "Hit_advantage": "6",
+    "Crouch_hit_advantage": "7",
+    "Cancel": {
+      "Super_art": true,
+      "Special": true,
+      "Self": false,
+      "Chain": false,
+      "Dash": false,
+      "High_jump": false
+    },
+    "Parry": {
+      "High": true,
+      "Low": false
+    },
+    "Kara_range": "14",
+    "Throw_range": "-",
+    "Damage": "12",
+    "Stun": "7",
+    "Bar_gain_attacker": {
+      "Whiff": "2",
+      "Hit": "11",
+      "Block": "6"
+    },
+    "Bar_gain_opponent": {
+      "Hit": "2",
+      "Block": "0"
+    }
+  },
+  {
+    "Name": "Fierce",
+    "Common_name": "",
+    "Startup": "6",
+    "Hit": "7",
+    "Recovery": "8",
+    "Block_advantage": "1",
+    "Hit_advantage": "3",
+    "Crouch_hit_advantage": "5",
+    "Cancel": {
+      "Super_art": true,
+      "Special": true,
+      "Self": false,
+      "Chain": false,
+      "Dash": false,
+      "High_jump": false
+    },
+    "Parry": {
+      "High": true,
+      "Low": true
+    },
+    "Kara_range": "0",
+    "Throw_range": "-",
+    "Damage": "21",
+    "Stun": "9",
+    "Bar_gain_attacker": {
+      "Whiff": "3",
+      "Hit": "19",
+      "Block": "10"
+    },
+    "Bar_gain_opponent": {
+      "Hit": "4",
+      "Block": "0"
+    }
+  },
+  {
+    "Name": "Far Jab",
+    "Common_name": "",
+    "Startup": "4",
+    "Hit": "4",
+    "Recovery": "3",
+    "Block_advantage": "4",
+    "Hit_advantage": "4",
+    "Crouch_hit_advantage": "4",
+    "Cancel": {
+      "Super_art": false,
+      "Special": false,
+      "Self": true,
+      "Chain": false,
+      "Dash": false,
+      "High_jump": false
+    },
+    "Parry": {
+      "High": true,
+      "Low": true
+    },
+    "Kara_range": "1",
+    "Throw_range": "-",
+    "Damage": "3",
+    "Stun": "3",
+    "Bar_gain_attacker": {
+      "Whiff": "0",
+      "Hit": "2",
+      "Block": "1"
+    },
+    "Bar_gain_opponent": {
+      "Hit": "0",
+      "Block": "0"
+    }
+  },
+  {
+    "Name": "Far Strong",
+    "Common_name": "",
+    "Startup": "7",
+    "Hit": "3",
+    "Recovery": "12",
+    "Block_advantage": "1",
+    "Hit_advantage": "2",
+    "Crouch_hit_advantage": "3",
+    "Cancel": {
+      "Super_art": false,
+      "Special": false,
+      "Self": false,
+      "Chain": false,
+      "Dash": false,
+      "High_jump": false
+    },
+    "Parry": {
+      "High": true,
+      "Low": false
+    },
+    "Kara_range": "21",
+    "Throw_range": "-",
+    "Damage": "10",
+    "Stun": "9",
+    "Bar_gain_attacker": {
+      "Whiff": "2",
+      "Hit": "11",
+      "Block": "6"
+    },
+    "Bar_gain_opponent": {
+      "Hit": "2",
+      "Block": "0"
+    }
+  },
+  {
+    "Name": "Far Fierce",
+    "Common_name": "",
+    "Startup": "10",
+    "Hit": "5",
+    "Recovery": "18",
+    "Block_advantage": "-2",
+    "Hit_advantage": "0",
+    "Crouch_hit_advantage": "2",
+    "Cancel": {
+      "Super_art": false,
+      "Special": false,
+      "Self": false,
+      "Chain": false,
+      "Dash": false,
+      "High_jump": false
+    },
+    "Parry": {
+      "High": true,
+      "Low": false
+    },
+    "Kara_range": "9",
+    "Throw_range": "-",
+    "Damage": "19",
+    "Stun": "7",
+    "Bar_gain_attacker": {
+      "Whiff": "3",
+      "Hit": "19",
+      "Block": "10"
+    },
+    "Bar_gain_opponent": {
+      "Hit": "4",
+      "Block": "0"
+    }
+  },
+  {
+    "Name": "Crouching Jab",
+    "Common_name": "",
+    "Startup": "5",
+    "Hit": "2",
+    "Recovery": "7",
+    "Block_advantage": "2",
+    "Hit_advantage": "2",
+    "Crouch_hit_advantage": "2",
+    "Cancel": {
+      "Super_art": true,
+      "Special": true,
+      "Self": true,
+      "Chain": false,
+      "Dash": false,
+      "High_jump": false
+    },
+    "Parry": {
+      "High": true,
+      "Low": true
+    },
+    "Kara_range": "0",
+    "Throw_range": "-",
+    "Damage": "3",
+    "Stun": "3",
+    "Bar_gain_attacker": {
+      "Whiff": "0",
+      "Hit": "2",
+      "Block": "1"
+    },
+    "Bar_gain_opponent": {
+      "Hit": "0",
+      "Block": "0"
+    }
+  },
+  {
+    "Name": "Crouching Strong",
+    "Common_name": "",
+    "Startup": "5",
+    "Hit": "5",
+    "Recovery": "11",
+    "Block_advantage": "-2",
+    "Hit_advantage": "-1",
+    "Crouch_hit_advantage": "0",
+    "Cancel": {
+      "Super_art": true,
+      "Special": true,
+      "Self": false,
+      "Chain": false,
+      "Dash": false,
+      "High_jump": false
+    },
+    "Parry": {
+      "High": true,
+      "Low": true
+    },
+    "Kara_range": "0",
+    "Throw_range": "-",
+    "Damage": "9",
+    "Stun": "5",
+    "Bar_gain_attacker": {
+      "Whiff": "2",
+      "Hit": "11",
+      "Block": "6"
+    },
+    "Bar_gain_opponent": {
+      "Hit": "2",
+      "Block": "0"
+    }
+  },
+  {
+    "Name": "Crouching Fierce",
+    "Common_name": "",
+    "Startup": "8",
+    "Hit": "6",
+    "Recovery": "18",
+    "Block_advantage": "-5",
+    "Hit_advantage": "D",
+    "Crouch_hit_advantage": "D",
+    "Cancel": {
+      "Super_art": false,
+      "Special": false,
+      "Self": false,
+      "Chain": false,
+      "Dash": false,
+      "High_jump": false
+    },
+    "Parry": {
+      "High": true,
+      "Low": true
+    },
+    "Kara_range": "6",
+    "Throw_range": "-",
+    "Damage": "17",
+    "Stun": "9",
+    "Bar_gain_attacker": {
+      "Whiff": "3",
+      "Hit": "19",
+      "Block": "10"
+    },
+    "Bar_gain_opponent": {
+      "Hit": "4",
+      "Block": "0"
+    }
+  },
+  {
+    "Name": "Jumping Jab",
+    "Common_name": "",
+    "Startup": "4",
+    "Hit": "20",
+    "Recovery": "-",
+    "Block_advantage": "-",
+    "Hit_advantage": "-",
+    "Crouch_hit_advantage": "-",
+    "Cancel": {
+      "Super_art": false,
+      "Special": false,
+      "Self": false,
+      "Chain": false,
+      "Dash": false,
+      "High_jump": false
+    },
+    "Parry": {
+      "High": true,
+      "Low": false
+    },
+    "Kara_range": "0",
+    "Throw_range": "-",
+    "Damage": "7",
+    "Stun": "7",
+    "Bar_gain_attacker": {
+      "Whiff": "0",
+      "Hit": "2",
+      "Block": "1"
+    },
+    "Bar_gain_opponent": {
+      "Hit": "0",
+      "Block": "0"
+    }
+  },
+  {
+    "Name": "Jumping Strong",
+    "Common_name": "",
+    "Startup": "5",
+    "Hit": "14",
+    "Recovery": "-",
+    "Block_advantage": "-",
+    "Hit_advantage": "-",
+    "Crouch_hit_advantage": "-",
+    "Cancel": {
+      "Super_art": false,
+      "Special": false,
+      "Self": false,
+      "Chain": false,
+      "Dash": false,
+      "High_jump": false
+    },
+    "Parry": {
+      "High": true,
+      "Low": false
+    },
+    "Kara_range": "0",
+    "Throw_range": "-",
+    "Damage": "12",
+    "Stun": "11",
+    "Bar_gain_attacker": {
+      "Whiff": "2",
+      "Hit": "11",
+      "Block": "6"
+    },
+    "Bar_gain_opponent": {
+      "Hit": "2",
+      "Block": "0"
+    }
+  },
+  {
+    "Name": "Jumping Fierce",
+    "Common_name": "",
+    "Startup": "9",
+    "Hit": "5",
+    "Recovery": "-",
+    "Block_advantage": "-",
+    "Hit_advantage": "-",
+    "Crouch_hit_advantage": "-",
+    "Cancel": {
+      "Super_art": false,
+      "Special": false,
+      "Self": false,
+      "Chain": false,
+      "Dash": false,
+      "High_jump": false
+    },
+    "Parry": {
+      "High": true,
+      "Low": false
+    },
+    "Kara_range": "0",
+    "Throw_range": "-",
+    "Damage": "22",
+    "Stun": "15",
+    "Bar_gain_attacker": {
+      "Whiff": "3",
+      "Hit": "19",
+      "Block": "10"
+    },
+    "Bar_gain_opponent": {
+      "Hit": "4",
+      "Block": "0"
+    }
+  },
+  {
+    "Name": "Short",
+    "Common_name": "",
+    "Startup": "2",
+    "Hit": "5",
+    "Recovery": "7",
+    "Block_advantage": "0",
+    "Hit_advantage": "0",
+    "Crouch_hit_advantage": "0",
+    "Cancel": {
+      "Super_art": true,
+      "Special": true,
+      "Self": false,
+      "Chain": false,
+      "Dash": false,
+      "High_jump": false
+    },
+    "Parry": {
+      "High": true,
+      "Low": true
+    },
+    "Kara_range": "12",
+    "Throw_range": "-",
+    "Damage": "6",
+    "Stun": "5",
+    "Bar_gain_attacker": {
+      "Whiff": "0",
+      "Hit": "2",
+      "Block": "1"
+    },
+    "Bar_gain_opponent": {
+      "Hit": "0",
+      "Block": "0"
+    }
+  },
+  {
+    "Name": "Forward",
+    "Common_name": "",
+    "Startup": "4",
+    "Hit": "6",
+    "Recovery": "11",
+    "Block_advantage": "1",
+    "Hit_advantage": "3",
+    "Crouch_hit_advantage": "5",
+    "Cancel": {
+      "Super_art": true,
+      "Special": true,
+      "Self": false,
+      "Chain": false,
+      "Dash": false,
+      "High_jump": false
+    },
+    "Parry": {
+      "High": true,
+      "Low": false
+    },
+    "Kara_range": "12",
+    "Throw_range": "-",
+    "Damage": "16",
+    "Stun": "9",
+    "Bar_gain_attacker": {
+      "Whiff": "2",
+      "Hit": "11",
+      "Block": "6"
+    },
+    "Bar_gain_opponent": {
+      "Hit": "2",
+      "Block": "0"
+    }
+  },
+  {
+    "Name": "Roundhouse",
+    "Common_name": "",
+    "Startup": "7",
+    "Hit": "7",
+    "Recovery": "13",
+    "Block_advantage": "3",
+    "Hit_advantage": "5",
+    "Crouch_hit_advantage": "7",
+    "Cancel": {
+      "Super_art": true,
+      "Special": true,
+      "Self": false,
+      "Chain": false,
+      "Dash": false,
+      "High_jump": false
+    },
+    "Parry": {
+      "High": true,
+      "Low": false
+    },
+    "Kara_range": "-3",
+    "Throw_range": "-",
+    "Damage": "23",
+    "Stun": "15",
+    "Bar_gain_attacker": {
+      "Whiff": "3",
+      "Hit": "25",
+      "Block": "12"
+    },
+    "Bar_gain_opponent": {
+      "Hit": "6",
+      "Block": "0"
+    }
+  },
+  {
+    "Name": "Far Short",
+    "Common_name": "",
+    "Startup": "2",
+    "Hit": "5",
+    "Recovery": "4",
+    "Block_advantage": "2",
+    "Hit_advantage": "2",
+    "Crouch_hit_advantage": "2",
+    "Cancel": {
+      "Super_art": false,
+      "Special": false,
+      "Self": false,
+      "Chain": false,
+      "Dash": false,
+      "High_jump": false
+    },
+    "Parry": {
+      "High": true,
+      "Low": true
+    },
+    "Kara_range": "0",
+    "Throw_range": "-",
+    "Damage": "5",
+    "Stun": "3",
+    "Bar_gain_attacker": {
+      "Whiff": "0",
+      "Hit": "2",
+      "Block": "1"
+    },
+    "Bar_gain_opponent": {
+      "Hit": "0",
+      "Block": "0"
+    }
+  },
+  {
+    "Name": "Far Forward",
+    "Common_name": "",
+    "Startup": "8",
+    "Hit": "5",
+    "Recovery": "14",
+    "Block_advantage": "-3",
+    "Hit_advantage": "-2",
+    "Crouch_hit_advantage": "-1",
+    "Cancel": {
+      "Super_art": false,
+      "Special": false,
+      "Self": false,
+      "Chain": false,
+      "Dash": false,
+      "High_jump": false
+    },
+    "Parry": {
+      "High": true,
+      "Low": false
+    },
+    "Kara_range": "0",
+    "Throw_range": "-",
+    "Damage": "14",
+    "Stun": "7",
+    "Bar_gain_attacker": {
+      "Whiff": "2",
+      "Hit": "11",
+      "Block": "6"
+    },
+    "Bar_gain_opponent": {
+      "Hit": "2",
+      "Block": "0"
+    }
+  },
+  {
+    "Name": "Far Roundhouse",
+    "Common_name": "",
+    "Startup": "10",
+    "Hit": "3",
+    "Recovery": "23",
+    "Block_advantage": "-9",
+    "Hit_advantage": "-7",
+    "Crouch_hit_advantage": "-5",
+    "Cancel": {
+      "Super_art": false,
+      "Special": false,
+      "Self": false,
+      "Chain": false,
+      "Dash": false,
+      "High_jump": false
+    },
+    "Parry": {
+      "High": true,
+      "Low": false
+    },
+    "Kara_range": "27",
+    "Throw_range": "-",
+    "Damage": "23",
+    "Stun": "11",
+    "Bar_gain_attacker": {
+      "Whiff": "3",
+      "Hit": "19",
+      "Block": "10"
+    },
+    "Bar_gain_opponent": {
+      "Hit": "4",
+      "Block": "0"
+    }
+  },
+  {
+    "Name": "Crouching Short",
+    "Common_name": "",
+    "Startup": "3",
+    "Hit": "4",
+    "Recovery": "7",
+    "Block_advantage": "0",
+    "Hit_advantage": "0",
+    "Crouch_hit_advantage": "0",
+    "Cancel": {
+      "Super_art": true,
+      "Special": true,
+      "Self": false,
+      "Chain": false,
+      "Dash": false,
+      "High_jump": false
+    },
+    "Parry": {
+      "High": false,
+      "Low": true
+    },
+    "Kara_range": "0",
+    "Throw_range": "-",
+    "Damage": "5",
+    "Stun": "3",
+    "Bar_gain_attacker": {
+      "Whiff": "0",
+      "Hit": "2",
+      "Block": "1"
+    },
+    "Bar_gain_opponent": {
+      "Hit": "0",
+      "Block": "0"
+    }
+  },
+  {
+    "Name": "Crouching Forward",
+    "Common_name": "",
+    "Startup": "8",
+    "Hit": "5",
+    "Recovery": "18",
+    "Block_advantage": "-9",
+    "Hit_advantage": "-8",
+    "Crouch_hit_advantage": "-7",
+    "Cancel": {
+      "Super_art": false,
+      "Special": false,
+      "Self": false,
+      "Chain": false,
+      "Dash": false,
+      "High_jump": false
+    },
+    "Parry": {
+      "High": false,
+      "Low": true
+    },
+    "Kara_range": "8",
+    "Throw_range": "-",
+    "Damage": "10",
+    "Stun": "3",
+    "Bar_gain_attacker": {
+      "Whiff": "2",
+      "Hit": "11",
+      "Block": "6"
+    },
+    "Bar_gain_opponent": {
+      "Hit": "2",
+      "Block": "0"
+    }
+  },
+  {
+    "Name": "Crouching Roundhouse",
+    "Common_name": "",
+    "Startup": "9",
+    "Hit": "7",
+    "Recovery": "21",
+    "Block_advantage": "-11",
+    "Hit_advantage": "D",
+    "Crouch_hit_advantage": "D",
+    "Cancel": {
+      "Super_art": false,
+      "Special": false,
+      "Self": false,
+      "Chain": false,
+      "Dash": false,
+      "High_jump": false
+    },
+    "Parry": {
+      "High": false,
+      "Low": true
+    },
+    "Kara_range": "7",
+    "Throw_range": "-",
+    "Damage": "17",
+    "Stun": "3",
+    "Bar_gain_attacker": {
+      "Whiff": "6",
+      "Hit": "22",
+      "Block": "20"
+    },
+    "Bar_gain_opponent": {
+      "Hit": "4",
+      "Block": "0"
+    }
+  },
+  {
+    "Name": "Jumping Short",
+    "Common_name": "",
+    "Startup": "4",
+    "Hit": "14",
+    "Recovery": "-",
+    "Block_advantage": "-",
+    "Hit_advantage": "-",
+    "Crouch_hit_advantage": "-",
+    "Cancel": {
+      "Super_art": false,
+      "Special": false,
+      "Self": false,
+      "Chain": false,
+      "Dash": false,
+      "High_jump": false
+    },
+    "Parry": {
+      "High": true,
+      "Low": false
+    },
+    "Kara_range": "0",
+    "Throw_range": "-",
+    "Damage": "8",
+    "Stun": "5",
+    "Bar_gain_attacker": {
+      "Whiff": "0",
+      "Hit": "2",
+      "Block": "1"
+    },
+    "Bar_gain_opponent": {
+      "Hit": "0",
+      "Block": "0"
+    }
+  },
+  {
+    "Name": "Jumping Forward",
+    "Common_name": "",
+    "Startup": "6",
+    "Hit": "4",
+    "Recovery": "-",
+    "Block_advantage": "-",
+    "Hit_advantage": "-",
+    "Crouch_hit_advantage": "-",
+    "Cancel": {
+      "Super_art": false,
+      "Special": false,
+      "Self": false,
+      "Chain": false,
+      "Dash": false,
+      "High_jump": false
+    },
+    "Parry": {
+      "High": true,
+      "Low": false
+    },
+    "Kara_range": "0",
+    "Throw_range": "-",
+    "Damage": "16",
+    "Stun": "9",
+    "Bar_gain_attacker": {
+      "Whiff": "2",
+      "Hit": "11",
+      "Block": "6"
+    },
+    "Bar_gain_opponent": {
+      "Hit": "2",
+      "Block": "0"
+    }
+  },
+  {
+    "Name": "Jumping Roundhouse",
+    "Common_name": "",
+    "Startup": "10",
+    "Hit": "4",
+    "Recovery": "-",
+    "Block_advantage": "-",
+    "Hit_advantage": "-",
+    "Crouch_hit_advantage": "-",
+    "Cancel": {
+      "Super_art": false,
+      "Special": false,
+      "Self": false,
+      "Chain": false,
+      "Dash": false,
+      "High_jump": false
+    },
+    "Parry": {
+      "High": true,
+      "Low": false
+    },
+    "Kara_range": "0",
+    "Throw_range": "-",
+    "Damage": "21",
+    "Stun": "13",
+    "Bar_gain_attacker": {
+      "Whiff": "3",
+      "Hit": "19",
+      "Block": "10"
+    },
+    "Bar_gain_opponent": {
+      "Hit": "4",
+      "Block": "0"
+    }
+  },
+  {
+    "Name": "Towards + Forward",
+    "Common_name": "",
+    "Startup": "18",
+    "Hit": "3",
+    "Recovery": "20",
+    "Block_advantage": "-7",
+    "Hit_advantage": "-6",
+    "Crouch_hit_advantage": "-5",
+    "Cancel": {
+      "Super_art": false,
+      "Special": false,
+      "Self": false,
+      "Chain": false,
+      "Dash": false,
+      "High_jump": false
+    },
+    "Parry": {
+      "High": true,
+      "Low": false
+    },
+    "Kara_range": "16",
+    "Throw_range": "-",
+    "Damage": "14",
+    "Stun": "3",
+    "Bar_gain_attacker": {
+      "Whiff": "2",
+      "Hit": "11",
+      "Block": "6"
+    },
+    "Bar_gain_opponent": {
+      "Hit": "2",
+      "Block": "0"
+    }
+  },
+  {
+    "Name": "Neutral Throw",
+    "Common_name": "",
+    "Startup": "2",
+    "Hit": "1",
+    "Recovery": "21",
+    "Block_advantage": "0",
+    "Hit_advantage": "D",
+    "Crouch_hit_advantage": "D",
+    "Cancel": {
+      "Super_art": false,
+      "Special": false,
+      "Self": false,
+      "Chain": false,
+      "Dash": false,
+      "High_jump": false
+    },
+    "Parry": {
+      "High": false,
+      "Low": false
+    },
+    "Kara_range": "15",
+    "Throw_range": "9",
+    "Damage": "17",
+    "Stun": "12",
+    "Bar_gain_attacker": {
+      "Whiff": "0",
+      "Hit": "7",
+      "Block": "0"
+    },
+    "Bar_gain_opponent": {
+      "Hit": "2",
+      "Block": "7"
+    }
+  },
+  {
+    "Name": "Throw",
+    "Common_name": "",
+    "Startup": "2",
+    "Hit": "1",
+    "Recovery": "21",
+    "Block_advantage": "0",
+    "Hit_advantage": "D",
+    "Crouch_hit_advantage": "D",
+    "Cancel": {
+      "Super_art": false,
+      "Special": false,
+      "Self": false,
+      "Chain": false,
+      "Dash": false,
+      "High_jump": false
+    },
+    "Parry": {
+      "High": false,
+      "Low": false
+    },
+    "Kara_range": "15",
+    "Throw_range": "9",
+    "Damage": "23",
+    "Stun": "4",
+    "Bar_gain_attacker": {
+      "Whiff": "0",
+      "Hit": "8",
+      "Block": "0"
+    },
+    "Bar_gain_opponent": {
+      "Hit": "2",
+      "Block": "7"
+    }
+  },
+  {
+    "Name": "Universal Overhead",
+    "Common_name": "",
+    "Startup": "15",
+    "Hit": "10",
+    "Recovery": "5",
+    "Block_advantage": "-",
+    "Hit_advantage": "-",
+    "Crouch_hit_advantage": "-",
+    "Cancel": {
+      "Super_art": false,
+      "Special": false,
+      "Self": false,
+      "Chain": false,
+      "Dash": false,
+      "High_jump": false
+    },
+    "Parry": {
+      "High": true,
+      "Low": false
+    },
+    "Kara_range": "0",
+    "Throw_range": "-",
+    "Damage": "7",
+    "Stun": "3",
+    "Bar_gain_attacker": {
+      "Whiff": "0",
+      "Hit": "2",
+      "Block": "1"
+    },
+    "Bar_gain_opponent": {
+      "Hit": "0",
+      "Block": "0"
+    }
+  },
+  {
+    "Name": "Taunt",
+    "Common_name": "",
+    "Startup": "-",
+    "Hit": "-",
+    "Recovery": "131",
+    "Block_advantage": "-",
+    "Hit_advantage": "-",
+    "Crouch_hit_advantage": "-",
+    "Cancel": {
+      "Super_art": false,
+      "Special": false,
+      "Self": false,
+      "Chain": false,
+      "Dash": false,
+      "High_jump": false
+    },
+    "Parry": {
+      "High": false,
+      "Low": false
+    },
+    "Kara_range": "-",
+    "Throw_range": "-",
+    "Damage": "-",
+    "Stun": "-",
+    "Bar_gain_attacker": {
+      "Whiff": "-",
+      "Hit": "-",
+      "Block": "-"
+    },
+    "Bar_gain_opponent": {
+      "Hit": "-",
+      "Block": "-"
+    }
+  },
+  {
+    "Name": "Light of Virtue (Jab)",
+    "Common_name": "",
+    "Startup": "9",
+    "Hit": "-",
+    "Recovery": "22",
+    "Block_advantage": "5",
+    "Hit_advantage": "-",
+    "Crouch_hit_advantage": "-",
+    "Cancel": {
+      "Super_art": true,
+      "Special": false,
+      "Self": false,
+      "Chain": false,
+      "Dash": false,
+      "High_jump": false
+    },
+    "Parry": {
+      "High": true,
+      "Low": false
+    },
+    "Kara_range": "-",
+    "Throw_range": "-",
+    "Damage": "10",
+    "Stun": "3",
+    "Bar_gain_attacker": {
+      "Whiff": "0",
+      "Hit": "1",
+      "Block": "1"
+    },
+    "Bar_gain_opponent": {
+      "Hit": "0",
+      "Block": "0"
+    }
+  },
+  {
+    "Name": "Light of Virtue (Strong)",
+    "Common_name": "",
+    "Startup": "10",
+    "Hit": "-",
+    "Recovery": "22",
+    "Block_advantage": "5",
+    "Hit_advantage": "-",
+    "Crouch_hit_advantage": "-",
+    "Cancel": {
+      "Super_art": true,
+      "Special": false,
+      "Self": false,
+      "Chain": false,
+      "Dash": false,
+      "High_jump": false
+    },
+    "Parry": {
+      "High": true,
+      "Low": false
+    },
+    "Kara_range": "-",
+    "Throw_range": "-",
+    "Damage": "10",
+    "Stun": "3",
+    "Bar_gain_attacker": {
+      "Whiff": "0",
+      "Hit": "1",
+      "Block": "1"
+    },
+    "Bar_gain_opponent": {
+      "Hit": "0",
+      "Block": "0"
+    }
+  },
+  {
+    "Name": "Light of Virtue (Fierce)",
+    "Common_name": "",
+    "Startup": "11",
+    "Hit": "-",
+    "Recovery": "22",
+    "Block_advantage": "5",
+    "Hit_advantage": "-",
+    "Crouch_hit_advantage": "-",
+    "Cancel": {
+      "Super_art": true,
+      "Special": false,
+      "Self": false,
+      "Chain": false,
+      "Dash": false,
+      "High_jump": false
+    },
+    "Parry": {
+      "High": true,
+      "Low": false
+    },
+    "Kara_range": "-",
+    "Throw_range": "-",
+    "Damage": "10",
+    "Stun": "3",
+    "Bar_gain_attacker": {
+      "Whiff": "0",
+      "Hit": "1",
+      "Block": "1"
+    },
+    "Bar_gain_opponent": {
+      "Hit": "0",
+      "Block": "0"
+    }
+  },
+  {
+    "Name": "Light of Virtue (EX High)",
+    "Common_name": "",
+    "Startup": "8",
+    "Hit": "-",
+    "Recovery": "24",
+    "Block_advantage": "4",
+    "Hit_advantage": "-",
+    "Crouch_hit_advantage": "-",
+    "Cancel": {
+      "Super_art": true,
+      "Special": false,
+      "Self": false,
+      "Chain": false,
+      "Dash": false,
+      "High_jump": false
+    },
+    "Parry": {
+      "High": true,
+      "Low": false
+    },
+    "Kara_range": "-",
+    "Throw_range": "-",
+    "Damage": "20",
+    "Stun": "5",
+    "Bar_gain_attacker": {
+      "Whiff": "-40",
+      "Hit": "-40",
+      "Block": "-40"
+    },
+    "Bar_gain_opponent": {
+      "Hit": "0",
+      "Block": "0"
+    }
+  },
+  {
+    "Name": "Light of Virtue (EX Low)",
+    "Common_name": "",
+    "Startup": "8",
+    "Hit": "-",
+    "Recovery": "24",
+    "Block_advantage": "4",
+    "Hit_advantage": "-",
+    "Crouch_hit_advantage": "-",
+    "Cancel": {
+      "Super_art": true,
+      "Special": false,
+      "Self": false,
+      "Chain": false,
+      "Dash": false,
+      "High_jump": false
+    },
+    "Parry": {
+      "High": true,
+      "Low": true
+    },
+    "Kara_range": "-",
+    "Throw_range": "-",
+    "Damage": "20",
+    "Stun": "5",
+    "Bar_gain_attacker": {
+      "Whiff": "-40",
+      "Hit": "-40",
+      "Block": "-40"
+    },
+    "Bar_gain_opponent": {
+      "Hit": "0",
+      "Block": "0"
+    }
+  },
+  {
+    "Name": "Light of Virtue (Short)",
+    "Common_name": "",
+    "Startup": "11",
+    "Hit": "-",
+    "Recovery": "26",
+    "Block_advantage": "1",
+    "Hit_advantage": "-",
+    "Crouch_hit_advantage": "-",
+    "Cancel": {
+      "Super_art": true,
+      "Special": false,
+      "Self": false,
+      "Chain": false,
+      "Dash": false,
+      "High_jump": false
+    },
+    "Parry": {
+      "High": true,
+      "Low": false
+    },
+    "Kara_range": "-",
+    "Throw_range": "-",
+    "Damage": "10",
+    "Stun": "3",
+    "Bar_gain_attacker": {
+      "Whiff": "0",
+      "Hit": "1",
+      "Block": "1"
+    },
+    "Bar_gain_opponent": {
+      "Hit": "0",
+      "Block": "0"
+    }
+  },
+  {
+    "Name": "Light of Virtue (Forward)",
+    "Common_name": "",
+    "Startup": "12",
+    "Hit": "-",
+    "Recovery": "26",
+    "Block_advantage": "1",
+    "Hit_advantage": "-",
+    "Crouch_hit_advantage": "-",
+    "Cancel": {
+      "Super_art": true,
+      "Special": false,
+      "Self": false,
+      "Chain": false,
+      "Dash": false,
+      "High_jump": false
+    },
+    "Parry": {
+      "High": true,
+      "Low": false
+    },
+    "Kara_range": "-",
+    "Throw_range": "-",
+    "Damage": "10",
+    "Stun": "3",
+    "Bar_gain_attacker": {
+      "Whiff": "0",
+      "Hit": "1",
+      "Block": "1"
+    },
+    "Bar_gain_opponent": {
+      "Hit": "0",
+      "Block": "0"
+    }
+  },
+  {
+    "Name": "Light of Virtue (RH)",
+    "Common_name": "",
+    "Startup": "13",
+    "Hit": "-",
+    "Recovery": "26",
+    "Block_advantage": "1",
+    "Hit_advantage": "-",
+    "Crouch_hit_advantage": "-",
+    "Cancel": {
+      "Super_art": true,
+      "Special": false,
+      "Self": false,
+      "Chain": false,
+      "Dash": false,
+      "High_jump": false
+    },
+    "Parry": {
+      "High": true,
+      "Low": false
+    },
+    "Kara_range": "-",
+    "Throw_range": "-",
+    "Damage": "10",
+    "Stun": "3",
+    "Bar_gain_attacker": {
+      "Whiff": "0",
+      "Hit": "1",
+      "Block": "1"
+    },
+    "Bar_gain_opponent": {
+      "Hit": "0",
+      "Block": "0"
+    }
+  },
+  {
+    "Name": "Light of Virtue (EX High)",
+    "Common_name": "",
+    "Startup": "8",
+    "Hit": "-",
+    "Recovery": "28",
+    "Block_advantage": "0",
+    "Hit_advantage": "-",
+    "Crouch_hit_advantage": "-",
+    "Cancel": {
+      "Super_art": true,
+      "Special": false,
+      "Self": false,
+      "Chain": false,
+      "Dash": false,
+      "High_jump": false
+    },
+    "Parry": {
+      "High": true,
+      "Low": false
+    },
+    "Kara_range": "-",
+    "Throw_range": "-",
+    "Damage": "20",
+    "Stun": "5",
+    "Bar_gain_attacker": {
+      "Whiff": "-40",
+      "Hit": "-40",
+      "Block": "-40"
+    },
+    "Bar_gain_opponent": {
+      "Hit": "0",
+      "Block": "0"
+    }
+  },
+  {
+    "Name": "Light of Virtue (EX Low)",
+    "Common_name": "",
+    "Startup": "8",
+    "Hit": "-",
+    "Recovery": "28",
+    "Block_advantage": "0",
+    "Hit_advantage": "-",
+    "Crouch_hit_advantage": "-",
+    "Cancel": {
+      "Super_art": true,
+      "Special": false,
+      "Self": false,
+      "Chain": false,
+      "Dash": false,
+      "High_jump": false
+    },
+    "Parry": {
+      "High": true,
+      "Low": true
+    },
+    "Kara_range": "-",
+    "Throw_range": "-",
+    "Damage": "20",
+    "Stun": "5",
+    "Bar_gain_attacker": {
+      "Whiff": "-40",
+      "Hit": "-40",
+      "Block": "-40"
+    },
+    "Bar_gain_opponent": {
+      "Hit": "0",
+      "Block": "0"
+    }
+  },
+  {
+    "Name": "Rising Rage Flash (Short)",
+    "Common_name": "",
+    "Startup": "3",
+    "Hit": "3",
+    "Recovery": "32",
+    "Block_advantage": "-17",
+    "Hit_advantage": "-",
+    "Crouch_hit_advantage": "-",
+    "Cancel": {
+      "Super_art": false,
+      "Special": false,
+      "Self": false,
+      "Chain": false,
+      "Dash": false,
+      "High_jump": false
+    },
+    "Parry": {
+      "High": true,
+      "Low": true
+    },
+    "Kara_range": "-",
+    "Throw_range": "-",
+    "Damage": "21",
+    "Stun": "9",
+    "Bar_gain_attacker": {
+      "Whiff": "3",
+      "Hit": "17",
+      "Block": "12"
+    },
+    "Bar_gain_opponent": {
+      "Hit": "4",
+      "Block": "0"
+    }
+  },
+  {
+    "Name": "Rising Rage Flash (Forward)",
+    "Common_name": "",
+    "Startup": "3",
+    "Hit": "4",
+    "Recovery": "39",
+    "Block_advantage": "-23",
+    "Hit_advantage": "-",
+    "Crouch_hit_advantage": "-",
+    "Cancel": {
+      "Super_art": false,
+      "Special": false,
+      "Self": false,
+      "Chain": false,
+      "Dash": false,
+      "High_jump": false
+    },
+    "Parry": {
+      "High": true,
+      "Low": true
+    },
+    "Kara_range": "-",
+    "Throw_range": "-",
+    "Damage": "23",
+    "Stun": "7",
+    "Bar_gain_attacker": {
+      "Whiff": "3",
+      "Hit": "17",
+      "Block": "12"
+    },
+    "Bar_gain_opponent": {
+      "Hit": "4",
+      "Block": "0"
+    }
+  },
+  {
+    "Name": "Rising Rage Flash (RH)",
+    "Common_name": "",
+    "Startup": "2",
+    "Hit": "7",
+    "Recovery": "44",
+    "Block_advantage": "-26",
+    "Hit_advantage": "-",
+    "Crouch_hit_advantage": "-",
+    "Cancel": {
+      "Super_art": false,
+      "Special": false,
+      "Self": false,
+      "Chain": false,
+      "Dash": false,
+      "High_jump": false
+    },
+    "Parry": {
+      "High": true,
+      "Low": true
+    },
+    "Kara_range": "-",
+    "Throw_range": "-",
+    "Damage": "24",
+    "Stun": "7",
+    "Bar_gain_attacker": {
+      "Whiff": "3",
+      "Hit": "17",
+      "Block": "12"
+    },
+    "Bar_gain_opponent": {
+      "Hit": "4",
+      "Block": "0"
+    }
+  },
+  {
+    "Name": "Rising Rage Flash (EX)",
+    "Common_name": "",
+    "Startup": "6",
+    "Hit": "5",
+    "Recovery": "41",
+    "Block_advantage": "-21",
+    "Hit_advantage": "-",
+    "Crouch_hit_advantage": "-",
+    "Cancel": {
+      "Super_art": true,
+      "Special": false,
+      "Self": false,
+      "Chain": false,
+      "Dash": false,
+      "High_jump": false
+    },
+    "Parry": {
+      "High": true,
+      "Low": true
+    },
+    "Kara_range": "-",
+    "Throw_range": "-",
+    "Damage": "32",
+    "Stun": "13",
+    "Bar_gain_attacker": {
+      "Whiff": "-40",
+      "Hit": "-40",
+      "Block": "-40"
+    },
+    "Bar_gain_opponent": {
+      "Hit": "0",
+      "Block": "0"
+    }
+  },
+  {
+    "Name": "Cold Blue Kick (Short)",
+    "Common_name": "",
+    "Startup": "17",
+    "Hit": "10",
+    "Recovery": "10",
+    "Block_advantage": "-4",
+    "Hit_advantage": "-",
+    "Crouch_hit_advantage": "-",
+    "Cancel": {
+      "Super_art": false,
+      "Special": false,
+      "Self": false,
+      "Chain": false,
+      "Dash": false,
+      "High_jump": false
+    },
+    "Parry": {
+      "High": true,
+      "Low": false
+    },
+    "Kara_range": "-",
+    "Throw_range": "-",
+    "Damage": "21",
+    "Stun": "7",
+    "Bar_gain_attacker": {
+      "Whiff": "3",
+      "Hit": "18",
+      "Block": "12"
+    },
+    "Bar_gain_opponent": {
+      "Hit": "4",
+      "Block": "0"
+    }
+  },
+  {
+    "Name": "Cold Blue Kick (Forward)",
+    "Common_name": "",
+    "Startup": "18",
+    "Hit": "10",
+    "Recovery": "10",
+    "Block_advantage": "-4",
+    "Hit_advantage": "-",
+    "Crouch_hit_advantage": "-",
+    "Cancel": {
+      "Super_art": false,
+      "Special": false,
+      "Self": false,
+      "Chain": false,
+      "Dash": false,
+      "High_jump": false
+    },
+    "Parry": {
+      "High": true,
+      "Low": false
+    },
+    "Kara_range": "-",
+    "Throw_range": "-",
+    "Damage": "21",
+    "Stun": "7",
+    "Bar_gain_attacker": {
+      "Whiff": "3",
+      "Hit": "18",
+      "Block": "12"
+    },
+    "Bar_gain_opponent": {
+      "Hit": "4",
+      "Block": "0"
+    }
+  },
+  {
+    "Name": "Cold Blue Kick (RH)",
+    "Common_name": "",
+    "Startup": "19",
+    "Hit": "12",
+    "Recovery": "10",
+    "Block_advantage": "-6",
+    "Hit_advantage": "-",
+    "Crouch_hit_advantage": "-",
+    "Cancel": {
+      "Super_art": false,
+      "Special": false,
+      "Self": false,
+      "Chain": false,
+      "Dash": false,
+      "High_jump": false
+    },
+    "Parry": {
+      "High": true,
+      "Low": false
+    },
+    "Kara_range": "-",
+    "Throw_range": "-",
+    "Damage": "21",
+    "Stun": "7",
+    "Bar_gain_attacker": {
+      "Whiff": "3",
+      "Hit": "18",
+      "Block": "12"
+    },
+    "Bar_gain_opponent": {
+      "Hit": "4",
+      "Block": "0"
+    }
+  },
+  {
+    "Name": "Cold Blue Kick (EX)",
+    "Common_name": "",
+    "Startup": "18",
+    "Hit": "9",
+    "Recovery": "10",
+    "Block_advantage": "-1",
+    "Hit_advantage": "-",
+    "Crouch_hit_advantage": "-",
+    "Cancel": {
+      "Super_art": false,
+      "Special": false,
+      "Self": false,
+      "Chain": false,
+      "Dash": false,
+      "High_jump": false
+    },
+    "Parry": {
+      "High": true,
+      "Low": false
+    },
+    "Kara_range": "-",
+    "Throw_range": "-",
+    "Damage": "27",
+    "Stun": "11",
+    "Bar_gain_attacker": {
+      "Whiff": "-40",
+      "Hit": "-40",
+      "Block": "-40"
+    },
+    "Bar_gain_opponent": {
+      "Hit": "0",
+      "Block": "0"
+    }
+  },
+  {
+    "Name": "Light of Justice",
+    "Common_name": "",
+    "Startup": "1",
+    "Hit": "-",
+    "Recovery": "N/A",
+    "Block_advantage": "3",
+    "Hit_advantage": "-",
+    "Crouch_hit_advantage": "-",
+    "Cancel": {
+      "Super_art": false,
+      "Special": false,
+      "Self": false,
+      "Chain": false,
+      "Dash": false,
+      "High_jump": false
+    },
+    "Parry": {
+      "High": true,
+      "Low": false
+    },
+    "Kara_range": "-",
+    "Throw_range": "-",
+    "Damage": "52",
+    "Stun": "14"
+  },
+  {
+    "Name": "Supreme Rising Rage Flash",
+    "Common_name": "",
+    "Startup": "0",
+    "Hit": "16",
+    "Recovery": "53",
+    "Block_advantage": "-29",
+    "Hit_advantage": "-",
+    "Crouch_hit_advantage": "-",
+    "Cancel": {
+      "Super_art": true,
+      "Special": false,
+      "Self": false,
+      "Chain": false,
+      "Dash": false,
+      "High_jump": false
+    },
+    "Parry": {
+      "High": true,
+      "Low": true
+    },
+    "Kara_range": "-",
+    "Throw_range": "-",
+    "Damage": "61",
+    "Stun": "14"
+  },
+  {
+    "Name": "Blue Nocturne",
+    "Common_name": "",
+    "Startup": "0",
+    "Hit": "21",
+    "Recovery": "27",
+    "Block_advantage": "-",
+    "Hit_advantage": "-",
+    "Crouch_hit_advantage": "-",
+    "Cancel": {
+      "Super_art": false,
+      "Special": false,
+      "Self": false,
+      "Chain": false,
+      "Dash": false,
+      "High_jump": false
+    },
+    "Parry": {
+      "High": false,
+      "Low": false
+    },
+    "Kara_range": "-",
+    "Throw_range": "-",
+    "Damage": "75",
+    "Stun": "14"
+  }
+]

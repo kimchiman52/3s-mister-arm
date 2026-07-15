@@ -1,0 +1,201 @@
+# Alex Super Art 3 (Stun Gun Headbutt) — EX/Supers program, supers wave S5.
+# Satellite corpus (auto-discovered by run-suite.sh's corpus-*.yaml glob,
+# own golden/alex-sa3.tsv once registered) — corpus-alex.yaml/corpus-alex-
+# ex.yaml/corpus-alex-sa1.yaml/corpus-alex-sa2.yaml are untouched.
+#
+# Scope: step0-universe.tsv row 54 (alex sa_slot 3, "Stun Gun Headbutt",
+# S=24/A=3/R=17/block_adv="-", ASSERTABLE, not GRAB-flagged in step0, but
+# a genuine unblockable command grab per alex.json's own `Parry: {"High":
+# false, "Low": false}` — task brief's own framing, "a leaping grab",
+# CONFIRMED this session, not assumed). Oracle: docs/arcade-frame-data/
+# alex.json (md5 f324fa3a68b748f7fb0f2c92c3e72db6, unchanged this session).
+#
+# IDENTITY (S-match probe, CORPUS-AUTHORING.md Phase 5), this session's own
+# isolated 2-candidate probe (<sp>/sa-alex/run-probe3-sa3-id/trace.log):
+# super_art:2 (0-indexed SA3) + `motion 2qcf HP` lands S=24, matching Stun
+# Gun Headbutt's oracle Startup=24 EXACTLY (unique among Alex's oracle rows
+# — no other row reads Startup=24). Sibling candidate `motion 2qcf HK`
+# produces the SAME unrelated fallback signature seen on the SA2 probe
+# (S=8/A=12/R=33) — confirms HP, not HK, same "kick strength doesn't route
+# to either super" finding as corpus-alex-sa2.yaml.
+#
+# Meter: sa_gauge:3 (MAXIMUM, per authoring-policy.md's meter policy
+# default for non-install supers).
+#
+# ============================================================================
+# CORRECTED FINDING (Phase 5's own "isolated single-entry re-verification
+# for anything suspicious" rule, applied live this session — recorded here
+# because the FIRST measurement was wrong and the correction matters for
+# anyone re-deriving this corpus):
+#
+# The first combined 3-entry probe this session (WHIFF-at-far-range first,
+# then unblockable-probe/hit at close range, <sp>/sa-alex/run-probe8-sa3-
+# legs/trace.log) appeared to show a REACHABLE far-range WHIFF (dist:310
+# centered) followed by TWO SURPRISE WHIFFS at close range where HIT was
+# expected. Re-verified in ISOLATED single-entry corpora (no predecessor
+# entry at all, <sp>/sa-alex/run-probe9-sa3-iso-whiff, run-probe10-sa3-iso-
+# block, run-probe11-sa3-iso-hit, run-probe12-sa3-iso-far-block): the
+# far-range "whiff" was a PREDECESSOR-ORDERING ARTIFACT (CORPUS-AUTHORING.md
+# Phase 5, §12.1 row 1 — "teleporting via P immediately after a HIT
+# command-grab silently no-ops if the defender still has residual
+# knockdown-recovery ticks pending"). The combined-run trace shows it
+# directly: entry 2's own MOVE_START recorded `dist=134` against a
+# requested `dist:310 centered` — the teleport partially failed because
+# entry 1 (a HIT with kd=1/endrel=1) left the dummy mid-knockdown-recovery.
+#
+# The TRUE, isolated-verified behavior is the OPPOSITE of the first
+# reading: this move WHIFFS at CLOSE range (dist:close=56, confirmed twice
+# independently — `dummy:stand` in run-probe10 and `dummy:none` in
+# run-probe11, byte-identical S=24/A=3/R=16 both) and HITS at FAR range
+# (dist:250 anchored AND dist:310 centered/achieved~302, confirmed
+# independently in run-probe9/run-probe12, byte-identical S=24/A=2/R=72/
+# adv=+209/kd=1 both, including a `dummy:stand` guard test that changes
+# nothing). This is a genuine "leaping grab" shape: the move's own active
+# hitbox does not engage until the attacker has traveled far enough (a
+# too-close target lets Alex's leap overshoot rather than connect) —
+# task brief's own "leaping grab, air-adjacent, may need distance care"
+# framing is confirmed exactly, and the distance-care turned out to be
+# real (an easy trap for a corpus author to walk into via ordinary "close
+# range = easy hit" intuition). No compiler/harness bug is implicated —
+# the ordering trap is entirely a corpus-authoring discipline issue, same
+# root cause as the documented Hugo Meat Squasher/Q CnDB teleport-ordering
+# precedents.
+#
+# SECOND ordering trap, found and fixed live this session: even after
+# putting the WHIFF entry first, the shipped 3-entry corpus (whiff, then
+# BOTH far-range HIT legs back-to-back) still broke — the THIRD entry
+# (`alex-sa3-hit`, immediately following `alex-sa3-unblockable-probe`, both
+# HIT/kd=1 at the SAME requested dist:250) measured a spurious WHIFF, its
+# own MOVE_START reading dist=154 against the requested 250
+# (<sp>/sa-alex/final-sa3-run1/trace.log). Raising `inter_entry_wait` to
+# 1500 (3x) did NOT fix it (<sp>/sa-alex/run-waittest/trace.log, dist=154
+# again, byte-identical) — confirms this is the same "not fixed by a
+# generous trailing wait" shape CORPUS-AUTHORING.md's Meat Squasher note
+# already documents, not merely a timing shortfall. The actual fix
+# (<sp>/sa-alex/run-probe13-reorder/trace.log, all 3 PASS, third entry's
+# achieved dist=217 vs requested 250 — some drift, but still within the
+# connecting window): insert the CLOSE-range whiff entry BETWEEN the two
+# far-range HIT legs, not before both of them. Chaining two large-teleport
+# HIT/kd=1 legs back-to-back appears to corrupt the second teleport
+# regardless of distance-delta or wait; a whiff entry in between (leaving
+# no knockdown residue) breaks the chain. Shipped order below: alex-sa3-
+# unblockable-probe (far, stand) -> alex-sa3-whiff (close) -> alex-sa3-hit
+# (far, none). Do not reorder without re-running this same check.
+# ============================================================================
+#
+# GRAB, CONFIRMED UNBLOCKABLE (Class 3 connected-grab precedent, same
+# posture as corpus-alex-sa1.yaml's Hyper Bomb): `alex-sa3-unblockable-
+# probe` below places a GUARDING dummy (`dummy: stand`) at dist:250 (well
+# within the far-range connecting window) and still gets a full HIT capture
+# (kd=1), BYTE-IDENTICAL to the `dummy: none` HIT entry — matches
+# alex.json's own `Parry: {false, false}` for this row.
+#
+# A DISPOSITION — Phase 6 "Contact-A undercount" class (docs/frame-data-
+# synthesis.md §13.13), NOT SA-WHIFF-A (that shape requires the SAME
+# magnitude reproduced INCLUDING a clean whiff — this move's own WHIFF leg
+# reads A=3, ORACLE-EXACT, while only the two contact legs undercount to
+# A=2; the opposite of SA-WHIFF-A's defining signature, explicitly checked
+# and excluded, same discipline as the Yun SA1 You Hou non-uniform-A
+# one-off in the synthesis doc). Contact-A juggle check (Ruling 2 check 3):
+# N/A in the strict sense (no separate BLOCK leg — unblockable, so "stand"
+# and "none" both connect identically) but the unblockable-probe/hit legs'
+# own byte-identical A=2 across both dummy states IS the relevant
+# cross-check here, and it passes trivially (rep-stable, not a fluke).
+# Asserted as a literal `2` citing §13.13 (measured engine-truth A is the
+# normative displayed value per that convention), plain PASS, on both
+# contact legs.
+#
+# R DISPOSITION — split by leg, two different established idioms:
+# - WHIFF: measured R=16 vs oracle 17 (off by exactly one), REP-STABLE
+#   across two independent isolated measurements at dist:close with
+#   different guard settings (run-probe10 `dummy:stand`=16, run-probe11
+#   `dummy:none`=16 — same value both times, ruling out guard-state noise).
+#   S/A are BOTH oracle-exact on this same leg (S=24, A=3), so this is not
+#   a wrong-move/wrong-window read. box_runs=0/busyr=-1 (no att_box path —
+#   Ruling 2's busyr-agreement carve-out does not apply here, nothing to
+#   corroborate against). Per the akuma-sa2 idiom (assert the ORACLE value
+#   with a dated xfail note when the divergence is rep-stable against a
+#   live numeric oracle): `R: from-qjson` + `xfail`, dated 2026-07-13,
+#   UNCLASSIFIED — a new one-off, not matching any existing §12.2.4 row
+#   (checked: not SA-WHIFF-A shape, not the legacy-R-surplus systemic shape
+#   which is contact-leg-only by definition).
+# - HIT/unblockable-probe: R DE-ASSERTED, same BUFFER-1 (2026-07-13) basis
+#   as corpus-alex-sa1.yaml's Hyper Bomb legs — alex.json publishes no
+#   Block_advantage/Hit_advantage for this row (both "-"), the post-capture
+#   span is ended_by_partner_release with no arcade oracle to compare
+#   against (§13.10, reopened by the FD_CAPTURE_LEN 72->256 raise).
+#   Measured R=72 on both legs (raw_sat=0, T=98 — genuinely unsaturated),
+#   recorded for the record, not asserted.
+#
+# Admissibility census (per-entry, mechanical, from FRAME_TRACE columns —
+# authoring-policy.md Ruling 2), ISOLATED single-entry probes this session
+# (<sp>/sa-alex/run-probe10-sa3-iso-block, run-probe11-sa3-iso-hit,
+# run-probe12-sa3-iso-far-block, run-probe9-sa3-iso-whiff — the SAME
+# setup/input/outcome triples shipped below, each re-verified standalone
+# after the combined-run ordering trap above):
+# (1) Single-FINAL integrity: exactly one MOVE_START/FINAL pair in each
+#     isolated probe's own window (grep census this session).
+# (2) Flash-overlap census: 0 nonzero-sastop ticks in [MOVE_START F, FINAL
+#     F] on every probe (mechanical awk census this session) — flash-free.
+# (3) Contact-A juggle check: see A DISPOSITION above.
+# (4) Shape record: WHIFF box_runs=0/box_a=0/busyr=-1; HIT/unblockable-
+#     probe box_runs=0/box_a=0/busyr=-1 both (the grab's own capture path
+#     doesn't route through the att_box tensor at all, same shape as
+#     corpus-alex-sa1.yaml's Hyper Bomb).
+character: alex
+oracle: alex.json
+super_art: 2
+sa_gauge: 3
+inter_entry_wait: 500
+entries:
+
+# ORDER NOTE (see the SECOND ordering trap in the header above): the
+# far-range unblockable-probe HIT is deliberately FIRST, the close-range
+# whiff SECOND (as a residue-breaking bridge), and the far-range hit THIRD
+# — verified as a unit (<sp>/sa-alex/run-probe13-reorder/trace.log, 3/3
+# PASS). Do not reorder without re-checking MOVE_START's own achieved
+# `dist` against the requested value.
+
+- label: alex-sa3-unblockable-probe
+  setup: { dist: 250, dummy: stand }
+  input: "motion 2qcf HP; wait 150"
+  qjson: { name: "Stun Gun Headbutt" }
+  outcome: HIT
+  # dist:250 is well within this leaping grab's far-range connecting
+  # window (confirmed reachable up to the harness's own ~302-310px
+  # centered ceiling, see header). Measured S=24 A=2(§13.13, oracle 3)
+  # R=72(NOT asserted, see R DISPOSITION above) adv=+209 kd=1 (raw_sat=0,
+  # T=98). S oracle-exact; A per §13.13 contact-A-undercount disposition.
+  # `dummy: stand` guard has zero effect (byte-identical to the `dummy:
+  # none` hit leg below) — confirms unblockable command grab.
+  expect: { S: from-qjson, A: 2, kd: 1 }
+
+- label: alex-sa3-whiff
+  setup: { dist: close, dummy: none }
+  input: "motion 2qcf HP"
+  qjson: { name: "Stun Gun Headbutt" }
+  outcome: WHIFF
+  # Measured S=24 A=3 R=16 (box_runs=0, T=44) — S/A oracle-exact; R is the
+  # UNCLASSIFIED off-by-one xfail per the R DISPOSITION note above (dated
+  # 2026-07-13; measured 16 vs oracle 17, rep-stable across two isolated
+  # probes with different guard settings). NOTE: this move WHIFFS at CLOSE
+  # range and HITS at FAR range (a genuine leaping-grab shape, see the
+  # CORRECTED FINDING header above) — do not "fix" this ordering by
+  # swapping distances without re-reading that section. Also serves as the
+  # residue-breaking bridge between the two far-range HIT legs (see ORDER
+  # NOTE above) — a clean whiff leaves no knockdown residue.
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, xfail: "[HONEST-FLOOR CENSUS 2026-07-14, opus-substitute / WANTS FABLE RE-REVIEW] TERMINAL CLASS = TERMINAL-NON-SURGICAL (R off-by-1, no gating signal). No hardware value beyond oracle exists; S=24/A=3 are oracle-exact so it is not a wrong-move read. NON-SURGICAL: box_runs=0/busyr=-1 (no att_box to corroborate), no census signal isolates this row, and nothing corroborates 17 over 16 except the oracle itself - a blind -1 has no support and regresses. Golden stays oracle=17, XFAIL. Prior disposition (unchanged): 2026-07-13: measured R=16 vs oracle 17 (off by one), rep-stable across two independent isolated probes at dist:close with different guard settings (dummy:stand and dummy:none, both R=16). S=24/A=3 both oracle-exact on this same leg, ruling out a wrong-move/wrong-window read. box_runs=0/busyr=-1 (no att_box path, nothing to corroborate against). UNCLASSIFIED, does not match SA-WHIFF-A (which requires the SAME -1 magnitude on an A field, not R) or the legacy-R-surplus systemic shape (contact-leg-only by definition — this is a WHIFF leg). Flagged for follow-up." }
+
+- label: alex-sa3-hit
+  setup: { dist: 250, dummy: none }
+  input: "motion 2qcf HP; wait 150"
+  qjson: { name: "Stun Gun Headbutt" }
+  outcome: HIT
+  # Measured S=24 A=2(§13.13, oracle 3) R=72(NOT asserted, same basis as
+  # the unblockable-probe above) adv=+169..+209 kd=1 (achieved MOVE_START
+  # dist drifts a little after the preceding whiff bridge, e.g. 217-249px
+  # observed across reps — always within the connecting window, never
+  # affecting any asserted field since adv/R aren't asserted here) —
+  # byte-identical S/A to the unblockable-probe entry, confirming
+  # rep-stability regardless of guard state.
+  expect: { S: from-qjson, A: 2, kd: 1 }

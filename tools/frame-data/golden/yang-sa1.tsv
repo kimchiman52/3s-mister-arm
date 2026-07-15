@@ -1,0 +1,4 @@
+label	verdict	outcome	n	S	A	R	adv	kd
+yang-sa1-whiff	PASS	WHIFF	1	6	4	36	+0	0
+yang-sa1-block	PASS	BLOCK	1	6	2	36	+1	0
+yang-sa1-hit	PASS	HIT	1	6	13	37	+64	1

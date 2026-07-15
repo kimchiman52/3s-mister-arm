@@ -1,0 +1,161 @@
+# Chun-Li Super Art 3 (Tensei Ranka) — EX/Supers program, supers wave S1
+# (authoring-policy.md Ruling 5 fan-out, following the chunli-sa2/ken-sa3/
+# ryu-sa1 pilot trio). Satellite corpus (auto-discovered by run-suite.sh's
+# corpus-*.yaml glob, own golden/chunli-sa3.tsv once registered) — the main
+# corpus-chunli.yaml/corpus-chunli-ex.yaml and the sibling corpus-chunli-
+# sa1.yaml/corpus-chunli-sa2.yaml are untouched.
+#
+# Scope: step0-universe.tsv row 23 (chunli SA3, "Tensei Ranka", sa_slot 3).
+# Oracle: docs/arcade-frame-data/chunli.json (md5 f2237f518c4d915ba454a2fe475aa342,
+# same file corpus-chunli.yaml/corpus-chunli-ex.yaml/corpus-chunli-sa1.yaml/
+# corpus-chunli-sa2.yaml already pin, re-verified unchanged this session).
+# Oracle row: Startup=2, Hit=16, Recovery=46, Block_advantage=-30,
+# Hit_advantage="-" (non-numeric).
+#
+# Meter: sa_gauge:3 (MAXIMUM) + super_art:2 (0-indexed SA3 — this program's
+# own index scheme, see corpus-chunli-sa1.yaml's header for the cross-move
+# confirmation: super_art:0/1/2 land S=0/S=2(SA2)/S=2(SA3) oracle-exact
+# respectively across the three siblings).
+#
+# Motion (identity confirmed on the FIRST probe this session, no button
+# sweep needed — matches the sibling pilot pattern exactly): "motion 2qcf
+# HK", the same button Ken SA3/Chun SA2 both used (<sp>/sa-chunli/
+# run-probe1-sa3/trace.log). S=2 on all three legs, oracle-exact.
+#
+# Admissibility census (per-entry, mechanical, from FRAME_TRACE columns —
+# authoring-policy.md Ruling 2), this session's own isolated 3-entry probe
+# run (<sp>/sa-chunli/run-probe1-sa3/trace.log, inter_entry_wait:500):
+# (1) Single-FINAL integrity — exactly one FINAL inside each entry's own
+# window (BLOCK F51-143; HIT F195-334; WHIFF F386-462), each FINAL's own
+# move_start_F matches its entry's MOVE_START annotation frame, no bleed.
+# (2) Flash-overlap census: 0 nonzero-sastop ticks in [MOVE_START F, FINAL
+# F] on all three legs (0/93 BLOCK, 0/140 HIT, 0/77 WHIFF — awk census this
+# session) — flash-free measurement on every leg.
+# (3) Contact-A juggle check (HIT legs only): HIT-leg A=16 vs BLOCK-leg
+# A=16 — PASSES (identical) — HIT-leg A is admissible, same instrument as
+# BLOCK.
+# (4) Shape record: box_runs=6 (BLOCK), 1 (HIT), 7 (WHIFF) — a genuinely
+# MULTI-RUN move on the BLOCK/WHIFF legs (Ruling 3 applies) but a clean
+# SINGLE run on the HIT leg specifically — Tensei Ranka is a rekka-style
+# multi-swing super whose later swings keep generating fresh box-active
+# runs when the earlier ones are blocked or whiff outright, but which
+# collapse into one continuous run once the first swing actually connects
+# (the target is carried through the rest of the combo without a fresh
+# box-active edge per swing). box_a=16 on all three legs (diagnostic only);
+# busyr=62 (BLOCK), 62 (HIT), 46 (WHIFF) — see R DISPOSITION below.
+#
+# S DISPOSITION: S=2 on all three legs, oracle-exact (Startup=2).
+# Assertable everywhere per Ruling 3's lever-independent E-3 rule.
+#
+# A DISPOSITION: A=16 on all three legs, oracle-exact (Hit=16) — a genuinely
+# clean field, matching on BLOCK (the validated legacy instrument, Ruling 2)
+# AND independently passing the HIT-leg juggle check AND matching on WHIFF
+# too (Phase 4's expectation that "WHIFF S/A/R matches the oracle exactly
+# for nearly every move"). Plain PASS, no xfail needed.
+#
+# adv DISPOSITION: BLOCK adv=-30, oracle Block_advantage=-30 EXACT. Plain
+# PASS. No expect.adv on HIT (chunli.json's Hit_advantage for this row is
+# the literal string "-") or WHIFF (no oracle whiff-advantage field exists,
+# from-qjson would raise CompileError on WHIFF outcome).
+#
+# R DISPOSITION (per-leg, two DIFFERENT divergence shapes on the same
+# move — T=72=FD_METER_LEN saturated identically on all three legs, but
+# busyr only corroborates oracle on ONE of them):
+# - WHIFF: legacy R=42 vs oracle Recovery=46 (-4, truncated), busyr=46 =
+#   oracle EXACTLY. This is the clean, established M1 raw-capture-
+#   saturation signature (same as Ken SA3/Dudley MGB (EX)/Chun SA2/this
+#   program's own Chun SA1 sibling corpus) — OMITTED, cited as M1 (a
+#   further, fifth-move confirmation of the same named mechanism; see
+#   docs/frame-data-synthesis.md's own "M1 register — class growth" note).
+# - BLOCK and HIT: legacy R=48 on BOTH legs vs oracle 46 (+2, a SURPLUS,
+#   not a truncation — the opposite direction from M1), busyr=62 on BOTH
+#   (disagreeing with oracle by a wide margin, NOT corroborating an M1
+#   reading the way it does on the WHIFF leg). Despite the different
+#   box_runs shape per leg (BLOCK=6 multi-run, HIT=1 single-run), both
+#   read the identical +2 legacy surplus and the identical busyr=62 — a
+#   real, move-level property (Chun-Li's own recovery animation appears to
+#   run a fixed ~62-tick tail regardless of whether the first swing
+#   connects or is blocked), not an M1 truncation and not a value this
+#   session confirmed against any established CORPUS-AUTHORING.md Phase 6
+#   bucket (checked against bucket 7's R-surplus direction: that bucket
+#   requires a recorded same-tick recovery skip/branch signature in the
+#   move's own trace, which was NOT taken this session — no per-tick
+#   ledger trace, out of this batch's scope). UNCLASSIFIED, flagged
+#   2026-07-13 for follow-up classification (a new docs/frame-data-
+#   synthesis.md §12.2.4 registry row) — OMITTED on both legs per the
+#   established "omit rather than guess" idiom, not force-cited as M1
+#   (the busyr-disagreement here is the decisive fact ruling M1 out; this
+#   is a DIFFERENT, second R-divergence shape newly observed on this same
+#   move). Only 2 members of this new shape (BLOCK+HIT) — below the
+#   authoring-policy.md "≥3 same-shaped quarantines ⇒ STOP" threshold.
+#
+# WHIFF FINDING (program-significant): this is a GENUINE super WHIFF,
+# reached on the very first max-distance probe (dist:300 dist_mode:centered,
+# 10px inside CENTERED_DIST_MAX=310) — the SECOND genuine super WHIFF found
+# this session (see the sibling corpus-chunli-sa1.yaml's own WHIFF FINDING),
+# and notable because Tensei Ranka is an ADVANCING rekka-style super, the
+# exact class authoring-policy.md Ruling 1 predicted would "mostly land in
+# the WHIFF-UNREACHABLE bucket" (like Chun SA2/Ken SA3 both did). MOVE_START's
+# own annotation reads dist=297 (barely reduced from the requested 300) —
+# this move's own pre-MOVE_START walk-in consumes only ~3px of the requested
+# separation, FAR less than Chun SA2's own +198px or Ken SA3's own +42px
+# walk-in (both measured under the same centered placement). This confirms
+# Tensei Ranka does NOT walk forward materially before MOVE_START despite
+# being a "2qcf" input identical in shape to Chun SA2's own qcf-ending
+# motion — the walk-in figure really is a per-move property (as authoring-
+# policy.md's own §"Whiff-reachability updates" section argued), not a
+# function of the input motion's own shape. This resolves authoring-
+# policy.md Ruling 4 item 2 ("One genuine super WHIFF ground truth") for
+# THIS move too (a second, independent confirmation this session — see the
+# sibling SA1 corpus for the first). No further binary search attempted:
+# a clean WHIFF on the first max-distance try is sufficient confirmation.
+character: chunli
+oracle: chunli.json
+super_art: 2
+sa_gauge: 3
+inter_entry_wait: 500
+entries:
+
+- label: chunli-sa3-block
+  setup: { dist: close, dummy: stand }
+  input: "motion 2qcf HK"
+  qjson: { name: "Tensei Ranka" }
+  outcome: BLOCK
+  # Measured S=2 A=16 R=48(NOT asserted, see R DISPOSITION above) adv=-30
+  # (box_runs=6, box_a=16, busyr=62, T=72). S/A/adv all oracle-exact.
+  # BUFFER-1 (2026-07-13): this leg is the non-M1 "R-surplus" shape (busyr
+  # never corroborated oracle here), NOT part of the M1 fix. Post-raise
+  # measured value: R=52 (was 48) — still not asserted, still UNCLASSIFIED,
+  # new value recorded here per the plan's "post-raise measured value" note.
+  expect: { S: from-qjson, A: from-qjson, adv: from-qjson }
+
+- label: chunli-sa3-hit
+  setup: { dist: close, dummy: none }
+  input: "motion 2qcf HK"
+  qjson: { name: "Tensei Ranka" }
+  outcome: HIT
+  # Measured S=2 A=16 R=48(NOT asserted, see R DISPOSITION above) (box_runs=1
+  # - a clean single run despite the BLOCK leg's own multi-run shape,
+  # box_a=16, busyr=62, kd=1, T=72). S/A both oracle-exact (juggle check
+  # PASSES: HIT A=16==BLOCK A=16). No expect.adv: chunli.json's
+  # Hit_advantage for this row is the literal string "-".
+  # BUFFER-1 (2026-07-13): non-M1 "R-surplus" shape (same as BLOCK above).
+  # Post-raise measured value: R=52 (was 48) — still not asserted.
+  expect: { S: from-qjson, A: from-qjson }
+
+- label: chunli-sa3-whiff
+  setup: { dist: 300, dist_mode: centered, dummy: none }
+  input: "motion 2qcf HK"
+  qjson: { name: "Tensei Ranka" }
+  outcome: WHIFF
+  # GENUINE WHIFF (see WHIFF FINDING above) - MOVE_START dist=297 (almost no
+  # walk-in consumed from the requested 300). Measured S=2 A=16
+  # R=42(NOT asserted, see R DISPOSITION above - busyr=46=oracle exactly on
+  # this leg, the clean M1 signature) (box_runs=7, box_a=16, busyr=46,
+  # T=72). S/A both oracle-exact. No expect.adv: WHIFF has no oracle
+  # whiff-advantage field (from-qjson would raise CompileError on WHIFF
+  # outcome). BUFFER-1 (2026-07-13): R now asserted from-qjson — capture
+  # raise un-truncates; post-fix measured R=46 == busyr == oracle exactly
+  # (this leg IS the M1 member; BLOCK/HIT above are the separate,
+  # non-M1 R-surplus shape, unaffected/unconverted by this fix).
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
