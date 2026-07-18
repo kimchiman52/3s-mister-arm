@@ -81,6 +81,19 @@
 # omitted or silently asserted at the wrong measured value — flagged here
 # for orchestrator/user follow-up classification.
 #
+# ***RESOLVED 2026-07-17 (lever V, ENGINE-SLOT0).*** The follow-up
+# classification landed: the -1 was an ENGINE slot-0-latch artifact, not
+# the twelve-sa1 published-table convention split it was grouped under.
+# proj_spawn_raw=0 across the whole population means the projectile spawns
+# ON the MOVE_START frame, so the pre-append slot-0 latch set proj_spawn_slot
+# =0 one convention-frame below the post-append consume every other
+# proj-split super uses (twelve-sa1 reads proj_spawn_raw=3 there — a genuine
+# table-convention split, a different mechanism). Lever V harmonizes the two
+# latch sites display-only (S shows the post-append slot 1; R keeps the raw
+# proj_s anchor, so no recovery cell moves and urien-sa2 R=91 is untouched).
+# All 4 legs now PASS at oracle Startup=1 — oracle-true (cap3 tape
+# strictly-before spawn = 1). The xfail notes below are retired.
+#
 # A/R NOTE: remy.json's Hit field is the literal string "-" and Recovery
 # is the literal string "N/A" for this row — both non-numeric, so
 # from-qjson would raise CompileError on either (same reasoning as every
@@ -129,11 +142,9 @@
 # hitbox via fd_engine_proj_active_count, Remy's own body att_box tensor
 # stays empty throughout, matching the established proj-split shape.
 #
-# SECTION ACCOUNTING (Phase 7): 4/4 entries carry the S xfail above
-# (100% xfail) — crosses the >50%-of-section threshold. Flagged here for
-# orchestrator/user review per the established >50%-section-accounting
-# convention (corpus-hugo.yaml/corpus-remy.yaml precedent) — NOT
-# self-granted by this implementing agent.
+# SECTION ACCOUNTING (Phase 7): 0/4 entries carry an S xfail as of the
+# 2026-07-17 lever-V resolution (was 4/4). All 4 legs now PASS at oracle
+# Startup=1.
 character: remy
 oracle: remy.json
 super_art: 0
@@ -148,11 +159,20 @@ entries:
   outcome: BLOCK
   # Measured S=0 A=20 R=66 adv=+3 (proj=1, proj_a=20, box_runs=0). adv is
   # EXACT (remy.json Block_advantage=3) — the identity-confirming field.
-  # S is the NEW single-member finding above (measured 0 vs oracle 1,
-  # rep-stable across every leg/distance tried, no established bucket
-  # match) — asserted at the oracle value per the rep-stable/live-oracle
-  # idiom, xfail'd rather than silently omitted or wrongly asserted.
-  expect: { S: from-qjson, adv: from-qjson, xfail: "[HONEST-FLOOR CENSUS 2026-07-14, opus-substitute / WANTS FABLE RE-REVIEW] TERMINAL CLASS = CAPABILITY-GATED-remaining (proj-split S; ORACLE-TABLE-INTERNAL-INCONSISTENCY). CAP-3 sees the Light of Justice projectile box (CAPTURE.md CAP-3 session; cap3/phase2-report.md). NON-SURGICAL: the spawn lands on the MOVE_START frame so the pre-append slot-0 latch reads engine 0 vs strictly-before 1 (proj-split/fit.md 1); the narrow slot-0->post-append fix regresses urien-sa2 R (90 vs oracle 91) - same published-table convention split as twelve-sa1, no engine discriminant. Golden stays oracle=1, XFAIL. Prior disposition (unchanged): NEW single-member S finding (2026-07-13): measured S=0 on every leg/distance tried vs remy.json Startup=1 (a reproducible, distance-invariant 1-tick gap, traced to proj_spawn_raw=0 identically across the whole population — see file header S FINDING). Only 1 sighting this session, not systemic. adv=+3 is the oracle-exact identity-confirming field, unaffected." }
+  # S RESOLVED 2026-07-17 by lever V (ENGINE-SLOT0, frame_data_overlay.c):
+  # the -1 was an ENGINE artifact, NOT a published-table convention split.
+  # Remy's projectile spawns ON the MOVE_START frame, so the pre-append
+  # slot-0 latch (frame_data_overlay.c MOVE_START block) set proj_spawn_slot
+  # =0 BEFORE that tick's raw[] append, one convention-frame below the
+  # post-append consume every other proj-split super uses. This differs from
+  # twelve-sa1 (proj_spawn_raw=3, post-append, a genuine oracle-table
+  # convention split): remy fires the slot-0 latch (proj_spawn_raw=0). Lever
+  # V harmonizes the two latch sites display-only (S shows the post-append
+  # slot 1; R keeps the raw proj_s anchor untouched). Oracle-true: remy.json
+  # Startup=1, and the cap3 tape (remy-sa1-hit-r1.log) shows the projectile
+  # pool-valid on the 2nd post-flash frame (fc276572, MOVE_START fc276571),
+  # i.e. strictly-before = 1. adv=+3 is the oracle-exact identity field.
+  expect: { S: from-qjson, adv: from-qjson }
 
 - label: remy-sa1-hit-close
   setup: { dist: close, dummy: none }
@@ -163,7 +183,9 @@ entries:
   # as remy-sa1-block above. No expect.A/expect.R (non-numeric oracle
   # fields, see file header A/R NOTE); no expect.adv (remy.json's
   # Hit_advantage is also non-numeric "-" for this row).
-  expect: { S: from-qjson, xfail: "[HONEST-FLOOR CENSUS 2026-07-14, opus-substitute / WANTS FABLE RE-REVIEW] TERMINAL CLASS = CAPABILITY-GATED-remaining (proj-split S; ORACLE-TABLE-INTERNAL-INCONSISTENCY). See remy-sa1-block: CAP-3 sees the projectile box; the -1 is the slot-0-latch/published-convention split, non-surgical. Golden stays oracle=1, XFAIL. Prior disposition (unchanged): Same S finding as remy-sa1-block (measured S=0 vs oracle 1) — see file header S FINDING." }
+  # S RESOLVED 2026-07-17 by lever V (slot-0 latch harmonization) — see
+  # remy-sa1-block. Now PASSES at oracle Startup=1.
+  expect: { S: from-qjson }
 
 - label: remy-sa1-hit-mid
   setup: { dist: 150, dummy: none }
@@ -175,7 +197,9 @@ entries:
   # A=20 — see file header TRAVEL-DISTANCE-DEPENDENT A FINDING (diagnostic
   # only, A is never oracle-comparable for this row either way). Same S
   # finding as remy-sa1-block.
-  expect: { S: from-qjson, xfail: "[HONEST-FLOOR CENSUS 2026-07-14, opus-substitute / WANTS FABLE RE-REVIEW] TERMINAL CLASS = CAPABILITY-GATED-remaining (proj-split S; ORACLE-TABLE-INTERNAL-INCONSISTENCY). See remy-sa1-block: CAP-3 sees the projectile box; the -1 is the slot-0-latch/published-convention split, non-surgical. Golden stays oracle=1, XFAIL. Prior disposition (unchanged): Same S finding as remy-sa1-block (measured S=0 vs oracle 1) — see file header S FINDING." }
+  # S RESOLVED 2026-07-17 by lever V (slot-0 latch harmonization) — see
+  # remy-sa1-block. Now PASSES at oracle Startup=1.
+  expect: { S: from-qjson }
 
 - label: remy-sa1-hit-far
   setup: { dist: 300, dist_mode: centered, dummy: none }
@@ -192,4 +216,6 @@ entries:
   # meaningful ground-range whiff exists for this move, matching Ryu SA1/
   # SA3's own already-decided disposition). Same S finding as
   # remy-sa1-block.
-  expect: { S: from-qjson, xfail: "[HONEST-FLOOR CENSUS 2026-07-14, opus-substitute / WANTS FABLE RE-REVIEW] TERMINAL CLASS = CAPABILITY-GATED-remaining (proj-split S; ORACLE-TABLE-INTERNAL-INCONSISTENCY). See remy-sa1-block: CAP-3 sees the projectile box; the -1 is the slot-0-latch/published-convention split, non-surgical. Golden stays oracle=1, XFAIL. Prior disposition (unchanged): Same S finding as remy-sa1-block (measured S=0 vs oracle 1) — see file header S FINDING." }
+  # S RESOLVED 2026-07-17 by lever V (slot-0 latch harmonization) — see
+  # remy-sa1-block. Now PASSES at oracle Startup=1.
+  expect: { S: from-qjson }

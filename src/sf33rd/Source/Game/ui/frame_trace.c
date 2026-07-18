@@ -61,6 +61,21 @@ static bool frame_trace_opt_in(void) {
     return cached != 0;
 }
 
+/* Separate opt-in for the projectile-spawn boundary probe
+ * (frame_spawn_probe_tick). Same env-gate idiom as frame_trace_opt_in()
+ * above, but a dedicated FD_SPAWN_PROBE var so the probe is completely
+ * inert in normal runs AND in the golden suite (which sets
+ * FRAME_TRACE_PATH but never FD_SPAWN_PROBE). Cached once; the harness
+ * sets the var before launch, so it can't change mid-run. */
+static bool frame_spawn_probe_opt_in(void) {
+    static int cached = -1;
+    if (cached < 0) {
+        const char* v = getenv("FD_SPAWN_PROBE");
+        cached = (v != NULL && v[0] != '\0') ? 1 : 0;
+    }
+    return cached != 0;
+}
+
 static FILE* g_fp = NULL;
 static bool g_open_attempted = false;
 static unsigned long g_local_frame = 0;
@@ -335,5 +350,51 @@ void frame_trace_annotate(const char* fmt, ...) {
     vfprintf(g_fp, fmt, ap);
     va_end(ap);
     fputc('\n', g_fp);
+    fflush(g_fp);
+}
+
+/* Freeze-boundary probe (fit.md §5): emit the engine's projectile-spawn
+ * flag alongside the super-freeze state, once per game frame, so the exact
+ * tick fd_engine_proj_spawned transitions 0->1 can be located relative to
+ * the super-flash window (during-flash vs MOVE_START/freeze-end tick).
+ *
+ * Sampling point (the whole reason this is a separate call site, not part
+ * of frame_trace_tick): main.c calls this AFTER njUserMain() — so
+ * effect_13_init() has already run and set the flag if a projectile
+ * spawned this tick — but BEFORE frame_data_overlay_tick(), which is the
+ * only code that clears fd_engine_proj_spawned (at its two consume sites).
+ * Reading pre-consume is essential: the overlay's consume sites are parked
+ * behind its own `sa_stop_check() != 0` early-return during the flash (so
+ * they don't clear it then), but on the first non-frozen tick (MOVE_START)
+ * the overlay runs its full path and clears the flag before
+ * frame_trace_tick() would see it. Sampling here captures the raw
+ * engine-set state every tick, giving an unambiguous 0->1 transition
+ * frame regardless of which side of the freeze boundary the spawn lands on.
+ *
+ * `sastop` is sa_stop_check() — the exact predicate the overlay itself
+ * gates its freeze early-return on (frame_data_overlay.c) and that
+ * frame_trace_tick() already emits as its trailing column. sastop != 0
+ * means the super-flash freeze is active this tick; sastop == 0 is a
+ * non-frozen tick (a MOVE_START-eligible / freeze-end tick). GT=Game_timer
+ * is an absolute per-tick reference (the trace's local F counter only
+ * advances on emitted data rows).
+ *
+ * Fully env-gated (FD_SPAWN_PROBE) on top of the trace's own gates, so it
+ * is inert in normal play and in the golden suite. Observation only:
+ * touches no measured value, no display, no lever path. */
+void frame_spawn_probe_tick(void) {
+    if (!frame_spawn_probe_opt_in()) return;
+    if (!Is_Training_Mode(Mode_Type)) return;
+    if (!Disp_Frame_Data) return;  /* see frame_trace_tick() */
+    if (!frame_trace_opt_in()) return;
+    if (g_rows_written >= FRAME_TRACE_MAX_ROWS) return;
+    ensure_open();
+    if (g_fp == NULL) return;
+    fprintf(g_fp,
+            "# F=%lu GT=%u SPAWNPROBE spawned0=%u spawned1=%u sastop=%d\n",
+            g_local_frame, (unsigned)Game_timer,
+            (unsigned)fd_engine_proj_spawned[0],
+            (unsigned)fd_engine_proj_spawned[1],
+            (int)sa_stop_check());
     fflush(g_fp);
 }

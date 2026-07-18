@@ -8,6 +8,13 @@ extern "C" {
 
 void frame_trace_tick(void);
 
+/* Freeze-boundary probe (fit.md §5): emit the engine's projectile-spawn
+ * flag + super-freeze state once per game frame. Env-gated on
+ * FD_SPAWN_PROBE (inert without it, including in the golden suite). Must
+ * be called AFTER njUserMain() but BEFORE frame_data_overlay_tick() so it
+ * reads fd_engine_proj_spawned pre-consume — see the definition comment. */
+void frame_spawn_probe_tick(void);
+
 void FrameTrace_SetPerfTickNs(uint64_t ns);
 uint64_t FrameTrace_GetPerfTickNs(void);
 

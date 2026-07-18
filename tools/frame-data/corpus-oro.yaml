@@ -802,7 +802,13 @@ entries:
   input: "motion charge-down 60 then-up LP"
   qjson: { name: "Oniyama (Jab)" }
   outcome: BLOCK
-  expect: { S: from-qjson, A: from-qjson }
+  # adv ASSERTED 2026-07-17 (lever W, LANDING-CUT / §B4): the §13.5.1b
+  # landing cut backdates attacker_idle to cghi1_first_frame; re-anchoring
+  # adv off the attacker's natural r1(nonzero->0) edge (atk_r1_end, 13 ticks
+  # later on this move) gives def_idle - atk_r1_end = -34, oracle-exact
+  # (oro.json Oniyama (Jab) Block_advantage=-34). Was measured -21,
+  # unasserted; now oracle-exact and asserted from-qjson. Stays PASS.
+  expect: { S: from-qjson, A: from-qjson, adv: from-qjson }
 
 # FIELD-MASKED (ERRATA): R not asserted - same oracle-field-incomparability
 # as oro-oniyama-lp-whiff (oro.json Recovery=-29, ERRATA.md §2). Measured

@@ -558,7 +558,9 @@ entries:
 # corpus row before this payload. Native trace confirmation (this
 # program's own harness, <sp>/zero/uoh-fit/rundir-ken-hit/trace.log FINAL,
 # F=38): outcome=HIT S=15 A=8 R=5(legacy) T=29 busyr=6 hsab=0 uoh=1 koc=5,
-# 2 reps byte-identical - executed against the Step-1-instrumented binary,
+# 2 reps byte-identical - executed against the CONTACT-2-diagnostics
+# binary (pre-Step-1; this FINAL carries hsab/leverR_pred but no
+# hsib/leverT_pred, design §6),
 # no STOP (design §6). hsib=8/leverT_pred=6 (freeze-overlap count /
 # predicted busy-edge R) confirmed separately at <sp>/zero/uoh-fit/step1/
 # rundirs-scratch/ken-hit-r1/trace.log FINAL (r1=r2 byte-identical,

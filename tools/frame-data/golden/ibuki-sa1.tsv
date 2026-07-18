@@ -1,4 +1,4 @@
 label	verdict	outcome	n	S	A	R	adv	kd
 ibuki-sa1-whiff	PASS	WHIFF	1	2	87	0	+0	0
-ibuki-sa1-block	PASS	BLOCK	1	0	42	26	-14	0
-ibuki-sa1-hit	PASS	HIT	1	0	75	0	-20	0
+ibuki-sa1-block	PASS	BLOCK	1	1	42	26	-14	0
+ibuki-sa1-hit	PASS	HIT	1	1	75	0	-20	0

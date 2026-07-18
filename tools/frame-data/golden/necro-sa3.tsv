@@ -1,3 +1,3 @@
 label	verdict	outcome	n	S	A	R	adv	kd
 necro-sa3-hit	PASS	HIT	1	3	7	51	+81	1
-necro-sa3-block	PASS	BLOCK	1	0	7	51	-11	0
+necro-sa3-block	PASS	BLOCK	1	1	7	51	-11	0

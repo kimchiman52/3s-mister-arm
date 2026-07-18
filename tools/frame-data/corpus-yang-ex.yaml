@@ -151,10 +151,13 @@ entries:
   # (`fd_contact_busy_edge_r`, frame_data_overlay.c §13.19) measures this
   # contact leg at R=25 natively (busyr=25, oracle-exact), covered by the
   # rule on its own contact tape even though this move has no WHIFF
-  # sibling (design.md §5 item 2 / §3.4). The adv clause remains open
-  # (measured -20 vs oracle -26, attacker_idle re-anchoring out of scope)
-  # — row stays XFAIL on adv alone.
-  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson, xfail: "RECLASSIFIED 2026-07-14, TERMINAL-NON-SURGICAL (was 'attacker_idle re-anchoring out of scope') - <sp>/zero/adv/plan.md §3-4.1, opus-substitute / WANTS FABLE RE-REVIEW: same +6 idle-divergence family as yang-senkyuutai-lk-block (corpus-yang.yaml) - adv = defender_idle - attacker_idle is arcade-exact on 600/607 currently-asserting rows; this row and its base-move sibling are 2 of only 4 non-uniform-delta divergences (+6 here and on the base move; the other 2, akuma-sa3-block/chunli-sa1-block, are +1). The critical gate (any adv re-anchor candidate must offline-fit against EVERY currently-PASS adv row with zero regression) KILLS every candidate rule: adv:=-(R+1) or adv-=6 both regress 86 other currently-correct lever-R-firing rows; a flat adv-=1 regresses 600 rows. No census signal isolates this row from the 86 correct lever-R rows sharing its signal profile; per-move hardcoding is policy-forbidden. The busy edge (this move's own lever R) points the WRONG direction: R went to 25 via the busy edge (earlier than attacker_idle), but the oracle wants adv MORE negative (-26), requiring a LATER attacker anchor - refuted by direction. Deferred pending a new instrumented diagnostic (build task), out of this design's read-only scope. Golden unchanged; adv stays asserted at oracle=-26, measured=-20, XFAIL. R clause CLOSED 2026-07-13 (CONTACT-2, lever R): busy-edge R=25, oracle-exact, covered on this move's own contact tape (no WHIFF sibling). Prior history (RELOCATED not deleted): same +4 cut-committed R-overshoot family already registered for this character's own Senkyuutai (Short) BLOCK leg (corpus-yang.yaml yang-senkyuutai-lk-block, cut=1, anchor_a=8=engine_a=8) -- measured R=29 vs oracle 25 (+4), adv -20 vs oracle -26 as a downstream consequence; S/A oracle-exact (S=29, A=8)." }
+  # sibling (design.md §5 item 2 / §3.4). adv clause RESOLVED 2026-07-17
+  # (lever W, LANDING-CUT / §B4): the §13.5.1b landing cut backdates
+  # attacker_idle to cghi1_first_frame; re-anchoring adv off the attacker's
+  # natural r1(nonzero->0) edge (atk_r1_end, 6 ticks later) gives
+  # def_idle - atk_r1_end = -26, oracle-exact -- row now PASS, adv asserted
+  # from-qjson.
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
 
 # --- Tourou Zan (EX) (rekka punch, qcf-shape) -- also serves as the ordering
 # buffer between Senkyuutai (EX)'s BLOCK and HIT legs (see header's ORDERING

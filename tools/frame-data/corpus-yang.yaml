@@ -632,10 +632,12 @@ entries:
   # UNCLASSIFIED R-overshoot finding below is CLOSED — lever R's
   # busy-edge construction (`fd_contact_busy_edge_r`, frame_data_overlay.c
   # §13.19) measures this contact leg at R=34 natively, oracle-exact
-  # (was 38 vs arcade/oracle 34 under the legacy recovery_pf tally). The
-  # adv clause remains open (measured -29 vs arcade -35, an
-  # attacker_idle-downstream question, out of this design's scope) — row
-  # stays XFAIL on adv alone. Prior history, RELOCATED not deleted: "same
+  # (was 38 vs arcade/oracle 34 under the legacy recovery_pf tally). adv
+  # clause RESOLVED 2026-07-17 (lever W, LANDING-CUT / §B4): the §13.5.1b
+  # landing cut backdates attacker_idle to cghi1_first_frame; re-anchoring
+  # adv off the attacker's natural r1(nonzero->0) edge (atk_r1_end, 6 ticks
+  # later here) gives def_idle - atk_r1_end = -35, oracle-exact — row now
+  # PASS, adv asserted from-qjson. Prior history, RELOCATED not deleted: "same
   # NEW UNCLASSIFIED R-overshoot finding as yang-senkyuutai-lk-whiff
   # (flagged 2026-07-08): measured R=38 vs arcade 34, adv -29 vs arcade
   # -35 as a downstream consequence; trace cut=1, anchor_a=8 (matches
@@ -653,7 +655,7 @@ entries:
   # CAPTURE.md) - engine-side, tables confirmed right. Stays xfail.
   # RE-CITED 2026-07-11 (LAYER-1): same layer-RESOLVED (a) finding as
   # yang-senkyuutai-lk-whiff (docs/frame-data-synthesis.md Sec13.16)."
-  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson, xfail: "RECLASSIFIED 2026-07-14, TERMINAL-NON-SURGICAL (was 'attacker_idle re-anchoring out of scope') - <sp>/zero/adv/plan.md §3-4.1, opus-substitute / WANTS FABLE RE-REVIEW: adv = defender_idle - attacker_idle (frame_data_overlay.c:1243) is arcade-exact on 600/607 currently-asserting adv rows - this is one of only 4 rows with a non-uniform-delta divergence (+6, matching yang-exsenkyuutai-block; the other 2 are akuma-sa3-block/chunli-sa1-block at +1). The critical gate (any adv re-anchor candidate must offline-fit against EVERY currently-PASS adv row with zero regression) KILLS every candidate rule tried: adv:=-(R+1) or adv-=6 (both fix this row + its EX sibling but regress 86 other lever-R-firing rows that are currently correct); a flat adv-=1 (regresses 600 rows, the CONTACT-A failure shape). No census signal (koc, uoh, leverT, hsab, mR, hsib) distinguishes this row from the 86 correct lever-R rows sharing the same signal profile - isolating it would require per-move (n=1) hardcoding of the Senkyuutai family, which this program's policy forbids (ENGINE-5/6/7 precedent). The busy edge (lever R's own actionable proxy) points the WRONG direction for a fix: R went 38->34 via lever R (busy edge is EARLIER than attacker_idle), but the oracle wants adv to be MORE negative (-35), which would require the attacker anchor to be LATER, not earlier - refuted by direction, not just by regression count. Deferred, not abandoned: a fix needs a NEW instrumented diagnostic (a build task) that fires only on this move family and fit-proves zero regression across all 607 adv rows - out of this design's own read-only scope. Golden unchanged; adv stays asserted at oracle=-35, measured=-29, XFAIL. R clause CLOSED 2026-07-13 (CONTACT-2, lever R): busy-edge R=34, oracle-exact." }
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
 
 - label: yang-senkyuutai-lk-hit
   setup: { dist: close, dummy: none }

@@ -501,7 +501,7 @@ busy-edge construction, while Chun-Li's read 5 (matching neither computed
 value) — the one apparent "hardware sides with legacy" result and the
 one apparent genuine divergence in this whole program. The HIT legs, by
 contrast, cleanly matched the busy-edge construction on all 6
-(ryu/ken/oro/sean/q-samef +1 each over the same characters' own BLOCK
+(ryu/ken/oro/sean/q-samef +1 each over the same characters' own HIT
 legacy value; chunli-hit 4, already valid).
 
 **DATED CORRECTION (2026-07-13, UOH-CLOSURE §2.2, `docs/
@@ -732,15 +732,42 @@ Char-force override reused from Session 12 (P2 select-id `0x02011388` while
 state<5): Twelve=19, Remy=20, Ibuki=7, Urien=13; in-match SA-slot readback
 `0x0201138C` (0=SA1/1=SA2/2=SA3). CPS3 char enum: `src/constants.h:12-34`.
 
-**Phase-2 findings (all hardware-backed, all stay XFAIL asserting the
-oracle):** twelve-sa1 S and remy-sa1 S are the projectile-Startup **−1**, an
-oracle-table convention split (strictly-before vs spawn-slot) with no
-engine-visible discriminant (ryu-sa1 engine S=3 PASS ≡ twelve-sa1 engine S=3
-XFAIL, byte-identical); ibuki-sa3 R **+2** vs sean-sa1 R **−2** (opposite
-signs, no uniform proj-R offset); urien-sa2 beam-A: **arcade attacker T is
-FLAT 144 over 6× spacing** (refuting the engine's 11→83 distance-scaling),
-the projectile box-active window is travel-dependent 34/85/105 (close/mid/far),
-and the oracle is internally over-budget (S+R=92 > T=91). These are documented
+**Phase-2 findings (all hardware-backed):** the projectile-Startup **−1** has
+TWO distinct proximate causes, NOT one convention split (corrected 2026-07-17,
+lever V):
+- **twelve-sa1 S** is the genuine oracle-table convention split
+  (strictly-before vs spawn-slot) — `proj_spawn_raw=3` (post-append consume),
+  `ryu-sa1` engine S=3 PASS ≡ `twelve-sa1` engine S=3 XFAIL, byte-identical, no
+  engine-visible discriminant. STAYS XFAIL (oracle 4, engine 3).
+- **remy-sa1 S** (and urien-sa2 S) is an ENGINE slot-0-latch artifact, not a
+  table split: `proj_spawn_raw=0` means the projectile spawns ON the MOVE_START
+  frame, so the pre-append slot-0 latch set S one convention-frame below the
+  post-append consume every other proj super uses. **RESOLVED by lever V**
+  (display-only slot-0→post-append harmonization; R keeps the raw proj_s
+  anchor): remy-sa1 ×4 flip XFAIL→PASS at oracle Startup=1 — remy is
+  tape-anchored (the cap3 tape's strictly-before spawn = 1 == oracle Startup).
+  urien-sa2 S now displays oracle 1 with R=91 intact, but this is
+  oracle-AGREEMENT only, NOT tape-anchored: urien's CAP-3 tapes show the spawn
+  pool-valid on the 3rd post-flash frame (strictly-before = 2), so displayed
+  S=1 matches the oracle but not urien's own tape-derived count. **The earlier
+  "oracle S+R=92 > T=91, internally over-budget / self-contradictory" claim is
+  REFUTED** (digest finding #1, `<sp>/zero-b/b5-window-rederive.txt`): the 91 is
+  the ENGINE meter window, not an oracle quantity; the arcade post-flash busy
+  window is **94 frames** (flash 256432–256482, busy768 at 256577), and
+  strictly-between(spawn 256485, busy768) = 91 = oracle R exactly, leaving 2
+  pre-spawn frames so oracle S=1 + R=91 are jointly satisfiable on the arcade
+  94-frame timeline. The residual is CROSS-LAYER (the engine's single-slot
+  `R = meter_len − proj_s` model cannot place S and R independently) plus an
+  **OPEN** engine-measurement item: the engine meter window (91) is 3 frames
+  short of the arcade busy window (94) — a possible future RE-ANCHOR/lever-N
+  meter re-anchor path, NOT resolved. The row stays XFAIL on its A divergence,
+  so no wrong value ships either way.
+
+Other Phase-2 findings (unchanged, stay XFAIL asserting oracle): ibuki-sa3 R
+**+2** vs sean-sa1 R **−2** (opposite signs, no uniform proj-R offset);
+urien-sa2 beam-A: **arcade attacker T is FLAT 144 over 6× spacing** (refuting
+the engine's 11→83 distance-scaling), the projectile box-active window is
+travel-dependent 34/85/105 (close/mid/far). These are documented
 divergences, not blocked capability — see §13.16 and `proj-split/fit.md`. Rig
 files (helpers3.lua, pjderive.py, raw tapes, screenshots) preserved in
 `<sp>/zero/cap3/` (scratchpad-only, not committed).

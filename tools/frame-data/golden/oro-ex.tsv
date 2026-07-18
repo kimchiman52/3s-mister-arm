@@ -1,7 +1,7 @@
 label	verdict	outcome	n	S	A	R	adv	kd
 oro-exoniyama-whiff	PASS	WHIFF	1	5	25	43	+0	0
-oro-exoniyama-block	PASS	BLOCK	1	5	25	43	-47	0
-oro-exoniyama-hit	PASS	HIT	1	5	25	43	+52	1
+oro-exoniyama-block	PASS	BLOCK	1	5	25	43	-60	0
+oro-exoniyama-hit	PASS	HIT	1	5	25	43	+39	1
 oro-exsundisklow-whiff	PASS	WHIFF	1	15	29	27	+0	0
 oro-exsundisklow-block	PASS	BLOCK	1	15	26	2	+21	0
 oro-exsundisklow-hit	PASS	HIT	1	15	26	2	+22	0

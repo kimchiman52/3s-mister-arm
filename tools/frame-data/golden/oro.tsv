@@ -45,8 +45,8 @@ oro-nichirin-lp-hit	PASS	HIT	1	15	12	27	+4	0
 oro-nichirin-mp-whiff	PASS	WHIFF	1	15	27	25	+0	0
 oro-nichirin-hp-whiff	PASS	WHIFF	1	13	25	23	+0	0
 oro-oniyama-lp-whiff	PASS	WHIFF	1	6	10	29	+0	0
-oro-oniyama-lp-block	PASS	BLOCK	1	6	10	29	-21	0
-oro-oniyama-lp-hit	PASS	HIT	1	6	10	29	+75	1
+oro-oniyama-lp-block	PASS	BLOCK	1	6	10	29	-34	0
+oro-oniyama-lp-hit	PASS	HIT	1	6	10	29	+62	1
 oro-jinchu-lk-whiff	PASS	WHIFF	1	27	6	19	+0	0
 oro-jinchu-lk-block	XFAIL	BLOCK	1	27	6	0	+16	0
 oro-jinchu-lk-hit	PASS	HIT	1	27	6	33	+98	1

@@ -104,13 +104,19 @@
 # proj-split-filed activation-settle, the identical 9-frame post-flash
 # r1=4 cast animation Yun's own install files as S=9 (an EXACT oracle
 # Startup match) — it equals urien.json's own Startup "(9/9/9)"
-# parenthetical component exactly, not Recovery=12 (the placed reflector's
-# own out-of-scope recovery, same class as the already-OMITTED
-# Block_advantage=65 and the literal "-" Hit field above). Per the Oro SA3
-# Tengu Stones proj-split precedent (corpus-oro-sa3.yaml's own
-# oro-sa3-activation: harness-R carries the oracle activation figure on
-# this branch shape, so the row asserts NOTHING and PASSes), this entry now
-# ships `expect: {}` — OMIT, matching oro-sa3 exactly. Zero-risk: removing
+# parenthetical component exactly, not Recovery=12 (an out-of-scope
+# quantity — neither the cast settle (9) nor the actionable-return (~65);
+# its precise referent is not identified by any trace or capture — same
+# class as the already-OMITTED Block_advantage=65 and the literal "-" Hit
+# field above). Per the Oro SA3 Tengu Stones proj-split precedent
+# (corpus-oro-sa3.yaml's own oro-sa3-activation established the OMIT
+# disposition for this branch shape; its own harness-R/oracle-activation
+# field-correspondence is labeled HYPOTHESIS, UNCONFIRMED there and asserts
+# NOTHING), this entry now ships `expect: {}` — OMIT, matching oro-sa3's
+# disposition. The harness-R == oracle-activation correspondence is proven
+# independently for urien (adjudication.md §1: the trace-verified identity
+# between Urien's R=9 cast settle and Yun's exact-match S=9 settle on the
+# shared finalize path), not carried over from oro's unconfirmed hypothesis. Zero-risk: removing
 # an assertion cannot regress any other row, no engine change, no
 # fabricated re-pin. (Real arcade actionable-return is ~65,
 # session-6/7 — a THIRD quantity, deliberately NOT adopted; see
@@ -182,12 +188,15 @@ entries:
   # R=9 exactly matches urien.json's own Startup "(9/9/9)" parenthetical
   # (the identical 9-frame post-flash r1=4 cast settle Yun's install files
   # as an exact-match S=9) — NOT oracle Recovery=12, a categorically
-  # different out-of-scope quantity (the placed reflector's own recovery,
-  # same class as the already-not-asserted Block_advantage=65/Hit="-"
-  # above). Per the Oro SA3 Tengu Stones proj-split precedent
-  # (corpus-oro-sa3.yaml oro-sa3-activation: harness-R carries the oracle
-  # activation figure on this branch shape, ships no assertion, PASSes),
-  # this row now OMITS the R assertion entirely — flips XFAIL to PASS,
+  # different out-of-scope quantity (neither the cast settle (9) nor the
+  # actionable-return (~65); its precise referent is not identified by any
+  # trace or capture — same class as the already-not-asserted
+  # Block_advantage=65/Hit="-" above). Per the Oro SA3 Tengu Stones
+  # proj-split precedent (corpus-oro-sa3.yaml oro-sa3-activation established
+  # the OMIT disposition for this branch shape; its own harness-R/oracle
+  # correspondence is labeled HYPOTHESIS, UNCONFIRMED and asserts nothing —
+  # the correspondence is proven independently for urien in adjudication.md
+  # §1), this row now OMITS the R assertion entirely — flips XFAIL to PASS,
   # zero risk (removing an assertion cannot regress any other row; no
   # engine change; no fabricated re-pin). Real arcade actionable-return is
   # ~65 (session-6/7) — a THIRD quantity, deliberately not adopted (see

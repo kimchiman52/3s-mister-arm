@@ -129,7 +129,13 @@ entries:
   input: "hold DOWN 60; hold UP+LP+HP 2; wait 1"
   qjson: { name: "Oniyama (EX)" }
   outcome: BLOCK
-  expect: { S: from-qjson, A: from-qjson }
+  # adv ASSERTED 2026-07-17 (lever W, LANDING-CUT / §B4): the §13.5.1b
+  # landing cut backdates attacker_idle to cghi1_first_frame; re-anchoring
+  # adv off the attacker's natural r1(nonzero->0) edge (atk_r1_end, 13 ticks
+  # later on this move) gives def_idle - atk_r1_end = -60, oracle-exact
+  # (oro.json Oniyama (EX) Block_advantage=-60). Was measured -47,
+  # unasserted; now oracle-exact and asserted from-qjson. Stays PASS.
+  expect: { S: from-qjson, A: from-qjson, adv: from-qjson }
 
 - label: oro-exoniyama-hit
   setup: { dist: close, dummy: none }

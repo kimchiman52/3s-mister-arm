@@ -38,8 +38,8 @@ yang-tourou-lp-whiff	PASS	WHIFF	1	8	5	22	+0	0
 yang-tourou-lp-block	PASS	BLOCK	1	8	5	22	-1	0
 yang-tourou-lp-hit	PASS	HIT	1	8	5	22	+1	0
 yang-senkyuutai-lk-whiff	PASS	WHIFF	1	8	8	34	+0	0
-yang-senkyuutai-lk-block	XFAIL	BLOCK	1	8	8	34	-29	0
-yang-senkyuutai-lk-hit	PASS	HIT	1	8	8	34	+69	1
+yang-senkyuutai-lk-block	PASS	BLOCK	1	8	8	34	-35	0
+yang-senkyuutai-lk-hit	PASS	HIT	1	8	8	34	+63	1
 yang-byakko-lp-whiff	PASS	WHIFF	1	21	13	10	+0	0
 yang-byakko-lp-block	PASS	BLOCK	1	21	6	10	-3	0
 yang-byakko-lp-hit	PASS	HIT	1	21	6	10	+87	1

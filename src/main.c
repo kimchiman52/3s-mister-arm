@@ -627,7 +627,21 @@ static void game_step_0() {
         DirectP2P_Tick();
     }
 
+    /* Freeze-boundary probe (fit.md §5), env-gated on FD_SPAWN_PROBE.
+     * MUST run here — after the engine tick (njUserMain, which runs
+     * effect_13_init and sets fd_engine_proj_spawned) and before
+     * frame_data_overlay_tick(), whose consume sites clear the flag. See
+     * frame_spawn_probe_tick()'s definition comment for why pre-consume
+     * sampling is required to place the 0->1 transition unambiguously. */
+    frame_spawn_probe_tick();
+
     frame_data_overlay_tick();
+
+    /* FD_IDLE_PROBE (diagnostic, env-gated): per-tick idle ledger. MUST run
+     * AFTER frame_data_overlay_tick() so each line reports post-engine,
+     * post-overlay-latch state. Observation only; inert unless FD_IDLE_PROBE
+     * is set (and, like the trace, only in training + overlay-enabled). */
+    fd_idle_probe_tick();
 #if ENABLE_PERF_TELEMETRY
     {
         const Uint64 _ft0 = SDL_GetTicksNS();

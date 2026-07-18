@@ -907,7 +907,7 @@ silently rewritten).
 | **S-divergence** (first ever) | `yang-forward-block/-hit` | measured S from `first_active_raw`=5 vs oracle 7 = `event_raw` (first contact-capable tick); A/R/adv exact | UNCLASSIFIED; two labeled hypotheses in the corpus (real "meaty" non-connecting active window vs S-measurement artifact). **UPDATE 2026-07-10 (sweep #2):** CONFIRMED as **ENGINE-6 candidate** — `h_att_set` fires on cell load (`charset.c:2989-2997`, unconditional on atix≠0) two ticks before `att_hit_ok` arms (`charset.c:2938` via `set_new_attnum()`); the engine's real collision loop gates on BOTH (`hitcheck.c:1618-1621`) and never box-tests at F=5-6; ENGINE-4/lever-J already fixed the identical pair on the projectile path. See completion-plan ENGINE-6 row. **UPDATE 2026-07-10 (ENGINE-6 CENSUS-FALSIFIED, 1,039-window pre-diff census across all 19 corpora — `e6-census.tsv` + `e6-census-report.md`, `docs/plan-frame-data-completion.md` ENGINE-6 row):** the candidate above is REJECTED as a general mechanism — no lever L. Every window in the suite where the sticky arm tick (`gen_athok_slot`, first `att_hit_ok`-armed AND `h_att_set` tick) differs from the cell-load tick (`first_active_raw`) was measured: **8 divergent windows across 3 distinct move families**, all `use_hatt=1`/`proj=0`/`endrel=0` (the general-classifier path lever L targets). `yang-forward-block/-hit` (S 5→7) key arcade Startup on the ARM tick — CONFIRMS, arcade-exact under the candidate. But two additional, currently-PASS, arcade-exact families key arcade Startup on the CELL-LOAD tick instead and would REGRESS off arcade-exact under the same fix: `remy-crfierce-block/-whiff/-hit` (S 8→9 vs arcade 8) and `twelve-backforward-block/-whiff/-crouch-probe` (S 5→7 vs arcade 5). All three families are mechanically byte-identical — cell-load fires 1-2 ticks before the arm tick in every case, and the arm coincides with contact on BLOCK/HIT legs but ALSO on WHIFF legs with no contact at all (proving the arm's timing is a property of the attacker's own chart, not a causal contact linkage); every available safety/diagnostic column (hitstop, super-freeze, dirty-start, trim-cap, case-B event-ordering) reads identically clean across all 8 windows. No discriminator exists in any observable engine state — arcade's own published table simply keys Startup per-move (cell-load for remy/twelve, arm for yang) for a bit-for-bit identical engine mechanism; the only available exclusion is enumerating labels, rung 3 on the census's own ladder (rung 1 tighten and rung 2 mechanistic-scope-down both fail — see the report). **Future bar** (same standard as ENGINE-7's closure): a mechanism claim must (i) name the discriminator, (ii) hold across every divergent window in a full re-census, not just the confirming pair, and (iii) show ≥2 independent positives on the SAME code path as the divergent windows — ENGINE-6 itself had a plausible ≥2 argument (ENGINE-4/lever-J's projectile-path fix, cited above) and still died on the general path, so a cross-path positive no longer counts toward the bar; only a same-path positive does. Status: no lever ships; `yang-forward-block/-hit` stay xfail with this census as their citation; `remy-crfierce-*` and `twelve-backforward-*` stay PASS, unaffected. |
 | **Defender-stance-conditional attacker R** | `necro-flyingviper` crouch-BLOCK | crouch R=15/adv=+1 vs stand R=19/adv=−3, identical dist | UNCLASSIFIED. **UPDATE 2026-07-10 (sweep #2):** enriched with the pinned-meter identity — `R = raw_len − event_raw − 1` reproduces BOTH 19 (stand/hit, event_raw=26) and 15 (crouch, event_raw=30) from one mechanism; raw_len/T pinned at 46 and atk_idle at start+55 on all three contact legs (outcome- AND stance-independent). HONESTY CAVEAT: active_pf splits (1 stand/hit vs 5 crouch) — two different routes to the same pinned length; `cg_extdat=0x80` not statically confirmed. Stays UNCLASSIFIED. **UPDATE (2026-07-11, sweep #3):** F5 (item-4 Hugo-Roundhouse landing-clocked family) membership tested and REFUSED on `necro-flyingviper-lp-block/-hit` — F5's bar requires a trace-proven same-tick contact advance whose freed declared-active ticks tally as RECOVERY, and neither prong survives the raw trace: no cgix advance exists (cells 32/36 play out inside a freeze already running on cell32's first row, athok never sets — a freeze-consumption variant, not the F5 same-tick advance), and the freed-tick arithmetic does not close (5 declared − 1 active_pf = 4 freed vs an R surplus of only +2; whiff raw_len 48 vs contact 46 unreconciled). Variant-shaped, not-per-tick-closed — CONV-2 (ii) bars conversion. Genuinely NEW enrichment: the terminal tail (cell44 full 3 → cell48 full 4 → cell52 sentinel → idle → FINAL) is now verified cell-for-cell identical across ALL THREE contact legs (first per-tick confirmation of the landing-pinned end); crouch's event_raw 26→30 (+4) shift confirmed in-trace (clean athok=1 window, freeze at cell36). NEW open residual, recorded honestly: whiff's own chart cuts mid-cell44 (1 of 3 declared) and ends at raw 48 vs the contact legs' pinned 46 — the "shortening" direction is whiff-side and unreconciled. `necro-flyingviper-lp-crouch-probe` rides this same enrichment (its adv clause has no family of its own). All three stay xfail. |
 | **Sum-preserving A/R boundary shift** | `remy-cbk-lk-whiff` (A 11/R 9 vs 10/10) + `yun-zesshou-hp-block/-hit` (A 16/R 11 vs 15/12) | ±1 A/R swap, S+A+R conserved, adv exact, cut=0 | two characters, same signature — LINKED as a family-of-two, UNCLASSIFIED. **DATED CORRECTION 2026-07-10 (sweep #2, s7):** the "same signature" framing is wrong — `remy-cbk-lk-whiff` IS sum-preserving/self-consistent (its single boundary tick now PROVEN: F=1207, the last-hatt tick at the anim-chain reset, no hitstop, active_pf==engine_a==11); but remy's CONTACT legs (`remy-cbk-lk-block/-hit`) and BOTH yun legs are NOT (T≠S+A+R on all four, and both moves are hitstop-entangled / active_pf≠engine_a in opposite directions). The whiff-leg row stands; the four contact legs are (e) hand-offs — no ledger was run for either move; a future ledger session is the named next probe. **UPDATE (2026-07-11, sweep #3):** the s3w ledger session RAN, closing the sweep-2 hand-off. `remy-cbk-lk-block/-hit`: same-tick interior-transition credit banking — within one Game_timer tick the chart passes 52→44→4, re-entering cell 44 and banking its declared 3 a second time while the per-frame snapshot observes only the tick's final cgix (ledger GT3393/3415 block, GT3700/3713/3716/3719/3722 hit); A=14 = whiff's own 11 + 3 phantom, exact both legs. Moved to the NEW "Same-tick interior-transition credit banking" row below (CONFIRMED-PENDING-GRANT) — see that row; this row's live UNCLASSIFIED member is now the whiff-leg ±1 shift only. `yun-zesshou-hp-block/-hit`: engine-credit-ledger decomposition (60:4+66:5+72:5+78:2 = A=16 exact; cell78 banks declared 2, plays 1; cell60 plays 5 real vs declared 4 across a freeze-extension) — arcade-mapping is two-way ambiguous (cell78 bank vs cell60 freeze-extension tick), no conversion offered; enriched-(b), (c)-cited to the NEW ENGINE-10 candidate row (`docs/plan-frame-data-completion.md`) for the diagnostic `h_att_set`/`jatix` one-tick lag. Both stay xfail. |
-| **Cut-committed whiff R-overshoot** | `yang-senkyuutai-lk-whiff/-block/-hit` | R=38 vs 34 on WHIFF itself, `cut=1`, anchor arms | UNCLASSIFIED — explicitly NOT item 18(c) (that bucket requires cut=0/no anchor). **UPDATE 2026-07-10 (sweep #2):** CONFIRMED as **ENGINE-7 candidate** — the §13.5.1 cut anchor fires at the cghi-edge, 4 ticks AFTER the attacker's guard_flag re-arm (rearm at reset+6, anchor at reset+10, gap = overshoot = 4 exactly; a gflg-based R reconstructs arcade 34 exactly; s8-findings, both legs). See the §13.5.1b dated correction (:1426-1432 census figure) and the completion-plan ENGINE-7 row. **UPDATE 2026-07-10 (ENGINE-7 CENSUS-FALSIFIED, 1,039-window pre-diff census across all 19 corpora — `e7-census.tsv` + `e7-census-report.md`, re-plan `engine7-replan.md`, `docs/plan-frame-data-completion.md` ENGINE-7 row):** the candidate above is REJECTED — no lever K. Full census scope: 1,039 windows / 41 cut=1 / 54 proj backstop / q-cndb+q-throw watch items, all clean except the seven-move table below. Every window with a grounded, persistent, post-reset guard-rearm edge preceding its current R end was measured: **seven moves total.** Arcade end = rearm+0 for four (`yang-senkyuutai-lk`, `ibuki-kazekiri-lk`, `yun-uoh-whiff`, `yang-uoh-whiff`), rearm+1 for two (`chunli-uoh` = the anchor itself, one tick after rearm; `remy-uoh` = NO traced engine event at that tick, only a mid-cell `cgctr` decrement), rearm+3 (= the natural r1 end) for one (`urien-headbutt` lp/mp/hp, 8 currently-PASS legs). Two identical-signature pairs land on opposite sides: `ibuki-kazekiri-lk` (+0) and `urien-headbutt` (+3) re-arm under the SAME post-landing `cghi=1` label with the same gap magnitude (3); `yun-uoh`/`yang-uoh` whiff (+0) and `remy-uoh` (+1) share that same `cghi=1` label too. No candidate discriminator (gap magnitude, gap-cell label, anchor type, cut status, cell-ordinal position — re-plan §2.1-2.5) separates the two populations; the only untested lead, per-cell `cg_type`, has no trace column today and is already half-falsified by the mid-cell remy-uoh end (re-plan §2.7). Status: no lever ships; `yang-senkyuutai-lk`, `ibuki-kazekiri-lk`, `yun-uoh`, `yang-uoh`, `remy-uoh` all stay xfail with this census as their citation; `chunli-uoh` and `urien-headbutt` stay PASS, unaffected. **DATED NOTE (2026-07-11, LAYER-1):** under the arcade counting rule (a convention-twin's from-scratch gflg-edge derivation, not an overlay-endpoint retime), the engine's own gflg edge reproduces arcade R exactly on `yang-senkyuutai-lk` (34), `ibuki-kazekiri-lk` (26), `yun-uoh` (6), `remy-uoh` (5) AND `chunli-uoh` (5, no regression) -- see §13.16's chunli reconciliation. Lever-K's REJECTION above stands unchanged: it was a retime of the overlay's existing per-move R endpoint onto the rearm event, and whether that lands on arcade depends on where each move's overlay endpoint sits relative to rearm (+0/+1/+3, this census's own irreducible heterogeneity) -- the twin's uniform strictly-between rule sidesteps that heterogeneity entirely by deriving R from scratch, it does not resurrect lever-K. `urien-headbutt`'s rearm+3 was never arcade-captured, so whether arcade's own busy-R there reads 16 (twin) or 19 (golden/oracle) stays UNKNOWN -- the twin's own P4 bound (§13.16). **DATED NOTE (2026-07-11, RE-ANCHOR-1 SHIPPED, §13.17):** the P4 unknown above is now resolved -- Session 4/5 hardware capture confirms `urien-headbutt`'s busy-R=16/15/16 IS the arcade actionable value (OUTCOME A), and `yang-senkyuutai-lk-whiff` flips XFAIL->PASS at R=34 via lever N (whiff busy-edge R). This is NOT lever K resurrected: lever N derives R from scratch under one uniform strictly-between rule (no overlay endpoint, no retime of `attacker_idle`), sidestepping this census's own rearm+0/+1/+3 heterogeneity entirely rather than resolving it -- see §13.17's "why not ENGINE-7 redux" paragraph. `ibuki-kazekiri-lk`/`yun-uoh`/`yang-uoh` also flip via the same lever; `remy-uoh`'s R-clause flips too (its A-clause is the separate "no-cut re-entry re-crediting" row below). `chunli-uoh` (already PASS) is unaffected -- lever N reproduces its existing PASS value byte-for-byte. |
+| **Cut-committed whiff R-overshoot** | `yang-senkyuutai-lk-whiff/-block/-hit` | R=38 vs 34 on WHIFF itself, `cut=1`, anchor arms | UNCLASSIFIED — explicitly NOT item 18(c) (that bucket requires cut=0/no anchor). **UPDATE 2026-07-10 (sweep #2):** CONFIRMED as **ENGINE-7 candidate** — the §13.5.1 cut anchor fires at the cghi-edge, 4 ticks AFTER the attacker's guard_flag re-arm (rearm at reset+6, anchor at reset+10, gap = overshoot = 4 exactly; a gflg-based R reconstructs arcade 34 exactly; s8-findings, both legs). See the §13.5.1b dated correction (:1426-1432 census figure) and the completion-plan ENGINE-7 row. **UPDATE 2026-07-10 (ENGINE-7 CENSUS-FALSIFIED, 1,039-window pre-diff census across all 19 corpora — `e7-census.tsv` + `e7-census-report.md`, re-plan `engine7-replan.md`, `docs/plan-frame-data-completion.md` ENGINE-7 row):** the candidate above is REJECTED — no lever K. Full census scope: 1,039 windows / 41 cut=1 / 54 proj backstop / q-cndb+q-throw watch items, all clean except the seven-move table below. Every window with a grounded, persistent, post-reset guard-rearm edge preceding its current R end was measured: **seven moves total.** Arcade end = rearm+0 for four (`yang-senkyuutai-lk`, `ibuki-kazekiri-lk`, `yun-uoh-whiff`, `yang-uoh-whiff`), rearm+1 for two (`chunli-uoh` = the anchor itself, one tick after rearm; `remy-uoh` = NO traced engine event at that tick, only a mid-cell `cgctr` decrement), rearm+3 (= the natural r1 end) for one (`urien-headbutt` lp/mp/hp, 8 currently-PASS legs). Two identical-signature pairs land on opposite sides: `ibuki-kazekiri-lk` (+0) and `urien-headbutt` (+3) re-arm under the SAME post-landing `cghi=1` label with the same gap magnitude (3); `yun-uoh`/`yang-uoh` whiff (+0) and `remy-uoh` (+1) share that same `cghi=1` label too. No candidate discriminator (gap magnitude, gap-cell label, anchor type, cut status, cell-ordinal position — re-plan §2.1-2.5) separates the two populations; the only untested lead, per-cell `cg_type`, has no trace column today and is already half-falsified by the mid-cell remy-uoh end (re-plan §2.7). Status: no lever ships; `yang-senkyuutai-lk`, `ibuki-kazekiri-lk`, `yun-uoh`, `yang-uoh`, `remy-uoh` all stay xfail with this census as their citation; `chunli-uoh` and `urien-headbutt` stay PASS, unaffected. **DATED NOTE (2026-07-11, LAYER-1):** under the arcade counting rule (a convention-twin's from-scratch gflg-edge derivation, not an overlay-endpoint retime), the engine's own gflg edge reproduces arcade R exactly on `yang-senkyuutai-lk` (34), `ibuki-kazekiri-lk` (26), `yun-uoh` (6), `remy-uoh` (5) AND `chunli-uoh` (5, no regression) -- see §13.16's chunli reconciliation. Lever-K's REJECTION above stands unchanged: it was a retime of the overlay's existing per-move R endpoint onto the rearm event, and whether that lands on arcade depends on where each move's overlay endpoint sits relative to rearm (+0/+1/+3, this census's own irreducible heterogeneity) -- the twin's uniform strictly-between rule sidesteps that heterogeneity entirely by deriving R from scratch, it does not resurrect lever-K. `urien-headbutt`'s rearm+3 was never arcade-captured, so whether arcade's own busy-R there reads 16 (twin) or 19 (golden/oracle) stays UNKNOWN -- the twin's own P4 bound (§13.16). **DATED NOTE (2026-07-11, RE-ANCHOR-1 SHIPPED, §13.17):** the P4 unknown above is now resolved -- Session 4/5 hardware capture confirms `urien-headbutt`'s busy-R=16/15/16 IS the arcade actionable value (OUTCOME A), and `yang-senkyuutai-lk-whiff` flips XFAIL->PASS at R=34 via lever N (whiff busy-edge R). This is NOT lever K resurrected: lever N derives R from scratch under one uniform strictly-between rule (no overlay endpoint, no retime of `attacker_idle`), sidestepping this census's own rearm+0/+1/+3 heterogeneity entirely rather than resolving it -- see §13.17's "why not ENGINE-7 redux" paragraph. `ibuki-kazekiri-lk`/`yun-uoh`/`yang-uoh` also flip via the same lever; `remy-uoh`'s R-clause flips too (its A-clause is the separate "no-cut re-entry re-crediting" row below). `chunli-uoh` (already PASS) is unaffected -- lever N reproduces its existing PASS value byte-for-byte. **DATED NOTE (2026-07-17, lever W / LANDING-CUT, §13.22):** this family's remaining ADV divergence is now CLOSED for its landing-cut contact block legs. The Fable re-review falsified the ADV-REANCHOR "no census signal isolates" premise -- the `cut` census column separates the 8-leg yang/oro airborne-landing family (`leverR_pred>=0 ∧ cut==1`) from all 86 correct `cut==0` lever-R adv rows. The §13.5.1b cut backdates `attacker_idle` to `cghi1_first_frame`; re-anchoring adv off the attacker's NATURAL r1(nonzero→0) edge (`atk_r1_end`, +6 ticks yang / +13 oro) gives `def_idle − atk_r1_end` = oracle-exact on the four block legs (yang −35/−26, oro −34/−60). `yang-senkyuutai-lk-block`/`yang-exsenkyuutai-block` flip XFAIL→PASS; `oro-oniyama-lp-block`/`oro-exoniyama-block` gain from-qjson adv assertions (stay PASS); the four hit legs re-pin display only (Hit_adv unpublished "-", mechanically-derived NOT oracle-claimed). Does NOT reach `akuma-sa3-block`/`chunli-sa1-block` (+1, `cut==0`) -- those stay TERMINAL-NON-SURGICAL. |
 | **Hayate compound** | `makoto-hayate-*` (6 entries) | A-undercount (lever-F-independent) + outcome-sign-flipping R (block +8, hit −4) | UNCLASSIFIED, top of the user-review list. **UPDATE 2026-07-10 (sweep #2):** the A-clause is RESOLVED — (a)-PARTIAL under F1, own ledger (s5-rundir/run-makoto): whiff credits 16(add=3)+20(add=3)=6=arcade; BOTH contact outcomes credit only 16(3)=3 — cgix=20 never credited; deficit = the skipped cell's declared duration exactly; lever-F already tested UNCHANGED. All six entries now assert `A: 3` (§13.13), xfails narrowed to the R clauses. The R sign-flip (block +8 / hit −4) stays OPEN — disposition (e). **UPDATE (2026-07-11, sweep #3): R clause CLOSED, F2, all six entries plain PASS.** The two-term "+2 uniform hitstop-conversion term" framing is MOOT — the audit's own per-tick recount (s5-rundir/run-makoto preserved P2tick stream) closes both signs as a SINGLE branch-content differential: BLOCK +8 = dwell cell 19 ticks (cgix60) vs whiff's 11 (cgix20), the 3-cell detour (40/44/48, 6 ticks) exactly replacing whiff's 0/4/8 (6 ticks); HIT −4 = whiff's cgix4+cgix8 cells (2+2) skipped outright, dwell unchanged (cgix12, 11 ticks = whiff's 11). F2's bar met as written (own recorded skip/branch cgix signature for this move). Row fully resolved; the sweep-2 "(e) OPEN" disposition is retired. |
 | **Block-adv anomaly, S/A/R exact** | `remy-crroundhouse-block` (adv −41 vs −11, T−sum gap 16); `remy-lov-{lp,lk}-block` (adv +23 vs +5 / +17 vs +1, projectile) | numbers exact except adv | UNCLASSIFIED. **UPDATE 2026-07-10 (sweep #2): the row SPLITS.** (i) `remy-lov` ×3 = mechanism-ESTABLISHED, disposition (b): measured adv = arcade adv + projectile travel ticks, closed exactly on all three members (travel 18/16/14 → +23/+17/+15 vs +5/+1/+1); blockstun anatomy identical (27 ticks post-contact), attacker anchor exact; oracle Block_advantage is travel-0 canonical (s11 members 2-4). Stays xfail, arcade adv stays in expect. (ii) `remy-crroundhouse-block` = **ENGINE-9 candidate**: two-contact move; the overlay's def_idle anchor latches blockstun exit #1 (F=33) instead of the FINAL exit (F=63); using the final exit reproduces arcade −11 EXACTLY (`frame_data_overlay.c:1208-1213` first-edge gate, :1187 event latch; s11 member 1). The defect is on the DEFENDER anchor; S/A/R are green. See completion-plan ENGINE-9 row. **UPDATE (2026-07-10,
 CONV-2):** the remy-lov side (i) now converts (family F10) - adv=23/17/15
@@ -6796,7 +6796,7 @@ box-active and gets counted) and, on the Remy legs, an additional F13
 same-tick declared-credit-banking phantom re-credit. A new frz-excluded
 strict box counter (`box_a_frz` = ticks where `box_active && hit_stop==0`,
 a one-line sibling of the shipped `hstop_in_box` counter,
-`frame_data_overlay.c:1918-1920`) reproduces oracle exactly on all 6 rows
+`frame_data_overlay.c:2127-2128`) reproduces oracle exactly on all 6 rows
 — but a full-universe native census (`<sp>/zero/contactA/design.md` §3)
 proves it is engine-signal-INDISTINGUISHABLE from **113** other
 currently-PASS contact-A rows spanning all 19 characters that it would
@@ -6825,22 +6825,88 @@ blind lever — if arcade on the 113-class matches `box_a_frz` rather than
 `box_a`, the 113 are mis-oracled and a *universal* re-anchor becomes
 shippable (see `<sp>/zero/contactA/design.md` §8.3).
 
+**§13.16 CONTACT-A native-census rider (dated 2026-07-17, opus-substitute /
+WANTS FABLE RE-REVIEW).** The "113 currently-PASS rows it would regress"
+figure above was offline-derived at drive time: the 2026-07-14 census
+predicted the frz-excluded strict count as `box_a − E` (an E-predictor)
+against the 2026-07-10 `uoh-fit/step1` offline baseline. With `box_a_frz`
+now SHIPPED (B2/B3, `frame_data_overlay.c:2127-2128`), a native census over
+the 94 kept `b3-suite-retry` rundirs re-measures the buckets directly from
+the trace `box_a_frz` FINAL key: **firers 265 / identical 95 / movers 170 /
+converts-at-oracle 6 / PASS-FAIL-regress 125**, vs the stale offline
+**263 / 93 / 170 / 6 / 113**. The deltas are entirely the drive-to-zero
+advancing UOH/oro-jinchu rows AFTER the 2026-07-10 baseline: +2 firers
+(`ken-uoh-hit`, `ryu-uoh-hit`) and +12 regressions (`alex-uoh-block/-hit`,
+`dudley-uoh-hit`, `elena-uoh-block`, `necro-uoh-block`, `oro-jinchu-lk-hit`,
+`remy-uoh-block/-hit`, `twelve-uoh-block`, `yang-uoh-hit`, `yun-uoh-block/
+-hit`) — each a leg that carried a truthy xfail note in the stale baseline
+but now asserts A and PASSES in the current corpus (xfail-churn →
+PASS-FAIL-regress). The offline 113 is therefore a STRICT SUBSET of the
+native 125 (none dropped) — the non-gateability negative is not weakened but
+STRENGTHENED. **The 6 converts reproduce EXACTLY at oracle natively**
+(`sean-exdragonsmash` 12/12, `remy-cbk-lk` 10/10, `remy-cbk-ex` 9/9; all 4
+per-frame ground-truth rows match). design.md §8.1's own Gate-1 criterion
+(6 converts at oracle + >=~100 engine-indistinguishable PASS regressions) is
+thus NATIVELY SATISFIED, so the CONTACT-A non-gateability negative above is
+**CONFIRMED AND STRENGTHENED**. No lever ships; zero golden edits; oracle
+stands. Two honest observations INSIDE the same non-gateable trade (not new
+work claims): **(a)** one native-vs-offline strict disagreement —
+`twelve-sa2-hit` native `box_a_frz=20` vs the offline E-predictor's strict
+19 (an E-predictor R2 miss on an A-unasserted, verdict-inert display-churn
+row; the native `box_a_frz` is authoritative). **(b)** six rows read native
+`box_a_frz` == oracle yet stay XFAIL (`chunli-sa2-block`, `urien-uoh-hit`,
+`yun-zesshou-hp` ×2, `yun-exzesshou` ×2) — adopting the strict convention
+would flip these to PASS but regress the 125 currently-PASS rows above, so
+they remain XFAIL as the honest floor: a direct observation of the same
+trade, not a resurrected lever. **DATED HUNT 2026-07-18:** a dedicated
+discriminator hunt (single-feature + pair scans over every FINAL-line
+feature and derived delta, the same method that found `cut` for lever W)
+was run over exactly these 6 rows vs the 125 regressions: NO SIGNAL —
+every zero-violation separator is circular (restates `box_a_frz == orA`),
+a per-capture frame-timestamp identity proxy, or per-move frame-data
+fingerprint hardcoding; the genuine engine flags (`cut` 25 violations,
+`uoh` 26, `dwellbrk` 10, `hsab` 8) do not separate, and the 6 span three
+unrelated move families (Chun-Li SA2, Urien UOH, Yun (EX)Zesshou). The
+trade is now hunt-confirmed, not assumed. **Naming note (leverV_pred):** the "letter V
+stays unclaimed" clause in the addendum above is now stale — letter V is
+claimed by ENGINE-SLOT0 (the display-only remy-sa1/urien-sa2 slot-0 fix, see
+the DATED CORRECTION 2026-07-17 later in §13.16). CONTACT-A still ships NO
+lever, and its census gate was reconstructed offline from the shipped
+`box_a_frz` counter (not a lever), so there is no lever-letter conflict of
+substance. Evidence: `<sp>/zero-b2/`, `<sp>/zero/contactA/design.md`.
+
 **Companion negative results, same session, same non-surgical shape (not
 contact-A specific, recorded here as sibling LAYER-1-adjacent proofs).**
-- **ADV-REANCHOR (`<sp>/zero/adv/plan.md`).** `adv = defender_idle -
-  attacker_idle` (`frame_data_overlay.c:1243`) is arcade-faithful on
-  600/607 currently-asserting rows; the 6 remaining divergent rows split
-  into two structural classes (D-e: `yang-senkyuutai-lk-block`/
-  `yang-exsenkyuutai-block`, a +6 idle-divergence where the busy-edge
-  re-anchor points the WRONG direction; D-f: `akuma-sa3-block`/
-  `chunli-sa1-block`, an undiagnosed +1 on truncated supers) plus D-g
-  (harness bundle-context, below). Every candidate rule broad enough to
-  catch the anomalies (`-(R+1)`, a flat `-6`, a flat `-1`) regresses
-  86-600 currently-correct rows — the identical CONTACT-A shape, proven
-  independently on the adv axis. No lever ships; all 4 D-e/D-f rows stay
-  XFAIL, reclassified TERMINAL-NON-SURGICAL (`corpus-yang.yaml`,
-  `corpus-yang-ex.yaml`, `corpus-akuma-sa3.yaml`,
-  `corpus-chunli-sa1.yaml`).
+- **ADV-REANCHOR (`<sp>/zero/adv/plan.md`; SUPERSEDED in part 2026-07-17
+  by lever W, `<sp>/zero-b/`).** `adv = defender_idle - attacker_idle`
+  (`frame_data_overlay.c`) is arcade-faithful on 600/607 currently-asserting
+  rows; the 6 remaining divergent rows split into two structural classes
+  (D-e: `yang-senkyuutai-lk-block`/`yang-exsenkyuutai-block`, a +6
+  idle-divergence; D-f: `akuma-sa3-block`/`chunli-sa1-block`, an undiagnosed
+  +1 on truncated supers) plus D-g (harness bundle-context, below).
+  **FALSIFIED PREMISE, CORRECTED 2026-07-17 (Fable re-review):** the original
+  negative asserted that "no census signal isolates" the D-e rows from the 86
+  currently-correct lever-R adv rows. That is WRONG — the `cut` census column
+  cleanly separates them. Of the 90 lever-R-firing adv rows, 86 (all correct)
+  have `cut==0`; `leverR_pred>=0 ∧ cut==1` selects EXACTLY 8 legs (the D-e
+  yang pair, its `oro-oniyama-lp`/`oro-exoniyama` block siblings, and all four
+  of those moves' hit legs). Mechanism (`<sp>/zero-b/b4-mechanism-reanchor.txt`):
+  the §13.5.1b landing cut backdates `attacker_idle` to `cghi1_first_frame`,
+  EARLIER than the attacker's natural r1(nonzero→0) edge (`atk_r1_end`) that
+  lands 6 ticks (yang) / 13 ticks (oro) later; re-anchoring
+  `adv = def_idle − atk_r1_end` reproduces published hardware EXACTLY on the
+  four block legs (yang −35/−26, oro −34/−60,
+  `<sp>/zero-b/b4-oracle-truth.txt`). Lever W (`fd_landing_cut_adv_reanchor`,
+  §13.22) ships this display-only re-anchor gated on the pure contact-leg
+  lever-R shape ∧ cut_committed; the two D-e yang rows flip XFAIL→PASS at
+  oracle. **D-f still stands as a genuine negative:** `akuma-sa3-block` and
+  `chunli-sa1-block` are `cut==0`, +1 (NOT the landing-cut +6 family), and the
+  cut discriminator does not reach them — they stay XFAIL TERMINAL-NON-SURGICAL
+  (`corpus-akuma-sa3.yaml`, `corpus-chunli-sa1.yaml`). The `oro-oniyama-lp`/
+  `oro-exoniyama` block legs were already PASS (adv unasserted); lever W adds
+  their from-qjson adv assertions. Hit legs re-pin display only — Hit_adv is
+  unpublished "-" in both JSONs, so their values are mechanically derived from
+  the same corrected recovery edge, NOT oracle-claimed.
 - **HARNESS-BLEED (`<sp>/zero/harness-bleed/footprint.md`).** A
   reconstructed global dummy-idle-reset (normalizing the standing dummy's
   breathing-cycle phase to its isolated-run value at every corpus-entry
@@ -6882,8 +6948,14 @@ oracle set itself.
 
 - **The identical-signal collision (the definitive finding).** On the
   projectile-split path (`use_proj_split = proj_seen && !use_hatt`,
-  `frame_data_overlay.c:786`) the engine reports a single self-consistent
-  convention, `S = proj_s` (the effect-init spawn flag). The engine value
+  `frame_data_overlay.c:786`) the engine reports a single convention on the
+  post-append-consume path, `S = proj_s` (the effect-init spawn flag) — but
+  it is NOT universally self-consistent: the pre-append slot-0 latch (`:1638-1645`)
+  reads one convention-frame BELOW the post-append consume (`:2291`), a 1-frame
+  engine-side split (`proj-split/fit.md §1`) that governs the slot-0 rows
+  (remy-sa1, urien-sa2). "Self-consistent" holds for the post-append-consume
+  path only (twelve/ryu/akuma/necro/sean/oro), not universally; see the DATED
+  CORRECTION below. The engine value
   for a **PASS** row and an **XFAIL** row is **byte-identical**: `ryu-sa1`
   engine `S=3` (oracle 3 → PASS) vs `twelve-sa1` engine `S=3` (oracle 4 →
   XFAIL) — same `proj_spawn_slot=3`, same `proj=1`, same `box_runs=0`, same
@@ -6898,25 +6970,146 @@ oracle set itself.
   spawn-slot (10) → exact. **The −1 is an oracle-table convention
   inconsistency across characters, with no engine-visible signal revealing
   which convention a given move's table author used.** A broad `S += 1`
-  flips 6 rows but regresses 8 currently-PASS rows (ryu-sa1 ×2, ryu-sa3,
-  akuma-sa1 ×2, necro-sa3-hit, sean-sa1 ×2); every narrowing (flash-only,
+  flips 6 rows but regresses **at least 14 rows whose S currently matches
+  oracle**: 6 currently-PASS (ryu-sa1 ×2, ryu-sa3, akuma-sa1 ×2, necro-sa3-hit);
+  2 currently-XFAIL-on-R whose S clause currently holds (sean-sa1 ×2, S=2=oracle
+  — these are NOT "currently-PASS" rows, their R is the failing clause; the
+  earlier "8 currently-PASS" phrasing mislabeled them, digest finding); and 6
+  more PASS legs the earlier `fit.md §2` "full enumeration" OMITTED (`oro-sa2`
+  Yagyou Dama ×3 + EX Yagyou Dama ×3, flashing supers with `proj=1/box_runs=0`,
+  S asserted from-qjson, PASS at S=28/27 oracle-exact — census-completeness
+  correction 2026-07-17, digest finding). Every narrowing (flash-only,
   spawn-slot value, proj_a value, multi-projectile shape) collides on an
-  identical signal (`proj-split/fit.md §2`).
+  identical signal (`proj-split/fit.md §2`); the added oro-sa2 regressions only
+  STRENGTHEN the broad-fix rejection. **This collision is real for twelve-sa1**
+  (`proj_spawn_raw=3`, the post-append consume — a genuine cross-character
+  table-convention split, no engine discriminant, stays XFAIL).
 
-- **The internally-over-budget oracle row (`urien-sa2`).** `urien-sa2`
-  asserts oracle **S=1** and oracle **R=91 (PASS)** with the engine's whole
-  measured window **T=91** (`corpus-urien-sa2.yaml`). Oracle S+R = 1+91 =
-  **92 > 91**. `proj_s=0` yields R=91 (right) but S=0 (wrong); `proj_s=1`
-  yields S=1 (right) but R=90 (wrong). **No single `proj_spawn_slot`
-  satisfies both oracle fields — the oracle table is one frame internally
-  over-budget on this row.** This is structurally unfixable in the engine,
-  not merely unfit: the target itself is self-contradictory. CAP-3 hardware
-  (`phase2-report.md` Target 4) independently confirms the engine's own
-  layer is not the beam-A source either — arcade attacker T is FLAT 144 over
-  6× spacing while the engine reports a false 11→83 distance-scaling, and the
-  projectile's true box-active window is travel-dependent 34/85/105 with no
-  flat canonical value for oracle A=75 to be. The row stays XFAIL asserting
-  the (self-inconsistent) oracle; the divergence is now hardware-backed.
+- **DATED CORRECTION 2026-07-17 (lever V, ENGINE-SLOT0) — remy-sa1 and
+  urien-sa2 S were mis-grouped under the table-convention split above; they
+  are a DISTINCT, engine-side mechanism that IS surgically fixable.** The
+  earlier addendum lumped `remy-sa1 S` (and `urien-sa2 S`) with `twelve-sa1`
+  under "oracle-table convention split." An offline census over the 94 step1
+  rundirs (2026-07-17; `<sp>/zero-b/census_slot0.tsv`) proved the difference:
+  the −1 rows that assert S split by `proj_spawn_raw`. twelve-sa1 reads
+  `proj_spawn_raw=3` (post-append consume) — the table split. remy-sa1 (×4)
+  and urien-sa2 (×2) read `proj_spawn_raw=0` — the projectile spawns ON the
+  MOVE_START frame, so the **pre-append slot-0 latch** (`frame_data_overlay.c`
+  MOVE_START block) set `proj_spawn_slot=0` BEFORE that tick's `raw[]` append,
+  one convention-frame below the post-append consume. That is an engine-side
+  latch artifact, not an oracle table defect (remy.json Startup=1 AGREES with
+  the strictly-before convention; the cap3 tape `remy-sa1-hit-r1.log` shows
+  the projectile pool-valid on the 2nd post-flash frame = strictly-before 1).
+  The freeze-boundary ambiguity `fit.md §5` flagged is MEASURED-RESOLVED
+  (2026-07-18): the instrumented probe Plan Step 2 called for has now been
+  run. Probe design: an env-gated (`FD_SPAWN_PROBE`) per-tick emitter
+  (`frame_spawn_probe_tick`, `frame_trace.c`) samples
+  `fd_engine_proj_spawned` + `sa_stop_check()` from `main.c` AFTER
+  `njUserMain()` (so `effect_13_init`'s write this tick is visible) but
+  BEFORE `frame_data_overlay_tick()` (pre-consume — the overlay's clear
+  sites cannot mask the transition; and `sastop` is read at the overlay's
+  own post-engine-tick phase, so "frozen tick" means precisely "a tick the
+  overlay parks on"). Run over the two slot-0 super-flash corpora
+  (remy-sa1, urien-sa2; both GREEN). **The measured answer is
+  MOVE-DEPENDENT — both sides of the boundary occur.** urien-sa2 sets the
+  flag DURING the super-flash freeze, on its LAST frozen tick: both windows
+  show `spawned0` 0→1 at GT=100/GT=613 with `sastop=1` (53rd of 53 frozen
+  ticks), one tick before the MOVE_START tick at GT=101/GT=614; the flag
+  then carries across the boundary exactly as the no-per-frame-reset
+  analysis predicted. remy-sa1 sets it ON the freeze-end MOVE_START tick
+  itself: the clean-history window 1 shows `spawned0=0` through all 51
+  frozen ticks (GT=48..98) and 0→1 at GT=99 = the MOVE_START tick with
+  `sastop=0` (windows 2-4 read flag=1 at MOVE_START but are masked by a
+  stale 1 persisting from the prior window's barrage tail — the same
+  no-per-frame-reset property — and corroborate window 1 via the identical
+  next-spawn cadence at MS+3, GT=615/1128/1641 vs window 1's GT=102, and
+  byte-identical FINAL `proj_spawn_raw=0`/S=1 on all four legs). The
+  earlier offline "CONSISTENT WITH set-on-MOVE_START" model — inferred from
+  the slot-0 latch plus the cap3 tape (projectile object absent through
+  MOVE_START fc276571, present at fc276572) under then-unverified
+  sampling-phase premises — was therefore right for remy-sa1 and WRONG for
+  urien-sa2. The shipped VALUE's independence from the sub-frame model is
+  now CONFIRMED BY MEASUREMENT, not just argued: the two corpora realize
+  OPPOSITE sides of the freeze boundary yet produce byte-identical outcomes
+  (flag observed =1 pre-consume on the MOVE_START tick → slot-0 latch →
+  `proj_spawn_raw=0` → lever V displays S=1 == remy.json Startup=1 == cap3
+  tape strictly-before = 1). Probe traces preserved in the 2026-07-18
+  session scratchpad (`spawn-probe/{remy-sa1,urien-sa2}-trace.log`); the
+  probe itself is kept as a permanent env-gated rig capability (inert
+  without `FD_SPAWN_PROBE` — the suite sets only `FRAME_TRACE_PATH`),
+  precedent `box_a_frz`/`hstop_in_box`. **Lever V** harmonizes the two
+  latch sites DISPLAY-ONLY
+  (S shows the post-append slot 1; R keeps the raw `proj_s` anchor, so
+  `R = meter_len − proj_s = 91` on urien-sa2 is byte-unchanged — this is the
+  display-only variant `fit.md §2` never evaluated, distinct from the
+  proj_s-mutating narrow fix it rejected for regressing urien-sa2 R). Census
+  footprint (offline = live, verified via `--update-golden`): exactly 12
+  windows / 7 corpora fire the slot-0 latch; all display S 0→1; only remy-sa1
+  asserts S and flips XFAIL→PASS at the oracle-true value; urien-sa2 S becomes
+  oracle-1 but the row stays XFAIL on its A divergence; the other 6 rows
+  (ibuki-sa1 block/hit, ibuki-sa3-block, necro-sa3-block, oro-sa3-activation,
+  urien-sa3-aegis) do not assert S (display-only convention drift, never an
+  oracle claim). **Result: remy-sa1 ×4 XFAIL→PASS; suite 1,290/59 → 1,294/55.**
+  Known cosmetic residual (2026-07-18 final review): the live meter's cell
+  classifier (`fd_classify_attacker_proj_split`, `frame_data_overlay.c`
+  ~:700-704) still reads the raw `proj_spawn_slot`, so on the 12 slot-0
+  windows the painted STARTUP cell count (0) disagrees with the displayed
+  S (1) by one cell; the golden checker reads FINAL S, so no suite impact.
+
+- **The engine-model-limitation row (`urien-sa2`) — NOT an "over-budget"
+  oracle table (DATED CORRECTION 2026-07-17, Fable re-review, digest
+  finding #1).** The earlier text here read "oracle S+R = 1+91 = 92 > 91, the
+  oracle table is one frame internally over-budget on this row, the target
+  itself is self-contradictory." **That mechanism is REFUTED by the drive's
+  own CAP-3 tapes.** The **91** is the ENGINE overlay's flash-excluded meter
+  window (`T=91`, `corpus-urien-sa2.yaml`), NOT any oracle-internal quantity —
+  so "S+R > 91" is a cross-LAYER comparison against the engine's window, not a
+  table-internal contradiction. Re-deriving from the CAP-3 hardware tapes
+  (`<sp>/zero-b/b5-window-rederive.txt` over
+  `<sp>/zero/cap3/raw/urien-tt-{close,mid,far}-*.log`, all distances): the
+  arcade post-flash **busy window is 94 frames** (flash 256432–256482; first
+  post-flash frame 256483; busy 771→768 edge at 256577), the projectile goes
+  pool-valid on the **3rd** post-flash frame (256485), and
+  strictly-between(spawn, busy768) = 256577 − 256485 − 1 = **91 = oracle R
+  exactly**, under the same strictly-between rule the drive validated for
+  oro-oniyama R (Session 3) and lever N (§13.17). That leaves **2 pre-spawn
+  post-flash frames**, so oracle **S=1 and R=91 are JOINTLY SATISFIABLE on the
+  arcade's own 94-frame timeline** with a frame to spare — the oracle row is
+  not self-contradictory. The real limitation is CROSS-LAYER: the engine's
+  proj-split construction ties both fields to a single slot
+  (`R = meter_len − proj_s`, `meter_len=91`), so no one `proj_spawn_slot` can
+  place S and R independently the way the arcade timeline does — an
+  engine-model unrepresentability, not a table defect. Lever V's display-only
+  harmonization (S shows the post-append slot 1; R keeps the raw `proj_s`
+  anchor → 91) side-steps it for the two DISPLAYED fields, so both now read
+  oracle, but it does not close the model gap. **RE-ANCHOR PATH CLOSED
+  2026-07-18 (Q6 investigation, `<sp>/q6-meter/footprint-census.md`):** the
+  3-frame shortfall vs the arcade post-flash busy window (94) is now LOCATED
+  and understood — it sits entirely at the window OPEN, in the sa_stop-vs-
+  attacker-frz definitional gap (the engine's flash-excluded window drops 2-3
+  trailing world-frozen ticks where the attacker's own frz has expired, plus
+  the spawn-in-freeze frame; remy control run proves the CLOSE end lands
+  exactly on the arcade's last busy frame). The shortfall is MOVE-SPECIFIC
+  (k=0 hadouken, k=1 remy, k=3 urien), and decisively: the published oracle
+  S/R conventions sit on the ENGINE'S window — on the tape's 94 window urien's
+  strictly-before S would read 2, not the oracle's 1, and a re-anchor would
+  regress the 20 currently-PASS proj-S legs, threaten the 123 use_hatt
+  super-S legs (per-move k unknown), and break urien's own exact R=91. Zero
+  honest XFAIL flips exist. A meter re-anchor therefore CANNOT help and the
+  lever-N-family path is closed. Genuinely still open (narrow): per-move k is
+  unmeasured beyond remy/urien (an additive `flash_tail` FINAL diagnostic
+  would census it engine-natively if ever needed), and the 2-open+1-close
+  alternative alignment is unfalsifiable without an arcade sa_stop-equivalent
+  tape field. (Independently, CAP-3 Target 4 confirms the engine layer
+  is not the beam-A source: arcade attacker T is FLAT 144 over 6× spacing while
+  the engine reports a false 11→83 distance-scaling, and the projectile's true
+  box-active window is travel-dependent 34/85/105 with no flat canonical value
+  for oracle A=75.) The row stays XFAIL asserting the oracle; per the
+  2026-07-17 lever-V fix its S now displays oracle 1 (see the DATED CORRECTION
+  above), so the residual divergence is **A** (travel-dependent
+  projectile-active, no flat canonical target) **alone** (the 91-vs-94
+  question is resolved-and-closed above) — an engine-model limitation, not an
+  over-budget table.
 
 - **The recovery-side echo (`ibuki-sa3` vs `sean-sa1`).** The same
   cross-character basis inconsistency appears on projectile **R**: the
@@ -6927,42 +7120,68 @@ oracle set itself.
   inconsistent bases (spawn-anchored, last-projbox→busy-edge, and
   late-despawn respectively) while the engine uses one (`proj-split/fit.md §3`).
 
-**Consequence for the honest floor.** A genuine, characterized share of the
-59 remaining XFAILs is **published-table inconsistency, not port error and
-not a fixable meter bug**: the engine is arcade-faithful and self-consistent
-(LAYER-1), and the divergence lives in the oracle set's own
-cross-character/internal convention choices. Correcting these rows in the
-port would require *fabricating* a value the engine never computes, to match
-a table that disagrees with itself. They stay XFAIL, asserting the oracle,
-with the inconsistency documented — the honest floor.
+**Consequence for the honest floor.** Part of the 53 remaining XFAILs is
+**cross-character published-table inconsistency** (twelve-sa1: no port error,
+no fixable meter bug — the tables count projectile Startup on two conventions
+with no engine-visible discriminant). The engine is LAYER-1 arcade-faithful;
+it is self-consistent on the post-append-consume path, with the one
+characterized exception of the pre-append slot-0 latch's 1-frame convention
+offset (remy-sa1, urien-sa2), which lever V harmonizes display-only. For the
+genuine table-inconsistency row, correcting it in the port would require
+*fabricating* a value the engine never computes to match a table that
+disagrees across characters. For the **engine-model-limitation** row
+(`urien-sa2`) the oracle is NOT self-contradictory (see the corrected bullet
+above): the divergence is the engine's single-slot proj-split model plus the
+open 91-vs-94 meter-window question, not a table defect. All stay XFAIL,
+asserting the oracle, with the true mechanism documented — the honest floor.
 
 **§13.16 addendum (HONEST FLOOR, dated 2026-07-14, user decision —
 opus-substitute / WANTS FABLE RE-REVIEW).** As of the drive-to-zero closing
-pass the overlay is **frame-exact on 1,290 of 1,349 legs** and within ~1
-frame on the remaining 59, with **every one of the 59 deviations diagnosed
-and terminally classified** (per-class census below; full per-row notes in
+pass the overlay is **frame-exact on 1,296 of 1,349 legs** (1,290 at the
+2026-07-14 floor + 4 from the 2026-07-17 lever-V remy-sa1 resolution + 2 from
+the 2026-07-17 lever-W yang landing-cut re-anchor) and within ~1 frame on the
+remaining 53, with **every one of the 53 deviations diagnosed and terminally
+classified** (per-class census below; full per-row notes in
 `tools/frame-data/corpus-*.yaml` and `docs/plan-frame-data-completion.md`).
 The user has chosen the **honest floor: NO override.** No display-convention
-grant, no blind lever, and no golden re-pin to a fabricated value ships for
-any of the 59 — each stays XFAIL asserting the arcade/oracle-true value with
-its measured-vs-oracle delta, its hardware/sibling-proven true value (where
-one exists), the exact reason it is not surgically fixable, and its terminal
-class recorded in its own note. The 59 partition into seven terminal
-classes, none of which admits a suite-safe fix:
+grant, no blind lever, and no golden re-pin to a *fabricated* value ships for
+any of the remaining 53 — each stays XFAIL asserting the arcade/oracle-true
+value with its measured-vs-oracle delta, its hardware/sibling-proven true
+value (where one exists), the exact reason it is not surgically fixable, and
+its terminal class recorded in its own note. (The 2026-07-17 lever-V
+resolution of remy-sa1 ×4 is NOT an exception to this rule: it re-pins to the
+ORACLE-TRUE value — S=1, tape-verified strictly-before and remy.json Startup
+— by correcting an engine-side slot-0-latch artifact display-only, not by
+granting a convention or fabricating a value; wrong values still never ship.
+Likewise the 2026-07-17 lever-W re-anchor of the two yang landing-cut block
+legs re-pins to the published-oracle value by fixing the §13.5.1b cut's
+backdated attacker anchor display-only — not a convention grant.) The 53
+partition into seven terminal classes, none of which admits a suite-safe fix:
 
 | Terminal class | Rows | Why terminal (the honest reason) |
 |---|---|---|
-| **TERMINAL-NON-SURGICAL** | 17 | no census signal isolates the row; every candidate rule regresses 86–600 currently-PASS rows (adv no-signal + contact-A 113-regression + harness-bundle reset net-negative) |
+| **TERMINAL-NON-SURGICAL** | 15 | no census signal isolates the row; every candidate rule regresses 86–600 currently-PASS rows (residual adv no-signal, e.g. the akuma-sa3/chunli-sa1 +1 cut==0 rows the lever-W cut discriminator does NOT reach + contact-A 113-regression + harness-bundle reset net-negative) |
 | **ENGINE-DIVERGENCE** | 12 | a genuine engine behavioral difference (two-phase install, block-vs-hit recovery, stance-conditional R, sum-preserving A/R) — an override would paper over the divergence |
 | **OVERLAY-DISPLAY-DIVERGENCE** | 10 | overlay self-consistent, arcade/whiff-sibling-true value asserted, small characterized offset, no suite-safe blind re-anchor exists |
-| **CAPABILITY-GATED-remaining** | 8 | projectile rows, now hardware-measured (CAP-3) — the divergence is documented, gated behind the oracle-table convention inconsistency above |
+| **CAPABILITY-GATED-remaining** | 4 | projectile rows, now hardware-measured (CAP-3) — the divergence is documented (was 8; remy-sa1 ×4 removed 2026-07-17, the slot-0-latch artifact resolved by lever V, not a table split) |
 | **CONVENTION/RULED** | 6 | genuinely ambiguous mapping between two hardware-real quantities (yang startup 5-vs-7; yun-zesshou A 15-vs-16), user-ruled, both readings defensible |
 | **REACHABILITY-GAP** | 4 | the clean-whiff baseline is harness-unproducible (urien-chariot connects even at DIST_MAX; sean-sa1 Hadou-Burst projectile has no reachable whiff) |
-| **ORACLE-TABLE-INCONSISTENCY** | 2 | the published table is internally over-budget / cross-character convention-split (urien-sa2 S+R=92>T=91) — correcting the port would fabricate a value to match a self-contradicting table |
-| **Total** | **59** | all characterized known-limitations; zero UNCLASSIFIED |
+| **ENGINE-MODEL-LIMITATION** | 2 | urien-sa2 ×2 — re-adjudicated 2026-07-17 (digest finding #1): the earlier "ORACLE-TABLE-INCONSISTENCY / S+R=92>T=91 over-budget" label is REFUTED (the 91 is the engine meter window, not an oracle quantity; the arcade 94-frame post-flash busy window makes oracle S=1+R=91 jointly satisfiable). Terminal because the engine's single-slot proj-split model (`R = meter_len − proj_s`) cannot place S and R independently AND the engine meter window is 3 frames short of arcade's 94 at the window OPEN (sa_stop-vs-frz definitional gap; re-anchor path CLOSED 2026-07-18 — the oracle conventions sit on the engine's window and a re-anchor regresses 20+ passing S legs; see the Q6 closure above). S now displays oracle 1 (lever V, display-only); residual is A (travel-dependent, no flat canonical value) + the open 91-vs-94 window. The genuine cross-character oracle-table convention split is `twelve-sa1` (classified under CAPABILITY-GATED-remaining; `proj_spawn_raw=3` post-append consume, `proj-split/fit.md §1`) |
+| **Total** | **53** | all characterized known-limitations; zero UNCLASSIFIED |
 
 No row remains UNCLASSIFIED. The engine is LAYER-1 arcade-faithful; the
-residual 59 are the diagnosed floor, held honestly rather than papered over.
+residual 53 are the diagnosed floor, held honestly rather than papered over.
+
+**(Class-table reconciliation, dated 2026-07-17.)** The per-class rows above
+now sum to 53 (15+12+10+4+6+4+2), matching both the **Total** row and the
+post-lever-W suite count (1,296 PASS / 53 XFAIL); the earlier header of 55
+XFAIL is superseded by the lever-W yang-senkyuutai-lk-block +
+yang-exsenkyuutai-block XFAIL→PASS flip (TERMINAL-NON-SURGICAL 17→15), which
+itself superseded 59 via the lever-V remy-sa1 ×4 XFAIL→PASS flip (those four
+left CAPABILITY-GATED, 8→4). No CONTACT-A row moved class in the
+2026-07-17 native census: the 6 converts and the 125-row regression trade are
+all held XFAIL, consistent with this table (see the CONTACT-A native-census
+rider earlier in §13.16).
 
 ### 13.17 RE-ANCHOR-1: whiff-leg raw-signal A/R (normative; SHIPPED 2026-07-11, levers N/O)
 
@@ -7321,8 +7540,9 @@ already established for the base family), growing the shipped payload to
   contact tape despite no WHIFF sibling).
 - **8 rows narrowed (R clause closed, still XFAIL on a separate clause):**
   `yang-senkyuutai-lk-block`/`yang-exsenkyuutai-block` (R closed at
-  oracle, adv clause remains open, attacker_idle re-anchoring out of
-  scope), `remy-cbk-lk-block/-hit` and `remy-cbk-ex-block/-hit` (R closed
+  oracle here; the adv clause, then noted "attacker_idle re-anchoring out
+  of scope", was SUBSEQUENTLY CLOSED 2026-07-17 by lever W / LANDING-CUT —
+  both rows now plain PASS at oracle adv −35/−26, see §13.22), `remy-cbk-lk-block/-hit` and `remy-cbk-ex-block/-hit` (R closed
   at oracle, F13 same-tick credit-banking A clause stands),
   `yun-exzesshou-block/-hit` (R closed at oracle, A clause stands, same
   shape as the base zesshou family).
@@ -7757,6 +7977,123 @@ session-report.md` (Session 6, the hardware capture this design cites),
 `<sp>/zero/contact2/step1/` (the preserved FINAL traces and pre-drift
 census this design re-reads, not re-runs), and `<sp>/zero/jinchu/step/`
 (this step's gauntlet transcripts) for the complete record.
+
+### 13.22 LANDING-CUT: lever W — landing-cut ADV re-anchor off the natural r1 edge (normative; SHIPPED 2026-07-17, lever W)
+
+**Status: SHIPPED.** The ADV-REANCHOR negative (§12.2.4's "Cut-committed
+whiff R-overshoot" family, `docs/plan-frame-data-completion.md`'s
+ADV-REANCHOR row) had rested on the premise "no census signal isolates
+the divergent adv rows from the 86 correct lever-R adv rows." The Fable
+re-review (`<sp>/zero-b/`) FALSIFIED that premise: the `cut` census
+column cleanly separates the divergent family. Of the 90 lever-R-firing
+adv rows, 86 (all arcade-correct) have `cut == 0`; the intersection
+`leverR_pred >= 0 ∧ cut == 1` selects EXACTLY 8 legs — yang
+senkyuutai-lk / EX senkyuutai, oro oniyama-lp / EX oniyama, each
+×{block,hit} — and nothing else suite-wide (`b4-cut-discriminator.txt`).
+`cut == 1` alone is 57 rows (all UOH etc.), too broad; the intersection
+is the clean separator the earlier four-negatives proof missed.
+
+**Mechanism** (`b4-mechanism-reanchor.txt`). The §13.5.1b landing cut
+backdates `attacker_idle` to `cghi1_first_frame`
+(`frame_data_overlay.c:2017-2018`), EARLIER than the attacker's natural
+r1(nonzero→0) edge that lands 6 ticks (all 4 yang legs) / 13 ticks (all
+4 oro legs) later. Re-anchoring the advantage off that natural edge —
+`atk_r1_end`, latched by a passive tick-side watcher independent of
+`attacker_idle` (`:1915-1918`) — gives `adv = def_idle − atk_r1_end`,
+which reproduces published hardware EXACTLY on the four block legs.
+
+**Values.** Re-anchored advantage on the 8 legs (block legs
+oracle-checked against `b4-oracle-truth.txt`):
+
+| Leg | prior disp | re-anchored | oracle Block_adv |
+|---|---|---|---|
+| `yang-senkyuutai-lk-block` | −29 | **−35** | −35 (yang.json Senkyuutai Short) ✓ |
+| `yang-senkyuutai-lk-hit` | +69 | **+63** | Hit_adv unpublished "-" |
+| `yang-exsenkyuutai-block` | −20 | **−26** | −26 (yang.json Senkyuutai EX) ✓ |
+| `yang-exsenkyuutai-hit` | +78 | **+72** | unpublished |
+| `oro-oniyama-lp-block` | −21 | **−34** | −34 (oro.json Oniyama Jab) ✓ |
+| `oro-oniyama-lp-hit` | +75 | **+62** | unpublished |
+| `oro-exoniyama-block` | −47 | **−60** | −60 (oro.json Oniyama EX) ✓ |
+| `oro-exoniyama-hit` | +52 | **+39** | unpublished |
+
+The four block legs match published hardware exactly. Hit_adv is "-" in
+both JSONs, so the four hit legs are display-repin only — mechanically
+derived from the same corrected attacker-recovery edge as the
+oracle-confirmed block legs (one rule, two tails), NOT oracle-claimed.
+
+**The fix.** A passive watcher latches `atk_r1_end` = the attacker's
+natural r1(nonzero→0) edge (`:1915-1918`); a bounded finalize deferral
+(≤20 ticks, new-move escape, timeout→legacy) holds finalize open until
+it latches on the 8 legs (census max gap is 13 ticks vs ~150-frame move
+spacing, so the bound never crosses the next SCRIPT entry). The
+displayed HIT/BLOCK advantage is then re-anchored to
+`def_idle − atk_r1_end` (`leverW_pred`, `:1353-1355`) ONLY under the
+gate:
+
+```c
+const bool fd_lever_w_applies = fd_landing_cut_adv_reanchor
+    && fd_lever_r_applies
+    && !g_cur.move_is_uoh
+    && cut_committed
+    && g_cur.atk_r1_end >= 0
+    && g_cur.defender_idle >= 0;
+```
+
+The `!move_is_uoh` conjunct is load-bearing: UOH contact rows also pass
+`fd_lever_r_applies` (via the lever-T G4 `hstop_in_box` disjunct) and are
+all `cut == 1`, so without it the gate would over-fire on every
+uoh-block/uoh-hit row — and UOH advantage is lever-T domain, currently
+arcade-correct, which re-anchoring would regress. With `!move_is_uoh`,
+`fd_lever_r_applies` reduces to exactly the pure contact-leg lever-R
+gate. Lever W = 0 is byte-identical to the prior build:
+`fd_lever_w_applies` short-circuits false, the display ternary
+(`:1412-1414`) falls back to the legacy `def_idle − attacker_idle`, the
+deferral gate's first conjunct short-circuits false, and `leverW_pred`
+is −1 on every non-8 window.
+
+**Per-leg disposition.** `yang-senkyuutai-lk-block` (−35 from-qjson) and
+`yang-exsenkyuutai-block` (−26 from-qjson) flip XFAIL→PASS;
+`oro-oniyama-lp-block` (−34) and `oro-exoniyama-block` (−60) gain
+from-qjson adv assertions and stay PASS; the four hit legs re-pin
+display only, no verdict change. **Residual:** `akuma-sa3-block` /
+`chunli-sa1-block` (+1 divergence, `cut == 0`, NOT a landing cut) stay
+TERMINAL-NON-SURGICAL — a distinct class the cut discriminator does not
+cover.
+
+**Cross-check risk (empirical, not by-construction).** The live
+finalize-deferral gate and the finalize-time `fd_lever_r_applies` gate
+could disagree (lever-T staleness precedent); the ship carries a
+`leverw_live_defer` FINAL-line cross-check diagnostic so the
+live-gate-vs-finalize-gate agreement is observable off the trace, and
+any timeout/new-move escape leaves `atk_r1_end` −1 → `leverW_pred` −1 →
+legacy display, never fabricated.
+
+**DATED AUDIT (2026-07-18).** A full-suite audit (94 corpora / 1,328
+rows) resolved the cross-check empirically: finalize fired on exactly
+the predicted 8 family legs, at the predicted re-anchored values, on
+every one of them. `leverw_live_defer` armed true on the 4 block legs
+(deferral genuinely required there — `defender_idle` resolves before
+the attacker's natural r1 edge, so finalize must hold open) and false
+on the 4 hit legs (the passive watcher at `:1915-1918` latches
+`atk_r1_end` first, so finalize never defers) — i.e. the flag records
+deferral-invoked, not value-validity, exactly as the struct-field and
+finalize-site comments now state. Zero rows armed live without
+finalize firing. Value validity on the 4 hit legs is independently
+witnessed off the same FINAL keys: `atk_r1_end < defender_idle` holds
+on all four, and `atk_r1_end − attacker_idle` is exactly 6 ticks on the
+yang rows / 13 ticks on the oro rows, matching the mechanism's own
+6-tick/13-tick lag. No lever-T-style staleness disagreement exists in
+the audited corpora.
+
+**Suite delta:** lever-V baseline **1,294 PASS / 55 XFAIL** →
+**1,296 PASS / 53 XFAIL** (+2 PASS / −2 XFAIL, the two yang block legs;
+zero XPASS). Only the 8 family adv cells drift, all to the predicted
+re-anchored values. See `<sp>/zero-b/B4-SPEC-lever-W.md` (the design),
+`<sp>/zero-b/b4-cut-discriminator.txt` /
+`b4-mechanism-reanchor.txt` / `b4-oracle-truth.txt` (the preserved
+evidence this design cites, not re-runs) for the complete record. The
+ENTIRE ADV-REANCHOR drive ran on an opus-substitute (Fable quota) and
+WANTS FABLE RE-REVIEW.
 
 ## 14. Live meter coloring: §8.3 mirror + scattered-active handling
 

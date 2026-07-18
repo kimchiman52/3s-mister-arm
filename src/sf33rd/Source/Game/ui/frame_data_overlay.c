@@ -3,6 +3,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "common.h"
@@ -223,6 +224,18 @@ typedef struct {
     s32       proj_spawn_slot;
     bool      proj_seen;
 
+    /* Lever V (ENGINE-SLOT0, 2026-07-17): set true when the pre-append
+     * slot-0 latch (:MOVE_START block below) fired — i.e. the projectile's
+     * spawn flag was already set on this move's first observed tick, so
+     * proj_spawn_slot was latched to 0 BEFORE this tick's raw[] append.
+     * That pre-append 0 is one convention-frame below the post-append
+     * consume every other proj-split super uses (a spawn on the first
+     * counted frame reads raw_len==1 there). Read display-only by the S
+     * (startup) computation to harmonize the two latch sites onto the one
+     * post-append convention; R keeps the raw proj_spawn_slot anchor so no
+     * recovery cell moves. Reset in fd_reset_move(). */
+    bool      proj_slot0_latched;
+
     /* §13.12 (ENGINE-4, added 2026-07-09): "hit-checkable projectile
      * split" S/R anchors (lever J). `proj_athok_slot` latches
      * g_cur.raw_len PRE-raw[]-append (the athok tick's own offset) the
@@ -328,6 +341,62 @@ typedef struct {
      * diagnostic-only and does not itself gate anything. Reset in
      * fd_reset_move() alongside box_count/box_runs. */
     s32       hstop_in_box;
+
+    /* CONTACT-A census (2026-07-17, design.md <sp>/zero/contactA/design.md
+     * §1.1): `box_a_frz`, the strict frz-EXCLUDED sibling of hstop_in_box —
+     * raw box-active ticks (`an->box_active`) during which the attacker's
+     * own hit_stop == 0, with NO event-tick exemption (deliberately unlike
+     * `box_count`/`box_a`, whose in_hitstop exemption keeps the contact tick
+     * so box_a == strict + 1 on a single-hit contact strike). Both counters
+     * gate on `!g_cur.is_throw` (increment sites below), so on a throw move
+     * both read 0 regardless of box_active ticks; for non-throw moves they
+     * partition every box-active tick, `box_a_frz + hstop_in_box ==
+     * #{box_active}`. Passive
+     * diagnostic ONLY: written here and in fd_reset_move(), read solely by
+     * the FINAL-line annotation (additive `box_a_frz=%d` key). NOT wired
+     * into any display, gate, or lever — box_a_frz drives no lever of its
+     * own. The non-gateability negative that keeps any CONTACT-A lever from
+     * shipping was established OFFLINE by the design.md §3 E-predictor census
+     * (strict = box_a − E, E = 1 iff hsib>0: 263 gate-firers; the 6 oracle
+     * converts are engine-indistinguishable from 113 currently-PASS
+     * regressions), independently seconded by the Fable re-review's broader
+     * separator hunt (zero single-threshold or pairwise-rectangle separators
+     * over ~40 FINAL features). This counter is the passive scaffold for the
+     * §8.1/§11.4 native Step-1 re-confirmation of that negative; that native
+     * box_a_frz census WAS run 2026-07-17 over the 94 kept b3-suite-retry
+     * rundirs (934/934 contact legs carried the key; buckets firers 265 /
+     * identical 95 / movers 170 / converts-at-oracle 6 / regress 125),
+     * natively satisfying the Step-1 gate and CONFIRMING (strengthening) the
+     * negative — the door now rests on native evidence, not only the offline
+     * census above. (The unrelated
+     * lever V above — ENGINE-SLOT0, the letter
+     * was free because CONTACT-A shipped none — is a different mechanism and
+     * does not read this field.) */
+    s32       box_a_frz;
+
+    /* Lever W (LANDING-CUT, 2026-07-17, §B4 SPEC): the attacker's NATURAL
+     * r1(nonzero->0) edge — the engine's authoritative move-end that the
+     * §13.5.1b landing cut backdates `attacker_idle` earlier than (the cut
+     * anchors attacker_idle on cghi1_first_frame, :cut block below; this
+     * latches the true r1 edge that lands 6-13 ticks later). -1 until the
+     * edge is observed. Latched by a passive tick-side watcher that runs
+     * regardless of `attacker_idle` (unlike the :attacker_idle latch, which
+     * is gated `< 0` and so never sees this later edge on a committed cut).
+     * `leverw_live_defer` records — as a FINAL-line diagnostic only — that
+     * the finalize-side deferral loop (:2391-2409) was invoked to hold
+     * finalize open on this move; it is NOT a validity witness for
+     * atk_r1_end. On the 4 hit legs of the 8-row lever-W footprint the
+     * passive watcher (:1915-1918) latches atk_r1_end before defender_idle
+     * resolves, so finalize fires without deferring and this flag reads
+     * false even though atk_r1_end is valid there (witnessed instead by
+     * atk_r1_end < defender_idle on hit legs and the exact 6/13-tick
+     * atk_r1_end - attacker_idle offset on yang/oro rows; block legs are
+     * oracle-exact, §13.22). Both reset in
+     * fd_reset_move(); atk_r1_end drives the displayed HIT/BLOCK advantage on
+     * the fd_lever_w_applies gate (`def_idle - atk_r1_end`) and is also emitted
+     * as the leverW_pred / r1end FINAL keys. */
+    s32       atk_r1_end;
+    bool      leverw_live_defer;
 
     int       raw_len;
     struct {
@@ -441,6 +510,63 @@ static const int fd_uoh_contact_busy_edge_t = 1; /* lever T (UOH-CLOSURE, WIRED 
  * G7 to `recovery_pf > 0` byte-identically. */
 static const int fd_jinchu_bounce_recovery_r = 1; /* lever U (ENGINE-JINCHU) */
 
+/* Lever V (ENGINE-SLOT0, 2026-07-17): display-only S harmonization for the
+ * pre-append slot-0 spawn latch. The proj-split S anchor has two latch sites
+ * one convention-frame apart: the per-tick post-append consume (proj_spawn_slot
+ * = raw_len AFTER this tick's append) that every non-slot-0 proj super uses, and
+ * the pre-append slot-0 latch at MOVE_START (proj_spawn_slot = 0 BEFORE the
+ * append) that fires when the spawn lands on the move's first observed tick
+ * (proj_spawn_raw=0). The pre-append 0 reads one below the post-append convention
+ * — for a first-frame spawn the post-append raw_len is 1. When this lever is 1
+ * and the slot-0 latch fired, the DISPLAYED startup adds that dropped frame
+ * (proj_s 0 -> shown 1), matching the post-append convention the rest of the
+ * overlay reports; recovery keeps the raw proj_spawn_slot anchor (R = meter_len
+ * - proj_s), so urien-sa2 R=91 and every proj-split R cell is byte-unchanged.
+ * Census (offline over 94 step1 rundirs, 2026-07-17): fires on exactly 12
+ * windows / 7 corpora (remy-sa1 x4, urien-sa2 x2, ibuki-sa1 block/hit,
+ * ibuki-sa3-block, necro-sa3-block, oro-sa3-activation, urien-sa3-aegis). Only
+ * remy-sa1 asserts S and flips XFAIL->PASS at the oracle-true value (remy.json
+ * Startup=1; cap3 tape strictly-before spawn = 1, pool-valid on the 2nd
+ * post-flash frame). urien-sa2 S becomes oracle-1 but the row stays XFAIL on its
+ * A divergence; the other rows do not assert S (display-only convention drift,
+ * never an oracle claim). Freeze-boundary (fit.md §5): MEASURED-RESOLVED
+ * 2026-07-18 by the env-gated FD_SPAWN_PROBE emitter (frame_spawn_probe_tick,
+ * frame_trace.c — samples fd_engine_proj_spawned + sa_stop_check() between
+ * njUserMain and this overlay tick, pre-consume). Move-dependent, both sides
+ * occur: urien-sa2's effect_13_init sets the flag DURING the flash on its
+ * last frozen tick (both windows 0->1 at sastop=1, one tick before
+ * MOVE_START) and the flag carries across the boundary (no per-frame reset;
+ * the consume sites here are parked under sa_stop); remy-sa1 sets it ON the
+ * freeze-end MOVE_START tick itself (clean window 1: 0 through all 51 frozen
+ * ticks, 0->1 on the first sastop=0 tick). Opposite boundary sides,
+ * byte-identical outcome — flag=1 observed at MOVE_START -> slot-0 latch ->
+ * proj_spawn_raw=0 -> S shown 1 — so the shipped value's independence from
+ * the sub-frame model is measurement-confirmed (remy S=1 == remy.json
+ * Startup=1 == cap3 tape strictly-before = 1). Lever at 0 is byte-identical
+ * (the +1 disjunct evaluates to 0). */
+static const int fd_slot0_postappend_s = 1; /* lever V (ENGINE-SLOT0) */
+
+/* Lever W (LANDING-CUT, 2026-07-17, §B4 SPEC): re-anchor the displayed
+ * advantage of a landing-cut contact move off the attacker's NATURAL
+ * r1(nonzero->0) edge (`atk_r1_end`) instead of the §13.5.1b-backdated
+ * `attacker_idle`. Fires on exactly the intersection the §B4 cut-discriminator
+ * isolated: a PURE CONTACT-LEG lever-R firer (`fd_lever_r_applies &&
+ * !move_is_uoh` — UOH rows also pass lever R via the lever-T G4 disjunct and
+ * are all cut==1, but their adv is lever-T domain and arcade-correct, so they
+ * are excluded) whose landing cut
+ * committed (`cut_committed`) — 8 legs suite-wide (yang senkyuutai-lk / EX
+ * senkyuutai, oro oniyama-lp / EX oniyama, each x{block,hit}). The cut backdates
+ * attacker_idle to cghi1_first_frame; the true actionable frame is the natural
+ * r1 edge 6 ticks (yang) / 13 ticks (oro) later, so `def_idle - atk_r1_end`
+ * matches published hardware on the four block legs (yang -35/-26, oro -34/-60).
+ * The bounded atk_r1_end watcher and the finalize-side deferral let the edge
+ * latch; the displayed `advantage` on the 8 gated legs is re-anchored to
+ * `def_idle - atk_r1_end` (== leverW_pred), every other row byte-identical.
+ * Lever at 0 is byte-identical (fd_lever_w_applies short-circuits false, the
+ * ternary falls back to the legacy `def_idle - attacker_idle`, the deferral
+ * gate's first conjunct short-circuits false, and leverW_pred is -1). */
+static const int fd_landing_cut_adv_reanchor = 1; /* lever W (LANDING-CUT) */
+
 static void fd_snap_player(int i, FdSnap* out) {
     const PLW* p = &plw[i];
     out->r1          = p->wu.routine_no[1];
@@ -530,6 +656,7 @@ static void fd_reset_move(void) {
     g_cur.ended_by_partner_release = false;
     g_cur.proj_spawn_slot    = -1;
     g_cur.proj_seen          = false;
+    g_cur.proj_slot0_latched = false;
     g_cur.proj_athok_slot    = -1;
     g_cur.proj_firstact_slot = -1;
     g_cur.proj_natural_end   = false;
@@ -545,6 +672,9 @@ static void fd_reset_move(void) {
     g_cur.move_is_uoh        = false;
     g_cur.koc                = -1;
     g_cur.hstop_in_box       = 0;
+    g_cur.box_a_frz          = 0;
+    g_cur.atk_r1_end         = -1;
+    g_cur.leverw_live_defer  = false;
     g_cur.raw_len            = 0;
     g_cur.meter_len          = 0;
 }
@@ -1017,7 +1147,14 @@ static void fd_finalize(void) {
         && g_cur.proj_athok_slot > proj_s) {
         proj_s = g_cur.proj_athok_slot;
     }
-    const s32 startup = use_proj_split ? proj_s : startup_pf;
+    /* Lever V (ENGINE-SLOT0): display-only harmonization of the pre-append
+     * slot-0 spawn latch onto the post-append convention. Only when proj_s is
+     * still the slot-0 value (0) that the MOVE_START latch set — never when a
+     * later proj_athok_slot won the max() above — so recovery's raw proj_s
+     * anchor (R = meter_len - proj_s below) is untouched. */
+    const s32 startup = use_proj_split
+        ? (proj_s + ((fd_slot0_postappend_s && g_cur.proj_slot0_latched && proj_s == 0) ? 1 : 0))
+        : startup_pf;
     const s32 active  = use_proj_split
         ? ((g_cur.atk_idx >= 0) ? (s32)fd_engine_proj_active_count[g_cur.atk_idx] : 0)
         : displayed_a;  /* lever O substitutes effective_a on the whiff gate, §13.17 */
@@ -1153,7 +1290,11 @@ static void fd_finalize(void) {
      * IN: this is the same predicate the amended G4 disjunct above now
      * folds into `fd_lever_r_applies`, kept here as an independent
      * cross-check/diagnostic (Gate U1/U2's tripwire, §8.1) rather than
-     * removed — the two must always agree by construction. Predicts what
+     * removed. Since lever U widened lever R's G4/G7 disjunct to admit
+     * recovery_pf == 0 (the fd_jinchu_bounce_recovery_r term above) while
+     * this predicate keeps the flat `recovery_pf > 0` (below), the two now
+     * agree empirically — no UOH suite window has recovery_pf == 0
+     * (census-verified) — not by construction. Predicts what
      * the amended G4 term (§3.2) computes on the UOH-contact branch it
      * adds — i.e. `fd_lever_r_applies` above with its G4 conjunct
      * evaluated purely on the new disjunct (`move_is_uoh && lever T
@@ -1182,6 +1323,44 @@ static void fd_finalize(void) {
         && recovery_pf > 0;
     const s32 leverT_pred = fd_lever_t_applies
         ? (g_cur.busy_edge_frame - g_cur.box_last - 1)
+        : -1;
+
+    /* §13.22 lever W gate (LANDING-CUT, §B4 SPEC). The re-anchored advantage
+     * `def_idle - atk_r1_end` (leverW_pred) is wired into the displayed
+     * HIT/BLOCK `advantage` below on exactly this gate; every other row keeps
+     * the legacy `def_idle - attacker_idle`. It
+     * fires on exactly the §B4 cut-discriminator intersection: a PURE
+     * CONTACT-LEG lever-R firer (`fd_lever_r_applies && !move_is_uoh` — i.e.
+     * lever R fired via G4's non-UOH disjunct, the shape whose leverR_pred was
+     * `>= 0` in the §B4 discriminator corpus) whose landing cut committed
+     * (`cut_committed` — i.e. FINAL `cut == 1`). The `!move_is_uoh` conjunct is
+     * load-bearing: UOH contact rows ALSO pass `fd_lever_r_applies` (via the
+     * lever-T G4 disjunct, hstop_in_box witness) and are all `cut == 1`, so
+     * without it the gate over-fires on every uoh-block/uoh-hit row suite-wide.
+     * UOH is excluded because its advantage is lever-T domain and currently
+     * arcade-correct as displayed — re-anchoring it off atk_r1_end would
+     * regress it. With `!move_is_uoh`, `fd_lever_r_applies` reduces exactly to
+     * the pure contact-leg lever-R gate (G4 short-circuits on its first
+     * disjunct), so this cannot drift from leverR_pred's own emission. That
+     * intersection selects the 8 family legs (yang senkyuutai-lk/EX, oro
+     * oniyama-lp/EX, each x{block,hit}) and nothing else suite-wide; the block
+     * legs' predicted values match published hardware exactly
+     * (b4-oracle-truth.txt). Requires
+     * atk_r1_end to have latched (the deferral below guarantees this on the 8
+     * legs; a timeout/new-move escape leaves it -1 -> leverW_pred -1 -> legacy,
+     * never fabricated). defender_idle >= 0 is already guaranteed on the
+     * HIT/BLOCK finalize path (needs_def_idle gate), asserted here for clarity.
+     * leverW_pred is -1 on every non-8 window; the displayed advantage re-anchor
+     * below is gated on fd_lever_w_applies, so it is byte-identical off the 8
+     * legs. It is also emitted as an additive FINAL diagnostic key. */
+    const bool fd_lever_w_applies = fd_landing_cut_adv_reanchor
+        && fd_lever_r_applies
+        && !g_cur.move_is_uoh
+        && cut_committed
+        && g_cur.atk_r1_end >= 0
+        && g_cur.defender_idle >= 0;
+    const s32 leverW_pred = fd_lever_w_applies
+        ? (g_cur.defender_idle - g_cur.atk_r1_end)
         : -1;
 
     s32 recovery;
@@ -1239,7 +1418,9 @@ static void fd_finalize(void) {
         case FD_OUTCOME_HIT:
         case FD_OUTCOME_BLOCK:
             if (g_cur.defender_idle >= 0) {
-                advantage = g_cur.defender_idle - g_cur.attacker_idle;
+                advantage = fd_lever_w_applies
+                    ? leverW_pred
+                    : (g_cur.defender_idle - g_cur.attacker_idle);
             }
             outcome = g_cur.event;
             /* §13.6 KD: throw outcome (CnDB and similar) leaves the
@@ -1319,7 +1500,9 @@ static void fd_finalize(void) {
         "athok=%d firstact=%d natend=%d "
         "box_a=%d busyr=%d box_runs=%d busyr_fb=%d raw_sat=%d "
         "hsab=%d uoh=%d koc=%d leverR_pred=%d "
-        "hsib=%d leverT_pred=%d",
+        "hsib=%d leverT_pred=%d "
+        "box_a_frz=%d "
+        "leverW_pred=%d r1end=%d leverW_live=%d",
         g_cur.atk_idx, outcome_str,
         (int)startup, (int)active, (int)recovery, (int)total, (int)advantage,
         (int)g_latched.kd,
@@ -1335,7 +1518,9 @@ static void fd_finalize(void) {
         (int)box_a_diag, (int)busyr_diag, (int)g_cur.box_runs, (int)g_cur.busyr_fallback,
         (int)(g_cur.raw_len == FD_CAPTURE_LEN),
         (int)g_cur.hstop_after_box, (int)g_cur.move_is_uoh, (int)g_cur.koc, (int)lever_r_pred,
-        (int)g_cur.hstop_in_box, (int)leverT_pred);
+        (int)g_cur.hstop_in_box, (int)leverT_pred,
+        (int)g_cur.box_a_frz,
+        (int)leverW_pred, (int)g_cur.atk_r1_end, (int)g_cur.leverw_live_defer);
 }
 
 void frame_data_overlay_tick(void) {
@@ -1403,13 +1588,13 @@ void frame_data_overlay_tick(void) {
                  * tag right at move-init, same timing as the engine_a/proj
                  * captures below (the engine tick that set cmoa.koc / set
                  * fd_engine_move_is_uoh already ran this same real frame,
-                 * main.c:604 vs :616 — see lever S comment above). */
+                 * main.c:618 vs :630 — see lever S comment above). */
                 g_cur.koc          = (s32)plw[i].wu.cmoa.koc;
                 g_cur.move_is_uoh  = (fd_engine_move_is_uoh[i] != 0);
                 /* Clear the engine's active-count capture slot so char_move
                  * can accumulate this move's active cells' cgctrs fresh. */
                 /* lever S (ENGINE-D2): the engine tick of THIS same real frame runs before
-                 * this overlay tick (main.c:604 vs :616). If char_move() already entered the
+                 * this overlay tick (main.c:618 vs :630). If char_move() already entered the
                  * new move's first active/catch cell this tick (freeze-deferred MOVE_START:
                  * sa_stop parks this scan while the engine runs, so on charts whose first
                  * post-flash cell is active, the add lands before this reset), preserve
@@ -1420,7 +1605,8 @@ void frame_data_overlay_tick(void) {
                  *
                  * Known caveat (documented, not gated): Game_timer is a u16
                  * (workuser.c:395, workuser.h:562) that wraps at 65536 and is reset to 0 at
-                 * six sites (game.c:506,607,1332; sys_sub.c:1440; netplay.c:419,486). A stale
+                 * eight sites (game.c:506,607,1332; sys_sub.c:1440; netplay.c:419,486;
+                 * opening.c:426; end_main.c:60). A stale
                  * fd_prev_active_cgix_tick[i] stamp surviving across one of those
                  * resets/wraps can numerically collide with a later, unrelated MOVE_START's
                  * Game_timer and wrongly take the preserve branch below. Suite-invisible
@@ -1449,7 +1635,7 @@ void frame_data_overlay_tick(void) {
                  *
                  * BUT: effect_13_init() (which sets fd_engine_proj_spawned)
                  * runs inside njUserMain(), strictly before this overlay
-                 * tick (main.c:603 vs 615) — so a projectile that spawns on
+                 * tick (main.c:618 vs 630) — so a projectile that spawns on
                  * THIS move's very first engine tick already has the flag
                  * set by the time we get here, on the same tick we're about
                  * to zero it for the fresh move. Latch it as a legitimate
@@ -1459,8 +1645,12 @@ void frame_data_overlay_tick(void) {
                  * miss the spawn. is_throw/atk_idx are already set above,
                  * so the guard mirrors the consume site's. */
                 if (!g_cur.is_throw && fd_engine_proj_spawned[i]) {
-                    g_cur.proj_spawn_slot = 0;
-                    g_cur.proj_seen       = true;
+                    g_cur.proj_spawn_slot   = 0;
+                    g_cur.proj_seen         = true;
+                    /* Lever V: mark that S came from the pre-append slot-0
+                     * latch (one convention-frame below the post-append
+                     * consume) so the finalize S display can harmonize it. */
+                    g_cur.proj_slot0_latched = true;
                 }
                 fd_engine_proj_spawned[i] = 0;
                 fd_engine_proj_active_count[i] = 0;
@@ -1719,6 +1909,23 @@ void frame_data_overlay_tick(void) {
             }
         }
 
+        /* Lever W (LANDING-CUT) passive watcher: latch the attacker's NATURAL
+         * r1(nonzero->0) edge into `atk_r1_end`, INDEPENDENT of attacker_idle.
+         * On a natural-end move this fires the same tick attacker_idle does,
+         * so the two are equal (harmless — lever W's finalize gate requires
+         * cut_committed, false there). On a §13.5.1b committed landing cut
+         * attacker_idle is backdated to cghi1_first_frame BEFORE this edge, so
+         * this watcher is the only site that records the true move-end 6-13
+         * ticks later; the finalize deferral below holds finalize open (bounded
+         * <=20 ticks, new-move escape, timeout->legacy) until it latches. -1
+         * until observed; throws exempt (never apply). Feeds the
+         * fd_lever_w_applies display gate (`def_idle - atk_r1_end`) at
+         * finalize. */
+        if (!g_cur.is_throw && g_cur.atk_r1_end < 0
+            && g_prev[atk].r1 != 0 && an->r1 == 0) {
+            g_cur.atk_r1_end = g_local_frame;
+        }
+
         /* §13.5.1 multi-segment recovery cut (see frame-data-synthesis.md).
          * Fires while move is in attacker-active state (r1=4) OR command-
          * throw-attacker state (r1=2). r1=2 covers Q's Capture and Deadly
@@ -1773,9 +1980,12 @@ void frame_data_overlay_tick(void) {
              * (pls00.c:1160) clears guard_flag to 0 iff the current chart
              * cell's cg_type is guard-capable ({0xFF,64,2,3,7});
              * Player_attack() (plpat.c:57,89) re-asserts 3 every r1=4 tick
-             * otherwise. True cleanup tails (UOH family, Oniyama,
-             * Senkyuutai) re-arm at anchor+0/+1; ENGINE-2/18(b) false cuts
-             * keep guard_flag=3 until the natural r1 edge. r1==2 grapple
+             * otherwise. True cleanup tails (UOH family, Oniyama) re-arm
+             * guarding during the dwell; rearm timing is not uniform
+             * (chunli-uoh at anchor-1, yang-senkyuutai at anchor-4, per the
+             * §13.5.1b dated riders) but the gate is a level test at the
+             * commit tick, so rearm timing does not affect it. ENGINE-2/18(b)
+             * false cuts keep guard_flag=3 until the natural r1 edge. r1==2 grapple
              * tails are exempt (Player_catch never re-arms guarding;
              * q-throw R=34 wall). */
             const int fd_cut_requires_guard_rearm = 1; /* lever H */
@@ -1794,8 +2004,8 @@ void frame_data_overlay_tick(void) {
                     g_cur.cghi1_first_frame    = g_local_frame;
                     g_cur.cghi1_first_raw_slot = g_cur.raw_len;
                     /* §13.9.4 anchor-time snapshot. Valid because
-                     * frame_data_overlay_tick() (main.c:615) runs after
-                     * the engine tick / njUserMain() (main.c:603), so
+                     * frame_data_overlay_tick() (main.c:630) runs after
+                     * the engine tick / njUserMain() (main.c:618), so
                      * every char_move() add for this frame (charset.c's
                      * fd_engine_active_count accumulator) has already
                      * landed by the time we read it here — the snapshot
@@ -1916,6 +2126,15 @@ void frame_data_overlay_tick(void) {
          * precedent as the box tracking above). */
         if (!g_cur.is_throw && an->box_active && an->hit_stop != 0) {
             g_cur.hstop_in_box++;
+        }
+
+        /* CONTACT-A census (design.md §1.1, diagnostics only): the strict
+         * frz-EXCLUDED complement of hstop_in_box — box-active AND hit_stop
+         * == 0, no event-tick exemption. Together with hstop_in_box this
+         * partitions every box-active tick. Passive: feeds only the FINAL
+         * line, never a display or gate. Same throw exclusion as above. */
+        if (!g_cur.is_throw && an->box_active && an->hit_stop == 0) {
+            g_cur.box_a_frz++;
         }
 
         /* Don't grow the attacker meter past attacker_idle. We continue
@@ -2046,8 +2265,8 @@ void frame_data_overlay_tick(void) {
          * BEFORE this consume site runs, since MOVE_START detection and
          * this per-tick block both execute within the same call, in that
          * order. effect_13_init() (which sets the flag) runs inside
-         * njUserMain(), strictly before this overlay tick (main.c:603 vs
-         * 615), so a projectile spawning on a move's very first engine
+         * njUserMain(), strictly before this overlay tick (main.c:618 vs
+         * 630), so a projectile spawning on a move's very first engine
          * tick would otherwise have its flag cleared out from under it
          * right here, never reaching this `if`. The MOVE_START block now
          * latches that slot-0 case itself (proj_spawn_slot=0,
@@ -2147,6 +2366,62 @@ void frame_data_overlay_tick(void) {
                         g_cur.busyr_fallback = true;
                     }
                 }
+                /* §13.22 lever W finalize deferral (LANDING-CUT, §B4 SPEC) —
+                 * the CONTACT-side mirror of lever N's deferral. A committed
+                 * landing cut backdates attacker_idle to cghi1_first_frame, so
+                 * on a negative-advantage BLOCK leg finalize would otherwise
+                 * fire at the cut-commit tick — BEFORE the attacker's natural
+                 * r1(nonzero->0) edge (`atk_r1_end`) lands 6-13 ticks later.
+                 * Hold finalize open until that edge latches so leverW_pred can
+                 * re-anchor off it. Gated on the tick-side-available PURE
+                 * CONTACT-LEG lever-R shape (contact HIT/BLOCK, !move_is_uoh,
+                 * cut_committed, single box run, koc==5, freeze-free) — a
+                 * strict subset of finalize's own fd_lever_w_applies. The
+                 * `!move_is_uoh` conjunct mirrors the finalize gate's: UOH
+                 * contact rows are cut==1 too, but their advantage is lever-T
+                 * domain and currently arcade-correct — lever W must not defer
+                 * for (nor re-anchor) them. The finalize-only conjuncts this
+                 * gate can't see (busy_edge_valid, recovery_pf>0,
+                 * use_proj_split/no_active_signal) are the empirical
+                 * live-vs-finalize gap the
+                 * SPEC risk section calls out — over-firing here is
+                 * display-invariant (the extra deferred ticks sit in post-cut
+                 * recovery, no box run advances box_last/busy_edge, so lever R's
+                 * recovery is unchanged) and leverW_pred still fires only on the
+                 * finalize gate. The <=20 bound never crosses the next SCRIPT
+                 * entry (census max gap 13 ticks vs ~150-frame move spacing) and
+                 * the new-move escape guards regardless; on timeout/new-move
+                 * atk_r1_end stays -1 -> leverW_pred -1 -> legacy advantage,
+                 * never fabricated. leverw_live_defer records only that this
+                 * deferral gate matched (finalize-side); it reads false on the
+                 * hit legs by design — the passive watcher (:1915-1918)
+                 * usually latches atk_r1_end before defender_idle resolves
+                 * there, so finalize never needs to defer — and is not a
+                 * signal that atk_r1_end is invalid (leverW_live=%d in the
+                 * FINAL line is a deferral-invoked diagnostic, not a value
+                 * witness). Mutually exclusive with lever N above (event
+                 * NONE there vs HIT/BLOCK here); guarded on !defer_now for
+                 * clarity. Lever at 0 short-circuits false, byte-identical. */
+                if (!defer_now
+                    && fd_landing_cut_adv_reanchor
+                    && !g_cur.is_throw
+                    && !g_cur.move_is_uoh
+                    && (g_cur.event == FD_OUTCOME_HIT || g_cur.event == FD_OUTCOME_BLOCK)
+                    && g_cur.cut_committed
+                    && g_cur.box_count > 0
+                    && g_cur.box_runs == 1
+                    && g_cur.koc == 5
+                    && g_cur.hstop_after_box == 0
+                    && g_cur.atk_r1_end < 0) {
+                    g_cur.leverw_live_defer = true;
+                    const int elapsed_w = g_local_frame - g_cur.attacker_idle;
+                    const bool new_move_edge_w =
+                        (g_prev[atk].r1 == 0)
+                        && (now[atk].r1 == 4 || now[atk].r1 == 2 || now[atk].r1 == 3);
+                    if (elapsed_w < 20 && !new_move_edge_w) {
+                        defer_now = true;
+                    }
+                }
                 if (!defer_now) {
                     fd_finalize();
                     fd_reset_move();
@@ -2163,7 +2438,14 @@ void frame_data_overlay_tick(void) {
  * only when a row's visible cell kinds change (memcmp below), then submitted
  * as a single UI-bitmap quad — replacing 72 per-cell solid rects per row.
  * Static lifetime matches the glyph cache in the software renderer: the
- * borrowed pointer stays valid from submit through RenderFrame. */
+ * borrowed pointer stays valid from submit through RenderFrame.
+ * PURITY CONSTRAINT: strip pixels must remain a pure function of the
+ * kinds[] array (colors/darken/position are compile-time constants); any
+ * future state that affects cell color must be folded into kinds[] or the
+ * memcmp dirty check will serve stale pixels. Also note the meter draws at
+ * PrioBase[2] outside njdp2d: if it is ever drawn while ToneDown dims the
+ * screen (same z, currently impossible — pause menu never draws the
+ * meter), it will punch through the dim layer. */
 static uint32_t fd_meter_px[2][FD_CELL_H * FD_METER_TOTAL_W];
 static u8       fd_cache_kinds[2][FD_METER_LEN];
 static bool     fd_cache_valid[2] = { false, false };
@@ -2297,4 +2579,71 @@ void frame_data_overlay_draw(void) {
     }
     fd_submit_meter_row(0, FD_METER_Y_ATK, atk_src, draw_len);
     fd_submit_meter_row(1, FD_METER_Y_DEF, def_src, draw_len);
+}
+
+/* FD_IDLE_PROBE (diagnostic, D-f adv ±1 residual). Dedicated cached env
+ * opt-in mirroring frame_trace.c:70-77 / frame_spawn_probe_opt_in()
+ * token-for-token: the harness sets the var before launch, so it can't
+ * change mid-run. Cached once; inert (single getenv) when unset. */
+static bool fd_idle_probe_opt_in(void) {
+    static int cached = -1;
+    if (cached < 0) {
+        const char* v = getenv("FD_IDLE_PROBE");
+        cached = (v != NULL && v[0] != '\0') ? 1 : 0;
+    }
+    return cached != 0;
+}
+
+/* Per-tick idle ledger. Emits one line per active-window tick via
+ * frame_trace_annotate (which stacks the training/overlay/opt-in gates and
+ * fflushes), witnessing every adv-anchor latch site plus the per-contact
+ * blockstun stun-arithmetic inputs (defender dm_attlv -> _guard_pause_table
+ * load -> cmwk[14] countdown vs both stop values). Observation only:
+ * reads g_cur (file-static) and plw[]/engine globals, writes no engine or
+ * overlay state, touches no measured value / display / lever path. Called
+ * from main.c AFTER frame_data_overlay_tick() so each line reports the
+ * post-engine, post-overlay-latch state (a latch and the engine edge that
+ * caused it land on the same line). The emission predicate is g_cur.active
+ * so it also runs on super-freeze ticks (sastop != 0) the overlay's own
+ * tick early-returns on -- those are emitted with sastop != 0 so freeze
+ * boundaries are visible rather than assumed absent. */
+void fd_idle_probe_tick(void) {
+    if (!fd_idle_probe_opt_in()) return;
+    if (!g_cur.active) return;
+
+    const int atk = g_cur.atk_idx;
+    if (atk != 0 && atk != 1) return;
+    const int def = 1 - atk;
+
+    const PLW* pa = &plw[atk];
+    const PLW* pd = &plw[def];
+
+    int a_box = 0;
+    if (pa->wu.h_att != NULL) {
+        for (int j = 0; j < 4 && !a_box; j++) {
+            for (int k = 0; k < 4; k++) {
+                if (pa->wu.h_att->att_box[j][k] != 0) { a_box = 1; break; }
+            }
+        }
+    }
+
+    frame_trace_annotate(
+        "IDLEPROBE GT=%u ovF=%d sastop=%d atk=%d ev=%d evF=%d aidle=%d didle=%d "
+        "r1end=%d rawlen=%d cutF=%d c1F=%d c1n=%d cutc=%d boxlast=%d busyF=%d runs=%d "
+        "a.r1=%d a.r2=%d a.cgix=%d a.cgctr=%d a.cghi=%d a.hs=%d a.gflg=%d a.box=%d "
+        "d.r1=%d d.r2=%d d.rno3=%d d.cmwk14=%d d.wcaix=%d d.dstop=%d d.hs=%d d.dcnt=%d d.attlv=%d",
+        (unsigned)Game_timer, (int)g_local_frame, (int)sa_stop_check(),
+        atk, (int)g_cur.event, (int)g_cur.event_frame,
+        (int)g_cur.attacker_idle, (int)g_cur.defender_idle,
+        (int)g_cur.atk_r1_end, (int)g_cur.raw_len,
+        (int)g_cur.cgix_reset_frame, (int)g_cur.cghi1_first_frame,
+        (int)g_cur.cghi1_count, (int)g_cur.cut_committed,
+        (int)g_cur.box_last, (int)g_cur.busy_edge_frame, (int)g_cur.box_runs,
+        (int)pa->wu.routine_no[1], (int)pa->wu.routine_no[2],
+        (int)pa->wu.cg_ix, (int)pa->wu.cg_ctr, (int)pa->wu.cg_hit_ix,
+        (int)pa->wu.hit_stop, (int)pa->guard_flag, a_box,
+        (int)pd->wu.routine_no[1], (int)pd->wu.routine_no[2],
+        (int)pd->wu.routine_no[3], (int)pd->wu.cmwk[14], (int)pd->wu.cg_wca_ix,
+        (int)pd->wu.dm_stop, (int)pd->wu.hit_stop, (int)pd->wu.dm_count_up,
+        (int)pd->wu.dm_attlv);
 }
