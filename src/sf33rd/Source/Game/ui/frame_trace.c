@@ -2,10 +2,12 @@
 
 #include <stdarg.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 
 #include "common.h"
+#include "port/build_config.h"
 #include "structs.h"
 #include "sf33rd/Source/Game/engine/plcnt.h"
 #include "sf33rd/Source/Game/engine/pls01.h"
@@ -37,6 +39,26 @@ static const char* frame_trace_path(void) {
         return override;
     }
     return FRAME_TRACE_DEFAULT_PATH;
+}
+
+/* Opt-in gate: even with training mode + Disp_Frame_Data on, the trace is
+ * a heavy per-frame diagnostic (~69-field fprintf + fflush() every active
+ * frame) and was the prime frame-drop suspect during normal play (see
+ * perf investigation). Require an explicit opt-in — the FRAME_TRACE_PATH
+ * env var — before any formatting, I/O, or file open. The frame-data
+ * harness (tools/frame-data/run.sh) already sets it, so the suite keeps
+ * working unchanged; an ordinary training-mode player who enables the
+ * FRAME DATA overlay pays zero trace I/O. */
+static bool frame_trace_opt_in(void) {
+    /* Resolved once and cached: this runs per active frame, and FRAME_TRACE_PATH
+     * cannot change mid-run for our processes (the harness sets it before launch).
+     * -1 = not yet resolved, 0/1 = cached result. */
+    static int cached = -1;
+    if (cached < 0) {
+        const char* override = getenv("FRAME_TRACE_PATH");
+        cached = (override != NULL && override[0] != '\0') ? 1 : 0;
+    }
+    return cached != 0;
 }
 
 static FILE* g_fp = NULL;
@@ -240,6 +262,15 @@ static void ensure_open(void) {
     }
 }
 
+#if ENABLE_PERF_TELEMETRY
+/* Wall-clock cost of frame_trace_tick(), sampled at the main.c call site
+   (perf-overlay report §4).  Assigned once per game frame; read by the FPS
+   overlay's debug telemetry. */
+static uint64_t perf_tick_ns = 0;
+void FrameTrace_SetPerfTickNs(uint64_t ns) { perf_tick_ns = ns; }
+uint64_t FrameTrace_GetPerfTickNs(void) { return perf_tick_ns; }
+#endif
+
 void frame_trace_tick(void) {
     if (!Is_Training_Mode(Mode_Type)) {
         return;
@@ -256,6 +287,9 @@ void frame_trace_tick(void) {
      * gameplay-entry, so the harness keeps working without touching
      * Disp_Frame_Data directly. */
     if (!Disp_Frame_Data) {
+        return;
+    }
+    if (!frame_trace_opt_in()) {
         return;
     }
     if (g_rows_written >= FRAME_TRACE_MAX_ROWS) {
@@ -289,6 +323,7 @@ void frame_trace_tick(void) {
 void frame_trace_annotate(const char* fmt, ...) {
     if (!Is_Training_Mode(Mode_Type)) return;
     if (!Disp_Frame_Data) return;  /* see frame_trace_tick() */
+    if (!frame_trace_opt_in()) return;
     ensure_open();
     if (g_fp == NULL) return;
 

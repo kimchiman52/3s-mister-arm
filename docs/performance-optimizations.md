@@ -438,6 +438,99 @@ These commits do not directly improve performance but were essential for identif
 | 9.1 | Texture group load race → skip frame | Stability | Eliminates SIGABRT crash in attract mode at 800MHz | |
 | 9.2 | CG cache full / decode error → graceful fallback | Stability | Eliminates infinite CPU spin on long idle (animated stages) | |
 | 11.1 | INDEX8 rasterization with per-pixel palette lookup | Rendering | 4× smaller source textures, eliminates ARGB8888 conversion | `480d3368`, `8c1994ec` |
+| 12.1 | frame_trace opt-in via env var | Overlay/I-O | Eliminates per-frame trace fprintf+fflush | `bdb5a4cd` |
+| 12.2 | njdp2d prim buffer raised + overflow log rate-limited | Overlay/I-O | Eliminates per-dropped-prim I/O storm | `ff0fbaf7` |
+| 12.3 | Perf telemetry counters (trace/njdp2d/quads/overlay-submit) | Instrumentation | Enables direct per-condition measurement | `dc567776` |
+| 12.4 | Hoist glyph texture bind out of SSPutStr_Bigger | Overlay/Rendering | ~39->~13 register sends/player/frame (input history) | `05f5364f` |
+| 12.5 | njdp2d sort-at-draw (replace O(n²) insertion walk) | Overlay/Rendering | O(n log n) vs O(n²); ~10k walk steps/frame removed | `4cf7eef1` |
+| 12.6 | NEON kernel for 16bpp partial-alpha solid fill | Overlay/Rendering | Bit-exact NEON path for hitbox alpha fills | `45da0d4c` |
+
+## 12. Training-Mode Overlay Perf Pass (Frame Meter + Input History)
+
+Frame drops reported during heavy training scenes with the frame-data meter, input history, and hitboxes all on. Root-caused in `scratchpad` investigation report (per-frame `frame_trace` file I/O, `njdp2d` prim-buffer overflow logging, redundant draw-call/texture-bind overhead, O(n²) 2D sort). All changes are display/measurement-side only; none touch rollback-saved gameplay state (`Disp_Frame_Data`/`Disp_Input_History` semantics unchanged).
+
+### 12.1 `frame_trace` Opt-In via Env Var
+
+- **What**: Gate `frame_trace_tick()`/`frame_trace_annotate()` on a new `frame_trace_opt_in()` check (`FRAME_TRACE_PATH` env var set and non-empty), in addition to the existing training-mode + `Disp_Frame_Data` checks.
+- **Why**: `frame_trace_tick()` ran every active training-mode frame regardless of whether anything consumed the trace file, writing a ~69-field `fprintf` + `fflush()` to `/tmp/3sx-frame-trace.log` whenever either player was "active" — i.e. during exactly the heavy scenes where drops were reported.
+- **Impact**: Zero per-frame trace I/O for ordinary players with the meter on. The frame-data test harness already exports `FRAME_TRACE_PATH`, so `tools/frame-data/run-suite.sh` keeps producing trace logs with no harness changes.
+- **Commit**: `bdb5a4cd`
+- **Files**: `src/sf33rd/Source/Game/ui/frame_trace.c`
+
+### 12.2 njdp2d Prim Buffer Raised + Overflow Log Rate-Limited
+
+- **What**: Raise `NJDP2D_PRIM_MAX` 200 -> 512 (`dc_ghost.c:20`); add an `overflow_logged` one-shot latch so the overflow `flLogOut` fires at most once per drain instead of once per dropped prim; add an `overflow_drops` counter. Both are reset in `njdp2d_init()`, which runs at the end of each `njdp2d_draw()` drain — and `njdp2d_draw()` drains up to twice per game frame, so the latch permits at most two overflow log lines per frame.
+- **Why**: The 144 unconditional meter-cell prims plus hitboxes/shadows/fades could exceed the old 200-prim cap during attacks. Every prim past the cap triggered `flLogOut` — a `vsprintf` plus an always-failing `open()` syscall plus `fprintf(stderr, ...)` — once per dropped prim, per drain, while also silently dropping (visually corrupting) the overflowing prims.
+- **Impact**: Meter + hitboxes now fit comfortably under the raised cap in the common case; on the rare drain that still overflows, the I/O storm collapses to one log line instead of N.
+- **Commit**: `ff0fbaf7`
+- **Files**: `src/main.c`, `src/sf33rd/Source/Game/rendering/dc_ghost.c`
+
+### 12.3 Perf Telemetry Counters (ENABLE_PERF_TELEMETRY)
+
+- **What**: Four new counters/timers, all gated under `ENABLE_PERF_TELEMETRY` and surfaced via a new `[perf_p3]` line in the debug FPS overlay's existing 120-frame cadence: (1) `FrameTrace_Set/GetPerfTickNs` — ns timer around `frame_trace_tick()`'s `main.c` call site; (2) `Njdp2d_GetPerfPeakTotal`/`GetPerfDrops` — per-frame peak `njdp2d_w.total` and summed `overflow_drops`, captured in `njdp2d_draw()` before `njdp2d_init()` clears them, reset once per frame via `Njdp2d_ResetPerf()`; (3) `SoftwareRenderer_GetPerfPeakQuads` — peak `arrlen(quads)` before sort in `SoftwareRenderer_RenderFrame()`; (4) `Training_Set/GetPerfDispNs` — ns timer around `Training_Data_Disp()`'s `menu.c` call site.
+- **Why**: The investigation's on-device measurement plan (below) needed direct instrumentation to distinguish "how much is trace I/O", "do we overflow the njdp2d/quad buffers, by how much", and "total overlay submission cost" per condition, rather than inferring them from the aggregate `u` bucket.
+- **Impact**: Near-zero overhead when the overlay is off (getters are only read in `FPS_OVERLAY_DEBUG` mode). Makes the 5-condition protocol below directly measurable instead of inferred.
+- **Commit**: `dc567776`
+- **Files**: `src/main.c`, `src/sf33rd/Source/Game/ui/frame_trace.{c,h}`, `src/sf33rd/Source/Game/rendering/dc_ghost.{c,h}`, `src/platform/video/software/software_renderer.{c,h}`, `src/sf33rd/Source/Game/menu/menu.c`, `src/sf33rd/Source/Game/ui/sc_sub.{c,h}`, `src/port/sdl/sdl_app.c`
+
+### 12.4 Hoist Glyph Texture Bind Out of `SSPutStr_Bigger`
+
+- **What**: `SSPutStr_Bigger` rebound the glyph texture register (`njDrawTexture`) once per character even though the whole string draws from the same glyph sheet. Add a no-bind quad path (`njDrawTextureNoBind`) so the register is set once, on the first drawn glyph, and reused for the rest of the string.
+- **Why**: Input-history rows (`sc_sub.c`) draw via `SSPutStr_Bigger`, each glyph doing a full `flSetRenderState(TEXSTAGE0)` texture-register set even though the source texture never changes within a string.
+- **Impact**: Cuts input-history count-field register sends from ~39 to ~13 per player per frame; benefits every other `SSPutStr_Bigger` HUD caller identically. Display-side only — same glyphs, same order, same position.
+- **Commit**: `05f5364f`
+- **Files**: `src/sf33rd/Source/Game/ui/sc_sub.c`, `src/sf33rd/Source/Common/PPGFile.{c,h}`, `src/sf33rd/Source/Game/rendering/dc_ghost.{c,h}`
+
+### 12.5 njdp2d Sort-at-Draw (Replace O(n²) Insertion Walk)
+
+- **What**: Replace `njdp2d_sort`'s per-insert linked-list walk with append-then-sort-at-draw: prims are pushed in arrival order into `njdp2d_w.prim[]`, then `njdp2d_draw()` builds a `(z-key, index)` array and quicksorts it (falling back to insertion sort for small partitions), preserving z-descending order with equal-z FIFO tie-breaking (signed-zero canonicalized so `-0.0`/`+0.0` tie like the old strict `>`).
+- **Why**: The old insertion sort walked the existing list linearly per prim, giving O(n²) total cost. With 144 same-priority meter prims alone this was ~10,300 list-walk steps per frame; more with hitboxes.
+- **Impact**: Replaces the O(n²) insertion walk with an O(n log n) sort once per frame. Draw order is provably unchanged (verified against the equal-key FIFO contract of the prior linked-list walk).
+- **Commit**: `4cf7eef1`
+- **Files**: `src/sf33rd/Source/Game/rendering/dc_ghost.c`
+
+### 12.6 NEON Kernel for 16bpp Partial-Alpha Solid Fill
+
+- **What**: Add a shared scalar-reference + NEON kernel (`sw_blit_565_fill.h`) for the 16bpp partial-alpha (`0 < a < 255`) solid-fill row used by hitbox box fills, processing 8 pixels/iteration in u32 lanes with a scalar tail. Routed in `sw_blit.c` behind `__ARM_NEON && CRS_SW_CANVAS_16BPP`; the `a==0`/`a==0xFF` short-circuits and the 32bpp path are untouched.
+- **Why**: Hitbox alpha fills are the one overlay cost that is per-pixel-significant, running through the scalar 16bpp blend row over character-sized screen areas every frame hitboxes are shown.
+- **Impact**: Proven bit-exact against the scalar reference over 88,531,974 comparisons in a standalone host harness (`tools/sw-blit-565/`) covering full geometry/alpha-bucket sweeps plus 20k fuzz cases. Cross-compiled clean for ARMv7 cortex-a9/neon-vfpv3 (`-Wall -Wextra -Werror`); on-device execution timing not yet measured.
+- **Commit**: `45da0d4c`
+- **Files**: `src/platform/video/software/sw_blit_565_fill.h`, `src/platform/video/software/sw_blit.c`, `tools/sw-blit-565/`
+
+### 12.7 Frame Meter Batched into Cached ARGB Strips (P4)
+
+- **What**: Replace the frame meter's 144 per-frame solid-rect prims (72 cells x 2 rows via `fd_draw_rect` -> `njColorBlendingMode` + `njDrawPolygon2D`) with two persistent 288x6 ARGB strips submitted as one UI-bitmap quad per row. Strips are regenerated only when a row's 72 visible cell kinds change (`memcmp` dirty check); cell colors, the odd-cell darken, positions, and opaque semantics on the 16bpp canvas are reproduced exactly (both paths write `sw_argb_to_canvas(argb)` for opaque pixels).
+- **Why**: The meter's per-cell prim submission was one of the remaining per-frame costs identified alongside 12.2/12.5 — 144 njdp2d prims, 144 giblet quads, and 144 blend-mode calls every frame the meter is visible, regardless of whether any cell actually changed.
+- **Impact**: Removes 144 njdp2d prims, 144 giblet quads, and 144 blend-mode calls per frame while the meter is visible; reviewed z-order against all `PrioBase[2]` users confirms no same-z opaque overlapper intersects the meter rectangle. Full frame-data suite `--check-golden` zero drift (94 corpora, 1,290 PASS / 59 XFAIL); ARM cross-build (telemetry) clean; all 12 lever gates asserted `==1` pre-commit. Measurement code, lever constants, and the numeric text line are untouched.
+- **Commit**: `6590c818`
+- **Files**: `include/rendering/game_renderer.h`, `src/platform/video/software/software_renderer.c`, `src/sf33rd/Source/Game/ui/frame_data_overlay.c`
+
+---
+
+## 13. On-Device Measurement Protocol (Training Overlay Perf)
+
+Use this to measure the wins above during real gameplay once on-device time is available. All conditions use the **telemetry** build flavor (`ENABLE_PERF_TELEMETRY` ON) — headless captures give inflated FPS and are not a substitute for on-device measurement.
+
+**Setup**: `show-fps = debug` (`config.h`) turns on the on-canvas `fps N u X r X p X t X` overlay. Training mode, same heavy scene (repeated SA + projectiles) for every condition so results are comparable.
+
+**5 conditions** (from the investigation report §4):
+1. All overlays off (baseline).
+2. Frame-data meter only.
+3. Input history only.
+4. Meter + input history (the originally reported repro scene).
+5. Meter + input history + hitboxes (goal state — the heaviest combination).
+
+**What to record per condition**:
+- `u`/`r`/`p`/`t` buckets and any FPS dips from the on-canvas overlay.
+- `[perf_avg]` 120-frame rolling averages (`sdl_app.c`).
+- `FRAME OUTLIER` log lines.
+- The new `[perf_p3]` telemetry line (step 12.3), which reports, per 120-frame window: `frame_trace` ns sum, `Training_Data_Disp` ns sum, njdp2d peak-total/512 and drops, and quads-peak/512. This directly answers: how much does trace I/O cost now (should be ~0 with `FRAME_TRACE_PATH` unset), how close to the 512-prim/512-quad caps each condition gets, and how much time the overlay submission itself costs.
+- `ls -l /tmp/3sx-frame-trace.log` during conditions 2/4 only if `FRAME_TRACE_PATH` is deliberately set — confirms the opt-in gate (12.1) is doing its job when unset (file should not exist/grow).
+- Any `２Ｄポリゴン…` line in stderr/log during condition 5 — now rate-limited to at most once per `njdp2d_draw()` drain (up to twice per game frame) (12.2) instead of once per dropped prim.
+
+Compare each condition's `[perf_p3]`/`[perf_avg]` numbers against this phase's baseline (pre-P1..P7, commit `e37d6208`) to quantify the win; the finer per-subsystem splits (`Game_GetPerfGameLogicNs/SpriteSubmitNs/DispatchNs`, `Mtrans_GetPerfTexRenewNs/SprSubmitNs`) remain available to rule out interaction with the texture-refresh/dirty-rect path.
+
+---
 
 ### Aggregate Impact
 

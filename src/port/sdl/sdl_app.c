@@ -37,8 +37,10 @@
 #include "sf33rd/Source/Game/system/sys_sub.h"
 #include "sf33rd/Source/Game/system/work_sys.h"
 #include "sf33rd/Source/Game/ui/sc_sub.h"
+#include "sf33rd/Source/Game/ui/frame_trace.h"
 #include "sf33rd/Source/Game/game.h"
 #include "sf33rd/Source/Game/rendering/mtrans.h"
+#include "sf33rd/Source/Game/rendering/dc_ghost.h"
 
 #include <SDL3/SDL.h>
 
@@ -3772,6 +3774,46 @@ void SDLApp_EndFrame() {
                                       packed_8px_hits, neon_16px_direct_hits,
                                       qsort_invocations,
                                       present_ns, frame_work_ns);
+
+        /* perf-P3 diagnostic counters (perf-overlay report §4): frame_trace and
+           overlay-submit ns timers, njdp2d prim peak/drops, giblet quad peak.
+           Reported on the same 120-frame cadence as [perf_avg] so the on-device
+           5-condition protocol needs no further code changes. */
+        {
+            static int    p3_frames = 0;
+            static Uint64 p3_frametrace_ns_sum = 0;
+            static Uint64 p3_trainingdisp_ns_sum = 0;
+            static int    p3_njdp2d_peak = 0;
+            static int    p3_njdp2d_drops_sum = 0;
+            static int    p3_quads_peak = 0;
+            p3_frames++;
+            p3_frametrace_ns_sum   += FrameTrace_GetPerfTickNs();
+            p3_trainingdisp_ns_sum += Training_GetPerfDispNs();
+            {
+                const int njp = Njdp2d_GetPerfPeakTotal();
+                if (njp > p3_njdp2d_peak) p3_njdp2d_peak = njp;
+            }
+            p3_njdp2d_drops_sum += Njdp2d_GetPerfDrops();
+            {
+                const int qp = SoftwareRenderer_GetPerfPeakQuads();
+                if (qp > p3_quads_peak) p3_quads_peak = qp;
+            }
+            if (p3_frames >= 120) {
+                const double inv = 1.0 / (p3_frames * 1e6);
+                backend_logf("[perf_p3] frames=%d  trace=%.3f trdisp=%.3f  njdp2d_peak=%d/512 drops=%d  quads_peak=%d/512",
+                             p3_frames,
+                             (double)p3_frametrace_ns_sum * inv,
+                             (double)p3_trainingdisp_ns_sum * inv,
+                             p3_njdp2d_peak, p3_njdp2d_drops_sum,
+                             p3_quads_peak);
+                p3_frames = 0;
+                p3_frametrace_ns_sum = 0;
+                p3_trainingdisp_ns_sum = 0;
+                p3_njdp2d_peak = 0;
+                p3_njdp2d_drops_sum = 0;
+                p3_quads_peak = 0;
+            }
+        }
     }
     /* Giblet renderer u/r/p/t timing for the FPS overlay debug line.
      * Substitute the per-call-site giblet measurements for the frame's

@@ -1,10 +1,15 @@
 #pragma once
 
+#include <stdint.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 void frame_trace_tick(void);
+
+void FrameTrace_SetPerfTickNs(uint64_t ns);
+uint64_t FrameTrace_GetPerfTickNs(void);
 
 /* Emit a free-form `# ...` annotation line into the trace file. Used by
  * frame_data_overlay to mark MOVE_START / FINAL events so the trace is

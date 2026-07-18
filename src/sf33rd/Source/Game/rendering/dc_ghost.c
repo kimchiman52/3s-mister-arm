@@ -5,6 +5,7 @@
 
 #include "sf33rd/Source/Game/rendering/dc_ghost.h"
 #include "common.h"
+#include "port/build_config.h"
 #include "rendering/game_renderer.h"
 #include "sf33rd/AcrSDK/ps2/flps2render.h"
 #include "sf33rd/AcrSDK/ps2/foundaps2.h"
@@ -16,7 +17,7 @@
 #include <string.h>
 
 #define NTH_BYTE(value, n) ((((value >> n * 8) & 0xFF) << n * 8))
-#define NJDP2D_PRIM_MAX 200
+#define NJDP2D_PRIM_MAX 512
 
 typedef struct {
     Vertex v;
@@ -28,12 +29,12 @@ typedef struct {
     Vec3 v[4];
     uintptr_t col;
     u32 type;
-    s32 next;
 } NJDP2D_PRIM;
 
 typedef struct {
-    s16 ix1st;
     s16 total;
+    s32 overflow_drops; // prims dropped this frame after hitting NJDP2D_PRIM_MAX
+    u8 overflow_logged; // rate-limit: at most one overflow log per njdp2d_draw() drain (up to twice/frame)
     NJDP2D_PRIM prim[NJDP2D_PRIM_MAX];
 } NJDP2D_W;
 
@@ -144,6 +145,19 @@ void njDrawTexture(Polygon* polygon, s32 /* unused */, s32 tex, s32 /* unused */
     ppgWriteQuadWithST_B(vtx, polygon[0].col, NULL, tex, -1);
 }
 
+// Same quad as njDrawTexture, but skips the redundant texture-register bind.
+// Only valid after a njDrawTexture that bound the identical texCode.
+void njDrawTextureNoBind(Polygon* polygon, s32 /* unused */, s32 tex, s32 /* unused */) {
+    Vertex vtx[4];
+    s32 i;
+
+    for (i = 0; i < 4; i++) {
+        vtx[i] = ((_Polygon*)polygon)[i].v;
+    }
+
+    ppgWriteQuadWithST_B_NoBind(vtx, polygon[0].col, NULL, tex, -1);
+}
+
 void njDrawSprite(Polygon* polygon, s32 /* unused */, s32 tex, s32 /* unused */) {
     Vertex vtx[4];
 
@@ -157,44 +171,160 @@ void njDrawSprite(Polygon* polygon, s32 /* unused */, s32 tex, s32 /* unused */)
     ppgWriteQuadWithST_B2(vtx, polygon[0].col, 0, tex, -1);
 }
 
+#if ENABLE_PERF_TELEMETRY
+/* Per-frame prim-buffer diagnostics (perf-overlay report §4).  njdp2d_draw()
+   runs up to twice per game frame and njdp2d_init() clears njdp2d_w.total each
+   time, so accumulate the peak/drops here and reset once per frame from
+   game_step_0() via Njdp2d_ResetPerf(). */
+static s32 njdp2d_perf_peak_total = 0;
+static s32 njdp2d_perf_drops = 0;
+s32 Njdp2d_GetPerfPeakTotal(void) { return njdp2d_perf_peak_total; }
+s32 Njdp2d_GetPerfDrops(void) { return njdp2d_perf_drops; }
+void Njdp2d_ResetPerf(void) {
+    njdp2d_perf_peak_total = 0;
+    njdp2d_perf_drops = 0;
+}
+#endif
+
 void njdp2d_init() {
-    njdp2d_w.ix1st = -1;
     njdp2d_w.total = 0;
+    njdp2d_w.overflow_drops = 0;
+    njdp2d_w.overflow_logged = 0;
+}
+
+// Sort prim indices instead of moving full prims around.  Draw order is
+// descending by priority (prim.v[0].z), with equal priorities kept in insertion
+// (FIFO) order.  The key below canonicalizes signed zero so -0.0/+0.0 tie, then
+// tie-breaks on the plain insertion index to hold the equal-priority FIFO.
+static inline u32 float_to_sortable_u32(float f) {
+    u32 b;
+    memcpy(&b, &f, sizeof(b));
+    return (b & 0x80000000u) ? ~b : (b | 0x80000000u);
+}
+
+static void njdp2d_insertion_sort_idx(u16* idx, int lo, int hi, const u64* keys) {
+    for (int i = lo + 1; i <= hi; i++) {
+        const u16 x = idx[i];
+        const u64 xk = keys[x];
+        int j = i - 1;
+        while (j >= lo && keys[idx[j]] > xk) {
+            idx[j + 1] = idx[j];
+            j--;
+        }
+        idx[j + 1] = x;
+    }
+}
+
+static void njdp2d_quick_sort_idx(u16* idx, int lo, int hi, const u64* keys) {
+    while (hi - lo > 15) {
+        const int mid = lo + ((hi - lo) >> 1);
+        if (keys[idx[lo]] > keys[idx[mid]]) {
+            u16 t = idx[lo];
+            idx[lo] = idx[mid];
+            idx[mid] = t;
+        }
+        if (keys[idx[lo]] > keys[idx[hi]]) {
+            u16 t = idx[lo];
+            idx[lo] = idx[hi];
+            idx[hi] = t;
+        }
+        if (keys[idx[mid]] > keys[idx[hi]]) {
+            u16 t = idx[mid];
+            idx[mid] = idx[hi];
+            idx[hi] = t;
+        }
+        const u16 pivot_i = idx[mid];
+        const u64 pivot_k = keys[pivot_i];
+        idx[mid] = idx[hi - 1];
+        idx[hi - 1] = pivot_i;
+        int i = lo, j = hi - 1;
+        for (;;) {
+            while (keys[idx[++i]] < pivot_k) { /* */
+            }
+            while (keys[idx[--j]] > pivot_k) { /* */
+            }
+            if (i >= j)
+                break;
+            u16 t = idx[i];
+            idx[i] = idx[j];
+            idx[j] = t;
+        }
+        {
+            u16 t = idx[i];
+            idx[i] = idx[hi - 1];
+            idx[hi - 1] = t;
+        }
+        if (i - lo < hi - i) {
+            njdp2d_quick_sort_idx(idx, lo, i - 1, keys);
+            lo = i + 1;
+        } else {
+            njdp2d_quick_sort_idx(idx, i + 1, hi, keys);
+            hi = i - 1;
+        }
+    }
+    njdp2d_insertion_sort_idx(idx, lo, hi, keys);
 }
 
 void njdp2d_draw() {
+    static u16 order[NJDP2D_PRIM_MAX];
+    static u64 keys[NJDP2D_PRIM_MAX];
     Quad prm;
     s32 i;
     s32 j;
+    s32 k;
+    s32 n = njdp2d_w.total;
 
-    for (i = njdp2d_w.ix1st; i != -1; i = njdp2d_w.prim[i].next) {
-        switch (njdp2d_w.prim[i].type) {
+    for (i = 0; i < n; i++) {
+        f32 z = njdp2d_w.prim[i].v[0].z;
+        if (z == 0.0f) {
+            z = 0.0f; // canonicalize -0.0 to +0.0 so signed zeros tie like the old strict `>`
+        }
+        keys[i] = ((u64)(~float_to_sortable_u32(z)) << 32) | (u32)i;
+        order[i] = (u16)i;
+    }
+
+    if (n > 1) {
+        njdp2d_quick_sort_idx(order, 0, n - 1, keys);
+    }
+
+    for (i = 0; i < n; i++) {
+        k = order[i];
+        switch (njdp2d_w.prim[k].type) {
         case 0:
             for (j = 0; j < 4; j++) {
-                prm.v[j] = njdp2d_w.prim[i].v[j];
+                prm.v[j] = njdp2d_w.prim[k].v[j];
             }
 
-            Renderer_DrawSolidQuad(&prm, njdp2d_w.prim[i].col);
+            Renderer_DrawSolidQuad(&prm, njdp2d_w.prim[k].col);
             break;
 
         case 1:
-            shadow_drawing((WORK*)njdp2d_w.prim[i].col, njdp2d_w.prim[i].v[0].y);
+            shadow_drawing((WORK*)njdp2d_w.prim[k].col, njdp2d_w.prim[k].v[0].y);
             break;
         }
     }
+
+#if ENABLE_PERF_TELEMETRY
+    if (njdp2d_w.total > njdp2d_perf_peak_total) {
+        njdp2d_perf_peak_total = njdp2d_w.total;
+    }
+    njdp2d_perf_drops += njdp2d_w.overflow_drops;
+#endif
 
     njdp2d_init();
 }
 
 // `col` needs to be `uintptr_t` because it sometimes stores a pointer to `WORK`
 void njdp2d_sort(f32* pos, f32 pri, uintptr_t col, s32 flag) {
-    s32 i;
     s32 ix = njdp2d_w.total;
-    s32 prev;
 
     if (ix >= NJDP2D_PRIM_MAX) {
-        // The 2D polygon display request has exceeded the buffer\n
-        flLogOut("２Ｄポリゴンの表示要求がバッファをオーバーしました\n");
+        njdp2d_w.overflow_drops += 1;
+        if (!njdp2d_w.overflow_logged) {
+            njdp2d_w.overflow_logged = 1;
+            // The 2D polygon display request has exceeded the buffer\n
+            flLogOut("２Ｄポリゴンの表示要求がバッファをオーバーしました\n");
+        }
         return;
     }
 
@@ -217,37 +347,6 @@ void njdp2d_sort(f32* pos, f32 pri, uintptr_t col, s32 flag) {
         njdp2d_w.prim[ix].v[0].y = pos[0];
         njdp2d_w.prim[ix].type = 1;
         njdp2d_w.prim[ix].col = col;
-    }
-
-    njdp2d_w.prim[ix].next = -1;
-
-    if (njdp2d_w.ix1st == -1) {
-        njdp2d_w.ix1st = njdp2d_w.total;
-    } else {
-        i = njdp2d_w.ix1st;
-        prev = -1;
-
-        while (1) {
-            if (pri > njdp2d_w.prim[i].v[0].z) {
-                if (prev == -1) {
-                    njdp2d_w.ix1st = ix;
-                    njdp2d_w.prim[ix].next = i;
-                } else {
-                    njdp2d_w.prim[prev].next = ix;
-                    njdp2d_w.prim[ix].next = i;
-                }
-
-                break;
-            }
-
-            if (njdp2d_w.prim[i].next == -1) {
-                njdp2d_w.prim[i].next = ix;
-                break;
-            }
-
-            prev = i;
-            i = njdp2d_w.prim[i].next;
-        }
     }
 
     njdp2d_w.total += 1;

@@ -4062,7 +4062,15 @@ void Wait_Pause_in_Tr(struct _TASK* task_ptr) {
     u16 ans;
     u16 ix;
 
+#if ENABLE_PERF_TELEMETRY
+    {
+        const Uint64 _td0 = SDL_GetTicksNS();
+        Training_Data_Disp();
+        Training_SetPerfDispNs(SDL_GetTicksNS() - _td0);
+    }
+#else
     Training_Data_Disp();
+#endif
     Control_Player_Tr();
 
     if (End_Training) {

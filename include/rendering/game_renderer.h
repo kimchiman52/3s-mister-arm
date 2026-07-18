@@ -28,6 +28,7 @@ void Renderer_DrawSprites2Batch(const Sprite2* sprites,
                                 int up_flag_count);
 void Renderer_DrawSolidQuad(const Quad* quad, unsigned int color);
 bool Renderer_DrawInputHistoryGlyph(float x, float y, float z, int glyph_index, unsigned int color);
+void Renderer_DrawUIBitmap(float x, float y, float z, const uint32_t* argb_pixels, int w, int h, unsigned int color);
 
 typedef enum Renderer_InputHistoryGlyph {
     RENDERER_INPUT_GLYPH_UP = 0,

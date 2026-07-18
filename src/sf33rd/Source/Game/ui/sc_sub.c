@@ -6,6 +6,7 @@
 #include "sf33rd/Source/Game/ui/sc_sub.h"
 #include "sf33rd/Source/Game/ui/frame_data_overlay.h"
 #include "common.h"
+#include "port/build_config.h"
 #include "rendering/game_renderer.h"
 #include <SDL3/SDL.h>
 #include "sf33rd/AcrSDK/common/pad.h"
@@ -720,6 +721,7 @@ void SSPutStr_Bigger(u16 x, u16 y, u8 atr, s8* str, f32 sc, u8 gr, u16 priority)
     f32 xx;
     f32 yy;
     u8 i;
+    bool bound = false;
 
     if (No_Trans) {
         return;
@@ -745,7 +747,12 @@ void SSPutStr_Bigger(u16 x, u16 y, u8 atr, s8* str, f32 sc, u8 gr, u16 priority)
         }
 
         SSPutStrTexInputB(xx, yy, str, sc);
-        njDrawTexture(scrscrntex, 4, 1, 1);
+        if (!bound) {
+            njDrawTexture(scrscrntex, 4, 1, 1);
+            bound = true;
+        } else {
+            njDrawTextureNoBind(scrscrntex, 4, 1, 1);
+        }
         xx += 8.0f * sc;
         str++;
     }
@@ -2417,6 +2424,16 @@ void Training_Damage_Set(s16 damage, s16 arg1, u8 kezuri) {
         tr_data[j].disp_total_damage = 999;
     }
 }
+
+#if ENABLE_PERF_TELEMETRY
+/* Wall-clock cost of the training overlay submission (Training_Data_Disp),
+   sampled at the menu.c call site (perf-overlay report §4).  Assigned per
+   game frame (0 when the overlay task doesn't run); read by the FPS overlay
+   debug telemetry. */
+static uint64_t perf_training_disp_ns = 0;
+void Training_SetPerfDispNs(uint64_t ns) { perf_training_disp_ns = ns; }
+uint64_t Training_GetPerfDispNs(void) { return perf_training_disp_ns; }
+#endif
 
 void Training_Data_Disp() {
     u8 i;

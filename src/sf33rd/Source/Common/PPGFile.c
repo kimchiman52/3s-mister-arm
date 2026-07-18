@@ -230,6 +230,7 @@ s16* dctex_linear;
 s32 ppgCheckPaletteDataBe(Palette* pch);
 void ppgWriteQuadOnly(Vertex* pos, u32 col, u32 texCode);
 void ppgWriteQuadOnly2(Vertex* pos, u32 col, u32 texCode);
+static void ppgWriteQuadNoBind(Vertex* pos, u32 col);
 void ppgChangeDataEndian(u8* adrs, s32 size, s32 dendL, s32 col4, s32 depth, s32 excdot);
 void ppgSetupContextFromPPL(PPLFileHeader* ppl, plContext* bits);
 void ppgSetupContextFromPPG(PPGFileHeader* ppg, plContext* bits);
@@ -360,6 +361,23 @@ void ppgWriteQuadOnly2(Vertex* pos, u32 col, u32 texCode) {
     Renderer_DrawSprite(&prm, col);
 }
 
+// Byte-identical to ppgWriteQuadOnly minus the flSetRenderState(FLRENDER_TEXSTAGE0)
+// bind; the caller must have already bound the matching texCode.
+static void ppgWriteQuadNoBind(Vertex* pos, u32 col) {
+    Sprite prm;
+    s32 i;
+
+    for (i = 0; i < 4; i++) {
+        prm.v[i].x = pos[i].x;
+        prm.v[i].y = pos[i].y;
+        prm.v[i].z = pos[i].z;
+        prm.t[i].s = pos[i].s;
+        prm.t[i].t = pos[i].t;
+    }
+
+    Renderer_DrawTexturedQuad(&prm, col);
+}
+
 s32 ppgWriteQuadWithST_B(Vertex* pos, u32 col, PPGDataList* tb, s32 tix, s32 cix) {
     u16 texhan;
     u16 palhan = 0;
@@ -391,6 +409,39 @@ s32 ppgWriteQuadWithST_B(Vertex* pos, u32 col, PPGDataList* tb, s32 tix, s32 cix
     }
 
     ppgWriteQuadOnly(pos, col, texhan | (palhan << 0x10));
+    return 1;
+}
+
+// Identical to ppgWriteQuadWithST_B (same texCode-invariant early-outs) but
+// relies on the caller having already bound this texCode via a prior
+// ppgWriteQuadWithST_B, so it skips the redundant flSetRenderState register
+// send. Only safe when the last bound texCode still matches (guaranteed within
+// a single string draw where tb/tix/cix are constant).
+s32 ppgWriteQuadWithST_B_NoBind(Vertex* pos, u32 col, PPGDataList* tb, s32 tix, s32 cix) {
+    u16 texhan;
+
+    if (tb == NULL) {
+        tb = ppg_w.cur;
+
+        if (tb == NULL) {
+            return ppgWriteQuadWithST_A(pos, col);
+        }
+    }
+
+    if (tix < 0) {
+        texhan = ppg_w.hanTex;
+    } else {
+        texhan = tb->tex->handle[tix - tb->tex->ixNum1st].b16[0];
+
+        if (texhan == 0) {
+            return 0;
+        }
+    }
+
+    (void)texhan;
+    (void)cix;
+
+    ppgWriteQuadNoBind(pos, col);
     return 1;
 }
 

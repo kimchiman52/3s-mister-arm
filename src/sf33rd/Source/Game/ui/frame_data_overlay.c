@@ -7,6 +7,7 @@
 
 #include "common.h"
 #include "structs.h"
+#include "rendering/game_renderer.h"
 #include "sf33rd/Source/Game/engine/plcnt.h"
 #include "sf33rd/Source/Game/engine/pls01.h"
 #include "sf33rd/Source/Game/engine/workuser.h"
@@ -14,10 +15,8 @@
 #include "sf33rd/Source/Game/ui/frame_trace.h"
 #include "sf33rd/Source/Game/ui/sc_sub.h"
 
-/* These are used across the engine (sc_sub.c, demo00.c, etc.) without
- * a public header — forward-declare what we need. */
-extern void njDrawPolygon2D(PAL_CURSOR* vtx, u32 num, f32 z, u32 flags);
-extern void njColorBlendingMode(s32 src, s32 dst);
+/* Used across the engine (sc_sub.c, demo00.c, etc.) without a public
+ * header — forward-declare what we need. */
 extern s32  SSGetDrawSizePro(const s8* str);
 
 /*
@@ -2160,8 +2159,17 @@ void frame_data_overlay_tick(void) {
     g_prev[1] = now[1];
 }
 
+/* Persistent ARGB strips for the two meter rows (288x6 each). Regenerated
+ * only when a row's visible cell kinds change (memcmp below), then submitted
+ * as a single UI-bitmap quad — replacing 72 per-cell solid rects per row.
+ * Static lifetime matches the glyph cache in the software renderer: the
+ * borrowed pointer stays valid from submit through RenderFrame. */
+static uint32_t fd_meter_px[2][FD_CELL_H * FD_METER_TOTAL_W];
+static u8       fd_cache_kinds[2][FD_METER_LEN];
+static bool     fd_cache_valid[2] = { false, false };
+
 /* Per-channel scale to ~75% brightness (factor 192/256). Alpha preserved.
- * Applied to odd-indexed cells in fd_draw_meter_row so individual frames
+ * Applied to odd-indexed cells in fd_submit_meter_row so individual frames
  * are visible without spending pixels on borders. */
 static u32 fd_darken_color(u32 color) {
     const u32 a = color & 0xFF000000u;
@@ -2189,33 +2197,33 @@ static u32 fd_cell_color(u8 kind) {
     }
 }
 
-static void fd_draw_rect(int x, int y, int w, int h, u32 color) {
-    PAL_CURSOR vtx;
-    PAL_CURSOR_P pos[4];
-    PAL_CURSOR_COL col;
-
-    njColorBlendingMode(0, 1);
-    vtx.p   = pos;
-    vtx.col = &col;
-    col.color = color;
-
-    pos[0].x = (f32)x;        pos[0].y = (f32)y;
-    pos[1].x = (f32)(x + w);  pos[1].y = (f32)y;
-    pos[2].x = (f32)x;        pos[2].y = (f32)(y + h);
-    pos[3].x = (f32)(x + w);  pos[3].y = (f32)(y + h);
-
-    njDrawPolygon2D(&vtx, 4, PrioBase[FD_RECT_PRIO], 96);
-}
-
-static void fd_draw_meter_row(int y, const u8* cells, int len) {
-    /* Draw every cell-slot. Idle cells get the bg color so the bar
+static void fd_submit_meter_row(int row, int y, const u8* cells, int len) {
+    /* Every cell-slot is painted. Idle cells get the bg color so the bar
      * has a continuous visible width even when the move was short. */
+    u8 kinds[FD_METER_LEN];
     for (int i = 0; i < FD_METER_LEN; i++) {
-        const u8 kind = (i < len) ? cells[i] : (u8)FD_CELL_IDLE;
-        u32 c = fd_cell_color(kind);
-        if (i & 1) c = fd_darken_color(c);
-        fd_draw_rect(FD_METER_X_LEFT + i * FD_CELL_W, y, FD_CELL_W, FD_CELL_H, c);
+        kinds[i] = (i < len && cells != NULL) ? cells[i] : (u8)FD_CELL_IDLE;
     }
+
+    if (!fd_cache_valid[row]
+        || memcmp(kinds, fd_cache_kinds[row], FD_METER_LEN) != 0) {
+        for (int i = 0; i < FD_METER_LEN; i++) {
+            u32 c = fd_cell_color(kinds[i]);
+            if (i & 1) c = fd_darken_color(c);
+            const int x0 = i * FD_CELL_W;
+            for (int py = 0; py < FD_CELL_H; py++) {
+                uint32_t* dst = &fd_meter_px[row][py * FD_METER_TOTAL_W + x0];
+                for (int cx = 0; cx < FD_CELL_W; cx++) {
+                    dst[cx] = c;
+                }
+            }
+        }
+        memcpy(fd_cache_kinds[row], kinds, FD_METER_LEN);
+        fd_cache_valid[row] = true;
+    }
+
+    Renderer_DrawUIBitmap((float)FD_METER_X_LEFT, (float)y, PrioBase[FD_RECT_PRIO],
+                          fd_meter_px[row], FD_METER_TOTAL_W, FD_CELL_H, FD_COL_WHITE);
 }
 
 void frame_data_overlay_draw(void) {
@@ -2287,6 +2295,6 @@ void frame_data_overlay_draw(void) {
         def_src  = NULL;
         draw_len = 0;
     }
-    fd_draw_meter_row(FD_METER_Y_ATK, atk_src, draw_len);
-    fd_draw_meter_row(FD_METER_Y_DEF, def_src, draw_len);
+    fd_submit_meter_row(0, FD_METER_Y_ATK, atk_src, draw_len);
+    fd_submit_meter_row(1, FD_METER_Y_DEF, def_src, draw_len);
 }

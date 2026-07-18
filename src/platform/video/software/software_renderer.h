@@ -19,6 +19,7 @@
 bool SoftwareRenderer_Init(bool nearest_filter, int scale);
 void SoftwareRenderer_Quit();
 void SoftwareRenderer_RenderFrame();
+int SoftwareRenderer_GetPerfPeakQuads(void);
 
 // Canvas accessor for the host app driver to present (SDL streaming texture, DRM dumb buffer, etc.).
 // Pixel layout is ARGB8888 (default) or RGB565 (with CRS_SW_CANVAS_16BPP) — see SWCanvasPixel in

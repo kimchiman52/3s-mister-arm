@@ -50,10 +50,12 @@
 // 32-bit value below was pinned empirically from compiler output. Treat it
 // as ground truth and update via re-pinning whenever GameState changes.
 #if UINTPTR_MAX == 0xffffffff
-/* 17580 + 72 (chainex_check[2][36]) = 17652. Added 2026-04-24 when
+/* 17580 + 72 (chainex_check[2][36]) = 17652 (added 2026-04-24 when
  * chainex_check was pulled into GameState to close a rollback-unsafe
- * file-static escape (see GameState_Save comment). */
-#define EXPECTED_GAME_STATE_SIZE 17652
+ * file-static escape, see GameState_Save comment); + 4 for the
+ * Disp_Frame_Data u8 (one byte rounded to the struct's 4-byte
+ * alignment) = 17656. */
+#define EXPECTED_GAME_STATE_SIZE 17656
 #define EXPECTED_TASK_SIZE 16
 
 _Static_assert(sizeof(GameState) == EXPECTED_GAME_STATE_SIZE,

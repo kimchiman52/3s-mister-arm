@@ -12,6 +12,7 @@
 #if CRS_VIDEO_DRIVER_SOFTWARE
 
 #include "platform/video/software/sw_blit.h"
+#include "platform/video/software/sw_blit_565_fill.h"
 
 #include <string.h>
 
@@ -137,29 +138,12 @@ void sw_fill_solid_row(SWCanvasPixel* dst, uint32_t argb, int count) {
     }
 
 #if defined(CRS_SW_CANVAS_16BPP)
-    // Stay at 2-pixel unroll here; 4-pixel regressed on real hardware.
     const uint32_t src_565 = (uint32_t)sw_argb_to_canvas(argb);
-    const uint32_t sa_5 = a >> 3;           // 0..31
-    const uint32_t ia_5 = 32u - sa_5;       // 1..32
-    const uint32_t s_rb_a = (src_565 & 0xF81Fu) * sa_5;
-    const uint32_t s_g_a  = (src_565 & 0x07E0u) * sa_5;
-    int i = 0;
-    for (; i + 2 <= count; i += 2) {
-        const uint32_t d0 = (uint32_t)dst[i + 0];
-        const uint32_t d1 = (uint32_t)dst[i + 1];
-        const uint32_t rb0 = ((s_rb_a + (d0 & 0xF81Fu) * ia_5) >> 5) & 0xF81Fu;
-        const uint32_t g0  = ((s_g_a  + (d0 & 0x07E0u) * ia_5) >> 5) & 0x07E0u;
-        const uint32_t rb1 = ((s_rb_a + (d1 & 0xF81Fu) * ia_5) >> 5) & 0xF81Fu;
-        const uint32_t g1  = ((s_g_a  + (d1 & 0x07E0u) * ia_5) >> 5) & 0x07E0u;
-        dst[i + 0] = (SWCanvasPixel)(rb0 | g0);
-        dst[i + 1] = (SWCanvasPixel)(rb1 | g1);
-    }
-    for (; i < count; i++) {
-        const uint32_t d = (uint32_t)dst[i];
-        const uint32_t rb = ((s_rb_a + (d & 0xF81Fu) * ia_5) >> 5) & 0xF81Fu;
-        const uint32_t g  = ((s_g_a  + (d & 0x07E0u) * ia_5) >> 5) & 0x07E0u;
-        dst[i] = (SWCanvasPixel)(rb | g);
-    }
+#if defined(__ARM_NEON)
+    sw_fill_565_blend_row_neon(dst, src_565, a, count);
+#else
+    sw_fill_565_blend_row_scalar(dst, src_565, a, count);
+#endif
 #else
     for (int i = 0; i < count; i++) {
         dst[i] = blend_argb_onto_canvas(argb, dst[i]);

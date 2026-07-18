@@ -3,6 +3,7 @@
 #include "platform/video/software/software_renderer.h"
 
 #include "common.h"
+#include "port/build_config.h"
 #include "platform/video/software/sw_blit.h"
 #include "platform/video/software/sw_convert.h"
 #include "port/utils.h"
@@ -1696,6 +1697,10 @@ static void SoftwareRenderer_DrawUIBitmap(float x, float y, float z, const uint3
     quad->ui_h = (uint16_t)h;
 }
 
+void Renderer_DrawUIBitmap(float x, float y, float z, const uint32_t* argb_pixels, int w, int h, unsigned int color) {
+    SoftwareRenderer_DrawUIBitmap(x, y, z, argb_pixels, w, h, color);
+}
+
 void Renderer_DrawSprites2Batch(const Sprite2* sprites,
                                 int sprite_count,
                                 const signed char* up_flags,
@@ -1807,7 +1812,17 @@ void SoftwareRenderer_Quit() {
     canvas = NULL;
 }
 
+#if ENABLE_PERF_TELEMETRY
+/* Peak queued-quad count seen before the per-frame sort (perf-overlay report
+   §4) — measures how close a frame gets to QUADS_MAX before silent drop. */
+static int sw_perf_peak_quads = 0;
+int SoftwareRenderer_GetPerfPeakQuads(void) { return sw_perf_peak_quads; }
+#endif
+
 void SoftwareRenderer_RenderFrame() {
+#if ENABLE_PERF_TELEMETRY
+    sw_perf_peak_quads = (int)arrlen(quads);
+#endif
     sort_quads_fast();
 #if CRS_SW_DEDUP_FS_SOLIDS
     dedup_fs_solids();

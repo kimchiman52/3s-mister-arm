@@ -552,6 +552,15 @@ static void game_step_0() {
     fd_engine_move_is_uoh[0] = 0;
     fd_engine_move_is_uoh[1] = 0;
 
+#if ENABLE_PERF_TELEMETRY
+    /* Per-frame reset for the perf-overlay diagnostic counters (report §4)
+       whose producers accumulate within this frame: njdp2d prim peak/drops
+       (drained twice per frame) and the training-overlay submit timer (0 on
+       frames where the training task doesn't run). */
+    Njdp2d_ResetPerf();
+    Training_SetPerfDispNs(0);
+#endif
+
     flSetRenderState(FLRENDER_BACKCOLOR, 0xFF000000);
 
 #if DEBUG
@@ -603,7 +612,7 @@ static void game_step_0() {
     if (Netplay_GetSessionState() != NETPLAY_SESSION_IDLE) {
         Netplay_Run();
         // Flush the 2D polygon buffer each frame when the game's normal render
-        // loop isn't running, preventing the 100-item limit from overflowing.
+        // loop isn't running, preventing the NJDP2D_PRIM_MAX limit from overflowing.
         njdp2d_draw();
     } else {
         njUserMain();
@@ -619,7 +628,15 @@ static void game_step_0() {
     }
 
     frame_data_overlay_tick();
+#if ENABLE_PERF_TELEMETRY
+    {
+        const Uint64 _ft0 = SDL_GetTicksNS();
+        frame_trace_tick();
+        FrameTrace_SetPerfTickNs(SDL_GetTicksNS() - _ft0);
+    }
+#else
     frame_trace_tick();
+#endif
 
     KnjFlush();
     disp_effect_work();
