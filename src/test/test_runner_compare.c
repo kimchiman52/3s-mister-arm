@@ -15,10 +15,31 @@
 #include <SDL3/SDL_iostream.h>
 #include <SDL3/SDL_stdinc.h>
 
+#include <stdio.h>
+
 typedef struct Position {
     s16 x;
     s16 y;
 } Position;
+
+// Ported from upstream #268 (52a395bd) with the tests that use it; the rest
+// of that statcheck tooling commit is deliberately not pulled in.
+#define assert_equals(actual, expected)                                                                                \
+    do {                                                                                                               \
+        if ((actual) != (expected)) {                                                                                  \
+            fprintf(                                                                                                   \
+                stderr,                                                                                                \
+                "%s:%d: %s (%lld) != %s (%lld)\n",                                                                     \
+                __FILE__,                                                                                              \
+                __LINE__,                                                                                               \
+                #actual,                                                                                               \
+                (long long)(actual),                                                                                   \
+                #expected,                                                                                             \
+                (long long)(expected)                                                                                  \
+            );                                                                                                         \
+            stop_if(true);                                                                                             \
+        }                                                                                                              \
+    } while (0)
 
 // Data reading
 
