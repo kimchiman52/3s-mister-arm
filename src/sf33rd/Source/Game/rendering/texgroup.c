@@ -292,6 +292,8 @@ void q_ldreq_texture_group(REQ* curr) {
                 const s16 character_id = plt_req[curr->id];
                 CharInitData* dst = &char_init_data[plid_data[character_id]];
 
+                bool arcade_data_applied = false;
+
                 if (ArcadeBalance_IsEnabled()) {
                     const size_t ps2_char_data_size = curr->size - bsd->to_chd;
                     const bool adapted = ArcadeCharData_Apply3SXRenderingConventions(
@@ -302,20 +304,22 @@ void q_ldreq_texture_group(REQ* curr) {
                     SDL_assert(adapted && arcade_data != NULL);
 
                     if (!adapted || arcade_data == NULL) {
+                        // Fall through to the PS2 population below. An early
+                        // return here (upstream's shape) leaves the load
+                        // request undrained: be stays nonzero, the queue never
+                        // clears, and Check_LDREQ_Clear() aborts on timeout.
                         SDL_LogCritical(
                             SDL_LOG_CATEGORY_APPLICATION,
-                            "Could not adapt arcade character data for character %d",
+                            "Could not adapt arcade character data for character %d; using PS2 data",
                             character_id
                         );
-                        // be=2 (error convention, same as the dup-transfer trap
-                        // above): a bare return leaves the load request pending
-                        // and Check_LDREQ_Clear() aborts on drain timeout.
-                        curr->be = 2;
-                        return;
+                    } else {
+                        SDL_copyp(dst, arcade_data);
+                        arcade_data_applied = true;
                     }
+                }
 
-                    SDL_copyp(dst, arcade_data);
-                } else {
+                if (!arcade_data_applied) {
                     for (i = 0; i < 25; i++) {
                         ((uintptr_t*)dst)[i] = ldchd + ((u32*)ldchd)[i];
                     }

@@ -55,6 +55,11 @@ Notes:
   balance is a local setting that peers do not negotiate, and a mismatch
   would guarantee a rollback desync. Negotiated CPS3-balance netplay is a
   possible follow-up (add a balance tag to the MIST handshake payload).
+- The force is a process-lifetime latch (same semantics as the game-mode
+  force): after a *failed* netplay attempt, local play in that same process
+  stays on PS2 balance even if the OSD shows Arcade Balance On. Each
+  OSD-initiated netplay attempt launches a fresh game process, and exiting
+  to the OSD clears it, so the mismatch window is one process.
 
 ### `software-frame-mode`
 
