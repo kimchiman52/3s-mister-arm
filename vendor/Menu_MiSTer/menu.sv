@@ -277,6 +277,10 @@ assign LED_POWER[0]= FB ? led[2] : act_cnt2[26] ? act_cnt2[25:18] > act_cnt2[7:0
 `include "build_id.v" 
 localparam CONF_STR = {
 	"MENU;UART31250,MIDI;",
+	// Bit 30 was V-Position's middle bit through release v20260416, so old
+	// 3S-ARM.CFG files may carry it set. Safe only because the wrapper seeds
+	// [30] from the game config AFTER CFG load (thirdsarm_wrapper.cpp) —
+	// keep that ordering if this bit ever moves.
 	"O[30],Arcade Balance,Off,On;",
 	"T[29],Play Online;",
 	"-;",

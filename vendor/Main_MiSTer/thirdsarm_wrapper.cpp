@@ -2613,6 +2613,10 @@ int thirdsarm_wrapper_run(int argc, char *argv[])
 		user_io_status_set("[12]", (uint32_t)g_wrapper_aspect_ratio);
 		user_io_status_set("[13]", (uint32_t)g_wrapper_game_mode);
 		user_io_status_set("[24]", (uint32_t)g_wrapper_hold_to_pause);
+		// [30] was V-Position's middle bit through v20260416; stale CFGs can
+		// carry it set. This overwrite-from-game-config is the ONLY defense —
+		// it must stay after user_io_init's CFG load and before the first
+		// poll_status_changes.
 		user_io_status_set("[30]", (uint32_t)g_wrapper_arcade_balance);
 		user_io_status_set("[28:25]", (uint32_t)g_wrapper_h_position);
 		user_io_status_set("[46:43]", (uint32_t)g_wrapper_v_position);
