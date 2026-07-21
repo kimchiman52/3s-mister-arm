@@ -307,6 +307,10 @@ void q_ldreq_texture_group(REQ* curr) {
                             "Could not adapt arcade character data for character %d",
                             character_id
                         );
+                        // be=2 (error convention, same as the dup-transfer trap
+                        // above): a bare return leaves the load request pending
+                        // and Check_LDREQ_Clear() aborts on drain timeout.
+                        curr->be = 2;
                         return;
                     }
 

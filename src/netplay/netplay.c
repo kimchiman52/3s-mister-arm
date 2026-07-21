@@ -1,4 +1,5 @@
 #include "netplay/netplay.h"
+#include "arcade/arcade_balance.h"
 #include "main.h"
 #include "port/config/config.h"
 #include "netplay/game_state.h"
@@ -407,6 +408,12 @@ static void setup_vs_mode() {
     save_w[MODE_NETWORK].Damage_Level = 0;     // Normal damage
     save_w[MODE_NETWORK].Handicap = 0;
     save_w[MODE_NETWORK].GuardCheck = 0;
+
+    // Arcade balance is a local config peers never negotiate; a mismatch
+    // guarantees a rollback desync. NetplayNav_Arm covers the direct-P2P
+    // entries, but matchmaking reaches here without arming Nav — force it
+    // off at the common session-setup chokepoint for every entry path.
+    ArcadeBalance_ForceDisable();
 
     E_Timer = 0; // E_Timer can have different values depending on when the session was initiated.
 
