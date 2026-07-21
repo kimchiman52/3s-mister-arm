@@ -277,6 +277,7 @@ assign LED_POWER[0]= FB ? led[2] : act_cnt2[26] ? act_cnt2[25:18] > act_cnt2[7:0
 `include "build_id.v" 
 localparam CONF_STR = {
 	"MENU;UART31250,MIDI;",
+	"O[30],Arcade Balance,Off,On;",
 	"T[29],Play Online;",
 	"-;",
 	"O[13],Game Mode,Console,Arcade;",

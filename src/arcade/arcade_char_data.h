@@ -48,6 +48,7 @@ typedef struct CharDataImage {
 } CharDataImage;
 
 void ArcadeCharData_Init();
+bool ArcadeCharData_IsInitialized();
 const CharInitData* ArcadeCharData_Get(Character character);
 bool ArcadeCharData_Apply3SXRenderingConventions(Character character, const void* ps2_data, size_t ps2_size);
 

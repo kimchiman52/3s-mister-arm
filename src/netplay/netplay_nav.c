@@ -34,6 +34,7 @@
 
 #include "netplay/netplay_nav.h"
 
+#include "arcade/arcade_balance.h"
 #include "main.h"
 #include "netplay/netplay.h"
 #include "port/sdl/sdl_app.h"
@@ -148,6 +149,9 @@ void NetplayNav_Arm(void) {
      * diverge on the arcade-specific DIP-switch block that we never
      * synchronize. */
     SDLApp_ForceConsoleGameMode();
+    /* Same class of divergence: arcade balance is a local config the peers
+     * never negotiate; force PS2 balance for the session. */
+    ArcadeBalance_ForceDisable();
     fprintf(stderr, "[netplay_nav] armed\n");
     fflush(stderr);
     transition_to(NAV_WAIT_INIT);

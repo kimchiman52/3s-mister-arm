@@ -5,5 +5,6 @@
 
 void ArcadeBalance_Init();
 bool ArcadeBalance_IsEnabled();
+void ArcadeBalance_ForceDisable();
 
 #endif

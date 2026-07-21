@@ -37,9 +37,24 @@ Defines the strength of the scanline filter (from `0` to `100`). `0` means the f
 
 Allow characters to render in front of the top HUD similar to Street Fighter IV. May introduce visual abnormalities on certain stages.
 
-### `arcade-balance` (experimental)
+### `arcade-balance`
 
-Enables arcade balance instead of PS2 balance (work in progress). Requires `sfiii3nr1.zip` to be present in `resources` directory.
+Enables arcade (CPS3) balance instead of PS2 balance. Requires `sfiii3nr1.zip`
+to be present in the `resources` directory.
+
+On MiSTer this is exposed as the **Arcade Balance** option at the top of the
+OSD menu (status bit `[30]`). The wrapper writes the toggle into this config
+key, so it persists across launches. Like the Overclock option it applies on
+the **next game launch** (use OSD → Restart), because CPS3 character data is
+loaded once at game init.
+
+Notes:
+- If `sfiii3nr1.zip` is missing or unreadable, the game logs an error and
+  falls back to PS2 balance instead of running half-enabled.
+- Netplay forces PS2 balance for the session (`ArcadeBalance_ForceDisable`):
+  balance is a local setting that peers do not negotiate, and a mismatch
+  would guarantee a rollback desync. Negotiated CPS3-balance netplay is a
+  possible follow-up (add a balance tag to the MIST handshake payload).
 
 ### `software-frame-mode`
 

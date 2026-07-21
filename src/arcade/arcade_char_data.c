@@ -435,6 +435,10 @@ void ArcadeCharData_Init() {
     SDL_free(rom);
 }
 
+bool ArcadeCharData_IsInitialized() {
+    return initialized;
+}
+
 const CharInitData* ArcadeCharData_Get(Character character) {
     if (!initialized || character >= NUM_CHARS) {
         return NULL;
