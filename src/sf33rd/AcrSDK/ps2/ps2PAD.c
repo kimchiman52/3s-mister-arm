@@ -68,7 +68,10 @@ static u32 ps2pad_hard_to_soft_dg[16][2] = { { 1024, 0 },  { 4096, 0 },  { 8192,
 
 static u8 ps2pad_an_rm_map[12] = { 2, 3, 1, 0, 6, 5, 11, 10, 7, 4, 9, 8 };
 static PS2PAD_CONFIG ps2PadShotConf_Basic = { 1, 1, 1, 0 };
-static u8 etclever_wrong_data[16] = { 0, 1, 2, 0, 4, 5, 6, 4, 8, 9, 10, 8, 0, 1, 2, 0 };
+// etclever_wrong_data[16] = { 0, 1, 2, 0, 4, 5, 6, 4, 8, 9, 10, 8, 0, 1, 2, 0 }
+// (PS2 illegal-lever normalization table) removed with its only use in
+// tarPADRead — upstream #282 preserves raw lever combinations for CPS3
+// replay input, and our -Werror build rejects the unused definition.
 
 u32 ps2pad_hard_to_soft[2][16][2];
 TARPAD tarpad_root[2];
