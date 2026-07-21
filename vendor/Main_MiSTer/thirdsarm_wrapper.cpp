@@ -2938,6 +2938,7 @@ int thirdsarm_wrapper_run(int argc, char *argv[])
 			user_io_status_set("[12]", (uint32_t)g_wrapper_aspect_ratio);
 			user_io_status_set("[13]", (uint32_t)g_wrapper_game_mode);
 			user_io_status_set("[24]", (uint32_t)g_wrapper_hold_to_pause);
+			user_io_status_set("[30]", (uint32_t)g_wrapper_arcade_balance);
 			user_io_status_set("[28:25]", (uint32_t)g_wrapper_h_position);
 			user_io_status_set("[46:43]", (uint32_t)g_wrapper_v_position);
 			user_io_status_set("[32]", (uint32_t)g_wrapper_vertical_crop);

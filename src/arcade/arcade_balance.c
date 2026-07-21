@@ -5,9 +5,13 @@
 #include <SDL3/SDL.h>
 
 static bool is_enabled = false;
+static bool force_disabled = false;
 
 void ArcadeBalance_Init() {
-    is_enabled = Config_GetBool(CFG_ARCADE_BALANCE);
+    /* force_disabled latch: NetplayNav_Arm runs inside set_netplay_params(),
+     * BEFORE this init (main.c initialize_game ordering), so the netplay
+     * force must survive the config re-read here. */
+    is_enabled = !force_disabled && Config_GetBool(CFG_ARCADE_BALANCE);
 
     if (is_enabled) {
         ArcadeCharData_Init();
@@ -35,5 +39,6 @@ void ArcadeBalance_ForceDisable() {
     if (is_enabled) {
         SDL_Log("Arcade balance disabled for netplay session (not negotiated between peers)");
     }
+    force_disabled = true;
     is_enabled = false;
 }
