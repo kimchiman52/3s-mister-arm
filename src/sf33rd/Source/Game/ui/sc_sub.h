@@ -98,6 +98,5 @@ void Training_SetPerfDispNs(uint64_t ns);
 uint64_t Training_GetPerfDispNs(void);
 void dispButtonImage(s32 px, s32 py, s32 pz, s32 sx, s32 sy, s32 cl, s32 ix);
 void dispButtonImage2(s32 px, s32 py, s32 pz, s32 sx, s32 sy, s32 cl, s32 ix);
-void dispSaveLoadTitle(void* ewk);
 
 #endif
