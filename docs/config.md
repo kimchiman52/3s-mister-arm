@@ -66,6 +66,25 @@ Notes:
   OSD-initiated netplay attempt launches a fresh game process, and exiting
   to the OSD clears it, so the mismatch window is one process.
 
+### `bgm-type`
+
+Selects between the PS2 arranged soundtrack (`arranged`, default) and the
+original arcade soundtrack (`original`). Mirrors the in-game Sound Options
+menu's BGM Type setting (`sys_w.bgm_type`, `BGM_ARRANGED`/`BGM_ORIGINAL` in
+`structs.h`).
+
+On MiSTer this is exposed as the **BGM Type** option in the OSD menu (status
+bit `[14]`). The wrapper writes the toggle into this config key, so it
+persists across launches; like Arcade Balance it applies on the **next game
+launch** (use OSD → Restart), because the boot-time override
+(`BgmType_ApplyBootOverride()`) only runs once, right after the settings save
+file finishes loading.
+
+Two-way sync: changing BGM Type from the in-game Sound Options menu also
+writes this config key (`BgmType_PersistToConfig()`), so the OSD reflects an
+in-game change at the next launch too, and the two settings never drift
+apart from each other.
+
 ### `software-frame-mode`
 
 Controls whether gameplay uses the 3S-ARM-owned software frame path or the legacy SDL-owned gameplay frame path.

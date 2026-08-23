@@ -55,6 +55,9 @@ typedef struct ConfigEntry {
 #define DEFAULT_ARM_CLOCK "800"
 #define DEFAULT_GAME_MODE "console"
 #define DEFAULT_HOLD_TO_PAUSE "off"
+/* Matches Init_sound_system()'s sys_w.bgm_type = BGM_ARRANGED default
+ * (sound3rd.c) and savesub.c's BGM_ARRANGED == 0. */
+#define DEFAULT_BGM_TYPE "arranged"
 
 static const ConfigEntry default_entries[] = {
     { .key = CFG_KEY_FULLSCREEN, .type = CFG_BOOL, .value.b = true },
@@ -64,6 +67,7 @@ static const ConfigEntry default_entries[] = {
     { .key = CFG_KEY_SCANLINES, .type = CFG_INT, .value.i = 0 },
     { .key = CFG_DRAW_PLAYERS_ABOVE_HUD, .type = CFG_BOOL, .value.b = false },
     { .key = CFG_ARCADE_BALANCE, .type = CFG_BOOL, .value.b = false },
+    { .key = CFG_KEY_BGM_TYPE, .type = CFG_STRING, .value.s = DEFAULT_BGM_TYPE },
     { .key = CFG_KEY_SOFTWARE_FRAME_MODE, .type = CFG_STRING, .value.s = DEFAULT_SOFTWARE_FRAME_MODE },
     { .key = CFG_KEY_SUPER_EFFECT_QUALITY, .type = CFG_STRING, .value.s = DEFAULT_SUPER_EFFECT_QUALITY },
     { .key = CFG_KEY_ARM_CLOCK, .type = CFG_STRING, .value.s = DEFAULT_ARM_CLOCK },

@@ -7,6 +7,7 @@
 #include "common.h"
 #include "main.h"
 #include "netplay/netplay.h"
+#include "port/config/bgm_type.h"
 #include "port/config/training_config.h"
 #include "port/sdl/sdl_app.h"
 #include "sf33rd/AcrSDK/common/pad.h"
@@ -2406,6 +2407,12 @@ void Sound_Test(struct _TASK* task_ptr) {
             sys_w.bgm_type = Convert_Buff[3][1][2];
             Convert_Buff[3][1][4] = 0;
             BGM_Request_Code_Check(0x41);
+
+            // Two-way sync: mirror the new choice into the on-disk
+            // `bgm-type` config key so the MiSTer OSD's BGM Type toggle
+            // (status bit [14]) reflects an in-game change at the next
+            // launch, not just save_w[Present_Mode].BgmType above.
+            BgmType_PersistToConfig(sys_w.bgm_type);
         }
 
         Order_Dir[0x7B] = Convert_Buff[3][1][4];

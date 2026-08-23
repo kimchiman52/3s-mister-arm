@@ -1,5 +1,6 @@
 #include "sf33rd/Source/Game/init3rd.h"
 #include "main.h"
+#include "port/config/bgm_type.h"
 #include "sf33rd/Source/Game/debug/Debug.h"
 #include "sf33rd/Source/Game/demo/demo00.h"
 #include "sf33rd/Source/Game/effect/effect.h"
@@ -159,6 +160,15 @@ void Init_Task_Aload(struct _TASK* task_ptr) {
             task_ptr->r_no[1] = 0;
             mpp_w.cutAnalogStickData = 0;
             Forbid_Reset = 1;
+
+            // Both settings loads (case 0/1's SAVE_FILE_SETTINGS -- which
+            // is where savesub.c's deserialize_settings() sets
+            // sys_w.bgm_type = save_w[1].BgmType -- and case 2's
+            // SAVE_FILE_SYSTEM_DIRECTION) have finished. Let an explicit
+            // OSD `bgm-type` config key win over the just-deserialized
+            // save value, mirroring Arcade Balance's config-overrides-CFG
+            // boot ordering (thirdsarm_wrapper.cpp).
+            BgmType_ApplyBootOverride();
         }
 
         break;

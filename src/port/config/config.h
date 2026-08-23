@@ -10,6 +10,7 @@
 #define CFG_KEY_SCANLINES "scanlines"
 #define CFG_DRAW_PLAYERS_ABOVE_HUD "draw-players-above-hud"
 #define CFG_ARCADE_BALANCE "arcade-balance"
+#define CFG_KEY_BGM_TYPE "bgm-type"
 #define CFG_KEY_SOFTWARE_FRAME_MODE "software-frame-mode"
 #define CFG_KEY_SUPER_EFFECT_QUALITY "super-effect-quality"
 #define CFG_KEY_SHOW_FPS "show-fps"
