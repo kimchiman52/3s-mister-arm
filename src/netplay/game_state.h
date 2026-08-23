@@ -250,6 +250,8 @@ typedef struct GameState {
     u8 Plate_Disposal_No[2][3];
     u8 SO_No[2];
     u8 Disp_Command_Name[2][3];
+    u8 OK_Appear79[2];
+    u8 Extra_Counter[2];
     u8 SC_No[4];
     u8 BGM_No[2];
     u8 BGM_Timer[2];
@@ -465,6 +467,7 @@ typedef struct GameState {
     s16 Plate_X[2][3];
     s16 Plate_Y[2][3];
     u16 Demo_Timer[2];
+    u16* Demo_Ptr[2]; // the recorder appends through this, so it has to rewind too
     u16 Condense_Buff[2];
     u16 Keep_Grade[2];
     u16 IO_Result;
@@ -478,7 +481,6 @@ typedef struct GameState {
     s16 Random_ix32_com;
     s16 Random_ix16_ex_com;
     s16 Random_ix32_ex_com;
-    s16 Random_ix16_bg;
     s16 Opening_Now;
     struct _TASK task[11];
 
