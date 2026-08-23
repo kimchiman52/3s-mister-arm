@@ -24,6 +24,12 @@ void BgmType_ApplyBootOverride(void) {
     }
 
     const char* value = Config_GetString(CFG_KEY_BGM_TYPE);
+    if (value != NULL && SDL_strcasecmp(value, "original") != 0 && SDL_strcasecmp(value, "arranged") != 0) {
+        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                    "BgmType: unrecognized '%s' value '%s'; falling back to 'arranged'",
+                    CFG_KEY_BGM_TYPE,
+                    value);
+    }
     sys_w.bgm_type = (value != NULL && SDL_strcasecmp(value, "original") == 0) ? BGM_ORIGINAL : BGM_ARRANGED;
 }
 
