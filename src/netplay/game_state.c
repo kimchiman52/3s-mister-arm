@@ -55,8 +55,19 @@
  * chainex_check was pulled into GameState to close a rollback-unsafe
  * file-static escape, see GameState_Save comment); + 4 for the
  * Disp_Frame_Data u8 (one byte rounded to the struct's 4-byte
- * alignment) = 17656. */
-#define EXPECTED_GAME_STATE_SIZE 17656
+ * alignment) = 17656.
+ *
+ * The #298 port (e57b16bd) grew this on ARM32 (32-bit pointers) by a
+ * net +8, to 17664:
+ *   + 2  OK_Appear79[2]  (u8[2])
+ *   + 2  Extra_Counter[2] (u8[2])
+ *   + 8  Demo_Ptr[2]     (u16*[2], two 4-byte pointers on ARM32)
+ *   - 2  Random_ix16_bg  (s16, removed — see GameState_Save comment)
+ *   - 2  padding re-absorbed by the field-layout shuffle above
+ *   -----
+ *   + 8  net
+ * 17656 + 8 = 17664. */
+#define EXPECTED_GAME_STATE_SIZE 17664
 #define EXPECTED_TASK_SIZE 16
 
 _Static_assert(sizeof(GameState) == EXPECTED_GAME_STATE_SIZE,
