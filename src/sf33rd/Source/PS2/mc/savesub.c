@@ -399,6 +399,18 @@ s32 SaveMove() {
         make_path(backup_path, sizeof(backup_path), info->name, PATH_KIND_BACKUP);
         make_path(tmp_path, sizeof(tmp_path), info->name, PATH_KIND_TMP);
         void* buffer = SDL_malloc(info->size);
+
+        if (buffer == NULL) {
+            // Unlike the SAVE_STATE_INIT->ERROR transition above (where
+            // operation.storage is still NULL), we're holding an open
+            // storage handle here — close it ourselves since the
+            // SAVE_STATE_ERROR case below does not.
+            SDL_CloseStorage(operation.storage);
+            SDL_zero(operation);
+            operation.state = SAVE_STATE_ERROR;
+            return -1;
+        }
+
         SDL_IOStream* io = NULL;
         bool success = false;
 
