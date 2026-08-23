@@ -2,6 +2,8 @@
 #include "common.h"
 #include "port/paths.h"
 #include "port/utils.h"
+#include "structs.h"
+#include "sf33rd/Source/Game/menu/dir_data.h"
 #include "sf33rd/Source/Game/system/sys_sub.h"
 #include "sf33rd/Source/Game/system/work_sys.h"
 
@@ -125,16 +127,39 @@ static bool deserialize_settings(SDL_IOStream* io) {
 
         for (int j = 0; j < SDL_arraysize(pad_info->Shot); j++) {
             SDL_ReadU8(io, &pad_info->Shot[j]);
+
+            // Shot[] is a raw button-ID index consumed unchecked by
+            // Convert_Data[Pad_Infor[PL_id].Shot[n]] (sys_sub.c ~:123-151).
+            // Convert_Data has 12 entries (sys_sub.c:68) and the menu UI's own
+            // increment/decrement wraps at 11 (menu.c ~:1895-1904, `max = 11`
+            // for all Shot slots), so 0..11 is the authoritative range.
+            if (pad_info->Shot[j] > 11) {
+                pad_info->Shot[j] = 11;
+            }
         }
 
         SDL_ReadU8(io, &pad_info->Vibration);
+        pad_info->Vibration = pad_info->Vibration ? 1 : 0;
     }
 
     SDL_ReadU8(io, &dst->Difficulty);
+    // Difficulty indexes Level_18_Data[9][17] (sys_sub.c:808) and Training's
+    // Control_Time scaling (sys_sub.c:833). The menu's own Game Option screen
+    // clamps it to Game_Option_Index_Data[0] == 7 (menu.c:1754), so 0..7 is
+    // the authoritative range.
+    if (dst->Difficulty > 7) {
+        dst->Difficulty = 7;
+    }
     SDL_ReadS8(io, &dst->Time_Limit);
     SDL_ReadU8(io, &dst->Battle_Number[0]);
     SDL_ReadU8(io, &dst->Battle_Number[1]);
     SDL_ReadU8(io, &dst->Damage_Level);
+    // Damage_Level indexes Com_Vital_Unit_Data[20][4][12] (pls02.c:829); its
+    // second dimension is 4, matching the menu's own clamp
+    // (Game_Option_Index_Data[4] == 3, menu.c:1754), so 0..3 is authoritative.
+    if (dst->Damage_Level > 3) {
+        dst->Damage_Level = 3;
+    }
     SDL_ReadU8(io, &dst->Handicap);
     SDL_ReadU8(io, &dst->Partner_Type[0]);
     SDL_ReadU8(io, &dst->Partner_Type[1]);
@@ -144,10 +169,36 @@ static bool deserialize_settings(SDL_IOStream* io) {
     SDL_ReadU8(io, &dst->GuardCheck);
     SDL_ReadU8(io, &dst->AnalogStick);
     SDL_ReadU8(io, &dst->BgmType);
+    // BgmType indexes bgm_table[2]/bgm_exdata[2]/bgm_selector[2]/
+    // Letter_Data_A8[2] (sound3rd.c, effa8.c) — always a 2-entry table
+    // (BGM_ARRANGED/BGM_ORIGINAL, structs.h), so 0..1 is authoritative.
+    if (dst->BgmType > 1) {
+        dst->BgmType = 1;
+    }
     SDL_ReadU8(io, &dst->BGM_Level);
     SDL_ReadU8(io, &dst->SE_Level);
+    // BGM_Level/SE_Level are not array indices, but every consumer divides by
+    // the fixed 15 (sound3rd.c ~:283/377/617) that the default/reset value
+    // also uses (sound3rd.c:156-157, menu.c:2387-2388), so clamp to 0..15 to
+    // keep them in the range the volume math was designed for.
+    if (dst->BGM_Level > 15) {
+        dst->BGM_Level = 15;
+    }
+    if (dst->SE_Level > 15) {
+        dst->SE_Level = 15;
+    }
     SDL_ReadIO(io, &dst->extra_option, sizeof(dst->extra_option));
     SDL_ReadIO(io, dst->PL_Color, sizeof(dst->PL_Color));
+
+    // PL_Color entries are unlocked-color booleans, read only via `if (...)`
+    // (sel_pl.c:298, next_cpu.c:1202) - not array indices - but normalize to
+    // 0/1 so a corrupted save can't leave a non-boolean value in a field
+    // that's meant to be one.
+    for (int i = 0; i < SDL_arraysize(dst->PL_Color); i++) {
+        for (int j = 0; j < SDL_arraysize(dst->PL_Color[i]); j++) {
+            dst->PL_Color[i][j] = dst->PL_Color[i][j] ? 1 : 0;
+        }
+    }
 
     for (int i = 0; i < SDL_arraysize(dst->Ranking); i++) {
         RANK_DATA* rank_data = &dst->Ranking[i];
@@ -193,6 +244,18 @@ static bool deserialize_sysdir(SDL_IOStream* io) {
     for (int page = 0; page < SDL_arraysize(loaded.contents); page++) {
         for (int item = 0; item < SDL_arraysize(loaded.contents[page]); item++) {
             SDL_ReadS8(io, &loaded.contents[page][item]);
+
+            // Clamp to the option's valid range. These values are used as array
+            // indices with no further validation (e.g. eff51.c:64 indexes
+            // Letter_Data_51[page][char][system_dir[1].contents[page][item]]);
+            // Dir_Menu_Max_Data[page][item] (dir_data.c) is the same table the
+            // menu UI itself clamps against when incrementing/decrementing an
+            // option, so it is the authoritative per-item upper bound.
+            if (loaded.contents[page][item] < 0) {
+                loaded.contents[page][item] = 0;
+            } else if (loaded.contents[page][item] > (s8)Dir_Menu_Max_Data[page][item]) {
+                loaded.contents[page][item] = (s8)Dir_Menu_Max_Data[page][item];
+            }
         }
     }
 
