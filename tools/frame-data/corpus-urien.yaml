@@ -1015,9 +1015,16 @@ entries:
   outcome: BLOCK
   expect: { S: from-qjson, A: from-qjson, R: 15, adv: from-qjson }
 
+# 2026-08-23: re-anchor after e654c97b (Gap_Timer wipe fix, -3 frames/wipe).
+# The training dummy's idle loop free-runs on absolute Game_timer
+# (effe3.c:162, :249), so this row's contact depended on corpus-history
+# phase rather than move timing alone. Re-anchored with an explicit
+# `wait 18` before the charge motion; validated stable across a band of
+# wait 14-22. Golden values unchanged (arcade Block_advantage -9 per
+# docs/arcade-frame-data/urien.json, Headbutt (Fierce)).
 - label: urien-headbutt-hp-block
   setup: { dist: close, dummy: stand }
-  input: "motion charge-down 60 then-up HP"
+  input: "wait 18; motion charge-down 60 then-up HP"
   qjson: { name: "Headbutt (Fierce)" }
   outcome: BLOCK
   expect: { S: from-qjson, A: from-qjson, R: 16, adv: from-qjson }
