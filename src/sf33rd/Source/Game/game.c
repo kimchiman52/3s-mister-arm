@@ -59,6 +59,7 @@
 #include "sf33rd/Source/Game/ui/count.h"
 #include "sf33rd/Source/Game/ui/flash_lp.h"
 #include "sf33rd/Source/Game/ui/sc_sub.h"
+#include "sf33rd/Source/PS2/mc/savesub.h"
 #include "structs.h"
 
 #include <SDL3/SDL.h>
@@ -1083,14 +1084,8 @@ void Game06() {
                 G_No[3] = 0;
                 G_Timer = 4;
                 Pause_ID = Player_id;
-                cpReadyTask(TASK_MENU, Menu_Task);
                 System_all_clear_Level_B();
-                Menu_Init(&task[TASK_MENU]);
-                task[TASK_MENU].r_no[0] = 9;
-                task[TASK_MENU].r_no[1] = 0;
                 Forbid_Reset = 1;
-                make_texcash_work(12);
-                Unsubstantial_BG[0] = 1;
                 Copy_Check_w();
                 cpExitTask(TASK_SAVER);
             }
@@ -1103,7 +1098,11 @@ void Game06() {
 
                 if (--G_Timer == 0) {
                     G_No[3] = 1;
+                    SaveInit(SAVE_FILE_SETTINGS, SAVE_MODE_SAVE);
                 }
+            } else if (SaveMove() <= 0) {
+                Forbid_Reset = 0;
+                G_No[2] = 6;
             }
 
             break;
