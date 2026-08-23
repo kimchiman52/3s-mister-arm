@@ -618,7 +618,6 @@ void Save_Game_Data() {
     save_w[1].Adjust_Y = Convert_Buff[2][0][1];
     save_w[1].Screen_Size = Convert_Buff[2][0][2];
     save_w[1].Screen_Mode = Convert_Buff[2][0][3];
-    save_w[1].Auto_Save = Convert_Buff[3][0][2];
     save_w[1].BGM_Level = Convert_Buff[3][1][0];
     save_w[1].SE_Level = Convert_Buff[3][1][1];
     save_w[1].BgmType = Convert_Buff[3][1][2];
@@ -665,7 +664,6 @@ void Copy_Save_w() {
     Convert_Buff[2][0][2] = save_w[1].Screen_Size;
     Convert_Buff[2][0][3] = save_w[1].Screen_Mode;
     sys_w.screen_mode = save_w[1].Screen_Mode;
-    Convert_Buff[3][0][2] = save_w[1].Auto_Save;
     Convert_Buff[3][1][0] = save_w[1].BGM_Level;
     Convert_Buff[3][1][1] = save_w[1].SE_Level;
     Convert_Buff[3][1][2] = save_w[1].BgmType;
@@ -707,7 +705,6 @@ const struct _SAVE_W Game_Default_Data = {
     0,
     0,
     1,
-    0,
     0,
     1,
     0,
