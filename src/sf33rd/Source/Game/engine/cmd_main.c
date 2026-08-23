@@ -78,7 +78,13 @@ void cmd_init(PLW* pl) {
     cmd_id = pl->wu.id;
     pl->cp = &wcp[cmd_id];
 
-    SDL_zeroa(waza_work[cmd_id]);
+    if (ArcadeBalance_IsEnabled()) {
+        // CPS3 clears 0x540 bytes of each 0x620-byte command-state block, leaving entries 48-55 intact.
+        SDL_memset(waza_work[cmd_id], 0, sizeof(WAZA_WORK) * 48);
+    } else {
+        SDL_zeroa(waza_work[cmd_id]);
+    }
+
     SDL_memset(wcp[cmd_id].waza_flag, 0, sizeof(wcp[cmd_id].waza_flag));
     SDL_memset(wcp[cmd_id].waza_r, 0, sizeof(wcp[cmd_id].waza_r));
 
