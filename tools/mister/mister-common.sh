@@ -595,7 +595,7 @@ set pw $env(EXPECT_PASSWORD)
 set src_path $env(EXPECT_SRC)
 set dst_path $env(EXPECT_DST)
 set rsync_shell $env(EXPECT_RSYNC_SHELL)
-spawn rsync -av --delete --omit-dir-times --no-perms --no-owner --no-group --exclude resources/SF33RD.AFS --filter {P resources/SF33RD.AFS} --exclude config --filter {P config} --exclude keymap --filter {P keymap} --exclude state --filter {P state} -e $rsync_shell "$src_path" ${user}@${host}:${dst_path}
+spawn rsync -av --delete --omit-dir-times --no-perms --no-owner --no-group --exclude resources/SF33RD.AFS --filter {P resources/SF33RD.AFS} --exclude config --filter {P config} --exclude keymap --filter {P keymap} --exclude state --filter {P state} --exclude replays --filter {P replays} --exclude resources/*.zip --filter {P resources/*.zip} -e $rsync_shell "$src_path" ${user}@${host}:${dst_path}
 expect {
   -re {[Pp]assword:} { send -- "$pw\r"; exp_continue }
   eof
@@ -659,6 +659,10 @@ mister_rsync_deploy() {
             --filter 'P keymap' \
             --exclude 'state' \
             --filter 'P state' \
+            --exclude 'replays' \
+            --filter 'P replays' \
+            --exclude 'resources/*.zip' \
+            --filter 'P resources/*.zip' \
             -e "${rsync_shell}" \
             "${src_path}" "${user}@${host}:${dst_path}" || {
             echo "MiSTer key-only rsync deploy failed; set MISTER_PASSWORD to use password auth or configure a working SSH key." >&2
