@@ -269,6 +269,27 @@ static void get_mister_state(int id, SDLPad_ButtonState *state) {
 }
 #endif
 
+// SOCD cleaning: up+down and left+right both held collapse to neutral. This
+// runs at the pad/OS layer, before capture (SDLPad_GetButtonState is the sole
+// producer tarPADRead consumes from), so it's symmetric for every peer in a
+// netplay session and no lever ever reaches the engine as an illegal
+// diagonal-cancel input. #282 ("Preserve illegal inputs") is a separate layer
+// above this one: it stops the *engine* from silently discarding levers that
+// don't appear in its own move tables, which is unrelated to and unaffected
+// by cleaning U+D / L+R out here - after this function runs, the engine
+// simply never sees that particular illegal combination in the first place.
+static void cleanup_state(SDLPad_ButtonState* state) {
+    if (state->dpad_up && state->dpad_down) {
+        state->dpad_up = false;
+        state->dpad_down = false;
+    }
+
+    if (state->dpad_left && state->dpad_right) {
+        state->dpad_left = false;
+        state->dpad_right = false;
+    }
+}
+
 void SDLPad_Init() {
 #if defined(PORT_MISTER)
     const char *shm_path = SDL_getenv("THIRDSARM_JOY_SHM");
@@ -335,13 +356,19 @@ bool SDLPad_IsGamepadConnected(int id) {
 
 void SDLPad_GetButtonState(int id, SDLPad_ButtonState* state) {
 #if defined(PORT_MISTER)
-    if (mister_shm) { get_mister_state(id, state); return; }
+    if (mister_shm) {
+        get_mister_state(id, state);
+        cleanup_state(state);
+        return;
+    }
 #endif
     if (id == keyboard_index) {
         get_keyboard_state(state);
     } else {
         get_gamepad_state(id, state);
     }
+
+    cleanup_state(state);
 }
 
 void SDLPad_RumblePad(int id, bool low_freq_enabled, Uint8 high_freq_rumble) {
