@@ -263,21 +263,25 @@ GEKKONET_BUILD="$GEKKONET_DIR/build"
 if [ "$PROFILE" = "miyoo" ]; then
     echo "Skipping GekkoNet for profile '$PROFILE' (Cut 1 has ENABLE_NETPLAY=OFF)"
 elif [ -d "$GEKKONET_BUILD" ] && \
+     [ -s "$GEKKONET_BUILD/lib/libGekkoNet.a" ] && \
      perl -0ne 'exit(!(/u8 value = 0;\s*\n\s*while \(idx \+ 1 < length\)/))' \
         "$GEKKONET_BUILD/include/compression.h" 2>/dev/null && \
      grep -q '3s-arm M-4: cap RLE-decompressed output' \
         "$GEKKONET_BUILD/include/compression.h" 2>/dev/null; then
-    # Self-healing: only treat the cache as valid if BOTH the RLEDecode OOB
-    # guard AND the R-2 hardening marker are present in the cached header
-    # (see the security-patch block below). The R-2 marker in compression.h
-    # is the version sentinel for the whole R-2 patch set: the C-1/C-2 guards
-    # live in src/backend.cpp and the M-4 resize guard in thirdparty/zpp/
-    # serializer.h — neither file is copied into the cached include tree, but
-    # all four patches are applied atomically in the same rebuild block, so a
-    # cache lacking the compression.h R-2 marker is a pre-R-2 build and is
-    # rebuilt. A pre-patch / partial cache falls through and rebuilds
-    # automatically, so a stale unpatched libGekkoNet.a can never be silently
-    # reused.
+    # Self-healing: only treat the cache as valid if the cached libGekkoNet.a
+    # exists non-empty AND both the RLEDecode OOB guard and the R-2 hardening
+    # marker are present in the cached header (see the security-patch block
+    # below). The R-2 marker in compression.h is the version sentinel for the
+    # whole R-2 patch set: the C-1/C-2/L-2 guards live in src/backend.cpp and
+    # the M-4 resize guard in thirdparty/zpp/serializer.h — neither file is
+    # copied into the cached include tree, but all patches are applied in the
+    # same rebuild block, which populates the cache by staging headers + .a
+    # into a temp dir and atomically renaming it into place. A kill at any
+    # point therefore leaves either (a) the previous cache untouched — which
+    # still fails whichever check sent us down the rebuild path, (b) a
+    # partially deleted or absent cache — rejected by the -d / -s / header
+    # checks, or (c) the complete new cache. The marker can never sit next to
+    # a stale unpatched libGekkoNet.a, so it is never silently reused.
     echo "GekkoNet already built (RLEDecode + R-2 hardening patched) at $GEKKONET_BUILD"
 else
     echo "Building GekkoNet @ $GEKKONET_REF..."
@@ -374,19 +378,30 @@ else
     # indexing loops: inputs.size() must be >= input_count * players *
     # _input_size, where players = _num_players for spectator packets, else
     # the number of remote handles bound to the sender address (u64 math to
-    # avoid overflow). On violation, drop the packet.
-    if ! grep -qF '    if (is_spectator) {' "$GEKKONET_BACKEND_CPP"; then
-        echo "ERROR: GekkoNet OnInputs not in expected pre-patch form at ref $GEKKONET_REF (C-1)." >&2
-        echo "       backend.cpp drifted. Refusing to build unpatched." >&2
+    # avoid overflow). On violation, drop the packet. The handles vector is
+    # fetched ONCE here and reused by the non-spectator loop below (L-4:
+    # upstream fetched it a second time there — one wasted vector alloc per
+    # input packet).
+    # The anchor must be UNIQUE (exactly 1 occurrence): the substitution is
+    # first-occurrence, so if a future ref bump introduced an earlier
+    # same-text line the guard would silently land in the wrong place while
+    # pre- and post-conditions still passed. Fail loud instead.
+    if [ "$(grep -cF '    if (is_spectator) {' "$GEKKONET_BACKEND_CPP")" -ne 1 ]; then
+        echo "ERROR: GekkoNet OnInputs not in expected pre-patch form at ref $GEKKONET_REF (C-1);" >&2
+        echo "       expected exactly 1 '    if (is_spectator) {' anchor. Refusing to build unpatched." >&2
         exit 1
     fi
     C1_ANCHOR='    if (is_spectator) {'
     C1_REPL='    // 3s-arm C-1: bound wire-declared input_count against the actual
     // decompressed buffer before indexing (OOB read / SIGSEGV guard).
+    std::vector<Handle> c1_handles;
+    if (!is_spectator) {
+        c1_handles = GetRemoteHandlesForAddress(&addr);
+    }
     {
         const u32 c1_players = is_spectator
             ? (u32)_num_players
-            : (u32)GetRemoteHandlesForAddress(&addr).size();
+            : (u32)c1_handles.size();
         const u64 c1_required =
             (u64)input_count * (u64)c1_players * (u64)_input_size;
         if (c1_required > (u64)body->inputs.size()) {
@@ -402,6 +417,59 @@ else
         exit 1
     fi
     echo "GekkoNet: applied C-1 OnInputs input_count bounds guard"
+
+    # --- L-4 (redundant handles fetch) -----------------------------------
+    # Reuse the handles vector the C-1 guard just computed instead of
+    # re-fetching it in the non-spectator loop. Anchored on the unique
+    # two-line fetch/count pair so the substitution cannot relocate.
+    C1_HOIST_ANCHOR='        auto handles = GetRemoteHandlesForAddress(&addr);
+        const u32 player_count = (u32)handles.size();'
+    export C1_HOIST_ANCHOR
+    if ! perl -0ne 'my $c = () = /\Q$ENV{C1_HOIST_ANCHOR}\E/g; exit($c != 1)' "$GEKKONET_BACKEND_CPP"; then
+        echo "ERROR: GekkoNet OnInputs handles fetch not in expected pre-patch form at ref $GEKKONET_REF (L-4);" >&2
+        echo "       expected exactly 1 handles/player_count pair. Refusing to build unpatched." >&2
+        exit 1
+    fi
+    C1_HOIST_REPL='        auto handles = std::move(c1_handles); // 3s-arm L-4: reuse C-1 fetch
+        const u32 player_count = (u32)handles.size();'
+    export C1_HOIST_REPL
+    perl -0pi -e 's/\Q$ENV{C1_HOIST_ANCHOR}\E/$ENV{C1_HOIST_REPL}/' "$GEKKONET_BACKEND_CPP"
+    if ! grep -qF '3s-arm L-4: reuse C-1 fetch' "$GEKKONET_BACKEND_CPP" || \
+       [ "$(grep -cF 'GetRemoteHandlesForAddress(&addr);' "$GEKKONET_BACKEND_CPP")" -ne 2 ]; then
+        echo "ERROR: GekkoNet L-4 handles hoist failed to apply cleanly" >&2
+        echo "       (expected exactly 2 remaining GetRemoteHandlesForAddress(&addr) call sites:" >&2
+        echo "       the C-1 guard fetch and the one in OnNetworkHealth)." >&2
+        exit 1
+    fi
+    echo "GekkoNet: applied L-4 handles hoist (single fetch per input packet)"
+
+    # --- L-2 (Debug-build remote abort on unknown packet type) -----------
+    # ParsePacket's default case hits assert(false) on an unknown wire
+    # header.type. Release (NDEBUG) compiles the assert out (falls through
+    # to return -> packet dropped), but a Debug build hands any
+    # session-magic-valid peer a one-packet remote abort. Replace the assert
+    # with an explicit drop so Debug and Release behave identically.
+    L2_ANCHOR='        default:
+            assert(false && "cannot process an unknown event!");
+            return;'
+    export L2_ANCHOR
+    if ! perl -0ne 'my $c = () = /\Q$ENV{L2_ANCHOR}\E/g; exit($c != 1)' "$GEKKONET_BACKEND_CPP"; then
+        echo "ERROR: GekkoNet ParsePacket default-assert not in expected pre-patch form at ref $GEKKONET_REF (L-2);" >&2
+        echo "       expected exactly 1 occurrence. Refusing to build unpatched." >&2
+        exit 1
+    fi
+    L2_REPL='        default:
+            // 3s-arm L-2: unknown wire header.type -> drop the packet.
+            // (Upstream assert(false) is a remote abort in Debug builds.)
+            return;'
+    export L2_REPL
+    perl -0pi -e 's/\Q$ENV{L2_ANCHOR}\E/$ENV{L2_REPL}/' "$GEKKONET_BACKEND_CPP"
+    if ! grep -qF '3s-arm L-2: unknown wire header.type' "$GEKKONET_BACKEND_CPP" || \
+       grep -qF 'cannot process an unknown event' "$GEKKONET_BACKEND_CPP"; then
+        echo "ERROR: GekkoNet L-2 default-case drop failed to apply." >&2
+        exit 1
+    fi
+    echo "GekkoNet: applied L-2 ParsePacket unknown-type drop (Debug-safe)"
 
     # --- M-4 (unbounded deserialize resize) ------------------------------
     # zpp's resizable-container loader reads a wire-declared u32 element count
@@ -441,9 +509,12 @@ else
     # buffer is returned empty and then dropped by the OnInputs C-1 size check.
     # Anchored on the push loop (untouched by the RLE odd-length OOB patch
     # above), so the two patches are order-independent. RLEEncode untouched.
-    if ! perl -0ne 'exit(!(/                for \(i32 x = 0; x < count; x\+\+\) \{\n                    result\.push_back\(value\);\n                \}/))' "$GEKKONET_COMPRESSION_H"; then
-        echo "ERROR: GekkoNet RLEDecode push loop not in expected form at ref $GEKKONET_REF (M-4)." >&2
-        echo "       compression.h drifted. Refusing to build unpatched." >&2
+    # The anchor must be UNIQUE (exactly 1 occurrence) — the substitution is
+    # first-occurrence, so a duplicate introduced by a ref bump would
+    # silently misplace the cap. Fail loud instead.
+    if ! perl -0ne 'my $c = () = /                for \(i32 x = 0; x < count; x\+\+\) \{\n                    result\.push_back\(value\);\n                \}/g; exit($c != 1)' "$GEKKONET_COMPRESSION_H"; then
+        echo "ERROR: GekkoNet RLEDecode push loop not in expected form at ref $GEKKONET_REF (M-4);" >&2
+        echo "       expected exactly 1 occurrence. compression.h drifted. Refusing to build unpatched." >&2
         exit 1
     fi
     CP_REPL='                // 3s-arm M-4: cap RLE-decompressed output. Bounds the
@@ -470,9 +541,25 @@ else
 
     cmake --build "$GEKKONET_SRC/cmake-build" -j"$JOBS"
 
-    mkdir -p "$GEKKONET_BUILD/include" "$GEKKONET_BUILD/lib"
-    cp -r "$GEKKONET_SRC/GekkoLib/include/." "$GEKKONET_BUILD/include/"
-    find "$GEKKONET_SRC" -name "*.a" -exec cp {} "$GEKKONET_BUILD/lib/libGekkoNet.a" \;
+    # Populate the cache CRASH-SAFELY: stage the complete artifact set
+    # (patched headers + libGekkoNet.a) into a temp dir beside the final
+    # path, then atomically rename() it into place. Copying headers straight
+    # into $GEKKONET_BUILD would write the R-2 sentinel next to whatever .a
+    # was already cached; a kill before the .a copy would then leave a cache
+    # that PASSES the marker check while shipping a stale unpatched library.
+    # With the stage + rename, a kill at any point leaves the previous cache
+    # untouched (still invalid, still rebuilt) or the complete new one.
+    GEKKONET_STAGE="$GEKKONET_BUILD.staging"
+    rm -rf "$GEKKONET_STAGE"
+    mkdir -p "$GEKKONET_STAGE/include" "$GEKKONET_STAGE/lib"
+    cp -r "$GEKKONET_SRC/GekkoLib/include/." "$GEKKONET_STAGE/include/"
+    find "$GEKKONET_SRC" -name "*.a" -exec cp {} "$GEKKONET_STAGE/lib/libGekkoNet.a" \;
+    if [ ! -s "$GEKKONET_STAGE/lib/libGekkoNet.a" ]; then
+        echo "ERROR: GekkoNet build produced no libGekkoNet.a to stage." >&2
+        exit 1
+    fi
+    rm -rf "$GEKKONET_BUILD"
+    mv "$GEKKONET_STAGE" "$GEKKONET_BUILD"
 
     rm -rf "$GEKKONET_SRC"
     echo "GekkoNet installed to $GEKKONET_BUILD"
