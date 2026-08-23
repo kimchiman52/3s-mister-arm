@@ -393,7 +393,10 @@ static void setup_vs_mode() {
     G_No[1] = 12;
     G_No[2] = 1;
     Mode_Type = MODE_NETWORK;
-    Present_Mode = MODE_NETWORK;
+    // Present_Mode is a PresentMode, not a ModeType (upstream #296); NETWORK
+    // and NETPLAY happen to share numeric value 2 in both enums, but assign
+    // the correctly-typed constant here rather than leaning on that.
+    Present_Mode = PRESENT_MODE_NETPLAY;
     Play_Mode = 0;
     Replay_Status[0] = 0;
     Replay_Status[1] = 0;

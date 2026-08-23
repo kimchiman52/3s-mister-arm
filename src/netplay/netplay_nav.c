@@ -121,7 +121,10 @@ static void apply_network_mode_override(void) {
      * Game12 advances into character select) ensures both peers
      * hash the same state on frame 0. */
     Mode_Type = MODE_NETWORK;
-    Present_Mode = MODE_NETWORK;
+    // Present_Mode is a PresentMode, not a ModeType (upstream #296); NETWORK
+    // and NETPLAY happen to share numeric value 2 in both enums, but assign
+    // the correctly-typed constant here rather than leaning on that.
+    Present_Mode = PRESENT_MODE_NETPLAY;
     save_w[MODE_NETWORK].Time_Limit = 99;
     save_w[MODE_NETWORK].Battle_Number[0] = 1;
     save_w[MODE_NETWORK].Battle_Number[1] = 1;

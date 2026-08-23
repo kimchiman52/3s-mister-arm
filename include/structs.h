@@ -923,7 +923,6 @@ struct _SAVE_W {
     BgmType BgmType;
     u8 BGM_Level;
     u8 SE_Level;
-    u8 PL_Color[2][20];
     _EXTRA_OPTION extra_option;
     RANK_DATA Ranking[20];
     u32 sum;

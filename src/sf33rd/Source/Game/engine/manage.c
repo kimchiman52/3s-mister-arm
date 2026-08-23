@@ -1198,8 +1198,6 @@ void Check_Naming(s16 PL_id) {
 }
 
 s32 Check_Ending() {
-    s16 xx;
-
     if (Play_Type == 1) {
         return 0;
     }
@@ -1224,18 +1222,16 @@ s32 Check_Ending() {
             return 1;
         }
 
-        // Extra_Option (the extra-options-menu unlock) and its Gill-win
-        // gate were removed upstream (#343): the menu is unlocked by
-        // default now. PL_Color is a fork-local field upstream doesn't
-        // have (predates upstream #296, not taken on this fork) that
-        // persists per-character alternate-color unlocks on a clean win;
-        // that part of the guard stays.
-        if (Check_Extra_Setting() == 0) {
-            for (xx = 1; xx < 5; xx++) {
-                save_w[xx].PL_Color[0][My_char[WINNER]] = 1;
-                save_w[xx].PL_Color[1][My_char[WINNER]] = 1;
-            }
-        }
+        // Extra_Option (the extra-options-menu unlock) and its Gill-win gate
+        // were removed upstream (#343). PL_Color (fork-local alternate-color
+        // unlock persistence, predating upstream #296) is now also gone: #296
+        // unlocks extra colors and Gill by default, so the field was dropped
+        // from _SAVE_W (include/structs.h) and there is nothing left to
+        // persist on a clean win. Check_Extra_Setting() is still called for
+        // its side effect - it syncs save_w[1].extra_option.contents pages
+        // past Ex_Page_Data[page] from save_w[0] - even though its return
+        // value no longer gates anything here.
+        Check_Extra_Setting();
 
         return 1;
     }

@@ -11,12 +11,17 @@
 #include <SDL3/SDL.h>
 
 #define SETTINGS_VERSION 1
-// Upstream's SETTINGS_SIZE_V1 is 367 bytes. This fork's _SAVE_W also carries
-// PL_Color[2][20] (fork-local unlocked-color persistence predating upstream
-// #296 "Unlock extra colors and Gill by default", which this fork has not
-// taken - see include/structs.h struct _SAVE_W), serialized below alongside
-// the rest of the settings blob. +40 bytes (2*20 u8) for that field.
-#define SETTINGS_SIZE_V1 (367 + 40)
+// Matches upstream's SETTINGS_SIZE_V1. This fork carried a +40-byte
+// PL_Color[2][20] extension here (fork-local unlocked-color persistence
+// predating upstream #296) until #296 "Unlock extra colors and Gill by
+// default" was taken: extra colors and Gill are unlocked unconditionally
+// now, PL_Color was dropped from struct _SAVE_W (include/structs.h), and
+// this size shrinks back to upstream's. A pre-existing settings save file
+// written under the old (407-byte) size is rejected by the size gate in
+// read_file_if_exists() below and falls back to defaults - nothing shipped
+// with this fork carries a settings save yet, so that's an acceptable
+// one-time reset.
+#define SETTINGS_SIZE_V1 367
 #define SETTINGS_SIZE SETTINGS_SIZE_V1
 
 #define SYSDIR_VERSION 1
@@ -97,7 +102,6 @@ static void serialize_settings(SDL_IOStream* io) {
     SDL_WriteU8(io, src->BGM_Level);
     SDL_WriteU8(io, src->SE_Level);
     SDL_WriteIO(io, &src->extra_option, sizeof(src->extra_option));
-    SDL_WriteIO(io, src->PL_Color, sizeof(src->PL_Color));
 
     for (int i = 0; i < SDL_arraysize(src->Ranking); i++) {
         const RANK_DATA* rank_data = &src->Ranking[i];
@@ -208,18 +212,6 @@ static bool deserialize_settings(SDL_IOStream* io) {
             } else if (*value > (s8)Ex_Menu_Max_Data[page][item]) {
                 *value = (s8)Ex_Menu_Max_Data[page][item];
             }
-        }
-    }
-
-    SDL_ReadIO(io, dst->PL_Color, sizeof(dst->PL_Color));
-
-    // PL_Color entries are unlocked-color booleans, read only via `if (...)`
-    // (sel_pl.c:298, next_cpu.c:1202) - not array indices - but normalize to
-    // 0/1 so a corrupted save can't leave a non-boolean value in a field
-    // that's meant to be one.
-    for (int i = 0; i < SDL_arraysize(dst->PL_Color); i++) {
-        for (int j = 0; j < SDL_arraysize(dst->PL_Color[i]); j++) {
-            dst->PL_Color[i][j] = dst->PL_Color[i][j] ? 1 : 0;
         }
     }
 

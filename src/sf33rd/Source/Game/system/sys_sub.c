@@ -691,8 +691,9 @@ void Copy_Check_w() {
 // (e.g. Shot default { 0, 1, 2, 11, 3, 4, 5, 11 } differs from upstream's
 // { 0, 1, 2, 9, 3, 4, 5, 10 }), not upstream's designated-initializer
 // literals. Extra_Option's positional slot (used to sit between SE_Level
-// and PL_Color) is removed here per upstream #343 - PL_Color's zero-init
-// stays since this fork still carries that field.
+// and PL_Color) is removed here per upstream #343. PL_Color itself is
+// removed per upstream #296 (extra colors and Gill unlocked by default) -
+// this fork no longer carries that field either.
 const struct _SAVE_W Game_Default_Data = {
     { { { 0, 1, 2, 11, 3, 4, 5, 11 }, 0, { 0, 0, 0 } }, { { 0, 1, 2, 11, 3, 4, 5, 11 }, 0, { 0, 0, 0 } } },
     2,
@@ -710,8 +711,6 @@ const struct _SAVE_W Game_Default_Data = {
     0,
     15,
     15,
-    { { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
-      { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 } },
     { { { 1, 3, 3, 0, 0, 1, 0, 0 },
         { 0, 0, 2, 2, 8, 8, 2, 0 },
         { 2, 2, 2, 2, 0, 0, 0, 0 },
@@ -1347,26 +1346,11 @@ void Replay(s16 PL_id) {
 }
 
 s16 Check_SysDir_Page() {
-    s16 ix;
-    s16 count;
-
     if (Debug_w[52]) {
         return Debug_w[52] + 6;
     }
 
-    for (count = 0, ix = 0; ix < 20; ix++) {
-        if (save_w[1].PL_Color[0][ix]) {
-            count++;
-        }
-    }
-
-    count /= 5;
-
-    if (count > 3) {
-        count = 3;
-    }
-
-    return count + 6;
+    return 9;
 }
 
 void Clear_Flash_Init(s16 level) {

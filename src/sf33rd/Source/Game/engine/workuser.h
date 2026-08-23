@@ -15,6 +15,15 @@ typedef enum ModeType {
     MODE_REPLAY,
 } ModeType;
 
+typedef enum PresentMode {
+    PRESENT_MODE_ATTRACT,
+    PRESENT_MODE_LOCAL, /// Arcade and Versus
+    PRESENT_MODE_NETPLAY,
+    PRESENT_MODE_REPLAY,
+    PRESENT_MODE_NORMAL_TRAINING,
+    PRESENT_MODE_PARRY_TRAINING,
+} PresentMode;
+
 typedef enum PlayMode {
     PLAY_MODE_NORMAL    = 0,
     PLAY_MODE_RECORDING = 1,
@@ -544,7 +553,7 @@ extern s8 Menu_Page;
 extern s8 Menu_Max;
 extern u8 reset_NG_flag;
 extern s8 VS_Stage;
-extern u8 Present_Mode;
+extern PresentMode Present_Mode;
 extern u8 Play_Mode;
 extern u8 Page_Max;
 extern u8 Direction_Working[6];

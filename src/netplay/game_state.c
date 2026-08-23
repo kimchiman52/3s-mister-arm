@@ -78,8 +78,21 @@
  *   + 8  net
  * 17664 + 8 = 17672. Empirically confirmed via ARM32 cross-compile
  * (clang --target=arm-linux-gnueabihf): actual sizeof(GameState) == 17672,
- * matching this arithmetic exactly. */
-#define EXPECTED_GAME_STATE_SIZE 17672
+ * matching this arithmetic exactly.
+ *
+ * Upstream #296 (de2eccc9, "Unlock extra colors and Gill by default")
+ * converts the Present_Mode global from u8 to the new PresentMode enum;
+ * game_state.h's Present_Mode field follows suit (u8 -> PresentMode) so
+ * GS_ASSERT_SAME_SIZE keeps passing. On the AAPCS ARM32 ABI a plain enum
+ * is int-sized (4 bytes), so the field grows from 1 byte to 4 bytes where
+ * it sits between VS_Stage (s8) and Play_Mode (u8) - both single bytes -
+ * which also forces alignment padding before it. The net effect doesn't
+ * reduce to simple arithmetic (some of the padding shift is absorbed
+ * downstream), so this was re-pinned empirically the same way as the
+ * entries above: cross-compiled with the OLD 17672 constant, read the
+ * static_assert failure's "note: expression evaluates to 'N == 17672'",
+ * and took N. Actual sizeof(GameState) == 17676 (net +4 over 17672). */
+#define EXPECTED_GAME_STATE_SIZE 17676
 #define EXPECTED_TASK_SIZE 16
 
 _Static_assert(sizeof(GameState) == EXPECTED_GAME_STATE_SIZE,
