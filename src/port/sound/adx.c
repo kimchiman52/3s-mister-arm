@@ -1005,10 +1005,6 @@ void ADX_SetOutVol(int volume) {
     }
 }
 
-void ADX_SetMono(bool mono) {
-    (void)mono;
-}
-
 ADXState ADX_GetState() {
     if (!has_tracks) {
         return ADX_STATE_STOP;

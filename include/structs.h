@@ -51,7 +51,6 @@ typedef enum : u8 {
 } BgmType;
 
 struct _SYSTEM_W {
-    u8 sound_mode;
     u8 screen_mode;
     BgmType bgm_type;
 };
@@ -923,7 +922,6 @@ struct _SAVE_W {
     u8 Auto_Save;
     u8 AnalogStick;
     BgmType BgmType;
-    u8 SoundMode;
     u8 BGM_Level;
     u8 SE_Level;
     u8 PL_Color[2][20];
