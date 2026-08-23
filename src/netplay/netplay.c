@@ -1555,6 +1555,29 @@ void Netplay_Run() {
         // (direct P2P, LAN, etc.) starts without carrying stale flags.
         s_lobby_session = false;
         s_mist_handshake_done = false;
+
+        // C1 fix: setup_vs_mode() (above) zeroes Convert_Buff/Check_Buff for
+        // the duration of the session so the netplay simulation runs with
+        // identity button mappings. Since the post-game auto-save (game.c
+        // Game06 case 5, SaveInit(SAVE_FILE_SETTINGS, SAVE_MODE_SAVE)) reads
+        // its data FROM Convert_Buff (Save_Game_Data(), sys_sub.c), any save
+        // that happens while those buffers are still zeroed would persist
+        // zeroed settings (Difficulty/pad mappings/volumes) to disk. The
+        // disconnect path is unaffected because it forces a hard Soft_Reset_Sub
+        // (session-reset -> TASK_INIT -> settings reload from disk); this is
+        // the clean-exit path, which returns straight to the normal menu
+        // flow without any such reload. Restore both buffers from the
+        // current save_w[1] here, mirroring the same restore done at the
+        // other safe call sites (boot: sys_sub.c Setup_IO_ConvData ->
+        // Copy_Save_w(); settings load: savesub.c deserialize_settings;
+        // menu defaults: menu.c). This guards every auto-save trigger from
+        // this point forward in the session (e.g. menu.c:778); it does not
+        // retroactively repair a settings file already written to disk by
+        // an in-session Game06 auto-save that ran before this teardown (see
+        // commit body).
+        Copy_Save_w();
+        Copy_Check_w();
+
         session_state = NETPLAY_SESSION_IDLE;
         break;
 
