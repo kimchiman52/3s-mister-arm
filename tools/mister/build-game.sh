@@ -109,17 +109,24 @@ require_cmd docker
 
 "${SETUP_CONTAINER_SCRIPT}" --container "${container_name}" --platform "${platform}"
 
+# R-1: the rsync into the container excludes .git/, so CMake's configure-time
+# git probe for the MIST handshake build_hash cannot work inside Docker.
+# Derive the short SHA here on the host and forward it explicitly. Empty on
+# failure (e.g. tarball checkout) -> CMake falls back to "0000000".
+git_short_sha="$(git -C "${ROOT_DIR}" rev-parse --short=7 HEAD 2>/dev/null || true)"
+
 # EXTRA_CMAKE_ARGS is forwarded as a fourth positional into the heredoc below.
 # The heredoc uses <<'EOF' (single-quoted) so host-side variable expansion is
 # disabled; positional args are the only way to smuggle values in.
 docker exec -i "${container_name}" bash -s -- \
-    "${platform}" "${flavor}" "${jobs}" "${EXTRA_CMAKE_ARGS:-}" <<'EOF'
+    "${platform}" "${flavor}" "${jobs}" "${EXTRA_CMAKE_ARGS:-}" "${git_short_sha}" <<'EOF'
 set -euo pipefail
 
 platform="$1"
 flavor="$2"
 jobs="$3"
 extra_cmake_args="$4"
+git_short_sha="$5"
 llvm_version="${MISTER_LLVM_VERSION:-20}"
 workdir="/work-mister"
 
@@ -172,10 +179,19 @@ build_one() {
         read -ra extra_args <<< "${extra_cmake_args}"
     fi
 
-    echo "cmake (final invocation): cmake -S . -B ${build_dir} -DCMAKE_BUILD_TYPE=Release -DPORT_MISTER=ON -DENABLE_PERF_TELEMETRY=${telemetry_flag} ${cmake_target_args[*]-} ${extra_args[*]-}"
+    # R-1: forward the host-derived git short SHA (5th positional) so the
+    # MIST handshake advertises the real build hash despite .git being
+    # excluded from the container rsync.
+    local hash_args=()
+    if [ -n "${git_short_sha}" ]; then
+        hash_args=(-DMIST_BUILD_HASH_OVERRIDE="${git_short_sha}")
+    fi
+
+    echo "cmake (final invocation): cmake -S . -B ${build_dir} -DCMAKE_BUILD_TYPE=Release -DPORT_MISTER=ON -DENABLE_PERF_TELEMETRY=${telemetry_flag} ${cmake_target_args[*]-} ${hash_args[*]-} ${extra_args[*]-}"
     cmake -S . -B "${build_dir}" -DCMAKE_BUILD_TYPE=Release -DPORT_MISTER=ON \
         -DENABLE_PERF_TELEMETRY="${telemetry_flag}" \
         "${cmake_target_args[@]}" \
+        "${hash_args[@]}" \
         "${extra_args[@]}"
     cmake --build "${build_dir}" --parallel "${jobs}"
     cmake --install "${build_dir}" --prefix "${install_dir}"

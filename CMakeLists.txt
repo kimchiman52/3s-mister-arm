@@ -116,20 +116,29 @@ add_executable(3s-arm MACOSX_BUNDLE
 # "0000000" when git or the repo is unavailable (tarball builds, containers
 # without .git access). Scoped as a per-source define so a SHA change only
 # recompiles mist_handshake.c, not the whole tree. The extra -c
-# safe.directory covers Docker cross-builds where the mounted repo is owned
-# by a different uid ("dubious ownership").
-set(MIST_BUILD_HASH "")
-find_package(Git QUIET)
-if(GIT_FOUND)
-    execute_process(
-        COMMAND "${GIT_EXECUTABLE}" -c "safe.directory=${CMAKE_SOURCE_DIR}"
-                -C "${CMAKE_SOURCE_DIR}" rev-parse --short=7 HEAD
-        OUTPUT_VARIABLE MIST_BUILD_HASH
-        OUTPUT_STRIP_TRAILING_WHITESPACE
-        RESULT_VARIABLE _mist_git_rc
-        ERROR_QUIET)
-    if(NOT _mist_git_rc EQUAL 0)
-        set(MIST_BUILD_HASH "")
+# safe.directory covers builds where the repo is owned by a different uid
+# ("dubious ownership").
+#
+# MIST_BUILD_HASH_OVERRIDE: the MiSTer Docker cross-build rsyncs the source
+# tree into the container WITHOUT .git (tools/mister/build-game.sh), so the
+# git probe below cannot work there. build-game.sh derives the SHA on the
+# host and passes it in explicitly via this cache variable.
+set(MIST_BUILD_HASH_OVERRIDE "" CACHE STRING
+    "Explicit git short SHA for the MIST handshake build_hash (for builds without .git access)")
+set(MIST_BUILD_HASH "${MIST_BUILD_HASH_OVERRIDE}")
+if(MIST_BUILD_HASH STREQUAL "")
+    find_package(Git QUIET)
+    if(GIT_FOUND)
+        execute_process(
+            COMMAND "${GIT_EXECUTABLE}" -c "safe.directory=${CMAKE_SOURCE_DIR}"
+                    -C "${CMAKE_SOURCE_DIR}" rev-parse --short=7 HEAD
+            OUTPUT_VARIABLE MIST_BUILD_HASH
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            RESULT_VARIABLE _mist_git_rc
+            ERROR_QUIET)
+        if(NOT _mist_git_rc EQUAL 0)
+            set(MIST_BUILD_HASH "")
+        endif()
     endif()
 endif()
 if(MIST_BUILD_HASH STREQUAL "")
