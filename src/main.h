@@ -24,7 +24,6 @@ extern Configuration configuration;
 void cpInitTask();
 void cpReadyTask(TaskID num, void (*func_adrs)(struct _TASK* task_ptr));
 void cpExitTask(TaskID num);
-s32 mppGetFavoritePlayerNumber();
 void njUserMain(); // FIXME: This shouldn't be public
 
 #endif

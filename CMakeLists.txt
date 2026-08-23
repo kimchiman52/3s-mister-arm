@@ -130,7 +130,6 @@ target_compile_definitions(3s-arm PRIVATE
     $<$<AND:$<CONFIG:Release>,$<NOT:$<OR:$<BOOL:${PORT_MISTER}>,$<BOOL:${PORT_MIYOO_MINI_PLUS}>>>>:CHECKSUM>
 
     _POSIX_C_SOURCE=200809L
-    MEMCARD_DISABLED
 )
 
 # Feature toggles
