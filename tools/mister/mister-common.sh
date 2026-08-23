@@ -765,6 +765,12 @@ mister_rsync_deploy_wrapper() {
                 --filter 'P config' \
                 --exclude 'keymap' \
                 --filter 'P keymap' \
+                --exclude 'state' \
+                --filter 'P state' \
+                --exclude 'replays' \
+                --filter 'P replays' \
+                --exclude 'resources/*.zip' \
+                --filter 'P resources/*.zip' \
                 -e "${rsync_shell}" \
                 "${runtime_src}" "${user}@${host}:${dst_path%/}/games/3s-arm/" || {
                 echo "MiSTer key-only wrapper runtime deploy failed; set MISTER_PASSWORD to use password auth or configure a working SSH key." >&2
