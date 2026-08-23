@@ -1564,23 +1564,46 @@ void Netplay_Run() {
 
         // C1 fix: setup_vs_mode() (above) zeroes Convert_Buff/Check_Buff for
         // the duration of the session so the netplay simulation runs with
-        // identity button mappings. Since the post-game auto-save (game.c
-        // Game06 case 5, SaveInit(SAVE_FILE_SETTINGS, SAVE_MODE_SAVE)) reads
-        // its data FROM Convert_Buff (Save_Game_Data(), sys_sub.c), any save
-        // that happens while those buffers are still zeroed would persist
-        // zeroed settings (Difficulty/pad mappings/volumes) to disk. The
-        // disconnect path is unaffected because it forces a hard Soft_Reset_Sub
-        // (session-reset -> TASK_INIT -> settings reload from disk); this is
-        // the clean-exit path, which returns straight to the normal menu
-        // flow without any such reload. Restore both buffers from the
-        // current save_w[1] here, mirroring the same restore done at the
-        // other safe call sites (boot: sys_sub.c Setup_IO_ConvData ->
-        // Copy_Save_w(); settings load: savesub.c deserialize_settings;
-        // menu defaults: menu.c). This guards every auto-save trigger from
-        // this point forward in the session (e.g. menu.c:778); it does not
-        // retroactively repair a settings file already written to disk by
-        // an in-session Game06 auto-save that ran before this teardown (see
-        // commit body).
+        // identity button mappings. Since Save_Game_Data() (sys_sub.c) reads
+        // settings FROM Convert_Buff, any save that happens while those
+        // buffers are still zeroed would persist zeroed settings
+        // (Difficulty/pad mappings/volumes) to disk.
+        //
+        // The clean-exit path here has no reload-from-disk of its own
+        // (unlike disconnect, which forces a hard Soft_Reset_Sub ->
+        // TASK_INIT -> settings reload). NOTE (corrected 2026-08-23,
+        // review C1 addendum): game.c Game06's post-game auto-save
+        // (SaveInit(SAVE_FILE_SETTINGS, SAVE_MODE_SAVE), case 5) is NOT
+        // reachable for a netplay session and so was never actually at risk
+        // here — proven via manage.c: Game_Manage_1st (C_No[0]==0, called
+        // every round from Game2_1 -> Game_Management()) sets
+        // Round_Operator[p] = (plw[p].wu.wu_operator != 0) every round
+        // (manage.c:194-203); netplay.c:371-372 unconditionally forces both
+        // plw[].wu.wu_operator = 1, so Round_Operator[WINNER] is always true
+        // in netplay; Game_Manage_10th's routing gate
+        // (manage.c:1143, `Mode_Type == MODE_VERSUS || Mode_Type == 5 ||
+        // Round_Operator[WINNER]`) is therefore always true for netplay
+        // regardless of Mode_Type, so it always takes G_No[1]=3 (Game03,
+        // whose own switch(Mode_Type) explicitly handles MODE_NETWORK via
+        // the VS_Result menu screen, game.c ~774-798) and never
+        // G_No[1]=4 (Game04, the arcade-only continue-screen flow that is
+        // the only route to Game07/Game08, the sole two G_No[1]=6/Game06
+        // writers, game.c:1251/1296). Game_Manage_10th's Check_Ending()
+        // call is also unreachable for netplay for the same reason
+        // (Play_Type==1, forced by both wu_operator being set, short-
+        // circuits it at manage.c:1202 before it can route to Game08
+        // either).
+        //
+        // The real, still-current motivation for this restore: leaving
+        // Convert_Buff/Check_Buff zeroed here persists forward to the NEXT
+        // real settings save after the player returns to the main menu —
+        // e.g. Option_Select (menu.c:778), or Game06's auto-save the next
+        // time the player plays Arcade/Versus locally (Game06 *is*
+        // reachable then). Restore both buffers from the current save_w[1]
+        // here, mirroring the same restore done at the other safe call
+        // sites (boot: sys_sub.c Setup_IO_ConvData -> Copy_Save_w();
+        // settings load: savesub.c deserialize_settings; menu defaults:
+        // menu.c).
         Copy_Save_w();
         Copy_Check_w();
 
