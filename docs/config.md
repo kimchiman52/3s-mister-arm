@@ -37,6 +37,11 @@ Defines the strength of the scanline filter (from `0` to `100`). `0` means the f
 
 Allow characters to render in front of the top HUD similar to Street Fighter IV. May introduce visual abnormalities on certain stages.
 
+With this setting on, these stage decorations are disabled to prevent overlapping with the HUD:
+- Chun-Li's stage: bamboo stick on the right
+- Makoto's stage: tree on the right
+- Yang's stage: rain overlay
+
 ### `arcade-balance`
 
 Enables arcade (CPS3) balance instead of PS2 balance. Requires `sfiii3nr1.zip`

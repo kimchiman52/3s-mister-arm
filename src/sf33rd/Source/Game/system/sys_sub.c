@@ -10,6 +10,7 @@
 #endif
 #include "main.h"
 #include "netplay/netplay.h"
+#include "port/config/config.h"
 #include "sf33rd/AcrSDK/common/mlPAD.h"
 #include "sf33rd/AcrSDK/ps2/flps2debug.h"
 #include "sf33rd/Source/Game/com/com_data.h"
@@ -899,12 +900,20 @@ s32 Check_PL_Load() {
     return 1;
 }
 
-void BG_Draw_System() {
-    u8 i;
-    u16 mask = 1 & 0xFFFF;
-    u16 s2;
-    u16 s3;
+static bool bg_layer_disabled(int i) {
+    if (!Config_GetBool(CFG_DRAW_PLAYERS_ABOVE_HUD)) {
+        return false;
+    }
 
+    // Rain on Yang's stage
+    if ((bg_w.bg_index == 10) && (i == 1)) {
+        return true;
+    }
+
+    return false;
+}
+
+void BG_Draw_System() {
 #if DEBUG
     /* Black-BG investigation 2026-04-24 — Experiment 2.
      * Reset log budget on each Play_Game transition so we capture per-match. */
@@ -924,22 +933,16 @@ void BG_Draw_System() {
     }
 #endif
 
-    if (bg_disp_off == 0) {
-        for (i = 0; i < 4; i++, s2 = mask *= 2) {
-            if (Screen_Switch_Buffer & mask) {
-                scr_trans(i);
-            }
-        }
-    } else {
-        for (i = 0; i < 4; i++, s3 = mask *= 2) {
-            if (Screen_Switch_Buffer & mask) {
-                scr_calc(i);
-            }
+    for (int i = 0; i < 4; i++) {
+        if ((bg_disp_off == 0) && (Screen_Switch_Buffer & (1 << i)) && !bg_layer_disabled(i)) {
+            scr_trans(i);
+        } else {
+            scr_calc(i);
         }
     }
 
     if (Play_Game == 0) {
-        for (i = 0; i < 4; i++) {
+        for (int i = 0; i < 4; i++) {
             if (Unsubstantial_BG[i]) {
                 scr_calc(i);
             }
