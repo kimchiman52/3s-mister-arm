@@ -54,10 +54,14 @@ typedef int socklen_t;
 #endif
 
 typedef enum {
-    PEER_ACK,      /* reply to the first hello with an ack */
-    PEER_REJECT,   /* reply with a reject */
-    PEER_SILENT,   /* never reply */
-    PEER_BADMAGIC, /* reply with a malformed frame (wrong magic) */
+    PEER_ACK,             /* reply to the first hello with an ack */
+    PEER_REJECT,          /* reply with a reject */
+    PEER_SILENT,          /* never reply */
+    PEER_BADMAGIC,        /* reply with a malformed frame (wrong magic) */
+    /* R-1 compatibility-field cases: */
+    PEER_ACK_WRONG_STATE, /* ack with a mismatching state_ver */
+    PEER_ACK_WRONG_PROTO, /* ack with a mismatching proto_ver */
+    PEER_ACK_LEGACY,      /* pre-R-1 ack: three strings, no version fields */
 } PeerMode;
 
 typedef struct {
@@ -133,6 +137,9 @@ static int SDLCALL peer_thread(void* arg) {
         uint8_t reply[256];
         int reply_len = 0;
         if (ctx->mode == PEER_ACK) {
+            /* Note: build_hash "abcdef0" deliberately differs from the
+             * local MIST_BUILD_HASH — a hash difference is warning-only
+             * and must NOT reject (only state_ver/proto_ver reject). */
             reply_len = (int)mist_handshake_build_frame(
                 MIST_MSG_ACK, "armv7", "mister", "abcdef0",
                 0, NULL, reply, sizeof(reply));
@@ -140,6 +147,22 @@ static int SDLCALL peer_thread(void* arg) {
             reply_len = (int)mist_handshake_build_frame(
                 MIST_MSG_REJECT, NULL, NULL, NULL,
                 MIST_REJECT_ARCH_MISMATCH, "arch mismatch",
+                reply, sizeof(reply));
+        } else if (ctx->mode == PEER_ACK_WRONG_STATE) {
+            reply_len = (int)mist_handshake_build_frame_ex(
+                MIST_MSG_ACK, "armv7", "mister", "abcdef0",
+                MIST_PROTO_VER,
+                (uint16_t)(mist_handshake_local_state_ver() + 8),
+                0, NULL, reply, sizeof(reply));
+        } else if (ctx->mode == PEER_ACK_WRONG_PROTO) {
+            reply_len = (int)mist_handshake_build_frame_ex(
+                MIST_MSG_ACK, "armv7", "mister", "abcdef0",
+                (uint8_t)(MIST_PROTO_VER + 1),
+                mist_handshake_local_state_ver(),
+                0, NULL, reply, sizeof(reply));
+        } else if (ctx->mode == PEER_ACK_LEGACY) {
+            reply_len = (int)mist_handshake_build_legacy_frame(
+                MIST_MSG_ACK, "armv7", "mister", "abcdef0",
                 reply, sizeof(reply));
         } else { /* PEER_BADMAGIC */
             reply_len = (int)mist_handshake_build_bad_magic(reply, sizeof(reply));
@@ -161,7 +184,8 @@ static int SDLCALL peer_thread(void* arg) {
     }
 }
 
-static int run_case(const char* label, PeerMode mode, bool expect_success) {
+static int run_case(const char* label, PeerMode mode, bool expect_success,
+                    const char* expect_reason_substr) {
     mist_handshake_test_reset();
 
     unsigned short peer_port = 0, local_port = 0;
@@ -209,6 +233,12 @@ static int run_case(const char* label, PeerMode mode, bool expect_success) {
             fprintf(stderr, "[test_mist_handshake] %s FAIL: expected a reject reason, got empty\n", label);
             return 1;
         }
+        if (expect_reason_substr != NULL && strstr(reason, expect_reason_substr) == NULL) {
+            fprintf(stderr,
+                    "[test_mist_handshake] %s FAIL: reason \"%s\" does not contain \"%s\"\n",
+                    label, reason, expect_reason_substr);
+            return 1;
+        }
         fprintf(stderr, "[test_mist_handshake] %s OK (reason=\"%s\")\n", label, reason);
     } else {
         fprintf(stderr, "[test_mist_handshake] %s OK\n", label);
@@ -216,17 +246,105 @@ static int run_case(const char* label, PeerMode mode, bool expect_success) {
     return 0;
 }
 
+/*
+ * R-1 responder-direction cases: drive mist_handshake_build_reply (the
+ * exact code the live receive paths use — respond_to_hello delegates to
+ * it) with crafted hello payloads and assert on the reply frame's
+ * msg_type + reject reason byte. Pure functions, no sockets.
+ */
+static int run_reply_case(const char* label,
+                          const uint8_t* frame, size_t frame_len,
+                          uint8_t expect_msg_type, uint8_t expect_reason) {
+    if (frame_len < MIST_HEADER_LEN) {
+        fprintf(stderr, "[test_mist_handshake] %s FAIL: bad input frame\n", label);
+        return 1;
+    }
+    const size_t payload_len = frame_len - MIST_HEADER_LEN;
+
+    uint8_t reply[MIST_FRAME_MAX];
+    const size_t reply_len = mist_handshake_build_reply(frame + MIST_HEADER_LEN,
+                                                        payload_len,
+                                                        reply, sizeof(reply));
+    if (reply_len < MIST_HEADER_LEN) {
+        fprintf(stderr, "[test_mist_handshake] %s FAIL: no reply built\n", label);
+        return 1;
+    }
+    if (reply[4] != expect_msg_type) {
+        fprintf(stderr,
+                "[test_mist_handshake] %s FAIL: reply msg_type 0x%02x expected 0x%02x\n",
+                label, reply[4], expect_msg_type);
+        return 1;
+    }
+    if (expect_msg_type == MIST_MSG_REJECT) {
+        if (reply_len < MIST_HEADER_LEN + 1 || reply[MIST_HEADER_LEN] != expect_reason) {
+            fprintf(stderr,
+                    "[test_mist_handshake] %s FAIL: reject reason %u expected %u\n",
+                    label,
+                    (reply_len > MIST_HEADER_LEN) ? (unsigned)reply[MIST_HEADER_LEN] : 0u,
+                    (unsigned)expect_reason);
+            return 1;
+        }
+    }
+    fprintf(stderr, "[test_mist_handshake] %s OK\n", label);
+    return 0;
+}
+
 int Netplay_Test_MistHandshake(void) {
     int fails = 0;
-    fails += run_case("(a) ack",        PEER_ACK,      true);
-    fails += run_case("(b) reject",     PEER_REJECT,   false);
-    fails += run_case("(c) silent",     PEER_SILENT,   false);
-    fails += run_case("(d) bad-magic",  PEER_BADMAGIC, false);
+    fails += run_case("(a) ack",        PEER_ACK,      true,  NULL);
+    fails += run_case("(b) reject",     PEER_REJECT,   false, "arch mismatch");
+    fails += run_case("(c) silent",     PEER_SILENT,   false, "timeout");
+    fails += run_case("(d) bad-magic",  PEER_BADMAGIC, false, "timeout");
+    /* R-1: compatibility-field validation on the ack path. */
+    fails += run_case("(e) wrong-state ack", PEER_ACK_WRONG_STATE, false, "Build state");
+    fails += run_case("(f) wrong-proto ack", PEER_ACK_WRONG_PROTO, false, "Handshake v");
+    fails += run_case("(g) legacy ack",      PEER_ACK_LEGACY,      false, "too old");
+
+    /* R-1: responder direction — what we send back to a peer's hello. */
+    uint8_t hello[MIST_FRAME_MAX];
+    size_t hello_len;
+
+    hello_len = mist_handshake_build_frame(MIST_MSG_HELLO, "armv7", "mister",
+                                           "abcdef0", 0, NULL,
+                                           hello, sizeof(hello));
+    fails += run_reply_case("(h) reply to matching hello -> ack",
+                            hello, hello_len, MIST_MSG_ACK, 0);
+
+    hello_len = mist_handshake_build_frame_ex(
+        MIST_MSG_HELLO, "armv7", "mister", "abcdef0",
+        MIST_PROTO_VER, (uint16_t)(mist_handshake_local_state_ver() + 8),
+        0, NULL, hello, sizeof(hello));
+    fails += run_reply_case("(i) reply to wrong-state hello -> reject",
+                            hello, hello_len, MIST_MSG_REJECT,
+                            MIST_REJECT_STATE_MISMATCH);
+
+    hello_len = mist_handshake_build_frame_ex(
+        MIST_MSG_HELLO, "armv7", "mister", "abcdef0",
+        (uint8_t)(MIST_PROTO_VER + 1), mist_handshake_local_state_ver(),
+        0, NULL, hello, sizeof(hello));
+    fails += run_reply_case("(j) reply to wrong-proto hello -> reject",
+                            hello, hello_len, MIST_MSG_REJECT,
+                            MIST_REJECT_PROTO_MISMATCH);
+
+    hello_len = mist_handshake_build_legacy_frame(MIST_MSG_HELLO, "armv7",
+                                                  "mister", "abcdef0",
+                                                  hello, sizeof(hello));
+    fails += run_reply_case("(k) reply to legacy hello -> reject",
+                            hello, hello_len, MIST_MSG_REJECT,
+                            MIST_REJECT_LEGACY);
+
+    hello_len = mist_handshake_build_frame(MIST_MSG_HELLO, "x86_64", "mister",
+                                           "abcdef0", 0, NULL,
+                                           hello, sizeof(hello));
+    fails += run_reply_case("(l) reply to wrong-arch hello -> reject",
+                            hello, hello_len, MIST_MSG_REJECT,
+                            MIST_REJECT_ARCH_MISMATCH);
+
     if (fails > 0) {
         fprintf(stderr, "[test_mist_handshake] %d case(s) failed\n", fails);
         return 1;
     }
-    fprintf(stderr, "[test_mist_handshake] OK — 4 cases passed\n");
+    fprintf(stderr, "[test_mist_handshake] OK — 12 cases passed\n");
     return 0;
 }
 
