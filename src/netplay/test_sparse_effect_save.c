@@ -15,7 +15,7 @@
  *     inactive slots reads back byte-exact for active slots; inactive slots
  *     match the canonical empty pattern (myself=i, before=-1, behind=-1,
  *     rest zero).
- *  2. Boundary cases — 0, 1, 82 (ceiling), 128 (overflow → unpack rejects).
+ *  2. Boundary cases — 0, 1, SPARSE_CEILING_SLOTS (ceiling), 128 (overflow → unpack rejects).
  *  3. Linked-list integrity — head_ix walk through `behind` reaches every
  *     active slot in that priority and terminates at -1.
  *  4. be_flag invariant — every active slot has be_flag != 0 after
@@ -334,17 +334,17 @@ static void test_mixed_active(void) {
     roundtrip_check("mixed-active-25", act);
 }
 
-static void test_ceiling_82_active(void) {
+static void test_ceiling_active(void) {
     bool act[EFFECT_MAX];
     SDL_memset(act, 0, sizeof(act));
     reset_pool_canonical();
-    /* SPARSE_CEILING_SLOTS (82) active exactly. Use slots 0..(N-1); spread
+    /* SPARSE_CEILING_SLOTS active exactly. Use slots 0..(N-1); spread
      * across all 8 lists. */
     for (int i = 0; i < SPARSE_CEILING_SLOTS; i++) {
         install_active_slot((s16)i, (s16)(i & 7), 0x12345678u + (uint32_t)i);
         act[i] = true;
     }
-    roundtrip_check("ceiling-82-active", act);
+    roundtrip_check("ceiling-active", act);
 }
 
 static void test_overflow_128_unpack_rejects(void) {
@@ -416,7 +416,7 @@ int Netplay_Test_SparseEffectSave(void) {
     test_zero_active();
     test_one_active();
     test_mixed_active();
-    test_ceiling_82_active();
+    test_ceiling_active();
     test_overflow_128_unpack_rejects();
     test_unpack_rejects_bad_count();
     test_unpack_rejects_short_buf();

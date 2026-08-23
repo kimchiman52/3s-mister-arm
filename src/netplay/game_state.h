@@ -755,9 +755,10 @@ typedef struct State {
  * the active slots and reconstruct the rest on load.
  *
  * SPARSE_CEILING_SLOTS  — worst-case # of active slots Gekko's ring
- * sizes for. 82 ≈ 1.44 × empirical peak. At save time, an active count
- * > SPARSE_CEILING_SLOTS triggers the full-state fallback path (see
- * save_current_state in game_state.c).
+ * sizes for. Set to 100 for rollback headroom (empirical peak observed
+ * 57; 100 ≈ 1.75×). At save time, an active count > SPARSE_CEILING_SLOTS
+ * triggers the full-state fallback path (see save_current_state in
+ * game_state.c) — correct, just a larger frame.
  *
  * SPARSE_FRW_SLOT_BYTES — per-slot payload size (matches the inner
  * uintptr_t[448] dimension on either bitness). Wire-stable on a single
@@ -768,25 +769,25 @@ typedef struct State {
  * fields + an active_mask + active_count.
  *
  * SPARSE_CEILING_BYTES  — buffer ceiling (sizeof(GameState) +
- * SPARSE_HEADER_BYTES + 82 × SPARSE_FRW_SLOT_BYTES). Used as
- * gekko_start config.state_size so the rollback ring buffer shrinks
- * proportionally. Each Gekko save still reports its own variable
+ * SPARSE_HEADER_BYTES + SPARSE_CEILING_SLOTS × SPARSE_FRW_SLOT_BYTES).
+ * Used as gekko_start config.state_size so the rollback ring buffer
+ * sizes proportionally. Each Gekko save still reports its own variable
  * state_len via GekkoSave.state_len, so the ceiling is just a max.
  */
-/* Phase 5 hygiene item 5 (docs/plan-frame-data-harness.md): this was
- * bumped 82 -> 100 by cce9095a ("chore(netplay): bump
- * SPARSE_CEILING_SLOTS 82 -> 100"), whose own commit message says the
- * motivation was "headroom for the in-flight lobby-mvp state
- * additions". That lobby feature was abandoned — netplay.c:272-273
- * ("Dormant since the RmlUi lobby UI was removed — no code path sets
- * s_lobby_session = true anymore") confirms no lobby-derived GameState
- * fields ever landed that would grow the effect-pool active-slot peak.
- * The frame-data overlay work this bump got squashed alongside
- * (a386e057) only added a 1-byte Disp_Frame_Data scalar to GameState,
- * not additional concurrent effect-pool slots — it doesn't motivate 100
- * either. Reverted to the original empirically-derived 82 (see comment
- * above: peak observed 57, 82 ≈ 1.44 × that peak). */
-#define SPARSE_CEILING_SLOTS 82
+/* DELIBERATELY 100 — DO NOT "hygiene-revert" this to 82.
+ * History: cce9095a bumped 82->100 (headroom); a "Phase 5 shipping
+ * hygiene" agent pass (c6a1a3da) reverted it to 82 reasoning the bump
+ * was only for the abandoned lobby; every subsequent merge/review then
+ * kept "restoring" 82 from that comment against the maintainer's intent.
+ * The maintainer wants 100. This is NOT a correctness/desync knob — it
+ * only sizes the local Gekko rollback ring (both peers on the same build
+ * behave identically at any value); the sole cost of 100 vs 82 is ~32 KB
+ * more per rollback state on ARM32, which is fine. 100 gives more headroom
+ * before the full-state fallback triggers. Keep it 100 unless the
+ * maintainer says otherwise. sizeof(GameState) is unaffected (17672).
+ * Ported from 42d063cf (feat/fcade-replay-browser), which itself reverses
+ * that branch's own 4f3ab1d6. */
+#define SPARSE_CEILING_SLOTS 100
 #define SPARSE_FRW_SLOT_BYTES (sizeof(uintptr_t) * 448)
 /* Fixed-size header on the wire. Lays out frwctr/frwctr_min,
  * head_ix/tail_ix/exec_tm/frwque, active_mask[16] (128-bit), and
