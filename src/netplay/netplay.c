@@ -270,15 +270,34 @@ static inline uint64_t netplay_utc_ms(void) {
     return (uint64_t)ts.tv_sec * 1000ULL + (uint64_t)(ts.tv_nsec / 1000000L);
 }
 
-// Phase 6 Step 8: lobby-session gate for Layer 3 MIST handshake.
-// Dormant since the RmlUi lobby UI was removed — no code path sets
-// s_lobby_session = true anymore, so the handshake gate at
-// maybe_run_mist_handshake() never fires. The state is retained so the
-// MIST handshake machinery (mist_handshake*) stays structurally intact
-// and can be re-armed when a future matchmaking surface lands.
-static bool s_lobby_session = false;
+// R-1: Layer 3 MIST handshake gate. Formerly conditioned on a
+// s_lobby_session flag that no live code path ever set (the RmlUi lobby
+// UI was removed), which made the handshake dead code on every real
+// session — two peers with different GameState layouts would connect,
+// sync, and desync mid-match with no explanation. The gate now runs
+// unconditionally for every session (direct P2P, matchmaking, LAN CLI)
+// on the same socket configure_gekko() hands to GekkoNet.
 static bool s_mist_handshake_done = false;
 static char s_mist_reject_reason[128] = { 0 };
+// Peer-skew tolerance: the two peers reach the TRANSITIONING gate at
+// slightly different times (cold-launch re-exec on the OSD host path can
+// leave one peer in Init_Task seconds longer than the other). A silent
+// 500 ms timeout therefore must NOT hard-fail immediately — the peer may
+// simply not be listening yet. Each attempt keeps the plan's 500 ms
+// budget; we retry across TRANSITIONING ticks up to this cap before
+// declaring the peer incompatible/unreachable (40 x 500 ms ≈ 20 s of
+// active waiting). An explicit reject frame still fails immediately.
+#define MIST_HANDSHAKE_MAX_ATTEMPTS 40
+static int s_mist_handshake_attempts = 0;
+
+// Tri-state result for run_mist_handshake_on_net_sock: OK / silent
+// timeout (retryable — peer may not have reached its gate yet) / hard
+// failure (peer sent a reject, or local transport state is broken).
+typedef enum {
+    MIST_HS_OK = 0,
+    MIST_HS_TIMEOUT,
+    MIST_HS_FAIL,
+} MistHandshakeResult;
 
 // First-to-X (number of game wins required to close a session).
 // Placeholder for Track C / lobby FT negotiation; default 2 = FT2 sessions.
@@ -603,19 +622,21 @@ static void configure_lossy_adapter(NET_DatagramSocket* sock) {
 }
 #endif
 
-// Phase 6 Step 8 — run the MIST handshake on our SDL_net matchmaking
-// socket before gekko_create() takes it over. Mirrors tier-2 §8.2.4.
-// Returns true on ack; false on reject or timeout (reason cached in
-// s_mist_reject_reason).
-static bool run_mist_handshake_on_net_sock(NET_DatagramSocket* sock) {
+// R-1 — run the MIST handshake on the active session socket before
+// gekko_create() takes it over. Mirrors tier-2 §8.2.4.
+// Returns MIST_HS_OK on ack; MIST_HS_TIMEOUT when the peer stayed silent
+// for the whole budget (retryable by the caller — the peer may not have
+// reached its own gate yet); MIST_HS_FAIL on an explicit reject or a
+// local transport error (reason cached in s_mist_reject_reason).
+static MistHandshakeResult run_mist_handshake_on_net_sock(NET_DatagramSocket* sock) {
     if (sock == NULL || remote_ip == NULL || remote_port == 0) {
         SDL_strlcpy(s_mist_reject_reason, "missing transport state", sizeof(s_mist_reject_reason));
-        return false;
+        return MIST_HS_FAIL;
     }
     NET_Address* peer = NET_ResolveHostname(remote_ip);
     if (peer == NULL) {
         SDL_strlcpy(s_mist_reject_reason, "peer resolve failed", sizeof(s_mist_reject_reason));
-        return false;
+        return MIST_HS_FAIL;
     }
     /* Wait briefly for resolution. */
     for (int spin = 0; spin < 50; spin++) {
@@ -625,7 +646,7 @@ static bool run_mist_handshake_on_net_sock(NET_DatagramSocket* sock) {
     if (NET_GetAddressStatus(peer) != NET_SUCCESS) {
         NET_UnrefAddress(peer);
         SDL_strlcpy(s_mist_reject_reason, "peer resolve timed out", sizeof(s_mist_reject_reason));
-        return false;
+        return MIST_HS_FAIL;
     }
 
     uint8_t hello[MIST_FRAME_MAX];
@@ -633,7 +654,7 @@ static bool run_mist_handshake_on_net_sock(NET_DatagramSocket* sock) {
     if (hello_len == 0) {
         NET_UnrefAddress(peer);
         SDL_strlcpy(s_mist_reject_reason, "hello build failed", sizeof(s_mist_reject_reason));
-        return false;
+        return MIST_HS_FAIL;
     }
 
     const Uint64 start_ms = SDL_GetTicks();
@@ -647,7 +668,7 @@ static bool run_mist_handshake_on_net_sock(NET_DatagramSocket* sock) {
             SDL_strlcpy(s_mist_reject_reason, "timeout (peer did not respond)",
                         sizeof(s_mist_reject_reason));
             NET_UnrefAddress(peer);
-            return false;
+            return MIST_HS_TIMEOUT;
         }
         if (now >= next_send_ms && sends < MIST_RETRANSMIT_COUNT) {
             NET_SendDatagram(sock, peer, remote_port, hello, (int)hello_len);
@@ -662,23 +683,48 @@ static bool run_mist_handshake_on_net_sock(NET_DatagramSocket* sock) {
                                                           (size_t)dgram->buflen);
             if (cls == 1) {
                 NET_DestroyDatagram(dgram);
+                /* Completion race guard: our side is done, but the peer
+                 * still needs an ack for ITS hello. If its hello was
+                 * reordered behind the ack we just consumed (or lost),
+                 * the peer would never complete — we'd start GekkoNet
+                 * and it would time out. Send one gratuitous ack so the
+                 * peer completes regardless of hello arrival order.
+                 * Redundant acks are harmless: a peer that already
+                 * completed has GekkoNet on the socket, which drops
+                 * non-Gekko frames. */
+                uint8_t final_ack[MIST_FRAME_MAX];
+                const size_t final_ack_len =
+                    mist_handshake_build_reply((const uint8_t*)hello + MIST_HEADER_LEN,
+                                               hello_len - MIST_HEADER_LEN,
+                                               final_ack, sizeof(final_ack));
+                if (final_ack_len > 0) {
+                    NET_SendDatagram(sock, peer, remote_port, final_ack, (int)final_ack_len);
+                }
                 NET_UnrefAddress(peer);
-                return true;
+                return MIST_HS_OK;
             }
             if (cls == -1) {
                 SDL_strlcpy(s_mist_reject_reason, mist_handshake_last_reject_reason(),
                             sizeof(s_mist_reject_reason));
                 NET_DestroyDatagram(dgram);
                 NET_UnrefAddress(peer);
-                return false;
+                return MIST_HS_FAIL;
             }
             if (cls == 0) {
-                /* Peer also called send_and_wait — reply with ack/reject. */
+                /* Peer also called send_and_wait — reply with ack/reject.
+                 * Trim the payload to the DECLARED length from the header
+                 * (bytes 5-6, big-endian) rather than the raw datagram
+                 * tail, so trailing garbage can never be misparsed as
+                 * payload fields. cls == 0 guarantees parse_header
+                 * accepted the frame, so buflen >= 7 + declared_len. */
+                const uint8_t* rb = (const uint8_t*)dgram->buf;
+                size_t declared_len = ((size_t)rb[5] << 8) | (size_t)rb[6];
+                if (declared_len > (size_t)dgram->buflen - MIST_HEADER_LEN) {
+                    declared_len = (size_t)dgram->buflen - MIST_HEADER_LEN;
+                }
                 uint8_t reply[MIST_FRAME_MAX];
                 const size_t reply_len = mist_handshake_build_reply(
-                    (const uint8_t*)dgram->buf + MIST_HEADER_LEN,
-                    (size_t)dgram->buflen - MIST_HEADER_LEN,
-                    reply, sizeof(reply));
+                    rb + MIST_HEADER_LEN, declared_len, reply, sizeof(reply));
                 if (reply_len > 0) {
                     NET_SendDatagram(sock, dgram->addr, dgram->port, reply, (int)reply_len);
                 }
@@ -689,6 +735,36 @@ static bool run_mist_handshake_on_net_sock(NET_DatagramSocket* sock) {
 
         SDL_Delay(5); /* keep the loop from burning 100% CPU */
     }
+}
+
+// R-1: single source of truth for "which socket carries this session".
+// Was inlined in configure_gekko(); hoisted so the MIST handshake gate in
+// Netplay_Run() runs on the exact same socket GekkoNet will take over.
+// Idempotent: the direct-P2P CLI/LAN socket is created once and cached in
+// p2p_sock (destroyed + NET_Quit'd on session EXITING, unchanged).
+static NET_DatagramSocket* acquire_active_socket(void) {
+    if (stun_socket != NULL) {
+        // Step 6: pre-punched STUN socket (internet play via orchestrator).
+        // Takes priority over matchmaking — if the STUN socket is set, the
+        // orchestrator has already hole-punched through NAT and the remote
+        // peer is expecting the STUN-discovered mapping. Mirrors upstream
+        // /tmp/3sxtra/src/netplay/netplay.c:440-444.
+        // NetTuning_SetRecvBuf is a plain setsockopt — calling it again on
+        // the configure_gekko() pass after the handshake pass is harmless.
+        NetTuning_SetRecvBuf(stun_socket, 256 * 1024);
+        return stun_socket;
+    }
+    NET_DatagramSocket* mm_sock = Matchmaking_GetSocket();
+    if (mm_sock != NULL) {
+        // Matchmaking path: reuse the socket that was registered with the server.
+        return mm_sock;
+    }
+    // Direct P2P CLI/LAN path: create a dedicated UDP socket on local_port.
+    if (p2p_sock == NULL) {
+        NET_Init();
+        p2p_sock = NET_CreateDatagramSocket(NULL, local_port);
+    }
+    return p2p_sock;
 }
 
 static void configure_gekko() {
@@ -785,25 +861,7 @@ static void configure_gekko() {
             (size_t)sizeof(State),
             (player_number == 0) ? "host" : "joiner");
 
-    NET_DatagramSocket* mm_sock = Matchmaking_GetSocket();
-    NET_DatagramSocket* active_sock;
-    if (stun_socket != NULL) {
-        // Step 6: pre-punched STUN socket (internet play via orchestrator).
-        // Takes priority over matchmaking — if the STUN socket is set, the
-        // orchestrator has already hole-punched through NAT and the remote
-        // peer is expecting the STUN-discovered mapping. Mirrors upstream
-        // /tmp/3sxtra/src/netplay/netplay.c:440-444.
-        NetTuning_SetRecvBuf(stun_socket, 256 * 1024);
-        active_sock = stun_socket;
-    } else if (mm_sock != NULL) {
-        // Matchmaking path: reuse the socket that was registered with the server.
-        active_sock = mm_sock;
-    } else {
-        // Direct P2P path: create a dedicated UDP socket on local_port.
-        NET_Init();
-        p2p_sock = NET_CreateDatagramSocket(NULL, local_port);
-        active_sock = p2p_sock;
-    }
+    NET_DatagramSocket* active_sock = acquire_active_socket();
 
 #if defined(LOSSY_ADAPTER)
     configure_lossy_adapter(active_sock);
@@ -1373,6 +1431,8 @@ void Netplay_TickDirectP2P() {
     frames_behind = 0;
     frame_skip_timer = 0;
     transition_ready_frames = 0;
+    s_mist_handshake_done = false;
+    s_mist_handshake_attempts = 0;
 
     session_state = NETPLAY_SESSION_TRANSITIONING;
 }
@@ -1411,6 +1471,8 @@ void Netplay_TickMatchmaking() {
         frames_behind = 0;
         frame_skip_timer = 0;
         transition_ready_frames = 0;
+        s_mist_handshake_done = false;
+        s_mist_handshake_attempts = 0;
         matchmaking_pending = false;
         setup_vs_mode();
         session_state = NETPLAY_SESSION_TRANSITIONING;
@@ -1444,12 +1506,38 @@ void Netplay_Run() {
         }
 
         if (transition_ready_frames >= 2) {
-            // Phase 6 Step 8 — Layer 3 MIST handshake. Only runs for
-            // lobby-matched sessions; offline / direct P2P / LAN skip.
-            // See docs/plan-netplay-port.md §8.2.4 for wire format.
-            if (s_lobby_session && !s_mist_handshake_done) {
-                NET_DatagramSocket* mm_sock = Matchmaking_GetSocket();
-                if (!run_mist_handshake_on_net_sock(mm_sock)) {
+            // R-1 — Layer 3 MIST handshake, unconditional for every live
+            // session path (direct-P2P punch, matchmaking, LAN CLI). Runs
+            // AFTER the punch/handoff produced the session socket and
+            // BEFORE gekko_create() takes it over, on the exact socket
+            // configure_gekko() will hand to GekkoNet. Non-MIST frames
+            // (stray punch keepalives, early GekkoNet packets from a
+            // legacy peer) are dropped inside the runner by the "MIST"
+            // magic gate. See mist_handshake.h for wire format.
+            if (!s_mist_handshake_done) {
+                NET_DatagramSocket* hs_sock = acquire_active_socket();
+                const MistHandshakeResult hs = run_mist_handshake_on_net_sock(hs_sock);
+                if (hs == MIST_HS_OK) {
+                    s_mist_handshake_done = true;
+                    s_mist_handshake_attempts = 0;
+                } else if (hs == MIST_HS_TIMEOUT &&
+                           ++s_mist_handshake_attempts < MIST_HANDSHAKE_MAX_ATTEMPTS) {
+                    // Silent peer — likely still booting toward its own
+                    // gate (cold-launch skew). Stay in TRANSITIONING and
+                    // retry next tick; each attempt keeps the 500 ms
+                    // budget. An explicit reject never lands here.
+                    break;
+                } else {
+                    if (hs == MIST_HS_TIMEOUT) {
+                        // Exhausted every retry with zero MIST traffic:
+                        // either the connection died, or the opponent
+                        // runs a build that predates the handshake
+                        // (every pre-R-1 release) — which also predates
+                        // the current GameState layout. Say so.
+                        SDL_strlcpy(s_mist_reject_reason,
+                                    "No reply - opponent build may be too old",
+                                    sizeof(s_mist_reject_reason));
+                    }
                     printf("[netplay] MIST handshake failed: %s\n",
                            s_mist_reject_reason);
                     push_event(NETPLAY_EVENT_DISCONNECTED);
@@ -1458,7 +1546,6 @@ void Netplay_Run() {
                     Soft_Reset_Sub();
                     break;
                 }
-                s_mist_handshake_done = true;
             }
             configure_gekko();
             session_state = NETPLAY_SESSION_CONNECTING;
@@ -1560,10 +1647,10 @@ void Netplay_Run() {
         }
 
         Netplay_CancelMatchmaking();
-        // Phase 6 Step 8: clear lobby/handshake state so the next session
-        // (direct P2P, LAN, etc.) starts without carrying stale flags.
-        s_lobby_session = false;
+        // R-1: clear handshake state so the next session (direct P2P,
+        // LAN, etc.) starts without carrying stale flags.
         s_mist_handshake_done = false;
+        s_mist_handshake_attempts = 0;
 
         // C1 fix: setup_vs_mode() (above) zeroes Convert_Buff/Check_Buff for
         // the duration of the session so the netplay simulation runs with
