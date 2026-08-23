@@ -302,7 +302,6 @@ s32 SaveMove() {
         switch (operation.mode) {
         case SAVE_MODE_LOAD:
             io = SDL_IOFromConstMem(buffer, info->size);
-            bool buffer_filled = false;
             const char* paths[] = { path, backup_path };
 
             for (int i = 0; i < SDL_arraysize(paths); i++) {
