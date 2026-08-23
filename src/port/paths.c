@@ -5,6 +5,9 @@
 #include <stdbool.h>
 #include <stdlib.h>
 
+#define ORG "CrowdedStreet"
+#define APP "3S-ARM"
+
 static char* pref_path = NULL;
 
 #if defined(PORT_MISTER) || defined(PORT_MIYOO_MINI_PLUS)
@@ -35,7 +38,7 @@ const char* Paths_GetPrefPath() {
 
         SDL_CreateDirectory(pref_path);
 #else
-        pref_path = SDL_GetPrefPath("CrowdedStreet", "3S-ARM");
+        pref_path = SDL_GetPrefPath(ORG, APP);
 #endif
     }
 
@@ -44,4 +47,20 @@ const char* Paths_GetPrefPath() {
 
 const char* Paths_GetBasePath() {
     return SDL_GetBasePath();
+}
+
+SDL_Storage* Paths_OpenUserStorage(SDL_PropertiesID props) {
+    // Deliberately NOT SDL_OpenUserStorage(ORG, APP, props): SDL's generic
+    // user-storage backend resolves its own SDL_GetPrefPath(org, app)
+    // internally (see SDL src/storage/generic/SDL_genericstorage.c,
+    // GENERIC_User_Create), bypassing the PORT_MISTER/PORT_MIYOO_MINI_PLUS
+    // override + THIRDSARM_HOME logic above entirely. That would silently
+    // relocate saves away from Paths_GetPrefPath() (where config/keymap/
+    // training already live) to whatever XDG default SDL_GetPrefPath()
+    // picks on the embedded Linux target. SDL_OpenFileStorage(path) uses
+    // the same generic file-storage interface but against an arbitrary
+    // path, so pointing it at our own Paths_GetPrefPath() keeps saves/
+    // colocated with the rest of this port's persisted state.
+    (void)props;
+    return SDL_OpenFileStorage(Paths_GetPrefPath());
 }
