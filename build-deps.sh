@@ -262,14 +262,42 @@ GEKKONET_BUILD="$GEKKONET_DIR/build"
 
 if [ "$PROFILE" = "miyoo" ]; then
     echo "Skipping GekkoNet for profile '$PROFILE' (Cut 1 has ENABLE_NETPLAY=OFF)"
-elif [ -d "$GEKKONET_BUILD" ]; then
-    echo "GekkoNet already built at $GEKKONET_BUILD"
+elif [ -d "$GEKKONET_BUILD" ] && \
+     perl -0ne 'exit(!(/u8 value = 0;\s*\n\s*while \(idx \+ 1 < length\)/))' \
+        "$GEKKONET_BUILD/include/compression.h" 2>/dev/null; then
+    # Self-healing: only treat the cache as valid if the RLEDecode OOB guard
+    # is present in the cached header (see the security-patch block below).
+    # A pre-patch / partial cache falls through and rebuilds automatically,
+    # so a stale unpatched libGekkoNet.a can never be silently reused.
+    echo "GekkoNet already built (RLEDecode patched) at $GEKKONET_BUILD"
 else
     echo "Building GekkoNet @ $GEKKONET_REF..."
 
     GEKKONET_SRC=$(mktemp -d)
     git clone https://github.com/HeatXD/GekkoNet.git "$GEKKONET_SRC"
     git -C "$GEKKONET_SRC" -c advice.detachedHead=false checkout "$GEKKONET_REF"
+
+    # 3s-arm security patch — GekkoNet RLEDecode 1-byte OOB heap read.
+    # compression.h RLEDecode() reads data[idx+1] with only an `idx < length`
+    # loop guard, so an odd-length (hostile/corrupt) compressed InputMsg
+    # payload reads one byte past the buffer. Patch the fetched source BEFORE
+    # the cmake build so the fix compiles into libGekkoNet.a (third_party/ is
+    # gitignored, so this script is the only durable place for the fix).
+    # The substitution is anchored on `u8 value = 0;` (a local unique to
+    # RLEDecode) so RLEEncode's identical `while (idx < length)` is untouched.
+    # Fails loudly if upstream compression.h drifts from the expected form.
+    GEKKONET_COMPRESSION_H="$GEKKONET_SRC/GekkoLib/include/compression.h"
+    if ! perl -0ne 'exit(!(/u8 value = 0;\s*\n\s*while \(idx < length\)/))' "$GEKKONET_COMPRESSION_H"; then
+        echo "ERROR: GekkoNet RLEDecode not in expected pre-patch form at ref $GEKKONET_REF;" >&2
+        echo "       upstream compression.h changed. Refusing to build unpatched." >&2
+        exit 1
+    fi
+    perl -0pi -e 's/(u8 value = 0;\s*\n\s*)while \(idx < length\)/${1}while (idx + 1 < length)/' "$GEKKONET_COMPRESSION_H"
+    if ! perl -0ne 'exit(!(/u8 value = 0;\s*\n\s*while \(idx \+ 1 < length\)/))' "$GEKKONET_COMPRESSION_H"; then
+        echo "ERROR: GekkoNet RLEDecode OOB guard failed to apply." >&2
+        exit 1
+    fi
+    echo "GekkoNet: applied RLEDecode odd-length OOB guard"
 
     cmake -S "$GEKKONET_SRC" -B "$GEKKONET_SRC/cmake-build" \
         -DCMAKE_BUILD_TYPE=Release \
