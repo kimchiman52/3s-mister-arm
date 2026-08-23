@@ -226,8 +226,25 @@ static const SaveFileInfo file_info[] = {
                            .deserialize_handler = deserialize_stub },
 };
 
-static void make_path(char* text, size_t maxlen, const char* name, bool backup) {
-    SDL_snprintf(text, maxlen, backup ? "%s/%s.bak" : "%s/%s", ROOT_DIR, name);
+typedef enum PathKind {
+    PATH_KIND_MAIN,
+    PATH_KIND_BACKUP,
+    PATH_KIND_TMP,
+} PathKind;
+
+static void make_path(char* text, size_t maxlen, const char* name, PathKind kind) {
+    switch (kind) {
+    case PATH_KIND_BACKUP:
+        SDL_snprintf(text, maxlen, "%s/%s.bak", ROOT_DIR, name);
+        break;
+    case PATH_KIND_TMP:
+        SDL_snprintf(text, maxlen, "%s/%s.tmp", ROOT_DIR, name);
+        break;
+    case PATH_KIND_MAIN:
+    default:
+        SDL_snprintf(text, maxlen, "%s/%s", ROOT_DIR, name);
+        break;
+    }
 }
 
 static ReadResult read_file_if_exists(SDL_Storage* storage, const char* path, void* buffer, Uint64 size) {
@@ -293,8 +310,10 @@ s32 SaveMove() {
         const SaveFileInfo* info = &file_info[operation.file_type];
         char path[PATH_LEN_MAX];
         char backup_path[PATH_LEN_MAX];
-        make_path(path, sizeof(path), info->name, false);
-        make_path(backup_path, sizeof(backup_path), info->name, true);
+        char tmp_path[PATH_LEN_MAX];
+        make_path(path, sizeof(path), info->name, PATH_KIND_MAIN);
+        make_path(backup_path, sizeof(backup_path), info->name, PATH_KIND_BACKUP);
+        make_path(tmp_path, sizeof(tmp_path), info->name, PATH_KIND_TMP);
         void* buffer = SDL_malloc(info->size);
         SDL_IOStream* io = NULL;
         bool success = false;
@@ -329,6 +348,9 @@ s32 SaveMove() {
                 bool backup_success = false;
                 const bool save_file_exists = SDL_GetStoragePathInfo(operation.storage, path, NULL);
 
+                // .bak is taken first, before any write to the tmp/main file, so that
+                // whichever moment a power cut lands in, at least one of {backup_path,
+                // path} is a complete, intact prior copy.
                 if (save_file_exists) {
                     backup_success = SDL_CopyStorageFile(operation.storage, path, backup_path);
                 } else {
@@ -336,7 +358,28 @@ s32 SaveMove() {
                 }
 
                 if (backup_success) {
-                    success = SDL_WriteStorageFile(operation.storage, path, buffer, info->size);
+                    // Atomic write: stage the new content at tmp_path, then rename it
+                    // over path. A truncate-and-rewrite of path directly leaves a
+                    // window where the file is empty/partial; a power cut on vfat in
+                    // that window can corrupt both the main file and (mid-copy) the
+                    // .bak above. SDL_RenameStoragePath -> SDL_RenamePath -> POSIX
+                    // rename() atomically replaces an existing destination on the
+                    // generic storage backend's Linux target (verified against SDL
+                    // release-3.4.4 src/filesystem/posix/SDL_sysfsops.c).
+                    success = SDL_WriteStorageFile(operation.storage, tmp_path, buffer, info->size);
+
+                    if (success) {
+                        success = SDL_RenameStoragePath(operation.storage, tmp_path, path);
+
+                        if (!success) {
+                            // Fallback for a backend/filesystem where rename does not
+                            // replace an existing destination: remove path first (the
+                            // .bak taken above is still intact at this point) then
+                            // retry the rename.
+                            SDL_RemoveStoragePath(operation.storage, path);
+                            success = SDL_RenameStoragePath(operation.storage, tmp_path, path);
+                        }
+                    }
                 }
             }
 
