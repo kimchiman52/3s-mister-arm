@@ -111,6 +111,36 @@ add_executable(3s-arm MACOSX_BUNDLE
     $<$<CONFIG:Debug>:${IMGUI_SOURCES}>
 )
 
+# R-1: wire the MIST netplay handshake's build_hash to the real git short
+# SHA, derived at configure time. Falls back to mist_handshake.c's baked-in
+# "0000000" when git or the repo is unavailable (tarball builds, containers
+# without .git access). Scoped as a per-source define so a SHA change only
+# recompiles mist_handshake.c, not the whole tree. The extra -c
+# safe.directory covers Docker cross-builds where the mounted repo is owned
+# by a different uid ("dubious ownership").
+set(MIST_BUILD_HASH "")
+find_package(Git QUIET)
+if(GIT_FOUND)
+    execute_process(
+        COMMAND "${GIT_EXECUTABLE}" -c "safe.directory=${CMAKE_SOURCE_DIR}"
+                -C "${CMAKE_SOURCE_DIR}" rev-parse --short=7 HEAD
+        OUTPUT_VARIABLE MIST_BUILD_HASH
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        RESULT_VARIABLE _mist_git_rc
+        ERROR_QUIET)
+    if(NOT _mist_git_rc EQUAL 0)
+        set(MIST_BUILD_HASH "")
+    endif()
+endif()
+if(MIST_BUILD_HASH STREQUAL "")
+    message(STATUS "MIST_BUILD_HASH: git unavailable, using fallback 0000000")
+else()
+    message(STATUS "MIST_BUILD_HASH=${MIST_BUILD_HASH}")
+    set_property(SOURCE "${CMAKE_SOURCE_DIR}/src/netplay/mist_handshake.c"
+                 APPEND PROPERTY COMPILE_DEFINITIONS
+                 MIST_BUILD_HASH="${MIST_BUILD_HASH}")
+endif()
+
 configure_file(
     "${CMAKE_SOURCE_DIR}/cmake/port_build_config.h.in"
     "${CMAKE_BINARY_DIR}/generated/port/build_config.h"

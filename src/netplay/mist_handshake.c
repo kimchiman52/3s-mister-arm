@@ -28,6 +28,12 @@
 
 #include "netplay/mist_handshake.h"
 
+/* R-1: the state_ver compatibility field is sizeof(GameState), read
+ * symbolically so it auto-tracks future re-pins of the rollback state
+ * layout. On 32-bit builds this equals EXPECTED_GAME_STATE_SIZE via the
+ * _Static_assert in game_state.c (17676 as of the #296 port). */
+#include "netplay/game_state.h"
+
 #include <errno.h>
 #include <stdarg.h>
 #include <stdint.h>
@@ -56,14 +62,23 @@ const uint8_t MIST_MAGIC[MIST_MAGIC_LEN] = {
     MIST_MAGIC_B0, MIST_MAGIC_B1, MIST_MAGIC_B2, MIST_MAGIC_B3,
 };
 
-/* Build hash advertised in hello/ack payloads. The plan allows pragmatic
- * sourcing — compile-time macro, env var, or file read. We pick the
- * compile-time define if present (the build system can pass
- * -DMIST_BUILD_HASH=\"abcdef0\") and otherwise fall back to a constant.
- * The reviewer can flip this to read build/provenance.json later. */
+/* Build hash advertised in hello/ack payloads. R-1: wired for real —
+ * CMakeLists.txt derives the git short SHA at configure time and passes
+ * it as a per-source COMPILE_DEFINITIONS on this file. The constant
+ * fallback covers builds where git is unavailable (e.g. tarball or a
+ * container without repo access). Difference is a WARNING only, never a
+ * reject: same build_hash is not required for compatibility, only same
+ * state_ver/proto_ver are. */
 #ifndef MIST_BUILD_HASH
 #define MIST_BUILD_HASH "0000000"
 #endif
+
+/* R-1: wire value for the state_ver field (big-endian u16 on the wire). */
+#define MIST_STATE_VER ((uint16_t)sizeof(GameState))
+
+uint16_t mist_handshake_local_state_ver(void) {
+    return MIST_STATE_VER;
+}
 
 static char s_last_reject[128] = { 0 };
 
@@ -97,6 +112,8 @@ static size_t build_frame(uint8_t msg_type,
                           const char* arch,
                           const char* platform,
                           const char* build_hash,
+                          uint8_t proto_ver,
+                          uint16_t state_ver,
                           uint8_t reject_reason,
                           const char* reject_text,
                           uint8_t* out,
@@ -113,6 +130,12 @@ static size_t build_frame(uint8_t msg_type,
         if (!off) return 0;
         off = append_cstr(out, cap, off, build_hash ? build_hash : MIST_BUILD_HASH);
         if (!off) return 0;
+        /* R-1 compatibility fields: proto_ver (u8) then state_ver (u16,
+         * big-endian — matches the payload_len field's byte order). */
+        if (off + 3 > cap) return 0;
+        out[off++] = proto_ver;
+        out[off++] = (uint8_t)((state_ver >> 8) & 0xFF);
+        out[off++] = (uint8_t)(state_ver & 0xFF);
     } else if (msg_type == MIST_MSG_REJECT) {
         if (off + 1 > cap) return 0;
         out[off++] = reject_reason;
@@ -185,6 +208,114 @@ static bool read_cstr(const uint8_t* payload, size_t payload_len, size_t* off,
     return true;
 }
 
+/* R-1: bounds-checked fixed-width readers for the version fields. This
+ * parser receives attacker-controlled bytes; every read must stay inside
+ * the declared payload length (which parse_header already bounded by
+ * MIST_PAYLOAD_MAX and by the actual received datagram length). A short
+ * read returns false — never reads out of bounds. */
+static bool read_u8(const uint8_t* payload, size_t payload_len, size_t* off,
+                    uint8_t* out) {
+    if (*off + 1 > payload_len) return false;
+    *out = payload[*off];
+    *off += 1;
+    return true;
+}
+
+static bool read_u16be(const uint8_t* payload, size_t payload_len, size_t* off,
+                       uint16_t* out) {
+    if (*off + 2 > payload_len) return false;
+    *out = (uint16_t)(((uint16_t)payload[*off] << 8) | (uint16_t)payload[*off + 1]);
+    *off += 2;
+    return true;
+}
+
+/*
+ * classify_peer_payload — parse + validate a hello/ack payload against
+ * our own profile. Returns 0 when the peer is compatible; otherwise a
+ * mist_reject_reason_t value, with a short human-readable explanation
+ * written to `text` (sized for the direct-P2P overlay's status line).
+ *
+ * Reject-worthy (hard incompatibility):
+ *   - malformed strings                → MIST_REJECT_MALFORMED
+ *   - arch / platform tag mismatch     → MIST_REJECT_{ARCH,PLATFORM}_MISMATCH
+ *   - payload ends after the strings   → MIST_REJECT_LEGACY (pre-R-1 build)
+ *   - proto_ver differs                → MIST_REJECT_PROTO_MISMATCH
+ *   - state_ver differs                → MIST_REJECT_STATE_MISMATCH — THE
+ *     desync-preventing check: different sizeof(GameState) means the two
+ *     builds save/load different rollback layouts and will diverge.
+ * Warning only (never rejects):
+ *   - build_hash differs — logged; identical hashes are not required for
+ *     compatibility, identical state layout is.
+ */
+static uint8_t classify_peer_payload(const uint8_t* payload, size_t payload_len,
+                                     char* text, size_t text_cap) {
+    char peer_arch[32] = { 0 };
+    char peer_platform[32] = { 0 };
+    char peer_build[32] = { 0 };
+    size_t off = 0;
+
+    if (!read_cstr(payload, payload_len, &off, peer_arch, sizeof(peer_arch)) ||
+        !read_cstr(payload, payload_len, &off, peer_platform, sizeof(peer_platform)) ||
+        !read_cstr(payload, payload_len, &off, peer_build, sizeof(peer_build))) {
+        snprintf(text, text_cap, "malformed handshake payload");
+        return MIST_REJECT_MALFORMED;
+    }
+    if (strcmp(peer_arch, MIST_ARCH_TAG) != 0) {
+        snprintf(text, text_cap, "arch mismatch (%s)", peer_arch);
+        return MIST_REJECT_ARCH_MISMATCH;
+    }
+    if (strcmp(peer_platform, MIST_PLATFORM_TAG) != 0) {
+        snprintf(text, text_cap, "platform mismatch (%s)", peer_platform);
+        return MIST_REJECT_PLATFORM_MISMATCH;
+    }
+
+    uint8_t peer_proto = 0;
+    uint16_t peer_state = 0;
+    if (!read_u8(payload, payload_len, &off, &peer_proto) ||
+        !read_u16be(payload, payload_len, &off, &peer_state)) {
+        /* Strings parsed clean but the payload ends there: a pre-R-1
+         * build. Its GameState layout predates the current pin, so it is
+         * incompatible by construction. */
+        snprintf(text, text_cap, "Opponent build too old - both need this update");
+        return MIST_REJECT_LEGACY;
+    }
+    if (peer_proto != MIST_PROTO_VER) {
+        snprintf(text, text_cap, "Handshake v%u vs v%u - update one side",
+                 (unsigned)peer_proto, (unsigned)MIST_PROTO_VER);
+        return MIST_REJECT_PROTO_MISMATCH;
+    }
+    if (peer_state != MIST_STATE_VER) {
+        /* Symmetric phrasing — this exact text is also what the OTHER
+         * peer displays when we send it inside our reject frame. */
+        snprintf(text, text_cap, "Build state %u vs %u - update one side",
+                 (unsigned)peer_state, (unsigned)MIST_STATE_VER);
+        return MIST_REJECT_STATE_MISMATCH;
+    }
+
+    if (strcmp(peer_build, MIST_BUILD_HASH) != 0) {
+        fprintf(stderr,
+                "[mist_handshake] WARNING: peer build_hash %s != ours %s "
+                "(state_ver %u matches; proceeding)\n",
+                peer_build, MIST_BUILD_HASH, (unsigned)MIST_STATE_VER);
+    }
+    return 0;
+}
+
+/* Fallback text for an inbound reject frame that carries a reason code
+ * but no (or an empty) human-readable string. */
+static const char* reject_reason_fallback_text(uint8_t reason) {
+    switch (reason) {
+    case MIST_REJECT_ARCH_MISMATCH:     return "arch mismatch";
+    case MIST_REJECT_PLATFORM_MISMATCH: return "platform mismatch";
+    case MIST_REJECT_BUILD_MISMATCH:    return "build mismatch";
+    case MIST_REJECT_MALFORMED:         return "malformed handshake";
+    case MIST_REJECT_LEGACY:            return "build too old - update needed";
+    case MIST_REJECT_STATE_MISMATCH:    return "game state version mismatch - update one side";
+    case MIST_REJECT_PROTO_MISMATCH:    return "handshake version mismatch - update one side";
+    default:                            return "unknown reason";
+    }
+}
+
 /* ------------------------------------------------------------------- */
 /* Time helpers                                                        */
 /* ------------------------------------------------------------------- */
@@ -205,34 +336,12 @@ static long long now_ms(void) {
 
 static void respond_to_hello(int sock, const struct sockaddr* peer, socklen_t peer_len,
                              const uint8_t* payload, size_t payload_len) {
-    char peer_arch[32] = { 0 };
-    char peer_platform[32] = { 0 };
-    char peer_build[32] = { 0 };
-
-    size_t off = 0;
-    (void)read_cstr(payload, payload_len, &off, peer_arch, sizeof(peer_arch));
-    (void)read_cstr(payload, payload_len, &off, peer_platform, sizeof(peer_platform));
-    (void)read_cstr(payload, payload_len, &off, peer_build, sizeof(peer_build));
-
+    /* R-1: same validation + framing as the SDL_net path — one shared
+     * implementation in mist_handshake_build_reply (classify, then ack
+     * or reject with reason). */
     uint8_t frame[MIST_FRAME_MAX];
-    size_t frame_len = 0;
-
-    if (strcmp(peer_arch, MIST_ARCH_TAG) != 0) {
-        frame_len = build_frame(MIST_MSG_REJECT, NULL, NULL, NULL,
-                                MIST_REJECT_ARCH_MISMATCH,
-                                "arch mismatch",
-                                frame, sizeof(frame));
-    } else if (strcmp(peer_platform, MIST_PLATFORM_TAG) != 0) {
-        frame_len = build_frame(MIST_MSG_REJECT, NULL, NULL, NULL,
-                                MIST_REJECT_PLATFORM_MISMATCH,
-                                "platform mismatch",
-                                frame, sizeof(frame));
-    } else {
-        frame_len = build_frame(MIST_MSG_ACK, MIST_ARCH_TAG, MIST_PLATFORM_TAG,
-                                MIST_BUILD_HASH, 0, NULL,
-                                frame, sizeof(frame));
-    }
-
+    const size_t frame_len = mist_handshake_build_reply(payload, payload_len,
+                                                        frame, sizeof(frame));
     if (frame_len > 0) {
         (void)sendto(sock, (const char*)frame, (int)frame_len, 0, peer, peer_len);
     }
@@ -260,6 +369,8 @@ bool mist_handshake_send_and_wait(int sock,
                                          MIST_ARCH_TAG,
                                          MIST_PLATFORM_TAG,
                                          MIST_BUILD_HASH,
+                                         MIST_PROTO_VER,
+                                         MIST_STATE_VER,
                                          0, NULL,
                                          hello, sizeof(hello));
     if (hello_len == 0) {
@@ -344,20 +455,16 @@ bool mist_handshake_send_and_wait(int sock,
             const uint8_t* payload = buf + MIST_HEADER_LEN;
 
             if (msg_type == MIST_MSG_ACK) {
-                /* Validate peer's profile. */
-                char peer_arch[32] = { 0 };
-                char peer_platform[32] = { 0 };
-                char peer_build[32] = { 0 };
-                size_t off = 0;
-                if (!read_cstr(payload, payload_len, &off, peer_arch, sizeof(peer_arch)) ||
-                    !read_cstr(payload, payload_len, &off, peer_platform, sizeof(peer_platform)) ||
-                    !read_cstr(payload, payload_len, &off, peer_build, sizeof(peer_build))) {
-                    continue; /* malformed ack — drop */
+                /* Validate peer's profile (R-1: includes proto_ver /
+                 * state_ver — see classify_peer_payload). */
+                char why[96] = { 0 };
+                const uint8_t reason = classify_peer_payload(payload, payload_len,
+                                                             why, sizeof(why));
+                if (reason == MIST_REJECT_MALFORMED) {
+                    continue; /* garbled ack — drop, keep waiting */
                 }
-                if (strcmp(peer_arch, MIST_ARCH_TAG) != 0 ||
-                    strcmp(peer_platform, MIST_PLATFORM_TAG) != 0) {
-                    set_reject_reason("peer ack arch/platform mismatch (%s/%s)",
-                                      peer_arch, peer_platform);
+                if (reason != 0) {
+                    set_reject_reason("%s", why);
                     return false;
                 }
                 s_last_reject[0] = '\0';
@@ -370,8 +477,8 @@ bool mist_handshake_send_and_wait(int sock,
                     size_t off = 1;
                     (void)read_cstr(payload, payload_len, &off, text, sizeof(text));
                 }
-                set_reject_reason("peer rejected: reason=%u %s",
-                                  (unsigned)reason, text[0] ? text : "");
+                set_reject_reason("%s", text[0] ? text
+                                              : reject_reason_fallback_text(reason));
                 return false;
             } else if (msg_type == MIST_MSG_HELLO) {
                 /* Peer also called send_and_wait. Reply to keep the
@@ -391,7 +498,8 @@ bool mist_handshake_send_and_wait(int sock,
 
 size_t mist_handshake_build_hello(uint8_t* out, size_t cap) {
     return build_frame(MIST_MSG_HELLO, MIST_ARCH_TAG, MIST_PLATFORM_TAG,
-                       MIST_BUILD_HASH, 0, NULL, out, cap);
+                       MIST_BUILD_HASH, MIST_PROTO_VER, MIST_STATE_VER,
+                       0, NULL, out, cap);
 }
 
 int mist_handshake_parse_response(const uint8_t* buf, size_t len) {
@@ -402,22 +510,15 @@ int mist_handshake_parse_response(const uint8_t* buf, size_t len) {
     }
     const uint8_t* payload = buf + MIST_HEADER_LEN;
     if (msg_type == MIST_MSG_ACK) {
-        char peer_arch[32] = { 0 };
-        char peer_platform[32] = { 0 };
-        char peer_build[32] = { 0 };
-        size_t off = 0;
-        if (!read_cstr(payload, payload_len, &off, peer_arch, sizeof(peer_arch)) ||
-            !read_cstr(payload, payload_len, &off, peer_platform, sizeof(peer_platform)) ||
-            !read_cstr(payload, payload_len, &off, peer_build, sizeof(peer_build))) {
-            set_reject_reason("malformed ack");
-            return -1;
-        }
-        if (strcmp(peer_arch, MIST_ARCH_TAG) != 0) {
-            set_reject_reason("peer ack arch mismatch (%s)", peer_arch);
-            return -1;
-        }
-        if (strcmp(peer_platform, MIST_PLATFORM_TAG) != 0) {
-            set_reject_reason("peer ack platform mismatch (%s)", peer_platform);
+        /* R-1: full compatibility validation, including proto_ver and
+         * state_ver. A pre-R-1 ack (three strings only) classifies as
+         * MIST_REJECT_LEGACY. Malformed stays a hard -1 here (unchanged
+         * from the pre-R-1 behavior of this helper). */
+        char why[96] = { 0 };
+        const uint8_t reason = classify_peer_payload(payload, payload_len,
+                                                     why, sizeof(why));
+        if (reason != 0) {
+            set_reject_reason("%s", why);
             return -1;
         }
         s_last_reject[0] = '\0';
@@ -431,8 +532,8 @@ int mist_handshake_parse_response(const uint8_t* buf, size_t len) {
             size_t off = 1;
             (void)read_cstr(payload, payload_len, &off, text, sizeof(text));
         }
-        set_reject_reason("peer rejected: reason=%u %s", (unsigned)reason,
-                          text[0] ? text : "");
+        set_reject_reason("%s", text[0] ? text
+                                        : reject_reason_fallback_text(reason));
         return -1;
     }
     if (msg_type == MIST_MSG_HELLO) {
@@ -445,26 +546,20 @@ size_t mist_handshake_build_reply(const uint8_t* in_payload,
                                   size_t in_payload_len,
                                   uint8_t* out,
                                   size_t cap) {
-    char peer_arch[32] = { 0 };
-    char peer_platform[32] = { 0 };
-    char peer_build[32] = { 0 };
-    size_t off = 0;
-    (void)read_cstr(in_payload, in_payload_len, &off, peer_arch, sizeof(peer_arch));
-    (void)read_cstr(in_payload, in_payload_len, &off, peer_platform, sizeof(peer_platform));
-    (void)read_cstr(in_payload, in_payload_len, &off, peer_build, sizeof(peer_build));
-
-    if (strcmp(peer_arch, MIST_ARCH_TAG) != 0) {
-        return build_frame(MIST_MSG_REJECT, NULL, NULL, NULL,
-                           MIST_REJECT_ARCH_MISMATCH, "arch mismatch",
-                           out, cap);
-    }
-    if (strcmp(peer_platform, MIST_PLATFORM_TAG) != 0) {
-        return build_frame(MIST_MSG_REJECT, NULL, NULL, NULL,
-                           MIST_REJECT_PLATFORM_MISMATCH, "platform mismatch",
-                           out, cap);
+    /* R-1: classify the inbound hello against our full profile; reply
+     * with an ack when compatible, otherwise a reject that carries both
+     * the machine reason code and the human-readable explanation (the
+     * peer displays that text on its overlay). */
+    char why[96] = { 0 };
+    const uint8_t reason = classify_peer_payload(in_payload, in_payload_len,
+                                                 why, sizeof(why));
+    if (reason != 0) {
+        return build_frame(MIST_MSG_REJECT, NULL, NULL, NULL, 0, 0,
+                           reason, why, out, cap);
     }
     return build_frame(MIST_MSG_ACK, MIST_ARCH_TAG, MIST_PLATFORM_TAG,
-                       MIST_BUILD_HASH, 0, NULL, out, cap);
+                       MIST_BUILD_HASH, MIST_PROTO_VER, MIST_STATE_VER,
+                       0, NULL, out, cap);
 }
 
 /* ------------------------------------------------------------------- */
@@ -482,7 +577,54 @@ size_t mist_handshake_build_frame(uint8_t msg_type,
                                   uint8_t* out,
                                   size_t cap) {
     return build_frame(msg_type, arch, platform, build_hash,
+                       MIST_PROTO_VER, MIST_STATE_VER,
                        reject_reason, reject_text, out, cap);
+}
+
+size_t mist_handshake_build_frame_ex(uint8_t msg_type,
+                                     const char* arch,
+                                     const char* platform,
+                                     const char* build_hash,
+                                     uint8_t proto_ver,
+                                     uint16_t state_ver,
+                                     uint8_t reject_reason,
+                                     const char* reject_text,
+                                     uint8_t* out,
+                                     size_t cap) {
+    return build_frame(msg_type, arch, platform, build_hash,
+                       proto_ver, state_ver,
+                       reject_reason, reject_text, out, cap);
+}
+
+size_t mist_handshake_build_legacy_frame(uint8_t msg_type,
+                                         const char* arch,
+                                         const char* platform,
+                                         const char* build_hash,
+                                         uint8_t* out,
+                                         size_t cap) {
+    /* Byte-identical to what a pre-R-1 build_frame emitted for hello/ack:
+     * header + three strings, no version fields. */
+    if (!out || cap < MIST_HEADER_LEN) return 0;
+    if (msg_type != MIST_MSG_HELLO && msg_type != MIST_MSG_ACK) return 0;
+
+    size_t off = MIST_HEADER_LEN;
+    off = append_cstr(out, cap, off, arch ? arch : MIST_ARCH_TAG);
+    if (!off) return 0;
+    off = append_cstr(out, cap, off, platform ? platform : MIST_PLATFORM_TAG);
+    if (!off) return 0;
+    off = append_cstr(out, cap, off, build_hash ? build_hash : MIST_BUILD_HASH);
+    if (!off) return 0;
+
+    const size_t payload_len = off - MIST_HEADER_LEN;
+    if (payload_len > MIST_PAYLOAD_MAX) return 0;
+    out[0] = MIST_MAGIC_B0;
+    out[1] = MIST_MAGIC_B1;
+    out[2] = MIST_MAGIC_B2;
+    out[3] = MIST_MAGIC_B3;
+    out[4] = msg_type;
+    out[5] = (uint8_t)((payload_len >> 8) & 0xFF);
+    out[6] = (uint8_t)(payload_len & 0xFF);
+    return off;
 }
 
 size_t mist_handshake_build_bad_magic(uint8_t* out, size_t cap) {

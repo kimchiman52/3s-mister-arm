@@ -17,8 +17,19 @@
  *   5       2      payload_len (big-endian, max MIST_PAYLOAD_MAX)
  *   7       N      payload
  *
- * Hello/ack payload: three null-terminated strings
- *   "armv7\0" "mister\0" "<build_hash_7chars>\0"
+ * Hello/ack payload (R-1 layout, proto_ver 1):
+ *   three null-terminated strings
+ *     "armv7\0" "mister\0" "<build_hash_7chars>\0"
+ *   followed by two fixed-width compatibility fields:
+ *     +0  u8   proto_ver   (MIST_PROTO_VER, currently 1)
+ *     +1  u16  state_ver   (big-endian; sizeof(GameState) — equals the
+ *                           EXPECTED_GAME_STATE_SIZE pin on 32-bit builds
+ *                           via the _Static_assert in game_state.c)
+ *   Peers reject on state_ver or proto_ver mismatch (different GameState
+ *   layouts desync mid-match); build_hash difference is a warning only.
+ *   Pre-R-1 peers end the payload after the three strings; the missing
+ *   version fields classify them as legacy-incompatible (their GameState
+ *   layout predates the current pin) and they are rejected cleanly.
  *
  * Reject payload: one-byte reason code (mist_reject_reason_t) followed by
  * an optional null-terminated human-readable string.
@@ -66,13 +77,22 @@ extern "C" {
 #define MIST_ARCH_TAG "armv7"
 #define MIST_PLATFORM_TAG "mister"
 
-/* Reject reason code at payload[0]. Sent as a single unsigned byte. */
+/* R-1: handshake protocol version, first byte after the three payload
+ * strings. Bump when the hello/ack payload layout changes again. */
+#define MIST_PROTO_VER 1
+
+/* Reject reason code at payload[0]. Sent as a single unsigned byte.
+ * Values are wire-stable — append only, never renumber. */
 typedef enum {
     MIST_REJECT_UNKNOWN         = 0,
     MIST_REJECT_ARCH_MISMATCH   = 1,
     MIST_REJECT_PLATFORM_MISMATCH = 2,
     MIST_REJECT_BUILD_MISMATCH  = 3,
     MIST_REJECT_MALFORMED       = 4,
+    /* R-1 additions: */
+    MIST_REJECT_LEGACY          = 5, /* payload ends after the strings — pre-R-1 build */
+    MIST_REJECT_STATE_MISMATCH  = 6, /* sizeof(GameState) differs — would desync */
+    MIST_REJECT_PROTO_MISMATCH  = 7, /* MIST_PROTO_VER differs */
 } mist_reject_reason_t;
 
 extern const uint8_t MIST_MAGIC[MIST_MAGIC_LEN];
@@ -135,6 +155,15 @@ size_t mist_handshake_build_reply(const uint8_t* in_payload,
  */
 const char* mist_handshake_last_reject_reason(void);
 
+/*
+ * mist_handshake_local_state_ver — the state_ver this build advertises
+ * on the wire: (uint16_t)sizeof(GameState). On 32-bit builds this equals
+ * the EXPECTED_GAME_STATE_SIZE pin (enforced by the _Static_assert in
+ * game_state.c). Exposed for logging and for the unit test to craft
+ * mismatching frames without hardcoding the number.
+ */
+uint16_t mist_handshake_local_state_ver(void);
+
 #ifdef ENABLE_NETPLAY_TESTS
 /* Test-only helpers. Implementation details surfaced for the unit test
  * to drive a synthetic peer over a loopback socket. */
@@ -149,6 +178,29 @@ size_t mist_handshake_build_frame(uint8_t msg_type,
                                   const char* reject_text,
                                   uint8_t* out,
                                   size_t cap);
+
+/* R-1 tests — like mist_handshake_build_frame but with explicit
+ * proto_ver / state_ver so the test can craft mismatching hello/ack
+ * frames (wrong state size, wrong protocol version). */
+size_t mist_handshake_build_frame_ex(uint8_t msg_type,
+                                     const char* arch,
+                                     const char* platform,
+                                     const char* build_hash,
+                                     uint8_t proto_ver,
+                                     uint16_t state_ver,
+                                     uint8_t reject_reason,
+                                     const char* reject_text,
+                                     uint8_t* out,
+                                     size_t cap);
+
+/* R-1 tests — craft a pre-R-1 hello/ack: three strings, NO version
+ * fields. Exercises the legacy-peer reject path. */
+size_t mist_handshake_build_legacy_frame(uint8_t msg_type,
+                                         const char* arch,
+                                         const char* platform,
+                                         const char* build_hash,
+                                         uint8_t* out,
+                                         size_t cap);
 
 /* Hosts test (d) — craft a malformed frame (wrong magic). */
 size_t mist_handshake_build_bad_magic(uint8_t* out, size_t cap);
