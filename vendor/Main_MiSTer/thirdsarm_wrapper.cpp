@@ -1966,6 +1966,12 @@ void poll_status_changes(pid_t child)
 	if (bgm_type != prev_bgm_type) {
 		prev_bgm_type = bgm_type;
 		int target = (int)bgm_type;
+		// Refresh the in-memory mirror from disk before comparing: the
+		// in-game Sound Options menu can call BgmType_PersistToConfig()
+		// directly from the game process (menu.c:2414), bypassing this
+		// wrapper entirely, so g_wrapper_bgm_type can go stale relative
+		// to the on-disk `bgm-type` key between polls.
+		g_wrapper_bgm_type = read_runtime_bgm_type_default();
 		if (target != g_wrapper_bgm_type) {
 			write_runtime_bgm_type_default(target);
 			g_wrapper_bgm_type = target;
@@ -3062,6 +3068,13 @@ int thirdsarm_wrapper_run(int argc, char *argv[])
 			user_io_status_set("[13]", (uint32_t)g_wrapper_game_mode);
 			user_io_status_set("[24]", (uint32_t)g_wrapper_hold_to_pause);
 			user_io_status_set("[30]", (uint32_t)g_wrapper_arcade_balance);
+			// bgm_type can have been changed by the game process itself via
+			// the in-game Sound Options menu (BgmType_PersistToConfig(),
+			// menu.c:2414), independent of this wrapper's OSD path, so
+			// g_wrapper_bgm_type's mirror may be stale here -- re-read the
+			// on-disk key so the OSD reseeds from the CURRENT value rather
+			// than this process's last-known-at-launch mirror.
+			g_wrapper_bgm_type = read_runtime_bgm_type_default();
 			user_io_status_set("[14]", (uint32_t)g_wrapper_bgm_type);
 			user_io_status_set("[28:25]", (uint32_t)g_wrapper_h_position);
 			user_io_status_set("[46:43]", (uint32_t)g_wrapper_v_position);
