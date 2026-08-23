@@ -717,6 +717,26 @@ typedef struct GameState {
      * desync on Mac↔Mac loopback + latency after ~15s of play. Added to
      * GameState on 2026-04-24 so save/restore covers it. */
     u8 chainex_check[2][36];
+
+    /* Char-select "Color 7" chord accumulator. Per-player u16 in sel_pl.c
+     * (screen/sel_pl.c:134) accumulated across frames while a color-select
+     * button chord is held, then READ to commit the chosen color. Previously
+     * a plain cross-frame global that escaped rollback, so a rollback
+     * straddling the accumulate->commit window re-derived the color against
+     * a stale value and desynced color selection between peers on the
+     * character-select screen. Same fix class as [[chainex_check]]. Ported
+     * from d5f301cc (eff79 OK_Appear79/Extra_Counter from that same commit
+     * are NOT duplicated here — already covered by the #298 port above as
+     * top-level GS_SAVE/GS_LOAD fields, see OK_Appear79/Extra_Counter). */
+    u16 Color7[2];
+
+    /* Battle-phase throw/critical-art gate. s8 in engine/hitcheck.c:39 set
+     * during hit checking one frame and READ on a later frame to gate a
+     * throw / critical-art interaction. Previously a plain cross-frame
+     * global that escaped rollback, desyncing throw resolution after a
+     * rollback that straddled the set->read window (2026-07-07 audit
+     * class). Same fix class as [[chainex_check]]. Ported from d5f301cc. */
+    s8 ca_check_flag;
 } GameState;
 
 typedef struct State {

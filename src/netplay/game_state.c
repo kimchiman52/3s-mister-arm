@@ -66,8 +66,20 @@
  *   - 2  padding re-absorbed by the field-layout shuffle above
  *   -----
  *   + 8  net
- * 17656 + 8 = 17664. */
-#define EXPECTED_GAME_STATE_SIZE 17664
+ * 17656 + 8 = 17664.
+ *
+ * Port of d5f301cc (ca_check_flag + Color7 only — eff79 OK_Appear79/
+ * Extra_Counter are already covered above by the #298 port, so they are
+ * NOT duplicated) grew this by a further +8, to 17672:
+ *   + 4  Color7[2]       (u16[2], appended right after chainex_check)
+ *   + 1  ca_check_flag   (s8, appended right after Color7)
+ *   + 3  trailing padding to restore the struct's 4-byte alignment
+ *   -----
+ *   + 8  net
+ * 17664 + 8 = 17672. Empirically confirmed via ARM32 cross-compile
+ * (clang --target=arm-linux-gnueabihf): actual sizeof(GameState) == 17672,
+ * matching this arithmetic exactly. */
+#define EXPECTED_GAME_STATE_SIZE 17672
 #define EXPECTED_TASK_SIZE 16
 
 _Static_assert(sizeof(GameState) == EXPECTED_GAME_STATE_SIZE,
@@ -792,6 +804,19 @@ void GameState_Save(GameState* dst) {
         extern u8 chainex_check[2][36];
         SDL_memcpy(&dst->chainex_check, chainex_check, sizeof(chainex_check));
     }
+
+    /* Color7 (char-select color chord) — extern defined in screen/sel_pl.c.
+     * ca_check_flag (battle throw/CA gate) — extern in engine/hitcheck.c.
+     * See the GameState struct comments for the rollback rationale.
+     * Ported from d5f301cc. */
+    {
+        extern u16 Color7[2];
+        SDL_memcpy(&dst->Color7, Color7, sizeof(Color7));
+    }
+    {
+        extern s8 ca_check_flag;
+        SDL_memcpy(&dst->ca_check_flag, &ca_check_flag, sizeof(ca_check_flag));
+    }
 }
 
 #define GS_LOAD(member)                                                                                                 \
@@ -1485,6 +1510,17 @@ void GameState_Load(const GameState* src) {
         extern u8 chainex_check[2][36];
         SDL_memcpy(chainex_check, &src->chainex_check, sizeof(chainex_check));
     }
+
+    /* Color7 / ca_check_flag restore — see GameState_Save. Ported from
+     * d5f301cc. */
+    {
+        extern u16 Color7[2];
+        SDL_memcpy(Color7, &src->Color7, sizeof(Color7));
+    }
+    {
+        extern s8 ca_check_flag;
+        SDL_memcpy(&ca_check_flag, &src->ca_check_flag, sizeof(ca_check_flag));
+    }
 }
 
 // ============================================================================
@@ -1550,6 +1586,7 @@ enum {
     FH_SLOW_timer, FH_SLOW_flag, FH_EXE_flag,
     FH_super_arts, FH_piyori_type, FH_Max_vitality,
     FH_chainex_check,
+    FH_Color7, FH_ca_check_flag,
     FH_COUNT
 };
 static const char* const FH_NAMES[FH_COUNT] = {
@@ -1568,6 +1605,7 @@ static const char* const FH_NAMES[FH_COUNT] = {
     "SLOW_timer", "SLOW_flag", "EXE_flag",
     "super_arts", "piyori_type", "Max_vitality",
     "chainex_check",
+    "Color7", "ca_check_flag",
 };
 
 static State state_buffer[STATE_BUFFER_MAX];
@@ -2011,6 +2049,13 @@ uint32_t save_current_state(void* buffer, int frame) {
         // cross-peer comparison catches any divergence just like plw_scratch.
         h = djb2_update_mem(h, (const uint8_t*)&gs->chainex_check, sizeof(gs->chainex_check));
 
+        // Color7 (char-select color chord) + ca_check_flag (battle throw/CA
+        // gate) — previously rollback-unsafe cross-frame globals; now saved
+        // via GameState. Hash the saved copies so any residual divergence is
+        // caught cross-peer just like chainex_check. Ported from d5f301cc.
+        h = djb2_update_mem(h, (const uint8_t*)&gs->Color7, sizeof(gs->Color7));
+        h = djb2_update_mem(h, (const uint8_t*)&gs->ca_check_flag, sizeof(gs->ca_check_flag));
+
         // Per-section checksums + per-field hashes for desync triage. Always-on
         // 2026-04-26: telemetry consumes the same diagnostic surface as DEBUG.
         SectionedChecksum sc;
@@ -2080,6 +2125,16 @@ uint32_t save_current_state(void* buffer, int frame) {
                 uint32_t _s = djb2_init();
                 _s = djb2_update_mem(_s, (const uint8_t*)chainex_check, sizeof(chainex_check));
                 fh[FH_chainex_check] = _s;
+            }
+            {
+                extern u16 Color7[2];
+                extern s8 ca_check_flag;
+                uint32_t _s = djb2_init();
+                _s = djb2_update_mem(_s, (const uint8_t*)Color7, sizeof(Color7));
+                fh[FH_Color7] = _s;
+                _s = djb2_init();
+                _s = djb2_update_mem(_s, (const uint8_t*)&ca_check_flag, sizeof(ca_check_flag));
+                fh[FH_ca_check_flag] = _s;
             }
 #undef HASHONE
         }
