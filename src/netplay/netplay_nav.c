@@ -37,6 +37,7 @@
 #include "arcade/arcade_balance.h"
 #include "main.h"
 #include "netplay/netplay.h"
+#include "port/config/draw_players_above_hud.h"
 #include "port/sdl/sdl_app.h"
 #include "sf33rd/AcrSDK/common/pad.h"
 #include "sf33rd/Source/Game/engine/workuser.h"
@@ -152,6 +153,10 @@ void NetplayNav_Arm(void) {
     /* Same class of divergence: arcade balance is a local config the peers
      * never negotiate; force PS2 balance for the session. */
     ArcadeBalance_ForceDisable();
+    /* Same class again: CFG_DRAW_PLAYERS_ABOVE_HUD's gameplay-affecting
+     * reads (effect-table population, scr_trans/scr_calc selection) are a
+     * local config the peers never negotiate. */
+    DrawPlayersAboveHud_ForceDisable();
     fprintf(stderr, "[netplay_nav] armed\n");
     fflush(stderr);
     transition_to(NAV_WAIT_INIT);

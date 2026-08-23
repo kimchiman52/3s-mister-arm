@@ -5,7 +5,7 @@
 
 #include "sf33rd/Source/Game/stage/bg150.h"
 #include "common.h"
-#include "port/config/config.h"
+#include "port/config/draw_players_above_hud.h"
 #include "sf33rd/Source/Game/effect/eff05.h"
 #include "sf33rd/Source/Game/effect/eff06.h"
 #include "sf33rd/Source/Game/effect/eff12.h"
@@ -65,7 +65,9 @@ void bg1502_init00() {
     effect_94_init(1); // Single plate that can fall
     effect_85_init();  // Bird
 
-    if (!Config_GetBool(CFG_DRAW_PLAYERS_ABOVE_HUD)) {
+    // Gameplay-affecting (changes effect-table population, not just draw
+    // order) — pinned off for netplay via DrawPlayersAboveHud_Enabled().
+    if (!DrawPlayersAboveHud_Enabled()) {
         effect_I4_init(); // Bamboo
     }
 }

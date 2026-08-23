@@ -2,6 +2,7 @@
 #include "arcade/arcade_balance.h"
 #include "main.h"
 #include "port/config/config.h"
+#include "port/config/draw_players_above_hud.h"
 #include "netplay/game_state.h"
 #include "netplay/matchmaking.h"
 #include "netplay/mist_handshake.h"
@@ -414,6 +415,11 @@ static void setup_vs_mode() {
     // entries, but matchmaking reaches here without arming Nav — force it
     // off at the common session-setup chokepoint for every entry path.
     ArcadeBalance_ForceDisable();
+    // Same reasoning for CFG_DRAW_PLAYERS_ABOVE_HUD's gameplay-affecting
+    // reads (effect-table population, scr_trans/scr_calc selection) —
+    // pinned off here too so matchmaking entries (which skip NetplayNav_Arm)
+    // are covered.
+    DrawPlayersAboveHud_ForceDisable();
 
     E_Timer = 0; // E_Timer can have different values depending on when the session was initiated.
 

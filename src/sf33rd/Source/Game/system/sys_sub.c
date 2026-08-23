@@ -10,7 +10,7 @@
 #endif
 #include "main.h"
 #include "netplay/netplay.h"
-#include "port/config/config.h"
+#include "port/config/draw_players_above_hud.h"
 #include "sf33rd/AcrSDK/common/mlPAD.h"
 #include "sf33rd/AcrSDK/ps2/flps2debug.h"
 #include "sf33rd/Source/Game/com/com_data.h"
@@ -901,7 +901,10 @@ s32 Check_PL_Load() {
 }
 
 static bool bg_layer_disabled(int i) {
-    if (!Config_GetBool(CFG_DRAW_PLAYERS_ABOVE_HUD)) {
+    // Gameplay-affecting (selects scr_trans vs scr_calc in BG_Draw_System,
+    // not just draw order) — pinned off for netplay via
+    // DrawPlayersAboveHud_Enabled().
+    if (!DrawPlayersAboveHud_Enabled()) {
         return false;
     }
 

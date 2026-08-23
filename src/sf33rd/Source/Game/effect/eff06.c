@@ -5,7 +5,7 @@
 
 #include "sf33rd/Source/Game/effect/eff06.h"
 #include "common.h"
-#include "port/config/config.h"
+#include "port/config/draw_players_above_hud.h"
 #include "sf33rd/Source/Game/effect/eff05.h"
 #include "sf33rd/Source/Game/effect/effect.h"
 #include "sf33rd/Source/Game/engine/charset.h"
@@ -113,7 +113,9 @@ s32 effect_06_init() {
         return 0;
     }
 
-    if (Config_GetBool(CFG_DRAW_PLAYERS_ABOVE_HUD)) {
+    // Gameplay-affecting (changes effect-table population, not just draw
+    // order) — pinned off for netplay via DrawPlayersAboveHud_Enabled().
+    if (DrawPlayersAboveHud_Enabled()) {
         switch (bg_w.bg_index) {
         case 16:         // Makoto's stage
             lp_cnt -= 1; // Remove large tree on the right
