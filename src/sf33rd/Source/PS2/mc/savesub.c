@@ -4,6 +4,7 @@
 #include "port/utils.h"
 #include "structs.h"
 #include "sf33rd/Source/Game/menu/dir_data.h"
+#include "sf33rd/Source/Game/menu/ex_data.h"
 #include "sf33rd/Source/Game/system/sys_sub.h"
 #include "sf33rd/Source/Game/system/work_sys.h"
 
@@ -188,6 +189,28 @@ static bool deserialize_settings(SDL_IOStream* io) {
         dst->SE_Level = 15;
     }
     SDL_ReadIO(io, &dst->extra_option, sizeof(dst->extra_option));
+
+    // extra_option.contents[page][item] is read raw with no per-field
+    // validation and is used unchecked as an array index — the same shape
+    // of bug as system_dir.contents fixed above: effc4.c:80 indexes
+    // Ex_Letter_Data[page][char][extra_option.contents[page][item]].
+    // Ex_Letter_Data is [4][7][17] (ex_data.c), and Ex_Menu_Max_Data[4][8]
+    // (ex_data.c) is the same per-item upper-bound table the menu UI itself
+    // clamps against (menu.c:1253 reads Ex_Page_Data for the page's item
+    // count; the per-item value ceiling is Ex_Menu_Max_Data), so it is the
+    // authoritative bound here too.
+    for (int page = 0; page < SDL_arraysize(dst->extra_option.contents); page++) {
+        for (int item = 0; item < SDL_arraysize(dst->extra_option.contents[page]); item++) {
+            s8* value = &dst->extra_option.contents[page][item];
+
+            if (*value < 0) {
+                *value = 0;
+            } else if (*value > (s8)Ex_Menu_Max_Data[page][item]) {
+                *value = (s8)Ex_Menu_Max_Data[page][item];
+            }
+        }
+    }
+
     SDL_ReadIO(io, dst->PL_Color, sizeof(dst->PL_Color));
 
     // PL_Color entries are unlocked-color booleans, read only via `if (...)`
