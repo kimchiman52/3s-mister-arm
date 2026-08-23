@@ -313,7 +313,6 @@ void cpInitTask() {
 }
 
 static void njUserInit() {
-    s32 i;
     u32 size;
 
     sysFF = 1;
