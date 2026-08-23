@@ -20,7 +20,11 @@ set(_ENABLE_SDL_DIALOGS_DEFAULT ON)
 set(_ENABLE_MISTER_ARM_HARDENING_DEFAULT OFF)
 
 if(PORT_MISTER)
-    set(_ENABLE_NETPLAY_DEFAULT OFF)
+    # Netplay stays ON for MiSTer. Direct-P2P + bilateral hole-punch is a
+    # shipping feature, and a netplay-OFF MiSTer package silently omits
+    # libminiupnpc — which a subsequent `--delete` deploy then removes from the
+    # device (the 2026-07-25 incident). We never want a netplay-off MiSTer
+    # build; the exceptional case must pass -DENABLE_NETPLAY=OFF explicitly.
     set(_ENABLE_ISO_IMPORT_DEFAULT OFF)
     set(_ENABLE_FFMPEG_ADX_DEFAULT OFF)
     set(_ENABLE_SDL_DIALOGS_DEFAULT OFF)

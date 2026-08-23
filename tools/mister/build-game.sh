@@ -39,8 +39,11 @@ Defaults:
 
 Environment:
   EXTRA_CMAKE_ARGS                  Space-separated extra -D... flags forwarded
-                                    verbatim to the inner cmake configure step
-                                    (e.g. 'EXTRA_CMAKE_ARGS="-DENABLE_NETPLAY=ON"').
+                                    verbatim to the inner cmake configure step.
+                                    Netplay is ON by default for MiSTer builds
+                                    (CMakeLists.txt PORT_MISTER block); to build
+                                    the rare netplay-off exception pass
+                                    'EXTRA_CMAKE_ARGS="-DENABLE_NETPLAY=OFF"'.
                                     Values with embedded whitespace or shell
                                     quoting are not supported; pass each
                                     \`-Dkey=value\` as a separate whitespace-
