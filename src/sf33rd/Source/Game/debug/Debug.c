@@ -49,9 +49,10 @@ void Debug_Task(struct _TASK* task_ptr) {
         permission_player[1].ok[0] = (u8)Debug_w[0x33];
     }
 
-    if (Debug_w[0x3A]) {
-        save_w[1].Extra_Option = 1;
-    }
+    // Debug_w[0x3A] (DEBUG_USE_EXTRA_OPTION) used to force-unlock the extra
+    // options menu via save_w[1].Extra_Option. Upstream #343 removed that
+    // field - the menu is unlocked unconditionally now - so this debug
+    // toggle has nothing left to do.
 
     Disp_Free_work();
     Disp_Random();

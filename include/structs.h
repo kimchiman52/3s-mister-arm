@@ -926,7 +926,6 @@ struct _SAVE_W {
     u8 SoundMode;
     u8 BGM_Level;
     u8 SE_Level;
-    u8 Extra_Option;
     u8 PL_Color[2][20];
     _EXTRA_OPTION extra_option;
     RANK_DATA Ranking[20];

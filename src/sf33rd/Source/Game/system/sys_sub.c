@@ -690,6 +690,13 @@ void Copy_Check_w() {
     ck_ex_option = save_w[1].extra_option;
 }
 
+// NOTE: positional (not designated) initializer - keep field order in sync
+// with struct _SAVE_W (include/structs.h). Values are this fork's own
+// (e.g. Shot default { 0, 1, 2, 11, 3, 4, 5, 11 } differs from upstream's
+// { 0, 1, 2, 9, 3, 4, 5, 10 }), not upstream's designated-initializer
+// literals. Extra_Option's positional slot (used to sit between SE_Level
+// and PL_Color) is removed here per upstream #343 - PL_Color's zero-init
+// stays since this fork still carries that field.
 const struct _SAVE_W Game_Default_Data = {
     { { { 0, 1, 2, 11, 3, 4, 5, 11 }, 0, { 0, 0, 0 } }, { { 0, 1, 2, 11, 3, 4, 5, 11 }, 0, { 0, 0, 0 } } },
     2,
@@ -709,7 +716,6 @@ const struct _SAVE_W Game_Default_Data = {
     0,
     15,
     15,
-    0,
     { { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
       { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 } },
     { { { 1, 3, 3, 0, 0, 1, 0, 0 },

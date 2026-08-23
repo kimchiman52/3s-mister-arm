@@ -1224,14 +1224,16 @@ s32 Check_Ending() {
             return 1;
         }
 
+        // Extra_Option (the extra-options-menu unlock) and its Gill-win
+        // gate were removed upstream (#343): the menu is unlocked by
+        // default now. PL_Color is a fork-local field upstream doesn't
+        // have (predates upstream #296, not taken on this fork) that
+        // persists per-character alternate-color unlocks on a clean win;
+        // that part of the guard stays.
         if (Check_Extra_Setting() == 0) {
             for (xx = 1; xx < 5; xx++) {
                 save_w[xx].PL_Color[0][My_char[WINNER]] = 1;
                 save_w[xx].PL_Color[1][My_char[WINNER]] = 1;
-            }
-
-            if (My_char[WINNER] == 0) {
-                save_w[Present_Mode].Extra_Option = 1;
             }
         }
 
