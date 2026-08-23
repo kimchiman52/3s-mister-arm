@@ -198,7 +198,7 @@ tools/mister-wrapper/build-core.sh --prepare-source
 colima ssh --profile quartus2 -- bash -c '
   nohup bash -c "
     export PATH=\"/home/sb.linux/intelFPGA_lite/17.0/quartus/bin:\$PATH\"
-    cd /Users/sb/Developer/3s-mister-arm/build/mister-wrapper-core/src
+    cd /Users/sb/Developer/3sx-mister/build/mister-wrapper-core/src
     quartus_sh --flow compile 3S-ARM -c 3S-ARM > /tmp/quartus_build.log 2>&1
     if [ ! -f output_files/3S-ARM.rbf ] && [ -f output_files/3S-ARM.sof ]; then
       quartus_cpf -c output_files/3S-ARM.sof output_files/3S-ARM.rbf
