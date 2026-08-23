@@ -116,6 +116,13 @@ enum RuntimeArcadeBalanceMenu
 	kArcadeBalanceMenuCount
 };
 
+enum RuntimeBgmTypeMenu
+{
+	kBgmTypeArranged = 0,
+	kBgmTypeOriginal,
+	kBgmTypeMenuCount
+};
+
 enum RuntimeAspectRatioMenu
 {
 	kAspectRatio4x3 = 0,
@@ -142,6 +149,7 @@ int g_wrapper_arm_clock_active = kArmClockStock;
 int g_wrapper_game_mode = kGameModeConsole;
 int g_wrapper_hold_to_pause = kHoldToPauseOff;
 int g_wrapper_arcade_balance = kArcadeBalanceOff;
+int g_wrapper_bgm_type = kBgmTypeArranged;
 int g_wrapper_aspect_ratio = kAspectRatio4x3;
 int g_wrapper_h_position = 0;
 int g_wrapper_v_position = 0;
@@ -1034,6 +1042,90 @@ bool write_runtime_arcade_balance_default(int mode)
 	return true;
 }
 
+int read_runtime_bgm_type_default()
+{
+	char value[64] = {};
+	if (!read_runtime_config_value("bgm-type", value, sizeof(value))) return kBgmTypeArranged;
+
+	if (!strcasecmp(value, "original")) return kBgmTypeOriginal;
+	return kBgmTypeArranged;
+}
+
+static const char *runtime_bgm_type_config_value(int mode)
+{
+	switch (mode)
+	{
+	case kBgmTypeOriginal: return "original";
+	default: return "arranged";
+	}
+}
+
+bool write_runtime_bgm_type_default(int mode)
+{
+	char path[PATH_MAX] = {};
+	char temp_path[PATH_MAX] = {};
+	snprintf(path, sizeof(path), "%s/config", kRuntimeHome);
+	snprintf(temp_path, sizeof(temp_path), "%s/config.tmp", kRuntimeHome);
+
+	FILE *in = fopen(path, "r");
+	FILE *out = fopen(temp_path, "w");
+	if (!out)
+	{
+		if (in) fclose(in);
+		return false;
+	}
+
+	bool wrote_value = false;
+	char line[256] = {};
+	if (in)
+	{
+		while (fgets(line, sizeof(line), in))
+		{
+			char inspect[256] = {};
+			snprintf(inspect, sizeof(inspect), "%s", line);
+
+			char *cursor = inspect;
+			while (*cursor && isspace((unsigned char)*cursor)) cursor++;
+			if (*cursor == '#')
+			{
+				fputs(line, out);
+				continue;
+			}
+
+			char *equals = strchr(cursor, '=');
+			if (equals)
+			{
+				*equals = 0;
+				trim_in_place(cursor);
+				if (!strcasecmp(cursor, "bgm-type"))
+				{
+					fprintf(out, "bgm-type = %s\n", runtime_bgm_type_config_value(mode));
+					wrote_value = true;
+					continue;
+				}
+			}
+
+			fputs(line, out);
+		}
+
+		fclose(in);
+	}
+
+	if (!wrote_value)
+	{
+		fprintf(out, "\nbgm-type = %s\n", runtime_bgm_type_config_value(mode));
+	}
+
+	if (fclose(out) != 0) return false;
+	if (rename(temp_path, path) != 0)
+	{
+		remove(temp_path);
+		return false;
+	}
+
+	return true;
+}
+
 int read_runtime_aspect_ratio_default()
 {
 	char value[64] = {};
@@ -1805,6 +1897,7 @@ void poll_status_changes(pid_t child)
 	static uint32_t prev_game_mode = 0xFFFFFFFF;
 	static uint32_t prev_hold_to_pause = 0xFFFFFFFF;
 	static uint32_t prev_arcade_balance = 0xFFFFFFFF;
+	static uint32_t prev_bgm_type = 0xFFFFFFFF;
 	static uint32_t prev_aspect_ratio = 0xFFFFFFFF;
 	static uint32_t prev_h_position = 0xFFFFFFFF;
 	static uint32_t prev_v_position = 0xFFFFFFFF;
@@ -1866,6 +1959,24 @@ void poll_status_changes(pid_t child)
 			// No child signal: arcade balance loads CPS3 character data at
 			// game init (ArcadeBalance_Init), so it applies on the next game
 			// launch -- same deferred model as the Overclock option.
+		}
+	}
+
+	uint32_t bgm_type = user_io_status_get("[14]");
+	if (bgm_type != prev_bgm_type) {
+		prev_bgm_type = bgm_type;
+		int target = (int)bgm_type;
+		if (target != g_wrapper_bgm_type) {
+			write_runtime_bgm_type_default(target);
+			g_wrapper_bgm_type = target;
+			// No child signal: like Arcade Balance, bgm_type is read once
+			// at game boot after the settings save load completes
+			// (Init_Task_Aload -> BgmType_ApplyBootOverride(),
+			// src/sf33rd/Source/Game/init3rd.c) -- applies on the next
+			// game launch, not live mid-session. (A live in-game Sound
+			// Options change *does* apply immediately, via the existing
+			// checkAdxFileLoaded()/adx_NowOnMemoryType reload on menu
+			// exit -- that path is unrelated to this OSD write.)
 		}
 	}
 
@@ -1972,6 +2083,7 @@ void poll_status_changes(pid_t child)
 		user_io_status_set("[13]", 0);    // Game Mode = Console
 		user_io_status_set("[24]", 0);    // Hold to Pause = Off
 		user_io_status_set("[30]", 0);    // Arcade Balance = Off
+		user_io_status_set("[14]", 0);    // BGM Type = Arranged
 		user_io_status_set("[28:25]", 0); // H Position = 0
 		user_io_status_set("[46:43]", 0); // V Position = 0
 		user_io_status_set("[32]", 0);    // Vertical Crop = Disabled
@@ -1983,6 +2095,7 @@ void poll_status_changes(pid_t child)
 		prev_game_mode = 0xFFFFFFFF;
 		prev_hold_to_pause = 0xFFFFFFFF;
 		prev_arcade_balance = 0xFFFFFFFF;
+		prev_bgm_type = 0xFFFFFFFF;
 		prev_aspect_ratio = 0xFFFFFFFF;
 		prev_h_position = 0xFFFFFFFF;
 		prev_v_position = 0xFFFFFFFF;
@@ -2552,6 +2665,7 @@ int thirdsarm_wrapper_run(int argc, char *argv[])
 	g_wrapper_game_mode = read_runtime_game_mode_default();
 	g_wrapper_hold_to_pause = read_runtime_hold_to_pause_default();
 	g_wrapper_arcade_balance = read_runtime_arcade_balance_default();
+	g_wrapper_bgm_type = read_runtime_bgm_type_default();
 	g_wrapper_aspect_ratio = read_runtime_aspect_ratio_default();
 	g_wrapper_h_position = read_runtime_h_position_default();
 	g_wrapper_v_position = read_runtime_v_position_default();
@@ -2618,6 +2732,11 @@ int thirdsarm_wrapper_run(int argc, char *argv[])
 		// it must stay after user_io_init's CFG load and before the first
 		// poll_status_changes.
 		user_io_status_set("[30]", (uint32_t)g_wrapper_arcade_balance);
+		// [14] was "SA Activation"'s bit (retired super-effect-quality OSD
+		// row); stale CFGs can carry it set. This overwrite-from-game-config
+		// is the ONLY defense -- same pattern as [30] -- it must stay after
+		// user_io_init's CFG load and before the first poll_status_changes.
+		user_io_status_set("[14]", (uint32_t)g_wrapper_bgm_type);
 		user_io_status_set("[28:25]", (uint32_t)g_wrapper_h_position);
 		user_io_status_set("[46:43]", (uint32_t)g_wrapper_v_position);
 		user_io_status_set("[32]", (uint32_t)g_wrapper_vertical_crop);
@@ -2943,6 +3062,7 @@ int thirdsarm_wrapper_run(int argc, char *argv[])
 			user_io_status_set("[13]", (uint32_t)g_wrapper_game_mode);
 			user_io_status_set("[24]", (uint32_t)g_wrapper_hold_to_pause);
 			user_io_status_set("[30]", (uint32_t)g_wrapper_arcade_balance);
+			user_io_status_set("[14]", (uint32_t)g_wrapper_bgm_type);
 			user_io_status_set("[28:25]", (uint32_t)g_wrapper_h_position);
 			user_io_status_set("[46:43]", (uint32_t)g_wrapper_v_position);
 			user_io_status_set("[32]", (uint32_t)g_wrapper_vertical_crop);

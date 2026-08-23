@@ -286,6 +286,12 @@ localparam CONF_STR = {
 	"-;",
 	"O[13],Game Mode,Console,Arcade;",
 	"O[24],Hold to Pause,Off,On;",
+	// Bit 14 was "SA Activation"'s bit (a retired super-effect-quality OSD
+	// row) before that row was removed, so old 3S-ARM.CFG files may carry
+	// it set. Safe only because the wrapper seeds [14] from the game
+	// config AFTER CFG load (thirdsarm_wrapper.cpp) — same defense as
+	// [30] (Arcade Balance) — keep that ordering if this bit ever moves.
+	"O[14],BGM Type,Arranged,Original;",
 	"O[11:10],FPS Counter,Off,FPS,Debug;",
 	"T[23],Button Check;",
 	"-;",
