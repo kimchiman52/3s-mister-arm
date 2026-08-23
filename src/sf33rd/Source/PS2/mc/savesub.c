@@ -350,6 +350,27 @@ void SaveInit(SaveFileType file_type, SaveMode save_mode) {
 }
 
 s32 SaveMove() {
+    // SAVE_FILE_REPLAY has no real serialize/deserialize handler yet
+    // (file_info[SAVE_FILE_REPLAY] points at serialize_stub/deserialize_stub,
+    // which both call fatal_error() and abort). Three live menu paths still
+    // call SaveInit(SAVE_FILE_REPLAY, ...) (menu.c:1423, 3497, 5277). Rather
+    // than crash on every one of them, make REPLAY a graceful no-op here:
+    // complete immediately without touching storage. This is a deliberate
+    // deviation from upstream (which has a real replay save/load
+    // implementation this fork has not ported) — logged once so the gap
+    // stays visible without spamming the log on repeat menu visits.
+    if (operation.state == SAVE_STATE_INIT && operation.file_type == SAVE_FILE_REPLAY) {
+        static bool warned = false;
+
+        if (!warned) {
+            SDL_Log("[savesub] SAVE_FILE_REPLAY is a no-op stub (no replay serializer ported); skipping.");
+            warned = true;
+        }
+
+        SDL_zero(operation);
+        return 0;
+    }
+
     switch (operation.state) {
     case SAVE_STATE_IDLE:
         return 0;
