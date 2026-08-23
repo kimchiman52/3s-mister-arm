@@ -3,6 +3,7 @@
 #include "main.h"
 #include "port/config/config.h"
 #include "port/config/draw_players_above_hud.h"
+#include "netplay/direct_p2p.h"
 #include "netplay/game_state.h"
 #include "netplay/matchmaking.h"
 #include "netplay/mist_handshake.h"
@@ -1540,6 +1541,13 @@ void Netplay_Run() {
                     }
                     printf("[netplay] MIST handshake failed: %s\n",
                            s_mist_reject_reason);
+                    // Surface the reason on screen: latch it into the
+                    // direct-P2P overlay BEFORE entering EXITING — the
+                    // teardown callback that runs there converts the
+                    // latch into DIRECT_P2P_FAILED_HANDSHAKE so the
+                    // overlay shows ERROR + reason instead of a silent
+                    // drop back to attract mode.
+                    DirectP2P_NotifySessionRejected(s_mist_reject_reason);
                     push_event(NETPLAY_EVENT_DISCONNECTED);
                     session_state = NETPLAY_SESSION_EXITING;
                     clean_input_buffers();

@@ -152,6 +152,13 @@ static char s_status[128] = { 0 };
  * call so re-entering Init doesn't double-release. */
 static UpnpMapping s_upnp_mapping = { 0 };
 
+/* R-1: latched by DirectP2P_NotifySessionRejected (game thread) when the
+ * post-handoff MIST handshake rejects the peer. Consumed by
+ * direct_p2p_on_teardown, which then parks in FAILED_HANDSHAKE instead
+ * of IDLE so the overlay keeps showing the reject reason. Main-thread
+ * only (notify, teardown, and Cancel all run on the game thread). */
+static bool s_handshake_reject_latched = false;
+
 /* Init guard so DirectP2P_Init is idempotent. */
 static bool s_init_done = false;
 
@@ -1116,8 +1123,20 @@ static void direct_p2p_on_teardown(void) {
      * netplay.c will destroy it immediately after this callback
      * returns. */
     s_work.stun.socket = NULL;
-    /* Reset state so the next BeginHost/BeginJoin starts clean. */
-    set_state(DIRECT_P2P_IDLE);
+    /* Reset state so the next BeginHost/BeginJoin starts clean.
+     * R-1 exception: when the MIST handshake rejected the session, park
+     * in FAILED_HANDSHAKE instead so the overlay keeps ERROR + the
+     * reason (set_status by NotifySessionRejected) on screen after the
+     * soft reset — an IDLE state would hide the overlay and the player
+     * would see a silent drop with no explanation. Terminal like the
+     * other FAILED_* states: cleared by DirectP2P_Cancel or process
+     * restart (the MiSTer OSD retry path re-execs anyway). */
+    if (s_handshake_reject_latched) {
+        s_handshake_reject_latched = false;
+        set_state(DIRECT_P2P_FAILED_HANDSHAKE);
+    } else {
+        set_state(DIRECT_P2P_IDLE);
+    }
 }
 
 /* Finish the handoff on the main thread. Called from Tick when the
@@ -1350,6 +1369,10 @@ void DirectP2P_BeginHost(int preferred_port) {
     SDL_SetAtomicInt(&s_bilateral_handoff_pending, 0);
     SDL_SetAtomicInt(&s_q_drops, 0);
     SDL_SetAtomicInt(&s_q_drops_logged, 0);
+    /* R-1: a reject latched during a session whose teardown never ran the
+     * callback (e.g. LAN CLI session with no orchestrator) must not leak
+     * into this fresh session's teardown. */
+    s_handshake_reject_latched = false;
     memset(&s_work, 0, sizeof(s_work));
     s_work.role = ROLE_HOST;
     s_work.preferred_port = preferred_port;
@@ -1414,6 +1437,7 @@ void DirectP2P_BeginJoin(const char* peer_code) {
     SDL_SetAtomicInt(&s_bilateral_handoff_pending, 0);
     SDL_SetAtomicInt(&s_q_drops, 0);
     SDL_SetAtomicInt(&s_q_drops_logged, 0);
+    s_handshake_reject_latched = false; /* R-1: see BeginHost */
     memset(&s_work, 0, sizeof(s_work));
     s_work.role = ROLE_JOIN;
     SDL_strlcpy(s_work.peer_code, peer_code, sizeof(s_work.peer_code));
@@ -1465,7 +1489,19 @@ void DirectP2P_Cancel(void) {
     }
     memset(&s_work, 0, sizeof(s_work));
     set_status("");
+    s_handshake_reject_latched = false; /* R-1: drop any pending reject latch */
     set_state(DIRECT_P2P_IDLE);
+}
+
+/* R-1 — see direct_p2p.h. Records the reject reason for the overlay and
+ * latches the teardown redirect to FAILED_HANDSHAKE. */
+void DirectP2P_NotifySessionRejected(const char* reason) {
+    set_status((reason != NULL && reason[0] != '\0')
+                   ? reason
+                   : "Connection rejected.");
+    s_handshake_reject_latched = true;
+    SDL_Log("[direct_p2p] session rejected by MIST handshake: %s",
+            reason ? reason : "(no reason)");
 }
 
 void DirectP2P_Tick(void) {
@@ -1566,6 +1602,12 @@ void DirectP2P_Tick(void) {
     case DIRECT_P2P_FAILED_BILATERAL:
         /* Terminal — bilateral fallback exhausted. No work; the menu
          * will issue DirectP2P_Cancel to return to IDLE. */
+        return;
+
+    case DIRECT_P2P_FAILED_HANDSHAKE:
+        /* Terminal — R-1 MIST handshake rejected the peer post-handoff.
+         * Overlay shows ERROR + the reason; DirectP2P_Cancel (or the
+         * OSD retry's process re-exec) returns to IDLE. */
         return;
     }
 }

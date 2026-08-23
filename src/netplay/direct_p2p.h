@@ -69,6 +69,8 @@ typedef enum {
     DIRECT_P2P_FALLBACK_SIGNALING,        /* using rendezvous server for endpoint exchange */
     DIRECT_P2P_FALLBACK_BILATERAL_PUNCH,  /* bilateral hole-punch in flight after signaling */
     DIRECT_P2P_FAILED_BILATERAL,          /* bilateral fallback exhausted; truly unreachable */
+    DIRECT_P2P_FAILED_HANDSHAKE,          /* R-1: post-handoff MIST handshake reject (see
+                                             DirectP2P_NotifySessionRejected) */
 } DirectP2PState;
 
 /* Role of the local end in the active session. Defined here (rather than
@@ -131,6 +133,17 @@ const char* DirectP2P_GetHostCode(void);
  * possibly empty string. Updates on state transitions. */
 const char* DirectP2P_GetStatusText(void);
 
+/* R-1: called by netplay.c when the post-handoff MIST handshake rejects
+ * the session (peer build incompatible / too old / unreachable). Records
+ * the human-readable reason and latches a flag so the session-teardown
+ * callback parks the orchestrator in DIRECT_P2P_FAILED_HANDSHAKE instead
+ * of IDLE — the overlay then keeps ERROR + reason on screen after the
+ * game soft-resets to attract, exactly like the pre-handoff FAILED_*
+ * states. Cleared by DirectP2P_Cancel / the next BeginHost|BeginJoin
+ * (which on the MiSTer OSD flow is a fresh process anyway). Main-thread
+ * only (called from the game thread's session state machine). */
+void DirectP2P_NotifySessionRejected(const char* reason);
+
 /* Step 8 — Per-frame native overlay. Renders three centered lines into
  * the 384x224 game canvas via SSPutStrPro:
  *   line 1: mode label (HOSTING / CONNECTING / CONNECTED / ERROR)
@@ -190,6 +203,7 @@ static inline DirectP2PState DirectP2P_GetState(void) { return DIRECT_P2P_IDLE; 
 static inline Role DirectP2P_GetRole(void) { return ROLE_NONE; }
 static inline const char* DirectP2P_GetHostCode(void) { return ""; }
 static inline const char* DirectP2P_GetStatusText(void) { return ""; }
+static inline void DirectP2P_NotifySessionRejected(const char* reason) { (void)reason; }
 static inline void DirectP2P_DrawOverlay(void) { }
 
 #endif /* ENABLE_NETPLAY */

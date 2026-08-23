@@ -72,6 +72,7 @@ static const char* dp2p_overlay_mode_label(DirectP2PState s) {
     case DIRECT_P2P_FAILED_STUN:
     case DIRECT_P2P_FAILED_PUNCH:
     case DIRECT_P2P_FAILED_BILATERAL:
+    case DIRECT_P2P_FAILED_HANDSHAKE:
         return "ERROR";
 
     case DIRECT_P2P_IDLE:
