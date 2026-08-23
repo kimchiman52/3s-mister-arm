@@ -94,7 +94,7 @@ s32 flLogOut(s8* format, ...) {
     va_list args;
     va_start(args, format);
 
-    vsprintf(str, format, args);
+    vsnprintf(str, sizeof(str), format, args);
     lp = strlen(str) + str;
     *(lp++) = '\r';
     *(lp++) = '\n';
