@@ -1,5 +1,6 @@
 #include "sf33rd/Source/PS2/mc/savesub.h"
 #include "common.h"
+#include "main.h"
 #include "port/paths.h"
 #include "port/utils.h"
 #include "structs.h"
@@ -10,19 +11,25 @@
 
 #include <SDL3/SDL.h>
 
-#define SETTINGS_VERSION 1
-// Matches upstream's SETTINGS_SIZE_V1. This fork carried a +40-byte
+#define SETTINGS_VERSION_V1 1
+#define SETTINGS_VERSION_V2 2
+#define SETTINGS_VERSION SETTINGS_VERSION_V2
+// V1/V2 sizes match upstream's. V2 (upstream #371) appends the 1-byte
+// Language field after Screen_Size; a V1 (367-byte) file still loads via
+// the multi-format table below and gets Get_Default_Language() for the
+// missing field. Historical note: this fork carried a +40-byte
 // PL_Color[2][20] extension here (fork-local unlocked-color persistence
 // predating upstream #296) until #296 "Unlock extra colors and Gill by
 // default" was taken: extra colors and Gill are unlocked unconditionally
 // now, PL_Color was dropped from struct _SAVE_W (include/structs.h), and
-// this size shrinks back to upstream's. A pre-existing settings save file
+// this size shrank back to upstream's. A pre-existing settings save file
 // written under the old (407-byte) size is rejected by the size gate in
 // read_file_if_exists() below and falls back to defaults - nothing shipped
 // with this fork carries a settings save yet, so that's an acceptable
 // one-time reset.
 #define SETTINGS_SIZE_V1 367
-#define SETTINGS_SIZE SETTINGS_SIZE_V1
+#define SETTINGS_SIZE_V2 368
+#define SETTINGS_SIZE SETTINGS_SIZE_V2
 
 #define SYSDIR_VERSION 1
 #define SYSDIR_SIZE_V1 71
@@ -59,10 +66,15 @@ typedef enum ReadResult {
 typedef void (*SerializeHandler)(SDL_IOStream* io);
 typedef bool (*DeserializeHandler)(SDL_IOStream* io);
 
-typedef struct SaveFileInfo {
-    const char* name;
+typedef struct SaveFileFormat {
     Uint8 version;
     Uint64 size;
+} SaveFileFormat;
+
+typedef struct SaveFileInfo {
+    const char* name;
+    const SaveFileFormat* formats;
+    int format_count;
     SerializeHandler serialize_handler;
     DeserializeHandler deserialize_handler;
 } SaveFileInfo;
@@ -96,6 +108,7 @@ static void serialize_settings(SDL_IOStream* io) {
     SDL_WriteS8(io, src->Adjust_X);
     SDL_WriteS8(io, src->Adjust_Y);
     SDL_WriteU8(io, src->Screen_Size);
+    SDL_WriteU8(io, src->Language);
     SDL_WriteU8(io, src->GuardCheck);
     SDL_WriteU8(io, src->AnalogStick);
     SDL_WriteU8(io, src->BgmType);
@@ -123,7 +136,7 @@ static bool deserialize_settings(SDL_IOStream* io) {
 
     SDL_ReadU8(io, &version);
 
-    if (version != SETTINGS_VERSION) {
+    if (version != SETTINGS_VERSION_V1 && version != SETTINGS_VERSION_V2) {
         return false;
     }
 
@@ -171,6 +184,25 @@ static bool deserialize_settings(SDL_IOStream* io) {
     SDL_ReadS8(io, &dst->Adjust_X);
     SDL_ReadS8(io, &dst->Adjust_Y);
     SDL_ReadU8(io, &dst->Screen_Size);
+
+    if (version == SETTINGS_VERSION_V2) {
+        SDL_ReadU8(io, &dst->Language);
+        // Language flows into Convert_Buff[2][0][4] (sys_sub.c Copy_Save_w)
+        // and mpp_w.language; the Convert_Buff copy is used unchecked as a
+        // display index — eff64.c:197 indexes
+        // Letter_Data_64[char_index][disp_index], whose language row only
+        // populates entries 0..1 ("EN"/"JP", the rest are NULL), so an
+        // out-of-range value from a corrupt/hostile save is a NULL deref or
+        // OOB read — the same class as the system_dir/extra_option clamps
+        // below. The menu UI itself only ever produces 0..1 (Language_Toggle,
+        // menu.c), so 0..1 is the authoritative range.
+        if (dst->Language > LANG_JAPANESE) {
+            dst->Language = LANG_JAPANESE;
+        }
+    } else {
+        dst->Language = Get_Default_Language();
+    }
+
     SDL_ReadU8(io, &dst->GuardCheck);
     SDL_ReadU8(io, &dst->AnalogStick);
     SDL_ReadU8(io, &dst->BgmType);
@@ -286,20 +318,33 @@ static bool deserialize_stub(SDL_IOStream* io) {
     fatal_error("Not implemented");
 }
 
+static const SaveFileFormat settings_formats[] = {
+    { SETTINGS_VERSION_V1, SETTINGS_SIZE_V1 },
+    { SETTINGS_VERSION_V2, SETTINGS_SIZE_V2 },
+};
+
+static const SaveFileFormat sysdir_formats[] = {
+    { SYSDIR_VERSION, SYSDIR_SIZE },
+};
+
+static const SaveFileFormat replay_formats[] = {
+    { REPLAY_VERSION, REPLAY_SIZE },
+};
+
 static const SaveFileInfo file_info[] = {
     [SAVE_FILE_SETTINGS] = { .name = "settings",
-                             .version = SETTINGS_VERSION,
-                             .size = SETTINGS_SIZE,
+                             .formats = settings_formats,
+                             .format_count = SDL_arraysize(settings_formats),
                              .serialize_handler = serialize_settings,
                              .deserialize_handler = deserialize_settings },
     [SAVE_FILE_SYSTEM_DIRECTION] = { .name = "sysdir",
-                                     .version = SYSDIR_VERSION,
-                                     .size = SYSDIR_SIZE,
+                                     .formats = sysdir_formats,
+                                     .format_count = SDL_arraysize(sysdir_formats),
                                      .serialize_handler = serialize_sysdir,
                                      .deserialize_handler = deserialize_sysdir },
     [SAVE_FILE_REPLAY] = { .name = "replay",
-                           .version = REPLAY_VERSION,
-                           .size = REPLAY_SIZE,
+                           .formats = replay_formats,
+                           .format_count = SDL_arraysize(replay_formats),
                            .serialize_handler = serialize_stub,
                            .deserialize_handler = deserialize_stub },
 };
@@ -325,8 +370,13 @@ static void make_path(char* text, size_t maxlen, const char* name, PathKind kind
     }
 }
 
-static ReadResult read_file_if_exists(SDL_Storage* storage, const char* path, void* buffer, Uint64 size) {
+static const SaveFileFormat* current_format(const SaveFileInfo* file) {
+    return &file->formats[file->format_count - 1];
+}
+
+static ReadResult read_file_if_exists(SDL_Storage* storage, const char* path, void* buffer, const SaveFileInfo* file) {
     SDL_PathInfo info;
+    const SaveFileFormat* format = NULL;
 
     if (!SDL_GetStoragePathInfo(storage, path, &info)) {
         return READ_ERROR;
@@ -336,11 +386,22 @@ static ReadResult read_file_if_exists(SDL_Storage* storage, const char* path, vo
         return READ_NO_FILE;
     }
 
-    if (info.size != size) {
+    for (int i = 0; i < file->format_count; i++) {
+        if (info.size == file->formats[i].size) {
+            format = &file->formats[i];
+            break;
+        }
+    }
+
+    if (format == NULL) {
         return READ_SIZE_MISMATCH;
     }
 
-    if (!SDL_ReadStorageFile(storage, path, buffer, size)) {
+    if (!SDL_ReadStorageFile(storage, path, buffer, format->size)) {
+        return READ_ERROR;
+    }
+
+    if (*(const Uint8*)buffer != format->version) {
         return READ_ERROR;
     }
 
@@ -413,7 +474,8 @@ s32 SaveMove() {
         make_path(path, sizeof(path), info->name, PATH_KIND_MAIN);
         make_path(backup_path, sizeof(backup_path), info->name, PATH_KIND_BACKUP);
         make_path(tmp_path, sizeof(tmp_path), info->name, PATH_KIND_TMP);
-        void* buffer = SDL_malloc(info->size);
+        const SaveFileFormat* format = current_format(info);
+        void* buffer = SDL_malloc(format->size);
 
         if (buffer == NULL) {
             // Unlike the SAVE_STATE_INIT->ERROR transition above (where
@@ -431,14 +493,14 @@ s32 SaveMove() {
 
         switch (operation.mode) {
         case SAVE_MODE_LOAD:
-            io = SDL_IOFromConstMem(buffer, info->size);
+            io = SDL_IOFromConstMem(buffer, format->size);
             const char* paths[] = { path, backup_path };
 
             for (int i = 0; i < SDL_arraysize(paths); i++) {
                 const char* _path = paths[i];
                 SDL_SeekIO(io, 0, SDL_IO_SEEK_SET);
 
-                if (read_file_if_exists(operation.storage, _path, buffer, info->size) == READ_SUCCESS) {
+                if (read_file_if_exists(operation.storage, _path, buffer, info) == READ_SUCCESS) {
                     success = info->deserialize_handler(io);
                 }
 
@@ -450,7 +512,7 @@ s32 SaveMove() {
             break;
 
         case SAVE_MODE_SAVE:
-            io = SDL_IOFromMem(buffer, info->size);
+            io = SDL_IOFromMem(buffer, format->size);
             info->serialize_handler(io);
 
             const bool saves_dir_exists = create_saves_dir(operation.storage);
@@ -477,7 +539,7 @@ s32 SaveMove() {
                     // rename() atomically replaces an existing destination on the
                     // generic storage backend's Linux target (verified against SDL
                     // release-3.4.4 src/filesystem/posix/SDL_sysfsops.c).
-                    success = SDL_WriteStorageFile(operation.storage, tmp_path, buffer, info->size);
+                    success = SDL_WriteStorageFile(operation.storage, tmp_path, buffer, format->size);
 
                     if (success) {
                         success = SDL_RenameStoragePath(operation.storage, tmp_path, path);

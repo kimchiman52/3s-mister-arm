@@ -26,4 +26,6 @@ void cpReadyTask(TaskID num, void (*func_adrs)(struct _TASK* task_ptr));
 void cpExitTask(TaskID num);
 void njUserMain(); // FIXME: This shouldn't be public
 
+Language Get_Default_Language();
+
 #endif
