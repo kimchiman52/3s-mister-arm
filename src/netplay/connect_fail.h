@@ -105,6 +105,10 @@ typedef enum ConnectFailCode {
 
     /* Local errors */
     CONNECT_FAIL_INVALID_CODE,    /* room code failed to decode               */
+    CONNECT_FAIL_CODE_VERSION,    /* S4b: room code is a valid but WRONG-VERSION
+                                     format (v1 pre-nonce code, or an unknown
+                                     future version char) — the two builds must
+                                     match; NOT a typo                         */
     CONNECT_FAIL_INTERNAL,        /* thread spawn / packet build / config     */
 } ConnectFailCode;
 

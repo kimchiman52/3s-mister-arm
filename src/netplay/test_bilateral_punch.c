@@ -322,7 +322,7 @@ static int test_register_deliver(void) {
 
     /* Derive a session key that both clients share. */
     uint8_t key[REND_KEY_LEN];
-    if (!Rendezvous_DeriveSessionKey(0x01020304u, 1234, key)) {
+    if (!Rendezvous_DeriveSessionKey(0x01020304u, 1234, 0x111, key)) {
         FAIL("test1", "Rendezvous_DeriveSessionKey returned false");
         goto cleanup_fail;
     }
@@ -482,8 +482,8 @@ static int test_session_key_stability(void) {
 
     uint8_t k1[REND_KEY_LEN];
     uint8_t k2[REND_KEY_LEN];
-    EXPECT_TRUE("test2", Rendezvous_DeriveSessionKey(0x0A0B0C0Du, 12345, k1));
-    EXPECT_TRUE("test2", Rendezvous_DeriveSessionKey(0x0A0B0C0Du, 12345, k2));
+    EXPECT_TRUE("test2", Rendezvous_DeriveSessionKey(0x0A0B0C0Du, 12345, 0x222, k1));
+    EXPECT_TRUE("test2", Rendezvous_DeriveSessionKey(0x0A0B0C0Du, 12345, 0x222, k2));
     if (memcmp(k1, k2, REND_KEY_LEN) != 0) {
         FAIL("test2", "deterministic derivation produced different keys");
         return 1;
@@ -491,15 +491,30 @@ static int test_session_key_stability(void) {
 
     /* Different ip yields different key. */
     uint8_t k3[REND_KEY_LEN];
-    EXPECT_TRUE("test2", Rendezvous_DeriveSessionKey(0x0A0B0C0Eu, 12345, k3));
+    EXPECT_TRUE("test2", Rendezvous_DeriveSessionKey(0x0A0B0C0Eu, 12345, 0x222, k3));
     if (memcmp(k1, k3, REND_KEY_LEN) == 0) {
         FAIL("test2", "different ip produced identical key (collision)");
         return 1;
     }
 
+    /* S4b: different NONCE (same ip:port) yields a different key —
+     * this is the whole point of the nonce: (ip, port) alone no longer
+     * determines the rendezvous slot. */
+    uint8_t k5[REND_KEY_LEN];
+    EXPECT_TRUE("test2", Rendezvous_DeriveSessionKey(0x0A0B0C0Du, 12345, 0x223, k5));
+    if (memcmp(k1, k5, REND_KEY_LEN) == 0) {
+        FAIL("test2", "different nonce produced identical session key");
+        return 1;
+    }
+    /* Out-of-range nonce (>12 bits) must fail. */
+    if (Rendezvous_DeriveSessionKey(0x0A0B0C0Du, 12345, 0x1000, k5)) {
+        FAIL("test2", "nonce above 12 bits accepted");
+        return 1;
+    }
+
     /* ip_be == 0 must return false. */
     uint8_t k4[REND_KEY_LEN];
-    if (Rendezvous_DeriveSessionKey(0u, 12345, k4)) {
+    if (Rendezvous_DeriveSessionKey(0u, 12345, 0x222, k4)) {
         FAIL("test2", "ip_be=0 should return false");
         return 1;
     }
@@ -510,16 +525,23 @@ static int test_session_key_stability(void) {
      * and zeroes the output. */
     uint8_t t1[REND_PUNCH_TOKEN_LEN];
     uint8_t t2[REND_PUNCH_TOKEN_LEN];
-    EXPECT_TRUE("test2-token", Rendezvous_DerivePunchToken(0x0A0B0C0Du, 12345, t1));
-    EXPECT_TRUE("test2-token", Rendezvous_DerivePunchToken(0x0A0B0C0Du, 12345, t2));
+    EXPECT_TRUE("test2-token", Rendezvous_DerivePunchToken(0x0A0B0C0Du, 12345, 0x222, t1));
+    EXPECT_TRUE("test2-token", Rendezvous_DerivePunchToken(0x0A0B0C0Du, 12345, 0x222, t2));
     if (memcmp(t1, t2, REND_PUNCH_TOKEN_LEN) != 0) {
         FAIL("test2-token", "deterministic token derivation produced different tokens");
         return 1;
     }
     uint8_t t3[REND_PUNCH_TOKEN_LEN];
-    EXPECT_TRUE("test2-token", Rendezvous_DerivePunchToken(0x0A0B0C0Du, 12346, t3));
+    EXPECT_TRUE("test2-token", Rendezvous_DerivePunchToken(0x0A0B0C0Du, 12346, 0x222, t3));
     if (memcmp(t1, t3, REND_PUNCH_TOKEN_LEN) == 0) {
         FAIL("test2-token", "different port produced identical token");
+        return 1;
+    }
+    /* S4b: different nonce -> different token. */
+    uint8_t t5[REND_PUNCH_TOKEN_LEN];
+    EXPECT_TRUE("test2-token", Rendezvous_DerivePunchToken(0x0A0B0C0Du, 12345, 0x223, t5));
+    if (memcmp(t1, t5, REND_PUNCH_TOKEN_LEN) == 0) {
+        FAIL("test2-token", "different nonce produced identical token");
         return 1;
     }
     /* Domain separation vs the session key over the SAME payload. */
@@ -529,7 +551,7 @@ static int test_session_key_stability(void) {
     }
     uint8_t t4[REND_PUNCH_TOKEN_LEN];
     memset(t4, 0xEE, sizeof(t4));
-    if (Rendezvous_DerivePunchToken(0u, 12345, t4)) {
+    if (Rendezvous_DerivePunchToken(0u, 12345, 0x222, t4)) {
         FAIL("test2-token", "ip_be=0 should return false");
         return 1;
     }
@@ -628,7 +650,7 @@ static int test_protocol_round_trip(void) {
     }
 
     uint8_t key[REND_KEY_LEN];
-    if (!Rendezvous_DeriveSessionKey(0x01020304u, 4321, key)) {
+    if (!Rendezvous_DeriveSessionKey(0x01020304u, 4321, 0x333, key)) {
         FAIL("test4", "DeriveSessionKey returned false");
         goto cleanup_fail;
     }
@@ -939,7 +961,7 @@ static int test_joiner_fresh_socket_retry(void) {
     struct in_addr lan_peer;
     lan_peer.s_addr = htonl(0x0A000001u); /* 10.0.0.1 */
     char code[ROOM_CODE_BUF_LEN] = { 0 };
-    if (!RoomCode_Encode((uint32_t)lan_peer.s_addr, 5555, code)) {
+    if (!RoomCode_Encode((uint32_t)lan_peer.s_addr, 5555, 0x0AA, code)) {
         FAIL("test6", "RoomCode_Encode failed");
         DirectP2P_TestHook_SetStunDiscover(NULL);
         DirectP2P_TestHook_SetStunHolePunch(NULL);
@@ -1294,7 +1316,7 @@ static int test_joiner_self_deliver(void) {
     host_ip.s_addr = htonl(0xC6336407u); /* 198.51.100.7 */
     char code[ROOM_CODE_BUF_LEN] = { 0 };
     int rc = 0;
-    if (!RoomCode_Encode((uint32_t)host_ip.s_addr, 6000, code)) {
+    if (!RoomCode_Encode((uint32_t)host_ip.s_addr, 6000, 0x0BB, code)) {
         FAIL("test8", "RoomCode_Encode failed");
         rc = 1;
         goto done;
@@ -1434,7 +1456,7 @@ static int test_posthandoff_failure_report(void) {
     host_ip.s_addr = htonl(0xC6336407u); /* 198.51.100.7 (TEST-NET-2) */
     char code[ROOM_CODE_BUF_LEN] = { 0 };
     int rc = 0;
-    if (!RoomCode_Encode((uint32_t)host_ip.s_addr, 6000, code)) {
+    if (!RoomCode_Encode((uint32_t)host_ip.s_addr, 6000, 0x0BB, code)) {
         FAIL("test9", "RoomCode_Encode failed");
         rc = 1;
         goto done;

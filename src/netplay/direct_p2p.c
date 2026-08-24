@@ -126,6 +126,15 @@ typedef struct {
     uint8_t punch_token[STUN_PUNCH_TOKEN_LEN];
     bool punch_token_valid;
 
+    /* S4b room-code nonce (12 bits). HOST: drawn from the CSPRNG by
+     * host_thread_fn right before the room code is encoded; kept
+     * STABLE across a drift re-encode (the endpoint change already
+     * forces a new code/key/token — regenerating the nonce too would
+     * add nothing) and regenerated per hosting attempt. JOINER: decoded
+     * from the room code by BeginJoin. Feeds the session-key and
+     * punch-token derivations on both roles. */
+    uint16_t nonce;
+
     /* Parsed rendezvous endpoint cache; populated in BeginHost/BeginJoin
      * once 5b/5c land. Holds the result of parsing the signal-url config
      * value (host:port). Both fields zero in 5a — no callers yet. */
@@ -972,7 +981,8 @@ static int SDLCALL host_rendezvous_thread_fn(void* data) {
      * the room code whenever UPnP maps a different external port. */
     uint8_t session_key[16];
     uint32_t ip_be = ipv4_str_to_be(s_work.stun.public_ip);
-    if (!Rendezvous_DeriveSessionKey(ip_be, s_work.advertised_port, session_key)) {
+    if (!Rendezvous_DeriveSessionKey(ip_be, s_work.advertised_port, s_work.nonce,
+                                     session_key)) {
         SDL_Log("[direct_p2p] rendezvous: failed to derive session key");
         NET_UnrefAddress(signal_addr);
         return 0;
@@ -1238,8 +1248,20 @@ static int SDLCALL host_thread_fn(void* data) {
      * room_code.h for the rationale. */
     uint16_t pub_port = upnp_ok ? s_upnp_mapping.external_port : s_work.stun.public_port;
     uint32_t ip_be = ipv4_str_to_be(s_work.stun.public_ip);
+    /* S4b: fresh CSPRNG nonce per hosting attempt — mixed into the code
+     * payload, the rendezvous session key, and the punch token, so
+     * neither can be derived from the observable (ip, port) alone.
+     * Fail closed on CSPRNG failure: a predictable nonce would silently
+     * void the protection (see RoomCode_GenerateNonce). */
+    if (!RoomCode_GenerateNonce(&s_work.nonce)) {
+        SDL_Log("[direct_p2p] CSPRNG unavailable — cannot generate a room-code nonce");
+        Stun_CloseSocket(&s_work.stun);
+        set_fail(CONNECT_FAIL_INTERNAL);
+        set_state(DIRECT_P2P_FAILED_STUN);
+        return 0;
+    }
     if (ip_be == 0 ||
-        !RoomCode_Encode(ip_be, pub_port, s_work.host_code)) {
+        !RoomCode_Encode(ip_be, pub_port, s_work.nonce, s_work.host_code)) {
         Stun_CloseSocket(&s_work.stun);
         set_fail(CONNECT_FAIL_INTERNAL);
         set_state(DIRECT_P2P_FAILED_STUN);
@@ -1257,7 +1279,7 @@ static int SDLCALL host_thread_fn(void* data) {
      * datagram gate would ignore every punch, so an unjoinable room
      * must not be advertised at all. */
     s_work.punch_token_valid =
-        Rendezvous_DerivePunchToken(ip_be, pub_port, s_work.punch_token);
+        Rendezvous_DerivePunchToken(ip_be, pub_port, s_work.nonce, s_work.punch_token);
     if (!s_work.punch_token_valid) {
         Stun_CloseSocket(&s_work.stun);
         set_fail(CONNECT_FAIL_INTERNAL);
@@ -1380,7 +1402,7 @@ static DirectP2PState join_attempt(void) {
     {
         uint32_t token_host_ip_be = ipv4_str_to_be(s_work.peer_ip);
         if (!Rendezvous_DerivePunchToken(token_host_ip_be, s_work.peer_public_port,
-                                         punch_token)) {
+                                         s_work.nonce, punch_token)) {
             Stun_CloseSocket(&s_work.stun);
             set_fail(CONNECT_FAIL_INTERNAL);
             return DIRECT_P2P_FAILED_STUN;
@@ -1500,7 +1522,8 @@ static DirectP2PState join_attempt(void) {
          * sides MUST hash the host's tuple to wind up in the same slot. */
         uint8_t session_key[16];
         uint32_t host_ip_be = ipv4_str_to_be(s_work.peer_ip);
-        if (!Rendezvous_DeriveSessionKey(host_ip_be, s_work.peer_public_port, session_key)) {
+        if (!Rendezvous_DeriveSessionKey(host_ip_be, s_work.peer_public_port,
+                                         s_work.nonce, session_key)) {
             SDL_Log("[direct_p2p] joiner fallback: failed to derive session key");
             NET_UnrefAddress(signal_addr);
             Stun_CloseSocket(&s_work.stun);
@@ -1978,7 +2001,10 @@ static void host_handle_stun_rebind(const uint8_t* buf, int len) {
     uint16_t new_adv_port = s_upnp_mapping.active ? s_upnp_mapping.external_port : port;
     uint32_t ip_be = ipv4_str_to_be(ip);
     char new_code[ROOM_CODE_BUF_LEN];
-    if (ip_be != 0 && RoomCode_Encode(ip_be, new_adv_port, new_code) &&
+    /* S4b: the nonce stays STABLE across a drift re-encode — the
+     * endpoint change already yields a new code/key/token, and the
+     * nonce's job (unguessable derivations) is done either way. */
+    if (ip_be != 0 && RoomCode_Encode(ip_be, new_adv_port, s_work.nonce, new_code) &&
         strcmp(new_code, s_work.host_code) != 0) {
         SDL_Log("[direct_p2p] room code re-encoded: %s -> %s",
                 s_work.host_code, new_code);
@@ -1993,7 +2019,7 @@ static void host_handle_stun_rebind(const uint8_t* buf, int len) {
      * that). Fail closed on derivation failure — better to ignore
      * punches than to accept unauthenticated ones. */
     s_work.punch_token_valid =
-        Rendezvous_DerivePunchToken(ip_be, new_adv_port, s_work.punch_token);
+        Rendezvous_DerivePunchToken(ip_be, new_adv_port, s_work.nonce, s_work.punch_token);
     if (!s_work.punch_token_valid) {
         SDL_Log("[direct_p2p] WARNING: punch-token re-derivation failed after "
                 "endpoint drift — punches will be ignored until re-host");
@@ -2044,7 +2070,8 @@ static bool try_handle_deliver(const uint8_t* pkt, int len) {
      * decoded room code). See the advertised_port field comment. */
     uint32_t ip_be = ipv4_str_to_be(s_work.stun.public_ip);
     uint8_t session_key[16];
-    if (!Rendezvous_DeriveSessionKey(ip_be, s_work.advertised_port, session_key)) {
+    if (!Rendezvous_DeriveSessionKey(ip_be, s_work.advertised_port, s_work.nonce,
+                                     session_key)) {
         SDL_Log("[direct_p2p] DELIVER drop: failed to derive session key");
         return true;
     }
@@ -2351,10 +2378,18 @@ void DirectP2P_BeginJoin(const char* peer_code) {
      * surface immediately, not after a STUN round-trip. (S3: safe to
      * memset s_work here — state == IDLE guarantees any previous worker
      * has published its terminal state, which happens-after its last
-     * s_work write.) */
+     * s_work write.)
+     *
+     * S4b: the decode result is a tri-state-plus — a checksum-valid
+     * 11-char v1 code and an unknown-version 14-char code each get
+     * their own explanation (CONNECT_FAIL_CODE_VERSION) instead of the
+     * mysterious generic "Invalid room code.". */
     uint32_t ip_be = 0;
     uint16_t pub_port = 0;
-    if (!RoomCode_Decode(peer_code, &ip_be, &pub_port)) {
+    uint16_t code_nonce = 0;
+    const RoomCodeDecodeResult dec =
+        RoomCode_Decode(peer_code, &ip_be, &pub_port, &code_nonce);
+    if (dec != ROOM_CODE_OK) {
         /* Review L-1: same belt-and-braces release the normal path does
          * before ITS memset — a ref'd STUN server address left in
          * s_work.stun by an earlier session must not be leaked by the
@@ -2363,7 +2398,23 @@ void DirectP2P_BeginJoin(const char* peer_code) {
         memset(&s_work, 0, sizeof(s_work));
         s_work.role = ROLE_JOIN;
         s_outcome_reported = false;
-        set_fail(CONNECT_FAIL_INVALID_CODE);
+        switch (dec) {
+        case ROOM_CODE_OLD_FORMAT:
+            SDL_Log("[direct_p2p] room code is a valid PRE-S4b (v1) code — "
+                    "the host runs an older build");
+            set_fail_msg(CONNECT_FAIL_CODE_VERSION,
+                         "Code is from an older game version.");
+            break;
+        case ROOM_CODE_FUTURE_VERSION:
+            SDL_Log("[direct_p2p] room code carries an unknown format-version "
+                    "char — created by a newer build?");
+            set_fail_msg(CONNECT_FAIL_CODE_VERSION,
+                         "Code is from a newer game version.");
+            break;
+        default:
+            set_fail(CONNECT_FAIL_INVALID_CODE);
+            break;
+        }
         set_state(DIRECT_P2P_FAILED_PUNCH);
         return;
     }
@@ -2414,6 +2465,7 @@ void DirectP2P_BeginJoin(const char* peer_code) {
     SDL_strlcpy(s_work.peer_code, peer_code, sizeof(s_work.peer_code));
     SDL_strlcpy(s_work.peer_ip, peer_ip, sizeof(s_work.peer_ip));
     s_work.peer_public_port = pub_port;
+    s_work.nonce = code_nonce; /* S4b: feeds session-key + punch-token derivation */
 
     s_thread = SDL_CreateThread(join_thread_fn, "DirectP2PJoin", NULL);
     if (s_thread == NULL) {

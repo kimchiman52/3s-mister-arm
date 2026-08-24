@@ -30,10 +30,12 @@
 
 #define REND_KEY_LEN          16
 
-/* The 6-byte payload that both peers hash to derive the session key.
- * Must byte-match room_code.c's raw payload exactly: 4 IPv4 octets in
- * network byte order followed by the public port stored big-endian. */
-#define REND_KEY_PAYLOAD_LEN  6
+/* The 8-byte canonical serialization of the v2 room-code payload that
+ * both peers hash to derive the session key and the punch token:
+ * 4 IPv4 octets in network byte order, the public port big-endian,
+ * then the 12-bit nonce as a 16-bit big-endian value (top 4 bits
+ * zero). Byte-aligned equivalent of room_code.c's 60-bit packing. */
+#define REND_KEY_PAYLOAD_LEN  8
 
 /* Big-endian byte-stream helpers — explicit reads/writes avoid any
  * struct-cast / alignment / host-endian dependency. */
@@ -61,17 +63,17 @@ static uint16_t read_be16(const uint8_t* p) {
 }
 
 /* Shared derivation core for the session key and the S4a punch token.
- * Hashes `domain` (optional, may be NULL/empty — the legacy session-key
- * derivation is domain-less for wire compatibility) followed by the
- * 6-byte payload, then copies the first out_len digest bytes out.
- * Zeroes the output and returns false on any failure. */
+ * Hashes the domain-separation string followed by the 8-byte canonical
+ * v2 payload (ip[4] || port_be[2] || nonce_be[2]), then copies the
+ * first out_len digest bytes out. Zeroes the output and returns false
+ * on any failure. */
 static bool rend_derive(const char* domain,
-                        uint32_t ip_be, uint16_t public_port,
+                        uint32_t ip_be, uint16_t public_port, uint16_t nonce,
                         uint8_t* out, size_t out_len) {
     if (!out) {
         return false;
     }
-    if (ip_be == 0) {
+    if (ip_be == 0 || nonce > 0x0FFFu) {
         memset(out, 0, out_len);
         return false;
     }
@@ -79,20 +81,22 @@ static bool rend_derive(const char* domain,
     /* Match room_code.c: ip_be is a uint32_t whose in-memory bytes are
      * the IPv4 octets in network byte order (as produced by inet_pton
      * into `struct in_addr.s_addr`). memcpy reads those four bytes in
-     * order, byte-for-byte, regardless of host endianness — so the
-     * 6-byte payload here is bit-identical to room_code.c's raw[6]. */
+     * order, byte-for-byte, regardless of host endianness. Port and
+     * nonce are serialized big-endian; the nonce's top 4 bits are zero
+     * by the range check above. */
     uint8_t payload[REND_KEY_PAYLOAD_LEN];
     memcpy(&payload[0], &ip_be, 4);
     payload[4] = (uint8_t)((public_port >> 8) & 0xFFu);
     payload[5] = (uint8_t)(public_port & 0xFFu);
+    payload[6] = (uint8_t)((nonce >> 8) & 0x0Fu);
+    payload[7] = (uint8_t)(nonce & 0xFFu);
 
     sha256 sha;
     if (!sha256_init(&sha)) {
         memset(out, 0, out_len);
         return false;
     }
-    if (domain != NULL && domain[0] != '\0' &&
-        !sha256_append(&sha, domain, strlen(domain))) {
+    if (!sha256_append(&sha, domain, strlen(domain))) {
         memset(out, 0, out_len);
         return false;
     }
@@ -111,17 +115,19 @@ static bool rend_derive(const char* domain,
 
 bool Rendezvous_DeriveSessionKey(uint32_t ip_be,
                                  uint16_t public_port,
+                                 uint16_t nonce,
                                  uint8_t out_key[16]) {
-    /* No domain string: the pre-S4 session-key derivation is preserved
-     * byte-for-byte (SHA-256 over the bare payload, first 16 bytes). */
-    return rend_derive(NULL, ip_be, public_port, out_key, REND_KEY_LEN);
+    /* Domain-separated v2 derivation (see rendezvous.h). BREAKING vs
+     * the v1 bare-payload hash — shipped with the v2 room-code format. */
+    return rend_derive("3SXR-SK2", ip_be, public_port, nonce,
+                       out_key, REND_KEY_LEN);
 }
 
 bool Rendezvous_DerivePunchToken(uint32_t ip_be,
                                  uint16_t public_port,
+                                 uint16_t nonce,
                                  uint8_t out_token[REND_PUNCH_TOKEN_LEN]) {
-    /* Domain-separated from the session key (see rendezvous.h). */
-    return rend_derive("3SXR-PT", ip_be, public_port,
+    return rend_derive("3SXR-PT2", ip_be, public_port, nonce,
                        out_token, REND_PUNCH_TOKEN_LEN);
 }
 
