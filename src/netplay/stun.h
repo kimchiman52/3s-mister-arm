@@ -39,6 +39,13 @@ typedef struct {
     int diag_servers_answered; /* slots with a parseable Binding Response */
     int diag_sends_ok;         /* NET_SendDatagram calls that reported success */
     bool diag_dns_all_failed;  /* every configured hostname failed getaddrinfo */
+    /* S3-review M-2: discovery failed LOCALLY before any probing (UDP
+     * socket creation/bind failed — fd exhaustion, EADDRINUSE, ...).
+     * With every other counter zero this case is indistinguishable from
+     * "no network at all", and the all-zeros classifier fallback used to
+     * misreport it as DNS_ALLDOWN ("No internet connection"). Callers
+     * classify it as CONNECT_FAIL_INTERNAL instead. */
+    bool diag_socket_fail;
 } StunResult;
 
 /// Perform STUN Binding Requests (RFC 5389) against the built-in server

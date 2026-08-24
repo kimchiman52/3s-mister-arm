@@ -1109,10 +1109,16 @@ static int SDLCALL host_thread_fn(void* data) {
         return 0;
     }
     if (!stun_ok) {
-        /* S3 causes 1-2 (host side): same classification as the joiner. */
-        set_fail(ConnectFail_ClassifyStunDiscover(
-            s_work.stun.diag_servers_probed, s_work.stun.diag_servers_answered,
-            s_work.stun.diag_sends_ok, s_work.stun.diag_dns_all_failed));
+        /* S3 causes 1-2 (host side): same classification as the joiner.
+         * Review M-2: a local socket-creation failure is not a network
+         * condition — classify INTERNAL, not "no internet". */
+        set_fail(s_work.stun.diag_socket_fail
+                     ? CONNECT_FAIL_INTERNAL
+                     : ConnectFail_ClassifyStunDiscover(
+                           s_work.stun.diag_servers_probed,
+                           s_work.stun.diag_servers_answered,
+                           s_work.stun.diag_sends_ok,
+                           s_work.stun.diag_dns_all_failed));
         set_state(DIRECT_P2P_FAILED_STUN);
         return 0;
     }
@@ -1250,10 +1256,16 @@ static DirectP2PState join_attempt(void) {
     }
     if (!stun_ok) {
         /* S3 causes 1-2: distinguish "no network / DNS dead" from
-         * "outbound UDP filtered" using the discovery evidence. */
-        set_fail(ConnectFail_ClassifyStunDiscover(
-            s_work.stun.diag_servers_probed, s_work.stun.diag_servers_answered,
-            s_work.stun.diag_sends_ok, s_work.stun.diag_dns_all_failed));
+         * "outbound UDP filtered" using the discovery evidence.
+         * Review M-2: a local socket-creation failure is neither —
+         * classify INTERNAL, not "no internet". */
+        set_fail(s_work.stun.diag_socket_fail
+                     ? CONNECT_FAIL_INTERNAL
+                     : ConnectFail_ClassifyStunDiscover(
+                           s_work.stun.diag_servers_probed,
+                           s_work.stun.diag_servers_answered,
+                           s_work.stun.diag_sends_ok,
+                           s_work.stun.diag_dns_all_failed));
         return DIRECT_P2P_FAILED_STUN;
     }
 

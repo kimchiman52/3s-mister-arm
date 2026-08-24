@@ -383,6 +383,11 @@ bool Stun_Discover(StunResult* result, uint16_t local_port, int timeout_ms) {
     }
     if (!sock) {
         SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "STUN: Failed to create UDP socket: %s", SDL_GetError());
+        /* S3-review M-2: local socket failure, not a network condition —
+         * all diag counters are zero (memset above) and without this flag
+         * the classifier's all-zeros fallback would misreport "No
+         * internet connection (DNS failed)". */
+        result->diag_socket_fail = true;
         return false;
     }
 
