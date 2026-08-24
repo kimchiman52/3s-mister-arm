@@ -277,33 +277,62 @@ assign LED_POWER[0]= FB ? led[2] : act_cnt2[26] ? act_cnt2[25:18] > act_cnt2[7:0
 `include "build_id.v" 
 localparam CONF_STR = {
 	"MENU;UART31250,MIDI;",
-	// Bit 30 was V-Position's middle bit through release v20260416, so old
-	// 3S-ARM.CFG files may carry it set. Safe only because the wrapper seeds
-	// [30] from the game config AFTER CFG load (thirdsarm_wrapper.cpp) —
-	// keep that ordering if this bit ever moves.
-	"O[30],Arcade Balance,Off,On;",
+	// Read-only status row — NOT an option, and deliberately without a
+	// status bit. Arcade-vs-PS2 balance auto-selects at game boot (ROM
+	// present + full 20-character adaptation -> arcade, else PS2) and
+	// cannot be toggled from the OSD; the old "O[30],Arcade Balance,Off,On;"
+	// row became a placebo the moment the game stopped reading the
+	// `arcade-balance` config key, so it was removed and bit [30] is now
+	// retired. menu.cpp substitutes the live value from
+	// /media/fat/games/3s-arm/balance.status into any text row whose label
+	// is exactly "Balance:" (thirdsarm_balance_status_line() in
+	// thirdsarm_wrapper.cpp, wired up by
+	// tools/mister-wrapper/main-mister-full-menu.patch) — keep the label
+	// byte-identical if this row ever moves. See docs/mister-wrapper.md
+	// "Balance Status Line".
+	"-,Balance:;",
 	"T[29],Play Online;",
+	"T[23],Button Check;",
 	"-;",
-	"O[13],Game Mode,Console,Arcade;",
-	"O[24],Hold to Pause,Off,On;",
+	// Pages. Reordering rows is presentation-only: the HPS wrapper keys
+	// every option and trigger on its BIT NUMBER, never on menu position
+	// (thirdsarm_wrapper.cpp's user_io_status_get/set calls all take a
+	// literal "[n]" / "[hi:lo]"). The P<n> syntax below is the one proven
+	// by 57ec219d, which shipped a "P1,Performance;" page in this same
+	// config string.
+	"P1,Game;",
+	"P1O[13],Game Mode,Console,Arcade;",
+	// Bit 47 is brand new: it has never appeared in any CONF_STR in this
+	// tree's history, in any user_io_status_* call in the wrapper, or in
+	// upstream Main_MiSTer's MENU-core handling (which owns [0], [3:1] and
+	// [4]), so no existing 3S-ARM.CFG can carry it set. That is why it was
+	// chosen over the tempting reuse candidates: [30] (ex-Arcade Balance,
+	// and V-Position's middle bit before v20260416) and [15]/[18:16]
+	// (the retired SA-quality rows). [31] stays reserved for the replay
+	// browser. The wrapper still seeds [47] from the game config after the
+	// CFG load, in the same block as [14], because the game config is
+	// authoritative for every wrapper-owned option.
+	"P1O[47],Language,English,Japanese;",
 	// Bit 14 was "SA Activation"'s bit (a retired super-effect-quality OSD
 	// row) before that row was removed, so old 3S-ARM.CFG files may carry
 	// it set. Safe only because the wrapper seeds [14] from the game
-	// config AFTER CFG load (thirdsarm_wrapper.cpp) — same defense as
-	// [30] (Arcade Balance) — keep that ordering if this bit ever moves.
-	"O[14],BGM Type,Arranged,Original;",
-	"O[11:10],FPS Counter,Off,FPS,Debug;",
-	"T[23],Button Check;",
-	"-;",
-	"O[12],Aspect Ratio,4:3,Full;",
-	"O[32],Vertical Crop,Disabled,216p(5x);",
-	"O[36:33],Crop Offset,0,2,4,6,8,10,-12,-10,-8,-6,-4,-2;",
-	"O[38:37],Scale,Normal,V-Integer,Narrower HV-Integer,Wider HV-Integer;",
-	"O[42:39],H Size,0,+1,+2,+3,+4,-4,-3,-2,-1;",
-	"O[28:25],H Position,0,+1,+2,+3,+4,+5,+6,+7,-8,-7,-6,-5,-4,-3,-2,-1;",
-	"O[46:43],V Position,0,+1,+2,+3,+4,+5,+6,+7,-8,-7,-6,-5,-4,-3,-2,-1;",
-	"-;",
-	"O[20:19],Overclock,Stock,1000MHz,1200MHz;",
+	// config AFTER CFG load (thirdsarm_wrapper.cpp) — keep that ordering
+	// if this bit ever moves.
+	"P1O[14],BGM Type,Arranged,Original;",
+	"P1O[24],Hold to Pause,Off,On;",
+	"P1O[11:10],FPS Counter,Off,FPS,Debug;",
+	"P2,Video;",
+	"P2O[12],Aspect Ratio,4:3,Full;",
+	"P2O[32],Vertical Crop,Disabled,216p(5x);",
+	"P2O[36:33],Crop Offset,0,2,4,6,8,10,-12,-10,-8,-6,-4,-2;",
+	"P2O[38:37],Scale,Normal,V-Integer,Narrower HV-Integer,Wider HV-Integer;",
+	"P2O[42:39],H Size,0,+1,+2,+3,+4,-4,-3,-2,-1;",
+	"P2O[28:25],H Position,0,+1,+2,+3,+4,+5,+6,+7,-8,-7,-6,-5,-4,-3,-2,-1;",
+	"P2O[46:43],V Position,0,+1,+2,+3,+4,+5,+6,+7,-8,-7,-6,-5,-4,-3,-2,-1;",
+	// Overclock is the only System row today. The page stays: netplay
+	// diagnostics / status rows land here next.
+	"P3,System;",
+	"P3O[20:19],Overclock,Stock,1000MHz,1200MHz;",
 	"-;",
 	"T[21],Reset to Default;",
 	"T[22],Restart;",
@@ -314,7 +343,12 @@ localparam CONF_STR = {
 };
 
 wire forced_scandoubler;
-wire [46:0] status;
+// Width tracks the highest bit the CONF_STR above declares ([47], Language).
+// [47] is HPS-side only — nothing in this file reads it — but keeping the
+// wire wide enough to cover the whole config string preserves the invariant
+// that every declared bit exists here. hps_io drives a 128-bit status; the
+// connection simply truncates.
+wire [47:0] status;
 
 hps_io #(.CONF_STR(CONF_STR), .CONF_STR_BRAM(1)) hps_io
 (
