@@ -21,8 +21,22 @@ const DELIVER_LEN = 32;
 
 // --- Tunables ----------------------------------------------------------------
 
-const SESSION_TTL_MS = 60 * 1000;
+// S1 host liveness (docs/plan-netplay-connection.md): 10 minutes, up from
+// 60 s. A host now re-REGISTERs every ~5 s for as long as it displays a
+// room code, so lastTouch stays fresh regardless — but the TTL must also
+// cover a host whose re-REGISTER packets are lost or whose client predates
+// S1, and it bounds how long a code shared over chat/voice stays pair-able.
+// Memory exposure at this TTL is bounded by MAX_SESSIONS below.
+const SESSION_TTL_MS = 10 * 60 * 1000;
 const SESSION_SWEEP_INTERVAL_MS = 5 * 1000;
+
+// Hard cap on concurrently-tracked sessions. Each entry is two endpoint
+// objects + a hex key (~250 bytes) => worst case ~1 MB. Before S1 the 60 s
+// TTL implicitly bounded slot-squatting; at 10 minutes an abuser inside the
+// per-IP rate limit (10 pkt/s) could otherwise park ~6000 keys per IP.
+// When full, REGISTERs for brand-new keys are dropped (logged); existing
+// sessions keep working, so a squatter cannot evict live hosts.
+const MAX_SESSIONS = 4096;
 const RATE_SWEEP_INTERVAL_MS = 60 * 1000;
 const RATE_WINDOW_MS = 1000;
 const RATE_LIMIT_PER_WINDOW = 10;
@@ -183,6 +197,10 @@ function handleRegister(socket, buf, rinfo) {
     let pairedPeer = null; // endpoint to receive an unsolicited DELIVER if we just paired
 
     if (!entry) {
+        if (sessionMap.size >= MAX_SESSIONS) {
+            logWarn(`REGISTER from ${source.address}:${source.port} dropped — session table full (${sessionMap.size}/${MAX_SESSIONS})`);
+            return;
+        }
         entry = { endpointA: source, endpointB: null, lastTouch: nowMs() };
         sessionMap.set(hexKey, entry);
     } else if (entry.endpointA && endpointEq(entry.endpointA, source)) {
@@ -346,6 +364,8 @@ function start(port) {
         socket,
         _sessionMap: sessionMap,
         _rateMap: rateMap,
+        _sessionTtlMs: SESSION_TTL_MS,
+        _maxSessions: MAX_SESSIONS,
         _sweepNow() {
             sweepSessions();
             sweepRates();

@@ -276,6 +276,90 @@ async function testRateLimit(serverPort) {
     }
 }
 
+async function testSessionTtl(handle, serverPort) {
+    // S1 host liveness: TTL is 10 minutes (was 60 s). Verify (a) the
+    // constant, (b) a session aged past the OLD 60 s TTL survives a sweep
+    // and is still pair-able, (c) a session aged past the new TTL is
+    // evicted. Aging is simulated by rewinding lastTouch through the
+    // _sessionMap hook — the sweep itself runs the real eviction code.
+    assertEq(handle._sessionTtlMs, 10 * 60 * 1000, 'SESSION_TTL_MS is 10 minutes');
+
+    const sessionKey = crypto.randomBytes(16);
+    const hexKey = sessionKey.toString('hex');
+    const a = await makeClient();
+    const b = await makeClient();
+    try {
+        await a.send(makeRegister(sessionKey, a.port), serverPort);
+        await a.recv(500); // pending DELIVER
+        const entry = handle._sessionMap.get(hexKey);
+        assert(entry !== undefined, 'TTL: session exists after REGISTER');
+
+        // (b) Age 61 s — dead under the old 60 s TTL, alive under 10 min.
+        entry.lastTouch -= 61 * 1000;
+        handle._sweepNow();
+        assert(handle._sessionMap.has(hexKey), 'TTL: session survives sweep at age 61s');
+
+        // ...and still pair-able: B registers the same key and must get
+        // A's endpoint back, and A must get the unsolicited DELIVER push.
+        await b.send(makeRegister(sessionKey, b.port), serverPort);
+        const bReply = decodeDeliver((await b.recv(500)).buf);
+        assertEq(bReply.peerIp, '127.0.0.1', 'TTL: B paired with aged-61s host (ip)');
+        assertEq(bReply.peerPort, a.port, 'TTL: B paired with aged-61s host (port)');
+        const aPush = decodeDeliver((await a.recv(500)).buf);
+        assertEq(aPush.peerPort, b.port, 'TTL: aged host still receives DELIVER push');
+
+        // (c) Age past the full TTL — must be evicted by the real sweep.
+        entry.lastTouch -= 10 * 60 * 1000 + 1000;
+        handle._sweepNow();
+        assert(!handle._sessionMap.has(hexKey), 'TTL: session evicted past 10 minutes');
+    } finally {
+        await a.close();
+        await b.close();
+    }
+}
+
+async function testSessionCap(handle, serverPort) {
+    // Fill the table to MAX_SESSIONS with synthetic entries, then verify a
+    // REGISTER for a brand-new key is dropped (no reply, no growth) while
+    // a REGISTER touching an EXISTING session still works.
+    const existingKey = crypto.randomBytes(16);
+    const c = await makeClient();
+    try {
+        await c.send(makeRegister(existingKey, c.port), serverPort);
+        await c.recv(500);
+
+        const before = handle._sessionMap.size;
+        for (let i = handle._sessionMap.size; i < handle._maxSessions; i++) {
+            handle._sessionMap.set(`fake${i}`, {
+                endpointA: { address: '203.0.113.1', port: 1000 + (i % 60000) },
+                endpointB: null,
+                lastTouch: Date.now(),
+            });
+        }
+        assertEq(handle._sessionMap.size, handle._maxSessions, 'cap: table filled to MAX_SESSIONS');
+
+        handle._resetRate();
+        const newKey = crypto.randomBytes(16);
+        await c.send(makeRegister(newKey, c.port), serverPort);
+        const dropped = await c.tryRecv(200);
+        assert(dropped === null, 'cap: REGISTER for new key at cap produces no reply');
+        assertEq(handle._sessionMap.size, handle._maxSessions, 'cap: table did not grow past MAX_SESSIONS');
+
+        // Existing session still serviced at cap.
+        await c.send(makeRegister(existingKey, c.port), serverPort);
+        const ok = await c.tryRecv(500);
+        assert(ok !== null, 'cap: REGISTER for existing key at cap still replies');
+
+        // Cleanup synthetic entries so later logic isn't affected.
+        for (const k of [...handle._sessionMap.keys()]) {
+            if (k.startsWith('fake')) handle._sessionMap.delete(k);
+        }
+        void before;
+    } finally {
+        await c.close();
+    }
+}
+
 async function testSweepHook(handle) {
     // The sweep hook exists and is callable. We don't try to time-warp; just
     // assert calling it doesn't throw and doesn't crash the server.
@@ -310,6 +394,10 @@ async function main() {
         await testPollAfterRegister(serverPort);   // 2 packets
         handle._resetRate();
         await testRateLimit(serverPort);
+        handle._resetRate();
+        await testSessionTtl(handle, serverPort);   // 3 packets
+        handle._resetRate();
+        await testSessionCap(handle, serverPort);   // 4 packets
         handle._resetRate();
         await testSweepHook(handle);
     } catch (err) {
