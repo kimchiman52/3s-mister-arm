@@ -2050,6 +2050,21 @@ async function testRelayBindFailureStillGrantsAWorkingPort(handle, serverPort) {
         const got = await b.tryRecv(1000);
         assert(got !== null && got.buf.equals(payload),
             'relay-bind: bytes cross the relay that survived a bind failure');
+
+        // The one path where the callback rework could otherwise produce
+        // SILENCE: a relay torn down before its bind landed. Its waiters
+        // must still get an explicit refusal, because a client that cannot
+        // tell "refused" from "server gone" is the reporting defect 6.5
+        // documents. Drive it directly -- there is no way to lose a bind
+        // race deterministically.
+        const answers = [];
+        const key2 = crypto.randomBytes(16);
+        const hex2 = key2.toString('hex');
+        handle._relayAllocateForTest(hex2, (r) => answers.push(r));
+        assertEq(answers.length, 0, 'relay-bind: nothing is answered before the bind lands');
+        handle._relayReleaseForTest(hex2, 'torn down mid-bind');
+        assertEq(answers.length, 1, 'relay-bind: a relay torn down mid-bind still answers its waiter');
+        assertEq(answers[0], null, 'relay-bind: ...with an explicit refusal, not silence');
     } finally {
         await a.close();
         await b.close();

@@ -634,6 +634,19 @@ function relayRelease(hexKey, why) {
     if (r === undefined) return;
     relayMap.delete(hexKey);
     relayPortInUse.delete(r.port);
+    // A relay torn down before its bind landed (shutdown, or a test reset)
+    // still owes an answer to every RELAY_REQ waiting on it. Answer them
+    // with an explicit refusal rather than dropping them: a client that
+    // cannot tell "refused" from "server gone" is the exact reporting
+    // defect §6.5 documents, and this is the one path where the review
+    // MEDIUM-2 rework could otherwise produce silence. The bind-failure
+    // handler drains `waiters` itself before calling us (it RETRIES rather
+    // than refuses), so this never double-answers.
+    if (r.waiters && r.waiters.length > 0) {
+        const waiting = r.waiters;
+        r.waiters = [];
+        for (const w of waiting) w(null);
+    }
     try {
         r.socket.close();
     } catch (_) {
@@ -1673,6 +1686,15 @@ function start(port) {
         },
         _relaySweepNow() {
             sweepRelays();
+        },
+        // Drive relayAllocate / relayRelease directly. The only way to
+        // exercise the "torn down before bind landed" path deterministically
+        // — a real bind race cannot be lost on demand.
+        _relayAllocateForTest(hexKey, cb) {
+            relayAllocate(hexKey, cb);
+        },
+        _relayReleaseForTest(hexKey, why) {
+            relayRelease(hexKey, why || 'test');
         },
         // Inject a datagram into a relay as if it arrived from `rinfo`,
         // optionally capturing the relay's outbound sends. Same shape and
