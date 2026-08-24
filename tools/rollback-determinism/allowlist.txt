@@ -1,0 +1,86 @@
+# Rollback-determinism harness allowlist.
+#
+# Symbols listed here are EXPECTED to differ between a baseline run and a
+# rollback run, for a verified benign reason stated on the entry. The
+# driver never silently ignores anything: allowlisted hits are still
+# printed (verdict ALLOWED, with the reason) — they just don't fail the
+# run. Format: fnmatch pattern, optional `# reason` (reason mandatory by
+# convention; review rejects reasonless entries).
+#
+# Rule of thumb: an entry belongs here only if the divergence is (a) an
+# artifact of the harness/diagnostics themselves, or (b) state that is
+# demonstrably write-only fan-out from the simulation (sound/render
+# request sinks) whose divergence cannot feed back into gameplay. When in
+# doubt, leave it OUT and let the run fail — a catalogued finding beats a
+# hidden one. See docs/rollback-determinism-harness.md ("Reading the
+# output").
+
+# --- rollback-path bookkeeping in src/netplay/game_state.c ---------------
+# These are written by save_current_state()/save_state() — i.e. only when
+# rollbacks happen — purely for the desync post-mortem dump. Never read by
+# the simulation.
+state_buffer               # desync-diag State ring (note_state), diag-only
+saved_section_checksums    # per-section checksum ring for dump_desync_state, diag-only
+saved_plw_scratch          # sanitized-PLW ring for dump_desync_state, diag-only
+saved_field_hashes         # per-field hash ring for dump_desync_state, diag-only
+save_current_state.*       # function-static sanitized-PLW scratch inside the save path
+s_save_scratch             # save_state()'s scratch State (encoder input), diag/encode only
+battle_start_frame         # first-save latch inside save_current_state, log-only
+
+# --- harness's own process state ------------------------------------------
+configuration              # holds the CLI flag values + const char* pointers into the argv block; the rollback run's flags differ from the baseline's BY CONSTRUCTION (--rbd-rollback-period)
+
+# --- diagnostic counters / rate-limited log latches -----------------------
+# Write-only counters read back only by debug prints / the desync dump.
+g_random_16_calls          # pls02.c:622 RNG call counter, read only by dump_desync_state's fprintf (game_state.c:2324)
+g_random_32_calls          # pls02.c:621, same (game_state.c:2323)
+*.s_pctn_log               # ppgCheckTextureNumber rate-limited debug print counter
+*.s_log_count              # bgDrawOneChip rate-limited debug print counter
+*.s_dbg_count              # BG_Draw_System rate-limited debug print counter
+fd_engine_*                # frame-data overlay engine probes (docs/plan-frame-data-harness.md); read only by the DEBUG training overlay/trace, reset per frame in game_step_0
+fd_prev_active_cgix*       # frame-data overlay cg_ix edge-latch diagnostics, overlay-only consumers (frame_data_overlay.c)
+
+# --- sound output sinks (research-desync-deep-investigation.md sect A.2.3) --
+# Simulation writes requests; the SPU/CRI/ADX pipeline consumes them.
+# Nothing in this class is read back by the simulation. Speculative
+# rollback frames re-issue sound requests exactly as real netplay resim
+# legs do (the known "rollback SE duplication" phenomenon).
+ram                        # port/sound/spu.c:78 — 2 MB emulated SPU sound RAM
+sdeb                       # sound/se.c:22 SoundPatch dedup ring
+sdbd                       # sound/sound3rd.c:46 sound data bank pointers (set by color3rd/sound path)
+cseSysWork                 # CRI middleware sound work area
+PhdAddr                    # CRI PHD (sound header) pointer table
+gpTsb                      # CRI TSB (sound bank) pointer table
+
+# --- render / texture / palette sinks (research doc sect A.2.2, A.2.4) ------
+# Written by sim-side request pushes, consumed by the renderer/loader.
+palettes                   # software-renderer palette store (platform/video/software)
+ColorRAM                   # rendering/color3rd palette transfer RAM
+colPalBuffDC               # rendering/color3rd DC palette buffer
+latest_texture_spec        # software_renderer.c:123 last-texture memo for draw batching
+mts_ok                     # rendering sprite-dispatch ready flags (aboutspr/mtrans)
+texcash_melt_buffer_mem    # main.c static scratch handed to the texture cache
+tpu_free_mem               # main.c static scratch handed to the TPU allocator
+sa_frame                   # ui/sc_sub.c:392 SA-gauge HUD frame display state (cockpit rendering)
+
+# --- loader / RAM-allocator state perturbed by speculative asset requests --
+# The speculative legs re-issue load/alloc requests the restore cannot
+# rewind (queue state is deliberately outside GameState). Real netplay
+# rollbacks perturb these identically; they are consumed by the loader,
+# not read by the simulation.
+afs_handle                 # AFS async file-system handle bookkeeping
+ldreq_result               # io/gd3rd.c load-request result slots
+rckeyctr                   # system/ramcnt.c RAM-key allocator counter
+rckeymin                   # system/ramcnt.c RAM-key allocator low-water mark
+rckeyque                   # system/ramcnt.c RAM-key allocator queue
+
+# --- rumble sink (research doc sect A.2.2) ----------------------------------
+ppwork                     # io/pulpul.c:188 rumble device work
+vib_req                    # io/pulpul.c rumble request queue, consumed by pad pipeline
+
+# --- per-tick scratch re-derived before every read --------------------------
+oya_adrs                   # effect/effb3.c:19 parent pointer, assigned at the top of effect_B3_move every tick (effb3.c:32) before any read
+oya_p                      # effect/effb9.c:17 parent pointer, assigned at the top of effect_B9's move every tick (effb9.c:22) before any read
+
+# --- training-UI data (inactive as gameplay input in VS/netplay) -----------
+tr_data                    # ui/sc_data.h TrainingData2 display tables; training-menu/UI consumer only
