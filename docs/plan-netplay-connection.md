@@ -2021,7 +2021,10 @@ mapping away for no reason. `docs/config.md` updated.
 
 ### 9.6 Tests
 
-Test 18 in `test_bilateral_punch.c` (:3814), in three parts:
+Test **22** in `test_bilateral_punch.c` (`test_natpmp_pcp`), in three
+parts. (It is registered as test 22; earlier drafts of this section
+called it 18 and cited stale line numbers — the function name is the
+stable handle.)
 
 - **Codec vs literal RFC bytes**, in the spirit of test 17. The
   expectations are hand-built from the §7.1/§11.1 and §3.2/§3.3
@@ -2033,11 +2036,14 @@ Test 18 in `test_bilateral_punch.c` (:3814), in three parts:
   up. Deletion shape is pinned on both protocols, including that the
   NAT-PMP builder **forces** Suggested External Port to 0 rather than
   trusting the caller.
-- **The client against a localhost mock gateway** (:3865): PCP
-  success, the §9 downgrade to NAT-PMP, a refusal, silence, and a
-  single-backend renewal. Silence asserts the elapsed wall clock is
-  inside budget — that is the assertion that fails if the §3.1 ladder
-  ever stops being truncated — and that a retransmit actually happened.
+- **The client against a localhost mock gateway**: PCP success, the §9
+  downgrade to NAT-PMP, a refusal, silence, and a single-backend
+  renewal. Silence asserts the elapsed wall clock is inside budget and
+  that a retransmit actually happened. That was originally described as
+  "the assertion that fails if the §3.1 ladder ever stops being
+  truncated"; **it is not**, and the review proved it — the phase budget
+  clamps a nine-rung ladder to the same elapsed time. Test 23b pins the
+  shape instead.
 - **The CGNAT gate end to end** on the real host state machine, run
   **twice**: with a `100.64.5.9` external IP the advertised port must
   be STUN's, with a `198.51.100.30` one it must be the mapped port. The
@@ -2090,22 +2096,44 @@ neutralisations, now RED.
 
 | # | Patch applied | Exit | First failing assertion |
 |---|---|---|---|
-| R1 | PCP builder: swap the Internal-Port and Suggested-External-Port writes | *see below* | `22-pcp-req-internal-port` |
-| R2 | Restore RFC 6886 §3.1's full nine-rung ladder | | `23b-ladder-steps` |
-| R3 | Pin `portmap_renew_interval_for` to a flat 30 minutes | | `23b-renew-interval-120` |
-| R4 | Delete the `disable-natpmp` check in `upnp_worker_fn` | | `23c-disabled-silent` |
-| R5 | Delete the backend-ownership refusal in `Natpmp_RemoveMapping` | | `23b-own-backend1` |
-| R6 | H-6: give all three phases the one shared deadline again | | `23b-slow-gw-700` |
-| R7 | H-6: retransmit even after the gateway has answered | | `23b-slow-gw-700` |
-| R8 | H-5: mint a fresh PCP nonce on every call | | `23b-nonce-renew-differs` |
-| R9 | M-5.3: discard PCP responses shorter than 60 octets | | `23b-short-error` |
-| R10 | M-5.1: make the §3.6 epoch estimator a no-op | | `23b-epoch-reset` |
-| R11 | M-5.4: return false for an empty external IP in the CGNAT gate | | `23b-gate-empty-closed` |
-| R12 | M-5.2: flat five-minute retry regardless of lease | | `23b-renew-retry-120` |
-| R13 | M-5.5: drop the lease-expiry check from the renewal tick | | `23d-still-advertised` |
-| R14 | M-5.4: accept a mapping with a `0.0.0.0` external address | | `23b-noextip-pcp` |
-| R15 | Harness guard: consult the real default route with no mock set | | `22-addmapping-without-gateway` |
-| R16 | 23a scanner: add an unpaired DISABLE_UPNP site | | `23a-unpaired` |
+| R1 | PCP builder: swap the Internal-Port and Suggested-External-Port writes | **1** | `22-pcp-req-internal-port`: octets 40-41 carry 40001, expected 54321 |
+| R2 | Restore RFC 6886 §3.1's full nine-rung ladder | **1** | `23b-ladder-steps`: 9 rungs, expected 3 (+ `23b-ladder-count`: 5 requests, expected 3) |
+| R3 | Pin `portmap_renew_interval_for` to a flat 30 minutes | **1** | `23b-renew-interval-120`: 1800000 ms, expected 60000 ms |
+| R4 | Delete the `disable-natpmp` check in `upnp_worker_fn` | **1** | `23c-disabled-silent`: switch SET, gateway still received 3 datagrams |
+| R5 | Delete the backend-ownership refusal in `Natpmp_RemoveMapping` | **1** | `23b-own-backend1`: sent 1 NAT-PMP datagram for a UPnP-owned mapping |
+| R6 | H-6: give all three phases the one shared deadline again | **1** | `23b-noise-starved`: 0 address + 0 mapping requests in 5260 ms |
+| R7 | H-6: retransmit even after the gateway has answered | **1** | `23b-slow-gw-700`: no mapping, 3880 ms, 3 address requests |
+| R8 | H-5: mint a fresh PCP nonce on every call | **1** | `23b-nonce-renew-differs` (and `23b-nonce-del-differs`) |
+| R9 | M-5.3: discard PCP responses shorter than 60 octets | **1** | `23b-short-error`: parsed NOT_OURS, expected REFUSED (+ 3510 ms to give up) |
+| R10 | M-5.1: make the §3.6 epoch estimator a no-op | **1** | `23b-epoch-reset`: SSSoE fell 100003 → 3 and the client did not notice |
+| R11 | M-5.4: return false for an empty external IP in the CGNAT gate | **1** | `23b-gate-empty-closed` |
+| R12 | M-5.2: flat five-minute retry regardless of lease | **1** | `23b-renew-retry-120`: 300000 ms, expected 30000 ms |
+| R13 | M-5.5: drop the lease-expiry check from the renewal tick | **1** | `23d-still-advertised`: still port 41200 after 25 s on an 8 s lease |
+| R14 | M-5.4: accept a mapping with a `0.0.0.0` external address | **1** | `23b-noextip-pcp` |
+| R15 | Harness guard: consult the real default route with no mock set | **0** | **none — see below** |
+| R16 | 23a scanner: add an unpaired DISABLE_UPNP site | **1** | `23a-unpaired`, naming the offending file and line |
+
+**R15 is GREEN, and that is reported rather than hidden.** On the
+development host (macOS) `discover_gateway_platform` is the deliberate
+no-op stub (natpmp.c), so removing the harness guard changes nothing
+observable: the platform already reports no gateway. The guard is
+defense-in-depth whose value appears only on Linux, where discovery is
+real — and no macOS-observable neutralisation for it exists, because
+constructing one would mean faking a gateway, which is the exact thing
+the guard prevents. The assertion it sits behind
+(`22-addmapping-without-gateway`) is NOT vacuous in general: it goes red
+if `Natpmp_AddMapping` ever stops failing closed without a gateway. What
+cannot be demonstrated here is that the *new* guard is the thing
+producing that outcome on this platform.
+
+**R6 and R7 are separately load-bearing, and neither subsumes the
+other.** R7 (retransmit suppression removed, per-phase budgets kept)
+fails the 700 ms measurement. R6 (per-phase budgets removed, suppression
+kept) passes it — 700 ms still maps — and is caught instead by the noise
+case, where an unmatchable-PCP phase with suppression in force waits out
+a *shared* deadline and starves the NAT-PMP fallback of every datagram.
+Had only the 700 ms test been written, the per-phase budget would have
+been another vacuous guard.
 
 Nothing here can reach a real router. Three independent guards now:
 every client call goes through `Natpmp_TestHook_SetGateway` at a
