@@ -58,6 +58,12 @@ typedef struct ConfigEntry {
 /* Matches Init_sound_system()'s sys_w.bgm_type = BGM_ARRANGED default
  * (sound3rd.c) and savesub.c's BGM_ARRANGED == 0. */
 #define DEFAULT_BGM_TYPE "arranged"
+/* "auto" == no override: the settings save file (or, with no save yet,
+ * Get_Default_Language()'s locale-derived pick) decides. Language_
+ * ApplyBootOverride() materializes the resolved value over this sentinel on
+ * the first boot so the MiSTer OSD's Language row has something concrete to
+ * display. Mirrors CFG_KEY_BALANCE's "auto" sentinel below. */
+#define DEFAULT_LANGUAGE "auto"
 
 static const ConfigEntry default_entries[] = {
     { .key = CFG_KEY_FULLSCREEN, .type = CFG_BOOL, .value.b = true },
@@ -68,6 +74,7 @@ static const ConfigEntry default_entries[] = {
     { .key = CFG_DRAW_PLAYERS_ABOVE_HUD, .type = CFG_BOOL, .value.b = false },
     { .key = CFG_KEY_BALANCE, .type = CFG_STRING, .value.s = "auto" },
     { .key = CFG_KEY_BGM_TYPE, .type = CFG_STRING, .value.s = DEFAULT_BGM_TYPE },
+    { .key = CFG_KEY_LANGUAGE, .type = CFG_STRING, .value.s = DEFAULT_LANGUAGE },
     { .key = CFG_KEY_SOFTWARE_FRAME_MODE, .type = CFG_STRING, .value.s = DEFAULT_SOFTWARE_FRAME_MODE },
     { .key = CFG_KEY_SUPER_EFFECT_QUALITY, .type = CFG_STRING, .value.s = DEFAULT_SUPER_EFFECT_QUALITY },
     { .key = CFG_KEY_ARM_CLOCK, .type = CFG_STRING, .value.s = DEFAULT_ARM_CLOCK },

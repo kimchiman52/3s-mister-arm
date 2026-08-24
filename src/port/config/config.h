@@ -17,6 +17,13 @@
  * configs are ignored.) */
 #define CFG_KEY_BALANCE "balance"
 #define CFG_KEY_BGM_TYPE "bgm-type"
+/* In-game text language. "auto" (default): keep whatever the settings save
+ * file holds, or — with no save yet — Get_Default_Language()'s locale-derived
+ * pick (src/main.c). "english"/"japanese": force that language at boot, over
+ * the settings save. Surfaced on MiSTer as the OSD Language option (status
+ * bit [47]); the in-game Screen Adjust row writes this key back so the two
+ * never drift (src/port/config/language.c). */
+#define CFG_KEY_LANGUAGE "language"
 #define CFG_KEY_SOFTWARE_FRAME_MODE "software-frame-mode"
 #define CFG_KEY_SUPER_EFFECT_QUALITY "super-effect-quality"
 #define CFG_KEY_SHOW_FPS "show-fps"

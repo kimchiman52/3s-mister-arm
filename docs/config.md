@@ -99,6 +99,33 @@ writes this config key (`BgmType_PersistToConfig()`), so the OSD reflects an
 in-game change at the next launch too, and the two settings never drift
 apart from each other.
 
+### `language`
+
+In-game text language. Values:
+
+- `auto` (default): no override — the settings save file's `Language` field
+  decides, and with no save yet (or a pre-V2 367-byte save) that field comes
+  from `Get_Default_Language()`, which picks Japanese only when `ja` is the
+  first `en`/`ja` entry in SDL's preferred-locale list (`src/main.c`).
+- `english` / `japanese`: force that language at boot, over the settings save.
+
+On MiSTer this is exposed as the **Language** option on the OSD's Game page
+(status bit `[47]`). Like BGM Type it applies on the **next game launch**
+(use OSD → Restart), because the boot-time override
+(`Language_ApplyBootOverride()`, `src/port/config/language.c`) only runs once,
+right after the settings save file finishes loading.
+
+Two-way sync: changing Language from the in-game **Screen Adjust** menu also
+writes this key (`Language_PersistToConfig()`), so the OSD reflects an in-game
+change at the next launch.
+
+`auto` is a one-shot sentinel: on the first boot that sees it,
+`Language_ApplyBootOverride()` writes the resolved language back into the key.
+That is what lets the OSD row show the real language instead of defaulting to
+English — the wrapper reads this key to seed the status bit and has no other
+way to see how the locale/save resolved. Write `auto` back into `config` by
+hand to re-derive from the save/locale.
+
 ### `software-frame-mode`
 
 Controls whether gameplay uses the 3S-ARM-owned software frame path or the legacy SDL-owned gameplay frame path.

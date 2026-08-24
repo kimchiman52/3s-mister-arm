@@ -8,6 +8,7 @@
 #include "main.h"
 #include "netplay/netplay.h"
 #include "port/config/bgm_type.h"
+#include "port/config/language.h"
 #include "port/config/training_config.h"
 #include "port/sdl/sdl_app.h"
 #include "sf33rd/AcrSDK/common/pad.h"
@@ -2167,6 +2168,15 @@ void Screen_Exit_Check(struct _TASK* task_ptr, s16 PL_id) {
         Menu_Suicide[2] = 1;
         X_Adjust = X_Adjust_Buff[2];
         Y_Adjust = Y_Adjust_Buff[2];
+
+        // Two-way sync: mirror the Screen Adjust Language row into the
+        // on-disk `language` config key so the MiSTer OSD's Language option
+        // (status bit [47]) reflects an in-game change at the next launch,
+        // not just save_w[1].Language (Save_Game_Data, sys_sub.c). No-ops
+        // when the key already matches, so leaving the menu without
+        // touching the row costs nothing.
+        Language_PersistToConfig(mpp_w.language);
+
         Return_Option_Mode_Sub(task_ptr);
 
         if (task_ptr->r_no[0] == 1) {

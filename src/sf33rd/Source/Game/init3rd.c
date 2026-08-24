@@ -1,6 +1,7 @@
 #include "sf33rd/Source/Game/init3rd.h"
 #include "main.h"
 #include "port/config/bgm_type.h"
+#include "port/config/language.h"
 #include "sf33rd/Source/Game/debug/Debug.h"
 #include "sf33rd/Source/Game/demo/demo00.h"
 #include "sf33rd/Source/Game/effect/effect.h"
@@ -169,6 +170,14 @@ void Init_Task_Aload(struct _TASK* task_ptr) {
             // save value, mirroring Arcade Balance's config-overrides-CFG
             // boot ordering (thirdsarm_wrapper.cpp).
             BgmType_ApplyBootOverride();
+
+            // Same ordering for the OSD Language option (status bit [47]):
+            // deserialize_settings() -> Copy_Save_w() (sys_sub.c) has
+            // already set mpp_w.language = save_w[1].Language, so an
+            // explicit `language` config key gets the last word here. This
+            // also materializes the `auto` sentinel into a concrete value
+            // so the OSD row can show the truth at the next launch.
+            Language_ApplyBootOverride();
         }
 
         break;
