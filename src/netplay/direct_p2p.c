@@ -3620,7 +3620,12 @@ static void report_connect_outcome(DirectP2PState st, bool success) {
         return;
     }
     s_outcome_reported = true;
-    char line[512];
+    /* S5 grew the FAIL line by ~40 chars (via_relay / relay_fail / the
+     * relay stage timing) on top of a msg field that can already be a
+     * full 128-char s_status. SDL_snprintf truncates safely, but a
+     * truncated report line is a silently degraded diagnostic, so the
+     * buffer keeps real headroom rather than sitting just under. */
+    char line[640];
     if (success) {
         /* S5: `via_relay=` records WHICH RUNG WON. (The `relay=` inside
          * the t_ms block is the stage TIMING; the two are named apart so

@@ -56,7 +56,17 @@
  *   host online, NAT-blocked       | a real-endpoint DELIVER arrived,
  *                                  | then the bilateral punch timed out
  *   symmetric-both / needs relay   | as above + StunResult.
- *                                  | port_disagreement (S2 signal)
+ *                                  | port_disagreement (S2 signal).
+ *                                  | S5: no longer terminal — the relay
+ *                                  | rung now ATTEMPTS a relay first, so
+ *                                  | this is reported only when the rung
+ *                                  | is switched off by configuration
+ *   relay unavailable              | S5: the relay rung ran and the
+ *                                  | RELAY_REQ was never answered
+ *   relay allocation refused       | S5: a RELAY_GRANT arrived carrying
+ *                                  | POOL_EXHAUSTED or NOT_PAIRED
+ *   relay pinning timed out        | S5: granted a relay port, then no
+ *                                  | RELAY_PIN_ACK inside the budget
  *   hairpin / no NAT loopback      | peer public IP == our public IP
  *   host-side router blocks        | host: no UPnP mapping AND no
  *   hosting                        | inbound AND no DELIVER (advisory)

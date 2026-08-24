@@ -15,7 +15,15 @@
 
 const dgram = require('dgram');
 const crypto = require('crypto');
+// The server times everything with perf_hooks performance.now(); the
+// synthetic relay entries testRelayPoolExhaustion injects must share that
+// clock domain or the idle sweep would see them as infinitely old.
+const { performance: perfShim } = require('perf_hooks');
 const { start } = require('./rendezvous-server.js');
+
+function nowMsShim() {
+    return perfShim.now();
+}
 
 // --- Wire constants (duplicate of server) -----------------------------------
 
@@ -1705,13 +1713,6 @@ async function testRelayIdleReclaim(handle, serverPort) {
         await b.close();
         handle._resetRelays();
     }
-}
-
-// performance.now() shim so the synthetic pool entries above share the
-// server's clock domain (the server uses perf_hooks performance.now()).
-const { performance: perfShim } = require('perf_hooks');
-function nowMsShim() {
-    return perfShim.now();
 }
 
 async function testSweepHook(handle) {
