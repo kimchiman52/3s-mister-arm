@@ -245,6 +245,22 @@ post-S2 tree.
   off-port punches before the retarget can trigger.) Regression:
   test_stun_mock.c `run_punch_retarget_test` (fails on the pre-S2
   tree — zero confirmations reach the translated port).
+  - *Attribution correction (adversarial review, L-2/L-6)*: the
+    host-full-cone × joiner-symmetric cell is flipped on the DIRECT
+    path by the **byteswap fix alone** — with the room code carrying a
+    live port again, a full-cone host accepts the symmetric joiner's
+    punch from any source, no retarget needed; the retarget fix
+    carries that cell only when the direct path fails and the
+    bilateral phase runs. The retarget fix is strictly necessary for
+    the symmetric-HOST cells (symmetric × full/restricted-cone) and
+    for restricted-cone × symmetric.
+  - *Reviewer INFO note (recorded, no code change)*: the retarget
+    accept criteria are source-IP + exact `"3SX_PUNCH"` payload, so
+    retargeting at a WRONG source would require a CGNAT neighbour
+    sharing the peer's public IP sending that exact payload into our
+    punch window. This is not a new surface — the port capture (and
+    IP-only matching) predates S2 — and punch authentication is
+    already on the S4 backlog.
 - **STUN port byteswap bug (unplanned find, worse than the plan
   knew)**: `parse_binding_response` assembled X-Port from the wire
   bytes via shifts (already native) and then applied `SDL_Swap16BE` on
@@ -279,13 +295,18 @@ post-S2 tree.
   DNS for all servers resolves concurrently on a refcounted side
   thread (getaddrinfo has no portable timeout; the thread is detached
   if stuck), with a numeric-IP fallback list (dig snapshot
-  2026-08-23) armed only when DNS produced nothing within 300 ms — a
-  blackholed resolver can no longer eat the budget.
+  2026-08-23) armed when DNS produced nothing within 300 ms, or —
+  post-review (L-3) — when no server has ANSWERED within 1500 ms
+  (covers a resolver that answers the first host then blackholes);
+  neither a blackholed nor a partially-dead resolver can eat the
+  budget.
 - **Dead key wired**: `netplay-direct-p2p-stun-timeout-ms` (default
   4000) is now the overall discovery budget — new `timeout_ms`
   parameter on `Stun_Discover`, threaded from both discovery sites via
-  `stun_budget_ms()` (direct_p2p.c:486-492, floor 1000 ms). The stale
-  "out of scope for Step 7" NOTE is gone.
+  `stun_budget_ms()` (clamped 1000–15000 ms post-review L-4:
+  `Stun_Discover` is not cancellable mid-run and `DirectP2P_Cancel`
+  joins the worker on the game thread, so the budget bounds Cancel's
+  block). The stale "out of scope for Step 7" NOTE is gone.
 - **Symmetric-NAT signal for S3**: after the first response, discovery
   lingers ≤300 ms (early-out once all probed servers answered) to
   collect the rest; `StunResult.port_disagreement` (stun.h:31) is set
