@@ -95,6 +95,20 @@ static void* decrypt(Uint8* const simms[ROM_SIMM_COUNT], size_t* size) {
     const size_t buf_size = (size_t)ROM_SIMM_SIZE * ROM_SIMM_COUNT;
     Uint32* buf = SDL_malloc(buf_size);
 
+    /* 8 MiB on a 1 GiB MiSTer that has already loaded the game — the one
+     * allocation here most likely to actually fail. Unchecked, the loop
+     * below wrote through a NULL pointer and took the process down at
+     * boot; returning NULL instead folds into Rom_Load's existing
+     * "no usable ROM" contract, which the balance auto-select reads as
+     * ROM-absent and answers with PS2 balance. */
+    if (buf == NULL) {
+        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                     "Rom_Load: out of memory allocating the %zu-byte decrypt buffer",
+                     buf_size);
+        *size = 0;
+        return NULL;
+    }
+
     for (Uint32 i = 0; i < ROM_SIMM_SIZE; i++) {
         buf[i] = cps3_decrypt(simms[0][i], simms[1][i], simms[2][i], simms[3][i], i);
     }
@@ -127,7 +141,24 @@ void* Rom_Load(const char* path, size_t* size) {
     Uint8* simms[ROM_SIMM_COUNT] = { 0 };
     int simm_count = 0;
 
-    while (err == MZ_OK && simm_count < ROM_SIMM_COUNT) {
+    /* Allocation-failure latch. It cannot ride in `err`: the loop tail
+     * reassigns err from mz_zip_goto_next_entry on every iteration, so
+     * an error stored there would be silently erased before the loop
+     * condition next reads it. */
+    bool alloc_failed = false;
+
+    if (read_buf == NULL) {
+        /* read_and_verify_entry decompresses through this buffer, so a
+         * NULL here corrupts every entry read. Skip the scan entirely —
+         * simm_count stays 0, the shared cleanup below still runs, and
+         * Rom_Load returns NULL (ROM-absent). */
+        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                     "Rom_Load: out of memory allocating the %d-byte read buffer",
+                     (int)READ_CHUNK_SIZE);
+        alloc_failed = true;
+    }
+
+    while (err == MZ_OK && !alloc_failed && simm_count < ROM_SIMM_COUNT) {
         mz_zip_file* info = NULL;
 
         if (mz_zip_entry_get_info(zip, &info) == MZ_OK && info != NULL) {
@@ -140,6 +171,20 @@ void* Rom_Load(const char* path, size_t* size) {
                 }
 
                 Uint8* data = SDL_malloc(ROM_SIMM_SIZE);
+
+                if (data == NULL) {
+                    /* 2 MiB per SIMM slot. read_and_verify_entry would
+                     * write the decompressed entry straight through this
+                     * pointer. Abandon the scan: leaving simms[slot] NULL
+                     * makes simm_count < ROM_SIMM_COUNT, so the shared
+                     * "no entry matched" path reports it and Rom_Load
+                     * returns NULL (ROM-absent -> PS2 balance). */
+                    SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                                 "Rom_Load: out of memory allocating the %u-byte %s buffer",
+                                 (unsigned)ROM_SIMM_SIZE, spec->name);
+                    alloc_failed = true;
+                    break;
+                }
 
                 if (read_and_verify_entry(zip, data, read_buf, spec->sha256_hex)) {
                     SDL_Log("Rom_Load: %s satisfied by entry '%s' (crc32 %08x, sha256 verified)",
@@ -173,6 +218,15 @@ void* Rom_Load(const char* path, size_t* size) {
 
     if (simm_count == ROM_SIMM_COUNT) {
         result = decrypt(simms, size);
+    } else if (alloc_failed) {
+        /* The scan was cut short by the already-logged allocation
+         * failure, so the unfilled slots prove nothing about this zip.
+         * Do NOT claim "no entry matched" — that would misdirect a
+         * field report toward a bad ROM file. */
+        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                     "Rom_Load: %s: aborted after an allocation failure with %d/%d "
+                     "SIMMs read; ROM treated as unavailable",
+                     path, simm_count, ROM_SIMM_COUNT);
     } else {
         for (int slot = 0; slot < ROM_SIMM_COUNT; slot++) {
             if (simms[slot] == NULL) {

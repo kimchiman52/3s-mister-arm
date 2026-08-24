@@ -65,6 +65,16 @@ merged, and subdirectory-variant packagings all work.
 Notes:
 - Replaces the removed `arcade-balance` bool toggle; stale `arcade-balance`
   lines in existing configs are ignored.
+- A hand-added `balance = ps2` line SURVIVES the MiSTer wrapper's config
+  rewrites. Every `write_runtime_*_default()` in
+  `vendor/Main_MiSTer/thirdsarm_wrapper.cpp` is a line-preserving
+  copy-through: it rewrites only the single line whose trimmed key
+  `strcasecmp`-matches its own target and emits every other line verbatim
+  via `fputs(line, out)`. The 15 targeted keys (`scale-mode`, `arm-clock`,
+  `game-mode`, `hold-to-pause`, `arcade-balance`, `bgm-type`,
+  `aspect-ratio`, `h-position`, `v-position-v2`, `v-position`,
+  `vertical-crop`, `crop-offset`, `scale`, `h-size`, `show-fps`) do not
+  include `balance`, and no writer regenerates the file from a template.
 - Netplay arms only in verified-arcade state and the MIST handshake carries a
   digest of the adapted data, so peers always simulate identical balance.
 - The test runner (`--test-enable`, used by the frame-data suite) pins PS2

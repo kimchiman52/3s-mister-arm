@@ -471,6 +471,20 @@ Arcade-vs-PS2 balance auto-selects at game boot (see `docs/config.md`
 The game side already provides everything a read-only status line needs —
 the menu-pages batch must wire the display half:
 
+> **RELEASE-NOTES ITEM — the existing OSD row is now a placebo.** Until
+> step 1 below lands, the **Arcade Balance** row still appears in the OSD
+> and still toggles, but it DOES NOTHING. The wrapper keeps writing
+> `arcade-balance = on|off` into `config`
+> (`write_runtime_arcade_balance_default`,
+> `vendor/Main_MiSTer/thirdsarm_wrapper.cpp:979`) and the game no longer
+> reads that key at all — `arcade-balance` was removed from
+> `default_entries` in `src/port/config/config.c` and replaced by
+> `balance`. So a player who flips the row sees no change in behavior and
+> gets no feedback explaining why. Ship notes must say: balance is now
+> automatic (arcade when the CPS3 ROM verifies, PS2 otherwise), the OSD
+> row is inert pending the status-row rework, and the only override is a
+> hand-added `balance = ps2` line in `config`.
+
 What the game provides (already shipped):
 
 - `<pref>/balance.status` (`/media/fat/games/3s-arm/balance.status` on
