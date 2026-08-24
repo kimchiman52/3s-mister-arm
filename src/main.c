@@ -396,9 +396,16 @@ static void initialize_game() {
     init_windows_console();
 #endif
 
-    set_netplay_params();
-    ArcadeBalance_Init();
+    /* Ordering matters:
+     *   AFS_Init          — the boot-time arcade adaptation reads each
+     *                       character's PS2 char-data tail from the AFS;
+     *   ArcadeBalance_Init— resolves arcade-vs-PS2 for the whole process
+     *                       (ROM discovery + full 20-character adaptation);
+     *   set_netplay_params— netplay arming consults the resolved balance
+     *                       state (netplay requires verified arcade). */
     AFS_Init(Resources_GetAFSPath());
+    ArcadeBalance_Init();
+    set_netplay_params();
     sf3_init();
 }
 

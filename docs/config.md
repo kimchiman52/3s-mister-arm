@@ -42,29 +42,33 @@ With this setting on, these stage decorations are disabled to prevent overlappin
 - Makoto's stage: tree on the right
 - Yang's stage: rain overlay
 
-### `arcade-balance`
+### `balance`
 
-Enables arcade (CPS3) balance instead of PS2 balance. Requires `sfiii3nr1.zip`
-to be present in the `resources` directory.
+Arcade (CPS3) vs PS2 balance **auto-selects at boot** — there is no OSD
+toggle. Values:
 
-On MiSTer this is exposed as the **Arcade Balance** option at the top of the
-OSD menu (status bit `[30]`). The wrapper writes the toggle into this config
-key, so it persists across launches. Like the Overclock option it applies on
-the **next game launch** (use OSD → Restart), because CPS3 character data is
-loaded once at game init.
+- `auto` (default): arcade balance is used when a CPS3 ROM source passes
+  content verification AND the full 20-character adaptation succeeds;
+  anything else falls back to PS2 balance with the reason logged and written
+  to `<pref>/balance.status` (line 1: `Arcade (CPS3)` / `PS2`; line 2: the
+  reason). Adaptation is all-or-nothing: a single character failing means the
+  whole session is PS2, never a per-character mix.
+- `ps2`: force PS2 balance even with a valid ROM (config-file-only knob for
+  players who own the ROM but prefer PS2 balance).
+
+ROM discovery tries, in order: `resources/sfiii3nr1.zip`, the
+`THIRDSARM_CPS3_ZIP` env override, then `/media/fat/games/mame/sfiii3.zip`
+(the merged set update_all ships for the jtcps3 core). Entries are matched by
+content hash (stored-CRC32 pre-filter + SHA-256 confirmation), so flat,
+merged, and subdirectory-variant packagings all work.
 
 Notes:
-- If `sfiii3nr1.zip` is missing or unreadable, the game logs an error and
-  falls back to PS2 balance instead of running half-enabled.
-- Netplay forces PS2 balance for the session (`ArcadeBalance_ForceDisable`):
-  balance is a local setting that peers do not negotiate, and a mismatch
-  would guarantee a rollback desync. Negotiated CPS3-balance netplay is a
-  possible follow-up (add a balance tag to the MIST handshake payload).
-- The force is a process-lifetime latch (same semantics as the game-mode
-  force): after a *failed* netplay attempt, local play in that same process
-  stays on PS2 balance even if the OSD shows Arcade Balance On. Each
-  OSD-initiated netplay attempt launches a fresh game process, and exiting
-  to the OSD clears it, so the mismatch window is one process.
+- Replaces the removed `arcade-balance` bool toggle; stale `arcade-balance`
+  lines in existing configs are ignored.
+- Netplay arms only in verified-arcade state and the MIST handshake carries a
+  digest of the adapted data, so peers always simulate identical balance.
+- The test runner (`--test-enable`, used by the frame-data suite) pins PS2
+  balance regardless of ROM presence so corpus expectations stay hermetic.
 
 ### `bgm-type`
 

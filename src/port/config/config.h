@@ -9,7 +9,13 @@
 #define CFG_KEY_SCALEMODE "scale-mode"
 #define CFG_KEY_SCANLINES "scanlines"
 #define CFG_DRAW_PLAYERS_ABOVE_HUD "draw-players-above-hud"
-#define CFG_ARCADE_BALANCE "arcade-balance"
+/* Balance override. "auto" (default): arcade balance auto-selects at boot
+ * when the CPS3 ROM is present and the full character adaptation succeeds,
+ * PS2 otherwise. "ps2": force PS2 balance even with a valid ROM. This is a
+ * config-file-only knob — no OSD surface. (Replaces the removed
+ * "arcade-balance" bool toggle; stale arcade-balance lines in existing
+ * configs are ignored.) */
+#define CFG_KEY_BALANCE "balance"
 #define CFG_KEY_BGM_TYPE "bgm-type"
 #define CFG_KEY_SOFTWARE_FRAME_MODE "software-frame-mode"
 #define CFG_KEY_SUPER_EFFECT_QUALITY "super-effect-quality"

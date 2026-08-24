@@ -3,6 +3,7 @@
 #include "constants.h"
 #include "port/resources.h"
 #include "structs.h"
+#include "utils/sha256.h"
 
 #include <SDL3/SDL.h>
 
@@ -556,6 +557,47 @@ void ArcadeCharData_Init() {
 
 bool ArcadeCharData_IsInitialized() {
     return initialized;
+}
+
+uint64_t ArcadeCharData_ComputeDigest() {
+    if (!initialized) {
+        return 0;
+    }
+
+    sha256 sha;
+
+    if (!sha256_init(&sha)) {
+        return 0;
+    }
+
+    /* Hash every parsed section span of every character, in fixed
+     * (character, section) order. Run AFTER the full 20-character
+     * adaptation: Apply3SXRenderingConventions mutates the OVCT spans, so
+     * the digest covers exactly the arcade data the simulation will read.
+     * Two peers agree iff their adapted tables are byte-identical — a
+     * different ROM revision (or a future parser/adaptation change)
+     * yields a different digest. */
+    for (int character = 0; character < NUM_CHARS; character++) {
+        for (int section = 0; section < CHAR_DATA_SECTION_COUNT; section++) {
+            const CharDataSpan* span = &data[character].spans[section];
+            sha256_append(&sha, span->data, span->size);
+        }
+    }
+
+    Uint8 bytes[SHA256_BYTES_SIZE];
+
+    if (!sha256_finalize_bytes(&sha, bytes)) {
+        return 0;
+    }
+
+    uint64_t digest = 0;
+
+    for (int i = 0; i < 8; i++) {
+        digest = (digest << 8) | bytes[i];
+    }
+
+    /* 0 is reserved for "no digest" — never emit it for real data. */
+    return digest != 0 ? digest : 1;
 }
 
 const CharInitData* ArcadeCharData_Get(Character character) {
