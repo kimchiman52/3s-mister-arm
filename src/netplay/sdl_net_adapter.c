@@ -287,8 +287,16 @@ static GekkoNetResult** receive_data(int* length) {
         // catch our own control traffic. This is what makes "a relayed
         // socket is behaviourally identical to a punched one" true
         // without depending on GekkoNet's unknown-type handling.
-        if (dgram->buf != NULL && dgram->buflen >= 6 &&
-            Rendezvous_FrameType((const uint8_t*)dgram->buf, dgram->buflen) != 0) {
+        //
+        // Review LOW-1: the test is the MAGIC ALONE, not
+        // Rendezvous_FrameType() != 0. FrameType returns 0 for any
+        // version != REND_VERSION (rendezvous.c), so a non-v2 '3SXR'
+        // frame used to pass straight through this guard and be
+        // miscounted as an InputAck — the exact bug the guard exists to
+        // close. Unreachable today (this build only emits v2), but the
+        // comment above says "every '3SXR' frame" and now that is true.
+        if (dgram->buf != NULL &&
+            Rendezvous_HasMagic((const uint8_t*)dgram->buf, dgram->buflen)) {
             NET_DestroyDatagram(dgram);
             dgram = NULL;
             continue;

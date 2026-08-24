@@ -952,6 +952,15 @@ handed to GekkoNet as a packet of type 51 — outside the 1..7
 heuristic**: a GekkoNet type byte is 1..7 by construction and can never
 be `0x33`, so this can only ever catch our own control traffic.
 
+The drop is on the **magic alone** (`Rendezvous_HasMagic`), and that
+correction is review LOW-1. It used to test
+`Rendezvous_FrameType(...) != 0`, and `Rendezvous_FrameType` returns 0
+for **any** version ≠ 2 — so a non-v2 '3SXR' frame would have passed
+through the guard with `data[0] == 0x33` and been miscounted as an
+`InputAck`, which is precisely the bug the guard exists to close.
+Unreachable today (this build only ever emits v2), but the word "every"
+above is now true rather than aspirational.
+
 ### 7.2 Protocol
 
 Four new types on the existing '3SXR' wire, same UDP port, same process,
@@ -1212,7 +1221,7 @@ never arrives.
 | key | default | purpose |
 |---|---|---|
 | `netplay-direct-p2p-disable-relay` | `false` | kill switch, mirrors `disable-bilateral` |
-| `netplay-direct-p2p-force-relay` | `false` | **test override**: no-ops both hole punches and skips the bad-token / kill-switch / LAN / hairpin bypasses (joiner) and the LAN DELIVER bypass (host), so the relay path can be exercised on demand without arranging two symmetric NATs |
+| `netplay-direct-p2p-force-relay` | `false` | **test override, `NETPLAY_TEST_HOOKS` builds only** (review LOW-2): no-ops both hole punches and skips the bad-token / kill-switch / LAN / hairpin bypasses (joiner) and the LAN DELIVER bypass (host), so the relay path can be exercised on demand without arranging two symmetric NATs. A shipping build ignores the key and logs once — it was a user-settable knob that disabled **all** direct connectivity, same-LAN included, and routed every match through a European VPS; there is no player-facing reason to set it and several ways to set it by accident. The key stays registered in every build so a config file carrying it still parses. |
 | `netplay-direct-p2p-relay-budget-ms` | `4000` | whole-rung wall clock, clamped [500, 20000]; half to REQ→GRANT, the rest (≥ 500 ms) to PIN→ACK |
 
 ### 7.5 Taxonomy and what the user sees

@@ -92,6 +92,13 @@
  * something a player should ever set: it deliberately throws away the
  * direct path, which is always lower latency.
  *
+ * Review LOW-2: FORCE_RELAY is therefore honoured ONLY by a build
+ * compiled with NETPLAY_TEST_HOOKS (see relay_forced() in
+ * src/netplay/direct_p2p.c). The key stays registered in every build so
+ * a config file carrying it still parses; a shipping build ignores it
+ * and logs once. Setting it used to disable ALL direct connectivity,
+ * same-LAN included, and route every match through a European VPS.
+ *
  * RELAY_BUDGET_MS is the whole rung's wall clock, split between the
  * RELAY_REQ->RELAY_GRANT phase and the RELAY_PIN->ACK phase. Clamped
  * [500, 20000]; it is spent only after the punch phases have already

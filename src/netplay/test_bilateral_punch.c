@@ -3738,6 +3738,48 @@ static int test_relay_codec(void) {
         }
     }
 
+    /* (7) Rendezvous_HasMagic — the STRAGGLER test, and deliberately
+     *     weaker than FrameType (review LOW-1).
+     *
+     *     sdl_net_adapter.c's drop used to be `FrameType(...) != 0`,
+     *     which returns 0 for ANY version != REND_VERSION. A non-v2
+     *     '3SXR' frame therefore passed straight through the guard with
+     *     data[0] == 0x33, was miscounted as an InputAck (0x33 & 7 == 3),
+     *     and reached GekkoNet as a packet of type 51 — the exact bug the
+     *     guard exists to close. The version-independent case below is
+     *     what fails if that regression ever comes back. */
+    {
+        EXPECT_TRUE("17-magic-grant",
+                    Rendezvous_HasMagic(grant, (int)sizeof(grant)));
+        uint8_t v3[REND_RELAY_GRANT_LEN];
+        memcpy(v3, grant, sizeof(v3));
+        v3[4] = 3;
+        EXPECT_TRUE("17-magic-wrong-version-still-dropped",
+                    Rendezvous_HasMagic(v3, (int)sizeof(v3)));
+        EXPECT_TRUE("17-magic-wrong-version-is-invisible-to-frametype",
+                    Rendezvous_FrameType(v3, (int)sizeof(v3)) == 0);
+        /* An unknown TYPE on the right version is likewise still ours. */
+        uint8_t t99[REND_RELAY_GRANT_LEN];
+        memcpy(t99, grant, sizeof(t99));
+        t99[5] = 99;
+        EXPECT_TRUE("17-magic-unknown-type-still-dropped",
+                    Rendezvous_HasMagic(t99, (int)sizeof(t99)));
+        uint8_t nm2[REND_RELAY_GRANT_LEN];
+        memcpy(nm2, grant, sizeof(nm2));
+        nm2[1] = 0x00;
+        EXPECT_FALSE("17-magic-wrong-magic", Rendezvous_HasMagic(nm2, (int)sizeof(nm2)));
+        EXPECT_FALSE("17-magic-short", Rendezvous_HasMagic(grant, 3));
+        EXPECT_FALSE("17-magic-null", Rendezvous_HasMagic(NULL, 36));
+        /* Still exact: no GekkoNet packet can carry our magic. */
+        for (uint8_t t = 1; t <= 7; t++) {
+            uint8_t gek[32];
+            memset(gek, 0x5A, sizeof(gek));
+            gek[0] = t;
+            EXPECT_FALSE("17-magic-gekko-never-matches",
+                         Rendezvous_HasMagic(gek, (int)sizeof(gek)));
+        }
+    }
+
     if (fail_count == fails_before) {
         fprintf(stderr,
                 "[test_bilateral_punch] test 17 OK — relay frames match the documented "

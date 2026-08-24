@@ -280,6 +280,15 @@ bool Rendezvous_ParseDeliver(const uint8_t* pkt, int len,
 
 /* --- S5 relay ---------------------------------------------------------- */
 
+bool Rendezvous_HasMagic(const uint8_t* pkt, int len) {
+    /* Magic ONLY — no version, no type. See the header for why the
+     * straggler drop must not be version-gated (review LOW-1). */
+    if (!pkt || len < 4) {
+        return false;
+    }
+    return read_be32(&pkt[0]) == REND_MAGIC;
+}
+
 int Rendezvous_FrameType(const uint8_t* pkt, int len) {
     if (!pkt || len < 6) {
         return 0;

@@ -940,9 +940,35 @@ static bool relay_enabled(void) {
     return !Config_GetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_RELAY);
 }
 
-/* Test override — see CFG_KEY_NETPLAY_DIRECT_P2P_FORCE_RELAY. */
+/*
+ * Test override — see CFG_KEY_NETPLAY_DIRECT_P2P_FORCE_RELAY.
+ *
+ * Review LOW-2: this is honoured ONLY in a build compiled with
+ * NETPLAY_TEST_HOOKS. It was a shipped, user-settable knob that disables
+ * ALL direct connectivity — including the same-LAN and hairpin bypasses —
+ * and forces every match through a European VPS. There is no player-facing
+ * reason to set it and several ways for it to be set by accident (a copied
+ * config from a test rig, a stale line in a shared config.ini), each of
+ * which turns a perfectly good LAN match into a relayed one with
+ * structurally worse ping and no obvious cause.
+ *
+ * The config KEY deliberately stays registered in config.c for every
+ * build, so a config file carrying it still parses cleanly rather than
+ * erroring; a shipping build simply ignores it and says so once.
+ */
 static bool relay_forced(void) {
+#ifdef NETPLAY_TEST_HOOKS
     return Config_GetBool(CFG_KEY_NETPLAY_DIRECT_P2P_FORCE_RELAY);
+#else
+    static bool warned = false;
+    if (!warned && Config_GetBool(CFG_KEY_NETPLAY_DIRECT_P2P_FORCE_RELAY)) {
+        warned = true;
+        SDL_Log("[direct_p2p] %s is set but IGNORED: it is a test-only override "
+                "and this build was not compiled with NETPLAY_TEST_HOOKS",
+                CFG_KEY_NETPLAY_DIRECT_P2P_FORCE_RELAY);
+    }
+    return false;
+#endif
 }
 
 static int relay_budget_ms(void) {

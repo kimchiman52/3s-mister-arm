@@ -233,6 +233,23 @@ bool Rendezvous_ParseDeliver(const uint8_t* pkt, int len,
  */
 int Rendezvous_FrameType(const uint8_t* pkt, int len);
 
+/*
+ * True when `pkt` carries the '3SXR' magic, REGARDLESS of version.
+ *
+ * This is the straggler test, and it is deliberately weaker than
+ * Rendezvous_FrameType (review LOW-1). The GekkoNet straggler drop in
+ * sdl_net_adapter.c used to test `Rendezvous_FrameType(...) != 0`, which
+ * returns 0 for ANY version != REND_VERSION — so a non-v2 '3SXR' frame
+ * would have passed straight through with data[0] == 0x33 and been
+ * miscounted as an InputAck (0x33 & 7 == 3) before reaching GekkoNet as
+ * a packet of type 51, which is exactly the bug that guard exists to
+ * close. Unreachable today, because this build only ever emits v2 —
+ * but the guard's comment claimed "every '3SXR' frame", and now that is
+ * true. The magic alone is still an EXACT test rather than a heuristic:
+ * a GekkoNet type byte is 1..7 by construction and can never be 0x33.
+ */
+bool Rendezvous_HasMagic(const uint8_t* pkt, int len);
+
 #define REND_RELAY_TOKEN_LEN   8
 /* RELAY_REQ is byte-identical to REGISTER apart from the type byte —
  * deliberately, so it passes through the server's return-routability
