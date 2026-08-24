@@ -1,5 +1,6 @@
 #include "arcade/rom_load.h"
 #include "arcade/cps3_decrypt.h"
+#include "utils/sha256.h"
 
 #include <SDL3/SDL.h>
 #include <minizip-ng/mz.h>
@@ -11,43 +12,92 @@
 
 #define READ_CHUNK_SIZE (1024 * 10)
 
-static bool is_prefix(const char* pre, const char* str) {
-    return SDL_strncmp(pre, str, SDL_strlen(pre)) == 0;
-}
+/* The four decryption inputs are the sfiii3nr1 SIMM1 slices. Each is
+ * exactly 2 MiB in every known packaging of the set. */
+#define ROM_SIMM_COUNT 4
+#define ROM_SIMM_SIZE (2u * 1024u * 1024u)
 
-static void read_file(SDL_IOStream* dst, void* zip, void* read_buf) {
-    mz_zip_entry_read_open(zip, false, NULL);
+/* Entries are matched by CONTENT, not by name or path, so the loader is
+ * immune to merged-vs-split packaging, variant subdirectories
+ * (sfiii3n/ vs sfiii3nar1/ ...) and future set reorganizations. The
+ * merged MAME set even carries same-named SIMMs with DIFFERENT bytes
+ * (sfiii3n/sfiii3-simm1.0 != sfiii3nar1/sfiii3-simm1.0); a name match
+ * would silently pick the wrong revision depending on zip entry order.
+ *
+ * Match pipeline per required slice:
+ *   1. cheap pre-filter on the zip central directory's stored CRC32 +
+ *      uncompressed size (no decompression, so scanning a ~95 MB merged
+ *      set touches only its directory);
+ *   2. decompress the candidate (2 MiB) and verify its SHA-256 against
+ *      the pinned digest below — the authoritative check.
+ * Digests pinned 2026-08-23 from a known-good sfiii3nr1 set; the same
+ * bytes appear in the update_all merged set under sfiii3nar1/. */
+typedef struct RomSimmSpec {
+    const char* name; /* canonical flat name — logging only, never matched */
+    Uint32 crc32;
+    const char* sha256_hex;
+} RomSimmSpec;
 
-    while (mz_zip_entry_read(zip, read_buf, READ_CHUNK_SIZE) > 0) {
-        SDL_WriteIO(dst, read_buf, READ_CHUNK_SIZE);
+static const RomSimmSpec simm_specs[ROM_SIMM_COUNT] = {
+    { "sfiii3-simm1.0", 0x66E66235, "0ddcfaa946a4c22c141980a137aa495d3accfe93e9e2893448a602a139b3715e" },
+    { "sfiii3-simm1.1", 0x186E8C5F, "7c0395585e77411d1dca6b60184df75631a34cf13d8bff25ba99d1354d5eb053" },
+    { "sfiii3-simm1.2", 0xBCE18CAB, "30b5e727c071f3fff2a93fb61c518f447257cb9dea8e5ec1cf96f612c6ecedb0" },
+    { "sfiii3-simm1.3", 0x129DC2C9, "d9597fdc7baea1571cd3332d2b29e73da000e2995cbd753a113b62399bfdc900" },
+};
+
+/* Decompress the currently-open zip entry (exactly ROM_SIMM_SIZE bytes)
+ * into `dst`, hashing as it streams. Returns true when the entry
+ * yielded exactly ROM_SIMM_SIZE bytes and its SHA-256 hex equals
+ * `expected_sha256_hex`. */
+static bool read_and_verify_entry(void* zip, Uint8* dst, void* read_buf, const char* expected_sha256_hex) {
+    if (mz_zip_entry_read_open(zip, false, NULL) != MZ_OK) {
+        return false;
     }
 
-    SDL_SeekIO(dst, 0, SDL_IO_SEEK_SET);
+    sha256 sha;
+
+    if (!sha256_init(&sha)) {
+        mz_zip_entry_close(zip);
+        return false;
+    }
+
+    size_t total = 0;
+    int32_t read = 0;
+
+    while ((read = mz_zip_entry_read(zip, read_buf, READ_CHUNK_SIZE)) > 0) {
+        if (total + (size_t)read > ROM_SIMM_SIZE) {
+            /* Larger than declared — cannot be our slice. */
+            mz_zip_entry_close(zip);
+            return false;
+        }
+
+        SDL_memcpy(dst + total, read_buf, (size_t)read);
+        sha256_append(&sha, read_buf, (size_t)read);
+        total += (size_t)read;
+    }
+
     mz_zip_entry_close(zip);
-}
 
-static Uint8 read_byte(SDL_IOStream* src) {
-    Uint8 result = 0;
-    SDL_ReadIO(src, &result, 1);
-    return result;
-}
-
-static void* decrypt(SDL_IOStream* simms[4], size_t* size) {
-    const Sint64 simm_size = SDL_GetIOSize(simms[0]);
-    const size_t buf_size = simm_size * 4;
-    void* buf = SDL_malloc(buf_size);
-    SDL_IOStream* dst = SDL_IOFromMem(buf, buf_size);
-
-    for (int i = 0; i < simm_size; i++) {
-        const Uint8 b0 = read_byte(simms[0]);
-        const Uint8 b1 = read_byte(simms[1]);
-        const Uint8 b2 = read_byte(simms[2]);
-        const Uint8 b3 = read_byte(simms[3]);
-        const Uint32 decrypted = cps3_decrypt(b0, b1, b2, b3, i);
-        SDL_WriteIO(dst, &decrypted, sizeof(Uint32));
+    if (total != ROM_SIMM_SIZE) {
+        return false;
     }
 
-    SDL_CloseIO(dst);
+    char hex[SHA256_HEX_SIZE];
+
+    if (!sha256_finalize_hex(&sha, hex)) {
+        return false;
+    }
+
+    return SDL_strcmp(hex, expected_sha256_hex) == 0;
+}
+
+static void* decrypt(Uint8* const simms[ROM_SIMM_COUNT], size_t* size) {
+    const size_t buf_size = (size_t)ROM_SIMM_SIZE * ROM_SIMM_COUNT;
+    Uint32* buf = SDL_malloc(buf_size);
+
+    for (Uint32 i = 0; i < ROM_SIMM_SIZE; i++) {
+        buf[i] = cps3_decrypt(simms[0][i], simms[1][i], simms[2][i], simms[3][i], i);
+    }
 
     *size = buf_size;
     return buf;
@@ -55,7 +105,11 @@ static void* decrypt(SDL_IOStream* simms[4], size_t* size) {
 
 void* Rom_Load(const char* path, size_t* size) {
     void* stream = mz_stream_os_create();
-    mz_stream_open(stream, path, MZ_OPEN_MODE_READ);
+
+    if (mz_stream_open(stream, path, MZ_OPEN_MODE_READ) != MZ_OK) {
+        mz_stream_os_delete(&stream);
+        return NULL;
+    }
 
     void* zip = mz_zip_create();
     int32_t err = mz_zip_open(zip, stream, MZ_OPEN_MODE_READ);
@@ -70,29 +124,70 @@ void* Rom_Load(const char* path, size_t* size) {
     err = mz_zip_goto_first_entry(zip);
 
     void* read_buf = SDL_malloc(READ_CHUNK_SIZE);
-    SDL_IOStream* simms[4] = { 0 };
+    Uint8* simms[ROM_SIMM_COUNT] = { 0 };
     int simm_count = 0;
 
-    while (err == MZ_OK && simm_count < 4) {
+    while (err == MZ_OK && simm_count < ROM_SIMM_COUNT) {
         mz_zip_file* info = NULL;
-        mz_zip_entry_get_info(zip, &info);
 
-        if (is_prefix("sfiii3-simm1.", info->filename)) {
-            SDL_IOStream* io = SDL_IOFromDynamicMem();
-            read_file(io, zip, read_buf);
-            simms[simm_count] = io;
-            simm_count += 1;
+        if (mz_zip_entry_get_info(zip, &info) == MZ_OK && info != NULL) {
+            for (int slot = 0; slot < ROM_SIMM_COUNT; slot++) {
+                const RomSimmSpec* spec = &simm_specs[slot];
+
+                if (simms[slot] != NULL || info->crc != spec->crc32 ||
+                    info->uncompressed_size != (int64_t)ROM_SIMM_SIZE) {
+                    continue;
+                }
+
+                Uint8* data = SDL_malloc(ROM_SIMM_SIZE);
+
+                if (read_and_verify_entry(zip, data, read_buf, spec->sha256_hex)) {
+                    SDL_Log("Rom_Load: %s satisfied by entry '%s' (crc32 %08x, sha256 verified)",
+                            spec->name,
+                            info->filename,
+                            (unsigned)info->crc);
+                    simms[slot] = data;
+                    simm_count += 1;
+                } else {
+                    /* CRC pre-filter hit but the content digest did not
+                     * confirm (corrupt entry or a CRC collision). Keep
+                     * scanning — another entry may carry the real bytes. */
+                    SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                                "Rom_Load: entry '%s' matched the CRC32 pre-filter for %s "
+                                "but failed SHA-256 verification; skipping it",
+                                info->filename,
+                                spec->name);
+                    SDL_free(data);
+                }
+
+                /* An entry can satisfy at most one slot (digests are all
+                 * distinct), and reading consumed the entry cursor. */
+                break;
+            }
         }
 
         err = mz_zip_goto_next_entry(zip);
     }
 
-    void* result = decrypt(simms, size);
+    void* result = NULL;
+
+    if (simm_count == ROM_SIMM_COUNT) {
+        result = decrypt(simms, size);
+    } else {
+        for (int slot = 0; slot < ROM_SIMM_COUNT; slot++) {
+            if (simms[slot] == NULL) {
+                SDL_Log("Rom_Load: %s: no entry matched %s (crc32 %08x)",
+                        path,
+                        simm_specs[slot].name,
+                        (unsigned)simm_specs[slot].crc32);
+            }
+        }
+    }
 
     // Cleanup
 
-    for (int i = 0; i < 4; i++) {
-        SDL_CloseIO(simms[i]);
+    for (int i = 0; i < ROM_SIMM_COUNT; i++) {
+        SDL_free(simms[i]);
     }
 
     SDL_free(read_buf);

@@ -451,12 +451,43 @@ static void dump_data(CharInitData* data, Character character) {
 #endif
 
 void ArcadeCharData_Init() {
-    const char* rom_path = Resources_GetPath("sfiii3nr1.zip");
+    /* CPS3 ROM search path. Sources are tried in order; within each zip
+     * the required slices are matched by content hash (see rom_load.c),
+     * so both our minimal flat sfiii3nr1.zip and update_all's merged
+     * subdirectory-variant sfiii3.zip load identically.
+     *   1. our own resources/ dir (preserves the original behavior);
+     *   2. THIRDSARM_CPS3_ZIP env override (test/dev hook);
+     *   3. the zip update_all ships for the jtcps3 core on MiSTer. */
+    char* resources_path = Resources_GetPath("sfiii3nr1.zip");
+    const char* env_path = SDL_getenv("THIRDSARM_CPS3_ZIP");
+    const char* candidates[3];
+    int candidate_count = 0;
+
+    candidates[candidate_count++] = resources_path;
+
+    if (env_path != NULL && env_path[0] != '\0') {
+        candidates[candidate_count++] = env_path;
+    }
+
+    candidates[candidate_count++] = "/media/fat/games/mame/sfiii3.zip";
+
     size_t rom_size = 0;
-    const void* rom = Rom_Load(rom_path, &rom_size);
-    SDL_free(rom_path);
+    const void* rom = NULL;
+
+    for (int i = 0; i < candidate_count && rom == NULL; i++) {
+        rom = Rom_Load(candidates[i], &rom_size);
+
+        if (rom != NULL) {
+            SDL_Log("ArcadeCharData: CPS3 ROM load satisfied by %s", candidates[i]);
+        }
+    }
+
+    SDL_free(resources_path);
 
     if (rom == NULL) {
+        SDL_Log("ArcadeCharData: no CPS3 ROM source matched the pinned content digests "
+                "(tried resources/sfiii3nr1.zip%s and /media/fat/games/mame/sfiii3.zip)",
+                (env_path != NULL && env_path[0] != '\0') ? ", $THIRDSARM_CPS3_ZIP" : "");
         return;
     }
 
