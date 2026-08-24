@@ -263,13 +263,26 @@ GEKKONET_BUILD="$GEKKONET_DIR/build"
 if [ "$PROFILE" = "miyoo" ]; then
     echo "Skipping GekkoNet for profile '$PROFILE' (Cut 1 has ENABLE_NETPLAY=OFF)"
 elif [ -d "$GEKKONET_BUILD" ] && \
+     [ -s "$GEKKONET_BUILD/lib/libGekkoNet.a" ] && \
      perl -0ne 'exit(!(/u8 value = 0;\s*\n\s*while \(idx \+ 1 < length\)/))' \
+        "$GEKKONET_BUILD/include/compression.h" 2>/dev/null && \
+     grep -q '3s-arm M-4: cap RLE-decompressed output' \
         "$GEKKONET_BUILD/include/compression.h" 2>/dev/null; then
-    # Self-healing: only treat the cache as valid if the RLEDecode OOB guard
-    # is present in the cached header (see the security-patch block below).
-    # A pre-patch / partial cache falls through and rebuilds automatically,
-    # so a stale unpatched libGekkoNet.a can never be silently reused.
-    echo "GekkoNet already built (RLEDecode patched) at $GEKKONET_BUILD"
+    # Self-healing: only treat the cache as valid if the cached libGekkoNet.a
+    # exists non-empty AND both the RLEDecode OOB guard and the R-2 hardening
+    # marker are present in the cached header (see the security-patch block
+    # below). The R-2 marker in compression.h is the version sentinel for the
+    # whole R-2 patch set: the C-1/C-2/L-2 guards live in src/backend.cpp and
+    # the M-4 resize guard in thirdparty/zpp/serializer.h — neither file is
+    # copied into the cached include tree, but all patches are applied in the
+    # same rebuild block, which populates the cache by staging headers + .a
+    # into a temp dir and atomically renaming it into place. A kill at any
+    # point therefore leaves either (a) the previous cache untouched — which
+    # still fails whichever check sent us down the rebuild path, (b) a
+    # partially deleted or absent cache — rejected by the -d / -s / header
+    # checks, or (c) the complete new cache. The marker can never sit next to
+    # a stale unpatched libGekkoNet.a, so it is never silently reused.
+    echo "GekkoNet already built (RLEDecode + R-2 hardening patched) at $GEKKONET_BUILD"
 else
     echo "Building GekkoNet @ $GEKKONET_REF..."
 
@@ -299,6 +312,228 @@ else
     fi
     echo "GekkoNet: applied RLEDecode odd-length OOB guard"
 
+    # ---------------------------------------------------------------------
+    # 3s-arm security patch (R-2) — GekkoNet remote-crash hardening.
+    #
+    # Beyond the RLEDecode OOB above, the shipped libGekkoNet.a has three
+    # remote-triggerable memory-safety bugs; a malicious/buggy peer can crash
+    # or OOM the console. Patch the fetched source BEFORE the cmake build so
+    # the fixes compile into libGekkoNet.a (third_party/ is gitignored, so
+    # this script is the only durable place for the fix). Every patch is
+    # FAIL-CLOSED: on a hostile/malformed packet the message is DROPPED
+    # (return) or the deserialize throws std::out_of_range (already caught in
+    # MessageSystem::HandleData) — never an assert/crash in release. Each
+    # patch asserts its vulnerable pre-condition source form first and its
+    # guard post-condition after, so a future GEKKONET_REF bump that drifts
+    # the source fails loudly and forces re-review.
+    # ---------------------------------------------------------------------
+    GEKKONET_BACKEND_CPP="$GEKKONET_SRC/GekkoLib/src/backend.cpp"
+    GEKKONET_SERIALIZER_H="$GEKKONET_SRC/GekkoLib/thirdparty/zpp/serializer.h"
+
+    # --- C-2 (type confusion) --------------------------------------------
+    # ParsePacket dispatches on the wire header.type, but the polymorphic
+    # body's concrete type is decided independently by its own wire
+    # serialization id. Each On* handler C-casts pkt.body.get() to the type
+    # implied by header.type WITHOUT checking the body's real runtime type,
+    # so a peer sending header.type=Inputs with e.g. a SyncMsg body makes
+    # OnInputs read a fabricated std::vector (wild ptr+size) -> OOB. Replace
+    # each unchecked C-cast with a dynamic_cast (the lib is built with RTTI;
+    # MsgBody is polymorphic) and drop the packet on a nullptr mismatch.
+    # NOTE: the two SyncMsg casts (OnSyncRequest/OnSyncResponse) are patched
+    # with one global substitution; the other four are unique.
+    for c2_pre in \
+        '    auto body = (SyncMsg*)pkt.body.get();' \
+        '    auto body = (InputMsg*)pkt.body.get();' \
+        '    auto body = (InputAckMsg*)pkt.body.get();' \
+        '    auto body = (SessionHealthMsg*)pkt.body.get();' \
+        '    auto body = (NetworkHealthMsg*)pkt.body.get();'; do
+        if ! grep -qF "$c2_pre" "$GEKKONET_BACKEND_CPP"; then
+            echo "ERROR: GekkoNet backend.cpp missing expected C-cast pre-patch form at ref $GEKKONET_REF (C-2):" >&2
+            echo "         $c2_pre" >&2
+            echo "       backend.cpp drifted. Refusing to build unpatched." >&2
+            exit 1
+        fi
+    done
+    perl -0pi -e 's/    auto body = \(SyncMsg\*\)pkt\.body\.get\(\);/    auto body = dynamic_cast<SyncMsg*>(pkt.body.get());\n    if (!body) { return; } \/\/ 3s-arm C-2: drop type-confused packet/g' "$GEKKONET_BACKEND_CPP"
+    perl -0pi -e 's/    auto body = \(InputMsg\*\)pkt\.body\.get\(\);/    auto body = dynamic_cast<InputMsg*>(pkt.body.get());\n    if (!body) { return; } \/\/ 3s-arm C-2: drop type-confused packet/' "$GEKKONET_BACKEND_CPP"
+    perl -0pi -e 's/    auto body = \(InputAckMsg\*\)pkt\.body\.get\(\);/    auto body = dynamic_cast<InputAckMsg*>(pkt.body.get());\n    if (!body) { return; } \/\/ 3s-arm C-2: drop type-confused packet/' "$GEKKONET_BACKEND_CPP"
+    perl -0pi -e 's/    auto body = \(SessionHealthMsg\*\)pkt\.body\.get\(\);/    auto body = dynamic_cast<SessionHealthMsg*>(pkt.body.get());\n    if (!body) { return; } \/\/ 3s-arm C-2: drop type-confused packet/' "$GEKKONET_BACKEND_CPP"
+    perl -0pi -e 's/    auto body = \(NetworkHealthMsg\*\)pkt\.body\.get\(\);/    auto body = dynamic_cast<NetworkHealthMsg*>(pkt.body.get());\n    if (!body) { return; } \/\/ 3s-arm C-2: drop type-confused packet/' "$GEKKONET_BACKEND_CPP"
+    if grep -qE '\((SyncMsg|InputMsg|InputAckMsg|SessionHealthMsg|NetworkHealthMsg)\*\)pkt\.body\.get\(\)' "$GEKKONET_BACKEND_CPP"; then
+        echo "ERROR: GekkoNet C-2 type-check left an unchecked body C-cast in backend.cpp." >&2
+        exit 1
+    fi
+    if [ "$(grep -c 'dynamic_cast<' "$GEKKONET_BACKEND_CPP")" -ne 6 ]; then
+        echo "ERROR: GekkoNet C-2 expected 6 dynamic_cast body checks, found a different count." >&2
+        exit 1
+    fi
+    echo "GekkoNet: applied C-2 body type-confusion guards (6 handlers)"
+
+    # --- C-1 (OnInputs OOB read) -----------------------------------------
+    # OnInputs indexes body->inputs[] (and memcpys _input_size bytes per
+    # entry via AddInput) using the wire-controlled u16 input_count with NO
+    # check against the actual, post-decompression inputs.size(). A peer
+    # sending input_count=65535 with a tiny inputs vector reads ~256KB past
+    # the buffer -> SIGSEGV. Insert a size invariant right before the
+    # indexing loops: inputs.size() must be >= input_count * players *
+    # _input_size, where players = _num_players for spectator packets, else
+    # the number of remote handles bound to the sender address (u64 math to
+    # avoid overflow). On violation, drop the packet. The handles vector is
+    # fetched ONCE here and reused by the non-spectator loop below (L-4:
+    # upstream fetched it a second time there — one wasted vector alloc per
+    # input packet).
+    # The anchor must be UNIQUE (exactly 1 occurrence): the substitution is
+    # first-occurrence, so if a future ref bump introduced an earlier
+    # same-text line the guard would silently land in the wrong place while
+    # pre- and post-conditions still passed. Fail loud instead.
+    if [ "$(grep -cF '    if (is_spectator) {' "$GEKKONET_BACKEND_CPP")" -ne 1 ]; then
+        echo "ERROR: GekkoNet OnInputs not in expected pre-patch form at ref $GEKKONET_REF (C-1);" >&2
+        echo "       expected exactly 1 '    if (is_spectator) {' anchor. Refusing to build unpatched." >&2
+        exit 1
+    fi
+    C1_ANCHOR='    if (is_spectator) {'
+    C1_REPL='    // 3s-arm C-1: bound wire-declared input_count against the actual
+    // decompressed buffer before indexing (OOB read / SIGSEGV guard).
+    std::vector<Handle> c1_handles;
+    if (!is_spectator) {
+        c1_handles = GetRemoteHandlesForAddress(&addr);
+    }
+    {
+        const u32 c1_players = is_spectator
+            ? (u32)_num_players
+            : (u32)c1_handles.size();
+        const u64 c1_required =
+            (u64)input_count * (u64)c1_players * (u64)_input_size;
+        if (c1_required > (u64)body->inputs.size()) {
+            return; // drop malformed / hostile input packet
+        }
+    }
+
+    if (is_spectator) {'
+    export C1_ANCHOR C1_REPL
+    perl -0pi -e 's/\Q$ENV{C1_ANCHOR}\E/$ENV{C1_REPL}/' "$GEKKONET_BACKEND_CPP"
+    if ! grep -qF '3s-arm C-1: bound wire-declared input_count' "$GEKKONET_BACKEND_CPP"; then
+        echo "ERROR: GekkoNet C-1 OnInputs bounds guard failed to apply." >&2
+        exit 1
+    fi
+    echo "GekkoNet: applied C-1 OnInputs input_count bounds guard"
+
+    # --- L-4 (redundant handles fetch) -----------------------------------
+    # Reuse the handles vector the C-1 guard just computed instead of
+    # re-fetching it in the non-spectator loop. Anchored on the unique
+    # two-line fetch/count pair so the substitution cannot relocate.
+    C1_HOIST_ANCHOR='        auto handles = GetRemoteHandlesForAddress(&addr);
+        const u32 player_count = (u32)handles.size();'
+    export C1_HOIST_ANCHOR
+    if ! perl -0ne 'my $c = () = /\Q$ENV{C1_HOIST_ANCHOR}\E/g; exit($c != 1)' "$GEKKONET_BACKEND_CPP"; then
+        echo "ERROR: GekkoNet OnInputs handles fetch not in expected pre-patch form at ref $GEKKONET_REF (L-4);" >&2
+        echo "       expected exactly 1 handles/player_count pair. Refusing to build unpatched." >&2
+        exit 1
+    fi
+    C1_HOIST_REPL='        auto handles = std::move(c1_handles); // 3s-arm L-4: reuse C-1 fetch
+        const u32 player_count = (u32)handles.size();'
+    export C1_HOIST_REPL
+    perl -0pi -e 's/\Q$ENV{C1_HOIST_ANCHOR}\E/$ENV{C1_HOIST_REPL}/' "$GEKKONET_BACKEND_CPP"
+    if ! grep -qF '3s-arm L-4: reuse C-1 fetch' "$GEKKONET_BACKEND_CPP" || \
+       [ "$(grep -cF 'GetRemoteHandlesForAddress(&addr);' "$GEKKONET_BACKEND_CPP")" -ne 2 ]; then
+        echo "ERROR: GekkoNet L-4 handles hoist failed to apply cleanly" >&2
+        echo "       (expected exactly 2 remaining GetRemoteHandlesForAddress(&addr) call sites:" >&2
+        echo "       the C-1 guard fetch and the one in OnNetworkHealth)." >&2
+        exit 1
+    fi
+    echo "GekkoNet: applied L-4 handles hoist (single fetch per input packet)"
+
+    # --- L-2 (Debug-build remote abort on unknown packet type) -----------
+    # ParsePacket's default case hits assert(false) on an unknown wire
+    # header.type. Release (NDEBUG) compiles the assert out (falls through
+    # to return -> packet dropped), but a Debug build hands any
+    # session-magic-valid peer a one-packet remote abort. Replace the assert
+    # with an explicit drop so Debug and Release behave identically.
+    L2_ANCHOR='        default:
+            assert(false && "cannot process an unknown event!");
+            return;'
+    export L2_ANCHOR
+    if ! perl -0ne 'my $c = () = /\Q$ENV{L2_ANCHOR}\E/g; exit($c != 1)' "$GEKKONET_BACKEND_CPP"; then
+        echo "ERROR: GekkoNet ParsePacket default-assert not in expected pre-patch form at ref $GEKKONET_REF (L-2);" >&2
+        echo "       expected exactly 1 occurrence. Refusing to build unpatched." >&2
+        exit 1
+    fi
+    L2_REPL='        default:
+            // 3s-arm L-2: unknown wire header.type -> drop the packet.
+            // (Upstream assert(false) is a remote abort in Debug builds.)
+            return;'
+    export L2_REPL
+    perl -0pi -e 's/\Q$ENV{L2_ANCHOR}\E/$ENV{L2_REPL}/' "$GEKKONET_BACKEND_CPP"
+    if ! grep -qF '3s-arm L-2: unknown wire header.type' "$GEKKONET_BACKEND_CPP" || \
+       grep -qF 'cannot process an unknown event' "$GEKKONET_BACKEND_CPP"; then
+        echo "ERROR: GekkoNet L-2 default-case drop failed to apply." >&2
+        exit 1
+    fi
+    echo "GekkoNet: applied L-2 ParsePacket unknown-type drop (Debug-safe)"
+
+    # --- M-4 (unbounded deserialize resize) ------------------------------
+    # zpp's resizable-container loader reads a wire-declared u32 element count
+    # and resize()s the container to it BEFORE bounds-checking the input
+    # bytes, so a hostile length (up to ~4G) forces a ~1GB transient
+    # allocation per poll on a ~1GB MiSTer -> OOM DoS. Cap the declared size
+    # to a single-UDP-datagram ceiling (65536 elements) BEFORE resizing; on
+    # violation throw out_of_range (already caught in HandleData -> packet
+    # dropped). Two identical resize sites (class-type and fundamental-type
+    # loaders); both guarded via one global substitution. Only InputMsg's
+    # inputs vector is wire-deserialized, whose legitimate size is <= the
+    # sender's MAX_INPUT_SIZE (512), so 65536 never rejects real traffic.
+    if [ "$(grep -c 'container.resize(size);' "$GEKKONET_SERIALIZER_H")" -ne 2 ]; then
+        echo "ERROR: GekkoNet zpp serializer not in expected pre-patch form at ref $GEKKONET_REF (M-4);" >&2
+        echo "       expected exactly 2 'container.resize(size);' sites. Refusing to build unpatched." >&2
+        exit 1
+    fi
+    SZ_REPL='    if (static_cast<std::uint64_t>(size) > static_cast<std::uint64_t>(65536u)) {
+        // 3s-arm M-4: refuse wire-declared container sizes beyond a single
+        // UDP datagram ceiling BEFORE allocating; prevents ~1GB transient OOM
+        // from a hostile u32 length. Caught in HandleData -> packet dropped.
+        throw out_of_range("3s-arm: deserialize size exceeds sane message bound");
+    }
+    container.resize(size);'
+    export SZ_REPL
+    perl -0pi -e 's/    container\.resize\(size\);/$ENV{SZ_REPL}/g' "$GEKKONET_SERIALIZER_H"
+    if [ "$(grep -c '3s-arm M-4' "$GEKKONET_SERIALIZER_H")" -ne 2 ]; then
+        echo "ERROR: GekkoNet M-4 serializer resize guard failed to apply to both sites." >&2
+        exit 1
+    fi
+    echo "GekkoNet: applied M-4 serializer resize bound (both loaders)"
+
+    # --- M-4 (RLEDecode decompression bomb) ------------------------------
+    # RLEDecode expands each (count,value) pair by up to 255x with no output
+    # cap. Even with the bounded input above, a full buffer could expand ~127x.
+    # Cap the decoded output at the same single-datagram ceiling; an over-cap
+    # buffer is returned empty and then dropped by the OnInputs C-1 size check.
+    # Anchored on the push loop (untouched by the RLE odd-length OOB patch
+    # above), so the two patches are order-independent. RLEEncode untouched.
+    # The anchor must be UNIQUE (exactly 1 occurrence) — the substitution is
+    # first-occurrence, so a duplicate introduced by a ref bump would
+    # silently misplace the cap. Fail loud instead.
+    if ! perl -0ne 'my $c = () = /                for \(i32 x = 0; x < count; x\+\+\) \{\n                    result\.push_back\(value\);\n                \}/g; exit($c != 1)' "$GEKKONET_COMPRESSION_H"; then
+        echo "ERROR: GekkoNet RLEDecode push loop not in expected form at ref $GEKKONET_REF (M-4);" >&2
+        echo "       expected exactly 1 occurrence. compression.h drifted. Refusing to build unpatched." >&2
+        exit 1
+    fi
+    CP_REPL='                // 3s-arm M-4: cap RLE-decompressed output. Bounds the
+                // decompression-bomb expansion (~127x) to a single-datagram
+                // ceiling; an over-cap buffer is dropped by OnInputs C-1.
+                if ((u64)result.size() + (u64)count > (u64)65536u) {
+                    return {};
+                }
+                for (i32 x = 0; x < count; x++) {
+                    result.push_back(value);
+                }'
+    export CP_REPL
+    perl -0pi -e 's/                for \(i32 x = 0; x < count; x\+\+\) \{\n                    result\.push_back\(value\);\n                \}/$ENV{CP_REPL}/' "$GEKKONET_COMPRESSION_H"
+    if ! grep -qF '3s-arm M-4: cap RLE-decompressed output' "$GEKKONET_COMPRESSION_H"; then
+        echo "ERROR: GekkoNet M-4 RLEDecode output cap failed to apply." >&2
+        exit 1
+    fi
+    echo "GekkoNet: applied M-4 RLEDecode output cap"
+
     cmake -S "$GEKKONET_SRC" -B "$GEKKONET_SRC/cmake-build" \
         -DCMAKE_BUILD_TYPE=Release \
         -DNO_ASIO_BUILD=ON \
@@ -306,9 +541,25 @@ else
 
     cmake --build "$GEKKONET_SRC/cmake-build" -j"$JOBS"
 
-    mkdir -p "$GEKKONET_BUILD/include" "$GEKKONET_BUILD/lib"
-    cp -r "$GEKKONET_SRC/GekkoLib/include/." "$GEKKONET_BUILD/include/"
-    find "$GEKKONET_SRC" -name "*.a" -exec cp {} "$GEKKONET_BUILD/lib/libGekkoNet.a" \;
+    # Populate the cache CRASH-SAFELY: stage the complete artifact set
+    # (patched headers + libGekkoNet.a) into a temp dir beside the final
+    # path, then atomically rename() it into place. Copying headers straight
+    # into $GEKKONET_BUILD would write the R-2 sentinel next to whatever .a
+    # was already cached; a kill before the .a copy would then leave a cache
+    # that PASSES the marker check while shipping a stale unpatched library.
+    # With the stage + rename, a kill at any point leaves the previous cache
+    # untouched (still invalid, still rebuilt) or the complete new one.
+    GEKKONET_STAGE="$GEKKONET_BUILD.staging"
+    rm -rf "$GEKKONET_STAGE"
+    mkdir -p "$GEKKONET_STAGE/include" "$GEKKONET_STAGE/lib"
+    cp -r "$GEKKONET_SRC/GekkoLib/include/." "$GEKKONET_STAGE/include/"
+    find "$GEKKONET_SRC" -name "*.a" -exec cp {} "$GEKKONET_STAGE/lib/libGekkoNet.a" \;
+    if [ ! -s "$GEKKONET_STAGE/lib/libGekkoNet.a" ]; then
+        echo "ERROR: GekkoNet build produced no libGekkoNet.a to stage." >&2
+        exit 1
+    fi
+    rm -rf "$GEKKONET_BUILD"
+    mv "$GEKKONET_STAGE" "$GEKKONET_BUILD"
 
     rm -rf "$GEKKONET_SRC"
     echo "GekkoNet installed to $GEKKONET_BUILD"
