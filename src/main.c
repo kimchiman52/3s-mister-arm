@@ -606,6 +606,13 @@ static void game_step_0() {
         // Flush the 2D polygon buffer each frame when the game's normal render
         // loop isn't running, preventing the NJDP2D_PRIM_MAX limit from overflowing.
         njdp2d_draw();
+        /* S1 host liveness (docs/plan-netplay-connection.md): keep the
+         * orchestrator ticking during the active session so the UPnP
+         * lease renewal (half of the 1-hour lease) fires mid-session —
+         * the mapping is what carries the peer's traffic. In HANDOFF
+         * state this is one atomic state read + one bool check per
+         * frame; renewal itself runs on a side thread. */
+        DirectP2P_Tick();
     } else {
         njUserMain();
         seqsBeforeProcess();

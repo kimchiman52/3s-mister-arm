@@ -515,6 +515,110 @@ static bool try_upnp(uint16_t internal_port, uint16_t preferred_external) {
     return ok;
 }
 
+/* --- S1 host liveness: UPnP lease renewal ------------------------------ */
+
+/* The UPnP mapping is requested with a 1-hour lease (UPNP_LEASE_DURATION
+ * "3600" in upnp.c) and was never renewed — a host relying on UPnP lost
+ * its mapping exactly one hour in, potentially MID-SESSION (the mapping
+ * is what carries the peer's traffic to us). Renew at half-lease while
+ * the mapping is in use, including into the active netplay session:
+ * main.c now calls DirectP2P_Tick from the session branch too, and the
+ * renewal runs on a short-lived side thread (miniupnpc HTTP to the
+ * router), so the netplay hot path and the GekkoNet-owned socket are
+ * never touched — UPnP renewal is router-side HTTP, not socket I/O.
+ *
+ * Threading: the renewal thread reuses upnp_worker_fn/UpnpJob. It only
+ * runs in states where host_thread_fn has finished writing
+ * s_upnp_mapping (see upnp_renew_tick's caller gate), and teardown /
+ * Cancel join it BEFORE calling Upnp_RemoveMapping, so miniupnpc's
+ * cached-IGD statics are never used concurrently. */
+#define UPNP_RENEW_INTERVAL_MS (30u * 60u * 1000u) /* half the 3600 s lease */
+#define UPNP_RENEW_RETRY_MS (5u * 60u * 1000u)     /* failed renew: retry sooner */
+
+static SDL_Thread* s_upnp_renew_thread = NULL;
+static UpnpJob* s_upnp_renew_job = NULL;
+static uint64_t s_upnp_next_renew_ms = 0;
+
+/* Join the renewal thread (blocking — bounded by one router HTTP round
+ * trip on the cached IGD, typically < 100 ms; ~2 s worst case if the
+ * cache was invalidated). Used by teardown/Cancel; must run before
+ * Upnp_RemoveMapping. Discards any result. */
+static void upnp_renew_join_and_discard(void) {
+    if (s_upnp_renew_thread != NULL) {
+        SDL_WaitThread(s_upnp_renew_thread, NULL);
+        s_upnp_renew_thread = NULL;
+    }
+    if (s_upnp_renew_job != NULL) {
+        SDL_free(s_upnp_renew_job);
+        s_upnp_renew_job = NULL;
+    }
+    s_upnp_next_renew_ms = 0;
+}
+
+/* Main-thread, non-blocking. Called once per frame from DirectP2P_Tick
+ * while the mapping is in use. Polls a completed renewal thread, or
+ * spawns one when the half-lease deadline passes. */
+static void upnp_renew_tick(void) {
+    if (s_upnp_renew_thread != NULL) {
+        if (SDL_GetThreadState(s_upnp_renew_thread) != SDL_THREAD_COMPLETE) {
+            return; /* renewal in flight */
+        }
+        SDL_WaitThread(s_upnp_renew_thread, NULL);
+        s_upnp_renew_thread = NULL;
+        uint64_t now = SDL_GetTicks();
+        if (s_upnp_renew_job != NULL && s_upnp_renew_job->ok) {
+            s_upnp_mapping = s_upnp_renew_job->result;
+            s_upnp_next_renew_ms = now + UPNP_RENEW_INTERVAL_MS;
+            SDL_Log("[direct_p2p] UPnP lease renewed (external %u -> internal %u); next renewal in %u min",
+                    s_upnp_mapping.external_port, s_upnp_mapping.internal_port,
+                    UPNP_RENEW_INTERVAL_MS / 60000u);
+        } else {
+            s_upnp_next_renew_ms = now + UPNP_RENEW_RETRY_MS;
+            SDL_Log("[direct_p2p] WARNING: UPnP lease renewal failed; retrying in %u min "
+                    "(mapping expires at the end of its current lease)",
+                    UPNP_RENEW_RETRY_MS / 60000u);
+        }
+        if (s_upnp_renew_job != NULL) {
+            SDL_free(s_upnp_renew_job);
+            s_upnp_renew_job = NULL;
+        }
+        return;
+    }
+
+    if (!s_upnp_mapping.active) {
+        return;
+    }
+    uint64_t now = SDL_GetTicks();
+    if (s_upnp_next_renew_ms == 0) {
+        /* First sighting of an active mapping — arm the half-lease timer.
+         * (Lazily armed here rather than in the worker so the deadline
+         * bookkeeping stays main-thread-only.) */
+        s_upnp_next_renew_ms = now + UPNP_RENEW_INTERVAL_MS;
+        return;
+    }
+    if (now < s_upnp_next_renew_ms) {
+        return;
+    }
+
+    UpnpJob* job = (UpnpJob*)SDL_calloc(1, sizeof(UpnpJob));
+    if (job == NULL) {
+        s_upnp_next_renew_ms = now + UPNP_RENEW_RETRY_MS;
+        return;
+    }
+    job->internal_port = s_upnp_mapping.internal_port;
+    job->preferred_external = s_upnp_mapping.external_port;
+    s_upnp_renew_thread = SDL_CreateThread(upnp_worker_fn, "UpnpRenew", job);
+    if (s_upnp_renew_thread == NULL) {
+        SDL_free(job);
+        s_upnp_next_renew_ms = now + UPNP_RENEW_RETRY_MS;
+        SDL_Log("[direct_p2p] WARNING: failed to spawn UPnP renewal thread");
+        return;
+    }
+    s_upnp_renew_job = job;
+    SDL_Log("[direct_p2p] UPnP lease renewal started (external port %u)",
+            s_upnp_mapping.external_port);
+}
+
 /* Convert public_ip string to network-byte-order uint32_t for room-code
  * encoding. Returns 0 on failure (still a valid IP, but 0.0.0.0 is not a
  * routable public addr so we also bail the caller). */
@@ -1167,6 +1271,10 @@ static void direct_p2p_on_teardown(void) {
      * after teardown). */
     rend_q_purge();
 
+    /* S1: join any in-flight UPnP lease renewal BEFORE RemoveMapping so
+     * miniupnpc's cached-IGD statics are never used concurrently. */
+    upnp_renew_join_and_discard();
+
     if (s_upnp_mapping.active) {
         Upnp_RemoveMapping(&s_upnp_mapping);
         memset(&s_upnp_mapping, 0, sizeof(s_upnp_mapping));
@@ -1677,6 +1785,8 @@ void DirectP2P_Cancel(void) {
     Stun_ReleaseServerAddr(&s_work.stun); /* S1: drop keepalive target ref */
     s_stun_keepalive_last_ms = 0;
     s_rebind_txid_valid = false;
+    /* S1: join any in-flight UPnP lease renewal before RemoveMapping. */
+    upnp_renew_join_and_discard();
     if (s_upnp_mapping.active) {
         Upnp_RemoveMapping(&s_upnp_mapping);
         memset(&s_upnp_mapping, 0, sizeof(s_upnp_mapping));
@@ -1700,6 +1810,19 @@ void DirectP2P_NotifySessionRejected(const char* reason) {
 
 void DirectP2P_Tick(void) {
     DirectP2PState st = get_state();
+
+    /* S1: UPnP lease renewal — only in states where host_thread_fn has
+     * finished writing s_upnp_mapping (it publishes HOST_WAITING after)
+     * and the mapping is potentially carrying traffic. HANDOFF covers
+     * the active netplay session: main.c ticks us from the session
+     * branch too, so a mapping that outlives the 1-hour lease keeps
+     * getting renewed mid-session. Never runs during UPNP_PROBE /
+     * STUN_DISCOVER, where the worker thread still owns the mapping. */
+    if (st == DIRECT_P2P_HOST_WAITING || st == DIRECT_P2P_FALLBACK_SIGNALING ||
+        st == DIRECT_P2P_FALLBACK_BILATERAL_PUNCH || st == DIRECT_P2P_HANDOFF) {
+        upnp_renew_tick();
+    }
+
     switch (st) {
     case DIRECT_P2P_IDLE:
     case DIRECT_P2P_UPNP_PROBE:
