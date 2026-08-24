@@ -5,7 +5,14 @@
 
 #include "sf33rd/Source/Game/rendering/texcash.h"
 #include "common.h"
+/* ENABLE_PERF_TELEMETRY lives in the generated port/build_config.h. Without
+ * it every `#if ENABLE_PERF_TELEMETRY` in this TU silently evaluates to 0
+ * (there is no -Wundef in C_FLAGS), so the skip+log diagnostics below would
+ * compile away. ramcnt.c and texgroup.c pick it up transitively via main.h;
+ * texcash.c does not include main.h, so take it directly. */
+#include "port/build_config.h"
 #include "sf33rd/AcrSDK/ps2/flps2debug.h"
+#include "sf33rd/AcrSDK/ps2/foundaps2.h" /* flLogOut */
 #include "sf33rd/Source/Common/PPGFile.h"
 #include "sf33rd/Source/Game/debug/Debug.h"
 #include "sf33rd/Source/Game/effect/effect.h"
@@ -410,6 +417,32 @@ void make_texcash_work(s16 ix) {
                      (mts[ix].mltnum32 * sizeof(u16));
             mts_ok[ix].key0 = Pull_ramcnt_key(memreq, mts_base[ix].type, 0, 0);
             adrs = (u8*)Get_ramcnt_address(mts_ok[ix].key0);
+
+            /* Pull_ramcnt_key returns -1 and Get_ramcnt_address(<= 0)
+             * returns 0 when the ramcnt pool or key table is exhausted
+             * (ramcnt.c:205/237 and :151-160 -- both already skip+log
+             * rather than the arcade ERR_STOP). Bail out here instead of
+             * carrying the sentinel into pointer arithmetic: leaving
+             * mts_ok[ix].be at 0 degrades to a missing texture.
+             *
+             * MOST consumers tolerate that -- aboutspr.c:265,
+             * texcash.c:361/576/614 and PPGWork.c:177 all skip on
+             * be == 0. It is not universal: opening.c:222-223 calls
+             * make_texcash_work(9) and then mlt_obj_melt2 with no be
+             * check, and mlt_obj_melt2 gates on grplds->ok (the texture
+             * group) rather than on be. That path needs the very first
+             * texcash allocation at boot to fail before it matters, which
+             * is not demonstrated reachable; it is called out here so the
+             * bail-out is not mistaken for a universally safe degrade. */
+            if (mts_ok[ix].key0 < 0 || adrs == NULL) {
+#if ENABLE_PERF_TELEMETRY
+                flLogOut("[ramcnt-skip] %s key0-alloc-failed ix=%d key0=%d memreq=%zu (texcash slot left uninitialised)\n",
+                         __func__, (int)ix, (int)mts_ok[ix].key0, memreq);
+#endif
+                mts_ok[ix].key0 = 0;
+                return;
+            }
+
             mts[ix].mltcsh16 = (PatternState*)adrs;
             adrs += mts[ix].mltnum16 * 8;
             mts[ix].mltcsh32 = (PatternState*)adrs;
@@ -455,6 +488,17 @@ void make_texcash_work(s16 ix) {
                      (mts[ix].mltnum32 * sizeof(u16));
             mts_ok[ix].key0 = Pull_ramcnt_key(memreq, mts_base[ix].type, 0, 0);
             adrs = (u8*)Get_ramcnt_address(mts_ok[ix].key0);
+
+            /* Same exhausted-pool bail-out as the ext branch above. */
+            if (mts_ok[ix].key0 < 0 || adrs == NULL) {
+#if ENABLE_PERF_TELEMETRY
+                flLogOut("[ramcnt-skip] %s key0-alloc-failed ix=%d key0=%d memreq=%zu (texcash slot left uninitialised)\n",
+                         __func__, (int)ix, (int)mts_ok[ix].key0, memreq);
+#endif
+                mts_ok[ix].key0 = 0;
+                return;
+            }
+
             mts[ix].mltcsh16 = (PatternState*)adrs;
             adrs += mts[ix].mltnum16 * 8;
             mts[ix].mltcsh32 = (PatternState*)adrs;
@@ -487,6 +531,48 @@ void make_texcash_work(s16 ix) {
         mts_ok[ix].key1 = Pull_ramcnt_key(memreq, mts_base[ix].type, 0, 0);
         mts[ix].attribute = mts_base[ix].attribute;
         page16 = Get_ramcnt_address(mts_ok[ix].key1);
+
+        /* This is the site that segfaults when the ramcnt pool has been
+         * leaked away: page16 == 0 flows into mlt_obj_trans_init ->
+         * ppgSetupTexChunkSeqs, which writes adrs[i] = 0 at
+         * PPGFile.c:1014. Bail out and hand key0 back rather than leaving
+         * it stranded; the caller-visible result is an uninitialised
+         * texcash slot (be stays 0), not a crash.
+         *
+         * The release has to be type-dispatched. ramcnt has two mutually
+         * exclusive gates: Push_ramcnt_key rejects type 8/9 (ramcnt.c:57)
+         * and Push_ramcnt_key_original rejects everything else
+         * (ramcnt.c:77). key0 carries mts_base[ix].type, and that is NOT
+         * uniformly 8/9 -- mts_base[0].type is 0 (the table is 1x0, 15x8,
+         * 8x9). ix == 0 is not reached today (Clear_texcash_work and
+         * Init_texcash_work both start at index 1), so an unconditional
+         * Push_ramcnt_key_original would be a latent trap rather than a
+         * live bug -- it would silently refuse the free and leak key0 with
+         * its handle already zeroed. Dispatch on the type instead so the
+         * bail-out is correct for every index, including ones a future
+         * caller might add. purge_texcash_work (texcash.c:613) is the
+         * normal release path and can hardcode _original precisely because
+         * it only ever runs for slots that reached be != 0. */
+        if (mts_ok[ix].key1 < 0 || page16 == 0) {
+#if ENABLE_PERF_TELEMETRY
+            flLogOut("[ramcnt-skip] %s key1-alloc-failed ix=%d key1=%d memreq=%zu (texcash slot left uninitialised)\n",
+                     __func__, (int)ix, (int)mts_ok[ix].key1, memreq);
+#endif
+            mts_ok[ix].key1 = 0;
+
+            if (mts_ok[ix].key0 > 0) {
+                if (mts_base[ix].type == 8 || mts_base[ix].type == 9) {
+                    Push_ramcnt_key_original(mts_ok[ix].key0);
+                } else {
+                    Push_ramcnt_key(mts_ok[ix].key0);
+                }
+
+                mts_ok[ix].key0 = 0;
+            }
+
+            return;
+        }
+
         mlt_obj_trans_init(&mts[ix], mts_base[ix].mode, (u8*)page16);
 
         if (mts[ix].ext) {

@@ -482,8 +482,20 @@ void RollbackDeterminism_PreFrame(void) {
     const int select_period = configuration.test.rbd_select_rollback_period;
     if (select_period > 0 && TestRunner_IsPhaseActive("character-select") &&
         (rbd_frame_index % (uint32_t)select_period) == 0) {
+        /* Select-phase depth used to be hard-clamped to 2 here. That clamp
+         * silently capped every select-phase investigation at depth 2 while
+         * production predicts 8 frames ahead by default
+         * (input_prediction_window, netplay.c:903-905), which is a real
+         * coverage gap: the task-50 duplicate-load leak changes character
+         * at depth >= 3, because by then the head request has drained and
+         * the enqueue-side dedupe no longer sees it. The bound is now
+         * configurable (default still 2) so that gap can be probed. */
         const int depth = configuration.test.rbd_rollback_depth;
-        rbd_rollback_cycle(depth > 2 ? 2 : depth);
+        int select_depth = configuration.test.rbd_select_rollback_depth;
+        if (select_depth < 1) {
+            select_depth = 1;
+        }
+        rbd_rollback_cycle(depth > select_depth ? select_depth : depth);
     }
 }
 

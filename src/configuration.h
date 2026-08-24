@@ -91,6 +91,20 @@ typedef struct TestRunnerConfiguration {
      * select-phase cycles entirely. Only meaningful when
      * rbd_rollback_period > 0. */
     int rbd_select_rollback_period;
+
+    /* Maximum speculative depth for character-select-phase cycles.
+     * Defaults to 2, which is the value this phase was historically
+     * hard-clamped to. The clamp existed because deeper select cycles
+     * tripped the crash-class arcade traps described above; task 50 fixed
+     * the ppgSetupTexChunkSeqs NULL-deref member of that class, and the
+     * neutralization matrix for it runs at 8 to match production's
+     * input_prediction_window default (netplay.c:903-905).
+     *
+     * Kept at 2 by default so the shared harness gate keeps its existing
+     * cadence; raise it to reproduce or regression-test select-phase
+     * rollback bugs at production depth. Clamped to rbd_rollback_depth,
+     * which bounds every phase. */
+    int rbd_select_rollback_depth;
 } TestRunnerConfiguration;
 
 #if ENABLE_PERF_TELEMETRY
