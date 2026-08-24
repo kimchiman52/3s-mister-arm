@@ -66,6 +66,28 @@ A1 and B:
   simulation: this is the genuine desync class, not just untracked
   bytes.
 
+The FEEDBACK tag is only as good as the driver's model of what "saved"
+means, so `load_gs_save_names()` covers all three ways this tree saves
+state, not just the `GS_SAVE(...)` macro: the ~600 macro lines, the four
+hand-rolled `extern` + `SDL_memcpy` blocks at the end of
+`GameState_Save`/`GameState_Load` (`chainex_check`, `Color7`,
+`ca_check_flag`, `spmv_ng_save` — four of the five historic escapees,
+i.e. exactly the symbols whose regression this harness exists to catch),
+and the `EffectState` members saved through `gather_state`. A symbol
+missing from that set still reports, but as plain DIVERGENT, losing the
+"saved state drifted" signal. The extraction therefore **fails the run
+(exit 2) rather than degrading quietly** if the macro-name count drops
+below a floor, if either half of a hand-rolled or partial save goes
+missing, or if the `EffectState` struct body stops containing a member
+it expects — so a future refactor of the save macros cannot silently
+blind the detector.
+
+`GameState.effl8_colorram` is registered separately as a *partial* save
+(a 96-byte slice of `ColorRAM`): it is presence-checked but deliberately
+NOT added to the saved-name set, because tagging the whole 64 KB symbol
+as saved would mislabel a divergence in the unsaved remainder as
+FEEDBACK.
+
 If the save set were complete (modulo the allowlist), run B would be
 byte-identical to run A1 at every frame: the save/load restores
 everything the speculative frames touched, and the continuation frames
