@@ -1285,6 +1285,27 @@ test**, not by assertion:
 | pool-size cap removed | `relayPoolExhaustion` (4) |
 | idle reclaim removed | `relayIdleReclaim` (3) |
 
+The adversarial review added **six more** (`EXPECTED_TESTS` 32 → **38**),
+each proven red the same way — and two of them by neutralising the fix
+into the *plausible wrong* fix rather than into the pre-fix code, which
+is the stronger proof:
+
+| test | neutralisation | red |
+|---|---|---|
+| `relaySurvivesSessionTtl` (CRITICAL-1) | the skip-active-relay guard removed (true pre-fix) | 4, including both end-to-end forwarding assertions |
+| `relayPinSourceBoundToSlotIp` (HIGH-1) | source gate removed (true pre-fix) | 6, incl. *"reached the victim ZERO times (actual=54)"* |
+| " | **the wrong fix**: require the port to match too | 4, incl. *"the slot IP from a DIFFERENT PORT pinned side 0 (symmetric NAT must still work)"*, plus 3 in `relayBandwidthCap` |
+| `relayBandwidthCap` +3rd act (HIGH-2) | the original `lastActivity` ordering restored | 2 |
+| `relayPortBlocklistExpires` (MEDIUM-1) | monotonic blocklist | 2, incl. *"an EXPIRED block returns the port to the pool (actual=34001 expected=34000)"* |
+| " | blocklist on **any** socket error | 1 |
+| `relayBindFailureStillGrantsAWorkingPort` (MEDIUM-2) | the synchronous grant restored | 4, incl. *"the grant names a port that is NOT the unbindable one (got 34000)"* and *"the granted port answered a PIN"* — i.e. the `RELAY_PIN_TIMEOUT` misreport itself |
+| `relayPinRateCap` (MEDIUM-3) | the pin bucket removed | 2 |
+| `keyBudgetCoversTheRelayRung` (MEDIUM-4) | `KEY_RATE_LIMIT_PER_WINDOW` back to 10 | 3, incl. *"every one of the 8 RELAY_REQs ... was answered (actual=7 expected=8)"* |
+
+`relayBindFailureStillGrantsAWorkingPort` occupies pool port 34000 with
+a real socket, so the bind failure it recovers from is a real libuv
+`EADDRINUSE`, not a mock.
+
 **Client** — `test_bilateral_punch.c` **test 16**, driving the REAL
 `BeginJoin` through the whole cascade against a mock server that also
 speaks the relay extension: 16A grant+ack → HANDOFF, 16B silent →
@@ -1304,6 +1325,20 @@ them (`s_mock_punch_calls == 0`). Five neutralisations, five reds:
 | relay endpoint writeback removed | 16A: *"do_handoff got 198.51.100.7:6000, expected the relay endpoint 127.0.0.1:58184"* — i.e. it handed off to the unreachable peer, the precise bug the rung exists to prevent |
 | `set_fail(rc)` → `set_fail(NAT_BLOCKED)` | 16B/C/D on both the status string and `code=` |
 | `via_relay=` dropped from the report lines | 16A on the OK line, 16B/C/D on `via_relay=0` |
+
+Test 17 (relay codec vs literal bytes) gained a `Rendezvous_HasMagic`
+block for review LOW-1, red under the old version-gated semantics on
+`17-magic-wrong-version-still-dropped` — the exact frame that used to
+slip past the straggler drop.
+
+**Where the review's two "unshippable" verdicts landed.** The reviewer
+passed the core correctness question — the relayed socket really is
+behaviourally identical to a punched one, verified link by link, and no
+relay frame can reach GekkoNet's deserializer — and the two teardown
+defects it found (CRITICAL-1, HIGH-2) are both now regression-tested
+against the *behaviour a player experiences*, not against internal
+state: "bytes still cross after ten minutes" and "a session over budget
+is not reclaimed as idle".
 
 ### 7.7 Residuals, stated rather than hidden
 
@@ -1371,5 +1406,5 @@ expected outcome. This is the regression net for S2–S7.
 | S2 punch / STUN mechanics | **implemented** (see §4; includes the unplanned STUN port-byteswap fix) |
 | S3 no-hangs + failure taxonomy | **implemented** (see §5) |
 | S4 security | **implemented + adversarially reviewed** (see §6; S4a punch auth, S4b room code — now v3, S4c rendezvous return-routability — the last two are breaking wire/format changes, authorized. Review fixes as-built in §6.8) |
-| S5 relay for symmetric-NAT pairs | **implemented** (see §7; custom '3SXR' relay on the existing port, NOT coturn. Closes the one §2 matrix cell that could not connect at all. Pure wire EXTENSION — protocol version stays 2) |
+| S5 relay for symmetric-NAT pairs | **implemented + adversarially reviewed** (see §7; custom '3SXR' relay on the existing port, NOT coturn. Closes the one §2 matrix cell that could not connect at all. Pure wire EXTENSION — protocol version stays 2. Review fixes as-built in §7.2/§7.3: CRITICAL-1 session-TTL teardown, HIGH-1 pin source binding, HIGH-2 over-budget liveness, MEDIUM-1..5, LOW-1..2) |
 | S6–S8 | planned above |
