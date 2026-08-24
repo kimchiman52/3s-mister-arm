@@ -1656,6 +1656,11 @@ async function testRelayPoolExhaustion(handle, serverPort) {
                 dropCap: 0,
                 pinRejects: 0,
                 pinSourceRejects: 0,
+                pinRateDrops: 0,
+                pinAllowance: handle._relayPinRatePerSec,
+                pinRefill: nowMsShim(),
+                listening: true,
+                waiters: [],
                 createdAt: nowMsShim(),
             });
         }
