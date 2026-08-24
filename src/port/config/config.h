@@ -127,6 +127,16 @@ bool Config_HasExplicitKey(const char* key);
 /// LAST_PEER_CODE) use this path for within-session updates.
 void Config_SetString(const char* key, const char* value);
 
+/* Bool sibling of Config_SetString, same in-memory-only semantics.
+ * Exists because several netplay kill switches are CFG_BOOL and
+ * Config_GetBool returns false for any entry whose type is not CFG_BOOL
+ * — so a test (or any runtime toggle) could NOT flip them via
+ * Config_SetString, which would install a CFG_STRING entry that
+ * Config_GetBool then silently ignores. Notably
+ * CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_UPNP has no default_entries[] row,
+ * so there is no coercion path either. */
+void Config_SetBool(const char* key, bool value);
+
 /// Persist the current in-memory config entries to the on-disk config file.
 /// See note on Config_SetString — current implementation is a no-op that
 /// logs once so callers have a stable symbol to call; real write-back is

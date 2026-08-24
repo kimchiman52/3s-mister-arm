@@ -328,6 +328,11 @@ static SDL_AtomicInt s_host_registering = { 0 };
  * NOT reset on the M1 bilateral-failure return to HOST_WAITING — that is
  * the same hosting session. */
 static uint64_t s_host_waiting_since_ms = 0;
+#ifdef NETPLAY_TEST_HOOKS
+/* Multiplier applied to the host-waiting elapsed clock (test seam; 1 =
+ * off). See host_waiting_tick. */
+static int s_host_advisory_scale = 1;
+#endif
 static uint64_t s_host_waiting_last_note_ms = 0;
 static ConnectFailCode s_host_advisory_code = CONNECT_FAIL_NONE;
 
@@ -2555,7 +2560,15 @@ static void host_handle_challenge(const uint8_t* pkt, int len,
     if (Rendezvous_BuildRegister(s_work.stun.public_port, session_key, cookie,
                                  register_pkt) &&
         s_work.stun.socket != NULL && src_addr != NULL) {
-        (void)Rendezvous_Send(s_work.stun.socket, src_addr, src_port,
+        /* Routed through the RENDEZVOUS_SEND seam (not a direct
+         * Rendezvous_Send) so test_bilateral_punch.c can OBSERVE the
+         * cookied echo: its `my_public_port` field must carry
+         * s_work.stun.public_port (the source port the server checks
+         * against rinfo.port) and NOT s_work.advertised_port, which
+         * differs whenever UPnP maps an external port the STUN probe
+         * never saw. Production (no -DNETPLAY_TEST_HOOKS) expands to the
+         * identical direct Rendezvous_Send call. */
+        (void)RENDEZVOUS_SEND(s_work.stun.socket, src_addr, src_port,
                               register_pkt, sizeof(register_pkt));
     }
     SDL_Log("[direct_p2p] rendezvous CHALLENGE answered (cookie echoed to %s:%u)",
@@ -3049,7 +3062,18 @@ static void host_waiting_tick(void) {
         s_host_waiting_last_note_ms = now;
         return;
     }
-    const uint32_t waited_ms = (uint32_t)(now - s_host_waiting_since_ms);
+    uint32_t waited_ms = (uint32_t)(now - s_host_waiting_since_ms);
+#ifdef NETPLAY_TEST_HOOKS
+    /* S4-review MEDIUM-2 seam: CONNECT_HOST_ADVISORY_MS is a 30 s
+     * compile-time constant, so the COOKIE_REJECTED host-advisory test
+     * would otherwise have to sleep 30 s of real time. Scale the elapsed
+     * clock instead of the threshold: the classifier under test still
+     * sees the real CONNECT_HOST_ADVISORY_MS boundary, so the test
+     * exercises the shipped constant rather than a test-only one. */
+    if (s_host_advisory_scale > 1) {
+        waited_ms *= (uint32_t)s_host_advisory_scale;
+    }
+#endif
 
     /* Cause-8 advisory (once per hosting session): the server answers
      * every REGISTER with a DELIVER, so zero DELIVERs after the
@@ -3457,6 +3481,10 @@ void DirectP2P_TestHook_RunTeardown(void) {
 }
 
 /* S4-review HIGH-1b: punch-gate throttle seams (see direct_p2p.h). */
+void DirectP2P_TestHook_SetHostAdvisoryScale(int scale) {
+    s_host_advisory_scale = (scale > 1) ? scale : 1;
+}
+
 void DirectP2P_TestHook_PunchGateReset(void) {
     host_punch_gate_reset();
 }

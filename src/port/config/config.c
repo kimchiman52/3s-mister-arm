@@ -473,6 +473,37 @@ void Config_SetString(const char* key, const char* value) {
     entry->value.s = SDL_strdup(value);
 }
 
+void Config_SetBool(const char* key, bool value) {
+    if (key == NULL) {
+        return;
+    }
+
+    ConfigEntry* existing = find_entry_in_array(key, entries, entry_count);
+    if (existing != NULL) {
+        if (existing->type == CFG_STRING) {
+            SDL_free(existing->value.s);
+            existing->value.s = NULL;
+        }
+        existing->type = CFG_BOOL;
+        existing->value.b = value;
+        existing->coerced = false;
+        return;
+    }
+
+    if (entry_count >= CONFIG_ENTRIES_MAX) {
+        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                    "Config_SetBool: entries table full (%d); dropping key '%s'",
+                    CONFIG_ENTRIES_MAX,
+                    key);
+        return;
+    }
+
+    ConfigEntry* entry = &entries[entry_count++];
+    entry->key = SDL_strdup(key);
+    entry->type = CFG_BOOL;
+    entry->value.b = value;
+}
+
 void Config_Save(void) {
     static bool warned = false;
     if (!warned) {

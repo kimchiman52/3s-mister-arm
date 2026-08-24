@@ -39,6 +39,17 @@
 
 #ifdef ENABLE_NETPLAY_TESTS
 
+/* MEDIUM-5: ENABLE_NETPLAY_TESTS alone is not enough. Every end-to-end
+ * test below drives direct_p2p.c through the DirectP2P_TestHook_* seams,
+ * and those symbols only exist under -DNETPLAY_TEST_HOOKS (see the
+ * NETPLAY_TEST_HOOKS block in direct_p2p.c). Without it this TU used to
+ * fail with ~20 "implicit declaration of function
+ * 'DirectP2P_TestHook_...'" errors that named the symptom, never the
+ * missing flag. */
+#ifndef NETPLAY_TEST_HOOKS
+#error "test_bilateral_punch.c needs BOTH -DENABLE_NETPLAY_TESTS and -DNETPLAY_TEST_HOOKS. Configure with: -DENABLE_NETPLAY=ON -DNETPLAY_TEST_HOOKS=ON -DCMAKE_C_FLAGS=-DENABLE_NETPLAY_TESTS"
+#endif
+
 #include "netplay/connect_fail.h"
 #include "netplay/direct_p2p.h"
 #include "netplay/net_tuning.h"
@@ -91,10 +102,11 @@ typedef int socklen_t;
  * they answer every REGISTER with a DELIVER directly. That is the
  * "cookie already accepted" steady state, which is what tests 1/4/8/9
  * are actually about, and it doubles as coverage that the client stays
- * correct against a server that never challenges it. The challenge
- * handshake itself is proven server-side in
- * tools/rendezvous-server/__test_protocol.js and client-side in
- * test 11 (the codec) below. */
+ * correct against a server that never challenges it (§6.5's "v2 client,
+ * v2 server that never challenges" row). Tests 13-15 flip
+ * MockServerCtx.challenge_enabled on and drive the full S4c handshake
+ * end to end on BOTH roles; the codec itself is pinned by test 11 and
+ * the server half by tools/rendezvous-server/__test_protocol.js. */
 
 static int fail_count = 0;
 
@@ -173,7 +185,113 @@ typedef struct {
     int             sock;
     volatile bool   stop;
     MockSession     session;
+
+    /* --- S4c return-routability gate (tests 13-15) --------------------
+     * Off by default so tests 1/4/8/9 keep talking to a server that
+     * never challenges — §6.5's "v2 client, v2 server that never
+     * challenges" row, a supported configuration whose coverage must not
+     * regress. When on, the mock behaves like the real v2 server:
+     * REGISTER/POLL whose 8-byte cookie tail (bytes [28..35]) is
+     * absent/zero/wrong gets exactly ONE 32-byte CHALLENGE and binds
+     * NOTHING — no endpoint recorded, no DELIVER. Only the matching
+     * echo binds. */
+    volatile bool   challenge_enabled;
+    /* §6.5 last row: "always challenges but never accepts" — every
+     * request is challenged, no cookie is ever honored, zero DELIVERs. */
+    volatile bool   never_accept;
+    /* Withhold the peer-bearing DELIVER until this many COOKIED requests
+     * have arrived (1 = pair on the echo itself). Lets a test keep the
+     * client in its waiting state long enough for the rendezvous WORKER
+     * thread's next periodic resend to be observed. */
+    int             min_cookied_before_peer;
+    /* Fabricated peer endpoint the DELIVER carries. The real localhost
+     * source would be 127.0.0.1, which every client rejects via the LAN
+     * bypass, so a PUBLIC address is synthesized instead (same trick as
+     * self_deliver_server_thread). */
+    bool            use_synth_peer;
+    uint32_t        synth_peer_ip_be;
+    uint16_t        synth_peer_port;
+    /* Thread lifetime in seconds; 0 selects the historic 5 s. */
+    int             life_secs;
+
+    /* Observability (written by the mock thread, read after a wait). */
+    volatile int    challenges_sent;
+    volatile int    cookied_requests;
+    volatile int    uncookied_requests;
+    /* Requests with a missing/zero/wrong cookie arriving from an endpoint
+     * that has ALREADY echoed a valid one. §6.4 says the client "carries
+     * it on every later resend", so on a healthy client this stays 0.
+     * It is the only sound observable for the host's cross-thread cookie
+     * publish: a re-challenged worker resend provokes ANOTHER main-thread
+     * echo, so "a later cookied packet exists" stays true even with the
+     * seqlock dead — the uncookied resend that preceded it does not. */
+    volatile int    uncookied_after_bind;
+    bool            bound_ep_valid;
+    struct sockaddr_in bound_ep;
+    uint8_t         last_cookie[REND_COOKIE_LEN]; /* cookie last issued */
 } MockServerCtx;
+
+/* Cookie construction for the mock. The real server uses
+ * SHA-256(secret ‖ "addr:port:slot")[0..7] (rendezvous-server.js:191);
+ * matching that byte-for-byte is NOT the property under test. What IS
+ * under test is that the cookie is (a) bound to the source endpoint and
+ * (b) unforgeable by the client — a client that does not RECEIVE the
+ * challenge can never produce it. A keyed FNV-1a over (address, port)
+ * with a process-lifetime secret gives both. */
+static uint64_t s_mock_cookie_secret = 0;
+
+static void mock_cookie_for(const struct sockaddr_in* src,
+                            uint8_t out[REND_COOKIE_LEN]) {
+    if (s_mock_cookie_secret == 0) {
+        /* Seeded once per process; never leaves this TU, so the only way
+         * for a client to hold a valid cookie is to have received it. */
+        s_mock_cookie_secret =
+            0x9E3779B97F4A7C15ull ^ ((uint64_t)SDL_GetTicks() << 21) ^
+            ((uint64_t)(uintptr_t)&s_mock_cookie_secret);
+        if (s_mock_cookie_secret == 0) s_mock_cookie_secret = 0xD1B54A32D192ED03ull;
+    }
+    uint8_t material[14];
+    memcpy(&material[0], &src->sin_addr.s_addr, 4);
+    memcpy(&material[4], &src->sin_port, 2);
+    for (int i = 0; i < 8; i++) {
+        material[6 + i] = (uint8_t)((s_mock_cookie_secret >> (8 * i)) & 0xFFu);
+    }
+    uint64_t h = 0xCBF29CE484222325ull;
+    for (size_t i = 0; i < sizeof(material); i++) {
+        h ^= material[i];
+        h *= 0x100000001B3ull;
+    }
+    for (int i = 0; i < REND_COOKIE_LEN; i++) {
+        out[i] = (uint8_t)((h >> (8 * i)) & 0xFFu);
+    }
+    /* An all-zero cookie is the wire's "no cookie" sentinel; never emit
+     * one or the gate would accept an uncookied request. */
+    if (out[0] == 0 && out[1] == 0 && out[2] == 0 && out[3] == 0 &&
+        out[4] == 0 && out[5] == 0 && out[6] == 0 && out[7] == 0) {
+        out[0] = 0x5A;
+    }
+}
+
+/* Build the 32-byte server->client CHALLENGE exactly as
+ * docs/plan-netplay-connection.md §6.4 specifies:
+ *   magic(4) ver(1) type(1)=4 reserved(2) key(16) cookie(8).
+ * The key echoed back is the one the REQUEST carried — that is what
+ * Rendezvous_ParseChallenge's session-key gate matches against. */
+static int build_challenge(uint8_t out[REND_CHALLENGE_LEN],
+                           const uint8_t key[REND_KEY_LEN],
+                           const uint8_t cookie[REND_COOKIE_LEN]) {
+    memset(out, 0, REND_CHALLENGE_LEN);
+    out[0] = REND_MAGIC_BYTES_0;
+    out[1] = REND_MAGIC_BYTES_1;
+    out[2] = REND_MAGIC_BYTES_2;
+    out[3] = REND_MAGIC_BYTES_3;
+    out[4] = (uint8_t)REND_VERSION;
+    out[5] = (uint8_t)REND_TYPE_CHALLENGE;
+    /* reserved [6..7] = 0 */
+    memcpy(&out[8], key, REND_KEY_LEN);
+    memcpy(&out[24], cookie, REND_COOKIE_LEN);
+    return REND_CHALLENGE_LEN;
+}
 
 /* Build a DELIVER packet for `peer` (or zeros if peer is NULL meaning
  * "not yet registered"). Returns the 32-byte packet length. */
@@ -204,10 +322,11 @@ static int build_deliver(uint8_t out[REND_DELIVER_LEN],
 static int SDLCALL mock_server_thread(void* arg) {
     MockServerCtx* ctx = (MockServerCtx*)arg;
     const long long start = (long long)time(NULL);
+    const long long life = (ctx->life_secs > 0) ? (long long)ctx->life_secs : 5;
 
     for (;;) {
         if (ctx->stop) return 0;
-        if ((long long)time(NULL) - start > 5) return 0;
+        if ((long long)time(NULL) - start > life) return 0;
 
         fd_set rfds;
         FD_ZERO(&rfds);
@@ -233,6 +352,38 @@ static int SDLCALL mock_server_thread(void* arg) {
         if (type != REND_TYPE_REGISTER && type != REND_TYPE_POLL) continue;
 
         const uint8_t* req_key = &buf[8];
+
+        /* S4c return-routability gate. Runs between "the frame is
+         * well-formed" and "we touch any state" — exactly where
+         * returnRoutabilityGate sits in rendezvous-server.js:553 — so an
+         * uncookied/invalid-cookied request binds NOTHING: no session
+         * slot, no endpoint recorded, no DELIVER. Only the echo binds. */
+        if (ctx->challenge_enabled) {
+            uint8_t want[REND_COOKIE_LEN];
+            mock_cookie_for(&src, want);
+            const bool cookie_ok =
+                memcmp(&buf[28], want, REND_COOKIE_LEN) == 0;
+            if (!cookie_ok) {
+                ctx->uncookied_requests++;
+                if (ctx->bound_ep_valid &&
+                    ctx->bound_ep.sin_addr.s_addr == src.sin_addr.s_addr &&
+                    ctx->bound_ep.sin_port == src.sin_port) {
+                    ctx->uncookied_after_bind++;
+                }
+            }
+            if (!cookie_ok || ctx->never_accept) {
+                uint8_t chal[REND_CHALLENGE_LEN];
+                const int cl = build_challenge(chal, req_key, want);
+                memcpy(ctx->last_cookie, want, REND_COOKIE_LEN);
+                ctx->challenges_sent++;
+                sendto(ctx->sock, (const char*)chal, cl, 0,
+                       (struct sockaddr*)&src, sl);
+                continue; /* bind nothing */
+            }
+            ctx->cookied_requests++;
+            ctx->bound_ep = src;
+            ctx->bound_ep_valid = true;
+        }
 
         /* Bind / find session by key. */
         MockSession* s = &ctx->session;
@@ -276,7 +427,22 @@ static int SDLCALL mock_server_thread(void* arg) {
          * 0.0.0.0:0 ("not yet registered"). */
         const struct sockaddr_in* peer = NULL;
         uint16_t peer_pub_port = 0;
-        if (s->ep_count == 2) {
+        struct sockaddr_in synth;
+        if (ctx->use_synth_peer) {
+            /* Single-client tests: the "other side" is fabricated. Until
+             * min_cookied_before_peer cookied requests have landed we
+             * answer with the zero-sentinel DELIVER ("peer not yet
+             * registered"), which every client treats as "keep waiting"
+             * — that is the window in which the rendezvous WORKER
+             * thread's next periodic resend can be observed. */
+            if (ctx->cookied_requests >= ctx->min_cookied_before_peer) {
+                memset(&synth, 0, sizeof(synth));
+                synth.sin_family = AF_INET;
+                synth.sin_addr.s_addr = ctx->synth_peer_ip_be;
+                peer = &synth;
+                peer_pub_port = ctx->synth_peer_port;
+            }
+        } else if (s->ep_count == 2) {
             for (int i = 0; i < 2; ++i) {
                 if (s->ep[i].sin_addr.s_addr == src.sin_addr.s_addr &&
                     s->ep[i].sin_port == src.sin_port) {
@@ -2063,6 +2229,756 @@ static int test_punch_gate_throttle(void) {
     return 1;
 }
 
+/* --- Tests 13-15: S4c client cookie handshake, end to end -------------- */
+
+/*
+ * Test 11 pins the CODEC. Nothing pinned the RUNTIME: no test ever
+ * delivered a CHALLENGE to a running client, so the cross-thread cookie
+ * seqlock (signal_cookie_publish / signal_cookie_snapshot), the host's
+ * cookied REGISTER echo in host_handle_challenge, s_host_challenge_seen
+ * ever becoming true, CONNECT_FAIL_COOKIE_REJECTED on the HOST path, and
+ * the joiner's inline re-BuildRegister+resend were all unexercised.
+ *
+ * The class of bug that hid in there: host_handle_challenge builds its
+ * echo with s_work.stun.public_port. Had it used s_work.advertised_port
+ * — a plausible copy/paste from the session-key derivation two lines
+ * above, which DOES use advertised_port — every UPnP host whose external
+ * port differs from its STUN-observed port would send the server a
+ * my_public_port that disagrees with its own UDP source port
+ * (rendezvous-server.js:517 compares exactly those two). The two agree
+ * today only because a reviewer read the code, not because a test says
+ * so. Test 13 makes them DIFFER at runtime and asserts the echo carries
+ * the STUN one.
+ */
+
+/* --- observing the wire through the RENDEZVOUS_SEND seam --------------- */
+
+#define REND_SEND_LOG_MAX 64
+
+typedef struct {
+    uint32_t t_ms;
+    uint16_t target_port;
+    int      len;
+    uint8_t  pkt[REND_REGISTER_PKT_LEN];
+} RendSendRec;
+
+static RendSendRec  s_send_log[REND_SEND_LOG_MAX];
+static SDL_AtomicInt s_send_log_n = { 0 };
+
+static void send_log_reset(void) {
+    memset(s_send_log, 0, sizeof(s_send_log));
+    SDL_SetAtomicInt(&s_send_log_n, 0);
+}
+
+static int send_log_count(void) {
+    int n = SDL_GetAtomicInt(&s_send_log_n);
+    return (n > REND_SEND_LOG_MAX) ? REND_SEND_LOG_MAX : n;
+}
+
+/* Records every packet direct_p2p.c pushes through RENDEZVOUS_SEND and
+ * then performs the real send, so the machine under test keeps running
+ * against the mock server. Both roles route here: the host's rend_q
+ * drain AND its main-thread CHALLENGE echo (direct_p2p.c:2558), and the
+ * joiner's inline signaling loop sends. */
+static bool recording_rendezvous_send(NET_DatagramSocket* sock, NET_Address* target,
+                                      uint16_t target_port, const uint8_t* pkt,
+                                      size_t pkt_len) {
+    const int slot = SDL_AddAtomicInt(&s_send_log_n, 1);
+    if (slot >= 0 && slot < REND_SEND_LOG_MAX && pkt != NULL) {
+        RendSendRec* r = &s_send_log[slot];
+        r->t_ms = SDL_GetTicks();
+        r->target_port = target_port;
+        r->len = (int)((pkt_len > sizeof(r->pkt)) ? sizeof(r->pkt) : pkt_len);
+        memcpy(r->pkt, pkt, (size_t)r->len);
+    }
+    if (sock == NULL || target == NULL || pkt == NULL || pkt_len == 0) {
+        return false;
+    }
+    return NET_SendDatagram(sock, target, target_port, pkt, (int)pkt_len);
+}
+
+static bool rec_is_register(const RendSendRec* r) {
+    return r->len >= REND_REGISTER_LEN &&
+           r->pkt[0] == REND_MAGIC_BYTES_0 && r->pkt[1] == REND_MAGIC_BYTES_1 &&
+           r->pkt[2] == REND_MAGIC_BYTES_2 && r->pkt[3] == REND_MAGIC_BYTES_3 &&
+           r->pkt[4] == REND_VERSION && r->pkt[5] == REND_TYPE_REGISTER;
+}
+
+static bool rec_has_cookie(const RendSendRec* r) {
+    if (r->len < REND_REGISTER_LEN) return false;
+    for (int i = 28; i < REND_REGISTER_LEN; i++) {
+        if (r->pkt[i] != 0) return true;
+    }
+    return false;
+}
+
+static uint16_t rec_my_public_port(const RendSendRec* r) {
+    return (uint16_t)(((uint16_t)r->pkt[24] << 8) | r->pkt[25]);
+}
+
+/* Index of the first cookied REGISTER, or -1. */
+static int send_log_first_cookied(void) {
+    const int n = send_log_count();
+    for (int i = 0; i < n; i++) {
+        if (rec_is_register(&s_send_log[i]) && rec_has_cookie(&s_send_log[i])) return i;
+    }
+    return -1;
+}
+
+/* --- mock-server lifecycle helper -------------------------------------- */
+
+/* Unblock the mock's select() and join it. Mirrors test 8's teardown. */
+static void mock_server_stop(MockServerCtx* ctx, SDL_Thread* tid,
+                             int server_sock, unsigned short server_port) {
+    ctx->stop = true;
+    struct sockaddr_in srv;
+    memset(&srv, 0, sizeof(srv));
+    srv.sin_family = AF_INET;
+    srv.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    srv.sin_port = htons(server_port);
+    uint8_t wake = 0;
+    sendto(server_sock, (const char*)&wake, 1, 0,
+           (struct sockaddr*)&srv, sizeof(srv));
+    if (tid != NULL) SDL_WaitThread(tid, NULL);
+    close_sock(server_sock);
+}
+
+/* --- host-side STUN seam that hands the test a live handle ------------- */
+
+/* direct_p2p.c:1407 calls STUN_DISCOVER(&s_work.stun, ...) — the mock is
+ * therefore handed a pointer to the orchestrator's own StunResult. Test
+ * 13 keeps it so it can move stun.public_port AFTER the room code (and
+ * with it advertised_port) has been latched, which is the only way to
+ * make the two ports diverge without a live UPnP mapping. */
+static StunResult* s_captured_stun = NULL;
+
+static bool capturing_stun_discover(StunResult* result, uint16_t local_port,
+                                    int timeout_ms) {
+    if (!mock_stun_discover(result, local_port, timeout_ms)) return false;
+    s_captured_stun = result;
+    return true;
+}
+
+/* Pump DirectP2P_Tick (main-thread work: rend_q drain, host_tick_receive,
+ * host_waiting_tick) until `want` is reached or the budget expires. */
+static bool tick_until_state(DirectP2PState want, int budget_ms) {
+    const uint32_t start = SDL_GetTicks();
+    while ((int)(SDL_GetTicks() - start) < budget_ms) {
+        if (DirectP2P_GetState() == want) return true;
+        DirectP2P_Tick();
+        SDL_Delay(5);
+    }
+    return DirectP2P_GetState() == want;
+}
+
+/* Pump Tick until `pred` holds or the budget expires. */
+static bool tick_until(bool (*pred)(void), int budget_ms) {
+    const uint32_t start = SDL_GetTicks();
+    while ((int)(SDL_GetTicks() - start) < budget_ms) {
+        if (pred()) return true;
+        DirectP2P_Tick();
+        SDL_Delay(5);
+    }
+    return pred();
+}
+
+static bool pred_first_cookied_send(void) {
+    return send_log_first_cookied() >= 0;
+}
+
+/* Set for the duration of a test so the zero-arg tick predicates can see
+ * the mock server's counters. */
+static MockServerCtx* s_pred_ctx = NULL;
+
+static bool pred_two_cookied_requests(void) {
+    return s_pred_ctx != NULL && s_pred_ctx->cookied_requests >= 2;
+}
+
+/* --- Test 13: HOST cookie handshake, end to end ------------------------ */
+
+static int test_host_cookie_handshake(void) {
+    fprintf(stderr, "[test_bilateral_punch] test 13: HOST S4c cookie handshake "
+                    "(CHALLENGE -> cookied echo -> seqlock -> DELIVER)\n");
+    const int fails_before = fail_count;
+    int rc = 0;
+
+    NET_Init();
+    DirectP2P_Init();
+    DirectP2P_TestHook_RunTeardown(); /* whatever ran before -> IDLE */
+
+    unsigned short server_port = 0;
+    int server_sock = open_udp_on_localhost(&server_port);
+    if (server_sock < 0) {
+        FAIL("test13", "failed to bind localhost UDP socket for mock server");
+        return 1;
+    }
+
+    MockServerCtx ctx;
+    memset(&ctx, 0, sizeof(ctx));
+    ctx.sock = server_sock;
+    ctx.challenge_enabled = true;   /* the S4c gate is ON for this one */
+    ctx.use_synth_peer = true;
+    ctx.synth_peer_ip_be = htonl(0xC6336407u); /* 198.51.100.7 (TEST-NET-2) */
+    ctx.synth_peer_port = 6000;
+    /* Pair only on the SECOND cookied request, so the host stays in
+     * HOST_WAITING long enough for the rendezvous worker's next periodic
+     * resend — the packet that proves the seqlock published. */
+    ctx.min_cookied_before_peer = 2;
+    ctx.life_secs = 30;
+    s_pred_ctx = &ctx;
+
+    SDL_Thread* tid = SDL_CreateThread(mock_server_thread, "rend_mock_s4c", &ctx);
+    if (!tid) {
+        FAIL("test13", "SDL_CreateThread failed");
+        close_sock(server_sock);
+        return 1;
+    }
+
+    {
+        char url[64];
+        SDL_snprintf(url, sizeof(url), "udp://127.0.0.1:%u", (unsigned)server_port);
+        Config_SetString(CFG_KEY_NETPLAY_DIRECT_P2P_SIGNAL_URL, url);
+        /* 1000 ms is the code's own floor (direct_p2p.c:1225); the
+         * seqlock assertion needs one worker cadence to elapse. */
+        Config_SetString(CFG_KEY_NETPLAY_DIRECT_P2P_REGISTER_INTERVAL_MS, "1000");
+    }
+
+    send_log_reset();
+    s_captured_stun = NULL;
+    s_mock_discover_calls = 0;
+    s_mock_punch_calls = 0;
+    s_mock_punch_succeed_from = 1; /* the bilateral punch succeeds */
+    DirectP2P_TestHook_SetStunDiscover(capturing_stun_discover);
+    DirectP2P_TestHook_SetStunHolePunch(mock_stun_punch);
+    DirectP2P_TestHook_SetRendezvousSend(recording_rendezvous_send);
+
+    /* Kill the UPnP probe. Without this the harness performs a REAL IGD
+     * discovery and installs a REAL 1-hour UDP mapping on whatever
+     * router the developer happens to be behind — a unit test must not
+     * mutate the LAN. It also made these tests environment-dependent:
+     * they took a different path depending on whether UPnP won. (This
+     * needed Config_SetBool; the key is CFG_BOOL and has no
+     * default_entries[] row, so Config_SetString would have installed a
+     * CFG_STRING entry that Config_GetBool silently ignores.)
+     * The port divergence test 13 asserts on is forced through the
+     * captured StunResult below, not through UPnP, so nothing is lost. */
+    Config_SetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_UPNP, true);
+    DirectP2P_BeginHost(0);
+    if (!wait_for_state(DIRECT_P2P_HOST_WAITING, 25000)) {
+        fprintf(stderr,
+                "[test_bilateral_punch] FAIL: test13: state %d after budget, expected "
+                "HOST_WAITING\n", (int)DirectP2P_GetState());
+        fail_count++;
+        rc = 1;
+        goto done;
+    }
+
+    /* The room code IS the advertised tuple: decoding it gives exactly
+     * the (ip, advertised_port, nonce) the host derives its session key
+     * from — no peeking at direct_p2p.c statics required. */
+    uint32_t adv_ip_be = 0, nonce = 0;
+    uint16_t advertised_port = 0;
+    if (RoomCode_Decode(DirectP2P_GetHostCode(), &adv_ip_be, &advertised_port,
+                        &nonce) != ROOM_CODE_OK) {
+        FAIL("test13", "could not decode the published host room code");
+        rc = 1;
+        goto done;
+    }
+    uint8_t expect_key[REND_KEY_LEN];
+    if (!Rendezvous_DeriveSessionKey(adv_ip_be, advertised_port, nonce, expect_key)) {
+        FAIL("test13", "Rendezvous_DeriveSessionKey failed for the advertised tuple");
+        rc = 1;
+        goto done;
+    }
+
+    /* Force the divergence the reviewer's latent bug needs to be visible.
+     * advertised_port was latched from the UPnP-or-STUN choice at
+     * direct_p2p.c:1476/1501 and is now frozen in the room code; moving
+     * the STUN-observed port through the pointer the discover seam handed
+     * us leaves the two permanently different. Done BEFORE the first Tick
+     * so nothing has been drained yet. */
+    if (s_captured_stun == NULL) {
+        FAIL("test13", "STUN seam never handed us the orchestrator's StunResult");
+        rc = 1;
+        goto done;
+    }
+    const uint16_t stun_public_port = (uint16_t)(advertised_port + 777u);
+    s_captured_stun->public_port = stun_public_port;
+    if (stun_public_port == advertised_port) {
+        FAIL("test13", "test setup failed to make the two ports differ");
+        rc = 1;
+        goto done;
+    }
+
+    /* 1) A CHALLENGE must reach the main thread and be answered. */
+    if (!tick_until(pred_first_cookied_send, 12000)) {
+        fprintf(stderr,
+                "[test_bilateral_punch] FAIL: test13: no cookied REGISTER ever left the "
+                "host (challenges_sent=%d sends=%d) — the CHALLENGE was not answered\n",
+                ctx.challenges_sent, send_log_count());
+        fail_count++;
+        rc = 1;
+        goto done;
+    }
+    EXPECT_TRUE("13-challenged", ctx.challenges_sent >= 1);
+
+    const int echo_i = send_log_first_cookied();
+    const RendSendRec* echo = &s_send_log[echo_i];
+
+    /* 2) The echo is a v2 REGISTER carrying the ADVERTISED-tuple session
+     *    key (a key derived from the STUN port would land in a different
+     *    server slot and never pair). */
+    EXPECT_TRUE("13-echo-is-register", rec_is_register(echo));
+    EXPECT_TRUE("13-echo-session-key",
+                memcmp(&echo->pkt[8], expect_key, REND_KEY_LEN) == 0);
+
+    /* 3) The echo's cookie is the one the mock issued for the host's
+     *    source endpoint — proof it came from RECEIVING the challenge. */
+    EXPECT_TRUE("13-echo-cookie",
+                memcmp(&echo->pkt[28], ctx.last_cookie, REND_COOKIE_LEN) == 0);
+
+    /* 4) THE PIN. my_public_port must be the STUN-observed port, which
+     *    the server compares against the datagram's own source port
+     *    (rendezvous-server.js:516-518). advertised_port is the UPnP
+     *    external port and is NOT what arrives at the server. */
+    if (rec_my_public_port(echo) != stun_public_port) {
+        fprintf(stderr,
+                "[test_bilateral_punch] FAIL: test13: echoed REGISTER my_public_port=%u, "
+                "expected stun.public_port=%u (advertised_port=%u). The CHALLENGE echo "
+                "must carry the STUN-observed port — the one the server matches against "
+                "the UDP source port.\n",
+                (unsigned)rec_my_public_port(echo), (unsigned)stun_public_port,
+                (unsigned)advertised_port);
+        fail_count++;
+        rc = 1;
+    }
+
+    /* 5) THE SEQLOCK. The cookie arrived on the MAIN thread
+     *    (host_handle_challenge); the periodic REGISTERs are rebuilt on
+     *    the rendezvous WORKER thread, so it can only reach them through
+     *    signal_cookie_publish -> signal_cookie_snapshot.
+     *
+     *    "A later cookied packet exists" is NOT proof: with the publish
+     *    broken, the worker's uncookied resend gets re-challenged and the
+     *    main thread echoes AGAIN, so cookied traffic keeps flowing. The
+     *    sound observable is the inverse — the mock counts any UNCOOKIED
+     *    request from an endpoint that has already echoed. A working
+     *    seqlock means the worker never sends the zero tail again. */
+    if (!tick_until(pred_two_cookied_requests, 8000)) {
+        fprintf(stderr,
+                "[test_bilateral_punch] FAIL: test13: the server saw only %d cookied "
+                "request(s) — the host stopped carrying the cookie\n",
+                ctx.cookied_requests);
+        fail_count++;
+        rc = 1;
+    }
+    if (ctx.uncookied_after_bind != 0) {
+        fprintf(stderr,
+                "[test_bilateral_punch] FAIL: test13: %d UNCOOKIED request(s) arrived "
+                "after the host had already echoed a valid cookie — the rendezvous "
+                "worker's periodic REGISTERs are not seeing the published cookie "
+                "(signal_cookie_publish / signal_cookie_snapshot)\n",
+                ctx.uncookied_after_bind);
+        fail_count++;
+        rc = 1;
+    }
+    {   /* The later, worker-produced resend carries the same cookie and
+         * the same advertised-tuple session key. */
+        int worker_i = -1;
+        const int n = send_log_count();
+        for (int i = echo_i + 1; i < n; i++) {
+            if (rec_is_register(&s_send_log[i]) && rec_has_cookie(&s_send_log[i]) &&
+                (uint32_t)(s_send_log[i].t_ms - echo->t_ms) >= 400u) {
+                worker_i = i;
+                break;
+            }
+        }
+        if (worker_i < 0) {
+            FAIL("test13", "no cookied resend >=400ms after the echo");
+            rc = 1;
+        } else {
+            EXPECT_TRUE("13-worker-cookie",
+                        memcmp(&s_send_log[worker_i].pkt[28], &echo->pkt[28],
+                               REND_COOKIE_LEN) == 0);
+            EXPECT_TRUE("13-worker-session-key",
+                        memcmp(&s_send_log[worker_i].pkt[8], expect_key,
+                               REND_KEY_LEN) == 0);
+        }
+    }
+
+    /* 6) The mock binds only on the cookie echo, and the pairing then
+     *    completes all the way to HANDOFF (DELIVER -> bilateral punch ->
+     *    main-thread handoff). */
+    if (!tick_until_state(DIRECT_P2P_HANDOFF, 15000)) {
+        fprintf(stderr,
+                "[test_bilateral_punch] FAIL: test13: state %d after the cookie bound, "
+                "expected HANDOFF (cookied=%d challenges=%d)\n",
+                (int)DirectP2P_GetState(), ctx.cookied_requests, ctx.challenges_sent);
+        fail_count++;
+        rc = 1;
+    }
+    EXPECT_TRUE("13-uncookied-never-bound", ctx.uncookied_requests >= 1);
+
+done:
+    DirectP2P_TestHook_SetRendezvousSend(NULL);
+    DirectP2P_TestHook_SetStunDiscover(NULL);
+    DirectP2P_TestHook_SetStunHolePunch(NULL);
+    DirectP2P_TestHook_RunTeardown(); /* releases any UPnP mapping; -> IDLE */
+    if (DirectP2P_GetState() != DIRECT_P2P_IDLE) DirectP2P_Cancel();
+    mock_server_stop(&ctx, tid, server_sock, server_port);
+    s_captured_stun = NULL;
+    s_pred_ctx = NULL;
+
+    if (rc == 0 && fail_count == fails_before) {
+        fprintf(stderr,
+                "[test_bilateral_punch] test 13 OK — uncookied REGISTER bound nothing, "
+                "CHALLENGE answered on the main thread with my_public_port=%u "
+                "(advertised_port=%u), cookie crossed the seqlock to the worker, "
+                "pairing completed\n",
+                (unsigned)stun_public_port, (unsigned)advertised_port);
+        return 0;
+    }
+    return 1;
+}
+
+/* --- Test 14: HOST cookie never accepted -> COOKIE_REJECTED ------------ */
+
+/*
+ * §6.5's last row on the HOST side: "v2 client, v2 server that always
+ * challenges but never accepts" must advise P2P_FAIL_COOKIE_REJECTED,
+ * NOT the P2P_FAIL_RENDEZVOUS_DOWN / HOST_UNMAPPABLE the pre-S4c code
+ * would have produced (a CHALLENGE is proof the server is alive).
+ *
+ * Cost note: CONNECT_HOST_ADVISORY_MS is a compile-time 30 s
+ * (connect_fail.h:198), so this used to spend ~31 s of real wall clock.
+ * DirectP2P_TestHook_SetHostAdvisoryScale scales the elapsed CLOCK
+ * rather than the threshold, so the classifier still runs against the
+ * shipped 30 s constant — the test is fast without testing a
+ * test-only number.
+ */
+
+static int s_adv_lines = 0;
+static char s_adv_last[512] = { 0 };
+
+static void SDLCALL capture_advisory_log_fn(void* userdata, int category,
+                                            SDL_LogPriority priority,
+                                            const char* message) {
+    if (message != NULL &&
+        strncmp(message, "[netplay-connect] ADVISORY", 26) == 0) {
+        s_adv_lines++;
+        SDL_strlcpy(s_adv_last, message, sizeof(s_adv_last));
+    }
+    if (s_prev_log_fn != NULL) {
+        s_prev_log_fn(s_prev_log_ud, category, priority, message);
+    }
+}
+
+static bool pred_advisory_seen(void) {
+    return s_adv_lines > 0;
+}
+
+static int test_host_cookie_rejected(void) {
+    fprintf(stderr, "[test_bilateral_punch] test 14: HOST challenged-but-never-accepted "
+                    "-> COOKIE_REJECTED\n");
+    const int fails_before = fail_count;
+    int rc = 0;
+
+    NET_Init();
+    DirectP2P_Init();
+    DirectP2P_TestHook_RunTeardown();
+
+    unsigned short server_port = 0;
+    int server_sock = open_udp_on_localhost(&server_port);
+    if (server_sock < 0) {
+        FAIL("test14", "failed to bind localhost UDP socket for mock server");
+        return 1;
+    }
+
+    MockServerCtx ctx;
+    memset(&ctx, 0, sizeof(ctx));
+    ctx.sock = server_sock;
+    ctx.challenge_enabled = true;
+    ctx.never_accept = true;  /* challenges forever; zero DELIVERs */
+    ctx.life_secs = 15; /* advisory now fires in ~1 s (advisory-scale seam) */
+
+    SDL_Thread* tid = SDL_CreateThread(mock_server_thread, "rend_mock_deaf", &ctx);
+    if (!tid) {
+        FAIL("test14", "SDL_CreateThread failed");
+        close_sock(server_sock);
+        return 1;
+    }
+
+    {
+        char url[64];
+        SDL_snprintf(url, sizeof(url), "udp://127.0.0.1:%u", (unsigned)server_port);
+        Config_SetString(CFG_KEY_NETPLAY_DIRECT_P2P_SIGNAL_URL, url);
+        Config_SetString(CFG_KEY_NETPLAY_DIRECT_P2P_REGISTER_INTERVAL_MS, "1000");
+    }
+
+    send_log_reset();
+    s_captured_stun = NULL;
+    s_mock_discover_calls = 0;
+    s_mock_punch_calls = 0;
+    s_mock_punch_succeed_from = 0;
+    DirectP2P_TestHook_SetStunDiscover(capturing_stun_discover);
+    DirectP2P_TestHook_SetStunHolePunch(mock_stun_punch);
+    DirectP2P_TestHook_SetRendezvousSend(recording_rendezvous_send);
+    /* No real router mutation (see test 13), and reach the shipped 30 s
+     * CONNECT_HOST_ADVISORY_MS boundary in ~1 s of wall clock by scaling
+     * the elapsed clock rather than the threshold. */
+    Config_SetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_UPNP, true);
+    DirectP2P_TestHook_SetHostAdvisoryScale(60);
+
+    DirectP2P_BeginHost(0);
+    if (!wait_for_state(DIRECT_P2P_HOST_WAITING, 25000)) {
+        fprintf(stderr,
+                "[test_bilateral_punch] FAIL: test14: state %d after budget, expected "
+                "HOST_WAITING\n", (int)DirectP2P_GetState());
+        fail_count++;
+        rc = 1;
+        goto done;
+    }
+
+    s_adv_lines = 0;
+    s_adv_last[0] = '\0';
+    SDL_GetLogOutputFunction(&s_prev_log_fn, &s_prev_log_ud);
+    SDL_SetLogOutputFunction(capture_advisory_log_fn, NULL);
+
+    /* CONNECT_HOST_ADVISORY_MS is 30 s from the first HOST_WAITING tick. */
+    const bool got_adv = tick_until(pred_advisory_seen, 40000);
+    SDL_SetLogOutputFunction(s_prev_log_fn, s_prev_log_ud);
+
+    if (!got_adv) {
+        fprintf(stderr,
+                "[test_bilateral_punch] FAIL: test14: no host-waiting advisory after 40s "
+                "(challenges_sent=%d)\n", ctx.challenges_sent);
+        fail_count++;
+        rc = 1;
+        goto done;
+    }
+    if (strstr(s_adv_last, ConnectFail_Code(CONNECT_FAIL_COOKIE_REJECTED)) == NULL) {
+        fprintf(stderr,
+                "[test_bilateral_punch] FAIL: test14: advisory was \"%s\", expected code=%s "
+                "— a server that CHALLENGES is alive, so this is an auth failure, not a "
+                "dead rendezvous\n",
+                s_adv_last, ConnectFail_Code(CONNECT_FAIL_COOKIE_REJECTED));
+        fail_count++;
+        rc = 1;
+    }
+    /* The advisory also owns the overlay status line for this cause. */
+    EXPECT_TRUE("14-status-text",
+                strcmp(DirectP2P_GetStatusText(),
+                       ConnectFail_UserText(CONNECT_FAIL_COOKIE_REJECTED)) == 0);
+    /* challenge_seen=1 in the line is s_host_challenge_seen observed at
+     * runtime — the flag test 11 could never reach. */
+    EXPECT_TRUE("14-challenge-seen-flag", strstr(s_adv_last, "challenge_seen=1") != NULL);
+    EXPECT_TRUE("14-zero-cookied-binds", ctx.cookied_requests == 0);
+
+done:
+    DirectP2P_TestHook_SetHostAdvisoryScale(1);
+    DirectP2P_TestHook_SetRendezvousSend(NULL);
+    DirectP2P_TestHook_SetStunDiscover(NULL);
+    DirectP2P_TestHook_SetStunHolePunch(NULL);
+    DirectP2P_TestHook_RunTeardown();
+    if (DirectP2P_GetState() != DIRECT_P2P_IDLE) DirectP2P_Cancel();
+    mock_server_stop(&ctx, tid, server_sock, server_port);
+    s_captured_stun = NULL;
+
+    if (rc == 0 && fail_count == fails_before) {
+        fprintf(stderr,
+                "[test_bilateral_punch] test 14 OK — %d challenges, 0 binds, host advised "
+                "%s\n", ctx.challenges_sent,
+                ConnectFail_Code(CONNECT_FAIL_COOKIE_REJECTED));
+        return 0;
+    }
+    return 1;
+}
+
+/* --- Test 15: JOINER cookie handshake ---------------------------------- */
+
+/*
+ * Part A — the joiner answers a CHALLENGE INLINE in its signaling loop
+ * (direct_p2p.c:1836-1846): one RTT to bind instead of waiting out the
+ * 500 ms resend cadence. Pinned by timing the first cookied REGISTER.
+ * Part B — the same mock, never accepting: budget expiry must classify
+ * COOKIE_REJECTED, which is only reachable when ev_challenge_any was set
+ * at runtime.
+ */
+
+static int test_joiner_cookie_handshake(void) {
+    fprintf(stderr, "[test_bilateral_punch] test 15: JOINER S4c CHALLENGE answered "
+                    "inline + COOKIE_REJECTED classification\n");
+    const int fails_before = fail_count;
+    int rc = 0;
+
+    NET_Init();
+    DirectP2P_Init();
+    DirectP2P_TestHook_RunTeardown();
+
+    unsigned short server_port = 0;
+    int server_sock = open_udp_on_localhost(&server_port);
+    if (server_sock < 0) {
+        FAIL("test15", "failed to bind localhost UDP socket for mock server");
+        return 1;
+    }
+
+    MockServerCtx ctx;
+    memset(&ctx, 0, sizeof(ctx));
+    ctx.sock = server_sock;
+    ctx.challenge_enabled = true;
+    ctx.use_synth_peer = true;
+    /* The DELIVER must carry a peer that is neither LAN nor our own
+     * public IP (203.0.113.9 from mock_stun_discover). */
+    ctx.synth_peer_ip_be = htonl(0xC0000209u); /* 192.0.0.9 — public, TEST */
+    ctx.synth_peer_port = 6100;
+    ctx.min_cookied_before_peer = 1; /* pair on the echo itself */
+    ctx.life_secs = 40;
+
+    SDL_Thread* tid = SDL_CreateThread(mock_server_thread, "rend_mock_join", &ctx);
+    if (!tid) {
+        FAIL("test15", "SDL_CreateThread failed");
+        close_sock(server_sock);
+        return 1;
+    }
+
+    /* Host tuple in the room code: public, not ours, not LAN, so the
+     * joiner reaches FALLBACK_SIGNALING (same shape as test 8). */
+    struct in_addr host_ip;
+    host_ip.s_addr = htonl(0xC6336407u); /* 198.51.100.7 */
+    char code[ROOM_CODE_BUF_LEN] = { 0 };
+    const uint32_t join_nonce = 0x0CC;
+    if (!RoomCode_Encode((uint32_t)host_ip.s_addr, 6000, join_nonce, code)) {
+        FAIL("test15", "RoomCode_Encode failed");
+        rc = 1;
+        goto done;
+    }
+    uint8_t expect_key[REND_KEY_LEN];
+    if (!Rendezvous_DeriveSessionKey((uint32_t)host_ip.s_addr, 6000, join_nonce,
+                                     expect_key)) {
+        FAIL("test15", "Rendezvous_DeriveSessionKey failed");
+        rc = 1;
+        goto done;
+    }
+
+    {
+        char url[64];
+        SDL_snprintf(url, sizeof(url), "udp://127.0.0.1:%u", (unsigned)server_port);
+        Config_SetString(CFG_KEY_NETPLAY_DIRECT_P2P_SIGNAL_URL, url);
+    }
+    DirectP2P_TestHook_SetStunDiscover(mock_stun_discover);
+    DirectP2P_TestHook_SetStunHolePunch(mock_stun_punch);
+    DirectP2P_TestHook_SetRendezvousSend(recording_rendezvous_send);
+
+    /* --- Part A: cooperative challenging server ------------------------ */
+    DirectP2P_TestHook_SetSignalBudgetMs(4000);
+    send_log_reset();
+    s_mock_discover_calls = 0;
+    s_mock_punch_calls = 0;
+    /* call 1 = the DIRECT punch (must fail so we reach signaling);
+     * call 2 = the bilateral punch after the DELIVER (must succeed). */
+    s_mock_punch_succeed_from = 2;
+
+    DirectP2P_BeginJoin(code);
+    if (!wait_for_state(DIRECT_P2P_HANDOFF, 20000)) {
+        fprintf(stderr,
+                "[test_bilateral_punch] FAIL: test15A: state %d after budget, expected "
+                "HANDOFF (challenges=%d cookied=%d status=\"%s\")\n",
+                (int)DirectP2P_GetState(), ctx.challenges_sent, ctx.cookied_requests,
+                DirectP2P_GetStatusText());
+        fail_count++;
+        rc = 1;
+    } else {
+        EXPECT_TRUE("15A-challenged", ctx.challenges_sent >= 1);
+        const int first = send_log_first_cookied();
+        if (first < 0) {
+            FAIL("test15A", "joiner never sent a cookied REGISTER");
+            rc = 1;
+        } else if (first == 0) {
+            FAIL("test15A", "first REGISTER was already cookied — the mock never "
+                            "challenged, so nothing about the answer was tested");
+            rc = 1;
+        } else {
+            const uint32_t dt = s_send_log[first].t_ms - s_send_log[0].t_ms;
+            /* The joiner's periodic cadence is 500 ms. An INLINE answer
+             * lands within one 50 ms loop tick of the challenge; waiting
+             * out the cadence would land at >= 500 ms. */
+            if (dt >= 400u) {
+                fprintf(stderr,
+                        "[test_bilateral_punch] FAIL: test15A: first cookied REGISTER went "
+                        "out %u ms after the first REGISTER — the CHALLENGE was NOT "
+                        "answered inline, it waited out the 500 ms resend cadence\n",
+                        (unsigned)dt);
+                fail_count++;
+                rc = 1;
+            }
+            EXPECT_TRUE("15A-echo-session-key",
+                        memcmp(&s_send_log[first].pkt[8], expect_key, REND_KEY_LEN) == 0);
+            EXPECT_TRUE("15A-echo-cookie",
+                        memcmp(&s_send_log[first].pkt[28], ctx.last_cookie,
+                               REND_COOKIE_LEN) == 0);
+            /* The joiner claims its own STUN-observed port, same field
+             * and same rule as the host's echo. */
+            EXPECT_TRUE("15A-echo-port",
+                        rec_my_public_port(&s_send_log[first]) == 40000);
+        }
+        EXPECT_TRUE("15A-bound-on-echo", ctx.cookied_requests >= 1);
+    }
+    DirectP2P_TestHook_RunTeardown();
+    if (DirectP2P_GetState() != DIRECT_P2P_IDLE) DirectP2P_Cancel();
+
+    /* --- Part B: challenges forever, never accepts --------------------- */
+    ctx.never_accept = true;
+    ctx.use_synth_peer = false;
+    ctx.challenges_sent = 0;
+    ctx.cookied_requests = 0;
+    send_log_reset();
+    s_mock_discover_calls = 0;
+    s_mock_punch_calls = 0;
+    s_mock_punch_succeed_from = 0; /* every punch fails */
+    DirectP2P_TestHook_SetSignalBudgetMs(1000);
+
+    DirectP2P_BeginJoin(code);
+    if (!wait_for_state(DIRECT_P2P_FAILED_BILATERAL, 20000)) {
+        fprintf(stderr,
+                "[test_bilateral_punch] FAIL: test15B: state %d after budget, expected "
+                "FAILED_BILATERAL\n", (int)DirectP2P_GetState());
+        fail_count++;
+        rc = 1;
+    } else {
+        const char* status = DirectP2P_GetStatusText();
+        const char* want = ConnectFail_UserText(CONNECT_FAIL_COOKIE_REJECTED);
+        if (strcmp(status, want) != 0) {
+            fprintf(stderr,
+                    "[test_bilateral_punch] FAIL: test15B: status \"%s\", expected \"%s\" "
+                    "(challenges=%d). A server that CHALLENGES is alive: without "
+                    "ev_challenge_any this misreports as \"%s\".\n",
+                    status, want, ctx.challenges_sent,
+                    ConnectFail_UserText(CONNECT_FAIL_RENDEZVOUS_DOWN));
+            fail_count++;
+            rc = 1;
+        }
+        EXPECT_TRUE("15B-challenged", ctx.challenges_sent >= 1);
+        EXPECT_TRUE("15B-never-bound", ctx.cookied_requests == 0);
+    }
+    DirectP2P_Cancel();
+
+done:
+    DirectP2P_TestHook_SetSignalBudgetMs(0);
+    DirectP2P_TestHook_SetRendezvousSend(NULL);
+    DirectP2P_TestHook_SetStunDiscover(NULL);
+    DirectP2P_TestHook_SetStunHolePunch(NULL);
+    mock_server_stop(&ctx, tid, server_sock, server_port);
+
+    if (rc == 0 && fail_count == fails_before) {
+        fprintf(stderr,
+                "[test_bilateral_punch] test 15 OK — CHALLENGE answered inline (well "
+                "inside the 500 ms cadence), pairing completed; never-accepting server "
+                "classified %s\n", ConnectFail_Code(CONNECT_FAIL_COOKIE_REJECTED));
+        return 0;
+    }
+    return 1;
+}
+
 /* --- Entry point ------------------------------------------------------ */
 
 int Netplay_Test_BilateralPunch(void) {
@@ -2081,6 +2997,9 @@ int Netplay_Test_BilateralPunch(void) {
     rc |= test_host_datagram_gate();
     rc |= test_rendezvous_cookie_codec();
     rc |= test_punch_gate_throttle();
+    rc |= test_host_cookie_handshake();
+    rc |= test_joiner_cookie_handshake();
+    rc |= test_host_cookie_rejected(); /* last: ~31 s of wall clock */
 
     if (fail_count > 0 || rc != 0) {
         fprintf(stderr, "[test_bilateral_punch] %d failure(s)\n", fail_count);

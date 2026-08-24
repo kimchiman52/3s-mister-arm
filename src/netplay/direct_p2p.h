@@ -276,6 +276,12 @@ void DirectP2P_TestHook_RunTeardown(void);
  *
  * The thresholds are exported so a test asserts against the shipped
  * numbers instead of hardcoding a copy that can silently drift. */
+/* S4-review MEDIUM-2: multiply the host-waiting elapsed clock so the
+ * 30 s CONNECT_HOST_ADVISORY_MS boundary is reached in 30 s / scale of
+ * real time. Scales the CLOCK, not the threshold, so the classifier
+ * still runs against the shipped constant. 1 (or less) disables. */
+void DirectP2P_TestHook_SetHostAdvisoryScale(int scale);
+
 void DirectP2P_TestHook_PunchGateReset(void);
 bool DirectP2P_TestHook_PunchGateNoteBad(const char* src_ip, uint32_t now_ms);
 bool DirectP2P_TestHook_PunchGateIsMuted(const char* src_ip, uint32_t now_ms);
