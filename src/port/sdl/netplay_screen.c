@@ -16,6 +16,13 @@
 static MatchmakingState display_state = MATCHMAKING_IDLE;
 static int transition_hold = 0;
 static int match_found_hold = 0;
+// S3-review M-1: true while the connect phase (TRANSITIONING/CONNECTING)
+// is being drawn. The "Connected!" hold is armed ONLY on the connect ->
+// RUNNING transition; pre-fix the hold was re-armed every connect-phase
+// frame and then drained as "Connected!" whatever state followed — a
+// FAILED or aborted connection showed ~90 frames of "Connected!" on the
+// attract screen.
+static bool connect_phase_live = false;
 
 static const char* mm_message(MatchmakingState s) {
     switch (s) {
@@ -127,11 +134,26 @@ void NetplayScreen_Render() {
             msg = "Match found!";
         }
         SSPutStrPro(1, 384, 110, 9, 0xFFFFFFFF, msg);
-        match_found_hold = MATCH_FOUND_HOLD_FRAMES;
+        connect_phase_live = true;
         return;
     }
-    if (match_found_hold > 0) {
-        match_found_hold--;
-        SSPutStrPro(1, 384, 110, 9, 0xFFFFFFFF, "Connected!");
+    if (ns == NETPLAY_SESSION_RUNNING) {
+        // Arm the brief "Connected!" hold only when the session actually
+        // REACHED RUNNING out of a connect phase; drain it over the first
+        // frames of the live game.
+        if (connect_phase_live) {
+            connect_phase_live = false;
+            match_found_hold = MATCH_FOUND_HOLD_FRAMES;
+        }
+        if (match_found_hold > 0) {
+            match_found_hold--;
+            SSPutStrPro(1, 384, 110, 9, 0xFFFFFFFF, "Connected!");
+        }
+        return;
     }
+    // Any other state (EXITING back to attract, IDLE after a failure or
+    // user abort): the connection did NOT succeed — never show
+    // "Connected!".
+    connect_phase_live = false;
+    match_found_hold = 0;
 }
