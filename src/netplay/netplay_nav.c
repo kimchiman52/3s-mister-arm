@@ -341,9 +341,14 @@ void NetplayNav_Tick(void) {
          * the direct-P2P overlay owns the ERROR display):
          *
          * (a) The orchestrator parked in a terminal FAILED_* state.
-         *     Exception: a HOST in FAILED_STUN still has the S2
-         *     auto-retry (Tick re-spawns the worker with backoff), so
-         *     nav keeps waiting there and relies on exit (c).
+         *     Exception (review M-3: only while genuinely non-terminal):
+         *     a HOST in FAILED_STUN with S2 auto-retries LEFT — Tick
+         *     re-spawns the worker after backoff, so nav keeps waiting.
+         *     Once the retry budget is exhausted FAILED_STUN is as
+         *     terminal as any other failure and exit (a) fires; the
+         *     pre-fix unconditional exception made nav wait the full
+         *     150 s and then log a second, contradictory
+         *     TIMEOUT_ORCHESTRATOR line for an already-reported failure.
          * (b) The orchestrator is IDLE with no remote ip — cancelled or
          *     never started. 5 s debounce covers the deferred-dispatch
          *     window at cold launch.
@@ -362,8 +367,7 @@ void NetplayNav_Tick(void) {
             dps == DIRECT_P2P_FAILED_SYMMETRIC || dps == DIRECT_P2P_FAILED_STUN ||
             dps == DIRECT_P2P_FAILED_PUNCH || dps == DIRECT_P2P_FAILED_BILATERAL ||
             dps == DIRECT_P2P_FAILED_HANDSHAKE;
-        if (orch_failed &&
-            !(dps == DIRECT_P2P_FAILED_STUN && DirectP2P_GetRole() == ROLE_HOST)) {
+        if (orch_failed && !DirectP2P_HostStunRetryPending()) {
             fprintf(stderr,
                     "[netplay_nav] orchestrator failed terminally (state %d) — "
                     "abandoning nav; overlay shows the reason\n", (int)dps);

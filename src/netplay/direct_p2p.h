@@ -128,6 +128,15 @@ DirectP2PState DirectP2P_GetState(void);
  * to branch the mode-label between HOSTING / CONNECTING. */
 Role DirectP2P_GetRole(void);
 
+/* S3-review M-3: true while a HOST parked in FAILED_STUN still has S2
+ * auto-retries left (Tick will re-spawn the worker after backoff) —
+ * i.e. the state is NOT yet terminal. False for a joiner, for any
+ * other state, and once the host retry budget is exhausted. netplay_nav
+ * consults this so its terminal-failure exit fires the moment
+ * FAILED_STUN actually becomes terminal instead of waiting out the
+ * 150 s orchestrator deadline. Main-thread only. */
+bool DirectP2P_HostStunRetryPending(void);
+
 /* Display-form 17-char room code, valid only while state ==
  * DIRECT_P2P_HOST_WAITING. Returns "" in all other states. Pointer is
  * into internal static storage — do not free or mutate. */
@@ -229,6 +238,7 @@ static inline void DirectP2P_Cancel(void) { }
 static inline void DirectP2P_Tick(void) { }
 static inline DirectP2PState DirectP2P_GetState(void) { return DIRECT_P2P_IDLE; }
 static inline Role DirectP2P_GetRole(void) { return ROLE_NONE; }
+static inline bool DirectP2P_HostStunRetryPending(void) { return false; }
 static inline const char* DirectP2P_GetHostCode(void) { return ""; }
 static inline const char* DirectP2P_GetStatusText(void) { return ""; }
 static inline void DirectP2P_NotifySessionRejected(const char* reason) { (void)reason; }

@@ -2717,6 +2717,21 @@ Role DirectP2P_GetRole(void) {
     return s_work.role;
 }
 
+bool DirectP2P_HostStunRetryPending(void) {
+    /* S3-review M-3: true while Tick's FAILED_STUN case still owns the
+     * outcome — a HOST parked in FAILED_STUN with S2 auto-retries left
+     * (backoff pending or about to respawn). Once the retry budget is
+     * spent (or for a joiner, whose retry ran inside its own worker)
+     * FAILED_STUN is TERMINAL: Tick has emitted the attributed FAIL
+     * report, and nav must take its exit (a) instead of waiting out the
+     * 150 s deadline and logging a second, contradictory
+     * P2P_FAIL_TIMEOUT_ORCHESTRATOR for the same failure. Main-thread
+     * only, like the retry bookkeeping it reads. */
+    return get_state() == DIRECT_P2P_FAILED_STUN &&
+           s_work.role == ROLE_HOST &&
+           s_host_stun_retry_count < HOST_STUN_MAX_RETRIES;
+}
+
 const char* DirectP2P_GetHostCode(void) {
     if (get_state() != DIRECT_P2P_HOST_WAITING) return "";
     return s_work.host_code;
