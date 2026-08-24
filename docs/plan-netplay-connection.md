@@ -433,18 +433,244 @@ LAZILY when the failure precedes `configure_gekko` (netplay.c
   ever sleeping; silent-peer timeout at 16 ms frame cadence with the
   full retransmit ladder; reject parity with the blocking runner.
 
-## 6. S4 — Security
+## 6. S4 — Security (IMPLEMENTED)
 
-- The host treats **any** non-'3SXR', non-STUN datagram as the peer
-  and hands the session off to its source
-  (host_tick_receive peer capture, direct_p2p.c:1763-1791; pre-S1
-  @1b217758:1295-1322). S1 narrowed this (STUN responses gated) but a
-  blind attacker who guesses/observes ip:port still gets a handoff.
-  Add a punch-payload check + a code-derived token.
-- The room code is a plaintext (ip, port) encoding
-  (room_code.h:59-84) — anyone seeing the code learns the endpoint.
-  Acceptable for friend-to-friend, but note it; MIST handshake
-  (netplay.c R-1 path) is the backstop.
+Three sub-stages, all landed. As-built below.
+
+### 6.1 The three defects (as originally found)
+
+1. **Anyone could be the opponent.** The host treated **any**
+   non-'3SXR', non-STUN datagram as the peer, captured its source,
+   echoed the payload, and handed the session off. The punch payload
+   was the fixed literal `"3SX_PUNCH"` — no secret. So a blind attacker
+   who guessed or observed the advertised `ip:port` got a handoff, and
+   **one** stray datagram (a port scan) permanently consumed the host's
+   only peer slot; the real joiner then failed and, after the MIST
+   silence window, was told "opponent build may be too old".
+2. **The room code determined every secret.** It was a bare reversible
+   `(ip, port)` encoding, and BOTH derived secrets — the rendezvous
+   session key and the punch token — were SHA-256 over that same
+   6-byte payload. Anyone who could *guess* a plausible `(ip, port)`
+   pair, with no code sighting at all, could derive the session key and
+   squat or race the pairing.
+3. **The rendezvous server never validated the sender's address.** It
+   answered any well-formed packet, so a source-spoofed REGISTER bound
+   a real slot (squat a victim's key; or take the joiner slot and have
+   the server DELIVER the host a bogus endpoint, steering the victim's
+   punch traffic at a third party), and the per-IP token bucket was
+   bypassed for free by spoofing.
+
+### 6.2 S4a — punch authentication (`7c9ae11b`)
+
+- Punch payload is `"3SX_PUNCH"` + an 8-byte token derived from the
+  room-code payload, domain-separated from the session key
+  (`Rendezvous_DerivePunchToken`, rendezvous.c:134). 17 bytes total.
+- `classify_host_datagram` (direct_p2p.c:547) is the single routing
+  decision for every inbound datagram on the waiting host's socket:
+  '3SXR' frame / STUN Binding Response / **authenticated** punch /
+  IGNORE. **Fail closed** — no valid token, no acceptance. The IGNORE
+  arm drops the datagram, does not echo, and **keeps waiting**
+  (host_tick_receive, direct_p2p.c:2351-2373): the peer slot is never
+  consumed. Pre-S4a that arm was "anything else IS the peer".
+- The host's echo (which authenticates the host back to the joiner)
+  only ever carries an already-validated payload.
+- `Stun_HolePunch` accepts only source-IP + exact authenticated payload
+  (constant-time token compare), with the port deliberately unmatched so
+  the S2 symmetric retarget still works — now under auth. A punch-shaped
+  datagram from the expected IP that fails the token check raises
+  `StunResult.diag_punch_bad_token`.
+- STUN transaction IDs now come from the platform CSPRNG
+  (src/utils/csprng.c). SDL_rand was *not* unseeded; the real weakness
+  is that it is an LCG whose state is recoverable from observed output,
+  making txids predictable and Binding-Response forgery possible for an
+  off-path attacker. RFC 5389 §6 requires cryptographic randomness.
+- New cause `CONNECT_FAIL_PUNCH_AUTH` (connect_fail.h:97). It outranks
+  the NAT diagnoses in the classifier: the peer was *reached*, so
+  blaming NAT would send users to their router settings for nothing.
+
+### 6.3 S4b — room code v2 (`5546589e`, BREAKING, authorized)
+
+- 14 chars, displayed `XXXXXXX-XXXXXXX`: version char `'2'` + 60-bit
+  payload `ip(32)<<28 | port(16)<<12 | nonce(12)` in 12 Crockford chars
+  + ISO 7064 MOD 37,36 check digit over the 13 preceding chars.
+- The 12-bit nonce comes from the CSPRNG (`RoomCode_GenerateNonce`,
+  room_code.c:160) and **hard-fails** when unavailable — no weak
+  fallback, since a predictable nonce silently voids the entire point.
+  It is mixed into the code *and* both derivations, now domain-separated
+  over the canonical 8-byte `ip[4]||port_be[2]||nonce_be[2]`:
+  session key = `SHA-256("3SXR-SK2" || payload8)[0..15]`
+  (rendezvous.c:130), punch token = `SHA-256("3SXR-PT2" || payload8)[0..7]`
+  (rendezvous.c:138). `(ip, port)` alone no longer determines either.
+- **Honest scope**: the code still necessarily *contains* the host IP —
+  the joiner has to reach it. The nonce protects the derived key
+  material against guessing; it does not hide the IP from someone
+  holding the whole code. Sharing a code on stream still exposes an IP.
+- Decode validates the version char **before** the check digit (a future
+  format's checksum scheme is unknowable) and returns a forced-handling
+  enum — `OK` / `MALFORMED` / `OLD_FORMAT` (checksum-valid v1) /
+  `FUTURE_VERSION`. The bool API is gone, so a stale caller fails to
+  compile rather than silently inverting. Version outcomes map to
+  `CONNECT_FAIL_CODE_VERSION` (connect_fail.h:112) with explicit
+  older/newer text. Checksum-invalid 11-char garbage stays `MALFORMED`:
+  garbage must never masquerade as a version issue.
+- Host keeps the nonce stable across an S1 drift re-encode and draws a
+  fresh one per hosting attempt.
+
+### 6.4 S4c — rendezvous return-routability (`977ed7b7`)
+
+Protocol **v2** on the '3SXR' wire. REGISTER/POLL are 36 bytes (was 28),
+the extra 8 being a cookie tail; new server→client type 4 `CHALLENGE`
+(32 bytes: magic(4) ver(1) type(1) reserved(2) key(16) cookie(8)).
+
+**The gate.** `returnRoutabilityGate` (rendezvous-server.js:553) runs
+between "the frame is well-formed" and "we touch any state", for both
+REGISTER and POLL. An uncookied or invalid-cookied request is answered
+with exactly one CHALLENGE and **binds nothing** — no session slot, no
+creator quota, no rate budget, no table eviction, no endpoint
+disclosure. Only the cookie **echo** binds. A spoofing sender has the
+CHALLENGE delivered to the address it is impersonating, so it never
+learns the cookie and can never bind.
+
+**Cookie construction.**
+
+| property | value |
+|---|---|
+| formula | `SHA-256(secret ‖ "addr:port:slot")[0..7]` (rendezvous-server.js:191) |
+| secret | 32 bytes from `crypto.randomBytes` at process start, never leaves the process |
+| inputs | source **address**, source **port**, rotation slot |
+| size | 8 bytes |
+| slot | `floor(Date.now() / 60000)` |
+| accepted | current **and** previous slot ⇒ 60–120 s lifetime |
+| compare | `crypto.timingSafeEqual` (rendezvous-server.js:205) |
+| expiry cost | one extra challenge round; the C client answers within one RTT |
+| restart | invalidates outstanding cookies; same one-round cost per live client |
+
+**Replay, honestly.** The cookie is *deliberately* replayable by
+whoever holds it, for as long as it lives. It proves **receipt, not
+identity**. What bounds it: it is bound to `(address, port)`, so a
+captured cookie is useless from any other endpoint; only an **on-path**
+attacker can observe one, and an on-path attacker at endpoint E already
+satisfies return routability for E by definition, so there is nothing
+left to prove; rotation caps a leaked cookie at ≤120 s; and an off-path
+attacker cannot forge one without the 32-byte secret. Cookies are **not**
+an authentication mechanism — peer auth is S4a's punch token and the
+S4b nonce-derived session key. A per-request nonce would add nothing
+against the threat model and would cost the server its statelessness.
+
+**Amplification.** CHALLENGE is 32 bytes for a 36-byte request:
+factor **0.89**, a net attenuator, never worth aiming at a victim. It
+is emitted under the existing per-IP bucket, so a spoofed flood at one
+victim is capped at `RATE_LIMIT_PER_WINDOW` (10) challenges/second.
+
+**Per-key rate cap.** `keyRateAllow` (rendezvous-server.js:311), 10/s
+per session key, enforced **after** the cookie check so spoofed traffic
+cannot burn a victim key's budget. This closes the "many real,
+cookie-capable source IPs all hammering ONE key" bypass that the per-IP
+bucket cannot see. A legitimate pair peaks around 2.5 pkt/s.
+
+**Client side.** The joiner answers a CHALLENGE inline in its signaling
+loop (one RTT to bind, instead of waiting out the 500 ms resend
+cadence). The host receives CHALLENGEs on the **main** thread while
+REGISTER resends are built on the rendezvous **worker** thread, so the
+8-byte cookie crosses via a seqlock (`signal_cookie_publish` /
+`signal_cookie_snapshot`, direct_p2p.c:355/370) and the main thread also
+echoes immediately (`host_handle_challenge`, direct_p2p.c:2272).
+`Rendezvous_ParseChallenge` (rendezvous.c:184) validates magic, version,
+type **and** that the frame carries *our* session key (cross-talk +
+forgery gate — the key embeds the S4b nonce), and **zeroes its output on
+every reject**, so a caller that ignores the return value cannot echo
+attacker-chosen bytes.
+
+**Cap-policy note.** The S1/H2 reasoning above (§ MAX_SESSIONS in
+rendezvous-server.js) was written assuming spoofed floods were free.
+They no longer are. `MAX_NEW_KEYS_PER_IP` and the
+evict-oldest-unpaired-singleton policy remain load-bearing against a
+real **botnet** whose nodes do receive at their own addresses and
+therefore pass the cookie gate.
+
+**New cause** `CONNECT_FAIL_COOKIE_REJECTED` (connect_fail.h:90,
+`"P2P_FAIL_COOKIE_REJECTED"`, "Matchmaking auth failed. Update the
+game."). A CHALLENGE is proof the server is alive, so
+challenges-with-zero-DELIVERs is an auth/version problem — not the dead
+server `RENDEZVOUS_DOWN` used to claim. Carried as
+`ConnectJoinEvidence.challenge_any` into `ConnectFail_ClassifyJoin` and
+as a new parameter to `ConnectFail_ClassifyHostWaiting`. Any DELIVER
+outranks it (the cookie did bind, so the failure is downstream), and
+hairpin still outranks everything.
+
+### 6.5 Version interlock
+
+`VERSION = 2` on both sides (rendezvous.c:28, rendezvous-server.js).
+The server checks the version byte **before** the cookie gate, so a
+mismatch never reaches state. Every combination:
+
+| client | server | behavior |
+|---|---|---|
+| v2 | v2 | CHALLENGE → echo → DELIVER. Normal path. |
+| **v1** | **v2** | Server drops on the version byte: logged, **no reply, no state, no timer, no hang**. The v1 client sees silence and its existing budget expiry reports `P2P_FAIL_RENDEZVOUS_DOWN`. |
+| **v2** | **v1** | Symmetric — the v1 server drops version=2 and stays silent; the v2 client reports `RENDEZVOUS_DOWN` (it never sees a CHALLENGE, so it does **not** claim `COOKIE_REJECTED`). |
+| v2 | v2, never challenges | Works. The client sends an uncookied (all-zero-tail) REGISTER and consumes a direct DELIVER. This is what the C test mocks do, and it is why the cookie tail must be zeroed rather than left as stack garbage. |
+| v2 | v2, always challenges but never accepts | Client is challenged repeatedly, zero DELIVERs, budget expires → `P2P_FAIL_COOKIE_REJECTED` (not "server down"). |
+| v3+ | v2 | Dropped on the version byte, same clean path as v1. |
+
+This is a deliberate breaking change, explicitly authorized: the whole
+alpha group ships the v2 client together, so old and new never need to
+pair. There is no mixed-version window to support and no negotiation.
+
+**Residual, stated plainly**: `RENDEZVOUS_DOWN` remains the catch-all
+for every *silent* server-side drop — rate limiter, per-IP key quota,
+per-key cap, paired-table-full, third-party drop, and version mismatch
+all look identical to a client (total silence). Distinguishing them
+needs a client-visible NACK, i.e. another wire change. The `CHALLENGE`
+frame is the first crack in that: it is the one server-side condition a
+client can now positively observe, which is exactly what makes
+`COOKIE_REJECTED` reportable.
+
+### 6.6 Tests
+
+Each of the three sub-stages has at least one test proven to go **red**
+against the pre-fix behavior (verified by neutralizing the fix, not by
+assertion):
+
+- **S4a** — `test_bilateral_punch.c` test 10 (host datagram gate truth
+  table) + `test_stun_mock.c` `run_punch_payload_test` /
+  `run_punch_token_reject_test`. Restoring the pre-S4a final arm
+  (`return DP2P_HOST_DGRAM_PEER_PUNCH`) turns 4 assertions red:
+  wrong-token, legacy 9-byte punch, arbitrary garbage, and the
+  no-token fail-closed case are all accepted as "the peer".
+- **S4b** — `test_room_code.c`. Four independent neutralizations, four
+  independent reds: check-digit verify → typo detection collapses;
+  v1 recognition → `OLD_FORMAT` cases fail; constant nonce → the
+  variability check fires; nonce dropped from the payload → round-trip
+  mismatch on every nonce-bearing case.
+- **S4c** — `tools/rendezvous-server/__test_protocol.js` (challenge
+  required, cookie bound to source, spoofed source cannot bind, per-key
+  cap, rotation window, v1 interlock) plus `test_bilateral_punch.c`
+  test 11 (v2 cookie tail + ParseChallenge reject table) and tests
+  7c2/7d2 (classifier truth tables). Disabling the cookie gate turns 19
+  assertions red; disabling only `keyRateAllow` turns the cap
+  assertion red (18 replies vs ≤11); disabling the version check turns
+  the interlock assertion red; dropping the session-key gate in
+  `Rendezvous_ParseChallenge`, the cookie-tail write, or the
+  `challenge_any` classifier branches each turn their own assertions
+  red.
+
+**Harness defect fixed in passing.** `__test_protocol.js` exited 0 no
+matter how many assertions failed — its forced-exit timer is `.unref()`'d
+(so node drained and exited 0 before it fired) and the `_shutdown` path
+it used ends in `socket.close(() => process.exit(0))`, whose hardcoded 0
+raced ahead of the real code. The file could not report failure at the
+shell level at all, which is how it stayed green through a v1→v2
+protocol change. It now sets `process.exitCode` eagerly and closes the
+socket directly. This is the reason the "prove it can go red" step is
+worth doing on the harness itself and not only on the code under test.
+
+### 6.7 Not addressed by S4
+
+- The room code still contains the host's public IP, by necessity.
+- The MIST handshake (netplay.c R-1 path) remains the backstop for a
+  peer that gets past the punch gate.
+- Symmetric×symmetric pairs still cannot connect at all — that is S5.
 
 ## 7. S5 — Custom '3SXR' relay for symmetric-NAT pairs
 
@@ -492,4 +718,5 @@ expected outcome. This is the regression net for S2–S7.
 | S1 host liveness | **implemented (this series)** |
 | S2 punch / STUN mechanics | **implemented** (see §4; includes the unplanned STUN port-byteswap fix) |
 | S3 no-hangs + failure taxonomy | **implemented** (see §5) |
-| S4–S8 | planned above |
+| S4 security | **implemented** (see §6; S4a punch auth, S4b room code v2, S4c rendezvous return-routability — the last two are breaking wire/format changes, authorized) |
+| S5–S8 | planned above |
