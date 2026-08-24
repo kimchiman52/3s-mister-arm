@@ -405,6 +405,27 @@ allowlist entry defeats the whole tool.
    `--rbd-select-rollback-depth 8` when reproducing or regression-testing
    any select-phase rollback bug.
 
+   **How to actually pass it (2026-08-24, task #60).** It is a *game*
+   flag (`src/args.c`), not a driver flag, so `run.sh fast
+   --rbd-select-rollback-depth 8` fails with an argparse error — the
+   driver rejects it before the game ever sees it. Use the `--game-arg`
+   passthrough, in `=` form (argparse will not accept a value that starts
+   with `--` as a separate token), and remember the effective select depth
+   is `min(--rollback-depth, --rbd-select-rollback-depth)`
+   (`src/test/rollback_determinism.c:498`), so `--rollback-depth` must be
+   raised too:
+
+   ```sh
+   python3 tools/rollback-determinism/check_rollback_determinism.py \
+     --binary build/host/3S-ARM.app/Contents/MacOS/3S-ARM --mode fast \
+     --scenario 'ryu-ken*' --rollback-period 500 --rollback-depth 8 \
+     --game-arg=--rbd-select-rollback-period --game-arg=1 \
+     --game-arg=--rbd-select-rollback-depth --game-arg=8
+   ```
+
+   Keep `--rollback-period` large: it also drives the *in-game* cycles,
+   and depth 8 every frame walks straight into the crash class above.
+
    The `ppgSetupTexChunkSeqs` NULL-destination segfault named above is
    **fixed** as of task 50 (the duplicate character-select load request
    stranding a ramcnt block); the `ppgSetupPalChunk` hang member of this
@@ -478,6 +499,107 @@ allowlist entry defeats the whole tool.
    once per outer frame regardless of how many speculative frames ran)
    is invisible — matching real netplay, where they also advance once
    per real frame on both peers.
+9. **Wall-clock-driven subsystems — the LDREQ/AFS/ramcnt cluster.**
+   Measured 2026-08-24 (task #60). `AFS_Read` is a genuine OS async read
+   (`SDL_ReadAsyncIO`, `port/io/afs.c:366`) whose completion is delivered
+   by `AFS_RunServer` draining `SDL_GetAsyncIOResult` (`afs.c:304-313`).
+   Load completion is therefore a **wall-clock** event, and the whole
+   cluster it drives is nondeterministic *without any rollback at all*:
+   `q_ldreq`, `rckey_work`, `rckey_mmobj`, `texgrplds`, `char_init_data`,
+   `requests`, `afs` and `asyncio_queue` all show up in this harness's
+   own **A1-vs-A2 baseline noise** list — two identical no-rollback runs
+   of the same binary, same inputs, same machine, ASLR disabled, and they
+   still differ.
+
+   Two consequences, both load-bearing:
+
+   - **Masking.** Per limit 2, a rollback-caused divergence in `q_ldreq`
+     is invisible: it is noise-classified before it can be reported. The
+     symbols in this cluster that *do* survive noise classification
+     (`afs_handle`, `ldreq_result`) are then suppressed by
+     `allowlist.txt`. So the cluster has two independent blindfolds on.
+   - **It is not a save-set problem.** Because the divergence exists
+     between two runs of one peer, no amount of GameState membership,
+     and no per-frame record/replay scheme, can make two *different*
+     peers agree on the frame a load completes. A fix has to stop the
+     simulation from observing an in-flight load inside the session
+     window (a barrier), not try to rewind the loader. See the
+     CORRECTION block in `tools/rollback-determinism/allowlist.txt`.
+
+   Do not use this harness to validate a claimed fix in this cluster.
+   Its run-B model compresses `depth` frames of prediction into a single
+   real frame, so the loader's wall-clock cadence in run B is unlike both
+   run A1 and production; `frames=` counts for these symbols move in both
+   directions for reasons that have nothing to do with correctness.
+
+### OPEN RED: the shipped gate's select *period* hides a real divergence
+
+Measured 2026-08-24 (task #60) on `upstream-engine-fixes` @ `fc06a657`,
+stock `allowlist.txt`, one scenario (`ryu-ken-basic-exchange`), 1500
+frames, `--rollback-period 500 --rollback-depth 8`, 68 rollback cycles,
+in-game from frame 328. All four runs used the same binary; only the
+select-phase knobs changed.
+
+| run | select period / depth | verdict | exit | divergent |
+|---|---|---|---|---|
+| stock gate (`run.sh fast`) | 8 / 2 | **PASS** | 0 | 0 |
+| select period 1, depth 8 | 1 / 8 | **FAIL** | 1 | 2 |
+| select period 1, depth 2 | 1 / 2 | **FAIL** | 1 | 2 |
+| repeat of period 1 / depth 8 | 1 / 8 | **FAIL** | 1 | 2 |
+
+The two divergent rows, and the two neighbouring rows the allowlist
+suppresses, with their divergent-frame counts:
+
+| symbol (nm window) | verdict | period 1 depth 8 | period 1 depth 2 |
+|---|---|---|---|
+| `plt_req` (10 B: `plt_req[2]` + 6 B pad) | DIVERGENT | first=193 frames=14 | first=199 frames=2 |
+| `Candidate_Buff` (48 B: `Candidate_Buff[16]` + `Active_Wipe_Type` + `training_hitbox_display_enabled` + pad) | DIVERGENT | first=193 frames=7 | first=199 frames=1 |
+| `afs_handle` | ALLOWED | first=193 frames=14 | first=199 frames=10 |
+| `ldreq_result` | ALLOWED | first=194 frames=18 | first=200 frames=14 |
+
+Read this carefully, because it says two different things:
+
+1. **The gate is green only because select cycles run every 8th frame.**
+   Production can roll back on *any* frame. Raising the cadence to
+   period 1 turns the tree red at either depth. The stock cadence was
+   chosen to dodge the crash class in limit 1, not because period 1 is
+   unrepresentative.
+2. **Depth still matters, quantitatively.** At depth 8 the divergence
+   starts 6 frames earlier and lasts 7× longer for `plt_req`. Frame 193
+   is inside `PHASE_CHARACTER_SELECT`, immediately around
+   `Sel_PL_3rd`'s `Push_LDREQ_Queue_Player` / `Initialize_EM_Candidate`
+   pair (`screen/sel_pl.c:996` and `:1007`).
+
+Symbol windows come from `nm` on the exact binary, so they can be wider
+than the C object. Checked against `symmap.txt`: `plt_req` is
+`0x1013fa926 + 0xa` = the 4-byte `plt_req[2]` plus 6 bytes of padding up
+to `q_ldreq` at `0x1013fa930`, so the divergence is `plt_req` itself.
+`ldreq_break` is a *separate* symbol (`0x1013fa7ef + 0x11`) and did NOT
+diverge in any run. `ldreq_result` is `0x1013fa800 + 0x126` = exactly its
+294 bytes. `q_ldreq` is `0x380` = 896 B = 16 x 56 (two 8-byte pointers in
+`REQ` on the 64-bit host) and is noise-masked, per limit 9.
+
+Neither divergent symbol is the known flake #65 signature (8-byte
+file-scope pointers from `port/paths.c` / `port/resources.c` /
+`port/sdl/*`); the repeat run reproduced both exactly.
+
+`feedback` is 0 in every one of these runs, so no GS_SAVE symbol was
+*observed* to drift. That is a coverage statement, not an exoneration:
+the select-phase cycles stop at `PHASE_GAME_TRANSITION`
+(`src/test/test_runner.c:1407`), which is exactly where `Exit_6th`
+(`screen/sel_pl.c:1701-1722`) does its `Check_PL_Load()` /
+`Check_LDREQ_Queue_BG()` wait and advances the GS-saved `Exit_No` /
+`Exit_Timer`. The one place the `ldreq_result` → saved-state feedback
+edge can be observed is the one place this harness does not cover.
+
+`Candidate_Buff`'s window is a separate finding from the LDREQ cluster
+and is not attributed to a sub-symbol here — `Candidate_Buff` itself is
+scratch that `Initialize_EM_Candidate` refills from the top on every
+call (`system/sys_sub.c:1714-1716`), and `EM_Candidate`, the thing
+derived from it, *is* saved (`game_state.c:435/1175`), so the live
+suspect in that window is `Active_Wipe_Type` (`sys_sub.c:81/92`).
+Confirming which byte moves needs a narrower probe than a per-symbol
+hash.
 
 ## Findings on the tree this harness landed on
 

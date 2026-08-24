@@ -553,7 +553,8 @@ def run_scenario(name, extra, args, outdir, map_path, frames, entries,
             log(f"scenario {name}: {'baseline ' + run_name if period == 0 else 'rollback B'}")
         out = os.path.join(outdir, f"{name}.{run_name}.rbd")
         runlog = os.path.join(outdir, f"{name}.{run_name}.log")
-        runs[run_name] = run_game(args.binary, [], extra, out, map_path,
+        runs[run_name] = run_game(args.binary, [], extra + list(args.game_arg),
+                                  out, map_path,
                                   frames, period, args.rollback_depth,
                                   args.timeout, runlog)
 
@@ -641,6 +642,13 @@ def main(argv):
     ap.add_argument("--timeout", type=int, default=900, help="per-run timeout (s)")
     ap.add_argument("--outdir", default=None, help="work dir (default: mktemp)")
     ap.add_argument("--allowlist", default=os.path.join(SCRIPT_DIR, "allowlist.txt"))
+    # Passthrough for game-side flags the driver does not model (e.g. the
+    # --rbd-select-rollback-* pair, which lives in src/args.c and is applied
+    # in src/test/rollback_determinism.c, not here). Appended to every run
+    # of every scenario, baselines included, so A1/A2/B stay comparable.
+    ap.add_argument("--game-arg", action="append", default=[],
+                    help="extra argument passed verbatim to the game binary "
+                         "(repeatable; applied to A1, A2 and B alike)")
     ap.add_argument("--keep", action="store_true", help="keep work dir on success")
     ap.add_argument("--scenario", action="append", default=None,
                     help="run only scenarios whose name matches this fnmatch "

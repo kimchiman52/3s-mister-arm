@@ -66,10 +66,37 @@ sa_frame                   # ui/sc_sub.c:392 SA-gauge HUD frame display state (c
 # --- loader / RAM-allocator state perturbed by speculative asset requests --
 # The speculative legs re-issue load/alloc requests the restore cannot
 # rewind (queue state is deliberately outside GameState). Real netplay
-# rollbacks perturb these identically; they are consumed by the loader,
-# not read by the simulation.
+# rollbacks perturb these identically.
+#
+# CORRECTION 2026-08-24 (task #60). This block used to end with "they are
+# consumed by the loader, not read by the simulation". That is FALSE for
+# ldreq_result and it is the reason this block hides a real desync class:
+#
+#   ldreq_result is read by Check_LDREQ_Queue_Player / _Union / _Direct
+#   (io/gd3rd.c), which gate Exit_6th (screen/sel_pl.c:1701-1722 -> Exit_No,
+#   Exit_Timer) and Bonus_Sub's stage wait (game.c:1377-1381 -> G_No, G_Timer).
+#   Exit_No/Exit_Timer/G_No/G_Timer are ALL in the rollback save set
+#   (netplay/game_state.c:456/607/453/540). Saved state is therefore derived
+#   from an allowlisted, unsaved symbol -- the textbook DIVERGENT+FEEDBACK
+#   shape, which this allowlist entry suppresses by construction.
+#
+# These entries stay, because the divergence is not fixable by save-set
+# membership: afs_handle is an index into port/io/afs.c's requests[] table
+# whose SDL_AsyncIO* and read cursor cannot be rewound, and AFS_Read is a
+# real async disk read (afs.c:366), so completion timing is wall-clock, not
+# frame-count. The empirical proof is in this harness's own output: q_ldreq,
+# rckey_work, rckey_mmobj, texgrplds, char_init_data, requests, afs and
+# asyncio_queue all appear in the A1-vs-A2 BASELINE NOISE list -- they differ
+# between two identical no-rollback runs of the same binary on the same
+# machine. Two peers cannot agree on them either, and no local save/replay
+# scheme changes that. The correct treatment is a load barrier (keep the
+# simulation from observing an in-flight LDREQ load while a session is
+# running), not a wider save set.
+#
+# Do NOT quietly widen this block. plt_req and Candidate_Buff also diverge at
+# --rbd-select-rollback-depth 8 and are deliberately left unallowlisted.
 afs_handle                 # AFS async file-system handle bookkeeping
-ldreq_result               # io/gd3rd.c load-request result slots
+ldreq_result               # io/gd3rd.c load-request result slots — SEE CORRECTION ABOVE
 rckeyctr                   # system/ramcnt.c RAM-key allocator counter
 rckeymin                   # system/ramcnt.c RAM-key allocator low-water mark
 rckeyque                   # system/ramcnt.c RAM-key allocator queue
