@@ -23,12 +23,42 @@ const TYPE_REGISTER = 1;
 const TYPE_DELIVER = 2;
 const TYPE_POLL = 3;
 const TYPE_CHALLENGE = 4;
+// S5 relay (docs/plan-netplay-connection.md §7). Types 5/6 ride the SAME
+// UDP port, process and systemd unit as the rest of the protocol; types
+// 7/8 only ever appear on a per-session relay port (see relayAllocate).
+// The version byte is UNCHANGED at 2 — a v2 client that never sends a
+// RELAY_REQ is indistinguishable from a pre-S5 one, so this is a pure
+// extension, not a breaking change.
+const TYPE_RELAY_REQ = 5;      // client -> server, main port
+const TYPE_RELAY_GRANT = 6;    // server -> client, main port
+const TYPE_RELAY_PIN = 7;      // client -> relay port
+const TYPE_RELAY_PIN_ACK = 8;  // relay port -> client
 
 const REGISTER_LEN = 36;
 const POLL_LEN = 36;
 const DELIVER_LEN = 32;
 const CHALLENGE_LEN = 32;
 const COOKIE_LEN = 8;
+
+// RELAY_REQ deliberately mirrors REGISTER byte-for-byte in the fields the
+// return-routability gate reads (key at [8..24), cookie at [28..36)), so
+// it passes through returnRoutabilityGate unmodified — one gate, one
+// cookie scheme, no second code path to get wrong.
+const RELAY_REQ_LEN = 36;
+// RELAY_GRANT is 36 bytes for a 36-byte request: amplification factor
+// exactly 1.0, so the relay handshake cannot make this server a
+// reflector any more than REGISTER/DELIVER already could. It carries no
+// relay IP — the client uses the address it already reached us at, which
+// is also the address the GRANT arrives from.
+const RELAY_GRANT_LEN = 36;
+const RELAY_PIN_LEN = 20;
+const RELAY_PIN_ACK_LEN = 12;   // 12 for 20: attenuator, factor 0.6
+const RELAY_TOKEN_LEN = 8;
+
+const RELAY_STATUS_GRANTED = 0;
+const RELAY_STATUS_POOL_EXHAUSTED = 1;
+const RELAY_STATUS_NOT_PAIRED = 2;
+const RELAY_SLOT_NONE = 0xff;
 
 // --- Tunables ----------------------------------------------------------------
 
@@ -209,6 +239,57 @@ const KEY_RATE_LIMIT_PER_WINDOW = 10;
 const COOKIE_ROTATE_MS = 60 * 1000;
 const cookieSecret = crypto.randomBytes(32);
 
+// --- S5 relay tunables -------------------------------------------------------
+//
+// WHY A CUSTOM RELAY AND NOT COTURN (docs/plan-netplay-connection.md §7):
+// do_handoff (src/netplay/direct_p2p.c) transfers a BARE
+// NET_DatagramSocket into netplay.c, after which GekkoNet owns plain
+// send/recv on it through src/netplay/sdl_net_adapter.c. A TURN
+// allocation would interpose Allocate/CreatePermission/ChannelData
+// framing on EVERY packet plus refresh timers, on a 60 Hz rollback
+// game's hot path — GekkoNet does not speak any of that. This relay
+// forwards raw datagrams unmodified, so the relayed socket is
+// behaviourally identical to a punched one and neither the MIST
+// handshake nor GekkoNet changes at all. Secondary reason: coturn would
+// add a scanner-recognisable public service to a VPS that also runs
+// unrelated infrastructure.
+//
+// One UDP port per RELAYED SESSION, drawn from a bounded pool. A port
+// per session (rather than demultiplexing many sessions on one port by
+// source address) is what keeps the forward path a pure "send the bytes
+// to the other pinned endpoint" with no header of our own: the port IS
+// the session identifier.
+//
+// DEPLOYMENT NOTE: the firewall must allow inbound UDP on
+// RELAY_PORT_BASE .. RELAY_PORT_BASE + RELAY_POOL_SIZE - 1 in addition
+// to the main rendezvous port. start() logs the range at boot.
+const RELAY_PORT_BASE = 34000;
+const RELAY_POOL_SIZE = 100;
+
+// A relayed session is reclaimed after this long with no pin and no
+// forwarded datagram. A live session sends ~120 datagrams/s, so 30 s of
+// total silence means both ends are gone (or the match ended); the pool
+// is small enough that holding dead entries for the 10-minute session
+// TTL would exhaust it. Reclaim closes the socket and frees the port.
+const RELAY_IDLE_MS = 30 * 1000;
+
+// Per-session forwarding cap, enforced by DROPPING over-budget datagrams
+// (never by closing the session — a rollback netcode absorbs loss, but a
+// mid-match teardown is unrecoverable). GekkoNet at 60 Hz costs roughly
+// 5 kB/s per direction, so 64 KiB/s is ~12x headroom for a real match
+// while bounding what a single relayed session can cost the box: 100
+// sessions x 64 KiB/s x 2 directions is the worst case this pool can
+// produce. Implemented as a token bucket refilled at the cap rate with a
+// one-second burst.
+const RELAY_BYTES_PER_SEC = 64 * 1024;
+
+// Relay tokens rotate on the same 60 s cadence as the S4c cookie and,
+// like it, the CURRENT and PREVIOUS slots both validate — that pair of
+// slots IS the token's expiry (60..120 s), long enough to cover the
+// GRANT -> PIN round trip many times over and short enough that a
+// captured token dies with the match.
+const RELAY_TOKEN_ROTATE_MS = 60 * 1000;
+
 // --- Logging -----------------------------------------------------------------
 
 function ts() {
@@ -312,6 +393,77 @@ function encodeDeliver(sessionKeyBuf, peerEndpoint) {
     return buf;
 }
 
+// --- S5 relay token ----------------------------------------------------------
+
+// token = HMAC-SHA256(server_secret, "relay:<hexKey>:<side>:<slot>")[0..7]
+//
+// This REUSES the S4c secret machinery (one 32-byte `cookieSecret` drawn
+// from crypto.randomBytes at process start, never leaving the process)
+// rather than inventing a second scheme, and domain-separates with the
+// "relay:" prefix so a cookie can never be replayed as a token or vice
+// versa. `slot` is the rotation slot; accepting the current and previous
+// slot gives the token a 60..120 s expiry.
+//
+// What it proves: the holder was told this token by THIS server, for
+// THIS session key and THIS side. The server only ever emits one to an
+// endpoint that already (a) passed the return-routability cookie gate
+// and (b) occupies one of the two slots of a PAIRED session. So a token
+// on the wire is a capability for exactly one side of one relayed
+// session, expiring with the rotation window.
+function relayTokenForSlot(hexKey, side, slot) {
+    return crypto
+        .createHmac('sha256', cookieSecret)
+        .update(`relay:${hexKey}:${side}:${slot}`)
+        .digest()
+        .subarray(0, RELAY_TOKEN_LEN);
+}
+
+function currentRelaySlot() {
+    return Math.floor(Date.now() / RELAY_TOKEN_ROTATE_MS);
+}
+
+// Constant-time check against the current and previous rotation slots
+// (same shape and same reasoning as cookieValid).
+function relayTokenValid(hexKey, side, tokenBuf) {
+    if (!tokenBuf || tokenBuf.length !== RELAY_TOKEN_LEN) return false;
+    const slot = currentRelaySlot();
+    for (const s of [slot, slot - 1]) {
+        if (crypto.timingSafeEqual(tokenBuf, relayTokenForSlot(hexKey, side, s))) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// magic(4) ver(1) type(1)=6 slot(1) status(1) key(16) port(2) reserved(2)
+// token(8) = 36 bytes. `port`/`token` are zero on every refusal, and the
+// slot byte is RELAY_SLOT_NONE, so a client that ignores `status` still
+// cannot mistake a refusal for a grant (port 0 is not connectable).
+function encodeRelayGrant(sessionKeyBuf, side, status, port, tokenBuf) {
+    const buf = Buffer.alloc(RELAY_GRANT_LEN);
+    buf.writeUInt32BE(MAGIC, 0);
+    buf.writeUInt8(VERSION, 4);
+    buf.writeUInt8(TYPE_RELAY_GRANT, 5);
+    buf.writeUInt8(side & 0xff, 6);
+    buf.writeUInt8(status & 0xff, 7);
+    sessionKeyBuf.copy(buf, 8, 0, 16);
+    buf.writeUInt16BE(port & 0xffff, 24);
+    buf.writeUInt16BE(0, 26); // reserved
+    if (tokenBuf) tokenBuf.copy(buf, 28, 0, RELAY_TOKEN_LEN);
+    return buf;
+}
+
+function encodeRelayPinAck(side, peerPinned) {
+    const buf = Buffer.alloc(RELAY_PIN_ACK_LEN);
+    buf.writeUInt32BE(MAGIC, 0);
+    buf.writeUInt8(VERSION, 4);
+    buf.writeUInt8(TYPE_RELAY_PIN_ACK, 5);
+    buf.writeUInt8(side & 0xff, 6);
+    buf.writeUInt8(peerPinned ? 1 : 0, 7);
+    buf.writeUInt32BE(0, 8); // reserved
+    return buf;
+}
+
 // --- State -------------------------------------------------------------------
 
 const sessionMap = new Map();
@@ -334,6 +486,201 @@ function releaseSession(hexKey, entry) {
         const n = creatorCounts.get(entry.creatorIp) || 0;
         if (n <= 1) creatorCounts.delete(entry.creatorIp);
         else creatorCounts.set(entry.creatorIp, n - 1);
+    }
+    // A relay only exists to carry a session's traffic; when the session
+    // is gone the port must go back to the pool immediately rather than
+    // waiting out RELAY_IDLE_MS.
+    relayRelease(hexKey, 'session released');
+}
+
+// --- S5 relay state ----------------------------------------------------------
+
+const relayMap = new Map();
+// key: hex session key; value: {
+//   hexKey, port, socket,
+//   side: [ {ep|null}, {ep|null} ],   // 0 = slot A (host), 1 = slot B (joiner)
+//   lastActivity, allowance, lastRefill,
+//   forwarded, forwardedBytes, dropUnpinned, dropCap, pinRejects, createdAt
+// }
+// Bounded by RELAY_POOL_SIZE — the pool IS the cap.
+
+const relayPortInUse = new Map(); // port -> hexKey
+const relayPortBlocked = new Set();
+// Ports whose bind() failed (already in use by something else on the
+// box). Without this the linear scan below would hand out the same dead
+// port on every retry; with it the pool self-heals down to whatever is
+// actually bindable.
+
+function relayRelease(hexKey, why) {
+    const r = relayMap.get(hexKey);
+    if (r === undefined) return;
+    relayMap.delete(hexKey);
+    relayPortInUse.delete(r.port);
+    try {
+        r.socket.close();
+    } catch (_) {
+        // already closed / never bound
+    }
+    logInfo(`[RELAY] released key=${shortKey4(hexKey)}... port=${r.port} (${why}) ` +
+        `fwd=${r.forwarded}/${r.forwardedBytes}B dropUnpinned=${r.dropUnpinned} ` +
+        `dropCap=${r.dropCap} pinRejects=${r.pinRejects}`);
+}
+
+// Token bucket over forwarded bytes. Refills at RELAY_BYTES_PER_SEC with
+// a one-second burst ceiling; an over-budget datagram is DROPPED, which
+// is the only safe over-budget action mid-match (see RELAY_BYTES_PER_SEC).
+function relayBandwidthAllow(relay, bytes, now) {
+    const dt = now - relay.lastRefill;
+    if (dt > 0) {
+        relay.allowance = Math.min(
+            RELAY_BYTES_PER_SEC,
+            relay.allowance + (dt / 1000) * RELAY_BYTES_PER_SEC);
+        relay.lastRefill = now;
+    }
+    if (relay.allowance < bytes) return false;
+    relay.allowance -= bytes;
+    return true;
+}
+
+// The relay socket's whole job. Two frame classes and nothing else:
+//
+//   1. RELAY_PIN — the ONLY frame this socket interprets. A valid token
+//      for a side that is not yet pinned records the source endpoint;
+//      the same endpoint re-pinning is idempotent (and re-ACKed, which
+//      is how a client learns its peer has arrived). A valid token from
+//      a DIFFERENT endpoint for an already-pinned side is refused, so
+//      holding the token cannot hijack a live side.
+//   2. Everything else — forwarded VERBATIM to the other pinned
+//      endpoint, or dropped. No framing, no rewriting, no inspection:
+//      that is what makes the relayed socket behaviourally identical to
+//      a punched one for GekkoNet and for the MIST handshake.
+//
+// Nothing is ever answered without a valid token, so this socket is not
+// a reflector: an unpinned source with no token gets silence.
+function relayOnMessage(relay, buf, rinfo) {
+    const now = nowMs();
+
+    if (buf.length === RELAY_PIN_LEN &&
+        buf.readUInt32BE(0) === MAGIC &&
+        buf.readUInt8(4) === VERSION &&
+        buf.readUInt8(5) === TYPE_RELAY_PIN) {
+        const side = buf.readUInt8(6);
+        if (side !== 0 && side !== 1) {
+            relay.pinRejects += 1;
+            return;
+        }
+        const token = Buffer.from(buf.subarray(8, 8 + RELAY_TOKEN_LEN));
+        if (!relayTokenValid(relay.hexKey, side, token)) {
+            relay.pinRejects += 1;
+            return; // silent — a wrong guess must look like a dead port
+        }
+        const s = relay.side[side];
+        if (s.ep === null) {
+            s.ep = { address: rinfo.address, port: rinfo.port };
+            logInfo(`[RELAY] pin key=${shortKey4(relay.hexKey)}... port=${relay.port} ` +
+                `side=${side} <- ${rinfo.address}:${rinfo.port}`);
+        } else if (s.ep.address !== rinfo.address || s.ep.port !== rinfo.port) {
+            relay.pinRejects += 1;
+            return; // side already pinned to a different endpoint — no hijack
+        }
+        relay.lastActivity = now;
+        const ack = encodeRelayPinAck(side, relay.side[1 - side].ep !== null);
+        relay.socket.send(ack, 0, RELAY_PIN_ACK_LEN, rinfo.port, rinfo.address);
+        return;
+    }
+
+    let from = -1;
+    for (let i = 0; i < 2; i++) {
+        const e = relay.side[i].ep;
+        if (e !== null && e.address === rinfo.address && e.port === rinfo.port) {
+            from = i;
+            break;
+        }
+    }
+    if (from < 0) {
+        relay.dropUnpinned += 1; // unknown source: never forwarded, never answered
+        return;
+    }
+    const dst = relay.side[1 - from].ep;
+    if (dst === null) {
+        relay.dropUnpinned += 1; // peer has not pinned yet — nowhere to send
+        return;
+    }
+    if (!relayBandwidthAllow(relay, buf.length, now)) {
+        relay.dropCap += 1;
+        return;
+    }
+    relay.lastActivity = now;
+    relay.forwarded += 1;
+    relay.forwardedBytes += buf.length;
+    relay.socket.send(buf, 0, buf.length, dst.port, dst.address);
+}
+
+// Allocate (or return the existing) relay for `hexKey`. Returns null when
+// the pool is exhausted — the caller answers RELAY_STATUS_POOL_EXHAUSTED
+// so the client can say "relay full" instead of guessing at silence.
+//
+// bind() is asynchronous, so the socket is returned before it is
+// listening. That is safe by construction: the GRANT still has to reach
+// the client and the client's first PIN still has to come back, which is
+// at least one network round trip, while bind completes on the next
+// event-loop turn. A bind FAILURE tears the entry down and blocklists the
+// port; the client's next RELAY_REQ resend (300 ms cadence) then draws a
+// different port.
+function relayAllocate(hexKey) {
+    const existing = relayMap.get(hexKey);
+    if (existing !== undefined) return existing;
+    if (relayMap.size >= RELAY_POOL_SIZE) return null;
+
+    for (let i = 0; i < RELAY_POOL_SIZE; i++) {
+        const port = RELAY_PORT_BASE + i;
+        if (relayPortInUse.has(port) || relayPortBlocked.has(port)) continue;
+
+        const socket = dgram.createSocket('udp4');
+        const now = nowMs();
+        const relay = {
+            hexKey,
+            port,
+            socket,
+            side: [{ ep: null }, { ep: null }],
+            lastActivity: now,
+            allowance: RELAY_BYTES_PER_SEC,
+            lastRefill: now,
+            forwarded: 0,
+            forwardedBytes: 0,
+            dropUnpinned: 0,
+            dropCap: 0,
+            pinRejects: 0,
+            createdAt: now,
+        };
+        socket.on('message', (b, ri) => {
+            try {
+                relayOnMessage(relay, b, ri);
+            } catch (err) {
+                logWarn(`relay handler error: ${err && err.stack ? err.stack : err}`);
+            }
+        });
+        socket.on('error', (err) => {
+            logWarn(`relay socket error on port ${port}: ${err.message}`);
+            relayPortBlocked.add(port);
+            relayRelease(hexKey, 'socket error');
+        });
+        relayMap.set(hexKey, relay);
+        relayPortInUse.set(port, hexKey);
+        socket.bind(port);
+        logInfo(`[RELAY] allocated key=${shortKey4(hexKey)}... port=${port} ` +
+            `(pool ${relayMap.size}/${RELAY_POOL_SIZE})`);
+        return relay;
+    }
+    return null;
+}
+
+function sweepRelays() {
+    const now = nowMs();
+    for (const [hexKey, r] of relayMap) {
+        if (now - r.lastActivity > RELAY_IDLE_MS) {
+            relayRelease(hexKey, `idle > ${RELAY_IDLE_MS} ms`);
+        }
     }
 }
 
@@ -478,6 +825,9 @@ function sweepSessions() {
     if (evicted > 0) {
         logInfo(`session sweep: evicted ${evicted}, live=${sessionMap.size}`);
     }
+    // S5: relays age out far faster than sessions (RELAY_IDLE_MS vs
+    // SESSION_TTL_MS) because the port pool is 100, not 4096.
+    sweepRelays();
 }
 
 // Idle eviction: eligible when there is no in-window activity AND the
@@ -667,6 +1017,76 @@ function handlePoll(socket, buf, rinfo) {
     logInfo(`[POLL] from ${source.address}:${source.port} key=${shortKey4(hexKey)}... a=${aStr} b=${bStr}`);
 }
 
+// S5: RELAY_REQ handler. Runs AFTER returnRoutabilityGate, exactly like
+// REGISTER/POLL, so the source has already proven return routability.
+//
+// Admission is deliberately narrow — this must never become an open
+// reflector or a free UDP-port dispenser:
+//   * the session key must EXIST (unknown key -> silence);
+//   * the source must BE one of that session's two registered slots,
+//     which is what identifies which side is asking and is impossible to
+//     satisfy without having completed the normal pairing (unknown
+//     source -> silence, no disclosure that the key exists);
+//   * the session must be PAIRED. An unpaired session has no second side
+//     to relay to, and allocating a port for it would let a lone host
+//     hold pool capacity. That one gets a NOT_PAIRED refusal rather than
+//     silence, because the requester is provably a participant and a
+//     client that cannot distinguish "refused" from "server gone" is the
+//     exact reporting defect §6.5 documents.
+function handleRelayReq(socket, buf, rinfo) {
+    const sessionKeyBuf = Buffer.from(buf.subarray(8, 24));
+    const hexKey = sessionKeyBuf.toString('hex');
+    const source = { address: rinfo.address, port: rinfo.port };
+    const entry = sessionMap.get(hexKey);
+
+    if (!entry) {
+        noteThrottled(logWarn, 'drop: RELAY_REQ for unknown key',
+            `from ${source.address}:${source.port} key=${shortKey4(hexKey)}...`);
+        return;
+    }
+    let side = -1;
+    if (endpointEq(entry.endpointA, source)) side = 0;
+    else if (endpointEq(entry.endpointB, source)) side = 1;
+    if (side < 0) {
+        noteThrottled(logWarn, 'drop: RELAY_REQ from a non-slot source',
+            `from ${source.address}:${source.port} key=${shortKey4(hexKey)}...`);
+        return;
+    }
+
+    // A live relay request is proof the pair is still trying; keep the
+    // session off the TTL sweep's eviction front.
+    entry.lastTouch = nowMs();
+    if (side === 0) entry.lastSeenA = entry.lastTouch;
+    else entry.lastSeenB = entry.lastTouch;
+
+    if (!entry.endpointA || !entry.endpointB) {
+        socket.send(
+            encodeRelayGrant(sessionKeyBuf, RELAY_SLOT_NONE, RELAY_STATUS_NOT_PAIRED, 0, null),
+            0, RELAY_GRANT_LEN, source.port, source.address);
+        logInfo(`[RELAY_REQ] refused NOT_PAIRED key=${shortKey4(hexKey)}... from ${source.address}:${source.port}`);
+        return;
+    }
+
+    const relay = relayAllocate(hexKey);
+    if (relay === null) {
+        socket.send(
+            encodeRelayGrant(sessionKeyBuf, RELAY_SLOT_NONE, RELAY_STATUS_POOL_EXHAUSTED, 0, null),
+            0, RELAY_GRANT_LEN, source.port, source.address);
+        logWarn(`[RELAY_REQ] refused POOL_EXHAUSTED key=${shortKey4(hexKey)}... ` +
+            `(${relayMap.size}/${RELAY_POOL_SIZE} in use)`);
+        return;
+    }
+
+    // Both sides converge on the same port; each gets a token scoped to
+    // its own side, so neither can pin the other's slot.
+    const token = relayTokenForSlot(hexKey, side, currentRelaySlot());
+    socket.send(
+        encodeRelayGrant(sessionKeyBuf, side, RELAY_STATUS_GRANTED, relay.port, token),
+        0, RELAY_GRANT_LEN, source.port, source.address);
+    logInfo(`[RELAY_REQ] granted key=${shortKey4(hexKey)}... side=${side} ` +
+        `port=${relay.port} to ${source.address}:${source.port}`);
+}
+
 // --- S4c return-routability gate ---------------------------------------------
 
 // Runs between "the frame is well-formed" and "we touch any state".
@@ -765,9 +1185,14 @@ function onMessage(socket, buf, rinfo) {
         return;
     }
     const type = buf.readUInt8(5);
-    if (type === TYPE_REGISTER || type === TYPE_POLL) {
-        const what = type === TYPE_REGISTER ? 'REGISTER' : 'POLL';
-        const wantLen = type === TYPE_REGISTER ? REGISTER_LEN : POLL_LEN;
+    if (type === TYPE_REGISTER || type === TYPE_POLL || type === TYPE_RELAY_REQ) {
+        // S5: RELAY_REQ shares REGISTER's length and its key/cookie
+        // offsets precisely so it can ride the SAME return-routability
+        // gate. A second gate would be a second thing to get wrong.
+        const what = type === TYPE_REGISTER ? 'REGISTER'
+            : type === TYPE_POLL ? 'POLL' : 'RELAY_REQ';
+        const wantLen = type === TYPE_REGISTER ? REGISTER_LEN
+            : type === TYPE_POLL ? POLL_LEN : RELAY_REQ_LEN;
         if (buf.length !== wantLen) {
             noteThrottled(logWarn, `drop: bad ${what} length`, `len=${buf.length} from ${rinfo.address}:${rinfo.port}`);
             return;
@@ -777,9 +1202,21 @@ function onMessage(socket, buf, rinfo) {
         }
         if (type === TYPE_REGISTER) {
             handleRegister(socket, buf, rinfo);
-        } else {
+        } else if (type === TYPE_POLL) {
             handlePoll(socket, buf, rinfo);
+        } else {
+            handleRelayReq(socket, buf, rinfo);
         }
+    } else if (type === TYPE_RELAY_GRANT) {
+        // Server -> client only, same as CHALLENGE.
+        noteThrottled(logWarn, 'drop: unexpected RELAY_GRANT', `from ${rinfo.address}:${rinfo.port}`);
+        return;
+    } else if (type === TYPE_RELAY_PIN || type === TYPE_RELAY_PIN_ACK) {
+        // These only ever belong on a per-session relay port. Arriving on
+        // the main port they are a misconfigured client or a probe.
+        noteThrottled(logWarn, 'drop: relay-port frame on the main port',
+            `type=${type} from ${rinfo.address}:${rinfo.port}`);
+        return;
     } else if (type === TYPE_CHALLENGE) {
         // Server -> client only. A client sending us one is confused or
         // hostile; never let it reach state.
@@ -817,6 +1254,9 @@ function start(port) {
     socket.on('listening', () => {
         const addr = socket.address();
         logInfo(`bound udp4 ${addr.address}:${addr.port}`);
+        logInfo(`S5 relay pool: udp ${RELAY_PORT_BASE}-${RELAY_PORT_BASE + RELAY_POOL_SIZE - 1} ` +
+            `(${RELAY_POOL_SIZE} sessions, ${RELAY_BYTES_PER_SEC} B/s each, idle reclaim ${RELAY_IDLE_MS} ms) ` +
+            `— the firewall must allow this range inbound`);
     });
 
     let shuttingDown = false;
@@ -826,6 +1266,7 @@ function start(port) {
         logInfo(`shutting down (${reason})`);
         if (sessionInterval) clearInterval(sessionInterval);
         if (rateInterval) clearInterval(rateInterval);
+        for (const k of [...relayMap.keys()]) relayRelease(k, 'shutdown');
         try {
             socket.close(() => process.exit(0));
         } catch (_) {
@@ -893,6 +1334,49 @@ function start(port) {
         // sleeping 60 s. Test-only: the real oracle is the CHALLENGE.
         _cookieFor(address, port, slotOffset) {
             return cookieForSlot(address, port, currentCookieSlot() + (slotOffset || 0));
+        },
+        // --- S5 relay hooks -----------------------------------------------
+        _relayMap: relayMap,
+        _relayPortInUse: relayPortInUse,
+        _relayPortBase: RELAY_PORT_BASE,
+        _relayPoolSize: RELAY_POOL_SIZE,
+        _relayIdleMs: RELAY_IDLE_MS,
+        _relayBytesPerSec: RELAY_BYTES_PER_SEC,
+        _relayTokenRotateMs: RELAY_TOKEN_ROTATE_MS,
+        _relayReqLen: RELAY_REQ_LEN,
+        _relayGrantLen: RELAY_GRANT_LEN,
+        _relayPinLen: RELAY_PIN_LEN,
+        _relayPinAckLen: RELAY_PIN_ACK_LEN,
+        // Mint the token this server would issue for (key, side).
+        // `slotOffset` reaches back/forward through rotation slots so a
+        // test can exercise the accept-previous / reject-older window
+        // without sleeping 60 s. Test-only: the real oracle is the GRANT.
+        _relayTokenFor(hexKey, side, slotOffset) {
+            return relayTokenForSlot(hexKey, side, currentRelaySlot() + (slotOffset || 0));
+        },
+        _relaySweepNow() {
+            sweepRelays();
+        },
+        // Inject a datagram into a relay as if it arrived from `rinfo`,
+        // optionally capturing the relay's outbound sends. Same shape and
+        // same purpose as _onMessage: it lets a test drive source-endpoint-
+        // dependent policy (pinning, hijack refusal) and count forwarded
+        // bytes deterministically, which loopback UDP scheduling cannot do.
+        _relayInject(hexKey, buf, rinfo, fakeSocket) {
+            const r = relayMap.get(hexKey);
+            if (r === undefined) return false;
+            const real = r.socket;
+            if (fakeSocket) r.socket = fakeSocket;
+            try {
+                relayOnMessage(r, buf, rinfo);
+            } finally {
+                r.socket = real;
+            }
+            return true;
+        },
+        _resetRelays() {
+            for (const k of [...relayMap.keys()]) relayRelease(k, 'test reset');
+            relayPortBlocked.clear();
         },
         // Inject a packet as if it arrived from rinfo — lets tests exercise
         // source-IP-dependent policy (slot reclaim identity, spoofed-source

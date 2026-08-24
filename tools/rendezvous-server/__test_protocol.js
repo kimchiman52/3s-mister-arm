@@ -29,12 +29,26 @@ const TYPE_REGISTER = 1;
 const TYPE_DELIVER = 2;
 const TYPE_POLL = 3;
 const TYPE_CHALLENGE = 4;
+// S5 relay (docs/plan-netplay-connection.md §7).
+const TYPE_RELAY_REQ = 5;
+const TYPE_RELAY_GRANT = 6;
+const TYPE_RELAY_PIN = 7;
+const TYPE_RELAY_PIN_ACK = 8;
 const REGISTER_LEN = 36;
 const POLL_LEN = 36;
 const DELIVER_LEN = 32;
 const CHALLENGE_LEN = 32;
 const COOKIE_LEN = 8;
 const V1_REGISTER_LEN = 28;
+const RELAY_REQ_LEN = 36;
+const RELAY_GRANT_LEN = 36;
+const RELAY_PIN_LEN = 20;
+const RELAY_PIN_ACK_LEN = 12;
+const RELAY_TOKEN_LEN = 8;
+const RELAY_STATUS_GRANTED = 0;
+const RELAY_STATUS_POOL_EXHAUSTED = 1;
+const RELAY_STATUS_NOT_PAIRED = 2;
+const RELAY_SLOT_NONE = 0xff;
 
 // --- Local encoders ---------------------------------------------------------
 
@@ -149,6 +163,78 @@ function regLocal(sessionKey, client, opts) {
 function pollLocal(sessionKey, client, opts) {
     return makePoll(sessionKey,
         Object.assign({ cookie: cookieFor('127.0.0.1', client.port) }, opts || {}));
+}
+
+// --- S5 relay encoders/decoders ---------------------------------------------
+//
+// Duplicated from the server on purpose, like every other codec here: a
+// shared helper would let a matching bug on both sides pass.
+
+// RELAY_REQ is byte-identical to REGISTER except for the type byte —
+// that is the whole point (it rides the same return-routability gate).
+function relayReqFrom(sessionKey, myPublicPort, address, port) {
+    return makeRegister(sessionKey, myPublicPort, {
+        type: TYPE_RELAY_REQ,
+        cookie: cookieFor(address, port),
+    });
+}
+
+function relayReqLocal(sessionKey, client) {
+    return relayReqFrom(sessionKey, client.port, '127.0.0.1', client.port);
+}
+
+function isRelayGrant(buf) {
+    return buf.length === RELAY_GRANT_LEN &&
+        buf.readUInt32BE(0) === MAGIC &&
+        buf.readUInt8(4) === VERSION &&
+        buf.readUInt8(5) === TYPE_RELAY_GRANT;
+}
+
+function decodeRelayGrant(buf) {
+    if (!isRelayGrant(buf)) {
+        throw new Error(`not a RELAY_GRANT (len=${buf.length} ver=${buf.length >= 5 ? buf.readUInt8(4) : '?'} type=${buf.length >= 6 ? buf.readUInt8(5) : '?'})`);
+    }
+    return {
+        slot: buf.readUInt8(6),
+        status: buf.readUInt8(7),
+        sessionKey: Buffer.from(buf.subarray(8, 24)),
+        relayPort: buf.readUInt16BE(24),
+        token: Buffer.from(buf.subarray(28, 28 + RELAY_TOKEN_LEN)),
+    };
+}
+
+function makeRelayPin(side, token) {
+    const buf = Buffer.alloc(RELAY_PIN_LEN);
+    buf.writeUInt32BE(MAGIC, 0);
+    buf.writeUInt8(VERSION, 4);
+    buf.writeUInt8(TYPE_RELAY_PIN, 5);
+    buf.writeUInt8(side & 0xff, 6);
+    buf.writeUInt8(0, 7);
+    if (token) token.copy(buf, 8, 0, RELAY_TOKEN_LEN);
+    return buf;
+}
+
+function isRelayPinAck(buf) {
+    return buf.length === RELAY_PIN_ACK_LEN &&
+        buf.readUInt32BE(0) === MAGIC &&
+        buf.readUInt8(4) === VERSION &&
+        buf.readUInt8(5) === TYPE_RELAY_PIN_ACK;
+}
+
+function decodeRelayPinAck(buf) {
+    if (!isRelayPinAck(buf)) throw new Error(`not a RELAY_PIN_ACK (len=${buf.length})`);
+    return { slot: buf.readUInt8(6), peerPinned: buf.readUInt8(7) === 1 };
+}
+
+// Register two loopback clients under one key so the session is PAIRED —
+// the precondition every relay allocation requires. Drains the DELIVERs
+// so later recv()s see only relay traffic.
+async function pairClients(serverPort, key, a, b) {
+    await a.send(regLocal(key, a), serverPort);
+    await a.recv(500);
+    await b.send(regLocal(key, b), serverPort);
+    await b.recv(500); // B's reply
+    await a.recv(500); // A's unsolicited push
 }
 
 // --- Test plumbing ----------------------------------------------------------
@@ -1206,6 +1292,428 @@ async function testRateMapBounded(handle) {
     handle._resetRate();
 }
 
+// --- S5: relay ---------------------------------------------------------------
+
+async function testRelayRequiresPairedSession(handle, serverPort) {
+    // The admission gate. A relay port is a real, scarce resource (pool of
+    // RELAY_POOL_SIZE) and a forwarder that anyone could aim is an open
+    // reflector, so RELAY_REQ must be answerable ONLY by a registered slot
+    // of a PAIRED session. Three refusals and one grant.
+    handle._resetSessions();
+    handle._resetRate();
+    handle._resetRelays();
+    const a = await makeClient();
+    const b = await makeClient();
+    const c = await makeClient();
+    try {
+        // (1) Unknown session key -> total silence. Answering would confirm
+        //     to a scanner which keys exist.
+        const ghost = crypto.randomBytes(16);
+        await a.send(relayReqLocal(ghost, a), serverPort);
+        assert((await a.tryRecv(200)) === null, 'relay-gate: RELAY_REQ for an unknown key gets no reply');
+        assertEq(handle._relayMap.size, 0, 'relay-gate: unknown key allocated no relay');
+
+        // (2) Known key, but the session is UNPAIRED (host only). The
+        //     requester is provably a participant, so it gets an explicit
+        //     NOT_PAIRED refusal rather than silence.
+        const key = crypto.randomBytes(16);
+        await a.send(regLocal(key, a), serverPort);
+        await a.recv(500);
+        await a.send(relayReqLocal(key, a), serverPort);
+        const unpaired = await a.tryRecv(500);
+        assert(unpaired !== null, 'relay-gate: unpaired slot got a reply');
+        if (unpaired !== null) {
+            assert(isRelayGrant(unpaired.buf), 'relay-gate: unpaired reply is a RELAY_GRANT frame');
+            if (isRelayGrant(unpaired.buf)) {
+                const g = decodeRelayGrant(unpaired.buf);
+                assertEq(g.status, RELAY_STATUS_NOT_PAIRED, 'relay-gate: unpaired status is NOT_PAIRED');
+                assertEq(g.relayPort, 0, 'relay-gate: refusal carries port 0');
+                assertEq(g.slot, RELAY_SLOT_NONE, 'relay-gate: refusal carries slot 0xff');
+                assert(g.token.every((x) => x === 0), 'relay-gate: refusal carries a zero token');
+                assert(g.sessionKey.equals(key), 'relay-gate: refusal echoes our session key');
+            }
+        }
+        assertEq(handle._relayMap.size, 0, 'relay-gate: unpaired session allocated no relay');
+
+        // (3) Pair it, then have a THIRD party (not a slot) ask. Silence,
+        //     and no allocation.
+        await b.send(regLocal(key, b), serverPort);
+        await b.recv(500);
+        await a.recv(500);
+        handle._resetRate();
+        await c.send(relayReqLocal(key, c), serverPort);
+        assert((await c.tryRecv(200)) === null, 'relay-gate: RELAY_REQ from a non-slot source gets no reply');
+        assertEq(handle._relayMap.size, 0, 'relay-gate: non-slot source allocated no relay');
+
+        // (4) A real slot of the paired session IS granted — the control
+        //     that proves the three refusals above are the gate talking and
+        //     not a dead handler.
+        handle._resetRate();
+        await a.send(relayReqLocal(key, a), serverPort);
+        const granted = await a.tryRecv(500);
+        assert(granted !== null, 'relay-gate: paired slot A got a reply');
+        if (granted !== null && isRelayGrant(granted.buf)) {
+            const g = decodeRelayGrant(granted.buf);
+            assertEq(g.status, RELAY_STATUS_GRANTED, 'relay-gate: paired slot A is GRANTED');
+            assertEq(g.slot, 0, 'relay-gate: slot A is side 0');
+            assert(g.relayPort >= handle._relayPortBase &&
+                g.relayPort < handle._relayPortBase + handle._relayPoolSize,
+                `relay-gate: granted port ${g.relayPort} is inside the pool`);
+            assert(!g.token.every((x) => x === 0), 'relay-gate: grant carries a non-zero token');
+        } else {
+            assert(false, 'relay-gate: paired slot A reply was not a RELAY_GRANT');
+        }
+        assertEq(handle._relayMap.size, 1, 'relay-gate: exactly one relay allocated');
+        // Amplification: the reply is no larger than the request.
+        assert(RELAY_GRANT_LEN <= RELAY_REQ_LEN,
+            `relay-gate: RELAY_GRANT (${RELAY_GRANT_LEN}B) <= RELAY_REQ (${RELAY_REQ_LEN}B)`);
+    } finally {
+        await a.close();
+        await b.close();
+        await c.close();
+        handle._resetRelays();
+    }
+}
+
+async function testRelayGrantAndForward(handle, serverPort) {
+    // The headline property: once both sides are pinned, the relay is a
+    // transparent pipe. Bytes in one end come out the other UNMODIFIED and
+    // appear to arrive from the relay endpoint — which is exactly the
+    // endpoint the client is sending to, so the socket behaves like a
+    // punched one for GekkoNet's address matching.
+    handle._resetSessions();
+    handle._resetRate();
+    handle._resetRelays();
+    const key = crypto.randomBytes(16);
+    const a = await makeClient();
+    const b = await makeClient();
+    try {
+        await pairClients(serverPort, key, a, b);
+        handle._resetRate();
+
+        await a.send(relayReqLocal(key, a), serverPort);
+        const ga = decodeRelayGrant((await a.recv(500)).buf);
+        await b.send(relayReqLocal(key, b), serverPort);
+        const gb = decodeRelayGrant((await b.recv(500)).buf);
+
+        assertEq(ga.status, RELAY_STATUS_GRANTED, 'relay-fwd: A granted');
+        assertEq(gb.status, RELAY_STATUS_GRANTED, 'relay-fwd: B granted');
+        assertEq(ga.relayPort, gb.relayPort, 'relay-fwd: both sides get the SAME relay port');
+        assertEq(ga.slot, 0, 'relay-fwd: A is side 0');
+        assertEq(gb.slot, 1, 'relay-fwd: B is side 1');
+        assert(!ga.token.equals(gb.token), 'relay-fwd: the two sides get DIFFERENT tokens');
+        assertEq(handle._relayMap.size, 1, 'relay-fwd: the second RELAY_REQ reused the same relay');
+
+        const port = ga.relayPort;
+
+        // Pin both sides. The first ACK reports peer_pinned=0, the second
+        // reports 1 — that flag is how a client learns the far side has
+        // arrived without any extra frame.
+        await a.send(makeRelayPin(0, ga.token), port);
+        const acka = await a.recv(500);
+        assert(isRelayPinAck(acka.buf), 'relay-fwd: A got a RELAY_PIN_ACK');
+        const da = decodeRelayPinAck(acka.buf);
+        assertEq(da.slot, 0, 'relay-fwd: A ACK echoes side 0');
+        assertEq(da.peerPinned, false, 'relay-fwd: A ACK reports peer not yet pinned');
+        assertEq(acka.rinfo.port, port, 'relay-fwd: A ACK came from the relay port');
+
+        await b.send(makeRelayPin(1, gb.token), port);
+        const ackb = decodeRelayPinAck((await b.recv(500)).buf);
+        assertEq(ackb.slot, 1, 'relay-fwd: B ACK echoes side 1');
+        assertEq(ackb.peerPinned, true, 'relay-fwd: B ACK reports the peer IS pinned');
+        assert(RELAY_PIN_ACK_LEN <= RELAY_PIN_LEN,
+            `relay-fwd: RELAY_PIN_ACK (${RELAY_PIN_ACK_LEN}B) <= RELAY_PIN (${RELAY_PIN_LEN}B)`);
+
+        // A -> B, byte-identical.
+        const payloadAB = crypto.randomBytes(140);
+        await a.send(payloadAB, port);
+        const gotB = await b.recv(500);
+        assert(gotB.buf.equals(payloadAB), 'relay-fwd: A->B payload arrived byte-identical');
+        assertEq(gotB.rinfo.port, port, 'relay-fwd: A->B payload appears to come FROM the relay port');
+
+        // B -> A, byte-identical, different length.
+        const payloadBA = crypto.randomBytes(37);
+        await b.send(payloadBA, port);
+        const gotA = await a.recv(500);
+        assert(gotA.buf.equals(payloadBA), 'relay-fwd: B->A payload arrived byte-identical');
+
+        // A '3SXR'-magic payload that is NOT a valid PIN must still be
+        // forwarded verbatim, not eaten: the relay interprets exactly one
+        // frame type and treats everything else as opaque application
+        // bytes. (A DELIVER-shaped frame is the realistic case — a
+        // straggler from the rendezvous phase.)
+        const magicPayload = makePoll(key, { cookie: Buffer.alloc(COOKIE_LEN) });
+        await a.send(magicPayload, port);
+        const gotMagic = await b.recv(500);
+        assert(gotMagic.buf.equals(magicPayload),
+            'relay-fwd: a non-PIN 3SXR frame is forwarded verbatim, not consumed');
+
+        const relay = handle._relayMap.get(key.toString('hex'));
+        assert(relay !== undefined, 'relay-fwd: relay entry still live');
+        assertEq(relay.forwarded, 3, 'relay-fwd: exactly three datagrams were forwarded');
+    } finally {
+        await a.close();
+        await b.close();
+        handle._resetRelays();
+    }
+}
+
+async function testRelayPinTokenRequired(handle, serverPort) {
+    // The token is what stops the relay port being a free forwarder for
+    // whoever finds it. Four rejections and one accept, then a no-hijack
+    // check on an already-pinned side.
+    handle._resetSessions();
+    handle._resetRate();
+    handle._resetRelays();
+    const key = crypto.randomBytes(16);
+    const hexKey = key.toString('hex');
+    const a = await makeClient();
+    const b = await makeClient();
+    const c = await makeClient();
+    try {
+        await pairClients(serverPort, key, a, b);
+        handle._resetRate();
+        await a.send(relayReqLocal(key, a), serverPort);
+        const ga = decodeRelayGrant((await a.recv(500)).buf);
+        assertEq(ga.status, RELAY_STATUS_GRANTED, 'relay-token: A granted (setup)');
+        const port = ga.relayPort;
+        const relay = handle._relayMap.get(hexKey);
+
+        // (1) Random token -> no ACK, no pin.
+        await a.send(makeRelayPin(0, crypto.randomBytes(RELAY_TOKEN_LEN)), port);
+        assert((await a.tryRecv(200)) === null, 'relay-token: forged token gets NO ack');
+        assert(relay.side[0].ep === null, 'relay-token: forged token did not pin side 0');
+
+        // (2) The OTHER side's token, presented as side 0 -> rejected. The
+        //     side index is inside the HMAC, so a token cannot be moved
+        //     across sides.
+        const sideBToken = handle._relayTokenFor(hexKey, 1, 0);
+        await a.send(makeRelayPin(0, sideBToken), port);
+        assert((await a.tryRecv(200)) === null, 'relay-token: side-1 token presented as side 0 gets NO ack');
+        assert(relay.side[0].ep === null, 'relay-token: cross-side token did not pin');
+
+        // (3) An EXPIRED token (two rotation slots back) -> rejected;
+        //     the PREVIOUS slot is still accepted, which is the expiry
+        //     window.
+        await a.send(makeRelayPin(0, handle._relayTokenFor(hexKey, 0, -2)), port);
+        assert((await a.tryRecv(200)) === null, 'relay-token: two-slots-old token gets NO ack');
+        assert(relay.side[0].ep === null, 'relay-token: expired token did not pin');
+
+        await a.send(makeRelayPin(0, handle._relayTokenFor(hexKey, 0, -1)), port);
+        const prevAck = await a.tryRecv(500);
+        assert(prevAck !== null && isRelayPinAck(prevAck.buf),
+            'relay-token: previous-slot token IS accepted (60..120 s expiry window)');
+        assert(relay.side[0].ep !== null, 'relay-token: valid token pinned side 0');
+        assertEq(relay.side[0].ep.port, a.port, 'relay-token: side 0 pinned to A');
+
+        // (4) No-hijack: a DIFFERENT endpoint replaying A's valid token
+        //     must not repoint an already-pinned side, and must not be
+        //     answered.
+        await c.send(makeRelayPin(0, ga.token), port);
+        assert((await c.tryRecv(200)) === null, 'relay-token: replay from another endpoint gets NO ack');
+        assertEq(relay.side[0].ep.port, a.port, 'relay-token: side 0 still pinned to A after replay');
+
+        // ...and that endpoint's traffic is not forwarded even once B is up.
+        await b.send(makeRelayPin(1, handle._relayTokenFor(hexKey, 1, 0)), port);
+        assert(isRelayPinAck((await b.recv(500)).buf), 'relay-token: B pinned (setup)');
+        await c.send(crypto.randomBytes(24), port);
+        assert((await b.tryRecv(200)) === null, 'relay-token: an unpinned source is never forwarded');
+        assert(relay.pinRejects >= 4, `relay-token: rejections were counted (got ${relay.pinRejects})`);
+    } finally {
+        await a.close();
+        await b.close();
+        await c.close();
+        handle._resetRelays();
+    }
+}
+
+async function testRelayBandwidthCap(handle, serverPort) {
+    // A relayed session must not be able to starve the box. The cap is
+    // enforced by DROPPING, never by tearing the session down. Driven
+    // through _relayInject so the measurement is deterministic (no
+    // loopback scheduling in the middle of a byte count).
+    handle._resetSessions();
+    handle._resetRate();
+    handle._resetRelays();
+    const key = crypto.randomBytes(16);
+    const hexKey = key.toString('hex');
+    const a = await makeClient();
+    const b = await makeClient();
+    try {
+        await pairClients(serverPort, key, a, b);
+        handle._resetRate();
+        await a.send(relayReqLocal(key, a), serverPort);
+        const ga = decodeRelayGrant((await a.recv(500)).buf);
+        assertEq(ga.status, RELAY_STATUS_GRANTED, 'relay-cap: granted (setup)');
+        const relay = handle._relayMap.get(hexKey);
+
+        // Pin both sides from synthetic endpoints via injection.
+        const EP0 = { address: '198.51.100.60', port: 40000 };
+        const EP1 = { address: '198.51.100.61', port: 40001 };
+        const stub = makeStubSocket();
+        handle._relayInject(hexKey, makeRelayPin(0, handle._relayTokenFor(hexKey, 0, 0)), EP0, stub);
+        handle._relayInject(hexKey, makeRelayPin(1, handle._relayTokenFor(hexKey, 1, 0)), EP1, stub);
+        assert(relay.side[0].ep !== null && relay.side[1].ep !== null, 'relay-cap: both sides pinned');
+
+        const cap = handle._relayBytesPerSec;
+        stub.sent.length = 0;
+        const CHUNK = 1024;
+        const chunks = Math.ceil((cap * 3) / CHUNK); // 3x the one-second budget
+        const payload = crypto.randomBytes(CHUNK);
+        for (let i = 0; i < chunks; i++) {
+            handle._relayInject(hexKey, payload, EP0, stub);
+        }
+        const offered = chunks * CHUNK;
+        const forwardedBytes = stub.sent.reduce((n, s) => n + s.buf.length, 0);
+
+        assert(offered > cap, `relay-cap: the test offered more than the cap (${offered} > ${cap})`);
+        assert(forwardedBytes >= CHUNK, 'relay-cap: some traffic did get through (not a blanket block)');
+        // The bucket refills at `cap` per second and the loop is pure
+        // in-process work, so the slack covers at most a few ms of refill.
+        assert(forwardedBytes <= cap * 1.1,
+            `relay-cap: forwarded ${forwardedBytes} B <= ${Math.round(cap * 1.1)} B (one-second budget + slack) out of ${offered} B offered`);
+        assert(relay.dropCap > 0, `relay-cap: over-budget datagrams were counted as dropped (got ${relay.dropCap})`);
+        // Dropping, not killing: the relay is still live and still forwards
+        // once the bucket refills.
+        assert(handle._relayMap.has(hexKey), 'relay-cap: the session was NOT torn down by the cap');
+    } finally {
+        await a.close();
+        await b.close();
+        handle._resetRelays();
+    }
+}
+
+async function testRelayPoolExhaustion(handle, serverPort) {
+    // The pool is the cap. At capacity a paired slot must get an explicit
+    // POOL_EXHAUSTED refusal so the client can say "relay full" instead of
+    // inferring it from silence.
+    //
+    // The filler entries carry ports OUTSIDE the pool range and are not
+    // registered in _relayPortInUse, so the ONLY thing that can refuse the
+    // request below is the pool-size check itself — neutralise that check
+    // and the linear port scan finds 34000 free and grants.
+    handle._resetSessions();
+    handle._resetRate();
+    handle._resetRelays();
+    const key = crypto.randomBytes(16);
+    const a = await makeClient();
+    const b = await makeClient();
+    try {
+        await pairClients(serverPort, key, a, b);
+
+        for (let i = 0; i < handle._relayPoolSize; i++) {
+            handle._relayMap.set(`fakerelay${i}`, {
+                hexKey: `fakerelay${i}`,
+                port: 40000 + i, // deliberately outside the pool range
+                socket: { close() {}, send() {} },
+                side: [{ ep: null }, { ep: null }],
+                lastActivity: nowMsShim(),
+                allowance: 0,
+                lastRefill: nowMsShim(),
+                forwarded: 0,
+                forwardedBytes: 0,
+                dropUnpinned: 0,
+                dropCap: 0,
+                pinRejects: 0,
+                createdAt: nowMsShim(),
+            });
+        }
+        assertEq(handle._relayMap.size, handle._relayPoolSize, 'relay-pool: filled to capacity');
+
+        handle._resetRate();
+        await a.send(relayReqLocal(key, a), serverPort);
+        const refused = await a.tryRecv(500);
+        assert(refused !== null, 'relay-pool: at capacity the slot still gets a REPLY (not silence)');
+        if (refused !== null && isRelayGrant(refused.buf)) {
+            const g = decodeRelayGrant(refused.buf);
+            assertEq(g.status, RELAY_STATUS_POOL_EXHAUSTED, 'relay-pool: status is POOL_EXHAUSTED');
+            assertEq(g.relayPort, 0, 'relay-pool: refusal carries port 0');
+            assert(g.token.every((x) => x === 0), 'relay-pool: refusal carries a zero token');
+        } else {
+            assert(false, 'relay-pool: reply at capacity was not a RELAY_GRANT');
+        }
+        assertEq(handle._relayMap.size, handle._relayPoolSize, 'relay-pool: nothing was allocated past the cap');
+
+        // Control: with the pool drained the very same request is granted,
+        // so the refusal above was the cap and not a broken handler.
+        handle._resetRelays();
+        handle._resetRate();
+        await a.send(relayReqLocal(key, a), serverPort);
+        const ok = await a.tryRecv(500);
+        assert(ok !== null && isRelayGrant(ok.buf), 'relay-pool: control reply is a RELAY_GRANT');
+        if (ok !== null && isRelayGrant(ok.buf)) {
+            assertEq(decodeRelayGrant(ok.buf).status, RELAY_STATUS_GRANTED,
+                'relay-pool: control — the same request is GRANTED once the pool has room');
+        }
+    } finally {
+        await a.close();
+        await b.close();
+        handle._resetRelays();
+    }
+}
+
+async function testRelayIdleReclaim(handle, serverPort) {
+    // 100 ports is a small pool; a relay whose match ended must give its
+    // port back on the RELAY_IDLE_MS clock, not the 10-minute session TTL.
+    handle._resetSessions();
+    handle._resetRate();
+    handle._resetRelays();
+    assertEq(handle._relayIdleMs, 30 * 1000, 'relay-idle: RELAY_IDLE_MS is 30 s');
+    const key = crypto.randomBytes(16);
+    const hexKey = key.toString('hex');
+    const a = await makeClient();
+    const b = await makeClient();
+    try {
+        await pairClients(serverPort, key, a, b);
+        handle._resetRate();
+        await a.send(relayReqLocal(key, a), serverPort);
+        const ga = decodeRelayGrant((await a.recv(500)).buf);
+        assertEq(ga.status, RELAY_STATUS_GRANTED, 'relay-idle: granted (setup)');
+        const port = ga.relayPort;
+        assert(handle._relayPortInUse.has(port), 'relay-idle: the port is marked in use');
+
+        // A fresh relay is NOT idle: the sweep must leave it alone.
+        handle._relaySweepNow();
+        assert(handle._relayMap.has(hexKey), 'relay-idle: a fresh relay survives the sweep');
+
+        // Age it past the threshold — the real sweep does the real
+        // eviction (same style as testSessionTtl aging lastTouch).
+        handle._relayMap.get(hexKey).lastActivity -= handle._relayIdleMs + 1000;
+        handle._relaySweepNow();
+        assert(!handle._relayMap.has(hexKey), 'relay-idle: an idle relay is reclaimed');
+        assert(!handle._relayPortInUse.has(port), 'relay-idle: its port went back to the pool');
+        assertEq(handle._relayMap.size, 0, 'relay-idle: the pool is empty again');
+
+        // The freed capacity is genuinely reusable.
+        handle._resetRate();
+        await a.send(relayReqLocal(key, a), serverPort);
+        const again = await a.tryRecv(500);
+        assert(again !== null && isRelayGrant(again.buf) &&
+            decodeRelayGrant(again.buf).status === RELAY_STATUS_GRANTED,
+            'relay-idle: a new allocation succeeds after reclaim');
+        assertEq(handle._relayMap.size, 1, 'relay-idle: exactly one relay live again');
+
+        // Releasing the SESSION releases the relay immediately, without
+        // waiting out the idle clock.
+        const entry = handle._sessionMap.get(hexKey);
+        entry.lastTouch -= handle._sessionTtlMs + 1000;
+        handle._sweepNow();
+        assert(!handle._sessionMap.has(hexKey), 'relay-idle: the session was swept');
+        assert(!handle._relayMap.has(hexKey), 'relay-idle: the relay went with its session');
+    } finally {
+        await a.close();
+        await b.close();
+        handle._resetRelays();
+    }
+}
+
+// performance.now() shim so the synthetic pool entries above share the
+// server's clock domain (the server uses perf_hooks performance.now()).
+const { performance: perfShim } = require('perf_hooks');
+function nowMsShim() {
+    return perfShim.now();
+}
+
 async function testSweepHook(handle) {
     // The sweep hook exists and is callable. We don't try to time-warp; just
     // assert calling it doesn't throw and doesn't crash the server.
@@ -1242,7 +1750,7 @@ async function testSweepHook(handle) {
 // EXPECTED_TESTS is deliberately a literal, NOT TESTS.length: the point is
 // to catch a test vanishing from the registry, and deriving it from the
 // registry would make that undetectable.
-const EXPECTED_TESTS = 26;
+const EXPECTED_TESTS = 32;
 
 let testsRun = 0;
 let testsFailed = 0;
@@ -1264,6 +1772,9 @@ async function runTest(name, fn) {
     try {
         H._resetRate();
         H._resetSessions();
+        // S5: a leaked relay would hold a pool port (and an open UDP
+        // socket) for every later test, so the reset must cover it too.
+        H._resetRelays();
     } catch (resetErr) {
         console.error(`TEST ERROR: ${name}: reset hook failed: ${resetErr && resetErr.stack ? resetErr.stack : resetErr}`);
         threw = threw || resetErr;
@@ -1325,6 +1836,14 @@ async function main() {
         await runTest('cookiedNotStarvedByUncookied', () => testCookiedNotStarvedByUncookied(handle));
         await runTest('preGateBudgetBoundsChallenges', () => testPreGateBudgetBoundsChallenges(handle));
         await runTest('rateMapBounded', () => testRateMapBounded(handle));
+
+        // --- S5: relay for symmetric-NAT pairs ---
+        await runTest('relayRequiresPairedSession', () => testRelayRequiresPairedSession(handle, serverPort));
+        await runTest('relayGrantAndForward', () => testRelayGrantAndForward(handle, serverPort));
+        await runTest('relayPinTokenRequired', () => testRelayPinTokenRequired(handle, serverPort));
+        await runTest('relayBandwidthCap', () => testRelayBandwidthCap(handle, serverPort));
+        await runTest('relayPoolExhaustion', () => testRelayPoolExhaustion(handle, serverPort));
+        await runTest('relayIdleReclaim', () => testRelayIdleReclaim(handle, serverPort));
 
         await runTest('sweepHook', () => testSweepHook(handle));
     } catch (err) {
