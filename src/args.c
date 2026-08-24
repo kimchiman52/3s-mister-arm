@@ -152,6 +152,9 @@ static void verify_configuration(Configuration* configuration) {
     if (test->rbd_select_rollback_period < 0) {
         error_out_with_code("--rbd-select-rollback-period must be >= 0.", EXIT_CODE_RUNTIME_ERROR);
     }
+    if (test->rbd_select_rollback_depth < 1) {
+        error_out_with_code("--rbd-select-rollback-depth must be >= 1.", EXIT_CODE_RUNTIME_ERROR);
+    }
 
     if (!is_supported_test_scene_preset(test->scene_preset)) {
         error_out_with_code("--test-scene-preset must be one of stage-heavy, effect-heavy, super-heavy, "
@@ -546,6 +549,15 @@ void read_args(int argc, const char* argv[], Configuration* configuration) {
                     "Character-select-phase cycle period (default 8; depth is clamped to 2 there; 0 "
                     "disables select-phase cycles). Aggressive select cadence hits known crash-class "
                     "ppg asset-setup traps — see docs/rollback-determinism-harness.md.",
+                    NULL,
+                    0,
+                    0),
+        OPT_INTEGER(0,
+                    "rbd-select-rollback-depth",
+                    &configuration->test.rbd_select_rollback_depth,
+                    "Max speculative depth for character-select-phase cycles (default 2, the value this "
+                    "phase used to be hard-clamped to; capped by --rbd-rollback-depth). Raise to 8 to "
+                    "match production's input_prediction_window when reproducing select-phase bugs.",
                     NULL,
                     0,
                     0),

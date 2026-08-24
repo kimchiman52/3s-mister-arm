@@ -77,10 +77,21 @@ and the `EffectState` members saved through `gather_state`. A symbol
 missing from that set still reports, but as plain DIVERGENT, losing the
 "saved state drifted" signal. The extraction therefore **fails the run
 (exit 2) rather than degrading quietly** if the macro-name count drops
-below a floor, if either half of a hand-rolled or partial save goes
-missing, or if the `EffectState` struct body stops containing a member
-it expects — so a future refactor of the save macros cannot silently
-blind the detector.
+below a floor, if the `GS_SAVE` and `GS_LOAD` name sets stop being
+identical, if either half of a hand-rolled or partial save goes missing,
+or if the `EffectState` struct body stops containing a member it expects
+— so a future refactor of the save macros cannot silently blind the
+detector.
+
+The floor and the set-equality check are deliberately different in kind.
+The floor (`MIN_GS_SAVE_MACRO_NAMES`, kept flush with the real count) is
+a pinned number and only sees the aggregate, so on its own it can be
+walked under by deleting fewer lines than its slack. The set-equality
+check is *derived* — `GS_SAVE` and `GS_LOAD` are two halves of one round
+trip, so any single dropped line shows up as an asymmetry no matter how
+large the save set grows. Neither is a substitute for
+`test_gs_coverage`, which checks the struct's byte coverage rather than
+the macro text.
 
 `GameState.effl8_colorram` is registered separately as a *partial* save
 (a 96-byte slice of `ColorRAM`): it is presence-checked but deliberately
@@ -139,7 +150,7 @@ and exit 2. Kill-by-timeout is the driver's, and is a failure.
 
 | mode | scenarios | runs | measured wall time (host M-series, Debug build) |
 |------|-----------|------|--------------------------------------|
-| fast | `ryu-ken-basic-exchange` (generic exchange) + `makoto-sa3-super` (positive control, see below) | 2 × 3 | ~5 min on an otherwise-idle machine (~10 min measured under a concurrent 9-way frame-data suite fan-out); each 1500-frame game run is ~45–90 s |
+| fast | `ryu-ken-basic-exchange` (generic exchange) + `makoto-sa3-super` (effect-L8 / palette coverage — **no longer a live positive control**, see below) | 2 × 3 | ~5 min on an otherwise-idle machine (~10 min measured under a concurrent 9-way frame-data suite fan-out); each 1500-frame game run is ~45–90 s |
 | thorough | fast + `charNN-pressure-super` for every selectable P1 character 1–19 vs Ryu (`yun-sa3-repeat-pressure` preset with character/SA overrides) | 21 × 3 | ~60–80 min (63 runs of 2400 frames, sequential) |
 
 Each run is 1500 frames (fast) / 2400 frames (thorough), of which
@@ -149,11 +160,188 @@ character select (period 8, depth 2 — see Known limits). Gill (index 0)
 is excluded from the thorough sweep: he is not selectable through the
 character-select flow the test runner drives.
 
-The `makoto-sa3-super` scenario is the **positive control**: Makoto's
-SA3 activation spawns effect L8 (`effl8.c`), whose `spmv_ng_save[]`
-file-static is a *known* escapee (being fixed in a separate worktree at
-the time this harness landed). The harness must flag it; if it ever
-stops flagging it before the fix lands, the harness itself is broken.
+### Fast mode is NOT self-validating
+
+`makoto-sa3-super` **used** to be a live positive control: Makoto's SA3
+activation spawns effect L8 (`effl8.c`), whose `spmv_ng_save[]`
+file-static was a known escapee at the time the harness landed, so every
+green-except-that run doubled as proof the pipeline could still fail.
+
+**That is no longer true.** `spmv_ng_save`, `ColorRAM`/`effl8_colorram`
+and `Random_ix16_bg` are all fixed, and fast mode now reports
+`divergent=0 feedback=0` on a healthy tree. There is **no live escapee
+left in fast mode**, which means a green fast run does not, on its own,
+demonstrate that the harness is still capable of going red — a build
+where the capture silently wrote nothing, or where the symbol map went
+empty, would look exactly the same from the summary line.
+
+Treat a green fast run as evidence only when it is paired with one of
+the controls below. Ordered cheapest first; run the cheap one whenever
+you are relying on a green verdict for a decision, and the rebuild one
+whenever you have changed the capture, the differ, or the classifier.
+
+**Each control below is tagged OBSERVED or RECORDED, and the difference
+is the whole point of this section.** OBSERVED means the numbers shown
+were produced by running it on this tree and pasting the output.
+RECORDED means the expected result is carried over from an earlier
+report and has *not* been reproduced here — it is a hypothesis about
+what the control would print, not evidence. Documenting an unrun control
+as though it were verified is precisely the defect this section exists
+to correct, so if you execute a RECORDED one, paste its real output and
+re-tag it.
+
+| control | status | last actually run |
+|---|---|---|
+| A — empty allowlist | **OBSERVED** | task 54, output below |
+| B — mutation test | **RECORDED — never executed** | never; signature inferred from the `Random_ix16_bg` finding below |
+| C — rebuild base `0e464a30` | **RECORDED** | the reviewer's validation run, not reproduced since |
+
+**Control A — empty allowlist (no rebuild, ~2.5 min). OBSERVED.** `allowlist.txt`'s
+39 fnmatch patterns suppressed 43 ALLOWED rows (28 distinct symbols)
+across the two fast scenarios on this tree. Those symbols really do
+diverge because of rollback; they are judged benign, not absent. Take
+the suppression away and they must surface as findings —
+`load_allowlist()` returns an empty list for an empty or missing path,
+so no pattern matches anything:
+
+```sh
+tools/rollback-determinism/run.sh fast --allowlist /dev/null
+```
+
+Measured on this tree, immediately after a `verdict=PASS` gate run of
+the same binary:
+
+```
+RBD SUMMARY: ... divergent=43 feedback=0 allowlisted=0 noise=182 errors=0 verdict=FAIL   (exit 1)
+```
+
+The arithmetic is the check: the 43 rows the gate reported as
+`allowlisted` are the same 43 that come back as `divergent`, and `noise`
+is unchanged at 182 because noise classification does not depend on the
+allowlist. Getting `verdict=PASS` out of this — or a `divergent` that
+does not account for the gate's `allowlisted` count — means the
+capture/differ/symbolizer chain is producing nothing to classify, i.e.
+the harness is broken, not the tree. This exercises everything except
+the FEEDBACK tagger (`feedback=0` here is expected: none of the
+allowlisted sinks is in the save set).
+
+**Control B — mutation test (one rebuild, ~4 min for one scenario).
+RECORDED — THIS HAS NEVER BEEN EXECUTED.** The recipe's mechanics were
+verified (both `sed`s apply, extraction passes at 607/607), but the run
+itself was not performed, so the result below is what it *should* print,
+derived from the historical `Random_ix16_bg` finding — not something
+anyone has watched happen. Delete a save/load pair that fast mode
+provably exercises and confirm the exact pre-fix signature comes back. `Random_ix16_bg` is the
+convenient one, because its historical failure is recorded below in
+full:
+
+```sh
+# in a scratch worktree, NOT your working tree
+sed -i '' '/GS_SAVE(Random_ix16_bg)/d;/GS_LOAD(Random_ix16_bg)/d' src/netplay/game_state.c
+# the save set just shrank by one, so the extraction floor has to follow
+sed -i '' 's/^MIN_GS_SAVE_MACRO_NAMES = 608$/MIN_GS_SAVE_MACRO_NAMES = 607/' \
+    tools/rollback-determinism/check_rollback_determinism.py
+tools/rollback-determinism/run.sh fast --scenario 'makoto*'
+```
+
+Expected (UNVERIFIED — see status above): exit **1**, with
+`Random_ix16_bg` DIVERGENT and
+`rw_dat`/`stage_flash`/`stage_ftimer` DIVERGENT+FEEDBACK from around
+frames 347–349 — i.e. the finding written up under
+"`makoto-sa3-super`: 6 divergent" below. This is the control that
+validates the FEEDBACK tagger specifically, which Control A does not.
+
+Both `sed`s are needed, and the reason is worth understanding rather
+than copy-pasting: the driver refuses to run at all (exit **2**, not 1)
+if the save-set extraction degrades. Delete only one half of the pair
+and the GS_SAVE/GS_LOAD set-equality check fires; delete both and the
+name count drops below `MIN_GS_SAVE_MACRO_NAMES`, which is kept flush
+with the real count on purpose. Exit 2 is a *harness* failure, not a
+finding — if you get it, you are testing the guards, not the tagger.
+
+**Control C — historical, for the record. RECORDED, not reproduced.**
+This comes from the reviewer's validation run and has not been repeated
+since; treat the number as a citation, not a measurement. The harness was validated
+against base commit `0e464a30` (before the desync-lane fixes), which
+reproduces `divergent=5`. Use this only if you suspect the fixes
+themselves are what changed the verdict.
+
+If you add a scenario that exposes a *new* live escapee, say so here and
+promote it — a standing live positive control is strictly better than an
+on-demand one.
+
+### What a green fast run does NOT say
+
+Three separate things, all currently true, limit how far a `verdict=PASS`
+can be carried. None of them is a reason to distrust a *finding* — a
+DIVERGENT+FEEDBACK hit with a plausible mechanism is still the sharpest
+signal this tree has — but each is a reason not to read PASS as "no
+rollback risk here".
+
+1. **It has no live escapee to prove itself against** — the whole point
+   of the section above. Pair it with a control.
+
+2. **Its character-select coverage is 4× shallower than production.**
+   Fast mode runs select at `--rbd-select-rollback-depth 2` while
+   production predicts 8 frames ahead (`netplay.c:903-905`). Known limit
+   1 spells out why that is not academic: the task-50 duplicate-load
+   leak changes *which guard fixes it* between depth 2 and depth 3+. A
+   green fast run therefore understates select-phase risk specifically,
+   and says nothing at all about depths 3–8 there. Raise the flag when
+   the question is about character select. Filed as **#63**.
+
+3. **It produces intermittent false FAILs.** Filed as **#65**. Observed
+   signature, worth recognising on sight:
+
+   ```
+   divergent=8 — all 8 are 8-byte platform pointers:
+     pref_path        (port/paths.c:11)
+     afs_path         (port/resources.c:32)
+     debug_renderer   (port/sdl/sdl_debug_text.c:10)
+     message_canvas   (port/sdl/sdl_message_renderer.c:5)
+   ```
+
+   Re-running the identical binary gave PASS. All four are `static`/file
+   scope pointers holding heap or SDL-object addresses — textbook NOISE
+   by the definition at the top of this document. The mechanism is
+   localized and understood: a symbol is tagged NOISE only when *its own
+   two baselines* (A1 vs A2) disagree, and that determination is made
+   per scenario. In the failing run the two scenarios disagreed with
+   each other about the same 8 symbols — one scenario's baselines
+   happened to allocate identically and so excluded none, the other's
+   diverged and excluded all.
+
+   The same instability was observed *benignly* in the task-54 session,
+   which corroborates that mechanism from a second direction. Two
+   `verdict=PASS` gate runs of source-identical binaries reported:
+
+   ```
+   run 1:  divergent=0  allowlisted=43  noise=182
+   run 2:  divergent=0  allowlisted=44  noise=181
+   ```
+
+   The distinct ALLOWED symbol sets were identical; the single moved row
+   was `configuration` in `makoto-sa3-super`, NOISE in run 1 and ALLOWED
+   in run 2. `configuration` holds `const char*` pointers into the argv
+   block — the same pointer-valued class as the four `port/` symbols
+   above. In run 1 that scenario's A1/A2 baselines disagreed about it and
+   it was excluded as noise; in run 2 they agreed, so it fell through to
+   the allowlist instead. **It only stayed benign because
+   `configuration` happens to carry an allowlist entry of its own.** The
+   four #65 symbols do not, so when the identical flip lands on them
+   there is nothing to catch them and they surface as DIVERGENT. Same
+   coin flip, different destination.
+
+   **Do not allowlist these.** An allowlist entry for a pointer-valued
+   symbol would also suppress a genuine finding that happened to land on
+   it, and the allowlist is supposed to carry a verified reason, which
+   "it is flaky" is not. **Equally, do not re-run until green.** If a
+   FAIL matches the signature above exactly — 8 symbols, all pointer
+   sized, all from the four `port/` sites — record it as the known flake
+   and say so. If it differs in *any* respect (a different symbol, a
+   different count, a non-pointer size, a FEEDBACK tag), it is not this
+   flake and must be triaged as a real finding. The fix belongs in the
+   noise determination, not in the allowlist.
 
 Useful driver flags (append after the mode):
 `--scenario 'makoto*'` (filter), `--frames N`, `--rollback-period N`,
@@ -204,6 +392,24 @@ allowlist entry defeats the whole tool.
    character-select-transition / game-transition / boot phases are not
    covered at all.
 
+   **The select-phase depth bound used to be a hard clamp** (`depth > 2
+   ? 2 : depth`) and is now `--rbd-select-rollback-depth` (default 2, so
+   the shared gate is unchanged). The default is a real coverage gap:
+   production predicts **8** frames ahead by default
+   (`input_prediction_window`, `netplay.c:903-905`), so anything
+   investigated only at the default depth is being probed at a quarter
+   of the real window. That is not academic — the task-50
+   duplicate-load leak *changes which guard fixes it* between depth 2
+   and depth 3+, because at depth ≥ 3 the head load request has already
+   drained by the time the rollback re-issues it. Pass
+   `--rbd-select-rollback-depth 8` when reproducing or regression-testing
+   any select-phase rollback bug.
+
+   The `ppgSetupTexChunkSeqs` NULL-destination segfault named above is
+   **fixed** as of task 50 (the duplicate character-select load request
+   stranding a ramcnt block); the `ppgSetupPalChunk` hang member of this
+   class is untouched and still live.
+
    The same trap class is reachable **mid-match, at round-init
    boundaries**: the thorough sweep's `char06-pressure-super` (Hugo)
    rollback run deterministically segfaults when a speculative leg
@@ -238,6 +444,14 @@ allowlist entry defeats the whole tool.
    structure, is a static array and is covered).
 4. **Dylib state.** SDL3 and other dynamic libraries' internal state is
    outside the image. (Vendored static libs — GekkoNet — are inside.)
+   The CP3 palette "ghost" (`col3rd_w.palCP3`, filled by
+   `palUpdateGhostCP3`) is a related blind spot for a different reason:
+   it is VRAM-side texture memory, not a global, so a mismatch between
+   it and `ColorRAM` is invisible here. `GameState_Load` deliberately
+   does not refresh it when it rewinds `effl8_colorram` — the reasoning
+   is written out at the restore site in `game_state.c`, the short
+   version being that `effl8.c` never refreshes it either, so not
+   refreshing is what the simulation does.
 5. **Input-window coverage.** Divergence can only be detected in code
    the scenarios actually execute. The fast slice exercises generic
    exchanges plus one super; thorough adds every character with a
@@ -276,7 +490,9 @@ rollback cycles per rollback run):
   baseline noise. For the generic-exchange slice the whitelist is
   measurably complete.
 - **`makoto-sa3-super`: 6 divergent (4 feedback):**
-  - `spmv_ng_save` (`effl8.c:11`, 8 bytes) — **positive control HIT**,
+  - `spmv_ng_save` (`effl8.c:13`, 8 bytes) — **positive control HIT** (at
+    the time; see "Fast mode is NOT self-validating" above — this hit no
+    longer reproduces on a healthy tree),
     divergent frames 1059–1060: a speculative leg ran Makoto's SA
     activation (effect L8 routine 0 writes
     `spmv_ng_save[id] = mwk->spmv_ng_flag`), the rollback restored plw
@@ -303,7 +519,7 @@ rollback cycles per rollback run):
     The real cause was **`ColorRAM`, which was on the allowlist** —
     an allowlisted symbol feeding a saved one, which produces exactly
     this signature (the consumer diverges, the cause is invisible).
-    `effl8.c:25-27` copies 24 bytes of live `ColorRAM` into
+    `effl8.c:32-33`+`:47` copies 24 bytes of live `ColorRAM` into
     `&ewk->wu.zu_flag`, i.e. into the *saved* attack-parameter window of
     the effect's own `frw` slot. `ColorRAM` was not rollback-restored,
     so a speculative leg that ran the SA activation left ColorRAM
