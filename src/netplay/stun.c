@@ -233,6 +233,7 @@ static const uint32_t stun_rto_offsets_ms[] = { 0, 500, 1500 };
 
 #define STUN_MAX_SERVERS 8
 #define STUN_DNS_FALLBACK_MS 300  /* arm numeric fallbacks if no DNS result by then */
+#define STUN_NO_RESPONSE_FALLBACK_MS 1500 /* ...or if nothing has ANSWERED by then */
 #define STUN_DISAGREE_GRACE_MS 300 /* post-first-response window to collect the rest */
 #define STUN_DEFAULT_TIMEOUT_MS 4000
 
@@ -455,12 +456,23 @@ bool Stun_Discover(StunResult* result, uint16_t local_port, int timeout_ms) {
         }
 
         /* 2) Arm the numeric fallbacks when DNS produced nothing in time
-         * (blackholed resolver, empty /etc/resolv.conf, ...). */
-        if (fallbacks_allowed && !fallbacks_armed && slot_count == 0 &&
-            (now - start) >= STUN_DNS_FALLBACK_MS) {
+         * (blackholed resolver, empty /etc/resolv.conf, ...) — OR when
+         * DNS produced SOMETHING but no server has answered by a later
+         * checkpoint. The second arm covers a partially-dead resolver:
+         * getaddrinfo answers the first host then blackholes (the DNS
+         * worker resolves serially), leaving one probed-but-dead slot —
+         * slot_count != 0, so the 300 ms checkpoint alone would never
+         * arm the fallbacks and discovery would burn the whole budget
+         * (review L-3). 1500 ms = the last retransmit offset, so the
+         * first resolved server has had its full send ladder before we
+         * conclude it's dead. */
+        if (fallbacks_allowed && !fallbacks_armed &&
+            ((slot_count == 0 && (now - start) >= STUN_DNS_FALLBACK_MS) ||
+             (first_responder < 0 && (now - start) >= STUN_NO_RESPONSE_FALLBACK_MS))) {
             SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
-                        "STUN: no DNS result after %u ms — probing numeric fallback servers",
-                        (unsigned)STUN_DNS_FALLBACK_MS);
+                        "STUN: no %s after %u ms — probing numeric fallback servers",
+                        slot_count == 0 ? "DNS result" : "server response",
+                        (unsigned)(now - start));
             for (int i = 0; i < STUN_FALLBACK_COUNT; i++) {
                 stun_probe_add(slots, &slot_count, stun_fallback_servers[i].host,
                                stun_fallback_servers[i].port, stun_fallback_servers[i].host, now);
