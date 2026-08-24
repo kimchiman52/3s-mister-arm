@@ -1701,13 +1701,104 @@ async function testRelayIdleReclaim(handle, serverPort) {
             'relay-idle: a new allocation succeeds after reclaim');
         assertEq(handle._relayMap.size, 1, 'relay-idle: exactly one relay live again');
 
-        // Releasing the SESSION releases the relay immediately, without
-        // waiting out the idle clock.
+        // Releasing the SESSION releases an IDLE relay immediately, without
+        // waiting out the rest of the idle clock. (An ACTIVE relay is the
+        // opposite case and is testRelaySurvivesSessionTtl's job — review
+        // CRITICAL-1.)
         const entry = handle._sessionMap.get(hexKey);
         entry.lastTouch -= handle._sessionTtlMs + 1000;
+        handle._relayMap.get(hexKey).lastActivity -= handle._relayIdleMs + 1000;
         handle._sweepNow();
         assert(!handle._sessionMap.has(hexKey), 'relay-idle: the session was swept');
-        assert(!handle._relayMap.has(hexKey), 'relay-idle: the relay went with its session');
+        assert(!handle._relayMap.has(hexKey), 'relay-idle: an IDLE relay went with its session');
+    } finally {
+        await a.close();
+        await b.close();
+        handle._resetRelays();
+    }
+}
+
+async function testRelaySurvivesSessionTtl(handle, serverPort) {
+    // Review CRITICAL-1: every relayed match used to die at exactly
+    // SESSION_TTL_MS.
+    //
+    // Nothing refreshes a session's lastTouch during a relayed match —
+    // after the handoff neither client ever speaks to the MAIN rendezvous
+    // port again — so lastTouch freezes at the last RELAY_REQ, i.e. at
+    // setup. Ten minutes into gameplay sweepSessions evicted the entry and
+    // releaseSession closed the relay socket unconditionally, and both
+    // clients (whose NAT mappings point only at that relay endpoint) went
+    // instantly, unrecoverably silent.
+    //
+    // This test drives a REAL relay over REAL loopback UDP, advances the
+    // session PAST the TTL boundary, runs the REAL sweep, and then asserts
+    // that forwarding still works. It is deliberately an end-to-end
+    // forwarding assertion rather than a "the map still has the key" one:
+    // the failure the user experiences is "my packets stopped arriving".
+    handle._resetSessions();
+    handle._resetRate();
+    handle._resetRelays();
+    const key = crypto.randomBytes(16);
+    const hexKey = key.toString('hex');
+    const a = await makeClient();
+    const b = await makeClient();
+    try {
+        await pairClients(serverPort, key, a, b);
+        handle._resetRate();
+        await a.send(relayReqLocal(key, a), serverPort);
+        const ga = decodeRelayGrant((await a.recv(500)).buf);
+        await b.send(relayReqLocal(key, b), serverPort);
+        const gb = decodeRelayGrant((await b.recv(500)).buf);
+        assertEq(ga.status, RELAY_STATUS_GRANTED, 'relay-ttl: A granted (setup)');
+        assertEq(gb.status, RELAY_STATUS_GRANTED, 'relay-ttl: B granted (setup)');
+        const port = ga.relayPort;
+        await a.send(makeRelayPin(0, ga.token), port);
+        assert(isRelayPinAck((await a.recv(500)).buf), 'relay-ttl: A pinned (setup)');
+        await b.send(makeRelayPin(1, gb.token), port);
+        assert(isRelayPinAck((await b.recv(500)).buf), 'relay-ttl: B pinned (setup)');
+
+        // Mid-match, before the boundary.
+        const before = crypto.randomBytes(96);
+        await a.send(before, port);
+        const gotBefore = await b.tryRecv(500);
+        assert(gotBefore !== null && gotBefore.buf.equals(before),
+            'relay-ttl: forwarding works before the TTL boundary');
+
+        // The relay is demonstrably NOT idle — the idle reclaim would never
+        // fire here, which is what made the old behaviour purely the
+        // session TTL's doing.
+        const relay = handle._relayMap.get(hexKey);
+        assert(nowMsShim() - relay.lastActivity < handle._relayIdleMs,
+            'relay-ttl: the relay is well inside its idle window (this is not an idle reclaim)');
+
+        // Ten minutes of gameplay: lastTouch has not moved since setup.
+        const entry = handle._sessionMap.get(hexKey);
+        entry.lastTouch -= handle._sessionTtlMs + 1000;
+        handle._sweepNow(); // the REAL sweep, the REAL releaseSession
+
+        assert(!handle._sessionMap.has(hexKey), 'relay-ttl: the session itself WAS evicted (the TTL still works)');
+        assert(handle._relayMap.has(hexKey), 'relay-ttl: the ACTIVE relay outlived its session');
+        assert(handle._relayPortInUse.has(port), 'relay-ttl: its port was NOT returned to the pool');
+
+        // The load-bearing assertion: bytes still cross, both ways.
+        const afterAB = crypto.randomBytes(120);
+        await a.send(afterAB, port);
+        const gotAB = await b.tryRecv(500);
+        assert(gotAB !== null && gotAB.buf.equals(afterAB),
+            'relay-ttl: A->B still forwards AFTER the session TTL swept the session');
+        const afterBA = crypto.randomBytes(64);
+        await b.send(afterBA, port);
+        const gotBA = await a.tryRecv(500);
+        assert(gotBA !== null && gotBA.buf.equals(afterBA),
+            'relay-ttl: B->A still forwards AFTER the session TTL swept the session');
+
+        // And the port is still not leaked: once the match really ends, the
+        // relay's OWN clock reclaims it. sweepRelays owns relay lifetime
+        // exclusively now, so this is the only thing that may free it.
+        handle._relayMap.get(hexKey).lastActivity -= handle._relayIdleMs + 1000;
+        handle._relaySweepNow();
+        assert(!handle._relayMap.has(hexKey), 'relay-ttl: the relay is still reclaimed once genuinely idle');
+        assert(!handle._relayPortInUse.has(port), 'relay-ttl: its port went back to the pool');
     } finally {
         await a.close();
         await b.close();
@@ -1751,7 +1842,7 @@ async function testSweepHook(handle) {
 // EXPECTED_TESTS is deliberately a literal, NOT TESTS.length: the point is
 // to catch a test vanishing from the registry, and deriving it from the
 // registry would make that undetectable.
-const EXPECTED_TESTS = 32;
+const EXPECTED_TESTS = 33;
 
 let testsRun = 0;
 let testsFailed = 0;
@@ -1845,6 +1936,7 @@ async function main() {
         await runTest('relayBandwidthCap', () => testRelayBandwidthCap(handle, serverPort));
         await runTest('relayPoolExhaustion', () => testRelayPoolExhaustion(handle, serverPort));
         await runTest('relayIdleReclaim', () => testRelayIdleReclaim(handle, serverPort));
+        await runTest('relaySurvivesSessionTtl', () => testRelaySurvivesSessionTtl(handle, serverPort));
 
         await runTest('sweepHook', () => testSweepHook(handle));
     } catch (err) {

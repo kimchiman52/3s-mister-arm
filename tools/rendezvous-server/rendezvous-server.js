@@ -488,8 +488,41 @@ function releaseSession(hexKey, entry) {
         else creatorCounts.set(entry.creatorIp, n - 1);
     }
     // A relay only exists to carry a session's traffic; when the session
-    // is gone the port must go back to the pool immediately rather than
-    // waiting out RELAY_IDLE_MS.
+    // is gone the port SHOULD go back to the pool rather than waiting out
+    // RELAY_IDLE_MS — but only if the relay is not carrying a live match.
+    //
+    // Review CRITICAL-1. This used to be unconditional, and that killed
+    // every relayed match at exactly SESSION_TTL_MS. Nothing refreshes a
+    // session's `lastTouch` during a relayed match: only handleRegister /
+    // handlePoll / handleRelayReq touch it, and after the handoff neither
+    // client ever speaks to the MAIN rendezvous port again (the joiner
+    // returns DIRECT_P2P_HANDOFF and its worker ends; the host raises
+    // s_bilateral_handoff_pending and its punch worker returns, the
+    // rendezvous worker having already exited). So `lastTouch` freezes at
+    // the last RELAY_REQ — i.e. at setup — and ten minutes into gameplay
+    // sweepSessions evicted the entry, closed the relay socket and
+    // returned the port to the pool. Both clients hold NAT mappings only
+    // toward that relay endpoint, so both went instantly silent, mid-match,
+    // unrecoverably. Reproduced against this module: at the boundary the
+    // relay's own lastActivity was 2 ms old, so the idle reclaim would
+    // never have fired; the session TTL alone did it.
+    //
+    // The fix is to let sweepRelays own relay lifetime EXCLUSIVELY, because
+    // the relay already has the correct liveness clock (lastActivity, which
+    // forwarded traffic refreshes ~120 times a second). A relay that really
+    // is finished still goes back to the pool RELAY_IDLE_MS later, via the
+    // same 5 s sweep — so the pool-pressure argument for immediate release
+    // costs at most 30 s of one port.
+    //
+    // (§7.3's rationale for the 30 s idle reclaim reasoned explicitly about
+    // SESSION_TTL_MS and still missed this reverse coupling. Noted so the
+    // next reader checks BOTH directions of a lifetime dependency.)
+    const relay = relayMap.get(hexKey);
+    if (relay !== undefined && nowMs() - relay.lastActivity < RELAY_IDLE_MS) {
+        logInfo(`[RELAY] key=${shortKey4(hexKey)}... port=${relay.port} OUTLIVES its session ` +
+            `(active ${Math.round(nowMs() - relay.lastActivity)} ms ago; sweepRelays owns it from here)`);
+        return;
+    }
     relayRelease(hexKey, 'session released');
 }
 

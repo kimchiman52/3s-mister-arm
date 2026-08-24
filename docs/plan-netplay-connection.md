@@ -1024,7 +1024,31 @@ forwarded like any other bytes (asserted by `relayGrantAndForward`).
 | bandwidth | **64 KiB/s per session**, token bucket, one-second burst | GekkoNet costs ~5 kB/s per direction at 60 Hz, so ~12× headroom; bounds what one session can cost the box |
 | over budget | **drop the datagram** | never teardown: rollback netcode absorbs loss, a mid-match teardown is unrecoverable |
 | idle reclaim | 30 s with no pin and no forwarded datagram, on the existing 5 s sweep | 100 ports is small enough that holding dead entries for the 10-minute `SESSION_TTL_MS` would exhaust the pool |
-| session release | frees its relay immediately | |
+| session release | frees its relay **only if that relay is already idle** | see below — `sweepRelays` owns relay lifetime exclusively |
+
+**Relay lifetime is the relay's own clock, and only its own clock**
+(review CRITICAL-1, fixed as-built). `releaseSession` used to call
+`relayRelease` unconditionally, which killed **every relayed match at
+exactly `SESSION_TTL_MS`**. Nothing refreshes a session's `lastTouch`
+during a relayed match: only `handleRegister` / `handlePoll` /
+`handleRelayReq` touch it, and after the handoff neither client ever
+speaks to the main rendezvous port again (the joiner returns
+`DIRECT_P2P_HANDOFF` and its worker ends; the host raises
+`s_bilateral_handoff_pending` and its punch worker returns, the
+rendezvous worker having already exited). So `lastTouch` froze at the
+last `RELAY_REQ` — at *setup* — and ten minutes into gameplay the 5 s
+sweep closed the relay socket and returned the port to the pool. Both
+clients hold NAT mappings only toward that relay endpoint, so both went
+instantly silent, mid-match, unrecoverably. Reproduced against the real
+module: at the boundary the relay's own `lastActivity` was **2 ms** old,
+so the idle reclaim would never have fired; this was purely the session
+TTL. `releaseSession` now skips `relayRelease` while
+`now - lastActivity < RELAY_IDLE_MS`, so the pool costs at most 30 s of
+one port and the correct clock — the one that forwarded traffic
+refreshes ~120 times a second — is the only one that can end a match.
+The irony worth not repeating: the idle-reclaim rationale directly above
+reasons about `SESSION_TTL_MS` and still missed the reverse coupling.
+Check **both** directions of a lifetime dependency.
 
 **Deployment**: the firewall must allow inbound UDP on the pool range in
 addition to the rendezvous port. `start()` logs the range at boot.
