@@ -239,6 +239,69 @@ void q_ldreq_texture_group(REQ* curr) {
     case 2:
         curr->size = fsGetFileSize(curr->fnum);
         curr->sect = fsCalSectorSize(curr->size);
+
+        /* texgrplds[grp].key is a SINGLE-SLOT key holder: it is the only
+         * surviving reference to the block this group owns, and
+         * purge_texture_group() (below) frees exactly that one key. If we
+         * land here while the group still holds a live block, the
+         * assignment below strands it forever.
+         *
+         * That state is reachable: the dup-transfer guard at case 0 sets
+         * be = 2 and returns *without* resetting rno, which case 0 already
+         * advanced to 1. The next pump therefore re-enters at case 1,
+         * bypassing the lds->ok check, and falls through to here with
+         * lds->ok still 1 and lds->key still live. Measured on the
+         * char06-pressure-super rollback repro: "OVERWRITE grp=7 oldkey=5
+         * oldok=1 olduse=1 newkey=12" -- 3,342,336 B lost.
+         *
+         * DO NOT "fix" that asymmetry by resetting rno in the case-0
+         * guard. be == 2 keeps the entry at slot 0 (Check_LDREQ_Queue only
+         * shifts the queue down when be reaches 0), so rno = 0 would
+         * re-enter case 0, hit the same dup-transfer guard, and spin
+         * forever -- a permanent head-of-line stall on the load queue.
+         * Case 4's reset is safe only because it calls Push_ramcnt_key on
+         * the key first, so the retry has something to allocate into.
+         *
+         * Release through purge_texture_group() rather than a bare
+         * Push_ramcnt_key(): purge also clears lds->ok. There are eleven
+         * readers of lds->texture_table / lds->trans_table; ten are gated
+         * on ok != 0 with an early return (mtrans.c:179, 278, 367, 416,
+         * 662, 785, 1043, 1179, 1415, 2393). The eleventh is the Akuma
+         * special-case at texgroup.c:371 below, which has NO ok check --
+         * it is safe only because it hardcodes texgrplds[15] and runs in
+         * the case-4 branch for curr->ix == 15, where that is the group
+         * just repointed at the new block, so it never observes the freed
+         * one. That is an index coincidence, not the ok invariant; do not
+         * generalise the invariant to it.
+         *
+         * Clearing ok is what makes the now-stale table pointers
+         * unreachable instead of dangling; case 4 re-asserts ok once the
+         * new block is populated. Freeing before the Pull also lets the
+         * new allocation reuse the same block instead of transiently
+         * needing two.
+         *
+         * The nested purge is bounded: purge_texture_group clears ok
+         * before calling Push_ramcnt_key (texgroup.c:477-479), so the
+         * purge_texture_group(group_num) re-entry inside
+         * Push_ramcnt_key_original_2 (ramcnt.c:102) sees ok == 0 and does
+         * nothing.
+         *
+         * Two behaviours this reclaim introduces that the pre-patch leak
+         * did not have are tracked as open items under task #64: the
+         * char_init_data 25-pointer window (case 4 repopulates those
+         * pointers only for ix1st == 1, so a reclaim of a group whose
+         * CharInitData was already published leaves them pointing at the
+         * freed block until the reload completes), and getObjectHeight
+         * returning 0 into checksummed plw state while ok == 0. Neither is
+         * demonstrated reachable. */
+        if (curr->lds->ok && curr->lds->key > 0 && rckey_work[curr->lds->key].use) {
+#if ENABLE_PERF_TELEMETRY
+            flLogOut("[texgroup-reclaim] %s freeing stranded block grp=%d key=%d ix=%d id=%d\n",
+                     __func__, (int)curr->group, (int)curr->lds->key, (int)curr->ix, (int)curr->id);
+#endif
+            purge_texture_group(curr->group);
+        }
+
         curr->key = Pull_ramcnt_key(curr->sect << 0xB, curr->kokey, curr->group, curr->frre);
         curr->lds->key = curr->key;
         Set_size_data_ramcnt_key(curr->key, curr->size);

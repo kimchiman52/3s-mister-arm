@@ -283,6 +283,24 @@ allowlist entry defeats the whole tool.
    character-select-transition / game-transition / boot phases are not
    covered at all.
 
+   **The select-phase depth bound used to be a hard clamp** (`depth > 2
+   ? 2 : depth`) and is now `--rbd-select-rollback-depth` (default 2, so
+   the shared gate is unchanged). The default is a real coverage gap:
+   production predicts **8** frames ahead by default
+   (`input_prediction_window`, `netplay.c:903-905`), so anything
+   investigated only at the default depth is being probed at a quarter
+   of the real window. That is not academic — the task-50
+   duplicate-load leak *changes which guard fixes it* between depth 2
+   and depth 3+, because at depth ≥ 3 the head load request has already
+   drained by the time the rollback re-issues it. Pass
+   `--rbd-select-rollback-depth 8` when reproducing or regression-testing
+   any select-phase rollback bug.
+
+   The `ppgSetupTexChunkSeqs` NULL-destination segfault named above is
+   **fixed** as of task 50 (the duplicate character-select load request
+   stranding a ramcnt block); the `ppgSetupPalChunk` hang member of this
+   class is untouched and still live.
+
    The same trap class is reachable **mid-match, at round-init
    boundaries**: the thorough sweep's `char06-pressure-super` (Hugo)
    rollback run deterministically segfaults when a speculative leg

@@ -72,6 +72,171 @@ if { [ "$PROFILE" = "mister" ] || [ "$PROFILE" = "miyoo" ]; } && [ "${MISTER_CC_
     fi
 fi
 
+# -----------------------------------------------------------------------
+# Task #52 — target-architecture guard for cached dependency artifacts
+# -----------------------------------------------------------------------
+#
+# Every "already built" check below used to test only for *presence* -- a
+# directory existing, or a file existing. Presence says nothing about what
+# architecture the artifact was compiled for. A host-arch artifact sitting
+# where an ARM one belongs therefore satisfied the guard and the ARM link
+# step later failed in a confusing way (or, worse, an agent reported a
+# successful "ARM" build off a cache that was never ARM).
+#
+# Observed instance: a host `build-deps.sh --profile desktop` run left
+# third_party/tf-psa-crypto/build/lib/libtfpsacrypto.a as a Mach-O 64-bit
+# arm64 object, while the container's copy of the same path is ELF EM_ARM.
+# `[ -d "$TF_PSA_CRYPTO_BUILD" ]` accepted both.
+#
+# The guard below inspects the artifact for real, via readelf. Note that
+# `file(1)` is NOT installed in the build container (debian:11 base image
+# from tools/mister/setup-build-container.sh installs neither file nor
+# its magic db), so readelf is the only inspection tool we can rely on.
+#
+# readelf -h on a static archive prints one ELF header per member, so the
+# checks below require that EVERY header present agrees with the target and
+# that at least one header exists. A Mach-O or an ar archive of Mach-O
+# members yields no "Class:"/"Machine:" lines at all and is rejected by the
+# final "at least one" test.
+dep_expected_elf_machine=""
+case "$PROFILE" in
+    mister|miyoo)
+        # Both cross profiles target 32-bit ARM hard-float; readelf spells
+        # EM_ARM (0x28) as "ARM" and EM_AARCH64 as "AArch64", so an aarch64
+        # artifact does not substring-match "ARM" and is correctly rejected.
+        dep_expected_elf_machine="ARM"
+        ;;
+esac
+
+dep_artifact_ok() {
+    # Desktop/host profile: artifacts are host-arch by definition and there is
+    # nothing to cross-check, so return success without touching the file.
+    # This keeps `--profile desktop` behaviour byte-for-byte unchanged.
+    [ -n "$dep_expected_elf_machine" ] || return 0
+
+    local artifact="$1"
+
+    if [ ! -s "$artifact" ]; then
+        return 1
+    fi
+
+    if ! command -v readelf >/dev/null 2>&1; then
+        echo "ERROR: readelf not found; cannot verify target architecture of" >&2
+        echo "       $artifact -- refusing to trust the dependency cache." >&2
+        return 1
+    fi
+
+    local hdr
+    hdr="$(readelf -h "$artifact" 2>/dev/null || true)"
+
+    # Counting rather than matching is deliberate. `grep -q` exits the moment
+    # it finds a hit, which closes the pipe and SIGPIPEs the writer; this file
+    # runs under `set -o pipefail` (line 2), so that turns into a non-zero
+    # pipeline status and the guard rejects a perfectly good artifact. It only
+    # bites once the header text exceeds the 64 KiB pipe buffer, i.e. for
+    # archives with enough members -- libtfpsacrypto.a has 79 -- which made it
+    # a size-dependent, intermittent false rejection. `grep -c` always drains
+    # its input, so there is no early close and no SIGPIPE.
+    #
+    # `grep -c` exits 1 on a zero count, hence the `|| true`; the substitution
+    # still captures "0".
+    local n_class n_class_ok n_machine n_machine_ok
+    n_class="$(printf '%s\n' "$hdr" | grep -cE '^[[:space:]]*Class:' || true)"
+    n_class_ok="$(printf '%s\n' "$hdr" \
+        | grep -cE '^[[:space:]]*Class:[[:space:]]+ELF32[[:space:]]*$' || true)"
+    n_machine="$(printf '%s\n' "$hdr" | grep -cE '^[[:space:]]*Machine:' || true)"
+    n_machine_ok="$(printf '%s\n' "$hdr" \
+        | grep -cE "^[[:space:]]*Machine:[[:space:]]+${dep_expected_elf_machine}[[:space:]]*\$" || true)"
+
+    # There must be at least one ELF header, so that a non-ELF file (Mach-O, an
+    # HTML error page, an empty archive) cannot pass by vacuously satisfying
+    # the "nothing disagrees" tests below.
+    [ "$n_class" -gt 0 ] && [ "$n_machine" -gt 0 ] || return 1
+
+    # And every header present must agree with the target, so a mixed archive
+    # with one host-arch member is rejected too.
+    [ "$n_class" -eq "$n_class_ok" ] || return 1
+    [ "$n_machine" -eq "$n_machine_ok" ] || return 1
+
+    return 0
+}
+
+# Reject-and-report wrapper: same predicate, but explains itself when the
+# cache is rejected so the rebuild is attributable in the build log.
+dep_cache_valid() {
+    local name="$1" artifact="$2"
+    if dep_artifact_ok "$artifact"; then
+        return 0
+    fi
+    if [ -e "$artifact" ]; then
+        local detail
+        # A wrong-arch ELF still has Class:/Machine: lines worth printing. A
+        # Mach-O, an HTML error page or a truncated file has none, and readelf
+        # explains itself on stderr instead ("Not an ELF file - it has the
+        # wrong magic bytes at the start"), so fall back to that.
+        detail="$(readelf -h "$artifact" 2>/dev/null \
+            | grep -E '^[[:space:]]*(Class|Machine):' \
+            | sed 's/^[[:space:]]*//' | sort -u | tr '\n' ';' | sed 's/;$//')"
+        if [ -z "$detail" ]; then
+            detail="$(readelf -h "$artifact" 2>&1 >/dev/null | head -n 1)"
+            [ -n "$detail" ] || detail="$(wc -c <"$artifact" | tr -d ' ') bytes, unrecognised format"
+        fi
+        echo "NOTE: $name cache at $artifact" >&2
+        echo "      is not ELF32/$dep_expected_elf_machine -- readelf reports: ${detail}" >&2
+        echo "      Discarding it and rebuilding for the target." >&2
+    fi
+    return 1
+}
+
+# -----------------------------------------------------------------------
+# Task #52 — integrity-checked downloads
+# -----------------------------------------------------------------------
+#
+# `curl -L -O <url>` without -f writes the server's error body to disk and
+# exits 0. A savannah.gnu.org hiccup returned a 166-byte HTTP error page in
+# place of the FreeType tarball; tar then failed deep in the build with an
+# unrelated-looking message. -f makes curl fail the transfer on HTTP >= 400,
+# and the sha256 pin catches every other way a fetch can be wrong (truncated
+# body, mirror serving a different release, MITM).
+sha256_of() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$1" | awk '{print $1}'
+    elif command -v shasum >/dev/null 2>&1; then
+        shasum -a 256 "$1" | awk '{print $1}'
+    else
+        echo "ERROR: no sha256sum/shasum available to verify $1" >&2
+        return 1
+    fi
+}
+
+fetch_verified() {
+    local url="$1" dest="$2" want="$3"
+    local tmp="${dest}.part"
+
+    rm -f "$tmp"
+    if ! curl -fL --retry 3 --retry-delay 2 --retry-all-errors -o "$tmp" "$url"; then
+        rm -f "$tmp"
+        echo "ERROR: download failed: $url" >&2
+        return 1
+    fi
+
+    local got
+    got="$(sha256_of "$tmp")" || { rm -f "$tmp"; return 1; }
+
+    if [ "$got" != "$want" ]; then
+        local sz
+        sz="$(wc -c < "$tmp" | tr -d ' ')"
+        echo "ERROR: sha256 mismatch for $url" >&2
+        echo "       expected: $want" >&2
+        echo "       actual:   $got" >&2
+        echo "       size:     ${sz} bytes" >&2
+        rm -f "$tmp"
+        return 1
+    fi
+
+    mv "$tmp" "$dest"
+}
+
 if [ -n "${JOBS:-}" ]; then
     JOBS="$JOBS"
 elif command -v nproc >/dev/null 2>&1; then
@@ -186,7 +351,8 @@ else
 fi
 SDL_BUILD="$SDL_DIR/build"
 
-if [ -d "$SDL_BUILD/lib" ] && ls "$SDL_BUILD/lib"/libSDL3.so* >/dev/null 2>&1; then
+if [ -d "$SDL_BUILD/lib" ] && ls "$SDL_BUILD/lib"/libSDL3.so* >/dev/null 2>&1 \
+   && dep_cache_valid "SDL3" "$SDL_BUILD/lib/libSDL3.so"; then
     echo "SDL3 already built at $SDL_BUILD"
 else
     echo "Building SDL3 at $SDL_BUILD..."
@@ -264,6 +430,7 @@ if [ "$PROFILE" = "miyoo" ]; then
     echo "Skipping GekkoNet for profile '$PROFILE' (Cut 1 has ENABLE_NETPLAY=OFF)"
 elif [ -d "$GEKKONET_BUILD" ] && \
      [ -s "$GEKKONET_BUILD/lib/libGekkoNet.a" ] && \
+     dep_cache_valid "GekkoNet" "$GEKKONET_BUILD/lib/libGekkoNet.a" && \
      perl -0ne 'exit(!(/u8 value = 0;\s*\n\s*while \(idx \+ 1 < length\)/))' \
         "$GEKKONET_BUILD/include/compression.h" 2>/dev/null && \
      grep -q '3s-arm M-4: cap RLE-decompressed output' \
@@ -575,10 +742,16 @@ SDL3_NET_BUILD="$SDL3_NET_DIR/build"
 
 if [ "$PROFILE" = "miyoo" ]; then
     echo "Skipping SDL3_net for profile '$PROFILE' (Cut 1 has ENABLE_NETPLAY=OFF)"
-elif [ -d "$SDL3_NET_BUILD" ]; then
+elif [ -d "$SDL3_NET_BUILD" ] \
+     && dep_cache_valid "SDL3_net" "$SDL3_NET_BUILD/lib/libSDL3_net.a"; then
     echo "SDL3_net already built at $SDL3_NET_BUILD"
 else
     echo "Building SDL3_net @ $SDL3_NET_REF..."
+
+    # Purge any rejected/partial prefix so a wrong-arch libSDL3_net.a cannot
+    # survive alongside the new one, and so the stale cmake/ and pkgconfig/
+    # files it installed cannot be picked up by the consuming cmake run.
+    rm -rf "$SDL3_NET_BUILD"
 
     SDL3_NET_SRC=$(mktemp -d)
     git clone https://github.com/libsdl-org/SDL_net.git "$SDL3_NET_SRC"
@@ -653,11 +826,13 @@ MINIZIP_NG_TAG="4.1.0"
 MINIZIP_NG_DIR="$THIRD_PARTY/minizip-ng"
 MINIZIP_NG_BUILD="$MINIZIP_NG_DIR/build"
 
-if [ -d "$MINIZIP_NG_BUILD" ]; then
+if [ -d "$MINIZIP_NG_BUILD" ] \
+   && dep_cache_valid "minizip-ng" "$MINIZIP_NG_BUILD/lib/libminizip-ng.a"; then
     echo "minizip-ng already built at $MINIZIP_NG_BUILD"
 else
     echo "Building minizip-ng @ $MINIZIP_NG_BUILD..."
 
+    rm -rf "$MINIZIP_NG_BUILD"
     mkdir -p "$MINIZIP_NG_BUILD"
     MINIZIP_NG_SRC=$(mktemp -d)
 
@@ -695,18 +870,27 @@ fi
 
 TF_PSA_CRYPTO_VERSION="1.0.0"
 TF_PSA_CRYPTO_URL="https://github.com/Mbed-TLS/TF-PSA-Crypto/releases/download/tf-psa-crypto-$TF_PSA_CRYPTO_VERSION/tf-psa-crypto-$TF_PSA_CRYPTO_VERSION.tar.bz2"
+TF_PSA_CRYPTO_SHA256="31f0df2ca17897b5db2757cb0307dcde267292ba21ade831663d972a7a5b7d40"
 TF_PSA_CRYPTO_DIR="$THIRD_PARTY/tf-psa-crypto"
 TF_PSA_CRYPTO_BUILD="$TF_PSA_CRYPTO_DIR/build"
 
-if [ -d "$TF_PSA_CRYPTO_BUILD" ]; then
+if [ -d "$TF_PSA_CRYPTO_BUILD" ] \
+   && dep_cache_valid "tf-psa-crypto" "$TF_PSA_CRYPTO_BUILD/lib/libtfpsacrypto.a"; then
     echo "tf-psa-crypto already built at $TF_PSA_CRYPTO_BUILD"
 else
     echo "Building tf-psa-crypto @ $TF_PSA_CRYPTO_BUILD..."
 
+    rm -rf "$TF_PSA_CRYPTO_BUILD"
     mkdir -p "$TF_PSA_CRYPTO_BUILD"
     TF_PSA_CRYPTO_SRC=$(mktemp -d)
 
-    curl -L -o "$TF_PSA_CRYPTO_SRC/tf-psa-crypto.tar.bz2" "$TF_PSA_CRYPTO_URL"
+    # sha256 pinned from the GitHub release asset digest reported by
+    # api.github.com/repos/Mbed-TLS/TF-PSA-Crypto/releases/tags/tf-psa-crypto-1.0.0
+    # ("digest": "sha256:31f0df2c...7d40", size 4440036), which matches a
+    # direct download of the URL above byte-for-byte.
+    fetch_verified "$TF_PSA_CRYPTO_URL" \
+        "$TF_PSA_CRYPTO_SRC/tf-psa-crypto.tar.bz2" \
+        "$TF_PSA_CRYPTO_SHA256"
     tar xf "$TF_PSA_CRYPTO_SRC/tf-psa-crypto.tar.bz2" -C "$TF_PSA_CRYPTO_SRC"
 
     cmake -S "$TF_PSA_CRYPTO_SRC/tf-psa-crypto-$TF_PSA_CRYPTO_VERSION" -B "$TF_PSA_CRYPTO_SRC/cmake-build" \
@@ -740,18 +924,27 @@ fi
 
 if [ "$PROFILE" = "mister" ]; then
     FREETYPE_VER="2.13.3"
+    FREETYPE_SHA256="0550350666d427c74daeb85d5ac7bb353acba5f76956395995311a9c6f063289"
     FREETYPE_DIR="$THIRD_PARTY/freetype"
     FREETYPE_BUILD="$FREETYPE_DIR/build"
 
-    if [ -d "$FREETYPE_BUILD/lib" ] && [ -f "$FREETYPE_BUILD/lib/libfreetype.a" ]; then
+    if [ -d "$FREETYPE_BUILD/lib" ] && [ -f "$FREETYPE_BUILD/lib/libfreetype.a" ] \
+       && dep_cache_valid "FreeType" "$FREETYPE_BUILD/lib/libfreetype.a"; then
         echo "FreeType already built at $FREETYPE_BUILD"
     else
         echo "Building FreeType $FREETYPE_VER at $FREETYPE_BUILD..."
 
+        rm -rf "$FREETYPE_BUILD"
         mkdir -p "$FREETYPE_DIR"
         if [ ! -d "$FREETYPE_DIR/src" ]; then
-            curl -L -o "$FREETYPE_DIR/freetype-$FREETYPE_VER.tar.xz" \
-                "https://download.savannah.gnu.org/releases/freetype/freetype-$FREETYPE_VER.tar.xz"
+            # sha256 pinned from a savannah.gnu.org download whose sha1
+            # (2437819d...1e96) and md5 (f3b4432c...bc64) match the digests
+            # SourceForge publishes for the same freetype-2.13.3.tar.xz, i.e.
+            # two independent mirrors agree on the bytes being hashed here.
+            fetch_verified \
+                "https://download.savannah.gnu.org/releases/freetype/freetype-$FREETYPE_VER.tar.xz" \
+                "$FREETYPE_DIR/freetype-$FREETYPE_VER.tar.xz" \
+                "$FREETYPE_SHA256"
             mkdir -p "$FREETYPE_DIR/src"
             tar xf "$FREETYPE_DIR/freetype-$FREETYPE_VER.tar.xz" -C "$FREETYPE_DIR/src" --strip-components=1
             rm -f "$FREETYPE_DIR/freetype-$FREETYPE_VER.tar.xz"
@@ -799,11 +992,13 @@ if [ "$PROFILE" = "mister" ]; then
     RMLUI_DIR="$THIRD_PARTY/rmlui"
     RMLUI_BUILD="$RMLUI_DIR/build"
 
-    if [ -d "$RMLUI_BUILD/lib" ] && [ -f "$RMLUI_BUILD/lib/librmlui.a" ]; then
+    if [ -d "$RMLUI_BUILD/lib" ] && [ -f "$RMLUI_BUILD/lib/librmlui.a" ] \
+       && dep_cache_valid "RmlUi" "$RMLUI_BUILD/lib/librmlui.a"; then
         echo "RmlUi already built at $RMLUI_BUILD"
     else
         echo "Building RmlUi @ $RMLUI_REF at $RMLUI_BUILD..."
 
+        rm -rf "$RMLUI_BUILD"
         mkdir -p "$RMLUI_DIR"
         RMLUI_SRC=$(mktemp -d)
 
