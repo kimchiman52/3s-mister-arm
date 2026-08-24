@@ -1274,7 +1274,6 @@ static void p2p_race(const RaceCfg* cfg, RaceResult* out) {
     out->relay_fail = CONNECT_FAIL_NONE;
 
     const uint32_t t0 = SDL_GetTicks();
-    const uint32_t race_deadline = t0 + (uint32_t)cfg->race_budget_ms;
 
     RacePunchCandidate cands[RACE_PUNCH_LEGS];
     memset(cands, 0, sizeof(cands));
@@ -1431,13 +1430,14 @@ static void p2p_race(const RaceCfg* cfg, RaceResult* out) {
             relay_state = RELAY_LEG_DONE;
             out->t_relay_ms = now - relay_armed_ms;
         } else if (relay_state == RELAY_LEG_PIN) {
-            int pin_budget = cfg->relay_budget_ms - (int)(now - relay_armed_ms);
-            (void)pin_budget;
-            const int pin_window =
-                (cfg->relay_budget_ms - (int)(relay_phase_ms - relay_armed_ms) >
-                 RELAY_PIN_MIN_MS)
-                    ? cfg->relay_budget_ms - (int)(relay_phase_ms - relay_armed_ms)
-                    : RELAY_PIN_MIN_MS;
+            /* Whatever the GRANT phase did not spend, floored at
+             * RELAY_PIN_MIN_MS: a grant we cannot use is the worst
+             * outcome, so always leave room for a couple of pin round
+             * trips even when phase 1 ate most of the budget. */
+            const int grant_spent = (int)(relay_phase_ms - relay_armed_ms);
+            const int pin_window = (cfg->relay_budget_ms - grant_spent > RELAY_PIN_MIN_MS)
+                                       ? cfg->relay_budget_ms - grant_spent
+                                       : RELAY_PIN_MIN_MS;
             if ((int)(now - relay_phase_ms) >= pin_window) {
                 /* The rendezvous port demonstrably works (we got a GRANT
                  * on it), so this is specifically about the relay PORT
@@ -1685,7 +1685,13 @@ static void p2p_race(const RaceCfg* cfg, RaceResult* out) {
                 break;
             }
         }
-        if ((int)(now - t0) >= cfg->race_budget_ms || now >= race_deadline) {
+        /* Wrap-safe elapsed comparison. The `now >= t0 + budget` form this
+         * replaces breaks across the SDL_GetTicks 32-bit wrap (~49.7 days
+         * of uptime): after the wrap `t0 + budget` is a huge number `now`
+         * never reaches, and the race would run until every leg finished
+         * with no overall bound. Subtract-then-cast is the form the rest
+         * of this file already uses (S3 deadline wrap-safety). */
+        if ((int)(now - t0) >= cfg->race_budget_ms) {
             SDL_Log("[direct_p2p] S6 race: overall budget (%d ms) expired",
                     cfg->race_budget_ms);
             break;
@@ -1703,15 +1709,27 @@ done:;
     }
     out->t_punch_ms = cands[0].alive_ms;
     out->t_bilateral_ms = cands[1].alive_ms;
-    out->t_signal_ms = (signal_end_ms != 0) ? (signal_end_ms - t0) : (t_end - t0);
+    /* A leg that never ran reports 0, not "the whole race": `signal=` in a
+     * report line has always meant "time spent in the signalling phase",
+     * and the host has no signalling leg at all. */
+    out->t_signal_ms = !cfg->signal_leg ? 0u
+                       : (signal_end_ms != 0) ? (signal_end_ms - t0)
+                                              : (t_end - t0);
     if (out->relay_ran && out->t_relay_ms == 0) {
         out->t_relay_ms = t_end - relay_armed_ms;
     }
     if (out->relay_ran && out->outcome != RACE_RELAYED &&
-        out->relay_fail == CONNECT_FAIL_NONE) {
+        out->outcome != RACE_PUNCHED && out->relay_fail == CONNECT_FAIL_NONE) {
         /* The leg armed but the race ended around it (budget expiry, or a
          * cancel). Report what it was actually still waiting on rather
-         * than leaving a silent P2P_OK on a rung that never delivered. */
+         * than leaving a silent P2P_OK on a rung that never delivered.
+         *
+         * RACE_PUNCHED is EXCLUDED on purpose. When a punch confirms we
+         * deliberately tear the relay leg down (§8.4 rule 1) — that is an
+         * abandonment, not a failure, and §7.5 defines `relay_fail=` as
+         * "it ran and failed like this". Reporting a relay failure on a
+         * line whose verdict is OK would make the field mean two
+         * different things. */
         out->relay_fail = (relay_state == RELAY_LEG_PIN)
                               ? CONNECT_FAIL_RELAY_PIN_TIMEOUT
                               : (relay_pending_fail != CONNECT_FAIL_NONE
@@ -4175,11 +4193,21 @@ static void report_connect_outcome(DirectP2PState st, bool success) {
          * would make every field latency complaint unattributable. */
         SDL_snprintf(line, sizeof(line),
                      "[netplay-connect] OK role=%s attempts=%d via_relay=%d "
+                     "relay_fail=%s "
                      "t_ms upnp=%u stun=%u race=%u punch=%u signal=%u bilateral=%u relay=%u "
                      "stun=%d/%d portdis=%d",
                      s_work.role == ROLE_HOST ? "host" : "join",
                      s_work.join_attempts,
                      (int)s_work.relay_used,
+                     /* S6: §7.5 always specified relay_fail= on BOTH report
+                      * lines; the OK line never actually carried it. It
+                      * matters more now that the legs race: a successful
+                      * DIRECT connection can have had a relay leg in flight
+                      * that we abandoned when the punch confirmed (§8.4
+                      * rule 1). P2P_OK here means "the relay leg either
+                      * never ran or was abandoned, not failed" — an
+                      * abandonment is not a failure. */
+                     ConnectFail_Code(s_work.relay_fail_code),
                      s_work.t_upnp_ms, s_work.t_stun_ms, s_work.t_race_ms, s_work.t_punch_ms,
                      s_work.t_signal_ms, s_work.t_bilateral_ms, s_work.t_relay_ms,
                      s_work.stun.diag_servers_answered,

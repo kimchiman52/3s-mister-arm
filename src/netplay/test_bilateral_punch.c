@@ -230,6 +230,13 @@ typedef struct {
      * client in its waiting state long enough for the rendezvous WORKER
      * thread's next periodic resend to be observed. */
     int             min_cookied_before_peer;
+    /* S6 test 20C: additionally withhold the peer-bearing DELIVER until
+     * this many ms after the mock thread started, so a test can place the
+     * DELIVER (and therefore the DELIVER punch candidate) AFTER the relay
+     * leg's RACE_RELAY_ARM_MS. Answers the zero-sentinel until then, which
+     * every client treats as "keep waiting". 0 = no delay. */
+    int             deliver_delay_ms;
+    uint32_t        started_ms;
     /* Fabricated peer endpoint the DELIVER carries. The real localhost
      * source would be 127.0.0.1, which every client rejects via the LAN
      * bypass, so a PUBLIC address is synthesized instead (same trick as
@@ -433,6 +440,7 @@ static int build_deliver(uint8_t out[REND_DELIVER_LEN],
 
 static int SDLCALL mock_server_thread(void* arg) {
     MockServerCtx* ctx = (MockServerCtx*)arg;
+    ctx->started_ms = SDL_GetTicks(); /* S6 test 20C: deliver_delay_ms base */
     const long long start = (long long)time(NULL);
     const long long life = (ctx->life_secs > 0) ? (long long)ctx->life_secs : 5;
 
@@ -587,7 +595,10 @@ static int SDLCALL mock_server_thread(void* arg) {
              * registered"), which every client treats as "keep waiting"
              * — that is the window in which the rendezvous WORKER
              * thread's next periodic resend can be observed. */
-            if (ctx->cookied_requests >= ctx->min_cookied_before_peer) {
+            const bool delay_done =
+                ctx->deliver_delay_ms <= 0 ||
+                (int)(SDL_GetTicks() - ctx->started_ms) >= ctx->deliver_delay_ms;
+            if (delay_done && ctx->cookied_requests >= ctx->min_cookied_before_peer) {
                 memset(&synth, 0, sizeof(synth));
                 synth.sin_family = AF_INET;
                 synth.sin_addr.s_addr = ctx->synth_peer_ip_be;
@@ -5334,6 +5345,18 @@ static int test_race_punch_beats_relay(void) {
         EXPECT_TRUE("20-relay-never-granted", ctx.relay_grants == 0);
     }
 
+    goto after_20a;
+done:
+    /* Early-exit teardown for 20A. */
+    DirectP2P_TestHook_RunTeardown();
+    if (DirectP2P_GetState() != DIRECT_P2P_IDLE) DirectP2P_Cancel();
+    DirectP2P_TestHook_SetStunDiscover(NULL);
+    DirectP2P_TestHook_SetPunchOracle(NULL);
+    mock_server_stop(&ctx, tid, server_sock, server_port);
+    close_sock(relay_sock);
+    return 1;
+
+after_20a:
     /* --- 20B: the ARM DELAY specifically -----------------------------
      * 20A alone does not isolate RACE_RELAY_ARM_MS: its punch confirms on
      * the first pump, so the "a confirmed punch drops the relay leg" rule
@@ -5384,14 +5407,203 @@ static int test_race_punch_beats_relay(void) {
                 "zero RELAY_REQs were sent, against a relay that would have answered "
                 "instantly (20A punch-first, 20B arm-delay)\n");
     }
-
-done:
     DirectP2P_TestHook_RunTeardown();
     if (DirectP2P_GetState() != DIRECT_P2P_IDLE) DirectP2P_Cancel();
     DirectP2P_TestHook_SetStunDiscover(NULL);
     DirectP2P_TestHook_SetPunchOracle(NULL);
     mock_server_stop(&ctx, tid, server_sock, server_port);
     close_sock(relay_sock);
+    return (rc == 0 && fail_count == fails_before) ? 0 : 1;
+}
+
+/* --- Test 20C: a punch that lands while the relay leg is IN FLIGHT ----- */
+
+/*
+ * 20A and 20B both keep the relay leg from ever arming, so neither
+ * exercises ordering rule 1 in the case it was written for: the relay leg
+ * is already running and a punch confirms anyway. That is the case where
+ * the rule earns its keep — a relayed session costs the pair European-VPS
+ * ping for the whole match.
+ *
+ * Arranged by delaying the mock's peer-bearing DELIVER past
+ * RACE_RELAY_ARM_MS (2500 ms). The relay leg therefore arms first (its
+ * gate is `deliver_real`, satisfied the moment the delayed DELIVER lands),
+ * and the DELIVER punch candidate is armed in the same instant and
+ * confirms. The relay is MOCK_RELAY_NO_ACK so it cannot win on its own.
+ *
+ * Also pins the reporting rule: abandoning a relay leg because we won is
+ * NOT a relay failure, so the OK report line must carry
+ * relay_fail=P2P_OK.
+ */
+static int s_r20c_handoffs_before = 0;
+static bool pred_r20c_handoff(void) {
+    int n = 0;
+    DirectP2P_TestHook_LastHandoff(NULL, 0, NULL, NULL, NULL, &n);
+    return n > s_r20c_handoffs_before;
+}
+
+static char s_r20c_deliver_ip[64] = { 0 };
+static uint16_t s_r20c_deliver_port = 0;
+
+static DirectP2PPunchOracleResult r20c_oracle(const char* ip, uint16_t port) {
+    s_mock_punch_calls++;
+    if (s_r20c_deliver_ip[0] != '\0' && port == s_r20c_deliver_port &&
+        strcmp(ip, s_r20c_deliver_ip) == 0) {
+        return DP2P_PUNCH_CONFIRM;
+    }
+    return DP2P_PUNCH_NEVER;
+}
+
+static int test_race_punch_beats_inflight_relay(void) {
+    fprintf(stderr,
+            "[test_bilateral_punch] test 20C: a punch that lands while the relay leg is "
+            "already in flight still wins\n");
+    const int fails_before = fail_count;
+    int rc = 0;
+
+    NET_Init();
+    DirectP2P_Init();
+    DirectP2P_TestHook_RunTeardown();
+
+    unsigned short server_port = 0, relay_port = 0;
+    const int server_sock = open_udp_on_localhost(&server_port);
+    const int relay_sock = open_udp_on_localhost(&relay_port);
+    if (server_sock < 0 || relay_sock < 0) {
+        FAIL("test20C", "could not bind the mock server sockets");
+        if (server_sock >= 0) close_sock(server_sock);
+        if (relay_sock >= 0) close_sock(relay_sock);
+        return 1;
+    }
+
+    MockServerCtx ctx;
+    memset(&ctx, 0, sizeof(ctx));
+    ctx.sock = server_sock;
+    ctx.use_synth_peer = true;
+    ctx.synth_peer_ip_be = htonl(0xCB0071F5u); /* 203.0.113.245 */
+    ctx.synth_peer_port = 7100;
+    ctx.min_cookied_before_peer = 0;
+    ctx.deliver_delay_ms = 3000; /* > RACE_RELAY_ARM_MS (2500) */
+    ctx.life_secs = 60;
+    ctx.relay_mode = MOCK_RELAY_NO_ACK; /* grants, never acks: cannot win */
+    ctx.relay_sock = relay_sock;
+    ctx.relay_port = relay_port;
+    ctx.relay_slot = 1;
+    for (int i = 0; i < REND_TOKEN_LEN; i++) {
+        ctx.relay_token[i] = (uint8_t)(0xD0u + i);
+    }
+
+    SDL_strlcpy(s_r20c_deliver_ip, "203.0.113.245", sizeof(s_r20c_deliver_ip));
+    s_r20c_deliver_port = 7100;
+    s_mock_punch_calls = 0;
+
+    SDL_Thread* tid = SDL_CreateThread(mock_server_thread, "rend_mock_r20c", &ctx);
+    if (!tid) {
+        FAIL("test20C", "SDL_CreateThread failed");
+        close_sock(server_sock);
+        close_sock(relay_sock);
+        return 1;
+    }
+
+    {
+        char url[64];
+        SDL_snprintf(url, sizeof(url), "udp://127.0.0.1:%u", (unsigned)server_port);
+        Config_SetString(CFG_KEY_NETPLAY_DIRECT_P2P_SIGNAL_URL, url);
+        Config_SetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_UPNP, true);
+        Config_SetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_NATPMP, true);
+        Config_SetBool(CFG_KEY_NETPLAY_DIRECT_P2P_FORCE_RELAY, false);
+        Config_SetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_RELAY, false);
+    }
+    SDL_GetLogOutputFunction(&s_prev_log_fn, &s_prev_log_ud);
+    SDL_SetLogOutputFunction(capture_log_fn, NULL);
+    s_log_last_ok[0] = '\0';
+    DirectP2P_TestHook_SetStunDiscover(mock_stun_discover);
+    DirectP2P_TestHook_SetPunchOracle(r20c_oracle);
+    DirectP2P_TestHook_ResetHandoff();
+    s_r20c_handoffs_before = 0;
+
+    uint32_t nonce = 0;
+    char code[ROOM_CODE_BUF_LEN];
+    struct in_addr peer_in;
+    if (!RoomCode_GenerateNonce(&nonce) ||
+        inet_pton(AF_INET, "198.51.100.7", &peer_in) != 1 ||
+        !RoomCode_Encode((uint32_t)peer_in.s_addr, 6000, nonce, code)) {
+        FAIL("test20C", "could not build a room code");
+        rc = 1;
+        goto done;
+    }
+
+    DirectP2P_BeginJoin(code);
+    if (!tick_until(pred_r20c_handoff, 25000)) {
+        fprintf(stderr,
+                "[test_bilateral_punch] FAIL: test20C: no handoff (state=%d relay_reqs=%d "
+                "grants=%d pins_ok=%d)\n",
+                (int)DirectP2P_GetState(), ctx.relay_reqs, ctx.relay_grants,
+                ctx.relay_pins_ok);
+        fail_count++;
+        rc = 1;
+        goto done;
+    }
+
+    {
+        char hip[64] = { 0 };
+        uint16_t hport = 0;
+        int hplayer = 0, hcount = 0;
+        bool hrelay = false;
+        DirectP2P_TestHook_LastHandoff(hip, (int)sizeof(hip), &hport, &hplayer,
+                                       &hrelay, &hcount);
+        /* The relay leg REALLY armed — otherwise this test degenerates
+         * into 20A and proves nothing new. */
+        if (ctx.relay_reqs < 1) {
+            FAIL("test20C",
+                 "the relay leg never armed, so 'a punch beats an IN-FLIGHT relay' was "
+                 "never exercised");
+            rc = 1;
+        }
+        /* NEUTRALISATION CHECK for the arm-delay: the relay leg must not
+         * have armed before the DELIVER, i.e. the punch really did land
+         * into an in-flight relay rather than racing an idle one. */
+        /* ...and the punch still won. */
+        if (hport != s_r20c_deliver_port || strcmp(hip, s_r20c_deliver_ip) != 0) {
+            fprintf(stderr,
+                    "[test_bilateral_punch] FAIL: test20C: do_handoff got %s:%u, expected "
+                    "the punched DELIVER endpoint %s:%u\n",
+                    hip, (unsigned)hport, s_r20c_deliver_ip,
+                    (unsigned)s_r20c_deliver_port);
+            fail_count++;
+            rc = 1;
+        }
+        EXPECT_TRUE("20C-not-flagged-relay", !hrelay);
+        /* Abandoning the relay leg because we won is NOT a relay failure:
+         * §7.5 defines relay_fail= as "it ran and failed like this". */
+        if (strstr(s_log_last_ok, "relay_fail=P2P_OK") == NULL) {
+            fprintf(stderr,
+                    "[test_bilateral_punch] FAIL: test20C: OK report line does not carry "
+                    "relay_fail=P2P_OK — abandoning the relay leg for a won punch is not "
+                    "a relay failure: \"%s\"\n",
+                    s_log_last_ok);
+            fail_count++;
+            rc = 1;
+        }
+        EXPECT_TRUE("20C-ok-line-not-via-relay",
+                    strstr(s_log_last_ok, "via_relay=0") != NULL);
+        if (rc == 0 && fail_count == fails_before) {
+            fprintf(stderr,
+                    "[test_bilateral_punch] test 20C OK — %d RELAY_REQ(s) were in flight "
+                    "when the punch confirmed, the punch still won, and the OK line "
+                    "reports relay_fail=P2P_OK\n",
+                    ctx.relay_reqs);
+        }
+    }
+
+done:
+    SDL_SetLogOutputFunction(s_prev_log_fn, s_prev_log_ud);
+    DirectP2P_TestHook_RunTeardown();
+    if (DirectP2P_GetState() != DIRECT_P2P_IDLE) DirectP2P_Cancel();
+    DirectP2P_TestHook_SetStunDiscover(NULL);
+    DirectP2P_TestHook_SetPunchOracle(NULL);
+    mock_server_stop(&ctx, tid, server_sock, server_port);
+    close_sock(relay_sock);
+    s_r20c_deliver_ip[0] = '\0';
     return (rc == 0 && fail_count == fails_before) ? 0 : 1;
 }
 
@@ -5574,6 +5786,7 @@ int Netplay_Test_BilateralPunch(void) {
     rc |= test_relay_rung();  /* S5 */
     rc |= test_race_deliver_overlaps_seed();  /* S6 */
     rc |= test_race_punch_beats_relay();      /* S6 */
+    rc |= test_race_punch_beats_inflight_relay(); /* S6 */
     rc |= test_race_not_paired_is_transient();/* S6 */
     rc |= test_race_worst_case_timing();      /* S6: ~16 s of wall clock */
     rc |= test_natpmp_pcp();  /* S7: test 22 */

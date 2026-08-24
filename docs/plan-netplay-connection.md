@@ -1527,7 +1527,8 @@ dead key.
   `bilateral=` and `relay=` are leg **lifetimes**, so they no longer sum
   to the elapsed time. A new `race=` field carries the wall clock of the
   whole post-STUN cascade and is the number to compare across builds. Both
-  the OK and FAIL lines carry it.
+  the OK and FAIL lines carry it. The OK line also gained `relay_fail=`,
+  which §7.5 always specified but the code never emitted there (§8.9).
 - **The `DirectP2P_TestHook_SetStunHolePunch` seam is gone**, replaced by
   `DirectP2P_TestHook_SetPunchOracle` (direct_p2p.h). With no blocking
   punch left to substitute, the seam moved to the decision the tests were
@@ -1540,8 +1541,9 @@ dead key.
 
 ### 8.8 Tests
 
-Four new cases in `test_bilateral_punch.c` (18-21) and one in
-`test_stun_mock.c`, each chosen so a serial cascade **cannot** satisfy it.
+Five new cases in `test_bilateral_punch.c` (18, 19, 20 with three acts,
+20C, 21) and one in `test_stun_mock.c`, each chosen so a serial cascade
+**cannot** satisfy it.
 Every one was proven red by neutralising the code under test and observing
 the failure — not by assertion:
 
@@ -1551,6 +1553,7 @@ the failure — not by assertion:
 | 19 + 18 | **N5**: the legs run serially again (DELIVER candidate deferred until the seed finishes; relay deferred until every punch leg has) | *"test19: handoff took 5226 ms; the DELIVER candidate must be punched CONCURRENTLY ... (expected < 2000 ms)"* and *"test18: full-cascade join took 16219 ms (~8109 ms/attempt), expected < 14000 ms"* |
 | 20B `test_race_punch_beats_relay` | the `RACE_RELAY_ARM_MS` delay removed (naive racing) | *"test20B: 1 RELAY_REQ(s) inside a 1500 ms race; the relay leg must not arm before RACE_RELAY_ARM_MS (2500 ms)"* |
 | 21 `test_race_not_paired_is_transient` | `NOT_PAIRED` terminal again (the pre-fix rule) | *"test21: no handoff after two NOT_PAIRED refusals ... relay_reqs=2 grants=2 notpaired=2"* |
+| 20C `test_race_punch_beats_inflight_relay` | the `RACE_PUNCHED` exclusion removed from the end-of-race relay-fail fallback | *"test20C: OK report line does not carry relay_fail=P2P_OK ... relay_fail=P2P_FAIL_RELAY_UNAVAILABLE"* |
 | `run_punch_leg_offer_test` | the stepper's source-IP gate removed | 4 reds, incl. *"a valid payload from the WRONG source IP confirmed the leg"* and *"a wrong-token punch CONFIRMED the leg (S4a fail-closed broken)"* |
 
 Notes on what each test is *for*:
@@ -1566,6 +1569,14 @@ Notes on what each test is *for*:
   (`DirectP2P_TestHook_LastHandoff`), not on internal state — a race that
   populated `s_work` correctly but never reached the handoff would pass an
   `s_work` assertion and cannot pass this one.
+- **20C** exists because 20A and 20B both keep the relay leg from ever
+  arming, so neither exercises ordering rule 1 in the case it was written
+  for — the relay leg **already in flight** when a punch confirms. It is
+  arranged by delaying the mock's peer-bearing DELIVER past
+  `RACE_RELAY_ARM_MS` (new `MockServerCtx.deliver_delay_ms`), so the relay
+  leg arms first and the DELIVER punch candidate confirms into it.
+  Observed on a passing run: 1 `RELAY_REQ` in flight, relay leg alive 8 ms
+  before the punch tore it down.
 - **20** has two acts because 20A alone does not isolate the arm delay:
   its punch confirms on the first pump, so the "a confirmed punch drops
   the relay leg" rule would keep `relay_reqs` at 0 even with the delay
@@ -1578,7 +1589,42 @@ Notes on what each test is *for*:
   first that consumes it, so a leg that consumed datagrams which are not
   its own would let one candidate's noise confirm another candidate's leg.
 
-### 8.9 Residuals, stated rather than hidden
+### 8.9 Three defects found by the gates themselves
+
+Recorded because each was found by a check that could easily have been
+skipped, and two of them by a build configuration rather than by a test.
+
+- **The punch-mode enum was inside the `NETPLAY_TEST_HOOKS` block.**
+  `p2p_race` stores a `DirectP2PPunchOracleResult` on every candidate in
+  every build, so a plain Release or Debug build did not compile — 10
+  errors. The test-hooks build was green throughout. Caught only by
+  running the Release and plain-Debug gates, which is exactly why they are
+  gates. The enum now lives in the production part of direct_p2p.h; only
+  the function-pointer typedef and the setter stay test-only.
+- **The overall race deadline was wrap-unsafe.** The loop tested both
+  `(int)(now - t0) >= budget` (wrap-safe) and `now >= t0 + budget` (not).
+  Across the `SDL_GetTicks` 32-bit wrap (~49.7 days of uptime) the second
+  form's target is a value `now` never reaches, so the race would have run
+  until every leg finished with no overall bound. It was redundant with
+  the first, so it is deleted rather than repaired; subtract-then-cast is
+  the form the rest of the file already uses (S3 deadline wrap-safety).
+  **Not covered by a test** — reproducing it needs a 49.7-day clock.
+- **An abandoned relay leg was reported as a failed one.** When a punch
+  confirms we tear the relay leg down (§8.4 rule 1). The end-of-race
+  fallback that fills in `relay_fail` for a leg that armed but never
+  concluded did not exclude that case, so a SUCCESSFUL direct connection
+  carried `relay_fail=P2P_FAIL_RELAY_UNAVAILABLE`. §7.5 defines
+  `relay_fail=` as "it ran and failed like this"; an abandonment is not a
+  failure, and the field would otherwise mean two different things
+  depending on the verdict on the same line. Fixed, and covered by test
+  20C.
+
+  Writing that test surfaced a second, **pre-existing** defect: §7.5 says
+  "both report lines gained ... `relay_fail=<code>`", but the OK line
+  never carried it — only the FAIL line did. The OK line now carries it,
+  which is what makes the abandonment case observable at all.
+
+### 8.10 Residuals, stated rather than hidden
 
 - **Scenario A is still 8 s/attempt**, because the 8 000 ms signalling
   budget is the longest single leg and racing cannot shorten it. Cutting
