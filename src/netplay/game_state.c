@@ -13,6 +13,7 @@
 #include "sf33rd/Source/Game/engine/slowf.h"
 #include "sf33rd/Source/Game/engine/spgauge.h"
 #include "sf33rd/Source/Game/engine/workuser.h"
+#include "sf33rd/Source/Game/rendering/color3rd.h"
 #include "sf33rd/Source/Game/select_timer.h"
 #include "sf33rd/Source/Game/stage/bg.h"
 #include "sf33rd/Source/Game/stage/bg_data.h"
@@ -62,7 +63,8 @@
  *   + 2  OK_Appear79[2]  (u8[2])
  *   + 2  Extra_Counter[2] (u8[2])
  *   + 8  Demo_Ptr[2]     (u16*[2], two 4-byte pointers on ARM32)
- *   - 2  Random_ix16_bg  (s16, removed — see GameState_Save comment)
+ *   - 2  Random_ix16_bg  (s16, removed by that port; RESTORED later — see
+ *                         the re-pin note at the bottom of this comment)
  *   - 2  padding re-absorbed by the field-layout shuffle above
  *   -----
  *   + 8  net
@@ -102,8 +104,24 @@
  * probe (deliberate `extern char probe[sizeof(GameState)]` vs
  * `extern char probe[1]` redeclaration conflict; compiler reported
  * 'char[17684]', and the same probe reproduces 'char[17676]' on the
- * pre-change header, validating the environment). 17676 + 8 = 17684. */
-#define EXPECTED_GAME_STATE_SIZE 17684
+ * pre-change header, validating the environment). 17676 + 8 = 17684.
+ *
+ * Restoring Random_ix16_bg (s16, put back between Random_ix32_ex_com and
+ * Opening_Now — the #298 port had dropped it on a premise that is false on
+ * this fork; see the GameState_Save comment) grew this by +4, not +2: the
+ * field lands in a run of s16s that ends at `struct _TASK task[11]`, so the
+ * 2 payload bytes turn an even halfword count into an odd one and 2 bytes of
+ * realignment padding follow. Re-measured, not computed — same clang
+ * --target=arm-linux-gnueabihf redeclaration probe as above (`extern char
+ * probe[sizeof(GameState)]` vs `extern char probe[1]`), which reported
+ * 'char[17688]' after the change and reproduced 'char[17684]' on the
+ * pre-change header. 17684 + 4 = 17688.
+ *
+ * effl8_colorram[4][12] (u16) appended at the end of the struct grew this by
+ * a clean +96: 4 rows x 12 u16 = 96 bytes of payload landing on the struct's
+ * 4-byte alignment with no padding on either side. Re-measured with the same
+ * probe: 'char[17784]'. 17688 + 96 = 17784. */
+#define EXPECTED_GAME_STATE_SIZE 17784
 #define EXPECTED_TASK_SIZE 16
 
 _Static_assert(sizeof(GameState) == EXPECTED_GAME_STATE_SIZE,
@@ -137,6 +155,25 @@ _Static_assert(sizeof(struct _TASK) == EXPECTED_TASK_SIZE,
 #define GS_SAVE(member)                                                                                                 \
     GS_ASSERT_SAME_SIZE(member);                                                                                        \
     SDL_memcpy(&dst->member, &member, sizeof(member))
+
+/* ColorRAM rows touched by Makoto's SA buff effect (effect/effl8.c), derived
+ * from effl8.c:25-26:
+ *   step_xy_table = (s16*)ColorRAM[(master_id == 1) * 16]  -> row 0  / row 16
+ *   move_xy_table = step_xy_table + 512                    -> row 8  / row 24
+ *     (512 u16 == 8 rows of 64)
+ * effl8 reads 12 entries from step_xy_table (save_old_color_data, 12
+ * iterations) and writes 12 entries to BOTH tables (get_new_color_data_L8 and
+ * load_old_color_data, also 12), so the full mutated window is exactly these
+ * four rows' first 12 u16. Keep in sync with effl8.c if that addressing
+ * changes; the whole point of pinning it here is that ColorRAM is otherwise
+ * outside the save set. */
+#define EFFL8_COLORRAM_ROW_COUNT 4
+static const int EFFL8_COLORRAM_ROWS[EFFL8_COLORRAM_ROW_COUNT] = { 0, 8, 16, 24 };
+_Static_assert(sizeof(((GameState*)0)->effl8_colorram) / sizeof(((GameState*)0)->effl8_colorram[0]) ==
+                   EFFL8_COLORRAM_ROW_COUNT,
+               "effl8_colorram row count must match EFFL8_COLORRAM_ROWS");
+_Static_assert(sizeof(((GameState*)0)->effl8_colorram[0]) <= sizeof(ColorRAM[0]),
+               "effl8_colorram row slice must fit inside a ColorRAM row");
 
 void GameState_Save(GameState* dst) {
     if (!dst)
@@ -591,8 +628,24 @@ void GameState_Save(GameState* dst) {
     GS_SAVE(Random_ix32_com);
     GS_SAVE(Random_ix16_ex_com);
     GS_SAVE(Random_ix32_ex_com);
-    // Random_ix16_bg is left out on purpose: it only drives stage flashing, and the
-    // state deciding when to draw from it isn't saved.
+    /* Random_ix16_bg IS saved. The upstream #298 port (e57b16bd) dropped it
+     * with the rationale "it only drives stage flashing, and the state
+     * deciding when to draw from it isn't saved" — the second clause is
+     * factually wrong on this fork. random_16_bg() (pls02.c:734-743) is
+     * called only from scr_trans() (stage/bg.c:811, 948, 949), and every
+     * field that call site writes from the result — stage_flash,
+     * stage_ftimer, rw_dat[0] (rw_cnt/rwd_ptr/brw_ptr) and rw3col_ptr — is
+     * GS_SAVEd right below in the `bg` block. Since step_game() runs
+     * njUserMain() unconditionally on rolled-back frames, an unsaved index
+     * advances while its saved consumers are rewound, so the saved BG-flash
+     * state drifts from the no-rollback timeline. Confirmed empirically by
+     * the rollback-determinism harness (makoto-sa3-super, stage 3): the
+     * index plus rw_dat/stage_flash/stage_ftimer all went DIVERGENT(+
+     * FEEDBACK) from frames 347-349 and stayed divergent to the end of the
+     * run. Severity is cosmetic cross-peer (none of these four are in the
+     * SessionHealthMsg checksum), but it is a real rollback divergence —
+     * save the index. */
+    GS_SAVE(Random_ix16_bg);
     GS_SAVE(Opening_Now);
     GS_SAVE(task);
 
@@ -848,6 +901,13 @@ void GameState_Save(GameState* dst) {
     {
         extern u32 spmv_ng_save[2];
         SDL_memcpy(&dst->spmv_ng_save, spmv_ng_save, sizeof(spmv_ng_save));
+    }
+
+    /* effl8_colorram — the ColorRAM rows Makoto's SA buff effect latches from
+     * and overwrites. See the GameState struct comment for the full rationale
+     * and EFFL8_COLORRAM_ROWS for how the rows are derived from effl8.c. */
+    for (int i = 0; i < EFFL8_COLORRAM_ROW_COUNT; i++) {
+        SDL_memcpy(dst->effl8_colorram[i], ColorRAM[EFFL8_COLORRAM_ROWS[i]], sizeof(dst->effl8_colorram[i]));
     }
 }
 
@@ -1308,6 +1368,7 @@ void GameState_Load(const GameState* src) {
     GS_LOAD(Random_ix32_com);
     GS_LOAD(Random_ix16_ex_com);
     GS_LOAD(Random_ix32_ex_com);
+    GS_LOAD(Random_ix16_bg); // see the GameState_Save comment for why this is saved
     GS_LOAD(Opening_Now);
     GS_LOAD(task);
 
@@ -1558,6 +1619,13 @@ void GameState_Load(const GameState* src) {
     {
         extern u32 spmv_ng_save[2];
         SDL_memcpy(spmv_ng_save, &src->spmv_ng_save, sizeof(spmv_ng_save));
+    }
+
+    /* effl8_colorram restore — rewinds the palette window effl8 latches from,
+     * so a rollback that straddles the SA activation cannot make routine 0
+     * re-latch already-buffed colours. See GameState_Save. */
+    for (int i = 0; i < EFFL8_COLORRAM_ROW_COUNT; i++) {
+        SDL_memcpy(ColorRAM[EFFL8_COLORRAM_ROWS[i]], src->effl8_colorram[i], sizeof(src->effl8_colorram[i]));
     }
 }
 

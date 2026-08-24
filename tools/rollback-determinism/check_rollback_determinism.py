@@ -391,17 +391,106 @@ def allowlist_match(name, allowlist):
     return None
 
 
+# Saved globals the `GS_SAVE(...)` regex below structurally cannot see.
+#
+# HAND_ROLLED_GS_SAVES: four globals are saved with a local `extern` +
+# explicit SDL_memcpy block instead of the GS_SAVE macro, because the macro
+# takes a bare name and these are externs with no header the save file
+# includes (game_state.c, the `chainex_check`/`Color7`/`ca_check_flag`/
+# `spmv_ng_save` blocks near the end of GameState_Save). Missing them is not
+# cosmetic: they are FOUR OF THE FIVE historic whitelist escapees this
+# harness exists to catch, so a regression in any of them would print plain
+# DIVERGENT instead of DIVERGENT+FEEDBACK, losing exactly the signal that
+# says "saved state drifted, so something is feeding back".
+HAND_ROLLED_GS_SAVES = ("chainex_check", "Color7", "ca_check_flag", "spmv_ng_save")
+
+# PARTIAL_GS_SAVES: GameState field -> the global it saves a SLICE of. These
+# are presence-checked exactly like HAND_ROLLED_GS_SAVES, but deliberately NOT
+# added to the saved-name set: only part of the global is restored, so tagging
+# the whole symbol as saved would mislabel a divergence in the unsaved
+# remainder as FEEDBACK. The check exists so the slice save can't be dropped
+# silently.
+PARTIAL_GS_SAVES = {"effl8_colorram": "ColorRAM"}
+
+# EffectState globals are saved through gather_state(), not GS_SAVE.
+EFFECT_STATE_SAVES = ("frw", "frwque", "frwctr", "frwctr_min",
+                      "head_ix", "tail_ix", "exec_tm")
+
+# Floor for the macro-extracted name count. The set only ever grows in normal
+# work (adding a field to the save set), so a DROP means the regex stopped
+# matching — e.g. someone renamed/reshaped the GS_SAVE macro — which would
+# silently blind the feedback detector rather than fail. Raise this when the
+# save set legitimately grows; never lower it to make a run pass.
+MIN_GS_SAVE_MACRO_NAMES = 600
+
+
 def load_gs_save_names():
-    """Symbol names covered by GS_SAVE in game_state.c (the whitelist under
-    test), used to tag feedback divergence."""
+    """Symbol names covered by the rollback save set in game_state.c (the
+    whitelist under test), used to tag feedback divergence.
+
+    Fails the run (exit 2) rather than returning a quietly-degraded set: an
+    under-populated whitelist downgrades DIVERGENT+FEEDBACK findings to plain
+    DIVERGENT, which is a silent loss of the harness's sharpest signal.
+    """
     path = os.path.join(REPO_ROOT, "src", "netplay", "game_state.c")
-    names = set()
     with open(path) as f:
-        for m in re.finditer(r"GS_SAVE\(([A-Za-z_][A-Za-z_0-9]*)\)", f.read()):
-            names.add(m.group(1))
-    # EffectState globals are saved through gather_state, not GS_SAVE.
-    names.update({"frw", "frwque", "frwctr", "frwctr_min",
-                  "head_ix", "tail_ix", "exec_tm"})
+        text = f.read()
+
+    names = set(re.findall(r"GS_SAVE\(([A-Za-z_][A-Za-z_0-9]*)\)", text))
+    if len(names) < MIN_GS_SAVE_MACRO_NAMES:
+        fail(f"GS_SAVE extraction recognised only {len(names)} names in "
+             f"{path} (floor is {MIN_GS_SAVE_MACRO_NAMES}). The save-set "
+             f"regex has gone stale — feedback tagging would be wrong. Fix "
+             f"the extraction in load_gs_save_names(), do not lower the floor.")
+
+    # Every hand-rolled/partial entry must still be findable on BOTH halves of
+    # the round trip: `dst->NAME` in GameState_Save and `src->NAME` in
+    # GameState_Load. Checking only one half would let a rename that drops the
+    # save while leaving the load (or vice versa) pass silently — which is the
+    # precise failure mode this guard exists to prevent.
+    def both_halves_present(field):
+        return (re.search(r"dst->" + re.escape(field) + r"\b", text) and
+                re.search(r"src->" + re.escape(field) + r"\b", text))
+
+    missing = [n for n in HAND_ROLLED_GS_SAVES if not both_halves_present(n)]
+    if missing:
+        fail(f"hand-rolled GS_SAVE/GS_LOAD block(s) not found in {path}: "
+             f"{', '.join(missing)}. These are historic whitelist escapees; "
+             f"if one was genuinely removed from the save set, update "
+             f"HAND_ROLLED_GS_SAVES — otherwise the extraction is stale.")
+    names.update(HAND_ROLLED_GS_SAVES)
+
+    partial_missing = [f"{field} (slice of {glob})"
+                       for field, glob in PARTIAL_GS_SAVES.items()
+                       if not both_halves_present(field)]
+    if partial_missing:
+        fail(f"partial GS_SAVE/GS_LOAD slice(s) not found in {path}: "
+             f"{', '.join(partial_missing)}. If a slice save was genuinely "
+             f"removed, update PARTIAL_GS_SAVES — otherwise the extraction is "
+             f"stale.")
+
+    # Same guard for the effect-pool members, which live in the EffectState
+    # struct rather than in any GS_SAVE line. Scope the search to the struct
+    # BODY — matching anywhere in the header would let a prose mention of
+    # `frw[]` in a comment satisfy the check after the member itself was
+    # renamed away.
+    header = os.path.join(REPO_ROOT, "src", "netplay", "game_state.h")
+    with open(header) as f:
+        header_text = f.read()
+    body = re.search(r"typedef\s+struct\s+EffectState\s*\{(.*?)\}\s*EffectState\s*;",
+                     header_text, re.S)
+    if not body:
+        fail(f"could not locate the EffectState struct body in {header}. The "
+             f"effect-pool save shape changed shape or moved; update "
+             f"load_gs_save_names().")
+    es_missing = [n for n in EFFECT_STATE_SAVES
+                  if not re.search(r"\b" + re.escape(n) + r"\s*[;\[]", body.group(1))]
+    if es_missing:
+        fail(f"EffectState member(s) not found in {header}: "
+             f"{', '.join(es_missing)}. The effect-pool save shape changed; "
+             f"update EFFECT_STATE_SAVES.")
+    names.update(EFFECT_STATE_SAVES)
+
     return names
 
 

@@ -66,6 +66,28 @@ A1 and B:
   simulation: this is the genuine desync class, not just untracked
   bytes.
 
+The FEEDBACK tag is only as good as the driver's model of what "saved"
+means, so `load_gs_save_names()` covers all three ways this tree saves
+state, not just the `GS_SAVE(...)` macro: the ~600 macro lines, the four
+hand-rolled `extern` + `SDL_memcpy` blocks at the end of
+`GameState_Save`/`GameState_Load` (`chainex_check`, `Color7`,
+`ca_check_flag`, `spmv_ng_save` — four of the five historic escapees,
+i.e. exactly the symbols whose regression this harness exists to catch),
+and the `EffectState` members saved through `gather_state`. A symbol
+missing from that set still reports, but as plain DIVERGENT, losing the
+"saved state drifted" signal. The extraction therefore **fails the run
+(exit 2) rather than degrading quietly** if the macro-name count drops
+below a floor, if either half of a hand-rolled or partial save goes
+missing, or if the `EffectState` struct body stops containing a member
+it expects — so a future refactor of the save macros cannot silently
+blind the detector.
+
+`GameState.effl8_colorram` is registered separately as a *partial* save
+(a 96-byte slice of `ColorRAM`): it is presence-checked but deliberately
+NOT added to the saved-name set, because tagging the whole 64 KB symbol
+as saved would mislabel a divergence in the unsaved remainder as
+FEEDBACK.
+
 If the save set were complete (modulo the allowlist), run B would be
 byte-identical to run A1 at every frame: the save/load restores
 everything the speculative frames touched, and the continuation frames
@@ -263,28 +285,86 @@ rollback cycles per rollback run):
     known escapee being fixed concurrently in another worktree; the
     harness detecting it end-to-end validates the whole pipeline.
   - `frw` (canonical view) — **DIVERGENT+FEEDBACK from frame 1061**,
-    persistently (439 divergent frames): immediately downstream of the
-    `spmv_ng_save` event, the *saved* effect-pool state itself evolves
-    differently in the rollback run — demonstrated simulation
-    divergence caused by the escapee, not just an untracked byte.
-    Expected to disappear when the `spmv_ng_save` fix lands; re-running
-    this scenario then is the fix's acceptance test.
+    persistently (439 divergent frames): the *saved* effect-pool state
+    itself evolves differently in the rollback run.
+
+    **This bullet originally claimed the `frw` divergence "is expected
+    to disappear when the `spmv_ng_save` fix lands". That was WRONG.**
+    With `spmv_ng_save` fixed, `frw` still reported
+    `DIVERGENT+FEEDBACK first=1061 frames=439` — a byte-identical
+    window before and after the fix, across two binaries with different
+    `sizeof(GameState)`, reproduced three times. Adjacency to the
+    `spmv_ng_save` event was correlation: both are effect L8, but they
+    are two independent escapees. The lesson is worth keeping: a
+    downstream FEEDBACK symbol tells you *something* upstream escaped,
+    never *which* thing, and the first plausible upstream candidate is
+    not evidence.
+
+    The real cause was **`ColorRAM`, which was on the allowlist** —
+    an allowlisted symbol feeding a saved one, which produces exactly
+    this signature (the consumer diverges, the cause is invisible).
+    `effl8.c:25-27` copies 24 bytes of live `ColorRAM` into
+    `&ewk->wu.zu_flag`, i.e. into the *saved* attack-parameter window of
+    the effect's own `frw` slot. `ColorRAM` was not rollback-restored,
+    so a speculative leg that ran the SA activation left ColorRAM
+    holding the buff colours; the rollback restored `frw` but not
+    `ColorRAM`; and the real activation one frame later re-latched the
+    ALREADY-BUFFED colours as the "old" colours it would restore at buff
+    end. The timing in the report is exact: `ColorRAM` last divergent
+    frame **1060**, `frw` first divergent frame **1061**.
+
+    How it was convicted, and the technique worth reusing: temporarily
+    remove the suspect from `allowlist.txt` and re-run. `ColorRAM` then
+    printed `DIVERGENT ... first=215 last=1060 frames=5`, putting a real
+    divergence exactly one frame ahead of the consumer's first bad
+    frame. **FIXED** by pulling the four ColorRAM row-prefixes effl8
+    mutates (`ColorRAM[0]/[8]/[16]/[24]`, first 12 u16 each) into the
+    save set as `GameState.effl8_colorram` — not by re-deriving the
+    colours from `plcol`, which would have been wrong whenever something
+    else legitimately owns those rows (`rendering/meta_col.c` writes the
+    same rows for Twelve's metamorphosis). After the fix the whole fast
+    sweep is `divergent=0 feedback=0 verdict=PASS`.
   - `Random_ix16_bg` (s16) with `rw_dat`, `stage_flash`, `stage_ftimer`
     all **DIVERGENT(+FEEDBACK) from frames 347–349**, persistently:
-    `Random_ix16_bg` is *deliberately* excluded from GS_SAVE
+    `Random_ix16_bg` was *deliberately* excluded from GS_SAVE
     ("only drives stage flashing, and the state deciding when to draw
-    from it isn't saved", `game_state.c:583`), but the harness shows the
-    exclusion is internally inconsistent — the excluded RNG index feeds
+    from it isn't saved"), but the harness shows the exclusion is
+    internally inconsistent — the excluded RNG index feeds
     `stage_flash`/`stage_ftimer`/`rw_dat`, which ARE saved, so after
     rollbacks the saved BG-flash state drifts from the no-rollback
-    timeline (stage 19; the ryu-ken scenario's stage 11 has no flash
-    path, which is why it stays clean). Cross-peer this means per-peer
-    rollback timing yields per-peer BG-flash divergence: cosmetic by
-    the checksum's standards (none of these are hashed), but `rw_dat`
-    carries the `rwd_ptr`/`brw_ptr` walk (research doc §A.3.1) and BG
-    state was central to the black-BG investigation, so it deserves a
-    real triage: either save `Random_ix16_bg` (2 bytes) or stop saving
-    the flash trio it drives — half-saving the mechanism is the bug.
+    timeline (the ryu-ken scenario's stage has no flash path, which is
+    why it stays clean). Cross-peer this means per-peer rollback timing
+    yields per-peer BG-flash divergence: cosmetic by the checksum's
+    standards (none of these are hashed), but `rw_dat` carries the
+    `rwd_ptr`/`brw_ptr` walk (research doc §A.3.1) and BG state was
+    central to the black-BG investigation. **FIXED** — the save/load
+    pair was restored (`GS_SAVE`/`GS_LOAD(Random_ix16_bg)`), which is
+    the half-saved mechanism's correct end: every deciding field was
+    already saved, so the index had to be too. Note this finding fires
+    on `makoto-sa3-super`'s stage, not only stage 19.
 
-None of these are fixed in the harness commit series (by design — they
-are triage material; `spmv_ng_save` is already being fixed elsewhere).
+`spmv_ng_save` was fixed in the separate worktree noted above and no
+longer appears on this branch. As of the 2026-08-24 follow-up pass
+(`Random_ix16_bg` restored, `effl8_colorram` added) fast mode reports:
+
+```
+RBD SUMMARY: mode=fast scenarios=2 frames=1500 period=1 depth=3 divergent=0 feedback=0 allowlisted=73 noise=182 errors=0 verdict=PASS
+```
+
+### Triage lesson: allowlisted symbols are a blind spot for causation
+
+Known limit 2 (noise-masked symbols) has a sibling the original text
+missed: **an ALLOWLISTED symbol can be the cause of a DIVERGENT+FEEDBACK
+finding, and the report will never say so.** Allowlisted rows are
+printed, but they read as context, so a real upstream cause sits in
+plain sight looking like expected fan-out. The `frw`/`ColorRAM` case
+above is exactly that.
+
+When a FEEDBACK symbol has no DIVERGENT symbol starting at or before its
+first frame, the cause is necessarily either allowlisted or noise-masked.
+The move is mechanical: re-run with the candidate removed from the
+allowlist (`--allowlist` takes any file, so no need to edit the tracked
+one) and compare `last` frames against the consumer's `first` frame.
+Nothing about an allowlist entry's reason being *true* — ColorRAM really
+is a palette transfer buffer — makes it safe to skip in this search;
+what matters is whether anything copies it into saved state.
