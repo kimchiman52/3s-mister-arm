@@ -180,7 +180,23 @@ the controls below. Ordered cheapest first; run the cheap one whenever
 you are relying on a green verdict for a decision, and the rebuild one
 whenever you have changed the capture, the differ, or the classifier.
 
-**Control A — empty allowlist (no rebuild, ~2.5 min).** `allowlist.txt`'s
+**Each control below is tagged OBSERVED or RECORDED, and the difference
+is the whole point of this section.** OBSERVED means the numbers shown
+were produced by running it on this tree and pasting the output.
+RECORDED means the expected result is carried over from an earlier
+report and has *not* been reproduced here — it is a hypothesis about
+what the control would print, not evidence. Documenting an unrun control
+as though it were verified is precisely the defect this section exists
+to correct, so if you execute a RECORDED one, paste its real output and
+re-tag it.
+
+| control | status | last actually run |
+|---|---|---|
+| A — empty allowlist | **OBSERVED** | task 54, output below |
+| B — mutation test | **RECORDED — never executed** | never; signature inferred from the `Random_ix16_bg` finding below |
+| C — rebuild base `0e464a30` | **RECORDED** | the reviewer's validation run, not reproduced since |
+
+**Control A — empty allowlist (no rebuild, ~2.5 min). OBSERVED.** `allowlist.txt`'s
 39 fnmatch patterns suppressed 43 ALLOWED rows (28 distinct symbols)
 across the two fast scenarios on this tree. Those symbols really do
 diverge because of rollback; they are judged benign, not absent. Take
@@ -209,9 +225,13 @@ the harness is broken, not the tree. This exercises everything except
 the FEEDBACK tagger (`feedback=0` here is expected: none of the
 allowlisted sinks is in the save set).
 
-**Control B — mutation test (one rebuild, ~4 min for one scenario).**
-Delete a save/load pair that fast mode provably exercises and confirm
-the exact pre-fix signature comes back. `Random_ix16_bg` is the
+**Control B — mutation test (one rebuild, ~4 min for one scenario).
+RECORDED — THIS HAS NEVER BEEN EXECUTED.** The recipe's mechanics were
+verified (both `sed`s apply, extraction passes at 607/607), but the run
+itself was not performed, so the result below is what it *should* print,
+derived from the historical `Random_ix16_bg` finding — not something
+anyone has watched happen. Delete a save/load pair that fast mode
+provably exercises and confirm the exact pre-fix signature comes back. `Random_ix16_bg` is the
 convenient one, because its historical failure is recorded below in
 full:
 
@@ -224,7 +244,8 @@ sed -i '' 's/^MIN_GS_SAVE_MACRO_NAMES = 608$/MIN_GS_SAVE_MACRO_NAMES = 607/' \
 tools/rollback-determinism/run.sh fast --scenario 'makoto*'
 ```
 
-Expected: exit **1**, with `Random_ix16_bg` DIVERGENT and
+Expected (UNVERIFIED — see status above): exit **1**, with
+`Random_ix16_bg` DIVERGENT and
 `rw_dat`/`stage_flash`/`stage_ftimer` DIVERGENT+FEEDBACK from around
 frames 347–349 — i.e. the finding written up under
 "`makoto-sa3-super`: 6 divergent" below. This is the control that
@@ -238,7 +259,9 @@ name count drops below `MIN_GS_SAVE_MACRO_NAMES`, which is kept flush
 with the real count on purpose. Exit 2 is a *harness* failure, not a
 finding — if you get it, you are testing the guards, not the tagger.
 
-**Control C — historical, for the record.** The harness was validated
+**Control C — historical, for the record. RECORDED, not reproduced.**
+This comes from the reviewer's validation run and has not been repeated
+since; treat the number as a citation, not a measurement. The harness was validated
 against base commit `0e464a30` (before the desync-lane fixes), which
 reproduces `divergent=5`. Use this only if you suspect the fixes
 themselves are what changed the verdict.
