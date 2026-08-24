@@ -3358,6 +3358,140 @@ done:
     return (rc == 0 && fail_count == fails_before) ? 0 : 1;
 }
 
+/*
+ * 16E — the HOST half. The rung exists on both roles and they take
+ * different code paths to reach it (the joiner runs inline in its own
+ * worker; the host runs on the bilateral-punch worker and has to rebuild
+ * the signal endpoint and the advertised-tuple session key from scratch,
+ * because the rendezvous worker has already exited by then). Covering
+ * only the joiner would leave the entire host reconstruction unexercised.
+ *
+ * Drives the REAL BeginHost: HOST_WAITING -> REGISTER -> synthetic
+ * DELIVER -> bilateral-punch worker (no-oped by force-relay) -> relay
+ * rung -> s_bilateral_handoff_pending -> Tick's main-thread do_handoff.
+ */
+static int relay_host_subrun(void) {
+    const char* tag = "test16E";
+    const int fails_before = fail_count;
+
+    unsigned short server_port = 0, relay_port = 0;
+    int server_sock = open_udp_on_localhost(&server_port);
+    int relay_sock = open_udp_on_localhost(&relay_port);
+    if (server_sock < 0 || relay_sock < 0) {
+        FAIL(tag, "failed to bind localhost UDP sockets for the mock relay server");
+        if (server_sock >= 0) close_sock(server_sock);
+        if (relay_sock >= 0) close_sock(relay_sock);
+        return 1;
+    }
+
+    MockServerCtx ctx;
+    memset(&ctx, 0, sizeof(ctx));
+    ctx.sock = server_sock;
+    ctx.use_synth_peer = true;
+    ctx.synth_peer_ip_be = htonl(0xC6336407u); /* 198.51.100.7 (TEST-NET-2) */
+    ctx.synth_peer_port = 6000;
+    ctx.min_cookied_before_peer = 0;
+    ctx.life_secs = 30;
+    ctx.relay_mode = MOCK_RELAY_OK;
+    ctx.relay_sock = relay_sock;
+    ctx.relay_port = relay_port;
+    ctx.relay_slot = 0; /* the host is slot A */
+    for (int i = 0; i < REND_TOKEN_LEN; i++) {
+        ctx.relay_token[i] = (uint8_t)(0x50u + i);
+    }
+
+    SDL_Thread* tid = SDL_CreateThread(mock_server_thread, "rend_mock_relay_h", &ctx);
+    if (!tid) {
+        FAIL(tag, "SDL_CreateThread failed");
+        close_sock(server_sock);
+        close_sock(relay_sock);
+        return 1;
+    }
+
+    int rc = 0;
+    {
+        char url[64];
+        SDL_snprintf(url, sizeof(url), "udp://127.0.0.1:%u", (unsigned)server_port);
+        Config_SetString(CFG_KEY_NETPLAY_DIRECT_P2P_SIGNAL_URL, url);
+        Config_SetString(CFG_KEY_NETPLAY_DIRECT_P2P_REGISTER_INTERVAL_MS, "1000");
+        Config_SetString(CFG_KEY_NETPLAY_DIRECT_P2P_RELAY_BUDGET_MS, "800");
+        Config_SetBool(CFG_KEY_NETPLAY_DIRECT_P2P_FORCE_RELAY, true);
+        /* Never let a unit test install a real 1-hour UPnP mapping on
+         * whatever router the developer is behind (see test 13). */
+        Config_SetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_UPNP, true);
+    }
+    DirectP2P_TestHook_SetStunDiscover(mock_stun_discover);
+    DirectP2P_TestHook_SetStunHolePunch(mock_stun_punch);
+    s_mock_punch_calls = 0;
+    s_mock_punch_succeed_from = 0;
+    DirectP2P_TestHook_ResetHandoff();
+    s_relay_handoffs_before = 0;
+
+    DirectP2P_BeginHost(0);
+    if (!wait_for_state(DIRECT_P2P_HOST_WAITING, 25000)) {
+        fprintf(stderr, "[test_bilateral_punch] FAIL: %s: state %d, expected HOST_WAITING\n",
+                tag, (int)DirectP2P_GetState());
+        fail_count++;
+        rc = 1;
+        goto done;
+    }
+
+    if (!tick_until(pred_relay_handoff_done, 20000)) {
+        fprintf(stderr,
+                "[test_bilateral_punch] FAIL: %s: no handoff (state=%d relay_reqs=%d "
+                "grants=%d pins_ok=%d acks=%d)\n",
+                tag, (int)DirectP2P_GetState(), ctx.relay_reqs, ctx.relay_grants,
+                ctx.relay_pins_ok, ctx.relay_acks);
+        fail_count++;
+        rc = 1;
+        goto done;
+    }
+
+    {
+        char hip[64] = { 0 };
+        uint16_t hport = 0;
+        int hplayer = 0, hcount = 0;
+        bool hrelay = false;
+        DirectP2P_TestHook_LastHandoff(hip, (int)sizeof(hip), &hport, &hplayer,
+                                       &hrelay, &hcount);
+        if (hport != relay_port || strcmp(hip, "127.0.0.1") != 0) {
+            fprintf(stderr,
+                    "[test_bilateral_punch] FAIL: %s: do_handoff got %s:%u, expected the "
+                    "relay endpoint 127.0.0.1:%u\n",
+                    tag, hip, (unsigned)hport, (unsigned)relay_port);
+            fail_count++;
+            rc = 1;
+        }
+        EXPECT_TRUE("16E-handoff-flagged-relay", hrelay);
+        /* The host is player 1 — the same argument the direct and
+         * bilateral host paths pass. */
+        EXPECT_TRUE("16E-handoff-player1", hplayer == 1);
+        EXPECT_TRUE("16E-one-handoff", hcount == 1);
+        /* The host reconstructed the signal endpoint and the
+         * advertised-tuple session key on the punch worker after the
+         * rendezvous worker had exited — if either were wrong, the mock
+         * would have seen no RELAY_REQ at all. */
+        EXPECT_TRUE("16E-relay-req", ctx.relay_reqs >= 1);
+        EXPECT_TRUE("16E-relay-grant", ctx.relay_grants >= 1);
+        EXPECT_TRUE("16E-pin-authenticated", ctx.relay_pins_ok >= 1);
+        EXPECT_TRUE("16E-no-bad-pins", ctx.relay_pins_bad == 0);
+        EXPECT_TRUE("16E-pin-slot-echoes-grant", ctx.relay_pin_slot == 0);
+        EXPECT_TRUE("16E-punches-skipped", s_mock_punch_calls == 0);
+        EXPECT_TRUE("16E-status-names-relay",
+                    strstr(DirectP2P_GetStatusText(), "relay") != NULL);
+    }
+
+done:
+    DirectP2P_TestHook_RunTeardown();
+    if (DirectP2P_GetState() != DIRECT_P2P_IDLE) DirectP2P_Cancel();
+    DirectP2P_TestHook_SetStunDiscover(NULL);
+    DirectP2P_TestHook_SetStunHolePunch(NULL);
+    Config_SetBool(CFG_KEY_NETPLAY_DIRECT_P2P_FORCE_RELAY, false);
+    mock_server_stop(&ctx, tid, server_sock, server_port);
+    close_sock(relay_sock);
+    return (rc == 0 && fail_count == fails_before) ? 0 : 1;
+}
+
 static int test_relay_rung(void) {
     fprintf(stderr, "[test_bilateral_punch] test 16: S5 relay rung "
                     "(RELAY_REQ -> GRANT -> PIN -> ACK -> do_handoff)\n");
@@ -3374,14 +3508,15 @@ static int test_relay_rung(void) {
     rc |= relay_subrun("test16B", MOCK_RELAY_SILENT, CONNECT_FAIL_RELAY_UNAVAILABLE);
     rc |= relay_subrun("test16C", MOCK_RELAY_REFUSE, CONNECT_FAIL_RELAY_REFUSED);
     rc |= relay_subrun("test16D", MOCK_RELAY_NO_ACK, CONNECT_FAIL_RELAY_PIN_TIMEOUT);
+    rc |= relay_host_subrun(); /* 16E: the HOST half of the rung */
 
     SDL_SetLogOutputFunction(s_prev_log_fn, s_prev_log_ud);
     if (DirectP2P_GetState() != DIRECT_P2P_IDLE) DirectP2P_Cancel();
 
     if (rc == 0 && fail_count == fails_before) {
         fprintf(stderr,
-                "[test_bilateral_punch] test 16 OK — relay endpoint reached do_handoff, "
-                "and silent / refused / unacked relays classify as %s / %s / %s\n",
+                "[test_bilateral_punch] test 16 OK — relay endpoint reached do_handoff on "
+                "BOTH roles, and silent / refused / unacked relays classify as %s / %s / %s\n",
                 ConnectFail_Code(CONNECT_FAIL_RELAY_UNAVAILABLE),
                 ConnectFail_Code(CONNECT_FAIL_RELAY_REFUSED),
                 ConnectFail_Code(CONNECT_FAIL_RELAY_PIN_TIMEOUT));
