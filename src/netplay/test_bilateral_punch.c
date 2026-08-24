@@ -52,6 +52,7 @@
 
 #include "netplay/connect_fail.h"
 #include "netplay/direct_p2p.h"
+#include "netplay/natpmp.h" /* S7, test 18 */
 #include "netplay/net_tuning.h"
 #include "netplay/rendezvous.h"
 #include "netplay/room_code.h"
@@ -2605,6 +2606,11 @@ static int test_host_cookie_handshake(void) {
      * The port divergence test 13 asserts on is forced through the
      * captured StunResult below, not through UPnP, so nothing is lost. */
     Config_SetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_UPNP, true);
+    /* S7: same reason, the other backend. Without this a Linux test run
+     * would find a real default gateway in /proc/net/route and install a
+     * real 1-hour NAT-PMP mapping on the developer's router. (On macOS
+     * gateway discovery reports nothing, so this is belt AND braces.) */
+    Config_SetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_NATPMP, true);
     DirectP2P_BeginHost(0);
     if (!wait_for_state(DIRECT_P2P_HOST_WAITING, 25000)) {
         fprintf(stderr,
@@ -2869,6 +2875,11 @@ static int test_host_cookie_rejected(void) {
      * CONNECT_HOST_ADVISORY_MS boundary in ~1 s of wall clock by scaling
      * the elapsed clock rather than the threshold. */
     Config_SetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_UPNP, true);
+    /* S7: same reason, the other backend. Without this a Linux test run
+     * would find a real default gateway in /proc/net/route and install a
+     * real 1-hour NAT-PMP mapping on the developer's router. (On macOS
+     * gateway discovery reports nothing, so this is belt AND braces.) */
+    Config_SetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_NATPMP, true);
     DirectP2P_TestHook_SetHostAdvisoryScale(60);
 
     DirectP2P_BeginHost(0);
@@ -3204,6 +3215,11 @@ static int relay_subrun(const char* tag, int mode, ConnectFailCode expect) {
         Config_SetString(CFG_KEY_NETPLAY_DIRECT_P2P_RELAY_BUDGET_MS, "800");
         Config_SetBool(CFG_KEY_NETPLAY_DIRECT_P2P_FORCE_RELAY, true);
         Config_SetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_UPNP, true);
+        /* S7: same reason, the other backend. Without this a Linux test run
+         * would find a real default gateway in /proc/net/route and install a
+         * real 1-hour NAT-PMP mapping on the developer's router. (On macOS
+         * gateway discovery reports nothing, so this is belt AND braces.) */
+        Config_SetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_NATPMP, true);
     }
     DirectP2P_TestHook_SetSignalBudgetMs(2500);
     DirectP2P_TestHook_SetStunDiscover(mock_stun_discover);
@@ -3419,6 +3435,11 @@ static int relay_host_subrun(void) {
         /* Never let a unit test install a real 1-hour UPnP mapping on
          * whatever router the developer is behind (see test 13). */
         Config_SetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_UPNP, true);
+        /* S7: same reason, the other backend. Without this a Linux test run
+         * would find a real default gateway in /proc/net/route and install a
+         * real 1-hour NAT-PMP mapping on the developer's router. (On macOS
+         * gateway discovery reports nothing, so this is belt AND braces.) */
+        Config_SetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_NATPMP, true);
     }
     DirectP2P_TestHook_SetStunDiscover(mock_stun_discover);
     DirectP2P_TestHook_SetStunHolePunch(mock_stun_punch);
@@ -3790,6 +3811,930 @@ static int test_relay_codec(void) {
     return 1;
 }
 
+/* --- Test 18: S7 NAT-PMP / PCP port-mapping backend -------------------- */
+
+/*
+ * S7 (docs/plan-netplay-connection.md §9). Three things are under test:
+ *
+ *   (A) the CODEC, pinned to LITERAL BYTES read off the RFC diagrams —
+ *       RFC 6887 §7.1/§7.2/§11.1/§11.2 for PCP and RFC 6886 §3.2/§3.3/
+ *       §3.4 for NAT-PMP — in the spirit of test 17. natpmp.c's encoder
+ *       is NOT used to produce the expectations; if it and this test
+ *       agreed on a wrong offset the test would be worthless.
+ *
+ *   (B) the CLIENT against a localhost mock gateway: PCP success, the
+ *       RFC 6887 §9 downgrade to NAT-PMP, a refusal, and silence.
+ *
+ *   (C) that a NAT-PMP mapping lands in the SAME S1 §3.6 CGNAT gate the
+ *       UPnP mapping already goes through — with a public/CGN pair of
+ *       runs, because "the mapping was dropped" is only meaningful next
+ *       to a run where it was kept.
+ *
+ * NOTHING here may touch the developer's real router. Two independent
+ * guards: every client call goes through Natpmp_TestHook_SetGateway at a
+ * 127.0.0.1 mock, and gateway discovery is Linux-only so a macOS run
+ * cannot find a real gateway even if the hook were forgotten.
+ */
+
+/* ---- mock gateway ---- */
+
+typedef enum {
+    MOCK_GW_SILENT = 0,    /* answers nothing at all                        */
+    MOCK_GW_PCP,           /* a PCP server: MAP -> SUCCESS                   */
+    MOCK_GW_NATPMP,        /* PCP -> UNSUPP_VERSION v0; speaks NAT-PMP       */
+    MOCK_GW_NATPMP_REFUSE, /* as above, but the MAP request is refused       */
+} MockGwMode;
+
+typedef struct {
+    int sock;
+    MockGwMode mode;
+    volatile bool stop;
+    uint32_t ext_ip_be;  /* external IP the gateway claims                  */
+    uint16_t ext_port;   /* external port it grants                         */
+    uint32_t lifetime_s; /* lifetime it grants (may differ from requested)  */
+    /* Observation counters + last frames, for byte-level assertions. */
+    int pcp_reqs;
+    int pmp_addr_reqs;
+    int pmp_map_reqs;
+    uint8_t last_pcp[128];
+    int last_pcp_len;
+    uint8_t last_pmp_map[64];
+    int last_pmp_map_len;
+} MockGwCtx;
+
+static int SDLCALL mock_gateway_thread(void* arg) {
+    MockGwCtx* ctx = (MockGwCtx*)arg;
+    for (;;) {
+        uint8_t buf[256];
+        struct sockaddr_in from;
+        memset(&from, 0, sizeof(from));
+        socklen_t fl = sizeof(from);
+        const int n = (int)recvfrom(ctx->sock, (char*)buf, sizeof(buf), 0,
+                                    (struct sockaddr*)&from, &fl);
+        if (ctx->stop) return 0;
+        if (n <= 0) continue;
+
+        /* RFC 6887 Appendix A: "The first octet of the packet indicates
+         * if it is NAT-PMP (first octet zero) or PCP (first octet
+         * non-zero)." The mock dispatches exactly that way. */
+        if (buf[0] == 2) {
+            ctx->pcp_reqs++;
+            if (n <= (int)sizeof(ctx->last_pcp)) {
+                memcpy(ctx->last_pcp, buf, (size_t)n);
+                ctx->last_pcp_len = n;
+            }
+            if (ctx->mode == MOCK_GW_SILENT) continue;
+            if (ctx->mode == MOCK_GW_PCP) {
+                /* Common Response Header (RFC 6887 §7.2, 24 bytes) +
+                 * MAP response (§11.2, 36 bytes). Hand-built. */
+                uint8_t r[60];
+                memset(r, 0, sizeof(r));
+                r[0] = 2;               /* Version = 2                     */
+                r[1] = 0x80u | 1u;      /* R = 1 (response), Opcode = MAP  */
+                r[2] = 0;               /* Reserved (8 bits)               */
+                r[3] = 0;               /* Result Code = SUCCESS           */
+                r[4] = (uint8_t)(ctx->lifetime_s >> 24);
+                r[5] = (uint8_t)(ctx->lifetime_s >> 16);
+                r[6] = (uint8_t)(ctx->lifetime_s >> 8);
+                r[7] = (uint8_t)(ctx->lifetime_s);
+                r[11] = 0x2A;           /* Epoch Time, arbitrary           */
+                memcpy(&r[24], &buf[24], 12); /* Mapping Nonce, copied     */
+                r[36] = buf[36];              /* Protocol, copied          */
+                r[40] = buf[40];              /* Internal Port, copied     */
+                r[41] = buf[41];
+                r[42] = (uint8_t)(ctx->ext_port >> 8);
+                r[43] = (uint8_t)(ctx->ext_port & 0xFFu);
+                /* Assigned External IP as an IPv4-mapped IPv6 (§5). */
+                r[54] = 0xFF; r[55] = 0xFF;
+                memcpy(&r[56], &ctx->ext_ip_be, 4);
+                sendto(ctx->sock, (const char*)r, sizeof(r), 0,
+                       (struct sockaddr*)&from, fl);
+                continue;
+            }
+            /* NAT-PMP-only gateway. RFC 6886 §3.5: "If the version in the
+             * request is not zero, then the NAT-PMP server MUST return
+             * the following 'Unsupported Version' error response":
+             * Vers=0 | OP=0 | Result Code = 1 | Epoch (32 bits). */
+            uint8_t r[8];
+            memset(r, 0, sizeof(r));
+            r[0] = 0;
+            r[1] = 0;
+            r[2] = 0; r[3] = 1;
+            r[7] = 0x2A;
+            sendto(ctx->sock, (const char*)r, sizeof(r), 0,
+                   (struct sockaddr*)&from, fl);
+            continue;
+        }
+
+        if (buf[0] != 0 || ctx->mode == MOCK_GW_SILENT) continue;
+        if (ctx->mode == MOCK_GW_PCP) continue; /* a PCP-only box ignores v0 */
+
+        if (buf[1] == 0) {
+            /* Public Address Response, RFC 6886 §3.2 (12 bytes). */
+            ctx->pmp_addr_reqs++;
+            uint8_t r[12];
+            memset(r, 0, sizeof(r));
+            r[0] = 0;
+            r[1] = 128 + 0;
+            r[2] = 0; r[3] = 0;   /* Result Code = 0 */
+            r[7] = 0x2A;          /* Seconds Since Start of Epoch */
+            memcpy(&r[8], &ctx->ext_ip_be, 4);
+            sendto(ctx->sock, (const char*)r, sizeof(r), 0,
+                   (struct sockaddr*)&from, fl);
+            continue;
+        }
+        if (buf[1] == 1) {
+            /* Mapping Response, RFC 6886 §3.3 (16 bytes). */
+            ctx->pmp_map_reqs++;
+            if (n <= (int)sizeof(ctx->last_pmp_map)) {
+                memcpy(ctx->last_pmp_map, buf, (size_t)n);
+                ctx->last_pmp_map_len = n;
+            }
+            const bool refuse = (ctx->mode == MOCK_GW_NATPMP_REFUSE);
+            uint8_t r[16];
+            memset(r, 0, sizeof(r));
+            r[0] = 0;
+            r[1] = 128 + 1;
+            r[2] = 0;
+            /* §3.5 result code 2 = Not Authorized/Refused. */
+            r[3] = refuse ? 2 : 0;
+            r[7] = 0x2A;
+            r[8] = buf[4]; r[9] = buf[5]; /* Internal Port, echoed */
+            if (!refuse) {
+                r[10] = (uint8_t)(ctx->ext_port >> 8);
+                r[11] = (uint8_t)(ctx->ext_port & 0xFFu);
+                r[12] = (uint8_t)(ctx->lifetime_s >> 24);
+                r[13] = (uint8_t)(ctx->lifetime_s >> 16);
+                r[14] = (uint8_t)(ctx->lifetime_s >> 8);
+                r[15] = (uint8_t)(ctx->lifetime_s);
+            }
+            sendto(ctx->sock, (const char*)r, sizeof(r), 0,
+                   (struct sockaddr*)&from, fl);
+            continue;
+        }
+    }
+}
+
+static void mock_gateway_stop(MockGwCtx* ctx, SDL_Thread* tid,
+                              unsigned short port) {
+    ctx->stop = true;
+    struct sockaddr_in srv;
+    memset(&srv, 0, sizeof(srv));
+    srv.sin_family = AF_INET;
+    srv.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    srv.sin_port = htons(port);
+    uint8_t wake = 0xEE;
+    sendto(ctx->sock, (const char*)&wake, 1, 0, (struct sockaddr*)&srv, sizeof(srv));
+    if (tid != NULL) SDL_WaitThread(tid, NULL);
+    close_sock(ctx->sock);
+}
+
+/* Bring up a mock gateway and aim the client at it. Returns the thread,
+ * or NULL on failure. */
+static SDL_Thread* mock_gateway_start(MockGwCtx* ctx, MockGwMode mode,
+                                      uint32_t ext_ip_be, uint16_t ext_port,
+                                      uint32_t lifetime_s) {
+    unsigned short port = 0;
+    memset(ctx, 0, sizeof(*ctx));
+    ctx->sock = open_udp_on_localhost(&port);
+    if (ctx->sock < 0) return NULL;
+    ctx->mode = mode;
+    ctx->ext_ip_be = ext_ip_be;
+    ctx->ext_port = ext_port;
+    ctx->lifetime_s = lifetime_s;
+    SDL_Thread* tid = SDL_CreateThread(mock_gateway_thread, "natpmp_gw_mock", ctx);
+    if (tid == NULL) {
+        close_sock(ctx->sock);
+        return NULL;
+    }
+    Natpmp_TestHook_SetGateway("127.0.0.1", (uint16_t)port);
+    return tid;
+}
+
+/* The mock's own bound port, needed by mock_gateway_stop's wake-up. */
+static unsigned short mock_gateway_port(const MockGwCtx* ctx) {
+    struct sockaddr_in a;
+    memset(&a, 0, sizeof(a));
+    socklen_t sl = sizeof(a);
+    if (getsockname(ctx->sock, (struct sockaddr*)&a, &sl) != 0) return 0;
+    return ntohs(a.sin_port);
+}
+
+static int test_natpmp_pcp(void) {
+    fprintf(stderr, "[test_bilateral_punch] test 18: S7 NAT-PMP / PCP backend\n");
+    const int fails_before = fail_count;
+
+    /* ================= (A) codec vs literal RFC bytes ================= */
+
+    uint8_t nonce[NATPMP_PCP_NONCE_LEN];
+    for (int i = 0; i < NATPMP_PCP_NONCE_LEN; i++) nonce[i] = (uint8_t)(0xA0u + i);
+
+    {
+        /* PCP MAP request, RFC 6887 §7.1 (24-byte common header) +
+         * §11.1 (36-byte MAP block) = 60 bytes. Expectation hand-built
+         * from the figures, byte by byte. */
+        uint8_t want[NATPMP_PCP_MAP_LEN];
+        memset(want, 0, sizeof(want));
+        want[0] = 2;    /* Version = 2                                  */
+        want[1] = 1;    /* R = 0 (request) | Opcode = MAP (1)           */
+        /* want[2..4) Reserved (16 bits) = 0                            */
+        want[4] = 0x00; want[5] = 0x00; want[6] = 0x0E; want[7] = 0x10; /* 3600 */
+        /* PCP Client's IP Address, 128 bits, IPv4-mapped (§5):
+         * ::ffff:192.168.1.77 */
+        want[18] = 0xFF; want[19] = 0xFF;
+        want[20] = 192; want[21] = 168; want[22] = 1; want[23] = 77;
+        memcpy(&want[24], nonce, NATPMP_PCP_NONCE_LEN); /* Mapping Nonce */
+        want[36] = 17;  /* Protocol = UDP                               */
+        /* want[37..40) Reserved (24 bits) = 0                          */
+        want[40] = 0xD4; want[41] = 0x31; /* Internal Port 54321        */
+        want[42] = 0xD4; want[43] = 0x31; /* Suggested External 54321   */
+        /* Suggested External IP = the all-zeros address for "no
+         * preference" (§11.1: "it MUST use the address-family-specific
+         * all-zeros address (see Section 5)"). For IPv4 that is NOT 16
+         * zero bytes — §5 is explicit: "The all-zeros IPv4 address MUST
+         * be expressed by 80 bits of zeros, 16 bits of ones, and 32 bits
+         * of zeros (::ffff:0:0)." Sending bare :: would be the IPv6
+         * unspecified address in an otherwise IPv4 request. */
+        want[54] = 0xFF; want[55] = 0xFF;
+
+        struct in_addr client;
+        memset(&client, 0, sizeof(client));
+        EXPECT_TRUE("18-pton", inet_pton(AF_INET, "192.168.1.77", &client) == 1);
+
+        uint8_t got[NATPMP_PCP_MAP_LEN];
+        EXPECT_TRUE("18-pcp-build",
+                    Natpmp_BuildPcpMapRequest(got, nonce, NATPMP_PROTO_UDP, 54321,
+                                              54321, 0, (uint32_t)client.s_addr, 3600));
+        if (memcmp(got, want, sizeof(want)) != 0) {
+            int off = -1;
+            for (int i = 0; i < (int)sizeof(want); i++) {
+                if (got[i] != want[i]) { off = i; break; }
+            }
+            fprintf(stderr,
+                    "[test_bilateral_punch] FAIL: 18-pcp-req-bytes: first difference at "
+                    "offset %d (got 0x%02X, RFC 6887 §7.1/§11.1 layout wants 0x%02X)\n",
+                    off, off >= 0 ? got[off] : 0, off >= 0 ? want[off] : 0);
+            fail_count++;
+        }
+        /* And a delete is the same frame with Requested Lifetime 0
+         * (§11.1: "The value 0 indicates 'delete'."). */
+        uint8_t del[NATPMP_PCP_MAP_LEN];
+        EXPECT_TRUE("18-pcp-del-build",
+                    Natpmp_BuildPcpMapRequest(del, nonce, NATPMP_PROTO_UDP, 54321, 0, 0,
+                                              (uint32_t)client.s_addr, 0));
+        EXPECT_TRUE("18-pcp-del-lifetime0",
+                    del[4] == 0 && del[5] == 0 && del[6] == 0 && del[7] == 0);
+        EXPECT_TRUE("18-pcp-del-still-map", del[1] == 1);
+    }
+
+    {
+        /* NAT-PMP public-address request, RFC 6886 §3.2: two bytes,
+         * "Vers = 0 | OP = 0". */
+        uint8_t a[NATPMP_PMP_ADDR_REQ_LEN];
+        EXPECT_TRUE("18-pmp-addr-build", Natpmp_BuildPmpAddrRequest(a));
+        EXPECT_TRUE("18-pmp-addr-bytes", a[0] == 0 && a[1] == 0);
+        EXPECT_TRUE("18-pmp-addr-len", (int)sizeof(a) == 2);
+    }
+
+    {
+        /* NAT-PMP mapping request, RFC 6886 §3.3, 12 bytes:
+         * Vers=0 | OP=x | Reserved(2) | Internal Port(2) |
+         * Suggested External Port(2) | Lifetime(4), network byte order. */
+        uint8_t want[NATPMP_PMP_MAP_REQ_LEN];
+        memset(want, 0, sizeof(want));
+        want[0] = 0;    /* Vers = 0                       */
+        want[1] = 1;    /* OP = 1 (Map UDP)               */
+        want[4] = 0xD4; want[5] = 0x31; /* Internal 54321 */
+        want[6] = 0x9C; want[7] = 0x41; /* Suggested ext 40001 */
+        want[8] = 0x00; want[9] = 0x00; want[10] = 0x0E; want[11] = 0x10; /* 3600 */
+
+        uint8_t got[NATPMP_PMP_MAP_REQ_LEN];
+        EXPECT_TRUE("18-pmp-map-build",
+                    Natpmp_BuildPmpMapRequest(got, NATPMP_PMP_OP_MAP_UDP, 54321, 40001,
+                                              3600));
+        if (memcmp(got, want, sizeof(want)) != 0) {
+            int off = -1;
+            for (int i = 0; i < (int)sizeof(want); i++) {
+                if (got[i] != want[i]) { off = i; break; }
+            }
+            fprintf(stderr,
+                    "[test_bilateral_punch] FAIL: 18-pmp-req-bytes: first difference at "
+                    "offset %d (got 0x%02X, RFC 6886 §3.3 layout wants 0x%02X)\n",
+                    off, off >= 0 ? got[off] : 0, off >= 0 ? want[off] : 0);
+            fail_count++;
+        }
+
+        /* RFC 6886 §3.4 deletion: lifetime 0 AND "The Suggested External
+         * Port MUST be set to zero by the client on sending". The builder
+         * must force it even when the caller passes one. */
+        uint8_t del[NATPMP_PMP_MAP_REQ_LEN];
+        EXPECT_TRUE("18-pmp-del-build",
+                    Natpmp_BuildPmpMapRequest(del, NATPMP_PMP_OP_MAP_UDP, 54321, 40001, 0));
+        if (del[6] != 0 || del[7] != 0) {
+            fprintf(stderr,
+                    "[test_bilateral_punch] FAIL: 18-pmp-del-extport0: deletion request "
+                    "carries Suggested External Port %u; RFC 6886 §3.4 says it MUST be "
+                    "zero on sending\n",
+                    (unsigned)((del[6] << 8) | del[7]));
+            fail_count++;
+        }
+        EXPECT_TRUE("18-pmp-del-lifetime0",
+                    del[8] == 0 && del[9] == 0 && del[10] == 0 && del[11] == 0);
+        EXPECT_TRUE("18-pmp-del-internal-kept", del[4] == 0xD4 && del[5] == 0x31);
+        /* Opcodes other than 1/2 do not exist on this wire (§3.3). */
+        uint8_t junk[NATPMP_PMP_MAP_REQ_LEN];
+        EXPECT_FALSE("18-pmp-op7", Natpmp_BuildPmpMapRequest(junk, 7, 1, 1, 60));
+    }
+
+    /* ---- PCP response parsing: success, then the reject table ---- */
+
+    uint8_t resp[NATPMP_PCP_MAP_LEN];
+    memset(resp, 0, sizeof(resp));
+    resp[0] = 2;
+    resp[1] = 0x80u | 1u;          /* R = 1, Opcode = MAP        */
+    resp[3] = 0;                   /* SUCCESS                    */
+    resp[4] = 0; resp[5] = 0; resp[6] = 0x02; resp[7] = 0x58; /* lifetime 600 */
+    resp[8] = 0; resp[9] = 0; resp[10] = 0; resp[11] = 0x2A;  /* epoch 42     */
+    memcpy(&resp[24], nonce, NATPMP_PCP_NONCE_LEN);
+    resp[36] = 17;
+    resp[40] = 0xD4; resp[41] = 0x31;  /* internal 54321          */
+    resp[42] = 0x9C; resp[43] = 0x41;  /* assigned external 40001 */
+    resp[54] = 0xFF; resp[55] = 0xFF;  /* ::ffff:198.51.100.7     */
+    resp[56] = 198; resp[57] = 51; resp[58] = 100; resp[59] = 7;
+
+    {
+        NatpmpPcpMap m;
+        memset(&m, 0xAA, sizeof(m));
+        EXPECT_TRUE("18-pcp-parse-ok",
+                    Natpmp_ParsePcpMapResponse(resp, (int)sizeof(resp), nonce,
+                                               NATPMP_PROTO_UDP, 54321, &m) ==
+                        NATPMP_PARSE_OK);
+        EXPECT_TRUE("18-pcp-parse-lifetime", m.lifetime_s == 600u);
+        EXPECT_TRUE("18-pcp-parse-epoch", m.epoch_s == 42u);
+        EXPECT_TRUE("18-pcp-parse-internal", m.internal_port == 54321);
+        if (m.external_port != 40001) {
+            fprintf(stderr,
+                    "[test_bilateral_punch] FAIL: 18-pcp-parse-extport: got %u, expected "
+                    "40001 (Assigned External Port is big-endian at [42..44), RFC 6887 "
+                    "§11.2)\n", (unsigned)m.external_port);
+            fail_count++;
+        }
+        struct in_addr got_ip;
+        memcpy(&got_ip.s_addr, &m.external_ip_be, 4);
+        char ipbuf[64] = { 0 };
+        inet_ntop(AF_INET, &got_ip, ipbuf, sizeof(ipbuf));
+        if (strcmp(ipbuf, "198.51.100.7") != 0) {
+            fprintf(stderr,
+                    "[test_bilateral_punch] FAIL: 18-pcp-parse-extip: got %s, expected "
+                    "198.51.100.7 (IPv4-mapped IPv6 at [44..60), RFC 6887 §5)\n", ipbuf);
+            fail_count++;
+        }
+    }
+
+    {
+        /* A forged or misdirected frame must never become a mapping.
+         * Every row below is NOT_OURS — "keep listening", not "refused"
+         * — and must leave the output zeroed. */
+        struct { const char* tag; int off; uint8_t val; } bad[] = {
+            { "18-pcp-rej-version",  0,  3    },  /* not version 2            */
+            { "18-pcp-rej-rbit",     1,  0x01 },  /* R clear: it is a request */
+            { "18-pcp-rej-opcode",   1,  0x82 },  /* R set, but PEER not MAP  */
+            { "18-pcp-rej-nonce",    24, 0x00 },  /* someone else's mapping   */
+            { "18-pcp-rej-nonce2",   35, 0x00 },  /* last nonce byte counts   */
+            { "18-pcp-rej-protocol", 36, 6    },  /* TCP answer to a UDP ask  */
+            { "18-pcp-rej-intport",  40, 0x00 },  /* not the port we asked    */
+            { "18-pcp-rej-v4mapped", 50, 0x01 },  /* §5: all 96 bits checked  */
+            { "18-pcp-rej-v4mapped2",54, 0xFE },  /* 0xFFFF marker corrupted  */
+        };
+        for (size_t i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
+            uint8_t b[NATPMP_PCP_MAP_LEN];
+            memcpy(b, resp, sizeof(b));
+            b[bad[i].off] = bad[i].val;
+            NatpmpPcpMap m;
+            memset(&m, 0xAA, sizeof(m));
+            const NatpmpParse v = Natpmp_ParsePcpMapResponse(b, (int)sizeof(b), nonce,
+                                                             NATPMP_PROTO_UDP, 54321, &m);
+            if (v != NATPMP_PARSE_NOT_OURS) {
+                fprintf(stderr,
+                        "[test_bilateral_punch] FAIL: %s: verdict %d, expected "
+                        "NATPMP_PARSE_NOT_OURS (%d) — a frame that is not provably an "
+                        "answer to our request must never be accepted\n",
+                        bad[i].tag, (int)v, (int)NATPMP_PARSE_NOT_OURS);
+                fail_count++;
+            }
+            EXPECT_TRUE("18-pcp-rej-zeroes",
+                        m.external_port == 0 && m.external_ip_be == 0 &&
+                            m.lifetime_s == 0);
+        }
+        /* Short frames, including one truncated one byte below the
+         * documented 60. */
+        NatpmpPcpMap m;
+        for (int len = 0; len < NATPMP_PCP_MAP_LEN; len++) {
+            uint8_t b[NATPMP_PCP_MAP_LEN];
+            memcpy(b, resp, sizeof(b));
+            memset(&m, 0xAA, sizeof(m));
+            if (Natpmp_ParsePcpMapResponse(b, len, nonce, NATPMP_PROTO_UDP, 54321, &m) ==
+                NATPMP_PARSE_OK) {
+                fprintf(stderr,
+                        "[test_bilateral_punch] FAIL: 18-pcp-short: a %d-byte frame parsed "
+                        "OK; the PCP MAP response is 60 bytes (RFC 6887 §7.2 + §11.2)\n",
+                        len);
+                fail_count++;
+                break;
+            }
+        }
+
+        /* An error result for OUR request is REFUSED, not NOT_OURS, and
+         * must not carry a port out. */
+        uint8_t e[NATPMP_PCP_MAP_LEN];
+        memcpy(e, resp, sizeof(e));
+        e[3] = (uint8_t)NATPMP_PCP_NO_RESOURCES; /* 8, RFC 6887 §7.4 */
+        memset(&m, 0xAA, sizeof(m));
+        EXPECT_TRUE("18-pcp-refused",
+                    Natpmp_ParsePcpMapResponse(e, (int)sizeof(e), nonce, NATPMP_PROTO_UDP,
+                                               54321, &m) == NATPMP_PARSE_REFUSED);
+        EXPECT_TRUE("18-pcp-refused-code", m.result_code == 8);
+        EXPECT_TRUE("18-pcp-refused-noport", m.external_port == 0);
+
+        /* THE DOWNGRADE SIGNAL. RFC 6886 §3.5's Unsupported Version frame
+         * is Vers=0 | OP=0 | Result Code=1 | Epoch — eight bytes, and its
+         * OP byte has the PCP R bit CLEAR. RFC 6887 §9 step 4 says a
+         * version-zero UNSUPP_VERSION means "this is a NAT-PMP server". */
+        uint8_t uv[8];
+        memset(uv, 0, sizeof(uv));
+        uv[0] = 0; uv[1] = 0; uv[2] = 0; uv[3] = 1; uv[7] = 0x2A;
+        memset(&m, 0xAA, sizeof(m));
+        const NatpmpParse dv = Natpmp_ParsePcpMapResponse(uv, (int)sizeof(uv), nonce,
+                                                          NATPMP_PROTO_UDP, 54321, &m);
+        if (dv != NATPMP_PARSE_PCP_IS_NATPMP) {
+            fprintf(stderr,
+                    "[test_bilateral_punch] FAIL: 18-pcp-downgrade: verdict %d, expected "
+                    "NATPMP_PARSE_PCP_IS_NATPMP (%d). RFC 6887 §9 step 4: a version-zero "
+                    "UNSUPP_VERSION response IS the NAT-PMP server signal; discarding it "
+                    "(e.g. by testing the R bit first) makes the gateway look silent.\n",
+                    (int)dv, (int)NATPMP_PARSE_PCP_IS_NATPMP);
+            fail_count++;
+        }
+    }
+
+    /* ---- NAT-PMP response parsing ---- */
+    {
+        uint8_t mr[NATPMP_PMP_MAP_RESP_LEN];
+        memset(mr, 0, sizeof(mr));
+        mr[0] = 0;
+        mr[1] = 128 + 1;
+        mr[7] = 0x2A;                      /* epoch 42                */
+        mr[8] = 0xD4; mr[9] = 0x31;        /* internal 54321          */
+        mr[10] = 0x9C; mr[11] = 0x41;      /* mapped external 40001   */
+        mr[14] = 0x0E; mr[15] = 0x10;      /* lifetime 3600           */
+
+        NatpmpPmpMap m;
+        memset(&m, 0xAA, sizeof(m));
+        EXPECT_TRUE("18-pmp-parse-ok",
+                    Natpmp_ParsePmpMapResponse(mr, (int)sizeof(mr), NATPMP_PMP_OP_MAP_UDP,
+                                               54321, &m) == NATPMP_PARSE_OK);
+        EXPECT_TRUE("18-pmp-parse-extport", m.external_port == 40001);
+        EXPECT_TRUE("18-pmp-parse-lifetime", m.lifetime_s == 3600u);
+        EXPECT_TRUE("18-pmp-parse-epoch", m.epoch_s == 42u);
+
+        /* Reject table. */
+        struct { const char* tag; int off; uint8_t val; } bad[] = {
+            { "18-pmp-rej-version", 0, 1        }, /* Vers must be 0            */
+            { "18-pmp-rej-op-req",  1, 1        }, /* a request, not a response */
+            { "18-pmp-rej-op-tcp",  1, 128 + 2  }, /* §3.3: 'x' MUST match      */
+            { "18-pmp-rej-intport", 8, 0x00     }, /* §3.5 correlator mismatch  */
+        };
+        for (size_t i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
+            uint8_t b[NATPMP_PMP_MAP_RESP_LEN];
+            memcpy(b, mr, sizeof(b));
+            b[bad[i].off] = bad[i].val;
+            memset(&m, 0xAA, sizeof(m));
+            const NatpmpParse v = Natpmp_ParsePmpMapResponse(
+                b, (int)sizeof(b), NATPMP_PMP_OP_MAP_UDP, 54321, &m);
+            if (v != NATPMP_PARSE_NOT_OURS) {
+                fprintf(stderr,
+                        "[test_bilateral_punch] FAIL: %s: verdict %d, expected "
+                        "NATPMP_PARSE_NOT_OURS (%d)\n",
+                        bad[i].tag, (int)v, (int)NATPMP_PARSE_NOT_OURS);
+                fail_count++;
+            }
+            EXPECT_TRUE("18-pmp-rej-zeroes", m.external_port == 0 && m.lifetime_s == 0);
+        }
+        for (int len = 0; len < NATPMP_PMP_MAP_RESP_LEN; len++) {
+            memset(&m, 0xAA, sizeof(m));
+            if (Natpmp_ParsePmpMapResponse(mr, len, NATPMP_PMP_OP_MAP_UDP, 54321, &m) ==
+                NATPMP_PARSE_OK) {
+                fprintf(stderr,
+                        "[test_bilateral_punch] FAIL: 18-pmp-short: a %d-byte frame parsed "
+                        "OK; the NAT-PMP mapping response is 16 bytes (RFC 6886 §3.3)\n",
+                        len);
+                fail_count++;
+                break;
+            }
+        }
+
+        /* A non-zero result code (RFC 6886 §3.5) is a refusal, and the
+         * external port / lifetime must NOT come out with it. */
+        for (uint8_t rc = 1; rc <= 5; rc++) {
+            uint8_t b[NATPMP_PMP_MAP_RESP_LEN];
+            memcpy(b, mr, sizeof(b));
+            b[3] = rc;
+            memset(&m, 0xAA, sizeof(m));
+            const NatpmpParse v = Natpmp_ParsePmpMapResponse(
+                b, (int)sizeof(b), NATPMP_PMP_OP_MAP_UDP, 54321, &m);
+            if (v != NATPMP_PARSE_REFUSED) {
+                fprintf(stderr,
+                        "[test_bilateral_punch] FAIL: 18-pmp-refuse-%u: verdict %d, "
+                        "expected NATPMP_PARSE_REFUSED (%d)\n",
+                        (unsigned)rc, (int)v, (int)NATPMP_PARSE_REFUSED);
+                fail_count++;
+            }
+            EXPECT_TRUE("18-pmp-refuse-code", m.result_code == rc);
+            EXPECT_TRUE("18-pmp-refuse-noport",
+                        m.external_port == 0 && m.lifetime_s == 0);
+        }
+
+        /* Public-address response, RFC 6886 §3.2. */
+        uint8_t ar[NATPMP_PMP_ADDR_RESP_LEN];
+        memset(ar, 0, sizeof(ar));
+        ar[0] = 0; ar[1] = 128 + 0; ar[7] = 0x2A;
+        ar[8] = 198; ar[9] = 51; ar[10] = 100; ar[11] = 7;
+        NatpmpPmpAddr a;
+        memset(&a, 0xAA, sizeof(a));
+        EXPECT_TRUE("18-pmp-addr-parse",
+                    Natpmp_ParsePmpAddrResponse(ar, (int)sizeof(ar), &a) ==
+                        NATPMP_PARSE_OK);
+        {
+            struct in_addr got_ip;
+            memcpy(&got_ip.s_addr, &a.external_ip_be, 4);
+            char ipbuf[64] = { 0 };
+            inet_ntop(AF_INET, &got_ip, ipbuf, sizeof(ipbuf));
+            EXPECT_TRUE("18-pmp-addr-ip", strcmp(ipbuf, "198.51.100.7") == 0);
+        }
+        ar[1] = 128 + 1; /* a mapping response, not an address response */
+        memset(&a, 0xAA, sizeof(a));
+        EXPECT_TRUE("18-pmp-addr-rej-op",
+                    Natpmp_ParsePmpAddrResponse(ar, (int)sizeof(ar), &a) ==
+                        NATPMP_PARSE_NOT_OURS);
+        /* §3.2: on a non-zero result "the value of the External IPv4
+         * Address field is undefined ... MUST be ignored on reception." */
+        ar[1] = 128 + 0;
+        ar[3] = 3; /* Network Failure */
+        memset(&a, 0xAA, sizeof(a));
+        EXPECT_TRUE("18-pmp-addr-refused",
+                    Natpmp_ParsePmpAddrResponse(ar, (int)sizeof(ar), &a) ==
+                        NATPMP_PARSE_REFUSED);
+        EXPECT_TRUE("18-pmp-addr-refused-noip", a.external_ip_be == 0);
+    }
+
+    /* ================= (B) the client vs a mock gateway ================ */
+
+    /* On this build's host platform the gateway lookup must report
+     * NOTHING when the hook is clear — that is the second guard keeping
+     * a test run off the developer's router. On Linux it may legitimately
+     * find one, so only the no-hook-set invariant is asserted here. */
+    Natpmp_TestHook_SetGateway(NULL, 0);
+#if !defined(__linux__)
+    {
+        UpnpMapping m;
+        memset(&m, 0, sizeof(m));
+        char gwip[64] = { 0 };
+        EXPECT_FALSE("18-no-gateway-off-linux",
+                     Natpmp_TestHook_DiscoverGateway(gwip, (int)sizeof(gwip)));
+        EXPECT_FALSE("18-addmapping-without-gateway",
+                     Natpmp_AddMapping(&m, 54321, 54321, PORTMAP_BACKEND_NONE, 300));
+        EXPECT_FALSE("18-addmapping-inactive", m.active);
+    }
+#endif
+
+    /* --- B1: a PCP gateway --- */
+    {
+        struct in_addr ext;
+        memset(&ext, 0, sizeof(ext));
+        inet_pton(AF_INET, "198.51.100.20", &ext);
+        MockGwCtx gw;
+        SDL_Thread* tid = mock_gateway_start(&gw, MOCK_GW_PCP, (uint32_t)ext.s_addr,
+                                             40011, 1800);
+        if (tid == NULL) {
+            FAIL("18-b1", "could not start the mock gateway");
+        } else {
+            UpnpMapping m;
+            memset(&m, 0, sizeof(m));
+            EXPECT_TRUE("18-b1-add",
+                        Natpmp_AddMapping(&m, 54321, 54321, PORTMAP_BACKEND_NONE, 2000));
+            EXPECT_TRUE("18-b1-active", m.active);
+            EXPECT_TRUE("18-b1-backend", m.backend == PORTMAP_BACKEND_PCP);
+            EXPECT_TRUE("18-b1-extport", m.external_port == 40011);
+            EXPECT_TRUE("18-b1-intport", m.internal_port == 54321);
+            EXPECT_TRUE("18-b1-lifetime", m.lifetime_s == 1800u);
+            EXPECT_TRUE("18-b1-extip", strcmp(m.external_ip, "198.51.100.20") == 0);
+            /* A PCP gateway must never have been asked in NAT-PMP. */
+            EXPECT_TRUE("18-b1-no-natpmp", gw.pmp_addr_reqs == 0 && gw.pmp_map_reqs == 0);
+            /* The PCP Client IP field must be the socket's real source
+             * address (RFC 6887 §7.1) — 127.0.0.1 here — as an
+             * IPv4-mapped IPv6 (§5). A hard-coded 0.0.0.0 would be an
+             * ADDRESS_MISMATCH (§7.4) on a real server. */
+            if (gw.last_pcp_len >= 24) {
+                EXPECT_TRUE("18-b1-client-ip-mapped",
+                            gw.last_pcp[18] == 0xFF && gw.last_pcp[19] == 0xFF);
+                EXPECT_TRUE("18-b1-client-ip-loopback",
+                            gw.last_pcp[20] == 127 && gw.last_pcp[23] == 1);
+            } else {
+                FAIL("18-b1-client-ip", "mock gateway never captured a PCP request");
+            }
+            mock_gateway_stop(&gw, tid, mock_gateway_port(&gw));
+        }
+    }
+
+    /* --- B2: a NAT-PMP-only gateway: RFC 6887 §9 downgrade --- */
+    {
+        struct in_addr ext;
+        memset(&ext, 0, sizeof(ext));
+        inet_pton(AF_INET, "198.51.100.21", &ext);
+        MockGwCtx gw;
+        SDL_Thread* tid = mock_gateway_start(&gw, MOCK_GW_NATPMP, (uint32_t)ext.s_addr,
+                                             40022, 3600);
+        if (tid == NULL) {
+            FAIL("18-b2", "could not start the mock gateway");
+        } else {
+            UpnpMapping m;
+            memset(&m, 0, sizeof(m));
+            const uint64_t t0 = SDL_GetTicks();
+            const bool ok = Natpmp_AddMapping(&m, 54321, 54321, PORTMAP_BACKEND_NONE, 2000);
+            const uint64_t dt = SDL_GetTicks() - t0;
+            if (!ok) {
+                fprintf(stderr,
+                        "[test_bilateral_punch] FAIL: 18-b2-add: the client did not get a "
+                        "mapping from a NAT-PMP-only gateway (pcp_reqs=%d addr_reqs=%d "
+                        "map_reqs=%d). RFC 6887 §9 step 4 requires downgrading to NAT-PMP "
+                        "on a version-zero UNSUPP_VERSION.\n",
+                        gw.pcp_reqs, gw.pmp_addr_reqs, gw.pmp_map_reqs);
+                fail_count++;
+            }
+            EXPECT_TRUE("18-b2-backend", m.backend == PORTMAP_BACKEND_NATPMP);
+            EXPECT_TRUE("18-b2-extport", m.external_port == 40022);
+            EXPECT_TRUE("18-b2-extip", strcmp(m.external_ip, "198.51.100.21") == 0);
+            EXPECT_TRUE("18-b2-lifetime", m.lifetime_s == 3600u);
+            EXPECT_TRUE("18-b2-tried-pcp-first", gw.pcp_reqs >= 1);
+            /* The external IP can only have come from a §3.2 public
+             * address request — a NAT-PMP mapping response carries none. */
+            EXPECT_TRUE("18-b2-asked-address", gw.pmp_addr_reqs >= 1);
+            EXPECT_TRUE("18-b2-asked-map", gw.pmp_map_reqs >= 1);
+            /* The downgrade is immediate, not a timeout: the whole
+             * exchange has to be far inside the budget. */
+            EXPECT_TRUE("18-b2-fast", dt < 1000u);
+            /* The mapping request the gateway actually received must be
+             * the RFC 6886 §3.3 frame, not something reshaped in flight. */
+            if (gw.last_pmp_map_len == 12) {
+                EXPECT_TRUE("18-b2-wire-vers", gw.last_pmp_map[0] == 0);
+                EXPECT_TRUE("18-b2-wire-op", gw.last_pmp_map[1] == 1);
+                EXPECT_TRUE("18-b2-wire-intport",
+                            ((gw.last_pmp_map[4] << 8) | gw.last_pmp_map[5]) == 54321);
+                EXPECT_TRUE("18-b2-wire-lifetime",
+                            gw.last_pmp_map[8] == 0 && gw.last_pmp_map[9] == 0 &&
+                                gw.last_pmp_map[10] == 0x0E && gw.last_pmp_map[11] == 0x10);
+            } else {
+                FAIL("18-b2-wire", "mock gateway never captured a 12-byte NAT-PMP map request");
+            }
+            mock_gateway_stop(&gw, tid, mock_gateway_port(&gw));
+        }
+    }
+
+    /* --- B3: a NAT-PMP gateway that refuses --- */
+    {
+        struct in_addr ext;
+        memset(&ext, 0, sizeof(ext));
+        inet_pton(AF_INET, "198.51.100.22", &ext);
+        MockGwCtx gw;
+        SDL_Thread* tid = mock_gateway_start(&gw, MOCK_GW_NATPMP_REFUSE,
+                                             (uint32_t)ext.s_addr, 40033, 3600);
+        if (tid == NULL) {
+            FAIL("18-b3", "could not start the mock gateway");
+        } else {
+            UpnpMapping m;
+            memset(&m, 0xAA, sizeof(m));
+            const bool ok = Natpmp_AddMapping(&m, 54321, 54321, PORTMAP_BACKEND_NONE, 2000);
+            if (ok) {
+                fprintf(stderr,
+                        "[test_bilateral_punch] FAIL: 18-b3-refused: a NAT-PMP result code "
+                        "2 (Not Authorized/Refused, RFC 6886 §3.5) became a MAPPING. A "
+                        "refusal must fail closed.\n");
+                fail_count++;
+            }
+            EXPECT_FALSE("18-b3-inactive", m.active);
+            EXPECT_TRUE("18-b3-zeroed",
+                        m.external_port == 0 && m.external_ip[0] == '\0' &&
+                            m.backend == PORTMAP_BACKEND_NONE);
+            EXPECT_TRUE("18-b3-did-ask", gw.pmp_map_reqs >= 1);
+            mock_gateway_stop(&gw, tid, mock_gateway_port(&gw));
+        }
+    }
+
+    /* --- B4: silence -> bounded timeout, no mapping, no hang --- */
+    {
+        MockGwCtx gw;
+        SDL_Thread* tid = mock_gateway_start(&gw, MOCK_GW_SILENT, 0, 0, 0);
+        if (tid == NULL) {
+            FAIL("18-b4", "could not start the mock gateway");
+        } else {
+            UpnpMapping m;
+            memset(&m, 0xAA, sizeof(m));
+            const int budget = 1200;
+            const uint64_t t0 = SDL_GetTicks();
+            const bool ok = Natpmp_AddMapping(&m, 54321, 54321, PORTMAP_BACKEND_NONE,
+                                              budget);
+            const uint64_t dt = SDL_GetTicks() - t0;
+            EXPECT_FALSE("18-b4-no-mapping", ok);
+            EXPECT_FALSE("18-b4-inactive", m.active);
+            /* The whole point of truncating RFC 6886 §3.1's ~127-second
+             * ladder: the call must come back inside its budget. Slack is
+             * generous because this machine runs the suite under load. */
+            if (dt > (uint64_t)budget + 1500u) {
+                fprintf(stderr,
+                        "[test_bilateral_punch] FAIL: 18-b4-bounded: a silent gateway held "
+                        "Natpmp_AddMapping for %u ms against a %d ms budget — the RFC 6886 "
+                        "§3.1 retransmit ladder is not being truncated by the deadline\n",
+                        (unsigned)dt, budget);
+                fail_count++;
+            }
+            /* ...and it really did retransmit rather than give up after
+             * one datagram (§3.1's 250 ms / 500 ms rungs). */
+            if (gw.pcp_reqs < 2) {
+                fprintf(stderr,
+                        "[test_bilateral_punch] FAIL: 18-b4-retransmit: the gateway saw %d "
+                        "request(s); RFC 6886 §3.1 wants a retransmit after 250 ms\n",
+                        gw.pcp_reqs);
+                fail_count++;
+            }
+            mock_gateway_stop(&gw, tid, mock_gateway_port(&gw));
+        }
+    }
+
+    /* --- B5: renewal stays on ONE backend --- */
+    {
+        struct in_addr ext;
+        memset(&ext, 0, sizeof(ext));
+        inet_pton(AF_INET, "198.51.100.23", &ext);
+        MockGwCtx gw;
+        SDL_Thread* tid = mock_gateway_start(&gw, MOCK_GW_NATPMP, (uint32_t)ext.s_addr,
+                                             40044, 120);
+        if (tid == NULL) {
+            FAIL("18-b5", "could not start the mock gateway");
+        } else {
+            UpnpMapping m;
+            memset(&m, 0, sizeof(m));
+            /* A renewal hint of NATPMP must not emit a PCP probe at all. */
+            EXPECT_TRUE("18-b5-renew",
+                        Natpmp_AddMapping(&m, 54321, 40044, PORTMAP_BACKEND_NATPMP, 2000));
+            EXPECT_TRUE("18-b5-backend", m.backend == PORTMAP_BACKEND_NATPMP);
+            if (gw.pcp_reqs != 0) {
+                fprintf(stderr,
+                        "[test_bilateral_punch] FAIL: 18-b5-no-pcp: a NAT-PMP renewal sent "
+                        "%d PCP request(s); a renewal must run only the backend that holds "
+                        "the mapping\n", gw.pcp_reqs);
+                fail_count++;
+            }
+            /* RFC 6886 §3.3: a renewal SHOULD carry the ASSIGNED external
+             * port so a rebooted gateway can recreate the same mapping. */
+            if (gw.last_pmp_map_len == 12) {
+                EXPECT_TRUE("18-b5-suggests-assigned",
+                            ((gw.last_pmp_map[6] << 8) | gw.last_pmp_map[7]) == 40044);
+            } else {
+                FAIL("18-b5-wire", "no NAT-PMP map request captured");
+            }
+            /* And the SHORT lease the gateway granted is carried out, so
+             * the caller can renew at ITS half-life rather than a fixed
+             * half hour (RFC 6886 §3.3 "The NAT gateway MAY reduce the
+             * lifetime from what the client requested"). */
+            EXPECT_TRUE("18-b5-short-lease", m.lifetime_s == 120u);
+            mock_gateway_stop(&gw, tid, mock_gateway_port(&gw));
+        }
+    }
+
+    Natpmp_TestHook_SetGateway(NULL, 0);
+
+    /* ============ (C) the S1 §3.6 CGNAT gate, end to end ============== */
+
+    /*
+     * The gate lives at direct_p2p.c's host_thread_fn and is NOT
+     * duplicated per backend — so the thing worth proving is that a
+     * NAT-PMP mapping REACHES it. Observable: the port the published
+     * room code carries.
+     *
+     *   mapping kept    -> the room code carries the MAPPED external port
+     *   mapping dropped -> it carries the STUN-observed port
+     *
+     * The mock STUN seam reports 203.0.113.9:40000 (mock_stun_discover),
+     * and the mock gateway grants a deliberately different external port,
+     * so the two outcomes are distinguishable by a single integer.
+     *
+     * Run TWICE. A drop-only assertion would also pass if the NAT-PMP
+     * mapping had never been created in the first place; the public-IP
+     * run is the control that rules that out.
+     */
+    {
+        struct {
+            const char* tag;
+            const char* ext_ip;
+            bool expect_kept;
+        } cases[] = {
+            /* RFC 6598 shared address space, the CGN signature the gate
+             * exists for (plan §3.6). */
+            { "18-c-cgnat", "100.64.5.9", false },
+            /* TEST-NET-2, public as far as the gate is concerned: 1:1
+             * NAT / DMZ territory, mapping must be kept. */
+            { "18-c-public", "198.51.100.30", true },
+        };
+
+        for (size_t ci = 0; ci < sizeof(cases) / sizeof(cases[0]); ci++) {
+            NET_Init();
+            DirectP2P_Init();
+            DirectP2P_TestHook_RunTeardown();
+
+            struct in_addr ext;
+            memset(&ext, 0, sizeof(ext));
+            EXPECT_TRUE("18-c-pton", inet_pton(AF_INET, cases[ci].ext_ip, &ext) == 1);
+
+            const uint16_t mapped_port = 41000;
+            MockGwCtx gw;
+            SDL_Thread* tid = mock_gateway_start(&gw, MOCK_GW_NATPMP,
+                                                 (uint32_t)ext.s_addr, mapped_port, 3600);
+            if (tid == NULL) {
+                FAIL(cases[ci].tag, "could not start the mock gateway");
+                continue;
+            }
+
+            /* Keep this entirely offline: no real IGD (test 13's rule),
+             * no rendezvous traffic, and STUN is the mock seam. */
+            Config_SetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_UPNP, true);
+            Config_SetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_NATPMP, false);
+            Config_SetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_BILATERAL, true);
+            /* NOTE: no punch seam is installed. This case only ever
+             * drives host_thread_fn as far as HOST_WAITING — the CGNAT
+             * gate fires between STUN discovery and the room-code
+             * encode — and with the bilateral fallback off there is no
+             * DELIVER and therefore no punch. Staying off the punch seam
+             * keeps this test independent of how punching is mocked. */
+            DirectP2P_TestHook_SetStunDiscover(mock_stun_discover);
+
+            DirectP2P_BeginHost(0);
+            const bool reached = wait_for_state(DIRECT_P2P_HOST_WAITING, 25000);
+            uint16_t adv_port = 0;
+            if (!reached) {
+                fprintf(stderr,
+                        "[test_bilateral_punch] FAIL: %s: state %d after budget, expected "
+                        "HOST_WAITING\n", cases[ci].tag, (int)DirectP2P_GetState());
+                fail_count++;
+            } else {
+                uint32_t ip_be = 0, nnc = 0;
+                if (RoomCode_Decode(DirectP2P_GetHostCode(), &ip_be, &adv_port, &nnc) !=
+                    ROOM_CODE_OK) {
+                    FAIL(cases[ci].tag, "could not decode the published host room code");
+                } else {
+                    const uint16_t want = cases[ci].expect_kept ? mapped_port : 40000;
+                    if (adv_port != want) {
+                        fprintf(stderr,
+                                "[test_bilateral_punch] FAIL: %s: advertised port %u, "
+                                "expected %u. The gateway reported external IP %s while "
+                                "STUN reported 203.0.113.9; the S1 §3.6 CGNAT gate should "
+                                "have %s the NAT-PMP mapping (mapped port %u, STUN port "
+                                "40000).\n",
+                                cases[ci].tag, (unsigned)adv_port, (unsigned)want,
+                                cases[ci].ext_ip,
+                                cases[ci].expect_kept ? "KEPT" : "DROPPED",
+                                (unsigned)mapped_port);
+                        fail_count++;
+                    }
+                }
+                /* Proof the mapping was really attempted through the
+                 * NAT-PMP path (and not, say, skipped entirely). */
+                EXPECT_TRUE("18-c-mapped", gw.pmp_map_reqs >= 1);
+            }
+
+            DirectP2P_TestHook_SetStunDiscover(NULL);
+            DirectP2P_TestHook_RunTeardown();
+            if (DirectP2P_GetState() != DIRECT_P2P_IDLE) DirectP2P_Cancel();
+            mock_gateway_stop(&gw, tid, mock_gateway_port(&gw));
+            Natpmp_TestHook_SetGateway(NULL, 0);
+        }
+
+        /* Leave the config as the rest of the suite expects. */
+        Config_SetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_BILATERAL, false);
+        Config_SetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_NATPMP, true);
+    }
+
+    if (fail_count == fails_before) {
+        fprintf(stderr,
+                "[test_bilateral_punch] test 18 OK — PCP/NAT-PMP frames match the RFC "
+                "byte layouts, forged responses are rejected, the RFC 6887 §9 downgrade "
+                "works, a silent gateway times out inside budget, and a NAT-PMP mapping "
+                "with a CGN external IP is dropped by the S1 §3.6 gate while a public one "
+                "is kept\n");
+        return 0;
+    }
+    return 1;
+}
+
 /* --- Entry point ------------------------------------------------------ */
 
 int Netplay_Test_BilateralPunch(void) {
@@ -3812,6 +4757,7 @@ int Netplay_Test_BilateralPunch(void) {
     rc |= test_joiner_cookie_handshake();
     rc |= test_relay_codec(); /* S5 */
     rc |= test_relay_rung();  /* S5 */
+    rc |= test_natpmp_pcp();  /* S7 */
     rc |= test_host_cookie_rejected(); /* last: ~31 s of wall clock */
 
     if (fail_count > 0 || rc != 0) {

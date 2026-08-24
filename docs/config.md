@@ -198,10 +198,24 @@ out-of-band (text message, voice) and paste it into the wrapper OSD.
   is whatever the NAT maps it to, not what you requested.
 
 `netplay-direct-p2p-disable-upnp` (bool, default `false`)
-- Skip the UPnP IGD first-try path and go straight to STUN hole
-  punch. Set `true` if your router misbehaves on UPnP and fails
-  slowly (some routers reply to `UPNP_Discover` but then hang on
-  `AddPortMapping`). STUN fallback always runs regardless.
+- Skip the UPnP IGD first-try path. Set `true` if your router
+  misbehaves on UPnP and fails slowly (some routers reply to
+  `UPNP_Discover` but then hang on `AddPortMapping`). Since S7 this
+  does **not** disable the NAT-PMP/PCP backend — that has its own key
+  below — and the STUN fallback always runs regardless.
+
+`netplay-direct-p2p-disable-natpmp` (bool, default `false`)
+- Skip the NAT-PMP (RFC 6886) / PCP (RFC 6887) port-mapping backend
+  that runs when UPnP IGD discovery fails
+  (docs/plan-netplay-connection.md §9). It is a hand-rolled UDP client
+  against port 5351 of the default gateway — no new library — and it
+  tries PCP first, downgrading to NAT-PMP when the gateway answers
+  `UNSUPP_VERSION` with version 0 (RFC 6887 §9). Set `true` if your
+  router's NAT-PMP implementation misbehaves, or to keep the host from
+  spending its truncated 4 s probe budget on a gateway you know is
+  silent. Gateway lookup is Linux-only (`/proc/net/route`); on other
+  platforms this backend reports no gateway and never sends anything,
+  so the key has no effect there. STUN fallback always runs regardless.
 
 `netplay-direct-p2p-last-peer-code` (string, no default)
 - Populated at runtime on a successful Join to enable quick-rejoin
