@@ -9,6 +9,13 @@
 #include "bin2obj/asstbl.h"
 #include "common.h"
 #include "constants.h"
+/* ENABLE_PERF_TELEMETRY lives in the generated port/build_config.h. Without it
+ * every `#if ENABLE_PERF_TELEMETRY` in this TU silently evaluates to 0 (there is
+ * no -Wundef in C_FLAGS), so the 28 super-art command counters below would
+ * compile away and PLS03_Reset/GetSuperArtCommandTelemetry would link as stubs.
+ * pls03.c reaches neither main.h nor configuration.h nor port/sdl/sdl_app.h, so
+ * take it directly. Same fix as texcash.c. */
+#include "port/build_config.h"
 #include "port/utils.h"
 #include "sf33rd/Source/Game/effect/effect.h"
 #include "sf33rd/Source/Game/engine/charset.h"

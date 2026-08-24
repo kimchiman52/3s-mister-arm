@@ -5,6 +5,12 @@
 
 #include "sf33rd/Source/Game/rendering/mtrans.h"
 #include "common.h"
+/* ENABLE_PERF_TELEMETRY lives in the generated port/build_config.h. Without it
+ * every `#if ENABLE_PERF_TELEMETRY` in this TU silently evaluates to 0 (there is
+ * no -Wundef in C_FLAGS), so the charsel tile/effect counters below would
+ * compile away. mtrans.c reaches neither main.h nor configuration.h nor
+ * port/sdl/sdl_app.h, so take it directly. Same fix as texcash.c. */
+#include "port/build_config.h"
 #include "rendering/game_renderer.h"
 #include "sf33rd/AcrSDK/ps2/flps2render.h"
 #include "sf33rd/AcrSDK/ps2/foundaps2.h"
