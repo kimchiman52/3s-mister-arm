@@ -336,6 +336,168 @@ static ConnectFailCode s_host_advisory_code = CONNECT_FAIL_NONE;
  * host_tick_receive). Main-thread only. */
 static int s_host_unauth_drops = 0;
 
+/* --- S4-review HIGH-1b: host punch-gate throttle ----------------------
+ *
+ * s_host_unauth_drops above is a LOG COUNTER ONLY. Before this block
+ * there was no cap, no per-source throttle and no backoff on the host's
+ * punch gate: the host answered every guess (a correct token is
+ * accepted and handed off, a wrong one is silently dropped and the host
+ * keeps waiting — deliberately with NO wall-clock budget), which makes
+ * it a perfect brute-force oracle. host_tick_receive drains ~60
+ * datagrams/second, and with a UPnP mapping the advertised port is
+ * STABLE, so a past opponent could grind at it months later.
+ *
+ * The v3 room code widened the nonce to 32 bits, which alone takes a
+ * 60/s grind from <=68 seconds to >=2.2 years. This throttle is the
+ * belt to that suspenders, and it closes the asymmetry the reviewer
+ * flagged: the session-KEY path was already properly bounded (no oracle
+ * + MAX_NEW_KEYS_PER_IP) while the punch path was not bounded at all.
+ *
+ * Accounting rule — ONLY punch-SHAPED datagrams that FAIL the token
+ * check are charged. A legitimate joiner holding the right code is
+ * accepted on its first punch and is never charged at all, so the
+ * thresholds below cannot be reached by a peer that can actually
+ * connect. What CAN reach them: a scanner, a brute-forcer, or a peer
+ * punching with a stale code (pre-drift-re-encode, or an old build).
+ *
+ * Two levels:
+ *
+ *  (1) PER SOURCE IP — after HOST_PUNCH_SRC_MAX_BAD bad punches from one
+ *      IP that source is MUTED: its punches are dropped WITHOUT the
+ *      accept/echo/handoff, so the oracle is closed for it. Sizing: a
+ *      joiner's Stun_HolePunch emits ~10 datagrams in its first 500 ms
+ *      then 5/s, so 24 covers the opening burst plus ~2.8 s of steady
+ *      state before muting — a peer that merely raced a drift re-encode
+ *      gets plenty of room.
+ *
+ *  (2) PER SESSION — after HOST_PUNCH_TOTAL_REROLL bad punches in total
+ *      the host re-rolls the nonce, re-encodes the room code, re-derives
+ *      the token and TELLS THE USER on the status line. Whatever the
+ *      attacker was searching is now worthless. Capped at
+ *      HOST_PUNCH_REROLL_MAX per hosting session so a persistently
+ *      stale peer cannot churn the displayed code forever.
+ *
+ * DELIBERATE DEPARTURE from the review's literal "stop classifying that
+ * source for the session": the mute EXPIRES after HOST_PUNCH_MUTE_MS,
+ * and a re-roll clears every mute. A permanent mute would turn this
+ * defence into a self-inflicted lockout — the exact failure class the
+ * review's headline question tested S4a for. Concretely: friend types a
+ * typo'd code, floods 24 bad punches, gets muted; user reads the code
+ * out again; friend now punches with the RIGHT token and is still
+ * dropped, forever, with no diagnosis. A bounded mute is also
+ * arithmetically sufficient: 24 attempts per 60 s is 0.4/s versus the
+ * unthrottled 60/s, so a 32-bit nonce needs ~340 years per source IP,
+ * and a 10,000-node botnet still needs ~12 days against a code that
+ * only exists while the OSD screen is up.
+ *
+ * All state here is MAIN-THREAD ONLY (host_tick_receive and the Tick
+ * reset paths). No locking.
+ */
+#define HOST_PUNCH_SRC_TABLE      8      /* tracked source IPs           */
+#define HOST_PUNCH_SRC_MAX_BAD    24     /* bad punches before mute      */
+#define HOST_PUNCH_MUTE_MS        60000u /* mute lifetime                */
+#define HOST_PUNCH_TOTAL_REROLL   64     /* session bad punches -> re-roll */
+#define HOST_PUNCH_REROLL_MAX     3      /* re-rolls per hosting session */
+
+typedef struct {
+    char     ip[64];       /* "" = free slot                            */
+    int      bad;          /* bad punch-shaped datagrams charged        */
+    uint32_t mute_until;   /* SDL_GetTicks() deadline; 0 = not muted    */
+} HostPunchSrc;
+
+static HostPunchSrc s_host_punch_src[HOST_PUNCH_SRC_TABLE];
+static int  s_host_punch_bad_total = 0;   /* this hosting session        */
+static int  s_host_punch_rerolls   = 0;   /* code re-rolls performed     */
+static int  s_host_punch_muted_drops = 0; /* accepts suppressed by mute  */
+
+static void host_punch_gate_reset(void) {
+    memset(s_host_punch_src, 0, sizeof(s_host_punch_src));
+    s_host_punch_bad_total = 0;
+    s_host_punch_rerolls = 0;
+    s_host_punch_muted_drops = 0;
+}
+
+/* Clear every mute and every per-source tally, keeping the session
+ * totals. Called after a re-roll: the code the muted sources were
+ * failing against no longer exists, so holding their strikes against
+ * them would be exactly the lockout this design avoids. */
+static void host_punch_gate_clear_mutes(void) {
+    memset(s_host_punch_src, 0, sizeof(s_host_punch_src));
+}
+
+/* Find `ip`'s slot, or claim one. Eviction picks the entry with the
+ * FEWEST strikes that is not currently muted — a muted attacker cannot
+ * push itself out of the table by rotating source addresses, while a
+ * one-off stray packet ages out immediately. Returns NULL only when
+ * every slot is muted (in which case the caller just charges the
+ * session total, which is the level that actually matters). */
+static HostPunchSrc* host_punch_src_slot(const char* ip, uint32_t now_ms) {
+    HostPunchSrc* victim = NULL;
+    for (int i = 0; i < HOST_PUNCH_SRC_TABLE; i++) {
+        HostPunchSrc* e = &s_host_punch_src[i];
+        if (e->ip[0] != '\0' && strcmp(e->ip, ip) == 0) {
+            /* Expire a stale mute in place. */
+            if (e->mute_until != 0 &&
+                (int32_t)(now_ms - e->mute_until) >= 0) {
+                e->mute_until = 0;
+                e->bad = 0;
+            }
+            return e;
+        }
+        if (e->ip[0] == '\0') {
+            victim = e;
+            break;
+        }
+        const bool muted = e->mute_until != 0 &&
+                           (int32_t)(now_ms - e->mute_until) < 0;
+        if (muted) continue;
+        if (victim == NULL || e->bad < victim->bad) victim = e;
+    }
+    if (victim == NULL) return NULL;
+    SDL_strlcpy(victim->ip, ip, sizeof(victim->ip));
+    victim->bad = 0;
+    victim->mute_until = 0;
+    return victim;
+}
+
+/* Is `ip` currently muted? Cheap read-only probe used on the ACCEPT
+ * path — the token compare still runs, we simply refuse to answer, so
+ * the source learns nothing from a correct guess. */
+static bool host_punch_gate_is_muted(const char* ip, uint32_t now_ms) {
+    for (int i = 0; i < HOST_PUNCH_SRC_TABLE; i++) {
+        const HostPunchSrc* e = &s_host_punch_src[i];
+        if (e->ip[0] == '\0' || strcmp(e->ip, ip) != 0) continue;
+        return e->mute_until != 0 && (int32_t)(now_ms - e->mute_until) < 0;
+    }
+    return false;
+}
+
+/* Charge one bad punch-shaped datagram to `ip`. Returns true when this
+ * charge crossed the session re-roll threshold and a re-roll is owed
+ * (the caller performs it — this function stays free of s_work and
+ * thread lifecycle concerns so it can be unit-tested). */
+static bool host_punch_gate_note_bad(const char* ip, uint32_t now_ms) {
+    s_host_punch_bad_total++;
+
+    HostPunchSrc* e = host_punch_src_slot(ip, now_ms);
+    if (e != NULL && e->mute_until == 0) {
+        e->bad++;
+        if (e->bad >= HOST_PUNCH_SRC_MAX_BAD) {
+            e->mute_until = now_ms + HOST_PUNCH_MUTE_MS;
+            if (e->mute_until == 0) e->mute_until = 1; /* 0 means "not muted" */
+            SDL_Log("[direct_p2p] %s punch-gate MUTE %s for %u ms after %d "
+                    "bad-token punches — that source can no longer probe the "
+                    "gate (session total %d)",
+                    ConnectFail_Code(CONNECT_FAIL_PUNCH_AUTH), ip,
+                    (unsigned)HOST_PUNCH_MUTE_MS, e->bad,
+                    s_host_punch_bad_total);
+        }
+    }
+
+    return s_host_punch_bad_total >= HOST_PUNCH_TOTAL_REROLL &&
+           s_host_punch_rerolls < HOST_PUNCH_REROLL_MAX;
+}
+
 /* --- S4c: rendezvous return-routability cookie (host side) ------------- */
 
 /* The v2 rendezvous server answers an uncookied REGISTER with a
@@ -1936,6 +2098,7 @@ static void direct_p2p_on_teardown(void) {
     s_host_advisory_code = CONNECT_FAIL_NONE;
     s_host_unauth_drops = 0; /* S4a */
     s_host_challenge_seen = false; /* S4c */
+    host_punch_gate_reset(); /* S4-review HIGH-1b */
     signal_cookie_reset();         /* S4c */
     SDL_SetAtomicInt(&s_host_registering, 0);
     /* Reset state so the next BeginHost/BeginJoin starts clean.
@@ -2019,6 +2182,34 @@ static void host_stun_keepalive_tick(void) {
     }
 }
 
+/* Cancel and JOIN the rendezvous re-REGISTER worker. Safe to call when
+ * no worker is running. Callers MUST do this before mutating any s_work
+ * field the worker's session-key derivation reads (public_ip /
+ * advertised_port / nonce). */
+static void host_rendezvous_stop(void) {
+    if (s_rendezvous_thread != NULL) {
+        SDL_SetAtomicInt(&s_rendezvous_cancel, 1);
+        SDL_WaitThread(s_rendezvous_thread, NULL);
+        s_rendezvous_thread = NULL;
+    }
+}
+
+/* Respawn the rendezvous worker under whatever session key s_work now
+ * implies, honoring the same kill switch as the original spawn in
+ * host_thread_fn step 5. `why` names the caller in the failure log. */
+static void host_rendezvous_restart(const char* why) {
+    if (Config_GetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_BILATERAL)) {
+        return;
+    }
+    SDL_SetAtomicInt(&s_rendezvous_cancel, 0);
+    s_rendezvous_thread = SDL_CreateThread(host_rendezvous_thread_fn,
+                                           "DirectP2PRendezvous", NULL);
+    if (s_rendezvous_thread == NULL) {
+        SDL_Log("[direct_p2p] WARNING: failed to respawn rendezvous thread "
+                "%s; fallback disabled this session", why);
+    }
+}
+
 /* Handle a STUN Binding Success Response received on the host socket
  * during HOST_WAITING (main thread). If the mapped endpoint matches the
  * last known public endpoint the NAT mapping is stable — nothing to do.
@@ -2083,11 +2274,7 @@ static void host_handle_stun_rebind(const uint8_t* buf, int len) {
 
     /* Stop the rendezvous re-REGISTER loop before mutating the fields it
      * reads (public_ip / advertised_port). */
-    if (s_rendezvous_thread != NULL) {
-        SDL_SetAtomicInt(&s_rendezvous_cancel, 1);
-        SDL_WaitThread(s_rendezvous_thread, NULL);
-        s_rendezvous_thread = NULL;
-    }
+    host_rendezvous_stop();
 
     SDL_strlcpy(s_work.stun.public_ip, ip, sizeof(s_work.stun.public_ip));
     s_work.stun.public_port = port;
@@ -2125,15 +2312,78 @@ static void host_handle_stun_rebind(const uint8_t* buf, int len) {
 
     /* Respawn the rendezvous loop under the new session key (same kill
      * switch as the original spawn in host_thread_fn step 5). */
-    if (!Config_GetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_BILATERAL)) {
-        SDL_SetAtomicInt(&s_rendezvous_cancel, 0);
-        s_rendezvous_thread = SDL_CreateThread(host_rendezvous_thread_fn,
-                                               "DirectP2PRendezvous", NULL);
-        if (s_rendezvous_thread == NULL) {
-            SDL_Log("[direct_p2p] WARNING: failed to respawn rendezvous thread "
-                    "after endpoint drift; fallback disabled this session");
-        }
+    host_rendezvous_restart("after endpoint drift");
+}
+
+/* --- S4-review HIGH-1b: room-code re-roll ------------------------------
+ *
+ * Draw a FRESH nonce, re-encode the room code, re-derive the punch
+ * token, and tell the user. Invoked once the punch gate has absorbed
+ * HOST_PUNCH_TOTAL_REROLL bad-token punches this session: whatever the
+ * sender was searching for is thereby invalidated, and every source mute
+ * is cleared so a legitimate peer that merely had a stale code gets a
+ * clean slate along with the new code.
+ *
+ * Same threading discipline as the drift handler above — the rendezvous
+ * worker derives its session key from (public_ip, advertised_port,
+ * nonce), so it is cancelled and JOINED before s_work.nonce moves, then
+ * respawned under the new key. Main thread only.
+ *
+ * Fails CLOSED and CHANGES NOTHING if either the CSPRNG or the
+ * derivation is unavailable: keeping a working old code beats
+ * advertising a code whose token we could not derive (which would
+ * ignore every punch, including the real joiner's). */
+static void host_reroll_room_code(void) {
+    const uint32_t ip_be = ipv4_str_to_be(s_work.stun.public_ip);
+    if (ip_be == 0) {
+        return;
     }
+
+    uint32_t new_nonce = 0;
+    if (!RoomCode_GenerateNonce(&new_nonce)) {
+        SDL_Log("[direct_p2p] punch-gate re-roll SKIPPED: CSPRNG unavailable — "
+                "keeping the current room code (a predictable nonce would be "
+                "worse than the flood)");
+        /* Do not retry on every datagram: park the counter just under the
+         * threshold so the next bad punch re-arms rather than spinning. */
+        s_host_punch_bad_total = HOST_PUNCH_TOTAL_REROLL - 1;
+        return;
+    }
+
+    char new_code[ROOM_CODE_BUF_LEN];
+    uint8_t new_token[STUN_PUNCH_TOKEN_LEN];
+    if (!RoomCode_Encode(ip_be, s_work.advertised_port, new_nonce, new_code) ||
+        !Rendezvous_DerivePunchToken(ip_be, s_work.advertised_port, new_nonce,
+                                     new_token)) {
+        SDL_Log("[direct_p2p] punch-gate re-roll SKIPPED: re-encode/derive "
+                "failed — keeping the current room code");
+        s_host_punch_bad_total = HOST_PUNCH_TOTAL_REROLL - 1;
+        return;
+    }
+
+    host_rendezvous_stop();
+
+    s_work.nonce = new_nonce;
+    SDL_strlcpy(s_work.host_code, new_code, sizeof(s_work.host_code));
+    memcpy(s_work.punch_token, new_token, sizeof(s_work.punch_token));
+    s_work.punch_token_valid = true;
+
+    s_host_punch_rerolls++;
+    s_host_punch_bad_total = 0;
+    host_punch_gate_clear_mutes();
+
+    SDL_Log("[direct_p2p] %s punch-gate RE-ROLL #%d/%d after %d bad-token "
+            "punches — room code regenerated (every source mute cleared)",
+            ConnectFail_Code(CONNECT_FAIL_PUNCH_AUTH),
+            s_host_punch_rerolls, HOST_PUNCH_REROLL_MAX,
+            HOST_PUNCH_TOTAL_REROLL);
+
+    /* The user is staring at a code they may already have read out. Say
+     * so explicitly on the overlay status line — same mechanism and the
+     * same wording shape as the STUN-drift re-encode above. */
+    set_status("Code was being probed. Share the NEW code.");
+
+    host_rendezvous_restart("after a punch-gate re-roll");
 }
 
 /*
@@ -2355,25 +2605,64 @@ static bool host_tick_receive(void) {
          * Rate-limited advisory so a scan/legacy-build burst is visible
          * in the log without flooding it. A punch-shaped payload with a
          * wrong token is called out as probable version mismatch. */
+        const bool punch_shaped =
+            Stun_HasPunchPrefix(dgram->buf, dgram->buflen);
+        char src_ip[64];
+        SDL_strlcpy(src_ip, NET_GetAddressString(dgram->addr), sizeof(src_ip));
+
         s_host_unauth_drops++;
         if (s_host_unauth_drops == 1 || (s_host_unauth_drops % 50) == 0) {
-            char src_ip[64];
-            SDL_strlcpy(src_ip, NET_GetAddressString(dgram->addr), sizeof(src_ip));
             SDL_Log("[direct_p2p] ADVISORY code=%s ignored unauthenticated datagram "
                     "#%d from %s:%u (len=%d%s) — still waiting for an authenticated "
                     "punch",
                     ConnectFail_Code(CONNECT_FAIL_PUNCH_AUTH),
                     s_host_unauth_drops, src_ip, (unsigned)dgram->port,
                     dgram->buflen,
-                    Stun_HasPunchPrefix(dgram->buf, dgram->buflen)
+                    punch_shaped
                         ? ", punch-shaped: peer build too old or wrong code"
                         : "");
         }
+
+        /* S4-review HIGH-1b: only a punch-SHAPED datagram that failed
+         * the token check is a gate probe. Arbitrary garbage (port
+         * scans, stray traffic) is logged above but deliberately NOT
+         * charged — it teaches an attacker nothing and charging it
+         * would let unrelated noise trip the re-roll. */
+        bool reroll_owed = false;
+        if (punch_shaped) {
+            reroll_owed = host_punch_gate_note_bad(src_ip, SDL_GetTicks());
+        }
         NET_DestroyDatagram(dgram);
+        if (reroll_owed) {
+            host_reroll_room_code();
+        }
         return false; /* keep waiting */
     }
 
     case DP2P_HOST_DGRAM_PEER_PUNCH:
+        /* S4-review HIGH-1b: the token compare has ALREADY run and
+         * passed, but if this source has been muted for grinding the
+         * gate we refuse to ANSWER. Dropping here (rather than skipping
+         * the classify) is what closes the oracle: the sender gets no
+         * echo and no handoff, so a correct guess is indistinguishable
+         * from a wrong one. Infrastructure arms ('3SXR', STUN) are
+         * untouched by the mute. */
+        if (host_punch_gate_is_muted(NET_GetAddressString(dgram->addr),
+                                     SDL_GetTicks())) {
+            s_host_punch_muted_drops++;
+            if (s_host_punch_muted_drops == 1 ||
+                (s_host_punch_muted_drops % 50) == 0) {
+                SDL_Log("[direct_p2p] %s punch-gate suppressed an AUTHENTICATED "
+                        "punch from muted source %s:%u (#%d) — that address "
+                        "burned its budget guessing; it recovers when the mute "
+                        "expires or the code re-rolls",
+                        ConnectFail_Code(CONNECT_FAIL_PUNCH_AUTH),
+                        NET_GetAddressString(dgram->addr),
+                        (unsigned)dgram->port, s_host_punch_muted_drops);
+            }
+            NET_DestroyDatagram(dgram);
+            return false; /* keep waiting */
+        }
         break; /* authenticated peer — fall through to the capture below */
     }
 
@@ -2438,6 +2727,7 @@ void DirectP2P_Init(void) {
     s_host_advisory_code = CONNECT_FAIL_NONE;
     s_host_unauth_drops = 0; /* S4a */
     s_host_challenge_seen = false; /* S4c */
+    host_punch_gate_reset(); /* S4-review HIGH-1b */
     signal_cookie_reset();         /* S4c */
     SDL_SetAtomicInt(&s_host_registering, 0);
     memset(s_rendezvous_send_q, 0, sizeof(s_rendezvous_send_q));
@@ -2482,6 +2772,7 @@ void DirectP2P_BeginHost(int preferred_port) {
     s_host_advisory_code = CONNECT_FAIL_NONE;
     s_host_unauth_drops = 0; /* S4a */
     s_host_challenge_seen = false; /* S4c */
+    host_punch_gate_reset(); /* S4-review HIGH-1b */
     signal_cookie_reset();         /* S4c */
     SDL_SetAtomicInt(&s_host_registering, 0);
     Stun_ReleaseServerAddr(&s_work.stun); /* belt-and-braces before memset */
@@ -2604,6 +2895,7 @@ void DirectP2P_BeginJoin(const char* peer_code) {
     s_host_advisory_code = CONNECT_FAIL_NONE;
     s_host_unauth_drops = 0; /* S4a */
     s_host_challenge_seen = false; /* S4c */
+    host_punch_gate_reset(); /* S4-review HIGH-1b */
     signal_cookie_reset();         /* S4c */
     SDL_SetAtomicInt(&s_host_registering, 0);
     Stun_ReleaseServerAddr(&s_work.stun); /* belt-and-braces before memset */
@@ -2685,6 +2977,7 @@ void DirectP2P_Cancel(void) {
     s_host_advisory_code = CONNECT_FAIL_NONE;
     s_host_unauth_drops = 0; /* S4a */
     s_host_challenge_seen = false; /* S4c */
+    host_punch_gate_reset(); /* S4-review HIGH-1b */
     signal_cookie_reset();         /* S4c */
     SDL_SetAtomicInt(&s_host_registering, 0);
     set_state(DIRECT_P2P_IDLE);
@@ -3147,6 +3440,38 @@ const char* DirectP2P_GetStatusText(void) {
  * sequence without standing up a full GekkoNet session. */
 void DirectP2P_TestHook_RunTeardown(void) {
     direct_p2p_on_teardown();
+}
+
+/* S4-review HIGH-1b: punch-gate throttle seams (see direct_p2p.h). */
+void DirectP2P_TestHook_PunchGateReset(void) {
+    host_punch_gate_reset();
+}
+
+bool DirectP2P_TestHook_PunchGateNoteBad(const char* src_ip, uint32_t now_ms) {
+    return host_punch_gate_note_bad(src_ip, now_ms);
+}
+
+bool DirectP2P_TestHook_PunchGateIsMuted(const char* src_ip, uint32_t now_ms) {
+    return host_punch_gate_is_muted(src_ip, now_ms);
+}
+
+void DirectP2P_TestHook_PunchGateClearMutes(void) {
+    host_punch_gate_clear_mutes();
+}
+
+void DirectP2P_TestHook_PunchGateCounters(int* bad_total, int* rerolls) {
+    if (bad_total) *bad_total = s_host_punch_bad_total;
+    if (rerolls) *rerolls = s_host_punch_rerolls;
+}
+
+void DirectP2P_TestHook_PunchGateLimits(int* src_max_bad, uint32_t* mute_ms,
+                                        int* total_reroll, int* reroll_max,
+                                        int* src_table) {
+    if (src_max_bad) *src_max_bad = HOST_PUNCH_SRC_MAX_BAD;
+    if (mute_ms) *mute_ms = HOST_PUNCH_MUTE_MS;
+    if (total_reroll) *total_reroll = HOST_PUNCH_TOTAL_REROLL;
+    if (reroll_max) *reroll_max = HOST_PUNCH_REROLL_MAX;
+    if (src_table) *src_table = HOST_PUNCH_SRC_TABLE;
 }
 #endif /* NETPLAY_TEST_HOOKS */
 

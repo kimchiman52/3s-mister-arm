@@ -259,6 +259,30 @@ void DirectP2P_TestHook_SetSignalBudgetMs(int ms);
  * (the same one netplay.c's EXITING pass fires) so a harness can drive
  * notify-failure -> teardown -> FAILED_HANDSHAKE -> one FAIL report. */
 void DirectP2P_TestHook_RunTeardown(void);
+
+/* S4-review HIGH-1b: the host punch-gate throttle. The gate accounting
+ * is deliberately free of s_work and of thread lifecycle so it can be
+ * driven deterministically with an injected clock — the production path
+ * passes SDL_GetTicks().
+ *
+ *   Reset       — clear every source tally, mute and session counter.
+ *   NoteBad     — charge ONE bad-token punch-shaped datagram to src_ip.
+ *                 Returns true when that charge crossed the session
+ *                 re-roll threshold (production then re-rolls the code).
+ *   IsMuted     — is src_ip currently refused an ACCEPT?
+ *   Counters    — session totals for assertions; any pointer may be NULL.
+ *   ClearMutes  — the side effect a re-roll has on the table.
+ *
+ * The thresholds are exported so a test asserts against the shipped
+ * numbers instead of hardcoding a copy that can silently drift. */
+void DirectP2P_TestHook_PunchGateReset(void);
+bool DirectP2P_TestHook_PunchGateNoteBad(const char* src_ip, uint32_t now_ms);
+bool DirectP2P_TestHook_PunchGateIsMuted(const char* src_ip, uint32_t now_ms);
+void DirectP2P_TestHook_PunchGateClearMutes(void);
+void DirectP2P_TestHook_PunchGateCounters(int* bad_total, int* rerolls);
+void DirectP2P_TestHook_PunchGateLimits(int* src_max_bad, uint32_t* mute_ms,
+                                        int* total_reroll, int* reroll_max,
+                                        int* src_table);
 #endif /* NETPLAY_TEST_HOOKS */
 
 #else /* !ENABLE_NETPLAY */

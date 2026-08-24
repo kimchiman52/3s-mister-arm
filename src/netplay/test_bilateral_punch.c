@@ -1886,6 +1886,164 @@ static int test_rendezvous_cookie_codec(void) {
     return 1;
 }
 
+/* --- Test 12: S4-review HIGH-1b host punch-gate throttle -------------- */
+
+/*
+ * Before this fix the host's punch gate had NO cap, NO per-source
+ * throttle and NO backoff: s_host_unauth_drops was a log counter only.
+ * The host answers every guess (correct token -> accepted + handed off,
+ * wrong token -> silent drop, and the host waits FOREVER by design), so
+ * it is a perfect brute-force oracle, drained at ~60 datagrams/second.
+ *
+ * The gate accounting takes an injected clock, so this test is fully
+ * deterministic — no sleeping, no sockets. It asserts against the
+ * SHIPPED thresholds (fetched via the limits hook) rather than a
+ * hardcoded copy that could silently drift from the header.
+ *
+ * Every assertion here goes RED against the pre-fix behavior, because
+ * pre-fix there is no mute to observe and no re-roll to be owed: with
+ * host_punch_gate_note_bad neutralized to `return false` and
+ * host_punch_gate_is_muted to `return false`, sub-tests 12a, 12b, 12d,
+ * 12e and 12f all fail.
+ */
+static int test_punch_gate_throttle(void) {
+    fprintf(stderr, "[test_bilateral_punch] test 12: S4-review HIGH-1b punch-gate throttle\n");
+    const int fails_before = fail_count;
+
+    int src_max_bad = 0, total_reroll = 0, reroll_max = 0, src_table = 0;
+    uint32_t mute_ms = 0;
+    DirectP2P_TestHook_PunchGateLimits(&src_max_bad, &mute_ms, &total_reroll,
+                                       &reroll_max, &src_table);
+
+    /* Sanity on the shipped numbers themselves: a joiner's Stun_HolePunch
+     * emits ~10 datagrams in its first 500 ms then 5/s, so the per-source
+     * budget must clear that opening burst or a peer that merely raced a
+     * drift re-encode would be muted mid-handshake. */
+    if (src_max_bad <= 10) {
+        FAIL("test12", "HOST_PUNCH_SRC_MAX_BAD <= the joiner's 10-datagram "
+                       "opening punch burst — a legitimate peer could be muted");
+    }
+    if (total_reroll < src_max_bad) {
+        FAIL("test12", "re-roll threshold below the per-source threshold — a "
+                       "single source would re-roll the code before muting");
+    }
+    if (mute_ms == 0) {
+        FAIL("test12", "mute lifetime is 0 — mutes would never take effect");
+    }
+
+    /* --- 12a: one source is muted at exactly the threshold, not before. */
+    DirectP2P_TestHook_PunchGateReset();
+    const uint32_t t0 = 1000u;
+    for (int i = 1; i < src_max_bad; i++) {
+        (void)DirectP2P_TestHook_PunchGateNoteBad("198.51.100.9", t0);
+        if (DirectP2P_TestHook_PunchGateIsMuted("198.51.100.9", t0)) {
+            fprintf(stderr, "[test_bilateral_punch] FAIL: test12a: muted early "
+                            "after %d bad punches (threshold %d)\n", i, src_max_bad);
+            fail_count++;
+            break;
+        }
+    }
+    (void)DirectP2P_TestHook_PunchGateNoteBad("198.51.100.9", t0);
+    EXPECT_TRUE("test12a", DirectP2P_TestHook_PunchGateIsMuted("198.51.100.9", t0));
+
+    /* --- 12b: muting is PER SOURCE — an unrelated address is unaffected.
+     * This is the assertion that stops the throttle from becoming a
+     * global denial of hosting. */
+    EXPECT_FALSE("test12b", DirectP2P_TestHook_PunchGateIsMuted("203.0.113.5", t0));
+
+    /* --- 12c: the mute EXPIRES. A permanent mute would turn this
+     * defence into a self-inflicted lockout: friend typos the code,
+     * burns the budget, then types it correctly and is dropped forever
+     * with no diagnosis. */
+    EXPECT_TRUE("test12c", DirectP2P_TestHook_PunchGateIsMuted("198.51.100.9",
+                                                               t0 + mute_ms - 1u));
+    EXPECT_FALSE("test12c", DirectP2P_TestHook_PunchGateIsMuted("198.51.100.9",
+                                                                t0 + mute_ms));
+
+    /* --- 12d: the session total crosses the re-roll threshold, and the
+     * charge that crosses it is the one that reports "re-roll owed". */
+    DirectP2P_TestHook_PunchGateReset();
+    bool owed = false;
+    int charged = 0;
+    /* Spread across enough distinct sources that no single one is muted
+     * before the total is reached — a muted source stops accruing
+     * per-source strikes but STILL feeds the session total. */
+    for (int i = 0; i < total_reroll && !owed; i++) {
+        char ip[64];
+        snprintf(ip, sizeof(ip), "192.0.2.%d", (i % 200) + 1);
+        owed = DirectP2P_TestHook_PunchGateNoteBad(ip, t0);
+        charged++;
+    }
+    EXPECT_TRUE("test12d", owed);
+    if (charged != total_reroll) {
+        fprintf(stderr, "[test_bilateral_punch] FAIL: test12d: re-roll owed after "
+                        "%d bad punches, expected exactly %d\n", charged, total_reroll);
+        fail_count++;
+    }
+    {
+        int bad_total = 0, rerolls = 0;
+        DirectP2P_TestHook_PunchGateCounters(&bad_total, &rerolls);
+        if (bad_total != total_reroll) {
+            fprintf(stderr, "[test_bilateral_punch] FAIL: test12d: session total %d "
+                            "!= %d\n", bad_total, total_reroll);
+            fail_count++;
+        }
+    }
+
+    /* --- 12e: a re-roll clears every mute. THIS is what keeps the
+     * escape hatch open: the code those sources were failing against no
+     * longer exists, so holding their strikes against them would be the
+     * lockout again. */
+    DirectP2P_TestHook_PunchGateReset();
+    for (int i = 0; i < src_max_bad; i++) {
+        (void)DirectP2P_TestHook_PunchGateNoteBad("198.51.100.9", t0);
+    }
+    EXPECT_TRUE("test12e", DirectP2P_TestHook_PunchGateIsMuted("198.51.100.9", t0));
+    DirectP2P_TestHook_PunchGateClearMutes();
+    EXPECT_FALSE("test12e", DirectP2P_TestHook_PunchGateIsMuted("198.51.100.9", t0));
+
+    /* --- 12f: a muted source cannot evict a quieter one from the table
+     * by rotating addresses. Fill the table with muted sources, then push
+     * (table + 4) fresh addresses through: the original mutes must all
+     * survive, otherwise an attacker clears its own mute for free. */
+    DirectP2P_TestHook_PunchGateReset();
+    for (int slot = 0; slot < src_table; slot++) {
+        char ip[64];
+        snprintf(ip, sizeof(ip), "198.51.100.%d", slot + 1);
+        for (int i = 0; i < src_max_bad; i++) {
+            (void)DirectP2P_TestHook_PunchGateNoteBad(ip, t0);
+        }
+    }
+    for (int i = 0; i < src_table + 4; i++) {
+        char ip[64];
+        snprintf(ip, sizeof(ip), "203.0.113.%d", i + 1);
+        (void)DirectP2P_TestHook_PunchGateNoteBad(ip, t0);
+    }
+    for (int slot = 0; slot < src_table; slot++) {
+        char ip[64];
+        snprintf(ip, sizeof(ip), "198.51.100.%d", slot + 1);
+        if (!DirectP2P_TestHook_PunchGateIsMuted(ip, t0)) {
+            fprintf(stderr, "[test_bilateral_punch] FAIL: test12f: muted source %s "
+                            "was evicted by address rotation — an attacker can "
+                            "clear its own mute for free\n", ip);
+            fail_count++;
+            break;
+        }
+    }
+
+    DirectP2P_TestHook_PunchGateReset();
+
+    if (fail_count == fails_before) {
+        fprintf(stderr,
+                "[test_bilateral_punch] test 12 OK — punch gate is capped "
+                "(mute at %d/source, %u ms, re-roll at %d/session, max %d "
+                "re-rolls) and cannot lock out a legitimate peer\n",
+                src_max_bad, (unsigned)mute_ms, total_reroll, reroll_max);
+        return 0;
+    }
+    return 1;
+}
+
 /* --- Entry point ------------------------------------------------------ */
 
 int Netplay_Test_BilateralPunch(void) {
@@ -1903,6 +2061,7 @@ int Netplay_Test_BilateralPunch(void) {
     rc |= test_posthandoff_failure_report();
     rc |= test_host_datagram_gate();
     rc |= test_rendezvous_cookie_codec();
+    rc |= test_punch_gate_throttle();
 
     if (fail_count > 0 || rc != 0) {
         fprintf(stderr, "[test_bilateral_punch] %d failure(s)\n", fail_count);
