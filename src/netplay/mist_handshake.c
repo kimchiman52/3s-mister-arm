@@ -607,6 +607,7 @@ static void drain_and_answer_hellos(const MistRunnerIo* io) {
 }
 
 MistHandshakeResult mist_handshake_run_attempt(const MistRunnerIo* io,
+                                               bool* peer_hello_ok,
                                                char* reason,
                                                size_t reason_cap) {
     uint8_t hello[MIST_FRAME_MAX];
@@ -659,6 +660,13 @@ MistHandshakeResult mist_handshake_run_attempt(const MistRunnerIo* io,
                 if (final_ack_len > 0) {
                     io->send_to_peer(io->ctx, final_ack, final_ack_len);
                 }
+                /* H-1 hardening: also answer any peer hellos ALREADY
+                 * queued behind this ack right now — the race window is
+                 * exactly "peer's hello arrived after the ack we just
+                 * consumed"; answering the queued ones deterministically
+                 * closes that half (the implicit-completion path below
+                 * covers hellos that arrive after we return). */
+                drain_and_answer_hellos(io);
                 return MIST_HS_OK;
             }
             if (cls == -1) {
@@ -720,9 +728,36 @@ MistHandshakeResult mist_handshake_run_attempt(const MistRunnerIo* io,
                     if (reply_len > 0) {
                         io->send_reply_to_last(io->ctx, reply, reply_len);
                     }
+                    /* H-1: latch "the SESSION PEER's hello passed the
+                     * full compatibility check this session". Arms the
+                     * implicit-completion path below. Source-gated so a
+                     * third party's hello can never arm it. */
+                    if (from_peer) {
+                        *peer_hello_ok = true;
+                    }
                 }
             }
-            /* cls == -2 — not a MIST frame; drop and keep listening. */
+            if (cls == -2) {
+                /* Not a MIST frame. H-1 implicit completion: if the
+                 * session peer's hello already classified compatible
+                 * (this session) and the peer is now sending
+                 * Gekko-shaped traffic, the peer has completed its own
+                 * gate and started GekkoNet — its gratuitous ack was
+                 * lost and any hello of ours now lands in its GekkoNet,
+                 * which drops non-Gekko frames silently. Waiting longer
+                 * can never succeed; treat it as handshake success.
+                 * Guard rationale + why this cannot re-open the
+                 * compatibility bypass: see mist_handshake.h
+                 * (mist_handshake_run_attempt docs). Anything else —
+                 * punch keepalives ("3SX_PUNCH", 0x33), STUN, garbage,
+                 * third-party sources — is dropped as before. */
+                if (*peer_hello_ok && from_peer &&
+                    buf[0] >= MIST_GEKKO_PACKET_TYPE_MIN &&
+                    buf[0] <= MIST_GEKKO_PACKET_TYPE_MAX) {
+                    return MIST_HS_OK;
+                }
+                /* else: drop and keep listening. */
+            }
         }
 
         io->delay_ms(io->ctx, MIST_RUNNER_IDLE_DELAY_MS);

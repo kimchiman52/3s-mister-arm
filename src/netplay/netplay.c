@@ -285,6 +285,15 @@ static char s_mist_reject_reason[128] = { 0 };
 // mist_handshake_gate_next in mist_handshake.h — extracted there so it
 // is unit-testable (adv-review M-5).
 static int s_mist_handshake_attempts = 0;
+// R-1 adv-review H-1: session-scoped latch — "the session peer's hello
+// passed the full compatibility check this session". Arms the runner's
+// implicit-completion path (Gekko-shaped traffic from a classified-clean
+// peer completes the handshake; see mist_handshake_run_attempt docs for
+// the stranded-completion race and the bypass-safety argument). Must
+// persist ACROSS the retry attempts of one session and reset wherever
+// s_mist_handshake_attempts resets: session start (direct-P2P tick,
+// matchmaking match) and session EXITING.
+static bool s_mist_peer_hello_ok = false;
 
 // First-to-X (number of game wins required to close a session).
 // Placeholder for Track C / lobby FT negotiation; default 2 = FT2 sessions.
@@ -706,7 +715,7 @@ static MistHandshakeResult run_mist_handshake_on_net_sock(NET_DatagramSocket* so
         mist_netio_delay_ms,
     };
     const MistHandshakeResult hs = mist_handshake_run_attempt(
-        &io, s_mist_reject_reason, sizeof(s_mist_reject_reason));
+        &io, &s_mist_peer_hello_ok, s_mist_reject_reason, sizeof(s_mist_reject_reason));
 
     if (net_io.last != NULL) {
         NET_DestroyDatagram(net_io.last);
@@ -1412,6 +1421,7 @@ void Netplay_TickDirectP2P() {
     transition_ready_frames = 0;
     s_mist_handshake_done = false;
     s_mist_handshake_attempts = 0;
+    s_mist_peer_hello_ok = false;
 
     session_state = NETPLAY_SESSION_TRANSITIONING;
 }
@@ -1452,6 +1462,7 @@ void Netplay_TickMatchmaking() {
         transition_ready_frames = 0;
         s_mist_handshake_done = false;
         s_mist_handshake_attempts = 0;
+        s_mist_peer_hello_ok = false;
         matchmaking_pending = false;
         setup_vs_mode();
         session_state = NETPLAY_SESSION_TRANSITIONING;
@@ -1631,6 +1642,7 @@ void Netplay_Run() {
         // LAN, etc.) starts without carrying stale flags.
         s_mist_handshake_done = false;
         s_mist_handshake_attempts = 0;
+        s_mist_peer_hello_ok = false;
 
         // C1 fix: setup_vs_mode() (above) zeroes Convert_Buff/Check_Buff for
         // the duration of the session so the netplay simulation runs with

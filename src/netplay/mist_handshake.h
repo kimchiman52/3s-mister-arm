@@ -207,6 +207,19 @@ typedef enum {
     MIST_GATE_FAIL,        /* hard fail — tear the session down */
 } MistGateAction;
 
+/* R-1 adv-review H-1: valid first-byte range of a live GekkoNet
+ * datagram. GekkoNet serializes MsgHeader first and its PacketType enum
+ * (u8, byte 0 on the wire) spans Inputs=1 .. NetworkHealth=7 — pinned
+ * third_party/GekkoNet/build/include/net.h:28-36. Used by the runner's
+ * implicit-completion guard: once THIS session has classified the
+ * session peer's hello as compatible, Gekko-shaped traffic from that
+ * peer proves the peer already completed its own gate (during the
+ * handshake phase a peer only ever emits MIST frames, first byte 0x4D
+ * 'M', or hole-punch keepalives "3SX_PUNCH", first byte 0x33 — nothing
+ * in [1, 7]) and is accepted as handshake success. */
+#define MIST_GEKKO_PACKET_TYPE_MIN 1
+#define MIST_GEKKO_PACKET_TYPE_MAX 7
+
 /*
  * IO vtable the runner core drives. All callbacks are non-NULL.
  *
@@ -242,8 +255,37 @@ typedef struct MistRunnerIo {
  * answers inbound hellos, and classifies replies, within one
  * MIST_DEFAULT_TIMEOUT_MS budget. On MIST_HS_TIMEOUT / MIST_HS_FAIL a
  * human-readable reason is written to `reason` (sized `reason_cap`).
+ *
+ * `peer_hello_ok` (R-1 adv-review H-1) is the caller-owned,
+ * SESSION-scoped "the session peer's hello classified compatible" latch
+ * that arms the implicit-completion path. The stranded-completion race:
+ * peer A completes the handshake (its hello reached us and ours reached
+ * it), starts GekkoNet the same tick, and its single gratuitous ack to
+ * us is lost — our further hellos land in A's GekkoNet, which drops
+ * them silently (pinned backend.cpp:132-151 catches the deserialize
+ * throw), so two IDENTICAL builds would burn the full retry budget and
+ * hard-fail with a misleading no-reply message. Fix: Gekko-shaped
+ * traffic (first byte in [MIST_GEKKO_PACKET_TYPE_MIN,
+ * MIST_GEKKO_PACKET_TYPE_MAX]) arriving FROM THE SESSION PEER is
+ * treated as handshake success — but ONLY when *peer_hello_ok is
+ * already true. The guard is what keeps the compatibility gate closed:
+ * the latch is set exclusively by classify_peer_payload() returning 0
+ * for a hello whose source address+port match the session peer, i.e.
+ * the full arch/platform/proto_ver/state_ver check passed. A legacy or
+ * mismatched peer can never set it, so blasting GekkoNet traffic at the
+ * gate cannot bypass validation — every path to MIST_HS_OK still runs
+ * the peer's advertised profile through the same classifier (explicit
+ * path validates the peer's ack payload; implicit path validated the
+ * peer's hello payload).
+ *
+ * Lifecycle: the caller must clear the latch at session start and at
+ * session teardown, alongside its attempt counter. It must persist
+ * ACROSS attempts within one session — the race spans attempts (the
+ * hello classifies clean in one 500 ms attempt, the peer's Gekko
+ * traffic arrives in a later one).
  */
 MistHandshakeResult mist_handshake_run_attempt(const MistRunnerIo* io,
+                                               bool* peer_hello_ok,
                                                char* reason,
                                                size_t reason_cap);
 
