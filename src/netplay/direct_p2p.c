@@ -286,6 +286,16 @@ static bool s_outcome_reported = false;
  * from Tick). */
 static bool s_host_deliver_seen = false;
 
+/* S3: set by host_rendezvous_thread_fn when it actually ENTERS its
+ * REGISTER resend loop. The cause-8 advisory reads "zero DELIVERs" as
+ * evidence of a dead rendezvous path — which is only evidence when
+ * REGISTERs are in fact being sent. With the bilateral kill switch on,
+ * a missing/malformed signal URL, a failed resolve, or a failed thread
+ * spawn, no REGISTER ever leaves the box and silence is EXPECTED, so
+ * the advisory must stay quiet (those paths already log their own
+ * cause). Worker-write / main-read. */
+static SDL_AtomicInt s_host_registering = { 0 };
+
 /* S3 Part A(3): HOST_WAITING is legitimately unbounded by design — a
  * host advertises until a joiner arrives or the user cancels. The S3
  * requirement is that it be INFORMATIVE, not silent: elapsed time on the
@@ -913,6 +923,9 @@ static int SDLCALL host_rendezvous_thread_fn(void* data) {
     int interval_ms = Config_GetInt(CFG_KEY_NETPLAY_DIRECT_P2P_REGISTER_INTERVAL_MS);
     if (interval_ms <= 0) interval_ms = 5000;
     if (interval_ms < 1000) interval_ms = 1000; /* server limits 10 pkts/s/IP */
+    /* S3: REGISTERs are now actually flowing — arm the cause-8 advisory
+     * (see s_host_registering). */
+    SDL_SetAtomicInt(&s_host_registering, 1);
     uint32_t last_send = 0;
     for (;;) {
         if (SDL_GetAtomicInt(&s_rendezvous_cancel)) {
@@ -1634,6 +1647,7 @@ static void direct_p2p_on_teardown(void) {
     s_host_waiting_since_ms = 0;   /* S3 */
     s_host_waiting_last_note_ms = 0;
     s_host_advisory_code = CONNECT_FAIL_NONE;
+    SDL_SetAtomicInt(&s_host_registering, 0);
     /* Reset state so the next BeginHost/BeginJoin starts clean.
      * R-1 exception: when the MIST handshake rejected the session, park
      * in FAILED_HANDSHAKE instead so the overlay keeps ERROR + the
@@ -2040,6 +2054,7 @@ void DirectP2P_Init(void) {
     s_host_waiting_since_ms = 0; /* S3 */
     s_host_waiting_last_note_ms = 0;
     s_host_advisory_code = CONNECT_FAIL_NONE;
+    SDL_SetAtomicInt(&s_host_registering, 0);
     memset(s_rendezvous_send_q, 0, sizeof(s_rendezvous_send_q));
     memset(&s_work, 0, sizeof(s_work));
     memset(&s_upnp_mapping, 0, sizeof(s_upnp_mapping));
@@ -2080,6 +2095,7 @@ void DirectP2P_BeginHost(int preferred_port) {
     s_host_waiting_since_ms = 0; /* S3 */
     s_host_waiting_last_note_ms = 0;
     s_host_advisory_code = CONNECT_FAIL_NONE;
+    SDL_SetAtomicInt(&s_host_registering, 0);
     Stun_ReleaseServerAddr(&s_work.stun); /* belt-and-braces before memset */
     s_stun_keepalive_last_ms = 0;
     s_rebind_txid_valid = false;
@@ -2167,6 +2183,7 @@ void DirectP2P_BeginJoin(const char* peer_code) {
     s_host_waiting_since_ms = 0; /* S3 */
     s_host_waiting_last_note_ms = 0;
     s_host_advisory_code = CONNECT_FAIL_NONE;
+    SDL_SetAtomicInt(&s_host_registering, 0);
     Stun_ReleaseServerAddr(&s_work.stun); /* belt-and-braces before memset */
     s_stun_keepalive_last_ms = 0;
     s_rebind_txid_valid = false;
@@ -2243,6 +2260,7 @@ void DirectP2P_Cancel(void) {
     s_host_waiting_since_ms = 0; /* S3 */
     s_host_waiting_last_note_ms = 0;
     s_host_advisory_code = CONNECT_FAIL_NONE;
+    SDL_SetAtomicInt(&s_host_registering, 0);
     set_state(DIRECT_P2P_IDLE);
 }
 
@@ -2286,7 +2304,8 @@ static void host_waiting_tick(void) {
      * threshold means the rendezvous path is dead — and with no UPnP
      * mapping either, this room is likely unjoinable. Tell the host NOW
      * instead of letting a friend fail minutes later. */
-    if (s_host_advisory_code == CONNECT_FAIL_NONE) {
+    if (s_host_advisory_code == CONNECT_FAIL_NONE &&
+        SDL_GetAtomicInt(&s_host_registering) != 0) {
         const ConnectFailCode adv = ConnectFail_ClassifyHostWaiting(
             s_upnp_mapping.active, s_host_deliver_seen, waited_ms);
         if (adv != CONNECT_FAIL_NONE) {
