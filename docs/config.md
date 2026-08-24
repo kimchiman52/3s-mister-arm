@@ -190,11 +190,29 @@ out-of-band (text message, voice) and paste it into the wrapper OSD.
 `netplay-direct-p2p-signal-budget-ms` (int, default `8000`)
 - Maximum wall-clock time spent waiting for the rendezvous server to
   pair us with our peer before giving up and reporting bilateral failure.
+- Since S1 (docs/plan-netplay-connection.md) this bounds the JOINER's
+  signaling phase only; the host's re-REGISTER loop is persistent and
+  paced by `netplay-direct-p2p-register-interval-ms` instead.
 
 `netplay-direct-p2p-bilateral-punch-ms` (int, default `3000`)
 - Length of the bilateral Stun_HolePunch window, in milliseconds.
   Longer than the initial direct punch window to accommodate post-
   signaling clock skew between peers.
+
+`netplay-direct-p2p-register-interval-ms` (int, default `5000`)
+- Host liveness (S1): cadence of the host's persistent rendezvous
+  re-REGISTER loop while the room code is displayed. Keeps the
+  rendezvous session and the host->server NAT mapping alive for as
+  long as the host is advertising. Floor-clamped to 1000 ms (the
+  server rate-limits at 10 packets/s/IP). The whole loop is disabled
+  by `netplay-direct-p2p-disable-bilateral`.
+
+`netplay-direct-p2p-stun-keepalive-ms` (int, default `20000`)
+- Host liveness (S1): cadence of the STUN rebind keepalive while
+  waiting for a joiner. Refreshes the advertised NAT mapping and
+  detects public-endpoint drift; on drift the room code is re-encoded
+  and re-displayed with an explicit "Network changed" status. Set to
+  `0` (or negative) to disable; values below 5000 ms are clamped up.
 
 ### Netplay tuning
 
