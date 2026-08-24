@@ -365,6 +365,39 @@ static int run_wire_test(void) {
         return 1;
     }
 
+    /* Also drive the PRODUCTION parser (public since S1 via
+     * Stun_ParseBindingResponse) over the same RFC 5389 §15.2 response.
+     * Regression for the S2 byte-order fix: the parser used to apply
+     * SDL_Swap16BE to the already-native port value, byteswapping every
+     * mapped port on little-endian hosts (55555 = 0xD903 came back as
+     * 0x03D9 = 985) — so every non-UPnP room code advertised a wrong
+     * port unless the port was a palindrome. The IPv4 branch was
+     * unaffected (its swap is cancelled by re-reading through memory
+     * bytes). */
+    {
+        char prod_ip[64] = { 0 };
+        uint16_t prod_port = 0;
+        if (!Stun_ParseBindingResponse(resp, n, txid, prod_ip, sizeof(prod_ip), &prod_port)) {
+            fail("wire", "production Stun_ParseBindingResponse rejected a valid response");
+            return 1;
+        }
+        if (prod_port != MOCK_MAPPED_PORT) {
+            fprintf(stderr,
+                    "[test_stun_mock] FAIL: wire: production parser returned port %u, expected %u "
+                    "(byteswapped? %u)\n",
+                    prod_port, MOCK_MAPPED_PORT,
+                    (unsigned)((MOCK_MAPPED_PORT >> 8) | ((MOCK_MAPPED_PORT & 0xFF) << 8)));
+            fail_count++;
+            return 1;
+        }
+        if (strcmp(prod_ip, "1.2.3.4") != 0) {
+            fprintf(stderr, "[test_stun_mock] FAIL: wire: production parser returned ip %s, expected 1.2.3.4\n",
+                    prod_ip);
+            fail_count++;
+            return 1;
+        }
+    }
+
     if (octets[0] != MOCK_MAPPED_IP_A || octets[1] != MOCK_MAPPED_IP_B
      || octets[2] != MOCK_MAPPED_IP_C || octets[3] != MOCK_MAPPED_IP_D
      || port != MOCK_MAPPED_PORT) {

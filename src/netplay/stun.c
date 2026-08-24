@@ -126,8 +126,15 @@ static bool parse_binding_response(const uint8_t* buf, int len, const uint8_t* t
         if (attr_type == STUN_ATTR_XOR_MAPPED_ADDRESS && attr_len >= 8) {
             // Family at offset+1 (skip reserved byte)
             uint8_t family = buf[offset + 1];
+            /* X-Port (RFC 5389 §15.2): the wire carries htons(port ^
+             * (cookie >> 16)). The shift-assembly below already converts
+             * the big-endian wire bytes to a NATIVE value, so XOR'ing the
+             * cookie's top 16 bits yields the port directly. The old
+             * SDL_Swap16BE here double-converted, byteswapping every
+             * mapped port on little-endian hosts (S2 fix; regression in
+             * test_stun_mock.c run_wire_test). */
             uint16_t xport = ((uint16_t)buf[offset + 2] << 8) | buf[offset + 3];
-            *out_port = SDL_Swap16BE(xport ^ (uint16_t)(STUN_MAGIC_COOKIE >> 16));
+            *out_port = (uint16_t)(xport ^ (uint16_t)(STUN_MAGIC_COOKIE >> 16));
 
             if (family == 0x01) { // IPv4
                 uint32_t xaddr = ((uint32_t)buf[offset + 4] << 24) | ((uint32_t)buf[offset + 5] << 16) |
@@ -161,7 +168,9 @@ static bool parse_binding_response(const uint8_t* buf, int len, const uint8_t* t
 
         if (attr_type == STUN_ATTR_MAPPED_ADDRESS && attr_len >= 8) {
             uint8_t family = buf[offset + 1];
-            *out_port = SDL_Swap16BE(((uint16_t)buf[offset + 2] << 8) | buf[offset + 3]);
+            /* Same S2 byte-order fix as X-Port above: the shift assembly
+             * already yields the native port value. */
+            *out_port = (uint16_t)(((uint16_t)buf[offset + 2] << 8) | buf[offset + 3]);
 
             if (family == 0x01) {
                 uint32_t decoded_ip =
