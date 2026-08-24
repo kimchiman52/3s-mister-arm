@@ -624,33 +624,49 @@ static void drain_and_answer_hellos(const MistRunnerIo* io) {
     }
 }
 
-MistHandshakeResult mist_handshake_run_attempt(const MistRunnerIo* io,
-                                               bool* peer_hello_ok,
-                                               char* reason,
-                                               size_t reason_cap) {
-    uint8_t hello[MIST_FRAME_MAX];
-    const size_t hello_len = mist_handshake_build_hello(hello, sizeof(hello));
-    if (hello_len == 0) {
+/* S3: arm one attempt for the per-tick pump (see mist_handshake.h). */
+bool mist_handshake_pump_begin(MistPumpState* st,
+                               const MistRunnerIo* io,
+                               char* reason,
+                               size_t reason_cap) {
+    memset(st, 0, sizeof(*st));
+    st->hello_len = mist_handshake_build_hello(st->hello, sizeof(st->hello));
+    if (st->hello_len == 0) {
         snprintf(reason, reason_cap, "hello build failed");
-        return MIST_HS_FAIL;
+        return false;
+    }
+    const uint64_t start_ms = io->now_ms(io->ctx);
+    st->deadline_ms = start_ms + (uint64_t)MIST_DEFAULT_TIMEOUT_MS;
+    st->next_send_ms = start_ms; /* first hello goes out on the first slice */
+    st->sends = 0;
+    return true;
+}
+
+/* S3: one bounded slice — the body of what used to be one iteration of
+ * mist_handshake_run_attempt's blocking loop (deadline check, scheduled
+ * hello send, drain of currently queued datagrams), with the delay
+ * removed: pacing comes from the caller's tick rate. All classification
+ * logic (gratuitous ack, H-1 latch + implicit completion, H-2a/H-2b
+ * hello answering) is byte-for-byte the pre-S3 behavior. */
+MistPumpStatus mist_handshake_pump(MistPumpState* st,
+                                   const MistRunnerIo* io,
+                                   bool* peer_hello_ok,
+                                   char* reason,
+                                   size_t reason_cap) {
+    const uint64_t now = io->now_ms(io->ctx);
+    if (now >= st->deadline_ms) {
+        snprintf(reason, reason_cap, "timeout (peer did not respond)");
+        return MIST_PUMP_TIMEOUT;
+    }
+    if (now >= st->next_send_ms && st->sends < MIST_RETRANSMIT_COUNT) {
+        io->send_to_peer(io->ctx, st->hello, st->hello_len);
+        st->sends++;
+        st->next_send_ms = now + MIST_RETRANSMIT_INTERVAL_MS;
     }
 
-    const uint64_t start_ms = io->now_ms(io->ctx);
-    const uint64_t deadline_ms = start_ms + (uint64_t)MIST_DEFAULT_TIMEOUT_MS;
-    int sends = 0;
-    uint64_t next_send_ms = start_ms;
-
-    for (;;) {
-        const uint64_t now = io->now_ms(io->ctx);
-        if (now >= deadline_ms) {
-            snprintf(reason, reason_cap, "timeout (peer did not respond)");
-            return MIST_HS_TIMEOUT;
-        }
-        if (now >= next_send_ms && sends < MIST_RETRANSMIT_COUNT) {
-            io->send_to_peer(io->ctx, hello, hello_len);
-            sends++;
-            next_send_ms = now + MIST_RETRANSMIT_INTERVAL_MS;
-        }
+    {
+        const uint8_t* hello = st->hello;
+        const size_t hello_len = st->hello_len;
 
         /* Drain pending datagrams. */
         uint8_t buf[MIST_RUNNER_RECV_CAP];
@@ -685,7 +701,7 @@ MistHandshakeResult mist_handshake_run_attempt(const MistRunnerIo* io,
                  * closes that half (the implicit-completion path below
                  * covers hellos that arrive after we return). */
                 drain_and_answer_hellos(io);
-                return MIST_HS_OK;
+                return MIST_PUMP_OK;
             }
             if (cls == -1) {
                 /* Explicit reject frame, or an ack that classified as
@@ -696,7 +712,7 @@ MistHandshakeResult mist_handshake_run_attempt(const MistRunnerIo* io,
                 const char* r = mist_handshake_last_reject_reason();
                 snprintf(reason, reason_cap, "%s", r[0] ? r : "peer rejected");
                 drain_and_answer_hellos(io);
-                return MIST_HS_FAIL;
+                return MIST_PUMP_FAIL;
             }
             if (cls == 0) {
                 /* Peer also runs the handshake — reply with ack/reject.
@@ -736,7 +752,7 @@ MistHandshakeResult mist_handshake_run_attempt(const MistRunnerIo* io,
                     if (hello_reason != MIST_REJECT_MALFORMED) {
                         snprintf(reason, reason_cap, "%s", why);
                         drain_and_answer_hellos(io);
-                        return MIST_HS_FAIL;
+                        return MIST_PUMP_FAIL;
                     }
                 } else {
                     reply_len = build_frame(MIST_MSG_ACK, MIST_ARCH_TAG,
@@ -772,12 +788,39 @@ MistHandshakeResult mist_handshake_run_attempt(const MistRunnerIo* io,
                 if (*peer_hello_ok && from_peer &&
                     buf[0] >= MIST_GEKKO_PACKET_TYPE_MIN &&
                     buf[0] <= MIST_GEKKO_PACKET_TYPE_MAX) {
-                    return MIST_HS_OK;
+                    return MIST_PUMP_OK;
                 }
                 /* else: drop and keep listening. */
             }
         }
+    }
 
+    /* Slice done — nothing terminal happened. NO delay here: the
+     * caller's tick cadence (or run_attempt's delay loop) paces us. */
+    return MIST_PUMP_PENDING;
+}
+
+/* The blocking attempt: begin + pump + idle-delay loop. Semantics are
+ * unchanged from the pre-S3 inline loop (the unit tests that drive this
+ * with a virtual clock still pass untouched); production netplay.c now
+ * uses the pump directly, one slice per frame. */
+MistHandshakeResult mist_handshake_run_attempt(const MistRunnerIo* io,
+                                               bool* peer_hello_ok,
+                                               char* reason,
+                                               size_t reason_cap) {
+    MistPumpState st;
+    if (!mist_handshake_pump_begin(&st, io, reason, reason_cap)) {
+        return MIST_HS_FAIL;
+    }
+    for (;;) {
+        const MistPumpStatus ps =
+            mist_handshake_pump(&st, io, peer_hello_ok, reason, reason_cap);
+        switch (ps) {
+        case MIST_PUMP_OK:      return MIST_HS_OK;
+        case MIST_PUMP_TIMEOUT: return MIST_HS_TIMEOUT;
+        case MIST_PUMP_FAIL:    return MIST_HS_FAIL;
+        case MIST_PUMP_PENDING: break;
+        }
         io->delay_ms(io->ctx, MIST_RUNNER_IDLE_DELAY_MS);
     }
 }

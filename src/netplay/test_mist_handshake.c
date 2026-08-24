@@ -777,6 +777,122 @@ static int runner_case_gate_policy(void) {
     return 0;
 }
 
+/* ---------------------------------------------------------------------
+ * S3 — incremental pump (mist_handshake_pump_begin / mist_handshake_pump).
+ * The production gate now runs ONE bounded slice per frame instead of
+ * blocking the whole 500 ms attempt inside Netplay_Run. These cases pin
+ * the pump's contract: it never sleeps (delay_ms must never be called —
+ * with the FakeIo clock, any delay call would advance clock_ms), each
+ * slice is bounded, and its terminal results match the blocking runner.
+ * --------------------------------------------------------------------- */
+
+/* (p1) pump completes across ticks without ever calling delay_ms: slice 1
+ * sends the hello and returns PENDING; the peer's ack queued before
+ * slice 2 completes with OK + the gratuitous ack. Virtual clock is
+ * advanced ONLY by the test between slices — an unchanged-by-pump clock
+ * proves delay_ms was never invoked. */
+static int pump_case_ok_across_ticks(void) {
+    const char* label = "(p1) pump: ack across ticks, no delay calls";
+    mist_handshake_test_reset();
+    FakeIo fio;
+    MistRunnerIo io;
+    fake_io_bind(&fio, &io);
+
+    MistPumpState st;
+    bool peer_hello_ok = false;
+    char reason[128] = { 0 };
+    RCHECK(mist_handshake_pump_begin(&st, &io, reason, sizeof(reason)),
+           "pump_begin failed");
+
+    /* Slice 1: nothing queued — hello out, attempt pending. */
+    fio.clock_ms = 16; /* one frame later */
+    MistPumpStatus ps = mist_handshake_pump(&st, &io, &peer_hello_ok,
+                                            reason, sizeof(reason));
+    RCHECK(ps == MIST_PUMP_PENDING, "slice 1 should be PENDING");
+    RCHECK(fio.sent_count == 1 && fio.sent[0].data[4] == MIST_MSG_HELLO,
+           "slice 1 must send exactly one hello");
+    RCHECK(fio.clock_ms == 16, "pump must NOT call delay_ms (clock moved)");
+
+    /* Slice 2: peer ack arrives between frames. */
+    uint8_t f[MIST_FRAME_MAX];
+    size_t fl = mist_handshake_build_frame(MIST_MSG_ACK, "armv7", "mister",
+                                           "abcdef0", 0, NULL, f, sizeof(f));
+    fake_queue(&fio, f, fl, true);
+    fio.clock_ms = 32;
+    ps = mist_handshake_pump(&st, &io, &peer_hello_ok, reason, sizeof(reason));
+    RCHECK(ps == MIST_PUMP_OK, "slice 2 should complete with OK");
+    RCHECK(fio.sent_count == 2 && fio.sent[1].data[4] == MIST_MSG_ACK,
+           "completion must send the gratuitous ack");
+    RCHECK(fio.clock_ms == 32, "pump must NOT call delay_ms (clock moved)");
+    fprintf(stderr, "[test_mist_handshake] %s OK\n", label);
+    return 0;
+}
+
+/* (p2) pump timeout: driven at a 16 ms virtual frame cadence with a
+ * silent peer, the attempt must retransmit the full hello ladder
+ * (MIST_RETRANSMIT_COUNT at 100 ms spacing) and report TIMEOUT once the
+ * 500 ms budget elapses — in ~budget/16 slices, none of them sleeping. */
+static int pump_case_timeout_frame_cadence(void) {
+    const char* label = "(p2) pump: silent peer times out at frame cadence";
+    mist_handshake_test_reset();
+    FakeIo fio;
+    MistRunnerIo io;
+    fake_io_bind(&fio, &io);
+
+    MistPumpState st;
+    bool peer_hello_ok = false;
+    char reason[128] = { 0 };
+    RCHECK(mist_handshake_pump_begin(&st, &io, reason, sizeof(reason)),
+           "pump_begin failed");
+
+    int slices = 0;
+    MistPumpStatus ps = MIST_PUMP_PENDING;
+    while (ps == MIST_PUMP_PENDING && slices < 100) {
+        fio.clock_ms += 16; /* the test, not the pump, advances time */
+        ps = mist_handshake_pump(&st, &io, &peer_hello_ok, reason, sizeof(reason));
+        slices++;
+    }
+    RCHECK(ps == MIST_PUMP_TIMEOUT, "silent peer must TIMEOUT");
+    RCHECK(fio.clock_ms >= MIST_DEFAULT_TIMEOUT_MS,
+           "TIMEOUT before the 500 ms budget elapsed");
+    RCHECK(slices <= (MIST_DEFAULT_TIMEOUT_MS / 16) + 2,
+           "too many slices — pump not honoring the deadline");
+    RCHECK(fio.sent_count == MIST_RETRANSMIT_COUNT,
+           "full hello retransmit ladder expected");
+    RCHECK(strstr(reason, "timeout") != NULL, "timeout reason missing");
+    fprintf(stderr, "[test_mist_handshake] %s OK\n", label);
+    return 0;
+}
+
+/* (p3) pump reject parity: an explicit reject terminates the very slice
+ * that drains it, with the runner-identical reason text. */
+static int pump_case_reject(void) {
+    const char* label = "(p3) pump: explicit reject fails the slice";
+    mist_handshake_test_reset();
+    FakeIo fio;
+    MistRunnerIo io;
+    fake_io_bind(&fio, &io);
+
+    uint8_t f[MIST_FRAME_MAX];
+    size_t fl = mist_handshake_build_frame(MIST_MSG_REJECT, NULL, NULL, NULL,
+                                           1 /* arch mismatch */, "arch mismatch (x86)",
+                                           f, sizeof(f));
+    fake_queue(&fio, f, fl, true);
+
+    MistPumpState st;
+    bool peer_hello_ok = false;
+    char reason[128] = { 0 };
+    RCHECK(mist_handshake_pump_begin(&st, &io, reason, sizeof(reason)),
+           "pump_begin failed");
+    fio.clock_ms = 16;
+    const MistPumpStatus ps = mist_handshake_pump(&st, &io, &peer_hello_ok,
+                                                  reason, sizeof(reason));
+    RCHECK(ps == MIST_PUMP_FAIL, "reject must FAIL the attempt");
+    RCHECK(strstr(reason, "arch mismatch") != NULL, "reject reason missing");
+    fprintf(stderr, "[test_mist_handshake] %s OK\n", label);
+    return 0;
+}
+
 #undef RCHECK
 
 int Netplay_Test_MistHandshake(void) {
@@ -844,6 +960,11 @@ int Netplay_Test_MistHandshake(void) {
     fails += runner_case_h1_guard_foreign_source();
     fails += runner_case_h1_guard_shape();
     fails += runner_case_gate_policy();
+
+    /* S3: incremental per-tick pump (the production gate's new driver). */
+    fails += pump_case_ok_across_ticks();
+    fails += pump_case_timeout_frame_cadence();
+    fails += pump_case_reject();
 
     if (fails > 0) {
         fprintf(stderr, "[test_mist_handshake] %d case(s) failed\n", fails);

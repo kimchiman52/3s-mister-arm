@@ -732,54 +732,89 @@ static void mist_netio_delay_ms(void* vctx, uint32_t ms) {
     SDL_Delay(ms);
 }
 
-// R-1 — run the MIST handshake on the active session socket before
-// gekko_create() takes it over. Mirrors tier-2 §8.2.4.
-// Returns MIST_HS_OK on ack; MIST_HS_TIMEOUT when the peer stayed silent
-// for the whole budget (retryable by the caller — the peer may not have
-// reached its own gate yet); MIST_HS_FAIL on an explicit reject or a
-// local transport error (reason cached in s_mist_reject_reason).
-// The loop itself lives in mist_handshake_run_attempt (adv-review M-5:
-// extracted for unit testability); this wrapper resolves the peer
-// address and binds the SDL3_net IO callbacks.
-static MistHandshakeResult run_mist_handshake_on_net_sock(NET_DatagramSocket* sock) {
+// R-1 / S3 — the MIST handshake gate runs on the active session socket
+// before gekko_create() takes it over (tier-2 §8.2.4). S3 (Part C)
+// converted it from a BLOCKING per-attempt runner — which stalled the
+// main thread for the full 500 ms budget once per frame, dropping the
+// game to ~2 fps with ~2 Hz input sampling for up to ~20-24 s of
+// retries — to an incremental per-tick pump over the same MistRunnerIo
+// seam: one bounded slice (<= one hello send + a drain of the queued
+// datagrams) per frame, terminal results folded through the unchanged
+// mist_handshake_gate_next retry policy. The attempt state persists in
+// the statics below; the resolved peer address is cached across the
+// retry attempts of one session and released by mist_pump_stop().
+static NET_DatagramSocket* acquire_active_socket(void); /* defined below */
+
+static bool s_hs_pump_active = false;
+static MistPumpState s_hs_pump;
+static MistNetIo s_hs_net_io = { NULL, NULL, 0, NULL };
+static NET_Address* s_hs_peer_addr = NULL;
+static const MistRunnerIo s_hs_io_template = {
+    &s_hs_net_io,
+    mist_netio_send_to_peer,
+    mist_netio_recv,
+    mist_netio_send_reply_to_last,
+    mist_netio_now_ms,
+    mist_netio_delay_ms,
+};
+
+// Release everything the pump holds. Idempotent; called on PROCEED,
+// hard failure, and session EXITING (covers a mid-handshake abort).
+static void mist_pump_stop(void) {
+    if (s_hs_net_io.last != NULL) {
+        NET_DestroyDatagram(s_hs_net_io.last);
+        s_hs_net_io.last = NULL;
+    }
+    if (s_hs_peer_addr != NULL) {
+        NET_UnrefAddress(s_hs_peer_addr);
+        s_hs_peer_addr = NULL;
+    }
+    s_hs_net_io.sock = NULL;
+    s_hs_net_io.peer = NULL;
+    s_hs_pump_active = false;
+}
+
+// Arm one pump attempt: bind the session socket, resolve (once per
+// session, cached) the peer address, stamp the 500 ms budget. Returns
+// false with the reason cached in s_mist_reject_reason on a local
+// transport error — the caller folds that through the gate as a hard
+// failure, exactly like the old blocking wrapper did.
+static bool mist_pump_start(void) {
+    NET_DatagramSocket* sock = acquire_active_socket();
     if (sock == NULL || remote_ip == NULL || remote_port == 0) {
         SDL_strlcpy(s_mist_reject_reason, "missing transport state", sizeof(s_mist_reject_reason));
-        return MIST_HS_FAIL;
+        return false;
     }
-    NET_Address* peer = NET_ResolveHostname(remote_ip);
-    if (peer == NULL) {
-        SDL_strlcpy(s_mist_reject_reason, "peer resolve failed", sizeof(s_mist_reject_reason));
-        return MIST_HS_FAIL;
+    if (s_hs_peer_addr == NULL) {
+        s_hs_peer_addr = NET_ResolveHostname(remote_ip);
+        if (s_hs_peer_addr == NULL) {
+            SDL_strlcpy(s_mist_reject_reason, "peer resolve failed", sizeof(s_mist_reject_reason));
+            return false;
+        }
+        /* Wait briefly for resolution. One-time per session; remote_ip
+         * is a numeric dotted-quad on the orchestrator/matchmaking
+         * paths, so this resolves immediately — the bounded poll only
+         * matters for a hostname passed via the LAN CLI. */
+        for (int spin = 0; spin < 50; spin++) {
+            if (NET_GetAddressStatus(s_hs_peer_addr) != NET_WAITING) break;
+            SDL_Delay(2);
+        }
+        if (NET_GetAddressStatus(s_hs_peer_addr) != NET_SUCCESS) {
+            NET_UnrefAddress(s_hs_peer_addr);
+            s_hs_peer_addr = NULL;
+            SDL_strlcpy(s_mist_reject_reason, "peer resolve timed out", sizeof(s_mist_reject_reason));
+            return false;
+        }
     }
-    /* Wait briefly for resolution. */
-    for (int spin = 0; spin < 50; spin++) {
-        if (NET_GetAddressStatus(peer) != NET_WAITING) break;
-        SDL_Delay(2);
+    s_hs_net_io.sock = sock;
+    s_hs_net_io.peer = s_hs_peer_addr;
+    s_hs_net_io.peer_port = remote_port;
+    if (!mist_handshake_pump_begin(&s_hs_pump, &s_hs_io_template,
+                                   s_mist_reject_reason, sizeof(s_mist_reject_reason))) {
+        return false;
     }
-    if (NET_GetAddressStatus(peer) != NET_SUCCESS) {
-        NET_UnrefAddress(peer);
-        SDL_strlcpy(s_mist_reject_reason, "peer resolve timed out", sizeof(s_mist_reject_reason));
-        return MIST_HS_FAIL;
-    }
-
-    MistNetIo net_io = { sock, peer, remote_port, NULL };
-    const MistRunnerIo io = {
-        &net_io,
-        mist_netio_send_to_peer,
-        mist_netio_recv,
-        mist_netio_send_reply_to_last,
-        mist_netio_now_ms,
-        mist_netio_delay_ms,
-    };
-    const MistHandshakeResult hs = mist_handshake_run_attempt(
-        &io, &s_mist_peer_hello_ok, s_mist_reject_reason, sizeof(s_mist_reject_reason));
-
-    if (net_io.last != NULL) {
-        NET_DestroyDatagram(net_io.last);
-        net_io.last = NULL;
-    }
-    NET_UnrefAddress(peer);
-    return hs;
+    s_hs_pump_active = true;
+    return true;
 }
 
 // R-1: single source of truth for "which socket carries this session".
@@ -1575,8 +1610,33 @@ void Netplay_Run() {
                 SDL_snprintf(s_connect_status, sizeof(s_connect_status),
                              "Verifying opponent (%ds)... START quits",
                              s_mist_handshake_attempts / 2);
-                NET_DatagramSocket* hs_sock = acquire_active_socket();
-                const MistHandshakeResult hs = run_mist_handshake_on_net_sock(hs_sock);
+                // S3: incremental pump — one bounded slice per frame
+                // instead of blocking the whole 500 ms attempt budget
+                // (see the s_hs_pump block comment). The game keeps
+                // rendering + sampling input at full frame rate for the
+                // entire retry window.
+                MistHandshakeResult hs = MIST_HS_FAIL;
+                bool slice_pending = false;
+                if (!s_hs_pump_active && !mist_pump_start()) {
+                    // Local transport error — reason already cached;
+                    // fold through the gate as a hard failure.
+                    mist_pump_stop();
+                } else {
+                    const MistPumpStatus ps = mist_handshake_pump(
+                        &s_hs_pump, &s_hs_io_template, &s_mist_peer_hello_ok,
+                        s_mist_reject_reason, sizeof(s_mist_reject_reason));
+                    if (ps == MIST_PUMP_PENDING) {
+                        slice_pending = true;
+                    } else {
+                        s_hs_pump_active = false; // this attempt concluded
+                        hs = (ps == MIST_PUMP_OK)        ? MIST_HS_OK
+                             : (ps == MIST_PUMP_TIMEOUT) ? MIST_HS_TIMEOUT
+                                                         : MIST_HS_FAIL;
+                    }
+                }
+                if (slice_pending) {
+                    break; // slice done; stay TRANSITIONING at full rate
+                }
                 // Retry policy (peer-skew tolerance, attempt cap, the
                 // exhaustion message) lives in mist_handshake_gate_next
                 // — extracted for unit testability (adv-review M-5).
@@ -1585,13 +1645,17 @@ void Netplay_Run() {
                     s_mist_reject_reason, sizeof(s_mist_reject_reason));
                 if (act == MIST_GATE_PROCEED) {
                     s_mist_handshake_done = true;
+                    mist_pump_stop();
                 } else if (act == MIST_GATE_RETRY) {
                     // Silent peer — likely still booting toward its own
-                    // gate (cold-launch skew). Stay in TRANSITIONING and
-                    // retry next tick; each attempt keeps the 500 ms
-                    // budget. An explicit reject never lands here.
+                    // gate (cold-launch skew). Stay in TRANSITIONING; the
+                    // next tick re-arms the pump (the resolved peer
+                    // address stays cached in s_hs_peer_addr). Each
+                    // attempt keeps the 500 ms budget. An explicit
+                    // reject never lands here.
                     break;
                 } else {
+                    mist_pump_stop();
                     printf("[netplay] MIST handshake failed: %s\n",
                            s_mist_reject_reason);
                     // Surface the reason on screen: latch it into the
@@ -1775,6 +1839,10 @@ void Netplay_Run() {
         Netplay_CancelMatchmaking();
         // R-1: clear handshake state so the next session (direct P2P,
         // LAN, etc.) starts without carrying stale flags.
+        // S3: also release anything the incremental pump still holds
+        // (cached peer address / last datagram) — a hold-START abort or
+        // menu exit can land here mid-handshake.
+        mist_pump_stop();
         s_mist_handshake_done = false;
         s_mist_handshake_attempts = 0;
         s_mist_peer_hello_ok = false;

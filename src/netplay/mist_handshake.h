@@ -297,6 +297,58 @@ MistHandshakeResult mist_handshake_run_attempt(const MistRunnerIo* io,
                                                char* reason,
                                                size_t reason_cap);
 
+/* ------------------------------------------------------------------- */
+/* S3 (docs/plan-netplay-connection.md §5): incremental per-tick pump.  */
+/*                                                                     */
+/* mist_handshake_run_attempt blocks its caller for the whole 500 ms    */
+/* attempt budget (send/drain/delay loop). Called once per frame from   */
+/* Netplay_Run's TRANSITIONING gate, that meant the game rendered at    */
+/* ~2 fps with input sampled at ~2 Hz for up to ~20 s of retries. The   */
+/* pump splits ONE attempt into bounded per-tick slices: each           */
+/* mist_handshake_pump call does at most one scheduled hello send plus  */
+/* a drain of the currently queued datagrams, then returns — never      */
+/* sleeping (io->delay_ms is NOT called), never spinning. Wall-clock    */
+/* budget/semantics are identical to run_attempt (which is now a thin   */
+/* begin+pump+delay loop kept for the blocking callers and the          */
+/* existing unit tests).                                                */
+/* ------------------------------------------------------------------- */
+
+typedef enum {
+    MIST_PUMP_PENDING = 0, /* slice done, attempt still in flight — call again */
+    MIST_PUMP_OK,          /* == MIST_HS_OK */
+    MIST_PUMP_TIMEOUT,     /* == MIST_HS_TIMEOUT (attempt budget exhausted) */
+    MIST_PUMP_FAIL,        /* == MIST_HS_FAIL */
+} MistPumpStatus;
+
+/* One in-flight attempt. All fields are private to the pump; callers
+ * only allocate/zero it and pass it back. A terminal pump return
+ * invalidates the state — call mist_handshake_pump_begin again for the
+ * next attempt. */
+typedef struct MistPumpState {
+    uint64_t deadline_ms;
+    uint64_t next_send_ms;
+    int sends;
+    uint8_t hello[MIST_FRAME_MAX];
+    size_t hello_len;
+} MistPumpState;
+
+/* Arm one attempt: builds the hello and stamps the 500 ms deadline from
+ * io->now_ms. Returns false (with `reason` filled) only on a local
+ * build failure. Does not send. */
+bool mist_handshake_pump_begin(MistPumpState* st,
+                               const MistRunnerIo* io,
+                               char* reason,
+                               size_t reason_cap);
+
+/* One bounded slice of the attempt (see block comment above).
+ * `peer_hello_ok` follows exactly the mist_handshake_run_attempt
+ * contract (session-scoped latch, persists across attempts). */
+MistPumpStatus mist_handshake_pump(MistPumpState* st,
+                                   const MistRunnerIo* io,
+                                   bool* peer_hello_ok,
+                                   char* reason,
+                                   size_t reason_cap);
+
 /*
  * mist_handshake_gate_next — fold one attempt result into the session
  * gate's retry state. `attempts` is the caller-owned consecutive-timeout
