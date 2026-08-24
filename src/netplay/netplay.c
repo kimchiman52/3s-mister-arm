@@ -1743,6 +1743,28 @@ void Netplay_SetSessionTeardownCallback(void (*cb)(void)) {
     session_teardown_cb = cb;
 }
 
+// S3 (docs/plan-netplay-connection.md §5) — connection-establishment
+// event logger. Most connection failures happen BEFORE configure_gekko()
+// opens the per-session netplay log, so this opens it lazily: a failed
+// attempt still leaves a netplay-<utc_ms>.log on disk carrying the
+// attributed failure line + stage timings, which is exactly what a field
+// report needs. Tees to SDL_Log via netplay_log_line and flushes
+// immediately (failure paths have no heartbeat to drive the 1 Hz flush).
+// MAIN THREAD ONLY — the log FILE* is unguarded; direct_p2p.c calls this
+// exclusively from DirectP2P_Tick's reporting path.
+void Netplay_LogConnectEvent(const char* line) {
+    if (line == NULL || line[0] == '\0') {
+        return;
+    }
+    if (s_netplay_log == NULL) {
+        netplay_log_open(netplay_utc_ms());
+    }
+    netplay_log_line(line);
+    if (s_netplay_log != NULL) {
+        fflush(s_netplay_log);
+    }
+}
+
 // === Tier-1 netplay diag — Item 10: SIGTERM flush hook ===
 // main.c calls this after its main loop exits but before SDL teardown so
 // the diagnostics survive wrapper-SIGTERM. Idempotent: a guard on

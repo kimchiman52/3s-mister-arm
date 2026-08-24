@@ -52,6 +52,10 @@
 #ifndef NETPLAY_DIRECT_P2P_H
 #define NETPLAY_DIRECT_P2P_H
 
+/* S3: ConnectFailCode taxonomy (header-only enum — safe for
+ * !ENABLE_NETPLAY builds where connect_fail.c is not compiled). */
+#include "netplay/connect_fail.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -144,6 +148,15 @@ const char* DirectP2P_GetStatusText(void);
  * only (called from the game thread's session state machine). */
 void DirectP2P_NotifySessionRejected(const char* reason);
 
+/* S3 generalization of NotifySessionRejected: latch ANY post-handoff
+ * session failure (MIST reject, CONNECTING-deadline timeout, ...) with
+ * its taxonomy code so the teardown callback parks FAILED_HANDSHAKE-
+ * style with an attributable status, and DirectP2P_Tick emits ONE
+ * machine-coded report line to the netplay log. `reason` may be NULL/
+ * empty — the code's ConnectFail_UserText is used then. Main-thread
+ * only. */
+void DirectP2P_NotifySessionFailed(ConnectFailCode code, const char* reason);
+
 /* Step 8 — Per-frame native overlay. Renders three centered lines into
  * the 384x224 game canvas via SSPutStrPro:
  *   line 1: mode label (HOSTING / CONNECTING / CONNECTED / ERROR)
@@ -210,6 +223,7 @@ static inline Role DirectP2P_GetRole(void) { return ROLE_NONE; }
 static inline const char* DirectP2P_GetHostCode(void) { return ""; }
 static inline const char* DirectP2P_GetStatusText(void) { return ""; }
 static inline void DirectP2P_NotifySessionRejected(const char* reason) { (void)reason; }
+static inline void DirectP2P_NotifySessionFailed(ConnectFailCode code, const char* reason) { (void)code; (void)reason; }
 static inline void DirectP2P_DrawOverlay(void) { }
 
 #endif /* ENABLE_NETPLAY */

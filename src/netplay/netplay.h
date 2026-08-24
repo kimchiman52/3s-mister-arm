@@ -47,6 +47,13 @@ void Netplay_SetStunSocket(struct NET_DatagramSocket* socket);
 // (Step 7) to release its UPnP mapping. Pass NULL to clear. The slot is
 // not cleared automatically — the callback persists across sessions.
 void Netplay_SetSessionTeardownCallback(void (*cb)(void));
+// S3 (docs/plan-netplay-connection.md §5): append one line to the
+// per-session netplay log (<pref>/logs/netplay-<utc_ms>.log), opening it
+// lazily when no session has opened it yet — connection failures happen
+// before configure_gekko() normally opens the file, and the attributed
+// failure line + stage timings must survive to disk for field reports.
+// Also tees to SDL_Log. MAIN THREAD ONLY.
+void Netplay_LogConnectEvent(const char* line);
 void Netplay_SetMatchmakingParams(const char* server_ip, int server_port);
 void Netplay_BeginMatchmaking();
 void Netplay_TickMatchmaking();

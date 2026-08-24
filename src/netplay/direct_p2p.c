@@ -119,6 +119,21 @@ typedef struct {
      * value (host:port). Both fields zero in 5a — no callers yet. */
     char     signal_host[64];
     uint16_t signal_port;
+
+    /* --- S3 failure attribution (docs/plan-netplay-connection.md §5) ---
+     * Written by the worker BEFORE it publishes a terminal state (same
+     * discipline as every other s_work field); read by the main thread's
+     * Tick reporting path after it observes that state. */
+    ConnectFailCode fail_code;   /* taxonomy code for the surfaced failure */
+    bool ev_deliver_any;         /* joiner: >=1 DELIVER frame (incl. sentinel) */
+    bool ev_deliver_real;        /* joiner: >=1 DELIVER with a real endpoint */
+    int  join_attempts;          /* attempts consumed (S2 auto-retry) */
+    /* Stage timings (ms) for the report line — 0 = stage not reached. */
+    uint32_t t_upnp_ms;
+    uint32_t t_stun_ms;
+    uint32_t t_punch_ms;
+    uint32_t t_signal_ms;
+    uint32_t t_bilateral_ms;
 } Work;
 
 static SDL_AtomicInt s_state = { DIRECT_P2P_IDLE };
@@ -255,6 +270,35 @@ static void set_status(const char* msg) {
 
 static bool cancel_requested(void) {
     return SDL_GetAtomicInt(&s_cancel) != 0;
+}
+
+/* --- S3: failure attribution helpers ----------------------------------- */
+
+/* One attributed report line per Begin* attempt-set (reset alongside the
+ * other per-session bookkeeping). Main-thread only — written from Tick's
+ * reporting path and the BeginHost / BeginJoin / Cancel resets. */
+static bool s_outcome_reported = false;
+
+/* S3: has the host received ANY rendezvous DELIVER (incl. the
+ * zero-sentinel) this hosting session? The server answers every REGISTER
+ * with a DELIVER, so this doubles as "the rendezvous path is alive" for
+ * the cause-8 host advisory. Main-thread only (try_handle_deliver runs
+ * from Tick). */
+static bool s_host_deliver_seen = false;
+
+/* Record the taxonomy code and put its user string on the overlay status
+ * line. Callable from worker threads (same rules as set_status — s_work
+ * writes happen-before the terminal state publish). */
+static void set_fail(ConnectFailCode code) {
+    s_work.fail_code = code;
+    set_status(ConnectFail_UserText(code));
+}
+
+/* Like set_fail but with a custom status string (cases where the generic
+ * user text would mislead, e.g. kill-switch bypass). */
+static void set_fail_msg(ConnectFailCode code, const char* msg) {
+    s_work.fail_code = code;
+    set_status(msg);
 }
 
 /* Returns true when ip is in a private/loopback/link-local IPv4 range.
@@ -917,8 +961,10 @@ static int SDLCALL host_bilateral_punch_thread_fn(void* data) {
     SDL_Log("[direct_p2p] entering FALLBACK_BILATERAL_PUNCH peer=%s:%u (budget=%dms)",
             peer_ip, (unsigned)peer_port, budget_ms);
 
+    const uint32_t stage_t0 = SDL_GetTicks();
     bool punched = STUN_HOLE_PUNCH(&s_work.stun, peer_ip, &peer_port,
                                    budget_ms, &s_bilateral_punch_cancel);
+    s_work.t_bilateral_ms = SDL_GetTicks() - stage_t0;
     if (SDL_GetAtomicInt(&s_bilateral_punch_cancel) || cancel_requested()) {
         /* Cancelled: leave state untouched if a terminal state has already
          * been published by another path; otherwise drop to IDLE-ish via
@@ -987,6 +1033,7 @@ static int SDLCALL host_thread_fn(void* data) {
      * which likewise KEEPS the mapping when a renew attempt fails
      * (upnp_renew_tick) rather than tearing it down on a blip. */
     set_state(DIRECT_P2P_UPNP_PROBE);
+    uint32_t stage_t0 = SDL_GetTicks();
     bool upnp_ok;
     if (s_upnp_mapping.active && s_upnp_mapping.internal_port == local_port) {
         SDL_Log("[direct_p2p] retry: reusing the live UPnP mapping from the previous "
@@ -996,6 +1043,7 @@ static int SDLCALL host_thread_fn(void* data) {
     } else {
         upnp_ok = try_upnp(local_port, local_port);
     }
+    s_work.t_upnp_ms = SDL_GetTicks() - stage_t0;
     if (cancel_requested()) {
         set_status("Cancelled.");
         set_state(DIRECT_P2P_IDLE);
@@ -1018,7 +1066,9 @@ static int SDLCALL host_thread_fn(void* data) {
     NET_Init();
     set_state(DIRECT_P2P_STUN_DISCOVER);
     set_status("Preparing...");
+    stage_t0 = SDL_GetTicks();
     bool stun_ok = STUN_DISCOVER(&s_work.stun, local_port, stun_budget_ms());
+    s_work.t_stun_ms = SDL_GetTicks() - stage_t0;
     if (cancel_requested()) {
         Stun_CloseSocket(&s_work.stun);
         set_status("Cancelled.");
@@ -1026,7 +1076,10 @@ static int SDLCALL host_thread_fn(void* data) {
         return 0;
     }
     if (!stun_ok) {
-        set_status("Connection failed. Try again.");
+        /* S3 causes 1-2 (host side): same classification as the joiner. */
+        set_fail(ConnectFail_ClassifyStunDiscover(
+            s_work.stun.diag_servers_probed, s_work.stun.diag_servers_answered,
+            s_work.stun.diag_sends_ok, s_work.stun.diag_dns_all_failed));
         set_state(DIRECT_P2P_FAILED_STUN);
         return 0;
     }
@@ -1080,7 +1133,7 @@ static int SDLCALL host_thread_fn(void* data) {
     if (ip_be == 0 ||
         !RoomCode_Encode(ip_be, pub_port, s_work.host_code)) {
         Stun_CloseSocket(&s_work.stun);
-        set_status("Connection failed. Try again.");
+        set_fail(CONNECT_FAIL_INTERNAL);
         set_state(DIRECT_P2P_FAILED_STUN);
         return 0;
     }
@@ -1140,16 +1193,29 @@ static int SDLCALL host_thread_fn(void* data) {
  * and set the status text; DIRECT_P2P_HANDOFF returns with s_work
  * fully written back. */
 static DirectP2PState join_attempt(void) {
+    /* S3: fresh evidence per attempt — the retry's classification must
+     * not inherit the first attempt's DELIVER counters. */
+    s_work.fail_code = CONNECT_FAIL_NONE;
+    s_work.ev_deliver_any = false;
+    s_work.ev_deliver_real = false;
+    s_work.join_attempts++;
+
     set_state(DIRECT_P2P_STUN_DISCOVER);
     set_status("Preparing...");
+    uint32_t stage_t0 = SDL_GetTicks();
     bool stun_ok = STUN_DISCOVER(&s_work.stun, 0, stun_budget_ms());
+    s_work.t_stun_ms = SDL_GetTicks() - stage_t0;
     if (cancel_requested()) {
         Stun_CloseSocket(&s_work.stun);
         set_status("Cancelled.");
         return DIRECT_P2P_IDLE;
     }
     if (!stun_ok) {
-        set_status("Connection failed. Try again.");
+        /* S3 causes 1-2: distinguish "no network / DNS dead" from
+         * "outbound UDP filtered" using the discovery evidence. */
+        set_fail(ConnectFail_ClassifyStunDiscover(
+            s_work.stun.diag_servers_probed, s_work.stun.diag_servers_answered,
+            s_work.stun.diag_sends_ok, s_work.stun.diag_dns_all_failed));
         return DIRECT_P2P_FAILED_STUN;
     }
 
@@ -1179,8 +1245,10 @@ static DirectP2PState join_attempt(void) {
     char punch_peer_ip[64];
     SDL_strlcpy(punch_peer_ip, s_work.peer_ip, sizeof(punch_peer_ip));
     uint16_t punch_peer_port = s_work.peer_public_port;
+    stage_t0 = SDL_GetTicks();
     bool punched = STUN_HOLE_PUNCH(&s_work.stun, punch_peer_ip, &punch_peer_port,
                                    2500, &s_cancel);
+    s_work.t_punch_ms = SDL_GetTicks() - stage_t0;
     if (cancel_requested()) {
         Stun_CloseSocket(&s_work.stun);
         set_status("Cancelled.");
@@ -1202,18 +1270,24 @@ static DirectP2PState join_attempt(void) {
          * underlying diagnosis is unchanged. */
         if (Config_GetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_BILATERAL)) {
             Stun_CloseSocket(&s_work.stun);
-            set_status("Could not connect. Try a different network.");
+            set_fail_msg(CONNECT_FAIL_NAT_BLOCKED,
+                         "Direct punch failed (fallback disabled).");
             return DIRECT_P2P_FAILED_SYMMETRIC;
         }
         if (direct_p2p_is_lan_peer(s_work.peer_ip)) {
             Stun_CloseSocket(&s_work.stun);
-            set_status("Could not connect. Try a different network.");
+            set_fail_msg(CONNECT_FAIL_NAT_BLOCKED,
+                         "LAN peer unreachable (check firewall).");
             return DIRECT_P2P_FAILED_SYMMETRIC;
         }
         if (s_work.stun.public_ip[0] != '\0' &&
             direct_p2p_ip_eq_normalized(s_work.peer_ip, s_work.stun.public_ip)) {
+            /* S3 cause 7: peer public IP == our public IP — same router,
+             * and the direct punch already proved it lacks NAT loopback.
+             * The bilateral punch would loop through the same broken
+             * router, so this is terminal here. */
             Stun_CloseSocket(&s_work.stun);
-            set_status("Could not connect. Try a different network.");
+            set_fail(CONNECT_FAIL_HAIRPIN);
             return DIRECT_P2P_FAILED_SYMMETRIC;
         }
 
@@ -1236,7 +1310,7 @@ static DirectP2PState join_attempt(void) {
         if (signal_url == NULL || signal_url[0] == '\0') {
             SDL_Log("[direct_p2p] joiner fallback: no signal URL configured");
             Stun_CloseSocket(&s_work.stun);
-            set_status("Could not connect. Try a different network.");
+            set_fail(CONNECT_FAIL_INTERNAL);
             return DIRECT_P2P_FAILED_BILATERAL;
         }
         char signal_host[64] = { 0 };
@@ -1244,7 +1318,7 @@ static DirectP2PState join_attempt(void) {
         if (!Rendezvous_ParseSignalUrl(signal_url, signal_host, &signal_port)) {
             SDL_Log("[direct_p2p] joiner fallback: malformed signal URL '%s'", signal_url);
             Stun_CloseSocket(&s_work.stun);
-            set_status("Could not connect. Try a different network.");
+            set_fail(CONNECT_FAIL_INTERNAL);
             return DIRECT_P2P_FAILED_BILATERAL;
         }
 
@@ -1253,7 +1327,9 @@ static DirectP2PState join_attempt(void) {
         if (!signal_addr) {
             SDL_Log("[direct_p2p] joiner fallback: failed to resolve %s", signal_host);
             Stun_CloseSocket(&s_work.stun);
-            set_status("Could not connect. Try a different network.");
+            /* DNS worked for STUN moments ago; a dead resolve HERE most
+             * likely means the rendezvous hostname itself is gone. */
+            set_fail(CONNECT_FAIL_RENDEZVOUS_DOWN);
             return DIRECT_P2P_FAILED_BILATERAL;
         }
 
@@ -1268,7 +1344,7 @@ static DirectP2PState join_attempt(void) {
             SDL_Log("[direct_p2p] joiner fallback: failed to derive session key");
             NET_UnrefAddress(signal_addr);
             Stun_CloseSocket(&s_work.stun);
-            set_status("Could not connect. Try a different network.");
+            set_fail(CONNECT_FAIL_INTERNAL);
             return DIRECT_P2P_FAILED_BILATERAL;
         }
 
@@ -1278,7 +1354,7 @@ static DirectP2PState join_attempt(void) {
             SDL_Log("[direct_p2p] joiner fallback: failed to build REGISTER packet");
             NET_UnrefAddress(signal_addr);
             Stun_CloseSocket(&s_work.stun);
-            set_status("Could not connect. Try a different network.");
+            set_fail(CONNECT_FAIL_INTERNAL);
             return DIRECT_P2P_FAILED_BILATERAL;
         }
 
@@ -1297,6 +1373,7 @@ static DirectP2PState join_attempt(void) {
         bool got_deliver = false;
 
         const uint32_t signal_start = SDL_GetTicks();
+        stage_t0 = signal_start;
         uint32_t last_send = 0;
         while ((int)(SDL_GetTicks() - signal_start) < signal_budget_ms) {
             if (cancel_requested()) {
@@ -1324,9 +1401,19 @@ static DirectP2PState join_attempt(void) {
                     dgram->buf[2] == 0x58 && dgram->buf[3] == 0x52) {
                     char parsed_ip[64] = { 0 };
                     uint16_t parsed_port = 0;
-                    if (Rendezvous_ParseDeliver(dgram->buf, dgram->buflen,
-                                                session_key, parsed_ip, &parsed_port) &&
+                    /* S3: tri-state parse. A zero-sentinel DELIVER is
+                     * MEANINGFUL evidence — it proves the rendezvous
+                     * server is alive (it answers every REGISTER), which
+                     * separates "server down" from "host offline" when
+                     * the budget expires below. */
+                    const RendezvousDeliverResult dr = Rendezvous_ParseDeliverEx(
+                        dgram->buf, dgram->buflen, session_key, parsed_ip, &parsed_port);
+                    if (dr != REND_DELIVER_MALFORMED) {
+                        s_work.ev_deliver_any = true;
+                    }
+                    if (dr == REND_DELIVER_PEER &&
                         parsed_ip[0] != '\0' && parsed_port != 0) {
+                        s_work.ev_deliver_real = true;
                         SDL_strlcpy(fb_peer_ip, parsed_ip, sizeof(fb_peer_ip));
                         fb_peer_port = parsed_port;
                         got_deliver = true;
@@ -1344,11 +1431,23 @@ static DirectP2PState join_attempt(void) {
         }
 
         NET_UnrefAddress(signal_addr);
+        s_work.t_signal_ms = SDL_GetTicks() - stage_t0;
 
         if (!got_deliver) {
-            SDL_Log("[direct_p2p] joiner fallback: signal budget expired without DELIVER");
+            /* S3 causes 3-4: silence from the server (which answers every
+             * REGISTER) means the server/path is down; only-sentinel
+             * replies mean the HOST never registered — offline or a
+             * stale code. */
+            ConnectJoinEvidence ev = { 0 };
+            ev.deliver_any = s_work.ev_deliver_any;
+            ev.deliver_real = s_work.ev_deliver_real;
+            ev.port_disagreement = s_work.stun.port_disagreement;
+            const ConnectFailCode jc = ConnectFail_ClassifyJoin(&ev);
+            SDL_Log("[direct_p2p] joiner fallback: signal budget expired without a "
+                    "peer DELIVER (deliver_any=%d) -> %s",
+                    (int)s_work.ev_deliver_any, ConnectFail_Code(jc));
             Stun_CloseSocket(&s_work.stun);
-            set_status("Could not connect. Try a different network.");
+            set_fail(jc);
             return DIRECT_P2P_FAILED_BILATERAL;
         }
 
@@ -1365,17 +1464,31 @@ static DirectP2PState join_attempt(void) {
         SDL_Log("[direct_p2p] joiner entering FALLBACK_BILATERAL_PUNCH peer=%s:%u (budget=%dms)",
                 bp_peer_ip, (unsigned)bp_peer_port, bilateral_budget_ms);
 
+        stage_t0 = SDL_GetTicks();
         bool bilateral_punched = STUN_HOLE_PUNCH(&s_work.stun, bp_peer_ip,
                                                  &bp_peer_port,
                                                  bilateral_budget_ms, &s_cancel);
+        s_work.t_bilateral_ms = SDL_GetTicks() - stage_t0;
         if (cancel_requested()) {
             Stun_CloseSocket(&s_work.stun);
             set_status("Cancelled.");
             return DIRECT_P2P_IDLE;
         }
         if (!bilateral_punched) {
+            /* S3 causes 5-6: the server handed us the host's LIVE
+             * endpoint and the bilateral punch still timed out — the
+             * NAT pair is the blocker. Our own S2 port_disagreement
+             * signal upgrades this to the needs-relay class. */
+            ConnectJoinEvidence ev = { 0 };
+            ev.deliver_any = s_work.ev_deliver_any;
+            ev.deliver_real = s_work.ev_deliver_real;
+            ev.bilateral_punched = false;
+            ev.port_disagreement = s_work.stun.port_disagreement;
+            const ConnectFailCode jc = ConnectFail_ClassifyJoin(&ev);
+            SDL_Log("[direct_p2p] joiner bilateral punch failed (port_disagreement=%d) -> %s",
+                    (int)s_work.stun.port_disagreement, ConnectFail_Code(jc));
             Stun_CloseSocket(&s_work.stun);
-            set_status("Could not connect. Try a different network.");
+            set_fail(jc);
             return DIRECT_P2P_FAILED_BILATERAL;
         }
 
@@ -1500,6 +1613,7 @@ static void direct_p2p_on_teardown(void) {
     s_stun_keepalive_last_ms = 0;
     s_rebind_txid_valid = false;
     s_drift_pending_valid = false; /* M2: drop any half-confirmed drift */
+    s_host_deliver_seen = false;   /* S3 */
     /* Reset state so the next BeginHost/BeginJoin starts clean.
      * R-1 exception: when the MIST handshake rejected the session, park
      * in FAILED_HANDSHAKE instead so the overlay keeps ERROR + the
@@ -1722,7 +1836,16 @@ static bool try_handle_deliver(const uint8_t* pkt, int len) {
 
     char peer_ip[64] = { 0 };
     uint16_t peer_port = 0;
-    if (!Rendezvous_ParseDeliver(pkt, len, session_key, peer_ip, &peer_port)) {
+    const RendezvousDeliverResult dr =
+        Rendezvous_ParseDeliverEx(pkt, len, session_key, peer_ip, &peer_port);
+    if (dr != REND_DELIVER_MALFORMED) {
+        /* S3 cause-8 evidence: the server answers EVERY REGISTER with a
+         * DELIVER (zero-sentinel while unpaired), so seeing ANY valid
+         * DELIVER proves the rendezvous path is alive. Consumed by the
+         * host-waiting advisory in Tick. Main thread — no atomics. */
+        s_host_deliver_seen = true;
+    }
+    if (dr != REND_DELIVER_PEER) {
         /* Malformed, wrong session, or "peer not yet registered" sentinel —
          * any of which the rendezvous thread will retry past. No action. */
         return true;
@@ -1793,7 +1916,7 @@ static bool try_handle_deliver(const uint8_t* pkt, int len) {
                                                 "DirectP2PBilateral", NULL);
     if (s_bilateral_punch_thread == NULL) {
         SDL_Log("[direct_p2p] failed to spawn bilateral-punch thread");
-        set_status("Connection failed. Try again.");
+        set_fail_msg(CONNECT_FAIL_INTERNAL, "Connection failed. Try again.");
         set_state(DIRECT_P2P_FAILED_BILATERAL);
     }
     return true;
@@ -1892,6 +2015,8 @@ void DirectP2P_Init(void) {
     SDL_SetAtomicInt(&s_q_tail, 0);
     SDL_SetAtomicInt(&s_q_drops, 0);
     SDL_SetAtomicInt(&s_q_drops_logged, 0);
+    s_outcome_reported = false;  /* S3 */
+    s_host_deliver_seen = false; /* S3 */
     memset(s_rendezvous_send_q, 0, sizeof(s_rendezvous_send_q));
     memset(&s_work, 0, sizeof(s_work));
     memset(&s_upnp_mapping, 0, sizeof(s_upnp_mapping));
@@ -1927,6 +2052,8 @@ void DirectP2P_BeginHost(int preferred_port) {
      * callback (e.g. LAN CLI session with no orchestrator) must not leak
      * into this fresh session's teardown. */
     s_handshake_reject_latched = false;
+    s_outcome_reported = false;  /* S3: fresh report per hosting session */
+    s_host_deliver_seen = false; /* S3 */
     Stun_ReleaseServerAddr(&s_work.stun); /* belt-and-braces before memset */
     s_stun_keepalive_last_ms = 0;
     s_rebind_txid_valid = false;
@@ -1950,7 +2077,7 @@ void DirectP2P_BeginHost(int preferred_port) {
     }
     s_thread = SDL_CreateThread(host_thread_fn, "DirectP2PHost", NULL);
     if (s_thread == NULL) {
-        set_status("Connection failed. Try again.");
+        set_fail_msg(CONNECT_FAIL_INTERNAL, "Connection failed. Try again.");
         set_state(DIRECT_P2P_FAILED_STUN);
         return;
     }
@@ -1965,11 +2092,17 @@ void DirectP2P_BeginJoin(const char* peer_code) {
     if (get_state() != DIRECT_P2P_IDLE) return;
 
     /* Decode before spawning the thread: user-input errors should
-     * surface immediately, not after a STUN round-trip. */
+     * surface immediately, not after a STUN round-trip. (S3: safe to
+     * memset s_work here — state == IDLE guarantees any previous worker
+     * has published its terminal state, which happens-after its last
+     * s_work write.) */
     uint32_t ip_be = 0;
     uint16_t pub_port = 0;
     if (!RoomCode_Decode(peer_code, &ip_be, &pub_port)) {
-        set_status("Invalid room code.");
+        memset(&s_work, 0, sizeof(s_work));
+        s_work.role = ROLE_JOIN;
+        s_outcome_reported = false;
+        set_fail(CONNECT_FAIL_INVALID_CODE);
         set_state(DIRECT_P2P_FAILED_PUNCH);
         return;
     }
@@ -1978,7 +2111,10 @@ void DirectP2P_BeginJoin(const char* peer_code) {
     in.s_addr = ip_be;
     char peer_ip[64] = { 0 };
     if (inet_ntop(AF_INET, &in, peer_ip, sizeof(peer_ip)) == NULL) {
-        set_status("Invalid room code.");
+        memset(&s_work, 0, sizeof(s_work));
+        s_work.role = ROLE_JOIN;
+        s_outcome_reported = false;
+        set_fail(CONNECT_FAIL_INVALID_CODE);
         set_state(DIRECT_P2P_FAILED_PUNCH);
         return;
     }
@@ -2000,6 +2136,8 @@ void DirectP2P_BeginJoin(const char* peer_code) {
     SDL_SetAtomicInt(&s_q_drops, 0);
     SDL_SetAtomicInt(&s_q_drops_logged, 0);
     s_handshake_reject_latched = false; /* R-1: see BeginHost */
+    s_outcome_reported = false;  /* S3: fresh report per join session */
+    s_host_deliver_seen = false; /* S3 */
     Stun_ReleaseServerAddr(&s_work.stun); /* belt-and-braces before memset */
     s_stun_keepalive_last_ms = 0;
     s_rebind_txid_valid = false;
@@ -2012,7 +2150,7 @@ void DirectP2P_BeginJoin(const char* peer_code) {
 
     s_thread = SDL_CreateThread(join_thread_fn, "DirectP2PJoin", NULL);
     if (s_thread == NULL) {
-        set_status("Connection failed. Try again.");
+        set_fail_msg(CONNECT_FAIL_INTERNAL, "Connection failed. Try again.");
         set_state(DIRECT_P2P_FAILED_STUN);
         return;
     }
@@ -2071,18 +2209,79 @@ void DirectP2P_Cancel(void) {
     s_handshake_reject_latched = false; /* R-1: drop any pending reject latch */
     s_host_stun_retry_count = 0; /* S2: drop any pending host STUN retry */
     s_host_stun_retry_at_ms = 0;
+    s_outcome_reported = false;  /* S3 */
+    s_host_deliver_seen = false; /* S3 */
     set_state(DIRECT_P2P_IDLE);
+}
+
+/* S3 — see direct_p2p.h. Latch a post-handoff session failure with its
+ * taxonomy code: status text for the overlay now, FAILED_HANDSHAKE park
+ * at teardown, and one machine-coded report line from Tick's reporting
+ * path once the terminal state is visible. */
+void DirectP2P_NotifySessionFailed(ConnectFailCode code, const char* reason) {
+    set_status((reason != NULL && reason[0] != '\0')
+                   ? reason
+                   : ConnectFail_UserText(code));
+    s_work.fail_code = code;
+    s_handshake_reject_latched = true;
+    /* The pre-handoff outcome (OK) may already have been reported; this
+     * is a NEW outcome for the same attempt-set — re-arm the reporter. */
+    s_outcome_reported = false;
+    SDL_Log("[direct_p2p] session failed post-handoff (%s): %s",
+            ConnectFail_Code(code), reason ? reason : "(no reason)");
 }
 
 /* R-1 — see direct_p2p.h. Records the reject reason for the overlay and
  * latches the teardown redirect to FAILED_HANDSHAKE. */
 void DirectP2P_NotifySessionRejected(const char* reason) {
-    set_status((reason != NULL && reason[0] != '\0')
-                   ? reason
-                   : "Connection rejected.");
-    s_handshake_reject_latched = true;
-    SDL_Log("[direct_p2p] session rejected by MIST handshake: %s",
-            reason ? reason : "(no reason)");
+    DirectP2P_NotifySessionFailed(CONNECT_FAIL_PEER_REJECTED, reason);
+}
+
+/* S3 — one attributed outcome line per attempt-set, written to the
+ * per-session netplay log (lazily opened by Netplay_LogConnectEvent for
+ * pre-session failures) + SDL_Log. Main-thread only: called exclusively
+ * from Tick after it observes a terminal state, so every s_work field
+ * the worker wrote before publishing that state is visible. */
+static void report_connect_outcome(DirectP2PState st, bool success) {
+    if (s_outcome_reported) {
+        return;
+    }
+    s_outcome_reported = true;
+    char line[512];
+    if (success) {
+        SDL_snprintf(line, sizeof(line),
+                     "[netplay-connect] OK role=%s attempts=%d "
+                     "t_ms upnp=%u stun=%u punch=%u signal=%u bilateral=%u "
+                     "stun=%d/%d portdis=%d",
+                     s_work.role == ROLE_HOST ? "host" : "join",
+                     s_work.join_attempts,
+                     s_work.t_upnp_ms, s_work.t_stun_ms, s_work.t_punch_ms,
+                     s_work.t_signal_ms, s_work.t_bilateral_ms,
+                     s_work.stun.diag_servers_answered,
+                     s_work.stun.diag_servers_probed,
+                     (int)s_work.stun.port_disagreement);
+    } else {
+        SDL_snprintf(line, sizeof(line),
+                     "[netplay-connect] FAIL code=%s state=%d role=%s msg=\"%s\" "
+                     "attempts=%d t_ms upnp=%u stun=%u punch=%u signal=%u bilateral=%u "
+                     "stun=%d/%d sends_ok=%d dns_all_failed=%d portdis=%d "
+                     "deliver=any:%d,real:%d",
+                     ConnectFail_Code(s_work.fail_code),
+                     (int)st,
+                     s_work.role == ROLE_HOST ? "host"
+                     : s_work.role == ROLE_JOIN ? "join" : "none",
+                     s_status,
+                     s_work.join_attempts,
+                     s_work.t_upnp_ms, s_work.t_stun_ms, s_work.t_punch_ms,
+                     s_work.t_signal_ms, s_work.t_bilateral_ms,
+                     s_work.stun.diag_servers_answered,
+                     s_work.stun.diag_servers_probed,
+                     s_work.stun.diag_sends_ok,
+                     (int)s_work.stun.diag_dns_all_failed,
+                     (int)s_work.stun.port_disagreement,
+                     (int)s_work.ev_deliver_any, (int)s_work.ev_deliver_real);
+    }
+    Netplay_LogConnectEvent(line);
 }
 
 void DirectP2P_Tick(void) {
@@ -2144,6 +2343,9 @@ void DirectP2P_Tick(void) {
         if (s_work.role == ROLE_JOIN && s_work.stun.socket != NULL) {
             join_tick_handoff();
         }
+        /* S3: one success line with the stage timings — the "how long
+         * did each phase take in the field" data reports need. */
+        report_connect_outcome(st, true);
         return;
 
     case DIRECT_P2P_FAILED_STUN:
@@ -2190,12 +2392,14 @@ void DirectP2P_Tick(void) {
             s_thread = SDL_CreateThread(host_thread_fn, "DirectP2PHost", NULL);
             if (s_thread == NULL) {
                 SDL_Log("[direct_p2p] host STUN auto-retry: thread spawn failed");
-                set_status("Connection failed. Try again.");
+                set_fail_msg(CONNECT_FAIL_INTERNAL, "Connection failed. Try again.");
                 set_state(DIRECT_P2P_FAILED_STUN);
             }
             return;
         }
-        return; /* joiner, or retry budget exhausted — terminal */
+        /* joiner, or retry budget exhausted — terminal */
+        report_connect_outcome(st, false);
+        return;
 
     case DIRECT_P2P_FAILED_SYMMETRIC:
     case DIRECT_P2P_FAILED_PUNCH:
@@ -2203,6 +2407,7 @@ void DirectP2P_Tick(void) {
          * overlay (Step 8) is responsible for showing the reason. The
          * caller (menu) will eventually issue DirectP2P_Cancel to
          * return to IDLE. */
+        report_connect_outcome(st, false);
         return;
 
     case DIRECT_P2P_FALLBACK_SIGNALING:
@@ -2266,7 +2471,16 @@ void DirectP2P_Tick(void) {
             if (s_bilateral_fail_count >= HOST_BILATERAL_MAX_FAILURES) {
                 SDL_Log("[direct_p2p] bilateral punch failed %d times this session — "
                         "parking FAILED_BILATERAL", s_bilateral_fail_count);
-                set_status("Could not connect. Try a different network.");
+                /* S3 causes 5-6 (host side): every punch ran against a
+                 * real DELIVER'd endpoint; the NAT pair is the blocker. */
+                {
+                    ConnectJoinEvidence ev = { 0 };
+                    ev.deliver_any = true;
+                    ev.deliver_real = true;
+                    ev.bilateral_punched = false;
+                    ev.port_disagreement = s_work.stun.port_disagreement;
+                    set_fail(ConnectFail_ClassifyJoin(&ev));
+                }
                 set_state(DIRECT_P2P_FAILED_BILATERAL);
                 return;
             }
@@ -2301,12 +2515,14 @@ void DirectP2P_Tick(void) {
     case DIRECT_P2P_FAILED_BILATERAL:
         /* Terminal — bilateral fallback exhausted. No work; the menu
          * will issue DirectP2P_Cancel to return to IDLE. */
+        report_connect_outcome(st, false);
         return;
 
     case DIRECT_P2P_FAILED_HANDSHAKE:
-        /* Terminal — R-1 MIST handshake rejected the peer post-handoff.
-         * Overlay shows ERROR + the reason; DirectP2P_Cancel (or the
-         * OSD retry's process re-exec) returns to IDLE. */
+        /* Terminal — post-handoff session failure (MIST reject or an S3
+         * deadline). Overlay shows ERROR + the reason; DirectP2P_Cancel
+         * (or the OSD retry's process re-exec) returns to IDLE. */
+        report_connect_outcome(st, false);
         return;
     }
 }

@@ -39,6 +39,10 @@ void Netplay_SetSessionTeardownCallback(void (*cb)(void)) {
     (void)cb;
 }
 
+void Netplay_LogConnectEvent(const char* line) {
+    (void)line;
+}
+
 void Netplay_SetMatchmakingParams(const char* server_ip, int server_port) {
     (void)server_ip;
     (void)server_port;
