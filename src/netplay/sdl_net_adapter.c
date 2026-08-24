@@ -1,5 +1,6 @@
 #include "netplay/sdl_net_adapter.h"
 
+#include "netplay/stun.h"
 #include "port/paths.h"
 
 #include <SDL3/SDL.h>
@@ -262,6 +263,16 @@ static GekkoNetResult** receive_data(int* length) {
     NET_Datagram* dgram = NULL;
 
     while (result_count < MAX_NETWORK_RESULTS && NET_ReceiveDatagram(adapter_sock, &dgram) && dgram) {
+        // S1 review L1: a STUN Binding Response straggler (a keepalive
+        // reply from HOST_WAITING arriving after the socket was handed
+        // off to GekkoNet) is not a GekkoNet packet — drop it before it
+        // pollutes the type counters or reaches the rollback engine.
+        if (dgram->buf != NULL &&
+            Stun_IsBindingResponse(dgram->buf, dgram->buflen)) {
+            NET_DestroyDatagram(dgram);
+            dgram = NULL;
+            continue;
+        }
         const char* ip_str = NET_GetAddressString(dgram->addr);
         char addr_str[64];
 
