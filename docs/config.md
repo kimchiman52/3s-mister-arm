@@ -207,12 +207,16 @@ out-of-band (text message, voice) and paste it into the wrapper OSD.
   server rate-limits at 10 packets/s/IP). The whole loop is disabled
   by `netplay-direct-p2p-disable-bilateral`.
 
-`netplay-direct-p2p-stun-keepalive-ms` (int, default `20000`)
+`netplay-direct-p2p-stun-keepalive-ms` (int, default `15000`)
 - Host liveness (S1): cadence of the STUN rebind keepalive while
   waiting for a joiner. Refreshes the advertised NAT mapping and
-  detects public-endpoint drift; on drift the room code is re-encoded
-  and re-displayed with an explicit "Network changed" status. Set to
-  `0` (or negative) to disable; values below 5000 ms are clamped up.
+  detects public-endpoint drift; a drift must be confirmed by two
+  consecutive keepalives before the room code is re-encoded and
+  re-displayed with an explicit "Network changed" status (a NAT that
+  rebinds on every keepalive therefore never churns the code). The
+  default sits below common NAT UDP idle timeouts (~30 s) so the
+  mapping is held rather than lost. Set to `0` (or negative) to
+  disable; values below 5000 ms are clamped up.
 
 ### Netplay tuning
 

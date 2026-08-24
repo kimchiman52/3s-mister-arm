@@ -96,8 +96,13 @@ static const ConfigEntry default_entries[] = {
     { .key = CFG_KEY_NETPLAY_DIRECT_P2P_REGISTER_INTERVAL_MS, .type = CFG_INT, .value.i = 5000 },
     /* Host liveness (S1): STUN rebind keepalive cadence while
      * HOST_WAITING. Refreshes the advertised NAT mapping and detects
-     * public-endpoint drift. <= 0 disables. */
-    { .key = CFG_KEY_NETPLAY_DIRECT_P2P_STUN_KEEPALIVE_MS, .type = CFG_INT, .value.i = 20000 },
+     * public-endpoint drift. <= 0 disables. Default 15 s (was 20 s,
+     * review M2): common consumer NAT UDP idle timeouts bottom out
+     * around 30 s (netfilter's unreplied default) with outliers near
+     * 20 s — keeping the keepalive comfortably below those HOLDS the
+     * mapping so drift never happens, which beats detecting it. Still
+     * only 0.067 pkt/s toward the STUN server; floor clamp is 5000. */
+    { .key = CFG_KEY_NETPLAY_DIRECT_P2P_STUN_KEEPALIVE_MS, .type = CFG_INT, .value.i = 15000 },
     { .key = CFG_KEY_NETPLAY_INPUT_PREDICTION_WINDOW, .type = CFG_INT, .value.i = 8 },
     { .key = CFG_KEY_NETPLAY_DIAG_ENABLE, .type = CFG_BOOL, .value.b = true },
     { .key = CFG_KEY_NETPLAY_SPARSE_EFFECT_SAVE_ENABLED, .type = CFG_BOOL, .value.b = true },

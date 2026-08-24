@@ -197,6 +197,20 @@ static uint64_t s_stun_keepalive_last_ms = 0;
 static uint8_t s_rebind_txid[12] = { 0 };
 static bool s_rebind_txid_valid = false;
 
+/* Review M2: drift debounce. A single differing STUN Binding Response
+ * must not rewrite the on-screen room code — the user may be reading it
+ * aloud. A drift candidate is only COMMITTED when a second consecutive
+ * keepalive confirms the same new endpoint; a response matching the
+ * current endpoint clears the candidate. Deliberate side effect: a NAT
+ * that rebinds on every keepalive (UDP idle timeout shorter than the
+ * keepalive interval) produces a DIFFERENT port each time, so the
+ * candidate keeps being replaced and never commits — the code stays
+ * stable instead of churning every interval with "Network changed!".
+ * Main-thread only, same lifecycle as the txid state above. */
+static char s_drift_pending_ip[64] = { 0 };
+static uint16_t s_drift_pending_port = 0;
+static bool s_drift_pending_valid = false;
+
 /* Init guard so DirectP2P_Init is idempotent. */
 static bool s_init_done = false;
 
@@ -1373,6 +1387,7 @@ static void direct_p2p_on_teardown(void) {
     Stun_ReleaseServerAddr(&s_work.stun);
     s_stun_keepalive_last_ms = 0;
     s_rebind_txid_valid = false;
+    s_drift_pending_valid = false; /* M2: drop any half-confirmed drift */
     /* Reset state so the next BeginHost/BeginJoin starts clean.
      * R-1 exception: when the MIST handshake rejected the session, park
      * in FAILED_HANDSHAKE instead so the overlay keeps ERROR + the
@@ -1412,6 +1427,7 @@ static void do_handoff(int player, const char* peer_ip, uint16_t peer_port) {
      * warm from here) — drop the ref'd STUN server address now. */
     Stun_ReleaseServerAddr(&s_work.stun);
     s_rebind_txid_valid = false;
+    s_drift_pending_valid = false; /* M2: drop any half-confirmed drift */
     /* netplay_nav owns the Netplay_BeginDirectP2P() call now. Netplay_
      * SetParams just populated remote_ip; nav's NAV_WAIT_ORCHESTRATOR
      * was gating on Netplay_IsRemoteIpSet() and will advance to
@@ -1470,7 +1486,12 @@ static void host_stun_keepalive_tick(void) {
  * (public_ip, advertised_port), so it is cancelled and JOINED before
  * s_work is mutated, then respawned under the new key. Join latency is
  * ~50 ms (the thread's inner tick) — acceptable for a rare event on a
- * menu screen. */
+ * menu screen.
+ *
+ * Review M2: commits are DEBOUNCED — a drift must be confirmed by two
+ * consecutive keepalives reporting the same new endpoint before the
+ * code is rewritten (see s_drift_pending_* for the rationale and the
+ * rebind-every-interval no-churn property). */
 static void host_handle_stun_rebind(const uint8_t* buf, int len) {
     if (!s_rebind_txid_valid) {
         return; /* no keepalive in flight — stale/foreign response */
@@ -1484,10 +1505,28 @@ static void host_handle_stun_rebind(const uint8_t* buf, int len) {
 
     if (port == s_work.stun.public_port &&
         direct_p2p_ip_eq_normalized(ip, s_work.stun.public_ip)) {
+        s_drift_pending_valid = false; /* stable again — drop any candidate */
         return; /* mapping stable — keepalive did its NAT-refresh job */
     }
 
-    SDL_Log("[direct_p2p] STUN rebind drift: public endpoint changed "
+    /* Review M2 debounce: require a second consecutive keepalive to
+     * confirm the SAME new endpoint before rewriting the displayed
+     * code. First sighting (or a candidate that keeps changing — the
+     * rebind-every-interval NAT) only records/replaces the candidate. */
+    if (!s_drift_pending_valid || port != s_drift_pending_port ||
+        !direct_p2p_ip_eq_normalized(ip, s_drift_pending_ip)) {
+        SDL_strlcpy(s_drift_pending_ip, ip, sizeof(s_drift_pending_ip));
+        s_drift_pending_port = port;
+        s_drift_pending_valid = true;
+        SDL_Log("[direct_p2p] STUN rebind drift CANDIDATE %s:%u (current %s:%u) — "
+                "awaiting confirmation on the next keepalive",
+                ip, (unsigned)port,
+                s_work.stun.public_ip, (unsigned)s_work.stun.public_port);
+        return;
+    }
+    s_drift_pending_valid = false;
+
+    SDL_Log("[direct_p2p] STUN rebind drift CONFIRMED: public endpoint changed "
             "%s:%u -> %s:%u — displayed room code is stale",
             s_work.stun.public_ip, (unsigned)s_work.stun.public_port,
             ip, (unsigned)port);
@@ -1774,6 +1813,7 @@ void DirectP2P_BeginHost(int preferred_port) {
     Stun_ReleaseServerAddr(&s_work.stun); /* belt-and-braces before memset */
     s_stun_keepalive_last_ms = 0;
     s_rebind_txid_valid = false;
+    s_drift_pending_valid = false; /* M2: drop any half-confirmed drift */
     memset(&s_work, 0, sizeof(s_work));
     s_work.role = ROLE_HOST;
     s_work.preferred_port = preferred_port;
@@ -1844,6 +1884,7 @@ void DirectP2P_BeginJoin(const char* peer_code) {
     Stun_ReleaseServerAddr(&s_work.stun); /* belt-and-braces before memset */
     s_stun_keepalive_last_ms = 0;
     s_rebind_txid_valid = false;
+    s_drift_pending_valid = false; /* M2: drop any half-confirmed drift */
     memset(&s_work, 0, sizeof(s_work));
     s_work.role = ROLE_JOIN;
     SDL_strlcpy(s_work.peer_code, peer_code, sizeof(s_work.peer_code));
@@ -1892,6 +1933,7 @@ void DirectP2P_Cancel(void) {
     Stun_ReleaseServerAddr(&s_work.stun); /* S1: drop keepalive target ref */
     s_stun_keepalive_last_ms = 0;
     s_rebind_txid_valid = false;
+    s_drift_pending_valid = false; /* M2: drop any half-confirmed drift */
     /* S1: reap any in-flight UPnP lease renewal before RemoveMapping —
      * bounded, and RemoveMapping is skipped when the worker had to be
      * detached (review H3; see upnp_renew_join_and_discard). */
