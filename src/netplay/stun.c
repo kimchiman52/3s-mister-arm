@@ -378,7 +378,16 @@ bool Stun_HolePunch(StunResult* local, char* peer_ip, uint16_t* peer_port, int p
 
     // Punch packet — a small identifiable payload
     const char punch_msg[] = "3SX_PUNCH";
-    const int punch_interval_ms = 200; // Send every 200ms
+    /* S2 adaptive cadence: establishment time is dominated by peer
+     * start-skew and first-packet loss, not RTT — the two sides rarely
+     * enter their punch loops at the same instant, and the first
+     * datagram toward a NAT is the one most likely to be dropped while
+     * the mapping opens. Burst at 50 ms for the first 500 ms (<= 10
+     * datagrams of 9 bytes — negligible traffic), then back off to the
+     * original 200 ms steady-state for the rest of the window. */
+    const int punch_interval_fast_ms = 50;
+    const int punch_interval_slow_ms = 200;
+    const int punch_burst_window_ms = 500;
 
     NET_Address* peer = NET_ResolveHostname(peer_ip);
     if (!peer) {
@@ -415,7 +424,10 @@ bool Stun_HolePunch(StunResult* local, char* peer_ip, uint16_t* peer_port, int p
         }
         uint32_t now = SDL_GetTicks();
 
-        // Send punch packet periodically
+        // Send punch packet periodically (fast burst early, then back off)
+        const int punch_interval_ms = ((int)(now - start) < punch_burst_window_ms)
+                                          ? punch_interval_fast_ms
+                                          : punch_interval_slow_ms;
         if (now - last_send >= (uint32_t)punch_interval_ms || last_send == 0) {
             if (!NET_SendDatagram(sock, peer, local_peer_port, punch_msg, strlen(punch_msg))) {
                 SDL_LogDebug(SDL_LOG_CATEGORY_APPLICATION, "STUN: Hole punch send failed: %s", SDL_GetError());
