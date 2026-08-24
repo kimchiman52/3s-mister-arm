@@ -195,12 +195,39 @@ const MAX_RATE_ENTRIES = 2 * MAX_SESSIONS;
 // S4c: per-SESSION-KEY rate cap, alongside the per-IP one. The per-IP
 // bucket is bypassable by an attacker with many (real, cookie-capable)
 // source IPs all hammering ONE key; this bounds the damage to any
-// single session. A legitimate pair peaks at ~2.5 pkt/s (host 0.2/s +
-// joiner 2/s + one challenge round each), so 10/s/key is generous.
-// Enforced AFTER cookie validation so spoofed traffic (which never
-// binds anyway) cannot consume a victim key's budget.
+// single session. Enforced AFTER cookie validation so spoofed traffic
+// (which never binds anyway) cannot consume a victim key's budget.
+//
+// Review MEDIUM-4 — the budget was 10/s and the rationale comment was
+// stale. It read "a legitimate pair peaks at ~2.5 pkt/s (host 0.2/s +
+// joiner 2/s + one challenge round each), so 10/s/key is generous",
+// which was true before S5 and false after it: RELAY_REQ rides this same
+// gate (that is the whole point of it being byte-identical to REGISTER),
+// and RELAY_REQ_RESEND_MS = 300 (direct_p2p.c) is 3.33 req/s per side
+// with BOTH sides on the same key — 6.67/s on its own. Add a
+// challenge-triggered immediate resend on each side (direct_p2p.c
+// answers a CHALLENGE by re-sending at once) and a host mid-retry
+// re-REGISTER and a legitimate pair peaks around 9-11 pkt/s/key. Margin
+// had fallen from ~4x to ~1x: real RELAY_REQs were being silently
+// dropped and reported to the user as RELAY_UNAVAILABLE ("No relay
+// available. Try again later.") — a lie about a working server.
+//
+// Fixed by raising the budget rather than by exempting RELAY_REQ or
+// slowing the resend, for two reasons:
+//   * exempting RELAY_REQ would remove the per-key bound from the ONE
+//     frame type that allocates a scarce pool port, which is exactly
+//     backwards;
+//   * slowing the resend costs first-packet-loss recovery inside the
+//     rung's grant budget (budget/2 = 2000 ms at the default: 300 ms
+//     gives 6 attempts, 500 ms gives 4).
+// 40/s restores the ~4x margin the pre-S5 constant had, and it costs
+// nothing defensively: RATE_LIMIT_PER_WINDOW still caps any single IP at
+// 10/s, so reaching 40/s on one key needs four distinct cookie-capable
+// source IPs, and 40 x 36 B/s of accepted traffic per key is 1.4 kB/s.
+// The real anti-squatting bounds are the slot policy and
+// MAX_NEW_KEYS_PER_IP, not this.
 const KEY_RATE_WINDOW_MS = 1000;
-const KEY_RATE_LIMIT_PER_WINDOW = 10;
+const KEY_RATE_LIMIT_PER_WINDOW = 40;
 
 // S4c: return-routability cookie. Stateless server side:
 //   cookie = SHA-256(secret || addr:port:slot)[0..7]
@@ -275,12 +302,20 @@ const RELAY_IDLE_MS = 30 * 1000;
 
 // Per-session forwarding cap, enforced by DROPPING over-budget datagrams
 // (never by closing the session — a rollback netcode absorbs loss, but a
-// mid-match teardown is unrecoverable). GekkoNet at 60 Hz costs roughly
-// 5 kB/s per direction, so 64 KiB/s is ~12x headroom for a real match
-// while bounding what a single relayed session can cost the box: 100
-// sessions x 64 KiB/s x 2 directions is the worst case this pool can
-// produce. Implemented as a token bucket refilled at the cap rate with a
-// one-second burst.
+// mid-match teardown is unrecoverable; see the HIGH-2 note in
+// relayOnMessage for the ordering that makes that claim true).
+//
+// Headroom, corrected by review MEDIUM-5: this is ONE bucket per session
+// charged for BOTH directions, so the comparison is against the sum, not
+// against one direction. Shipped telemetry says ~4.2 kB/s per direction
+// (kbps_tx=4.2 in the heartbeat sample at docs/netplay-diagnostics.md:32,
+// from net_stats.kb_sent at src/netplay/netplay.c:1372-1373), i.e.
+// ~8.4 kB/s per session => 65536 / 8400 = ~7.8x headroom, NOT the ~12x
+// this comment used to claim from a ~5 kB/s estimate compared against a
+// single direction. Still ample, and it bounds what one relayed session
+// can cost the box: 100 sessions x 64 KiB/s is the worst case this pool
+// can produce. Implemented as a token bucket refilled at the cap rate
+// with a one-second burst.
 const RELAY_BYTES_PER_SEC = 64 * 1024;
 
 // Relay tokens rotate on the same 60 s cadence as the S4c cookie and,

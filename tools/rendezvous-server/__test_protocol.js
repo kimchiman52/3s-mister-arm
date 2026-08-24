@@ -1751,6 +1751,88 @@ async function testRelayIdleReclaim(handle, serverPort) {
     }
 }
 
+async function testKeyBudgetCoversTheRelayRung(handle, serverPort) {
+    // Review MEDIUM-4: the relay rung ate most of the per-key budget.
+    //
+    // RELAY_REQ rides the S4c gate -- that is the whole point of it being
+    // byte-identical to REGISTER -- so it is charged to
+    // KEY_RATE_LIMIT_PER_WINDOW like everything else. RELAY_REQ_RESEND_MS
+    // = 300 (direct_p2p.c:924) is 3.33 req/s per side and BOTH sides sit
+    // on the SAME key: 6.67/s before anything else happens. Against the
+    // old 10/s that left ~1x margin, so a cookie re-CHALLENGE or a host
+    // mid-retry re-REGISTER pushed real RELAY_REQs over the edge, where
+    // they were silently dropped and reported to the user as
+    // RELAY_UNAVAILABLE -- "No relay available. Try again later." about a
+    // server that was working fine.
+    //
+    // This drives a realistic worst SECOND on one key and asserts every
+    // frame is answered. Sources are injected from two DISTINCT IPs (the
+    // real shape: two peers behind two NATs), so the per-IP bucket cannot
+    // be what is being measured -- each side stays under
+    // RATE_LIMIT_PER_WINDOW on its own.
+    handle._resetSessions();
+    handle._resetRate();
+    handle._resetRelays();
+    const key = crypto.randomBytes(16);
+    const A = { address: '198.51.100.10', port: 5000 };
+    const B = { address: '203.0.113.20', port: 6000 };
+    const stub = makeStubSocket();
+    try {
+        // Pair the two sides from their own addresses.
+        handle._onMessage(regFrom(key, A.port, A.address, A.port), A, stub);
+        handle._onMessage(regFrom(key, B.port, B.address, B.port), B, stub);
+        const entry = handle._sessionMap.get(key.toString('hex'));
+        assert(entry !== undefined && entry.endpointA && entry.endpointB,
+            'key-budget: the session is paired (setup)');
+
+        // Warm the relay so its bind has completed: the GRANT is answered
+        // from the socket's `listening` callback (review MEDIUM-2), and
+        // this test counts replies synchronously.
+        handle._resetRate();
+        handle._onMessage(relayReqFrom(key, A.port, A.address, A.port), A, stub);
+        await new Promise((r) => setTimeout(r, 100));
+        assertEq(handle._relayMap.size, 1, 'key-budget: the relay is allocated and listening (setup)');
+
+        // One realistic second on this key: 4 RELAY_REQ per side (3.33/s
+        // plus one challenge-triggered immediate resend) interleaved with
+        // 3 joiner POLLs. 11 frames.
+        handle._resetRate();
+        stub.sent.length = 0;
+        const second = [];
+        for (let i = 0; i < 4; i++) {
+            second.push(['req', A]);
+            second.push(['req', B]);
+            if (i < 3) second.push(['poll', B]);
+        }
+        assertEq(second.length, 11, 'key-budget: the modelled second is 11 frames');
+        for (const [kind, who] of second) {
+            const buf = kind === 'req'
+                ? relayReqFrom(key, who.port, who.address, who.port)
+                : makePoll(key, { cookie: cookieFor(who.address, who.port) });
+            handle._onMessage(buf, who, stub);
+        }
+
+        const grants = stub.sent.filter((s) => isRelayGrant(s.buf));
+        assertEq(grants.length, 8,
+            'key-budget: every one of the 8 RELAY_REQs in a realistic second was answered');
+        assert(grants.every((g) => decodeRelayGrant(g.buf).status === RELAY_STATUS_GRANTED),
+            'key-budget: ...and every answer was a GRANT, not a refusal');
+        assertEq(stub.sent.length, second.length,
+            `key-budget: all ${second.length} frames were answered (nothing silently rate-dropped)`);
+
+        // The constant itself, stated so a future cadence change trips
+        // here rather than in the field. RELAY_REQ_RESEND_MS = 300 on two
+        // sides is 6.67/s; the budget must leave real headroom over that.
+        const relayReqPerSec = 2 * Math.ceil(1000 / 300);
+        assert(handle._keyRateLimit >= 4 * relayReqPerSec,
+            `key-budget: KEY_RATE_LIMIT_PER_WINDOW (${handle._keyRateLimit}) keeps >= 4x margin over both sides' RELAY_REQ cadence (${relayReqPerSec}/s)`);
+    } finally {
+        handle._resetRelays();
+        handle._resetSessions();
+        handle._resetRate();
+    }
+}
+
 async function testRelayPinRateCap(handle, serverPort) {
     // Review MEDIUM-3: the relay ports had NO rate limiting at all, while
     // the main port has three limiter layers. Every PIN-shaped datagram
@@ -2194,7 +2276,7 @@ async function testSweepHook(handle) {
 // EXPECTED_TESTS is deliberately a literal, NOT TESTS.length: the point is
 // to catch a test vanishing from the registry, and deriving it from the
 // registry would make that undetectable.
-const EXPECTED_TESTS = 37;
+const EXPECTED_TESTS = 38;
 
 let testsRun = 0;
 let testsFailed = 0;
@@ -2288,6 +2370,7 @@ async function main() {
         await runTest('relayBandwidthCap', () => testRelayBandwidthCap(handle, serverPort));
         await runTest('relayPoolExhaustion', () => testRelayPoolExhaustion(handle, serverPort));
         await runTest('relayIdleReclaim', () => testRelayIdleReclaim(handle, serverPort));
+        await runTest('keyBudgetCoversTheRelayRung', () => testKeyBudgetCoversTheRelayRung(handle, serverPort));
         await runTest('relayPinRateCap', () => testRelayPinRateCap(handle, serverPort));
         await runTest('relayPortBlocklistExpires', () => testRelayPortBlocklistExpires(handle, serverPort));
         await runTest('relayBindFailureStillGrantsAWorkingPort', () => testRelayBindFailureStillGrantsAWorkingPort(handle, serverPort));

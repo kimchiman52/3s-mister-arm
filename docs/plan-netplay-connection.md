@@ -1050,10 +1050,20 @@ forwarded like any other bytes (asserted by `relayGrantAndForward`).
 | port pool | UDP **34000–34099**, one port per relayed **session** | the port IS the session identifier, which is what keeps the forward path a bare "send these bytes to the other pinned endpoint" with no header of our own |
 | bind failure | port blocklisted for `RELAY_PORT_BLOCK_MS` (5 min), scan **retries for the same request** | see below — nothing is granted for a port that is not listening, and the blocklist is not permanent |
 | capacity | 100 concurrent relayed sessions; at cap → `POOL_EXHAUSTED` | |
-| bandwidth | **64 KiB/s per session**, token bucket, one-second burst | GekkoNet costs ~5 kB/s per direction at 60 Hz, so ~12× headroom; bounds what one session can cost the box |
+| bandwidth | **64 KiB/s per session**, token bucket, one-second burst | ~**7.8×** headroom over a real match; bounds what one session can cost the box |
 | over budget | **drop the datagram**, and still refresh liveness | never teardown: rollback netcode absorbs loss, a mid-match teardown is unrecoverable |
 | idle reclaim | 30 s with no pin and no forwarded datagram, on the existing 5 s sweep | 100 ports is small enough that holding dead entries for the 10-minute `SESSION_TTL_MS` would exhaust the pool |
 | session release | frees its relay **only if that relay is already idle** | see below — `sweepRelays` owns relay lifetime exclusively |
+
+**The bandwidth headroom is ~7.8×, not ~12×** (review MEDIUM-5). The old
+figure compared the wrong quantities: `relayBandwidthAllow` is **one**
+bucket per session charged for **both** directions, and the ~5 kB/s
+input was an estimate. Shipped telemetry says **~4.2 kB/s per
+direction** (`kbps_tx=4.2` in the heartbeat sample at
+docs/netplay-diagnostics.md:32, from `net_stats.kb_sent` at
+src/netplay/netplay.c:1372-1373) → ~8.4 kB/s against 65536 B/s =
+**~7.8×**. Still ample — a relayed match uses about an eighth of its
+budget — but the number should be the measured one.
 
 **The relay ports are rate-limited too** (review MEDIUM-3, fixed
 as-built). They had **no** limiter of any kind while the main port has
