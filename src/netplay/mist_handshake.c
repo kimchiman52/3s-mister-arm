@@ -576,6 +576,36 @@ size_t mist_handshake_build_reply(const uint8_t* in_payload,
  * 100% CPU (same 5 ms the pre-extraction netplay.c loop used). */
 #define MIST_RUNNER_IDLE_DELAY_MS 5
 
+/* R-1 adv-review H-2b: before the runner returns a hard failure, answer
+ * any peer hellos already sitting in the receive queue. Without this the
+ * peer never hears WHY the pair is incompatible — it burns its whole
+ * retry budget and reports the generic no-reply message instead of the
+ * real mismatch. One non-blocking pass over the currently queued
+ * datagrams; each hello gets the classify-derived ack/reject reply
+ * (retransmitted hellos naturally get the reject re-sent, which also
+ * raises the reject frame's delivery odds). Non-hello frames drop. */
+static void drain_and_answer_hellos(const MistRunnerIo* io) {
+    uint8_t buf[MIST_RUNNER_RECV_CAP];
+    bool from_peer = false;
+    int n;
+    while ((n = io->recv(io->ctx, buf, sizeof(buf), &from_peer)) > 0) {
+        uint8_t msg_type = 0;
+        size_t declared_len = 0;
+        if (!parse_header(buf, (size_t)n, &msg_type, &declared_len)) {
+            continue;
+        }
+        if (msg_type != MIST_MSG_HELLO) {
+            continue;
+        }
+        uint8_t reply[MIST_FRAME_MAX];
+        const size_t reply_len = mist_handshake_build_reply(
+            buf + MIST_HEADER_LEN, declared_len, reply, sizeof(reply));
+        if (reply_len > 0) {
+            io->send_reply_to_last(io->ctx, reply, reply_len);
+        }
+    }
+}
+
 MistHandshakeResult mist_handshake_run_attempt(const MistRunnerIo* io,
                                                char* reason,
                                                size_t reason_cap) {
@@ -633,9 +663,13 @@ MistHandshakeResult mist_handshake_run_attempt(const MistRunnerIo* io,
             }
             if (cls == -1) {
                 /* Explicit reject frame, or an ack that classified as
-                 * incompatible. Reason was cached by parse_response. */
+                 * incompatible. Reason was cached by parse_response.
+                 * H-2b: answer any hellos already queued behind this
+                 * frame before failing, so the peer learns the real
+                 * reason instead of timing out on the generic one. */
                 const char* r = mist_handshake_last_reject_reason();
                 snprintf(reason, reason_cap, "%s", r[0] ? r : "peer rejected");
+                drain_and_answer_hellos(io);
                 return MIST_HS_FAIL;
             }
             if (cls == 0) {
@@ -650,11 +684,42 @@ MistHandshakeResult mist_handshake_run_attempt(const MistRunnerIo* io,
                 if (!parse_header(buf, (size_t)n, &msg_type, &declared_len)) {
                     continue; /* unreachable — defensive */
                 }
+                char why[96] = { 0 };
+                const uint8_t hello_reason = classify_peer_payload(
+                    buf + MIST_HEADER_LEN, declared_len, why, sizeof(why));
                 uint8_t reply[MIST_FRAME_MAX];
-                const size_t reply_len = mist_handshake_build_reply(
-                    buf + MIST_HEADER_LEN, declared_len, reply, sizeof(reply));
-                if (reply_len > 0) {
-                    io->send_reply_to_last(io->ctx, reply, reply_len);
+                size_t reply_len;
+                if (hello_reason != 0) {
+                    reply_len = build_frame(MIST_MSG_REJECT, NULL, NULL, NULL,
+                                            0, 0, hello_reason, why,
+                                            reply, sizeof(reply));
+                    if (reply_len > 0) {
+                        io->send_reply_to_last(io->ctx, reply, reply_len);
+                    }
+                    /* H-2a: the peer's hello proves the pair is
+                     * incompatible — fail OUR side too, with the same
+                     * classify text the reject frame carries, instead
+                     * of burning the remaining retry budget waiting
+                     * for an ack that can never validly arrive. The
+                     * one exception is MALFORMED: a garbled datagram
+                     * that happens to carry MIST magic proves nothing
+                     * about the peer's build (its retransmitted hello
+                     * will classify properly), so it must not kill a
+                     * session between identical builds — reject-reply
+                     * and keep waiting. */
+                    if (hello_reason != MIST_REJECT_MALFORMED) {
+                        snprintf(reason, reason_cap, "%s", why);
+                        drain_and_answer_hellos(io);
+                        return MIST_HS_FAIL;
+                    }
+                } else {
+                    reply_len = build_frame(MIST_MSG_ACK, MIST_ARCH_TAG,
+                                            MIST_PLATFORM_TAG, MIST_BUILD_HASH,
+                                            MIST_PROTO_VER, MIST_STATE_VER,
+                                            0, NULL, reply, sizeof(reply));
+                    if (reply_len > 0) {
+                        io->send_reply_to_last(io->ctx, reply, reply_len);
+                    }
                 }
             }
             /* cls == -2 — not a MIST frame; drop and keep listening. */
