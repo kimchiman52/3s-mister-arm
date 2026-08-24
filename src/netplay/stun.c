@@ -430,11 +430,12 @@ bool Stun_Discover(StunResult* result, uint16_t local_port, int timeout_ms) {
     bool fallbacks_armed = false;
 
     const uint32_t start = SDL_GetTicks();
-    const uint32_t deadline = start + (uint32_t)timeout_ms;
     int first_responder = -1;
     uint32_t first_response_at = 0;
 
-    while (SDL_GetTicks() < deadline) {
+    /* Elapsed-subtraction guard (wrap-safe, matches Stun_HolePunch's
+     * pattern) rather than an absolute-deadline compare. */
+    while ((int)(SDL_GetTicks() - start) < timeout_ms) {
         const uint32_t now = SDL_GetTicks();
 
         /* 1) Absorb newly resolved DNS entries into probe slots. */
