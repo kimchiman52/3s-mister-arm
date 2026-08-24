@@ -76,6 +76,30 @@
 #define CFG_KEY_NETPLAY_DIRECT_P2P_REGISTER_INTERVAL_MS "netplay-direct-p2p-register-interval-ms"
 #define CFG_KEY_NETPLAY_DIRECT_P2P_STUN_KEEPALIVE_MS "netplay-direct-p2p-stun-keepalive-ms"
 
+/* S5 relay (docs/plan-netplay-connection.md §7). The relay is the LAST
+ * rung of the cascade: it runs after the bilateral punch fails, on both
+ * roles, and is the only path that works for a symmetric x symmetric
+ * pair.
+ *
+ * DISABLE_RELAY is the kill switch, mirroring DISABLE_BILATERAL: with it
+ * set the rung never runs and a symmetric pair reports
+ * P2P_FAIL_SYMMETRIC_BOTH exactly as it did pre-S5.
+ *
+ * FORCE_RELAY is a TEST override. It makes both hole-punches no-ops and
+ * skips the LAN / hairpin / bad-token bypasses that would otherwise
+ * short-circuit a same-network test rig, so the relay rung can be
+ * exercised on demand without arranging two symmetric NATs. It is not
+ * something a player should ever set: it deliberately throws away the
+ * direct path, which is always lower latency.
+ *
+ * RELAY_BUDGET_MS is the whole rung's wall clock, split between the
+ * RELAY_REQ->RELAY_GRANT phase and the RELAY_PIN->ACK phase. Clamped
+ * [500, 20000]; it is spent only after the punch phases have already
+ * failed, so it extends the worst case rather than the common one. */
+#define CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_RELAY "netplay-direct-p2p-disable-relay"
+#define CFG_KEY_NETPLAY_DIRECT_P2P_FORCE_RELAY "netplay-direct-p2p-force-relay"
+#define CFG_KEY_NETPLAY_DIRECT_P2P_RELAY_BUDGET_MS "netplay-direct-p2p-relay-budget-ms"
+
 /* Rollback prediction window — max frames Gekko will predict ahead of
  * confirmed inputs and, on mispredict, the max rollback depth. Lower
  * values reduce worst-case resim CPU cost (linear in window) at the cost
