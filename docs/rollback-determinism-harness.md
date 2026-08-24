@@ -288,6 +288,27 @@ rollback risk here".
    happened to allocate identically and so excluded none, the other's
    diverged and excluded all.
 
+   The same instability was observed *benignly* in the task-54 session,
+   which corroborates that mechanism from a second direction. Two
+   `verdict=PASS` gate runs of source-identical binaries reported:
+
+   ```
+   run 1:  divergent=0  allowlisted=43  noise=182
+   run 2:  divergent=0  allowlisted=44  noise=181
+   ```
+
+   The distinct ALLOWED symbol sets were identical; the single moved row
+   was `configuration` in `makoto-sa3-super`, NOISE in run 1 and ALLOWED
+   in run 2. `configuration` holds `const char*` pointers into the argv
+   block — the same pointer-valued class as the four `port/` symbols
+   above. In run 1 that scenario's A1/A2 baselines disagreed about it and
+   it was excluded as noise; in run 2 they agreed, so it fell through to
+   the allowlist instead. **It only stayed benign because
+   `configuration` happens to carry an allowlist entry of its own.** The
+   four #65 symbols do not, so when the identical flip lands on them
+   there is nothing to catch them and they surface as DIVERGENT. Same
+   coin flip, different destination.
+
    **Do not allowlist these.** An allowlist entry for a pointer-valued
    symbol would also suppress a genuine finding that happened to land on
    it, and the allowlist is supposed to carry a verified reason, which
