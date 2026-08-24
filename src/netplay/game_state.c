@@ -7,6 +7,9 @@
 #include "sf33rd/Source/Game/effect/effb2.h"
 #include "sf33rd/Source/Game/effect/effb8.h"
 #include "sf33rd/Source/Game/effect/effect.h"
+/* effl8.h is the source of truth for the ColorRAM rows effect L8 mutates;
+ * EFFL8_COLORRAM_ROWS below is derived from its macros, not restated. */
+#include "sf33rd/Source/Game/effect/effl8.h"
 #include "sf33rd/Source/Game/ending/end_data.h"
 #include "sf33rd/Source/Game/engine/charset.h"
 #include "sf33rd/Source/Game/engine/plcnt.h"
@@ -156,24 +159,41 @@ _Static_assert(sizeof(struct _TASK) == EXPECTED_TASK_SIZE,
     GS_ASSERT_SAME_SIZE(member);                                                                                        \
     SDL_memcpy(&dst->member, &member, sizeof(member))
 
-/* ColorRAM rows touched by Makoto's SA buff effect (effect/effl8.c), derived
- * from effl8.c:25-26:
- *   step_xy_table = (s16*)ColorRAM[(master_id == 1) * 16]  -> row 0  / row 16
- *   move_xy_table = step_xy_table + 512                    -> row 8  / row 24
- *     (512 u16 == 8 rows of 64)
- * effl8 reads 12 entries from step_xy_table (save_old_color_data, 12
- * iterations) and writes 12 entries to BOTH tables (get_new_color_data_L8 and
- * load_old_color_data, also 12), so the full mutated window is exactly these
- * four rows' first 12 u16. Keep in sync with effl8.c if that addressing
- * changes; the whole point of pinning it here is that ColorRAM is otherwise
- * outside the save set. */
-#define EFFL8_COLORRAM_ROW_COUNT 4
-static const int EFFL8_COLORRAM_ROWS[EFFL8_COLORRAM_ROW_COUNT] = { 0, 8, 16, 24 };
+/* ColorRAM rows touched by Makoto's SA buff effect (effect/effl8.c). These are
+ * NOT restated here: every row index below expands from the same
+ * EFFL8_STEP_ROW/EFFL8_MOVE_ROW macros that effect_L8_move() itself uses to
+ * build step_xy_table/move_xy_table (see effl8.h), so editing the effect's
+ * addressing moves this save window with it. effl8.c additionally asserts at
+ * runtime that the pointers it computed really are those rows, which catches
+ * an edit that bypasses the macros. Concretely the expansion is:
+ *   EFFL8_STEP_ROW(0)=0, EFFL8_MOVE_ROW(0)=8,
+ *   EFFL8_STEP_ROW(1)=16, EFFL8_MOVE_ROW(1)=24
+ * effl8 reads EFFL8_COLOR_ENTRIES entries from step_xy_table
+ * (save_old_color_data) and writes the same count to BOTH tables
+ * (get_new_color_data_L8, load_old_color_data), so the full mutated window is
+ * exactly these four rows' first EFFL8_COLOR_ENTRIES u16 — the whole point of
+ * pinning it here is that ColorRAM is otherwise outside the save set. */
+#define EFFL8_COLORRAM_ROW_LIST                                                                                        \
+    EFFL8_STEP_ROW(0), EFFL8_MOVE_ROW(0), EFFL8_STEP_ROW(1), EFFL8_MOVE_ROW(1)
+#define EFFL8_COLORRAM_ROW_COUNT (EFFL8_MASTER_IDS * 2)
+static const int EFFL8_COLORRAM_ROWS[EFFL8_COLORRAM_ROW_COUNT] = { EFFL8_COLORRAM_ROW_LIST };
 _Static_assert(sizeof(((GameState*)0)->effl8_colorram) / sizeof(((GameState*)0)->effl8_colorram[0]) ==
                    EFFL8_COLORRAM_ROW_COUNT,
                "effl8_colorram row count must match EFFL8_COLORRAM_ROWS");
 _Static_assert(sizeof(((GameState*)0)->effl8_colorram[0]) <= sizeof(ColorRAM[0]),
                "effl8_colorram row slice must fit inside a ColorRAM row");
+/* The slice width is effl8's own loop bound, not an independent constant. */
+_Static_assert(sizeof(((GameState*)0)->effl8_colorram[0]) / sizeof(((GameState*)0)->effl8_colorram[0][0]) ==
+                   EFFL8_COLOR_ENTRIES,
+               "effl8_colorram row slice must be exactly EFFL8_COLOR_ENTRIES wide");
+/* Bound every row index against ColorRAM's real first dimension. Without this
+ * a typo'd row is an out-of-bounds SDL_memcpy on a 64 KB global rather than a
+ * build failure. Checked on the macro expansions, which is what initialises
+ * EFFL8_COLORRAM_ROWS, so the array cannot hold an unchecked value. */
+#define EFFL8_ROW_IN_RANGE(row) ((row) >= 0 && (row) < EFFL8_COLORRAM_TOTAL_ROWS)
+_Static_assert(EFFL8_ROW_IN_RANGE(EFFL8_STEP_ROW(0)) && EFFL8_ROW_IN_RANGE(EFFL8_MOVE_ROW(0)) &&
+                   EFFL8_ROW_IN_RANGE(EFFL8_STEP_ROW(1)) && EFFL8_ROW_IN_RANGE(EFFL8_MOVE_ROW(1)),
+               "EFFL8 ColorRAM row index is outside ColorRAM");
 
 void GameState_Save(GameState* dst) {
     if (!dst)
@@ -1623,7 +1643,38 @@ void GameState_Load(const GameState* src) {
 
     /* effl8_colorram restore — rewinds the palette window effl8 latches from,
      * so a rollback that straddles the SA activation cannot make routine 0
-     * re-latch already-buffed colours. See GameState_Save. */
+     * re-latch already-buffed colours. See GameState_Save.
+     *
+     * DELIBERATELY does NOT call palUpdateGhostCP3() for these rows, even
+     * though rendering/meta_col.c:19-24 and :82-84 do after writing the same
+     * rows. Three reasons, in order of weight:
+     *
+     *  1. It would make the rollback path do something the simulation never
+     *     does. effl8.c writes these rows on every activation and every
+     *     buff-end and NEVER refreshes the CP3 ghost — palUpdateGhostCP3 has
+     *     no caller in effl8.c (the complete caller list is color3rd.c,
+     *     meta_col.c and effe6.c). Restoring ColorRAM without a ghost refresh
+     *     is therefore exactly symmetric with what the effect itself does.
+     *  2. It would not fix the case it appears to. The only way a torn 12-of-64
+     *     row can arise is a speculative frame running a FULL-row writer over
+     *     one of these rows — metamor_color_trans/_restore (meta_col.c), which
+     *     write all 64 entries of rows 0/8/16/24 — after which the load
+     *     restores only the first 12. The ghost at that point still holds the
+     *     self-consistent 64 entries meta_col pushed; refreshing it would
+     *     PUBLISH the torn row to VRAM instead of leaving a stale-but-coherent
+     *     one. The real remedy for that case would be widening the slice or
+     *     saving meta_col's rows, not a ghost push.
+     *  3. Cost and blast radius. palUpdateGhostCP3 is VRAM work
+     *     (flLockPalette/palConvRowTim2CI8Clut/flUnlockPalette, color3rd.c:531)
+     *     — four lock/copy-64/unlock round trips on every rollback tick on a
+     *     target with limited frame budget — and it would introduce
+     *     rollback-driven mutation of render-side state, the exact class
+     *     docs/rollback-determinism-harness.md's Known limit 1 records as
+     *     crash-prone (the ppgSetupPalChunk arcade trap).
+     *
+     * The residual is cosmetic, self-healing on the next full write, and
+     * strictly better than the pre-fix behaviour (which left all 64 wrong).
+     * Revisit only with a reproduction, not on principle. */
     for (int i = 0; i < EFFL8_COLORRAM_ROW_COUNT; i++) {
         SDL_memcpy(ColorRAM[EFFL8_COLORRAM_ROWS[i]], src->effl8_colorram[i], sizeof(src->effl8_colorram[i]));
     }

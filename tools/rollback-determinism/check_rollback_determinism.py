@@ -421,7 +421,14 @@ EFFECT_STATE_SAVES = ("frw", "frwque", "frwctr", "frwctr_min",
 # matching — e.g. someone renamed/reshaped the GS_SAVE macro — which would
 # silently blind the feedback detector rather than fail. Raise this when the
 # save set legitimately grows; never lower it to make a run pass.
-MIN_GS_SAVE_MACRO_NAMES = 600
+#
+# Kept flush with the actual count (608 unique names as of this line) rather
+# than left slack: a floor with slack is a floor you can walk under. The floor
+# alone is still the WEAKER of the two guards here, because it only sees the
+# aggregate — see the GS_SAVE/GS_LOAD set-equality check in
+# load_gs_save_names(), which is derived rather than pinned and catches a
+# single dropped line that this number never would.
+MIN_GS_SAVE_MACRO_NAMES = 608
 
 
 def load_gs_save_names():
@@ -442,6 +449,30 @@ def load_gs_save_names():
              f"{path} (floor is {MIN_GS_SAVE_MACRO_NAMES}). The save-set "
              f"regex has gone stale — feedback tagging would be wrong. Fix "
              f"the extraction in load_gs_save_names(), do not lower the floor.")
+
+    # Derived companion to the floor above. GS_SAVE and GS_LOAD are two halves
+    # of one round trip, so their name sets must be IDENTICAL — that invariant
+    # needs no pinned number and cannot drift as the save set grows. It closes
+    # the floor's blind spot: the floor only sees the aggregate, so dropping a
+    # handful of GS_SAVE lines stays above it and passes, while dropping even
+    # one shows up here as an asymmetry. A save without its load (or a load
+    # without its save) is also a bug in its own right: the state is captured
+    # and never restored, or restored from a stale field that nothing writes.
+    load_names = set(re.findall(r"GS_LOAD\(([A-Za-z_][A-Za-z_0-9]*)\)", text))
+    save_only = sorted(names - load_names)
+    load_only = sorted(load_names - names)
+    if save_only or load_only:
+        detail = []
+        if save_only:
+            detail.append(f"GS_SAVE without GS_LOAD: {', '.join(save_only)}")
+        if load_only:
+            detail.append(f"GS_LOAD without GS_SAVE: {', '.join(load_only)}")
+        fail(f"GS_SAVE/GS_LOAD name sets disagree in {path} "
+             f"({len(names)} save / {len(load_names)} load). "
+             f"{'; '.join(detail)}. Every saved field must be loaded and vice "
+             f"versa; a one-sided entry means state is captured but never "
+             f"restored (or restored from a field nothing writes). Fix the "
+             f"save set, do not relax this check.")
 
     # Every hand-rolled/partial entry must still be findable on BOTH halves of
     # the round trip: `dst->NAME` in GameState_Save and `src->NAME` in

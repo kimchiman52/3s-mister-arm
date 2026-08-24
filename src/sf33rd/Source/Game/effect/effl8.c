@@ -8,11 +8,18 @@
 #include "sf33rd/Source/Game/effect/effect.h"
 #include "sf33rd/Source/Game/rendering/color3rd.h"
 
+#include <assert.h>
+
 u32 spmv_ng_save[2];
 
 // forward declaration
 
 const s16 pl17_0_00[12];
+
+/* The colour source table effl8 reads through hit_adrs is exactly as wide as
+ * the window it writes, so the loop bound and the table cannot drift apart. */
+_Static_assert(sizeof(pl17_0_00) / sizeof(pl17_0_00[0]) == EFFL8_COLOR_ENTRIES,
+               "pl17_0_00 must be exactly EFFL8_COLOR_ENTRIES wide");
 
 void effect_L8_move(WORK_Other* ewk) {
     PLW* mwk = (PLW*)ewk->my_master;
@@ -22,8 +29,21 @@ void effect_L8_move(WORK_Other* ewk) {
     case 0:
         ewk->wu.routine_no[0] += 1;
         ewk->wu.hit_adrs = pl17_0_00;
-        ewk->wu.step_xy_table = (s16*)ColorRAM[(ewk->master_id == 1) * 16];
-        ewk->wu.move_xy_table = ewk->wu.step_xy_table + 512;
+        ewk->wu.step_xy_table = (s16*)ColorRAM[EFFL8_STEP_ROW(ewk->master_id)];
+        ewk->wu.move_xy_table = ewk->wu.step_xy_table + EFFL8_MOVE_TABLE_S16_STRIDE;
+        /* The rollback save window (GameState.effl8_colorram) is derived from
+         * EFFL8_STEP_ROW/EFFL8_MOVE_ROW in effl8.h. These two assertions are
+         * the mechanical link in the other direction: if this addressing is
+         * ever edited to rows those macros no longer describe, the save window
+         * silently stops covering what the effect mutates — which is exactly
+         * how the `frw` DIVERGENT+FEEDBACK escapee was introduced. Fail loudly
+         * here instead of leaving the harness to point at the consumer.
+         * Debug-only: Release defines NDEBUG, so this costs nothing on the
+         * frame-budget-limited target. */
+        assert(ewk->wu.step_xy_table == (s16*)ColorRAM[EFFL8_STEP_ROW(ewk->master_id)] &&
+               "effl8 step_xy_table left the rollback-saved ColorRAM rows (see effl8.h / game_state.c)");
+        assert(ewk->wu.move_xy_table == (s16*)ColorRAM[EFFL8_MOVE_ROW(ewk->master_id)] &&
+               "effl8 move_xy_table left the rollback-saved ColorRAM rows (see effl8.h / game_state.c)");
         save_old_color_data(save_old_col_ptr, ewk->wu.step_xy_table);
         check_new_color_data_L8(&ewk->wu);
         mwk->att_plus = 14;
@@ -62,7 +82,7 @@ void get_new_color_data_L8(WORK* /* unused */, s16* trom, s16* tram) {
     s16 i;
     u16 col;
 
-    for (i = 0; i < 12; i++) {
+    for (i = 0; i < EFFL8_COLOR_ENTRIES; i++) {
         col = *trom++;
         *tram++ = palConvSrcToRam(col);
     }
@@ -71,7 +91,7 @@ void get_new_color_data_L8(WORK* /* unused */, s16* trom, s16* tram) {
 void save_old_color_data(s16* wram, s16* tram) {
     s16 i;
 
-    for (i = 0; i < 12; i++) {
+    for (i = 0; i < EFFL8_COLOR_ENTRIES; i++) {
         *wram++ = *tram++;
     }
 }
@@ -79,7 +99,7 @@ void save_old_color_data(s16* wram, s16* tram) {
 void load_old_color_data(s16* wram, s16* tram) {
     s16 i;
 
-    for (i = 0; i < 12; i++) {
+    for (i = 0; i < EFFL8_COLOR_ENTRIES; i++) {
         *tram++ = *wram++;
     }
 }
