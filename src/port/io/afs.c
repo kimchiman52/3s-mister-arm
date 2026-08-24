@@ -36,12 +36,21 @@ typedef struct ReadRequest {
     int sector;
     AFSReadState state;
     SDL_AsyncIO* asyncio;
+    /* TEST-ONLY (--afs-inject-latency-ms). Earliest SDL_GetTicksNS() at
+     * which AFS_GetState() is allowed to stop reporting READING for this
+     * slot. Zero whenever injection is off, which makes the gate in
+     * AFS_GetState() a compare against 0 that is never taken. */
+    Uint64 release_ticks_ns;
 } ReadRequest;
 
 static AFS afs = { 0 };
 static SDL_AsyncIOQueue* asyncio_queue = NULL;
 static ReadRequest requests[AFS_MAX_READ_REQUESTS] = { { 0 } };
 static const int asyncio_completion_budget_per_tick = 32;
+/* TEST-ONLY: see AFS_SetInjectedLatencyMs() in afs.h. */
+static int afs_injected_latency_ms = 0;
+/* Monotonic bytes-requested counter; see AFS_GetTotalBytesRequested(). */
+static unsigned long long afs_total_bytes_requested = 0;
 
 static bool is_valid_attribute_data(Uint32 attributes_offset, Uint32 attributes_size, Sint64 file_size,
                                     Uint32 entries_end_offset, Uint32 entry_count) {
@@ -312,6 +321,34 @@ void AFS_RunServer() {
     }
 }
 
+bool AFS_PumpBlocking(int timeout_ms) {
+    SDL_AsyncIOOutcome outcome;
+
+    if (asyncio_queue == NULL) {
+        return false;
+    }
+
+    if (!SDL_WaitAsyncIOResult(asyncio_queue, &outcome, timeout_ms)) {
+        return false;
+    }
+
+    process_asyncio_outcome(&outcome);
+    AFS_RunServer();
+    return true;
+}
+
+unsigned long long AFS_GetTotalBytesRequested(void) {
+    return afs_total_bytes_requested;
+}
+
+void AFS_SetInjectedLatencyMs(int ms) {
+    afs_injected_latency_ms = (ms > 0) ? ms : 0;
+}
+
+int AFS_GetInjectedLatencyMs(void) {
+    return afs_injected_latency_ms;
+}
+
 AFSHandle AFS_Open(int file_num) {
     AFSHandle retval = AFS_NONE;
 
@@ -362,6 +399,12 @@ void AFS_Read(AFSHandle handle, int sectors, void* buf) {
     }
 
     request->state = AFS_READ_STATE_READING;
+    request->release_ticks_ns =
+        (afs_injected_latency_ms > 0)
+            ? SDL_GetTicksNS() + (Uint64)afs_injected_latency_ms * SDL_NS_PER_MS
+            : 0;
+
+    afs_total_bytes_requested += (unsigned long long)sectors * 2048ull;
 
     const bool success = SDL_ReadAsyncIO(request->asyncio, buf, offset, sectors * 2048, asyncio_queue, request);
 
@@ -399,6 +442,15 @@ void AFS_ReadSync(AFSHandle handle, int sectors, void* buf) {
 #endif
 
     AFS_Read(handle, sectors, buf);
+
+    /* TEST-ONLY: the injected-latency instrument targets the ASYNC LDREQ
+     * pipeline, which is the only place a wall-clock completion frame can
+     * leak into the simulation. Blocking reads are already frame-exact.
+     * Leaving the delay armed here would also break callers that poll
+     * AFS_GetState() right after this returns and re-issue the whole read
+     * when it still says READING (load_it_use_this_key's while(1),
+     * gd3rd.c:259-277). Disarm it for this slot. */
+    requests[handle].release_ticks_ns = 0;
 
     SDL_AsyncIOOutcome outcome;
 
@@ -460,6 +512,17 @@ AFSReadState AFS_GetState(AFSHandle handle) {
 #if defined(AFS_DEBUG)
     printf("📂 %d: get state (%d)\n", handle, request->state);
 #endif
+
+    /* TEST-ONLY (--afs-inject-latency-ms): keep reporting READING until
+     * the injected delay elapses, so a harness run can reproduce a peer
+     * whose disk is slower without touching the real I/O path. Inert
+     * (release_ticks_ns == 0) unless injection was armed. */
+    if (request->release_ticks_ns != 0) {
+        if (SDL_GetTicksNS() < request->release_ticks_ns) {
+            return AFS_READ_STATE_READING;
+        }
+        request->release_ticks_ns = 0;
+    }
 
     return request->state;
 }

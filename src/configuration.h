@@ -105,6 +105,30 @@ typedef struct TestRunnerConfiguration {
      * rollback bugs at production depth. Clamped to rbd_rollback_depth,
      * which bounds every phase. */
     int rbd_select_rollback_depth;
+
+    /* === Loader-timing invariance instrument (task #66) ===
+     * See src/test/ldreq_timing_trace.h and
+     * tools/ldreq-timing/check_ldreq_timing.py. */
+
+    /* Write one CSV row per outer frame describing the saved state the
+     * LDREQ loader feeds plus the loader's own observable surface. */
+    const char* ldreq_trace_path;
+
+    /* Row count, then flush + clean exit. Required with ldreq_trace_path. */
+    int ldreq_trace_frames;
+
+    /* Force Ldreq_BarrierActive() true without a live GekkoNet session,
+     * so the barrier can be exercised from an offline test-runner scene.
+     * Omitting it is the instrument's built-in neutralization: the same
+     * binary then takes the unbarriered path and the comparison must go
+     * red. */
+    bool ldreq_barrier_force;
+
+    /* Hold back the OBSERVED completion of every async AFS read by this
+     * many milliseconds (AFS_SetInjectedLatencyMs, port/io/afs.h). This
+     * is the independent variable: two runs differing only in this value
+     * stand in for two peers whose disks differ. */
+    int afs_inject_latency_ms;
 } TestRunnerConfiguration;
 
 #if ENABLE_PERF_TELEMETRY

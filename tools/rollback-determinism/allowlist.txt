@@ -93,6 +93,22 @@ sa_frame                   # ui/sc_sub.c:392 SA-gauge HUD frame display state (c
 # simulation from observing an in-flight LDREQ load while a session is
 # running), not a wider save set.
 #
+# UPDATE 2026-08-24 (task #66): that barrier now exists. Check_LDREQ_Queue()
+# (io/gd3rd.c) finishes every queued request inside the simulated frame that
+# pumped it whenever Ldreq_BarrierActive() -- i.e. whenever the GekkoNet
+# session is RUNNING. The queue is therefore empty and afs_handle is AFS_NONE
+# at every simulated-frame boundary IN NETPLAY, which makes ldreq_result a
+# pure function of the Push_LDREQ_Queue_* sequence (driven by SP_No/G_No/
+# bg_w.stage, all saved).
+#
+# These entries still stay, and this harness's verdict is unchanged, because
+# the barrier is deliberately netplay-gated: an rbd run has no session and no
+# --ldreq-barrier-force, so it takes the stock unbarriered path and these
+# symbols keep behaving exactly as described above. The barrier is validated
+# by tools/ldreq-timing (which varies loader wall-clock rather than rollback
+# cadence) -- see known limit 9 in docs/rollback-determinism-harness.md for
+# why this harness cannot do that job.
+#
 # Do NOT quietly widen this block. plt_req and Candidate_Buff also diverge at
 # --rbd-select-rollback-depth 8 and are deliberately left unallowlisted.
 afs_handle                 # AFS async file-system handle bookkeeping

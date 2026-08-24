@@ -40,6 +40,7 @@
 #include "sf33rd/Source/Game/ui/frame_trace.h"
 #include "sf33rd/Source/Game/ui/sc_sub.h"
 #include "structs.h"
+#include "test/ldreq_timing_trace.h"
 #include "test/rollback_determinism.h"
 #include "test/test_runner.h"
 
@@ -97,6 +98,10 @@ Configuration configuration = {
             .rbd_rollback_depth = 3,
             .rbd_select_rollback_period = 8,
             .rbd_select_rollback_depth = 2,
+            .ldreq_trace_path = NULL,
+            .ldreq_trace_frames = 0,
+            .ldreq_barrier_force = false,
+            .afs_inject_latency_ms = 0,
         },
 };
 
@@ -882,6 +887,7 @@ static int loop() {
             game_step_1();
 
             RollbackDeterminism_FrameEnd();
+            LdreqTimingTrace_FrameEnd();
 
 #if ENABLE_PERF_TELEMETRY
             if (!perf_capture_started && configuration.perf.frame_count > 0 &&
@@ -1085,6 +1091,13 @@ static SDL_AssertState SDLCALL test_harness_assert_handler(const SDL_AssertData*
 
 int main(int argc, const char* argv[]) {
     read_args(argc, argv, &configuration);
+
+    /* Loader-timing invariance instrument (task #66, src/test/
+     * ldreq_timing_trace.h). Both are no-ops at their default values, so
+     * a normal launch leaves the barrier gated on the live GekkoNet
+     * session state and the AFS path untouched. */
+    Ldreq_SetBarrierForced(configuration.test.ldreq_barrier_force);
+    AFS_SetInjectedLatencyMs(configuration.test.afs_inject_latency_ms);
 
     if (configuration.test_netplay_event_queue || configuration.test_mist_handshake ||
         configuration.test_room_code || configuration.test_stun_mock ||

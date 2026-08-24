@@ -19,6 +19,9 @@
 #include "structs.h"
 
 #include "port/io/afs.h"
+#include "netplay/netplay.h"
+
+#include <SDL3/SDL.h>
 
 typedef struct {
     u8 type;
@@ -85,7 +88,21 @@ const u8 lpt_seldat[4] = { 3, 4, 5, 0 };
  * in-flight load while a GekkoNet session is running — not a wider save set
  * and not a replay scheme. See the CORRECTION block in
  * tools/rollback-determinism/allowlist.txt and known limit 9 in
- * docs/rollback-determinism-harness.md. */
+ * docs/rollback-determinism-harness.md.
+ *
+ * That barrier is now implemented — see the block comment above
+ * Check_LDREQ_Queue() below. It does NOT make any of these four symbols
+ * saveable and does not change this disposition; it makes them
+ * unobservable in an intermediate state, which is a different fix. The
+ * paragraphs above remain the reason not to try the save-set route again.
+ *
+ * One correction to the paragraph above, measured in task #66: Bonus_Sub
+ * (game.c:1377-1381) is NOT reachable in MODE_NETWORK. Game09 needs
+ * G_No[1] == 9, written only at game.c:998 (inside Game05) and game.c:1582
+ * (inside Game11); Game05 is entered only from the `default:` arm of
+ * Game03's switch (game.c:817), and `case MODE_VERSUS: case MODE_NETWORK:`
+ * (game.c:786-787) divert before it. The netplay-reachable feedback edge is
+ * Exit_6th's alone. */
 s16 plt_req[2];
 u8 ldreq_break;
 REQ q_ldreq[16];
@@ -479,33 +496,182 @@ s32 Push_LDREQ_Queue(REQ* ldreq) {
     return 0;
 }
 
-void Check_LDREQ_Queue() {
+static bool ldreq_barrier_forced = false;
+
+void Ldreq_SetBarrierForced(bool forced) {
+    ldreq_barrier_forced = forced;
+}
+
+bool Ldreq_BarrierActive(void) {
+    if (ldreq_barrier_forced) {
+        return true;
+    }
+
+    return Netplay_GetSessionState() == NETPLAY_SESSION_RUNNING;
+}
+
+/* One step of the head request's state machine, plus the queue shift the
+ * original Check_LDREQ_Queue() performed inline when the head drained.
+ * Factored out verbatim so the barrier loop below and the stock
+ * single-step path share exactly one implementation. */
+static void ldreq_pump_head(void) {
     s16 i;
 
+    ldreq_process[q_ldreq->type](q_ldreq);
+
+    if (q_ldreq->be == 0) {
+        for (i = 0; i < 15; i++) {
+            q_ldreq[i] = q_ldreq[i + 1];
+        }
+
+        q_ldreq[i].be = 0;
+        q_ldreq[i].type = 0;
+    }
+}
+
+/* === NETPLAY LDREQ FRAME BARRIER (task #66) ===
+ *
+ * THE BUG. Every value this file exposes to the simulation —
+ * ldreq_result[] through Check_LDREQ_Queue_Player/_Union/_Direct,
+ * q_ldreq[].be through Check_LDREQ_Clear(), afs_handle through
+ * Check_LDREQ_Break()/fsCheckCommandExecuting() — advances on the frame
+ * an OS async read happens to land. AFS_Read is a real SDL_ReadAsyncIO
+ * (port/io/afs.c:366) drained by AFS_RunServer via SDL_GetAsyncIOResult
+ * (afs.c:304-313), so the completion frame is WALL CLOCK, not frame
+ * count. Two peers with different disks therefore disagree about it,
+ * with no rollback involved at all. That divergence is not cosmetic:
+ * Exit_6th (screen/sel_pl.c:1701-1722) gates the SAVED Exit_No /
+ * Exit_Timer on Check_PL_Load() + Check_LDREQ_Queue_BG(), so the two
+ * peers leave character select on different frames and every frame of
+ * the match after that is misaligned.
+ *
+ * Measured, not argued: the rollback-determinism harness classifies
+ * q_ldreq, rckey_work, rckey_mmobj, texgrplds, char_init_data, requests,
+ * afs and asyncio_queue as A1-vs-A2 BASELINE NOISE — they differ between
+ * two identical NO-ROLLBACK runs of one binary on one machine with ASLR
+ * off (docs/rollback-determinism-harness.md, known limit 9).
+ *
+ * WHY NOT THE OBVIOUS FIXES. Both were tried and both are refuted in the
+ * disposition comment above plt_req: widening the rollback save set
+ * cannot work (afs_handle is an index into a slot that owns a live
+ * SDL_AsyncIO* and a monotonic cursor; rewinding q_ldreq replays
+ * Pull_ramcnt_key against a non-rewound allocator and can strand the
+ * queue non-empty at the Game2_0/Game2_2 drain assertion), and a
+ * per-frame record/replay scheme cannot work either, because the
+ * divergence exists between two runs of a SINGLE peer. There is nothing
+ * to replay that both peers would agree on.
+ *
+ * THE BARRIER. Make the queue unobservable in an intermediate state:
+ * while a session is running, the frame that pumps the queue finishes
+ * every request in it before returning. The invariant that buys is
+ *
+ *     at every simulated-frame boundary the queue is empty, afs_handle
+ *     is AFS_NONE, and ldreq_result[] is a pure function of the sequence
+ *     of Push_LDREQ_Queue_* calls
+ *
+ * and that sequence is driven by SP_No / G_No / bg_w.stage, all of which
+ * are in the rollback save set. So every observation the simulation can
+ * make of this subsystem becomes a function of saved state alone.
+ *
+ * It is rollback-order independent, which the narrower alternatives are
+ * not. A speculative leg that re-issues a request (Sel_PL_3rd's one-shot
+ * gate is restored by a rollback but the queue is not) drains it inside
+ * that same leg, so a peer that rolled back and a peer that did not
+ * finish the frame with identical ldreq_result[]. Suppressing the pump
+ * on resimulated frames instead does NOT achieve this: the confirm
+ * input reaches the two peers at different points (local input is known
+ * at forward-advance time, remote input arrives late and lands in a
+ * resim), so the push falls on opposite sides of that frame's pump and
+ * the peers end up one pump-step apart.
+ *
+ * It also strictly reduces the risk of the Game2_0/Game2_2
+ * fatal_error("Load queue failed to drain in time") (game.c:472, :615):
+ * on the barrier path the queue is already empty when those run.
+ *
+ * COST. The frame that issues a load absorbs the whole read instead of
+ * spreading it across frames. That is a stall, so it is bounded twice —
+ * LDREQ_BARRIER_BUDGET_MS wall clock and LDREQ_BARRIER_MAX_STEPS pump
+ * steps — and the budget is set well under GekkoNet's 5000 ms
+ * NetStats::DISCONNECT_TIMEOUT (third_party/GekkoNet/build/include/
+ * net.h:125), which is measured from the last packet of any type
+ * received from us. A remote peer that runs out of prediction window
+ * while we stall simply stops advancing (GekkoLib src/game_session.cpp:
+ * 145-152) and resumes when we do; it does not error. Blowing the budget
+ * logs and returns control to the frame loop — degraded to stock
+ * behaviour, never a hang, which matters because Exit_6th has no timeout
+ * of its own.
+ *
+ * OFFLINE IS UNTOUCHED. Ldreq_BarrierActive() is false with no session
+ * and no harness override, and the early return below is placed after
+ * the stock single-step pump, so a non-netplay frame executes exactly
+ * the instructions it executed before this change.
+ */
+void Check_LDREQ_Queue() {
     disp_ldreq_status();
 
-    if (!ldreq_break) {
-        if (q_ldreq->be != 0) {
-            ldreq_process[q_ldreq->type](q_ldreq);
-
-            if (q_ldreq->be == 0) {
-                for (i = 0; i < 15; i++) {
-                    q_ldreq[i] = q_ldreq[i + 1];
-                }
-
-                q_ldreq[i].be = 0;
-                q_ldreq[i].type = 0;
-            }
-
-            return;
-        }
-    } else {
+    if (ldreq_break) {
         if (q_ldreq->be == 1) {
             fsCansel(q_ldreq);
         }
 
         Init_Load_Request_Queue_1st();
+        return;
     }
+
+    if (q_ldreq->be == 0) {
+        return;
+    }
+
+    ldreq_pump_head();
+
+    if (!Ldreq_BarrierActive()) {
+        return;
+    }
+
+    const Uint64 start_ns = SDL_GetTicksNS();
+    const Uint64 budget_ns = (Uint64)LDREQ_BARRIER_BUDGET_MS * SDL_NS_PER_MS;
+    const unsigned long long start_bytes = AFS_GetTotalBytesRequested();
+    int steps = 0;
+
+    while (q_ldreq->be != 0) {
+        if (steps >= LDREQ_BARRIER_MAX_STEPS || (SDL_GetTicksNS() - start_ns) > budget_ns) {
+            /* Budget blown. Never spin: hand the frame back so the outer
+             * loop keeps polling the network and rendering. The session
+             * is now exposed to the original divergence, which is why
+             * this is logged unconditionally rather than behind the
+             * telemetry gate. */
+            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                         "[ldreq-barrier] budget exceeded after %d steps / %llu ms — head be=%d type=%d rno=%d",
+                         steps,
+                         (unsigned long long)((SDL_GetTicksNS() - start_ns) / SDL_NS_PER_MS),
+                         (int)q_ldreq->be, (int)q_ldreq->type, (int)q_ldreq->rno);
+            break;
+        }
+
+        /* be == 1 means the head is parked on an in-flight AFS_Read, so
+         * block for its completion rather than busy-spinning the state
+         * machine. 1 ms also bounds the poll interval for the harness's
+         * injected-latency mode, where the outcome has already been
+         * delivered and only the artificial release time is pending. */
+        AFS_PumpBlocking(1);
+        ldreq_pump_head();
+        steps += 1;
+    }
+
+#if ENABLE_PERF_TELEMETRY
+    /* Field measurement of exactly what this stall costs: how long the
+     * frame loop was blocked and how many bytes of AFS the block covered.
+     * The byte figure is the one that transfers across machines — the
+     * same bytes are read on MiSTer, just from SD instead of a warm page
+     * cache — so a device log answers the stall-length question with a
+     * measurement instead of an extrapolation. */
+    if (steps > 0) {
+        const Uint64 elapsed_ms = (SDL_GetTicksNS() - start_ns) / SDL_NS_PER_MS;
+        flLogOut("[ldreq-barrier] drained in %d steps / %u ms / %u bytes\n",
+                 steps, (unsigned)elapsed_ms,
+                 (unsigned)(AFS_GetTotalBytesRequested() - start_bytes));
+    }
+#endif
 }
 
 void disp_ldreq_status() {
