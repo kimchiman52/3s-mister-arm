@@ -1520,6 +1520,36 @@ static bool try_handle_deliver(const uint8_t* pkt, int len) {
 
     SDL_Log("[direct_p2p] DELIVER received peer=%s:%u", peer_ip, (unsigned)peer_port);
 
+    /* Self-DELIVER gate (review H1): a DELIVER whose peer IP equals our
+     * OWN public IP is our own stale registration echoed back, not a
+     * peer. Scenario: host presses Host, cancels, re-hosts within the
+     * server TTL. With UPnP the external port is pinned so the session
+     * key is unchanged; if the new socket's NAT mapping toward the
+     * server picked a different source port, the server sees stale slot
+     * A + empty slot B, makes us B, and its reply DELIVER carries our
+     * own old endpoint. Pre-fix this hit the terminal hairpin gate
+     * below and killed the re-hosted room with FAILED_SYMMETRIC for the
+     * whole 10-minute TTL.
+     *
+     * A LEGITIMATE joiner can never produce a same-IP DELIVER: the
+     * joiner's own hairpin bypass (join_thread_fn, the
+     * ip_eq_normalized(peer_ip, own public_ip) check before
+     * FALLBACK_SIGNALING) fails it with FAILED_SYMMETRIC before it ever
+     * REGISTERs with the rendezvous server. So every same-IP DELIVER is
+     * either our own stale slot (any old NAT port — we cannot know
+     * which, so we ignore ALL same-IP ports, not just advertised_port)
+     * or a spoofed REGISTER; in both cases the right move is to keep
+     * waiting, and to keep the rendezvous resender ALIVE so our
+     * re-REGISTERs eventually refresh/reclaim the slot server-side.
+     * This subsumes the old terminal hairpin gate, whose only reachable
+     * firing case was exactly this self-DELIVER poison. */
+    if (direct_p2p_ip_eq_normalized(peer_ip, s_work.stun.public_ip)) {
+        SDL_Log("[direct_p2p] DELIVER carries our own IP (%s:%u, advertised port %u) "
+                "— stale self-registration or spoof; ignoring and staying HOST_WAITING.",
+                peer_ip, (unsigned)peer_port, (unsigned)s_work.advertised_port);
+        return true;
+    }
+
     /* Stop the rendezvous resender — we have what we need from the server. */
     SDL_SetAtomicInt(&s_rendezvous_cancel, 1);
 
@@ -1530,19 +1560,6 @@ static bool try_handle_deliver(const uint8_t* pkt, int len) {
     if (direct_p2p_is_lan_peer(peer_ip)) {
         SDL_Log("[direct_p2p] DELIVER peer is LAN (%s); staying HOST_WAITING — "
                 "direct path should already have completed.", peer_ip);
-        return true;
-    }
-
-    /* Hairpin gate: peer public IP == our public IP. If the router broke
-     * the direct-punch loopback it will break the bilateral punch the
-     * same way (per §Hard requirement 3(c)). Compare normalized so
-     * formatting differences don't bypass the check. */
-    if (direct_p2p_ip_eq_normalized(peer_ip, s_work.stun.public_ip)) {
-        SDL_Log("[direct_p2p] DELIVER hairpin (peer %s == self %s); "
-                "router lacks NAT loopback. Failing without bilateral retry.",
-                peer_ip, s_work.stun.public_ip);
-        set_status("Could not connect. Try a different network.");
-        set_state(DIRECT_P2P_FAILED_SYMMETRIC);
         return true;
     }
 
