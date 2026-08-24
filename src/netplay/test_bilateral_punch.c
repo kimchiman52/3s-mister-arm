@@ -504,6 +504,42 @@ static int test_session_key_stability(void) {
         return 1;
     }
 
+    /* --- S4a: punch-token derivation. Deterministic; sensitive to both
+     * inputs; DOMAIN-SEPARATED from the session key (a token must never
+     * equal a session-key prefix for the same payload); ip_be==0 fails
+     * and zeroes the output. */
+    uint8_t t1[REND_PUNCH_TOKEN_LEN];
+    uint8_t t2[REND_PUNCH_TOKEN_LEN];
+    EXPECT_TRUE("test2-token", Rendezvous_DerivePunchToken(0x0A0B0C0Du, 12345, t1));
+    EXPECT_TRUE("test2-token", Rendezvous_DerivePunchToken(0x0A0B0C0Du, 12345, t2));
+    if (memcmp(t1, t2, REND_PUNCH_TOKEN_LEN) != 0) {
+        FAIL("test2-token", "deterministic token derivation produced different tokens");
+        return 1;
+    }
+    uint8_t t3[REND_PUNCH_TOKEN_LEN];
+    EXPECT_TRUE("test2-token", Rendezvous_DerivePunchToken(0x0A0B0C0Du, 12346, t3));
+    if (memcmp(t1, t3, REND_PUNCH_TOKEN_LEN) == 0) {
+        FAIL("test2-token", "different port produced identical token");
+        return 1;
+    }
+    /* Domain separation vs the session key over the SAME payload. */
+    if (memcmp(t1, k1, REND_PUNCH_TOKEN_LEN) == 0) {
+        FAIL("test2-token", "token equals session-key prefix — no domain separation");
+        return 1;
+    }
+    uint8_t t4[REND_PUNCH_TOKEN_LEN];
+    memset(t4, 0xEE, sizeof(t4));
+    if (Rendezvous_DerivePunchToken(0u, 12345, t4)) {
+        FAIL("test2-token", "ip_be=0 should return false");
+        return 1;
+    }
+    for (int i = 0; i < REND_PUNCH_TOKEN_LEN; i++) {
+        if (t4[i] != 0) {
+            FAIL("test2-token", "failed derivation must zero the output");
+            return 1;
+        }
+    }
+
     fprintf(stderr, "[test_bilateral_punch] test 2 OK\n");
     return 0;
 }
@@ -866,10 +902,12 @@ static bool mock_stun_discover(StunResult* result, uint16_t local_port, int time
 }
 
 static bool mock_stun_punch(StunResult* local, char* peer_ip, uint16_t* peer_port,
+                            const uint8_t punch_token[STUN_PUNCH_TOKEN_LEN],
                             int punch_duration_ms, SDL_AtomicInt* cancel_flag) {
     (void)local;
     (void)peer_ip;
     (void)peer_port;
+    (void)punch_token; /* S4a: token now flows through the seam */
     (void)punch_duration_ms;
     (void)cancel_flag;
     s_mock_punch_calls++;
@@ -1086,13 +1124,21 @@ static int test_failure_taxonomy(void) {
     ev.port_disagreement = true;
     EXPECT_TRUE("7c-symmetric-both",
                 ConnectFail_ClassifyJoin(&ev) == CONNECT_FAIL_SYMMETRIC_BOTH);
+    /* S4a: bad-token evidence outranks the NAT diagnoses — the peer's
+     * datagrams arrived, they just failed auth. */
+    ev.punch_bad_token = true;
+    EXPECT_TRUE("7c-punch-auth",
+                ConnectFail_ClassifyJoin(&ev) == CONNECT_FAIL_PUNCH_AUTH);
+    ev.punch_bad_token = false;
     /* Hairpin outranks everything. */
     ev.hairpin = true;
     EXPECT_TRUE("7c-hairpin",
                 ConnectFail_ClassifyJoin(&ev) == CONNECT_FAIL_HAIRPIN);
-    /* Punch succeeded -> no failure. */
+    /* Punch succeeded -> no failure (a stray bad-token sighting must
+     * not fail a join that actually connected). */
     memset(&ev, 0, sizeof(ev));
     ev.deliver_any = ev.deliver_real = ev.bilateral_punched = true;
+    ev.punch_bad_token = true;
     EXPECT_TRUE("7c-ok", ConnectFail_ClassifyJoin(&ev) == CONNECT_FAIL_NONE);
 
     /* --- 7d: host-waiting advisory (cause 8). */
@@ -1487,6 +1533,98 @@ done:
     return rc;
 }
 
+/* --- Test 10: S4a host datagram gate ----------------------------------- */
+
+/*
+ * Truth table for the host-waiting datagram classifier
+ * (classify_host_datagram via the test hook) — the routing gate that
+ * decides, for every inbound datagram on the host's advertising socket,
+ * between rendezvous frame / STUN response / authenticated peer punch /
+ * IGNORE. The load-bearing rows are the IGNORE ones: pre-S4a the final
+ * arm was "anything else IS the peer", so a single stray datagram
+ * (port scan, stale packet, legacy unauthenticated punch, spoofed
+ * garbage) was captured as the opponent, echoed, and handed the
+ * session off — hijacking the room AND permanently consuming the
+ * host's one peer slot. To prove this test bites: make
+ * classify_host_datagram return DP2P_HOST_DGRAM_PEER_PUNCH in its
+ * final arm (the pre-fix behavior) and the IGNORE rows fail.
+ */
+static int test_host_datagram_gate(void) {
+    fprintf(stderr, "[test_bilateral_punch] test 10: S4a host datagram gate\n");
+    const int fails_before = fail_count;
+
+    uint8_t token[STUN_PUNCH_TOKEN_LEN] = { 9, 8, 7, 6, 5, 4, 3, 2 };
+    uint8_t wrong[STUN_PUNCH_TOKEN_LEN] = { 9, 8, 7, 6, 5, 4, 3, 1 };
+
+    /* (a) Authenticated punch -> PEER_PUNCH. */
+    uint8_t punch[STUN_PUNCH_PAYLOAD_LEN];
+    Stun_BuildPunchPayload(token, punch);
+    EXPECT_TRUE("10-auth-punch",
+                DirectP2P_TestHook_ClassifyHostDatagram(punch, sizeof(punch), token, true) ==
+                    DP2P_HOST_DGRAM_PEER_PUNCH);
+
+    /* (b) WRONG token -> IGNORE (never the peer). */
+    uint8_t bad[STUN_PUNCH_PAYLOAD_LEN];
+    Stun_BuildPunchPayload(wrong, bad);
+    EXPECT_TRUE("10-wrong-token",
+                DirectP2P_TestHook_ClassifyHostDatagram(bad, sizeof(bad), token, true) ==
+                    DP2P_HOST_DGRAM_IGNORE);
+
+    /* (c) Legacy pre-S4a 9-byte "3SX_PUNCH" -> IGNORE. */
+    EXPECT_TRUE("10-legacy-punch",
+                DirectP2P_TestHook_ClassifyHostDatagram((const uint8_t*)"3SX_PUNCH", 9,
+                                                        token, true) ==
+                    DP2P_HOST_DGRAM_IGNORE);
+
+    /* (d) Arbitrary garbage (the classic slot-consumer: one stray
+     * packet from a scanner) -> IGNORE. */
+    static const uint8_t garbage[] = { 0xDE, 0xAD, 0xBE, 0xEF, 0x00, 0x41 };
+    EXPECT_TRUE("10-garbage",
+                DirectP2P_TestHook_ClassifyHostDatagram(garbage, (int)sizeof(garbage),
+                                                        token, true) ==
+                    DP2P_HOST_DGRAM_IGNORE);
+
+    /* (e) Valid punch but NO valid token on the host (fail closed) ->
+     * IGNORE. */
+    EXPECT_TRUE("10-no-token-fail-closed",
+                DirectP2P_TestHook_ClassifyHostDatagram(punch, sizeof(punch), token, false) ==
+                    DP2P_HOST_DGRAM_IGNORE);
+
+    /* (f) Rendezvous frame ('3SXR', 32 bytes) -> RENDEZVOUS. */
+    uint8_t key[REND_KEY_LEN];
+    memset(key, 0x5A, sizeof(key));
+    uint8_t deliver[REND_DELIVER_LEN];
+    (void)build_deliver(deliver, key, NULL, 0);
+    EXPECT_TRUE("10-rendezvous",
+                DirectP2P_TestHook_ClassifyHostDatagram(deliver, sizeof(deliver), token, true) ==
+                    DP2P_HOST_DGRAM_RENDEZVOUS);
+
+    /* (g) STUN Binding Response (type 0x0101 + magic cookie) -> STUN. */
+    uint8_t stun_resp[20] = { 0 };
+    stun_resp[0] = 0x01; stun_resp[1] = 0x01;
+    stun_resp[4] = 0x21; stun_resp[5] = 0x12;
+    stun_resp[6] = 0xA4; stun_resp[7] = 0x42;
+    EXPECT_TRUE("10-stun",
+                DirectP2P_TestHook_ClassifyHostDatagram(stun_resp, sizeof(stun_resp),
+                                                        token, true) ==
+                    DP2P_HOST_DGRAM_STUN);
+
+    /* (h) Empty / NULL -> IGNORE. */
+    EXPECT_TRUE("10-empty",
+                DirectP2P_TestHook_ClassifyHostDatagram(punch, 0, token, true) ==
+                    DP2P_HOST_DGRAM_IGNORE);
+    EXPECT_TRUE("10-null",
+                DirectP2P_TestHook_ClassifyHostDatagram(NULL, 17, token, true) ==
+                    DP2P_HOST_DGRAM_IGNORE);
+
+    if (fail_count == fails_before) {
+        fprintf(stderr, "[test_bilateral_punch] test 10 OK — unauthenticated datagrams "
+                        "can no longer consume the host's peer slot\n");
+        return 0;
+    }
+    return 1;
+}
+
 /* --- Entry point ------------------------------------------------------ */
 
 int Netplay_Test_BilateralPunch(void) {
@@ -1502,6 +1640,7 @@ int Netplay_Test_BilateralPunch(void) {
     rc |= test_joiner_fresh_socket_retry();
     rc |= test_failure_taxonomy();
     rc |= test_posthandoff_failure_report();
+    rc |= test_host_datagram_gate();
 
     if (fail_count > 0 || rc != 0) {
         fprintf(stderr, "[test_bilateral_punch] %d failure(s)\n", fail_count);

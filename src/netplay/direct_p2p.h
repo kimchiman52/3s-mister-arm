@@ -88,6 +88,18 @@ typedef enum {
     ROLE_JOIN,
 } Role;
 
+/* S4a: classification of an inbound datagram on the host's waiting
+ * socket. Produced by the file-local classifier in direct_p2p.c (also
+ * exposed to tests via DirectP2P_TestHook_ClassifyHostDatagram).
+ * IGNORE is the fail-closed default: an unauthenticated datagram must
+ * never consume the host's peer slot. */
+typedef enum {
+    DP2P_HOST_DGRAM_IGNORE = 0,   /* drop, keep waiting — never consume the slot */
+    DP2P_HOST_DGRAM_RENDEZVOUS,   /* '3SXR' frame -> try_handle_deliver */
+    DP2P_HOST_DGRAM_STUN,         /* Binding Response -> rebind/drift handler */
+    DP2P_HOST_DGRAM_PEER_PUNCH,   /* authenticated punch -> accept as the peer */
+} DirectP2PHostDgramClass;
+
 #ifdef ENABLE_NETPLAY
 
 /* One-shot setup: registers the session-teardown callback that releases
@@ -193,9 +205,11 @@ void DirectP2P_DrawOverlay(void);
 #include <stddef.h>
 #include <stdint.h>
 
+/* S4a: signature includes the 8-byte punch-auth token. */
 typedef bool (*DirectP2P_StunHolePunch_fn)(StunResult* local,
                                            char* peer_ip,
                                            uint16_t* peer_port,
+                                           const uint8_t punch_token[STUN_PUNCH_TOKEN_LEN],
                                            int punch_duration_ms,
                                            SDL_AtomicInt* cancel_flag);
 typedef bool (*DirectP2P_RendezvousSend_fn)(NET_DatagramSocket* sock,
@@ -213,6 +227,16 @@ void DirectP2P_TestHook_SetStunHolePunch(DirectP2P_StunHolePunch_fn fn);
 void DirectP2P_TestHook_SetRendezvousSend(DirectP2P_RendezvousSend_fn fn);
 void DirectP2P_TestHook_SetStunDiscover(DirectP2P_StunDiscover_fn fn);
 bool DirectP2P_TestHook_IsLanPeer(const char* ip);
+/* S4a: expose the host-waiting datagram classifier (the routing gate
+ * host_tick_receive runs on every inbound datagram) so the truth table
+ * — DELIVER / STUN / authenticated-punch / IGNORE — is unit-testable.
+ * The pre-S4a behavior was "anything that isn't '3SXR' or STUN is the
+ * peer", which made ONE stray/hostile datagram consume the host's peer
+ * slot permanently. The DirectP2PHostDgramClass enum is declared above
+ * (outside this test-hooks block — production code uses it too). */
+DirectP2PHostDgramClass DirectP2P_TestHook_ClassifyHostDatagram(
+    const uint8_t* buf, int len,
+    const uint8_t token[STUN_PUNCH_TOKEN_LEN], bool token_valid);
 /* S3-review HIGH-1: override the joiner's fallback-signaling budget
  * (ms; <= 0 restores the config value). The self-DELIVER regression
  * test must wait the FULL budget out — its fix removes the loop's

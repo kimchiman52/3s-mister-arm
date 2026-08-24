@@ -114,6 +114,18 @@ typedef struct {
      * drift handler (which joins the rendezvous thread first). */
     uint16_t advertised_port;
 
+    /* S4a punch-auth token (Rendezvous_DerivePunchToken over the same
+     * payload the room code encodes). HOST: derived by host_thread_fn
+     * from its advertised tuple right after the room code is built
+     * (re-derived by the drift handler when the code is re-encoded);
+     * consumed by host_tick_receive's datagram gate and the bilateral
+     * punch worker. JOINER: derived per join_attempt from the decoded
+     * code into a worker-stack copy — this field stays host-only.
+     * token_valid gates the host's punch gate fail-closed: with no
+     * valid token NO datagram is ever accepted as the peer. */
+    uint8_t punch_token[STUN_PUNCH_TOKEN_LEN];
+    bool punch_token_valid;
+
     /* Parsed rendezvous endpoint cache; populated in BeginHost/BeginJoin
      * once 5b/5c land. Holds the result of parsing the signal-url config
      * value (host:port). Both fields zero in 5a — no callers yet. */
@@ -308,6 +320,11 @@ static uint64_t s_host_waiting_since_ms = 0;
 static uint64_t s_host_waiting_last_note_ms = 0;
 static ConnectFailCode s_host_advisory_code = CONNECT_FAIL_NONE;
 
+/* S4a: count of unauthenticated datagrams the host's gate has ignored
+ * this hosting session (rate-limited advisory logging in
+ * host_tick_receive). Main-thread only. */
+static int s_host_unauth_drops = 0;
+
 /* Record the taxonomy code and put its user string on the overlay status
  * line. Callable from worker threads (same rules as set_status — s_work
  * writes happen-before the terminal state publish). */
@@ -406,7 +423,8 @@ static bool Rendezvous_Send(NET_DatagramSocket* sock, NET_Address* target,
  * the DirectP2P_TestHook_Set* setters.
  *
  * Signatures must match the productions exactly:
- *   bool Stun_HolePunch(StunResult*, char*, uint16_t*, int, SDL_AtomicInt*);
+ *   bool Stun_HolePunch(StunResult*, char*, uint16_t*, const uint8_t[8],
+ *                       int, SDL_AtomicInt*);
  *   bool Rendezvous_Send(NET_DatagramSocket*, NET_Address*, uint16_t,
  *                        const uint8_t*, size_t);
  */
@@ -425,8 +443,8 @@ static DirectP2P_StunDiscover_fn   s_stun_discover_impl    = Stun_Discover;
  * removes. 0 = use the config value. */
 static int s_test_signal_budget_ms = 0;
 
-#define STUN_HOLE_PUNCH(stun, peer_ip, peer_port, duration_ms, cancel) \
-    s_stun_hole_punch_impl((stun), (peer_ip), (peer_port), (duration_ms), (cancel))
+#define STUN_HOLE_PUNCH(stun, peer_ip, peer_port, token, duration_ms, cancel) \
+    s_stun_hole_punch_impl((stun), (peer_ip), (peer_port), (token), (duration_ms), (cancel))
 #define RENDEZVOUS_SEND(sock, target, target_port, pkt, pkt_len) \
     s_rendezvous_send_impl((sock), (target), (target_port), (pkt), (pkt_len))
 #define STUN_DISCOVER(result, local_port, timeout_ms) \
@@ -448,12 +466,59 @@ bool DirectP2P_TestHook_IsLanPeer(const char* ip) {
     return direct_p2p_is_lan_peer(ip);
 }
 #else
-#define STUN_HOLE_PUNCH(stun, peer_ip, peer_port, duration_ms, cancel) \
-    Stun_HolePunch((stun), (peer_ip), (peer_port), (duration_ms), (cancel))
+#define STUN_HOLE_PUNCH(stun, peer_ip, peer_port, token, duration_ms, cancel) \
+    Stun_HolePunch((stun), (peer_ip), (peer_port), (token), (duration_ms), (cancel))
 #define RENDEZVOUS_SEND(sock, target, target_port, pkt, pkt_len) \
     Rendezvous_Send((sock), (target), (target_port), (pkt), (pkt_len))
 #define STUN_DISCOVER(result, local_port, timeout_ms) \
     Stun_Discover((result), (local_port), (timeout_ms))
+#endif /* NETPLAY_TEST_HOOKS */
+
+/* --- S4a: host-waiting datagram classifier ----------------------------- */
+
+/* One routing decision per inbound datagram on the host's waiting
+ * socket. Order matters: rendezvous frames and STUN responses are
+ * infrastructure traffic recognized by structure; ONLY a datagram
+ * carrying the exact authenticated punch payload may be accepted as
+ * the peer. Everything else — port scans, stray packets, legacy
+ * unauthenticated punches, spoofed garbage — is IGNORE: the host drops
+ * it and KEEPS WAITING. (Pre-S4a the final arm was "anything else IS
+ * the peer": one stray datagram consumed the host's only peer slot,
+ * the real joiner then failed, and after the MIST silence window the
+ * user got the misleading "opponent build may be too old".) */
+static DirectP2PHostDgramClass classify_host_datagram(
+        const uint8_t* buf, int len,
+        const uint8_t token[STUN_PUNCH_TOKEN_LEN], bool token_valid) {
+    if (buf == NULL || len <= 0) {
+        return DP2P_HOST_DGRAM_IGNORE;
+    }
+    /* Rendezvous DELIVER/CHALLENGE: 32+ bytes, '3SXR' magic
+     * (0x33535852 BE). Hosts only ever receive server->client frames;
+     * REGISTER and POLL are client->server only. Gate BEFORE the punch
+     * check so a server frame is never mistaken for a peer probe. */
+    if (len >= 32 && buf[0] == 0x33 && buf[1] == 0x53 &&
+        buf[2] == 0x58 && buf[3] == 0x52) {
+        return DP2P_HOST_DGRAM_RENDEZVOUS;
+    }
+    /* S1: STUN Binding Responses (keepalive replies, or a late
+     * duplicate from a slower Stun_Discover server). */
+    if (Stun_IsBindingResponse(buf, len)) {
+        return DP2P_HOST_DGRAM_STUN;
+    }
+    /* S4a: the peer slot requires the exact 17-byte authenticated
+     * punch payload. Fail closed when no token exists. */
+    if (token_valid && Stun_IsPunchPayload(buf, len, token)) {
+        return DP2P_HOST_DGRAM_PEER_PUNCH;
+    }
+    return DP2P_HOST_DGRAM_IGNORE;
+}
+
+#ifdef NETPLAY_TEST_HOOKS
+DirectP2PHostDgramClass DirectP2P_TestHook_ClassifyHostDatagram(
+        const uint8_t* buf, int len,
+        const uint8_t token[STUN_PUNCH_TOKEN_LEN], bool token_valid) {
+    return classify_host_datagram(buf, len, token, token_valid);
+}
 #endif /* NETPLAY_TEST_HOOKS */
 
 /* --- rendezvous send queue (SPSC ring) --------------------------------- */
@@ -995,7 +1060,11 @@ static int SDLCALL host_bilateral_punch_thread_fn(void* data) {
             peer_ip, (unsigned)peer_port, budget_ms);
 
     const uint32_t stage_t0 = SDL_GetTicks();
+    /* S4a: the host punches with the token derived from its own
+     * advertised tuple (host_thread_fn refuses to advertise without
+     * one, so punch_token_valid is guaranteed here). */
     bool punched = STUN_HOLE_PUNCH(&s_work.stun, peer_ip, &peer_port,
+                                   s_work.punch_token,
                                    budget_ms, &s_bilateral_punch_cancel);
     s_work.t_bilateral_ms = SDL_GetTicks() - stage_t0;
     if (SDL_GetAtomicInt(&s_bilateral_punch_cancel) || cancel_requested()) {
@@ -1182,6 +1251,20 @@ static int SDLCALL host_thread_fn(void* data) {
      * spawns after and reads it). */
     s_work.advertised_port = pub_port;
 
+    /* S4a: derive the punch-auth token from the SAME advertised tuple
+     * the room code encodes — the joiner derives the identical token
+     * from the decoded code. Fail closed: without a token the host's
+     * datagram gate would ignore every punch, so an unjoinable room
+     * must not be advertised at all. */
+    s_work.punch_token_valid =
+        Rendezvous_DerivePunchToken(ip_be, pub_port, s_work.punch_token);
+    if (!s_work.punch_token_valid) {
+        Stun_CloseSocket(&s_work.stun);
+        set_fail(CONNECT_FAIL_INTERNAL);
+        set_state(DIRECT_P2P_FAILED_STUN);
+        return 0;
+    }
+
     /* 4) Publish — Tick() will now drain the STUN socket non-blockingly
      * until a peer punches through. The room code renders on overlay
      * line 2 via DirectP2P_GetHostCode(); this status goes on line 3.
@@ -1287,6 +1370,23 @@ static DirectP2PState join_attempt(void) {
                 s_work.peer_ip, (unsigned)s_work.peer_public_port);
     }
 
+    /* S4a: derive the punch-auth token from the DECODED room-code tuple
+     * (the host derives the identical token from its advertised tuple).
+     * Derived once per attempt; used for the direct punch and, on
+     * fallback, the bilateral punch. Never overwritten by retargeting —
+     * the token is bound to the advertised payload, not to whatever
+     * translated endpoint the punch later observes. */
+    uint8_t punch_token[STUN_PUNCH_TOKEN_LEN];
+    {
+        uint32_t token_host_ip_be = ipv4_str_to_be(s_work.peer_ip);
+        if (!Rendezvous_DerivePunchToken(token_host_ip_be, s_work.peer_public_port,
+                                         punch_token)) {
+            Stun_CloseSocket(&s_work.stun);
+            set_fail(CONNECT_FAIL_INTERNAL);
+            return DIRECT_P2P_FAILED_STUN;
+        }
+    }
+
     /* Hole-punch. 2.5s window per upstream. Stun_HolePunch updates the
      * peer_ip/peer_port in place with the translated endpoint the host
      * actually reaches us from. */
@@ -1297,7 +1397,7 @@ static DirectP2PState join_attempt(void) {
     uint16_t punch_peer_port = s_work.peer_public_port;
     stage_t0 = SDL_GetTicks();
     bool punched = STUN_HOLE_PUNCH(&s_work.stun, punch_peer_ip, &punch_peer_port,
-                                   2500, &s_cancel);
+                                   punch_token, 2500, &s_cancel);
     s_work.t_punch_ms = SDL_GetTicks() - stage_t0;
     if (cancel_requested()) {
         Stun_CloseSocket(&s_work.stun);
@@ -1318,6 +1418,16 @@ static DirectP2PState join_attempt(void) {
          * appropriate status. The original "Possible Symmetric NAT"
          * string is preserved for the kill-switch / LAN cases since the
          * underlying diagnosis is unchanged. */
+        /* S4a: bad-token evidence is terminal — the host's datagrams
+         * REACHED us but failed authentication, so the bilateral punch
+         * (same token, same peer) would fail identically. Surfacing
+         * PUNCH_AUTH now beats burning the signaling+bilateral budgets
+         * to then blame NAT for a version/payload mismatch. */
+        if (s_work.stun.diag_punch_bad_token) {
+            Stun_CloseSocket(&s_work.stun);
+            set_fail(CONNECT_FAIL_PUNCH_AUTH);
+            return DIRECT_P2P_FAILED_SYMMETRIC;
+        }
         if (Config_GetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_BILATERAL)) {
             Stun_CloseSocket(&s_work.stun);
             set_fail_msg(CONNECT_FAIL_NAT_BLOCKED,
@@ -1551,7 +1661,7 @@ static DirectP2PState join_attempt(void) {
 
         stage_t0 = SDL_GetTicks();
         bool bilateral_punched = STUN_HOLE_PUNCH(&s_work.stun, bp_peer_ip,
-                                                 &bp_peer_port,
+                                                 &bp_peer_port, punch_token,
                                                  bilateral_budget_ms, &s_cancel);
         s_work.t_bilateral_ms = SDL_GetTicks() - stage_t0;
         if (cancel_requested()) {
@@ -1569,9 +1679,12 @@ static DirectP2PState join_attempt(void) {
             ev.deliver_real = s_work.ev_deliver_real;
             ev.bilateral_punched = false;
             ev.port_disagreement = s_work.stun.port_disagreement;
+            ev.punch_bad_token = s_work.stun.diag_punch_bad_token; /* S4a */
             const ConnectFailCode jc = ConnectFail_ClassifyJoin(&ev);
-            SDL_Log("[direct_p2p] joiner bilateral punch failed (port_disagreement=%d) -> %s",
-                    (int)s_work.stun.port_disagreement, ConnectFail_Code(jc));
+            SDL_Log("[direct_p2p] joiner bilateral punch failed (port_disagreement=%d "
+                    "bad_token=%d) -> %s",
+                    (int)s_work.stun.port_disagreement,
+                    (int)s_work.stun.diag_punch_bad_token, ConnectFail_Code(jc));
             Stun_CloseSocket(&s_work.stun);
             set_fail(jc);
             return DIRECT_P2P_FAILED_BILATERAL;
@@ -1702,6 +1815,7 @@ static void direct_p2p_on_teardown(void) {
     s_host_waiting_since_ms = 0;   /* S3 */
     s_host_waiting_last_note_ms = 0;
     s_host_advisory_code = CONNECT_FAIL_NONE;
+    s_host_unauth_drops = 0; /* S4a */
     SDL_SetAtomicInt(&s_host_registering, 0);
     /* Reset state so the next BeginHost/BeginJoin starts clean.
      * R-1 exception: when the MIST handshake rejected the session, park
@@ -1873,6 +1987,18 @@ static void host_handle_stun_rebind(const uint8_t* buf, int len) {
     }
     s_work.advertised_port = new_adv_port;
 
+    /* S4a: the punch token is derived from the advertised tuple, so a
+     * drift-committed endpoint means a NEW token (the re-encoded code
+     * the user shares carries the new payload; the joiner derives from
+     * that). Fail closed on derivation failure — better to ignore
+     * punches than to accept unauthenticated ones. */
+    s_work.punch_token_valid =
+        Rendezvous_DerivePunchToken(ip_be, new_adv_port, s_work.punch_token);
+    if (!s_work.punch_token_valid) {
+        SDL_Log("[direct_p2p] WARNING: punch-token re-derivation failed after "
+                "endpoint drift — punches will be ignored until re-host");
+    }
+
     /* Respawn the rendezvous loop under the new session key (same kill
      * switch as the original spawn in host_thread_fn step 5). */
     if (!Config_GetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_BILATERAL)) {
@@ -2012,13 +2138,15 @@ static bool try_handle_deliver(const uint8_t* pkt, int len) {
 }
 
 /* Host-side per-frame drain. Returns true once a valid inbound datagram
- * has been received and the handoff was executed. The first inbound
- * packet on a direct-P2P Host socket is the joiner's Stun_HolePunch
- * probe ("3SX_PUNCH" string, mirroring the upstream convention). We
- * echo one packet back to the source so the joiner's Stun_HolePunch
- * loop sees a response and returns success — otherwise the joiner
- * would time out and flag FAILED_SYMMETRIC even though connectivity is
- * established. */
+ * has been received and the handoff was executed. The first ACCEPTED
+ * inbound packet on a direct-P2P Host socket is the joiner's
+ * authenticated Stun_HolePunch probe ("3SX_PUNCH" + the 8-byte
+ * code-derived token, S4a). We echo the validated payload back to the
+ * source so the joiner's Stun_HolePunch loop sees an authenticated
+ * response and returns success — otherwise the joiner would time out
+ * and flag FAILED_SYMMETRIC even though connectivity is established.
+ * Anything that fails the datagram gate is dropped WITHOUT consuming
+ * the peer slot (see classify_host_datagram). */
 static bool host_tick_receive(void) {
     if (s_work.stun.socket == NULL) {
         return false;
@@ -2027,29 +2155,58 @@ static bool host_tick_receive(void) {
     if (!NET_ReceiveDatagram(s_work.stun.socket, &dgram) || dgram == NULL) {
         return false;
     }
-    /* Rendezvous DELIVER: 32+ bytes starting with '3SXR' magic
-     * (0x33535852 BE). Hosts only ever receive DELIVER (server -> host);
-     * REGISTER and POLL are client -> server only. Gate this BEFORE the
-     * peer-endpoint capture and echo below so a DELIVER from the
-     * rendezvous server is not mistaken for a peer punch probe. */
-    if (dgram->buflen >= 32 &&
-        dgram->buf[0] == 0x33 && dgram->buf[1] == 0x53 &&
-        dgram->buf[2] == 0x58 && dgram->buf[3] == 0x52) {
+    /* S4a: one routing decision per datagram (classify_host_datagram).
+     * Only an AUTHENTICATED punch — "3SX_PUNCH" + the 8-byte token both
+     * sides derive from the room-code payload — may be accepted as the
+     * peer. Pre-S4a, ANY non-'3SXR'/non-STUN datagram was captured as
+     * the peer and echoed: session hijack for anyone who saw/guessed
+     * the advertised endpoint, and permanent slot loss to a single
+     * stray packet (the real joiner then failed with a misleading
+     * "opponent build may be too old" after the MIST silence window). */
+    switch (classify_host_datagram(dgram->buf, dgram->buflen,
+                                   s_work.punch_token, s_work.punch_token_valid)) {
+    case DP2P_HOST_DGRAM_RENDEZVOUS:
+        /* Server->host frame ('3SXR'). Hosts only ever receive DELIVER
+         * (and, S4c, CHALLENGE); REGISTER/POLL are client->server. */
         try_handle_deliver(dgram->buf, dgram->buflen);
         NET_DestroyDatagram(dgram);
         return true;
-    }
-    /* S1: STUN Binding Responses (keepalive replies, or a late duplicate
-     * from a slower server probed during Stun_Discover) must NOT fall
-     * through to the peer-endpoint capture below — pre-S1, a straggler
-     * STUN response arriving in HOST_WAITING would be captured as "the
-     * peer" and handed off to a STUN server's endpoint. Gate them here
-     * and route keepalive replies to the drift detector. */
-    if (Stun_IsBindingResponse(dgram->buf, dgram->buflen)) {
+
+    case DP2P_HOST_DGRAM_STUN:
+        /* S1: keepalive replies / late Stun_Discover duplicates route
+         * to the drift detector, never to the peer capture. */
         host_handle_stun_rebind(dgram->buf, dgram->buflen);
         NET_DestroyDatagram(dgram);
         return false; /* not a peer — keep waiting */
+
+    case DP2P_HOST_DGRAM_IGNORE: {
+        /* Unauthenticated / unrecognized datagram: drop it, do NOT
+         * echo, and KEEP WAITING — the peer slot is not consumed.
+         * Rate-limited advisory so a scan/legacy-build burst is visible
+         * in the log without flooding it. A punch-shaped payload with a
+         * wrong token is called out as probable version mismatch. */
+        s_host_unauth_drops++;
+        if (s_host_unauth_drops == 1 || (s_host_unauth_drops % 50) == 0) {
+            char src_ip[64];
+            SDL_strlcpy(src_ip, NET_GetAddressString(dgram->addr), sizeof(src_ip));
+            SDL_Log("[direct_p2p] ADVISORY code=%s ignored unauthenticated datagram "
+                    "#%d from %s:%u (len=%d%s) — still waiting for an authenticated "
+                    "punch",
+                    ConnectFail_Code(CONNECT_FAIL_PUNCH_AUTH),
+                    s_host_unauth_drops, src_ip, (unsigned)dgram->port,
+                    dgram->buflen,
+                    Stun_HasPunchPrefix(dgram->buf, dgram->buflen)
+                        ? ", punch-shaped: peer build too old or wrong code"
+                        : "");
+        }
+        NET_DestroyDatagram(dgram);
+        return false; /* keep waiting */
     }
+
+    case DP2P_HOST_DGRAM_PEER_PUNCH:
+        break; /* authenticated peer — fall through to the capture below */
+    }
+
     /* Capture the source endpoint — this is who we'll talk to. The
      * socket's internal "connected peer" state gets set when
      * configure_gekko wraps it into SDLNetAdapter; for the orchestrator
@@ -2059,10 +2216,10 @@ static bool host_tick_receive(void) {
     SDL_strlcpy(src_ip, NET_GetAddressString(dgram->addr), sizeof(src_ip));
     uint16_t src_port = dgram->port;
 
-    /* Echo the packet back — Stun_HolePunch on the joiner accepts any
-     * byte-identical response payload from the expected peer. Sending
-     * the same buffer the peer sent is the simplest way to satisfy
-     * that check without exposing "3SX_PUNCH" here. */
+    /* Echo the (already-validated) punch payload back — Stun_HolePunch
+     * on the joiner requires the byte-identical authenticated payload
+     * from the expected peer, so echoing what we just validated
+     * authenticates US to the joiner in the same exchange. */
     (void)NET_SendDatagram(s_work.stun.socket, dgram->addr, src_port,
                            dgram->buf, dgram->buflen);
     NET_DestroyDatagram(dgram);
@@ -2109,6 +2266,7 @@ void DirectP2P_Init(void) {
     s_host_waiting_since_ms = 0; /* S3 */
     s_host_waiting_last_note_ms = 0;
     s_host_advisory_code = CONNECT_FAIL_NONE;
+    s_host_unauth_drops = 0; /* S4a */
     SDL_SetAtomicInt(&s_host_registering, 0);
     memset(s_rendezvous_send_q, 0, sizeof(s_rendezvous_send_q));
     memset(&s_work, 0, sizeof(s_work));
@@ -2150,6 +2308,7 @@ void DirectP2P_BeginHost(int preferred_port) {
     s_host_waiting_since_ms = 0; /* S3 */
     s_host_waiting_last_note_ms = 0;
     s_host_advisory_code = CONNECT_FAIL_NONE;
+    s_host_unauth_drops = 0; /* S4a */
     SDL_SetAtomicInt(&s_host_registering, 0);
     Stun_ReleaseServerAddr(&s_work.stun); /* belt-and-braces before memset */
     s_stun_keepalive_last_ms = 0;
@@ -2244,6 +2403,7 @@ void DirectP2P_BeginJoin(const char* peer_code) {
     s_host_waiting_since_ms = 0; /* S3 */
     s_host_waiting_last_note_ms = 0;
     s_host_advisory_code = CONNECT_FAIL_NONE;
+    s_host_unauth_drops = 0; /* S4a */
     SDL_SetAtomicInt(&s_host_registering, 0);
     Stun_ReleaseServerAddr(&s_work.stun); /* belt-and-braces before memset */
     s_stun_keepalive_last_ms = 0;
@@ -2321,6 +2481,7 @@ void DirectP2P_Cancel(void) {
     s_host_waiting_since_ms = 0; /* S3 */
     s_host_waiting_last_note_ms = 0;
     s_host_advisory_code = CONNECT_FAIL_NONE;
+    s_host_unauth_drops = 0; /* S4a */
     SDL_SetAtomicInt(&s_host_registering, 0);
     set_state(DIRECT_P2P_IDLE);
 }
@@ -2664,6 +2825,7 @@ void DirectP2P_Tick(void) {
                     ev.deliver_real = true;
                     ev.bilateral_punched = false;
                     ev.port_disagreement = s_work.stun.port_disagreement;
+                    ev.punch_bad_token = s_work.stun.diag_punch_bad_token; /* S4a */
                     set_fail(ConnectFail_ClassifyJoin(&ev));
                 }
                 set_state(DIRECT_P2P_FAILED_BILATERAL);

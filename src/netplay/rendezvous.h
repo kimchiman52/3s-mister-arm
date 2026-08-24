@@ -46,6 +46,30 @@ bool Rendezvous_DeriveSessionKey(uint32_t ip_be,
                                  uint8_t out_key[16]);
 
 /*
+ * S4a (docs/plan-netplay-connection.md §6): derive the 8-byte punch
+ * authentication token both peers append to the "3SX_PUNCH" hole-punch
+ * payload. Same input convention and same 6-byte payload as
+ * Rendezvous_DeriveSessionKey, but domain-separated:
+ *
+ *   token = SHA-256("3SXR-PT" || payload)[0..7]
+ *
+ * (The session key is SHA-256 over the bare payload, so the two
+ * derivations can never collide.) The token proves knowledge of the
+ * room-code payload: the host only accepts a punch carrying it, so a
+ * blind scanner or an attacker who merely observed the host's ip:port
+ * can no longer be captured as "the peer". Anyone who has the full
+ * room code can of course derive it — the room code IS the shared
+ * secret in this friend-to-friend model.
+ *
+ * Writes 8 bytes into out_token. Returns true on success; on failure
+ * (ip_be == 0 or hash failure) zeroes out_token and returns false.
+ */
+#define REND_PUNCH_TOKEN_LEN 8
+bool Rendezvous_DerivePunchToken(uint32_t ip_be,
+                                 uint16_t public_port,
+                                 uint8_t out_token[REND_PUNCH_TOKEN_LEN]);
+
+/*
  * Build a 28-byte REGISTER packet (type=1) for the rendezvous server.
  *
  * `my_public_port` is the caller's STUN-observed public port in HOST

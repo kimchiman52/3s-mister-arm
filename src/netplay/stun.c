@@ -10,6 +10,7 @@
 #endif
 #include "netplay/stun.h"
 #include "netplay/net_tuning.h"
+#include "utils/csprng.h"
 #include <SDL3/SDL.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -82,11 +83,63 @@ static void build_binding_request(uint8_t* buf, uint8_t* transaction_id) {
     buf[5] = 0x12;
     buf[6] = 0xA4;
     buf[7] = 0x42;
-    // Transaction ID (12 random bytes)
-    for (int i = 0; i < 12; i++) {
-        transaction_id[i] = (uint8_t)(SDL_rand(256));
-        buf[8 + i] = transaction_id[i];
+    /* Transaction ID: 12 CSPRNG bytes (S4a). The previous SDL_rand
+     * source was NOT "unseeded" — SDL 3.4.4 auto-seeds from the
+     * performance counter — but it IS an LCG whose internal state is
+     * recoverable from observed outputs, making every future
+     * transaction ID predictable to anyone who saw a few. RFC 5389 §6
+     * requires txids to be "cryptographically random": a predictable
+     * txid lets an off-path attacker forge Binding Responses (feeding
+     * us a wrong mapped endpoint, i.e. a dead room code, or steering
+     * the S1 rebind-drift path). Fall back to SDL_rand only when the
+     * platform CSPRNG is unavailable, with a one-time warning. */
+    if (!Csprng_Bytes(transaction_id, 12)) {
+        static bool warned = false;
+        if (!warned) {
+            warned = true;
+            SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                        "STUN: platform CSPRNG unavailable — transaction IDs fall "
+                        "back to SDL_rand (predictable; response forgery possible)");
+        }
+        for (int i = 0; i < 12; i++) {
+            transaction_id[i] = (uint8_t)(SDL_rand(256));
+        }
     }
+    memcpy(&buf[8], transaction_id, 12);
+}
+
+/* --- S4a authenticated punch payload ----------------------------------- */
+
+static const char k_punch_prefix[STUN_PUNCH_PREFIX_LEN] = { '3', 'S', 'X', '_',
+                                                            'P', 'U', 'N', 'C', 'H' };
+
+void Stun_BuildPunchPayload(const uint8_t token[STUN_PUNCH_TOKEN_LEN],
+                            uint8_t out[STUN_PUNCH_PAYLOAD_LEN]) {
+    memcpy(out, k_punch_prefix, STUN_PUNCH_PREFIX_LEN);
+    memcpy(out + STUN_PUNCH_PREFIX_LEN, token, STUN_PUNCH_TOKEN_LEN);
+}
+
+bool Stun_HasPunchPrefix(const uint8_t* buf, int len) {
+    return buf != NULL && len >= STUN_PUNCH_PREFIX_LEN &&
+           memcmp(buf, k_punch_prefix, STUN_PUNCH_PREFIX_LEN) == 0;
+}
+
+bool Stun_IsPunchPayload(const uint8_t* buf, int len,
+                         const uint8_t token[STUN_PUNCH_TOKEN_LEN]) {
+    if (buf == NULL || token == NULL || len != STUN_PUNCH_PAYLOAD_LEN) {
+        return false;
+    }
+    if (memcmp(buf, k_punch_prefix, STUN_PUNCH_PREFIX_LEN) != 0) {
+        return false;
+    }
+    /* Constant-time token compare: a UDP responder that early-exits on
+     * the first mismatching byte is a (weak, but free-to-close) timing
+     * oracle for guessing the token byte-by-byte. */
+    uint8_t diff = 0;
+    for (int i = 0; i < STUN_PUNCH_TOKEN_LEN; i++) {
+        diff |= (uint8_t)(buf[STUN_PUNCH_PREFIX_LEN + i] ^ token[i]);
+    }
+    return diff == 0;
 }
 
 // Parse STUN Binding Response for XOR-MAPPED-ADDRESS or MAPPED-ADDRESS
@@ -650,15 +703,22 @@ bool Stun_Discover(StunResult* result, uint16_t local_port, int timeout_ms) {
     return true;
 }
 
-bool Stun_HolePunch(StunResult* local, char* peer_ip, uint16_t* peer_port, int punch_duration_ms,
-                    SDL_AtomicInt* cancel_flag) {
-    if (!local || !local->socket || !peer_ip || !peer_port)
+bool Stun_HolePunch(StunResult* local, char* peer_ip, uint16_t* peer_port,
+                    const uint8_t punch_token[STUN_PUNCH_TOKEN_LEN],
+                    int punch_duration_ms, SDL_AtomicInt* cancel_flag) {
+    if (!local || !local->socket || !peer_ip || !peer_port || !punch_token)
         return false;
 
     NET_DatagramSocket* sock = local->socket;
 
-    // Punch packet — a small identifiable payload
-    const char punch_msg[] = "3SX_PUNCH";
+    /* S4a: authenticated punch payload — "3SX_PUNCH" + 8-byte token
+     * derived from the room-code payload. Sent with every punch;
+     * REQUIRED on every accepted datagram (see the receive path below).
+     * Note: diag_punch_bad_token is deliberately NOT cleared here — it
+     * OR-accumulates across the direct + bilateral punches of one join
+     * attempt and is reset by Stun_Discover's memset. */
+    uint8_t punch_msg[STUN_PUNCH_PAYLOAD_LEN];
+    Stun_BuildPunchPayload(punch_token, punch_msg);
     /* S2 adaptive cadence: establishment time is dominated by peer
      * start-skew and first-packet loss, not RTT — the two sides rarely
      * enter their punch loops at the same instant, and the first
@@ -710,7 +770,7 @@ bool Stun_HolePunch(StunResult* local, char* peer_ip, uint16_t* peer_port, int p
                                           ? punch_interval_fast_ms
                                           : punch_interval_slow_ms;
         if (now - last_send >= (uint32_t)punch_interval_ms || last_send == 0) {
-            if (!NET_SendDatagram(sock, peer, local_peer_port, punch_msg, strlen(punch_msg))) {
+            if (!NET_SendDatagram(sock, peer, local_peer_port, punch_msg, sizeof(punch_msg))) {
                 SDL_LogDebug(SDL_LOG_CATEGORY_APPLICATION, "STUN: Hole punch send failed: %s", SDL_GetError());
             }
             last_send = now;
@@ -726,8 +786,25 @@ bool Stun_HolePunch(StunResult* local, char* peer_ip, uint16_t* peer_port, int p
             // static buffer — must copy one result before the second call.
             char recv_addr[64];
             SDL_strlcpy(recv_addr, NET_GetAddressString(dgram->addr), sizeof(recv_addr));
-            if (strcmp(recv_addr, NET_GetAddressString(peer)) == 0 && dgram->buflen == strlen(punch_msg) &&
-                strncmp((char*)dgram->buf, punch_msg, dgram->buflen) == 0) {
+            const bool from_expected_ip =
+                strcmp(recv_addr, NET_GetAddressString(peer)) == 0;
+            /* S4a: a datagram from the expected peer IP that SPEAKS the
+             * punch protocol but fails the token check (legacy 9-byte
+             * payload from an older build, or a token derived from a
+             * different room payload) is decisive version-mismatch
+             * evidence — record it for the failure classifier, then
+             * drop the datagram like any other stranger. */
+            if (from_expected_ip &&
+                Stun_HasPunchPrefix(dgram->buf, dgram->buflen) &&
+                !Stun_IsPunchPayload(dgram->buf, dgram->buflen, punch_token)) {
+                local->diag_punch_bad_token = true;
+                SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                            "STUN: punch from %s:%u has a bad/missing auth token "
+                            "(len=%d) — peer build mismatch? Ignoring.",
+                            recv_addr, (unsigned)dgram->port, dgram->buflen);
+            }
+            if (from_expected_ip &&
+                Stun_IsPunchPayload(dgram->buf, dgram->buflen, punch_token)) {
                 SDL_Log("STUN: Hole punch SUCCESS — received response from peer");
                 received_response = true;
 
@@ -787,7 +864,7 @@ bool Stun_HolePunch(StunResult* local, char* peer_ip, uint16_t* peer_port, int p
                         return false;
                     }
                     NET_SendDatagram(sock, confirmed != NULL ? confirmed : peer, local_peer_port,
-                                     punch_msg, strlen(punch_msg));
+                                     punch_msg, sizeof(punch_msg));
                     SDL_Delay(50);
                 }
                 if (confirmed != NULL) {

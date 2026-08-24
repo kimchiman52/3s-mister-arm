@@ -17,6 +17,7 @@ const char* ConnectFail_Code(ConnectFailCode code) {
     case CONNECT_FAIL_NAT_BLOCKED:          return "P2P_FAIL_NAT_BLOCKED";
     case CONNECT_FAIL_SYMMETRIC_BOTH:       return "P2P_FAIL_SYMMETRIC_BOTH";
     case CONNECT_FAIL_HAIRPIN:              return "P2P_FAIL_HAIRPIN";
+    case CONNECT_FAIL_PUNCH_AUTH:           return "P2P_FAIL_PUNCH_AUTH";
     case CONNECT_FAIL_HOST_UNMAPPABLE:      return "P2P_FAIL_HOST_UNMAPPABLE";
     case CONNECT_FAIL_PEER_REJECTED:        return "P2P_FAIL_PEER_REJECTED";
     case CONNECT_FAIL_TIMEOUT_CONNECTING:   return "P2P_FAIL_TIMEOUT_CONNECTING";
@@ -49,6 +50,11 @@ const char* ConnectFail_UserText(ConnectFailCode code) {
         return "Both networks too strict (needs relay).";
     case CONNECT_FAIL_HAIRPIN:
         return "Same network as host. Router lacks loopback.";
+    case CONNECT_FAIL_PUNCH_AUTH:
+        /* The peer was REACHED (its datagrams arrived) but its punch
+         * failed the token check — almost always a build too old to
+         * send the S4a token, or a code/nonce mismatch. */
+        return "Opponent failed auth. Update both builds.";
     case CONNECT_FAIL_HOST_UNMAPPABLE:
         return "Router may be blocking hosting.";
     case CONNECT_FAIL_PEER_REJECTED:
@@ -114,6 +120,13 @@ ConnectFailCode ConnectFail_ClassifyJoin(const ConnectJoinEvidence* ev) {
         return CONNECT_FAIL_HOST_OFFLINE;
     }
     if (!ev->bilateral_punched) {
+        /* S4a: bad-token evidence outranks the NAT diagnoses — the
+         * peer's datagrams REACHED us (connectivity fine), they just
+         * failed authentication. Blaming NAT here would send the user
+         * chasing router settings for a version mismatch. */
+        if (ev->punch_bad_token) {
+            return CONNECT_FAIL_PUNCH_AUTH;
+        }
         /* We learned the host's live endpoint and still couldn't punch:
          * the NAT pair is the blocker. Our own port_disagreement (S2)
          * upgrades the diagnosis to the symmetric/relay-needed class. */

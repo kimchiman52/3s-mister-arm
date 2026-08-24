@@ -46,6 +46,17 @@ typedef struct {
      * misreport it as DNS_ALLDOWN ("No internet connection"). Callers
      * classify it as CONNECT_FAIL_INTERNAL instead. */
     bool diag_socket_fail;
+
+    /* S4a punch-auth evidence: during Stun_HolePunch, a datagram arrived
+     * from the EXPECTED peer IP carrying the "3SX_PUNCH" prefix but a
+     * missing/short/wrong token — the signature of a peer running a
+     * build with a different token derivation (older version) or a
+     * mismatched room code. OR-accumulated across HolePunch calls (the
+     * direct punch and the bilateral punch of one join attempt share
+     * this StunResult); cleared by Stun_Discover's memset at the start
+     * of each attempt. ConnectFail_ClassifyJoin upgrades a punch
+     * failure carrying this bit to P2P_FAIL_PUNCH_AUTH. */
+    bool diag_punch_bad_token;
 } StunResult;
 
 /// Perform STUN Binding Requests (RFC 5389) against the built-in server
@@ -75,10 +86,41 @@ void Stun_EncodeEndpoint(const char* ip, uint16_t port, uint16_t local_port, cha
 /// Returns true on success.
 bool Stun_DecodeEndpoint(const char* code, char* out_ip, uint16_t* out_port, uint16_t* out_local_port);
 
+/* --- S4a punch authentication ----------------------------------------- */
+
+/* The hole-punch payload is "3SX_PUNCH" (9 bytes, no NUL) followed by
+ * an 8-byte token derived from the room-code payload
+ * (Rendezvous_DerivePunchToken). Both directions send and REQUIRE this
+ * exact 17-byte payload: the joiner always validated the host's echo,
+ * and since S4a the host validates the joiner's punch too — an
+ * unauthenticated datagram is ignored and the host keeps waiting
+ * instead of handing its one peer slot to the first stray packet. */
+#define STUN_PUNCH_TOKEN_LEN 8
+#define STUN_PUNCH_PREFIX_LEN 9 /* strlen("3SX_PUNCH") */
+#define STUN_PUNCH_PAYLOAD_LEN (STUN_PUNCH_PREFIX_LEN + STUN_PUNCH_TOKEN_LEN)
+
+/// Compose the 17-byte authenticated punch payload into `out`.
+void Stun_BuildPunchPayload(const uint8_t token[STUN_PUNCH_TOKEN_LEN],
+                            uint8_t out[STUN_PUNCH_PAYLOAD_LEN]);
+
+/// True iff buf/len is EXACTLY the authenticated punch payload for
+/// `token` (17 bytes, "3SX_PUNCH" prefix, constant-time token compare).
+bool Stun_IsPunchPayload(const uint8_t* buf, int len,
+                         const uint8_t token[STUN_PUNCH_TOKEN_LEN]);
+
+/// True iff buf/len starts with the "3SX_PUNCH" prefix (any length /
+/// token) — used to distinguish "peer speaks the punch protocol but
+/// failed auth" (version mismatch evidence) from unrelated traffic.
+bool Stun_HasPunchPrefix(const uint8_t* buf, int len);
+
 /// Hole punches NAT to connect to peer. Blocks for up to `punch_duration_ms`.
+/// `punch_token` (required, 8 bytes from Rendezvous_DerivePunchToken)
+/// authenticates the exchange in BOTH directions: we send it with every
+/// punch and only accept a datagram carrying it back.
 // Updates `peer_ip` and `peer_port` with the true translated endpoint if successful.
-bool Stun_HolePunch(StunResult* local, char* peer_ip, uint16_t* peer_port, int punch_duration_ms,
-                    SDL_AtomicInt* cancel_flag);
+bool Stun_HolePunch(StunResult* local, char* peer_ip, uint16_t* peer_port,
+                    const uint8_t punch_token[STUN_PUNCH_TOKEN_LEN],
+                    int punch_duration_ms, SDL_AtomicInt* cancel_flag);
 
 /* --- S1 host liveness (docs/plan-netplay-connection.md) --------------- */
 

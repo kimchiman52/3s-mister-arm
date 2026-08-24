@@ -90,6 +90,9 @@ typedef enum ConnectFailCode {
     CONNECT_FAIL_NAT_BLOCKED,     /* real DELIVER, bilateral punch timed out  */
     CONNECT_FAIL_SYMMETRIC_BOTH,  /* as NAT_BLOCKED + port_disagreement       */
     CONNECT_FAIL_HAIRPIN,         /* peer public IP == ours, no NAT loopback  */
+    CONNECT_FAIL_PUNCH_AUTH,      /* S4a: peer punched with a bad/missing token
+                                     — build mismatch (old peer) or mismatched
+                                     room payload; connectivity was fine       */
 
     /* Host-side advisory (state stays HOST_WAITING) */
     CONNECT_FAIL_HOST_UNMAPPABLE, /* no UPnP + no inbound + no DELIVER        */
@@ -138,10 +141,14 @@ typedef struct ConnectJoinEvidence {
     bool deliver_real;       /* >=1 DELIVER carried a real peer endpoint */
     bool bilateral_punched;  /* bilateral Stun_HolePunch succeeded */
     bool port_disagreement;  /* StunResult.port_disagreement (S2 symmetric signal) */
+    bool punch_bad_token;    /* S4a: StunResult.diag_punch_bad_token — peer spoke
+                                the punch protocol but failed the token check */
 } ConnectJoinEvidence;
 
 /* Classify a failed joiner fallback. Precedence: hairpin > rendezvous
- * silence > host absent > punch failure (symmetric vs plain NAT block).
+ * silence > host absent > punch failure (bad-token evidence first —
+ * the peer was REACHED but failed auth, so NAT is exonerated — then
+ * symmetric vs plain NAT block).
  * Returns NONE when the evidence says the attempt succeeded. */
 ConnectFailCode ConnectFail_ClassifyJoin(const ConnectJoinEvidence* ev);
 

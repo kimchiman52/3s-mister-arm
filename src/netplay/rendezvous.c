@@ -60,14 +60,19 @@ static uint16_t read_be16(const uint8_t* p) {
     return (uint16_t)(((uint16_t)p[0] << 8) | (uint16_t)p[1]);
 }
 
-bool Rendezvous_DeriveSessionKey(uint32_t ip_be,
-                                 uint16_t public_port,
-                                 uint8_t out_key[16]) {
-    if (!out_key) {
+/* Shared derivation core for the session key and the S4a punch token.
+ * Hashes `domain` (optional, may be NULL/empty — the legacy session-key
+ * derivation is domain-less for wire compatibility) followed by the
+ * 6-byte payload, then copies the first out_len digest bytes out.
+ * Zeroes the output and returns false on any failure. */
+static bool rend_derive(const char* domain,
+                        uint32_t ip_be, uint16_t public_port,
+                        uint8_t* out, size_t out_len) {
+    if (!out) {
         return false;
     }
     if (ip_be == 0) {
-        memset(out_key, 0, REND_KEY_LEN);
+        memset(out, 0, out_len);
         return false;
     }
 
@@ -83,20 +88,41 @@ bool Rendezvous_DeriveSessionKey(uint32_t ip_be,
 
     sha256 sha;
     if (!sha256_init(&sha)) {
-        memset(out_key, 0, REND_KEY_LEN);
+        memset(out, 0, out_len);
+        return false;
+    }
+    if (domain != NULL && domain[0] != '\0' &&
+        !sha256_append(&sha, domain, strlen(domain))) {
+        memset(out, 0, out_len);
         return false;
     }
     if (!sha256_append(&sha, payload, sizeof(payload))) {
-        memset(out_key, 0, REND_KEY_LEN);
+        memset(out, 0, out_len);
         return false;
     }
     uint8_t digest[SHA256_BYTES_SIZE];
     if (!sha256_finalize_bytes(&sha, digest)) {
-        memset(out_key, 0, REND_KEY_LEN);
+        memset(out, 0, out_len);
         return false;
     }
-    memcpy(out_key, digest, REND_KEY_LEN);
+    memcpy(out, digest, out_len);
     return true;
+}
+
+bool Rendezvous_DeriveSessionKey(uint32_t ip_be,
+                                 uint16_t public_port,
+                                 uint8_t out_key[16]) {
+    /* No domain string: the pre-S4 session-key derivation is preserved
+     * byte-for-byte (SHA-256 over the bare payload, first 16 bytes). */
+    return rend_derive(NULL, ip_be, public_port, out_key, REND_KEY_LEN);
+}
+
+bool Rendezvous_DerivePunchToken(uint32_t ip_be,
+                                 uint16_t public_port,
+                                 uint8_t out_token[REND_PUNCH_TOKEN_LEN]) {
+    /* Domain-separated from the session key (see rendezvous.h). */
+    return rend_derive("3SXR-PT", ip_be, public_port,
+                       out_token, REND_PUNCH_TOKEN_LEN);
 }
 
 bool Rendezvous_BuildRegister(uint16_t my_public_port,

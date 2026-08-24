@@ -548,12 +548,15 @@ typedef struct {
     int sock;                 /* mock peer's raw UDP socket */
     uint16_t target_port;     /* the puncher's local port */
     volatile bool stop;
-    volatile int punches_received; /* "3SX_PUNCH" datagrams seen by the peer */
+    volatile int punches_received; /* AUTHENTICATED punch datagrams seen by the peer */
+    /* S4a: the payload this mock peer SENDS (valid or deliberately
+     * wrong token) and the payload it EXPECTS back (the valid one). */
+    uint8_t send_payload[STUN_PUNCH_PAYLOAD_LEN];
+    uint8_t expect_payload[STUN_PUNCH_PAYLOAD_LEN];
 } PunchPeerCtx;
 
 static int SDLCALL punch_peer_thread(void* arg) {
     PunchPeerCtx* ctx = (PunchPeerCtx*)arg;
-    const char punch_msg[] = "3SX_PUNCH";
 
     struct sockaddr_in dst;
     memset(&dst, 0, sizeof(dst));
@@ -565,7 +568,8 @@ static int SDLCALL punch_peer_thread(void* arg) {
     while (!ctx->stop) {
         const uint32_t now = SDL_GetTicks();
         if (last_send == 0 || now - last_send >= 30) {
-            sendto(ctx->sock, punch_msg, strlen(punch_msg), 0,
+            sendto(ctx->sock, (const char*)ctx->send_payload,
+                   sizeof(ctx->send_payload), 0,
                    (struct sockaddr*)&dst, sizeof(dst));
             last_send = now;
         }
@@ -580,8 +584,8 @@ static int SDLCALL punch_peer_thread(void* arg) {
             socklen_t fl = sizeof(from);
             const int n = (int)recvfrom(ctx->sock, (char*)buf, sizeof(buf), 0,
                                         (struct sockaddr*)&from, &fl);
-            if (n == (int)strlen(punch_msg) &&
-                memcmp(buf, punch_msg, (size_t)n) == 0) {
+            if (n == (int)sizeof(ctx->expect_payload) &&
+                memcmp(buf, ctx->expect_payload, (size_t)n) == 0) {
                 ctx->punches_received++;
             }
         }
@@ -640,10 +644,18 @@ static int run_punch_retarget_test(void) {
     memset(&local, 0, sizeof(local));
     local.socket = punch_sock;
 
+    /* S4a: both directions authenticate with the same code-derived
+     * token. Fixed bytes here — the derivation itself is covered in
+     * test_bilateral_punch.c. */
+    uint8_t token[STUN_PUNCH_TOKEN_LEN] = { 0xA5, 0x11, 0x22, 0x33,
+                                            0x44, 0x55, 0x66, 0x77 };
+
     PunchPeerCtx ctx;
     memset(&ctx, 0, sizeof(ctx));
     ctx.sock = peer_sock;
     ctx.target_port = punch_local_port;
+    Stun_BuildPunchPayload(token, ctx.send_payload);
+    Stun_BuildPunchPayload(token, ctx.expect_payload);
 
     SDL_Thread* tid = SDL_CreateThread(punch_peer_thread, "punch_peer", &ctx);
     if (!tid) {
@@ -659,7 +671,7 @@ static int run_punch_retarget_test(void) {
     char peer_ip[64];
     SDL_strlcpy(peer_ip, "127.0.0.1", sizeof(peer_ip));
     uint16_t observed_port = wrong_port;
-    const bool punched = Stun_HolePunch(&local, peer_ip, &observed_port, 3000, NULL);
+    const bool punched = Stun_HolePunch(&local, peer_ip, &observed_port, token, 3000, NULL);
 
     /* Give the confirmation burst a moment to land, then stop the peer. */
     SDL_Delay(100);
@@ -695,6 +707,166 @@ static int run_punch_retarget_test(void) {
     NET_DestroyDatagramSocket(punch_sock);
     close_sock(wrong_sock);
     close_sock(peer_sock);
+    return rc;
+}
+
+/* --- S4a punch authentication tests ------------------------------------ */
+
+/*
+ * Payload truth table for Stun_BuildPunchPayload / Stun_IsPunchPayload /
+ * Stun_HasPunchPrefix — the primitives host_tick_receive's datagram gate
+ * and Stun_HolePunch's accept path are built on. The legacy 9-byte
+ * "3SX_PUNCH" (what every pre-S4a build sends) MUST be rejected: on the
+ * pre-fix tree that exact payload was accepted as the peer.
+ */
+static int run_punch_payload_test(void) {
+    fprintf(stderr, "[test_stun_mock] punch-payload: token truth table\n");
+    int fails_before = fail_count;
+
+    uint8_t token[STUN_PUNCH_TOKEN_LEN] = { 1, 2, 3, 4, 5, 6, 7, 8 };
+    uint8_t other[STUN_PUNCH_TOKEN_LEN] = { 1, 2, 3, 4, 5, 6, 7, 9 };
+    uint8_t payload[STUN_PUNCH_PAYLOAD_LEN];
+    Stun_BuildPunchPayload(token, payload);
+
+    if (memcmp(payload, "3SX_PUNCH", 9) != 0) {
+        fail("punch-payload", "payload does not start with the 3SX_PUNCH prefix");
+    }
+    if (!Stun_IsPunchPayload(payload, sizeof(payload), token)) {
+        fail("punch-payload", "valid payload rejected");
+    }
+    if (Stun_IsPunchPayload(payload, sizeof(payload), other)) {
+        fail("punch-payload", "payload accepted with the WRONG token");
+    }
+    /* Legacy pre-S4a 9-byte punch: MUST be rejected. */
+    if (Stun_IsPunchPayload((const uint8_t*)"3SX_PUNCH", 9, token)) {
+        fail("punch-payload", "legacy 9-byte 3SX_PUNCH accepted (pre-S4a behavior)");
+    }
+    /* Truncated token / oversized payload / garbage / empty. */
+    if (Stun_IsPunchPayload(payload, sizeof(payload) - 1, token)) {
+        fail("punch-payload", "truncated payload accepted");
+    }
+    uint8_t big[STUN_PUNCH_PAYLOAD_LEN + 1];
+    memcpy(big, payload, sizeof(payload));
+    big[STUN_PUNCH_PAYLOAD_LEN] = 0;
+    if (Stun_IsPunchPayload(big, sizeof(big), token)) {
+        fail("punch-payload", "oversized payload accepted");
+    }
+    if (Stun_IsPunchPayload((const uint8_t*)"GARBAGEGARBAGEGAR", 17, token)) {
+        fail("punch-payload", "garbage of the right length accepted");
+    }
+    if (Stun_IsPunchPayload(payload, 0, token) ||
+        Stun_IsPunchPayload(NULL, (int)sizeof(payload), token)) {
+        fail("punch-payload", "empty/NULL accepted");
+    }
+    /* Prefix classifier: any-length prefix match, used only for the
+     * bad-token diagnostics. */
+    if (!Stun_HasPunchPrefix((const uint8_t*)"3SX_PUNCH", 9) ||
+        !Stun_HasPunchPrefix(payload, sizeof(payload)) ||
+        Stun_HasPunchPrefix((const uint8_t*)"3SX_PUNC", 8) ||
+        Stun_HasPunchPrefix((const uint8_t*)"XSX_PUNCH", 9)) {
+        fail("punch-payload", "Stun_HasPunchPrefix truth table failed");
+    }
+
+    if (fail_count == fails_before) {
+        fprintf(stderr, "[test_stun_mock] punch-payload OK\n");
+        return 0;
+    }
+    return 1;
+}
+
+/*
+ * End-to-end token rejection through the REAL Stun_HolePunch: a mock
+ * peer at the expected IP floods punches carrying a WRONG token. The
+ * puncher must (a) time out (never accept), (b) record the bad-token
+ * evidence bit for the S4a failure classifier. On the pre-fix tree the
+ * equivalent exchange (payload echo with no token check) succeeded.
+ */
+static int run_punch_token_reject_test(void) {
+    fprintf(stderr, "[test_stun_mock] punch-reject: wrong-token punches must be ignored\n");
+
+    if (!NET_Init()) {
+        fail("punch-reject", "NET_Init failed");
+        return 1;
+    }
+
+    unsigned short peer_port_bound = 0;
+    int peer_sock = open_udp_on_localhost(&peer_port_bound);
+    if (peer_sock < 0) {
+        fail("punch-reject", "failed to bind localhost UDP socket");
+        return 1;
+    }
+
+    NET_Address* bind_addr = NET_ResolveHostname("0.0.0.0");
+    if (bind_addr) {
+        int wait = 0;
+        while (NET_GetAddressStatus(bind_addr) == NET_WAITING && wait < 100) {
+            SDL_Delay(1);
+            wait++;
+        }
+    }
+    NET_DatagramSocket* punch_sock = NET_CreateDatagramSocket(bind_addr, 0);
+    if (bind_addr) NET_UnrefAddress(bind_addr);
+    if (punch_sock == NULL) {
+        fail("punch-reject", "NET_CreateDatagramSocket failed");
+        close_sock(peer_sock);
+        return 1;
+    }
+    const uint16_t punch_local_port = sdlnet_local_port(punch_sock);
+
+    StunResult local;
+    memset(&local, 0, sizeof(local));
+    local.socket = punch_sock;
+
+    uint8_t good_token[STUN_PUNCH_TOKEN_LEN] = { 0xA5, 0x11, 0x22, 0x33,
+                                                 0x44, 0x55, 0x66, 0x77 };
+    uint8_t bad_token[STUN_PUNCH_TOKEN_LEN]  = { 0xA5, 0x11, 0x22, 0x33,
+                                                 0x44, 0x55, 0x66, 0x78 };
+
+    PunchPeerCtx ctx;
+    memset(&ctx, 0, sizeof(ctx));
+    ctx.sock = peer_sock;
+    ctx.target_port = punch_local_port;
+    Stun_BuildPunchPayload(bad_token, ctx.send_payload);   /* peer punches wrong */
+    Stun_BuildPunchPayload(good_token, ctx.expect_payload);
+
+    SDL_Thread* tid = SDL_CreateThread(punch_peer_thread, "punch_peer_bad", &ctx);
+    if (!tid) {
+        fail("punch-reject", "SDL_CreateThread failed");
+        NET_DestroyDatagramSocket(punch_sock);
+        close_sock(peer_sock);
+        return 1;
+    }
+
+    char peer_ip[64];
+    SDL_strlcpy(peer_ip, "127.0.0.1", sizeof(peer_ip));
+    uint16_t observed_port = peer_port_bound;
+    const bool punched =
+        Stun_HolePunch(&local, peer_ip, &observed_port, good_token, 800, NULL);
+
+    ctx.stop = true;
+    SDL_WaitThread(tid, NULL);
+
+    int rc = 0;
+    if (punched) {
+        fail("punch-reject",
+             "Stun_HolePunch ACCEPTED a wrong-token punch — auth is not enforced "
+             "(pre-S4a behavior)");
+        rc = 1;
+    }
+    if (!local.diag_punch_bad_token) {
+        fail("punch-reject",
+             "diag_punch_bad_token not set — the classifier loses the "
+             "version-mismatch evidence");
+        rc = 1;
+    }
+
+    NET_DestroyDatagramSocket(punch_sock);
+    close_sock(peer_sock);
+    if (rc == 0) {
+        fprintf(stderr,
+                "[test_stun_mock] punch-reject OK — wrong token ignored, evidence "
+                "recorded\n");
+    }
     return rc;
 }
 
@@ -1073,6 +1245,8 @@ int Netplay_Test_StunMock(void) {
     const int wire_rc = run_wire_test();
     const int codec_rc = run_codec_test();
     const int retarget_rc = run_punch_retarget_test();
+    const int payload_rc = run_punch_payload_test();   /* S4a */
+    const int reject_rc = run_punch_token_reject_test(); /* S4a */
     int discover_rc = 0;
 #ifdef NETPLAY_TEST_HOOKS
     discover_rc |= run_discover_parallel_test();
@@ -1083,11 +1257,12 @@ int Netplay_Test_StunMock(void) {
     fprintf(stderr, "[test_stun_mock] discover tests skipped (build lacks NETPLAY_TEST_HOOKS)\n");
 #endif
 
-    if (fail_count > 0 || wire_rc != 0 || codec_rc != 0 || retarget_rc != 0 || discover_rc != 0) {
+    if (fail_count > 0 || wire_rc != 0 || codec_rc != 0 || retarget_rc != 0 ||
+        payload_rc != 0 || reject_rc != 0 || discover_rc != 0) {
         fprintf(stderr, "[test_stun_mock] %d failure(s)\n", fail_count);
         return 1;
     }
-    fprintf(stderr, "[test_stun_mock] OK — wire + codec + retarget + discover passed\n");
+    fprintf(stderr, "[test_stun_mock] OK — wire + codec + retarget + punch-auth + discover passed\n");
     return 0;
 }
 
