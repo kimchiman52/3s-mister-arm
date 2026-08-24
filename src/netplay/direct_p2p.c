@@ -2589,8 +2589,30 @@ static void direct_p2p_on_teardown(void) {
 /* Finish the handoff on the main thread. Called from Tick when the
  * worker publishes DIRECT_P2P_HANDOFF (Join path) or when Tick itself
  * receives the first inbound datagram (Host path). */
+#ifdef NETPLAY_TEST_HOOKS
+/* S5 seam. The relay rung's entire contract on the client is "feed the
+ * EXISTING do_handoff the relay endpoint instead of the peer endpoint",
+ * and the only honest way to assert that is to observe do_handoff's own
+ * arguments. Recording them here (rather than reading s_work) also
+ * catches a rung that writes s_work correctly but never reaches the
+ * handoff. Main-thread only, like do_handoff itself. */
+static char     s_test_handoff_ip[64] = { 0 };
+static uint16_t s_test_handoff_port = 0;
+static int      s_test_handoff_player = 0;
+static bool     s_test_handoff_relay = false;
+static int      s_test_handoff_count = 0;
+#endif
+
 static void do_handoff(int player, const char* peer_ip, uint16_t peer_port) {
-    SDL_Log("[direct_p2p] Handoff to netplay: player=%d peer=%s:%u", player, peer_ip, (unsigned)peer_port);
+    SDL_Log("[direct_p2p] Handoff to netplay: player=%d peer=%s:%u%s", player, peer_ip,
+            (unsigned)peer_port, s_work.relay_used ? " (VIA RELAY)" : "");
+#ifdef NETPLAY_TEST_HOOKS
+    SDL_strlcpy(s_test_handoff_ip, peer_ip ? peer_ip : "", sizeof(s_test_handoff_ip));
+    s_test_handoff_port = peer_port;
+    s_test_handoff_player = player;
+    s_test_handoff_relay = s_work.relay_used;
+    s_test_handoff_count++;
+#endif
     /* Netplay_SetParams wires remote_ip, local_port and the default
      * remote_port from (player, ip). The STUN socket we hand off below is a
      * plain datagram socket with no connected-peer state, so GekkoNet sends
@@ -3600,12 +3622,14 @@ static void report_connect_outcome(DirectP2PState st, bool success) {
     s_outcome_reported = true;
     char line[512];
     if (success) {
-        /* S5: `relay=` records WHICH RUNG WON. A relayed session detours
+        /* S5: `via_relay=` records WHICH RUNG WON. (The `relay=` inside
+         * the t_ms block is the stage TIMING; the two are named apart so
+         * a log grep cannot confuse them.) A relayed session detours
          * through the rendezvous VPS (Europe), so its ping is
          * structurally worse than a direct link — a report that hid that
          * would make every field latency complaint unattributable. */
         SDL_snprintf(line, sizeof(line),
-                     "[netplay-connect] OK role=%s attempts=%d relay=%d "
+                     "[netplay-connect] OK role=%s attempts=%d via_relay=%d "
                      "t_ms upnp=%u stun=%u punch=%u signal=%u bilateral=%u relay=%u "
                      "stun=%d/%d portdis=%d",
                      s_work.role == ROLE_HOST ? "host" : "join",
@@ -3619,7 +3643,7 @@ static void report_connect_outcome(DirectP2PState st, bool success) {
     } else {
         SDL_snprintf(line, sizeof(line),
                      "[netplay-connect] FAIL code=%s state=%d role=%s msg=\"%s\" "
-                     "attempts=%d relay=%d relay_fail=%s "
+                     "attempts=%d via_relay=%d relay_fail=%s "
                      "t_ms upnp=%u stun=%u punch=%u signal=%u bilateral=%u relay=%u "
                      "stun=%d/%d sends_ok=%d dns_all_failed=%d portdis=%d "
                      "deliver=any:%d,real:%d",
@@ -3982,6 +4006,28 @@ void DirectP2P_TestHook_PunchGateClearMutes(void) {
 void DirectP2P_TestHook_PunchGateCounters(int* bad_total, int* rerolls) {
     if (bad_total) *bad_total = s_host_punch_bad_total;
     if (rerolls) *rerolls = s_host_punch_rerolls;
+}
+
+/* S5: last do_handoff arguments (see s_test_handoff_*). Any pointer may
+ * be NULL. `count` distinguishes "no handoff happened" from "a handoff
+ * happened to 0.0.0.0:0". */
+void DirectP2P_TestHook_LastHandoff(char* out_ip, int ip_cap, uint16_t* out_port,
+                                    int* out_player, bool* out_relay, int* out_count) {
+    if (out_ip != NULL && ip_cap > 0) {
+        SDL_strlcpy(out_ip, s_test_handoff_ip, (size_t)ip_cap);
+    }
+    if (out_port) *out_port = s_test_handoff_port;
+    if (out_player) *out_player = s_test_handoff_player;
+    if (out_relay) *out_relay = s_test_handoff_relay;
+    if (out_count) *out_count = s_test_handoff_count;
+}
+
+void DirectP2P_TestHook_ResetHandoff(void) {
+    s_test_handoff_ip[0] = '\0';
+    s_test_handoff_port = 0;
+    s_test_handoff_player = 0;
+    s_test_handoff_relay = false;
+    s_test_handoff_count = 0;
 }
 
 void DirectP2P_TestHook_PunchGateLimits(int* src_max_bad, uint32_t* mute_ms,

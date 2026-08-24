@@ -282,6 +282,16 @@ void DirectP2P_TestHook_RunTeardown(void);
  * still runs against the shipped constant. 1 (or less) disables. */
 void DirectP2P_TestHook_SetHostAdvisoryScale(int scale);
 
+/* S5 relay rung seam. The rung's whole client-side contract is "call the
+ * EXISTING do_handoff with the RELAY endpoint", so the assertion that
+ * matters is on do_handoff's own arguments — not on internal state a
+ * rung could set correctly while never reaching the handoff. `out_count`
+ * separates "no handoff at all" from "a handoff to 0.0.0.0:0". Any
+ * pointer may be NULL. */
+void DirectP2P_TestHook_LastHandoff(char* out_ip, int ip_cap, uint16_t* out_port,
+                                    int* out_player, bool* out_relay, int* out_count);
+void DirectP2P_TestHook_ResetHandoff(void);
+
 void DirectP2P_TestHook_PunchGateReset(void);
 bool DirectP2P_TestHook_PunchGateNoteBad(const char* src_ip, uint32_t now_ms);
 bool DirectP2P_TestHook_PunchGateIsMuted(const char* src_ip, uint32_t now_ms);
