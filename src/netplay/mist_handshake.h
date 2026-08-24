@@ -27,6 +27,10 @@
  *                           via the _Static_assert in game_state.c)
  *   Peers reject on state_ver or proto_ver mismatch (different GameState
  *   layouts desync mid-match); build_hash difference is a warning only.
+ *   Residual (adv-review M-3): state_ver only sees the struct SIZE — see
+ *   the MIST_STATE_VER comment in mist_handshake.c for what still slips
+ *   through (same-size sim/layout/format changes) and why that tradeoff
+ *   is deliberate.
  *   Pre-R-1 peers end the payload after the three strings; the missing
  *   version fields classify them as legacy-incompatible (their GameState
  *   layout predates the current pin) and they are rejected cleanly.
@@ -37,9 +41,13 @@
  * Retransmit: sender fires hello every 100 ms up to 5 times; accepts an
  * ack/reject from the peer at any point inside the 500 ms window.
  *
- * Collision safety: GekkoNet's wire type enum at byte 0 is in [0, 6] per
- * /tmp/GekkoNet-head/GekkoLib/include/net.h:26-36, so our 0x4D 'M' magic
- * cannot collide with a live GekkoNet packet.
+ * Collision safety: GekkoNet serializes MsgHeader first, so byte 0 of a
+ * live GekkoNet datagram is its PacketType enum — values 1..7 (Inputs=1
+ * .. NetworkHealth=7) per the pinned
+ * third_party/GekkoNet/build/include/net.h:28-36 — so our 0x4D 'M'
+ * magic cannot collide with a live GekkoNet packet. The same range is
+ * what MIST_GEKKO_PACKET_TYPE_MIN/MAX encode for the runner's
+ * implicit-completion guard.
  */
 #ifndef NETPLAY_MIST_HANDSHAKE_H
 #define NETPLAY_MIST_HANDSHAKE_H

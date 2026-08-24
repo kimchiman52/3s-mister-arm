@@ -73,7 +73,25 @@ const uint8_t MIST_MAGIC[MIST_MAGIC_LEN] = {
 #define MIST_BUILD_HASH "0000000"
 #endif
 
-/* R-1: wire value for the state_ver field (big-endian u16 on the wire). */
+/* R-1: wire value for the state_ver field (big-endian u16 on the wire).
+ *
+ * adv-review M-3 — what this check does and does NOT guarantee:
+ * state_ver = sizeof(GameState) catches every layout re-pin that changes
+ * the struct's size (field added/removed/retyped, EXPECTED_GAME_STATE_SIZE
+ * bumps). It does NOT catch:
+ *   - sim-logic changes with no state-field change (a balance tweak, a
+ *     fixed engine branch — same struct, different simulation);
+ *   - same-size field reorders or type swaps inside GameState;
+ *   - save/load FORMAT changes that leave the struct untouched, e.g. a
+ *     SPARSE_CEILING_SLOTS divergence in the sparse effect-pool format.
+ * Such pairs pass the state_ver gate, connect with only the build-hash
+ * WARNING below, and can still desync mid-match (desync detection then
+ * catches them at runtime). This is a DELIBERATE tradeoff: rejecting on
+ * build_hash would block every rebuild — including provably-compatible
+ * ones — from playing each other, which is far worse for a community of
+ * self-built peers than tolerating the rare silent-incompatible pair.
+ * If one of the above ships in a release, bump MIST_PROTO_VER to force
+ * the reject. */
 #define MIST_STATE_VER ((uint16_t)sizeof(GameState))
 
 uint16_t mist_handshake_local_state_ver(void) {

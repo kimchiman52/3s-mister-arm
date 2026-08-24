@@ -187,6 +187,35 @@ Two log markers in `last-run.log` (or `backend.log`) come from
   dereference at addr 0. Function returns 0 (load-failed) in both
   cases.
 
+## MIST handshake version gate — what it does and does not guarantee
+
+Before GekkoNet starts, peers exchange a `MIST` hello carrying
+`proto_ver` and `state_ver = sizeof(GameState)` plus the build's git
+short hash (`src/netplay/mist_handshake.h`, R-1). A `state_ver` or
+`proto_ver` mismatch hard-rejects the session with an on-screen reason;
+a `build_hash` difference only logs a WARNING.
+
+**Guaranteed rejected:** any pair whose `GameState` size differs — every
+layout re-pin (field added/removed/retyped) — and every pre-R-1 build
+(classified legacy).
+
+**NOT caught (deliberate residual):** builds that differ without
+changing `sizeof(GameState)` —
+
+- sim-logic changes with no state-field change (balance tweaks, engine
+  branch fixes),
+- same-size field reorders/type swaps inside `GameState`,
+- save/load format changes that leave the struct untouched (e.g. a
+  `SPARSE_CEILING_SLOTS` divergence in the sparse effect-pool format).
+
+Such pairs connect with only the build-hash WARNING in the log and can
+still desync mid-match; runtime desync detection (always on) is the
+backstop that catches them. Rejecting on `build_hash` instead would
+block every rebuild — including provably-compatible ones — from playing
+each other, which is worse for self-built peers than tolerating the
+rare silently-incompatible pair. When shipping a known same-size
+incompatibility, bump `MIST_PROTO_VER` to force the reject.
+
 ## Audio log noise suppression
 
 `SDL_SetLogPriority(SDL_LOG_CATEGORY_AUDIO, SDL_LOG_PRIORITY_CRITICAL)`
