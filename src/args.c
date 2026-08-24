@@ -260,6 +260,13 @@ void read_args(int argc, const char* argv[], Configuration* configuration) {
                     NULL,
                     0,
                     0),
+        OPT_BOOLEAN(0,
+                    "test-gs-coverage",
+                    &configuration->test_gs_coverage,
+                    "Run the GameState save/load field-coverage guard and exit. Requires ENABLE_NETPLAY=ON with -DENABLE_NETPLAY_TESTS.",
+                    NULL,
+                    0,
+                    0),
 #if ENABLE_PERF_TELEMETRY
         OPT_GROUP("Performance"),
         OPT_INTEGER(0,

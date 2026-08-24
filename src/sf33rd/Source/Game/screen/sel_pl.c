@@ -129,6 +129,34 @@ void Correct_Control_Time(s16 PL_id);
 s32 Check_Boss(s16 PL_id);
 u8 Setup_Battle_Country();
 
+/* Netplay rollback-safety audit of this global cluster (2026-08-23, M-2).
+ * Color7 is saved in GameState (rollback-unsafe chord accumulator, fixed
+ * earlier — see netplay/game_state.h). The rest were re-audited after the
+ * spmv_ng_save exoneration proved wrong (H-6); per-symbol disposition:
+ *
+ * - SEL_PL_X: safe by construction. Reset to 0 at the top of every
+ *   Select_Player() call (below) before any read; the only other write is
+ *   Exit_7th() which runs mid-invocation (Select_Player -> Sel_PL_Control
+ *   -> Check_Exit), and the only read is Select_Player's own return. No
+ *   value survives across frames, so rollback cannot observe stale state.
+ *
+ * - Play_Type_1st: safe. Written only by Setup_1st_Play_Type() (called
+ *   from Sel_PL_Cont_1st, gated by GS-saved S_No), as a pure function of
+ *   Play_Type and Aborigine — both GS-saved. Re-simulation after rollback
+ *   re-derives the identical value; readers (effd8.c face-portrait
+ *   placement) see a deterministic function of saved state.
+ *
+ * - Decide_Stage, hc3alpha (and hc3alphaadd below): proven unreachable
+ *   under MODE_NETWORK. Every read/write lives in Handicap_1st/_2/_3,
+ *   reachable only while Exit_No is 7/8/9. The only entry into that range
+ *   is Exit_1st (`Exit_No = 7`), gated on
+ *   `Mode_Type == MODE_VERSUS && save_w[Present_Mode].Handicap != 0`;
+ *   netplay sets Mode_Type = MODE_NETWORK (netplay.c / netplay_nav.c) and
+ *   MODE_VERSUS != MODE_NETWORK (workuser.h enum), Mode_Type is GS-saved
+ *   so rollback cannot flip it mid-session, and Exit_No/SP_No are GS-saved
+ *   so rollback cannot resurrect a Handicap state that never ran. The
+ *   VS_Stage writes these feed (Handicap_Stage_Move_Sub) sit behind the
+ *   same gate; netplay pins VS_Stage = 0 at session start on both peers. */
 u8 SEL_PL_X;
 s16 Play_Type_1st;
 u16 Color7[2];
