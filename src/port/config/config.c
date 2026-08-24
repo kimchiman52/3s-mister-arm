@@ -84,11 +84,19 @@ static const ConfigEntry default_entries[] = {
     { .key = CFG_KEY_NETPLAY_DIRECT_P2P_HANDOFF_PATH, .type = CFG_STRING, .value.s = "/tmp/3s-arm-netplay.handoff" },
     { .key = CFG_KEY_NETPLAY_DIRECT_P2P_STUN_TIMEOUT_MS, .type = CFG_INT, .value.i = 4000 },
     /* Bilateral hole-punch fallback defaults (docs/plan-bilateral-hole-punch.md
-     * Decision 6). SIGNAL_URL points at the live rendezvous server. */
+     * Decision 6). SIGNAL_URL points at the live rendezvous server.
+     * BILATERAL_PUNCH_MS raised 3000 -> 5000 (S2,
+     * docs/plan-netplay-connection.md §4): the two sides enter their
+     * punch windows skewed by DELIVER arrival — the host only learns of
+     * the joiner on its next Tick after the server pushes the DELIVER,
+     * while the joiner starts punching the moment its own DELIVER
+     * parses — and both loops simply drop stray/early datagrams that
+     * don't match the punch payload, so a longer overlap window costs
+     * nothing but the failure-case wait. */
     { .key = CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_BILATERAL, .type = CFG_BOOL, .value.b = false },
     { .key = CFG_KEY_NETPLAY_DIRECT_P2P_SIGNAL_URL, .type = CFG_STRING, .value.s = "udp://46.62.244.55:3478" },
     { .key = CFG_KEY_NETPLAY_DIRECT_P2P_SIGNAL_BUDGET_MS, .type = CFG_INT, .value.i = 8000 },
-    { .key = CFG_KEY_NETPLAY_DIRECT_P2P_BILATERAL_PUNCH_MS, .type = CFG_INT, .value.i = 3000 },
+    { .key = CFG_KEY_NETPLAY_DIRECT_P2P_BILATERAL_PUNCH_MS, .type = CFG_INT, .value.i = 5000 },
     /* Host liveness (docs/plan-netplay-connection.md S1): persistent host
      * re-REGISTER cadence. ~0.2 pkt/s/host — far under the rendezvous
      * server's 10 pkt/s/IP limiter (rendezvous-server.js RATE_LIMIT_PER_

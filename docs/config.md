@@ -194,10 +194,13 @@ out-of-band (text message, voice) and paste it into the wrapper OSD.
   signaling phase only; the host's re-REGISTER loop is persistent and
   paced by `netplay-direct-p2p-register-interval-ms` instead.
 
-`netplay-direct-p2p-bilateral-punch-ms` (int, default `3000`)
+`netplay-direct-p2p-bilateral-punch-ms` (int, default `5000`)
 - Length of the bilateral Stun_HolePunch window, in milliseconds.
   Longer than the initial direct punch window to accommodate post-
-  signaling clock skew between peers.
+  signaling clock skew between peers. Raised from 3000 in S2
+  (docs/plan-netplay-connection.md §4): the two sides' punch windows
+  start skewed by DELIVER-arrival timing, and both loops tolerate
+  stray datagrams, so extra overlap only costs failure-case wait.
 
 `netplay-direct-p2p-register-interval-ms` (int, default `5000`)
 - Host liveness (S1): cadence of the host's persistent rendezvous

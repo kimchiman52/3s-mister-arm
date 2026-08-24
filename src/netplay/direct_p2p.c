@@ -874,7 +874,7 @@ static int SDLCALL host_bilateral_punch_thread_fn(void* data) {
     uint16_t peer_port = s_work.peer_public_port;
 
     int budget_ms = Config_GetInt(CFG_KEY_NETPLAY_DIRECT_P2P_BILATERAL_PUNCH_MS);
-    if (budget_ms <= 0) budget_ms = 3000;
+    if (budget_ms <= 0) budget_ms = 5000; /* S2: keep in sync with config.c default */
 
     set_status("Connecting...");
     SDL_Log("[direct_p2p] entering FALLBACK_BILATERAL_PUNCH peer=%s:%u (budget=%dms)",
@@ -1244,7 +1244,7 @@ static int SDLCALL join_thread_fn(void* data) {
         int signal_budget_ms = Config_GetInt(CFG_KEY_NETPLAY_DIRECT_P2P_SIGNAL_BUDGET_MS);
         if (signal_budget_ms <= 0) signal_budget_ms = 8000;
         int bilateral_budget_ms = Config_GetInt(CFG_KEY_NETPLAY_DIRECT_P2P_BILATERAL_PUNCH_MS);
-        if (bilateral_budget_ms <= 0) bilateral_budget_ms = 3000;
+        if (bilateral_budget_ms <= 0) bilateral_budget_ms = 5000; /* S2: sync w/ config.c */
 
         char fb_peer_ip[64] = { 0 };
         uint16_t fb_peer_port = 0;
