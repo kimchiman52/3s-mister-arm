@@ -360,6 +360,144 @@ async function testSessionCap(handle, serverPort) {
     }
 }
 
+// Stub socket for handle._onMessage injection: captures outbound sends so
+// tests can exercise source-IP-dependent policy without real routing.
+function makeStubSocket() {
+    const sent = [];
+    return {
+        sent,
+        send(buf, off, len, port, address) {
+            sent.push({ buf: Buffer.from(buf.subarray(off, off + len)), port, address });
+        },
+    };
+}
+
+async function testStaleSlotReclaim(handle, serverPort) {
+    // Review H1 (server side): a REGISTER from the same IP as a STALE,
+    // unpaired host slot reclaims the slot (cancel-then-re-host with a new
+    // NAT source port, session key pinned by UPnP) instead of being filed
+    // as "the joiner" and DELIVERed its own stale endpoint.
+    const key = crypto.randomBytes(16);
+    const hexKey = key.toString('hex');
+    const oldHost = await makeClient();
+    const newHost = await makeClient();
+    const joiner = await makeClient();
+    try {
+        // Old host registers, then goes silent (user pressed Cancel).
+        await oldHost.send(makeRegister(key, oldHost.port), serverPort);
+        await oldHost.recv(500);
+        const entry = handle._sessionMap.get(hexKey);
+        assert(entry !== undefined, 'reclaim: session exists after REGISTER');
+        assertEq(entry.endpointA.port, oldHost.port, 'reclaim: slot A is old host');
+
+        // Age slot A past SLOT_STALE_MS (real reclaim code runs on the
+        // next REGISTER — aging via the _sessionMap hook, same style as
+        // testSessionTtl), then re-host from a new port.
+        entry.lastSeenA -= handle._slotStaleMs + 1000;
+        await newHost.send(makeRegister(key, newHost.port), serverPort);
+        const r = decodeDeliver((await newHost.recv(500)).buf);
+        assertEq(r.peerIp, '0.0.0.0', 'reclaim: re-host reply has NO peer (not own stale endpoint)');
+        assertEq(r.peerPort, 0, 'reclaim: re-host reply peer port zero');
+        assertEq(entry.endpointA.port, newHost.port, 'reclaim: slot A repointed to new host port');
+        assert(entry.endpointB === null, 'reclaim: slot B still empty');
+
+        // A joiner now pairs with the NEW endpoint, and the new host gets
+        // the unsolicited DELIVER push.
+        await joiner.send(makeRegister(key, joiner.port), serverPort);
+        const jr = decodeDeliver((await joiner.recv(500)).buf);
+        assertEq(jr.peerPort, newHost.port, 'reclaim: joiner paired with reclaimed host');
+        const push = decodeDeliver((await newHost.recv(500)).buf);
+        assertEq(push.peerPort, joiner.port, 'reclaim: reclaimed host received DELIVER push');
+    } finally {
+        await oldHost.close();
+        await newHost.close();
+        await joiner.close();
+    }
+}
+
+async function testFreshSlotNotReclaimed(handle, serverPort) {
+    // Reclaim must require staleness: a same-IP REGISTER from a new port
+    // against a LIVE host slot pairs as the joiner (normal flow preserved).
+    const key = crypto.randomBytes(16);
+    const a = await makeClient();
+    const b = await makeClient();
+    try {
+        await a.send(makeRegister(key, a.port), serverPort);
+        await a.recv(500);
+        await b.send(makeRegister(key, b.port), serverPort);
+        const br = decodeDeliver((await b.recv(500)).buf);
+        assertEq(br.peerPort, a.port, 'fresh-slot: same-IP new-port REGISTER paired as joiner');
+        const entry = handle._sessionMap.get(key.toString('hex'));
+        assertEq(entry.endpointA.port, a.port, 'fresh-slot: slot A untouched');
+        assertEq(entry.endpointB.port, b.port, 'fresh-slot: slot B is the new client');
+    } finally {
+        await a.close();
+        await b.close();
+    }
+}
+
+async function testReclaimRequiresSameIp(handle) {
+    // Injection: a stale host slot is NOT reclaimed by a different-IP
+    // source — that source becomes the joiner, keeping pre-S1 silent
+    // hosts pair-able exactly as before.
+    const key = crypto.randomBytes(16);
+    const stub = makeStubSocket();
+    handle._onMessage(makeRegister(key, 1111), { address: '198.51.100.7', port: 1111 }, stub);
+    const entry = handle._sessionMap.get(key.toString('hex'));
+    entry.lastSeenA -= handle._slotStaleMs + 1000;
+    handle._onMessage(makeRegister(key, 2222), { address: '198.51.100.8', port: 2222 }, stub);
+    assertEq(entry.endpointA.address, '198.51.100.7', 'same-ip-required: stale A kept for different-IP source');
+    assertEq(entry.endpointB.address, '198.51.100.8', 'same-ip-required: different IP paired as joiner');
+    // 3 sends total: A's initial reply, B's pairing reply, A's push.
+    assertEq(stub.sent.length, 3, 'same-ip-required: reply+reply+push emitted');
+}
+
+async function testPoisonedKeyBothSlotsStale(handle) {
+    // Review H1 variant: both slots stale (abandoned pairing). A same-IP
+    // re-host REGISTER must reclaim slot A AND clear the dead joiner slot
+    // instead of being dropped as a third party for the whole TTL.
+    const key = crypto.randomBytes(16);
+    const stub = makeStubSocket();
+    handle._onMessage(makeRegister(key, 1111), { address: '198.51.100.17', port: 1111 }, stub);
+    handle._onMessage(makeRegister(key, 2222), { address: '198.51.100.19', port: 2222 }, stub);
+    const entry = handle._sessionMap.get(key.toString('hex'));
+    entry.lastSeenA -= handle._slotStaleMs + 1000;
+    entry.lastSeenB -= handle._slotStaleMs + 1000;
+    stub.sent.length = 0;
+    handle._onMessage(makeRegister(key, 3333), { address: '198.51.100.17', port: 3333 }, stub);
+    assertEq(entry.endpointA.port, 3333, 'poisoned-key: slot A reclaimed by same-IP re-host');
+    assert(entry.endpointB === null, 'poisoned-key: stale joiner slot cleared');
+    assertEq(stub.sent.length, 1, 'poisoned-key: re-host got a reply (not third-party drop)');
+    const d = decodeDeliver(stub.sent[0].buf);
+    assertEq(d.peerIp, '0.0.0.0', 'poisoned-key: reply carries no peer');
+}
+
+async function testStaleJoinerSlotReplaced(handle) {
+    // Full entry, live host, stale joiner: a fresh joiner (any IP) replaces
+    // slot B and the host is re-notified with the new endpoint.
+    const key = crypto.randomBytes(16);
+    const stub = makeStubSocket();
+    handle._onMessage(makeRegister(key, 1111), { address: '198.51.100.27', port: 1111 }, stub);
+    handle._onMessage(makeRegister(key, 2222), { address: '198.51.100.29', port: 2222 }, stub);
+    const entry = handle._sessionMap.get(key.toString('hex'));
+    entry.lastSeenB -= handle._slotStaleMs + 1000;
+    stub.sent.length = 0;
+    handle._onMessage(makeRegister(key, 4444), { address: '198.51.100.30', port: 4444 }, stub);
+    assertEq(entry.endpointB.address, '198.51.100.30', 'stale-joiner: slot B replaced');
+    assertEq(entry.endpointA.address, '198.51.100.27', 'stale-joiner: live host slot untouched');
+    // Reply to the new joiner (carrying A) + re-notify push to A (carrying new B).
+    assertEq(stub.sent.length, 2, 'stale-joiner: reply + host push emitted');
+    const toJoiner = stub.sent.find((s) => s.address === '198.51.100.30');
+    const toHost = stub.sent.find((s) => s.address === '198.51.100.27');
+    assert(toJoiner && decodeDeliver(toJoiner.buf).peerPort === 1111, 'stale-joiner: joiner told host endpoint');
+    assert(toHost && decodeDeliver(toHost.buf).peerPort === 4444, 'stale-joiner: host told NEW joiner endpoint');
+    // Live joiner control: fresh slot B must NOT be replaceable.
+    stub.sent.length = 0;
+    handle._onMessage(makeRegister(key, 5555), { address: '198.51.100.31', port: 5555 }, stub);
+    assertEq(entry.endpointB.address, '198.51.100.30', 'stale-joiner: LIVE slot B not replaced by third party');
+    assertEq(stub.sent.length, 0, 'stale-joiner: third party got no reply');
+}
+
 async function testSweepHook(handle) {
     // The sweep hook exists and is callable. We don't try to time-warp; just
     // assert calling it doesn't throw and doesn't crash the server.
@@ -398,6 +536,14 @@ async function main() {
         await testSessionTtl(handle, serverPort);   // 3 packets
         handle._resetRate();
         await testSessionCap(handle, serverPort);   // 4 packets
+        handle._resetRate();
+        await testStaleSlotReclaim(handle, serverPort); // 4 packets
+        handle._resetRate();
+        await testFreshSlotNotReclaimed(handle, serverPort); // 2 packets
+        handle._resetRate();
+        await testReclaimRequiresSameIp(handle);
+        await testPoisonedKeyBothSlotsStale(handle);
+        await testStaleJoinerSlotReplaced(handle);
         handle._resetRate();
         await testSweepHook(handle);
     } catch (err) {
