@@ -1415,8 +1415,10 @@ static int SDLCALL host_thread_fn(void* data) {
     if (!stun_ok) {
         /* S3 causes 1-2 (host side): same classification as the joiner.
          * Review M-2: a local socket-creation failure is not a network
-         * condition — classify INTERNAL, not "no internet". */
-        set_fail(s_work.stun.diag_socket_fail
+         * condition — classify INTERNAL, not "no internet". S4-review
+         * L-3: a CSPRNG failure is the same shape — nothing was ever
+         * sent, so a connectivity diagnosis would be a lie. */
+        set_fail((s_work.stun.diag_socket_fail || s_work.stun.diag_csprng_fail)
                      ? CONNECT_FAIL_INTERNAL
                      : ConnectFail_ClassifyStunDiscover(
                            s_work.stun.diag_servers_probed,
@@ -1528,9 +1530,16 @@ static int SDLCALL host_thread_fn(void* data) {
 
     set_status("Waiting for player 2...");
     set_state(DIRECT_P2P_HOST_WAITING);
-    SDL_Log("[direct_p2p] HOST_WAITING published. Code=%s public=%s:%u (via %s)",
-            s_work.host_code, s_work.stun.public_ip, (unsigned)pub_port,
-            upnp_ok ? "UPnP" : "STUN");
+    {
+        /* MEDIUM-4: the code is key material now — nonce chars redacted.
+         * The ip:port on the same line is the non-secret half. */
+        char code_redacted[ROOM_CODE_BUF_LEN];
+        RoomCode_Redact(s_work.host_code, code_redacted);
+        SDL_Log("[direct_p2p] HOST_WAITING published. Code=%s (nonce redacted) "
+                "public=%s:%u (via %s)",
+                code_redacted, s_work.stun.public_ip, (unsigned)pub_port,
+                upnp_ok ? "UPnP" : "STUN");
+    }
 
     /* 5) Bilateral fallback: spawn the rendezvous-resender thread unless
      * the kill switch is set. The thread enqueues REGISTER packets onto
@@ -1590,7 +1599,7 @@ static DirectP2PState join_attempt(void) {
          * "outbound UDP filtered" using the discovery evidence.
          * Review M-2: a local socket-creation failure is neither —
          * classify INTERNAL, not "no internet". */
-        set_fail(s_work.stun.diag_socket_fail
+        set_fail((s_work.stun.diag_socket_fail || s_work.stun.diag_csprng_fail)
                      ? CONNECT_FAIL_INTERNAL
                      : ConnectFail_ClassifyStunDiscover(
                            s_work.stun.diag_servers_probed,
@@ -2291,8 +2300,12 @@ static void host_handle_stun_rebind(const uint8_t* buf, int len) {
      * nonce's job (unguessable derivations) is done either way. */
     if (ip_be != 0 && RoomCode_Encode(ip_be, new_adv_port, s_work.nonce, new_code) &&
         strcmp(new_code, s_work.host_code) != 0) {
-        SDL_Log("[direct_p2p] room code re-encoded: %s -> %s",
-                s_work.host_code, new_code);
+        char old_redacted[ROOM_CODE_BUF_LEN];
+        char new_redacted[ROOM_CODE_BUF_LEN];
+        RoomCode_Redact(s_work.host_code, old_redacted);
+        RoomCode_Redact(new_code, new_redacted);
+        SDL_Log("[direct_p2p] room code re-encoded: %s -> %s (nonce redacted)",
+                old_redacted, new_redacted);
         SDL_strlcpy(s_work.host_code, new_code, sizeof(s_work.host_code));
         set_status("Network changed! Share the NEW code.");
     }
@@ -2821,7 +2834,8 @@ void DirectP2P_BeginJoin(const char* peer_code) {
      * S4b: the decode result is a tri-state-plus — a legacy-checksum-
      * valid 11-char v1 or 14-char v2 code, and an unknown-version
      * 18-char code, each get their own explanation
-     * (CONNECT_FAIL_CODE_VERSION) instead of the
+     * (CONNECT_FAIL_CODE_VERSION_OLDER / _NEWER — L-4 split so log
+     * triage can tell WHICH side is stale) instead of the
      * mysterious generic "Invalid room code.". */
     uint32_t ip_be = 0;
     uint16_t pub_port = 0;
@@ -2841,13 +2855,13 @@ void DirectP2P_BeginJoin(const char* peer_code) {
         case ROOM_CODE_OLD_FORMAT:
             SDL_Log("[direct_p2p] room code is a valid pre-v3 (v1/v2) code — "
                     "the host runs an older build");
-            set_fail_msg(CONNECT_FAIL_CODE_VERSION,
+            set_fail_msg(CONNECT_FAIL_CODE_VERSION_OLDER,
                          "Code is from an older game version.");
             break;
         case ROOM_CODE_FUTURE_VERSION:
             SDL_Log("[direct_p2p] room code carries an unknown format-version "
                     "char — created by a newer build?");
-            set_fail_msg(CONNECT_FAIL_CODE_VERSION,
+            set_fail_msg(CONNECT_FAIL_CODE_VERSION_NEWER,
                          "Code is from a newer game version.");
             break;
         default:

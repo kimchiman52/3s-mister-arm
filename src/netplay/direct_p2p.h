@@ -118,7 +118,8 @@ void DirectP2P_BeginHost(int preferred_port);
  * dashed (v3 format). No-op on NULL/empty. On success, code is
  * persisted to CFG_KEY_NETPLAY_DIRECT_P2P_LAST_PEER_CODE. A v1
  * (11-char), v2 (14-char) or unknown-version code fails immediately
- * with CONNECT_FAIL_CODE_VERSION and an explanatory status. */
+ * with CONNECT_FAIL_CODE_VERSION_OLDER / _NEWER and an explanatory
+ * status. */
 void DirectP2P_BeginJoin(const char* peer_code);
 
 /* User cancel. Sets the worker's atomic cancel flag, waits up to a

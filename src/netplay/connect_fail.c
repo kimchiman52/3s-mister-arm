@@ -25,7 +25,8 @@ const char* ConnectFail_Code(ConnectFailCode code) {
     case CONNECT_FAIL_TIMEOUT_ORCHESTRATOR: return "P2P_FAIL_TIMEOUT_ORCHESTRATOR";
     case CONNECT_FAIL_USER_ABORT:           return "P2P_ABORT_USER";
     case CONNECT_FAIL_INVALID_CODE:         return "P2P_FAIL_INVALID_CODE";
-    case CONNECT_FAIL_CODE_VERSION:         return "P2P_FAIL_CODE_VERSION";
+    case CONNECT_FAIL_CODE_VERSION_OLDER:   return "P2P_FAIL_CODE_VERSION_OLDER";
+    case CONNECT_FAIL_CODE_VERSION_NEWER:   return "P2P_FAIL_CODE_VERSION_NEWER";
     case CONNECT_FAIL_INTERNAL:             return "P2P_FAIL_INTERNAL";
     case CONNECT_FAIL_BALANCE_UNAVAILABLE:  return "P2P_FAIL_BALANCE_UNAVAILABLE";
     }
@@ -72,10 +73,10 @@ const char* ConnectFail_UserText(ConnectFailCode code) {
         return "Cancelled.";
     case CONNECT_FAIL_INVALID_CODE:
         return "Invalid room code.";
-    case CONNECT_FAIL_CODE_VERSION:
-        /* Callers pass a more specific older/newer string via
-         * set_fail_msg; this is the generic fallback. */
-        return "Code is from a different game version.";
+    case CONNECT_FAIL_CODE_VERSION_OLDER:
+        return "Code is from an older game version.";
+    case CONNECT_FAIL_CODE_VERSION_NEWER:
+        return "Code is from a newer game version.";
     case CONNECT_FAIL_INTERNAL:
         return "Internal error. See log.";
     case CONNECT_FAIL_BALANCE_UNAVAILABLE:

@@ -109,10 +109,18 @@ typedef enum ConnectFailCode {
 
     /* Local errors */
     CONNECT_FAIL_INVALID_CODE,    /* room code failed to decode               */
-    CONNECT_FAIL_CODE_VERSION,    /* S4b: room code is a valid but WRONG-VERSION
-                                     format (v1 pre-nonce code, or an unknown
-                                     future version char) — the two builds must
-                                     match; NOT a typo                         */
+    /* S4-review L-4: the room code is a valid but WRONG-VERSION format —
+     * the two builds must match; NOT a typo. Split into two machine
+     * codes because "older" and "newer" send the two ends of a failed
+     * pairing to OPPOSITE actions: with _OLDER the code's CREATOR needs
+     * to update, with _NEWER the person typing it does. Collapsed into
+     * one code, log triage could not tell which side was stale — which
+     * is the entire question a support thread has to answer. */
+    CONNECT_FAIL_CODE_VERSION_OLDER, /* v1 (11-char) or v2 (14-char) code:
+                                        the code's CREATOR is behind       */
+    CONNECT_FAIL_CODE_VERSION_NEWER, /* current length, unrecognized version
+                                        char: WE are behind (or the code is
+                                        corrupt)                           */
     CONNECT_FAIL_INTERNAL,        /* thread spawn / packet build / config     */
     CONNECT_FAIL_BALANCE_UNAVAILABLE, /* arm-time refusal: this build could not
                                      reach verified-arcade balance (CPS3 ROM

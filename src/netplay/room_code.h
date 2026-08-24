@@ -27,7 +27,7 @@
  * mapping the advertised port is STABLE, so a past opponent could do it
  * months later. 32 bits turns that 68 s into >= 2.2 years of sustained
  * flooding; combined with the host-side attempt cap (direct_p2p.c,
- * host_punch_gate_note_drop) it is unreachable.
+ * host_punch_gate_note_bad) it is unreachable.
  *
  * Why the entropy MUST live in the code: the joiner derives the punch
  * token from the decoded code ALONE, before (and often without) any
@@ -213,6 +213,34 @@ RoomCodeDecodeResult RoomCode_Decode(const char* code,
  * predictable nonce would silently void the S4b guessing protection).
  */
 bool RoomCode_GenerateNonce(uint32_t* out_nonce);
+
+/*
+ * S4-review MEDIUM-4: write a LOG-SAFE rendering of `code` into `out`,
+ * with every nonce-bearing character replaced by '*'.
+ *
+ * Pre-S4b the room code was a reversible (ip, port) encoding — logging
+ * it in full leaked nothing the ip:port on the same line did not. Post-
+ * S4b it is KEY MATERIAL: the same payload seeds BOTH the rendezvous
+ * session key ("3SXR-SK3") and the S4a punch token ("3SXR-PT3"). Alpha
+ * testers routinely hand log files over, and a log file carrying a live
+ * room code hands over the ability to squat the rendezvous slot and to
+ * satisfy the punch gate.
+ *
+ * What survives: the version char and the ip+port characters — the half
+ * the joiner must know anyway, and which the surrounding log line
+ * already prints in the clear. What does not: the 32 nonce bits.
+ *
+ * The nonce occupies the LOW 32 bits of the 80-bit payload, i.e. the
+ * last ceil(32/5) = 7 payload chars, and the check digit is a function
+ * of them, so masking the final 8 non-dash characters removes every
+ * nonce bit. `out` must be at least ROOM_CODE_BUF_LEN; it is always
+ * NUL-terminated. Accepts dashed or dash-free input. NULL/short input
+ * yields an empty string.
+ *
+ * The full code belongs on the overlay only.
+ */
+#define ROOM_CODE_REDACT_CHARS 8
+void RoomCode_Redact(const char* code, char out[ROOM_CODE_BUF_LEN]);
 
 /*
  * Normalize user input: strip '-' and whitespace, upper-case letters,

@@ -177,6 +177,28 @@ static bool iso7064_mod_37_36_verify(const char* code_with_check, size_t len) {
     return expected == actual;
 }
 
+void RoomCode_Redact(const char* code, char out[ROOM_CODE_BUF_LEN]) {
+    if (out == NULL) return;
+    out[0] = '\0';
+    if (code == NULL) return;
+
+    size_t w = 0;
+    for (size_t i = 0; code[i] != '\0' && w + 1 < (size_t)ROOM_CODE_BUF_LEN; i++) {
+        out[w++] = code[i];
+    }
+    out[w] = '\0';
+
+    /* Walk back over the printable (non-dash) tail, masking as we go.
+     * Positional rather than index-arithmetic so a format change shows
+     * up as an obviously-wrong log string, never a silent leak. */
+    int masked = 0;
+    for (int i = (int)w - 1; i >= 0 && masked < ROOM_CODE_REDACT_CHARS; i--) {
+        if (out[i] == '-') continue;
+        out[i] = '*';
+        masked++;
+    }
+}
+
 size_t RoomCode_NormalizeInput(const char* in, char* out, size_t out_cap) {
     if (out_cap == 0) return 0;
     if (!in) { out[0] = '\0'; return 0; }

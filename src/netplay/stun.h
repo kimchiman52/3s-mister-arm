@@ -57,6 +57,12 @@ typedef struct {
      * of each attempt. ConnectFail_ClassifyJoin upgrades a punch
      * failure carrying this bit to P2P_FAIL_PUNCH_AUTH. */
     bool diag_punch_bad_token;
+
+    /* S4-review L-3: the platform CSPRNG was unavailable, so no STUN
+     * transaction ID could be generated and discovery refused to send.
+     * Reported as an INTERNAL failure, not as a connectivity one —
+     * nothing ever left the machine. See build_binding_request. */
+    bool diag_csprng_fail;
 } StunResult;
 
 /// Perform STUN Binding Requests (RFC 5389) against the built-in server

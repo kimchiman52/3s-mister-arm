@@ -4,6 +4,7 @@
 #include "common.h"
 #include "configuration.h"
 #include "netplay/direct_p2p.h"
+#include "netplay/room_code.h"
 #include "netplay/direct_p2p_handoff.h"
 #include "netplay/netplay.h"
 #include "netplay/netplay_nav.h"
@@ -239,7 +240,17 @@ static void dispatch_direct_p2p_handoff(void) {
         DirectP2P_BeginHost(handoff.port);
         break;
     case DIRECT_P2P_HANDOFF_MODE_JOIN:
-        fprintf(stderr, "[direct_p2p_handoff] dispatching Join (peer_code=%s)\n", handoff.peer_code);
+        {
+            /* S4-review MEDIUM-4: the peer code is the HOST's key
+             * material (it seeds their session key and punch token), so
+             * the nonce characters are redacted here the same way the
+             * host redacts its own. See RoomCode_Redact. */
+            char peer_code_redacted[ROOM_CODE_BUF_LEN];
+            RoomCode_Redact(handoff.peer_code, peer_code_redacted);
+            fprintf(stderr,
+                    "[direct_p2p_handoff] dispatching Join (peer_code=%s, nonce redacted)\n",
+                    peer_code_redacted);
+        }
         DirectP2P_BeginJoin(handoff.peer_code);
         break;
     case DIRECT_P2P_HANDOFF_MODE_NONE:

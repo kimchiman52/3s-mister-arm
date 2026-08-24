@@ -70,8 +70,11 @@ bool Stun_DecodeEndpoint(const char* code, char* out_ip, uint16_t* out_port, uin
     return true;
 }
 
-// Build a 20-byte STUN Binding Request (RFC 5389 §6)
-static void build_binding_request(uint8_t* buf, uint8_t* transaction_id) {
+// Build a 20-byte STUN Binding Request (RFC 5389 §6).
+// Returns false when the platform CSPRNG is unavailable — see the
+// transaction-ID comment below for why that is fatal rather than
+// degradable.
+static bool build_binding_request(uint8_t* buf, uint8_t* transaction_id) {
     // Type: Binding Request (0x0001)
     buf[0] = 0x00;
     buf[1] = 0x01;
@@ -91,21 +94,38 @@ static void build_binding_request(uint8_t* buf, uint8_t* transaction_id) {
      * requires txids to be "cryptographically random": a predictable
      * txid lets an off-path attacker forge Binding Responses (feeding
      * us a wrong mapped endpoint, i.e. a dead room code, or steering
-     * the S1 rebind-drift path). Fall back to SDL_rand only when the
-     * platform CSPRNG is unavailable, with a one-time warning. */
+     * the S1 rebind-drift path).
+     *
+     * S4-review L-3 — CSPRNG failure policy is now CONSISTENT AND LOUD.
+     * This used to degrade silently to SDL_rand behind a one-time
+     * SDL_LogWarn while RoomCode_GenerateNonce hard-failed on the same
+     * condition. On a device with no /dev/urandom that split the two
+     * roles: the HOST aborted hosting outright, while the JOINER
+     * proceeded with predictable txids — reintroducing the exact
+     * RFC 5389 §6 response-forgery weakness S4a set out to remove, on
+     * the side least able to notice. There is no "slightly weaker
+     * netplay" worth having here: fail closed on both sides and say so
+     * at ERROR level.
+     *
+     * (The old one-shot `static bool warned` was also a plain non-atomic
+     * bool read/written from the discover worker AND the main-thread
+     * keepalive path. It is gone; the CAS below is the same pattern
+     * direct_p2p.c's rendezvous-queue drop log uses.) */
     if (!Csprng_Bytes(transaction_id, 12)) {
-        static bool warned = false;
-        if (!warned) {
-            warned = true;
-            SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
-                        "STUN: platform CSPRNG unavailable — transaction IDs fall "
-                        "back to SDL_rand (predictable; response forgery possible)");
+        static SDL_AtomicInt logged = { 0 };
+        if (SDL_CompareAndSwapAtomicInt(&logged, 0, 1)) {
+            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                         "STUN: platform CSPRNG unavailable — refusing to send a "
+                         "Binding Request with a predictable transaction ID "
+                         "(RFC 5389 §6 requires cryptographic randomness; a "
+                         "guessable txid permits off-path response forgery). "
+                         "Netplay cannot start on this device.");
         }
-        for (int i = 0; i < 12; i++) {
-            transaction_id[i] = (uint8_t)(SDL_rand(256));
-        }
+        memset(transaction_id, 0, 12);
+        return false;
     }
     memcpy(&buf[8], transaction_id, 12);
+    return true;
 }
 
 /* --- S4a authenticated punch payload ----------------------------------- */
@@ -401,7 +421,13 @@ static void stun_probe_add(StunProbeSlot* slots, int* slot_count, const char* nu
     s->addr = addr;
     s->port = port;
     SDL_strlcpy(s->label, label, sizeof(s->label));
-    build_binding_request(s->request, s->txid);
+    if (!build_binding_request(s->request, s->txid)) {
+        /* L-3: no CSPRNG => no probe. Leaving the slot unarmed keeps
+         * diag_servers_probed at 0, which the caller turns into an
+         * INTERNAL failure rather than a connectivity diagnosis. */
+        NET_UnrefAddress(addr);
+        return;
+    }
     s->armed_at_ms = now_ms;
     (*slot_count)++;
 }
@@ -413,6 +439,26 @@ bool Stun_Discover(StunResult* result, uint16_t local_port, int timeout_ms) {
     result->socket = NULL;
     if (timeout_ms <= 0)
         timeout_ms = STUN_DEFAULT_TIMEOUT_MS;
+
+    /* S4-review L-3: probe the CSPRNG up front and refuse EARLY when it
+     * is unavailable. Discovery cannot produce a compliant transaction
+     * ID without it (build_binding_request now fails closed), so every
+     * slot would silently go unarmed and the caller would misread an
+     * all-zeros diag as "no internet connection". This flag routes it
+     * to CONNECT_FAIL_INTERNAL instead — nothing ever left the machine.
+     * The host side already hard-failed here via RoomCode_GenerateNonce;
+     * this makes the JOINER behave identically instead of proceeding
+     * with predictable txids. */
+    {
+        uint8_t probe[12];
+        if (!Csprng_Bytes(probe, sizeof(probe))) {
+            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                         "STUN: platform CSPRNG unavailable — refusing to start "
+                         "discovery (see build_binding_request)");
+            result->diag_csprng_fail = true;
+            return false;
+        }
+    }
 
     // Create socket once — local port stays consistent across server attempts.
     // Force IPv4: MiSTer kernel disables IPv6 (sysctl net.ipv6.conf.*.disable_ipv6=1),
@@ -911,7 +957,9 @@ bool Stun_SendKeepalive(StunResult* result, uint8_t out_txid[12]) {
         return false;
 
     uint8_t request[20];
-    build_binding_request(request, out_txid);
+    if (!build_binding_request(request, out_txid)) {
+        return false; /* L-3: no CSPRNG => no keepalive, and say so */
+    }
     if (!NET_SendDatagram(result->socket, (NET_Address*)result->server_addr, result->server_port, request, 20)) {
         SDL_LogDebug(SDL_LOG_CATEGORY_APPLICATION, "STUN: keepalive send failed: %s", SDL_GetError());
         return false;

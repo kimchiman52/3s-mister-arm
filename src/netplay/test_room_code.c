@@ -590,6 +590,105 @@ static void reject_bogus(void) {
     fprintf(stderr, "[test_room_code] bogus-input rejection OK\n");
 }
 
+/* --- S4-review MEDIUM-4: log redaction --------------------------------
+ *
+ * The property that matters is not "some characters are stars" but
+ * "ZERO nonce bits survive". So: encode the SAME (ip, port) under many
+ * different nonces and assert every redaction is byte-identical. If any
+ * nonce bit leaked into a surviving character the strings would differ.
+ * Also assert the surviving prefix still identifies the version and is
+ * genuinely shorter than the whole code (a redactor that blanked
+ * everything would pass the first test trivially).
+ */
+static void redaction_behavior(void) {
+    const uint32_t ip_be = make_ip_be(198, 51, 100, 7);
+    const uint16_t pport = 51234;
+
+    char first[ROOM_CODE_BUF_LEN] = { 0 };
+    uint32_t rng = 0xC0FFEE11u;
+    for (int i = 0; i < 512; i++) {
+        rng = rng * 1664525u + 1013904223u;
+        char code[ROOM_CODE_BUF_LEN];
+        if (!RoomCode_Encode(ip_be, pport, rng, code)) {
+            fail("redact", "encode failed during setup");
+            return;
+        }
+        char red[ROOM_CODE_BUF_LEN];
+        RoomCode_Redact(code, red);
+
+        if (strlen(red) != strlen(code)) {
+            fail("redact", "redaction changed the code's length");
+            return;
+        }
+        if (strcmp(red, code) == 0) {
+            fail("redact", "redaction returned the code unchanged");
+            return;
+        }
+        if (red[0] != ROOM_CODE_VERSION_CHAR) {
+            fail("redact", "redaction destroyed the version char");
+            return;
+        }
+        if (i == 0) {
+            memcpy(first, red, sizeof(first));
+        } else if (strcmp(first, red) != 0) {
+            fprintf(stderr,
+                    "[test_room_code] FAIL: redact: nonce bits SURVIVED "
+                    "redaction — \"%s\" vs \"%s\" for the same ip:port\n",
+                    first, red);
+            fail_count++;
+            return;
+        }
+    }
+
+    /* Exactly ROOM_CODE_REDACT_CHARS masked characters, and they are the
+     * TAIL (the nonce end), not a scatter. */
+    {
+        int stars = 0;
+        for (size_t i = 0; first[i] != '\0'; i++) {
+            if (first[i] == '*') stars++;
+        }
+        if (stars != ROOM_CODE_REDACT_CHARS) {
+            fprintf(stderr,
+                    "[test_room_code] FAIL: redact: %d masked chars, expected "
+                    "%d (\"%s\")\n", stars, ROOM_CODE_REDACT_CHARS, first);
+            fail_count++;
+            return;
+        }
+    }
+
+    /* A DIFFERENT (ip, port) must still be distinguishable — redaction
+     * must not throw away the half the log is for. */
+    {
+        char other[ROOM_CODE_BUF_LEN];
+        char other_red[ROOM_CODE_BUF_LEN];
+        if (!RoomCode_Encode(make_ip_be(203, 0, 113, 77), 3478, 1u, other)) {
+            fail("redact", "encode failed for the distinctness case");
+            return;
+        }
+        RoomCode_Redact(other, other_red);
+        if (strcmp(other_red, first) == 0) {
+            fail("redact", "two different endpoints redact identically — the "
+                           "redaction is destroying the ip:port half too");
+            return;
+        }
+    }
+
+    /* Degenerate inputs must not write past the buffer or leave it
+     * unterminated. */
+    {
+        char red[ROOM_CODE_BUF_LEN];
+        RoomCode_Redact(NULL, red);
+        if (red[0] != '\0') fail("redact", "NULL input did not yield \"\"");
+        RoomCode_Redact("", red);
+        if (red[0] != '\0') fail("redact", "empty input did not yield \"\"");
+        RoomCode_Redact("2AB", red);
+        if (strlen(red) != 3) fail("redact", "short input changed length");
+    }
+
+    fprintf(stderr, "[test_room_code] redaction OK — \"%s\" (0 nonce bits "
+                    "survive across 512 nonces)\n", first);
+}
+
 static void normalization_sanity(void) {
     /* Encode, convert display form to lower-case, decode. */
     char code[ROOM_CODE_BUF_LEN];
@@ -679,6 +778,10 @@ int Netplay_Test_RoomCode(void) {
 
     /* Normalization sanity (case fold, dash strip). */
     normalization_sanity();
+
+    /* S4-review MEDIUM-4: the code is key material — logs must not
+     * carry the nonce. */
+    redaction_behavior();
 
     if (fail_count > 0) {
         fprintf(stderr, "[test_room_code] %d failure(s)\n", fail_count);

@@ -1281,6 +1281,25 @@ static int test_failure_taxonomy(void) {
     EXPECT_TRUE("7e-hold-zero", held == 0);
 
     /* --- 7f: every code has a distinct machine string and a user string. */
+    /* S4-review L-4: "older" and "newer" must be DISTINCT machine codes.
+     * Collapsed into one, log triage could not tell which side of a
+     * failed pairing was stale — the entire question a support thread
+     * has to answer. The generic sweep below proves every code has a
+     * distinct string; this proves these two specifically exist, differ,
+     * and carry user text that points at the right person. */
+    EXPECT_TRUE("test7f-l4",
+                strcmp(ConnectFail_Code(CONNECT_FAIL_CODE_VERSION_OLDER),
+                       ConnectFail_Code(CONNECT_FAIL_CODE_VERSION_NEWER)) != 0);
+    EXPECT_TRUE("test7f-l4",
+                strcmp(ConnectFail_UserText(CONNECT_FAIL_CODE_VERSION_OLDER),
+                       ConnectFail_UserText(CONNECT_FAIL_CODE_VERSION_NEWER)) != 0);
+    EXPECT_TRUE("test7f-l4",
+                strstr(ConnectFail_UserText(CONNECT_FAIL_CODE_VERSION_OLDER),
+                       "older") != NULL);
+    EXPECT_TRUE("test7f-l4",
+                strstr(ConnectFail_UserText(CONNECT_FAIL_CODE_VERSION_NEWER),
+                       "newer") != NULL);
+
     for (int c = CONNECT_FAIL_NONE; c <= CONNECT_FAIL_LAST_; c++) {
         const char* mc = ConnectFail_Code((ConnectFailCode)c);
         EXPECT_TRUE("7f-code-nonnull", mc != NULL && mc[0] != '\0');
