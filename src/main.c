@@ -974,8 +974,32 @@ int Netplay_Test_SparseEffectSave(void);
 int Netplay_Test_BilateralPunch(void);
 #endif
 
+/* Test harnesses run unattended (scripts, CI). SDL's DEFAULT assertion
+ * handler shows an interactive Retry/Break/Abort/Ignore prompt in Debug
+ * builds, which never returns in a non-interactive session — a tripped
+ * SDL_assert anywhere under a harness becomes an infinite hang that a
+ * wrapper losing the exit code can mistake for a pass. Install an
+ * abort-on-assert handler before dispatching ANY harness so every
+ * assert terminates loudly (SIGABRT) with the condition on stderr, with
+ * no SDL_ASSERT environment override needed. Interactive game runs keep
+ * SDL's default handler. */
+static SDL_AssertState SDLCALL test_harness_assert_handler(const SDL_AssertData* data, void* userdata) {
+    (void)userdata;
+    fprintf(stderr,
+            "[test-harness] SDL assertion failed: '%s' at %s:%d (%s) — aborting "
+            "(non-interactive harness assert policy, src/main.c)\n",
+            data->condition, data->filename, data->linenum, data->function);
+    return SDL_ASSERTION_ABORT;
+}
+
 int main(int argc, const char* argv[]) {
     read_args(argc, argv, &configuration);
+
+    if (configuration.test_netplay_event_queue || configuration.test_mist_handshake ||
+        configuration.test_room_code || configuration.test_stun_mock ||
+        configuration.test_sparse_effect_save || configuration.test_bilateral_punch) {
+        SDL_SetAssertionHandler(test_harness_assert_handler, NULL);
+    }
 
     if (configuration.test_netplay_event_queue) {
 #ifdef ENABLE_NETPLAY

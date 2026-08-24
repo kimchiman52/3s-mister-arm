@@ -286,7 +286,13 @@ static ConfigEntry* find_entry(const char* key) {
     } else if (default_entry != NULL) {
         return default_entry;
     } else {
-        SDL_assert(false);
+        /* Unknown key: warn and fall through to the getters' documented
+         * defaults (false / 0 / NULL). This used to SDL_assert(false),
+         * which in a default Debug build invokes SDL's INTERACTIVE
+         * assertion prompt — a guaranteed hang for any non-interactive
+         * run (test harnesses, CI) that reaches it. A typo'd key is a
+         * programmer error worth logging, not worth an interactive trap. */
+        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "Config: unknown key '%s' — returning the type default", key);
         return NULL;
     }
 }
