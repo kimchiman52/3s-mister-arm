@@ -971,9 +971,31 @@ static int SDLCALL host_thread_fn(void* data) {
 
     /* 1) UPnP probe. Non-fatal if it fails — we fall through to STUN.
      * Request external == internal so the router doesn't have to invent
-     * an external port (some firmware rejects wildcards, error 716). */
+     * an external port (some firmware rejects wildcards, error 716).
+     *
+     * S2-retry hygiene (review L-5): on a FAILED_STUN auto-retry, a
+     * PREVIOUS attempt in this hosting session may already hold a live
+     * mapping (s_upnp_mapping is only reset in DirectP2P_Init /
+     * teardown, deliberately — the router-side lease survives the
+     * retry). Re-probing could only refresh that same (internal,
+     * external) pair, but a TRANSIENT re-probe failure would leave
+     * upnp_ok=false while s_upnp_mapping.active stays true — the
+     * advertised port becomes the STUN port while a later room-code
+     * drift re-encode (which keys off s_upnp_mapping.active) would
+     * switch to the stale mapping's port. Skip the re-probe and trust
+     * the live mapping instead: consistent with S1's renewal policy,
+     * which likewise KEEPS the mapping when a renew attempt fails
+     * (upnp_renew_tick) rather than tearing it down on a blip. */
     set_state(DIRECT_P2P_UPNP_PROBE);
-    bool upnp_ok = try_upnp(local_port, local_port);
+    bool upnp_ok;
+    if (s_upnp_mapping.active && s_upnp_mapping.internal_port == local_port) {
+        SDL_Log("[direct_p2p] retry: reusing the live UPnP mapping from the previous "
+                "attempt (external %u -> internal %u) — skipping re-probe",
+                s_upnp_mapping.external_port, s_upnp_mapping.internal_port);
+        upnp_ok = true;
+    } else {
+        upnp_ok = try_upnp(local_port, local_port);
+    }
     if (cancel_requested()) {
         set_status("Cancelled.");
         set_state(DIRECT_P2P_IDLE);
@@ -2130,9 +2152,12 @@ void DirectP2P_Tick(void) {
          * momentary uplink loss) and the host has nothing else to do —
          * parking terminal turns a 5-second blip into a dead room.
          * Bounded per hosting session; each retry re-runs the full
-         * host_thread_fn (UPnP probe included — the failure may have
-         * poisoned the earlier probe too). The JOINER already retried
-         * inside join_thread_fn and stays terminal here. */
+         * host_thread_fn. The UPnP step reuses a live mapping from the
+         * previous attempt rather than re-probing (review L-5 — a
+         * transient re-probe failure must not desync upnp_ok from
+         * s_upnp_mapping.active); with no live mapping it probes
+         * fresh. The JOINER already retried inside join_thread_fn and
+         * stays terminal here. */
         if (s_work.role == ROLE_HOST && s_host_stun_retry_count < HOST_STUN_MAX_RETRIES) {
             uint64_t now = SDL_GetTicks();
             if (s_host_stun_retry_at_ms == 0) {
