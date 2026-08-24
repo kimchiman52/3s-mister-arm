@@ -164,6 +164,103 @@ const char* mist_handshake_last_reject_reason(void);
  */
 uint16_t mist_handshake_local_state_ver(void);
 
+/* ------------------------------------------------------------------- */
+/* R-1 adv-review M-5: testable live-runner core.                      */
+/*                                                                     */
+/* The production handshake loop used to live inline in netplay.c's    */
+/* run_mist_handshake_on_net_sock() where no test could reach it. The  */
+/* loop now lives here as mist_handshake_run_attempt(), driven through */
+/* a small IO vtable: netplay.c supplies an SDL3_net-backed adapter    */
+/* for the live session socket, and the unit test supplies an          */
+/* in-memory adapter with a fake clock, so every branch (tri-state     */
+/* result, retransmit budget, gratuitous ack, reject latching) is      */
+/* testable deterministically without sockets or real time.            */
+/* ------------------------------------------------------------------- */
+
+/* Tri-state result of one handshake attempt (one MIST_DEFAULT_TIMEOUT_MS
+ * budget): OK / silent timeout (retryable — the peer may not have
+ * reached its own gate yet) / hard failure (explicit reject, classified
+ * incompatibility, or broken local transport). */
+typedef enum {
+    MIST_HS_OK = 0,
+    MIST_HS_TIMEOUT,
+    MIST_HS_FAIL,
+} MistHandshakeResult;
+
+/* Peer-skew tolerance: the two peers reach the TRANSITIONING gate at
+ * slightly different times (cold-launch re-exec on the OSD host path can
+ * leave one peer in Init_Task seconds longer than the other). A silent
+ * 500 ms timeout therefore must NOT hard-fail immediately — the peer may
+ * simply not be listening yet. Each attempt keeps the plan's 500 ms
+ * budget; the caller retries across TRANSITIONING ticks up to this cap
+ * before declaring the peer incompatible/unreachable (40 x 500 ms ≈ 20 s
+ * of active waiting). An explicit reject still fails immediately. */
+#define MIST_HANDSHAKE_MAX_ATTEMPTS 40
+
+/* What the session gate should do after one attempt — the retry-policy
+ * mapping that used to live inline in Netplay_Run()'s TRANSITIONING
+ * case. Extracted so the attempt-cap/exhaustion-message behavior is unit
+ * testable (adv-review M-5). */
+typedef enum {
+    MIST_GATE_PROCEED = 0, /* handshake done — start GekkoNet */
+    MIST_GATE_RETRY,       /* silent timeout, budget remains — retry next tick */
+    MIST_GATE_FAIL,        /* hard fail — tear the session down */
+} MistGateAction;
+
+/*
+ * IO vtable the runner core drives. All callbacks are non-NULL.
+ *
+ *   send_to_peer       — send a frame to the session peer (hellos and the
+ *                        completion-race gratuitous ack).
+ *   recv               — non-blocking: copy the next queued datagram into
+ *                        `buf` (truncating to `cap` — only MIST frames,
+ *                        which fit MIST_FRAME_MAX, are ever parsed beyond
+ *                        byte 0). Returns the copied byte count, or 0 when
+ *                        nothing is pending (a zero-length datagram reads
+ *                        as nothing pending; the next call resumes the
+ *                        drain). Sets *from_session_peer to true when the
+ *                        datagram's source address AND port match the
+ *                        session peer.
+ *   send_reply_to_last — send a frame to the source of the most recently
+ *                        recv'd datagram (ack/reject answers to a hello).
+ *   now_ms             — monotonic milliseconds.
+ *   delay_ms           — sleep (keeps the live loop from burning CPU; a
+ *                        test clock advances virtual time here instead).
+ */
+typedef struct MistRunnerIo {
+    void* ctx;
+    void (*send_to_peer)(void* ctx, const uint8_t* buf, size_t len);
+    int (*recv)(void* ctx, uint8_t* buf, size_t cap, bool* from_session_peer);
+    void (*send_reply_to_last)(void* ctx, const uint8_t* buf, size_t len);
+    uint64_t (*now_ms)(void* ctx);
+    void (*delay_ms)(void* ctx, uint32_t ms);
+} MistRunnerIo;
+
+/*
+ * mist_handshake_run_attempt — one full handshake attempt over `io`:
+ * retransmits our hello (MIST_RETRANSMIT_COUNT x MIST_RETRANSMIT_INTERVAL_MS),
+ * answers inbound hellos, and classifies replies, within one
+ * MIST_DEFAULT_TIMEOUT_MS budget. On MIST_HS_TIMEOUT / MIST_HS_FAIL a
+ * human-readable reason is written to `reason` (sized `reason_cap`).
+ */
+MistHandshakeResult mist_handshake_run_attempt(const MistRunnerIo* io,
+                                               char* reason,
+                                               size_t reason_cap);
+
+/*
+ * mist_handshake_gate_next — fold one attempt result into the session
+ * gate's retry state. `attempts` is the caller-owned consecutive-timeout
+ * counter (reset to 0 on MIST_HS_OK). On the timeout that exhausts
+ * `max_attempts`, overwrites `reason` with the no-reply explanation
+ * (every pre-R-1 build never answers MIST hellos — see the caller's
+ * comment in netplay.c).
+ */
+MistGateAction mist_handshake_gate_next(MistHandshakeResult hs,
+                                        int* attempts,
+                                        int max_attempts,
+                                        char* reason,
+                                        size_t reason_cap);
+
 #ifdef ENABLE_NETPLAY_TESTS
 /* Test-only helpers. Implementation details surfaced for the unit test
  * to drive a synthetic peer over a loopback socket. */

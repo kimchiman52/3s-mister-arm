@@ -563,6 +563,135 @@ size_t mist_handshake_build_reply(const uint8_t* in_payload,
 }
 
 /* ------------------------------------------------------------------- */
+/* R-1 adv-review M-5: testable live-runner core                       */
+/* ------------------------------------------------------------------- */
+
+/* Receive scratch size for the runner. GekkoNet datagrams can exceed
+ * MIST_FRAME_MAX; the runner only ever inspects byte 0 of non-MIST
+ * traffic, and every MIST frame fits MIST_FRAME_MAX, so truncation to
+ * this cap never affects classification. */
+#define MIST_RUNNER_RECV_CAP 2048
+
+/* Idle sleep between drain passes — keeps the live loop from burning
+ * 100% CPU (same 5 ms the pre-extraction netplay.c loop used). */
+#define MIST_RUNNER_IDLE_DELAY_MS 5
+
+MistHandshakeResult mist_handshake_run_attempt(const MistRunnerIo* io,
+                                               char* reason,
+                                               size_t reason_cap) {
+    uint8_t hello[MIST_FRAME_MAX];
+    const size_t hello_len = mist_handshake_build_hello(hello, sizeof(hello));
+    if (hello_len == 0) {
+        snprintf(reason, reason_cap, "hello build failed");
+        return MIST_HS_FAIL;
+    }
+
+    const uint64_t start_ms = io->now_ms(io->ctx);
+    const uint64_t deadline_ms = start_ms + (uint64_t)MIST_DEFAULT_TIMEOUT_MS;
+    int sends = 0;
+    uint64_t next_send_ms = start_ms;
+
+    for (;;) {
+        const uint64_t now = io->now_ms(io->ctx);
+        if (now >= deadline_ms) {
+            snprintf(reason, reason_cap, "timeout (peer did not respond)");
+            return MIST_HS_TIMEOUT;
+        }
+        if (now >= next_send_ms && sends < MIST_RETRANSMIT_COUNT) {
+            io->send_to_peer(io->ctx, hello, hello_len);
+            sends++;
+            next_send_ms = now + MIST_RETRANSMIT_INTERVAL_MS;
+        }
+
+        /* Drain pending datagrams. */
+        uint8_t buf[MIST_RUNNER_RECV_CAP];
+        bool from_peer = false;
+        int n;
+        while ((n = io->recv(io->ctx, buf, sizeof(buf), &from_peer)) > 0) {
+            const int cls = mist_handshake_parse_response(buf, (size_t)n);
+            if (cls == 1) {
+                /* Completion race guard: our side is done, but the peer
+                 * still needs an ack for ITS hello. If its hello was
+                 * reordered behind the ack we just consumed (or lost),
+                 * the peer would never complete — we'd start GekkoNet
+                 * and it would time out. Send one gratuitous ack so the
+                 * peer completes regardless of hello arrival order.
+                 * Redundant acks are harmless: a peer that already
+                 * completed has GekkoNet on the socket, which drops
+                 * non-Gekko frames. Building the reply from our OWN
+                 * hello payload always yields an ack (we classify
+                 * ourselves as compatible). */
+                uint8_t final_ack[MIST_FRAME_MAX];
+                const size_t final_ack_len =
+                    mist_handshake_build_reply(hello + MIST_HEADER_LEN,
+                                               hello_len - MIST_HEADER_LEN,
+                                               final_ack, sizeof(final_ack));
+                if (final_ack_len > 0) {
+                    io->send_to_peer(io->ctx, final_ack, final_ack_len);
+                }
+                return MIST_HS_OK;
+            }
+            if (cls == -1) {
+                /* Explicit reject frame, or an ack that classified as
+                 * incompatible. Reason was cached by parse_response. */
+                const char* r = mist_handshake_last_reject_reason();
+                snprintf(reason, reason_cap, "%s", r[0] ? r : "peer rejected");
+                return MIST_HS_FAIL;
+            }
+            if (cls == 0) {
+                /* Peer also runs the handshake — reply with ack/reject.
+                 * Use the DECLARED payload length from the header
+                 * (parse_header re-derives it; cls == 0 guarantees the
+                 * frame already passed parse_header, so this cannot
+                 * fail) rather than the raw datagram tail, so trailing
+                 * garbage can never be misparsed as payload fields. */
+                uint8_t msg_type = 0;
+                size_t declared_len = 0;
+                if (!parse_header(buf, (size_t)n, &msg_type, &declared_len)) {
+                    continue; /* unreachable — defensive */
+                }
+                uint8_t reply[MIST_FRAME_MAX];
+                const size_t reply_len = mist_handshake_build_reply(
+                    buf + MIST_HEADER_LEN, declared_len, reply, sizeof(reply));
+                if (reply_len > 0) {
+                    io->send_reply_to_last(io->ctx, reply, reply_len);
+                }
+            }
+            /* cls == -2 — not a MIST frame; drop and keep listening. */
+        }
+
+        io->delay_ms(io->ctx, MIST_RUNNER_IDLE_DELAY_MS);
+    }
+}
+
+MistGateAction mist_handshake_gate_next(MistHandshakeResult hs,
+                                        int* attempts,
+                                        int max_attempts,
+                                        char* reason,
+                                        size_t reason_cap) {
+    if (hs == MIST_HS_OK) {
+        *attempts = 0;
+        return MIST_GATE_PROCEED;
+    }
+    if (hs == MIST_HS_TIMEOUT) {
+        *attempts += 1;
+        if (*attempts < max_attempts) {
+            /* Silent peer — likely still booting toward its own gate
+             * (cold-launch skew). Caller stays in TRANSITIONING and
+             * retries next tick; each attempt keeps the 500 ms budget. */
+            return MIST_GATE_RETRY;
+        }
+        /* Exhausted every retry with zero MIST traffic: either the
+         * connection died, or the opponent runs a build that predates
+         * the handshake (every pre-R-1 release) — which also predates
+         * the current GameState layout. Say so. */
+        snprintf(reason, reason_cap, "No reply - opponent build may be too old");
+        return MIST_GATE_FAIL;
+    }
+    return MIST_GATE_FAIL;
+}
+
+/* ------------------------------------------------------------------- */
 /* Test-only hooks                                                     */
 /* ------------------------------------------------------------------- */
 

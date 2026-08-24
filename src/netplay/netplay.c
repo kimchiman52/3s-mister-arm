@@ -280,25 +280,11 @@ static inline uint64_t netplay_utc_ms(void) {
 // on the same socket configure_gekko() hands to GekkoNet.
 static bool s_mist_handshake_done = false;
 static char s_mist_reject_reason[128] = { 0 };
-// Peer-skew tolerance: the two peers reach the TRANSITIONING gate at
-// slightly different times (cold-launch re-exec on the OSD host path can
-// leave one peer in Init_Task seconds longer than the other). A silent
-// 500 ms timeout therefore must NOT hard-fail immediately — the peer may
-// simply not be listening yet. Each attempt keeps the plan's 500 ms
-// budget; we retry across TRANSITIONING ticks up to this cap before
-// declaring the peer incompatible/unreachable (40 x 500 ms ≈ 20 s of
-// active waiting). An explicit reject frame still fails immediately.
-#define MIST_HANDSHAKE_MAX_ATTEMPTS 40
+// Consecutive silent-timeout attempts. Retry policy (peer-skew
+// tolerance, 40 x 500 ms cap) lives with MIST_HANDSHAKE_MAX_ATTEMPTS /
+// mist_handshake_gate_next in mist_handshake.h — extracted there so it
+// is unit-testable (adv-review M-5).
 static int s_mist_handshake_attempts = 0;
-
-// Tri-state result for run_mist_handshake_on_net_sock: OK / silent
-// timeout (retryable — peer may not have reached its gate yet) / hard
-// failure (peer sent a reject, or local transport state is broken).
-typedef enum {
-    MIST_HS_OK = 0,
-    MIST_HS_TIMEOUT,
-    MIST_HS_FAIL,
-} MistHandshakeResult;
 
 // First-to-X (number of game wins required to close a session).
 // Placeholder for Track C / lobby FT negotiation; default 2 = FT2 sessions.
@@ -623,12 +609,72 @@ static void configure_lossy_adapter(NET_DatagramSocket* sock) {
 }
 #endif
 
+// R-1 — SDL3_net adapter for the extracted handshake runner core
+// (mist_handshake_run_attempt). The core owns the loop/classification
+// logic; these callbacks bind it to the live session socket. The most
+// recently received datagram is kept alive in `last` (destroyed on the
+// next recv or after the run) so send_reply_to_last can answer its
+// source, exactly as the pre-extraction inline loop did.
+typedef struct {
+    NET_DatagramSocket* sock;
+    NET_Address* peer;
+    Uint16 peer_port;
+    NET_Datagram* last;
+} MistNetIo;
+
+static void mist_netio_send_to_peer(void* vctx, const uint8_t* buf, size_t len) {
+    MistNetIo* io = (MistNetIo*)vctx;
+    NET_SendDatagram(io->sock, io->peer, io->peer_port, buf, (int)len);
+}
+
+static int mist_netio_recv(void* vctx, uint8_t* buf, size_t cap, bool* from_session_peer) {
+    MistNetIo* io = (MistNetIo*)vctx;
+    if (io->last != NULL) {
+        NET_DestroyDatagram(io->last);
+        io->last = NULL;
+    }
+    NET_Datagram* dgram = NULL;
+    if (!NET_ReceiveDatagram(io->sock, &dgram) || dgram == NULL) {
+        return 0;
+    }
+    size_t n = (size_t)dgram->buflen;
+    if (n > cap) {
+        n = cap;
+    }
+    SDL_memcpy(buf, dgram->buf, n);
+    *from_session_peer = (dgram->port == io->peer_port) &&
+                         (NET_CompareAddresses(dgram->addr, io->peer) == 0);
+    io->last = dgram;
+    return (int)n;
+}
+
+static void mist_netio_send_reply_to_last(void* vctx, const uint8_t* buf, size_t len) {
+    MistNetIo* io = (MistNetIo*)vctx;
+    if (io->last == NULL) {
+        return;
+    }
+    NET_SendDatagram(io->sock, io->last->addr, io->last->port, buf, (int)len);
+}
+
+static uint64_t mist_netio_now_ms(void* vctx) {
+    (void)vctx;
+    return (uint64_t)SDL_GetTicks();
+}
+
+static void mist_netio_delay_ms(void* vctx, uint32_t ms) {
+    (void)vctx;
+    SDL_Delay(ms);
+}
+
 // R-1 — run the MIST handshake on the active session socket before
 // gekko_create() takes it over. Mirrors tier-2 §8.2.4.
 // Returns MIST_HS_OK on ack; MIST_HS_TIMEOUT when the peer stayed silent
 // for the whole budget (retryable by the caller — the peer may not have
 // reached its own gate yet); MIST_HS_FAIL on an explicit reject or a
 // local transport error (reason cached in s_mist_reject_reason).
+// The loop itself lives in mist_handshake_run_attempt (adv-review M-5:
+// extracted for unit testability); this wrapper resolves the peer
+// address and binds the SDL3_net IO callbacks.
 static MistHandshakeResult run_mist_handshake_on_net_sock(NET_DatagramSocket* sock) {
     if (sock == NULL || remote_ip == NULL || remote_port == 0) {
         SDL_strlcpy(s_mist_reject_reason, "missing transport state", sizeof(s_mist_reject_reason));
@@ -650,92 +696,24 @@ static MistHandshakeResult run_mist_handshake_on_net_sock(NET_DatagramSocket* so
         return MIST_HS_FAIL;
     }
 
-    uint8_t hello[MIST_FRAME_MAX];
-    const size_t hello_len = mist_handshake_build_hello(hello, sizeof(hello));
-    if (hello_len == 0) {
-        NET_UnrefAddress(peer);
-        SDL_strlcpy(s_mist_reject_reason, "hello build failed", sizeof(s_mist_reject_reason));
-        return MIST_HS_FAIL;
+    MistNetIo net_io = { sock, peer, remote_port, NULL };
+    const MistRunnerIo io = {
+        &net_io,
+        mist_netio_send_to_peer,
+        mist_netio_recv,
+        mist_netio_send_reply_to_last,
+        mist_netio_now_ms,
+        mist_netio_delay_ms,
+    };
+    const MistHandshakeResult hs = mist_handshake_run_attempt(
+        &io, s_mist_reject_reason, sizeof(s_mist_reject_reason));
+
+    if (net_io.last != NULL) {
+        NET_DestroyDatagram(net_io.last);
+        net_io.last = NULL;
     }
-
-    const Uint64 start_ms = SDL_GetTicks();
-    const Uint64 deadline_ms = start_ms + (Uint64)MIST_DEFAULT_TIMEOUT_MS;
-    int sends = 0;
-    Uint64 next_send_ms = start_ms;
-
-    for (;;) {
-        const Uint64 now = SDL_GetTicks();
-        if (now >= deadline_ms) {
-            SDL_strlcpy(s_mist_reject_reason, "timeout (peer did not respond)",
-                        sizeof(s_mist_reject_reason));
-            NET_UnrefAddress(peer);
-            return MIST_HS_TIMEOUT;
-        }
-        if (now >= next_send_ms && sends < MIST_RETRANSMIT_COUNT) {
-            NET_SendDatagram(sock, peer, remote_port, hello, (int)hello_len);
-            sends++;
-            next_send_ms = now + MIST_RETRANSMIT_INTERVAL_MS;
-        }
-
-        /* Drain pending datagrams. */
-        NET_Datagram* dgram = NULL;
-        while (NET_ReceiveDatagram(sock, &dgram) && dgram) {
-            const int cls = mist_handshake_parse_response((const uint8_t*)dgram->buf,
-                                                          (size_t)dgram->buflen);
-            if (cls == 1) {
-                NET_DestroyDatagram(dgram);
-                /* Completion race guard: our side is done, but the peer
-                 * still needs an ack for ITS hello. If its hello was
-                 * reordered behind the ack we just consumed (or lost),
-                 * the peer would never complete — we'd start GekkoNet
-                 * and it would time out. Send one gratuitous ack so the
-                 * peer completes regardless of hello arrival order.
-                 * Redundant acks are harmless: a peer that already
-                 * completed has GekkoNet on the socket, which drops
-                 * non-Gekko frames. */
-                uint8_t final_ack[MIST_FRAME_MAX];
-                const size_t final_ack_len =
-                    mist_handshake_build_reply((const uint8_t*)hello + MIST_HEADER_LEN,
-                                               hello_len - MIST_HEADER_LEN,
-                                               final_ack, sizeof(final_ack));
-                if (final_ack_len > 0) {
-                    NET_SendDatagram(sock, peer, remote_port, final_ack, (int)final_ack_len);
-                }
-                NET_UnrefAddress(peer);
-                return MIST_HS_OK;
-            }
-            if (cls == -1) {
-                SDL_strlcpy(s_mist_reject_reason, mist_handshake_last_reject_reason(),
-                            sizeof(s_mist_reject_reason));
-                NET_DestroyDatagram(dgram);
-                NET_UnrefAddress(peer);
-                return MIST_HS_FAIL;
-            }
-            if (cls == 0) {
-                /* Peer also called send_and_wait — reply with ack/reject.
-                 * Trim the payload to the DECLARED length from the header
-                 * (bytes 5-6, big-endian) rather than the raw datagram
-                 * tail, so trailing garbage can never be misparsed as
-                 * payload fields. cls == 0 guarantees parse_header
-                 * accepted the frame, so buflen >= 7 + declared_len. */
-                const uint8_t* rb = (const uint8_t*)dgram->buf;
-                size_t declared_len = ((size_t)rb[5] << 8) | (size_t)rb[6];
-                if (declared_len > (size_t)dgram->buflen - MIST_HEADER_LEN) {
-                    declared_len = (size_t)dgram->buflen - MIST_HEADER_LEN;
-                }
-                uint8_t reply[MIST_FRAME_MAX];
-                const size_t reply_len = mist_handshake_build_reply(
-                    rb + MIST_HEADER_LEN, declared_len, reply, sizeof(reply));
-                if (reply_len > 0) {
-                    NET_SendDatagram(sock, dgram->addr, dgram->port, reply, (int)reply_len);
-                }
-            }
-            /* cls == -2 → not a MIST frame; drop and keep listening. */
-            NET_DestroyDatagram(dgram);
-        }
-
-        SDL_Delay(5); /* keep the loop from burning 100% CPU */
-    }
+    NET_UnrefAddress(peer);
+    return hs;
 }
 
 // R-1: single source of truth for "which socket carries this session".
@@ -1518,27 +1496,21 @@ void Netplay_Run() {
             if (!s_mist_handshake_done) {
                 NET_DatagramSocket* hs_sock = acquire_active_socket();
                 const MistHandshakeResult hs = run_mist_handshake_on_net_sock(hs_sock);
-                if (hs == MIST_HS_OK) {
+                // Retry policy (peer-skew tolerance, attempt cap, the
+                // exhaustion message) lives in mist_handshake_gate_next
+                // — extracted for unit testability (adv-review M-5).
+                const MistGateAction act = mist_handshake_gate_next(
+                    hs, &s_mist_handshake_attempts, MIST_HANDSHAKE_MAX_ATTEMPTS,
+                    s_mist_reject_reason, sizeof(s_mist_reject_reason));
+                if (act == MIST_GATE_PROCEED) {
                     s_mist_handshake_done = true;
-                    s_mist_handshake_attempts = 0;
-                } else if (hs == MIST_HS_TIMEOUT &&
-                           ++s_mist_handshake_attempts < MIST_HANDSHAKE_MAX_ATTEMPTS) {
+                } else if (act == MIST_GATE_RETRY) {
                     // Silent peer — likely still booting toward its own
                     // gate (cold-launch skew). Stay in TRANSITIONING and
                     // retry next tick; each attempt keeps the 500 ms
                     // budget. An explicit reject never lands here.
                     break;
                 } else {
-                    if (hs == MIST_HS_TIMEOUT) {
-                        // Exhausted every retry with zero MIST traffic:
-                        // either the connection died, or the opponent
-                        // runs a build that predates the handshake
-                        // (every pre-R-1 release) — which also predates
-                        // the current GameState layout. Say so.
-                        SDL_strlcpy(s_mist_reject_reason,
-                                    "No reply - opponent build may be too old",
-                                    sizeof(s_mist_reject_reason));
-                    }
                     printf("[netplay] MIST handshake failed: %s\n",
                            s_mist_reject_reason);
                     // Surface the reason on screen: latch it into the
