@@ -149,7 +149,13 @@ static void build_request(uint8_t out[20], uint8_t txid[12]) {
  *   xport:       2 bytes (port XOR cookie[0..1])
  *   xaddr:       4 bytes (addr XOR cookie)
  */
+static int build_response_ex(uint8_t out[36], const uint8_t txid[12], uint16_t mapped_port);
+
 static int build_response(uint8_t out[36], const uint8_t txid[12]) {
+    return build_response_ex(out, txid, MOCK_MAPPED_PORT);
+}
+
+static int build_response_ex(uint8_t out[36], const uint8_t txid[12], uint16_t mapped_port) {
     /* Header */
     out[0] = 0x01; out[1] = 0x01;  /* type: Binding Response */
     out[2] = 0x00; out[3] = 0x0C;  /* body length: 12 bytes (one attr, 4+8) */
@@ -164,7 +170,7 @@ static int build_response(uint8_t out[36], const uint8_t txid[12]) {
     out[25] = 0x01;                 /* family: IPv4 */
 
     /* xport = port (host order) XOR top 16 bits of cookie, written BE */
-    const uint16_t xport = (uint16_t)MOCK_MAPPED_PORT
+    const uint16_t xport = mapped_port
                          ^ (uint16_t)(STUN_MAGIC_COOKIE >> 16);
     out[26] = (uint8_t)(xport >> 8);
     out[27] = (uint8_t)(xport & 0xFF);
@@ -691,18 +697,320 @@ static int run_punch_retarget_test(void) {
     return rc;
 }
 
+/* --- S2 parallel Stun_Discover tests ----------------------------------- */
+
+#ifdef NETPLAY_TEST_HOOKS
+
+/*
+ * These drive the REAL Stun_Discover against in-process mock STUN
+ * servers on 127.0.0.1, installed via the Stun_TestHook_SetServers
+ * seam (which also disables the production numeric-IP fallback list so
+ * the endpoint set is exactly what each test configures).
+ */
+
+/* Persistent mock STUN server: answers every valid Binding Request with
+ * an XOR-MAPPED-ADDRESS response claiming `mapped_port`, optionally
+ * ignoring the first `ignore_first` requests (packet-loss simulation).
+ * Runs until stop. */
+typedef struct {
+    int sock;
+    volatile bool stop;
+    int ignore_first;
+    uint16_t mapped_port;
+    volatile int requests_seen;
+} StunSrvCtx;
+
+static int SDLCALL stun_srv_thread(void* arg) {
+    StunSrvCtx* ctx = (StunSrvCtx*)arg;
+    while (!ctx->stop) {
+        fd_set rfds;
+        FD_ZERO(&rfds);
+        FD_SET(ctx->sock, &rfds);
+        struct timeval tv = { 0, 20 * 1000 };
+        if (select(ctx->sock + 1, &rfds, NULL, NULL, &tv) <= 0) continue;
+
+        uint8_t req[64];
+        struct sockaddr_in src;
+        socklen_t sl = sizeof(src);
+        const int n = (int)recvfrom(ctx->sock, (char*)req, sizeof(req), 0,
+                                    (struct sockaddr*)&src, &sl);
+        if (n < 20) continue;
+        const uint16_t msg_type = ((uint16_t)req[0] << 8) | req[1];
+        const uint32_t cookie = ((uint32_t)req[4] << 24) | ((uint32_t)req[5] << 16)
+                              | ((uint32_t)req[6] << 8)  | (uint32_t)req[7];
+        if (msg_type != STUN_BINDING_REQUEST || cookie != STUN_MAGIC_COOKIE) continue;
+
+        ctx->requests_seen++;
+        if (ctx->requests_seen <= ctx->ignore_first) continue; /* simulated loss */
+
+        uint8_t txid[12];
+        memcpy(txid, &req[8], 12);
+        uint8_t reply[64];
+        const int rl = build_response_ex(reply, txid, ctx->mapped_port);
+        sendto(ctx->sock, (const char*)reply, rl, 0, (struct sockaddr*)&src, sl);
+    }
+    return 0;
+}
+
+/* One dead server (bound, never answers) + one live server: discovery
+ * must succeed fast off the live one instead of serially burning ~2 s
+ * on the dead one first (pre-S2 behavior), and must retain the LIVE
+ * server for S1 keepalives. */
+static int run_discover_parallel_test(void) {
+    fprintf(stderr, "[test_stun_mock] discover-parallel: one dead server must not stall discovery\n");
+
+    unsigned short dead_port = 0, live_port = 0;
+    int dead_sock = open_udp_on_localhost(&dead_port);
+    int live_sock = open_udp_on_localhost(&live_port);
+    if (dead_sock < 0 || live_sock < 0) {
+        fail("discover-parallel", "failed to bind localhost UDP sockets");
+        if (dead_sock >= 0) close_sock(dead_sock);
+        if (live_sock >= 0) close_sock(live_sock);
+        return 1;
+    }
+
+    StunSrvCtx ctx;
+    memset(&ctx, 0, sizeof(ctx));
+    ctx.sock = live_sock;
+    ctx.mapped_port = 47001;
+    SDL_Thread* tid = SDL_CreateThread(stun_srv_thread, "stun_srv_live", &ctx);
+    if (!tid) {
+        fail("discover-parallel", "SDL_CreateThread failed");
+        close_sock(dead_sock);
+        close_sock(live_sock);
+        return 1;
+    }
+
+    static StunServerDesc servers[2];
+    servers[0] = (StunServerDesc){ "127.0.0.1", 0 };
+    servers[0].port = dead_port;   /* listed FIRST — serial code would stall here */
+    servers[1] = (StunServerDesc){ "127.0.0.1", 0 };
+    servers[1].port = live_port;
+    Stun_TestHook_SetServers(servers, 2);
+
+    StunResult res;
+    const uint32_t t0 = SDL_GetTicks();
+    const bool ok = Stun_Discover(&res, 0, 4000);
+    const uint32_t elapsed = SDL_GetTicks() - t0;
+
+    Stun_TestHook_SetServers(NULL, 0);
+    ctx.stop = true;
+    SDL_WaitThread(tid, NULL);
+
+    int rc = 0;
+    if (!ok) {
+        fail("discover-parallel", "Stun_Discover failed with a live server present");
+        rc = 1;
+    } else {
+        if (elapsed >= 1500) {
+            fprintf(stderr,
+                    "[test_stun_mock] FAIL: discover-parallel: took %u ms — dead server was "
+                    "probed serially, not in parallel\n", (unsigned)elapsed);
+            fail_count++;
+            rc = 1;
+        }
+        if (strcmp(res.public_ip, "1.2.3.4") != 0 || res.public_port != 47001) {
+            fprintf(stderr, "[test_stun_mock] FAIL: discover-parallel: got %s:%u, expected 1.2.3.4:47001\n",
+                    res.public_ip, (unsigned)res.public_port);
+            fail_count++;
+            rc = 1;
+        }
+        if (res.server_port != live_port) {
+            fprintf(stderr,
+                    "[test_stun_mock] FAIL: discover-parallel: retained server port %u, expected the "
+                    "LIVE server %u (S1 keepalive target)\n",
+                    (unsigned)res.server_port, (unsigned)live_port);
+            fail_count++;
+            rc = 1;
+        }
+        if (res.port_disagreement) {
+            fail("discover-parallel", "port_disagreement set with a single responder");
+            rc = 1;
+        }
+        Stun_CloseSocket(&res);
+    }
+
+    close_sock(dead_sock);
+    close_sock(live_sock);
+    if (rc == 0) {
+        fprintf(stderr, "[test_stun_mock] discover-parallel OK — %u ms, live server won and was retained\n",
+                (unsigned)elapsed);
+    }
+    return rc;
+}
+
+/* Single server that drops the first request: the 500 ms retransmit
+ * must recover discovery (pre-S2 there was NO retransmit — one lost
+ * packet burned the server's whole 2 s window). */
+static int run_discover_retransmit_test(void) {
+    fprintf(stderr, "[test_stun_mock] discover-retransmit: first-packet loss must be retransmitted\n");
+
+    unsigned short srv_port = 0;
+    int srv_sock = open_udp_on_localhost(&srv_port);
+    if (srv_sock < 0) {
+        fail("discover-retransmit", "failed to bind localhost UDP socket");
+        return 1;
+    }
+
+    StunSrvCtx ctx;
+    memset(&ctx, 0, sizeof(ctx));
+    ctx.sock = srv_sock;
+    ctx.mapped_port = 47002;
+    ctx.ignore_first = 1; /* drop the initial request */
+    SDL_Thread* tid = SDL_CreateThread(stun_srv_thread, "stun_srv_lossy", &ctx);
+    if (!tid) {
+        fail("discover-retransmit", "SDL_CreateThread failed");
+        close_sock(srv_sock);
+        return 1;
+    }
+
+    static StunServerDesc servers[1];
+    servers[0] = (StunServerDesc){ "127.0.0.1", 0 };
+    servers[0].port = srv_port;
+    Stun_TestHook_SetServers(servers, 1);
+
+    StunResult res;
+    const uint32_t t0 = SDL_GetTicks();
+    const bool ok = Stun_Discover(&res, 0, 4000);
+    const uint32_t elapsed = SDL_GetTicks() - t0;
+
+    Stun_TestHook_SetServers(NULL, 0);
+    ctx.stop = true;
+    SDL_WaitThread(tid, NULL);
+
+    int rc = 0;
+    if (!ok) {
+        fail("discover-retransmit", "Stun_Discover failed — first-packet loss was not retransmitted");
+        rc = 1;
+    } else {
+        if (ctx.requests_seen < 2) {
+            fprintf(stderr, "[test_stun_mock] FAIL: discover-retransmit: server saw %d request(s), expected >= 2\n",
+                    ctx.requests_seen);
+            fail_count++;
+            rc = 1;
+        }
+        if (elapsed < 400) {
+            fprintf(stderr,
+                    "[test_stun_mock] FAIL: discover-retransmit: succeeded in %u ms — impossible if the "
+                    "first packet was dropped and the RTO is 500 ms\n", (unsigned)elapsed);
+            fail_count++;
+            rc = 1;
+        }
+        if (res.public_port != 47002) {
+            fprintf(stderr, "[test_stun_mock] FAIL: discover-retransmit: mapped port %u, expected 47002\n",
+                    (unsigned)res.public_port);
+            fail_count++;
+            rc = 1;
+        }
+        Stun_CloseSocket(&res);
+    }
+
+    close_sock(srv_sock);
+    if (rc == 0) {
+        fprintf(stderr, "[test_stun_mock] discover-retransmit OK — %d requests, recovered in %u ms\n",
+                ctx.requests_seen, (unsigned)elapsed);
+    }
+    return rc;
+}
+
+/* Two live servers reporting DIFFERENT mapped ports: the symmetric-NAT
+ * signal must be recorded (S3 consumes it for failure attribution). */
+static int run_discover_disagreement_test(void) {
+    fprintf(stderr, "[test_stun_mock] discover-disagree: differing mapped ports must set the flag\n");
+
+    unsigned short port_a = 0, port_b = 0;
+    int sock_a = open_udp_on_localhost(&port_a);
+    int sock_b = open_udp_on_localhost(&port_b);
+    if (sock_a < 0 || sock_b < 0) {
+        fail("discover-disagree", "failed to bind localhost UDP sockets");
+        if (sock_a >= 0) close_sock(sock_a);
+        if (sock_b >= 0) close_sock(sock_b);
+        return 1;
+    }
+
+    StunSrvCtx ctx_a, ctx_b;
+    memset(&ctx_a, 0, sizeof(ctx_a));
+    memset(&ctx_b, 0, sizeof(ctx_b));
+    ctx_a.sock = sock_a;
+    ctx_a.mapped_port = 40000;
+    ctx_b.sock = sock_b;
+    ctx_b.mapped_port = 40001; /* disagrees with A */
+    SDL_Thread* tid_a = SDL_CreateThread(stun_srv_thread, "stun_srv_a", &ctx_a);
+    SDL_Thread* tid_b = SDL_CreateThread(stun_srv_thread, "stun_srv_b", &ctx_b);
+    if (!tid_a || !tid_b) {
+        fail("discover-disagree", "SDL_CreateThread failed");
+        ctx_a.stop = ctx_b.stop = true;
+        if (tid_a) SDL_WaitThread(tid_a, NULL);
+        if (tid_b) SDL_WaitThread(tid_b, NULL);
+        close_sock(sock_a);
+        close_sock(sock_b);
+        return 1;
+    }
+
+    static StunServerDesc servers[2];
+    servers[0] = (StunServerDesc){ "127.0.0.1", 0 };
+    servers[0].port = port_a;
+    servers[1] = (StunServerDesc){ "127.0.0.1", 0 };
+    servers[1].port = port_b;
+    Stun_TestHook_SetServers(servers, 2);
+
+    StunResult res;
+    const bool ok = Stun_Discover(&res, 0, 4000);
+
+    Stun_TestHook_SetServers(NULL, 0);
+    ctx_a.stop = ctx_b.stop = true;
+    SDL_WaitThread(tid_a, NULL);
+    SDL_WaitThread(tid_b, NULL);
+
+    int rc = 0;
+    if (!ok) {
+        fail("discover-disagree", "Stun_Discover failed with two live servers");
+        rc = 1;
+    } else {
+        if (!res.port_disagreement) {
+            fail("discover-disagree",
+                 "servers mapped 40000 vs 40001 but port_disagreement is false");
+            rc = 1;
+        }
+        if (res.public_port != 40000 && res.public_port != 40001) {
+            fprintf(stderr, "[test_stun_mock] FAIL: discover-disagree: mapped port %u not from either server\n",
+                    (unsigned)res.public_port);
+            fail_count++;
+            rc = 1;
+        }
+        Stun_CloseSocket(&res);
+    }
+
+    close_sock(sock_a);
+    close_sock(sock_b);
+    if (rc == 0) {
+        fprintf(stderr, "[test_stun_mock] discover-disagree OK — symmetric-NAT signal recorded\n");
+    }
+    return rc;
+}
+
+#endif /* NETPLAY_TEST_HOOKS */
+
 int Netplay_Test_StunMock(void) {
     fail_count = 0;
 
     const int wire_rc = run_wire_test();
     const int codec_rc = run_codec_test();
     const int retarget_rc = run_punch_retarget_test();
+    int discover_rc = 0;
+#ifdef NETPLAY_TEST_HOOKS
+    discover_rc |= run_discover_parallel_test();
+    discover_rc |= run_discover_retransmit_test();
+    discover_rc |= run_discover_disagreement_test();
+#else
+    fprintf(stderr, "[test_stun_mock] discover tests skipped (build lacks NETPLAY_TEST_HOOKS)\n");
+#endif
 
-    if (fail_count > 0 || wire_rc != 0 || codec_rc != 0 || retarget_rc != 0) {
+    if (fail_count > 0 || wire_rc != 0 || codec_rc != 0 || retarget_rc != 0 || discover_rc != 0) {
         fprintf(stderr, "[test_stun_mock] %d failure(s)\n", fail_count);
         return 1;
     }
-    fprintf(stderr, "[test_stun_mock] OK — wire + codec + retarget passed\n");
+    fprintf(stderr, "[test_stun_mock] OK — wire + codec + retarget + discover passed\n");
     return 0;
 }
 

@@ -196,11 +196,15 @@ static bool parse_binding_response(const uint8_t* buf, int len, const uint8_t* t
     return false;
 }
 
-// Fallback STUN server list — tried in order until one succeeds.
-static const struct {
+/* STUN server pool. All are probed IN PARALLEL from the one socket
+ * (S2, docs/plan-netplay-connection.md §4); the first parseable
+ * Binding Response wins. */
+typedef struct {
     const char* host;
     uint16_t port;
-} stun_servers[] = {
+} StunServerEntry;
+
+static const StunServerEntry stun_servers[] = {
     { "stun.l.google.com", 19302 },
     { "stun1.l.google.com", 19302 },
     { "stun.cloudflare.com", 3478 },
@@ -208,11 +212,153 @@ static const struct {
 };
 #define STUN_SERVER_COUNT (int)(sizeof(stun_servers) / sizeof(stun_servers[0]))
 
-bool Stun_Discover(StunResult* result, uint16_t local_port) {
+/* Numeric-IP fallbacks: used ONLY when DNS has produced nothing by
+ * STUN_DNS_FALLBACK_MS — a blackholed resolver must not consume the
+ * discovery budget. Best-effort snapshot (dig, 2026-08-23); Cloudflare
+ * is anycast so its address is the most durable of the three. When DNS
+ * works these are never contacted. */
+static const StunServerEntry stun_fallback_servers[] = {
+    { "74.125.250.129", 19302 }, /* stun.l.google.com */
+    { "162.159.207.0", 3478 },   /* stun.cloudflare.com (anycast) */
+    { "46.225.95.169", 443 },    /* stun.nextcloud.com */
+};
+#define STUN_FALLBACK_COUNT (int)(sizeof(stun_fallback_servers) / sizeof(stun_fallback_servers[0]))
+
+/* Probe scheduling (RFC 5389 §7.2.1 prescribes RTO >= 500 ms doubling;
+ * we truncate to 3 sends per server since parallel servers substitute
+ * for deeper retransmission). Offsets are from each server's
+ * activation (DNS-resolution) time, not from Stun_Discover entry. */
+static const uint32_t stun_rto_offsets_ms[] = { 0, 500, 1500 };
+#define STUN_MAX_SENDS (int)(sizeof(stun_rto_offsets_ms) / sizeof(stun_rto_offsets_ms[0]))
+
+#define STUN_MAX_SERVERS 8
+#define STUN_DNS_FALLBACK_MS 300  /* arm numeric fallbacks if no DNS result by then */
+#define STUN_DISAGREE_GRACE_MS 300 /* post-first-response window to collect the rest */
+#define STUN_DEFAULT_TIMEOUT_MS 4000
+
+#ifdef NETPLAY_TEST_HOOKS
+/* Test seam: replace the probed server list (numeric-IP mock servers on
+ * localhost). While an override is installed the numeric fallback list
+ * is NOT armed — tests control the exact endpoint set. */
+static const StunServerDesc* s_stun_servers_override = NULL;
+static int s_stun_servers_override_count = 0;
+
+void Stun_TestHook_SetServers(const StunServerDesc* servers, int count) {
+    if (servers == NULL || count <= 0) {
+        s_stun_servers_override = NULL;
+        s_stun_servers_override_count = 0;
+        return;
+    }
+    if (count > STUN_MAX_SERVERS) count = STUN_MAX_SERVERS;
+    s_stun_servers_override = servers;
+    s_stun_servers_override_count = count;
+}
+#endif /* NETPLAY_TEST_HOOKS */
+
+/* --- concurrent DNS resolution (S2) ------------------------------------ */
+
+/* getaddrinfo has no portable timeout, so it runs on a side thread that
+ * publishes per-host dotted-quad results through atomics. Ownership is
+ * refcounted (2 owners: worker + caller); whoever drops the last ref
+ * frees, so the caller can abandon a resolver stuck on a dead DNS
+ * server (detach) without a use-after-free. */
+typedef struct {
+    int count;
+    char host[STUN_MAX_SERVERS][64];
+    uint16_t port[STUN_MAX_SERVERS];
+    char ip[STUN_MAX_SERVERS][64];      /* valid when done[i] == 1 */
+    SDL_AtomicInt done[STUN_MAX_SERVERS]; /* 0 pending, 1 resolved, -1 failed */
+    SDL_AtomicInt refs;
+} StunDnsJob;
+
+static void stun_dns_job_unref(StunDnsJob* job) {
+    if (SDL_AddAtomicInt(&job->refs, -1) == 1) {
+        SDL_free(job);
+    }
+}
+
+static int SDLCALL stun_dns_worker_fn(void* data) {
+    StunDnsJob* job = (StunDnsJob*)data;
+    for (int i = 0; i < job->count; i++) {
+        /* Prefer IPv4 — NAT traversal (UPnP + hole punch) is IPv4-only,
+         * and the discovery socket is bound to an IPv4 wildcard. */
+        struct addrinfo hints = { 0 };
+        hints.ai_family = AF_INET;
+        hints.ai_socktype = SOCK_DGRAM;
+        struct addrinfo* ai = NULL;
+        if (getaddrinfo(job->host[i], NULL, &hints, &ai) == 0 && ai) {
+            struct sockaddr_in* sin = (struct sockaddr_in*)ai->ai_addr;
+            inet_ntop(AF_INET, &sin->sin_addr, job->ip[i], sizeof(job->ip[i]));
+            freeaddrinfo(ai);
+            SDL_SetAtomicInt(&job->done[i], 1);
+        } else {
+            if (ai) freeaddrinfo(ai);
+            SDL_SetAtomicInt(&job->done[i], -1);
+        }
+    }
+    stun_dns_job_unref(job);
+    return 0;
+}
+
+/* --- parallel discovery ------------------------------------------------ */
+
+typedef struct {
+    NET_Address* addr;    /* resolved numeric address (ref held) */
+    uint16_t port;
+    char label[64];       /* host string for logging */
+    uint8_t request[20];  /* prebuilt Binding Request (stable txid across retransmits) */
+    uint8_t txid[12];
+    uint32_t armed_at_ms; /* activation time — RTO offsets are relative to this */
+    int sends;
+    bool responded;
+    char resp_ip[64];
+    uint16_t resp_port;
+} StunProbeSlot;
+
+/* Add a probe slot for a numeric IP, deduping on (ip, port) — e.g.
+ * stun.l.google.com and stun1.l.google.com often resolve to one
+ * frontend, and a resolved entry may coincide with a fallback entry. */
+static void stun_probe_add(StunProbeSlot* slots, int* slot_count, const char* numeric_ip, uint16_t port,
+                           const char* label, uint32_t now_ms) {
+    if (*slot_count >= STUN_MAX_SERVERS)
+        return;
+    /* Dedupe by resolved target string + port. */
+    for (int i = 0; i < *slot_count; i++) {
+        if (slots[i].port == port && slots[i].addr != NULL &&
+            strcmp(NET_GetAddressString(slots[i].addr), numeric_ip) == 0) {
+            return;
+        }
+    }
+    NET_Address* addr = NET_ResolveHostname(numeric_ip);
+    if (!addr)
+        return;
+    /* Numeric strings resolve synchronously-fast; bounded poll anyway. */
+    int wait = 0;
+    while (NET_GetAddressStatus(addr) == NET_WAITING && wait < 100) {
+        SDL_Delay(1);
+        wait++;
+    }
+    if (NET_GetAddressStatus(addr) != NET_SUCCESS) {
+        NET_UnrefAddress(addr);
+        return;
+    }
+    StunProbeSlot* s = &slots[*slot_count];
+    memset(s, 0, sizeof(*s));
+    s->addr = addr;
+    s->port = port;
+    SDL_strlcpy(s->label, label, sizeof(s->label));
+    build_binding_request(s->request, s->txid);
+    s->armed_at_ms = now_ms;
+    (*slot_count)++;
+}
+
+bool Stun_Discover(StunResult* result, uint16_t local_port, int timeout_ms) {
     if (!result)
         return false;
     memset(result, 0, sizeof(*result));
     result->socket = NULL;
+    if (timeout_ms <= 0)
+        timeout_ms = STUN_DEFAULT_TIMEOUT_MS;
 
     // Create socket once — local port stays consistent across server attempts.
     // Force IPv4: MiSTer kernel disables IPv6 (sysctl net.ipv6.conf.*.disable_ipv6=1),
@@ -243,139 +389,229 @@ bool Stun_Discover(StunResult* result, uint16_t local_port) {
     // is busy re-simulating during rollback (inspired by Weyvelength SDK).
     NetTuning_SetRecvBuf(sock, 256 * 1024);
 
-    // Try each STUN server in order until one succeeds.
-    for (int srv = 0; srv < STUN_SERVER_COUNT; srv++) {
-        const char* host = stun_servers[srv].host;
-        uint16_t srv_port = stun_servers[srv].port;
+    /* Configured server list (test override replaces it wholesale). */
+    const StunServerEntry* servers = stun_servers;
+    int server_count = STUN_SERVER_COUNT;
+    bool fallbacks_allowed = true;
+#ifdef NETPLAY_TEST_HOOKS
+    if (s_stun_servers_override != NULL) {
+        servers = (const StunServerEntry*)s_stun_servers_override;
+        server_count = s_stun_servers_override_count;
+        fallbacks_allowed = false;
+    }
+#endif
+    if (server_count > STUN_MAX_SERVERS)
+        server_count = STUN_MAX_SERVERS;
 
-        // Resolve hostname — prefer IPv4 since NAT traversal (UPnP + hole punch)
-        // is IPv4-only. Use getaddrinfo(AF_INET) to get a dotted-quad, then pass
-        // that numeric string to NET_ResolveHostname for instant resolution.
-        // Falls back to plain resolve on IPv6-only networks.
-        NET_Address* stun_addr = NULL;
-        {
-            struct addrinfo hints = { 0 };
-            hints.ai_family = AF_INET; // Prefer IPv4
-            hints.ai_socktype = SOCK_DGRAM;
-            struct addrinfo* ai = NULL;
-            char ipv4_str[64] = { 0 };
-
-            if (getaddrinfo(host, NULL, &hints, &ai) == 0 && ai) {
-                struct sockaddr_in* sin = (struct sockaddr_in*)ai->ai_addr;
-                inet_ntop(AF_INET, &sin->sin_addr, ipv4_str, sizeof(ipv4_str));
-                freeaddrinfo(ai);
-                stun_addr = NET_ResolveHostname(ipv4_str);
-            } else {
-                // IPv4 unavailable — fall back to default (may return IPv6)
-                if (ai)
-                    freeaddrinfo(ai);
-                stun_addr = NET_ResolveHostname(host);
-            }
+    /* Kick off concurrent DNS for every configured server. */
+    StunDnsJob* dns = (StunDnsJob*)SDL_calloc(1, sizeof(StunDnsJob));
+    SDL_Thread* dns_thread = NULL;
+    if (dns != NULL) {
+        dns->count = server_count;
+        for (int i = 0; i < server_count; i++) {
+            SDL_strlcpy(dns->host[i], servers[i].host, sizeof(dns->host[i]));
+            dns->port[i] = servers[i].port;
+            SDL_SetAtomicInt(&dns->done[i], 0);
         }
-        if (!stun_addr) {
-            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "STUN: Failed to resolve %s", host);
-            continue;
+        SDL_SetAtomicInt(&dns->refs, 2); /* worker + this function */
+        dns_thread = SDL_CreateThread(stun_dns_worker_fn, "StunDns", dns);
+        if (dns_thread == NULL) {
+            /* No worker — drop its ref and run without DNS (numeric
+             * fallbacks below still carry the attempt). */
+            SDL_SetAtomicInt(&dns->refs, 1);
+            stun_dns_job_unref(dns);
+            dns = NULL;
         }
+    }
 
-        int wait_attempts = 0;
-        while (NET_GetAddressStatus(stun_addr) == NET_WAITING && wait_attempts < 100) {
-            SDL_Delay(1);
-            wait_attempts++;
-        }
+    StunProbeSlot slots[STUN_MAX_SERVERS];
+    int slot_count = 0;
+    bool dns_consumed[STUN_MAX_SERVERS] = { false };
+    bool fallbacks_armed = false;
 
-        if (NET_GetAddressStatus(stun_addr) != NET_SUCCESS) {
-            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "STUN: Failed to resolve %s", host);
-            NET_UnrefAddress(stun_addr);
-            continue;
-        }
+    const uint32_t start = SDL_GetTicks();
+    const uint32_t deadline = start + (uint32_t)timeout_ms;
+    int first_responder = -1;
+    uint32_t first_response_at = 0;
 
-        // Build and send STUN request (fresh transaction ID per server)
-        uint8_t request[20];
-        uint8_t transaction_id[12];
-        build_binding_request(request, transaction_id);
+    while (SDL_GetTicks() < deadline) {
+        const uint32_t now = SDL_GetTicks();
 
-        if (!NET_SendDatagram(sock, stun_addr, srv_port, request, 20)) {
-            SDL_LogDebug(
-                SDL_LOG_CATEGORY_APPLICATION, "STUN: Failed to send to %s:%u: %s", host, srv_port, SDL_GetError());
-            NET_UnrefAddress(stun_addr);
-            continue;
-        }
-
-        // Receive response — single attempt with ~2s timeout.
-        // No per-server retries; we rely on having multiple servers for resilience.
-        NET_Datagram* dgram = NULL;
-        for (int poll = 0; poll < 20 && !dgram; poll++) {
-            NET_ReceiveDatagram(sock, &dgram);
-            if (!dgram)
-                SDL_Delay(100);
-        }
-
-        if (!dgram) {
-            SDL_LogWarn(
-                SDL_LOG_CATEGORY_APPLICATION, "STUN: No response from %s:%u, trying next server", host, srv_port);
-            NET_UnrefAddress(stun_addr);
-            continue;
-        }
-
-        // Parse response
-        char ip[64] = { 0 };
-        uint16_t port = 0;
-        if (!parse_binding_response((const uint8_t*)dgram->buf, dgram->buflen, transaction_id, ip, sizeof(ip), &port)) {
-            SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
-                        "STUN: Failed to parse response from %s:%u, trying next server",
-                        host,
-                        srv_port);
-            NET_UnrefAddress(stun_addr);
-            NET_DestroyDatagram(dgram);
-            continue;
-        }
-
-        // Success!
-        SDL_strlcpy(result->public_ip, ip, sizeof(result->public_ip));
-        result->public_port = port;
-        result->socket = sock; // Keep open for hole punching!
-        // S1: keep the resolved server address (ref transferred to result)
-        // so Stun_SendKeepalive can rebind-probe without re-resolving.
-        result->server_addr = (struct NET_Address*)stun_addr;
-        result->server_port = srv_port;
-
-        // Query the ACTUAL OS-assigned local port via getsockname.
-        // The STUN public port may differ from the local port on
-        // non-port-preserving NATs. The hairpin bypass needs the real
-        // local port so localhost connections target the correct socket.
-        {
-            const NetTuningDgramMirror* m = (const NetTuningDgramMirror*)sock;
-            result->local_port = port; // Fallback: assume port-preserving NAT
-            for (int h = 0; h < m->num_handles; h++) {
-                struct sockaddr_storage sa;
-                int sa_len = sizeof(sa);
-                if (getsockname((int)m->handles[h].handle, (struct sockaddr*)&sa, &sa_len) == 0) {
-                    if (sa.ss_family == AF_INET) {
-                        result->local_port = ntohs(((struct sockaddr_in*)&sa)->sin_port);
-                        break;
-                    } else if (sa.ss_family == AF_INET6) {
-                        result->local_port = ntohs(((struct sockaddr_in6*)&sa)->sin6_port);
-                        // Keep looking for IPv4; prefer it since STUN used IPv4
-                    }
+        /* 1) Absorb newly resolved DNS entries into probe slots. */
+        if (dns != NULL) {
+            for (int i = 0; i < dns->count; i++) {
+                if (dns_consumed[i])
+                    continue;
+                const int st = SDL_GetAtomicInt(&dns->done[i]);
+                if (st == 1) {
+                    dns_consumed[i] = true;
+                    stun_probe_add(slots, &slot_count, dns->ip[i], dns->port[i], dns->host[i], now);
+                } else if (st == -1) {
+                    dns_consumed[i] = true;
+                    SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "STUN: Failed to resolve %s", dns->host[i]);
                 }
             }
         }
 
-        NET_DestroyDatagram(dgram);
-
-        if (srv > 0) {
-            SDL_Log("STUN: Discovered public endpoint via %s (local port %u)", host, result->local_port);
-        } else {
-            SDL_Log("STUN: Discovered public endpoint (local port %u)", result->local_port);
+        /* 2) Arm the numeric fallbacks when DNS produced nothing in time
+         * (blackholed resolver, empty /etc/resolv.conf, ...). */
+        if (fallbacks_allowed && !fallbacks_armed && slot_count == 0 &&
+            (now - start) >= STUN_DNS_FALLBACK_MS) {
+            SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                        "STUN: no DNS result after %u ms — probing numeric fallback servers",
+                        (unsigned)STUN_DNS_FALLBACK_MS);
+            for (int i = 0; i < STUN_FALLBACK_COUNT; i++) {
+                stun_probe_add(slots, &slot_count, stun_fallback_servers[i].host,
+                               stun_fallback_servers[i].port, stun_fallback_servers[i].host, now);
+            }
+            fallbacks_armed = true;
         }
 
-        return true;
+        /* 3) Scheduled sends: initial + retransmits at 0/500/1500 ms per
+         * server (relative to that server's activation). */
+        for (int i = 0; i < slot_count; i++) {
+            StunProbeSlot* s = &slots[i];
+            if (s->responded || s->sends >= STUN_MAX_SENDS)
+                continue;
+            if ((now - s->armed_at_ms) >= stun_rto_offsets_ms[s->sends]) {
+                if (!NET_SendDatagram(sock, s->addr, s->port, s->request, 20)) {
+                    SDL_LogDebug(SDL_LOG_CATEGORY_APPLICATION, "STUN: Failed to send to %s:%u: %s",
+                                 s->label, (unsigned)s->port, SDL_GetError());
+                }
+                s->sends++;
+            }
+        }
+
+        /* 4) Drain responses; first parseable Binding Response wins. */
+        NET_Datagram* dgram = NULL;
+        while (NET_ReceiveDatagram(sock, &dgram) && dgram != NULL) {
+            for (int i = 0; i < slot_count; i++) {
+                StunProbeSlot* s = &slots[i];
+                if (s->responded)
+                    continue;
+                char ip[64] = { 0 };
+                uint16_t port = 0;
+                if (parse_binding_response((const uint8_t*)dgram->buf, dgram->buflen, s->txid, ip, sizeof(ip),
+                                           &port)) {
+                    s->responded = true;
+                    SDL_strlcpy(s->resp_ip, ip, sizeof(s->resp_ip));
+                    s->resp_port = port;
+                    if (first_responder < 0) {
+                        first_responder = i;
+                        first_response_at = now;
+                    }
+                    break;
+                }
+            }
+            NET_DestroyDatagram(dgram);
+            dgram = NULL;
+        }
+
+        /* 5) Exit: once someone answered, linger briefly (bounded by the
+         * budget) to collect the remaining responses — server DISAGREE-
+         * ment on the mapped port is the symmetric-NAT signal S3 wants
+         * for failure attribution. Break early when every probed server
+         * has answered. */
+        if (first_responder >= 0) {
+            bool all_answered = true;
+            for (int i = 0; i < slot_count; i++) {
+                if (slots[i].sends > 0 && !slots[i].responded) {
+                    all_answered = false;
+                    break;
+                }
+            }
+            if (all_answered || (now - first_response_at) >= STUN_DISAGREE_GRACE_MS)
+                break;
+        }
+
+        SDL_Delay(10);
     }
 
-    // All servers exhausted
-    SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "STUN: All %d servers failed", STUN_SERVER_COUNT);
-    NET_DestroyDatagramSocket(sock);
-    return false;
+    /* Reap the DNS worker: join when it already finished, otherwise
+     * detach and let the refcount free the job — a resolver stuck on a
+     * dead DNS server must not block us here either. */
+    if (dns_thread != NULL) {
+        if (SDL_GetThreadState(dns_thread) == SDL_THREAD_COMPLETE) {
+            SDL_WaitThread(dns_thread, NULL);
+        } else {
+            SDL_DetachThread(dns_thread);
+        }
+    }
+    if (dns != NULL) {
+        stun_dns_job_unref(dns);
+    }
+
+    if (first_responder < 0) {
+        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                     "STUN: no response from any of %d server(s) within %d ms", slot_count, timeout_ms);
+        for (int i = 0; i < slot_count; i++) {
+            NET_UnrefAddress(slots[i].addr);
+        }
+        NET_DestroyDatagramSocket(sock);
+        return false;
+    }
+
+    /* Success — the FIRST responder defines the advertised endpoint and
+     * is retained for S1 keepalives (ref transferred to result). */
+    StunProbeSlot* win = &slots[first_responder];
+    SDL_strlcpy(result->public_ip, win->resp_ip, sizeof(result->public_ip));
+    result->public_port = win->resp_port;
+    result->socket = sock; // Keep open for hole punching!
+    result->server_addr = (struct NET_Address*)win->addr;
+    result->server_port = win->port;
+
+    /* S2: record whether any other server observed a DIFFERENT mapped
+     * port — per-destination translation, i.e. a symmetric NAT. S3
+     * consumes this for failure attribution; no UX here. */
+    int responders = 0;
+    for (int i = 0; i < slot_count; i++) {
+        if (!slots[i].responded)
+            continue;
+        responders++;
+        if (slots[i].resp_port != win->resp_port) {
+            result->port_disagreement = true;
+            SDL_Log("STUN: servers disagree on our mapped port (%s:%u says %u, %s:%u says %u) — "
+                    "symmetric NAT likely",
+                    win->label, (unsigned)win->port, (unsigned)win->resp_port,
+                    slots[i].label, (unsigned)slots[i].port, (unsigned)slots[i].resp_port);
+        }
+    }
+
+    // Query the ACTUAL OS-assigned local port via getsockname.
+    // The STUN public port may differ from the local port on
+    // non-port-preserving NATs. The hairpin bypass needs the real
+    // local port so localhost connections target the correct socket.
+    {
+        const NetTuningDgramMirror* m = (const NetTuningDgramMirror*)sock;
+        result->local_port = result->public_port; // Fallback: assume port-preserving NAT
+        for (int h = 0; h < m->num_handles; h++) {
+            struct sockaddr_storage sa;
+            int sa_len = sizeof(sa);
+            if (getsockname((int)m->handles[h].handle, (struct sockaddr*)&sa, &sa_len) == 0) {
+                if (sa.ss_family == AF_INET) {
+                    result->local_port = ntohs(((struct sockaddr_in*)&sa)->sin_port);
+                    break;
+                } else if (sa.ss_family == AF_INET6) {
+                    result->local_port = ntohs(((struct sockaddr_in6*)&sa)->sin6_port);
+                    // Keep looking for IPv4; prefer it since STUN used IPv4
+                }
+            }
+        }
+    }
+
+    /* Release the non-winning slot addresses. */
+    for (int i = 0; i < slot_count; i++) {
+        if (i != first_responder) {
+            NET_UnrefAddress(slots[i].addr);
+        }
+    }
+
+    SDL_Log("STUN: Discovered public endpoint via %s in %u ms (%d/%d servers answered, local port %u%s)",
+            win->label, (unsigned)(SDL_GetTicks() - start), responders, slot_count,
+            (unsigned)result->local_port,
+            result->port_disagreement ? ", PORT DISAGREEMENT" : "");
+
+    return true;
 }
 
 bool Stun_HolePunch(StunResult* local, char* peer_ip, uint16_t* peer_port, int punch_duration_ms,

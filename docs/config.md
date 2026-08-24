@@ -171,10 +171,14 @@ out-of-band (text message, voice) and paste it into the wrapper OSD.
   `0600`) and consumed-and-unlinked by the game on first read.
 
 `netplay-direct-p2p-stun-timeout-ms` (int, default `4000`)
-- Upper bound on STUN discovery time per server. Upstream's default
-  is 2000 ms but congested public STUN sometimes needs more; 4000 ms
-  fully covers the four-server fallback chain's 2 s/server × 4 budget.
-  Lowering helps failover but risks false negatives on slow networks.
+- Overall wall-clock budget for STUN discovery. Since S2
+  (docs/plan-netplay-connection.md §4) all four servers are probed in
+  PARALLEL from the one socket with per-server retransmits at
+  0/500/1500 ms, DNS resolves concurrently on a side thread, and a
+  numeric-IP fallback list covers a dead resolver — the first
+  parseable Binding Response wins. Floor-clamped to 1000 ms. (Pre-S2
+  this key was read by nothing; the serial implementation had its own
+  hard-coded ~2 s/server budget.)
 
 `netplay-direct-p2p-disable-bilateral` (bool, default `false`)
 - If true, disables the bilateral hole-punch fallback. Direct-P2P will

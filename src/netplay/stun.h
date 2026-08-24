@@ -23,14 +23,28 @@ typedef struct {
      * Stun_ReleaseServerAddr. NULL when no discovery has succeeded. */
     struct NET_Address* server_addr;
     uint16_t server_port;              // Host byte order — port of server_addr
+    /* S2 (docs/plan-netplay-connection.md §4): true when at least two
+     * STUN servers answered with DIFFERENT mapped ports for the same
+     * local socket — per-destination translation, i.e. a symmetric-NAT
+     * signal. Recorded for S3 failure attribution; discovery itself
+     * still succeeds with the FIRST responder's endpoint. */
+    bool port_disagreement;
 } StunResult;
 
-/// Perform a STUN Binding Request (RFC 5389).
-/// Tries multiple STUN servers in order (Google, Cloudflare, Nextcloud)
-/// for resilience against rate limiting or service outages.
+/// Perform STUN Binding Requests (RFC 5389) against the built-in server
+/// pool (Google, Cloudflare, Nextcloud). S2: all servers are probed IN
+/// PARALLEL from the one socket with per-server retransmits at
+/// 0/500/1500 ms (RFC 5389 §7.2.1, truncated to 3 sends — parallel
+/// servers substitute for deeper retransmission); DNS for all servers
+/// resolves concurrently on a side thread with a numeric-IP fallback
+/// list so a dead resolver cannot consume the budget. First parseable
+/// Binding Response wins and its server is retained in server_addr for
+/// S1 keepalives. `timeout_ms` is the overall wall-clock budget
+/// (<= 0 selects the built-in 4000 ms default); callers wire
+/// CFG_KEY_NETPLAY_DIRECT_P2P_STUN_TIMEOUT_MS here.
 /// Returns true on success and fills `result`.
 /// The socket in result->socket is left open for hole punching.
-bool Stun_Discover(StunResult* result, uint16_t local_port);
+bool Stun_Discover(StunResult* result, uint16_t local_port, int timeout_ms);
 
 /// Close the STUN socket when done
 void Stun_CloseSocket(StunResult* result);
@@ -76,6 +90,21 @@ bool Stun_ParseBindingResponse(const uint8_t* buf, int len, const uint8_t txid[1
 /// been handed off to netplay and keepalives are no longer this
 /// module's job). Safe on NULL/already-released.
 void Stun_ReleaseServerAddr(StunResult* result);
+
+#ifdef NETPLAY_TEST_HOOKS
+/* S2 test seam: replace the Stun_Discover server pool with
+ * caller-supplied entries (numeric-IP localhost mocks). While an
+ * override is installed the numeric fallback list is NOT armed, so
+ * tests control the exact endpoint set. The array must outlive the
+ * override (tests use function-scope statics). Pass (NULL, 0) to
+ * restore the production pool. */
+typedef struct {
+    const char* host; /* hostname or numeric dotted-quad */
+    uint16_t port;
+} StunServerDesc;
+
+void Stun_TestHook_SetServers(const StunServerDesc* servers, int count);
+#endif /* NETPLAY_TEST_HOOKS */
 
 #ifdef __cplusplus
 }

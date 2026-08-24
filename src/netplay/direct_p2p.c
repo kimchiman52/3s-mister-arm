@@ -456,12 +456,15 @@ static void rend_q_purge(void) {
     rend_q_drain(NULL, (int)REND_Q_CAPACITY);
 }
 
-/* NOTE on CFG_KEY_NETPLAY_DIRECT_P2P_STUN_TIMEOUT_MS: the current
- * Stun_Discover API has its own hard-coded 2s-per-server internal
- * budget (see src/netplay/stun.c:281-284) and does not accept a
- * caller-supplied timeout. Honoring the config key from here would
- * require a new parameter on Stun_Discover — out of scope for Step 7.
- * Left read-through for Step 12's integration tests. */
+/* S2: CFG_KEY_NETPLAY_DIRECT_P2P_STUN_TIMEOUT_MS is the overall
+ * wall-clock budget for Stun_Discover (all servers probed in parallel;
+ * see stun.c). Read at each discovery site via stun_budget_ms(). */
+static int stun_budget_ms(void) {
+    int ms = Config_GetInt(CFG_KEY_NETPLAY_DIRECT_P2P_STUN_TIMEOUT_MS);
+    if (ms <= 0) ms = 4000;      /* keep in sync with the config.c default */
+    if (ms < 1000) ms = 1000;    /* below one RTO the retransmit ladder is meaningless */
+    return ms;
+}
 
 /* --- worker thread ----------------------------------------------------- */
 
@@ -959,7 +962,7 @@ static int SDLCALL host_thread_fn(void* data) {
     NET_Init();
     set_state(DIRECT_P2P_STUN_DISCOVER);
     set_status("Preparing...");
-    bool stun_ok = Stun_Discover(&s_work.stun, local_port);
+    bool stun_ok = Stun_Discover(&s_work.stun, local_port, stun_budget_ms());
     if (cancel_requested()) {
         Stun_CloseSocket(&s_work.stun);
         set_status("Cancelled.");
@@ -1085,7 +1088,7 @@ static int SDLCALL join_thread_fn(void* data) {
     NET_Init();
     set_state(DIRECT_P2P_STUN_DISCOVER);
     set_status("Preparing...");
-    bool stun_ok = Stun_Discover(&s_work.stun, 0);
+    bool stun_ok = Stun_Discover(&s_work.stun, 0, stun_budget_ms());
     if (cancel_requested()) {
         Stun_CloseSocket(&s_work.stun);
         set_status("Cancelled.");
