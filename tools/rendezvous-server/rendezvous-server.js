@@ -31,12 +31,32 @@ const SESSION_TTL_MS = 10 * 60 * 1000;
 const SESSION_SWEEP_INTERVAL_MS = 5 * 1000;
 
 // Hard cap on concurrently-tracked sessions. Each entry is two endpoint
-// objects + a hex key (~250 bytes) => worst case ~1 MB. Before S1 the 60 s
-// TTL implicitly bounded slot-squatting; at 10 minutes an abuser inside the
-// per-IP rate limit (10 pkt/s) could otherwise park ~6000 keys per IP.
-// When full, REGISTERs for brand-new keys are dropped (logged); existing
-// sessions keep working, so a squatter cannot evict live hosts.
+// objects + timestamps + a 32-char hex key; V8 overhead (hidden classes,
+// Map buckets, string headers) puts a realistic worst case at ~1.3-2 MB,
+// not the naive ~250 B/entry ~1 MB. Before S1 the 60 s TTL implicitly
+// bounded slot-squatting; at 10 minutes the table needs an explicit
+// bound.
+//
+// Cap POLICY (review H2): a plain "drop new keys when full" cap is itself
+// a lockout vector — filling 4096 fresh keys takes ~410 s inside the
+// 10 pkt/s per-IP limit, and source-spoofed REGISTERs bypass the per-IP
+// limiter entirely. Two complementary defenses:
+//   1. MAX_NEW_KEYS_PER_IP: one (non-spoofing) source IP may have at most
+//      this many live keys it CREATED. A legitimate client holds exactly
+//      one while hosting (briefly two across a drift re-key), so 4 is
+//      generous headroom; a single-IP squatter now parks 4 keys, not 4096.
+//   2. At cap, a new key EVICTS the oldest UNPAIRED singleton instead of
+//      being dropped: paired sessions are never evicted, and a live host
+//      re-REGISTERs every <= 5 s (refreshing lastTouch) so it is never the
+//      oldest while a flood is cycling the table (flood would need to
+//      turn the whole 4096-slot table over in < 5 s, i.e. > 800 spoofed
+//      keys/s, to age a live host to the front). A legitimate new host
+//      therefore always gets a slot, even during a spoofed-source flood.
+// A stateless address-validation cookie (return-routability) is the
+// third defense; it needs a wire change and is deliberately left to the
+// queued S4 security stage to avoid conflicting designs.
 const MAX_SESSIONS = 4096;
+const MAX_NEW_KEYS_PER_IP = 4;
 
 // Per-slot liveness threshold (review H1). A live S1 host re-REGISTERs
 // every <= 5 s and a live joiner every 500 ms, so a slot silent for 30 s
@@ -126,10 +146,26 @@ function encodeDeliver(sessionKeyBuf, peerEndpoint) {
 
 const sessionMap = new Map();
 // key: hex-encoded 16-byte session_key
-// value: { endpointA, endpointB, lastTouch, lastSeenA, lastSeenB }
+// value: { endpointA, endpointB, lastTouch, lastSeenA, lastSeenB, creatorIp }
 // lastSeenA/B track per-slot liveness (last REGISTER/POLL from that exact
 // endpoint) for the SLOT_STALE_MS reclaim logic; lastTouch remains the
-// whole-entry TTL clock.
+// whole-entry TTL clock. creatorIp is the source IP that created the key
+// (slot A's original registrant) for the MAX_NEW_KEYS_PER_IP quota.
+
+const creatorCounts = new Map();
+// key: source IP string; value: number of LIVE sessionMap keys created by
+// that IP. Incremented on new-key admit, decremented via releaseSession.
+
+// Single deletion path so the creator quota stays consistent with the
+// session table (sweep, cap eviction, and test resets all route here).
+function releaseSession(hexKey, entry) {
+    sessionMap.delete(hexKey);
+    if (entry && entry.creatorIp) {
+        const n = creatorCounts.get(entry.creatorIp) || 0;
+        if (n <= 1) creatorCounts.delete(entry.creatorIp);
+        else creatorCounts.set(entry.creatorIp, n - 1);
+    }
+}
 
 const rateMap = new Map();
 // key: source IP string
@@ -174,7 +210,7 @@ function sweepSessions() {
     let evicted = 0;
     for (const [key, entry] of sessionMap) {
         if (now - entry.lastTouch > SESSION_TTL_MS) {
-            sessionMap.delete(key);
+            releaseSession(key, entry);
             evicted += 1;
         }
     }
@@ -216,12 +252,35 @@ function handleRegister(socket, buf, rinfo) {
     const now = nowMs();
 
     if (!entry) {
-        if (sessionMap.size >= MAX_SESSIONS) {
-            logWarn(`REGISTER from ${source.address}:${source.port} dropped — session table full (${sessionMap.size}/${MAX_SESSIONS})`);
+        // Per-IP live-key quota (review H2 defense 1) — checked before the
+        // cap so a quota-violating IP can never trigger evictions either.
+        const created = creatorCounts.get(source.address) || 0;
+        if (created >= MAX_NEW_KEYS_PER_IP) {
+            logWarn(`REGISTER from ${source.address}:${source.port} dropped — IP already holds ${created}/${MAX_NEW_KEYS_PER_IP} live keys`);
             return;
         }
-        entry = { endpointA: source, endpointB: null, lastTouch: now, lastSeenA: now, lastSeenB: 0 };
+        if (sessionMap.size >= MAX_SESSIONS) {
+            // Cap policy (review H2 defense 2): evict the oldest UNPAIRED
+            // singleton to make room. Paired sessions are never evicted;
+            // if everything is paired, only then drop the new key.
+            let oldestKey = null;
+            let oldestEntry = null;
+            for (const [k, e] of sessionMap) {
+                if (e.endpointB === null && (oldestEntry === null || e.lastTouch < oldestEntry.lastTouch)) {
+                    oldestKey = k;
+                    oldestEntry = e;
+                }
+            }
+            if (oldestKey === null) {
+                logWarn(`REGISTER from ${source.address}:${source.port} dropped — session table full of PAIRED sessions (${sessionMap.size}/${MAX_SESSIONS})`);
+                return;
+            }
+            releaseSession(oldestKey, oldestEntry);
+            logWarn(`session table full — evicted oldest unpaired singleton key=${shortKey4(oldestKey)}... to admit ${source.address}:${source.port}`);
+        }
+        entry = { endpointA: source, endpointB: null, lastTouch: now, lastSeenA: now, lastSeenB: 0, creatorIp: source.address };
         sessionMap.set(hexKey, entry);
+        creatorCounts.set(source.address, created + 1);
     } else if (entry.endpointA && endpointEq(entry.endpointA, source)) {
         entry.lastSeenA = now; // idempotent re-REGISTER from A
     } else if (entry.endpointB && endpointEq(entry.endpointB, source)) {
@@ -430,7 +489,10 @@ function start(port) {
         },
         _resetSessions() {
             sessionMap.clear();
+            creatorCounts.clear();
         },
+        _creatorCounts: creatorCounts,
+        _maxNewKeysPerIp: MAX_NEW_KEYS_PER_IP,
         // Inject a packet as if it arrived from rinfo — lets tests exercise
         // source-IP-dependent policy (slot reclaim identity, spoofed-source
         // floods) that loopback UDP cannot produce. fakeSocket, when given,

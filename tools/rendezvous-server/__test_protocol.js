@@ -319,45 +319,147 @@ async function testSessionTtl(handle, serverPort) {
 }
 
 async function testSessionCap(handle, serverPort) {
-    // Fill the table to MAX_SESSIONS with synthetic entries, then verify a
-    // REGISTER for a brand-new key is dropped (no reply, no growth) while
-    // a REGISTER touching an EXISTING session still works.
+    // Review H2 cap policy: at MAX_SESSIONS, a REGISTER for a brand-new key
+    // EVICTS the oldest UNPAIRED singleton and is admitted (a flood of
+    // squatted singletons can no longer lock out a legitimate new host).
+    // Only a table full of PAIRED sessions drops the new key. Existing
+    // sessions are always still serviced at cap.
+    handle._resetSessions(); // isolate from keys created by earlier tests
     const existingKey = crypto.randomBytes(16);
     const c = await makeClient();
     try {
         await c.send(makeRegister(existingKey, c.port), serverPort);
         await c.recv(500);
 
-        const before = handle._sessionMap.size;
+        // Fill with synthetic UNPAIRED singletons. lastTouch counts up from
+        // 1 (performance.now() epoch) so the fakes are strictly OLDER than
+        // the real entry and fake0 is the oldest of all.
         for (let i = handle._sessionMap.size; i < handle._maxSessions; i++) {
             handle._sessionMap.set(`fake${i}`, {
                 endpointA: { address: '203.0.113.1', port: 1000 + (i % 60000) },
                 endpointB: null,
-                lastTouch: Date.now(),
+                lastTouch: 1 + i,
+                lastSeenA: 1 + i,
+                lastSeenB: 0,
             });
         }
         assertEq(handle._sessionMap.size, handle._maxSessions, 'cap: table filled to MAX_SESSIONS');
+        assert(handle._sessionMap.has('fake1'), 'cap: oldest singleton present before new-key REGISTER');
 
         handle._resetRate();
         const newKey = crypto.randomBytes(16);
         await c.send(makeRegister(newKey, c.port), serverPort);
-        const dropped = await c.tryRecv(200);
-        assert(dropped === null, 'cap: REGISTER for new key at cap produces no reply');
+        const admitted = await c.tryRecv(500);
+        assert(admitted !== null, 'cap: new key at cap ADMITTED via singleton eviction (got a reply)');
         assertEq(handle._sessionMap.size, handle._maxSessions, 'cap: table did not grow past MAX_SESSIONS');
+        assert(!handle._sessionMap.has('fake1'), 'cap: oldest unpaired singleton was the one evicted');
+        assert(handle._sessionMap.has(newKey.toString('hex')), 'cap: new key present after eviction');
 
         // Existing session still serviced at cap.
         await c.send(makeRegister(existingKey, c.port), serverPort);
         const ok = await c.tryRecv(500);
         assert(ok !== null, 'cap: REGISTER for existing key at cap still replies');
 
-        // Cleanup synthetic entries so later logic isn't affected.
-        for (const k of [...handle._sessionMap.keys()]) {
-            if (k.startsWith('fake')) handle._sessionMap.delete(k);
+        // All-PAIRED variant: with no unpaired singleton to evict, a new
+        // key is genuinely dropped — paired sessions are never evicted.
+        for (const [k, e] of handle._sessionMap) {
+            if (e.endpointB === null) e.endpointB = { address: '203.0.113.2', port: 2000 };
+            void k;
         }
-        void before;
+        handle._resetRate();
+        const blockedKey = crypto.randomBytes(16);
+        // Use a fresh source IP via injection so the per-IP quota (127.0.0.1
+        // already owns keys here) is not the reason for the drop.
+        const stub = makeStubSocket();
+        handle._onMessage(makeRegister(blockedKey, 3333), { address: '198.51.100.99', port: 3333 }, stub);
+        assertEq(stub.sent.length, 0, 'cap: new key dropped when table is all paired (no reply)');
+        assert(!handle._sessionMap.has(blockedKey.toString('hex')), 'cap: paired sessions were not evicted');
+
+        handle._resetSessions(); // drop synthetic state for later tests
     } finally {
         await c.close();
     }
+}
+
+async function testPerIpQuota(handle, serverPort) {
+    // Review H2 defense 1: one source IP may hold at most MAX_NEW_KEYS_PER_IP
+    // live keys it created. The quota frees up when a key is released (TTL
+    // sweep here), so a legitimate client is never permanently locked out.
+    handle._resetSessions();
+    const quota = handle._maxNewKeysPerIp;
+    const c = await makeClient();
+    try {
+        const keys = [];
+        for (let i = 0; i < quota; i++) {
+            const k = crypto.randomBytes(16);
+            keys.push(k);
+            await c.send(makeRegister(k, c.port), serverPort);
+            const r = await c.tryRecv(500);
+            assert(r !== null, `quota: key ${i + 1}/${quota} admitted`);
+        }
+        assertEq(handle._sessionMap.size, quota, 'quota: table holds exactly the quota');
+
+        const overKey = crypto.randomBytes(16);
+        await c.send(makeRegister(overKey, c.port), serverPort);
+        const over = await c.tryRecv(200);
+        assert(over === null, 'quota: key over quota dropped (no reply)');
+        assertEq(handle._sessionMap.size, quota, 'quota: table did not grow');
+
+        // Existing keys still serviced while at quota.
+        await c.send(makeRegister(keys[0], c.port), serverPort);
+        assert((await c.tryRecv(500)) !== null, 'quota: existing key still serviced at quota');
+
+        // Release one key via the real TTL sweep; the quota must free up.
+        const e0 = handle._sessionMap.get(keys[0].toString('hex'));
+        e0.lastTouch -= handle._sessionTtlMs + 1000;
+        handle._sweepNow();
+        handle._resetRate();
+        await c.send(makeRegister(overKey, c.port), serverPort);
+        assert((await c.tryRecv(500)) !== null, 'quota: freed by sweep — new key admitted again');
+        handle._resetSessions(); // don't let this test's keys count against later tests
+    } finally {
+        await c.close();
+    }
+}
+
+async function testSpoofedFloodEviction(handle) {
+    // Review H2 end-to-end: a spoofed-source flood (bypasses the per-IP
+    // limiter AND the per-IP quota) fills the table; a legitimate new host
+    // must still be admitted (evicting the oldest flood singleton), and a
+    // LIVE host that keeps re-REGISTERing must never be the eviction
+    // victim while the flood continues.
+    handle._resetSessions();
+    const stub = makeStubSocket();
+    const max = handle._maxSessions;
+    let firstFloodHex = null;
+    for (let i = 0; i < max; i++) {
+        const k = crypto.randomBytes(16);
+        if (i === 0) firstFloodHex = k.toString('hex');
+        handle._onMessage(makeRegister(k, 1024 + (i % 60000)), { address: `10.${(i >> 16) & 255}.${(i >> 8) & 255}.${i & 255}`, port: 1024 + (i % 60000) }, stub);
+    }
+    assertEq(handle._sessionMap.size, max, 'flood: spoofed flood filled the table');
+
+    // Legitimate new host (fresh IP) registers: admitted, oldest flood key evicted.
+    stub.sent.length = 0;
+    const hostKey = crypto.randomBytes(16);
+    handle._onMessage(makeRegister(hostKey, 7777), { address: '192.0.2.10', port: 7777 }, stub);
+    assertEq(stub.sent.length, 1, 'flood: legit host got a reply at cap');
+    assert(handle._sessionMap.has(hostKey.toString('hex')), 'flood: legit host key admitted');
+    assert(!handle._sessionMap.has(firstFloodHex), 'flood: oldest flood singleton evicted');
+    assertEq(handle._sessionMap.size, max, 'flood: size still at cap');
+
+    // Flood continues; the live host re-REGISTERs (S1 cadence) between
+    // waves and must survive every eviction round.
+    for (let wave = 0; wave < 5; wave++) {
+        for (let i = 0; i < 50; i++) {
+            const k = crypto.randomBytes(16);
+            handle._onMessage(makeRegister(k, 5000 + i), { address: `172.16.${wave}.${i + 1}`, port: 5000 + i }, stub);
+        }
+        handle._onMessage(makeRegister(hostKey, 7777), { address: '192.0.2.10', port: 7777 }, stub);
+    }
+    assert(handle._sessionMap.has(hostKey.toString('hex')), 'flood: live re-REGISTERing host never evicted');
+    handle._resetSessions();
+    handle._resetRate();
 }
 
 // Stub socket for handle._onMessage injection: captures outbound sends so
@@ -535,8 +637,11 @@ async function main() {
         handle._resetRate();
         await testSessionTtl(handle, serverPort);   // 3 packets
         handle._resetRate();
-        await testSessionCap(handle, serverPort);   // 4 packets
+        await testSessionCap(handle, serverPort);   // 5 packets
         handle._resetRate();
+        await testPerIpQuota(handle, serverPort);   // 8 packets
+        handle._resetRate();
+        await testSpoofedFloodEviction(handle);     // injection only
         await testStaleSlotReclaim(handle, serverPort); // 4 packets
         handle._resetRate();
         await testFreshSlotNotReclaimed(handle, serverPort); // 2 packets
