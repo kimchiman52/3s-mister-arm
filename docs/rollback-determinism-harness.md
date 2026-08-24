@@ -532,6 +532,68 @@ allowlist entry defeats the whole tool.
    run A1 and production; `frames=` counts for these symbols move in both
    directions for reasons that have nothing to do with correctness.
 
+   **Use `tools/ldreq-timing` instead** (task #66). Because the bug is
+   wall-clock coupling, the experiment is to vary the wall clock and
+   require the simulation to be invariant: two runs of one binary with
+   identical scripted inputs and pinned RNG, differing only in
+   `--afs-inject-latency-ms`, each writing one row per frame of the saved
+   state the loader feeds plus the loader's own observable surface
+   (`src/test/ldreq_timing_trace.c`). It runs a 2×2 matrix and checks
+   both directions, so it cannot report PASS without first demonstrating
+   it can fail:
+
+   ```
+   tools/ldreq-timing/run.sh
+   LDREQ-TIMING SUMMARY: frames=600 latency_ms=400 barrier_off_divergent=274 \
+     barrier_off_saved_divergent=5 \
+     barrier_off_saved_columns=Exit_No,Exit_Timer,G_No1,G_No2,G_Timer \
+     barrier_on_divergent=0 verdict=PASS
+   ```
+
+   OBSERVED on `task66/ldreq-barrier`, `basic-exchange`, 600 frames,
+   400 ms injected latency, per column:
+
+   | column | barrier OFF | barrier ON |
+   |---|---|---|
+   | `Exit_Timer` **(saved)** | 137 frames, first **318** | 0 |
+   | `Exit_No` **(saved)** | 136 frames, first **319** | 0 |
+   | `G_No[2]` / `G_No[1]` / `G_Timer` **(saved)** | 155 / 136 / 146 frames, first 320 / **328** / 329 | 0 |
+   | `pl_load` (`Check_PL_Load()`) | 161 frames, first 217 | 0 |
+   | `ldreq_clear` (`Check_LDREQ_Clear()`) | 229 frames, first 208 | 0 |
+   | `ldreq_result_h` | 252 frames, first 201 | 0 |
+   | `head_be` / `head_type` / `head_rno` | 239 / 245 / 231 | 0 |
+
+   Read the `G_No[1]` row: at frame 328 the fast side is in the battle
+   (`G_No[1] == 2`) while the slow side is still in character select
+   (`G_No[1] == 1`). Every row marked saved is inside the desync
+   checksum. `pl_load` is the exact expression `Exit_6th`
+   (`screen/sel_pl.c:1702`) gates the saved `Exit_No`/`Exit_Timer` on,
+   and `ldreq_clear` is the expression `Game2_0`/`Game2_2`
+   (`game.c:472`, `:615`) call `fatal_error("Load queue failed to drain
+   in time")` on. **No rollback occurs anywhere in these runs.**
+
+   At 150 ms the loader columns still diverge (105 rows) but the saved
+   ones do not, because `Exit_6th` happens to sample the gate after both
+   timelines have reconverged. That is why the driver's control demands
+   divergence in a saved column specifically and defaults to 400 ms — a
+   control keyed on "some column moved" would have passed at 150 ms
+   without ever exercising the chain the fix is for.
+
+   Barrier cost, OBSERVED from the same run's telemetry
+   (`[ldreq-barrier]` lines, `barrier1_lat0.log`): the barrier fires
+   **four times per match** and drains
+   `8/7/5/4 steps, 0/1/0/1 ms, 284672/229376/147456/65536 bytes`
+   — ~710 KB total, on the Ryu-vs-Ken scene. The 3000 ms budget is
+   three orders of magnitude above the host figure; the byte counts are
+   the number that carries to MiSTer, where the same bytes come off SD.
+
+   The fix is the barrier in `Check_LDREQ_Queue()` (`io/gd3rd.c`), live
+   whenever `Ldreq_BarrierActive()` — i.e. whenever the GekkoNet session
+   is `NETPLAY_SESSION_RUNNING`. **This harness's verdict is deliberately
+   unchanged by it**: an rbd run has no session and does not pass
+   `--ldreq-barrier-force`, so it exercises the stock unbarriered path
+   and the OPEN RED below still reproduces exactly as recorded.
+
 ### OPEN RED: the shipped gate's select *period* hides a real divergence
 
 Measured 2026-08-24 (task #60) on `upstream-engine-fixes` @ `fc06a657`,
@@ -582,6 +644,35 @@ diverge in any run. `ldreq_result` is `0x1013fa800 + 0x126` = exactly its
 Neither divergent symbol is the known flake #65 signature (8-byte
 file-scope pointers from `port/paths.c` / `port/resources.c` /
 `port/sdl/*`); the repeat run reproduced both exactly.
+
+**Still OPEN after the task-#66 barrier, by design.** Re-measured on
+`task66/ldreq-barrier`, same command, `errors=0` in both:
+
+| run | verdict | exit | divergent |
+|---|---|---|---|
+| select 1 / 8, stock (no session, no force) | FAIL | 1 | 2 — `plt_req` first=193 frames=14, `Candidate_Buff` first=193 frames=7 |
+| select 1 / 8, `--game-arg=--ldreq-barrier-force` | FAIL | 1 | 3 — the two above plus `q_ldreq` first=193 frames=7 |
+
+Row 1 reproduces the numbers above symbol-for-symbol, which is the
+point: the barrier is gated on a live GekkoNet session, an rbd run has
+none, so this harness's verdict is untouched and the OPEN RED stands as
+recorded.
+
+Row 2 looks like a regression and is not one. Forcing the barrier on
+removes the loader's A1-vs-A2 nondeterminism, so `q_ldreq` **falls out
+of the baseline-noise list** — the diff of the two runs' noise lists is
+exactly `-q_ldreq` (plus `configuration` moving, the known pointer-valued
+flip from limit 3). Having stopped being noise-masked it lands in
+DIVERGENT, where it reports a 7-frame transient in the same push window
+as `Candidate_Buff` and then reconverges. This is known limit 9's
+masking being *lifted*, not new state escaping: the harness can suddenly
+see a symbol it was previously blindfolded to. It is also not a
+production configuration — a real session has the barrier on *and* is
+not this harness.
+
+`plt_req` is unchanged by the barrier in either row, consistent with its
+mechanism being mispredicted-input re-execution of `Sel_PL_3rd`'s
+one-shot push rather than loader timing.
 
 `feedback` is 0 in every one of these runs, so no GS_SAVE symbol was
 *observed* to drift. That is a coverage statement, not an exoneration:
