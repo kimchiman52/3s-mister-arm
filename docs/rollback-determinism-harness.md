@@ -192,12 +192,12 @@ re-tag it.
 
 | control | status | last actually run |
 |---|---|---|
-| A — empty allowlist | **OBSERVED** | task 54, output below |
+| A — empty allowlist | **OBSERVED** | task 69, output below (re-run after task #62 revived the perf telemetry; supersedes the task-54 numbers) |
 | B — mutation test | **RECORDED — never executed** | never; signature inferred from the `Random_ix16_bg` finding below |
 | C — rebuild base `0e464a30` | **RECORDED** | the reviewer's validation run, not reproduced since |
 
 **Control A — empty allowlist (no rebuild, ~2.5 min). OBSERVED.** `allowlist.txt`'s
-39 fnmatch patterns suppressed 43 ALLOWED rows (28 distinct symbols)
+40 fnmatch patterns suppressed 44 ALLOWED rows (28 distinct symbols)
 across the two fast scenarios on this tree. Those symbols really do
 diverge because of rollback; they are judged benign, not absent. Take
 the suppression away and they must surface as findings —
@@ -208,22 +208,30 @@ so no pattern matches anything:
 tools/rollback-determinism/run.sh fast --allowlist /dev/null
 ```
 
-Measured on this tree, immediately after a `verdict=PASS` gate run of
-the same binary:
+Measured on this tree (task #69, `996e2d64` + the perf-telemetry allowlist
+entry), immediately after a `verdict=PASS` gate run of the same binary
+(`divergent=0 allowlisted=44 noise=185`):
 
 ```
-RBD SUMMARY: ... divergent=43 feedback=0 allowlisted=0 noise=182 errors=0 verdict=FAIL   (exit 1)
+RBD SUMMARY: ... divergent=48 feedback=0 allowlisted=0 noise=181 errors=0 verdict=FAIL   (exit 1)
 ```
 
-The arithmetic is the check: the 43 rows the gate reported as
-`allowlisted` are the same 43 that come back as `divergent`, and `noise`
-is unchanged at 182 because noise classification does not depend on the
-allowlist. Getting `verdict=PASS` out of this — or a `divergent` that
-does not account for the gate's `allowlisted` count — means the
-capture/differ/symbolizer chain is producing nothing to classify, i.e.
-the harness is broken, not the tree. This exercises everything except
-the FEEDBACK tagger (`feedback=0` here is expected: none of the
-allowlisted sinks is in the save set).
+The arithmetic is the check, with one caveat this run makes explicit.
+All 44 rows the gate reported as `allowlisted` come back as `divergent`
+here — the containment holds exactly, verified row by row. The count is
+48 rather than 44 because four rows the gate had classified as NOISE
+(`configuration` x2, `afs_total_bytes_requested`, `bgm_exe`) landed on
+the DIVERGENT side of the A1-vs-A2 baseline comparison in this run
+instead; that is the run-to-run noise-classification instability
+documented under known limit 8 / task #65 below, not an allowlist
+effect. So the invariant to check is **containment**
+(`allowlisted_rows ⊆ divergent_rows`), not equality of the two counts,
+and `noise` moves by exactly the offset (185 → 181). Getting
+`verdict=PASS` out of this — or a `divergent` that does not contain the
+gate's `allowlisted` rows — means the capture/differ/symbolizer chain is
+producing nothing to classify, i.e. the harness is broken, not the tree.
+This exercises everything except the FEEDBACK tagger (`feedback=0` here
+is expected: none of the allowlisted sinks is in the save set).
 
 **Control B — mutation test (one rebuild, ~4 min for one scenario).
 RECORDED — THIS HAS NEVER BEEN EXECUTED.** The recipe's mechanics were
