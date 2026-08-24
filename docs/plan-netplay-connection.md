@@ -6,7 +6,7 @@ liveness" commit series — S1 is IMPLEMENTED by the commits that land
 alongside this file; S2–S8 are planned.**
 
 Citation convention: `path:NNN` refers to the tree as of the S1
-series. Pre-S1 baseline pointers are cited as `path@1b217758:NNN`
+series plus its adversarial-review fix commits (H1-H3/M1-M3/L1/L4). Pre-S1 baseline pointers are cited as `path@1b217758:NNN`
 (the `upstream-engine-fixes` tip this series branched from). Every
 constant below was read from the named line, not recalled.
 
@@ -57,11 +57,11 @@ All from `src/netplay/direct_p2p.c` (current lines); labels from
 
 | Terminal state | Status text | Raised at |
 |---|---|---|
-| `FAILED_STUN` | "Connection failed. Try again." | host: direct_p2p.c:881, 923, 995 (thread-spawn failure paths in Begin*); joiner: :1718 |
-| `FAILED_PUNCH` | "Invalid room code." | BeginJoin decode failures, direct_p2p.c:1737, 1746 |
-| `FAILED_SYMMETRIC` | "Could not connect. Try a different network." | joiner bypasses :1050/:1056/:1063; host hairpin gate :1545 |
-| `FAILED_BILATERAL` | "Could not connect. Try a different network." | signaling/punch failures :1087-:1234, :1570 |
-| `FAILED_HANDSHAKE` | MIST reject reason | R-1 path, :1328 |
+| `FAILED_STUN` | "Connection failed. Try again." | host: direct_p2p.c:971, 1025; thread-spawn failure paths in Begin* :1872/:1932; joiner: :1097 |
+| `FAILED_PUNCH` | "Invalid room code." | BeginJoin decode failures, direct_p2p.c:1891, 1900 |
+| `FAILED_SYMMETRIC` | "Could not connect. Try a different network." | joiner bypasses :1152/:1158/:1165 (host side no longer has a terminal gate — same-IP DELIVERs are ignored as stale self-registrations, review H1) |
+| `FAILED_BILATERAL` | "Could not connect. Try a different network." | joiner signaling/punch failures :1189-:1336; host: punch-thread spawn failure :1719, retry-budget exhaustion :2130 (review M1: a single host-side punch failure returns to HOST_WAITING) |
+| `FAILED_HANDSHAKE` | MIST reject reason | R-1 path, :1435 |
 
 Non-exits (hangs) are catalogued in S3.
 
@@ -94,21 +94,23 @@ Demonstrated end-to-end against the real server (see §3.4).
 
 Mechanics verified in code; classifications are standard NAT taxonomy.
 "UPnP" means the host's router granted the mapping
-(`try_upnp`, direct_p2p.c:441-509) and its external IP matches STUN
-(S1 CGNAT gate, §3.3.5).
+(`try_upnp`, direct_p2p.c:509-566) and its external IP is not
+provably non-public (CGNAT gate, §3.6; review M3).
 
 | Host \ Joiner | Full-cone / restricted | Port-restricted | Symmetric |
 |---|---|---|---|
 | **UPnP mapped** | direct punch to mapped port succeeds | succeeds (joiner's own mapping opens on first send) | succeeds — mapped port accepts any source |
-| **Full/restricted cone, no UPnP** | direct punch succeeds | succeeds | joiner's source port differs per destination → host's echo goes to the STUN-observed (wrong) port; **bilateral fallback required**, host-side learns true port from first inbound (host_tick_receive captures source, direct_p2p.c:1616-1633) |
+| **Full/restricted cone, no UPnP** | direct punch succeeds | succeeds | joiner's source port differs per destination → host's echo goes to the STUN-observed (wrong) port; **bilateral fallback required**, host-side learns true port from first inbound (host_tick_receive captures source, direct_p2p.c:1763-1782) |
 | **Port-restricted, no UPnP** | succeeds | succeeds (simultaneous send opens both) | fails direct; bilateral gives the host the joiner's fresh mapping via DELIVER — works iff joiner's NAT maps the rendezvous-learned port for the host too (usually not, for true symmetric) |
 | **Symmetric, no UPnP** | host's advertised STUN port is per-destination-wrong; joiner's punch lands on a dead mapping. Bilateral: server learns the host's port *toward the server*, still wrong toward the joiner → **fails**; needs relay (S5) | same | **fails — S5 relay is the only path** |
 | **CGNAT (any inner type)** | pre-S1: silently broken when UPnP "succeeded" (wrong ip/port pair, §3.3.5); post-S1: behaves as the corresponding no-UPnP row | ↑ | ↑ |
 
 Hairpin (both peers behind one router) is a special row: works only
-with router NAT-loopback support; both sides now fail fast with
-`FAILED_SYMMETRIC` instead of retrying bilateral through the same
-broken router (direct_p2p.c:1521-1548, join bypass :1058-1064).
+with router NAT-loopback support. The joiner fails fast with
+`FAILED_SYMMETRIC` before ever REGISTERing (join bypass :1163-1166);
+because of that bypass a same-IP DELIVER can only be the host's own
+stale registration, so the host now IGNORES it and keeps waiting
+(review H1, try_handle_deliver self-DELIVER gate :1655-1683).
 
 ---
 
@@ -117,7 +119,7 @@ broken router (direct_p2p.c:1521-1548, join bypass :1058-1064).
 Fix = keep the host alive for as long as it is advertising.
 
 ### 3.1 Persistent re-REGISTER
-`host_rendezvous_thread_fn` (direct_p2p.c:677-762) now re-REGISTERs
+`host_rendezvous_thread_fn` (direct_p2p.c:760-851) now re-REGISTERs
 every `netplay-direct-p2p-register-interval-ms` (default 5 000 ms,
 floor 1 000 ms; config.c defaults block) for the **entire duration of
 HOST_WAITING** — exit on `s_rendezvous_cancel` or on the state leaving
@@ -126,12 +128,12 @@ flag; the state check covers it). Server cost ≈ 0.2 pkt/s/host against
 the verified 10 pkt/s/IP limiter (rendezvous-server.js:41-42
 `RATE_WINDOW_MS`/`RATE_LIMIT_PER_WINDOW`). Spawn remains behind the
 `netplay-direct-p2p-disable-bilateral` kill switch
-(direct_p2p.c:948-956).
+(direct_p2p.c:1063-1070).
 
 Bonus correctness fix: the session key is now derived from the
 **advertised** tuple (`Work.advertised_port`, direct_p2p.c:103-115) on
-both the register loop (:717-724) and the host DELIVER handler
-(:1499-1504). Pre-S1 the host hashed its raw STUN port while the
+both the register loop (:796-799) and the host DELIVER handler
+(:1635-1640). Pre-S1 the host hashed its raw STUN port while the
 joiner hashed the room-code port (UPnP external when mapped,
 direct_p2p.c@1b217758:739 vs :933-934) — different rendezvous slots
 whenever the two ports differed (non-port-preserving NAT), so the
@@ -141,10 +143,10 @@ bilateral fallback could never pair those hosts.
 Every `netplay-direct-p2p-stun-keepalive-ms` (default 20 000 ms, ≤ 0
 disables) while HOST_WAITING, the main thread re-issues a STUN Binding
 Request on the same socket toward the server that answered discovery
-(`host_stun_keepalive_tick`, direct_p2p.c:1380-1397;
+(`host_stun_keepalive_tick`, direct_p2p.c:1488-1504;
 `Stun_SendKeepalive`, stun.c). The probe refreshes the advertised NAT
 mapping; the response is routed through a new STUN gate in
-`host_tick_receive` (direct_p2p.c:1602-1613) — which also fixes a
+`host_tick_receive` (direct_p2p.c:1752-1762) — which also fixes a
 latent pre-S1 bug where a straggler Binding Response from a slower
 `Stun_Discover` server arriving during HOST_WAITING was captured as
 "the peer" (@1b217758:1295-1322 had no payload validation at all).
@@ -153,8 +155,13 @@ latent pre-S1 bug where a straggler Binding Response from a slower
 last known one, the NAT rebound and the displayed code is already
 dead. We re-encode and **display the NEW code** with status "Network
 changed! Share the NEW code." (`host_handle_stun_rebind`,
-direct_p2p.c:1416-1475), and restart the rendezvous loop under the new
-session key (cancel+join before mutating the fields it reads). We do
+direct_p2p.c:1529-1606), and restart the rendezvous loop under the new
+session key (cancel+join before mutating the fields it reads).
+Review M2: the rewrite is debounced — a drift commits only when two
+consecutive keepalives report the same new endpoint, so a NAT that
+rebinds every interval never churns the code; and the default
+keepalive dropped 20 s -> 15 s to sit below common ~30 s NAT UDP idle
+timeouts, holding the mapping so drift rarely happens at all. We do
 not silently continue; preserving the old, dead code has no value, and
 an explained code change is the least surprising outcome for a user
 staring at a code they already shared. A live UPnP mapping pins the
@@ -162,12 +169,18 @@ advertised port, so only IP drift can change the code there.
 
 ### 3.3 Server TTL + cap
 `SESSION_TTL_MS` 60 s → **10 min** (rendezvous-server.js:30) so a code
-shared over chat/voice stays pair-able; `MAX_SESSIONS = 4096` (:39,
-enforcement :200-203) bounds the slot-squat/memory exposure the longer
-TTL creates (~1 MB worst case; new-key REGISTERs drop at cap, existing
-sessions unaffected). Tests: `__test_protocol.js` `testSessionTtl` /
-`testSessionCap` (real sweep + real packets; aging simulated through
-the `_sessionMap` hook).
+shared over chat/voice stays pair-able; `MAX_SESSIONS = 4096` bounds
+the memory exposure the longer TTL creates (~1.3-2 MB realistic under
+V8). Review H2 replaced drop-on-full (itself a lockout vector) with a
+layered policy: `MAX_NEW_KEYS_PER_IP = 4` per-IP live-key quota, and
+at cap a new key evicts the oldest UNPAIRED singleton (paired sessions
+are never evicted; a live host's <=5 s re-REGISTER keeps it off the
+eviction front). Review H1 added same-IP stale-slot reclamation
+(`SLOT_STALE_MS = 30 s`) so a cancel-then-re-host client reclaims its
+own key instead of poisoning it. Tests: `__test_protocol.js`
+`testSessionTtl` / `testSessionCap` / `testPerIpQuota` /
+`testSpoofedFloodEviction` / the stale-slot reclaim suite (real sweep +
+real packets; aging simulated through the `_sessionMap` hook).
 
 ### 3.4 Demonstration (real server, real clock)
 `scratchpad/demo-liveness.js` ran both behaviors concurrently:
@@ -179,14 +192,17 @@ unsolicited DELIVER push (pair-able). Output is in the S1 task report.
 
 ### 3.5 UPnP lease renewal
 The 1-hour lease (upnp.c:27) is renewed at half-life (30 min,
-`upnp_renew_tick`, direct_p2p.c:561-641), retry at 5 min on failure,
+`upnp_renew_tick`, direct_p2p.c:646-705), retry at 5 min on failure,
 **including mid-session**: `main.c` now ticks the orchestrator from
 the active-session branch (main.c, `DirectP2P_Tick` beside
 `Netplay_Run`), because the mapping is what carries the peer's
 traffic. Renewal runs on a side thread (router HTTP), never touches
-the GekkoNet-owned socket; teardown/Cancel join it before
-`Upnp_RemoveMapping` so miniupnpc's cached-IGD statics
-(upnp.c:34-37) are never used concurrently.
+the GekkoNet-owned socket; teardown/Cancel reap it before
+`Upnp_RemoveMapping` with a bounded 2 s deadline+detach (review H3 —
+an unbounded join could block the game thread for the OS SYN timeout
+when the router is dead), skipping the router-side removal on detach
+so miniupnpc's cached-IGD statics (upnp.c:34-37) are never used
+concurrently.
 
 ### 3.6 CGNAT blind spot
 `UpnpMapping.external_ip` was captured (upnp.c:120) and never read.
@@ -194,9 +210,12 @@ Behind CGNAT/double-NAT the inner router reports a private/CGN
 external IP while STUN reports the true public IP; the room code
 paired the STUN IP with the UPnP port (@1b217758:739-740) — a wrong
 pair that silently killed the direct path. Now compared after STUN
-discovery (direct_p2p.c:884-908): on mismatch, log "CGNAT detected",
-remove the mapping, advertise the STUN endpoint, let punch/bilateral
-carry it.
+discovery (direct_p2p.c:975-1010): the mapping is dropped only when
+the router-reported IP parses and is provably non-public (RFC1918 /
+CGN 100.64.0.0/10 / loopback / link-local — review M3); a
+public-but-different (1:1 NAT / DMZ) or unparseable external IP keeps
+the mapping and logs. On drop, advertise the STUN endpoint and let
+punch/bilateral carry it.
 
 ---
 
@@ -240,7 +259,7 @@ carry it.
 
 - The host treats **any** non-'3SXR', non-STUN datagram as the peer
   and hands the session off to its source
-  (host_tick_receive peer capture, direct_p2p.c:1616-1660; pre-S1
+  (host_tick_receive peer capture, direct_p2p.c:1763-1791; pre-S1
   @1b217758:1295-1322). S1 narrowed this (STUN responses gated) but a
   blind attacker who guesses/observes ip:port still gets a handoff.
   Add a punch-payload check + a code-derived token.
@@ -254,7 +273,7 @@ carry it.
 Symmetric×symmetric (and most symmetric×port-restricted) pairs cannot
 punch (matrix §2). **Not coturn**: `do_handoff` transfers a bare
 `NET_DatagramSocket` into netplay
-(Netplay_SetStunSocket, direct_p2p.c:1345-1352) and GekkoNet then owns
+(Netplay_SetStunSocket, direct_p2p.c:1449-1459) and GekkoNet then owns
 plain UDP send/recv on it — a TURN allocation needs TURN framing on
 the wire, which GekkoNet will not speak. A minimal relay extension to
 the existing rendezvous protocol (same '3SXR' magic, new RELAY type

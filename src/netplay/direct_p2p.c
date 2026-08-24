@@ -1611,11 +1611,12 @@ static void host_handle_stun_rebind(const uint8_t* buf, int len) {
  * public endpoint, same as the rendezvous thread). On a valid DELIVER
  * with a non-zero peer endpoint, transitions out of HOST_WAITING per
  * the bilateral fallback flow:
+ *   - Self-DELIVER (peer public IP == our public IP) => ignore and stay
+ *     HOST_WAITING with the resender alive (review H1 — it is our own
+ *     stale registration or a spoof; a legitimate joiner hairpin-bails
+ *     client-side before ever REGISTERing).
  *   - LAN peer => stay HOST_WAITING (we should have seen a direct punch
  *     already; rendezvous via public infra is the wrong path).
- *   - Hairpin (peer public IP == our public IP) => FAILED_SYMMETRIC; the
- *     router that broke the direct punch will also break the bilateral
- *     punch (Hard Requirement 3(c)).
  *   - Otherwise => stash peer endpoint, signal rendezvous-cancel,
  *     transition to FALLBACK_BILATERAL_PUNCH and spawn the
  *     bilateral-punch worker thread.
@@ -2088,8 +2089,9 @@ void DirectP2P_Tick(void) {
          * which are main-thread-only. We pick up that signal here, join
          * the worker so its handle is reclaimed and s_work reads are
          * race-free, then run do_handoff inline. do_handoff itself does
-         * NOT publish HANDOFF (mirroring the direct-path convention at
-         * host_tick_receive:1014/1017), so we set_state HANDOFF after.
+         * NOT publish HANDOFF (mirroring the direct-path convention in
+         * host_tick_receive, where set_state(DIRECT_P2P_HANDOFF)
+         * precedes the do_handoff call), so we set_state HANDOFF after.
          *
          * On punch FAILURE the worker publishes FAILED_BILATERAL itself
          * and we never observe the pending flag — that path is handled
