@@ -4146,6 +4146,15 @@ typedef enum {
      * STUN's, so a mapping without one is unjudgeable. */
     MOCK_GW_PCP_NO_EXT_IP,
     MOCK_GW_NATPMP_NO_EXT_IP,
+    /* S7 review H-6, the per-phase-budget half. Speaks NAT-PMP perfectly
+     * but answers every PCP request with a well-formed MAP response
+     * carrying the WRONG Mapping Nonce — i.e. NOISE on port 5351 that
+     * the §11.4 matcher rejects and that therefore never ends the PCP
+     * phase's wait. A gateway that is merely confused, a second PCP
+     * client on the LAN, or an attacker all produce this. The point of
+     * the test is that such noise must not be able to STARVE the
+     * NAT-PMP fallback of its own retransmit budget. */
+    MOCK_GW_PCP_NOISE_THEN_NATPMP,
 } MockGwMode;
 
 typedef struct {
@@ -4242,6 +4251,29 @@ static int SDLCALL mock_gateway_thread(void* arg) {
                 r[9] = (uint8_t)(ctx->epoch_s >> 16);
                 r[10] = (uint8_t)(ctx->epoch_s >> 8);
                 r[11] = (uint8_t)(ctx->epoch_s);
+                mock_gw_reply(ctx, r, sizeof(r), &from, fl);
+                continue;
+            }
+            if (ctx->mode == MOCK_GW_PCP_NOISE_THEN_NATPMP) {
+                /* A syntactically perfect 60-octet MAP response whose
+                 * Mapping Nonce is not the one we sent. RFC 6887 §11.4
+                 * matches "the protocol, the internal port, and the
+                 * mapping nonce", so the client must treat it as not
+                 * ours and keep waiting — which is exactly the state in
+                 * which a shared deadline lets one phase eat the rest. */
+                uint8_t r[60];
+                memset(r, 0, sizeof(r));
+                r[0] = 2;
+                r[1] = 0x80u | 1u;
+                r[3] = 0;
+                r[7] = 60;
+                memset(&r[24], 0x5A, 12); /* deliberately NOT our nonce */
+                r[36] = buf[36];
+                r[40] = buf[40]; r[41] = buf[41];
+                r[42] = (uint8_t)(ctx->ext_port >> 8);
+                r[43] = (uint8_t)(ctx->ext_port & 0xFFu);
+                r[54] = 0xFF; r[55] = 0xFF;
+                memcpy(&r[56], &ctx->ext_ip_be, 4);
                 mock_gw_reply(ctx, r, sizeof(r), &from, fl);
                 continue;
             }
@@ -5465,6 +5497,59 @@ static int test_s7_review_fixes(void) {
                         "already answered; RFC 6886 §3.1 says to let it work at its own "
                         "pace\n", (unsigned)delays[di], gw.pmp_addr_reqs);
                 fail_count++;
+            }
+            mock_gateway_stop(&gw, tid, mock_gateway_port(&gw));
+        }
+    }
+
+    /* ===== H-6, the other half: one phase may not starve the next ===== *
+     *
+     * The 700 ms case above is fixed by the stop-retransmitting rule
+     * alone. THIS case is what the per-phase budget is for.
+     *
+     * A gateway that answers PCP with unmatchable noise (wrong Mapping
+     * Nonce — §11.4 says ignore it) but speaks NAT-PMP perfectly. The
+     * client cannot end the PCP phase on any of those frames, and with
+     * the retransmit suppression in force it waits out the phase. If
+     * that wait runs to a SHARED deadline, the PCP phase consumes the
+     * whole allowance and the NAT-PMP fallback — the working protocol,
+     * on the same box — never gets a single datagram.
+     */
+    {
+        Natpmp_TestHook_ResetState();
+        struct in_addr ext;
+        memset(&ext, 0, sizeof(ext));
+        inet_pton(AF_INET, "198.51.100.44", &ext);
+        MockGwCtx gw;
+        SDL_Thread* tid = mock_gateway_start(&gw, MOCK_GW_PCP_NOISE_THEN_NATPMP,
+                                             (uint32_t)ext.s_addr, 40111, 3600);
+        if (tid == NULL) {
+            FAIL("23b-noise", "could not start the mock gateway");
+        } else {
+            UpnpMapping m;
+            memset(&m, 0, sizeof(m));
+            const uint64_t t0 = SDL_GetTicks();
+            const bool ok = Natpmp_AddMapping(&m, 54321, 54321, PORTMAP_BACKEND_NONE,
+                                              NATPMP_PROBE_BUDGET_MS);
+            const uint64_t dt = SDL_GetTicks() - t0;
+            fprintf(stderr,
+                    "[test_bilateral_punch] 23b-noise: mapping=%s elapsed=%u ms "
+                    "pcp_reqs=%d addr_reqs=%d map_reqs=%d\n",
+                    ok ? "YES" : "NO", (unsigned)dt, gw.pcp_reqs, gw.pmp_addr_reqs,
+                    gw.pmp_map_reqs);
+            if (!ok) {
+                fprintf(stderr,
+                        "[test_bilateral_punch] FAIL: 23b-noise-starved: unmatchable "
+                        "PCP noise on port 5351 starved the NAT-PMP fallback (the "
+                        "gateway saw %d address and %d mapping request(s) in %u ms). "
+                        "Each protocol phase must get its OWN retransmit budget; a "
+                        "shared deadline lets the first phase spend the whole "
+                        "allowance.\n",
+                        gw.pmp_addr_reqs, gw.pmp_map_reqs, (unsigned)dt);
+                fail_count++;
+            } else {
+                EXPECT_TRUE("23b-noise-extport", m.external_port == 40111);
+                EXPECT_TRUE("23b-noise-backend", m.backend == PORTMAP_BACKEND_NATPMP);
             }
             mock_gateway_stop(&gw, tid, mock_gateway_port(&gw));
         }
