@@ -1655,15 +1655,25 @@ void GameState_Load(const GameState* src) {
      *     no caller in effl8.c (the complete caller list is color3rd.c,
      *     meta_col.c and effe6.c). Restoring ColorRAM without a ghost refresh
      *     is therefore exactly symmetric with what the effect itself does.
-     *  2. It would not fix the case it appears to. The only way a torn 12-of-64
-     *     row can arise is a speculative frame running a FULL-row writer over
-     *     one of these rows — metamor_color_trans/_restore (meta_col.c), which
-     *     write all 64 entries of rows 0/8/16/24 — after which the load
-     *     restores only the first 12. The ghost at that point still holds the
-     *     self-consistent 64 entries meta_col pushed; refreshing it would
-     *     PUBLISH the torn row to VRAM instead of leaving a stale-but-coherent
-     *     one. The real remedy for that case would be widening the slice or
-     *     saving meta_col's rows, not a ghost push.
+     *  2. It would not fix the case it appears to. A torn row arises when a
+     *     speculative frame runs a WIDER writer over one of these rows and the
+     *     load then restores only the first 12 entries. Two such writers exist,
+     *     both on rows 0/8/16/24:
+     *       - metamor_color_trans/_restore (meta_col.c:19-24, :73-84) write all
+     *         64 entries and push the ghost;
+     *       - effect J7's get_new_color_data (effj7.c:491) writes 48 entries to
+     *         both tables, which effj7.c:400-401 point at exactly these rows.
+     *     In both cases the ghost still holds a self-consistent row; refreshing
+     *     it would PUBLISH the tear to VRAM instead of leaving a stale-but-
+     *     coherent row. The remedy for that case would be widening the slice or
+     *     saving those writers' rows, not a ghost push.
+     *
+     *     Note the tear cannot feed back into simulation state: the only path
+     *     from ColorRAM into saved state is effl8's save_old_color_data
+     *     (effl8.c:47), which reads exactly the EFFL8_COLOR_ENTRIES prefix this
+     *     loop restores. effj7 has no save_old_color_data at all. So the save
+     *     window is the right width for correctness even though it is narrower
+     *     than the widest writer.
      *  3. Cost and blast radius. palUpdateGhostCP3 is VRAM work
      *     (flLockPalette/palConvRowTim2CI8Clut/flUnlockPalette, color3rd.c:531)
      *     — four lock/copy-64/unlock round trips on every rollback tick on a
