@@ -556,7 +556,64 @@ function relayRelease(hexKey, why) {
     }
     logInfo(`[RELAY] released key=${shortKey4(hexKey)}... port=${r.port} (${why}) ` +
         `fwd=${r.forwarded}/${r.forwardedBytes}B dropUnpinned=${r.dropUnpinned} ` +
-        `dropCap=${r.dropCap} pinRejects=${r.pinRejects}`);
+        `dropCap=${r.dropCap} pinRejects=${r.pinRejects} pinSourceRejects=${r.pinSourceRejects}`);
+}
+
+// Review HIGH-1: which source IP may pin `side`.
+//
+// The defect this closes: every frame on the MAIN port is source-bound by
+// the S4c cookie gate, but RELAY_PIN on the relay port was bound to
+// NOTHING but the token — and the token is a capability for
+// (hexKey, side, slot) only. relayOnMessage recorded rinfo.address/port
+// verbatim, never asking that address to prove it can receive. So a party
+// legitimately holding a side-0 token (trivially arranged by creating your
+// own session with two of your own sockets) could present it from a
+// SPOOFED source; the relay pinned side 0 to an arbitrary victim and then
+// forwarded everything the attacker sent as side 1 to that victim at up to
+// RELAY_BYTES_PER_SEC. Reproduced: 200x1200 B offered, 54 datagrams /
+// 64800 B forwarded to the victim, plus an unsolicited PIN_ACK. It is 1:1,
+// so source-laundering and uplink burn rather than classic amplification —
+// still an off-path-drivable reflector, and still unshippable.
+//
+// The fix binds the pin to the IP that the session's return-routability
+// gate already proved receives at its own address: a slot's registered IP.
+// An off-path attacker cannot get a victim's IP into a session slot,
+// because doing so requires answering a CHALLENGE delivered to the victim.
+//
+// MATCHING IS IP-ONLY, DELIBERATELY, AND MUST STAY THAT WAY. A symmetric
+// NAT hands out a DIFFERENT mapping toward the relay port than toward the
+// rendezvous port — which is precisely the case S5 exists for. Requiring
+// the port to match would break the entire stage for exactly the users it
+// was built for. testRelayPinSourceBoundToSlotIp asserts both halves: a
+// wrong IP is refused, and the right IP from a DIFFERENT PORT is accepted.
+//
+// Source of truth is the LIVE session entry (it tracks slot reclaim), with
+// the snapshot taken at grant time as the fallback for a relay that has
+// outlived its session — which review CRITICAL-1's fix makes reachable.
+function relaySlotIp(relay, side) {
+    const entry = sessionMap.get(relay.hexKey);
+    if (entry !== undefined) {
+        const ep = side === 0 ? entry.endpointA : entry.endpointB;
+        if (ep) return ep.address;
+    }
+    return relay.slotIp[side];
+}
+
+// True when `rinfo` is allowed to pin (or re-pin) `side`.
+//
+// Runs BEFORE the HMAC (review MEDIUM-3): an unknown source is now
+// rejected on a Map lookup and a string compare instead of costing up to
+// two HMAC-SHA256 plus a timingSafeEqual.
+function relayPinSourceAllowed(relay, side, rinfo) {
+    const s = relay.side[side];
+    if (s.ep !== null) {
+        // Already pinned: only the pinned endpoint may re-pin (idempotent
+        // re-ACK). Holding a token cannot hijack a live side — this is the
+        // pre-existing no-hijack rule, just moved ahead of the HMAC.
+        return s.ep.address === rinfo.address && s.ep.port === rinfo.port;
+    }
+    const want = relaySlotIp(relay, side);
+    return want !== null && want !== undefined && want === rinfo.address;
 }
 
 // Token bucket over forwarded bytes. Refills at RELAY_BYTES_PER_SEC with
@@ -602,6 +659,15 @@ function relayOnMessage(relay, buf, rinfo) {
             relay.pinRejects += 1;
             return;
         }
+        // Review HIGH-1 + MEDIUM-3: source admission BEFORE the HMAC. The
+        // token alone is a capability for (key, side, slot) and proves
+        // nothing about who is holding it, so the source IP must be one the
+        // S4c cookie gate already proved receives at its own address — a
+        // registered slot IP. IP only, never port: see relayPinSourceAllowed.
+        if (!relayPinSourceAllowed(relay, side, rinfo)) {
+            relay.pinSourceRejects += 1;
+            return; // silent — a wrong guess must look like a dead port
+        }
         const token = Buffer.from(buf.subarray(8, 8 + RELAY_TOKEN_LEN));
         if (!relayTokenValid(relay.hexKey, side, token)) {
             relay.pinRejects += 1;
@@ -612,9 +678,6 @@ function relayOnMessage(relay, buf, rinfo) {
             s.ep = { address: rinfo.address, port: rinfo.port };
             logInfo(`[RELAY] pin key=${shortKey4(relay.hexKey)}... port=${relay.port} ` +
                 `side=${side} <- ${rinfo.address}:${rinfo.port}`);
-        } else if (s.ep.address !== rinfo.address || s.ep.port !== rinfo.port) {
-            relay.pinRejects += 1;
-            return; // side already pinned to a different endpoint — no hijack
         }
         relay.lastActivity = now;
         const ack = encodeRelayPinAck(side, relay.side[1 - side].ep !== null);
@@ -676,6 +739,9 @@ function relayAllocate(hexKey) {
             port,
             socket,
             side: [{ ep: null }, { ep: null }],
+            // Review HIGH-1: the registered slot IPs, snapshotted by
+            // handleRelayReq. Only a source at slot N's IP may pin side N.
+            slotIp: [null, null],
             lastActivity: now,
             allowance: RELAY_BYTES_PER_SEC,
             lastRefill: now,
@@ -684,6 +750,7 @@ function relayAllocate(hexKey) {
             dropUnpinned: 0,
             dropCap: 0,
             pinRejects: 0,
+            pinSourceRejects: 0,
             createdAt: now,
         };
         socket.on('message', (b, ri) => {
@@ -1109,6 +1176,15 @@ function handleRelayReq(socket, buf, rinfo) {
             `(${relayMap.size}/${RELAY_POOL_SIZE} in use)`);
         return;
     }
+
+    // Review HIGH-1: snapshot the registered slot IPs onto the relay, so
+    // the relay port can source-bind a PIN without depending on the session
+    // entry still being alive (CRITICAL-1's fix lets a relay outlive it).
+    // Refreshed on every grant, so a slot reclaimed between grants is
+    // picked up. relaySlotIp() still prefers the live entry when there is
+    // one; this is the fallback.
+    relay.slotIp[0] = entry.endpointA.address;
+    relay.slotIp[1] = entry.endpointB.address;
 
     // Both sides converge on the same port; each gets a token scoped to
     // its own side, so neither can pin the other's slot.

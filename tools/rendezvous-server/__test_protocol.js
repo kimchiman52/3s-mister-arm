@@ -1526,7 +1526,12 @@ async function testRelayPinTokenRequired(handle, serverPort) {
         assert(isRelayPinAck((await b.recv(500)).buf), 'relay-token: B pinned (setup)');
         await c.send(crypto.randomBytes(24), port);
         assert((await b.tryRecv(200)) === null, 'relay-token: an unpinned source is never forwarded');
-        assert(relay.pinRejects >= 4, `relay-token: rejections were counted (got ${relay.pinRejects})`);
+        // Three token rejections (forged / cross-side / expired). The replay
+        // from another endpoint is now counted separately, because review
+        // HIGH-1 moved the source check ahead of the HMAC.
+        assert(relay.pinRejects >= 3, `relay-token: token rejections were counted (got ${relay.pinRejects})`);
+        assert(relay.pinSourceRejects >= 1,
+            `relay-token: the cross-endpoint replay was rejected on SOURCE, before the HMAC (got ${relay.pinSourceRejects})`);
     } finally {
         await a.close();
         await b.close();
@@ -1555,9 +1560,13 @@ async function testRelayBandwidthCap(handle, serverPort) {
         assertEq(ga.status, RELAY_STATUS_GRANTED, 'relay-cap: granted (setup)');
         const relay = handle._relayMap.get(hexKey);
 
-        // Pin both sides from synthetic endpoints via injection.
-        const EP0 = { address: '198.51.100.60', port: 40000 };
-        const EP1 = { address: '198.51.100.61', port: 40001 };
+        // Pin both sides from synthetic endpoints via injection. The
+        // addresses must be the registered slot IPs (review HIGH-1); the
+        // PORTS are deliberately not the registered ones, which is both the
+        // realistic symmetric-NAT shape and a standing check that the
+        // source binding is IP-only.
+        const EP0 = { address: '127.0.0.1', port: 40000 };
+        const EP1 = { address: '127.0.0.1', port: 40001 };
         const stub = makeStubSocket();
         handle._relayInject(hexKey, makeRelayPin(0, handle._relayTokenFor(hexKey, 0, 0)), EP0, stub);
         handle._relayInject(hexKey, makeRelayPin(1, handle._relayTokenFor(hexKey, 1, 0)), EP1, stub);
@@ -1615,6 +1624,7 @@ async function testRelayPoolExhaustion(handle, serverPort) {
                 port: 40000 + i, // deliberately outside the pool range
                 socket: { close() {}, send() {} },
                 side: [{ ep: null }, { ep: null }],
+                slotIp: [null, null],
                 lastActivity: nowMsShim(),
                 allowance: 0,
                 lastRefill: nowMsShim(),
@@ -1623,6 +1633,7 @@ async function testRelayPoolExhaustion(handle, serverPort) {
                 dropUnpinned: 0,
                 dropCap: 0,
                 pinRejects: 0,
+                pinSourceRejects: 0,
                 createdAt: nowMsShim(),
             });
         }
@@ -1711,6 +1722,105 @@ async function testRelayIdleReclaim(handle, serverPort) {
         handle._sweepNow();
         assert(!handle._sessionMap.has(hexKey), 'relay-idle: the session was swept');
         assert(!handle._relayMap.has(hexKey), 'relay-idle: an IDLE relay went with its session');
+    } finally {
+        await a.close();
+        await b.close();
+        handle._resetRelays();
+    }
+}
+
+async function testRelayPinSourceBoundToSlotIp(handle, serverPort) {
+    // Review HIGH-1: the relay data plane used to be an off-path-spoofable
+    // reflector.
+    //
+    // Every frame on the MAIN port is source-bound by the S4c cookie gate.
+    // RELAY_PIN, on the relay port, was bound to nothing but the token --
+    // and the token is a capability for (hexKey, side, slot) ONLY. So a
+    // party legitimately holding a side-0 token (trivially arranged: create
+    // your own session with two of your own sockets) could present it from
+    // a SPOOFED source, and the relay would pin side 0 to an arbitrary
+    // victim and forward everything the attacker sent as side 1 to that
+    // victim at up to RELAY_BYTES_PER_SEC. Reproduced pre-fix: 200x1200 B
+    // offered, 54 datagrams / 64800 B delivered to the victim, plus an
+    // unsolicited PIN_ACK.
+    //
+    // Two halves, and the SECOND ONE IS AS LOAD-BEARING AS THE FIRST:
+    //   (a) a valid token from a source IP that is not the slot's
+    //       registered IP is refused, so nothing is ever forwarded there;
+    //   (b) a valid token from the slot's registered IP but a DIFFERENT
+    //       PORT is ACCEPTED. A symmetric NAT hands out a different mapping
+    //       toward the relay port than toward the rendezvous port, which is
+    //       precisely the case S5 exists for -- matching the port would
+    //       break the entire stage for exactly the users it was built for.
+    handle._resetSessions();
+    handle._resetRate();
+    handle._resetRelays();
+    const key = crypto.randomBytes(16);
+    const hexKey = key.toString('hex');
+    const a = await makeClient();
+    const b = await makeClient();
+    try {
+        await pairClients(serverPort, key, a, b);
+        handle._resetRate();
+        await a.send(relayReqLocal(key, a), serverPort);
+        const ga = decodeRelayGrant((await a.recv(500)).buf);
+        assertEq(ga.status, RELAY_STATUS_GRANTED, 'relay-pinsrc: granted (setup)');
+        await b.send(relayReqLocal(key, b), serverPort);
+        const gb = decodeRelayGrant((await b.recv(500)).buf);
+        assertEq(gb.status, RELAY_STATUS_GRANTED, 'relay-pinsrc: B granted (setup)');
+        const relay = handle._relayMap.get(hexKey);
+        assertEq(relay.slotIp[0], '127.0.0.1', 'relay-pinsrc: slot A IP snapshotted onto the relay');
+        assertEq(relay.slotIp[1], '127.0.0.1', 'relay-pinsrc: slot B IP snapshotted onto the relay');
+
+        const VICTIM = { address: '203.0.113.99', port: 9999 };
+        const stub = makeStubSocket();
+
+        // (a) The attack: a VALID side-0 token from a spoofed source.
+        handle._relayInject(hexKey, makeRelayPin(0, ga.token), VICTIM, stub);
+        assert(relay.side[0].ep === null,
+            'relay-pinsrc: a valid token from a non-slot IP did NOT pin side 0');
+        assertEq(stub.sent.length, 0,
+            'relay-pinsrc: no unsolicited PIN_ACK was emitted toward the spoofed victim');
+        assert(relay.pinSourceRejects >= 1,
+            `relay-pinsrc: the spoofed pin was rejected on SOURCE (got ${relay.pinSourceRejects})`);
+
+        // ...and with side 0 unpinnable by the attacker, the reflector is
+        // gone: run the exact offer that used to deliver 64800 B.
+        const ATTACKER = { address: '127.0.0.1', port: 44444 };
+        handle._relayInject(hexKey, makeRelayPin(1, gb.token), ATTACKER, stub);
+        assert(relay.side[1].ep !== null, 'relay-pinsrc: the attacker can still only pin its OWN side');
+        stub.sent.length = 0;
+        const payload = crypto.randomBytes(1200);
+        for (let i = 0; i < 200; i++) handle._relayInject(hexKey, payload, ATTACKER, stub);
+        const toVictim = stub.sent.filter((s) => s.address === VICTIM.address);
+        assertEq(toVictim.length, 0,
+            'relay-pinsrc: 200x1200 B from the attacker reached the victim ZERO times (pre-fix: 54 datagrams / 64800 B)');
+
+        // (b) IP-ONLY, NOT PORT. The same token, from the slot's registered
+        //     IP but a port the server has never seen, IS accepted -- the
+        //     symmetric-NAT mapping this whole stage exists to serve.
+        const NATTED = { address: '127.0.0.1', port: 51515 };
+        stub.sent.length = 0;
+        handle._relayInject(hexKey, makeRelayPin(0, ga.token), NATTED, stub);
+        assert(relay.side[0].ep !== null,
+            'relay-pinsrc: the slot IP from a DIFFERENT PORT pinned side 0 (symmetric NAT must still work)');
+        if (relay.side[0].ep !== null) {
+            assertEq(relay.side[0].ep.port, NATTED.port,
+                'relay-pinsrc: side 0 is pinned to the NEW port, not the registered one');
+        }
+        assertEq(stub.sent.length, 1, 'relay-pinsrc: exactly one PIN_ACK went back to the natted endpoint');
+        if (stub.sent.length === 1) {
+            assertEq(stub.sent[0].port, NATTED.port, 'relay-pinsrc: the ACK went to the natted port');
+            assert(isRelayPinAck(stub.sent[0].buf), 'relay-pinsrc: it is a RELAY_PIN_ACK');
+        }
+
+        // And now that both sides are legitimately pinned, traffic flows.
+        stub.sent.length = 0;
+        handle._relayInject(hexKey, crypto.randomBytes(64), NATTED, stub);
+        assertEq(stub.sent.length, 1, 'relay-pinsrc: a natted-but-slot-IP source is forwarded normally');
+        if (stub.sent.length === 1) {
+            assertEq(stub.sent[0].address, ATTACKER.address, 'relay-pinsrc: forwarded to the other pinned endpoint');
+        }
     } finally {
         await a.close();
         await b.close();
@@ -1842,7 +1952,7 @@ async function testSweepHook(handle) {
 // EXPECTED_TESTS is deliberately a literal, NOT TESTS.length: the point is
 // to catch a test vanishing from the registry, and deriving it from the
 // registry would make that undetectable.
-const EXPECTED_TESTS = 33;
+const EXPECTED_TESTS = 34;
 
 let testsRun = 0;
 let testsFailed = 0;
@@ -1936,6 +2046,7 @@ async function main() {
         await runTest('relayBandwidthCap', () => testRelayBandwidthCap(handle, serverPort));
         await runTest('relayPoolExhaustion', () => testRelayPoolExhaustion(handle, serverPort));
         await runTest('relayIdleReclaim', () => testRelayIdleReclaim(handle, serverPort));
+        await runTest('relayPinSourceBoundToSlotIp', () => testRelayPinSourceBoundToSlotIp(handle, serverPort));
         await runTest('relaySurvivesSessionTtl', () => testRelaySurvivesSessionTtl(handle, serverPort));
 
         await runTest('sweepHook', () => testSweepHook(handle));

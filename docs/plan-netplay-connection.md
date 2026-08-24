@@ -1005,6 +1005,35 @@ answering would confirm to a scanner which keys exist. An unpaired
 session gets a `NOT_PAIRED` refusal, because that requester is provably
 a participant.
 
+**Pin source binding (review HIGH-1, fixed as-built).** A token is a
+capability for `(hexKey, side, slot)` and **nothing else** — it says who
+told you, not who is holding you. `RELAY_PIN` originally recorded
+`rinfo.address/port` verbatim, so a party legitimately holding a side-0
+token (trivially arranged: create your own session with two of your own
+sockets) could present it from a **spoofed source**; the relay pinned
+side 0 to an arbitrary victim and then forwarded everything the attacker
+sent as side 1 to that victim at up to `RELAY_BYTES_PER_SEC`.
+Reproduced: 200×1200 B offered → **54 datagrams / 64800 B** delivered to
+the victim, plus an unsolicited `PIN_ACK`. 1:1, so source-laundering and
+VPS-uplink burn rather than classic amplification — an off-path-drivable
+reflector all the same. The relay now requires the pin source to be at
+the **registered slot IP** for that side (live `sessionMap` entry first,
+with a snapshot taken at grant time as the fallback for a relay that has
+outlived its session). An off-path attacker cannot put a victim's IP in
+a slot: that requires answering a `CHALLENGE` delivered to the victim.
+
+**The match is IP-only and must stay that way.** A symmetric NAT hands
+out a *different* mapping toward the relay port than toward the
+rendezvous port — which is precisely the case this whole stage exists
+for. Requiring the port to match would break S5 for exactly the users it
+was built for. Both halves are asserted:
+`testRelayPinSourceBoundToSlotIp` fails if a non-slot IP can pin **and**
+fails if the slot IP from a different port cannot. Neutralising the fix
+into the port-matching version reproduces the second failure verbatim.
+Running the check **before** the HMAC is also review MEDIUM-3's cheap
+path: an unknown source now costs a Map lookup and a string compare
+instead of up to two HMAC-SHA256 plus a `timingSafeEqual`.
+
 **Pinning.** The relay pins the first token-bearing source on each side.
 The same endpoint re-pinning is idempotent and re-ACKed — that is how a
 client learns its peer arrived, via the `peer_pinned` flag, with no
@@ -1204,10 +1233,16 @@ them (`s_mock_punch_calls == 0`). Five neutralisations, five reds:
   and §7.5 makes sure they can see it.
 - **The relay trusts the pin, not the payload.** Once both sides are
   pinned the relay forwards raw bytes without inspection — which is the
-  entire point, and means an on-path attacker who can spoof a pinned
+  entire point, and means an **on-path** attacker who can spoof a pinned
   source endpoint can inject into the stream. That is the same exposure a
   punched UDP link already has; peer authentication remains S4a's punch
-  token and the MIST handshake.
+  token and the MIST handshake. This residual is **on-path only**, and
+  said so imprecisely enough before review HIGH-1 that it read as
+  covering the off-path case too. It never did: the off-path
+  *establishment* attack — spoofing the PIN itself to aim the relay at a
+  third party — was a real defect, and is fixed above by binding the pin
+  source to the registered slot IP. What remains is strictly injection
+  into an already-established stream by someone already on its path.
 - **`RELAY_PIN_ACK` is not session-key-authenticated.** The ephemeral
   relay port is the session identifier and the ACK steers nothing —
   forging one (having guessed the port) only makes a client hand off a
