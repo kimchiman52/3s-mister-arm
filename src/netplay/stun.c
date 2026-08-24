@@ -738,7 +738,18 @@ bool Stun_HolePunch(StunResult* local, char* peer_ip, uint16_t* peer_port, int p
                 const uint32_t confirm_start = SDL_GetTicks();
                 while ((int)(SDL_GetTicks() - confirm_start) < 600) {
                     if (cancel_flag && SDL_GetAtomicInt(cancel_flag)) {
-                        break;
+                        /* Cancel is a caller-initiated abort, not a
+                         * success — report false like the main-loop
+                         * cancel path above does. (All current call
+                         * sites re-check the flag after return, but a
+                         * `true` here is a latent trap for any future
+                         * caller that trusts the return value.) */
+                        SDL_Log("STUN: Hole punch cancelled by caller during confirmation");
+                        if (confirmed != NULL) {
+                            NET_UnrefAddress(confirmed);
+                        }
+                        NET_UnrefAddress(peer);
+                        return false;
                     }
                     NET_SendDatagram(sock, confirmed != NULL ? confirmed : peer, local_peer_port,
                                      punch_msg, strlen(punch_msg));
