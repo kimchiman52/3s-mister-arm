@@ -12,11 +12,18 @@
 // directly.
 bool DrawPlayersAboveHud_Enabled(void);
 
-// Session-only override, mirrors ArcadeBalance_ForceDisable (arcade/arcade_balance.c):
-// this is a per-machine config that peers never negotiate, so a mismatch
-// between two netplay peers' local settings would diverge which effect-table
-// entries get created / which of scr_trans-vs-scr_calc runs, guaranteeing a
-// rollback desync. Does not rewrite the on-disk config.
-void DrawPlayersAboveHud_ForceDisable(void);
+// Netplay-session suppression. This is a per-machine config that peers never
+// negotiate, so a mismatch between two netplay peers' local settings would
+// diverge which effect-table entries get created / which of
+// scr_trans-vs-scr_calc runs, guaranteeing a rollback desync.
+// Suppressed(true) at netplay arm (NetplayNav_Arm) and at the common
+// session-setup chokepoint (setup_vs_mode); Suppressed(false) when the
+// netplay session finishes tearing down (Netplay_Run EXITING -> IDLE), so —
+// unlike the old never-cleared ForceDisable latch — LOCAL play after a
+// netplay session gets the user's configured value back. Does not rewrite
+// the on-disk config. Residual: a process whose netplay attempt armed but
+// never produced a session keeps the suppression until relaunch (the MiSTer
+// OSD flow re-execs per attempt).
+void DrawPlayersAboveHud_SetNetplaySuppressed(bool suppressed);
 
 #endif

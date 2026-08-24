@@ -17,16 +17,24 @@
  *   5       2      payload_len (big-endian, max MIST_PAYLOAD_MAX)
  *   7       N      payload
  *
- * Hello/ack payload (R-1 layout, proto_ver 1):
+ * Hello/ack payload (proto_ver 2 layout):
  *   three null-terminated strings
  *     "armv7\0" "mister\0" "<build_hash_7chars>\0"
- *   followed by two fixed-width compatibility fields:
- *     +0  u8   proto_ver   (MIST_PROTO_VER, currently 1)
- *     +1  u16  state_ver   (big-endian; sizeof(GameState) — equals the
- *                           EXPECTED_GAME_STATE_SIZE pin on 32-bit builds
- *                           via the _Static_assert in game_state.c)
- *   Peers reject on state_ver or proto_ver mismatch (different GameState
- *   layouts desync mid-match); build_hash difference is a warning only.
+ *   followed by fixed-width compatibility fields:
+ *     +0  u8   proto_ver      (MIST_PROTO_VER, currently 2)
+ *     +1  u16  state_ver      (big-endian; sizeof(GameState) — equals the
+ *                              EXPECTED_GAME_STATE_SIZE pin on 32-bit builds
+ *                              via the _Static_assert in game_state.c)
+ *     +3  u64  balance_digest (big-endian; ArcadeBalance_GetDigest() — a
+ *                              SHA-256-derived digest of the fully-adapted
+ *                              arcade balance data, wired in via
+ *                              mist_handshake_set_balance_digest. Netplay
+ *                              only arms in verified-arcade state, so peers
+ *                              with differing digests — e.g. different CPS3
+ *                              ROM revisions — would silently desync;
+ *                              reject them here instead.)
+ *   Peers reject on proto_ver, state_ver, or balance_digest mismatch;
+ *   build_hash difference is a warning only.
  *   Residual (adv-review M-3): state_ver only sees the struct SIZE — see
  *   the MIST_STATE_VER comment in mist_handshake.c for what still slips
  *   through (same-size sim/layout/format changes) and why that tradeoff
@@ -85,9 +93,13 @@ extern "C" {
 #define MIST_ARCH_TAG "armv7"
 #define MIST_PLATFORM_TAG "mister"
 
-/* R-1: handshake protocol version, first byte after the three payload
- * strings. Bump when the hello/ack payload layout changes again. */
-#define MIST_PROTO_VER 1
+/* Handshake protocol version, first byte after the three payload
+ * strings. Bump when the hello/ack payload layout changes again.
+ * v2: appended the u64 balance_digest field AND made arcade balance the
+ * netplay-required default — v1 builds force PS2 balance in netplay, so a
+ * v1<->v2 pair would desync on balance alone. The proto_ver reject is the
+ * correct outcome for that pairing, not just a parsing concern. */
+#define MIST_PROTO_VER 2
 
 /* Reject reason code at payload[0]. Sent as a single unsigned byte.
  * Values are wire-stable — append only, never renumber. */
@@ -101,6 +113,8 @@ typedef enum {
     MIST_REJECT_LEGACY          = 5, /* payload ends after the strings — pre-R-1 build */
     MIST_REJECT_STATE_MISMATCH  = 6, /* sizeof(GameState) differs — would desync */
     MIST_REJECT_PROTO_MISMATCH  = 7, /* MIST_PROTO_VER differs */
+    /* v2 addition: */
+    MIST_REJECT_BALANCE_MISMATCH = 8, /* adapted arcade-balance digest differs — would desync */
 } mist_reject_reason_t;
 
 extern const uint8_t MIST_MAGIC[MIST_MAGIC_LEN];
@@ -171,6 +185,16 @@ const char* mist_handshake_last_reject_reason(void);
  * mismatching frames without hardcoding the number.
  */
 uint16_t mist_handshake_local_state_ver(void);
+
+/*
+ * Balance digest carried in the v2 hello/ack payload. netplay.c wires
+ * ArcadeBalance_GetDigest() in before running the handshake gate (kept a
+ * setter — rather than a direct arcade include here — so the unit-test
+ * harness links without the arcade/AFS stack and can craft mismatches).
+ * Defaults to 0 until set.
+ */
+void mist_handshake_set_balance_digest(uint64_t digest);
+uint64_t mist_handshake_local_balance_digest(void);
 
 /* ------------------------------------------------------------------- */
 /* R-1 adv-review M-5: testable live-runner core.                      */

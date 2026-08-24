@@ -216,6 +216,33 @@ unsigned int AFS_GetSize(int file_num) {
     return afs.entries[file_num].size;
 }
 
+bool AFS_ReadRange(int file_num, unsigned int offset, unsigned int size, void* buf) {
+    if ((file_num < 0) || (file_num >= afs.entry_count) || (buf == NULL)) {
+        return false;
+    }
+
+    const AFSEntry* entry = &afs.entries[file_num];
+
+    if ((offset > entry->size) || (size > entry->size - offset)) {
+        return false;
+    }
+
+    SDL_IOStream* io = SDL_IOFromFile(afs.file_path, "rb");
+
+    if (io == NULL) {
+        return false;
+    }
+
+    bool ok = false;
+
+    if (SDL_SeekIO(io, (Sint64)entry->offset + offset, SDL_IO_SEEK_SET) >= 0) {
+        ok = SDL_ReadIO(io, buf, size) == size;
+    }
+
+    SDL_CloseIO(io);
+    return ok;
+}
+
 // AFS reading
 
 static void process_asyncio_outcome(const SDL_AsyncIOOutcome* outcome) {

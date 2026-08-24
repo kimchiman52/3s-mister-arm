@@ -2705,6 +2705,25 @@ void DirectP2P_NotifySessionFailed(ConnectFailCode code, const char* reason) {
             ConnectFail_Code(code), reason ? reason : "(no reason)");
 }
 
+/* See direct_p2p.h — arm-time refusal with no session to tear down:
+ * publish the reason and park in FAILED_HANDSHAKE immediately so the
+ * overlay renders ERROR + reason on the very next frame.
+ *
+ * Rebase integration note: this predates the S3 taxonomy, which made
+ * Tick's terminal FAILED_HANDSHAKE case emit one machine-coded
+ * "[netplay-connect] FAIL code=..." line via report_connect_outcome.
+ * Parking the state WITHOUT a fail_code would emit that line with the
+ * zero code (P2P_FAIL_NONE) and role=none — a dishonest log entry for a
+ * fully-attributable cause. Stamp the taxonomy explicitly, and re-arm
+ * the reporter for the same reason NotifySessionFailed does. */
+void DirectP2P_RefuseSession(const char* reason) {
+    set_status((reason != NULL && reason[0] != '\0') ? reason : "Netplay unavailable.");
+    s_work.fail_code = CONNECT_FAIL_BALANCE_UNAVAILABLE;
+    s_outcome_reported = false;
+    SDL_Log("[direct_p2p] refusing session: %s", reason ? reason : "(no reason)");
+    set_state(DIRECT_P2P_FAILED_HANDSHAKE);
+}
+
 /* R-1 — see direct_p2p.h. Records the reject reason for the overlay and
  * latches the teardown redirect to FAILED_HANDSHAKE. */
 void DirectP2P_NotifySessionRejected(const char* reason) {

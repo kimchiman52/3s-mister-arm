@@ -180,6 +180,17 @@ void DirectP2P_NotifySessionRejected(const char* reason);
  * only. */
 void DirectP2P_NotifySessionFailed(ConnectFailCode code, const char* reason);
 
+/* Arm-time refusal: park the orchestrator directly in
+ * DIRECT_P2P_FAILED_HANDSHAKE with `reason` as the status text, WITHOUT
+ * any session having started. Used by Netplay_RefuseArm when the
+ * verified-arcade predicate fails — reuses the exact overlay surfacing
+ * the MIST reject path uses (ERROR + reason via DrawOverlay). Terminal
+ * like the other FAILED_* states; cleared by DirectP2P_Cancel (the
+ * network-menu exit calls it) or process restart. Main-thread only.
+ * Stamps CONNECT_FAIL_BALANCE_UNAVAILABLE so Tick's terminal-state
+ * reporter has an honest taxonomy code to log. */
+void DirectP2P_RefuseSession(const char* reason);
+
 /* Step 8 — Per-frame native overlay. Renders three centered lines into
  * the 384x224 game canvas via SSPutStrPro:
  *   line 1: mode label (HOSTING / CONNECTING / CONNECTED / ERROR)
@@ -269,6 +280,7 @@ static inline const char* DirectP2P_GetHostCode(void) { return ""; }
 static inline const char* DirectP2P_GetStatusText(void) { return ""; }
 static inline void DirectP2P_NotifySessionRejected(const char* reason) { (void)reason; }
 static inline void DirectP2P_NotifySessionFailed(ConnectFailCode code, const char* reason) { (void)code; (void)reason; }
+static inline void DirectP2P_RefuseSession(const char* reason) { (void)reason; }
 static inline void DirectP2P_DrawOverlay(void) { }
 
 #endif /* ENABLE_NETPLAY */

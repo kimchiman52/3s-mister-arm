@@ -6,6 +6,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 
 typedef enum CharDataSection {
     CHAR_DATA_NMCA,
@@ -51,5 +52,13 @@ void ArcadeCharData_Init();
 bool ArcadeCharData_IsInitialized();
 const CharInitData* ArcadeCharData_Get(Character character);
 bool ArcadeCharData_Apply3SXRenderingConventions(Character character, const void* ps2_data, size_t ps2_size);
+
+/// SHA-256-derived 64-bit digest over every parsed section span of every
+/// character. Call AFTER the full adaptation pass so the digest covers the
+/// exact bytes the simulation reads. Returns 0 when char data is not
+/// initialized (0 is reserved for "no digest"). Wired into the MIST netplay
+/// handshake so peers whose adapted arcade data differs (e.g. different ROM
+/// revisions) are rejected instead of desyncing.
+uint64_t ArcadeCharData_ComputeDigest();
 
 #endif

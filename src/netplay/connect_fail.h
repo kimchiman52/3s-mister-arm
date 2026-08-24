@@ -114,6 +114,20 @@ typedef enum ConnectFailCode {
                                      future version char) — the two builds must
                                      match; NOT a typo                         */
     CONNECT_FAIL_INTERNAL,        /* thread spawn / packet build / config     */
+    CONNECT_FAIL_BALANCE_UNAVAILABLE, /* arm-time refusal: this build could not
+                                     reach verified-arcade balance (CPS3 ROM
+                                     absent, or the 20-character adaptation
+                                     did not fully succeed), and netplay arms
+                                     ONLY in that state — see
+                                     Netplay_ArmAllowed. A local environment
+                                     fact, NOT an internal error and NOT a
+                                     connectivity failure: nothing was ever
+                                     sent.                                    */
+
+    /* Append new codes ABOVE this marker and bump the bound in
+     * test_bilateral_punch.c test 7f (which sweeps NONE..LAST proving
+     * every code has a distinct machine string). */
+    CONNECT_FAIL_LAST_ = CONNECT_FAIL_BALANCE_UNAVAILABLE,
 } ConnectFailCode;
 
 /* Stable machine code string, e.g. "P2P_FAIL_STUN_ALLDOWN". Never NULL.

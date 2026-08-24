@@ -66,6 +66,16 @@ NetplaySessionState Netplay_GetSessionState();
 // Returns "" outside TRANSITIONING/CONNECTING. Never NULL.
 const char* Netplay_GetConnectStatusText(void);
 void Netplay_HandleMenuExit();
+
+// Arm-time predicate: netplay arms ONLY in verified-arcade balance state
+// (balance auto-selects at boot and is fixed for the process). Every
+// session entry path — NetplayNav_Arm, the direct-P2P handoff dispatch,
+// the matchmaking CLI, and the in-game network menu — must consult this
+// before starting anything, and call Netplay_RefuseArm() on false, which
+// logs and routes the human-readable reason to the direct-P2P overlay
+// (the same surfacing mechanism the MIST handshake reject path uses).
+bool Netplay_ArmAllowed(void);
+void Netplay_RefuseArm(void);
 void Netplay_GetNetworkStats(NetworkStats* stats);
 
 // === 3SX-private extensions ===

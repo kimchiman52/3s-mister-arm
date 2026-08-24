@@ -946,6 +946,107 @@ int Netplay_Test_MistHandshake(void) {
                             hello, hello_len, MIST_MSG_REJECT,
                             MIST_REJECT_ARCH_MISMATCH);
 
+    /* v2: balance-digest validation. Build the peer frame under digest A,
+     * then classify under local digest B (the setter is the only knob —
+     * builders and classifier both read the module-static). */
+    mist_handshake_set_balance_digest(0x1122334455667788ULL);
+    hello_len = mist_handshake_build_frame(MIST_MSG_HELLO, "armv7", "mister",
+                                           "abcdef0", 0, NULL,
+                                           hello, sizeof(hello));
+    mist_handshake_set_balance_digest(0x8877665544332211ULL);
+    fails += run_reply_case("(m) reply to wrong-balance-digest hello -> reject",
+                            hello, hello_len, MIST_MSG_REJECT,
+                            MIST_REJECT_BALANCE_MISMATCH);
+
+    /* (n) sender side: an ack whose digest mismatches ours is a hard
+     * reject with the symmetric ROM-mismatch text... */
+    mist_handshake_set_balance_digest(0x1122334455667788ULL);
+    uint8_t ack[MIST_FRAME_MAX];
+    size_t ack_len = mist_handshake_build_frame(MIST_MSG_ACK, "armv7", "mister",
+                                                "abcdef0", 0, NULL,
+                                                ack, sizeof(ack));
+    mist_handshake_set_balance_digest(0x8877665544332211ULL);
+    if (mist_handshake_parse_response(ack, ack_len) != -1 ||
+        strstr(mist_handshake_last_reject_reason(), "ROM sets differ") == NULL) {
+        fprintf(stderr,
+                "[test_mist_handshake] (n) wrong-balance-digest ack FAIL: got '%s'\n",
+                mist_handshake_last_reject_reason());
+        fails += 1;
+    } else {
+        fprintf(stderr, "[test_mist_handshake] (n) wrong-balance-digest ack -> reject OK\n");
+    }
+
+    /* (o) ...and matching digests still ack. */
+    mist_handshake_set_balance_digest(0x1122334455667788ULL);
+    ack_len = mist_handshake_build_frame(MIST_MSG_ACK, "armv7", "mister",
+                                         "abcdef0", 0, NULL, ack, sizeof(ack));
+    if (mist_handshake_parse_response(ack, ack_len) != 1) {
+        fprintf(stderr, "[test_mist_handshake] (o) matching-digest ack FAIL\n");
+        fails += 1;
+    } else {
+        fprintf(stderr, "[test_mist_handshake] (o) matching-digest ack -> OK\n");
+    }
+
+    /* (q) THE ORDER CASE: a genuine v1 peer on the wire. Cases (f)/(j)
+     * cover a wrong-proto frame that still CARRIES a digest, because
+     * mist_handshake_build_frame_ex always appends one. A real pre-digest
+     * build emits proto_ver=1 with NOTHING after state_ver, so this is
+     * the only shape that can prove classify_peer_payload returns
+     * PROTO_MISMATCH *before* it tries to read the digest field. If the
+     * digest read ever moved above the proto check, this frame would
+     * classify MALFORMED ("no balance digest") and an old build would be
+     * told its handshake was corrupt instead of "update one side".
+     *
+     * Build a v2 frame at proto_ver 1, then truncate the trailing 8-byte
+     * digest and fix payload_len (offset 5, big-endian) to match. */
+    mist_handshake_set_balance_digest(0x1122334455667788ULL);
+    uint8_t v1[MIST_FRAME_MAX];
+    size_t v1_len = mist_handshake_build_frame_ex(
+        MIST_MSG_ACK, "armv7", "mister", "abcdef0",
+        1 /* v1 proto */, mist_handshake_local_state_ver(),
+        0, NULL, v1, sizeof(v1));
+    if (v1_len <= 8) {
+        fprintf(stderr, "[test_mist_handshake] (q) v1 frame build FAIL\n");
+        fails += 1;
+    } else {
+        const uint16_t old_payload_len = (uint16_t)((v1[5] << 8) | v1[6]);
+        const uint16_t new_payload_len = (uint16_t)(old_payload_len - 8);
+        v1[5] = (uint8_t)((new_payload_len >> 8) & 0xFF);
+        v1[6] = (uint8_t)(new_payload_len & 0xFF);
+        v1_len -= 8; /* drop the digest bytes entirely */
+
+        if (mist_handshake_parse_response(v1, v1_len) != -1 ||
+            strstr(mist_handshake_last_reject_reason(), "Handshake v1 vs v2") == NULL) {
+            fprintf(stderr,
+                    "[test_mist_handshake] (q) digest-less v1 ack FAIL: expected the "
+                    "proto-mismatch text, got '%s'\n",
+                    mist_handshake_last_reject_reason());
+            fails += 1;
+        } else {
+            fprintf(stderr,
+                    "[test_mist_handshake] (q) digest-less v1 ack -> PROTO_MISMATCH "
+                    "(before any digest read) OK\n");
+        }
+
+        /* Responder direction: the reject we SEND a v1 peer must carry the
+         * same PROTO_MISMATCH code, not a digest complaint. */
+        uint8_t v1_hello[MIST_FRAME_MAX];
+        size_t v1_hello_len = mist_handshake_build_frame_ex(
+            MIST_MSG_HELLO, "armv7", "mister", "abcdef0",
+            1, mist_handshake_local_state_ver(), 0, NULL,
+            v1_hello, sizeof(v1_hello));
+        const uint16_t hl = (uint16_t)(((v1_hello[5] << 8) | v1_hello[6]) - 8);
+        v1_hello[5] = (uint8_t)((hl >> 8) & 0xFF);
+        v1_hello[6] = (uint8_t)(hl & 0xFF);
+        v1_hello_len -= 8;
+        fails += run_reply_case("(q2) reply to digest-less v1 hello -> PROTO_MISMATCH",
+                                v1_hello, v1_hello_len, MIST_MSG_REJECT,
+                                MIST_REJECT_PROTO_MISMATCH);
+    }
+
+    /* Back to the digest-agnostic default for the runner cases below. */
+    mist_handshake_set_balance_digest(0);
+
     /* R-1 adv-review M-5: live-runner core (mist_handshake_run_attempt /
      * mist_handshake_gate_next — the loop netplay.c actually runs). */
     fails += runner_case_ack_ok();
@@ -970,7 +1071,19 @@ int Netplay_Test_MistHandshake(void) {
         fprintf(stderr, "[test_mist_handshake] %d case(s) failed\n", fails);
         return 1;
     }
-    fprintf(stderr, "[test_mist_handshake] OK — 24 cases passed\n");
+    /* Case-count reconciliation (rebase onto S3/S4):
+     *   (a)-(g) sender-side           7
+     *   (h)-(l) responder/reply       5
+     *   (m)-(o) v2 balance digest     3   [this lane]
+     *   (q)/(q2) v1-on-the-wire order 2   [this lane]
+     *   runner_case_*                12
+     *   pump_case_*                   3   [S3]
+     *                                --
+     *                                32
+     * S3 added its three pump cases without bumping this string (it
+     * still said 24, the pre-S3 total); this lane's digest and
+     * classify-order cases land on top. */
+    fprintf(stderr, "[test_mist_handshake] OK — 32 cases passed\n");
     return 0;
 }
 

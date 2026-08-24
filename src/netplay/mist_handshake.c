@@ -98,6 +98,21 @@ uint16_t mist_handshake_local_state_ver(void) {
     return MIST_STATE_VER;
 }
 
+/* v2: balance digest advertised in hello/ack payloads (see header).
+ * Netplay only arms in verified-arcade state, so in production this is
+ * always ArcadeBalance_GetDigest()'s nonzero value by the time the gate
+ * runs; 0 only occurs if a caller skipped the wiring (two such peers
+ * still match 0 == 0, preserving the harness's digest-agnostic cases). */
+static uint64_t s_balance_digest = 0;
+
+void mist_handshake_set_balance_digest(uint64_t digest) {
+    s_balance_digest = digest;
+}
+
+uint64_t mist_handshake_local_balance_digest(void) {
+    return s_balance_digest;
+}
+
 static char s_last_reject[128] = { 0 };
 
 static void set_reject_reason(const char* fmt, ...) {
@@ -148,12 +163,16 @@ static size_t build_frame(uint8_t msg_type,
         if (!off) return 0;
         off = append_cstr(out, cap, off, build_hash ? build_hash : MIST_BUILD_HASH);
         if (!off) return 0;
-        /* R-1 compatibility fields: proto_ver (u8) then state_ver (u16,
-         * big-endian — matches the payload_len field's byte order). */
-        if (off + 3 > cap) return 0;
+        /* Compatibility fields: proto_ver (u8), state_ver (u16 BE), then
+         * the v2 balance_digest (u64 BE — matches the payload_len field's
+         * byte order). */
+        if (off + 3 + 8 > cap) return 0;
         out[off++] = proto_ver;
         out[off++] = (uint8_t)((state_ver >> 8) & 0xFF);
         out[off++] = (uint8_t)(state_ver & 0xFF);
+        for (int shift = 56; shift >= 0; shift -= 8) {
+            out[off++] = (uint8_t)((s_balance_digest >> shift) & 0xFF);
+        }
     } else if (msg_type == MIST_MSG_REJECT) {
         if (off + 1 > cap) return 0;
         out[off++] = reject_reason;
@@ -247,6 +266,18 @@ static bool read_u16be(const uint8_t* payload, size_t payload_len, size_t* off,
     return true;
 }
 
+static bool read_u64be(const uint8_t* payload, size_t payload_len, size_t* off,
+                       uint64_t* out) {
+    if (*off + 8 > payload_len) return false;
+    uint64_t v = 0;
+    for (int i = 0; i < 8; i++) {
+        v = (v << 8) | (uint64_t)payload[*off + i];
+    }
+    *out = v;
+    *off += 8;
+    return true;
+}
+
 /*
  * classify_peer_payload — parse + validate a hello/ack payload against
  * our own profile. Returns 0 when the peer is compatible; otherwise a
@@ -261,6 +292,19 @@ static bool read_u16be(const uint8_t* payload, size_t payload_len, size_t* off,
  *   - state_ver differs                → MIST_REJECT_STATE_MISMATCH — THE
  *     desync-preventing check: different sizeof(GameState) means the two
  *     builds save/load different rollback layouts and will diverge.
+ *   - balance_digest absent (v2 frame) → MIST_REJECT_MALFORMED
+ *   - balance_digest differs           → MIST_REJECT_BALANCE_MISMATCH —
+ *     the SECOND desync-preventing check: both peers passed the
+ *     verified-arcade arm gate (Netplay_ArmAllowed), so identical
+ *     adapted arcade data is a precondition; differing digests mean
+ *     different CPS3 ROM revisions produced different balance tables
+ *     and the two sims would diverge mid-match.
+ *
+ * ORDER IS LOAD-BEARING: proto_ver is checked BEFORE the digest is even
+ * read, so a v1 peer gets "Handshake v1 vs v2 - update one side" (the
+ * actionable message) rather than a confusing digest error about a
+ * field its build never sent.
+ *
  * Warning only (never rejects):
  *   - build_hash differs — logged; identical hashes are not required for
  *     compatibility, identical state layout is.
@@ -310,6 +354,24 @@ static uint8_t classify_peer_payload(const uint8_t* payload, size_t payload_len,
         return MIST_REJECT_STATE_MISMATCH;
     }
 
+    uint64_t peer_balance = 0;
+    if (!read_u64be(payload, payload_len, &off, &peer_balance)) {
+        /* proto_ver matched ours (v2) but the mandatory digest field is
+         * missing — a truncated or hand-rolled frame. */
+        snprintf(text, text_cap, "malformed handshake payload (no balance digest)");
+        return MIST_REJECT_MALFORMED;
+    }
+    if (peer_balance != s_balance_digest) {
+        /* THE balance-divergence check: both peers passed the verified-
+         * arcade arm gate, but their adapted arcade data differs (e.g.
+         * different CPS3 ROM revisions) — they would desync mid-match.
+         * Symmetric phrasing, same as state_ver above. */
+        snprintf(text, text_cap, "Arcade data %08x vs %08x - ROM sets differ",
+                 (unsigned)(peer_balance >> 32) ^ (unsigned)peer_balance,
+                 (unsigned)(s_balance_digest >> 32) ^ (unsigned)s_balance_digest);
+        return MIST_REJECT_BALANCE_MISMATCH;
+    }
+
     if (strcmp(peer_build, MIST_BUILD_HASH) != 0) {
         fprintf(stderr,
                 "[mist_handshake] WARNING: peer build_hash %s != ours %s "
@@ -330,6 +392,7 @@ static const char* reject_reason_fallback_text(uint8_t reason) {
     case MIST_REJECT_LEGACY:            return "build too old - update needed";
     case MIST_REJECT_STATE_MISMATCH:    return "game state version mismatch - update one side";
     case MIST_REJECT_PROTO_MISMATCH:    return "handshake version mismatch - update one side";
+    case MIST_REJECT_BALANCE_MISMATCH:  return "arcade balance data mismatch - ROM sets differ";
     default:                            return "unknown reason";
     }
 }

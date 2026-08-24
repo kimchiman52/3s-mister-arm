@@ -1257,7 +1257,7 @@ static int test_failure_taxonomy(void) {
     EXPECT_TRUE("7e-hold-zero", held == 0);
 
     /* --- 7f: every code has a distinct machine string and a user string. */
-    for (int c = CONNECT_FAIL_NONE; c <= CONNECT_FAIL_INTERNAL; c++) {
+    for (int c = CONNECT_FAIL_NONE; c <= CONNECT_FAIL_LAST_; c++) {
         const char* mc = ConnectFail_Code((ConnectFailCode)c);
         EXPECT_TRUE("7f-code-nonnull", mc != NULL && mc[0] != '\0');
         EXPECT_TRUE("7f-user-nonnull", ConnectFail_UserText((ConnectFailCode)c) != NULL);

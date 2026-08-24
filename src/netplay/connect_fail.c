@@ -27,6 +27,7 @@ const char* ConnectFail_Code(ConnectFailCode code) {
     case CONNECT_FAIL_INVALID_CODE:         return "P2P_FAIL_INVALID_CODE";
     case CONNECT_FAIL_CODE_VERSION:         return "P2P_FAIL_CODE_VERSION";
     case CONNECT_FAIL_INTERNAL:             return "P2P_FAIL_INTERNAL";
+    case CONNECT_FAIL_BALANCE_UNAVAILABLE:  return "P2P_FAIL_BALANCE_UNAVAILABLE";
     }
     return "P2P_FAIL_UNKNOWN";
 }
@@ -77,6 +78,11 @@ const char* ConnectFail_UserText(ConnectFailCode code) {
         return "Code is from a different game version.";
     case CONNECT_FAIL_INTERNAL:
         return "Internal error. See log.";
+    case CONNECT_FAIL_BALANCE_UNAVAILABLE:
+        /* Callers (Netplay_RefuseArm) pass the specific
+         * ArcadeBalance_GetReason() text through set_status instead;
+         * this is the generic fallback. */
+        return "Netplay needs the arcade ROM.";
     }
     return "Connection failed.";
 }
