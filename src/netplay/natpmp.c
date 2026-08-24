@@ -169,7 +169,18 @@ NatpmpParse Natpmp_ParsePcpMapResponse(const uint8_t* buf, int len,
         return NATPMP_PARSE_PCP_IS_NATPMP;
     }
 
-    if (len < NATPMP_PCP_MAP_LEN) {
+    /* RFC 6887 §8.3, verbatim: "Responses shorter than 24 octets, longer
+     * than 1100 octets, or not a multiple of 4 octets are invalid and
+     * ignored."
+     *
+     * Review M-5.3: this used to demand the full 60-octet MAP response,
+     * which threw away every SHORT error response a refusing gateway
+     * sends. §7.4's error frames carry only the 24-byte common header
+     * when the server has nothing opcode-specific to say, so a gateway
+     * that was actively saying "no" looked identical to a dead one and
+     * cost the caller the whole retransmit ladder instead of failing
+     * fast. §8.3's floor is 24, and that is now the floor here. */
+    if (len < NATPMP_PCP_HDR_LEN || len > 1100 || (len % 4) != 0) {
         return NATPMP_PARSE_NOT_OURS;
     }
     if (buf[0] != NATPMP_PCP_VERSION) {
@@ -183,6 +194,33 @@ NatpmpParse Natpmp_ParsePcpMapResponse(const uint8_t* buf, int len,
     }
     if ((buf[1] & 0x7Fu) != NATPMP_PCP_OPCODE_MAP) {
         return NATPMP_PARSE_NOT_OURS;
+    }
+
+    /* A header-only (§8.3-legal, sub-60-octet) frame has no §11.1 MAP
+     * block, so §11.4's matcher — "the protocol, the internal port, and
+     * the mapping nonce" — has nothing to compare. That cuts two ways:
+     *
+     *   SUCCESS  is REFUSED-to-believe. An unmatched success would let a
+     *            24-byte frame install a mapping whose external port is
+     *            not even present in it. Dropped as NOT_OURS.
+     *   an ERROR is reported. §8.3 requires processing it, and the only
+     *            action it produces is "give up on this gateway now",
+     *            which is strictly better for the user than the ladder
+     *            timing out. The residual is that an attacker who can
+     *            spoof the gateway's source IP can abort one probe; the
+     *            fallback is STUN, exactly as if the router were silent,
+     *            and no mapping can be forged this way.
+     *
+     * Both branches sit ABOVE the nonce/protocol/port matcher below,
+     * which reads bytes a short frame does not have. */
+    if (len < NATPMP_PCP_MAP_LEN) {
+        const uint8_t short_result = buf[3];
+        if (short_result == (uint8_t)NATPMP_PCP_SUCCESS) {
+            return NATPMP_PARSE_NOT_OURS;
+        }
+        out->result_code = short_result;
+        out->epoch_s = get_u32(&buf[8]); /* §7.2 Epoch, in the header */
+        return NATPMP_PARSE_REFUSED;
     }
 
     /* §11.2: Mapping Nonce, Protocol and Internal Port are all "Copied
@@ -201,6 +239,13 @@ NatpmpParse Natpmp_ParsePcpMapResponse(const uint8_t* buf, int len,
     }
 
     const uint8_t result = buf[3];
+    /* Epoch is a common-header field (§7.2) and is present on error
+     * responses too. It is copied out BEFORE the result-code branch so
+     * the RFC 6886 §3.6 / RFC 6887 §8.5 reboot estimator sees a refusing
+     * gateway's clock as well as a granting one's — a gateway that
+     * reboots into a state where it refuses us is exactly the case the
+     * estimator exists to notice. */
+    out->epoch_s = get_u32(&buf[8]);
     if (result != (uint8_t)NATPMP_PCP_SUCCESS) {
         /* Ours, and refused. Report the code; §7.2 says the header
          * Lifetime on an error response is a back-off hint, not a
@@ -218,7 +263,6 @@ NatpmpParse Natpmp_ParsePcpMapResponse(const uint8_t* buf, int len,
 
     out->result_code = result;
     out->lifetime_s = get_u32(&buf[4]);   /* §7.2 Lifetime  */
-    out->epoch_s = get_u32(&buf[8]);      /* §7.2 Epoch     */
     out->internal_port = get_u16(&buf[40]);
     out->external_port = get_u16(&buf[42]); /* §11.2 Assigned External Port */
     out->external_ip_be = ext_ip_be;
@@ -338,6 +382,183 @@ NatpmpParse Natpmp_ParsePmpMapResponse(const uint8_t* buf, int len,
     out->external_port = get_u16(&buf[10]);
     out->lifetime_s = get_u32(&buf[12]);
     return NATPMP_PARSE_OK;
+}
+
+/* ====================================================================== */
+/* Cross-call client state                                                */
+/* ====================================================================== */
+
+/*
+ * THREADING. Everything in this section is process-global mutable state
+ * touched only from inside Natpmp_AddMapping / Natpmp_RemoveMapping,
+ * which direct_p2p.c calls from at most one worker thread at a time:
+ *
+ *   - the probe worker is spawned in try_portmap and then either JOINED
+ *     (SDL_WaitThread) or detached-and-abandoned, and its result is
+ *     adopted only on the joined path, so a detached straggler can never
+ *     be followed by a renewal for the same mapping;
+ *   - upnp_renew_tick returns early while s_upnp_renew_thread != NULL,
+ *     so there is never a second renewal worker;
+ *   - teardown/Cancel go through upnp_renew_join_and_discard before
+ *     calling portmap_remove, so a removal never overlaps a renewal.
+ *
+ * That is a single-writer invariant, not an absence of one. If a second
+ * concurrent mapping is ever introduced, this state has to become
+ * per-mapping (or locked) at the same time.
+ */
+
+/* --- PCP Mapping Nonce, RFC 6887 §11.3 (review H-5) ------------------- */
+
+/*
+ * THE MAPPING NONCE MUST OUTLIVE THE REQUEST THAT MINTED IT.
+ *
+ * RFC 6887 §11.3, verbatim: "If operating in the Simple Threat Model
+ * (Section 18.1), and the internal port, protocol, and internal address
+ * match an existing explicit dynamic mapping, but the mapping nonce does
+ * not match, the request MUST be rejected with a NOT_AUTHORIZED error
+ * with the lifetime of the error indicating duration of that existing
+ * mapping."
+ *
+ * §18.1 is the model every consumer NAT box S7 targets runs in ("PCP
+ * servers running on NAT boxes or stateful firewalls that support the
+ * PEER and MAP Opcodes can be secure under this threat model"), and
+ * §8.1.1 says the same thing for retransmits: "The retransmissions MUST
+ * use the same Mapping Nonce value".
+ *
+ * Before this fix every call minted a fresh nonce, so on a CONFORMING
+ * PCP gateway the half-lease renewal was rejected with NOT_AUTHORIZED
+ * and so was the teardown delete — the mapping could be neither renewed
+ * nor removed, and the caller kept advertising its port until the lease
+ * quietly ran out. That is a regression against pre-S7, where the host
+ * advertised the STUN endpoint it was actively maintaining. It presents
+ * to the user as "it worked, and then it went dead".
+ *
+ * Persisted here, keyed by internal port, rather than in UpnpMapping:
+ * Natpmp_AddMapping memsets its out-parameter on entry and the renewal
+ * path hands it a zeroed struct, so a struct field would have to be
+ * threaded through direct_p2p.c's UpnpJob to have any effect. The port
+ * key is sufficient because the whole program holds exactly one mapping
+ * (the single s_upnp_mapping global).
+ */
+static bool s_pcp_nonce_valid = false;
+static uint16_t s_pcp_nonce_port = 0;
+static uint8_t s_pcp_nonce[NATPMP_PCP_NONCE_LEN];
+
+/* Fetch the nonce to use for `internal_port`, minting and persisting one
+ * on first use. Returns false only when the CSPRNG is unavailable AND we
+ * have nothing persisted — see the §18.1 fail-closed rationale at the
+ * call site. *out_reused reports whether this was a §11.3 continuation. */
+static bool pcp_nonce_acquire(uint16_t internal_port,
+                              uint8_t out[NATPMP_PCP_NONCE_LEN],
+                              bool* out_reused) {
+    if (s_pcp_nonce_valid && s_pcp_nonce_port == internal_port) {
+        memcpy(out, s_pcp_nonce, NATPMP_PCP_NONCE_LEN);
+        if (out_reused != NULL) {
+            *out_reused = true;
+        }
+        return true;
+    }
+    if (!Csprng_Bytes(out, NATPMP_PCP_NONCE_LEN)) {
+        return false;
+    }
+    memcpy(s_pcp_nonce, out, NATPMP_PCP_NONCE_LEN);
+    s_pcp_nonce_port = internal_port;
+    s_pcp_nonce_valid = true;
+    if (out_reused != NULL) {
+        *out_reused = false;
+    }
+    return true;
+}
+
+/* The mapping is gone (deleted, or provably lost): the next MAP for this
+ * port is a NEW mapping and §11.3 wants a new nonce for it. */
+static void pcp_nonce_forget(uint16_t internal_port) {
+    if (s_pcp_nonce_valid && s_pcp_nonce_port == internal_port) {
+        s_pcp_nonce_valid = false;
+        s_pcp_nonce_port = 0;
+        memset(s_pcp_nonce, 0, sizeof(s_pcp_nonce));
+    }
+}
+
+/* --- Gateway reboot detection, RFC 6886 §3.6 (review M-5.1) ----------- */
+
+/*
+ * §3.6, verbatim: "Whenever a client receives any packet from the NAT
+ * gateway, either unsolicited or in response to a client request, the
+ * client computes its own conservative estimate of the expected SSSoE
+ * value by taking the SSSoE value in the last packet it received from
+ * the gateway and adding 7/8 (87.5%) of the time elapsed according to
+ * the client's local clock since that packet was received.  If the SSSoE
+ * in the newly received packet is less than the client's conservative
+ * estimate by more than 2 seconds, then the client concludes that the
+ * NAT gateway has undergone a reboot or other loss of port mapping
+ * state, and the client MUST immediately renew all its active port
+ * mapping leases as described in Section 3.7".
+ *
+ * Both dialects carry the field: NAT-PMP calls it Seconds Since Start of
+ * Epoch (§3.2/§3.3), PCP calls it Epoch Time (RFC 6887 §7.2) and §8.5
+ * describes the same estimator. Before this fix the value was parsed
+ * into NatpmpPmpAddr/NatpmpPmpMap/NatpmpPcpMap and read by nobody, so a
+ * router reboot silently emptied the mapping table and this client went
+ * on advertising a port that no longer forwarded anything.
+ */
+typedef struct {
+    bool have;
+    uint32_t last_epoch_s;
+    uint64_t last_local_ms;
+} NpEpochState;
+
+static NpEpochState s_epoch;
+static bool s_epoch_reset_pending = false;
+
+static void np_epoch_observe(uint32_t sssoe) {
+    const uint64_t now = SDL_GetTicks();
+    if (s_epoch.have) {
+        const uint64_t elapsed_ms = now >= s_epoch.last_local_ms
+                                        ? now - s_epoch.last_local_ms
+                                        : 0u;
+        /* "adding 7/8 (87.5%) of the time elapsed" — in ms, then down to
+         * whole seconds, which rounds the estimate DOWN and so keeps it
+         * conservative in the direction §3.6 asks for. */
+        const uint64_t estimate_s =
+            (uint64_t)s_epoch.last_epoch_s + ((elapsed_ms * 7u) / 8u) / 1000u;
+        /* "less than the client's conservative estimate by more than 2
+         * seconds" — strict, so exactly 2 s of slack is still fine. */
+        if ((uint64_t)sssoe + 2u < estimate_s) {
+            SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                        "NAT-PMP/PCP: gateway epoch went backwards (reported %us, "
+                        "conservative estimate %us) — RFC 6886 §3.6 reboot, mappings "
+                        "must be recreated",
+                        (unsigned)sssoe, (unsigned)estimate_s);
+            s_epoch_reset_pending = true;
+        }
+    }
+    s_epoch.have = true;
+    s_epoch.last_epoch_s = sssoe;
+    s_epoch.last_local_ms = now;
+}
+
+bool Natpmp_TakeEpochReset(uint32_t* out_jitter_ms) {
+    if (!s_epoch_reset_pending) {
+        return false;
+    }
+    s_epoch_reset_pending = false;
+    if (out_jitter_ms != NULL) {
+        /* RFC 6886 §3.7: "the client MUST first delay by a random amount
+         * of time selected with uniform random distribution in the range
+         * 0 to 5 seconds, and then send its first port mapping request."
+         * The point is to keep every device on the LAN from stampeding a
+         * gateway that just finished booting. §3.6/§3.7 ask for random,
+         * not unpredictable, so a CSPRNG failure degrades to the middle
+         * of the range rather than to zero. */
+        uint16_t r = 0;
+        if (Csprng_Bytes((uint8_t*)&r, sizeof(r))) {
+            *out_jitter_ms = (uint32_t)(((uint32_t)r * 5000u) / 65536u);
+        } else {
+            *out_jitter_ms = 2500u;
+        }
+    }
+    return true;
 }
 
 /* ====================================================================== */
@@ -489,7 +710,31 @@ static bool discover_gateway(char* out_ip, int ip_buf_size, uint16_t* out_port) 
         return true;
     }
 #endif
+#if defined(NETPLAY_TEST_HOOKS) && defined(ENABLE_NETPLAY_TESTS)
+    /*
+     * A HARNESS BINARY MAY NOT TALK TO THE REAL DEFAULT GATEWAY.
+     *
+     * The suite's rule is that no test installs a mapping on the
+     * developer's (or CI's) router. Until now that rule rested on two
+     * things that are both weaker than they look: every test remembering
+     * to call Natpmp_TestHook_SetGateway, and gateway discovery being
+     * Linux-only so a macOS run finds nothing. The second guard
+     * evaporates the moment the suite runs on Linux — which is the
+     * shipping platform.
+     *
+     * This build combination (test hooks AND the harness's own
+     * ENABLE_NETPLAY_TESTS) exists only inside the test binary; neither
+     * host-release, host-debug, nor the MiSTer build defines them, so
+     * production discovery is untouched. Inside the harness, an unset
+     * hook is a bug in the test, and the honest failure is "no gateway".
+     */
+    SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                "NAT-PMP: test build with no mock gateway configured — refusing to "
+                "consult the real default route");
+    return false;
+#else
     return discover_gateway_platform(out_ip, ip_buf_size);
+#endif
 }
 
 #ifdef NETPLAY_TEST_HOOKS
@@ -532,6 +777,40 @@ bool Natpmp_TestHook_DiscoverGateway(char* out_ip, int ip_buf_size) {
 static const int k_ladder_ms[] = { 250, 500, 1000 };
 #define NP_LADDER_STEPS ((int)(sizeof(k_ladder_ms) / sizeof(k_ladder_ms[0])))
 
+/* The budget for ONE phase is exactly the ladder it has to run. Derived
+ * from the table rather than written down twice, so that restoring the
+ * full §3.1 ladder cannot silently leave the budget behind — the phase
+ * grows with the ladder and the caller's overall ceiling becomes the
+ * thing that bites, which is observable in the tests. */
+static int np_phase_budget_ms(void) {
+    int total = 0;
+    for (int i = 0; i < NP_LADDER_STEPS; i++) {
+        total += k_ladder_ms[i];
+    }
+    return total;
+}
+
+#ifdef NETPLAY_TEST_HOOKS
+int Natpmp_TestHook_Ladder(const int** out_steps_ms) {
+    if (out_steps_ms != NULL) {
+        *out_steps_ms = k_ladder_ms;
+    }
+    return NP_LADDER_STEPS;
+}
+
+int Natpmp_TestHook_PhaseBudgetMs(void) {
+    return np_phase_budget_ms();
+}
+
+void Natpmp_TestHook_ResetState(void) {
+    s_pcp_nonce_valid = false;
+    s_pcp_nonce_port = 0;
+    memset(s_pcp_nonce, 0, sizeof(s_pcp_nonce));
+    memset(&s_epoch, 0, sizeof(s_epoch));
+    s_epoch_reset_pending = false;
+}
+#endif
+
 typedef enum {
     NP_TX_ANSWERED = 0, /* a verdict was reached (see *out_verdict) */
     NP_TX_TIMEOUT,      /* ladder or deadline exhausted, no answer  */
@@ -559,30 +838,64 @@ static int np_remaining_ms(uint64_t deadline_ms) {
  * anywhere else are never delivered here. Payload-level correlation
  * (nonce / opcode / internal port) is the parse callback's job, and a
  * NOT_OURS verdict does NOT end the wait: a frame we cannot attribute
- * must neither become a mapping nor consume our timeout. */
+ * must neither become a mapping nor consume our timeout.
+ *
+ * `io_gw_alive` is shared across every phase of one Natpmp_AddMapping
+ * call and latches true the moment ANY datagram arrives from the
+ * gateway, including one this phase rejects as NOT_OURS. Once it is set
+ * the ladder STOPS RETRANSMITTING and simply waits out the phase.
+ *
+ * That is review H-6's other half, and it is what RFC 6886 §3.1 asks
+ * for: "In the case of a slow NAT gateway that takes perhaps half a
+ * second to respond to a NAT-PMP request, the client SHOULD respect this
+ * and allow the NAT gateway to operate at the pace it can manage, and
+ * not overload it by issuing requests faster than the rate it's
+ * answering them." Retransmission exists to cover loss and to detect a
+ * gateway that does not speak the protocol; against one that has already
+ * answered, every extra datagram only lengthens the queue we are waiting
+ * behind. On a single-threaded 700 ms router the un-suppressed ladder
+ * put three requests into the queue per phase and then timed out waiting
+ * for replies to the FIRST one.
+ *
+ * The residual: an on-path attacker able to spoof the gateway's source
+ * address can latch the flag early and cost us the retransmits. The
+ * worst outcome is one missed mapping and a fall through to STUN — the
+ * same outcome as a silent router — and no forged frame can become a
+ * mapping, because that still requires passing the §11.4 / §3.5
+ * matchers. */
 static NpTxOutcome np_transact(np_sock_t sock, const uint8_t* req, int req_len,
                                uint64_t deadline_ms, NpParseFn parse, void* ctx,
-                               NatpmpParse* out_verdict) {
+                               NatpmpParse* out_verdict, bool* io_gw_alive) {
+    bool sent_once = false;
     for (int step = 0; step < NP_LADDER_STEPS; step++) {
         if (np_remaining_ms(deadline_ms) <= 0) {
             return NP_TX_TIMEOUT;
         }
+        const bool suppress_retransmit =
+            sent_once && io_gw_alive != NULL && *io_gw_alive;
+        if (!suppress_retransmit) {
 #ifdef _WIN32
-        const int sent = send(sock, (const char*)req, req_len, 0);
+            const int sent = send(sock, (const char*)req, req_len, 0);
 #else
-        const ssize_t sent = send(sock, req, (size_t)req_len, 0);
+            const ssize_t sent = send(sock, req, (size_t)req_len, 0);
 #endif
-        if (sent != (int)req_len) {
-            /* On a connected UDP socket an "ICMP Port Unreachable" from
-             * the gateway surfaces as an error on a later call. RFC 6886
-             * §3.1: on that ICMP the client "can skip any remaining
-             * retransmissions and conclude immediately that the gateway
-             * does not support NAT-PMP". Any other send error is equally
-             * terminal for this attempt. */
-            return NP_TX_ERROR;
+            if (sent != (int)req_len) {
+                /* On a connected UDP socket an "ICMP Port Unreachable"
+                 * from the gateway surfaces as an error on a later call.
+                 * RFC 6886 §3.1: on that ICMP the client "can skip any
+                 * remaining retransmissions and conclude immediately that
+                 * the gateway does not support NAT-PMP". Any other send
+                 * error is equally terminal for this attempt. */
+                return NP_TX_ERROR;
+            }
+            sent_once = true;
         }
 
-        uint64_t step_deadline = SDL_GetTicks() + (uint64_t)k_ladder_ms[step];
+        /* A suppressed rung waits out the WHOLE remaining phase in one
+         * go, so the loop makes at most one more pass after it. */
+        uint64_t step_deadline =
+            suppress_retransmit ? deadline_ms
+                                : SDL_GetTicks() + (uint64_t)k_ladder_ms[step];
         if (step_deadline > deadline_ms) {
             step_deadline = deadline_ms;
         }
@@ -621,6 +934,12 @@ static NpTxOutcome np_transact(np_sock_t sock, const uint8_t* req, int req_len,
                  * unreachable, and §3.1 says stop. */
                 return NP_TX_ERROR;
             }
+            /* The socket is connect()ed, so this datagram came from the
+             * gateway address: it is alive and answering, whatever the
+             * payload turns out to be. */
+            if (io_gw_alive != NULL) {
+                *io_gw_alive = true;
+            }
             const NatpmpParse verdict = parse(buf, (int)got, ctx);
             if (verdict == NATPMP_PARSE_NOT_OURS) {
                 continue; /* keep waiting inside this rung */
@@ -642,10 +961,24 @@ typedef struct {
     NatpmpPcpMap map;
 } PcpCtx;
 
+/* Every callback funnels an accepted frame's epoch into the RFC 6886
+ * §3.6 estimator. Only frames the matcher proved are OURS count: an
+ * unattributable datagram's clock is not evidence about our gateway's
+ * mapping table, and letting one drive the estimator would hand an
+ * off-path attacker a free "your mappings are gone" signal. */
+static void np_note_epoch(NatpmpParse verdict, uint32_t epoch_s) {
+    if (verdict == NATPMP_PARSE_OK || verdict == NATPMP_PARSE_REFUSED) {
+        np_epoch_observe(epoch_s);
+    }
+}
+
 static NatpmpParse pcp_parse_cb(const uint8_t* buf, int len, void* ctx) {
     PcpCtx* c = (PcpCtx*)ctx;
-    return Natpmp_ParsePcpMapResponse(buf, len, c->nonce, NATPMP_PROTO_UDP,
-                                      c->internal_port, &c->map);
+    const NatpmpParse v = Natpmp_ParsePcpMapResponse(buf, len, c->nonce,
+                                                     NATPMP_PROTO_UDP,
+                                                     c->internal_port, &c->map);
+    np_note_epoch(v, c->map.epoch_s);
+    return v;
 }
 
 typedef struct {
@@ -654,7 +987,9 @@ typedef struct {
 
 static NatpmpParse pmp_addr_parse_cb(const uint8_t* buf, int len, void* ctx) {
     PmpAddrCtx* c = (PmpAddrCtx*)ctx;
-    return Natpmp_ParsePmpAddrResponse(buf, len, &c->addr);
+    const NatpmpParse v = Natpmp_ParsePmpAddrResponse(buf, len, &c->addr);
+    np_note_epoch(v, c->addr.epoch_s);
+    return v;
 }
 
 typedef struct {
@@ -664,8 +999,10 @@ typedef struct {
 
 static NatpmpParse pmp_map_parse_cb(const uint8_t* buf, int len, void* ctx) {
     PmpMapCtx* c = (PmpMapCtx*)ctx;
-    return Natpmp_ParsePmpMapResponse(buf, len, NATPMP_PMP_OP_MAP_UDP,
-                                      c->internal_port, &c->map);
+    const NatpmpParse v = Natpmp_ParsePmpMapResponse(buf, len, NATPMP_PMP_OP_MAP_UDP,
+                                                     c->internal_port, &c->map);
+    np_note_epoch(v, c->map.epoch_s);
+    return v;
 }
 
 /* Open a UDP socket connect()ed to the gateway and report the source
@@ -702,6 +1039,14 @@ static np_sock_t open_gateway_socket(const char* gw_ip, uint16_t gw_port,
     }
     memcpy(out_client_ip_be, &local.sin_addr.s_addr, 4);
     return s;
+}
+
+/* A fresh ladder budget for the phase starting NOW, never past the
+ * caller's overall ceiling. Review H-6: taken per phase, at phase start,
+ * so a slow-but-answering gateway cannot let one phase eat another's. */
+static uint64_t np_phase_deadline(uint64_t overall_deadline_ms) {
+    const uint64_t d = SDL_GetTicks() + (uint64_t)np_phase_budget_ms();
+    return d > overall_deadline_ms ? overall_deadline_ms : d;
 }
 
 static void fill_mapping(UpnpMapping* out, PortMapBackend backend,
@@ -749,7 +1094,18 @@ bool Natpmp_AddMapping(UpnpMapping* out, uint16_t internal_port,
     if (budget_ms <= 0) {
         budget_ms = NATPMP_PROBE_BUDGET_MS;
     }
-    const uint64_t deadline_ms = SDL_GetTicks() + (uint64_t)budget_ms;
+    /* Review H-6. `overall_deadline_ms` is the caller's hard ceiling and
+     * nothing below may run past it. Each PHASE additionally gets its own
+     * fresh ladder budget, taken at the moment the phase starts — see
+     * np_phase_deadline. A single shared deadline meant a gateway that
+     * merely answered slowly could spend the whole allowance on the PCP
+     * probe and the address request, and the mapping request — the only
+     * one that actually opens a port — was never sent. */
+    const uint64_t overall_deadline_ms = SDL_GetTicks() + (uint64_t)budget_ms;
+    /* Latched by np_transact on the first datagram from the gateway and
+     * SHARED across phases: liveness proven during the PCP probe still
+     * counts during the NAT-PMP phases, because it is the same box. */
+    bool gw_alive = false;
     bool try_pcp = (backend_hint == PORTMAP_BACKEND_NONE || backend_hint == PORTMAP_BACKEND_PCP);
     bool try_pmp = (backend_hint == PORTMAP_BACKEND_NONE || backend_hint == PORTMAP_BACKEND_NATPMP);
     bool ok = false;
@@ -761,7 +1117,8 @@ bool Natpmp_AddMapping(UpnpMapping* out, uint16_t internal_port,
         PcpCtx ctx;
         memset(&ctx, 0, sizeof(ctx));
         ctx.internal_port = internal_port;
-        if (!Csprng_Bytes(ctx.nonce, sizeof(ctx.nonce))) {
+        bool nonce_reused = false;
+        if (!pcp_nonce_acquire(internal_port, ctx.nonce, &nonce_reused)) {
             /* RFC 6887 §18.1: the Mapping Nonce is what stops an off-path
              * attacker from deleting or hijacking our mapping. A
              * predictable one voids that, so fail closed — the same
@@ -776,16 +1133,33 @@ bool Natpmp_AddMapping(UpnpMapping* out, uint16_t internal_port,
                                       suggested_external, 0, client_ip_be,
                                       NATPMP_LEASE_SECONDS);
             NatpmpParse verdict = NATPMP_PARSE_NOT_OURS;
-            const NpTxOutcome tx = np_transact(sock, req, (int)sizeof(req), deadline_ms,
-                                               pcp_parse_cb, &ctx, &verdict);
-            if (tx == NP_TX_ANSWERED && verdict == NATPMP_PARSE_OK) {
+            const NpTxOutcome tx = np_transact(sock, req, (int)sizeof(req),
+                                               np_phase_deadline(overall_deadline_ms),
+                                               pcp_parse_cb, &ctx, &verdict, &gw_alive);
+            if (tx == NP_TX_ANSWERED && verdict == NATPMP_PARSE_OK &&
+                ctx.map.external_ip_be != 0) {
                 fill_mapping(out, PORTMAP_BACKEND_PCP, ctx.map.internal_port,
                              ctx.map.external_port, ctx.map.external_ip_be,
                              ctx.map.lifetime_s);
-                SDL_Log("PCP: mapping granted (external %s:%u -> internal %u, lifetime %us)",
-                        out->external_ip, (unsigned)out->external_port,
-                        (unsigned)out->internal_port, (unsigned)out->lifetime_s);
+                SDL_Log("PCP: mapping %s (external %s:%u -> internal %u, lifetime %us, "
+                        "Mapping Nonce %s per RFC 6887 §11.3)",
+                        nonce_reused ? "renewed" : "granted", out->external_ip,
+                        (unsigned)out->external_port, (unsigned)out->internal_port,
+                        (unsigned)out->lifetime_s, nonce_reused ? "reused" : "minted");
                 ok = true;
+            } else if (tx == NP_TX_ANSWERED && verdict == NATPMP_PARSE_OK) {
+                /* Review M-5.4, fail CLOSED. A success with an all-zeros
+                 * Assigned External IP is a mapping the S1 §3.6 CGNAT
+                 * gate cannot judge: it compares the router-reported
+                 * external address against STUN's, and an absent address
+                 * matches nothing. Accepting it would advertise a port on
+                 * an address we never learned. */
+                SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                            "PCP: gateway %s granted a mapping with no external IP "
+                            "address — refusing it (RFC 6887 §11.2 Assigned External "
+                            "IP Address)",
+                            gw_ip);
+                try_pmp = false;
             } else if (tx == NP_TX_ANSWERED && verdict == NATPMP_PARSE_REFUSED) {
                 SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
                             "PCP: gateway %s refused the MAP request (result code %u, "
@@ -823,9 +1197,21 @@ bool Natpmp_AddMapping(UpnpMapping* out, uint16_t internal_port,
         uint8_t areq[NATPMP_PMP_ADDR_REQ_LEN];
         Natpmp_BuildPmpAddrRequest(areq);
         NatpmpParse averdict = NATPMP_PARSE_NOT_OURS;
-        const NpTxOutcome atx = np_transact(sock, areq, (int)sizeof(areq), deadline_ms,
-                                            pmp_addr_parse_cb, &actx, &averdict);
-        if (atx != NP_TX_ANSWERED || averdict != NATPMP_PARSE_OK) {
+        const NpTxOutcome atx = np_transact(sock, areq, (int)sizeof(areq),
+                                            np_phase_deadline(overall_deadline_ms),
+                                            pmp_addr_parse_cb, &actx, &averdict,
+                                            &gw_alive);
+        if (atx == NP_TX_ANSWERED && averdict == NATPMP_PARSE_OK &&
+            actx.addr.external_ip_be == 0) {
+            /* Review M-5.4, the NAT-PMP half: §3.2's response is the ONLY
+             * source of an external address on this protocol, so a
+             * success carrying 0.0.0.0 leaves the CGNAT gate blind. Treat
+             * it as a refusal rather than mapping into the dark. */
+            SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                        "NAT-PMP: gateway %s reported external address 0.0.0.0 — "
+                        "refusing to create a mapping the CGNAT gate cannot judge",
+                        gw_ip);
+        } else if (atx != NP_TX_ANSWERED || averdict != NATPMP_PARSE_OK) {
             if (atx == NP_TX_ANSWERED && averdict == NATPMP_PARSE_REFUSED) {
                 SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
                             "NAT-PMP: gateway %s refused the public-address request "
@@ -844,8 +1230,10 @@ bool Natpmp_AddMapping(UpnpMapping* out, uint16_t internal_port,
             Natpmp_BuildPmpMapRequest(mreq, NATPMP_PMP_OP_MAP_UDP, internal_port,
                                       suggested_external, NATPMP_LEASE_SECONDS);
             NatpmpParse mverdict = NATPMP_PARSE_NOT_OURS;
-            const NpTxOutcome mtx = np_transact(sock, mreq, (int)sizeof(mreq), deadline_ms,
-                                                pmp_map_parse_cb, &mctx, &mverdict);
+            const NpTxOutcome mtx = np_transact(sock, mreq, (int)sizeof(mreq),
+                                                np_phase_deadline(overall_deadline_ms),
+                                                pmp_map_parse_cb, &mctx, &mverdict,
+                                                &gw_alive);
             if (mtx == NP_TX_ANSWERED && mverdict == NATPMP_PARSE_OK &&
                 mctx.map.external_port != 0) {
                 fill_mapping(out, PORTMAP_BACKEND_NATPMP, mctx.map.internal_port,
@@ -915,15 +1303,33 @@ void Natpmp_RemoveMapping(UpnpMapping* mapping) {
 
     if (backend == PORTMAP_BACKEND_PCP) {
         /* RFC 6887 §11.1: "Requested lifetime ... The value 0 indicates
-         * 'delete'." A fresh nonce is fine — §11.1 calls the nonce a
-         * random value chosen by the client, and the delete is
-         * self-identifying via protocol + internal port. If the CSPRNG is
-         * down we still send: an all-zero nonce is "a legal value" (§11.1)
-         * and losing the teardown is worse than a predictable delete of a
-         * mapping we are abandoning anyway. */
+         * 'delete'."
+         *
+         * Review H-5: the delete MUST carry the SAME Mapping Nonce as the
+         * mapping it is deleting. §11.3 rejects a MAP request that
+         * matches "the internal port, protocol, and internal address" of
+         * "an existing explicit dynamic mapping, but the mapping nonce
+         * does not match" with NOT_AUTHORIZED — and a delete is just a
+         * MAP with lifetime 0, so the old fresh-nonce-per-delete left the
+         * mapping installed on every conforming gateway. It only ever
+         * "worked" because nothing checks the delete's reply.
+         *
+         * If nothing is persisted (a mapping adopted before this process
+         * learned its nonce, or a CSPRNG failure at creation time) we
+         * still send an all-zero-nonce delete: §11.1 calls zero "a legal
+         * value", and a delete that might be refused beats no delete at
+         * all — §3.4/§3.1 make teardown advisory either way. */
         uint8_t nonce[NATPMP_PCP_NONCE_LEN];
-        if (!Csprng_Bytes(nonce, sizeof(nonce))) {
-            memset(nonce, 0, sizeof(nonce));
+        memset(nonce, 0, sizeof(nonce));
+        const bool have_nonce = s_pcp_nonce_valid && s_pcp_nonce_port == internal_port;
+        if (have_nonce) {
+            memcpy(nonce, s_pcp_nonce, sizeof(nonce));
+        } else {
+            SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                        "PCP: no persisted Mapping Nonce for internal port %u — the "
+                        "delete may be refused with NOT_AUTHORIZED (RFC 6887 §11.3); "
+                        "the mapping will expire on its lease",
+                        (unsigned)internal_port);
         }
         uint8_t req[NATPMP_PCP_MAP_LEN];
         Natpmp_BuildPcpMapRequest(req, nonce, NATPMP_PROTO_UDP, internal_port, 0, 0,
@@ -933,9 +1339,11 @@ void Natpmp_RemoveMapping(UpnpMapping* mapping) {
         memcpy(ctx.nonce, nonce, sizeof(nonce));
         ctx.internal_port = internal_port;
         NatpmpParse verdict = NATPMP_PARSE_NOT_OURS;
+        bool alive = false;
         (void)np_transact(sock, req, (int)sizeof(req), deadline_ms, pcp_parse_cb, &ctx,
-                          &verdict);
-        SDL_Log("PCP: delete sent for internal port %u", (unsigned)internal_port);
+                          &verdict, &alive);
+        SDL_Log("PCP: delete sent for internal port %u (Mapping Nonce %s)",
+                (unsigned)internal_port, have_nonce ? "persisted" : "absent/zero");
     } else {
         /* RFC 6886 §3.4: lifetime 0, and the builder forces Suggested
          * External Port to 0 as the section requires. */
@@ -945,10 +1353,18 @@ void Natpmp_RemoveMapping(UpnpMapping* mapping) {
         memset(&ctx, 0, sizeof(ctx));
         ctx.internal_port = internal_port;
         NatpmpParse verdict = NATPMP_PARSE_NOT_OURS;
+        bool alive = false;
         (void)np_transact(sock, req, (int)sizeof(req), deadline_ms, pmp_map_parse_cb, &ctx,
-                          &verdict);
+                          &verdict, &alive);
         SDL_Log("NAT-PMP: delete sent for internal port %u", (unsigned)internal_port);
     }
+
+    /* The mapping is gone as far as this process is concerned, so the
+     * next MAP for this port is a NEW mapping and RFC 6887 §11.3 wants a
+     * fresh nonce for it — keeping the old one would make the next
+     * creation look like a renewal of something the gateway may no
+     * longer have. */
+    pcp_nonce_forget(internal_port);
 
     NP_CLOSE(sock);
 }

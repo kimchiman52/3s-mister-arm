@@ -298,6 +298,23 @@ uint32_t DirectP2P_TestHook_LastRaceMs(void);
  * notify-failure -> teardown -> FAILED_HANDSHAKE -> one FAIL report. */
 void DirectP2P_TestHook_RunTeardown(void);
 
+/* S7 review H-7.3 / M-5.2: the port-mapping renewal cadence, as a pure
+ * function of the lease the gateway GRANTED, so a test can pin it
+ * without waiting out half an hour. Both are the very functions
+ * upnp_renew_tick calls — not a re-derivation of them.
+ *
+ *   interval: RFC 6886 §3.3 "The client SHOULD begin trying to renew the
+ *             mapping halfway to expiry time, like DHCP", inside RFC 6887
+ *             §11.2.1's 1/2-to-5/8 window, floored at §11.2.1's four
+ *             seconds and capped at the UPnP half-hour.
+ *   retry:    what to wait after a FAILED renewal. Must scale with the
+ *             lease; a flat five minutes puts the retry after a 120 s
+ *             mapping has already died.
+ *
+ * lifetime 0 means "the backend reported no granted lease" (UPnP). */
+uint64_t DirectP2P_TestHook_PortmapRenewIntervalMs(uint32_t granted_lifetime_s);
+uint64_t DirectP2P_TestHook_PortmapRenewRetryMs(uint32_t granted_lifetime_s);
+
 /* S4-review HIGH-1b: the host punch-gate throttle. The gate accounting
  * is deliberately free of s_work and of thread lifecycle so it can be
  * driven deterministically with an injected clock — the production path

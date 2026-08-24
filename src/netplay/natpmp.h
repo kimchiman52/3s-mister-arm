@@ -241,14 +241,38 @@ NatpmpParse Natpmp_ParsePmpMapResponse(const uint8_t* buf, int len,
 
 /* --- client ------------------------------------------------------------ */
 
-/** Wall-clock budget for a first-time probe: enough for the PCP ladder
- *  and then the NAT-PMP ladder (see natpmp.c's truncation rationale). */
-#define NATPMP_PROBE_BUDGET_MS 4000
-/** Wall-clock budget for a renewal, which knows its backend and so runs
- *  exactly one ladder. Kept under direct_p2p.c's
- *  UPNP_RENEW_JOIN_BUDGET_MS (2000) so a renewal worker is always
- *  joinable rather than detached. */
-#define NATPMP_RENEW_BUDGET_MS 1500
+/**
+ * Wall-clock budget for ONE retransmit ladder, i.e. one protocol phase.
+ *
+ * Review H-6: this used to be a single budget shared by all three phases
+ * of a probe (PCP MAP, then the NAT-PMP public-address request, then the
+ * NAT-PMP mapping request). A gateway that answered in 700 ms — inside
+ * RFC 6886 §3.1's own "a slow NAT gateway that takes perhaps half a
+ * second to respond" — spent the shared deadline on the first two phases
+ * and the mapping request was never issued at all (measured: 3896 ms
+ * elapsed, no mapping). Each phase now gets its OWN budget of this size,
+ * still clamped by the caller's overall ceiling.
+ *
+ * The value is the sum of natpmp.c's truncated §3.1 ladder
+ * (250 + 500 + 1000), so a phase is exactly long enough to run its
+ * ladder to the end and no longer. natpmp.c asserts the two agree.
+ */
+#define NATPMP_PHASE_BUDGET_MS 1750
+
+/** Wall-clock ceiling for a first-time probe: the three phases above,
+ *  back to back. Only a gateway that answers the PCP downgrade and the
+ *  address request and then goes silent on the mapping request can
+ *  actually spend it; a wholly silent gateway costs two phases (3500 ms)
+ *  because the address request timing out ends the attempt. */
+#define NATPMP_PROBE_BUDGET_MS (3 * NATPMP_PHASE_BUDGET_MS)
+/** Wall-clock ceiling for a renewal. A renewal knows its backend, so PCP
+ *  runs one phase and NAT-PMP runs two (address, then mapping) — never
+ *  the PCP probe. This EXCEEDS direct_p2p.c's UPNP_RENEW_JOIN_BUDGET_MS
+ *  (2000): a renewal caught in flight by teardown is detached rather
+ *  than joined, which is an already-handled path
+ *  (upnp_renew_join_and_discard), whereas a renewal budget too short for
+ *  a slow gateway loses the mapping MID-SESSION, which is not. */
+#define NATPMP_RENEW_BUDGET_MS (2 * NATPMP_PHASE_BUDGET_MS)
 
 /** Lifetime we request, in seconds. Matches upnp.c's UPNP_LEASE_DURATION
  *  ("3600") so the ONE S1 half-life renewal timer in direct_p2p.c is
@@ -279,6 +303,27 @@ bool Natpmp_AddMapping(UpnpMapping* out,
                        int budget_ms);
 
 /**
+ * RFC 6886 §3.6, consume-once: has the gateway's Seconds Since Start of
+ * Epoch gone backwards since we last heard from it?
+ *
+ * §3.6 is a MUST on the CLIENT, not the gateway: "If the SSSoE in the
+ * newly received packet is less than the client's conservative estimate
+ * by more than 2 seconds, then the client concludes that the NAT gateway
+ * has undergone a reboot or other loss of port mapping state, and the
+ * client MUST immediately renew all its active port mapping leases as
+ * described in Section 3.7". Every response this client parses feeds the
+ * estimator; this call reports and CLEARS the verdict, so the caller
+ * renews once per detected reboot rather than once per frame.
+ *
+ * @param out_jitter_ms receives the mandatory §3.7 pre-renewal delay:
+ *        "the client MUST first delay by a random amount of time
+ *        selected with uniform random distribution in the range 0 to 5
+ *        seconds, and then send its first port mapping request." Ignored
+ *        when NULL. Meaningless when the return is false.
+ */
+bool Natpmp_TakeEpochReset(uint32_t* out_jitter_ms);
+
+/**
  * Release a mapping created by Natpmp_AddMapping. Best-effort and
  * bounded, exactly like Upnp_RemoveMapping: RFC 6886 §3.1 notes deletion
  * requests "are in some sense advisory", so one send plus a short wait is
@@ -302,6 +347,27 @@ void Natpmp_TestHook_SetGateway(const char* ip, uint16_t port);
 /** Expose gateway discovery so a test can assert what the platform
  *  actually reports (and that non-Linux honestly reports nothing). */
 bool Natpmp_TestHook_DiscoverGateway(char* out_ip, int ip_buf_size);
+
+/**
+ * Drop every piece of cross-call client state: the persisted PCP Mapping
+ * Nonce (RFC 6887 §11.3) and the RFC 6886 §3.6 epoch estimator. Tests
+ * call this between cases so one case cannot leak a nonce or an epoch
+ * baseline into the next.
+ */
+void Natpmp_TestHook_ResetState(void);
+
+/**
+ * The retransmit ladder, so a test can pin its SHAPE rather than only
+ * its wall-clock consequences. Returns the step count and points
+ * *out_steps_ms at the interval table. Review H-7: a test that only
+ * measured elapsed time could not tell the shipped three-rung ladder
+ * from RFC 6886 §3.1's full nine-rung one, because the phase budget
+ * clamps both.
+ */
+int Natpmp_TestHook_Ladder(const int** out_steps_ms);
+
+/** The per-phase budget natpmp.c actually derives from that ladder. */
+int Natpmp_TestHook_PhaseBudgetMs(void);
 #endif /* NETPLAY_TEST_HOOKS */
 
 #ifdef __cplusplus
