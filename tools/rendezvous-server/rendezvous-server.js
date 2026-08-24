@@ -301,6 +301,33 @@ const RELAY_TOKEN_ROTATE_MS = 60 * 1000;
 // which frees the port recovers without a restart.
 const RELAY_PORT_BLOCK_MS = 5 * 60 * 1000;
 
+// Review MEDIUM-3: the relay ports had NO rate limiting of any kind,
+// while the main port has three limiter layers. Every PIN-shaped datagram
+// cost up to TWO HMAC-SHA256 (relayTokenValid iterates the current and
+// previous slot) plus a timingSafeEqual, unmetered, from any source that
+// found the port — and 100 open UDP ports is a discoverable surface.
+//
+// Two mechanisms, in order:
+//   1. Source admission runs BEFORE the HMAC (see relayPinSourceAllowed,
+//      added for review HIGH-1): a source that is neither the pinned
+//      endpoint nor at a registered slot IP costs a Map lookup and a
+//      string compare, not a hash. That is the cheap front line and it
+//      handles the scanner case entirely.
+//   2. This bucket bounds what survives (1) — i.e. an attacker spoofing a
+//      slot IP, which cannot pin anything but could still burn hashes.
+//
+// The bucket is deliberately PER RELAY, not per source: a per-source
+// bucket would be keyed on an attacker-chosen, spoofable value and would
+// be its own unbounded allocator, which is the exact MEDIUM-3 mistake the
+// main port already had to unlearn (see MAX_RATE_ENTRIES). Per relay it
+// is two numbers on an object that already exists.
+//
+// Sizing: a legitimate pair pins at RELAY_PIN_RESEND_MS = 150 ms per side
+// (direct_p2p.c), i.e. ~13.3 pin/s across both sides, so 40/s is ~3x the
+// real peak. Worst case for the box is RELAY_POOL_SIZE x 40 x 2 HMAC =
+// 8000 HMAC-SHA256/s over ~40-byte inputs.
+const RELAY_PIN_RATE_PER_SEC = 40;
+
 // --- Logging -----------------------------------------------------------------
 
 function ts() {
@@ -579,7 +606,8 @@ function relayRelease(hexKey, why) {
     }
     logInfo(`[RELAY] released key=${shortKey4(hexKey)}... port=${r.port} (${why}) ` +
         `fwd=${r.forwarded}/${r.forwardedBytes}B dropUnpinned=${r.dropUnpinned} ` +
-        `dropCap=${r.dropCap} pinRejects=${r.pinRejects} pinSourceRejects=${r.pinSourceRejects}`);
+        `dropCap=${r.dropCap} pinRejects=${r.pinRejects} pinSourceRejects=${r.pinSourceRejects} ` +
+        `pinRateDrops=${r.pinRateDrops}`);
 }
 
 // Review HIGH-1: which source IP may pin `side`.
@@ -620,6 +648,23 @@ function relaySlotIp(relay, side) {
         if (ep) return ep.address;
     }
     return relay.slotIp[side];
+}
+
+// Review MEDIUM-3: bound the HMAC work one relay port can be made to do.
+// Token bucket over PIN VALIDATIONS, refilled at RELAY_PIN_RATE_PER_SEC
+// with a one-second burst — same shape as relayBandwidthAllow, and like
+// it, over-budget means DROP, never teardown.
+function relayPinRateAllow(relay, now) {
+    const dt = now - relay.pinRefill;
+    if (dt > 0) {
+        relay.pinAllowance = Math.min(
+            RELAY_PIN_RATE_PER_SEC,
+            relay.pinAllowance + (dt / 1000) * RELAY_PIN_RATE_PER_SEC);
+        relay.pinRefill = now;
+    }
+    if (relay.pinAllowance < 1) return false;
+    relay.pinAllowance -= 1;
+    return true;
 }
 
 // True when `rinfo` is allowed to pin (or re-pin) `side`.
@@ -690,6 +735,12 @@ function relayOnMessage(relay, buf, rinfo) {
         if (!relayPinSourceAllowed(relay, side, rinfo)) {
             relay.pinSourceRejects += 1;
             return; // silent — a wrong guess must look like a dead port
+        }
+        // Review MEDIUM-3: and even a source that passes (1) cannot make
+        // this port hash without limit. Still ahead of the HMAC.
+        if (!relayPinRateAllow(relay, now)) {
+            relay.pinRateDrops += 1;
+            return;
         }
         const token = Buffer.from(buf.subarray(8, 8 + RELAY_TOKEN_LEN));
         if (!relayTokenValid(relay.hexKey, side, token)) {
@@ -824,6 +875,10 @@ function relayAllocate(hexKey, cb) {
             dropCap: 0,
             pinRejects: 0,
             pinSourceRejects: 0,
+            pinRateDrops: 0,
+            // Review MEDIUM-3: PIN-validation budget for this port.
+            pinAllowance: RELAY_PIN_RATE_PER_SEC,
+            pinRefill: now,
             createdAt: now,
             // Review MEDIUM-2: nothing is granted until bind() lands.
             listening: false,
@@ -1563,6 +1618,7 @@ function start(port) {
         _relayMap: relayMap,
         _relayPortInUse: relayPortInUse,
         _relayPortBlocked: relayPortBlocked,
+        _relayPinRatePerSec: RELAY_PIN_RATE_PER_SEC,
         _relayPortBlockMs: RELAY_PORT_BLOCK_MS,
         _relayPortBase: RELAY_PORT_BASE,
         _relayPoolSize: RELAY_POOL_SIZE,

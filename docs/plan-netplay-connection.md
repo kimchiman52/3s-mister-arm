@@ -1055,6 +1055,23 @@ forwarded like any other bytes (asserted by `relayGrantAndForward`).
 | idle reclaim | 30 s with no pin and no forwarded datagram, on the existing 5 s sweep | 100 ports is small enough that holding dead entries for the 10-minute `SESSION_TTL_MS` would exhaust the pool |
 | session release | frees its relay **only if that relay is already idle** | see below — `sweepRelays` owns relay lifetime exclusively |
 
+**The relay ports are rate-limited too** (review MEDIUM-3, fixed
+as-built). They had **no** limiter of any kind while the main port has
+three layers, and every PIN-shaped datagram cost up to **two**
+HMAC-SHA256 (`relayTokenValid` iterates the current and previous slot)
+plus a `timingSafeEqual`, unmetered, from any source that found the port
+— across 100 discoverable open UDP ports. Two mechanisms, in order:
+the HIGH-1 source check runs **before** the HMAC, so a scanner costs a
+Map lookup and a string compare rather than a hash; and what survives it
+draws on a `RELAY_PIN_RATE_PER_SEC` (40/s) token bucket **per relay**.
+Per relay, not per source, on purpose: a per-source bucket is keyed on
+an attacker-chosen, spoofable value and is its own unbounded allocator —
+the exact mistake the main port already had to unlearn
+(`MAX_RATE_ENTRIES`). Sizing: the client pins at `RELAY_PIN_RESEND_MS`
+= 150 ms per side, ~13.3/s across both, so 40/s is ~3× the real peak;
+worst case for the box is 100 × 40 × 2 = 8000 HMAC-SHA256/s over
+~40-byte inputs. Over budget drops, never tears down.
+
 **Bind failure: the blocklist is time-boxed and the grant waits for the
 socket** (review MEDIUM-1 + MEDIUM-2, fixed as-built). Two coupled
 defects on the same path.

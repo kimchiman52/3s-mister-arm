@@ -1751,6 +1751,75 @@ async function testRelayIdleReclaim(handle, serverPort) {
     }
 }
 
+async function testRelayPinRateCap(handle, serverPort) {
+    // Review MEDIUM-3: the relay ports had NO rate limiting at all, while
+    // the main port has three limiter layers. Every PIN-shaped datagram
+    // cost up to TWO HMAC-SHA256 (relayTokenValid iterates current +
+    // previous slot) plus a timingSafeEqual, unmetered, from any source
+    // that found the port -- across 100 discoverable open UDP ports.
+    //
+    // Two properties, and the second is the one that keeps the fix honest:
+    //   (a) a flood of PIN-shaped datagrams is capped;
+    //   (b) the REAL client cadence is nowhere near the cap.
+    handle._resetSessions();
+    handle._resetRate();
+    handle._resetRelays();
+    const key = crypto.randomBytes(16);
+    const hexKey = key.toString('hex');
+    const a = await makeClient();
+    const b = await makeClient();
+    try {
+        await pairClients(serverPort, key, a, b);
+        handle._resetRate();
+        await a.send(relayReqLocal(key, a), serverPort);
+        const ga = decodeRelayGrant((await a.recv(500)).buf);
+        assertEq(ga.status, RELAY_STATUS_GRANTED, 'relay-pinrate: granted (setup)');
+        const relay = handle._relayMap.get(hexKey);
+        const cap = handle._relayPinRatePerSec;
+
+        // (b) first, before the bucket is touched: the shipped client pins
+        //     at RELAY_PIN_RESEND_MS = 150 ms per side, i.e. ~13.3/s across
+        //     both sides. A full second of that must never be throttled.
+        const REAL_CLIENT_PINS_PER_SEC = Math.ceil(1000 / 150) * 2;
+        assert(cap > REAL_CLIENT_PINS_PER_SEC,
+            `relay-pinrate: the cap (${cap}/s) leaves headroom over the real client cadence (${REAL_CLIENT_PINS_PER_SEC}/s)`);
+        const stub = makeStubSocket();
+        const SLOT_EP = { address: '127.0.0.1', port: 40100 };
+        const good = handle._relayTokenFor(hexKey, 0, 0);
+        for (let i = 0; i < REAL_CLIENT_PINS_PER_SEC; i++) {
+            handle._relayInject(hexKey, makeRelayPin(0, good), SLOT_EP, stub);
+        }
+        assertEq(relay.pinRateDrops, 0,
+            'relay-pinrate: a full second of the REAL client pin cadence is never throttled');
+        assertEq(stub.sent.length, REAL_CLIENT_PINS_PER_SEC,
+            'relay-pinrate: ...and every one of those pins was ACKed');
+
+        // (a) Now flood well past the cap, from a source that passes the
+        //     HIGH-1 admission check (spoofing a slot IP) but holds a
+        //     GARBAGE token -- the expensive case, the one that used to
+        //     cost two HMACs per datagram with nothing metering it.
+        stub.sent.length = 0;
+        const before = relay.pinRateDrops;
+        const FLOOD = cap * 5;
+        for (let i = 0; i < FLOOD; i++) {
+            handle._relayInject(hexKey, makeRelayPin(1, crypto.randomBytes(RELAY_TOKEN_LEN)),
+                { address: '127.0.0.1', port: 40200 }, stub);
+        }
+        assert(relay.pinRateDrops > before,
+            `relay-pinrate: an unmetered PIN flood is now capped (drops ${before} -> ${relay.pinRateDrops})`);
+        assert(relay.pinRateDrops >= FLOOD - cap - 1,
+            `relay-pinrate: nearly the whole flood was dropped before the HMAC (${relay.pinRateDrops} of ${FLOOD}, cap ${cap})`);
+        assertEq(stub.sent.length, 0, 'relay-pinrate: a garbage-token flood is never answered');
+
+        // Dropping, not killing: the relay is still live and still forwards.
+        assert(handle._relayMap.has(hexKey), 'relay-pinrate: the relay was NOT torn down by the cap');
+    } finally {
+        await a.close();
+        await b.close();
+        handle._resetRelays();
+    }
+}
+
 async function testRelayPortBlocklistExpires(handle, serverPort) {
     // Review MEDIUM-1: relayPortBlocked was a Set and therefore MONOTONIC.
     // The only clear() lived inside the _resetRelays TEST HOOK -- zero
@@ -2125,7 +2194,7 @@ async function testSweepHook(handle) {
 // EXPECTED_TESTS is deliberately a literal, NOT TESTS.length: the point is
 // to catch a test vanishing from the registry, and deriving it from the
 // registry would make that undetectable.
-const EXPECTED_TESTS = 36;
+const EXPECTED_TESTS = 37;
 
 let testsRun = 0;
 let testsFailed = 0;
@@ -2219,6 +2288,7 @@ async function main() {
         await runTest('relayBandwidthCap', () => testRelayBandwidthCap(handle, serverPort));
         await runTest('relayPoolExhaustion', () => testRelayPoolExhaustion(handle, serverPort));
         await runTest('relayIdleReclaim', () => testRelayIdleReclaim(handle, serverPort));
+        await runTest('relayPinRateCap', () => testRelayPinRateCap(handle, serverPort));
         await runTest('relayPortBlocklistExpires', () => testRelayPortBlocklistExpires(handle, serverPort));
         await runTest('relayBindFailureStillGrantsAWorkingPort', () => testRelayBindFailureStillGrantsAWorkingPort(handle, serverPort));
         await runTest('relayPinSourceBoundToSlotIp', () => testRelayPinSourceBoundToSlotIp(handle, serverPort));
