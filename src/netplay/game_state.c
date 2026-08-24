@@ -62,7 +62,8 @@
  *   + 2  OK_Appear79[2]  (u8[2])
  *   + 2  Extra_Counter[2] (u8[2])
  *   + 8  Demo_Ptr[2]     (u16*[2], two 4-byte pointers on ARM32)
- *   - 2  Random_ix16_bg  (s16, removed — see GameState_Save comment)
+ *   - 2  Random_ix16_bg  (s16, removed by that port; RESTORED later — see
+ *                         the re-pin note at the bottom of this comment)
  *   - 2  padding re-absorbed by the field-layout shuffle above
  *   -----
  *   + 8  net
@@ -102,8 +103,19 @@
  * probe (deliberate `extern char probe[sizeof(GameState)]` vs
  * `extern char probe[1]` redeclaration conflict; compiler reported
  * 'char[17684]', and the same probe reproduces 'char[17676]' on the
- * pre-change header, validating the environment). 17676 + 8 = 17684. */
-#define EXPECTED_GAME_STATE_SIZE 17684
+ * pre-change header, validating the environment). 17676 + 8 = 17684.
+ *
+ * Restoring Random_ix16_bg (s16, put back between Random_ix32_ex_com and
+ * Opening_Now — the #298 port had dropped it on a premise that is false on
+ * this fork; see the GameState_Save comment) grew this by +4, not +2: the
+ * field lands in a run of s16s that ends at `struct _TASK task[11]`, so the
+ * 2 payload bytes turn an even halfword count into an odd one and 2 bytes of
+ * realignment padding follow. Re-measured, not computed — same clang
+ * --target=arm-linux-gnueabihf redeclaration probe as above (`extern char
+ * probe[sizeof(GameState)]` vs `extern char probe[1]`), which reported
+ * 'char[17688]' after the change and reproduced 'char[17684]' on the
+ * pre-change header. 17684 + 4 = 17688. */
+#define EXPECTED_GAME_STATE_SIZE 17688
 #define EXPECTED_TASK_SIZE 16
 
 _Static_assert(sizeof(GameState) == EXPECTED_GAME_STATE_SIZE,
@@ -591,8 +603,24 @@ void GameState_Save(GameState* dst) {
     GS_SAVE(Random_ix32_com);
     GS_SAVE(Random_ix16_ex_com);
     GS_SAVE(Random_ix32_ex_com);
-    // Random_ix16_bg is left out on purpose: it only drives stage flashing, and the
-    // state deciding when to draw from it isn't saved.
+    /* Random_ix16_bg IS saved. The upstream #298 port (e57b16bd) dropped it
+     * with the rationale "it only drives stage flashing, and the state
+     * deciding when to draw from it isn't saved" — the second clause is
+     * factually wrong on this fork. random_16_bg() (pls02.c:734-743) is
+     * called only from scr_trans() (stage/bg.c:811, 948, 949), and every
+     * field that call site writes from the result — stage_flash,
+     * stage_ftimer, rw_dat[0] (rw_cnt/rwd_ptr/brw_ptr) and rw3col_ptr — is
+     * GS_SAVEd right below in the `bg` block. Since step_game() runs
+     * njUserMain() unconditionally on rolled-back frames, an unsaved index
+     * advances while its saved consumers are rewound, so the saved BG-flash
+     * state drifts from the no-rollback timeline. Confirmed empirically by
+     * the rollback-determinism harness (makoto-sa3-super, stage 3): the
+     * index plus rw_dat/stage_flash/stage_ftimer all went DIVERGENT(+
+     * FEEDBACK) from frames 347-349 and stayed divergent to the end of the
+     * run. Severity is cosmetic cross-peer (none of these four are in the
+     * SessionHealthMsg checksum), but it is a real rollback divergence —
+     * save the index. */
+    GS_SAVE(Random_ix16_bg);
     GS_SAVE(Opening_Now);
     GS_SAVE(task);
 
@@ -1308,6 +1336,7 @@ void GameState_Load(const GameState* src) {
     GS_LOAD(Random_ix32_com);
     GS_LOAD(Random_ix16_ex_com);
     GS_LOAD(Random_ix32_ex_com);
+    GS_LOAD(Random_ix16_bg); // see the GameState_Save comment for why this is saved
     GS_LOAD(Opening_Now);
     GS_LOAD(task);
 

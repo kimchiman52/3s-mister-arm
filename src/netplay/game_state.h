@@ -481,6 +481,16 @@ typedef struct GameState {
     s16 Random_ix32_com;
     s16 Random_ix16_ex_com;
     s16 Random_ix32_ex_com;
+    /* Random_ix16_bg — the BG-flash RNG index (workuser.c:511, advanced by
+     * random_16_bg(), pls02.c:734-743). Saved because every consumer of its
+     * return value IS saved: scr_trans() (stage/bg.c:811, 948, 949) writes
+     * stage_flash, stage_ftimer, rw_dat[0] and rw3col_ptr, all four of which
+     * are GS_SAVEd. step_game() calls njUserMain() unconditionally on
+     * rolled-back frames, so leaving the index out let it advance while its
+     * saved consumers were rewound — half-saving the mechanism. Briefly
+     * dropped by the upstream #298 port (e57b16bd) on the incorrect premise
+     * that the deciding state was unsaved; restored here. */
+    s16 Random_ix16_bg;
     s16 Opening_Now;
     struct _TASK task[11];
 

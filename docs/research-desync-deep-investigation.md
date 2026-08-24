@@ -302,7 +302,7 @@ Not saved: the sound mixer state (`bgm_exe`, `bgm_req`, `current_bgm`, `bgm_fade
 
 #### A.3.4 RNG
 
-Eight RNG indices in state and in hash: `Random_ix16`, `Random_ix32`, `_ex`, `_com`, `_ex_com` variants (`game_state.c:442-443,481-482,523-528` save; `1677-1684` hash). Plus `Random_ix16_bg` (`game_state.c:527` saved, NOT hashed).
+Eight RNG indices in state and in hash: `Random_ix16`, `Random_ix32`, `_ex`, `_com`, `_ex_com` variants (`game_state.c:442-443,481-482,523-528` save; `1677-1684` hash). Plus `Random_ix16_bg` (saved in `GameState_Save`/`GameState_Load` just after `Random_ix32_ex_com`, NOT hashed). Its save/load pair was briefly removed by the upstream #298 port (`e57b16bd`, 2026-08-23) on the rationale that "the state deciding when to draw from it isn't saved"; that is false on this fork — `random_16_bg()` is called only from `scr_trans()` (`stage/bg.c:811,948,949`), whose four write targets (`stage_flash`, `stage_ftimer`, `rw_dat[0]`, `rw3col_ptr`) are all GS_SAVEd — so the rollback-determinism harness caught the index and all three saved consumers going DIVERGENT(+FEEDBACK) from frame 347 and the pair was restored.
 
 RNG impl at `sf33rd/Source/Game/engine/pls02.c:617-699`. `random_16` / `random_32` / `random_16_ex` / `random_32_ex` / `random_16_com` / `random_32_com` / `random_16_ex_com` / `random_32_ex_com`. Each increments its index, ANDs with a mask, returns table lookup. **All tables are const** (verified by: `grep -n 'random_tbl' src/sf33rd/Source/Game/engine/pls02.c` → file-local `static const` arrays).
 

@@ -271,20 +271,22 @@ rollback cycles per rollback run):
     this scenario then is the fix's acceptance test.
   - `Random_ix16_bg` (s16) with `rw_dat`, `stage_flash`, `stage_ftimer`
     all **DIVERGENT(+FEEDBACK) from frames 347–349**, persistently:
-    `Random_ix16_bg` is *deliberately* excluded from GS_SAVE
+    `Random_ix16_bg` was *deliberately* excluded from GS_SAVE
     ("only drives stage flashing, and the state deciding when to draw
-    from it isn't saved", `game_state.c:583`), but the harness shows the
-    exclusion is internally inconsistent — the excluded RNG index feeds
+    from it isn't saved"), but the harness shows the exclusion is
+    internally inconsistent — the excluded RNG index feeds
     `stage_flash`/`stage_ftimer`/`rw_dat`, which ARE saved, so after
     rollbacks the saved BG-flash state drifts from the no-rollback
-    timeline (stage 19; the ryu-ken scenario's stage 11 has no flash
-    path, which is why it stays clean). Cross-peer this means per-peer
-    rollback timing yields per-peer BG-flash divergence: cosmetic by
-    the checksum's standards (none of these are hashed), but `rw_dat`
-    carries the `rwd_ptr`/`brw_ptr` walk (research doc §A.3.1) and BG
-    state was central to the black-BG investigation, so it deserves a
-    real triage: either save `Random_ix16_bg` (2 bytes) or stop saving
-    the flash trio it drives — half-saving the mechanism is the bug.
+    timeline (the ryu-ken scenario's stage has no flash path, which is
+    why it stays clean). Cross-peer this means per-peer rollback timing
+    yields per-peer BG-flash divergence: cosmetic by the checksum's
+    standards (none of these are hashed), but `rw_dat` carries the
+    `rwd_ptr`/`brw_ptr` walk (research doc §A.3.1) and BG state was
+    central to the black-BG investigation. **FIXED** — the save/load
+    pair was restored (`GS_SAVE`/`GS_LOAD(Random_ix16_bg)`), which is
+    the half-saved mechanism's correct end: every deciding field was
+    already saved, so the index had to be too. Note this finding fires
+    on `makoto-sa3-super`'s stage, not only stage 19.
 
-None of these are fixed in the harness commit series (by design — they
-are triage material; `spmv_ng_save` is already being fixed elsewhere).
+`spmv_ng_save` was fixed in the separate worktree noted above and no
+longer appears on this branch.
