@@ -1048,12 +1048,49 @@ forwarded like any other bytes (asserted by `relayGrantAndForward`).
 | policy | value | rationale |
 |---|---|---|
 | port pool | UDP **34000–34099**, one port per relayed **session** | the port IS the session identifier, which is what keeps the forward path a bare "send these bytes to the other pinned endpoint" with no header of our own |
-| bind failure | port blocklisted, scan continues | the pool self-heals down to whatever is actually bindable on the box |
+| bind failure | port blocklisted for `RELAY_PORT_BLOCK_MS` (5 min), scan **retries for the same request** | see below — nothing is granted for a port that is not listening, and the blocklist is not permanent |
 | capacity | 100 concurrent relayed sessions; at cap → `POOL_EXHAUSTED` | |
 | bandwidth | **64 KiB/s per session**, token bucket, one-second burst | GekkoNet costs ~5 kB/s per direction at 60 Hz, so ~12× headroom; bounds what one session can cost the box |
 | over budget | **drop the datagram**, and still refresh liveness | never teardown: rollback netcode absorbs loss, a mid-match teardown is unrecoverable |
 | idle reclaim | 30 s with no pin and no forwarded datagram, on the existing 5 s sweep | 100 ports is small enough that holding dead entries for the 10-minute `SESSION_TTL_MS` would exhaust the pool |
 | session release | frees its relay **only if that relay is already idle** | see below — `sweepRelays` owns relay lifetime exclusively |
+
+**Bind failure: the blocklist is time-boxed and the grant waits for the
+socket** (review MEDIUM-1 + MEDIUM-2, fixed as-built). Two coupled
+defects on the same path.
+
+*MEDIUM-1* — `relayPortBlocked` was a `Set` and therefore **monotonic**.
+Its only `clear()` lived inside the `_resetRelays` **test hook**: zero
+production clear sites. Any transient bind failure — including the
+plausible release→re-allocate `EADDRINUSE`, since libuv defers the real
+close past `socket.close()` — removed that port for the lifetime of the
+process, so over a long-lived systemd unit the pool ratcheted toward
+zero and everyone eventually got `POOL_EXHAUSTED`. It also fired on
+**any** `socket.on('error')`, not just bind errors, so a runtime error
+on a perfectly good port threw that port away too. It is now a `Map` of
+expiry timestamps re-tried after `RELAY_PORT_BLOCK_MS`, written only for
+a pre-`listening` `EADDRINUSE` / `EACCES`.
+
+*MEDIUM-2* — the documented recovery ("the client's next `RELAY_REQ`
+resend, 300 ms cadence, then draws a different port") **does not exist
+in the shipped client**: `direct_p2p.c` breaks its phase-1 loop the
+instant `granted` is set, and phase 2 only ever sends `RELAY_PIN`. A
+bind failure therefore handed out a `GRANT` for a port that would never
+listen, the client burned its whole pin budget against it, and the rung
+reported `RELAY_PIN_TIMEOUT` → *"Relay unreachable (firewall?)"* —
+pointing the user at their own router for a server-side bind failure,
+exactly the misreporting class §6.5 exists to prevent. `relayAllocate`
+is now callback-based: nothing is granted until the socket's
+`listening` event fires, and a bind failure re-enters the port scan for
+the waiting request (the failed port is blocklisted, so the retry
+necessarily draws a different one; the finite pool bounds the chain at
+`POOL_EXHAUSTED`). The old round-trip argument for granting early bought
+nothing — bind resolves on the next event-loop turn, far inside the same
+round trip it was reasoning about. Fixed server-side on purpose: the
+client keeps its single-request/single-answer shape and did not change.
+`testRelayBindFailureStillGrantsAWorkingPort` occupies the first pool
+port for real and asserts the client gets one grant, for a different
+port, that answers a `PIN` and carries bytes.
 
 **"Drop, never teardown" is now actually true** (review HIGH-2, fixed
 as-built). `relay.lastActivity` was refreshed *after* the budget check,

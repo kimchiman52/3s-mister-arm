@@ -1751,6 +1751,157 @@ async function testRelayIdleReclaim(handle, serverPort) {
     }
 }
 
+async function testRelayPortBlocklistExpires(handle, serverPort) {
+    // Review MEDIUM-1: relayPortBlocked was a Set and therefore MONOTONIC.
+    // The only clear() lived inside the _resetRelays TEST HOOK -- zero
+    // production clear sites -- so any transient bind failure removed that
+    // port for the lifetime of the process and, over a long-lived systemd
+    // unit, the pool ratcheted toward zero until everyone got
+    // POOL_EXHAUSTED. It also fired on ANY socket.on('error'), not just
+    // bind errors.
+    handle._resetSessions();
+    handle._resetRate();
+    handle._resetRelays();
+    const key = crypto.randomBytes(16);
+    const hexKey = key.toString('hex');
+    const a = await makeClient();
+    const b = await makeClient();
+    try {
+        assert(handle._relayPortBlocked instanceof Map,
+            'relay-block: the blocklist carries EXPIRY TIMESTAMPS (a Map), not bare ports (a Set)');
+        assert(typeof handle._relayPortBlockMs === 'number' && handle._relayPortBlockMs > 0 &&
+            Number.isFinite(handle._relayPortBlockMs),
+            `relay-block: RELAY_PORT_BLOCK_MS is a finite, positive window (got ${handle._relayPortBlockMs})`);
+
+        await pairClients(serverPort, key, a, b);
+        const first = handle._relayPortBase;
+
+        // (1) A LIVE block keeps the port out of the scan.
+        handle._relayPortBlocked.set(first, nowMsShim() + handle._relayPortBlockMs);
+        handle._resetRate();
+        await a.send(relayReqLocal(key, a), serverPort);
+        const g1 = decodeRelayGrant((await a.recv(500)).buf);
+        assertEq(g1.status, RELAY_STATUS_GRANTED, 'relay-block: granted while a port is blocked');
+        assert(g1.relayPort !== first,
+            `relay-block: a live-blocked port is skipped (got ${g1.relayPort}, blocked ${first})`);
+        handle._resetRelays();
+
+        // (2) An EXPIRED block does NOT: the port comes back by itself, and
+        //     the stale entry is dropped. This is the whole defect -- with a
+        //     monotonic Set the port never returns.
+        handle._relayPortBlocked.set(first, nowMsShim() - 1);
+        handle._resetRate();
+        await a.send(relayReqLocal(key, a), serverPort);
+        const g2 = decodeRelayGrant((await a.recv(500)).buf);
+        assertEq(g2.status, RELAY_STATUS_GRANTED, 'relay-block: granted after the block expired');
+        assertEq(g2.relayPort, first,
+            'relay-block: an EXPIRED block returns the port to the pool (the pool self-heals)');
+        assert(!handle._relayPortBlocked.has(first),
+            'relay-block: the expired entry was dropped rather than re-evaluated forever');
+
+        // (3) A RUNTIME socket error on a LISTENING port must not blocklist
+        //     it: that is no evidence the port is unbindable, and throwing
+        //     capacity away for it is how the pool bled out. Drive the REAL
+        //     handler by emitting on the REAL socket.
+        const relay = handle._relayMap.get(hexKey);
+        assert(relay !== undefined, 'relay-block: the relay is live (setup for the error case)');
+        if (relay !== undefined) {
+            relay.listening = true; // it is, by now; make the test independent of bind timing
+            const port = relay.port;
+            const runtimeErr = new Error('simulated runtime error');
+            runtimeErr.code = 'ECONNREFUSED';
+            relay.socket.emit('error', runtimeErr);
+            assert(!handle._relayPortBlocked.has(port),
+                'relay-block: a runtime (non-bind) socket error does NOT blocklist the port');
+            assert(!handle._relayMap.has(hexKey),
+                'relay-block: ...but the relay is still released (the error is still handled)');
+        }
+    } finally {
+        await a.close();
+        await b.close();
+        handle._resetRelays();
+    }
+}
+
+function bindBlocker(port) {
+    // Occupy a pool port so the server's next bind() on it really fails
+    // with EADDRINUSE -- no mocking, the real libuv error path.
+    return new Promise((resolve, reject) => {
+        const s = dgram.createSocket('udp4');
+        s.on('error', reject);
+        s.bind(port, '0.0.0.0', () => resolve({
+            port,
+            close: () => new Promise((r) => s.close(r)),
+        }));
+    });
+}
+
+async function testRelayBindFailureStillGrantsAWorkingPort(handle, serverPort) {
+    // Review MEDIUM-2: the documented bind-failure recovery did not exist.
+    //
+    // relayAllocate returned the relay BEFORE bind() completed, and the
+    // comment claimed "the client's next RELAY_REQ resend (300 ms cadence)
+    // then draws a different port". The shipped client never resends
+    // RELAY_REQ after a grant: direct_p2p.c:1062 breaks phase 1 the instant
+    // `granted` is set, and phase 2 (:1104-1139) sends only RELAY_PIN. So a
+    // bind failure handed out a GRANT for a port that would never listen,
+    // the client burned its whole pin budget against it, and the rung
+    // reported RELAY_PIN_TIMEOUT -> "Relay unreachable (firewall?)": a
+    // wrong diagnosis pointing the user at their own router, exactly the
+    // misreporting class 6.5 exists to prevent.
+    //
+    // Occupy the first pool port for real, then assert the client gets ONE
+    // grant, for a DIFFERENT port, that actually carries traffic.
+    handle._resetSessions();
+    handle._resetRate();
+    handle._resetRelays();
+    const key = crypto.randomBytes(16);
+    const a = await makeClient();
+    const b = await makeClient();
+    let blocker = null;
+    try {
+        blocker = await bindBlocker(handle._relayPortBase);
+        await pairClients(serverPort, key, a, b);
+        handle._resetRate();
+
+        await a.send(relayReqLocal(key, a), serverPort);
+        const ga = decodeRelayGrant((await a.recv(1000)).buf);
+        assertEq(ga.status, RELAY_STATUS_GRANTED, 'relay-bind: the request is still GRANTED');
+        assert(ga.relayPort !== blocker.port,
+            `relay-bind: the grant names a port that is NOT the unbindable one (got ${ga.relayPort})`);
+        assert(handle._relayPortBlocked.has(blocker.port),
+            'relay-bind: the unbindable port was blocklisted');
+
+        // The load-bearing assertion: the granted port LISTENS. Pre-fix the
+        // grant named the occupied port and no PIN was ever answered, which
+        // the client reports as "Relay unreachable (firewall?)".
+        await a.send(makeRelayPin(0, ga.token), ga.relayPort);
+        const ack = await a.tryRecv(1000);
+        assert(ack !== null && isRelayPinAck(ack.buf),
+            'relay-bind: the granted port answered a PIN — it is a REAL, listening port');
+        if (ack !== null) {
+            assertEq(ack.rinfo.port, ga.relayPort, 'relay-bind: the ACK came from the granted port');
+        }
+
+        // And it carries traffic end to end.
+        await b.send(relayReqLocal(key, b), serverPort);
+        const gb = decodeRelayGrant((await b.recv(1000)).buf);
+        assertEq(gb.relayPort, ga.relayPort, 'relay-bind: B converges on the same working port');
+        await b.send(makeRelayPin(1, gb.token), gb.relayPort);
+        assert(isRelayPinAck((await b.recv(1000)).buf), 'relay-bind: B pinned');
+        const payload = crypto.randomBytes(80);
+        await a.send(payload, ga.relayPort);
+        const got = await b.tryRecv(1000);
+        assert(got !== null && got.buf.equals(payload),
+            'relay-bind: bytes cross the relay that survived a bind failure');
+    } finally {
+        await a.close();
+        await b.close();
+        if (blocker) await blocker.close();
+        handle._resetRelays();
+    }
+}
+
 async function testRelayPinSourceBoundToSlotIp(handle, serverPort) {
     // Review HIGH-1: the relay data plane used to be an off-path-spoofable
     // reflector.
@@ -1974,7 +2125,7 @@ async function testSweepHook(handle) {
 // EXPECTED_TESTS is deliberately a literal, NOT TESTS.length: the point is
 // to catch a test vanishing from the registry, and deriving it from the
 // registry would make that undetectable.
-const EXPECTED_TESTS = 34;
+const EXPECTED_TESTS = 36;
 
 let testsRun = 0;
 let testsFailed = 0;
@@ -2068,6 +2219,8 @@ async function main() {
         await runTest('relayBandwidthCap', () => testRelayBandwidthCap(handle, serverPort));
         await runTest('relayPoolExhaustion', () => testRelayPoolExhaustion(handle, serverPort));
         await runTest('relayIdleReclaim', () => testRelayIdleReclaim(handle, serverPort));
+        await runTest('relayPortBlocklistExpires', () => testRelayPortBlocklistExpires(handle, serverPort));
+        await runTest('relayBindFailureStillGrantsAWorkingPort', () => testRelayBindFailureStillGrantsAWorkingPort(handle, serverPort));
         await runTest('relayPinSourceBoundToSlotIp', () => testRelayPinSourceBoundToSlotIp(handle, serverPort));
         await runTest('relaySurvivesSessionTtl', () => testRelaySurvivesSessionTtl(handle, serverPort));
 

@@ -290,6 +290,17 @@ const RELAY_BYTES_PER_SEC = 64 * 1024;
 // captured token dies with the match.
 const RELAY_TOKEN_ROTATE_MS = 60 * 1000;
 
+// How long a port that FAILED TO BIND stays out of the scan (review
+// MEDIUM-1). The blocklist used to be permanent and had no production
+// clear site at all: any transient bind failure removed that port for the
+// lifetime of the process, so over a long-lived systemd unit the pool
+// ratcheted monotonically toward zero and every client eventually got
+// POOL_EXHAUSTED. The plausible transient is a release -> re-allocate
+// EADDRINUSE, because libuv defers the real close past socket.close().
+// Five minutes is far longer than that race and short enough that a box
+// which frees the port recovers without a restart.
+const RELAY_PORT_BLOCK_MS = 5 * 60 * 1000;
+
 // --- Logging -----------------------------------------------------------------
 
 function ts() {
@@ -538,11 +549,23 @@ const relayMap = new Map();
 // Bounded by RELAY_POOL_SIZE — the pool IS the cap.
 
 const relayPortInUse = new Map(); // port -> hexKey
-const relayPortBlocked = new Set();
-// Ports whose bind() failed (already in use by something else on the
-// box). Without this the linear scan below would hand out the same dead
-// port on every retry; with it the pool self-heals down to whatever is
-// actually bindable.
+const relayPortBlocked = new Map(); // port -> unblock-at timestamp (nowMs)
+// Ports whose BIND failed (already in use by something else on the box, or
+// not permitted). Without this the linear scan below would hand out the
+// same dead port on every retry; with it the pool skips whatever is not
+// currently bindable.
+//
+// Review MEDIUM-1, two defects, both fixed here:
+//   * It was a Set and therefore MONOTONIC. The only clear() lived inside
+//     the _resetRelays TEST HOOK — zero production clear sites — so the
+//     pool ratcheted toward zero over a long-lived systemd unit and
+//     everyone eventually got POOL_EXHAUSTED. It is now a Map of expiry
+//     timestamps, re-tried after RELAY_PORT_BLOCK_MS.
+//   * It fired on ANY socket.on('error'), not just bind errors. A runtime
+//     error on a working port (an ICMP-driven ECONNREFUSED, say) is not
+//     evidence that the port is unbindable, and blocklisting on it threw
+//     away good capacity. Only a pre-listening EADDRINUSE / EACCES
+//     blocklists now.
 
 function relayRelease(hexKey, why) {
     const r = relayMap.get(hexKey);
@@ -730,25 +753,57 @@ function relayOnMessage(relay, buf, rinfo) {
     relay.socket.send(buf, 0, buf.length, dst.port, dst.address);
 }
 
-// Allocate (or return the existing) relay for `hexKey`. Returns null when
-// the pool is exhausted — the caller answers RELAY_STATUS_POOL_EXHAUSTED
-// so the client can say "relay full" instead of guessing at silence.
+// Allocate (or return the existing) relay for `hexKey` and hand it to
+// `cb`. `cb(null)` means the pool is exhausted — the caller answers
+// RELAY_STATUS_POOL_EXHAUSTED so the client can say "relay full" instead
+// of guessing at silence.
 //
-// bind() is asynchronous, so the socket is returned before it is
-// listening. That is safe by construction: the GRANT still has to reach
-// the client and the client's first PIN still has to come back, which is
-// at least one network round trip, while bind completes on the next
-// event-loop turn. A bind FAILURE tears the entry down and blocklists the
-// port; the client's next RELAY_REQ resend (300 ms cadence) then draws a
-// different port.
-function relayAllocate(hexKey) {
+// THE CALLBACK IS THE POINT (review MEDIUM-2). This used to return the
+// relay synchronously, before bind() had completed, and the documented
+// recovery for a bind failure was "the client's next RELAY_REQ resend
+// (300 ms cadence) then draws a different port". That recovery DOES NOT
+// EXIST in the shipped client: direct_p2p.c breaks its phase-1 loop the
+// instant `granted` is set, and phase 2 only ever sends RELAY_PIN. So a
+// bind failure handed out a GRANT for a port that would never listen, the
+// client burned its entire pin budget against it, and the rung reported
+// RELAY_PIN_TIMEOUT -> "Relay unreachable (firewall?)" — a wrong
+// diagnosis pointing the user at their own router, exactly the
+// misreporting class §6.5 exists to prevent.
+//
+// Now nothing is granted until the socket is actually listening, and a
+// bind failure re-enters the scan for the waiting request (the port it
+// just failed on is blocklisted, so the retry necessarily draws a
+// different one, and the pool being finite bounds the recursion). The
+// client's one request still gets exactly one honest answer: a GRANT for
+// a live port, or POOL_EXHAUSTED. The old round-trip argument for
+// granting early bought nothing — bind resolves on the next event-loop
+// turn, i.e. far inside the same round trip it was reasoning about.
+function relayAllocate(hexKey, cb) {
     const existing = relayMap.get(hexKey);
-    if (existing !== undefined) return existing;
-    if (relayMap.size >= RELAY_POOL_SIZE) return null;
+    if (existing !== undefined) {
+        // Both sides converge on one relay, so the second RELAY_REQ often
+        // arrives while the first one's bind is still in flight.
+        if (existing.listening) cb(existing);
+        else existing.waiters.push(cb);
+        return;
+    }
+    if (relayMap.size >= RELAY_POOL_SIZE) {
+        cb(null);
+        return;
+    }
 
     for (let i = 0; i < RELAY_POOL_SIZE; i++) {
         const port = RELAY_PORT_BASE + i;
-        if (relayPortInUse.has(port) || relayPortBlocked.has(port)) continue;
+        if (relayPortInUse.has(port)) continue;
+        // Review MEDIUM-1: the blocklist is time-boxed, so a port that
+        // failed to bind comes back into the scan by itself. This is the
+        // ONLY clear site the production path needs.
+        const blockedUntil = relayPortBlocked.get(port);
+        if (blockedUntil !== undefined) {
+            if (nowMs() < blockedUntil) continue;
+            relayPortBlocked.delete(port);
+            logInfo(`[RELAY] port ${port} returns to the pool (blocklist expired)`);
+        }
 
         const socket = dgram.createSocket('udp4');
         const now = nowMs();
@@ -770,6 +825,9 @@ function relayAllocate(hexKey) {
             pinRejects: 0,
             pinSourceRejects: 0,
             createdAt: now,
+            // Review MEDIUM-2: nothing is granted until bind() lands.
+            listening: false,
+            waiters: [cb],
         };
         socket.on('message', (b, ri) => {
             try {
@@ -778,19 +836,49 @@ function relayAllocate(hexKey) {
                 logWarn(`relay handler error: ${err && err.stack ? err.stack : err}`);
             }
         });
+        socket.on('listening', () => {
+            relay.listening = true;
+            relay.lastActivity = nowMs(); // the idle clock starts when the port is real
+            const waiting = relay.waiters;
+            relay.waiters = [];
+            logInfo(`[RELAY] listening key=${shortKey4(hexKey)}... port=${port} ` +
+                `(pool ${relayMap.size}/${RELAY_POOL_SIZE}, ${waiting.length} request(s) waiting)`);
+            for (const w of waiting) w(relay);
+        });
         socket.on('error', (err) => {
-            logWarn(`relay socket error on port ${port}: ${err.message}`);
-            relayPortBlocked.add(port);
-            relayRelease(hexKey, 'socket error');
+            const code = err && err.code;
+            // Review MEDIUM-1: blocklist ONLY a genuine bind failure. A
+            // runtime error on a working port is not evidence that the port
+            // is unbindable, and treating it as such threw away capacity
+            // permanently.
+            const bindFailure = !relay.listening &&
+                (code === 'EADDRINUSE' || code === 'EACCES');
+            if (bindFailure) {
+                relayPortBlocked.set(port, nowMs() + RELAY_PORT_BLOCK_MS);
+                logWarn(`relay bind failed on port ${port} (${code}); blocklisted for ` +
+                    `${RELAY_PORT_BLOCK_MS} ms, retrying on another port`);
+            } else {
+                logWarn(`relay socket error on port ${port}: ${err.message}` +
+                    `${code ? ` (${code})` : ''} — releasing, port NOT blocklisted`);
+            }
+            const waiting = relay.waiters;
+            relay.waiters = [];
+            relayRelease(hexKey, bindFailure ? `bind failed (${code})` : 'socket error');
+            // The request that triggered this allocation is still owed an
+            // answer, and the client will not resend (see the header
+            // comment). Re-enter the scan: this port is now blocklisted, so
+            // a retry draws a different one, and the pool being finite
+            // means the chain terminates at POOL_EXHAUSTED at worst.
+            for (const w of waiting) relayAllocate(hexKey, w);
         });
         relayMap.set(hexKey, relay);
         relayPortInUse.set(port, hexKey);
         socket.bind(port);
-        logInfo(`[RELAY] allocated key=${shortKey4(hexKey)}... port=${port} ` +
+        logInfo(`[RELAY] allocating key=${shortKey4(hexKey)}... port=${port} ` +
             `(pool ${relayMap.size}/${RELAY_POOL_SIZE})`);
-        return relay;
+        return;
     }
-    return null;
+    cb(null);
 }
 
 function sweepRelays() {
@@ -1185,33 +1273,42 @@ function handleRelayReq(socket, buf, rinfo) {
         return;
     }
 
-    const relay = relayAllocate(hexKey);
-    if (relay === null) {
+    // Capture the slot IPs now, while we are still holding the entry we
+    // validated `source` against; the grant is answered from a callback.
+    const slotIpA = entry.endpointA.address;
+    const slotIpB = entry.endpointB.address;
+
+    // Review MEDIUM-2: the answer waits for bind(). Nothing is granted for
+    // a port that is not listening, so a bind failure can never be
+    // mis-reported to the user as "Relay unreachable (firewall?)".
+    relayAllocate(hexKey, (relay) => {
+        if (relay === null) {
+            socket.send(
+                encodeRelayGrant(sessionKeyBuf, RELAY_SLOT_NONE, RELAY_STATUS_POOL_EXHAUSTED, 0, null),
+                0, RELAY_GRANT_LEN, source.port, source.address);
+            logWarn(`[RELAY_REQ] refused POOL_EXHAUSTED key=${shortKey4(hexKey)}... ` +
+                `(${relayMap.size}/${RELAY_POOL_SIZE} in use)`);
+            return;
+        }
+
+        // Review HIGH-1: snapshot the registered slot IPs onto the relay,
+        // so the relay port can source-bind a PIN without depending on the
+        // session entry still being alive (CRITICAL-1's fix lets a relay
+        // outlive it). Refreshed on every grant, so a slot reclaimed
+        // between grants is picked up. relaySlotIp() still prefers the live
+        // entry when there is one; this is the fallback.
+        relay.slotIp[0] = slotIpA;
+        relay.slotIp[1] = slotIpB;
+
+        // Both sides converge on the same port; each gets a token scoped to
+        // its own side, so neither can pin the other's slot.
+        const token = relayTokenForSlot(hexKey, side, currentRelaySlot());
         socket.send(
-            encodeRelayGrant(sessionKeyBuf, RELAY_SLOT_NONE, RELAY_STATUS_POOL_EXHAUSTED, 0, null),
+            encodeRelayGrant(sessionKeyBuf, side, RELAY_STATUS_GRANTED, relay.port, token),
             0, RELAY_GRANT_LEN, source.port, source.address);
-        logWarn(`[RELAY_REQ] refused POOL_EXHAUSTED key=${shortKey4(hexKey)}... ` +
-            `(${relayMap.size}/${RELAY_POOL_SIZE} in use)`);
-        return;
-    }
-
-    // Review HIGH-1: snapshot the registered slot IPs onto the relay, so
-    // the relay port can source-bind a PIN without depending on the session
-    // entry still being alive (CRITICAL-1's fix lets a relay outlive it).
-    // Refreshed on every grant, so a slot reclaimed between grants is
-    // picked up. relaySlotIp() still prefers the live entry when there is
-    // one; this is the fallback.
-    relay.slotIp[0] = entry.endpointA.address;
-    relay.slotIp[1] = entry.endpointB.address;
-
-    // Both sides converge on the same port; each gets a token scoped to
-    // its own side, so neither can pin the other's slot.
-    const token = relayTokenForSlot(hexKey, side, currentRelaySlot());
-    socket.send(
-        encodeRelayGrant(sessionKeyBuf, side, RELAY_STATUS_GRANTED, relay.port, token),
-        0, RELAY_GRANT_LEN, source.port, source.address);
-    logInfo(`[RELAY_REQ] granted key=${shortKey4(hexKey)}... side=${side} ` +
-        `port=${relay.port} to ${source.address}:${source.port}`);
+        logInfo(`[RELAY_REQ] granted key=${shortKey4(hexKey)}... side=${side} ` +
+            `port=${relay.port} to ${source.address}:${source.port}`);
+    });
 }
 
 // --- S4c return-routability gate ---------------------------------------------
@@ -1465,6 +1562,8 @@ function start(port) {
         // --- S5 relay hooks -----------------------------------------------
         _relayMap: relayMap,
         _relayPortInUse: relayPortInUse,
+        _relayPortBlocked: relayPortBlocked,
+        _relayPortBlockMs: RELAY_PORT_BLOCK_MS,
         _relayPortBase: RELAY_PORT_BASE,
         _relayPoolSize: RELAY_POOL_SIZE,
         _relayIdleMs: RELAY_IDLE_MS,
