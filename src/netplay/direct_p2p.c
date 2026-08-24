@@ -2499,8 +2499,20 @@ void DirectP2P_Tick(void) {
             join_tick_handoff();
         }
         /* S3: one success line with the stage timings — the "how long
-         * did each phase take in the field" data reports need. */
-        report_connect_outcome(st, true);
+         * did each phase take in the field" data reports need.
+         *
+         * S3-review HIGH-2: once a post-handoff failure has been latched
+         * (DirectP2P_NotifySessionFailed re-arms the reporter while the
+         * orchestrator is still parked here — Netplay_Run runs BEFORE
+         * DirectP2P_Tick in the same frame, and the netplay teardown that
+         * publishes FAILED_HANDSHAKE only runs on the NEXT frame's
+         * EXITING pass), this success report MUST NOT re-fire: it would
+         * consume the re-arm as a second, spurious OK line and thereby
+         * suppress the real FAIL line the FAILED_HANDSHAKE case emits.
+         * The latch is main-thread, like every reader here. */
+        if (!s_handshake_reject_latched) {
+            report_connect_outcome(st, true);
+        }
         return;
 
     case DIRECT_P2P_FAILED_STUN:
@@ -2701,5 +2713,16 @@ const char* DirectP2P_GetHostCode(void) {
 const char* DirectP2P_GetStatusText(void) {
     return s_status;
 }
+
+#ifdef NETPLAY_TEST_HOOKS
+/* S3-review HIGH-2: run the session-teardown callback exactly as
+ * netplay.c's EXITING pass would (it is registered via
+ * Netplay_SetSessionTeardownCallback in DirectP2P_Init). Lets the
+ * harness drive the notify -> teardown -> FAILED_HANDSHAKE -> report
+ * sequence without standing up a full GekkoNet session. */
+void DirectP2P_TestHook_RunTeardown(void) {
+    direct_p2p_on_teardown();
+}
+#endif /* NETPLAY_TEST_HOOKS */
 
 #endif /* ENABLE_NETPLAY */

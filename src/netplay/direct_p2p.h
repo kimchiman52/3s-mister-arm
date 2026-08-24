@@ -209,6 +209,10 @@ bool DirectP2P_TestHook_IsLanPeer(const char* ip);
  * test must wait the FULL budget out — its fix removes the loop's
  * early exit — so it shrinks the budget rather than sleeping 2 x 8 s. */
 void DirectP2P_TestHook_SetSignalBudgetMs(int ms);
+/* S3-review HIGH-2: invoke the registered session-teardown callback
+ * (the same one netplay.c's EXITING pass fires) so a harness can drive
+ * notify-failure -> teardown -> FAILED_HANDSHAKE -> one FAIL report. */
+void DirectP2P_TestHook_RunTeardown(void);
 #endif /* NETPLAY_TEST_HOOKS */
 
 #else /* !ENABLE_NETPLAY */

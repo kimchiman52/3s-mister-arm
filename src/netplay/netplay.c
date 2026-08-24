@@ -1698,10 +1698,17 @@ void Netplay_Run() {
         }
         if (ConnectFail_DeadlineExpired(now, s_connecting_since_ms,
                                         CONNECT_TIMEOUT_CONNECTING_MS)) {
+            // S3-review HIGH-2: tagged DEADLINE, not FAIL — the ONE
+            // attributed "[netplay-connect] FAIL code=..." line for this
+            // outcome is emitted by the orchestrator's FAILED_HANDSHAKE
+            // report after the NotifySessionFailed latch below parks it
+            // there at teardown. A second FAIL-tagged line here would
+            // double-report the same terminal outcome.
             char line[192];
             SDL_snprintf(line, sizeof(line),
-                         "[netplay-connect] FAIL code=%s stage=connecting — no "
-                         "GekkoSessionStarted within %u ms (peer never synced)",
+                         "[netplay-connect] DEADLINE code=%s stage=connecting — no "
+                         "GekkoSessionStarted within %u ms (peer never synced); "
+                         "attributed FAIL line follows from the teardown path",
                          ConnectFail_Code(CONNECT_FAIL_TIMEOUT_CONNECTING),
                          (unsigned)CONNECT_TIMEOUT_CONNECTING_MS);
             Netplay_LogConnectEvent(line);

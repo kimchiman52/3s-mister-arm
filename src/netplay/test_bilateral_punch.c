@@ -1321,6 +1321,172 @@ done:
     return rc;
 }
 
+/* --- Test 9: post-handoff failure report integrity (S3 review HIGH-2) -- */
+
+/*
+ * Regression for the spurious-OK / suppressed-FAIL defect: with the
+ * orchestrator parked in HANDOFF, DirectP2P_NotifySessionFailed
+ * re-arms the outcome reporter, and (pre-fix) the very next Tick's
+ * HANDOFF case unconditionally re-fired the SUCCESS report — writing a
+ * second "[netplay-connect] OK" and setting the report guard so the
+ * real FAIL from FAILED_HANDSHAKE was suppressed. Required behavior:
+ * after the failure is latched, ZERO further OK lines, and exactly ONE
+ * "[netplay-connect] FAIL code=P2P_FAIL_PEER_REJECTED" line once
+ * teardown parks FAILED_HANDSHAKE.
+ *
+ * Drives the REAL machinery: BeginJoin -> HANDOFF via the seams,
+ * DirectP2P_Tick for the report path, NotifySessionFailed for the
+ * latch, and the registered teardown callback (via the RunTeardown
+ * hook — the same function netplay.c's EXITING pass fires). Log lines
+ * are counted by intercepting SDL's log output, which both
+ * Netplay_LogConnectEvent and netplay_log_line tee into.
+ */
+
+static int s_log_ok_lines = 0;
+static int s_log_fail_lines = 0;
+static char s_log_last_fail[512] = { 0 };
+static SDL_LogOutputFunction s_prev_log_fn = NULL;
+static void* s_prev_log_ud = NULL;
+
+static void SDLCALL capture_log_fn(void* userdata, int category,
+                                   SDL_LogPriority priority, const char* message) {
+    if (message != NULL) {
+        if (strncmp(message, "[netplay-connect] OK", 20) == 0) {
+            s_log_ok_lines++;
+        } else if (strncmp(message, "[netplay-connect] FAIL", 22) == 0) {
+            s_log_fail_lines++;
+            SDL_strlcpy(s_log_last_fail, message, sizeof(s_log_last_fail));
+        }
+    }
+    if (s_prev_log_fn != NULL) {
+        s_prev_log_fn(s_prev_log_ud, category, priority, message);
+    }
+}
+
+static int test_posthandoff_failure_report(void) {
+    fprintf(stderr, "[test_bilateral_punch] test 9: post-handoff failure -> one FAIL, no OK\n");
+
+    NET_Init();
+    DirectP2P_Init();
+
+    /* Test 6 Part B leaves the orchestrator parked in HANDOFF; reset to
+     * IDLE the same way a real session exit does — via the registered
+     * teardown callback (no failure latched => parks IDLE). */
+    DirectP2P_TestHook_RunTeardown();
+    if (DirectP2P_GetState() != DIRECT_P2P_IDLE) {
+        FAIL("test9", "teardown hook did not reset the orchestrator to IDLE");
+        return 1;
+    }
+
+    DirectP2P_TestHook_SetStunDiscover(mock_stun_discover);
+    DirectP2P_TestHook_SetStunHolePunch(mock_stun_punch);
+    s_mock_discover_calls = 0;
+    s_mock_punch_calls = 0;
+    s_mock_punch_succeed_from = 1; /* direct punch succeeds on attempt 1 */
+
+    struct in_addr host_ip;
+    host_ip.s_addr = htonl(0xC6336407u); /* 198.51.100.7 (TEST-NET-2) */
+    char code[ROOM_CODE_BUF_LEN] = { 0 };
+    int rc = 0;
+    if (!RoomCode_Encode((uint32_t)host_ip.s_addr, 6000, code)) {
+        FAIL("test9", "RoomCode_Encode failed");
+        rc = 1;
+        goto done;
+    }
+
+    DirectP2P_BeginJoin(code);
+    if (!wait_for_state(DIRECT_P2P_HANDOFF, 10000)) {
+        fprintf(stderr,
+                "[test_bilateral_punch] FAIL: test9: state %d after budget, expected HANDOFF\n",
+                (int)DirectP2P_GetState());
+        fail_count++;
+        rc = 1;
+        goto done;
+    }
+
+    /* Intercept the log stream, then run the exact frame sequence. */
+    s_log_ok_lines = 0;
+    s_log_fail_lines = 0;
+    s_log_last_fail[0] = '\0';
+    SDL_GetLogOutputFunction(&s_prev_log_fn, &s_prev_log_ud);
+    SDL_SetLogOutputFunction(capture_log_fn, NULL);
+
+    /* Frame A: first HANDOFF tick — executes the main-thread handoff and
+     * emits the one legitimate OK line. */
+    DirectP2P_Tick();
+    if (s_log_ok_lines != 1 || s_log_fail_lines != 0) {
+        fprintf(stderr,
+                "[test_bilateral_punch] FAIL: test9: after handoff tick, OK=%d FAIL=%d "
+                "(expected 1/0)\n", s_log_ok_lines, s_log_fail_lines);
+        fail_count++;
+        rc = 1;
+    }
+
+    /* Frame B: the MIST gate rejects (Netplay_Run runs before
+     * DirectP2P_Tick in the same frame) ... */
+    DirectP2P_NotifySessionFailed(CONNECT_FAIL_PEER_REJECTED,
+                                  "engine version mismatch (test)");
+    /* ... and the SAME frame's Tick — plus a few more while netplay is
+     * still winding down — must NOT re-fire the success report. */
+    DirectP2P_Tick();
+    DirectP2P_Tick();
+    DirectP2P_Tick();
+    if (s_log_ok_lines != 1) {
+        fprintf(stderr,
+                "[test_bilateral_punch] FAIL: test9: %d OK line(s) after the failure was "
+                "latched — the HANDOFF tick re-fired a spurious success report\n",
+                s_log_ok_lines - 1);
+        fail_count++;
+        rc = 1;
+    }
+
+    /* Frame C: netplay's EXITING pass fires the teardown callback, which
+     * converts the latch into FAILED_HANDSHAKE. */
+    DirectP2P_TestHook_RunTeardown();
+    if (DirectP2P_GetState() != DIRECT_P2P_FAILED_HANDSHAKE) {
+        fprintf(stderr,
+                "[test_bilateral_punch] FAIL: test9: state %d after teardown, expected "
+                "FAILED_HANDSHAKE\n", (int)DirectP2P_GetState());
+        fail_count++;
+        rc = 1;
+    }
+    DirectP2P_Tick();
+    DirectP2P_Tick(); /* second tick must not double-report */
+    if (s_log_fail_lines != 1) {
+        fprintf(stderr,
+                "[test_bilateral_punch] FAIL: test9: %d FAIL line(s) after FAILED_HANDSHAKE "
+                "(expected exactly 1)\n", s_log_fail_lines);
+        fail_count++;
+        rc = 1;
+    } else if (strstr(s_log_last_fail, "code=P2P_FAIL_PEER_REJECTED") == NULL) {
+        fprintf(stderr,
+                "[test_bilateral_punch] FAIL: test9: FAIL line lacks "
+                "code=P2P_FAIL_PEER_REJECTED: %s\n", s_log_last_fail);
+        fail_count++;
+        rc = 1;
+    }
+    if (s_log_ok_lines != 1) {
+        fprintf(stderr,
+                "[test_bilateral_punch] FAIL: test9: total OK lines %d (expected exactly "
+                "the one pre-failure line)\n", s_log_ok_lines);
+        fail_count++;
+        rc = 1;
+    }
+
+    SDL_SetLogOutputFunction(s_prev_log_fn, s_prev_log_ud);
+    DirectP2P_Cancel(); /* FAILED_HANDSHAKE -> IDLE */
+
+done:
+    DirectP2P_TestHook_SetStunDiscover(NULL);
+    DirectP2P_TestHook_SetStunHolePunch(NULL);
+    if (rc == 0) {
+        fprintf(stderr,
+                "[test_bilateral_punch] test 9 OK — one OK before the failure, zero after, "
+                "exactly one FAIL (PEER_REJECTED) from FAILED_HANDSHAKE\n");
+    }
+    return rc;
+}
+
 /* --- Entry point ------------------------------------------------------ */
 
 int Netplay_Test_BilateralPunch(void) {
@@ -1335,6 +1501,7 @@ int Netplay_Test_BilateralPunch(void) {
     rc |= test_joiner_self_deliver();
     rc |= test_joiner_fresh_socket_retry();
     rc |= test_failure_taxonomy();
+    rc |= test_posthandoff_failure_report();
 
     if (fail_count > 0 || rc != 0) {
         fprintf(stderr, "[test_bilateral_punch] %d failure(s)\n", fail_count);
