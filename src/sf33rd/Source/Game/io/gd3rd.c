@@ -33,6 +33,59 @@ const u8 lpr_wrdata[3] = { 0x03, 0xC0, 0x3C };
 const u8 lpc_seldat[2] = { 10, 11 };
 const u8 lpt_seldat[4] = { 3, 4, 5, 0 };
 
+/* NETPLAY ROLLBACK DISPOSITION of this file's globals (task #60, 2026-08-24).
+ * None of them are in the rollback save set (zero hits for any of these names
+ * in netplay/game_state.c) and none of them CAN be. Do not "fix" a
+ * select-phase desync by adding them; each was checked individually:
+ *
+ *   afs_handle    Index into port/io/afs.c's requests[] table (afs.c:346).
+ *                 The slot owns an SDL_AsyncIO* (afs.c:355) and a
+ *                 monotonically advancing read cursor (afs.c:374); restoring
+ *                 the index rewinds neither. AFS_Close zeroes the slot
+ *                 (afs.c:288/442/453) and AFS_Open hands out the first free
+ *                 one (afs.c:318-331) from a pool the ADX music streamer also
+ *                 draws from (port/sound/adx.c:455), so a restored stale
+ *                 handle can alias another file's in-flight read.
+ *
+ *   q_ldreq       Restoring it rewinds `rno`, replaying steps that already
+ *                 ran: Pull_ramcnt_key (texgroup.c:305, color3rd.c:108)
+ *                 against an allocator that is NOT rewound, plus fsOpen /
+ *                 AFS_Read. That is the double-allocation the dedupe below
+ *                 and the reclaim in q_ldreq_texture_group case 2 exist to
+ *                 contain. It also rewinds the queue back into a non-empty
+ *                 state at the select->battle boundary, where Game2_0 /
+ *                 Game2_2 (game.c:472, :615) call fatal_error("Load queue
+ *                 failed to drain in time") — a hard process kill.
+ *
+ *   ldreq_result  Plain u8[294], so physically saveable, but rewinding a
+ *                 completion bit whose queue entry has already drained
+ *                 (be == 0, shifted out by Check_LDREQ_Queue) leaves
+ *                 Check_LDREQ_Queue_Player waiting on a byte nobody will
+ *                 ever set. Exit_6th (sel_pl.c:1701) has no timeout, only a
+ *                 `return`. Saving it without q_ldreq is a hang.
+ *
+ *   plt_req       A latch that must agree with the (unsaved) queue:
+ *                 q_ldreq_texture_group case 4 publishes into
+ *                 char_init_data[plid_data[plt_req[id]]] (texgroup.c:355).
+ *                 Rewinding it while the queue still holds the newer
+ *                 character's request publishes into the wrong slot.
+ *
+ * The cluster is all-in or all-out and all-in is impossible, so it is out.
+ *
+ * The residual is real and is NOT a rollback bug: AFS_Read is a genuine
+ * async disk read (afs.c:366), so ldreq_result's completion frame is
+ * wall-clock, not frame-count. Measured proof — the rollback-determinism
+ * harness classifies q_ldreq, rckey_work, rckey_mmobj, texgrplds,
+ * char_init_data, requests, afs and asyncio_queue as A1-vs-A2 BASELINE
+ * NOISE: they differ between two identical no-rollback runs of one binary
+ * on one machine. Two peers cannot agree on them either. Since Exit_6th
+ * (sel_pl.c:1701-1722 -> Exit_No, Exit_Timer) and Bonus_Sub's stage wait
+ * (game.c:1377-1381 -> G_No, G_Timer) gate SAVED state on ldreq_result, the
+ * correct treatment is a barrier that keeps the simulation from observing an
+ * in-flight load while a GekkoNet session is running — not a wider save set
+ * and not a replay scheme. See the CORRECTION block in
+ * tools/rollback-determinism/allowlist.txt and known limit 9 in
+ * docs/rollback-determinism-harness.md. */
 s16 plt_req[2];
 u8 ldreq_break;
 REQ q_ldreq[16];
