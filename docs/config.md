@@ -176,9 +176,12 @@ out-of-band (text message, voice) and paste it into the wrapper OSD.
   PARALLEL from the one socket with per-server retransmits at
   0/500/1500 ms, DNS resolves concurrently on a side thread, and a
   numeric-IP fallback list covers a dead resolver — the first
-  parseable Binding Response wins. Floor-clamped to 1000 ms. (Pre-S2
-  this key was read by nothing; the serial implementation had its own
-  hard-coded ~2 s/server budget.)
+  parseable Binding Response wins. Clamped to 1000–15000 ms: the floor
+  because below one RTO the retransmit ladder is meaningless, the
+  ceiling because `Stun_Discover` is not cancellable mid-run and
+  cancelling Host/Join mid-discovery blocks the game thread for up to
+  this budget. (Pre-S2 this key was read by nothing; the serial
+  implementation had its own hard-coded ~2 s/server budget.)
 
 `netplay-direct-p2p-disable-bilateral` (bool, default `false`)
 - If true, disables the bilateral hole-punch fallback. Direct-P2P will

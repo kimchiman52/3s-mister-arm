@@ -482,11 +482,21 @@ static void rend_q_purge(void) {
 
 /* S2: CFG_KEY_NETPLAY_DIRECT_P2P_STUN_TIMEOUT_MS is the overall
  * wall-clock budget for Stun_Discover (all servers probed in parallel;
- * see stun.c). Read at each discovery site via stun_budget_ms(). */
+ * see stun.c). Read at each discovery site via stun_budget_ms().
+ *
+ * Ceiling rationale (review L-4): Stun_Discover takes no cancel flag —
+ * it runs to its budget when no server answers — and DirectP2P_Cancel
+ * joins the worker on the GAME thread, so this budget is a direct
+ * bound on how long Cancel can block the game. The retransmit ladder
+ * ends 1500 ms after the last server arms; 15 s already covers any
+ * network where discovery can succeed at all. An uncapped user value
+ * would turn a mid-discovery Cancel into an arbitrarily long UI
+ * freeze. */
 static int stun_budget_ms(void) {
     int ms = Config_GetInt(CFG_KEY_NETPLAY_DIRECT_P2P_STUN_TIMEOUT_MS);
     if (ms <= 0) ms = 4000;      /* keep in sync with the config.c default */
     if (ms < 1000) ms = 1000;    /* below one RTO the retransmit ladder is meaningless */
+    if (ms > 15000) ms = 15000;  /* ceiling — bounds DirectP2P_Cancel's worst-case block */
     return ms;
 }
 
@@ -2000,8 +2010,12 @@ void DirectP2P_Cancel(void) {
      * thread handle eliminates the race where the worker writes s_work
      * after the memset below. Each worker honors its cancel flag at the
      * next loop iteration; worst-case blocking is bounded by the
-     * longest cancel-check interval among the active workers (~2s for
-     * Stun_Discover, ~10ms inside Stun_HolePunch). */
+     * longest cancel-uninterruptible span among the active workers:
+     * Stun_Discover takes no cancel flag, so a worker inside it blocks
+     * us for up to stun_budget_ms() — the user-configurable STUN
+     * timeout, clamped to [1000, 15000] ms (default 4000) precisely so
+     * this join stays bounded (review L-4). Stun_HolePunch checks its
+     * cancel flag every ~10-50 ms. */
     if (s_thread)                  { SDL_WaitThread(s_thread,                  NULL); s_thread                  = NULL; }
     if (s_rendezvous_thread)       { SDL_WaitThread(s_rendezvous_thread,       NULL); s_rendezvous_thread       = NULL; }
     if (s_bilateral_punch_thread)  { SDL_WaitThread(s_bilateral_punch_thread,  NULL); s_bilateral_punch_thread  = NULL; }
