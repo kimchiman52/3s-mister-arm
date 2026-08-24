@@ -464,7 +464,7 @@ Three sub-stages, all landed. As-built below.
 
 - Punch payload is `"3SX_PUNCH"` + an 8-byte token derived from the
   room-code payload, domain-separated from the session key
-  (`Rendezvous_DerivePunchToken`, rendezvous.c:134). 17 bytes total.
+  (`Rendezvous_DerivePunchToken`, rendezvous.c). 17 bytes total.
 - `classify_host_datagram` (direct_p2p.c:547) is the single routing
   decision for every inbound datagram on the waiting host's socket:
   '3SXR' frame / STUN Binding Response / **authenticated** punch /
@@ -488,19 +488,32 @@ Three sub-stages, all landed. As-built below.
   the NAT diagnoses in the classifier: the peer was *reached*, so
   blaming NAT would send users to their router settings for nothing.
 
-### 6.3 S4b — room code v2 (`5546589e`, BREAKING, authorized)
+### 6.3 S4b — room code v2, superseded by **v3** (BREAKING, authorized)
 
-- 14 chars, displayed `XXXXXXX-XXXXXXX`: version char `'2'` + 60-bit
-  payload `ip(32)<<28 | port(16)<<12 | nonce(12)` in 12 Crockford chars
-  + ISO 7064 MOD 37,36 check digit over the 13 preceding chars.
-- The 12-bit nonce comes from the CSPRNG (`RoomCode_GenerateNonce`,
-  room_code.c:160) and **hard-fails** when unavailable — no weak
+**As shipped today (v3 — see §6.8 for why v2 was not enough):**
+
+- 18 chars, displayed `XXXXXX-XXXXXX-XXXXXX`: version char `'3'` +
+  80-bit payload `ip(32)<<48 | port(16)<<32 | nonce(32)` in 16 Crockford
+  chars + ISO 7064 MOD 37,36 check digit over the 17 preceding chars.
+- The **32-bit** nonce comes from the CSPRNG (`RoomCode_GenerateNonce`,
+  room_code.c) and **hard-fails** when unavailable — no weak
   fallback, since a predictable nonce silently voids the entire point.
-  It is mixed into the code *and* both derivations, now domain-separated
-  over the canonical 8-byte `ip[4]||port_be[2]||nonce_be[2]`:
-  session key = `SHA-256("3SXR-SK2" || payload8)[0..15]`
-  (rendezvous.c:130), punch token = `SHA-256("3SXR-PT2" || payload8)[0..7]`
-  (rendezvous.c:138). `(ip, port)` alone no longer determines either.
+  It is mixed into the code *and* both derivations, domain-separated
+  over the canonical 10-byte `ip[4]||port_be[2]||nonce_be[4]`:
+  session key = `SHA-256("3SXR-SK3" || payload10)[0..15]`,
+  punch token = `SHA-256("3SXR-PT3" || payload10)[0..7]`
+  (rendezvous.c). `(ip, port)` alone no longer determines either.
+- The '3SXR' **wire** version is unaffected and stays 2 — the session
+  key is a 16-byte opaque blob to the server, so the server needs no
+  change for a room-code format bump.
+- The payload bitstream and the hash input are now the **same 10 bytes**
+  (`room_code_pack_payload`), removing the "which packing did this side
+  use" class of bug.
+
+*(v2, for the record: 14 chars, `'2'` + `ip(32)<<28 | port(16)<<12 |
+nonce(12)`, 8-byte payload, `"3SXR-SK2"` / `"3SXR-PT2"`. A
+legacy-checksum-valid v1 (11-char) or v2 (14-char) code now decodes to
+`ROOM_CODE_OLD_FORMAT`.)*
 - **Honest scope**: the code still necessarily *contains* the host IP —
   the joiner has to reach it. The nonce protects the derived key
   material against guessing; it does not hide the IP from someone

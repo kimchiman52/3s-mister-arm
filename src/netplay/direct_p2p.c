@@ -86,7 +86,8 @@ typedef struct {
     int preferred_port;
 
     /* Join-side decoded peer tuple. peer_local_port was removed when
-     * the room code shrank to 11 chars (see room_code.h). Hairpin
+     * the v1 room code shrank to 11 chars (see room_code.h; the code is
+     * 18 chars as of v3 but has never carried local_port again). Hairpin
      * fallback now relies on the router's NAT-loopback behavior
      * rather than rewriting to 127.0.0.1:peer_local_port. */
     char peer_code[64];
@@ -126,14 +127,14 @@ typedef struct {
     uint8_t punch_token[STUN_PUNCH_TOKEN_LEN];
     bool punch_token_valid;
 
-    /* S4b room-code nonce (12 bits). HOST: drawn from the CSPRNG by
+    /* S4b room-code nonce (32 bits as of v3). HOST: drawn from the CSPRNG by
      * host_thread_fn right before the room code is encoded; kept
      * STABLE across a drift re-encode (the endpoint change already
      * forces a new code/key/token — regenerating the nonce too would
      * add nothing) and regenerated per hosting attempt. JOINER: decoded
      * from the room code by BeginJoin. Feeds the session-key and
      * punch-token derivations on both roles. */
-    uint16_t nonce;
+    uint32_t nonce;
 
     /* Parsed rendezvous endpoint cache; populated in BeginHost/BeginJoin
      * once 5b/5c land. Holds the result of parsing the signal-url config
@@ -2526,13 +2527,14 @@ void DirectP2P_BeginJoin(const char* peer_code) {
      * has published its terminal state, which happens-after its last
      * s_work write.)
      *
-     * S4b: the decode result is a tri-state-plus — a checksum-valid
-     * 11-char v1 code and an unknown-version 14-char code each get
-     * their own explanation (CONNECT_FAIL_CODE_VERSION) instead of the
+     * S4b: the decode result is a tri-state-plus — a legacy-checksum-
+     * valid 11-char v1 or 14-char v2 code, and an unknown-version
+     * 18-char code, each get their own explanation
+     * (CONNECT_FAIL_CODE_VERSION) instead of the
      * mysterious generic "Invalid room code.". */
     uint32_t ip_be = 0;
     uint16_t pub_port = 0;
-    uint16_t code_nonce = 0;
+    uint32_t code_nonce = 0;
     const RoomCodeDecodeResult dec =
         RoomCode_Decode(peer_code, &ip_be, &pub_port, &code_nonce);
     if (dec != ROOM_CODE_OK) {
@@ -2546,7 +2548,7 @@ void DirectP2P_BeginJoin(const char* peer_code) {
         s_outcome_reported = false;
         switch (dec) {
         case ROOM_CODE_OLD_FORMAT:
-            SDL_Log("[direct_p2p] room code is a valid PRE-S4b (v1) code — "
+            SDL_Log("[direct_p2p] room code is a valid pre-v3 (v1/v2) code — "
                     "the host runs an older build");
             set_fail_msg(CONNECT_FAIL_CODE_VERSION,
                          "Code is from an older game version.");

@@ -34,7 +34,7 @@ index a8d8bd8..e0aeac8 100644
 + * Direct-P2P OSD state (Step 10 of docs/plan-stun-direct-p2p.md)
 + *
 + * Process-local state backing the "Direct P2P" submenu. The peer-code
-+ * buffer holds the 14-char v2 room code (no dashes) being assembled
++ * buffer holds the 18-char v3 room code (no dashes) being assembled
 + * via the on-screen keyboard below.
 + *
 + * Power-user knobs (CFG_KEY_NETPLAY_DIRECT_P2P_HOST_PORT and
@@ -45,13 +45,13 @@ index a8d8bd8..e0aeac8 100644
 + * OSK layout: 6 columns x 7 rows. The first 6 rows spell out 0-9A-Z
 + * (36 chars) in order; row 6 holds the two action cells "BS" (erase
 + * last char) and "OK" (commit + transition to MENU_DIRECT_P2P_CONFIRM).
-+ * All 14 code chars use the ISO 7064 MOD 37,36 alphabet (0-9A-Z) so
-+ * every cell is needed — cannot drop I/L/O/U since the 14th (check)
++ * All 18 code chars use the ISO 7064 MOD 37,36 alphabet (0-9A-Z) so
++ * every cell is needed — cannot drop I/L/O/U since the 18th (check)
 + * char may legally land on any of those.
 + * ------------------------------------------------------------------ */
 +static int      g_dp2p_confirm_is_join = 0;
 +
-+static char     g_dp2p_code_buf[16];  /* 14 chars + NUL + slack */
++static char     g_dp2p_code_buf[RECENT_JOIN_CODE_BUF];  /* 18 chars + NUL + slack */
 +static int      g_dp2p_code_len     = 0;
 +static int      g_dp2p_osk_row      = 0;
 +static int      g_dp2p_osk_col      = 0;
@@ -59,7 +59,7 @@ index a8d8bd8..e0aeac8 100644
 +
 +#define DP2P_OSK_ROWS 7
 +#define DP2P_OSK_COLS 6
-+#define DP2P_CODE_CHAR_LEN 14
++#define DP2P_CODE_CHAR_LEN 18
 +#define DP2P_RECENT_MAX 10
 +
 +/* Row-major alphabet (0-9A-Z) then action cells on the final row. */
@@ -98,10 +98,10 @@ index a8d8bd8..e0aeac8 100644
 + * MENU_* enum values declared above and the file-scope `menustate`. */
 +static void direct_p2p_osk_select(void);
 +
-+/* Compose the partial-code display line "   2ABCDEF-GHJKMNP" with
++/* Compose the partial-code display line "   3ABCDE-FGHJKM-NPQRST" with
 + * unfilled positions replaced by '_'. Writes NUL-terminated into out.
-+ * The single dash at position 7 mirrors RoomCode_Encode's display
-+ * layout (7-char half, dash, 7-char half of the 14-char code). */
++ * The dashes at positions 6 and 12 mirror RoomCode_Encode's display
++ * layout (three 6-char groups of the 18-char code). */
 +static void direct_p2p_format_entry_display(char *out, size_t out_cap)
 +{
 +	size_t o = 0;
@@ -109,7 +109,7 @@ index a8d8bd8..e0aeac8 100644
 +	out[o++] = ' '; out[o++] = ' '; out[o++] = ' ';
 +	for (int i = 0; i < DP2P_CODE_CHAR_LEN && o + 2 < out_cap; i++)
 +	{
-+		if (i == 7) out[o++] = '-';
++		if (i == 6 || i == 12) out[o++] = '-';
 +		if (i < g_dp2p_code_len) out[o++] = g_dp2p_code_buf[i];
 +		else out[o++] = '_';
 +	}
@@ -132,7 +132,7 @@ index a8d8bd8..e0aeac8 100644
 +	}
 +	if (g_dp2p_osk_row == 6 && g_dp2p_osk_col == 1)
 +	{
-+		/* OK: commit only if the buffer holds a full 14-char code.
++		/* OK: commit only if the buffer holds a full 18-char code.
 +		 * Checksum validation happens in the game via RoomCode_Decode
 +		 * (Step 9 reader path); the wrapper forwards verbatim. */
 +		if (g_dp2p_code_len == DP2P_CODE_CHAR_LEN)
@@ -155,8 +155,8 @@ index a8d8bd8..e0aeac8 100644
 +}
 +
 +/* Render an epoch delta as a short "Xm/h/d ago" string or "just now" /
-+ * "(unknown)" sentinel. Sized to fit alongside a 14-char code on a
-+ * 28-column OSD row in the Recently Joined list. */
++ * "(unknown)" sentinel. Sized to fit alongside an 18-char code on a
++ * 32-column OSD row in the Recently Joined list (1 + 18 + 1 + 9 = 29). */
 +static void direct_p2p_format_ago(long epoch, char *out, size_t out_cap)
 +{
 +	if (!out || out_cap == 0) return;
@@ -351,7 +351,7 @@ index a8d8bd8..e0aeac8 100644
 +	 *         minimal so the default Host/Join flow is one button press.
 +	 * JOIN_ENTRY: 6x7 on-screen keyboard; A selects a cell, Dpad moves.
 +	 *         Row 6 holds the BS / OK action cells. OK commits when the
-+	 *         buffer holds a full 14-char code.
++	 *         buffer holds a full 18-char code.
 +	 * CONFIRM: write the handoff file (direct_p2p_handoff_host/join)
 +	 *         then close the OSD. Step 11 handles the argv injection
 +	 *         at the subsequent exec.
@@ -493,7 +493,7 @@ index a8d8bd8..e0aeac8 100644
 +			OsdSetTitle("Recently Joined", 0);
 +			menustate = MENU_DIRECT_P2P_JOIN_RECENT1;
 +			parentstate = MENU_DIRECT_P2P_JOIN_RECENT;
-+			char codes[DP2P_RECENT_MAX][16];
++			char codes[DP2P_RECENT_MAX][RECENT_JOIN_CODE_BUF];
 +			long epochs[DP2P_RECENT_MAX];
 +			int count = load_recent_joins(codes, epochs, DP2P_RECENT_MAX);
 +			if (count == 0)
@@ -518,7 +518,7 @@ index a8d8bd8..e0aeac8 100644
 +				{
 +					char ago[16];
 +					direct_p2p_format_ago(epochs[i], ago, sizeof(ago));
-+					sprintf(s, " %-14s %-10s", codes[i], ago);
++					sprintf(s, " %-18s %-9s", codes[i], ago);
 +					MenuWrite(n++, s, g_dp2p_recent_sel == i, 0);
 +				}
 +				while (n < OsdGetSize() - 1) MenuWrite(n++);
@@ -535,7 +535,7 @@ index a8d8bd8..e0aeac8 100644
 +		}
 +		else if (up || down || select)
 +		{
-+			char codes[DP2P_RECENT_MAX][16];
++			char codes[DP2P_RECENT_MAX][RECENT_JOIN_CODE_BUF];
 +			long epochs[DP2P_RECENT_MAX];
 +			int count = load_recent_joins(codes, epochs, DP2P_RECENT_MAX);
 +			if (count <= 0) break;

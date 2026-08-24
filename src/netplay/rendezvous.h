@@ -12,11 +12,17 @@
  * (c) parse a 32-byte DELIVER or CHALLENGE, and (d) parse the
  * configured `udp://host:port` signal URL.
  *
- * Security note (v2, S4b): the session key is
- * SHA-256("3SXR-SK2" || ip[4] || port_be[2] || nonce_be[2])[0..15] —
- * the byte-aligned serialization of the v2 room-code payload including
- * the 12-bit CSPRNG nonce, domain-separated from the S4a punch token
- * ("3SXR-PT2"). It is derived (not transmitted) and not user-typeable.
+ * Security note (v3): the session key is
+ * SHA-256("3SXR-SK3" || ip[4] || port_be[2] || nonce_be[4])[0..15] —
+ * the byte-aligned serialization of the v3 room-code payload including
+ * the 32-bit CSPRNG nonce, domain-separated from the S4a punch token
+ * ("3SXR-PT3"). It is derived (not transmitted) and not user-typeable.
+ *
+ * The domain strings carry the room-code format version ("...2" -> "...3")
+ * so a build that somehow paired a v2 payload with a v3 derivation
+ * cannot land in the same rendezvous slot or produce a matching punch
+ * token. The '3SXR' WIRE version is unaffected and stays 2 — the
+ * session key is a 16-byte opaque blob to the server.
  */
 
 #ifndef NETPLAY_RENDEZVOUS_H
@@ -31,24 +37,25 @@ extern "C" {
 
 /*
  * Derive the 16-byte rendezvous session key from the public endpoint
- * tuple + nonce that both peers share via the room code (v2, S4b).
+ * tuple + nonce that both peers share via the room code (v3).
  *
  * `ip_be` follows the same convention as room_code.c: the uint32_t's
  * in-memory bytes are the four IPv4 octets in network byte order (i.e.
  * the value returned by inet_pton(AF_INET, ...) into `s_addr`).
- * `nonce` is the 12-bit room-code nonce (host order, <= 0x0FFF).
+ * `nonce` is the 32-bit room-code nonce (host order; every value is
+ * in range).
  *
- * The derivation is domain-separated and covers the full v2 payload:
+ * The derivation is domain-separated and covers the full v3 payload:
  *
- *   key = SHA-256("3SXR-SK2" || ip[4] || port_be[2] || nonce_be[2])[0..15]
+ *   key = SHA-256("3SXR-SK3" || ip[4] || port_be[2] || nonce_be[4])[0..15]
  *
- * where nonce_be is the nonce as a 16-bit big-endian value (top 4 bits
- * zero). Because the 12-bit CSPRNG nonce is inside the hash, an
- * attacker who merely knows/guesses (ip, port) can no longer derive
- * the session key to squat or race the rendezvous slot (S4b) — only
- * someone holding the actual room code can. BREAKING change from the
- * v1 derivation (SHA-256 over the bare 6-byte payload), shipped
- * together with the v2 room-code format to the whole alpha group.
+ * where nonce_be is the nonce as a 32-bit big-endian value. Because the
+ * 32-bit CSPRNG nonce is inside the hash, an attacker who merely
+ * knows/guesses (ip, port) can no longer derive the session key to
+ * squat or race the rendezvous slot — only someone holding the actual
+ * room code can. BREAKING change from the v2 derivation (12-bit nonce,
+ * "3SXR-SK2"), shipped together with the v3 room-code format to the
+ * whole alpha group.
  *
  * Writes 16 bytes into `out_key`. Returns true on success. On failure
  * (ip_be == 0, indicating an unset / invalid endpoint), zeroes
@@ -56,7 +63,7 @@ extern "C" {
  */
 bool Rendezvous_DeriveSessionKey(uint32_t ip_be,
                                  uint16_t public_port,
-                                 uint16_t nonce,
+                                 uint32_t nonce,
                                  uint8_t out_key[16]);
 
 /*
@@ -65,7 +72,7 @@ bool Rendezvous_DeriveSessionKey(uint32_t ip_be,
  * payload. Same inputs and payload serialization as
  * Rendezvous_DeriveSessionKey, different domain string:
  *
- *   token = SHA-256("3SXR-PT2" || ip[4] || port_be[2] || nonce_be[2])[0..7]
+ *   token = SHA-256("3SXR-PT3" || ip[4] || port_be[2] || nonce_be[4])[0..7]
  *
  * so the two derivations can never collide. The token proves knowledge
  * of the room-code payload INCLUDING the nonce: the host only accepts
@@ -75,13 +82,18 @@ bool Rendezvous_DeriveSessionKey(uint32_t ip_be,
  * course derive it — the room code IS the shared secret in this
  * friend-to-friend model. S5's relay will reuse this token.
  *
+ * The nonce is 32 bits as of v3. At 12 bits the token had only 4096
+ * unguessable variants against a host that answered every guess (accept
+ * -> handoff, miss -> silent drop, no cap), which the host receive path
+ * could be walked through in under 68 seconds. See room_code.h.
+ *
  * Writes 8 bytes into out_token. Returns true on success; on failure
  * (ip_be == 0 or hash failure) zeroes out_token and returns false.
  */
 #define REND_PUNCH_TOKEN_LEN 8
 bool Rendezvous_DerivePunchToken(uint32_t ip_be,
                                  uint16_t public_port,
-                                 uint16_t nonce,
+                                 uint32_t nonce,
                                  uint8_t out_token[REND_PUNCH_TOKEN_LEN]);
 
 /* S4c protocol v2 sizes: REGISTER/POLL carry an 8-byte return-

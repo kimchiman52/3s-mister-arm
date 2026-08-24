@@ -518,9 +518,23 @@ static int test_session_key_stability(void) {
         FAIL("test2", "different nonce produced identical session key");
         return 1;
     }
-    /* Out-of-range nonce (>12 bits) must fail. */
-    if (Rendezvous_DeriveSessionKey(0x0A0B0C0Du, 12345, 0x1000, k5)) {
-        FAIL("test2", "nonce above 12 bits accepted");
+    /* v3: the nonce is a full 32 bits — 0x1000 is now a PERFECTLY
+     * VALID nonce (it was out of range under v2's 12-bit mask), and a
+     * high-bit nonce must reach the hash rather than being masked off.
+     * Regression net for the widening: if any layer silently truncated
+     * the nonce back to 12 or 16 bits these two would collide. */
+    uint8_t k6[REND_KEY_LEN];
+    EXPECT_TRUE("test2", Rendezvous_DeriveSessionKey(0x0A0B0C0Du, 12345, 0x1000u, k6));
+    if (memcmp(k1, k6, REND_KEY_LEN) == 0) {
+        FAIL("test2", "nonce 0x1000 produced the same key as 0x222");
+        return 1;
+    }
+    uint8_t k7[REND_KEY_LEN];
+    uint8_t k8[REND_KEY_LEN];
+    EXPECT_TRUE("test2", Rendezvous_DeriveSessionKey(0x0A0B0C0Du, 12345, 0x00000222u, k7));
+    EXPECT_TRUE("test2", Rendezvous_DeriveSessionKey(0x0A0B0C0Du, 12345, 0xDEAD0222u, k8));
+    if (memcmp(k7, k8, REND_KEY_LEN) == 0) {
+        FAIL("test2", "nonce high 16 bits ignored — 32-bit nonce truncated");
         return 1;
     }
 
@@ -554,6 +568,16 @@ static int test_session_key_stability(void) {
     EXPECT_TRUE("test2-token", Rendezvous_DerivePunchToken(0x0A0B0C0Du, 12345, 0x223, t5));
     if (memcmp(t1, t5, REND_PUNCH_TOKEN_LEN) == 0) {
         FAIL("test2-token", "different nonce produced identical token");
+        return 1;
+    }
+    /* v3: the token must see all 32 nonce bits too — the punch gate is
+     * the thing the widening exists for (room_code.h). */
+    uint8_t t6[REND_PUNCH_TOKEN_LEN];
+    uint8_t t7[REND_PUNCH_TOKEN_LEN];
+    EXPECT_TRUE("test2-token", Rendezvous_DerivePunchToken(0x0A0B0C0Du, 12345, 0x00000222u, t6));
+    EXPECT_TRUE("test2-token", Rendezvous_DerivePunchToken(0x0A0B0C0Du, 12345, 0xDEAD0222u, t7));
+    if (memcmp(t6, t7, REND_PUNCH_TOKEN_LEN) == 0) {
+        FAIL("test2-token", "nonce high 16 bits ignored in punch token");
         return 1;
     }
     /* Domain separation vs the session key over the SAME payload. */

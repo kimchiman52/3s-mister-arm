@@ -114,11 +114,11 @@ void DirectP2P_Init(void);
 void DirectP2P_BeginHost(int preferred_port);
 
 /* Join-side flow. peer_code must be a room-code display form (with or
- * without dashes, any case); accepts both 14-char raw and 15-char
- * dashed (S4b v2 format). No-op on NULL/empty. On success, code is
+ * without dashes, any case); accepts both 18-char raw and 20-char
+ * dashed (v3 format). No-op on NULL/empty. On success, code is
  * persisted to CFG_KEY_NETPLAY_DIRECT_P2P_LAST_PEER_CODE. A v1
- * (11-char) or unknown-version code fails immediately with
- * CONNECT_FAIL_CODE_VERSION and an explanatory status. */
+ * (11-char), v2 (14-char) or unknown-version code fails immediately
+ * with CONNECT_FAIL_CODE_VERSION and an explanatory status. */
 void DirectP2P_BeginJoin(const char* peer_code);
 
 /* User cancel. Sets the worker's atomic cancel flag, waits up to a
@@ -151,7 +151,7 @@ Role DirectP2P_GetRole(void);
  * 150 s orchestrator deadline. Main-thread only. */
 bool DirectP2P_HostStunRetryPending(void);
 
-/* Display-form room code (15 visible chars, S4b v2), valid only while
+/* Display-form room code (20 visible chars, v3), valid only while
  * state == DIRECT_P2P_HOST_WAITING. Returns "" in all other states.
  * Pointer is into internal static storage — do not free or mutate. */
 const char* DirectP2P_GetHostCode(void);
@@ -194,7 +194,7 @@ void DirectP2P_RefuseSession(const char* reason);
 /* Step 8 — Per-frame native overlay. Renders three centered lines into
  * the 384x224 game canvas via SSPutStrPro:
  *   line 1: mode label (HOSTING / CONNECTING / CONNECTED / ERROR)
- *   line 2: 15-char display-form room code (host-waiting only)
+ *   line 2: 20-char display-form room code (host-waiting only)
  *   line 3: DirectP2P_GetStatusText() detail
  * No-op when state == DIRECT_P2P_IDLE. Called from the main SDL render
  * loop via NetplayScreen_Render; see src/port/sdl/netplay_screen.c. */

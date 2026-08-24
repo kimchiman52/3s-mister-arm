@@ -2481,7 +2481,11 @@ bool direct_p2p_write_all(int fd, const char *buf, size_t len)
 constexpr const char *kRecentJoinsDir  = "/media/fat/games/3s-arm/state";
 constexpr const char *kRecentJoinsPath = "/media/fat/games/3s-arm/state/recent_joins.txt";
 constexpr int kRecentJoinsMax = 10;
-constexpr int kRecentCodeBuf  = 16;  // matches g_dp2p_code_buf sizing
+// Bound to the public header's RECENT_JOIN_CODE_BUF so the extern "C"
+// signature below and the on-disk record can never drift apart. Also
+// matches the wrapper menu's g_dp2p_code_buf sizing (v3 room code:
+// 18 chars without dashes + NUL + slack).
+constexpr int kRecentCodeBuf  = RECENT_JOIN_CODE_BUF;
 
 struct RecentJoinsBuf
 {
@@ -2501,7 +2505,7 @@ static int read_recent_joins_file(RecentJoinsBuf *out)
 		char code[kRecentCodeBuf] = {0};
 		long epoch = 0;
 		// Tolerate missing epoch (older format / hand-edit); epoch 0 → "unknown"
-		int got = sscanf(line, "%15s %ld", code, &epoch);
+		int got = sscanf(line, "%23s %ld", code, &epoch);
 		if (got < 1) continue;
 		if (!code[0]) continue;
 		int i = out->count++;
@@ -2544,7 +2548,7 @@ static bool write_recent_joins_file(const RecentJoinsBuf *in)
 
 }  // namespace
 
-extern "C" int load_recent_joins(char codes_out[][16], long epochs_out[], int max_entries)
+extern "C" int load_recent_joins(char codes_out[][kRecentCodeBuf], long epochs_out[], int max_entries)
 {
 	if (!codes_out || max_entries <= 0) return 0;
 	RecentJoinsBuf buf;
@@ -2552,7 +2556,7 @@ extern "C" int load_recent_joins(char codes_out[][16], long epochs_out[], int ma
 	if (n > max_entries) n = max_entries;
 	for (int i = 0; i < n; i++)
 	{
-		memcpy(codes_out[i], buf.codes[i], 16);
+		memcpy(codes_out[i], buf.codes[i], kRecentCodeBuf);
 		if (epochs_out) epochs_out[i] = buf.epochs[i];
 	}
 	return n;
