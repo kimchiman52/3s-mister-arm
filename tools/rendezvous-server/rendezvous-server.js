@@ -285,6 +285,21 @@ function handleRegister(socket, buf, rinfo) {
         entry.lastSeenA = now; // idempotent re-REGISTER from A
     } else if (entry.endpointB && endpointEq(entry.endpointB, source)) {
         entry.lastSeenB = now; // idempotent re-REGISTER from B
+        // Review H1 (within-stale-window re-host): if this key's HOST slot
+        // is a stale endpoint from this same IP, we are a re-hosted client
+        // that re-registered before its old slot crossed SLOT_STALE_MS and
+        // was therefore filed as "the joiner". Promote to the host slot
+        // (and free B) so a real joiner can pair; the client keeps its
+        // resender alive across the interim thanks to its self-DELIVER
+        // ignore gate.
+        if (entry.endpointA && entry.endpointA.address === source.address &&
+            now - entry.lastSeenA > SLOT_STALE_MS) {
+            logInfo(`[RECLAIM] promote B->A key=${shortKey4(hexKey)}... ${entry.endpointA.address}:${entry.endpointA.port} (stale) replaced by ${source.address}:${source.port}`);
+            entry.endpointA = source;
+            entry.lastSeenA = now;
+            entry.endpointB = null;
+            entry.lastSeenB = 0;
+        }
     } else {
         // Source matches neither slot exactly. Review H1: before the old
         // fill-or-drop logic, consider stale-slot reclamation so a

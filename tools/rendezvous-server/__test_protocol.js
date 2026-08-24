@@ -462,6 +462,48 @@ async function testSpoofedFloodEviction(handle) {
     handle._resetRate();
 }
 
+async function testRehostWithinStaleWindow(handle, serverPort) {
+    // Review H1 gap: a re-host WITHIN the 30 s staleness window (new NAT
+    // port) gets filed as B while old-A is still fresh. Its own periodic
+    // re-REGISTERs then only refresh B — so once old-A crosses the
+    // threshold, the next re-REGISTER must PROMOTE the client from B to A
+    // (clearing B) or a real joiner would be dropped as a third party
+    // forever.
+    const key = crypto.randomBytes(16);
+    const hexKey = key.toString('hex');
+    const oldHost = await makeClient();
+    const newHost = await makeClient();
+    const joiner = await makeClient();
+    try {
+        await oldHost.send(makeRegister(key, oldHost.port), serverPort);
+        await oldHost.recv(500);
+        // Immediate re-host (old slot NOT yet stale) -> filed as joiner (B).
+        await newHost.send(makeRegister(key, newHost.port), serverPort);
+        await newHost.recv(500); // DELIVER carrying old-A (self IP; client ignores it)
+        const entry = handle._sessionMap.get(hexKey);
+        assertEq(entry.endpointB.port, newHost.port, 'rehost-window: new host filed as B while A fresh');
+
+        // Old slot crosses the staleness threshold; the S1 resender's next
+        // periodic re-REGISTER (matching B exactly) must promote B->A.
+        entry.lastSeenA -= handle._slotStaleMs + 1000;
+        await newHost.send(makeRegister(key, newHost.port), serverPort);
+        await newHost.recv(500);
+        assertEq(entry.endpointA.port, newHost.port, 'rehost-window: re-REGISTER promoted B to host slot');
+        assert(entry.endpointB === null, 'rehost-window: joiner slot freed by promotion');
+
+        // A real joiner can now pair with the re-hosted client.
+        await joiner.send(makeRegister(key, joiner.port), serverPort);
+        const jr = decodeDeliver((await joiner.recv(500)).buf);
+        assertEq(jr.peerPort, newHost.port, 'rehost-window: joiner paired with promoted host');
+        const push = decodeDeliver((await newHost.recv(500)).buf);
+        assertEq(push.peerPort, joiner.port, 'rehost-window: promoted host got DELIVER push');
+    } finally {
+        await oldHost.close();
+        await newHost.close();
+        await joiner.close();
+    }
+}
+
 // Stub socket for handle._onMessage injection: captures outbound sends so
 // tests can exercise source-IP-dependent policy without real routing.
 function makeStubSocket() {
@@ -643,6 +685,8 @@ async function main() {
         handle._resetRate();
         await testSpoofedFloodEviction(handle);     // injection only
         await testStaleSlotReclaim(handle, serverPort); // 4 packets
+        handle._resetRate();
+        await testRehostWithinStaleWindow(handle, serverPort); // 5 packets
         handle._resetRate();
         await testFreshSlotNotReclaimed(handle, serverPort); // 2 packets
         handle._resetRate();
