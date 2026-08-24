@@ -131,6 +131,14 @@ typedef struct Configuration {
      * rendezvous wire codec, session-key derivation, LAN-bypass table,
      * and the kill-switch config gate; uses only localhost UDP sockets. */
     bool test_bilateral_punch;
+    /* M-3 coverage guard: when true, main() runs the GameState
+     * save/load field-coverage harness (randomized load->save round-trip
+     * that fails loudly on any struct byte GS_SAVE/GS_LOAD misses) and
+     * exits. Honors the CLI flag --test-gs-coverage. Parsed
+     * unconditionally; real body gated by ENABLE_NETPLAY=ON &&
+     * ENABLE_NETPLAY_TESTS, otherwise the stub returns 2. Pure
+     * in-process — no session, no sockets. */
+    bool test_gs_coverage;
 } Configuration;
 
 #endif

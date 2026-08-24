@@ -1041,6 +1041,12 @@ int Netplay_Test_SparseEffectSave(void);
 // exercises the REGISTER/POLL/DELIVER round-trip plus the LAN-bypass
 // table; no external network dep.
 int Netplay_Test_BilateralPunch(void);
+// M-3 coverage guard: forward-decl of the GameState save/load
+// field-coverage harness (src/netplay/test_gs_coverage.c). Randomized
+// load->save round-trip over the whole GameState; any struct byte that
+// GS_SAVE/GS_LOAD misses fails loudly with its exact offset. Same
+// gating pattern as the other harnesses.
+int Netplay_Test_GsCoverage(void);
 #endif
 
 /* Test harnesses run unattended (scripts, CI). SDL's DEFAULT assertion
@@ -1066,7 +1072,8 @@ int main(int argc, const char* argv[]) {
 
     if (configuration.test_netplay_event_queue || configuration.test_mist_handshake ||
         configuration.test_room_code || configuration.test_stun_mock ||
-        configuration.test_sparse_effect_save || configuration.test_bilateral_punch) {
+        configuration.test_sparse_effect_save || configuration.test_bilateral_punch ||
+        configuration.test_gs_coverage) {
         SDL_SetAssertionHandler(test_harness_assert_handler, NULL);
     }
 
@@ -1126,6 +1133,16 @@ int main(int argc, const char* argv[]) {
 #else
         fprintf(stderr,
                 "--test-bilateral-punch requires a build with ENABLE_NETPLAY=ON.\n");
+        return 2;
+#endif
+    }
+
+    if (configuration.test_gs_coverage) {
+#ifdef ENABLE_NETPLAY
+        return Netplay_Test_GsCoverage();
+#else
+        fprintf(stderr,
+                "--test-gs-coverage requires a build with ENABLE_NETPLAY=ON.\n");
         return 2;
 #endif
     }
