@@ -83,7 +83,8 @@ Verified mechanism chain, pre-S1:
    (`DirectP2P_GetHostCode`, valid the whole time state stays
    `HOST_WAITING`).
 
-Real usage: the host reads an 11-char code aloud or pastes it in chat;
+Real usage: the host reads the code aloud or pastes it in chat (11 chars
+at the time this was measured; 18 as of v3, §6.3);
 the friend types it in **minutes later**. By then the session is
 un-pair-able on every path — and this is independent of NAT type.
 Demonstrated end-to-end against the real server (see §3.4).
@@ -520,12 +521,15 @@ legacy-checksum-valid v1 (11-char) or v2 (14-char) code now decodes to
   holding the whole code. Sharing a code on stream still exposes an IP.
 - Decode validates the version char **before** the check digit (a future
   format's checksum scheme is unknowable) and returns a forced-handling
-  enum — `OK` / `MALFORMED` / `OLD_FORMAT` (checksum-valid v1) /
-  `FUTURE_VERSION`. The bool API is gone, so a stale caller fails to
-  compile rather than silently inverting. Version outcomes map to
-  `CONNECT_FAIL_CODE_VERSION` (connect_fail.h:112) with explicit
-  older/newer text. Checksum-invalid 11-char garbage stays `MALFORMED`:
-  garbage must never masquerade as a version issue.
+  enum — `OK` / `MALFORMED` / `OLD_FORMAT` (legacy-checksum-valid
+  11-char v1 or 14-char v2) / `FUTURE_VERSION`. The bool API is gone, so
+  a stale caller fails to compile rather than silently inverting. Version
+  outcomes map to `CONNECT_FAIL_CODE_VERSION_OLDER` /
+  `CONNECT_FAIL_CODE_VERSION_NEWER` (connect_fail.h; split from a single
+  code by review finding L-4, §6.8) with explicit older/newer text.
+  11- or 14-char input that does **not** pass
+  the legacy checksum stays `MALFORMED`: garbage must never masquerade as
+  a version issue.
 - Host keeps the nonce stable across an S1 drift re-encode and draws a
   fresh one per hosting attempt.
 
@@ -645,6 +649,14 @@ Each of the three sub-stages has at least one test proven to go **red**
 against the pre-fix behavior (verified by neutralizing the fix, not by
 assertion):
 
+> **Correction (§6.8, HIGH-3).** The S4c red counts below were collected
+> with a harness that aborted the whole run on the first thrown
+> exception, so some tests recorded as red had in fact not executed. The
+> per-test isolation and the `EXPECTED_TESTS` coverage literal landed in
+> `77af7787`; re-measured counts are in §6.8. The S4b "four
+> neutralizations" bullet also predates MEDIUM-1 — the check-digit
+> recurrence it was exercising was itself defective.
+
 - **S4a** — `test_bilateral_punch.c` test 10 (host datagram gate truth
   table) + `test_stun_mock.c` `run_punch_payload_test` /
   `run_punch_token_reject_test`. Restoring the pre-S4a final arm
@@ -684,6 +696,217 @@ worth doing on the harness itself and not only on the code under test.
 - The MIST handshake (netplay.c R-1 path) remains the backstop for a
   peer that gets past the punch gate.
 - Symmetric×symmetric pairs still cannot connect at all — that is S5.
+
+### 6.8 S4 adversarial review — as-built fixes
+
+S4 was re-read adversarially after landing. The three HIGH findings and
+MEDIUM-1 / MEDIUM-3 are described below as shipped, across three commits
+(`3b92669d`, `77af7787`, `adb63c3a`); the remaining findings are listed at
+the end of this section.
+
+**HIGH-1 — the punch gate was 12 bits deep and had no cap.** Two halves,
+two commits.
+
+- *Nonce width* (`3b92669d`). The S4a punch token is
+  `SHA-256("3SXR-PT3" ‖ payload10)[0..7]`; an attacker who knows the
+  advertised `ip:port` — which the code necessarily reveals — knows every
+  derivation input except the nonce. At `ROOM_CODE_NONCE_BITS 12` that was
+  a 4096-value search against a host that is a perfect oracle, drained at
+  the ~60 datagrams/s `host_tick_receive` accepts: the whole space in
+  ≤ 68 s, and under UPnP the advertised port is stable, so a past opponent
+  could grind it months later. Now 32 bits (≥ 2.2 years at the same rate).
+  The entropy has to live in the code: the joiner derives the token from
+  the decoded code alone on the first direct punch, before any rendezvous
+  exchange, and the session key is what *indexes* the rendezvous slot, so
+  it cannot be delivered by the thing it indexes. At 5 bits/char, 32 nonce
+  bits cost exactly 4 more payload chars (48 + 32 = 80 = 16 × 5) — the
+  minimum possible. Format details in §6.3.
+- *Host-side cap* (`adb63c3a`). `s_host_unauth_drops` was a log counter
+  only: no per-source throttle, no backoff, no wall-clock budget, while
+  the host answered every guess. Two levels, both in `direct_p2p.c`'s
+  `host_punch_*` block. Per source: `HOST_PUNCH_SRC_MAX_BAD = 24` bad
+  punches mutes that IP for `HOST_PUNCH_MUTE_MS = 60 s`, and a muted
+  source is dropped **on the accept path** — no echo, no handoff, even
+  when its token compare passes — so a correct guess stays
+  indistinguishable from a wrong one. Per session:
+  `HOST_PUNCH_TOTAL_REROLL = 64` bad punches re-rolls the nonce,
+  re-encodes the code, re-derives the token, clears every mute, and
+  restarts the rendezvous worker (whose session key is derived from the
+  nonce), capped at `HOST_PUNCH_REROLL_MAX = 3` per hosting session. It
+  fails **closed**: if the CSPRNG or a derivation is unavailable nothing
+  changes, because advertising a code whose token we cannot derive would
+  ignore every punch including the real joiner's.
+- *Accounting rule*: only punch-shaped datagrams that **fail** the token
+  check are charged. A joiner holding the right code is accepted on its
+  first punch and is never charged, so no threshold here is reachable by a
+  peer that can actually connect. Arbitrary garbage is logged but
+  deliberately not charged — it teaches an attacker nothing and would let
+  unrelated noise trip the re-roll.
+- *What the user sees*: nothing for a mute (log only — a status line per
+  blocked port-scanner is noise). On a re-roll, the code on overlay line 2
+  changes and line 3 reads "Code was being probed. Share the NEW code.",
+  the same mechanism and wording shape as the existing STUN-drift
+  "Network changed! Share the NEW code."
+- *Deliberate departure* from the review's literal "stop classifying that
+  source for the session": the mute **expires** and a re-roll clears it. A
+  permanent mute converts this defence into a self-inflicted lockout —
+  friend typos the code, floods 24 bad punches, gets muted, is then read
+  the code correctly and is dropped forever with no diagnosis. It is also
+  arithmetically sufficient: 24 per 60 s is 0.4/s against an unthrottled
+  60/s, so 32 bits needs ~340 years per source IP, and a 10,000-node
+  botnet still needs ~12 days against a code that exists only while the
+  OSD screen is up. Eviction picks the entry with the fewest strikes that
+  is **not** currently muted, so rotating source addresses cannot clear a
+  mute for free.
+
+**HIGH-2 — a spoofer could lock a named host out of matchmaking for
+~2.9 kbit/s** (`77af7787`). `rateLimitAllow` was the first statement in
+`onMessage`, ahead of length/magic/version/gate and keyed on
+`rinfo.address` only, which contradicted the file's own comments claiming
+an uncookied request consumes no rate budget. Spoofed 36-byte REGISTERs
+carrying the victim's IP exhausted `RATE_LIMIT_PER_WINDOW`, and the
+victim's own correctly-cookied REGISTER then got zero replies and bound
+nothing — the user sees `RENDEZVOUS_DOWN` and goes to check their
+internet. `onMessage` now orders length → magic → version → type/length →
+`returnRoutabilityGate` → handler, so nothing is charged to an IP until
+the frame is well-formed. The gate charges **cookied** requests to
+`rateLimitAllow` and **uncookied first contact** to a separate, much
+larger `preGateAllow` bucket (`PREGATE_LIMIT_PER_WINDOW = 100`/s/IP) — a
+different bucket, not a bigger one, so cookied traffic is structurally
+immune to uncookied flooding rather than merely better funded. 100 is
+sized off the 0.89 amplification factor: at the cap the victim receives
+100 × 32 B/s while the attacker spends 100 × 36 B/s to elicit it, so the
+attacker always pays more than the victim receives; legitimate need is one
+challenge round at startup plus one per ≥ 60 s cookie rotation, which
+covers ~6000 clients behind one NAT.
+
+Consequence the review did not call out, caused by the reordering itself:
+moving the limiter behind the frame checks removed the implicit 10/s/IP
+cap that was throttling the pre-validation `logWarn` calls, turning a junk
+flood into an unbounded synchronous console write — one denial of service
+traded for another. Pre-validation logs now go through `noteThrottled()`,
+keyed on a fixed set of reason strings (never attacker-supplied, so that
+map cannot grow), at most one aggregated line per reason per 10 s.
+**Operational note:** the per-packet `[CHALLENGE]` log line is now an
+aggregated count every 10 s, not one line per packet.
+
+**HIGH-3 — the protocol harness silently skipped tests** (`77af7787`).
+`__test_protocol.js` wrapped every test in one `try`/`catch`, so the first
+thrown "recv timeout" unwound the runner and skipped all remaining tests
+while printing a misleadingly small failure count. Demonstrated: with the
+server's version check disabled the run printed "1 assertion(s) failed"
+while everything from `testLengthReject` through `testSweepHook` and
+`testV1ClientInterlock` never executed — which means one "proven red"
+claim in §6.6 was wrong, and the prove-it-can-fail methodology was
+unreliable after the first throw. Each test now runs under
+`runTest(name, fn)` with its own `try`/`catch`, records assertion failures
+and throws separately, and resets server rate/session state pass-or-throw
+so a dead test cannot poison its successors. `testsRun` is asserted
+against a **literal** `EXPECTED_TESTS` (26), not `TESTS.length`, so a
+silently skipped or quietly deleted test is itself a hard failure
+(`COVERAGE FAIL`). The review said 25 tests; there were 23, plus 3 new.
+
+**MEDIUM-1 — the check digit did not detect all single-character typos**
+(`3b92669d`). v1/v2 computed the ISO 7064 hybrid recurrence with the
+intermediate sum reduced mod 37 (M+1) instead of mod 36 (M), letting the
+running product reach 0 as well as 36; `(37 - product) % 36` maps both to
+check char `'1'`, collapsing 37 product states onto 36 outputs. The
+documented "every single-character substitution is detected" guarantee in
+`room_code.h` was therefore false. Measured against the shipped v2 codec:
+**2508 of 1,960,000 substitutions (0.128%, ~1 in 781)** decoded silently
+to a *different* endpoint. Worked counterexample, both `ROOM_CODE_OK`:
+
+| code | decodes to |
+|---|---|
+| `248BVXBAA4DNM1` | 34.23.190.173 |
+| `2E8BVXBAA4DNM1` | 114.23.190.173 |
+
+i.e. a one-character typo aimed ~15 s of UDP punch traffic at an
+uninvolved third party and then reported `HOST_OFFLINE`, never "Invalid
+room code". v3 solves the check character correctly (sum mod M), whose
+product range is [1, 36] and whose check map is a bijection. The old
+recurrence is retained as `iso7064_legacy_compute` for exactly one
+purpose — recognizing v1/v2 codes as `ROOM_CODE_OLD_FORMAT`. The
+regression net is `test_room_code.c full_alphabet_sweep()`, which replaces
+every position with every other character of the full 0-9A-Z alphabet:
+0 undetected of 2,520,000 post-fix; 3484 of 2,520,000 (0.1383%) with the
+recurrence neutralized back to mod 37. The previous `typo_detection` test
+applied one hardcoded substitution per position and could never have seen
+the collapse.
+
+**MEDIUM-3 — unbounded spoofable pre-validation allocation** (`77af7787`).
+`rateLimitAllow` created a `Map` entry before length/magic/version/gate;
+measured, 1-byte junk from 5000 spoofed IPs retained 5000 entries ≥ 60 s,
+which at 100k pps is ~6M live entries/minute → V8 heap exhaustion. Fixed
+from both ends: the HIGH-2 reordering means junk now allocates nothing at
+any rate, and all three buckets (`rateMap`, `preGateMap`, `keyRateMap`)
+are hard-capped at `MAX_RATE_ENTRIES = 2 * MAX_SESSIONS = 8192` with O(1)
+LRU eviction (JS `Map` insertion order *is* recency order when every hit
+re-inserts, so `map.keys().next()` is the victim; a scan-for-oldest would
+be O(n) per admit and would bolt a second DoS onto the fix for the first).
+Eviction fails **open**, which is the correct direction: these buckets are
+a courtesy throttle and the cookie is the authorization gate, so a flood
+can dilute the throttle but can never use eviction to deny a real client.
+
+**Not a wire change.** The '3SXR' protocol version stays **2** through all
+of this. The session key is a 16-byte opaque blob to the server, so a
+room-code format bump needs no server change; only the derivation domains
+moved (`"3SXR-SK2"`/`"3SXR-PT2"` → `"3SXR-SK3"`/`"3SXR-PT3"`), which is
+what stops a v2 payload landing in a v3 slot.
+
+**Residuals, stated rather than hidden.**
+
+- Any per-source pre-gate budget remains spoof-starvable for **first
+  contact**, because first contact is by definition unauthenticated (see
+  the comment at the `rendezvous-server.js` PREGATE block). What is now
+  impossible is starving an established, cookie-holding client — the
+  lockout the review actually found.
+- A bounded mute is a deliberate trade: it caps the oracle without being
+  able to permanently exclude anyone, so a sufficiently patient attacker
+  is slowed by ~150×, not stopped.
+- §6.7 still applies unchanged: the code contains the host IP by
+  necessity, and symmetric×symmetric is still S5.
+
+**Remaining findings.**
+
+- **MEDIUM-4** (`bc8694cc`) — the room code became key material at S4b
+  (it seeds both the session key and the punch token) but was still
+  logged in cleartext, and alpha testers routinely hand log files over.
+  `RoomCode_Redact` now masks the final `ROOM_CODE_REDACT_CHARS = 8`
+  non-dash characters, which covers every one of the 32 nonce bits (the
+  nonce is the low 32 bits of the 80-bit payload = the last 7 payload
+  chars, plus the check digit that is a function of them). The version
+  char and the ip+port characters survive — the half the joiner must know
+  anyway, already printed in the clear on the same log line. Applied at
+  the HOST_WAITING publish, the drift re-encode, and the handoff Join
+  dispatch. The full code stays on the overlay.
+- **L-3** (`bc8694cc`) — CSPRNG failure policy was inconsistent in the
+  worst direction: `RoomCode_GenerateNonce` hard-failed while `stun.c`
+  degraded silently to `SDL_rand`. On a device without `/dev/urandom` the
+  HOST aborted hosting while the JOINER carried on with predictable
+  transaction IDs — reintroducing exactly the RFC 5389 §6 forgery
+  weakness S4a set out to remove, on the side least able to notice. Both
+  now fail closed and loud; `Stun_Discover` refuses early with a new
+  `diag_csprng_fail` that classifies as `CONNECT_FAIL_INTERNAL` rather
+  than a connectivity diagnosis (nothing ever left the machine). The
+  `static bool warned` one-shot, previously raced between the discover
+  worker and the main-thread keepalive, is now a CAS.
+- **L-4** (`bc8694cc`) — `P2P_FAIL_CODE_VERSION` split into
+  `..._OLDER` / `..._NEWER`. The two answers send opposite people to
+  opposite actions (with OLDER the code's *creator* must update; with
+  NEWER the person typing it must), which is the entire question a
+  support thread has to answer.
+- **L-5** — room-code length/nonce drift across the older plan docs;
+  documentation-only, corrected or annotated as superseded.
+- **MEDIUM-5** — the documented netplay-test build recipe omitted
+  `NETPLAY_TEST_HOOKS` and therefore did not compile (configures clean,
+  then ~20 errors). Corrected in the four affected docs. The source-side
+  half: `test_stun_mock.c` used to print one quiet line, still exit 0 and
+  still claim "+ discover passed" when built without the hooks, so four
+  `run_discover_*` tests validated nothing while looking green — it now
+  reports INCOMPLETE and fails.
+- **MEDIUM-2** — integration coverage for the S4c client cookie
+  handshake, on both roles; lands in a sibling commit.
 
 ## 7. S5 — Custom '3SXR' relay for symmetric-NAT pairs
 
@@ -731,5 +954,5 @@ expected outcome. This is the regression net for S2–S7.
 | S1 host liveness | **implemented (this series)** |
 | S2 punch / STUN mechanics | **implemented** (see §4; includes the unplanned STUN port-byteswap fix) |
 | S3 no-hangs + failure taxonomy | **implemented** (see §5) |
-| S4 security | **implemented** (see §6; S4a punch auth, S4b room code v2, S4c rendezvous return-routability — the last two are breaking wire/format changes, authorized) |
+| S4 security | **implemented + adversarially reviewed** (see §6; S4a punch auth, S4b room code — now v3, S4c rendezvous return-routability — the last two are breaking wire/format changes, authorized. Review fixes as-built in §6.8) |
 | S5–S8 | planned above |

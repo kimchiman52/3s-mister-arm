@@ -1254,7 +1254,25 @@ int Netplay_Test_StunMock(void) {
     discover_rc |= run_discover_retransmit_test();
     discover_rc |= run_discover_disagreement_test();
 #else
-    fprintf(stderr, "[test_stun_mock] discover tests skipped (build lacks NETPLAY_TEST_HOOKS)\n");
+    /* S4-review MEDIUM-5: this used to print one quiet line, still exit
+     * 0, and still claim "+ discover passed" in the success message —
+     * so a build configured with -DENABLE_NETPLAY_TESTS but WITHOUT
+     * NETPLAY_TEST_HOOKS validated nothing for four tests while looking
+     * green at the shell. Four docs told readers to build exactly that
+     * way. A silently-skipped test is a work item, not a pass: be loud
+     * AND exit non-zero so CI and humans both notice. Nothing here is
+     * expected to run in that configuration — build it correctly:
+     *   -DENABLE_NETPLAY=ON -DNETPLAY_TEST_HOOKS=ON \
+     *   "-DCMAKE_C_FLAGS=-DENABLE_NETPLAY_TESTS"
+     */
+    fprintf(stderr,
+            "[test_stun_mock] INCOMPLETE: this build lacks NETPLAY_TEST_HOOKS, so the "
+            "four run_discover_* tests (parallel probe, all-dead diag, retransmit, "
+            "port disagreement) DID NOT RUN.\n"
+            "[test_stun_mock] Reporting failure rather than a misleading pass. "
+            "Rebuild with -DNETPLAY_TEST_HOOKS=ON alongside "
+            "-DCMAKE_C_FLAGS=-DENABLE_NETPLAY_TESTS.\n");
+    discover_rc = 1;
 #endif
 
     if (fail_count > 0 || wire_rc != 0 || codec_rc != 0 || retarget_rc != 0 ||

@@ -42,7 +42,7 @@ Upstream `/tmp/3sxtra/src/port/sdl/netplay/sdl_netplay_ui.cpp:1141-1209` runs **
 **Decision (codified in Step 6, Step 9).** STUN, hole-punch, UPnP port-mapping, and the socket hand-off all run **inside the game binary** (`src/netplay/`). The wrapper OSD's role is strictly:
 
 - Collect user intent (Host vs. Join).
-- For Join: accept the 12-character base32 room code (gamepad-navigable widget).
+- For Join: accept the 12-character base32 room code (gamepad-navigable widget). *[Superseded — and already inconsistent with Step 2's own 14 at the time of writing. As shipped the code is **18** chars, `XXXXXX-XXXXXX-XXXXXX` (`DP2P_CODE_CHAR_LEN 18` in the wrapper OSK). See `docs/plan-netplay-connection.md` §6.3.]*
 - Write a single handoff file (`/tmp/3s-arm-netplay.handoff`, mode 0600) containing one of `mode=host\n` or `mode=join\ncode=AB3F-9K2L-MN7P\n`.
 - Re-exec `/media/fat/games/3s-arm/bin/3s-arm` — existing wrapper pathway already forwards its own `argv[2..]`; we add `--direct-p2p-handoff /tmp/3s-arm-netplay.handoff` to the child argv inside the wrapper (see `vendor/Main_MiSTer/thirdsarm_wrapper.cpp:2765-2770`).
 
@@ -143,6 +143,24 @@ This split is load-bearing for the plan. Steps 10 and 11 implement the wrapper s
 
 ## Step 2 — Base32 room-code codec
 
+> **Superseded design — the format below never shipped in this shape.**
+> This step specifies an 8-byte payload (`ip | public_port |
+> local_port`), a 14-char code with no version character and a 17-char
+> display form. What actually landed, in three steps: `local_port` was
+> dropped before the first release (6-byte payload, **11** chars — see
+> `docs/STUN-PORT-STATUS.md`); S4b added a version char and a nonce
+> (**14** chars, v2); the S4 adversarial review widened the nonce to 32
+> bits (**18** chars, v3: `'3'` + 80-bit `ip(32)|port(16)|nonce(32)` in
+> 16 Crockford chars + 1 ISO 7064 MOD 37,36 check digit, displayed
+> `XXXXXX-XXXXXX-XXXXXX` = 20 visible). Treat every payload size,
+> character count and display form in this step as the original plan of
+> record, not as current fact. Current spec:
+> `docs/plan-netplay-connection.md` §6.3; the v3 rationale and the
+> check-digit defect that forced it are in §6.8 and in the `room_code.h`
+> header comment. The base32 alphabet choice (Crockford) and the check
+> scheme (ISO 7064 MOD 37,36) *did* survive unchanged — the arithmetic
+> for computing the check character did not (§6.8, MEDIUM-1).
+
 **Why it matters.** Upstream's `Stun_EncodeEndpoint` (`/tmp/3sxtra/src/netplay/stun.c:39-43`) emits `"ip|public_port|local_port"` — verbose, error-prone over voice chat, and unsuitable for gamepad entry. The user's locked decision #6 requires a short base32-alphabet, human-typeable code with a checksum. Typical payload: 4 bytes IPv4 + 2 bytes public_port + 2 bytes local_port = 8 bytes = 13 base32 chars; with a checksum digit → 14 chars → displayed as `ABCD-EFGH-IJKL-MN` (three dashes, 17 printable chars total).
 
 **Files to read first.**
@@ -172,8 +190,9 @@ This split is load-bearing for the plan. Steps 10 and 11 implement the wrapper s
 - `src/main.c`: route `--test-room-code` to a dispatch that calls into the test TU and exits.
 
 **Success criteria.**
-- `EXTRA_CMAKE_ARGS="-DENABLE_NETPLAY=ON -DCMAKE_C_FLAGS=-DENABLE_NETPLAY_TESTS" tools/mister/build-game.sh --flavor telemetry` succeeds. The cross-compiled binary lands at `build/mister-telemetry/3s-arm` (per `tools/mister/build-game.sh:157`).
-- Run the test binary via one of: (a) inside the Docker cross-build container (`docker exec ... build/mister-telemetry/3s-arm --test-room-code`), (b) host macOS build via `cmake -S . -B build/host -DENABLE_NETPLAY=ON -DCMAKE_C_FLAGS=-DENABLE_NETPLAY_TESTS && cmake --build build/host --target 3s-arm` followed by `./build/host/3S-ARM.app/Contents/MacOS/3S-ARM --test-room-code`, or (c) `tools/mister/misterctl.sh` deploy + run on the device. The test must print `[room_code] PASS (N=10000)` and exit 0. (A cross-compiled ARM `3s-arm` cannot be executed directly on the macOS dev host.)
+- `EXTRA_CMAKE_ARGS="-DENABLE_NETPLAY=ON -DNETPLAY_TEST_HOOKS=ON -DCMAKE_C_FLAGS=-DENABLE_NETPLAY_TESTS" tools/mister/build-game.sh --flavor telemetry` succeeds. The cross-compiled binary lands at `build/mister-telemetry/3s-arm` (per `tools/mister/build-game.sh:157`).
+- **The two flags are spelled differently and both are required.** `NETPLAY_TEST_HOOKS` is a genuine CMake `option()` (`CMakeLists.txt:47`, default OFF) and must be passed as `-DNETPLAY_TEST_HOOKS=ON`; `ENABLE_NETPLAY_TESTS` is *not* a CMake option and only reaches the compiler via `CMAKE_C_FLAGS`. Passing `CMAKE_C_FLAGS` alone configures cleanly and then fails the build with ~20 compile errors in the netplay test TUs. Note also that `EXTRA_CMAKE_ARGS` is split on whitespace by `tools/mister/build-game.sh:171`, so each token must be whitespace-free — pass the hooks flag as its own `-D`, do not fold it into a quoted `CMAKE_C_FLAGS` string.
+- Run the test binary via one of: (a) inside the Docker cross-build container (`docker exec ... build/mister-telemetry/3s-arm --test-room-code`), (b) host build via `cmake -S . -B build/host -DCMAKE_BUILD_TYPE=Debug -DENABLE_NETPLAY=ON -DNETPLAY_TEST_HOOKS=ON "-DCMAKE_C_FLAGS=-DENABLE_NETPLAY_TESTS" && cmake --build build/host --target 3s-arm` followed by `./build/host/3S-ARM.app/Contents/MacOS/3S-ARM --test-room-code` (macOS; on Linux the binary is `build/host/3s-arm`), or (c) `tools/mister/misterctl.sh` deploy + run on the device. The harness must exit 0; its final line is `[test_room_code] OK — all cases passed`. (A cross-compiled ARM `3s-arm` cannot be executed directly on the macOS dev host.)
 - `grep -c 'RoomCode_Encode\|RoomCode_Decode' src/netplay/room_code.c` returns at least 2.
 - Manual spot-check: 192.168.1.171 + public_port 55123 + local_port 55123 encodes to a 14-char string, decodes back to the same bytes, display form has exactly 3 dashes.
 
@@ -190,7 +209,7 @@ This split is load-bearing for the plan. Steps 10 and 11 implement the wrapper s
 - If ISO 7064 MOD 37,36 check-character math is wrong: compare against the published test vector (`ISO7064` Wikipedia reference implementations). The alphabet ordering for the 37-wide modulus must match the ISO table: 0–9, A–Z, then the check-only character `*`. When restricted to the Crockford 32 characters, the missing slots (I/L/O/U) are simply unreachable by encode; decode rejects them as invalid input.
 - If round-trip fails for edge endpoints (port 0, port 65535): fix endianness handling. IPv4 is stored big-endian throughout; ports are converted to big-endian before encoding.
 - If the test harness hangs: the random seed loop is running forever. Use `SDL_rand_bits()` not `rand()` — Phase 6 Step 7 decision.
-- If the code is >14 chars: the payload exceeds 8 bytes. Verify you aren't packing anything else in (no flags byte, no version — room code carries only the endpoint tuple).
+- If the code is >14 chars: the payload exceeds 8 bytes. Verify you aren't packing anything else in (no flags byte, no version — room code carries only the endpoint tuple). *[Superseded, and this one inverted: the shipped code deliberately carries **both** a version character and a 32-bit nonce on top of the endpoint tuple (10-byte payload, 18 chars). The nonce is what stops the punch token and rendezvous session key from being derivable by anyone who can guess `(ip, port)` — `docs/plan-netplay-connection.md` §6.3. Do not "fix" a long code by stripping them.]*
 
 ---
 
@@ -447,7 +466,7 @@ This split is load-bearing for the plan. Steps 10 and 11 implement the wrapper s
   - Extend `NetplayScreen_Render` to inspect `DirectP2P_GetState()` when `Netplay_GetSessionState() == NETPLAY_SESSION_IDLE`. If the orchestrator is running, render its state/message/code. Render order:
     - If state is `DIRECT_P2P_UPNP_PROBING`: show "Opening port forward..." at top.
     - If `DIRECT_P2P_STUN_DISCOVERING`: show "Discovering public endpoint..." at top.
-    - If `DIRECT_P2P_AWAITING_PEER_CODE` (Host): show "Room Code:" on the label line, the formatted 17-char code (`AB3F-9K2L-MN7P-XY`) centered on a second line. `SSPutStrPro` (`src/sf33rd/Source/Game/ui/sc_sub.h:44`) has no scale parameter — its signature is `s32 SSPutStrPro(u16 flag, u16 x, u16 y, u8 atr, u32 vtxcol, const char* str);` where `atr` is a palette bank, not a scale. Use single-size text and center horizontally on the 384-wide canvas (text width ≈ 8 px per character = 136 px for 17 chars; `x = (384 - 136) / 2 = 124`). `SSPutStr_Bigger` accepts an `f32 sc` parameter but its call path is not what netplay_screen.c currently uses; introducing it here is scope creep.
+    - If `DIRECT_P2P_AWAITING_PEER_CODE` (Host): show "Room Code:" on the label line, the formatted 17-char code (`AB3F-9K2L-MN7P-XY`) centered on a second line. `SSPutStrPro` (`src/sf33rd/Source/Game/ui/sc_sub.h:44`) has no scale parameter — its signature is `s32 SSPutStrPro(u16 flag, u16 x, u16 y, u8 atr, u32 vtxcol, const char* str);` where `atr` is a palette bank, not a scale. Use single-size text and center horizontally on the 384-wide canvas (text width ≈ 8 px per character = 136 px for 17 chars; `x = (384 - 136) / 2 = 124`). `SSPutStr_Bigger` accepts an `f32 sc` parameter but its call path is not what netplay_screen.c currently uses; introducing it here is scope creep. *[Superseded twice. The code is **20 visible** chars now (`XXXXXX-XXXXXX-XXXXXX`, v3), not 17, so the hand-computed `x = 124` would be wrong; and the as-built overlay does not hand-compute `x` at all — `src/netplay/direct_p2p_overlay.c` calls `SSPutStrProP(1, DP2P_OVL_CANVAS_W /* 384 */, ...)`, which self-centers the string within `[0, width]`. The layout constants live in that file, not in `netplay_screen.c`.]*
     - If `DIRECT_P2P_PUNCHING`: show "Connecting to peer..." at top.
     - If `DIRECT_P2P_HANDING_OFF`: show "Connected!" briefly.
     - If `DIRECT_P2P_FAILED_SYMMETRIC_NAT`: show "Cannot connect through your router." and below "Enable UPnP or use Lobby." — hold for 4 seconds then trigger a clean exit (return to the title).
@@ -471,7 +490,7 @@ This split is load-bearing for the plan. Steps 10 and 11 implement the wrapper s
 - Do not blink the text. Fighting-game community reads static text fast enough; animation adds CPU and interrupts the frame budget we spent Phase 1–4 lowering.
 
 **What to do if it fails.**
-- If the formatted 17-character code runs off the right edge at x=384: measure the string width at runtime (SSPutStrPro returns width on the `s32` return path) and adjust `x` accordingly, or drop the dashes on the screen display and let users reconstruct (mild UX degradation).
+- If the formatted 17-character code runs off the right edge at x=384: measure the string width at runtime (SSPutStrPro returns width on the `s32` return path) and adjust `x` accordingly, or drop the dashes on the screen display and let users reconstruct (mild UX degradation). *[Superseded: the display form is now 20 visible characters (v3), and the as-built overlay lets `SSPutStrProP` centre within the 384-wide canvas rather than computing an `x`. The v3 bump added 4 payload chars and one dash group — worth re-checking against the CRT if this ever regresses.]*
 - If the state machine flashes through a state too fast to read: add a minimum 500 ms hold timer on each state in the orchestrator (Step 7) rather than in the renderer.
 - If native_video_writer doesn't pick up the overlay when main menu is visible: `NetplayScreen_Render` is called after the menu draw in sdl_app.c. Move the call site after the menu render block.
 
@@ -551,7 +570,7 @@ This split is load-bearing for the plan. Steps 10 and 11 implement the wrapper s
 - Lint-grep: `grep -c 'MENU_DIRECT_P2P' tools/mister-wrapper/main-mister-full-menu.patch` returns at least 5 (enum entries + case labels).
 - No changes under `build/` tree committed (AGENTS.md §Source of Truth).
 
-**Dependencies.** Step 2 (for the base32 display; the wrapper side reads the code as 14 chars but doesn't need to decode — that's the game's job).
+**Dependencies.** Step 2 (for the base32 display; the wrapper side reads the code as 14 chars but doesn't need to decode — that's the game's job). *[Superseded: **18** chars as shipped (`DP2P_CODE_CHAR_LEN 18`). "Doesn't need to decode" still holds, but the wrapper's buffers are NOT length-agnostic — they are sized from `RECENT_JOIN_CODE_BUF 24` and must be updated in lockstep with `room_code.h` whenever the format grows; the v3 bump would have overflowed the previous 16-byte buffers.]*
 
 **What NOT to do.**
 - Do not link `src/netplay/room_code.c` into the wrapper. The wrapper takes a typed string and forwards verbatim; the game validates. Avoids a cross-TU dep.
@@ -647,8 +666,8 @@ This split is load-bearing for the plan. Steps 10 and 11 implement the wrapper s
 2. Pass: test exits 0.
 
 **Success criteria.**
-- `EXTRA_CMAKE_ARGS="-DENABLE_NETPLAY=ON -DCMAKE_C_FLAGS=-DENABLE_NETPLAY_TESTS" tools/mister/build-game.sh --flavor telemetry` succeeds. Cross-compiled output lands at `build/mister-telemetry/3s-arm`.
-- Let `${HOST_BIN}` be `build/host/3S-ARM.app/Contents/MacOS/3S-ARM` on macOS or `build/host/3s-arm` on Linux; or use the Docker cross-build container's `build/mister-telemetry/3s-arm`; or deploy to MiSTer and invoke via `tools/mister/misterctl.sh`. `"${HOST_BIN}" --test-stun-mock` passes (runs in ~1 second, no network dep).
+- `EXTRA_CMAKE_ARGS="-DENABLE_NETPLAY=ON -DNETPLAY_TEST_HOOKS=ON -DCMAKE_C_FLAGS=-DENABLE_NETPLAY_TESTS" tools/mister/build-game.sh --flavor telemetry` succeeds. Cross-compiled output lands at `build/mister-telemetry/3s-arm`. Both flags are required — see the note in Step 2's success criteria for why the spellings differ.
+- Let `${HOST_BIN}` be `build/host/3S-ARM.app/Contents/MacOS/3S-ARM` on macOS or `build/host/3s-arm` on Linux; or use the Docker cross-build container's `build/mister-telemetry/3s-arm`; or deploy to MiSTer and invoke via `tools/mister/misterctl.sh`. `"${HOST_BIN}" --test-stun-mock` passes (runs in ~1 second, no network dep). **`--test-stun-mock` needs `NETPLAY_TEST_HOOKS`, not just `ENABLE_NETPLAY_TESTS`.** Its four `run_discover_*` cases (parallel probe, all-dead diagnosis, retransmit, port-disagreement) are compiled out without the hooks. Historically that skip printed one quiet line and the harness **still exited 0**, so "expect exit 0" from a bare-flags build validated nothing for those four; it now prints `[test_stun_mock] INCOMPLETE: ... DID NOT RUN` and fails (`test_stun_mock.c:1257-1275`). Either way, build with `-DNETPLAY_TEST_HOOKS=ON` — a bare-flags build was never sufficient.
 - `"${HOST_BIN}" --test-direct-p2p-flow` passes.
 - Smoke A (same-LAN hairpin) completed end-to-end with evidence (log snippet in commit message showing `configure_gekko` reached and the hairpin log line from Step 7). **REQUIRED.**
 - Smoke C (UPnP-disabled router) completed with evidence (STUN-hairpin log line, router UPnP confirmed disabled via admin page screenshot noted in commit message). **REQUIRED.**
@@ -674,9 +693,9 @@ This split is load-bearing for the plan. Steps 10 and 11 implement the wrapper s
 
 ## Open questions flagged during planning
 
-1. **Wrapper OSD text-entry for 14-character code.** The BTNCHECK patch pattern shows how to add a new MENU state, but does not demonstrate multi-character text entry. Before implementing Step 10, a 1–2 hour research spike on `vendor/Main_MiSTer/...` (or the upstream Main_MiSTer menu.cpp at the pinned commit) must enumerate existing upstream menu patterns that collect multi-character strings (e.g., SD card file selection, hostname entry). If none exist upstream, Step 10's fallback is a 4x4 on-screen keyboard built from `OsdWrite`.
+1. **Wrapper OSD text-entry for 14-character code.** *[Answered, and the length moved: the OSK is a 6×7 grid entering an **18**-character code (`DP2P_CODE_CHAR_LEN 18`, dashes rendered after chars 6 and 12, buffers sized from `RECENT_JOIN_CODE_BUF 24`). An 18-char code overflows the original 16-byte buffers, so the wrapper constants are kept in lockstep with `room_code.h` — see `docs/plan-netplay-connection.md` §6.3.]* The BTNCHECK patch pattern shows how to add a new MENU state, but does not demonstrate multi-character text entry. Before implementing Step 10, a 1–2 hour research spike on `vendor/Main_MiSTer/...` (or the upstream Main_MiSTer menu.cpp at the pinned commit) must enumerate existing upstream menu patterns that collect multi-character strings (e.g., SD card file selection, hostname entry). If none exist upstream, Step 10's fallback is a 4x4 on-screen keyboard built from `OsdWrite`.
 2. **miniupnpc:armhf availability.** Confirmed available via Debian bullseye main (the `tools/mister/setup-build-container.sh` apt sources cover bullseye main + bullseye-updates + bullseye-security). If the package gets moved to unstable/testing only, Step 4's fallback is vendoring miniupnpc into `third_party/` similar to SDL3_net (add ~60 LOC to `build-deps.sh`). Verify at Step 4 kickoff.
-3. **Host's internal IP in the room code.** When UPnP succeeds, the external IP from UPnP maps to the LAN IP via the router's NAT. The joiner needs the external IP+external_port. But on hairpin (same LAN), the joiner needs the internal IP+internal_port. Resolution: encode the external IP in the code; on the joiner's side, run STUN too and compare public IPs — if same, rewrite to the host's internal_port (which the code also carries). This is exactly upstream's pattern (`sdl_netplay_ui.cpp:719-720` uses `lobby_punch_peer_local_port` for the hairpin port). The 8-byte payload in Step 2 already accommodates both port fields.
+3. **Host's internal IP in the room code.** When UPnP succeeds, the external IP from UPnP maps to the LAN IP via the router's NAT. The joiner needs the external IP+external_port. But on hairpin (same LAN), the joiner needs the internal IP+internal_port. Resolution: encode the external IP in the code; on the joiner's side, run STUN too and compare public IPs — if same, rewrite to the host's internal_port (which the code also carries). This is exactly upstream's pattern (`sdl_netplay_ui.cpp:719-720` uses `lobby_punch_peer_local_port` for the hairpin port). The 8-byte payload in Step 2 already accommodates both port fields. *[Resolved differently — this resolution was NOT implemented. `local_port` was dropped from the payload before the first release (`docs/STUN-PORT-STATUS.md`), so the shipped code does **not** carry `internal_port` at any version. Hairpin relies on NAT loopback instead. The payload's second port slot became the nonce.]*
 4. **Session restart after symmetric-NAT failure.** Answered: the game renders the failure string for 4 seconds, then calls `Soft_Reset_Sub()` — the existing Phase 6 netplay-teardown return-to-title path. The wrapper OSD is not involved (the user re-enters it through the normal OSD hotkey once back at the title). Step 7 and Step 8 encode this behavior. Post-MVP refinement path: if UX feedback requests auto-return to wrapper OSD, add a game-to-wrapper exit signal (likely a distinct exit code the wrapper interprets).
 5. **Doc/code mismatch: wrapper source.** AGENTS.md §Source of Truth warns that `build/mister-wrapper-hps/src/` is NOT the source of truth, and points at `vendor/Menu_MiSTer/`. But `Menu_MiSTer` is the **FPGA core menu** (SystemVerilog); the **OSD wrapper** (ARM-side C++) source is `vendor/Main_MiSTer/` per `tools/mister-wrapper/build-hps.sh:7`. Plan uses `vendor/Main_MiSTer/` for wrapper edits. Flagged here for agent safety — do not edit `vendor/Menu_MiSTer/` when the user asks for OSD changes.
 6. **`r_no[1]=6` routing.** Per the task spec and `docs/plan-netplay-phase6.md:433-437`, our fork's menu slot 5 routes to `MENU_SCREEN_NETWORK_LOBBY`. Direct-P2P does NOT collide because Direct-P2P is entered via the **wrapper OSD**, not via an in-game menu slot. No new in-game menu slot is allocated. Documented in Step 10.

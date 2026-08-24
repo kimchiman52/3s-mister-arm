@@ -17,6 +17,25 @@ Before running any of these, confirm the following once per session:
    ```
    Deploy per `docs/mister-runbook.md` (rsync the install tree into
    `/media/fat/games/3s-arm/`; NEVER use `--delete`).
+
+   For the offline harnesses in steps 3 and 4 you need a **test** build
+   instead, which requires **two** differently-spelled flags:
+   ```bash
+   EXTRA_CMAKE_ARGS="-DENABLE_NETPLAY=ON -DNETPLAY_TEST_HOOKS=ON -DCMAKE_C_FLAGS=-DENABLE_NETPLAY_TESTS" \
+       tools/mister/build-game.sh --flavor telemetry
+   ```
+   `NETPLAY_TEST_HOOKS` is a real CMake `option()` (`CMakeLists.txt:47`,
+   default OFF); `ENABLE_NETPLAY_TESTS` is not an option and only reaches
+   the compiler through `CMAKE_C_FLAGS`. Passing only the latter
+   configures cleanly and then fails the build with ~20 compile errors.
+   (`EXTRA_CMAKE_ARGS` is whitespace-split by
+   `tools/mister/build-game.sh:171`, so keep each `-D` token
+   whitespace-free.) The equivalent host build is:
+   ```bash
+   cmake -S . -B build/host -DCMAKE_BUILD_TYPE=Debug -DENABLE_NETPLAY=ON \
+       -DNETPLAY_TEST_HOOKS=ON "-DCMAKE_C_FLAGS=-DENABLE_NETPLAY_TESTS"
+   cmake --build build/host --target 3s-arm
+   ```
 3. Room-code codec has already been validated offline:
    ```bash
    "${HOST_BIN}" --test-room-code   # expect exit 0
@@ -28,6 +47,18 @@ Before running any of these, confirm the following once per session:
    This requires `-DENABLE_NETPLAY_TESTS` in `CMAKE_C_FLAGS`. A build
    without the flag returns exit code 2 with a `"not compiled in"`
    diagnostic; that is the expected fallback behavior, not a failure.
+
+   **`--test-stun-mock` also requires `NETPLAY_TEST_HOOKS`.** Its four
+   `run_discover_*` cases (parallel probe, all-dead diagnosis,
+   retransmit, port-disagreement) are compiled out without the hooks.
+   That skip used to print one quiet line and **still exit 0**, so
+   "expect exit 0" above validated nothing for those four cases on a
+   bare-`-DENABLE_NETPLAY_TESTS` build. The harness now reports
+   `[test_stun_mock] INCOMPLETE: ... DID NOT RUN` and exits non-zero
+   instead (`src/netplay/test_stun_mock.c:1257-1275`). Do not record
+   this step as passed against a binary that emits that line — and if
+   you are running an older binary that exits 0 anyway, check the output
+   for the skip line before believing it.
 
 Evidence captured per scenario: serial-over-SSH log excerpt, a screen
 photo of any on-screen code display, and the router UPnP state where
@@ -194,8 +225,9 @@ Covered entirely by `--test-room-code`. Runs in ~10 ms, no network.
 - If the binary was built without `-DENABLE_NETPLAY_TESTS`, the flag
   returns exit 2 with `"not compiled in"`. That is the
   intentional-stub path and does NOT satisfy Smoke D. Rebuild with
-  `EXTRA_CMAKE_ARGS="-DENABLE_NETPLAY=ON -DCMAKE_C_FLAGS=-DENABLE_NETPLAY_TESTS"`
-  and retry.
+  `EXTRA_CMAKE_ARGS="-DENABLE_NETPLAY=ON -DNETPLAY_TEST_HOOKS=ON -DCMAKE_C_FLAGS=-DENABLE_NETPLAY_TESTS"`
+  and retry. Both flags are required — see Prerequisites step 2;
+  `CMAKE_C_FLAGS` alone configures but does not build.
 
 ---
 

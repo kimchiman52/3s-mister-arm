@@ -5,6 +5,16 @@ branch `netplay`. The only outstanding action is deploying to the
 MiSTer at `192.168.1.171`, which was offline at session end (device
 not responding to ping).
 
+> **Historical snapshot — do not use as current reference.** Everything
+> below describes the branch/artifact state at the end of that one
+> session. The room code has since gone 11 → 14 (v2) → **18** chars
+> (v3: version char `'3'` + 80-bit `ip(32)|port(16)|nonce(32)` in 16
+> Crockford chars + ISO 7064 check digit, displayed
+> `XXXXXX-XXXXXX-XXXXXX`). Wherever this file says 11 or 14 chars, read
+> it as a record of what was true then. Current spec:
+> `docs/plan-netplay-connection.md` §6.3, with the S4 adversarial-review
+> fixes in §6.8.
+
 ## What shipped tonight
 
 All 12 steps of `docs/plan-stun-direct-p2p.md` plus the plan itself
@@ -27,7 +37,8 @@ Three changes, one commit, all review-driven:
    payload (6-byte payload, 10 payload chars + 1 check digit).
    Hairpin routing now relies on NAT loopback instead of the
    `127.0.0.1:local_port` shortcut. `room_code.h` documents the
-   rationale.
+   rationale. *(That 11-char form was superseded twice — v2 at 14 chars,
+   v3 at 18. `local_port` stayed dropped; the growth is the nonce.)*
 
 The `main-mister-full-menu.patch` hunk headers were re-validated
 against pinned Main_MiSTer ref `3380931329b8acb442bd3d35a24d89f88641b7cf`
@@ -108,9 +119,12 @@ Per `docs/direct-p2p-smoke-plan.md`:
   and a room code appears on-screen. Exit cleanly.
 
   Then try Join Game with a fabricated code — should render the
-  OSK, let you type 14 chars, and then fail with "Invalid room
-  code" or "Cannot reach peer". Tests the full OSD + handoff +
-  game-side flow end-to-end without a partner.
+  OSK, let you type **18** chars (`DP2P_CODE_CHAR_LEN`, dashes after
+  chars 6 and 12), and then fail with "Invalid room code" or "Cannot
+  reach peer". Tests the full OSD + handoff + game-side flow end-to-end
+  without a partner. *(This line said "14 chars" and contradicted the
+  "11-char code entry" artifact note above it even at the time; 18 is the
+  current v3 length.)*
 
 - **Smoke C (UPnP toggle — doable solo):** Host Game with `Disable
   UPnP` = Off, then again with = On. First run logs
