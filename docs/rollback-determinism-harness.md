@@ -203,6 +203,9 @@ full:
 ```sh
 # in a scratch worktree, NOT your working tree
 sed -i '' '/GS_SAVE(Random_ix16_bg)/d;/GS_LOAD(Random_ix16_bg)/d' src/netplay/game_state.c
+# the save set just shrank by one, so the extraction floor has to follow
+sed -i '' 's/^MIN_GS_SAVE_MACRO_NAMES = 608$/MIN_GS_SAVE_MACRO_NAMES = 607/' \
+    tools/rollback-determinism/check_rollback_determinism.py
 tools/rollback-determinism/run.sh fast --scenario 'makoto*'
 ```
 
@@ -211,10 +214,14 @@ Expected: exit **1**, with `Random_ix16_bg` DIVERGENT and
 frames 347–349 — i.e. the finding written up under
 "`makoto-sa3-super`: 6 divergent" below. This is the control that
 validates the FEEDBACK tagger specifically, which Control A does not.
-Note the driver also refuses to run at all if the save-set extraction
-degrades (`load_gs_save_names()` floor + the GS_SAVE/GS_LOAD
-set-equality check), so delete **both** halves or you will get exit 2
-for a different reason.
+
+Both `sed`s are needed, and the reason is worth understanding rather
+than copy-pasting: the driver refuses to run at all (exit **2**, not 1)
+if the save-set extraction degrades. Delete only one half of the pair
+and the GS_SAVE/GS_LOAD set-equality check fires; delete both and the
+name count drops below `MIN_GS_SAVE_MACRO_NAMES`, which is kept flush
+with the real count on purpose. Exit 2 is a *harness* failure, not a
+finding — if you get it, you are testing the guards, not the tagger.
 
 **Control C — historical, for the record.** The harness was validated
 against base commit `0e464a30` (before the desync-lane fixes), which

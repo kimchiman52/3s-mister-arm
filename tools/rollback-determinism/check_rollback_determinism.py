@@ -423,11 +423,22 @@ EFFECT_STATE_SAVES = ("frw", "frwque", "frwctr", "frwctr_min",
 # save set legitimately grows; never lower it to make a run pass.
 #
 # Kept flush with the actual count (608 unique names as of this line) rather
-# than left slack: a floor with slack is a floor you can walk under. The floor
-# alone is still the WEAKER of the two guards here, because it only sees the
+# than left slack: a floor with slack is a floor you can walk under. Flush also
+# gives it a second, stronger meaning — the save set may never SHRINK without a
+# deliberate edit here. Growth still passes untouched, so adding fields needs no
+# maintenance; only removal does, which is the case that deserves friction.
+#
+# The floor is still the WEAKER of the two guards, because it only sees the
 # aggregate — see the GS_SAVE/GS_LOAD set-equality check in
-# load_gs_save_names(), which is derived rather than pinned and catches a
-# single dropped line that this number never would.
+# load_gs_save_names(), which is derived rather than pinned and catches a single
+# dropped line at any save-set size, which no fixed number can.
+#
+# Deliberately removing a field from the save set (or running the Control B
+# mutation test in docs/rollback-determinism-harness.md, which deletes a
+# GS_SAVE/GS_LOAD pair on purpose) therefore needs this number lowered to
+# match. That is the intended workflow, not a workaround — but only ever in a
+# scratch tree or alongside a real save-set change. Never lower it to make an
+# otherwise-failing run go green.
 MIN_GS_SAVE_MACRO_NAMES = 608
 
 
@@ -448,7 +459,10 @@ def load_gs_save_names():
         fail(f"GS_SAVE extraction recognised only {len(names)} names in "
              f"{path} (floor is {MIN_GS_SAVE_MACRO_NAMES}). The save-set "
              f"regex has gone stale — feedback tagging would be wrong. Fix "
-             f"the extraction in load_gs_save_names(), do not lower the floor.")
+             f"the extraction in load_gs_save_names(), do not lower the floor. "
+             f"(If you deliberately removed a field from the save set, or are "
+             f"running the Control B mutation test, lower the floor to match "
+             f"in that tree — see the comment on MIN_GS_SAVE_MACRO_NAMES.)")
 
     # Derived companion to the floor above. GS_SAVE and GS_LOAD are two halves
     # of one round trip, so their name sets must be IDENTICAL — that invariant
