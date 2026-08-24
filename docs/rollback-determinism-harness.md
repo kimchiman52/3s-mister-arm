@@ -180,21 +180,34 @@ the controls below. Ordered cheapest first; run the cheap one whenever
 you are relying on a green verdict for a decision, and the rebuild one
 whenever you have changed the capture, the differ, or the classifier.
 
-**Control A — empty allowlist (no rebuild, ~5 min).** `allowlist.txt`'s
-39 fnmatch patterns suppressed 73 symbol hits in the last recorded run.
-Those symbols really do diverge because of rollback; they are judged
-benign, not absent. Take the suppression away and they must surface as
-findings — `load_allowlist()` returns an empty list for an empty or
-missing path, so no pattern matches anything:
+**Control A — empty allowlist (no rebuild, ~2.5 min).** `allowlist.txt`'s
+39 fnmatch patterns suppressed 43 ALLOWED rows (28 distinct symbols)
+across the two fast scenarios on this tree. Those symbols really do
+diverge because of rollback; they are judged benign, not absent. Take
+the suppression away and they must surface as findings —
+`load_allowlist()` returns an empty list for an empty or missing path,
+so no pattern matches anything:
 
 ```sh
 tools/rollback-determinism/run.sh fast --allowlist /dev/null
 ```
 
-Expected: exit **1**, `divergent` well above zero, `allowlisted=0`.
-Getting `verdict=PASS` out of this means the capture/differ/symbolizer
-chain is producing nothing to classify — the harness is broken, not the
-tree. This exercises everything except the FEEDBACK tagger.
+Measured on this tree, immediately after a `verdict=PASS` gate run of
+the same binary:
+
+```
+RBD SUMMARY: ... divergent=43 feedback=0 allowlisted=0 noise=182 errors=0 verdict=FAIL   (exit 1)
+```
+
+The arithmetic is the check: the 43 rows the gate reported as
+`allowlisted` are the same 43 that come back as `divergent`, and `noise`
+is unchanged at 182 because noise classification does not depend on the
+allowlist. Getting `verdict=PASS` out of this — or a `divergent` that
+does not account for the gate's `allowlisted` count — means the
+capture/differ/symbolizer chain is producing nothing to classify, i.e.
+the harness is broken, not the tree. This exercises everything except
+the FEEDBACK tagger (`feedback=0` here is expected: none of the
+allowlisted sinks is in the save set).
 
 **Control B — mutation test (one rebuild, ~4 min for one scenario).**
 Delete a save/load pair that fast mode provably exercises and confirm
