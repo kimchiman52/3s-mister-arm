@@ -8,6 +8,7 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
+#include <unistd.h>
 
 #include <SDL3/SDL.h>
 
@@ -68,7 +69,16 @@ void Language_PersistToConfig(Language language) {
     char path[512];
     char temp_path[512];
     SDL_snprintf(path, sizeof(path), "%sconfig", pref_path);
-    SDL_snprintf(temp_path, sizeof(temp_path), "%sconfig.tmp", pref_path);
+    // PID-qualified scratch file, unlike BgmType_PersistToConfig()'s plain
+    // `config.tmp`. Language_ApplyBootOverride() writes at BOOT, and on
+    // desktop Paths_GetPrefPath() is a single shared SDL_GetPrefPath()
+    // directory — so the frame-data suite's parallel `--test-enable`
+    // processes would all open the same `config.tmp` with "w" at the same
+    // moment, interleave their buffered writes into one inode, and then
+    // rename the resulting garbage over `config`. Distinct temp names make
+    // each writer's file private; rename(2) is atomic, so the losers are
+    // simply overwritten with identical content.
+    SDL_snprintf(temp_path, sizeof(temp_path), "%sconfig.tmp.%d", pref_path, (int)getpid());
 
     FILE* in = fopen(path, "r");
     FILE* out = fopen(temp_path, "w");
