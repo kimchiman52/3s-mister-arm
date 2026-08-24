@@ -40,9 +40,11 @@
 
 #ifdef ENABLE_NETPLAY_TESTS
 
+#include "netplay/net_tuning.h"
 #include "netplay/stun.h"
 
 #include <SDL3/SDL.h>
+#include <SDL3_net/SDL_net.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
@@ -460,17 +462,214 @@ static int run_codec_test(void) {
     return 0;
 }
 
+/* --- Hole-punch retarget regression (S2) ------------------------------- */
+
+/*
+ * S2 retarget fix (docs/plan-netplay-connection.md §4): when a punch
+ * datagram arrives from a TRANSLATED source port (symmetric-NAT peer),
+ * Stun_HolePunch must (a) update *peer_port to the observed port and
+ * (b) send its confirmation punches to THAT port — not the original
+ * port captured at function entry. Pre-fix, (a) happened but (b) did
+ * not, so the symmetric peer never received a confirmation and its own
+ * punch timed out.
+ *
+ * Simulation on localhost:
+ *   - `local`: a real SDL3_net datagram socket (the puncher).
+ *   - `wrong`: a bound throwaway that plays the stale/advertised port —
+ *     the puncher initially targets it; it never answers. Post-fix it
+ *     must stop receiving once the retarget happens.
+ *   - `mock peer`: a raw UDP socket on a DIFFERENT port that sends
+ *     "3SX_PUNCH" to the puncher (same source IP 127.0.0.1, translated
+ *     port — exactly what a symmetric peer's punch looks like) and then
+ *     counts the punch datagrams it receives back.
+ *
+ * PASS requires the mock peer to receive >= 1 punch datagram. Pre-fix
+ * this test FAILS: every send goes to `wrong`, the mock peer receives
+ * nothing (verified against the pre-S2 tree).
+ */
+
+/* Resolve the OS-assigned local port of an SDL3_net datagram socket via
+ * the net_tuning.h layout mirror (same technique as stun.c). */
+static uint16_t sdlnet_local_port(NET_DatagramSocket* sock) {
+    const NetTuningDgramMirror* m = (const NetTuningDgramMirror*)sock;
+    for (int h = 0; h < m->num_handles; h++) {
+        struct sockaddr_storage sa;
+        socklen_t sl = sizeof(sa);
+        if (getsockname((int)m->handles[h].handle, (struct sockaddr*)&sa, &sl) == 0) {
+            if (sa.ss_family == AF_INET) {
+                return ntohs(((struct sockaddr_in*)&sa)->sin_port);
+            }
+        }
+    }
+    return 0;
+}
+
+typedef struct {
+    int sock;                 /* mock peer's raw UDP socket */
+    uint16_t target_port;     /* the puncher's local port */
+    volatile bool stop;
+    volatile int punches_received; /* "3SX_PUNCH" datagrams seen by the peer */
+} PunchPeerCtx;
+
+static int SDLCALL punch_peer_thread(void* arg) {
+    PunchPeerCtx* ctx = (PunchPeerCtx*)arg;
+    const char punch_msg[] = "3SX_PUNCH";
+
+    struct sockaddr_in dst;
+    memset(&dst, 0, sizeof(dst));
+    dst.sin_family = AF_INET;
+    dst.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    dst.sin_port = htons(ctx->target_port);
+
+    uint32_t last_send = 0;
+    while (!ctx->stop) {
+        const uint32_t now = SDL_GetTicks();
+        if (last_send == 0 || now - last_send >= 30) {
+            sendto(ctx->sock, punch_msg, strlen(punch_msg), 0,
+                   (struct sockaddr*)&dst, sizeof(dst));
+            last_send = now;
+        }
+
+        fd_set rfds;
+        FD_ZERO(&rfds);
+        FD_SET(ctx->sock, &rfds);
+        struct timeval tv = { 0, 10 * 1000 };
+        if (select(ctx->sock + 1, &rfds, NULL, NULL, &tv) > 0) {
+            uint8_t buf[64];
+            struct sockaddr_in from;
+            socklen_t fl = sizeof(from);
+            const int n = (int)recvfrom(ctx->sock, (char*)buf, sizeof(buf), 0,
+                                        (struct sockaddr*)&from, &fl);
+            if (n == (int)strlen(punch_msg) &&
+                memcmp(buf, punch_msg, (size_t)n) == 0) {
+                ctx->punches_received++;
+            }
+        }
+    }
+    return 0;
+}
+
+static int run_punch_retarget_test(void) {
+    fprintf(stderr, "[test_stun_mock] retarget: punch from a translated port must retarget sends\n");
+
+    if (!NET_Init()) {
+        fail("retarget", "NET_Init failed");
+        return 1;
+    }
+
+    /* Throwaway socket standing in for the stale advertised port. */
+    unsigned short wrong_port = 0;
+    int wrong_sock = open_udp_on_localhost(&wrong_port);
+    /* Mock peer at its own ("translated") port. */
+    unsigned short peer_port_bound = 0;
+    int peer_sock = open_udp_on_localhost(&peer_port_bound);
+    if (wrong_sock < 0 || peer_sock < 0) {
+        fail("retarget", "failed to bind localhost UDP sockets");
+        if (wrong_sock >= 0) close_sock(wrong_sock);
+        if (peer_sock >= 0) close_sock(peer_sock);
+        return 1;
+    }
+
+    /* Puncher socket — same construction as Stun_Discover (IPv4 wildcard). */
+    NET_Address* bind_addr = NET_ResolveHostname("0.0.0.0");
+    if (bind_addr) {
+        int wait = 0;
+        while (NET_GetAddressStatus(bind_addr) == NET_WAITING && wait < 100) {
+            SDL_Delay(1);
+            wait++;
+        }
+    }
+    NET_DatagramSocket* punch_sock = NET_CreateDatagramSocket(bind_addr, 0);
+    if (bind_addr) NET_UnrefAddress(bind_addr);
+    if (punch_sock == NULL) {
+        fail("retarget", "NET_CreateDatagramSocket failed");
+        close_sock(wrong_sock);
+        close_sock(peer_sock);
+        return 1;
+    }
+    const uint16_t punch_local_port = sdlnet_local_port(punch_sock);
+    if (punch_local_port == 0) {
+        fail("retarget", "could not resolve puncher's local port");
+        NET_DestroyDatagramSocket(punch_sock);
+        close_sock(wrong_sock);
+        close_sock(peer_sock);
+        return 1;
+    }
+
+    StunResult local;
+    memset(&local, 0, sizeof(local));
+    local.socket = punch_sock;
+
+    PunchPeerCtx ctx;
+    memset(&ctx, 0, sizeof(ctx));
+    ctx.sock = peer_sock;
+    ctx.target_port = punch_local_port;
+
+    SDL_Thread* tid = SDL_CreateThread(punch_peer_thread, "punch_peer", &ctx);
+    if (!tid) {
+        fail("retarget", "SDL_CreateThread failed");
+        NET_DestroyDatagramSocket(punch_sock);
+        close_sock(wrong_sock);
+        close_sock(peer_sock);
+        return 1;
+    }
+
+    /* Punch toward the WRONG (stale) port; the peer's actual punches
+     * arrive from peer_port_bound. */
+    char peer_ip[64];
+    SDL_strlcpy(peer_ip, "127.0.0.1", sizeof(peer_ip));
+    uint16_t observed_port = wrong_port;
+    const bool punched = Stun_HolePunch(&local, peer_ip, &observed_port, 3000, NULL);
+
+    /* Give the confirmation burst a moment to land, then stop the peer. */
+    SDL_Delay(100);
+    ctx.stop = true;
+    SDL_WaitThread(tid, NULL);
+
+    int rc = 0;
+    if (!punched) {
+        fail("retarget", "Stun_HolePunch did not accept the translated-port punch");
+        rc = 1;
+    }
+    if (observed_port != peer_port_bound) {
+        fprintf(stderr,
+                "[test_stun_mock] FAIL: retarget: *peer_port=%u, expected observed source %u\n",
+                (unsigned)observed_port, (unsigned)peer_port_bound);
+        fail_count++;
+        rc = 1;
+    }
+    if (ctx.punches_received < 1) {
+        fail("retarget",
+             "peer at the translated port received ZERO confirmation punches — "
+             "sends still target the stale endpoint (pre-S2 bug)");
+        rc = 1;
+    }
+
+    if (rc == 0) {
+        fprintf(stderr,
+                "[test_stun_mock] retarget OK — peer_port %u -> %u, %d confirmations "
+                "reached the translated endpoint\n",
+                (unsigned)wrong_port, (unsigned)peer_port_bound, ctx.punches_received);
+    }
+
+    NET_DestroyDatagramSocket(punch_sock);
+    close_sock(wrong_sock);
+    close_sock(peer_sock);
+    return rc;
+}
+
 int Netplay_Test_StunMock(void) {
     fail_count = 0;
 
     const int wire_rc = run_wire_test();
     const int codec_rc = run_codec_test();
+    const int retarget_rc = run_punch_retarget_test();
 
-    if (fail_count > 0 || wire_rc != 0 || codec_rc != 0) {
+    if (fail_count > 0 || wire_rc != 0 || codec_rc != 0 || retarget_rc != 0) {
         fprintf(stderr, "[test_stun_mock] %d failure(s)\n", fail_count);
         return 1;
     }
-    fprintf(stderr, "[test_stun_mock] OK — wire + codec passed\n");
+    fprintf(stderr, "[test_stun_mock] OK — wire + codec + retarget passed\n");
     return 0;
 }
 

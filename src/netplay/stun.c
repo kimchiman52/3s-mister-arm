@@ -438,6 +438,24 @@ bool Stun_HolePunch(StunResult* local, char* peer_ip, uint16_t* peer_port, int p
                 SDL_Log("STUN: Hole punch SUCCESS — received response from peer");
                 received_response = true;
 
+                /* S2 retarget fix (docs/plan-netplay-connection.md §4): a
+                 * symmetric-NAT peer punches us from a per-destination
+                 * mapping whose port differs from the one we were told
+                 * (the rendezvous/room-code port). We deliberately accept
+                 * on source-IP + payload only, so we DO learn the true
+                 * translated endpoint here — but pre-fix, the confirmation
+                 * sends below still targeted the ORIGINAL port captured
+                 * into local_peer_port at function entry, so the symmetric
+                 * peer never saw our confirmations and ITS punch timed
+                 * out. Retarget every subsequent send at the observed
+                 * source endpoint before confirming. */
+                if (dgram->port != local_peer_port) {
+                    SDL_Log("STUN: peer punched from translated port %u (expected %u) — "
+                            "retargeting confirmation sends at the observed endpoint",
+                            (unsigned)dgram->port, (unsigned)local_peer_port);
+                }
+                local_peer_port = dgram->port;
+
                 // Update with actual received endpoint (fixes Symmetric NAT port/IP translation)
                 *peer_port = dgram->port; // Host order — NET_ReceiveDatagram returns host order
 
@@ -445,12 +463,32 @@ bool Stun_HolePunch(StunResult* local, char* peer_ip, uint16_t* peer_port, int p
                 const char* received_ip = NET_GetAddressString(dgram->addr);
                 SDL_strlcpy(peer_ip, received_ip, 64);
 
-                // Send a few more punches to ensure the peer also receives ours
-                for (int i = 0; i < 3; i++) {
-                    NET_SendDatagram(sock, peer, local_peer_port, punch_msg, strlen(punch_msg));
+                /* Keep a ref on the OBSERVED source address (the accept
+                 * criteria guarantee it string-matches `peer`'s IP, but
+                 * using the datagram's own address is the principled
+                 * target). NET_DestroyDatagram drops the datagram's ref,
+                 * so take our own before destroying. */
+                NET_Address* confirmed = NET_RefAddress(dgram->addr);
+                NET_DestroyDatagram(dgram);
+
+                /* Keep punching the confirmed endpoint for ~600 ms at the
+                 * fast cadence so the peer — whose own punch loop may have
+                 * started late or lost packets — reliably sees at least
+                 * one of ours. (Replaces the old 3 x 50 ms burst, which
+                 * additionally went to the WRONG port for symmetric
+                 * peers.) */
+                const uint32_t confirm_start = SDL_GetTicks();
+                while ((int)(SDL_GetTicks() - confirm_start) < 600) {
+                    if (cancel_flag && SDL_GetAtomicInt(cancel_flag)) {
+                        break;
+                    }
+                    NET_SendDatagram(sock, confirmed != NULL ? confirmed : peer, local_peer_port,
+                                     punch_msg, strlen(punch_msg));
                     SDL_Delay(50);
                 }
-                NET_DestroyDatagram(dgram);
+                if (confirmed != NULL) {
+                    NET_UnrefAddress(confirmed);
+                }
                 break;
             }
             NET_DestroyDatagram(dgram);
