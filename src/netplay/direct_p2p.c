@@ -1205,11 +1205,16 @@ static int SDLCALL host_thread_fn(void* data) {
  * and set the status text; DIRECT_P2P_HANDOFF returns with s_work
  * fully written back. */
 static DirectP2PState join_attempt(void) {
-    /* S3: fresh evidence per attempt — the retry's classification must
-     * not inherit the first attempt's DELIVER counters. */
+    /* S3: fresh evidence per attempt — the retry's classification and
+     * report must not inherit the first attempt's DELIVER counters or
+     * the timings of stages the retry never reached. */
     s_work.fail_code = CONNECT_FAIL_NONE;
     s_work.ev_deliver_any = false;
     s_work.ev_deliver_real = false;
+    s_work.t_stun_ms = 0;
+    s_work.t_punch_ms = 0;
+    s_work.t_signal_ms = 0;
+    s_work.t_bilateral_ms = 0;
     s_work.join_attempts++;
 
     set_state(DIRECT_P2P_STUN_DISCOVER);
