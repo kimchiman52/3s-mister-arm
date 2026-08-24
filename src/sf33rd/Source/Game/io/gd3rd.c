@@ -336,6 +336,62 @@ s32 Push_LDREQ_Queue(REQ* ldreq) {
     s16 i;
     u8 masknum;
 
+    /* Rollback re-simulation rewinds the one-shot gate that issues a load
+     * request but not the request queue itself, so the same request can be
+     * issued twice across a rollback boundary. Sel_PL_3rd (sel_pl.c:996)
+     * calls Push_LDREQ_Queue_Player() and then bumps SP_No[ID][0], which is
+     * the dispatch selector in Sel_PL() (sel_pl.c:905) and IS in the
+     * rollback save set (game_state.c:437 GS_SAVE / :1177 GS_LOAD). q_ldreq
+     * is NOT (zero hits in game_state.c). A rollback across the confirm
+     * frame therefore restores the gate and re-issues the request.
+     *
+     * The duplicate does not simply reload: it re-enters
+     * q_ldreq_texture_group() (texgroup.c) at rno==1 after the
+     * dup-transfer guard, skipping the lds->ok check, and allocates a
+     * second ramcnt block over texgrplds[grp].key -- a single-slot key
+     * holder. The first block then has no remaining reference and can
+     * never be freed (purge_texture_group only frees texgrplds[grp].key),
+     * permanently losing 3.34 MB for a character group. Drop the duplicate
+     * here instead.
+     *
+     * Identity is (type, ix, id, result). `result` is included on purpose:
+     * it is 1:1 with the ldreq_tbl[] index, and two different table entries
+     * can carry the same (type, ix) -- e.g. entries 1 and 26 are both
+     * {type 1, ix 0x1B}. Matching on `result` too guarantees we never
+     * swallow a request whose completion bits live in a *different*
+     * ldreq_result[] slot, which would leave Check_LDREQ_Queue_Player()
+     * waiting forever on a byte nobody sets.
+     *
+     * Only entries with be != 0 are live; an already-drained request leaves
+     * be == 0 and is not matched, so a genuine reload still goes through.
+     *
+     * SCOPE -- this is the shallow-rollback half of the fix, NOT the whole
+     * fix. It only catches a duplicate that arrives while the original is
+     * still queued. Whether that holds depends on rollback depth:
+     *
+     *   select depth 2:     dedupe=4  reclaim=0  dup-transfer=0
+     *   select depth 3/5/8: dedupe=7  reclaim=1  dup-transfer=1
+     *
+     * At depth >= 3 the head request has already drained (be == 0) by the
+     * time the duplicate is issued, so this scan misses it entirely and
+     * the reclaim in q_ldreq_texture_group's case 2 (texgroup.c) is what
+     * actually prevents the leak. Production predicts 8 frames ahead
+     * (input_prediction_window, netplay.c:903-905), so depth >= 3 is the
+     * case that matters in the field. The texgroup.c reclaim is therefore
+     * load-bearing and must not be removed on the grounds that this dedupe
+     * exists. */
+    for (i = 0; i < 16; i++) {
+        if (q_ldreq[i].be != 0 && q_ldreq[i].type == ldreq->type && q_ldreq[i].ix == ldreq->ix &&
+            q_ldreq[i].id == ldreq->id && q_ldreq[i].result == ldreq->result) {
+#if ENABLE_PERF_TELEMETRY
+            flLogOut("[ldreq-dedupe] %s dropped duplicate slot=%d type=%d ix=%d id=%d be=%d rno=%d\n",
+                     __func__, (int)i, (int)ldreq->type, (int)ldreq->ix, (int)ldreq->id, (int)q_ldreq[i].be,
+                     (int)q_ldreq[i].rno);
+#endif
+            return 1;
+        }
+    }
+
     for (i = 0; i < 16; i++) {
         if (q_ldreq[i].be == 0) {
             break;

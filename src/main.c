@@ -96,6 +96,7 @@ Configuration configuration = {
             .rbd_rollback_period = 0,
             .rbd_rollback_depth = 3,
             .rbd_select_rollback_period = 8,
+            .rbd_select_rollback_depth = 2,
         },
 };
 
