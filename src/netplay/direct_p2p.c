@@ -102,6 +102,18 @@ typedef struct {
      * DIRECT_P2P_HOST_WAITING. */
     char host_code[ROOM_CODE_BUF_LEN];
 
+    /* Host-side: the public port actually encoded in host_code (UPnP
+     * external port when the mapping succeeded, else the STUN-observed
+     * port). The rendezvous session key MUST be derived from this
+     * advertised tuple — the joiner derives its key from the decoded
+     * room code, so a host deriving from the raw STUN port instead
+     * would land in a different rendezvous slot whenever the UPnP
+     * external port differs from the STUN-observed port (non-port-
+     * preserving NAT). Set by host_thread_fn before HOST_WAITING is
+     * published; only rewritten on the main thread by the STUN-rebind
+     * drift handler (which joins the rendezvous thread first). */
+    uint16_t advertised_port;
+
     /* Parsed rendezvous endpoint cache; populated in BeginHost/BeginJoin
      * once 5b/5c land. Holds the result of parsing the signal-url config
      * value (host:port). Both fields zero in 5a — no callers yet. */
@@ -524,12 +536,28 @@ static NET_Address* resolve_with_short_poll(const char* host) {
 }
 
 /* Host rendezvous worker: parses signal-url, resolves once, then loops
- * sending REGISTER/POLL via the s_rendezvous_send_q until either
- * s_rendezvous_cancel is set (DELIVER arrived; main thread cancelled us)
- * or the signal-budget elapses. On budget-expiry without cancel, updates
- * status to inform the user no peer was detected; per §Decision 9 this
- * does NOT change state — host stays HOST_WAITING so a late-arriving
- * direct punch still works. */
+ * sending REGISTER via the s_rendezvous_send_q for the ENTIRE duration
+ * of HOST_WAITING (docs/plan-netplay-connection.md S1 "host liveness").
+ *
+ * The pre-S1 version resent for an 8 s budget and then exited
+ * permanently, so (a) the rendezvous server forgot the session at its
+ * TTL and (b) the host's NAT mapping decayed at the router's UDP idle
+ * timeout — while the overlay kept displaying the room code. Real
+ * usage shares the code out-of-band over minutes, so the host must
+ * stay registered for as long as it is advertising.
+ *
+ * Cadence: CFG_KEY_NETPLAY_DIRECT_P2P_REGISTER_INTERVAL_MS (default
+ * 5000 ms, floor 1000 ms — the server rate-limits at 10 pkts/s/IP).
+ * Each REGISTER also refreshes the host->server NAT mapping.
+ *
+ * Exit conditions (all prompt, <= ~50 ms latency via the inner sleep):
+ *   - s_rendezvous_cancel set (DELIVER arrived / Cancel / teardown);
+ *   - state leaves HOST_WAITING (direct-punch handoff sets HANDOFF
+ *     without raising s_rendezvous_cancel — the state check covers it,
+ *     so the loop cannot keep REGISTERing into an active session).
+ * Spawn stays gated behind CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_BILATERAL
+ * (see host_thread_fn step 5), which remains the kill switch for this
+ * whole path. */
 static int SDLCALL host_rendezvous_thread_fn(void* data) {
     (void)data;
 
@@ -558,11 +586,16 @@ static int SDLCALL host_rendezvous_thread_fn(void* data) {
         return 0;
     }
 
-    /* 3) Derive session key from OUR public endpoint — the same one the
-     * room code encodes. */
+    /* 3) Derive session key from OUR ADVERTISED endpoint — the exact
+     * tuple the room code encodes (advertised_port is the UPnP external
+     * port when the mapping succeeded, else the STUN port). The joiner
+     * derives its key from the decoded room code, so both sides only
+     * land in the same rendezvous slot when the host hashes the same
+     * pair. Pre-S1 this hashed the raw STUN port, which diverges from
+     * the room code whenever UPnP maps a different external port. */
     uint8_t session_key[16];
     uint32_t ip_be = ipv4_str_to_be(s_work.stun.public_ip);
-    if (!Rendezvous_DeriveSessionKey(ip_be, s_work.stun.public_port, session_key)) {
+    if (!Rendezvous_DeriveSessionKey(ip_be, s_work.advertised_port, session_key)) {
         SDL_Log("[direct_p2p] rendezvous: failed to derive session key");
         NET_UnrefAddress(signal_addr);
         return 0;
@@ -576,21 +609,31 @@ static int SDLCALL host_rendezvous_thread_fn(void* data) {
         return 0;
     }
 
-    /* 5) Resend loop. 500ms cadence; 8s default budget (configurable).
-     * Cancel-flag check happens between sends so worst-case latency to
-     * exit on cancel is ~50ms (the inner 50ms sleep tick). */
-    int budget_ms = Config_GetInt(CFG_KEY_NETPLAY_DIRECT_P2P_SIGNAL_BUDGET_MS);
-    if (budget_ms <= 0) budget_ms = 8000;
-    const uint32_t start = SDL_GetTicks();
+    /* 5) Persistent resend loop (S1). First REGISTER goes out
+     * immediately, then one every interval_ms until cancel or the state
+     * leaves HOST_WAITING. There is deliberately NO wall-clock budget:
+     * the host must stay registered (and keep its NAT mapping warm) for
+     * as long as the room code is on screen. Cancel-flag and state
+     * checks happen every 50 ms inner tick, so exit latency on
+     * handoff / cancel / teardown is ~50 ms. */
+    int interval_ms = Config_GetInt(CFG_KEY_NETPLAY_DIRECT_P2P_REGISTER_INTERVAL_MS);
+    if (interval_ms <= 0) interval_ms = 5000;
+    if (interval_ms < 1000) interval_ms = 1000; /* server limits 10 pkts/s/IP */
     uint32_t last_send = 0;
-    while ((int)(SDL_GetTicks() - start) < budget_ms) {
+    for (;;) {
         if (SDL_GetAtomicInt(&s_rendezvous_cancel)) {
             /* Main thread received DELIVER (or shutdown). Exit cleanly. */
-            NET_UnrefAddress(signal_addr);
-            return 0;
+            break;
+        }
+        if (get_state() != DIRECT_P2P_HOST_WAITING) {
+            /* Direct-punch handoff / failure / cancel — we are no longer
+             * advertising, so stop re-REGISTERing. This is the exit path
+             * for the direct-punch success case, which never raises
+             * s_rendezvous_cancel. */
+            break;
         }
         uint32_t now = SDL_GetTicks();
-        if (last_send == 0 || (now - last_send) >= 500u) {
+        if (last_send == 0 || (now - last_send) >= (uint32_t)interval_ms) {
             /* Producer must Ref before enqueue; consumer Unrefs after
              * send. On enqueue failure (queue full) we Unref ourselves. */
             NET_Address* ref = NET_RefAddress(signal_addr);
@@ -602,13 +645,6 @@ static int SDLCALL host_rendezvous_thread_fn(void* data) {
             last_send = now;
         }
         SDL_Delay(50);
-    }
-
-    /* 6) Budget expired without DELIVER. Update status (state stays
-     * HOST_WAITING per §Decision 9). */
-    if (!SDL_GetAtomicInt(&s_rendezvous_cancel)) {
-        set_status("Waiting for player 2...");
-        SDL_Log("[direct_p2p] rendezvous: 8s budget expired; no DELIVER received");
     }
 
     NET_UnrefAddress(signal_addr);
@@ -745,6 +781,11 @@ static int SDLCALL host_thread_fn(void* data) {
         set_state(DIRECT_P2P_FAILED_STUN);
         return 0;
     }
+    /* Record the advertised tuple's port — the rendezvous session key is
+     * derived from (public_ip, advertised_port) on both roles (S1). Must
+     * be visible before HOST_WAITING publishes (the rendezvous thread
+     * spawns after and reads it). */
+    s_work.advertised_port = pub_port;
 
     /* 4) Publish — Tick() will now drain the STUN socket non-blockingly
      * until a peer punches through. The room code renders on overlay
@@ -1193,11 +1234,12 @@ static bool try_handle_deliver(const uint8_t* pkt, int len) {
         return true;
     }
 
-    /* Derive the session key from our own public endpoint — the same
-     * derivation the rendezvous thread does and the joiner does. */
+    /* Derive the session key from our own ADVERTISED endpoint — the same
+     * derivation the rendezvous thread does and the joiner does (from the
+     * decoded room code). See the advertised_port field comment. */
     uint32_t ip_be = ipv4_str_to_be(s_work.stun.public_ip);
     uint8_t session_key[16];
-    if (!Rendezvous_DeriveSessionKey(ip_be, s_work.stun.public_port, session_key)) {
+    if (!Rendezvous_DeriveSessionKey(ip_be, s_work.advertised_port, session_key)) {
         SDL_Log("[direct_p2p] DELIVER drop: failed to derive session key");
         return true;
     }

@@ -89,6 +89,11 @@ static const ConfigEntry default_entries[] = {
     { .key = CFG_KEY_NETPLAY_DIRECT_P2P_SIGNAL_URL, .type = CFG_STRING, .value.s = "udp://46.62.244.55:3478" },
     { .key = CFG_KEY_NETPLAY_DIRECT_P2P_SIGNAL_BUDGET_MS, .type = CFG_INT, .value.i = 8000 },
     { .key = CFG_KEY_NETPLAY_DIRECT_P2P_BILATERAL_PUNCH_MS, .type = CFG_INT, .value.i = 3000 },
+    /* Host liveness (docs/plan-netplay-connection.md S1): persistent host
+     * re-REGISTER cadence. ~0.2 pkt/s/host — far under the rendezvous
+     * server's 10 pkt/s/IP limiter (rendezvous-server.js RATE_LIMIT_PER_
+     * WINDOW=10 / RATE_WINDOW_MS=1000). */
+    { .key = CFG_KEY_NETPLAY_DIRECT_P2P_REGISTER_INTERVAL_MS, .type = CFG_INT, .value.i = 5000 },
     { .key = CFG_KEY_NETPLAY_INPUT_PREDICTION_WINDOW, .type = CFG_INT, .value.i = 8 },
     { .key = CFG_KEY_NETPLAY_DIAG_ENABLE, .type = CFG_BOOL, .value.b = true },
     { .key = CFG_KEY_NETPLAY_SPARSE_EFFECT_SAVE_ENABLED, .type = CFG_BOOL, .value.b = true },

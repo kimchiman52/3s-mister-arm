@@ -49,6 +49,20 @@
 #define CFG_KEY_NETPLAY_DIRECT_P2P_SIGNAL_BUDGET_MS "netplay-direct-p2p-signal-budget-ms"
 #define CFG_KEY_NETPLAY_DIRECT_P2P_BILATERAL_PUNCH_MS "netplay-direct-p2p-bilateral-punch-ms"
 
+/* Host liveness (docs/plan-netplay-connection.md S1). REGISTER_INTERVAL_MS
+ * is the cadence of the host's persistent rendezvous re-REGISTER loop —
+ * the host re-REGISTERs for the entire time it displays a room code so
+ * the rendezvous session and the host's NAT mappings stay alive while
+ * the code is shared out-of-band (minutes, not the old 8 s budget).
+ * Floor-clamped to 1000 ms (server rate limit is 10 pkts/s/IP).
+ * STUN_KEEPALIVE_MS is the cadence of the host's STUN rebind keepalive
+ * while HOST_WAITING — refreshes the advertised NAT mapping and detects
+ * public-endpoint drift (<= 0 disables). Both sit under the existing
+ * DISABLE_BILATERAL kill switch (the rendezvous loop) / HOST_WAITING
+ * lifecycle (the keepalive). */
+#define CFG_KEY_NETPLAY_DIRECT_P2P_REGISTER_INTERVAL_MS "netplay-direct-p2p-register-interval-ms"
+#define CFG_KEY_NETPLAY_DIRECT_P2P_STUN_KEEPALIVE_MS "netplay-direct-p2p-stun-keepalive-ms"
+
 /* Rollback prediction window — max frames Gekko will predict ahead of
  * confirmed inputs and, on mispredict, the max rollback depth. Lower
  * values reduce worst-case resim CPU cost (linear in window) at the cost
