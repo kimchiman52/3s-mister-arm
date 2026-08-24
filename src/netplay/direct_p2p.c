@@ -152,6 +152,20 @@ static SDL_Thread* s_bilateral_punch_thread = NULL;
  * on the next frame, joins the worker, and runs do_handoff inline. */
 static SDL_AtomicInt s_bilateral_handoff_pending = { 0 };
 
+/* Review M1: host-side bilateral-punch FAILURE signal, mirror of the
+ * handoff-pending flag above. The worker must not park the host in a
+ * terminal state — a single stale or hostile REGISTER on our session
+ * key (anyone who saw the room code) would then kill the room for the
+ * entire hosting period. Instead the worker raises this flag and
+ * exits; Tick joins it and returns the host to HOST_WAITING (respawning
+ * the rendezvous loop) up to HOST_BILATERAL_MAX_FAILURES times per
+ * hosting session, after which it parks FAILED_BILATERAL so a genuinely
+ * unreachable pairing still surfaces. The count is main-thread only.
+ * The JOINER's failure disposition is deliberately unchanged. */
+static SDL_AtomicInt s_bilateral_failed = { 0 };
+static int s_bilateral_fail_count = 0;
+#define HOST_BILATERAL_MAX_FAILURES 5
+
 /* Set by the worker right before it publishes a FAILED_* or
  * HOST_WAITING state so the status-text reader sees the fresh message
  * without a race. Writes from worker -> readers from main. Char buffer
@@ -840,8 +854,13 @@ static int SDLCALL host_bilateral_punch_thread_fn(void* data) {
         return 0;
     }
     if (!punched) {
-        set_status("Could not connect. Try a different network.");
-        set_state(DIRECT_P2P_FAILED_BILATERAL);
+        /* Review M1: do NOT park terminal from here. Raise the failure
+         * flag and let Tick (main thread) decide: back to HOST_WAITING
+         * with the rendezvous loop respawned, or FAILED_BILATERAL once
+         * the per-session retry budget is spent. State stays
+         * FALLBACK_BILATERAL_PUNCH until Tick acts. */
+        SDL_SetAtomicInt(&s_bilateral_failed, 1);
+        SDL_Log("[direct_p2p] bilateral punch FAILED — deferring disposition to Tick");
         return 0;
     }
 
@@ -1713,6 +1732,8 @@ void DirectP2P_Init(void) {
     SDL_SetAtomicInt(&s_rendezvous_cancel, 0);
     SDL_SetAtomicInt(&s_bilateral_punch_cancel, 0);
     SDL_SetAtomicInt(&s_bilateral_handoff_pending, 0);
+    SDL_SetAtomicInt(&s_bilateral_failed, 0);
+    s_bilateral_fail_count = 0; /* M1: fresh retry budget per hosting session */
     SDL_SetAtomicInt(&s_q_head, 0);
     SDL_SetAtomicInt(&s_q_tail, 0);
     SDL_SetAtomicInt(&s_q_drops, 0);
@@ -1742,6 +1763,8 @@ void DirectP2P_BeginHost(int preferred_port) {
     SDL_SetAtomicInt(&s_rendezvous_cancel, 0);
     SDL_SetAtomicInt(&s_bilateral_punch_cancel, 0);
     SDL_SetAtomicInt(&s_bilateral_handoff_pending, 0);
+    SDL_SetAtomicInt(&s_bilateral_failed, 0);
+    s_bilateral_fail_count = 0; /* M1: fresh retry budget per hosting session */
     SDL_SetAtomicInt(&s_q_drops, 0);
     SDL_SetAtomicInt(&s_q_drops_logged, 0);
     /* R-1: a reject latched during a session whose teardown never ran the
@@ -1813,6 +1836,8 @@ void DirectP2P_BeginJoin(const char* peer_code) {
     SDL_SetAtomicInt(&s_rendezvous_cancel, 0);
     SDL_SetAtomicInt(&s_bilateral_punch_cancel, 0);
     SDL_SetAtomicInt(&s_bilateral_handoff_pending, 0);
+    SDL_SetAtomicInt(&s_bilateral_failed, 0);
+    s_bilateral_fail_count = 0; /* M1: fresh retry budget per hosting session */
     SDL_SetAtomicInt(&s_q_drops, 0);
     SDL_SetAtomicInt(&s_q_drops_logged, 0);
     s_handshake_reject_latched = false; /* R-1: see BeginHost */
@@ -2002,6 +2027,56 @@ void DirectP2P_Tick(void) {
             set_state(DIRECT_P2P_HANDOFF);
             /* Host is player 1 (player_number = 0). */
             do_handoff(1, s_work.peer_ip, s_work.peer_public_port);
+            return;
+        }
+        /* Review M1: host-side punch FAILURE. Pre-fix the worker parked
+         * terminal FAILED_BILATERAL and the host stopped advertising —
+         * so one stale/hostile REGISTER against our key (anyone who saw
+         * the room code, or an aborted joiner's leftover slot) killed
+         * the room for the whole hosting period. Return to HOST_WAITING
+         * and respawn the rendezvous loop (bounded retries so a
+         * repeated attacker cannot spin the host in 3 s punch cycles
+         * forever); the joiner's own failure handling is untouched. */
+        if (SDL_GetAtomicInt(&s_bilateral_failed) != 0 &&
+            s_work.role == ROLE_HOST) {
+            SDL_SetAtomicInt(&s_bilateral_failed, 0);
+            if (s_bilateral_punch_thread != NULL) {
+                SDL_WaitThread(s_bilateral_punch_thread, NULL);
+                s_bilateral_punch_thread = NULL;
+            }
+            s_bilateral_fail_count++;
+            if (s_bilateral_fail_count >= HOST_BILATERAL_MAX_FAILURES) {
+                SDL_Log("[direct_p2p] bilateral punch failed %d times this session — "
+                        "parking FAILED_BILATERAL", s_bilateral_fail_count);
+                set_status("Could not connect. Try a different network.");
+                set_state(DIRECT_P2P_FAILED_BILATERAL);
+                return;
+            }
+            SDL_Log("[direct_p2p] bilateral punch failure %d/%d — returning to "
+                    "HOST_WAITING and resuming rendezvous advertising",
+                    s_bilateral_fail_count, HOST_BILATERAL_MAX_FAILURES);
+            /* The rendezvous thread exited when try_handle_deliver raised
+             * s_rendezvous_cancel (and the state left HOST_WAITING); its
+             * handle is still ours to reclaim before respawning. */
+            if (s_rendezvous_thread != NULL) {
+                SDL_WaitThread(s_rendezvous_thread, NULL);
+                s_rendezvous_thread = NULL;
+            }
+            set_status("Waiting for player 2...");
+            /* Clear the cancel flag BEFORE publishing HOST_WAITING so a
+             * DELIVER processed on a later tick can re-raise it without
+             * being clobbered (same ordering as host_thread_fn step 4). */
+            SDL_SetAtomicInt(&s_rendezvous_cancel, 0);
+            SDL_SetAtomicInt(&s_bilateral_punch_cancel, 0);
+            set_state(DIRECT_P2P_HOST_WAITING);
+            if (!Config_GetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_BILATERAL)) {
+                s_rendezvous_thread = SDL_CreateThread(host_rendezvous_thread_fn,
+                                                       "DirectP2PRendezvous", NULL);
+                if (s_rendezvous_thread == NULL) {
+                    SDL_Log("[direct_p2p] WARNING: failed to respawn rendezvous thread "
+                            "after bilateral failure; direct punch still possible");
+                }
+            }
         }
         return;
 
