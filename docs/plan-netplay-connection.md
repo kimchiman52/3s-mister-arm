@@ -219,25 +219,105 @@ punch/bilateral carry it.
 
 ---
 
-## 4. S2 — Punch / STUN mechanics
+## 4. S2 — Punch / STUN mechanics (IMPLEMENTED)
 
-- **`Stun_HolePunch` retarget bug**: `local_peer_port` is captured
-  once (stun.c:407) and every send — including the three
-  post-success confirmation sends (stun.c:450) — targets it and the
-  original `peer` address, even after the loop learned the peer's TRUE
-  translated endpoint (`*peer_port = dgram->port` / `peer_ip`
-  overwrite, stun.c:442-446). Against a symmetric peer the
-  confirmations go to the stale port, so the *other* side may never
-  see our punch and time out. Fix: re-resolve/re-target after the
-  endpoint update.
-- **Adaptive cadence**: fixed 200 ms punch interval (stun.c:381);
-  start faster (50 ms) and back off.
-- **Parallel STUN with RFC 5389 retransmit**: `Stun_Discover` probes
-  4 servers serially at ~2.1 s each (stun.c:242-302); probe in
-  parallel on the one socket, RFC 5389 §7.2.1 retransmit timers.
-- **Wire the dead key**: `netplay-direct-p2p-stun-timeout-ms`
-  (default 4000, config.c:85) is read nowhere (only comments,
-  direct_p2p.c:398-404) — `Stun_Discover` needs a timeout parameter.
+Landed as its own commit series on top of S1. Citations refer to the
+post-S2 tree.
+
+- **`Stun_HolePunch` retarget fix** (headline): the loop deliberately
+  accepts a punch on source-IP + exact `"3SX_PUNCH"` payload alone
+  (port intentionally unmatched — that is what recognizes a symmetric
+  peer punching from a translated per-destination port) and learns the
+  true endpoint, but every send — including the post-success
+  confirmations — still targeted the ORIGINAL port captured into
+  `local_peer_port` at function entry. The symmetric peer therefore
+  never saw a confirmation and its own punch timed out. Now the accept
+  path retargets `local_peer_port` + the send address (a ref on the
+  datagram's own source address) and keeps punching the confirmed
+  endpoint for ~600 ms at 50 ms cadence (stun.c:694-747; replaces the
+  old 3×50 ms burst to the stale port). Unblocks the bilateral-phase
+  cells where a cone-family side pairs a symmetric side: the cone side
+  now confirms to the symmetric side's real mapping, which that NAT
+  accepts because it is the very mapping the symmetric side is punching
+  from. (host full/restricted-cone × joiner symmetric, and the mirrored
+  symmetric × full/restricted-cone; port-restricted × symmetric still
+  needs S5 — the port-restricted filter drops the symmetric side's
+  off-port punches before the retarget can trigger.) Regression:
+  test_stun_mock.c `run_punch_retarget_test` (fails on the pre-S2
+  tree — zero confirmations reach the translated port).
+- **STUN port byteswap bug (unplanned find, worse than the plan
+  knew)**: `parse_binding_response` assembled X-Port from the wire
+  bytes via shifts (already native) and then applied `SDL_Swap16BE` on
+  top — on little-endian hosts (macOS AND MiSTer ARM) every
+  STUN-parsed port was byteswapped (55555 → 985). Same in the plain
+  MAPPED-ADDRESS branch; the IP branch was unaffected (its swap
+  cancels by re-reading through memory bytes). So every non-UPnP room
+  code advertised a DEAD port; UPnP hosts and the bilateral path (the
+  server reports the port it OBSERVES) masked it. Fixed
+  (stun.c:129-137, :171-173); regression via the public
+  `Stun_ParseBindingResponse` in test_stun_mock.c `run_wire_test`.
+  The parser had zero prior coverage — the original wire test built
+  and parsed with its own local helpers.
+- **Adaptive cadence**: 50 ms for the first 500 ms of the punch
+  window, then the original 200 ms (stun.c:625-635, :672-676).
+  Establishment time is dominated by peer start-skew and first-packet
+  loss, not RTT.
+- **Bilateral window 3000 → 5000 ms**
+  (`netplay-direct-p2p-bilateral-punch-ms`, config.c defaults block):
+  the two sides' punch windows start skewed by DELIVER arrival (the
+  joiner punches the instant its DELIVER parses; the host learns of
+  the joiner a Tick later and spawns a worker), and both loops drop
+  stray non-punch datagrams (re-verified post-S1), so extra overlap
+  costs only failure-case wait.
+- **Parallel STUN with RFC 5389 retransmit** (`Stun_Discover`
+  rewrite, stun.c:355-616): all 4 servers probed in parallel from the
+  one socket, distinct txid + prebuilt request per server; per-server
+  retransmits at 0/500/1500 ms (§7.2.1 RTO≥500 ms doubling, truncated
+  to 3 sends — parallel servers substitute for deeper
+  retransmission); first parseable Binding Response wins and its
+  server is the one retained in `server_addr` for the S1 keepalives.
+  DNS for all servers resolves concurrently on a refcounted side
+  thread (getaddrinfo has no portable timeout; the thread is detached
+  if stuck), with a numeric-IP fallback list (dig snapshot
+  2026-08-23) armed only when DNS produced nothing within 300 ms — a
+  blackholed resolver can no longer eat the budget.
+- **Dead key wired**: `netplay-direct-p2p-stun-timeout-ms` (default
+  4000) is now the overall discovery budget — new `timeout_ms`
+  parameter on `Stun_Discover`, threaded from both discovery sites via
+  `stun_budget_ms()` (direct_p2p.c:486-492, floor 1000 ms). The stale
+  "out of scope for Step 7" NOTE is gone.
+- **Symmetric-NAT signal for S3**: after the first response, discovery
+  lingers ≤300 ms (early-out once all probed servers answered) to
+  collect the rest; `StunResult.port_disagreement` (stun.h:31) is set
+  and logged when servers disagree on the mapped port. S3 consumes
+  this for failure attribution; no UX in S2 by design.
+- **Auto-retry policy**: (a) joiner — join_thread_fn
+  (direct_p2p.c:1401) wraps the extracted `join_attempt()`
+  (direct_p2p.c:1110) and interposes exactly ONE automatic full retry
+  on any terminal failure before surfacing it; each attempt re-runs
+  discovery on local_port 0 with the previous socket closed, so the
+  retry binds a FRESH local port (dodges stuck conntrack/NAT state;
+  also covers host-still-in-UPnP-probe start-skew). (b) host —
+  Tick's FAILED_STUN case (direct_p2p.c:2113) re-spawns
+  host_thread_fn after a 5 s backoff, ≤3 retries per hosting session,
+  instead of parking terminal; composes with (and does not touch) the
+  S1 bilateral-failure return-to-HOST_WAITING path.
+- **Tests**: test_stun_mock.c gains `run_punch_retarget_test` plus,
+  via the `Stun_TestHook_SetServers` seam, `run_discover_parallel_test`
+  (dead server first + live server → success in ~340 ms, live server
+  retained), `run_discover_retransmit_test` (first packet dropped →
+  recovered by the 500 ms retransmit), and
+  `run_discover_disagreement_test` (40000 vs 40001 → flag set).
+  test_bilateral_punch.c gains test 6 (`test_joiner_fresh_socket_retry`)
+  driving the REAL BeginJoin offline through the new
+  `DirectP2P_TestHook_SetStunDiscover` seam: double failure = exactly
+  2 attempts on 2 different local ports; punch-succeeds-on-attempt-2 =
+  HANDOFF.
+
+Plan-drift note: the pre-S2 pointers above originally cited stun.c:407
+(“captured port”), :450 (confirmation sends), :442-446 (endpoint
+update) — those matched the pre-S1 numbering and have been superseded
+by the citations in this section.
 
 ## 5. S3 — No hangs + failure taxonomy
 
@@ -254,6 +334,10 @@ punch/bilateral carry it.
 - Deliverable: every waiting state gets a bounded timer + a distinct
   terminal state, and the failure-exit table (§1.2) grows a
   machine-readable reason code for telemetry.
+- Input now available from S2: `StunResult.port_disagreement`
+  (stun.h:31) — set when STUN servers disagreed on our mapped port
+  (symmetric-NAT signature) — for failure attribution in the reason
+  codes.
 
 ## 6. S4 — Security
 
@@ -312,4 +396,5 @@ expected outcome. This is the regression net for S2–S7.
 | Stage | Status |
 |---|---|
 | S1 host liveness | **implemented (this series)** |
-| S2–S8 | planned above |
+| S2 punch / STUN mechanics | **implemented** (see §4; includes the unplanned STUN port-byteswap fix) |
+| S3–S8 | planned above |
