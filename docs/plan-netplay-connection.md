@@ -1372,12 +1372,240 @@ is not reclaimed as idle".
   few hundred ms early, a state GekkoNet's retransmit and the S3
   CONNECTING deadline already cover.
 
-## 8. S6 — Joiner candidate racing
+## 8. S6 — Joiner candidate racing (IMPLEMENTED)
 
-Joiner currently tries exactly one (ip, port) tuple. Race candidates
-concurrently on the one socket: room-code endpoint, rendezvous
-DELIVER endpoint, LAN-local addresses (hairpin), first responder
-wins. Removes the serial 2.5 s + 8 s + 3 s worst case (§1.1).
+Landed as its own commit series on top of S5. Citations refer to the
+post-S6 tree.
+
+### 8.1 The defect: everything was serial
+
+The joiner ran its establishment phases strictly one after another, so a
+join that ended in failure cost the **sum** of every budget:
+
+| phase | budget | source (pre-S6 tree, `9eadde33`) |
+|---|---|---|
+| direct punch | 2 500 ms | `join_attempt`, literal `2500` |
+| rendezvous REGISTER/DELIVER | 8 000 ms | `CFG_KEY_NETPLAY_DIRECT_P2P_SIGNAL_BUDGET_MS`, config.c default |
+| bilateral punch | 5 000 ms | `CFG_KEY_NETPLAY_DIRECT_P2P_BILATERAL_PUNCH_MS`, config.c default |
+| relay rung | 4 000 ms | `CFG_KEY_NETPLAY_DIRECT_P2P_RELAY_BUDGET_MS`, config.c default |
+
+19 500 ms per attempt, and the S2 auto-retry runs the whole thing twice:
+**39 000 ms** before the user is told anything. The host was serial too —
+bilateral punch 5 000 then relay 4 000 = 9 000 ms.
+
+Worse than the arithmetic: the bilateral punch could not **start** until
+the direct punch had burned its entire window, even though the DELIVER
+carrying its endpoint had typically arrived hundreds of milliseconds in.
+
+### 8.2 Why not ICE
+
+Decision on file, unchanged: **do not build ICE.** The MiSTer has one
+interface; the kernel is built without `CONFIG_IPV6`, so there is no v6
+escape from NAT; there are at most three candidate routes; and a
+rendezvous signalling channel already exists. Full ICE — candidate
+gathering, priorities, connectivity-check pacing, nomination — would buy
+nothing those four facts do not already decide, and would add a state
+machine larger than the whole of `direct_p2p.c`.
+
+What was actually needed is the *one* thing ICE has that we lacked:
+candidates tried **concurrently** rather than in sequence.
+
+### 8.3 As built: one interleaved loop, no new threads
+
+`p2p_race()` (direct_p2p.c) drives up to four legs from a single loop on
+**the same worker thread that already owned the socket exclusively** —
+the join worker, or the host's bilateral-punch worker during
+`FALLBACK_BILATERAL_PUNCH` (§Decision 3, unchanged and still
+load-bearing). **No new threads, no new locks, no new races**: every leg
+is a state machine pumped from that loop, and the socket keeps exactly
+one reader/writer, exactly as before.
+
+| leg | role | what it is |
+|---|---|---|
+| `punch[0]` | both | the endpoint we already hold — the joiner's room-code endpoint, or the host's DELIVER-supplied joiner endpoint |
+| `punch[1]` | joiner | the endpoint a DELIVER teaches us mid-race. This is the old "bilateral" punch, except it now starts **the instant the DELIVER parses** |
+| `signal` | joiner | the REGISTER / CHALLENGE / DELIVER conversation. The host is already paired by the time it punches and its rendezvous worker has exited, so it has no signal leg |
+| `relay` | both | the S5 `RELAY_REQ → GRANT → PIN → ACK` rung |
+
+The blocking `Stun_HolePunch` was split into a non-blocking stepper —
+`Stun_PunchBegin` / `Pump` / `Offer` / `Settled` / `End` (stun.h,
+stun.c) — and `Stun_HolePunch` **re-implemented as a thin blocking driver
+over it**, so its wire behaviour, its accept criteria (source IP + the
+exact 17-byte authenticated payload, port deliberately unmatched for the
+S2 symmetric retarget), its adaptive cadence and its ~600 ms confirmation
+tail are unchanged, and its existing regression tests
+(`run_punch_retarget_test`, `run_punch_token_reject_test`) now cover the
+stepper too.
+
+### 8.4 The four ordering rules, and why each is load-bearing
+
+1. **A confirmed punch always beats the relay.** Checked first in every
+   iteration; the first confirm tears the relay leg down. A relayed
+   session detours through a European VPS (§7.5), so silently preferring
+   it over a working direct link would be a latency regression disguised
+   as a connectivity win.
+2. **The relay leg does not arm until `RACE_RELAY_ARM_MS` (2 500 ms).**
+   §7.4 promised that "a pair that can punch never reaches this code, so
+   an enabled relay costs a connectable pair nothing". Naive racing
+   breaks that promise outright — every pair would request a pool port
+   from the 100-port range. 2 500 ms is *exactly* the window the pre-S6
+   direct punch had entirely to itself, so nothing that the pre-S6 code
+   would have connected at that stage is diverted to a relay; and by then
+   the DELIVER candidate has usually been punching for ~2 s as well.
+3. **The relay leg also needs a real DELIVER (joiner).** Without one we
+   are provably not paired server-side and `handleRelayReq` refuses an
+   unpaired session, so arming would spend the budget to be told
+   something we already know. The host is paired by construction.
+4. **A `NOT_PAIRED` refusal is transient, not terminal.** Serially the
+   rung ran after the signalling phase had definitely completed, so a
+   refusal could only mean a durable condition. Racing can now ask while
+   the peer's own REGISTER is still in flight, and treating that first
+   answer as final would **invent** a failure for exactly the symmetric
+   pairs the relay exists to carry. Only `POOL_EXHAUSTED` ends the leg
+   early.
+
+### 8.5 Measured, not estimated
+
+Both numbers come from the **same probe** — the REAL `BeginJoin` driven
+to terminal failure with a mocked STUN discovery and offline punch legs
+— run against the pre-S6 tree in a separate worktree at `9eadde33` and
+against the post-S6 tree. Two scenarios, because they stress different
+parts of the cascade:
+
+| scenario | pre-S6 (`9eadde33`) | post-S6 | change |
+|---|---|---|---|
+| **A** rendezvous black hole (no DELIVER ever arrives) | 21 326 ms total, **10 663 ms/attempt** | 16 222 ms total, **8 111 ms/attempt** | −24% |
+| **B** full cascade (DELIVER arrives, relay silent — every leg runs) | 19 354 ms total, **9 677 ms/attempt** | 10 228 ms total, **5 114 ms/attempt** | **−47%** |
+
+Scenario A is bounded by the 8 000 ms signalling budget on both trees —
+racing cannot shorten a leg that is the longest thing running. Scenario B
+is where seriality actually cost: pre-S6 the bilateral punch and the
+relay rung could only begin after the direct punch had expired.
+
+The **arithmetic** worst case — a DELIVER arriving just before the
+signalling budget expires, so all four phases run at full length — is
+19 500 ms/attempt pre-S6 against a `RACE_BUDGET_MS`-bounded 8 000 ms
+post-S6. That case is stated from the code, **not** measured: neither
+probe scenario reproduces a late DELIVER.
+
+Sanity check on the mid-race overlap, measured directly: with a DELIVER
+arriving at once and only the DELIVER endpoint answering, the handoff
+completes in **~230 ms** (test 19). Pre-S6 the earliest possible handoff
+on that path was > 2 500 ms, because the direct punch had to expire
+first.
+
+### 8.6 Config
+
+| key | default | purpose |
+|---|---|---|
+| `netplay-direct-p2p-race-budget-ms` | `8000` | the WHOLE post-STUN establishment wall clock on both roles, clamped [2000, 30000]. It replaces the old serial sum as the thing that bounds a failing attempt |
+
+The per-leg keys keep their meaning and now bound their own legs *inside*
+the race: `signal-budget-ms` the rendezvous leg, `bilateral-punch-ms`
+each punch leg's lifetime, `relay-budget-ms` the relay leg. None became a
+dead key.
+
+### 8.7 Behaviour changes worth calling out
+
+- **The three fallback bypasses moved up front.** Kill switch, LAN peer
+  and hairpin used to be evaluated *after* the direct punch failed,
+  because that was the only point at which the code decided whether to
+  enter the fallback. In a race there is no such point — the signalling
+  leg starts at t=0 — so the question they answer ("is the rendezvous
+  fallback worth running at all for this peer?") is answered before the
+  race is configured. **No verdict changes**: none of the three depends
+  on the punch outcome, and each still yields `FAILED_SYMMETRIC` with its
+  pre-S6 status text. The fourth bypass, `diag_punch_bad_token`, genuinely
+  does depend on the punch and stays after the race.
+- **A dead rendezvous URL no longer kills the direct punch.** Pre-S6 a
+  missing/malformed signal URL or a failed resolve returned
+  `FAILED_BILATERAL` from inside the fallback, after the direct punch had
+  run. Now the setup happens before the race, and a failure only drops
+  the fallback *legs* — the punch leg still runs and can still win. The
+  failure is reported only if nothing connects.
+- **The report line's stage timings now OVERLAP.** `punch=`, `signal=`,
+  `bilateral=` and `relay=` are leg **lifetimes**, so they no longer sum
+  to the elapsed time. A new `race=` field carries the wall clock of the
+  whole post-STUN cascade and is the number to compare across builds. Both
+  the OK and FAIL lines carry it.
+- **The `DirectP2P_TestHook_SetStunHolePunch` seam is gone**, replaced by
+  `DirectP2P_TestHook_SetPunchOracle` (direct_p2p.h). With no blocking
+  punch left to substitute, the seam moved to the decision the tests were
+  really making — "does THIS candidate ever confirm?" — consulted once per
+  candidate at arm time. The **rename is deliberate**: a stale caller must
+  fail to compile rather than silently behave differently, the same
+  discipline §6.3 applied to the room-code bool API. A leg under an oracle
+  override puts nothing on the wire, which is what keeps the offline
+  harnesses offline while still consuming the leg's real wall time.
+
+### 8.8 Tests
+
+Four new cases in `test_bilateral_punch.c` (18-21) and one in
+`test_stun_mock.c`, each chosen so a serial cascade **cannot** satisfy it.
+Every one was proven red by neutralising the code under test and observing
+the failure — not by assertion:
+
+| test | neutralisation | observed red |
+|---|---|---|
+| 19 `test_race_deliver_overlaps_seed` | the DELIVER endpoint is never armed as a punch candidate | *"test19: no handoff (state=11 seed_arms=2 deliver_arms=0)"* |
+| 19 + 18 | **N5**: the legs run serially again (DELIVER candidate deferred until the seed finishes; relay deferred until every punch leg has) | *"test19: handoff took 5226 ms; the DELIVER candidate must be punched CONCURRENTLY ... (expected < 2000 ms)"* and *"test18: full-cascade join took 16219 ms (~8109 ms/attempt), expected < 14000 ms"* |
+| 20B `test_race_punch_beats_relay` | the `RACE_RELAY_ARM_MS` delay removed (naive racing) | *"test20B: 1 RELAY_REQ(s) inside a 1500 ms race; the relay leg must not arm before RACE_RELAY_ARM_MS (2500 ms)"* |
+| 21 `test_race_not_paired_is_transient` | `NOT_PAIRED` terminal again (the pre-fix rule) | *"test21: no handoff after two NOT_PAIRED refusals ... relay_reqs=2 grants=2 notpaired=2"* |
+| `run_punch_leg_offer_test` | the stepper's source-IP gate removed | 4 reds, incl. *"a valid payload from the WRONG source IP confirmed the leg"* and *"a wrong-token punch CONFIRMED the leg (S4a fail-closed broken)"* |
+
+Notes on what each test is *for*:
+
+- **18** is the timing regression net, and its scenario-B bound (14 000 ms)
+  sits between the two **measured** numbers in §8.5 — 27% above the S6
+  measurement, 28% below the pre-S6 one. Its scenario-A bound is
+  deliberately loose; scenario A is a *measurement*, scenario B is the
+  assertion that bites. This was found by neutralising: an earlier
+  version of the test used only scenario A and stayed green under N5,
+  i.e. it could not fail. A test that cannot fail is worse than no test.
+- **19**'s assertion is on `do_handoff`'s **own arguments**
+  (`DirectP2P_TestHook_LastHandoff`), not on internal state — a race that
+  populated `s_work` correctly but never reached the handoff would pass an
+  `s_work` assertion and cannot pass this one.
+- **20** has two acts because 20A alone does not isolate the arm delay:
+  its punch confirms on the first pump, so the "a confirmed punch drops
+  the relay leg" rule would keep `relay_reqs` at 0 even with the delay
+  removed. 20B uses a punch that never confirms and a race bounded to
+  1 500 ms — below `RACE_RELAY_ARM_MS` — so the delay is the only thing
+  that can keep the count at zero.
+- **`run_punch_leg_offer_test`** covers the one decision the blocking
+  driver never makes and the race depends on completely: the race offers
+  each non-'3SXR' datagram to every live leg in turn and stops at the
+  first that consumes it, so a leg that consumed datagrams which are not
+  its own would let one candidate's noise confirm another candidate's leg.
+
+### 8.9 Residuals, stated rather than hidden
+
+- **Scenario A is still 8 s/attempt**, because the 8 000 ms signalling
+  budget is the longest single leg and racing cannot shorten it. Cutting
+  that number means cutting `SIGNAL_BUDGET_MS`, which is a separate
+  judgement about how long to wait for a host that may simply be slow to
+  register — not a racing problem.
+- **The S2 auto-retry still doubles everything.** One attempt is ~5-8 s;
+  the user-visible worst case is ~10-16 s because a terminal failure is
+  retried once with a fresh local port. Removing the retry is a different
+  trade (it demonstrably rescues joins — test 6 part B) and was not made
+  here.
+- **A pair that needs longer than `RACE_RELAY_ARM_MS` to punch may end up
+  relayed** where the pre-S6 code would have kept punching for the full
+  bilateral window first. The arm delay bounds this to pairs that failed
+  to punch for 2.5 s across *both* candidates; a confirmed punch still
+  wins if it lands while the relay leg is mid-flight, because the punch
+  check runs first in every iteration and tears the relay leg down.
+- **The overlapping stage timings are a diagnostic regression** for anyone
+  grepping old report lines: `punch + signal + bilateral + relay` no
+  longer approximates the elapsed time. `race=` is the replacement, and
+  §8.7 says so, but a reader of an old log and a new log side by side will
+  see the shapes differ.
+- **No on-device measurement.** Every number in §8.5 is from the macOS
+  host build. The MiSTer is a 800 MHz ARM with a single GbE interface; the
+  race loop's cost is one non-blocking recv and a handful of 17-byte sends
+  per 5 ms, so it is not expected to behave differently, but that is
+  reasoning, not a measurement.
 
 ## 9. S7 — NAT-PMP / PCP
 
@@ -1407,4 +1635,5 @@ expected outcome. This is the regression net for S2–S7.
 | S3 no-hangs + failure taxonomy | **implemented** (see §5) |
 | S4 security | **implemented + adversarially reviewed** (see §6; S4a punch auth, S4b room code — now v3, S4c rendezvous return-routability — the last two are breaking wire/format changes, authorized. Review fixes as-built in §6.8) |
 | S5 relay for symmetric-NAT pairs | **implemented + adversarially reviewed** (see §7; custom '3SXR' relay on the existing port, NOT coturn. Closes the one §2 matrix cell that could not connect at all. Pure wire EXTENSION — protocol version stays 2. Review fixes as-built in §7.2/§7.3: CRITICAL-1 session-TTL teardown, HIGH-1 pin source binding, HIGH-2 over-budget liveness, MEDIUM-1..5, LOW-1..2) |
-| S6–S8 | planned above |
+| S6 joiner candidate racing | **implemented** (see §8; one interleaved race on the existing worker thread — no new threads, no new locks. Full-cascade worst case measured 9 677 -> 5 114 ms per attempt) |
+| S7–S8 | planned above |

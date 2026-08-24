@@ -253,6 +253,22 @@ out-of-band (text message, voice) and paste it into the wrapper OSD.
   start skewed by DELIVER-arrival timing, and both loops tolerate
   stray datagrams, so extra overlap only costs failure-case wait.
 
+`netplay-direct-p2p-race-budget-ms` (int, default `8000`)
+- S6 candidate racing (docs/plan-netplay-connection.md §8): the WHOLE
+  post-STUN establishment wall clock, on both roles. Since S6 the punch
+  candidates, the rendezvous signaling leg and the relay leg run
+  CONCURRENTLY on the one worker thread instead of one after another, so
+  this replaces the old serial sum (direct punch + signal budget +
+  bilateral punch + relay budget = 19500 ms) as the bound on a failing
+  attempt. The per-leg keys above still bound their own legs INSIDE it:
+  `signal-budget-ms` the rendezvous leg, `bilateral-punch-ms` each punch
+  leg's lifetime, `relay-budget-ms` the relay leg. Clamped to
+  [2000, 30000]: below 2000 ms no leg completes a round trip to a distant
+  server, and above 30000 ms the S3 orchestrator deadline is the more
+  meaningful bound. Note that a terminal failure is still retried once
+  with a fresh local port (S2), so the user-visible worst case is about
+  twice this.
+
 `netplay-direct-p2p-register-interval-ms` (int, default `5000`)
 - Host liveness (S1): cadence of the host's persistent rendezvous
   re-REGISTER loop while the room code is displayed. Keeps the

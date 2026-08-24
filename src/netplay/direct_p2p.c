@@ -163,13 +163,20 @@ typedef struct {
      * the relay has been tried the relay is the actionable thing. */
     bool relay_used;
     ConnectFailCode relay_fail_code;
-    /* Stage timings (ms) for the report line — 0 = stage not reached. */
+    /* Stage timings (ms) for the report line — 0 = stage not reached.
+     *
+     * S6 WARNING for anyone reading a report line: punch / signal /
+     * bilateral / relay are the LEG lifetimes and they now OVERLAP, so
+     * they no longer sum to the elapsed time. `t_race_ms` is the wall
+     * clock of the whole post-STUN cascade and is the number to compare
+     * across builds. */
     uint32_t t_upnp_ms;
     uint32_t t_stun_ms;
     uint32_t t_punch_ms;
     uint32_t t_signal_ms;
     uint32_t t_bilateral_ms;
     uint32_t t_relay_ms;
+    uint32_t t_race_ms;
 } Work;
 
 static SDL_AtomicInt s_state = { DIRECT_P2P_IDLE };
@@ -671,7 +678,6 @@ static bool Rendezvous_Send(NET_DatagramSocket* sock, NET_Address* target,
 /* Public typedefs are declared in direct_p2p.h. The local function
  * pointers default to the production functions; test_bilateral_punch.c
  * overrides them via DirectP2P_TestHook_Set*. */
-static DirectP2P_StunHolePunch_fn  s_stun_hole_punch_impl  = Stun_HolePunch;
 static DirectP2P_RendezvousSend_fn s_rendezvous_send_impl  = Rendezvous_Send;
 /* S2: Stun_Discover seam so the joiner auto-retry test can drive
  * BeginJoin end-to-end without touching real STUN servers. */
@@ -681,16 +687,16 @@ static DirectP2P_StunDiscover_fn   s_stun_discover_impl    = Stun_Discover;
  * budget) waiting out a loop whose early-exit the fix deliberately
  * removes. 0 = use the config value. */
 static int s_test_signal_budget_ms = 0;
+/* S6: override for the OVERALL race budget (0 = use the config value). */
+static int s_test_race_budget_ms = 0;
 
-#define STUN_HOLE_PUNCH(stun, peer_ip, peer_port, token, duration_ms, cancel) \
-    s_stun_hole_punch_impl((stun), (peer_ip), (peer_port), (token), (duration_ms), (cancel))
 #define RENDEZVOUS_SEND(sock, target, target_port, pkt, pkt_len) \
     s_rendezvous_send_impl((sock), (target), (target_port), (pkt), (pkt_len))
 #define STUN_DISCOVER(result, local_port, timeout_ms) \
     s_stun_discover_impl((result), (local_port), (timeout_ms))
 
-void DirectP2P_TestHook_SetStunHolePunch(DirectP2P_StunHolePunch_fn fn) {
-    s_stun_hole_punch_impl = (fn != NULL) ? fn : Stun_HolePunch;
+void DirectP2P_TestHook_SetRaceBudgetMs(int ms) {
+    s_test_race_budget_ms = (ms > 0) ? ms : 0;
 }
 void DirectP2P_TestHook_SetRendezvousSend(DirectP2P_RendezvousSend_fn fn) {
     s_rendezvous_send_impl = (fn != NULL) ? fn : Rendezvous_Send;
@@ -705,13 +711,36 @@ bool DirectP2P_TestHook_IsLanPeer(const char* ip) {
     return direct_p2p_is_lan_peer(ip);
 }
 #else
-#define STUN_HOLE_PUNCH(stun, peer_ip, peer_port, token, duration_ms, cancel) \
-    Stun_HolePunch((stun), (peer_ip), (peer_port), (token), (duration_ms), (cancel))
 #define RENDEZVOUS_SEND(sock, target, target_port, pkt, pkt_len) \
     Rendezvous_Send((sock), (target), (target_port), (pkt), (pkt_len))
 #define STUN_DISCOVER(result, local_port, timeout_ms) \
     Stun_Discover((result), (local_port), (timeout_ms))
 #endif /* NETPLAY_TEST_HOOKS */
+
+/* S6: the overall post-STUN race budget. The per-leg keys
+ * (SIGNAL_BUDGET_MS, BILATERAL_PUNCH_MS, RELAY_BUDGET_MS) still bound
+ * their own legs INSIDE this. */
+static int race_budget_ms(void) {
+    int ms = Config_GetInt(CFG_KEY_NETPLAY_DIRECT_P2P_RACE_BUDGET_MS);
+    if (ms <= 0) ms = 8000;     /* keep in sync with the config.c default */
+    if (ms < 2000) ms = 2000;   /* below this no leg completes a distant round trip */
+    if (ms > 30000) ms = 30000; /* past this the S3 orchestrator deadline is the bound */
+#ifdef NETPLAY_TEST_HOOKS
+    if (s_test_race_budget_ms > 0) ms = s_test_race_budget_ms;
+#endif
+    return ms;
+}
+
+/* S6: wall clock of the last completed race — the number this stage
+ * exists to shrink, exposed so the timing regression test measures the
+ * shipped path rather than a re-implementation of it. */
+static SDL_AtomicInt s_last_race_ms;
+
+#ifdef NETPLAY_TEST_HOOKS
+uint32_t DirectP2P_TestHook_LastRaceMs(void) {
+    return (uint32_t)SDL_GetAtomicInt(&s_last_race_ms);
+}
+#endif
 
 /* --- S4a: host-waiting datagram classifier ----------------------------- */
 
@@ -928,13 +957,9 @@ static int stun_budget_ms(void) {
  * couple of pin round trips. */
 #define RELAY_PIN_MIN_MS 500
 
-typedef struct {
-    char     ip[64];      /* relay endpoint — taken from the PIN_ACK's own
-                             source address, see relay_rung_run           */
-    uint16_t port;
-    uint8_t  slot;
-    bool     peer_pinned;
-} RelayEndpoint;
+/* (S6: the RelayEndpoint struct is gone with relay_rung_run — the relay
+ * leg now writes its endpoint straight into RaceResult, which is the one
+ * place every rung's outcome lands.) */
 
 static bool relay_enabled(void) {
     return !Config_GetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_RELAY);
@@ -979,209 +1004,730 @@ static int relay_budget_ms(void) {
     return ms;
 }
 
-/*
- * Run the whole rung. Returns CONNECT_FAIL_NONE and fills `out` on
- * success; otherwise the specific relay cause (or USER_ABORT).
+/* ======================================================================
+ * S6 — candidate racing (docs/plan-netplay-connection.md §8)
+ * ======================================================================
  *
- * Phase 1 — RELAY_REQ -> RELAY_GRANT on the SIGNAL port. The request is
- * byte-identical to a REGISTER in the fields the server's S4c gate
- * reads, so it is cookie-gated exactly like one; a CHALLENGE arriving
- * here (rotation, or a server restart) is answered inline, same as the
- * signaling loop does.
+ * Before S6 the joiner ran its establishment phases STRICTLY SERIALLY —
+ * direct punch, then the rendezvous REGISTER/DELIVER loop, then the
+ * bilateral punch, then the relay rung — so a join that ended in failure
+ * cost the SUM of every budget (2500 + 8000 + 5000 + 4000 = 19500 ms on
+ * top of STUN). The host was serial too: bilateral punch, then relay
+ * (5000 + 4000 = 9000 ms).
  *
- * Phase 2 — RELAY_PIN -> RELAY_PIN_ACK on the GRANTED port. The relay
- * pins the first token-bearing source on each side; the pin datagrams
- * are also what open OUR NAT toward the relay port, which is the whole
- * reason the endpoint is usable afterwards.
+ * We do NOT build ICE. The justification is on file: the MiSTer has ONE
+ * interface, the kernel is built without CONFIG_IPV6 so there is no v6
+ * escape from NAT, there are at most three candidate routes, and a
+ * rendezvous signalling channel already exists. Full ICE would buy
+ * nothing those three facts do not already decide.
  *
- * We hand off once OUR OWN pin is acked, and keep pinning until the ACK
- * reports the peer pinned too (or the budget runs out). Waiting for the
- * peer as a HARD requirement would deadlock the symmetric case both
- * sides are in: each would sit waiting for the other. Handing off with
- * only our own ACK is safe — the relay drops our frames until the peer
- * pins, GekkoNet retransmits SyncRequest every 200 ms, and the S3
- * CONNECT_TIMEOUT_CONNECTING_MS deadline reports honestly if the peer
- * never arrives.
+ * Instead: ONE interleaved loop, on the SAME worker thread that already
+ * owned the socket exclusively, driving up to four legs concurrently:
+ *
+ *   punch[0]  the endpoint we already know — the joiner's room-code
+ *             endpoint, or (host) the joiner endpoint the DELIVER gave us
+ *   punch[1]  the endpoint a rendezvous DELIVER teaches us mid-race
+ *             (joiner only; this is the old "bilateral" punch, except it
+ *             now starts the instant the DELIVER parses instead of after
+ *             the direct punch has burned its whole window)
+ *   signal    the rendezvous REGISTER/CHALLENGE/DELIVER conversation
+ *             (joiner only — the host is already paired by the time it
+ *             punches, and its rendezvous worker has exited)
+ *   relay     the S5 RELAY_REQ -> GRANT -> PIN -> ACK rung
+ *
+ * NO NEW THREADS, NO NEW LOCKS, NO NEW RACES: every leg is a state
+ * machine pumped from the one loop, and the socket keeps exactly one
+ * reader/writer, exactly as it had before.
+ *
+ * Ordering rules that are load-bearing, not incidental:
+ *
+ *  - A CONFIRMED PUNCH ALWAYS BEATS THE RELAY. It is checked first in
+ *    every iteration, and the first confirm tears the relay leg down.
+ *    A relayed session detours through a European VPS, so silently
+ *    preferring it over a working direct link would be a latency
+ *    regression disguised as a connectivity win.
+ *  - THE RELAY LEG DOES NOT ARM UNTIL RACE_RELAY_ARM_MS. S5 promised
+ *    that "a pair that can punch never reaches this code, so an enabled
+ *    relay costs a connectable pair nothing" (§7.4). Racing would break
+ *    that promise — every pair would request a pool port. The arm delay
+ *    restores it: 2500 ms is exactly the window the DIRECT punch used to
+ *    get all to itself, and by then the DELIVER leg has usually been
+ *    punching for ~2 s as well, so a pair that has not punched by then
+ *    is a pair the pre-S6 code had already given up on at this stage.
+ *  - THE RELAY LEG ALSO NEEDS A REAL DELIVER (joiner). Without one we
+ *    are provably not paired server-side, and handleRelayReq refuses an
+ *    unpaired session — so arming would spend the budget to be told
+ *    something we already know. The host is paired by construction.
+ *  - A `NOT_PAIRED` REFUSAL IS TRANSIENT, NOT TERMINAL. Serially the
+ *    rung ran after the signalling phase had definitely completed, so a
+ *    refusal could only mean a durable condition. Racing can now ask
+ *    while the peer's own REGISTER is still in flight, and treating that
+ *    first answer as final would invent a failure. Only
+ *    POOL_EXHAUSTED ends the leg early.
  */
-static ConnectFailCode relay_rung_run(NET_DatagramSocket* sock,
-                                      NET_Address* signal_addr,
-                                      uint16_t signal_port,
-                                      const uint8_t session_key[16],
-                                      uint16_t my_public_port,
-                                      const uint8_t* cookie_in,
-                                      int budget_ms,
-                                      SDL_AtomicInt* cancel_flag,
-                                      RelayEndpoint* out) {
-    if (out == NULL) {
-        return CONNECT_FAIL_INTERNAL;
-    }
-    memset(out, 0, sizeof(*out));
-    if (sock == NULL || signal_addr == NULL || session_key == NULL) {
-        return CONNECT_FAIL_RELAY_UNAVAILABLE;
-    }
 
+/* The relay leg does not arm before this. See the ordering rules above:
+ * this is the window the pre-S6 DIRECT punch had entirely to itself
+ * (join_attempt's `2500` literal), so nothing that could have connected
+ * on the pre-S6 code path is diverted to a relay by the race. */
+#define RACE_RELAY_ARM_MS 2500u
+
+/* Loop period. The legs' own cadences are 50-500 ms; 5 ms keeps the
+ * cancel check responsive and the send timings honest without spinning
+ * (the receive call below is non-blocking, so this is the only sleep). */
+#define RACE_POLL_MS 5
+
+#define RACE_PUNCH_LEGS 2
+
+typedef enum {
+    RACE_ROLE_JOIN = 0,
+    RACE_ROLE_HOST
+} RaceRole;
+
+typedef enum {
+    RACE_PUNCHED = 0,  /* a punch leg confirmed and finished its tail */
+    RACE_RELAYED,      /* the relay leg pinned                        */
+    RACE_CANCELLED,    /* caller-initiated abort                      */
+    RACE_EXHAUSTED     /* every leg finished without a link           */
+} RaceOutcome;
+
+typedef struct {
+    RaceRole role;
+    NET_DatagramSocket* sock;
+    StunResult* stun;                 /* diag sink (punch bad-token); may be NULL */
+    const uint8_t* punch_token;       /* STUN_PUNCH_TOKEN_LEN bytes */
+
+    /* Seed punch candidate — the endpoint we already hold. */
+    const char* seed_ip;
+    uint16_t seed_port;
+
+    /* Rendezvous + relay shared endpoint. `signal_addr` is BORROWED:
+     * the caller owns the ref for the whole race and after it. */
+    NET_Address* signal_addr;
+    uint16_t signal_port;
+    const uint8_t* session_key;       /* 16 bytes */
+    uint16_t my_public_port;
+    const uint8_t* cookie_in;         /* NULL when we hold no cookie yet */
+
+    bool signal_leg;                  /* run the REGISTER/DELIVER conversation */
+    int  signal_budget_ms;
+    const char* my_public_ip;         /* self-DELIVER gate; may be NULL */
+
+    bool relay_leg;
+    int  relay_budget_ms;
+
+    int  punch_leg_ms;                /* per-leg punch window */
+    int  race_budget_ms;              /* overall wall clock */
+    bool no_punch;                    /* force-relay override: arm no punch legs */
+
+    SDL_AtomicInt* cancel;            /* extra cancel flag, beside s_cancel */
+} RaceCfg;
+
+typedef struct {
+    RaceOutcome outcome;
+    char     peer_ip[64];
+    uint16_t peer_port;
+
+    /* S3 evidence, carried out for the classifier. */
+    bool deliver_any;
+    bool deliver_real;
+    bool challenge_any;
+
+    /* S4c cookie learned mid-race, so the caller can reuse it. */
+    bool    have_cookie;
     uint8_t cookie[REND_COOKIE_LEN];
-    bool have_cookie = false;
-    if (cookie_in != NULL) {
-        memcpy(cookie, cookie_in, sizeof(cookie));
-        have_cookie = true;
-    }
 
-    uint8_t req[REND_RELAY_REQ_PKT_LEN];
-    if (!Rendezvous_BuildRelayReq(my_public_port, session_key,
-                                  have_cookie ? cookie : NULL, req)) {
-        return CONNECT_FAIL_INTERNAL;
-    }
+    /* S5 relay disposition. `relay_ran` distinguishes "never armed" from
+     * "armed and failed", which the code alone cannot say. */
+    bool            relay_ran;
+    ConnectFailCode relay_fail;
 
-    /* The user has been staring at "Connecting..." through two failed
-     * punch phases; name the rung so a relayed connection is never a
-     * silent surprise (its ping is structurally worse). */
-    set_status("Connecting via relay...");
-    SDL_Log("[direct_p2p] S5 relay rung: requesting a relay (budget=%d ms)", budget_ms);
+    /* Stage timings. NOTE: these now OVERLAP — that is the whole point of
+     * S6 — so they no longer sum to the elapsed time. `t_race_ms` is the
+     * wall clock the caller should reason about. */
+    uint32_t t_punch_ms;      /* punch leg 0 (room code / host's peer) alive */
+    uint32_t t_bilateral_ms;  /* punch leg 1 (DELIVER endpoint) alive        */
+    uint32_t t_signal_ms;     /* signal leg alive                            */
+    uint32_t t_relay_ms;      /* relay leg alive                             */
+    uint32_t t_race_ms;       /* the whole race                              */
+} RaceResult;
+
+/* Relay leg states. */
+typedef enum {
+    RELAY_LEG_UNARMED = 0,
+    RELAY_LEG_REQ,   /* RELAY_REQ -> RELAY_GRANT on the signal port */
+    RELAY_LEG_PIN,   /* RELAY_PIN -> RELAY_PIN_ACK on the granted port */
+    RELAY_LEG_DONE
+} RaceRelayState;
+
+#ifdef NETPLAY_TEST_HOOKS
+/* S6 test seam. Replaces the pre-S6 DirectP2P_TestHook_SetStunHolePunch:
+ * with the punch no longer owning the socket for a whole window, there is
+ * no blocking call left to substitute, so the seam moved to the decision
+ * the tests were actually making — "does THIS candidate ever confirm?".
+ * A leg under an oracle override sends NOTHING on the wire, which is what
+ * keeps the offline harnesses offline. */
+static DirectP2P_PunchOracle_fn s_punch_oracle = NULL;
+
+void DirectP2P_TestHook_SetPunchOracle(DirectP2P_PunchOracle_fn fn) {
+    s_punch_oracle = fn;
+}
+#define PUNCH_ORACLE(ip, port) \
+    (s_punch_oracle != NULL ? s_punch_oracle((ip), (port)) : DP2P_PUNCH_REAL)
+#else
+#define PUNCH_ORACLE(ip, port) ((void)(ip), (void)(port), DP2P_PUNCH_REAL)
+#endif
+
+/* One punch candidate. `oracle` is DP2P_PUNCH_REAL for every production
+ * leg; the other two values make the leg a pure clock with no wire
+ * traffic, for the offline harnesses. */
+typedef struct {
+    bool         armed;
+    bool         finished;
+    StunPunchLeg leg;
+    uint32_t     armed_ms;
+    uint32_t     alive_ms;
+    char         ip[64];
+    uint16_t     port;
+    DirectP2PPunchOracleResult oracle;
+    bool         oracle_confirmed;
+} RacePunchCandidate;
+
+static bool race_cancelled(const RaceCfg* cfg) {
+    return cancel_requested() ||
+           (cfg->cancel != NULL && SDL_GetAtomicInt(cfg->cancel) != 0);
+}
+
+/* Arm a punch candidate. Returns false if the endpoint is unusable (or a
+ * duplicate of one we are already punching — punching the same endpoint
+ * twice from one socket doubles the traffic and teaches us nothing). */
+static bool race_arm_punch(RacePunchCandidate* cands, int n_cands, int slot,
+                           const RaceCfg* cfg, const char* ip, uint16_t port,
+                           uint32_t now) {
+    if (ip == NULL || ip[0] == '\0' || port == 0) {
+        return false;
+    }
+    for (int i = 0; i < n_cands; i++) {
+        if (cands[i].armed && !cands[i].finished &&
+            cands[i].port == port && strcmp(cands[i].ip, ip) == 0) {
+            return false;
+        }
+    }
+    RacePunchCandidate* c = &cands[slot];
+    memset(c, 0, sizeof(*c));
+    SDL_strlcpy(c->ip, ip, sizeof(c->ip));
+    c->port = port;
+    c->armed_ms = now;
+    c->oracle = PUNCH_ORACLE(ip, port);
+    if (c->oracle == DP2P_PUNCH_REAL) {
+        if (!Stun_PunchBegin(&c->leg, ip, port, cfg->punch_token, now)) {
+            return false;
+        }
+    }
+    c->armed = true;
+    SDL_Log("[direct_p2p] S6 race: punching candidate %s:%u", ip, (unsigned)port);
+    return true;
+}
+
+static void race_finish_punch(RacePunchCandidate* c, uint32_t now) {
+    if (!c->armed || c->finished) {
+        return;
+    }
+    c->alive_ms = now - c->armed_ms;
+    if (c->oracle == DP2P_PUNCH_REAL) {
+        Stun_PunchEnd(&c->leg);
+    }
+    c->finished = true;
+}
+
+static bool race_punch_confirmed(const RacePunchCandidate* c) {
+    if (!c->armed || c->finished) {
+        return false;
+    }
+    return (c->oracle == DP2P_PUNCH_REAL) ? Stun_PunchConfirmed(&c->leg)
+                                          : c->oracle_confirmed;
+}
+
+static bool race_punch_settled(const RacePunchCandidate* c, uint32_t now) {
+    if (!race_punch_confirmed(c)) {
+        return false;
+    }
+    /* An oracle-driven leg has no wire traffic to flush, so it settles at
+     * once; a real leg owes the peer its ~600 ms confirmation tail. */
+    return (c->oracle == DP2P_PUNCH_REAL) ? Stun_PunchSettled(&c->leg, now) : true;
+}
+
+/*
+ * Run the race. Returns a RaceResult; the caller owns every decision that
+ * follows from it (classification, status text, handoff).
+ *
+ * Preconditions the caller must guarantee — the same ones the pre-S6
+ * serial phases relied on: this thread is the SOLE reader/writer of
+ * `cfg->sock` for the whole call (the join worker, or the host's
+ * bilateral-punch worker during FALLBACK_BILATERAL_PUNCH, plan
+ * §Decision 3), and `cfg->signal_addr` stays ref'd by the caller.
+ */
+static void p2p_race(const RaceCfg* cfg, RaceResult* out) {
+    memset(out, 0, sizeof(*out));
+    out->outcome = RACE_EXHAUSTED;
+    out->relay_fail = CONNECT_FAIL_NONE;
 
     const uint32_t t0 = SDL_GetTicks();
-    const int grant_budget = budget_ms / 2;
+    const uint32_t race_deadline = t0 + (uint32_t)cfg->race_budget_ms;
+
+    RacePunchCandidate cands[RACE_PUNCH_LEGS];
+    memset(cands, 0, sizeof(cands));
+
+    /* --- leg: punch[0], the endpoint we already hold ------------------ */
+    if (!cfg->no_punch) {
+        (void)race_arm_punch(cands, RACE_PUNCH_LEGS, 0, cfg,
+                             cfg->seed_ip, cfg->seed_port, t0);
+    }
+
+    /* --- leg: rendezvous signalling ----------------------------------- */
+    uint8_t register_pkt[REND_REGISTER_PKT_LEN];
+    uint8_t cookie[REND_COOKIE_LEN];
+    bool have_cookie = false;
+    bool signal_active = false;
+    uint32_t signal_last_send = 0;
+    bool signal_sent_any = false;
+    uint32_t signal_end_ms = 0;
+
+    if (cfg->cookie_in != NULL) {
+        memcpy(cookie, cfg->cookie_in, sizeof(cookie));
+        have_cookie = true;
+    }
+    if (cfg->signal_leg && cfg->signal_addr != NULL && cfg->session_key != NULL) {
+        if (Rendezvous_BuildRegister(cfg->my_public_port, cfg->session_key,
+                                     have_cookie ? cookie : NULL, register_pkt)) {
+            signal_active = true;
+        } else {
+            SDL_Log("[direct_p2p] S6 race: failed to build REGISTER — signal leg off");
+        }
+    }
+
+    /* --- leg: relay --------------------------------------------------- */
+    RaceRelayState relay_state = RELAY_LEG_UNARMED;
+    uint32_t relay_armed_ms = 0;
+    uint32_t relay_phase_ms = 0;
+    uint32_t relay_last_send = 0;
+    bool relay_sent_any = false;
+    uint8_t relay_req[REND_RELAY_REQ_PKT_LEN];
+    uint8_t relay_pin[REND_RELAY_PIN_LEN];
     RendezvousRelayGrant grant;
     memset(&grant, 0, sizeof(grant));
-    bool granted = false;
-    bool refused = false;
-    uint32_t last_send = 0;
+    char relay_ip[64] = { 0 };
+    bool relay_acked = false;
+    bool relay_peer_pinned = false;
+    /* A refusal we have SEEN but not yet acted on. NOT_PAIRED is
+     * transient while the peer's REGISTER may still be in flight (see the
+     * ordering rules above), so it is remembered and only reported if the
+     * leg runs out of budget still holding it. */
+    ConnectFailCode relay_pending_fail = CONNECT_FAIL_NONE;
+    const bool relay_possible = cfg->relay_leg && cfg->signal_addr != NULL &&
+                                cfg->session_key != NULL;
 
-    while ((int)(SDL_GetTicks() - t0) < grant_budget) {
-        if (cancel_requested() ||
-            (cancel_flag != NULL && SDL_GetAtomicInt(cancel_flag) != 0)) {
-            return CONNECT_FAIL_USER_ABORT;
-        }
+    while (true) {
         const uint32_t now = SDL_GetTicks();
-        if (last_send == 0 || (now - last_send) >= RELAY_REQ_RESEND_MS) {
-            (void)RENDEZVOUS_SEND(sock, signal_addr, signal_port, req, sizeof(req));
-            last_send = now;
+
+        if (race_cancelled(cfg)) {
+            out->outcome = RACE_CANCELLED;
+            break;
         }
-        NET_Datagram* dgram = NULL;
-        if (NET_ReceiveDatagram(sock, &dgram) && dgram != NULL) {
-            const int ft = Rendezvous_FrameType(dgram->buf, dgram->buflen);
-            if (ft == REND_FRAME_CHALLENGE) {
-                if (Rendezvous_ParseChallenge(dgram->buf, dgram->buflen,
-                                              session_key, cookie)) {
-                    have_cookie = true;
-                    (void)Rendezvous_BuildRelayReq(my_public_port, session_key,
-                                                   cookie, req);
-                    (void)RENDEZVOUS_SEND(sock, signal_addr, signal_port,
-                                          req, sizeof(req));
-                    last_send = SDL_GetTicks();
-                    SDL_Log("[direct_p2p] S5 relay rung answered a rendezvous CHALLENGE");
-                }
-            } else if (ft == REND_FRAME_RELAY_GRANT) {
-                if (Rendezvous_ParseRelayGrant(dgram->buf, dgram->buflen,
-                                               session_key, &grant)) {
-                    if (grant.status == (uint8_t)REND_RELAY_GRANTED) {
-                        granted = true;
-                    } else {
-                        refused = true;
+
+        /* --- 1) a confirmed punch outranks everything ----------------- */
+        {
+            bool any_confirmed = false;
+            for (int i = 0; i < RACE_PUNCH_LEGS; i++) {
+                if (race_punch_confirmed(&cands[i])) {
+                    any_confirmed = true;
+                    if (race_punch_settled(&cands[i], now)) {
+                        if (cands[i].oracle == DP2P_PUNCH_REAL) {
+                            Stun_PunchEndpoint(&cands[i].leg, out->peer_ip,
+                                               (int)sizeof(out->peer_ip),
+                                               &out->peer_port);
+                        } else {
+                            SDL_strlcpy(out->peer_ip, cands[i].ip, sizeof(out->peer_ip));
+                            out->peer_port = cands[i].port;
+                        }
+                        out->outcome = RACE_PUNCHED;
+                        goto done;
                     }
                 }
             }
-            /* Everything else (a DELIVER straggler from the signaling
-             * phase, a late punch echo, noise) is dropped: this loop is
-             * relay-only. */
-            NET_DestroyDatagram(dgram);
-            if (granted || refused) break;
+            if (any_confirmed && relay_state != RELAY_LEG_DONE &&
+                relay_state != RELAY_LEG_UNARMED) {
+                /* Stop asking for (and stop paying for) a relay port the
+                 * moment a direct link exists. */
+                SDL_Log("[direct_p2p] S6 race: punch confirmed — dropping the relay leg");
+                relay_state = RELAY_LEG_DONE;
+                out->relay_fail = CONNECT_FAIL_NONE;
+                out->t_relay_ms = now - relay_armed_ms;
+            }
         }
-        SDL_Delay(10);
-    }
 
-    if (refused) {
-        SDL_Log("[direct_p2p] %s relay REFUSED by the server (status=%u) — %s",
-                ConnectFail_Code(CONNECT_FAIL_RELAY_REFUSED), (unsigned)grant.status,
-                grant.status == (uint8_t)REND_RELAY_POOL_EXHAUSTED
-                    ? "the relay port pool is exhausted"
-                    : "the session is not paired server-side");
-        return CONNECT_FAIL_RELAY_REFUSED;
-    }
-    if (!granted) {
-        /* The server answers a well-formed, cookied RELAY_REQ from a
-         * registered slot with either a grant or a refusal, so total
-         * silence means the request never landed: relay disabled
-         * server-side, an older server build, or we are no longer one of
-         * this session's two slots (an S2 fresh-socket retry re-binds a
-         * new source port, which the server may still file as a third
-         * party while the previous slot is inside SLOT_STALE_MS). */
-        SDL_Log("[direct_p2p] %s no RELAY_GRANT within %d ms",
-                ConnectFail_Code(CONNECT_FAIL_RELAY_UNAVAILABLE), grant_budget);
-        return CONNECT_FAIL_RELAY_UNAVAILABLE;
-    }
-
-    uint8_t pin[REND_RELAY_PIN_LEN];
-    if (!Rendezvous_BuildRelayPin(grant.slot, grant.token, pin)) {
-        return CONNECT_FAIL_INTERNAL;
-    }
-    SDL_Log("[direct_p2p] S5 relay GRANTED: port=%u slot=%u — pinning",
-            (unsigned)grant.relay_port, (unsigned)grant.slot);
-
-    int pin_budget = budget_ms - (int)(SDL_GetTicks() - t0);
-    if (pin_budget < RELAY_PIN_MIN_MS) pin_budget = RELAY_PIN_MIN_MS;
-
-    const uint32_t t1 = SDL_GetTicks();
-    bool acked = false;
-    bool peer_pinned = false;
-    char relay_ip[64] = { 0 };
-    last_send = 0;
-
-    while ((int)(SDL_GetTicks() - t1) < pin_budget) {
-        if (cancel_requested() ||
-            (cancel_flag != NULL && SDL_GetAtomicInt(cancel_flag) != 0)) {
-            return CONNECT_FAIL_USER_ABORT;
+        /* --- 2) leg lifetimes ---------------------------------------- */
+        for (int i = 0; i < RACE_PUNCH_LEGS; i++) {
+            if (cands[i].armed && !cands[i].finished &&
+                !race_punch_confirmed(&cands[i]) &&
+                (int)(now - cands[i].armed_ms) >= cfg->punch_leg_ms) {
+                SDL_Log("[direct_p2p] S6 race: candidate %s:%u timed out after %d ms",
+                        cands[i].ip, (unsigned)cands[i].port, cfg->punch_leg_ms);
+                race_finish_punch(&cands[i], now);
+            }
         }
-        const uint32_t now = SDL_GetTicks();
-        if (last_send == 0 || (now - last_send) >= RELAY_PIN_RESEND_MS) {
-            (void)RENDEZVOUS_SEND(sock, signal_addr, grant.relay_port,
-                                  pin, sizeof(pin));
-            last_send = now;
+        if (signal_active && (int)(now - t0) >= cfg->signal_budget_ms) {
+            signal_active = false;
+            signal_end_ms = now;
         }
+
+        /* --- 3) arm the relay leg ------------------------------------ */
+        if (relay_possible && relay_state == RELAY_LEG_UNARMED) {
+            /* With no punch legs at all (force-relay), there is nothing
+             * for the relay to defer TO, so the arm delay is skipped. */
+            const bool delay_done = cfg->no_punch || (now - t0) >= RACE_RELAY_ARM_MS;
+            const bool paired = (cfg->role == RACE_ROLE_HOST) || out->deliver_real ||
+                                cfg->no_punch;
+            bool punch_live = false;
+            for (int i = 0; i < RACE_PUNCH_LEGS; i++) {
+                if (race_punch_confirmed(&cands[i])) punch_live = true;
+            }
+            if (delay_done && paired && !punch_live &&
+                Rendezvous_BuildRelayReq(cfg->my_public_port, cfg->session_key,
+                                         have_cookie ? cookie : NULL, relay_req)) {
+                relay_state = RELAY_LEG_REQ;
+                relay_armed_ms = now;
+                relay_phase_ms = now;
+                relay_sent_any = false;
+                out->relay_ran = true;
+                /* The user has been staring at "Connecting..."; name the
+                 * rung so a relayed connection is never a silent surprise
+                 * (its ping is structurally worse). */
+                set_status("Connecting via relay...");
+                SDL_Log("[direct_p2p] S6 race: relay leg armed at t+%u ms (budget=%d ms)",
+                        (unsigned)(now - t0), cfg->relay_budget_ms);
+            }
+        }
+
+        /* --- 4) relay leg phase deadlines ---------------------------- */
+        if (relay_state == RELAY_LEG_REQ &&
+            (int)(now - relay_phase_ms) >= cfg->relay_budget_ms / 2) {
+            if (relay_pending_fail != CONNECT_FAIL_NONE) {
+                out->relay_fail = relay_pending_fail;
+                SDL_Log("[direct_p2p] %s relay refused for the whole GRANT phase",
+                        ConnectFail_Code(out->relay_fail));
+            } else {
+                /* The server answers a well-formed, cookied RELAY_REQ from
+                 * a registered slot with either a grant or a refusal, so
+                 * total silence means the request never landed: relay
+                 * disabled server-side, an older server build, or we are
+                 * no longer one of this session's two slots. */
+                out->relay_fail = CONNECT_FAIL_RELAY_UNAVAILABLE;
+                SDL_Log("[direct_p2p] %s no RELAY_GRANT within %d ms",
+                        ConnectFail_Code(CONNECT_FAIL_RELAY_UNAVAILABLE),
+                        cfg->relay_budget_ms / 2);
+            }
+            relay_state = RELAY_LEG_DONE;
+            out->t_relay_ms = now - relay_armed_ms;
+        } else if (relay_state == RELAY_LEG_PIN) {
+            int pin_budget = cfg->relay_budget_ms - (int)(now - relay_armed_ms);
+            (void)pin_budget;
+            const int pin_window =
+                (cfg->relay_budget_ms - (int)(relay_phase_ms - relay_armed_ms) >
+                 RELAY_PIN_MIN_MS)
+                    ? cfg->relay_budget_ms - (int)(relay_phase_ms - relay_armed_ms)
+                    : RELAY_PIN_MIN_MS;
+            if ((int)(now - relay_phase_ms) >= pin_window) {
+                /* The rendezvous port demonstrably works (we got a GRANT
+                 * on it), so this is specifically about the relay PORT
+                 * RANGE being unreachable from here. */
+                SDL_Log("[direct_p2p] %s no RELAY_PIN_ACK from relay port %u within %d ms",
+                        ConnectFail_Code(CONNECT_FAIL_RELAY_PIN_TIMEOUT),
+                        (unsigned)grant.relay_port, pin_window);
+                out->relay_fail = CONNECT_FAIL_RELAY_PIN_TIMEOUT;
+                relay_state = RELAY_LEG_DONE;
+                out->t_relay_ms = now - relay_armed_ms;
+            }
+        }
+
+        /* --- 5) pump the legs ---------------------------------------- */
+        for (int i = 0; i < RACE_PUNCH_LEGS; i++) {
+            if (!cands[i].armed || cands[i].finished) continue;
+            if (cands[i].oracle == DP2P_PUNCH_REAL) {
+                Stun_PunchPump(&cands[i].leg, cfg->sock, now);
+            } else if (cands[i].oracle == DP2P_PUNCH_CONFIRM) {
+                cands[i].oracle_confirmed = true;
+            }
+        }
+        if (signal_active &&
+            (!signal_sent_any || (now - signal_last_send) >= 500u)) {
+            (void)RENDEZVOUS_SEND(cfg->sock, cfg->signal_addr, cfg->signal_port,
+                                  register_pkt, sizeof(register_pkt));
+            signal_last_send = now;
+            signal_sent_any = true;
+        }
+        if (relay_state == RELAY_LEG_REQ &&
+            (!relay_sent_any || (now - relay_last_send) >= RELAY_REQ_RESEND_MS)) {
+            (void)RENDEZVOUS_SEND(cfg->sock, cfg->signal_addr, cfg->signal_port,
+                                  relay_req, sizeof(relay_req));
+            relay_last_send = now;
+            relay_sent_any = true;
+        } else if (relay_state == RELAY_LEG_PIN &&
+                   (!relay_sent_any || (now - relay_last_send) >= RELAY_PIN_RESEND_MS)) {
+            (void)RENDEZVOUS_SEND(cfg->sock, cfg->signal_addr, grant.relay_port,
+                                  relay_pin, sizeof(relay_pin));
+            relay_last_send = now;
+            relay_sent_any = true;
+        }
+
+        /* --- 6) ONE shared receive path ------------------------------ */
         NET_Datagram* dgram = NULL;
-        if (NET_ReceiveDatagram(sock, &dgram) && dgram != NULL) {
-            bool pp = false;
-            if (Rendezvous_ParseRelayPinAck(dgram->buf, dgram->buflen,
-                                            grant.slot, &pp)) {
-                if (!acked) {
-                    /* Take the relay's address from the ACK's OWN source
-                     * rather than from signal_addr. signal_addr may have
-                     * come from a hostname, and re-resolving it later
-                     * (netplay.c does exactly that for remote_ip) could
-                     * land on a different round-robin answer — whereupon
-                     * the relay would drop our traffic as coming from an
-                     * unpinned source. The ACK's source is, by
-                     * construction, the box that just pinned us. */
-                    SDL_strlcpy(relay_ip, NET_GetAddressString(dgram->addr),
-                                sizeof(relay_ip));
+        bool got_dgram = false;
+        if (NET_ReceiveDatagram(cfg->sock, &dgram) && dgram != NULL) {
+            got_dgram = true;
+            char src_ip[64];
+            SDL_strlcpy(src_ip, NET_GetAddressString(dgram->addr), sizeof(src_ip));
+            const uint16_t src_port = dgram->port;
+            const int ft = Rendezvous_HasMagic(dgram->buf, dgram->buflen)
+                               ? Rendezvous_FrameType(dgram->buf, dgram->buflen)
+                               : -1;
+
+            if (ft == REND_FRAME_CHALLENGE) {
+                /* S4c: answer inline — one RTT to bind instead of waiting
+                 * out a resend cadence — and carry the cookie on every
+                 * later REGISTER and RELAY_REQ. A challenge is ALSO
+                 * liveness evidence: the server answered us, so a budget
+                 * expiry with challenges but no DELIVERs is an auth
+                 * problem, not a dead server. */
+                if (Rendezvous_ParseChallenge(dgram->buf, dgram->buflen,
+                                              cfg->session_key, cookie)) {
+                    have_cookie = true;
+                    out->have_cookie = true;
+                    memcpy(out->cookie, cookie, sizeof(cookie));
+                    out->challenge_any = true;
+                    if (signal_active &&
+                        Rendezvous_BuildRegister(cfg->my_public_port, cfg->session_key,
+                                                 cookie, register_pkt)) {
+                        (void)RENDEZVOUS_SEND(cfg->sock, cfg->signal_addr,
+                                              cfg->signal_port, register_pkt,
+                                              sizeof(register_pkt));
+                        signal_last_send = now;
+                        signal_sent_any = true;
+                    }
+                    if (relay_state == RELAY_LEG_REQ &&
+                        Rendezvous_BuildRelayReq(cfg->my_public_port, cfg->session_key,
+                                                 cookie, relay_req)) {
+                        (void)RENDEZVOUS_SEND(cfg->sock, cfg->signal_addr,
+                                              cfg->signal_port, relay_req,
+                                              sizeof(relay_req));
+                        relay_last_send = now;
+                        relay_sent_any = true;
+                    }
+                    SDL_Log("[direct_p2p] S6 race answered a rendezvous CHALLENGE");
                 }
-                acked = true;
-                if (pp) peer_pinned = true;
+            } else if (ft == REND_FRAME_DELIVER) {
+                char parsed_ip[64] = { 0 };
+                uint16_t parsed_port = 0;
+                /* S3 tri-state parse: a zero-sentinel DELIVER is MEANINGFUL
+                 * evidence — it proves the server is alive (it answers
+                 * every REGISTER), which separates "server down" from
+                 * "host offline" when the budget expires. */
+                const RendezvousDeliverResult dr = Rendezvous_ParseDeliverEx(
+                    dgram->buf, dgram->buflen, cfg->session_key, parsed_ip, &parsed_port);
+                if (dr != REND_DELIVER_MALFORMED) {
+                    out->deliver_any = true;
+                }
+                if (dr == REND_DELIVER_PEER && parsed_ip[0] != '\0' && parsed_port != 0) {
+                    /* S3-review HIGH-1 self-DELIVER gate: a DELIVER whose
+                     * endpoint IP equals OUR OWN public IP is not the host;
+                     * it is this client's own registration echoed back
+                     * after the S2 fresh-socket retry re-REGISTERed from a
+                     * new source port. A legitimate same-IP host is
+                     * impossible: the hairpin bypass fails any same-IP room
+                     * code before this leg ever REGISTERs. Treat it as
+                     * EMPTY evidence and keep polling. */
+                    if (cfg->my_public_ip != NULL && cfg->my_public_ip[0] != '\0' &&
+                        direct_p2p_ip_eq_normalized(parsed_ip, cfg->my_public_ip)) {
+                        SDL_Log("[direct_p2p] S6 race: DELIVER carries our own public IP "
+                                "(%s:%u) — our stale registration, not the host",
+                                parsed_ip, (unsigned)parsed_port);
+                    } else {
+                        if (!out->deliver_real) {
+                            SDL_Log("[direct_p2p] S6 race: DELIVER peer=%s:%u at t+%u ms",
+                                    parsed_ip, (unsigned)parsed_port,
+                                    (unsigned)(now - t0));
+                        }
+                        out->deliver_real = true;
+                        if (signal_end_ms == 0) {
+                            signal_end_ms = now;
+                        }
+                        /* The DELIVER endpoint becomes a punch candidate
+                         * IMMEDIATELY. Pre-S6 this punch could not start
+                         * until the direct punch had burned its full
+                         * window AND the signalling loop had broken out —
+                         * the single biggest serial cost in the cascade. */
+                        if (!cfg->no_punch) {
+                            (void)race_arm_punch(cands, RACE_PUNCH_LEGS, 1, cfg,
+                                                 parsed_ip, parsed_port, now);
+                        }
+                        /* We have what we came for; stop re-REGISTERing. */
+                        signal_active = false;
+                    }
+                }
+            } else if (ft == REND_FRAME_RELAY_GRANT) {
+                if (relay_state == RELAY_LEG_REQ &&
+                    Rendezvous_ParseRelayGrant(dgram->buf, dgram->buflen,
+                                               cfg->session_key, &grant)) {
+                    if (grant.status == (uint8_t)REND_RELAY_GRANTED) {
+                        if (Rendezvous_BuildRelayPin(grant.slot, grant.token, relay_pin)) {
+                            SDL_Log("[direct_p2p] S6 relay GRANTED: port=%u slot=%u — pinning",
+                                    (unsigned)grant.relay_port, (unsigned)grant.slot);
+                            relay_state = RELAY_LEG_PIN;
+                            relay_phase_ms = now;
+                            relay_sent_any = false;
+                            relay_pending_fail = CONNECT_FAIL_NONE;
+                        } else {
+                            out->relay_fail = CONNECT_FAIL_INTERNAL;
+                            relay_state = RELAY_LEG_DONE;
+                            out->t_relay_ms = now - relay_armed_ms;
+                        }
+                    } else if (grant.status == (uint8_t)REND_RELAY_NOT_PAIRED) {
+                        /* Transient under racing — the peer's REGISTER may
+                         * still be in flight. Remember it and keep asking. */
+                        relay_pending_fail = CONNECT_FAIL_RELAY_REFUSED;
+                    } else {
+                        SDL_Log("[direct_p2p] %s relay REFUSED by the server (status=%u) — "
+                                "the relay port pool is exhausted",
+                                ConnectFail_Code(CONNECT_FAIL_RELAY_REFUSED),
+                                (unsigned)grant.status);
+                        out->relay_fail = CONNECT_FAIL_RELAY_REFUSED;
+                        relay_state = RELAY_LEG_DONE;
+                        out->t_relay_ms = now - relay_armed_ms;
+                    }
+                }
+            } else if (ft == REND_FRAME_RELAY_PIN_ACK) {
+                bool pp = false;
+                if (relay_state == RELAY_LEG_PIN &&
+                    Rendezvous_ParseRelayPinAck(dgram->buf, dgram->buflen,
+                                                grant.slot, &pp)) {
+                    if (!relay_acked) {
+                        /* Take the relay's address from the ACK's OWN
+                         * source rather than from signal_addr: signal_addr
+                         * may have come from a hostname, and netplay.c
+                         * re-resolves remote_ip later — a round-robin
+                         * answer would then name a box that never pinned
+                         * us, and the relay would drop everything as
+                         * unpinned traffic. */
+                        SDL_strlcpy(relay_ip, src_ip, sizeof(relay_ip));
+                    }
+                    relay_acked = true;
+                    if (pp) relay_peer_pinned = true;
+                }
+            } else if (ft < 0) {
+                /* Not a '3SXR' frame. STUN stragglers from a slower
+                 * discovery server are dropped (S1); everything else is
+                 * offered to the punch legs, which accept ONLY the exact
+                 * authenticated payload from a candidate's IP. */
+                if (!Stun_IsBindingResponse(dgram->buf, dgram->buflen)) {
+                    for (int i = 0; i < RACE_PUNCH_LEGS; i++) {
+                        if (!cands[i].armed || cands[i].finished) continue;
+                        if (cands[i].oracle != DP2P_PUNCH_REAL) continue;
+                        if (Stun_PunchOffer(&cands[i].leg, cfg->stun, dgram->buf,
+                                            dgram->buflen, src_ip, src_port, now)) {
+                            break;
+                        }
+                    }
+                }
             }
             NET_DestroyDatagram(dgram);
-            if (peer_pinned) break;
         }
-        SDL_Delay(10);
+
+        /* --- 7) relay success ---------------------------------------- */
+        if (relay_state == RELAY_LEG_PIN && relay_acked && relay_ip[0] != '\0') {
+            /* Pin-then-handoff: we hand off once OUR OWN pin is acked and
+             * keep pinning until the ACK reports the peer pinned too (or
+             * the phase ends). Requiring `peer_pinned` as a HARD condition
+             * would deadlock the symmetric case both sides are in — each
+             * waiting for the other. Handing off early is safe: the relay
+             * drops our frames until the peer pins, GekkoNet retransmits
+             * SyncRequest every 200 ms, and the S3
+             * CONNECT_TIMEOUT_CONNECTING_MS deadline reports honestly if
+             * the peer never arrives. */
+            if (relay_peer_pinned || (int)(now - relay_phase_ms) >= RELAY_PIN_RESEND_MS) {
+                SDL_strlcpy(out->peer_ip, relay_ip, sizeof(out->peer_ip));
+                out->peer_port = grant.relay_port;
+                out->relay_fail = CONNECT_FAIL_NONE;
+                out->t_relay_ms = now - relay_armed_ms;
+                relay_state = RELAY_LEG_DONE;
+                SDL_Log("[direct_p2p] S6 relay PINNED at %s:%u (slot=%u peer_pinned=%d) — "
+                        "handing off; expect higher ping than a direct link",
+                        out->peer_ip, (unsigned)out->peer_port, (unsigned)grant.slot,
+                        (int)relay_peer_pinned);
+                out->outcome = RACE_RELAYED;
+                goto done;
+            }
+        }
+
+        /* --- 8) termination ------------------------------------------ */
+        {
+            bool punch_live = false;
+            for (int i = 0; i < RACE_PUNCH_LEGS; i++) {
+                if (cands[i].armed && !cands[i].finished) punch_live = true;
+            }
+            /* The relay may still ARM in the future; that counts as live. */
+            const bool relay_live =
+                relay_possible &&
+                (relay_state == RELAY_LEG_REQ || relay_state == RELAY_LEG_PIN ||
+                 (relay_state == RELAY_LEG_UNARMED &&
+                  ((cfg->role == RACE_ROLE_HOST) || out->deliver_real || cfg->no_punch)));
+            if (!punch_live && !signal_active && !relay_live) {
+                break;
+            }
+        }
+        if ((int)(now - t0) >= cfg->race_budget_ms || now >= race_deadline) {
+            SDL_Log("[direct_p2p] S6 race: overall budget (%d ms) expired",
+                    cfg->race_budget_ms);
+            break;
+        }
+
+        if (!got_dgram) {
+            SDL_Delay(RACE_POLL_MS);
+        }
     }
 
-    if (!acked || relay_ip[0] == '\0') {
-        /* The rendezvous port demonstrably works (we got a GRANT on it),
-         * so this is specifically about the relay PORT RANGE being
-         * unreachable from here. */
-        SDL_Log("[direct_p2p] %s no RELAY_PIN_ACK from relay port %u within %d ms",
-                ConnectFail_Code(CONNECT_FAIL_RELAY_PIN_TIMEOUT),
-                (unsigned)grant.relay_port, pin_budget);
-        return CONNECT_FAIL_RELAY_PIN_TIMEOUT;
+done:;
+    const uint32_t t_end = SDL_GetTicks();
+    for (int i = 0; i < RACE_PUNCH_LEGS; i++) {
+        race_finish_punch(&cands[i], t_end);
     }
-
-    SDL_strlcpy(out->ip, relay_ip, sizeof(out->ip));
-    out->port = grant.relay_port;
-    out->slot = grant.slot;
-    out->peer_pinned = peer_pinned;
-    SDL_Log("[direct_p2p] S5 relay PINNED at %s:%u (slot=%u peer_pinned=%d) — "
-            "handing off; expect higher ping than a direct link",
-            out->ip, (unsigned)out->port, (unsigned)out->slot, (int)peer_pinned);
-    return CONNECT_FAIL_NONE;
+    out->t_punch_ms = cands[0].alive_ms;
+    out->t_bilateral_ms = cands[1].alive_ms;
+    out->t_signal_ms = (signal_end_ms != 0) ? (signal_end_ms - t0) : (t_end - t0);
+    if (out->relay_ran && out->t_relay_ms == 0) {
+        out->t_relay_ms = t_end - relay_armed_ms;
+    }
+    if (out->relay_ran && out->outcome != RACE_RELAYED &&
+        out->relay_fail == CONNECT_FAIL_NONE) {
+        /* The leg armed but the race ended around it (budget expiry, or a
+         * cancel). Report what it was actually still waiting on rather
+         * than leaving a silent P2P_OK on a rung that never delivered. */
+        out->relay_fail = (relay_state == RELAY_LEG_PIN)
+                              ? CONNECT_FAIL_RELAY_PIN_TIMEOUT
+                              : (relay_pending_fail != CONNECT_FAIL_NONE
+                                     ? relay_pending_fail
+                                     : CONNECT_FAIL_RELAY_UNAVAILABLE);
+    }
+    out->t_race_ms = t_end - t0;
+    SDL_SetAtomicInt(&s_last_race_ms, (int)out->t_race_ms);
+    if (have_cookie) {
+        out->have_cookie = true;
+        memcpy(out->cookie, cookie, sizeof(cookie));
+    }
+    SDL_Log("[direct_p2p] S6 race done in %u ms: outcome=%d punch=%u bilateral=%u "
+            "signal=%u relay=%u deliver=any:%d,real:%d",
+            (unsigned)out->t_race_ms, (int)out->outcome, out->t_punch_ms,
+            out->t_bilateral_ms, out->t_signal_ms, out->t_relay_ms,
+            (int)out->deliver_any, (int)out->deliver_real);
 }
 
 /* --- worker thread ----------------------------------------------------- */
@@ -1590,149 +2136,165 @@ static int SDLCALL host_rendezvous_thread_fn(void* data) {
     return 0;
 }
 
-/* Host bilateral-punch worker: takes a stack-local copy of peer_ip /
- * peer_port (mirror :418-420 / :493-495 patterns), runs Stun_HolePunch
- * with the configured bilateral budget, and on success writes the
- * (possibly-updated) endpoint BACK to s_work BEFORE transitioning to
- * HANDOFF (mirror :518-521 -> :531). On failure: FAILED_BILATERAL.
+/* Host bilateral-punch worker.
  *
- * §Decision 3: while this thread runs, the STUN socket is exclusively
- * read/written by Stun_HolePunch on this thread. The main-thread Tick
- * MUST NOT call host_tick_receive or drain s_rendezvous_send_q during
- * FALLBACK_BILATERAL_PUNCH — see DirectP2P_Tick's case for that state. */
+ * S6: the punch and the S5 relay rung used to run SERIALLY here —
+ * Stun_HolePunch for BILATERAL_PUNCH_MS (5000), and only on its failure
+ * the relay rung for RELAY_BUDGET_MS (4000): 9000 ms worst case. They now
+ * RACE inside p2p_race() on this same thread, with the relay leg arming
+ * at RACE_RELAY_ARM_MS so a pair that can still punch is never diverted
+ * to a relay port it does not need.
+ *
+ * §Decision 3 is unchanged and still load-bearing: while this thread
+ * runs, the STUN socket is exclusively read/written HERE. The main-thread
+ * Tick MUST NOT call host_tick_receive or drain s_rendezvous_send_q
+ * during FALLBACK_BILATERAL_PUNCH — see DirectP2P_Tick's case for that
+ * state. p2p_race introduces no thread of its own, so that invariant
+ * carries over verbatim.
+ *
+ * On success the endpoint is written BACK to s_work before
+ * s_bilateral_handoff_pending is raised, because the main thread reads
+ * s_work.peer_ip / peer_public_port in do_handoff. That is true whether
+ * the winner was the punch leg or the relay leg — which is exactly why
+ * do_handoff needed no new plumbing for either. */
 static int SDLCALL host_bilateral_punch_thread_fn(void* data) {
     (void)data;
 
-    /* Stack-locals: Stun_HolePunch overwrites *peer_ip / *peer_port at
-     * stun.c:438-442 with the post-NAT-translation source endpoint. The
-     * main thread reads s_work.peer_ip in do_handoff; passing &s_work...
-     * directly would race. */
+    /* Stack-local copy: the race writes the post-NAT-translation endpoint
+     * into its own result, and the main thread reads s_work.peer_ip in
+     * do_handoff, so nothing hands &s_work.* to the race. */
     char peer_ip[64];
     SDL_strlcpy(peer_ip, s_work.peer_ip, sizeof(peer_ip));
-    uint16_t peer_port = s_work.peer_public_port;
+    const uint16_t peer_port = s_work.peer_public_port;
 
-    int budget_ms = Config_GetInt(CFG_KEY_NETPLAY_DIRECT_P2P_BILATERAL_PUNCH_MS);
-    if (budget_ms <= 0) budget_ms = 5000; /* S2: keep in sync with config.c default */
+    int punch_leg_ms = Config_GetInt(CFG_KEY_NETPLAY_DIRECT_P2P_BILATERAL_PUNCH_MS);
+    if (punch_leg_ms <= 0) punch_leg_ms = 5000; /* S2: keep in sync with config.c default */
 
     set_status("Connecting...");
-    SDL_Log("[direct_p2p] entering FALLBACK_BILATERAL_PUNCH peer=%s:%u (budget=%dms)",
-            peer_ip, (unsigned)peer_port, budget_ms);
+    SDL_Log("[direct_p2p] entering FALLBACK_BILATERAL_PUNCH peer=%s:%u "
+            "(punch leg=%dms, race budget=%dms)",
+            peer_ip, (unsigned)peer_port, punch_leg_ms, race_budget_ms());
 
-    const uint32_t stage_t0 = SDL_GetTicks();
-    /* S4a: the host punches with the token derived from its own
-     * advertised tuple (host_thread_fn refuses to advertise without
-     * one, so punch_token_valid is guaranteed here).
-     * S5 force-relay: the override makes the punch a no-op so the flow
-     * lands on the relay rung below, which is how the relay path is
-     * exercised without arranging two symmetric NATs. */
-    bool punched = relay_forced()
-                       ? false
-                       : STUN_HOLE_PUNCH(&s_work.stun, peer_ip, &peer_port,
-                                         s_work.punch_token,
-                                         budget_ms, &s_bilateral_punch_cancel);
-    s_work.t_bilateral_ms = SDL_GetTicks() - stage_t0;
-    if (SDL_GetAtomicInt(&s_bilateral_punch_cancel) || cancel_requested()) {
+    /* Rebuild what the (now-exited) rendezvous worker knew: the signal
+     * endpoint and the session key over our ADVERTISED tuple. Same
+     * derivation as host_rendezvous_thread_fn step 3 — both sides must
+     * land in the same server slot. Done UP FRONT now (pre-S6 it happened
+     * only after the punch had already failed) because the relay leg is
+     * armed from inside the race and cannot do blocking DNS there. */
+    char signal_host[64] = { 0 };
+    uint16_t signal_port = 0;
+    uint8_t session_key[16];
+    bool have_session_key = false;
+    NET_Address* signal_addr = NULL;
+    if (relay_enabled()) {
+        const char* signal_url = Config_GetString(CFG_KEY_NETPLAY_DIRECT_P2P_SIGNAL_URL);
+        const uint32_t ip_be = ipv4_str_to_be(s_work.stun.public_ip);
+        if (signal_url != NULL && signal_url[0] != '\0' &&
+            Rendezvous_ParseSignalUrl(signal_url, signal_host, &signal_port) &&
+            Rendezvous_DeriveSessionKey(ip_be, s_work.advertised_port,
+                                        s_work.nonce, session_key)) {
+            have_session_key = true;
+            signal_addr = resolve_with_short_poll(signal_host);
+        }
+        if (signal_addr == NULL) {
+            /* No usable signal endpoint: the rung could not run at all,
+             * which is a different fact from "it ran and failed". */
+            s_work.relay_fail_code = CONNECT_FAIL_RELAY_UNAVAILABLE;
+            SDL_Log("[direct_p2p] host relay leg unavailable: no usable signal endpoint");
+        }
+    }
+
+    /* The S4c cookie crossed from the main thread via the seqlock;
+     * without one the server just re-CHALLENGEs and the race answers
+     * inline. */
+    uint8_t cookie[REND_COOKIE_LEN];
+    const bool have_cookie = signal_cookie_snapshot(cookie);
+
+    RaceCfg cfg;
+    memset(&cfg, 0, sizeof(cfg));
+    cfg.role = RACE_ROLE_HOST;
+    cfg.sock = s_work.stun.socket;
+    cfg.stun = &s_work.stun;
+    /* S4a: the host punches with the token derived from its own advertised
+     * tuple (host_thread_fn refuses to advertise without one, so
+     * punch_token_valid is guaranteed here). */
+    cfg.punch_token = s_work.punch_token;
+    cfg.seed_ip = peer_ip;
+    cfg.seed_port = peer_port;
+    cfg.signal_addr = signal_addr;
+    cfg.signal_port = signal_port;
+    cfg.session_key = have_session_key ? session_key : NULL;
+    cfg.my_public_port = s_work.stun.public_port;
+    cfg.cookie_in = have_cookie ? cookie : NULL;
+    /* The host does NOT run a signalling leg: it is already paired (the
+     * DELIVER that started this thread proves it) and its rendezvous
+     * worker has exited. */
+    cfg.signal_leg = false;
+    cfg.my_public_ip = s_work.stun.public_ip;
+    cfg.relay_leg = relay_enabled() && signal_addr != NULL && have_session_key;
+    cfg.relay_budget_ms = relay_budget_ms();
+    cfg.punch_leg_ms = punch_leg_ms;
+    cfg.race_budget_ms = race_budget_ms();
+    /* S5 force-relay: the override arms no punch legs at all, which is how
+     * the relay path is exercised without arranging two symmetric NATs. */
+    cfg.no_punch = relay_forced();
+    cfg.cancel = &s_bilateral_punch_cancel;
+
+    RaceResult res;
+    p2p_race(&cfg, &res);
+
+    if (signal_addr != NULL) {
+        NET_UnrefAddress(signal_addr);
+    }
+
+    s_work.t_bilateral_ms = res.t_punch_ms; /* the host's only punch leg */
+    s_work.t_relay_ms = res.t_relay_ms;
+    s_work.t_race_ms = res.t_race_ms;
+
+    if (res.outcome == RACE_CANCELLED ||
+        SDL_GetAtomicInt(&s_bilateral_punch_cancel) || cancel_requested()) {
         /* Cancelled: leave state untouched if a terminal state has already
          * been published by another path; otherwise drop to IDLE-ish via
          * Cancel's own teardown. The DirectP2P_Cancel path joins this
          * thread before tearing down s_work, so we just exit. */
         return 0;
     }
-    if (!punched) {
-        /* --- S5: the relay rung (host side) --------------------------
-         * The last thing to try before the host gives up on this joiner.
-         * It runs HERE, on the punch worker, rather than in Tick, for
-         * two reasons: this thread already owns the socket exclusively
-         * for the whole FALLBACK_BILATERAL_PUNCH phase (plan §Decision
-         * 3), and the rung blocks for up to its budget while
-         * DirectP2P_Tick must never block.
-         *
-         * The success path is the punch success path VERBATIM — write
-         * the endpoint back to s_work, raise s_bilateral_handoff_pending,
-         * exit — so Tick's existing main-thread do_handoff carries the
-         * relayed endpoint with no new plumbing at all. The only
-         * difference is which endpoint we wrote. */
-        if (relay_enabled() && !cancel_requested() &&
-            SDL_GetAtomicInt(&s_bilateral_punch_cancel) == 0) {
-            /* Rebuild what the (now-exited) rendezvous worker knew: the
-             * signal endpoint and the session key over our ADVERTISED
-             * tuple. Same derivation as host_rendezvous_thread_fn step 3
-             * — both sides must land in the same server slot. */
-            char signal_host[64] = { 0 };
-            uint16_t signal_port = 0;
-            const char* signal_url =
-                Config_GetString(CFG_KEY_NETPLAY_DIRECT_P2P_SIGNAL_URL);
-            uint8_t session_key[16];
-            const uint32_t ip_be = ipv4_str_to_be(s_work.stun.public_ip);
-            NET_Address* signal_addr = NULL;
-            if (signal_url != NULL && signal_url[0] != '\0' &&
-                Rendezvous_ParseSignalUrl(signal_url, signal_host, &signal_port) &&
-                Rendezvous_DeriveSessionKey(ip_be, s_work.advertised_port,
-                                            s_work.nonce, session_key)) {
-                signal_addr = resolve_with_short_poll(signal_host);
-            }
-            if (signal_addr != NULL) {
-                /* The cookie crossed from the main thread via the S4c
-                 * seqlock; without one the server just re-CHALLENGEs and
-                 * the rung answers inline. */
-                uint8_t cookie[REND_COOKIE_LEN];
-                const bool have_cookie = signal_cookie_snapshot(cookie);
-                RelayEndpoint rly;
-                const uint32_t relay_t0 = SDL_GetTicks();
-                const ConnectFailCode rc =
-                    relay_rung_run(s_work.stun.socket, signal_addr, signal_port,
-                                   session_key, s_work.stun.public_port,
-                                   have_cookie ? cookie : NULL,
-                                   relay_budget_ms(), &s_bilateral_punch_cancel,
-                                   &rly);
-                s_work.t_relay_ms = SDL_GetTicks() - relay_t0;
-                NET_UnrefAddress(signal_addr);
-                if (rc == CONNECT_FAIL_NONE) {
-                    SDL_strlcpy(s_work.peer_ip, rly.ip, sizeof(s_work.peer_ip));
-                    s_work.peer_public_port = rly.port;
-                    s_work.relay_used = true;
-                    s_work.relay_fail_code = CONNECT_FAIL_NONE;
-                    set_status("Connected via relay (higher ping).");
-                    SDL_SetAtomicInt(&s_bilateral_handoff_pending, 1);
-                    SDL_Log("[direct_p2p] host relay rung SUCCESS - handoff pending "
-                            "via %s:%u", rly.ip, (unsigned)rly.port);
-                    return 0;
-                }
-                if (rc != CONNECT_FAIL_USER_ABORT) {
-                    s_work.relay_fail_code = rc;
-                }
-            } else {
-                /* No usable signal endpoint: the rung could not run at
-                 * all, which is a different fact from "it ran and
-                 * failed" — record it as such. */
-                s_work.relay_fail_code = CONNECT_FAIL_RELAY_UNAVAILABLE;
-                SDL_Log("[direct_p2p] host relay rung skipped: no usable signal endpoint");
-            }
-        }
 
-        /* Review M1: do NOT park terminal from here. Raise the failure
-         * flag and let Tick (main thread) decide: back to HOST_WAITING
-         * with the rendezvous loop respawned, or FAILED_BILATERAL once
-         * the per-session retry budget is spent. State stays
-         * FALLBACK_BILATERAL_PUNCH until Tick acts. */
-        SDL_SetAtomicInt(&s_bilateral_failed, 1);
-        SDL_Log("[direct_p2p] bilateral punch FAILED — deferring disposition to Tick");
+    if (res.outcome == RACE_PUNCHED || res.outcome == RACE_RELAYED) {
+        /* Writeback BEFORE signaling — main-thread do_handoff reads
+         * s_work.peer_ip/peer_public_port and we want the winning
+         * endpoint, whichever leg produced it. */
+        SDL_strlcpy(s_work.peer_ip, res.peer_ip, sizeof(s_work.peer_ip));
+        s_work.peer_public_port = res.peer_port;
+        s_work.relay_used = (res.outcome == RACE_RELAYED);
+        s_work.relay_fail_code =
+            (res.outcome == RACE_RELAYED) ? CONNECT_FAIL_NONE : res.relay_fail;
+        set_status(res.outcome == RACE_RELAYED ? "Connected via relay (higher ping)."
+                                               : "Connecting...");
+        /* Cannot set_state(DIRECT_P2P_HANDOFF) here: do_handoff calls
+         * Netplay_SetParams / Netplay_SetRemotePort / Netplay_SetStunSocket
+         * which are main-thread-only. Stay in FALLBACK_BILATERAL_PUNCH and
+         * raise s_bilateral_handoff_pending so the next Tick observes us,
+         * joins this thread, and runs do_handoff on the main thread. */
+        SDL_SetAtomicInt(&s_bilateral_handoff_pending, 1);
+        SDL_Log("[direct_p2p] host race SUCCESS (%s) - handoff pending via %s:%u",
+                res.outcome == RACE_RELAYED ? "relay" : "punch",
+                s_work.peer_ip, (unsigned)s_work.peer_public_port);
         return 0;
     }
 
-    /* Writeback BEFORE signaling — main-thread do_handoff reads
-     * s_work.peer_ip/peer_public_port and we want the post-punch values. */
-    SDL_strlcpy(s_work.peer_ip, peer_ip, sizeof(s_work.peer_ip));
-    s_work.peer_public_port = peer_port;
+    if (res.relay_ran) {
+        s_work.relay_fail_code = res.relay_fail;
+    }
 
-    set_status("Connecting...");
-    /* Cannot set_state(DIRECT_P2P_HANDOFF) here: do_handoff calls
-     * Netplay_SetParams / Netplay_SetRemotePort / Netplay_SetStunSocket
-     * which are main-thread-only. Stay in FALLBACK_BILATERAL_PUNCH and
-     * raise s_bilateral_handoff_pending so the next Tick observes us,
-     * joins this thread, and runs do_handoff on the main thread. */
-    SDL_SetAtomicInt(&s_bilateral_handoff_pending, 1);
-    SDL_Log("[direct_p2p] bilateral punch SUCCESS - handoff pending");
+    /* Review M1: do NOT park terminal from here. Raise the failure flag
+     * and let Tick (main thread) decide: back to HOST_WAITING with the
+     * rendezvous loop respawned, or FAILED_BILATERAL once the per-session
+     * retry budget is spent. State stays FALLBACK_BILATERAL_PUNCH until
+     * Tick acts. */
+    SDL_SetAtomicInt(&s_bilateral_failed, 1);
+    SDL_Log("[direct_p2p] host race FAILED after %u ms — deferring disposition to Tick",
+            (unsigned)res.t_race_ms);
     return 0;
 }
 
@@ -1983,16 +2545,16 @@ static DirectP2PState join_attempt(void) {
     s_work.t_signal_ms = 0;
     s_work.t_bilateral_ms = 0;
     s_work.t_relay_ms = 0;          /* S5 */
+    s_work.t_race_ms = 0;           /* S6 */
     s_work.relay_used = false;      /* S5 */
     s_work.relay_fail_code = CONNECT_FAIL_NONE;
     s_work.join_attempts++;
 
-    /* S5 test override (CFG_KEY_NETPLAY_DIRECT_P2P_FORCE_RELAY): make
-     * both hole-punches no-ops AND skip the bypasses that would
-     * short-circuit a same-network rig, so the flow lands on the relay
-     * rung exactly as a symmetric x symmetric pair would. Read once per
-     * attempt so a mid-attempt config change cannot make the two punch
-     * decisions disagree. */
+    /* S5 test override (CFG_KEY_NETPLAY_DIRECT_P2P_FORCE_RELAY): arm no
+     * punch legs AND skip the bypasses that would short-circuit a
+     * same-network rig, so the flow lands on the relay leg exactly as a
+     * symmetric x symmetric pair would. Read once per attempt so a
+     * mid-attempt config change cannot make two decisions disagree. */
     const bool force_relay = relay_forced();
 
     set_state(DIRECT_P2P_STUN_DISCOVER);
@@ -2026,11 +2588,7 @@ static DirectP2PState join_attempt(void) {
      * that field was dropped (see room_code.h) we now rely on the
      * router's NAT-loopback support. If the router forwards the UDP
      * mapping back to itself on a same-LAN send, the hole-punch
-     * completes normally using the STUN-discovered public address.
-     * If the router does NOT support NAT loopback, the punch times
-     * out and the existing "Cannot reach peer" / FAILED_SYMMETRIC
-     * path reports it — same failure the user would get from any
-     * other hairpin-broken network. */
+     * completes normally using the STUN-discovered public address. */
     if (s_work.peer_ip[0] != '\0' && s_work.stun.public_ip[0] != '\0' &&
         strcmp(s_work.peer_ip, s_work.stun.public_ip) == 0) {
         SDL_Log("[direct_p2p] NAT hairpin detected — router must support "
@@ -2040,10 +2598,10 @@ static DirectP2PState join_attempt(void) {
 
     /* S4a: derive the punch-auth token from the DECODED room-code tuple
      * (the host derives the identical token from its advertised tuple).
-     * Derived once per attempt; used for the direct punch and, on
-     * fallback, the bilateral punch. Never overwritten by retargeting —
-     * the token is bound to the advertised payload, not to whatever
-     * translated endpoint the punch later observes. */
+     * Derived once per attempt; used for EVERY punch leg of the race.
+     * Never overwritten by retargeting — the token is bound to the
+     * advertised payload, not to whatever translated endpoint a leg later
+     * observes. */
     uint8_t punch_token[STUN_PUNCH_TOKEN_LEN];
     {
         uint32_t token_host_ip_be = ipv4_str_to_be(s_work.peer_ip);
@@ -2055,452 +2613,252 @@ static DirectP2PState join_attempt(void) {
         }
     }
 
-    /* Hole-punch. 2.5s window per upstream. Stun_HolePunch updates the
-     * peer_ip/peer_port in place with the translated endpoint the host
-     * actually reaches us from. */
+    /* ---- S6: the bypasses move UP FRONT --------------------------------
+     *
+     * Pre-S6 these three were evaluated AFTER the direct punch had already
+     * failed, because that was the only point at which the code decided
+     * whether to enter the fallback. In a race there is no such point: the
+     * signalling leg starts at t=0 alongside the punch. So the question
+     * they answer — "is the rendezvous fallback worth running AT ALL for
+     * this peer?" — has to be answered before the race is configured.
+     *
+     * Answering earlier does not change any verdict, because none of the
+     * three depends on the punch outcome:
+     *   (a) kill switch  — pure configuration;
+     *   (b) LAN peer     — a private-subnet peer must be reached directly;
+     *                      public rendezvous is the wrong path for it;
+     *   (c) hairpin      — peer's public IP equals ours, so the bilateral
+     *                      punch would loop back through the same router
+     *                      that has already proven it lacks NAT loopback.
+     * Each still yields FAILED_SYMMETRIC with the same status text; the
+     * only change is that the punch leg now runs WITH that decision
+     * already made, instead of before it.
+     *
+     * The FOURTH pre-S6 bypass — diag_punch_bad_token — genuinely depends
+     * on the punch, so it stays where it always was: after the race.
+     *
+     * S5: under the force-relay test override the whole block is skipped;
+     * these are exactly what would stop a developer exercising the relay
+     * from one LAN. */
+    bool fallback_ok = true;
+    if (!force_relay) {
+        if (Config_GetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_BILATERAL)) {
+            fallback_ok = false;
+        } else if (direct_p2p_is_lan_peer(s_work.peer_ip)) {
+            fallback_ok = false;
+        } else if (s_work.stun.public_ip[0] != '\0' &&
+                   direct_p2p_ip_eq_normalized(s_work.peer_ip, s_work.stun.public_ip)) {
+            fallback_ok = false;
+        }
+    }
+
+    /* Resolve the rendezvous endpoint and derive the session key BEFORE
+     * the race — the race must never do blocking DNS from inside its
+     * loop. Failures here are not fatal to the DIRECT punch, which is a
+     * behaviour change worth stating: pre-S6 a malformed signal URL
+     * returned FAILED_BILATERAL without the direct punch ever having been
+     * given its full window in the presence of the fallback. Now the
+     * punch leg still runs and can still win; only the fallback legs are
+     * dropped, and the failure is reported if nothing connects. */
+    NET_Address* signal_addr = NULL;
+    uint16_t signal_port = 0;
+    uint8_t session_key[16];
+    bool have_session_key = false;
+    ConnectFailCode signal_setup_fail = CONNECT_FAIL_NONE;
+
+    if (fallback_ok) {
+        const char* signal_url = Config_GetString(CFG_KEY_NETPLAY_DIRECT_P2P_SIGNAL_URL);
+        char signal_host[64] = { 0 };
+        if (signal_url == NULL || signal_url[0] == '\0' ||
+            !Rendezvous_ParseSignalUrl(signal_url, signal_host, &signal_port)) {
+            SDL_Log("[direct_p2p] joiner: missing/malformed signal URL — fallback legs off");
+            signal_setup_fail = CONNECT_FAIL_INTERNAL;
+        } else {
+            /* Session key from the HOST's public endpoint, decoded from the
+             * room code into peer_ip / peer_public_port. The host
+             * registered with the same hash and the server pairs entries by
+             * literal session_key equality, so both sides MUST hash the
+             * host's tuple to land in the same slot. */
+            const uint32_t host_ip_be = ipv4_str_to_be(s_work.peer_ip);
+            if (!Rendezvous_DeriveSessionKey(host_ip_be, s_work.peer_public_port,
+                                             s_work.nonce, session_key)) {
+                SDL_Log("[direct_p2p] joiner: failed to derive session key");
+                signal_setup_fail = CONNECT_FAIL_INTERNAL;
+            } else {
+                have_session_key = true;
+                signal_addr = resolve_with_short_poll(signal_host);
+                if (signal_addr == NULL) {
+                    SDL_Log("[direct_p2p] joiner: failed to resolve %s", signal_host);
+                    /* DNS worked for STUN moments ago; a dead resolve HERE
+                     * most likely means the rendezvous hostname is gone. */
+                    signal_setup_fail = CONNECT_FAIL_RENDEZVOUS_DOWN;
+                }
+            }
+        }
+    }
+
+    /* ---- S6: run the race ---------------------------------------------- */
     set_state(DIRECT_P2P_JOIN_PUNCHING);
     set_status("Connecting...");
-    char punch_peer_ip[64];
-    SDL_strlcpy(punch_peer_ip, s_work.peer_ip, sizeof(punch_peer_ip));
-    uint16_t punch_peer_port = s_work.peer_public_port;
-    stage_t0 = SDL_GetTicks();
-    bool punched = force_relay
-                       ? false
-                       : STUN_HOLE_PUNCH(&s_work.stun, punch_peer_ip, &punch_peer_port,
-                                         punch_token, 2500, &s_cancel);
-    s_work.t_punch_ms = SDL_GetTicks() - stage_t0;
-    if (cancel_requested()) {
+
+    int punch_leg_ms = Config_GetInt(CFG_KEY_NETPLAY_DIRECT_P2P_BILATERAL_PUNCH_MS);
+    if (punch_leg_ms <= 0) punch_leg_ms = 5000; /* S2: keep in sync with config.c */
+    int signal_budget_ms = Config_GetInt(CFG_KEY_NETPLAY_DIRECT_P2P_SIGNAL_BUDGET_MS);
+    if (signal_budget_ms <= 0) signal_budget_ms = 8000;
+#ifdef NETPLAY_TEST_HOOKS
+    if (s_test_signal_budget_ms > 0) signal_budget_ms = s_test_signal_budget_ms;
+#endif
+
+    RaceCfg cfg;
+    memset(&cfg, 0, sizeof(cfg));
+    cfg.role = RACE_ROLE_JOIN;
+    cfg.sock = s_work.stun.socket;
+    cfg.stun = &s_work.stun;
+    cfg.punch_token = punch_token;
+    cfg.seed_ip = s_work.peer_ip;
+    cfg.seed_port = s_work.peer_public_port;
+    cfg.signal_addr = signal_addr;
+    cfg.signal_port = signal_port;
+    cfg.session_key = have_session_key ? session_key : NULL;
+    cfg.my_public_port = s_work.stun.public_port;
+    cfg.cookie_in = NULL; /* the joiner starts uncookied; the race binds one */
+    cfg.signal_leg = (signal_addr != NULL && have_session_key);
+    cfg.signal_budget_ms = signal_budget_ms;
+    cfg.my_public_ip = s_work.stun.public_ip;
+    cfg.relay_leg = relay_enabled() && signal_addr != NULL && have_session_key;
+    cfg.relay_budget_ms = relay_budget_ms();
+    cfg.punch_leg_ms = punch_leg_ms;
+    cfg.race_budget_ms = race_budget_ms();
+    cfg.no_punch = force_relay;
+    cfg.cancel = &s_cancel;
+
+    /* The state line is informational only; the race owns the socket
+     * either way. Publishing FALLBACK_SIGNALING when a signalling leg is
+     * running keeps the overlay/state machine honest about what is on the
+     * wire, and the S3 nav deadlines key off terminal states, not this. */
+    if (cfg.signal_leg) {
+        set_state(DIRECT_P2P_FALLBACK_SIGNALING);
+    }
+
+    RaceResult res;
+    p2p_race(&cfg, &res);
+
+    if (signal_addr != NULL) {
+        NET_UnrefAddress(signal_addr);
+    }
+
+    s_work.ev_deliver_any = res.deliver_any;
+    s_work.ev_deliver_real = res.deliver_real;
+    s_work.ev_challenge_any = res.challenge_any;
+    s_work.t_punch_ms = res.t_punch_ms;
+    s_work.t_bilateral_ms = res.t_bilateral_ms;
+    s_work.t_signal_ms = res.t_signal_ms;
+    s_work.t_relay_ms = res.t_relay_ms;
+    s_work.t_race_ms = res.t_race_ms;
+
+    if (res.outcome == RACE_CANCELLED || cancel_requested()) {
         Stun_CloseSocket(&s_work.stun);
         set_status("Cancelled.");
         return DIRECT_P2P_IDLE;
     }
-    if (!punched) {
-        /* Direct punch failed. Three-way bypass before attempting the
-         * bilateral rendezvous fallback:
-         *   (a) kill switch — user disabled bilateral fallback;
-         *   (b) LAN peer — we should have reached a private-subnet peer
-         *       directly, public rendezvous is the wrong path;
-         *   (c) hairpin — peer's public IP equals our own, meaning a
-         *       same-LAN router that lacks NAT loopback. The bilateral
-         *       punch would loopback through the same broken router and
-         *       fail identically (Hard Requirement 3(c)).
-         * Each bypass takes the legacy FAILED_SYMMETRIC path with an
-         * appropriate status. The original "Possible Symmetric NAT"
-         * string is preserved for the kill-switch / LAN cases since the
-         * underlying diagnosis is unchanged. */
-        /* S4a: bad-token evidence is terminal — the host's datagrams
-         * REACHED us but failed authentication, so the bilateral punch
-         * (same token, same peer) would fail identically. Surfacing
-         * PUNCH_AUTH now beats burning the signaling+bilateral budgets
-         * to then blame NAT for a version/payload mismatch. */
-        /* S5: every bypass below is a REASON NOT TO BOTHER with the
-         * fallback path, and each is correct in production. Under the
-         * force-relay test override they are exactly what would stop a
-         * developer exercising the relay from one LAN, so the whole
-         * block is skipped there. */
-        if (!force_relay) {
-        if (s_work.stun.diag_punch_bad_token) {
-            Stun_CloseSocket(&s_work.stun);
-            set_fail(CONNECT_FAIL_PUNCH_AUTH);
-            return DIRECT_P2P_FAILED_SYMMETRIC;
-        }
-        if (Config_GetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_BILATERAL)) {
-            Stun_CloseSocket(&s_work.stun);
-            set_fail_msg(CONNECT_FAIL_NAT_BLOCKED,
-                         "Direct punch failed (fallback disabled).");
-            return DIRECT_P2P_FAILED_SYMMETRIC;
-        }
-        if (direct_p2p_is_lan_peer(s_work.peer_ip)) {
-            Stun_CloseSocket(&s_work.stun);
-            set_fail_msg(CONNECT_FAIL_NAT_BLOCKED,
-                         "LAN peer unreachable (check firewall).");
-            return DIRECT_P2P_FAILED_SYMMETRIC;
-        }
-        if (s_work.stun.public_ip[0] != '\0' &&
-            direct_p2p_ip_eq_normalized(s_work.peer_ip, s_work.stun.public_ip)) {
-            /* S3 cause 7: peer public IP == our public IP — same router,
-             * and the direct punch already proved it lacks NAT loopback.
-             * The bilateral punch would loop through the same broken
-             * router, so this is terminal here. */
-            Stun_CloseSocket(&s_work.stun);
-            set_fail(CONNECT_FAIL_HAIRPIN);
-            return DIRECT_P2P_FAILED_SYMMETRIC;
-        }
-        } /* !force_relay */
 
-        /* Bilateral fallback (joiner side). Per §Decision 4, the joiner
-         * runs the rendezvous REGISTER/POLL loop INLINE in this worker
-         * thread instead of spawning a producer/queue split — its STUN
-         * socket has only one reader/writer (this thread), so direct
-         * Rendezvous_Send calls are race-free.
-         *
-         * Flow: FALLBACK_SIGNALING -> resolve signal URL -> derive
-         * session key -> resend REGISTER every 500ms while reading non-
-         * blocking, watching for a 32+ byte '3SXR' DELIVER. On valid
-         * DELIVER -> FALLBACK_BILATERAL_PUNCH -> Stun_HolePunch (bilateral
-         * budget) -> HANDOFF or FAILED_BILATERAL. */
-        set_status("Connecting...");
-        set_state(DIRECT_P2P_FALLBACK_SIGNALING);
-
-        /* 1) Parse signal URL. */
-        const char* signal_url = Config_GetString(CFG_KEY_NETPLAY_DIRECT_P2P_SIGNAL_URL);
-        if (signal_url == NULL || signal_url[0] == '\0') {
-            SDL_Log("[direct_p2p] joiner fallback: no signal URL configured");
-            Stun_CloseSocket(&s_work.stun);
-            set_fail(CONNECT_FAIL_INTERNAL);
-            return DIRECT_P2P_FAILED_BILATERAL;
-        }
-        char signal_host[64] = { 0 };
-        uint16_t signal_port = 0;
-        if (!Rendezvous_ParseSignalUrl(signal_url, signal_host, &signal_port)) {
-            SDL_Log("[direct_p2p] joiner fallback: malformed signal URL '%s'", signal_url);
-            Stun_CloseSocket(&s_work.stun);
-            set_fail(CONNECT_FAIL_INTERNAL);
-            return DIRECT_P2P_FAILED_BILATERAL;
-        }
-
-        /* 2) Resolve hostname (100ms-bounded poll, mirror stun.c:272-275). */
-        NET_Address* signal_addr = resolve_with_short_poll(signal_host);
-        if (!signal_addr) {
-            SDL_Log("[direct_p2p] joiner fallback: failed to resolve %s", signal_host);
-            Stun_CloseSocket(&s_work.stun);
-            /* DNS worked for STUN moments ago; a dead resolve HERE most
-             * likely means the rendezvous hostname itself is gone. */
-            set_fail(CONNECT_FAIL_RENDEZVOUS_DOWN);
-            return DIRECT_P2P_FAILED_BILATERAL;
-        }
-
-        /* 3) Derive session key from the HOST's public endpoint, decoded
-         * from the room code into peer_ip / peer_public_port. The host
-         * registered with the rendezvous using the same hash, and the
-         * server pairs entries by literal session_key equality — so both
-         * sides MUST hash the host's tuple to wind up in the same slot. */
-        uint8_t session_key[16];
-        uint32_t host_ip_be = ipv4_str_to_be(s_work.peer_ip);
-        if (!Rendezvous_DeriveSessionKey(host_ip_be, s_work.peer_public_port,
-                                         s_work.nonce, session_key)) {
-            SDL_Log("[direct_p2p] joiner fallback: failed to derive session key");
-            NET_UnrefAddress(signal_addr);
-            Stun_CloseSocket(&s_work.stun);
-            set_fail(CONNECT_FAIL_INTERNAL);
-            return DIRECT_P2P_FAILED_BILATERAL;
-        }
-
-        /* 4) Build the initial (uncookied) REGISTER. S4c: the server
-         * answers it with a CHALLENGE; the loop below echoes the cookie
-         * and rebuilds the packet, after which REGISTERs bind normally. */
-        uint8_t register_pkt[REND_REGISTER_PKT_LEN];
-        uint8_t signal_cookie[REND_COOKIE_LEN] = { 0 };
-        bool have_signal_cookie = false;
-        if (!Rendezvous_BuildRegister(s_work.stun.public_port, session_key, NULL,
-                                      register_pkt)) {
-            SDL_Log("[direct_p2p] joiner fallback: failed to build REGISTER packet");
-            NET_UnrefAddress(signal_addr);
-            Stun_CloseSocket(&s_work.stun);
-            set_fail(CONNECT_FAIL_INTERNAL);
-            return DIRECT_P2P_FAILED_BILATERAL;
-        }
-
-        /* 5) Inline REGISTER/POLL + DELIVER receive loop. 500ms send
-         * cadence; 8s default budget (configurable). 50ms inner sleep so
-         * the cancel check has ~50ms granularity. Direct Rendezvous_Send
-         * is safe here because this thread is the sole reader/writer of
-         * the STUN socket. */
-        int signal_budget_ms = Config_GetInt(CFG_KEY_NETPLAY_DIRECT_P2P_SIGNAL_BUDGET_MS);
-        if (signal_budget_ms <= 0) signal_budget_ms = 8000;
-#ifdef NETPLAY_TEST_HOOKS
-        if (s_test_signal_budget_ms > 0) signal_budget_ms = s_test_signal_budget_ms;
-#endif
-        int bilateral_budget_ms = Config_GetInt(CFG_KEY_NETPLAY_DIRECT_P2P_BILATERAL_PUNCH_MS);
-        if (bilateral_budget_ms <= 0) bilateral_budget_ms = 5000; /* S2: sync w/ config.c */
-
-        char fb_peer_ip[64] = { 0 };
-        uint16_t fb_peer_port = 0;
-        bool got_deliver = false;
-
-        const uint32_t signal_start = SDL_GetTicks();
-        stage_t0 = signal_start;
-        uint32_t last_send = 0;
-        while ((int)(SDL_GetTicks() - signal_start) < signal_budget_ms) {
-            if (cancel_requested()) {
-                NET_UnrefAddress(signal_addr);
-                Stun_CloseSocket(&s_work.stun);
-                set_status("Cancelled.");
-                return DIRECT_P2P_IDLE;
-            }
-
-            uint32_t now = SDL_GetTicks();
-            if (last_send == 0 || (now - last_send) >= 500u) {
-                (void)RENDEZVOUS_SEND(s_work.stun.socket, signal_addr,
-                                      signal_port, register_pkt, sizeof(register_pkt));
-                last_send = now;
-            }
-
-            /* Non-blocking receive — mirror host_tick_receive's call
-             * convention. NET_ReceiveDatagram returns success/failure as
-             * bool; a successful call with no datagram available leaves
-             * dgram == NULL. */
-            NET_Datagram* dgram = NULL;
-            if (NET_ReceiveDatagram(s_work.stun.socket, &dgram) && dgram != NULL) {
-                if (dgram->buflen >= 32 &&
-                    dgram->buf[0] == 0x33 && dgram->buf[1] == 0x53 &&
-                    dgram->buf[2] == 0x58 && dgram->buf[3] == 0x52 &&
-                    dgram->buf[5] == 4 /* REND_TYPE_CHALLENGE */) {
-                    /* S4c: server challenge — echo the cookie right away
-                     * (one RTT to bind instead of the 500 ms resend
-                     * cadence) and carry it on every later resend. A
-                     * challenge is ALSO liveness evidence: the server
-                     * answered us, so a budget expiry with challenges
-                     * but no DELIVERs is an auth problem, not a dead
-                     * server. */
-                    if (Rendezvous_ParseChallenge(dgram->buf, dgram->buflen,
-                                                  session_key, signal_cookie)) {
-                        have_signal_cookie = true;
-                        s_work.ev_challenge_any = true;
-                        (void)Rendezvous_BuildRegister(s_work.stun.public_port,
-                                                       session_key, signal_cookie,
-                                                       register_pkt);
-                        (void)RENDEZVOUS_SEND(s_work.stun.socket, signal_addr,
-                                              signal_port, register_pkt,
-                                              sizeof(register_pkt));
-                        SDL_Log("[direct_p2p] joiner answered rendezvous CHALLENGE");
-                    }
-                    (void)have_signal_cookie;
-                } else if (dgram->buflen >= 32 &&
-                    dgram->buf[0] == 0x33 && dgram->buf[1] == 0x53 &&
-                    dgram->buf[2] == 0x58 && dgram->buf[3] == 0x52) {
-                    char parsed_ip[64] = { 0 };
-                    uint16_t parsed_port = 0;
-                    /* S3: tri-state parse. A zero-sentinel DELIVER is
-                     * MEANINGFUL evidence — it proves the rendezvous
-                     * server is alive (it answers every REGISTER), which
-                     * separates "server down" from "host offline" when
-                     * the budget expires below. */
-                    const RendezvousDeliverResult dr = Rendezvous_ParseDeliverEx(
-                        dgram->buf, dgram->buflen, session_key, parsed_ip, &parsed_port);
-                    if (dr != REND_DELIVER_MALFORMED) {
-                        s_work.ev_deliver_any = true;
-                    }
-                    if (dr == REND_DELIVER_PEER &&
-                        parsed_ip[0] != '\0' && parsed_port != 0) {
-                        /* S3-review HIGH-1 — joiner self-DELIVER gate, the
-                         * sibling of the host's H1 gate in
-                         * try_handle_deliver. A DELIVER whose endpoint IP
-                         * equals OUR OWN public IP is not the host: it is
-                         * this client's own registration from a previous
-                         * attempt, echoed back after the S2 fresh-socket
-                         * retry re-REGISTERed from a new source port and
-                         * the server filed us as "the joiner" of our own
-                         * attempt-1 slot. A LEGITIMATE same-IP host is
-                         * impossible here: the hairpin bypass above
-                         * (ip_eq_normalized(peer_ip, public_ip) before
-                         * FALLBACK_SIGNALING) fails any same-IP room code
-                         * with FAILED_SYMMETRIC before this loop ever
-                         * REGISTERs — the same argument the server's
-                         * SLOT_STALE_MS comment makes. Pre-fix this
-                         * consumed the self-endpoint as a live host,
-                         * punched our own dead attempt-1 mapping, and
-                         * misreported the single most common real failure
-                         * (a stale room code) as NAT_BLOCKED /
-                         * SYMMETRIC_BOTH instead of HOST_OFFLINE. Treat it
-                         * as EMPTY evidence (server alive, host absent)
-                         * and keep polling. */
-                        if (s_work.stun.public_ip[0] != '\0' &&
-                            direct_p2p_ip_eq_normalized(parsed_ip,
-                                                        s_work.stun.public_ip)) {
-                            SDL_Log("[direct_p2p] joiner DELIVER carries our own "
-                                    "public IP (%s:%u) — our stale registration "
-                                    "from a previous attempt, not the host; "
-                                    "treating as 'peer not registered'",
-                                    parsed_ip, (unsigned)parsed_port);
-                        } else {
-                            s_work.ev_deliver_real = true;
-                            SDL_strlcpy(fb_peer_ip, parsed_ip, sizeof(fb_peer_ip));
-                            fb_peer_port = parsed_port;
-                            got_deliver = true;
-                            SDL_Log("[direct_p2p] joiner DELIVER received peer=%s:%u",
-                                    fb_peer_ip, (unsigned)fb_peer_port);
-                        }
-                    }
-                }
-                /* Non-DELIVER packets (stale punch echoes, garbage) are
-                 * dropped — no echo here; this loop is rendezvous-only. */
-                NET_DestroyDatagram(dgram);
-                if (got_deliver) break;
-            }
-
-            SDL_Delay(50);
-        }
-
-        /* S5: `signal_addr` is deliberately kept ref'd past this point —
-         * the relay rung below needs the same endpoint, and re-resolving
-         * it there would add a failure mode (and, for a round-robin DNS
-         * name, could pick a DIFFERENT server than the one holding our
-         * session). Every exit from here on Unrefs it explicitly. */
-        s_work.t_signal_ms = SDL_GetTicks() - stage_t0;
-
-        if (!got_deliver) {
-            NET_UnrefAddress(signal_addr);
-            /* S3 causes 3-4: silence from the server (which answers every
-             * REGISTER) means the server/path is down; only-sentinel
-             * replies mean the HOST never registered — offline or a
-             * stale code. */
-            ConnectJoinEvidence ev = { 0 };
-            ev.deliver_any = s_work.ev_deliver_any;
-            ev.deliver_real = s_work.ev_deliver_real;
-            ev.challenge_any = s_work.ev_challenge_any; /* S4c */
-            ev.port_disagreement = s_work.stun.port_disagreement;
-            const ConnectFailCode jc = ConnectFail_ClassifyJoin(&ev);
-            SDL_Log("[direct_p2p] joiner fallback: signal budget expired without a "
-                    "peer DELIVER (deliver_any=%d challenge_any=%d) -> %s",
-                    (int)s_work.ev_deliver_any, (int)s_work.ev_challenge_any,
-                    ConnectFail_Code(jc));
-            Stun_CloseSocket(&s_work.stun);
-            set_fail(jc);
-            return DIRECT_P2P_FAILED_BILATERAL;
-        }
-
-        /* 6) Bilateral hole-punch with a stack-local copy of the peer
-         * endpoint (Stun_HolePunch overwrites *peer_ip / *peer_port with
-         * the post-NAT-translation source on success — mirrors the
-         * direct-path locals at :788-790). */
-        char bp_peer_ip[64];
-        SDL_strlcpy(bp_peer_ip, fb_peer_ip, sizeof(bp_peer_ip));
-        uint16_t bp_peer_port = fb_peer_port;
-
-        set_status("Connecting...");
-        set_state(DIRECT_P2P_FALLBACK_BILATERAL_PUNCH);
-        SDL_Log("[direct_p2p] joiner entering FALLBACK_BILATERAL_PUNCH peer=%s:%u (budget=%dms)",
-                bp_peer_ip, (unsigned)bp_peer_port, bilateral_budget_ms);
-
-        stage_t0 = SDL_GetTicks();
-        /* S5 force-relay: no-op the punch so the flow reaches the rung. */
-        bool bilateral_punched =
-            force_relay ? false
-                        : STUN_HOLE_PUNCH(&s_work.stun, bp_peer_ip,
-                                          &bp_peer_port, punch_token,
-                                          bilateral_budget_ms, &s_cancel);
-        s_work.t_bilateral_ms = SDL_GetTicks() - stage_t0;
-        if (cancel_requested()) {
-            NET_UnrefAddress(signal_addr);
-            Stun_CloseSocket(&s_work.stun);
-            set_status("Cancelled.");
-            return DIRECT_P2P_IDLE;
-        }
-        if (!bilateral_punched) {
-            /* --- S5: the relay rung (joiner side) --------------------
-             * The last rung. Before S5 this arm classified and gave up,
-             * which for a symmetric x symmetric pair was the end of the
-             * road by construction (§2 matrix). Runs inline on this
-             * worker thread — the socket's sole actor, same as the
-             * signaling loop above. */
-            if (relay_enabled()) {
-                RelayEndpoint rly;
-                const uint32_t relay_t0 = SDL_GetTicks();
-                const ConnectFailCode rc =
-                    relay_rung_run(s_work.stun.socket, signal_addr, signal_port,
-                                   session_key, s_work.stun.public_port,
-                                   have_signal_cookie ? signal_cookie : NULL,
-                                   relay_budget_ms(), &s_cancel, &rly);
-                s_work.t_relay_ms = SDL_GetTicks() - relay_t0;
-                NET_UnrefAddress(signal_addr);
-                if (rc == CONNECT_FAIL_NONE) {
-                    /* Identical writeback to the punch-success path
-                     * below — only the endpoint differs. Tick's existing
-                     * join_tick_handoff -> do_handoff then carries the
-                     * relay endpoint with no new plumbing. */
-                    SDL_strlcpy(s_work.peer_ip, rly.ip, sizeof(s_work.peer_ip));
-                    s_work.peer_public_port = rly.port;
-                    s_work.relay_used = true;
-                    if (s_work.peer_code[0] != '\0') {
-                        Config_SetString(CFG_KEY_NETPLAY_DIRECT_P2P_LAST_PEER_CODE,
-                                         s_work.peer_code);
-                    }
-                    set_status("Connected via relay (higher ping).");
-                    return DIRECT_P2P_HANDOFF;
-                }
-                if (rc == CONNECT_FAIL_USER_ABORT) {
-                    Stun_CloseSocket(&s_work.stun);
-                    set_status("Cancelled.");
-                    return DIRECT_P2P_IDLE;
-                }
-                /* The rung RAN and failed. Report ITS cause, not the NAT
-                 * verdict: the NAT diagnosis is still true but is no
-                 * longer the actionable fact — we got as far as the
-                 * relay, so the relay is what the user (or the operator)
-                 * has to act on. The NAT evidence survives in the report
-                 * line's portdis= field. */
-                s_work.relay_fail_code = rc;
-                SDL_Log("[direct_p2p] joiner relay rung failed (port_disagreement=%d) "
-                        "-> %s", (int)s_work.stun.port_disagreement,
-                        ConnectFail_Code(rc));
-                Stun_CloseSocket(&s_work.stun);
-                set_fail(rc);
-                return DIRECT_P2P_FAILED_BILATERAL;
-            }
-            NET_UnrefAddress(signal_addr);
-
-            /* Relay switched off by configuration: the pre-S5 verdict
-             * stands, and SYMMETRIC_BOTH once again means "needs relay"
-             * with nothing having tried one.
-             *
-             * S3 causes 5-6: the server handed us the host's LIVE
-             * endpoint and the bilateral punch still timed out — the
-             * NAT pair is the blocker. Our own S2 port_disagreement
-             * signal upgrades this to the needs-relay class. */
-            ConnectJoinEvidence ev = { 0 };
-            ev.deliver_any = s_work.ev_deliver_any;
-            ev.deliver_real = s_work.ev_deliver_real;
-            ev.challenge_any = s_work.ev_challenge_any; /* S4c */
-            ev.bilateral_punched = false;
-            ev.port_disagreement = s_work.stun.port_disagreement;
-            ev.punch_bad_token = s_work.stun.diag_punch_bad_token; /* S4a */
-            const ConnectFailCode jc = ConnectFail_ClassifyJoin(&ev);
-            SDL_Log("[direct_p2p] joiner bilateral punch failed (port_disagreement=%d "
-                    "bad_token=%d, relay disabled) -> %s",
-                    (int)s_work.stun.port_disagreement,
-                    (int)s_work.stun.diag_punch_bad_token, ConnectFail_Code(jc));
-            Stun_CloseSocket(&s_work.stun);
-            set_fail(jc);
-            return DIRECT_P2P_FAILED_BILATERAL;
-        }
-        NET_UnrefAddress(signal_addr);
-
-        /* 7) Bilateral punch succeeded. Writeback BEFORE the HANDOFF
-         * publish (done by the join_thread_fn wrapper on our return) —
-         * Tick reads s_work.peer_ip/peer_public_port in join_tick_handoff,
-         * so the post-punch translated endpoint must be visible by the
-         * time HANDOFF is observed. */
-        SDL_strlcpy(s_work.peer_ip, bp_peer_ip, sizeof(s_work.peer_ip));
-        s_work.peer_public_port = bp_peer_port;
-
+    if (res.outcome == RACE_PUNCHED || res.outcome == RACE_RELAYED) {
+        /* Writeback BEFORE the HANDOFF publish (done by the join_thread_fn
+         * wrapper on our return) — Tick reads s_work.peer_ip /
+         * peer_public_port in join_tick_handoff, so the winning endpoint
+         * must be visible by the time HANDOFF is observed. Identical for
+         * both winners; only WHICH endpoint differs, which is why
+         * do_handoff needed no new plumbing for the relay. */
+        SDL_strlcpy(s_work.peer_ip, res.peer_ip, sizeof(s_work.peer_ip));
+        s_work.peer_public_port = res.peer_port;
+        s_work.relay_used = (res.outcome == RACE_RELAYED);
+        s_work.relay_fail_code =
+            (res.outcome == RACE_RELAYED) ? CONNECT_FAIL_NONE : res.relay_fail;
         if (s_work.peer_code[0] != '\0') {
             Config_SetString(CFG_KEY_NETPLAY_DIRECT_P2P_LAST_PEER_CODE, s_work.peer_code);
         }
-
-        set_status("Connected!");
+        set_status(res.outcome == RACE_RELAYED ? "Connected via relay (higher ping)."
+                                               : "Connected!");
         return DIRECT_P2P_HANDOFF;
     }
 
-    /* Stash the post-punch translated endpoint so Tick can feed it to
-     * Netplay_SetParams. The old "hairpin bypass" block that rewrote
-     * the STUN socket to 127.0.0.1 is gone now that the room code no
-     * longer carries peer_local_port — hairpin traffic flows through
-     * the router's NAT loopback using the STUN-discovered public
-     * endpoint (or fails with the generic FAILED_SYMMETRIC path). */
-    SDL_strlcpy(s_work.peer_ip, punch_peer_ip, sizeof(s_work.peer_ip));
-    s_work.peer_public_port = punch_peer_port;
+    /* ---- nothing connected: classify -----------------------------------
+     *
+     * Precedence, unchanged from S3/S4/S5 but now decided in one place
+     * instead of at four different points in a serial cascade:
+     *   1. PUNCH_AUTH — the peer's datagrams REACHED us and failed
+     *      authentication. The peer was reached, so blaming NAT would send
+     *      the user to their router for a version/payload mismatch.
+     *   2. A relay leg that RAN and failed reports ITS OWN cause. The NAT
+     *      diagnosis stays true but stops being actionable once the last
+     *      rung has been tried, and sending a user to their router because
+     *      the relay pool was full would be a lie. The NAT evidence
+     *      survives in the report line's portdis= field.
+     *   3. A fallback that could not be SET UP at all (bad URL, dead
+     *      resolve) reports that.
+     *   4. Otherwise the S3 evidence classifier.
+     */
+    Stun_CloseSocket(&s_work.stun);
 
-    /* Persist the code the user just joined with. */
-    if (s_work.peer_code[0] != '\0') {
-        Config_SetString(CFG_KEY_NETPLAY_DIRECT_P2P_LAST_PEER_CODE, s_work.peer_code);
+    if (s_work.stun.diag_punch_bad_token) {
+        set_fail(CONNECT_FAIL_PUNCH_AUTH);
+        return DIRECT_P2P_FAILED_SYMMETRIC;
     }
 
-    /* Attempt is done; the wrapper publishes HANDOFF and Tick drives the
-     * netplay.c handoff on the main thread. */
-    set_status("Connected!");
-    return DIRECT_P2P_HANDOFF;
+    if (!fallback_ok) {
+        /* The three up-front bypasses keep their pre-S6 verdicts and
+         * their pre-S6 terminal state. */
+        if (Config_GetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_BILATERAL)) {
+            set_fail_msg(CONNECT_FAIL_NAT_BLOCKED,
+                         "Direct punch failed (fallback disabled).");
+        } else if (direct_p2p_is_lan_peer(s_work.peer_ip)) {
+            set_fail_msg(CONNECT_FAIL_NAT_BLOCKED,
+                         "LAN peer unreachable (check firewall).");
+        } else {
+            /* S3 cause 7: peer public IP == our public IP — same router,
+             * and the punch just proved it lacks NAT loopback. */
+            set_fail(CONNECT_FAIL_HAIRPIN);
+        }
+        return DIRECT_P2P_FAILED_SYMMETRIC;
+    }
+
+    if (res.relay_ran && res.relay_fail != CONNECT_FAIL_NONE) {
+        s_work.relay_fail_code = res.relay_fail;
+        SDL_Log("[direct_p2p] joiner relay leg failed (port_disagreement=%d) -> %s",
+                (int)s_work.stun.port_disagreement, ConnectFail_Code(res.relay_fail));
+        set_fail(res.relay_fail);
+        return DIRECT_P2P_FAILED_BILATERAL;
+    }
+
+    if (signal_setup_fail != CONNECT_FAIL_NONE) {
+        set_fail(signal_setup_fail);
+        return DIRECT_P2P_FAILED_BILATERAL;
+    }
+
+    {
+        /* S3 causes 3-6: silence from the server (which answers every
+         * REGISTER) means the server/path is down; only-sentinel replies
+         * mean the HOST never registered — offline or a stale code; a real
+         * endpoint plus a failed punch is the NAT pair, upgraded to the
+         * needs-relay class by our own S2 port_disagreement signal. */
+        ConnectJoinEvidence ev = { 0 };
+        ev.deliver_any = res.deliver_any;
+        ev.deliver_real = res.deliver_real;
+        ev.challenge_any = res.challenge_any; /* S4c */
+        ev.bilateral_punched = false;
+        ev.port_disagreement = s_work.stun.port_disagreement;
+        ev.punch_bad_token = s_work.stun.diag_punch_bad_token; /* S4a */
+        const ConnectFailCode jc = ConnectFail_ClassifyJoin(&ev);
+        SDL_Log("[direct_p2p] joiner race exhausted (deliver_any=%d real=%d "
+                "challenge_any=%d portdis=%d) -> %s",
+                (int)res.deliver_any, (int)res.deliver_real,
+                (int)res.challenge_any, (int)s_work.stun.port_disagreement,
+                ConnectFail_Code(jc));
+        set_fail(jc);
+        return DIRECT_P2P_FAILED_BILATERAL;
+    }
 }
+
 
 /* Join worker: one join_attempt pass, plus the S2 auto-retry — on a
  * TERMINAL failure the joiner gets exactly ONE automatic full retry
@@ -3661,12 +4019,12 @@ static void report_connect_outcome(DirectP2PState st, bool success) {
          * would make every field latency complaint unattributable. */
         SDL_snprintf(line, sizeof(line),
                      "[netplay-connect] OK role=%s attempts=%d via_relay=%d "
-                     "t_ms upnp=%u stun=%u punch=%u signal=%u bilateral=%u relay=%u "
+                     "t_ms upnp=%u stun=%u race=%u punch=%u signal=%u bilateral=%u relay=%u "
                      "stun=%d/%d portdis=%d",
                      s_work.role == ROLE_HOST ? "host" : "join",
                      s_work.join_attempts,
                      (int)s_work.relay_used,
-                     s_work.t_upnp_ms, s_work.t_stun_ms, s_work.t_punch_ms,
+                     s_work.t_upnp_ms, s_work.t_stun_ms, s_work.t_race_ms, s_work.t_punch_ms,
                      s_work.t_signal_ms, s_work.t_bilateral_ms, s_work.t_relay_ms,
                      s_work.stun.diag_servers_answered,
                      s_work.stun.diag_servers_probed,
@@ -3675,7 +4033,7 @@ static void report_connect_outcome(DirectP2PState st, bool success) {
         SDL_snprintf(line, sizeof(line),
                      "[netplay-connect] FAIL code=%s state=%d role=%s msg=\"%s\" "
                      "attempts=%d via_relay=%d relay_fail=%s "
-                     "t_ms upnp=%u stun=%u punch=%u signal=%u bilateral=%u relay=%u "
+                     "t_ms upnp=%u stun=%u race=%u punch=%u signal=%u bilateral=%u relay=%u "
                      "stun=%d/%d sends_ok=%d dns_all_failed=%d portdis=%d "
                      "deliver=any:%d,real:%d",
                      ConnectFail_Code(s_work.fail_code),
@@ -3691,7 +4049,7 @@ static void report_connect_outcome(DirectP2PState st, bool success) {
                       * host's M1 retry loop has folded several attempts
                       * into one terminal verdict. */
                      ConnectFail_Code(s_work.relay_fail_code),
-                     s_work.t_upnp_ms, s_work.t_stun_ms, s_work.t_punch_ms,
+                     s_work.t_upnp_ms, s_work.t_stun_ms, s_work.t_race_ms, s_work.t_punch_ms,
                      s_work.t_signal_ms, s_work.t_bilateral_ms, s_work.t_relay_ms,
                      s_work.stun.diag_servers_answered,
                      s_work.stun.diag_servers_probed,

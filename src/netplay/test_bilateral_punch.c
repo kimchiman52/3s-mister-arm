@@ -118,6 +118,9 @@ typedef enum {
 
 #define MOCK_RELAY_STATUS_GRANTED        0
 #define MOCK_RELAY_STATUS_POOL_EXHAUSTED 1
+/* S6 test 21: "not yet", as opposed to "never" — racing can reach the
+ * server before the peer's own REGISTER has landed. */
+#define MOCK_RELAY_STATUS_NOT_PAIRED     2
 
 /* NOTE on the mock servers below: they are v2 by version byte and
  * length, but they deliberately do NOT implement the S4c challenge —
@@ -267,6 +270,10 @@ typedef struct {
     volatile int    relay_pins_bad;  /* pins carrying anything else        */
     volatile int    relay_acks;
     volatile int    relay_pin_slot;  /* slot byte of the last accepted pin */
+    /* S6 test 21: answer the first N RELAY_REQs with NOT_PAIRED before
+     * granting, i.e. "the peer has not registered YET". */
+    int             relay_notpaired_first;
+    volatile int    relay_notpaired_sent;
 } MockServerCtx;
 
 /* magic(4) ver(1) type(1)=6 slot(1) status(1) key(16) port_be(2)
@@ -478,11 +485,17 @@ static int SDLCALL mock_server_thread(void* arg) {
             ctx->relay_reqs++;
             if (ctx->relay_mode == MOCK_RELAY_SILENT) continue;
             const bool refuse = (ctx->relay_mode == MOCK_RELAY_REFUSE);
+            /* S6 test 21: the first N requests get "not yet". */
+            const bool not_paired =
+                !refuse && ctx->relay_notpaired_sent < ctx->relay_notpaired_first;
+            if (not_paired) ctx->relay_notpaired_sent++;
             uint8_t g[REND_GRANT_LEN];
             const int gl = build_relay_grant(
                 g, req_key,
-                refuse ? 0xFFu : ctx->relay_slot,
-                refuse ? MOCK_RELAY_STATUS_POOL_EXHAUSTED : MOCK_RELAY_STATUS_GRANTED,
+                (refuse || not_paired) ? 0xFFu : ctx->relay_slot,
+                refuse ? MOCK_RELAY_STATUS_POOL_EXHAUSTED
+                       : not_paired ? MOCK_RELAY_STATUS_NOT_PAIRED
+                                    : MOCK_RELAY_STATUS_GRANTED,
                 ctx->relay_port, ctx->relay_token);
             ctx->relay_grants++;
             sendto(ctx->sock, (const char*)g, gl, 0, (struct sockaddr*)&src, sl);
@@ -1263,17 +1276,21 @@ static bool mock_stun_discover(StunResult* result, uint16_t local_port, int time
     return true;
 }
 
-static bool mock_stun_punch(StunResult* local, char* peer_ip, uint16_t* peer_port,
-                            const uint8_t punch_token[STUN_PUNCH_TOKEN_LEN],
-                            int punch_duration_ms, SDL_AtomicInt* cancel_flag) {
-    (void)local;
+/* S6: the seam moved from "replace the blocking Stun_HolePunch" to "does
+ * THIS candidate ever confirm?" — the decision these tests were really
+ * making. p2p_race consults the oracle ONCE per candidate, when the leg is
+ * armed, and a leg under an override puts NOTHING on the wire, so the
+ * harness stays offline. `s_mock_punch_calls` therefore counts armed punch
+ * CANDIDATES, which is the same quantity it counted before (each pre-S6
+ * phase armed exactly one). */
+static DirectP2PPunchOracleResult mock_punch_oracle(const char* peer_ip,
+                                                    uint16_t peer_port) {
     (void)peer_ip;
     (void)peer_port;
-    (void)punch_token; /* S4a: token now flows through the seam */
-    (void)punch_duration_ms;
-    (void)cancel_flag;
     s_mock_punch_calls++;
-    return s_mock_punch_succeed_from > 0 && s_mock_punch_calls >= s_mock_punch_succeed_from;
+    return (s_mock_punch_succeed_from > 0 && s_mock_punch_calls >= s_mock_punch_succeed_from)
+               ? DP2P_PUNCH_CONFIRM
+               : DP2P_PUNCH_NEVER;
 }
 
 /* Poll DirectP2P_GetState until it reaches `want` or `budget_ms` runs
@@ -1293,7 +1310,14 @@ static int test_joiner_fresh_socket_retry(void) {
     NET_Init();
     DirectP2P_Init();
     DirectP2P_TestHook_SetStunDiscover(mock_stun_discover);
-    DirectP2P_TestHook_SetStunHolePunch(mock_stun_punch);
+    DirectP2P_TestHook_SetPunchOracle(mock_punch_oracle);
+    /* S6: the punch leg now lives for BILATERAL_PUNCH_MS (5000 ms
+     * default) rather than the old 2500 ms direct-punch window, and this
+     * test runs TWO full attempts. Bound the race so the two attempts fit
+     * inside the existing 10 s wait-for-state budget — the properties
+     * under test (attempt count, fresh local port per attempt) are
+     * independent of how long a losing leg is allowed to run. */
+    DirectP2P_TestHook_SetRaceBudgetMs(600);
 
     /* Room code for a LAN peer: after the (mocked) punch failure the
      * deterministic LAN bypass fails the attempt as FAILED_SYMMETRIC
@@ -1304,7 +1328,7 @@ static int test_joiner_fresh_socket_retry(void) {
     if (!RoomCode_Encode((uint32_t)lan_peer.s_addr, 5555, 0x0AA, code)) {
         FAIL("test6", "RoomCode_Encode failed");
         DirectP2P_TestHook_SetStunDiscover(NULL);
-        DirectP2P_TestHook_SetStunHolePunch(NULL);
+        DirectP2P_TestHook_SetPunchOracle(NULL);
         return 1;
     }
 
@@ -1374,7 +1398,8 @@ static int test_joiner_fresh_socket_retry(void) {
      * left to the process teardown — Cancel is a no-op in HANDOFF and
      * the harness exits right after this test. */
     DirectP2P_TestHook_SetStunDiscover(NULL);
-    DirectP2P_TestHook_SetStunHolePunch(NULL);
+    DirectP2P_TestHook_SetPunchOracle(NULL);
+    DirectP2P_TestHook_SetRaceBudgetMs(0);
 
     if (rc == 0) {
         fprintf(stderr,
@@ -1738,7 +1763,7 @@ static int test_joiner_self_deliver(void) {
     }
     DirectP2P_TestHook_SetSignalBudgetMs(1000);
     DirectP2P_TestHook_SetStunDiscover(mock_stun_discover);
-    DirectP2P_TestHook_SetStunHolePunch(mock_stun_punch);
+    DirectP2P_TestHook_SetPunchOracle(mock_punch_oracle);
     s_mock_discover_calls = 0;
     s_mock_punch_calls = 0;
     s_mock_punch_succeed_from = 0; /* every punch fails */
@@ -1773,7 +1798,7 @@ static int test_joiner_self_deliver(void) {
 
 done:
     DirectP2P_TestHook_SetStunDiscover(NULL);
-    DirectP2P_TestHook_SetStunHolePunch(NULL);
+    DirectP2P_TestHook_SetPunchOracle(NULL);
     DirectP2P_TestHook_SetSignalBudgetMs(0);
     ctx.stop = true;
     {
@@ -1858,7 +1883,7 @@ static int test_posthandoff_failure_report(void) {
     }
 
     DirectP2P_TestHook_SetStunDiscover(mock_stun_discover);
-    DirectP2P_TestHook_SetStunHolePunch(mock_stun_punch);
+    DirectP2P_TestHook_SetPunchOracle(mock_punch_oracle);
     s_mock_discover_calls = 0;
     s_mock_punch_calls = 0;
     s_mock_punch_succeed_from = 1; /* direct punch succeeds on attempt 1 */
@@ -1957,7 +1982,7 @@ static int test_posthandoff_failure_report(void) {
 
 done:
     DirectP2P_TestHook_SetStunDiscover(NULL);
-    DirectP2P_TestHook_SetStunHolePunch(NULL);
+    DirectP2P_TestHook_SetPunchOracle(NULL);
     if (rc == 0) {
         fprintf(stderr,
                 "[test_bilateral_punch] test 9 OK — one OK before the failure, zero after, "
@@ -2591,7 +2616,7 @@ static int test_host_cookie_handshake(void) {
     s_mock_punch_calls = 0;
     s_mock_punch_succeed_from = 1; /* the bilateral punch succeeds */
     DirectP2P_TestHook_SetStunDiscover(capturing_stun_discover);
-    DirectP2P_TestHook_SetStunHolePunch(mock_stun_punch);
+    DirectP2P_TestHook_SetPunchOracle(mock_punch_oracle);
     DirectP2P_TestHook_SetRendezvousSend(recording_rendezvous_send);
 
     /* Kill the UPnP probe. Without this the harness performs a REAL IGD
@@ -2764,7 +2789,7 @@ static int test_host_cookie_handshake(void) {
 done:
     DirectP2P_TestHook_SetRendezvousSend(NULL);
     DirectP2P_TestHook_SetStunDiscover(NULL);
-    DirectP2P_TestHook_SetStunHolePunch(NULL);
+    DirectP2P_TestHook_SetPunchOracle(NULL);
     DirectP2P_TestHook_RunTeardown(); /* releases any UPnP mapping; -> IDLE */
     if (DirectP2P_GetState() != DIRECT_P2P_IDLE) DirectP2P_Cancel();
     mock_server_stop(&ctx, tid, server_sock, server_port);
@@ -2863,7 +2888,7 @@ static int test_host_cookie_rejected(void) {
     s_mock_punch_calls = 0;
     s_mock_punch_succeed_from = 0;
     DirectP2P_TestHook_SetStunDiscover(capturing_stun_discover);
-    DirectP2P_TestHook_SetStunHolePunch(mock_stun_punch);
+    DirectP2P_TestHook_SetPunchOracle(mock_punch_oracle);
     DirectP2P_TestHook_SetRendezvousSend(recording_rendezvous_send);
     /* No real router mutation (see test 13), and reach the shipped 30 s
      * CONNECT_HOST_ADVISORY_MS boundary in ~1 s of wall clock by scaling
@@ -2920,7 +2945,7 @@ done:
     DirectP2P_TestHook_SetHostAdvisoryScale(1);
     DirectP2P_TestHook_SetRendezvousSend(NULL);
     DirectP2P_TestHook_SetStunDiscover(NULL);
-    DirectP2P_TestHook_SetStunHolePunch(NULL);
+    DirectP2P_TestHook_SetPunchOracle(NULL);
     DirectP2P_TestHook_RunTeardown();
     if (DirectP2P_GetState() != DIRECT_P2P_IDLE) DirectP2P_Cancel();
     mock_server_stop(&ctx, tid, server_sock, server_port);
@@ -3008,7 +3033,7 @@ static int test_joiner_cookie_handshake(void) {
         Config_SetString(CFG_KEY_NETPLAY_DIRECT_P2P_SIGNAL_URL, url);
     }
     DirectP2P_TestHook_SetStunDiscover(mock_stun_discover);
-    DirectP2P_TestHook_SetStunHolePunch(mock_stun_punch);
+    DirectP2P_TestHook_SetPunchOracle(mock_punch_oracle);
     DirectP2P_TestHook_SetRendezvousSend(recording_rendezvous_send);
 
     /* --- Part A: cooperative challenging server ------------------------ */
@@ -3108,7 +3133,7 @@ done:
     DirectP2P_TestHook_SetSignalBudgetMs(0);
     DirectP2P_TestHook_SetRendezvousSend(NULL);
     DirectP2P_TestHook_SetStunDiscover(NULL);
-    DirectP2P_TestHook_SetStunHolePunch(NULL);
+    DirectP2P_TestHook_SetPunchOracle(NULL);
     mock_server_stop(&ctx, tid, server_sock, server_port);
 
     if (rc == 0 && fail_count == fails_before) {
@@ -3207,7 +3232,7 @@ static int relay_subrun(const char* tag, int mode, ConnectFailCode expect) {
     }
     DirectP2P_TestHook_SetSignalBudgetMs(2500);
     DirectP2P_TestHook_SetStunDiscover(mock_stun_discover);
-    DirectP2P_TestHook_SetStunHolePunch(mock_stun_punch);
+    DirectP2P_TestHook_SetPunchOracle(mock_punch_oracle);
     s_mock_punch_calls = 0;
     s_mock_punch_succeed_from = 0; /* belt and braces: no punch may succeed */
     DirectP2P_TestHook_ResetHandoff();
@@ -3350,7 +3375,7 @@ done:
     if (DirectP2P_GetState() != DIRECT_P2P_IDLE) DirectP2P_Cancel();
     DirectP2P_TestHook_SetSignalBudgetMs(0);
     DirectP2P_TestHook_SetStunDiscover(NULL);
-    DirectP2P_TestHook_SetStunHolePunch(NULL);
+    DirectP2P_TestHook_SetPunchOracle(NULL);
     Config_SetBool(CFG_KEY_NETPLAY_DIRECT_P2P_FORCE_RELAY, false);
     mock_server_stop(&ctx, tid, server_sock, server_port);
     close_sock(relay_sock);
@@ -3421,7 +3446,7 @@ static int relay_host_subrun(void) {
         Config_SetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_UPNP, true);
     }
     DirectP2P_TestHook_SetStunDiscover(mock_stun_discover);
-    DirectP2P_TestHook_SetStunHolePunch(mock_stun_punch);
+    DirectP2P_TestHook_SetPunchOracle(mock_punch_oracle);
     s_mock_punch_calls = 0;
     s_mock_punch_succeed_from = 0;
     DirectP2P_TestHook_ResetHandoff();
@@ -3485,7 +3510,7 @@ done:
     DirectP2P_TestHook_RunTeardown();
     if (DirectP2P_GetState() != DIRECT_P2P_IDLE) DirectP2P_Cancel();
     DirectP2P_TestHook_SetStunDiscover(NULL);
-    DirectP2P_TestHook_SetStunHolePunch(NULL);
+    DirectP2P_TestHook_SetPunchOracle(NULL);
     Config_SetBool(CFG_KEY_NETPLAY_DIRECT_P2P_FORCE_RELAY, false);
     mock_server_stop(&ctx, tid, server_sock, server_port);
     close_sock(relay_sock);
@@ -3790,6 +3815,786 @@ static int test_relay_codec(void) {
     return 1;
 }
 
+/* --- Tests 18-21: S6 candidate racing ---------------------------------- */
+
+/*
+ * docs/plan-netplay-connection.md §8. Four properties, each chosen so that
+ * a serial cascade CANNOT satisfy it — i.e. each one goes red if p2p_race
+ * stops racing:
+ *
+ *   18  worst-case wall clock to terminal failure is bounded by the race
+ *       budget, not by the SUM of the leg budgets
+ *   19  the DELIVER endpoint is punched WHILE the room-code endpoint is
+ *       still being punched (serially it could not even start until the
+ *       direct window had closed)
+ *   20  a confirmed punch beats the relay, and a pair that punches inside
+ *       RACE_RELAY_ARM_MS never asks the server for a relay port at all
+ *       (the §7.4 "costs a connectable pair nothing" promise, which naive
+ *       racing would have broken)
+ *   21  a NOT_PAIRED relay refusal is transient, not terminal — racing can
+ *       now ask while the peer's REGISTER is still in flight
+ */
+
+static int s_probe_sock = -1;
+
+static DirectP2PPunchOracleResult probe_never_punch(const char* ip, uint16_t port) {
+    (void)ip;
+    (void)port;
+    return DP2P_PUNCH_NEVER;
+}
+
+/* --- Test 18: worst-case join timing ---------------------------------- */
+
+/*
+ * Drives the REAL BeginJoin to terminal failure against a rendezvous
+ * BLACK HOLE (a localhost UDP socket that is bound and never answers)
+ * with a PUBLIC room code, so none of the LAN/hairpin bypasses fire and
+ * every leg runs its full budget. Offline by construction: the punch legs
+ * are oracle-driven and put nothing on the wire, and the "server" only
+ * ever receives.
+ *
+ * The pre-S6 joiner spent its budgets SERIALLY — direct punch 2500 +
+ * signal 8000 + bilateral 5000 + relay 4000 = 19500 ms per attempt, x2
+ * attempts for the S2 auto-retry = 39000 ms. Measured on the pre-S6 tree
+ * with the equivalent probe: see docs/plan-netplay-connection.md §8.
+ */
+#define S6_WORST_CASE_BOUND_MS 22000u
+#define S6_RACE_BOUND_MS 9000u
+/* Scenario B bound — see the comment at the assertion. */
+#define S6_CASCADE_BOUND_MS 14000u
+
+
+/* Scenario B: every leg runs. The mock DELIVERs a synthetic peer at once
+ * (so the bilateral / DELIVER candidate exists) and its relay is SILENT
+ * (so the relay leg runs and times out on the GRANT phase). */
+static uint32_t probe_run_cascade(const char* label) {
+    unsigned short server_port = 0, relay_port = 0;
+    const int server_sock = open_udp_on_localhost(&server_port);
+    const int relay_sock = open_udp_on_localhost(&relay_port);
+    if (server_sock < 0 || relay_sock < 0) {
+        fprintf(stderr, "[timing-probe] %s: could not bind the mock sockets\n", label);
+        if (server_sock >= 0) close_sock(server_sock);
+        if (relay_sock >= 0) close_sock(relay_sock);
+        return 0;
+    }
+    MockServerCtx ctx;
+    memset(&ctx, 0, sizeof(ctx));
+    ctx.sock = server_sock;
+    ctx.use_synth_peer = true;
+    ctx.synth_peer_ip_be = htonl(0xCB0071F5u); /* 203.0.113.245 (TEST-NET-3) */
+    ctx.synth_peer_port = 7100;
+    ctx.min_cookied_before_peer = 0;
+    ctx.life_secs = 60;
+    ctx.relay_mode = MOCK_RELAY_SILENT;
+    ctx.relay_sock = relay_sock;
+    ctx.relay_port = relay_port;
+    ctx.relay_slot = 1;
+    SDL_Thread* tid = SDL_CreateThread(mock_server_thread, "rend_mock_probe", &ctx);
+    if (!tid) {
+        fprintf(stderr, "[timing-probe] %s: SDL_CreateThread failed\n", label);
+        close_sock(server_sock);
+        close_sock(relay_sock);
+        return 0;
+    }
+    {
+        char url[64];
+        SDL_snprintf(url, sizeof(url), "udp://127.0.0.1:%u", (unsigned)server_port);
+        Config_SetString(CFG_KEY_NETPLAY_DIRECT_P2P_SIGNAL_URL, url);
+        Config_SetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_UPNP, true);
+        Config_SetBool(CFG_KEY_NETPLAY_DIRECT_P2P_FORCE_RELAY, false);
+        Config_SetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_RELAY, false);
+        Config_SetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_BILATERAL, false);
+    }
+
+    uint32_t nonce = 0;
+    char code[ROOM_CODE_BUF_LEN];
+    struct in_addr peer_in;
+    uint32_t elapsed = 0;
+    if (RoomCode_GenerateNonce(&nonce) &&
+        inet_pton(AF_INET, "198.51.100.7", &peer_in) == 1 &&
+        RoomCode_Encode((uint32_t)peer_in.s_addr, 6000, nonce, code)) {
+        const uint32_t t0 = SDL_GetTicks();
+        DirectP2P_BeginJoin(code);
+        bool left_idle = false;
+        while ((int)(SDL_GetTicks() - t0) < 120000) {
+            const DirectP2PState st = DirectP2P_GetState();
+            if (st != DIRECT_P2P_IDLE) left_idle = true;
+            if (st == DIRECT_P2P_FAILED_STUN || st == DIRECT_P2P_FAILED_PUNCH ||
+                st == DIRECT_P2P_FAILED_SYMMETRIC || st == DIRECT_P2P_FAILED_BILATERAL ||
+                st == DIRECT_P2P_HANDOFF || (left_idle && st == DIRECT_P2P_IDLE)) {
+                elapsed = SDL_GetTicks() - t0;
+                break;
+            }
+            SDL_Delay(5);
+        }
+        if (elapsed == 0) elapsed = SDL_GetTicks() - t0;
+        fprintf(stderr,
+                "[timing-probe] %s FULL CASCADE: BeginJoin -> terminal in %u ms "
+                "(state=%d, 2 attempts, ~%u ms per attempt, relay_reqs=%d)\n",
+                label, (unsigned)elapsed, (int)DirectP2P_GetState(),
+                (unsigned)(elapsed / 2u), ctx.relay_reqs);
+    } else {
+        fprintf(stderr, "[timing-probe] %s: could not build a room code\n", label);
+    }
+    if (DirectP2P_GetState() != DIRECT_P2P_IDLE) DirectP2P_Cancel();
+    mock_server_stop(&ctx, tid, server_sock, server_port);
+    close_sock(relay_sock);
+    return elapsed;
+}
+
+static uint32_t probe_run_once(const char* label) {
+    unsigned short bh_port = 0;
+    s_probe_sock = open_udp_on_localhost(&bh_port);
+    if (s_probe_sock < 0) {
+        FAIL("test18", "could not bind the black-hole socket");
+        return 0;
+    }
+    char url[64];
+    SDL_snprintf(url, sizeof(url), "udp://127.0.0.1:%u", (unsigned)bh_port);
+    Config_SetString(CFG_KEY_NETPLAY_DIRECT_P2P_SIGNAL_URL, url);
+    Config_SetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_UPNP, true);
+    Config_SetBool(CFG_KEY_NETPLAY_DIRECT_P2P_FORCE_RELAY, false);
+    Config_SetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_RELAY, false);
+    Config_SetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_BILATERAL, false);
+
+    uint32_t nonce = 0;
+    char code[ROOM_CODE_BUF_LEN];
+    struct in_addr peer_in;
+    if (!RoomCode_GenerateNonce(&nonce) ||
+        inet_pton(AF_INET, "198.51.100.7", &peer_in) != 1 ||
+        !RoomCode_Encode((uint32_t)peer_in.s_addr, 6000, nonce, code)) {
+        FAIL("test18", "could not build a room code");
+        close_sock(s_probe_sock);
+        s_probe_sock = -1;
+        return 0;
+    }
+
+    const uint32_t t0 = SDL_GetTicks();
+    DirectP2P_BeginJoin(code);
+    uint32_t elapsed = 0;
+    /* BeginJoin spawns a worker that publishes its first state a moment
+     * later, so IDLE only counts as terminal once we have SEEN the machine
+     * leave it. Without this the probe reads the pre-spawn IDLE and
+     * reports 0 ms — a measurement that cannot fail is worse than none. */
+    bool left_idle = false;
+    while ((int)(SDL_GetTicks() - t0) < 120000) {
+        const DirectP2PState st = DirectP2P_GetState();
+        if (st != DIRECT_P2P_IDLE) left_idle = true;
+        if (st == DIRECT_P2P_FAILED_STUN || st == DIRECT_P2P_FAILED_PUNCH ||
+            st == DIRECT_P2P_FAILED_SYMMETRIC || st == DIRECT_P2P_FAILED_BILATERAL ||
+            st == DIRECT_P2P_HANDOFF || (left_idle && st == DIRECT_P2P_IDLE)) {
+            elapsed = SDL_GetTicks() - t0;
+            break;
+        }
+        SDL_Delay(5);
+    }
+    if (elapsed == 0) elapsed = SDL_GetTicks() - t0;
+    fprintf(stderr,
+            "[timing-probe] %s: BeginJoin -> terminal in %u ms (state=%d, 2 attempts, "
+            "~%u ms per attempt)\n",
+            label, (unsigned)elapsed, (int)DirectP2P_GetState(), (unsigned)(elapsed / 2u));
+    if (DirectP2P_GetState() != DIRECT_P2P_IDLE) DirectP2P_Cancel();
+    close_sock(s_probe_sock);
+    s_probe_sock = -1;
+    return elapsed;
+}
+
+static int test_race_worst_case_timing(void) {
+    fprintf(stderr, "[test_bilateral_punch] test 18: S6 worst-case join timing\n");
+    const int fails_before = fail_count;
+
+    NET_Init();
+    DirectP2P_Init();
+    DirectP2P_TestHook_RunTeardown();
+    DirectP2P_TestHook_SetStunDiscover(mock_stun_discover);
+    DirectP2P_TestHook_SetPunchOracle(probe_never_punch);
+    const uint32_t elapsed = probe_run_once("S6");
+    const uint32_t cascade_ms = probe_run_cascade("S6");
+    const uint32_t race_ms = DirectP2P_TestHook_LastRaceMs();
+    DirectP2P_TestHook_SetStunDiscover(NULL);
+    DirectP2P_TestHook_SetPunchOracle(NULL);
+
+    if (elapsed == 0 || elapsed >= S6_WORST_CASE_BOUND_MS) {
+        fprintf(stderr,
+                "[test_bilateral_punch] FAIL: test18: BeginJoin -> terminal took %u ms, "
+                "expected < %u ms (S6 races the legs; the pre-S6 serial cascade needed "
+                "~39000 ms)\n",
+                (unsigned)elapsed, (unsigned)S6_WORST_CASE_BOUND_MS);
+        fail_count++;
+    }
+    /* Each attempt's race must respect its OWN budget:
+     * netplay-direct-p2p-race-budget-ms defaults to 8000; allow scheduler
+     * slack on a loaded machine. */
+    if (race_ms == 0 || race_ms > S6_RACE_BOUND_MS) {
+        fprintf(stderr,
+                "[test_bilateral_punch] FAIL: test18: last race ran %u ms, expected "
+                "0 < race <= %u ms\n",
+                (unsigned)race_ms, (unsigned)S6_RACE_BOUND_MS);
+        fail_count++;
+    }
+    /* Scenario B — EVERY leg runs (the DELIVER arrives, so there is a
+     * second punch candidate, and the relay is silent so its leg runs and
+     * times out). This is the scenario that distinguishes racing from
+     * seriality, and its bound is the one that actually bites:
+     *
+     *   measured pre-S6 (worktree 3sx-mister-s6base @ 9eadde33, same probe)
+     *       19354 ms total  ->  9677 ms/attempt
+     *   measured post-S6
+     *       10235 ms total  ->  5117 ms/attempt
+     *
+     * 14000 ms sits between them with ~27% headroom over the S6 number and
+     * ~28% below the pre-S6 one. Serialise the legs again and this goes
+     * red on the clock. */
+    if (cascade_ms == 0 || cascade_ms >= S6_CASCADE_BOUND_MS) {
+        fprintf(stderr,
+                "[test_bilateral_punch] FAIL: test18: full-cascade join took %u ms "
+                "(~%u ms/attempt), expected < %u ms — the punch, signalling and relay "
+                "legs must OVERLAP (measured pre-S6 serial: 19354 ms)\n",
+                (unsigned)cascade_ms, (unsigned)(cascade_ms / 2u),
+                (unsigned)S6_CASCADE_BOUND_MS);
+        fail_count++;
+    }
+    if (fail_count == fails_before) {
+        fprintf(stderr,
+                "[test_bilateral_punch] test 18 OK — black-hole join %u ms total "
+                "(~%u ms/attempt), full-cascade join %u ms total (~%u ms/attempt), "
+                "last race %u ms\n",
+                (unsigned)elapsed, (unsigned)(elapsed / 2u),
+                (unsigned)cascade_ms, (unsigned)(cascade_ms / 2u), (unsigned)race_ms);
+        return 0;
+    }
+    return 1;
+}
+
+/* --- Test 19: the DELIVER leg starts while the seed leg is still live -- */
+
+/*
+ * THE test for S6's core claim. The mock server DELIVERs a synthetic peer
+ * endpoint on the first REGISTER. The punch oracle confirms ONLY that
+ * DELIVER endpoint and never the room-code endpoint.
+ *
+ * Pre-S6 the DELIVER endpoint could not be punched until the direct punch
+ * had burned its whole 2500 ms window AND the signalling loop had broken
+ * out — so the earliest possible handoff was > 2500 ms. Here the handoff
+ * must land well inside that, which is only possible if the two legs
+ * overlapped.
+ *
+ * The assertion is on do_handoff's OWN arguments, not on internal state:
+ * a race that populated s_work correctly but never reached the handoff
+ * would pass an s_work assertion and cannot pass this one.
+ */
+#define S6_OVERLAP_BOUND_MS 2000u
+
+static char s_r19_deliver_ip[64] = { 0 };
+static uint16_t s_r19_deliver_port = 0;
+static int s_r19_seed_arms = 0;
+static int s_r19_deliver_arms = 0;
+
+static DirectP2PPunchOracleResult r19_oracle(const char* ip, uint16_t port) {
+    s_mock_punch_calls++;
+    if (s_r19_deliver_ip[0] != '\0' && port == s_r19_deliver_port &&
+        strcmp(ip, s_r19_deliver_ip) == 0) {
+        s_r19_deliver_arms++;
+        return DP2P_PUNCH_CONFIRM;
+    }
+    s_r19_seed_arms++;
+    return DP2P_PUNCH_NEVER;
+}
+
+static int s_r19_handoffs_before = 0;
+static bool pred_r19_handoff(void) {
+    int n = 0;
+    DirectP2P_TestHook_LastHandoff(NULL, 0, NULL, NULL, NULL, &n);
+    return n > s_r19_handoffs_before;
+}
+
+static int test_race_deliver_overlaps_seed(void) {
+    fprintf(stderr,
+            "[test_bilateral_punch] test 19: the DELIVER candidate is punched while "
+            "the room-code candidate is still live\n");
+    const int fails_before = fail_count;
+    int rc = 0;
+
+    NET_Init();
+    DirectP2P_Init();
+    DirectP2P_TestHook_RunTeardown();
+
+    unsigned short server_port = 0;
+    const int server_sock = open_udp_on_localhost(&server_port);
+    if (server_sock < 0) {
+        FAIL("test19", "could not bind the mock server socket");
+        return 1;
+    }
+
+    MockServerCtx ctx;
+    memset(&ctx, 0, sizeof(ctx));
+    ctx.sock = server_sock;
+    ctx.use_synth_peer = true;
+    ctx.synth_peer_ip_be = htonl(0xCB0071F5u); /* 203.0.113.245 (TEST-NET-3) */
+    ctx.synth_peer_port = 7100;
+    ctx.min_cookied_before_peer = 0; /* pair on the very first REGISTER */
+    ctx.life_secs = 30;
+
+    SDL_strlcpy(s_r19_deliver_ip, "203.0.113.245", sizeof(s_r19_deliver_ip));
+    s_r19_deliver_port = 7100;
+    s_r19_seed_arms = 0;
+    s_r19_deliver_arms = 0;
+    s_mock_punch_calls = 0;
+
+    SDL_Thread* tid = SDL_CreateThread(mock_server_thread, "rend_mock_r19", &ctx);
+    if (!tid) {
+        FAIL("test19", "SDL_CreateThread failed");
+        close_sock(server_sock);
+        return 1;
+    }
+
+    {
+        char url[64];
+        SDL_snprintf(url, sizeof(url), "udp://127.0.0.1:%u", (unsigned)server_port);
+        Config_SetString(CFG_KEY_NETPLAY_DIRECT_P2P_SIGNAL_URL, url);
+        Config_SetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_UPNP, true);
+        Config_SetBool(CFG_KEY_NETPLAY_DIRECT_P2P_FORCE_RELAY, false);
+        /* The relay must not be able to win this race — the property under
+         * test is punch-leg overlap. It could not anyway (it arms at
+         * RACE_RELAY_ARM_MS = 2500 ms and this must finish inside 2000 ms),
+         * but saying so explicitly keeps the test's meaning single. */
+        Config_SetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_RELAY, true);
+    }
+    DirectP2P_TestHook_SetStunDiscover(mock_stun_discover);
+    DirectP2P_TestHook_SetPunchOracle(r19_oracle);
+    DirectP2P_TestHook_ResetHandoff();
+    s_r19_handoffs_before = 0;
+
+    uint32_t nonce = 0;
+    char code[ROOM_CODE_BUF_LEN];
+    struct in_addr peer_in;
+    if (!RoomCode_GenerateNonce(&nonce) ||
+        inet_pton(AF_INET, "198.51.100.7", &peer_in) != 1 ||
+        !RoomCode_Encode((uint32_t)peer_in.s_addr, 6000, nonce, code)) {
+        FAIL("test19", "could not build a room code");
+        rc = 1;
+        goto done;
+    }
+
+    {
+        const uint32_t t0 = SDL_GetTicks();
+        DirectP2P_BeginJoin(code);
+        if (!tick_until(pred_r19_handoff, 20000)) {
+            fprintf(stderr,
+                    "[test_bilateral_punch] FAIL: test19: no handoff (state=%d seed_arms=%d "
+                    "deliver_arms=%d)\n",
+                    (int)DirectP2P_GetState(), s_r19_seed_arms, s_r19_deliver_arms);
+            fail_count++;
+            rc = 1;
+            goto done;
+        }
+        const uint32_t elapsed = SDL_GetTicks() - t0;
+
+        char hip[64] = { 0 };
+        uint16_t hport = 0;
+        int hplayer = 0, hcount = 0;
+        bool hrelay = false;
+        DirectP2P_TestHook_LastHandoff(hip, (int)sizeof(hip), &hport, &hplayer,
+                                       &hrelay, &hcount);
+
+        /* THE assertion: do_handoff was handed the DELIVER endpoint... */
+        if (hport != s_r19_deliver_port || strcmp(hip, s_r19_deliver_ip) != 0) {
+            fprintf(stderr,
+                    "[test_bilateral_punch] FAIL: test19: do_handoff got %s:%u, expected the "
+                    "DELIVER endpoint %s:%u\n",
+                    hip, (unsigned)hport, s_r19_deliver_ip, (unsigned)s_r19_deliver_port);
+            fail_count++;
+            rc = 1;
+        }
+        /* ...and it got there before the pre-S6 code could even have
+         * STARTED punching it. This is the number a serial cascade cannot
+         * produce: its direct-punch window alone was 2500 ms. */
+        if (elapsed >= S6_OVERLAP_BOUND_MS) {
+            fprintf(stderr,
+                    "[test_bilateral_punch] FAIL: test19: handoff took %u ms; the DELIVER "
+                    "candidate must be punched CONCURRENTLY with the room-code candidate "
+                    "(expected < %u ms — pre-S6 the direct-punch window alone was 2500 ms)\n",
+                    (unsigned)elapsed, (unsigned)S6_OVERLAP_BOUND_MS);
+            fail_count++;
+            rc = 1;
+        }
+        EXPECT_TRUE("19-not-relayed", !hrelay);
+        EXPECT_TRUE("19-seed-was-armed", s_r19_seed_arms >= 1);
+        EXPECT_TRUE("19-deliver-was-armed", s_r19_deliver_arms >= 1);
+        EXPECT_TRUE("19-two-candidates", s_mock_punch_calls == 2);
+        if (rc == 0 && fail_count == fails_before) {
+            fprintf(stderr,
+                    "[test_bilateral_punch] test 19 OK — DELIVER candidate punched and "
+                    "handed off in %u ms with the room-code candidate still live\n",
+                    (unsigned)elapsed);
+        }
+    }
+
+done:
+    DirectP2P_TestHook_RunTeardown();
+    if (DirectP2P_GetState() != DIRECT_P2P_IDLE) DirectP2P_Cancel();
+    DirectP2P_TestHook_SetStunDiscover(NULL);
+    DirectP2P_TestHook_SetPunchOracle(NULL);
+    Config_SetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_RELAY, false);
+    mock_server_stop(&ctx, tid, server_sock, server_port);
+    s_r19_deliver_ip[0] = '\0';
+    return (rc == 0 && fail_count == fails_before) ? 0 : 1;
+}
+
+/* --- Test 20: a punch beats the relay, and never asks for one ---------- */
+
+/*
+ * §7.4 promised that "a pair that can punch never reaches this code, so an
+ * enabled relay costs a connectable pair nothing". Racing the relay leg
+ * against the punch legs would have broken that promise outright: every
+ * pair would request a pool port, and a slow-but-working direct link could
+ * lose to a fast relay and be silently downgraded to European-VPS ping.
+ *
+ * RACE_RELAY_ARM_MS restores it. The mock server here is a fully working
+ * relay (MOCK_RELAY_OK) that would grant instantly, so the ONLY reason it
+ * is never asked is the arm delay; and the ONLY reason the punch endpoint
+ * wins is the punch-first ordering rule.
+ */
+static int s_r20_handoffs_before = 0;
+static bool pred_r20_handoff(void) {
+    int n = 0;
+    DirectP2P_TestHook_LastHandoff(NULL, 0, NULL, NULL, NULL, &n);
+    return n > s_r20_handoffs_before;
+}
+
+static DirectP2PPunchOracleResult r20_oracle(const char* ip, uint16_t port) {
+    (void)ip;
+    (void)port;
+    s_mock_punch_calls++;
+    return DP2P_PUNCH_CONFIRM;
+}
+
+static int test_race_punch_beats_relay(void) {
+    fprintf(stderr,
+            "[test_bilateral_punch] test 20: a confirmed punch beats the relay, and a "
+            "connectable pair never requests a relay port\n");
+    const int fails_before = fail_count;
+    int rc = 0;
+
+    NET_Init();
+    DirectP2P_Init();
+    DirectP2P_TestHook_RunTeardown();
+
+    unsigned short server_port = 0, relay_port = 0;
+    const int server_sock = open_udp_on_localhost(&server_port);
+    const int relay_sock = open_udp_on_localhost(&relay_port);
+    if (server_sock < 0 || relay_sock < 0) {
+        FAIL("test20", "could not bind the mock server sockets");
+        if (server_sock >= 0) close_sock(server_sock);
+        if (relay_sock >= 0) close_sock(relay_sock);
+        return 1;
+    }
+
+    MockServerCtx ctx;
+    memset(&ctx, 0, sizeof(ctx));
+    ctx.sock = server_sock;
+    ctx.use_synth_peer = true;
+    ctx.synth_peer_ip_be = htonl(0xCB0071F5u); /* 203.0.113.245 */
+    ctx.synth_peer_port = 7100;
+    ctx.min_cookied_before_peer = 0;
+    ctx.life_secs = 30;
+    ctx.relay_mode = MOCK_RELAY_OK; /* a relay that WOULD answer instantly */
+    ctx.relay_sock = relay_sock;
+    ctx.relay_port = relay_port;
+    ctx.relay_slot = 1;
+    for (int i = 0; i < REND_TOKEN_LEN; i++) {
+        ctx.relay_token[i] = (uint8_t)(0xB0u + i);
+    }
+
+    SDL_Thread* tid = SDL_CreateThread(mock_server_thread, "rend_mock_r20", &ctx);
+    if (!tid) {
+        FAIL("test20", "SDL_CreateThread failed");
+        close_sock(server_sock);
+        close_sock(relay_sock);
+        return 1;
+    }
+
+    {
+        char url[64];
+        SDL_snprintf(url, sizeof(url), "udp://127.0.0.1:%u", (unsigned)server_port);
+        Config_SetString(CFG_KEY_NETPLAY_DIRECT_P2P_SIGNAL_URL, url);
+        Config_SetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_UPNP, true);
+        Config_SetBool(CFG_KEY_NETPLAY_DIRECT_P2P_FORCE_RELAY, false);
+        Config_SetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_RELAY, false);
+    }
+    DirectP2P_TestHook_SetStunDiscover(mock_stun_discover);
+    DirectP2P_TestHook_SetPunchOracle(r20_oracle);
+    DirectP2P_TestHook_ResetHandoff();
+    s_r20_handoffs_before = 0;
+    s_mock_punch_calls = 0;
+
+    uint32_t nonce = 0;
+    char code[ROOM_CODE_BUF_LEN];
+    struct in_addr peer_in;
+    if (!RoomCode_GenerateNonce(&nonce) ||
+        inet_pton(AF_INET, "198.51.100.7", &peer_in) != 1 ||
+        !RoomCode_Encode((uint32_t)peer_in.s_addr, 6000, nonce, code)) {
+        FAIL("test20", "could not build a room code");
+        rc = 1;
+        goto done;
+    }
+
+    DirectP2P_BeginJoin(code);
+    if (!tick_until(pred_r20_handoff, 20000)) {
+        fprintf(stderr,
+                "[test_bilateral_punch] FAIL: test20: no handoff (state=%d relay_reqs=%d)\n",
+                (int)DirectP2P_GetState(), ctx.relay_reqs);
+        fail_count++;
+        rc = 1;
+        goto done;
+    }
+
+    {
+        char hip[64] = { 0 };
+        uint16_t hport = 0;
+        int hplayer = 0, hcount = 0;
+        bool hrelay = false;
+        DirectP2P_TestHook_LastHandoff(hip, (int)sizeof(hip), &hport, &hplayer,
+                                       &hrelay, &hcount);
+        /* The punch endpoint, NOT the relay port. */
+        if (hport == relay_port) {
+            fprintf(stderr,
+                    "[test_bilateral_punch] FAIL: test20: do_handoff got the RELAY endpoint "
+                    "%s:%u — a confirmed punch must outrank the relay\n",
+                    hip, (unsigned)hport);
+            fail_count++;
+            rc = 1;
+        }
+        EXPECT_TRUE("20-handoff-not-flagged-relay", !hrelay);
+        /* And the server was never even ASKED for a relay port: the
+         * connectable pair costs the pool nothing (§7.4). */
+        if (ctx.relay_reqs != 0) {
+            fprintf(stderr,
+                    "[test_bilateral_punch] FAIL: test20: the server saw %d RELAY_REQ(s); a "
+                    "pair that punches inside RACE_RELAY_ARM_MS must never request a relay "
+                    "port\n",
+                    ctx.relay_reqs);
+            fail_count++;
+            rc = 1;
+        }
+        EXPECT_TRUE("20-relay-never-granted", ctx.relay_grants == 0);
+    }
+
+    /* --- 20B: the ARM DELAY specifically -----------------------------
+     * 20A alone does not isolate RACE_RELAY_ARM_MS: its punch confirms on
+     * the first pump, so the "a confirmed punch drops the relay leg" rule
+     * would keep relay_reqs at 0 even with the delay removed. Here the
+     * punch NEVER confirms and the whole race is bounded to 1500 ms,
+     * which is BELOW RACE_RELAY_ARM_MS (2500). The only thing that can
+     * keep the request count at zero is the delay itself. */
+    DirectP2P_TestHook_RunTeardown();
+    if (DirectP2P_GetState() != DIRECT_P2P_IDLE) DirectP2P_Cancel();
+    DirectP2P_TestHook_SetPunchOracle(probe_never_punch);
+    DirectP2P_TestHook_SetRaceBudgetMs(1500);
+    DirectP2P_TestHook_ResetHandoff();
+    {
+        const int reqs_before = ctx.relay_reqs;
+        DirectP2P_BeginJoin(code);
+        const uint32_t t0 = SDL_GetTicks();
+        bool left_idle = false;
+        while ((int)(SDL_GetTicks() - t0) < 20000) {
+            const DirectP2PState st = DirectP2P_GetState();
+            if (st != DIRECT_P2P_IDLE) left_idle = true;
+            if (st == DIRECT_P2P_FAILED_SYMMETRIC || st == DIRECT_P2P_FAILED_BILATERAL ||
+                st == DIRECT_P2P_FAILED_STUN || st == DIRECT_P2P_HANDOFF ||
+                (left_idle && st == DIRECT_P2P_IDLE)) {
+                break;
+            }
+            SDL_Delay(5);
+        }
+        if (ctx.relay_reqs != reqs_before) {
+            fprintf(stderr,
+                    "[test_bilateral_punch] FAIL: test20B: %d RELAY_REQ(s) inside a %u ms "
+                    "race; the relay leg must not arm before RACE_RELAY_ARM_MS (2500 ms)\n",
+                    ctx.relay_reqs - reqs_before, 1500u);
+            fail_count++;
+            rc = 1;
+        }
+        /* Sanity: the run really happened (a race that never started would
+         * trivially satisfy the assertion above). */
+        if (!left_idle) {
+            FAIL("test20B", "the orchestrator never left IDLE — nothing was measured");
+            rc = 1;
+        }
+    }
+    DirectP2P_TestHook_SetRaceBudgetMs(0);
+
+    if (rc == 0 && fail_count == fails_before) {
+        fprintf(stderr,
+                "[test_bilateral_punch] test 20 OK — a confirmed punch won the handoff and "
+                "zero RELAY_REQs were sent, against a relay that would have answered "
+                "instantly (20A punch-first, 20B arm-delay)\n");
+    }
+
+done:
+    DirectP2P_TestHook_RunTeardown();
+    if (DirectP2P_GetState() != DIRECT_P2P_IDLE) DirectP2P_Cancel();
+    DirectP2P_TestHook_SetStunDiscover(NULL);
+    DirectP2P_TestHook_SetPunchOracle(NULL);
+    mock_server_stop(&ctx, tid, server_sock, server_port);
+    close_sock(relay_sock);
+    return (rc == 0 && fail_count == fails_before) ? 0 : 1;
+}
+
+/* --- Test 21: NOT_PAIRED is transient, POOL_EXHAUSTED is terminal ------ */
+
+/*
+ * Serially the relay rung ran only after the signalling phase had
+ * definitely completed, so any refusal was durable and terminating on it
+ * was correct. Racing can now ask while the peer's own REGISTER is still
+ * in flight, and a server that answers NOT_PAIRED at that instant is not
+ * saying "never" — it is saying "not yet". Treating the first answer as
+ * final would INVENT a failure for exactly the symmetric pairs the relay
+ * exists to carry.
+ *
+ * The mock refuses the first `relay_notpaired_first` requests with
+ * NOT_PAIRED and grants after that.
+ */
+static int s_r21_handoffs_before = 0;
+static bool pred_r21_handoff(void) {
+    int n = 0;
+    DirectP2P_TestHook_LastHandoff(NULL, 0, NULL, NULL, NULL, &n);
+    return n > s_r21_handoffs_before;
+}
+
+static int test_race_not_paired_is_transient(void) {
+    fprintf(stderr,
+            "[test_bilateral_punch] test 21: a NOT_PAIRED relay refusal is transient\n");
+    const int fails_before = fail_count;
+    int rc = 0;
+
+    NET_Init();
+    DirectP2P_Init();
+    DirectP2P_TestHook_RunTeardown();
+
+    unsigned short server_port = 0, relay_port = 0;
+    const int server_sock = open_udp_on_localhost(&server_port);
+    const int relay_sock = open_udp_on_localhost(&relay_port);
+    if (server_sock < 0 || relay_sock < 0) {
+        FAIL("test21", "could not bind the mock server sockets");
+        if (server_sock >= 0) close_sock(server_sock);
+        if (relay_sock >= 0) close_sock(relay_sock);
+        return 1;
+    }
+
+    MockServerCtx ctx;
+    memset(&ctx, 0, sizeof(ctx));
+    ctx.sock = server_sock;
+    ctx.use_synth_peer = true;
+    ctx.synth_peer_ip_be = htonl(0xC6336407u); /* 198.51.100.7 */
+    ctx.synth_peer_port = 6000;
+    ctx.min_cookied_before_peer = 0;
+    ctx.life_secs = 30;
+    ctx.relay_mode = MOCK_RELAY_OK;
+    ctx.relay_notpaired_first = 2; /* two "not yet" answers, then a grant */
+    ctx.relay_sock = relay_sock;
+    ctx.relay_port = relay_port;
+    ctx.relay_slot = 1;
+    for (int i = 0; i < REND_TOKEN_LEN; i++) {
+        ctx.relay_token[i] = (uint8_t)(0xC0u + i);
+    }
+
+    SDL_Thread* tid = SDL_CreateThread(mock_server_thread, "rend_mock_r21", &ctx);
+    if (!tid) {
+        FAIL("test21", "SDL_CreateThread failed");
+        close_sock(server_sock);
+        close_sock(relay_sock);
+        return 1;
+    }
+
+    {
+        char url[64];
+        SDL_snprintf(url, sizeof(url), "udp://127.0.0.1:%u", (unsigned)server_port);
+        Config_SetString(CFG_KEY_NETPLAY_DIRECT_P2P_SIGNAL_URL, url);
+        Config_SetString(CFG_KEY_NETPLAY_DIRECT_P2P_RELAY_BUDGET_MS, "3000");
+        Config_SetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_UPNP, true);
+        /* Force-relay arms no punch legs and skips the bypasses, so the
+         * relay leg is the only runner and its refusal handling is the
+         * only thing under test. */
+        Config_SetBool(CFG_KEY_NETPLAY_DIRECT_P2P_FORCE_RELAY, true);
+        Config_SetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_RELAY, false);
+    }
+    DirectP2P_TestHook_SetSignalBudgetMs(2500);
+    DirectP2P_TestHook_SetStunDiscover(mock_stun_discover);
+    DirectP2P_TestHook_SetPunchOracle(mock_punch_oracle);
+    s_mock_punch_calls = 0;
+    s_mock_punch_succeed_from = 0;
+    DirectP2P_TestHook_ResetHandoff();
+    s_r21_handoffs_before = 0;
+
+    uint32_t nonce = 0;
+    char code[ROOM_CODE_BUF_LEN];
+    struct in_addr peer_in;
+    if (!RoomCode_GenerateNonce(&nonce) ||
+        inet_pton(AF_INET, "198.51.100.7", &peer_in) != 1 ||
+        !RoomCode_Encode((uint32_t)peer_in.s_addr, 6000, nonce, code)) {
+        FAIL("test21", "could not build a room code");
+        rc = 1;
+        goto done;
+    }
+
+    DirectP2P_BeginJoin(code);
+    if (!tick_until(pred_r21_handoff, 25000)) {
+        fprintf(stderr,
+                "[test_bilateral_punch] FAIL: test21: no handoff after two NOT_PAIRED "
+                "refusals (state=%d status=\"%s\" relay_reqs=%d grants=%d notpaired=%d "
+                "pins_ok=%d acks=%d) — a 'not yet' refusal must not end the leg\n",
+                (int)DirectP2P_GetState(), DirectP2P_GetStatusText(), ctx.relay_reqs,
+                ctx.relay_grants, ctx.relay_notpaired_sent, ctx.relay_pins_ok,
+                ctx.relay_acks);
+        fail_count++;
+        rc = 1;
+        goto done;
+    }
+
+    {
+        char hip[64] = { 0 };
+        uint16_t hport = 0;
+        int hplayer = 0, hcount = 0;
+        bool hrelay = false;
+        DirectP2P_TestHook_LastHandoff(hip, (int)sizeof(hip), &hport, &hplayer,
+                                       &hrelay, &hcount);
+        if (hport != relay_port || strcmp(hip, "127.0.0.1") != 0) {
+            fprintf(stderr,
+                    "[test_bilateral_punch] FAIL: test21: do_handoff got %s:%u, expected the "
+                    "relay endpoint 127.0.0.1:%u\n",
+                    hip, (unsigned)hport, (unsigned)relay_port);
+            fail_count++;
+            rc = 1;
+        }
+        EXPECT_TRUE("21-handoff-flagged-relay", hrelay);
+        /* The refusals really happened — otherwise this test proves
+         * nothing about how they are handled. */
+        EXPECT_TRUE("21-refusals-were-sent", ctx.relay_notpaired_sent >= 2);
+        EXPECT_TRUE("21-kept-asking", ctx.relay_reqs >= 3);
+        EXPECT_TRUE("21-eventually-granted", ctx.relay_grants >= 1);
+        if (rc == 0 && fail_count == fails_before) {
+            fprintf(stderr,
+                    "[test_bilateral_punch] test 21 OK — %d NOT_PAIRED refusal(s) absorbed, "
+                    "%d RELAY_REQ(s) sent, relay endpoint reached do_handoff\n",
+                    ctx.relay_notpaired_sent, ctx.relay_reqs);
+        }
+    }
+
+done:
+    DirectP2P_TestHook_RunTeardown();
+    if (DirectP2P_GetState() != DIRECT_P2P_IDLE) DirectP2P_Cancel();
+    DirectP2P_TestHook_SetSignalBudgetMs(0);
+    DirectP2P_TestHook_SetStunDiscover(NULL);
+    DirectP2P_TestHook_SetPunchOracle(NULL);
+    Config_SetBool(CFG_KEY_NETPLAY_DIRECT_P2P_FORCE_RELAY, false);
+    Config_SetString(CFG_KEY_NETPLAY_DIRECT_P2P_RELAY_BUDGET_MS, "4000");
+    mock_server_stop(&ctx, tid, server_sock, server_port);
+    close_sock(relay_sock);
+    return (rc == 0 && fail_count == fails_before) ? 0 : 1;
+}
+
+
 /* --- Entry point ------------------------------------------------------ */
 
 int Netplay_Test_BilateralPunch(void) {
@@ -3812,6 +4617,10 @@ int Netplay_Test_BilateralPunch(void) {
     rc |= test_joiner_cookie_handshake();
     rc |= test_relay_codec(); /* S5 */
     rc |= test_relay_rung();  /* S5 */
+    rc |= test_race_deliver_overlaps_seed();  /* S6 */
+    rc |= test_race_punch_beats_relay();      /* S6 */
+    rc |= test_race_not_paired_is_transient();/* S6 */
+    rc |= test_race_worst_case_timing();      /* S6: ~16 s of wall clock */
     rc |= test_host_cookie_rejected(); /* last: ~31 s of wall clock */
 
     if (fail_count > 0 || rc != 0) {

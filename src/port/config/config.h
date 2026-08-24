@@ -107,6 +107,19 @@
 #define CFG_KEY_NETPLAY_DIRECT_P2P_FORCE_RELAY "netplay-direct-p2p-force-relay"
 #define CFG_KEY_NETPLAY_DIRECT_P2P_RELAY_BUDGET_MS "netplay-direct-p2p-relay-budget-ms"
 
+/* S6 candidate racing (docs/plan-netplay-connection.md §8).
+ *
+ * RACE_BUDGET_MS is the WHOLE post-STUN establishment wall clock on both
+ * roles — the punch legs, the rendezvous signaling leg and the relay leg
+ * now run CONCURRENTLY inside it instead of one after another, so it
+ * replaces the old serial sum (direct punch + signal budget + bilateral
+ * punch + relay budget) as the thing that bounds a failing attempt. The
+ * per-leg keys above still bound their own legs INSIDE this budget.
+ * Clamped [2000, 30000]: below ~2 s no leg can complete a round trip to
+ * a distant server, and above 30 s the S3 orchestrator deadline is the
+ * more meaningful bound. */
+#define CFG_KEY_NETPLAY_DIRECT_P2P_RACE_BUDGET_MS "netplay-direct-p2p-race-budget-ms"
+
 /* Rollback prediction window — max frames Gekko will predict ahead of
  * confirmed inputs and, on mispredict, the max rollback depth. Lower
  * values reduce worst-case resim CPU cost (linear in window) at the cost

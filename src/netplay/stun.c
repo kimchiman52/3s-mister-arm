@@ -749,6 +749,183 @@ bool Stun_Discover(StunResult* result, uint16_t local_port, int timeout_ms) {
     return true;
 }
 
+/* --- S6 non-blocking punch leg ----------------------------------------
+ *
+ * docs/plan-netplay-connection.md §8. Extracted from the body of
+ * Stun_HolePunch so the joiner can RACE several candidate endpoints (and
+ * the rendezvous / relay legs) on one thread and one socket. The wire
+ * behaviour is unchanged: same 17-byte authenticated payload, same S2
+ * adaptive cadence, same source-IP + exact-payload accept criteria with
+ * the port deliberately unmatched (S2 symmetric retarget), same ~600 ms
+ * confirmation tail. Stun_HolePunch below is now a blocking driver over
+ * this stepper, so its existing regression tests cover both.
+ */
+
+/* S2 adaptive cadence: establishment time is dominated by peer start-skew
+ * and first-packet loss, not RTT — the two sides rarely enter their punch
+ * loops at the same instant, and the first datagram toward a NAT is the
+ * one most likely to be dropped while the mapping opens. Burst at 50 ms
+ * for the first 500 ms (<= 10 datagrams of 17 bytes — negligible
+ * traffic), then back off to the original 200 ms steady state. */
+#define STUN_PUNCH_INTERVAL_FAST_MS 50
+#define STUN_PUNCH_INTERVAL_SLOW_MS 200
+#define STUN_PUNCH_BURST_WINDOW_MS 500
+
+bool Stun_PunchBegin(StunPunchLeg* leg, const char* peer_ip, uint16_t peer_port,
+                     const uint8_t punch_token[STUN_PUNCH_TOKEN_LEN],
+                     uint32_t now_ms) {
+    if (!leg || !peer_ip || !punch_token)
+        return false;
+    memset(leg, 0, sizeof(*leg));
+
+    NET_Address* peer = NET_ResolveHostname(peer_ip);
+    if (!peer) {
+        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "STUN: Failed to resolve peer IP");
+        return false;
+    }
+    /* Numeric dotted-quads (the only thing a room code or a DELIVER ever
+     * yields) resolve without ever entering NET_WAITING; the bounded poll
+     * is retained verbatim from Stun_HolePunch for the hostname case. */
+    int wait_attempts = 0;
+    while (NET_GetAddressStatus(peer) == NET_WAITING && wait_attempts < 300) {
+        SDL_Delay(10);
+        wait_attempts++;
+    }
+    if (NET_GetAddressStatus(peer) != NET_SUCCESS) {
+        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "STUN: Failed to resolve peer IP");
+        NET_UnrefAddress(peer);
+        return false;
+    }
+
+    leg->target = peer;
+    leg->target_port = peer_port;
+    leg->start_ms = now_ms;
+    leg->last_send_ms = 0;
+    leg->sent_any = false;
+    leg->confirmed = false;
+    memcpy(leg->token, punch_token, STUN_PUNCH_TOKEN_LEN);
+    /* S4a: authenticated punch payload — "3SX_PUNCH" + the 8-byte token
+     * derived from the room-code payload. Sent with every punch; REQUIRED
+     * on every accepted datagram. */
+    Stun_BuildPunchPayload(punch_token, leg->msg);
+    SDL_strlcpy(leg->peer_ip, NET_GetAddressString(peer), sizeof(leg->peer_ip));
+    return true;
+}
+
+bool Stun_PunchActive(const StunPunchLeg* leg) {
+    return leg != NULL && leg->target != NULL;
+}
+
+bool Stun_PunchConfirmed(const StunPunchLeg* leg) {
+    return leg != NULL && leg->confirmed;
+}
+
+void Stun_PunchPump(StunPunchLeg* leg, NET_DatagramSocket* sock, uint32_t now_ms) {
+    if (!Stun_PunchActive(leg) || sock == NULL)
+        return;
+
+    int interval_ms;
+    if (leg->confirmed) {
+        /* Confirmation tail: keep punching the CONFIRMED endpoint at the
+         * fast cadence so a peer whose own loop started late, or which
+         * lost our earlier datagrams, reliably sees at least one. */
+        interval_ms = STUN_PUNCH_INTERVAL_FAST_MS;
+    } else {
+        interval_ms = ((int)(now_ms - leg->start_ms) < STUN_PUNCH_BURST_WINDOW_MS)
+                          ? STUN_PUNCH_INTERVAL_FAST_MS
+                          : STUN_PUNCH_INTERVAL_SLOW_MS;
+    }
+    if (leg->sent_any && (now_ms - leg->last_send_ms) < (uint32_t)interval_ms)
+        return;
+
+    if (!NET_SendDatagram(sock, leg->target, leg->target_port, leg->msg, sizeof(leg->msg))) {
+        SDL_LogDebug(SDL_LOG_CATEGORY_APPLICATION, "STUN: Hole punch send failed: %s",
+                     SDL_GetError());
+    }
+    leg->last_send_ms = now_ms;
+    leg->sent_any = true;
+}
+
+bool Stun_PunchOffer(StunPunchLeg* leg, StunResult* local,
+                     const uint8_t* buf, int len,
+                     const char* src_ip, uint16_t src_port, uint32_t now_ms) {
+    if (!Stun_PunchActive(leg) || buf == NULL || src_ip == NULL)
+        return false;
+
+    /* Accept criteria (S4a, unchanged): source IP + the exact 17-byte
+     * authenticated payload. The PORT is deliberately NOT matched — that
+     * is what recognises a symmetric peer punching from a translated
+     * per-destination mapping. */
+    if (strcmp(src_ip, NET_GetAddressString(leg->target)) != 0)
+        return false;
+
+    if (!Stun_HasPunchPrefix(buf, len))
+        return false;
+
+    if (!Stun_IsPunchPayload(buf, len, leg->token)) {
+        /* S4a: a datagram from the expected peer IP that SPEAKS the punch
+         * protocol but fails the token check (a legacy 9-byte payload from
+         * an older build, or a token derived from a different room
+         * payload) is decisive version-mismatch evidence — record it for
+         * the failure classifier, then drop it like any other stranger. */
+        if (local != NULL) {
+            local->diag_punch_bad_token = true;
+        }
+        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                    "STUN: punch from %s:%u has a bad/missing auth token (len=%d) — "
+                    "peer build mismatch? Ignoring.",
+                    src_ip, (unsigned)src_port, len);
+        return true; /* consumed: it is ours, it is just not acceptable */
+    }
+
+    if (!leg->confirmed) {
+        SDL_Log("STUN: Hole punch SUCCESS — received response from peer");
+        /* S2 retarget fix (docs/plan-netplay-connection.md §4): a
+         * symmetric-NAT peer punches us from a mapping whose port differs
+         * from the one we were told. Pre-fix the confirmation sends still
+         * went to the ORIGINAL port, so the symmetric peer never saw them
+         * and its own punch timed out. Retarget every subsequent send at
+         * the observed source endpoint before confirming. */
+        if (src_port != leg->target_port) {
+            SDL_Log("STUN: peer punched from translated port %u (expected %u) — "
+                    "retargeting confirmation sends at the observed endpoint",
+                    (unsigned)src_port, (unsigned)leg->target_port);
+        }
+        leg->confirmed = true;
+        leg->confirm_ms = now_ms;
+        /* Re-send immediately at the new target rather than waiting out
+         * the current interval. */
+        leg->sent_any = false;
+    }
+    leg->target_port = src_port;
+    SDL_strlcpy(leg->peer_ip, src_ip, sizeof(leg->peer_ip));
+    return true;
+}
+
+bool Stun_PunchSettled(const StunPunchLeg* leg, uint32_t now_ms) {
+    return leg != NULL && leg->confirmed &&
+           (int)(now_ms - leg->confirm_ms) >= STUN_PUNCH_CONFIRM_MS;
+}
+
+void Stun_PunchEndpoint(const StunPunchLeg* leg, char* out_ip, int ip_buf_size,
+                        uint16_t* out_port) {
+    if (leg == NULL)
+        return;
+    if (out_ip != NULL && ip_buf_size > 0) {
+        SDL_strlcpy(out_ip, leg->peer_ip, (size_t)ip_buf_size);
+    }
+    if (out_port != NULL) {
+        *out_port = leg->target_port;
+    }
+}
+
+void Stun_PunchEnd(StunPunchLeg* leg) {
+    if (leg == NULL || leg->target == NULL)
+        return;
+    NET_UnrefAddress(leg->target);
+    leg->target = NULL;
+}
+
 bool Stun_HolePunch(StunResult* local, char* peer_ip, uint16_t* peer_port,
                     const uint8_t punch_token[STUN_PUNCH_TOKEN_LEN],
                     int punch_duration_ms, SDL_AtomicInt* cancel_flag) {
@@ -757,182 +934,63 @@ bool Stun_HolePunch(StunResult* local, char* peer_ip, uint16_t* peer_port,
 
     NET_DatagramSocket* sock = local->socket;
 
-    /* S4a: authenticated punch payload — "3SX_PUNCH" + 8-byte token
-     * derived from the room-code payload. Sent with every punch;
-     * REQUIRED on every accepted datagram (see the receive path below).
-     * Note: diag_punch_bad_token is deliberately NOT cleared here — it
-     * OR-accumulates across the direct + bilateral punches of one join
-     * attempt and is reset by Stun_Discover's memset. */
-    uint8_t punch_msg[STUN_PUNCH_PAYLOAD_LEN];
-    Stun_BuildPunchPayload(punch_token, punch_msg);
-    /* S2 adaptive cadence: establishment time is dominated by peer
-     * start-skew and first-packet loss, not RTT — the two sides rarely
-     * enter their punch loops at the same instant, and the first
-     * datagram toward a NAT is the one most likely to be dropped while
-     * the mapping opens. Burst at 50 ms for the first 500 ms (<= 10
-     * datagrams of 9 bytes — negligible traffic), then back off to the
-     * original 200 ms steady-state for the rest of the window. */
-    const int punch_interval_fast_ms = 50;
-    const int punch_interval_slow_ms = 200;
-    const int punch_burst_window_ms = 500;
-
-    NET_Address* peer = NET_ResolveHostname(peer_ip);
-    if (!peer) {
-        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "STUN: Failed to resolve peer IP");
-        return false;
-    }
-
-    int wait_attempts = 0;
-    while (NET_GetAddressStatus(peer) == NET_WAITING && wait_attempts < 300) {
-        SDL_Delay(10);
-        wait_attempts++;
-    }
-
-    if (NET_GetAddressStatus(peer) != NET_SUCCESS) {
-        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "STUN: Failed to resolve peer IP");
-        NET_UnrefAddress(peer);
+    StunPunchLeg leg;
+    if (!Stun_PunchBegin(&leg, peer_ip, *peer_port, punch_token, SDL_GetTicks())) {
         return false;
     }
 
     SDL_Log("STUN: Hole punching for %dms...", punch_duration_ms);
 
-    uint32_t start = SDL_GetTicks();
-    uint32_t last_send = 0;
-    bool received_response = false;
+    const uint32_t start = leg.start_ms;
 
-    uint16_t local_peer_port = *peer_port; // Host order — NET_SendDatagram expects host order
-
-    while ((int)(SDL_GetTicks() - start) < punch_duration_ms) {
-        // Check for cancellation
+    while ((int)(SDL_GetTicks() - start) < punch_duration_ms ||
+           (leg.confirmed && !Stun_PunchSettled(&leg, SDL_GetTicks()))) {
         if (cancel_flag && SDL_GetAtomicInt(cancel_flag)) {
-            SDL_Log("STUN: Hole punch cancelled by caller");
-            NET_UnrefAddress(peer);
+            /* Cancel is a caller-initiated abort, not a success — report
+             * false. (All current call sites re-check the flag after
+             * return, but a `true` here is a latent trap for any future
+             * caller that trusts the return value.) */
+            SDL_Log(leg.confirmed ? "STUN: Hole punch cancelled by caller during confirmation"
+                                  : "STUN: Hole punch cancelled by caller");
+            Stun_PunchEnd(&leg);
             return false;
         }
-        uint32_t now = SDL_GetTicks();
+        const uint32_t now = SDL_GetTicks();
+        Stun_PunchPump(&leg, sock, now);
 
-        // Send punch packet periodically (fast burst early, then back off)
-        const int punch_interval_ms = ((int)(now - start) < punch_burst_window_ms)
-                                          ? punch_interval_fast_ms
-                                          : punch_interval_slow_ms;
-        if (now - last_send >= (uint32_t)punch_interval_ms || last_send == 0) {
-            if (!NET_SendDatagram(sock, peer, local_peer_port, punch_msg, sizeof(punch_msg))) {
-                SDL_LogDebug(SDL_LOG_CATEGORY_APPLICATION, "STUN: Hole punch send failed: %s", SDL_GetError());
-            }
-            last_send = now;
-        }
-
-        // Try to receive from peer
         NET_Datagram* dgram = NULL;
         NET_ReceiveDatagram(sock, &dgram);
-
         if (dgram) {
-            // Check if it's a punch from our expected peer.
-            // NOTE: NET_GetAddressString returns a pointer to an internal
-            // static buffer — must copy one result before the second call.
+            /* NOTE: NET_GetAddressString returns a pointer to an internal
+             * static buffer — copy this result before Stun_PunchOffer
+             * calls it again on the leg's own address. */
             char recv_addr[64];
             SDL_strlcpy(recv_addr, NET_GetAddressString(dgram->addr), sizeof(recv_addr));
-            const bool from_expected_ip =
-                strcmp(recv_addr, NET_GetAddressString(peer)) == 0;
-            /* S4a: a datagram from the expected peer IP that SPEAKS the
-             * punch protocol but fails the token check (legacy 9-byte
-             * payload from an older build, or a token derived from a
-             * different room payload) is decisive version-mismatch
-             * evidence — record it for the failure classifier, then
-             * drop the datagram like any other stranger. */
-            if (from_expected_ip &&
-                Stun_HasPunchPrefix(dgram->buf, dgram->buflen) &&
-                !Stun_IsPunchPayload(dgram->buf, dgram->buflen, punch_token)) {
-                local->diag_punch_bad_token = true;
-                SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
-                            "STUN: punch from %s:%u has a bad/missing auth token "
-                            "(len=%d) — peer build mismatch? Ignoring.",
-                            recv_addr, (unsigned)dgram->port, dgram->buflen);
-            }
-            if (from_expected_ip &&
-                Stun_IsPunchPayload(dgram->buf, dgram->buflen, punch_token)) {
-                SDL_Log("STUN: Hole punch SUCCESS — received response from peer");
-                received_response = true;
-
-                /* S2 retarget fix (docs/plan-netplay-connection.md §4): a
-                 * symmetric-NAT peer punches us from a per-destination
-                 * mapping whose port differs from the one we were told
-                 * (the rendezvous/room-code port). We deliberately accept
-                 * on source-IP + payload only, so we DO learn the true
-                 * translated endpoint here — but pre-fix, the confirmation
-                 * sends below still targeted the ORIGINAL port captured
-                 * into local_peer_port at function entry, so the symmetric
-                 * peer never saw our confirmations and ITS punch timed
-                 * out. Retarget every subsequent send at the observed
-                 * source endpoint before confirming. */
-                if (dgram->port != local_peer_port) {
-                    SDL_Log("STUN: peer punched from translated port %u (expected %u) — "
-                            "retargeting confirmation sends at the observed endpoint",
-                            (unsigned)dgram->port, (unsigned)local_peer_port);
-                }
-                local_peer_port = dgram->port;
-
-                // Update with actual received endpoint (fixes Symmetric NAT port/IP translation)
-                *peer_port = dgram->port; // Host order — NET_ReceiveDatagram returns host order
-
-                // Update peer_ip from received address (Symmetric NAT may change it)
-                const char* received_ip = NET_GetAddressString(dgram->addr);
-                SDL_strlcpy(peer_ip, received_ip, 64);
-
-                /* Keep a ref on the OBSERVED source address (the accept
-                 * criteria guarantee it string-matches `peer`'s IP, but
-                 * using the datagram's own address is the principled
-                 * target). NET_DestroyDatagram drops the datagram's ref,
-                 * so take our own before destroying. */
-                NET_Address* confirmed = NET_RefAddress(dgram->addr);
-                NET_DestroyDatagram(dgram);
-
-                /* Keep punching the confirmed endpoint for ~600 ms at the
-                 * fast cadence so the peer — whose own punch loop may have
-                 * started late or lost packets — reliably sees at least
-                 * one of ours. (Replaces the old 3 x 50 ms burst, which
-                 * additionally went to the WRONG port for symmetric
-                 * peers.) */
-                const uint32_t confirm_start = SDL_GetTicks();
-                while ((int)(SDL_GetTicks() - confirm_start) < 600) {
-                    if (cancel_flag && SDL_GetAtomicInt(cancel_flag)) {
-                        /* Cancel is a caller-initiated abort, not a
-                         * success — report false like the main-loop
-                         * cancel path above does. (All current call
-                         * sites re-check the flag after return, but a
-                         * `true` here is a latent trap for any future
-                         * caller that trusts the return value.) */
-                        SDL_Log("STUN: Hole punch cancelled by caller during confirmation");
-                        if (confirmed != NULL) {
-                            NET_UnrefAddress(confirmed);
-                        }
-                        NET_UnrefAddress(peer);
-                        return false;
-                    }
-                    NET_SendDatagram(sock, confirmed != NULL ? confirmed : peer, local_peer_port,
-                                     punch_msg, sizeof(punch_msg));
-                    SDL_Delay(50);
-                }
-                if (confirmed != NULL) {
-                    NET_UnrefAddress(confirmed);
-                }
-                break;
-            }
+            (void)Stun_PunchOffer(&leg, local, dgram->buf, dgram->buflen, recv_addr,
+                                  dgram->port, now);
             NET_DestroyDatagram(dgram);
         } else {
-            SDL_Delay(10); // Don't spin too hot if no data
+            SDL_Delay(10); /* don't spin too hot if no data */
+        }
+
+        if (Stun_PunchSettled(&leg, SDL_GetTicks())) {
+            break;
         }
     }
 
-    if (!received_response) {
+    const bool received_response = leg.confirmed;
+    if (received_response) {
+        /* Update with the actual received endpoint (this is what fixes
+         * symmetric-NAT port/IP translation for the caller). */
+        Stun_PunchEndpoint(&leg, peer_ip, 64, peer_port);
+    } else {
         SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
                     "STUN: Hole punch timed out after %dms. "
                     "Peer may be behind Symmetric NAT.",
                     punch_duration_ms);
     }
 
-    NET_UnrefAddress(peer);
-
+    Stun_PunchEnd(&leg);
     return received_response;
 }
 
