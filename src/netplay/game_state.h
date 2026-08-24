@@ -829,6 +829,15 @@ typedef struct State {
 void GameState_Save(GameState* dst);
 void GameState_Load(const GameState* src);
 
+/* Sanitize a scratch COPY of a PLW / effect-pool WORK to the exact view
+ * the focused cross-peer checksum hashes (pointers nulled, rendering
+ * bits masked, allocation-order fields zeroed, pointer-like u64 sweep
+ * for PLW). Shared by save_current_state() and the rollback-determinism
+ * harness (src/test/rollback_determinism.c) so "what counts as gameplay
+ * bytes" has one definition. Never call on live state. */
+void GameState_SanitizePlwCopyForHash(PLW* copy);
+void GameState_SanitizeWorkCopyForHash(WORK* w);
+
 // Rollback save/load public API (Track A Phase 3). These mirror 3sxtra's
 // signatures in /tmp/3sxtra/src/include/game_state.h:787-800.
 struct GekkoGameEvent;

@@ -111,6 +111,14 @@ add_executable(3s-arm MACOSX_BUNDLE
     $<$<CONFIG:Debug>:${IMGUI_SOURCES}>
 )
 
+# The rollback-determinism capture (src/test/rollback_determinism.c) hashes
+# the entire ~17 MB writable data/bss image once per frame. At Debug -O0 the
+# byte loop is ~10x slower, which multiplies the whole harness runtime, so
+# compile just this TU with -O2 in every configuration. Semantics are
+# unaffected: the TU is self-contained bookkeeping, not simulation code.
+set_source_files_properties(src/test/rollback_determinism.c
+    PROPERTIES COMPILE_OPTIONS "-O2")
+
 # R-1: wire the MIST netplay handshake's build_hash to the real git short
 # SHA, derived at configure time. Falls back to mist_handshake.c's baked-in
 # "0000000" when git or the repo is unavailable (tarball builds, containers

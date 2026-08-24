@@ -40,6 +40,7 @@
 #include "sf33rd/Source/Game/ui/frame_trace.h"
 #include "sf33rd/Source/Game/ui/sc_sub.h"
 #include "structs.h"
+#include "test/rollback_determinism.h"
 #include "test/test_runner.h"
 
 #if DEBUG
@@ -89,6 +90,12 @@ Configuration configuration = {
             .preserve_game_transition = false,
             .delay_gameplay_inputs_until_active = false,
             .stage = -1,
+            .rbd_capture_path = NULL,
+            .rbd_symmap_path = NULL,
+            .rbd_frames = 0,
+            .rbd_rollback_period = 0,
+            .rbd_rollback_depth = 3,
+            .rbd_select_rollback_period = 8,
         },
 };
 
@@ -862,10 +869,18 @@ static int loop() {
                 break;
             }
 
+            /* Rollback-determinism harness (inert without --rbd-capture):
+             * PreFrame may inject a save/resim/load rollback cycle before
+             * the frame; FrameEnd hashes the writable image after it. Both
+             * are stubs outside DEBUG+ENABLE_NETPLAY builds. */
+            RollbackDeterminism_PreFrame();
+
             SDLApp_BeginFrame();
             game_step_0();
             SDLApp_EndFrame();
             game_step_1();
+
+            RollbackDeterminism_FrameEnd();
 
 #if ENABLE_PERF_TELEMETRY
             if (!perf_capture_started && configuration.perf.frame_count > 0 &&

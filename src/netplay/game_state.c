@@ -1920,6 +1920,42 @@ static void sanitize_plw_pointers(PLW* p) {
     p->rp = NULL;
 }
 
+/* Public wrappers around the sanitizers, shared by the focused-checksum
+ * path in save_current_state() below and the rollback-determinism harness
+ * (src/test/rollback_determinism.c), which must hash plw / effect-pool
+ * WORK slots through EXACTLY the view the production checksum compares —
+ * one source of truth for what counts as gameplay bytes vs pointer/render
+ * noise. Both operate on scratch COPIES only, never live state. */
+
+void GameState_SanitizeWorkCopyForHash(WORK* w) {
+    sanitize_work_pointers(w);
+    sanitize_work_rendering(w);
+}
+
+void GameState_SanitizePlwCopyForHash(PLW* copy) {
+    sanitize_plw_pointers(copy);
+    sanitize_work_rendering(&copy->wu);
+
+    // Linked-list indices and timing differ per allocation order.
+    copy->wu.before = 0;
+    copy->wu.behind = 0;
+    copy->wu.myself = 0;
+    copy->wu.listix = 0;
+    copy->wu.timing = 0;
+
+    // Sweep remaining pointer-like values in PLW.
+    // Use fixed uint64_t stride so both 32-bit and 64-bit platforms
+    // scan the same bytes and produce identical checksums.
+    uint64_t* words = (uint64_t*)copy;
+    const size_t count = sizeof(PLW) / sizeof(uint64_t);
+    for (size_t i = 0; i < count; i++) {
+        uint64_t v = words[i];
+        if (v > 0x100000000ULL && (v >> 47) == 0) {
+            words[i] = 0;
+        }
+    }
+}
+
 /// Save state in state buffer (ring buffer for desync dump). Always-on
 /// 2026-04-26 — telemetry needs the same dump infrastructure as DEBUG.
 static State* note_state(const State* state, int frame) {
@@ -2000,27 +2036,7 @@ uint32_t save_current_state(void* buffer, int frame) {
         static PLW plw_scratch[2];
         for (int p = 0; p < 2; p++) {
             SDL_memcpy(&plw_scratch[p], &dst->gs.plw[p], sizeof(PLW));
-            sanitize_plw_pointers(&plw_scratch[p]);
-            sanitize_work_rendering(&plw_scratch[p].wu);
-
-            // Linked-list indices and timing differ per allocation order.
-            plw_scratch[p].wu.before = 0;
-            plw_scratch[p].wu.behind = 0;
-            plw_scratch[p].wu.myself = 0;
-            plw_scratch[p].wu.listix = 0;
-            plw_scratch[p].wu.timing = 0;
-
-            // Sweep remaining pointer-like values in PLW.
-            // Use fixed uint64_t stride so both 32-bit and 64-bit platforms
-            // scan the same bytes and produce identical checksums.
-            uint64_t* words = (uint64_t*)&plw_scratch[p];
-            const size_t count = sizeof(PLW) / sizeof(uint64_t);
-            for (size_t i = 0; i < count; i++) {
-                uint64_t v = words[i];
-                if (v > 0x100000000ULL && (v >> 47) == 0) {
-                    words[i] = 0;
-                }
-            }
+            GameState_SanitizePlwCopyForHash(&plw_scratch[p]);
         }
 
         // --- Build combined hash from PLW + whitelisted globals ---
