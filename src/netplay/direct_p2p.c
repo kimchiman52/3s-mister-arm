@@ -102,6 +102,18 @@ typedef struct {
      * DIRECT_P2P_HOST_WAITING. */
     char host_code[ROOM_CODE_BUF_LEN];
 
+    /* Host-side: the public port actually encoded in host_code (UPnP
+     * external port when the mapping succeeded, else the STUN-observed
+     * port). The rendezvous session key MUST be derived from this
+     * advertised tuple — the joiner derives its key from the decoded
+     * room code, so a host deriving from the raw STUN port instead
+     * would land in a different rendezvous slot whenever the UPnP
+     * external port differs from the STUN-observed port (non-port-
+     * preserving NAT). Set by host_thread_fn before HOST_WAITING is
+     * published; only rewritten on the main thread by the STUN-rebind
+     * drift handler (which joins the rendezvous thread first). */
+    uint16_t advertised_port;
+
     /* Parsed rendezvous endpoint cache; populated in BeginHost/BeginJoin
      * once 5b/5c land. Holds the result of parsing the signal-url config
      * value (host:port). Both fields zero in 5a — no callers yet. */
@@ -140,6 +152,20 @@ static SDL_Thread* s_bilateral_punch_thread = NULL;
  * on the next frame, joins the worker, and runs do_handoff inline. */
 static SDL_AtomicInt s_bilateral_handoff_pending = { 0 };
 
+/* Review M1: host-side bilateral-punch FAILURE signal, mirror of the
+ * handoff-pending flag above. The worker must not park the host in a
+ * terminal state — a single stale or hostile REGISTER on our session
+ * key (anyone who saw the room code) would then kill the room for the
+ * entire hosting period. Instead the worker raises this flag and
+ * exits; Tick joins it and returns the host to HOST_WAITING (respawning
+ * the rendezvous loop) up to HOST_BILATERAL_MAX_FAILURES times per
+ * hosting session, after which it parks FAILED_BILATERAL so a genuinely
+ * unreachable pairing still surfaces. The count is main-thread only.
+ * The JOINER's failure disposition is deliberately unchanged. */
+static SDL_AtomicInt s_bilateral_failed = { 0 };
+static int s_bilateral_fail_count = 0;
+#define HOST_BILATERAL_MAX_FAILURES 5
+
 /* Set by the worker right before it publishes a FAILED_* or
  * HOST_WAITING state so the status-text reader sees the fresh message
  * without a race. Writes from worker -> readers from main. Char buffer
@@ -158,6 +184,32 @@ static UpnpMapping s_upnp_mapping = { 0 };
  * of IDLE so the overlay keeps showing the reject reason. Main-thread
  * only (notify, teardown, and Cancel all run on the game thread). */
 static bool s_handshake_reject_latched = false;
+
+/* S1 host liveness: STUN rebind keepalive bookkeeping. Main-thread only
+ * (written/read exclusively from Tick's HOST_WAITING branch and the
+ * BeginHost/BeginJoin/Cancel/teardown resets, all on the game thread).
+ * last_ms == 0
+ * means "not armed yet" — the first keepalive fires one interval after
+ * HOST_WAITING is first ticked. txid_valid gates response parsing so a
+ * stale or spoofed binding response without a matching in-flight
+ * transaction is ignored. */
+static uint64_t s_stun_keepalive_last_ms = 0;
+static uint8_t s_rebind_txid[12] = { 0 };
+static bool s_rebind_txid_valid = false;
+
+/* Review M2: drift debounce. A single differing STUN Binding Response
+ * must not rewrite the on-screen room code — the user may be reading it
+ * aloud. A drift candidate is only COMMITTED when a second consecutive
+ * keepalive confirms the same new endpoint; a response matching the
+ * current endpoint clears the candidate. Deliberate side effect: a NAT
+ * that rebinds on every keepalive (UDP idle timeout shorter than the
+ * keepalive interval) produces a DIFFERENT port each time, so the
+ * candidate keeps being replaced and never commits — the code stays
+ * stable instead of churning every interval with "Network changed!".
+ * Main-thread only, same lifecycle as the txid state above. */
+static char s_drift_pending_ip[64] = { 0 };
+static uint16_t s_drift_pending_port = 0;
+static bool s_drift_pending_valid = false;
 
 /* Init guard so DirectP2P_Init is idempotent. */
 static bool s_init_done = false;
@@ -211,6 +263,28 @@ static bool direct_p2p_is_lan_peer(const char* ip) {
     if ((a & 0xFFFF0000u) == 0xC0A80000u) return true;
     /* 169.254.0.0/16 (link-local) */
     if ((a & 0xFFFF0000u) == 0xA9FE0000u) return true;
+    return false;
+}
+
+/* Classify a router-reported external IP for the CGNAT gate (review
+ * M3). Returns true — "the mapping is provably useless" — only when
+ * the string PARSES as IPv4 and is a non-public address: RFC1918,
+ * RFC 6598 CGN shared space (100.64.0.0/10), loopback, or link-local.
+ * A public-but-different IP (ISP 1:1 NAT / DMZ, where the router's WAN
+ * IP differs from the STUN IP but the mapping forwards perfectly) and
+ * an unparseable string (garbage, IPv6 form) must NOT poison a working
+ * mapping — callers keep it and log instead. */
+static bool direct_p2p_ip_is_nonpublic(const char* ip) {
+    if (direct_p2p_is_lan_peer(ip)) {
+        return true; /* 127/8, 10/8, 172.16/12, 192.168/16, 169.254/16 */
+    }
+    struct in_addr addr;
+    if (!ip || inet_pton(AF_INET, ip, &addr) != 1) {
+        return false; /* unparseable — cannot prove anything, keep mapping */
+    }
+    uint32_t a = ntohl(addr.s_addr);
+    /* 100.64.0.0/10 — RFC 6598 carrier-grade NAT shared address space */
+    if ((a & 0xFFC00000u) == 0x64400000u) return true;
     return false;
 }
 
@@ -491,6 +565,145 @@ static bool try_upnp(uint16_t internal_port, uint16_t preferred_external) {
     return ok;
 }
 
+/* --- S1 host liveness: UPnP lease renewal ------------------------------ */
+
+/* The UPnP mapping is requested with a 1-hour lease (UPNP_LEASE_DURATION
+ * "3600" in upnp.c) and was never renewed — a host relying on UPnP lost
+ * its mapping exactly one hour in, potentially MID-SESSION (the mapping
+ * is what carries the peer's traffic to us). Renew at half-lease while
+ * the mapping is in use, including into the active netplay session:
+ * main.c now calls DirectP2P_Tick from the session branch too, and the
+ * renewal runs on a short-lived side thread (miniupnpc HTTP to the
+ * router), so the netplay hot path and the GekkoNet-owned socket are
+ * never touched — UPnP renewal is router-side HTTP, not socket I/O.
+ *
+ * Threading: the renewal thread reuses upnp_worker_fn/UpnpJob. It only
+ * runs in states where host_thread_fn has finished writing
+ * s_upnp_mapping (see upnp_renew_tick's caller gate), and teardown /
+ * Cancel join it BEFORE calling Upnp_RemoveMapping, so miniupnpc's
+ * cached-IGD statics are never used concurrently. */
+#define UPNP_RENEW_INTERVAL_MS (30u * 60u * 1000u) /* half the 3600 s lease */
+#define UPNP_RENEW_RETRY_MS (5u * 60u * 1000u)     /* failed renew: retry sooner */
+
+static SDL_Thread* s_upnp_renew_thread = NULL;
+static UpnpJob* s_upnp_renew_job = NULL;
+static uint64_t s_upnp_next_renew_ms = 0;
+
+/* Reap the renewal thread with a BOUNDED wait (review H3 — mirrors
+ * try_upnp's deadline+detach pattern). An unbounded SDL_WaitThread here
+ * was a main-thread hang: the worker runs Upnp_AddMapping = two blocking
+ * router HTTP transactions, and if the router is dead/rebooting —
+ * exactly when a renewal is likely to be in flight — a TCP connect can
+ * block for the OS SYN timeout (~75 s macOS, ~2 min Linux), freezing
+ * the game thread inside teardown/Cancel.
+ *
+ * Returns true when the thread was joined (or none was running), i.e.
+ * miniupnpc is quiescent and the caller may safely make further
+ * miniupnpc calls (Upnp_RemoveMapping). Returns false when the thread
+ * had to be DETACHED: the caller must then SKIP Upnp_RemoveMapping —
+ * (a) it would race the still-running worker on miniupnpc's cached-IGD
+ * statics, and (b) it would block the main thread on the same dead
+ * router anyway. The un-removed mapping expires on its own 1-hour
+ * lease (same accepted leak as try_upnp's timeout path). On detach the
+ * heap job struct is intentionally leaked to the worker — it is the
+ * thread's sole owner from that point, so the detached thread can
+ * never touch freed state (it references only the job and miniupnpc
+ * statics, never s_work). */
+#define UPNP_RENEW_JOIN_BUDGET_MS 2000
+static bool upnp_renew_join_and_discard(void) {
+    bool joined = true;
+    if (s_upnp_renew_thread != NULL) {
+        const uint64_t deadline_ms = SDL_GetTicks() + UPNP_RENEW_JOIN_BUDGET_MS;
+        while (SDL_GetThreadState(s_upnp_renew_thread) != SDL_THREAD_COMPLETE &&
+               SDL_GetTicks() < deadline_ms) {
+            SDL_Delay(10);
+        }
+        if (SDL_GetThreadState(s_upnp_renew_thread) == SDL_THREAD_COMPLETE) {
+            SDL_WaitThread(s_upnp_renew_thread, NULL);
+        } else {
+            SDL_Log("[direct_p2p] WARNING: UPnP renewal thread unresponsive after %u ms "
+                    "(router down?) — detaching; router-side mapping removal skipped, "
+                    "the lease expires on its own.",
+                    (unsigned)UPNP_RENEW_JOIN_BUDGET_MS);
+            SDL_DetachThread(s_upnp_renew_thread);
+            /* Ownership of the job transfers to the detached worker. */
+            s_upnp_renew_job = NULL;
+            joined = false;
+        }
+        s_upnp_renew_thread = NULL;
+    }
+    if (s_upnp_renew_job != NULL) {
+        SDL_free(s_upnp_renew_job);
+        s_upnp_renew_job = NULL;
+    }
+    s_upnp_next_renew_ms = 0;
+    return joined;
+}
+
+/* Main-thread, non-blocking. Called once per frame from DirectP2P_Tick
+ * while the mapping is in use. Polls a completed renewal thread, or
+ * spawns one when the half-lease deadline passes. */
+static void upnp_renew_tick(void) {
+    if (s_upnp_renew_thread != NULL) {
+        if (SDL_GetThreadState(s_upnp_renew_thread) != SDL_THREAD_COMPLETE) {
+            return; /* renewal in flight */
+        }
+        SDL_WaitThread(s_upnp_renew_thread, NULL);
+        s_upnp_renew_thread = NULL;
+        uint64_t now = SDL_GetTicks();
+        if (s_upnp_renew_job != NULL && s_upnp_renew_job->ok) {
+            s_upnp_mapping = s_upnp_renew_job->result;
+            s_upnp_next_renew_ms = now + UPNP_RENEW_INTERVAL_MS;
+            SDL_Log("[direct_p2p] UPnP lease renewed (external %u -> internal %u); next renewal in %u min",
+                    s_upnp_mapping.external_port, s_upnp_mapping.internal_port,
+                    UPNP_RENEW_INTERVAL_MS / 60000u);
+        } else {
+            s_upnp_next_renew_ms = now + UPNP_RENEW_RETRY_MS;
+            SDL_Log("[direct_p2p] WARNING: UPnP lease renewal failed; retrying in %u min "
+                    "(mapping expires at the end of its current lease)",
+                    UPNP_RENEW_RETRY_MS / 60000u);
+        }
+        if (s_upnp_renew_job != NULL) {
+            SDL_free(s_upnp_renew_job);
+            s_upnp_renew_job = NULL;
+        }
+        return;
+    }
+
+    if (!s_upnp_mapping.active) {
+        return;
+    }
+    uint64_t now = SDL_GetTicks();
+    if (s_upnp_next_renew_ms == 0) {
+        /* First sighting of an active mapping — arm the half-lease timer.
+         * (Lazily armed here rather than in the worker so the deadline
+         * bookkeeping stays main-thread-only.) */
+        s_upnp_next_renew_ms = now + UPNP_RENEW_INTERVAL_MS;
+        return;
+    }
+    if (now < s_upnp_next_renew_ms) {
+        return;
+    }
+
+    UpnpJob* job = (UpnpJob*)SDL_calloc(1, sizeof(UpnpJob));
+    if (job == NULL) {
+        s_upnp_next_renew_ms = now + UPNP_RENEW_RETRY_MS;
+        return;
+    }
+    job->internal_port = s_upnp_mapping.internal_port;
+    job->preferred_external = s_upnp_mapping.external_port;
+    s_upnp_renew_thread = SDL_CreateThread(upnp_worker_fn, "UpnpRenew", job);
+    if (s_upnp_renew_thread == NULL) {
+        SDL_free(job);
+        s_upnp_next_renew_ms = now + UPNP_RENEW_RETRY_MS;
+        SDL_Log("[direct_p2p] WARNING: failed to spawn UPnP renewal thread");
+        return;
+    }
+    s_upnp_renew_job = job;
+    SDL_Log("[direct_p2p] UPnP lease renewal started (external port %u)",
+            s_upnp_mapping.external_port);
+}
+
 /* Convert public_ip string to network-byte-order uint32_t for room-code
  * encoding. Returns 0 on failure (still a valid IP, but 0.0.0.0 is not a
  * routable public addr so we also bail the caller). */
@@ -524,12 +737,28 @@ static NET_Address* resolve_with_short_poll(const char* host) {
 }
 
 /* Host rendezvous worker: parses signal-url, resolves once, then loops
- * sending REGISTER/POLL via the s_rendezvous_send_q until either
- * s_rendezvous_cancel is set (DELIVER arrived; main thread cancelled us)
- * or the signal-budget elapses. On budget-expiry without cancel, updates
- * status to inform the user no peer was detected; per §Decision 9 this
- * does NOT change state — host stays HOST_WAITING so a late-arriving
- * direct punch still works. */
+ * sending REGISTER via the s_rendezvous_send_q for the ENTIRE duration
+ * of HOST_WAITING (docs/plan-netplay-connection.md S1 "host liveness").
+ *
+ * The pre-S1 version resent for an 8 s budget and then exited
+ * permanently, so (a) the rendezvous server forgot the session at its
+ * TTL and (b) the host's NAT mapping decayed at the router's UDP idle
+ * timeout — while the overlay kept displaying the room code. Real
+ * usage shares the code out-of-band over minutes, so the host must
+ * stay registered for as long as it is advertising.
+ *
+ * Cadence: CFG_KEY_NETPLAY_DIRECT_P2P_REGISTER_INTERVAL_MS (default
+ * 5000 ms, floor 1000 ms — the server rate-limits at 10 pkts/s/IP).
+ * Each REGISTER also refreshes the host->server NAT mapping.
+ *
+ * Exit conditions (all prompt, <= ~50 ms latency via the inner sleep):
+ *   - s_rendezvous_cancel set (DELIVER arrived / Cancel / teardown);
+ *   - state leaves HOST_WAITING (direct-punch handoff sets HANDOFF
+ *     without raising s_rendezvous_cancel — the state check covers it,
+ *     so the loop cannot keep REGISTERing into an active session).
+ * Spawn stays gated behind CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_BILATERAL
+ * (see host_thread_fn step 5), which remains the kill switch for this
+ * whole path. */
 static int SDLCALL host_rendezvous_thread_fn(void* data) {
     (void)data;
 
@@ -558,11 +787,16 @@ static int SDLCALL host_rendezvous_thread_fn(void* data) {
         return 0;
     }
 
-    /* 3) Derive session key from OUR public endpoint — the same one the
-     * room code encodes. */
+    /* 3) Derive session key from OUR ADVERTISED endpoint — the exact
+     * tuple the room code encodes (advertised_port is the UPnP external
+     * port when the mapping succeeded, else the STUN port). The joiner
+     * derives its key from the decoded room code, so both sides only
+     * land in the same rendezvous slot when the host hashes the same
+     * pair. Pre-S1 this hashed the raw STUN port, which diverges from
+     * the room code whenever UPnP maps a different external port. */
     uint8_t session_key[16];
     uint32_t ip_be = ipv4_str_to_be(s_work.stun.public_ip);
-    if (!Rendezvous_DeriveSessionKey(ip_be, s_work.stun.public_port, session_key)) {
+    if (!Rendezvous_DeriveSessionKey(ip_be, s_work.advertised_port, session_key)) {
         SDL_Log("[direct_p2p] rendezvous: failed to derive session key");
         NET_UnrefAddress(signal_addr);
         return 0;
@@ -576,21 +810,31 @@ static int SDLCALL host_rendezvous_thread_fn(void* data) {
         return 0;
     }
 
-    /* 5) Resend loop. 500ms cadence; 8s default budget (configurable).
-     * Cancel-flag check happens between sends so worst-case latency to
-     * exit on cancel is ~50ms (the inner 50ms sleep tick). */
-    int budget_ms = Config_GetInt(CFG_KEY_NETPLAY_DIRECT_P2P_SIGNAL_BUDGET_MS);
-    if (budget_ms <= 0) budget_ms = 8000;
-    const uint32_t start = SDL_GetTicks();
+    /* 5) Persistent resend loop (S1). First REGISTER goes out
+     * immediately, then one every interval_ms until cancel or the state
+     * leaves HOST_WAITING. There is deliberately NO wall-clock budget:
+     * the host must stay registered (and keep its NAT mapping warm) for
+     * as long as the room code is on screen. Cancel-flag and state
+     * checks happen every 50 ms inner tick, so exit latency on
+     * handoff / cancel / teardown is ~50 ms. */
+    int interval_ms = Config_GetInt(CFG_KEY_NETPLAY_DIRECT_P2P_REGISTER_INTERVAL_MS);
+    if (interval_ms <= 0) interval_ms = 5000;
+    if (interval_ms < 1000) interval_ms = 1000; /* server limits 10 pkts/s/IP */
     uint32_t last_send = 0;
-    while ((int)(SDL_GetTicks() - start) < budget_ms) {
+    for (;;) {
         if (SDL_GetAtomicInt(&s_rendezvous_cancel)) {
             /* Main thread received DELIVER (or shutdown). Exit cleanly. */
-            NET_UnrefAddress(signal_addr);
-            return 0;
+            break;
+        }
+        if (get_state() != DIRECT_P2P_HOST_WAITING) {
+            /* Direct-punch handoff / failure / cancel — we are no longer
+             * advertising, so stop re-REGISTERing. This is the exit path
+             * for the direct-punch success case, which never raises
+             * s_rendezvous_cancel. */
+            break;
         }
         uint32_t now = SDL_GetTicks();
-        if (last_send == 0 || (now - last_send) >= 500u) {
+        if (last_send == 0 || (now - last_send) >= (uint32_t)interval_ms) {
             /* Producer must Ref before enqueue; consumer Unrefs after
              * send. On enqueue failure (queue full) we Unref ourselves. */
             NET_Address* ref = NET_RefAddress(signal_addr);
@@ -602,13 +846,6 @@ static int SDLCALL host_rendezvous_thread_fn(void* data) {
             last_send = now;
         }
         SDL_Delay(50);
-    }
-
-    /* 6) Budget expired without DELIVER. Update status (state stays
-     * HOST_WAITING per §Decision 9). */
-    if (!SDL_GetAtomicInt(&s_rendezvous_cancel)) {
-        set_status("Waiting for player 2...");
-        SDL_Log("[direct_p2p] rendezvous: 8s budget expired; no DELIVER received");
     }
 
     NET_UnrefAddress(signal_addr);
@@ -653,8 +890,13 @@ static int SDLCALL host_bilateral_punch_thread_fn(void* data) {
         return 0;
     }
     if (!punched) {
-        set_status("Could not connect. Try a different network.");
-        set_state(DIRECT_P2P_FAILED_BILATERAL);
+        /* Review M1: do NOT park terminal from here. Raise the failure
+         * flag and let Tick (main thread) decide: back to HOST_WAITING
+         * with the rendezvous loop respawned, or FAILED_BILATERAL once
+         * the per-session retry budget is spent. State stays
+         * FALLBACK_BILATERAL_PUNCH until Tick acts. */
+        SDL_SetAtomicInt(&s_bilateral_failed, 1);
+        SDL_Log("[direct_p2p] bilateral punch FAILED — deferring disposition to Tick");
         return 0;
     }
 
@@ -730,6 +972,44 @@ static int SDLCALL host_thread_fn(void* data) {
         return 0;
     }
 
+    /* S1 CGNAT gate: on carrier-grade NAT (or any double NAT) the inner
+     * router happily grants a mapping whose external IP is a private /
+     * CGN (100.64/10) address, while STUN reports the true public IP.
+     * The room code is built from the STUN IP + the chosen port, so
+     * advertising the UPnP port would pair the STUN IP with a port that
+     * only exists on the INNER router — a wrong (ip, port) pair that
+     * silently kills the direct path.
+     *
+     * Review M3: the mapping is dropped only when the router's external
+     * IP PARSES and is provably non-public (RFC1918 / CGN 100.64.0.0/10 /
+     * loopback / link-local) — that is the double-NAT signature. A
+     * public-but-different external IP is ISP 1:1 NAT / DMZ territory,
+     * where the mapping forwards perfectly and dropping it would
+     * downgrade a host with a good direct path; an unparseable string
+     * (garbage, IPv6) proves nothing. Both keep the mapping and log. */
+    if (upnp_ok &&
+        !direct_p2p_ip_eq_normalized(s_upnp_mapping.external_ip, s_work.stun.public_ip)) {
+        if (direct_p2p_ip_is_nonpublic(s_upnp_mapping.external_ip)) {
+            SDL_Log("[direct_p2p] CGNAT detected: UPnP external IP %s is private/CGN and "
+                    "!= STUN public IP %s — ignoring the UPnP mapping and advertising "
+                    "the STUN endpoint instead",
+                    s_upnp_mapping.external_ip, s_work.stun.public_ip);
+            /* Release the useless mapping now (worker thread — same thread
+             * class try_upnp used; no concurrent miniupnpc user exists in
+             * UPNP_PROBE/STUN_DISCOVER states). Also stops the S1 lease
+             * renewal from ever arming for it. */
+            Upnp_RemoveMapping(&s_upnp_mapping);
+            memset(&s_upnp_mapping, 0, sizeof(s_upnp_mapping));
+            upnp_ok = false;
+        } else {
+            SDL_Log("[direct_p2p] UPnP external IP %s differs from STUN public IP %s but "
+                    "is not a private/CGN address (1:1 NAT / DMZ, or unparseable) — "
+                    "keeping the mapping",
+                    s_upnp_mapping.external_ip[0] ? s_upnp_mapping.external_ip : "(empty)",
+                    s_work.stun.public_ip);
+        }
+    }
+
     /* 3) Build room code from discovered endpoint. If UPnP succeeded we
      * prefer its external port over the STUN-observed port — symmetric
      * NATs translate per-destination, so the STUN port is only valid
@@ -745,6 +1025,11 @@ static int SDLCALL host_thread_fn(void* data) {
         set_state(DIRECT_P2P_FAILED_STUN);
         return 0;
     }
+    /* Record the advertised tuple's port — the rendezvous session key is
+     * derived from (public_ip, advertised_port) on both roles (S1). Must
+     * be visible before HOST_WAITING publishes (the rendezvous thread
+     * spawns after and reads it). */
+    s_work.advertised_port = pub_port;
 
     /* 4) Publish — Tick() will now drain the STUN socket non-blockingly
      * until a peer punches through. The room code renders on overlay
@@ -1114,8 +1399,16 @@ static void direct_p2p_on_teardown(void) {
      * after teardown). */
     rend_q_purge();
 
+    /* S1: reap any in-flight UPnP lease renewal BEFORE RemoveMapping so
+     * miniupnpc's cached-IGD statics are never used concurrently. Bounded
+     * (review H3); on detach-timeout the router-side removal is skipped —
+     * see upnp_renew_join_and_discard. */
+    bool upnp_quiescent = upnp_renew_join_and_discard();
+
     if (s_upnp_mapping.active) {
-        Upnp_RemoveMapping(&s_upnp_mapping);
+        if (upnp_quiescent) {
+            Upnp_RemoveMapping(&s_upnp_mapping);
+        }
         memset(&s_upnp_mapping, 0, sizeof(s_upnp_mapping));
     }
     /* Note: we do NOT destroy s_work.stun.socket here — ownership has
@@ -1123,6 +1416,12 @@ static void direct_p2p_on_teardown(void) {
      * netplay.c will destroy it immediately after this callback
      * returns. */
     s_work.stun.socket = NULL;
+    /* S1: the ref'd STUN server address is still ours (do_handoff already
+     * released it on the handoff path; this covers non-handoff teardowns). */
+    Stun_ReleaseServerAddr(&s_work.stun);
+    s_stun_keepalive_last_ms = 0;
+    s_rebind_txid_valid = false;
+    s_drift_pending_valid = false; /* M2: drop any half-confirmed drift */
     /* Reset state so the next BeginHost/BeginJoin starts clean.
      * R-1 exception: when the MIST handshake rejected the session, park
      * in FAILED_HANDSHAKE instead so the overlay keeps ERROR + the
@@ -1158,6 +1457,11 @@ static void do_handoff(int player, const char* peer_ip, uint16_t peer_port) {
     /* Ownership transferred — prevent direct_p2p_on_teardown or a
      * subsequent Cancel from double-closing. */
     s_work.stun.socket = NULL;
+    /* S1: keepalives stop at handoff (GekkoNet traffic keeps the mapping
+     * warm from here) — drop the ref'd STUN server address now. */
+    Stun_ReleaseServerAddr(&s_work.stun);
+    s_rebind_txid_valid = false;
+    s_drift_pending_valid = false; /* M2: drop any half-confirmed drift */
     /* netplay_nav owns the Netplay_BeginDirectP2P() call now. Netplay_
      * SetParams just populated remote_ip; nav's NAV_WAIT_ORCHESTRATOR
      * was gating on Netplay_IsRemoteIpSet() and will advance to
@@ -1167,17 +1471,152 @@ static void do_handoff(int player, const char* peer_ip, uint16_t peer_port) {
     SDL_Log("[direct_p2p] handoff complete — nav state machine will start netplay session");
 }
 
+/* --- S1 host liveness: STUN rebind keepalive + drift detection --------- */
+
+/* Called from Tick's HOST_WAITING branch (main thread — the socket's
+ * sole I/O actor in that phase). Every CFG_KEY_NETPLAY_DIRECT_P2P_STUN_
+ * KEEPALIVE_MS (default 20 s; <= 0 disables) re-issues a STUN Binding
+ * Request on the shared socket toward the server that answered
+ * Stun_Discover. Two effects:
+ *   (a) the outbound datagram refreshes the host's NAT mapping — for a
+ *       non-UPnP host this is the very mapping the room code
+ *       advertises, which otherwise decays at the router's UDP idle
+ *       timeout while the host sits waiting;
+ *   (b) the response (handled in host_handle_stun_rebind via
+ *       host_tick_receive's STUN gate) reveals whether the NAT rebound
+ *       the mapping — i.e. whether the displayed room code went stale. */
+static void host_stun_keepalive_tick(void) {
+    int interval_ms = Config_GetInt(CFG_KEY_NETPLAY_DIRECT_P2P_STUN_KEEPALIVE_MS);
+    if (interval_ms <= 0) return; /* disabled */
+    if (interval_ms < 5000) interval_ms = 5000; /* don't spam public STUN */
+    uint64_t now = SDL_GetTicks();
+    if (s_stun_keepalive_last_ms == 0) {
+        /* Arm on first HOST_WAITING tick; Stun_Discover just probed, so
+         * the first keepalive is due one full interval from now. */
+        s_stun_keepalive_last_ms = now;
+        return;
+    }
+    if (now - s_stun_keepalive_last_ms < (uint64_t)interval_ms) return;
+    s_stun_keepalive_last_ms = now;
+    if (Stun_SendKeepalive(&s_work.stun, s_rebind_txid)) {
+        s_rebind_txid_valid = true;
+    }
+}
+
+/* Handle a STUN Binding Success Response received on the host socket
+ * during HOST_WAITING (main thread). If the mapped endpoint matches the
+ * last known public endpoint the NAT mapping is stable — nothing to do.
+ * If it DIFFERS, the NAT rebound and the displayed room code is stale.
+ *
+ * Chosen behavior (documented in docs/plan-netplay-connection.md S1):
+ * re-encode and display the NEW code, plus an explicit status line
+ * ("Network changed! Share the NEW code."). Rationale: silently
+ * continuing would leave a code on screen that can never connect; the
+ * least surprising outcome for a user staring at a code they already
+ * shared is a visible, explained code change — the old code was already
+ * dead the moment the NAT rebound, so there is nothing to preserve.
+ *
+ * Ordering: the rendezvous thread derives its session key from
+ * (public_ip, advertised_port), so it is cancelled and JOINED before
+ * s_work is mutated, then respawned under the new key. Join latency is
+ * ~50 ms (the thread's inner tick) — acceptable for a rare event on a
+ * menu screen.
+ *
+ * Review M2: commits are DEBOUNCED — a drift must be confirmed by two
+ * consecutive keepalives reporting the same new endpoint before the
+ * code is rewritten (see s_drift_pending_* for the rationale and the
+ * rebind-every-interval no-churn property). */
+static void host_handle_stun_rebind(const uint8_t* buf, int len) {
+    if (!s_rebind_txid_valid) {
+        return; /* no keepalive in flight — stale/foreign response */
+    }
+    char ip[64] = { 0 };
+    uint16_t port = 0;
+    if (!Stun_ParseBindingResponse(buf, len, s_rebind_txid, ip, sizeof(ip), &port)) {
+        return; /* wrong transaction / malformed — ignore */
+    }
+    s_rebind_txid_valid = false;
+
+    if (port == s_work.stun.public_port &&
+        direct_p2p_ip_eq_normalized(ip, s_work.stun.public_ip)) {
+        s_drift_pending_valid = false; /* stable again — drop any candidate */
+        return; /* mapping stable — keepalive did its NAT-refresh job */
+    }
+
+    /* Review M2 debounce: require a second consecutive keepalive to
+     * confirm the SAME new endpoint before rewriting the displayed
+     * code. First sighting (or a candidate that keeps changing — the
+     * rebind-every-interval NAT) only records/replaces the candidate. */
+    if (!s_drift_pending_valid || port != s_drift_pending_port ||
+        !direct_p2p_ip_eq_normalized(ip, s_drift_pending_ip)) {
+        SDL_strlcpy(s_drift_pending_ip, ip, sizeof(s_drift_pending_ip));
+        s_drift_pending_port = port;
+        s_drift_pending_valid = true;
+        SDL_Log("[direct_p2p] STUN rebind drift CANDIDATE %s:%u (current %s:%u) — "
+                "awaiting confirmation on the next keepalive",
+                ip, (unsigned)port,
+                s_work.stun.public_ip, (unsigned)s_work.stun.public_port);
+        return;
+    }
+    s_drift_pending_valid = false;
+
+    SDL_Log("[direct_p2p] STUN rebind drift CONFIRMED: public endpoint changed "
+            "%s:%u -> %s:%u — displayed room code is stale",
+            s_work.stun.public_ip, (unsigned)s_work.stun.public_port,
+            ip, (unsigned)port);
+
+    /* Stop the rendezvous re-REGISTER loop before mutating the fields it
+     * reads (public_ip / advertised_port). */
+    if (s_rendezvous_thread != NULL) {
+        SDL_SetAtomicInt(&s_rendezvous_cancel, 1);
+        SDL_WaitThread(s_rendezvous_thread, NULL);
+        s_rendezvous_thread = NULL;
+    }
+
+    SDL_strlcpy(s_work.stun.public_ip, ip, sizeof(s_work.stun.public_ip));
+    s_work.stun.public_port = port;
+
+    /* Recompute the advertised tuple. A live UPnP mapping pins the
+     * advertised PORT (the router forwards it regardless of the STUN
+     * mapping), so only the IP component can drift there; without UPnP
+     * both components track the STUN-observed endpoint. */
+    uint16_t new_adv_port = s_upnp_mapping.active ? s_upnp_mapping.external_port : port;
+    uint32_t ip_be = ipv4_str_to_be(ip);
+    char new_code[ROOM_CODE_BUF_LEN];
+    if (ip_be != 0 && RoomCode_Encode(ip_be, new_adv_port, new_code) &&
+        strcmp(new_code, s_work.host_code) != 0) {
+        SDL_Log("[direct_p2p] room code re-encoded: %s -> %s",
+                s_work.host_code, new_code);
+        SDL_strlcpy(s_work.host_code, new_code, sizeof(s_work.host_code));
+        set_status("Network changed! Share the NEW code.");
+    }
+    s_work.advertised_port = new_adv_port;
+
+    /* Respawn the rendezvous loop under the new session key (same kill
+     * switch as the original spawn in host_thread_fn step 5). */
+    if (!Config_GetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_BILATERAL)) {
+        SDL_SetAtomicInt(&s_rendezvous_cancel, 0);
+        s_rendezvous_thread = SDL_CreateThread(host_rendezvous_thread_fn,
+                                               "DirectP2PRendezvous", NULL);
+        if (s_rendezvous_thread == NULL) {
+            SDL_Log("[direct_p2p] WARNING: failed to respawn rendezvous thread "
+                    "after endpoint drift; fallback disabled this session");
+        }
+    }
+}
+
 /*
  * DELIVER handler — invoked from host_tick_receive after the magic-byte
  * gate. Parses the packet against our session key (derived from our own
  * public endpoint, same as the rendezvous thread). On a valid DELIVER
  * with a non-zero peer endpoint, transitions out of HOST_WAITING per
  * the bilateral fallback flow:
+ *   - Self-DELIVER (peer public IP == our public IP) => ignore and stay
+ *     HOST_WAITING with the resender alive (review H1 — it is our own
+ *     stale registration or a spoof; a legitimate joiner hairpin-bails
+ *     client-side before ever REGISTERing).
  *   - LAN peer => stay HOST_WAITING (we should have seen a direct punch
  *     already; rendezvous via public infra is the wrong path).
- *   - Hairpin (peer public IP == our public IP) => FAILED_SYMMETRIC; the
- *     router that broke the direct punch will also break the bilateral
- *     punch (Hard Requirement 3(c)).
  *   - Otherwise => stash peer endpoint, signal rendezvous-cancel,
  *     transition to FALLBACK_BILATERAL_PUNCH and spawn the
  *     bilateral-punch worker thread.
@@ -1193,11 +1632,12 @@ static bool try_handle_deliver(const uint8_t* pkt, int len) {
         return true;
     }
 
-    /* Derive the session key from our own public endpoint — the same
-     * derivation the rendezvous thread does and the joiner does. */
+    /* Derive the session key from our own ADVERTISED endpoint — the same
+     * derivation the rendezvous thread does and the joiner does (from the
+     * decoded room code). See the advertised_port field comment. */
     uint32_t ip_be = ipv4_str_to_be(s_work.stun.public_ip);
     uint8_t session_key[16];
-    if (!Rendezvous_DeriveSessionKey(ip_be, s_work.stun.public_port, session_key)) {
+    if (!Rendezvous_DeriveSessionKey(ip_be, s_work.advertised_port, session_key)) {
         SDL_Log("[direct_p2p] DELIVER drop: failed to derive session key");
         return true;
     }
@@ -1212,6 +1652,36 @@ static bool try_handle_deliver(const uint8_t* pkt, int len) {
 
     SDL_Log("[direct_p2p] DELIVER received peer=%s:%u", peer_ip, (unsigned)peer_port);
 
+    /* Self-DELIVER gate (review H1): a DELIVER whose peer IP equals our
+     * OWN public IP is our own stale registration echoed back, not a
+     * peer. Scenario: host presses Host, cancels, re-hosts within the
+     * server TTL. With UPnP the external port is pinned so the session
+     * key is unchanged; if the new socket's NAT mapping toward the
+     * server picked a different source port, the server sees stale slot
+     * A + empty slot B, makes us B, and its reply DELIVER carries our
+     * own old endpoint. Pre-fix this hit the terminal hairpin gate
+     * below and killed the re-hosted room with FAILED_SYMMETRIC for the
+     * whole 10-minute TTL.
+     *
+     * A LEGITIMATE joiner can never produce a same-IP DELIVER: the
+     * joiner's own hairpin bypass (join_thread_fn, the
+     * ip_eq_normalized(peer_ip, own public_ip) check before
+     * FALLBACK_SIGNALING) fails it with FAILED_SYMMETRIC before it ever
+     * REGISTERs with the rendezvous server. So every same-IP DELIVER is
+     * either our own stale slot (any old NAT port — we cannot know
+     * which, so we ignore ALL same-IP ports, not just advertised_port)
+     * or a spoofed REGISTER; in both cases the right move is to keep
+     * waiting, and to keep the rendezvous resender ALIVE so our
+     * re-REGISTERs eventually refresh/reclaim the slot server-side.
+     * This subsumes the old terminal hairpin gate, whose only reachable
+     * firing case was exactly this self-DELIVER poison. */
+    if (direct_p2p_ip_eq_normalized(peer_ip, s_work.stun.public_ip)) {
+        SDL_Log("[direct_p2p] DELIVER carries our own IP (%s:%u, advertised port %u) "
+                "— stale self-registration or spoof; ignoring and staying HOST_WAITING.",
+                peer_ip, (unsigned)peer_port, (unsigned)s_work.advertised_port);
+        return true;
+    }
+
     /* Stop the rendezvous resender — we have what we need from the server. */
     SDL_SetAtomicInt(&s_rendezvous_cancel, 1);
 
@@ -1222,19 +1692,6 @@ static bool try_handle_deliver(const uint8_t* pkt, int len) {
     if (direct_p2p_is_lan_peer(peer_ip)) {
         SDL_Log("[direct_p2p] DELIVER peer is LAN (%s); staying HOST_WAITING — "
                 "direct path should already have completed.", peer_ip);
-        return true;
-    }
-
-    /* Hairpin gate: peer public IP == our public IP. If the router broke
-     * the direct-punch loopback it will break the bilateral punch the
-     * same way (per §Hard requirement 3(c)). Compare normalized so
-     * formatting differences don't bypass the check. */
-    if (direct_p2p_ip_eq_normalized(peer_ip, s_work.stun.public_ip)) {
-        SDL_Log("[direct_p2p] DELIVER hairpin (peer %s == self %s); "
-                "router lacks NAT loopback. Failing without bilateral retry.",
-                peer_ip, s_work.stun.public_ip);
-        set_status("Could not connect. Try a different network.");
-        set_state(DIRECT_P2P_FAILED_SYMMETRIC);
         return true;
     }
 
@@ -1292,6 +1749,17 @@ static bool host_tick_receive(void) {
         NET_DestroyDatagram(dgram);
         return true;
     }
+    /* S1: STUN Binding Responses (keepalive replies, or a late duplicate
+     * from a slower server probed during Stun_Discover) must NOT fall
+     * through to the peer-endpoint capture below — pre-S1, a straggler
+     * STUN response arriving in HOST_WAITING would be captured as "the
+     * peer" and handed off to a STUN server's endpoint. Gate them here
+     * and route keepalive replies to the drift detector. */
+    if (Stun_IsBindingResponse(dgram->buf, dgram->buflen)) {
+        host_handle_stun_rebind(dgram->buf, dgram->buflen);
+        NET_DestroyDatagram(dgram);
+        return false; /* not a peer — keep waiting */
+    }
     /* Capture the source endpoint — this is who we'll talk to. The
      * socket's internal "connected peer" state gets set when
      * configure_gekko wraps it into SDLNetAdapter; for the orchestrator
@@ -1338,6 +1806,8 @@ void DirectP2P_Init(void) {
     SDL_SetAtomicInt(&s_rendezvous_cancel, 0);
     SDL_SetAtomicInt(&s_bilateral_punch_cancel, 0);
     SDL_SetAtomicInt(&s_bilateral_handoff_pending, 0);
+    SDL_SetAtomicInt(&s_bilateral_failed, 0);
+    s_bilateral_fail_count = 0; /* M1: fresh retry budget per hosting session */
     SDL_SetAtomicInt(&s_q_head, 0);
     SDL_SetAtomicInt(&s_q_tail, 0);
     SDL_SetAtomicInt(&s_q_drops, 0);
@@ -1367,12 +1837,18 @@ void DirectP2P_BeginHost(int preferred_port) {
     SDL_SetAtomicInt(&s_rendezvous_cancel, 0);
     SDL_SetAtomicInt(&s_bilateral_punch_cancel, 0);
     SDL_SetAtomicInt(&s_bilateral_handoff_pending, 0);
+    SDL_SetAtomicInt(&s_bilateral_failed, 0);
+    s_bilateral_fail_count = 0; /* M1: fresh retry budget per hosting session */
     SDL_SetAtomicInt(&s_q_drops, 0);
     SDL_SetAtomicInt(&s_q_drops_logged, 0);
     /* R-1: a reject latched during a session whose teardown never ran the
      * callback (e.g. LAN CLI session with no orchestrator) must not leak
      * into this fresh session's teardown. */
     s_handshake_reject_latched = false;
+    Stun_ReleaseServerAddr(&s_work.stun); /* belt-and-braces before memset */
+    s_stun_keepalive_last_ms = 0;
+    s_rebind_txid_valid = false;
+    s_drift_pending_valid = false; /* M2: drop any half-confirmed drift */
     memset(&s_work, 0, sizeof(s_work));
     s_work.role = ROLE_HOST;
     s_work.preferred_port = preferred_port;
@@ -1435,9 +1911,15 @@ void DirectP2P_BeginJoin(const char* peer_code) {
     SDL_SetAtomicInt(&s_rendezvous_cancel, 0);
     SDL_SetAtomicInt(&s_bilateral_punch_cancel, 0);
     SDL_SetAtomicInt(&s_bilateral_handoff_pending, 0);
+    SDL_SetAtomicInt(&s_bilateral_failed, 0);
+    s_bilateral_fail_count = 0; /* M1: fresh retry budget per hosting session */
     SDL_SetAtomicInt(&s_q_drops, 0);
     SDL_SetAtomicInt(&s_q_drops_logged, 0);
     s_handshake_reject_latched = false; /* R-1: see BeginHost */
+    Stun_ReleaseServerAddr(&s_work.stun); /* belt-and-braces before memset */
+    s_stun_keepalive_last_ms = 0;
+    s_rebind_txid_valid = false;
+    s_drift_pending_valid = false; /* M2: drop any half-confirmed drift */
     memset(&s_work, 0, sizeof(s_work));
     s_work.role = ROLE_JOIN;
     SDL_strlcpy(s_work.peer_code, peer_code, sizeof(s_work.peer_code));
@@ -1483,10 +1965,19 @@ void DirectP2P_Cancel(void) {
         NET_DestroyDatagramSocket(s_work.stun.socket);
         s_work.stun.socket = NULL;
     }
-    if (s_upnp_mapping.active) {
-        Upnp_RemoveMapping(&s_upnp_mapping);
-        memset(&s_upnp_mapping, 0, sizeof(s_upnp_mapping));
+    Stun_ReleaseServerAddr(&s_work.stun); /* S1: drop keepalive target ref */
+    s_stun_keepalive_last_ms = 0;
+    s_rebind_txid_valid = false;
+    s_drift_pending_valid = false; /* M2: drop any half-confirmed drift */
+    /* S1: reap any in-flight UPnP lease renewal before RemoveMapping —
+     * bounded, and RemoveMapping is skipped when the worker had to be
+     * detached (review H3; see upnp_renew_join_and_discard). */
+    if (upnp_renew_join_and_discard()) {
+        if (s_upnp_mapping.active) {
+            Upnp_RemoveMapping(&s_upnp_mapping);
+        }
     }
+    memset(&s_upnp_mapping, 0, sizeof(s_upnp_mapping));
     memset(&s_work, 0, sizeof(s_work));
     set_status("");
     s_handshake_reject_latched = false; /* R-1: drop any pending reject latch */
@@ -1506,6 +1997,19 @@ void DirectP2P_NotifySessionRejected(const char* reason) {
 
 void DirectP2P_Tick(void) {
     DirectP2PState st = get_state();
+
+    /* S1: UPnP lease renewal — only in states where host_thread_fn has
+     * finished writing s_upnp_mapping (it publishes HOST_WAITING after)
+     * and the mapping is potentially carrying traffic. HANDOFF covers
+     * the active netplay session: main.c ticks us from the session
+     * branch too, so a mapping that outlives the 1-hour lease keeps
+     * getting renewed mid-session. Never runs during UPNP_PROBE /
+     * STUN_DISCOVER, where the worker thread still owns the mapping. */
+    if (st == DIRECT_P2P_HOST_WAITING || st == DIRECT_P2P_FALLBACK_SIGNALING ||
+        st == DIRECT_P2P_FALLBACK_BILATERAL_PUNCH || st == DIRECT_P2P_HANDOFF) {
+        upnp_renew_tick();
+    }
+
     switch (st) {
     case DIRECT_P2P_IDLE:
     case DIRECT_P2P_UPNP_PROBE:
@@ -1521,6 +2025,10 @@ void DirectP2P_Tick(void) {
          * STUN socket's sole I/O actor during this phase). Then poll for
          * inbound — peer punch OR rendezvous DELIVER. */
         rend_q_drain(s_work.stun.socket, 4);
+        /* S1: periodic STUN rebind keepalive (mapping refresh + drift
+         * probe). Send-only and non-blocking; the response comes back
+         * through host_tick_receive's STUN gate. */
+        host_stun_keepalive_tick();
         host_tick_receive();
         return;
 
@@ -1581,8 +2089,9 @@ void DirectP2P_Tick(void) {
          * which are main-thread-only. We pick up that signal here, join
          * the worker so its handle is reclaimed and s_work reads are
          * race-free, then run do_handoff inline. do_handoff itself does
-         * NOT publish HANDOFF (mirroring the direct-path convention at
-         * host_tick_receive:1014/1017), so we set_state HANDOFF after.
+         * NOT publish HANDOFF (mirroring the direct-path convention in
+         * host_tick_receive, where set_state(DIRECT_P2P_HANDOFF)
+         * precedes the do_handoff call), so we set_state HANDOFF after.
          *
          * On punch FAILURE the worker publishes FAILED_BILATERAL itself
          * and we never observe the pending flag — that path is handled
@@ -1596,6 +2105,56 @@ void DirectP2P_Tick(void) {
             set_state(DIRECT_P2P_HANDOFF);
             /* Host is player 1 (player_number = 0). */
             do_handoff(1, s_work.peer_ip, s_work.peer_public_port);
+            return;
+        }
+        /* Review M1: host-side punch FAILURE. Pre-fix the worker parked
+         * terminal FAILED_BILATERAL and the host stopped advertising —
+         * so one stale/hostile REGISTER against our key (anyone who saw
+         * the room code, or an aborted joiner's leftover slot) killed
+         * the room for the whole hosting period. Return to HOST_WAITING
+         * and respawn the rendezvous loop (bounded retries so a
+         * repeated attacker cannot spin the host in 3 s punch cycles
+         * forever); the joiner's own failure handling is untouched. */
+        if (SDL_GetAtomicInt(&s_bilateral_failed) != 0 &&
+            s_work.role == ROLE_HOST) {
+            SDL_SetAtomicInt(&s_bilateral_failed, 0);
+            if (s_bilateral_punch_thread != NULL) {
+                SDL_WaitThread(s_bilateral_punch_thread, NULL);
+                s_bilateral_punch_thread = NULL;
+            }
+            s_bilateral_fail_count++;
+            if (s_bilateral_fail_count >= HOST_BILATERAL_MAX_FAILURES) {
+                SDL_Log("[direct_p2p] bilateral punch failed %d times this session — "
+                        "parking FAILED_BILATERAL", s_bilateral_fail_count);
+                set_status("Could not connect. Try a different network.");
+                set_state(DIRECT_P2P_FAILED_BILATERAL);
+                return;
+            }
+            SDL_Log("[direct_p2p] bilateral punch failure %d/%d — returning to "
+                    "HOST_WAITING and resuming rendezvous advertising",
+                    s_bilateral_fail_count, HOST_BILATERAL_MAX_FAILURES);
+            /* The rendezvous thread exited when try_handle_deliver raised
+             * s_rendezvous_cancel (and the state left HOST_WAITING); its
+             * handle is still ours to reclaim before respawning. */
+            if (s_rendezvous_thread != NULL) {
+                SDL_WaitThread(s_rendezvous_thread, NULL);
+                s_rendezvous_thread = NULL;
+            }
+            set_status("Waiting for player 2...");
+            /* Clear the cancel flag BEFORE publishing HOST_WAITING so a
+             * DELIVER processed on a later tick can re-raise it without
+             * being clobbered (same ordering as host_thread_fn step 4). */
+            SDL_SetAtomicInt(&s_rendezvous_cancel, 0);
+            SDL_SetAtomicInt(&s_bilateral_punch_cancel, 0);
+            set_state(DIRECT_P2P_HOST_WAITING);
+            if (!Config_GetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_BILATERAL)) {
+                s_rendezvous_thread = SDL_CreateThread(host_rendezvous_thread_fn,
+                                                       "DirectP2PRendezvous", NULL);
+                if (s_rendezvous_thread == NULL) {
+                    SDL_Log("[direct_p2p] WARNING: failed to respawn rendezvous thread "
+                            "after bilateral failure; direct punch still possible");
+                }
+            }
         }
         return;
 

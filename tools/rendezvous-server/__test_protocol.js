@@ -276,6 +276,372 @@ async function testRateLimit(serverPort) {
     }
 }
 
+async function testSessionTtl(handle, serverPort) {
+    // S1 host liveness: TTL is 10 minutes (was 60 s). Verify (a) the
+    // constant, (b) a session aged past the OLD 60 s TTL survives a sweep
+    // and is still pair-able, (c) a session aged past the new TTL is
+    // evicted. Aging is simulated by rewinding lastTouch through the
+    // _sessionMap hook — the sweep itself runs the real eviction code.
+    assertEq(handle._sessionTtlMs, 10 * 60 * 1000, 'SESSION_TTL_MS is 10 minutes');
+
+    const sessionKey = crypto.randomBytes(16);
+    const hexKey = sessionKey.toString('hex');
+    const a = await makeClient();
+    const b = await makeClient();
+    try {
+        await a.send(makeRegister(sessionKey, a.port), serverPort);
+        await a.recv(500); // pending DELIVER
+        const entry = handle._sessionMap.get(hexKey);
+        assert(entry !== undefined, 'TTL: session exists after REGISTER');
+
+        // (b) Age 61 s — dead under the old 60 s TTL, alive under 10 min.
+        entry.lastTouch -= 61 * 1000;
+        handle._sweepNow();
+        assert(handle._sessionMap.has(hexKey), 'TTL: session survives sweep at age 61s');
+
+        // ...and still pair-able: B registers the same key and must get
+        // A's endpoint back, and A must get the unsolicited DELIVER push.
+        await b.send(makeRegister(sessionKey, b.port), serverPort);
+        const bReply = decodeDeliver((await b.recv(500)).buf);
+        assertEq(bReply.peerIp, '127.0.0.1', 'TTL: B paired with aged-61s host (ip)');
+        assertEq(bReply.peerPort, a.port, 'TTL: B paired with aged-61s host (port)');
+        const aPush = decodeDeliver((await a.recv(500)).buf);
+        assertEq(aPush.peerPort, b.port, 'TTL: aged host still receives DELIVER push');
+
+        // (c) Age past the full TTL — must be evicted by the real sweep.
+        entry.lastTouch -= 10 * 60 * 1000 + 1000;
+        handle._sweepNow();
+        assert(!handle._sessionMap.has(hexKey), 'TTL: session evicted past 10 minutes');
+    } finally {
+        await a.close();
+        await b.close();
+    }
+}
+
+async function testSessionCap(handle, serverPort) {
+    // Review H2 cap policy: at MAX_SESSIONS, a REGISTER for a brand-new key
+    // EVICTS the oldest UNPAIRED singleton and is admitted (a flood of
+    // squatted singletons can no longer lock out a legitimate new host).
+    // Only a table full of PAIRED sessions drops the new key. Existing
+    // sessions are always still serviced at cap.
+    handle._resetSessions(); // isolate from keys created by earlier tests
+    const existingKey = crypto.randomBytes(16);
+    const c = await makeClient();
+    try {
+        await c.send(makeRegister(existingKey, c.port), serverPort);
+        await c.recv(500);
+
+        // Fill with synthetic UNPAIRED singletons. lastTouch counts up from
+        // 1 (performance.now() epoch) so the fakes are strictly OLDER than
+        // the real entry and fake0 is the oldest of all.
+        for (let i = handle._sessionMap.size; i < handle._maxSessions; i++) {
+            handle._sessionMap.set(`fake${i}`, {
+                endpointA: { address: '203.0.113.1', port: 1000 + (i % 60000) },
+                endpointB: null,
+                lastTouch: 1 + i,
+                lastSeenA: 1 + i,
+                lastSeenB: 0,
+            });
+        }
+        assertEq(handle._sessionMap.size, handle._maxSessions, 'cap: table filled to MAX_SESSIONS');
+        assert(handle._sessionMap.has('fake1'), 'cap: oldest singleton present before new-key REGISTER');
+
+        handle._resetRate();
+        const newKey = crypto.randomBytes(16);
+        await c.send(makeRegister(newKey, c.port), serverPort);
+        const admitted = await c.tryRecv(500);
+        assert(admitted !== null, 'cap: new key at cap ADMITTED via singleton eviction (got a reply)');
+        assertEq(handle._sessionMap.size, handle._maxSessions, 'cap: table did not grow past MAX_SESSIONS');
+        assert(!handle._sessionMap.has('fake1'), 'cap: oldest unpaired singleton was the one evicted');
+        assert(handle._sessionMap.has(newKey.toString('hex')), 'cap: new key present after eviction');
+
+        // Existing session still serviced at cap.
+        await c.send(makeRegister(existingKey, c.port), serverPort);
+        const ok = await c.tryRecv(500);
+        assert(ok !== null, 'cap: REGISTER for existing key at cap still replies');
+
+        // All-PAIRED variant: with no unpaired singleton to evict, a new
+        // key is genuinely dropped — paired sessions are never evicted.
+        for (const [k, e] of handle._sessionMap) {
+            if (e.endpointB === null) e.endpointB = { address: '203.0.113.2', port: 2000 };
+            void k;
+        }
+        handle._resetRate();
+        const blockedKey = crypto.randomBytes(16);
+        // Use a fresh source IP via injection so the per-IP quota (127.0.0.1
+        // already owns keys here) is not the reason for the drop.
+        const stub = makeStubSocket();
+        handle._onMessage(makeRegister(blockedKey, 3333), { address: '198.51.100.99', port: 3333 }, stub);
+        assertEq(stub.sent.length, 0, 'cap: new key dropped when table is all paired (no reply)');
+        assert(!handle._sessionMap.has(blockedKey.toString('hex')), 'cap: paired sessions were not evicted');
+
+        handle._resetSessions(); // drop synthetic state for later tests
+    } finally {
+        await c.close();
+    }
+}
+
+async function testPerIpQuota(handle, serverPort) {
+    // Review H2 defense 1: one source IP may hold at most MAX_NEW_KEYS_PER_IP
+    // live keys it created. The quota frees up when a key is released (TTL
+    // sweep here), so a legitimate client is never permanently locked out.
+    handle._resetSessions();
+    const quota = handle._maxNewKeysPerIp;
+    const c = await makeClient();
+    try {
+        const keys = [];
+        for (let i = 0; i < quota; i++) {
+            const k = crypto.randomBytes(16);
+            keys.push(k);
+            await c.send(makeRegister(k, c.port), serverPort);
+            const r = await c.tryRecv(500);
+            assert(r !== null, `quota: key ${i + 1}/${quota} admitted`);
+        }
+        assertEq(handle._sessionMap.size, quota, 'quota: table holds exactly the quota');
+
+        const overKey = crypto.randomBytes(16);
+        await c.send(makeRegister(overKey, c.port), serverPort);
+        const over = await c.tryRecv(200);
+        assert(over === null, 'quota: key over quota dropped (no reply)');
+        assertEq(handle._sessionMap.size, quota, 'quota: table did not grow');
+
+        // Existing keys still serviced while at quota.
+        await c.send(makeRegister(keys[0], c.port), serverPort);
+        assert((await c.tryRecv(500)) !== null, 'quota: existing key still serviced at quota');
+
+        // Release one key via the real TTL sweep; the quota must free up.
+        const e0 = handle._sessionMap.get(keys[0].toString('hex'));
+        e0.lastTouch -= handle._sessionTtlMs + 1000;
+        handle._sweepNow();
+        handle._resetRate();
+        await c.send(makeRegister(overKey, c.port), serverPort);
+        assert((await c.tryRecv(500)) !== null, 'quota: freed by sweep — new key admitted again');
+        handle._resetSessions(); // don't let this test's keys count against later tests
+    } finally {
+        await c.close();
+    }
+}
+
+async function testSpoofedFloodEviction(handle) {
+    // Review H2 end-to-end: a spoofed-source flood (bypasses the per-IP
+    // limiter AND the per-IP quota) fills the table; a legitimate new host
+    // must still be admitted (evicting the oldest flood singleton), and a
+    // LIVE host that keeps re-REGISTERing must never be the eviction
+    // victim while the flood continues.
+    handle._resetSessions();
+    const stub = makeStubSocket();
+    const max = handle._maxSessions;
+    let firstFloodHex = null;
+    for (let i = 0; i < max; i++) {
+        const k = crypto.randomBytes(16);
+        if (i === 0) firstFloodHex = k.toString('hex');
+        handle._onMessage(makeRegister(k, 1024 + (i % 60000)), { address: `10.${(i >> 16) & 255}.${(i >> 8) & 255}.${i & 255}`, port: 1024 + (i % 60000) }, stub);
+    }
+    assertEq(handle._sessionMap.size, max, 'flood: spoofed flood filled the table');
+
+    // Legitimate new host (fresh IP) registers: admitted, oldest flood key evicted.
+    stub.sent.length = 0;
+    const hostKey = crypto.randomBytes(16);
+    handle._onMessage(makeRegister(hostKey, 7777), { address: '192.0.2.10', port: 7777 }, stub);
+    assertEq(stub.sent.length, 1, 'flood: legit host got a reply at cap');
+    assert(handle._sessionMap.has(hostKey.toString('hex')), 'flood: legit host key admitted');
+    assert(!handle._sessionMap.has(firstFloodHex), 'flood: oldest flood singleton evicted');
+    assertEq(handle._sessionMap.size, max, 'flood: size still at cap');
+
+    // Flood continues; the live host re-REGISTERs (S1 cadence) between
+    // waves and must survive every eviction round.
+    for (let wave = 0; wave < 5; wave++) {
+        for (let i = 0; i < 50; i++) {
+            const k = crypto.randomBytes(16);
+            handle._onMessage(makeRegister(k, 5000 + i), { address: `172.16.${wave}.${i + 1}`, port: 5000 + i }, stub);
+        }
+        handle._onMessage(makeRegister(hostKey, 7777), { address: '192.0.2.10', port: 7777 }, stub);
+    }
+    assert(handle._sessionMap.has(hostKey.toString('hex')), 'flood: live re-REGISTERing host never evicted');
+    handle._resetSessions();
+    handle._resetRate();
+}
+
+async function testRehostWithinStaleWindow(handle, serverPort) {
+    // Review H1 gap: a re-host WITHIN the 30 s staleness window (new NAT
+    // port) gets filed as B while old-A is still fresh. Its own periodic
+    // re-REGISTERs then only refresh B — so once old-A crosses the
+    // threshold, the next re-REGISTER must PROMOTE the client from B to A
+    // (clearing B) or a real joiner would be dropped as a third party
+    // forever.
+    const key = crypto.randomBytes(16);
+    const hexKey = key.toString('hex');
+    const oldHost = await makeClient();
+    const newHost = await makeClient();
+    const joiner = await makeClient();
+    try {
+        await oldHost.send(makeRegister(key, oldHost.port), serverPort);
+        await oldHost.recv(500);
+        // Immediate re-host (old slot NOT yet stale) -> filed as joiner (B).
+        await newHost.send(makeRegister(key, newHost.port), serverPort);
+        await newHost.recv(500); // DELIVER carrying old-A (self IP; client ignores it)
+        const entry = handle._sessionMap.get(hexKey);
+        assertEq(entry.endpointB.port, newHost.port, 'rehost-window: new host filed as B while A fresh');
+
+        // Old slot crosses the staleness threshold; the S1 resender's next
+        // periodic re-REGISTER (matching B exactly) must promote B->A.
+        entry.lastSeenA -= handle._slotStaleMs + 1000;
+        await newHost.send(makeRegister(key, newHost.port), serverPort);
+        await newHost.recv(500);
+        assertEq(entry.endpointA.port, newHost.port, 'rehost-window: re-REGISTER promoted B to host slot');
+        assert(entry.endpointB === null, 'rehost-window: joiner slot freed by promotion');
+
+        // A real joiner can now pair with the re-hosted client.
+        await joiner.send(makeRegister(key, joiner.port), serverPort);
+        const jr = decodeDeliver((await joiner.recv(500)).buf);
+        assertEq(jr.peerPort, newHost.port, 'rehost-window: joiner paired with promoted host');
+        const push = decodeDeliver((await newHost.recv(500)).buf);
+        assertEq(push.peerPort, joiner.port, 'rehost-window: promoted host got DELIVER push');
+    } finally {
+        await oldHost.close();
+        await newHost.close();
+        await joiner.close();
+    }
+}
+
+// Stub socket for handle._onMessage injection: captures outbound sends so
+// tests can exercise source-IP-dependent policy without real routing.
+function makeStubSocket() {
+    const sent = [];
+    return {
+        sent,
+        send(buf, off, len, port, address) {
+            sent.push({ buf: Buffer.from(buf.subarray(off, off + len)), port, address });
+        },
+    };
+}
+
+async function testStaleSlotReclaim(handle, serverPort) {
+    // Review H1 (server side): a REGISTER from the same IP as a STALE,
+    // unpaired host slot reclaims the slot (cancel-then-re-host with a new
+    // NAT source port, session key pinned by UPnP) instead of being filed
+    // as "the joiner" and DELIVERed its own stale endpoint.
+    const key = crypto.randomBytes(16);
+    const hexKey = key.toString('hex');
+    const oldHost = await makeClient();
+    const newHost = await makeClient();
+    const joiner = await makeClient();
+    try {
+        // Old host registers, then goes silent (user pressed Cancel).
+        await oldHost.send(makeRegister(key, oldHost.port), serverPort);
+        await oldHost.recv(500);
+        const entry = handle._sessionMap.get(hexKey);
+        assert(entry !== undefined, 'reclaim: session exists after REGISTER');
+        assertEq(entry.endpointA.port, oldHost.port, 'reclaim: slot A is old host');
+
+        // Age slot A past SLOT_STALE_MS (real reclaim code runs on the
+        // next REGISTER — aging via the _sessionMap hook, same style as
+        // testSessionTtl), then re-host from a new port.
+        entry.lastSeenA -= handle._slotStaleMs + 1000;
+        await newHost.send(makeRegister(key, newHost.port), serverPort);
+        const r = decodeDeliver((await newHost.recv(500)).buf);
+        assertEq(r.peerIp, '0.0.0.0', 'reclaim: re-host reply has NO peer (not own stale endpoint)');
+        assertEq(r.peerPort, 0, 'reclaim: re-host reply peer port zero');
+        assertEq(entry.endpointA.port, newHost.port, 'reclaim: slot A repointed to new host port');
+        assert(entry.endpointB === null, 'reclaim: slot B still empty');
+
+        // A joiner now pairs with the NEW endpoint, and the new host gets
+        // the unsolicited DELIVER push.
+        await joiner.send(makeRegister(key, joiner.port), serverPort);
+        const jr = decodeDeliver((await joiner.recv(500)).buf);
+        assertEq(jr.peerPort, newHost.port, 'reclaim: joiner paired with reclaimed host');
+        const push = decodeDeliver((await newHost.recv(500)).buf);
+        assertEq(push.peerPort, joiner.port, 'reclaim: reclaimed host received DELIVER push');
+    } finally {
+        await oldHost.close();
+        await newHost.close();
+        await joiner.close();
+    }
+}
+
+async function testFreshSlotNotReclaimed(handle, serverPort) {
+    // Reclaim must require staleness: a same-IP REGISTER from a new port
+    // against a LIVE host slot pairs as the joiner (normal flow preserved).
+    const key = crypto.randomBytes(16);
+    const a = await makeClient();
+    const b = await makeClient();
+    try {
+        await a.send(makeRegister(key, a.port), serverPort);
+        await a.recv(500);
+        await b.send(makeRegister(key, b.port), serverPort);
+        const br = decodeDeliver((await b.recv(500)).buf);
+        assertEq(br.peerPort, a.port, 'fresh-slot: same-IP new-port REGISTER paired as joiner');
+        const entry = handle._sessionMap.get(key.toString('hex'));
+        assertEq(entry.endpointA.port, a.port, 'fresh-slot: slot A untouched');
+        assertEq(entry.endpointB.port, b.port, 'fresh-slot: slot B is the new client');
+    } finally {
+        await a.close();
+        await b.close();
+    }
+}
+
+async function testReclaimRequiresSameIp(handle) {
+    // Injection: a stale host slot is NOT reclaimed by a different-IP
+    // source — that source becomes the joiner, keeping pre-S1 silent
+    // hosts pair-able exactly as before.
+    const key = crypto.randomBytes(16);
+    const stub = makeStubSocket();
+    handle._onMessage(makeRegister(key, 1111), { address: '198.51.100.7', port: 1111 }, stub);
+    const entry = handle._sessionMap.get(key.toString('hex'));
+    entry.lastSeenA -= handle._slotStaleMs + 1000;
+    handle._onMessage(makeRegister(key, 2222), { address: '198.51.100.8', port: 2222 }, stub);
+    assertEq(entry.endpointA.address, '198.51.100.7', 'same-ip-required: stale A kept for different-IP source');
+    assertEq(entry.endpointB.address, '198.51.100.8', 'same-ip-required: different IP paired as joiner');
+    // 3 sends total: A's initial reply, B's pairing reply, A's push.
+    assertEq(stub.sent.length, 3, 'same-ip-required: reply+reply+push emitted');
+}
+
+async function testPoisonedKeyBothSlotsStale(handle) {
+    // Review H1 variant: both slots stale (abandoned pairing). A same-IP
+    // re-host REGISTER must reclaim slot A AND clear the dead joiner slot
+    // instead of being dropped as a third party for the whole TTL.
+    const key = crypto.randomBytes(16);
+    const stub = makeStubSocket();
+    handle._onMessage(makeRegister(key, 1111), { address: '198.51.100.17', port: 1111 }, stub);
+    handle._onMessage(makeRegister(key, 2222), { address: '198.51.100.19', port: 2222 }, stub);
+    const entry = handle._sessionMap.get(key.toString('hex'));
+    entry.lastSeenA -= handle._slotStaleMs + 1000;
+    entry.lastSeenB -= handle._slotStaleMs + 1000;
+    stub.sent.length = 0;
+    handle._onMessage(makeRegister(key, 3333), { address: '198.51.100.17', port: 3333 }, stub);
+    assertEq(entry.endpointA.port, 3333, 'poisoned-key: slot A reclaimed by same-IP re-host');
+    assert(entry.endpointB === null, 'poisoned-key: stale joiner slot cleared');
+    assertEq(stub.sent.length, 1, 'poisoned-key: re-host got a reply (not third-party drop)');
+    const d = decodeDeliver(stub.sent[0].buf);
+    assertEq(d.peerIp, '0.0.0.0', 'poisoned-key: reply carries no peer');
+}
+
+async function testStaleJoinerSlotReplaced(handle) {
+    // Full entry, live host, stale joiner: a fresh joiner (any IP) replaces
+    // slot B and the host is re-notified with the new endpoint.
+    const key = crypto.randomBytes(16);
+    const stub = makeStubSocket();
+    handle._onMessage(makeRegister(key, 1111), { address: '198.51.100.27', port: 1111 }, stub);
+    handle._onMessage(makeRegister(key, 2222), { address: '198.51.100.29', port: 2222 }, stub);
+    const entry = handle._sessionMap.get(key.toString('hex'));
+    entry.lastSeenB -= handle._slotStaleMs + 1000;
+    stub.sent.length = 0;
+    handle._onMessage(makeRegister(key, 4444), { address: '198.51.100.30', port: 4444 }, stub);
+    assertEq(entry.endpointB.address, '198.51.100.30', 'stale-joiner: slot B replaced');
+    assertEq(entry.endpointA.address, '198.51.100.27', 'stale-joiner: live host slot untouched');
+    // Reply to the new joiner (carrying A) + re-notify push to A (carrying new B).
+    assertEq(stub.sent.length, 2, 'stale-joiner: reply + host push emitted');
+    const toJoiner = stub.sent.find((s) => s.address === '198.51.100.30');
+    const toHost = stub.sent.find((s) => s.address === '198.51.100.27');
+    assert(toJoiner && decodeDeliver(toJoiner.buf).peerPort === 1111, 'stale-joiner: joiner told host endpoint');
+    assert(toHost && decodeDeliver(toHost.buf).peerPort === 4444, 'stale-joiner: host told NEW joiner endpoint');
+    // Live joiner control: fresh slot B must NOT be replaceable.
+    stub.sent.length = 0;
+    handle._onMessage(makeRegister(key, 5555), { address: '198.51.100.31', port: 5555 }, stub);
+    assertEq(entry.endpointB.address, '198.51.100.30', 'stale-joiner: LIVE slot B not replaced by third party');
+    assertEq(stub.sent.length, 0, 'stale-joiner: third party got no reply');
+}
+
 async function testSweepHook(handle) {
     // The sweep hook exists and is callable. We don't try to time-warp; just
     // assert calling it doesn't throw and doesn't crash the server.
@@ -310,6 +676,23 @@ async function main() {
         await testPollAfterRegister(serverPort);   // 2 packets
         handle._resetRate();
         await testRateLimit(serverPort);
+        handle._resetRate();
+        await testSessionTtl(handle, serverPort);   // 3 packets
+        handle._resetRate();
+        await testSessionCap(handle, serverPort);   // 5 packets
+        handle._resetRate();
+        await testPerIpQuota(handle, serverPort);   // 8 packets
+        handle._resetRate();
+        await testSpoofedFloodEviction(handle);     // injection only
+        await testStaleSlotReclaim(handle, serverPort); // 4 packets
+        handle._resetRate();
+        await testRehostWithinStaleWindow(handle, serverPort); // 5 packets
+        handle._resetRate();
+        await testFreshSlotNotReclaimed(handle, serverPort); // 2 packets
+        handle._resetRate();
+        await testReclaimRequiresSameIp(handle);
+        await testPoisonedKeyBothSlotsStale(handle);
+        await testStaleJoinerSlotReplaced(handle);
         handle._resetRate();
         await testSweepHook(handle);
     } catch (err) {

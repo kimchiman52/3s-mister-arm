@@ -21,8 +21,57 @@ const DELIVER_LEN = 32;
 
 // --- Tunables ----------------------------------------------------------------
 
-const SESSION_TTL_MS = 60 * 1000;
+// S1 host liveness (docs/plan-netplay-connection.md): 10 minutes, up from
+// 60 s. A host now re-REGISTERs every ~5 s for as long as it displays a
+// room code, so lastTouch stays fresh regardless — but the TTL must also
+// cover a host whose re-REGISTER packets are lost or whose client predates
+// S1, and it bounds how long a code shared over chat/voice stays pair-able.
+// Memory exposure at this TTL is bounded by MAX_SESSIONS below.
+const SESSION_TTL_MS = 10 * 60 * 1000;
 const SESSION_SWEEP_INTERVAL_MS = 5 * 1000;
+
+// Hard cap on concurrently-tracked sessions. Each entry is two endpoint
+// objects + timestamps + a 32-char hex key; V8 overhead (hidden classes,
+// Map buckets, string headers) puts a realistic worst case at ~1.3-2 MB,
+// not the naive ~250 B/entry ~1 MB. Before S1 the 60 s TTL implicitly
+// bounded slot-squatting; at 10 minutes the table needs an explicit
+// bound.
+//
+// Cap POLICY (review H2): a plain "drop new keys when full" cap is itself
+// a lockout vector — filling 4096 fresh keys takes ~410 s inside the
+// 10 pkt/s per-IP limit, and source-spoofed REGISTERs bypass the per-IP
+// limiter entirely. Two complementary defenses:
+//   1. MAX_NEW_KEYS_PER_IP: one (non-spoofing) source IP may have at most
+//      this many live keys it CREATED. A legitimate client holds exactly
+//      one while hosting (briefly two across a drift re-key), so 4 is
+//      generous headroom; a single-IP squatter now parks 4 keys, not 4096.
+//   2. At cap, a new key EVICTS the oldest UNPAIRED singleton instead of
+//      being dropped: paired sessions are never evicted, and a live host
+//      re-REGISTERs every <= 5 s (refreshing lastTouch) so it is never the
+//      oldest while a flood is cycling the table (flood would need to
+//      turn the whole 4096-slot table over in < 5 s, i.e. > 800 spoofed
+//      keys/s, to age a live host to the front). A legitimate new host
+//      therefore always gets a slot, even during a spoofed-source flood.
+// A stateless address-validation cookie (return-routability) is the
+// third defense; it needs a wire change and is deliberately left to the
+// queued S4 security stage to avoid conflicting designs.
+const MAX_SESSIONS = 4096;
+const MAX_NEW_KEYS_PER_IP = 4;
+
+// Per-slot liveness threshold (review H1). A live S1 host re-REGISTERs
+// every <= 5 s and a live joiner every 500 ms, so a slot silent for 30 s
+// (6+ missed host refreshes) is stale: its endpoint is a leftover from a
+// cancelled/abandoned attempt. A stale, UNPAIRED host slot may be
+// reclaimed by a REGISTER from the SAME source IP (the cancel-then-re-host
+// flow, where the NAT picked a new source port toward us but the UPnP-
+// pinned session key is unchanged); without this, the server would file
+// the re-hosting client as "the joiner" and DELIVER the client its own
+// stale endpoint — poisoning the room for the whole TTL. Pre-S1 clients
+// (silent after their 8 s REGISTER budget) keep their slot pair-able by
+// DIFFERENT-IP joiners exactly as before; only same-IP re-registration
+// (which no legitimate joiner can produce — the client-side hairpin
+// bypass fails same-IP joiners before they ever REGISTER) repoints it.
+const SLOT_STALE_MS = 30 * 1000;
 const RATE_SWEEP_INTERVAL_MS = 60 * 1000;
 const RATE_WINDOW_MS = 1000;
 const RATE_LIMIT_PER_WINDOW = 10;
@@ -97,7 +146,26 @@ function encodeDeliver(sessionKeyBuf, peerEndpoint) {
 
 const sessionMap = new Map();
 // key: hex-encoded 16-byte session_key
-// value: { endpointA, endpointB, lastTouch }
+// value: { endpointA, endpointB, lastTouch, lastSeenA, lastSeenB, creatorIp }
+// lastSeenA/B track per-slot liveness (last REGISTER/POLL from that exact
+// endpoint) for the SLOT_STALE_MS reclaim logic; lastTouch remains the
+// whole-entry TTL clock. creatorIp is the source IP that created the key
+// (slot A's original registrant) for the MAX_NEW_KEYS_PER_IP quota.
+
+const creatorCounts = new Map();
+// key: source IP string; value: number of LIVE sessionMap keys created by
+// that IP. Incremented on new-key admit, decremented via releaseSession.
+
+// Single deletion path so the creator quota stays consistent with the
+// session table (sweep, cap eviction, and test resets all route here).
+function releaseSession(hexKey, entry) {
+    sessionMap.delete(hexKey);
+    if (entry && entry.creatorIp) {
+        const n = creatorCounts.get(entry.creatorIp) || 0;
+        if (n <= 1) creatorCounts.delete(entry.creatorIp);
+        else creatorCounts.set(entry.creatorIp, n - 1);
+    }
+}
 
 const rateMap = new Map();
 // key: source IP string
@@ -142,7 +210,7 @@ function sweepSessions() {
     let evicted = 0;
     for (const [key, entry] of sessionMap) {
         if (now - entry.lastTouch > SESSION_TTL_MS) {
-            sessionMap.delete(key);
+            releaseSession(key, entry);
             evicted += 1;
         }
     }
@@ -181,26 +249,101 @@ function handleRegister(socket, buf, rinfo) {
     const source = { address: rinfo.address, port: rinfo.port };
     let entry = sessionMap.get(hexKey);
     let pairedPeer = null; // endpoint to receive an unsolicited DELIVER if we just paired
+    const now = nowMs();
 
     if (!entry) {
-        entry = { endpointA: source, endpointB: null, lastTouch: nowMs() };
+        // Per-IP live-key quota (review H2 defense 1) — checked before the
+        // cap so a quota-violating IP can never trigger evictions either.
+        const created = creatorCounts.get(source.address) || 0;
+        if (created >= MAX_NEW_KEYS_PER_IP) {
+            logWarn(`REGISTER from ${source.address}:${source.port} dropped — IP already holds ${created}/${MAX_NEW_KEYS_PER_IP} live keys`);
+            return;
+        }
+        if (sessionMap.size >= MAX_SESSIONS) {
+            // Cap policy (review H2 defense 2): evict the oldest UNPAIRED
+            // singleton to make room. Paired sessions are never evicted;
+            // if everything is paired, only then drop the new key.
+            let oldestKey = null;
+            let oldestEntry = null;
+            for (const [k, e] of sessionMap) {
+                if (e.endpointB === null && (oldestEntry === null || e.lastTouch < oldestEntry.lastTouch)) {
+                    oldestKey = k;
+                    oldestEntry = e;
+                }
+            }
+            if (oldestKey === null) {
+                logWarn(`REGISTER from ${source.address}:${source.port} dropped — session table full of PAIRED sessions (${sessionMap.size}/${MAX_SESSIONS})`);
+                return;
+            }
+            releaseSession(oldestKey, oldestEntry);
+            logWarn(`session table full — evicted oldest unpaired singleton key=${shortKey4(oldestKey)}... to admit ${source.address}:${source.port}`);
+        }
+        entry = { endpointA: source, endpointB: null, lastTouch: now, lastSeenA: now, lastSeenB: 0, creatorIp: source.address };
         sessionMap.set(hexKey, entry);
+        creatorCounts.set(source.address, created + 1);
     } else if (entry.endpointA && endpointEq(entry.endpointA, source)) {
-        // idempotent re-REGISTER from A
+        entry.lastSeenA = now; // idempotent re-REGISTER from A
     } else if (entry.endpointB && endpointEq(entry.endpointB, source)) {
-        // idempotent re-REGISTER from B
-    } else if (!entry.endpointA) {
-        entry.endpointA = source;
-    } else if (!entry.endpointB) {
-        entry.endpointB = source;
-        pairedPeer = entry.endpointA; // notify A that B has now joined
+        entry.lastSeenB = now; // idempotent re-REGISTER from B
+        // Review H1 (within-stale-window re-host): if this key's HOST slot
+        // is a stale endpoint from this same IP, we are a re-hosted client
+        // that re-registered before its old slot crossed SLOT_STALE_MS and
+        // was therefore filed as "the joiner". Promote to the host slot
+        // (and free B) so a real joiner can pair; the client keeps its
+        // resender alive across the interim thanks to its self-DELIVER
+        // ignore gate.
+        if (entry.endpointA && entry.endpointA.address === source.address &&
+            now - entry.lastSeenA > SLOT_STALE_MS) {
+            logInfo(`[RECLAIM] promote B->A key=${shortKey4(hexKey)}... ${entry.endpointA.address}:${entry.endpointA.port} (stale) replaced by ${source.address}:${source.port}`);
+            entry.endpointA = source;
+            entry.lastSeenA = now;
+            entry.endpointB = null;
+            entry.lastSeenB = 0;
+        }
     } else {
-        // both slots filled with different endpoints; treat as a third party — drop it.
-        // (Don't overwrite either slot. Don't reply.)
-        logWarn(`REGISTER from ${source.address}:${source.port} for full session key=${shortKey4(hexKey)} — ignored`);
-        return;
+        // Source matches neither slot exactly. Review H1: before the old
+        // fill-or-drop logic, consider stale-slot reclamation so a
+        // cancel-then-re-host client (same IP, new NAT source port, same
+        // UPnP-pinned session key) reclaims its own slot instead of being
+        // filed as "the joiner" (which DELIVERed the client its own stale
+        // endpoint) or dropped as a third party (poisoned-key variant).
+        const aStale = entry.endpointA !== null && now - entry.lastSeenA > SLOT_STALE_MS;
+        const bStale = entry.endpointB !== null && now - entry.lastSeenB > SLOT_STALE_MS;
+        if (entry.endpointA && aStale && entry.endpointA.address === source.address) {
+            // Same-IP reclaim of the stale host slot. Also drop a stale
+            // leftover joiner slot so the reclaimed host is not handed a
+            // dead endpoint in the reply DELIVER.
+            logInfo(`[RECLAIM] host slot key=${shortKey4(hexKey)}... ${entry.endpointA.address}:${entry.endpointA.port} -> ${source.address}:${source.port} (stale ${Math.round((now - entry.lastSeenA) / 1000)}s)`);
+            entry.endpointA = source;
+            entry.lastSeenA = now;
+            if (bStale) {
+                entry.endpointB = null;
+                entry.lastSeenB = 0;
+            }
+        } else if (!entry.endpointA) {
+            entry.endpointA = source;
+            entry.lastSeenA = now;
+        } else if (!entry.endpointB) {
+            entry.endpointB = source;
+            entry.lastSeenB = now;
+            pairedPeer = entry.endpointA; // notify A that B has now joined
+        } else if (bStale) {
+            // Both slots filled but the joiner slot is stale (abandoned
+            // attempt). Replace it — same-IP retry from a new port, or a
+            // fresh joiner arriving after an abandoned pairing — and
+            // re-notify A of the new joiner endpoint.
+            logInfo(`[RECLAIM] joiner slot key=${shortKey4(hexKey)}... ${entry.endpointB.address}:${entry.endpointB.port} -> ${source.address}:${source.port} (stale ${Math.round((now - entry.lastSeenB) / 1000)}s)`);
+            entry.endpointB = source;
+            entry.lastSeenB = now;
+            pairedPeer = entry.endpointA;
+        } else {
+            // Both slots live with different endpoints; treat as a third party — drop it.
+            // (Don't overwrite either slot. Don't reply.)
+            logWarn(`REGISTER from ${source.address}:${source.port} for full session key=${shortKey4(hexKey)} — ignored`);
+            return;
+        }
     }
-    entry.lastTouch = nowMs();
+    entry.lastTouch = now;
 
     // Reply to source with the OTHER endpoint (or zeroes).
     const otherForSource = endpointEq(entry.endpointA, source) ? entry.endpointB : entry.endpointA;
@@ -232,8 +375,10 @@ function handlePoll(socket, buf, rinfo) {
         // Refresh lastTouch even though we don't update endpoints.
         entry.lastTouch = nowMs();
         if (endpointEq(entry.endpointA, source)) {
+            entry.lastSeenA = entry.lastTouch; // slot liveness (review H1)
             peer = entry.endpointB;
         } else if (endpointEq(entry.endpointB, source)) {
+            entry.lastSeenB = entry.lastTouch;
             peer = entry.endpointA;
         } else {
             // Source isn't a registered endpoint for this key.
@@ -346,6 +491,9 @@ function start(port) {
         socket,
         _sessionMap: sessionMap,
         _rateMap: rateMap,
+        _sessionTtlMs: SESSION_TTL_MS,
+        _maxSessions: MAX_SESSIONS,
+        _slotStaleMs: SLOT_STALE_MS,
         _sweepNow() {
             sweepSessions();
             sweepRates();
@@ -353,6 +501,19 @@ function start(port) {
         _resetRate() {
             rateMap.clear();
             warnedIps.clear();
+        },
+        _resetSessions() {
+            sessionMap.clear();
+            creatorCounts.clear();
+        },
+        _creatorCounts: creatorCounts,
+        _maxNewKeysPerIp: MAX_NEW_KEYS_PER_IP,
+        // Inject a packet as if it arrived from rinfo — lets tests exercise
+        // source-IP-dependent policy (slot reclaim identity, spoofed-source
+        // floods) that loopback UDP cannot produce. fakeSocket, when given,
+        // captures outbound sends instead of hitting the wire.
+        _onMessage(buf, rinfo, fakeSocket) {
+            onMessage(fakeSocket || socket, buf, rinfo);
         },
         _shutdown: shutdown,
     };
