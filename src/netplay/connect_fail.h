@@ -92,6 +92,14 @@ typedef enum ConnectFailCode {
                                      version trouble, not connectivity         */
     CONNECT_FAIL_HOST_OFFLINE,    /* only zero-sentinel DELIVERs — code stale */
     CONNECT_FAIL_NAT_BLOCKED,     /* real DELIVER, bilateral punch timed out  */
+    /* S5: this cause means "needs relay". It is NO LONGER a dead end —
+     * the relay rung (direct_p2p.c, both roles, after the bilateral
+     * punch fails) now ATTEMPTS the relay before any of this is
+     * surfaced. It is reported only when the relay rung is unavailable
+     * by configuration (kill switch / no signal URL); a relay rung that
+     * RAN and failed reports its own RELAY_* cause below, because
+     * "the relay is what broke" is the actionable fact and blaming the
+     * NAT would send the user to their router for nothing. */
     CONNECT_FAIL_SYMMETRIC_BOTH,  /* as NAT_BLOCKED + port_disagreement       */
     CONNECT_FAIL_HAIRPIN,         /* peer public IP == ours, no NAT loopback  */
     CONNECT_FAIL_PUNCH_AUTH,      /* S4a: peer punched with a bad/missing token
@@ -132,10 +140,36 @@ typedef enum ConnectFailCode {
                                      connectivity failure: nothing was ever
                                      sent.                                    */
 
+    /* --- S5 relay (docs/plan-netplay-connection.md §7) -----------------
+     * Three DISTINCT failures of the relay rung. They are separate codes
+     * because they send the user and the log reader to three different
+     * places: nothing to relay through, the relay is at capacity, or the
+     * relay was granted and then could not be reached. Collapsing them
+     * would recreate exactly the "one string for many causes" problem S3
+     * existed to fix. */
+    CONNECT_FAIL_RELAY_UNAVAILABLE,  /* the relay rung ran and the server never
+                                        answered the RELAY_REQ at all (relay
+                                        disabled server-side, request dropped,
+                                        or we are no longer a registered slot
+                                        of the session) — nothing to fall back
+                                        to beyond this point                */
+    CONNECT_FAIL_RELAY_REFUSED,      /* a RELAY_GRANT arrived carrying an
+                                        explicit refusal: the port pool is
+                                        exhausted, or the session was not
+                                        paired server-side. Transient and
+                                        retryable, unlike a NAT diagnosis   */
+    CONNECT_FAIL_RELAY_PIN_TIMEOUT,  /* granted a relay port, then no
+                                        RELAY_PIN_ACK inside the budget: the
+                                        relay port range is unreachable from
+                                        this network (firewall) or the relay
+                                        socket is dead. The rendezvous port
+                                        worked, so this is specifically about
+                                        the relay range                     */
+
     /* Append new codes ABOVE this marker and bump the bound in
      * test_bilateral_punch.c test 7f (which sweeps NONE..LAST proving
      * every code has a distinct machine string). */
-    CONNECT_FAIL_LAST_ = CONNECT_FAIL_BALANCE_UNAVAILABLE,
+    CONNECT_FAIL_LAST_ = CONNECT_FAIL_RELAY_PIN_TIMEOUT,
 } ConnectFailCode;
 
 /* Stable machine code string, e.g. "P2P_FAIL_STUN_ALLDOWN". Never NULL.

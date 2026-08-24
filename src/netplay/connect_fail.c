@@ -29,6 +29,9 @@ const char* ConnectFail_Code(ConnectFailCode code) {
     case CONNECT_FAIL_CODE_VERSION_NEWER:   return "P2P_FAIL_CODE_VERSION_NEWER";
     case CONNECT_FAIL_INTERNAL:             return "P2P_FAIL_INTERNAL";
     case CONNECT_FAIL_BALANCE_UNAVAILABLE:  return "P2P_FAIL_BALANCE_UNAVAILABLE";
+    case CONNECT_FAIL_RELAY_UNAVAILABLE:    return "P2P_FAIL_RELAY_UNAVAILABLE";
+    case CONNECT_FAIL_RELAY_REFUSED:        return "P2P_FAIL_RELAY_REFUSED";
+    case CONNECT_FAIL_RELAY_PIN_TIMEOUT:    return "P2P_FAIL_RELAY_PIN_TIMEOUT";
     }
     return "P2P_FAIL_UNKNOWN";
 }
@@ -53,6 +56,9 @@ const char* ConnectFail_UserText(ConnectFailCode code) {
     case CONNECT_FAIL_NAT_BLOCKED:
         return "Host found, but NAT blocked the link.";
     case CONNECT_FAIL_SYMMETRIC_BOTH:
+        /* S5: reachable only when the relay rung is switched OFF. With
+         * the relay enabled this diagnosis leads to an ATTEMPT, and a
+         * relay that then fails reports its own cause. */
         return "Both networks too strict (needs relay).";
     case CONNECT_FAIL_HAIRPIN:
         return "Same network as host. Router lacks loopback.";
@@ -84,6 +90,14 @@ const char* ConnectFail_UserText(ConnectFailCode code) {
          * ArcadeBalance_GetReason() text through set_status instead;
          * this is the generic fallback. */
         return "Netplay needs the arcade ROM.";
+    /* S5 relay rung. Each string names the thing to do next, because
+     * these are the LAST rung — there is no further fallback. */
+    case CONNECT_FAIL_RELAY_UNAVAILABLE:
+        return "No relay available. Try again later.";
+    case CONNECT_FAIL_RELAY_REFUSED:
+        return "Relay is full. Try again shortly.";
+    case CONNECT_FAIL_RELAY_PIN_TIMEOUT:
+        return "Relay unreachable (firewall?).";
     }
     return "Connection failed.";
 }

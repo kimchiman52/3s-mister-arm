@@ -30,6 +30,11 @@
 #define REND_TYPE_DELIVER     2
 #define REND_TYPE_POLL        3
 #define REND_TYPE_CHALLENGE   4
+/* S5 relay. Version byte stays 2 — pure extension (see rendezvous.h). */
+#define REND_TYPE_RELAY_REQ   5
+#define REND_TYPE_RELAY_GRANT 6
+#define REND_TYPE_RELAY_PIN   7
+#define REND_TYPE_RELAY_PIN_ACK 8
 
 #define REND_REGISTER_LEN     36
 #define REND_POLL_LEN         36
@@ -271,6 +276,130 @@ bool Rendezvous_ParseDeliver(const uint8_t* pkt, int len,
                              uint16_t* out_peer_port) {
     return Rendezvous_ParseDeliverEx(pkt, len, expected_session_key,
                                      out_peer_ip, out_peer_port) == REND_DELIVER_PEER;
+}
+
+/* --- S5 relay ---------------------------------------------------------- */
+
+int Rendezvous_FrameType(const uint8_t* pkt, int len) {
+    if (!pkt || len < 6) {
+        return 0;
+    }
+    if (read_be32(&pkt[0]) != REND_MAGIC) {
+        return 0;
+    }
+    if (pkt[4] != REND_VERSION) {
+        return 0;
+    }
+    return (int)pkt[5];
+}
+
+bool Rendezvous_BuildRelayReq(uint16_t my_public_port,
+                              const uint8_t session_key[16],
+                              const uint8_t cookie[REND_COOKIE_LEN],
+                              uint8_t out_pkt[REND_RELAY_REQ_PKT_LEN]) {
+    /* Byte-identical to a REGISTER except for the type byte — that is
+     * what lets it ride the server's existing return-routability gate
+     * (key at [8..24), cookie at [28..36), length 36) instead of needing
+     * a second gate. Build it through the REGISTER encoder so the two can
+     * never drift apart. */
+    if (!Rendezvous_BuildRegister(my_public_port, session_key, cookie, out_pkt)) {
+        return false;
+    }
+    out_pkt[5] = (uint8_t)REND_TYPE_RELAY_REQ;
+    return true;
+}
+
+bool Rendezvous_ParseRelayGrant(const uint8_t* pkt, int len,
+                                const uint8_t expected_session_key[16],
+                                RendezvousRelayGrant* out) {
+    if (out) {
+        memset(out, 0, sizeof(*out));
+        out->slot = REND_RELAY_SLOT_NONE;
+    }
+    if (!pkt || len < REND_RELAY_GRANT_LEN || !expected_session_key || !out) {
+        return false;
+    }
+    if (read_be32(&pkt[0]) != REND_MAGIC) {
+        return false;
+    }
+    if (pkt[4] != REND_VERSION) {
+        return false;
+    }
+    if (pkt[5] != REND_TYPE_RELAY_GRANT) {
+        return false;
+    }
+    /* Same cross-talk + forgery gate as Rendezvous_ParseChallenge: the
+     * key embeds the room-code nonce, so a frame carrying it came from
+     * something on the path of our own request. */
+    if (memcmp(&pkt[8], expected_session_key, REND_KEY_LEN) != 0) {
+        return false;
+    }
+
+    const uint8_t slot = pkt[6];
+    const uint8_t status = pkt[7];
+    const uint16_t port = read_be16(&pkt[24]);
+
+    if (status == (uint8_t)REND_RELAY_GRANTED) {
+        /* Fail closed: a "grant" we cannot connect to is worse than a
+         * clean parse failure, because the caller would spend its whole
+         * pin budget punching at port 0. Likewise a slot outside {0,1}
+         * would make us build a RELAY_PIN the relay can only reject. */
+        if (port == 0 || slot > 1) {
+            memset(out, 0, sizeof(*out));
+            out->slot = REND_RELAY_SLOT_NONE;
+            return false;
+        }
+    }
+
+    out->slot = slot;
+    out->status = status;
+    out->relay_port = (status == (uint8_t)REND_RELAY_GRANTED) ? port : 0;
+    if (status == (uint8_t)REND_RELAY_GRANTED) {
+        memcpy(out->token, &pkt[28], REND_RELAY_TOKEN_LEN);
+    }
+    return true;
+}
+
+bool Rendezvous_BuildRelayPin(uint8_t slot,
+                              const uint8_t token[REND_RELAY_TOKEN_LEN],
+                              uint8_t out_pkt[REND_RELAY_PIN_LEN]) {
+    if (!token || !out_pkt || slot > 1) {
+        return false;
+    }
+    memset(out_pkt, 0, REND_RELAY_PIN_LEN);
+    write_be32(&out_pkt[0], REND_MAGIC);
+    out_pkt[4] = (uint8_t)REND_VERSION;
+    out_pkt[5] = (uint8_t)REND_TYPE_RELAY_PIN;
+    out_pkt[6] = slot;
+    /* reserved [7] = 0 */
+    memcpy(&out_pkt[8], token, REND_RELAY_TOKEN_LEN);
+    /* reserved2 [16..19] = 0 */
+    return true;
+}
+
+bool Rendezvous_ParseRelayPinAck(const uint8_t* pkt, int len,
+                                 uint8_t expect_slot,
+                                 bool* out_peer_pinned) {
+    if (out_peer_pinned) {
+        *out_peer_pinned = false;
+    }
+    if (!pkt || len < REND_RELAY_PIN_ACK_LEN || !out_peer_pinned) {
+        return false;
+    }
+    if (read_be32(&pkt[0]) != REND_MAGIC) {
+        return false;
+    }
+    if (pkt[4] != REND_VERSION) {
+        return false;
+    }
+    if (pkt[5] != REND_TYPE_RELAY_PIN_ACK) {
+        return false;
+    }
+    if (pkt[6] != expect_slot) {
+        return false; /* an ACK for the other side is not ours */
+    }
+    *out_peer_pinned = (pkt[7] != 0);
+    return true;
 }
 
 bool Rendezvous_ParseSignalUrl(const char* url,
