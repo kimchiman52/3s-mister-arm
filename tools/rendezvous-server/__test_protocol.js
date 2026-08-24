@@ -1593,6 +1593,28 @@ async function testRelayBandwidthCap(handle, serverPort) {
         // Dropping, not killing: the relay is still live and still forwards
         // once the bucket refills.
         assert(handle._relayMap.has(hexKey), 'relay-cap: the session was NOT torn down by the cap');
+
+        // Review HIGH-2: "drop, never teardown" was false. The dropCap path
+        // returned BEFORE lastActivity was refreshed, so a session
+        // persistently over budget for RELAY_IDLE_MS was reclaimed by
+        // sweepRelays as "idle" while carrying constant traffic -- a
+        // mid-match teardown by the exact mechanism the drop policy exists
+        // to avoid. Age the liveness clock past the threshold, keep the
+        // bucket empty, and keep offering: the drops alone must hold the
+        // relay alive across a real sweep.
+        relay.lastActivity -= handle._relayIdleMs + 1000;
+        const aged = relay.lastActivity;
+        relay.allowance = 0;
+        relay.lastRefill = nowMsShim();
+        const dropsBefore = relay.dropCap;
+        for (let i = 0; i < 20; i++) handle._relayInject(hexKey, payload, EP0, stub);
+        assert(relay.dropCap > dropsBefore,
+            'relay-cap: the follow-up traffic really was over budget (all dropped)');
+        assert(relay.lastActivity > aged,
+            'relay-cap: a DROPPED datagram from a pinned source still refreshes liveness');
+        handle._relaySweepNow();
+        assert(handle._relayMap.has(hexKey),
+            'relay-cap: a session that is constantly over budget is NOT reclaimed as idle');
     } finally {
         await a.close();
         await b.close();

@@ -702,11 +702,29 @@ function relayOnMessage(relay, buf, rinfo) {
         relay.dropUnpinned += 1; // peer has not pinned yet — nowhere to send
         return;
     }
+    // Review HIGH-2: liveness is refreshed BEFORE the budget check, not
+    // after.
+    //
+    // "Over budget => drop the datagram, never teardown" (§7.3, and the
+    // RELAY_BYTES_PER_SEC comment above) was false: the dropCap path
+    // returned before this line, so dropped datagrams did not refresh
+    // lastActivity, and a session persistently over RELAY_BYTES_PER_SEC
+    // for RELAY_IDLE_MS was reclaimed by sweepRelays as "idle" while
+    // carrying constant traffic — a mid-match teardown by the exact
+    // mechanism the drop policy exists to avoid. Reproduced against this
+    // module. A datagram between two pinned endpoints is evidence of life
+    // whether or not we choose to carry it.
+    //
+    // It stays BELOW the dst === null check on purpose. A relay with only
+    // one side pinned still ages out on RELAY_IDLE_MS, which is what
+    // §7.3's "no pin and no forwarded datagram" says and what stops a
+    // single client parking a pool port indefinitely now that the session
+    // TTL no longer bounds relay lifetime (review CRITICAL-1).
+    relay.lastActivity = now;
     if (!relayBandwidthAllow(relay, buf.length, now)) {
         relay.dropCap += 1;
         return;
     }
-    relay.lastActivity = now;
     relay.forwarded += 1;
     relay.forwardedBytes += buf.length;
     relay.socket.send(buf, 0, buf.length, dst.port, dst.address);

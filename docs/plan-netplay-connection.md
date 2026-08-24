@@ -1051,9 +1051,24 @@ forwarded like any other bytes (asserted by `relayGrantAndForward`).
 | bind failure | port blocklisted, scan continues | the pool self-heals down to whatever is actually bindable on the box |
 | capacity | 100 concurrent relayed sessions; at cap → `POOL_EXHAUSTED` | |
 | bandwidth | **64 KiB/s per session**, token bucket, one-second burst | GekkoNet costs ~5 kB/s per direction at 60 Hz, so ~12× headroom; bounds what one session can cost the box |
-| over budget | **drop the datagram** | never teardown: rollback netcode absorbs loss, a mid-match teardown is unrecoverable |
+| over budget | **drop the datagram**, and still refresh liveness | never teardown: rollback netcode absorbs loss, a mid-match teardown is unrecoverable |
 | idle reclaim | 30 s with no pin and no forwarded datagram, on the existing 5 s sweep | 100 ports is small enough that holding dead entries for the 10-minute `SESSION_TTL_MS` would exhaust the pool |
 | session release | frees its relay **only if that relay is already idle** | see below — `sweepRelays` owns relay lifetime exclusively |
+
+**"Drop, never teardown" is now actually true** (review HIGH-2, fixed
+as-built). `relay.lastActivity` was refreshed *after* the budget check,
+so the `dropCap` path returned first and a dropped datagram did not
+count as life. A session persistently over `RELAY_BYTES_PER_SEC` for
+`RELAY_IDLE_MS` was therefore reclaimed by `sweepRelays` as "idle" while
+carrying constant traffic — a mid-match teardown by the exact mechanism
+the drop policy exists to avoid. Reproduced. The refresh now happens
+before the budget check, for any datagram between two pinned endpoints:
+a datagram is evidence of life whether or not we choose to carry it. It
+stays *below* the "peer has not pinned yet" check on purpose, so a
+half-open relay still ages out on `RELAY_IDLE_MS` — which is what the
+idle-reclaim row says, and what stops a single client parking a pool
+port indefinitely now that the session TTL no longer bounds relay
+lifetime.
 
 **Relay lifetime is the relay's own clock, and only its own clock**
 (review CRITICAL-1, fixed as-built). `releaseSession` used to call
