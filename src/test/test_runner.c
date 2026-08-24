@@ -1512,6 +1512,14 @@ void TestRunner_Epilogue() {
 
 #else /* !DEBUG — provide stubs for perf-telemetry references */
 
+/* port/build_config.h must come FIRST. test_runner.h opens with
+ * `#if DEBUG || ENABLE_PERF_TELEMETRY`; in this branch DEBUG is 0, and without
+ * build_config.h ENABLE_PERF_TELEMETRY is undefined and also evaluates to 0
+ * (no -Wundef in C_FLAGS), so the header body — the prototypes for the three
+ * stubs below — silently disappears and the definitions compile unchecked
+ * against their declarations. This is the RELEASE/telemetry branch, i.e. the
+ * configuration this project actually ships. Same class as mtrans.c/pls03.c. */
+#include "port/build_config.h"
 #include "test/test_runner.h"
 #include <stdbool.h>
 
