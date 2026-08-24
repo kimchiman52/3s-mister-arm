@@ -204,6 +204,11 @@ void DirectP2P_TestHook_SetStunHolePunch(DirectP2P_StunHolePunch_fn fn);
 void DirectP2P_TestHook_SetRendezvousSend(DirectP2P_RendezvousSend_fn fn);
 void DirectP2P_TestHook_SetStunDiscover(DirectP2P_StunDiscover_fn fn);
 bool DirectP2P_TestHook_IsLanPeer(const char* ip);
+/* S3-review HIGH-1: override the joiner's fallback-signaling budget
+ * (ms; <= 0 restores the config value). The self-DELIVER regression
+ * test must wait the FULL budget out — its fix removes the loop's
+ * early exit — so it shrinks the budget rather than sleeping 2 x 8 s. */
+void DirectP2P_TestHook_SetSignalBudgetMs(int ms);
 #endif /* NETPLAY_TEST_HOOKS */
 
 #else /* !ENABLE_NETPLAY */

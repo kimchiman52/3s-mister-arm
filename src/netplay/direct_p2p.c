@@ -419,6 +419,11 @@ static DirectP2P_RendezvousSend_fn s_rendezvous_send_impl  = Rendezvous_Send;
 /* S2: Stun_Discover seam so the joiner auto-retry test can drive
  * BeginJoin end-to-end without touching real STUN servers. */
 static DirectP2P_StunDiscover_fn   s_stun_discover_impl    = Stun_Discover;
+/* S3-review HIGH-1: signaling-budget override so the self-DELIVER
+ * regression test doesn't spend 2 x 8 s (both attempts' full default
+ * budget) waiting out a loop whose early-exit the fix deliberately
+ * removes. 0 = use the config value. */
+static int s_test_signal_budget_ms = 0;
 
 #define STUN_HOLE_PUNCH(stun, peer_ip, peer_port, duration_ms, cancel) \
     s_stun_hole_punch_impl((stun), (peer_ip), (peer_port), (duration_ms), (cancel))
@@ -435,6 +440,9 @@ void DirectP2P_TestHook_SetRendezvousSend(DirectP2P_RendezvousSend_fn fn) {
 }
 void DirectP2P_TestHook_SetStunDiscover(DirectP2P_StunDiscover_fn fn) {
     s_stun_discover_impl = (fn != NULL) ? fn : Stun_Discover;
+}
+void DirectP2P_TestHook_SetSignalBudgetMs(int ms) {
+    s_test_signal_budget_ms = (ms > 0) ? ms : 0;
 }
 bool DirectP2P_TestHook_IsLanPeer(const char* ip) {
     return direct_p2p_is_lan_peer(ip);
@@ -1395,6 +1403,9 @@ static DirectP2PState join_attempt(void) {
          * the STUN socket. */
         int signal_budget_ms = Config_GetInt(CFG_KEY_NETPLAY_DIRECT_P2P_SIGNAL_BUDGET_MS);
         if (signal_budget_ms <= 0) signal_budget_ms = 8000;
+#ifdef NETPLAY_TEST_HOOKS
+        if (s_test_signal_budget_ms > 0) signal_budget_ms = s_test_signal_budget_ms;
+#endif
         int bilateral_budget_ms = Config_GetInt(CFG_KEY_NETPLAY_DIRECT_P2P_BILATERAL_PUNCH_MS);
         if (bilateral_budget_ms <= 0) bilateral_budget_ms = 5000; /* S2: sync w/ config.c */
 
@@ -1443,12 +1454,44 @@ static DirectP2PState join_attempt(void) {
                     }
                     if (dr == REND_DELIVER_PEER &&
                         parsed_ip[0] != '\0' && parsed_port != 0) {
-                        s_work.ev_deliver_real = true;
-                        SDL_strlcpy(fb_peer_ip, parsed_ip, sizeof(fb_peer_ip));
-                        fb_peer_port = parsed_port;
-                        got_deliver = true;
-                        SDL_Log("[direct_p2p] joiner DELIVER received peer=%s:%u",
-                                fb_peer_ip, (unsigned)fb_peer_port);
+                        /* S3-review HIGH-1 — joiner self-DELIVER gate, the
+                         * sibling of the host's H1 gate in
+                         * try_handle_deliver. A DELIVER whose endpoint IP
+                         * equals OUR OWN public IP is not the host: it is
+                         * this client's own registration from a previous
+                         * attempt, echoed back after the S2 fresh-socket
+                         * retry re-REGISTERed from a new source port and
+                         * the server filed us as "the joiner" of our own
+                         * attempt-1 slot. A LEGITIMATE same-IP host is
+                         * impossible here: the hairpin bypass above
+                         * (ip_eq_normalized(peer_ip, public_ip) before
+                         * FALLBACK_SIGNALING) fails any same-IP room code
+                         * with FAILED_SYMMETRIC before this loop ever
+                         * REGISTERs — the same argument the server's
+                         * SLOT_STALE_MS comment makes. Pre-fix this
+                         * consumed the self-endpoint as a live host,
+                         * punched our own dead attempt-1 mapping, and
+                         * misreported the single most common real failure
+                         * (a stale room code) as NAT_BLOCKED /
+                         * SYMMETRIC_BOTH instead of HOST_OFFLINE. Treat it
+                         * as EMPTY evidence (server alive, host absent)
+                         * and keep polling. */
+                        if (s_work.stun.public_ip[0] != '\0' &&
+                            direct_p2p_ip_eq_normalized(parsed_ip,
+                                                        s_work.stun.public_ip)) {
+                            SDL_Log("[direct_p2p] joiner DELIVER carries our own "
+                                    "public IP (%s:%u) — our stale registration "
+                                    "from a previous attempt, not the host; "
+                                    "treating as 'peer not registered'",
+                                    parsed_ip, (unsigned)parsed_port);
+                        } else {
+                            s_work.ev_deliver_real = true;
+                            SDL_strlcpy(fb_peer_ip, parsed_ip, sizeof(fb_peer_ip));
+                            fb_peer_port = parsed_port;
+                            got_deliver = true;
+                            SDL_Log("[direct_p2p] joiner DELIVER received peer=%s:%u",
+                                    fb_peer_ip, (unsigned)fb_peer_port);
+                        }
                     }
                 }
                 /* Non-DELIVER packets (stale punch echoes, garbage) are

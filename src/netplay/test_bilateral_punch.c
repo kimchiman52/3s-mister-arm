@@ -1147,6 +1147,180 @@ static int test_failure_taxonomy(void) {
     return fail_count > 0 ? 1 : 0;
 }
 
+/* --- Test 8: joiner self-DELIVER misdiagnosis (S3 review HIGH-1) ------- */
+
+/*
+ * Regression for the empirically-reproduced stale-room-code flow: a
+ * joiner REGISTERing a session key the host never occupied CREATES the
+ * server entry with itself as endpointA; the S2 retry re-REGISTERs from
+ * a fresh source port, gets filed as endpointB, and the server DELIVERs
+ * the joiner ITS OWN attempt-1 endpoint as "the peer". Pre-fix the
+ * joiner consumed that self-endpoint as a live host (ev_deliver_real),
+ * punched its own dead mapping, and classified the failure as
+ * NAT_BLOCKED — the single most common real failure ("stale code")
+ * never reported "Host not found".
+ *
+ * This test drives the REAL BeginJoin through the discover/punch seams
+ * against a localhost mock rendezvous that answers EVERY REGISTER with
+ * a DELIVER carrying the joiner's own (mock) public endpoint. Required
+ * outcome: terminal FAILED_BILATERAL classified as HOST_OFFLINE ("Host
+ * not found. Code stale or host offline."), NOT NAT_BLOCKED.
+ */
+
+typedef struct {
+    int           sock;
+    volatile bool stop;
+    uint32_t      self_ip_be;   /* endpoint the DELIVER carries (network order) */
+    uint16_t      self_port;    /* .. and its port (host order) */
+} SelfDeliverCtx;
+
+static int SDLCALL self_deliver_server_thread(void* arg) {
+    SelfDeliverCtx* ctx = (SelfDeliverCtx*)arg;
+    const long long start = (long long)time(NULL);
+    for (;;) {
+        if (ctx->stop) return 0;
+        if ((long long)time(NULL) - start > 20) return 0;
+
+        fd_set rfds;
+        FD_ZERO(&rfds);
+        FD_SET(ctx->sock, &rfds);
+        struct timeval tv = { 0, 50 * 1000 };
+        if (select(ctx->sock + 1, &rfds, NULL, NULL, &tv) <= 0) continue;
+
+        uint8_t buf[128];
+        struct sockaddr_in src;
+        socklen_t sl = sizeof(src);
+        const int n = (int)recvfrom(ctx->sock, (char*)buf, sizeof(buf), 0,
+                                    (struct sockaddr*)&src, &sl);
+        if (n < REND_REGISTER_LEN) continue;
+        if (buf[0] != REND_MAGIC_BYTES_0 || buf[1] != REND_MAGIC_BYTES_1 ||
+            buf[2] != REND_MAGIC_BYTES_2 || buf[3] != REND_MAGIC_BYTES_3 ||
+            buf[4] != REND_VERSION || buf[5] != REND_TYPE_REGISTER) {
+            continue;
+        }
+        /* Echo the REGISTER's own session key; carry the SELF endpoint. */
+        struct sockaddr_in self_ep;
+        memset(&self_ep, 0, sizeof(self_ep));
+        self_ep.sin_family = AF_INET;
+        self_ep.sin_addr.s_addr = ctx->self_ip_be;
+        uint8_t reply[REND_DELIVER_LEN];
+        const int rl = build_deliver(reply, &buf[8], &self_ep, ctx->self_port);
+        sendto(ctx->sock, (const char*)reply, rl, 0, (struct sockaddr*)&src, sl);
+    }
+}
+
+static int test_joiner_self_deliver(void) {
+    fprintf(stderr, "[test_bilateral_punch] test 8: joiner self-DELIVER -> HOST_OFFLINE\n");
+
+    NET_Init();
+    DirectP2P_Init();
+
+    unsigned short server_port = 0;
+    int server_sock = open_udp_on_localhost(&server_port);
+    if (server_sock < 0) {
+        FAIL("test8", "failed to bind localhost UDP socket for mock server");
+        return 1;
+    }
+
+    SelfDeliverCtx ctx;
+    memset(&ctx, 0, sizeof(ctx));
+    ctx.sock = server_sock;
+    ctx.stop = false;
+    /* The mock discover (below) reports the joiner's public endpoint as
+     * 203.0.113.9:40000; the DELIVER carries the same IP with a DIFFERENT
+     * port — exactly what the real server serves back after a retry
+     * re-REGISTER (the attempt-1 NAT mapping's port). */
+    ctx.self_ip_be = htonl(0xCB007109u); /* 203.0.113.9 (TEST-NET-3) */
+    ctx.self_port = 40123;
+
+    SDL_Thread* tid = SDL_CreateThread(self_deliver_server_thread,
+                                       "self_deliver_mock", &ctx);
+    if (!tid) {
+        FAIL("test8", "SDL_CreateThread failed");
+        close_sock(server_sock);
+        return 1;
+    }
+
+    /* Room code for a PUBLIC, non-LAN, non-self host so neither the LAN
+     * bypass nor the hairpin bypass fires and the joiner reaches the
+     * fallback-signaling loop. 198.51.100.7 (TEST-NET-2). */
+    struct in_addr host_ip;
+    host_ip.s_addr = htonl(0xC6336407u); /* 198.51.100.7 */
+    char code[ROOM_CODE_BUF_LEN] = { 0 };
+    int rc = 0;
+    if (!RoomCode_Encode((uint32_t)host_ip.s_addr, 6000, code)) {
+        FAIL("test8", "RoomCode_Encode failed");
+        rc = 1;
+        goto done;
+    }
+
+    /* Point the signaling at the localhost mock; shrink the budget so
+     * waiting out the (now exit-less) loop twice stays fast. */
+    {
+        char url[64];
+        SDL_snprintf(url, sizeof(url), "udp://127.0.0.1:%u", (unsigned)server_port);
+        Config_SetString(CFG_KEY_NETPLAY_DIRECT_P2P_SIGNAL_URL, url);
+    }
+    DirectP2P_TestHook_SetSignalBudgetMs(1000);
+    DirectP2P_TestHook_SetStunDiscover(mock_stun_discover);
+    DirectP2P_TestHook_SetStunHolePunch(mock_stun_punch);
+    s_mock_discover_calls = 0;
+    s_mock_punch_calls = 0;
+    s_mock_punch_succeed_from = 0; /* every punch fails */
+
+    DirectP2P_BeginJoin(code);
+    if (!wait_for_state(DIRECT_P2P_FAILED_BILATERAL, 15000)) {
+        fprintf(stderr,
+                "[test_bilateral_punch] FAIL: test8: state %d after budget, expected "
+                "FAILED_BILATERAL\n", (int)DirectP2P_GetState());
+        fail_count++;
+        rc = 1;
+    } else {
+        const char* status = DirectP2P_GetStatusText();
+        const char* want = ConnectFail_UserText(CONNECT_FAIL_HOST_OFFLINE);
+        const char* nat = ConnectFail_UserText(CONNECT_FAIL_NAT_BLOCKED);
+        if (strcmp(status, nat) == 0 ||
+            strcmp(status, ConnectFail_UserText(CONNECT_FAIL_SYMMETRIC_BOTH)) == 0) {
+            fprintf(stderr,
+                    "[test_bilateral_punch] FAIL: test8: self-DELIVER was consumed as a "
+                    "live host — status \"%s\" (the HIGH-1 misdiagnosis)\n", status);
+            fail_count++;
+            rc = 1;
+        } else if (strcmp(status, want) != 0) {
+            fprintf(stderr,
+                    "[test_bilateral_punch] FAIL: test8: status \"%s\", expected \"%s\"\n",
+                    status, want);
+            fail_count++;
+            rc = 1;
+        }
+    }
+    DirectP2P_Cancel(); /* back to IDLE for the tests that follow */
+
+done:
+    DirectP2P_TestHook_SetStunDiscover(NULL);
+    DirectP2P_TestHook_SetStunHolePunch(NULL);
+    DirectP2P_TestHook_SetSignalBudgetMs(0);
+    ctx.stop = true;
+    {
+        struct sockaddr_in srv;
+        memset(&srv, 0, sizeof(srv));
+        srv.sin_family = AF_INET;
+        srv.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        srv.sin_port = htons(server_port);
+        uint8_t wake = 0;
+        sendto(server_sock, (const char*)&wake, 1, 0,
+               (struct sockaddr*)&srv, sizeof(srv));
+    }
+    SDL_WaitThread(tid, NULL);
+    close_sock(server_sock);
+    if (rc == 0) {
+        fprintf(stderr,
+                "[test_bilateral_punch] test 8 OK — self-DELIVER treated as 'peer not "
+                "registered'; classified HOST_OFFLINE\n");
+    }
+    return rc;
+}
+
 /* --- Entry point ------------------------------------------------------ */
 
 int Netplay_Test_BilateralPunch(void) {
@@ -1158,6 +1332,7 @@ int Netplay_Test_BilateralPunch(void) {
     rc |= test_lan_bypass();
     rc |= test_protocol_round_trip();
     rc |= test_kill_switch_round_trip();
+    rc |= test_joiner_self_deliver();
     rc |= test_joiner_fresh_socket_retry();
     rc |= test_failure_taxonomy();
 
