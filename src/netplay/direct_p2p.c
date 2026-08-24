@@ -539,13 +539,47 @@ static SDL_Thread* s_upnp_renew_thread = NULL;
 static UpnpJob* s_upnp_renew_job = NULL;
 static uint64_t s_upnp_next_renew_ms = 0;
 
-/* Join the renewal thread (blocking — bounded by one router HTTP round
- * trip on the cached IGD, typically < 100 ms; ~2 s worst case if the
- * cache was invalidated). Used by teardown/Cancel; must run before
- * Upnp_RemoveMapping. Discards any result. */
-static void upnp_renew_join_and_discard(void) {
+/* Reap the renewal thread with a BOUNDED wait (review H3 — mirrors
+ * try_upnp's deadline+detach pattern). An unbounded SDL_WaitThread here
+ * was a main-thread hang: the worker runs Upnp_AddMapping = two blocking
+ * router HTTP transactions, and if the router is dead/rebooting —
+ * exactly when a renewal is likely to be in flight — a TCP connect can
+ * block for the OS SYN timeout (~75 s macOS, ~2 min Linux), freezing
+ * the game thread inside teardown/Cancel.
+ *
+ * Returns true when the thread was joined (or none was running), i.e.
+ * miniupnpc is quiescent and the caller may safely make further
+ * miniupnpc calls (Upnp_RemoveMapping). Returns false when the thread
+ * had to be DETACHED: the caller must then SKIP Upnp_RemoveMapping —
+ * (a) it would race the still-running worker on miniupnpc's cached-IGD
+ * statics, and (b) it would block the main thread on the same dead
+ * router anyway. The un-removed mapping expires on its own 1-hour
+ * lease (same accepted leak as try_upnp's timeout path). On detach the
+ * heap job struct is intentionally leaked to the worker — it is the
+ * thread's sole owner from that point, so the detached thread can
+ * never touch freed state (it references only the job and miniupnpc
+ * statics, never s_work). */
+#define UPNP_RENEW_JOIN_BUDGET_MS 2000
+static bool upnp_renew_join_and_discard(void) {
+    bool joined = true;
     if (s_upnp_renew_thread != NULL) {
-        SDL_WaitThread(s_upnp_renew_thread, NULL);
+        const uint64_t deadline_ms = SDL_GetTicks() + UPNP_RENEW_JOIN_BUDGET_MS;
+        while (SDL_GetThreadState(s_upnp_renew_thread) != SDL_THREAD_COMPLETE &&
+               SDL_GetTicks() < deadline_ms) {
+            SDL_Delay(10);
+        }
+        if (SDL_GetThreadState(s_upnp_renew_thread) == SDL_THREAD_COMPLETE) {
+            SDL_WaitThread(s_upnp_renew_thread, NULL);
+        } else {
+            SDL_Log("[direct_p2p] WARNING: UPnP renewal thread unresponsive after %u ms "
+                    "(router down?) — detaching; router-side mapping removal skipped, "
+                    "the lease expires on its own.",
+                    (unsigned)UPNP_RENEW_JOIN_BUDGET_MS);
+            SDL_DetachThread(s_upnp_renew_thread);
+            /* Ownership of the job transfers to the detached worker. */
+            s_upnp_renew_job = NULL;
+            joined = false;
+        }
         s_upnp_renew_thread = NULL;
     }
     if (s_upnp_renew_job != NULL) {
@@ -553,6 +587,7 @@ static void upnp_renew_join_and_discard(void) {
         s_upnp_renew_job = NULL;
     }
     s_upnp_next_renew_ms = 0;
+    return joined;
 }
 
 /* Main-thread, non-blocking. Called once per frame from DirectP2P_Tick
@@ -1297,12 +1332,16 @@ static void direct_p2p_on_teardown(void) {
      * after teardown). */
     rend_q_purge();
 
-    /* S1: join any in-flight UPnP lease renewal BEFORE RemoveMapping so
-     * miniupnpc's cached-IGD statics are never used concurrently. */
-    upnp_renew_join_and_discard();
+    /* S1: reap any in-flight UPnP lease renewal BEFORE RemoveMapping so
+     * miniupnpc's cached-IGD statics are never used concurrently. Bounded
+     * (review H3); on detach-timeout the router-side removal is skipped —
+     * see upnp_renew_join_and_discard. */
+    bool upnp_quiescent = upnp_renew_join_and_discard();
 
     if (s_upnp_mapping.active) {
-        Upnp_RemoveMapping(&s_upnp_mapping);
+        if (upnp_quiescent) {
+            Upnp_RemoveMapping(&s_upnp_mapping);
+        }
         memset(&s_upnp_mapping, 0, sizeof(s_upnp_mapping));
     }
     /* Note: we do NOT destroy s_work.stun.socket here — ownership has
@@ -1828,12 +1867,15 @@ void DirectP2P_Cancel(void) {
     Stun_ReleaseServerAddr(&s_work.stun); /* S1: drop keepalive target ref */
     s_stun_keepalive_last_ms = 0;
     s_rebind_txid_valid = false;
-    /* S1: join any in-flight UPnP lease renewal before RemoveMapping. */
-    upnp_renew_join_and_discard();
-    if (s_upnp_mapping.active) {
-        Upnp_RemoveMapping(&s_upnp_mapping);
-        memset(&s_upnp_mapping, 0, sizeof(s_upnp_mapping));
+    /* S1: reap any in-flight UPnP lease renewal before RemoveMapping —
+     * bounded, and RemoveMapping is skipped when the worker had to be
+     * detached (review H3; see upnp_renew_join_and_discard). */
+    if (upnp_renew_join_and_discard()) {
+        if (s_upnp_mapping.active) {
+            Upnp_RemoveMapping(&s_upnp_mapping);
+        }
     }
+    memset(&s_upnp_mapping, 0, sizeof(s_upnp_mapping));
     memset(&s_work, 0, sizeof(s_work));
     set_status("");
     s_handshake_reject_latched = false; /* R-1: drop any pending reject latch */
