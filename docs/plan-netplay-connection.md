@@ -369,7 +369,11 @@ post-S3 tree.
   liveness log, and the cause-8 advisory (below) after 30 s of silence.
 - User-reachable abort: holding START ~3 s
   (`CONNECT_ABORT_HOLD_FRAMES`) in TRANSITIONING or CONNECTING tears
-  down as a user cancel (`P2P_ABORT_USER`).
+  down as a user cancel (`P2P_ABORT_USER`). Note (review L-5):
+  TRANSITIONING's *loading* phase (waiting on
+  `game_ready_to_run_character_select`) has no wall-clock deadline —
+  the START-hold abort is the ONLY bound on it, and its status line
+  advertises the abort ("Match found! Loading... START quits").
 
 ### 5.2 Failure taxonomy (Part B) — src/netplay/connect_fail.{h,c}
 
@@ -379,8 +383,8 @@ overlay status line. Detection evidence, as implemented:
 | # | cause | detection evidence | machine code | user string |
 |---|---|---|---|---|
 | 1 | no network / DNS dead | every getaddrinfo failed AND zero STUN replies (`StunResult.diag_*`) | `P2P_FAIL_DNS_ALLDOWN` | "No internet connection (DNS failed)." |
-| 2 | STUN blocked | sends succeeded, zero responses from all servers | `P2P_FAIL_STUN_ALLDOWN` | "Network blocks UDP (no STUN reply)." |
-| 3 | rendezvous server down | ZERO DELIVER frames for the whole signaling budget — the server answers EVERY REGISTER with a DELIVER (real or 0.0.0.0:0 sentinel; rendezvous-server.js handleRegister), so silence = server/path down. Requires the `Rendezvous_ParseDeliverEx` tri-state split (MALFORMED vs EMPTY vs PEER) | `P2P_FAIL_RENDEZVOUS_DOWN` | "Matchmaking server unreachable." |
+| 2 | STUN blocked | sends succeeded, zero responses from all servers | `P2P_FAIL_STUN_ALLDOWN` | "No STUN reply (UDP blocked or net down)." (hedged, review L-4: also covers ISP-down-LAN-up) |
+| 3 | rendezvous server down | ZERO DELIVER frames for the whole signaling budget — the server answers EVERY REGISTER with a DELIVER (real or 0.0.0.0:0 sentinel; rendezvous-server.js handleRegister), so silence = server/path down. Requires the `Rendezvous_ParseDeliverEx` tri-state split (MALFORMED vs EMPTY vs PEER). Review L-3 honesty note: four live-server silent-drop cases (per-IP rate limit, per-IP live-key quota, paired-table-full, third-party drop) also land here — documented in connect_fail.h; a distinguishable NACK needs a wire change | `P2P_FAIL_RENDEZVOUS_DOWN` | "Matchmaking server unreachable." |
 | 4 | host offline / code stale | DELIVERs arrived but ALL were the zero-sentinel — a DELIVER carrying the joiner's OWN public IP counts as a sentinel too (review HIGH-1: it is the server echoing the joiner's attempt-1 registration back after the S2 fresh-socket retry re-REGISTERed a never-hosted key; a legitimate same-IP host is impossible because the hairpin bypass fails same-IP codes before the joiner ever REGISTERs) | `P2P_FAIL_HOST_OFFLINE` | "Host not found. Code stale or host offline." |
 | 5 | host online, NAT-blocked | real-endpoint DELIVER arrived, bilateral punch timed out | `P2P_FAIL_NAT_BLOCKED` | "Host found, but NAT blocked the link." |
 | 6 | symmetric-both / needs relay | as (5) + `StunResult.port_disagreement` (S2) | `P2P_FAIL_SYMMETRIC_BOTH` | "Both networks too strict (needs relay)." |

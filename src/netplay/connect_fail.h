@@ -30,6 +30,27 @@
  *                                  | "Reply to source with the OTHER
  *                                  | endpoint (or zeroes)"; silence
  *                                  | therefore means server/path down)
+ *                                  | HONESTY NOTE (review L-3): a live
+ *                                  | server SILENTLY DROPS a REGISTER in
+ *                                  | four real cases, all of which this
+ *                                  | inference then misfiles as "server
+ *                                  | down": (1) the 10 pkt/s/IP rate
+ *                                  | limiter (rendezvous-server.js
+ *                                  | onMessage) — shared/CGNAT egress IPs
+ *                                  | pool that budget across users;
+ *                                  | (2) the MAX_NEW_KEYS_PER_IP live-key
+ *                                  | quota — reachable by one joiner
+ *                                  | retrying >= 5 DISTINCT stale codes
+ *                                  | inside the TTL, since each stale
+ *                                  | attempt CREATES a key; (3) session
+ *                                  | table full of PAIRED sessions;
+ *                                  | (4) third-party REGISTER on a fully
+ *                                  | paired key. All four are rare and
+ *                                  | none is distinguishable client-side
+ *                                  | today (a distinct NACK needs a wire
+ *                                  | change — S4/S5 territory), so
+ *                                  | RENDEZVOUS_DOWN remains the honest
+ *                                  | best guess, not a certainty.
  *   host offline / code stale      | DELIVERs arrived but ALL were the
  *                                  | zero-sentinel for the whole budget
  *   host online, NAT-blocked       | a real-endpoint DELIVER arrived,

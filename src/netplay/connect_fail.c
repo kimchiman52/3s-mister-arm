@@ -35,7 +35,10 @@ const char* ConnectFail_UserText(ConnectFailCode code) {
     case CONNECT_FAIL_DNS_ALLDOWN:
         return "No internet connection (DNS failed).";
     case CONNECT_FAIL_STUN_ALLDOWN:
-        return "Network blocks UDP (no STUN reply).";
+        /* Review L-4: hedged — the same evidence (sends left the box,
+         * zero replies) also covers "ISP/uplink down while the LAN is
+         * up", which is not the router's fault. */
+        return "No STUN reply (UDP blocked or net down).";
     case CONNECT_FAIL_RENDEZVOUS_DOWN:
         return "Matchmaking server unreachable.";
     case CONNECT_FAIL_HOST_OFFLINE:
@@ -97,7 +100,12 @@ ConnectFailCode ConnectFail_ClassifyJoin(const ConnectJoinEvidence* ev) {
     if (!ev->deliver_any) {
         /* The server answers EVERY REGISTER with a DELIVER (real
          * endpoint or zero-sentinel) — total silence for the whole
-         * budget means the server or the path to it is down. */
+         * budget means the server or the path to it is down.
+         * Review L-3: four silent-drop exceptions exist (rate limiter,
+         * per-IP key quota, paired-table-full, third-party drop) and
+         * currently classify here too — see the honesty note in
+         * connect_fail.h; a client-distinguishable NACK needs a wire
+         * change. */
         return CONNECT_FAIL_RENDEZVOUS_DOWN;
     }
     if (!ev->deliver_real) {

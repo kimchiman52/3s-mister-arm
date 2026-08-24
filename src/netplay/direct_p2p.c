@@ -2196,6 +2196,11 @@ void DirectP2P_BeginJoin(const char* peer_code) {
     uint32_t ip_be = 0;
     uint16_t pub_port = 0;
     if (!RoomCode_Decode(peer_code, &ip_be, &pub_port)) {
+        /* Review L-1: same belt-and-braces release the normal path does
+         * before ITS memset — a ref'd STUN server address left in
+         * s_work.stun by an earlier session must not be leaked by the
+         * zeroing below. */
+        Stun_ReleaseServerAddr(&s_work.stun);
         memset(&s_work, 0, sizeof(s_work));
         s_work.role = ROLE_JOIN;
         s_outcome_reported = false;
@@ -2208,6 +2213,7 @@ void DirectP2P_BeginJoin(const char* peer_code) {
     in.s_addr = ip_be;
     char peer_ip[64] = { 0 };
     if (inet_ntop(AF_INET, &in, peer_ip, sizeof(peer_ip)) == NULL) {
+        Stun_ReleaseServerAddr(&s_work.stun); /* L-1: see decode path above */
         memset(&s_work, 0, sizeof(s_work));
         s_work.role = ROLE_JOIN;
         s_outcome_reported = false;

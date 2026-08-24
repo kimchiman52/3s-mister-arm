@@ -926,6 +926,15 @@ static void configure_gekko() {
     // Tier-1 netplay diag — Item 7: open the per-session netplay log file.
     // Block-buffered, fflush'd 1 Hz from the heartbeat. Filename includes
     // the session-start unix ms so cross-peer pairing is just matching ms.
+    //
+    // S3-review L-2: a PRE-session connection failure opens the log lazily
+    // via Netplay_LogConnectEvent, and nothing on that path ever closes it
+    // (netplay_log_close only runs from the EXITING/flush paths of a live
+    // session) — so without this close, a later session's netplay_log_open
+    // would early-return on the already-open handle and append the entire
+    // session log to the failure-timestamped file. Retire any such
+    // leftover log first; this session gets its own file.
+    netplay_log_close();
     netplay_log_open(s_session_started_unix_ms);
 
     // Tier-1 netplay diag — Item 9: capture /proc/net/snmp UDP-row baseline
@@ -1591,8 +1600,13 @@ void Netplay_Run() {
             transition_ready_frames += 1;
         } else {
             transition_ready_frames = 0;
+            /* Review L-5: the hold-START abort armed above is live during
+             * this loading phase too — say so, like the verifying/syncing
+             * texts do. (This phase is bounded ONLY by that abort: it
+             * waits on game_ready_to_run_character_select with no
+             * wall-clock deadline.) */
             SDL_snprintf(s_connect_status, sizeof(s_connect_status),
-                         "Match found! Loading...");
+                         "Match found! Loading... START quits");
             clean_input_buffers();
             step_game(true);
         }
