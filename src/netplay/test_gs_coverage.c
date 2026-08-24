@@ -70,8 +70,25 @@
  * 59 hole bytes across 24 ranges, cross-checked against a clang
  * -fdump-record-layouts offsetof/sizeof map of all 610 top-level members
  * — every hole byte lies in inter-member or trailing alignment padding,
- * and all 610 members round-trip. */
-#define GS_COVERAGE_EXPECTED_HOLE_BYTES 59
+ * and all 610 members round-trip.
+ *
+ * Re-pinned 2026-08-24, 59 -> 57 (sizeof(GameState) == 19344, 612
+ * top-level members), after two fields were added:
+ *   - Random_ix16_bg (s16) restored between Random_ix32_ex_com and
+ *     Opening_Now. On 64-bit it costs ZERO new bytes: it lands inside
+ *     the existing pre-`task[11]` alignment padding, so the hole at
+ *     2044..2047 shrinks to 2046..2047 and the count drops by 2. This is
+ *     the "FEWER holes" direction, which can only mean padding became a
+ *     covered field — never a coverage loss.
+ *   - effl8_colorram[4][12] (u16) appended at 19248, running to 19343 =
+ *     sizeof-1, i.e. no trailing hole: all 96 bytes round-trip.
+ * Verification (not assumed): clang -Xclang -fdump-record-layouts on
+ * this exact header, then checking every one of the 24 reported hole
+ * ranges against the member offset map. All 24 sit strictly BETWEEN two
+ * consecutive members (e.g. 11..11 after hoji_counter@10 before
+ * select_timer_state@12; 19237..19239 after ca_check_flag@19236 before
+ * spmv_ng_save@19240); none coincides with or falls inside a member. */
+#define GS_COVERAGE_EXPECTED_HOLE_BYTES 57
 #endif
 
 static uint32_t rng_state;
