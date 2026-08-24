@@ -3,11 +3,13 @@
 // UDP clients. Wire-format encode logic is duplicated here on purpose so the
 // test catches encoding bugs in either side.
 //
-// Runtime budget: ~1.6 s, dominated by deliberate negative-wait
+// Runtime budget: ~1.7 s, dominated by deliberate negative-wait
 // timeouts (assertions of the form "no reply arrives"). Keep it under
 // 2.5 s; on loopback every POSITIVE wait resolves in well under a
 // millisecond, so if this file ever approaches the ceiling the cause is
-// a new negative wait, not slow I/O.
+// a new negative wait, not slow I/O. The map-bound tests (review
+// MEDIUM-3) inject ~40k packets through handle._onMessage, but that is
+// pure in-process work and costs well under 100 ms.
 
 'use strict';
 
@@ -1021,6 +1023,189 @@ async function testV1ClientInterlock(handle, serverPort) {
     }
 }
 
+// --- Review HIGH-2 / MEDIUM-3: pre-validation resource policy ---------------
+
+async function testCookiedNotStarvedByUncookied(handle) {
+    // Review HIGH-2, the attack this exists to stop. rateLimitAllow used to
+    // be the FIRST statement in onMessage, keyed on rinfo.address alone and
+    // run before the length/magic/version checks and before the cookie
+    // gate. So an attacker who knows a host's IP — which the room code
+    // still reveals — could send 10 spoofed 36-byte REGISTERs/s carrying
+    // that address (~2.9 kbit/s), exhaust the VICTIM's per-IP budget, and
+    // the victim's OWN correctly-cookied REGISTER would then get zero
+    // replies and bind nothing. A permanent matchmaking lockout of a named
+    // host for the price of a trickle, surfaced to the user as
+    // RENDEZVOUS_DOWN.
+    //
+    // Required property: uncookied/spoofed traffic claiming source X must
+    // not be able to consume anything a correctly-cookied request from X
+    // needs. The two budgets are now structurally separate buckets, so
+    // this is not a question of tuning a limit.
+    handle._resetSessions();
+    handle._resetRate();
+    const VICTIM = '192.0.2.77';
+    const VICTIM_PORT = 5555;
+    const stub = makeStubSocket();
+
+    // The flood: 4x the COOKIED budget, spoofing the victim's address.
+    // (The attacker picks the source port; it cannot know or match the
+    // victim's, and the limiter never looked at the port anyway.)
+    const floodShots = handle._rateLimit * 4;
+    for (let i = 0; i < floodShots; i++) {
+        handle._onMessage(makeRegister(crypto.randomBytes(16), 9999),
+            { address: VICTIM, port: 9999 }, stub);
+    }
+    assertEq(handle._sessionMap.size, 0, 'starvation: spoofed uncookied flood bound no sessions');
+    assertEq(handle._creatorCounts.size, 0, 'starvation: spoofed uncookied flood consumed no key quota');
+    // Structural core of the fix: uncookied traffic never reaches the
+    // cookied bucket at all.
+    assert(!handle._rateMap.has(VICTIM),
+        'starvation: uncookied traffic did NOT touch the victim\'s COOKIED per-IP budget');
+    assert(handle._preGateMap.has(VICTIM),
+        'starvation: uncookied traffic was accounted to the separate pre-gate budget');
+
+    // Now the victim itself: one correctly-cookied REGISTER from its real
+    // endpoint. It must be served.
+    stub.sent.length = 0;
+    const key = crypto.randomBytes(16);
+    handle._onMessage(regFrom(key, VICTIM_PORT, VICTIM, VICTIM_PORT),
+        { address: VICTIM, port: VICTIM_PORT }, stub);
+    assertEq(stub.sent.length, 1, 'starvation: cookied REGISTER from the flooded IP got exactly one reply');
+    assertNotChallenge(stub.sent[0], 'starvation: cookied REGISTER got a DELIVER, not a CHALLENGE');
+    assert(handle._sessionMap.has(key.toString('hex')),
+        'starvation: cookied REGISTER from the flooded IP BOUND its session slot');
+
+    // And it keeps working: the victim's whole cookied budget is intact,
+    // not merely its first packet.
+    stub.sent.length = 0;
+    for (let i = 1; i < handle._rateLimit; i++) {
+        handle._onMessage(regFrom(key, VICTIM_PORT, VICTIM, VICTIM_PORT),
+            { address: VICTIM, port: VICTIM_PORT }, stub);
+    }
+    assertEq(stub.sent.length, handle._rateLimit - 1,
+        'starvation: the rest of the victim\'s cookied budget survived the flood too');
+
+    handle._resetSessions();
+    handle._resetRate();
+}
+
+async function testPreGateBudgetBoundsChallenges(handle) {
+    // The HIGH-2 fix must not be "delete the limiter". Uncookied first
+    // contact keeps a budget of its own — PREGATE_LIMIT_PER_WINDOW — whose
+    // job is to bound CHALLENGE egress toward a single address. The
+    // CHALLENGE is 32 bytes for a 36-byte request (factor 0.89), so the
+    // server is a net attenuator and this budget is about egress volume
+    // and per-source work, not about amplification.
+    handle._resetSessions();
+    handle._resetRate();
+    const limit = handle._preGateLimit;
+    assert(limit > handle._rateLimit,
+        `pre-gate: uncookied budget (${limit}) is larger than the cookied one (${handle._rateLimit}) — the two must not be the same bucket`);
+    const SRC = '203.0.113.90';
+    const stub = makeStubSocket();
+    const shots = limit + 25;
+    for (let i = 0; i < shots; i++) {
+        handle._onMessage(makeRegister(crypto.randomBytes(16), 4000), { address: SRC, port: 4000 }, stub);
+    }
+    // +1 slack for a sliding-window boundary landing mid-loop.
+    assert(stub.sent.length <= limit + 1,
+        `pre-gate: <= ${limit + 1} CHALLENGEs emitted for ${shots} uncookied requests from one IP (got ${stub.sent.length})`);
+    assert(stub.sent.length >= 1, 'pre-gate: at least one CHALLENGE got through');
+    for (const s of stub.sent) {
+        if (s.address !== SRC) {
+            assert(false, `pre-gate: every CHALLENGE goes to the claimed source (saw ${s.address})`);
+            break;
+        }
+    }
+    assertIsChallenge(stub.sent[0], 'pre-gate: emitted packets are CHALLENGEs');
+
+    // Control: the same volume spread over distinct sources is not
+    // throttled — this is a per-source budget, not a global one, and this
+    // is what proves the assertion above measured the pre-gate bucket.
+    handle._resetRate();
+    stub.sent.length = 0;
+    for (let i = 0; i < shots; i++) {
+        const addr = `198.18.${(i >> 8) & 255}.${i & 255}`;
+        handle._onMessage(makeRegister(crypto.randomBytes(16), 4000), { address: addr, port: 4000 }, stub);
+    }
+    assertEq(stub.sent.length, shots, 'pre-gate: distinct sources are NOT throttled (control)');
+    handle._resetSessions();
+    handle._resetRate();
+}
+
+async function testRateMapBounded(handle) {
+    // Review MEDIUM-3. rateLimitAllow used to run before ANY validation, so
+    // every datagram allocated a Map entry keyed on its CLAIMED source
+    // address: 1-byte junk from 5000 spoofed IPs produced 5000 rateMap
+    // entries retained >= 60 s, and at 100k pps that is ~6M live
+    // entries/minute — V8 heap exhaustion from traffic that never carried
+    // a valid byte. Two properties are required now:
+    //   (a) nothing is allocated until the frame passes magic + version +
+    //       length, so pure junk costs zero entries at any rate; and
+    //   (b) what does survive that filter is hard-capped with LRU
+    //       eviction, so even well-formed spoofed traffic from unbounded
+    //       distinct sources cannot grow the maps without limit.
+    handle._resetSessions();
+    handle._resetRate();
+    const stub = makeStubSocket();
+
+    // (a) Junk that never passes validation allocates nothing at all.
+    const JUNK_SOURCES = 5000;
+    for (let i = 0; i < JUNK_SOURCES; i++) {
+        const addr = `10.${(i >> 16) & 255}.${(i >> 8) & 255}.${i & 255}`;
+        handle._onMessage(Buffer.alloc(1), { address: addr, port: 1 }, stub);           // too short
+        handle._onMessage(makeRegister(crypto.randomBytes(16), 1, { magic: 0xdeadbeef }),
+            { address: addr, port: 2 }, stub);                                          // bad magic
+        handle._onMessage(makeRegister(crypto.randomBytes(16), 1, { version: 3 }),
+            { address: addr, port: 3 }, stub);                                          // bad version
+        handle._onMessage(makeRegister(crypto.randomBytes(16), 1, { length: 16 }),
+            { address: addr, port: 4 }, stub);                                          // bad length
+    }
+    assertEq(stub.sent.length, 0, 'bounded: pre-validation junk produced no replies');
+    assertEq(handle._rateMap.size, 0, `bounded: ${JUNK_SOURCES} junk sources allocated NO cookied rate entries`);
+    assertEq(handle._preGateMap.size, 0, `bounded: ${JUNK_SOURCES} junk sources allocated NO pre-gate entries`);
+    assertEq(handle._keyRateMap.size, 0, `bounded: ${JUNK_SOURCES} junk sources allocated NO per-key entries`);
+
+    // (b) Well-formed uncookied REGISTERs DO allocate — from more distinct
+    // spoofed sources than the cap allows. The map must stop growing.
+    const cap = handle._maxRateEntries;
+    const sources = cap + 1500;
+    let firstAddr = null;
+    let lastAddr = null;
+    for (let i = 0; i < sources; i++) {
+        const addr = `172.${(i >> 16) & 255}.${(i >> 8) & 255}.${i & 255}`;
+        if (i === 0) firstAddr = addr;
+        lastAddr = addr;
+        handle._onMessage(makeRegister(crypto.randomBytes(16), 4000), { address: addr, port: 4000 }, stub);
+    }
+    assert(handle._preGateMap.size <= cap,
+        `bounded: pre-gate map stayed <= ${cap} across ${sources} distinct spoofed sources (got ${handle._preGateMap.size})`);
+    assertEq(handle._rateMap.size, 0, 'bounded: spoofed uncookied traffic never allocated a COOKIED rate entry');
+    // LRU, not FIFO-of-first-insert-only: the least recently seen source is
+    // the one that goes, the most recent survives.
+    assert(!handle._preGateMap.has(firstAddr), 'bounded: the least-recently-used source was evicted');
+    assert(handle._preGateMap.has(lastAddr), 'bounded: the most recent source is retained');
+
+    // Same treatment for the post-cookie maps: a cookie-capable botnet
+    // hitting distinct keys from distinct addresses cannot grow them past
+    // the cap either.
+    handle._resetRate();
+    stub.sent.length = 0;
+    for (let i = 0; i < cap + 500; i++) {
+        const addr = `100.${(i >> 16) & 255}.${(i >> 8) & 255}.${i & 255}`;
+        const port = 6000;
+        handle._onMessage(makePoll(crypto.randomBytes(16), { cookie: cookieFor(addr, port) }),
+            { address: addr, port }, stub);
+    }
+    assert(handle._rateMap.size <= cap,
+        `bounded: cookied per-IP map stayed <= ${cap} (got ${handle._rateMap.size})`);
+    assert(handle._keyRateMap.size <= cap,
+        `bounded: per-key map stayed <= ${cap} (got ${handle._keyRateMap.size})`);
+
+    handle._resetSessions();
+    handle._resetRate();
+}
+
 async function testSweepHook(handle) {
     // The sweep hook exists and is callable. We don't try to time-warp; just
     // assert calling it doesn't throw and doesn't crash the server.
@@ -1031,6 +1216,69 @@ async function testSweepHook(handle) {
 }
 
 // --- Main -------------------------------------------------------------------
+
+// Review HIGH-3. This file used to wrap the ENTIRE test list in one
+// try/catch. The first `recv timeout` thrown by any test unwound the whole
+// runner, silently skipped every test after it, and still printed a small,
+// plausible-looking failure count. It was proven in review: with the
+// server's version check disabled the run reported "1 assertion(s) failed"
+// while everything from testLengthReject onwards — the entire S4c block AND
+// testV1ClientInterlock, the test that was supposed to catch exactly that
+// regression — never executed at all. A suite that cannot report the truth
+// about its own coverage is worse than no suite.
+//
+// Three properties now hold:
+//   1. Each test runs inside its OWN try/catch. A throw is recorded against
+//      that test by name and the runner continues.
+//   2. `testsRun` is counted and compared against a LITERAL expected count,
+//      so a silently-skipped (or accidentally-unregistered) test is itself
+//      a hard failure rather than an invisible hole.
+//   3. Shared server state is reset AFTER every test, pass or throw, so a
+//      test that dies halfway through cannot poison the next one (a throw
+//      mid-testSessionCap used to leave 4096 synthetic entries behind).
+// Combined with the eager `process.exitCode` (see §6.6 of
+// docs/plan-netplay-connection.md), the shell now sees the truth.
+
+// EXPECTED_TESTS is deliberately a literal, NOT TESTS.length: the point is
+// to catch a test vanishing from the registry, and deriving it from the
+// registry would make that undetectable.
+const EXPECTED_TESTS = 26;
+
+let testsRun = 0;
+let testsFailed = 0;
+
+async function runTest(name, fn) {
+    testsRun += 1;
+    const before = failed;
+    let threw = null;
+    try {
+        await fn();
+    } catch (err) {
+        threw = err;
+    }
+    // Per-test isolation, pass or throw. Every test either builds its own
+    // session keys or resets first, so a blanket reset here is safe — and
+    // it is what makes a test that dies halfway through harmless to its
+    // successors (a throw inside testSessionCap used to leave 4096
+    // synthetic entries and a filled per-IP quota behind).
+    try {
+        H._resetRate();
+        H._resetSessions();
+    } catch (resetErr) {
+        console.error(`TEST ERROR: ${name}: reset hook failed: ${resetErr && resetErr.stack ? resetErr.stack : resetErr}`);
+        threw = threw || resetErr;
+    }
+    const assertionsFailed = failed - before;
+    if (assertionsFailed > 0) {
+        console.error(`TEST FAIL: ${name} (${assertionsFailed} assertion(s) failed)`);
+    }
+    if (threw) {
+        console.error(`TEST ERROR: ${name}: ${threw && threw.stack ? threw.stack : threw}`);
+    }
+    if (assertionsFailed > 0 || threw) {
+        testsFailed += 1;
+    }
+}
 
 async function main() {
     // Silence info/warn logs from the server during tests so output is clean.
@@ -1045,57 +1293,56 @@ async function main() {
 
     let exitCode = 0;
     try {
-        // Tests that touch the rate-limit budget share the 127.0.0.1 source IP,
-        // so we explicitly clear the rate state between tests via the
-        // _resetRate() hook rather than waiting on wall-clock windows.
-        await testRoundTripRegister(serverPort);   // 4 packets
-        handle._resetRate();
-        await testMagicReject(serverPort);         // 1 packet
-        await testVersionReject(serverPort);       // 1 packet
-        await testLengthReject(serverPort);        // 1 packet
-        await testPollAfterRegister(serverPort);   // 2 packets
-        handle._resetRate();
-        await testRateLimit(serverPort);
-        handle._resetRate();
-        await testSessionTtl(handle, serverPort);   // 3 packets
-        handle._resetRate();
-        await testSessionCap(handle, serverPort);   // 5 packets
-        handle._resetRate();
-        await testPerIpQuota(handle, serverPort);   // 8 packets
-        handle._resetRate();
-        await testSpoofedFloodEviction(handle);     // injection only
-        await testStaleSlotReclaim(handle, serverPort); // 4 packets
-        handle._resetRate();
-        await testRehostWithinStaleWindow(handle, serverPort); // 5 packets
-        handle._resetRate();
-        await testFreshSlotNotReclaimed(handle, serverPort); // 2 packets
-        handle._resetRate();
-        await testReclaimRequiresSameIp(handle);
-        await testPoisonedKeyBothSlotsStale(handle);
-        await testStaleJoinerSlotReplaced(handle);
-        handle._resetRate();
+        // Tests that touch the rate-limit budget share the 127.0.0.1 source
+        // IP; runTest() clears the rate + session state after every entry
+        // rather than waiting on wall-clock windows.
+        await runTest('roundTripRegister', () => testRoundTripRegister(serverPort));
+        await runTest('magicReject', () => testMagicReject(serverPort));
+        await runTest('versionReject', () => testVersionReject(serverPort));
+        await runTest('lengthReject', () => testLengthReject(serverPort));
+        await runTest('pollAfterRegister', () => testPollAfterRegister(serverPort));
+        await runTest('rateLimit', () => testRateLimit(serverPort));
+        await runTest('sessionTtl', () => testSessionTtl(handle, serverPort));
+        await runTest('sessionCap', () => testSessionCap(handle, serverPort));
+        await runTest('perIpQuota', () => testPerIpQuota(handle, serverPort));
+        await runTest('spoofedFloodEviction', () => testSpoofedFloodEviction(handle));
+        await runTest('staleSlotReclaim', () => testStaleSlotReclaim(handle, serverPort));
+        await runTest('rehostWithinStaleWindow', () => testRehostWithinStaleWindow(handle, serverPort));
+        await runTest('freshSlotNotReclaimed', () => testFreshSlotNotReclaimed(handle, serverPort));
+        await runTest('reclaimRequiresSameIp', () => testReclaimRequiresSameIp(handle));
+        await runTest('poisonedKeyBothSlotsStale', () => testPoisonedKeyBothSlotsStale(handle));
+        await runTest('staleJoinerSlotReplaced', () => testStaleJoinerSlotReplaced(handle));
 
         // --- S4c: return-routability + per-key cap + version interlock ---
-        await testCookieChallengeRequired(handle, serverPort); // 6 packets
-        handle._resetRate();
-        await testCookieBoundToSource(handle);      // injection only
-        await testSpoofedSourceCannotBind(handle);  // injection only
-        await testPerKeyRateCap(handle);            // injection only
-        await testCookieRotationWindow(handle);     // injection only
-        await testV1ClientInterlock(handle, serverPort); // 3 packets
-        handle._resetRate();
+        await runTest('cookieChallengeRequired', () => testCookieChallengeRequired(handle, serverPort));
+        await runTest('cookieBoundToSource', () => testCookieBoundToSource(handle));
+        await runTest('spoofedSourceCannotBind', () => testSpoofedSourceCannotBind(handle));
+        await runTest('perKeyRateCap', () => testPerKeyRateCap(handle));
+        await runTest('cookieRotationWindow', () => testCookieRotationWindow(handle));
+        await runTest('v1ClientInterlock', () => testV1ClientInterlock(handle, serverPort));
 
-        await testSweepHook(handle);
+        // --- Review HIGH-2 / MEDIUM-3: pre-validation resource policy ---
+        await runTest('cookiedNotStarvedByUncookied', () => testCookiedNotStarvedByUncookied(handle));
+        await runTest('preGateBudgetBoundsChallenges', () => testPreGateBudgetBoundsChallenges(handle));
+        await runTest('rateMapBounded', () => testRateMapBounded(handle));
+
+        await runTest('sweepHook', () => testSweepHook(handle));
     } catch (err) {
-        console.error(`UNCAUGHT: ${err && err.stack ? err.stack : err}`);
+        // Only reachable if runTest() itself (or the registry) breaks — a
+        // test body throwing is handled inside runTest and never lands here.
+        console.error(`UNCAUGHT (runner): ${err && err.stack ? err.stack : err}`);
         exitCode = 1;
     } finally {
         console.log = origLog;
         console.warn = origWarn;
     }
 
-    if (failed > 0) {
-        console.error(`${failed} assertion(s) failed`);
+    if (testsRun !== EXPECTED_TESTS) {
+        console.error(`COVERAGE FAIL: ran ${testsRun} test(s), expected exactly ${EXPECTED_TESTS} — a test was skipped, aborted the runner, or was removed without updating EXPECTED_TESTS`);
+        exitCode = 1;
+    }
+    if (failed > 0 || testsFailed > 0) {
+        console.error(`${failed} assertion(s) failed; ${testsFailed}/${testsRun} test(s) failed or errored`);
         exitCode = 1;
     }
 
@@ -1108,7 +1355,7 @@ async function main() {
     try { handle.socket.close(); } catch (_) {}
 
     if (exitCode === 0) {
-        console.log('protocol test passed');
+        console.log(`protocol test passed (${testsRun}/${EXPECTED_TESTS} tests)`);
     }
     // Set the exit code EAGERLY. The forced-exit timer below is .unref()'d
     // so it cannot hold the loop open — which means that once the server

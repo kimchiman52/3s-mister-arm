@@ -70,6 +70,15 @@ const SESSION_SWEEP_INTERVAL_MS = 5 * 1000;
 // depth rather than the front line. Defenses 1 and 2 still matter — a
 // real botnet whose nodes DO receive at their own addresses passes the
 // cookie gate and can still flood the table.
+//
+// Review HIGH-2 correction: an uncookied request is NOT free of every
+// server resource, and the comment that used to claim it consumed "no
+// rate budget" was wrong in the direction that mattered. It draws on the
+// separate PREGATE budget below (which bounds CHALLENGE emission and
+// nothing else) and, until that budget is capped, on one bounded Map
+// entry. What it still cannot do is create, refresh, evict, or NAME a
+// session, consume the per-IP creator quota, or touch the COOKIED per-IP
+// budget that a legitimate client depends on.
 const MAX_SESSIONS = 4096;
 const MAX_NEW_KEYS_PER_IP = 4;
 
@@ -88,8 +97,70 @@ const MAX_NEW_KEYS_PER_IP = 4;
 // bypass fails same-IP joiners before they ever REGISTER) repoints it.
 const SLOT_STALE_MS = 30 * 1000;
 const RATE_SWEEP_INTERVAL_MS = 60 * 1000;
+
+// Per-IP budget for requests that have ALREADY PROVEN return routability
+// (valid cookie). Review HIGH-2: this bucket used to be the very first
+// statement in onMessage, keyed on rinfo.address alone and applied before
+// the length/magic/version checks and before the cookie gate. That made it
+// a lockout weapon rather than a defense — 10 spoofed 36-byte REGISTERs
+// per second carrying a victim's source address (~2.9 kbit/s; the room
+// code still reveals the address) exhausted the victim's own budget, so
+// the victim's correctly-cookied REGISTER got zero replies, bound nothing,
+// and the user saw RENDEZVOUS_DOWN indefinitely. It now runs AFTER the
+// cookie check, on a bucket that only cookie-holding sources can reach, so
+// no amount of spoofed traffic can starve a real client.
 const RATE_WINDOW_MS = 1000;
 const RATE_LIMIT_PER_WINDOW = 10;
+
+// Per-IP budget for UNCOOKIED / stale-cookied first contact. Deliberately
+// separate from (and much larger than) the cookied budget above so the two
+// classes of traffic cannot starve each other.
+//
+// What it actually bounds: CHALLENGE emission. The CHALLENGE is 32 bytes
+// answering a 36-byte request — amplification factor 0.89, i.e. the server
+// is a net ATTENUATOR and is never worth aiming at a victim. So this is
+// not an anti-reflection control (there is nothing to reflect); it bounds
+// egress toward one address and the work done per source.
+//
+// Why 100/s:
+//   * At the cap, egress toward a spoofed victim is 100 x 32 B = 3.2 kB/s
+//     (25.6 kbit/s) and it costs the attacker 100 x 36 B = 3.6 kB/s to
+//     elicit — the attacker spends more than the victim receives, every
+//     second, which is the whole point of keeping the reply smaller than
+//     the request.
+//   * It is 10x the cookied budget, so an attacker trying to starve FIRST
+//     CONTACT for a shared-NAT site must now spend 10x what it used to,
+//     while cookied traffic is structurally immune (separate bucket).
+//   * Legitimate headroom is enormous: a client needs one challenge round
+//     at startup and one per cookie rotation (>= 60 s), so 100/s per
+//     PUBLIC IP covers on the order of 6000 clients behind a single NAT —
+//     orders of magnitude beyond this deployment.
+//   * Worst-case bucket memory stays small: <= 100 timestamps x 8 B plus
+//     array/object overhead, ~900 B for a fully-saturated entry.
+// Residual, stated plainly: ANY per-source pre-gate budget is spoof-
+// starvable for FIRST CONTACT, because first contact is by definition
+// unauthenticated. Choosing the number trades egress against how hard that
+// is. What is no longer possible is starving an ESTABLISHED, cookie-
+// holding client, which is the lockout the review found.
+const PREGATE_WINDOW_MS = 1000;
+const PREGATE_LIMIT_PER_WINDOW = 100;
+
+// Review MEDIUM-3: hard cap on every rate-bucket Map. These are keyed on
+// attacker-supplied values (source IP, or a session key read out of the
+// frame), so without a bound they are an unbounded allocator: the reviewer
+// measured 1-byte junk from 5000 spoofed sources producing 5000 rateMap
+// entries retained >= 60 s, which at 100k pps is ~6M live entries/minute
+// and V8 heap exhaustion. Two mechanisms together (see bucketAllow):
+//   1. NOTHING is allocated until the frame passes magic + version +
+//     length, so pure junk — the 1-byte probe above — now costs zero
+//     entries no matter how many sources send it.
+//   2. What survives that filter is capped here with O(1) LRU eviction.
+// Sizing: 2x MAX_SESSIONS, i.e. at most twice as many distinct sources as
+// the server will ever track sessions for. Worst case is dominated by the
+// pre-gate map at ~900 B/saturated entry => ~7 MB, with the two 10/s maps
+// at ~200 B/entry => ~1.6 MB each; ~10 MB total, the same order as the
+// 1.3-2 MB MAX_SESSIONS budget reasoned about above.
+const MAX_RATE_ENTRIES = 2 * MAX_SESSIONS;
 
 // S4c: per-SESSION-KEY rate cap, alongside the per-IP one. The per-IP
 // bucket is bypassable by an attacker with many (real, cookie-capable)
@@ -131,9 +202,10 @@ const KEY_RATE_LIMIT_PER_WINDOW = 10;
 //   * Rotation bounds a leaked cookie's usefulness to <= 120 s.
 // The CHALLENGE reply is 32 bytes for a 36-byte request: amplification
 // factor 0.89, i.e. the server is a net ATTENUATOR, never a reflector
-// worth aiming at a victim. It is also emitted under the per-IP token
-// bucket, so a spoofed flood at one victim is capped at
-// RATE_LIMIT_PER_WINDOW challenges/second.
+// worth aiming at a victim. It is emitted under the dedicated PRE-GATE
+// bucket (PREGATE_LIMIT_PER_WINDOW, 100/s/IP), so a spoofed flood at one
+// victim is capped there — and NOT under the cookied per-IP bucket, which
+// spoofed traffic must not be able to reach at all (review HIGH-2).
 const COOKIE_ROTATE_MS = 60 * 1000;
 const cookieSecret = crypto.randomBytes(32);
 
@@ -270,10 +342,19 @@ const rateMap = new Map();
 // value: { timestamps: number[], lastSeen: number }
 // `timestamps` holds send times within the current sliding window
 // (anything older than RATE_WINDOW_MS is filtered out on each access).
+// Reached ONLY by requests that already passed the cookie gate (HIGH-2).
 
 const warnedIps = new Set();
 // IPs we've already warned about. Cleared when the rateMap entry is evicted
-// (i.e. the IP has been quiet long enough to be swept).
+// (i.e. the IP has been quiet long enough to be swept, or was LRU-evicted).
+
+const preGateMap = new Map();
+// Review HIGH-2: same shape, but for UNCOOKIED first contact. Kept
+// strictly separate from rateMap so spoofed/uncookied traffic claiming a
+// victim's source address cannot consume the budget the victim's own
+// cookied traffic depends on.
+
+const warnedPreGate = new Set();
 
 const keyRateMap = new Map();
 // S4c: key = hex session key; value = { timestamps: number[], lastSeen }.
@@ -283,52 +364,104 @@ const warnedKeys = new Set();
 
 // --- Rate limiter ------------------------------------------------------------
 
-function rateLimitAllow(ip) {
+// Sliding-window token bucket over a SIZE-CAPPED Map (review MEDIUM-3).
+//
+// Insertion order in a JS Map IS recency order as long as every hit
+// re-inserts its key, so `map.keys().next()` is the least-recently-used
+// entry and eviction is O(1). That matters: an O(n) "scan for the oldest
+// lastSeen" would turn a flood of distinct sources into quadratic work,
+// i.e. a second DoS bolted onto the fix for the first.
+//
+// Evicting a rate bucket FAILS OPEN — the evicted source's budget resets.
+// That is the correct direction here: these buckets are a courtesy
+// throttle, while the return-routability cookie is the actual
+// authorisation gate. A flood can therefore make the throttle less
+// effective, but it can never use eviction to DENY a legitimate client.
+function bucketAllow(map, warned, key, windowMs, limit) {
     const now = nowMs();
-    let entry = rateMap.get(ip);
-    if (!entry) {
+    let entry = map.get(key);
+    if (entry !== undefined) {
+        map.delete(key); // re-inserted below => moves to the recent end
+    } else {
+        while (map.size >= MAX_RATE_ENTRIES) {
+            const victim = map.keys().next();
+            if (victim.done) break;
+            map.delete(victim.value);
+            if (warned) warned.delete(victim.value);
+        }
         entry = { timestamps: [], lastSeen: now };
-        rateMap.set(ip, entry);
     }
+    map.set(key, entry);
     // Drop timestamps outside the current sliding window.
-    const cutoff = now - RATE_WINDOW_MS;
+    const cutoff = now - windowMs;
     if (entry.timestamps.length > 0 && entry.timestamps[0] <= cutoff) {
         entry.timestamps = entry.timestamps.filter((t) => t > cutoff);
     }
     entry.lastSeen = now;
-    if (entry.timestamps.length >= RATE_LIMIT_PER_WINDOW) {
-        if (!warnedIps.has(ip)) {
-            warnedIps.add(ip);
-            logWarn(`rate-limit: dropping packets from ${ip} (further drops will be silent until this IP is quiet long enough to evict)`);
-        }
-        return false;
-    }
+    if (entry.timestamps.length >= limit) return false;
     entry.timestamps.push(now);
     return true;
 }
 
+// Post-cookie per-IP budget.
+function rateLimitAllow(ip) {
+    if (bucketAllow(rateMap, warnedIps, ip, RATE_WINDOW_MS, RATE_LIMIT_PER_WINDOW)) {
+        return true;
+    }
+    if (!warnedIps.has(ip)) {
+        warnedIps.add(ip);
+        logWarn(`rate-limit: dropping COOKIED packets from ${ip} (further drops will be silent until this IP is quiet long enough to evict)`);
+    }
+    return false;
+}
+
+// Pre-cookie per-IP budget: bounds CHALLENGE emission only (review HIGH-2).
+function preGateAllow(ip) {
+    if (bucketAllow(preGateMap, warnedPreGate, ip, PREGATE_WINDOW_MS, PREGATE_LIMIT_PER_WINDOW)) {
+        return true;
+    }
+    if (!warnedPreGate.has(ip)) {
+        warnedPreGate.add(ip);
+        logWarn(`pre-gate: dropping UNCOOKIED packets from ${ip} (challenge budget exhausted; cookied traffic from this IP is unaffected)`);
+    }
+    return false;
+}
+
 // S4c per-key limiter (post-cookie; see KEY_RATE_* rationale) --------------
 function keyRateAllow(hexKey) {
+    if (bucketAllow(keyRateMap, warnedKeys, hexKey, KEY_RATE_WINDOW_MS, KEY_RATE_LIMIT_PER_WINDOW)) {
+        return true;
+    }
+    if (!warnedKeys.has(hexKey)) {
+        warnedKeys.add(hexKey);
+        logWarn(`key-rate-limit: dropping packets for key=${shortKey4(hexKey)}... (further drops silent until the key is quiet long enough to evict)`);
+    }
+    return false;
+}
+
+// Aggregated logging for PRE-VALIDATION events (review HIGH-2 side effect).
+//
+// Before the reordering, the per-IP bucket ran first and implicitly capped
+// these log lines at 10/s/IP. Moving the bucket behind the frame checks
+// would otherwise turn a junk flood into an unbounded console write, and a
+// blocking stdout is its own denial of service. So they are aggregated:
+// keyed on a FIXED set of reason strings chosen by this file, never on
+// anything an attacker supplies, so `noteMap` cannot grow.
+const NOTE_INTERVAL_MS = 10 * 1000;
+const noteMap = new Map(); // reason -> { count, lastLog }
+
+function noteThrottled(logFn, reason, detail) {
+    let st = noteMap.get(reason);
+    if (st === undefined) {
+        st = { count: 0, lastLog: -Infinity };
+        noteMap.set(reason, st);
+    }
+    st.count += 1;
     const now = nowMs();
-    let entry = keyRateMap.get(hexKey);
-    if (!entry) {
-        entry = { timestamps: [], lastSeen: now };
-        keyRateMap.set(hexKey, entry);
-    }
-    const cutoff = now - KEY_RATE_WINDOW_MS;
-    if (entry.timestamps.length > 0 && entry.timestamps[0] <= cutoff) {
-        entry.timestamps = entry.timestamps.filter((t) => t > cutoff);
-    }
-    entry.lastSeen = now;
-    if (entry.timestamps.length >= KEY_RATE_LIMIT_PER_WINDOW) {
-        if (!warnedKeys.has(hexKey)) {
-            warnedKeys.add(hexKey);
-            logWarn(`key-rate-limit: dropping packets for key=${shortKey4(hexKey)}... (further drops silent until the key is quiet long enough to evict)`);
-        }
-        return false;
-    }
-    entry.timestamps.push(now);
-    return true;
+    if (now - st.lastLog < NOTE_INTERVAL_MS) return;
+    logFn(`${reason}: ${st.count} since last report (latest: ${detail})`);
+    st.count = 0;
+    st.lastLog = now;
 }
 
 // --- Session sweep -----------------------------------------------------------
@@ -347,32 +480,32 @@ function sweepSessions() {
     }
 }
 
-function sweepRates() {
-    const now = nowMs();
+// Idle eviction: eligible when there is no in-window activity AND the
+// bucket has been quiet for 60 windows. This is the SLOW path that keeps
+// the maps small in normal operation; MAX_RATE_ENTRIES (review MEDIUM-3)
+// is the hard bound that holds when a flood outruns this sweep.
+function sweepBucketMap(map, warned, windowMs, now) {
     let evicted = 0;
-    for (const [ip, entry] of rateMap) {
-        // Eligible when no in-window activity AND quiet for at least 60s.
-        const cutoff = now - RATE_WINDOW_MS;
+    const cutoff = now - windowMs;
+    for (const [k, entry] of map) {
         const inWindow = entry.timestamps.length > 0 && entry.timestamps[entry.timestamps.length - 1] > cutoff;
-        if (!inWindow && now - entry.lastSeen > RATE_WINDOW_MS * 60) {
-            rateMap.delete(ip);
-            warnedIps.delete(ip);
+        if (!inWindow && now - entry.lastSeen > windowMs * 60) {
+            map.delete(k);
+            warned.delete(k);
             evicted += 1;
         }
     }
+    return evicted;
+}
+
+function sweepRates() {
+    const now = nowMs();
+    const evicted = sweepBucketMap(rateMap, warnedIps, RATE_WINDOW_MS, now);
+    const preEvicted = sweepBucketMap(preGateMap, warnedPreGate, PREGATE_WINDOW_MS, now);
     // S4c: same policy for the per-key buckets.
-    let keyEvicted = 0;
-    for (const [k, entry] of keyRateMap) {
-        const cutoff = now - KEY_RATE_WINDOW_MS;
-        const inWindow = entry.timestamps.length > 0 && entry.timestamps[entry.timestamps.length - 1] > cutoff;
-        if (!inWindow && now - entry.lastSeen > KEY_RATE_WINDOW_MS * 60) {
-            keyRateMap.delete(k);
-            warnedKeys.delete(k);
-            keyEvicted += 1;
-        }
-    }
-    if (evicted > 0 || keyEvicted > 0) {
-        logInfo(`rate sweep: evicted ${evicted} ip(s) + ${keyEvicted} key(s), live=${rateMap.size}/${keyRateMap.size}`);
+    const keyEvicted = sweepBucketMap(keyRateMap, warnedKeys, KEY_RATE_WINDOW_MS, now);
+    if (evicted > 0 || preEvicted > 0 || keyEvicted > 0) {
+        logInfo(`rate sweep: evicted ${evicted} ip(s) + ${preEvicted} pre-gate ip(s) + ${keyEvicted} key(s), live=${rateMap.size}/${preGateMap.size}/${keyRateMap.size}`);
     }
 }
 
@@ -543,11 +676,18 @@ function handlePoll(socket, buf, rinfo) {
 // Ordering is load-bearing:
 //   1. cookie check FIRST — a request that has not proven return
 //      routability must not be able to create, refresh, evict, or even
-//      NAME a session, and must not consume the victim key's rate budget.
-//   2. per-key cap SECOND — now that the source is proven, bound how
-//      much one session key may be hammered by an attacker who controls
-//      many real (cookie-capable) source addresses and therefore slips
-//      past the per-IP bucket.
+//      NAME a session, and must not consume the victim key's rate budget
+//      or the victim IP's COOKIED budget.
+//   2. uncookied requests draw on the SEPARATE pre-gate budget (review
+//      HIGH-2). That budget exists to bound CHALLENGE emission toward one
+//      address; it is deliberately not the same bucket as (2b), because
+//      sharing one bucket is exactly what let spoofed traffic starve a
+//      real client. Over budget => silent drop, still binding nothing.
+//   2b. per-IP cap on COOKIED traffic — the source is proven, so this is
+//      now a throttle on a real client rather than a lockout weapon.
+//   3. per-key cap LAST — bound how much one session key may be hammered
+//      by an attacker who controls many real (cookie-capable) source
+//      addresses and therefore slips past the per-IP bucket.
 // The gate NEVER binds state and NEVER hangs: every path either sends
 // exactly one 32-byte CHALLENGE or returns silently.
 function returnRoutabilityGate(socket, buf, rinfo, what) {
@@ -560,13 +700,22 @@ function returnRoutabilityGate(socket, buf, rinfo, what) {
         // Answer with a CHALLENGE bound to THIS source and bind nothing.
         // A spoofing sender has the challenge delivered to the address it
         // is impersonating and therefore never learns the cookie.
+        if (!preGateAllow(rinfo.address)) {
+            return null;
+        }
         const challenge = encodeChallenge(sessionKeyBuf, rinfo);
         socket.send(challenge, 0, CHALLENGE_LEN, rinfo.port, rinfo.address);
         const uncookied = cookieBuf.every((b) => b === 0);
-        logInfo(`[CHALLENGE] ${what} from ${rinfo.address}:${rinfo.port} key=${shortKey4(hexKey)}... (${uncookied ? 'uncookied' : 'stale/invalid cookie'}) — no state bound`);
+        // Aggregated: one uncookied packet per line would be an unbounded
+        // console write under a flood (see noteThrottled).
+        noteThrottled(logInfo, '[CHALLENGE] uncookied/stale request',
+            `${what} from ${rinfo.address}:${rinfo.port} key=${shortKey4(hexKey)}... (${uncookied ? 'uncookied' : 'stale/invalid cookie'}) — no state bound`);
         return null;
     }
 
+    if (!rateLimitAllow(rinfo.address)) {
+        return null;
+    }
     if (!keyRateAllow(hexKey)) {
         return null;
     }
@@ -575,12 +724,27 @@ function returnRoutabilityGate(socket, buf, rinfo, what) {
 
 // --- Top-level dispatch ------------------------------------------------------
 
+// Ordering here is load-bearing (review HIGH-2 + MEDIUM-3).
+//
+// It used to be: rateLimitAllow(rinfo.address) FIRST, before the length,
+// magic and version checks and before the cookie gate. That was wrong
+// twice over:
+//   * HIGH-2 — the bucket was keyed on the source address only, so 10
+//     spoofed 36-byte REGISTERs/s carrying a victim's address (~2.9
+//     kbit/s, and the room code still reveals the address) exhausted the
+//     VICTIM's budget. The victim's own correctly-cookied REGISTER then
+//     got zero replies and bound nothing: a permanent, cheap matchmaking
+//     lockout of a named host, reported to the user as RENDEZVOUS_DOWN.
+//   * MEDIUM-3 — running first meant a Map entry was allocated for the
+//     claimed source of EVERY datagram, including 1-byte junk, before a
+//     single byte had been validated.
+// Now: allocation-free frame checks first (so junk costs nothing at all),
+// then the cookie gate, and only then the per-IP bucket — on a bucket
+// that only cookie-holding sources can reach. Uncookied first contact has
+// its own, separate, larger pre-gate budget inside the gate.
 function onMessage(socket, buf, rinfo) {
-    if (!rateLimitAllow(rinfo.address)) {
-        return;
-    }
     if (buf.length < 8) {
-        logWarn(`drop: short packet len=${buf.length} from ${rinfo.address}:${rinfo.port}`);
+        noteThrottled(logWarn, 'drop: short packet', `len=${buf.length} from ${rinfo.address}:${rinfo.port}`);
         return;
     }
     const magic = buf.readUInt32BE(0);
@@ -596,39 +760,37 @@ function onMessage(socket, buf, rinfo) {
         // budget expiry classifies P2P_FAIL_RENDEZVOUS_DOWN. This is the
         // authorized breaking change; see docs/plan-netplay-connection.md
         // §6 for the full mixed-version matrix.
-        logWarn(`drop: unsupported version=${version} from ${rinfo.address}:${rinfo.port} (this server speaks v${VERSION} only)`);
+        noteThrottled(logWarn, 'drop: unsupported version',
+            `version=${version} from ${rinfo.address}:${rinfo.port} (this server speaks v${VERSION} only)`);
         return;
     }
     const type = buf.readUInt8(5);
-    if (type === TYPE_REGISTER) {
-        if (buf.length !== REGISTER_LEN) {
-            logWarn(`drop: bad REGISTER len=${buf.length} from ${rinfo.address}:${rinfo.port}`);
+    if (type === TYPE_REGISTER || type === TYPE_POLL) {
+        const what = type === TYPE_REGISTER ? 'REGISTER' : 'POLL';
+        const wantLen = type === TYPE_REGISTER ? REGISTER_LEN : POLL_LEN;
+        if (buf.length !== wantLen) {
+            noteThrottled(logWarn, `drop: bad ${what} length`, `len=${buf.length} from ${rinfo.address}:${rinfo.port}`);
             return;
         }
-        if (returnRoutabilityGate(socket, buf, rinfo, 'REGISTER') === null) {
+        if (returnRoutabilityGate(socket, buf, rinfo, what) === null) {
             return;
         }
-        handleRegister(socket, buf, rinfo);
-    } else if (type === TYPE_POLL) {
-        if (buf.length !== POLL_LEN) {
-            logWarn(`drop: bad POLL len=${buf.length} from ${rinfo.address}:${rinfo.port}`);
-            return;
+        if (type === TYPE_REGISTER) {
+            handleRegister(socket, buf, rinfo);
+        } else {
+            handlePoll(socket, buf, rinfo);
         }
-        if (returnRoutabilityGate(socket, buf, rinfo, 'POLL') === null) {
-            return;
-        }
-        handlePoll(socket, buf, rinfo);
     } else if (type === TYPE_CHALLENGE) {
         // Server -> client only. A client sending us one is confused or
         // hostile; never let it reach state.
-        logWarn(`drop: unexpected CHALLENGE from ${rinfo.address}:${rinfo.port}`);
+        noteThrottled(logWarn, 'drop: unexpected CHALLENGE', `from ${rinfo.address}:${rinfo.port}`);
         return;
     } else if (type === TYPE_DELIVER) {
         // Server doesn't accept DELIVER from clients.
-        logWarn(`drop: unexpected DELIVER from ${rinfo.address}:${rinfo.port}`);
+        noteThrottled(logWarn, 'drop: unexpected DELIVER', `from ${rinfo.address}:${rinfo.port}`);
         return;
     } else {
-        logWarn(`drop: unknown type=${type} from ${rinfo.address}:${rinfo.port}`);
+        noteThrottled(logWarn, 'drop: unknown type', `type=${type} from ${rinfo.address}:${rinfo.port}`);
         return;
     }
 }
@@ -693,11 +855,13 @@ function start(port) {
             sweepSessions();
             sweepRates();
         },
-        // Clears BOTH rate buckets — most callers just want a clean
+        // Clears ALL THREE rate buckets — most callers just want a clean
         // budget. _resetKeyRate() isolates the per-key one.
         _resetRate() {
             rateMap.clear();
             warnedIps.clear();
+            preGateMap.clear();
+            warnedPreGate.clear();
             keyRateMap.clear();
             warnedKeys.clear();
         },
@@ -714,6 +878,11 @@ function start(port) {
         _cookieRotateMs: COOKIE_ROTATE_MS,
         _keyRateMap: keyRateMap,
         _keyRateLimit: KEY_RATE_LIMIT_PER_WINDOW,
+        // --- Review HIGH-2 / MEDIUM-3 hooks ------------------------------
+        _preGateMap: preGateMap,
+        _preGateLimit: PREGATE_LIMIT_PER_WINDOW,
+        _rateLimit: RATE_LIMIT_PER_WINDOW,
+        _maxRateEntries: MAX_RATE_ENTRIES,
         _resetKeyRate() {
             keyRateMap.clear();
             warnedKeys.clear();
