@@ -882,6 +882,32 @@ static int SDLCALL host_thread_fn(void* data) {
         return 0;
     }
 
+    /* S1 CGNAT gate: on carrier-grade NAT (or any double NAT) the inner
+     * router happily grants a mapping whose external IP is a private /
+     * CGN (100.64/10) address, while STUN reports the true public IP.
+     * The room code is built from the STUN IP + the chosen port, so
+     * advertising the UPnP port would pair the STUN IP with a port that
+     * only exists on the INNER router — a wrong (ip, port) pair that
+     * silently kills the direct path. If the two external IPs disagree,
+     * drop the mapping and advertise the STUN-observed endpoint; the
+     * punch/bilateral paths carry it from there. (ip_eq_normalized
+     * returns false on unparseable/IPv6 strings, which conservatively
+     * lands in the mismatch branch.) */
+    if (upnp_ok &&
+        !direct_p2p_ip_eq_normalized(s_upnp_mapping.external_ip, s_work.stun.public_ip)) {
+        SDL_Log("[direct_p2p] CGNAT detected: UPnP external IP %s != STUN public IP %s "
+                "— ignoring the UPnP mapping and advertising the STUN endpoint instead",
+                s_upnp_mapping.external_ip[0] ? s_upnp_mapping.external_ip : "(empty)",
+                s_work.stun.public_ip);
+        /* Release the useless mapping now (worker thread — same thread
+         * class try_upnp used; no concurrent miniupnpc user exists in
+         * UPNP_PROBE/STUN_DISCOVER states). Also stops the S1 lease
+         * renewal from ever arming for it. */
+        Upnp_RemoveMapping(&s_upnp_mapping);
+        memset(&s_upnp_mapping, 0, sizeof(s_upnp_mapping));
+        upnp_ok = false;
+    }
+
     /* 3) Build room code from discovered endpoint. If UPnP succeeded we
      * prefer its external port over the STUN-observed port — symmetric
      * NATs translate per-destination, so the STUN port is only valid
