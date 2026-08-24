@@ -817,6 +817,18 @@ static bool mist_pump_start(void) {
     s_hs_net_io.sock = sock;
     s_hs_net_io.peer = s_hs_peer_addr;
     s_hs_net_io.peer_port = remote_port;
+    // MIST v2: advertise the adapted arcade-balance digest so peers with
+    // differing adapted data (e.g. different CPS3 ROM revisions) reject
+    // cleanly instead of desyncing mid-match. Balance is fixed at boot,
+    // so this is idempotent; it must be set BEFORE pump_begin because
+    // pump_begin builds the hello frame (mist_handshake_build_hello ->
+    // build_frame) which serializes the digest, and before any slice
+    // runs, because a slice's responder path (drain_and_answer_hellos /
+    // mist_handshake_build_reply) serializes it into ack frames too.
+    // Arming one attempt is the seam: it is the pre-S3 blocking runner's
+    // call site translated into the pump's lifecycle, and every frame
+    // this peer emits during the attempt is built after it.
+    mist_handshake_set_balance_digest(ArcadeBalance_GetDigest());
     if (!mist_handshake_pump_begin(&s_hs_pump, &s_hs_io_template,
                                    s_mist_reject_reason, sizeof(s_mist_reject_reason))) {
         return false;
