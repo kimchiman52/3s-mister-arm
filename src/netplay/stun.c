@@ -301,11 +301,10 @@ bool Stun_Discover(StunResult* result, uint16_t local_port) {
                 SDL_Delay(100);
         }
 
-        NET_UnrefAddress(stun_addr);
-
         if (!dgram) {
             SDL_LogWarn(
                 SDL_LOG_CATEGORY_APPLICATION, "STUN: No response from %s:%u, trying next server", host, srv_port);
+            NET_UnrefAddress(stun_addr);
             continue;
         }
 
@@ -317,6 +316,7 @@ bool Stun_Discover(StunResult* result, uint16_t local_port) {
                         "STUN: Failed to parse response from %s:%u, trying next server",
                         host,
                         srv_port);
+            NET_UnrefAddress(stun_addr);
             NET_DestroyDatagram(dgram);
             continue;
         }
@@ -325,6 +325,10 @@ bool Stun_Discover(StunResult* result, uint16_t local_port) {
         SDL_strlcpy(result->public_ip, ip, sizeof(result->public_ip));
         result->public_port = port;
         result->socket = sock; // Keep open for hole punching!
+        // S1: keep the resolved server address (ref transferred to result)
+        // so Stun_SendKeepalive can rebind-probe without re-resolving.
+        result->server_addr = (struct NET_Address*)stun_addr;
+        result->server_port = srv_port;
 
         // Query the ACTUAL OS-assigned local port via getsockname.
         // The STUN public port may differ from the local port on
@@ -472,4 +476,43 @@ void Stun_CloseSocket(StunResult* result) {
         NET_DestroyDatagramSocket(result->socket);
         result->socket = NULL;
     }
+    Stun_ReleaseServerAddr(result);
+}
+
+void Stun_ReleaseServerAddr(StunResult* result) {
+    if (result && result->server_addr != NULL) {
+        NET_UnrefAddress((NET_Address*)result->server_addr);
+        result->server_addr = NULL;
+        result->server_port = 0;
+    }
+}
+
+bool Stun_SendKeepalive(StunResult* result, uint8_t out_txid[12]) {
+    if (!result || !result->socket || !result->server_addr || !out_txid)
+        return false;
+
+    uint8_t request[20];
+    build_binding_request(request, out_txid);
+    if (!NET_SendDatagram(result->socket, (NET_Address*)result->server_addr, result->server_port, request, 20)) {
+        SDL_LogDebug(SDL_LOG_CATEGORY_APPLICATION, "STUN: keepalive send failed: %s", SDL_GetError());
+        return false;
+    }
+    return true;
+}
+
+bool Stun_IsBindingResponse(const uint8_t* buf, int len) {
+    if (!buf || len < 20)
+        return false;
+    uint16_t msg_type = ((uint16_t)buf[0] << 8) | buf[1];
+    if (msg_type != STUN_BINDING_RESPONSE)
+        return false;
+    uint32_t cookie = ((uint32_t)buf[4] << 24) | ((uint32_t)buf[5] << 16) | ((uint32_t)buf[6] << 8) | buf[7];
+    return cookie == STUN_MAGIC_COOKIE;
+}
+
+bool Stun_ParseBindingResponse(const uint8_t* buf, int len, const uint8_t txid[12], char* out_ip, int ip_buf_size,
+                               uint16_t* out_port) {
+    if (!buf || !txid || !out_ip || !out_port)
+        return false;
+    return parse_binding_response(buf, len, txid, out_ip, ip_buf_size, out_port);
 }

@@ -94,6 +94,10 @@ static const ConfigEntry default_entries[] = {
      * server's 10 pkt/s/IP limiter (rendezvous-server.js RATE_LIMIT_PER_
      * WINDOW=10 / RATE_WINDOW_MS=1000). */
     { .key = CFG_KEY_NETPLAY_DIRECT_P2P_REGISTER_INTERVAL_MS, .type = CFG_INT, .value.i = 5000 },
+    /* Host liveness (S1): STUN rebind keepalive cadence while
+     * HOST_WAITING. Refreshes the advertised NAT mapping and detects
+     * public-endpoint drift. <= 0 disables. */
+    { .key = CFG_KEY_NETPLAY_DIRECT_P2P_STUN_KEEPALIVE_MS, .type = CFG_INT, .value.i = 20000 },
     { .key = CFG_KEY_NETPLAY_INPUT_PREDICTION_WINDOW, .type = CFG_INT, .value.i = 8 },
     { .key = CFG_KEY_NETPLAY_DIAG_ENABLE, .type = CFG_BOOL, .value.b = true },
     { .key = CFG_KEY_NETPLAY_SPARSE_EFFECT_SAVE_ENABLED, .type = CFG_BOOL, .value.b = true },

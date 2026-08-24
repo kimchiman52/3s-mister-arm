@@ -171,6 +171,18 @@ static UpnpMapping s_upnp_mapping = { 0 };
  * only (notify, teardown, and Cancel all run on the game thread). */
 static bool s_handshake_reject_latched = false;
 
+/* S1 host liveness: STUN rebind keepalive bookkeeping. Main-thread only
+ * (written/read exclusively from Tick's HOST_WAITING branch and the
+ * BeginHost/BeginJoin/Cancel/teardown resets, all on the game thread).
+ * last_ms == 0
+ * means "not armed yet" — the first keepalive fires one interval after
+ * HOST_WAITING is first ticked. txid_valid gates response parsing so a
+ * stale or spoofed binding response without a matching in-flight
+ * transaction is ignored. */
+static uint64_t s_stun_keepalive_last_ms = 0;
+static uint8_t s_rebind_txid[12] = { 0 };
+static bool s_rebind_txid_valid = false;
+
 /* Init guard so DirectP2P_Init is idempotent. */
 static bool s_init_done = false;
 
@@ -1164,6 +1176,11 @@ static void direct_p2p_on_teardown(void) {
      * netplay.c will destroy it immediately after this callback
      * returns. */
     s_work.stun.socket = NULL;
+    /* S1: the ref'd STUN server address is still ours (do_handoff already
+     * released it on the handoff path; this covers non-handoff teardowns). */
+    Stun_ReleaseServerAddr(&s_work.stun);
+    s_stun_keepalive_last_ms = 0;
+    s_rebind_txid_valid = false;
     /* Reset state so the next BeginHost/BeginJoin starts clean.
      * R-1 exception: when the MIST handshake rejected the session, park
      * in FAILED_HANDSHAKE instead so the overlay keeps ERROR + the
@@ -1199,6 +1216,10 @@ static void do_handoff(int player, const char* peer_ip, uint16_t peer_port) {
     /* Ownership transferred — prevent direct_p2p_on_teardown or a
      * subsequent Cancel from double-closing. */
     s_work.stun.socket = NULL;
+    /* S1: keepalives stop at handoff (GekkoNet traffic keeps the mapping
+     * warm from here) — drop the ref'd STUN server address now. */
+    Stun_ReleaseServerAddr(&s_work.stun);
+    s_rebind_txid_valid = false;
     /* netplay_nav owns the Netplay_BeginDirectP2P() call now. Netplay_
      * SetParams just populated remote_ip; nav's NAV_WAIT_ORCHESTRATOR
      * was gating on Netplay_IsRemoteIpSet() and will advance to
@@ -1206,6 +1227,117 @@ static void do_handoff(int player, const char* peer_ip, uint16_t peer_port) {
      * (fast path on host, orchestrator still hole-punching on joiner)
      * nav simply stays in NAV_WAIT_ORCHESTRATOR until we land here. */
     SDL_Log("[direct_p2p] handoff complete — nav state machine will start netplay session");
+}
+
+/* --- S1 host liveness: STUN rebind keepalive + drift detection --------- */
+
+/* Called from Tick's HOST_WAITING branch (main thread — the socket's
+ * sole I/O actor in that phase). Every CFG_KEY_NETPLAY_DIRECT_P2P_STUN_
+ * KEEPALIVE_MS (default 20 s; <= 0 disables) re-issues a STUN Binding
+ * Request on the shared socket toward the server that answered
+ * Stun_Discover. Two effects:
+ *   (a) the outbound datagram refreshes the host's NAT mapping — for a
+ *       non-UPnP host this is the very mapping the room code
+ *       advertises, which otherwise decays at the router's UDP idle
+ *       timeout while the host sits waiting;
+ *   (b) the response (handled in host_handle_stun_rebind via
+ *       host_tick_receive's STUN gate) reveals whether the NAT rebound
+ *       the mapping — i.e. whether the displayed room code went stale. */
+static void host_stun_keepalive_tick(void) {
+    int interval_ms = Config_GetInt(CFG_KEY_NETPLAY_DIRECT_P2P_STUN_KEEPALIVE_MS);
+    if (interval_ms <= 0) return; /* disabled */
+    if (interval_ms < 5000) interval_ms = 5000; /* don't spam public STUN */
+    uint64_t now = SDL_GetTicks();
+    if (s_stun_keepalive_last_ms == 0) {
+        /* Arm on first HOST_WAITING tick; Stun_Discover just probed, so
+         * the first keepalive is due one full interval from now. */
+        s_stun_keepalive_last_ms = now;
+        return;
+    }
+    if (now - s_stun_keepalive_last_ms < (uint64_t)interval_ms) return;
+    s_stun_keepalive_last_ms = now;
+    if (Stun_SendKeepalive(&s_work.stun, s_rebind_txid)) {
+        s_rebind_txid_valid = true;
+    }
+}
+
+/* Handle a STUN Binding Success Response received on the host socket
+ * during HOST_WAITING (main thread). If the mapped endpoint matches the
+ * last known public endpoint the NAT mapping is stable — nothing to do.
+ * If it DIFFERS, the NAT rebound and the displayed room code is stale.
+ *
+ * Chosen behavior (documented in docs/plan-netplay-connection.md S1):
+ * re-encode and display the NEW code, plus an explicit status line
+ * ("Network changed! Share the NEW code."). Rationale: silently
+ * continuing would leave a code on screen that can never connect; the
+ * least surprising outcome for a user staring at a code they already
+ * shared is a visible, explained code change — the old code was already
+ * dead the moment the NAT rebound, so there is nothing to preserve.
+ *
+ * Ordering: the rendezvous thread derives its session key from
+ * (public_ip, advertised_port), so it is cancelled and JOINED before
+ * s_work is mutated, then respawned under the new key. Join latency is
+ * ~50 ms (the thread's inner tick) — acceptable for a rare event on a
+ * menu screen. */
+static void host_handle_stun_rebind(const uint8_t* buf, int len) {
+    if (!s_rebind_txid_valid) {
+        return; /* no keepalive in flight — stale/foreign response */
+    }
+    char ip[64] = { 0 };
+    uint16_t port = 0;
+    if (!Stun_ParseBindingResponse(buf, len, s_rebind_txid, ip, sizeof(ip), &port)) {
+        return; /* wrong transaction / malformed — ignore */
+    }
+    s_rebind_txid_valid = false;
+
+    if (port == s_work.stun.public_port &&
+        direct_p2p_ip_eq_normalized(ip, s_work.stun.public_ip)) {
+        return; /* mapping stable — keepalive did its NAT-refresh job */
+    }
+
+    SDL_Log("[direct_p2p] STUN rebind drift: public endpoint changed "
+            "%s:%u -> %s:%u — displayed room code is stale",
+            s_work.stun.public_ip, (unsigned)s_work.stun.public_port,
+            ip, (unsigned)port);
+
+    /* Stop the rendezvous re-REGISTER loop before mutating the fields it
+     * reads (public_ip / advertised_port). */
+    if (s_rendezvous_thread != NULL) {
+        SDL_SetAtomicInt(&s_rendezvous_cancel, 1);
+        SDL_WaitThread(s_rendezvous_thread, NULL);
+        s_rendezvous_thread = NULL;
+    }
+
+    SDL_strlcpy(s_work.stun.public_ip, ip, sizeof(s_work.stun.public_ip));
+    s_work.stun.public_port = port;
+
+    /* Recompute the advertised tuple. A live UPnP mapping pins the
+     * advertised PORT (the router forwards it regardless of the STUN
+     * mapping), so only the IP component can drift there; without UPnP
+     * both components track the STUN-observed endpoint. */
+    uint16_t new_adv_port = s_upnp_mapping.active ? s_upnp_mapping.external_port : port;
+    uint32_t ip_be = ipv4_str_to_be(ip);
+    char new_code[ROOM_CODE_BUF_LEN];
+    if (ip_be != 0 && RoomCode_Encode(ip_be, new_adv_port, new_code) &&
+        strcmp(new_code, s_work.host_code) != 0) {
+        SDL_Log("[direct_p2p] room code re-encoded: %s -> %s",
+                s_work.host_code, new_code);
+        SDL_strlcpy(s_work.host_code, new_code, sizeof(s_work.host_code));
+        set_status("Network changed! Share the NEW code.");
+    }
+    s_work.advertised_port = new_adv_port;
+
+    /* Respawn the rendezvous loop under the new session key (same kill
+     * switch as the original spawn in host_thread_fn step 5). */
+    if (!Config_GetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_BILATERAL)) {
+        SDL_SetAtomicInt(&s_rendezvous_cancel, 0);
+        s_rendezvous_thread = SDL_CreateThread(host_rendezvous_thread_fn,
+                                               "DirectP2PRendezvous", NULL);
+        if (s_rendezvous_thread == NULL) {
+            SDL_Log("[direct_p2p] WARNING: failed to respawn rendezvous thread "
+                    "after endpoint drift; fallback disabled this session");
+        }
+    }
 }
 
 /*
@@ -1334,6 +1466,17 @@ static bool host_tick_receive(void) {
         NET_DestroyDatagram(dgram);
         return true;
     }
+    /* S1: STUN Binding Responses (keepalive replies, or a late duplicate
+     * from a slower server probed during Stun_Discover) must NOT fall
+     * through to the peer-endpoint capture below — pre-S1, a straggler
+     * STUN response arriving in HOST_WAITING would be captured as "the
+     * peer" and handed off to a STUN server's endpoint. Gate them here
+     * and route keepalive replies to the drift detector. */
+    if (Stun_IsBindingResponse(dgram->buf, dgram->buflen)) {
+        host_handle_stun_rebind(dgram->buf, dgram->buflen);
+        NET_DestroyDatagram(dgram);
+        return false; /* not a peer — keep waiting */
+    }
     /* Capture the source endpoint — this is who we'll talk to. The
      * socket's internal "connected peer" state gets set when
      * configure_gekko wraps it into SDLNetAdapter; for the orchestrator
@@ -1415,6 +1558,9 @@ void DirectP2P_BeginHost(int preferred_port) {
      * callback (e.g. LAN CLI session with no orchestrator) must not leak
      * into this fresh session's teardown. */
     s_handshake_reject_latched = false;
+    Stun_ReleaseServerAddr(&s_work.stun); /* belt-and-braces before memset */
+    s_stun_keepalive_last_ms = 0;
+    s_rebind_txid_valid = false;
     memset(&s_work, 0, sizeof(s_work));
     s_work.role = ROLE_HOST;
     s_work.preferred_port = preferred_port;
@@ -1480,6 +1626,9 @@ void DirectP2P_BeginJoin(const char* peer_code) {
     SDL_SetAtomicInt(&s_q_drops, 0);
     SDL_SetAtomicInt(&s_q_drops_logged, 0);
     s_handshake_reject_latched = false; /* R-1: see BeginHost */
+    Stun_ReleaseServerAddr(&s_work.stun); /* belt-and-braces before memset */
+    s_stun_keepalive_last_ms = 0;
+    s_rebind_txid_valid = false;
     memset(&s_work, 0, sizeof(s_work));
     s_work.role = ROLE_JOIN;
     SDL_strlcpy(s_work.peer_code, peer_code, sizeof(s_work.peer_code));
@@ -1525,6 +1674,9 @@ void DirectP2P_Cancel(void) {
         NET_DestroyDatagramSocket(s_work.stun.socket);
         s_work.stun.socket = NULL;
     }
+    Stun_ReleaseServerAddr(&s_work.stun); /* S1: drop keepalive target ref */
+    s_stun_keepalive_last_ms = 0;
+    s_rebind_txid_valid = false;
     if (s_upnp_mapping.active) {
         Upnp_RemoveMapping(&s_upnp_mapping);
         memset(&s_upnp_mapping, 0, sizeof(s_upnp_mapping));
@@ -1563,6 +1715,10 @@ void DirectP2P_Tick(void) {
          * STUN socket's sole I/O actor during this phase). Then poll for
          * inbound — peer punch OR rendezvous DELIVER. */
         rend_q_drain(s_work.stun.socket, 4);
+        /* S1: periodic STUN rebind keepalive (mapping refresh + drift
+         * probe). Send-only and non-blocking; the response comes back
+         * through host_tick_receive's STUN gate. */
+        host_stun_keepalive_tick();
         host_tick_receive();
         return;
 
