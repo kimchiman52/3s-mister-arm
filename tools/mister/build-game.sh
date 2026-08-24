@@ -136,8 +136,16 @@ if [ "${platform}" != "linux/arm/v7" ]; then
 fi
 
 mkdir -p "${workdir}"
+# .claude/ holds this repo's agent worktrees -- entire parallel checkouts of
+# other branches, each with its own build output dirs. None of it is a build
+# input (CMake globs src/ under ${workdir} only), and the --exclude='build/'
+# above does not catch their differently-named output dirs (build-host-debug,
+# build-normal, ...). Left in, they dominate the copy: 1.4 GB of .claude vs
+# ~0.6 GB of actual source, and the overflow is what filled this container's
+# 20 GB overlay and killed the rsync mid-transfer with ENOSPC.
 rsync -a --delete \
     --exclude='.git/' \
+    --exclude='.claude/' \
     --exclude='build/' \
     --exclude='third_party/sdl3/build/' \
     /src/ "${workdir}/"
