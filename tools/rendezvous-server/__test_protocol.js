@@ -3,7 +3,11 @@
 // UDP clients. Wire-format encode logic is duplicated here on purpose so the
 // test catches encoding bugs in either side.
 //
-// Runtime budget: under 2 seconds.
+// Runtime budget: ~1.6 s, dominated by deliberate negative-wait
+// timeouts (assertions of the form "no reply arrives"). Keep it under
+// 2.5 s; on loopback every POSITIVE wait resolves in well under a
+// millisecond, so if this file ever approaches the ceiling the cause is
+// a new negative wait, not slow I/O.
 
 'use strict';
 
@@ -993,7 +997,7 @@ async function testV1ClientInterlock(handle, serverPort) {
         const v1 = makeRegister(v1Key, c.port, { version: V1_VERSION, length: V1_REGISTER_LEN });
         assertEq(v1.length, 28, 'interlock: v1 REGISTER is 28 bytes');
         await c.send(v1, serverPort);
-        assert((await c.tryRecv(250)) === null, 'interlock: v1 REGISTER gets NO reply (not even a CHALLENGE)');
+        assert((await c.tryRecv(150)) === null, 'interlock: v1 REGISTER gets NO reply (not even a CHALLENGE)');
         assert(!handle._sessionMap.has(v1Key.toString('hex')), 'interlock: v1 REGISTER bound no session');
         assertEq(handle._creatorCounts.size, 0, 'interlock: v1 REGISTER consumed no key quota');
 
@@ -1001,7 +1005,7 @@ async function testV1ClientInterlock(handle, serverPort) {
         // by the same check, before the cookie gate.
         const v1Long = makeRegister(v1Key, c.port, { version: V1_VERSION });
         await c.send(v1Long, serverPort);
-        assert((await c.tryRecv(250)) === null, 'interlock: v1 version byte at v2 length also dropped');
+        assert((await c.tryRecv(150)) === null, 'interlock: v1 version byte at v2 length also dropped');
         assert(!handle._sessionMap.has(v1Key.toString('hex')), 'interlock: still no session');
 
         // Liveness: the server did not wedge on any of that.
