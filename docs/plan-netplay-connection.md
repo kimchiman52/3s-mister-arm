@@ -1950,19 +1950,99 @@ not speak NAT-PMP. That is ~127 seconds. PCP's own default (RFC 6887
 Neither is shippable behind a "Host Game" click that is already capped
 at 6 s for UPnP. The ladder is cut to its **first three rungs** —
 250/500/1000 ms, doubling shape preserved — and every wait is
-additionally clamped by an absolute wall-clock deadline the caller sets
-(natpmp.c:510-535, 563-651). Probe budget 4 s, renewal budget 1.5 s
-(the latter chosen to stay inside `upnp_renew_join_and_discard`'s 2 s
-join budget so a renewal worker is always joinable rather than
-detached).
+additionally clamped by an absolute wall-clock deadline the caller sets.
+
+#### 9.3.1 The PCP ladder deviates from RFC 6887 §8.1.1 too — four SHOULDs
+
+The NAT-PMP truncation above was disclosed from the start. The PCP one
+was not, and it is larger. §8.1.1 specifies:
+
+| §8.1.1 | Spec | Shipped | Effect |
+|---|---|---|---|
+| `IRT: Initial retransmission time, SHOULD be 3 seconds` | 3000 ms | 250 ms | first retransmit 12× sooner |
+| `MRC: Maximum retransmission count, SHOULD be 0 (0 indicates no maximum)` | unlimited | 3 | gives up after three sends |
+| `MRD: Maximum retransmission duration, SHOULD be 0 (0 indicates no maximum)` | unlimited | 1750 ms/phase | gives up inside two seconds |
+| `Each of the computations of a new RT include a new randomization factor (RAND), which is a random number chosen with a uniform distribution between -0.1 and +0.1.` | required | **absent** | no de-synchronisation between clients |
+
+The first three are the same shippability argument as §3.1: PCP's
+defaults describe a daemon maintaining a mapping indefinitely, not a
+one-shot probe behind a button press. The **missing RAND is a genuine
+gap, not a trade**: §8.1.1 states its purpose is "to minimize
+synchronization of messages transmitted by PCP clients", and a LAN full
+of 3S instances rebooting together would retransmit in lockstep. The
+mitigating facts are that a household runs one or two of these, and
+that the one place where synchronised retransmission is actually
+plausible — every device on a LAN reacting to a gateway reboot — IS
+randomised, because RFC 6886 §3.7's mandatory 0-5 s pre-renewal jitter
+is implemented (§9.4). Adding RAND to the probe ladder is cheap and
+remains open.
+
+One §8.1.1 MUST **is** honoured: "The retransmissions MUST use the same
+Mapping Nonce value (see Sections 11.1 and 12.1)" — see §9.4's nonce
+persistence, which extends that to renewals and deletes as well.
+
+#### 9.3.2 Each phase gets its own budget (review H-6)
+
+A probe runs up to **three** ladders in sequence: the PCP MAP, then —
+after a §9 downgrade — the NAT-PMP public-address request, then the
+NAT-PMP mapping request. These originally shared ONE absolute deadline
+computed once at the top of `Natpmp_AddMapping`. Measured consequence
+on a mock gateway that answers at a fixed latency:
+
+| Gateway latency | Mapping | Elapsed | Map requests seen by the gateway |
+|---|---|---|---|
+| 300 ms | yes | ~1.2 s | 1 |
+| 700 ms | **no** | 3896 ms | **0** |
+
+RFC 6886 §3.1 names "a slow NAT gateway that takes perhaps half a
+second to respond to a NAT-PMP request" as normal. The cliff sat below
+that. Each phase now takes a fresh `NATPMP_PHASE_BUDGET_MS` at phase
+start, still clamped by the caller's overall ceiling.
+
+That alone was not enough, because the failure was a **queue**, not a
+clock: three rungs per phase put three datagrams into a single-threaded
+router's backlog and then timed out waiting for the reply to the first.
+So the ladder now also **stops retransmitting once the gateway has
+answered anything at all** — including a datagram this phase rejects as
+NOT_OURS, since the socket is `connect()`ed and only the gateway's
+datagrams are delivered. That is §3.1's own instruction: "the client
+SHOULD respect this and allow the NAT gateway to operate at the pace it
+can manage, and not overload it by issuing requests faster than the
+rate it's answering them." With both fixes a 700 ms gateway maps in
+~2.8 s and the gateway sees 2 PCP + 1 address + 1 mapping request.
+
+Residual: an attacker who can spoof the gateway's source address can
+latch that flag early and cost us the retransmits. The worst outcome is
+one missed mapping and a fall through to STUN — identical to a silent
+router — because a forged frame still has to pass §11.4's nonce /
+protocol / internal-port matcher to become a mapping.
+
+#### 9.3.3 Budgets, as shipped
+
+- `NATPMP_PHASE_BUDGET_MS` = 1750 ms, **derived in natpmp.c from the
+  ladder table** rather than written twice, so lengthening the ladder
+  cannot silently leave the budget behind.
+- `NATPMP_PROBE_BUDGET_MS` = 3 × phase = **5250 ms**. Reached only when
+  a gateway answers the PCP downgrade and the address request and then
+  goes silent on the mapping request; a *wholly* silent gateway costs
+  two phases (3500 ms), because the address request timing out ends the
+  attempt.
+- `NATPMP_RENEW_BUDGET_MS` = 2 × phase = **3500 ms** (a renewal knows
+  its backend: PCP runs one phase, NAT-PMP runs address-then-mapping).
+  This deliberately **exceeds** `upnp_renew_join_and_discard`'s 2 s join
+  budget, reversing the earlier choice. A renewal caught in flight by
+  teardown is *detached*, which is an already-handled, already-bounded
+  path; a renewal budget too short for a slow gateway loses the mapping
+  **mid-session**, which is not.
 
 The cost of being wrong is one missed mapping on a very slow gateway,
 which degrades to exactly today's behaviour: fall through to STUN. The
 worst case for the whole probe is `UPNP_PROBE_BUDGET_MS` (6 s) +
-`NATPMP_PROBE_BUDGET_MS` (4 s) = 10 s, and it is reached only when
-**both** protocols are dead silent. The case S7 exists for — a NAT-PMP
-router with no IGD — costs miniupnpc's own 2 s SSDP timeout plus one
-LAN round-trip, because a router that speaks NAT-PMP answers at once.
+`NATPMP_PROBE_BUDGET_MS` (5.25 s) = **11.25 s**, and it is reached only
+when **both** protocols are dead silent. The case S7 exists for — a
+NAT-PMP router with no IGD — costs miniupnpc's own 2 s SSDP timeout
+plus one LAN round-trip, because a router that speaks NAT-PMP answers
+at once.
 
 ### 9.4 One mapping struct, three backends
 
@@ -1996,9 +2076,121 @@ LAN round-trip, because a router that speaks NAT-PMP answers at once.
   so `lifetime_s` stays 0 and the old constant applies.
 - **The §3.6 CGNAT gate is NOT duplicated.** It keys off
   `external_ip`, which all three backends fill, so a NAT-PMP mapping
-  whose external IP is `100.64/10` is dropped exactly as a UPnP one is
-  (direct_p2p.c:1977-2025). The only S7 change inside the gate is that
-  the release dispatches on the backend.
+  whose external IP is `100.64/10` is dropped exactly as a UPnP one is.
+  The only S7 change inside the gate is that the release dispatches on
+  the backend.
+- **The gate fails CLOSED on an absent external address** (review
+  M-5.4). `direct_p2p_ip_is_nonpublic("")` used to return false —
+  "cannot prove anything, keep the mapping" — but an *empty* string is
+  not an unclassifiable address, it is the absence of one, and the
+  gate's entire job is to compare that address against STUN's. It now
+  returns true for NULL/empty while still returning false for
+  present-but-unparseable text (which really does prove nothing) and
+  for a public-but-different address (1:1 NAT / DMZ). Upstream of it,
+  `Natpmp_AddMapping` now refuses outright to build a mapping from a
+  gateway that reports `0.0.0.0`, on either dialect.
+
+#### 9.4.1 The PCP Mapping Nonce is persisted (review H-5, ALPHA BLOCKER)
+
+RFC 6887 §11.3: *"If operating in the Simple Threat Model (Section
+18.1), and the internal port, protocol, and internal address match an
+existing explicit dynamic mapping, but the mapping nonce does not
+match, the request MUST be rejected with a NOT_AUTHORIZED error with
+the lifetime of the error indicating duration of that existing
+mapping."* §18.1 is the model consumer NAT boxes run in, and §8.1.1
+says the same for retransmits: *"The retransmissions MUST use the same
+Mapping Nonce value."*
+
+As originally shipped, every PCP call minted a **fresh** nonce —
+creation, half-lease renewal, and teardown delete alike. On a
+conforming gateway that means the renewal is refused, the delete is
+refused, and neither refusal is checked. The mapping could be neither
+kept alive nor removed; it simply expired, while `active` stayed true
+and the room code kept advertising its port. **This was a regression
+against pre-S7 on PCP routers**, where the host advertised the STUN
+endpoint it was actively maintaining. It presents to the user as "it
+worked, and then it went dead."
+
+The nonce now lives in `natpmp.c`, keyed by internal port: minted on
+first use, reused by every renewal and by the delete, and forgotten
+after the delete so the next creation draws a new one. It is *not* a
+field on `UpnpMapping`, because `Natpmp_AddMapping` memsets its
+out-parameter on entry and the renewal path hands it a zeroed struct —
+a struct field would have to be threaded through `UpnpJob` to have any
+effect. The program holds exactly one mapping (`s_upnp_mapping`), so
+the port key is sufficient; the single-writer invariant that makes the
+module-global safe is spelled out at its definition, together with what
+would have to change if a second concurrent mapping ever appeared.
+
+#### 9.4.2 A mapping that cannot be renewed is DROPPED (review H-5, M-5.5)
+
+The downstream half of the same chain. Three fixes, all in
+`upnp_renew_tick`:
+
+- **The lease is tracked.** `s_portmap_lease_expiry_ms` is armed from
+  the granted `lifetime_s` and re-armed on every successful renewal
+  (0 = "no deadline known", the UPnP case). Arming it from the first
+  main-thread sighting rather than from the grant instant errs a frame
+  or two LATE, which can only ever keep a mapping marginally longer
+  than the router does — never drop a live one.
+- **A renewal that fails past expiry drops the mapping** and
+  re-publishes the STUN endpoint through `host_commit_endpoint` (a
+  small extraction from the drift handler, which needed exactly the
+  same re-encode / re-derive / restart-rendezvous sequence). The user
+  gets "Share the NEW code." instead of a code that silently stopped
+  working.
+- **The drift re-encode tests `portmap_mapping_usable()`**, not
+  `.active`, so a mapping past its lease can no longer pin the
+  advertised port.
+- **The retry scales to the lease** (review M-5.2). It was a flat five
+  minutes; against a router that grants 120 s — permitted by §3.3, "The
+  NAT gateway MAY reduce the lifetime from what the client requested" —
+  the one retry that mattered landed four and a half minutes after the
+  mapping was already gone. It is now a quarter of the lease, floored
+  by §11.2.1's four seconds and capped at the old five minutes so UPnP
+  behaves exactly as before.
+
+#### 9.4.3 Gateway reboot detection, RFC 6886 §3.6 (review M-5.1)
+
+§3.6's MUST is on the **client**: *"Whenever a client receives any
+packet from the NAT gateway ... the client computes its own
+conservative estimate of the expected SSSoE value by taking the SSSoE
+value in the last packet it received from the gateway and adding 7/8
+(87.5%) of the time elapsed according to the client's local clock since
+that packet was received. If the SSSoE in the newly received packet is
+less than the client's conservative estimate by more than 2 seconds,
+then the client concludes that the NAT gateway has undergone a reboot
+or other loss of port mapping state, and the client MUST immediately
+renew all its active port mapping leases."*
+
+The epoch was parsed into all three response structs and read by
+nobody, so a router reboot emptied the mapping table and this client
+went on advertising a port that forwarded nothing until the lease ran
+out. The estimator is now implemented exactly as written, fed by every
+response the matcher proved is ours (an unattributable datagram's clock
+is not evidence, and letting one drive the estimator would hand an
+off-path attacker a free "your mappings are gone" signal). On a
+detected reboot the renewal deadline is pulled in to now + a random
+0-5 s delay, which is §3.7's own mandatory jitter: *"the client MUST
+first delay by a random amount of time selected with uniform random
+distribution in the range 0 to 5 seconds, and then send its first port
+mapping request."*
+
+#### 9.4.4 Short PCP error responses are processed (review M-5.3)
+
+RFC 6887 §8.3: *"Responses shorter than 24 octets, longer than 1100
+octets, or not a multiple of 4 octets are invalid and ignored."* The
+parser demanded the 60-octet MAP response, so a gateway refusing with
+only the §7.2 common header was indistinguishable from a dead one and
+cost the caller the whole ladder. The floor is now §8.3's 24, and the
+two length rules it states alongside are enforced as well. A short
+**success** is still dropped — §11.4 matches a MAP response on "the
+protocol, the internal port, and the mapping nonce", none of which a
+header-only frame carries, and an unmatched success would install a
+mapping whose external port is not even present in it. A short
+**error** is reported, so a refusing gateway fails fast. Residual: an
+attacker who can spoof the gateway's source address can abort one probe
+that way; the fallback is STUN, exactly as if the router were silent.
 
 ### 9.5 Config
 
@@ -2013,7 +2205,10 @@ mapping away for no reason. `docs/config.md` updated.
 
 ### 9.6 Tests
 
-Test 18 in `test_bilateral_punch.c` (:3814), in three parts:
+Test **22** in `test_bilateral_punch.c` (`test_natpmp_pcp`), in three
+parts. (It is registered as test 22; earlier drafts of this section
+called it 18 and cited stale line numbers — the function name is the
+stable handle.)
 
 - **Codec vs literal RFC bytes**, in the spirit of test 17. The
   expectations are hand-built from the §7.1/§11.1 and §3.2/§3.3
@@ -2025,25 +2220,121 @@ Test 18 in `test_bilateral_punch.c` (:3814), in three parts:
   up. Deletion shape is pinned on both protocols, including that the
   NAT-PMP builder **forces** Suggested External Port to 0 rather than
   trusting the caller.
-- **The client against a localhost mock gateway** (:3865): PCP
-  success, the §9 downgrade to NAT-PMP, a refusal, silence, and a
-  single-backend renewal. Silence asserts the elapsed wall clock is
-  inside budget — that is the assertion that fails if the §3.1 ladder
-  ever stops being truncated — and that a retransmit actually happened.
+- **The client against a localhost mock gateway**: PCP success, the §9
+  downgrade to NAT-PMP, a refusal, silence, and a single-backend
+  renewal. Silence asserts the elapsed wall clock is inside budget and
+  that a retransmit actually happened. That was originally described as
+  "the assertion that fails if the §3.1 ladder ever stops being
+  truncated"; **it is not**, and the review proved it — the phase budget
+  clamps a nine-rung ladder to the same elapsed time. Test 23b pins the
+  shape instead.
 - **The CGNAT gate end to end** on the real host state machine, run
   **twice**: with a `100.64.5.9` external IP the advertised port must
   be STUN's, with a `198.51.100.30` one it must be the mapped port. The
   public-IP run is the control — a drop-only assertion would also pass
   if the NAT-PMP mapping had never been created at all.
 
-Every assertion was proven able to go red by neutralising the code
-under test and observing the failure (19 neutralisations; see the S7
-task report for the patch-to-red table). Nothing here can reach a real
-router: every client call goes through
-`Natpmp_TestHook_SetGateway` at a 127.0.0.1 mock, gateway discovery is
-Linux-only so a macOS run cannot find a real gateway even with the hook
-forgotten, and the four pre-existing host tests now set
-`disable-natpmp` alongside `disable-upnp`.
+#### 9.6.1 Tests 23a-23d, and why they exist
+
+The original S7 claim was that every assertion had been proven able to
+go red. An adversarial re-derivation found **five of those
+neutralisations vacuous** — the reviewer reverted the guarded behaviour
+and the suite stayed green. Tests 23a-23d exist to close exactly those
+holes, and the patch-to-red table below is inlined here rather than
+cited to a document that does not exist.
+
+- **23a — the DISABLE_UPNP / DISABLE_NATPMP pairing.** No test may
+  install a mapping on a real router. Thirteen sites in
+  `test_bilateral_punch.c` disable UPnP before driving the host state
+  machine, and each is hand-paired with a `disable-natpmp`. That
+  discipline is now *asserted*, by scanning `__FILE__` for every
+  DISABLE_UPNP-true site and requiring a DISABLE_NATPMP-true within the
+  next two non-blank lines. Failing to open the file is a FAILURE, and
+  the scan must find at least 11 sites, so a scanner that silently
+  matched nothing cannot pass.
+- **23b — the review fixes**, each keyed to the reversion it catches:
+  the ladder shape (via a test hook *and* a behavioural rung-timing
+  observation), the 700 ms gateway measurement, the Mapping Nonce
+  observed on the wire across create/renew/delete, §8.3 short errors,
+  §3.6 epoch rollback, the no-external-address refusal, the renewal
+  interval and retry as functions of the granted lease, and the
+  backend-ownership refusal *with a control* proving that a mapping
+  this backend does own really does emit a delete down the same path.
+- **23c — the `disable-natpmp` kill switch, end to end**, in both
+  polarities. `try_portmap` used to hold a *second* copy of the check
+  that short-circuited before the worker ran, which is precisely why
+  deleting the worker's copy left the suite green; enforcement is now
+  in one observable place. The enabled case is the control.
+- **23d — a lost mapping stops being advertised.** An 8 s lease, then
+  the gateway goes silent; the advertised port must revert from the
+  mapped one to the STUN-observed one. Measured: 41200 → 40000 after
+  11.5 s. The pre-drop assertion that the code carried the *mapped*
+  port is the control that stops this passing when no mapping existed.
+
+#### 9.6.2 Patch-to-red table
+
+Every row was applied to the tree, rebuilt, and run against the full
+`--test-bilateral-punch` harness; the recorded exit code is the true
+process exit. The first five are the reviewer's own vacuous
+neutralisations, now RED.
+
+| # | Patch applied | Exit | First failing assertion |
+|---|---|---|---|
+| R1 | PCP builder: swap the Internal-Port and Suggested-External-Port writes | **1** | `22-pcp-req-internal-port`: octets 40-41 carry 40001, expected 54321 |
+| R2 | Restore RFC 6886 §3.1's full nine-rung ladder | **1** | `23b-ladder-steps`: 9 rungs, expected 3 (+ `23b-ladder-count`: 5 requests, expected 3) |
+| R3 | Pin `portmap_renew_interval_for` to a flat 30 minutes | **1** | `23b-renew-interval-120`: 1800000 ms, expected 60000 ms |
+| R4 | Delete the `disable-natpmp` check in `upnp_worker_fn` | **1** | `23c-disabled-silent`: switch SET, gateway still received 3 datagrams |
+| R5 | Delete the backend-ownership refusal in `Natpmp_RemoveMapping` | **1** | `23b-own-backend1`: sent 1 NAT-PMP datagram for a UPnP-owned mapping |
+| R6 | H-6: give all three phases the one shared deadline again | **1** | `23b-noise-starved`: 0 address + 0 mapping requests in 5260 ms |
+| R7 | H-6: retransmit even after the gateway has answered | **1** | `23b-slow-gw-700`: no mapping, 3880 ms, 3 address requests |
+| R8 | H-5: mint a fresh PCP nonce on every call | **1** | `23b-nonce-renew-differs` (and `23b-nonce-del-differs`) |
+| R9 | M-5.3: discard PCP responses shorter than 60 octets | **1** | `23b-short-error`: parsed NOT_OURS, expected REFUSED (+ 3510 ms to give up) |
+| R10 | M-5.1: make the §3.6 epoch estimator a no-op | **1** | `23b-epoch-reset`: SSSoE fell 100003 → 3 and the client did not notice |
+| R11 | M-5.4: return false for an empty external IP in the CGNAT gate | **1** | `23b-gate-empty-closed` |
+| R12 | M-5.2: flat five-minute retry regardless of lease | **1** | `23b-renew-retry-120`: 300000 ms, expected 30000 ms |
+| R13 | M-5.5: drop the lease-expiry check from the renewal tick | **1** | `23d-still-advertised`: still port 41200 after 25 s on an 8 s lease |
+| R14 | M-5.4: accept a mapping with a `0.0.0.0` external address | **1** | `23b-noextip-pcp` |
+| R15 | Harness guard: consult the real default route with no mock set | **0** | **none — see below** |
+| R16 | 23a scanner: add an unpaired DISABLE_UPNP site | **1** | `23a-unpaired`, naming the offending file and line |
+| R17 | H-6 "BEFORE": all three reverted together — shared deadline, no suppression, and the original 4000 ms probe budget | **1** | `23b-slow-gw-700`: no mapping, **3886 ms**, 3 address requests |
+
+R17 is the pre-fix state reconstructed exactly, and it reproduces the
+independently reported measurement: 700 ms → no mapping in 3886 ms with
+three public-address requests (the review reported 3896 ms and three
+address requests). The 300 ms control still mapped, in 1534 ms. After
+the fix the same gateway maps in ~2.8 s having been sent 2 PCP + 1
+address + 1 mapping request.
+
+**R15 is GREEN, and that is reported rather than hidden.** On the
+development host (macOS) `discover_gateway_platform` is the deliberate
+no-op stub (natpmp.c), so removing the harness guard changes nothing
+observable: the platform already reports no gateway. The guard is
+defense-in-depth whose value appears only on Linux, where discovery is
+real — and no macOS-observable neutralisation for it exists, because
+constructing one would mean faking a gateway, which is the exact thing
+the guard prevents. The assertion it sits behind
+(`22-addmapping-without-gateway`) is NOT vacuous in general: it goes red
+if `Natpmp_AddMapping` ever stops failing closed without a gateway. What
+cannot be demonstrated here is that the *new* guard is the thing
+producing that outcome on this platform.
+
+**R6 and R7 are separately load-bearing, and neither subsumes the
+other.** R7 (retransmit suppression removed, per-phase budgets kept)
+fails the 700 ms measurement. R6 (per-phase budgets removed, suppression
+kept) passes it — 700 ms still maps — and is caught instead by the noise
+case, where an unmatchable-PCP phase with suppression in force waits out
+a *shared* deadline and starves the NAT-PMP fallback of every datagram.
+Had only the 700 ms test been written, the per-phase budget would have
+been another vacuous guard.
+
+Nothing here can reach a real router. Three independent guards now:
+every client call goes through `Natpmp_TestHook_SetGateway` at a
+127.0.0.1 mock; gateway discovery is Linux-only so a macOS run cannot
+find a real gateway even with the hook forgotten; and — new — a build
+with both `NETPLAY_TEST_HOOKS` and `ENABLE_NETPLAY_TESTS` (the harness
+binary, and nothing else) **refuses** to consult the default route when
+no mock is configured, which is what makes the claim hold when the suite
+runs on Linux.
 
 ### 9.7 Residuals, stated rather than hidden
 
@@ -2067,10 +2358,35 @@ forgotten, and the four pre-existing host tests now set
   codec — the codec half is pinned to literal RFC bytes for that
   reason, but the *client* half (does a real Airport/pfSense/OpenWrt
   box actually answer this?) is unproven until someone hosts behind one.
-- **The 10 s worst case is real**, if unlikely: a router that answers
-  neither SSDP nor 5351 now costs 10 s before the STUN fallback instead
-  of 6. S6's candidate racing does not help here — this is the host's
-  probe, not the joiner's connect.
+- **The worst case is 11.25 s**, if unlikely: a router that answers
+  neither SSDP nor 5351 costs `UPNP_PROBE_BUDGET_MS` (6 s) +
+  `NATPMP_PROBE_BUDGET_MS` (5.25 s) before the STUN fallback, instead of
+  the pre-S7 6 s. (It was 10 s before review H-6 widened the NAT-PMP
+  half from one shared 4 s deadline to three 1.75 s phases.) A *wholly*
+  silent gateway actually costs 3.5 s of that, not 5.25, because the
+  address request timing out ends the attempt before the mapping phase.
+  S6's candidate racing does not help here — this is the host's probe,
+  not the joiner's connect.
+- **The PCP retransmit ladder deviates from four RFC 6887 §8.1.1
+  SHOULDs**, one of which (the missing randomisation factor) is a gap
+  rather than a trade. Disclosed in full in §9.3.1.
+- **A gateway slower than ~1 s per request still gets no mapping.** The
+  three-phase budget totals 5.25 s and each phase's ladder is 1.75 s, so
+  a *serialising* router taking 1.5 s per datagram runs out of phase
+  before its reply arrives. 700 ms — RFC 6886 §3.1's own "perhaps half a
+  second" neighbourhood — is covered and measured (§9.3.2); beyond that,
+  the degradation is still the same fall-through to STUN.
+- **The lease clock is armed from the main thread's first sighting of
+  the mapping, not from the instant the gateway granted it.** That is a
+  frame or two of optimism in the safe direction (we may keep a mapping
+  marginally longer than the router does, never drop a live one), but it
+  is an approximation and it is not measured against the router.
+- **Nothing verifies that a gateway ACCEPTED a delete or a renewal.**
+  Both are sent and the reply is parsed only far enough to feed the
+  §3.6 epoch estimator; a NOT_AUTHORIZED on a delete is not surfaced.
+  The lease-expiry drop (§9.4.2) is what limits the damage: a mapping
+  that could not be renewed stops being advertised whether or not we
+  understood why.
 - **PCP options are not implemented.** No `PREFER_FAILURE`, no
   `FILTER`, no `THIRD_PARTY` (RFC 6887 §13). Consequence: per §11.2 a
   normal MAP request "will return an available external port" rather
@@ -2113,5 +2429,5 @@ expected outcome. This is the regression net for S2–S7.
 | S4 security | **implemented + adversarially reviewed** (see §6; S4a punch auth, S4b room code — now v3, S4c rendezvous return-routability — the last two are breaking wire/format changes, authorized. Review fixes as-built in §6.8) |
 | S5 relay for symmetric-NAT pairs | **implemented + adversarially reviewed** (see §7; custom '3SXR' relay on the existing port, NOT coturn. Closes the one §2 matrix cell that could not connect at all. Pure wire EXTENSION — protocol version stays 2. Review fixes as-built in §7.2/§7.3: CRITICAL-1 session-TTL teardown, HIGH-1 pin source binding, HIGH-2 over-budget liveness, MEDIUM-1..5, LOW-1..2) |
 | S6 joiner candidate racing | **implemented + adversarially reviewed** (see §8; one interleaved race on the existing worker thread — no new threads, no new locks. Full-cascade worst case measured 9 677 -> 5 114 ms per attempt. Review fixes as-built in §8.4 rules 1b/2b, §8.5, §8.8 and §8.9: H-1 the confirmation-tail budget exemption, H-2 real-wire punch legs in the suite, H-3 the split brain — measured 150 ms band — H-4 per-candidate punch windows, H-7 ordering-rule-1 tear-down coverage, M-1..M-4, L-1) |
-| S7 NAT-PMP / PCP | **implemented** (see §9; hand-rolled RFC 6887 PCP client with RFC 6886 NAT-PMP downgrade, NO new library, as a third backend behind `UpnpMapping`. RFC 6886 §3.1's ~127 s retransmit ladder is deliberately truncated to 250/500/1000 ms under an absolute deadline — §9.3. Residuals in §9.7, chiefly: gateway discovery is Linux-only, and the client has never met real NAT-PMP/PCP hardware) |
+| S7 NAT-PMP / PCP | **implemented + adversarially reviewed** (see §9; hand-rolled RFC 6887 PCP client with RFC 6886 NAT-PMP downgrade, NO new library, as a third backend behind `UpnpMapping`. RFC 6886 §3.1's ~127 s retransmit ladder is deliberately truncated to 250/500/1000 ms per PHASE under an absolute ceiling — §9.3, and the PCP ladder's four §8.1.1 deviations are disclosed in §9.3.1. Review fixes as-built: H-5 the PCP Mapping Nonce is persisted so renewals and deletes are not NOT_AUTHORIZED'd (§9.4.1) and a mapping that cannot be renewed is dropped instead of advertised forever (§9.4.2); H-6 per-phase retransmit budgets plus §3.1's "do not overload it" rule, measured 700 ms gateway no-mapping → mapping (§9.3.2); H-7 five vacuous neutralisations replaced by tests 23a-23d with an inline patch-to-red table (§9.6); M-5.1 §3.6 epoch reboot detection implemented, M-5.2 lease-scaled renewal retry, M-5.3 §8.3 short error responses, M-5.4 the CGNAT gate fails closed on an absent external address, M-5.5 lost mappings stop being advertised. Residuals in §9.7, chiefly: gateway discovery is Linux-only, the client has never met real NAT-PMP/PCP hardware, and a gateway slower than ~1 s per request is still out of budget) |
 | S8 netns verification harness | planned above |

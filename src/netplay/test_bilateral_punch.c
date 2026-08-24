@@ -4148,6 +4148,25 @@ typedef enum {
     MOCK_GW_PCP,           /* a PCP server: MAP -> SUCCESS                   */
     MOCK_GW_NATPMP,        /* PCP -> UNSUPP_VERSION v0; speaks NAT-PMP       */
     MOCK_GW_NATPMP_REFUSE, /* as above, but the MAP request is refused       */
+    /* S7 review M-5.3: a PCP server that refuses with a HEADER-ONLY
+     * 24-octet frame. RFC 6887 §8.3's floor is 24 octets, not the MAP
+     * response's 60, and a refusing gateway that only ever sends the
+     * common header used to look identical to a dead one. */
+    MOCK_GW_PCP_SHORT_ERROR,
+    /* S7 review M-5.4: grants a mapping but reports NO external address
+     * (all-zeros). The S1 §3.6 CGNAT gate compares that address against
+     * STUN's, so a mapping without one is unjudgeable. */
+    MOCK_GW_PCP_NO_EXT_IP,
+    MOCK_GW_NATPMP_NO_EXT_IP,
+    /* S7 review H-6, the per-phase-budget half. Speaks NAT-PMP perfectly
+     * but answers every PCP request with a well-formed MAP response
+     * carrying the WRONG Mapping Nonce — i.e. NOISE on port 5351 that
+     * the §11.4 matcher rejects and that therefore never ends the PCP
+     * phase's wait. A gateway that is merely confused, a second PCP
+     * client on the LAN, or an attacker all produce this. The point of
+     * the test is that such noise must not be able to STARVE the
+     * NAT-PMP fallback of its own retransmit budget. */
+    MOCK_GW_PCP_NOISE_THEN_NATPMP,
 } MockGwMode;
 
 typedef struct {
@@ -4157,6 +4176,25 @@ typedef struct {
     uint32_t ext_ip_be;  /* external IP the gateway claims                  */
     uint16_t ext_port;   /* external port it grants                         */
     uint32_t lifetime_s; /* lifetime it grants (may differ from requested)  */
+    /*
+     * S7 review H-6: how long this gateway takes to answer, applied
+     * INLINE in the receive loop so the mock is single-threaded and
+     * falls behind exactly the way a real low-cost NAT box does. RFC
+     * 6886 §3.1 names the shape: "NAT gateways are often low-cost
+     * devices, with limited memory and CPU speed... In the case of a
+     * slow NAT gateway that takes perhaps half a second to respond to a
+     * NAT-PMP request, the client SHOULD respect this and allow the NAT
+     * gateway to operate at the pace it can manage, and not overload it
+     * by issuing requests faster than the rate it's answering them."
+     *
+     * A mock that replied late WITHOUT serialising would be a strictly
+     * easier target and would not reproduce the measured failure.
+     */
+    uint32_t reply_delay_ms;
+    /* Seconds Since Start of Epoch to report (RFC 6886 §3.6 / RFC 6887
+     * §7.2). Writable between calls so a test can make the gateway's
+     * clock jump backwards, i.e. reboot. */
+    uint32_t epoch_s;
     /* Observation counters + last frames, for byte-level assertions. */
     int pcp_reqs;
     int pmp_addr_reqs;
@@ -4165,7 +4203,21 @@ typedef struct {
     int last_pcp_len;
     uint8_t last_pmp_map[64];
     int last_pmp_map_len;
+    /* Arrival time of each PCP request, relative to the first, so a test
+     * can pin the retransmit ladder's SHAPE and not merely its total. */
+    uint64_t pcp_arrival_ms[16];
+    uint64_t first_arrival_ms;
 } MockGwCtx;
+
+/* Every reply goes through here so the injected latency cannot be
+ * forgotten on one branch. */
+static void mock_gw_reply(MockGwCtx* ctx, const void* buf, size_t len,
+                          const struct sockaddr_in* to, socklen_t tolen) {
+    if (ctx->reply_delay_ms != 0) {
+        SDL_Delay(ctx->reply_delay_ms);
+    }
+    sendto(ctx->sock, (const char*)buf, len, 0, (const struct sockaddr*)to, tolen);
+}
 
 static int SDLCALL mock_gateway_thread(void* arg) {
     MockGwCtx* ctx = (MockGwCtx*)arg;
@@ -4183,13 +4235,61 @@ static int SDLCALL mock_gateway_thread(void* arg) {
          * if it is NAT-PMP (first octet zero) or PCP (first octet
          * non-zero)." The mock dispatches exactly that way. */
         if (buf[0] == 2) {
+            {
+                const uint64_t now = SDL_GetTicks();
+                if (ctx->pcp_reqs == 0) ctx->first_arrival_ms = now;
+                if (ctx->pcp_reqs <
+                    (int)(sizeof(ctx->pcp_arrival_ms) / sizeof(ctx->pcp_arrival_ms[0]))) {
+                    ctx->pcp_arrival_ms[ctx->pcp_reqs] = now - ctx->first_arrival_ms;
+                }
+            }
             ctx->pcp_reqs++;
             if (n <= (int)sizeof(ctx->last_pcp)) {
                 memcpy(ctx->last_pcp, buf, (size_t)n);
                 ctx->last_pcp_len = n;
             }
             if (ctx->mode == MOCK_GW_SILENT) continue;
-            if (ctx->mode == MOCK_GW_PCP) {
+            if (ctx->mode == MOCK_GW_PCP_SHORT_ERROR) {
+                /* RFC 6887 §7.2 common response header ONLY — 24 octets,
+                 * a legal length under §8.3's "Responses shorter than 24
+                 * octets ... are invalid and ignored" floor. Result code
+                 * 2 = NOT_AUTHORIZED (§7.4). */
+                uint8_t r[NATPMP_PCP_HDR_LEN];
+                memset(r, 0, sizeof(r));
+                r[0] = 2;
+                r[1] = 0x80u | 1u;
+                r[3] = (uint8_t)NATPMP_PCP_NOT_AUTHORIZED;
+                r[8] = (uint8_t)(ctx->epoch_s >> 24);
+                r[9] = (uint8_t)(ctx->epoch_s >> 16);
+                r[10] = (uint8_t)(ctx->epoch_s >> 8);
+                r[11] = (uint8_t)(ctx->epoch_s);
+                mock_gw_reply(ctx, r, sizeof(r), &from, fl);
+                continue;
+            }
+            if (ctx->mode == MOCK_GW_PCP_NOISE_THEN_NATPMP) {
+                /* A syntactically perfect 60-octet MAP response whose
+                 * Mapping Nonce is not the one we sent. RFC 6887 §11.4
+                 * matches "the protocol, the internal port, and the
+                 * mapping nonce", so the client must treat it as not
+                 * ours and keep waiting — which is exactly the state in
+                 * which a shared deadline lets one phase eat the rest. */
+                uint8_t r[60];
+                memset(r, 0, sizeof(r));
+                r[0] = 2;
+                r[1] = 0x80u | 1u;
+                r[3] = 0;
+                r[7] = 60;
+                memset(&r[24], 0x5A, 12); /* deliberately NOT our nonce */
+                r[36] = buf[36];
+                r[40] = buf[40]; r[41] = buf[41];
+                r[42] = (uint8_t)(ctx->ext_port >> 8);
+                r[43] = (uint8_t)(ctx->ext_port & 0xFFu);
+                r[54] = 0xFF; r[55] = 0xFF;
+                memcpy(&r[56], &ctx->ext_ip_be, 4);
+                mock_gw_reply(ctx, r, sizeof(r), &from, fl);
+                continue;
+            }
+            if (ctx->mode == MOCK_GW_PCP || ctx->mode == MOCK_GW_PCP_NO_EXT_IP) {
                 /* Common Response Header (RFC 6887 §7.2, 24 bytes) +
                  * MAP response (§11.2, 36 bytes). Hand-built. */
                 uint8_t r[60];
@@ -4202,18 +4302,25 @@ static int SDLCALL mock_gateway_thread(void* arg) {
                 r[5] = (uint8_t)(ctx->lifetime_s >> 16);
                 r[6] = (uint8_t)(ctx->lifetime_s >> 8);
                 r[7] = (uint8_t)(ctx->lifetime_s);
-                r[11] = 0x2A;           /* Epoch Time, arbitrary           */
+                r[8] = (uint8_t)(ctx->epoch_s >> 24);   /* Epoch Time (§7.2) */
+                r[9] = (uint8_t)(ctx->epoch_s >> 16);
+                r[10] = (uint8_t)(ctx->epoch_s >> 8);
+                r[11] = (uint8_t)(ctx->epoch_s);
                 memcpy(&r[24], &buf[24], 12); /* Mapping Nonce, copied     */
                 r[36] = buf[36];              /* Protocol, copied          */
                 r[40] = buf[40];              /* Internal Port, copied     */
                 r[41] = buf[41];
                 r[42] = (uint8_t)(ctx->ext_port >> 8);
                 r[43] = (uint8_t)(ctx->ext_port & 0xFFu);
-                /* Assigned External IP as an IPv4-mapped IPv6 (§5). */
+                /* Assigned External IP as an IPv4-mapped IPv6 (§5). The
+                 * NO_EXT_IP mode still sends a well-formed IPv4-mapped
+                 * field — it just maps 0.0.0.0, which is what a gateway
+                 * that has no WAN address yet reports. */
                 r[54] = 0xFF; r[55] = 0xFF;
-                memcpy(&r[56], &ctx->ext_ip_be, 4);
-                sendto(ctx->sock, (const char*)r, sizeof(r), 0,
-                       (struct sockaddr*)&from, fl);
+                if (ctx->mode != MOCK_GW_PCP_NO_EXT_IP) {
+                    memcpy(&r[56], &ctx->ext_ip_be, 4);
+                }
+                mock_gw_reply(ctx, r, sizeof(r), &from, fl);
                 continue;
             }
             /* NAT-PMP-only gateway. RFC 6886 §3.5: "If the version in the
@@ -4225,14 +4332,20 @@ static int SDLCALL mock_gateway_thread(void* arg) {
             r[0] = 0;
             r[1] = 0;
             r[2] = 0; r[3] = 1;
-            r[7] = 0x2A;
-            sendto(ctx->sock, (const char*)r, sizeof(r), 0,
-                   (struct sockaddr*)&from, fl);
+            r[4] = (uint8_t)(ctx->epoch_s >> 24);
+            r[5] = (uint8_t)(ctx->epoch_s >> 16);
+            r[6] = (uint8_t)(ctx->epoch_s >> 8);
+            r[7] = (uint8_t)(ctx->epoch_s);
+            mock_gw_reply(ctx, r, sizeof(r), &from, fl);
             continue;
         }
 
         if (buf[0] != 0 || ctx->mode == MOCK_GW_SILENT) continue;
-        if (ctx->mode == MOCK_GW_PCP) continue; /* a PCP-only box ignores v0 */
+        /* A PCP-only box ignores version 0. */
+        if (ctx->mode == MOCK_GW_PCP || ctx->mode == MOCK_GW_PCP_NO_EXT_IP ||
+            ctx->mode == MOCK_GW_PCP_SHORT_ERROR) {
+            continue;
+        }
 
         if (buf[1] == 0) {
             /* Public Address Response, RFC 6886 §3.2 (12 bytes). */
@@ -4242,10 +4355,14 @@ static int SDLCALL mock_gateway_thread(void* arg) {
             r[0] = 0;
             r[1] = 128 + 0;
             r[2] = 0; r[3] = 0;   /* Result Code = 0 */
-            r[7] = 0x2A;          /* Seconds Since Start of Epoch */
-            memcpy(&r[8], &ctx->ext_ip_be, 4);
-            sendto(ctx->sock, (const char*)r, sizeof(r), 0,
-                   (struct sockaddr*)&from, fl);
+            r[4] = (uint8_t)(ctx->epoch_s >> 24); /* Seconds Since Start of Epoch */
+            r[5] = (uint8_t)(ctx->epoch_s >> 16);
+            r[6] = (uint8_t)(ctx->epoch_s >> 8);
+            r[7] = (uint8_t)(ctx->epoch_s);
+            if (ctx->mode != MOCK_GW_NATPMP_NO_EXT_IP) {
+                memcpy(&r[8], &ctx->ext_ip_be, 4);
+            }
+            mock_gw_reply(ctx, r, sizeof(r), &from, fl);
             continue;
         }
         if (buf[1] == 1) {
@@ -4263,7 +4380,10 @@ static int SDLCALL mock_gateway_thread(void* arg) {
             r[2] = 0;
             /* §3.5 result code 2 = Not Authorized/Refused. */
             r[3] = refuse ? 2 : 0;
-            r[7] = 0x2A;
+            r[4] = (uint8_t)(ctx->epoch_s >> 24);
+            r[5] = (uint8_t)(ctx->epoch_s >> 16);
+            r[6] = (uint8_t)(ctx->epoch_s >> 8);
+            r[7] = (uint8_t)(ctx->epoch_s);
             r[8] = buf[4]; r[9] = buf[5]; /* Internal Port, echoed */
             if (!refuse) {
                 r[10] = (uint8_t)(ctx->ext_port >> 8);
@@ -4273,8 +4393,7 @@ static int SDLCALL mock_gateway_thread(void* arg) {
                 r[14] = (uint8_t)(ctx->lifetime_s >> 8);
                 r[15] = (uint8_t)(ctx->lifetime_s);
             }
-            sendto(ctx->sock, (const char*)r, sizeof(r), 0,
-                   (struct sockaddr*)&from, fl);
+            mock_gw_reply(ctx, r, sizeof(r), &from, fl);
             continue;
         }
     }
@@ -4307,6 +4426,10 @@ static SDL_Thread* mock_gateway_start(MockGwCtx* ctx, MockGwMode mode,
     ctx->ext_ip_be = ext_ip_be;
     ctx->ext_port = ext_port;
     ctx->lifetime_s = lifetime_s;
+    /* Default Seconds Since Start of Epoch. Tests that care about RFC
+     * 6886 §3.6 reboot detection overwrite ctx->epoch_s between calls;
+     * everything else just needs a stable non-zero value. */
+    ctx->epoch_s = 42u;
     SDL_Thread* tid = SDL_CreateThread(mock_gateway_thread, "natpmp_gw_mock", ctx);
     if (tid == NULL) {
         close_sock(ctx->sock);
@@ -4351,8 +4474,19 @@ static int test_natpmp_pcp(void) {
         memcpy(&want[24], nonce, NATPMP_PCP_NONCE_LEN); /* Mapping Nonce */
         want[36] = 17;  /* Protocol = UDP                               */
         /* want[37..40) Reserved (24 bits) = 0                          */
+        /* S7 review H-7.1: these two ports MUST DIFFER.
+         *
+         * This block used to ask for internal 54321 and suggested
+         * external 54321, so the two adjacent 16-bit fields held
+         * identical bytes and SWAPPING them in Natpmp_BuildPcpMapRequest
+         * produced a byte-identical frame — the neutralisation the
+         * reviewer applied (swap the Internal-Port and
+         * Suggested-External-Port writes) left the whole suite green.
+         * With 54321 / 40001 the swap moves bytes and is caught, both by
+         * the whole-frame memcmp below and by the explicit
+         * offset assertions after it. */
         want[40] = 0xD4; want[41] = 0x31; /* Internal Port 54321        */
-        want[42] = 0xD4; want[43] = 0x31; /* Suggested External 54321   */
+        want[42] = 0x9C; want[43] = 0x41; /* Suggested External 40001   */
         /* Suggested External IP = the all-zeros address for "no
          * preference" (§11.1: "it MUST use the address-family-specific
          * all-zeros address (see Section 5)"). For IPv4 that is NOT 16
@@ -4369,7 +4503,26 @@ static int test_natpmp_pcp(void) {
         uint8_t got[NATPMP_PCP_MAP_LEN];
         EXPECT_TRUE("22-pcp-build",
                     Natpmp_BuildPcpMapRequest(got, nonce, NATPMP_PROTO_UDP, 54321,
-                                              54321, 0, (uint32_t)client.s_addr, 3600));
+                                              40001, 0, (uint32_t)client.s_addr, 3600));
+        /* Named, so a swap reports WHICH field moved rather than only an
+         * offset. RFC 6887 §11.1: Internal Port at octets 40-41,
+         * Suggested External Port at 42-43. */
+        if (((got[40] << 8) | got[41]) != 54321) {
+            fprintf(stderr,
+                    "[test_bilateral_punch] FAIL: 22-pcp-req-internal-port: octets 40-41 "
+                    "carry %u, expected the Internal Port 54321 (RFC 6887 §11.1). A "
+                    "gateway reading a swapped frame would map the wrong port.\n",
+                    (unsigned)((got[40] << 8) | got[41]));
+            fail_count++;
+        }
+        if (((got[42] << 8) | got[43]) != 40001) {
+            fprintf(stderr,
+                    "[test_bilateral_punch] FAIL: 22-pcp-req-suggested-ext-port: octets "
+                    "42-43 carry %u, expected the Suggested External Port 40001 (RFC "
+                    "6887 §11.1)\n",
+                    (unsigned)((got[42] << 8) | got[43]));
+            fail_count++;
+        }
         if (memcmp(got, want, sizeof(want)) != 0) {
             int off = -1;
             for (int i = 0; i < (int)sizeof(want); i++) {
@@ -4699,18 +4852,34 @@ static int test_natpmp_pcp(void) {
      * a test run off the developer's router. On Linux it may legitimately
      * find one, so only the no-hook-set invariant is asserted here. */
     Natpmp_TestHook_SetGateway(NULL, 0);
+    Natpmp_TestHook_ResetState();
 #if !defined(__linux__)
     {
-        UpnpMapping m;
-        memset(&m, 0, sizeof(m));
         char gwip[64] = { 0 };
         EXPECT_FALSE("22-no-gateway-off-linux",
                      Natpmp_TestHook_DiscoverGateway(gwip, (int)sizeof(gwip)));
+    }
+#endif
+    {
+        /* S7 review, method rule 3: with NO mock gateway configured, a
+         * HARNESS build must refuse to consult the real default route —
+         * on EVERY platform, not just the macOS one that happens to have
+         * no discovery implementation. This assertion is what makes the
+         * "no test can touch a real router" claim hold when the suite
+         * runs on Linux, which is the shipping platform. */
+        UpnpMapping m;
+        memset(&m, 0, sizeof(m));
         EXPECT_FALSE("22-addmapping-without-gateway",
                      Natpmp_AddMapping(&m, 54321, 54321, PORTMAP_BACKEND_NONE, 300));
         EXPECT_FALSE("22-addmapping-inactive", m.active);
+        UpnpMapping rm;
+        memset(&rm, 0, sizeof(rm));
+        rm.active = true;
+        rm.backend = PORTMAP_BACKEND_PCP;
+        rm.internal_port = 54321;
+        Natpmp_RemoveMapping(&rm); /* must not reach a real gateway either */
+        EXPECT_FALSE("22-removemapping-without-gateway-inactive", rm.active);
     }
-#endif
 
     /* --- B1: a PCP gateway --- */
     {
@@ -5036,6 +5205,1043 @@ static int test_natpmp_pcp(void) {
                 "works, a silent gateway times out inside budget, and a NAT-PMP mapping "
                 "with a CGN external IP is dropped by the S1 §3.6 gate while a public one "
                 "is kept\n");
+        return 0;
+    }
+    return 1;
+}
+
+/* ======================================================================= */
+/* Test 23: the S7 adversarial-review fixes                                */
+/* ======================================================================= */
+
+/*
+ * Everything here exists because an adversarial review found the S7
+ * guard it covers either WRONG or UNTESTABLE. Five of the original S7
+ * neutralisations were vacuous — the reviewer reverted the guarded
+ * behaviour and the suite stayed green — so each section below names the
+ * exact reversion it is built to catch.
+ *
+ * Nothing here may reach a real router. Two guards, one of them new:
+ * every client call goes through Natpmp_TestHook_SetGateway at a
+ * 127.0.0.1 mock, and a harness build (NETPLAY_TEST_HOOKS +
+ * ENABLE_NETPLAY_TESTS) now REFUSES to consult the real default route
+ * when no mock is set — see 22-addmapping-without-gateway.
+ */
+
+/* --- 23a: the DISABLE_UPNP / DISABLE_NATPMP pairing, asserted --------- *
+ *
+ * Method rule: no test may install a mapping on the developer's router.
+ * Eleven sites in this file disable UPnP before driving the host state
+ * machine, and every one of them is hand-paired with a matching
+ * disable-natpmp. Hand-maintained and, until now, unasserted: adding a
+ * twelfth site and forgetting the pair would silently aim the NAT-PMP
+ * backend at whatever gateway the test machine actually has.
+ *
+ * A source-level discipline is asserted at the source. __FILE__ is
+ * absolute here (CMake compiles with absolute paths), and a failure to
+ * open it is a FAILURE, not a skip — a scan that silently matched
+ * nothing would be exactly the vacuous test this whole exercise is
+ * about.
+ *
+ * The rule checked is: every line that sets DISABLE_UPNP to true must be
+ * followed, within the next two non-blank lines, by a line setting
+ * DISABLE_NATPMP to true. (Two, not one, because a case may then
+ * deliberately re-enable NAT-PMP against its own mock on the line after
+ * — which is what the CGNAT block does.)
+ */
+static int test_s7_disable_pairing(void) {
+    fprintf(stderr,
+            "[test_bilateral_punch] test 23a: DISABLE_UPNP sites pair with "
+            "DISABLE_NATPMP\n");
+    const int fails_before = fail_count;
+
+    FILE* f = fopen(__FILE__, "r");
+    if (f == NULL) {
+        fprintf(stderr,
+                "[test_bilateral_punch] FAIL: 23a-open: cannot read %s to verify the "
+                "disable-UPnP/disable-NAT-PMP pairing discipline\n", __FILE__);
+        fail_count++;
+        return 1;
+    }
+
+    /* Built at runtime so this scanner does not match ITSELF. */
+    char key_upnp[128];
+    char key_natpmp[128];
+    SDL_snprintf(key_upnp, sizeof(key_upnp), "%s%s", "Config_SetBool(CFG_KEY_NETPLAY_",
+                 "DIRECT_P2P_DISABLE_UPNP, true)");
+    SDL_snprintf(key_natpmp, sizeof(key_natpmp), "%s%s", "Config_SetBool(CFG_KEY_NETPLAY_",
+                 "DIRECT_P2P_DISABLE_NATPMP, true)");
+
+    char lines[3][512];
+    memset(lines, 0, sizeof(lines));
+    int pending = 0;   /* lines still allowed to satisfy an open UPNP site */
+    int upnp_line = 0; /* line number of that site                          */
+    int lineno = 0;
+    int sites = 0;
+    int unpaired = 0;
+    char buf[512];
+    while (fgets(buf, sizeof(buf), f) != NULL) {
+        lineno++;
+        if (pending > 0) {
+            /* Blank lines do not consume the window. */
+            const char* p = buf;
+            while (*p == ' ' || *p == '\t') p++;
+            if (*p != '\n' && *p != '\0') {
+                if (strstr(buf, key_natpmp) != NULL) {
+                    pending = 0;
+                } else if (--pending == 0) {
+                    fprintf(stderr,
+                            "[test_bilateral_punch] FAIL: 23a-unpaired: %s:%d disables "
+                            "UPnP but no disable-NAT-PMP follows within two lines. That "
+                            "test would aim the NAT-PMP/PCP backend at the machine's "
+                            "REAL default gateway.\n",
+                            __FILE__, upnp_line);
+                    fail_count++;
+                    unpaired++;
+                }
+            }
+        }
+        if (strstr(buf, key_upnp) != NULL) {
+            sites++;
+            pending = 2;
+            upnp_line = lineno;
+        }
+        (void)lines;
+    }
+    if (pending > 0) {
+        fprintf(stderr,
+                "[test_bilateral_punch] FAIL: 23a-unpaired-eof: %s:%d disables UPnP at "
+                "the end of the file with no disable-NAT-PMP after it\n",
+                __FILE__, upnp_line);
+        fail_count++;
+        unpaired++;
+    }
+    fclose(f);
+
+    /* The scan must have found the sites that exist. A scanner that
+     * matched zero lines would "pass" forever. */
+    if (sites < 11) {
+        fprintf(stderr,
+                "[test_bilateral_punch] FAIL: 23a-scan: found only %d disable-UPnP "
+                "site(s); at least 11 exist. The scanner is not matching, so its "
+                "verdict means nothing.\n", sites);
+        fail_count++;
+    }
+    fprintf(stderr,
+            "[test_bilateral_punch] test 23a: scanned %d disable-UPnP site(s), %d "
+            "unpaired\n", sites, unpaired);
+
+    if (fail_count == fails_before) {
+        fprintf(stderr,
+                "[test_bilateral_punch] test 23a OK — every disable-UPnP site pairs "
+                "with disable-NAT-PMP\n");
+        return 0;
+    }
+    return 1;
+}
+
+/* --- 23b: the S7 review fixes ---------------------------------------- */
+
+static int test_s7_review_fixes(void) {
+    fprintf(stderr, "[test_bilateral_punch] test 23b: S7 adversarial-review fixes\n");
+    const int fails_before = fail_count;
+
+    Natpmp_TestHook_SetGateway(NULL, 0);
+    Natpmp_TestHook_ResetState();
+
+    /* ================= H-7.2: the ladder's SHAPE ====================== *
+     *
+     * The reviewer restored RFC 6886 §3.1's full nine-rung ladder and the
+     * suite stayed green, because the only ladder assertion measured
+     * elapsed wall clock — which the phase budget clamps identically
+     * either way. The shape is now pinned directly, and the phase budget
+     * is DERIVED from the ladder in natpmp.c so the two cannot drift.
+     */
+    {
+        const int* steps = NULL;
+        const int n = Natpmp_TestHook_Ladder(&steps);
+        if (n != 3 || steps == NULL) {
+            fprintf(stderr,
+                    "[test_bilateral_punch] FAIL: 23b-ladder-steps: the retransmit "
+                    "ladder has %d rung(s), expected the documented truncation to 3 "
+                    "(plan §9.3). RFC 6886 §3.1's full ladder is nine rungs and ~127 s, "
+                    "which is not shippable behind a Host Game click.\n", n);
+            fail_count++;
+        } else {
+            const int want[3] = { 250, 500, 1000 };
+            for (int i = 0; i < 3; i++) {
+                if (steps[i] != want[i]) {
+                    fprintf(stderr,
+                            "[test_bilateral_punch] FAIL: 23b-ladder-rung%d: %d ms, "
+                            "expected %d ms — §3.1's doubling shape, truncated at three "
+                            "rungs\n", i, steps[i], want[i]);
+                    fail_count++;
+                }
+            }
+        }
+        const int phase = Natpmp_TestHook_PhaseBudgetMs();
+        if (phase != NATPMP_PHASE_BUDGET_MS) {
+            fprintf(stderr,
+                    "[test_bilateral_punch] FAIL: 23b-phase-budget: natpmp.c derives %d "
+                    "ms per phase from its ladder but the header advertises %d ms. A "
+                    "phase shorter than its ladder truncates the ladder silently; a "
+                    "longer one inflates the worst case nobody budgeted for.\n",
+                    phase, NATPMP_PHASE_BUDGET_MS);
+            fail_count++;
+        }
+        EXPECT_TRUE("23b-probe-budget-is-three-phases",
+                    NATPMP_PROBE_BUDGET_MS == 3 * NATPMP_PHASE_BUDGET_MS);
+        EXPECT_TRUE("23b-renew-budget-is-two-phases",
+                    NATPMP_RENEW_BUDGET_MS == 2 * NATPMP_PHASE_BUDGET_MS);
+    }
+
+    /* A behavioural companion to the pin above: against a SILENT gateway
+     * the PCP phase must send exactly as many datagrams as it has rungs,
+     * at the rung intervals. Restoring the nine-rung ladder grows the
+     * phase budget past the caller's overall ceiling and the count moves. */
+    {
+        Natpmp_TestHook_ResetState();
+        MockGwCtx gw;
+        SDL_Thread* tid = mock_gateway_start(&gw, MOCK_GW_SILENT, 0, 0, 0);
+        if (tid == NULL) {
+            FAIL("23b-ladder-obs", "could not start the mock gateway");
+        } else {
+            UpnpMapping m;
+            memset(&m, 0, sizeof(m));
+            (void)Natpmp_AddMapping(&m, 54321, 54321, PORTMAP_BACKEND_PCP,
+                                    NATPMP_PROBE_BUDGET_MS);
+            if (gw.pcp_reqs != 3) {
+                fprintf(stderr,
+                        "[test_bilateral_punch] FAIL: 23b-ladder-count: a silent gateway "
+                        "saw %d PCP request(s) in one phase; the truncated §3.1 ladder "
+                        "has exactly 3 rungs\n", gw.pcp_reqs);
+                fail_count++;
+            } else {
+                /* Arrival offsets, relative to the first: 0, 250, 750.
+                 * Loose bounds — this box runs the suite under load — but
+                 * tight enough that a 3 s IRT (RFC 6887 §8.1.1's own
+                 * default) or a missing rung cannot pass. */
+                const uint64_t lo[3] = { 0u, 150u, 550u };
+                const uint64_t hi[3] = { 120u, 600u, 1400u };
+                for (int i = 0; i < 3; i++) {
+                    if (gw.pcp_arrival_ms[i] < lo[i] || gw.pcp_arrival_ms[i] > hi[i]) {
+                        fprintf(stderr,
+                                "[test_bilateral_punch] FAIL: 23b-ladder-timing%d: "
+                                "request %d arrived at +%u ms, expected %u..%u ms "
+                                "(§3.1 rungs 250/500/1000)\n",
+                                i, i, (unsigned)gw.pcp_arrival_ms[i], (unsigned)lo[i],
+                                (unsigned)hi[i]);
+                        fail_count++;
+                    }
+                }
+            }
+            mock_gateway_stop(&gw, tid, mock_gateway_port(&gw));
+        }
+    }
+
+    /* ============ H-6: a slow-but-normal gateway gets a mapping ======= *
+     *
+     * RFC 6886 §3.1 calls out "a slow NAT gateway that takes perhaps half
+     * a second to respond". Before the fix, three phases shared ONE
+     * absolute deadline and a 700 ms gateway produced NO mapping: the
+     * measured run spent 3896 ms, answered three public-address requests
+     * and never got a mapping request as far as the gateway at all.
+     *
+     * 300 ms is the control: it worked before and must keep working.
+     */
+    {
+        const uint32_t delays[] = { 300u, 700u };
+        for (size_t di = 0; di < sizeof(delays) / sizeof(delays[0]); di++) {
+            Natpmp_TestHook_ResetState();
+            struct in_addr ext;
+            memset(&ext, 0, sizeof(ext));
+            inet_pton(AF_INET, "198.51.100.40", &ext);
+            MockGwCtx gw;
+            SDL_Thread* tid = mock_gateway_start(&gw, MOCK_GW_NATPMP,
+                                                 (uint32_t)ext.s_addr, 40055, 3600);
+            if (tid == NULL) {
+                FAIL("23b-slow-gw", "could not start the mock gateway");
+                continue;
+            }
+            gw.reply_delay_ms = delays[di];
+            UpnpMapping m;
+            memset(&m, 0, sizeof(m));
+            const uint64_t t0 = SDL_GetTicks();
+            const bool ok = Natpmp_AddMapping(&m, 54321, 54321, PORTMAP_BACKEND_NONE,
+                                              NATPMP_PROBE_BUDGET_MS);
+            const uint64_t dt = SDL_GetTicks() - t0;
+            fprintf(stderr,
+                    "[test_bilateral_punch] 23b-slow-gw %u ms delay: mapping=%s "
+                    "elapsed=%u ms pcp_reqs=%d addr_reqs=%d map_reqs=%d ext_port=%u\n",
+                    (unsigned)delays[di], ok ? "YES" : "NO", (unsigned)dt, gw.pcp_reqs,
+                    gw.pmp_addr_reqs, gw.pmp_map_reqs, (unsigned)m.external_port);
+            if (!ok) {
+                fprintf(stderr,
+                        "[test_bilateral_punch] FAIL: 23b-slow-gw-%u: a gateway that "
+                        "answers in %u ms produced NO mapping (elapsed %u ms, "
+                        "map requests seen by the gateway: %d). RFC 6886 §3.1 names "
+                        "\"perhaps half a second\" as slow-but-normal; each protocol "
+                        "phase must get its own retransmit budget.\n",
+                        (unsigned)delays[di], (unsigned)delays[di], (unsigned)dt,
+                        gw.pmp_map_reqs);
+                fail_count++;
+            } else {
+                EXPECT_TRUE("23b-slow-gw-extport", m.external_port == 40055);
+                EXPECT_TRUE("23b-slow-gw-backend", m.backend == PORTMAP_BACKEND_NATPMP);
+            }
+            /* And the whole call still respects the advertised ceiling. */
+            if (dt > (uint64_t)NATPMP_PROBE_BUDGET_MS + 1500u) {
+                fprintf(stderr,
+                        "[test_bilateral_punch] FAIL: 23b-slow-gw-bounded-%u: the call "
+                        "took %u ms against a %d ms ceiling\n",
+                        (unsigned)delays[di], (unsigned)dt, NATPMP_PROBE_BUDGET_MS);
+                fail_count++;
+            }
+            /* §3.1: "not overload it by issuing requests faster than the
+             * rate it's answering them." Once the gateway has answered
+             * anything, the ladder must stop retransmitting — three full
+             * rungs per phase into a 700 ms box is what starved the
+             * mapping request in the first place. */
+            if (gw.pmp_addr_reqs > 2) {
+                fprintf(stderr,
+                        "[test_bilateral_punch] FAIL: 23b-slow-gw-flood-%u: %d "
+                        "public-address requests were issued at a gateway that had "
+                        "already answered; RFC 6886 §3.1 says to let it work at its own "
+                        "pace\n", (unsigned)delays[di], gw.pmp_addr_reqs);
+                fail_count++;
+            }
+            mock_gateway_stop(&gw, tid, mock_gateway_port(&gw));
+        }
+    }
+
+    /* ===== H-6, the other half: one phase may not starve the next ===== *
+     *
+     * The 700 ms case above is fixed by the stop-retransmitting rule
+     * alone. THIS case is what the per-phase budget is for.
+     *
+     * A gateway that answers PCP with unmatchable noise (wrong Mapping
+     * Nonce — §11.4 says ignore it) but speaks NAT-PMP perfectly. The
+     * client cannot end the PCP phase on any of those frames, and with
+     * the retransmit suppression in force it waits out the phase. If
+     * that wait runs to a SHARED deadline, the PCP phase consumes the
+     * whole allowance and the NAT-PMP fallback — the working protocol,
+     * on the same box — never gets a single datagram.
+     */
+    {
+        Natpmp_TestHook_ResetState();
+        struct in_addr ext;
+        memset(&ext, 0, sizeof(ext));
+        inet_pton(AF_INET, "198.51.100.44", &ext);
+        MockGwCtx gw;
+        SDL_Thread* tid = mock_gateway_start(&gw, MOCK_GW_PCP_NOISE_THEN_NATPMP,
+                                             (uint32_t)ext.s_addr, 40111, 3600);
+        if (tid == NULL) {
+            FAIL("23b-noise", "could not start the mock gateway");
+        } else {
+            UpnpMapping m;
+            memset(&m, 0, sizeof(m));
+            const uint64_t t0 = SDL_GetTicks();
+            const bool ok = Natpmp_AddMapping(&m, 54321, 54321, PORTMAP_BACKEND_NONE,
+                                              NATPMP_PROBE_BUDGET_MS);
+            const uint64_t dt = SDL_GetTicks() - t0;
+            fprintf(stderr,
+                    "[test_bilateral_punch] 23b-noise: mapping=%s elapsed=%u ms "
+                    "pcp_reqs=%d addr_reqs=%d map_reqs=%d\n",
+                    ok ? "YES" : "NO", (unsigned)dt, gw.pcp_reqs, gw.pmp_addr_reqs,
+                    gw.pmp_map_reqs);
+            if (!ok) {
+                fprintf(stderr,
+                        "[test_bilateral_punch] FAIL: 23b-noise-starved: unmatchable "
+                        "PCP noise on port 5351 starved the NAT-PMP fallback (the "
+                        "gateway saw %d address and %d mapping request(s) in %u ms). "
+                        "Each protocol phase must get its OWN retransmit budget; a "
+                        "shared deadline lets the first phase spend the whole "
+                        "allowance.\n",
+                        gw.pmp_addr_reqs, gw.pmp_map_reqs, (unsigned)dt);
+                fail_count++;
+            } else {
+                EXPECT_TRUE("23b-noise-extport", m.external_port == 40111);
+                EXPECT_TRUE("23b-noise-backend", m.backend == PORTMAP_BACKEND_NATPMP);
+            }
+            mock_gateway_stop(&gw, tid, mock_gateway_port(&gw));
+        }
+    }
+
+    /* ============ H-5: the PCP Mapping Nonce is PERSISTED ============= *
+     *
+     * RFC 6887 §11.3: "If operating in the Simple Threat Model (Section
+     * 18.1), and the internal port, protocol, and internal address match
+     * an existing explicit dynamic mapping, but the mapping nonce does
+     * not match, the request MUST be rejected with a NOT_AUTHORIZED
+     * error". A renewal with a fresh nonce is therefore refused by every
+     * conforming gateway, and so is the teardown delete.
+     *
+     * Observed on the wire, at octets 24..36 of the frame the gateway
+     * actually received (§11.1 Mapping Nonce, 96 bits).
+     */
+    {
+        Natpmp_TestHook_ResetState();
+        struct in_addr ext;
+        memset(&ext, 0, sizeof(ext));
+        inet_pton(AF_INET, "198.51.100.41", &ext);
+        MockGwCtx gw;
+        SDL_Thread* tid = mock_gateway_start(&gw, MOCK_GW_PCP, (uint32_t)ext.s_addr,
+                                             40066, 3600);
+        if (tid == NULL) {
+            FAIL("23b-nonce", "could not start the mock gateway");
+        } else {
+            UpnpMapping m;
+            memset(&m, 0, sizeof(m));
+            EXPECT_TRUE("23b-nonce-add",
+                        Natpmp_AddMapping(&m, 54321, 54321, PORTMAP_BACKEND_PCP, 2000));
+            uint8_t nonce_create[NATPMP_PCP_NONCE_LEN];
+            memset(nonce_create, 0, sizeof(nonce_create));
+            bool have_create = gw.last_pcp_len >= 36;
+            if (have_create) {
+                memcpy(nonce_create, &gw.last_pcp[24], NATPMP_PCP_NONCE_LEN);
+            } else {
+                FAIL("23b-nonce-create-frame", "no PCP request captured for the create");
+            }
+            /* A fresh nonce must not be all zeros — that would be the
+             * CSPRNG failing open rather than the §18.1 fail-closed. */
+            {
+                bool all_zero = true;
+                for (int i = 0; i < NATPMP_PCP_NONCE_LEN; i++) {
+                    if (nonce_create[i] != 0) { all_zero = false; break; }
+                }
+                EXPECT_FALSE("23b-nonce-not-zero", all_zero);
+            }
+
+            /* THE RENEWAL. Same internal port, PCP hint — exactly what
+             * upnp_renew_tick issues at half-lease. */
+            UpnpMapping m2;
+            memset(&m2, 0, sizeof(m2));
+            EXPECT_TRUE("23b-nonce-renew",
+                        Natpmp_AddMapping(&m2, 54321, 40066, PORTMAP_BACKEND_PCP, 2000));
+            if (have_create && gw.last_pcp_len >= 36) {
+                if (memcmp(&gw.last_pcp[24], nonce_create, NATPMP_PCP_NONCE_LEN) != 0) {
+                    fprintf(stderr,
+                            "[test_bilateral_punch] FAIL: 23b-nonce-renew-differs: the "
+                            "renewal carried a DIFFERENT Mapping Nonce than the "
+                            "creation. RFC 6887 §11.3 makes a conforming gateway reject "
+                            "that with NOT_AUTHORIZED, so the mapping can never be "
+                            "renewed and dies at the end of its lease.\n");
+                    fail_count++;
+                }
+            }
+
+            /* THE DELETE. §11.1 makes a delete a MAP with lifetime 0, so
+             * §11.3's nonce rule applies to it too. */
+            UpnpMapping del = m2;
+            del.active = true;
+            Natpmp_RemoveMapping(&del);
+            EXPECT_FALSE("23b-nonce-del-inactive", del.active);
+            if (have_create && gw.last_pcp_len >= 36) {
+                /* lifetime 0 at octets 4..8 identifies it as the delete */
+                const bool is_delete = gw.last_pcp[4] == 0 && gw.last_pcp[5] == 0 &&
+                                       gw.last_pcp[6] == 0 && gw.last_pcp[7] == 0;
+                EXPECT_TRUE("23b-nonce-del-is-delete", is_delete);
+                if (memcmp(&gw.last_pcp[24], nonce_create, NATPMP_PCP_NONCE_LEN) != 0) {
+                    fprintf(stderr,
+                            "[test_bilateral_punch] FAIL: 23b-nonce-del-differs: the "
+                            "delete carried a DIFFERENT Mapping Nonce than the mapping "
+                            "it is deleting; RFC 6887 §11.3 rejects it with "
+                            "NOT_AUTHORIZED and the mapping stays installed\n");
+                    fail_count++;
+                }
+            }
+
+            /* After a delete the mapping is gone, so the NEXT create for
+             * that port is a new mapping and must draw a new nonce. */
+            UpnpMapping m3;
+            memset(&m3, 0, sizeof(m3));
+            EXPECT_TRUE("23b-nonce-recreate",
+                        Natpmp_AddMapping(&m3, 54321, 54321, PORTMAP_BACKEND_PCP, 2000));
+            if (have_create && gw.last_pcp_len >= 36) {
+                if (memcmp(&gw.last_pcp[24], nonce_create, NATPMP_PCP_NONCE_LEN) == 0) {
+                    fprintf(stderr,
+                            "[test_bilateral_punch] FAIL: 23b-nonce-stale-after-delete: "
+                            "a create issued AFTER the delete reused the deleted "
+                            "mapping's nonce\n");
+                    fail_count++;
+                }
+            }
+            mock_gateway_stop(&gw, tid, mock_gateway_port(&gw));
+        }
+    }
+
+    /* ====== M-5.3: a short PCP error response is processed, fast ====== *
+     *
+     * RFC 6887 §8.3: "Responses shorter than 24 octets, longer than 1100
+     * octets, or not a multiple of 4 octets are invalid and ignored."
+     * The old floor was the MAP response's 60 octets, so a gateway
+     * refusing with a header-only frame looked SILENT and cost the whole
+     * ladder.
+     */
+    {
+        Natpmp_TestHook_ResetState();
+        /* Codec level first — no timing, no sockets. */
+        uint8_t hdr[NATPMP_PCP_HDR_LEN];
+        memset(hdr, 0, sizeof(hdr));
+        hdr[0] = 2;
+        hdr[1] = 0x80u | 1u;
+        hdr[3] = (uint8_t)NATPMP_PCP_NOT_AUTHORIZED;
+        hdr[11] = 0x2A;
+        uint8_t any_nonce[NATPMP_PCP_NONCE_LEN];
+        for (int i = 0; i < NATPMP_PCP_NONCE_LEN; i++) any_nonce[i] = (uint8_t)i;
+        NatpmpPcpMap sm;
+        memset(&sm, 0xAA, sizeof(sm));
+        const NatpmpParse sv = Natpmp_ParsePcpMapResponse(hdr, (int)sizeof(hdr),
+                                                          any_nonce, NATPMP_PROTO_UDP,
+                                                          54321, &sm);
+        if (sv != NATPMP_PARSE_REFUSED) {
+            fprintf(stderr,
+                    "[test_bilateral_punch] FAIL: 23b-short-error: a 24-octet PCP error "
+                    "response parsed as %d, expected NATPMP_PARSE_REFUSED (%d). RFC 6887 "
+                    "§8.3 puts the floor at 24 octets, not at the 60-octet MAP "
+                    "response; discarding it makes a refusing gateway look silent.\n",
+                    (int)sv, (int)NATPMP_PARSE_REFUSED);
+            fail_count++;
+        }
+        EXPECT_TRUE("23b-short-error-code",
+                    sm.result_code == (uint8_t)NATPMP_PCP_NOT_AUTHORIZED);
+        EXPECT_TRUE("23b-short-error-noport", sm.external_port == 0);
+        /* A short SUCCESS still cannot be believed: §11.4 matches on the
+         * protocol, internal port and nonce, none of which are present. */
+        hdr[3] = 0;
+        memset(&sm, 0xAA, sizeof(sm));
+        EXPECT_TRUE("23b-short-success-rejected",
+                    Natpmp_ParsePcpMapResponse(hdr, (int)sizeof(hdr), any_nonce,
+                                               NATPMP_PROTO_UDP, 54321, &sm) ==
+                        NATPMP_PARSE_NOT_OURS);
+        /* §8.3's other two length rules. */
+        uint8_t odd[26];
+        memset(odd, 0, sizeof(odd));
+        odd[0] = 2; odd[1] = 0x80u | 1u; odd[3] = 2;
+        memset(&sm, 0xAA, sizeof(sm));
+        EXPECT_TRUE("23b-not-multiple-of-4",
+                    Natpmp_ParsePcpMapResponse(odd, 26, any_nonce, NATPMP_PROTO_UDP,
+                                               54321, &sm) == NATPMP_PARSE_NOT_OURS);
+
+        /* Now end to end: the client must give up FAST, not burn the
+         * ladder waiting for a gateway that already said no. */
+        MockGwCtx gw;
+        SDL_Thread* tid = mock_gateway_start(&gw, MOCK_GW_PCP_SHORT_ERROR, 0, 0, 0);
+        if (tid == NULL) {
+            FAIL("23b-short-e2e", "could not start the mock gateway");
+        } else {
+            UpnpMapping m;
+            memset(&m, 0, sizeof(m));
+            const uint64_t t0 = SDL_GetTicks();
+            const bool ok = Natpmp_AddMapping(&m, 54321, 54321, PORTMAP_BACKEND_NONE,
+                                              NATPMP_PROBE_BUDGET_MS);
+            const uint64_t dt = SDL_GetTicks() - t0;
+            EXPECT_FALSE("23b-short-e2e-no-mapping", ok);
+            if (dt > 1200u) {
+                fprintf(stderr,
+                        "[test_bilateral_punch] FAIL: 23b-short-e2e-fast: a gateway that "
+                        "REFUSED with a 24-octet PCP error held the call for %u ms. "
+                        "RFC 6887 §8.3 requires processing that response; a refusal is "
+                        "a verdict, not silence.\n", (unsigned)dt);
+                fail_count++;
+            }
+            mock_gateway_stop(&gw, tid, mock_gateway_port(&gw));
+        }
+    }
+
+    /* ====== M-5.1: RFC 6886 §3.6 gateway-reboot detection ============= */
+    {
+        Natpmp_TestHook_ResetState();
+        struct in_addr ext;
+        memset(&ext, 0, sizeof(ext));
+        inet_pton(AF_INET, "198.51.100.42", &ext);
+        MockGwCtx gw;
+        SDL_Thread* tid = mock_gateway_start(&gw, MOCK_GW_NATPMP, (uint32_t)ext.s_addr,
+                                             40077, 3600);
+        if (tid == NULL) {
+            FAIL("23b-epoch", "could not start the mock gateway");
+        } else {
+            UpnpMapping m;
+            memset(&m, 0, sizeof(m));
+            gw.epoch_s = 100000u; /* gateway has been up a while */
+            EXPECT_TRUE("23b-epoch-add",
+                        Natpmp_AddMapping(&m, 54321, 54321, PORTMAP_BACKEND_NATPMP,
+                                          2000));
+            /* A forward-moving clock is NOT a reboot. */
+            EXPECT_FALSE("23b-epoch-no-false-positive", Natpmp_TakeEpochReset(NULL));
+            gw.epoch_s = 100003u;
+            UpnpMapping m2;
+            memset(&m2, 0, sizeof(m2));
+            EXPECT_TRUE("23b-epoch-renew",
+                        Natpmp_AddMapping(&m2, 54321, 40077, PORTMAP_BACKEND_NATPMP,
+                                          2000));
+            EXPECT_FALSE("23b-epoch-still-no-reset", Natpmp_TakeEpochReset(NULL));
+
+            /* THE REBOOT. §3.6: "If the NAT gateway resets or loses the
+             * state of its port mapping table, due to reboot, power
+             * failure, or any other reason, it MUST reset its epoch time
+             * and begin counting SSSoE from zero again." */
+            gw.epoch_s = 3u;
+            UpnpMapping m3;
+            memset(&m3, 0, sizeof(m3));
+            EXPECT_TRUE("23b-epoch-after-reboot",
+                        Natpmp_AddMapping(&m3, 54321, 40077, PORTMAP_BACKEND_NATPMP,
+                                          2000));
+            uint32_t jitter = 0xFFFFFFFFu;
+            if (!Natpmp_TakeEpochReset(&jitter)) {
+                fprintf(stderr,
+                        "[test_bilateral_punch] FAIL: 23b-epoch-reset: the gateway's "
+                        "Seconds Since Start of Epoch fell from 100003 to 3 and the "
+                        "client did not notice. RFC 6886 §3.6 makes detecting that a "
+                        "client MUST — it is the only signal that the router lost every "
+                        "mapping it had.\n");
+                fail_count++;
+            }
+            /* §3.7: "the client MUST first delay by a random amount of
+             * time selected with uniform random distribution in the range
+             * 0 to 5 seconds". */
+            if (jitter > 5000u) {
+                fprintf(stderr,
+                        "[test_bilateral_punch] FAIL: 23b-epoch-jitter: %u ms, outside "
+                        "RFC 6886 §3.7's 0..5000 ms window\n", (unsigned)jitter);
+                fail_count++;
+            }
+            /* Consume-once: one reboot must not renew forever. */
+            EXPECT_FALSE("23b-epoch-consumed", Natpmp_TakeEpochReset(NULL));
+            mock_gateway_stop(&gw, tid, mock_gateway_port(&gw));
+        }
+    }
+
+    /* ====== M-5.4: no external address => no mapping (fail closed) ==== */
+    {
+        const MockGwMode modes[] = { MOCK_GW_PCP_NO_EXT_IP, MOCK_GW_NATPMP_NO_EXT_IP };
+        const char* tags[] = { "23b-noextip-pcp", "23b-noextip-natpmp" };
+        for (size_t i = 0; i < sizeof(modes) / sizeof(modes[0]); i++) {
+            Natpmp_TestHook_ResetState();
+            MockGwCtx gw;
+            SDL_Thread* tid = mock_gateway_start(&gw, modes[i], 0u, 40088, 3600);
+            if (tid == NULL) {
+                FAIL(tags[i], "could not start the mock gateway");
+                continue;
+            }
+            UpnpMapping m;
+            memset(&m, 0xAA, sizeof(m));
+            const bool ok = Natpmp_AddMapping(&m, 54321, 54321, PORTMAP_BACKEND_NONE,
+                                              NATPMP_PROBE_BUDGET_MS);
+            if (ok) {
+                fprintf(stderr,
+                        "[test_bilateral_punch] FAIL: %s: a gateway that reported NO "
+                        "external address still produced a mapping. The S1 §3.6 CGNAT "
+                        "gate judges a mapping by comparing that address against STUN's; "
+                        "with none there is nothing to compare, and the host would "
+                        "advertise a port on an address it never learned.\n", tags[i]);
+                fail_count++;
+            }
+            EXPECT_FALSE("23b-noextip-inactive", m.active);
+            EXPECT_TRUE("23b-noextip-zeroed",
+                        m.external_port == 0 && m.external_ip[0] == '\0');
+            mock_gateway_stop(&gw, tid, mock_gateway_port(&gw));
+        }
+    }
+
+    /* The gate predicate itself: EMPTY must fail closed, present-but-
+     * unparseable must not (it proves nothing). */
+    {
+        EXPECT_TRUE("23b-gate-empty-closed", DirectP2P_TestHook_IpIsNonPublic(""));
+        EXPECT_TRUE("23b-gate-null-closed", DirectP2P_TestHook_IpIsNonPublic(NULL));
+        EXPECT_TRUE("23b-gate-cgn", DirectP2P_TestHook_IpIsNonPublic("100.64.5.9"));
+        EXPECT_TRUE("23b-gate-rfc1918", DirectP2P_TestHook_IpIsNonPublic("192.168.1.1"));
+        EXPECT_FALSE("23b-gate-public", DirectP2P_TestHook_IpIsNonPublic("198.51.100.30"));
+        EXPECT_FALSE("23b-gate-garbage", DirectP2P_TestHook_IpIsNonPublic("not-an-ip"));
+    }
+
+    /* ====== H-7.3 / M-5.2: renewal cadence follows the GRANTED lease == *
+     *
+     * The reviewer pinned portmap_renew_interval_ms to a flat 30 minutes
+     * and the suite stayed green — nothing asserted it at all. RFC 6886
+     * §3.3: "The client SHOULD begin trying to renew the mapping halfway
+     * to expiry time, like DHCP". RFC 6887 §11.2.1 floors renewals at
+     * four seconds apart.
+     */
+    {
+        struct { uint32_t lease_s; uint64_t want_interval; uint64_t want_retry; } iv[] = {
+            /* UPnP: no granted lease reported, keep the old constants. */
+            { 0u,     30u * 60u * 1000u, 5u * 60u * 1000u },
+            /* A router that shortens our 3600 s request to 120 s. A flat
+             * 30-minute timer would fire 28 minutes after it died, and a
+             * flat 5-minute RETRY 4.5 minutes after that. */
+            { 120u,   60u * 1000u,       30u * 1000u },
+            { 3600u,  30u * 60u * 1000u, 5u * 60u * 1000u },
+            /* Longer than the UPnP cap: clamped, never longer. */
+            { 7200u,  30u * 60u * 1000u, 5u * 60u * 1000u },
+            /* §11.2.1's floor: "renewal requests MUST NOT be sent less
+             * than four seconds apart". */
+            { 4u,     4000u,             4000u },
+        };
+        for (size_t i = 0; i < sizeof(iv) / sizeof(iv[0]); i++) {
+            const uint64_t got_i =
+                DirectP2P_TestHook_PortmapRenewIntervalMs(iv[i].lease_s);
+            if (got_i != iv[i].want_interval) {
+                fprintf(stderr,
+                        "[test_bilateral_punch] FAIL: 23b-renew-interval-%u: got %u ms, "
+                        "expected %u ms. RFC 6886 §3.3 renews at half the lease the "
+                        "GATEWAY granted, not half the one we asked for.\n",
+                        (unsigned)iv[i].lease_s, (unsigned)got_i,
+                        (unsigned)iv[i].want_interval);
+                fail_count++;
+            }
+            const uint64_t got_r = DirectP2P_TestHook_PortmapRenewRetryMs(iv[i].lease_s);
+            if (got_r != iv[i].want_retry) {
+                fprintf(stderr,
+                        "[test_bilateral_punch] FAIL: 23b-renew-retry-%u: got %u ms, "
+                        "expected %u ms. A failed renewal must be retried while the "
+                        "mapping is still alive; a flat five minutes is long after a "
+                        "120 s lease has gone.\n",
+                        (unsigned)iv[i].lease_s, (unsigned)got_r,
+                        (unsigned)iv[i].want_retry);
+                fail_count++;
+            }
+            /* The retry can never outlast the lease it is retrying. */
+            if (iv[i].lease_s != 0 && got_r > (uint64_t)iv[i].lease_s * 1000u) {
+                fprintf(stderr,
+                        "[test_bilateral_punch] FAIL: 23b-renew-retry-past-lease-%u: "
+                        "retry %u ms exceeds the whole %u s lease\n",
+                        (unsigned)iv[i].lease_s, (unsigned)got_r,
+                        (unsigned)iv[i].lease_s);
+                fail_count++;
+            }
+        }
+    }
+
+    /* ====== H-7.5: Natpmp_RemoveMapping refuses foreign backends ====== *
+     *
+     * The reviewer deleted the ownership check and the suite stayed
+     * green. On a router that speaks both protocols, sending a NAT-PMP
+     * lifetime-0 delete for a mapping that miniupnpc installed removes
+     * whatever unrelated IGD entry happens to sit on that external port.
+     */
+    {
+        Natpmp_TestHook_ResetState();
+        struct in_addr ext;
+        memset(&ext, 0, sizeof(ext));
+        inet_pton(AF_INET, "198.51.100.43", &ext);
+        const PortMapBackend foreign[] = { PORTMAP_BACKEND_UPNP, PORTMAP_BACKEND_NONE };
+        for (size_t i = 0; i < sizeof(foreign) / sizeof(foreign[0]); i++) {
+            MockGwCtx gw;
+            SDL_Thread* tid = mock_gateway_start(&gw, MOCK_GW_NATPMP,
+                                                 (uint32_t)ext.s_addr, 40099, 3600);
+            if (tid == NULL) {
+                FAIL("23b-own", "could not start the mock gateway");
+                continue;
+            }
+            UpnpMapping m;
+            memset(&m, 0, sizeof(m));
+            m.active = true;
+            m.backend = foreign[i];
+            m.internal_port = 54321;
+            m.external_port = 40099;
+            Natpmp_RemoveMapping(&m);
+            EXPECT_FALSE("23b-own-cleared", m.active);
+            if (gw.pcp_reqs != 0 || gw.pmp_map_reqs != 0 || gw.pmp_addr_reqs != 0) {
+                fprintf(stderr,
+                        "[test_bilateral_punch] FAIL: 23b-own-backend%d: "
+                        "Natpmp_RemoveMapping sent %d PCP / %d NAT-PMP datagram(s) for a "
+                        "mapping owned by backend %d. Deleting another backend's mapping "
+                        "over the wrong protocol removes whatever unrelated entry sits on "
+                        "that external port.\n",
+                        (int)foreign[i], gw.pcp_reqs, gw.pmp_map_reqs, (int)foreign[i]);
+                fail_count++;
+            }
+            mock_gateway_stop(&gw, tid, mock_gateway_port(&gw));
+        }
+        /* The control: a mapping this backend DOES own really does emit a
+         * delete through the same code path — without it, "sent nothing"
+         * above would also be satisfied by a RemoveMapping that never
+         * sends anything at all. */
+        Natpmp_TestHook_ResetState();
+        MockGwCtx gw;
+        SDL_Thread* tid = mock_gateway_start(&gw, MOCK_GW_NATPMP, (uint32_t)ext.s_addr,
+                                             40099, 3600);
+        if (tid == NULL) {
+            FAIL("23b-own-control", "could not start the mock gateway");
+        } else {
+            UpnpMapping m;
+            memset(&m, 0, sizeof(m));
+            m.active = true;
+            m.backend = PORTMAP_BACKEND_NATPMP;
+            m.internal_port = 54321;
+            m.external_port = 40099;
+            Natpmp_RemoveMapping(&m);
+            if (gw.pmp_map_reqs < 1) {
+                fprintf(stderr,
+                        "[test_bilateral_punch] FAIL: 23b-own-control: removing a "
+                        "NAT-PMP-owned mapping sent NO delete; the refusal assertions "
+                        "above would then pass vacuously\n");
+                fail_count++;
+            }
+            /* RFC 6886 §3.4: lifetime 0 and Suggested External Port 0. */
+            if (gw.last_pmp_map_len == 12) {
+                EXPECT_TRUE("23b-own-control-lifetime0",
+                            gw.last_pmp_map[8] == 0 && gw.last_pmp_map[9] == 0 &&
+                                gw.last_pmp_map[10] == 0 && gw.last_pmp_map[11] == 0);
+                EXPECT_TRUE("23b-own-control-extport0",
+                            gw.last_pmp_map[6] == 0 && gw.last_pmp_map[7] == 0);
+            }
+            mock_gateway_stop(&gw, tid, mock_gateway_port(&gw));
+        }
+    }
+
+    Natpmp_TestHook_SetGateway(NULL, 0);
+    Natpmp_TestHook_ResetState();
+
+    if (fail_count == fails_before) {
+        fprintf(stderr,
+                "[test_bilateral_punch] test 23b OK — ladder shape pinned, a 700 ms "
+                "gateway gets a mapping, the PCP Mapping Nonce survives renewal and "
+                "delete, short PCP errors fail fast, an epoch rollback is detected, a "
+                "gateway with no external address is refused, the renewal cadence "
+                "follows the granted lease, and a foreign backend's mapping is never "
+                "deleted over this wire\n");
+        return 0;
+    }
+    return 1;
+}
+
+/* --- 23c: the disable-natpmp kill switch, end to end ------------------ *
+ *
+ * The reviewer DELETED the kill switch and the suite stayed green,
+ * because try_portmap held a second copy of the check that
+ * short-circuited before the worker ran. That duplicate is gone; the
+ * switch is enforced once, in upnp_worker_fn, and this drives the real
+ * host state machine to prove it.
+ *
+ * Both halves matter:
+ *   OFF  -> the mock gateway must see NOTHING, and the room code must
+ *           carry the STUN-observed port.
+ *   ON   -> the same setup must produce a mapping (the control; without
+ *           it "saw nothing" would also pass if the plumbing were dead).
+ */
+static int test_s7_natpmp_kill_switch(void) {
+    fprintf(stderr,
+            "[test_bilateral_punch] test 23c: the disable-natpmp kill switch\n");
+    const int fails_before = fail_count;
+
+    struct { const char* tag; bool disabled; } cases[] = {
+        { "23c-disabled", true },
+        { "23c-enabled", false },
+    };
+
+    for (size_t ci = 0; ci < sizeof(cases) / sizeof(cases[0]); ci++) {
+        NET_Init();
+        DirectP2P_Init();
+        DirectP2P_TestHook_RunTeardown();
+        Natpmp_TestHook_ResetState();
+
+        struct in_addr ext;
+        memset(&ext, 0, sizeof(ext));
+        EXPECT_TRUE("23c-pton", inet_pton(AF_INET, "198.51.100.50", &ext) == 1);
+        const uint16_t mapped_port = 41100;
+        MockGwCtx gw;
+        SDL_Thread* tid = mock_gateway_start(&gw, MOCK_GW_NATPMP, (uint32_t)ext.s_addr,
+                                             mapped_port, 3600);
+        if (tid == NULL) {
+            FAIL(cases[ci].tag, "could not start the mock gateway");
+            continue;
+        }
+
+        Config_SetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_UPNP, true);
+        Config_SetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_NATPMP, true);
+        Config_SetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_NATPMP, cases[ci].disabled);
+        Config_SetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_BILATERAL, true);
+        DirectP2P_TestHook_SetStunDiscover(mock_stun_discover);
+
+        DirectP2P_BeginHost(0);
+        const bool reached = wait_for_state(DIRECT_P2P_HOST_WAITING, 25000);
+        if (!reached) {
+            fprintf(stderr,
+                    "[test_bilateral_punch] FAIL: %s: state %d after budget, expected "
+                    "HOST_WAITING\n", cases[ci].tag, (int)DirectP2P_GetState());
+            fail_count++;
+        } else {
+            uint32_t ip_be = 0, nnc = 0;
+            uint16_t adv_port = 0;
+            if (RoomCode_Decode(DirectP2P_GetHostCode(), &ip_be, &adv_port, &nnc) !=
+                ROOM_CODE_OK) {
+                FAIL(cases[ci].tag, "could not decode the published host room code");
+            } else {
+                const uint16_t want = cases[ci].disabled ? 40000 : mapped_port;
+                if (adv_port != want) {
+                    fprintf(stderr,
+                            "[test_bilateral_punch] FAIL: %s: advertised port %u, "
+                            "expected %u (netplay-direct-p2p-disable-natpmp=%d)\n",
+                            cases[ci].tag, (unsigned)adv_port, (unsigned)want,
+                            (int)cases[ci].disabled);
+                    fail_count++;
+                }
+            }
+            const int seen = gw.pcp_reqs + gw.pmp_addr_reqs + gw.pmp_map_reqs;
+            if (cases[ci].disabled && seen != 0) {
+                fprintf(stderr,
+                        "[test_bilateral_punch] FAIL: 23c-disabled-silent: "
+                        "netplay-direct-p2p-disable-natpmp was SET and the gateway still "
+                        "received %d datagram(s) (%d PCP, %d addr, %d map). The kill "
+                        "switch is the only thing standing between a user who set it and "
+                        "a backend they asked not to run.\n",
+                        seen, gw.pcp_reqs, gw.pmp_addr_reqs, gw.pmp_map_reqs);
+                fail_count++;
+            }
+            if (!cases[ci].disabled && gw.pmp_map_reqs < 1) {
+                fprintf(stderr,
+                        "[test_bilateral_punch] FAIL: 23c-enabled-control: with the kill "
+                        "switch CLEAR the gateway saw no mapping request, so the "
+                        "\"saw nothing\" assertion above proves nothing\n");
+                fail_count++;
+            }
+        }
+
+        DirectP2P_TestHook_SetStunDiscover(NULL);
+        DirectP2P_TestHook_RunTeardown();
+        if (DirectP2P_GetState() != DIRECT_P2P_IDLE) DirectP2P_Cancel();
+        mock_gateway_stop(&gw, tid, mock_gateway_port(&gw));
+        Natpmp_TestHook_SetGateway(NULL, 0);
+    }
+
+    Config_SetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_BILATERAL, false);
+    Config_SetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_NATPMP, true);
+
+    if (fail_count == fails_before) {
+        fprintf(stderr,
+                "[test_bilateral_punch] test 23c OK — the disable-natpmp switch keeps "
+                "the gateway silent, and clearing it produces a mapping\n");
+        return 0;
+    }
+    return 1;
+}
+
+/* --- 23d: a LOST mapping stops being advertised ---------------------- *
+ *
+ * The other half of review H-5, and all of M-5.5. A gateway grants a
+ * short lease and then goes silent. Before the fix the chain was:
+ * renewal refused -> s_upnp_mapping.active stays true -> the lease
+ * expires -> the room code and the drift re-encode keep pinning an
+ * external port the router has already forgotten. The user reads out a
+ * code that worked five minutes ago and nobody can connect to it.
+ *
+ * Driven end to end, because the interesting behaviour lives in the
+ * interaction between the renewal tick, the lease clock and the room
+ * code — not in any one of them.
+ *
+ * Wall clock: an 8 s lease renews at 4 s (half), the renewal fails after
+ * one silent NAT-PMP phase, retries at +2 s, and the second failure
+ * lands past expiry and drops the mapping. Budget generously.
+ */
+static int test_s7_lost_mapping(void) {
+    fprintf(stderr,
+            "[test_bilateral_punch] test 23d: a lost port mapping stops being "
+            "advertised\n");
+    const int fails_before = fail_count;
+
+    NET_Init();
+    DirectP2P_Init();
+    DirectP2P_TestHook_RunTeardown();
+    Natpmp_TestHook_ResetState();
+
+    struct in_addr ext;
+    memset(&ext, 0, sizeof(ext));
+    EXPECT_TRUE("23d-pton", inet_pton(AF_INET, "198.51.100.60", &ext) == 1);
+    const uint16_t mapped_port = 41200;
+    MockGwCtx gw;
+    /* Lifetime 8 s: short enough to watch expire, long enough that the
+     * half-lease renewal is above RFC 6887 §11.2.1's four-second floor. */
+    SDL_Thread* tid = mock_gateway_start(&gw, MOCK_GW_NATPMP, (uint32_t)ext.s_addr,
+                                         mapped_port, 8);
+    if (tid == NULL) {
+        FAIL("23d", "could not start the mock gateway");
+        return 1;
+    }
+
+    Config_SetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_UPNP, true);
+    Config_SetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_NATPMP, true);
+    Config_SetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_NATPMP, false);
+    /* Bilateral OFF keeps the rendezvous worker from spawning, here and
+     * on the re-publish path (host_rendezvous_restart honours the same
+     * switch), so nothing leaves this machine. */
+    Config_SetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_BILATERAL, true);
+    DirectP2P_TestHook_SetStunDiscover(mock_stun_discover);
+
+    DirectP2P_BeginHost(0);
+    if (!wait_for_state(DIRECT_P2P_HOST_WAITING, 25000)) {
+        fprintf(stderr,
+                "[test_bilateral_punch] FAIL: 23d-host: state %d after budget, expected "
+                "HOST_WAITING\n", (int)DirectP2P_GetState());
+        fail_count++;
+    } else {
+        uint32_t ip_be = 0, nnc = 0;
+        uint16_t adv0 = 0;
+        EXPECT_TRUE("23d-decode",
+                    RoomCode_Decode(DirectP2P_GetHostCode(), &ip_be, &adv0, &nnc) ==
+                        ROOM_CODE_OK);
+        /* The control: the mapping really was created and really is what
+         * the code advertises. Without this, "the port reverted" below
+         * would also pass if no mapping had ever existed. */
+        if (adv0 != mapped_port) {
+            fprintf(stderr,
+                    "[test_bilateral_punch] FAIL: 23d-control: the published code "
+                    "advertises port %u, expected the MAPPED port %u — there is no live "
+                    "mapping to lose, so this test would prove nothing\n",
+                    (unsigned)adv0, (unsigned)mapped_port);
+            fail_count++;
+        }
+        EXPECT_TRUE("23d-lifetime-honoured", gw.pmp_map_reqs >= 1);
+
+        /* THE ROUTER GOES AWAY. Every renewal from here on fails. */
+        gw.mode = MOCK_GW_SILENT;
+
+        /* Pump the main-thread tick — the only place the renewal and the
+         * lease clock live — until the advertised port reverts. */
+        const uint64_t t0 = SDL_GetTicks();
+        uint16_t adv = adv0;
+        bool reverted = false;
+        while (SDL_GetTicks() - t0 < 25000u) {
+            DirectP2P_Tick();
+            SDL_Delay(10);
+            uint32_t ib = 0, nn = 0;
+            uint16_t p = 0;
+            if (RoomCode_Decode(DirectP2P_GetHostCode(), &ib, &p, &nn) == ROOM_CODE_OK) {
+                adv = p;
+                if (p == 40000) { reverted = true; break; }
+            }
+        }
+        const uint64_t dt = SDL_GetTicks() - t0;
+        fprintf(stderr,
+                "[test_bilateral_punch] 23d: advertised port %u -> %u after %u ms\n",
+                (unsigned)adv0, (unsigned)adv, (unsigned)dt);
+        if (!reverted) {
+            fprintf(stderr,
+                    "[test_bilateral_punch] FAIL: 23d-still-advertised: %u ms after the "
+                    "gateway went silent the room code still advertises port %u, whose "
+                    "8 s lease expired long ago. A mapping that cannot be renewed must "
+                    "be DROPPED and the STUN-observed endpoint (port 40000) advertised "
+                    "instead — otherwise the code the user already shared is dead and "
+                    "nothing says so.\n",
+                    (unsigned)dt, (unsigned)adv);
+            fail_count++;
+        }
+    }
+
+    DirectP2P_TestHook_SetStunDiscover(NULL);
+    DirectP2P_TestHook_RunTeardown();
+    if (DirectP2P_GetState() != DIRECT_P2P_IDLE) DirectP2P_Cancel();
+    mock_gateway_stop(&gw, tid, mock_gateway_port(&gw));
+    Natpmp_TestHook_SetGateway(NULL, 0);
+    Config_SetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_BILATERAL, false);
+    Config_SetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_NATPMP, true);
+
+    if (fail_count == fails_before) {
+        fprintf(stderr,
+                "[test_bilateral_punch] test 23d OK — a mapping whose lease expired "
+                "without a successful renewal is dropped and the room code falls back "
+                "to the STUN endpoint\n");
         return 0;
     }
     return 1;
@@ -7294,6 +8500,10 @@ int Netplay_Test_BilateralPunch(void) {
     rc |= test_race_split_brain();                 /* H-3: two peers */
     rc |= test_relay_not_paired_named_separately();/* L-1 */
     rc |= test_natpmp_pcp();  /* S7: test 22 */
+    rc |= test_s7_disable_pairing();    /* S7 review: test 23a */
+    rc |= test_s7_review_fixes();       /* S7 review: test 23b */
+    rc |= test_s7_natpmp_kill_switch(); /* S7 review: test 23c */
+    rc |= test_s7_lost_mapping();       /* S7 review: test 23d */
     rc |= test_host_cookie_rejected(); /* last: ~31 s of wall clock */
 
     if (fail_count > 0 || rc != 0) {

@@ -619,11 +619,29 @@ static bool direct_p2p_is_lan_peer(const char* ip) {
  * an unparseable string (garbage, IPv6 form) must NOT poison a working
  * mapping — callers keep it and log instead. */
 static bool direct_p2p_ip_is_nonpublic(const char* ip) {
+    /* S7 review M-5.4: the gate used to fail OPEN on an EMPTY string.
+     *
+     * An empty external_ip does not mean "an address we could not
+     * classify", it means "no address was ever learned" — natpmp.c's
+     * fill_mapping leaves the buffer empty when the gateway reported
+     * 0.0.0.0, and upnp.c leaves it empty when GetExternalIPAddress
+     * failed. The gate's whole job is to compare the router's idea of
+     * our external address against STUN's; with nothing to compare it
+     * cannot clear the mapping, and "cannot clear" must not read as
+     * "cleared". Falling through to STUN costs one port mapping;
+     * advertising a port on an address we never learned costs the
+     * connection.
+     *
+     * Note this is checked BEFORE direct_p2p_is_lan_peer, which parses
+     * and would classify "" as simply unparseable. */
+    if (ip == NULL || ip[0] == '\0') {
+        return true; /* fail CLOSED: unknown external address */
+    }
     if (direct_p2p_is_lan_peer(ip)) {
         return true; /* 127/8, 10/8, 172.16/12, 192.168/16, 169.254/16 */
     }
     struct in_addr addr;
-    if (!ip || inet_pton(AF_INET, ip, &addr) != 1) {
+    if (inet_pton(AF_INET, ip, &addr) != 1) {
         return false; /* unparseable — cannot prove anything, keep mapping */
     }
     uint32_t a = ntohl(addr.s_addr);
@@ -631,6 +649,17 @@ static bool direct_p2p_ip_is_nonpublic(const char* ip) {
     if ((a & 0xFFC00000u) == 0x64400000u) return true;
     return false;
 }
+
+#ifdef NETPLAY_TEST_HOOKS
+/* S7 review M-5.4. Thin passthrough to the very predicate the CGNAT gate
+ * calls — not a re-derivation of it — so a test can pin the fail-closed
+ * behaviour on an empty external IP without standing up a whole host
+ * state machine for a case (UPnP's GetExternalIPAddress failing) that
+ * has no mockable seam. */
+bool DirectP2P_TestHook_IpIsNonPublic(const char* ip) {
+    return direct_p2p_ip_is_nonpublic(ip);
+}
+#endif
 
 /* Equality check that normalizes both inputs through inet_pton so two
  * dotted-quad strings that differ only in formatting (leading zeros,
@@ -2125,11 +2154,15 @@ static bool try_portmap(uint16_t internal_port, uint16_t preferred_external) {
      * adapter is connected alongside eth0 — validated 2026-04-22.
      * eth0-only is safe. Users running WiFi can set
      * CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_UPNP=1 to skip this path. */
-    const bool upnp_off = Config_GetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_UPNP);
-    const bool natpmp_off = Config_GetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_NATPMP);
-    if (upnp_off && natpmp_off) {
-        return false;
-    }
+    /* S7 review H-7.4: there used to be a second copy of the two kill
+     * switches HERE, short-circuiting before the worker ever ran. That
+     * made the worker's own gates untestable — with both switches set,
+     * this early return kept the gateway silent no matter what the worker
+     * did, so DELETING the worker's `disable-natpmp` check left the whole
+     * suite green. The switches are now enforced in exactly ONE place,
+     * upnp_worker_fn, which is the place a test can observe. The cost of
+     * dropping the shortcut is one thread that starts and immediately
+     * returns ok=false when both backends are off. */
     set_status("Preparing...");
 
     /* Wrap Upnp_AddMapping with a wall-clock budget. miniupnpc's internal
@@ -2223,6 +2256,22 @@ static SDL_Thread* s_upnp_renew_thread = NULL;
 static UpnpJob* s_upnp_renew_job = NULL;
 static uint64_t s_upnp_next_renew_ms = 0;
 
+/* S7 review H-5 / M-5.5: when the CURRENT lease runs out, in SDL ticks.
+ * 0 = "no lease deadline known" (no mapping, or a UPnP mapping, whose
+ * granted lifetime miniupnpc never reports).
+ *
+ * Without this, a mapping that could not be renewed stayed active=true
+ * forever: the renewal retried on a fixed timer, the room code kept
+ * advertising the mapped external port, and the drift re-encode kept
+ * PINNING that port — long after the router had forgotten it. The user
+ * saw a code that had worked and then silently stopped working. */
+static uint64_t s_portmap_lease_expiry_ms = 0;
+
+/* Defined with the drift handler (both are main-thread endpoint
+ * re-publish paths); declared here because upnp_renew_tick calls it when
+ * a lease is lost. */
+static void host_commit_endpoint(const char* ip, uint16_t port, const char* why);
+
 /* S7: half of the lease the gateway actually GRANTED, when it told us.
  *
  * UPNP_RENEW_INTERVAL_MS is half of upnp.c's requested 3600 s, and
@@ -2237,11 +2286,11 @@ static uint64_t s_upnp_next_renew_ms = 0;
  * begin trying to renew the mapping halfway to expiry time, like DHCP",
  * and RFC 6887 §11.2.1's recommended window is 1/2 to 5/8 of expiry, so
  * 1/2 sits inside it. */
-static uint64_t portmap_renew_interval_ms(void) {
-    if (s_upnp_mapping.lifetime_s == 0) {
+static uint64_t portmap_renew_interval_for(uint32_t lifetime_s) {
+    if (lifetime_s == 0) {
         return UPNP_RENEW_INTERVAL_MS;
     }
-    uint64_t half = ((uint64_t)s_upnp_mapping.lifetime_s * 1000u) / 2u;
+    uint64_t half = ((uint64_t)lifetime_s * 1000u) / 2u;
     if (half < PORTMAP_RENEW_FLOOR_MS) {
         half = PORTMAP_RENEW_FLOOR_MS;
     }
@@ -2250,6 +2299,62 @@ static uint64_t portmap_renew_interval_ms(void) {
     }
     return half;
 }
+
+static uint64_t portmap_renew_interval_ms(void) {
+    return portmap_renew_interval_for(s_upnp_mapping.lifetime_s);
+}
+
+/* S7 review M-5.2: how long to wait after a FAILED renewal.
+ *
+ * This used to be a flat 5 minutes regardless of the lease. A gateway
+ * that granted 120 s — which RFC 6886 §3.3 explicitly permits, "The NAT
+ * gateway MAY reduce the lifetime from what the client requested" — put
+ * the retry four and a half minutes AFTER the mapping had already
+ * expired, so the one retry that mattered never happened. The retry now
+ * scales with the lease: half the renewal interval, i.e. a quarter of
+ * the lease, floored by RFC 6887 §11.2.1's four seconds and capped by
+ * the old five minutes so a long UPnP lease behaves as before. */
+static uint64_t portmap_renew_retry_for(uint32_t lifetime_s) {
+    if (lifetime_s == 0) {
+        return UPNP_RENEW_RETRY_MS; /* UPnP: no granted lease to scale to */
+    }
+    uint64_t retry = portmap_renew_interval_for(lifetime_s) / 2u;
+    if (retry < PORTMAP_RENEW_FLOOR_MS) {
+        retry = PORTMAP_RENEW_FLOOR_MS;
+    }
+    if (retry > UPNP_RENEW_RETRY_MS) {
+        retry = UPNP_RENEW_RETRY_MS;
+    }
+    return retry;
+}
+
+/* Is the mapping something we may still ADVERTISE?
+ *
+ * `active` alone is not enough (review H-5 / M-5.5): it stays true after
+ * a refused renewal, and the lease keeps running down underneath it. A
+ * mapping past its known expiry forwards nothing, so the room code must
+ * fall back to the STUN-observed endpoint rather than pin a dead port.
+ * A zero expiry means "no lease deadline known" — the UPnP case — and
+ * keeps the pre-S7 behaviour of trusting `active`. */
+static bool portmap_mapping_usable(void) {
+    if (!s_upnp_mapping.active) {
+        return false;
+    }
+    if (s_portmap_lease_expiry_ms == 0) {
+        return true;
+    }
+    return SDL_GetTicks() < s_portmap_lease_expiry_ms;
+}
+
+#ifdef NETPLAY_TEST_HOOKS
+uint64_t DirectP2P_TestHook_PortmapRenewIntervalMs(uint32_t granted_lifetime_s) {
+    return portmap_renew_interval_for(granted_lifetime_s);
+}
+
+uint64_t DirectP2P_TestHook_PortmapRenewRetryMs(uint32_t granted_lifetime_s) {
+    return portmap_renew_retry_for(granted_lifetime_s);
+}
+#endif
 
 /* Reap the renewal thread with a BOUNDED wait (review H3 — mirrors
  * try_upnp's deadline+detach pattern). An unbounded SDL_WaitThread here
@@ -2299,6 +2404,11 @@ static bool upnp_renew_join_and_discard(void) {
         s_upnp_renew_job = NULL;
     }
     s_upnp_next_renew_ms = 0;
+    /* Kept in lockstep with the renewal deadline: both are re-armed
+     * together on the next first-sighting of an active mapping, so
+     * leaving a stale expiry behind would mean judging a NEW mapping
+     * against an OLD lease. */
+    s_portmap_lease_expiry_ms = 0;
     return joined;
 }
 
@@ -2317,17 +2427,55 @@ static void upnp_renew_tick(void) {
             s_upnp_mapping = s_upnp_renew_job->result;
             const uint64_t iv = portmap_renew_interval_ms();
             s_upnp_next_renew_ms = now + iv;
+            /* A granted lifetime restarts the lease clock; UPnP reports
+             * none, so it stays on the "no deadline known" path. */
+            s_portmap_lease_expiry_ms =
+                s_upnp_mapping.lifetime_s != 0
+                    ? now + (uint64_t)s_upnp_mapping.lifetime_s * 1000u
+                    : 0u;
             SDL_Log("[direct_p2p] %s lease renewed (external %u -> internal %u); next "
                     "renewal in %u s",
                     portmap_backend_name(s_upnp_mapping.backend),
                     s_upnp_mapping.external_port, s_upnp_mapping.internal_port,
                     (unsigned)(iv / 1000u));
+        } else if (s_portmap_lease_expiry_ms != 0 && now >= s_portmap_lease_expiry_ms) {
+            /* S7 review H-5 / M-5.5: THE LEASE IS GONE.
+             *
+             * A refused or unanswered renewal is not itself fatal — the
+             * mapping lives until its lease runs out and the retry below
+             * may still catch it. But once the lease HAS run out, the
+             * router forwards nothing and continuing to advertise the
+             * mapped port is worse than never having had one: the room
+             * code the user is reading aloud points at a closed port.
+             *
+             * Drop it here rather than calling portmap_remove: there is
+             * nothing left on the router to remove, and on PCP the delete
+             * would be refused anyway (RFC 6887 §11.3 — the mapping the
+             * nonce belonged to no longer exists). Clearing the struct
+             * makes both the room-code encode and the drift re-encode
+             * fall back to the STUN endpoint, which is the endpoint the
+             * keepalive loop is actively maintaining.
+             */
+            SDL_Log("[direct_p2p] WARNING: %s mapping LOST — the lease expired and "
+                    "renewal did not succeed; dropping it and advertising the "
+                    "STUN-observed endpoint instead. Share the NEW code.",
+                    portmap_backend_name(s_upnp_mapping.backend));
+            memset(&s_upnp_mapping, 0, sizeof(s_upnp_mapping));
+            s_portmap_lease_expiry_ms = 0;
+            s_upnp_next_renew_ms = 0;
+            /* Same STUN endpoint, different advertised PORT: with the
+             * mapping gone the code must carry the STUN-observed port
+             * again. host_commit_endpoint re-encodes, re-derives the
+             * punch token and restarts the rendezvous loop. */
+            host_commit_endpoint(s_work.stun.public_ip, s_work.stun.public_port,
+                                 "after port-mapping loss");
         } else {
-            s_upnp_next_renew_ms = now + UPNP_RENEW_RETRY_MS;
-            SDL_Log("[direct_p2p] WARNING: %s lease renewal failed; retrying in %u min "
+            const uint64_t retry = portmap_renew_retry_for(s_upnp_mapping.lifetime_s);
+            s_upnp_next_renew_ms = now + retry;
+            SDL_Log("[direct_p2p] WARNING: %s lease renewal failed; retrying in %u s "
                     "(mapping expires at the end of its current lease)",
                     portmap_backend_name(s_upnp_mapping.backend),
-                    UPNP_RENEW_RETRY_MS / 60000u);
+                    (unsigned)(retry / 1000u));
         }
         if (s_upnp_renew_job != NULL) {
             SDL_free(s_upnp_renew_job);
@@ -2345,7 +2493,40 @@ static void upnp_renew_tick(void) {
          * (Lazily armed here rather than in the worker so the deadline
          * bookkeeping stays main-thread-only.) */
         s_upnp_next_renew_ms = now + portmap_renew_interval_ms();
+        /* S7: and the lease clock. Arming it from the first main-thread
+         * sighting rather than from the grant instant puts the deadline a
+         * frame or two LATE, which is the safe direction — it can only
+         * ever make us keep a mapping marginally longer than the router
+         * does, never drop a live one. */
+        s_portmap_lease_expiry_ms =
+            s_upnp_mapping.lifetime_s != 0
+                ? now + (uint64_t)s_upnp_mapping.lifetime_s * 1000u
+                : 0u;
         return;
+    }
+    /* RFC 6886 §3.6 (review M-5.1): the gateway's epoch went backwards,
+     * so it rebooted and its mapping table is empty. §3.6 is a MUST —
+     * "the client MUST immediately renew all its active port mapping
+     * leases" — and §3.7 attaches a mandatory 0-to-5-second random delay
+     * before the first request so a whole LAN does not stampede a router
+     * that has just finished booting. Pull the renewal deadline in to
+     * now + that jitter; the existing spawn path below does the rest,
+     * and because the renewal is a MAP for the same internal port the
+     * rebooted gateway simply treats it as a creation (§3.7: "from the
+     * point of view of the freshly rebooted NAT gateway, it appears as a
+     * new mapping request"). */
+    {
+        uint32_t jitter_ms = 0;
+        if (Natpmp_TakeEpochReset(&jitter_ms)) {
+            const uint64_t due = now + (uint64_t)jitter_ms;
+            if (due < s_upnp_next_renew_ms) {
+                s_upnp_next_renew_ms = due;
+                SDL_Log("[direct_p2p] %s gateway reboot detected (RFC 6886 §3.6 epoch "
+                        "went backwards) — recreating the mapping in %u ms",
+                        portmap_backend_name(s_upnp_mapping.backend),
+                        (unsigned)jitter_ms);
+            }
+        }
     }
     if (now < s_upnp_next_renew_ms) {
         return;
@@ -2848,6 +3029,7 @@ static int SDLCALL host_thread_fn(void* data) {
              * renewal from ever arming for it. */
             portmap_remove(&s_upnp_mapping);
             memset(&s_upnp_mapping, 0, sizeof(s_upnp_mapping));
+            s_portmap_lease_expiry_ms = 0;
             upnp_ok = false;
         } else {
             SDL_Log("[direct_p2p] %s external IP %s differs from STUN public IP %s but "
@@ -3577,6 +3759,20 @@ static void host_handle_stun_rebind(const uint8_t* buf, int len) {
             s_work.stun.public_ip, (unsigned)s_work.stun.public_port,
             ip, (unsigned)port);
 
+    host_commit_endpoint(ip, port, "after endpoint drift");
+}
+
+/*
+ * Re-publish the advertised tuple: recompute the advertised port from
+ * (STUN endpoint, live port mapping), re-encode the room code, re-derive
+ * the punch token, and restart the rendezvous loop under the new key.
+ *
+ * Extracted from the drift handler in S7 so the OTHER event that
+ * invalidates the advertised port can use it too: a port mapping whose
+ * lease expired without a successful renewal (review H-5 / M-5.5). Both
+ * callers are the main thread in a HOST_WAITING-family state.
+ */
+static void host_commit_endpoint(const char* ip, uint16_t port, const char* why) {
     /* Stop the rendezvous re-REGISTER loop before mutating the fields it
      * reads (public_ip / advertised_port). */
     host_rendezvous_stop();
@@ -3584,11 +3780,17 @@ static void host_handle_stun_rebind(const uint8_t* buf, int len) {
     SDL_strlcpy(s_work.stun.public_ip, ip, sizeof(s_work.stun.public_ip));
     s_work.stun.public_port = port;
 
-    /* Recompute the advertised tuple. A live UPnP mapping pins the
+    /* Recompute the advertised tuple. A live port mapping pins the
      * advertised PORT (the router forwards it regardless of the STUN
-     * mapping), so only the IP component can drift there; without UPnP
-     * both components track the STUN-observed endpoint. */
-    uint16_t new_adv_port = s_upnp_mapping.active ? s_upnp_mapping.external_port : port;
+     * mapping), so only the IP component can drift there; without one
+     * both components track the STUN-observed endpoint.
+     *
+     * S7 review H-5: the test is portmap_mapping_usable(), not
+     * `active` — a mapping whose lease has run out under a failing
+     * renewal is still flagged active but forwards nothing, and pinning
+     * its port here is precisely how a stale room code outlives the
+     * mapping it describes. */
+    uint16_t new_adv_port = portmap_mapping_usable() ? s_upnp_mapping.external_port : port;
     uint32_t ip_be = ipv4_str_to_be(ip);
     char new_code[ROOM_CODE_BUF_LEN];
     /* S4b: the nonce stays STABLE across a drift re-encode — the
@@ -3615,13 +3817,13 @@ static void host_handle_stun_rebind(const uint8_t* buf, int len) {
     s_work.punch_token_valid =
         Rendezvous_DerivePunchToken(ip_be, new_adv_port, s_work.nonce, s_work.punch_token);
     if (!s_work.punch_token_valid) {
-        SDL_Log("[direct_p2p] WARNING: punch-token re-derivation failed after "
-                "endpoint drift — punches will be ignored until re-host");
+        SDL_Log("[direct_p2p] WARNING: punch-token re-derivation failed %s — punches "
+                "will be ignored until re-host", why);
     }
 
     /* Respawn the rendezvous loop under the new session key (same kill
      * switch as the original spawn in host_thread_fn step 5). */
-    host_rendezvous_restart("after endpoint drift");
+    host_rendezvous_restart(why);
 }
 
 /* --- S4-review HIGH-1b: room-code re-roll ------------------------------
@@ -4053,6 +4255,8 @@ void DirectP2P_Init(void) {
     memset(s_rendezvous_send_q, 0, sizeof(s_rendezvous_send_q));
     memset(&s_work, 0, sizeof(s_work));
     memset(&s_upnp_mapping, 0, sizeof(s_upnp_mapping));
+    s_portmap_lease_expiry_ms = 0;
+    s_upnp_next_renew_ms = 0;
     s_status[0] = '\0';
     Netplay_SetSessionTeardownCallback(direct_p2p_on_teardown);
     s_init_done = true;
