@@ -266,6 +266,28 @@ static bool direct_p2p_is_lan_peer(const char* ip) {
     return false;
 }
 
+/* Classify a router-reported external IP for the CGNAT gate (review
+ * M3). Returns true — "the mapping is provably useless" — only when
+ * the string PARSES as IPv4 and is a non-public address: RFC1918,
+ * RFC 6598 CGN shared space (100.64.0.0/10), loopback, or link-local.
+ * A public-but-different IP (ISP 1:1 NAT / DMZ, where the router's WAN
+ * IP differs from the STUN IP but the mapping forwards perfectly) and
+ * an unparseable string (garbage, IPv6 form) must NOT poison a working
+ * mapping — callers keep it and log instead. */
+static bool direct_p2p_ip_is_nonpublic(const char* ip) {
+    if (direct_p2p_is_lan_peer(ip)) {
+        return true; /* 127/8, 10/8, 172.16/12, 192.168/16, 169.254/16 */
+    }
+    struct in_addr addr;
+    if (!ip || inet_pton(AF_INET, ip, &addr) != 1) {
+        return false; /* unparseable — cannot prove anything, keep mapping */
+    }
+    uint32_t a = ntohl(addr.s_addr);
+    /* 100.64.0.0/10 — RFC 6598 carrier-grade NAT shared address space */
+    if ((a & 0xFFC00000u) == 0x64400000u) return true;
+    return false;
+}
+
 /* Equality check that normalizes both inputs through inet_pton so two
  * dotted-quad strings that differ only in formatting (leading zeros,
  * embedded whitespace handling, IPv4-mapped-v6 like "::ffff:1.2.3.4")
@@ -956,24 +978,36 @@ static int SDLCALL host_thread_fn(void* data) {
      * The room code is built from the STUN IP + the chosen port, so
      * advertising the UPnP port would pair the STUN IP with a port that
      * only exists on the INNER router — a wrong (ip, port) pair that
-     * silently kills the direct path. If the two external IPs disagree,
-     * drop the mapping and advertise the STUN-observed endpoint; the
-     * punch/bilateral paths carry it from there. (ip_eq_normalized
-     * returns false on unparseable/IPv6 strings, which conservatively
-     * lands in the mismatch branch.) */
+     * silently kills the direct path.
+     *
+     * Review M3: the mapping is dropped only when the router's external
+     * IP PARSES and is provably non-public (RFC1918 / CGN 100.64.0.0/10 /
+     * loopback / link-local) — that is the double-NAT signature. A
+     * public-but-different external IP is ISP 1:1 NAT / DMZ territory,
+     * where the mapping forwards perfectly and dropping it would
+     * downgrade a host with a good direct path; an unparseable string
+     * (garbage, IPv6) proves nothing. Both keep the mapping and log. */
     if (upnp_ok &&
         !direct_p2p_ip_eq_normalized(s_upnp_mapping.external_ip, s_work.stun.public_ip)) {
-        SDL_Log("[direct_p2p] CGNAT detected: UPnP external IP %s != STUN public IP %s "
-                "— ignoring the UPnP mapping and advertising the STUN endpoint instead",
-                s_upnp_mapping.external_ip[0] ? s_upnp_mapping.external_ip : "(empty)",
-                s_work.stun.public_ip);
-        /* Release the useless mapping now (worker thread — same thread
-         * class try_upnp used; no concurrent miniupnpc user exists in
-         * UPNP_PROBE/STUN_DISCOVER states). Also stops the S1 lease
-         * renewal from ever arming for it. */
-        Upnp_RemoveMapping(&s_upnp_mapping);
-        memset(&s_upnp_mapping, 0, sizeof(s_upnp_mapping));
-        upnp_ok = false;
+        if (direct_p2p_ip_is_nonpublic(s_upnp_mapping.external_ip)) {
+            SDL_Log("[direct_p2p] CGNAT detected: UPnP external IP %s is private/CGN and "
+                    "!= STUN public IP %s — ignoring the UPnP mapping and advertising "
+                    "the STUN endpoint instead",
+                    s_upnp_mapping.external_ip, s_work.stun.public_ip);
+            /* Release the useless mapping now (worker thread — same thread
+             * class try_upnp used; no concurrent miniupnpc user exists in
+             * UPNP_PROBE/STUN_DISCOVER states). Also stops the S1 lease
+             * renewal from ever arming for it. */
+            Upnp_RemoveMapping(&s_upnp_mapping);
+            memset(&s_upnp_mapping, 0, sizeof(s_upnp_mapping));
+            upnp_ok = false;
+        } else {
+            SDL_Log("[direct_p2p] UPnP external IP %s differs from STUN public IP %s but "
+                    "is not a private/CGN address (1:1 NAT / DMZ, or unparseable) — "
+                    "keeping the mapping",
+                    s_upnp_mapping.external_ip[0] ? s_upnp_mapping.external_ip : "(empty)",
+                    s_work.stun.public_ip);
+        }
     }
 
     /* 3) Build room code from discovered endpoint. If UPnP succeeded we
