@@ -315,6 +315,14 @@ void DirectP2P_TestHook_RunTeardown(void);
 uint64_t DirectP2P_TestHook_PortmapRenewIntervalMs(uint32_t granted_lifetime_s);
 uint64_t DirectP2P_TestHook_PortmapRenewRetryMs(uint32_t granted_lifetime_s);
 
+/* S7 review M-5.4: the CGNAT gate's "this mapping is provably useless"
+ * predicate. True for RFC1918 / RFC 6598 CGN / loopback / link-local
+ * AND for an absent (empty or NULL) external address — the gate must
+ * fail CLOSED when it has nothing to judge. False for a public-but-
+ * different address (1:1 NAT / DMZ) and for unparseable-but-present
+ * text, neither of which proves the mapping is broken. */
+bool DirectP2P_TestHook_IpIsNonPublic(const char* ip);
+
 /* S4-review HIGH-1b: the host punch-gate throttle. The gate accounting
  * is deliberately free of s_work and of thread lifecycle so it can be
  * driven deterministically with an injected clock — the production path

@@ -650,6 +650,17 @@ static bool direct_p2p_ip_is_nonpublic(const char* ip) {
     return false;
 }
 
+#ifdef NETPLAY_TEST_HOOKS
+/* S7 review M-5.4. Thin passthrough to the very predicate the CGNAT gate
+ * calls — not a re-derivation of it — so a test can pin the fail-closed
+ * behaviour on an empty external IP without standing up a whole host
+ * state machine for a case (UPnP's GetExternalIPAddress failing) that
+ * has no mockable seam. */
+bool DirectP2P_TestHook_IpIsNonPublic(const char* ip) {
+    return direct_p2p_ip_is_nonpublic(ip);
+}
+#endif
+
 /* Equality check that normalizes both inputs through inet_pton so two
  * dotted-quad strings that differ only in formatting (leading zeros,
  * embedded whitespace handling, IPv4-mapped-v6 like "::ffff:1.2.3.4")
