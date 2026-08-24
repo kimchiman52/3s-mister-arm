@@ -765,6 +765,33 @@ typedef struct GameState {
      * CHAR_MAKOTO and the effl8.c:91 gate passes for exactly the character
      * plpat17.c:245 dispatches. The code is LIVE. */
     u32 spmv_ng_save[2];
+
+    /* The four ColorRAM row-prefixes that Makoto's SA buff effect (effect L8,
+     * effect/effl8.c) mutates, in the row order EFFL8_COLORRAM_ROWS below:
+     * ColorRAM[0], [8], [16], [24], first 12 u16 of each.
+     *
+     * Why a render-side array ends up in the rollback save set: effl8's
+     * routine 0 latches the CURRENT palette out of live ColorRAM into its own
+     * WORK slot (`save_old_color_data(&ewk->wu.zu_flag, step_xy_table)`,
+     * effl8.c:19/27) and then overwrites those ColorRAM entries with the buff
+     * colours (check_new_color_data_L8, effl8.c:28); routine 1 writes the
+     * latched copy back at buff end (effl8.c:40-41). The latch destination is
+     * inside frw[] and IS saved/restored; ColorRAM was NOT. So a rollback
+     * straddling the activation re-ran routine 0 against an ALREADY-BUFFED
+     * ColorRAM and latched the buff colours as the "old" colours — the saved
+     * effect-pool bytes then diverged from the no-rollback timeline
+     * permanently (rollback-determinism harness, makoto-sa3-super: ColorRAM
+     * last divergent frame 1060, `frw` DIVERGENT+FEEDBACK from 1061 onward).
+     *
+     * Saving the window instead of re-deriving the colours from plcol keeps
+     * the decompiled logic untouched and stays correct when something else
+     * legitimately owns those rows (rendering/meta_col.c writes exactly
+     * ColorRAM[id*16] / [id*16+8] for Twelve's metamorphosis).
+     *
+     * step_xy_table/move_xy_table themselves are pointers into ColorRAM and
+     * are already NULLed by sanitize_work_pointers for the checksum view;
+     * only the latched CONTENT needed rewinding. */
+    u16 effl8_colorram[4][12];
 } GameState;
 
 typedef struct State {

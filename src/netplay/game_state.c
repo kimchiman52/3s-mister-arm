@@ -13,6 +13,7 @@
 #include "sf33rd/Source/Game/engine/slowf.h"
 #include "sf33rd/Source/Game/engine/spgauge.h"
 #include "sf33rd/Source/Game/engine/workuser.h"
+#include "sf33rd/Source/Game/rendering/color3rd.h"
 #include "sf33rd/Source/Game/select_timer.h"
 #include "sf33rd/Source/Game/stage/bg.h"
 #include "sf33rd/Source/Game/stage/bg_data.h"
@@ -114,8 +115,13 @@
  * --target=arm-linux-gnueabihf redeclaration probe as above (`extern char
  * probe[sizeof(GameState)]` vs `extern char probe[1]`), which reported
  * 'char[17688]' after the change and reproduced 'char[17684]' on the
- * pre-change header. 17684 + 4 = 17688. */
-#define EXPECTED_GAME_STATE_SIZE 17688
+ * pre-change header. 17684 + 4 = 17688.
+ *
+ * effl8_colorram[4][12] (u16) appended at the end of the struct grew this by
+ * a clean +96: 4 rows x 12 u16 = 96 bytes of payload landing on the struct's
+ * 4-byte alignment with no padding on either side. Re-measured with the same
+ * probe: 'char[17784]'. 17688 + 96 = 17784. */
+#define EXPECTED_GAME_STATE_SIZE 17784
 #define EXPECTED_TASK_SIZE 16
 
 _Static_assert(sizeof(GameState) == EXPECTED_GAME_STATE_SIZE,
@@ -149,6 +155,25 @@ _Static_assert(sizeof(struct _TASK) == EXPECTED_TASK_SIZE,
 #define GS_SAVE(member)                                                                                                 \
     GS_ASSERT_SAME_SIZE(member);                                                                                        \
     SDL_memcpy(&dst->member, &member, sizeof(member))
+
+/* ColorRAM rows touched by Makoto's SA buff effect (effect/effl8.c), derived
+ * from effl8.c:25-26:
+ *   step_xy_table = (s16*)ColorRAM[(master_id == 1) * 16]  -> row 0  / row 16
+ *   move_xy_table = step_xy_table + 512                    -> row 8  / row 24
+ *     (512 u16 == 8 rows of 64)
+ * effl8 reads 12 entries from step_xy_table (save_old_color_data, 12
+ * iterations) and writes 12 entries to BOTH tables (get_new_color_data_L8 and
+ * load_old_color_data, also 12), so the full mutated window is exactly these
+ * four rows' first 12 u16. Keep in sync with effl8.c if that addressing
+ * changes; the whole point of pinning it here is that ColorRAM is otherwise
+ * outside the save set. */
+#define EFFL8_COLORRAM_ROW_COUNT 4
+static const int EFFL8_COLORRAM_ROWS[EFFL8_COLORRAM_ROW_COUNT] = { 0, 8, 16, 24 };
+_Static_assert(sizeof(((GameState*)0)->effl8_colorram) / sizeof(((GameState*)0)->effl8_colorram[0]) ==
+                   EFFL8_COLORRAM_ROW_COUNT,
+               "effl8_colorram row count must match EFFL8_COLORRAM_ROWS");
+_Static_assert(sizeof(((GameState*)0)->effl8_colorram[0]) <= sizeof(ColorRAM[0]),
+               "effl8_colorram row slice must fit inside a ColorRAM row");
 
 void GameState_Save(GameState* dst) {
     if (!dst)
@@ -877,6 +902,13 @@ void GameState_Save(GameState* dst) {
         extern u32 spmv_ng_save[2];
         SDL_memcpy(&dst->spmv_ng_save, spmv_ng_save, sizeof(spmv_ng_save));
     }
+
+    /* effl8_colorram — the ColorRAM rows Makoto's SA buff effect latches from
+     * and overwrites. See the GameState struct comment for the full rationale
+     * and EFFL8_COLORRAM_ROWS for how the rows are derived from effl8.c. */
+    for (int i = 0; i < EFFL8_COLORRAM_ROW_COUNT; i++) {
+        SDL_memcpy(dst->effl8_colorram[i], ColorRAM[EFFL8_COLORRAM_ROWS[i]], sizeof(dst->effl8_colorram[i]));
+    }
 }
 
 #define GS_LOAD(member)                                                                                                 \
@@ -1587,6 +1619,13 @@ void GameState_Load(const GameState* src) {
     {
         extern u32 spmv_ng_save[2];
         SDL_memcpy(spmv_ng_save, &src->spmv_ng_save, sizeof(spmv_ng_save));
+    }
+
+    /* effl8_colorram restore — rewinds the palette window effl8 latches from,
+     * so a rollback that straddles the SA activation cannot make routine 0
+     * re-latch already-buffed colours. See GameState_Save. */
+    for (int i = 0; i < EFFL8_COLORRAM_ROW_COUNT; i++) {
+        SDL_memcpy(ColorRAM[EFFL8_COLORRAM_ROWS[i]], src->effl8_colorram[i], sizeof(src->effl8_colorram[i]));
     }
 }
 

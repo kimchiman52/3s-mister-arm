@@ -55,7 +55,7 @@ gpTsb                      # CRI TSB (sound bank) pointer table
 # --- render / texture / palette sinks (research doc sect A.2.2, A.2.4) ------
 # Written by sim-side request pushes, consumed by the renderer/loader.
 palettes                   # software-renderer palette store (platform/video/software)
-ColorRAM                   # rendering/color3rd palette transfer RAM
+ColorRAM                   # rendering/color3rd palette transfer RAM. PARTIALLY EXEMPT: the four row-prefixes effl8 latches from (ColorRAM[0]/[8]/[16]/[24], first 12 u16) ARE in the save set as GameState.effl8_colorram — they fed back into saved frw[] bytes and caused the persistent makoto-sa3-super frw divergence. The rest of the array is render fan-out with no path back into simulation state. If a NEW ColorRAM-mediated feedback shows up, widen the save set; do not widen this entry.
 colPalBuffDC               # rendering/color3rd DC palette buffer
 latest_texture_spec        # software_renderer.c:123 last-texture memo for draw batching
 mts_ok                     # rendering sprite-dispatch ready flags (aboutspr/mtrans)
