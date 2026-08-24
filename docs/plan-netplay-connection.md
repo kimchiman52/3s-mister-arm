@@ -2112,6 +2112,14 @@ neutralisations, now RED.
 | R14 | M-5.4: accept a mapping with a `0.0.0.0` external address | **1** | `23b-noextip-pcp` |
 | R15 | Harness guard: consult the real default route with no mock set | **0** | **none — see below** |
 | R16 | 23a scanner: add an unpaired DISABLE_UPNP site | **1** | `23a-unpaired`, naming the offending file and line |
+| R17 | H-6 "BEFORE": all three reverted together — shared deadline, no suppression, and the original 4000 ms probe budget | **1** | `23b-slow-gw-700`: no mapping, **3886 ms**, 3 address requests |
+
+R17 is the pre-fix state reconstructed exactly, and it reproduces the
+independently reported measurement: 700 ms → no mapping in 3886 ms with
+three public-address requests (the review reported 3896 ms and three
+address requests). The 300 ms control still mapped, in 1534 ms. After
+the fix the same gateway maps in ~2.8 s having been sent 2 PCP + 1
+address + 1 mapping request.
 
 **R15 is GREEN, and that is reported rather than hidden.** On the
 development host (macOS) `discover_gateway_platform` is the deliberate
