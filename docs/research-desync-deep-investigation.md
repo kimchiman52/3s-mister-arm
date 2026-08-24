@@ -984,9 +984,10 @@ A candidate that predicts only one peer goes black (asymmetric) is ruled out as 
 
 ### Candidate 0b: `spmv_ng_save[2]` rollback-unsafe but dead code
 
-**Rank: none** (dead code, unchanged from prior report).
+**Rank: none** (dead code, unchanged from prior report). **[CORRECTION 2026-08-23: THIS EXONERATION WAS WRONG — the code is LIVE and the symbol has been added to GameState. See below.]**
 
-- Reconfirmed: `plpat17.c` is MAKOTO attack code, so the `wk->player_number != 16` gate at `effl8.c:87-108` never hits CHUNLI → L8 effect never fires in live play. Left in the list as demonstration that the "static-save-across-rollback" pattern exists in the codebase.
+- ~~Reconfirmed: `plpat17.c` is MAKOTO attack code, so the `wk->player_number != 16` gate at `effl8.c:87-108` never hits CHUNLI → L8 effect never fires in live play. Left in the list as demonstration that the "static-save-across-rollback" pattern exists in the codebase.~~
+- **CORRECTION (2026-08-23)**: the reasoning above used CPS3 character numbering (CHUNLI=16, MAKOTO=17, `constants.h:29-30`), but `CPS3` is NOT defined in this build (`CMakeLists.txt` "Feature toggles" block leaves `# CPS3` commented out), so the active enum is `constants.h:54-55`: CHUNLI=15, **MAKOTO=16**. The `wk->player_number != 16 → return 0` gate at `effl8.c:91` therefore passes for exactly the character `plpat17.c` serves. Verified dispatch chain: `plpat.c:95` `plxx_extra_attack_table[wk->player_number]` → table entry index 16 = `pl17_extra_attack` (`plpat.c:776-781`) → `pl17_exatt_table[routine_no[2]-16]` entry 3 = `Att_PL17_AT2` (`plpat17.c:26,311-316`) → `effect_L8_init(wk)` at `plpat17.c:245` on `cg_type == 10`. The L8 effect fires in live Makoto play; its `spmv_ng_save` latch/restore (`effl8.c:30,43`) writes back into the checksummed `PLW.spmv_ng_flag`, so a rollback straddling the latch/restore window desyncs — same class as `chainex_check`/`ca_check_flag`/`Color7`. **Fixed 2026-08-23: `spmv_ng_save[2]` added to GameState save/load, the desync checksum, and the FH_* per-field triage table (`src/netplay/game_state.c`), EXPECTED_GAME_STATE_SIZE re-pinned 17676 → 17684.** Other rows in this document that describe `spmv_ng_save` as "dead code" (the §uncovered-globals table row, Candidate ranking notes, and appendix A.2 lists) predate this correction and should be read against this note.
 
 ### Candidate 2: Unhashed-but-saved BG state accumulating divergence
 

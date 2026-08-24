@@ -91,8 +91,19 @@
  * downstream), so this was re-pinned empirically the same way as the
  * entries above: cross-compiled with the OLD 17672 constant, read the
  * static_assert failure's "note: expression evaluates to 'N == 17672'",
- * and took N. Actual sizeof(GameState) == 17676 (net +4 over 17672). */
-#define EXPECTED_GAME_STATE_SIZE 17676
+ * and took N. Actual sizeof(GameState) == 17676 (net +4 over 17672).
+ *
+ * H-6 fix (2026-08-23) appended spmv_ng_save[2] (u32[2], Makoto SA-buff
+ * backup of the checksummed PLW.spmv_ng_flag — see the struct comment for
+ * the corrected Candidate-0b history) right after ca_check_flag, growing
+ * this by +8: the s8's former 3 trailing pad bytes stay as pre-u32
+ * alignment padding, then 8 bytes of payload land on the struct's 4-byte
+ * boundary. Re-pinned with the clang --target=arm-linux-gnueabihf layout
+ * probe (deliberate `extern char probe[sizeof(GameState)]` vs
+ * `extern char probe[1]` redeclaration conflict; compiler reported
+ * 'char[17684]', and the same probe reproduces 'char[17676]' on the
+ * pre-change header, validating the environment). 17676 + 8 = 17684. */
+#define EXPECTED_GAME_STATE_SIZE 17684
 #define EXPECTED_TASK_SIZE 16
 
 _Static_assert(sizeof(GameState) == EXPECTED_GAME_STATE_SIZE,
@@ -830,6 +841,14 @@ void GameState_Save(GameState* dst) {
         extern s8 ca_check_flag;
         SDL_memcpy(&dst->ca_check_flag, &ca_check_flag, sizeof(ca_check_flag));
     }
+
+    /* spmv_ng_save (Makoto SA-buff backup of PLW.spmv_ng_flag) — extern
+     * defined in effect/effl8.c. See the GameState struct comment for the
+     * rollback rationale and the corrected Candidate-0b history. */
+    {
+        extern u32 spmv_ng_save[2];
+        SDL_memcpy(&dst->spmv_ng_save, spmv_ng_save, sizeof(spmv_ng_save));
+    }
 }
 
 #define GS_LOAD(member)                                                                                                 \
@@ -1534,6 +1553,12 @@ void GameState_Load(const GameState* src) {
         extern s8 ca_check_flag;
         SDL_memcpy(&ca_check_flag, &src->ca_check_flag, sizeof(ca_check_flag));
     }
+
+    /* spmv_ng_save restore — see GameState_Save comment. */
+    {
+        extern u32 spmv_ng_save[2];
+        SDL_memcpy(spmv_ng_save, &src->spmv_ng_save, sizeof(spmv_ng_save));
+    }
 }
 
 // ============================================================================
@@ -1600,6 +1625,7 @@ enum {
     FH_super_arts, FH_piyori_type, FH_Max_vitality,
     FH_chainex_check,
     FH_Color7, FH_ca_check_flag,
+    FH_spmv_ng_save,
     FH_COUNT
 };
 static const char* const FH_NAMES[FH_COUNT] = {
@@ -1619,6 +1645,7 @@ static const char* const FH_NAMES[FH_COUNT] = {
     "super_arts", "piyori_type", "Max_vitality",
     "chainex_check",
     "Color7", "ca_check_flag",
+    "spmv_ng_save",
 };
 
 static State state_buffer[STATE_BUFFER_MAX];
@@ -2069,6 +2096,14 @@ uint32_t save_current_state(void* buffer, int frame) {
         h = djb2_update_mem(h, (const uint8_t*)&gs->Color7, sizeof(gs->Color7));
         h = djb2_update_mem(h, (const uint8_t*)&gs->ca_check_flag, sizeof(gs->ca_check_flag));
 
+        // spmv_ng_save (Makoto SA-buff backup of PLW.spmv_ng_flag) —
+        // previously rollback-unsafe (2026-04-24 Candidate 0b wrongly
+        // exonerated it as dead code via CPS3 character numbering; with
+        // CPS3 off, id 16 IS Makoto and the code is live). Now saved via
+        // GameState; hash the saved copy so any residual divergence is
+        // caught cross-peer just like chainex_check.
+        h = djb2_update_mem(h, (const uint8_t*)&gs->spmv_ng_save, sizeof(gs->spmv_ng_save));
+
         // Per-section checksums + per-field hashes for desync triage. Always-on
         // 2026-04-26: telemetry consumes the same diagnostic surface as DEBUG.
         SectionedChecksum sc;
@@ -2148,6 +2183,12 @@ uint32_t save_current_state(void* buffer, int frame) {
                 _s = djb2_init();
                 _s = djb2_update_mem(_s, (const uint8_t*)&ca_check_flag, sizeof(ca_check_flag));
                 fh[FH_ca_check_flag] = _s;
+            }
+            {
+                extern u32 spmv_ng_save[2];
+                uint32_t _s = djb2_init();
+                _s = djb2_update_mem(_s, (const uint8_t*)spmv_ng_save, sizeof(spmv_ng_save));
+                fh[FH_spmv_ng_save] = _s;
             }
 #undef HASHONE
         }

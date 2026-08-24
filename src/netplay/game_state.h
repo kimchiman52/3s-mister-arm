@@ -737,6 +737,24 @@ typedef struct GameState {
      * rollback that straddled the set->read window (2026-07-07 audit
      * class). Same fix class as [[chainex_check]]. Ported from d5f301cc. */
     s8 ca_check_flag;
+
+    /* Makoto SA-buff backup of PLW.spmv_ng_flag. u32[2] in effect/effl8.c:11.
+     * effect_L8_move latches spmv_ng_save[id] = mwk->spmv_ng_flag when the
+     * buff starts (effl8.c:30, routine_no[0]==0) and writes it BACK into
+     * PLW.spmv_ng_flag when the buff ends (effl8.c:43, routine_no[0]==1).
+     * PLW.spmv_ng_flag IS part of the cross-peer desync checksum, so a
+     * rollback that straddles the latch/restore window with a stale or
+     * mispredicted spmv_ng_save value writes divergent flags on the two
+     * peers -> mid-battle desync. Same fix class as [[chainex_check]].
+     *
+     * NOTE: the 2026-04-24 audit (docs/research-desync-deep-investigation.md
+     * Candidate 0b) exonerated this as dead code via "player_number 16 ==
+     * CHAR_CHUNLI, never hit by Makoto's plpat17.c". That used CPS3
+     * numbering; CPS3 is NOT defined in this build (CMakeLists.txt "Feature
+     * toggles" leaves it commented out), so constants.h:55 makes 16 ==
+     * CHAR_MAKOTO and the effl8.c:91 gate passes for exactly the character
+     * plpat17.c:245 dispatches. The code is LIVE. */
+    u32 spmv_ng_save[2];
 } GameState;
 
 typedef struct State {
@@ -784,7 +802,11 @@ typedef struct State {
  * behave identically at any value); the sole cost of 100 vs 82 is ~32 KB
  * more per rollback state on ARM32, which is fine. 100 gives more headroom
  * before the full-state fallback triggers. Keep it 100 unless the
- * maintainer says otherwise. sizeof(GameState) is unaffected (17672).
+ * maintainer says otherwise. sizeof(GameState) is unaffected by this
+ * knob — it only sizes the separate sparse wire buffer. (The
+ * authoritative struct-size pin is EXPECTED_GAME_STATE_SIZE in
+ * game_state.c — 17684 as of the spmv_ng_save fix; trust that
+ * _Static_assert, not any number quoted in a comment.)
  * Ported from 42d063cf (feat/fcade-replay-browser), which itself reverses
  * that branch's own 4f3ab1d6. */
 #define SPARSE_CEILING_SLOTS 100
