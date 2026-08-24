@@ -40,6 +40,7 @@
 
 #ifdef ENABLE_NETPLAY_TESTS
 
+#include "netplay/connect_fail.h"
 #include "netplay/net_tuning.h"
 #include "netplay/stun.h"
 
@@ -839,6 +840,81 @@ static int run_discover_parallel_test(void) {
     return rc;
 }
 
+/* S3 failure attribution: an all-dead server pool must fail WITH
+ * evidence — the diag counters on the StunResult have to say "we
+ * probed, we sent, nobody answered" so ConnectFail_ClassifyStunDiscover
+ * lands on P2P_FAIL_STUN_ALLDOWN (UDP filtered) rather than the
+ * no-network bucket. Pre-S3 a failed discovery carried nothing. */
+static int run_discover_alldead_diag_test(void) {
+    fprintf(stderr, "[test_stun_mock] discover-alldead-diag: failure must carry classification evidence\n");
+
+    unsigned short dead_port_a = 0, dead_port_b = 0;
+    int dead_a = open_udp_on_localhost(&dead_port_a);
+    int dead_b = open_udp_on_localhost(&dead_port_b);
+    if (dead_a < 0 || dead_b < 0) {
+        fail("discover-alldead-diag", "failed to bind localhost UDP sockets");
+        if (dead_a >= 0) close_sock(dead_a);
+        if (dead_b >= 0) close_sock(dead_b);
+        return 1;
+    }
+
+    static StunServerDesc servers[2];
+    servers[0] = (StunServerDesc){ "127.0.0.1", 0 };
+    servers[0].port = dead_port_a;
+    servers[1] = (StunServerDesc){ "127.0.0.1", 0 };
+    servers[1].port = dead_port_b;
+    Stun_TestHook_SetServers(servers, 2);
+
+    StunResult res;
+    const bool ok = Stun_Discover(&res, 0, 1200);
+
+    Stun_TestHook_SetServers(NULL, 0);
+    close_sock(dead_a);
+    close_sock(dead_b);
+
+    int rc = 0;
+    if (ok) {
+        fail("discover-alldead-diag", "Stun_Discover succeeded against dead-only servers");
+        Stun_CloseSocket(&res);
+        return 1;
+    }
+    /* Note: both slots dedupe-survive (same IP, different ports). */
+    if (res.diag_servers_probed != 2) {
+        fprintf(stderr, "[test_stun_mock] FAIL: discover-alldead-diag: probed=%d expected 2\n",
+                res.diag_servers_probed);
+        fail_count++;
+        rc = 1;
+    }
+    if (res.diag_servers_answered != 0) {
+        fail("discover-alldead-diag", "answered != 0 on the failure path");
+        rc = 1;
+    }
+    if (res.diag_sends_ok <= 0) {
+        fail("discover-alldead-diag", "sends_ok not recorded (localhost sends must succeed)");
+        rc = 1;
+    }
+    if (res.diag_dns_all_failed) {
+        fail("discover-alldead-diag", "dns_all_failed set — numeric 127.0.0.1 resolves");
+        rc = 1;
+    }
+    const ConnectFailCode code = ConnectFail_ClassifyStunDiscover(
+        res.diag_servers_probed, res.diag_servers_answered,
+        res.diag_sends_ok, res.diag_dns_all_failed);
+    if (code != CONNECT_FAIL_STUN_ALLDOWN) {
+        fprintf(stderr,
+                "[test_stun_mock] FAIL: discover-alldead-diag: classified %s, expected "
+                "P2P_FAIL_STUN_ALLDOWN\n", ConnectFail_Code(code));
+        fail_count++;
+        rc = 1;
+    }
+    if (rc == 0) {
+        fprintf(stderr,
+                "[test_stun_mock] discover-alldead-diag OK — probed=%d sends_ok=%d -> %s\n",
+                res.diag_servers_probed, res.diag_sends_ok, ConnectFail_Code(code));
+    }
+    return rc;
+}
+
 /* Single server that drops the first request: the 500 ms retransmit
  * must recover discovery (pre-S2 there was NO retransmit — one lost
  * packet burned the server's whole 2 s window). */
@@ -1000,6 +1076,7 @@ int Netplay_Test_StunMock(void) {
     int discover_rc = 0;
 #ifdef NETPLAY_TEST_HOOKS
     discover_rc |= run_discover_parallel_test();
+    discover_rc |= run_discover_alldead_diag_test();
     discover_rc |= run_discover_retransmit_test();
     discover_rc |= run_discover_disagreement_test();
 #else

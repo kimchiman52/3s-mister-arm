@@ -39,6 +39,7 @@
 
 #ifdef ENABLE_NETPLAY_TESTS
 
+#include "netplay/connect_fail.h"
 #include "netplay/direct_p2p.h"
 #include "netplay/net_tuning.h"
 #include "netplay/rendezvous.h"
@@ -984,6 +985,168 @@ static int test_joiner_fresh_socket_retry(void) {
     return rc;
 }
 
+/* --- Test 7: S3 failure taxonomy -------------------------------------- */
+
+/*
+ * S3 (docs/plan-netplay-connection.md §5): the tri-state DELIVER parse
+ * plus the pure classifiers in connect_fail.c. These are the functions
+ * direct_p2p.c uses to turn thrown-away evidence into distinct machine
+ * codes + user strings; a taxonomy with no tests is a taxonomy that
+ * rots.
+ */
+static int test_failure_taxonomy(void) {
+    /* --- 7a: Rendezvous_ParseDeliverEx tri-state split. Pre-S3 the
+     * bool API conflated zero-sentinel with malformed. */
+    uint8_t key[REND_KEY_LEN];
+    memset(key, 0xAB, sizeof(key));
+
+    uint8_t deliver[REND_DELIVER_LEN];
+    memset(deliver, 0, sizeof(deliver));
+    deliver[0] = REND_MAGIC_BYTES_0;
+    deliver[1] = REND_MAGIC_BYTES_1;
+    deliver[2] = REND_MAGIC_BYTES_2;
+    deliver[3] = REND_MAGIC_BYTES_3;
+    deliver[4] = REND_VERSION;
+    deliver[5] = REND_TYPE_DELIVER;
+    memcpy(&deliver[8], key, REND_KEY_LEN);
+    /* peer = 0.0.0.0:0 (already zero) — the "not yet registered" sentinel. */
+
+    char ip[64] = { 0 };
+    uint16_t port = 0;
+    EXPECT_TRUE("7a-empty",
+                Rendezvous_ParseDeliverEx(deliver, sizeof(deliver), key, ip, &port) ==
+                    REND_DELIVER_EMPTY);
+    EXPECT_TRUE("7a-empty-outputs", ip[0] == '\0' && port == 0);
+    /* Legacy bool wrapper still reports "no peer" for the sentinel. */
+    EXPECT_FALSE("7a-empty-legacy",
+                 Rendezvous_ParseDeliver(deliver, sizeof(deliver), key, ip, &port));
+
+    /* Real endpoint 9.8.7.6:4321. */
+    deliver[24] = 9; deliver[25] = 8; deliver[26] = 7; deliver[27] = 6;
+    deliver[28] = (uint8_t)(4321 >> 8);
+    deliver[29] = (uint8_t)(4321 & 0xFF);
+    EXPECT_TRUE("7a-peer",
+                Rendezvous_ParseDeliverEx(deliver, sizeof(deliver), key, ip, &port) ==
+                    REND_DELIVER_PEER);
+    EXPECT_TRUE("7a-peer-outputs", strcmp(ip, "9.8.7.6") == 0 && port == 4321);
+    EXPECT_TRUE("7a-peer-legacy",
+                Rendezvous_ParseDeliver(deliver, sizeof(deliver), key, ip, &port));
+
+    /* Wrong session key -> MALFORMED (not EMPTY). */
+    uint8_t wrong_key[REND_KEY_LEN];
+    memset(wrong_key, 0xCD, sizeof(wrong_key));
+    EXPECT_TRUE("7a-wrongkey",
+                Rendezvous_ParseDeliverEx(deliver, sizeof(deliver), wrong_key, ip, &port) ==
+                    REND_DELIVER_MALFORMED);
+    /* Truncated frame -> MALFORMED. */
+    EXPECT_TRUE("7a-short",
+                Rendezvous_ParseDeliverEx(deliver, 16, key, ip, &port) ==
+                    REND_DELIVER_MALFORMED);
+    /* Wrong type (REGISTER) -> MALFORMED. */
+    deliver[5] = REND_TYPE_REGISTER;
+    EXPECT_TRUE("7a-wrongtype",
+                Rendezvous_ParseDeliverEx(deliver, sizeof(deliver), key, ip, &port) ==
+                    REND_DELIVER_MALFORMED);
+    deliver[5] = REND_TYPE_DELIVER;
+
+    /* --- 7b: STUN discovery classification (cause 1 vs cause 2). */
+    /* All DNS failed, nothing answered -> no network / DNS dead. */
+    EXPECT_TRUE("7b-dns-alldown",
+                ConnectFail_ClassifyStunDiscover(0, 0, 0, true) == CONNECT_FAIL_DNS_ALLDOWN);
+    /* DNS dead but numeric fallbacks probed + sent, still silent ->
+     * DNS blackout stays the primary diagnosis. */
+    EXPECT_TRUE("7b-dns-alldown-fallbacks",
+                ConnectFail_ClassifyStunDiscover(3, 0, 9, true) == CONNECT_FAIL_DNS_ALLDOWN);
+    /* DNS fine, sends went out, zero responses -> UDP filtered. */
+    EXPECT_TRUE("7b-stun-alldown",
+                ConnectFail_ClassifyStunDiscover(4, 0, 12, false) == CONNECT_FAIL_STUN_ALLDOWN);
+    /* Sends all failed at the socket layer -> no-network bucket. */
+    EXPECT_TRUE("7b-sends-failed",
+                ConnectFail_ClassifyStunDiscover(4, 0, 0, false) == CONNECT_FAIL_DNS_ALLDOWN);
+    /* Discovery succeeded -> not a discovery failure. */
+    EXPECT_TRUE("7b-ok",
+                ConnectFail_ClassifyStunDiscover(4, 2, 8, false) == CONNECT_FAIL_NONE);
+
+    /* --- 7c: joiner fallback classification (causes 3-7). */
+    ConnectJoinEvidence ev;
+    memset(&ev, 0, sizeof(ev));
+    /* Zero DELIVERs of any kind -> server down (it answers EVERY
+     * REGISTER with a DELIVER, so silence is the server, not the host). */
+    EXPECT_TRUE("7c-rendezvous-down",
+                ConnectFail_ClassifyJoin(&ev) == CONNECT_FAIL_RENDEZVOUS_DOWN);
+    /* Only zero-sentinel DELIVERs -> host offline / code stale. */
+    ev.deliver_any = true;
+    EXPECT_TRUE("7c-host-offline",
+                ConnectFail_ClassifyJoin(&ev) == CONNECT_FAIL_HOST_OFFLINE);
+    /* Real endpoint arrived, punch failed, cone-family NAT -> blocked. */
+    ev.deliver_real = true;
+    EXPECT_TRUE("7c-nat-blocked",
+                ConnectFail_ClassifyJoin(&ev) == CONNECT_FAIL_NAT_BLOCKED);
+    /* Same + our S2 symmetric signal -> relay-needed class. */
+    ev.port_disagreement = true;
+    EXPECT_TRUE("7c-symmetric-both",
+                ConnectFail_ClassifyJoin(&ev) == CONNECT_FAIL_SYMMETRIC_BOTH);
+    /* Hairpin outranks everything. */
+    ev.hairpin = true;
+    EXPECT_TRUE("7c-hairpin",
+                ConnectFail_ClassifyJoin(&ev) == CONNECT_FAIL_HAIRPIN);
+    /* Punch succeeded -> no failure. */
+    memset(&ev, 0, sizeof(ev));
+    ev.deliver_any = ev.deliver_real = ev.bilateral_punched = true;
+    EXPECT_TRUE("7c-ok", ConnectFail_ClassifyJoin(&ev) == CONNECT_FAIL_NONE);
+
+    /* --- 7d: host-waiting advisory (cause 8). */
+    EXPECT_TRUE("7d-too-early",
+                ConnectFail_ClassifyHostWaiting(false, false, CONNECT_HOST_ADVISORY_MS - 1) ==
+                    CONNECT_FAIL_NONE);
+    EXPECT_TRUE("7d-unmappable",
+                ConnectFail_ClassifyHostWaiting(false, false, CONNECT_HOST_ADVISORY_MS) ==
+                    CONNECT_FAIL_HOST_UNMAPPABLE);
+    EXPECT_TRUE("7d-rendezvous-down-with-upnp",
+                ConnectFail_ClassifyHostWaiting(true, false, CONNECT_HOST_ADVISORY_MS) ==
+                    CONNECT_FAIL_RENDEZVOUS_DOWN);
+    EXPECT_TRUE("7d-deliver-seen",
+                ConnectFail_ClassifyHostWaiting(false, true, CONNECT_HOST_ADVISORY_MS * 2) ==
+                    CONNECT_FAIL_NONE);
+
+    /* --- 7e: deadline + abort-hold policy helpers (Part A). */
+    EXPECT_FALSE("7e-unarmed", ConnectFail_DeadlineExpired(123456, 0, 15000));
+    EXPECT_FALSE("7e-young", ConnectFail_DeadlineExpired(10000, 1, 15000));
+    EXPECT_TRUE("7e-expired", ConnectFail_DeadlineExpired(15001, 1, 15000));
+    /* Wrap-safe: now < since via u64 wraparound still measures elapsed. */
+    EXPECT_TRUE("7e-wrap",
+                ConnectFail_DeadlineExpired(5000, UINT64_MAX - 20000ULL, 15000));
+
+    int held = 0;
+    for (int i = 0; i < CONNECT_ABORT_HOLD_FRAMES - 1; i++) {
+        held = ConnectFail_AbortHoldTick(held, true);
+    }
+    EXPECT_FALSE("7e-hold-not-yet", ConnectFail_AbortHoldFired(held));
+    held = ConnectFail_AbortHoldTick(held, true);
+    EXPECT_TRUE("7e-hold-fired", ConnectFail_AbortHoldFired(held));
+    held = ConnectFail_AbortHoldTick(held, false);
+    EXPECT_FALSE("7e-hold-release-resets", ConnectFail_AbortHoldFired(held));
+    EXPECT_TRUE("7e-hold-zero", held == 0);
+
+    /* --- 7f: every code has a distinct machine string and a user string. */
+    for (int c = CONNECT_FAIL_NONE; c <= CONNECT_FAIL_INTERNAL; c++) {
+        const char* mc = ConnectFail_Code((ConnectFailCode)c);
+        EXPECT_TRUE("7f-code-nonnull", mc != NULL && mc[0] != '\0');
+        EXPECT_TRUE("7f-user-nonnull", ConnectFail_UserText((ConnectFailCode)c) != NULL);
+        for (int d = CONNECT_FAIL_NONE; d < c; d++) {
+            if (strcmp(mc, ConnectFail_Code((ConnectFailCode)d)) == 0) {
+                FAIL("7f-code-distinct", "duplicate machine code string");
+            }
+        }
+    }
+
+    if (fail_count == 0) {
+        fprintf(stderr, "[test_bilateral_punch] test 7 OK — DELIVER tri-state + "
+                        "taxonomy classifiers + deadline/abort policy\n");
+    }
+    return fail_count > 0 ? 1 : 0;
+}
+
 /* --- Entry point ------------------------------------------------------ */
 
 int Netplay_Test_BilateralPunch(void) {
@@ -996,6 +1159,7 @@ int Netplay_Test_BilateralPunch(void) {
     rc |= test_protocol_round_trip();
     rc |= test_kill_switch_round_trip();
     rc |= test_joiner_fresh_socket_retry();
+    rc |= test_failure_taxonomy();
 
     if (fail_count > 0 || rc != 0) {
         fprintf(stderr, "[test_bilateral_punch] %d failure(s)\n", fail_count);

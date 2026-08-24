@@ -29,6 +29,16 @@ typedef struct {
      * signal. Recorded for S3 failure attribution; discovery itself
      * still succeeds with the FIRST responder's endpoint. */
     bool port_disagreement;
+
+    /* S3 failure-attribution evidence (docs/plan-netplay-connection.md
+     * §5). Filled by Stun_Discover on BOTH the success and the failure
+     * path, so a false return still carries the counters
+     * ConnectFail_ClassifyStunDiscover needs to distinguish "DNS dead /
+     * no network" from "outbound UDP filtered". */
+    int diag_servers_probed;   /* probe slots armed (resolved + fallbacks) */
+    int diag_servers_answered; /* slots with a parseable Binding Response */
+    int diag_sends_ok;         /* NET_SendDatagram calls that reported success */
+    bool diag_dns_all_failed;  /* every configured hostname failed getaddrinfo */
 } StunResult;
 
 /// Perform STUN Binding Requests (RFC 5389) against the built-in server

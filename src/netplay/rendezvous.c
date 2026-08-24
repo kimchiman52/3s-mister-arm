@@ -131,43 +131,61 @@ bool Rendezvous_BuildPoll(const uint8_t session_key[16],
     return true;
 }
 
-bool Rendezvous_ParseDeliver(const uint8_t* pkt, int len,
-                             const uint8_t expected_session_key[16],
-                             char out_peer_ip[64],
-                             uint16_t* out_peer_port) {
+RendezvousDeliverResult Rendezvous_ParseDeliverEx(const uint8_t* pkt, int len,
+                                                  const uint8_t expected_session_key[16],
+                                                  char out_peer_ip[64],
+                                                  uint16_t* out_peer_port) {
+    if (out_peer_ip) {
+        out_peer_ip[0] = '\0';
+    }
+    if (out_peer_port) {
+        *out_peer_port = 0;
+    }
     if (!pkt || len < REND_DELIVER_MIN_LEN || !expected_session_key ||
         !out_peer_ip || !out_peer_port) {
-        return false;
+        return REND_DELIVER_MALFORMED;
     }
     if (read_be32(&pkt[0]) != REND_MAGIC) {
-        return false;
+        return REND_DELIVER_MALFORMED;
     }
     if (pkt[4] != REND_VERSION) {
-        return false;
+        return REND_DELIVER_MALFORMED;
     }
     if (pkt[5] != REND_TYPE_DELIVER) {
-        return false;
+        return REND_DELIVER_MALFORMED;
     }
     if (memcmp(&pkt[8], expected_session_key, REND_KEY_LEN) != 0) {
-        return false;
+        return REND_DELIVER_MALFORMED;
     }
 
     /* peer_ip raw 4 bytes at pkt[24..27], peer port BE at pkt[28..29]. */
     if (!inet_ntop(AF_INET, &pkt[24], out_peer_ip, 64)) {
-        return false;
+        out_peer_ip[0] = '\0';
+        return REND_DELIVER_MALFORMED;
     }
     *out_peer_port = read_be16(&pkt[28]);
 
     /* Server's "peer not yet registered" sentinel: 0.0.0.0:0. The plan
      * (§Decision 2 step 2) explicitly uses zeros to mean "the other side
-     * hasn't registered yet — keep polling". Distinguish from a parsed-
-     * OK delivered endpoint by clearing the outputs and returning false. */
+     * hasn't registered yet — keep polling". S3: this is a distinct,
+     * MEANINGFUL result — a zero-sentinel DELIVER proves the server is
+     * alive and reachable, which the failure taxonomy needs to separate
+     * "rendezvous down" from "host offline". Clear the outputs so no
+     * caller can mistake the sentinel for an endpoint. */
     if (strcmp(out_peer_ip, "0.0.0.0") == 0 && *out_peer_port == 0) {
         out_peer_ip[0] = '\0';
         *out_peer_port = 0;
-        return false;
+        return REND_DELIVER_EMPTY;
     }
-    return true;
+    return REND_DELIVER_PEER;
+}
+
+bool Rendezvous_ParseDeliver(const uint8_t* pkt, int len,
+                             const uint8_t expected_session_key[16],
+                             char out_peer_ip[64],
+                             uint16_t* out_peer_port) {
+    return Rendezvous_ParseDeliverEx(pkt, len, expected_session_key,
+                                     out_peer_ip, out_peer_port) == REND_DELIVER_PEER;
 }
 
 bool Rendezvous_ParseSignalUrl(const char* url,

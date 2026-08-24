@@ -429,6 +429,10 @@ bool Stun_Discover(StunResult* result, uint16_t local_port, int timeout_ms) {
     int slot_count = 0;
     bool dns_consumed[STUN_MAX_SERVERS] = { false };
     bool fallbacks_armed = false;
+    /* S3 evidence counters — published into result->diag_* on every
+     * exit path so a failed discovery is still classifiable. */
+    int dns_failures = 0;
+    int sends_ok = 0;
 
     const uint32_t start = SDL_GetTicks();
     int first_responder = -1;
@@ -450,6 +454,7 @@ bool Stun_Discover(StunResult* result, uint16_t local_port, int timeout_ms) {
                     stun_probe_add(slots, &slot_count, dns->ip[i], dns->port[i], dns->host[i], now);
                 } else if (st == -1) {
                     dns_consumed[i] = true;
+                    dns_failures++;
                     SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "STUN: Failed to resolve %s", dns->host[i]);
                 }
             }
@@ -490,6 +495,8 @@ bool Stun_Discover(StunResult* result, uint16_t local_port, int timeout_ms) {
                 if (!NET_SendDatagram(sock, s->addr, s->port, s->request, 20)) {
                     SDL_LogDebug(SDL_LOG_CATEGORY_APPLICATION, "STUN: Failed to send to %s:%u: %s",
                                  s->label, (unsigned)s->port, SDL_GetError());
+                } else {
+                    sends_ok++;
                 }
                 s->sends++;
             }
@@ -550,6 +557,16 @@ bool Stun_Discover(StunResult* result, uint16_t local_port, int timeout_ms) {
             SDL_DetachThread(dns_thread);
         }
     }
+    /* S3: publish the evidence counters on EVERY exit path — the
+     * failure classifier (ConnectFail_ClassifyStunDiscover) reads these
+     * off the StunResult even when we return false. dns_all_failed is
+     * only claimed when a DNS job actually ran and every configured
+     * hostname came back -1 (a job that never spawned proves nothing). */
+    result->diag_servers_probed = slot_count;
+    result->diag_sends_ok = sends_ok;
+    result->diag_dns_all_failed =
+        (dns != NULL && dns->count > 0 && dns_failures == dns->count);
+
     if (dns != NULL) {
         stun_dns_job_unref(dns);
     }
@@ -589,6 +606,7 @@ bool Stun_Discover(StunResult* result, uint16_t local_port, int timeout_ms) {
                     slots[i].label, (unsigned)slots[i].port, (unsigned)slots[i].resp_port);
         }
     }
+    result->diag_servers_answered = responders; /* S3 evidence */
 
     // Query the ACTUAL OS-assigned local port via getsockname.
     // The STUN public port may differ from the local port on

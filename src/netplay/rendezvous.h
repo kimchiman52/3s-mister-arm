@@ -70,22 +70,44 @@ bool Rendezvous_BuildPoll(const uint8_t session_key[16],
                           uint8_t out_pkt[28]);
 
 /*
+ * Tri-state DELIVER parse result (S3 failure taxonomy,
+ * docs/plan-netplay-connection.md). The rendezvous server answers EVERY
+ * REGISTER with a DELIVER — a real endpoint when the peer is paired, or
+ * the 0.0.0.0:0 zero-sentinel when it is not — so callers counting
+ * DELIVER frames can distinguish "server down" (no DELIVERs at all)
+ * from "host offline / code stale" (only zero-sentinel DELIVERs). The
+ * pre-S3 bool API conflated MALFORMED with EMPTY, throwing that
+ * evidence away.
+ */
+typedef enum RendezvousDeliverResult {
+    REND_DELIVER_MALFORMED = 0, /* bad magic/version/type/key/length — drop */
+    REND_DELIVER_EMPTY,         /* valid, zero-sentinel: peer not yet registered */
+    REND_DELIVER_PEER,          /* valid, real peer endpoint in the outputs */
+} RendezvousDeliverResult;
+
+/*
  * Parse a DELIVER packet (type=2, 32 bytes) received from the
  * rendezvous server.
  *
  * Validates magic, version, type, and that the embedded session_key
  * matches `expected_session_key` (rejecting cross-talk between sessions
- * that share a UDP socket). On success writes the peer's IPv4 address
- * as a NUL-terminated dotted-quad string into `out_peer_ip` (which must
- * be at least 64 bytes) and the peer's public port (host order) into
- * `*out_peer_port`.
- *
- * Returns false if the packet is malformed, the session_key does not
- * match, or the server has reported the peer as not-yet-registered
- * (peer_ip == 0.0.0.0 AND peer_port == 0). In the not-yet-registered
- * case `out_peer_ip` is set to "" and `*out_peer_port` to 0 so the
- * caller can distinguish "no peer yet, keep polling" from "garbage
- * packet, drop".
+ * that share a UDP socket). On REND_DELIVER_PEER writes the peer's IPv4
+ * address as a NUL-terminated dotted-quad string into `out_peer_ip`
+ * (which must be at least 64 bytes) and the peer's public port (host
+ * order) into `*out_peer_port`. On REND_DELIVER_EMPTY (server's
+ * "peer not yet registered" 0.0.0.0:0 sentinel) and on
+ * REND_DELIVER_MALFORMED, `out_peer_ip` is set to "" and
+ * `*out_peer_port` to 0.
+ */
+RendezvousDeliverResult Rendezvous_ParseDeliverEx(const uint8_t* pkt, int len,
+                                                  const uint8_t expected_session_key[16],
+                                                  char out_peer_ip[64],
+                                                  uint16_t* out_peer_port);
+
+/*
+ * Legacy bool wrapper around Rendezvous_ParseDeliverEx: returns true
+ * only for REND_DELIVER_PEER. Kept for call sites and tests that only
+ * care about "did the server hand me a live peer endpoint".
  */
 bool Rendezvous_ParseDeliver(const uint8_t* pkt, int len,
                              const uint8_t expected_session_key[16],
