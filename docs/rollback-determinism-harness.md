@@ -180,13 +180,15 @@ the controls below. Ordered cheapest first; run the cheap one whenever
 you are relying on a green verdict for a decision, and the rebuild one
 whenever you have changed the capture, the differ, or the classifier.
 
-**Control A — empty allowlist (no rebuild, ~5 min).** ~73 symbols
-diverge between the baseline and rollback runs on a healthy tree and are
-suppressed as ALLOWED. Take the suppression away and they must surface:
+**Control A — empty allowlist (no rebuild, ~5 min).** `allowlist.txt`'s
+39 fnmatch patterns suppressed 73 symbol hits in the last recorded run.
+Those symbols really do diverge because of rollback; they are judged
+benign, not absent. Take the suppression away and they must surface as
+findings — `load_allowlist()` returns an empty list for an empty or
+missing path, so no pattern matches anything:
 
 ```sh
-: > /tmp/rbd-empty-allowlist.txt
-tools/rollback-determinism/run.sh fast --allowlist /tmp/rbd-empty-allowlist.txt
+tools/rollback-determinism/run.sh fast --allowlist /dev/null
 ```
 
 Expected: exit **1**, `divergent` well above zero, `allowlisted=0`.
