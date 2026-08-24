@@ -251,6 +251,16 @@ static void dispatch_direct_p2p_handoff(void) {
 
 static void set_netplay_params() {
 #if defined(ENABLE_NETPLAY)
+    /* S3 (docs/plan-netplay-connection.md §5): initialize the direct-P2P
+     * orchestrator for EVERY netplay entry path, not just the handoff
+     * one. DirectP2P_Init registers the session-teardown callback that
+     * converts a latched session failure (MIST reject, CONNECTING
+     * deadline) into DIRECT_P2P_FAILED_HANDSHAKE + the on-screen reason;
+     * pre-S3 it only ran on the handoff branch, so the matchmaking and
+     * LAN-CLI paths surfaced reject reasons on stdout ONLY and the
+     * player saw a silent drop to attract. Init is idempotent and spawns
+     * no worker. */
+    DirectP2P_Init();
     if (configuration.netplay.p2p_remote_ip != NULL) {
         Netplay_SetParams(configuration.netplay.p2p_local_player, configuration.netplay.p2p_remote_ip);
         /* Netplay_SetParams already wired remote_ip, so the nav state
@@ -265,11 +275,10 @@ static void set_netplay_params() {
          * orchestrator's worker thread publishes state transitions the
          * overlay renderer reads; if those happen before njUserInit()
          * completes ppg_Initialize the overlay's SSPutStrPro path hits
-         * an uninitialized sprite bank and segfaults. Initialize the
-         * orchestrator here (no worker spawned) so DirectP2P_Tick has
-         * valid state from frame 0; the actual BeginHost/BeginJoin fires
-         * once on first tick. See defer_direct_p2p_handoff_tick(). */
-        DirectP2P_Init();
+         * an uninitialized sprite bank and segfaults. DirectP2P_Init ran
+         * above (no worker spawned) so DirectP2P_Tick has valid state
+         * from frame 0; the actual BeginHost/BeginJoin fires once on
+         * first tick. See defer_direct_p2p_handoff_tick(). */
         /* Arm nav ONLY when a handoff file actually exists — a normal
          * cold OSD launch with no handoff is indistinguishable from the
          * "netplay requested" case until we check the file system, and

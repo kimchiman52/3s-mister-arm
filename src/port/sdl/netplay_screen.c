@@ -55,7 +55,19 @@ void NetplayScreen_Render() {
     // JOIN CONNECTING, HANDOFF, etc). Replacing that with a generic
     // "CONNECTING..." would hide the room code the player needs to read.
     if (ns == NETPLAY_SESSION_IDLE && DirectP2P_GetState() != DIRECT_P2P_IDLE) {
-        DirectP2P_DrawOverlay();
+        // S3 defensive guard (inherited from the R-1 review): the nav
+        // overlay below carries a task[TASK_INIT].condition == 0 gate
+        // because SSPutStrPro null-derefs before sf3_init primes the
+        // sprite bank / ppg list. The direct-P2P overlay had NO such
+        // guard, and FAILED_HANDSHAKE is the first FAILED_* state ever
+        // drawn immediately after a Soft_Reset_Sub (which re-registers
+        // TASK_INIT and purges/rebuilds texcash) — text drawing during
+        // those re-init frames is unverified on hardware. Skip the draw
+        // while TASK_INIT is live; the overlay resumes the moment init
+        // finishes (the FAILED_* states are sticky, so nothing is lost).
+        if (task[TASK_INIT].condition == 0) {
+            DirectP2P_DrawOverlay();
+        }
         return;
     }
 

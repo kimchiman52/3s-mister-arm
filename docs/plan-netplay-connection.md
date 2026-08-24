@@ -340,25 +340,94 @@ Plan-drift note: the pre-S2 pointers above originally cited stun.c:407
 update) — those matched the pre-S1 numbering and have been superseded
 by the citations in this section.
 
-## 5. S3 — No hangs + failure taxonomy
+## 5. S3 — No hangs + failure taxonomy (IMPLEMENTED)
 
-- `NAV_WAIT_ORCHESTRATOR` has **no timeout**
-  (src/netplay/netplay_nav.c:309-321): if the orchestrator never sets
-  remote_ip, nav waits forever.
-- `NETPLAY_SESSION_CONNECTING` has no timeout in netplay.c
-  (netplay.c:1564-1567 just runs `run_netplay()`; exit requires a
-  Gekko `GekkoPlayerConnected` event, netplay.c:1052). The design
-  study's claim that GekkoNet's 'Initiating' phase retries forever
-  could NOT be verified locally — GekkoNet ships prebuilt
-  (third_party/GekkoNet/build/{include,lib}, no sources); verify
-  against upstream GekkoNet source before building S3.
-- Deliverable: every waiting state gets a bounded timer + a distinct
-  terminal state, and the failure-exit table (§1.2) grows a
-  machine-readable reason code for telemetry.
-- Input now available from S2: `StunResult.port_disagreement`
-  (stun.h:31) — set when STUN servers disagreed on our mapped port
-  (symmetric-NAT signature) — for failure attribution in the reason
-  codes.
+Landed as its own commit series on top of S2. Citations refer to the
+post-S3 tree.
+
+### 5.1 Hangs closed (Part A)
+
+- `NAV_WAIT_ORCHESTRATOR` (netplay_nav.c) was the only nav state with
+  no `s_frames_in_state` deadline. Now: bails to NAV_DONE on terminal
+  orchestrator FAILED_* (except host FAILED_STUN, whose S2 auto-retry
+  is live), on orchestrator-IDLE with no remote ip (5 s debounce), or
+  on a 150 s overall deadline that RE-ARMS while the orchestrator sits
+  in HOST_WAITING (unbounded by design). Deadline expiry logs
+  `P2P_FAIL_TIMEOUT_ORCHESTRATOR`.
+- `NETPLAY_SESSION_CONNECTING` (netplay.c) had no timeout — exit
+  required a Gekko event; GekkoNet's `DISCONNECT_TIMEOUT` (5000 ms)
+  applies only to actors already `Connected` (an actor stuck
+  `Initiating` retries `SendSyncRequest` every 200 ms forever), and the
+  netplay watchdog only fires while RUNNING. GekkoNet is NOT patched;
+  our own wall-clock deadline (`CONNECT_TIMEOUT_CONNECTING_MS` = 15 s,
+  connect_fail.h) exits to EXITING with
+  `P2P_FAIL_TIMEOUT_CONNECTING`, surfaced via
+  `DirectP2P_NotifySessionFailed` (overlay ERROR + reason on every
+  entry path), plus a 5 s "still CONNECTING" log line.
+- `HOST_WAITING` stays unbounded by design but is now informative:
+  minute-cadence elapsed status ("Waiting for player 2... (3 min)") +
+  liveness log, and the cause-8 advisory (below) after 30 s of silence.
+- User-reachable abort: holding START ~3 s
+  (`CONNECT_ABORT_HOLD_FRAMES`) in TRANSITIONING or CONNECTING tears
+  down as a user cancel (`P2P_ABORT_USER`).
+
+### 5.2 Failure taxonomy (Part B) — src/netplay/connect_fail.{h,c}
+
+Machine codes are stable log-grep anchors; user strings fit the
+overlay status line. Detection evidence, as implemented:
+
+| # | cause | detection evidence | machine code | user string |
+|---|---|---|---|---|
+| 1 | no network / DNS dead | every getaddrinfo failed AND zero STUN replies (`StunResult.diag_*`) | `P2P_FAIL_DNS_ALLDOWN` | "No internet connection (DNS failed)." |
+| 2 | STUN blocked | sends succeeded, zero responses from all servers | `P2P_FAIL_STUN_ALLDOWN` | "Network blocks UDP (no STUN reply)." |
+| 3 | rendezvous server down | ZERO DELIVER frames for the whole signaling budget — the server answers EVERY REGISTER with a DELIVER (real or 0.0.0.0:0 sentinel; rendezvous-server.js handleRegister), so silence = server/path down. Requires the `Rendezvous_ParseDeliverEx` tri-state split (MALFORMED vs EMPTY vs PEER) | `P2P_FAIL_RENDEZVOUS_DOWN` | "Matchmaking server unreachable." |
+| 4 | host offline / code stale | DELIVERs arrived but ALL were the zero-sentinel | `P2P_FAIL_HOST_OFFLINE` | "Host not found. Code stale or host offline." |
+| 5 | host online, NAT-blocked | real-endpoint DELIVER arrived, bilateral punch timed out | `P2P_FAIL_NAT_BLOCKED` | "Host found, but NAT blocked the link." |
+| 6 | symmetric-both / needs relay | as (5) + `StunResult.port_disagreement` (S2) | `P2P_FAIL_SYMMETRIC_BOTH` | "Both networks too strict (needs relay)." |
+| 7 | hairpin / no NAT loopback | peer public IP == our public IP | `P2P_FAIL_HAIRPIN` | "Same network as host. Router lacks loopback." |
+| 8 | host router blocks hosting | host advisory: no UPnP AND no inbound AND no DELIVER after 30 s (with UPnP: same silence logs `P2P_FAIL_RENDEZVOUS_DOWN` advisory, direct joins still work) | `P2P_FAIL_HOST_UNMAPPABLE` | "Router may be blocking hosting." |
+| 9 | peer rejected (version) | MIST handshake reject (R-1), now routed through the same latch/report path | `P2P_FAIL_PEER_REJECTED` | MIST reason text |
+| 10 | timeout at stage N | Part A deadlines, stage named | `P2P_FAIL_TIMEOUT_CONNECTING` / `P2P_FAIL_TIMEOUT_ORCHESTRATOR` | "Opponent never synced. Gave up." / "Connection setup timed out." |
+| — | user abort / invalid code / local error | START hold, room-code decode, spawn/build failures | `P2P_ABORT_USER` / `P2P_FAIL_INVALID_CODE` / `P2P_FAIL_INTERNAL` | "Cancelled." / "Invalid room code." / "Internal error. See log." |
+
+Every terminal outcome emits ONE attributed line
+(`[netplay-connect] FAIL code=... msg=... t_ms upnp/stun/punch/signal/
+bilateral ... deliver=any,real` — or `OK` with the same stage timings)
+into the per-session netplay log, which `Netplay_LogConnectEvent` opens
+LAZILY when the failure precedes `configure_gekko` (netplay.c
+`netplay_log_open`, `{pref}/logs/netplay-<utc_ms>.log`).
+
+### 5.3 UX defects fixed (Part C, inherited from the R-1 review)
+
+- The MIST handshake runner no longer blocks the main thread for its
+  500 ms per-attempt budget (~2 fps + ~2 Hz input for up to ~20-24 s of
+  retries): it is an incremental per-tick pump over the `MistRunnerIo`
+  seam (`mist_handshake_pump_begin`/`mist_handshake_pump`, one bounded
+  slice per frame, never sleeps; `mist_handshake_run_attempt` remains
+  as the blocking wrapper for its unit tests). On-screen text is now
+  honest ("Verifying opponent (Ns)... START quits" / "Syncing with
+  opponent (Ns)... START quits") instead of a perpetual "Match found!".
+- Reject/failure reasons surface on ALL THREE entry paths (direct-P2P,
+  matchmaking, LAN CLI): `DirectP2P_Init` — which registers the
+  teardown callback converting the failure latch into
+  `DIRECT_P2P_FAILED_HANDSHAKE` — now runs unconditionally in
+  `set_netplay_params` (main.c).
+- `DIRECT_P2P_FAILED_HANDSHAKE` (drawn right after a `Soft_Reset_Sub`)
+  now sits behind the same `task[TASK_INIT].condition == 0` guard the
+  nav overlay always had (netplay_screen.c) — no text draw during the
+  unverified texcash re-init frames; FAILED_* states are sticky so the
+  overlay appears as soon as init settles.
+
+### 5.4 Tests
+
+- test_bilateral_punch.c test 7: DELIVER tri-state split, full
+  classifier truth tables (causes 1-8), deadline wrap-safety, abort-
+  hold counter, machine-code uniqueness.
+- test_stun_mock.c `run_discover_alldead_diag_test`: failed discovery
+  carries evidence and classifies `P2P_FAIL_STUN_ALLDOWN`.
+- test_mist_handshake.c (p1)-(p3): pump completes across ticks without
+  ever sleeping; silent-peer timeout at 16 ms frame cadence with the
+  full retransmit ladder; reject parity with the blocking runner.
 
 ## 6. S4 — Security
 
@@ -418,4 +487,5 @@ expected outcome. This is the regression net for S2–S7.
 |---|---|
 | S1 host liveness | **implemented (this series)** |
 | S2 punch / STUN mechanics | **implemented** (see §4; includes the unplanned STUN port-byteswap fix) |
-| S3–S8 | planned above |
+| S3 no-hangs + failure taxonomy | **implemented** (see §5) |
+| S4–S8 | planned above |
