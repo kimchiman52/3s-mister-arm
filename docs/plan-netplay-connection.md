@@ -1198,8 +1198,21 @@ The only difference is which endpoint was written.
 diagnosis (a symmetric NAT that happens to hand two STUN servers the
 same port never raises it), and a relay works for any pair that can
 reach the server. Gating on it would strand exactly the users the rung
-exists for. A pair that *can* punch never reaches this code, so an
-enabled relay costs a connectable pair nothing.
+exists for.
+
+> **Superseded by S6 (review finding L-1).** This section used to end
+> "A pair that *can* punch never reaches this code, so an enabled relay
+> costs a connectable pair nothing." That was true of the S5 **serial**
+> cascade, where the rung only ran after the punch had spent its whole
+> window. It is **not** true after S6: the relay leg now RACES the punch
+> legs, so a pair that punches slowly does reach this code and does spend
+> a pool port. §8.4 rules 2 and 2b bound how much: the relay may not arm
+> until every live punch candidate has had a window of its own, and even
+> once it is ready to hand off it waits `RACE_RELAY_GRACE_MS` for a punch
+> to land. What survives of the original promise is the measurable part —
+> a pair that punches inside those windows still costs the pool nothing
+> (test 20A asserts zero `RELAY_REQ`s) — and the honest residual is in
+> §8.10.
 
 **Relay address provenance.** Taken from the `PIN_ACK`'s **own source
 address**, not from `signal_addr`. `signal_addr` may have come from a
@@ -1444,14 +1457,42 @@ stepper too.
    session detours through a European VPS (§7.5), so silently preferring
    it over a working direct link would be a latency regression disguised
    as a connectivity win.
-2. **The relay leg does not arm until `RACE_RELAY_ARM_MS` (2 500 ms).**
-   §7.4 promised that "a pair that can punch never reaches this code, so
-   an enabled relay costs a connectable pair nothing". Naive racing
-   breaks that promise outright — every pair would request a pool port
-   from the 100-port range. 2 500 ms is *exactly* the window the pre-S6
-   direct punch had entirely to itself, so nothing that the pre-S6 code
-   would have connected at that stage is diverted to a relay; and by then
-   the DELIVER candidate has usually been punching for ~2 s as well.
+
+   **1b — and the relay's own handoff waits `RACE_RELAY_GRACE_MS`
+   (600 ms) for one (S6 review, H-3).** Rule 1 as originally shipped was
+   a purely LOCAL decision: the relay leg pinned, the race ended on the
+   spot, and nothing asked what the *other* peer had decided. Two peers
+   confirm their punches about one one-way delay apart, so a start skew
+   of a few tens of milliseconds was enough for one side to relay while
+   the other punched. GekkoNet resolves inbound packets by source address
+   and `netplay.c` registers the remote **once** at configure time with
+   no relearn path, so that pair then sits in `CONNECTING` for the whole
+   15 s `CONNECT_TIMEOUT_CONNECTING_MS` and fails with no recovery.
+   Measured, not argued: the two-peer rig in test 24 (§8.8) puts the
+   divergence band at **skew ∈ [2 350, 2 500] ms — a 150 ms window, equal
+   to the injected one-way delay**. The relay leg therefore becomes
+   *ready* and then keeps pinning for one grace window before it commits,
+   during which rule 1 can still take the race. Bounded twice over: by
+   the grace itself and by the race budget, which commits the relay
+   rather than losing it.
+2. **The relay leg does not arm until `RACE_RELAY_ARM_MS` (2 500 ms)...**
+   Naive racing would have every pair request a pool port from the
+   100-port range. 2 500 ms is *exactly* the window the pre-S6 direct
+   punch had entirely to itself, so nothing that the pre-S6 code would
+   have connected at that stage is diverted to a relay.
+
+   **2b — ...and not until every LIVE CANDIDATE has had
+   `RACE_PUNCH_MIN_WINDOW_MS` (2 500 ms) of its own (S6 review, H-4).**
+   The original rule measured its delay from RACE START, which makes the
+   justification above true of `punch[0]` — armed at `t0` — and false of
+   the DELIVER candidate, which is armed at DELIVER time *D* and pre-S6
+   got its own full `BILATERAL_PUNCH_MS`. With *D* = 1 200 ms it got
+   ~1.3 s instead of 2.5 s, so a US-US pair needing ~2 s from DELIVER was
+   diverted onto a European relay it did not need — a direct link
+   replaced by a transatlantic one for people who connect fine today. The
+   deferral is **capped** at `race_budget − relay_budget` (4 000 ms on
+   the defaults) so the relay always keeps its own budget: a relay that
+   arms too late to finish is worse than one that arms slightly early.
 3. **The relay leg also needs a real DELIVER (joiner).** Without one we
    are provably not paired server-side and `handleRelayReq` refuses an
    unpaired session, so arming would spend the budget to be told
@@ -1493,6 +1534,25 @@ arriving at once and only the DELIVER endpoint answering, the handoff
 completes in **~230 ms** (test 19). Pre-S6 the earliest possible handoff
 on that path was > 2 500 ms, because the direct punch had to expire
 first.
+
+**What the race is now hard-bounded by (S6 review, H-1).** The overall
+deadline is `race_budget_ms`, **plus at most one `STUN_PUNCH_CONFIRM_MS`
+(600 ms) confirmation tail** when a leg has already confirmed and is
+still owing its peer that tail — see §8.9. Worst case per attempt is
+therefore 8 600 ms on the defaults, 17 200 ms for the joiner's two
+attempts. Verified headroom against the callers:
+
+- `CONNECT_TIMEOUT_CONNECTING_MS` (15 000 ms, `connect_fail.h:257`) does
+  **not** bound the race: it is armed on entry to
+  `NETPLAY_SESSION_CONNECTING` (`netplay.c:1719-1734`), i.e. *after* the
+  handoff, and bounds GekkoNet's sync, not establishment.
+- The bound that does apply is nav's `NAV_WAIT_ORCH_TIMEOUT_FRAMES`
+  (`netplay_nav.c:120` = `150 * 60` frames = 150 000 ms, enforced at
+  `netplay_nav.c:391`). 17 200 ms of race against 150 000 ms is **8.7x
+  headroom**, and the +1 200 ms the tail exemption adds across two
+  attempts is 0.8% of it.
+- The suite's own bound, `S6_WORST_CASE_BOUND_MS` = 22 000 ms, is met:
+  the black-hole probe measured **16 228 ms** total post-fix.
 
 ### 8.6 Config
 
@@ -1541,58 +1601,132 @@ dead key.
 
 ### 8.8 Tests
 
-Five new cases in `test_bilateral_punch.c` (18, 19, 20 with three acts,
-20C, 21) and one in `test_stun_mock.c`, each chosen so a serial cascade
-**cannot** satisfy it.
-Every one was proven red by neutralising the code under test and observing
-the failure — not by assertion:
+Cases 18, 19, 20 (three acts), 20C and 21 in `test_bilateral_punch.c`
+came with the stage, plus one in `test_stun_mock.c`. **23-29 came out of
+the S6 adversarial review**, which found that the stage's own tests could
+not see three of its four alpha blockers. Every case below was proven
+red by neutralising the code under test and observing a **non-zero
+harness exit** — not by assertion.
 
-| test | neutralisation | observed red |
+**The structural finding first (H-2).** Across a full pristine run the
+line `S6 race: punching candidate` appeared **27 times** and
+`Hole punch SUCCESS` **zero** times. Every candidate in 18-21 is
+oracle-driven, and `race_punch_settled()` returns `true` unconditionally
+for a non-`DP2P_PUNCH_REAL` oracle — so the `Stun_PunchSettled` branch
+the shipping path *always* takes was executed by no test at all. That is
+why H-1, H-4 and M-2 all survived a green suite. Tests 23-29 use **no
+oracle**: every leg is `DP2P_PUNCH_REAL` and punches a real loopback UDP
+socket through the real stepper, so the S4a token check, the source-IP
+gate and the 600 ms tail are genuinely executed. The rig is a **punch
+echo peer** that returns the exact 17 bytes it received — verbatim, so
+it passes `Stun_PunchOffer`'s prefix and constant-time token compare by
+construction rather than by bypassing them — with a configurable delay
+measured from the first punch it sees, which is what lets a test place
+the confirmation instant relative to the race's own `t0`.
+
+Two new `NETPLAY_TEST_HOOKS`-only seams make that possible:
+
+- **`DirectP2P_TestHook_RunRace`** runs ONE `p2p_race` against
+  caller-supplied endpoints. Every other seam drives the race through
+  `BeginJoin` or the host worker, which own process-wide state, so only
+  one can be live at a time — and the split brain is by construction a
+  TWO-peer property. `p2p_race` takes everything by argument, so test 24
+  runs two of them concurrently on two threads, punching each other
+  through a UDP delay line that injects a fixed one-way delay.
+- **`DirectP2P_TestHook_RaceBudgetExpired`** exposes the deadline
+  predicate as a pure function, because the wrap defect needs a 49.7-day
+  clock and this build has no clock-injection seam.
+
+| test | neutralisation | observed red (harness exit 1) |
 |---|---|---|
 | 19 `test_race_deliver_overlaps_seed` | the DELIVER endpoint is never armed as a punch candidate | *"test19: no handoff (state=11 seed_arms=2 deliver_arms=0)"* |
-| 19 + 18 | **N5**: the legs run serially again (DELIVER candidate deferred until the seed finishes; relay deferred until every punch leg has) | *"test19: handoff took 5226 ms; the DELIVER candidate must be punched CONCURRENTLY ... (expected < 2000 ms)"* and *"test18: full-cascade join took 16219 ms (~8109 ms/attempt), expected < 14000 ms"* |
-| 20B `test_race_punch_beats_relay` | the `RACE_RELAY_ARM_MS` delay removed (naive racing) | *"test20B: 1 RELAY_REQ(s) inside a 1500 ms race; the relay leg must not arm before RACE_RELAY_ARM_MS (2500 ms)"* |
-| 21 `test_race_not_paired_is_transient` | `NOT_PAIRED` terminal again (the pre-fix rule) | *"test21: no handoff after two NOT_PAIRED refusals ... relay_reqs=2 grants=2 notpaired=2"* |
+| 19 + 18 | **N10**: the legs run serially again (DELIVER candidate deferred until the seed finishes; relay deferred until every punch leg has) | *"test19: no handoff (state=11 seed_arms=2 deliver_arms=0)"* and *"test18: full-cascade join took 14216 ms (~7108 ms/attempt), expected < 12000 ms"* |
+| 20B `test_race_punch_beats_relay` | **N9**: `RACE_RELAY_ARM_MS` → 0 | *"test20B: 1 RELAY_REQ(s) inside a 1500 ms race; the relay leg must not arm before RACE_RELAY_ARM_MS (2500 ms)"* |
+| 21 `test_race_not_paired_is_transient` | `NOT_PAIRED` terminal again | *"test21: no handoff after two NOT_PAIRED refusals ... relay_reqs=2 grants=2 notpaired=2"* |
 | 20C `test_race_punch_beats_inflight_relay` | the `RACE_PUNCHED` exclusion removed from the end-of-race relay-fail fallback | *"test20C: OK report line does not carry relay_fail=P2P_OK ... relay_fail=P2P_FAIL_RELAY_UNAVAILABLE"* |
+| **23** `test_race_confirm_at_budget_edge` (H-1, H-2) | **N1**: the confirmation-tail exemption deleted from `race_budget_expired` | *"test23: outcome=3 after 4003 ms, expected PUNCHED(0) — a punch that confirms inside the last 600 ms of the 4000 ms budget must NOT be discarded (H-1)"* |
+| **24** `test_race_split_brain` (H-3) | **N2**: `RACE_RELAY_GRACE_MS` → 0 | *"test24: SPLIT BRAIN at skew=2450 ms — peer A ended PUNCHED and peer B ended RELAYED"* |
+| **25** `test_race_relay_defers_per_candidate` (H-4) | **N3**: `RACE_PUNCH_MIN_WINDOW_MS` → 0 | *"test25: outcome=RELAYED peer=127.0.0.1:55122 after 2518 ms — the DELIVER candidate armed at t+1200 ms confirms at ~t+3200 ms and must win"* |
+| **26** `test_race_punch_drops_relay_leg` (H-7) | **N4**: `relay_state = RELAY_LEG_DONE;` deleted from ordering rule 1 | *"test26: the relay port was still being pinned 508 ms after the punch confirmed (tear-down logged at t=73488, last pin at t=73996, 7 pins total). Ordering rule 1 must set relay_state = RELAY_LEG_DONE, not merely log that it did"* |
+| **27** `test_race_duplicate_candidate_guard` (M-2) | **N5**: the duplicate-endpoint guard deleted | *"test27: 5 candidates were armed against 5 identical DELIVERs, expected exactly 1"* |
+| **28** `test_race_budget_wrap_safety` (M-1) | **N6**: `race_budget_expired` restored to `now >= t0 + budget` | *"28-wrap-first-iteration: expected false: DirectP2P_TestHook_RaceBudgetExpired(t0, t0, budget, false)"* |
+| **28** (M-3) | **N7**: `STUN_PUNCH_CONFIRM_MS` 600 → 0 | *"test28: STUN_PUNCH_CONFIRM_MS is 0, expected the shipped literal 600"* |
+| **29** `test_relay_not_paired_named_separately` (L-1) | **N8**: `NOT_PAIRED` collapsed back into `CONNECT_FAIL_RELAY_REFUSED` | *"test29: relay_fail=P2P_FAIL_RELAY_REFUSED after 4 NOT_PAIRED refusal(s), expected P2P_FAIL_RELAY_NOT_PAIRED"* |
+| **29** (arm delay) | **N9**: `RACE_RELAY_ARM_MS` → 0 | *"test29: the relay leg armed at t+2 ms with no punch candidate in the race; it must not arm before RACE_RELAY_ARM_MS (2500 ms)"* |
 | `run_punch_leg_offer_test` | the stepper's source-IP gate removed | 4 reds, incl. *"a valid payload from the WRONG source IP confirmed the leg"* and *"a wrong-token punch CONFIRMED the leg (S4a fail-closed broken)"* |
 
 Notes on what each test is *for*:
 
-- **18** is the timing regression net, and its scenario-B bound (14 000 ms)
-  sits between the two **measured** numbers in §8.5 — 27% above the S6
-  measurement, 28% below the pre-S6 one. Its scenario-A bound is
-  deliberately loose; scenario A is a *measurement*, scenario B is the
-  assertion that bites. This was found by neutralising: an earlier
-  version of the test used only scenario A and stayed green under N5,
-  i.e. it could not fail. A test that cannot fail is worse than no test.
+- **18** is the timing regression net. Its scenario-B bound was
+  **14 000 ms**, and the review measured the neutralised (serialised) run
+  at **14 216 ms** — 216 ms, **1.5%**, of margin. A slightly faster
+  machine would have left the assertion unable to fail, which is the
+  same defect the bound was introduced to avoid. Re-measured on this
+  tree with the same probe: passing **10 235 ms**, neutralised
+  **14 216 ms**. The bound is now **12 000 ms**, sitting between the two
+  measured numbers with **17.3%** of headroom over the passing run and
+  **18.5%** of margin under the neutralised one. Its scenario-A bound
+  stays deliberately loose; A is a *measurement*, B is the assertion that
+  bites.
 - **19**'s assertion is on `do_handoff`'s **own arguments**
   (`DirectP2P_TestHook_LastHandoff`), not on internal state — a race that
-  populated `s_work` correctly but never reached the handoff would pass an
-  `s_work` assertion and cannot pass this one.
-- **20C** exists because 20A and 20B both keep the relay leg from ever
-  arming, so neither exercises ordering rule 1 in the case it was written
-  for — the relay leg **already in flight** when a punch confirms. It is
-  arranged by delaying the mock's peer-bearing DELIVER past
-  `RACE_RELAY_ARM_MS` (new `MockServerCtx.deliver_delay_ms`), so the relay
-  leg arms first and the DELIVER punch candidate confirms into it.
-  Observed on a passing run: 1 `RELAY_REQ` in flight, relay leg alive 8 ms
-  before the punch tore it down.
+  populated `s_work` correctly but never reached the handoff would pass
+  an `s_work` assertion and cannot pass this one.
 - **20** has two acts because 20A alone does not isolate the arm delay:
   its punch confirms on the first pump, so the "a confirmed punch drops
   the relay leg" rule would keep `relay_reqs` at 0 even with the delay
   removed. 20B uses a punch that never confirms and a race bounded to
-  1 500 ms — below `RACE_RELAY_ARM_MS` — so the delay is the only thing
-  that can keep the count at zero.
+  1 500 ms, so the delay is the only thing that can keep the count at
+  zero.
+- **20C, honestly re-scoped (review H-7).** What it covers: a relay leg
+  that really armed (1 `RELAY_REQ` in flight), the punch still winning,
+  and the reporting rule that an abandoned relay leg is not a failed one
+  (`relay_fail=P2P_OK` on the OK line). What it does **not** cover: on a
+  passing run its relay leg lives ~6 ms, never leaves `RELAY_LEG_REQ`,
+  never receives a GRANT, and its mock is `MOCK_RELAY_NO_ACK`, whose own
+  comment says it "cannot win" — so deleting the tear-down leaves it
+  green. Test 26 covers the tear-down. It also carried an empty
+  *"NEUTRALISATION CHECK for the arm-delay"* comment with **no code under
+  it**; that is resolved by **deleting** it rather than by writing the
+  check, because the check it described cannot fail there — 20C's
+  DELIVER is delayed to 3 000 ms by construction and the relay's
+  `paired` gate *is* that DELIVER, so the leg cannot arm before 2 500 ms
+  whatever the arm rule says. 20B and test 29 cover the arm delay where
+  it *can* fail. 20C now also sets `relay-budget-ms` explicitly instead
+  of inheriting 800 ms from an earlier case, because rule 2b's cap is
+  computed from `(race_budget − relay_budget)`.
+- **23** asserts that the race ran **longer** than its budget, not merely
+  that it succeeded. That is what proves the confirmation landed inside
+  the exempted window rather than comfortably before it — without it the
+  test could pass for a reason unrelated to H-1. Observed on a passing
+  run: 4 348 ms against a 4 000 ms budget, hard cap 4 600 ms.
+- **24** is the only two-peer case in the suite. Its control point
+  (skew 1 000 ms) must punch on both sides *even on the pre-fix code*; if
+  the control ever reds, the rig is broken, not the fix. Its sweep mode
+  (`S6_SPLIT_SWEEP=1`) is what produced the measured 150 ms band and is
+  off by default because it costs ~25 races.
+- **26** is the tear-down test, and the mechanism is only observable as
+  an **absence**: the relay grants immediately, the leg reaches
+  `RELAY_LEG_PIN` and resends `RELAY_PIN` every 150 ms, and the mock
+  records the arrival time of the last pin. With the tear-down the pins
+  stop at the confirm (observed: last pin **130 ms before** the tear-down
+  line); without it they keep coming for the whole 600 ms tail (observed:
+  **508 ms after**). The threshold is 200 ms, so the margins are 330 ms
+  on the passing side and 308 ms on the red side — both over twice the
+  150 ms pin period.
 - **`run_punch_leg_offer_test`** covers the one decision the blocking
   driver never makes and the race depends on completely: the race offers
   each non-'3SXR' datagram to every live leg in turn and stops at the
   first that consumes it, so a leg that consumed datagrams which are not
   its own would let one candidate's noise confirm another candidate's leg.
 
-### 8.9 Three defects found by the gates themselves
+### 8.9 Defects found by the gates, and by the review of the gates
 
 Recorded because each was found by a check that could easily have been
 skipped, and two of them by a build configuration rather than by a test.
+The last entry is the adversarial review of this stage, which found
+four alpha blockers the stage's own tests could not see; §8.8 carries
+the neutralisation record.
 
 - **The punch-mode enum was inside the `NETPLAY_TEST_HOOKS` block.**
   `p2p_race` stores a `DirectP2PPunchOracleResult` on every candidate in
@@ -1603,12 +1737,27 @@ skipped, and two of them by a build configuration rather than by a test.
   the function-pointer typedef and the setter stay test-only.
 - **The overall race deadline was wrap-unsafe.** The loop tested both
   `(int)(now - t0) >= budget` (wrap-safe) and `now >= t0 + budget` (not).
-  Across the `SDL_GetTicks` 32-bit wrap (~49.7 days of uptime) the second
-  form's target is a value `now` never reaches, so the race would have run
-  until every leg finished with no overall bound. It was redundant with
-  the first, so it is deleted rather than repaired; subtract-then-cast is
-  the form the rest of the file already uses (S3 deadline wrap-safety).
-  **Not covered by a test** — reproducing it needs a 49.7-day clock.
+  It was redundant with the first, so it is deleted rather than repaired;
+  subtract-then-cast is the form the rest of the file already uses (S3
+  deadline wrap-safety).
+
+  **The recorded reasoning for that fix was BACKWARDS, and the wrong
+  reasoning is what justified shipping it untested (S6 review, M-1).**
+  This entry used to say that across the wrap "the race would have run
+  until every leg finished with no overall bound". It could not have: the
+  condition was an OR of a wrap-safe term and a wrap-unsafe one, so the
+  wrap-safe term bounded the loop on its own. The real symptom is the
+  exact opposite. `t0 + budget` evaluated in `uint32_t` **overflows to a
+  small number** whenever `t0` is within `budget` of the wrap, and `now`
+  — still just below the wrap — is already past it, so the deadline fires
+  on the **first iteration**: every join attempted in the ~8 s before a
+  49.7-day wrap failed instantly. "Unbounded" and "instantly bounded" are
+  opposite defects, and the harmless-sounding one is why no test was
+  written. `SDL_GetTicks` cannot be moved to the wrap and this build has
+  no clock-injection seam, so the deadline is now a pure function
+  (`race_budget_expired`) exposed as
+  `DirectP2P_TestHook_RaceBudgetExpired`, and **test 28 drives it at
+  `t0 = 0xFFFFFF00`**. The arithmetic *is* the whole defect.
 - **An abandoned relay leg was reported as a failed one.** When a punch
   confirms we tear the relay leg down (§8.4 rule 1). The end-of-race
   fallback that fills in `relay_fail` for a leg that armed but never
@@ -1624,6 +1773,28 @@ skipped, and two of them by a build configuration rather than by a test.
   never carried it — only the FAIL line did. The OK line now carries it,
   which is what makes the abandonment case observable at all.
 
+- **The S6 adversarial review (H-1 … L-1).** In order of what they cost
+  a real pair:
+
+  | finding | what it cost | where it is fixed |
+  |---|---|---|
+  | **H-1** | a punch confirming in the last 600 ms of the budget was discarded and reported as a NAT block — 7.5% of every race, on both attempts | `race_budget_expired`, §8.5 |
+  | **H-2** | the suite never put a punch on the wire, which is why H-1/H-4/M-2 survived it | tests 23-29, §8.8 |
+  | **H-3** | split brain: one peer relays, the other punches, 15 s hard failure. Measured band 150 ms wide | §8.4 rule 1b |
+  | **H-4** | the relay stole candidates that had not had a window of their own | §8.4 rule 2b |
+  | **H-7** | ordering rule 1's tear-down was untested and 20C overstated its coverage | test 26, §8.8 |
+  | **M-1** | the wrap-safety reasoning was backwards, which justified writing no test | this section, test 28 |
+  | **M-2** | `race_arm_punch` memset the slot before `Stun_PunchBegin` could fail, leaking the previous leg's `NET_Address` ref | `race_arm_punch`, test 27 |
+  | **M-3** | `STUN_PUNCH_CONFIRM_MS` was unpinned | test 28 |
+  | **M-4** | test 18's serialisation red had 1.5% of margin | §8.8 |
+  | **L-1** | a persistent `NOT_PAIRED` was reported as "the relay port pool is exhausted" | `CONNECT_FAIL_RELAY_NOT_PAIRED`, test 29 |
+
+  What the review explicitly **cleared**, and what therefore was not
+  touched: S4a's fail-closed punch authentication (the token check, the
+  source-IP gate, the punch prefix, the bad-token evidence), the
+  deliberately-unmatched port that recognises the S2 symmetric retarget,
+  the adaptive cadence, and the 600 ms tail itself.
+
 ### 8.10 Residuals, stated rather than hidden
 
 - **Scenario A is still 8 s/attempt**, because the 8 000 ms signalling
@@ -1636,12 +1807,25 @@ skipped, and two of them by a build configuration rather than by a test.
   retried once with a fresh local port. Removing the retry is a different
   trade (it demonstrably rescues joins — test 6 part B) and was not made
   here.
-- **A pair that needs longer than `RACE_RELAY_ARM_MS` to punch may end up
-  relayed** where the pre-S6 code would have kept punching for the full
-  bilateral window first. The arm delay bounds this to pairs that failed
-  to punch for 2.5 s across *both* candidates; a confirmed punch still
-  wins if it lands while the relay leg is mid-flight, because the punch
-  check runs first in every iteration and tears the relay leg down.
+- **A pair that needs longer than `RACE_RELAY_ARM_MS` + one grace window
+  to punch may end up relayed** where the pre-S6 code would have kept
+  punching for the full bilateral window first. Post-review the bound is
+  per-candidate (§8.4 rule 2b), so it is 2.5 s *each* rather than 2.5 s
+  from race start, plus the 600 ms grace before the relay commits — but
+  it is still shorter than the pre-S6 5 000 ms per punch. Anything slower
+  than that is relayed. Closing the gap entirely means letting the relay
+  leg finish and then *upgrading* to a direct link mid-session, which
+  needs a GekkoNet remote-address relearn path that does not exist
+  (`backend.h`; the remote is registered once at configure time in
+  `netplay.c`). Named here rather than hidden.
+- **A genuinely ASYMMETRIC punch path still splits the two peers.** If
+  one side's datagrams traverse and the other's do not, one peer confirms
+  and the other never can, so one punches and one relays no matter how
+  long the grace window is. This is **not** new in S6 — the pre-S6 serial
+  cascade diverged the same way, because each side decided locally there
+  too — and the S6 fix deliberately targets the *timing* case, which S6
+  did create. The mid-session relearn above is the only real answer to
+  the asymmetric case.
 - **The overlapping stage timings are a diagnostic regression** for anyone
   grepping old report lines: `punch + signal + bilateral + relay` no
   longer approximates the elapsed time. `race=` is the replacement, and
@@ -1928,6 +2112,6 @@ expected outcome. This is the regression net for S2–S7.
 | S3 no-hangs + failure taxonomy | **implemented** (see §5) |
 | S4 security | **implemented + adversarially reviewed** (see §6; S4a punch auth, S4b room code — now v3, S4c rendezvous return-routability — the last two are breaking wire/format changes, authorized. Review fixes as-built in §6.8) |
 | S5 relay for symmetric-NAT pairs | **implemented + adversarially reviewed** (see §7; custom '3SXR' relay on the existing port, NOT coturn. Closes the one §2 matrix cell that could not connect at all. Pure wire EXTENSION — protocol version stays 2. Review fixes as-built in §7.2/§7.3: CRITICAL-1 session-TTL teardown, HIGH-1 pin source binding, HIGH-2 over-budget liveness, MEDIUM-1..5, LOW-1..2) |
-| S6 joiner candidate racing | **implemented** (see §8; one interleaved race on the existing worker thread — no new threads, no new locks. Full-cascade worst case measured 9 677 -> 5 114 ms per attempt) |
+| S6 joiner candidate racing | **implemented + adversarially reviewed** (see §8; one interleaved race on the existing worker thread — no new threads, no new locks. Full-cascade worst case measured 9 677 -> 5 114 ms per attempt. Review fixes as-built in §8.4 rules 1b/2b, §8.5, §8.8 and §8.9: H-1 the confirmation-tail budget exemption, H-2 real-wire punch legs in the suite, H-3 the split brain — measured 150 ms band — H-4 per-candidate punch windows, H-7 ordering-rule-1 tear-down coverage, M-1..M-4, L-1) |
 | S7 NAT-PMP / PCP | **implemented** (see §9; hand-rolled RFC 6887 PCP client with RFC 6886 NAT-PMP downgrade, NO new library, as a third backend behind `UpnpMapping`. RFC 6886 §3.1's ~127 s retransmit ladder is deliberately truncated to 250/500/1000 ms under an absolute deadline — §9.3. Residuals in §9.7, chiefly: gateway discovery is Linux-only, and the client has never met real NAT-PMP/PCP hardware) |
 | S8 netns verification harness | planned above |
