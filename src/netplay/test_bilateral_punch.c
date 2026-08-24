@@ -40,7 +40,9 @@
 #ifdef ENABLE_NETPLAY_TESTS
 
 #include "netplay/direct_p2p.h"
+#include "netplay/net_tuning.h"
 #include "netplay/rendezvous.h"
+#include "netplay/room_code.h"
 #include "port/config/config.h"
 
 #include <SDL3/SDL.h>
@@ -792,6 +794,196 @@ static int test_kill_switch_round_trip(void) {
     return 0;
 }
 
+/* --- Test 6: joiner fresh-socket auto-retry (S2) ----------------------- */
+
+/*
+ * Drives the REAL BeginJoin state machine end-to-end using the
+ * Stun_Discover + Stun_HolePunch seams (no real network):
+ *
+ *   Part A — punch fails on both attempts against a LAN peer
+ *   (10.0.0.1, so the deterministic LAN bypass fails the attempt as
+ *   FAILED_SYMMETRIC without ever touching the rendezvous server).
+ *   Expectation: the joiner runs exactly TWO full attempts before
+ *   surfacing the error, and each attempt binds a FRESH local socket
+ *   (different OS-assigned port — a new local port dodges stuck
+ *   conntrack/NAT state).
+ *
+ *   Part B — punch fails on attempt 1 and succeeds on attempt 2.
+ *   Expectation: the retry rescues the join; terminal state HANDOFF.
+ *
+ * The discover mock creates a REAL SDL3_net socket (so the failure
+ * paths' Stun_CloseSocket and the handoff bookkeeping operate on real
+ * resources) and records each socket's bound port via the net_tuning
+ * layout mirror.
+ */
+
+static int s_mock_discover_calls = 0;
+static uint16_t s_mock_discover_ports[8];
+static int s_mock_punch_calls = 0;
+static int s_mock_punch_succeed_from = 0; /* 1-based call # from which punch succeeds; 0 = never */
+
+static uint16_t mock_sdlnet_local_port(NET_DatagramSocket* sock) {
+    const NetTuningDgramMirror* m = (const NetTuningDgramMirror*)sock;
+    for (int h = 0; h < m->num_handles; h++) {
+        struct sockaddr_storage sa;
+        socklen_t sl = sizeof(sa);
+        if (getsockname((int)m->handles[h].handle, (struct sockaddr*)&sa, &sl) == 0) {
+            if (sa.ss_family == AF_INET) {
+                return ntohs(((struct sockaddr_in*)&sa)->sin_port);
+            }
+        }
+    }
+    return 0;
+}
+
+static bool mock_stun_discover(StunResult* result, uint16_t local_port, int timeout_ms) {
+    (void)local_port;
+    (void)timeout_ms;
+    memset(result, 0, sizeof(*result));
+
+    NET_Address* bind_addr = NET_ResolveHostname("0.0.0.0");
+    if (bind_addr) {
+        int wait = 0;
+        while (NET_GetAddressStatus(bind_addr) == NET_WAITING && wait < 100) {
+            SDL_Delay(1);
+            wait++;
+        }
+    }
+    result->socket = NET_CreateDatagramSocket(bind_addr, 0); /* port 0: fresh OS bind */
+    if (bind_addr) NET_UnrefAddress(bind_addr);
+    if (result->socket == NULL) {
+        return false;
+    }
+    result->local_port = mock_sdlnet_local_port(result->socket);
+    if (s_mock_discover_calls < (int)(sizeof(s_mock_discover_ports) / sizeof(s_mock_discover_ports[0]))) {
+        s_mock_discover_ports[s_mock_discover_calls] = result->local_port;
+    }
+    s_mock_discover_calls++;
+    SDL_strlcpy(result->public_ip, "203.0.113.9", sizeof(result->public_ip)); /* TEST-NET-3 */
+    result->public_port = 40000;
+    return true;
+}
+
+static bool mock_stun_punch(StunResult* local, char* peer_ip, uint16_t* peer_port,
+                            int punch_duration_ms, SDL_AtomicInt* cancel_flag) {
+    (void)local;
+    (void)peer_ip;
+    (void)peer_port;
+    (void)punch_duration_ms;
+    (void)cancel_flag;
+    s_mock_punch_calls++;
+    return s_mock_punch_succeed_from > 0 && s_mock_punch_calls >= s_mock_punch_succeed_from;
+}
+
+/* Poll DirectP2P_GetState until it reaches `want` or `budget_ms` runs
+ * out. Returns true on reach. */
+static bool wait_for_state(DirectP2PState want, int budget_ms) {
+    const uint32_t start = SDL_GetTicks();
+    while ((int)(SDL_GetTicks() - start) < budget_ms) {
+        if (DirectP2P_GetState() == want) return true;
+        SDL_Delay(20);
+    }
+    return DirectP2P_GetState() == want;
+}
+
+static int test_joiner_fresh_socket_retry(void) {
+    fprintf(stderr, "[test_bilateral_punch] test 6: joiner fresh-socket auto-retry\n");
+
+    NET_Init();
+    DirectP2P_Init();
+    DirectP2P_TestHook_SetStunDiscover(mock_stun_discover);
+    DirectP2P_TestHook_SetStunHolePunch(mock_stun_punch);
+
+    /* Room code for a LAN peer: after the (mocked) punch failure the
+     * deterministic LAN bypass fails the attempt as FAILED_SYMMETRIC
+     * before any rendezvous traffic — keeping this test offline. */
+    struct in_addr lan_peer;
+    lan_peer.s_addr = htonl(0x0A000001u); /* 10.0.0.1 */
+    char code[ROOM_CODE_BUF_LEN] = { 0 };
+    if (!RoomCode_Encode((uint32_t)lan_peer.s_addr, 5555, code)) {
+        FAIL("test6", "RoomCode_Encode failed");
+        DirectP2P_TestHook_SetStunDiscover(NULL);
+        DirectP2P_TestHook_SetStunHolePunch(NULL);
+        return 1;
+    }
+
+    int rc = 0;
+
+    /* --- Part A: both attempts fail -> exactly 2 attempts, fresh ports. */
+    s_mock_discover_calls = 0;
+    s_mock_punch_calls = 0;
+    s_mock_punch_succeed_from = 0;
+    memset(s_mock_discover_ports, 0, sizeof(s_mock_discover_ports));
+
+    DirectP2P_BeginJoin(code);
+    if (!wait_for_state(DIRECT_P2P_FAILED_SYMMETRIC, 10000)) {
+        fprintf(stderr,
+                "[test_bilateral_punch] FAIL: test6A: state %d after budget, expected FAILED_SYMMETRIC\n",
+                (int)DirectP2P_GetState());
+        fail_count++;
+        rc = 1;
+    } else {
+        if (s_mock_discover_calls != 2) {
+            fprintf(stderr,
+                    "[test_bilateral_punch] FAIL: test6A: %d discover call(s), expected 2 "
+                    "(one automatic retry)\n", s_mock_discover_calls);
+            fail_count++;
+            rc = 1;
+        }
+        if (s_mock_punch_calls != 2) {
+            fprintf(stderr, "[test_bilateral_punch] FAIL: test6A: %d punch call(s), expected 2\n",
+                    s_mock_punch_calls);
+            fail_count++;
+            rc = 1;
+        }
+        if (s_mock_discover_calls >= 2 &&
+            (s_mock_discover_ports[0] == 0 ||
+             s_mock_discover_ports[0] == s_mock_discover_ports[1])) {
+            fprintf(stderr,
+                    "[test_bilateral_punch] FAIL: test6A: retry reused local port %u — the retry "
+                    "must bind a FRESH socket\n", (unsigned)s_mock_discover_ports[0]);
+            fail_count++;
+            rc = 1;
+        }
+    }
+    DirectP2P_Cancel(); /* back to IDLE for Part B */
+
+    /* --- Part B: retry rescues the join -> HANDOFF. */
+    s_mock_discover_calls = 0;
+    s_mock_punch_calls = 0;
+    s_mock_punch_succeed_from = 2;
+
+    DirectP2P_BeginJoin(code);
+    if (!wait_for_state(DIRECT_P2P_HANDOFF, 10000)) {
+        fprintf(stderr,
+                "[test_bilateral_punch] FAIL: test6B: state %d after budget, expected HANDOFF "
+                "(retry should have rescued the join)\n",
+                (int)DirectP2P_GetState());
+        fail_count++;
+        rc = 1;
+    } else if (s_mock_discover_calls != 2 || s_mock_punch_calls != 2) {
+        fprintf(stderr,
+                "[test_bilateral_punch] FAIL: test6B: discover=%d punch=%d, expected 2/2\n",
+                s_mock_discover_calls, s_mock_punch_calls);
+        fail_count++;
+        rc = 1;
+    }
+
+    /* Restore production hooks. The HANDOFF-state socket is deliberately
+     * left to the process teardown — Cancel is a no-op in HANDOFF and
+     * the harness exits right after this test. */
+    DirectP2P_TestHook_SetStunDiscover(NULL);
+    DirectP2P_TestHook_SetStunHolePunch(NULL);
+
+    if (rc == 0) {
+        fprintf(stderr,
+                "[test_bilateral_punch] test 6 OK — 2 attempts, fresh ports (%u -> %u), "
+                "retry rescued Part B to HANDOFF\n",
+                (unsigned)s_mock_discover_ports[0], (unsigned)s_mock_discover_ports[1]);
+    }
+    return rc;
+}
+
 /* --- Entry point ------------------------------------------------------ */
 
 int Netplay_Test_BilateralPunch(void) {
@@ -803,6 +995,7 @@ int Netplay_Test_BilateralPunch(void) {
     rc |= test_lan_bypass();
     rc |= test_protocol_round_trip();
     rc |= test_kill_switch_round_trip();
+    rc |= test_joiner_fresh_socket_retry();
 
     if (fail_count > 0 || rc != 0) {
         fprintf(stderr, "[test_bilateral_punch] %d failure(s)\n", fail_count);

@@ -181,9 +181,15 @@ typedef bool (*DirectP2P_RendezvousSend_fn)(NET_DatagramSocket* sock,
                                             uint16_t target_port,
                                             const uint8_t* pkt,
                                             size_t pkt_len);
+/* S2: Stun_Discover seam — signature must match
+ *   bool Stun_Discover(StunResult*, uint16_t local_port, int timeout_ms); */
+typedef bool (*DirectP2P_StunDiscover_fn)(StunResult* result,
+                                          uint16_t local_port,
+                                          int timeout_ms);
 
 void DirectP2P_TestHook_SetStunHolePunch(DirectP2P_StunHolePunch_fn fn);
 void DirectP2P_TestHook_SetRendezvousSend(DirectP2P_RendezvousSend_fn fn);
+void DirectP2P_TestHook_SetStunDiscover(DirectP2P_StunDiscover_fn fn);
 bool DirectP2P_TestHook_IsLanPeer(const char* ip);
 #endif /* NETPLAY_TEST_HOOKS */
 

@@ -211,6 +211,20 @@ static char s_drift_pending_ip[64] = { 0 };
 static uint16_t s_drift_pending_port = 0;
 static bool s_drift_pending_valid = false;
 
+/* S2 host auto-retry (docs/plan-netplay-connection.md §4): a host
+ * parking terminal in FAILED_STUN because one discovery attempt raced
+ * a DHCP renew / DNS hiccup is pure loss — the user just stares at
+ * ERROR. Tick's FAILED_STUN case re-spawns host_thread_fn after a 5 s
+ * backoff, up to HOST_STUN_MAX_RETRIES per hosting session (BeginHost
+ * resets the count). Main-thread only, like the other Tick-side
+ * bookkeeping. The JOINER's FAILED_STUN is handled inside its own
+ * worker (join_thread_fn single fresh-socket retry) and stays terminal
+ * here. */
+static int s_host_stun_retry_count = 0;
+static uint64_t s_host_stun_retry_at_ms = 0;
+#define HOST_STUN_MAX_RETRIES 3
+#define HOST_STUN_RETRY_BACKOFF_MS 5000
+
 /* Init guard so DirectP2P_Init is idempotent. */
 static bool s_init_done = false;
 
@@ -336,17 +350,25 @@ static bool Rendezvous_Send(NET_DatagramSocket* sock, NET_Address* target,
  * overrides them via DirectP2P_TestHook_Set*. */
 static DirectP2P_StunHolePunch_fn  s_stun_hole_punch_impl  = Stun_HolePunch;
 static DirectP2P_RendezvousSend_fn s_rendezvous_send_impl  = Rendezvous_Send;
+/* S2: Stun_Discover seam so the joiner auto-retry test can drive
+ * BeginJoin end-to-end without touching real STUN servers. */
+static DirectP2P_StunDiscover_fn   s_stun_discover_impl    = Stun_Discover;
 
 #define STUN_HOLE_PUNCH(stun, peer_ip, peer_port, duration_ms, cancel) \
     s_stun_hole_punch_impl((stun), (peer_ip), (peer_port), (duration_ms), (cancel))
 #define RENDEZVOUS_SEND(sock, target, target_port, pkt, pkt_len) \
     s_rendezvous_send_impl((sock), (target), (target_port), (pkt), (pkt_len))
+#define STUN_DISCOVER(result, local_port, timeout_ms) \
+    s_stun_discover_impl((result), (local_port), (timeout_ms))
 
 void DirectP2P_TestHook_SetStunHolePunch(DirectP2P_StunHolePunch_fn fn) {
     s_stun_hole_punch_impl = (fn != NULL) ? fn : Stun_HolePunch;
 }
 void DirectP2P_TestHook_SetRendezvousSend(DirectP2P_RendezvousSend_fn fn) {
     s_rendezvous_send_impl = (fn != NULL) ? fn : Rendezvous_Send;
+}
+void DirectP2P_TestHook_SetStunDiscover(DirectP2P_StunDiscover_fn fn) {
+    s_stun_discover_impl = (fn != NULL) ? fn : Stun_Discover;
 }
 bool DirectP2P_TestHook_IsLanPeer(const char* ip) {
     return direct_p2p_is_lan_peer(ip);
@@ -356,6 +378,8 @@ bool DirectP2P_TestHook_IsLanPeer(const char* ip) {
     Stun_HolePunch((stun), (peer_ip), (peer_port), (duration_ms), (cancel))
 #define RENDEZVOUS_SEND(sock, target, target_port, pkt, pkt_len) \
     Rendezvous_Send((sock), (target), (target_port), (pkt), (pkt_len))
+#define STUN_DISCOVER(result, local_port, timeout_ms) \
+    Stun_Discover((result), (local_port), (timeout_ms))
 #endif /* NETPLAY_TEST_HOOKS */
 
 /* --- rendezvous send queue (SPSC ring) --------------------------------- */
@@ -962,7 +986,7 @@ static int SDLCALL host_thread_fn(void* data) {
     NET_Init();
     set_state(DIRECT_P2P_STUN_DISCOVER);
     set_status("Preparing...");
-    bool stun_ok = Stun_Discover(&s_work.stun, local_port, stun_budget_ms());
+    bool stun_ok = STUN_DISCOVER(&s_work.stun, local_port, stun_budget_ms());
     if (cancel_requested()) {
         Stun_CloseSocket(&s_work.stun);
         set_status("Cancelled.");
@@ -1074,31 +1098,27 @@ static int SDLCALL host_thread_fn(void* data) {
     return 0;
 }
 
-/* Join worker: STUN discover -> hairpin-detect -> Stun_HolePunch -> hand
- * off. The final socket transfer into netplay.c happens on the main
- * thread inside Tick() once this worker publishes DIRECT_P2P_HANDOFF;
- * the worker arranges s_work so Tick has everything it needs. */
-static int SDLCALL join_thread_fn(void* data) {
-    (void)data;
-
-    /* See host_thread_fn for the rationale on this pre-NET_Init delay. */
-    SDL_Delay(200);
-
-    /* Idempotent NET_Init — Stun_Discover assumes we've called it. */
-    NET_Init();
+/* Join attempt: STUN discover -> hairpin-detect -> Stun_HolePunch ->
+ * bilateral fallback. One complete pass of the joiner flow. RETURNS the
+ * terminal state instead of publishing it — the join_thread_fn wrapper
+ * below owns the terminal set_state so it can interpose the S2
+ * auto-retry (docs/plan-netplay-connection.md §4). Intermediate states
+ * (STUN_DISCOVER / JOIN_PUNCHING / FALLBACK_*) are still published
+ * here; every failure return has already closed the attempt's socket
+ * and set the status text; DIRECT_P2P_HANDOFF returns with s_work
+ * fully written back. */
+static DirectP2PState join_attempt(void) {
     set_state(DIRECT_P2P_STUN_DISCOVER);
     set_status("Preparing...");
-    bool stun_ok = Stun_Discover(&s_work.stun, 0, stun_budget_ms());
+    bool stun_ok = STUN_DISCOVER(&s_work.stun, 0, stun_budget_ms());
     if (cancel_requested()) {
         Stun_CloseSocket(&s_work.stun);
         set_status("Cancelled.");
-        set_state(DIRECT_P2P_IDLE);
-        return 0;
+        return DIRECT_P2P_IDLE;
     }
     if (!stun_ok) {
         set_status("Connection failed. Try again.");
-        set_state(DIRECT_P2P_FAILED_STUN);
-        return 0;
+        return DIRECT_P2P_FAILED_STUN;
     }
 
     /* Hairpin detect: peer public IP == our public IP => same LAN.
@@ -1132,8 +1152,7 @@ static int SDLCALL join_thread_fn(void* data) {
     if (cancel_requested()) {
         Stun_CloseSocket(&s_work.stun);
         set_status("Cancelled.");
-        set_state(DIRECT_P2P_IDLE);
-        return 0;
+        return DIRECT_P2P_IDLE;
     }
     if (!punched) {
         /* Direct punch failed. Three-way bypass before attempting the
@@ -1152,21 +1171,18 @@ static int SDLCALL join_thread_fn(void* data) {
         if (Config_GetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_BILATERAL)) {
             Stun_CloseSocket(&s_work.stun);
             set_status("Could not connect. Try a different network.");
-            set_state(DIRECT_P2P_FAILED_SYMMETRIC);
-            return 0;
+            return DIRECT_P2P_FAILED_SYMMETRIC;
         }
         if (direct_p2p_is_lan_peer(s_work.peer_ip)) {
             Stun_CloseSocket(&s_work.stun);
             set_status("Could not connect. Try a different network.");
-            set_state(DIRECT_P2P_FAILED_SYMMETRIC);
-            return 0;
+            return DIRECT_P2P_FAILED_SYMMETRIC;
         }
         if (s_work.stun.public_ip[0] != '\0' &&
             direct_p2p_ip_eq_normalized(s_work.peer_ip, s_work.stun.public_ip)) {
             Stun_CloseSocket(&s_work.stun);
             set_status("Could not connect. Try a different network.");
-            set_state(DIRECT_P2P_FAILED_SYMMETRIC);
-            return 0;
+            return DIRECT_P2P_FAILED_SYMMETRIC;
         }
 
         /* Bilateral fallback (joiner side). Per §Decision 4, the joiner
@@ -1189,8 +1205,7 @@ static int SDLCALL join_thread_fn(void* data) {
             SDL_Log("[direct_p2p] joiner fallback: no signal URL configured");
             Stun_CloseSocket(&s_work.stun);
             set_status("Could not connect. Try a different network.");
-            set_state(DIRECT_P2P_FAILED_BILATERAL);
-            return 0;
+            return DIRECT_P2P_FAILED_BILATERAL;
         }
         char signal_host[64] = { 0 };
         uint16_t signal_port = 0;
@@ -1198,8 +1213,7 @@ static int SDLCALL join_thread_fn(void* data) {
             SDL_Log("[direct_p2p] joiner fallback: malformed signal URL '%s'", signal_url);
             Stun_CloseSocket(&s_work.stun);
             set_status("Could not connect. Try a different network.");
-            set_state(DIRECT_P2P_FAILED_BILATERAL);
-            return 0;
+            return DIRECT_P2P_FAILED_BILATERAL;
         }
 
         /* 2) Resolve hostname (100ms-bounded poll, mirror stun.c:272-275). */
@@ -1208,8 +1222,7 @@ static int SDLCALL join_thread_fn(void* data) {
             SDL_Log("[direct_p2p] joiner fallback: failed to resolve %s", signal_host);
             Stun_CloseSocket(&s_work.stun);
             set_status("Could not connect. Try a different network.");
-            set_state(DIRECT_P2P_FAILED_BILATERAL);
-            return 0;
+            return DIRECT_P2P_FAILED_BILATERAL;
         }
 
         /* 3) Derive session key from the HOST's public endpoint, decoded
@@ -1224,8 +1237,7 @@ static int SDLCALL join_thread_fn(void* data) {
             NET_UnrefAddress(signal_addr);
             Stun_CloseSocket(&s_work.stun);
             set_status("Could not connect. Try a different network.");
-            set_state(DIRECT_P2P_FAILED_BILATERAL);
-            return 0;
+            return DIRECT_P2P_FAILED_BILATERAL;
         }
 
         /* 4) Build REGISTER once — payload is constant across resends. */
@@ -1235,8 +1247,7 @@ static int SDLCALL join_thread_fn(void* data) {
             NET_UnrefAddress(signal_addr);
             Stun_CloseSocket(&s_work.stun);
             set_status("Could not connect. Try a different network.");
-            set_state(DIRECT_P2P_FAILED_BILATERAL);
-            return 0;
+            return DIRECT_P2P_FAILED_BILATERAL;
         }
 
         /* 5) Inline REGISTER/POLL + DELIVER receive loop. 500ms send
@@ -1260,8 +1271,7 @@ static int SDLCALL join_thread_fn(void* data) {
                 NET_UnrefAddress(signal_addr);
                 Stun_CloseSocket(&s_work.stun);
                 set_status("Cancelled.");
-                set_state(DIRECT_P2P_IDLE);
-                return 0;
+                return DIRECT_P2P_IDLE;
             }
 
             uint32_t now = SDL_GetTicks();
@@ -1307,8 +1317,7 @@ static int SDLCALL join_thread_fn(void* data) {
             SDL_Log("[direct_p2p] joiner fallback: signal budget expired without DELIVER");
             Stun_CloseSocket(&s_work.stun);
             set_status("Could not connect. Try a different network.");
-            set_state(DIRECT_P2P_FAILED_BILATERAL);
-            return 0;
+            return DIRECT_P2P_FAILED_BILATERAL;
         }
 
         /* 6) Bilateral hole-punch with a stack-local copy of the peer
@@ -1330,21 +1339,19 @@ static int SDLCALL join_thread_fn(void* data) {
         if (cancel_requested()) {
             Stun_CloseSocket(&s_work.stun);
             set_status("Cancelled.");
-            set_state(DIRECT_P2P_IDLE);
-            return 0;
+            return DIRECT_P2P_IDLE;
         }
         if (!bilateral_punched) {
             Stun_CloseSocket(&s_work.stun);
             set_status("Could not connect. Try a different network.");
-            set_state(DIRECT_P2P_FAILED_BILATERAL);
-            return 0;
+            return DIRECT_P2P_FAILED_BILATERAL;
         }
 
-        /* 7) Bilateral punch succeeded. Writeback BEFORE set_state(HANDOFF)
-         * — Tick reads s_work.peer_ip/peer_public_port in join_tick_handoff,
+        /* 7) Bilateral punch succeeded. Writeback BEFORE the HANDOFF
+         * publish (done by the join_thread_fn wrapper on our return) —
+         * Tick reads s_work.peer_ip/peer_public_port in join_tick_handoff,
          * so the post-punch translated endpoint must be visible by the
-         * time HANDOFF is observed. Persist the room code and fall through
-         * to the existing HANDOFF publish below. */
+         * time HANDOFF is observed. */
         SDL_strlcpy(s_work.peer_ip, bp_peer_ip, sizeof(s_work.peer_ip));
         s_work.peer_public_port = bp_peer_port;
 
@@ -1353,8 +1360,7 @@ static int SDLCALL join_thread_fn(void* data) {
         }
 
         set_status("Connected!");
-        set_state(DIRECT_P2P_HANDOFF);
-        return 0;
+        return DIRECT_P2P_HANDOFF;
     }
 
     /* Stash the post-punch translated endpoint so Tick can feed it to
@@ -1371,10 +1377,47 @@ static int SDLCALL join_thread_fn(void* data) {
         Config_SetString(CFG_KEY_NETPLAY_DIRECT_P2P_LAST_PEER_CODE, s_work.peer_code);
     }
 
-    /* Worker is done; Tick will observe HANDOFF and drive the
+    /* Attempt is done; the wrapper publishes HANDOFF and Tick drives the
      * netplay.c handoff on the main thread. */
     set_status("Connected!");
-    set_state(DIRECT_P2P_HANDOFF);
+    return DIRECT_P2P_HANDOFF;
+}
+
+/* Join worker: one join_attempt pass, plus the S2 auto-retry — on a
+ * TERMINAL failure the joiner gets exactly ONE automatic full retry
+ * with a FRESHLY BOUND local socket before the error is surfaced.
+ * Rationale (docs/plan-netplay-connection.md §4): the first attempt can
+ * die to transient causes a second pass fixes — the host was still in
+ * its UPnP probe when our 2.5 s direct punch ran (start-skew), a first
+ * packet lost while NAT mappings opened, or stuck conntrack/NAT state
+ * pinned to the previous local port. join_attempt's failure paths all
+ * close the attempt's socket, and each attempt re-runs STUN_DISCOVER
+ * with local_port 0, so the retry naturally binds a fresh OS-assigned
+ * port (dodging stale per-port NAT state).
+ *
+ * Non-retryable outcomes: DIRECT_P2P_IDLE (user cancel) and HANDOFF
+ * (success). Everything terminal (FAILED_STUN / FAILED_SYMMETRIC /
+ * FAILED_BILATERAL) retries once. */
+static int SDLCALL join_thread_fn(void* data) {
+    (void)data;
+
+    /* See host_thread_fn for the rationale on this pre-NET_Init delay. */
+    SDL_Delay(200);
+
+    /* Idempotent NET_Init — Stun_Discover assumes we've called it. */
+    NET_Init();
+
+    DirectP2PState outcome = join_attempt();
+    if (outcome != DIRECT_P2P_HANDOFF && outcome != DIRECT_P2P_IDLE) {
+        SDL_Log("[direct_p2p] join attempt failed (state %d) — one automatic retry "
+                "with a freshly bound socket", (int)outcome);
+        set_status("Retrying...");
+        outcome = join_attempt();
+        if (outcome != DIRECT_P2P_HANDOFF && outcome != DIRECT_P2P_IDLE) {
+            SDL_Log("[direct_p2p] join retry failed too (state %d) — surfacing", (int)outcome);
+        }
+    }
+    set_state(outcome);
     return 0;
 }
 
@@ -1811,6 +1854,8 @@ void DirectP2P_Init(void) {
     SDL_SetAtomicInt(&s_bilateral_handoff_pending, 0);
     SDL_SetAtomicInt(&s_bilateral_failed, 0);
     s_bilateral_fail_count = 0; /* M1: fresh retry budget per hosting session */
+    s_host_stun_retry_count = 0; /* S2: fresh host STUN-retry budget */
+    s_host_stun_retry_at_ms = 0;
     SDL_SetAtomicInt(&s_q_head, 0);
     SDL_SetAtomicInt(&s_q_tail, 0);
     SDL_SetAtomicInt(&s_q_drops, 0);
@@ -1842,6 +1887,8 @@ void DirectP2P_BeginHost(int preferred_port) {
     SDL_SetAtomicInt(&s_bilateral_handoff_pending, 0);
     SDL_SetAtomicInt(&s_bilateral_failed, 0);
     s_bilateral_fail_count = 0; /* M1: fresh retry budget per hosting session */
+    s_host_stun_retry_count = 0; /* S2: fresh host STUN-retry budget */
+    s_host_stun_retry_at_ms = 0;
     SDL_SetAtomicInt(&s_q_drops, 0);
     SDL_SetAtomicInt(&s_q_drops_logged, 0);
     /* R-1: a reject latched during a session whose teardown never ran the
@@ -1916,6 +1963,8 @@ void DirectP2P_BeginJoin(const char* peer_code) {
     SDL_SetAtomicInt(&s_bilateral_handoff_pending, 0);
     SDL_SetAtomicInt(&s_bilateral_failed, 0);
     s_bilateral_fail_count = 0; /* M1: fresh retry budget per hosting session */
+    s_host_stun_retry_count = 0; /* S2: fresh host STUN-retry budget */
+    s_host_stun_retry_at_ms = 0;
     SDL_SetAtomicInt(&s_q_drops, 0);
     SDL_SetAtomicInt(&s_q_drops_logged, 0);
     s_handshake_reject_latched = false; /* R-1: see BeginHost */
@@ -1984,6 +2033,8 @@ void DirectP2P_Cancel(void) {
     memset(&s_work, 0, sizeof(s_work));
     set_status("");
     s_handshake_reject_latched = false; /* R-1: drop any pending reject latch */
+    s_host_stun_retry_count = 0; /* S2: drop any pending host STUN retry */
+    s_host_stun_retry_at_ms = 0;
     set_state(DIRECT_P2P_IDLE);
 }
 
@@ -2059,8 +2110,55 @@ void DirectP2P_Tick(void) {
         }
         return;
 
-    case DIRECT_P2P_FAILED_SYMMETRIC:
     case DIRECT_P2P_FAILED_STUN:
+        /* S2: HOST auto-retry with backoff. FAILED_STUN on the host is
+         * frequently transient (DHCP renew mid-discovery, DNS hiccup,
+         * momentary uplink loss) and the host has nothing else to do —
+         * parking terminal turns a 5-second blip into a dead room.
+         * Bounded per hosting session; each retry re-runs the full
+         * host_thread_fn (UPnP probe included — the failure may have
+         * poisoned the earlier probe too). The JOINER already retried
+         * inside join_thread_fn and stays terminal here. */
+        if (s_work.role == ROLE_HOST && s_host_stun_retry_count < HOST_STUN_MAX_RETRIES) {
+            uint64_t now = SDL_GetTicks();
+            if (s_host_stun_retry_at_ms == 0) {
+                s_host_stun_retry_at_ms = now + HOST_STUN_RETRY_BACKOFF_MS;
+                SDL_Log("[direct_p2p] host STUN discovery failed — auto-retry %d/%d in %u ms",
+                        s_host_stun_retry_count + 1, HOST_STUN_MAX_RETRIES,
+                        (unsigned)HOST_STUN_RETRY_BACKOFF_MS);
+                set_status("Connection failed. Retrying...");
+                return;
+            }
+            if (now < s_host_stun_retry_at_ms) {
+                return; /* backoff in progress */
+            }
+            s_host_stun_retry_at_ms = 0;
+            s_host_stun_retry_count++;
+            /* Reap the failed worker before re-spawning (it has exited —
+             * it published FAILED_STUN as its last act). */
+            if (s_thread != NULL) {
+                SDL_WaitThread(s_thread, NULL);
+                s_thread = NULL;
+            }
+            SDL_Log("[direct_p2p] host STUN auto-retry %d/%d starting",
+                    s_host_stun_retry_count, HOST_STUN_MAX_RETRIES);
+            set_status("Preparing...");
+            /* Publish the intermediate state BEFORE spawning so a Tick
+             * racing the worker's own set_state never re-enters this
+             * case mid-spawn. host_thread_fn re-publishes UPNP_PROBE
+             * itself after its startup delay. */
+            set_state(DIRECT_P2P_UPNP_PROBE);
+            s_thread = SDL_CreateThread(host_thread_fn, "DirectP2PHost", NULL);
+            if (s_thread == NULL) {
+                SDL_Log("[direct_p2p] host STUN auto-retry: thread spawn failed");
+                set_status("Connection failed. Try again.");
+                set_state(DIRECT_P2P_FAILED_STUN);
+            }
+            return;
+        }
+        return; /* joiner, or retry budget exhausted — terminal */
+
+    case DIRECT_P2P_FAILED_SYMMETRIC:
     case DIRECT_P2P_FAILED_PUNCH:
         /* Terminal failure; no auto-retry. The status-rendering
          * overlay (Step 8) is responsible for showing the reason. The
