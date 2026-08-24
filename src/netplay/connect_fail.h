@@ -175,11 +175,21 @@ typedef enum ConnectFailCode {
                                         socket is dead. The rendezvous port
                                         worked, so this is specifically about
                                         the relay range                     */
+    /* S6-review L-1: a RELAY_GRANT carrying NOT_PAIRED for the WHOLE
+     * GRANT phase. It used to share CONNECT_FAIL_RELAY_REFUSED with
+     * POOL_EXHAUSTED, whose log line reads "the relay port pool is
+     * exhausted" and whose user string is "Relay is full" — so an alpha
+     * tester whose real problem was that the OTHER PLAYER never reached
+     * the rendezvous server was told the server was at capacity. Two
+     * causes, two actions: "wait and retry" vs "your opponent is not in
+     * this room". Collapsing them recreates exactly the one-string-many-
+     * causes problem S3 exists to fix. */
+    CONNECT_FAIL_RELAY_NOT_PAIRED,
 
     /* Append new codes ABOVE this marker and bump the bound in
      * test_bilateral_punch.c test 7f (which sweeps NONE..LAST proving
      * every code has a distinct machine string). */
-    CONNECT_FAIL_LAST_ = CONNECT_FAIL_RELAY_PIN_TIMEOUT,
+    CONNECT_FAIL_LAST_ = CONNECT_FAIL_RELAY_NOT_PAIRED,
 } ConnectFailCode;
 
 /* Stable machine code string, e.g. "P2P_FAIL_STUN_ALLDOWN". Never NULL.

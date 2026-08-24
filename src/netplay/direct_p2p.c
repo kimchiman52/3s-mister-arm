@@ -1073,10 +1073,81 @@ static int relay_budget_ms(void) {
  * on the pre-S6 code path is diverted to a relay by the race. */
 #define RACE_RELAY_ARM_MS 2500u
 
+/* ...and no punch candidate may be stolen before it has had this much of
+ * a window OF ITS OWN (S6-review H-4).
+ *
+ * RACE_RELAY_ARM_MS alone is measured from RACE START, which makes §8.4
+ * rule 2's justification true only of punch[0]. The DELIVER candidate is
+ * armed at DELIVER time D, and pre-S6 it got its own full
+ * BILATERAL_PUNCH_MS window; measured from t0 it gets
+ * (RACE_RELAY_ARM_MS - D) instead. With a typical D of 1 200 ms that is
+ * ~1.3 s rather than 2.5 s, so a US-US pair needing ~2 s from DELIVER was
+ * diverted onto a European relay — a direct link replaced by a
+ * transatlantic one for people who connect fine today. */
+#define RACE_PUNCH_MIN_WINDOW_MS 2500u
+
+/* Once the relay leg is READY to hand off, a punch confirming inside this
+ * window still wins (S6-review H-3).
+ *
+ * Ordering rule 1 is a purely LOCAL decision and the relay handoff used
+ * to end the race on the spot. Two peers confirm their punches about one
+ * one-way delay apart, so a skew of a few tens of milliseconds was enough
+ * for one side to commit to the relay while the other committed to a
+ * direct link — and GekkoNet registers the remote ONCE by source address
+ * at configure time (netplay.c) with no relearn path, so that pair then
+ * hangs for the whole CONNECT_TIMEOUT_CONNECTING_MS and gives up. Pre-S6
+ * this was impossible from timing alone: the relay rung only ran after
+ * the bilateral punch had spent its ENTIRE window on both sides.
+ *
+ * 600 ms is one full STUN_PUNCH_CONFIRM_MS tail — about 4x the worst
+ * realistic transatlantic one-way delay, and the same number the punch
+ * itself already spends making sure its peer heard it. The cost is paid
+ * only by pairs that genuinely end up relayed, and only once. */
+#define RACE_RELAY_GRACE_MS 600u
+
 /* Loop period. The legs' own cadences are 50-500 ms; 5 ms keeps the
  * cancel check responsive and the send timings honest without spinning
  * (the receive call below is non-blocking, so this is the only sleep). */
 #define RACE_POLL_MS 5
+
+/*
+ * The overall race deadline, as a pure function of the clock.
+ *
+ * WRAP SAFETY (S6-review M-1 — this comment replaces a WRONG one).
+ * `SDL_GetTicks` is stored here in a uint32_t, which wraps after ~49.7
+ * days of uptime. The form this replaced was
+ *
+ *     now >= t0 + budget            // uint32_t arithmetic
+ *
+ * and the recorded reasoning for deleting it ("the race would run until
+ * every leg finished with no overall bound") had the symptom BACKWARDS.
+ * `t0 + budget` overflows to a SMALL number whenever `t0` is within
+ * `budget` of the wrap, and `now` — still just below the wrap — is then
+ * already >= it. The real symptom is the opposite of unbounded: the
+ * deadline fires on the FIRST iteration, so every join attempted in the
+ * ~8 s before a wrap fails instantly. Subtract-then-cast never forms the
+ * overflowing sum, which is why it is the form used throughout this file.
+ *
+ * H-1 EXEMPTION. A leg that has CONFIRMED still owes its peer the
+ * STUN_PUNCH_CONFIRM_MS tail (stun.c Stun_PunchSettled) before the
+ * endpoint may be handed off. Breaking on the raw budget threw that
+ * connection away and reported a NAT failure — with the shipped
+ * defaults, for every punch confirming in the last 600 ms of the 8 000 ms
+ * budget. The deadline is therefore extended by exactly one tail, and no
+ * more: the loop stays hard-bounded at budget + STUN_PUNCH_CONFIRM_MS
+ * whatever the legs do.
+ */
+static bool race_budget_expired(uint32_t now, uint32_t t0, int budget_ms,
+                                bool tail_outstanding) {
+    const int elapsed = (int)(now - t0);
+    if (elapsed < budget_ms) {
+        return false;
+    }
+    if (!tail_outstanding) {
+        return true;
+    }
+    return elapsed >= budget_ms + STUN_PUNCH_CONFIRM_MS;
+}
 
 #define RACE_PUNCH_LEGS 2
 
@@ -1199,6 +1270,8 @@ static bool race_cancelled(const RaceCfg* cfg) {
            (cfg->cancel != NULL && SDL_GetAtomicInt(cfg->cancel) != 0);
 }
 
+static void race_finish_punch(RacePunchCandidate* c, uint32_t now);
+
 /* Arm a punch candidate. Returns false if the endpoint is unusable (or a
  * duplicate of one we are already punching — punching the same endpoint
  * twice from one socket doubles the traffic and teaches us nothing). */
@@ -1214,17 +1287,30 @@ static bool race_arm_punch(RacePunchCandidate* cands, int n_cands, int slot,
             return false;
         }
     }
-    RacePunchCandidate* c = &cands[slot];
-    memset(c, 0, sizeof(*c));
-    SDL_strlcpy(c->ip, ip, sizeof(c->ip));
-    c->port = port;
-    c->armed_ms = now;
-    c->oracle = PUNCH_ORACLE(ip, port);
-    if (c->oracle == DP2P_PUNCH_REAL) {
-        if (!Stun_PunchBegin(&c->leg, ip, port, cfg->punch_token, now)) {
+    /* S6-review M-2: VALIDATE, THEN memset. The pre-fix order wiped the
+     * slot before Stun_PunchBegin could fail, and a slot being re-armed
+     * (slot 1 is re-armed whenever a DELIVER carries a DIFFERENT endpoint)
+     * holds a ref'd NET_Address in leg.target — wiping it leaked the ref
+     * with no way left to release it. The new leg is built on the stack
+     * and only committed once it is known good. */
+    StunPunchLeg leg;
+    memset(&leg, 0, sizeof(leg));
+    const DirectP2PPunchOracleResult oracle = PUNCH_ORACLE(ip, port);
+    if (oracle == DP2P_PUNCH_REAL) {
+        if (!Stun_PunchBegin(&leg, ip, port, cfg->punch_token, now)) {
             return false;
         }
     }
+    RacePunchCandidate* c = &cands[slot];
+    /* Releasing the ref the outgoing leg still holds is the whole point of
+     * doing this after the validation, not before it. */
+    race_finish_punch(c, now);
+    memset(c, 0, sizeof(*c));
+    c->leg = leg;
+    SDL_strlcpy(c->ip, ip, sizeof(c->ip));
+    c->port = port;
+    c->armed_ms = now;
+    c->oracle = oracle;
     c->armed = true;
     SDL_Log("[direct_p2p] S6 race: punching candidate %s:%u", ip, (unsigned)port);
     return true;
@@ -1310,6 +1396,9 @@ static void p2p_race(const RaceCfg* cfg, RaceResult* out) {
     RaceRelayState relay_state = RELAY_LEG_UNARMED;
     uint32_t relay_armed_ms = 0;
     uint32_t relay_phase_ms = 0;
+    /* H-3: when the relay leg first became handoff-READY (0 = not yet).
+     * The commit is deferred by RACE_RELAY_GRACE_MS from this instant. */
+    uint32_t relay_ready_ms = 0;
     uint32_t relay_last_send = 0;
     bool relay_sent_any = false;
     uint8_t relay_req[REND_RELAY_REQ_PKT_LEN];
@@ -1326,6 +1415,8 @@ static void p2p_race(const RaceCfg* cfg, RaceResult* out) {
     ConnectFailCode relay_pending_fail = CONNECT_FAIL_NONE;
     const bool relay_possible = cfg->relay_leg && cfg->signal_addr != NULL &&
                                 cfg->session_key != NULL;
+    /* H-1: one line per race when the confirmation-tail exemption fires. */
+    bool logged_tail_hold = false;
 
     while (true) {
         const uint32_t now = SDL_GetTicks();
@@ -1383,9 +1474,33 @@ static void p2p_race(const RaceCfg* cfg, RaceResult* out) {
 
         /* --- 3) arm the relay leg ------------------------------------ */
         if (relay_possible && relay_state == RELAY_LEG_UNARMED) {
+            /* H-4: the arm delay is the LATER of "RACE_RELAY_ARM_MS since
+             * the race started" and "RACE_PUNCH_MIN_WINDOW_MS since each
+             * live candidate armed" — a candidate that appeared at
+             * DELIVER time keeps a window of its own instead of
+             * inheriting whatever is left of punch[0]'s.
+             *
+             * It is NOT open-ended: the relay leg still needs its own
+             * budget inside the race budget, so the deferral is capped at
+             * (race_budget - relay_budget). A relay that arms too late to
+             * finish is worse than one that arms slightly early. */
+            int relay_defer_cap_ms = cfg->race_budget_ms - cfg->relay_budget_ms;
+            if (relay_defer_cap_ms < (int)RACE_RELAY_ARM_MS) {
+                relay_defer_cap_ms = (int)RACE_RELAY_ARM_MS;
+            }
+            bool candidate_windows_done = true;
+            for (int i = 0; i < RACE_PUNCH_LEGS; i++) {
+                if (cands[i].armed && !cands[i].finished &&
+                    (int)(now - cands[i].armed_ms) < (int)RACE_PUNCH_MIN_WINDOW_MS) {
+                    candidate_windows_done = false;
+                }
+            }
             /* With no punch legs at all (force-relay), there is nothing
              * for the relay to defer TO, so the arm delay is skipped. */
-            const bool delay_done = cfg->no_punch || (now - t0) >= RACE_RELAY_ARM_MS;
+            const bool delay_done =
+                cfg->no_punch ||
+                (int)(now - t0) >= relay_defer_cap_ms ||
+                ((int)(now - t0) >= (int)RACE_RELAY_ARM_MS && candidate_windows_done);
             const bool paired = (cfg->role == RACE_ROLE_HOST) || out->deliver_real ||
                                 cfg->no_punch;
             bool punch_live = false;
@@ -1414,8 +1529,12 @@ static void p2p_race(const RaceCfg* cfg, RaceResult* out) {
             (int)(now - relay_phase_ms) >= cfg->relay_budget_ms / 2) {
             if (relay_pending_fail != CONNECT_FAIL_NONE) {
                 out->relay_fail = relay_pending_fail;
-                SDL_Log("[direct_p2p] %s relay refused for the whole GRANT phase",
-                        ConnectFail_Code(out->relay_fail));
+                SDL_Log("[direct_p2p] %s relay refused for the whole %d ms GRANT phase "
+                        "(%s)",
+                        ConnectFail_Code(out->relay_fail), cfg->relay_budget_ms / 2,
+                        out->relay_fail == CONNECT_FAIL_RELAY_NOT_PAIRED
+                            ? "the server never saw the other side of this room"
+                            : "the relay port pool is exhausted");
             } else {
                 /* The server answers a well-formed, cookied RELAY_REQ from
                  * a registered slot with either a grant or a refusal, so
@@ -1429,7 +1548,13 @@ static void p2p_race(const RaceCfg* cfg, RaceResult* out) {
             }
             relay_state = RELAY_LEG_DONE;
             out->t_relay_ms = now - relay_armed_ms;
-        } else if (relay_state == RELAY_LEG_PIN) {
+        } else if (relay_state == RELAY_LEG_PIN && !relay_acked) {
+            /* `!relay_acked` (S6-review H-3): once the relay has ACKed our
+             * pin the leg has provably worked, and section 7 below holds
+             * it for RACE_RELAY_GRACE_MS before committing. Without this
+             * guard a grant that arrived late (pin_window floored at
+             * RELAY_PIN_MIN_MS = 500) could expire DURING that grace and
+             * report RELAY_PIN_TIMEOUT for a relay that answered us. */
             /* Whatever the GRANT phase did not spend, floored at
              * RELAY_PIN_MIN_MS: a grant we cannot use is the worst
              * outcome, so always leave room for a couple of pin round
@@ -1594,11 +1719,19 @@ static void p2p_race(const RaceCfg* cfg, RaceResult* out) {
                         }
                     } else if (grant.status == (uint8_t)REND_RELAY_NOT_PAIRED) {
                         /* Transient under racing — the peer's REGISTER may
-                         * still be in flight. Remember it and keep asking. */
-                        relay_pending_fail = CONNECT_FAIL_RELAY_REFUSED;
+                         * still be in flight. Remember it and keep asking.
+                         *
+                         * S6-review L-1: remembered as its OWN code. A
+                         * persistent NOT_PAIRED means the server never saw
+                         * the other side of this room; reporting it as
+                         * RELAY_REFUSED told the user "the relay port pool
+                         * is exhausted", which is a different fact with a
+                         * different action. */
+                        relay_pending_fail = CONNECT_FAIL_RELAY_NOT_PAIRED;
                     } else {
-                        SDL_Log("[direct_p2p] %s relay REFUSED by the server (status=%u) — "
-                                "the relay port pool is exhausted",
+                        SDL_Log("[direct_p2p] %s relay REFUSED by the server "
+                                "(status=%u = POOL_EXHAUSTED) — every port in the relay "
+                                "pool is in use",
                                 ConnectFail_Code(CONNECT_FAIL_RELAY_REFUSED),
                                 (unsigned)grant.status);
                         out->relay_fail = CONNECT_FAIL_RELAY_REFUSED;
@@ -1655,6 +1788,29 @@ static void p2p_race(const RaceCfg* cfg, RaceResult* out) {
              * CONNECT_TIMEOUT_CONNECTING_MS deadline reports honestly if
              * the peer never arrives. */
             if (relay_peer_pinned || (int)(now - relay_phase_ms) >= RELAY_PIN_RESEND_MS) {
+                /* H-3: READY is not the same as COMMITTED. The peer is
+                 * running this same loop about one one-way delay behind
+                 * us; committing here on the spot is what let one side
+                 * relay while the other punched. Hold the leg open for
+                 * RACE_RELAY_GRACE_MS — still pinning, so the relay stays
+                 * ours — and let ordering rule 1 (checked FIRST in every
+                 * iteration, above) hand the race to a punch that
+                 * confirms in the meantime. Bounded two ways: the grace
+                 * itself, and the race budget, which commits the relay
+                 * rather than losing it. */
+                if (relay_ready_ms == 0) {
+                    relay_ready_ms = (now != 0) ? now : 1u;
+                    SDL_Log("[direct_p2p] S6 relay ready at %s:%u (slot=%u) — holding "
+                            "%u ms for a punch the peer may still be confirming",
+                            relay_ip, (unsigned)grant.relay_port, (unsigned)grant.slot,
+                            (unsigned)RACE_RELAY_GRACE_MS);
+                }
+                const bool grace_done =
+                    (int)(now - relay_ready_ms) >= (int)RACE_RELAY_GRACE_MS;
+                const bool budget_done = (int)(now - t0) >= cfg->race_budget_ms;
+                if (!grace_done && !budget_done) {
+                    goto relay_grace_pending;
+                }
                 SDL_strlcpy(out->peer_ip, relay_ip, sizeof(out->peer_ip));
                 out->peer_port = grant.relay_port;
                 out->relay_fail = CONNECT_FAIL_NONE;
@@ -1668,6 +1824,7 @@ static void p2p_race(const RaceCfg* cfg, RaceResult* out) {
                 goto done;
             }
         }
+relay_grace_pending:;
 
         /* --- 8) termination ------------------------------------------ */
         {
@@ -1685,16 +1842,37 @@ static void p2p_race(const RaceCfg* cfg, RaceResult* out) {
                 break;
             }
         }
-        /* Wrap-safe elapsed comparison. The `now >= t0 + budget` form this
-         * replaces breaks across the SDL_GetTicks 32-bit wrap (~49.7 days
-         * of uptime): after the wrap `t0 + budget` is a huge number `now`
-         * never reaches, and the race would run until every leg finished
-         * with no overall bound. Subtract-then-cast is the form the rest
-         * of this file already uses (S3 deadline wrap-safety). */
-        if ((int)(now - t0) >= cfg->race_budget_ms) {
-            SDL_Log("[direct_p2p] S6 race: overall budget (%d ms) expired",
-                    cfg->race_budget_ms);
-            break;
+        /* Overall deadline. See race_budget_expired() for the wrap-safety
+         * argument and for the H-1 confirmation-tail exemption: a leg that
+         * has already confirmed is not thrown away just because the budget
+         * edge landed inside its 600 ms tail. */
+        {
+            bool tail_outstanding = false;
+            for (int i = 0; i < RACE_PUNCH_LEGS; i++) {
+                if (race_punch_confirmed(&cands[i]) &&
+                    !race_punch_settled(&cands[i], now)) {
+                    tail_outstanding = true;
+                }
+            }
+            if (race_budget_expired(now, t0, cfg->race_budget_ms, tail_outstanding)) {
+                SDL_Log("[direct_p2p] S6 race: overall budget (%d ms) expired%s",
+                        cfg->race_budget_ms,
+                        tail_outstanding ? " (confirmation tail also exhausted)" : "");
+                break;
+            }
+            if (tail_outstanding && (int)(now - t0) >= cfg->race_budget_ms) {
+                /* Logged ONCE per race: this is the H-1 rescue happening,
+                 * and a field log that shows it is how we know the window
+                 * is real on the wire rather than only in the harness. */
+                static const char* k_msg =
+                    "[direct_p2p] S6 race: budget expired with a CONFIRMED punch still "
+                    "in its %d ms tail — holding the race open (hard cap %d ms)";
+                if (!logged_tail_hold) {
+                    logged_tail_hold = true;
+                    SDL_Log(k_msg, STUN_PUNCH_CONFIRM_MS,
+                            cfg->race_budget_ms + STUN_PUNCH_CONFIRM_MS);
+                }
+            }
         }
 
         if (!got_dgram) {
@@ -1748,6 +1926,84 @@ done:;
             out->t_bilateral_ms, out->t_signal_ms, out->t_relay_ms,
             (int)out->deliver_any, (int)out->deliver_real);
 }
+
+#ifdef NETPLAY_TEST_HOOKS
+static NET_Address* resolve_with_short_poll(const char* host);
+
+/* S6-review H-3 / H-2: run ONE race against caller-supplied endpoints.
+ * See the contract in direct_p2p.h — this exists so a harness can stand
+ * up TWO concurrent peers in one process (the split-brain property is
+ * not observable from one side) and so at least one harness leg punches
+ * for real instead of through the oracle. */
+void DirectP2P_TestHook_RunRace(const DirectP2PRaceProbeCfg* pcfg,
+                                DirectP2PRaceProbeOut* pout) {
+    if (pout == NULL) {
+        return;
+    }
+    memset(pout, 0, sizeof(*pout));
+    /* The probe is not part of a session, and s_cancel is sticky: a
+     * DirectP2P_Cancel from an EARLIER test in the same process leaves it
+     * raised (only Init/BeginHost/BeginJoin clear it), which would make
+     * every probe race return CANCELLED on its first iteration. */
+    SDL_SetAtomicInt(&s_cancel, 0);
+    if (pcfg == NULL || pcfg->sock == NULL) {
+        pout->outcome = DP2P_RACE_PROBE_EXHAUSTED;
+        return;
+    }
+
+    NET_Address* signal_addr = NULL;
+    if (pcfg->signal_ip != NULL && pcfg->signal_ip[0] != '\0') {
+        signal_addr = resolve_with_short_poll(pcfg->signal_ip);
+    }
+
+    RaceCfg cfg;
+    memset(&cfg, 0, sizeof(cfg));
+    cfg.role = pcfg->host_role ? RACE_ROLE_HOST : RACE_ROLE_JOIN;
+    cfg.sock = pcfg->sock;
+    cfg.stun = NULL;
+    cfg.punch_token = pcfg->punch_token;
+    cfg.seed_ip = pcfg->seed_ip;
+    cfg.seed_port = pcfg->seed_port;
+    cfg.signal_addr = signal_addr;
+    cfg.signal_port = pcfg->signal_port;
+    cfg.session_key = pcfg->session_key;
+    cfg.my_public_port = pcfg->my_public_port;
+    cfg.cookie_in = NULL;
+    cfg.signal_leg = pcfg->signal_leg && signal_addr != NULL;
+    cfg.signal_budget_ms = pcfg->signal_budget_ms;
+    cfg.my_public_ip = NULL;
+    cfg.relay_leg = pcfg->relay_leg && signal_addr != NULL;
+    cfg.relay_budget_ms = pcfg->relay_budget_ms;
+    cfg.punch_leg_ms = pcfg->punch_leg_ms;
+    cfg.race_budget_ms = pcfg->race_budget_ms;
+    cfg.no_punch = false;
+    cfg.cancel = NULL;
+
+    RaceResult res;
+    p2p_race(&cfg, &res);
+
+    if (signal_addr != NULL) {
+        NET_UnrefAddress(signal_addr);
+    }
+
+    switch (res.outcome) {
+    case RACE_PUNCHED:   pout->outcome = DP2P_RACE_PROBE_PUNCHED;   break;
+    case RACE_RELAYED:   pout->outcome = DP2P_RACE_PROBE_RELAYED;   break;
+    case RACE_CANCELLED: pout->outcome = DP2P_RACE_PROBE_CANCELLED; break;
+    default:             pout->outcome = DP2P_RACE_PROBE_EXHAUSTED; break;
+    }
+    SDL_strlcpy(pout->peer_ip, res.peer_ip, sizeof(pout->peer_ip));
+    pout->peer_port = res.peer_port;
+    pout->t_race_ms = res.t_race_ms;
+    pout->relay_ran = res.relay_ran;
+    pout->relay_fail = (int)res.relay_fail;
+}
+
+bool DirectP2P_TestHook_RaceBudgetExpired(uint32_t now, uint32_t t0,
+                                          int budget_ms, bool tail_outstanding) {
+    return race_budget_expired(now, t0, budget_ms, tail_outstanding);
+}
+#endif /* NETPLAY_TEST_HOOKS */
 
 /* --- worker thread ----------------------------------------------------- */
 

@@ -337,6 +337,70 @@ void DirectP2P_TestHook_PunchGateCounters(int* bad_total, int* rerolls);
 void DirectP2P_TestHook_PunchGateLimits(int* src_max_bad, uint32_t* mute_ms,
                                         int* total_reroll, int* reroll_max,
                                         int* src_table);
+
+/* --- S6-review H-3: drive ONE p2p_race directly ------------------------
+ *
+ * Every other seam here drives the race through BeginJoin / the host
+ * worker, and those own process-wide state (s_work, the state machine,
+ * the worker threads), so at most ONE of them can be live in a process.
+ * The S6 split-brain defect is by construction a TWO-peer property — one
+ * side commits to the relay while the other commits to a punch — so it
+ * cannot be reproduced through that door at all.
+ *
+ * p2p_race itself takes everything it needs by argument (its own socket,
+ * its own endpoints, its own budgets) and touches no per-session global,
+ * so two of them can run concurrently on two threads in one process.
+ * This hook is that door: it builds a RaceCfg from `cfg`, runs the REAL
+ * race, and reports the outcome. Production code never calls it. */
+typedef struct DirectP2PRaceProbeCfg {
+    bool                host_role;      /* false = joiner                     */
+    NET_DatagramSocket* sock;           /* caller owns it for the whole call  */
+    const uint8_t*      punch_token;    /* STUN_PUNCH_TOKEN_LEN bytes         */
+    const char*         seed_ip;        /* numeric dotted quad                */
+    uint16_t            seed_port;
+    const char*         signal_ip;      /* numeric dotted quad; NULL = no legs */
+    uint16_t            signal_port;
+    const uint8_t*      session_key;    /* 16 bytes                           */
+    uint16_t            my_public_port;
+    bool                signal_leg;
+    int                 signal_budget_ms;
+    bool                relay_leg;
+    int                 relay_budget_ms;
+    int                 punch_leg_ms;
+    int                 race_budget_ms;
+} DirectP2PRaceProbeCfg;
+
+/* Mirrors the internal RaceOutcome enum; kept as explicit values so the
+ * harness never has to see the private type. */
+typedef enum DirectP2PRaceProbeOutcome {
+    DP2P_RACE_PROBE_PUNCHED = 0,
+    DP2P_RACE_PROBE_RELAYED = 1,
+    DP2P_RACE_PROBE_CANCELLED = 2,
+    DP2P_RACE_PROBE_EXHAUSTED = 3,
+} DirectP2PRaceProbeOutcome;
+
+typedef struct DirectP2PRaceProbeOut {
+    DirectP2PRaceProbeOutcome outcome;
+    char     peer_ip[64];
+    uint16_t peer_port;
+    uint32_t t_race_ms;
+    bool     relay_ran;
+    /* ConnectFailCode as an int so the harness can assert on the relay
+     * leg's OWN disposition (S6-review L-1 split NOT_PAIRED out of
+     * RELAY_REFUSED, and only the leg's verdict shows which fired). */
+    int      relay_fail;
+} DirectP2PRaceProbeOut;
+
+void DirectP2P_TestHook_RunRace(const DirectP2PRaceProbeCfg* cfg,
+                                DirectP2PRaceProbeOut* out);
+
+/* S6-review M-1: the overall race deadline predicate, as a pure function
+ * of the clock. Exposed because the defect the wrap-safe form fixes needs
+ * a 49.7-day uptime to reach through SDL_GetTicks, and a test that cannot
+ * be run is not a test. `tail_outstanding` is the H-1 exemption: a leg
+ * that has confirmed and still owes its peer the confirmation tail. */
+bool DirectP2P_TestHook_RaceBudgetExpired(uint32_t now, uint32_t t0,
+                                          int budget_ms, bool tail_outstanding);
 #endif /* NETPLAY_TEST_HOOKS */
 
 #else /* !ENABLE_NETPLAY */
