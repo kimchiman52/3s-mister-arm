@@ -71,10 +71,13 @@ Notes:
   copy-through: it rewrites only the single line whose trimmed key
   `strcasecmp`-matches its own target and emits every other line verbatim
   via `fputs(line, out)`. The 15 targeted keys (`scale-mode`, `arm-clock`,
-  `game-mode`, `hold-to-pause`, `arcade-balance`, `bgm-type`,
+  `game-mode`, `hold-to-pause`, `language`, `bgm-type`,
   `aspect-ratio`, `h-position`, `v-position-v2`, `v-position`,
   `vertical-crop`, `crop-offset`, `scale`, `h-size`, `show-fps`) do not
   include `balance`, and no writer regenerates the file from a template.
+  (`arcade-balance` was on that list until the Arcade Balance OSD row was
+  replaced by the read-only Balance status row; the wrapper no longer
+  writes that key at all.)
 - Netplay arms only in verified-arcade state and the MIST handshake carries a
   digest of the adapted data, so peers always simulate identical balance.
 - The test runner (`--test-enable`, used by the frame-data suite) pins PS2

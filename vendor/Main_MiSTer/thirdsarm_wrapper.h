@@ -1,6 +1,8 @@
 #ifndef THIRDSARM_WRAPPER_H
 #define THIRDSARM_WRAPPER_H
 
+#include <stddef.h>
+
 int thirdsarm_wrapper_run(int argc, char *argv[]);
 
 /*
@@ -18,6 +20,21 @@ int thirdsarm_wrapper_run(int argc, char *argv[]);
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/* Read-only Balance status row for the CONF_STR menu.
+ *
+ * Formats " Balance: <status>" from line 1 of
+ * /media/fat/games/3s-arm/balance.status (the file the game rewrites on
+ * every boot with the outcome of arcade-vs-PS2 auto-select), or
+ * " Balance: (unknown)" when that file is missing or empty. menu.cpp calls
+ * this when it renders the CONF_STR "-,Balance:;" text row -- see
+ * tools/mister-wrapper/main-mister-full-menu.patch. There is no toggle:
+ * balance is chosen at game boot and the only override is a hand-added
+ * `balance = ps2` line in `config` (docs/config.md "balance").
+ *
+ * Result is cached and re-read only when the file's mtime/size change, so
+ * calling it once per OSD render is cheap. */
+void thirdsarm_balance_status_line(char *out, size_t out_size);
 
 /* Serialize "mode=host\n" to the handoff file; arm + request restart. */
 void direct_p2p_handoff_host(void);

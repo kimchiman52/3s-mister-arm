@@ -1,5 +1,5 @@
 diff --git a/menu.cpp b/menu.cpp
-index a8d8bd8..e0aeac8 100644
+index a8d8bd8..71d074e 100644
 --- a/menu.cpp
 +++ b/menu.cpp
 @@ -66,6 +66,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
@@ -26,7 +26,7 @@ index a8d8bd8..e0aeac8 100644
  	MENU_PROHIB_BTPAIR2,
  
  	MENU_SCRIPTS_PRE,
-@@ -1066,6 +1074,146 @@ void build_advanced_map_summary(advancedButtonMap *abm, char *dest_str, size_t d
+@@ -1066,6 +1076,146 @@ void build_advanced_map_summary(advancedButtonMap *abm, char *dest_str, size_t d
  	snprintf(dest_str, dest_size, "%s->%s", input_str, output_str);
  }
  
@@ -173,7 +173,25 @@ index a8d8bd8..e0aeac8 100644
  void HandleUI(void)
  {
  	PROFILE_FUNCTION();
-@@ -2468,6 +2598,16 @@ void HandleUI(void)
+@@ -2115,6 +2265,17 @@ void HandleUI(void)
+ 							s[0] = ' ';
+ 							s[1] = 0;
+ 							substrcpy(s + 1, p, 1);
++							/* 3S-ARM: read-only Balance status row. CONF_STR
++							   carries the literal "-,Balance:;" (menu.sv);
++							   fill in the live value from
++							   <pref>/balance.status. Unlike every other row
++							   in that config string this one has no status
++							   bit at all — arcade-vs-PS2 balance is chosen at
++							   game boot and cannot be toggled from the OSD
++							   (docs/mister-wrapper.md "Balance Status Line").
++							   Left unsubstituted the row degrades to a bare
++							   " Balance:" label. */
++							if (!strcmp(s + 1, "Balance:")) thirdsarm_balance_status_line(s, sizeof(s));
+ 							last_space = (strlen(s) == 1);
+ 							MenuWrite(entry, s, 0, d);
+ 							entry++;
+@@ -2468,6 +2629,16 @@ void HandleUI(void)
  							int ex = (p[0] == 't') || (p[0] == 'r');
  							if (user_io_status_bits(p + 1, &bit, 0, ex) == 1)
  							{
@@ -190,7 +208,7 @@ index a8d8bd8..e0aeac8 100644
  								const char *opt = p + 1;
  								if (!bit && (is_x86() || is_pcxt()))
  								{
-@@ -2506,6 +2642,7 @@ void HandleUI(void)
+@@ -2506,6 +2677,7 @@ void HandleUI(void)
  									menustate = MENU_GENERIC_MAIN1;
  									if (p[0] == 'R' || p[0] == 'r') menustate = MENU_NONE1;
  								}
@@ -198,7 +216,7 @@ index a8d8bd8..e0aeac8 100644
  							}
  						}
  					}
-@@ -2749,17 +2886,15 @@ void HandleUI(void)
+@@ -2749,17 +2921,15 @@ void HandleUI(void)
  			parentstate = MENU_COMMON1;
  			int n;
  
@@ -218,7 +236,7 @@ index a8d8bd8..e0aeac8 100644
  				if (cfg.osd_lock[0] && !cfg.osd_lock_time)
  				{
  					MenuWrite(n++, " Lock OSD", menusub == 1, 0);
-@@ -6608,7 +6760,7 @@ void HandleUI(void)
+@@ -6608,7 +6778,7 @@ void HandleUI(void)
  		/* system menu */
  		/******************************************************************/
  	case MENU_SYSTEM1:
@@ -227,7 +245,7 @@ index a8d8bd8..e0aeac8 100644
  		{
  			menustate = MENU_NONE1;
  			break;
-@@ -6851,6 +7003,356 @@ void HandleUI(void)
+@@ -6851,6 +7021,356 @@ void HandleUI(void)
  		}
  		break;
  

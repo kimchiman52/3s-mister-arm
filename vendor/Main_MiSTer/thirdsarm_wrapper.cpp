@@ -109,18 +109,19 @@ enum RuntimeHoldToPauseMenu
 	kHoldToPauseMenuCount
 };
 
-enum RuntimeArcadeBalanceMenu
-{
-	kArcadeBalanceOff = 0,
-	kArcadeBalanceOn,
-	kArcadeBalanceMenuCount
-};
-
 enum RuntimeBgmTypeMenu
 {
 	kBgmTypeArranged = 0,
 	kBgmTypeOriginal,
 	kBgmTypeMenuCount
+};
+
+// CONF_STR "O[47],Language,English,Japanese;" index order.
+enum RuntimeLanguageMenu
+{
+	kLanguageEnglish = 0,
+	kLanguageJapanese,
+	kLanguageMenuCount
 };
 
 enum RuntimeAspectRatioMenu
@@ -148,8 +149,8 @@ int g_wrapper_arm_clock = kArmClockStock;
 int g_wrapper_arm_clock_active = kArmClockStock;
 int g_wrapper_game_mode = kGameModeConsole;
 int g_wrapper_hold_to_pause = kHoldToPauseOff;
-int g_wrapper_arcade_balance = kArcadeBalanceOff;
 int g_wrapper_bgm_type = kBgmTypeArranged;
+int g_wrapper_language = kLanguageEnglish;
 int g_wrapper_aspect_ratio = kAspectRatio4x3;
 int g_wrapper_h_position = 0;
 int g_wrapper_v_position = 0;
@@ -957,89 +958,82 @@ bool write_runtime_hold_to_pause_default(int mode)
 	return true;
 }
 
-int read_runtime_arcade_balance_default()
+// --- Balance status row (read-only) ------------------------------------
+//
+// Arcade-vs-PS2 balance is no longer an OSD toggle. The game auto-selects
+// it at boot -- arcade when a CPS3 ROM passes content verification AND the
+// full 20-character adaptation succeeds, PS2 otherwise (docs/config.md
+// "balance"; src/arcade/arcade_balance.c) -- and writes the outcome to
+// <kRuntimeHome>/balance.status: line 1 is the status text ("Arcade (CPS3)"
+// or "PS2"), line 2 is the reason when PS2. Status bit [30] and the
+// write/read_runtime_arcade_balance_default() pair that used to back the
+// toggle were deleted with this row: the game stopped reading the
+// `arcade-balance` config key entirely, so the toggle had become a placebo
+// (docs/mister-wrapper.md "Balance Status Line").
+//
+// menu.cpp renders the CONF_STR "-,Balance:;" text row through this helper
+// (tools/mister-wrapper/main-mister-full-menu.patch). Only line 1 is shown:
+// the OSD row is 32 columns and the longest line-2 reason ("CPS3 ROM not
+// found or failed content verification") is 48, so the reason stays an
+// optional detail surface as docs/mister-wrapper.md step 3 allows.
+//
+// balance.status only changes when the game relaunches, but
+// MENU_GENERIC_MAIN1 re-renders on every OSD navigation event, so the
+// contents are cached and re-read only when stat() reports a different
+// mtime or size.
+// extern "C" is load-bearing: everything from line 53 down lives in this
+// file's anonymous namespace, so without it this definition gets internal
+// linkage and menu.cpp's call (declared extern "C" in thirdsarm_wrapper.h)
+// fails to resolve at link time. Same treatment as direct_p2p_handoff_host()
+// and load_recent_joins() below.
+extern "C" void thirdsarm_balance_status_line(char *out, size_t out_size)
 {
-	char value[64] = {};
-	if (!read_runtime_config_value("arcade-balance", value, sizeof(value))) return kArcadeBalanceOff;
+	static char cached[64] = {};
+	static time_t cached_mtime = 0;
+	static off_t cached_size = -1;
+	static bool cached_valid = false;
 
-	// Match the game's Config bool parsing (config.c): true/yes/1.
-	if (!strcasecmp(value, "true") || !strcasecmp(value, "yes") || !strcmp(value, "1")) return kArcadeBalanceOn;
-	return kArcadeBalanceOff;
-}
+	if (!out || !out_size) return;
 
-static const char *runtime_arcade_balance_config_value(int mode)
-{
-	switch (mode)
-	{
-	case kArcadeBalanceOn: return "true";
-	default: return "false";
-	}
-}
-
-bool write_runtime_arcade_balance_default(int mode)
-{
 	char path[PATH_MAX] = {};
-	char temp_path[PATH_MAX] = {};
-	snprintf(path, sizeof(path), "%s/config", kRuntimeHome);
-	snprintf(temp_path, sizeof(temp_path), "%s/config.tmp", kRuntimeHome);
+	snprintf(path, sizeof(path), "%s/balance.status", kRuntimeHome);
 
-	FILE *in = fopen(path, "r");
-	FILE *out = fopen(temp_path, "w");
-	if (!out)
+	struct stat info = {};
+	if (stat(path, &info) != 0)
 	{
-		if (in) fclose(in);
-		return false;
+		// No file yet -- the game has not booted since balance auto-select
+		// shipped. Do not keep serving a stale cache.
+		cached_valid = false;
+		cached_mtime = 0;
+		cached_size = -1;
+		snprintf(out, out_size, " Balance: (unknown)");
+		return;
 	}
 
-	bool wrote_value = false;
-	char line[256] = {};
-	if (in)
+	if (!cached_valid || info.st_mtime != cached_mtime || info.st_size != cached_size)
 	{
-		while (fgets(line, sizeof(line), in))
+		cached[0] = 0;
+		FILE *file = fopen(path, "r");
+		if (file)
 		{
-			char inspect[256] = {};
-			snprintf(inspect, sizeof(inspect), "%s", line);
-
-			char *cursor = inspect;
-			while (*cursor && isspace((unsigned char)*cursor)) cursor++;
-			if (*cursor == '#')
+			if (fgets(cached, sizeof(cached), file))
 			{
-				fputs(line, out);
-				continue;
+				char *newline = strpbrk(cached, "\r\n");
+				if (newline) *newline = 0;
+				trim_in_place(cached);
 			}
-
-			char *equals = strchr(cursor, '=');
-			if (equals)
+			else
 			{
-				*equals = 0;
-				trim_in_place(cursor);
-				if (!strcasecmp(cursor, "arcade-balance"))
-				{
-					fprintf(out, "arcade-balance = %s\n", runtime_arcade_balance_config_value(mode));
-					wrote_value = true;
-					continue;
-				}
+				cached[0] = 0;
 			}
-
-			fputs(line, out);
+			fclose(file);
 		}
-
-		fclose(in);
+		cached_mtime = info.st_mtime;
+		cached_size = info.st_size;
+		cached_valid = cached[0] != 0;
 	}
 
-	if (!wrote_value)
-	{
-		fprintf(out, "\narcade-balance = %s\n", runtime_arcade_balance_config_value(mode));
-	}
-
-	if (fclose(out) != 0) return false;
-	if (rename(temp_path, path) != 0)
-	{
-		remove(temp_path);
-		return false;
-	}
-
-	return true;
+	snprintf(out, out_size, " Balance: %s", cached_valid ? cached : "(unknown)");
 }
 
 int read_runtime_bgm_type_default()
@@ -1114,6 +1108,97 @@ bool write_runtime_bgm_type_default(int mode)
 	if (!wrote_value)
 	{
 		fprintf(out, "\nbgm-type = %s\n", runtime_bgm_type_config_value(mode));
+	}
+
+	if (fclose(out) != 0) return false;
+	if (rename(temp_path, path) != 0)
+	{
+		remove(temp_path);
+		return false;
+	}
+
+	return true;
+}
+
+// `language` carries the "auto" sentinel until the game resolves it (see
+// docs/config.md "language"): "auto" means "no override -- the settings
+// save file or the locale-derived Get_Default_Language() decides", which
+// this side cannot evaluate. Language_ApplyBootOverride() (game side)
+// materializes the resolved value into the key on the first boot that sees
+// "auto", so the sentinel is transient and English here is only ever a
+// pre-first-launch placeholder, never a lasting lie in the OSD row.
+int read_runtime_language_default()
+{
+	char value[64] = {};
+	if (!read_runtime_config_value("language", value, sizeof(value))) return kLanguageEnglish;
+
+	if (!strcasecmp(value, "japanese")) return kLanguageJapanese;
+	return kLanguageEnglish;
+}
+
+static const char *runtime_language_config_value(int mode)
+{
+	switch (mode)
+	{
+	case kLanguageJapanese: return "japanese";
+	default: return "english";
+	}
+}
+
+bool write_runtime_language_default(int mode)
+{
+	char path[PATH_MAX] = {};
+	char temp_path[PATH_MAX] = {};
+	snprintf(path, sizeof(path), "%s/config", kRuntimeHome);
+	snprintf(temp_path, sizeof(temp_path), "%s/config.tmp", kRuntimeHome);
+
+	FILE *in = fopen(path, "r");
+	FILE *out = fopen(temp_path, "w");
+	if (!out)
+	{
+		if (in) fclose(in);
+		return false;
+	}
+
+	bool wrote_value = false;
+	char line[256] = {};
+	if (in)
+	{
+		while (fgets(line, sizeof(line), in))
+		{
+			char inspect[256] = {};
+			snprintf(inspect, sizeof(inspect), "%s", line);
+
+			char *cursor = inspect;
+			while (*cursor && isspace((unsigned char)*cursor)) cursor++;
+			if (*cursor == '#')
+			{
+				fputs(line, out);
+				continue;
+			}
+
+			char *equals = strchr(cursor, '=');
+			if (equals)
+			{
+				*equals = 0;
+				trim_in_place(cursor);
+				if (!strcasecmp(cursor, "language"))
+				{
+					fprintf(out, "language = %s\n", runtime_language_config_value(mode));
+					wrote_value = true;
+					continue;
+				}
+			}
+
+			fputs(line, out);
+		}
+
+		fclose(in);
+	}
+
+	if (!wrote_value)
+	{
+		fprintf(out, "\nlanguage = %s\n", runtime_language_config_value(mode));
 	}
 
 	if (fclose(out) != 0) return false;
@@ -1896,8 +1981,8 @@ void poll_status_changes(pid_t child)
 	static uint32_t prev_arm_clock = 0xFFFFFFFF;
 	static uint32_t prev_game_mode = 0xFFFFFFFF;
 	static uint32_t prev_hold_to_pause = 0xFFFFFFFF;
-	static uint32_t prev_arcade_balance = 0xFFFFFFFF;
 	static uint32_t prev_bgm_type = 0xFFFFFFFF;
+	static uint32_t prev_language = 0xFFFFFFFF;
 	static uint32_t prev_aspect_ratio = 0xFFFFFFFF;
 	static uint32_t prev_h_position = 0xFFFFFFFF;
 	static uint32_t prev_v_position = 0xFFFFFFFF;
@@ -1949,19 +2034,6 @@ void poll_status_changes(pid_t child)
 		}
 	}
 
-	uint32_t arcade_balance = user_io_status_get("[30]");
-	if (arcade_balance != prev_arcade_balance) {
-		prev_arcade_balance = arcade_balance;
-		int target = (int)arcade_balance;
-		if (target != g_wrapper_arcade_balance) {
-			write_runtime_arcade_balance_default(target);
-			g_wrapper_arcade_balance = target;
-			// No child signal: arcade balance loads CPS3 character data at
-			// game init (ArcadeBalance_Init), so it applies on the next game
-			// launch -- same deferred model as the Overclock option.
-		}
-	}
-
 	uint32_t bgm_type = user_io_status_get("[14]");
 	if (bgm_type != prev_bgm_type) {
 		prev_bgm_type = bgm_type;
@@ -1975,7 +2047,7 @@ void poll_status_changes(pid_t child)
 		if (target != g_wrapper_bgm_type) {
 			write_runtime_bgm_type_default(target);
 			g_wrapper_bgm_type = target;
-			// No child signal: like Arcade Balance, bgm_type is read once
+			// No child signal: like Overclock, bgm_type is read once
 			// at game boot after the settings save load completes
 			// (Init_Task_Aload -> BgmType_ApplyBootOverride(),
 			// src/sf33rd/Source/Game/init3rd.c) -- applies on the next
@@ -1983,6 +2055,27 @@ void poll_status_changes(pid_t child)
 			// Options change *does* apply immediately, via the existing
 			// checkAdxFileLoaded()/adx_NowOnMemoryType reload on menu
 			// exit -- that path is unrelated to this OSD write.)
+		}
+	}
+
+	uint32_t language = user_io_status_get("[47]");
+	if (language != prev_language) {
+		prev_language = language;
+		int target = (int)language;
+		// Same disk refresh as bgm_type above, for the same reason: the
+		// in-game Screen Adjust menu calls Language_PersistToConfig()
+		// straight from the game process (menu.c's Screen_Exit_Check),
+		// bypassing this wrapper, so g_wrapper_language can go stale
+		// relative to the on-disk `language` key between polls.
+		g_wrapper_language = read_runtime_language_default();
+		if (target != g_wrapper_language) {
+			write_runtime_language_default(target);
+			g_wrapper_language = target;
+			// No child signal: mpp_w.language is resolved once at game
+			// boot, after the settings save load completes
+			// (Init_Task_Aload -> Language_ApplyBootOverride(),
+			// src/sf33rd/Source/Game/init3rd.c) -- applies on the next
+			// game launch, same deferred model as BGM Type above.
 		}
 	}
 
@@ -2088,8 +2181,14 @@ void poll_status_changes(pid_t child)
 		user_io_status_set("[12]", 0);    // Aspect Ratio = 4:3
 		user_io_status_set("[13]", 0);    // Game Mode = Console
 		user_io_status_set("[24]", 0);    // Hold to Pause = Off
-		user_io_status_set("[30]", 0);    // Arcade Balance = Off
 		user_io_status_set("[14]", 0);    // BGM Type = Arranged
+		// Language = English. Deliberately English and not the `auto`
+		// sentinel: the OSD row can only render English/Japanese, so
+		// resetting to "auto" would leave the row asserting English while
+		// the game could still boot Japanese off the settings save. The
+		// poll above turns this into `language = english` on disk, which
+		// is exactly what the row now claims.
+		user_io_status_set("[47]", 0);
 		user_io_status_set("[28:25]", 0); // H Position = 0
 		user_io_status_set("[46:43]", 0); // V Position = 0
 		user_io_status_set("[32]", 0);    // Vertical Crop = Disabled
@@ -2100,8 +2199,8 @@ void poll_status_changes(pid_t child)
 		prev_arm_clock = 0xFFFFFFFF;
 		prev_game_mode = 0xFFFFFFFF;
 		prev_hold_to_pause = 0xFFFFFFFF;
-		prev_arcade_balance = 0xFFFFFFFF;
 		prev_bgm_type = 0xFFFFFFFF;
+		prev_language = 0xFFFFFFFF;
 		prev_aspect_ratio = 0xFFFFFFFF;
 		prev_h_position = 0xFFFFFFFF;
 		prev_v_position = 0xFFFFFFFF;
@@ -2674,8 +2773,8 @@ int thirdsarm_wrapper_run(int argc, char *argv[])
 	g_wrapper_arm_clock_active = g_wrapper_arm_clock;
 	g_wrapper_game_mode = read_runtime_game_mode_default();
 	g_wrapper_hold_to_pause = read_runtime_hold_to_pause_default();
-	g_wrapper_arcade_balance = read_runtime_arcade_balance_default();
 	g_wrapper_bgm_type = read_runtime_bgm_type_default();
+	g_wrapper_language = read_runtime_language_default();
 	g_wrapper_aspect_ratio = read_runtime_aspect_ratio_default();
 	g_wrapper_h_position = read_runtime_h_position_default();
 	g_wrapper_v_position = read_runtime_v_position_default();
@@ -2737,16 +2836,17 @@ int thirdsarm_wrapper_run(int argc, char *argv[])
 		user_io_status_set("[12]", (uint32_t)g_wrapper_aspect_ratio);
 		user_io_status_set("[13]", (uint32_t)g_wrapper_game_mode);
 		user_io_status_set("[24]", (uint32_t)g_wrapper_hold_to_pause);
-		// [30] was V-Position's middle bit through v20260416; stale CFGs can
-		// carry it set. This overwrite-from-game-config is the ONLY defense —
-		// it must stay after user_io_init's CFG load and before the first
-		// poll_status_changes.
-		user_io_status_set("[30]", (uint32_t)g_wrapper_arcade_balance);
 		// [14] was "SA Activation"'s bit (retired super-effect-quality OSD
 		// row); stale CFGs can carry it set. This overwrite-from-game-config
-		// is the ONLY defense -- same pattern as [30] -- it must stay after
-		// user_io_init's CFG load and before the first poll_status_changes.
+		// is the ONLY defense -- it must stay after user_io_init's CFG load
+		// and before the first poll_status_changes.
 		user_io_status_set("[14]", (uint32_t)g_wrapper_bgm_type);
+		// [47] has no such history -- it has never appeared in any CONF_STR
+		// or in any user_io_status_* call in this tree, so no 3S-ARM.CFG can
+		// carry it set. It is seeded here anyway, in the same block and the
+		// same order, because the game config is authoritative for every
+		// wrapper-owned option regardless of what the CFG held.
+		user_io_status_set("[47]", (uint32_t)g_wrapper_language);
 		user_io_status_set("[28:25]", (uint32_t)g_wrapper_h_position);
 		user_io_status_set("[46:43]", (uint32_t)g_wrapper_v_position);
 		user_io_status_set("[32]", (uint32_t)g_wrapper_vertical_crop);
@@ -3071,15 +3171,21 @@ int thirdsarm_wrapper_run(int argc, char *argv[])
 			user_io_status_set("[12]", (uint32_t)g_wrapper_aspect_ratio);
 			user_io_status_set("[13]", (uint32_t)g_wrapper_game_mode);
 			user_io_status_set("[24]", (uint32_t)g_wrapper_hold_to_pause);
-			user_io_status_set("[30]", (uint32_t)g_wrapper_arcade_balance);
 			// bgm_type can have been changed by the game process itself via
 			// the in-game Sound Options menu (BgmType_PersistToConfig(),
-			// menu.c:2414), independent of this wrapper's OSD path, so
+			// menu.c), independent of this wrapper's OSD path, so
 			// g_wrapper_bgm_type's mirror may be stale here -- re-read the
 			// on-disk key so the OSD reseeds from the CURRENT value rather
 			// than this process's last-known-at-launch mirror.
 			g_wrapper_bgm_type = read_runtime_bgm_type_default();
 			user_io_status_set("[14]", (uint32_t)g_wrapper_bgm_type);
+			// Same for language: the in-game Screen Adjust row calls
+			// Language_PersistToConfig() from the game process, and on the
+			// very first boot Language_ApplyBootOverride() also materializes
+			// the `auto` sentinel into a concrete value -- both happen behind
+			// this wrapper's back, so re-read before reseeding.
+			g_wrapper_language = read_runtime_language_default();
+			user_io_status_set("[47]", (uint32_t)g_wrapper_language);
 			user_io_status_set("[28:25]", (uint32_t)g_wrapper_h_position);
 			user_io_status_set("[46:43]", (uint32_t)g_wrapper_v_position);
 			user_io_status_set("[32]", (uint32_t)g_wrapper_vertical_crop);

@@ -464,28 +464,40 @@ Phase 1 does not replace the current runtime-only path:
 
 The wrapper-core path must coexist with those tools until the new path is proven on device.
 
-## Balance Status Line (handoff to the OSD menu-pages task)
+## Balance Status Line (as built)
 
 Arcade-vs-PS2 balance auto-selects at game boot (see `docs/config.md`
-"balance"); the **Arcade Balance** OSD row and its plumbing are obsolete.
-The game side already provides everything a read-only status line needs —
-the menu-pages batch must wire the display half:
+"balance") and the old **Arcade Balance** OSD toggle is gone. What
+replaced it:
 
-> **RELEASE-NOTES ITEM — the existing OSD row is now a placebo.** Until
-> step 1 below lands, the **Arcade Balance** row still appears in the OSD
-> and still toggles, but it DOES NOTHING. The wrapper keeps writing
-> `arcade-balance = on|off` into `config`
-> (`write_runtime_arcade_balance_default`,
-> `vendor/Main_MiSTer/thirdsarm_wrapper.cpp:979`) and the game no longer
-> reads that key at all — `arcade-balance` was removed from
-> `default_entries` in `src/port/config/config.c` and replaced by
-> `balance`. So a player who flips the row sees no change in behavior and
-> gets no feedback explaining why. Ship notes must say: balance is now
-> automatic (arcade when the CPS3 ROM verifies, PS2 otherwise), the OSD
-> row is inert pending the status-row rework, and the only override is a
-> hand-added `balance = ps2` line in `config`.
+- `vendor/Menu_MiSTer/menu.sv` CONF_STR: `"O[30],Arcade Balance,Off,On;"`
+  and its bit-30 ordering comment were deleted; the first row is now the
+  read-only text row `"-,Balance:;"`. Status bit `[30]` is retired and
+  unused.
+- `vendor/Main_MiSTer/thirdsarm_wrapper.cpp`: the `[30]` poll/seed/reset
+  syncs and `read_runtime_arcade_balance_default()` /
+  `runtime_arcade_balance_config_value()` /
+  `write_runtime_arcade_balance_default()` were deleted along with
+  `g_wrapper_arcade_balance` and `enum RuntimeArcadeBalanceMenu`. The
+  wrapper no longer writes the `arcade-balance` config key at all (the
+  game stopped reading it when `balance` replaced it in
+  `src/port/config/config.c`).
+- `thirdsarm_balance_status_line()` (declared in `thirdsarm_wrapper.h`)
+  renders the row. It reads line 1 of
+  `/media/fat/games/3s-arm/balance.status` and formats
+  ` Balance: Arcade (CPS3)` / ` Balance: PS2`, or ` Balance: (unknown)`
+  when the file is missing or empty (the game has not booted since
+  balance auto-select shipped). The contents are cached and re-read only
+  when `stat()` reports a changed mtime/size, because
+  `MENU_GENERIC_MAIN1` re-renders on every OSD navigation event while
+  the file itself only changes at game relaunch.
+- `tools/mister-wrapper/main-mister-full-menu.patch` carries the
+  substitution: in the `p[0] == '-'` text-row branch of
+  `MENU_GENERIC_MAIN1`, a row whose text is exactly `Balance:` is
+  replaced with the formatted status. Unsubstituted it degrades to a
+  bare ` Balance:` label.
 
-What the game provides (already shipped):
+What the game provides:
 
 - `<pref>/balance.status` (`/media/fat/games/3s-arm/balance.status` on
   MiSTer, next to `config`): overwritten on every game boot.
@@ -495,20 +507,14 @@ What the game provides (already shipped):
 - In-process: `ArcadeBalance_GetStatusText()` / `ArcadeBalance_GetReason()`
   (src/arcade/arcade_balance.h) — for any future game-rendered surface.
 
-What the menu-pages task must do:
+Line 2 (the PS2 reason) is deliberately NOT rendered: the OSD row is 32
+columns and the longest reason string is 48. It remains available for a
+future info popup or a second row.
 
-1. `vendor/Menu_MiSTer/menu.sv`: remove the `Arcade Balance` row (status
-   bit `[30]`) from the config string; add the read-only status row.
-2. `vendor/Main_MiSTer/thirdsarm_wrapper.cpp`: delete the `[30]` sync +
-   `write_runtime_arcade_balance_default()` /
-   `read_runtime_arcade_balance_default()` machinery (the game ignores the
-   `arcade-balance` config key entirely now); instead read
-   `balance.status` line 1 (re-read on OSD open — the file changes only at
-   game relaunch) and render it in the new status row, e.g.
-   `Balance: Arcade (CPS3)`.
-3. Optional detail surface: line 2 (the PS2 reason) fits an info popup or
-   second line; not required for the status row itself.
+The row is display-only — balance cannot be toggled from the OSD.
+Players with the ROM who want PS2 set `balance = ps2` in `config`.
 
-No game-side change is needed for the status line beyond what is listed
-above; the row is display-only (balance cannot be toggled from the OSD —
-players with the ROM who want PS2 set `balance = ps2` in `config`).
+**Ship note:** balance is now automatic (arcade when the CPS3 ROM
+verifies AND the full 20-character adaptation succeeds, PS2 otherwise);
+the OSD shows the outcome and the only override is a hand-added
+`balance = ps2` line in `config`.
