@@ -429,8 +429,14 @@ void Mode_Select(struct _TASK* task_ptr) {
 
             case 4:
 #if defined(NETPLAY_ENABLED)
-                Netplay_BeginMatchmaking();
-                Netplay_BeginDirectP2P();
+                /* Netplay arms only in verified-arcade balance state; on
+                 * refusal the reason renders via the direct-P2P overlay. */
+                if (Netplay_ArmAllowed()) {
+                    Netplay_BeginMatchmaking();
+                    Netplay_BeginDirectP2P();
+                } else {
+                    Netplay_RefuseArm();
+                }
                 break;
 #else
                 break;
@@ -1393,8 +1399,13 @@ void Netplay_Menu(struct _TASK* task_ptr) {
             }
 
             if (Menu_Cursor_Y[0] == 0 && !check_netplay_cancelled()) {
-                Netplay_BeginMatchmaking();
-                Netplay_BeginDirectP2P();
+                /* Same arm-time gate as the mode-select entry. */
+                if (Netplay_ArmAllowed()) {
+                    Netplay_BeginMatchmaking();
+                    Netplay_BeginDirectP2P();
+                } else {
+                    Netplay_RefuseArm();
+                }
                 break;
             }
         }

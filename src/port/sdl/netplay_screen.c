@@ -72,6 +72,19 @@ void NetplayScreen_Render() {
         // those re-init frames is unverified on hardware. Skip the draw
         // while TASK_INIT is live; the overlay resumes the moment init
         // finishes (the FAILED_* states are sticky, so nothing is lost).
+        //
+        // The balance lane adds a SECOND, earlier way into this branch,
+        // which makes the guard load-bearing rather than merely
+        // defensive: the arm-time refusal path (Netplay_RefuseArm) parks
+        // the orchestrator in FAILED_HANDSHAKE from inside
+        // set_netplay_params(), which runs BEFORE sf3_init() — so on a
+        // refused boot this branch fires on frames where the sprite bank
+        // has never been initialized at all. Every pre-refusal
+        // orchestrator state could only appear after the first game-loop
+        // tick, which is why this branch historically had no guard.
+        // The early-return stays UNCONDITIONAL: while the orchestrator
+        // owns the screen the matchmaking/nav paths below must not draw
+        // over it, init-complete or not.
         if (task[TASK_INIT].condition == 0) {
             DirectP2P_DrawOverlay();
         }

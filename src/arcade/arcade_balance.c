@@ -179,15 +179,3 @@ const char* ArcadeBalance_GetReason() {
 uint64_t ArcadeBalance_GetDigest() {
     return digest;
 }
-
-void ArcadeBalance_ForceDisable() {
-    /* Transitional netplay force — replaced by the arm-time verified-
-     * arcade predicate in the netplay-gating change. */
-    if (is_enabled) {
-        SDL_Log("Arcade balance disabled for netplay session (not negotiated between peers)");
-    }
-
-    is_enabled = false;
-    digest = 0;
-    set_ps2_reason("netplay session forced PS2 balance");
-}

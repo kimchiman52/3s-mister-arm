@@ -485,16 +485,24 @@ static void setup_vs_mode() {
     save_w[MODE_NETWORK].Handicap = 0;
     save_w[MODE_NETWORK].GuardCheck = 0;
 
-    // Arcade balance is a local config peers never negotiate; a mismatch
-    // guarantees a rollback desync. NetplayNav_Arm covers the direct-P2P
-    // entries, but matchmaking reaches here without arming Nav — force it
-    // off at the common session-setup chokepoint for every entry path.
-    ArcadeBalance_ForceDisable();
-    // Same reasoning for CFG_DRAW_PLAYERS_ABOVE_HUD's gameplay-affecting
-    // reads (effect-table population, scr_trans/scr_calc selection) —
-    // pinned off here too so matchmaking entries (which skip NetplayNav_Arm)
-    // are covered.
-    DrawPlayersAboveHud_ForceDisable();
+    // Balance is no longer forced off here: every netplay entry path is
+    // gated at arm time by Netplay_ArmAllowed() (verified-arcade required)
+    // and the MIST handshake digest-checks the adapted data, so both peers
+    // simulate identical arcade balance. Belt-and-braces: a session
+    // reaching this chokepoint without verified arcade means an entry
+    // path missed its gate.
+    if (!ArcadeBalance_IsEnabled()) {
+        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                     "setup_vs_mode reached without verified arcade balance (%s) — "
+                     "an entry path missed the Netplay_ArmAllowed gate",
+                     ArcadeBalance_GetReason());
+    }
+    // CFG_DRAW_PLAYERS_ABOVE_HUD's gameplay-affecting reads (effect-table
+    // population, scr_trans/scr_calc selection) are still a local config
+    // peers never negotiate — suppress for the session at the common
+    // session-setup chokepoint (covers matchmaking entries, which skip
+    // NetplayNav_Arm). Released when the session finishes tearing down.
+    DrawPlayersAboveHud_SetNetplaySuppressed(true);
 
     E_Timer = 0; // E_Timer can have different values depending on when the session was initiated.
 
@@ -1913,6 +1921,13 @@ void Netplay_Run() {
         Copy_Save_w();
         Copy_Check_w();
 
+        // Release the netplay-session suppression of the draw-players-
+        // above-HUD gameplay reads: the session is fully torn down, so
+        // subsequent LOCAL play gets the user's configured value back.
+        // (The old ForceDisable latch was never cleared — a menu-initiated
+        // netplay session left the suppression on until relaunch.)
+        DrawPlayersAboveHud_SetNetplaySuppressed(false);
+
         session_state = NETPLAY_SESSION_IDLE;
         break;
 
@@ -1938,8 +1953,45 @@ const char* Netplay_GetConnectStatusText(void) {
     return s_connect_status;
 }
 
+// Arm-time predicate: netplay arms ONLY in verified-arcade balance state.
+// Balance auto-selects once at boot (ArcadeBalance_Init) and is fixed for
+// the process, so this answer cannot change under a live session. Peers
+// that both pass the gate still cross-check the adapted data via the MIST
+// handshake balance digest.
+bool Netplay_ArmAllowed(void) {
+    return ArcadeBalance_IsEnabled();
+}
+
+// Refusal path shared by every entry site (nav arm, direct-P2P handoff
+// dispatch, matchmaking CLI, in-game network menu): log, then surface the
+// reason on screen through the existing direct-P2P overlay mechanism —
+// the same route the MIST handshake reject path uses (ERROR + status
+// text, rendered by NetplayScreen_Render -> DirectP2P_DrawOverlay).
+void Netplay_RefuseArm(void) {
+    char msg[120];
+    SDL_snprintf(msg, sizeof(msg), "Netplay needs arcade balance - %s", ArcadeBalance_GetReason());
+    // SDL_Log, not a bare printf: this fires during set_netplay_params()
+    // at boot, long before any of the fflush(stdout) pairings elsewhere
+    // in this file run, so a block-buffered stdout (any redirected or
+    // piped run — i.e. every field log we actually receive) would swallow
+    // the only record of WHY netplay refused. SDL_Log is unbuffered to
+    // stderr and matches DirectP2P_RefuseSession's own line below it.
+    SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "[netplay] refusing to arm: %s", msg);
+    DirectP2P_Init();
+    DirectP2P_RefuseSession(msg);
+}
+
 void Netplay_HandleMenuExit() {
     Netplay_CancelMatchmaking();
+
+    // A refused arm (or a post-session MIST reject) parks the direct-P2P
+    // overlay in the terminal FAILED_HANDSHAKE state so the reason stays
+    // readable. Leaving the network menu is the user acknowledging it —
+    // clear the overlay so it does not sit over subsequent local play.
+    // Only when no session exists: live-session teardown owns its own path.
+    if (session_state == NETPLAY_SESSION_IDLE && DirectP2P_GetState() == DIRECT_P2P_FAILED_HANDSHAKE) {
+        DirectP2P_Cancel();
+    }
 
     switch (session_state) {
     case NETPLAY_SESSION_IDLE:

@@ -27,8 +27,13 @@ const char* ArcadeBalance_GetReason();
 /// handshake so peers with differing adapted data reject instead of desync.
 uint64_t ArcadeBalance_GetDigest();
 
-/* Transitional netplay force-off; superseded by the arm-time
- * verified-arcade predicate. */
-void ArcadeBalance_ForceDisable();
+/* There is deliberately NO netplay force-off here anymore. The old
+ * ArcadeBalance_ForceDisable was a process-lifetime latch that was never
+ * cleared, so a menu-initiated netplay session left arcade balance off for
+ * subsequent LOCAL play until relaunch. Netplay now requires the
+ * verified-arcade state instead: every session entry path is gated by the
+ * arm-time predicate Netplay_ArmAllowed() (src/netplay/netplay.c), and the
+ * MIST handshake carries ArcadeBalance_GetDigest() so peers with differing
+ * adapted data are rejected. */
 
 #endif

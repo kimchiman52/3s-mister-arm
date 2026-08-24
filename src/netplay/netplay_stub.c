@@ -75,6 +75,13 @@ const char* Netplay_GetConnectStatusText(void) {
 void Netplay_HandleMenuExit() {
 }
 
+bool Netplay_ArmAllowed(void) {
+    return false;
+}
+
+void Netplay_RefuseArm(void) {
+}
+
 void Netplay_GetNetworkStats(NetworkStats* stats) {
     if (stats != NULL) {
         memset(stats, 0, sizeof(*stats));

@@ -1,12 +1,12 @@
 #include "port/config/draw_players_above_hud.h"
 #include "port/config/config.h"
 
-static bool force_disabled = false;
+static bool netplay_suppressed = false;
 
 bool DrawPlayersAboveHud_Enabled(void) {
-    return !force_disabled && Config_GetBool(CFG_DRAW_PLAYERS_ABOVE_HUD);
+    return !netplay_suppressed && Config_GetBool(CFG_DRAW_PLAYERS_ABOVE_HUD);
 }
 
-void DrawPlayersAboveHud_ForceDisable(void) {
-    force_disabled = true;
+void DrawPlayersAboveHud_SetNetplaySuppressed(bool suppressed) {
+    netplay_suppressed = suppressed;
 }

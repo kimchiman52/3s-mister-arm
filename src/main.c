@@ -269,7 +269,14 @@ static void set_netplay_params() {
          * the menu-nav frames above it. */
         NetplayNav_Arm();
     } else if (configuration.netplay.matchmaking_ip != NULL) {
-        Netplay_SetMatchmakingParams(configuration.netplay.matchmaking_ip, configuration.netplay.matchmaking_port);
+        /* Arm-time predicate: matchmaking reaches setup_vs_mode without
+         * NetplayNav_Arm, so gate it here (see Netplay_ArmAllowed). */
+        if (Netplay_ArmAllowed()) {
+            Netplay_SetMatchmakingParams(configuration.netplay.matchmaking_ip,
+                                         configuration.netplay.matchmaking_port);
+        } else {
+            Netplay_RefuseArm();
+        }
     } else {
         /* Direct-P2P dispatch is deferred to the main game loop tick. The
          * orchestrator's worker thread publishes state transitions the
@@ -304,6 +311,17 @@ static void defer_direct_p2p_handoff_tick(void) {
     if (dispatched) return;
     dispatched = true;
     if (configuration.netplay.matchmaking_ip != NULL) return;
+    /* Arm-time predicate: the handoff dispatch (BeginHost/BeginJoin) runs
+     * independently of NetplayNav_Arm, so it needs its own gate — without
+     * this the orchestrator would still host/join even though nav refused.
+     * Netplay_RefuseArm keeps the overlay reason posted (idempotent with
+     * the refusal NetplayNav_Arm already issued at boot). */
+    if (!Netplay_ArmAllowed()) {
+        if (resolve_direct_p2p_handoff_path() != NULL) {
+            Netplay_RefuseArm();
+        }
+        return;
+    }
     if (configuration.netplay.p2p_remote_ip != NULL) {
         // LAN/localhost direct-P2P path: Netplay_SetParams already wired
         // remote_ip/local_port/remote_port via set_netplay_params, and

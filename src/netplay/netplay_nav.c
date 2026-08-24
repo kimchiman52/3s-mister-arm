@@ -39,7 +39,6 @@
 
 #include "netplay/netplay_nav.h"
 
-#include "arcade/arcade_balance.h"
 #include "main.h"
 #include "netplay/direct_p2p.h"
 #include "netplay/netplay.h"
@@ -159,6 +158,15 @@ void NetplayNav_Arm(void) {
         /* Idempotent — already armed or driving. */
         return;
     }
+    /* Netplay arms ONLY in verified-arcade balance state (arm-time
+     * predicate; see Netplay_ArmAllowed in netplay.c). Balance is fixed
+     * at boot and digest-checked in the MIST handshake, so gated peers
+     * always simulate identical arcade data. On refusal the reason is
+     * routed to the direct-P2P overlay (ERROR + text). */
+    if (!Netplay_ArmAllowed()) {
+        Netplay_RefuseArm();
+        return;
+    }
     /* Force console game mode for the session. The arcade path
      * (Loop_Demo branch in game.c) inline-jumps to Game12 / MODE_ARCADE
      * on the first Coin press, skipping Mode_Select registration
@@ -167,13 +175,11 @@ void NetplayNav_Arm(void) {
      * diverge on the arcade-specific DIP-switch block that we never
      * synchronize. */
     SDLApp_ForceConsoleGameMode();
-    /* Same class of divergence: arcade balance is a local config the peers
-     * never negotiate; force PS2 balance for the session. */
-    ArcadeBalance_ForceDisable();
-    /* Same class again: CFG_DRAW_PLAYERS_ABOVE_HUD's gameplay-affecting
-     * reads (effect-table population, scr_trans/scr_calc selection) are a
-     * local config the peers never negotiate. */
-    DrawPlayersAboveHud_ForceDisable();
+    /* CFG_DRAW_PLAYERS_ABOVE_HUD's gameplay-affecting reads (effect-table
+     * population, scr_trans/scr_calc selection) are a local config the
+     * peers never negotiate — suppress for the netplay session (released
+     * when the session finishes tearing down; see draw_players_above_hud.h). */
+    DrawPlayersAboveHud_SetNetplaySuppressed(true);
     fprintf(stderr, "[netplay_nav] armed\n");
     fflush(stderr);
     transition_to(NAV_WAIT_INIT);
