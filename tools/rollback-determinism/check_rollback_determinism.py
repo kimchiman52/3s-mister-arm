@@ -88,6 +88,16 @@ def log(msg):
     print(f"[rbd-driver] {msg}", file=sys.stderr, flush=True)
 
 
+class ScenarioError(Exception):
+    """A single scenario's runs failed (crash, timeout, truncated stream,
+    zero rollback cycles, never in-game). Contained per scenario so a
+    crash-class finding in one character's sweep doesn't hide the results
+    of the other 20 — the scenario is reported as ERROR and the driver
+    still exits 2. A scenario ERROR in a rollback run usually IS a
+    finding (a crash-class rollback bug); see the per-run .log next to
+    the streams."""
+
+
 def fail(msg):
     log(f"ERROR: {msg}")
     print("RBD SUMMARY: verdict=ERROR")
@@ -213,10 +223,10 @@ def read_stream(path):
     with open(path, "rb") as f:
         data = f.read()
     if len(data) < 8:
-        fail(f"stream {path} truncated (no header)")
+        raise ScenarioError(f"stream {path} truncated (no header)")
     magic, sym_count = struct.unpack_from("<II", data, 0)
     if magic != STREAM_MAGIC:
-        fail(f"stream {path} has bad magic {magic:#x}")
+        raise ScenarioError(f"stream {path} has bad magic {magic:#x}")
     row_bytes = 4 + sym_count * 4
     off = 8
     rows = []
@@ -227,17 +237,17 @@ def read_stream(path):
             break
         frame_idx = maybe_magic
         if frame_idx != len(rows):
-            fail(f"stream {path}: frame index {frame_idx} at row {len(rows)} — corrupt stream")
+            raise ScenarioError(f"stream {path}: frame index {frame_idx} at row {len(rows)} — corrupt stream")
         rows.append(data[off + 4:off + row_bytes])
         off += row_bytes
     if off + 20 != len(data):
-        fail(f"stream {path}: missing/short footer — run died before completing "
+        raise ScenarioError(f"stream {path}: missing/short footer — run died before completing "
              f"(rows={len(rows)}, trailing={len(data) - off} bytes)")
     magic, frames, cycles, ingame_first, completed = struct.unpack_from("<IIIII", data, off)
     if magic != FOOTER_MAGIC or completed != 1:
-        fail(f"stream {path}: bad footer (magic={magic:#x} completed={completed})")
+        raise ScenarioError(f"stream {path}: bad footer (magic={magic:#x} completed={completed})")
     if frames != len(rows):
-        fail(f"stream {path}: footer frames={frames} but rows={len(rows)}")
+        raise ScenarioError(f"stream {path}: footer frames={frames} but rows={len(rows)}")
     return Stream(sym_count, rows, frames, cycles, ingame_first)
 
 
@@ -301,7 +311,7 @@ def wait_with_timeout(pid, timeout, log_path):
         if _time.monotonic() > deadline:
             os.kill(pid, _signal.SIGKILL)
             os.waitpid(pid, 0)
-            fail(f"game timed out after {timeout}s (log: {log_path})")
+            raise ScenarioError(f"game timed out after {timeout}s (log: {log_path})")
         _time.sleep(0.2)
 
 
@@ -329,10 +339,10 @@ def run_game(binary, base_args, extra_args, out_path, map_path, frames,
                                       stderr=subprocess.STDOUT,
                                       timeout=timeout, cwd=REPO_ROOT)
             except subprocess.TimeoutExpired:
-                fail(f"game timed out after {timeout}s (log: {log_path})")
+                raise ScenarioError(f"game timed out after {timeout}s (log: {log_path})")
             returncode = proc.returncode
     if returncode != 0:
-        fail(f"game exited with code {returncode} (log: {log_path})")
+        raise ScenarioError(f"game exited with code {returncode} (log: {log_path})")
     return read_stream(out_path)
 
 
@@ -341,7 +351,7 @@ def run_game(binary, base_args, extra_args, out_path, map_path, frames,
 def diff_streams(ref, other):
     """Returns {sym_index: (first_frame, last_frame, count)}."""
     if ref.sym_count != other.sym_count or len(ref.rows) != len(other.rows):
-        fail(f"stream shape mismatch: {ref.sym_count}x{len(ref.rows)} vs "
+        raise ScenarioError(f"stream shape mismatch: {ref.sym_count}x{len(ref.rows)} vs "
              f"{other.sym_count}x{len(other.rows)}")
     result = {}
     n = ref.sym_count
@@ -393,6 +403,93 @@ def load_gs_save_names():
     names.update({"frw", "frwque", "frwctr", "frwctr_min",
                   "head_ix", "tail_ix", "exec_tm"})
     return names
+
+
+# --- per-scenario pipeline --------------------------------------------------
+
+def run_scenario(name, extra, args, outdir, map_path, frames, entries,
+                 allowlist, gs_saved):
+    """Run A1/A2/B for one scenario, diff, classify, print, and return the
+    scenario dict for report.json. Raises ScenarioError on any run/stream
+    failure (contained by the caller)."""
+    log(f"scenario {name}: baseline A1")
+    runs = {}
+    for run_name, period in (("A1", 0), ("A2", 0), ("B", args.rollback_period)):
+        if run_name != "A1":
+            log(f"scenario {name}: {'baseline ' + run_name if period == 0 else 'rollback B'}")
+        out = os.path.join(outdir, f"{name}.{run_name}.rbd")
+        runlog = os.path.join(outdir, f"{name}.{run_name}.log")
+        runs[run_name] = run_game(args.binary, [], extra, out, map_path,
+                                  frames, period, args.rollback_depth,
+                                  args.timeout, runlog)
+
+    b = runs["B"]
+    if b.cycles == 0:
+        raise ScenarioError(f"rollback run executed ZERO rollback cycles — "
+                            f"harness is not exercising the save/load path")
+    if b.ingame_first == 0xFFFFFFFF:
+        raise ScenarioError(f"run never reached in-game (G_No[1]==2) "
+                            f"within {frames} frames")
+
+    noise = diff_streams(runs["A1"], runs["A2"])
+    div = diff_streams(runs["A1"], b)
+
+    # A GS_SAVE-covered symbol in the noise set means the baseline
+    # itself is nondeterministic in gameplay state — the feedback
+    # detector is blind there. Warn loudly; that's a harness-health
+    # signal, not a divergence verdict.
+    noisy_saved = sorted(entries[i][2] for i in noise
+                         if entries[i][2] in gs_saved)
+    if noisy_saved:
+        log(f"WARNING scenario {name}: GS_SAVE-covered symbols are "
+            f"baseline-nondeterministic (feedback detection blind for "
+            f"them): {', '.join(noisy_saved)}")
+
+    rows = []
+    n_noise = n_allow = n_real = n_feedback = 0
+    for idx, (first, last, count) in sorted(div.items(), key=lambda kv: kv[1][0]):
+        addr, size, sym = entries[idx]
+        if idx in noise:
+            n_noise += 1
+            verdict = "NOISE"
+            reason = "differs between the two identical baseline runs"
+        else:
+            reason = allowlist_match(sym, allowlist)
+            if reason is not None:
+                n_allow += 1
+                verdict = "ALLOWED"
+            else:
+                n_real += 1
+                verdict = "DIVERGENT"
+                if sym in gs_saved:
+                    verdict = "DIVERGENT+FEEDBACK"
+                    n_feedback += 1
+        rows.append({"symbol": sym, "addr": f"{addr:#x}", "size": size,
+                     "first_frame": first, "last_frame": last,
+                     "divergent_frames": count, "verdict": verdict,
+                     "saved": sym in gs_saved, "reason": reason})
+
+    # Noise-only symbols (nondeterministic even without rollback) that
+    # did NOT show in the A1-vs-B diff are still worth listing.
+    noise_names = sorted(entries[i][2] for i in noise)
+
+    print(f"\n=== scenario {name} (in-game from frame {b.ingame_first}, "
+          f"{b.cycles} rollback cycles) ===")
+    if not rows:
+        print("  no divergence at all")
+    for r in rows:
+        tag = f" [{r['reason']}]" if r["verdict"] in ("ALLOWED",) else ""
+        print(f"  {r['verdict']:<18} {r['symbol']:<40} addr={r['addr']} "
+              f"size={r['size']} first={r['first_frame']} last={r['last_frame']} "
+              f"frames={r['divergent_frames']}{tag}")
+    if noise_names:
+        print(f"  (baseline noise, excluded: {', '.join(noise_names)})")
+
+    return {"name": name, "args": extra, "frames": frames,
+            "rollback_cycles": b.cycles, "ingame_first_frame": b.ingame_first,
+            "divergent": n_real, "feedback": n_feedback,
+            "allowlisted": n_allow, "noise": len(noise),
+            "noise_symbols": noise_names, "rows": rows}
 
 
 # --- main ------------------------------------------------------------------
@@ -452,108 +549,53 @@ def main(argv):
     total_feedback = 0
     total_noise = 0
     total_allowlisted = 0
+    total_errors = 0
 
     for name, extra in scenarios:
-        log(f"scenario {name}: baseline A1")
-        runs = {}
-        for run_name, period in (("A1", 0), ("A2", 0), ("B", args.rollback_period)):
-            if run_name != "A1":
-                log(f"scenario {name}: {'baseline ' + run_name if period == 0 else 'rollback B'}")
-            out = os.path.join(outdir, f"{name}.{run_name}.rbd")
-            runlog = os.path.join(outdir, f"{name}.{run_name}.log")
-            runs[run_name] = run_game(args.binary, [], extra, out, map_path,
-                                      frames, period, args.rollback_depth,
-                                      args.timeout, runlog)
+        try:
+            scenario_result = run_scenario(name, extra, args, outdir, map_path,
+                                           frames, entries, allowlist, gs_saved)
+        except ScenarioError as e:
+            total_errors += 1
+            log(f"SCENARIO ERROR {name}: {e}")
+            print(f"\n=== scenario {name} ===")
+            print(f"  ERROR              {e}")
+            print(f"  (a rollback-run crash/hang here is usually a crash-class "
+                  f"rollback bug — see the per-run .log files in {outdir})")
+            report["scenarios"].append({"name": name, "args": extra,
+                                        "error": str(e)})
+            continue
 
-        b = runs["B"]
-        if b.cycles == 0:
-            fail(f"scenario {name}: rollback run executed ZERO rollback cycles — "
-                 f"harness is not exercising the save/load path")
-        if b.ingame_first == 0xFFFFFFFF:
-            fail(f"scenario {name}: run never reached in-game (G_No[1]==2) "
-                 f"within {frames} frames")
-
-        noise = diff_streams(runs["A1"], runs["A2"])
-        div = diff_streams(runs["A1"], b)
-
-        # A GS_SAVE-covered symbol in the noise set means the baseline
-        # itself is nondeterministic in gameplay state — the feedback
-        # detector is blind there. Warn loudly; that's a harness-health
-        # signal, not a divergence verdict.
-        noisy_saved = sorted(entries[i][2] for i in noise
-                             if entries[i][2] in gs_saved)
-        if noisy_saved:
-            log(f"WARNING scenario {name}: GS_SAVE-covered symbols are "
-                f"baseline-nondeterministic (feedback detection blind for "
-                f"them): {', '.join(noisy_saved)}")
-
-        rows = []
-        n_noise = n_allow = n_real = n_feedback = 0
-        for idx, (first, last, count) in sorted(div.items(), key=lambda kv: kv[1][0]):
-            addr, size, sym = entries[idx]
-            if idx in noise:
-                n_noise += 1
-                verdict = "NOISE"
-                reason = "differs between the two identical baseline runs"
-            else:
-                reason = allowlist_match(sym, allowlist)
-                if reason is not None:
-                    n_allow += 1
-                    verdict = "ALLOWED"
-                else:
-                    n_real += 1
-                    verdict = "DIVERGENT"
-                    if sym in gs_saved:
-                        verdict = "DIVERGENT+FEEDBACK"
-                        n_feedback += 1
-            rows.append({"symbol": sym, "addr": f"{addr:#x}", "size": size,
-                         "first_frame": first, "last_frame": last,
-                         "divergent_frames": count, "verdict": verdict,
-                         "saved": sym in gs_saved, "reason": reason})
-
-        # Noise-only symbols (nondeterministic even without rollback) that
-        # did NOT show in the A1-vs-B diff are still worth listing.
-        noise_names = sorted(entries[i][2] for i in noise)
-
-        scen = {"name": name, "args": extra, "frames": frames,
-                "rollback_cycles": b.cycles, "ingame_first_frame": b.ingame_first,
-                "divergent": n_real, "feedback": n_feedback,
-                "allowlisted": n_allow, "noise": len(noise),
-                "noise_symbols": noise_names, "rows": rows}
-        report["scenarios"].append(scen)
-        total_divergent += n_real
-        total_feedback += n_feedback
-        total_noise += len(noise)
-        total_allowlisted += n_allow
-
-        print(f"\n=== scenario {name} (in-game from frame {b.ingame_first}, "
-              f"{b.cycles} rollback cycles) ===")
-        if not rows:
-            print("  no divergence at all")
-        for r in rows:
-            tag = f" [{r['reason']}]" if r["verdict"] in ("ALLOWED",) else ""
-            print(f"  {r['verdict']:<18} {r['symbol']:<40} addr={r['addr']} "
-                  f"size={r['size']} first={r['first_frame']} last={r['last_frame']} "
-                  f"frames={r['divergent_frames']}{tag}")
-        if noise_names:
-            print(f"  (baseline noise, excluded: {', '.join(noise_names)})")
+        report["scenarios"].append(scenario_result)
+        total_divergent += scenario_result["divergent"]
+        total_feedback += scenario_result["feedback"]
+        total_noise += scenario_result["noise"]
+        total_allowlisted += scenario_result["allowlisted"]
 
     report_path = os.path.join(outdir, "report.json")
     with open(report_path, "w") as f:
         json.dump(report, f, indent=2)
     log(f"report: {report_path}")
 
-    verdict = "PASS" if total_divergent == 0 else "FAIL"
+    if total_errors > 0:
+        verdict = "ERROR"
+    elif total_divergent > 0:
+        verdict = "FAIL"
+    else:
+        verdict = "PASS"
     print(f"\nRBD SUMMARY: mode={args.mode} scenarios={len(scenarios)} "
           f"frames={frames} period={args.rollback_period} depth={args.rollback_depth} "
           f"divergent={total_divergent} feedback={total_feedback} "
-          f"allowlisted={total_allowlisted} noise={total_noise} verdict={verdict}")
+          f"allowlisted={total_allowlisted} noise={total_noise} "
+          f"errors={total_errors} verdict={verdict}")
 
     if verdict == "PASS" and not args.keep and args.outdir is None:
         shutil.rmtree(outdir, ignore_errors=True)
     else:
         log(f"work dir kept: {outdir}")
 
+    if verdict == "ERROR":
+        return 2
     return 0 if verdict == "PASS" else 1
 
 

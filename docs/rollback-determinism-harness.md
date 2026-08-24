@@ -94,13 +94,17 @@ tools/rollback-determinism/run.sh thorough   # every selectable character
 ```
 
 Exit code **0** = no unexplained divergence, **1** = divergence found
-(the report lists each symbol), **2** = harness/plumbing failure (game
-crashed, timed out, produced no rollback cycles, or never reached
-in-game — a run that did no work can never pass). The last stdout line
-is always the machine-greppable verdict:
+(the report lists each symbol), **2** = harness/plumbing failure or any
+scenario ERROR (game crashed, timed out, produced no rollback cycles,
+or never reached in-game — a run that did no work can never pass).
+Scenario-level failures are contained: the scenario is reported as
+ERROR (a rollback-run crash there is usually a crash-class rollback
+bug — see its `.log` in the work dir) and the sweep continues, but the
+driver still exits 2. The last stdout line is always the
+machine-greppable verdict:
 
 ```
-RBD SUMMARY: mode=fast scenarios=2 frames=1500 period=1 depth=3 divergent=N feedback=F allowlisted=A noise=X verdict=PASS|FAIL
+RBD SUMMARY: mode=fast scenarios=2 frames=1500 period=1 depth=3 divergent=N feedback=F allowlisted=A noise=X errors=E verdict=PASS|FAIL|ERROR
 ```
 
 There is deliberately no detached exit timer anywhere in the harness: the
@@ -176,11 +180,28 @@ allowlist entry defeats the whole tool.
    period 8 / depth ≤ 2 (which completes select and reaches in-game on
    the exact same frame as baseline), and the
    character-select-transition / game-transition / boot phases are not
-   covered at all. **These crash traps are themselves a real
-   netplay-relevant exposure** (a real mid-load rollback can hit them),
-   but they manifest as hangs/crashes, not byte divergence; this
-   byte-diff harness scopes them out and they remain catalogued here
-   and in the 2026-04-29 arcade-trap sweep notes.
+   covered at all.
+
+   The same trap class is reachable **mid-match, at round-init
+   boundaries**: the thorough sweep's `char06-pressure-super` (Hugo)
+   rollback run deterministically segfaults when a speculative leg
+   crosses a round (re)initialization — full stack:
+   `Game2_1 → Player_control → plcnt_init → init_app_10000 → pli_0000 →
+   setup_base_and_other_data → make_texcash_work(6) →
+   mlt_obj_trans_init (mtrans.c:2228) → ppgSetupTexChunkSeqs
+   (PPGFile.c:1014) adrs=NULL`, immediately after a
+   `[ramcnt-skip] Get_ramcnt_address key=-1 (returning 0)` guard line
+   (one of the 2026-04-29 brick-prevention guards converting the
+   arcade trap into a NULL return that this path then dereferences).
+   The driver reports such a scenario as ERROR (with the per-run log)
+   and still sweeps the remaining characters.
+
+   **These crash traps are themselves a real netplay-relevant
+   exposure** (a real rollback across the same one-shot inits runs the
+   identical double-init pattern), but they manifest as hangs/crashes,
+   not byte divergence; this byte-diff harness surfaces them as
+   scenario ERRORs rather than symbol findings, and they remain
+   catalogued here and in the 2026-04-29 arcade-trap sweep notes.
 2. **Noise-masked symbols.** Anything nondeterministic between two
    identical baseline runs (stored pointer values under per-process
    ASLR, audio-mixer state advanced by a real-time thread, allocator
