@@ -3525,6 +3525,229 @@ static int test_relay_rung(void) {
     return 1;
 }
 
+/* --- Test 17: S5 relay codec pinned to literal bytes ------------------- */
+
+/*
+ * The relay wire format has TWO independent implementations — rendezvous.c
+ * here and rendezvous-server.js there — both written from the same spec by
+ * the same hand. Test 16's mock is a THIRD implementation in this file, so
+ * a byte-offset mistake shared between the C codec and the C mock would
+ * sail through test 16 while failing against the real server; the JS suite
+ * would likewise stay green because its own duplicate codec would share
+ * the server's (correct) offsets. Neither suite can see that class of bug.
+ *
+ * This test closes it by pinning the C side to LITERAL BYTES matching the
+ * layout documented in docs/plan-netplay-connection.md §7.2 — the same
+ * document the server was written from — rather than to any encoder in
+ * this repository.
+ *
+ * It also pins the invariant the whole design rests on: a RELAY_REQ must
+ * be byte-identical to a REGISTER apart from the type byte, because that
+ * is what lets it ride the server's return-routability gate (which reads
+ * the session key at [8..24) and the cookie at [28..36)) instead of
+ * needing a second gate. If the cookie ever moved, the gate would read
+ * garbage and every relay request would be silently re-challenged
+ * forever — a failure that looks exactly like "the server is down".
+ */
+static int test_relay_codec(void) {
+    fprintf(stderr, "[test_bilateral_punch] test 17: S5 relay codec vs literal bytes\n");
+    const int fails_before = fail_count;
+
+    uint8_t key[REND_KEY_LEN];
+    for (int i = 0; i < REND_KEY_LEN; i++) key[i] = (uint8_t)(0x10u + i);
+    uint8_t cookie[REND_COOKIE_LEN];
+    for (int i = 0; i < REND_COOKIE_LEN; i++) cookie[i] = (uint8_t)(0xC0u + i);
+    uint8_t token[REND_TOKEN_LEN];
+    for (int i = 0; i < REND_TOKEN_LEN; i++) token[i] = (uint8_t)(0x70u + i);
+
+    /* (1) THE invariant: RELAY_REQ == REGISTER with byte 5 retyped. */
+    {
+        uint8_t reg[REND_REGISTER_PKT_LEN];
+        uint8_t req[REND_RELAY_REQ_PKT_LEN];
+        EXPECT_TRUE("17-build-register", Rendezvous_BuildRegister(0xBEEF, key, cookie, reg));
+        EXPECT_TRUE("17-build-relayreq", Rendezvous_BuildRelayReq(0xBEEF, key, cookie, req));
+        EXPECT_TRUE("17-req-len-is-register-len",
+                    (int)sizeof(req) == REND_REGISTER_PKT_LEN);
+        EXPECT_TRUE("17-req-type", req[5] == REND_TYPE_RELAY_REQ);
+        EXPECT_TRUE("17-reg-type", reg[5] == REND_TYPE_REGISTER);
+        reg[5] = REND_TYPE_RELAY_REQ;
+        if (memcmp(reg, req, REND_REGISTER_PKT_LEN) != 0) {
+            FAIL("17-req-is-register",
+                 "RELAY_REQ differs from REGISTER by more than the type byte — it would "
+                 "no longer pass the server's return-routability gate");
+        }
+        /* And the fields the gate reads are where the gate expects. */
+        EXPECT_TRUE("17-req-key-offset", memcmp(&req[8], key, REND_KEY_LEN) == 0);
+        EXPECT_TRUE("17-req-cookie-offset",
+                    memcmp(&req[28], cookie, REND_COOKIE_LEN) == 0);
+    }
+
+    /* (2) RELAY_GRANT: parse a hand-written frame laid out per §7.2 —
+     *     magic(4) ver(1) type(1) slot(1) status(1) key(16) port_be(2)
+     *     rsv(2) token(8). */
+    uint8_t grant[REND_RELAY_GRANT_LEN];
+    memset(grant, 0, sizeof(grant));
+    grant[0] = 0x33; grant[1] = 0x53; grant[2] = 0x58; grant[3] = 0x52; /* '3SXR' */
+    grant[4] = 2;                       /* version — unchanged by S5 */
+    grant[5] = REND_TYPE_RELAY_GRANT;
+    grant[6] = 1;                       /* slot B */
+    grant[7] = 0;                       /* GRANTED */
+    memcpy(&grant[8], key, REND_KEY_LEN);
+    grant[24] = 0x84; grant[25] = 0xD0; /* port 34000, big-endian */
+    memcpy(&grant[28], token, REND_TOKEN_LEN);
+    {
+        RendezvousRelayGrant g;
+        EXPECT_TRUE("17-grant-parse",
+                    Rendezvous_ParseRelayGrant(grant, (int)sizeof(grant), key, &g));
+        EXPECT_TRUE("17-grant-slot", g.slot == 1);
+        EXPECT_TRUE("17-grant-status", g.status == (uint8_t)REND_RELAY_GRANTED);
+        if (g.relay_port != 34000) {
+            fprintf(stderr,
+                    "[test_bilateral_punch] FAIL: 17-grant-port: got %u, expected 34000 "
+                    "(port is big-endian at [24..26))\n", (unsigned)g.relay_port);
+            fail_count++;
+        }
+        EXPECT_TRUE("17-grant-token", memcmp(g.token, token, REND_TOKEN_LEN) == 0);
+    }
+
+    /* (3) Reject table. Every reject must ZERO the output, so a caller
+     *     that ignores the return value cannot act on attacker bytes. */
+    {
+        struct { const char* tag; int off; uint8_t val; } bad[] = {
+            { "17-grant-magic",   0, 0x34 },
+            { "17-grant-version", 4, 3    },
+            { "17-grant-type",    5, 2    }, /* a DELIVER, not a grant */
+            { "17-grant-key",     8, 0xFF },
+        };
+        for (size_t i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
+            uint8_t b[REND_RELAY_GRANT_LEN];
+            memcpy(b, grant, sizeof(b));
+            b[bad[i].off] = bad[i].val;
+            RendezvousRelayGrant g;
+            memset(&g, 0xAA, sizeof(g));
+            EXPECT_FALSE(bad[i].tag,
+                         Rendezvous_ParseRelayGrant(b, (int)sizeof(b), key, &g));
+            EXPECT_TRUE("17-grant-reject-zeroes", g.relay_port == 0 && g.status == 0);
+        }
+        /* Short frame. */
+        RendezvousRelayGrant g;
+        EXPECT_FALSE("17-grant-short",
+                     Rendezvous_ParseRelayGrant(grant, REND_RELAY_GRANT_LEN - 1, key, &g));
+
+        /* FAIL CLOSED: a GRANTED status carrying an unconnectable port,
+         * or a slot the pin encoder cannot express, must not parse — the
+         * caller would otherwise burn its whole pin budget on nothing. */
+        uint8_t p0[REND_RELAY_GRANT_LEN];
+        memcpy(p0, grant, sizeof(p0));
+        p0[24] = 0; p0[25] = 0;
+        EXPECT_FALSE("17-grant-granted-port0",
+                     Rendezvous_ParseRelayGrant(p0, (int)sizeof(p0), key, &g));
+        uint8_t s2[REND_RELAY_GRANT_LEN];
+        memcpy(s2, grant, sizeof(s2));
+        s2[6] = 2;
+        EXPECT_FALSE("17-grant-granted-slot2",
+                     Rendezvous_ParseRelayGrant(s2, (int)sizeof(s2), key, &g));
+
+        /* A REFUSAL is a VALID frame and must parse TRUE with its status —
+         * a client that cannot tell "refused" from "silence" is the
+         * reporting defect this cause exists to remove. */
+        uint8_t refused[REND_RELAY_GRANT_LEN];
+        memcpy(refused, grant, sizeof(refused));
+        refused[6] = REND_RELAY_SLOT_NONE;
+        refused[7] = (uint8_t)REND_RELAY_POOL_EXHAUSTED;
+        refused[24] = 0; refused[25] = 0;
+        RendezvousRelayGrant gr;
+        EXPECT_TRUE("17-grant-refusal-parses",
+                    Rendezvous_ParseRelayGrant(refused, (int)sizeof(refused), key, &gr));
+        EXPECT_TRUE("17-grant-refusal-status",
+                    gr.status == (uint8_t)REND_RELAY_POOL_EXHAUSTED);
+        EXPECT_TRUE("17-grant-refusal-port0", gr.relay_port == 0);
+    }
+
+    /* (4) RELAY_PIN: magic(4) ver(1) type(1) slot(1) rsv(1) token(8)
+     *     rsv2(4) = 20 bytes. */
+    {
+        uint8_t pin[REND_RELAY_PIN_LEN];
+        uint8_t want[REND_RELAY_PIN_LEN];
+        memset(want, 0, sizeof(want));
+        want[0] = 0x33; want[1] = 0x53; want[2] = 0x58; want[3] = 0x52;
+        want[4] = 2;
+        want[5] = REND_TYPE_RELAY_PIN;
+        want[6] = 1;
+        memcpy(&want[8], token, REND_TOKEN_LEN);
+        EXPECT_TRUE("17-pin-build", Rendezvous_BuildRelayPin(1, token, pin));
+        if (memcmp(pin, want, sizeof(want)) != 0) {
+            FAIL("17-pin-bytes", "RELAY_PIN bytes do not match the documented layout");
+        }
+        /* Slots other than 0/1 do not exist on the wire. */
+        EXPECT_FALSE("17-pin-slot2", Rendezvous_BuildRelayPin(2, token, pin));
+    }
+
+    /* (5) RELAY_PIN_ACK: magic(4) ver(1) type(1) slot(1) peer_pinned(1)
+     *     rsv(4) = 12 bytes. */
+    {
+        uint8_t ack[REND_RELAY_PIN_ACK_LEN];
+        memset(ack, 0, sizeof(ack));
+        ack[0] = 0x33; ack[1] = 0x53; ack[2] = 0x58; ack[3] = 0x52;
+        ack[4] = 2;
+        ack[5] = REND_TYPE_RELAY_PIN_ACK;
+        ack[6] = 1;
+        ack[7] = 1; /* peer pinned */
+        bool pp = false;
+        EXPECT_TRUE("17-ack-parse",
+                    Rendezvous_ParseRelayPinAck(ack, (int)sizeof(ack), 1, &pp));
+        EXPECT_TRUE("17-ack-peer-pinned", pp);
+        ack[7] = 0;
+        EXPECT_TRUE("17-ack-parse2",
+                    Rendezvous_ParseRelayPinAck(ack, (int)sizeof(ack), 1, &pp));
+        EXPECT_FALSE("17-ack-peer-not-pinned", pp);
+        /* An ACK for the OTHER side is not ours. */
+        pp = true;
+        EXPECT_FALSE("17-ack-slot-mismatch",
+                     Rendezvous_ParseRelayPinAck(ack, (int)sizeof(ack), 0, &pp));
+        EXPECT_FALSE("17-ack-reject-clears", pp);
+        ack[5] = REND_TYPE_RELAY_GRANT;
+        EXPECT_FALSE("17-ack-wrong-type",
+                     Rendezvous_ParseRelayPinAck(ack, (int)sizeof(ack), 1, &pp));
+    }
+
+    /* (6) Rendezvous_FrameType — the router every receive site now uses
+     *     instead of open-coding the magic/version test. */
+    {
+        EXPECT_TRUE("17-ft-grant",
+                    Rendezvous_FrameType(grant, (int)sizeof(grant)) == REND_FRAME_RELAY_GRANT);
+        uint8_t v3[REND_RELAY_GRANT_LEN];
+        memcpy(v3, grant, sizeof(v3));
+        v3[4] = 3;
+        EXPECT_TRUE("17-ft-wrong-version", Rendezvous_FrameType(v3, (int)sizeof(v3)) == 0);
+        uint8_t nm[REND_RELAY_GRANT_LEN];
+        memcpy(nm, grant, sizeof(nm));
+        nm[1] = 0x00;
+        EXPECT_TRUE("17-ft-wrong-magic", Rendezvous_FrameType(nm, (int)sizeof(nm)) == 0);
+        EXPECT_TRUE("17-ft-short", Rendezvous_FrameType(grant, 5) == 0);
+        EXPECT_TRUE("17-ft-null", Rendezvous_FrameType(NULL, 36) == 0);
+        /* A GekkoNet packet must never look like a '3SXR' frame — that is
+         * what makes sdl_net_adapter.c's straggler drop exact rather than
+         * heuristic. PacketType is 1..7 (GekkoNet net.h:28-36). */
+        for (uint8_t t = 1; t <= 7; t++) {
+            uint8_t gek[32];
+            memset(gek, 0x5A, sizeof(gek));
+            gek[0] = t;
+            EXPECT_TRUE("17-ft-gekko-never-matches",
+                        Rendezvous_FrameType(gek, (int)sizeof(gek)) == 0);
+        }
+    }
+
+    if (fail_count == fails_before) {
+        fprintf(stderr,
+                "[test_bilateral_punch] test 17 OK — relay frames match the documented "
+                "byte layout, RELAY_REQ is a retyped REGISTER, and no GekkoNet packet "
+                "can be mistaken for a '3SXR' frame\n");
+        return 0;
+    }
+    return 1;
+}
+
 /* --- Entry point ------------------------------------------------------ */
 
 int Netplay_Test_BilateralPunch(void) {
@@ -3545,7 +3768,8 @@ int Netplay_Test_BilateralPunch(void) {
     rc |= test_punch_gate_throttle();
     rc |= test_host_cookie_handshake();
     rc |= test_joiner_cookie_handshake();
-    rc |= test_relay_rung(); /* S5 */
+    rc |= test_relay_codec(); /* S5 */
+    rc |= test_relay_rung();  /* S5 */
     rc |= test_host_cookie_rejected(); /* last: ~31 s of wall clock */
 
     if (fail_count > 0 || rc != 0) {
