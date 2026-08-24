@@ -234,6 +234,58 @@ If you add a scenario that exposes a *new* live escapee, say so here and
 promote it — a standing live positive control is strictly better than an
 on-demand one.
 
+### What a green fast run does NOT say
+
+Three separate things, all currently true, limit how far a `verdict=PASS`
+can be carried. None of them is a reason to distrust a *finding* — a
+DIVERGENT+FEEDBACK hit with a plausible mechanism is still the sharpest
+signal this tree has — but each is a reason not to read PASS as "no
+rollback risk here".
+
+1. **It has no live escapee to prove itself against** — the whole point
+   of the section above. Pair it with a control.
+
+2. **Its character-select coverage is 4× shallower than production.**
+   Fast mode runs select at `--rbd-select-rollback-depth 2` while
+   production predicts 8 frames ahead (`netplay.c:903-905`). Known limit
+   1 spells out why that is not academic: the task-50 duplicate-load
+   leak changes *which guard fixes it* between depth 2 and depth 3+. A
+   green fast run therefore understates select-phase risk specifically,
+   and says nothing at all about depths 3–8 there. Raise the flag when
+   the question is about character select. Filed as **#63**.
+
+3. **It produces intermittent false FAILs.** Filed as **#65**. Observed
+   signature, worth recognising on sight:
+
+   ```
+   divergent=8 — all 8 are 8-byte platform pointers:
+     pref_path        (port/paths.c:11)
+     afs_path         (port/resources.c:32)
+     debug_renderer   (port/sdl/sdl_debug_text.c:10)
+     message_canvas   (port/sdl/sdl_message_renderer.c:5)
+   ```
+
+   Re-running the identical binary gave PASS. All four are `static`/file
+   scope pointers holding heap or SDL-object addresses — textbook NOISE
+   by the definition at the top of this document. The mechanism is
+   localized and understood: a symbol is tagged NOISE only when *its own
+   two baselines* (A1 vs A2) disagree, and that determination is made
+   per scenario. In the failing run the two scenarios disagreed with
+   each other about the same 8 symbols — one scenario's baselines
+   happened to allocate identically and so excluded none, the other's
+   diverged and excluded all.
+
+   **Do not allowlist these.** An allowlist entry for a pointer-valued
+   symbol would also suppress a genuine finding that happened to land on
+   it, and the allowlist is supposed to carry a verified reason, which
+   "it is flaky" is not. **Equally, do not re-run until green.** If a
+   FAIL matches the signature above exactly — 8 symbols, all pointer
+   sized, all from the four `port/` sites — record it as the known flake
+   and say so. If it differs in *any* respect (a different symbol, a
+   different count, a non-pointer size, a FEEDBACK tag), it is not this
+   flake and must be triaged as a real finding. The fix belongs in the
+   noise determination, not in the allowlist.
+
 Useful driver flags (append after the mode):
 `--scenario 'makoto*'` (filter), `--frames N`, `--rollback-period N`,
 `--rollback-depth N`, `--outdir DIR --keep` (retain streams + per-run
