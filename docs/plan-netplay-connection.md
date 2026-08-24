@@ -1607,12 +1607,259 @@ Notes on what each test is *for*:
   per 5 ms, so it is not expected to behave differently, but that is
   reasoning, not a measurement.
 
-## 9. S7 — NAT-PMP / PCP
+## 9. S7 — NAT-PMP / PCP (IMPLEMENTED)
 
-miniupnpc only speaks UPnP IGD. Many routers (esp. Apple/BSD-based)
-speak NAT-PMP/PCP instead — add libnatpmp (or a ~200-line PCP client)
-as a second mapping backend behind the same `UpnpMapping` interface
-(upnp.h:11-16), tried when IGD discovery fails.
+miniupnpc only speaks UPnP IGD. Routers whose firmware is Apple- or
+BSD-derived speak NAT-PMP (RFC 6886) or its successor PCP (RFC 6887)
+instead, and on those a host got **no port mapping at all** — it fell
+straight through to STUN and lived or died on the punch. Landed as
+`src/netplay/natpmp.{c,h}`, a third mapping backend behind the same
+`UpnpMapping` interface (upnp.h:26-39), tried when UPnP fails.
+Citations refer to the post-S7 tree.
+
+**Merge note (S6 + S7).** S6 and S7 were implemented in parallel on
+separate branches and merged. Two collisions, both resolved in favour of
+keeping everything:
+
+- Both stages added a "test 18" to `test_bilateral_punch.c`. S6 owns
+  18-21; **the S7 test is test 22** (`test_natpmp_pcp`), and its assertion
+  tags were renumbered `18-*` -> `22-*` to match. The neutralisation
+  evidence in §9.6 was recorded against the pre-merge `18-*` tags.
+- Every test site that sets `netplay-direct-p2p-disable-upnp` now also
+  sets `netplay-direct-p2p-disable-natpmp`, including the S6 sites, which
+  predate S7. Without that pairing a Linux test run would install a real
+  1-hour NAT-PMP mapping on the developer's router — the S7 backend is a
+  second, independent path to the LAN and `disable-upnp` does not cover
+  it.
+
+### 9.1 Hand-rolled, and no new dependency
+
+The original sketch said "add libnatpmp (or a ~200-line PCP client)".
+It is the client, not the library, and that was the authorized call:
+the entire protocol surface we need is a 60-byte packet, a 12-byte
+packet, a 2-byte packet and a `select()` loop. A library would mean a
+new `build-deps.sh` entry, a new cross-compiled `.so` on the MiSTer
+deploy, and a new thing to keep in the `--delete` rsync shield — for
+code smaller than the CMake needed to find it. `natpmp.c` uses only
+the POSIX socket API the tree already links (Winsock behind `_WIN32`,
+same shape as `stun.c`). CMakeLists gained a comment saying so and
+nothing else; the file is picked up by the existing
+`GLOB_RECURSE CONFIGURE_DEPENDS src/*.c`.
+
+### 9.2 Protocol, and the ordering that matters
+
+PCP first, NAT-PMP on downgrade — RFC 6887 Appendix A: "A client
+supporting both NAT-PMP and PCP SHOULD send its request using the PCP
+packet format." Both live on UDP 5351 (RFC 6886 §3.1, RFC 6887 §19.1),
+so one socket serves both and the first octet selects the dialect.
+
+| field | source |
+|---|---|
+| PCP common request header, 24 B: Version=2, R\|Opcode, Reserved(16), Requested Lifetime(32), Client IP(128) | RFC 6887 §7.1 |
+| PCP common response header, 24 B: Version, R\|Opcode, Reserved(8), Result Code(8), Lifetime(32), Epoch(32), Reserved(96) | §7.2 |
+| PCP MAP block, 36 B: Nonce(96), Protocol(8), Reserved(**24**), Internal Port, Suggested/Assigned External Port, Suggested/Assigned External IP(128) | §11.1, §11.2 |
+| MAP Opcode = 1 | §19.2 opcode registry |
+| Protocol 17 = UDP | §11.1 ("This field contains 17 (UDP) if the Opcode is intended to create a UDP mapping") |
+| IPv4 carried as IPv4-mapped IPv6; **all 96 leading bits** must be checked on receive | §5 |
+| the all-zeros IPv4 address is `::ffff:0:0`, **not** `::` | §5 — see below |
+| PCP result codes 0..13 | §7.4 |
+| NAT-PMP public address req/resp (2 B / 12 B) | RFC 6886 §3.2 |
+| NAT-PMP mapping req/resp (12 B / 16 B), OP 1 = UDP, 2 = TCP, all multi-byte fields network order | §3.3 |
+| deletion = lifetime 0, and Suggested External Port **MUST** be 0 | §3.4 |
+| NAT-PMP result codes 0..5 | §3.5 |
+
+Two details are load-bearing and were each nearly got wrong:
+
+**The downgrade signal has the R bit clear.** A NAT-PMP-only gateway
+answers a PCP request with RFC 6886 §3.5's "Unsupported Version" frame:
+`Vers=0 | OP=0 | Result Code=1 | Epoch` — eight bytes. Overlaid on the
+PCP response header that reads as version 0, Reserved 0, Result Code 1,
+i.e. exactly the version-zero `UNSUPP_VERSION` that RFC 6887 §9 step 4
+defines as "this is a NAT-PMP server". But its OP byte is 0, so the PCP
+**R bit is CLEAR**. A parser that tests R before version discards the
+one frame that tells it to downgrade, and the gateway looks silent. The
+version test therefore runs first, before the length check and before
+the R check (natpmp.c:152-176), with the reasoning in the comment so
+nobody "tidies" it into the obvious order.
+
+**`::ffff:0:0`, not `::`.** RFC 6887 §11.1 says a client with no
+external-address preference "MUST use the address-family-specific
+all-zeros address (see Section 5)". §5 is explicit that the all-zeros
+*IPv4* address is "80 bits of zeros, 16 bits of ones, and 32 bits of
+zeros (`::ffff:0:0`)" — only the all-zeros *IPv6* address is 16 zero
+bytes. The test's hand-built expectation had this wrong and the code
+right; §5 settled it, and the test now carries the citation.
+
+The PCP Client's IP Address field is the socket's **actual** source
+address, read back with `getsockname()` after `connect()`
+(natpmp.c:678-706), because §7.1 defines it as "the source IPv4 or IPv6
+address in the IP header used by the PCP client when sending this PCP
+request" and §7.4's `ADDRESS_MISMATCH` (12) exists precisely to catch a
+client that guessed. The `connect()` also buys RFC 6886 §3.2/§3.3's
+"client MUST check the source IP address, and silently discard the
+packet if the address is not the address of the gateway" for free, at
+the kernel.
+
+Within the NAT-PMP phase the public-address request goes **first and
+serially** (§3.1: "clients SHOULD NOT issue multiple concurrent
+requests … it SHOULD queue them and issue them serially"). It is the
+cheapest possible liveness probe, and it is the only source of the
+external IP on this protocol — a NAT-PMP mapping response carries none,
+unlike PCP's (§11.2). That address is what §3.6's CGNAT gate compares
+against STUN, so a mapping without it would be a mapping the gate
+cannot judge.
+
+### 9.3 The retransmit ladder is deliberately truncated
+
+RFC 6886 §3.1 specifies: send, wait 250 ms, retransmit, wait 500 ms,
+"with the interval between attempts doubling each time", up to a ninth
+attempt and a final 64-second wait before concluding the gateway does
+not speak NAT-PMP. That is ~127 seconds. PCP's own default (RFC 6887
+§8.1.1: IRT 3 s, MRC 0, MRT 1024 s) is unbounded by design.
+
+Neither is shippable behind a "Host Game" click that is already capped
+at 6 s for UPnP. The ladder is cut to its **first three rungs** —
+250/500/1000 ms, doubling shape preserved — and every wait is
+additionally clamped by an absolute wall-clock deadline the caller sets
+(natpmp.c:510-535, 563-651). Probe budget 4 s, renewal budget 1.5 s
+(the latter chosen to stay inside `upnp_renew_join_and_discard`'s 2 s
+join budget so a renewal worker is always joinable rather than
+detached).
+
+The cost of being wrong is one missed mapping on a very slow gateway,
+which degrades to exactly today's behaviour: fall through to STUN. The
+worst case for the whole probe is `UPNP_PROBE_BUDGET_MS` (6 s) +
+`NATPMP_PROBE_BUDGET_MS` (4 s) = 10 s, and it is reached only when
+**both** protocols are dead silent. The case S7 exists for — a NAT-PMP
+router with no IGD — costs miniupnpc's own 2 s SSDP timeout plus one
+LAN round-trip, because a router that speaks NAT-PMP answers at once.
+
+### 9.4 One mapping struct, three backends
+
+`UpnpMapping` gained two fields (upnp.h:14-39): `backend`
+(`PortMapBackend` NONE/UPNP/NATPMP/PCP) and `lifetime_s`.
+
+- **Teardown dispatches** through `portmap_remove` (direct_p2p.c:1241),
+  and every removal site goes through it. `Upnp_RemoveMapping` and
+  `Natpmp_RemoveMapping` each additionally **refuse** a mapping they do
+  not own. This is not defensive decoration: on a router that speaks
+  both, deleting a NAT-PMP mapping through the IGD would remove
+  whatever unrelated IGD entry happens to sit on that external port.
+- **Renewal renews the backend that holds the mapping.** The S1
+  half-life timer is unchanged in shape; `upnp_worker_fn` now takes a
+  backend hint, so a renewal runs exactly one ladder instead of
+  re-running UPnP discovery against a NAT-PMP-only router every
+  half-lease. Both specs also want the renewal to carry the
+  **assigned** external port so a rebooted gateway can recreate the
+  same mapping (RFC 6886 §3.3, RFC 6887 §11.2.1); that is what the
+  existing `preferred_external = s_upnp_mapping.external_port` line
+  already did.
+- **The renewal interval now follows the granted lease**
+  (`portmap_renew_interval_ms`, direct_p2p.c:1420). RFC 6886 §3.3: "The
+  NAT gateway MAY reduce the lifetime from what the client requested."
+  A router granting 120 s against our 3600 s request would have
+  silently lost the mapping 28 minutes before a fixed half-hour timer
+  fired. Half-life satisfies §3.3 ("halfway to expiry time, like DHCP")
+  and sits inside RFC 6887 §11.2.1's recommended 1/2-to-5/8 window,
+  floored at 4 s because §11.2.1 forbids renewals less than four
+  seconds apart. UPnP is untouched: miniupnpc reports no granted lease,
+  so `lifetime_s` stays 0 and the old constant applies.
+- **The §3.6 CGNAT gate is NOT duplicated.** It keys off
+  `external_ip`, which all three backends fill, so a NAT-PMP mapping
+  whose external IP is `100.64/10` is dropped exactly as a UPnP one is
+  (direct_p2p.c:1977-2025). The only S7 change inside the gate is that
+  the release dispatches on the backend.
+
+### 9.5 Config
+
+New kill switch `netplay-direct-p2p-disable-natpmp` (bool, default
+false), **deliberately separate** from `disable-upnp`. The latter
+exists for one specific defect — libminiupnpc 2.2.1's `upnpDiscover()`
+segfaulting on MiSTer when a Realtek 8821cu USB WiFi adapter sits
+alongside eth0 — and a user who sets it to dodge that crash should
+still get a mapping from a router that speaks NAT-PMP. The two backends
+share no code, so folding the switches together would take a working
+mapping away for no reason. `docs/config.md` updated.
+
+### 9.6 Tests
+
+Test 18 in `test_bilateral_punch.c` (:3814), in three parts:
+
+- **Codec vs literal RFC bytes**, in the spirit of test 17. The
+  expectations are hand-built from the §7.1/§11.1 and §3.2/§3.3
+  diagrams, **not** produced by `natpmp.c` — an encoder and a test that
+  agreed on a wrong offset would both be wrong together. Reject tables
+  cover wrong version, R bit clear, wrong opcode, wrong 96-bit nonce
+  (first and last byte), wrong Protocol, wrong Internal Port, a
+  non-IPv4-mapped external address, and every truncation from 0 bytes
+  up. Deletion shape is pinned on both protocols, including that the
+  NAT-PMP builder **forces** Suggested External Port to 0 rather than
+  trusting the caller.
+- **The client against a localhost mock gateway** (:3865): PCP
+  success, the §9 downgrade to NAT-PMP, a refusal, silence, and a
+  single-backend renewal. Silence asserts the elapsed wall clock is
+  inside budget — that is the assertion that fails if the §3.1 ladder
+  ever stops being truncated — and that a retransmit actually happened.
+- **The CGNAT gate end to end** on the real host state machine, run
+  **twice**: with a `100.64.5.9` external IP the advertised port must
+  be STUN's, with a `198.51.100.30` one it must be the mapped port. The
+  public-IP run is the control — a drop-only assertion would also pass
+  if the NAT-PMP mapping had never been created at all.
+
+Every assertion was proven able to go red by neutralising the code
+under test and observing the failure (19 neutralisations; see the S7
+task report for the patch-to-red table). Nothing here can reach a real
+router: every client call goes through
+`Natpmp_TestHook_SetGateway` at a 127.0.0.1 mock, gateway discovery is
+Linux-only so a macOS run cannot find a real gateway even with the hook
+forgotten, and the four pre-existing host tests now set
+`disable-natpmp` alongside `disable-upnp`.
+
+### 9.7 Residuals, stated rather than hidden
+
+- **Gateway discovery is Linux-only.** `/proc/net/route` covers the
+  shipping target (MiSTer, kernel 5.15, single STMMAC GbE, IPv4 only),
+  and the column layout and byte order were taken from the kernel's own
+  printer (`net/ipv4/fib_trie.c:2984-2994`, v5.15) rather than guessed —
+  Destination/Gateway/Mask are `__be32` printed with `%08X`, so parsing
+  the hex straight back into `in_addr.s_addr` reproduces the original
+  bytes on either endianness and no `htonl` belongs anywhere near it.
+  Non-Linux hosts report **no gateway**, on purpose: a BSD
+  `sysctl(NET_RT_DUMP)` walk would be untested code on the failure path
+  of a feature that mutates the LAN, and reporting nothing is what
+  makes the macOS test box physically unable to install a mapping on
+  the developer's router. Consequence: on macOS this backend is only
+  ever exercised through the test hook.
+- **Never exercised against real NAT-PMP or PCP hardware.** Every
+  gateway this code has met is the mock in test 18. The mock is a
+  second implementation written from the same RFC text by the same
+  hand, which is exactly the blind spot §7.6 calls out for the relay
+  codec — the codec half is pinned to literal RFC bytes for that
+  reason, but the *client* half (does a real Airport/pfSense/OpenWrt
+  box actually answer this?) is unproven until someone hosts behind one.
+- **The 10 s worst case is real**, if unlikely: a router that answers
+  neither SSDP nor 5351 now costs 10 s before the STUN fallback instead
+  of 6. S6's candidate racing does not help here — this is the host's
+  probe, not the joiner's connect.
+- **PCP options are not implemented.** No `PREFER_FAILURE`, no
+  `FILTER`, no `THIRD_PARTY` (RFC 6887 §13). Consequence: per §11.2 a
+  normal MAP request "will return an available external port" rather
+  than failing when our suggested one is taken, so the gateway may hand
+  back a port we did not ask for — which is fine, the room code carries
+  whatever we got.
+- **Version negotiation stops at 2 and 0.** RFC 6887 §9 step 5 says a
+  client receiving `UNSUPP_VERSION` with a version it does not support
+  SHOULD try the next-lower one and, having exhausted them, retry in 30
+  minutes. We implement version 2 and NAT-PMP's 0 and nothing between,
+  and we do not arm the 30-minute retry — the probe is one-shot per
+  hosting attempt.
+- **The ICMP-unreachable shortcut is inferred from errno, not from the
+  ICMP packet.** RFC 6886 §3.1 says an ICMP Port Unreachable for 5351
+  lets a client "skip any remaining retransmissions". On a connected
+  UDP socket that surfaces as an error on a later `send`/`recv`, which
+  is what `np_transact` treats as terminal — but any other socket error
+  is treated the same way, and the mapping from ICMP to errno was not
+  verified on the MiSTer kernel.
 
 ## 10. S8 — netns verification harness
 
@@ -1636,4 +1883,5 @@ expected outcome. This is the regression net for S2–S7.
 | S4 security | **implemented + adversarially reviewed** (see §6; S4a punch auth, S4b room code — now v3, S4c rendezvous return-routability — the last two are breaking wire/format changes, authorized. Review fixes as-built in §6.8) |
 | S5 relay for symmetric-NAT pairs | **implemented + adversarially reviewed** (see §7; custom '3SXR' relay on the existing port, NOT coturn. Closes the one §2 matrix cell that could not connect at all. Pure wire EXTENSION — protocol version stays 2. Review fixes as-built in §7.2/§7.3: CRITICAL-1 session-TTL teardown, HIGH-1 pin source binding, HIGH-2 over-budget liveness, MEDIUM-1..5, LOW-1..2) |
 | S6 joiner candidate racing | **implemented** (see §8; one interleaved race on the existing worker thread — no new threads, no new locks. Full-cascade worst case measured 9 677 -> 5 114 ms per attempt) |
-| S7–S8 | planned above |
+| S7 NAT-PMP / PCP | **implemented** (see §9; hand-rolled RFC 6887 PCP client with RFC 6886 NAT-PMP downgrade, NO new library, as a third backend behind `UpnpMapping`. RFC 6886 §3.1's ~127 s retransmit ladder is deliberately truncated to 250/500/1000 ms under an absolute deadline — §9.3. Residuals in §9.7, chiefly: gateway discovery is Linux-only, and the client has never met real NAT-PMP/PCP hardware) |
+| S8 netns verification harness | planned above |

@@ -39,6 +39,7 @@
  * bleeding symbol references. */
 #ifdef ENABLE_NETPLAY
 
+#include "netplay/natpmp.h"
 #include "netplay/netplay.h"
 #include "netplay/room_code.h"
 #include "netplay/stun.h"
@@ -1750,6 +1751,15 @@ typedef struct {
     /* Inputs populated before SDL_CreateThread; never mutated after. */
     uint16_t internal_port;
     uint16_t preferred_external;
+    /* S7: which backend to run. PORTMAP_BACKEND_NONE = "first probe":
+     * try UPnP, then NAT-PMP/PCP. Anything else = "renew THIS backend",
+     * which is what keeps a renewal from re-running discovery on the
+     * wrong protocol. */
+    PortMapBackend backend;
+    /* S7: wall-clock budget handed to the NAT-PMP/PCP client. The UPnP
+     * half has no such parameter (miniupnpc blocks), which is why
+     * try_portmap still needs its own outer deadline+detach. */
+    int natpmp_budget_ms;
 
     /* Output populated by the side thread on completion. Consumer reads
      * these two fields only if SDL_GetThreadState returned
@@ -1758,28 +1768,92 @@ typedef struct {
     bool ok;
 } UpnpJob;
 
+/* Human name for a backend, for logs and the failure report. */
+static const char* portmap_backend_name(PortMapBackend b) {
+    switch (b) {
+    case PORTMAP_BACKEND_UPNP:   return "UPnP";
+    case PORTMAP_BACKEND_NATPMP: return "NAT-PMP";
+    case PORTMAP_BACKEND_PCP:    return "PCP";
+    default:                     return "none";
+    }
+}
+
+/* S7 teardown dispatch. Three backends now share UpnpMapping, and the
+ * removal call is protocol-specific: Upnp_RemoveMapping drives miniupnpc
+ * HTTP at an IGD, Natpmp_RemoveMapping sends a lifetime-0 datagram to
+ * the gateway. Calling the wrong one is not a no-op on a router that
+ * speaks both — it would delete an unrelated IGD entry that happens to
+ * sit on the same external port. Every removal site goes through here. */
+static void portmap_remove(UpnpMapping* mapping) {
+    if (mapping == NULL || !mapping->active) {
+        return;
+    }
+    switch (mapping->backend) {
+    case PORTMAP_BACKEND_NATPMP:
+    case PORTMAP_BACKEND_PCP:
+        Natpmp_RemoveMapping(mapping);
+        break;
+    case PORTMAP_BACKEND_UPNP:
+    case PORTMAP_BACKEND_NONE:
+    default:
+        Upnp_RemoveMapping(mapping);
+        break;
+    }
+    mapping->active = false;
+}
+
 static int SDLCALL upnp_worker_fn(void* data) {
     UpnpJob* job = (UpnpJob*)data;
     memset(&job->result, 0, sizeof(job->result));
-    job->ok = Upnp_AddMapping(&job->result,
-                              job->internal_port,
-                              job->preferred_external != 0 ? job->preferred_external
-                                                           : job->internal_port,
-                              "UDP");
+    job->ok = false;
+
+    const uint16_t want_external =
+        job->preferred_external != 0 ? job->preferred_external : job->internal_port;
+
+    /* UPnP first — the existing ordering, and the backend the shipped
+     * MiSTer routers have been validated against. */
+    if ((job->backend == PORTMAP_BACKEND_NONE || job->backend == PORTMAP_BACKEND_UPNP) &&
+        !Config_GetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_UPNP)) {
+        job->ok = Upnp_AddMapping(&job->result, job->internal_port, want_external, "UDP");
+    }
+
+    /* S7 (plan §9): NAT-PMP/PCP is tried when IGD discovery fails.
+     * DELIBERATELY NOT gated on DISABLE_UPNP — that kill switch exists
+     * for one specific miniupnpc defect (the 2.2.1 upnpDiscover segfault
+     * documented in try_portmap), and a user who sets it to dodge that
+     * crash should still get a port mapping from a router that speaks
+     * NAT-PMP. It has its own switch. */
+    if (!job->ok &&
+        (job->backend == PORTMAP_BACKEND_NONE || job->backend == PORTMAP_BACKEND_NATPMP ||
+         job->backend == PORTMAP_BACKEND_PCP) &&
+        !Config_GetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_NATPMP)) {
+        job->ok = Natpmp_AddMapping(&job->result, job->internal_port, want_external,
+                                    job->backend,
+                                    job->natpmp_budget_ms > 0 ? job->natpmp_budget_ms
+                                                              : NATPMP_PROBE_BUDGET_MS);
+    }
     return 0;
 }
 
-/* Attempt UPnP mapping. Returns true on success (s_upnp_mapping.active
- * is set). Returns false on user-disabled, miniupnpc unavailable,
- * router rejection, or wall-clock timeout. See UpnpJob comment for the
- * timeout rationale. */
-static bool try_upnp(uint16_t internal_port, uint16_t preferred_external) {
+/* Wall-clock ceiling for the UPnP half of a probe. Was an inline 6000
+ * before S7; named now because the outer deadline is the SUM of the two
+ * backends' budgets. */
+#define UPNP_PROBE_BUDGET_MS 6000u
+
+/* Attempt a port mapping (UPnP, then NAT-PMP/PCP). Returns true on
+ * success (s_upnp_mapping.active is set and s_upnp_mapping.backend says
+ * which protocol won). Returns false on user-disabled, no backend
+ * available, router rejection, or wall-clock timeout. See UpnpJob's
+ * comment for the timeout rationale. */
+static bool try_portmap(uint16_t internal_port, uint16_t preferred_external) {
     /* Known caveat: libminiupnpc 2.2.1 upnpDiscover() segfaults on MiSTer
      * (Buildroot 2021.02.4, glibc 2.31) when a Realtek 8821cu USB WiFi
      * adapter is connected alongside eth0 — validated 2026-04-22.
      * eth0-only is safe. Users running WiFi can set
      * CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_UPNP=1 to skip this path. */
-    if (Config_GetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_UPNP)) {
+    const bool upnp_off = Config_GetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_UPNP);
+    const bool natpmp_off = Config_GetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_NATPMP);
+    if (upnp_off && natpmp_off) {
         return false;
     }
     set_status("Preparing...");
@@ -1794,28 +1868,41 @@ static bool try_upnp(uint16_t internal_port, uint16_t preferred_external) {
      *
      * Heap-allocated job struct: the detached thread must not reference
      * our stack, and the leak on timeout is bounded by host-game attempts
-     * per session. */
+     * per session.
+     *
+     * S7: the worker may now run TWO backends serially, so the outer
+     * deadline is UPNP_PROBE_BUDGET_MS + NATPMP_PROBE_BUDGET_MS. That
+     * 10 s ceiling is reached only when BOTH protocols are dead silent;
+     * the case S7 exists for — a NAT-PMP router with no IGD — costs
+     * ~2 s (miniupnpc's own UPNP_DISCOVER_TIMEOUT_MS) plus one LAN
+     * round-trip, because a router that speaks NAT-PMP answers
+     * immediately. */
     UpnpJob* job = (UpnpJob*)SDL_calloc(1, sizeof(UpnpJob));
     if (job == NULL) {
         return false;
     }
     job->internal_port = internal_port;
     job->preferred_external = preferred_external;
+    job->backend = PORTMAP_BACKEND_NONE; /* first probe: try both */
+    job->natpmp_budget_ms = NATPMP_PROBE_BUDGET_MS;
 
-    SDL_Thread* t = SDL_CreateThread(upnp_worker_fn, "UpnpProbe", job);
+    SDL_Thread* t = SDL_CreateThread(upnp_worker_fn, "PortMapProbe", job);
     if (t == NULL) {
         SDL_free(job);
         return false;
     }
 
-    const uint64_t deadline_ms = SDL_GetTicks() + 6000;
+    const uint64_t deadline_ms =
+        SDL_GetTicks() + UPNP_PROBE_BUDGET_MS + (uint64_t)NATPMP_PROBE_BUDGET_MS;
     while (SDL_GetThreadState(t) != SDL_THREAD_COMPLETE) {
         if (SDL_GetTicks() >= deadline_ms) {
-            SDL_Log("[direct_p2p] WARNING: UPnP mapping attempt timed out after 6s; falling back to STUN.");
+            SDL_Log("[direct_p2p] WARNING: port-mapping attempt timed out after %u ms; "
+                    "falling back to STUN.",
+                    (unsigned)(UPNP_PROBE_BUDGET_MS + NATPMP_PROBE_BUDGET_MS));
             /* Detach and leak the job struct — the side thread owns it
              * until it exits, at which point the OS reclaims everything.
-             * Any mapping it eventually registers will expire on its
-             * own lease. */
+             * Any mapping it eventually registers (UPnP or NAT-PMP/PCP —
+             * both request a 3600 s lease) will expire on its own. */
             SDL_DetachThread(t);
             return false;
         }
@@ -1852,9 +1939,43 @@ static bool try_upnp(uint16_t internal_port, uint16_t preferred_external) {
 #define UPNP_RENEW_INTERVAL_MS (30u * 60u * 1000u) /* half the 3600 s lease */
 #define UPNP_RENEW_RETRY_MS (5u * 60u * 1000u)     /* failed renew: retry sooner */
 
+/* S7 floor on the renewal cadence. RFC 6887 §11.2.1: "renewal requests
+ * MUST NOT be sent less than four seconds apart (a PCP client MUST NOT
+ * send a flood of ever-closer-together requests in the last few seconds
+ * before a mapping expires)." */
+#define PORTMAP_RENEW_FLOOR_MS 4000u
+
 static SDL_Thread* s_upnp_renew_thread = NULL;
 static UpnpJob* s_upnp_renew_job = NULL;
 static uint64_t s_upnp_next_renew_ms = 0;
+
+/* S7: half of the lease the gateway actually GRANTED, when it told us.
+ *
+ * UPNP_RENEW_INTERVAL_MS is half of upnp.c's requested 3600 s, and
+ * miniupnpc's AddPortMapping reports no granted lease, so UPnP keeps
+ * using it verbatim. NAT-PMP and PCP DO report one, and both allow the
+ * gateway to shorten it — RFC 6886 §3.3 "The NAT gateway MAY reduce the
+ * lifetime from what the client requested". A router that grants 120 s
+ * against our 3600 s request would silently lose the mapping 28 minutes
+ * before a fixed half-hour timer fired.
+ *
+ * Half-life is what both specs ask for: RFC 6886 §3.3 "The client SHOULD
+ * begin trying to renew the mapping halfway to expiry time, like DHCP",
+ * and RFC 6887 §11.2.1's recommended window is 1/2 to 5/8 of expiry, so
+ * 1/2 sits inside it. */
+static uint64_t portmap_renew_interval_ms(void) {
+    if (s_upnp_mapping.lifetime_s == 0) {
+        return UPNP_RENEW_INTERVAL_MS;
+    }
+    uint64_t half = ((uint64_t)s_upnp_mapping.lifetime_s * 1000u) / 2u;
+    if (half < PORTMAP_RENEW_FLOOR_MS) {
+        half = PORTMAP_RENEW_FLOOR_MS;
+    }
+    if (half > UPNP_RENEW_INTERVAL_MS) {
+        half = UPNP_RENEW_INTERVAL_MS;
+    }
+    return half;
+}
 
 /* Reap the renewal thread with a BOUNDED wait (review H3 — mirrors
  * try_upnp's deadline+detach pattern). An unbounded SDL_WaitThread here
@@ -1920,14 +2041,18 @@ static void upnp_renew_tick(void) {
         uint64_t now = SDL_GetTicks();
         if (s_upnp_renew_job != NULL && s_upnp_renew_job->ok) {
             s_upnp_mapping = s_upnp_renew_job->result;
-            s_upnp_next_renew_ms = now + UPNP_RENEW_INTERVAL_MS;
-            SDL_Log("[direct_p2p] UPnP lease renewed (external %u -> internal %u); next renewal in %u min",
+            const uint64_t iv = portmap_renew_interval_ms();
+            s_upnp_next_renew_ms = now + iv;
+            SDL_Log("[direct_p2p] %s lease renewed (external %u -> internal %u); next "
+                    "renewal in %u s",
+                    portmap_backend_name(s_upnp_mapping.backend),
                     s_upnp_mapping.external_port, s_upnp_mapping.internal_port,
-                    UPNP_RENEW_INTERVAL_MS / 60000u);
+                    (unsigned)(iv / 1000u));
         } else {
             s_upnp_next_renew_ms = now + UPNP_RENEW_RETRY_MS;
-            SDL_Log("[direct_p2p] WARNING: UPnP lease renewal failed; retrying in %u min "
+            SDL_Log("[direct_p2p] WARNING: %s lease renewal failed; retrying in %u min "
                     "(mapping expires at the end of its current lease)",
+                    portmap_backend_name(s_upnp_mapping.backend),
                     UPNP_RENEW_RETRY_MS / 60000u);
         }
         if (s_upnp_renew_job != NULL) {
@@ -1945,7 +2070,7 @@ static void upnp_renew_tick(void) {
         /* First sighting of an active mapping — arm the half-lease timer.
          * (Lazily armed here rather than in the worker so the deadline
          * bookkeeping stays main-thread-only.) */
-        s_upnp_next_renew_ms = now + UPNP_RENEW_INTERVAL_MS;
+        s_upnp_next_renew_ms = now + portmap_renew_interval_ms();
         return;
     }
     if (now < s_upnp_next_renew_ms) {
@@ -1958,16 +2083,29 @@ static void upnp_renew_tick(void) {
         return;
     }
     job->internal_port = s_upnp_mapping.internal_port;
+    /* RFC 6886 §3.3 / RFC 6887 §11.2.1 both say a renewal SHOULD carry
+     * the currently ASSIGNED external port, not the originally wanted
+     * one, so a rebooted gateway can recreate the same mapping. That is
+     * already what this line has always passed. */
     job->preferred_external = s_upnp_mapping.external_port;
-    s_upnp_renew_thread = SDL_CreateThread(upnp_worker_fn, "UpnpRenew", job);
+    /* S7: renew the backend that HOLDS the mapping. Re-probing from
+     * scratch would run UPnP discovery against a NAT-PMP-only router
+     * every half-lease, and — worse — could land the renewal on a
+     * different protocol than the teardown path will later try to
+     * remove. One ladder only, which is what keeps the worker inside
+     * upnp_renew_join_and_discard's 2 s join budget. */
+    job->backend = s_upnp_mapping.backend;
+    job->natpmp_budget_ms = NATPMP_RENEW_BUDGET_MS;
+    s_upnp_renew_thread = SDL_CreateThread(upnp_worker_fn, "PortMapRenew", job);
     if (s_upnp_renew_thread == NULL) {
         SDL_free(job);
         s_upnp_next_renew_ms = now + UPNP_RENEW_RETRY_MS;
-        SDL_Log("[direct_p2p] WARNING: failed to spawn UPnP renewal thread");
+        SDL_Log("[direct_p2p] WARNING: failed to spawn port-mapping renewal thread");
         return;
     }
     s_upnp_renew_job = job;
-    SDL_Log("[direct_p2p] UPnP lease renewal started (external port %u)",
+    SDL_Log("[direct_p2p] %s lease renewal started (external port %u)",
+            portmap_backend_name(s_upnp_mapping.backend),
             s_upnp_mapping.external_port);
 }
 
@@ -2314,9 +2452,12 @@ static int SDLCALL host_thread_fn(void* data) {
 
     const uint16_t local_port = (uint16_t)s_work.preferred_port;
 
-    /* 1) UPnP probe. Non-fatal if it fails — we fall through to STUN.
-     * Request external == internal so the router doesn't have to invent
-     * an external port (some firmware rejects wildcards, error 716).
+    /* 1) Port-mapping probe: UPnP IGD first, then NAT-PMP/PCP (S7).
+     * Non-fatal if it fails — we fall through to STUN. Request external
+     * == internal so the router doesn't have to invent an external port
+     * (some firmware rejects wildcards, error 716); NAT-PMP's §3.3 and
+     * PCP's §11.1 Suggested External Port fields carry the same request,
+     * and neither gateway is obliged to honour it.
      *
      * S2-retry hygiene (review L-5): on a FAILED_STUN auto-retry, a
      * PREVIOUS attempt in this hosting session may already hold a live
@@ -2335,12 +2476,13 @@ static int SDLCALL host_thread_fn(void* data) {
     uint32_t stage_t0 = SDL_GetTicks();
     bool upnp_ok;
     if (s_upnp_mapping.active && s_upnp_mapping.internal_port == local_port) {
-        SDL_Log("[direct_p2p] retry: reusing the live UPnP mapping from the previous "
+        SDL_Log("[direct_p2p] retry: reusing the live %s mapping from the previous "
                 "attempt (external %u -> internal %u) — skipping re-probe",
+                portmap_backend_name(s_upnp_mapping.backend),
                 s_upnp_mapping.external_port, s_upnp_mapping.internal_port);
         upnp_ok = true;
     } else {
-        upnp_ok = try_upnp(local_port, local_port);
+        upnp_ok = try_portmap(local_port, local_port);
     }
     s_work.t_upnp_ms = SDL_GetTicks() - stage_t0;
     if (cancel_requested()) {
@@ -2349,11 +2491,14 @@ static int SDLCALL host_thread_fn(void* data) {
         return 0;
     }
     if (upnp_ok) {
-        SDL_Log("[direct_p2p] UPnP mapping OK (external %u -> internal %u)",
+        SDL_Log("[direct_p2p] %s mapping OK (external %s:%u -> internal %u)",
+                portmap_backend_name(s_upnp_mapping.backend),
+                s_upnp_mapping.external_ip[0] ? s_upnp_mapping.external_ip : "(unknown)",
                 s_upnp_mapping.external_port,
                 s_upnp_mapping.internal_port);
     } else {
-        SDL_Log("[direct_p2p] UPnP unavailable or refused; falling back to STUN.");
+        SDL_Log("[direct_p2p] no port mapping (UPnP and NAT-PMP/PCP both unavailable or "
+                "refused); falling back to STUN.");
     }
 
     /* 2) STUN discover. We always need a public IP + port for the room
@@ -2405,25 +2550,36 @@ static int SDLCALL host_thread_fn(void* data) {
      * public-but-different external IP is ISP 1:1 NAT / DMZ territory,
      * where the mapping forwards perfectly and dropping it would
      * downgrade a host with a good direct path; an unparseable string
-     * (garbage, IPv6) proves nothing. Both keep the mapping and log. */
+     * (garbage, IPv6) proves nothing. Both keep the mapping and log.
+     *
+     * S7: this gate is backend-agnostic BY DESIGN and NOT duplicated per
+     * protocol. It keys off s_upnp_mapping.external_ip, which all three
+     * backends fill — UPnP from UPNP_GetExternalIPAddress (upnp.c),
+     * PCP from the MAP response's Assigned External IP Address (RFC 6887
+     * §11.2), NAT-PMP from a Public Address Request (RFC 6886 §3.2),
+     * which natpmp.c issues before the mapping request precisely so this
+     * comparison has something to judge. The only S7 change here is that
+     * the release dispatches on the backend. */
     if (upnp_ok &&
         !direct_p2p_ip_eq_normalized(s_upnp_mapping.external_ip, s_work.stun.public_ip)) {
         if (direct_p2p_ip_is_nonpublic(s_upnp_mapping.external_ip)) {
-            SDL_Log("[direct_p2p] CGNAT detected: UPnP external IP %s is private/CGN and "
-                    "!= STUN public IP %s — ignoring the UPnP mapping and advertising "
+            SDL_Log("[direct_p2p] CGNAT detected: %s external IP %s is private/CGN and "
+                    "!= STUN public IP %s — ignoring the mapping and advertising "
                     "the STUN endpoint instead",
+                    portmap_backend_name(s_upnp_mapping.backend),
                     s_upnp_mapping.external_ip, s_work.stun.public_ip);
             /* Release the useless mapping now (worker thread — same thread
-             * class try_upnp used; no concurrent miniupnpc user exists in
-             * UPNP_PROBE/STUN_DISCOVER states). Also stops the S1 lease
+             * class try_portmap used; no concurrent miniupnpc user exists
+             * in UPNP_PROBE/STUN_DISCOVER states). Also stops the S1 lease
              * renewal from ever arming for it. */
-            Upnp_RemoveMapping(&s_upnp_mapping);
+            portmap_remove(&s_upnp_mapping);
             memset(&s_upnp_mapping, 0, sizeof(s_upnp_mapping));
             upnp_ok = false;
         } else {
-            SDL_Log("[direct_p2p] UPnP external IP %s differs from STUN public IP %s but "
+            SDL_Log("[direct_p2p] %s external IP %s differs from STUN public IP %s but "
                     "is not a private/CGN address (1:1 NAT / DMZ, or unparseable) — "
                     "keeping the mapping",
+                    portmap_backend_name(s_upnp_mapping.backend),
                     s_upnp_mapping.external_ip[0] ? s_upnp_mapping.external_ip : "(empty)",
                     s_work.stun.public_ip);
         }
@@ -2500,7 +2656,7 @@ static int SDLCALL host_thread_fn(void* data) {
         SDL_Log("[direct_p2p] HOST_WAITING published. Code=%s (nonce redacted) "
                 "public=%s:%u (via %s)",
                 code_redacted, s_work.stun.public_ip, (unsigned)pub_port,
-                upnp_ok ? "UPnP" : "STUN");
+                upnp_ok ? portmap_backend_name(s_upnp_mapping.backend) : "STUN");
     }
 
     /* 5) Bilateral fallback: spawn the rendezvous-resender thread unless
@@ -2930,7 +3086,7 @@ static void direct_p2p_on_teardown(void) {
 
     if (s_upnp_mapping.active) {
         if (upnp_quiescent) {
-            Upnp_RemoveMapping(&s_upnp_mapping);
+            portmap_remove(&s_upnp_mapping);
         }
         memset(&s_upnp_mapping, 0, sizeof(s_upnp_mapping));
     }
@@ -3852,7 +4008,7 @@ void DirectP2P_Cancel(void) {
      * detached (review H3; see upnp_renew_join_and_discard). */
     if (upnp_renew_join_and_discard()) {
         if (s_upnp_mapping.active) {
-            Upnp_RemoveMapping(&s_upnp_mapping);
+            portmap_remove(&s_upnp_mapping);
         }
     }
     memset(&s_upnp_mapping, 0, sizeof(s_upnp_mapping));

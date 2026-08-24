@@ -492,6 +492,14 @@ if(ENABLE_NETPLAY)
     # ENABLE_NETPLAY block so a non-netplay build neither links miniupnpc
     # nor compiles upnp.c (glob filter excludes src/netplay/*.c above).
     target_compile_definitions(3s-arm PRIVATE HAVE_UPNP)
+
+    # S7 (docs/plan-netplay-connection.md §9): src/netplay/natpmp.c is the
+    # second mapping backend (NAT-PMP RFC 6886 / PCP RFC 6887). It is
+    # picked up by the same GLOB_RECURSE CONFIGURE_DEPENDS src/*.c above
+    # as upnp.c is, and there is DELIBERATELY nothing to link and nothing
+    # to add to build-deps.sh: it is raw UDP on the existing socket API,
+    # not libnatpmp. Please keep it that way.
+
 endif()
 
 if(APPLE)

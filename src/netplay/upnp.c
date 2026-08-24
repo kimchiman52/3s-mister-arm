@@ -121,12 +121,31 @@ bool Upnp_AddMapping(UpnpMapping* out, uint16_t internal_port, uint16_t external
     out->external_port = external_port;
     out->internal_port = internal_port;
     out->active = true;
+    /* S7: stamp the backend so teardown/renewal dispatch correctly now
+     * that natpmp.c fills the same struct. lifetime_s stays 0 —
+     * UPNP_AddPortMapping reports no granted lease. */
+    out->backend = PORTMAP_BACKEND_UPNP;
+    out->lifetime_s = 0;
     return true;
 }
 
 void Upnp_RemoveMapping(UpnpMapping* mapping) {
     if (!mapping || !mapping->active)
         return;
+
+    /* S7 fail-closed: three backends share UpnpMapping now. Deleting a
+     * NAT-PMP/PCP mapping through the IGD would, on a router that speaks
+     * BOTH, delete whatever unrelated IGD entry happens to sit on that
+     * external port. Refuse and let the caller's dispatch bug be loud.
+     * (BACKEND_NONE is accepted: mappings minted before S7 — and any
+     * hand-built one in a test — carry 0 and are UPnP by construction.) */
+    if (mapping->backend != PORTMAP_BACKEND_UPNP && mapping->backend != PORTMAP_BACKEND_NONE) {
+        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                    "UPnP: refusing to remove a mapping owned by backend %d — "
+                    "wrong teardown path (see PortMapBackend dispatch)",
+                    (int)mapping->backend);
+        return;
+    }
 
     if (!upnp_ensure_cached()) {
         mapping->active = false;

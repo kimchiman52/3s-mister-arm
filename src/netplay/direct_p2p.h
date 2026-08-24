@@ -45,6 +45,9 @@
  * Config keys (from Step 5):
  *   CFG_KEY_NETPLAY_DIRECT_P2P_HOST_PORT        — passed to BeginHost.
  *   CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_UPNP     — skip UPnP first-try.
+ *   CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_NATPMP   — skip the S7 NAT-PMP/PCP
+ *                                                 backend (separate switch
+ *                                                 by design; see config.h).
  *   CFG_KEY_NETPLAY_DIRECT_P2P_STUN_TIMEOUT_MS  — STUN discovery clamp.
  *   CFG_KEY_NETPLAY_DIRECT_P2P_LAST_PEER_CODE   — written on Join success.
  */
