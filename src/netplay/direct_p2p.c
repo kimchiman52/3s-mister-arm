@@ -148,6 +148,7 @@ typedef struct {
     ConnectFailCode fail_code;   /* taxonomy code for the surfaced failure */
     bool ev_deliver_any;         /* joiner: >=1 DELIVER frame (incl. sentinel) */
     bool ev_deliver_real;        /* joiner: >=1 DELIVER with a real endpoint */
+    bool ev_challenge_any;       /* S4c joiner: >=1 CHALLENGE frame received */
     int  join_attempts;          /* attempts consumed (S2 auto-retry) */
     /* Stage timings (ms) for the report line — 0 = stage not reached. */
     uint32_t t_upnp_ms;
@@ -333,6 +334,54 @@ static ConnectFailCode s_host_advisory_code = CONNECT_FAIL_NONE;
  * this hosting session (rate-limited advisory logging in
  * host_tick_receive). Main-thread only. */
 static int s_host_unauth_drops = 0;
+
+/* --- S4c: rendezvous return-routability cookie (host side) ------------- */
+
+/* The v2 rendezvous server answers an uncookied REGISTER with a
+ * CHALLENGE and only binds a slot once the client echoes the cookie
+ * back (proving it receives at its claimed source). On the HOST the
+ * writer and reader live on different threads: the CHALLENGE arrives
+ * on the MAIN thread (host_tick_receive -> host_handle_challenge)
+ * while the periodic REGISTER resends are built on the rendezvous
+ * WORKER thread. A seqlock publishes the 8-byte cookie across:
+ * seq == 0 means "no cookie yet"; the writer bumps to odd, writes the
+ * bytes, bumps to even; the reader snapshots seq, copies, re-checks.
+ * The JOINER needs none of this — its signaling loop is inline in the
+ * join worker, the socket's sole actor. */
+static uint8_t s_signal_cookie[REND_COOKIE_LEN];
+static SDL_AtomicInt s_signal_cookie_seq = { 0 };
+
+/* Main-thread writer (host_handle_challenge). */
+static void signal_cookie_publish(const uint8_t cookie[REND_COOKIE_LEN]) {
+    int seq = SDL_GetAtomicInt(&s_signal_cookie_seq);
+    if (seq & 1) seq++; /* defensive: never leave an odd value behind */
+    SDL_SetAtomicInt(&s_signal_cookie_seq, seq + 1);       /* odd: writing */
+    memcpy(s_signal_cookie, cookie, REND_COOKIE_LEN);
+    SDL_SetAtomicInt(&s_signal_cookie_seq, seq + 2);       /* even: stable */
+}
+
+static void signal_cookie_reset(void) {
+    SDL_SetAtomicInt(&s_signal_cookie_seq, 0);
+    memset(s_signal_cookie, 0, sizeof(s_signal_cookie));
+}
+
+/* Worker-thread reader. Returns true and fills `out` when a stable
+ * cookie is available; false -> caller sends the uncookied form. */
+static bool signal_cookie_snapshot(uint8_t out[REND_COOKIE_LEN]) {
+    for (int attempt = 0; attempt < 4; attempt++) {
+        const int s1 = SDL_GetAtomicInt(&s_signal_cookie_seq);
+        if (s1 == 0 || (s1 & 1)) return false; /* none, or mid-write */
+        memcpy(out, s_signal_cookie, REND_COOKIE_LEN);
+        if (SDL_GetAtomicInt(&s_signal_cookie_seq) == s1) return true;
+    }
+    return false; /* writer kept racing us — next tick will get it */
+}
+
+/* S4c: has the host seen a CHALLENGE this hosting session? "Server is
+ * alive" evidence for the host-waiting advisory (a challenge with no
+ * subsequent DELIVER points at cookie/auth trouble, not a dead
+ * server). Main-thread only. */
+static bool s_host_challenge_seen = false;
 
 /* Record the taxonomy code and put its user string on the overlay status
  * line. Callable from worker threads (same rules as set_status — s_work
@@ -551,8 +600,8 @@ DirectP2PHostDgramClass DirectP2P_TestHook_ClassifyHostDatagram(
 typedef struct {
     NET_Address* target;       /* NET_RefAddress'd by producer; consumer Unrefs after send */
     uint16_t     target_port;  /* host order, matches NET_SendDatagram */
-    uint8_t      payload[28];  /* REGISTER or POLL packet */
-    uint8_t      payload_len;  /* always 28 in practice; future-proof */
+    uint8_t      payload[REND_REGISTER_PKT_LEN]; /* v2 REGISTER or POLL packet */
+    uint8_t      payload_len;  /* always 36 in practice; future-proof */
 } RendezvousSendSlot;
 
 static RendezvousSendSlot s_rendezvous_send_q[REND_Q_CAPACITY];
@@ -606,7 +655,7 @@ static void rend_q_drain(NET_DatagramSocket* sock, int max_slots) {
         RendezvousSendSlot* slot = &s_rendezvous_send_q[(unsigned)head % REND_Q_CAPACITY];
         NET_Address* target = slot->target;
         uint16_t target_port = slot->target_port;
-        uint8_t payload[28];
+        uint8_t payload[REND_REGISTER_PKT_LEN];
         memcpy(payload, slot->payload, sizeof(payload));
         uint8_t payload_len = slot->payload_len;
         /* Consume: bump head BEFORE we use the slot's pointers (post-bump
@@ -988,9 +1037,14 @@ static int SDLCALL host_rendezvous_thread_fn(void* data) {
         return 0;
     }
 
-    /* 4) Build REGISTER once — payload is constant across resends. */
-    uint8_t register_pkt[28];
-    if (!Rendezvous_BuildRegister(s_work.stun.public_port, session_key, register_pkt)) {
+    /* 4) REGISTER packets are (re)built per send since S4c: the cookie
+     * tail changes when the main thread answers a server CHALLENGE
+     * (signal_cookie_publish) or when the server rotates its cookie
+     * slot. Validate buildability once up front so a hard failure
+     * still exits early. */
+    uint8_t register_pkt[REND_REGISTER_PKT_LEN];
+    if (!Rendezvous_BuildRegister(s_work.stun.public_port, session_key, NULL,
+                                  register_pkt)) {
         SDL_Log("[direct_p2p] rendezvous: failed to build REGISTER packet");
         NET_UnrefAddress(signal_addr);
         return 0;
@@ -1024,6 +1078,14 @@ static int SDLCALL host_rendezvous_thread_fn(void* data) {
         }
         uint32_t now = SDL_GetTicks();
         if (last_send == 0 || (now - last_send) >= (uint32_t)interval_ms) {
+            /* S4c: rebuild with the latest cookie (zeros until the main
+             * thread has answered a CHALLENGE; the server treats an
+             * uncookied REGISTER as a challenge request, not a bind). */
+            uint8_t cookie[REND_COOKIE_LEN];
+            const bool have_cookie = signal_cookie_snapshot(cookie);
+            (void)Rendezvous_BuildRegister(s_work.stun.public_port, session_key,
+                                           have_cookie ? cookie : NULL,
+                                           register_pkt);
             /* Producer must Ref before enqueue; consumer Unrefs after
              * send. On enqueue failure (queue full) we Unref ourselves. */
             NET_Address* ref = NET_RefAddress(signal_addr);
@@ -1343,6 +1405,7 @@ static DirectP2PState join_attempt(void) {
     s_work.fail_code = CONNECT_FAIL_NONE;
     s_work.ev_deliver_any = false;
     s_work.ev_deliver_real = false;
+    s_work.ev_challenge_any = false; /* S4c */
     s_work.t_stun_ms = 0;
     s_work.t_punch_ms = 0;
     s_work.t_signal_ms = 0;
@@ -1531,9 +1594,14 @@ static DirectP2PState join_attempt(void) {
             return DIRECT_P2P_FAILED_BILATERAL;
         }
 
-        /* 4) Build REGISTER once — payload is constant across resends. */
-        uint8_t register_pkt[28];
-        if (!Rendezvous_BuildRegister(s_work.stun.public_port, session_key, register_pkt)) {
+        /* 4) Build the initial (uncookied) REGISTER. S4c: the server
+         * answers it with a CHALLENGE; the loop below echoes the cookie
+         * and rebuilds the packet, after which REGISTERs bind normally. */
+        uint8_t register_pkt[REND_REGISTER_PKT_LEN];
+        uint8_t signal_cookie[REND_COOKIE_LEN] = { 0 };
+        bool have_signal_cookie = false;
+        if (!Rendezvous_BuildRegister(s_work.stun.public_port, session_key, NULL,
+                                      register_pkt)) {
             SDL_Log("[direct_p2p] joiner fallback: failed to build REGISTER packet");
             NET_UnrefAddress(signal_addr);
             Stun_CloseSocket(&s_work.stun);
@@ -1583,6 +1651,30 @@ static DirectP2PState join_attempt(void) {
             NET_Datagram* dgram = NULL;
             if (NET_ReceiveDatagram(s_work.stun.socket, &dgram) && dgram != NULL) {
                 if (dgram->buflen >= 32 &&
+                    dgram->buf[0] == 0x33 && dgram->buf[1] == 0x53 &&
+                    dgram->buf[2] == 0x58 && dgram->buf[3] == 0x52 &&
+                    dgram->buf[5] == 4 /* REND_TYPE_CHALLENGE */) {
+                    /* S4c: server challenge — echo the cookie right away
+                     * (one RTT to bind instead of the 500 ms resend
+                     * cadence) and carry it on every later resend. A
+                     * challenge is ALSO liveness evidence: the server
+                     * answered us, so a budget expiry with challenges
+                     * but no DELIVERs is an auth problem, not a dead
+                     * server. */
+                    if (Rendezvous_ParseChallenge(dgram->buf, dgram->buflen,
+                                                  session_key, signal_cookie)) {
+                        have_signal_cookie = true;
+                        s_work.ev_challenge_any = true;
+                        (void)Rendezvous_BuildRegister(s_work.stun.public_port,
+                                                       session_key, signal_cookie,
+                                                       register_pkt);
+                        (void)RENDEZVOUS_SEND(s_work.stun.socket, signal_addr,
+                                              signal_port, register_pkt,
+                                              sizeof(register_pkt));
+                        SDL_Log("[direct_p2p] joiner answered rendezvous CHALLENGE");
+                    }
+                    (void)have_signal_cookie;
+                } else if (dgram->buflen >= 32 &&
                     dgram->buf[0] == 0x33 && dgram->buf[1] == 0x53 &&
                     dgram->buf[2] == 0x58 && dgram->buf[3] == 0x52) {
                     char parsed_ip[64] = { 0 };
@@ -1659,11 +1751,13 @@ static DirectP2PState join_attempt(void) {
             ConnectJoinEvidence ev = { 0 };
             ev.deliver_any = s_work.ev_deliver_any;
             ev.deliver_real = s_work.ev_deliver_real;
+            ev.challenge_any = s_work.ev_challenge_any; /* S4c */
             ev.port_disagreement = s_work.stun.port_disagreement;
             const ConnectFailCode jc = ConnectFail_ClassifyJoin(&ev);
             SDL_Log("[direct_p2p] joiner fallback: signal budget expired without a "
-                    "peer DELIVER (deliver_any=%d) -> %s",
-                    (int)s_work.ev_deliver_any, ConnectFail_Code(jc));
+                    "peer DELIVER (deliver_any=%d challenge_any=%d) -> %s",
+                    (int)s_work.ev_deliver_any, (int)s_work.ev_challenge_any,
+                    ConnectFail_Code(jc));
             Stun_CloseSocket(&s_work.stun);
             set_fail(jc);
             return DIRECT_P2P_FAILED_BILATERAL;
@@ -1700,6 +1794,7 @@ static DirectP2PState join_attempt(void) {
             ConnectJoinEvidence ev = { 0 };
             ev.deliver_any = s_work.ev_deliver_any;
             ev.deliver_real = s_work.ev_deliver_real;
+            ev.challenge_any = s_work.ev_challenge_any; /* S4c */
             ev.bilateral_punched = false;
             ev.port_disagreement = s_work.stun.port_disagreement;
             ev.punch_bad_token = s_work.stun.diag_punch_bad_token; /* S4a */
@@ -1839,6 +1934,8 @@ static void direct_p2p_on_teardown(void) {
     s_host_waiting_last_note_ms = 0;
     s_host_advisory_code = CONNECT_FAIL_NONE;
     s_host_unauth_drops = 0; /* S4a */
+    s_host_challenge_seen = false; /* S4c */
+    signal_cookie_reset();         /* S4c */
     SDL_SetAtomicInt(&s_host_registering, 0);
     /* Reset state so the next BeginHost/BeginJoin starts clean.
      * R-1 exception: when the MIST handshake rejected the session, park
@@ -2164,6 +2261,44 @@ static bool try_handle_deliver(const uint8_t* pkt, int len) {
     return true;
 }
 
+/* S4c: server CHALLENGE handler — invoked from host_tick_receive's
+ * rendezvous arm (main thread) when the '3SXR' frame's type byte is
+ * CHALLENGE. Parses the cookie against our session key, publishes it
+ * for the rendezvous worker's periodic resends, and IMMEDIATELY sends
+ * one cookie'd REGISTER back to the frame's source (the signal server)
+ * so slot binding costs one RTT instead of waiting out the worker's
+ * next 5 s cadence. Main thread owns the socket in HOST_WAITING, so
+ * the direct send is race-free. */
+static void host_handle_challenge(const uint8_t* pkt, int len,
+                                  NET_Address* src_addr, uint16_t src_port) {
+    if (get_state() != DIRECT_P2P_HOST_WAITING) {
+        return; /* stale challenge after a transition — ignore */
+    }
+    uint32_t ip_be = ipv4_str_to_be(s_work.stun.public_ip);
+    uint8_t session_key[16];
+    if (!Rendezvous_DeriveSessionKey(ip_be, s_work.advertised_port, s_work.nonce,
+                                     session_key)) {
+        return;
+    }
+    uint8_t cookie[REND_COOKIE_LEN];
+    if (!Rendezvous_ParseChallenge(pkt, len, session_key, cookie)) {
+        SDL_Log("[direct_p2p] CHALLENGE drop: bad frame or wrong session key");
+        return;
+    }
+    s_host_challenge_seen = true;
+    signal_cookie_publish(cookie);
+    uint8_t register_pkt[REND_REGISTER_PKT_LEN];
+    if (Rendezvous_BuildRegister(s_work.stun.public_port, session_key, cookie,
+                                 register_pkt) &&
+        s_work.stun.socket != NULL && src_addr != NULL) {
+        (void)Rendezvous_Send(s_work.stun.socket, src_addr, src_port,
+                              register_pkt, sizeof(register_pkt));
+    }
+    SDL_Log("[direct_p2p] rendezvous CHALLENGE answered (cookie echoed to %s:%u)",
+            src_addr != NULL ? NET_GetAddressString(src_addr) : "?",
+            (unsigned)src_port);
+}
+
 /* Host-side per-frame drain. Returns true once a valid inbound datagram
  * has been received and the handoff was executed. The first ACCEPTED
  * inbound packet on a direct-P2P Host socket is the joiner's
@@ -2194,8 +2329,15 @@ static bool host_tick_receive(void) {
                                    s_work.punch_token, s_work.punch_token_valid)) {
     case DP2P_HOST_DGRAM_RENDEZVOUS:
         /* Server->host frame ('3SXR'). Hosts only ever receive DELIVER
-         * (and, S4c, CHALLENGE); REGISTER/POLL are client->server. */
-        try_handle_deliver(dgram->buf, dgram->buflen);
+         * or (S4c) CHALLENGE; REGISTER/POLL are client->server.
+         * Dispatch on the type byte — DELIVER pairs, CHALLENGE arms the
+         * return-routability cookie. */
+        if (dgram->buflen >= 6 && dgram->buf[5] == 4 /* REND_TYPE_CHALLENGE */) {
+            host_handle_challenge(dgram->buf, dgram->buflen,
+                                  dgram->addr, dgram->port);
+        } else {
+            try_handle_deliver(dgram->buf, dgram->buflen);
+        }
         NET_DestroyDatagram(dgram);
         return true;
 
@@ -2294,6 +2436,8 @@ void DirectP2P_Init(void) {
     s_host_waiting_last_note_ms = 0;
     s_host_advisory_code = CONNECT_FAIL_NONE;
     s_host_unauth_drops = 0; /* S4a */
+    s_host_challenge_seen = false; /* S4c */
+    signal_cookie_reset();         /* S4c */
     SDL_SetAtomicInt(&s_host_registering, 0);
     memset(s_rendezvous_send_q, 0, sizeof(s_rendezvous_send_q));
     memset(&s_work, 0, sizeof(s_work));
@@ -2336,6 +2480,8 @@ void DirectP2P_BeginHost(int preferred_port) {
     s_host_waiting_last_note_ms = 0;
     s_host_advisory_code = CONNECT_FAIL_NONE;
     s_host_unauth_drops = 0; /* S4a */
+    s_host_challenge_seen = false; /* S4c */
+    signal_cookie_reset();         /* S4c */
     SDL_SetAtomicInt(&s_host_registering, 0);
     Stun_ReleaseServerAddr(&s_work.stun); /* belt-and-braces before memset */
     s_stun_keepalive_last_ms = 0;
@@ -2455,6 +2601,8 @@ void DirectP2P_BeginJoin(const char* peer_code) {
     s_host_waiting_last_note_ms = 0;
     s_host_advisory_code = CONNECT_FAIL_NONE;
     s_host_unauth_drops = 0; /* S4a */
+    s_host_challenge_seen = false; /* S4c */
+    signal_cookie_reset();         /* S4c */
     SDL_SetAtomicInt(&s_host_registering, 0);
     Stun_ReleaseServerAddr(&s_work.stun); /* belt-and-braces before memset */
     s_stun_keepalive_last_ms = 0;
@@ -2534,6 +2682,8 @@ void DirectP2P_Cancel(void) {
     s_host_waiting_last_note_ms = 0;
     s_host_advisory_code = CONNECT_FAIL_NONE;
     s_host_unauth_drops = 0; /* S4a */
+    s_host_challenge_seen = false; /* S4c */
+    signal_cookie_reset();         /* S4c */
     SDL_SetAtomicInt(&s_host_registering, 0);
     set_state(DIRECT_P2P_IDLE);
 }
@@ -2581,22 +2731,28 @@ static void host_waiting_tick(void) {
     if (s_host_advisory_code == CONNECT_FAIL_NONE &&
         SDL_GetAtomicInt(&s_host_registering) != 0) {
         const ConnectFailCode adv = ConnectFail_ClassifyHostWaiting(
-            s_upnp_mapping.active, s_host_deliver_seen, waited_ms);
+            s_upnp_mapping.active, s_host_deliver_seen,
+            s_host_challenge_seen, waited_ms);
         if (adv != CONNECT_FAIL_NONE) {
             s_host_advisory_code = adv;
             char line[256];
             SDL_snprintf(line, sizeof(line),
                          "[netplay-connect] ADVISORY code=%s role=host waited_ms=%u "
-                         "upnp=%d deliver_seen=0 — %s",
+                         "upnp=%d deliver_seen=0 challenge_seen=%d — %s",
                          ConnectFail_Code(adv), (unsigned)waited_ms,
                          (int)s_upnp_mapping.active,
+                         (int)s_host_challenge_seen,
                          adv == CONNECT_FAIL_HOST_UNMAPPABLE
                              ? "no UPnP mapping and no rendezvous contact: joiners "
                                "will likely fail; ask the other side to host"
+                         : adv == CONNECT_FAIL_COOKIE_REJECTED
+                             ? "server challenges us but never accepts the cookie "
+                               "echo: auth/version trouble, not a dead server"
                              : "rendezvous server unreachable: the bilateral "
                                "fallback is unavailable, direct joins still work");
             Netplay_LogConnectEvent(line);
-            if (adv == CONNECT_FAIL_HOST_UNMAPPABLE) {
+            if (adv == CONNECT_FAIL_HOST_UNMAPPABLE ||
+                adv == CONNECT_FAIL_COOKIE_REJECTED) {
                 /* Overlay line 3 — the room code stays displayed (a
                  * direct cone-NAT join could still land), but the host
                  * is no longer silently unaware. */
@@ -2606,14 +2762,15 @@ static void host_waiting_tick(void) {
     }
 
     /* Minute-cadence liveness note: log + on-screen elapsed counter (the
-     * unmappable advisory owns the status line when present). */
+     * unmappable / cookie advisories own the status line when present). */
     if (now - s_host_waiting_last_note_ms >= 60000u) {
         s_host_waiting_last_note_ms = now;
         const unsigned min = waited_ms / 60000u;
         SDL_Log("[direct_p2p] host still advertising (%u min): rendezvous=%s upnp=%s",
                 min, s_host_deliver_seen ? "alive" : "SILENT",
                 s_upnp_mapping.active ? "mapped" : "none");
-        if (s_host_advisory_code != CONNECT_FAIL_HOST_UNMAPPABLE) {
+        if (s_host_advisory_code != CONNECT_FAIL_HOST_UNMAPPABLE &&
+            s_host_advisory_code != CONNECT_FAIL_COOKIE_REJECTED) {
             char st[64];
             SDL_snprintf(st, sizeof(st), "Waiting for player 2... (%u min)", min);
             set_status(st);

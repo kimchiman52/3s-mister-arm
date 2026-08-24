@@ -75,14 +75,26 @@ typedef int socklen_t;
 #define REND_MAGIC_BYTES_1 0x53u  /* 'S' */
 #define REND_MAGIC_BYTES_2 0x58u  /* 'X' */
 #define REND_MAGIC_BYTES_3 0x52u  /* 'R' */
-#define REND_VERSION       1
+#define REND_VERSION       2  /* S4c: protocol v2 */
 #define REND_TYPE_REGISTER 1
 #define REND_TYPE_DELIVER  2
 #define REND_TYPE_POLL     3
+#define REND_TYPE_CHALLENGE 4  /* S4c: server -> client cookie challenge */
 
-#define REND_REGISTER_LEN  28
+#define REND_REGISTER_LEN  36  /* S4c: 28 + 8-byte cookie tail */
 #define REND_DELIVER_LEN   32
+#define REND_CHALLENGE_LEN 32
 #define REND_KEY_LEN       16
+
+/* NOTE on the mock servers below: they are v2 by version byte and
+ * length, but they deliberately do NOT implement the S4c challenge —
+ * they answer every REGISTER with a DELIVER directly. That is the
+ * "cookie already accepted" steady state, which is what tests 1/4/8/9
+ * are actually about, and it doubles as coverage that the client stays
+ * correct against a server that never challenges it. The challenge
+ * handshake itself is proven server-side in
+ * tools/rendezvous-server/__test_protocol.js and client-side in
+ * test 11 (the codec) below. */
 
 static int fail_count = 0;
 
@@ -331,8 +343,8 @@ static int test_register_deliver(void) {
      * its public port — the mock will echo that back inside the DELIVER. */
     uint8_t reg_a[REND_REGISTER_LEN];
     uint8_t reg_b[REND_REGISTER_LEN];
-    if (!Rendezvous_BuildRegister(client_a_port, key, reg_a) ||
-        !Rendezvous_BuildRegister(client_b_port, key, reg_b)) {
+    if (!Rendezvous_BuildRegister(client_a_port, key, NULL, reg_a) ||
+        !Rendezvous_BuildRegister(client_b_port, key, NULL, reg_b)) {
         FAIL("test1", "Rendezvous_BuildRegister returned false");
         goto cleanup_fail;
     }
@@ -664,7 +676,7 @@ static int test_protocol_round_trip(void) {
     /* (a) Register peer first so the client's REGISTER pairs immediately. */
     {
         uint8_t reg_p[REND_REGISTER_LEN];
-        if (!Rendezvous_BuildRegister(peer_port, key, reg_p)) {
+        if (!Rendezvous_BuildRegister(peer_port, key, NULL, reg_p)) {
             FAIL("test4", "BuildRegister(peer) failed");
             goto cleanup_fail;
         }
@@ -691,7 +703,7 @@ static int test_protocol_round_trip(void) {
     /* (b) Client REGISTER -> expect DELIVER with peer info. */
     {
         uint8_t reg_c[REND_REGISTER_LEN];
-        if (!Rendezvous_BuildRegister(client_port, key, reg_c)) {
+        if (!Rendezvous_BuildRegister(client_port, key, NULL, reg_c)) {
             FAIL("test4", "BuildRegister(client) failed");
             goto cleanup_fail;
         }
@@ -739,7 +751,7 @@ static int test_protocol_round_trip(void) {
     /* (c) Client POLL -> expect DELIVER with peer info (already paired). */
     {
         uint8_t poll_c[REND_REGISTER_LEN];
-        if (!Rendezvous_BuildPoll(key, poll_c)) {
+        if (!Rendezvous_BuildPoll(key, NULL, poll_c)) {
             FAIL("test4", "BuildPoll failed");
             goto cleanup_fail;
         }
@@ -1163,18 +1175,66 @@ static int test_failure_taxonomy(void) {
     ev.punch_bad_token = true;
     EXPECT_TRUE("7c-ok", ConnectFail_ClassifyJoin(&ev) == CONNECT_FAIL_NONE);
 
+    /* --- 7c2 (S4c): CHALLENGE evidence splits "server down" from
+     * "our cookie echo never bound". Pre-S4c both looked identical
+     * (zero DELIVERs) and every auth/version problem was misreported as
+     * RENDEZVOUS_DOWN, sending users to check their internet. */
+    memset(&ev, 0, sizeof(ev));
+    EXPECT_TRUE("7c2-silence-is-down",
+                ConnectFail_ClassifyJoin(&ev) == CONNECT_FAIL_RENDEZVOUS_DOWN);
+    ev.challenge_any = true;
+    EXPECT_TRUE("7c2-challenged-but-never-bound",
+                ConnectFail_ClassifyJoin(&ev) == CONNECT_FAIL_COOKIE_REJECTED);
+    /* A CHALLENGE plus at least one DELIVER means the cookie DID bind —
+     * the failure is downstream, so cookie blame must not stick. */
+    ev.deliver_any = true;
+    EXPECT_TRUE("7c2-deliver-outranks-challenge",
+                ConnectFail_ClassifyJoin(&ev) == CONNECT_FAIL_HOST_OFFLINE);
+    /* Hairpin still outranks the cookie diagnosis. */
+    memset(&ev, 0, sizeof(ev));
+    ev.challenge_any = true;
+    ev.hairpin = true;
+    EXPECT_TRUE("7c2-hairpin-outranks",
+                ConnectFail_ClassifyJoin(&ev) == CONNECT_FAIL_HAIRPIN);
+    /* COOKIE_REJECTED is its own cause, not an alias of an older one. */
+    EXPECT_TRUE("7c2-distinct-code",
+                strcmp(ConnectFail_Code(CONNECT_FAIL_COOKIE_REJECTED),
+                       ConnectFail_Code(CONNECT_FAIL_RENDEZVOUS_DOWN)) != 0);
+    EXPECT_TRUE("7c2-code-string",
+                strcmp(ConnectFail_Code(CONNECT_FAIL_COOKIE_REJECTED),
+                       "P2P_FAIL_COOKIE_REJECTED") == 0);
+
     /* --- 7d: host-waiting advisory (cause 8). */
     EXPECT_TRUE("7d-too-early",
-                ConnectFail_ClassifyHostWaiting(false, false, CONNECT_HOST_ADVISORY_MS - 1) ==
+                ConnectFail_ClassifyHostWaiting(false, false, false, CONNECT_HOST_ADVISORY_MS - 1) ==
                     CONNECT_FAIL_NONE);
     EXPECT_TRUE("7d-unmappable",
-                ConnectFail_ClassifyHostWaiting(false, false, CONNECT_HOST_ADVISORY_MS) ==
+                ConnectFail_ClassifyHostWaiting(false, false, false, CONNECT_HOST_ADVISORY_MS) ==
                     CONNECT_FAIL_HOST_UNMAPPABLE);
     EXPECT_TRUE("7d-rendezvous-down-with-upnp",
-                ConnectFail_ClassifyHostWaiting(true, false, CONNECT_HOST_ADVISORY_MS) ==
+                ConnectFail_ClassifyHostWaiting(true, false, false, CONNECT_HOST_ADVISORY_MS) ==
                     CONNECT_FAIL_RENDEZVOUS_DOWN);
     EXPECT_TRUE("7d-deliver-seen",
-                ConnectFail_ClassifyHostWaiting(false, true, CONNECT_HOST_ADVISORY_MS * 2) ==
+                ConnectFail_ClassifyHostWaiting(false, true, false, CONNECT_HOST_ADVISORY_MS * 2) ==
+                    CONNECT_FAIL_NONE);
+
+    /* --- 7d2 (S4c): same CHALLENGE split on the HOST advisory path.
+     * A host that is being challenged but never DELIVERed must be told
+     * "auth/version trouble", not "no UPnP mapping" or "server down". */
+    EXPECT_TRUE("7d2-challenged-no-upnp",
+                ConnectFail_ClassifyHostWaiting(false, false, true, CONNECT_HOST_ADVISORY_MS) ==
+                    CONNECT_FAIL_COOKIE_REJECTED);
+    EXPECT_TRUE("7d2-challenged-with-upnp",
+                ConnectFail_ClassifyHostWaiting(true, false, true, CONNECT_HOST_ADVISORY_MS) ==
+                    CONNECT_FAIL_COOKIE_REJECTED);
+    /* A DELIVER means the cookie bound — no advisory at all, challenges
+     * notwithstanding (every v2 session starts with one). */
+    EXPECT_TRUE("7d2-deliver-outranks-challenge",
+                ConnectFail_ClassifyHostWaiting(false, true, true, CONNECT_HOST_ADVISORY_MS * 2) ==
+                    CONNECT_FAIL_NONE);
+    /* Still inside the advisory window: say nothing yet. */
+    EXPECT_TRUE("7d2-too-early",
+                ConnectFail_ClassifyHostWaiting(false, false, true, CONNECT_HOST_ADVISORY_MS - 1) ==
                     CONNECT_FAIL_NONE);
 
     /* --- 7e: deadline + abort-hold policy helpers (Part A). */
@@ -1647,6 +1707,161 @@ static int test_host_datagram_gate(void) {
     return 1;
 }
 
+/* --- Test 11: S4c rendezvous v2 cookie wire codec --------------------- */
+
+/*
+ * Client half of return-routability. The server (tools/rendezvous-
+ * server/rendezvous-server.js, exercised by __test_protocol.js) answers
+ * an uncookied REGISTER with a CHALLENGE and binds nothing until the
+ * cookie is echoed. This test pins the CLIENT's side of that contract:
+ *
+ *  - REGISTER/POLL are 36 bytes with an 8-byte cookie tail; NULL cookie
+ *    encodes as all-zeros, which is precisely the "no cookie yet" form
+ *    the server answers with a CHALLENGE. If the tail ever stopped being
+ *    zeroed, an uncookied REGISTER would carry stack garbage and the
+ *    client would be re-challenged forever.
+ *  - Rendezvous_ParseChallenge accepts only a well-formed v2 CHALLENGE
+ *    carrying OUR session key, and zeroes its output on every reject —
+ *    a client that echoed a cookie lifted from a forged/cross-talk
+ *    CHALLENGE would hand an attacker control of which cookie it uses.
+ */
+static int test_rendezvous_cookie_codec(void) {
+    fprintf(stderr, "[test_bilateral_punch] test 11: S4c rendezvous v2 cookie codec\n");
+    const int fails_before = fail_count;
+
+    uint8_t key[REND_KEY_LEN];
+    uint8_t other_key[REND_KEY_LEN];
+    for (int i = 0; i < REND_KEY_LEN; i++) {
+        key[i] = (uint8_t)(0xA0 + i);
+        other_key[i] = (uint8_t)(0x10 + i);
+    }
+    uint8_t cookie[REND_COOKIE_LEN] = { 0xDE, 0xAD, 0xBE, 0xEF, 0x01, 0x02, 0x03, 0x04 };
+
+    /* (a) Sizes agree with the wire spec. */
+    EXPECT_TRUE("11-sizes", REND_REGISTER_PKT_LEN == 36 && REND_COOKIE_LEN == 8);
+    EXPECT_TRUE("11-local-len-agrees", REND_REGISTER_LEN == REND_REGISTER_PKT_LEN);
+
+    /* (b) NULL cookie -> zero tail, version byte 2. */
+    uint8_t reg_nc[REND_REGISTER_PKT_LEN];
+    memset(reg_nc, 0xFF, sizeof(reg_nc)); /* poison: catch a missing memset */
+    EXPECT_TRUE("11-build-null", Rendezvous_BuildRegister(4321, key, NULL, reg_nc));
+    EXPECT_TRUE("11-version-2", reg_nc[4] == REND_VERSION);
+    EXPECT_TRUE("11-type-register", reg_nc[5] == REND_TYPE_REGISTER);
+    EXPECT_TRUE("11-key-echoed", memcmp(&reg_nc[8], key, REND_KEY_LEN) == 0);
+    EXPECT_TRUE("11-port-be", reg_nc[24] == 0x10 && reg_nc[25] == 0xE1); /* 4321 */
+    {
+        bool tail_zero = true;
+        for (int i = 28; i < REND_REGISTER_PKT_LEN; i++) {
+            if (reg_nc[i] != 0) tail_zero = false;
+        }
+        EXPECT_TRUE("11-null-cookie-tail-zero", tail_zero);
+    }
+
+    /* (c) Cookie present -> exact tail, head byte-identical to (b). */
+    uint8_t reg_c[REND_REGISTER_PKT_LEN];
+    memset(reg_c, 0xFF, sizeof(reg_c));
+    EXPECT_TRUE("11-build-cookie", Rendezvous_BuildRegister(4321, key, cookie, reg_c));
+    EXPECT_TRUE("11-cookie-tail", memcmp(&reg_c[28], cookie, REND_COOKIE_LEN) == 0);
+    EXPECT_TRUE("11-head-unchanged", memcmp(reg_c, reg_nc, 28) == 0);
+
+    /* (d) POLL carries the cookie the same way, with its own type. */
+    uint8_t poll_c[REND_REGISTER_PKT_LEN];
+    memset(poll_c, 0xFF, sizeof(poll_c));
+    EXPECT_TRUE("11-build-poll", Rendezvous_BuildPoll(key, cookie, poll_c));
+    EXPECT_TRUE("11-poll-type", poll_c[5] == REND_TYPE_POLL);
+    EXPECT_TRUE("11-poll-version", poll_c[4] == REND_VERSION);
+    EXPECT_TRUE("11-poll-cookie-tail", memcmp(&poll_c[28], cookie, REND_COOKIE_LEN) == 0);
+    uint8_t poll_nc[REND_REGISTER_PKT_LEN];
+    memset(poll_nc, 0xFF, sizeof(poll_nc));
+    EXPECT_TRUE("11-build-poll-null", Rendezvous_BuildPoll(key, NULL, poll_nc));
+    {
+        bool tail_zero = true;
+        for (int i = 28; i < REND_REGISTER_PKT_LEN; i++) {
+            if (poll_nc[i] != 0) tail_zero = false;
+        }
+        EXPECT_TRUE("11-poll-null-cookie-tail-zero", tail_zero);
+    }
+
+    /* (e) Build a well-formed CHALLENGE the way the server does:
+     *     magic(4) ver(1) type(1) reserved(2) key(16) cookie(8). */
+    uint8_t chal[REND_CHALLENGE_LEN];
+    memset(chal, 0, sizeof(chal));
+    chal[0] = REND_MAGIC_BYTES_0;
+    chal[1] = REND_MAGIC_BYTES_1;
+    chal[2] = REND_MAGIC_BYTES_2;
+    chal[3] = REND_MAGIC_BYTES_3;
+    chal[4] = (uint8_t)REND_VERSION;
+    chal[5] = (uint8_t)REND_TYPE_CHALLENGE;
+    memcpy(&chal[8], key, REND_KEY_LEN);
+    memcpy(&chal[24], cookie, REND_COOKIE_LEN);
+
+    uint8_t out[REND_COOKIE_LEN];
+    memset(out, 0x77, sizeof(out));
+    EXPECT_TRUE("11-parse-ok",
+                Rendezvous_ParseChallenge(chal, sizeof(chal), key, out));
+    EXPECT_TRUE("11-parse-cookie", memcmp(out, cookie, REND_COOKIE_LEN) == 0);
+
+    /* (f) Reject table. Every reject must ALSO zero the output so a
+     * caller that ignores the return value cannot echo attacker bytes. */
+#define EXPECT_CHAL_REJECT(tag, pkt, len, k) do {                            \
+        uint8_t _o[REND_COOKIE_LEN];                                         \
+        memset(_o, 0x77, sizeof(_o));                                        \
+        EXPECT_FALSE(tag, Rendezvous_ParseChallenge((pkt), (len), (k), _o)); \
+        bool _z = true;                                                      \
+        for (int _i = 0; _i < REND_COOKIE_LEN; _i++) {                       \
+            if (_o[_i] != 0) _z = false;                                     \
+        }                                                                    \
+        EXPECT_TRUE(tag "-zeroed", _z);                                      \
+    } while (0)
+
+    {   /* wrong magic */
+        uint8_t bad[REND_CHALLENGE_LEN];
+        memcpy(bad, chal, sizeof(bad));
+        bad[0] ^= 0xFF;
+        EXPECT_CHAL_REJECT("11-bad-magic", bad, sizeof(bad), key);
+    }
+    {   /* v1 version byte — a v1 server's frame must never be consumed */
+        uint8_t bad[REND_CHALLENGE_LEN];
+        memcpy(bad, chal, sizeof(bad));
+        bad[4] = 1;
+        EXPECT_CHAL_REJECT("11-v1-version", bad, sizeof(bad), key);
+    }
+    {   /* future version */
+        uint8_t bad[REND_CHALLENGE_LEN];
+        memcpy(bad, chal, sizeof(bad));
+        bad[4] = 3;
+        EXPECT_CHAL_REJECT("11-future-version", bad, sizeof(bad), key);
+    }
+    {   /* wrong type: a DELIVER must not be mistaken for a CHALLENGE */
+        uint8_t bad[REND_CHALLENGE_LEN];
+        memcpy(bad, chal, sizeof(bad));
+        bad[5] = (uint8_t)REND_TYPE_DELIVER;
+        EXPECT_CHAL_REJECT("11-deliver-not-challenge", bad, sizeof(bad), key);
+    }
+    /* cross-talk / forgery: right shape, someone else's session key */
+    EXPECT_CHAL_REJECT("11-wrong-key", chal, sizeof(chal), other_key);
+    /* truncated by one byte */
+    EXPECT_CHAL_REJECT("11-short", chal, REND_CHALLENGE_LEN - 1, key);
+    /* zero length / negative length */
+    EXPECT_CHAL_REJECT("11-zero-len", chal, 0, key);
+    EXPECT_CHAL_REJECT("11-neg-len", chal, -1, key);
+#undef EXPECT_CHAL_REJECT
+
+    /* (g) NULL-argument safety. */
+    EXPECT_FALSE("11-null-pkt", Rendezvous_ParseChallenge(NULL, REND_CHALLENGE_LEN, key, out));
+    EXPECT_FALSE("11-null-key", Rendezvous_ParseChallenge(chal, REND_CHALLENGE_LEN, NULL, out));
+    EXPECT_FALSE("11-null-out", Rendezvous_ParseChallenge(chal, REND_CHALLENGE_LEN, key, NULL));
+    EXPECT_FALSE("11-null-buf-register", Rendezvous_BuildRegister(1, key, cookie, NULL));
+    EXPECT_FALSE("11-null-key-register", Rendezvous_BuildRegister(1, NULL, cookie, reg_c));
+
+    if (fail_count == fails_before) {
+        fprintf(stderr, "[test_bilateral_punch] test 11 OK — v2 cookie tail + "
+                        "CHALLENGE parse gate\n");
+        return 0;
+    }
+    return 1;
+}
+
 /* --- Entry point ------------------------------------------------------ */
 
 int Netplay_Test_BilateralPunch(void) {
@@ -1663,6 +1878,7 @@ int Netplay_Test_BilateralPunch(void) {
     rc |= test_failure_taxonomy();
     rc |= test_posthandoff_failure_report();
     rc |= test_host_datagram_gate();
+    rc |= test_rendezvous_cookie_codec();
 
     if (fail_count > 0 || rc != 0) {
         fprintf(stderr, "[test_bilateral_punch] %d failure(s)\n", fail_count);

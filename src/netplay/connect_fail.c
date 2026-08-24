@@ -13,6 +13,7 @@ const char* ConnectFail_Code(ConnectFailCode code) {
     case CONNECT_FAIL_DNS_ALLDOWN:          return "P2P_FAIL_DNS_ALLDOWN";
     case CONNECT_FAIL_STUN_ALLDOWN:         return "P2P_FAIL_STUN_ALLDOWN";
     case CONNECT_FAIL_RENDEZVOUS_DOWN:      return "P2P_FAIL_RENDEZVOUS_DOWN";
+    case CONNECT_FAIL_COOKIE_REJECTED:      return "P2P_FAIL_COOKIE_REJECTED";
     case CONNECT_FAIL_HOST_OFFLINE:         return "P2P_FAIL_HOST_OFFLINE";
     case CONNECT_FAIL_NAT_BLOCKED:          return "P2P_FAIL_NAT_BLOCKED";
     case CONNECT_FAIL_SYMMETRIC_BOTH:       return "P2P_FAIL_SYMMETRIC_BOTH";
@@ -43,6 +44,8 @@ const char* ConnectFail_UserText(ConnectFailCode code) {
         return "No STUN reply (UDP blocked or net down).";
     case CONNECT_FAIL_RENDEZVOUS_DOWN:
         return "Matchmaking server unreachable.";
+    case CONNECT_FAIL_COOKIE_REJECTED:
+        return "Matchmaking auth failed. Update the game.";
     case CONNECT_FAIL_HOST_OFFLINE:
         return "Host not found. Code stale or host offline.";
     case CONNECT_FAIL_NAT_BLOCKED:
@@ -109,14 +112,23 @@ ConnectFailCode ConnectFail_ClassifyJoin(const ConnectJoinEvidence* ev) {
         return CONNECT_FAIL_HAIRPIN;
     }
     if (!ev->deliver_any) {
-        /* The server answers EVERY REGISTER with a DELIVER (real
-         * endpoint or zero-sentinel) — total silence for the whole
-         * budget means the server or the path to it is down.
-         * Review L-3: four silent-drop exceptions exist (rate limiter,
-         * per-IP key quota, paired-table-full, third-party drop) and
-         * currently classify here too — see the honesty note in
-         * connect_fail.h; a client-distinguishable NACK needs a wire
-         * change. */
+        /* S4c: a CHALLENGE is proof of life — the server answered us.
+         * Challenges without a single DELIVER for the whole budget
+         * means our cookie echo never bound: auth/version trouble,
+         * not a dead server. */
+        if (ev->challenge_any) {
+            return CONNECT_FAIL_COOKIE_REJECTED;
+        }
+        /* The v2 server answers EVERY well-formed REGISTER with a
+         * CHALLENGE or a DELIVER — total silence for the whole budget
+         * means the server or the path to it is down.
+         * Review L-3: silent-drop exceptions exist (rate limiter,
+         * per-IP key quota, per-KEY rate cap (S4c), paired-table-full,
+         * third-party drop, and a VERSION-MISMATCHED client — a v1
+         * client against the v2 server lands here too) and currently
+         * classify here as well — see the honesty note in
+         * connect_fail.h; a client-distinguishable NACK needs another
+         * wire change. */
         return CONNECT_FAIL_RENDEZVOUS_DOWN;
     }
     if (!ev->deliver_real) {
@@ -143,9 +155,15 @@ ConnectFailCode ConnectFail_ClassifyJoin(const ConnectJoinEvidence* ev) {
 
 ConnectFailCode ConnectFail_ClassifyHostWaiting(bool upnp_active,
                                                 bool deliver_any,
+                                                bool challenge_any,
                                                 uint32_t waited_ms) {
     if (waited_ms < CONNECT_HOST_ADVISORY_MS || deliver_any) {
         return CONNECT_FAIL_NONE;
+    }
+    /* S4c: challenges prove the server is alive; zero DELIVERs despite
+     * them means our cookie echoes never bound. */
+    if (challenge_any) {
+        return CONNECT_FAIL_COOKIE_REJECTED;
     }
     /* Zero DELIVERs after >= 6 REGISTER cycles (5 s cadence): the
      * rendezvous path is dead. Without UPnP that leaves no reliable way

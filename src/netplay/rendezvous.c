@@ -19,14 +19,22 @@
 
 /* '3SXR' big-endian on the wire. */
 #define REND_MAGIC            0x33535852u
-#define REND_VERSION          1
+/* S4c: protocol v2 — REGISTER/POLL grew an 8-byte return-routability
+ * cookie tail (36 bytes, was 28) and the server answers uncookied
+ * requests with a CHALLENGE (type 4) instead of binding state. The
+ * version bump is deliberate and breaking: a v1 client is cleanly
+ * dropped (and logged) by the v2 server; see the interlock note in
+ * docs/plan-netplay-connection.md §6. */
+#define REND_VERSION          2
 #define REND_TYPE_REGISTER    1
 #define REND_TYPE_DELIVER     2
 #define REND_TYPE_POLL        3
+#define REND_TYPE_CHALLENGE   4
 
-#define REND_REGISTER_LEN     28
-#define REND_POLL_LEN         28
+#define REND_REGISTER_LEN     36
+#define REND_POLL_LEN         36
 #define REND_DELIVER_MIN_LEN  32
+#define REND_CHALLENGE_LEN    32
 
 #define REND_KEY_LEN          16
 
@@ -133,7 +141,8 @@ bool Rendezvous_DerivePunchToken(uint32_t ip_be,
 
 bool Rendezvous_BuildRegister(uint16_t my_public_port,
                               const uint8_t session_key[16],
-                              uint8_t out_pkt[28]) {
+                              const uint8_t cookie[REND_COOKIE_LEN],
+                              uint8_t out_pkt[REND_REGISTER_PKT_LEN]) {
     if (!session_key || !out_pkt) {
         return false;
     }
@@ -145,11 +154,17 @@ bool Rendezvous_BuildRegister(uint16_t my_public_port,
     memcpy(&out_pkt[8], session_key, REND_KEY_LEN);
     write_be16(&out_pkt[24], my_public_port);
     /* reserved2 [26..27] = 0 (already zeroed by memset) */
+    /* S4c cookie tail [28..35]: all-zero (memset) = "no cookie yet" —
+     * the server answers with a CHALLENGE instead of binding a slot. */
+    if (cookie != NULL) {
+        memcpy(&out_pkt[28], cookie, REND_COOKIE_LEN);
+    }
     return true;
 }
 
 bool Rendezvous_BuildPoll(const uint8_t session_key[16],
-                          uint8_t out_pkt[28]) {
+                          const uint8_t cookie[REND_COOKIE_LEN],
+                          uint8_t out_pkt[REND_REGISTER_PKT_LEN]) {
     if (!session_key || !out_pkt) {
         return false;
     }
@@ -159,7 +174,39 @@ bool Rendezvous_BuildPoll(const uint8_t session_key[16],
     out_pkt[5] = (uint8_t)REND_TYPE_POLL;
     /* reserved [6..7] = 0 */
     memcpy(&out_pkt[8], session_key, REND_KEY_LEN);
-    /* reserved3 [24..27] = 0 */
+    /* port field [24..25] unused for POLL; reserved [26..27] = 0 */
+    if (cookie != NULL) {
+        memcpy(&out_pkt[28], cookie, REND_COOKIE_LEN);
+    }
+    return true;
+}
+
+bool Rendezvous_ParseChallenge(const uint8_t* pkt, int len,
+                               const uint8_t expected_session_key[16],
+                               uint8_t out_cookie[REND_COOKIE_LEN]) {
+    if (out_cookie) {
+        memset(out_cookie, 0, REND_COOKIE_LEN);
+    }
+    if (!pkt || len < REND_CHALLENGE_LEN || !expected_session_key || !out_cookie) {
+        return false;
+    }
+    if (read_be32(&pkt[0]) != REND_MAGIC) {
+        return false;
+    }
+    if (pkt[4] != REND_VERSION) {
+        return false;
+    }
+    if (pkt[5] != REND_TYPE_CHALLENGE) {
+        return false;
+    }
+    /* Session-key match: a CHALLENGE not carrying OUR key is cross-talk
+     * or a forgery — an off-path attacker cannot know the key (it
+     * embeds the S4b nonce), so this also authenticates the challenge
+     * source as "someone on the path of our own REGISTER". */
+    if (memcmp(&pkt[8], expected_session_key, REND_KEY_LEN) != 0) {
+        return false;
+    }
+    memcpy(out_cookie, &pkt[24], REND_COOKIE_LEN);
     return true;
 }
 

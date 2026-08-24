@@ -6,10 +6,11 @@
  *
  * This module is intentionally I/O-free: callers own the socket, the
  * thread, the schedule, and the cancellation. The functions here only
- * (a) derive the session key shared with the peer from the same
- * (ip_be, public_port) tuple the room code already encodes, (b) build
- * the 28-byte REGISTER and POLL packets, (c) parse a 32-byte DELIVER,
- * and (d) parse the configured `udp://host:port` signal URL.
+ * (a) derive the session key / punch token from the same
+ * (ip_be, public_port, nonce) tuple the room code encodes, (b) build
+ * the 36-byte v2 REGISTER and POLL packets (8-byte cookie tail, S4c),
+ * (c) parse a 32-byte DELIVER or CHALLENGE, and (d) parse the
+ * configured `udp://host:port` signal URL.
  *
  * Security note (v2, S4b): the session key is
  * SHA-256("3SXR-SK2" || ip[4] || port_be[2] || nonce_be[2])[0..15] —
@@ -83,29 +84,60 @@ bool Rendezvous_DerivePunchToken(uint32_t ip_be,
                                  uint16_t nonce,
                                  uint8_t out_token[REND_PUNCH_TOKEN_LEN]);
 
+/* S4c protocol v2 sizes: REGISTER/POLL carry an 8-byte return-
+ * routability cookie tail (see Rendezvous_ParseChallenge). */
+#define REND_COOKIE_LEN 8
+#define REND_REGISTER_PKT_LEN 36
+
 /*
- * Build a 28-byte REGISTER packet (type=1) for the rendezvous server.
+ * Build a 36-byte v2 REGISTER packet (type=1) for the rendezvous
+ * server.
  *
  * `my_public_port` is the caller's STUN-observed public port in HOST
  * byte order (matches StunResult.public_port). The encoder writes it
  * big-endian on the wire. `session_key` is the 16-byte key from
- * Rendezvous_DeriveSessionKey. `out_pkt` MUST point to a 28-byte buffer.
+ * Rendezvous_DeriveSessionKey. `cookie` is the 8-byte server cookie
+ * from the most recent CHALLENGE, or NULL for the initial uncookied
+ * REGISTER (encoded as all-zeros — the server replies with a CHALLENGE
+ * instead of binding a slot). `out_pkt` MUST point to a 36-byte buffer.
  *
- * Returns true on success, false on NULL inputs.
+ * Returns true on success, false on NULL key/buffer.
  */
 bool Rendezvous_BuildRegister(uint16_t my_public_port,
                               const uint8_t session_key[16],
-                              uint8_t out_pkt[28]);
+                              const uint8_t cookie[REND_COOKIE_LEN],
+                              uint8_t out_pkt[REND_REGISTER_PKT_LEN]);
 
 /*
- * Build a 28-byte POLL packet (type=3) for the rendezvous server.
- * Same shape as REGISTER but with no port and a zero reserved tail.
- * `out_pkt` MUST point to a 28-byte buffer.
+ * Build a 36-byte v2 POLL packet (type=3) for the rendezvous server.
+ * Same shape as REGISTER but with a zero port field. `out_pkt` MUST
+ * point to a 36-byte buffer.
  *
- * Returns true on success, false on NULL inputs.
+ * Returns true on success, false on NULL key/buffer.
  */
 bool Rendezvous_BuildPoll(const uint8_t session_key[16],
-                          uint8_t out_pkt[28]);
+                          const uint8_t cookie[REND_COOKIE_LEN],
+                          uint8_t out_pkt[REND_REGISTER_PKT_LEN]);
+
+/*
+ * Parse a 32-byte v2 CHALLENGE packet (type=4, server -> client). The
+ * server answers any REGISTER/POLL whose cookie is missing/stale with
+ * a CHALLENGE carrying a cookie bound to the request's SOURCE address
+ * (return-routability, S4c): only a client that can actually RECEIVE
+ * at its claimed source learns the cookie, so a source-spoofed
+ * REGISTER can no longer occupy a slot or steer a victim's punch
+ * traffic. Layout: magic(4) ver(1) type(1) reserved(2) key(16)
+ * cookie(8).
+ *
+ * Validates magic/version/type and that the embedded session key
+ * matches `expected_session_key` (cross-talk + forgery gate — the key
+ * embeds the S4b nonce, which an off-path attacker cannot know). On
+ * success writes the 8-byte cookie into out_cookie and returns true;
+ * on any mismatch zeroes out_cookie and returns false.
+ */
+bool Rendezvous_ParseChallenge(const uint8_t* pkt, int len,
+                               const uint8_t expected_session_key[16],
+                               uint8_t out_cookie[REND_COOKIE_LEN]);
 
 /*
  * Tri-state DELIVER parse result (S3 failure taxonomy,

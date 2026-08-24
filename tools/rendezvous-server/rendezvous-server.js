@@ -5,19 +5,30 @@
 'use strict';
 
 const dgram = require('dgram');
+const crypto = require('crypto');
 const { performance } = require('perf_hooks');
 
 // --- Wire constants ----------------------------------------------------------
 
 const MAGIC = 0x33535852; // '3SXR' big-endian
-const VERSION = 1;
+// S4c protocol v2 (docs/plan-netplay-connection.md §6): REGISTER/POLL
+// carry an 8-byte return-routability cookie tail; the server answers an
+// uncookied (or stale-cookied) request with a CHALLENGE and binds NO
+// state until the client echoes the cookie back — proving it actually
+// receives at its claimed source address. v1 clients are cleanly
+// dropped (logged once per warn cycle); the whole alpha group ships the
+// v2 client together, so there is no mixed-version window to support.
+const VERSION = 2;
 const TYPE_REGISTER = 1;
 const TYPE_DELIVER = 2;
 const TYPE_POLL = 3;
+const TYPE_CHALLENGE = 4;
 
-const REGISTER_LEN = 28;
-const POLL_LEN = 28;
+const REGISTER_LEN = 36;
+const POLL_LEN = 36;
 const DELIVER_LEN = 32;
+const CHALLENGE_LEN = 32;
+const COOKIE_LEN = 8;
 
 // --- Tunables ----------------------------------------------------------------
 
@@ -53,8 +64,12 @@ const SESSION_SWEEP_INTERVAL_MS = 5 * 1000;
 //      keys/s, to age a live host to the front). A legitimate new host
 //      therefore always gets a slot, even during a spoofed-source flood.
 // A stateless address-validation cookie (return-routability) is the
-// third defense; it needs a wire change and is deliberately left to the
-// queued S4 security stage to avoid conflicting designs.
+// third defense and SHIPPED in S4c (see COOKIE_ROTATE_MS below): a
+// source-spoofed REGISTER can no longer reach handleRegister at all, so
+// the "spoofed flood" arm of the reasoning above is now a defense in
+// depth rather than the front line. Defenses 1 and 2 still matter — a
+// real botnet whose nodes DO receive at their own addresses passes the
+// cookie gate and can still flood the table.
 const MAX_SESSIONS = 4096;
 const MAX_NEW_KEYS_PER_IP = 4;
 
@@ -75,6 +90,52 @@ const SLOT_STALE_MS = 30 * 1000;
 const RATE_SWEEP_INTERVAL_MS = 60 * 1000;
 const RATE_WINDOW_MS = 1000;
 const RATE_LIMIT_PER_WINDOW = 10;
+
+// S4c: per-SESSION-KEY rate cap, alongside the per-IP one. The per-IP
+// bucket is bypassable by an attacker with many (real, cookie-capable)
+// source IPs all hammering ONE key; this bounds the damage to any
+// single session. A legitimate pair peaks at ~2.5 pkt/s (host 0.2/s +
+// joiner 2/s + one challenge round each), so 10/s/key is generous.
+// Enforced AFTER cookie validation so spoofed traffic (which never
+// binds anyway) cannot consume a victim key's budget.
+const KEY_RATE_WINDOW_MS = 1000;
+const KEY_RATE_LIMIT_PER_WINDOW = 10;
+
+// S4c: return-routability cookie. Stateless server side:
+//   cookie = SHA-256(secret || addr:port:slot)[0..7]
+// with slot = floor(now_wallclock / COOKIE_ROTATE_MS). The current and
+// previous slots validate, so a cookie is usable for 60..120 s; a
+// client whose cookie expires simply gets re-CHALLENGEd on its next
+// REGISTER (the C client answers within one RTT). The secret is drawn
+// fresh at process start — a restart invalidates outstanding cookies,
+// which costs each live client exactly one extra challenge round.
+//
+// The cookie is a RETURN-ROUTABILITY proof, not a nonce: it is
+// deliberately replayable by whoever holds it, for as long as it lives.
+// What that buys and what it does not:
+//   * It is bound to (source address, source port), so a cookie is
+//     useless from any other endpoint — the only way to obtain one for
+//     endpoint E is to RECEIVE a datagram at E. A source-spoofing
+//     attacker gets the CHALLENGE delivered to the victim it is
+//     impersonating and learns nothing, so it can never bind a slot,
+//     occupy a key, or steer a victim's punch traffic.
+//   * An OFF-PATH attacker cannot forge one: the secret is 32 random
+//     bytes that never leave the process, and the cookie is a SHA-256
+//     truncation over it.
+//   * An ON-PATH attacker who observes a cookie can replay it — but an
+//     on-path attacker at endpoint E already satisfies return
+//     routability for E by definition, so there is nothing left to
+//     prove. Cookies are NOT an authentication mechanism; peer
+//     authentication is S4a's punch token and the S4b nonce-derived
+//     session key.
+//   * Rotation bounds a leaked cookie's usefulness to <= 120 s.
+// The CHALLENGE reply is 32 bytes for a 36-byte request: amplification
+// factor 0.89, i.e. the server is a net ATTENUATOR, never a reflector
+// worth aiming at a victim. It is also emitted under the per-IP token
+// bucket, so a spoofed flood at one victim is capped at
+// RATE_LIMIT_PER_WINDOW challenges/second.
+const COOKIE_ROTATE_MS = 60 * 1000;
+const cookieSecret = crypto.randomBytes(32);
 
 // --- Logging -----------------------------------------------------------------
 
@@ -124,6 +185,43 @@ function ipv4ToBytes(addr) {
 }
 
 // --- Packet encode/decode ----------------------------------------------------
+
+// S4c cookie derivation + validation ------------------------------------------
+
+function cookieForSlot(address, port, slot) {
+    return crypto
+        .createHash('sha256')
+        .update(cookieSecret)
+        .update(`${address}:${port}:${slot}`)
+        .digest()
+        .subarray(0, COOKIE_LEN);
+}
+
+function currentCookieSlot() {
+    return Math.floor(Date.now() / COOKIE_ROTATE_MS);
+}
+
+// Constant-time check against the current and previous rotation slots.
+function cookieValid(cookieBuf, rinfo) {
+    if (!cookieBuf || cookieBuf.length !== COOKIE_LEN) return false;
+    const slot = currentCookieSlot();
+    for (const s of [slot, slot - 1]) {
+        const expect = cookieForSlot(rinfo.address, rinfo.port, s);
+        if (crypto.timingSafeEqual(cookieBuf, expect)) return true;
+    }
+    return false;
+}
+
+function encodeChallenge(sessionKeyBuf, rinfo) {
+    const buf = Buffer.alloc(CHALLENGE_LEN);
+    buf.writeUInt32BE(MAGIC, 0);
+    buf.writeUInt8(VERSION, 4);
+    buf.writeUInt8(TYPE_CHALLENGE, 5);
+    buf.writeUInt16BE(0, 6); // reserved
+    sessionKeyBuf.copy(buf, 8, 0, 16);
+    cookieForSlot(rinfo.address, rinfo.port, currentCookieSlot()).copy(buf, 24);
+    return buf;
+}
 
 function encodeDeliver(sessionKeyBuf, peerEndpoint) {
     const buf = Buffer.alloc(DELIVER_LEN);
@@ -177,6 +275,12 @@ const warnedIps = new Set();
 // IPs we've already warned about. Cleared when the rateMap entry is evicted
 // (i.e. the IP has been quiet long enough to be swept).
 
+const keyRateMap = new Map();
+// S4c: key = hex session key; value = { timestamps: number[], lastSeen }.
+// Same sliding-window shape as rateMap, enforced post-cookie.
+
+const warnedKeys = new Set();
+
 // --- Rate limiter ------------------------------------------------------------
 
 function rateLimitAllow(ip) {
@@ -196,6 +300,30 @@ function rateLimitAllow(ip) {
         if (!warnedIps.has(ip)) {
             warnedIps.add(ip);
             logWarn(`rate-limit: dropping packets from ${ip} (further drops will be silent until this IP is quiet long enough to evict)`);
+        }
+        return false;
+    }
+    entry.timestamps.push(now);
+    return true;
+}
+
+// S4c per-key limiter (post-cookie; see KEY_RATE_* rationale) --------------
+function keyRateAllow(hexKey) {
+    const now = nowMs();
+    let entry = keyRateMap.get(hexKey);
+    if (!entry) {
+        entry = { timestamps: [], lastSeen: now };
+        keyRateMap.set(hexKey, entry);
+    }
+    const cutoff = now - KEY_RATE_WINDOW_MS;
+    if (entry.timestamps.length > 0 && entry.timestamps[0] <= cutoff) {
+        entry.timestamps = entry.timestamps.filter((t) => t > cutoff);
+    }
+    entry.lastSeen = now;
+    if (entry.timestamps.length >= KEY_RATE_LIMIT_PER_WINDOW) {
+        if (!warnedKeys.has(hexKey)) {
+            warnedKeys.add(hexKey);
+            logWarn(`key-rate-limit: dropping packets for key=${shortKey4(hexKey)}... (further drops silent until the key is quiet long enough to evict)`);
         }
         return false;
     }
@@ -232,8 +360,19 @@ function sweepRates() {
             evicted += 1;
         }
     }
-    if (evicted > 0) {
-        logInfo(`rate sweep: evicted ${evicted}, live=${rateMap.size}`);
+    // S4c: same policy for the per-key buckets.
+    let keyEvicted = 0;
+    for (const [k, entry] of keyRateMap) {
+        const cutoff = now - KEY_RATE_WINDOW_MS;
+        const inWindow = entry.timestamps.length > 0 && entry.timestamps[entry.timestamps.length - 1] > cutoff;
+        if (!inWindow && now - entry.lastSeen > KEY_RATE_WINDOW_MS * 60) {
+            keyRateMap.delete(k);
+            warnedKeys.delete(k);
+            keyEvicted += 1;
+        }
+    }
+    if (evicted > 0 || keyEvicted > 0) {
+        logInfo(`rate sweep: evicted ${evicted} ip(s) + ${keyEvicted} key(s), live=${rateMap.size}/${keyRateMap.size}`);
     }
 }
 
@@ -395,6 +534,45 @@ function handlePoll(socket, buf, rinfo) {
     logInfo(`[POLL] from ${source.address}:${source.port} key=${shortKey4(hexKey)}... a=${aStr} b=${bStr}`);
 }
 
+// --- S4c return-routability gate ---------------------------------------------
+
+// Runs between "the frame is well-formed" and "we touch any state".
+// Returns the hex session key when the request may proceed, or null when
+// it was answered with a CHALLENGE / dropped.
+//
+// Ordering is load-bearing:
+//   1. cookie check FIRST — a request that has not proven return
+//      routability must not be able to create, refresh, evict, or even
+//      NAME a session, and must not consume the victim key's rate budget.
+//   2. per-key cap SECOND — now that the source is proven, bound how
+//      much one session key may be hammered by an attacker who controls
+//      many real (cookie-capable) source addresses and therefore slips
+//      past the per-IP bucket.
+// The gate NEVER binds state and NEVER hangs: every path either sends
+// exactly one 32-byte CHALLENGE or returns silently.
+function returnRoutabilityGate(socket, buf, rinfo, what) {
+    const sessionKeyBuf = Buffer.from(buf.subarray(8, 24));
+    const hexKey = sessionKeyBuf.toString('hex');
+    const cookieBuf = Buffer.from(buf.subarray(28, 28 + COOKIE_LEN));
+
+    if (!cookieValid(cookieBuf, rinfo)) {
+        // Uncookied (first contact) or stale/forged/wrong-endpoint cookie.
+        // Answer with a CHALLENGE bound to THIS source and bind nothing.
+        // A spoofing sender has the challenge delivered to the address it
+        // is impersonating and therefore never learns the cookie.
+        const challenge = encodeChallenge(sessionKeyBuf, rinfo);
+        socket.send(challenge, 0, CHALLENGE_LEN, rinfo.port, rinfo.address);
+        const uncookied = cookieBuf.every((b) => b === 0);
+        logInfo(`[CHALLENGE] ${what} from ${rinfo.address}:${rinfo.port} key=${shortKey4(hexKey)}... (${uncookied ? 'uncookied' : 'stale/invalid cookie'}) — no state bound`);
+        return null;
+    }
+
+    if (!keyRateAllow(hexKey)) {
+        return null;
+    }
+    return hexKey;
+}
+
 // --- Top-level dispatch ------------------------------------------------------
 
 function onMessage(socket, buf, rinfo) {
@@ -412,7 +590,13 @@ function onMessage(socket, buf, rinfo) {
     }
     const version = buf.readUInt8(4);
     if (version !== VERSION) {
-        logWarn(`drop: unsupported version=${version} from ${rinfo.address}:${rinfo.port}`);
+        // Version interlock (S4c): a v1 client's 28-byte REGISTER lands
+        // here and is dropped CLEANLY — logged, no reply, no state, no
+        // timer, no hang. The client sees total silence and its existing
+        // budget expiry classifies P2P_FAIL_RENDEZVOUS_DOWN. This is the
+        // authorized breaking change; see docs/plan-netplay-connection.md
+        // §6 for the full mixed-version matrix.
+        logWarn(`drop: unsupported version=${version} from ${rinfo.address}:${rinfo.port} (this server speaks v${VERSION} only)`);
         return;
     }
     const type = buf.readUInt8(5);
@@ -421,13 +605,24 @@ function onMessage(socket, buf, rinfo) {
             logWarn(`drop: bad REGISTER len=${buf.length} from ${rinfo.address}:${rinfo.port}`);
             return;
         }
+        if (returnRoutabilityGate(socket, buf, rinfo, 'REGISTER') === null) {
+            return;
+        }
         handleRegister(socket, buf, rinfo);
     } else if (type === TYPE_POLL) {
         if (buf.length !== POLL_LEN) {
             logWarn(`drop: bad POLL len=${buf.length} from ${rinfo.address}:${rinfo.port}`);
             return;
         }
+        if (returnRoutabilityGate(socket, buf, rinfo, 'POLL') === null) {
+            return;
+        }
         handlePoll(socket, buf, rinfo);
+    } else if (type === TYPE_CHALLENGE) {
+        // Server -> client only. A client sending us one is confused or
+        // hostile; never let it reach state.
+        logWarn(`drop: unexpected CHALLENGE from ${rinfo.address}:${rinfo.port}`);
+        return;
     } else if (type === TYPE_DELIVER) {
         // Server doesn't accept DELIVER from clients.
         logWarn(`drop: unexpected DELIVER from ${rinfo.address}:${rinfo.port}`);
@@ -498,9 +693,13 @@ function start(port) {
             sweepSessions();
             sweepRates();
         },
+        // Clears BOTH rate buckets — most callers just want a clean
+        // budget. _resetKeyRate() isolates the per-key one.
         _resetRate() {
             rateMap.clear();
             warnedIps.clear();
+            keyRateMap.clear();
+            warnedKeys.clear();
         },
         _resetSessions() {
             sessionMap.clear();
@@ -508,6 +707,24 @@ function start(port) {
         },
         _creatorCounts: creatorCounts,
         _maxNewKeysPerIp: MAX_NEW_KEYS_PER_IP,
+        // --- S4c hooks ---------------------------------------------------
+        _version: VERSION,
+        _registerLen: REGISTER_LEN,
+        _cookieLen: COOKIE_LEN,
+        _cookieRotateMs: COOKIE_ROTATE_MS,
+        _keyRateMap: keyRateMap,
+        _keyRateLimit: KEY_RATE_LIMIT_PER_WINDOW,
+        _resetKeyRate() {
+            keyRateMap.clear();
+            warnedKeys.clear();
+        },
+        // Mint the cookie this server would issue to (address, port).
+        // `slotOffset` reaches back to older rotation slots so tests can
+        // exercise the accept-previous / reject-older window without
+        // sleeping 60 s. Test-only: the real oracle is the CHALLENGE.
+        _cookieFor(address, port, slotOffset) {
+            return cookieForSlot(address, port, currentCookieSlot() + (slotOffset || 0));
+        },
         // Inject a packet as if it arrived from rinfo — lets tests exercise
         // source-IP-dependent policy (slot reclaim identity, spoofed-source
         // floods) that loopback UDP cannot produce. fakeSocket, when given,

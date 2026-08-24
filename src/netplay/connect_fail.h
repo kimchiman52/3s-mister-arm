@@ -85,7 +85,11 @@ typedef enum ConnectFailCode {
     CONNECT_FAIL_STUN_ALLDOWN,    /* sends went out, zero STUN responses      */
 
     /* Joiner fallback-signaling failures */
-    CONNECT_FAIL_RENDEZVOUS_DOWN, /* zero DELIVERs — server/path down         */
+    CONNECT_FAIL_RENDEZVOUS_DOWN, /* zero DELIVERs AND zero CHALLENGEs —
+                                     server/path down                          */
+    CONNECT_FAIL_COOKIE_REJECTED, /* S4c: server CHALLENGEd us (alive!) but
+                                     never accepted the cookie echo — auth /
+                                     version trouble, not connectivity         */
     CONNECT_FAIL_HOST_OFFLINE,    /* only zero-sentinel DELIVERs — code stale */
     CONNECT_FAIL_NAT_BLOCKED,     /* real DELIVER, bilateral punch timed out  */
     CONNECT_FAIL_SYMMETRIC_BOTH,  /* as NAT_BLOCKED + port_disagreement       */
@@ -143,6 +147,8 @@ typedef struct ConnectJoinEvidence {
     bool hairpin;            /* peer public IP == our public IP */
     bool deliver_any;        /* >=1 DELIVER frame received (incl. zero-sentinel) */
     bool deliver_real;       /* >=1 DELIVER carried a real peer endpoint */
+    bool challenge_any;      /* S4c: >=1 CHALLENGE frame received — the server
+                                is provably alive even with zero DELIVERs */
     bool bilateral_punched;  /* bilateral Stun_HolePunch succeeded */
     bool port_disagreement;  /* StunResult.port_disagreement (S2 symmetric signal) */
     bool punch_bad_token;    /* S4a: StunResult.diag_punch_bad_token — peer spoke
@@ -168,8 +174,12 @@ ConnectFailCode ConnectFail_ClassifyJoin(const ConnectJoinEvidence* ev);
  *                       (direct joins still work; log-only advisory)
  *   NONE             — otherwise. */
 #define CONNECT_HOST_ADVISORY_MS 30000u
+/* S4c: `challenge_any` — the server CHALLENGEd us at least once, so it
+ * is alive; zero DELIVERs then means our cookie echo never bound
+ * (COOKIE_REJECTED advisory) rather than a dead server. */
 ConnectFailCode ConnectFail_ClassifyHostWaiting(bool upnp_active,
                                                 bool deliver_any,
+                                                bool challenge_any,
                                                 uint32_t waited_ms);
 
 /* --- deadline / abort policy helpers (Part A) -------------------------- */
