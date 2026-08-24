@@ -101,17 +101,25 @@ void NetplayScreen_Render() {
     display_state = MATCHMAKING_IDLE;
     transition_hold = 0;
 
-    // After a match is found, show "Match found!" during VS mode loading and
-    // hold it briefly into the connecting phase before revealing the game.
-    // this should maybe be replaced by actual visual effects but good for a prototype.
-    if (ns == NETPLAY_SESSION_TRANSITIONING) {
+    // S3: live connect-phase progress. Pre-S3 this block drew a static
+    // "Match found!" for the entire TRANSITIONING phase (including the
+    // up-to-~20 s MIST handshake retry window) and the first frames of
+    // CONNECTING — a lie while retries/syncing were actually happening.
+    // netplay.c now maintains honest text ("Verifying opponent (3s)...",
+    // "Syncing with opponent (7s)... START quits") which also advertises
+    // the S3 hold-START abort. After the session starts RUNNING we hold a
+    // brief "Connected!" before revealing the game.
+    if (ns == NETPLAY_SESSION_TRANSITIONING || ns == NETPLAY_SESSION_CONNECTING) {
+        const char* msg = Netplay_GetConnectStatusText();
+        if (msg == NULL || msg[0] == '\0') {
+            msg = "Match found!";
+        }
+        SSPutStrPro(1, 384, 110, 9, 0xFFFFFFFF, msg);
         match_found_hold = MATCH_FOUND_HOLD_FRAMES;
-    } else if (match_found_hold > 0) {
-        match_found_hold--;
-    } else {
         return;
     }
-
-    const char* msg = "Match found!";
-    SSPutStrPro(1, 384, 110, 9, 0xFFFFFFFF, msg);
+    if (match_found_hold > 0) {
+        match_found_hold--;
+        SSPutStrPro(1, 384, 110, 9, 0xFFFFFFFF, "Connected!");
+    }
 }

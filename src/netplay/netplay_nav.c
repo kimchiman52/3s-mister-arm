@@ -30,12 +30,18 @@
  * even if something upstream blocks the expected transition. A timeout
  * path means char select will render wrong (the bug this module exists
  * to fix), but the session still starts — better than deadlocking.
+ * S3 closed the one exception: NAV_WAIT_ORCHESTRATOR historically had
+ * NO deadline and hung forever when the orchestrator never populated
+ * remote_ip; it now bails to NAV_DONE on terminal orchestrator failure,
+ * on orchestrator-idle, or on an overall deadline (HOST_WAITING, which
+ * is unbounded by design, re-arms the deadline instead).
  */
 
 #include "netplay/netplay_nav.h"
 
 #include "arcade/arcade_balance.h"
 #include "main.h"
+#include "netplay/direct_p2p.h"
 #include "netplay/netplay.h"
 #include "port/config/draw_players_above_hud.h"
 #include "port/sdl/sdl_app.h"
@@ -105,6 +111,14 @@ static void inject_start_press(void) {
  * frame, so a missed press is never more than a handful of frames from
  * the next retry window. */
 #define NAV_PRESS_DEBOUNCE_FRAMES 8
+
+/* S3 Part A: NAV_WAIT_ORCHESTRATOR overall deadline (see that case for
+ * the exit taxonomy). 150 s at 60 fps — covers the worst-case joiner
+ * (2 auto-retry attempts x STUN 15 s + punch 2.5 s + signaling 8 s +
+ * bilateral 5 s) and the host's 3x FAILED_STUN retry ladder with
+ * margin. The counter re-arms while the orchestrator sits in
+ * HOST_WAITING, which is unbounded by design. */
+#define NAV_WAIT_ORCH_TIMEOUT_FRAMES (150 * 60)
 
 static void drive_start_press(void) {
     if (!s_press_injected) {
@@ -307,7 +321,7 @@ void NetplayNav_Tick(void) {
         }
         break;
 
-    case NAV_WAIT_ORCHESTRATOR:
+    case NAV_WAIT_ORCHESTRATOR: {
         /* For --p2p-remote-ip (LAN/localhost) Netplay_SetParams wired
          * remote_ip at set_netplay_params() time, so this flips true
          * immediately. For the direct-P2P orchestrator path the
@@ -317,8 +331,62 @@ void NetplayNav_Tick(void) {
          * Netplay_BeginDirectP2P() when remote_ip is NULL. */
         if (Netplay_IsRemoteIpSet()) {
             transition_to(NAV_START_NETPLAY);
+            break;
+        }
+
+        /* S3 Part A (docs/plan-netplay-connection.md §5): pre-S3 this
+         * was the ONLY state in the machine with no deadline — if the
+         * orchestrator never set remote_ip, nav waited forever. Three
+         * bounded exits, all to NAV_DONE (there is no session to start;
+         * the direct-P2P overlay owns the ERROR display):
+         *
+         * (a) The orchestrator parked in a terminal FAILED_* state.
+         *     Exception: a HOST in FAILED_STUN still has the S2
+         *     auto-retry (Tick re-spawns the worker with backoff), so
+         *     nav keeps waiting there and relies on exit (c).
+         * (b) The orchestrator is IDLE with no remote ip — cancelled or
+         *     never started. 5 s debounce covers the deferred-dispatch
+         *     window at cold launch.
+         * (c) Overall deadline. HOST_WAITING is legitimately unbounded
+         *     by design (the host advertises until a joiner arrives),
+         *     so the frame counter re-arms while the orchestrator sits
+         *     there; every OTHER orchestrator state is internally
+         *     bounded and 150 s comfortably covers the worst-case
+         *     joiner (2 attempts) and host retry ladder. */
+        const DirectP2PState dps = DirectP2P_GetState();
+        if (dps == DIRECT_P2P_HOST_WAITING) {
+            s_frames_in_state = 0; /* unbounded-by-design; re-arm deadline */
+            break;
+        }
+        const bool orch_failed =
+            dps == DIRECT_P2P_FAILED_SYMMETRIC || dps == DIRECT_P2P_FAILED_STUN ||
+            dps == DIRECT_P2P_FAILED_PUNCH || dps == DIRECT_P2P_FAILED_BILATERAL ||
+            dps == DIRECT_P2P_FAILED_HANDSHAKE;
+        if (orch_failed &&
+            !(dps == DIRECT_P2P_FAILED_STUN && DirectP2P_GetRole() == ROLE_HOST)) {
+            fprintf(stderr,
+                    "[netplay_nav] orchestrator failed terminally (state %d) — "
+                    "abandoning nav; overlay shows the reason\n", (int)dps);
+            fflush(stderr);
+            transition_to(NAV_DONE);
+            break;
+        }
+        if (dps == DIRECT_P2P_IDLE && s_frames_in_state > 300) {
+            fprintf(stderr, "[netplay_nav] orchestrator idle with no remote ip "
+                            "after %d frames — abandoning nav\n", s_frames_in_state);
+            fflush(stderr);
+            transition_to(NAV_DONE);
+            break;
+        }
+        if (s_frames_in_state > NAV_WAIT_ORCH_TIMEOUT_FRAMES) {
+            Netplay_LogConnectEvent(
+                "[netplay-connect] FAIL code=P2P_FAIL_TIMEOUT_ORCHESTRATOR "
+                "stage=NAV_WAIT_ORCHESTRATOR — orchestrator produced neither a "
+                "session nor a terminal state within the nav deadline");
+            transition_to(NAV_DONE);
         }
         break;
+    }
 
     case NAV_START_NETPLAY:
         Netplay_BeginDirectP2P();

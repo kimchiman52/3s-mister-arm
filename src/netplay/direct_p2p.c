@@ -286,6 +286,18 @@ static bool s_outcome_reported = false;
  * from Tick). */
 static bool s_host_deliver_seen = false;
 
+/* S3 Part A(3): HOST_WAITING is legitimately unbounded by design — a
+ * host advertises until a joiner arrives or the user cancels. The S3
+ * requirement is that it be INFORMATIVE, not silent: elapsed time on the
+ * status line (so the user can see the room is alive), a minute-cadence
+ * log line, and the cause-8 advisory when the evidence says the room is
+ * likely unjoinable. Main-thread only (Tick's HOST_WAITING branch).
+ * NOT reset on the M1 bilateral-failure return to HOST_WAITING — that is
+ * the same hosting session. */
+static uint64_t s_host_waiting_since_ms = 0;
+static uint64_t s_host_waiting_last_note_ms = 0;
+static ConnectFailCode s_host_advisory_code = CONNECT_FAIL_NONE;
+
 /* Record the taxonomy code and put its user string on the overlay status
  * line. Callable from worker threads (same rules as set_status — s_work
  * writes happen-before the terminal state publish). */
@@ -1614,6 +1626,9 @@ static void direct_p2p_on_teardown(void) {
     s_rebind_txid_valid = false;
     s_drift_pending_valid = false; /* M2: drop any half-confirmed drift */
     s_host_deliver_seen = false;   /* S3 */
+    s_host_waiting_since_ms = 0;   /* S3 */
+    s_host_waiting_last_note_ms = 0;
+    s_host_advisory_code = CONNECT_FAIL_NONE;
     /* Reset state so the next BeginHost/BeginJoin starts clean.
      * R-1 exception: when the MIST handshake rejected the session, park
      * in FAILED_HANDSHAKE instead so the overlay keeps ERROR + the
@@ -2017,6 +2032,9 @@ void DirectP2P_Init(void) {
     SDL_SetAtomicInt(&s_q_drops_logged, 0);
     s_outcome_reported = false;  /* S3 */
     s_host_deliver_seen = false; /* S3 */
+    s_host_waiting_since_ms = 0; /* S3 */
+    s_host_waiting_last_note_ms = 0;
+    s_host_advisory_code = CONNECT_FAIL_NONE;
     memset(s_rendezvous_send_q, 0, sizeof(s_rendezvous_send_q));
     memset(&s_work, 0, sizeof(s_work));
     memset(&s_upnp_mapping, 0, sizeof(s_upnp_mapping));
@@ -2054,6 +2072,9 @@ void DirectP2P_BeginHost(int preferred_port) {
     s_handshake_reject_latched = false;
     s_outcome_reported = false;  /* S3: fresh report per hosting session */
     s_host_deliver_seen = false; /* S3 */
+    s_host_waiting_since_ms = 0; /* S3 */
+    s_host_waiting_last_note_ms = 0;
+    s_host_advisory_code = CONNECT_FAIL_NONE;
     Stun_ReleaseServerAddr(&s_work.stun); /* belt-and-braces before memset */
     s_stun_keepalive_last_ms = 0;
     s_rebind_txid_valid = false;
@@ -2138,6 +2159,9 @@ void DirectP2P_BeginJoin(const char* peer_code) {
     s_handshake_reject_latched = false; /* R-1: see BeginHost */
     s_outcome_reported = false;  /* S3: fresh report per join session */
     s_host_deliver_seen = false; /* S3 */
+    s_host_waiting_since_ms = 0; /* S3 */
+    s_host_waiting_last_note_ms = 0;
+    s_host_advisory_code = CONNECT_FAIL_NONE;
     Stun_ReleaseServerAddr(&s_work.stun); /* belt-and-braces before memset */
     s_stun_keepalive_last_ms = 0;
     s_rebind_txid_valid = false;
@@ -2211,6 +2235,9 @@ void DirectP2P_Cancel(void) {
     s_host_stun_retry_at_ms = 0;
     s_outcome_reported = false;  /* S3 */
     s_host_deliver_seen = false; /* S3 */
+    s_host_waiting_since_ms = 0; /* S3 */
+    s_host_waiting_last_note_ms = 0;
+    s_host_advisory_code = CONNECT_FAIL_NONE;
     set_state(DIRECT_P2P_IDLE);
 }
 
@@ -2235,6 +2262,65 @@ void DirectP2P_NotifySessionFailed(ConnectFailCode code, const char* reason) {
  * latches the teardown redirect to FAILED_HANDSHAKE. */
 void DirectP2P_NotifySessionRejected(const char* reason) {
     DirectP2P_NotifySessionFailed(CONNECT_FAIL_PEER_REJECTED, reason);
+}
+
+/* S3 Part A(3): per-frame informative pass for HOST_WAITING (see the
+ * s_host_waiting_* comment). Called from Tick's HOST_WAITING branch —
+ * main thread, like the keepalive tick beside it. */
+static void host_waiting_tick(void) {
+    const uint64_t now = SDL_GetTicks();
+    if (s_host_waiting_since_ms == 0) {
+        s_host_waiting_since_ms = now;
+        s_host_waiting_last_note_ms = now;
+        return;
+    }
+    const uint32_t waited_ms = (uint32_t)(now - s_host_waiting_since_ms);
+
+    /* Cause-8 advisory (once per hosting session): the server answers
+     * every REGISTER with a DELIVER, so zero DELIVERs after the
+     * threshold means the rendezvous path is dead — and with no UPnP
+     * mapping either, this room is likely unjoinable. Tell the host NOW
+     * instead of letting a friend fail minutes later. */
+    if (s_host_advisory_code == CONNECT_FAIL_NONE) {
+        const ConnectFailCode adv = ConnectFail_ClassifyHostWaiting(
+            s_upnp_mapping.active, s_host_deliver_seen, waited_ms);
+        if (adv != CONNECT_FAIL_NONE) {
+            s_host_advisory_code = adv;
+            char line[256];
+            SDL_snprintf(line, sizeof(line),
+                         "[netplay-connect] ADVISORY code=%s role=host waited_ms=%u "
+                         "upnp=%d deliver_seen=0 — %s",
+                         ConnectFail_Code(adv), (unsigned)waited_ms,
+                         (int)s_upnp_mapping.active,
+                         adv == CONNECT_FAIL_HOST_UNMAPPABLE
+                             ? "no UPnP mapping and no rendezvous contact: joiners "
+                               "will likely fail; ask the other side to host"
+                             : "rendezvous server unreachable: the bilateral "
+                               "fallback is unavailable, direct joins still work");
+            Netplay_LogConnectEvent(line);
+            if (adv == CONNECT_FAIL_HOST_UNMAPPABLE) {
+                /* Overlay line 3 — the room code stays displayed (a
+                 * direct cone-NAT join could still land), but the host
+                 * is no longer silently unaware. */
+                set_status(ConnectFail_UserText(adv));
+            }
+        }
+    }
+
+    /* Minute-cadence liveness note: log + on-screen elapsed counter (the
+     * unmappable advisory owns the status line when present). */
+    if (now - s_host_waiting_last_note_ms >= 60000u) {
+        s_host_waiting_last_note_ms = now;
+        const unsigned min = waited_ms / 60000u;
+        SDL_Log("[direct_p2p] host still advertising (%u min): rendezvous=%s upnp=%s",
+                min, s_host_deliver_seen ? "alive" : "SILENT",
+                s_upnp_mapping.active ? "mapped" : "none");
+        if (s_host_advisory_code != CONNECT_FAIL_HOST_UNMAPPABLE) {
+            char st[64];
+            SDL_snprintf(st, sizeof(st), "Waiting for player 2... (%u min)", min);
+            set_status(st);
+        }
+    }
 }
 
 /* S3 — one attributed outcome line per attempt-set, written to the
@@ -2318,6 +2404,8 @@ void DirectP2P_Tick(void) {
          * probe). Send-only and non-blocking; the response comes back
          * through host_tick_receive's STUN gate. */
         host_stun_keepalive_tick();
+        /* S3: elapsed-time status + cause-8 advisory (see host_waiting_tick). */
+        host_waiting_tick();
         host_tick_receive();
         return;
 

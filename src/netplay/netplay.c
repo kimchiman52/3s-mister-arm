@@ -3,7 +3,9 @@
 #include "main.h"
 #include "port/config/config.h"
 #include "port/config/draw_players_above_hud.h"
+#include "netplay/connect_fail.h"
 #include "netplay/direct_p2p.h"
+#include "sf33rd/AcrSDK/common/pad.h"
 #include "netplay/game_state.h"
 #include "netplay/matchmaking.h"
 #include "netplay/mist_handshake.h"
@@ -53,6 +55,9 @@
 // 3SX-private: forward declaration for event queue (defined at end of file).
 // Phase 6 Step 2: port of /tmp/3sxtra/src/netplay/netplay.c:70.
 static void push_event(NetplayEventType type);
+// S3: forward declaration — connect_abort_tick (defined with the S3 state
+// above Netplay_Run's helpers) tears down via handle_disconnection.
+static void handle_disconnection(void);
 
 static GekkoSession* session = NULL;
 static unsigned short local_port = 0;
@@ -294,6 +299,58 @@ static int s_mist_handshake_attempts = 0;
 // s_mist_handshake_attempts resets: session start (direct-P2P tick,
 // matchmaking match) and session EXITING.
 static bool s_mist_peer_hello_ok = false;
+
+// === S3 Part A (docs/plan-netplay-connection.md §5): CONNECTING deadline
+// + user-reachable abort + live connect-status text ===
+//
+// NETPLAY_SESSION_CONNECTING had NO timeout: exit required a
+// GekkoPlayerConnected/SessionStarted event, and GekkoNet's own
+// DISCONNECT_TIMEOUT (5000 ms) applies only to actors already Connected —
+// an actor stuck Initiating retries SendSyncRequest forever. The netplay
+// watchdog (process_session) also only fires while RUNNING, so CONNECTING
+// was entirely unwatched. We do NOT patch GekkoNet; instead:
+//   - a wall-clock deadline (CONNECT_TIMEOUT_CONNECTING_MS = 15 s) bounds
+//     the state and exits with an attributable reason
+//     (P2P_FAIL_TIMEOUT_CONNECTING via DirectP2P_NotifySessionFailed);
+//   - a 5 s progress log line makes the state log-visible (watchdog gap);
+//   - holding START for CONNECT_ABORT_HOLD_FRAMES (~3 s) aborts BOTH the
+//     TRANSITIONING (MIST handshake retry window) and CONNECTING states,
+//     so nobody is stuck watching a frozen screen;
+//   - s_connect_status carries honest progress text for
+//     NetplayScreen_Render (replacing the perpetual "Match found!").
+// All main-thread (Netplay_Run).
+static uint64_t s_connecting_since_ms = 0;
+static uint64_t s_connecting_last_log_ms = 0;
+static int s_abort_hold_frames = 0;
+static char s_connect_status[96] = { 0 };
+
+// Shared abort handler for TRANSITIONING/CONNECTING: counts consecutive
+// frames with START held on either pad; on the threshold, logs an
+// attributed line and tears the session down as a user cancel (attract
+// screen, no ERROR overlay). Returns true when the abort fired and the
+// session is now EXITING.
+static bool connect_abort_tick(const char* stage) {
+    const bool start_down = ((p1sw_buff | p2sw_buff) & SWK_START) != 0;
+    s_abort_hold_frames = ConnectFail_AbortHoldTick(s_abort_hold_frames, start_down);
+    if (!ConnectFail_AbortHoldFired(s_abort_hold_frames)) {
+        return false;
+    }
+    s_abort_hold_frames = 0;
+    char line[192];
+    SDL_snprintf(line, sizeof(line),
+                 "[netplay-connect] ABORT code=%s stage=%s — user held START "
+                 "through the %d-frame window",
+                 ConnectFail_Code(CONNECT_FAIL_USER_ABORT), stage,
+                 (int)CONNECT_ABORT_HOLD_FRAMES);
+    Netplay_LogConnectEvent(line);
+    if (s_session_end_reason[0] == '\0') {
+        SDL_strlcpy(s_session_end_reason, "user-abort-connect", sizeof(s_session_end_reason));
+        s_session_end_frame = s_last_advance_frame;
+    }
+    push_event(NETPLAY_EVENT_DISCONNECTED);
+    handle_disconnection();
+    return true;
+}
 
 // First-to-X (number of game wins required to close a session).
 // Placeholder for Track C / lobby FT negotiation; default 2 = FT2 sessions.
@@ -1487,10 +1544,20 @@ void Netplay_CancelMatchmaking() {
 void Netplay_Run() {
     switch (session_state) {
     case NETPLAY_SESSION_TRANSITIONING:
+        /* S3: user-reachable abort — the MIST retry window below can
+         * legitimately spend up to ~20 s waiting on a slow-booting peer,
+         * and pre-S3 there was no way out but killing the process. Check
+         * BEFORE clean_input_buffers() so the pad state keyConvert()
+         * captured this frame is still visible. */
+        if (connect_abort_tick("transitioning")) {
+            break;
+        }
         if (game_ready_to_run_character_select()) {
             transition_ready_frames += 1;
         } else {
             transition_ready_frames = 0;
+            SDL_snprintf(s_connect_status, sizeof(s_connect_status),
+                         "Match found! Loading...");
             clean_input_buffers();
             step_game(true);
         }
@@ -1505,6 +1572,9 @@ void Netplay_Run() {
             // legacy peer) are dropped inside the runner by the "MIST"
             // magic gate. See mist_handshake.h for wire format.
             if (!s_mist_handshake_done) {
+                SDL_snprintf(s_connect_status, sizeof(s_connect_status),
+                             "Verifying opponent (%ds)... START quits",
+                             s_mist_handshake_attempts / 2);
                 NET_DatagramSocket* hs_sock = acquire_active_socket();
                 const MistHandshakeResult hs = run_mist_handshake_on_net_sock(hs_sock);
                 // Retry policy (peer-skew tolerance, attempt cap, the
@@ -1540,16 +1610,81 @@ void Netplay_Run() {
             }
             configure_gekko();
             session_state = NETPLAY_SESSION_CONNECTING;
+            /* S3: arm the CONNECTING deadline + progress clock. */
+            s_connecting_since_ms = SDL_GetTicks();
+            s_connecting_last_log_ms = s_connecting_since_ms;
+            s_abort_hold_frames = 0;
         }
 
         break;
 
-    case NETPLAY_SESSION_CONNECTING:
+    case NETPLAY_SESSION_CONNECTING: {
+        /* S3 Part A: CONNECTING is now (a) user-abortable, (b) bounded
+         * by a wall-clock deadline with an attributable reason, and
+         * (c) log-visible via a 5 s progress line — see the S3 comment
+         * block at the top of the file for why GekkoNet cannot be
+         * trusted to time this state out itself. */
+        if (connect_abort_tick("connecting")) {
+            break;
+        }
+        const uint64_t now = SDL_GetTicks();
+        if (s_connecting_since_ms == 0) { /* safety: entered without arming */
+            s_connecting_since_ms = now;
+            s_connecting_last_log_ms = now;
+        }
+        if (ConnectFail_DeadlineExpired(now, s_connecting_since_ms,
+                                        CONNECT_TIMEOUT_CONNECTING_MS)) {
+            char line[192];
+            SDL_snprintf(line, sizeof(line),
+                         "[netplay-connect] FAIL code=%s stage=connecting — no "
+                         "GekkoSessionStarted within %u ms (peer never synced)",
+                         ConnectFail_Code(CONNECT_FAIL_TIMEOUT_CONNECTING),
+                         (unsigned)CONNECT_TIMEOUT_CONNECTING_MS);
+            Netplay_LogConnectEvent(line);
+            if (s_session_end_reason[0] == '\0') {
+                SDL_strlcpy(s_session_end_reason, "connect-timeout",
+                            sizeof(s_session_end_reason));
+                s_session_end_frame = s_last_advance_frame;
+            }
+            /* Surface through the taxonomy path: the latch parks the
+             * orchestrator in FAILED_HANDSHAKE at teardown so the
+             * overlay shows ERROR + the reason on every entry path. */
+            DirectP2P_NotifySessionFailed(CONNECT_FAIL_TIMEOUT_CONNECTING, NULL);
+            push_event(NETPLAY_EVENT_DISCONNECTED);
+            handle_disconnection();
+            break;
+        }
+        const unsigned elapsed_s = (unsigned)((now - s_connecting_since_ms) / 1000u);
+        if (now - s_connecting_last_log_ms >= 5000) {
+            s_connecting_last_log_ms = now;
+            SDL_Log("[netplay sess=%08x] still CONNECTING after %u s — waiting for "
+                    "GekkoNet sync (deadline %u s)",
+                    s_session_uuid, elapsed_s,
+                    (unsigned)(CONNECT_TIMEOUT_CONNECTING_MS / 1000u));
+        }
+        SDL_snprintf(s_connect_status, sizeof(s_connect_status),
+                     "Syncing with opponent (%us)... START quits", elapsed_s);
+        run_netplay();
+        break;
+    }
+
     case NETPLAY_SESSION_RUNNING:
+        /* S3: leaving CONNECTING — retire its bookkeeping/status. */
+        if (s_connecting_since_ms != 0) {
+            s_connecting_since_ms = 0;
+            s_abort_hold_frames = 0;
+            s_connect_status[0] = '\0';
+        }
         run_netplay();
         break;
 
     case NETPLAY_SESSION_EXITING:
+        // S3: retire the CONNECTING bookkeeping + status text so the next
+        // session (and the idle screen) starts clean.
+        s_connecting_since_ms = 0;
+        s_connecting_last_log_ms = 0;
+        s_abort_hold_frames = 0;
+        s_connect_status[0] = '\0';
         // Final session-end summary. Logged once per session; gives offline
         // log readers a clean correlation point — pairing two friends' logs
         // is just matching session_started_unix_ms + the role-distinguished
@@ -1699,6 +1834,19 @@ void Netplay_Run() {
 
 NetplaySessionState Netplay_GetSessionState() {
     return session_state;
+}
+
+// S3 — honest connect-phase progress text for NetplayScreen_Render.
+// Non-empty only while TRANSITIONING/CONNECTING have something to say;
+// replaces the old perpetual "Match found!" (which stayed on screen for
+// the entire MIST retry window and CONNECTING phase, lying about what
+// was happening).
+const char* Netplay_GetConnectStatusText(void) {
+    if (session_state != NETPLAY_SESSION_TRANSITIONING &&
+        session_state != NETPLAY_SESSION_CONNECTING) {
+        return "";
+    }
+    return s_connect_status;
 }
 
 void Netplay_HandleMenuExit() {

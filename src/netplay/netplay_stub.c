@@ -68,6 +68,10 @@ NetplaySessionState Netplay_GetSessionState() {
     return NETPLAY_SESSION_IDLE;
 }
 
+const char* Netplay_GetConnectStatusText(void) {
+    return "";
+}
+
 void Netplay_HandleMenuExit() {
 }
 

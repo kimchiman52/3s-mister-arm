@@ -61,6 +61,10 @@ bool Netplay_IsMatchmakingPending(); // true while searching, false once matched
 void Netplay_CancelMatchmaking();
 void Netplay_Run();
 NetplaySessionState Netplay_GetSessionState();
+// S3: honest connect-phase progress text ("Verifying opponent (3s)...",
+// "Syncing with opponent (7s)... START quits") for the netplay screen.
+// Returns "" outside TRANSITIONING/CONNECTING. Never NULL.
+const char* Netplay_GetConnectStatusText(void);
 void Netplay_HandleMenuExit();
 void Netplay_GetNetworkStats(NetworkStats* stats);
 
