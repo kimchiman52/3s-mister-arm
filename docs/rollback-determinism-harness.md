@@ -17,6 +17,102 @@ character-numbering scheme — `effect_L8_init`'s `player_number != 16`
 gate is Makoto in the 3SX enum, not Chun-Li). A machine that observes
 every byte does not make that class of mistake.
 
+## READ THIS BEFORE YOU RUN IT: the gate is macOS-only, by policy
+
+**This harness is a macOS-only gate. A run on Linux is not comparable to a
+macOS run, is not a gate, and its FAIL verdicts are not findings.** This is
+a deliberate scoping decision (task #75), not an oversight, and it is stated
+here rather than in "Known limits" because the hazard is someone running the
+gate on Linux and believing the number that comes out.
+
+This matters precisely because **the MiSTer target is Linux**, so the
+assumption that "the gate runs anywhere" is an easy one to make. If the gate
+is ever moved into CI, run by a contributor, or run natively on a Linux box,
+it produces exactly the cry-wolf failures task #65 was fixed to eliminate.
+A Linux driver run predating the task #71 backend fix was reported as
+`divergent=4 unstable=8 FAIL` with **none of those being real findings** —
+that figure is not recorded anywhere in this tree and was not reproduced
+for this note, so treat it as an anecdote, not a measurement. The policy
+below does not rest on it.
+
+**Why a Linux run is not comparable — the two symbol maps are built
+differently, in code.** This is structural, not a tuning problem:
+
+| | macOS (`build_symbol_map_macho`, `check_rollback_determinism.py:177-208`) | Linux (`build_symbol_map_elf`, `check_rollback_determinism.py:211-225`) |
+|---|---|---|
+| source | `nm -nm <binary>` | `nm -S --defined-only <binary>` |
+| selection | only `__DATA,__data` / `__bss` / `__common` (`NM_MACHO_RE`, line 173) | nm type letters `d`/`D`/`b`/`B` |
+| symbol size | **distance to the next symbol**, so inter-symbol padding is attributed to the preceding symbol and the whole segment is covered | the symbol's **own declared size**; padding between symbols is covered by nothing |
+| synthetic entries | inserts a `<section>.headgap` pseudo-symbol for the run-up before the first symbol | none |
+
+So the two platforms hash a **different byte set** under a **different set of
+names**. `allowlist.txt` matches by symbol NAME (`allowlist_match`,
+`check_rollback_determinism.py:444-448`), so entries written against the
+macOS name set do not necessarily bind on Linux, and rows the macOS gate
+accounts for surface unaccounted there.
+
+**Measured, on this tree:**
+
+- macOS map: **3838 writable symbols, 16.8 MB covered** — reproduced on
+  2026-08-25 at tip, driver line `[rbd-driver] symbol map: 3838 writable
+  symbols, 16.8 MB covered`.
+- `allowlist.txt` holds **41 entries** (41 patterns; `load_allowlist`
+  ignores blank and comment lines). Expanded against the macOS map those 41
+  patterns match **52 concrete symbols**, and every one of the 41 patterns
+  binds at least one symbol.
+- This macOS `fast` run reported `allowlisted=67`. **That field counts
+  allowlisted *divergence rows* (symbol × scenario), not allowlist entries**
+  — `n_allow` is incremented once per diverging symbol per scenario and
+  summed across scenarios (`check_rollback_determinism.py:660-671` and
+  `:698-702`).
+
+**A correction to the figures this document used to carry.** The earlier
+text read "the Linux Debug build mapped 4018 writable symbols against
+macOS's 3838, and only 57 of the 67 allowlist entries matched":
+
+- **"57 of the 67 allowlist entries"** mis-labelled the quantity. 67 is not
+  an entry count — `allowlist.txt` has **41** entries today and had **41 at
+  `ae308bd9`, the commit that wrote that sentence**; no counting rule over
+  the file yields 67 (code-before-`#` 41, non-blank 261, comment-only 220,
+  total 272), and its expansion against the macOS map is 52. 67 is the
+  macOS run's **`allowlisted=` row count**, reproduced today, and 57 is the
+  corresponding row count from the task #71 Linux run. Task #71's own commit
+  bodies corroborate this reading directly — `ae308bd9`, `afc8fe03` and
+  `7ba545fe` each record its Control A as "verdict=FAIL exit 1, divergent=67
+  against allowlisted=67, identical symbol sets", i.e. 67 *rows* moving from
+  ALLOWED to DIVERGENT, from a 41-entry allowlist. Reproduced again here
+  (see Control A below).
+- Read correctly, **57-vs-67 is not a "10 entries failed to match" gap.**
+  Both numbers count rows that *actually diverged* and *happened to* match a
+  pattern, so a different symbol set changes the row population outright.
+  The two are not measurements of the same quantity — which is itself part
+  of why the runs are not comparable, and why the gap must not be read as
+  "Linux is 10 entries short of green".
+- **4018 Linux writable symbols** is unverified here. Checking it needs a
+  native Linux *host* build of the game, which the ARM cross-build container
+  cannot supply (its `third_party` is ARM-only, and it had 1.5 GB free); it
+  was not rebuilt for this note.
+
+The macOS-only policy does not rest on any of these figures: the
+map-builder table above is sufficient on its own.
+
+**Running the harness on Linux inside Docker is separately blocked.** The
+driver disables ASLR with `setarch -R` (`check_rollback_determinism.py:392-393`),
+and Docker's **default seccomp profile denies it**: `personality(0x40000)`
+returns `-1/EPERM` while `personality(0)` returns `0`. `setarch -R` then
+dies with `setarch: failed to set personality to (null): Operation not
+permitted`, and the run surfaces only as `game exited with code 1` — the
+real cause is the first line of that run's `.log`. This was measured, not
+assumed, and **`--privileged` does not lift it**;
+`/proc/sys/kernel/randomize_va_space` is read-only in the container. A
+Linux run inside Docker needs `--security-opt seccomp=unconfined`.
+
+**If you want to change this policy**, the two alternatives to documenting
+it are (a) platform-qualify `allowlist.txt` so entries can be scoped to a
+symbol set, or (b) normalize the symbol set across platforms so the two maps
+cover the same bytes under the same names. Both are real work, and (b)
+subsumes (a). Neither was done; nobody runs this on Linux today.
+
 ## How it works
 
 Per scenario, the driver runs the game **three times** with identical
@@ -312,11 +408,15 @@ and `/proc/sys/kernel/randomize_va_space` is read-only in the container.
 
 A Linux run is also **not gate-comparable to the macOS one** and must not
 be read as one. `allowlist.txt` matches by symbol NAME, and the two
-toolchains do not emit the same symbol set: the Linux Debug build mapped
-4018 writable symbols against macOS's 3838, and only 57 of the 67
-allowlist entries matched, so rows the macOS gate accounts for surface
-unaccounted there. Bringing Linux to a green gate is a separate piece of
-work from making the backend correct, and only the second is done.
+toolchains do not emit the same symbol set, so rows the macOS gate accounts
+for surface unaccounted there. Bringing Linux to a green gate is a separate
+piece of work from making the backend correct, and only the second is done.
+**This is now a stated policy, not just a caveat — see "READ THIS BEFORE YOU
+RUN IT: the gate is macOS-only" at the top of this document**, which carries
+the code-level reason (the two symbol-map builders differ structurally) and
+corrects this paragraph's original "4018 vs 3838 / 57 of 67" figures — 57
+and 67 are `allowlisted=` *row* counts, not allowlist entry counts
+(`allowlist.txt` has 41 entries), and 4018 is unreproduced (task #75).
 
 **Stack / argv / env addresses — the control is made valid instead.**
 The pad cannot move `mmap` placements, so the heap needed the hash
@@ -407,6 +507,13 @@ Both are instances of known limit 2. The structural claim in this section
 covers whole-pointer statics and the stack/argv/env class only.
 
 ## Running it
+
+> **macOS only.** Run this on a Mac. A Linux run is not a gate and its FAIL
+> verdicts are not findings — see "READ THIS BEFORE YOU RUN IT: the gate is
+> macOS-only" at the top of this document for the reason and the evidence.
+> Inside Docker on Linux it does not run at all without
+> `--security-opt seccomp=unconfined` (seccomp denies the driver's
+> `setarch -R`).
 
 One command (build + run + verdict):
 
@@ -542,8 +649,11 @@ re-tag it.
 | C — rebuild base `0e464a30` | **RECORDED** | the reviewer's validation run, not reproduced since |
 
 **Control A — empty allowlist (no rebuild, ~2.5 min). OBSERVED.** `allowlist.txt`'s
-40 fnmatch patterns suppressed 44 ALLOWED rows (28 distinct symbols)
-across the two fast scenarios on this tree. Those symbols really do
+fnmatch patterns suppress ALLOWED rows across the two fast scenarios —
+**41 patterns suppressing 67 rows (39 distinct symbols) as re-measured on
+2026-08-25 at production select depth 8** (task #75; the historical figures
+further down this section were taken at select depth 2, before task #69
+raised it, and are kept as the record of that run). Those symbols really do
 diverge because of rollback; they are judged benign, not absent. Take
 the suppression away and they must surface as findings —
 `load_allowlist()` returns an empty list for an empty or missing path,
@@ -571,6 +681,27 @@ gate's `allowlisted` rows — means the capture/differ/symbolizer chain is
 producing nothing to classify, i.e. the harness is broken, not the tree.
 This exercises everything except the FEEDBACK tagger (`feedback=0` here
 is expected: none of the allowlisted sinks is in the save set).
+
+**Re-run 2026-08-25 at production select depth 8** (task #75, on the tree
+carrying the task #74 build-deps fix; same binary for both runs,
+`RBD_SKIP_BUILD=1`). Gate run:
+
+```
+RBD SUMMARY: mode=fast scenarios=2 frames=1500 period=1 depth=3 select_period=8 select_depth=8 divergent=0 feedback=0 allowlisted=67 noise=141 unstable=0 errors=0 verdict=PASS   (exit 0)
+```
+
+Control A on the same binary:
+
+```
+RBD SUMMARY: mode=fast scenarios=2 frames=1500 period=1 depth=3 select_period=8 select_depth=8 divergent=67 feedback=0 allowlisted=0 noise=141 unstable=0 errors=0 verdict=FAIL   (exit 1)
+```
+
+Containment is **exact** here: `allowlisted` 67 → 0 and `divergent` 0 → 67,
+and the 67 DIVERGENT rows are 28 symbols appearing in both scenarios plus 11
+appearing in one (28×2 + 11 = 67). `noise` is **141 in both runs**,
+`unstable=0`, `errors=0` — the allowlist is the only thing that moved. This
+is also the direct demonstration that `allowlisted=` counts *rows*, not
+allowlist entries: 41 entries produced 67 of them.
 
 On this run the two counts happened to be **equal** (51 and 51, no extra
 rows either way), but do not promote that to the invariant — the
