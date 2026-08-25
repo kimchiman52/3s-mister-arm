@@ -1115,8 +1115,9 @@ static int relay_budget_ms(void) {
  * transatlantic one for people who connect fine today. */
 #define RACE_PUNCH_MIN_WINDOW_MS 2500u
 
-/* Once the relay leg is READY to hand off, a punch confirming inside this
- * window still wins (S6-review H-3).
+/* How long the relay leg holds — AFTER the punch has stopped on this side
+ * — before it commits (S6-review H-3, re-anchored and re-sized by the
+ * second review's H-A and H-B).
  *
  * Ordering rule 1 is a purely LOCAL decision and the relay handoff used
  * to end the race on the spot. Two peers confirm their punches about one
@@ -1128,10 +1129,34 @@ static int relay_budget_ms(void) {
  * this was impossible from timing alone: the relay rung only ran after
  * the bilateral punch had spent its ENTIRE window on both sides.
  *
- * 600 ms is one full STUN_PUNCH_CONFIRM_MS tail — about 4x the worst
- * realistic transatlantic one-way delay, and the same number the punch
- * itself already spends making sure its peer heard it. The cost is paid
- * only by pairs that genuinely end up relayed, and only once. */
+ * WHAT THE SECOND REVIEW FOUND, AND WHY THE ANCHOR MOVED. Held from the
+ * instant the relay became READY, this window did not close the band; it
+ * TRANSLATED it, because a start skew large enough always puts the late
+ * peer's confirmation after the early peer's commit. Measured on the
+ * two-peer rig (test 24, S6_SPLIT_SWEEP=1):
+ *
+ *     grace 0    / owd 150  ->  split brain at skew 2350-2625
+ *     grace 600  / owd 150  ->  split brain at skew 2950-3250
+ *     grace 1200 / owd 300  ->  split brain at skew 3400-3600
+ *
+ * The window is therefore held from the LATER of "the relay became ready"
+ * and "the last punch candidate stopped sending", with the candidates
+ * kept on the receive path meanwhile. See the long comment at the commit
+ * site in p2p_race() for the argument that this converges.
+ *
+ * SIZING — and this is deliberately NOT sized against a harness constant,
+ * which is exactly what the second review's H-B objected to. The
+ * convergence condition is that the grace cover one peer-to-peer ROUND
+ * TRIP: the late peer's punch needs one one-way delay to reach us, and
+ * our answering tail needs another to reach it. That is why every
+ * measured band above is ~2x the one-way delay wide (275-300 ms at
+ * owd 150) rather than the "150 ms window, equal to the injected one-way
+ * delay" §8.4 used to claim. 600 ms covers every pair with an RTT up to
+ * 600 ms; a transatlantic RTT is 70-180 ms, and a pair above 600 ms RTT
+ * cannot play this game at all. It remains one full STUN_PUNCH_CONFIRM_MS
+ * tail, which is the same quantity the punch itself spends making sure
+ * its peer heard it. The cost is paid only by pairs that genuinely end up
+ * relayed, and only once. */
 #define RACE_RELAY_GRACE_MS 600u
 
 /* Loop period. The legs' own cadences are 50-500 ms; 5 ms keeps the
@@ -1292,6 +1317,14 @@ typedef struct {
     uint16_t     port;
     DirectP2PPunchOracleResult oracle;
     bool         oracle_confirmed;
+    /* SECOND-REVIEW H-A. `punch_leg_ms` is the window in which we SEND.
+     * A candidate that reaches it stops sending but is NOT torn down
+     * while the relay leg is still deciding: it stays on the receive path
+     * so a peer that started late can still confirm it. `send_end_ms` is
+     * when the sending stopped, and it is one of the two anchors the
+     * relay's commit grace is measured from. */
+    bool         send_expired;
+    uint32_t     send_end_ms;
 } RacePunchCandidate;
 
 static bool race_cancelled(const RaceCfg* cfg) {
@@ -1349,7 +1382,14 @@ static void race_finish_punch(RacePunchCandidate* c, uint32_t now) {
     if (!c->armed || c->finished) {
         return;
     }
-    c->alive_ms = now - c->armed_ms;
+    /* H-A: `punch=` in a report line has always meant "how long this
+     * candidate spent punching". A candidate that is being held on the
+     * receive path past its send window is no longer punching, so the
+     * reported number stops at `send_end_ms` and the report keeps its
+     * pre-H-A meaning. */
+    c->alive_ms = (c->send_expired && c->send_end_ms != 0)
+                      ? (c->send_end_ms - c->armed_ms)
+                      : (now - c->armed_ms);
     if (c->oracle == DP2P_PUNCH_REAL) {
         Stun_PunchEnd(&c->leg);
     }
@@ -1487,10 +1527,44 @@ static void p2p_race(const RaceCfg* cfg, RaceResult* out) {
         }
 
         /* --- 2) leg lifetimes ---------------------------------------- */
+        /*
+         * SECOND-REVIEW H-A: SENDING and LISTENING end at different times.
+         *
+         * The window a candidate SENDS for is still `punch_leg_ms`. What
+         * changed is what happens at the end of it while a relay leg is
+         * still in play: the candidate stops sending but stays on the
+         * receive path, because the whole H-A defect is one peer ending
+         * the race while the other peer's punch is still in flight toward
+         * it. A leg that is still listening can be confirmed by that
+         * punch; `Stun_PunchOffer` then sets `confirmed` and resets
+         * `sent_any`, so section 5 below resumes pumping immediately at
+         * the fast cadence and the confirmation tail goes out — which is
+         * what confirms the OTHER peer in turn. That mutual tail is why
+         * this converges instead of merely moving the problem.
+         *
+         * The deferral is scoped to "a relay leg exists and has not
+         * finished". With no relay in play there is nothing to diverge
+         * ABOUT — both peers simply fail — so the pure-failure path keeps
+         * its pre-existing latency and test 18's cascade timing is
+         * untouched.
+         */
+        const bool relay_in_play =
+            relay_state == RELAY_LEG_REQ || relay_state == RELAY_LEG_PIN;
         for (int i = 0; i < RACE_PUNCH_LEGS; i++) {
-            if (cands[i].armed && !cands[i].finished &&
-                !race_punch_confirmed(&cands[i]) &&
-                (int)(now - cands[i].armed_ms) >= cfg->punch_leg_ms) {
+            if (!cands[i].armed || cands[i].finished ||
+                race_punch_confirmed(&cands[i])) {
+                continue;
+            }
+            if ((int)(now - cands[i].armed_ms) < cfg->punch_leg_ms) {
+                continue;
+            }
+            if (!cands[i].send_expired) {
+                cands[i].send_expired = true;
+                cands[i].send_end_ms = (now != 0) ? now : 1u;
+                SDL_Log("[direct_p2p] S6 race: candidate %s:%u stopped punching after "
+                        "%d ms", cands[i].ip, (unsigned)cands[i].port, cfg->punch_leg_ms);
+            }
+            if (!relay_in_play) {
                 SDL_Log("[direct_p2p] S6 race: candidate %s:%u timed out after %d ms",
                         cands[i].ip, (unsigned)cands[i].port, cfg->punch_leg_ms);
                 race_finish_punch(&cands[i], now);
@@ -1608,6 +1682,12 @@ static void p2p_race(const RaceCfg* cfg, RaceResult* out) {
         /* --- 5) pump the legs ---------------------------------------- */
         for (int i = 0; i < RACE_PUNCH_LEGS; i++) {
             if (!cands[i].armed || cands[i].finished) continue;
+            /* H-A: past its send window a candidate is receive-only —
+             * UNLESS it has just been confirmed by a late peer, in which
+             * case it owes that peer the confirmation tail and pumping
+             * resumes (Stun_PunchOffer cleared `sent_any`, so the first
+             * tail datagram leaves on this very iteration). */
+            if (cands[i].send_expired && !race_punch_confirmed(&cands[i])) continue;
             if (cands[i].oracle == DP2P_PUNCH_REAL) {
                 Stun_PunchPump(&cands[i].leg, cfg->sock, now);
             } else if (cands[i].oracle == DP2P_PUNCH_CONFIRM) {
@@ -1830,12 +1910,67 @@ static void p2p_race(const RaceCfg* cfg, RaceResult* out) {
                 if (relay_ready_ms == 0) {
                     relay_ready_ms = (now != 0) ? now : 1u;
                     SDL_Log("[direct_p2p] S6 relay ready at %s:%u (slot=%u) — holding "
-                            "%u ms for a punch the peer may still be confirming",
+                            "%u ms past the last punch for a peer that may still be "
+                            "confirming",
                             relay_ip, (unsigned)grant.relay_port, (unsigned)grant.slot,
                             (unsigned)RACE_RELAY_GRACE_MS);
                 }
+                /*
+                 * SECOND-REVIEW H-A: WHERE THE GRACE IS ANCHORED IS THE
+                 * WHOLE FIX. Anchored only at `relay_ready_ms` — which is
+                 * what shipped — the grace is a LOCAL timer, and a local
+                 * timer cannot resolve a disagreement about timing: the
+                 * divergence band simply translated with the grace
+                 * (measured: 2350-2625 at grace 0, 2950-3250 at grace 600,
+                 * 3400-3600 at grace 1200/OWD 300). No finite value closed
+                 * it, because a peer starting late enough always confirms
+                 * after we have committed.
+                 *
+                 * The grace is now anchored at the LATER of "the relay
+                 * became ready" and "the last punch candidate stopped
+                 * sending", and section 2 keeps those candidates on the
+                 * receive path until this commit happens. That turns the
+                 * decision from "how long since MY relay was ready" into
+                 * "is the punch provably over on BOTH sides", which is a
+                 * quantity the peers actually share: each side punches for
+                 * `punch_leg_ms` from its own start, each side listens
+                 * until it commits, and a confirmation on either side
+                 * resumes that side's tail, which confirms the other.
+                 *
+                 * SIZING (second-review H-B). The convergence condition is
+                 * RACE_RELAY_GRACE_MS >= one peer-to-peer ROUND TRIP, not
+                 * one one-way delay: with start skew s and one-way delay
+                 * d, the late peer confirms at s+d and the early peer must
+                 * still be listening at s+d, which holds for every s
+                 * exactly when the grace covers 2d. That is why the
+                 * divergence band was always ~2d wide (measured 275-300 ms
+                 * at d=150) and never the "150 ms, equal to the injected
+                 * one-way delay" §8.4 used to claim. 600 ms therefore
+                 * covers every pair with an RTT up to 600 ms; a real
+                 * transatlantic RTT is 70-180 ms. The number is sized
+                 * against a NETWORK quantity and the derivation is above —
+                 * it is not sized against any harness constant.
+                 */
+                uint32_t grace_anchor = relay_ready_ms;
+                for (int i = 0; i < RACE_PUNCH_LEGS; i++) {
+                    if (!cands[i].armed || !cands[i].send_expired) continue;
+                    if ((int)(cands[i].send_end_ms - grace_anchor) > 0) {
+                        grace_anchor = cands[i].send_end_ms;
+                    }
+                }
+                /* A candidate that is still SENDING has not reached its
+                 * anchor yet, so the grace has not started: the punch is
+                 * demonstrably still running and committing now is exactly
+                 * the H-A defect. */
+                bool punch_still_sending = false;
+                for (int i = 0; i < RACE_PUNCH_LEGS; i++) {
+                    if (cands[i].armed && !cands[i].finished && !cands[i].send_expired) {
+                        punch_still_sending = true;
+                    }
+                }
                 const bool grace_done =
-                    (int)(now - relay_ready_ms) >= (int)RACE_RELAY_GRACE_MS;
+                    !punch_still_sending &&
+                    (int)(now - grace_anchor) >= (int)RACE_RELAY_GRACE_MS;
                 const bool budget_done = (int)(now - t0) >= cfg->race_budget_ms;
                 if (!grace_done && !budget_done) {
                     goto relay_grace_pending;
@@ -2031,6 +2166,14 @@ void DirectP2P_TestHook_RunRace(const DirectP2PRaceProbeCfg* pcfg,
 bool DirectP2P_TestHook_RaceBudgetExpired(uint32_t now, uint32_t t0,
                                           int budget_ms, bool tail_outstanding) {
     return race_budget_expired(now, t0, budget_ms, tail_outstanding);
+}
+
+uint32_t DirectP2P_TestHook_RaceRelayArmMs(void) {
+    return RACE_RELAY_ARM_MS;
+}
+
+uint32_t DirectP2P_TestHook_RaceRelayGraceMs(void) {
+    return RACE_RELAY_GRACE_MS;
 }
 #endif /* NETPLAY_TEST_HOOKS */
 

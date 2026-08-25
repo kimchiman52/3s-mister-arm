@@ -426,6 +426,15 @@ void DirectP2P_TestHook_RunRace(const DirectP2PRaceProbeCfg* cfg,
  * that has confirmed and still owes its peer the confirmation tail. */
 bool DirectP2P_TestHook_RaceBudgetExpired(uint32_t now, uint32_t t0,
                                           int budget_ms, bool tail_outstanding);
+
+/* Second-review H-A: the two constants that place the relay-vs-punch
+ * decision in time, exposed so the split-brain sweep can DERIVE its search
+ * range from them instead of hard-coding a range chosen where the fix
+ * happened to work. The direction matters: a test range computed from a
+ * production constant follows the production code; a production margin
+ * sized against a test constant is the H-B defect and is forbidden. */
+uint32_t DirectP2P_TestHook_RaceRelayArmMs(void);
+uint32_t DirectP2P_TestHook_RaceRelayGraceMs(void);
 #endif /* NETPLAY_TEST_HOOKS */
 
 #else /* !ENABLE_NETPLAY */

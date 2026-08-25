@@ -1459,22 +1459,70 @@ stepper too.
    as a connectivity win.
 
    **1b — and the relay's own handoff waits `RACE_RELAY_GRACE_MS`
-   (600 ms) for one (S6 review, H-3).** Rule 1 as originally shipped was
-   a purely LOCAL decision: the relay leg pinned, the race ended on the
-   spot, and nothing asked what the *other* peer had decided. Two peers
-   confirm their punches about one one-way delay apart, so a start skew
-   of a few tens of milliseconds was enough for one side to relay while
-   the other punched. GekkoNet resolves inbound packets by source address
-   and `netplay.c` registers the remote **once** at configure time with
-   no relearn path, so that pair then sits in `CONNECTING` for the whole
-   15 s `CONNECT_TIMEOUT_CONNECTING_MS` and fails with no recovery.
-   Measured, not argued: the two-peer rig in test 24 (§8.8) puts the
-   divergence band at **skew ∈ [2 350, 2 500] ms — a 150 ms window, equal
-   to the injected one-way delay**. The relay leg therefore becomes
-   *ready* and then keeps pinning for one grace window before it commits,
-   during which rule 1 can still take the race. Bounded twice over: by
-   the grace itself and by the race budget, which commits the relay
-   rather than losing it.
+   (600 ms) PAST THE END OF THE PUNCH (S6 review H-3; re-anchored and
+   re-sized by the second review's H-A and H-B).** Rule 1 as originally
+   shipped was a purely LOCAL decision: the relay leg pinned, the race
+   ended on the spot, and nothing asked what the *other* peer had
+   decided. Two peers confirm their punches about one one-way delay
+   apart, so a start skew of a few tens of milliseconds was enough for
+   one side to relay while the other punched. GekkoNet resolves inbound
+   packets by source address and `netplay.c` registers the remote
+   **once** at configure time with no relearn path, so that pair then
+   sits in `CONNECTING` for the whole 15 s
+   `CONNECT_TIMEOUT_CONNECTING_MS` and fails with no recovery.
+
+   **The first fix moved the band; it did not close it.** Held from the
+   instant the relay became *ready*, the grace is still a LOCAL timer,
+   and a local timer cannot resolve a disagreement about timing — a peer
+   starting late enough always confirms after we have committed. The
+   second review reproduced that on shipped defaults, and the residual
+   sat ~200 ms above the top of the range the suite ever looked at
+   (sweep upper bound 2 750, pinned point 2 450). Measured on the
+   two-peer rig, three configurations:
+
+   | `RACE_RELAY_GRACE_MS` | injected one-way delay | divergence band |
+   |---|---|---|
+   | 0 | 150 ms | skew 2 350 – 2 625 ms |
+   | 600 (as shipped) | 150 ms | skew 2 950 – 3 250 ms |
+   | 1 200 | 300 ms | skew 3 400 – 3 600 ms |
+
+   The band **translates with the grace** and its width is **~2× the
+   one-way delay — one round trip**, not "a 150 ms window equal to the
+   injected one-way delay", which is what this section claimed and what
+   the 600 ms was sized against. That mis-measurement is the second
+   review's H-B; the corrected derivation is below.
+
+   **What closes it.** The grace is now held from the LATER of "the
+   relay became ready" and "the last punch candidate stopped sending",
+   and a candidate that has stopped sending is kept on the RECEIVE path
+   until the relay commits instead of being torn down. The decision
+   stops being "how long since MY relay was ready" and becomes "is the
+   punch provably over on BOTH sides" — a quantity the two peers
+   genuinely share, because each punches for `punch_leg_ms` from its own
+   start and each listens until it commits. A confirmation on either
+   side resets `sent_any` in `Stun_PunchOffer` and resumes that side's
+   confirmation tail, which is what confirms the other side in turn.
+   Both halves are load-bearing and each has its own probe point in
+   test 24: without the re-anchor the band stays at the relay-commit
+   instant, and without the listen-past-send rule it simply moves to the
+   punch-send-end instant.
+
+   **Sizing, corrected (H-B).** With start skew *s* and one-way delay
+   *d*, the late peer's punch reaches us at *s + d* and our answering
+   tail reaches it at *s + 2d*; convergence therefore needs the grace to
+   cover **one round trip (2*d*), not one one-way delay**. That is
+   exactly why every band measured above is ~2*d* wide. 600 ms covers
+   every pair up to a 600 ms RTT; a real transatlantic RTT is
+   70–180 ms, and a pair above 600 ms RTT cannot play this game anyway.
+   The number is sized against a network quantity with the derivation
+   written next to it in `direct_p2p.c`, **not** against
+   `SB6_OWD_MS` or any other harness constant — sizing a production
+   margin against a test literal is what produced H-B in the first
+   place.
+
+   Bounded three ways: by the grace, by the punch send window that now
+   anchors it, and by the race budget, which commits the relay rather
+   than losing it. The cost is stated in §8.10.
 2. **The relay leg does not arm until `RACE_RELAY_ARM_MS` (2 500 ms)...**
    Naive racing would have every pair request a pool port from the
    100-port range. 2 500 ms is *exactly* the window the pre-S6 direct
@@ -1700,11 +1748,37 @@ Notes on what each test is *for*:
   the exempted window rather than comfortably before it — without it the
   test could pass for a reason unrelated to H-1. Observed on a passing
   run: 4 348 ms against a 4 000 ms budget, hard cap 4 600 ms.
-- **24** is the only two-peer case in the suite. Its control point
-  (skew 1 000 ms) must punch on both sides *even on the pre-fix code*; if
-  the control ever reds, the rig is broken, not the fix. Its sweep mode
-  (`S6_SPLIT_SWEEP=1`) is what produced the measured 150 ms band and is
-  off by default because it costs ~25 races.
+- **24** is the only two-peer case in the suite, and the second review
+  rewrote how it chooses what to probe. Its control point (skew
+  1 000 ms) must punch on both sides *even on the pre-fix code*; if the
+  control ever reds, the rig is broken, not the fix.
+
+  **What was wrong with it.** Both the pinned point (`SB6_SPLIT_SKEW_MS`
+  = 2 450) and the sweep range (2 150–2 750, step 25) were compile-time
+  literals chosen where the fix worked. The residual band sat at
+  2 950–3 250 — ~200 ms **above the top of the range the project ever
+  looked at** — so the suite was structurally unable to see the defect
+  it existed to catch. That is the defect underneath the defect, and it
+  is why the second review's H-A asked for the sweep to be widened and
+  the delay parameterised before anything was fixed.
+
+  **What it does now.** A race can only diverge at an instant where one
+  peer's decision changes, and there are exactly two: the **relay
+  commit** (`RACE_RELAY_ARM_MS + RACE_RELAY_GRACE_MS`) and the **punch
+  send end** (`punch_leg_ms`). The pinned points are derived from those
+  two constants — each probed at −owd, +0 and +owd, plus one point past
+  everything where both peers must agree to RELAY — via
+  `DirectP2P_TestHook_RaceRelayArmMs` / `...RaceRelayGraceMs`, so
+  widening the grace or the arm delay moves the probe with it. Each
+  point carries its own expected outcome, so a point that flips from
+  PUNCHED to RELAYED is a red rather than a silent pass. The one-way
+  delay, the punch window, the race budget and the sweep bounds are all
+  runtime knobs now (`S6_SPLIT_OWD_MS`, `S6_SPLIT_PUNCH_LEG_MS`,
+  `S6_SPLIT_BUDGET_MS`, `S6_SPLIT_LO/HI/STEP`), which is what let the
+  bands in §8.4 rule 1b be measured at three grace values and three
+  delays instead of one. The sweep (`S6_SPLIT_SWEEP=1`) is still off by
+  default because it costs ~100 races; its default range is now derived
+  from the same two constants rather than hard-coded.
 - **26** is the tear-down test, and the mechanism is only observable as
   an **absence**: the relay grants immediately, the leg reaches
   `RELAY_LEG_PIN` and resends `RELAY_PIN` every 150 ms, and the mock
@@ -1795,6 +1869,31 @@ the neutralisation record.
   deliberately-unmatched port that recognises the S2 symmetric retarget,
   the adaptive cadence, and the 600 ms tail itself.
 
+- **The SECOND adversarial review (H-A, H-B, H-C), which falsified the
+  first round's headline claim.** The first round said H-3 was fixed.
+  It was not; it had been moved.
+
+  | finding | what it was | where it is fixed |
+  |---|---|---|
+  | **H-A** | the split brain was **relocated by one grace window, not closed**. Reproduced on shipped defaults at skew 2 950–3 250 ms — and the suite could not see it, because its sweep stopped at 2 750 and its pinned point was 2 450 | §8.4 rule 1b (grace re-anchored at the punch send end + candidates kept on the receive path), test 24 rewritten |
+  | **H-B** | the measurement that sized the grace did not reproduce. §8.4 claimed a "150 ms window, equal to the injected one-way delay"; the band is ~2× the one-way delay — one **round trip** — so the claimed 4× headroom was ~2× | §8.4 rule 1b sizing paragraph, and the `RACE_RELAY_GRACE_MS` comment |
+  | **H-C** | one row of the table above was vacuous: the duplicate-endpoint guard test 27 neutralises is **byte-identical to the pre-fix tree**, so it was never the M-2 defect. The real fix is the validate-then-memset reorder plus the `race_finish_punch` ref release, and restoring the pre-fix form left the suite green | M-2's row re-attributed; a test that observes the ref release |
+  | **M-1 (2nd)** | `natpmp.c` refuses the real default gateway in a harness build; `upnp.c` had no equivalent, and `-DHAVE_UPNP` is in the harness's own `flags.make`. Only a config flag stood between the suite and the developer's router | `upnp_ensure_cached`, test 23e |
+
+  **The structural lesson, recorded because it is the one that
+  generalises.** Both H-A and H-B trace to the same mistake: a
+  production margin sized against a harness constant, and a harness
+  range chosen where the fix worked. `SB6_SPLIT_SKEW_MS` and the sweep
+  bounds were literals picked from a passing run, so the suite's search
+  space was defined by the answer rather than by the mechanism. The
+  probe points and the sweep range are now DERIVED from the production
+  constants that place the decision (`DirectP2P_TestHook_RaceRelayArmMs`,
+  `...RaceRelayGraceMs`, `punch_leg_ms`), and the grace is sized from a
+  network quantity — one peer-to-peer round trip — with the derivation
+  written beside it. The direction of the dependency matters and is now
+  one-way: tests may derive from production constants; production
+  margins may never derive from test constants.
+
 ### 8.10 Residuals, stated rather than hidden
 
 - **Scenario A is still 8 s/attempt**, because the 8 000 ms signalling
@@ -1807,17 +1906,57 @@ the neutralisation record.
   retried once with a fresh local port. Removing the retry is a different
   trade (it demonstrably rescues joins — test 6 part B) and was not made
   here.
-- **A pair that needs longer than `RACE_RELAY_ARM_MS` + one grace window
-  to punch may end up relayed** where the pre-S6 code would have kept
-  punching for the full bilateral window first. Post-review the bound is
-  per-candidate (§8.4 rule 2b), so it is 2.5 s *each* rather than 2.5 s
-  from race start, plus the 600 ms grace before the relay commits — but
-  it is still shorter than the pre-S6 5 000 ms per punch. Anything slower
-  than that is relayed. Closing the gap entirely means letting the relay
-  leg finish and then *upgrading* to a direct link mid-session, which
-  needs a GekkoNet remote-address relearn path that does not exist
-  (`backend.h`; the remote is registered once at configure time in
-  `netplay.c`). Named here rather than hidden.
+- **How often a real pair lands in the band was NOT measured — only
+  bounded from the code on both sides.** The band is a function of start
+  skew, so its field rate is a function of the skew distribution. What
+  the two implementations say:
+
+  - The host enters the race **only** from `try_handle_deliver`, and
+    only while still in `HOST_WAITING`
+    (`src/netplay/direct_p2p.c:4062-4067`, spawn at `:4162`).
+  - The server sets `pairedPeer` only on the REGISTER that fills the
+    joiner slot and then pushes **one** unsolicited DELIVER to the host
+    (`tools/rendezvous-server/rendezvous-server.js:1256-1258` and
+    `:1283-1286`). It is a bare `socket.send` — **no retransmit**.
+  - So when that push arrives, the host starts roughly one server
+    one-way delay plus one frame behind the joiner: far below every band
+    measured in §8.4 rule 1b.
+  - When it is **lost**, the host learns only from the reply DELIVER to
+    its own next REGISTER (`rendezvous-server.js:1279-1280`), and that
+    interval is **5 000 ms** (`src/port/config/config.c:111`, loop at
+    `src/netplay/direct_p2p.c:2686-2733`). One lost datagram therefore
+    places the host's race start at a roughly uniform point in the next
+    5 s — a range that spans every band measured.
+
+  Both the loss rate and the resulting distribution are unmeasured;
+  there is no real-network capture of the pairing path. The rate is
+  small and it is not zero. The fix does not depend on the answer — it
+  converged at all 97 sweep points from 1 800 to 6 600 ms — which is the
+  reason to prefer it over sizing a timer against a guess about how
+  skewed a real pair can get.
+- **A relayed pair now waits ~2.5 s longer for its handoff.** This is
+  the price of the H-A re-anchor and it is paid by exactly the pairs
+  that end up on the relay. The relay used to commit one grace window
+  after it became *ready* (~3.1 s into the race on the defaults); it now
+  commits one grace window after the last punch candidate stops sending
+  (`punch_leg_ms` + `RACE_RELAY_GRACE_MS` = 5 000 + 600 = **5 600 ms**
+  for `punch[0]`). Nothing else about the relay leg moved: it still
+  ARMS at 2 500 ms and still does its REQ/GRANT/PIN work concurrently
+  with the punch, which is where S6's measured win came from — pre-S6
+  the same pair paid 5 000 ms of punch **plus** up to 4 000 ms of relay
+  serially. The pure-failure path is unchanged: with no relay leg in
+  play there is nothing to diverge about, so candidates are torn down at
+  `punch_leg_ms` exactly as before and §8.5's scenario-A/B timings and
+  test 18's cascade bound are untouched.
+- **A pair that needs longer than `punch_leg_ms` to punch is still
+  relayed** where the pre-S6 code would have punched for the full
+  bilateral window on both sides first. That bound is now the *punch's
+  own* window rather than `RACE_RELAY_ARM_MS`, so it is strictly more
+  generous than what shipped, but it is still a bound. Closing the gap
+  entirely means letting the relay leg finish and then *upgrading* to a
+  direct link mid-session, which needs a GekkoNet remote-address relearn
+  path that does not exist (`backend.h`; the remote is registered once
+  at configure time in `netplay.c`). Named here rather than hidden.
 - **A genuinely ASYMMETRIC punch path still splits the two peers.** If
   one side's datagrams traverse and the other's do not, one peer confirms
   and the other never can, so one punches and one relays no matter how

@@ -7492,22 +7492,75 @@ done:
  *
  * THE RIG. Two real p2p_race instances on two threads, each with its own
  * SDL_net socket, punching each other through a UDP delay line that adds
- * a fixed one-way delay `SB6_OWD_MS` (loopback is otherwise ~0 ms, which
- * would compress the whole effect into one 5 ms loop iteration). Both are
- * HOST-role so the relay-arm rule is identical on both sides and the ONLY
- * asymmetry is the one under test: peer A starts `skew_ms` after peer B.
+ * a fixed one-way delay (`S6_SPLIT_OWD_MS`, default
+ * SB6_OWD_DEFAULT_MS; loopback is otherwise ~0 ms, which would compress
+ * the whole effect into one 5 ms loop iteration). Both are HOST-role so
+ * the relay-arm rule is identical on both sides and the ONLY asymmetry is
+ * the one under test: peer A starts `skew_ms` after peer B.
  *
- * With the pre-fix code the outcomes diverge for
+ * THE BAND, CORRECTED (second review, H-B). This comment used to say the
+ * outcomes diverge for
  *      skew ∈ (t_relay_commit − OWD, t_relay_commit)
- * — B's relay commits at ~RACE_RELAY_ARM_MS + one signal round trip while
- * B's own punch is still one one-way delay away from confirming, and A,
- * which started later, still has plenty of budget and punches. The
- * measured width of that band is reported below and in
- * docs/plan-netplay-connection.md §8.9.
+ * — one one-way delay wide. That is wrong, and the wrong width is what
+ * the 600 ms grace was sized against. The band is
+ *      skew ∈ (t_relay_commit − OWD, t_relay_commit + OWD)
+ * — one ROUND TRIP wide — because there are two failures, not one: below
+ * the commit instant, B's leg is confirmed by A's punch arriving one owd
+ * late; above it, A is confirmed by the last punch B sent one owd before
+ * it committed. Both ends were measured (grace 600 / owd 150: split brain
+ * at skew 2 950-3 250, a 300 ms span). The old range 2 150..2 750 could
+ * not see either end.
  */
-#define SB6_OWD_MS 150      /* one-way delay injected between the two peers */
+/* Default one-way delay injected between the two peers.
+ *
+ * SECOND-REVIEW H-A: this used to be a bare `#define SB6_OWD_MS 150` and the
+ * sweep below used to be a bare `for (skew = 2150; skew <= 2750; skew += 25)`.
+ * Both literals had been chosen where the fix works, so the suite could not
+ * detect its own inadequacy: the residual band sat ~200 ms above the top of
+ * the only range the project ever looked at. The delay is now a RUNTIME knob
+ * (`S6_SPLIT_OWD_MS`) and the sweep range is DERIVED from the production
+ * constants that place the decision point, so widening the grace or the arm
+ * delay widens the search automatically. */
+#define SB6_OWD_DEFAULT_MS 150
 #define SB6_RIG_BUDGET_MS 7000
 #define SB6_RIG_RELAY_BUDGET_MS 3000
+
+static int sb6_env_int(const char* name, int fallback) {
+    const char* v = SDL_getenv(name);
+    if (v == NULL || v[0] == '\0') {
+        return fallback;
+    }
+    return SDL_atoi(v);
+}
+
+static int sb6_owd_ms(void) {
+    const int v = sb6_env_int("S6_SPLIT_OWD_MS", SB6_OWD_DEFAULT_MS);
+    return (v < 0) ? 0 : v;
+}
+
+/* The rig's punch SEND window. Overridable so the sweep can be pointed at
+ * the second decision instant (the end of the punch) as well as the
+ * first (the relay becoming ready). */
+#define SB6_RIG_PUNCH_LEG_MS 5000
+static int sb6_punch_leg_ms(void) {
+    return sb6_env_int("S6_SPLIT_PUNCH_LEG_MS", SB6_RIG_PUNCH_LEG_MS);
+}
+
+/*
+ * Where the early peer's relay decision lands on this rig, computed from the
+ * production constants rather than from a measurement of one build.
+ *
+ * The early peer arms its relay leg at RACE_RELAY_ARM_MS (the rig is
+ * HOST-role on both sides, so `paired` is true by construction and there is
+ * no DELIVER to wait for), the loopback mock server grants and ACKs within a
+ * few ms, and section 7 of p2p_race then holds the leg for
+ * RACE_RELAY_GRACE_MS before committing. Anything that changes either
+ * constant moves this point, and the sweep moves with it.
+ */
+static int sb6_relay_commit_ms(void) {
+    return (int)DirectP2P_TestHook_RaceRelayArmMs() +
+           (int)DirectP2P_TestHook_RaceRelayGraceMs();
+}
 
 typedef struct {
     int sock_a;   /* peer A punches here; forwarded to B out of sock_b */
@@ -7692,8 +7745,8 @@ static bool sb6_run_split_brain(int skew_ms, int owd_ms,
     a.cfg.signal_leg = false;
     a.cfg.relay_leg = true;
     a.cfg.relay_budget_ms = SB6_RIG_RELAY_BUDGET_MS;
-    a.cfg.punch_leg_ms = 5000;
-    a.cfg.race_budget_ms = SB6_RIG_BUDGET_MS;
+    a.cfg.punch_leg_ms = sb6_punch_leg_ms();
+    a.cfg.race_budget_ms = sb6_env_int("S6_SPLIT_BUDGET_MS", SB6_RIG_BUDGET_MS);
 
     b.cfg = a.cfg;
     b.cfg.sock = net_b;
@@ -7732,19 +7785,47 @@ static const char* sb6_outcome_name(DirectP2PRaceProbeOutcome o) {
     }
 }
 
-/* The skew that lands inside the pre-fix divergence band. Derived from
- * the measurement recorded in §8.9: the band is
- * (relay_commit − SB6_OWD_MS, relay_commit) and relay_commit on this rig
- * is RACE_RELAY_ARM_MS + ~10 ms of loopback signalling. */
-#define SB6_SPLIT_SKEW_MS 2450
-/* A control point comfortably below the band: both sides must punch. */
+/* A control point comfortably below every decision instant: both sides
+ * must punch, and must have punched on the pre-fix code too. If THIS one
+ * ever reds, the rig is broken, not the fix. */
 #define SB6_SAFE_SKEW_MS 1000
+
+/*
+ * SECOND-REVIEW H-A: the pinned probe points are DERIVED, not chosen.
+ *
+ * What shipped was a single literal, `SB6_SPLIT_SKEW_MS 2450`, sitting
+ * ~500 ms below the band the fix left behind — so the assertion could not
+ * see the residual it was supposed to bound, and neither could the sweep
+ * (which stopped at 2750). The defect underneath the defect was that both
+ * numbers were chosen where the fix works.
+ *
+ * A race can only diverge at an instant where one peer's decision
+ * changes, and there are exactly two of those:
+ *
+ *   1. RELAY COMMIT — RACE_RELAY_ARM_MS + RACE_RELAY_GRACE_MS. The early
+ *      peer used to end the race here while the late peer was still
+ *      punching. This is the band the first fix moved rather than closed.
+ *   2. PUNCH SEND END — `punch_leg_ms`. The early peer stops sending
+ *      here. If it also stopped LISTENING here, the late peer's punch
+ *      would confirm one-sidedly and the band would simply have moved to
+ *      this instant instead.
+ *
+ * Both are probed at -owd, +0 and +owd, which is where a one-round-trip
+ * asymmetry lands, plus one point past the whole thing where BOTH peers
+ * must agree to relay. Each expectation is stated per point, so a point
+ * whose expected outcome flips is a red rather than a silent pass.
+ */
+typedef struct {
+    int  skew_ms;
+    bool expect_punched; /* false => both must RELAY */
+    const char* why;
+} Sb6ProbePoint;
 
 static int test_race_split_brain(void) {
     fprintf(stderr,
             "[test_bilateral_punch] test 24: two real peers, %d ms one-way delay — "
             "neither may end up on a different rung from the other (H-3)\n",
-            SB6_OWD_MS);
+            sb6_owd_ms());
     const int fails_before = fail_count;
     int rc = 0;
 
@@ -7758,10 +7839,29 @@ static int test_race_split_brain(void) {
      * suite runs. */
     const char* sweep = SDL_getenv("S6_SPLIT_SWEEP");
     if (sweep != NULL && sweep[0] == '1') {
-        for (int skew = 2150; skew <= 2750; skew += 25) {
+        /* DERIVED bounds (second-review H-A). The old range stopped at
+         * 2750, which is below `sb6_relay_commit_ms()` on the shipped
+         * defaults (2500 + 600 = 3100) — the sweep could not see the very
+         * instant it exists to probe. The range now brackets the computed
+         * commit point by several one-way delays on each side, so it
+         * follows RACE_RELAY_ARM_MS and RACE_RELAY_GRACE_MS wherever they
+         * go. Still overridable for a wider hunt. */
+        const int owd = sb6_owd_ms();
+        const int commit = sb6_relay_commit_ms();
+        int lo = sb6_env_int("S6_SPLIT_LO", commit - 6 * owd - 400);
+        const int hi = sb6_env_int("S6_SPLIT_HI", commit + 6 * owd + 400);
+        int step = sb6_env_int("S6_SPLIT_STEP", 50);
+        if (lo < 0) lo = 0;
+        if (step < 1) step = 1;
+        fprintf(stderr,
+                "[split-sweep] owd=%d ms  relay-commit≈%d ms (arm %u + grace %u)  "
+                "range %d..%d step %d\n",
+                owd, commit, (unsigned)DirectP2P_TestHook_RaceRelayArmMs(),
+                (unsigned)DirectP2P_TestHook_RaceRelayGraceMs(), lo, hi, step);
+        for (int skew = lo; skew <= hi; skew += step) {
             DirectP2PRaceProbeOutcome oa = DP2P_RACE_PROBE_EXHAUSTED;
             DirectP2PRaceProbeOutcome ob = DP2P_RACE_PROBE_EXHAUSTED;
-            if (!sb6_run_split_brain(skew, SB6_OWD_MS, &oa, &ob)) break;
+            if (!sb6_run_split_brain(skew, owd, &oa, &ob)) break;
             fprintf(stderr, "[split-sweep] skew=%4d ms  A=%-9s B=%-9s  %s\n",
                     skew, sb6_outcome_name(oa), sb6_outcome_name(ob),
                     (oa == ob) ? "converged" : "*** SPLIT BRAIN ***");
@@ -7769,45 +7869,81 @@ static int test_race_split_brain(void) {
     }
 
     {
-        DirectP2PRaceProbeOutcome oa = DP2P_RACE_PROBE_EXHAUSTED;
-        DirectP2PRaceProbeOutcome ob = DP2P_RACE_PROBE_EXHAUSTED;
-        if (!sb6_run_split_brain(SB6_SPLIT_SKEW_MS, SB6_OWD_MS, &oa, &ob)) {
-            FAIL("test24", "could not stand up the two-peer rig");
-            rc = 1;
-            goto done;
-        }
-        if (oa != ob) {
+        const int owd = sb6_owd_ms();
+        const int commit = sb6_relay_commit_ms();
+        const int punch_end = sb6_punch_leg_ms();
+        const int past = punch_end + (int)DirectP2P_TestHook_RaceRelayGraceMs() +
+                         3 * owd;
+        const Sb6ProbePoint points[] = {
+            { commit - owd, true,
+              "one owd BEFORE the relay-commit instant" },
+            { commit, true,
+              "exactly AT the relay-commit instant" },
+            { commit + owd, true,
+              "one owd AFTER the relay-commit instant — the band the first "
+              "H-3 fix left behind" },
+            { punch_end - owd, true,
+              "one owd BEFORE the punch send window ends" },
+            { punch_end, true,
+              "exactly AT the end of the punch send window" },
+            { punch_end + owd, true,
+              "one owd AFTER the punch send window ends — only the "
+              "listen-past-send rule can converge this one" },
+            { past, false,
+              "past every punch: both peers must agree to RELAY" },
+        };
+        for (size_t i = 0; i < sizeof(points) / sizeof(points[0]); i++) {
+            DirectP2PRaceProbeOutcome oa = DP2P_RACE_PROBE_EXHAUSTED;
+            DirectP2PRaceProbeOutcome ob = DP2P_RACE_PROBE_EXHAUSTED;
+            if (!sb6_run_split_brain(points[i].skew_ms, owd, &oa, &ob)) {
+                FAIL("test24", "could not stand up the two-peer rig");
+                rc = 1;
+                goto done;
+            }
+            if (oa != ob) {
+                fprintf(stderr,
+                        "[test_bilateral_punch] FAIL: test24: SPLIT BRAIN at "
+                        "skew=%d ms (%s) — peer A ended %s and peer B ended %s. The "
+                        "two peers are now on different rungs; GekkoNet registers the "
+                        "remote once by source address with no relearn path, so this "
+                        "pair hangs for the whole %u ms "
+                        "CONNECT_TIMEOUT_CONNECTING_MS and fails\n",
+                        points[i].skew_ms, points[i].why, sb6_outcome_name(oa),
+                        sb6_outcome_name(ob), (unsigned)CONNECT_TIMEOUT_CONNECTING_MS);
+                fail_count++;
+                rc = 1;
+            }
+            const DirectP2PRaceProbeOutcome want = points[i].expect_punched
+                                                       ? DP2P_RACE_PROBE_PUNCHED
+                                                       : DP2P_RACE_PROBE_RELAYED;
+            if (oa != want) {
+                fprintf(stderr,
+                        "[test_bilateral_punch] FAIL: test24: at skew=%d ms (%s) the "
+                        "converged outcome must be %s, not %s%s\n",
+                        points[i].skew_ms, points[i].why, sb6_outcome_name(want),
+                        sb6_outcome_name(oa),
+                        points[i].expect_punched
+                            ? " — a relayed pair pays European-VPS ping for the whole "
+                              "match"
+                            : " — this skew is past every punch, so a PUNCHED outcome "
+                              "means the rig is not injecting the delay it claims");
+                fail_count++;
+                rc = 1;
+            }
             fprintf(stderr,
-                    "[test_bilateral_punch] FAIL: test24: SPLIT BRAIN at skew=%d ms — "
-                    "peer A ended %s and peer B ended %s. The two peers are now on "
-                    "different rungs; GekkoNet registers the remote once by source "
-                    "address with no relearn path, so this pair hangs for the whole "
-                    "%u ms CONNECT_TIMEOUT_CONNECTING_MS and fails\n",
-                    SB6_SPLIT_SKEW_MS, sb6_outcome_name(oa), sb6_outcome_name(ob),
-                    (unsigned)CONNECT_TIMEOUT_CONNECTING_MS);
-            fail_count++;
-            rc = 1;
+                    "[test_bilateral_punch] test24: skew=%4d ms -> A=%-9s B=%-9s (%s)\n",
+                    points[i].skew_ms, sb6_outcome_name(oa), sb6_outcome_name(ob),
+                    points[i].why);
         }
-        if (oa != DP2P_RACE_PROBE_PUNCHED) {
-            fprintf(stderr,
-                    "[test_bilateral_punch] FAIL: test24: at skew=%d ms both peers can "
-                    "still punch, so the converged outcome must be PUNCHED, not %s — a "
-                    "relayed pair pays European-VPS ping for the whole match\n",
-                    SB6_SPLIT_SKEW_MS, sb6_outcome_name(oa));
-            fail_count++;
-            rc = 1;
-        }
-        fprintf(stderr, "[test_bilateral_punch] test24: skew=%d ms -> A=%s B=%s\n",
-                SB6_SPLIT_SKEW_MS, sb6_outcome_name(oa), sb6_outcome_name(ob));
     }
 
     {
-        /* Control: a skew nowhere near the relay-arm boundary must punch
+        /* Control: a skew nowhere near either decision instant must punch
          * on both sides on the pre-fix code too. If THIS one ever goes
          * red the rig is broken, not the fix. */
         DirectP2PRaceProbeOutcome oa = DP2P_RACE_PROBE_EXHAUSTED;
         DirectP2PRaceProbeOutcome ob = DP2P_RACE_PROBE_EXHAUSTED;
-        if (!sb6_run_split_brain(SB6_SAFE_SKEW_MS, SB6_OWD_MS, &oa, &ob)) {
+        if (!sb6_run_split_brain(SB6_SAFE_SKEW_MS, sb6_owd_ms(), &oa, &ob)) {
             FAIL("test24", "could not stand up the two-peer rig (control)");
             rc = 1;
             goto done;
@@ -7826,8 +7962,11 @@ static int test_race_split_brain(void) {
     if (rc == 0 && fail_count == fails_before) {
         fprintf(stderr,
                 "[test_bilateral_punch] test 24 OK — two real peers converged on the "
-                "same rung at both the boundary skew (%d ms) and the control (%d ms)\n",
-                SB6_SPLIT_SKEW_MS, SB6_SAFE_SKEW_MS);
+                "same rung at the control (%d ms) and at all 7 derived probe points "
+                "around the relay-commit instant (%d ms) and the punch send end "
+                "(%d ms), owd=%d ms\n",
+                SB6_SAFE_SKEW_MS, sb6_relay_commit_ms(), sb6_punch_leg_ms(),
+                sb6_owd_ms());
     }
 
 done:
@@ -7947,6 +8086,34 @@ static int test_race_relay_defers_per_candidate(void) {
             rc = 1;
         }
         EXPECT_TRUE("25-real-punch-confirmed", s_sb6_punch_success >= 1);
+        /*
+         * SECOND-REVIEW H-A follow-on: the OUTCOME assertion above is no
+         * longer sufficient to catch N3 (`RACE_PUNCH_MIN_WINDOW_MS` -> 0).
+         * The H-A re-anchor stops the relay COMMITTING while a punch is
+         * still running, so with the per-candidate window removed the
+         * DELIVER candidate now still wins the race and the outcome stays
+         * PUNCHED — this row would have gone vacuous exactly the way M-2's
+         * did (§8.9).
+         *
+         * What rule 2b actually promises is narrower and survives: "a pair
+         * that can punch never requests a pool port" (§7.4). That is
+         * observable as the RELAY_REQ count at the mock server. With the
+         * per-candidate window the relay never arms (measured: 0 REQs on
+         * both the pre- and post-H-A trees); with it removed the relay
+         * arms at RACE_RELAY_ARM_MS and asks for a port it does not need.
+         */
+        if (srv.reqs != 0) {
+            fprintf(stderr,
+                    "[test_bilateral_punch] FAIL: test25: the relay leg sent %d "
+                    "RELAY_REQ(s) for a pair that punched successfully. The DELIVER "
+                    "candidate armed at t+%d ms is entitled to "
+                    "RACE_PUNCH_MIN_WINDOW_MS of its own (§8.4 rule 2b), so the relay "
+                    "must never arm here — every pair that does costs one of the "
+                    "100 pool ports it does not need\n",
+                    srv.reqs, SB6_H4_DELIVER_MS);
+            fail_count++;
+            rc = 1;
+        }
         if (rc == 0 && fail_count == fails_before) {
             fprintf(stderr,
                     "[test_bilateral_punch] test 25 OK — DELIVER candidate armed at "
