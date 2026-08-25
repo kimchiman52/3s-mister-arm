@@ -748,10 +748,10 @@ typedef struct GameState {
      * class). Same fix class as [[chainex_check]]. Ported from d5f301cc. */
     s8 ca_check_flag;
 
-    /* Makoto SA-buff backup of PLW.spmv_ng_flag. u32[2] in effect/effl8.c:11.
+    /* Makoto SA-buff backup of PLW.spmv_ng_flag. u32[2] in effect/effl8.c:13.
      * effect_L8_move latches spmv_ng_save[id] = mwk->spmv_ng_flag when the
-     * buff starts (effl8.c:30, routine_no[0]==0) and writes it BACK into
-     * PLW.spmv_ng_flag when the buff ends (effl8.c:43, routine_no[0]==1).
+     * buff starts (effl8.c:50, routine_no[0]==0) and writes it BACK into
+     * PLW.spmv_ng_flag when the buff ends (effl8.c:63, routine_no[0]==1).
      * PLW.spmv_ng_flag IS part of the cross-peer desync checksum, so a
      * rollback that straddles the latch/restore window with a stale or
      * mispredicted spmv_ng_save value writes divergent flags on the two
@@ -762,7 +762,7 @@ typedef struct GameState {
      * CHAR_CHUNLI, never hit by Makoto's plpat17.c". That used CPS3
      * numbering; CPS3 is NOT defined in this build (CMakeLists.txt "Feature
      * toggles" leaves it commented out), so constants.h:55 makes 16 ==
-     * CHAR_MAKOTO and the effl8.c:91 gate passes for exactly the character
+     * CHAR_MAKOTO and the effl8.c:111 gate passes for exactly the character
      * plpat17.c:245 dispatches. The code is LIVE. */
     u32 spmv_ng_save[2];
 
@@ -773,9 +773,9 @@ typedef struct GameState {
      * Why a render-side array ends up in the rollback save set: effl8's
      * routine 0 latches the CURRENT palette out of live ColorRAM into its own
      * WORK slot (`save_old_color_data(&ewk->wu.zu_flag, step_xy_table)`,
-     * effl8.c:19/27) and then overwrites those ColorRAM entries with the buff
-     * colours (check_new_color_data_L8, effl8.c:28); routine 1 writes the
-     * latched copy back at buff end (effl8.c:40-41). The latch destination is
+     * effl8.c:26) and then overwrites those ColorRAM entries with the buff
+     * colours (check_new_color_data_L8, effl8.c:48); routine 1 writes the
+     * latched copy back at buff end (effl8.c:60-61). The latch destination is
      * inside frw[] and IS saved/restored; ColorRAM was NOT. So a rollback
      * straddling the activation re-ran routine 0 against an ALREADY-BUFFED
      * ColorRAM and latched the buff colours as the "old" colours — the saved

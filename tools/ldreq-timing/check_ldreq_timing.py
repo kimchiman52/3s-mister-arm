@@ -8,8 +8,8 @@ on how long the disk took -- i.e. that two netplay peers with different
 storage speeds compute the same saved state through character select.
 
 The bug this exists for is NOT a rollback bug. AFS_Read is a genuine OS
-async read (src/port/io/afs.c:366) drained by AFS_RunServer via
-SDL_GetAsyncIOResult (afs.c:304-313), so the frame on which a load
+async read (src/port/io/afs.c:403) drained by AFS_RunServer via
+SDL_GetAsyncIOResult (afs.c:313-318), so the frame on which a load
 completes is wall-clock. Exit_6th (src/sf33rd/Source/Game/screen/
 sel_pl.c:1701-1722) gates the rollback-SAVED Exit_No / Exit_Timer on
 Check_PL_Load() + Check_LDREQ_Queue_BG(), so two peers leave character
