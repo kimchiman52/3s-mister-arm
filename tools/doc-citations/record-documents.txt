@@ -1,0 +1,34 @@
+# RECORD-class documents, one glob per line.
+#
+# A RECORD is a document that describes a moment rather than the present: a
+# proposal for work not yet done, or a write-up of work that has since been
+# superseded. In a record, naming a file or a function that does not exist is
+# the document doing its job.
+#
+# A REFERENCE -- everything not listed here, including every in-tree code
+# comment -- claims to describe what IS. There, a name that resolves to nothing
+# is a defect, because a reader who follows it finds nothing.
+#
+# This affects existence findings only (phantom-path, phantom-identifier,
+# wrong-path), which drop from error to advisory. It does NOT affect drift or
+# line-out-of-range: those cite files that exist right now at the wrong line,
+# which is equally wrong and equally mechanical to fix in either class.
+#
+# Keep this list SHORT and justified. Every entry is a place the linter has
+# been told to stop looking; that is a cost, not a convenience.
+
+docs/plan-*.md          # proposals: they name the files they intend to create
+docs/archive/*.md       # explicitly archived; superseded by construction
+docs/*-review.md        # reviews OF proposals, quoting their not-yet-real names
+docs/fix-plan-*.md      # proposals under a different prefix
+
+# --- individually justified: abandoned or superseded efforts -----------------
+# The 3sxtra netplay port was abandoned; its research doc names lobby_server.c
+# and the RmlUi lobby UI, none of which were ever written.
+docs/research-3sxtra-netplay-port.md
+TRACK_B_BLOCKED.md      # a blocked-status note for that same abandoned port
+
+# Dated research memos. Each is a snapshot of one investigation on one day
+# (filenames carry the date), citing the scratch artifacts of that session.
+# They are evidence of what was believed then, not a description of now.
+docs/agent-memory/*.md
