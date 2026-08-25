@@ -560,12 +560,82 @@ void Ldreq_SetBarrierForced(bool forced) {
     ldreq_barrier_forced = forced;
 }
 
+/* Task #72 — the gate covers every session state that can advance the
+ * simulation, not just RUNNING.
+ *
+ * The task-#66 barrier keyed on NETPLAY_SESSION_RUNNING alone. That is
+ * narrower than the set of states in which Check_LDREQ_Queue() runs, so
+ * the frames outside it pumped the loader on the stock single-step path
+ * — the exact wall-clock-coupled behaviour #66 exists to remove. The
+ * full enumeration of paths that reach njUserMain()/Game_Task() (and
+ * therefore Check_LDREQ_Queue(), game.c:195) while a session exists:
+ *
+ *   IDLE           main.c:700 calls njUserMain() directly. Offline. The
+ *                  barrier MUST stay off here — that is the whole
+ *                  "offline is untouched" clause below.
+ *   TRANSITIONING  netplay.c:1688 step_game(true), once per frame until
+ *                  game_ready_to_run_character_select(). Unbounded frame
+ *                  count: measured 9 pumps per peer locally, and the
+ *                  Netplay_Run timeline has shown 66 vs 12 ticks on two
+ *                  peers of the same session.
+ *   CONNECTING     netplay.c:1829 run_netplay(). GekkoNet emits no
+ *                  advance until AllActorsValid() first returns true
+ *                  (GekkoLib game_session.cpp:125, ref 7be848c pinned in
+ *                  build-deps.sh:425), and that same UpdateSession call
+ *                  both queues SessionStarted (game_session.cpp:425) and
+ *                  advances (:145). Netplay_Run reads session
+ *                  events BEFORE update_session (step_logic, netplay.c
+ *                  :1356-1357), so the RUNNING flip lands one tick late
+ *                  and session frame 0 always executes here. Measured:
+ *                  exactly one pump per session, on both peers.
+ *   RUNNING        netplay.c:1840 run_netplay(). What #66 covered.
+ *   EXITING        no run_netplay(), no step_game(). Never pumps under a
+ *                  live engine; handle_disconnection() has already run
+ *                  Soft_Reset_Sub() -> Init_Load_Request_Queue_1st()
+ *                  (sys_sub.c:1060), which wipes the queue.
+ *
+ * So TRANSITIONING and CONNECTING are added and IDLE/EXITING are not.
+ *
+ * WHY THIS IS THE FIX FOR THE SESSION-START SKEW (task #69.3) TOO.
+ * #69.3 is open because nothing on the start path clears the queue, so
+ * two peers have no structural guarantee of holding the same loader
+ * state when the engine takes over. With the barrier live during
+ * TRANSITIONING, every frame of the pre-session run ends with an empty
+ * queue and a settled ldreq_result[] — including the last one before
+ * configure_gekko() — so both peers enter session frame 0 identical by
+ * construction rather than by measurement. CONNECTING alone would not
+ * have achieved that: frame 0's game logic runs BEFORE frame 0's pump
+ * (game.c:195 is the tail of the Game_Task ix loop), so a disagreement
+ * inherited from TRANSITIONING would already have been read into frame
+ * 0's saved state.
+ *
+ * COST IS ZERO WHENEVER THE QUEUE IS EMPTY. Check_LDREQ_Queue() returns
+ * at the `q_ldreq->be == 0` guard below before it ever consults this
+ * function, so on every path measured so far (all 10 pre-RUNNING pumps
+ * per peer carried head_be == 0) this widening changes nothing at all.
+ * When the queue is NOT empty the added work is the same bounded drain
+ * RUNNING has been shipping since #66 — LDREQ_BARRIER_BUDGET_MS and
+ * LDREQ_BARRIER_MAX_STEPS, blown budget logs and returns. The two new
+ * states are also strictly safer to stall than RUNNING: no peer is
+ * counting our packets yet, so GekkoNet's 5000 ms DISCONNECT_TIMEOUT is
+ * not in play, and CONNECTING's own 15 s deadline (CONNECT_TIMEOUT_
+ * CONNECTING_MS, connect_fail.h:257) sees at most one such drain. */
 bool Ldreq_BarrierActive(void) {
     if (ldreq_barrier_forced) {
         return true;
     }
 
-    return Netplay_GetSessionState() == NETPLAY_SESSION_RUNNING;
+    switch (Netplay_GetSessionState()) {
+    case NETPLAY_SESSION_TRANSITIONING:
+    case NETPLAY_SESSION_CONNECTING:
+    case NETPLAY_SESSION_RUNNING:
+        return true;
+
+    case NETPLAY_SESSION_IDLE:
+    case NETPLAY_SESSION_EXITING:
+    default:
+        return false;
+    }
 }
 
 #if ENABLE_PERF_TELEMETRY
