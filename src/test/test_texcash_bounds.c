@@ -369,6 +369,22 @@ static void sub_b_recovery(void) {
     CHECK(cp == &t_pc.patt[7], "acquire after expiry did not reuse the freed instance");
     CHECK(t_pc.kazu == 0x40, "kazu=%d after recovery acquire, expected 64", (int)t_pc.kazu);
 
+    /* The other arm of patcash_acquire's refusal -- "kazu has room but nothing
+     * is dead" -- cannot be reached from any state this code produces. SUB_A
+     * shows kazu + dead == 0x40 is maintained across a frame, and the only
+     * thing that breaks it (an mltcshtime16 of 0, so an acquired instance
+     * stays dead) drives kazu UP, never down, so the bound arm always fires
+     * first. The arm exists so a future mts_base edit cannot make the
+     * collection hand out a live instance. Constructed directly, because a
+     * guard nothing can turn red is a guard nobody knows works. */
+    for (k = 0; k < 0x40; k++) {
+        t_pc.patt[k].time = 20;
+    }
+    t_pc.kazu = 10;
+    CHECK(patcash_acquire(&t_pc) == NULL, "acquire handed back an instance with nothing dead (kazu=%d)",
+          (int)t_pc.kazu);
+    CHECK(t_pc.kazu == 10, "the refused acquire still advanced kazu to %d", (int)t_pc.kazu);
+
     printf("       refusal is one frame of missing sprite, not a permanent wedge\n");
 }
 
