@@ -170,13 +170,21 @@ sa_frame                   # ui/sc_sub.c:392 SA-gauge HUD frame display state (c
 # whose SDL_AsyncIO* and read cursor cannot be rewound, and AFS_Read is a
 # real async disk read (afs.c:366), so completion timing is wall-clock, not
 # frame-count. The empirical proof is in this harness's own output: q_ldreq,
-# rckey_work, rckey_mmobj, texgrplds, char_init_data, requests, afs and
-# asyncio_queue all appear in the A1-vs-A2 BASELINE NOISE list -- they differ
-# between two identical no-rollback runs of the same binary on the same
-# machine. Two peers cannot agree on them either, and no local save/replay
-# scheme changes that. The correct treatment is a load barrier (keep the
-# simulation from observing an in-flight LDREQ load while a session is
-# running), not a wider save set.
+# rckey_work, rckey_mmobj, texgrplds, char_init_data, requests and afs all
+# appear in the A1-vs-A2 BASELINE NOISE list -- they differ between two
+# identical no-rollback runs of the same binary on the same machine. Two peers
+# cannot agree on them either, and no local save/replay scheme changes that.
+# The correct treatment is a load barrier (keep the simulation from observing
+# an in-flight LDREQ load while a session is running), not a wider save set.
+#
+# CORRECTION 2026-08-25 (task #65): asyncio_queue used to be named in that
+# list and no longer belongs in it. It is a whole-pointer static
+# (SDL_AsyncIOQueue*, port/io/afs.c:47), so it is now pointer-canonicalized in
+# the capture and holds one identical hash in every run. Its former noise
+# membership was evidence of ALLOCATOR nondeterminism -- it only ever carried
+# the queue's address, never its contents -- not of loader timing. The genuinely
+# wall-clock members above are unaffected and still noise-masked, so nothing
+# about this block's conclusion changes.
 #
 # UPDATE 2026-08-24 (task #66): that barrier now exists. Check_LDREQ_Queue()
 # (io/gd3rd.c) finishes every queued request inside the simulated frame that
