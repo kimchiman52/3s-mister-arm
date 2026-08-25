@@ -57,8 +57,8 @@ All from `src/netplay/direct_p2p.c` (current lines); labels from
 
 | Terminal state | Status text | Raised at |
 |---|---|---|
-| `FAILED_STUN` | "Connection failed. Try again." | host: direct_p2p.c:971, 1025; thread-spawn failure paths in Begin* :1872/:1932; joiner: :1097 |
-| `FAILED_PUNCH` | "Invalid room code." | BeginJoin decode failures, direct_p2p.c:1891, 1900 |
+| `FAILED_STUN` | "Connection failed. Try again." | host: direct_p2p.c:279, 1025; thread-spawn failure paths in Begin* :1872/:1932; joiner: :1097 |
+| `FAILED_PUNCH` | "Invalid room code." | BeginJoin decode failures, direct_p2p.c:4382, 4395 |
 | `FAILED_SYMMETRIC` | "Could not connect. Try a different network." | joiner bypasses :1152/:1158/:1165 (host side no longer has a terminal gate — same-IP DELIVERs are ignored as stale self-registrations, review H1) |
 | `FAILED_BILATERAL` | "Could not connect. Try a different network." | joiner signaling/punch failures :1189-:1336; host: punch-thread spawn failure :1719, retry-budget exhaustion :2130 (review M1: a single host-side punch failure returns to HOST_WAITING) |
 | `FAILED_HANDSHAKE` | MIST reject reason | R-1 path, :1435 |
@@ -95,7 +95,7 @@ Demonstrated end-to-end against the real server (see §3.4).
 
 Mechanics verified in code; classifications are standard NAT taxonomy.
 "UPnP" means the host's router granted the mapping
-(`try_upnp`, direct_p2p.c:509-566) and its external IP is not
+(`try_portmap`, direct_p2p.c:2151-2360) and its external IP is not
 provably non-public (CGNAT gate, §3.6; review M3).
 
 | Host \ Joiner | Full-cone / restricted | Port-restricted | Symmetric |
@@ -144,7 +144,7 @@ bilateral fallback could never pair those hosts.
 Every `netplay-direct-p2p-stun-keepalive-ms` (default 20 000 ms, ≤ 0
 disables) while HOST_WAITING, the main thread re-issues a STUN Binding
 Request on the same socket toward the server that answered discovery
-(`host_stun_keepalive_tick`, direct_p2p.c:1488-1504;
+(`host_stun_keepalive_tick`, direct_p2p.c:3654-3670;
 `Stun_SendKeepalive`, stun.c). The probe refreshes the advertised NAT
 mapping; the response is routed through a new STUN gate in
 `host_tick_receive` (direct_p2p.c:1752-1762) — which also fixes a
@@ -193,7 +193,7 @@ unsolicited DELIVER push (pair-able). Output is in the S1 task report.
 
 ### 3.5 UPnP lease renewal
 The 1-hour lease (upnp.c:27) is renewed at half-life (30 min,
-`upnp_renew_tick`, direct_p2p.c:646-705), retry at 5 min on failure,
+`upnp_renew_tick`, direct_p2p.c:2418-2565), retry at 5 min on failure,
 **including mid-session**: `main.c` now ticks the orchestrator from
 the active-session branch (main.c, `DirectP2P_Tick` beside
 `Netplay_Run`), because the mapping is what carries the peer's
@@ -314,13 +314,13 @@ post-S2 tree.
   and logged when servers disagree on the mapped port. S3 consumes
   this for failure attribution; no UX in S2 by design.
 - **Auto-retry policy**: (a) joiner — join_thread_fn
-  (direct_p2p.c:1401) wraps the extracted `join_attempt()`
+  (direct_p2p.c:1101) wraps the extracted `join_attempt()`
   (direct_p2p.c:1110) and interposes exactly ONE automatic full retry
   on any terminal failure before surfacing it; each attempt re-runs
   discovery on local_port 0 with the previous socket closed, so the
   retry binds a FRESH local port (dodges stuck conntrack/NAT state;
   also covers host-still-in-UPnP-probe start-skew). (b) host —
-  Tick's FAILED_STUN case (direct_p2p.c:2113) re-spawns
+  Tick's FAILED_STUN case (direct_p2p.c:2917) re-spawns
   host_thread_fn after a 5 s backoff, ≤3 retries per hosting session,
   instead of parking terminal; composes with (and does not touch) the
   S1 bilateral-failure return-to-HOST_WAITING path.
@@ -466,7 +466,7 @@ Three sub-stages, all landed. As-built below.
 - Punch payload is `"3SX_PUNCH"` + an 8-byte token derived from the
   room-code payload, domain-separated from the session key
   (`Rendezvous_DerivePunchToken`, rendezvous.c). 17 bytes total.
-- `classify_host_datagram` (direct_p2p.c:547) is the single routing
+- `classify_host_datagram` (direct_p2p.c:787) is the single routing
   decision for every inbound datagram on the waiting host's socket:
   '3SXR' frame / STUN Binding Response / **authenticated** punch /
   IGNORE. **Fail closed** — no valid token, no acceptance. The IGNORE
@@ -485,7 +485,7 @@ Three sub-stages, all landed. As-built below.
   is that it is an LCG whose state is recoverable from observed output,
   making txids predictable and Binding-Response forgery possible for an
   off-path attacker. RFC 5389 §6 requires cryptographic randomness.
-- New cause `CONNECT_FAIL_PUNCH_AUTH` (connect_fail.h:97). It outranks
+- New cause `CONNECT_FAIL_PUNCH_AUTH` (connect_fail.h:115). It outranks
   the NAT diagnoses in the classifier: the peer was *reached*, so
   blaming NAT would send users to their router settings for nothing.
 
@@ -589,10 +589,10 @@ bucket cannot see. A legitimate pair peaks around 2.5 pkt/s.
 loop (one RTT to bind, instead of waiting out the 500 ms resend
 cadence). The host receives CHALLENGEs on the **main** thread while
 REGISTER resends are built on the rendezvous **worker** thread, so the
-8-byte cookie crosses via a seqlock (`signal_cookie_publish` /
-`signal_cookie_snapshot`, direct_p2p.c:355/370) and the main thread also
-echoes immediately (`host_handle_challenge`, direct_p2p.c:2272).
-`Rendezvous_ParseChallenge` (rendezvous.c:184) validates magic, version,
+8-byte cookie crosses via a seqlock (`signal_cookie_publish`, direct_p2p.c:544;
+`signal_cookie_snapshot`, direct_p2p.c:559) and the main thread also
+echoes immediately (`host_handle_challenge`, direct_p2p.c:4037).
+`Rendezvous_ParseChallenge` (rendezvous.c:195) validates magic, version,
 type **and** that the frame carries *our* session key (cross-talk +
 forgery gate — the key embeds the S4b nonce), and **zeroes its output on
 every reject**, so a caller that ignores the return value cannot echo
@@ -605,7 +605,7 @@ evict-oldest-unpaired-singleton policy remain load-bearing against a
 real **botnet** whose nodes do receive at their own addresses and
 therefore pass the cookie gate.
 
-**New cause** `CONNECT_FAIL_COOKIE_REJECTED` (connect_fail.h:90,
+**New cause** `CONNECT_FAIL_COOKIE_REJECTED` (connect_fail.h:100,
 `"P2P_FAIL_COOKIE_REJECTED"`, "Matchmaking auth failed. Update the
 game."). A CHALLENGE is proof the server is alive, so
 challenges-with-zero-DELIVERs is an auth/version problem — not the dead
@@ -1542,9 +1542,9 @@ still owing its peer that tail — see §8.9. Worst case per attempt is
 therefore 8 600 ms on the defaults, 17 200 ms for the joiner's two
 attempts. Verified headroom against the callers:
 
-- `CONNECT_TIMEOUT_CONNECTING_MS` (15 000 ms, `connect_fail.h:257`) does
+- `CONNECT_TIMEOUT_CONNECTING_MS` (15 000 ms, `connect_fail.h:267`) does
   **not** bound the race: it is armed on entry to
-  `NETPLAY_SESSION_CONNECTING` (`netplay.c:1719-1734`), i.e. *after* the
+  `NETPLAY_SESSION_CONNECTING` (`netplay.c:1776-1791`), i.e. *after* the
   handoff, and bounds GekkoNet's sync, not establishment.
 - The bound that does apply is nav's `NAV_WAIT_ORCH_TIMEOUT_FRAMES`
   (`netplay_nav.c:120` = `150 * 60` frames = 150 000 ms, enforced at
@@ -2049,7 +2049,7 @@ at once.
 `UpnpMapping` gained two fields (upnp.h:14-39): `backend`
 (`PortMapBackend` NONE/UPNP/NATPMP/PCP) and `lifetime_s`.
 
-- **Teardown dispatches** through `portmap_remove` (direct_p2p.c:1241),
+- **Teardown dispatches** through `portmap_remove` (direct_p2p.c:2090),
   and every removal site goes through it. `Upnp_RemoveMapping` and
   `Natpmp_RemoveMapping` each additionally **refuse** a mapping they do
   not own. This is not defensive decoration: on a router that speaks
@@ -2065,7 +2065,7 @@ at once.
   existing `preferred_external = s_upnp_mapping.external_port` line
   already did.
 - **The renewal interval now follows the granted lease**
-  (`portmap_renew_interval_ms`, direct_p2p.c:1420). RFC 6886 §3.3: "The
+  (`portmap_renew_interval_ms`, direct_p2p.c:2303). RFC 6886 §3.3: "The
   NAT gateway MAY reduce the lifetime from what the client requested."
   A router granting 120 s against our 3600 s request would have
   silently lost the mapping 28 minutes before a fixed half-hour timer
