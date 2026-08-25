@@ -879,7 +879,56 @@ allowlist entry defeats the whole tool.
    `--ldreq-barrier-force`, so it exercises the stock unbarriered path
    and the OPEN RED below still reproduces exactly as recorded.
 
-### OPEN RED: the shipped gate's select *depth* hides it too
+### CLOSED (2026-08-25, task #69): the select-*depth* OPEN RED
+
+**Resolved. The shared gate now runs character select at production depth
+8** (`tools/rollback-determinism/run.sh`, the `fast|thorough` arm), and
+`plt_req` — the single finding that made depth 8 permanently red — is
+allowlisted on a measured reachability proof rather than on the
+"loader-owned" hand-wave the rest of that block rests on. The full proof
+lives in `tools/rollback-determinism/allowlist.txt` and, for the engine
+side, in the `plt_req` entry of the disposition block at the top of
+`src/sf33rd/Source/Game/io/gd3rd.c`. The short version:
+
+- **It is a phase lead, not a value divergence.** `plt_req[id]` is written
+  only by `Push_LDREQ_Queue_Player` (`io/gd3rd.c:384`), which sets it to
+  the character whose requests it enqueues in the same call. Every call
+  site reachable in `MODE_NETWORK` passes `My_char[id]`, which is saved
+  (`game_state.c:232/972`). Measured: `plt_req1` goes `0 -> 11` at frame
+  **210** with no rollback and at frame **208** with rollback — same value,
+  two frames early.
+- **Its only in-select reader cannot be dispatched inside the window.**
+  `Exit_6th` runs only at `Exit_No == 5` (`sel_pl.c:1551-1553`), and
+  `Exit_No` leaves 0 only through `Exit_1st` (`sel_pl.c:1556-1562`), gated
+  on both players' `Sel_Arts_Complete < 0` — which is strictly downstream
+  of the confirmed-timeline `plt_req` write. Every symbol in that chain is
+  saved, so both peers agree on the ordering.
+- **Measured margin.** Across sixteen per-frame traces (both fast
+  scenarios × barrier off/forced-on × select period 8 and the adversarial
+  period 1 × depth 8, 1500 frames, ASLR off, pinned RNG), the `plt_req`
+  window ends at frame **209** and `Exit_No` first reaches 5 at frame
+  **317** — in all sixteen. Every SAVED column (`G_No[0..3]`, `G_Timer`,
+  `Exit_No`, `Exit_Timer`) is byte-identical on all 1500 frames in all
+  twelve rollback-vs-baseline comparisons.
+
+One thing that measurement corrected on the way through, recorded here
+because it contradicts a load-bearing sentence in the task-#66 barrier
+comment: **the barrier buys wall-clock invariance, not rollback
+invariance.** With `--ldreq-barrier-force` on, `Check_PL_Load()` still
+differs between a rollback run and a no-rollback run of the *same* binary
+for 2 frames (select period 8) / 7 frames (period 1), because
+`ldreq_result[]` bits are only ever OR'd in and a rolled-back speculative
+push leaves its completion set. That is a genuine cross-peer disagreement
+in the observable surface; it is not a desync only because of the
+`Exit_1st` ordering above. `io/gd3rd.c` now says so.
+
+`Candidate_Buff` is **not** closed by this and remains unallowlisted; it
+only appears at select period 1, which the period OPEN RED below still
+owns.
+
+The original finding is preserved below for provenance.
+
+#### (historical) OPEN RED: the shipped gate's select *depth* hides it too
 
 Measured 2026-08-25 (task #63) on `upstream-engine-fixes` @ `ac52abc2`
 plus the #63/#65 changes, stock `allowlist.txt`, fast mode (both
@@ -915,6 +964,9 @@ cadence or the depth surfaces it.
 
 It stays **unallowlisted and unfixed here**, deliberately, on both
 counts. Allowlisting it is refused outright (`allowlist.txt:198`).
+*(Superseded 2026-08-25 — see the CLOSED section above. The refusal was
+right until someone measured it; task #69 did, and the entry now exists
+with its proof attached.)*
 Fixing it is genuinely out of scope for a harness task: the doc's own
 analysis of this cluster (known limit 9) says the correct treatment is a
 **barrier**, not save-set membership — restoring `plt_req` alone would

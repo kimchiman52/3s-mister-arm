@@ -202,9 +202,58 @@ sa_frame                   # ui/sc_sub.c:392 SA-gauge HUD frame display state (c
 # cadence) -- see known limit 9 in docs/rollback-determinism-harness.md for
 # why this harness cannot do that job.
 #
-# Do NOT quietly widen this block. plt_req and Candidate_Buff also diverge at
-# --rbd-select-rollback-depth 8 and are deliberately left unallowlisted.
+# Do NOT quietly widen this block. Candidate_Buff still diverges at
+# --rbd-select-rollback-period 1 and is deliberately left unallowlisted.
+#
+# UPDATE 2026-08-25 (task #69): plt_req IS now allowlisted, below, and it is
+# the only member of this block admitted on a positive reachability proof
+# rather than on "the loader owns it". The refusal it replaces was correct
+# for its time -- nobody had measured it. What was measured:
+#
+#   VALUE. plt_req[id] is written only by Push_LDREQ_Queue_Player
+#   (io/gd3rd.c:384), which sets it to the character whose requests it
+#   enqueues in the same call. Every call site reachable in MODE_NETWORK
+#   passes My_char[id] (sel_pl.c:790, :996, win.c:178, menu.c:1571-1572,
+#   ranking.c:330-331) and My_char is GS_SAVE'd (game_state.c:232/972). The
+#   only site that passes anything else -- Push_LDREQ_Queue_Player(COM_id,
+#   17), next_cpu.c:958 -- sits under Game05, entered solely from the
+#   `default:` arm of Game03's Mode_Type switch (game.c:817), which
+#   `case MODE_VERSUS: case MODE_NETWORK:` divert past at game.c:786-787.
+#   So the divergence is a PHASE LEAD of a value both timelines agree on:
+#
+#     plt_req1  no-rollback  0 -> 11 at frame 210
+#     plt_req1  rollback(8)  0 -> 11 at frame 208
+#
+#   ORDER. The only reader reachable during character select is Exit_6th
+#   (sel_pl.c:1701-1706) via Check_PL_Load (sys_sub.c:899) ->
+#   Check_LDREQ_Queue_Player (gd3rd.c:780-786). Exit_6th is dispatched only
+#   at Exit_No == 5 (sel_pl.c:1551-1553), and Exit_No leaves 0 only through
+#   Exit_1st (sel_pl.c:1556-1562), which returns early unless BOTH
+#   operator-active players have Sel_Arts_Complete < 0 (set at sel_pl.c:865,
+#   strictly downstream of the PL_Sel_1st push at sel_pl.c:788-790, itself
+#   downstream of the Sel_PL_3rd confirm push at sel_pl.c:984-996).
+#   Sel_PL_Complete / Sel_Arts_Complete / Exit_No / SP_No are all saved
+#   (game_state.c:253/993, 550/1290, 456/1196, 457/1197), so both peers
+#   agree on that ordering exactly. The confirmed-timeline write therefore
+#   always lands before the reader can be dispatched.
+#
+#   EVIDENCE. tools/ldreq-timing's per-frame trace driven by --rbd-*
+#   rollback injection instead of injected AFS latency, 1500 frames, both
+#   fast scenarios x barrier off/forced-on x select period 8 and the
+#   adversarial period 1, select depth 8, ASLR off, pinned RNG. plt_req
+#   diverges on 2 frames (period 8) / 7 frames (period 1) per slot; every
+#   SAVED column (G_No[0..3], G_Timer, Exit_No, Exit_Timer) is
+#   byte-identical on all 1500 frames in all TWELVE rollback-vs-baseline
+#   comparisons (2 scenarios x barrier off/on x select {d8p8, d2p8, d8p1});
+#   and
+#   Exit_No first reaches 5 at frame 317 in all SIXTEEN traces -- 108 frames
+#   after the window closes.
+#
+#   VOIDING CONDITION. Add a reader of plt_req, Check_PL_Load or
+#   Check_LDREQ_Clear inside character select before Exit_No leaves 0 and
+#   this entry is wrong. Delete it and re-open the finding; do not widen it.
 afs_handle                 # AFS async file-system handle bookkeeping
+plt_req                    # io/gd3rd.c:162 pending-load character latch — phase lead of a saved value (My_char), read only by Exit_6th which cannot be dispatched until after the confirmed-timeline write. SEE THE PROOF ABOVE
 ldreq_result               # io/gd3rd.c load-request result slots — SEE CORRECTION ABOVE
 rckeyctr                   # system/ramcnt.c RAM-key allocator counter
 rckeymin                   # system/ramcnt.c RAM-key allocator low-water mark
