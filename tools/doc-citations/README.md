@@ -25,19 +25,37 @@ tool exists to catch. Run the tool; the number comes from the summary line.
 
 ## Finding codes
 
-| code | severity | meaning |
-| --- | --- | --- |
-| `drift` | error | the file and line exist, but the line no longer contains the symbol the citation is about. Carries the line where the symbol actually is. |
-| `degenerate-target` | error | the cited line is blank, or only a brace. Nobody cites those on purpose. |
-| `line-out-of-range` | error | the file has fewer lines than the citation claims. |
-| `phantom-path` | error* | no commit on any ref has ever contained this path. |
-| `wrong-path` | error* | ditto, but a file with that basename exists elsewhere — carries the suggestion. |
-| `phantom-identifier` | error* | a backticked symbol absent from all current code *and* all historical revisions. |
-| `stale-path` | advisory | the path existed and was deleted. A historical record, not a fabrication. |
-| `stale-identifier` | advisory | ditto for a symbol. |
-| `unresolvable-evidence` | advisory | "see the *X* report" where no path appears anywhere in the sentence. |
+Severity is set by **measured precision**, not by how bad the failure sounds.
+Every figure below comes from hand-auditing sampled findings against the actual
+files; the sample size is given so you can weigh it.
 
-\* demoted to advisory in RECORD-class documents — see `record-documents.txt`.
+| code | severity | precision | meaning |
+| --- | --- | --- | --- |
+| `degenerate-target` | error | **9/9** | the cited line is blank, or only a brace. Nobody cites those on purpose. |
+| `drift` | error | 23/40 | file and line exist, but the line no longer contains the symbol the citation is about. Carries the line where the symbol actually is. |
+| `wrong-path` | error† | 5/9 | the path has never existed, but a file with that basename does — carries the suggestion. |
+| `line-out-of-range` | error | 4/9 | the file has fewer lines than the citation claims. |
+| `phantom-path` | advisory | **0/9** | no commit on any ref has ever contained this path. |
+| `phantom-identifier` | advisory | **1/9** | a backticked symbol absent from all current code *and* all historical revisions. |
+| `stale-path` | advisory | — | the path existed and was deleted. A historical record, not a fabrication. |
+| `stale-identifier` | advisory | — | ditto for a symbol. |
+| `unresolvable-evidence` | advisory | — | "see the *X* report" where no path appears anywhere in the sentence. |
+
+† demoted to advisory in RECORD-class documents — see `record-documents.txt`.
+
+**`phantom-path` and `phantom-identifier` are advisory because they measured
+0/9 and 1/9.** They stay switched on — `phantom-identifier` is the check that
+catches the `kill_texcash_work` class, and that class is worth finding — but a
+category that is wrong four times out of five must not be able to fail a build.
+Their residue is not a scoping bug awaiting one more rule: it is documents whose
+citations are relative to a different worktree, informal scratchpad artifacts,
+external tool and NEON intrinsic names, and numbered-family placeholders like
+`nm_NNNNN`. Those are things this tree genuinely cannot resolve, and none of
+them is a defect. Promote them only together with a fresh measurement.
+
+`line-out-of-range` measuring 4/9 was the surprise — a citation into a file that
+is demonstrably too short still looks certain, but most of the misses are docs
+that cite a *sibling worktree*. That is why the table exists.
 
 ## The three ideas that make it quiet enough to use
 
@@ -77,12 +95,13 @@ looking.
 
 ## Known limits
 
-- **Drift precision is roughly 3 in 5** on this tree, measured by hand-auditing
-  110 sampled findings across five independent audits. That is a triage tool,
-  not a gate. Do not run `--fix` over drift findings unattended; read the
+- **Drift precision is 23/40** on this tree, from two independent hand audits
+  (110 findings were audited in total across five audits; the earlier 70 scored
+  38/70 against a version before the anchor-ownership fix). That is a triage
+  tool, not a gate. Do not run `--fix` over drift findings unattended; read the
   evidence line, which is printed precisely so you can judge in one glance.
-  `line-out-of-range`, `degenerate-target` and `wrong-path` are mechanically
-  certain and much stronger.
+- **`degenerate-target` is the only check that measured perfect** (9/9). If you
+  want one thing wired into CI, it is that one.
 - **A citation with no symbol near it cannot be drift-checked.** `texcash.c:301/516/554`
   in a sentence whose subject is `be` gets its line numbers range-checked and
   nothing more. This is asserted as a known gap by the acceptance test so that

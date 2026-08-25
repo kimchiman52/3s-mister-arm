@@ -151,6 +151,20 @@ MIN_IDENT_LEN = 6
 # quoted() helper in main() for the rule and why it is not an escape hatch.
 QUOTE_MARKER = "doccite:quote"
 
+# Severity for the two existence checks whose precision was MEASURED and found
+# poor: hand-auditing 9 sampled findings of each gave phantom-path 0/9 and
+# phantom-identifier 1/9. The residue is not a scoping bug that one more rule
+# would fix -- it is documents citing another worktree, informal scratchpad
+# artifacts, external tool and intrinsic names, and numbered-family
+# placeholders like nm_NNNNN. All are things this tree genuinely cannot
+# resolve and none is a defect.
+#
+# They stay ON, because this is the check that catches the kill_texcash_work
+# class and that class is worth finding. They are ADVISORY, because a finding
+# category that is wrong four times out of five must not be able to fail a
+# build. Raise to "error" only alongside a fresh precision measurement.
+PHANTOM_SEVERITY = "advisory"
+
 # Extensions whose comment text is scanned for citations.
 CODE_PROSE_EXTS = {".c", ".h", ".cpp", ".hpp", ".py", ".sh"}
 
@@ -857,7 +871,7 @@ def check_path_cites(repo, unit, findings, seen_paths, history, dclass,
                           "the citation is a historical record, not a "
                           "fabrication"]))
             return
-        sev = "error" if dclass == "reference" else "advisory"
+        sev = PHANTOM_SEVERITY if dclass == "reference" else "advisory"
         cands = repo.by_base.get(os.path.basename(cited)) or []
         if cands:
             findings.append(Finding(
@@ -875,6 +889,18 @@ def check_path_cites(repo, unit, findings, seen_paths, history, dclass,
                           "no tracked file shares its basename"]))
 
     def handle(cited, lo, hi, mstart, matched_text):
+        # "mtrans.c/texcash.c" names TWO files with a slash between them; it is
+        # not one path. Any non-final component carrying a source extension
+        # means shorthand, not a directory. Measured as a top false-positive
+        # source for phantom-path.
+        parts = cited.split("/")
+        if len(parts) > 1 and any(
+                p.rsplit(".", 1)[-1].lower() in CHECKED_EXTS
+                for p in parts[:-1] if "." in p):
+            return
+        # "a/src/netplay/netplay.c" is a git-diff hunk prefix.
+        if parts[0] in ("a", "b") and len(parts) > 2:
+            return
         target, how = repo.resolve(cited)
         line_no = unit.line_of(mstart)
 
@@ -884,6 +910,12 @@ def check_path_cites(repo, unit, findings, seen_paths, history, dclass,
                 return  # a build output, not a tracked source
             norm = cited.lstrip("./")
             if any(norm.startswith(p) for p in UNTRACKED_BY_DESIGN):
+                return
+            # third_party/GekkoNet/build/include/net.h -- a vendored library's
+            # generated output. "build/" has to match as a segment anywhere,
+            # not only at the front.
+            if any(seg in ("build", "out", "dist", "output_files")
+                   for seg in norm.split("/")[:-1]):
                 return
             if any(fnmatch.fnmatch(norm, g) for g in external_globs):
                 return  # deliberately points outside this repository
@@ -1027,7 +1059,8 @@ def check_identifiers(repo, unit, findings, allowed, stats, history, dclass):
                 continue
             findings.append(Finding(
                 "phantom-identifier",
-                "error" if dclass == "reference" else "advisory", unit.path,
+                PHANTOM_SEVERITY if dclass == "reference" else "advisory",
+                unit.path,
                 unit.line_of(m.start()),
                 "`%s` is referenced but has never existed" % tok,
                 evidence=["absent from every tracked file with comments "
