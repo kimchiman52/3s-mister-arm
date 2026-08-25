@@ -617,7 +617,6 @@ void Save_Game_Data() {
     save_w[1].Adjust_X = Convert_Buff[2][0][0];
     save_w[1].Adjust_Y = Convert_Buff[2][0][1];
     save_w[1].Screen_Size = Convert_Buff[2][0][2];
-    save_w[1].Screen_Mode = Convert_Buff[2][0][3];
     save_w[1].Language = mpp_w.language;
     save_w[1].BGM_Level = Convert_Buff[3][1][0];
     save_w[1].SE_Level = Convert_Buff[3][1][1];
@@ -663,8 +662,6 @@ void Copy_Save_w() {
     Convert_Buff[2][0][0] = save_w[1].Adjust_X;
     Convert_Buff[2][0][1] = save_w[1].Adjust_Y;
     Convert_Buff[2][0][2] = save_w[1].Screen_Size;
-    Convert_Buff[2][0][3] = save_w[1].Screen_Mode;
-    sys_w.screen_mode = save_w[1].Screen_Mode;
     Convert_Buff[2][0][4] = save_w[1].Language;
     mpp_w.language = save_w[1].Language;
     Convert_Buff[3][1][0] = save_w[1].BGM_Level;
@@ -696,7 +693,10 @@ void Copy_Check_w() {
 // literals. Extra_Option's positional slot (used to sit between SE_Level
 // and PL_Color) is removed here per upstream #343. PL_Color itself is
 // removed per upstream #296 (extra colors and Gill unlocked by default) -
-// this fork no longer carries that field either.
+// this fork no longer carries that field either. Screen_Mode's positional
+// slot (used to sit between Screen_Size and Language, default 1) is removed
+// per task #58: upstream #371 repurposed the Screen Adjust FILTER row into
+// LANGUAGE, deleting the only writer and the only consumer of the setting.
 const struct _SAVE_W Game_Default_Data = {
     { { { 0, 1, 2, 11, 3, 4, 5, 11 }, 0, { 0, 0, 0 } }, { { 0, 1, 2, 11, 3, 4, 5, 11 }, 0, { 0, 0, 0 } } },
     2,
@@ -708,7 +708,6 @@ const struct _SAVE_W Game_Default_Data = {
     0,
     0,
     0,
-    1,
     LANG_ENGLISH,
     0,
     1,

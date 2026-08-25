@@ -1,0 +1,1327 @@
+#!/usr/bin/env python3
+"""Documentation citation linter (task #77).
+
+WHAT IT PROVES
+--------------
+That the citations written in this repo's prose -- markdown under docs/ and
+comment text inside src/, include/, tools/ -- still point at something that
+exists. It does not check whether a claim is TRUE; it checks whether the
+evidence a claim points at is REACHABLE. Those are different failures, and
+only the second one is mechanical.
+
+Four checks, in descending order of how much harm the failure caused when it
+was found by hand:
+
+  C1  file:LINE citations       -- the file exists, the line exists, and the
+                                   line still contains what the citation says
+                                   it contains (see DRIFT below).
+  C2  backticked identifiers    -- a `snake_case` symbol named in prose exists  # doccite:quote
+                                   somewhere in the tree's CODE, not merely in
+                                   the prose asserting it.
+  C3  referenced paths          -- a path mentioned in prose resolves to a
+                                   tracked file.
+  C4  evidence references       -- "see the <Name> report" style appeals to a
+                                   named artifact that has no resolvable path
+                                   anywhere in the sentence. Advisory only.
+
+DRIFT, AND WHY THERE ARE NO FINGERPRINTS
+----------------------------------------
+The interesting C1 failure is not the dangling citation, it is the citation
+whose file and line both still exist but now describe something unrelated --
+because a later patch inserted lines above it. `effl8.c:11` was cited for  # doccite:quote
+`spmv_ng_save` in three places; the symbol is at :13 and line 11 is
+`#include <assert.h>`. Both file and line resolve. Nothing dangles.
+
+The obvious fix is a fingerprint: write `effl8.c:13#a3f2` and check the hash.
+This linter deliberately does NOT do that, for one reason: a hash a human has
+to maintain will rot exactly the way the comments rotted. Every legitimate
+line move would demand a doc edit AND a recomputed digest, and the first time
+someone is in a hurry they will drop the suffix rather than recompute it. A
+scheme whose failure mode is "people stop using it" cannot be the check that
+catches people not keeping things up to date.
+
+Instead this uses ANCHOR TOKENS, which authors already write for free. Real
+citations name their subject next to the pointer -- "`spmv_ng_save[2]` (u32) |
+`.../effl8.c:11`". So: pull identifier-shaped tokens out of the citation's own  # doccite:quote
+context, and ask whether any of them appears on the cited line.
+
+The rule that makes this quiet enough to trust is when it stays SILENT:
+
+  anchor found on the cited line        -> OK.
+  no anchor found anywhere in the file  -> SILENT. The citation may point at
+                                           an unnamed region (a loop body, a
+                                           blank line, a brace) and we have no
+                                           evidence either way. Absence of
+                                           proof is not a finding.
+  anchor found ELSEWHERE in the file    -> DRIFT, reported with the line number
+                                           where the anchor actually is.
+
+So a drift finding is never an inference. It always carries its own proof:
+here is the token, here is the line you cited, here is the line it is on. That
+also makes it a one-line fix, which is the point -- see --fix.
+
+An anchor that occurs more than ANCHOR_MAX_HITS times in the file is discarded
+as evidence: it is too common to localise anything.
+
+IDENTIFIER NOISE SCOPING (C2)
+-----------------------------
+`kill_texcash_work` was asserted by a comment in texcash.c and existed nowhere  # doccite:quote
+else in the tree. Catching that class means checking backticked prose tokens
+against reality, and prose backticks hold a great deal that is not a symbol:
+flags, paths, shell fragments, RFC terms, prose emphasis. An identifier check
+that fires on those is a check nobody reads.
+
+Scoping, each rule chosen to remove a specific noise source:
+
+  * must fully match [A-Za-z_][A-Za-z0-9_]*   -- removes shell fragments,
+    flags (--fast), paths (a/b.c), and anything with punctuation or spaces.  # doccite:quote
+  * must contain at least one '_'             -- removes ordinary English
+    words, RFC/protocol nouns, and single-word emphasis. snake_case and
+    SCREAMING_CASE are near-conclusive evidence of "C symbol in this repo".
+  * must be at least MIN_IDENT_LEN chars      -- removes short accidents.
+  * `foo()`, `foo[2]`, `*foo`, `a.b`, `a->b`  -- unwrapped first, so call and
+    field syntax is checked rather than skipped.
+
+and then the existence test itself, which is the part that actually matters:
+
+  the token must appear as a whole word in the CODE corpus, where the code
+  corpus is built with COMMENTS STRIPPED.
+
+Stripping comments is not an optimisation, it is the whole check. A symbol
+that only a comment claims exists is precisely the defect; if comment text
+counted as evidence of existence, `kill_texcash_work` would have been  # doccite:quote
+self-certifying. Comment stripping is a real lexer pass (see strip_comments),
+not a regex, because a regex gets // inside a string literal wrong.
+
+Unavoidable residue -- env vars, external API names, planned-but-unbuilt
+symbols in plan documents -- goes in allowlist.txt with a reason per entry,
+the same convention tools/rollback-determinism/allowlist.txt uses.
+
+SCOPE
+-----
+Scanned for citations: docs/**.md, top-level *.md, and comment text in
+src/**, include/**, tools/** ({.c,.h,.cpp,.hpp,.py,.sh}).
+
+NOT scanned: vendor/. It is third-party-derived; its comments cite an upstream
+line numbering we neither control nor may edit, so every finding there would be
+unactionable -- the definition of noise. vendor/ IS included in the resolution
+corpus, so that OUR docs may legitimately cite into it.
+
+Also not scanned: this tool's own testdata/, which contains deliberately
+broken citations as fixtures.
+
+OUTPUT
+------
+Findings on stdout, one block each, with the evidence inline. The last line is
+always the machine-greppable verdict:
+
+    DOCCITE SUMMARY: findings=N errors=N advisories=N files=N ...
+
+Exit codes: 0 = no errors; 1 = errors found; 2 = harness failure.
+
+This file is itself scanned by this tool. Every path and symbol named in this
+docstring is checked by the check it documents.
+"""
+
+import argparse
+import fnmatch
+import json
+import os
+import re
+import subprocess
+import sys
+from collections import defaultdict
+
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+REPO_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, "..", ".."))
+
+# ---------------------------------------------------------------------------
+# Tunables. Each of these trades recall against noise; the comment on each says
+# which direction and why the value is where it is.
+# ---------------------------------------------------------------------------
+
+# An anchor token appearing more often than this in the cited file cannot
+# localise anything, so it is not admissible as drift evidence.
+ANCHOR_MAX_HITS = 12
+
+# Below this length, snake_case tokens are too often accidents of prose.
+MIN_IDENT_LEN = 6
+
+# A line carrying this marker is QUOTING a citation, not making one. See the
+# quoted() helper in main() for the rule and why it is not an escape hatch.
+QUOTE_MARKER = "doccite:quote"
+
+# Severity for the two existence checks whose precision was MEASURED and found
+# poor: hand-auditing 9 sampled findings of each gave phantom-path 0/9 and
+# phantom-identifier 1/9. The residue is not a scoping bug that one more rule
+# would fix -- it is documents citing another worktree, informal scratchpad
+# artifacts, external tool and intrinsic names, and numbered-family
+# placeholders like nm_NNNNN. All are things this tree genuinely cannot
+# resolve and none is a defect.
+#
+# They stay ON, because this is the check that catches the kill_texcash_work
+# class and that class is worth finding. They are ADVISORY, because a finding
+# category that is wrong four times out of five must not be able to fail a
+# build. Raise to "error" only alongside a fresh precision measurement.
+PHANTOM_SEVERITY = "advisory"
+
+# Extensions whose comment text is scanned for citations.
+CODE_PROSE_EXTS = {".c", ".h", ".cpp", ".hpp", ".py", ".sh"}
+
+# Extensions treated as "code" when building the identifier existence corpus.
+# Deliberately broad: a symbol may be defined in a Makefile, a linker script, a
+# JSON config or a shell script and still be a real symbol.
+CODE_CORPUS_EXTS = {
+    ".c", ".h", ".cpp", ".hpp", ".cc", ".hh", ".s", ".S", ".inc",
+    ".py", ".sh", ".bash", ".mk", ".mak", ".cmake", ".txt", ".json",
+    ".yml", ".yaml", ".toml", ".cfg", ".ini", ".sv", ".v", ".qsf", ".tcl",
+    ".sdc", ".qip", ".ld", ".mra", ".xml", ".rules", ".service", ".conf",
+}
+
+# Directories never scanned as citation sources. See SCOPE in the docstring.
+# src/imgui is vendored Dear ImGui (src/imgui/imgui/imgui.h:1 reads
+# "// dear imgui, v1.92.7") and gets the same treatment as vendor/ for the same
+# reason: its comments cite an upstream layout we do not control and must not
+# edit.
+SKIP_SCAN_DIRS = ("vendor/", "src/imgui/", "tools/doc-citations/testdata/")
+
+# File extensions that make a bare token look like a path reference. Used only
+# to RECOGNISE a filename (so `menu_network.c` is not mistaken for a symbol).  # doccite:quote
+PATH_EXTS = (
+    "md|c|h|cpp|hpp|py|sh|txt|json|mk|yml|yaml|toml|cfg|ini|rbf|sv|v|qsf|"
+    "tcl|sdc|mra|xml|log|csv|zip|bin|elf|map|ld|s|inc|patch|diff"
+)
+
+# Extensions whose existence is actually CHECKED. The difference is build
+# outputs: 3S-ARM.rbf is referenced correctly and often by README.md and
+# AGENTS.md, and is produced by Quartus rather than tracked, so demanding it
+# exist in git is a guaranteed false positive.
+CHECKED_EXTS = {
+    "md", "c", "h", "cpp", "hpp", "py", "sh", "txt", "json", "mk", "yml",
+    "yaml", "toml", "cfg", "ini", "sv", "v", "qsf", "tcl", "sdc", "mra",
+    "xml", "s", "inc", "ld",
+}
+
+# Path prefixes that are outputs or tooling state, never tracked sources.
+UNTRACKED_BY_DESIGN = ("build/", "out/", "dist/", ".claude/", "node_modules/",
+                       "output_files/", "/media/", "media/fat/")
+
+# ---------------------------------------------------------------------------
+# Regexes
+# ---------------------------------------------------------------------------
+
+# A slash-bearing path, optionally followed by :LINE or :LINE-LINE.
+RE_PATH_CITE = re.compile(
+    r"(?<![\w/.:-])"
+    r"((?:[\w.+-]+/)+[\w.+-]+\.(?:" + PATH_EXTS + r"))"
+    r"(?::(\d+)(?:\s*[-–]\s*(\d+))?)?"
+    r"(?![\w])"
+)
+
+# A bare filename (no directory) with a code/doc extension. Only honoured
+# inside backticks, because a bare filename in free prose is frequently a
+# mention rather than a reference.
+RE_BARE_FILE = re.compile(
+    r"^([\w.+-]+\.(?:" + PATH_EXTS + r"))(?::(\d+)(?:\s*[-–]\s*(\d+))?)?$"
+)
+
+# A bare filename carrying a LINE NUMBER, anywhere in prose, backticks or not.
+# This is how in-tree comments in this repo actually cite -- texgroup.c:285
+# reads "before calling Push_ramcnt_key (texgroup.c:477-479)", and ramcnt.c,  # doccite:quote
+# mtrans.c and aboutspr.c are cited the same way. Requiring the :NNN is what
+# makes it safe: "see texgroup.c" is a mention, "texgroup.c:477" is a pointer.
+RE_BARE_CITE = re.compile(
+    r"(?<![\w/.+-])([\w.+-]+\.(?:" + PATH_EXTS + r"))"
+    r":(\d+)(?:\s*[-–]\s*(\d+))?(?![\w])"
+)
+
+# Extra line numbers hanging off a citation: `texcash.c:361/576/614`.
+# Without this only the first number of such a citation was ever checked, and
+# in-tree comments in this repo write them this way constantly.
+RE_EXTRA_LINES = re.compile(r"[/,](\d+)")
+
+# A line nobody cites on purpose: blank, a lone brace or comment delimiter, or
+# a preprocessor include. Used as an anchor-free drift signal -- see
+# check_path_cites. Deliberately conservative; a citation landing here is
+# wrong regardless of what the prose was talking about.
+RE_DEGENERATE = re.compile(r"^\s*(?:[{}();,]*|\*/|/\*+|#include\b.*)\s*$")
+
+RE_BACKTICK = re.compile(r"`([^`\n]{1,200})`")
+RE_WORD = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+RE_IDENT_FULL = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+# C4: an appeal to a named artifact. Requires (a) an evidence verb, (b) a
+# qualifier carrying a digit/uppercase/backtick so that "see the table below"
+# cannot fire, (c) an artifact noun.
+RE_EVIDENCE_REF = re.compile(
+    r"\b(?:see|per|cf\.?|documented in|recorded in|verified in|described in|"
+    r"captured in|listed in|from)\s+"
+    r"(?:the\s+)?"
+    r"([`\"']?[A-Za-z0-9][\w.#/-]*[`\"']?(?:\s+[\w#.-]+){0,2}?)\s+"
+    r"(task report|report|write-?up|document|doc|plan|appendix|memo|log|"
+    r"transcript|dossier|brief)\b",
+    re.IGNORECASE,
+)
+
+
+# ---------------------------------------------------------------------------
+# Comment / prose extraction
+# ---------------------------------------------------------------------------
+
+def strip_c_comments(text):
+    """Return (code_only, comment_spans).
+
+    code_only has every comment byte replaced by a space, preserving offsets
+    and newlines, so the identifier corpus sees code and not commentary.
+    comment_spans is a list of (start, end) offsets of comment bodies.
+
+    A real state machine rather than a regex: `"http://x"` contains // and is
+    not a comment, and a regex gets that wrong.
+    """
+    out = list(text)
+    spans = []
+    i, n = 0, len(text)
+    while i < n:
+        ch = text[i]
+        if ch == '"' or ch == "'":
+            quote = ch
+            i += 1
+            while i < n:
+                if text[i] == "\\":
+                    i += 2
+                    continue
+                if text[i] == quote:
+                    i += 1
+                    break
+                if text[i] == "\n" and quote == '"':
+                    break  # unterminated; bail rather than eat the file
+                i += 1
+            continue
+        if ch == "/" and i + 1 < n and text[i + 1] == "/":
+            start = i
+            while i < n and text[i] != "\n":
+                out[i] = " "
+                i += 1
+            spans.append((start + 2, i))
+            continue
+        if ch == "/" and i + 1 < n and text[i + 1] == "*":
+            start = i
+            out[i] = out[i + 1] = " "
+            i += 2
+            while i + 1 < n and not (text[i] == "*" and text[i + 1] == "/"):
+                if text[i] != "\n":
+                    out[i] = " "
+                i += 1
+            end = i
+            while i < n and i < end + 2:
+                out[i] = " "
+                i += 1
+            spans.append((start + 2, end))
+            continue
+        i += 1
+    return "".join(out), spans
+
+
+def strip_hash_comments(text, triple_quotes_are_prose):
+    """Same contract as strip_c_comments, for Python and shell.
+
+    Python docstrings count as prose: this repo's own tools carry their
+    citations there (tools/ldreq-timing/check_ldreq_timing.py cites
+    src/port/io/afs.c:366 from inside its module docstring).  # doccite:quote
+    """
+    out = list(text)
+    spans = []
+    i, n = 0, len(text)
+    while i < n:
+        ch = text[i]
+        if triple_quotes_are_prose and text[i:i + 3] in ('"""', "'''"):
+            q = text[i:i + 3]
+            start = i
+            for k in range(3):
+                out[i + k] = " "
+            i += 3
+            while i < n and text[i:i + 3] != q:
+                if text[i] != "\n":
+                    out[i] = " "
+                i += 1
+            end = i
+            for k in range(3):
+                if i + k < n:
+                    out[i + k] = " "
+            i = min(n, i + 3)
+            spans.append((start + 3, end))
+            continue
+        if ch == '"' or ch == "'":
+            quote = ch
+            i += 1
+            while i < n and text[i] != "\n":
+                if text[i] == "\\":
+                    i += 2
+                    continue
+                if text[i] == quote:
+                    i += 1
+                    break
+                i += 1
+            continue
+        if ch == "#":
+            start = i
+            while i < n and text[i] != "\n":
+                out[i] = " "
+                i += 1
+            spans.append((start + 1, i))
+            continue
+        i += 1
+    return "".join(out), spans
+
+
+def line_index(text):
+    """Offsets of each line start, for offset -> line-number conversion."""
+    starts = [0]
+    for m in re.finditer(r"\n", text):
+        starts.append(m.end())
+    return starts
+
+
+def offset_to_line(starts, off):
+    lo, hi = 0, len(starts) - 1
+    while lo < hi:
+        mid = (lo + hi + 1) // 2
+        if starts[mid] <= off:
+            lo = mid
+        else:
+            hi = mid - 1
+    return lo + 1
+
+
+# ---------------------------------------------------------------------------
+# Repo model
+# ---------------------------------------------------------------------------
+
+class Repo:
+    def __init__(self, root):
+        self.root = root
+        self.files = self._tracked()
+        self.by_suffix = defaultdict(list)
+        self.by_base = defaultdict(list)
+        for p in self.files:
+            self.by_base[os.path.basename(p)].append(p)
+            parts = p.split("/")
+            for k in range(len(parts)):
+                self.by_suffix["/".join(parts[k:])].append(p)
+        self._text_cache = {}
+        self._code_tokens = None
+
+    def _tracked(self):
+        out = subprocess.run(
+            ["git", "-C", self.root, "ls-files", "-z"],
+            capture_output=True, text=True, check=True,
+        ).stdout
+        return [p for p in out.split("\0") if p]
+
+    def read(self, relpath):
+        if relpath not in self._text_cache:
+            full = os.path.join(self.root, relpath)
+            try:
+                with open(full, "r", encoding="utf-8", errors="replace") as fh:
+                    self._text_cache[relpath] = fh.read()
+            except (OSError, IsADirectoryError):
+                self._text_cache[relpath] = None
+        return self._text_cache[relpath]
+
+    def lines(self, relpath):
+        t = self.read(relpath)
+        return t.split("\n") if t is not None else None
+
+    def resolve(self, cited):
+        """Resolve a cited path. Returns (relpath|None, how).
+
+        how is one of: exact, root, suffix, ambiguous, basename, missing.
+        'basename' means the file exists but NOT where the citation says --
+        that is the tools/mister/build-deps.sh class and it is an error with a  # doccite:quote
+        suggestion attached.
+        """
+        cited = cited.lstrip("./")
+        if cited in self.by_base and len(self.by_base[cited]) == 1 and "/" not in cited:
+            return self.by_base[cited][0], "exact"
+        if os.path.isfile(os.path.join(self.root, cited)):
+            return cited, "exact"
+        for pre in ("src", "include", "vendor", "tools"):
+            cand = pre + "/" + cited
+            if os.path.isfile(os.path.join(self.root, cand)):
+                return cand, "root"
+        hits = self.by_suffix.get(cited)
+        if hits:
+            if len(hits) == 1:
+                return hits[0], "suffix"
+            return None, "ambiguous"
+        base = os.path.basename(cited)
+        bhits = self.by_base.get(base)
+        if bhits:
+            return None, "basename"
+        return None, "missing"
+
+    def code_tokens(self):
+        """Whole-word identifier set over all code, COMMENTS STRIPPED."""
+        if self._code_tokens is not None:
+            return self._code_tokens
+        toks = set()
+        for p in self.files:
+            ext = os.path.splitext(p)[1]
+            if ext and ext not in CODE_CORPUS_EXTS:
+                continue
+            if p.startswith("docs/") or ext == ".md":
+                continue
+            # SELF-EXCLUSION. This tool's own fixtures and test name the very
+            # symbols they assert do not exist ("kill_texcash_work" appears in
+            # test_doc_citations.py as a string literal). Counting those as
+            # evidence would make every phantom real the moment a test asserts
+            # it -- the linter would silently stop being able to fail. Found by
+            # the acceptance test, which is the point of having one.
+            if p.startswith("tools/doc-citations/"):
+                continue
+            t = self.read(p)
+            if t is None or "\0" in t[:4096]:
+                continue
+            if ext in (".c", ".h", ".cpp", ".hpp", ".cc", ".hh"):
+                t, _ = strip_c_comments(t)
+            elif ext in (".py",):
+                t, _ = strip_hash_comments(t, True)
+            elif ext in (".sh", ".bash", ".mk", ".mak", ".cmake", ".tcl", ".cfg", ".ini", ".yml", ".yaml", ".toml", ".conf", ".rules", ".service"):
+                t, _ = strip_hash_comments(t, False)
+            for m in RE_WORD.finditer(t):
+                toks.add(m.group(0))
+        self._code_tokens = toks
+        return toks
+
+
+def doc_class(relpath, record_globs):
+    """REFERENCE or RECORD -- which decides whether "this does not exist" is a
+    defect or the document's entire point.
+
+    A plan document names files and functions that do not exist BECAUSE IT IS
+    PROPOSING THEM. docs/plan-netplay-port.md cites src/netplay/lobby_server.c  # doccite:quote
+    throughout; that port was abandoned and the file was never written. Calling
+    that an error demands that every finished proposal be rewritten to match a
+    tree that overtook it, and it is (measured on this tree) the largest single
+    block of findings.
+
+    A reference document and a code comment make no such promise. They describe
+    what IS. When they name something that does not exist, a reader following
+    the citation finds nothing, which is the failure this linter exists for.
+
+    Applies ONLY to existence findings (phantom-*, wrong-path). Drift and
+    line-out-of-range stay errors in every class: they are citations into files
+    that exist RIGHT NOW, pointing at the wrong line of them, and that is
+    equally wrong and equally mechanical to fix in a plan or a reference.
+    """
+    for pat in record_globs:
+        if fnmatch.fnmatch(relpath, pat):
+            return "record"
+    return "reference"
+
+
+def load_record_globs(path):
+    globs = []
+    if not os.path.isfile(path):
+        return globs
+    with open(path, "r", encoding="utf-8") as fh:
+        for raw in fh:
+            line = raw.split("#", 1)[0].strip()
+            if line:
+                globs.append(line)
+    return globs
+
+
+class History:
+    """What this repo has EVER contained, used to separate two different
+    failures that look identical to a naive checker.
+
+        docs/plan-perf-2-rgb565-canvas.md cites src/port/sdl/sdl_game_renderer.c  # doccite:quote
+        -- that file had 86 commits and was deleted by the renderer rip-out.
+
+        an agent brief cited tools/mister/build-deps.sh  # doccite:quote
+        -- no commit in this repository has ever contained that path.
+
+    The first is a historical record: the document was true when written and is
+    describing work that has since been removed. Reporting it as an error means
+    demanding that finished plan documents be rewritten forever, and produces
+    (measured on this tree) over a thousand findings nobody will action.
+
+    The second is a fabrication. It was never true. That is the defect class
+    this linter exists for, and it is the one that caused real harm.
+
+    So: existed-and-was-deleted -> advisory. Never-existed -> error.
+
+    Paths come from `git log --all --name-only`, which is exact.
+
+    Identifiers come from tokenising every blob that any non-current revision
+    of a *.c/*.h/*.cpp/*.hpp/*.py/*.sh path ever had. That is exact for the
+    dominant case (a symbol that vanished with its file). KNOWN LIMIT: a symbol
+    renamed inside a file that still exists is classified as a phantom rather
+    than as stale. That is a deliberate choice, not an oversight -- a reader who
+    greps for such a name finds nothing either way, so it is still a live defect
+    worth reporting.
+    """
+
+    def __init__(self, root, enabled=True):
+        self.root = root
+        self.enabled = enabled
+        self._paths = None
+        self._tokens = None
+        self._suffix = None
+
+    def _git(self, args, binary=False):
+        return subprocess.run(["git", "-C", self.root] + args,
+                              capture_output=True, check=True).stdout
+
+    def paths(self):
+        if not self.enabled:
+            return None
+        if self._paths is None:
+            out = self._git(["log", "--all", "--pretty=format:", "--name-only"])
+            self._paths = {p for p in out.decode("utf-8", "replace").split("\n")
+                           if p.strip()}
+        return self._paths
+
+    def has_path(self, cited):
+        """True if any commit ever contained this path.
+
+        Suffix-tolerant, because docs routinely drop the src/ prefix and write
+        `sf33rd/Source/Game/effect/effl8.c`.
+        """
+        paths = self.paths()
+        if paths is None:
+            return None
+        cited = cited.lstrip("./")
+        if cited in paths:
+            return True
+        if self._suffix is None:
+            self._suffix = set()
+            for p in paths:
+                parts = p.split("/")
+                for k in range(len(parts)):
+                    self._suffix.add("/".join(parts[k:]))
+        return cited in self._suffix
+
+    def tokens(self):
+        if not self.enabled:
+            return None
+        if self._tokens is None:
+            current = set(subprocess.run(
+                ["git", "-C", self.root, "ls-files"],
+                capture_output=True, text=True, check=True).stdout.split("\n"))
+            raw = self._git([
+                "log", "--all", "--raw", "--no-abbrev", "--pretty=format:",
+                "--", "*.c", "*.h", "*.cpp", "*.hpp", "*.py", "*.sh",
+            ]).decode("utf-8", "replace")
+            blobs = set()
+            for line in raw.split("\n"):
+                if not line.startswith(":"):
+                    continue
+                fields = line.split("\t")
+                meta = fields[0].split()
+                if len(meta) < 4:
+                    continue
+                for p in fields[1:]:
+                    if p in current:
+                        continue
+                    for sha in (meta[2], meta[3]):
+                        if sha and sha.strip("0"):
+                            blobs.add(sha)
+            if not blobs:
+                self._tokens = set()
+                return self._tokens
+            proc = subprocess.run(
+                ["git", "-C", self.root, "cat-file", "--batch"],
+                input="\n".join(sorted(blobs)).encode(),
+                capture_output=True)
+            body = proc.stdout.decode("utf-8", "replace")
+            self._tokens = set(RE_WORD.findall(body))
+        return self._tokens
+
+
+# ---------------------------------------------------------------------------
+# Prose units
+# ---------------------------------------------------------------------------
+
+class Prose:
+    """A contiguous run of prose with a known line span in a known file."""
+
+    __slots__ = ("path", "text", "first_line", "line_of")
+
+    def __init__(self, path, text, first_line, line_of):
+        self.path = path
+        self.text = text
+        self.first_line = first_line
+        self.line_of = line_of  # offset-within-text -> absolute file line
+
+
+def prose_units(repo, relpath):
+    text = repo.read(relpath)
+    if text is None:
+        return []
+    ext = os.path.splitext(relpath)[1]
+    if ext == ".md":
+        starts = line_index(text)
+        return [Prose(relpath, text, 1, lambda o, s=starts: offset_to_line(s, o))]
+    if ext in (".c", ".h", ".cpp", ".hpp"):
+        _, spans = strip_c_comments(text)
+    elif ext == ".py":
+        _, spans = strip_hash_comments(text, True)
+    elif ext in (".sh", ".bash"):
+        _, spans = strip_hash_comments(text, False)
+    else:
+        return []
+    starts = line_index(text)
+    # Merge comment spans separated only by whitespace, so a multi-line
+    # comment BLOCK is one anchor context rather than N disconnected lines.
+    merged = []
+    for s, e in spans:
+        if merged and text[merged[-1][1]:s].strip() == "":
+            merged[-1] = (merged[-1][0], e)
+        else:
+            merged.append((s, e))
+    units = []
+    for s, e in merged:
+        body = text[s:e]
+        if not body.strip():
+            continue
+        units.append(Prose(relpath, body, offset_to_line(starts, s),
+                           lambda o, s=s, st=starts: offset_to_line(st, s + o)))
+    return units
+
+
+# ---------------------------------------------------------------------------
+# Identifier candidates
+# ---------------------------------------------------------------------------
+
+RE_LOOKS_LIKE_FILENAME = re.compile(r"\.(?:" + PATH_EXTS + r")$")
+
+
+def unwrap_identifiers(raw):
+    """Turn one backtick payload into zero or more identifier candidates."""
+    s = raw.strip()
+    s = re.sub(r"\(\s*\)$", "", s)          # foo()
+    s = re.sub(r"\[[^\]]*\]$", "", s)        # foo[2]
+    s = s.lstrip("&*").rstrip(",.;:")
+    if not s:
+        return []
+    # `menu_network.c` is a FILENAME, not a struct access. Without this the  # doccite:quote
+    # dotted split below happily proposes `menu_network` as a missing symbol,  # doccite:quote
+    # which is both wrong and the single largest source of false identifier
+    # findings measured on this tree.
+    if RE_LOOKS_LIKE_FILENAME.search(s):
+        return []
+    # Split struct/member access so `PLW.spmv_ng_flag` checks both halves.
+    parts = re.split(r"->|\.|::", s)
+    out = []
+    for p in parts:
+        p = p.strip()
+        if RE_IDENT_FULL.match(p):
+            out.append(p)
+    if len(parts) > 1 and len(out) != len(parts):
+        return []  # something in there was not an identifier; not a symbol ref
+    return out
+
+
+def is_symbol_candidate(tok):
+    return (
+        len(tok) >= MIN_IDENT_LEN
+        and "_" in tok
+        and RE_IDENT_FULL.match(tok) is not None
+    )
+
+
+def load_allowlist(path):
+    allowed = {}
+    if not os.path.isfile(path):
+        return allowed
+    with open(path, "r", encoding="utf-8") as fh:
+        for raw in fh:
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            tok, _, reason = line.partition("#")
+            tok = tok.strip()
+            if tok:
+                allowed[tok] = reason.strip() or "(no reason given)"
+    return allowed
+
+
+# ---------------------------------------------------------------------------
+# Findings
+# ---------------------------------------------------------------------------
+
+class Finding:
+    def __init__(self, code, severity, path, line, message, evidence=None,
+                 suggestion=None):
+        self.code = code
+        self.severity = severity  # "error" | "advisory"
+        self.path = path
+        self.line = line
+        self.message = message
+        self.evidence = evidence or []
+        self.suggestion = suggestion
+
+    def key(self):
+        return (self.path, self.line, self.code, self.message)
+
+    def as_dict(self):
+        return {
+            "code": self.code, "severity": self.severity, "path": self.path,
+            "line": self.line, "message": self.message,
+            "evidence": self.evidence, "suggestion": self.suggestion,
+        }
+
+    def render(self):
+        head = "%s:%d: %s [%s] %s" % (
+            self.path, self.line, self.severity.upper(), self.code, self.message)
+        body = "".join("\n      %s" % e for e in self.evidence)
+        if self.suggestion:
+            body += "\n      fix: %s" % self.suggestion
+        return head + body
+
+
+# ---------------------------------------------------------------------------
+# Checks
+# ---------------------------------------------------------------------------
+
+def anchor_tokens(unit, cite_off, cite_text):
+    """Identifier-shaped tokens belonging to THIS citation, best evidence first.
+
+    Backticked tokens rank above bare ones: an author who backticked it was
+    naming a symbol on purpose. Tokens that are part of the cited path itself
+    are excluded -- `effl8` is not evidence about effl8.c.
+
+    OWNERSHIP. A sentence or table row routinely carries several citations:
+
+        | `Bg_Close` at `bg.c:311` | `bg_work_clear` at `bg.c:555` |  # doccite:quote
+
+    Taking every token in the window as an anchor for every citation lets one
+    citation borrow its neighbour's subject and produce a confident, wrong
+    drift report. Measured on a hand-audited sample, that was the single
+    largest false-positive source. So each token is assigned to the citation it
+    sits closest to, and a citation only gets the tokens that chose it.
+    """
+    if unit.path.endswith(".md"):
+        # A markdown line (or table row) is the natural unit.
+        lo = unit.text.rfind("\n", 0, cite_off) + 1
+        hi = unit.text.find("\n", cite_off)
+        hi = hi if hi >= 0 else len(unit.text)
+    else:
+        # A comment block, already merged by prose_units.
+        lo = unit.text.rfind("\n", 0, max(0, cite_off - 400)) + 1
+        hi = unit.text.find("\n", cite_off + 400)
+        hi = hi if hi >= 0 else len(unit.text)
+    window = unit.text[lo:hi]
+    here = cite_off - lo
+
+    cites = [m.start() for m in RE_PATH_CITE.finditer(window)]
+    if here not in cites:
+        cites.append(here)
+
+    def owns(pos):
+        """True if this citation is the nearest one to a token at pos."""
+        return min(cites, key=lambda c: (abs(c - pos), c)) == here
+
+    path_words = set(RE_WORD.findall(cite_text))
+    ranked = []
+    nearby = set()
+    for m in RE_BACKTICK.finditer(window):
+        for t in unwrap_identifiers(m.group(1)):
+            if is_symbol_candidate(t) and t not in path_words:
+                nearby.add(t)
+                if owns(m.start()):
+                    ranked.append((0, -len(t), t))
+    for m in RE_WORD.finditer(window):
+        t = m.group(0)
+        if is_symbol_candidate(t) and t not in path_words:
+            nearby.add(t)
+            if owns(m.start()):
+                ranked.append((1, -len(t), t))
+    seen, out = set(), []
+    for _, _, t in sorted(ranked):
+        if t not in seen:
+            seen.add(t)
+            out.append(t)
+    # Asymmetric on purpose. ACCUSING a citation of drift uses only the tokens
+    # that chose it (`out`); EXONERATING it uses every symbol in the window
+    # (`nearby`). texgroup.c:287 reads "the purge_texture_group(group_num)  # doccite:quote
+    # re-entry inside Push_ramcnt_key_original_2 (ramcnt.c:102)": the nearest  # doccite:quote
+    # token to the citation is Push_ramcnt_key_original_2, but line 102 really
+    # is the purge_texture_group re-entry, so the citation is correct. Being
+    # generous about what counts as a hit and strict about what counts as
+    # evidence of a miss is what keeps this from crying wolf.
+    return out, nearby
+
+
+def check_path_cites(repo, unit, findings, seen_paths, history, dclass,
+                     external_globs):
+    text = unit.text
+
+    def unresolved(cited, line_no, how):
+        """Classify a path that does not resolve. See History's docstring for
+        why deleted-then-cited and never-existed are not the same finding."""
+        ever = history.has_path(cited)
+        if ever:
+            findings.append(Finding(
+                "stale-path", "advisory", unit.path, line_no,
+                "cited path no longer exists: %s" % cited,
+                evidence=["this path did exist in history and was deleted, so "
+                          "the citation is a historical record, not a "
+                          "fabrication"]))
+            return
+        sev = PHANTOM_SEVERITY if dclass == "reference" else "advisory"
+        cands = repo.by_base.get(os.path.basename(cited)) or []
+        if cands:
+            findings.append(Finding(
+                "wrong-path", sev, unit.path, line_no,
+                "cited path has never existed: %s" % cited,
+                evidence=["no commit on any ref has contained it",
+                          "a file with that basename does exist: "
+                          + ", ".join(sorted(cands)[:4])],
+                suggestion="%s -> %s" % (cited, sorted(cands)[0])))
+        else:
+            findings.append(Finding(
+                "phantom-path", sev, unit.path, line_no,
+                "cited path has never existed: %s" % cited,
+                evidence=["no commit on any ref has contained this path, and "
+                          "no tracked file shares its basename"]))
+
+    def handle(cited, lo, hi, mstart, matched_text):
+        # "mtrans.c/texcash.c" names TWO files with a slash between them; it is
+        # not one path. Any non-final component carrying a source extension
+        # means shorthand, not a directory. Measured as a top false-positive
+        # source for phantom-path.
+        parts = cited.split("/")
+        if len(parts) > 1 and any(
+                p.rsplit(".", 1)[-1].lower() in CHECKED_EXTS
+                for p in parts[:-1] if "." in p):
+            return
+        # "a/src/netplay/netplay.c" is a git-diff hunk prefix.
+        if parts[0] in ("a", "b") and len(parts) > 2:
+            return
+        target, how = repo.resolve(cited)
+        line_no = unit.line_of(mstart)
+
+        if how in ("missing", "basename"):
+            ext = cited.rsplit(".", 1)[-1].lower()
+            if ext not in CHECKED_EXTS:
+                return  # a build output, not a tracked source
+            norm = cited.lstrip("./")
+            if any(norm.startswith(p) for p in UNTRACKED_BY_DESIGN):
+                return
+            # third_party/GekkoNet/build/include/net.h -- a vendored library's
+            # generated output. "build/" has to match as a segment anywhere,
+            # not only at the front.
+            if any(seg in ("build", "out", "dist", "output_files")
+                   for seg in norm.split("/")[:-1]):
+                return
+            if any(fnmatch.fnmatch(norm, g) for g in external_globs):
+                return  # deliberately points outside this repository
+            unresolved(cited, line_no, how)
+            return
+        if how == "ambiguous" or target is None:
+            return
+
+        seen_paths.add(target)
+        if lo is None:
+            return
+
+        flines = repo.lines(target)
+        if flines is None:
+            return
+        nlines = len(flines)
+        if flines and flines[-1] == "":
+            nlines -= 1
+        hi_eff = hi if hi is not None else lo
+        if lo < 1 or hi_eff > nlines:
+            findings.append(Finding(
+                "line-out-of-range", "error", unit.path, line_no,
+                "cited %s:%s but the file has %d lines"
+                % (target, ("%d-%d" % (lo, hi)) if hi else str(lo), nlines)))
+            return
+
+        def degenerate():
+            """Anchor-free drift signal: the cited line is one nobody cites on
+            purpose. texgroup.c:440 is a lone "}", and the citation that landed  # doccite:quote
+            there meant :477-479. Checked only AFTER the anchor path, because
+            when an anchor exists it names the correct line and this does not.
+            """
+            span = flines[lo - 1:hi_eff]
+            if not span or not all(RE_DEGENERATE.match(x) for x in span):
+                return False
+            findings.append(Finding(
+                "degenerate-target", "error", unit.path, line_no,
+                "cited %s:%s, which is not a citable line"
+                % (target, ("%d-%d" % (lo, hi)) if hi else str(lo)),
+                evidence=["%s:%d is: %s"
+                          % (target, lo, flines[lo - 1].strip() or "(blank)")]))
+            return True
+
+        anchors, nearby = anchor_tokens(unit, mstart, matched_text)
+        if not anchors:
+            degenerate()
+            return
+        cited_body = "\n".join(flines[lo - 1:hi_eff])
+        cited_words = set(RE_WORD.findall(cited_body))
+        if nearby & cited_words:
+            return  # the cited line names something the prose is discussing
+
+        # No anchor on the cited line. Only claim drift if we can EXHIBIT the
+        # anchor somewhere else in the same file. Otherwise stay silent.
+        best = None
+        for a in anchors:
+            hits = [i + 1 for i, ln in enumerate(flines)
+                    if re.search(r"\b%s\b" % re.escape(a), ln)]
+            if not hits or len(hits) > ANCHOR_MAX_HITS:
+                continue
+            hits.sort(key=lambda h: abs(h - lo))
+            if best is None or len(hits) < len(best[1]):
+                best = (a, hits)
+        if best is None:
+            degenerate()
+            return
+        a, hits = best
+        shown = hits[:3]
+        findings.append(Finding(
+            "drift", "error", unit.path, line_no,
+            "cited %s:%s for `%s`, but that line does not mention it"
+            % (target, ("%d-%d" % (lo, hi)) if hi else str(lo), a),
+            evidence=[
+                "%s:%d is: %s" % (target, lo, flines[lo - 1].strip()[:110]),
+                "`%s` is at %s" % (a, ", ".join("%s:%d" % (target, h) for h in shown)),
+            ],
+            suggestion="%s:%d -> %s:%d" % (target, lo, target, hits[0])))
+
+    for m in RE_PATH_CITE.finditer(text):
+        cited = m.group(1)
+        lo = int(m.group(2)) if m.group(2) else None
+        hi = int(m.group(3)) if m.group(3) else None
+        handle(cited, lo, hi, m.start(), m.group(0))
+        # `texcash.c:361/576/614` -- check the trailing numbers too.
+        if lo is not None and hi is None:
+            pos = m.end()
+            while True:
+                em = RE_EXTRA_LINES.match(text, pos)
+                if not em:
+                    break
+                handle(cited, int(em.group(1)), None, m.start(), m.group(0))
+                pos = em.end()
+
+    # Bare filename + line number, anywhere: `texgroup.c:477-479`. This is the
+    # native citation style of this repo's in-tree comments.
+    for m in RE_BARE_CITE.finditer(text):
+        lo = int(m.group(2))
+        hi = int(m.group(3)) if m.group(3) else None
+        handle(m.group(1), lo, hi, m.start(), m.group(0))
+        if hi is None:
+            pos = m.end()
+            while True:
+                em = RE_EXTRA_LINES.match(text, pos)
+                if not em:
+                    break
+                handle(m.group(1), int(em.group(1)), None, m.start(),
+                       m.group(0))
+                pos = em.end()
+
+    # A backticked bare filename with NO line number: existence only.
+    for m in RE_BACKTICK.finditer(text):
+        payload = m.group(1).strip()
+        if "/" in payload:
+            continue  # already covered by RE_PATH_CITE
+        bm = RE_BARE_FILE.match(payload)
+        if not bm or bm.group(2):
+            continue  # with a line number it was handled by RE_BARE_CITE
+        handle(bm.group(1), None, None, m.start(), payload)
+
+
+def check_identifiers(repo, unit, findings, allowed, stats, history, dclass):
+    toks = repo.code_tokens()
+    hist = history.tokens()
+    for m in RE_BACKTICK.finditer(unit.text):
+        payload = m.group(1)
+        if "/" in payload or " " in payload:
+            continue
+        for tok in unwrap_identifiers(payload):
+            if not is_symbol_candidate(tok):
+                continue
+            stats["ident_checked"] += 1
+            if tok in toks or tok in allowed:
+                continue
+            if hist is not None and tok in hist:
+                findings.append(Finding(
+                    "stale-identifier", "advisory", unit.path,
+                    unit.line_of(m.start()),
+                    "`%s` no longer exists in the tree" % tok,
+                    evidence=["it did exist in a deleted revision, so this "
+                              "document is describing removed code"]))
+                continue
+            findings.append(Finding(
+                "phantom-identifier",
+                PHANTOM_SEVERITY if dclass == "reference" else "advisory",
+                unit.path,
+                unit.line_of(m.start()),
+                "`%s` is referenced but has never existed" % tok,
+                evidence=["absent from every tracked file with comments "
+                          "stripped, and from every historical revision of "
+                          "every source file: only prose asserts this symbol"],
+                suggestion="correct the name, or add it to "
+                           "tools/doc-citations/allowlist.txt with a reason"))
+
+
+def check_evidence_refs(repo, unit, findings):
+    for line_rel, line in enumerate(unit.text.split("\n")):
+        for m in RE_EVIDENCE_REF.finditer(line):
+            name = m.group(1).strip("`\"' ")
+            noun = m.group(2)
+            # Only fire on a NAMED artifact: a qualifier carrying a digit or an
+            # internal capital. "the table below" must not fire.
+            if not re.search(r"\d", name) and not re.search(r"[A-Z]", name[1:]):
+                continue
+            if re.search(r"\.(md|txt|log|json|csv|pdf)\b", line):
+                continue
+            if RE_PATH_CITE.search(line) or re.search(r"\]\([^)]+\)", line):
+                continue
+            if re.search(r"\b(section|chapter|figure|table|step|phase)\b",
+                         name, re.IGNORECASE):
+                continue
+            abs_line = unit.line_of(sum(len(x) + 1 for x in
+                                        unit.text.split("\n")[:line_rel]))
+            findings.append(Finding(
+                "unresolvable-evidence", "advisory", unit.path, abs_line,
+                'appeals to "%s %s" but names no file anywhere in the sentence'
+                % (name, noun),
+                evidence=[line.strip()[:150]],
+                suggestion="cite the artifact by path, or state the evidence "
+                           "inline"))
+
+
+# ---------------------------------------------------------------------------
+# Driver
+# ---------------------------------------------------------------------------
+
+def scan_targets(repo, extra_roots=None):
+    out = []
+    for p in repo.files:
+        if any(p.startswith(d) for d in SKIP_SCAN_DIRS):
+            if not (extra_roots and any(p.startswith(r) for r in extra_roots)):
+                continue
+        ext = os.path.splitext(p)[1]
+        if ext == ".md":
+            if p.startswith("docs/") or "/" not in p or (
+                    extra_roots and any(p.startswith(r) for r in extra_roots)):
+                out.append(p)
+            continue
+        if ext in CODE_PROSE_EXTS and (
+                p.startswith("src/") or p.startswith("include/")
+                or p.startswith("tools/")
+                or (extra_roots and any(p.startswith(r) for r in extra_roots))):
+            out.append(p)
+    return sorted(set(out))
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(
+        description="Check that citations in docs and comments still resolve.")
+    ap.add_argument("--root", default=REPO_ROOT)
+    ap.add_argument("paths", nargs="*",
+                    help="limit the scan to these repo-relative paths/prefixes")
+    ap.add_argument("--checks", default="c1,c2,c3,c4",
+                    help="comma list of c1(file:line) c2(identifiers) "
+                         "c3(paths) c4(evidence refs). c1 and c3 share a pass.")
+    ap.add_argument("--errors-only", action="store_true",
+                    help="suppress advisories")
+    ap.add_argument("--json", action="store_true")
+    ap.add_argument("--fix", action="store_true",
+                    help="apply unambiguous line-number and path corrections "
+                         "in place; never touches prose")
+    ap.add_argument("--baseline", default=None,
+                    help="a baseline JSON; only findings absent from it are "
+                         "reported as errors")
+    ap.add_argument("--write-baseline", default=None)
+    ap.add_argument("--allowlist",
+                    default=os.path.join(SCRIPT_DIR, "allowlist.txt"))
+    ap.add_argument("--external-paths",
+                    default=os.path.join(SCRIPT_DIR, "external-paths.txt"),
+                    help="globs for paths that deliberately point outside this "
+                         "repository and so cannot be resolved here")
+    ap.add_argument("--record-globs",
+                    default=os.path.join(SCRIPT_DIR, "record-documents.txt"),
+                    help="globs for RECORD-class documents (proposals and "
+                         "superseded write-ups) where a not-yet-existing "
+                         "name is the point rather than a defect")
+    ap.add_argument("--include-testdata", action="store_true",
+                    help="also scan tools/doc-citations/testdata (fixtures)")
+    ap.add_argument("--no-history", action="store_true",
+                    help="skip the git-history corpus (~3s). Without it a "
+                         "deleted-code citation cannot be told apart from a "
+                         "fabricated one, so everything reports as an error.")
+    args = ap.parse_args(argv)
+
+    root = os.path.abspath(args.root)
+    if not os.path.isdir(os.path.join(root, ".git")) and not os.path.exists(
+            os.path.join(root, ".git")):
+        sys.stderr.write("not a git repository: %s\n" % root)
+        return 2
+
+    try:
+        repo = Repo(root)
+    except subprocess.CalledProcessError as exc:
+        sys.stderr.write("git ls-files failed: %s\n" % exc)
+        return 2
+
+    checks = {c.strip() for c in args.checks.split(",") if c.strip()}
+    allowed = load_allowlist(args.allowlist)
+    history = History(root, enabled=not args.no_history)
+    record_globs = load_record_globs(args.record_globs)
+    external_globs = load_record_globs(args.external_paths)
+
+    extra = ["tools/doc-citations/testdata"] if args.include_testdata else None
+    targets = scan_targets(repo, extra)
+    if args.paths:
+        pfx = tuple(p.rstrip("/") for p in args.paths)
+        targets = [t for t in targets
+                   if t in pfx or any(t.startswith(p + "/") for p in pfx)]
+
+    findings = []
+    seen_paths = set()
+    stats = defaultdict(int)
+    for relpath in targets:
+        dclass = doc_class(relpath, record_globs)
+        for unit in prose_units(repo, relpath):
+            if "c1" in checks or "c3" in checks:
+                check_path_cites(repo, unit, findings, seen_paths, history,
+                                 dclass, external_globs)
+            if "c2" in checks:
+                check_identifiers(repo, unit, findings, allowed, stats, history, dclass)
+            if "c4" in checks:
+                check_evidence_refs(repo, unit, findings)
+
+    if "c1" not in checks:
+        findings = [f for f in findings
+                    if f.code not in ("drift", "line-out-of-range")]
+    if "c3" not in checks:
+        findings = [f for f in findings
+                    if f.code not in ("missing-path", "wrong-path")]
+
+    # QUOTING vs ASSERTING. A line may carry the marker below to say "the
+    # citation on this line is being quoted, not made". This file needs it:
+    # its own docstring shows what a broken citation looks like, and without a
+    # way to say so the linter reports its own worked examples as defects.
+    #
+    # The marker means quoted. It does not mean "ignore this" -- silencing a
+    # citation you actually made is what the allowlists are for, and those
+    # demand a written reason. Keep it rare; grep for it in review.
+    def quoted(f):
+        lines = repo.lines(f.path)
+        if not lines or not (1 <= f.line <= len(lines)):
+            return False
+        return QUOTE_MARKER in lines[f.line - 1]
+
+    findings = [f for f in findings if not quoted(f)]
+    findings.sort(key=lambda f: (f.path, f.line, f.code))
+
+    baseline_keys = set()
+    if args.baseline and os.path.isfile(args.baseline):
+        with open(args.baseline, "r", encoding="utf-8") as fh:
+            for d in json.load(fh).get("findings", []):
+                baseline_keys.add((d["path"], d["line"], d["code"], d["message"]))
+
+    if args.write_baseline:
+        with open(args.write_baseline, "w", encoding="utf-8") as fh:
+            json.dump({"findings": [f.as_dict() for f in findings]}, fh,
+                      indent=1, sort_keys=True)
+            fh.write("\n")
+        sys.stderr.write("wrote baseline: %s (%d findings)\n"
+                         % (args.write_baseline, len(findings)))
+
+    fixed = 0
+    if args.fix:
+        fixed = apply_fixes(repo, findings)
+
+    shown = [f for f in findings
+             if not (args.errors_only and f.severity == "advisory")]
+    new_errors = [f for f in findings
+                  if f.severity == "error" and f.key() not in baseline_keys]
+
+    if args.json:
+        print(json.dumps({
+            "findings": [f.as_dict() for f in shown],
+            "counts": counts_of(findings),
+            "files_scanned": len(targets),
+            "new_errors": len(new_errors),
+        }, indent=1, sort_keys=True))
+    else:
+        for f in shown:
+            print(f.render())
+            print("")
+
+    c = counts_of(findings)
+    # In --json mode the verdict goes to stderr so stdout stays parseable.
+    summary = ("DOCCITE SUMMARY: findings=%d errors=%d advisories=%d "
+               "new_errors=%d files_scanned=%d fixed=%d %s"
+               % (len(findings), c["error"], c["advisory"], len(new_errors),
+                  len(targets), fixed,
+                  " ".join("%s=%d" % kv for kv in sorted(c["by_code"].items()))))
+    print(summary, file=sys.stderr if args.json else sys.stdout)
+
+    return 1 if new_errors else 0
+
+
+def counts_of(findings):
+    by_code = defaultdict(int)
+    sev = defaultdict(int)
+    for f in findings:
+        by_code[f.code] += 1
+        sev[f.severity] += 1
+    return {"error": sev["error"], "advisory": sev["advisory"],
+            "by_code": dict(by_code)}
+
+
+def apply_fixes(repo, findings):
+    """Apply only mechanical corrections: a line number or a path spelling.
+
+    Never rewrites prose. A finding whose suggestion is not an exact textual
+    substitution present on the cited line is skipped.
+    """
+    edits = defaultdict(list)
+    for f in findings:
+        if f.code not in ("drift", "wrong-path") or not f.suggestion:
+            continue
+        old, _, new = f.suggestion.partition(" -> ")
+        edits[f.path].append((f.line, old.strip(), new.strip()))
+    n = 0
+    for path, items in edits.items():
+        full = os.path.join(repo.root, path)
+        with open(full, "r", encoding="utf-8") as fh:
+            lines = fh.read().split("\n")
+        changed = False
+        for line_no, old, new in items:
+            if not (1 <= line_no <= len(lines)):
+                continue
+            # Match the cited path suffix so a doc that writes the path without
+            # its src/ prefix is still rewritten correctly.
+            oldp, _, oldl = old.rpartition(":")
+            newp, _, newl = new.rpartition(":")
+            if oldp == newp and oldl.isdigit() and newl.isdigit():
+                pat = re.compile(r"((?:[\w.+-]+/)*%s):%s\b"
+                                 % (re.escape(os.path.basename(oldp)),
+                                    re.escape(oldl)))
+                repl, k = pat.subn(lambda m: "%s:%s" % (m.group(1), newl),
+                                   lines[line_no - 1])
+            else:
+                repl, k = lines[line_no - 1].replace(old, new), \
+                    lines[line_no - 1].count(old)
+            if k:
+                lines[line_no - 1] = repl
+                changed = True
+                n += k
+        if changed:
+            with open(full, "w", encoding="utf-8") as fh:
+                fh.write("\n".join(lines))
+    return n
+
+
+if __name__ == "__main__":
+    sys.exit(main())

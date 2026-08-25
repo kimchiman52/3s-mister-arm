@@ -1,0 +1,17 @@
+# Path globs that are NOT expected to resolve inside this repository.
+# One glob per line; text after # is the required justification.
+#
+# There is one failure this linter cannot distinguish on its own: a path in
+# ANOTHER repository or on another machine looks exactly like a path in this
+# one. docs/arcade-frame-data/CAPTURE.md:214 cites `docs/builde-guide.md`, which
+# is a file in the upstream crowded-street/3s-decomp project -- the sentence
+# says so explicitly -- and no amount of checking THIS tree can confirm or deny
+# it. Listing such a pattern here is a statement that the reference is
+# deliberately outward-pointing, not that it is known-good.
+#
+# Keep entries narrow. A bare `*.py` here would silence the check entirely.
+
+artifacts/**            # uncommitted scratchpad outputs from research sessions
+fightcade-fbneo/**      # external FBNeo checkout on the capture rig
+crowded-street/**       # the upstream 3s-decomp project, a different repository
+3s-decomp/**            # ditto, cited under its short name

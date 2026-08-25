@@ -282,7 +282,7 @@ void q_ldreq_texture_group(REQ* curr) {
          * needing two.
          *
          * The nested purge is bounded: purge_texture_group clears ok
-         * before calling Push_ramcnt_key (texgroup.c:477-479), so the
+         * before calling Push_ramcnt_key (texgroup.c:562-563), so the
          * purge_texture_group(group_num) re-entry inside
          * Push_ramcnt_key_original_2 (ramcnt.c:102) sees ok == 0 and does
          * nothing.

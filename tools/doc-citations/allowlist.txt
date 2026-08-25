@@ -1,0 +1,6 @@
+# Identifiers that prose may legitimately name even though they are not symbols
+# of this repository. One per line; text after # is the required justification.
+#
+# Every entry here is a check switched off. Prefer correcting the prose.
+# Before adding something, confirm it is genuinely not a symbol of this tree --
+# a real missing symbol added here is the exact defect the linter exists for.

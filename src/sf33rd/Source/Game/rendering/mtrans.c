@@ -42,10 +42,6 @@ typedef struct {
 s32 curr_bright;
 SpriteChipSet seqs_w;
 
-#if ENABLE_PERF_TELEMETRY
-int charsel_frame_portrait_tiles = 0;
-int charsel_frame_plate_tiles = 0;
-#endif
 f32 PrioBase[PRIO_BASE_SIZE];
 f32 PrioBaseOriginal[PRIO_BASE_SIZE];
 
@@ -1119,14 +1115,6 @@ void mlt_obj_trans_cp3(MultiTexture* mt, WORK* wk, s32 base_y) {
     mlt_obj_matrix(wk, base_y);
     cc.parts.group = i;
 
-#if ENABLE_PERF_TELEMETRY
-    if (mt->id == 13) {
-        charsel_frame_portrait_tiles += count;
-    } else if (mt->id == 14) {
-        charsel_frame_plate_tiles += count;
-    }
-#endif
-
     while (count--) {
         if (flip & 0x8000) {
             x += trsptr->x;
@@ -1514,14 +1502,6 @@ void mlt_obj_trans_rgb(MultiTexture* mt, WORK* wk, s32 base_y) {
     mlt_obj_matrix(wk, base_y);
     cc.parts.group = i;
 
-#if ENABLE_PERF_TELEMETRY
-    if (mt->id == 13) {
-        charsel_frame_portrait_tiles += count;
-    } else if (mt->id == 14) {
-        charsel_frame_plate_tiles += count;
-    }
-#endif
-
     while (count--) {
         if (flip & 0x8000) {
             x += trsptr->x;
@@ -1647,8 +1627,6 @@ void seqsBeforeProcess() {
     seqs_w.sprTotal = 0;
     SDL_memset(seqs_w.up, 0, sizeof(seqs_w.up));
 #if ENABLE_PERF_TELEMETRY
-    charsel_frame_portrait_tiles = 0;
-    charsel_frame_plate_tiles = 0;
     {
         extern int charsel_active_effect_count;
         charsel_active_effect_count = EFFECT_MAX - frwctr;
