@@ -297,6 +297,23 @@ static void sub_a_append_bound(void) {
     CHECK(t_pc.kazu == 0x40, "65th acquire advanced kazu to %d", (int)t_pc.kazu);
     CHECK(memcmp(&snapshot, &t_pc.patt[0], sizeof snapshot) == 0, "65th acquire modified patt[0]");
 
+    /* The bound arm's own red. The two refusal arms are redundant on every
+     * state the collection actually reaches -- kazu + dead == 0x40 is checked
+     * at every step above, so "kazu is full" and "nothing is dead" coincide,
+     * and removing either arm alone leaves the other covering it. The one
+     * state that separates them is kazu at the limit with instances still
+     * dead, which is what an mltcshtime16 of 0 would accumulate: the caller's
+     * `cp->time = mt->mltcshtime16` would leave every acquired instance dead
+     * while kazu kept advancing. Construct it, because otherwise the bound
+     * check is the one thing here that nothing can turn red. */
+    t_pc.patt[9].time = 0;
+    snapshot = t_pc.patt[0];
+    cp = patcash_acquire(&t_pc);
+    CHECK(cp == NULL, "acquire at kazu=64 with a dead instance present did not refuse");
+    CHECK(t_pc.kazu == 0x40, "refused acquire advanced kazu to %d", (int)t_pc.kazu);
+    CHECK(memcmp(&snapshot, &t_pc.patt[0], sizeof snapshot) == 0,
+          "the append at kazu=64 wrote over patt[0]");
+
     /* ---- control: the pre-fix code, same starting state ---- */
     memset(&t_pc_ctl, 0, sizeof t_pc_ctl);
     for (k = 0; k < 0x40; k++) {
