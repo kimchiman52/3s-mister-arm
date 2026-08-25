@@ -73,6 +73,64 @@ const u8 lpt_seldat[4] = { 3, 4, 5, 0 };
  *                 Rewinding it while the queue still holds the newer
  *                 character's request publishes into the wrong slot.
  *
+ *                 CLOSED 2026-08-25 (task #69). plt_req is the one member of
+ *                 this cluster the rollback-determinism harness still reports
+ *                 DIVERGENT at production select depth 8, and it is now
+ *                 measured rather than argued. It is a PHASE LEAD OF AN
+ *                 IDENTICAL VALUE, not a value divergence, and its single
+ *                 in-select reader is structurally dispatched after the
+ *                 window has closed. Both halves:
+ *
+ *                 VALUE. plt_req[id] is written only here (Push_LDREQ_Queue_
+ *                 Player, below), which sets it to the character whose
+ *                 requests it enqueues in the same call. Every call site
+ *                 reachable in MODE_NETWORK passes My_char[id] (sel_pl.c:790,
+ *                 :996, win.c:178, menu.c:1571-1572, ranking.c:330-331), and
+ *                 My_char is GS_SAVE'd (game_state.c:232/972). The one site
+ *                 that passes something else -- Push_LDREQ_Queue_Player(
+ *                 COM_id, 17) at next_cpu.c:958 -- sits under Game05, entered
+ *                 only from the `default:` arm of Game03's Mode_Type switch
+ *                 (game.c:817); `case MODE_VERSUS: case MODE_NETWORK:` divert
+ *                 at game.c:786-787.
+ *
+ *                 ORDER. The only in-select reader is Exit_6th
+ *                 (sel_pl.c:1701-1706) via Check_PL_Load (sys_sub.c:899) ->
+ *                 Check_LDREQ_Queue_Player (below). Exit_6th is dispatched
+ *                 only at Exit_No == 5 (sel_pl.c:1551-1553), and Exit_No
+ *                 leaves 0 only through Exit_1st (sel_pl.c:1556-1562), which
+ *                 returns early unless BOTH operator-active players have
+ *                 Sel_Arts_Complete < 0. That is set at sel_pl.c:865, strictly
+ *                 downstream of the PL_Sel_1st push (sel_pl.c:788-790), which
+ *                 is itself gated on the Sel_PL_Complete == -0x8000 sentinel
+ *                 (effd8.c:87) that follows the Sel_PL_3rd confirm push
+ *                 (sel_pl.c:984-996). Sel_PL_Complete, Sel_Arts_Complete,
+ *                 Exit_No and SP_No are ALL in the save set (game_state.c:
+ *                 253/993, 550/1290, 456/1196, 457/1197), so both peers agree
+ *                 on that ordering exactly. The confirmed timeline's plt_req
+ *                 write therefore always lands before Exit_No can leave 0,
+ *                 and four further Exit_Nth transitions separate that from
+ *                 Exit_6th.
+ *
+ *                 MEASURED (host, ASLR off, pinned RNG, 1500 frames, both
+ *                 fast scenarios, barrier off AND forced on, select depth 8,
+ *                 select period 8 and the adversarial period 1) with the
+ *                 tools/ldreq-timing per-frame trace driven by --rbd-*
+ *                 rollback injection instead of injected AFS latency:
+ *
+ *                   plt_req1  no-rollback  0 -> 11 at frame 210
+ *                   plt_req1  rollback(8)  0 -> 11 at frame 208
+ *                   divergent frames: 2 (period 8) / 7 (period 1), per slot
+ *                   Exit_No first reaches 5 at frame 317 in EVERY run
+ *                   G_No[0..3], G_Timer, Exit_No, Exit_Timer: byte-identical
+ *                   on all 1500 frames in all TWELVE rollback-vs-baseline
+ *                   comparisons (2 scenarios x barrier off/on x select
+ *                   {d8p8, d2p8, d8p1}); eight of those are at depth 8
+ *
+ *                 Do NOT read this as "plt_req is harmless". It is harmless
+ *                 because of the Exit_1st ordering above. A new reader of
+ *                 plt_req or of Check_PL_Load inside character select, before
+ *                 Exit_No leaves 0, voids this.
+ *
  * The cluster is all-in or all-out and all-in is impossible, so it is out.
  *
  * The residual is real and is NOT a rollback bug: AFS_Read is a genuine
@@ -570,8 +628,36 @@ static void ldreq_pump_head(void) {
  *     of Push_LDREQ_Queue_* calls
  *
  * and that sequence is driven by SP_No / G_No / bg_w.stage, all of which
- * are in the rollback save set. So every observation the simulation can
- * make of this subsystem becomes a function of saved state alone.
+ * are in the rollback save set.
+ *
+ * SCOPE OF THAT INVARIANT -- corrected 2026-08-25 (task #69), because the
+ * sentence that used to close this paragraph ("so every observation the
+ * simulation can make of this subsystem becomes a function of saved state
+ * alone") is too strong and would mislead the next reader. The barrier
+ * buys WALL-CLOCK invariance, not ROLLBACK invariance. The push SEQUENCE
+ * includes pushes issued by speculative legs that a rollback then discards
+ * from the save set but NOT from ldreq_result[] (its bits are only ever
+ * OR'd in -- see `*curr->result |= lpr_wrdata[curr->id]`, texgroup.c and
+ * color3rd.c -- never cleared). So a peer that rolled back across a
+ * character-select confirm has the load already COMPLETE while a peer that
+ * did not is still waiting.
+ *
+ * MEASURED, with the barrier forced on: Check_PL_Load() -- the exact
+ * expression Exit_6th gates the saved Exit_No/Exit_Timer on -- differs
+ * between a no-rollback run and a rollback run of this one binary for
+ * 2 frames at select period 8 / 7 frames at select period 1, both
+ * scenarios, select depth 8. That is a real, reproducible cross-peer
+ * disagreement in this subsystem's observable surface.
+ *
+ * It is nonetheless not a desync, and the reason is ORDER, not the
+ * barrier: Exit_6th is dispatched only at Exit_No == 5, which cannot be
+ * reached until both players' confirmed-timeline pushes have landed. See
+ * the plt_req entry in the disposition block at the top of this file for
+ * the full chain and the frame numbers (window ends at 209 / reader first
+ * dispatched at 317, in all sixteen traces). If a reader of ldreq_result,
+ * Check_PL_Load or Check_LDREQ_Clear is ever added inside character select
+ * BEFORE Exit_No leaves 0, that reasoning is void and this barrier alone
+ * will not save it.
  *
  * It is rollback-order independent, which the narrower alternatives are
  * not. A speculative leg that re-issues a request (Sel_PL_3rd's one-shot
