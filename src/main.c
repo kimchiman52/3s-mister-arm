@@ -40,6 +40,7 @@
 #include "sf33rd/Source/Game/ui/frame_trace.h"
 #include "sf33rd/Source/Game/ui/sc_sub.h"
 #include "structs.h"
+#include "test/ldreq_timing_trace.h"
 #include "test/rollback_determinism.h"
 #include "test/test_runner.h"
 
@@ -96,7 +97,12 @@ Configuration configuration = {
             .rbd_rollback_period = 0,
             .rbd_rollback_depth = 3,
             .rbd_select_rollback_period = 8,
-            .rbd_select_rollback_depth = 2,
+            .rbd_select_rollback_depth = 8,
+            .ldreq_trace_path = NULL,
+            .ldreq_trace_frames = 0,
+            .ldreq_slot_trace_path = NULL,
+            .ldreq_barrier_force = false,
+            .afs_inject_latency_ms = 0,
         },
 };
 
@@ -882,6 +888,7 @@ static int loop() {
             game_step_1();
 
             RollbackDeterminism_FrameEnd();
+            LdreqTimingTrace_FrameEnd();
 
 #if ENABLE_PERF_TELEMETRY
             if (!perf_capture_started && configuration.perf.frame_count > 0 &&
@@ -1065,6 +1072,12 @@ int Netplay_Test_BilateralPunch(void);
 int Netplay_Test_GsCoverage(void);
 #endif
 
+/* Tasks #59/#61: forward-decl of the ext texture-cache brick-prevention
+ * harness (src/test/test_texcash_bounds.c). Outside the ENABLE_NETPLAY block
+ * on purpose -- it exercises mtrans.c/texcash.c, not netplay, so the TU is
+ * always compiled and gates its own body on ENABLE_NETPLAY_TESTS. */
+int Texcash_Test_Bounds(void);
+
 /* Test harnesses run unattended (scripts, CI). SDL's DEFAULT assertion
  * handler shows an interactive Retry/Break/Abort/Ignore prompt in Debug
  * builds, which never returns in a non-interactive session — a tripped
@@ -1085,6 +1098,13 @@ static SDL_AssertState SDLCALL test_harness_assert_handler(const SDL_AssertData*
 
 int main(int argc, const char* argv[]) {
     read_args(argc, argv, &configuration);
+
+    /* Loader-timing invariance instrument (task #66, src/test/
+     * ldreq_timing_trace.h). Both are no-ops at their default values, so
+     * a normal launch leaves the barrier gated on the live GekkoNet
+     * session state and the AFS path untouched. */
+    Ldreq_SetBarrierForced(configuration.test.ldreq_barrier_force);
+    AFS_SetInjectedLatencyMs(configuration.test.afs_inject_latency_ms);
 
     if (configuration.test_netplay_event_queue || configuration.test_mist_handshake ||
         configuration.test_room_code || configuration.test_stun_mock ||
@@ -1161,6 +1181,10 @@ int main(int argc, const char* argv[]) {
                 "--test-gs-coverage requires a build with ENABLE_NETPLAY=ON.\n");
         return 2;
 #endif
+    }
+
+    if (configuration.test_texcash_bounds) {
+        return Texcash_Test_Bounds();
     }
 
     return loop();

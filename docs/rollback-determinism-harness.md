@@ -17,6 +17,102 @@ character-numbering scheme — `effect_L8_init`'s `player_number != 16`
 gate is Makoto in the 3SX enum, not Chun-Li). A machine that observes
 every byte does not make that class of mistake.
 
+## READ THIS BEFORE YOU RUN IT: the gate is macOS-only, by policy
+
+**This harness is a macOS-only gate. A run on Linux is not comparable to a
+macOS run, is not a gate, and its FAIL verdicts are not findings.** This is
+a deliberate scoping decision (task #75), not an oversight, and it is stated
+here rather than in "Known limits" because the hazard is someone running the
+gate on Linux and believing the number that comes out.
+
+This matters precisely because **the MiSTer target is Linux**, so the
+assumption that "the gate runs anywhere" is an easy one to make. If the gate
+is ever moved into CI, run by a contributor, or run natively on a Linux box,
+it produces exactly the cry-wolf failures task #65 was fixed to eliminate.
+A Linux driver run predating the task #71 backend fix was reported as
+`divergent=4 unstable=8 FAIL` with **none of those being real findings** —
+that figure is not recorded anywhere in this tree and was not reproduced
+for this note, so treat it as an anecdote, not a measurement. The policy
+below does not rest on it.
+
+**Why a Linux run is not comparable — the two symbol maps are built
+differently, in code.** This is structural, not a tuning problem:
+
+| | macOS (`build_symbol_map_macho`, `check_rollback_determinism.py:177-208`) | Linux (`build_symbol_map_elf`, `check_rollback_determinism.py:211-225`) |
+|---|---|---|
+| source | `nm -nm <binary>` | `nm -S --defined-only <binary>` |
+| selection | only `__DATA,__data` / `__bss` / `__common` (`NM_MACHO_RE`, line 173) | nm type letters `d`/`D`/`b`/`B` |
+| symbol size | **distance to the next symbol**, so inter-symbol padding is attributed to the preceding symbol and the whole segment is covered | the symbol's **own declared size**; padding between symbols is covered by nothing |
+| synthetic entries | inserts a `<section>.headgap` pseudo-symbol for the run-up before the first symbol | none |
+
+So the two platforms hash a **different byte set** under a **different set of
+names**. `allowlist.txt` matches by symbol NAME (`allowlist_match`,
+`check_rollback_determinism.py:444-448`), so entries written against the
+macOS name set do not necessarily bind on Linux, and rows the macOS gate
+accounts for surface unaccounted there.
+
+**Measured, on this tree:**
+
+- macOS map: **3838 writable symbols, 16.8 MB covered** — reproduced on
+  2026-08-25 at tip, driver line `[rbd-driver] symbol map: 3838 writable
+  symbols, 16.8 MB covered`.
+- `allowlist.txt` holds **41 entries** (41 patterns; `load_allowlist`
+  ignores blank and comment lines). Expanded against the macOS map those 41
+  patterns match **52 concrete symbols**, and every one of the 41 patterns
+  binds at least one symbol.
+- This macOS `fast` run reported `allowlisted=67`. **That field counts
+  allowlisted *divergence rows* (symbol × scenario), not allowlist entries**
+  — `n_allow` is incremented once per diverging symbol per scenario and
+  summed across scenarios (`check_rollback_determinism.py:660-671` and
+  `:698-702`).
+
+**A correction to the figures this document used to carry.** The earlier
+text read "the Linux Debug build mapped 4018 writable symbols against
+macOS's 3838, and only 57 of the 67 allowlist entries matched":
+
+- **"57 of the 67 allowlist entries"** mis-labelled the quantity. 67 is not
+  an entry count — `allowlist.txt` has **41** entries today and had **41 at
+  `ae308bd9`, the commit that wrote that sentence**; no counting rule over
+  the file yields 67 (code-before-`#` 41, non-blank 261, comment-only 220,
+  total 272), and its expansion against the macOS map is 52. 67 is the
+  macOS run's **`allowlisted=` row count**, reproduced today, and 57 is the
+  corresponding row count from the task #71 Linux run. Task #71's own commit
+  bodies corroborate this reading directly — `ae308bd9`, `afc8fe03` and
+  `7ba545fe` each record its Control A as "verdict=FAIL exit 1, divergent=67
+  against allowlisted=67, identical symbol sets", i.e. 67 *rows* moving from
+  ALLOWED to DIVERGENT, from a 41-entry allowlist. Reproduced again here
+  (see Control A below).
+- Read correctly, **57-vs-67 is not a "10 entries failed to match" gap.**
+  Both numbers count rows that *actually diverged* and *happened to* match a
+  pattern, so a different symbol set changes the row population outright.
+  The two are not measurements of the same quantity — which is itself part
+  of why the runs are not comparable, and why the gap must not be read as
+  "Linux is 10 entries short of green".
+- **4018 Linux writable symbols** is unverified here. Checking it needs a
+  native Linux *host* build of the game, which the ARM cross-build container
+  cannot supply (its `third_party` is ARM-only, and it had 1.5 GB free); it
+  was not rebuilt for this note.
+
+The macOS-only policy does not rest on any of these figures: the
+map-builder table above is sufficient on its own.
+
+**Running the harness on Linux inside Docker is separately blocked.** The
+driver disables ASLR with `setarch -R` (`check_rollback_determinism.py:392-393`),
+and Docker's **default seccomp profile denies it**: `personality(0x40000)`
+returns `-1/EPERM` while `personality(0)` returns `0`. `setarch -R` then
+dies with `setarch: failed to set personality to (null): Operation not
+permitted`, and the run surfaces only as `game exited with code 1` — the
+real cause is the first line of that run's `.log`. This was measured, not
+assumed, and **`--privileged` does not lift it**;
+`/proc/sys/kernel/randomize_va_space` is read-only in the container. A
+Linux run inside Docker needs `--security-opt seccomp=unconfined`.
+
+**If you want to change this policy**, the two alternatives to documenting
+it are (a) platform-qualify `allowlist.txt` so entries can be scoped to a
+symbol set, or (b) normalize the symbol set across platforms so the two maps
+cover the same bytes under the same names. Both are real work, and (b)
+subsumes (a). Neither was done; nobody runs this on Linux today.
+
 ## How it works
 
 Per scenario, the driver runs the game **three times** with identical
@@ -26,7 +122,7 @@ SDL video/audio):
 | run | what it does |
 |-----|--------------|
 | A1  | baseline: straight-line simulation |
-| A2  | identical second baseline (noise control) |
+| A2  | second baseline (noise control), identical except for a deliberate **address-layout perturbation** — see below |
 | B   | rollback: before covered frames, additionally performs a full **save → speculatively resimulate *depth* frames → load** cycle |
 
 The rollback cycle in run B goes through the **production** rollback
@@ -51,14 +147,21 @@ then classifies every symbol whose per-frame hash stream differs between
 A1 and B:
 
 - **NOISE** — also differs between A1 and A2. Process-level
-  nondeterminism (stored heap/ASLR pointer values, audio-thread timing),
-  not rollback-caused. Excluded from the verdict, listed for
-  transparency.
+  nondeterminism (audio-thread timing, wall-clock counters, allocator
+  addresses inside composite objects), not rollback-caused. Excluded from
+  the verdict, listed for transparency. A2 is deliberately perturbed so
+  that this determination is not a coin flip — see "Why address-valued
+  state cannot reach the verdict" below.
 - **ALLOWED** — matches an entry in
   `tools/rollback-determinism/allowlist.txt`. Every entry carries a
   verified reason (e.g. the desync-diagnostic rings in `game_state.c`
   that only the save path writes). Allowlisted hits are still printed;
   nothing is silently ignored.
+- **UNSTABLE** — reported DIVERGENT in this scenario, but another
+  scenario's baselines in the same invocation proved the symbol is
+  baseline-nondeterministic. Printed with both sides of the evidence
+  under its own heading and counted as `unstable=`; not a finding. See
+  "Why address-valued state cannot reach the verdict".
 - **DIVERGENT** — state that escaped the rollback save set. The finding.
 - **DIVERGENT+FEEDBACK** — a symbol that is *itself in the GS_SAVE
   whitelist* diverged. Since saved state is restored on every cycle, the
@@ -117,14 +220,313 @@ save set. The capture hashes the same canonical view in **both** runs,
 so any `frw` divergence that survives is real effect-pool state the
 rollback failed to reproduce.
 
+### Why address-valued state cannot reach the verdict
+
+This is the fix for **#65**, the intermittent false FAIL. It is worth
+reading as a worked example of the harness's own failure mode: a
+*classification* that is really a coin flip looks exactly like a
+classification until the coin lands the other way.
+
+**The defect.** A symbol was excluded as NOISE only when its own two
+baselines disagreed. For a symbol whose entire content is an address,
+that is a two-sample guess at "is this nondeterministic across
+processes", and when the two baselines happened to allocate at the same
+address the symbol fell through and the rollback run's different address
+was reported as a genuine divergence.
+
+**Why the addresses move at all.** The driver spawns every run with
+`_POSIX_SPAWN_DISABLE_ASLR`, which zeroes the *image* slide only.
+Measured through the driver's own `spawn_no_aslr_darwin`, 40 spawns of a
+probe binary: `&main` was identical in **40/40** runs, while a 16-byte
+`malloc` took 30 distinct values (**1.5%** pairwise collision) and a 1 MB
+`malloc` took 40 distinct values (**0%** collision). The kernel
+randomizes where the allocator's regions are mapped and `DISABLE_ASLR`
+does not touch that. ~1.5% is exactly the "rare but real" rate #65 had.
+
+Two different address classes needed two different answers.
+
+**Heap addresses — removed from the hash entirely.** A symbol that is
+exactly `sizeof(void*)` wide, at an aligned address, whose value at the
+*first captured frame* is an allocator-owned address outside the main
+executable, hashes a fixed token instead of the address, in **every**
+run. This is the same move `frw[]` and `plw[]` already make, not a new
+exclusion class: both baselines and the rollback run agree by
+construction, so there is nothing left for them to coincide about. NULL
+is deliberately **not** canonicalized, so "pointer became NULL" still
+diverges; only pointer identity is dropped, and pointer identity was
+never comparable across processes anyway.
+
+Three bounds keep it from silencing anything real, and the third exists
+because the first two were not enough:
+
+1. **Whole-symbol only.** Canonicalizing every aligned word of every
+   symbol would let an adjacent pair of `int32`s that happens to land in
+   a mapped region silence gameplay state. The rule only ever replaces a
+   symbol that is a single pointer slot.
+2. **Value must be 8-byte aligned and in an allocator-owned mapping.**
+   Both filters were added after measurement, not in advance. With the
+   region set unfiltered, `msgTalkCtrPL01` — `static s8[5] = {1,2,2,2,2}`
+   (`message/en/pl01tlk_en.c:31`), padded to 8 bytes by `nm` — hashed as
+   `0x202020201`, landed inside a non-allocator mapping, and **was
+   canonicalized**: real game data silenced by accident. Either filter
+   alone rejects it (the value is odd, and it is not allocator-owned);
+   both are applied because they fail in different directions. All 21
+   genuine pointers on this tree were 8-byte aligned; both false
+   positives were odd.
+3. **The decision is frozen once, at the first captured frame.** This is
+   what makes the rule "single-assignment-at-startup pointers" rather
+   than "anything that currently looks like a pointer", and a per-frame
+   test is not merely looser, it is *wrong*: `sdl_app.c`'s `Uint64`
+   wall-clock statics (`frame_deadline`, `last_frame_end_time`,
+   `perf_frame_start_ns`, `perf_update_start_ns`) hold nanosecond counts
+   that grow past the end of the image around frame 96 and from then on
+   land inside the malloc region sitting immediately above it — a
+   nanosecond timestamp and a heap address are numerically
+   indistinguishable in this process. A per-frame test canonicalized all
+   four from frame ~96 onward, which would have **invented a new flake**:
+   whenever both baselines tokenized a timer and the rollback run did
+   not, an always-noise wall-clock symbol would have been promoted to
+   DIVERGENT. Freezing at frame 0 excludes them for free (all four are
+   still 0 there) while every symbol the rule is for is already assigned.
+   Anything that only becomes a pointer later stays fully byte-compared,
+   which is the safe direction.
+
+Nothing is suppressed invisibly: each symbol is named on stderr in the
+per-run `.log` (`[rbd] pointer-canonicalized <name> (map addr …, value
+…)`), the total is written to the stream footer, and the driver warns if
+the three runs disagree on that total.
+
+OBSERVED on this tree — `froze 21 whole-pointer statics at frame 0 (of
+3835 symbols, 21 readable VM regions)`, all of them platform handles:
+
+```
+_renderer  _ZL18stb__barrier_out_b  _ZL18stb__barrier_out_e  _ZL9stb__dout
+afs_path  asyncio_queue  canvas  debug_renderer  giblet_present_texture
+GImGui  imgui_ini_path  knjsub_palette  message_canvas  pref_path  quads
+renderer  renderer  screen_texture  soundLock  stream  window
+```
+
+**The two backends were measured against each other, not assumed equal.**
+The "is this value in an allocator-owned mapping" query has a Mach
+backend and an ELF `/proc/self/maps` backend. Every measurement behind
+the rule above was taken on macOS; the ELF branch had never executed,
+which mattered because the MiSTer target is Linux. It was executed by
+compiling the backend text *itself* (extracted by line range from
+`src/test/rollback_determinism.c`, so the probe cannot drift from the
+harness) into a probe binary run over an identical subject set on both
+platforms: image `.data`/`.bss`/`.rodata`/function addresses, six flavours
+of allocator result, the main and a `pthread` stack, raw `mmap` (anonymous
+and file-backed), shared-object text and data, NULL, an unaligned interior
+pointer, small integers, `CLOCK_MONOTONIC`/`CLOCK_REALTIME` nanosecond
+counts, and the two `msgTalkCtrPL0*` false-positive values. The Linux runs
+used the driver's own launch mechanism, `setarch -R`.
+
+It was not equal, and the direction was the dangerous one. `IMAGE` came
+back as `[0x555555554000,0x555555559000)` — **20 KB** — because
+`/proc/self/maps` carries the executable's pathname only on the
+file-backed part of each `PT_LOAD`; the `.bss` tail past the last file
+page is an *anonymous* mapping, so it fell outside the image range and
+inside the region set (which has no allocator tag to filter on and so
+accepts anonymous). `&bss[mid]` and `&bss[end-8]` of a 24 MB static array
+both classified CANON on Linux and raw/in-image on macOS. Of this game's
+16,793,600-byte writable segment, **16,385,960 bytes (97.6%) is zero-fill**
+(`size -m`: `__bss` 14,683,364 + `__common` 1,702,596, against `__data`
+403,280) — so a pointer-width static holding the address of almost any
+game global would have been silently replaced by a constant token on the
+target platform.
+
+Fixed by bounding the image with the program headers' `p_memsz`, the ELF
+analogue of the `sc->vmsize` the Mach branch already sums (`dl_iterate_phdr`
+needs `_GNU_SOURCE`, unavailable this far down the TU, so the headers are
+read through the ELF header the first `PT_LOAD` maps at the image base;
+`ElfW()` keeps it width-correct for 32-bit armhf). After the fix all
+image-resident subjects classify raw on both platforms and all six
+allocator subjects classify CANON on both. Re-measured on the real MiSTer
+(`Linux 5.15.1-MiSTer armv7l`, non-PIE at `0x400000`, under `setarch -R`):
+`IMAGE` 77,824 -> 25,243,648 bytes, `.bss` subjects CANON -> raw.
+
+Confirmed afterwards on the REAL game, not just the probe. A native Linux
+x86-64 Debug build (clang-20; gcc-10.2.1 cannot build this tree —
+`src/constants.h:38`'s `typedef enum Character : uint16_t` is rejected) was
+driven through `check_rollback_determinism.py` in a seccomp-unconfined
+container, and rebuilt with only this file swapped:
+
+| | `image=` | froze |
+|---|---|---|
+| before | `[0x555555554000,0x555555b68000)` | 25 |
+| after  | `[0x555555554000,0x555556aff000)` | 22 |
+
+`image_hi` stopped exactly at the last file-backed segment boundary, and
+the anonymous `.bss` tail `555555b68000-555556afe000` was being counted as
+an allocator region. The three statics that bought were not hypothetical:
+
+```
+dctex_linear        (map addr 0x55555685ff38, value 0x555555b6ba50)
+tpu_free            (map addr 0x5555568f5188, value 0x555555b6d250)
+texcash_melt_buffer (map addr 0x5555568f5190, value 0x555555b6c250)
+```
+
+Every value sits inside that anonymous tail — three texture/TPU pool
+pointers into the game's own `.bss`, hashed as a constant token on the
+target platform and byte-compared on macOS. The post-fix set is a strict
+subset of the pre-fix set; nothing new became eligible.
+
+Two residual differences are **documented, not fixed**, because ELF cannot
+express them: Linux also canonicalizes `pthread` stacks, raw anonymous
+`mmap`s and shared-object `.bss`. Narrowing the region set to `[heap]`
+would be worse than the deviation — a 1 MB malloc landed at
+`0x7ffff7cce010`, inside the anonymous mapping `7ffff7cce000-7ffff7dd2000`
+(`rw-p 00000000 00:00 0`), so dropping anonymous mappings would stop
+canonicalizing the large-malloc class and hand back the flake. The
+deviation only ever canonicalizes more addresses, all of them kernel-chosen
+per process; what keeps an ordinary integer out is the same 8-byte
+alignment plus frame-0 freeze as on macOS. The freeze is *more* load-bearing
+here: with ASLR disabled the Linux mmap area sits at ~1.4e14, which
+`CLOCK_MONOTONIC` in nanoseconds reaches at roughly 1.6 days of uptime.
+Guard pages are excluded on both (the `---p` page at
+`7ffff74cd000-7ffff74ce000` was absent from the region set), as are all
+named mappings including `[stack]`, `[vvar]`, `[vdso]` and `[vsyscall]`.
+
+One further Linux fact worth recording: under `setarch -R` two consecutive
+runs of the same binary produced **byte-identical addresses** for every
+subject — heap, mmap, stack and image alike; only the timer readings
+differed. `ADDR_NO_RANDOMIZE` suppresses far more than macOS's
+`_POSIX_SPAWN_DISABLE_ASLR`, which zeroes the image slide only. The
+canonicalization rule is therefore near-redundant on Linux and load-bearing
+on macOS — but it must still be *correct* on Linux, because a wrong rule
+silences rather than flakes.
+
+Running the harness on Linux **inside Docker** needs
+`--security-opt seccomp=unconfined`. The default seccomp profile denies
+`personality(ADDR_NO_RANDOMIZE)`, so the driver's `setarch -R` launch dies
+with `setarch: failed to set personality to (null): Operation not
+permitted` and the run surfaces only as `game exited with code 1` — the
+real cause is the first line of that run's `.log`. Confirmed to be seccomp
+and not privilege: `personality(0x40000)` returns -1/EPERM while
+`personality(0)` returns 0, `docker exec --privileged` does not lift it,
+and `/proc/sys/kernel/randomize_va_space` is read-only in the container.
+
+A Linux run is also **not gate-comparable to the macOS one** and must not
+be read as one. `allowlist.txt` matches by symbol NAME, and the two
+toolchains do not emit the same symbol set, so rows the macOS gate accounts
+for surface unaccounted there. Bringing Linux to a green gate is a separate
+piece of work from making the backend correct, and only the second is done.
+**This is now a stated policy, not just a caveat — see "READ THIS BEFORE YOU
+RUN IT: the gate is macOS-only" at the top of this document**, which carries
+the code-level reason (the two symbol-map builders differ structurally) and
+corrects this paragraph's original "4018 vs 3838 / 57 of 67" figures — 57
+and 67 are `allowlisted=` *row* counts, not allowlist entry counts
+(`allowlist.txt` has 41 entries), and 4018 is unreproduced (task #75).
+
+**Stack / argv / env addresses — the control is made valid instead.**
+The pad cannot move `mmap` placements, so the heap needed the hash
+change above; the stack needed the opposite treatment. Measured the same
+way, unpadded runs took only **two** distinct stack addresses in 40
+spawns (`0x16fdfe0fc` / `0x16fdfe10c` — about one bit of entropy, so a
+**57%** chance two runs coincide). A2 is therefore run with an inert
+padding environment variable (`RBD_ADDRESS_LAYOUT_PAD`, 64 bytes), which
+provably moves the initial stack pointer and the argv/envp string block:
+12 padded vs 12 unpadded runs shared **zero** stack, `argv[0]` or `envp`
+values. Any symbol storing one of those addresses now differs between
+the baselines by construction. `configuration` (which holds
+`const char*` into argv) is the documented example — it used to flip
+NOISE↔ALLOWED between source-identical runs and is now NOISE in both
+scenarios, deterministically.
+
+**How this was demonstrated, rather than merely not observed.** Repeated
+green runs are worthless evidence against an intermittent bug, so the
+coincident-baseline condition was forced instead: the classification was
+re-run over real capture streams with the A1-vs-A2 noise set **forced
+completely empty**, the strongest possible form of "the two baselines
+agreed about everything".
+
+| | `pref_path` / `afs_path` / `debug_renderer` / `message_canvas` | rows surfacing with the control forced degenerate |
+|---|---|---|
+| before (`ac52abc2`) | three distinct hashes — A1≠A2≠B in both scenarios | **8** — 4 symbols × 2 scenarios, all `size=8`: the exact documented #65 signature, reproduced deterministically |
+| after | one constant (`0xee1f84b8`) in A1, A2 and B, on all 1500 frames of both scenarios | **0** |
+
+The "after" row is the actual claim: the four symbols hold the same hash
+in every run, so no noise set — degenerate or not — can change their
+verdict. That is a structural property, not a lucky sample.
+
+**A third class, which the two fixes above cannot touch.** Not every
+false FAIL is address-valued. Caught on a verification run of the very
+change described above: `bgm_exe` (`BGMExecution`, `sound3rd.c:44`)
+reported `DIVERGENT ... size=24 first=673 last=1377 frames=3` in
+`makoto-sa3-super`. It is **eleven `s16`/`u16` fields and no pointers at
+all**, so canonicalization is irrelevant to it; it is driven by
+`BGM_Server`, a once-per-real-frame global (known limit 8). Across four
+fast-mode invocations of the same binary it came out NOISE in three and
+DIVERGENT in one. Wall-clock state has no structural test — you cannot
+canonicalize a timer without destroying the signal it carries.
+
+**Cross-scenario noise reconciliation.** The run already held the
+evidence to settle this and was discarding it. Each scenario contributes
+its own pair of baselines, but the noise determination only ever
+consulted the *same* scenario's two. Whether a symbol is
+baseline-nondeterministic is a property of how the process runs, not of
+which characters were picked, so a symbol that another scenario's
+baselines **proved** nondeterministic is no longer reported as a finding.
+In the run above, `ryu-ken-basic-exchange` had already demonstrated
+`bgm_exe` was baseline-noisy while `makoto-sa3-super`'s two baselines
+happened to coincide.
+
+This is **not** an allowlist: nothing is hand-written, nothing persists
+across runs, and no symbol is named anywhere. Every reconciled row is
+printed under its own `=== cross-scenario noise reconciliation ===`
+heading with both sides of the evidence, and counted as `unstable=` in
+the summary line. `DIVERGENT+FEEDBACK` is deliberately never reconciled —
+a saved symbol drifting is the sharpest signal this harness produces, and
+losing one to a cross-scenario inference is a worse trade than a rerun.
+
+Verified by inversion, against stored `report.json` files rather than by
+re-running and hoping (`reconcile_cross_scenario_noise` is split out of
+`main()` precisely so this is possible):
+
+| test | result |
+|---|---|
+| the real flaking run | `bgm_exe` reconciled, `divergent` 1 → 0 |
+| **inversion** — genuine finding (`plt_req`, in no scenario's noise list) | untouched, `divergent` stays 2 |
+| **inversion** — same row forged to `DIVERGENT+FEEDBACK` | untouched, stays a finding |
+| **inversion** — cross-scenario evidence deleted | `bgm_exe` stays DIVERGENT — the exclusion is evidence-driven, not name-driven |
+
+**Residual, stated plainly — this one is a probability reduction, not a
+structural argument.** Say so rather than implying the flake class is
+closed:
+
+- Reconciliation needs *all* participating scenarios' baselines to
+  coincide instead of one scenario's. In fast mode that is four
+  coinciding baselines rather than two. It is not impossible, just much
+  less likely, and a single-scenario run (`--scenario 'makoto*'`) gets no
+  benefit from it at all.
+- A *composite* symbol (wider than one pointer) storing a **heap**
+  address is still classified by baseline comparison — measured ~1.5% per
+  scenario for a collision.
+
+Both are instances of known limit 2. The structural claim in this section
+covers whole-pointer statics and the stack/argv/env class only.
+
 ## Running it
+
+> **macOS only.** Run this on a Mac. A Linux run is not a gate and its FAIL
+> verdicts are not findings — see "READ THIS BEFORE YOU RUN IT: the gate is
+> macOS-only" at the top of this document for the reason and the evidence.
+> Inside Docker on Linux it does not run at all without
+> `--security-opt seccomp=unconfined` (seccomp denies the driver's
+> `setarch -R`).
 
 One command (build + run + verdict):
 
 ```sh
 tools/rollback-determinism/run.sh            # fast mode (default)
 tools/rollback-determinism/run.sh thorough   # every selectable character
+tools/rollback-determinism/run.sh select     # production character-select depth
 ```
+
+`fast` and `thorough` are the **shared gate**. `select` is the
+**production-depth profile** and is EXPECTED TO FAIL on this tree — see
+"Character-select depth" below and the OPEN RED section. The three
+differ in purpose, not just in size.
 
 Exit code **0** = no unexplained divergence, **1** = divergence found
 (the report lists each symbol), **2** = harness/plumbing failure or any
@@ -137,8 +539,15 @@ driver still exits 2. The last stdout line is always the
 machine-greppable verdict:
 
 ```
-RBD SUMMARY: mode=fast scenarios=2 frames=1500 period=1 depth=3 divergent=N feedback=F allowlisted=A noise=X errors=E verdict=PASS|FAIL|ERROR
+RBD SUMMARY: mode=fast scenarios=2 frames=1500 period=1 depth=3 select_period=8 select_depth=2 divergent=N feedback=F allowlisted=A noise=X unstable=U errors=E verdict=PASS|FAIL|ERROR
 ```
+
+`select_period=` / `select_depth=` are printed because their absence was
+the substance of **#63**: the gate inherited a compiled-in select depth
+of 2 from `src/main.c` and nothing in the output said so. The driver now
+owns both knobs, passes them explicitly on every run, and echoes them
+here, so the depth a given verdict was produced at can never again be
+invisible.
 
 There is deliberately no detached exit timer anywhere in the harness: the
 game process exits 0 only after writing the stream footer (a missing
@@ -159,6 +568,49 @@ cycle before **every** in-game frame (depth 3) plus gentle cycles across
 character select (period 8, depth 2 — see Known limits). Gill (index 0)
 is excluded from the thorough sweep: he is not selectable through the
 character-select flow the test runner drives.
+
+### Character-select depth, and why there is a separate profile
+
+Production's GekkoNet prediction window defaults to **8**
+(`input_prediction_window`, `netplay.c:903-905`, ceiling 32), and with
+`DELAY_FRAMES = 1` remote inputs are predicted on essentially every
+frame of a non-LAN connection. Character select used to be probed at
+depth **2** — a quarter of that — and the shortfall was invisible.
+
+Three things changed (**#63**):
+
+1. **The knobs are decoupled.** Select depth used to be
+   `min(--rbd-rollback-depth, --rbd-select-rollback-depth)`, and before
+   that a hard clamp to 2. Either way the in-game knob silently capped
+   select, so reaching select depth 8 meant raising the **in-game** depth
+   to 8 as well — which changes what the in-game half measures and walks
+   into the crash class in known limit 1. The two knobs bound different
+   risks and are now independent (`src/test/rollback_determinism.c`).
+2. **The driver owns them and passes them explicitly**, and prints them
+   in the summary line. The driver's own default is the
+   production-representative **8**; `run.sh fast`/`thorough` pass **2**
+   explicitly, at the call site, with the reason written there.
+3. **`run.sh select` runs the production depth.** Same two scenarios as
+   `fast`, only the select depth differs, so a diff against a `fast` run
+   isolates depth and nothing else.
+
+**Why the shared gate is still 2.** Not for convenience — because depth
+8 reports a real, pre-existing, already-catalogued escapee (`plt_req`,
+see OPEN RED below), and allowlisting it to get green is explicitly
+refused (`allowlist.txt`: "deliberately left unallowlisted"). This is
+the same treatment the select *period* already gets: the shared gate runs
+a deliberately constrained profile, the deeper configuration's red is
+recorded here with exact numbers, and neither is silenced. The
+difference from before is that the constraint is now visible in every
+summary line instead of inherited from an initializer.
+
+**If you are writing a character-select regression test, use
+`run.sh select`.** A depth-2 matrix is not merely weaker, it is capable
+of certifying a fix whose load-bearing half has been deleted: the
+task-50 duplicate-load leak changes *which* guard matters between depth 2
+and depth ≥ 3, because by depth 3 the head request has drained and the
+enqueue-side dedupe no longer sees it, so the `texgroup.c` reclaim
+(`texgroup.c:297-304`) can be reverted and a depth-2 matrix still passes.
 
 ### Fast mode is NOT self-validating
 
@@ -192,13 +644,16 @@ re-tag it.
 
 | control | status | last actually run |
 |---|---|---|
-| A — empty allowlist | **OBSERVED** | task 54, output below |
+| A — empty allowlist | **OBSERVED** | task 63/65, output below (re-run after the pointer-canonicalization change; supersedes the task-69 numbers) |
 | B — mutation test | **RECORDED — never executed** | never; signature inferred from the `Random_ix16_bg` finding below |
 | C — rebuild base `0e464a30` | **RECORDED** | the reviewer's validation run, not reproduced since |
 
 **Control A — empty allowlist (no rebuild, ~2.5 min). OBSERVED.** `allowlist.txt`'s
-39 fnmatch patterns suppressed 43 ALLOWED rows (28 distinct symbols)
-across the two fast scenarios on this tree. Those symbols really do
+fnmatch patterns suppress ALLOWED rows across the two fast scenarios —
+**41 patterns suppressing 67 rows (39 distinct symbols) as re-measured on
+2026-08-25 at production select depth 8** (task #75; the historical figures
+further down this section were taken at select depth 2, before task #69
+raised it, and are kept as the record of that run). Those symbols really do
 diverge because of rollback; they are judged benign, not absent. Take
 the suppression away and they must surface as findings —
 `load_allowlist()` returns an empty list for an empty or missing path,
@@ -208,22 +663,61 @@ so no pattern matches anything:
 tools/rollback-determinism/run.sh fast --allowlist /dev/null
 ```
 
-Measured on this tree, immediately after a `verdict=PASS` gate run of
-the same binary:
+Measured on this tree (task #63/#65, `ac52abc2` + the select-depth and
+pointer-canonicalization changes), immediately after a `verdict=PASS`
+gate run of the same binary
+(`divergent=0 feedback=0 allowlisted=51 noise=143 unstable=0`, exit 0):
 
 ```
-RBD SUMMARY: ... divergent=43 feedback=0 allowlisted=0 noise=182 errors=0 verdict=FAIL   (exit 1)
+RBD SUMMARY: mode=fast scenarios=2 frames=1500 period=1 depth=3 select_period=8 select_depth=2 divergent=51 feedback=0 allowlisted=0 noise=143 unstable=0 errors=0 verdict=FAIL   (exit 1)
 ```
 
-The arithmetic is the check: the 43 rows the gate reported as
-`allowlisted` are the same 43 that come back as `divergent`, and `noise`
-is unchanged at 182 because noise classification does not depend on the
-allowlist. Getting `verdict=PASS` out of this — or a `divergent` that
-does not account for the gate's `allowlisted` count — means the
-capture/differ/symbolizer chain is producing nothing to classify, i.e.
-the harness is broken, not the tree. This exercises everything except
-the FEEDBACK tagger (`feedback=0` here is expected: none of the
-allowlisted sinks is in the save set).
+The invariant to check is **containment**
+(`allowlisted_rows ⊆ divergent_rows`), not equality of the two counts.
+Verified row by row on this run: all **51** rows the gate reported as
+`allowlisted` come back as `divergent`, with **none** missing. Getting
+`verdict=PASS` out of this — or a `divergent` that does not contain the
+gate's `allowlisted` rows — means the capture/differ/symbolizer chain is
+producing nothing to classify, i.e. the harness is broken, not the tree.
+This exercises everything except the FEEDBACK tagger (`feedback=0` here
+is expected: none of the allowlisted sinks is in the save set).
+
+**Re-run 2026-08-25 at production select depth 8** (task #75, on the tree
+carrying the task #74 build-deps fix; same binary for both runs,
+`RBD_SKIP_BUILD=1`). Gate run:
+
+```
+RBD SUMMARY: mode=fast scenarios=2 frames=1500 period=1 depth=3 select_period=8 select_depth=8 divergent=0 feedback=0 allowlisted=67 noise=141 unstable=0 errors=0 verdict=PASS   (exit 0)
+```
+
+Control A on the same binary:
+
+```
+RBD SUMMARY: mode=fast scenarios=2 frames=1500 period=1 depth=3 select_period=8 select_depth=8 divergent=67 feedback=0 allowlisted=0 noise=141 unstable=0 errors=0 verdict=FAIL   (exit 1)
+```
+
+Containment is **exact** here: `allowlisted` 67 → 0 and `divergent` 0 → 67,
+and the 67 DIVERGENT rows are 28 symbols appearing in both scenarios plus 11
+appearing in one (28×2 + 11 = 67). `noise` is **141 in both runs**,
+`unstable=0`, `errors=0` — the allowlist is the only thing that moved. This
+is also the direct demonstration that `allowlisted=` counts *rows*, not
+allowlist entries: 41 entries produced 67 of them.
+
+On this run the two counts happened to be **equal** (51 and 51, no extra
+rows either way), but do not promote that to the invariant — the
+sound/loader sinks in known limit 9's wall-clock cluster drift in and out
+of the diff between runs, and an earlier pairing of the same two
+profiles on this same tree gave 44 allowlisted against 51 divergent, the
+seven extras all being that cluster (`PhdAddr`, `cseSysWork`, `gpTsb`,
+`ldreq_result`, `ram`, `rckeyctr`, `sdbd`). Containment held in both.
+
+Note what did **not** move. The earlier (task-69) numbers for this
+control recorded `noise` shifting 185 → 181 between the gate run and the
+control run, with four rows changing class — the #65 instability. On
+this tree the two runs' noise sets are **identical**, symbol for symbol
+(141 rows), across both scenarios, and were identical on the earlier
+pairing too. That is corroboration from a third direction that the noise
+classification is no longer coincidence-dependent.
 
 **Control B — mutation test (one rebuild, ~4 min for one scenario).
 RECORDED — THIS HAS NEVER BEEN EXECUTED.** The recipe's mechanics were
@@ -282,13 +776,16 @@ rollback risk here".
    of the section above. Pair it with a control.
 
 2. **Its character-select coverage is 4× shallower than production.**
-   Fast mode runs select at `--rbd-select-rollback-depth 2` while
-   production predicts 8 frames ahead (`netplay.c:903-905`). Known limit
-   1 spells out why that is not academic: the task-50 duplicate-load
-   leak changes *which guard fixes it* between depth 2 and depth 3+. A
-   green fast run therefore understates select-phase risk specifically,
-   and says nothing at all about depths 3–8 there. Raise the flag when
-   the question is about character select. Filed as **#63**.
+   Still true, and still deliberate — but no longer invisible or
+   unreachable. `fast`/`thorough` run select at depth 2 while production
+   predicts 8 (`netplay.c:903-905`), the gate now *says so* in every
+   summary line (`select_depth=2`), and `run.sh select` runs the
+   production depth in one command. A green `fast` run understates
+   select-phase risk specifically and says nothing about depths 3–8
+   there; use `run.sh select` when the question is about character
+   select. See "Character-select depth" above. **#63** — the clamp and
+   the invisibility are fixed; the shared gate's shallower cadence is a
+   recorded choice, kept because depth 8 reports the OPEN RED below.
 
 3. **It produces intermittent false FAILs.** Filed as **#65**. Observed
    signature, worth recognising on sight:
@@ -335,13 +832,30 @@ rollback risk here".
    **Do not allowlist these.** An allowlist entry for a pointer-valued
    symbol would also suppress a genuine finding that happened to land on
    it, and the allowlist is supposed to carry a verified reason, which
-   "it is flaky" is not. **Equally, do not re-run until green.** If a
-   FAIL matches the signature above exactly — 8 symbols, all pointer
-   sized, all from the four `port/` sites — record it as the known flake
-   and say so. If it differs in *any* respect (a different symbol, a
-   different count, a non-pointer size, a FEEDBACK tag), it is not this
-   flake and must be triaged as a real finding. The fix belongs in the
-   noise determination, not in the allowlist.
+   "it is flaky" is not. **Equally, do not re-run until green.** The fix
+   belongs in the noise determination, not in the allowlist.
+
+   **FIXED (2026-08-25, task #65).** No entry was added to
+   `allowlist.txt`; the pattern set is byte-identical. The four symbols
+   above now hash a fixed token instead of their address, in every run,
+   and A2 carries a deliberate address-layout perturbation so the stack
+   case cannot coincide either — the mechanism, the two anti-false-positive
+   filters, and the measured evidence are under "Why address-valued state
+   cannot reach the verdict" above.
+
+   The demonstration is the part that matters, because repeated green
+   runs prove nothing about an intermittent bug. The coincident-baseline
+   condition was **forced**: the classification was re-run over real
+   capture streams with the A1-vs-A2 noise set emptied. On `ac52abc2`
+   that reproduces the exact signature above — 8 rows, four symbols ×
+   two scenarios, all `size=8` — deterministically, on demand. After the
+   fix the same forced-degenerate control yields **0** of those rows,
+   because the four symbols hold one identical hash (`0xee1f84b8`) in A1,
+   A2 and B across all 1500 frames of both scenarios. There is no longer
+   anything for the baselines to be lucky about.
+
+   A FAIL matching the old signature should now be treated as a **new
+   finding**, not as this flake.
 
 Useful driver flags (append after the mode):
 `--scenario 'makoto*'` (filter), `--frames N`, `--rollback-period N`,
@@ -404,6 +918,27 @@ allowlist entry defeats the whole tool.
    drained by the time the rollback re-issues it. Pass
    `--rbd-select-rollback-depth 8` when reproducing or regression-testing
    any select-phase rollback bug.
+
+   **How to actually pass it (2026-08-24, task #60).** It is a *game*
+   flag (`src/args.c`), not a driver flag, so `run.sh fast
+   --rbd-select-rollback-depth 8` fails with an argparse error — the
+   driver rejects it before the game ever sees it. Use the `--game-arg`
+   passthrough, in `=` form (argparse will not accept a value that starts
+   with `--` as a separate token), and remember the effective select depth
+   is `min(--rollback-depth, --rbd-select-rollback-depth)`
+   (`src/test/rollback_determinism.c:498`), so `--rollback-depth` must be
+   raised too:
+
+   ```sh
+   python3 tools/rollback-determinism/check_rollback_determinism.py \
+     --binary build/host/3S-ARM.app/Contents/MacOS/3S-ARM --mode fast \
+     --scenario 'ryu-ken*' --rollback-period 500 --rollback-depth 8 \
+     --game-arg=--rbd-select-rollback-period --game-arg=1 \
+     --game-arg=--rbd-select-rollback-depth --game-arg=8
+   ```
+
+   Keep `--rollback-period` large: it also drives the *in-game* cycles,
+   and depth 8 every frame walks straight into the crash class above.
 
    The `ppgSetupTexChunkSeqs` NULL-destination segfault named above is
    **fixed** as of task 50 (the duplicate character-select load request
@@ -478,6 +1013,308 @@ allowlist entry defeats the whole tool.
    once per outer frame regardless of how many speculative frames ran)
    is invisible — matching real netplay, where they also advance once
    per real frame on both peers.
+9. **Wall-clock-driven subsystems — the LDREQ/AFS/ramcnt cluster.**
+   Measured 2026-08-24 (task #60). `AFS_Read` is a genuine OS async read
+   (`SDL_ReadAsyncIO`, `port/io/afs.c:366`) whose completion is delivered
+   by `AFS_RunServer` draining `SDL_GetAsyncIOResult` (`afs.c:304-313`).
+   Load completion is therefore a **wall-clock** event, and the whole
+   cluster it drives is nondeterministic *without any rollback at all*:
+   `q_ldreq`, `rckey_work`, `rckey_mmobj`, `texgrplds`, `char_init_data`,
+   `requests`, `afs` and `asyncio_queue` all show up in this harness's
+   own **A1-vs-A2 baseline noise** list — two identical no-rollback runs
+   of the same binary, same inputs, same machine, ASLR disabled, and they
+   still differ.
+
+   One correction to that list as of task #65: `asyncio_queue` is a
+   whole-pointer static (`SDL_AsyncIOQueue*`, `port/io/afs.c:47`) and is
+   now pointer-canonicalized, so it no longer appears in the noise list —
+   it holds one identical hash in every run. That changes nothing about
+   this limit. The symbol only ever carried the *address* of the queue,
+   never its contents, so its former noise membership was evidence of
+   allocator nondeterminism rather than of loader timing; the genuinely
+   wall-clock members (`q_ldreq`, `requests`, `afs`, `texgrplds`,
+   `rckey_*`, `char_init_data`) are unaffected and still noise-masked.
+
+   Two consequences, both load-bearing:
+
+   - **Masking.** Per limit 2, a rollback-caused divergence in `q_ldreq`
+     is invisible: it is noise-classified before it can be reported. The
+     symbols in this cluster that *do* survive noise classification
+     (`afs_handle`, `ldreq_result`) are then suppressed by
+     `allowlist.txt`. So the cluster has two independent blindfolds on.
+   - **It is not a save-set problem.** Because the divergence exists
+     between two runs of one peer, no amount of GameState membership,
+     and no per-frame record/replay scheme, can make two *different*
+     peers agree on the frame a load completes. A fix has to stop the
+     simulation from observing an in-flight load inside the session
+     window (a barrier), not try to rewind the loader. See the
+     CORRECTION block in `tools/rollback-determinism/allowlist.txt`.
+
+   Do not use this harness to validate a claimed fix in this cluster.
+   Its run-B model compresses `depth` frames of prediction into a single
+   real frame, so the loader's wall-clock cadence in run B is unlike both
+   run A1 and production; `frames=` counts for these symbols move in both
+   directions for reasons that have nothing to do with correctness.
+
+   **Use `tools/ldreq-timing` instead** (task #66). Because the bug is
+   wall-clock coupling, the experiment is to vary the wall clock and
+   require the simulation to be invariant: two runs of one binary with
+   identical scripted inputs and pinned RNG, differing only in
+   `--afs-inject-latency-ms`, each writing one row per frame of the saved
+   state the loader feeds plus the loader's own observable surface
+   (`src/test/ldreq_timing_trace.c`). It runs a 2×2 matrix and checks
+   both directions, so it cannot report PASS without first demonstrating
+   it can fail:
+
+   ```
+   tools/ldreq-timing/run.sh
+   LDREQ-TIMING SUMMARY: frames=600 latency_ms=400 barrier_off_divergent=274 \
+     barrier_off_saved_divergent=5 \
+     barrier_off_saved_columns=Exit_No,Exit_Timer,G_No1,G_No2,G_Timer \
+     barrier_on_divergent=0 verdict=PASS
+   ```
+
+   OBSERVED on `task66/ldreq-barrier`, `basic-exchange`, 600 frames,
+   400 ms injected latency, per column:
+
+   | column | barrier OFF | barrier ON |
+   |---|---|---|
+   | `Exit_Timer` **(saved)** | 137 frames, first **318** | 0 |
+   | `Exit_No` **(saved)** | 136 frames, first **319** | 0 |
+   | `G_No[2]` / `G_No[1]` / `G_Timer` **(saved)** | 155 / 136 / 146 frames, first 320 / **328** / 329 | 0 |
+   | `pl_load` (`Check_PL_Load()`) | 161 frames, first 217 | 0 |
+   | `ldreq_clear` (`Check_LDREQ_Clear()`) | 229 frames, first 208 | 0 |
+   | `ldreq_result_h` | 252 frames, first 201 | 0 |
+   | `head_be` / `head_type` / `head_rno` | 239 / 245 / 231 | 0 |
+
+   Read the `G_No[1]` row: at frame 328 the fast side is in the battle
+   (`G_No[1] == 2`) while the slow side is still in character select
+   (`G_No[1] == 1`). Every row marked saved is inside the desync
+   checksum. `pl_load` is the exact expression `Exit_6th`
+   (`screen/sel_pl.c:1702`) gates the saved `Exit_No`/`Exit_Timer` on,
+   and `ldreq_clear` is the expression `Game2_0`/`Game2_2`
+   (`game.c:472`, `:615`) call `fatal_error("Load queue failed to drain
+   in time")` on. **No rollback occurs anywhere in these runs.**
+
+   At 150 ms the loader columns still diverge (105 rows) but the saved
+   ones do not, because `Exit_6th` happens to sample the gate after both
+   timelines have reconverged. That is why the driver's control demands
+   divergence in a saved column specifically and defaults to 400 ms — a
+   control keyed on "some column moved" would have passed at 150 ms
+   without ever exercising the chain the fix is for.
+
+   Barrier cost, OBSERVED from the same run's telemetry
+   (`[ldreq-barrier]` lines, `barrier1_lat0.log`): the barrier fires
+   **four times per match** and drains
+   `8/7/5/4 steps, 0/1/0/1 ms, 284672/229376/147456/65536 bytes`
+   — ~710 KB total, on the Ryu-vs-Ken scene. The 3000 ms budget is
+   three orders of magnitude above the host figure; the byte counts are
+   the number that carries to MiSTer, where the same bytes come off SD.
+
+   The fix is the barrier in `Check_LDREQ_Queue()` (`io/gd3rd.c`), live
+   whenever `Ldreq_BarrierActive()` — i.e. whenever the GekkoNet session
+   is `NETPLAY_SESSION_RUNNING`. **This harness's verdict is deliberately
+   unchanged by it**: an rbd run has no session and does not pass
+   `--ldreq-barrier-force`, so it exercises the stock unbarriered path
+   and the OPEN RED below still reproduces exactly as recorded.
+
+### CLOSED (2026-08-25, task #69): the select-*depth* OPEN RED
+
+**Resolved. The shared gate now runs character select at production depth
+8** (`tools/rollback-determinism/run.sh`, the `fast|thorough` arm), and
+`plt_req` — the single finding that made depth 8 permanently red — is
+allowlisted on a measured reachability proof rather than on the
+"loader-owned" hand-wave the rest of that block rests on. The full proof
+lives in `tools/rollback-determinism/allowlist.txt` and, for the engine
+side, in the `plt_req` entry of the disposition block at the top of
+`src/sf33rd/Source/Game/io/gd3rd.c`. The short version:
+
+- **It is a phase lead, not a value divergence.** `plt_req[id]` is written
+  only by `Push_LDREQ_Queue_Player` (`io/gd3rd.c:384`), which sets it to
+  the character whose requests it enqueues in the same call. Every call
+  site reachable in `MODE_NETWORK` passes `My_char[id]`, which is saved
+  (`game_state.c:232/972`). Measured: `plt_req1` goes `0 -> 11` at frame
+  **210** with no rollback and at frame **208** with rollback — same value,
+  two frames early.
+- **Its only in-select reader cannot be dispatched inside the window.**
+  `Exit_6th` runs only at `Exit_No == 5` (`sel_pl.c:1551-1553`), and
+  `Exit_No` leaves 0 only through `Exit_1st` (`sel_pl.c:1556-1562`), gated
+  on both players' `Sel_Arts_Complete < 0` — which is strictly downstream
+  of the confirmed-timeline `plt_req` write. Every symbol in that chain is
+  saved, so both peers agree on the ordering.
+- **Measured margin.** Across sixteen per-frame traces (both fast
+  scenarios × barrier off/forced-on × select period 8 and the adversarial
+  period 1 × depth 8, 1500 frames, ASLR off, pinned RNG), the `plt_req`
+  window ends at frame **209** and `Exit_No` first reaches 5 at frame
+  **317** — in all sixteen. Every SAVED column (`G_No[0..3]`, `G_Timer`,
+  `Exit_No`, `Exit_Timer`) is byte-identical on all 1500 frames in all
+  twelve rollback-vs-baseline comparisons.
+
+One thing that measurement corrected on the way through, recorded here
+because it contradicts a load-bearing sentence in the task-#66 barrier
+comment: **the barrier buys wall-clock invariance, not rollback
+invariance.** With `--ldreq-barrier-force` on, `Check_PL_Load()` still
+differs between a rollback run and a no-rollback run of the *same* binary
+for 2 frames (select period 8) / 7 frames (period 1), because
+`ldreq_result[]` bits are only ever OR'd in and a rolled-back speculative
+push leaves its completion set. That is a genuine cross-peer disagreement
+in the observable surface; it is not a desync only because of the
+`Exit_1st` ordering above. `io/gd3rd.c` now says so.
+
+`Candidate_Buff` is **not** closed by this and remains unallowlisted; it
+only appears at select period 1, which the period OPEN RED below still
+owns.
+
+The original finding is preserved below for provenance.
+
+#### (historical) OPEN RED: the shipped gate's select *depth* hides it too
+
+Measured 2026-08-25 (task #63) on `upstream-engine-fixes` @ `ac52abc2`
+plus the #63/#65 changes, stock `allowlist.txt`, fast mode (both
+scenarios), 1500 frames, in-game cadence unchanged at period 1 / depth 3,
+in-game from frame 328, 1179 rollback cycles. The **only** variable is
+the select-phase depth; the select period stays at the shared gate's 8 in
+both rows, so this is a strictly cleaner isolation than the period table
+below.
+
+| profile | select period / depth | verdict | exit | divergent |
+|---|---|---|---|---|
+| `run.sh fast` (shared gate) | 8 / 2 | **PASS** | 0 | 0 |
+| `run.sh select` (production depth) | 8 / **8** | **FAIL** | 1 | **2** |
+
+```
+run.sh fast    ... select_depth=2 divergent=0  feedback=0 allowlisted=51 noise=143 unstable=0 verdict=PASS  (exit 0)
+run.sh select  ... select_depth=8 divergent=2  feedback=0 allowlisted=65 noise=143 unstable=0 verdict=FAIL  (exit 1)
+```
+
+Both divergent rows are the same symbol, one per scenario, identical
+windows — `plt_req` (10 B: `plt_req[2]` + 6 B pad) `first=208 last=209
+frames=2`, in `ryu-ken-basic-exchange` and `makoto-sa3-super` alike.
+`feedback=0`. Reproduced across two independent builds of the branch.
+
+This is the substance of **#63**: the gate was green at character select
+only because it probed at a quarter of production's prediction window.
+`plt_req` is the same escapee the period table below already records —
+it is **not** a new bug and **not** an artifact of the depth change. Its
+mechanism is mispredicted-input re-execution of `Sel_PL_3rd`'s one-shot
+`Push_LDREQ_Queue_Player` / `Initialize_EM_Candidate` pair
+(`screen/sel_pl.c:996`, `:1007`), which is why raising *either* the
+cadence or the depth surfaces it.
+
+It stays **unallowlisted and unfixed here**, deliberately, on both
+counts. Allowlisting it is refused outright (`allowlist.txt:198`).
+*(Superseded 2026-08-25 — see the CLOSED section above. The refusal was
+right until someone measured it; task #69 did, and the entry now exists
+with its proof attached.)*
+Fixing it is genuinely out of scope for a harness task: the doc's own
+analysis of this cluster (known limit 9) says the correct treatment is a
+**barrier**, not save-set membership — restoring `plt_req` alone would
+leave it claiming "not requested" while the request it pushed is still
+in flight in the unrewindable `q_ldreq`. That is the task-#66 barrier's
+territory, and the barrier is netplay-session-gated so it does not apply
+to an rbd run.
+
+Consequence for anyone reading a green gate: `verdict=PASS` from
+`run.sh fast` means *the in-game phase is clean and character select is
+clean at depth 2*. It does not mean character select is clean.
+
+### OPEN RED: the shipped gate's select *period* hides a real divergence
+
+Measured 2026-08-24 (task #60) on `upstream-engine-fixes` @ `fc06a657`,
+stock `allowlist.txt`, one scenario (`ryu-ken-basic-exchange`), 1500
+frames, `--rollback-period 500 --rollback-depth 8`, 68 rollback cycles,
+in-game from frame 328. All four runs used the same binary; only the
+select-phase knobs changed.
+
+| run | select period / depth | verdict | exit | divergent |
+|---|---|---|---|---|
+| stock gate (`run.sh fast`) | 8 / 2 | **PASS** | 0 | 0 |
+| select period 1, depth 8 | 1 / 8 | **FAIL** | 1 | 2 |
+| select period 1, depth 2 | 1 / 2 | **FAIL** | 1 | 2 |
+| repeat of period 1 / depth 8 | 1 / 8 | **FAIL** | 1 | 2 |
+
+The two divergent rows, and the two neighbouring rows the allowlist
+suppresses, with their divergent-frame counts:
+
+| symbol (nm window) | verdict | period 1 depth 8 | period 1 depth 2 |
+|---|---|---|---|
+| `plt_req` (10 B: `plt_req[2]` + 6 B pad) | DIVERGENT | first=193 frames=14 | first=199 frames=2 |
+| `Candidate_Buff` (48 B: `Candidate_Buff[16]` + `Active_Wipe_Type` + `training_hitbox_display_enabled` + pad) | DIVERGENT | first=193 frames=7 | first=199 frames=1 |
+| `afs_handle` | ALLOWED | first=193 frames=14 | first=199 frames=10 |
+| `ldreq_result` | ALLOWED | first=194 frames=18 | first=200 frames=14 |
+
+Read this carefully, because it says two different things:
+
+1. **The gate is green only because select cycles run every 8th frame.**
+   Production can roll back on *any* frame. Raising the cadence to
+   period 1 turns the tree red at either depth. The stock cadence was
+   chosen to dodge the crash class in limit 1, not because period 1 is
+   unrepresentative.
+2. **Depth still matters, quantitatively.** At depth 8 the divergence
+   starts 6 frames earlier and lasts 7× longer for `plt_req`. Frame 193
+   is inside `PHASE_CHARACTER_SELECT`, immediately around
+   `Sel_PL_3rd`'s `Push_LDREQ_Queue_Player` / `Initialize_EM_Candidate`
+   pair (`screen/sel_pl.c:996` and `:1007`).
+
+Symbol windows come from `nm` on the exact binary, so they can be wider
+than the C object. Checked against `symmap.txt`: `plt_req` is
+`0x1013fa926 + 0xa` = the 4-byte `plt_req[2]` plus 6 bytes of padding up
+to `q_ldreq` at `0x1013fa930`, so the divergence is `plt_req` itself.
+`ldreq_break` is a *separate* symbol (`0x1013fa7ef + 0x11`) and did NOT
+diverge in any run. `ldreq_result` is `0x1013fa800 + 0x126` = exactly its
+294 bytes. `q_ldreq` is `0x380` = 896 B = 16 x 56 (two 8-byte pointers in
+`REQ` on the 64-bit host) and is noise-masked, per limit 9.
+
+Neither divergent symbol is the known flake #65 signature (8-byte
+file-scope pointers from `port/paths.c` / `port/resources.c` /
+`port/sdl/*`); the repeat run reproduced both exactly.
+
+**Still OPEN after the task-#66 barrier, by design.** Re-measured on
+`task66/ldreq-barrier`, same command, `errors=0` in both:
+
+| run | verdict | exit | divergent |
+|---|---|---|---|
+| select 1 / 8, stock (no session, no force) | FAIL | 1 | 2 — `plt_req` first=193 frames=14, `Candidate_Buff` first=193 frames=7 |
+| select 1 / 8, `--game-arg=--ldreq-barrier-force` | FAIL | 1 | 3 — the two above plus `q_ldreq` first=193 frames=7 |
+
+Row 1 reproduces the numbers above symbol-for-symbol, which is the
+point: the barrier is gated on a live GekkoNet session, an rbd run has
+none, so this harness's verdict is untouched and the OPEN RED stands as
+recorded.
+
+Row 2 looks like a regression and is not one. Forcing the barrier on
+removes the loader's A1-vs-A2 nondeterminism, so `q_ldreq` **falls out
+of the baseline-noise list** — the diff of the two runs' noise lists is
+exactly `-q_ldreq` (plus `configuration` moving, the known pointer-valued
+flip from limit 3). Having stopped being noise-masked it lands in
+DIVERGENT, where it reports a 7-frame transient in the same push window
+as `Candidate_Buff` and then reconverges. This is known limit 9's
+masking being *lifted*, not new state escaping: the harness can suddenly
+see a symbol it was previously blindfolded to. It is also not a
+production configuration — a real session has the barrier on *and* is
+not this harness.
+
+`plt_req` is unchanged by the barrier in either row, consistent with its
+mechanism being mispredicted-input re-execution of `Sel_PL_3rd`'s
+one-shot push rather than loader timing.
+
+`feedback` is 0 in every one of these runs, so no GS_SAVE symbol was
+*observed* to drift. That is a coverage statement, not an exoneration:
+the select-phase cycles stop at `PHASE_GAME_TRANSITION`
+(`src/test/test_runner.c:1407`), which is exactly where `Exit_6th`
+(`screen/sel_pl.c:1701-1722`) does its `Check_PL_Load()` /
+`Check_LDREQ_Queue_BG()` wait and advances the GS-saved `Exit_No` /
+`Exit_Timer`. The one place the `ldreq_result` → saved-state feedback
+edge can be observed is the one place this harness does not cover.
+
+`Candidate_Buff`'s window is a separate finding from the LDREQ cluster
+and is not attributed to a sub-symbol here — `Candidate_Buff` itself is
+scratch that `Initialize_EM_Candidate` refills from the top on every
+call (`system/sys_sub.c:1714-1716`), and `EM_Candidate`, the thing
+derived from it, *is* saved (`game_state.c:435/1175`), so the live
+suspect in that window is `Active_Wipe_Type` (`sys_sub.c:81/92`).
+Confirming which byte moves needs a narrower probe than a per-symbol
+hash.
 
 ## Findings on the tree this harness landed on
 

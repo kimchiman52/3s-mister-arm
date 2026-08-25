@@ -155,6 +155,21 @@ static void verify_configuration(Configuration* configuration) {
     if (test->rbd_select_rollback_depth < 1) {
         error_out_with_code("--rbd-select-rollback-depth must be >= 1.", EXIT_CODE_RUNTIME_ERROR);
     }
+    if (test->ldreq_trace_path != NULL) {
+#ifndef DEBUG
+        error_out_with_code("--ldreq-trace requires a Debug build (#if DEBUG).", EXIT_CODE_RUNTIME_ERROR);
+#endif
+        if (test->ldreq_trace_frames <= 0) {
+            error_out_with_code("--ldreq-trace requires --ldreq-trace-frames > 0.", EXIT_CODE_RUNTIME_ERROR);
+        }
+    }
+    if (test->ldreq_slot_trace_path != NULL && test->ldreq_trace_path == NULL) {
+        error_out_with_code("--ldreq-slot-trace requires --ldreq-trace (it shares its frame budget).",
+                            EXIT_CODE_RUNTIME_ERROR);
+    }
+    if (test->afs_inject_latency_ms < 0) {
+        error_out_with_code("--afs-inject-latency-ms must be >= 0.", EXIT_CODE_RUNTIME_ERROR);
+    }
 
     if (!is_supported_test_scene_preset(test->scene_preset)) {
         error_out_with_code("--test-scene-preset must be one of stage-heavy, effect-heavy, super-heavy, "
@@ -291,6 +306,13 @@ void read_args(int argc, const char* argv[], Configuration* configuration) {
                     "test-gs-coverage",
                     &configuration->test_gs_coverage,
                     "Run the GameState save/load field-coverage guard and exit. Requires ENABLE_NETPLAY=ON with -DENABLE_NETPLAY_TESTS.",
+                    NULL,
+                    0,
+                    0),
+        OPT_BOOLEAN(0,
+                    "test-texcash-bounds",
+                    &configuration->test_texcash_bounds,
+                    "Run the ext texture-cache brick-prevention harness (tasks #59/#61) and exit. Requires -DENABLE_NETPLAY_TESTS.",
                     NULL,
                     0,
                     0),
@@ -546,18 +568,63 @@ void read_args(int argc, const char* argv[], Configuration* configuration) {
         OPT_INTEGER(0,
                     "rbd-select-rollback-period",
                     &configuration->test.rbd_select_rollback_period,
-                    "Character-select-phase cycle period (default 8; depth is clamped to 2 there; 0 "
-                    "disables select-phase cycles). Aggressive select cadence hits known crash-class "
-                    "ppg asset-setup traps — see docs/rollback-determinism-harness.md.",
+                    "Character-select-phase cycle period (default 8; 0 disables select-phase cycles). "
+                    "Aggressive select cadence hits known crash-class ppg asset-setup traps — see "
+                    "docs/rollback-determinism-harness.md.",
                     NULL,
                     0,
                     0),
         OPT_INTEGER(0,
                     "rbd-select-rollback-depth",
                     &configuration->test.rbd_select_rollback_depth,
-                    "Max speculative depth for character-select-phase cycles (default 2, the value this "
-                    "phase used to be hard-clamped to; capped by --rbd-rollback-depth). Raise to 8 to "
-                    "match production's input_prediction_window when reproducing select-phase bugs.",
+                    "Speculative depth for character-select-phase cycles (default 8, matching "
+                    "production's input_prediction_window, netplay.c:903-905). Independent of "
+                    "--rbd-rollback-depth, which bounds the in-game phase only.",
+                    NULL,
+                    0,
+                    0),
+
+        OPT_GROUP("Loader-timing invariance instrument (src/test/ldreq_timing_trace.h)"),
+        OPT_STRING(0,
+                   "ldreq-trace",
+                   &configuration->test.ldreq_trace_path,
+                   "Write one CSV row per outer frame describing the saved state the LDREQ loader "
+                   "feeds (Exit_No/Exit_Timer/G_No/G_Timer) plus the loader's observable surface. "
+                   "Requires --ldreq-trace-frames and a Debug build. Driven by "
+                   "tools/ldreq-timing/check_ldreq_timing.py.",
+                   NULL,
+                   0,
+                   0),
+        OPT_INTEGER(0,
+                    "ldreq-trace-frames",
+                    &configuration->test.ldreq_trace_frames,
+                    "Capture this many frames for --ldreq-trace, then flush and exit cleanly (0).",
+                    NULL,
+                    0,
+                    0),
+        OPT_STRING(0,
+                   "ldreq-slot-trace",
+                   &configuration->test.ldreq_slot_trace_path,
+                   "Write one CSV row per (frame, q_ldreq slot) carrying every REQ field plus a "
+                   "pointer-normalised raw byte image of the slot, so a residue in a DRAINED slot "
+                   "can be told apart from one in a live slot. Requires --ldreq-trace (shares its "
+                   "frame budget). Analysed by tools/ldreq-timing/check_slot_residue.py.",
+                   NULL,
+                   0,
+                   0),
+        OPT_BOOLEAN(0,
+                    "ldreq-barrier-force",
+                    &configuration->test.ldreq_barrier_force,
+                    "Force the netplay LDREQ frame barrier on without a live GekkoNet session, so it "
+                    "can be exercised from an offline test-runner scene. Harness use only.",
+                    NULL,
+                    0,
+                    0),
+        OPT_INTEGER(0,
+                    "afs-inject-latency-ms",
+                    &configuration->test.afs_inject_latency_ms,
+                    "Hold back the OBSERVED completion of every async AFS read by N ms. Models a peer "
+                    "with a slower disk; the physical read is untouched. Harness use only.",
                     NULL,
                     0,
                     0),

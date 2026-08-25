@@ -6,6 +6,7 @@
 #include "sf33rd/Source/Game/engine/charid.h"
 #include "bin2obj/char_table.h"
 #include "common.h"
+#include "test/texgroup_window_probe.h"
 
 CharInitData char_init_data[23];
 UNK_Data* parabora_own_table[20];
@@ -73,6 +74,13 @@ const CharInitData char_init_data_ex[2] = { { _ef13_char_table,
                                               NULL } };
 
 void set_char_base_data(WORK* wk) {
+    /* Task #64 F3 observation point: this is one of only two readers of
+     * char_init_data[] in the tree (the other is setup_butt_own_data in
+     * pls02.c), so a stale-pointer read inside the texgroup case-2
+     * reclaim window would have to pass through here. No-op unless
+     * -DENABLE_TEXGROUP_WINDOW_PROBE=ON. */
+    TGWP_ReadCid(wk->charset_id, "set_char_base_data");
+
     CharInitData* cdat = &char_init_data[wk->charset_id];
     const CharInitData2* cdat2 = &char_init_data2[wk->charset_id];
 

@@ -21,6 +21,7 @@
 #include "sf33rd/Source/Game/system/sysdir.h"
 #include "sf33rd/Source/Game/system/work_sys.h"
 #include "structs.h"
+#include "test/texgroup_window_probe.h"
 
 void read_adrs_store_mvxy(WORK* wk, s16* adrs);
 void remake_mvxy_PoGR(WORK* wk);
@@ -161,6 +162,9 @@ void FUN_0611d732(WORK* wk, u16 ix) { // 🔵
 }
 
 void setup_butt_own_data(WORK* wk) { // 🟢
+    /* Task #64 F3 observation point -- the tree's only reader of
+     * parabora_own_table[]. See charid.c set_char_base_data. */
+    TGWP_ReadPara(wk->dm_plnum, "setup_butt_own_data");
     wk->mvxy.index = wk->dm_butt_type;
     read_adrs_store_mvxy(wk, parabora_own_table[wk->dm_plnum][wk->dm_butt_type].data[wk->weight_level]);
 }

@@ -40,6 +40,91 @@ g_random_32_calls          # pls02.c:621, same (game_state.c:2323)
 fd_engine_*                # frame-data overlay engine probes (docs/plan-frame-data-harness.md); read only by the DEBUG training overlay/trace, reset per frame in game_step_0
 fd_prev_active_cgix*       # frame-data overlay cg_ix edge-latch diagnostics, overlay-only consumers (frame_data_overlay.c)
 
+# --- super-art command telemetry revived by task #62 -----------------------
+# Task #62 made this array actually compile. pls03.c did not include the
+# generated port/build_config.h, so every `#if ENABLE_PERF_TELEMETRY` in that
+# TU silently evaluated to 0 (no -Wundef) and the counter sites compiled away.
+# Now that they compile, they advance on the harness's speculative-resim
+# frames -- rbd_speculative_advance (test/rollback_determinism.c:373) calls
+# njUserMain, which reaches check_super_arts_attack (pls03.c:436) -- and
+# load_state_from_event does not rewind them, so from the first in-battle
+# frame the rollback run reads permanently ahead of the baseline.
+#
+# Why that is benign. Verified 2026-08-24 (task #69) by inspection, not
+# asserted -- see the CORRECTION block further down for why a hand-wavy
+# justification here is worse than none:
+#
+#   1. WRITE-ONLY, AND CURRENTLY READ BY NOTHING AT ALL. Every one of the 25
+#      uses of the struct in pls03.c is a bare `+= 1` and nothing else:
+#        grep -n 'perf_command_telemetry->' pls03.c | grep -v '+= 1;'  -> empty
+#      The array's only reader is PLS03_GetSuperArtCommandTelemetry
+#      (pls03.c:58), and that function has ZERO callers anywhere in the tree
+#      (task #68) -- the declaration at pls03.h:31 and the definition are the
+#      only occurrences. The counters are therefore not "read only by a
+#      diagnostic"; they are read by no code path whatsoever.
+#
+#   2. OUTSIDE BOTH THE ROLLBACK SAVE SET AND THE DESYNC CHECKSUM. Nothing
+#      under src/netplay/ names the array, the accessor, or the
+#      PLS03_SuperArtCommandTelemetry type (grep -rn over src/netplay/ ->
+#      no matches). GameState's save set and the desync checksum are both
+#      whitelist-only (game_state.c:2107, "The checksum covers only a
+#      whitelist of gameplay-critical fields"), so a symbol no netplay
+#      translation unit mentions cannot be in either.
+#
+# WHAT WOULD INVALIDATE THIS ENTRY: any consumer of
+# PLS03_GetSuperArtCommandTelemetry -- or any direct read of the array added
+# inside pls03.c -- whose result reaches gameplay, the save set, or the
+# checksum. These counts are a function of each peer's private rollback
+# history, so two netplay peers can never agree on them; if one ever feeds
+# the simulation the correct fix is to delete the read, NOT to widen this
+# entry or add the array to GameState. Revisit this entry when that happens.
+#
+# DO NOT WIDEN. The pattern is the exact symbol, deliberately not
+# `perf_super_art_*` or `perf_*`: a glob here would also swallow the
+# perf_*_ns timers that currently show up as NOISE, and any future perf
+# static in an unrelated TU.
+#
+# The sibling symbols task #62 revived are deliberately NOT listed. Their
+# per-symbol status, read straight out of this harness's own capture streams
+# (fast mode, 1500 frames x 2 scenarios, task #69):
+#
+#   - charsel_active_effect_count (effect.c:21): EXERCISED AND CLEAN. The
+#     baseline stream carries 30 distinct hashes for it in
+#     ryu-ken-basic-exchange and 24 in makoto-sa3-super (so it really does
+#     move), and it matches the rollback run on every one of the 1500 frames
+#     in both. That is structural, not luck: it is assigned outright rather
+#     than accumulated -- charsel_active_effect_count = EFFECT_MAX - frwctr
+#     (mtrans.c:1581) -- on every rendered frame, and frwctr IS in the save
+#     set (game_state.c:1804/1871/1944/2411). It is a pure function of
+#     restored state with no independent divergence surface; if frwctr
+#     drifted, the gate would flag frwctr. Its one consumer is the DEBUG FPS
+#     overlay's sticky peak (sdl_app.c:3762-3767).
+#
+#   - charsel_frame_portrait_tiles / charsel_frame_plate_tiles
+#     (mtrans.c:45-46): LATENT IN THE FAST SCENARIOS -- be honest about this.
+#     Both hold hash 0x776ec7e3 on all 1500 frames of both fast scenarios,
+#     which is exactly hash(int32 0), i.e. the fast gate never drives the
+#     mt->id == 13 / == 14 branches that increment them and its clean verdict
+#     for them is vacuous. What keeps them safe is structural, not empirical:
+#     they accumulate during njdp2d_draw but are reset to 0 unconditionally
+#     at the top of seqsBeforeProcess (mtrans.c:1577-1578), which runs on
+#     every outer frame on both live paths (main.c:700 offline,
+#     netplay.c:1076 in-session) as well as inside every speculative advance
+#     (test/rollback_determinism.c:383). The harness hashes at frame end,
+#     after the real frame's own render, so whatever the speculative legs
+#     accumulated has already been wiped and the hashed value is a pure
+#     function of that frame's own draw list. Nothing reads them anywhere.
+#
+#   - get_perf_super_art_command_telemetry_slot (pls03.c:39): NOT A DATA
+#     SYMBOL. It is a static FUNCTION; nm reports it in (__TEXT,__text) and
+#     the driver's symbol map only admits __DATA,__data/__bss/__common
+#     (check_rollback_determinism.py:137), so it is absent from symmap.txt
+#     entirely and structurally outside this gate.
+#
+# If any of those three ever turns up DIVERGENT, that is a NEW finding and
+# must be triaged, not appended here on the strength of this block.
+perf_super_art_command_telemetry # pls03.c:37 super-art command-check counters; write-only, getter has zero callers, absent from src/netplay -- SEE BLOCK ABOVE
+
 # --- sound output sinks (research-desync-deep-investigation.md sect A.2.3) --
 # Simulation writes requests; the SPU/CRI/ADX pipeline consumes them.
 # Nothing in this class is read back by the simulation. Speculative
@@ -66,10 +151,110 @@ sa_frame                   # ui/sc_sub.c:392 SA-gauge HUD frame display state (c
 # --- loader / RAM-allocator state perturbed by speculative asset requests --
 # The speculative legs re-issue load/alloc requests the restore cannot
 # rewind (queue state is deliberately outside GameState). Real netplay
-# rollbacks perturb these identically; they are consumed by the loader,
-# not read by the simulation.
+# rollbacks perturb these identically.
+#
+# CORRECTION 2026-08-24 (task #60). This block used to end with "they are
+# consumed by the loader, not read by the simulation". That is FALSE for
+# ldreq_result and it is the reason this block hides a real desync class:
+#
+#   ldreq_result is read by Check_LDREQ_Queue_Player / _Union / _Direct
+#   (io/gd3rd.c), which gate Exit_6th (screen/sel_pl.c:1701-1722 -> Exit_No,
+#   Exit_Timer) and Bonus_Sub's stage wait (game.c:1377-1381 -> G_No, G_Timer).
+#   Exit_No/Exit_Timer/G_No/G_Timer are ALL in the rollback save set
+#   (netplay/game_state.c:456/607/453/540). Saved state is therefore derived
+#   from an allowlisted, unsaved symbol -- the textbook DIVERGENT+FEEDBACK
+#   shape, which this allowlist entry suppresses by construction.
+#
+# These entries stay, because the divergence is not fixable by save-set
+# membership: afs_handle is an index into port/io/afs.c's requests[] table
+# whose SDL_AsyncIO* and read cursor cannot be rewound, and AFS_Read is a
+# real async disk read (afs.c:366), so completion timing is wall-clock, not
+# frame-count. The empirical proof is in this harness's own output: q_ldreq,
+# rckey_work, rckey_mmobj, texgrplds, char_init_data, requests and afs all
+# appear in the A1-vs-A2 BASELINE NOISE list -- they differ between two
+# identical no-rollback runs of the same binary on the same machine. Two peers
+# cannot agree on them either, and no local save/replay scheme changes that.
+# The correct treatment is a load barrier (keep the simulation from observing
+# an in-flight LDREQ load while a session is running), not a wider save set.
+#
+# CORRECTION 2026-08-25 (task #65): asyncio_queue used to be named in that
+# list and no longer belongs in it. It is a whole-pointer static
+# (SDL_AsyncIOQueue*, port/io/afs.c:47), so it is now pointer-canonicalized in
+# the capture and holds one identical hash in every run. Its former noise
+# membership was evidence of ALLOCATOR nondeterminism -- it only ever carried
+# the queue's address, never its contents -- not of loader timing. The genuinely
+# wall-clock members above are unaffected and still noise-masked, so nothing
+# about this block's conclusion changes.
+#
+# UPDATE 2026-08-24 (task #66): that barrier now exists. Check_LDREQ_Queue()
+# (io/gd3rd.c) finishes every queued request inside the simulated frame that
+# pumped it whenever Ldreq_BarrierActive() -- i.e. whenever the GekkoNet
+# session is RUNNING. The queue is therefore empty and afs_handle is AFS_NONE
+# at every simulated-frame boundary IN NETPLAY, which makes ldreq_result a
+# pure function of the Push_LDREQ_Queue_* sequence (driven by SP_No/G_No/
+# bg_w.stage, all saved).
+#
+# These entries still stay, and this harness's verdict is unchanged, because
+# the barrier is deliberately netplay-gated: an rbd run has no session and no
+# --ldreq-barrier-force, so it takes the stock unbarriered path and these
+# symbols keep behaving exactly as described above. The barrier is validated
+# by tools/ldreq-timing (which varies loader wall-clock rather than rollback
+# cadence) -- see known limit 9 in docs/rollback-determinism-harness.md for
+# why this harness cannot do that job.
+#
+# Do NOT quietly widen this block. Candidate_Buff still diverges at
+# --rbd-select-rollback-period 1 and is deliberately left unallowlisted.
+#
+# UPDATE 2026-08-25 (task #69): plt_req IS now allowlisted, below, and it is
+# the only member of this block admitted on a positive reachability proof
+# rather than on "the loader owns it". The refusal it replaces was correct
+# for its time -- nobody had measured it. What was measured:
+#
+#   VALUE. plt_req[id] is written only by Push_LDREQ_Queue_Player
+#   (io/gd3rd.c:384), which sets it to the character whose requests it
+#   enqueues in the same call. Every call site reachable in MODE_NETWORK
+#   passes My_char[id] (sel_pl.c:790, :996, win.c:178, menu.c:1571-1572,
+#   ranking.c:330-331) and My_char is GS_SAVE'd (game_state.c:232/972). The
+#   only site that passes anything else -- Push_LDREQ_Queue_Player(COM_id,
+#   17), next_cpu.c:958 -- sits under Game05, entered solely from the
+#   `default:` arm of Game03's Mode_Type switch (game.c:817), which
+#   `case MODE_VERSUS: case MODE_NETWORK:` divert past at game.c:786-787.
+#   So the divergence is a PHASE LEAD of a value both timelines agree on:
+#
+#     plt_req1  no-rollback  0 -> 11 at frame 210
+#     plt_req1  rollback(8)  0 -> 11 at frame 208
+#
+#   ORDER. The only reader reachable during character select is Exit_6th
+#   (sel_pl.c:1701-1706) via Check_PL_Load (sys_sub.c:899) ->
+#   Check_LDREQ_Queue_Player (gd3rd.c:780-786). Exit_6th is dispatched only
+#   at Exit_No == 5 (sel_pl.c:1551-1553), and Exit_No leaves 0 only through
+#   Exit_1st (sel_pl.c:1556-1562), which returns early unless BOTH
+#   operator-active players have Sel_Arts_Complete < 0 (set at sel_pl.c:865,
+#   strictly downstream of the PL_Sel_1st push at sel_pl.c:788-790, itself
+#   downstream of the Sel_PL_3rd confirm push at sel_pl.c:984-996).
+#   Sel_PL_Complete / Sel_Arts_Complete / Exit_No / SP_No are all saved
+#   (game_state.c:253/993, 550/1290, 456/1196, 457/1197), so both peers
+#   agree on that ordering exactly. The confirmed-timeline write therefore
+#   always lands before the reader can be dispatched.
+#
+#   EVIDENCE. tools/ldreq-timing's per-frame trace driven by --rbd-*
+#   rollback injection instead of injected AFS latency, 1500 frames, both
+#   fast scenarios x barrier off/forced-on x select period 8 and the
+#   adversarial period 1, select depth 8, ASLR off, pinned RNG. plt_req
+#   diverges on 2 frames (period 8) / 7 frames (period 1) per slot; every
+#   SAVED column (G_No[0..3], G_Timer, Exit_No, Exit_Timer) is
+#   byte-identical on all 1500 frames in all TWELVE rollback-vs-baseline
+#   comparisons (2 scenarios x barrier off/on x select {d8p8, d2p8, d8p1});
+#   and
+#   Exit_No first reaches 5 at frame 317 in all SIXTEEN traces -- 108 frames
+#   after the window closes.
+#
+#   VOIDING CONDITION. Add a reader of plt_req, Check_PL_Load or
+#   Check_LDREQ_Clear inside character select before Exit_No leaves 0 and
+#   this entry is wrong. Delete it and re-open the finding; do not widen it.
 afs_handle                 # AFS async file-system handle bookkeeping
-ldreq_result               # io/gd3rd.c load-request result slots
+plt_req                    # io/gd3rd.c:162 pending-load character latch — phase lead of a saved value (My_char), read only by Exit_6th which cannot be dispatched until after the confirmed-timeline write. SEE THE PROOF ABOVE
+ldreq_result               # io/gd3rd.c load-request result slots — SEE CORRECTION ABOVE
 rckeyctr                   # system/ramcnt.c RAM-key allocator counter
 rckeymin                   # system/ramcnt.c RAM-key allocator low-water mark
 rckeyque                   # system/ramcnt.c RAM-key allocator queue

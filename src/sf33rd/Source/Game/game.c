@@ -61,6 +61,7 @@
 #include "sf33rd/Source/Game/ui/sc_sub.h"
 #include "sf33rd/Source/PS2/mc/savesub.h"
 #include "structs.h"
+#include "test/texgroup_window_probe.h"
 
 #include <SDL3/SDL.h>
 
@@ -163,6 +164,11 @@ void Game_Task(struct _TASK* task_ptr) {
         if (nowSoftReset() == 0) {
             Main_Jmp_Tbl[G_No[0]](task_ptr);
         }
+
+        /* Task #64: counts executed game-logic frames. system_timer is
+         * not usable for that -- a rollback resim rewinds it -- and the
+         * F3 question is posed in frames of game logic. */
+        TGWP_LogicTick();
 
         {
             const Uint64 _d0 = SDL_GetTicksNS();

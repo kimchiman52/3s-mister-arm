@@ -13,6 +13,16 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 option(PORT_MISTER "Enable MiSTer-oriented build profile" OFF)
 option(ENABLE_PERF_TELEMETRY "Enable perf telemetry capture and perf-focused CLI surface" ON)
 
+# Task #64 measurement instrument (src/test/texgroup_window_probe.c).
+# OFF by default and it must stay that way: the probe keeps file-scope
+# counters that land inside the rollback-determinism harness's hashed
+# data image, so an ON build reports them as DIVERGENT symbols and turns
+# `tools/rollback-determinism/run.sh` red for reasons that have nothing
+# to do with the simulation. Turn it on only for a measurement run:
+#   cmake -B build/host -DENABLE_TEXGROUP_WINDOW_PROBE=ON
+option(ENABLE_TEXGROUP_WINDOW_PROBE
+       "Instrument the texgroup case-2 reclaim window and getObjectHeight ok==0 returns (task #64)" OFF)
+
 set(_ENABLE_NETPLAY_DEFAULT ON)
 set(_ENABLE_ISO_IMPORT_DEFAULT ON)
 set(_ENABLE_FFMPEG_ADX_DEFAULT ON)
@@ -69,6 +79,7 @@ endif()
 
 message(STATUS "PORT_MISTER=${PORT_MISTER}")
 message(STATUS "ENABLE_PERF_TELEMETRY=${ENABLE_PERF_TELEMETRY}")
+message(STATUS "ENABLE_TEXGROUP_WINDOW_PROBE=${ENABLE_TEXGROUP_WINDOW_PROBE}")
 message(STATUS "ENABLE_NETPLAY=${ENABLE_NETPLAY}")
 message(STATUS "ENABLE_ISO_IMPORT=${ENABLE_ISO_IMPORT}")
 message(STATUS "ENABLE_FFMPEG_ADX=${ENABLE_FFMPEG_ADX}")

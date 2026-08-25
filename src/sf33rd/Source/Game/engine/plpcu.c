@@ -18,6 +18,7 @@
 #include "sf33rd/Source/Game/engine/pls02.h"
 #include "sf33rd/Source/Game/io/pulpul.h"
 #include "sf33rd/Source/Game/rendering/mtrans.h"
+#include "test/texgroup_window_probe.h"
 
 void setup_caught_process_flags(PLW* wk);
 void caught_cg_type_check(PLW* wk, PLW* emwk);
@@ -233,6 +234,8 @@ void caught_cg_type_check(PLW* wk, PLW* emwk) { // 🟡
 }
 
 s32 check_tsukamare_keizoku_check(PLW* wk, PLW* emwk) { // 🟡
+    TGWP_TsukamareEnter();
+
     if (!emwk->tsukami_f) {
         wk->wu.routine_no[1] = 1;
         wk->wu.routine_no[2] = 88;
@@ -248,9 +251,11 @@ s32 check_tsukamare_keizoku_check(PLW* wk, PLW* emwk) { // 🟡
             }
         }
 
+        TGWP_TsukamareExit();
         return 1;
     }
 
+    TGWP_TsukamareExit();
     return 0;
 }
 

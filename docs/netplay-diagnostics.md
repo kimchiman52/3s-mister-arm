@@ -187,6 +187,41 @@ Two log markers in `last-run.log` (or `backend.log`) come from
   dereference at addr 0. Function returns 0 (load-failed) in both
   cases.
 
+- `[mtrans-skip] patcash_acquire ...` — gated behind
+  `ENABLE_PERF_TELEMETRY`. Emitted from
+  `src/sf33rd/Source/Game/rendering/mtrans.c` when the 64-entry ext
+  pattern collection cannot supply an instance, in two flavours:
+  `live-list-full kazu=64` (the live list is at capacity) and
+  `no-dead-instance kazu=N` (nothing is expired). Pre-fix there was no
+  guard at all: the append ran unchecked into `adr[64]`, which is
+  `&patt[0]` to the byte on both ABIs, and `get_free_patcash_index`
+  handed back a still-live `patt[0]` on exhaustion. The result was a
+  wild pointer in the live list that `texture_cash_update()` then
+  wrote through, plus a permanent x16/x32 slot leak. The sprite is now
+  dropped for one frame instead. If you see this in the wild, one
+  character or effect vanished for a frame — and something is putting
+  65 distinct cg codes on one texture cache, which is worth chasing.
+
+- `[texcash-skip] <func> ...` — gated behind `ENABLE_PERF_TELEMETRY`.
+  Emitted from `src/sf33rd/Source/Game/rendering/texcash.c` for the
+  three arcade `do{...}while(1)` traps in the ext cache:
+  * `x16-refcount-underflow` / `x32-refcount-underflow slot=N time=-1
+    ... (clamped to 0)` — a slot's refcount went negative, i.e. it was
+    released more times than it was acquired. Was `CACHE MISS x16/x32`
+    plus an infinite loop. The slot is clamped to the fully-released
+    value 0 and the release completes.
+  * `mapping-miss num=N i=N map16=... cp16=... (resynced from map;
+    release proceeds)` — an expiring instance's `x16`/`x32` tally
+    disagrees with its own `map`. Was `MAPPING MISS` plus an infinite
+    loop. The tally is restored from the map (the map is the
+    authoritative record of what was acquired) and the release still
+    runs, deliberately: skipping it would strand every slot the
+    instance holds.
+  `Debug_w[11]` is still set in all three cases, so the on-screen
+  free-area report and `search_texcash_free_area()` keep reporting.
+  `--test-texcash-bounds` (Debug build with `-DENABLE_NETPLAY_TESTS`)
+  exercises all three guards and their neutralizations.
+
 ## MIST handshake version gate — what it does and does not guarantee
 
 Before GekkoNet starts, peers exchange a `MIST` hello carrying

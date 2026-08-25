@@ -82,7 +82,7 @@ typedef struct TestRunnerConfiguration {
      * prediction). Default 3. */
     int rbd_rollback_depth;
     /* Character-select-phase cycle cadence. Select is covered separately
-     * and GENTLY (default period 8, depth clamped to 2) because
+     * and at a GENTLE CADENCE (default period 8) because
      * every-frame cycles across select straddle one-shot ppg asset
      * setups and hit the crash-class arcade traps
      * (ppgSetupPalChunk hang / ppgSetupTexChunkSeqs NULL deref) — a
@@ -92,19 +92,54 @@ typedef struct TestRunnerConfiguration {
      * rbd_rollback_period > 0. */
     int rbd_select_rollback_period;
 
-    /* Maximum speculative depth for character-select-phase cycles.
-     * Defaults to 2, which is the value this phase was historically
-     * hard-clamped to. The clamp existed because deeper select cycles
-     * tripped the crash-class arcade traps described above; task 50 fixed
-     * the ppgSetupTexChunkSeqs NULL-deref member of that class, and the
-     * neutralization matrix for it runs at 8 to match production's
-     * input_prediction_window default (netplay.c:903-905).
+    /* Speculative depth for character-select-phase cycles. Defaults to 8,
+     * matching production's input_prediction_window default
+     * (netplay.c:903-905), so the shared gate probes select at the depth
+     * GekkoNet actually predicts to rather than a quarter of it.
      *
-     * Kept at 2 by default so the shared harness gate keeps its existing
-     * cadence; raise it to reproduce or regression-test select-phase
-     * rollback bugs at production depth. Clamped to rbd_rollback_depth,
-     * which bounds every phase. */
+     * INDEPENDENT of rbd_rollback_depth (task #63). It used to be
+     * min(rbd_rollback_depth, this) — and before that a hard clamp to 2 —
+     * which meant the in-game knob silently capped select coverage and the
+     * only way to reach select depth 8 was to raise the IN-GAME depth to 8
+     * too, changing what the in-game half measures and walking into the
+     * crash class in docs/rollback-determinism-harness.md known limit 1.
+     * The two knobs bound different risks, so they are now separate. */
     int rbd_select_rollback_depth;
+
+    /* === Loader-timing invariance instrument (task #66) ===
+     * See src/test/ldreq_timing_trace.h and
+     * tools/ldreq-timing/check_ldreq_timing.py. */
+
+    /* Write one CSV row per outer frame describing the saved state the
+     * LDREQ loader feeds plus the loader's own observable surface. */
+    const char* ldreq_trace_path;
+
+    /* Row count, then flush + clean exit. Required with ldreq_trace_path. */
+    int ldreq_trace_frames;
+
+    /* === Per-slot LDREQ queue residue probe (task #69.2) ===
+     * Side-channel companion to ldreq_trace_path: one CSV row per
+     * (frame, q_ldreq slot) carrying every field of the REQ plus a
+     * pointer-normalised raw byte image of the slot. Written to a
+     * SEPARATE file on purpose — the barrier's timing-invariance gate
+     * (check_ldreq_timing.py) compares whole rows of the main trace, and
+     * folding 16 slots into it would change that gate's meaning. Requires
+     * ldreq_trace_path (it shares its frame budget and its exit hook).
+     * Analysed by tools/ldreq-timing/check_slot_residue.py. */
+    const char* ldreq_slot_trace_path;
+
+    /* Force Ldreq_BarrierActive() true without a live GekkoNet session,
+     * so the barrier can be exercised from an offline test-runner scene.
+     * Omitting it is the instrument's built-in neutralization: the same
+     * binary then takes the unbarriered path and the comparison must go
+     * red. */
+    bool ldreq_barrier_force;
+
+    /* Hold back the OBSERVED completion of every async AFS read by this
+     * many milliseconds (AFS_SetInjectedLatencyMs, port/io/afs.h). This
+     * is the independent variable: two runs differing only in this value
+     * stand in for two peers whose disks differ. */
+    int afs_inject_latency_ms;
 } TestRunnerConfiguration;
 
 #if ENABLE_PERF_TELEMETRY
@@ -188,6 +223,13 @@ typedef struct Configuration {
      * ENABLE_NETPLAY_TESTS, otherwise the stub returns 2. Pure
      * in-process — no session, no sockets. */
     bool test_gs_coverage;
+    /* Tasks #59/#61: when true, main() runs the ext texture-cache
+     * brick-prevention harness (src/test/test_texcash_bounds.c) and exits.
+     * Honors --test-texcash-bounds. Parsed unconditionally; the real body is
+     * gated on ENABLE_NETPLAY_TESTS only -- it touches no netplay code, so it
+     * does not need ENABLE_NETPLAY. Pure in-process: no session, no sockets,
+     * no SDL window. */
+    bool test_texcash_bounds;
 } Configuration;
 
 #endif

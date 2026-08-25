@@ -9,10 +9,17 @@ full design and how to read the output.
 Per scenario it runs the game binary three times with identical
 deterministic inputs (test runner scene preset + pinned RNG):
 
-  A1, A2  baseline: straight-line simulation, no rollbacks
+  A1, A2  baseline: straight-line simulation, no rollbacks. A2 additionally
+          carries a deliberate address-layout perturbation (NOISE_PAD_ENV)
+          so the noise control below is a valid control rather than a coin
+          flip -- see that constant, and RBD_PTR_TOKEN in
+          src/test/rollback_determinism.c, for the #65 write-up.
   B       rollback: every --rollback-period frames the game additionally
           performs save -> speculative-resimulate(depth) -> load through
-          the PRODUCTION save_state()/load_state_from_event() path
+          the PRODUCTION save_state()/load_state_from_event() path.
+          Character select uses its own independent depth
+          (--select-rollback-depth), because production predicts 8 frames
+          ahead there and the gate used to probe it at 2.
 
 Each run hashes every writable data/bss symbol once per frame (symbol map
 generated here from nm on the exact binary) into a stream file. Then:
@@ -51,8 +58,37 @@ import tempfile
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, "..", ".."))
 
-STREAM_MAGIC = 0x31444252  # "RBD1"
+STREAM_MAGIC = 0x32444252  # "RBD2" (bumped when the footer gained ptr_canon)
 FOOTER_MAGIC = 0x46444252  # "RBDF"
+FOOTER_BYTES = 24  # magic, frames, cycles, ingame_first, ptr_canon, completed
+
+# Environment variable set ONLY on the A2 baseline, to make the A1-vs-A2
+# noise control a valid control for stack/argv/env-valued symbols (task #65).
+#
+# The value is never read by the game — it exists purely for its SIZE. The
+# initial process stack sits beneath the argv/envp string block, so
+# lengthening the environment provably moves the stack, the argv strings and
+# the env strings. Measured on this host through the driver's own spawn path
+# (12 runs unpadded vs 12 runs with a 64-byte pad, probe binary): unpadded
+# runs took only TWO distinct stack addresses (0x16fdfe0fc / 0x16fdfe10c —
+# about one bit of entropy, so a 57% chance that two runs coincide), while
+# padded runs took a third value disjoint from both, with ZERO overlap
+# between the padded and unpadded sets on any of stack / argv[0] / envp.
+#
+# Without this, a symbol holding an argv or stack address is excluded as
+# NOISE only when the two baselines happen to land on different values — 43%
+# of the time. `configuration` (which holds const char* into argv) is the
+# documented example, and it only stayed benign because it carries an
+# allowlist entry of its own; a symbol without one would surface as a false
+# DIVERGENT exactly the way the four port/ pointers in #65 did. With the pad
+# the two baselines can never agree on those addresses, so the exclusion is
+# structural instead of a coin flip.
+#
+# This does NOT cover heap addresses (the pad cannot move mmap placements);
+# those are handled in the capture itself — see RBD_PTR_TOKEN in
+# src/test/rollback_determinism.c.
+NOISE_PAD_ENV = "RBD_ADDRESS_LAYOUT_PAD"
+NOISE_PAD_BYTES = 64
 
 # Scenario = (name, extra game args). Every scenario boots through title /
 # menu / character select (rollback cycles active from character select
@@ -209,14 +245,20 @@ def load_map(map_path):
 # --- stream files ----------------------------------------------------------
 
 class Stream:
-    __slots__ = ("sym_count", "rows", "frames", "cycles", "ingame_first")
+    __slots__ = ("sym_count", "rows", "frames", "cycles", "ingame_first",
+                 "ptr_canon")
 
-    def __init__(self, sym_count, rows, frames, cycles, ingame_first):
+    def __init__(self, sym_count, rows, frames, cycles, ingame_first, ptr_canon):
         self.sym_count = sym_count
         self.rows = rows          # list[bytes], each sym_count*4 bytes
         self.frames = frames
         self.cycles = cycles
         self.ingame_first = ingame_first
+        # How many symbols the capture's whole-pointer canonicalization rule
+        # fired on (RBD_PTR_TOKEN in src/test/rollback_determinism.c). Carried
+        # so run_scenario can cross-check the three runs against each other —
+        # nothing this harness suppresses is allowed to be invisible.
+        self.ptr_canon = ptr_canon
 
 
 def read_stream(path):
@@ -233,22 +275,23 @@ def read_stream(path):
     while off + row_bytes <= len(data):
         # Peek: is this the footer instead of a row?
         (maybe_magic,) = struct.unpack_from("<I", data, off)
-        if maybe_magic == FOOTER_MAGIC and off + 20 == len(data):
+        if maybe_magic == FOOTER_MAGIC and off + FOOTER_BYTES == len(data):
             break
         frame_idx = maybe_magic
         if frame_idx != len(rows):
             raise ScenarioError(f"stream {path}: frame index {frame_idx} at row {len(rows)} — corrupt stream")
         rows.append(data[off + 4:off + row_bytes])
         off += row_bytes
-    if off + 20 != len(data):
+    if off + FOOTER_BYTES != len(data):
         raise ScenarioError(f"stream {path}: missing/short footer — run died before completing "
              f"(rows={len(rows)}, trailing={len(data) - off} bytes)")
-    magic, frames, cycles, ingame_first, completed = struct.unpack_from("<IIIII", data, off)
+    magic, frames, cycles, ingame_first, ptr_canon, completed = struct.unpack_from(
+        "<IIIIII", data, off)
     if magic != FOOTER_MAGIC or completed != 1:
         raise ScenarioError(f"stream {path}: bad footer (magic={magic:#x} completed={completed})")
     if frames != len(rows):
         raise ScenarioError(f"stream {path}: footer frames={frames} but rows={len(rows)}")
-    return Stream(sym_count, rows, frames, cycles, ingame_first)
+    return Stream(sym_count, rows, frames, cycles, ingame_first, ptr_canon)
 
 
 # --- game runs -------------------------------------------------------------
@@ -316,17 +359,31 @@ def wait_with_timeout(pid, timeout, log_path):
 
 
 def run_game(binary, base_args, extra_args, out_path, map_path, frames,
-             period, depth, timeout, log_path):
+             period, depth, select_period, select_depth, timeout, log_path,
+             address_layout_pad=False):
     args = [binary, "--test-enable", "--test-pin-rng",
             "--rbd-capture", out_path, "--rbd-symmap", map_path,
             "--rbd-frames", str(frames)]
     if period > 0:
+        # The select-phase knobs are passed EXPLICITLY rather than inherited
+        # from the game's compiled-in defaults (task #63). They only matter
+        # when rollbacks are enabled at all, so they ride with the in-game
+        # pair. Passing them means the depth the gate actually exercises at
+        # character select is visible in the per-run log and in the RBD
+        # SUMMARY line, and cannot drift silently if a default changes.
         args += ["--rbd-rollback-period", str(period),
-                 "--rbd-rollback-depth", str(depth)]
+                 "--rbd-rollback-depth", str(depth),
+                 "--rbd-select-rollback-period", str(select_period),
+                 "--rbd-select-rollback-depth", str(select_depth)]
     args += base_args + extra_args
     env = dict(os.environ)
     env["SDL_VIDEODRIVER"] = "dummy"
     env["SDL_AUDIODRIVER"] = "dummy"
+    if address_layout_pad:
+        # See NOISE_PAD_ENV. Inert to the game; present only to shift the
+        # initial stack / argv / envp addresses so the noise control is a
+        # valid control for symbols that store one.
+        env[NOISE_PAD_ENV] = "x" * NOISE_PAD_BYTES
     with open(log_path, "w") as logf:
         if platform.system() == "Darwin":
             pid = spawn_no_aslr_darwin(args, env, logf.fileno(), REPO_ROOT)
@@ -553,9 +610,13 @@ def run_scenario(name, extra, args, outdir, map_path, frames, entries,
             log(f"scenario {name}: {'baseline ' + run_name if period == 0 else 'rollback B'}")
         out = os.path.join(outdir, f"{name}.{run_name}.rbd")
         runlog = os.path.join(outdir, f"{name}.{run_name}.log")
-        runs[run_name] = run_game(args.binary, [], extra, out, map_path,
+        runs[run_name] = run_game(args.binary, [], extra + list(args.game_arg),
+                                  out, map_path,
                                   frames, period, args.rollback_depth,
-                                  args.timeout, runlog)
+                                  args.select_rollback_period,
+                                  args.select_rollback_depth,
+                                  args.timeout, runlog,
+                                  address_layout_pad=(run_name == "A2"))
 
     b = runs["B"]
     if b.cycles == 0:
@@ -564,6 +625,22 @@ def run_scenario(name, extra, args, outdir, map_path, frames, entries,
     if b.ingame_first == 0xFFFFFFFF:
         raise ScenarioError(f"run never reached in-game (G_No[1]==2) "
                             f"within {frames} frames")
+
+    # The capture replaces whole-pointer statics with a fixed token instead of
+    # hashing the address (RBD_PTR_TOKEN, src/test/rollback_determinism.c).
+    # That is a deliberate suppression, so it is cross-checked rather than
+    # trusted: all three runs should fire the rule on the same number of
+    # symbols. A mismatch is legitimate in one specific case — a pointer that
+    # is NULL in one run and set in another, which the rule deliberately still
+    # lets diverge — so this warns with the per-symbol evidence rather than
+    # failing. The names are in each run's .log ("pointer-canonicalized ...").
+    canon = {k: v.ptr_canon for k, v in runs.items()}
+    if len(set(canon.values())) != 1:
+        log(f"WARNING scenario {name}: the three runs canonicalized different "
+            f"numbers of whole-pointer statics ({canon}) — grep the per-run "
+            f".log files in {outdir} for 'pointer-canonicalized' to see which "
+            f"symbol differs, and check whether it is a genuine NULL/non-NULL "
+            f"transition before treating it as benign")
 
     noise = diff_streams(runs["A1"], runs["A2"])
     div = diff_streams(runs["A1"], b)
@@ -626,6 +703,38 @@ def run_scenario(name, extra, args, outdir, map_path, frames, entries,
             "noise_symbols": noise_names, "rows": rows}
 
 
+def reconcile_cross_scenario_noise(report):
+    """Reclassify DIVERGENT rows that another scenario's baselines proved to be
+    baseline-nondeterministic. Mutates `report` in place (row verdicts and each
+    scenario's `divergent` count) and returns [(scenario, row, proof)].
+
+    Split out of main() so it can be exercised directly against a stored
+    report.json — see the #65 write-up in docs/rollback-determinism-harness.md
+    for why "it did not reproduce" is not an acceptable test for this.
+    """
+    global_noise = set()
+    for sc in report["scenarios"]:
+        global_noise.update(sc.get("noise_symbols", []))
+
+    reconciled = []
+    for sc in report["scenarios"]:
+        own_noise = set(sc.get("noise_symbols", []))
+        for row in sc.get("rows", []):
+            # DIVERGENT only: DIVERGENT+FEEDBACK is never reconciled away.
+            if row["verdict"] != "DIVERGENT":
+                continue
+            if row["symbol"] in own_noise or row["symbol"] not in global_noise:
+                continue
+            proof = sorted(o["name"] for o in report["scenarios"]
+                           if row["symbol"] in set(o.get("noise_symbols", [])))
+            row["verdict"] = "UNSTABLE"
+            row["reason"] = ("baseline-nondeterministic in " + ", ".join(proof) +
+                             " — this scenario's two baselines coincided")
+            sc["divergent"] -= 1
+            reconciled.append((sc["name"], row, proof))
+    return reconciled
+
+
 # --- main ------------------------------------------------------------------
 
 def main(argv):
@@ -636,11 +745,40 @@ def main(argv):
     ap.add_argument("--mode", choices=["fast", "thorough"], default="fast")
     ap.add_argument("--frames", type=int, default=None,
                     help="frames per run (default: 1500 fast, 2400 thorough)")
-    ap.add_argument("--rollback-period", type=int, default=1)
-    ap.add_argument("--rollback-depth", type=int, default=3)
+    ap.add_argument("--rollback-period", type=int, default=1,
+                    help="in-game cycle period (default 1 = every frame)")
+    ap.add_argument("--rollback-depth", type=int, default=3,
+                    help="in-game speculative depth (default 3)")
+    # Character-select knobs. These are game flags, but the driver now owns
+    # them and passes them explicitly (task #63) instead of letting the gate
+    # inherit whatever src/main.c happens to default to.
+    #
+    # Depth 8 is production's GekkoNet input_prediction_window default
+    # (netplay.c:903-905) — the gate used to run select at 2, a quarter of the
+    # real window, which is enough to certify a fix whose load-bearing half
+    # has been deleted (the task-50 duplicate-load leak changes which guard
+    # matters between depth 2 and depth >= 3).
+    #
+    # Period stays at 8 and is NOT a stand-in for depth: it is the documented
+    # dodge for the crash-class ppg asset-setup traps in known limit 1, and
+    # period 1 is a separately-tracked OPEN RED. Depth and cadence bound
+    # different things.
+    ap.add_argument("--select-rollback-period", type=int, default=8,
+                    help="character-select cycle period (default 8; 0 disables "
+                         "select-phase cycles)")
+    ap.add_argument("--select-rollback-depth", type=int, default=8,
+                    help="character-select speculative depth (default 8 = "
+                         "production's input_prediction_window). Independent of "
+                         "--rollback-depth.")
     ap.add_argument("--timeout", type=int, default=900, help="per-run timeout (s)")
     ap.add_argument("--outdir", default=None, help="work dir (default: mktemp)")
     ap.add_argument("--allowlist", default=os.path.join(SCRIPT_DIR, "allowlist.txt"))
+    # Passthrough for game-side flags the driver does not model. Appended to
+    # every run of every scenario, baselines included, so A1/A2/B stay
+    # comparable.
+    ap.add_argument("--game-arg", action="append", default=[],
+                    help="extra argument passed verbatim to the game binary "
+                         "(repeatable; applied to A1, A2 and B alike)")
     ap.add_argument("--keep", action="store_true", help="keep work dir on success")
     ap.add_argument("--scenario", action="append", default=None,
                     help="run only scenarios whose name matches this fnmatch "
@@ -678,6 +816,8 @@ def main(argv):
     report = {"mode": args.mode, "frames": frames,
               "rollback_period": args.rollback_period,
               "rollback_depth": args.rollback_depth,
+              "select_rollback_period": args.select_rollback_period,
+              "select_rollback_depth": args.select_rollback_depth,
               "scenarios": []}
     total_divergent = 0
     total_feedback = 0
@@ -701,10 +841,66 @@ def main(argv):
             continue
 
         report["scenarios"].append(scenario_result)
-        total_divergent += scenario_result["divergent"]
-        total_feedback += scenario_result["feedback"]
         total_noise += scenario_result["noise"]
         total_allowlisted += scenario_result["allowlisted"]
+
+    # --- cross-scenario noise reconciliation (task #65) --------------------
+    #
+    # The per-scenario noise control is TWO samples of "is this symbol
+    # nondeterministic between processes". Two samples is enough for state
+    # that always differs, and not enough for state that differs *most* of
+    # the time — which is what wall-clock-driven state does. Measured: over
+    # four fast-mode invocations of the same binary, `bgm_exe`
+    # (BGMExecution, sound3rd.c:44 — eleven s16/u16 fields, NO pointers, so
+    # the capture's pointer canonicalization cannot help it) came out NOISE
+    # in three and DIVERGENT in one. It is driven by BGM_Server, a
+    # once-per-real-frame global (known limit 8), so its baselines usually
+    # disagree and occasionally coincide. That is a false FAIL of exactly
+    # the shape #65 is about.
+    #
+    # The run already holds the evidence to settle it and was throwing it
+    # away: every scenario contributes its own pair of baselines, and a
+    # symbol that is baseline-nondeterministic is so because of how the
+    # process runs, not because of which characters were picked. So a
+    # symbol another scenario's baselines PROVED nondeterministic is not
+    # reported as a finding here. This uses more of the run's own measured
+    # evidence than the two samples the verdict used before; it is not an
+    # allowlist (no permanence, no per-symbol reason, nothing hand-written)
+    # and nothing is hidden — every reconciled row is printed below with
+    # both sides of the evidence and counted as `unstable=` in the summary.
+    #
+    # HONEST BOUND, because this one is a probability reduction and NOT the
+    # structural argument that covers address-valued symbols: with the two
+    # fast scenarios it takes four coinciding baselines instead of two to
+    # produce a false FAIL. It does not make that impossible. Wall-clock
+    # state has no structural test — you cannot canonicalize a timer without
+    # destroying the signal — so this class is narrowed, not closed.
+    #
+    # DIVERGENT+FEEDBACK is deliberately NOT reconciled. A GS_SAVE-covered
+    # symbol drifting is the sharpest signal this harness produces, and
+    # run_scenario already warns separately when a saved symbol is
+    # baseline-noisy. Losing one of those to a cross-scenario inference is a
+    # worse trade than a rerun.
+    reconciled = reconcile_cross_scenario_noise(report)
+
+    if reconciled:
+        print("\n=== cross-scenario noise reconciliation ===")
+        for scen, row, proof in reconciled:
+            print(f"  UNSTABLE           {row['symbol']:<40} addr={row['addr']} "
+                  f"size={row['size']} first={row['first_frame']} "
+                  f"last={row['last_frame']} frames={row['divergent_frames']}")
+            print(f"    diverged in {scen}; proven baseline-nondeterministic by "
+                  f"{', '.join(proof)}")
+        print("  These are NOT counted as findings. If a symbol you expected to be "
+              "a real finding\n  shows up here, that is a signal in itself — it "
+              "means it is also baseline-noisy,\n  so this harness cannot "
+              "adjudicate it (known limit 2).")
+
+    for sc in report["scenarios"]:
+        total_divergent += sc.get("divergent", 0)
+        total_feedback += sc.get("feedback", 0)
+
+    report["unstable"] = len(reconciled)
 
     report_path = os.path.join(outdir, "report.json")
     with open(report_path, "w") as f:
@@ -719,8 +915,11 @@ def main(argv):
         verdict = "PASS"
     print(f"\nRBD SUMMARY: mode={args.mode} scenarios={len(scenarios)} "
           f"frames={frames} period={args.rollback_period} depth={args.rollback_depth} "
+          f"select_period={args.select_rollback_period} "
+          f"select_depth={args.select_rollback_depth} "
           f"divergent={total_divergent} feedback={total_feedback} "
           f"allowlisted={total_allowlisted} noise={total_noise} "
+          f"unstable={report['unstable']} "
           f"errors={total_errors} verdict={verdict}")
 
     if verdict == "PASS" and not args.keep and args.outdir is None:
