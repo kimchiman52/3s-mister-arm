@@ -109,16 +109,34 @@ case "$PROFILE" in
 esac
 
 dep_artifact_ok() {
-    # Desktop/host profile: artifacts are host-arch by definition and there is
-    # nothing to cross-check, so return success without touching the file.
-    # This keeps `--profile desktop` behaviour byte-for-byte unchanged.
-    [ -n "$dep_expected_elf_machine" ] || return 0
-
     local artifact="$1"
 
+    # EXISTENCE IS NOT AN ARCHITECTURE QUESTION, so it is tested on every
+    # profile, ahead of the desktop early-out below.
+    #
+    # Task #74: the early-out used to come FIRST. On `--profile desktop` the
+    # function therefore returned 0 without ever looking at $artifact, so an
+    # empty third_party/tf-psa-crypto/build/ satisfied the call site's
+    # `[ -d "$TF_PSA_CRYPTO_BUILD" ] && dep_cache_valid ...` (line ~877),
+    # build-deps.sh printed "tf-psa-crypto already built", and the game build
+    # died later on a missing psa/crypto.h. That is the same shape as the
+    # defect this guard was written to fix in #52 -- a check that tests the
+    # wrong thing and reports success -- merely on the other profile.
+    #
+    # `-s` (exists AND non-empty) rather than `-f`, because a truncated or
+    # zero-byte library is a broken cache too: the desktop-reachable SDL3
+    # guard tests only `ls libSDL3.so*`, and SDL3_net/minizip-ng test only
+    # that the build DIRECTORY exists, so a 0-byte file passes every one of
+    # those call sites. Centralising the test here covers all of them.
     if [ ! -s "$artifact" ]; then
         return 1
     fi
+
+    # Desktop/host profile: artifacts are host-arch by definition and there is
+    # nothing to cross-check, so return success without inspecting the file's
+    # ARCHITECTURE. `--profile desktop` still never runs readelf and can still
+    # never be rejected on arch grounds -- only on the existence test above.
+    [ -n "$dep_expected_elf_machine" ] || return 0
 
     if ! command -v readelf >/dev/null 2>&1; then
         echo "ERROR: readelf not found; cannot verify target architecture of" >&2
@@ -168,6 +186,23 @@ dep_cache_valid() {
     if dep_artifact_ok "$artifact"; then
         return 0
     fi
+
+    # Missing-or-empty is a cache MISS, not an architecture mismatch, and it
+    # is the only way the guard can fail on --profile desktop (task #74).
+    # Report it separately: the arch wording below would print the empty
+    # $dep_expected_elf_machine as "is not ELF32/" on desktop, and would run
+    # readelf, which is not installed on a macOS host.
+    if [ ! -s "$artifact" ]; then
+        if [ -e "$artifact" ]; then
+            echo "NOTE: $name cache at $artifact exists but is empty" >&2
+            echo "      (0 bytes). Discarding it and rebuilding." >&2
+        else
+            echo "NOTE: $name cache directory is present but $artifact" >&2
+            echo "      is missing. Discarding it and rebuilding." >&2
+        fi
+        return 1
+    fi
+
     if [ -e "$artifact" ]; then
         local detail
         # A wrong-arch ELF still has Class:/Machine: lines worth printing. A
