@@ -100,6 +100,7 @@ Configuration configuration = {
             .rbd_select_rollback_depth = 8,
             .ldreq_trace_path = NULL,
             .ldreq_trace_frames = 0,
+            .ldreq_slot_trace_path = NULL,
             .ldreq_barrier_force = false,
             .afs_inject_latency_ms = 0,
         },

@@ -869,6 +869,17 @@ static NET_DatagramSocket* acquire_active_socket(void) {
 
 static void configure_gekko() {
     GekkoConfig config;
+
+#if ENABLE_PERF_TELEMETRY
+    /* Task #69.3 — session-start skew. This is the last moment before the
+     * rollback engine exists, and the LDREQ barrier is still OFF here
+     * (Ldreq_BarrierActive() keys on NETPLAY_SESSION_RUNNING, gd3rd.c:510,
+     * and this line runs while session_state is still TRANSITIONING). If
+     * two peers can hold different loader state at this instant, this is
+     * where it shows. */
+    Ldreq_LogSessionProbe("configure-gekko", s_last_advance_frame);
+#endif
+
     SDL_zero(config);
 
     config.num_players = PLAYER_COUNT;
@@ -1205,6 +1216,14 @@ static void process_session() {
             SDL_Log("[netplay sess=%08x] event=session-started frame=%d",
                     s_session_uuid, s_last_advance_frame);
             session_state = NETPLAY_SESSION_RUNNING;
+#if ENABLE_PERF_TELEMETRY
+            /* Task #69.3 — the exact line the LDREQ barrier turns on at
+             * (gd3rd.c:510 reads this variable). Probed AFTER the
+             * assignment so the logged barrier= column reads 1, and the
+             * rest of the row is the state the barrier inherits rather
+             * than one it produced. */
+            Ldreq_LogSessionProbe("session-running", s_last_advance_frame);
+#endif
             // P-2.1 fix: re-seed last-advance now so the watchdog clock
             // starts from the RUNNING transition, not from CONNECTING-entry
             // in configure_gekko(). Multi-second handshakes would otherwise
@@ -1606,6 +1625,44 @@ void Netplay_CancelMatchmaking() {
 }
 
 void Netplay_Run() {
+#if ENABLE_PERF_TELEMETRY
+    /* Task #69.3 — the whole session-start window as a timeline, not two
+     * point samples. TRANSITIONING and CONNECTING both step the engine
+     * with the barrier OFF (step_game() at the TRANSITIONING branch below;
+     * Ldreq_BarrierActive() is false until RUNNING, gd3rd.c:510), so this
+     * is the window in which two peers can drift apart.
+     *
+     * Both arms are capped because this is a telemetry build that ships:
+     * TRANSITIONING has NO wall-clock deadline (it waits on the peer, and
+     * the comment on that branch says so), so an uncapped per-frame log
+     * would be unbounded on a slow-peer session. 120 pre-RUNNING frames
+     * covers a nominal start with room to spare — measured 66 and 12 on
+     * the two peers of the 2026-08-25 run — and the 8-frame RUNNING tail
+     * is only there to show what the barrier inherited. Steady-state
+     * RUNNING is not this probe's job; the per-slot residue probe and
+     * tools/ldreq-timing cover it.
+     *
+     * `s_last_advance_frame` is 0 until GekkoNet starts advancing, so the
+     * pre-RUNNING rows carry their own ordinal instead — otherwise the
+     * whole start window logs as frame=0 and cannot be read as a
+     * timeline. */
+    {
+        static int pre_running_probes = 0;
+        static int running_probes = 0;
+
+        if (session_state == NETPLAY_SESSION_TRANSITIONING || session_state == NETPLAY_SESSION_CONNECTING) {
+            if (pre_running_probes < 120) {
+                pre_running_probes += 1;
+                Ldreq_LogSessionProbe(session_state == NETPLAY_SESSION_TRANSITIONING ? "transitioning" : "connecting",
+                                      pre_running_probes);
+            }
+        } else if (session_state == NETPLAY_SESSION_RUNNING && running_probes < 8) {
+            running_probes += 1;
+            Ldreq_LogSessionProbe("running", s_last_advance_frame);
+        }
+    }
+#endif
+
     switch (session_state) {
     case NETPLAY_SESSION_TRANSITIONING:
         /* S3: user-reachable abort — the MIST retry window below can

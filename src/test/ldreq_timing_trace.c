@@ -20,9 +20,11 @@
 #include "structs.h"
 
 #include <SDL3/SDL.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 /* Distinct from rollback_determinism.c's 4 so a plumbing failure here is
  * never confused with one there. */
@@ -35,6 +37,7 @@ extern u8 ldreq_break;
 static bool ldt_init_attempted = false;
 static bool ldt_active = false;
 static FILE* ldt_file = NULL;
+static FILE* ldt_slot_file = NULL;
 static uint32_t ldt_frame_index = 0;
 
 static void ldt_fail(const char* what) {
@@ -52,6 +55,94 @@ static uint32_t ldt_djb2(const void* data, size_t len) {
     }
 
     return h;
+}
+
+/* === Per-slot q_ldreq residue probe (task #69.2) ===
+ *
+ * The main trace above records the HEAD slot only, which is enough to
+ * gate timing invariance but cannot answer the question task #69.2 asks:
+ * when the barrier is on and the two latency runs still disagree about
+ * q_ldreq, are the differing bytes confined to slots that are DRAINED
+ * (be == 0) in BOTH runs, or is there live residue?
+ *
+ * Two things make a naive byte-for-byte dump useless here, and both are
+ * handled explicitly rather than hidden:
+ *
+ *   1. REQ carries two pointers (result, lds). Their raw values are heap
+ *      / data-segment addresses and differ between ANY two processes on
+ *      a macOS host (ASLR is not disabled by this harness — see
+ *      check_ldreq_timing.py, which sets only SDL_VIDEODRIVER and
+ *      SDL_AUDIODRIVER). Dumping them raw would make every populated
+ *      slot "differ" for a reason that has nothing to do with timing.
+ *      So the byte image zeroes both pointer fields and the decoded
+ *      columns carry `result` as an INDEX into ldreq_result[] (which is
+ *      exactly its meaning — gd3rd.c:337, :401) and `lds` as nullness.
+ *
+ *   2. Push_LDREQ_Queue_Player (gd3rd.c:320-345) fills a stack-local
+ *      `REQ ldreq` field by field and leaves rno/retry/kokey/size/sect/
+ *      fnum/free[]/lds/info and every padding hole uninitialised;
+ *      Push_LDREQ_Queue then does `q_ldreq[i] = ldreq[0]` (gd3rd.c:472),
+ *      a whole-struct copy. Stack garbage and padding therefore land in
+ *      the queue. The analyser names every differing byte offset via the
+ *      fieldmap in the header, so a padding difference is reported AS
+ *      padding and never confused with a semantic field.
+ */
+static const struct {
+    const char* name;
+    size_t off;
+    size_t len;
+} ldt_req_fields[] = {
+    { "be", offsetof(REQ, be), sizeof(((REQ*)0)->be) },
+    { "type", offsetof(REQ, type), sizeof(((REQ*)0)->type) },
+    { "id", offsetof(REQ, id), sizeof(((REQ*)0)->id) },
+    { "rno", offsetof(REQ, rno), sizeof(((REQ*)0)->rno) },
+    { "retry", offsetof(REQ, retry), sizeof(((REQ*)0)->retry) },
+    { "ix", offsetof(REQ, ix), sizeof(((REQ*)0)->ix) },
+    { "frre", offsetof(REQ, frre), sizeof(((REQ*)0)->frre) },
+    { "key", offsetof(REQ, key), sizeof(((REQ*)0)->key) },
+    { "kokey", offsetof(REQ, kokey), sizeof(((REQ*)0)->kokey) },
+    { "group", offsetof(REQ, group), sizeof(((REQ*)0)->group) },
+    { "result", offsetof(REQ, result), sizeof(((REQ*)0)->result) },
+    { "size", offsetof(REQ, size), sizeof(((REQ*)0)->size) },
+    { "sect", offsetof(REQ, sect), sizeof(((REQ*)0)->sect) },
+    { "fnum", offsetof(REQ, fnum), sizeof(((REQ*)0)->fnum) },
+    { "free", offsetof(REQ, free), sizeof(((REQ*)0)->free) },
+    { "lds", offsetof(REQ, lds), sizeof(((REQ*)0)->lds) },
+    { "info.number", offsetof(REQ, info.number), sizeof(((REQ*)0)->info.number) },
+    { "info.size", offsetof(REQ, info.size), sizeof(((REQ*)0)->info.size) },
+};
+
+static void ldt_emit_slot_rows(void) {
+    unsigned char image[sizeof(REQ)];
+
+    for (int slot = 0; slot < 16; slot++) {
+        const REQ* r = &q_ldreq[slot];
+
+        memcpy(image, r, sizeof(REQ));
+        memset(image + offsetof(REQ, result), 0, sizeof(r->result));
+        memset(image + offsetof(REQ, lds), 0, sizeof(r->lds));
+
+        if (fprintf(ldt_slot_file, "%u,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%ld,%d,%d,%d,%d,%d,%d,%u,%u,",
+                    ldt_frame_index, slot,
+                    (int)r->be, (int)r->type, (int)r->id, (int)r->rno, (int)r->retry,
+                    (int)r->ix, (int)r->frre, (int)r->key, (int)r->kokey, (int)r->group,
+                    (r->result == NULL) ? -1L : (long)(r->result - ldreq_result),
+                    (int)r->size, (int)r->sect, (int)r->fnum,
+                    (int)r->free[0], (int)r->free[1], (r->lds == NULL) ? 0 : 1,
+                    (unsigned)r->info.number, (unsigned)r->info.size) < 0) {
+            ldt_fail("write failure on slot-trace row");
+        }
+
+        for (size_t b = 0; b < sizeof(REQ); b++) {
+            if (fprintf(ldt_slot_file, "%02x", image[b]) < 0) {
+                ldt_fail("write failure on slot-trace raw image");
+            }
+        }
+
+        if (fputc('\n', ldt_slot_file) == EOF) {
+            ldt_fail("write failure on slot-trace row terminator");
+        }
+    }
 }
 
 static void ldt_init(void) {
@@ -84,6 +175,41 @@ static void ldt_init(void) {
                 "ldreq_break,pl_load,ldreq_clear\n",
                 (int)Ldreq_BarrierActive(), AFS_GetInjectedLatencyMs(), test->ldreq_trace_frames) < 0) {
         ldt_fail("write failure on trace header");
+    }
+
+    if (test->ldreq_slot_trace_path != NULL) {
+        ldt_slot_file = fopen(test->ldreq_slot_trace_path, "w");
+
+        if (ldt_slot_file == NULL) {
+            ldt_fail("could not open --ldreq-slot-trace output for writing");
+        }
+
+        if (fprintf(ldt_slot_file,
+                    "# ldreq-slot-trace v1 barrier_force=%d afs_inject_latency_ms=%d frames=%d sizeof_REQ=%d\n",
+                    (int)Ldreq_BarrierActive(), AFS_GetInjectedLatencyMs(), test->ldreq_trace_frames,
+                    (int)sizeof(REQ)) < 0) {
+            ldt_fail("write failure on slot-trace header");
+        }
+
+        /* Byte-offset map so the analyser can name every differing byte,
+         * including the padding holes, without hard-coding this ABI. */
+        if (fprintf(ldt_slot_file, "# fieldmap") < 0) {
+            ldt_fail("write failure on slot-trace fieldmap");
+        }
+
+        for (size_t i = 0; i < sizeof(ldt_req_fields) / sizeof(ldt_req_fields[0]); i++) {
+            if (fprintf(ldt_slot_file, " %s:%d:%d", ldt_req_fields[i].name, (int)ldt_req_fields[i].off,
+                        (int)ldt_req_fields[i].len) < 0) {
+                ldt_fail("write failure on slot-trace fieldmap");
+            }
+        }
+
+        if (fprintf(ldt_slot_file,
+                    "\n"
+                    "frame,slot,be,type,id,rno,retry,ix,frre,key,kokey,group,result_ix,"
+                    "size,sect,fnum,free0,free1,lds_nonnull,info_number,info_size,raw\n") < 0) {
+            ldt_fail("write failure on slot-trace column header");
+        }
     }
 
     ldt_active = true;
@@ -119,11 +245,23 @@ void LdreqTimingTrace_FrameEnd(void) {
         ldt_fail("write failure on trace row");
     }
 
+    if (ldt_slot_file != NULL) {
+        ldt_emit_slot_rows();
+    }
+
     ldt_frame_index += 1;
 
     if ((int)ldt_frame_index >= configuration.test.ldreq_trace_frames) {
         if (fflush(ldt_file) != 0 || fclose(ldt_file) != 0) {
             ldt_fail("flush/close failure on trace output");
+        }
+
+        if (ldt_slot_file != NULL) {
+            if (fflush(ldt_slot_file) != 0 || fclose(ldt_slot_file) != 0) {
+                ldt_fail("flush/close failure on slot-trace output");
+            }
+
+            ldt_slot_file = NULL;
         }
 
         ldt_file = NULL;

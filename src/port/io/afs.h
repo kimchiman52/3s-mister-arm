@@ -1,6 +1,8 @@
 #ifndef PORT_IO_AFS_H
 #define PORT_IO_AFS_H
 
+#include "port/build_config.h"
+
 #include <stdbool.h>
 
 typedef enum AFSReadState {
@@ -55,6 +57,16 @@ unsigned long long AFS_GetTotalBytesRequested(void);
 /// every code path below byte-identical to an uninstrumented build.
 void AFS_SetInjectedLatencyMs(int ms);
 int AFS_GetInjectedLatencyMs(void);
+
+#if ENABLE_PERF_TELEMETRY
+/// Task #69.3 probe. `*open_out` receives the number of request slots
+/// that are currently allocated (AFS_Open'd and not yet fully closed);
+/// the return value is how many of those are still AFS_READ_STATE_READING,
+/// i.e. reads genuinely in flight. Read-only over requests[]; exists so
+/// the session-start skew probe in gd3rd.c can report "is there a read in
+/// flight at this instant" as a measurement rather than an inference.
+int AFS_GetInFlightCount(int* open_out);
+#endif
 
 AFSHandle AFS_Open(int file_num);
 void AFS_Read(AFSHandle handle, int sectors, void* buf);

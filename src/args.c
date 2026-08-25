@@ -163,6 +163,10 @@ static void verify_configuration(Configuration* configuration) {
             error_out_with_code("--ldreq-trace requires --ldreq-trace-frames > 0.", EXIT_CODE_RUNTIME_ERROR);
         }
     }
+    if (test->ldreq_slot_trace_path != NULL && test->ldreq_trace_path == NULL) {
+        error_out_with_code("--ldreq-slot-trace requires --ldreq-trace (it shares its frame budget).",
+                            EXIT_CODE_RUNTIME_ERROR);
+    }
     if (test->afs_inject_latency_ms < 0) {
         error_out_with_code("--afs-inject-latency-ms must be >= 0.", EXIT_CODE_RUNTIME_ERROR);
     }
@@ -598,6 +602,16 @@ void read_args(int argc, const char* argv[], Configuration* configuration) {
                     NULL,
                     0,
                     0),
+        OPT_STRING(0,
+                   "ldreq-slot-trace",
+                   &configuration->test.ldreq_slot_trace_path,
+                   "Write one CSV row per (frame, q_ldreq slot) carrying every REQ field plus a "
+                   "pointer-normalised raw byte image of the slot, so a residue in a DRAINED slot "
+                   "can be told apart from one in a live slot. Requires --ldreq-trace (shares its "
+                   "frame budget). Analysed by tools/ldreq-timing/check_slot_residue.py.",
+                   NULL,
+                   0,
+                   0),
         OPT_BOOLEAN(0,
                     "ldreq-barrier-force",
                     &configuration->test.ldreq_barrier_force,

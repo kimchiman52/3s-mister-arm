@@ -349,6 +349,31 @@ int AFS_GetInjectedLatencyMs(void) {
     return afs_injected_latency_ms;
 }
 
+#if ENABLE_PERF_TELEMETRY
+int AFS_GetInFlightCount(int* open_out) {
+    int open_slots = 0;
+    int reading = 0;
+
+    for (int i = 0; i < SDL_arraysize(requests); i++) {
+        if (!requests[i].initialized) {
+            continue;
+        }
+
+        open_slots += 1;
+
+        if (requests[i].state == AFS_READ_STATE_READING) {
+            reading += 1;
+        }
+    }
+
+    if (open_out != NULL) {
+        *open_out = open_slots;
+    }
+
+    return reading;
+}
+#endif
+
 AFSHandle AFS_Open(int file_num) {
     AFSHandle retval = AFS_NONE;
 
