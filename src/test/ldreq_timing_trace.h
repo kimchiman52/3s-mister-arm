@@ -61,6 +61,40 @@
  * the only part of this fix not covered by an executable test.
  *
  * Inert unless --ldreq-trace is passed; real body only in #if DEBUG.
+ *
+ * PER-SLOT SIDE CHANNEL (--ldreq-slot-trace, task #69.2).
+ * The row above records q_ldreq[0] only. That is enough to gate timing
+ * invariance but cannot answer whether the residual q_ldreq disagreement
+ * between two latency runs sits in slots that are DRAINED (be == 0) or in
+ * LIVE ones — and only the second would falsify the barrier's "the queue
+ * is empty at every simulated-frame boundary" clause. --ldreq-slot-trace
+ * writes a SEPARATE CSV with one row per (frame, slot) for all 16 slots,
+ * every REQ field decoded plus a pointer-normalised raw byte image, and
+ * tools/ldreq-timing/check_slot_residue.py classifies every difference.
+ * It is a separate file on purpose: check_ldreq_timing.py compares whole
+ * rows of the main trace, so folding 16 slots into it would silently
+ * change what the PASS/FAIL gate means.
+ *
+ * Measured on this tree at 400 ms (2026-08-25, 600 frames):
+ *   barrier ON  — 0 LIVE-slot differences, 0 frame boundaries with a
+ *                 non-empty queue; 191 DRAINED-slot differences, all in
+ *                 slot 0, all in the single field `size`.
+ *   barrier OFF — 1396 LIVE-slot differences; 24 (lat 0) and 256 (lat
+ *                 400) frame boundaries with a non-empty queue.
+ * The OFF column is the neutralization: the probe goes red on demand.
+ *
+ * That `size` residue is dead, and provably so rather than by argument.
+ * Push_LDREQ_Queue_Player/_Union/_Direct (gd3rd.c:320-403) never assign
+ * REQ.size, and Push_LDREQ_Queue copies the whole stack-local struct
+ * (gd3rd.c:472), so a drained slot carries a stack-garbage `size` — in
+ * the two runs above, 0x0056BC30 vs 0x02287C30, equal in the low 12 bits,
+ * the page-offset signature of an address-valued word. Nothing reads it:
+ * the only readers of REQ.size are texgroup.c:241/307/361 and
+ * color3rd.c:107/109, all inside ldreq_process[] whose sole call site is
+ * gd3rd.c:520, reachable only with be != 0 (guards at gd3rd.c:621 and
+ * :636); and every fresh request enters at rno == 0 (gd3rd.c:474) and is
+ * assigned `size` at rno == 2 (texgroup.c:240, color3rd.c:106) before its
+ * first read.
  */
 
 /* Called once per outer frame, after game_step_1(), alongside

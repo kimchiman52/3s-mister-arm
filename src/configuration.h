@@ -117,6 +117,17 @@ typedef struct TestRunnerConfiguration {
     /* Row count, then flush + clean exit. Required with ldreq_trace_path. */
     int ldreq_trace_frames;
 
+    /* === Per-slot LDREQ queue residue probe (task #69.2) ===
+     * Side-channel companion to ldreq_trace_path: one CSV row per
+     * (frame, q_ldreq slot) carrying every field of the REQ plus a
+     * pointer-normalised raw byte image of the slot. Written to a
+     * SEPARATE file on purpose — the barrier's timing-invariance gate
+     * (check_ldreq_timing.py) compares whole rows of the main trace, and
+     * folding 16 slots into it would change that gate's meaning. Requires
+     * ldreq_trace_path (it shares its frame budget and its exit hook).
+     * Analysed by tools/ldreq-timing/check_slot_residue.py. */
+    const char* ldreq_slot_trace_path;
+
     /* Force Ldreq_BarrierActive() true without a live GekkoNet session,
      * so the barrier can be exercised from an offline test-runner scene.
      * Omitting it is the instrument's built-in neutralization: the same

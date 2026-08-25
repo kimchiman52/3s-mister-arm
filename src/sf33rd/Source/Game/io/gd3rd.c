@@ -568,6 +568,50 @@ bool Ldreq_BarrierActive(void) {
     return Netplay_GetSessionState() == NETPLAY_SESSION_RUNNING;
 }
 
+#if ENABLE_PERF_TELEMETRY
+/* Task #69.3 — see the block comment on the declaration in gd3rd.h.
+ * Every read here is of state this file already owns; nothing is mutated,
+ * so enabling the probe cannot move the thing it is measuring. */
+void Ldreq_LogSessionProbe(const char* tag, int frame) {
+    char be_map[17];
+    int nonempty = 0;
+    unsigned bits = 0;
+    unsigned hash = 5381u;
+    int afs_open = 0;
+    const int afs_reading = AFS_GetInFlightCount(&afs_open);
+
+    for (int i = 0; i < 16; i++) {
+        const int be = (int)q_ldreq[i].be;
+        be_map[i] = (char)((be >= 0 && be <= 9) ? ('0' + be) : '?');
+
+        if (be != 0) {
+            nonempty += 1;
+        }
+    }
+
+    be_map[16] = '\0';
+
+    for (unsigned i = 0; i < (unsigned)sizeof(ldreq_result); i++) {
+        u8 v = ldreq_result[i];
+
+        hash = ((hash << 5) + hash) ^ (unsigned)v;
+
+        while (v != 0) {
+            bits += (unsigned)(v & 1u);
+            v = (u8)(v >> 1);
+        }
+    }
+
+    SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                "[ldreq-session-probe] tag=%s frame=%d barrier=%d q_be=%s q_nonempty=%d head_type=%d head_rno=%d "
+                "afs_handle=%d afs_reading=%d afs_open=%d fs_busy=%d ldreq_break=%d ldreq_result_h=%08x "
+                "ldreq_result_bits=%u plt_req=%d/%d",
+                tag, frame, (int)Ldreq_BarrierActive(), be_map, nonempty, (int)q_ldreq[0].type, (int)q_ldreq[0].rno,
+                (int)afs_handle, afs_reading, afs_open, (int)fsCheckCommandExecuting(), (int)ldreq_break, hash, bits,
+                (int)plt_req[0], (int)plt_req[1]);
+}
+#endif
+
 /* One step of the head request's state machine, plus the queue shift the
  * original Check_LDREQ_Queue() performed inline when the head drained.
  * Factored out verbatim so the barrier loop below and the stock

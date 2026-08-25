@@ -55,6 +55,53 @@ s32 Check_LDREQ_Queue_Direct(s16 ix);
 bool Ldreq_BarrierActive(void);
 void Ldreq_SetBarrierForced(bool forced);
 
+#if ENABLE_PERF_TELEMETRY
+/* === Session-start skew probe (task #69.3) ===
+ *
+ * The barrier's invariant is scoped to frames DURING a session. It says
+ * nothing about the instant a session begins, and Ldreq_BarrierActive()
+ * turns on only AFTER session_state becomes NETPLAY_SESSION_RUNNING
+ * (gd3rd.c:510), so anything still in flight when that flip happens was
+ * pumped under the stock single-step path. Whether two peers can be at
+ * different points of a load at that instant is a measurement, not an
+ * argument, and this is the instrument: it dumps the whole loader surface
+ * — every q_ldreq[].be, afs_handle, the AFS in-flight/open counts, and a
+ * hash + set-bit count of ldreq_result[] — to the SDL log under a caller
+ * -supplied tag, so two peers' logs can be diffed line for line.
+ *
+ * Pure reads. Call sites: netplay.c (the RUNNING flip and the top of
+ * configure_gekko(), plus a bounded per-frame timeline over
+ * TRANSITIONING / CONNECTING / the first 240 RUNNING frames).
+ *
+ * WHAT IT MEASURED (2026-08-25). Two real local peers, the documented
+ * two-instance harness in docs/netplay-auto-nav.md, differing only in
+ * --afs-inject-latency-ms (0 vs 400) — i.e. an actual GekkoNet session
+ * start, not a forced flag. Both peers, at BOTH instants:
+ *
+ *   q_be=0000000000000000  afs_handle=-1  fs_busy=0
+ *   ldreq_result_h=4de778c5  ldreq_result_bits=0  plt_req=0/0
+ *
+ * identical across the two peers, and identical across all 314 / 260
+ * probe rows, even though the peers spent 66 vs 12 frames in
+ * TRANSITIONING. So no skew on the path that can be exercised here.
+ *
+ * WHAT IT DID NOT SETTLE. Nothing on the start path CLEARS the queue:
+ * Init_Load_Request_Queue_1st has zero call sites under src/netplay/, and
+ * System_all_clear_Level_B() (sys_sub.c:983-986, called by setup_vs_mode)
+ * is only Bg_Close() + effect_work_init(). The TRANSITIONING flip is
+ * gated on task[TASK_INIT].condition == 0 alone (netplay.c:1533) and on
+ * nothing at all for matchmaking (netplay.c:1584-1592), and the
+ * G_No[1] 12 -> 1 path it then waits on (game.c:303-341) gates on
+ * Switch_Screen(1), a frame-counted wipe, not on Check_PL_Load() or
+ * Check_LDREQ_Clear(). A load left in flight at that flip therefore has
+ * no structural guarantee of being drained before configure_gekko().
+ * Producing one needs a session start from a screen with an outstanding
+ * push (e.g. demo00.c:130/154/166), which no automation in this tree can
+ * drive. Treat "empty at session start" as measured-on-one-path, not
+ * proven. */
+void Ldreq_LogSessionProbe(const char* tag, int frame);
+#endif
+
 /* Two independent bounds on the barrier drain, because the two failure
  * modes they guard have opposite shapes.
  *
