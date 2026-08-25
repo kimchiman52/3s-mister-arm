@@ -31,7 +31,6 @@
 #include "sf33rd/Source/Game/effect/effect.h"
 #include "sf33rd/Source/Game/engine/plcnt.h"
 #include "sf33rd/Source/Game/engine/pls01.h"
-#include "sf33rd/Source/Game/engine/pls03.h"
 #include "sf33rd/Source/Game/engine/workuser.h"
 #include "sf33rd/Source/Game/opening/opening.h"
 #include "sf33rd/Source/Game/system/sys_sub.h"
@@ -169,7 +168,8 @@ static double fps_overlay_avg_qsort_per_frame = 0.0;
 /* Sticky max-active-effect-count peak watch — used to size GameState's
  * effect work pool ceiling for sparse-save (Option A). Sampled every frame
  * the overlay is in DEBUG mode; reset only when overlay mode toggles or
- * the user reboots. Displayed as `e<peak>` on line 2 of the overlay. */
+ * the user reboots. Displayed as the trailing `e<peak>` field of the DEBUG
+ * overlay line built by publish_fps_overlay_label(). */
 static int fps_overlay_peak_active_effects = 0;
 static double fps_overlay_avg_present_ms = 0.0;
 static double fps_overlay_avg_frame_ms = 0.0;
@@ -334,9 +334,6 @@ static Uint64 perf_hybrid_reason_color_mod_total = 0;
 static Uint64 perf_hybrid_reason_flip_total = 0;
 static Uint64 perf_hybrid_reason_geometry_total = 0;
 static Uint64 perf_hybrid_reason_solid_total = 0;
-static Uint64 perf_charsel_active_effects_total = 0;
-static Uint64 perf_charsel_portrait_tiles_total = 0;
-static Uint64 perf_charsel_plate_tiles_total = 0;
 static Uint64 perf_super_art_stock_available_frames[2] = { 0 };
 static int perf_super_art_stock_available_first_frame[2] = { -1, -1 };
 static int perf_super_art_stock_max_reached[2] = { 0, 0 };
@@ -616,9 +613,6 @@ typedef struct PerfFrameSample {
     int hybrid_reason_flip;
     int hybrid_reason_geometry;
     int hybrid_reason_solid;
-    int charsel_active_effects;
-    int charsel_portrait_tiles;
-    int charsel_plate_tiles;
 } PerfFrameSample;
 
 static PerfFrameSample* perf_samples = NULL;
@@ -1135,9 +1129,6 @@ static void perf_capture_reset_storage(void) {
     perf_hybrid_reason_flip_total = 0;
     perf_hybrid_reason_geometry_total = 0;
     perf_hybrid_reason_solid_total = 0;
-    perf_charsel_active_effects_total = 0;
-    perf_charsel_portrait_tiles_total = 0;
-    perf_charsel_plate_tiles_total = 0;
     for (int player = 0; player < 2; player++) {
         perf_super_art_stock_available_frames[player] = 0;
         perf_super_art_stock_available_first_frame[player] = -1;
@@ -1257,7 +1248,6 @@ static void perf_capture_reset_storage(void) {
     perf_software_frame_reason_color_mod_total = 0;
     perf_software_frame_reason_geometry_total = 0;
     perf_software_frame_reason_solid_total = 0;
-    PLS03_ResetSuperArtCommandTelemetry();
 }
 
 static bool perf_capture_collect_extended_stats(void) {
@@ -1418,9 +1408,6 @@ void SDLApp_ConfigurePerfCapture(int frame_count,
     perf_hybrid_reason_flip_total = 0;
     perf_hybrid_reason_geometry_total = 0;
     perf_hybrid_reason_solid_total = 0;
-    perf_charsel_active_effects_total = 0;
-    perf_charsel_portrait_tiles_total = 0;
-    perf_charsel_plate_tiles_total = 0;
     for (int player = 0; player < 2; player++) {
         perf_super_art_ready_frames[player] = 0;
         perf_super_art_ready_first_frame[player] = -1;
@@ -1495,7 +1482,6 @@ void SDLApp_ConfigurePerfCapture(int frame_count,
     perf_software_frame_reason_color_mod_total = 0;
     perf_software_frame_reason_geometry_total = 0;
     perf_software_frame_reason_solid_total = 0;
-    PLS03_ResetSuperArtCommandTelemetry();
     perf_capture_output_path = output_path != NULL ? SDL_strdup(output_path) : NULL;
     perf_capture_scene_name = scene_name != NULL ? SDL_strdup(scene_name) : NULL;
     perf_samples = (PerfFrameSample*)SDL_calloc((size_t)frame_count, sizeof(PerfFrameSample));
@@ -1522,7 +1508,6 @@ void SDLApp_ConfigurePerfCapture(int frame_count,
                  perf_capture_basic_first_window_onset_cluster_alpha_offpath_enabled ? "on" : "off",
                  perf_capture_fast_non_integer_subrect_alpha_telemetry_enabled ? "on" : "off");
 }
-
 
 static void perf_capture_write_summary(void) {
     if (!perf_capture_enabled || (perf_capture_recorded_frames <= 0)) {
@@ -2170,14 +2155,18 @@ static void publish_fps_overlay_label(void) {
         SDL_snprintf(fps_overlay_label, sizeof(fps_overlay_label), "%d", fps_overlay_value);
     }
     else if (fps_overlay_avg_frame_ms > 0.0) {
-        /* Giblet renderer DEBUG line — compact u/r/p/t breakdown. */
+        /* Giblet renderer DEBUG line — compact u/r/p/t breakdown, plus the
+         * sticky active-effect-slot peak as `e<peak>`. The peak is the one
+         * consumer of fps_overlay_peak_active_effects; without this field it
+         * is a write-only counter. */
         SDL_snprintf(fps_overlay_label, sizeof(fps_overlay_label),
-                     "fps %d u %4.1f r %4.1f p %4.1f t %4.1f",
+                     "fps %d u %4.1f r %4.1f p %4.1f t %4.1f e%d",
                      fps_overlay_value,
                      fps_overlay_avg_update_ms,
                      fps_overlay_avg_render_ms,
                      fps_overlay_avg_present_ms,
-                     fps_overlay_avg_frame_ms);
+                     fps_overlay_avg_frame_ms,
+                     fps_overlay_peak_active_effects);
     } else {
         SDL_snprintf(fps_overlay_label, sizeof(fps_overlay_label), "%d FPS", fps_overlay_value);
     }
@@ -3135,7 +3124,6 @@ bool SDLApp_PollEvents() {
 #if DEBUG
         ImGuiW_ProcessEvent(&event);
 #endif
-
 
         switch (event.type) {
         case SDL_EVENT_GAMEPAD_ADDED:

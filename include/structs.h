@@ -58,7 +58,6 @@ typedef enum : u8 {
 } BgmType;
 
 struct _SYSTEM_W {
-    u8 screen_mode;
     BgmType bgm_type;
 };
 
@@ -924,7 +923,6 @@ struct _SAVE_W {
     s8 Adjust_X;
     s8 Adjust_Y;
     u8 Screen_Size;
-    u8 Screen_Mode;
     Language Language;
     u8 GuardCheck;
     u8 AnalogStick;

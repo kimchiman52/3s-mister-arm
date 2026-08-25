@@ -226,8 +226,8 @@ Computed by set-difference of the non-const mutable globals in `src/sf33rd/Sourc
 - `col3rd_w`, `palFormRam`, `palFormSrc`, `palFormConv`, `colPalBuffDC`, `ColorRAM`, `col3rd_w.upBits`, `col3rd_w.req[]` — palette transfer state in `rendering/color3rd.c:54-60`. Written by sim (`push_color_trans_req`), consumed by renderer.
 - `njdp2d_w` (2D polygon sort buffer) — `rendering/dc_ghost.c:41`. Written by sim `njdp2d_sort`, drained once per sim tick by `njdp2d_draw` at `src/netplay/netplay.c:587`. No cross-tick residue.
 - `seqs_w`, `mts[]`, `mts_ok[]` — sprite dispatch buffers in `rendering/mtrans.c`, `rendering/aboutspr.c`. Drained each frame via `seqsBeforeProcess`/`seqsAfterProcess`.
-- `charsel_active_effect_count`, `charsel_frame_portrait_tiles`, `charsel_frame_plate_tiles` — perf telemetry in `effect/effect.c:21`, `rendering/mtrans.c:40-41` (only when `ENABLE_PERF_TELEMETRY`).
-- `perf_super_art_command_telemetry[2]` — `engine/pls03.c:30`. Write-only counters. No feedback into sim.
+- `charsel_active_effect_count` — perf telemetry in `effect/effect.c:21` (only when `ENABLE_PERF_TELEMETRY`). Assigned outright as `EFFECT_MAX - frwctr` each rendered frame; its consumer is the DEBUG FPS overlay's sticky peak (`fps_overlay_peak_active_effects`, rendered as the trailing `e<peak>` field of the overlay label). No feedback into sim.
+- `charsel_frame_portrait_tiles` / `charsel_frame_plate_tiles` (formerly `rendering/mtrans.c`) and `perf_super_art_command_telemetry[2]` (formerly `engine/pls03.c`) — **deleted, task #68.** All were write-only with zero readers. The tile counters additionally keyed on `mt->id == 13 / == 14`, but `texcash.c:660` assigns `mts[ix].id = ix`, so `id` is a cache-slot index and the branch never identified a portrait or a plate. The super-art counters' designed sink was the `test_state` object of the perf-capture JSON, which no longer exists (see `perf_capture_write_summary` in `port/sdl/sdl_app.c`).
 
 #### A.2.3 Uncovered globals — sound/BGM state
 
