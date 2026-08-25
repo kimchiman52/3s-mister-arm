@@ -40,90 +40,49 @@ g_random_32_calls          # pls02.c:621, same (game_state.c:2323)
 fd_engine_*                # frame-data overlay engine probes (docs/plan-frame-data-harness.md); read only by the DEBUG training overlay/trace, reset per frame in game_step_0
 fd_prev_active_cgix*       # frame-data overlay cg_ix edge-latch diagnostics, overlay-only consumers (frame_data_overlay.c)
 
-# --- super-art command telemetry revived by task #62 -----------------------
-# Task #62 made this array actually compile. pls03.c did not include the
-# generated port/build_config.h, so every `#if ENABLE_PERF_TELEMETRY` in that
-# TU silently evaluated to 0 (no -Wundef) and the counter sites compiled away.
-# Now that they compile, they advance on the harness's speculative-resim
-# frames -- rbd_speculative_advance (test/rollback_determinism.c:373) calls
-# njUserMain, which reaches check_super_arts_attack (pls03.c:436) -- and
-# load_state_from_event does not rewind them, so from the first in-battle
-# frame the rollback run reads permanently ahead of the baseline.
+# --- deliberately NOT allowlisted: charsel_active_effect_count ------------
+# History: task #62 made pls03.c's 28 super-art command counters actually
+# compile (the TU was missing the generated port/build_config.h, so every
+# `#if ENABLE_PERF_TELEMETRY` in it silently evaluated to 0 -- no -Wundef).
+# Once live they advanced on the harness's speculative-resim frames and
+# needed the exact-symbol entry `perf_super_art_command_telemetry` here.
 #
-# Why that is benign. Verified 2026-08-24 (task #69) by inspection, not
-# asserted -- see the CORRECTION block further down for why a hand-wavy
-# justification here is worse than none:
+# That entry is GONE as of task #68. The counters, the accessor, the
+# PLS03_SuperArtCommandTelemetry type and PLS03_Get/ResetSuperArtCommandTelemetry
+# were deleted outright: the getter had zero callers, and its designed sink --
+# the `test_state` object of the perf-capture JSON that
+# tools/mister/perf-sampler.sh still greps -- no longer exists, having been
+# removed with the legacy renderer perf surface ("Phase D rip",
+# perf_capture_write_summary in port/sdl/sdl_app.c, which now emits only
+# schema_version/frames/avg_frame_ms/fps). Nothing under src/ names any of
+# those symbols any more.
 #
-#   1. WRITE-ONLY, AND CURRENTLY READ BY NOTHING AT ALL. Every one of the 25
-#      uses of the struct in pls03.c is a bare `+= 1` and nothing else:
-#        grep -n 'perf_command_telemetry->' pls03.c | grep -v '+= 1;'  -> empty
-#      The array's only reader is PLS03_GetSuperArtCommandTelemetry
-#      (pls03.c:58), and that function has ZERO callers anywhere in the tree
-#      (task #68) -- the declaration at pls03.h:31 and the definition are the
-#      only occurrences. The counters are therefore not "read only by a
-#      diagnostic"; they are read by no code path whatsoever.
+# The one sibling task #62 revived that SURVIVES is charsel_active_effect_count
+# (effect.c:21), and it is deliberately not listed. It is EXERCISED AND CLEAN:
+# read straight out of this harness's own capture streams (fast mode, 1500
+# frames x 2 scenarios, task #69) the baseline carries 30 distinct hashes for
+# it in ryu-ken-basic-exchange and 24 in makoto-sa3-super -- it really does
+# move -- and it matches the rollback run on every one of the 1500 frames in
+# both. That is structural, not luck: it is assigned outright rather than
+# accumulated -- charsel_active_effect_count = EFFECT_MAX - frwctr
+# (mtrans.c) -- on every rendered frame, and frwctr IS in the save set
+# (game_state.c:1804/1871/1944/2411). It is a pure function of restored state
+# with no independent divergence surface; if frwctr drifted, the gate would
+# flag frwctr. Its consumer is the DEBUG FPS overlay's sticky peak
+# (fps_overlay_peak_active_effects), which task #68 wired into the overlay
+# label's trailing `e<peak>` field -- a presenter-only sink that reaches
+# neither gameplay, the save set, nor the checksum.
 #
-#   2. OUTSIDE BOTH THE ROLLBACK SAVE SET AND THE DESYNC CHECKSUM. Nothing
-#      under src/netplay/ names the array, the accessor, or the
-#      PLS03_SuperArtCommandTelemetry type (grep -rn over src/netplay/ ->
-#      no matches). GameState's save set and the desync checksum are both
-#      whitelist-only (game_state.c:2107, "The checksum covers only a
-#      whitelist of gameplay-critical fields"), so a symbol no netplay
-#      translation unit mentions cannot be in either.
+# The other two task #62 siblings, charsel_frame_portrait_tiles and
+# charsel_frame_plate_tiles (formerly mtrans.c), were also deleted by task
+# #68: they had zero readers, and they keyed on `mt->id == 13 / == 14` while
+# texcash.c:660 assigns `mts[ix].id = ix` -- a cache-slot index, not a
+# semantic identity, so the branch never meant "portrait"/"plate" at all.
+# They also never left hash 0x776ec7e3 (= hash(int32 0)) across all 1500
+# frames of both fast scenarios, i.e. the gate never drove them.
 #
-# WHAT WOULD INVALIDATE THIS ENTRY: any consumer of
-# PLS03_GetSuperArtCommandTelemetry -- or any direct read of the array added
-# inside pls03.c -- whose result reaches gameplay, the save set, or the
-# checksum. These counts are a function of each peer's private rollback
-# history, so two netplay peers can never agree on them; if one ever feeds
-# the simulation the correct fix is to delete the read, NOT to widen this
-# entry or add the array to GameState. Revisit this entry when that happens.
-#
-# DO NOT WIDEN. The pattern is the exact symbol, deliberately not
-# `perf_super_art_*` or `perf_*`: a glob here would also swallow the
-# perf_*_ns timers that currently show up as NOISE, and any future perf
-# static in an unrelated TU.
-#
-# The sibling symbols task #62 revived are deliberately NOT listed. Their
-# per-symbol status, read straight out of this harness's own capture streams
-# (fast mode, 1500 frames x 2 scenarios, task #69):
-#
-#   - charsel_active_effect_count (effect.c:21): EXERCISED AND CLEAN. The
-#     baseline stream carries 30 distinct hashes for it in
-#     ryu-ken-basic-exchange and 24 in makoto-sa3-super (so it really does
-#     move), and it matches the rollback run on every one of the 1500 frames
-#     in both. That is structural, not luck: it is assigned outright rather
-#     than accumulated -- charsel_active_effect_count = EFFECT_MAX - frwctr
-#     (mtrans.c:1581) -- on every rendered frame, and frwctr IS in the save
-#     set (game_state.c:1804/1871/1944/2411). It is a pure function of
-#     restored state with no independent divergence surface; if frwctr
-#     drifted, the gate would flag frwctr. Its one consumer is the DEBUG FPS
-#     overlay's sticky peak (sdl_app.c:3762-3767).
-#
-#   - charsel_frame_portrait_tiles / charsel_frame_plate_tiles
-#     (mtrans.c:45-46): LATENT IN THE FAST SCENARIOS -- be honest about this.
-#     Both hold hash 0x776ec7e3 on all 1500 frames of both fast scenarios,
-#     which is exactly hash(int32 0), i.e. the fast gate never drives the
-#     mt->id == 13 / == 14 branches that increment them and its clean verdict
-#     for them is vacuous. What keeps them safe is structural, not empirical:
-#     they accumulate during njdp2d_draw but are reset to 0 unconditionally
-#     at the top of seqsBeforeProcess (mtrans.c:1577-1578), which runs on
-#     every outer frame on both live paths (main.c:700 offline,
-#     netplay.c:1076 in-session) as well as inside every speculative advance
-#     (test/rollback_determinism.c:383). The harness hashes at frame end,
-#     after the real frame's own render, so whatever the speculative legs
-#     accumulated has already been wiped and the hashed value is a pure
-#     function of that frame's own draw list. Nothing reads them anywhere.
-#
-#   - get_perf_super_art_command_telemetry_slot (pls03.c:39): NOT A DATA
-#     SYMBOL. It is a static FUNCTION; nm reports it in (__TEXT,__text) and
-#     the driver's symbol map only admits __DATA,__data/__bss/__common
-#     (check_rollback_determinism.py:137), so it is absent from symmap.txt
-#     entirely and structurally outside this gate.
-#
-# If any of those three ever turns up DIVERGENT, that is a NEW finding and
-# must be triaged, not appended here on the strength of this block.
-perf_super_art_command_telemetry # pls03.c:37 super-art command-check counters; write-only, getter has zero callers, absent from src/netplay -- SEE BLOCK ABOVE
+# If charsel_active_effect_count ever turns up DIVERGENT, that is a NEW
+# finding and must be triaged, not silently added here.
 
 # --- sound output sinks (research-desync-deep-investigation.md sect A.2.3) --
 # Simulation writes requests; the SPU/CRI/ADX pipeline consumes them.

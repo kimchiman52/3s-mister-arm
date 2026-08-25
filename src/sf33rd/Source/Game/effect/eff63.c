@@ -178,7 +178,13 @@ void Disp_63_Sub(WORK_Other_CONN* ewk) {
         break;
 
     default:
-        disp_index = sys_w.screen_mode;
+        /* Unreachable. Screen_Adjust() is the only caller of effect_63_init
+         * and creates value rows for cursor_index 0..3 only (menu.c, `ix < 4`),
+         * so ewk->wu.type (eff63.c, `ewk->wu.type = cursor_index`) is always
+         * 0..3. Upstream #371 removed the fifth row (FILTER) and with it the
+         * only writer and only consumer of sys_w.screen_mode. The arm is kept
+         * solely so disp_index is definitely initialized. */
+        disp_index = 0;
         break;
     }
 
