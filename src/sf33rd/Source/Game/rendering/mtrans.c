@@ -26,6 +26,7 @@
 #include "sf33rd/Source/Game/system/work_sys.h"
 #include "structs.h"
 #include "mts_hash.h"
+#include "test/texgroup_window_probe.h"
 
 #include <SDL3/SDL.h>
 
@@ -370,6 +371,10 @@ s16 getObjectHeight(u16 cgnum) {
     }
 
     if (texgrplds[i].ok == 0) {
+        /* Task #64 F4 observation point: this early return writes a 0
+         * into wk->reserv_add_y at plpcu.c:248, which is checksummed
+         * rollback state (game_state.c:654). */
+        TGWP_ObjectHeightZero(cgnum, i);
         return 0;
     }
 
