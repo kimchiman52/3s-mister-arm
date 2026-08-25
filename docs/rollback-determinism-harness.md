@@ -249,6 +249,32 @@ allocator subjects classify CANON on both. Re-measured on the real MiSTer
 (`Linux 5.15.1-MiSTer armv7l`, non-PIE at `0x400000`, under `setarch -R`):
 `IMAGE` 77,824 -> 25,243,648 bytes, `.bss` subjects CANON -> raw.
 
+Confirmed afterwards on the REAL game, not just the probe. A native Linux
+x86-64 Debug build (clang-20; gcc-10.2.1 cannot build this tree —
+`src/constants.h:38`'s `typedef enum Character : uint16_t` is rejected) was
+driven through `check_rollback_determinism.py` in a seccomp-unconfined
+container, and rebuilt with only this file swapped:
+
+| | `image=` | froze |
+|---|---|---|
+| before | `[0x555555554000,0x555555b68000)` | 25 |
+| after  | `[0x555555554000,0x555556aff000)` | 22 |
+
+`image_hi` stopped exactly at the last file-backed segment boundary, and
+the anonymous `.bss` tail `555555b68000-555556afe000` was being counted as
+an allocator region. The three statics that bought were not hypothetical:
+
+```
+dctex_linear        (map addr 0x55555685ff38, value 0x555555b6ba50)
+tpu_free            (map addr 0x5555568f5188, value 0x555555b6d250)
+texcash_melt_buffer (map addr 0x5555568f5190, value 0x555555b6c250)
+```
+
+Every value sits inside that anonymous tail — three texture/TPU pool
+pointers into the game's own `.bss`, hashed as a constant token on the
+target platform and byte-compared on macOS. The post-fix set is a strict
+subset of the pre-fix set; nothing new became eligible.
+
 Two residual differences are **documented, not fixed**, because ELF cannot
 express them: Linux also canonicalizes `pthread` stacks, raw anonymous
 `mmap`s and shared-object `.bss`. Narrowing the region set to `[heap]`
@@ -279,7 +305,18 @@ Running the harness on Linux **inside Docker** needs
 `personality(ADDR_NO_RANDOMIZE)`, so the driver's `setarch -R` launch dies
 with `setarch: failed to set personality to (null): Operation not
 permitted` and the run surfaces only as `game exited with code 1` — the
-real cause is the first line of that run's `.log`.
+real cause is the first line of that run's `.log`. Confirmed to be seccomp
+and not privilege: `personality(0x40000)` returns -1/EPERM while
+`personality(0)` returns 0, `docker exec --privileged` does not lift it,
+and `/proc/sys/kernel/randomize_va_space` is read-only in the container.
+
+A Linux run is also **not gate-comparable to the macOS one** and must not
+be read as one. `allowlist.txt` matches by symbol NAME, and the two
+toolchains do not emit the same symbol set: the Linux Debug build mapped
+4018 writable symbols against macOS's 3838, and only 57 of the 67
+allowlist entries matched, so rows the macOS gate accounts for surface
+unaccounted there. Bringing Linux to a green gate is a separate piece of
+work from making the backend correct, and only the second is done.
 
 **Stack / argv / env addresses — the control is made valid instead.**
 The pad cannot move `mmap` placements, so the heap needed the hash
