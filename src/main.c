@@ -1071,6 +1071,12 @@ int Netplay_Test_BilateralPunch(void);
 int Netplay_Test_GsCoverage(void);
 #endif
 
+/* Tasks #59/#61: forward-decl of the ext texture-cache brick-prevention
+ * harness (src/test/test_texcash_bounds.c). Outside the ENABLE_NETPLAY block
+ * on purpose -- it exercises mtrans.c/texcash.c, not netplay, so the TU is
+ * always compiled and gates its own body on ENABLE_NETPLAY_TESTS. */
+int Texcash_Test_Bounds(void);
+
 /* Test harnesses run unattended (scripts, CI). SDL's DEFAULT assertion
  * handler shows an interactive Retry/Break/Abort/Ignore prompt in Debug
  * builds, which never returns in a non-interactive session — a tripped
@@ -1174,6 +1180,10 @@ int main(int argc, const char* argv[]) {
                 "--test-gs-coverage requires a build with ENABLE_NETPLAY=ON.\n");
         return 2;
 #endif
+    }
+
+    if (configuration.test_texcash_bounds) {
+        return Texcash_Test_Bounds();
     }
 
     return loop();

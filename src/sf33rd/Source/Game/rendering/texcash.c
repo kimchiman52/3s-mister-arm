@@ -69,6 +69,18 @@ s8* texcash_name[29] = { "    16x16 (tm)  32x32 (tm) GIX      (mn.nw)",
 
 u8* texcash_melt_buffer;
 TexturePoolUsed* tpu_free;
+
+#ifdef ENABLE_NETPLAY_TESTS
+/* [tasks #59/#61] Test-only observability: how many times a brick-prevention
+ * guard in this TU has fired.  --test-texcash-bounds reads it to prove the
+ * guard actually engaged rather than the test merely walking a happy path.
+ * Deliberately absent from every shipping and gate build so it adds no
+ * file-scope state to the rollback-determinism memory image. */
+unsigned texcash_guard_hits;
+#define TEXCASH_GUARD_HIT() (texcash_guard_hits += 1)
+#else
+#define TEXCASH_GUARD_HIT() ((void)0)
+#endif
 s16 mts_ob_curr_stage;
 
 // forward decls
@@ -270,6 +282,54 @@ void init_texcash_2nd(s16 ix) {
     }
 }
 
+/* Give back every x16/x32 slot a just-expired PatternInstance holds.
+ *
+ * Split out of texture_cash_update() so the --test-texcash-bounds harness
+ * can drive the MAPPING MISS guard directly; `num` and `i` are carried only
+ * so the diagnostic can name the cache and the live-list position. */
+void texcash_release_instance(MultiTexture* mt, PatternInstance* cp, s16 num, s16 i) {
+    makeup_tpu_free(mt->mltnum16 / 256, mt->mltnum32 / 64, &cp->map);
+
+    if ((tpu_free->x16 != cp->x16) || (tpu_free->x32 != cp->x32)) {
+        Debug_w[11] = 1;
+        // The arcade source hung here (do{...}while(1)); log + resync and carry on with the release.
+        //
+        // [task #61] What the never-returning loop owned: the *release* of
+        // this instance's slots.  It fires after the instance's `time` has
+        // already been decremented to 0 and before update_with_tpu_free()
+        // has handed a single refcount back, so a guard that returned here
+        // would strand every slot the instance holds -- mc[slot].time never
+        // decremented, cs.code never set to -1, the slot never returned to
+        // tpf by init_texcash_2nd.  That is exactly the shape of the
+        // 2026-04-29 texgroup.c:216 guard that turned an arcade hang into a
+        // leak, so this guard must not skip the release.
+        //
+        // It resyncs the redundant counters instead.  `cp->map` is the
+        // authoritative record of what was acquired: mc[slot].time is
+        // incremented exactly when x16_mapping_set/x32_mapping_set flips a
+        // bit 0->1 (mtrans.c, get_mltbuf{16,32}_ext_2), so popcount(map) is
+        // precisely the number of decrements this instance owes, and
+        // makeup_tpu_free() above enumerates precisely that popcount.
+        // cp->x16 / cp->x32 are a parallel tally maintained alongside the
+        // map and read nowhere but this comparison -- when the two disagree
+        // it is the tally that is wrong.  Restoring it from the map leaves
+        // the instance self-consistent for search_texcash_free_area() and
+        // for its own next expiry.  --test-texcash-bounds SUB_D asserts the
+        // release actually happened, which is what forbids the texgroup
+        // shape from creeping back in.
+#if ENABLE_PERF_TELEMETRY
+        flLogOut("[texcash-skip] %s mapping-miss num=%d i=%d map16=%d cp16=%d map32=%d cp32=%d (resynced from map; "
+                 "release proceeds)\n",
+                 __func__, (int)num, (int)i, (int)tpu_free->x16, (int)cp->x16, (int)tpu_free->x32, (int)cp->x32);
+#endif
+        TEXCASH_GUARD_HIT();
+        cp->x16 = tpu_free->x16;
+        cp->x32 = tpu_free->x32;
+    }
+
+    update_with_tpu_free(mt);
+}
+
 void texture_cash_update() {
     s16 i;
     s16 num;
@@ -279,19 +339,7 @@ void texture_cash_update() {
             if (mts[num].ext) {
                 for (i = 0; i < mts[num].cpat->kazu; i++) {
                     if ((--mts[num].cpat->adr[i]->time) == 0) {
-                        makeup_tpu_free(mts[num].mltnum16 / 256, mts[num].mltnum32 / 64, &mts[num].cpat->adr[i]->map);
-
-                        if ((tpu_free->x16 != mts[num].cpat->adr[i]->x16) ||
-                            (tpu_free->x32 != mts[num].cpat->adr[i]->x32)) {
-                            Debug_w[11] = 1;
-                            do {
-                                disp_texcash_free_area();
-                                flPrintL(2, 3, "MAPPING MISS : %2d : &2d", num, i);
-                                njWaitVSync_with_N();
-                            } while (1);
-                        }
-
-                        update_with_tpu_free(&mts[num]);
+                        texcash_release_instance(&mts[num], mts[num].cpat->adr[i], num, i);
                     }
                 }
             } else {
@@ -319,11 +367,35 @@ void update_with_tpu_free(MultiTexture* mt) {
         mc16[slot].time -= 1;
         if (mc16[slot].time < 0) {
             Debug_w[11] = 1;
-            do {
-                disp_texcash_free_area();
-                flPrintL(2, 3, "CACHE MISS x16 : %3d", slot);
-                njWaitVSync_with_N();
-            } while (1);
+            // The arcade source hung here (do{...}while(1)); log + clamp and carry on.
+            //
+            // [task #59] What the never-returning loop owned: the invariant
+            // `time >= 0 for every slot` -- it asserted it and then refused
+            // to continue.  So the guard has to restore it, not just step
+            // over it.  Clamping to 0 is the only coherent choice: 0 is what
+            // "fully released" means everywhere else in this cache (a slot
+            // reaches tpf only via cs.code == -1, and cs.code is set to -1
+            // only right below, at time <= 0), and the fall-through below
+            // then completes that release normally.
+            //
+            // Leaving the value negative would re-arm the same trap one
+            // generation later.  A slot's next allocation is either
+            // `mc[slot].time = 1` (x16, mtrans.c get_mltbuf16_ext_2) which
+            // would paper over it, or `mc[slot].time += 1` (x32,
+            // get_mltbuf32_ext_2) which would not -- the slot would come
+            // back from the free list still negative and trap again on its
+            // next release.  The clamp makes both paths safe and removes the
+            // dependence on that x16/x32 asymmetry.
+            //
+            // Debug_w[11] is still set, so texture_cash_update() keeps
+            // calling search_texcash_free_area() and the on-screen free-area
+            // report still shows the damage.
+#if ENABLE_PERF_TELEMETRY
+            flLogOut("[texcash-skip] %s x16-refcount-underflow slot=%d time=%d gidx=%d (clamped to 0)\n",
+                     __func__, (int)slot, (int)mc16[slot].time, (int)mt->mltgidx16);
+#endif
+            TEXCASH_GUARD_HIT();
+            mc16[slot].time = 0;
         }
 
         if (mc16[slot].time <= 0) {
@@ -340,11 +412,17 @@ void update_with_tpu_free(MultiTexture* mt) {
         mc32[slot].time -= 1;
         if (mc32[slot].time < 0) {
             Debug_w[11] = 1;
-            do {
-                disp_texcash_free_area();
-                flPrintL(2, 3, "CACHE MISS x32 : %3d", slot);
-                njWaitVSync_with_N();
-            } while (1);
+            // [task #59] Same guard as the x16 loop above; see the rationale there.
+            // This is the arm that actually needs the clamp: the x32 realloc
+            // path increments (`mc[slot].time += 1`) rather than assigning,
+            // so a slot left negative here would still be negative when it
+            // is handed out again.
+#if ENABLE_PERF_TELEMETRY
+            flLogOut("[texcash-skip] %s x32-refcount-underflow slot=%d time=%d gidx=%d (clamped to 0)\n",
+                     __func__, (int)slot, (int)mc32[slot].time, (int)mt->mltgidx32);
+#endif
+            TEXCASH_GUARD_HIT();
+            mc32[slot].time = 0;
         }
 
         if (mc32[slot].time <= 0) {

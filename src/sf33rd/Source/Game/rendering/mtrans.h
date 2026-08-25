@@ -13,6 +13,11 @@ void seqsBeforeProcess();
 void seqsAfterProcess();
 u32 seqsGetUseMemorySize();
 void makeup_tpu_free(s32 x16, s32 x32, PatternMap* map);
+/* [task #61] Bounds-checked replacement for get_free_patcash_index() plus
+ * the unchecked `adr[kazu++] = cp` that followed it.  Returns NULL when the
+ * collection is exhausted; callers must skip the sprite.  Non-static so the
+ * --test-texcash-bounds harness can drive it directly. */
+PatternInstance* patcash_acquire(PatternCollection* padr);
 void mlt_obj_trans_update(MultiTexture* mt);
 void mlt_obj_melt2(MultiTexture* mt, u16 cg_number);
 void mlt_obj_trans_init(MultiTexture* mt, s32 mode, u8* adrs);

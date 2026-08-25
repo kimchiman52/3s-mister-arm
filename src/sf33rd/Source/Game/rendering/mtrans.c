@@ -120,7 +120,6 @@ static void DebugLine(f32 x, f32 y, f32 w, f32 h);
 s32 seqsStoreChip(f32 x, f32 y, s32 w, s32 h, s32 gix, s32 code, s32 attr, s32 alpha, s32 id);
 void appRenewTempPriority(s32 z);
 static s16 check_patcash_ex_trans(PatternCollection* padr, u32 cg);
-static s32 get_free_patcash_index(PatternCollection* padr);
 static s32 get_mltbuf16(MultiTexture* mt, u32 code, u32 palt, s32* ret);
 static s32 get_mltbuf16_ext(MultiTexture* mt, u32 code, u32 palt);
 static s32 get_mltbuf16_ext_2(MultiTexture* mt, u32 code, u32 palt, s32* ret, PatternInstance* cp);
@@ -455,10 +454,33 @@ void mlt_obj_trans_ext(MultiTexture* mt, WORK* wk, s32 base_y) {
             (void)dw;
             (void)dh;
 
-            ix = get_free_patcash_index(mt->cpat);
-            cp = &mt->cpat->patt[ix];
-            mt->cpat->adr[mt->cpat->kazu] = cp;
-            mt->cpat->kazu += 1;
+            cp = patcash_acquire(mt->cpat);
+
+            if (cp == NULL) {
+                /* [task #61] The 64-entry pattern collection is exhausted.
+                 * Drop this sprite for one frame instead of scribbling a
+                 * pointer over patt[0] / recycling a live instance.
+                 *
+                 * What this early return leaves behind: nothing.  We are
+                 * upstream of every side effect the success path has --
+                 * mt->cpat is untouched (patcash_acquire only mutates it on
+                 * the path that returns non-NULL), no seqsStoreChip has run,
+                 * and seqs_w.up[mt->id] / appRenewTempPriority are still
+                 * unset.  That is the same state the texture-group-not-loaded
+                 * skip a few lines above returns in, and the same state a
+                 * frame in which this WORK simply was not drawn would have.
+                 *
+                 * mlt_obj_matrix() has already run, and it is the only
+                 * njSetMatrix() caller in the tree (mtrans.c:1574), so it
+                 * leaves the global current matrix loaded.  That is dead
+                 * state here: the only readers are appRenewTempPriority
+                 * (mtrans.c:1600, success path only) and bg.c:710/1340/1349/
+                 * 1356, and every one of those bg.c reads is preceded by an
+                 * njUnitMatrix() that discards whatever was there
+                 * (bg.c:705/1335/1344/1353). */
+                return;
+            }
+
             cp->curr_disp = 1;
             cp->time = mt->mltcshtime16;
             cp->cg.code = cc.code;
@@ -826,10 +848,33 @@ void mlt_obj_trans_cp3_ext(MultiTexture* mt, WORK* wk, s32 base_y) {
             (void)dw;
             (void)dh;
 
-            ix = get_free_patcash_index(mt->cpat);
-            cp = &mt->cpat->patt[ix];
-            mt->cpat->adr[mt->cpat->kazu] = cp;
-            mt->cpat->kazu += 1;
+            cp = patcash_acquire(mt->cpat);
+
+            if (cp == NULL) {
+                /* [task #61] The 64-entry pattern collection is exhausted.
+                 * Drop this sprite for one frame instead of scribbling a
+                 * pointer over patt[0] / recycling a live instance.
+                 *
+                 * What this early return leaves behind: nothing.  We are
+                 * upstream of every side effect the success path has --
+                 * mt->cpat is untouched (patcash_acquire only mutates it on
+                 * the path that returns non-NULL), no seqsStoreChip has run,
+                 * and seqs_w.up[mt->id] / appRenewTempPriority are still
+                 * unset.  That is the same state the texture-group-not-loaded
+                 * skip a few lines above returns in, and the same state a
+                 * frame in which this WORK simply was not drawn would have.
+                 *
+                 * mlt_obj_matrix() has already run, and it is the only
+                 * njSetMatrix() caller in the tree (mtrans.c:1574), so it
+                 * leaves the global current matrix loaded.  That is dead
+                 * state here: the only readers are appRenewTempPriority
+                 * (mtrans.c:1600, success path only) and bg.c:710/1340/1349/
+                 * 1356, and every one of those bg.c reads is preceded by an
+                 * njUnitMatrix() that discards whatever was there
+                 * (bg.c:705/1335/1344/1353). */
+                return;
+            }
+
             cp->curr_disp = 1;
             cp->time = mt->mltcshtime16;
             cp->cg.code = cc.code;
@@ -1217,10 +1262,33 @@ void mlt_obj_trans_rgb_ext(MultiTexture* mt, WORK* wk, s32 base_y) {
             s32 dw;
             s32 dh;
 
-            ix = get_free_patcash_index(mt->cpat);
-            cp = &mt->cpat->patt[ix];
-            mt->cpat->adr[mt->cpat->kazu] = cp;
-            mt->cpat->kazu += 1;
+            cp = patcash_acquire(mt->cpat);
+
+            if (cp == NULL) {
+                /* [task #61] The 64-entry pattern collection is exhausted.
+                 * Drop this sprite for one frame instead of scribbling a
+                 * pointer over patt[0] / recycling a live instance.
+                 *
+                 * What this early return leaves behind: nothing.  We are
+                 * upstream of every side effect the success path has --
+                 * mt->cpat is untouched (patcash_acquire only mutates it on
+                 * the path that returns non-NULL), no seqsStoreChip has run,
+                 * and seqs_w.up[mt->id] / appRenewTempPriority are still
+                 * unset.  That is the same state the texture-group-not-loaded
+                 * skip a few lines above returns in, and the same state a
+                 * frame in which this WORK simply was not drawn would have.
+                 *
+                 * mlt_obj_matrix() has already run, and it is the only
+                 * njSetMatrix() caller in the tree (mtrans.c:1574), so it
+                 * leaves the global current matrix loaded.  That is dead
+                 * state here: the only readers are appRenewTempPriority
+                 * (mtrans.c:1600, success path only) and bg.c:710/1340/1349/
+                 * 1356, and every one of those bg.c reads is preceded by an
+                 * njUnitMatrix() that discards whatever was there
+                 * (bg.c:705/1335/1344/1353). */
+                return;
+            }
+
             cp->curr_disp = 1;
             cp->time = mt->mltcshtime16;
             cp->cg.code = cc.code;
@@ -2090,16 +2158,78 @@ static s16 check_patcash_ex_trans(PatternCollection* padr, u32 cg) {
     return rnum;
 }
 
-static s32 get_free_patcash_index(PatternCollection* padr) {
+/* Acquire a dead PatternInstance from `padr` and publish it at the tail of
+ * the live list (`adr[0 .. kazu-1]`).  Returns NULL when the 64-entry
+ * collection has nothing to give.
+ *
+ * [task #61]  This replaces get_free_patcash_index() plus the three
+ * copy-pasted, unchecked appends that followed it (mtrans.c:452-456,
+ * :823-825, :1214-1216 pre-fix):
+ *
+ *     ix = get_free_patcash_index(mt->cpat);   // returned 0 on exhaustion
+ *     cp = &mt->cpat->patt[ix];
+ *     mt->cpat->adr[mt->cpat->kazu] = cp;      // no bound check
+ *     mt->cpat->kazu += 1;
+ *
+ * Two defects, and they compound:
+ *
+ *  1. `adr` and `patt` are adjacent members of PatternCollection
+ *     (include/structs.h:1516-1520), so `adr[64]` lands exactly on
+ *     `&patt[0]`.  What follows is worse than a stuck instance: the
+ *     caller's own next three statements (`cp->curr_disp = 1;
+ *     cp->time = mt->mltcshtime16; cp->cg.code = cc.code;`) overwrite the
+ *     very bytes adr[64] occupies -- curr_disp+time on a 32-bit ABI,
+ *     curr_disp+time+cg.code on LP64 -- so the live list is left holding
+ *     field data reinterpreted as an address.  texture_cash_update() then
+ *     executes `--mts[num].cpat->adr[i]->time` through it (texcash.c:281).
+ *     --test-texcash-bounds SUB_E reproduces the value: adr[64] comes out
+ *     as 0xb00000140001 on arm64, i.e. cg.code<<32 | time<<16 | curr_disp.
+ *
+ *  2. Returning 0 on exhaustion handed the caller a *still-live* patt[0].
+ *     The caller then ran SDL_zero(cp->map) over it (mtrans.c:449 pre-fix),
+ *     discarding every x16/x32 slot reference the instance held without
+ *     ever decrementing those slots' refcounts -- a permanent slot leak.
+ *     SUB_E observes that one deterministically.
+ *
+ * Both are closed here by never handing back a live instance and never
+ * writing past adr[].
+ *
+ * The two rejection conditions are the same condition in a healthy
+ * collection: init_texcash_2nd sets kazu to the number of instances with
+ * time != 0 and every acquire consumes exactly one time == 0 instance, so
+ * `kazu + dead == 0x40` holds for the whole frame (SUB_A checks it at every
+ * step).  They are still checked separately, because they stop being
+ * equivalent the moment mltcshtime16 is 0 -- the caller's
+ * `cp->time = mt->mltcshtime16` would leave the acquired instance at
+ * time == 0, so it would be handed out again on the next call while kazu
+ * kept advancing, and kazu alone would run away.  That cannot happen on the
+ * shipped table (ext is `mode & 0x2000`, so indices 3/4/5/7/13/14, with
+ * life16 20/20/2/12/2/4 -- texcash.c:663-687), but the collection must not
+ * become corruptible by a future table edit. */
+PatternInstance* patcash_acquire(PatternCollection* padr) {
     s16 i;
+
+    // originally an unchecked append from arcade source; skip + log instead of writing over patt[0]
+    if (padr->kazu < 0 || padr->kazu >= 0x40) {
+#if ENABLE_PERF_TELEMETRY
+        flLogOut("[mtrans-skip] %s live-list-full kazu=%d (sprite skipped this frame)\n", __func__, (int)padr->kazu);
+#endif
+        return NULL;
+    }
 
     for (i = 0; i < 0x40; i++) {
         if (padr->patt[i].time == 0) {
-            return i;
+            padr->adr[padr->kazu] = &padr->patt[i];
+            padr->kazu += 1;
+            return &padr->patt[i];
         }
     }
 
-    return 0; /* cache buffer full — reuse slot 0 */
+    // originally `return 0`, which handed back a live patt[0]; skip + log instead
+#if ENABLE_PERF_TELEMETRY
+    flLogOut("[mtrans-skip] %s no-dead-instance kazu=%d (sprite skipped this frame)\n", __func__, (int)padr->kazu);
+#endif
+    return NULL;
 }
 
 static void lz_ext_p6_fx(u8* srcptr, u8* dstptr, u32 len) {
