@@ -17,6 +17,7 @@
 #include "sf33rd/Source/Game/rendering/texcash.h"
 #include "sf33rd/Source/Game/system/ramcnt.h"
 #include "structs.h"
+#include "test/texgroup_window_probe.h"
 
 #include <SDL3/SDL.h>
 
@@ -286,18 +287,74 @@ void q_ldreq_texture_group(REQ* curr) {
          * Push_ramcnt_key_original_2 (ramcnt.c:102) sees ok == 0 and does
          * nothing.
          *
-         * Two behaviours this reclaim introduces that the pre-patch leak
-         * did not have are tracked as open items under task #64: the
-         * char_init_data 25-pointer window (case 4 repopulates those
-         * pointers only for ix1st == 1, so a reclaim of a group whose
-         * CharInitData was already published leaves them pointing at the
-         * freed block until the reload completes), and getObjectHeight
-         * returning 0 into checksummed plw state while ok == 0. Neither is
-         * demonstrated reachable. */
+         * Task #64 measured the two behaviours this reclaim introduces
+         * that the pre-patch leak did not have. Both are closed; the
+         * instrument is src/test/texgroup_window_probe.c, compiled only
+         * under -DENABLE_TEXGROUP_WINDOW_PROBE=ON.
+         *
+         * (1) THE char_init_data 25-POINTER WINDOW. The stated worry was
+         * that case 4 republishes those pointers only for ix1st == 1, so
+         * a reclaim of an already-published group would leave them
+         * dangling permanently. That cannot happen. Reaching here with
+         * ok == 1 requires the case-0 dup-transfer guard above, which is
+         * itself inside `if (bsd->ix1st == 1 || bsd->ix1st == 2)`
+         * (texgroup.c:176) -- ix1st == 0 drains at :221-224 and never
+         * sets be = 2. Resolving texgrpdat[]'s num_of_1st through
+         * obj_group_table gives: ix1st == 1 covers groups 1..20 and
+         * nothing else, ix1st == 2 covers groups 27 and 35 and nothing
+         * else. The two sets are disjoint, and char_init_data /
+         * parabora_own_table are written only in the ix1st == 1 branch
+         * below (:443-445, :471). So every reclaim that can strand those
+         * pointers is a reclaim of a group in 1..20, i.e. one whose own
+         * case 4 republishes them. Groups 2..20 have exactly one
+         * texgrpdat entry each and group 1's other entries all carry
+         * apfn == -1 (drained at :162-165 without loading), so the block
+         * freed at :359 and the file re-read at :362/:369 are always the
+         * same file at the same length: the refill rewrites the block
+         * with the bytes that were already in it.
+         *
+         * What is real is the transient window, and it is wider than one
+         * pump: measured on tools/rollback-determinism/run.sh select,
+         * both scenarios, with the ldreq barrier OFF (the offline
+         * single-step path), the reclaim stranded 25/25 pointers of one
+         * char_init_data slot plus one parabora_own_table slot and the
+         * window stayed open across 7 Main_Jmp_Tbl dispatches. No read
+         * landed in it: set_char_base_data (charid.c) and
+         * setup_butt_own_data (pls02.c) are the tree's only readers of
+         * those two tables, and both run under Game02/Game09, which are
+         * entered only through Game2_0 (game.c:475-477) or Game2_2
+         * (game.c:618-620) -- each of which fatal_error()s unless
+         * Check_LDREQ_Clear(), and no Push_LDREQ_Queue_* site executes
+         * under Game02. A live reclaim and a live reader are therefore
+         * mutually exclusive by that assertion. Residual not observed in
+         * 2/2 samples and not forced: mmAllocSub is best-fit
+         * (MemMan.c:65-93), so if the freed cell coalesces with adjacent
+         * free space the Pull at :362 may land at a different address;
+         * both measured refills returned the identical address.
+         *
+         * (2) getObjectHeight RETURNING 0 INTO CHECKSUMMED plw STATE
+         * while ok == 0 (mtrans.c:366-368 -> plpcu.c:248). Unreachable.
+         * Its only caller is check_tsukamare_keizoku_check, which runs
+         * under G_No == {2,2,1} or G_No[1] == 9, and for a PLW
+         * obj_group_table[wk->wu.cg_number] lands in 1..20. Groups 1..20
+         * lose ok only via purge_texture_group, whose three call sites
+         * are this one, texgroup.c:557 (reset_dma_group, attract mode,
+         * group 61 only) and ramcnt.c:102. This one cannot fire during
+         * Game02 by the Check_LDREQ_Clear() argument above. ramcnt.c:102
+         * needs a key with a nonzero group_num, and the only such free
+         * that can execute while G_No == {2,2,1} is the soft reset --
+         * Purge_mmtm_area(6) at game.c:1819, which is followed four
+         * lines later at game.c:1822-1828 by G_No[ix] = 0 inside the
+         * same Next_Title_Sub() call, with no Main_Jmp_Tbl dispatch in
+         * between (and game.c:164 suppresses that dispatch under
+         * nowSoftReset() anyway). Empirically: 2611 executions of
+         * check_tsukamare_keizoku_check across 77 frame-data battle
+         * corpora produced zero ok == 0 returns. */
         if (curr->lds->ok && curr->lds->key > 0 && rckey_work[curr->lds->key].use) {
 #if ENABLE_PERF_TELEMETRY
             flLogOut("[texgroup-reclaim] %s freeing stranded block grp=%d key=%d ix=%d id=%d\n",
                      __func__, (int)curr->group, (int)curr->lds->key, (int)curr->ix, (int)curr->id);
+            TGWP_ReclaimOpen(curr->group, curr->lds->key, curr->id, curr->ix, bsd->ix1st);
 #endif
             purge_texture_group(curr->group);
         }
@@ -414,6 +471,7 @@ void q_ldreq_texture_group(REQ* curr) {
                 parabora_own_table[character_id] = dst->prot;
             }
 
+            TGWP_LoadComplete(curr->group, bsd->ix1st, curr->key);
             *curr->result |= lpr_wrdata[curr->id];
             curr->be = 0;
             break;

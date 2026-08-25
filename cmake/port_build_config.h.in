@@ -2,5 +2,6 @@
 #define PORT_BUILD_CONFIG_H
 
 #cmakedefine01 ENABLE_PERF_TELEMETRY
+#cmakedefine01 ENABLE_TEXGROUP_WINDOW_PROBE
 
 #endif
