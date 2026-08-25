@@ -564,18 +564,18 @@ void read_args(int argc, const char* argv[], Configuration* configuration) {
         OPT_INTEGER(0,
                     "rbd-select-rollback-period",
                     &configuration->test.rbd_select_rollback_period,
-                    "Character-select-phase cycle period (default 8; depth is clamped to 2 there; 0 "
-                    "disables select-phase cycles). Aggressive select cadence hits known crash-class "
-                    "ppg asset-setup traps — see docs/rollback-determinism-harness.md.",
+                    "Character-select-phase cycle period (default 8; 0 disables select-phase cycles). "
+                    "Aggressive select cadence hits known crash-class ppg asset-setup traps — see "
+                    "docs/rollback-determinism-harness.md.",
                     NULL,
                     0,
                     0),
         OPT_INTEGER(0,
                     "rbd-select-rollback-depth",
                     &configuration->test.rbd_select_rollback_depth,
-                    "Max speculative depth for character-select-phase cycles (default 2, the value this "
-                    "phase used to be hard-clamped to; capped by --rbd-rollback-depth). Raise to 8 to "
-                    "match production's input_prediction_window when reproducing select-phase bugs.",
+                    "Speculative depth for character-select-phase cycles (default 8, matching "
+                    "production's input_prediction_window, netplay.c:903-905). Independent of "
+                    "--rbd-rollback-depth, which bounds the in-game phase only.",
                     NULL,
                     0,
                     0),
