@@ -305,6 +305,13 @@ void read_args(int argc, const char* argv[], Configuration* configuration) {
                     NULL,
                     0,
                     0),
+        OPT_BOOLEAN(0,
+                    "test-texcash-bounds",
+                    &configuration->test_texcash_bounds,
+                    "Run the ext texture-cache brick-prevention harness (tasks #59/#61) and exit. Requires -DENABLE_NETPLAY_TESTS.",
+                    NULL,
+                    0,
+                    0),
 #if ENABLE_PERF_TELEMETRY
         OPT_GROUP("Performance"),
         OPT_INTEGER(0,

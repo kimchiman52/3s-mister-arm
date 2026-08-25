@@ -212,6 +212,13 @@ typedef struct Configuration {
      * ENABLE_NETPLAY_TESTS, otherwise the stub returns 2. Pure
      * in-process — no session, no sockets. */
     bool test_gs_coverage;
+    /* Tasks #59/#61: when true, main() runs the ext texture-cache
+     * brick-prevention harness (src/test/test_texcash_bounds.c) and exits.
+     * Honors --test-texcash-bounds. Parsed unconditionally; the real body is
+     * gated on ENABLE_NETPLAY_TESTS only -- it touches no netplay code, so it
+     * does not need ENABLE_NETPLAY. Pure in-process: no session, no sockets,
+     * no SDL window. */
+    bool test_texcash_bounds;
 } Configuration;
 
 #endif
