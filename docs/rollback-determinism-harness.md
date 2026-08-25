@@ -210,6 +210,77 @@ GImGui  imgui_ini_path  knjsub_palette  message_canvas  pref_path  quads
 renderer  renderer  screen_texture  soundLock  stream  window
 ```
 
+**The two backends were measured against each other, not assumed equal.**
+The "is this value in an allocator-owned mapping" query has a Mach
+backend and an ELF `/proc/self/maps` backend. Every measurement behind
+the rule above was taken on macOS; the ELF branch had never executed,
+which mattered because the MiSTer target is Linux. It was executed by
+compiling the backend text *itself* (extracted by line range from
+`src/test/rollback_determinism.c`, so the probe cannot drift from the
+harness) into a probe binary run over an identical subject set on both
+platforms: image `.data`/`.bss`/`.rodata`/function addresses, six flavours
+of allocator result, the main and a `pthread` stack, raw `mmap` (anonymous
+and file-backed), shared-object text and data, NULL, an unaligned interior
+pointer, small integers, `CLOCK_MONOTONIC`/`CLOCK_REALTIME` nanosecond
+counts, and the two `msgTalkCtrPL0*` false-positive values. The Linux runs
+used the driver's own launch mechanism, `setarch -R`.
+
+It was not equal, and the direction was the dangerous one. `IMAGE` came
+back as `[0x555555554000,0x555555559000)` — **20 KB** — because
+`/proc/self/maps` carries the executable's pathname only on the
+file-backed part of each `PT_LOAD`; the `.bss` tail past the last file
+page is an *anonymous* mapping, so it fell outside the image range and
+inside the region set (which has no allocator tag to filter on and so
+accepts anonymous). `&bss[mid]` and `&bss[end-8]` of a 24 MB static array
+both classified CANON on Linux and raw/in-image on macOS. Of this game's
+16,793,600-byte writable segment, **16,385,960 bytes (97.6%) is zero-fill**
+(`size -m`: `__bss` 14,683,364 + `__common` 1,702,596, against `__data`
+403,280) — so a pointer-width static holding the address of almost any
+game global would have been silently replaced by a constant token on the
+target platform.
+
+Fixed by bounding the image with the program headers' `p_memsz`, the ELF
+analogue of the `sc->vmsize` the Mach branch already sums (`dl_iterate_phdr`
+needs `_GNU_SOURCE`, unavailable this far down the TU, so the headers are
+read through the ELF header the first `PT_LOAD` maps at the image base;
+`ElfW()` keeps it width-correct for 32-bit armhf). After the fix all
+image-resident subjects classify raw on both platforms and all six
+allocator subjects classify CANON on both. Re-measured on the real MiSTer
+(`Linux 5.15.1-MiSTer armv7l`, non-PIE at `0x400000`, under `setarch -R`):
+`IMAGE` 77,824 -> 25,243,648 bytes, `.bss` subjects CANON -> raw.
+
+Two residual differences are **documented, not fixed**, because ELF cannot
+express them: Linux also canonicalizes `pthread` stacks, raw anonymous
+`mmap`s and shared-object `.bss`. Narrowing the region set to `[heap]`
+would be worse than the deviation — a 1 MB malloc landed at
+`0x7ffff7cce010`, inside the anonymous mapping `7ffff7cce000-7ffff7dd2000`
+(`rw-p 00000000 00:00 0`), so dropping anonymous mappings would stop
+canonicalizing the large-malloc class and hand back the flake. The
+deviation only ever canonicalizes more addresses, all of them kernel-chosen
+per process; what keeps an ordinary integer out is the same 8-byte
+alignment plus frame-0 freeze as on macOS. The freeze is *more* load-bearing
+here: with ASLR disabled the Linux mmap area sits at ~1.4e14, which
+`CLOCK_MONOTONIC` in nanoseconds reaches at roughly 1.6 days of uptime.
+Guard pages are excluded on both (the `---p` page at
+`7ffff74cd000-7ffff74ce000` was absent from the region set), as are all
+named mappings including `[stack]`, `[vvar]`, `[vdso]` and `[vsyscall]`.
+
+One further Linux fact worth recording: under `setarch -R` two consecutive
+runs of the same binary produced **byte-identical addresses** for every
+subject — heap, mmap, stack and image alike; only the timer readings
+differed. `ADDR_NO_RANDOMIZE` suppresses far more than macOS's
+`_POSIX_SPAWN_DISABLE_ASLR`, which zeroes the image slide only. The
+canonicalization rule is therefore near-redundant on Linux and load-bearing
+on macOS — but it must still be *correct* on Linux, because a wrong rule
+silences rather than flakes.
+
+Running the harness on Linux **inside Docker** needs
+`--security-opt seccomp=unconfined`. The default seccomp profile denies
+`personality(ADDR_NO_RANDOMIZE)`, so the driver's `setarch -R` launch dies
+with `setarch: failed to set personality to (null): Operation not
+permitted` and the run surfaces only as `game exited with code 1` — the
+real cause is the first line of that run's `.log`.
+
 **Stack / argv / env addresses — the control is made valid instead.**
 The pad cannot move `mmap` placements, so the heap needed the hash
 change above; the stack needed the opposite treatment. Measured the same

@@ -55,7 +55,10 @@
 #include <mach/mach_vm.h>
 #elif defined(__linux__)
 #define RBD_HAVE_VM_BACKEND 1
+#include <elf.h>
+#include <link.h> /* ElfW() — width-correct for both x86-64 and 32-bit armhf */
 #include <unistd.h>
+#define RBD_ELFCLASS_NATIVE (__ELF_NATIVE_CLASS == 64 ? ELFCLASS64 : ELFCLASS32)
 #else
 #define RBD_HAVE_VM_BACKEND 0
 #endif
@@ -398,8 +401,99 @@ static void rbd_compute_image_bounds(void) {
     if (lo >= hi) {
         rbd_fail("no /proc/self/maps entry matched the main executable \"%s\"", exe);
     }
-    rbd_image_lo = lo;
-    rbd_image_hi = hi;
+
+    /* The maps walk alone is NOT the image, and stopping here was measurably
+     * wrong. /proc/self/maps carries the executable's pathname only on the
+     * FILE-BACKED part of each PT_LOAD; the .bss tail past the last file page
+     * is an ANONYMOUS mapping with an empty pathname, so it is (a) excluded
+     * from this range and (b) admitted by rbd_collect_regions below, which
+     * treats every anonymous mapping as allocator-owned because ELF exposes
+     * no allocator tag. Net effect: the address of any executable-owned
+     * object in that tail passes rbd_addr_is_process_varying, and a
+     * pointer-width static holding one is silently canonicalized — real game
+     * state replaced by a constant token, in a harness whose entire purpose
+     * is to refuse that.
+     *
+     * Measured with a probe binary compiled from this very source text on
+     * Debian 11 x86-64 under the driver's own `setarch -R` launch: a 24 MB
+     * `static unsigned char[]` reported image=[0x555555554000,0x555555559000)
+     * — 20 KB — with &array[mid] and &array[end-8] both landing in a
+     * 25165824-byte "allocator" region and classifying CANON, while the same
+     * probe on macOS classified all of them raw/in-image. This game's
+     * writable image is ~17 MB and overwhelmingly .bss, so the exposure is
+     * the whole state the harness watches, not an edge.
+     *
+     * The macOS branch above has never had this hole because it sums
+     * `sc->vmsize`, which counts bss. Do the ELF-equivalent: take p_memsz
+     * from the program headers. They are reachable without dl_iterate_phdr
+     * (which needs _GNU_SOURCE — unavailable here, the tree builds -std=gnu11
+     * and this include block sits below <stdio.h>): the first PT_LOAD maps
+     * file offset 0, so the ELF header is mapped at the image's lowest
+     * address, and e_phoff indexes the headers from there. ElfW() picks the
+     * right width, which matters — the MiSTer target is 32-bit armhf. */
+    const ElfW(Ehdr)* ehdr = (const ElfW(Ehdr)*)lo;
+    if (memcmp(ehdr->e_ident, ELFMAG, SELFMAG) != 0 || ehdr->e_ident[EI_CLASS] != RBD_ELFCLASS_NATIVE ||
+        ehdr->e_phentsize != (uint16_t)sizeof(ElfW(Phdr)) || ehdr->e_phnum == 0) {
+        rbd_fail("mapping at %#llx for \"%s\" is not a native-class ELF header — cannot bound the image",
+                 (unsigned long long)lo, exe);
+    }
+    /* Keep the header walk inside what the maps walk already proved is
+     * mapped. A malformed e_phoff must abort loudly like every other
+     * plumbing failure here, not segfault — a crash reads as a crash-class
+     * finding this harness does not make. */
+    if ((uintptr_t)ehdr->e_phoff > hi - lo ||
+        (uintptr_t)ehdr->e_phnum * (uintptr_t)ehdr->e_phentsize > (hi - lo) - (uintptr_t)ehdr->e_phoff) {
+        rbd_fail("program headers of \"%s\" (e_phoff %llu, %u x %u) fall outside its mapped file range "
+                 "[%#llx,%#llx)",
+                 exe, (unsigned long long)ehdr->e_phoff, (unsigned)ehdr->e_phnum, (unsigned)ehdr->e_phentsize,
+                 (unsigned long long)lo, (unsigned long long)hi);
+    }
+    const ElfW(Phdr)* phdr = (const ElfW(Phdr)*)(lo + (uintptr_t)ehdr->e_phoff);
+
+    uintptr_t min_vaddr = UINTPTR_MAX;
+    uintptr_t max_end = 0;
+    for (uint16_t i = 0; i < ehdr->e_phnum; i++) {
+        if (phdr[i].p_type != PT_LOAD || phdr[i].p_memsz == 0) {
+            continue;
+        }
+        const uintptr_t v = (uintptr_t)phdr[i].p_vaddr;
+        if (v < min_vaddr) {
+            min_vaddr = v;
+        }
+        if (v + (uintptr_t)phdr[i].p_memsz > max_end) {
+            max_end = v + (uintptr_t)phdr[i].p_memsz;
+        }
+    }
+    if (min_vaddr == UINTPTR_MAX || max_end <= min_vaddr) {
+        rbd_fail("program-header walk for \"%s\" found no loadable segment", exe);
+    }
+
+    /* Bias handles both PIE (min p_vaddr 0, bias = load address) and a
+     * fixed-address binary (bias 0). */
+    const uintptr_t bias = lo - min_vaddr;
+
+    /* Round the end up to a page: the kernel maps whole pages, so the bytes
+     * between p_memsz's end and the page boundary belong to the image's own
+     * anonymous tail mapping and would otherwise be claimed by the region
+     * set. Rounding can only make the rule fire LESS, which is the safe
+     * direction. */
+    long pagesize = sysconf(_SC_PAGESIZE);
+    if (pagesize <= 0) {
+        pagesize = 4096;
+    }
+    const uintptr_t page_mask = (uintptr_t)pagesize - 1u;
+
+    /* The program headers are the whole answer; `hi` from the maps walk is
+     * deliberately NOT folded back in. Any mapping past the last PT_LOAD that
+     * still carries the executable's pathname is a SECOND mapping of the
+     * file, not part of the loaded image, and widening to reach it is how
+     * this range stops meaning anything. Measured, when a probe mmap'd its
+     * own argv[0]: the maps-derived end jumped to that mapping and produced
+     * image=[0x64f5960b8000,0x765850394000) — 19 TB, inside which every value
+     * tests as "in the image" and NOTHING is ever canonicalized, i.e. the #65
+     * flake back in full. */
+    rbd_image_lo = bias + min_vaddr;
+    rbd_image_hi = ((bias + max_end) + page_mask) & ~page_mask;
 #endif
 }
 
@@ -431,7 +525,37 @@ static bool rbd_tag_is_allocator(unsigned int tag) {
 
 /* Fill `out` (capacity `cap`) with this process's allocator-owned readable
  * mappings, in ascending address order, and return how many exist. Passing
- * out=NULL counts without storing. */
+ * out=NULL counts without storing.
+ *
+ * "Allocator-owned" is EXACT on Mach and a documented SUPERSET on ELF, and
+ * the difference is stated here rather than left for someone to rediscover.
+ * /proc/self/maps carries no allocator tag, so the ELF branch's only
+ * available proxy is "anonymous" — which also catches thread stacks, raw
+ * mmap()s, and the .bss tails of shared objects. Narrowing it to [heap] is
+ * NOT the fix: measured on Debian 11 x86-64 under `setarch -R`, a 1 MB
+ * malloc landed at 0x7ffff7cce010 inside the anonymous mapping
+ * 7ffff7cce000-7ffff7dd2000 (`rw-p 00000000 00:00 0`, no pathname), so
+ * dropping anonymous mappings would stop canonicalizing the large-malloc
+ * class and hand back the #65 flake this rule exists to close.
+ *
+ * The superset only ever canonicalizes MORE addresses, never fewer, and
+ * every address it adds is one the kernel picks per process — the same
+ * quantity the rule is built to drop. What keeps an ordinary integer out is
+ * the pair of bounds in rbd_addr_is_process_varying: 8-byte value alignment,
+ * and the frozen-at-frame-0 decision. The second one is load-bearing on
+ * Linux specifically, not just in principle: with ASLR disabled the mmap
+ * area sits at ~0x7ffff7xxxxxx, i.e. ~1.4e14, and CLOCK_MONOTONIC in
+ * nanoseconds reaches that at roughly 1.6 days of uptime — a ns timer and a
+ * mapped address are numerically indistinguishable there, exactly as
+ * measured for sdl_app.c's timers on macOS. Frame 0 is before those counters
+ * leave zero, which is what makes the rule safe here.
+ *
+ * What IS excluded on both, and verified on ELF from the same run: PROT_NONE
+ * guard pages (7ffff74cd000-7ffff74ce000 `---p` was absent from the region
+ * set), every named mapping (the executable, libc, ld.so, [stack], [vvar],
+ * [vdso], [vsyscall]) — and, since rbd_compute_image_bounds now bounds the
+ * image by p_memsz, the executable's own .bss tail is checked against the
+ * image range before this set is ever consulted. */
 static uint32_t rbd_collect_regions(RbdRegion* out, uint32_t cap) {
     uint32_t n = 0;
 #if defined(__APPLE__)
