@@ -374,7 +374,17 @@ Remote mutation safety:
 - `tools/mister/perf-sampler.sh --copy-afs` now restores the previous remote `SF33RD.AFS` on exit instead of leaving a replacement behind.
 - `tools/mister/perf-sampler.sh --tag` now accepts only safe basenames; do not use path-like tags.
 
-Recommended sync command (preserves staged `SF33RD.AFS` plus on-device `config`/`keymap`):
+Recommended sync command (preserves staged `SF33RD.AFS` plus on-device
+`config`/`keymap`/`state`/`replays`/`training`/`balance.status`):
+
+Note that `deploy` runs `rsync --delete` scoped to `/media/fat/games/3s-arm/`.
+Everything the device generates at the pref path must therefore appear in the
+preserve list above, or a deploy silently destroys it. `training` (the user's
+training-mode settings, written by `src/port/config/training_config.c:133`) and
+`balance.status` (`src/arcade/arcade_balance.c:91`) were missing from that list
+until 2026-08-29 and were lost on a deploy; if you add a new pref-path runtime
+file, add it here and to `mister_rsync_expect`/`mister_rsync_deploy` in
+`tools/mister/mister-common.sh` in the same change.
 
 ```bash
 MISTER_HOST=192.168.1.171 MISTER_USER=root MISTER_PASSWORD=1 \
@@ -395,6 +405,10 @@ rsync -avn --itemize-changes --delete --omit-dir-times --no-perms --no-owner --n
   --filter 'P keymap' \
   --exclude 'state' \
   --filter 'P state' \
+  --exclude 'training' \
+  --filter 'P training' \
+  --exclude 'balance.status' \
+  --filter 'P balance.status' \
   build/mister-clean-package/ root@192.168.1.171:/media/fat/games/3s-arm/
 ```
 
