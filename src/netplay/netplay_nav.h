@@ -38,6 +38,22 @@ void NetplayNav_Tick(void);
 bool NetplayNav_IsActive(void);
 void NetplayNav_Reset(void);
 
+/*
+ * Task #76: the NAV_WAIT_ORCHESTRATOR backstop, in frames, for a given
+ * orchestrator worst case in milliseconds. Adds nav's fixed scheduling
+ * margin and converts at the nav tick rate.
+ *
+ * This used to be a flat `150 * 60` constant, which meant a wedged
+ * orchestrator left the player on a static "Connecting..." overlay for
+ * 150 s — read as a hang, not a timeout. It is now derived from
+ * DirectP2P_OrchWorstCaseMs(); see netplay_nav.c for the full rationale
+ * and why a smaller flat constant is not a safe substitute.
+ *
+ * Exported (rather than static) so the enforced deadline can be checked
+ * directly. Pure function of its argument — no global state.
+ */
+int NetplayNav_OrchTimeoutFrames(int orch_worst_case_ms);
+
 #ifdef __cplusplus
 }
 #endif

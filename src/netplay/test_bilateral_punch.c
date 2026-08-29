@@ -55,6 +55,7 @@
 #include "netplay/connect_fail.h"
 #include "netplay/direct_p2p.h"
 #include "netplay/natpmp.h" /* S7, test 18 */
+#include "netplay/netplay_nav.h" /* task #76, test 40 */
 #include "netplay/net_tuning.h"
 #include "netplay/rendezvous.h"
 #include "netplay/room_code.h"
@@ -7799,6 +7800,175 @@ done:
     return (rc == 0 && fail_count == fails_before) ? 0 : 1;
 }
 
+/* ======================================================================
+ * Task #76 — the NAV_WAIT_ORCHESTRATOR backstop is DERIVED, not flat
+ * ======================================================================
+ *
+ * The bug: a wedged orchestrator left the player on a static
+ * "Connecting..." overlay for a flat 150 s before any attributed failure
+ * appeared. netplay_nav.c now derives its deadline from
+ * DirectP2P_OrchWorstCaseMs().
+ *
+ * NEUTRALIZATION. Each assertion below names the specific mutation it
+ * exists to catch, and every one of them fails if that mutation is made:
+ *
+ *   [N1] Revert netplay_nav.c to `#define NAV_WAIT_ORCH_TIMEOUT_FRAMES
+ *        (150 * 60)`. Caught by the shipped-defaults ceiling: a joiner's
+ *        deadline must be well under the old constant.
+ *   [N2] Replace the derivation with ANY constant (150 s, 60 s, 30 s).
+ *        Caught by monotonicity: raising the race budget must raise the
+ *        deadline, and by the slope check, which pins the increase to
+ *        exactly the 2 attempts join_thread_fn actually runs. A constant
+ *        has slope 0.
+ *   [N3] Drop `+ STUN_PUNCH_CONFIRM_MS` from the joiner term — i.e.
+ *        size the nav deadline against the race budget alone and let it
+ *        cut inside the S6/S7 H-1 confirmation tail, resurrecting the
+ *        misattribution H-1 was written to fix. Caught by the tail
+ *        containment assertion, which is run at MINIMUM stun timeout and
+ *        MAXIMUM race budget precisely so the two tails are load-bearing
+ *        rather than lost in slack.
+ *   [N4] Make the bound role-blind (drop the ForRole switch, or return
+ *        the host term for a joiner). Caught by the defaults ceiling: at
+ *        shipped defaults the host ladder term is ~3x the joiner term and
+ *        blows the ceiling.
+ *
+ * Direction note (S6/S7 review H-B): every bound below is computed from
+ * PRODUCTION values — the config figures this test itself writes, and
+ * STUN_PUNCH_CONFIRM_MS from stun.h. No production margin is sized
+ * against a constant that lives in this file. */
+static int test_nav_orch_deadline_is_derived(void) {
+    fprintf(stderr, "[test_bilateral_punch] test 40: task #76 nav orchestrator "
+                    "deadline is derived from the live budgets\n");
+    const int fails_before = fail_count;
+
+    /* The old flat constant, reproduced here ONLY as the thing we must be
+     * strictly under. Nothing in production reads it any more. */
+    const int old_flat_frames = 150 * 60;
+
+    /* A previous test in this process may have left the race-budget test
+     * seam armed; it would mask every config write below. */
+    DirectP2P_TestHook_SetRaceBudgetMs(0);
+
+    /* ---- [N1]/[N4] shipped defaults: joiner deadline is human-scale --- */
+    Config_SetString(CFG_KEY_NETPLAY_DIRECT_P2P_STUN_TIMEOUT_MS, "4000");
+    Config_SetString(CFG_KEY_NETPLAY_DIRECT_P2P_RACE_BUDGET_MS, "8000");
+
+    const int join_default_frames =
+        NetplayNav_OrchTimeoutFrames(DirectP2P_OrchWorstCaseMsForRole(ROLE_JOIN));
+    /* 45 s at 60 fps. Chosen as the UX ceiling this task exists to enforce:
+     * comfortably above the ~30.6 s the shipped defaults actually derive
+     * (200 ms startup + 2 x (4000 stun + 100 resolve + 8000 race + 600
+     * tail) + 5000 margin) and far below the 150 s that made a timeout
+     * read as a hang. */
+    const int ux_ceiling_frames = 45 * 60;
+    if (join_default_frames >= ux_ceiling_frames) {
+        fprintf(stderr,
+                "[test_bilateral_punch] FAIL: test40: joiner nav deadline at shipped "
+                "defaults is %d frames (%d ms), expected < %d frames — the player "
+                "must not sit on a static overlay this long before the attributed "
+                "failure appears\n",
+                join_default_frames, (join_default_frames * 1000) / 60,
+                ux_ceiling_frames);
+        fail_count++;
+    }
+    if (join_default_frames >= old_flat_frames) {
+        fprintf(stderr,
+                "[test_bilateral_punch] FAIL: test40: joiner nav deadline is %d "
+                "frames, not under the old flat %d — the deadline is still the "
+                "pre-task-#76 constant\n",
+                join_default_frames, old_flat_frames);
+        fail_count++;
+    }
+
+    /* ---- [N2] slope: the deadline tracks the race budget, 2 attempts --- */
+    Config_SetString(CFG_KEY_NETPLAY_DIRECT_P2P_RACE_BUDGET_MS, "4000");
+    const int join_lo_ms = DirectP2P_OrchWorstCaseMsForRole(ROLE_JOIN);
+    Config_SetString(CFG_KEY_NETPLAY_DIRECT_P2P_RACE_BUDGET_MS, "9000");
+    const int join_hi_ms = DirectP2P_OrchWorstCaseMsForRole(ROLE_JOIN);
+
+    /* join_thread_fn runs join_attempt() TWICE (the S2 auto-retry), so a
+     * +5000 ms race budget must move the joiner bound by exactly +10000.
+     * A constant moves it by 0; a one-attempt bound moves it by 5000. */
+    const int expected_delta = 2 * (9000 - 4000);
+    if (join_hi_ms - join_lo_ms != expected_delta) {
+        fprintf(stderr,
+                "[test_bilateral_punch] FAIL: test40: raising the race budget by "
+                "5000 ms moved the joiner bound by %d ms, expected exactly %d "
+                "(2 attempts x the budget delta). A flat constant moves it by 0.\n",
+                join_hi_ms - join_lo_ms, expected_delta);
+        fail_count++;
+    }
+    /* Same slope must be visible through the nav conversion the state
+     * machine actually enforces, not only through the raw ms. */
+    if (NetplayNav_OrchTimeoutFrames(join_hi_ms) <=
+        NetplayNav_OrchTimeoutFrames(join_lo_ms)) {
+        fprintf(stderr,
+                "[test_bilateral_punch] FAIL: test40: nav deadline did not increase "
+                "with the race budget (%d vs %d frames) — nav is not consuming the "
+                "derived bound\n",
+                NetplayNav_OrchTimeoutFrames(join_lo_ms),
+                NetplayNav_OrchTimeoutFrames(join_hi_ms));
+        fail_count++;
+    }
+
+    /* ---- [N3] the H-1 confirmation tail is inside the bound ----------- */
+    /* Run at the STUN clamp floor and the race clamp ceiling so the two
+     * 600 ms tails are the difference between pass and fail rather than
+     * being absorbed by slack. race_budget_expired() holds a race open to
+     * budget + STUN_PUNCH_CONFIRM_MS when a punch confirmed inside the
+     * tail; if the nav bound does not contain that, the 7.5% of races H-1
+     * rescued get cut off by nav instead and are misattributed again. */
+    const int stun_floor_ms = 1000;   /* stun_budget_ms() clamp floor      */
+    const int race_ceil_ms  = 30000;  /* race_budget_ms() clamp ceiling    */
+    char buf[32];
+    snprintf(buf, sizeof(buf), "%d", stun_floor_ms);
+    Config_SetString(CFG_KEY_NETPLAY_DIRECT_P2P_STUN_TIMEOUT_MS, buf);
+    snprintf(buf, sizeof(buf), "%d", race_ceil_ms);
+    Config_SetString(CFG_KEY_NETPLAY_DIRECT_P2P_RACE_BUDGET_MS, buf);
+
+    const int join_tail_ms = DirectP2P_OrchWorstCaseMsForRole(ROLE_JOIN);
+    const int tail_floor_ms =
+        2 * (stun_floor_ms + race_ceil_ms + (int)STUN_PUNCH_CONFIRM_MS);
+    if (join_tail_ms < tail_floor_ms) {
+        fprintf(stderr,
+                "[test_bilateral_punch] FAIL: test40: joiner bound is %d ms, below "
+                "the %d ms needed for 2 attempts x (STUN %d + race %d + H-1 "
+                "confirmation tail %d). The nav deadline can now cut inside a "
+                "confirmed punch's tail — this is the S6/S7 H-1 regression.\n",
+                join_tail_ms, tail_floor_ms, stun_floor_ms, race_ceil_ms,
+                (int)STUN_PUNCH_CONFIRM_MS);
+        fail_count++;
+    }
+
+    /* ---- [N4] the two role bounds are genuinely different ------------- */
+    Config_SetString(CFG_KEY_NETPLAY_DIRECT_P2P_STUN_TIMEOUT_MS, "4000");
+    Config_SetString(CFG_KEY_NETPLAY_DIRECT_P2P_RACE_BUDGET_MS, "8000");
+    const int host_default_ms = DirectP2P_OrchWorstCaseMsForRole(ROLE_HOST);
+    const int join_default_ms = DirectP2P_OrchWorstCaseMsForRole(ROLE_JOIN);
+    if (host_default_ms <= join_default_ms) {
+        fprintf(stderr,
+                "[test_bilateral_punch] FAIL: test40: host bound (%d ms) is not "
+                "above the joiner bound (%d ms) at shipped defaults — the role "
+                "switch has been flattened, so the joiner is being charged the "
+                "host's port-map + STUN retry ladder\n",
+                host_default_ms, join_default_ms);
+        fail_count++;
+    }
+    /* And a role-blind caller must be bounded by the LONGER path, never
+     * short: ROLE_NONE is what nav sees if the role has not been
+     * published yet. */
+    if (DirectP2P_OrchWorstCaseMsForRole(ROLE_NONE) < host_default_ms) {
+        fprintf(stderr,
+                "[test_bilateral_punch] FAIL: test40: ROLE_NONE bound (%d ms) is "
+                "shorter than the host bound (%d ms) — an unpublished role would "
+                "get a deadline too short for the path it may take\n",
+                DirectP2P_OrchWorstCaseMsForRole(ROLE_NONE), host_default_ms);
+        fail_count++;
+    }
+
+    return (fail_count == fails_before) ? 0 : 1;
+}
+
 /* --- Entry point ------------------------------------------------------ */
 
 int Netplay_Test_BilateralPunch(void) {
@@ -7836,6 +8006,7 @@ int Netplay_Test_BilateralPunch(void) {
     rc |= test_s7_review_fixes();       /* S7 review: test 23b */
     rc |= test_s7_natpmp_kill_switch(); /* S7 review: test 23c */
     rc |= test_s7_lost_mapping();       /* S7 review: test 23d */
+    rc |= test_nav_orch_deadline_is_derived(); /* task #76: test 40 */
     rc |= test_host_cookie_rejected(); /* last: ~31 s of wall clock */
 
     if (fail_count > 0 || rc != 0) {

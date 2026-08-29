@@ -271,6 +271,11 @@ static uint64_t s_host_stun_retry_at_ms = 0;
 #define HOST_STUN_MAX_RETRIES 3
 #define HOST_STUN_RETRY_BACKOFF_MS 5000
 
+/* Pre-NET_Init settle delay both workers take before touching SDL_net
+ * (see host_thread_fn for the segfault rationale). Named for task #76 so
+ * DirectP2P_OrchWorstCaseMs() can sum it. */
+#define WORKER_STARTUP_DELAY_MS 200
+
 /* Init guard so DirectP2P_Init is idempotent. */
 static bool s_init_done = false;
 
@@ -1799,6 +1804,15 @@ done:;
 }
 
 #ifdef NETPLAY_TEST_HOOKS
+/* Bounded blocking DNS poll used before a signalling/relay leg can arm.
+ * Named (task #76) because DirectP2P_OrchWorstCaseMs() has to account for
+ * it: an anonymous `< 100` in the loop body cannot be summed into a
+ * derived deadline without the deadline silently going stale the moment
+ * the loop changes. */
+#define RESOLVE_POLL_ATTEMPTS 100
+#define RESOLVE_POLL_STEP_MS  1
+#define RESOLVE_POLL_MAX_MS   (RESOLVE_POLL_ATTEMPTS * RESOLVE_POLL_STEP_MS)
+
 static NET_Address* resolve_with_short_poll(const char* host);
 
 /* S6-review H-3 / H-2: run ONE race against caller-supplied endpoints.
@@ -2422,8 +2436,9 @@ static NET_Address* resolve_with_short_poll(const char* host) {
     NET_Address* addr = NET_ResolveHostname(host);
     if (!addr) return NULL;
     int wait_attempts = 0;
-    while (NET_GetAddressStatus(addr) == NET_WAITING && wait_attempts < 100) {
-        SDL_Delay(1);
+    while (NET_GetAddressStatus(addr) == NET_WAITING &&
+           wait_attempts < RESOLVE_POLL_ATTEMPTS) {
+        SDL_Delay(RESOLVE_POLL_STEP_MS);
         wait_attempts++;
     }
     if (NET_GetAddressStatus(addr) != NET_SUCCESS) {
@@ -2684,7 +2699,7 @@ static int SDLCALL host_thread_fn(void* data) {
      * memcard) races and segfaults inside NET_ResolveHostname on MiSTer
      * (glibc 2.31, ARM). 200ms is empirically enough to get past all
      * the initialize_game() work that follows defer_direct_p2p_handoff. */
-    SDL_Delay(200);
+    SDL_Delay(WORKER_STARTUP_DELAY_MS);
 
     const uint16_t local_port = (uint16_t)s_work.preferred_port;
 
@@ -3233,7 +3248,7 @@ static int SDLCALL join_thread_fn(void* data) {
     (void)data;
 
     /* See host_thread_fn for the rationale on this pre-NET_Init delay. */
-    SDL_Delay(200);
+    SDL_Delay(WORKER_STARTUP_DELAY_MS);
 
     /* Idempotent NET_Init — Stun_Discover assumes we've called it. */
     NET_Init();
@@ -4693,12 +4708,80 @@ bool DirectP2P_HostStunRetryPending(void) {
      * spent (or for a joiner, whose retry ran inside its own worker)
      * FAILED_STUN is TERMINAL: Tick has emitted the attributed FAIL
      * report, and nav must take its exit (a) instead of waiting out the
-     * 150 s deadline and logging a second, contradictory
+     * orchestrator deadline and logging a second, contradictory
      * P2P_FAIL_TIMEOUT_ORCHESTRATOR for the same failure. Main-thread
      * only, like the retry bookkeeping it reads. */
     return get_state() == DIRECT_P2P_FAILED_STUN &&
            s_work.role == ROLE_HOST &&
            s_host_stun_retry_count < HOST_STUN_MAX_RETRIES;
+}
+
+/* Task #76: worst-case wall clock the orchestrator can legitimately spend
+ * between BeginHost/BeginJoin and publishing a terminal state, DERIVED
+ * from the live clamped budgets rather than guessed.
+ *
+ * Every term below is the enforcement site's own bound, not an estimate:
+ *
+ *   WORKER_STARTUP_DELAY_MS   host_thread_fn / join_thread_fn settle delay
+ *   stun_budget_ms()          the STUN_DISCOVER argument at both sites,
+ *                             clamped [1000, 15000]
+ *   RESOLVE_POLL_MAX_MS       resolve_with_short_poll's bounded DNS poll
+ *   race_budget_ms()          p2p_race's overall deadline, clamped
+ *                             [2000, 30000]
+ *   + STUN_PUNCH_CONFIRM_MS   the S6/S7 H-1 confirmation-tail extension.
+ *                             race_budget_expired() holds the race open to
+ *                             budget + tail when a punch confirmed inside
+ *                             the tail, so the tail IS part of the legal
+ *                             worst case. It is a term here, not a
+ *                             literal, so widening the tail widens this
+ *                             bound automatically and H-1 can never be
+ *                             squeezed out by a stale nav deadline.
+ *
+ * The relay rung adds NOTHING on top: relay_defer_cap_ms is
+ * race_budget_ms - relay_budget_ms, so the latest-arming relay still
+ * finishes at race_budget_ms. The per-leg SIGNAL/BILATERAL budgets are
+ * likewise bounded INSIDE the race (see race_budget_ms's comment).
+ *
+ * Thread-safety: reads Config plus DirectP2P_GetRole(), both of which the
+ * existing main-thread callers already touch. Main thread only. */
+int DirectP2P_OrchWorstCaseMsForRole(Role role) {
+    const int stun    = stun_budget_ms();
+    const int race    = race_budget_ms() + STUN_PUNCH_CONFIRM_MS;
+    const int resolve = RESOLVE_POLL_MAX_MS;
+
+    /* JOINER: join_thread_fn runs join_attempt() twice — the S2 automatic
+     * retry with a freshly bound socket. Each pass re-runs STUN discovery
+     * and a full race. */
+    const int join_ms = WORKER_STARTUP_DELAY_MS + 2 * (stun + resolve + race);
+
+    /* HOST: try_portmap's outer deadline is the SUM of the two backends'
+     * budgets, then STUN — once per attempt, across the S2 FAILED_STUN
+     * ladder of 1 initial attempt + HOST_STUN_MAX_RETRIES retries, with a
+     * backoff between each. */
+    const int portmap = (int)(UPNP_PROBE_BUDGET_MS + NATPMP_PROBE_BUDGET_MS);
+    int host_ms = WORKER_STARTUP_DELAY_MS +
+                  (1 + HOST_STUN_MAX_RETRIES) * (portmap + stun) +
+                  HOST_STUN_MAX_RETRIES * HOST_STUN_RETRY_BACKOFF_MS;
+    /* A host that reached HOST_WAITING re-arms nav's counter every frame
+     * (netplay_nav.c), so its punch starts from a fresh deadline — but that
+     * fresh deadline must still fit one race. Do not rely on the ladder
+     * term dominating; make it explicit so an extreme config cannot
+     * silently produce a host bound shorter than a single race. */
+    const int host_post_wait_ms = resolve + race;
+    if (host_ms < host_post_wait_ms) host_ms = host_post_wait_ms;
+
+    switch (role) {
+    case ROLE_JOIN: return join_ms;
+    case ROLE_HOST: return host_ms;
+    default:        break;
+    }
+    /* ROLE_NONE — role not yet published, or the orchestrator is idle.
+     * Bound by whichever path is longer so the deadline is never short. */
+    return (join_ms > host_ms) ? join_ms : host_ms;
+}
+
+int DirectP2P_OrchWorstCaseMs(void) {
+    return DirectP2P_OrchWorstCaseMsForRole(DirectP2P_GetRole());
 }
 
 const char* DirectP2P_GetHostCode(void) {
