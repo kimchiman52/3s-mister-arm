@@ -43,15 +43,17 @@ jobs:
 
     build-netplay-explicit:
         # F19 — netplay Track A review finding (2026-04-20).
-        # Sibling job that explicitly forces -DENABLE_NETPLAY=ON and
-        # -DENABLE_RMLUI=ON so any regression in either cascade
-        # (src/netplay/*.c, src/port/sdl/netplay_screen.*, the Phase 6
-        # RmlUi lobby TUs) surfaces in CI even if the desktop default ever
-        # flips to OFF. The existing `build` job already compiles netplay
-        # by default on Linux (see CMakeLists.txt:16); this is
-        # belt-and-suspenders coverage, plus it proves the full RmlUi
-        # source cascade compiles on Linux x86_64 before we start adding
-        # Phase 6 TUs.
+        # Sibling job that explicitly forces -DENABLE_NETPLAY=ON so any
+        # regression in the netplay cascade (src/netplay/*.c,
+        # src/port/sdl/netplay_screen.*) surfaces in CI even if the desktop
+        # default ever flips to OFF. The existing `build` job already
+        # compiles netplay by default on Linux (see CMakeLists.txt:16); this
+        # is belt-and-suspenders coverage.
+        # The job used to also pass -DENABLE_RMLUI=ON for the planned Phase 6
+        # RmlUi lobby TUs. That option was never added to CMakeLists.txt and
+        # the RmlUi port was abandoned, so the flag only produced a
+        # "Manually-specified variables were not used" warning; dropped
+        # 2026-08-29 with the RmlUi/FreeType recipes in build-deps.sh.
         # Note: full MiSTer-target verification still requires the Docker
         # ARM cross-compile recipe (`EXTRA_CMAKE_ARGS=... tools/mister/
         # build-game.sh --flavor telemetry`), which is not plumbed into
@@ -78,10 +80,10 @@ jobs:
                 ./build-deps.sh
             shell: bash
 
-          - name: Build for Linux (ENABLE_NETPLAY=ON ENABLE_RMLUI=ON explicit)
+          - name: Build for Linux (ENABLE_NETPLAY=ON explicit)
             run: |
                 set -o pipefail
-                CC=clang CXX=clang++ cmake -B build-netplay -DCMAKE_BUILD_TYPE=Release -DENABLE_NETPLAY=ON -DENABLE_RMLUI=ON
+                CC=clang CXX=clang++ cmake -B build-netplay -DCMAKE_BUILD_TYPE=Release -DENABLE_NETPLAY=ON
                 cmake --build build-netplay --parallel 2>&1 | tee build-netplay.log
             shell: bash
 
