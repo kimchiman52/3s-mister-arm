@@ -120,14 +120,32 @@ const SLOT_STALE_MS = 30 * 1000;
 // mechanism was therefore inert in exactly the lossy conditions it was
 // built for.
 //
-// THE FIX, AND WHY IT IS NOT A SLOT HIJACK. Reclaim slot B for a REGISTER
-// from the SAME PUBLIC ADDRESS on a new port. This is the exact
+// THE FIX, AND WHY IT IS NOT A SLOT HIJACK. Reclaim EITHER slot for a
+// REGISTER from the SAME PUBLIC ADDRESS on a new port. This is the exact
 // discriminator already used for the HOST slot in the H1 reclaim above --
-// same IP, new NAT source port, same session key -- applied to the joiner
-// slot, and it deliberately does NOT relax staleness for anyone else:
-//   * A DIFFERENT-IP third party still cannot touch a live slot B. That is
+// same IP, new NAT source port, same session key -- generalised to both
+// slots, and it deliberately does NOT relax staleness for anyone else:
+//   * A DIFFERENT-IP third party still cannot touch a live slot. That is
 //     the property __test_protocol.js testStaleJoinerSlotReplaced asserts
 //     ("LIVE slot B not replaced by third party"), and it still holds.
+//
+// BOTH SLOTS, NOT JUST B -- this is load-bearing, not symmetry for its own
+// sake. Slots are FIRST-COME, not role-based: nothing in the REGISTER
+// frame identifies a host or a joiner (handleRegister parses only the
+// session key, my_public_port and the cookie), so whichever side binds
+// first takes slot A. A B-only rule therefore misses every room where the
+// joiner won slot A, and the lockout is completely unrepaired there --
+// measured 13/13 on the natmatrix rig: all 11 failing reps with the joiner
+// in slot A showed 16 ignored REGISTERs and zero reclaims, while both reps
+// with the host in slot A reclaimed correctly. The host's ~5 s
+// re-REGISTER cadence against the joiner's ~500 ms means joiner-first is
+// not a rare ordering; forcing host-first in the rig took an 8 s lead.
+//
+// If BOTH slots carry the source address (both parties behind one NAT),
+// slot B is preferred, arbitrarily but deterministically. That is the
+// hairpin room, which the client-side hairpin bypass already refuses
+// before either side REGISTERs, so the choice is unreachable in practice
+// and exists only so the branch order is total.
 //   * The claimant must still pass the S4 return-routability gate at its
 //     NEW (address, port). cookieForSlot() is unchanged and still does NOT
 //     take the session key, so this grants NO new power to a spoofed
@@ -146,7 +164,7 @@ const SLOT_STALE_MS = 30 * 1000;
 // still-live room code within SESSION_TTL_MS without letting a co-located
 // peer flap the slot indefinitely. Once the budget is spent the slot falls
 // back to the pre-existing staleness rule.
-const MAX_JOINER_PORT_RECLAIMS = 8;
+const MAX_PORT_RECLAIMS = 8;
 const RATE_SWEEP_INTERVAL_MS = 60 * 1000;
 
 // Per-IP budget for requests that have ALREADY PROVEN return routability
@@ -685,7 +703,7 @@ function handleRegister(socket, buf, rinfo) {
             releaseSession(oldestKey, oldestEntry);
             logWarn(`session table full — evicted oldest unpaired singleton key=${shortKey4(oldestKey)}... to admit ${source.address}:${source.port}`);
         }
-        entry = { endpointA: source, endpointB: null, lastTouch: now, lastSeenA: now, lastSeenB: 0, creatorIp: source.address, joinerPortReclaims: 0 };
+        entry = { endpointA: source, endpointB: null, lastTouch: now, lastSeenA: now, lastSeenB: 0, creatorIp: source.address, portReclaims: 0 };
         sessionMap.set(hexKey, entry);
         creatorCounts.set(source.address, created + 1);
     } else if (entry.endpointA && endpointEq(entry.endpointA, source)) {
@@ -736,18 +754,39 @@ function handleRegister(socket, buf, rinfo) {
             pairedPeer = entry.endpointA; // notify A that B has now joined
         } else if (entry.endpointB &&
                    entry.endpointB.address === source.address &&
-                   (entry.joinerPortReclaims || 0) < MAX_JOINER_PORT_RECLAIMS) {
-            // Task #105: the room's OWN joiner retrying on a fresh source
-            // port. Same public address, port changed, slot B NOT stale
-            // (attempt 1 refreshed it moments ago). Without this the retry
-            // is ignored for the whole connect budget — see the long note
-            // on MAX_JOINER_PORT_RECLAIMS above for why this is not a slot
-            // hijack and why S4 stays closed.
-            entry.joinerPortReclaims = (entry.joinerPortReclaims || 0) + 1;
-            logInfo(`[RECLAIM] joiner port key=${shortKey4(hexKey)}... ${entry.endpointB.address}:${entry.endpointB.port} -> ${source.address}:${source.port} (same-IP retry ${entry.joinerPortReclaims}/${MAX_JOINER_PORT_RECLAIMS})`);
+                   (entry.portReclaims || 0) < MAX_PORT_RECLAIMS) {
+            // Task #105: a party of THIS room retrying on a fresh source
+            // port, and it happens to hold slot B. Same public address,
+            // port changed, slot NOT stale (attempt 1 refreshed it moments
+            // ago). Without this the retry is ignored for the whole connect
+            // budget — see the long note on MAX_PORT_RECLAIMS above for why
+            // this is not a slot hijack and why S4 stays closed.
+            entry.portReclaims = (entry.portReclaims || 0) + 1;
+            logInfo(`[RECLAIM] port key=${shortKey4(hexKey)}... slotB ${entry.endpointB.address}:${entry.endpointB.port} -> ${source.address}:${source.port} (same-IP retry ${entry.portReclaims}/${MAX_PORT_RECLAIMS})`);
             entry.endpointB = source;
             entry.lastSeenB = now;
-            pairedPeer = entry.endpointA; // re-notify A with the new joiner endpoint
+            pairedPeer = entry.endpointA; // re-notify the peer with the new endpoint
+        } else if (entry.endpointA &&
+                   entry.endpointA.address === source.address &&
+                   (entry.portReclaims || 0) < MAX_PORT_RECLAIMS) {
+            // Task #105 follow-up. The SAME retry, for the party that holds
+            // slot A instead. This arm is NOT redundant: slots are
+            // first-come, not role-based (there is no role bit anywhere in
+            // the REGISTER frame — handleRegister parses only key,
+            // my_public_port and cookie), so the JOINER routinely wins slot
+            // A. Measured 13/13: every failing rep with the joiner in slot A
+            // showed 16 ignored REGISTERs and zero reclaims, because a
+            // B-only rule cannot match a source whose address sits in A.
+            //
+            // Note this also repairs the non-stale HOST retry, which
+            // previously fell through to "fill slot B" and filed the host as
+            // its own joiner; the H1 reclaim above only covers the case
+            // where slot A has already gone STALE.
+            entry.portReclaims = (entry.portReclaims || 0) + 1;
+            logInfo(`[RECLAIM] port key=${shortKey4(hexKey)}... slotA ${entry.endpointA.address}:${entry.endpointA.port} -> ${source.address}:${source.port} (same-IP retry ${entry.portReclaims}/${MAX_PORT_RECLAIMS})`);
+            entry.endpointA = source;
+            entry.lastSeenA = now;
+            pairedPeer = entry.endpointB; // re-notify the peer with the new endpoint
         } else if (bStale) {
             // Both slots filled but the joiner slot is stale (abandoned
             // attempt). Replace it — same-IP retry from a new port, or a
@@ -1005,7 +1044,7 @@ function start(port) {
         _sessionTtlMs: SESSION_TTL_MS,
         _maxSessions: MAX_SESSIONS,
         _slotStaleMs: SLOT_STALE_MS,
-        _maxJoinerPortReclaims: MAX_JOINER_PORT_RECLAIMS, // #105
+        _maxPortReclaims: MAX_PORT_RECLAIMS, // #105
         _sweepNow() {
             sweepSessions();
             sweepRates();
