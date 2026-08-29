@@ -662,9 +662,31 @@ bool Ldreq_BarrierActive(void) {
 
     case NETPLAY_SESSION_IDLE:
     case NETPLAY_SESSION_EXITING:
-    default:
         return false;
     }
+
+    /* No `default:` arm ON PURPOSE. Every NetplaySessionState is listed
+     * above, so -Wswitch (in -Wall, and this tree builds -Werror) turns a
+     * newly added state into a compile error naming the unhandled enumerator.
+     *
+     * A `default: return false;` is what this used to have, and it is exactly
+     * the wrong shape here: it makes a new state silently barrier-free, and
+     * "the gate was narrower than the set of states that can advance the
+     * simulation" is precisely the task-#66 defect that task #72 had to come
+     * back and fix (see the block comment above this function). With a
+     * default, that recurrence compiles clean and the loader quietly pumps on
+     * the wall-clock-coupled path again for whatever frames the new state
+     * covers.
+     *
+     * This return is for a value outside the enum only (a corrupt or
+     * uninitialised read); it is not the new-state path.
+     *
+     * A _Static_assert on the last enumerator was tried first and REJECTED as
+     * vacuous: appending a state after NETPLAY_SESSION_EXITING -- the most
+     * likely way one gets added -- leaves its value unchanged, so the
+     * assertion never fires for the case that matters. -Wswitch catches both
+     * append and insert. */
+    return false;
 }
 
 #if ENABLE_PERF_TELEMETRY
