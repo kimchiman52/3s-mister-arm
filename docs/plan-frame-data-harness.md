@@ -77,12 +77,12 @@ Most of the harness already exists in-tree. Do not rebuild these:
 | Piece | Where | Status |
 |---|---|---|
 | Scripted-input test runner, `#if DEBUG` | `src/test/test_runner.c` — `TestRunner_Prologue()` at `test_runner.c:1173-1347` phase machine (`PHASE_INIT→TITLE→MENU→CHARACTER_SELECT_*→GAME`) | Working; used by existing `--test-*` flows |
-| Boots straight into **training mode** with forced characters/SA | `test_runner.c:1208-1222` (menu nav into training), `test_runner.c:724-767` (char/SA forcing), preset `training-yun-ryu-ryu-stage` at `test_runner.c:845-851` | Working precedent — needs a Q-focused preset |
+| Boots straight into **training mode** with forced characters/SA | `test_runner.c:1208-1222` (menu nav into training), `test_runner.c:731-752` (char/SA forcing), preset `training-yun-ryu-ryu-stage` at `test_runner.c:845-851` | Working precedent — needs a Q-focused preset |
 | Deterministic char-select cursor table | `character_to_cursor[20][2]` at `test_runner.c:70-72`; Q = char id 17 | Working |
 | Input injection choke point | `p1sw_buff`/`p2sw_buff` written by `keyConvert()` at `ioconv.c:123-124`, overwritten by `TestRunner_Prologue()` at `main.c:562-564`, latched at `main.c:581-582` | This is where scripted input goes |
 | Existing RLE input record/replay (reference for format) | `Setup_Replay_Buff()` `sys_sub.c:1267-1293`, `Replay()` `sys_sub.c:1295-1341` — 16-bit words, low 12 bits state, high 4 bits repeat count | Format precedent only; harness uses its own file |
-| Headless run | SDL `dummy` video driver is already the **default** (`config.c:34-35, 73`; `sdl_app.c:1817-1818`); `SDL_VIDEODRIVER` env honored (`sdl_app.c:1596`). NOTE: `--headless` CLI flag is a parsed no-op (`args.c:215`, zero consumers) — don't use it, don't trust it | Working via env/default |
-| Frame trace with machine-parseable annotations | `frame_trace.c` — rows + `# F=N MOVE_START ...` / `# F=N FINAL ... S=. A=. R=. T=. adv=.` annotations from `frame_data_overlay.c:540,608`; training-mode gated (`frame_trace.c:217`) | This is the harness's output channel |
+| Headless run | SDL `dummy` video driver is already the **default** (`config.c:34-35, 73`; `sdl_app.c:1817-1818`); `SDL_VIDEODRIVER` env honored (`sdl_app.c:1596`). NOTE: `--headless` CLI flag is a parsed no-op (`args.c:262`, zero consumers) — don't use it, don't trust it | Working via env/default |
+| Frame trace with machine-parseable annotations | `frame_trace.c` — rows + `# F=N MOVE_START ...` / `# F=N FINAL ... S=. A=. R=. T=. adv=.` annotations from `frame_data_overlay.c:540,608`; training-mode gated (`frame_trace.c:290-304`) | This is the harness's output channel |
 | Arcade ground truth | `docs/arcade-frame-data/q.json` (50 Q entries, from Coccis77/thirdstrikedatabot) | The oracle |
 | CLI plumbing | `read_args()` `args.c:174-464`; test flags at `args.c:368-439`; dispatch `main.c:945-1003` | Extend, don't invent |
 
@@ -91,13 +91,13 @@ Gaps the harness must close (each is a step below):
 - No per-frame input **script file** player (only preset button-mash logic
   and `--test-states` RAM-dump replay, which needs captured dumps).
 - Training mode seeds RNG from wall-clock frame count:
-  `game.c:350-352` sets `Random_ix32 = Interrupt_Timer` when
+  `game.c:383-384` sets `Random_ix32 = Interrupt_Timer` when
   `Mode_Type != MODE_NETWORK` → **non-reproducible**, and the training
   dummy's guard logic consumes RNG (`Guard_Data[zz][Lv][random_16_ex_com()]`
   at `com_sub.c:1875`).
 - No control of player spacing (close vs. far normals resolve by distance).
 - No control of dummy guard mode from the CLI.
-- Trace path is hardcoded `/tmp/3sx-frame-trace.log` (`frame_trace.c:13`).
+- Trace path is hardcoded `/tmp/3sx-frame-trace.log` (`frame_trace.c:16`).
 - No auto-exit when the script finishes.
 - No checker that pairs FINAL lines with expected `q.json` values.
 
@@ -142,7 +142,7 @@ New file `src/test/input_script.c` (+ header), `#if DEBUG`, wired into
     frames (the only instruction that consumes time). Words are the
     `SWK_*` bit layout already documented in `replay_game.c:12-26`.
   - `L <label>` — emit `# F=n SCRIPT <label>` via `frame_trace_annotate()`
-    (`frame_trace.c:248`) so the checker can pair the following FINAL(s)
+    (`frame_trace.c:338`) so the checker can pair the following FINAL(s)
     with a corpus entry.
   - `P <p1_x> <p2_x>` — teleport players to absolute X positions (writes
     the WORK position fields the same way test_runner already force-writes
@@ -175,7 +175,7 @@ Add a preset (enum + `args.c:29-39` list + `test_runner.c` table) that:
 - New flag `--test-pin-rng`: at battle start, zero `Random_ix16/32/_ex`
   exactly as network mode does (`Setup_Net_Random_ix()`,
   `sys_sub.c:1451-1458`) instead of seeding from `Interrupt_Timer`
-  (`game.c:350-352`). Smallest patch: in `game.c`, gate the
+  (`game.c:383-384`). Smallest patch: in `game.c`, gate the
   `Interrupt_Timer` seeding on `!configuration.test.pin_rng` (`#if DEBUG`).
 - Dummy guard mode: the training menu's dummy/guard settings live in the
   training `contents[][][]` data (persisted by
@@ -781,7 +781,7 @@ re-located by content (several files had moved on since).
 - [x] `frame_data_overlay_tick` (`frame_data_overlay.c`) — added an
       early-out (with the same state reset the `!Is_Training_Mode` branch
       already does) when `Disp_Frame_Data == 0`, mirroring the draw-side
-      check (`sc_sub.c:2441`). The engine accumulator hooks in
+      check (`sc_sub.c:2458`). The engine accumulator hooks in
       `charset.c`'s `char_move()` (`fd_engine_hitbox_active`,
       `fd_engine_active_count`, `fd_prev_active_cgix*`) are deliberately
       **not** gated on `Disp_Frame_Data` — they already run unconditionally

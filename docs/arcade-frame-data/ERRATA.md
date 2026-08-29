@@ -150,9 +150,9 @@ keeps outcome=WHIFF asserted) citing this section; see synthesis
 
 **Verdict: STRUCTURAL** (with a caveat — see below)
 
-**Corpus citation:** section comment `tools/frame-data/corpus-oro.yaml:683-705`;
-entries `tools/frame-data/corpus-oro.yaml:707,712` (`oro-oniyama-lp-whiff`),
-`:714,719` (`-block`), `:721,726` (`-hit`) — all three assert the same
+**Corpus citation:** section comment `tools/frame-data/corpus-oro.yaml:729-754`;
+entries `tools/frame-data/corpus-oro.yaml:766,781` (`oro-oniyama-lp-whiff`),
+`:793,811` (`-block`), `:823,835` (`-hit`) — all three assert the same
 measured **R=28, identical across WHIFF/BLOCK/HIT** (the xfail strings
 themselves are not byte-identical: the block/hit entries add their own
 adv/kd notes on top of the shared R=28 reasoning):
@@ -255,15 +255,15 @@ change).
 
 **Verdict: STRUCTURAL**
 
-**Corpus citation:** section comment `tools/frame-data/corpus-ibuki.yaml:630-689`
-(the "STRUCTURAL FINDING (two-phase move...)" sub-header is at line 649).
+**Corpus citation:** section comment `tools/frame-data/corpus-ibuki.yaml:765-829`
+(the "STRUCTURAL FINDING (two-phase move...)" sub-header is at line 790).
 Three entries:
-- `ibuki-kubiori-lp-whiff` (`tools/frame-data/corpus-ibuki.yaml:690`) and
-  `-block` (`:697,702`): xfail cites the "residual item 18(b) whiff-R
+- `ibuki-kubiori-lp-whiff` (`tools/frame-data/corpus-ibuki.yaml:831`) and
+  `-block` (`:838,843`): xfail cites the "residual item 18(b) whiff-R
   truncation" bucket — measured R=8 vs the oracle's first-triplet
   (Jab-strength) Recovery=15; S=14/A=11 assert exactly against the
   oracle's first-triplet values.
-- `ibuki-kubiori-lp-hit` (`tools/frame-data/corpus-ibuki.yaml:704`): the
+- `ibuki-kubiori-lp-hit` (`tools/frame-data/corpus-ibuki.yaml:871`): the
   true oracle-field-incomparable entry:
 
 ```
@@ -373,7 +373,7 @@ literal value and are plain PASS.
 **Pre-capture history (2026-07-10, preserved verbatim):** not part of the
 closed 7-entry oracle-incomparable bucket. This item was tracked in the
 corpus as an **open, unresolved "user review pending"**
-item (`tools/frame-data/corpus-sean.yaml:842` — "Dragon Smash Strong
+item (`tools/frame-data/corpus-sean.yaml:920` — "Dragon Smash Strong
 oracle-duplicate question on the user-review list w/ the interpolation
 finding... User review pending (overnight autonomous run)"), not a closed
 oracle-field-incomparable disposition. It is included here because it was
