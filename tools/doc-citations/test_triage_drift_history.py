@@ -38,11 +38,18 @@ spec.loader.exec_module(triage)
 PLCNT = "src/sf33rd/Source/Game/engine/plcnt.c"
 DOC = "docs/research-desync-deep-investigation.md"
 IMPORT_SHA = "a752e2ca"
+IMPORT_SHA_FULL = "a752e2caf3151f197e2281aca66f1852cee047b7"
 
 failures = []
 
 
-def check(label, expect, finding):
+def check(label, expect, finding, sha=None):
+    # Pin the blame result. The classifier's job is to reason from an authoring
+    # commit to a verdict, and that is what is under test; which commit git
+    # happens to blame a live doc line to is not. Leaving it live made the test
+    # fail merely because the anchor document had unstaged edits, which is a
+    # property of the working tree rather than of the logic.
+    triage._blame_cache[(finding["path"], finding["line"])] = sha or IMPORT_SHA_FULL
     got, detail = triage.classify(finding)
     ok = got == expect
     print(f"  [{'ok' if ok else 'FAIL'}] {label}: expected {expect}, got {got}")
@@ -81,6 +88,21 @@ def main():
     check("cited file never existed", "FILE-ABSENT", cite("src/no_such_file.c", 100, "vib_sel"))
     check("unparseable message", "INCONCLUSIVE", {"path": DOC, "line": 186, "message": "no citation here"})
 
+    # A plan document tabulates the state its own commit replaces. 71694d40
+    # ("split FPS overlay into FPS mode and Debug mode") both landed the change
+    # and carried the plan whose table cites the PRE-change lines:
+    #   $ git show 71694d40^:src/port/sdl/sdl_app.c | sed -n '86p'
+    #   static bool show_fps_overlay = false;
+    # Repointing that to today's code would destroy the record, so it must not
+    # be reported as a defect.
+    print("plan documents that record the state they replaced:")
+    split = {"path": "docs/archive/plan-fps-overlay-split.md", "line": 60,
+             "message": "cited src/port/sdl/sdl_app.c:89 for `fps_overlay_value`, "
+                        "but that line does not mention it"}
+    split_sha = subprocess.run(["git", "-C", REPO, "rev-parse", "71694d40"],
+                               stdout=subprocess.PIPE, text=True).stdout.strip()
+    check("plan table citing the pre-change state", "CORRECT-AT-PARENT", split, sha=split_sha)
+
     # The import guard must be load-bearing. With the threshold raised so that
     # nothing counts as an import, the same citation must be ACCUSED instead of
     # excused -- proving the guard is what is suppressing the accusation.
@@ -89,7 +111,9 @@ def main():
     try:
         triage.IMPORT_FILE_THRESHOLD = 10 ** 9
         triage._import_cache.clear()
-        got, _ = triage.classify(cite(PLCNT, 101, "vib_sel"))
+        f = cite(PLCNT, 101, "vib_sel")
+        triage._blame_cache[(f["path"], f["line"])] = IMPORT_SHA_FULL
+        got, _ = triage.classify(f)
         ok = got == "NEVER-CORRECT"
         print(f"  [{'ok' if ok else 'FAIL'}] threshold disabled -> {got} (want NEVER-CORRECT)")
         if not ok:

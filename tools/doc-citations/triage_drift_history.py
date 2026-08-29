@@ -21,7 +21,14 @@ Verdicts:
   NEVER-CORRECT  the cited file existed at the authoring commit and the token
                  was demonstrably elsewhere in it -> the citation was wrong when
                  written.
+  CORRECT-AT-PARENT
+                 the citation resolves at the blamed commit's PARENT. The
+                 document tabulates the state its own commit replaced, which is
+                 what plan documents do. NOT a defect -- repointing it would
+                 destroy the record.
   FILE-ABSENT    the cited path did not exist at the authoring commit.
+  UNCOMMITTED    the prose line has uncommitted working-tree edits, so there is
+                 no authoring commit to consult yet.
   UNPROVABLE-PRE-IMPORT
                  the token was elsewhere in the file at the blamed commit, BUT
                  that commit is a bulk history-flattening import rather than the
@@ -85,6 +92,8 @@ def git(*args, binary=False):
     return p.stdout if binary else p.stdout.decode("utf-8", "replace")
 
 
+UNCOMMITTED = "<uncommitted>"
+
 _blame_cache = {}
 
 
@@ -97,6 +106,13 @@ def blame_commit(path, line):
     sha = out.split()[0] if out else None
     if sha and not re.fullmatch(r"[0-9a-f]{40}", sha):
         sha = None
+    # git blame reports an all-zero sha for a line that is modified in the
+    # working tree but not committed. That is a valid 40-char hex string, so it
+    # sails through the check above and then makes every `git show` fail --
+    # which silently reads as "the cited file did not exist", turning an
+    # unsaved edit into a fabricated verdict. Catch it explicitly.
+    if sha and set(sha) == {"0"}:
+        sha = UNCOMMITTED
     _blame_cache[key] = sha
     return sha
 
@@ -152,6 +168,8 @@ def classify(finding):
     sha = blame_commit(finding["path"], finding["line"])
     if sha is None:
         return "INCONCLUSIVE", "no blame for the prose line"
+    if sha is UNCOMMITTED:
+        return "UNCOMMITTED", "the prose line has uncommitted edits; commit them and re-run"
 
     then = file_at(sha, cited_path)
     if then is None:
@@ -166,6 +184,20 @@ def classify(finding):
     # The token was not on the cited line then. Only an accusation if we can
     # exhibit it somewhere else in that same file at that same commit -- the
     # linter's own "drift is proven, never inferred" rule, applied to history.
+    # A plan document routinely tabulates the state its own change is about to
+    # replace. Such a document ships in the SAME commit as the change, so the
+    # blamed commit is the state AFTER the thing being described was removed.
+    # Check the parent before accusing it of anything: if the citation resolves
+    # there, the document is an accurate record of the "before" and repointing
+    # it to today's code would destroy the very thing it documents.
+    before = file_at(sha + "^", cited_path)
+    if token_on(before, cited_line, token) is True:
+        return (
+            "CORRECT-AT-PARENT",
+            f"`{token}` was on {cited_path}:{cited_line} at {sha[:8]}^ -- the doc records "
+            f"the state its own commit replaced; do NOT repoint",
+        )
+
     elsewhere = [i + 1 for i, t in enumerate(then) if token in t]
     if not elsewhere:
         return "INCONCLUSIVE", f"`{token}` absent from all of {cited_path} at {sha[:8]}"
@@ -215,7 +247,7 @@ def main():
     for v, n in verdicts.most_common():
         print(f"{n:6d}  {v}")
     print()
-    hdr = ["DRIFTED", "NEVER-CORRECT", "UNPROVABLE-PRE-IMPORT", "FILE-ABSENT", "INCONCLUSIVE"]
+    hdr = ["DRIFTED", "NEVER-CORRECT", "CORRECT-AT-PARENT", "UNPROVABLE-PRE-IMPORT", "FILE-ABSENT", "INCONCLUSIVE", "UNCOMMITTED"]
     print("doc".ljust(56) + "".join(h[:6].rjust(9) for h in hdr))
     for path, c in sorted(per_file.items(), key=lambda kv: -sum(kv[1].values())):
         print(path.ljust(56) + "".join(str(c[h]).rjust(9) for h in hdr))
