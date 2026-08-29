@@ -474,7 +474,7 @@ void AFS_ReadSync(AFSHandle handle, int sectors, void* buf) {
      * Leaving the delay armed here would also break callers that poll
      * AFS_GetState() right after this returns and re-issue the whole read
      * when it still says READING (load_it_use_this_key's while(1),
-     * gd3rd.c:329-354). Disarm it for this slot. */
+     * gd3rd.c:355-379). Disarm it for this slot. */
     requests[handle].release_ticks_ns = 0;
 
     SDL_AsyncIOOutcome outcome;
