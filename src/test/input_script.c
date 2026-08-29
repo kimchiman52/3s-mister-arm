@@ -111,10 +111,10 @@ static void fail_to_start(const char* fmt, ...) {
  * derives the DIP guard/parry flags on spmv_ng_flag) and stance/ACTION
  * setting (Training[].contents[0][0][0], latched into control_pl_rno at
  * menu->gameplay transition and re-read every frame by Control_Player_Tr(),
- * menu.c:4188-4217, to force the dummy's input word).
+ * menu.c:3798-3827, to force the dummy's input word).
  *
  * Writes both Training[0] (the live copy) and Training[2] (the copy
- * Setup_NTr_Data, menu.c:4874, restores into Training[0] on a round
+ * Setup_NTr_Data, menu.c:4451, restores into Training[0] on a round
  * reset) so the setting survives a reset, and pokes control_pl_rno
  * directly for immediate effect this frame (it was only latched once,
  * at gameplay entry - re-deriving it from Training[0] wouldn't happen
@@ -122,7 +122,7 @@ static void fail_to_start(const char* fmt, ...) {
  *
  * Guard slot values (effe3.c:178-260): 0=AUTO, 1=NO GUARD, 2=ALL GUARD,
  * 3=PARRYING. Stance/control_pl_rno values: 0=STAND, 1=CROUCH (also
- * 2=JUMP, 99=UNFORCED, unused here - see DummyAction, workuser.h:46-51).
+ * 2=JUMP, 99=UNFORCED, unused here - see DummyAction, workuser.h:55-60).
  *
  * Does NOT touch spmv_ng_flag/Guard_Type directly - both are re-derived
  * every frame from the contents slot (effe3.c:154-235; com_pl.c:589-591)
@@ -394,7 +394,7 @@ void InputScript_Tick(u16* p1sw, u16* p2sw) {
          * training_mode_gameplay_started() goes true - see
          * TestRunner_Prologue's PHASE_GAME case). Fresh training mode
          * defaults to guard slot 0 (AUTO, Default_Training_Data(),
-         * menu.c:5549), which re-derives its behavior every frame from
+         * menu.c:5126), which re-derives its behavior every frame from
          * timers (effe3.c:178-260) rather than being a fixed mode - not
          * suitable as a deterministic harness default. A script's own
          * `G` directive overrides this immediately once it runs. */

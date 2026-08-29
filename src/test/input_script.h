@@ -45,7 +45,7 @@
  *       with an explicit `G none` unless they want to document it.
  *       NOTE: when the resulting stance is STAND or CROUCH (i.e. every
  *       mode above), Control_Player_Tr() overwrites the dummy's input
- *       word every frame (menu.c:4188-4217), so this script's P2 W-word
+ *       word every frame (menu.c:3798-3827), so this script's P2 W-word
  *       column is a dead field while a `G` mode is active - that's
  *       expected, not a bug in the script.
  *   Q

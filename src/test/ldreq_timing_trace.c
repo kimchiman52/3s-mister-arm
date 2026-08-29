@@ -76,12 +76,12 @@ static uint32_t ldt_djb2(const void* data, size_t len) {
  *      slot "differ" for a reason that has nothing to do with timing.
  *      So the byte image zeroes both pointer fields and the decoded
  *      columns carry `result` as an INDEX into ldreq_result[] (which is
- *      exactly its meaning — gd3rd.c:337, :401) and `lds` as nullness.
+ *      exactly its meaning — gd3rd.c:422, :486) and `lds` as nullness.
  *
- *   2. Push_LDREQ_Queue_Player (gd3rd.c:320-345) fills a stack-local
+ *   2. Push_LDREQ_Queue_Player (gd3rd.c:405-432) fills a stack-local
  *      `REQ ldreq` field by field and leaves rno/retry/kokey/size/sect/
  *      fnum/free[]/lds/info and every padding hole uninitialised;
- *      Push_LDREQ_Queue then does `q_ldreq[i] = ldreq[0]` (gd3rd.c:472),
+ *      Push_LDREQ_Queue then does `q_ldreq[i] = ldreq[0]` (gd3rd.c:559),
  *      a whole-struct copy. Stack garbage and padding therefore land in
  *      the queue. The analyser names every differing byte offset via the
  *      fieldmap in the header, so a padding difference is reported AS
@@ -225,7 +225,7 @@ void LdreqTimingTrace_FrameEnd(void) {
     }
 
     /* Check_PL_Load() and Check_LDREQ_Clear() are pure reads of
-     * ldreq_result[] / q_ldreq[] (gd3rd.c:526-549, sys_sub.c:899-905) —
+     * ldreq_result[] / q_ldreq[] (gd3rd.c:921-923, sys_sub.c:898-904) —
      * capturing them cannot perturb the run. They are recorded because
      * they are the exact expressions Exit_6th (sel_pl.c:1702-1707) gates
      * the SAVED Exit_No / Exit_Timer on. */

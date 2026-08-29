@@ -12,8 +12,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define TGWP_CID_SLOTS 23 /* char_init_data[23]      — charid.c:10 */
-#define TGWP_PAR_SLOTS 20  /* parabora_own_table[20]  — charid.c:11 */
+#define TGWP_CID_SLOTS 23 /* char_init_data[23]      — charid.c:11 */
+#define TGWP_PAR_SLOTS 20  /* parabora_own_table[20]  — charid.c:12 */
 #define TGWP_CID_PTRS 25   /* CharInitData members    — structs.h:1212-1238 */
 
 typedef struct {

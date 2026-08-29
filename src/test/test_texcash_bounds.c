@@ -129,7 +129,8 @@ static void mt_reset(void) {
     memset(&t_tpu_free, 0, sizeof t_tpu_free);
 
     /* mlt_obj_trans_init() leaves every slot at time == 0 / cs.code == -1
-     * before the first init_texcash_2nd (mtrans.c:2236-2251). Start there. */
+     * before the first init_texcash_2nd (mtrans.c:2335, slot loops at
+     * :2369-2381). Start there. */
     for (i = 0; i < T_X16_SLOTS; i++) {
         t_mc16[i].cs.code = (u32)-1;
     }
@@ -142,7 +143,7 @@ static void mt_reset(void) {
     t_mt.mltcsh16 = t_mc16;
     t_mt.mltcsh32 = t_mc32;
     /* mts_base[3]: ext (mode 8209 = 0x2011), life16 = life32 = 20,
-     * gix = 40 (texcash.c:667). */
+     * gix = 40 (mts_base[3], texcash.c:747). */
     t_mt.mltcshtime16 = 20;
     t_mt.mltcshtime32 = 20;
     t_mt.mltgidx16 = 40;
@@ -182,7 +183,7 @@ static void acquire_x32(PatternInstance* cp, s32 slot, u32 code) {
     t_mc32[slot].state = 0;
 }
 
-/* init_texcash_2nd()'s live-list rebuild, texcash.c:263-269. */
+/* init_texcash_2nd() (texcash.c:210), live-list rebuild at texcash.c:275-282. */
 static void rebuild_live_list(PatternCollection* pc) {
     s16 i;
 
@@ -377,7 +378,7 @@ static void sub_b_recovery(void) {
     CHECK(patcash_acquire(&t_pc) == NULL, "full collection did not refuse");
 
     /* texture_cash_update() expires patt[7]; init_texcash_2nd() rebuilds the
-     * live list at the top of the next frame (texcash.c:263-269). */
+     * live list at the top of the next frame (texcash.c:275-282). */
     t_pc.patt[7].time = 0;
     rebuild_live_list(&t_pc);
     CHECK(t_pc.kazu == 0x3F, "rebuild gave kazu=%d, expected 63", (int)t_pc.kazu);
