@@ -277,16 +277,11 @@ deploy)
     mister_lock_acquire
     mister_require_target_idle "${host}" "${user}" "${password}" "deploy"
     mister_rsync_deploy "${src_path%/}/" "${host}" "${user}" "${password}" "${remote_root}/"
-    wrapper_cmd=$(cat <<EOF
-set -e
-mkdir -p '${remote_root}/logs'
-rm -f /media/fat/Scripts/3S-ARM.sh '/media/fat/Scripts/3S-ARM_Training_Yun_Ryu_Ryu_Stage.sh' '/media/fat/Scripts/3S-ARM Training Yun Ryu Ryu Stage.sh'
-mkdir -p /media/fat/Scripts
-printf '%s\n' '#!/bin/sh' 'set -eu' 'exec ${remote_root}/scripts/launch-osd.sh "\$@"' > /media/fat/Scripts/3S-ARM.sh
-chmod +x /media/fat/Scripts/3S-ARM.sh
-EOF
-)
-    mister_ssh_exec "${host}" "${user}" "${password}" "${wrapper_cmd}"
+    # The OSD launcher step used to open with a hardcoded `rm -f` naming two
+    # hand-authored training shortcuts this tooling never created, so every
+    # deploy destroyed them. It is now manifest-scoped: see
+    # mister_deploy_osd_launcher in mister-common.sh (task #95).
+    mister_deploy_osd_launcher "${host}" "${user}" "${password}" "${remote_root}"
     ;;
 deploy-wrapper)
     src_path=""
