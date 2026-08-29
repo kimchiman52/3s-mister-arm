@@ -279,7 +279,7 @@ Output layout:
 - `build/mister-telemetry-package/scripts/launch-osd.sh`
 - `build/mister-clean-package/scripts/launch-osd.sh`
 - The launchers live under `scripts/` only (`scripts/run-3s-arm.sh`, `scripts/launch-osd.sh`); `package.sh` no longer emits top-level compatibility wrappers. `misterctl.sh probe`/`smoke` invoke the `scripts/` paths directly.
-- The visible MiSTer OSD menu entry `/media/fat/Scripts/3S-ARM.sh` is NOT part of the package — `misterctl.sh deploy` (re)creates it on-device as a thin wrapper that `exec`s `<remote_root>/scripts/launch-osd.sh`. A game-only `deploy` therefore refreshes the OSD launcher; it does not preserve any hand-authored `/media/fat/Scripts/3S-ARM*.sh` variants (e.g. per-stage training shortcuts), which must be recreated separately.
+- The visible MiSTer OSD menu entry `/media/fat/Scripts/3S-ARM.sh` is NOT part of the package — `misterctl.sh deploy` (re)creates it on-device as a thin wrapper that `exec`s `<remote_root>/scripts/launch-osd.sh`. A game-only `deploy` therefore refreshes the OSD launcher. It does **not** touch anything else in `/media/fat/Scripts/`: hand-authored variants such as per-stage training shortcuts survive a deploy. Until 2026-08-29 this bullet claimed the opposite, because the deploy opened with a hardcoded `rm -f` naming `3S-ARM_Training_Yun_Ryu_Ryu_Stage.sh` and `3S-ARM Training Yun Ryu Ryu Stage.sh` — two files nothing in this repo has ever created — and destroyed them on every deploy. See `mister_deploy_osd_launcher` in `tools/mister/mister-common.sh` and the acceptance test at `tools/mister/tests/osd-launcher-test.sh`.
 
 ## Player Release Zip
 
@@ -342,7 +342,7 @@ Preferred remote entry point:
 - `tools/mister/misterctl.sh`
 
 The MiSTer SSH path is fragile on this target. Use `tools/mister/misterctl.sh` for deploy, probe, smoke, and ad hoc remote commands, and use `tools/mister/perf-sampler.sh` for captures. Both tools take a shared local lock so only one MiSTer remote workflow runs at a time.
-`misterctl.sh deploy` also refreshes the visible MiSTer OSD wrapper at `/media/fat/Scripts/3S-ARM.sh`.
+`misterctl.sh deploy` also refreshes the visible MiSTer OSD wrapper at `/media/fat/Scripts/3S-ARM.sh`. That step deletes only launcher names a previous deploy recorded in `<remote_root>/.osd-scripts-manifest`; every other file in the shared `/media/fat/Scripts/` directory is invisible to it and survives. Delete that manifest on-device to reset ownership — after which the deploy installs the launcher but removes nothing until it has written a manifest of its own.
 
 Auth note:
 
@@ -400,7 +400,15 @@ Removal is `rm -f <exact file>` plus `rmdir` for directories; there is no
 `rm -rf` in the path, so a directory that still holds runtime data cannot be
 taken out even if the manifest is wrong.
 
-Useful valves:
+The OSD launcher step that follows the transfer uses the same policy against
+`/media/fat/Scripts/`, with its own manifest at
+`<remote_root>/.osd-scripts-manifest`. It installs `3S-ARM.sh` and deletes only
+launcher names a previous deploy recorded there, so hand-authored scripts in
+that shared directory survive. `tools/mister/tests/osd-launcher-test.sh` is the
+acceptance test; its load-bearing cases are the two per-stage training
+shortcuts the old hardcoded `rm -f` destroyed on every deploy.
+
+Useful valves (both apply to the runtime tree and the OSD launcher step):
 
 - `MISTER_DEPLOY_PLAN_ONLY=1` — print the plan and stop before any transfer.
 - `MISTER_DEPLOY_NO_PRUNE=1` — install, skip the removals, leave the previous

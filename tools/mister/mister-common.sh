@@ -854,22 +854,25 @@ mister_deploy_prune_script() {
     printf 'echo __MISTER_PRUNE_DONE__\n'
 }
 
-mister_deploy_fetch_manifest() {
+# Read a remote file into ${out_file}, empty if it does not exist. Sentinels
+# bracket the payload so SSH banners/motd cannot be mistaken for manifest lines.
+# Generic over the manifest path so the runtime manifest (.deploy-manifest) and
+# the OSD launcher manifest (task #95) share one implementation.
+mister_remote_read_file() {
     local host="$1"
     local user="$2"
     local password="$3"
-    local remote_root="$4"
+    local remote_path="$4"
     local out_file="$5"
-    local manifest_path raw
+    local raw
 
-    manifest_path="${remote_root%/}/$(mister_deploy_manifest_name)"
     : >"${out_file}"
 
     raw="$(mister_ssh_exec "${host}" "${user}" "${password}" "$(
         printf 'echo __MISTER_MANIFEST_BEGIN__\n'
         printf '[ -f %s ] && cat %s\n' \
-            "$(mister_shell_quote "${manifest_path}")" \
-            "$(mister_shell_quote "${manifest_path}")"
+            "$(mister_shell_quote "${remote_path}")" \
+            "$(mister_shell_quote "${remote_path}")"
         printf 'echo __MISTER_MANIFEST_END__\n'
     )" 2>/dev/null)" || true
 
@@ -879,27 +882,50 @@ mister_deploy_fetch_manifest() {
         sed '1d;$d' >"${out_file}"
 }
 
+# Write ${local_file} to ${remote_path} atomically (tmp + mv), base64 so the
+# content never has to survive a shell quoting round trip.
+mister_remote_write_file() {
+    local host="$1"
+    local user="$2"
+    local password="$3"
+    local remote_path="$4"
+    local local_file="$5"
+    local encoded
+
+    encoded="$(base64 <"${local_file}" | tr -d '\n')"
+
+    mister_ssh_exec "${host}" "${user}" "${password}" "$(
+        printf 'set -e\n'
+        printf 'printf %%s %s | base64 -d > %s\n' \
+            "$(mister_shell_quote "${encoded}")" \
+            "$(mister_shell_quote "${remote_path}.tmp")"
+        printf 'mv %s %s\n' \
+            "$(mister_shell_quote "${remote_path}.tmp")" \
+            "$(mister_shell_quote "${remote_path}")"
+        printf 'echo __MISTER_MANIFEST_WRITTEN__\n'
+    )"
+}
+
+mister_deploy_fetch_manifest() {
+    local host="$1"
+    local user="$2"
+    local password="$3"
+    local remote_root="$4"
+    local out_file="$5"
+
+    mister_remote_read_file "${host}" "${user}" "${password}" \
+        "${remote_root%/}/$(mister_deploy_manifest_name)" "${out_file}"
+}
+
 mister_deploy_write_manifest() {
     local host="$1"
     local user="$2"
     local password="$3"
     local remote_root="$4"
     local manifest_file="$5"
-    local manifest_path encoded
 
-    manifest_path="${remote_root%/}/$(mister_deploy_manifest_name)"
-    encoded="$(base64 <"${manifest_file}" | tr -d '\n')"
-
-    mister_ssh_exec "${host}" "${user}" "${password}" "$(
-        printf 'set -e\n'
-        printf 'printf %%s %s | base64 -d > %s\n' \
-            "$(mister_shell_quote "${encoded}")" \
-            "$(mister_shell_quote "${manifest_path}.tmp")"
-        printf 'mv %s %s\n' \
-            "$(mister_shell_quote "${manifest_path}.tmp")" \
-            "$(mister_shell_quote "${manifest_path}")"
-        printf 'echo __MISTER_MANIFEST_WRITTEN__\n'
-    )"
+    mister_remote_write_file "${host}" "${user}" "${password}" \
+        "${remote_root%/}/$(mister_deploy_manifest_name)" "${manifest_file}"
 }
 
 # Upload the package, then remove only what a previous deploy owned and this
@@ -1003,6 +1029,250 @@ mister_deploy_runtime_tree() {
     fi
 
     mister_deploy_write_manifest "${host}" "${user}" "${password}" "${dst_path}" "${new_manifest}" || rc=$?
+    rm -rf "${tmp_dir}"
+    return "${rc}"
+}
+
+# ===========================================================================
+# OSD launcher deploy -- manifest-scoped, task #95
+# ===========================================================================
+#
+# `misterctl.sh deploy` also installs the visible MiSTer OSD menu entry at
+# /media/fat/Scripts/3S-ARM.sh. That step used to open with a hardcoded
+# delete list:
+#
+#   rm -f /media/fat/Scripts/3S-ARM.sh \
+#         '/media/fat/Scripts/3S-ARM_Training_Yun_Ryu_Ryu_Stage.sh' \
+#         '/media/fat/Scripts/3S-ARM Training Yun Ryu Ryu Stage.sh'
+#
+# Only the first of those three is a file this tooling has ever created. The
+# other two are hand-authored per-stage training shortcuts -- user content,
+# named in the source, deleted on every single deploy. docs/mister-runbook.md
+# recorded that as expected behaviour ("must be recreated separately") rather
+# than as the bug it is.
+#
+# That is the same premise that destroyed user data twice inside the runtime
+# root: delete by pattern rather than delete what we own. 2026-07-25 took
+# libminiupnpc.so, replays/ and the ROM; 2026-08-29 took the user's `training`
+# settings. Task #93 inverted the policy for /media/fat/games/3s-arm/ (see the
+# block above). This is the same inversion for /media/fat/Scripts/, which #93
+# does not reach because it sits outside the runtime root -- and where the
+# blast radius is larger, since /media/fat/Scripts is shared with every other
+# MiSTer core's scripts.
+#
+# Narrowing the list -- deleting only `3S-ARM_Training_*.sh`, say -- would keep
+# the premise and just move the boundary. The deploy now deletes only launcher
+# names a previous deploy recorded as its own, in a manifest it writes to the
+# device. A file in /media/fat/Scripts that this tooling did not install is
+# absent from that manifest, is therefore never a candidate, and survives by
+# construction. With no manifest on the device nothing is owned and nothing is
+# deleted at all -- so the first deploy after this change stops removing the
+# two training shortcuts immediately, without anyone having to enumerate them.
+#
+# The manifest lives in the runtime root, not in /media/fat/Scripts: the
+# runtime root is ours and is already validated by
+# mister_require_safe_runtime_root, whereas /media/fat/Scripts belongs to the
+# whole system and should gain exactly the launcher we install and nothing
+# else. Losing the runtime root resets ownership to "nothing", which is the
+# fail-safe direction: a stale launcher lingers rather than a live one being
+# removed.
+
+mister_osd_scripts_dir() {
+    printf '%s\n' "${MISTER_OSD_SCRIPTS_DIR:-/media/fat/Scripts}"
+}
+
+mister_osd_manifest_name() {
+    printf '%s\n' '.osd-scripts-manifest'
+}
+
+# Launcher basenames THIS deploy installs into the OSD scripts directory.
+# The manifest records exactly this set, so it is also the complete set of
+# names a later deploy is ever entitled to delete.
+mister_osd_launcher_names() {
+    printf '%s\n' '3S-ARM.sh'
+}
+
+# A basename we are willing to name in a remote `rm` inside a directory shared
+# with every other core. Structural, not an allowlist of known-good names: the
+# manifest already bounds *which* names appear, this only bounds what shape
+# they may have, so a corrupted or hand-edited manifest cannot escape the
+# directory or smuggle in a glob.
+mister_osd_name_is_sane() {
+    local name="$1"
+
+    [ -n "${name}" ] || return 1
+    case "${name}" in
+    */* | -* | .* | *'..'* | *'*'* | *'?'* | *'['* | *']'* | *'$'* | *'`'* | *'\'* | *'"'* | *"'"* | *'
+'*)
+        return 1
+        ;;
+    esac
+
+    return 0
+}
+
+# Plan what this deploy may remove from the OSD scripts directory.
+#
+#   prune <name>          a previous deploy installed it and this one does not
+#   veto <reason> <name>  malformed manifest entry; the caller refuses
+#
+# A name absent from ${old_manifest} is never a candidate. That is the whole
+# point, and it is what the acceptance test proves red against the old code.
+mister_osd_plan_prune() {
+    local old_manifest="$1"
+    local current name
+
+    [ -f "${old_manifest}" ] || return 0
+
+    current="$(mister_osd_launcher_names)"
+
+    while IFS= read -r name; do
+        name="${name%$'\r'}"
+        [ -n "${name}" ] || continue
+
+        if ! mister_osd_name_is_sane "${name}"; then
+            printf 'veto unsafe-name %s\n' "${name}"
+            continue
+        fi
+
+        # Still installed by this deploy: not stale, and it is about to be
+        # rewritten anyway.
+        if printf '%s\n' "${current}" | grep -qxF "${name}"; then
+            continue
+        fi
+
+        printf 'prune %s\n' "${name}"
+    done <"${old_manifest}"
+}
+
+# Remote script that prunes the planned names and installs the launchers.
+# Deletion is `rm -f --` against exact, shell-quoted basenames after a `cd`
+# into the scripts directory -- never a glob, never recursive.
+mister_osd_remote_script() {
+    local remote_root="${1%/}"
+    local scripts_dir="${2%/}"
+    local plan_file="$3"
+    local line name exec_line
+    local -a stale=()
+
+    while IFS= read -r line; do
+        case "${line}" in
+        'prune '*) ;;
+        *) continue ;;
+        esac
+        stale+=("${line#prune }")
+    done <"${plan_file}"
+
+    printf 'set -e\n'
+    printf 'mkdir -p %s\n' "$(mister_shell_quote "${remote_root}/logs")"
+    printf 'mkdir -p %s\n' "$(mister_shell_quote "${scripts_dir}")"
+    printf 'cd %s\n' "$(mister_shell_quote "${scripts_dir}")"
+
+    if [ "${#stale[@]}" -gt 0 ]; then
+        printf 'rm -f --'
+        for name in "${stale[@]}"; do
+            printf ' %s' "$(mister_shell_quote "${name}")"
+        done
+        printf '\n'
+    fi
+
+    exec_line="exec ${remote_root}/scripts/launch-osd.sh \"\$@\""
+    while IFS= read -r name; do
+        [ -n "${name}" ] || continue
+        printf 'printf %s %s %s %s > %s\n' \
+            "$(mister_shell_quote '%s\n')" \
+            "$(mister_shell_quote '#!/bin/sh')" \
+            "$(mister_shell_quote 'set -eu')" \
+            "$(mister_shell_quote "${exec_line}")" \
+            "$(mister_shell_quote "${name}")"
+        printf 'chmod +x %s\n' "$(mister_shell_quote "${name}")"
+    done < <(mister_osd_launcher_names)
+
+    printf 'echo __MISTER_OSD_LAUNCHER_DONE__\n'
+}
+
+# Install the OSD launcher(s), removing only launcher names a previous deploy
+# recorded as its own. Called by `misterctl.sh deploy` after the runtime tree
+# has landed.
+mister_deploy_osd_launcher() {
+    local host="$1"
+    local user="$2"
+    local password="$3"
+    local remote_root="$4"
+
+    local scripts_dir tmp_dir old_manifest new_manifest plan_file remote_script
+    local vetoes prunes rc=0
+
+    mister_require_safe_runtime_root "${remote_root}" || return $?
+
+    scripts_dir="$(mister_osd_scripts_dir)"
+
+    tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/mister-osd.XXXXXX")" || return 1
+    old_manifest="${tmp_dir}/old-manifest"
+    new_manifest="${tmp_dir}/new-manifest"
+    plan_file="${tmp_dir}/plan"
+    remote_script="${tmp_dir}/osd.sh"
+
+    mister_osd_launcher_names >"${new_manifest}"
+
+    mister_remote_read_file "${host}" "${user}" "${password}" \
+        "${remote_root%/}/$(mister_osd_manifest_name)" "${old_manifest}"
+
+    if [ ! -s "${old_manifest}" ]; then
+        echo "deploy: no previous OSD launcher manifest on the device; nothing in ${scripts_dir} is owned, so nothing there will be removed."
+        : >"${plan_file}"
+    else
+        mister_osd_plan_prune "${old_manifest}" >"${plan_file}" || {
+            echo "deploy: could not plan the OSD launcher prune set; refusing." >&2
+            rm -rf "${tmp_dir}"
+            return 2
+        }
+    fi
+
+    vetoes="$(grep '^veto ' "${plan_file}" || true)"
+    prunes="$(grep '^prune ' "${plan_file}" || true)"
+
+    if [ -n "${prunes}" ]; then
+        echo "deploy: stale OSD launchers recorded by the previous deploy and no longer installed:"
+        printf '%s\n' "${prunes}" | sed "s|^prune |  - ${scripts_dir}/|"
+    else
+        echo "deploy: no stale OSD launchers to remove."
+    fi
+
+    if [ -n "${vetoes}" ]; then
+        echo "ERROR: the previous deploy's OSD launcher manifest names entries this deploy must not remove:" >&2
+        printf '%s\n' "${vetoes}" | sed 's/^veto /  - /' >&2
+        echo "       'unsafe-name' means the entry is not a plain basename; the manifest is malformed." >&2
+        echo "       Refusing to touch ${scripts_dir} rather than delete it." >&2
+        echo "       To reset ownership -- after which the deploy installs the launcher but" >&2
+        echo "       removes nothing until it has written a manifest of its own -- delete" >&2
+        echo "       ${remote_root%/}/$(mister_osd_manifest_name) on the device." >&2
+        rm -rf "${tmp_dir}"
+        return 2
+    fi
+
+    if [ "${MISTER_DEPLOY_PLAN_ONLY:-0}" = "1" ]; then
+        echo "deploy: MISTER_DEPLOY_PLAN_ONLY=1, stopping before the OSD launcher step."
+        rm -rf "${tmp_dir}"
+        return 0
+    fi
+
+    if [ -n "${prunes}" ] && [ "${MISTER_DEPLOY_NO_PRUNE:-0}" = "1" ]; then
+        echo "deploy: MISTER_DEPLOY_NO_PRUNE=1, leaving the stale OSD launchers in place."
+        echo "        The manifest is not updated, so the next deploy re-plans the same removals."
+        : >"${plan_file}"
+    fi
+
+    mister_osd_remote_script "${remote_root}" "${scripts_dir}" "${plan_file}" >"${remote_script}"
+    mister_ssh_exec "${host}" "${user}" "${password}" "$(cat "${remote_script}")" || rc=$?
+    if [ "${rc}" -ne 0 ]; then
+        echo "deploy: OSD launcher step failed; leaving the previous manifest in place so it can be retried." >&2
+        rm -rf "${tmp_dir}"
+        return "${rc}"
+    fi
+
+    mister_remote_write_file "${host}" "${user}" "${password}" \
+        "${remote_root%/}/$(mister_osd_manifest_name)" "${new_manifest}" || rc=$?
     rm -rf "${tmp_dir}"
     return "${rc}"
 }
