@@ -109,9 +109,35 @@ esac
 if docker ps -a --format '{{.Names}}' | grep -qx "${container_name}"; then
     existing_src_mount="$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/src"}}{{.Source}}{{end}}{{end}}' "${container_name}")"
     if [ -n "${existing_src_mount}" ] && [ "${existing_src_mount}" != "${ROOT_DIR}" ]; then
-        echo "existing container '${container_name}' is mounted from '${existing_src_mount}', expected '${ROOT_DIR}'" >&2
-        echo "reuse that checkout or recreate the container deliberately before running this helper" >&2
-        exit 1
+        # Task #81. A git worktree necessarily has a different ROOT_DIR than the
+        # container's /src bind mount, and a bind mount cannot be re-pointed
+        # without recreating the container -- which destroys the lane workdirs
+        # and the prebuilt ARM dependency trees inside them. Refusing here is
+        # what forced every lane to merge to the shared checkout before it could
+        # verify anything on ARM, i.e. merge-before-verify.
+        #
+        # This is deliberately NOT a bare relaxation of the check. build-game.sh
+        # does not compile /src: when ROOT_DIR is not the mount source it stages
+        # ROOT_DIR into a per-invocation directory underneath the mount and
+        # rsyncs *that* into the lane workdir, under the lane lock, then proves
+        # what it compiled with the task #53 source fingerprint and nonce
+        # canary. The mount therefore only has to be a usable transport into the
+        # container, not the tree being built. Removing this check without that
+        # staging step would silently compile the mount source while reporting
+        # the worktree's commit -- the exact false attribution task #53 exists
+        # to prevent -- so the two changes only make sense together.
+        if [ ! -d "${existing_src_mount}" ]; then
+            echo "existing container '${container_name}' is mounted from '${existing_src_mount}', which does not exist on this host" >&2
+            echo "recreate the container deliberately before running this helper" >&2
+            exit 1
+        fi
+        if [ ! -w "${existing_src_mount}" ]; then
+            echo "existing container '${container_name}' is mounted from '${existing_src_mount}', which is not writable" >&2
+            echo "build-game.sh stages source through that mount and cannot proceed" >&2
+            exit 1
+        fi
+        echo "note: container '${container_name}' is bind-mounted from '${existing_src_mount}';" >&2
+        echo "      '${ROOT_DIR}' will be staged through it per invocation (task #81)." >&2
     fi
 
     docker start "${container_name}" >/dev/null

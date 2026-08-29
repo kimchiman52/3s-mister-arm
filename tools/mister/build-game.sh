@@ -55,6 +55,16 @@ Concurrency (task #53):
   container overlay). Prefer sharing the default lane and letting the lock
   serialise the builds unless you specifically need them to run at once.
 
+Worktrees (task #81):
+  The build container has a single /src bind mount, fixed to whichever checkout
+  created it. When this script runs from a different checkout -- any git
+  worktree -- it stages that checkout into <mount>/.build-src/<nonce>/ and the
+  container rsyncs from there, so a lane can verify its own branch on ARM
+  without merging first. The staging directory is per invocation, not per lane,
+  so it is never shared mutable state, and it is removed on exit. What was
+  actually compiled is still proven by the task #53 fingerprint and nonce
+  canary, which compare against this checkout, not against the mount.
+
 Defaults:
   - The default platform is linux/amd64 because it is the most portable Docker
     path across macOS and other hosts that cannot execute linux/arm/v7
@@ -200,12 +210,85 @@ source_fingerprint() {
 }
 host_fingerprint="$(cd "${ROOT_DIR}" && source_fingerprint)"
 
+# -------------------------------------------------------------------------
+# Task #81 -- build the caller's checkout, not the container's bind mount
+# -------------------------------------------------------------------------
+#
+# The container has exactly one bind mount, /src, fixed at creation time to
+# whichever checkout created it. The in-container step below rsyncs its source
+# from a path inside the container, so when ROOT_DIR is a git worktree the tree
+# that actually reaches the compiler has to be put somewhere the container can
+# see. Re-pointing the mount would mean recreating the container and losing the
+# lane workdirs and their prebuilt ARM dependency trees.
+#
+# So: when ROOT_DIR is the mount source, nothing changes and the historical
+# `/src/` path is used verbatim. Otherwise ROOT_DIR is staged into a directory
+# underneath the mount and the container rsyncs from there instead.
+#
+# The staging directory is keyed by ${build_nonce}, which is unique per
+# invocation, rather than by lane. That is deliberate: a lane-keyed staging
+# directory would be shared mutable state that a second invocation of the same
+# lane could overwrite while the first was still rsyncing out of it, which is a
+# new instance of exactly the clobber that task #53 removed. Per-invocation
+# staging is not shared at all, so no second process can write to the directory
+# this build reads from, and the lane flock continues to be the only thing
+# serialising access to the workdir.
+mount_src="$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/src"}}{{.Source}}{{end}}{{end}}' "${container_name}" 2>/dev/null || true)"
+staging_host_dir=""
+container_src="/src/"
+
+if [ -n "${mount_src}" ] && [ "${mount_src}" != "${ROOT_DIR}" ]; then
+    staging_host_dir="${mount_src}/.build-src/${build_nonce}"
+    container_src="/src/.build-src/${build_nonce}/"
+
+    # Advisory only. Staging copies the whole checkout, so doing it before
+    # discovering the lane is busy wastes a few hundred MB of writes and a good
+    # chunk of wall time. This probe acquires and immediately releases the lane
+    # lock just to answer "is it busy right now?". It is deliberately not
+    # treated as ownership: the lane can be taken between this probe and the
+    # real acquisition inside the container, so the authoritative check remains
+    # the flock held across the actual build. Skipped when the caller asked to
+    # wait, since then a busy lane is not an error.
+    if [ "${lane_wait_secs}" -eq 0 ]; then
+        if ! docker exec "${container_name}" \
+            flock -n "/var/lock/3s-mister-build-lane-${lane}.lock" -c true 2>/dev/null; then
+            echo "ERROR: build lane '${lane}' is already in use (workdir ${workdir})." >&2
+            echo "       Refusing to stage source for a build that cannot start." >&2
+            echo "       Either wait (--wait-for-lane <seconds>) or pick another lane" >&2
+            echo "       (--lane <name>); note a fresh lane rebuilds all dependencies." >&2
+            exit 3
+        fi
+    fi
+
+    # Remove the staging copy however we exit, including on failure, so a
+    # killed build cannot leave 600 MB of source inside the shared checkout.
+    cleanup_staging() {
+        if [ -n "${staging_host_dir}" ] && [ -d "${staging_host_dir}" ]; then
+            rm -rf "${staging_host_dir}"
+        fi
+    }
+    trap cleanup_staging EXIT INT TERM
+
+    echo "staging ${ROOT_DIR} -> ${staging_host_dir} (task #81)"
+    mkdir -p "${staging_host_dir}"
+    # Same exclude set as the in-container rsync below, so the staged tree is
+    # byte-identical to what a same-checkout build would have shipped.
+    rsync -a --delete \
+        --exclude='.git/' \
+        --exclude='.claude/' \
+        --exclude='.build-src/' \
+        --exclude='build/' \
+        --exclude='third_party/sdl3/build/' \
+        "${ROOT_DIR}/" "${staging_host_dir}/"
+fi
+
 # EXTRA_CMAKE_ARGS is forwarded as a fourth positional into the heredoc below.
 # The heredoc uses <<'EOF' (single-quoted) so host-side variable expansion is
 # disabled; positional args are the only way to smuggle values in.
 docker exec -i "${container_name}" bash -s -- \
     "${platform}" "${flavor}" "${jobs}" "${EXTRA_CMAKE_ARGS:-}" "${git_short_sha}" \
-    "${lane}" "${workdir}" "${lane_wait_secs}" "${build_nonce}" "${host_fingerprint}" <<'EOF'
+    "${lane}" "${workdir}" "${lane_wait_secs}" "${build_nonce}" "${host_fingerprint}" \
+    "${container_src}" <<'EOF'
 set -euo pipefail
 
 platform="$1"
@@ -218,6 +301,9 @@ workdir="$7"
 lane_wait_secs="$8"
 build_nonce="$9"
 host_fingerprint="${10}"
+# Task #81: "/src/" for a build of the container's own checkout, or a
+# per-invocation staging path underneath it for a build of another worktree.
+container_src="${11}"
 llvm_version="${MISTER_LLVM_VERSION:-20}"
 
 # -----------------------------------------------------------------------
@@ -230,10 +316,25 @@ llvm_version="${MISTER_LLVM_VERSION:-20}"
 # /src gets removed, and the lock must also exist before the workdir does.
 #
 # flock is an advisory lock on an open file descriptor, which the kernel drops
-# when the holding process dies. That matters here because builds on this
-# machine have been killed by tool timeouts and background-task lifetime caps;
-# a lock implemented as a mkdir/PID file would have survived those kills and
-# wedged the lane permanently.
+# when the last descriptor referring to it is closed. That matters here because
+# builds on this machine have been killed by tool timeouts and background-task
+# lifetime caps; a lock implemented as a mkdir/PID file would have survived
+# those kills and wedged the lane permanently.
+#
+# One correction to the above, measured rather than assumed. The lock is NOT
+# released merely because the shell below dies. fd 9 is inherited across fork
+# and exec, so every descendant -- make, cc1, ld -- holds a copy, and the lock
+# survives for as long as any of them does. Observed directly: with the holding
+# shell SIGKILLed, a surviving child still had /proc/<pid>/fd/9 open on the lock
+# file and `flock -n` from a third process still failed; it succeeded only once
+# that child exited.
+#
+# That is the safer of the two behaviours and is deliberately left alone: an
+# orphaned compiler is still writing into ${workdir}, so releasing the lane
+# while it runs would re-admit exactly the `rsync --delete` clobber task #53
+# exists to prevent. The cost is that a killed build can leave the lane held by
+# a process no owner file names, so the busy-lane path below reports the pids
+# actually holding the descriptor and not just the recorded owner.
 lock_file="/var/lock/3s-mister-build-lane-${lane}.lock"
 owner_file="${lock_file}.owner"
 mkdir -p /var/lock
@@ -244,12 +345,42 @@ mkdir -p /var/lock
 # fd1 is dup'd from the *new* fd2, so the holder record is discarded and the
 # operator sees an empty "current holder:" heading -- which is precisely the
 # information they need to decide whether to wait or use another lane.
+#
+# The owner file records the build that *acquired* the lane. It does not
+# necessarily name the process still holding it: if that build was killed, the
+# lane stays locked by whichever inherited descendant outlived it, and the owner
+# record then describes a process that no longer exists. Walking /proc for the
+# processes with the lock file actually open is what distinguishes "a build is
+# genuinely running" from "a dead build left an orphan behind", which is the
+# difference between waiting and killing something. Done by hand rather than
+# with fuser/lsof because neither is installed in this container.
+print_lock_fd_holders() {
+    local found=0 p pid resolved
+    # /proc/<pid>/fd/N shows the *resolved* target, and /var/lock is a symlink
+    # to /run/lock in this image, so matching on ${lock_file} verbatim silently
+    # finds nothing -- it reported "no live process" while nine processes held
+    # the descriptor. Compare against the resolved path instead.
+    resolved="$(readlink -f "${lock_file}" 2>/dev/null || echo "${lock_file}")"
+    for p in /proc/[0-9]*; do
+        pid="${p#/proc/}"
+        if ls -l "${p}/fd" 2>/dev/null | grep -q " -> ${resolved}\$"; then
+            found=1
+            echo "         pid ${pid}: $(tr '\0' ' ' <"${p}/cmdline" 2>/dev/null | cut -c1-100)" >&2
+        fi
+    done
+    if [ "${found}" -eq 0 ]; then
+        echo "         (no live process holds the lock descriptor)" >&2
+    fi
+}
+
 print_lane_holder() {
     if [ -f "${owner_file}" ]; then
         sed 's/^/         /' "${owner_file}" >&2
     else
         echo "         (no owner record)" >&2
     fi
+    echo "       processes holding the lock descriptor:" >&2
+    print_lock_fd_holders
 }
 
 exec 9>"${lock_file}"
@@ -297,12 +428,18 @@ mkdir -p "${workdir}"
 # build-normal, ...). Left in, they dominate the copy: 1.4 GB of .claude vs
 # ~0.6 GB of actual source, and the overflow is what filled this container's
 # 20 GB overlay and killed the rsync mid-transfer with ENOSPC.
+#
+# Task #81: '.build-src/' is where a worktree build stages its source inside
+# the mount. It is never a build input -- excluding it keeps a concurrent
+# worktree build's staging tree out of this lane's workdir, and stops a build
+# of the container's own checkout from copying it in.
 rsync -a --delete \
     --exclude='.git/' \
     --exclude='.claude/' \
+    --exclude='.build-src/' \
     --exclude='build/' \
     --exclude='third_party/sdl3/build/' \
-    /src/ "${workdir}/"
+    "${container_src}" "${workdir}/"
 cd "${workdir}"
 
 # Task #53 -- write the clobber canary immediately after the rsync, while we
