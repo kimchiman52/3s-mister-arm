@@ -80,7 +80,7 @@ bool Rendezvous_DeriveSessionKey(uint32_t ip_be,
  * observed the host's ip:port but not the code — can no longer be
  * captured as "the peer". Anyone who has the full room code can of
  * course derive it — the room code IS the shared secret in this
- * friend-to-friend model. S5's relay will reuse this token.
+ * friend-to-friend model.
  *
  * The nonce is 32 bits as of v3. At 12 bits the token had only 4096
  * unguessable variants against a host that answered every guess (accept
@@ -196,40 +196,24 @@ bool Rendezvous_ParseDeliver(const uint8_t* pkt, int len,
                              char out_peer_ip[64],
                              uint16_t* out_peer_port);
 
-/* --- S5 relay (docs/plan-netplay-connection.md §7) ---------------------
- *
- * Symmetric x symmetric is the one NAT pair that cannot punch: neither
- * side can predict the other's per-destination port. The relay is the
- * only fix. It is a minimal extension of THIS protocol on the SAME UDP
- * port rather than TURN, because do_handoff transfers a BARE datagram
- * socket into netplay.c and GekkoNet then owns plain send/recv on it —
- * TURN framing on every packet, on a 60 Hz rollback game's hot path, is
- * not something GekkoNet can speak. The relay forwards raw datagrams,
- * so a relayed socket behaves exactly like a punched one.
- *
- * The '3SXR' WIRE VERSION IS UNCHANGED at 2: a client that never sends a
- * RELAY_REQ is indistinguishable from a pre-S5 one, so this is a pure
- * extension and no interlock row in §6.5 changes.
- *
- * Flow: RELAY_REQ (main port) -> RELAY_GRANT carries a per-session relay
- * PORT and a per-side TOKEN -> the client sends RELAY_PIN datagrams to
- * (signal host, relay port) until it sees a RELAY_PIN_ACK -> the relay
- * has both endpoints pinned and forwards raw bytes between them.
- */
-
 /* Server->client frame types this client understands. REGISTER (1) and
- * POLL (3) are client->server; RELAY_PIN (7) is client->relay. */
+ * POLL (3) are client->server.
+ *
+ * Types 5-8 (RELAY_REQ / RELAY_GRANT / RELAY_PIN / RELAY_PIN_ACK) were
+ * the S5 relay rung and are GONE from this client. The '3SXR' wire
+ * version deliberately stays 2: a client that never sends a RELAY_REQ
+ * was always indistinguishable from a pre-S5 one, so ceasing to send it
+ * is not a protocol change and no interlock row in §6.5 moves. */
 #define REND_FRAME_DELIVER      2
 #define REND_FRAME_CHALLENGE    4
-#define REND_FRAME_RELAY_GRANT  6
-#define REND_FRAME_RELAY_PIN_ACK 8
 
 /*
  * Cheap router for an inbound datagram: returns the '3SXR' frame type
  * byte when `pkt` is a well-formed frame of THIS protocol version, or 0
  * otherwise (wrong magic, wrong version, or too short to carry a type).
  * Receive loops use this instead of re-deriving the magic/version test —
- * before S5 every call site open-coded `buf[0]==0x33 && ... && buf[5]==N`.
+ * before this existed every call site open-coded
+ * `buf[0]==0x33 && ... && buf[5]==N`.
  */
 int Rendezvous_FrameType(const uint8_t* pkt, int len);
 
@@ -249,99 +233,6 @@ int Rendezvous_FrameType(const uint8_t* pkt, int len);
  * a GekkoNet type byte is 1..7 by construction and can never be 0x33.
  */
 bool Rendezvous_HasMagic(const uint8_t* pkt, int len);
-
-#define REND_RELAY_TOKEN_LEN   8
-/* RELAY_REQ is byte-identical to REGISTER apart from the type byte —
- * deliberately, so it passes through the server's return-routability
- * gate (which reads the key at [8..24) and the cookie at [28..36))
- * without a second code path. Same 36-byte length. */
-#define REND_RELAY_REQ_PKT_LEN REND_REGISTER_PKT_LEN
-#define REND_RELAY_GRANT_LEN   36
-#define REND_RELAY_PIN_LEN     20
-#define REND_RELAY_PIN_ACK_LEN 12
-
-/* Slot value the server puts in a REFUSED grant. */
-#define REND_RELAY_SLOT_NONE   0xFFu
-
-typedef enum RendezvousRelayStatus {
-    REND_RELAY_GRANTED = 0,
-    REND_RELAY_POOL_EXHAUSTED = 1, /* every relay port is in use          */
-    REND_RELAY_NOT_PAIRED = 2,     /* the peer never registered — nothing
-                                      to relay to                         */
-} RendezvousRelayStatus;
-
-typedef struct RendezvousRelayGrant {
-    uint8_t  slot;    /* 0 = slot A (host), 1 = slot B (joiner);
-                         REND_RELAY_SLOT_NONE on refusal                  */
-    uint8_t  status;  /* RendezvousRelayStatus                            */
-    uint16_t relay_port;                       /* host order; 0 on refusal */
-    uint8_t  token[REND_RELAY_TOKEN_LEN];      /* zeros on refusal         */
-} RendezvousRelayGrant;
-
-/*
- * Build a 36-byte RELAY_REQ (type=5). Same arguments and same wire shape
- * as Rendezvous_BuildRegister — including the cookie tail, which the
- * server's gate requires exactly as it does for a REGISTER.
- *
- * Returns true on success, false on NULL key/buffer.
- */
-bool Rendezvous_BuildRelayReq(uint16_t my_public_port,
-                              const uint8_t session_key[16],
-                              const uint8_t cookie[REND_COOKIE_LEN],
-                              uint8_t out_pkt[REND_RELAY_REQ_PKT_LEN]);
-
-/*
- * Parse a 36-byte RELAY_GRANT (type=6, server->client). Layout:
- * magic(4) ver(1) type(1) slot(1) status(1) key(16) port_be(2)
- * reserved(2) token(8).
- *
- * Validates magic/version/type and that the frame carries OUR session
- * key (the same cross-talk + forgery gate Rendezvous_ParseChallenge
- * applies — the key embeds the room-code nonce, which an off-path
- * attacker cannot know). A GRANTED status carrying port 0 is rejected as
- * malformed: fail closed rather than hand the caller an unconnectable
- * endpoint. `*out` is ZEROED on every reject, so a caller that ignores
- * the return value cannot act on attacker-chosen bytes.
- *
- * A REFUSED grant (status != REND_RELAY_GRANTED) returns TRUE with the
- * status set — a refusal is a valid, informative frame and the caller
- * must be able to distinguish it from silence.
- */
-bool Rendezvous_ParseRelayGrant(const uint8_t* pkt, int len,
-                                const uint8_t expected_session_key[16],
-                                RendezvousRelayGrant* out);
-
-/*
- * Build a 20-byte RELAY_PIN (type=7) for the per-session relay port:
- * magic(4) ver(1) type(1) slot(1) reserved(1) token(8) reserved2(4).
- *
- * The relay pins the first token-bearing source on each side and
- * forwards raw datagrams between the two thereafter. `slot` and `token`
- * both come from the RELAY_GRANT; the slot index is inside the server's
- * token HMAC, so a token cannot be presented for the other side.
- */
-bool Rendezvous_BuildRelayPin(uint8_t slot,
-                              const uint8_t token[REND_RELAY_TOKEN_LEN],
-                              uint8_t out_pkt[REND_RELAY_PIN_LEN]);
-
-/*
- * Parse a 12-byte RELAY_PIN_ACK (type=8, relay->client):
- * magic(4) ver(1) type(1) slot(1) peer_pinned(1) reserved(4).
- *
- * Validates magic/version/type and that the slot echo matches
- * `expect_slot`. Writes whether the OTHER side is pinned yet into
- * `*out_peer_pinned` (false on any reject).
- *
- * Deliberately NOT session-key-authenticated: the relay port itself is
- * the session identifier and the ACK steers nothing — it only tells the
- * client "your pin landed" and "your peer has/hasn't arrived". Forging
- * one requires knowing the ephemeral relay port, and the only thing it
- * buys is making a client hand off a few hundred ms early — a state
- * GekkoNet's own retransmit/timeout already covers.
- */
-bool Rendezvous_ParseRelayPinAck(const uint8_t* pkt, int len,
-                                 uint8_t expect_slot,
-                                 bool* out_peer_pinned);
 
 /*
  * Parse a `udp://host:port` configuration URL into its host and port
