@@ -38,6 +38,18 @@ set -euo pipefail
 # primitive - just run.sh's existing RUNDIR/FRAME_TRACE_PATH mechanism,
 # fanned out via the FDH_SKIP_BUILD/FDH_RUNDIR/FDH_KEEP_RUNDIR hooks it
 # gained for this purpose.
+#
+# KNOWN LIMITATION (task #79, documented not fixed - different defect, same
+# family as the per-corpus wall-clock cap run.sh applies): a full run of all
+# 94 corpora (build + fan-out) has been externally SIGTERM'd mid-run by a
+# separate background-task lifetime cap of roughly 70 minutes, unrelated to
+# anything in this script or in run.sh - it kills the whole process group
+# from outside, the same way any other long-lived background job on this
+# host is capped. Launching this script under `nohup ... & disown` has been
+# observed to survive that cap (the job is detached from the session the cap
+# tracks). There is no mechanism in run-suite.sh itself to extend or detect
+# that external cap; a run long enough to approach ~70 minutes wall should be
+# started detached.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"

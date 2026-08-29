@@ -147,6 +147,13 @@ ANCHOR_MAX_HITS = 12
 # Below this length, snake_case tokens are too often accidents of prose.
 MIN_IDENT_LEN = 6
 
+# How many extra lines the markdown anchor window reaches on each side of a
+# citation's own line, to catch a symbol that hand-wrapped onto a neighbouring
+# line (see anchor_tokens). Kept small and symmetric: wide enough for an
+# ordinary wrapped sentence or table cell, narrow enough that OWNERSHIP still
+# reliably separates one citation's subject from the next row's.
+MD_ANCHOR_WINDOW_LINES = 1
+
 # A line carrying this marker is QUOTING a citation, not making one. See the
 # quoted() helper in main() for the rule and why it is not an escape hatch.
 QUOTE_MARKER = "doccite:quote"
@@ -754,7 +761,7 @@ def load_allowlist(path):
 
 class Finding:
     def __init__(self, code, severity, path, line, message, evidence=None,
-                 suggestion=None):
+                 suggestion=None, range_cite=False):
         self.code = code
         self.severity = severity  # "error" | "advisory"
         self.path = path
@@ -762,6 +769,9 @@ class Finding:
         self.message = message
         self.evidence = evidence or []
         self.suggestion = suggestion
+        # True only for a "drift" finding on a LINE-RANGE citation
+        # (`file.c:522-566`). --fix refuses these -- see apply_fixes.
+        self.range_cite = range_cite
 
     def key(self):
         return (self.path, self.line, self.code, self.message)
@@ -771,6 +781,7 @@ class Finding:
             "code": self.code, "severity": self.severity, "path": self.path,
             "line": self.line, "message": self.message,
             "evidence": self.evidence, "suggestion": self.suggestion,
+            "range_cite": self.range_cite,
         }
 
     def render(self):
@@ -804,10 +815,33 @@ def anchor_tokens(unit, cite_off, cite_text):
     sits closest to, and a citation only gets the tokens that chose it.
     """
     if unit.path.endswith(".md"):
-        # A markdown line (or table row) is the natural unit.
-        lo = unit.text.rfind("\n", 0, cite_off) + 1
-        hi = unit.text.find("\n", cite_off)
-        hi = hi if hi >= 0 else len(unit.text)
+        # A markdown line (or table row) is the natural unit, widened by
+        # MD_ANCHOR_WINDOW_LINES on each side. KNOWN LIMITATION this widening
+        # fixes: an author hand-wraps a sentence or a wide table cell across
+        # lines, and the symbol backtick lands one line away from its own
+        # `file.c:LINE` citation. A same-line-only window then sees zero
+        # anchor tokens for a citation that is actually correct, which stayed
+        # SILENT (no anchor anywhere -> no finding) when the real target line
+        # happened to also look non-degenerate, and reported spurious
+        # drift/degenerate-target when it didn't -- a human had to manually
+        # reflow the prose onto one line to make the checker agree it was
+        # correct. Widening the window a LITTLE is a cheap fix: OWNERSHIP
+        # (below) still assigns each token to its nearest citation by
+        # position, so a wider window does not let a neighbouring table row's
+        # subject bleed onto this citation -- it only admits more candidates
+        # to compete for. It is deliberately not widened to the ±400-char
+        # block window the comment branch uses below: a markdown table's rows
+        # are short and dense, so a wide window would pull in several
+        # neighbouring rows' worth of tokens, and OWNERSHIP nearest-wins
+        # heuristic gets less reliable the more competing citations are in
+        # play. A fully robust fix (e.g. parsing table cell/sentence
+        # boundaries) was judged not cheap and is left for a future change.
+        starts = line_index(unit.text)
+        cite_line = offset_to_line(starts, cite_off)
+        lo_line = max(1, cite_line - MD_ANCHOR_WINDOW_LINES)
+        hi_line = min(len(starts), cite_line + MD_ANCHOR_WINDOW_LINES)
+        lo = starts[lo_line - 1]
+        hi = starts[hi_line] if hi_line < len(starts) else len(unit.text)
     else:
         # A comment block, already merged by prose_units.
         lo = unit.text.rfind("\n", 0, max(0, cite_off - 400)) + 1
@@ -984,6 +1018,26 @@ def check_path_cites(repo, unit, findings, seen_paths, history, dclass,
             return
         a, hits = best
         shown = hits[:3]
+        # RANGE CITATIONS. The anchor only locates ONE line (hits[0]) -- it
+        # is evidence about where `a` moved TO, not about how the citation's
+        # far end should move. `--fix` used to rewrite only the range's
+        # START with that single line and leave the OLD END untouched:
+        # `file.c:522-566` -> `file.c:2360-566`, a backwards range pointing
+        # nowhere, applied silently (task #84). There is no anchor for the
+        # end of a range, so there is no coherent way to rewrite both ends
+        # mechanically -- guessing (e.g. shifting the end by the same delta
+        # as the start) assumes the intervening lines moved uniformly, which
+        # a later insertion/deletion inside the range can easily violate.
+        # So: refuse. Report the finding, with the one thing that IS known
+        # (where the anchor now is), and let a human decide the new range.
+        is_range = hi is not None
+        if is_range:
+            suggestion = (
+                "RANGE CITATION -- refused by --fix, repair manually: "
+                "anchor `%s` is now at %s:%d (cited range was %s:%d-%d)"
+                % (a, target, hits[0], target, lo, hi))
+        else:
+            suggestion = "%s:%d -> %s:%d" % (target, lo, target, hits[0])
         findings.append(Finding(
             "drift", "error", unit.path, line_no,
             "cited %s:%s for `%s`, but that line does not mention it"
@@ -992,7 +1046,8 @@ def check_path_cites(repo, unit, findings, seen_paths, history, dclass,
                 "%s:%d is: %s" % (target, lo, flines[lo - 1].strip()[:110]),
                 "`%s` is at %s" % (a, ", ".join("%s:%d" % (target, h) for h in shown)),
             ],
-            suggestion="%s:%d -> %s:%d" % (target, lo, target, hits[0])))
+            suggestion=suggestion,
+            range_cite=is_range))
 
     for m in RE_PATH_CITE.finditer(text):
         cited = m.group(1)
@@ -1135,7 +1190,9 @@ def main(argv=None):
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--fix", action="store_true",
                     help="apply unambiguous line-number and path corrections "
-                         "in place; never touches prose")
+                         "in place; never touches prose; refuses range "
+                         "citations (file.c:LO-HI) and reports them for "
+                         "manual repair instead of guessing a new end")
     ap.add_argument("--baseline", default=None,
                     help="a baseline JSON; only findings absent from it are "
                          "reported as errors")
@@ -1237,8 +1294,9 @@ def main(argv=None):
                          % (args.write_baseline, len(findings)))
 
     fixed = 0
+    range_skipped = 0
     if args.fix:
-        fixed = apply_fixes(repo, findings)
+        fixed, range_skipped = apply_fixes(repo, findings)
 
     shown = [f for f in findings
              if not (args.errors_only and f.severity == "advisory")]
@@ -1260,9 +1318,9 @@ def main(argv=None):
     c = counts_of(findings)
     # In --json mode the verdict goes to stderr so stdout stays parseable.
     summary = ("DOCCITE SUMMARY: findings=%d errors=%d advisories=%d "
-               "new_errors=%d files_scanned=%d fixed=%d %s"
+               "new_errors=%d files_scanned=%d fixed=%d range_refused=%d %s"
                % (len(findings), c["error"], c["advisory"], len(new_errors),
-                  len(targets), fixed,
+                  len(targets), fixed, range_skipped,
                   " ".join("%s=%d" % kv for kv in sorted(c["by_code"].items()))))
     print(summary, file=sys.stderr if args.json else sys.stdout)
 
@@ -1284,10 +1342,25 @@ def apply_fixes(repo, findings):
 
     Never rewrites prose. A finding whose suggestion is not an exact textual
     substitution present on the cited line is skipped.
+
+    RANGE CITATIONS ARE REFUSED, not fixed. A drift finding on a `file.c:LO-HI`
+    citation carries range_cite=True and a suggestion that is deliberately NOT
+    in the "old -> new" mechanical-substitution shape apply_fixes elsewhere
+    depends on (see Finding.range_cite's docstring at its construction site).
+    Skipping them here is a second, independent guard on top of that shape
+    mismatch: even if a future suggestion string for a range finding
+    accidentally looked like "old -> new", the range_cite flag alone is
+    checked first and stops it before the regex substitution runs.
+
+    Returns (fixed_count, range_skipped_count).
     """
     edits = defaultdict(list)
+    range_skipped = 0
     for f in findings:
         if f.code not in ("drift", "wrong-path") or not f.suggestion:
+            continue
+        if f.range_cite:
+            range_skipped += 1
             continue
         old, _, new = f.suggestion.partition(" -> ")
         edits[f.path].append((f.line, old.strip(), new.strip()))
@@ -1320,7 +1393,7 @@ def apply_fixes(repo, findings):
         if changed:
             with open(full, "w", encoding="utf-8") as fh:
                 fh.write("\n".join(lines))
-    return n
+    return n, range_skipped
 
 
 if __name__ == "__main__":

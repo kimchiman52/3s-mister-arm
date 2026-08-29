@@ -96,6 +96,47 @@ echo "[run.sh] RUNDIR=$RUNDIR" >&2
 echo "[run.sh] compiling corpus $CORPUS_PATH -> $RUNDIR" >&2
 python3 "${SCRIPT_DIR}/compile_corpus.py" "$CORPUS_PATH" "$RUNDIR"
 
+# Wall-clock cap for the single game invocation below (task #79). This used
+# to be a flat 300, and it false-RED'd the `sean` corpus (69 labels, the
+# second-largest of the 94) twice in different lanes ~12h apart -- once at
+# host load 165 driven by eight stale processes from an unrelated session,
+# once with 36 game processes contending ~10 cores from two overlapping
+# suites -- while every sibling corpus, including three OTHER `sean-*`
+# corpora in the second incident, stayed GREEN. A flat cap bounds the load
+# level the harness happens to run under, not the actual variable, which is
+# run LENGTH: it is driven by how many labels the corpus compiles to (each
+# label is a scripted setup + a wait), not by which corpus it is. Scaling the
+# cap by that count targets the real variable and keeps a flat cap's tight
+# hang detection for small corpora, instead of giving every corpus the same
+# multi-minute grace a 1-label corpus never needs.
+#
+# Rate: the only two wall-clock measurements recorded in this tree.
+#   docs/plan-frame-data-harness.md:849 - corpus-q.yaml's H6 acceptance run
+#     (69 entries at the time), 149s wall, uncontended: ~2.16 s/label.
+#   docs/plan-frame-data-harness.md:846 - the H5 smoke run, 3 entries in
+#     ~17s: ~5.67 s/label (a tiny corpus is dominated by fixed engine-boot
+#     cost that a larger corpus amortizes across more labels, so its rate
+#     reads high).
+# SECONDS_PER_LABEL is set above BOTH observed rates deliberately: it is a
+# chosen safety margin for the failure this fixes (ordinary machine
+# contention slowing the run), not a third measurement -- neither false-RED
+# incident has a recorded wall-clock time, only that each exceeded 300s.
+# MIN_CAP_SECONDS is a floor so the smallest corpora (11 of the 94 have
+# exactly one label) still get a cap that stays tight for hang detection,
+# rather than a proportional cap so low a single slow frame could trip it.
+#
+# At these numbers: q (73 labels, the largest corpus) -> 438s; every corpus
+# with 15 labels or fewer (75 of the 94, counted from
+# tools/frame-data/corpus-*.yaml) sits at the 90s floor.
+EXPECTED_LABEL_COUNT="$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))))' "$RUNDIR/expected.json")"
+SECONDS_PER_LABEL=6
+MIN_CAP_SECONDS=90
+RUN_TIMEOUT_SECONDS=$(( SECONDS_PER_LABEL * EXPECTED_LABEL_COUNT ))
+if [ "$RUN_TIMEOUT_SECONDS" -lt "$MIN_CAP_SECONDS" ]; then
+    RUN_TIMEOUT_SECONDS=$MIN_CAP_SECONDS
+fi
+echo "[run.sh] wall-clock cap: ${RUN_TIMEOUT_SECONDS}s (${EXPECTED_LABEL_COUNT} labels x ${SECONDS_PER_LABEL}s/label, floor ${MIN_CAP_SECONDS}s)" >&2
+
 # Phase 6 Step 3: the corpus's top-level `character:` key (default q) is
 # emitted into meta.json by compile_corpus.py; read it back here and pass
 # it through as --test-p1-character. run.sh itself gains no new CLI surface
@@ -122,7 +163,7 @@ fi
 echo "[run.sh] running harness (training-frame-data, pinned RNG, p1_character=$P1_CHARACTER${EXTRA_ARGS:+, extra=$EXTRA_ARGS})..." >&2
 set +e
 FRAME_TRACE_PATH="$RUNDIR/trace.log" SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy \
-    run_with_timeout 300 "$BIN_PATH" --test-enable --test-scene-preset training-frame-data \
+    run_with_timeout "$RUN_TIMEOUT_SECONDS" "$BIN_PATH" --test-enable --test-scene-preset training-frame-data \
     --test-input-script "$RUNDIR/script.fdi" --test-pin-rng --test-p1-character "$P1_CHARACTER" \
     $EXTRA_ARGS
 game_exit=$?
@@ -132,7 +173,7 @@ if [ "$game_exit" -eq 3 ]; then
     echo "error: harness could not start (input_script.c rejected the script or mode) - RUNDIR=$RUNDIR" >&2
     exit 1
 elif [ "$game_exit" -eq 124 ]; then
-    echo "error: game hung and was killed by the timeout - RUNDIR=$RUNDIR" >&2
+    echo "error: game hung and was killed by the timeout (${RUN_TIMEOUT_SECONDS}s cap for ${EXPECTED_LABEL_COUNT} labels) - RUNDIR=$RUNDIR" >&2
     exit 1
 elif [ "$game_exit" -ne 0 ]; then
     echo "error: game exited with unexpected code $game_exit - RUNDIR=$RUNDIR" >&2
