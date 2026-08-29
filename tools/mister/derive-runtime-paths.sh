@@ -53,8 +53,9 @@
 #      savesub.c:42 defines the storage root as "saves"; savesub.c:412 reads
 #      that macro and savesub.c:416 creates the directory.
 #   D. SDL_CreateDirectory("<literal>"). Catches directories created relative
-#      to the process CWD rather than through the pref path -- game_state.c:2469
-#      and netplay.c:1044 both create "states" this way.
+#      to the process CWD rather than through the pref path -- the
+#      SDL_CreateDirectory call at game_state.c:2522 and the one at
+#      netplay.c:1044 both create "states" this way.
 #
 set -euo pipefail
 

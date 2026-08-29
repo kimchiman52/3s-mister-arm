@@ -1,0 +1,54 @@
+# Files where a citation MUST name something checkable.
+# One glob per line; text after # is the required justification.
+#
+# THE PROBLEM THIS SOLVES
+#
+# The linter checks a citation by looking for an ANCHOR -- a symbol named in
+# the prose around it -- and asking whether the cited line mentions that symbol.
+# A citation that names nothing has no anchor, so there is nothing to test, so
+# it passes. Forever. `game_state.c:580` is accepted whatever line 580 happens
+# to be today.
+#
+# That is usually the right trade. Demanding an anchor tree-wide would turn
+# thousands of harmless bare references into findings and bury the real ones.
+# But it fails badly in one specific shape: a file that is a long mechanical
+# table, where every insertion moves everything below it, and where being wrong
+# is expensive. There, "silently accepted forever" is not a trade, it is a
+# guarantee of rot.
+#
+# When select_timer_state was removed from GameState, roughly 136
+# `game_state.c:NNN` citations shifted tree-wide and the linter flagged NONE of
+# them. Spot-checks afterwards showed that several had never been right in the
+# first place -- one doc placed `bg_w` at game_state.c:580, which is
+# GS_SAVE(zoom_request_flag) today and was not `bg_w` when the doc was written
+# either. Nothing in the tooling could have said so.
+#
+# WHAT LISTING A FILE HERE DOES
+#
+# A bare `file:LINE` citation into a listed file becomes an ERROR
+# (unanchored-citation) instead of being silently accepted. To satisfy it, name
+# the thing the line is supposed to hold -- `GS_SAVE(bg_w)`, not
+# `game_state.c:580` -- and the ordinary drift check takes over from there and
+# stays true as the file moves.
+#
+# Listed files also get a mechanically-derived vocabulary of their own macro
+# arguments, so that short member names (`bg_w`, `M_Lv`, `VS_Index`) can serve
+# as anchors even though the generic >= 6-characters-with-an-underscore rule
+# excludes them. Without that, requiring an anchor in a macro table would demand
+# something the checker had already decided it could not see -- 80 of
+# game_state.c's 609 save-set members are shorter than that threshold.
+#
+# CHOOSING WHAT GOES HERE
+#
+# The bar is high and deliberately so; every entry converts a class of silence
+# into a class of work. A file belongs here when all three hold:
+#   1. it is dense and mechanical, so line numbers move in bulk;
+#   2. citations into it are load-bearing for debugging, so being wrong costs
+#      real investigation time;
+#   3. its contents are namable, so an anchor is actually available to whoever
+#      is asked to supply one.
+#
+# Do NOT add a file here to make a number go up. The ceilings in baselines.txt
+# are what keep the cleaned scopes clean.
+
+src/netplay/game_state.c    # the rollback save/load table: 609 GS_SAVE/GS_LOAD pairs over 2,653 lines, every save-set change moves everything below it, and a wrong line here sends a desync investigation to the wrong member
