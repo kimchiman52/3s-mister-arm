@@ -64,6 +64,21 @@ void Netplay_LogSinkInit(void);
  * thread, and those used bare SDL_Log, so they never reached the
  * per-session file a tester actually sends us. */
 void Netplay_LogConnectEventMT(const char* line);
+#ifdef NETPLAY_TEST_HOOKS
+/* #44 test seams. Both are compiled out of the shipped build.
+ *
+ * LogPrune runs the production session-log prune against an arbitrary
+ * directory, so the "what does it refuse to delete" contract can be tested
+ * on a scratch directory instead of the user's real logs/.
+ *
+ * ReportDir redirects <PrefPath>logs/netplay-report.txt at a scratch
+ * directory. Pass NULL or "" to restore the default. Without it the
+ * rotation test would have to push 128 KB through, and then delete, the
+ * one real artifact this feature exists to hand a tester. Closes any open
+ * report first, so the next line reopens under the new directory. */
+void Netplay_TestHook_LogPrune(const char* dir);
+void Netplay_TestHook_ReportDir(const char* dir);
+#endif
 void Netplay_SetMatchmakingParams(const char* server_ip, int server_port);
 void Netplay_BeginMatchmaking();
 void Netplay_TickMatchmaking();

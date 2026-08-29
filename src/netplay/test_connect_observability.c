@@ -38,6 +38,16 @@
  *      never report attempt 1's counters. See test5 for exactly what
  *      about the two-attempt path could not be induced offline.
  *
+ * And, for #44 — the evidence is only useful if it is still on the
+ * device and small enough to send:
+ *   6. The per-session byte budget really freezes the file, once, with
+ *      one marker, instead of merely claiming to.
+ *   7. The prune keeps the 20 newest session logs and — the assertion
+ *      that matters — does NOT match netplay-report.txt,
+ *      netplay-report.1.txt or an unrelated bystander file.
+ *   8. The tester report rotates at two generations and carries ONLY
+ *      the attributed "[netplay-connect]" one-liners, stamped.
+ *
  * Gated behind ENABLE_NETPLAY_TESTS. Enable with:
  *   EXTRA_CMAKE_ARGS="-DENABLE_NETPLAY=ON \
  *                     -DCMAKE_C_FLAGS='-DENABLE_NETPLAY_TESTS -DNETPLAY_TEST_HOOKS'"
@@ -1054,6 +1064,451 @@ static void test5_attempt_evidence_reset(void) {
     }
 }
 
+/* ======================================================================
+ * #44 shared helpers — scratch directories and file arithmetic
+ * ====================================================================== */
+
+/* A per-process scratch directory OUTSIDE PrefPath. The prune and the
+ * report rotation are both destructive by design, and pointing them at
+ * the real <PrefPath>logs/ to test them would mean deleting a developer's
+ * (or a tester's) actual evidence to prove that deleting works. */
+static void obs_tmp_dir(const char* what, char* out, size_t cap) {
+    const char* base = getenv("TMPDIR");
+    if (base == NULL || base[0] == '\0') {
+        base = "/tmp";
+    }
+    const size_t n = strlen(base);
+    const char* sep = (n > 0 && base[n - 1] == '/') ? "" : "/";
+    SDL_snprintf(out, cap, "%s%s3sx-obs-%s-%d", base, sep, what, (int)getpid());
+}
+
+static size_t obs_file_size(const char* path) {
+    FILE* f = fopen(path, "rb");
+    if (f == NULL) {
+        return 0;
+    }
+    size_t n = 0;
+    if (fseek(f, 0, SEEK_END) == 0) {
+        const long end = ftell(f);
+        if (end > 0) {
+            n = (size_t)end;
+        }
+    }
+    fclose(f);
+    return n;
+}
+
+static bool obs_file_exists(const char* path) {
+    FILE* f = fopen(path, "rb");
+    if (f == NULL) {
+        return false;
+    }
+    fclose(f);
+    return true;
+}
+
+static int obs_count_substr(const char* hay, const char* needle) {
+    int n = 0;
+    const size_t nlen = strlen(needle);
+    if (nlen == 0) {
+        return 0;
+    }
+    for (const char* p = strstr(hay, needle); p != NULL; p = strstr(p + nlen, needle)) {
+        n++;
+    }
+    return n;
+}
+
+/* Delete every file this harness put in a scratch directory, then the
+ * directory. Bounded, non-recursive, and it only ever removes plain
+ * files it finds there — the same discipline the production prune uses. */
+static void obs_rmtree_flat(const char* dir) {
+    DIR* d = opendir(dir);
+    if (d != NULL) {
+        struct dirent* e;
+        int examined = 0;
+        while ((e = readdir(d)) != NULL && examined < 4096) {
+            examined++;
+            if (strcmp(e->d_name, ".") == 0 || strcmp(e->d_name, "..") == 0) {
+                continue;
+            }
+            char path[1024];
+            SDL_snprintf(path, sizeof(path), "%s/%s", dir, e->d_name);
+            remove(path);
+        }
+        closedir(d);
+    }
+    remove(dir);
+}
+
+/* ======================================================================
+ * Test 6 — the per-session byte budget actually stops the file growing
+ * ======================================================================
+ *
+ * ORDERING NOTE, deliberate and load-bearing: this test EXHAUSTS the
+ * budget of the one session log the whole run shares (netplay.c opens it
+ * lazily on the first connect event and only closes it from a live
+ * session's teardown, which this harness never reaches). Once the
+ * TRUNCATED marker is published the file is frozen for the rest of the
+ * process, so every test that reads the session log back — 1 through 4 —
+ * must run BEFORE this one. That is not an accidental coupling: the
+ * property under test is a process-global latch, and there is no honest
+ * way to assert "the file stops growing" without stopping it.
+ *
+ * The lines are tagged [netplay-budget-test], NOT [netplay-connect], for
+ * a second reason: they must not end up in the tester-facing report. Test
+ * 8 relies on that same filter from the other direction. */
+static void test6_byte_budget(unsigned long long before_ts) {
+    const char* tag = "test6-byte-budget";
+
+    char path[768];
+    if (!obs_find_new_log(before_ts, path, sizeof(path))) {
+        fail(tag, "no session log exists to test the budget against");
+        return;
+    }
+
+    /* Pad each line so the budget is reached in a bounded number of
+     * writes without depending on NETPLAY_LOG_MAX_BYTES being visible
+     * here — it is private to netplay.c, and a test that hardcodes a
+     * private constant silently stops testing anything the day it
+     * changes. The loop cap is a liveness guard, not the assertion. */
+    static const char k_pad[] =
+        "................................................................"
+        "................................................................"
+        "................................................................"
+        "...............................................................";
+    const int   k_max_writes = 20000;
+    const char* k_trunc = "[netplay-log] TRUNCATED at ";
+
+    int  writes = 0;
+    bool truncated = false;
+    while (writes < k_max_writes) {
+        char line[512];
+        SDL_snprintf(line, sizeof(line), "[netplay-budget-test] n=%06d %s",
+                     writes, k_pad);
+        Netplay_LogConnectEventMT(line);
+        writes++;
+        if ((writes % 64) == 0) {
+            size_t len = 0;
+            char* body = obs_read_file(path, &len);
+            if (body != NULL) {
+                truncated = (strstr(body, k_trunc) != NULL);
+                free(body);
+            }
+            if (truncated) {
+                break;
+            }
+        }
+    }
+
+    if (!truncated) {
+        fprintf(stderr,
+                "[test_connect_observability] FAIL: %s: wrote %d padded lines and the "
+                "session file never published a TRUNCATED marker — the budget is not "
+                "bounding %s\n",
+                tag, writes, path);
+        fail_count++;
+        return;
+    }
+
+    const size_t frozen_at = obs_file_size(path);
+
+    /* Past the budget the sink must keep accepting lines (they still go
+     * to SDL_Log) and must stop touching the disk. */
+    for (int i = 0; i < 500; i++) {
+        char line[512];
+        SDL_snprintf(line, sizeof(line), "[netplay-budget-test] post=%06d %s",
+                     i, k_pad);
+        Netplay_LogConnectEventMT(line);
+    }
+    const size_t after = obs_file_size(path);
+
+    if (after != frozen_at) {
+        fprintf(stderr,
+                "[test_connect_observability] FAIL: %s: session file grew from %lu to "
+                "%lu bytes AFTER the TRUNCATED marker — the marker is a lie\n",
+                tag, (unsigned long)frozen_at, (unsigned long)after);
+        fail_count++;
+    } else {
+        fprintf(stderr,
+                "[test_connect_observability] PASS: %s: session file froze at %lu bytes "
+                "and stayed there across 500 further lines\n",
+                tag, (unsigned long)frozen_at);
+    }
+
+    /* Exactly one marker. A per-line marker would be its own runaway. */
+    size_t len = 0;
+    char* body = obs_read_file(path, &len);
+    if (body == NULL) {
+        fail(tag, "could not read back the session log to count TRUNCATED markers");
+        return;
+    }
+    const int markers = obs_count_substr(body, k_trunc);
+    free(body);
+    if (markers != 1) {
+        fprintf(stderr,
+                "[test_connect_observability] FAIL: %s: expected exactly 1 TRUNCATED "
+                "marker, found %d\n",
+                tag, markers);
+        fail_count++;
+    } else {
+        pass(tag, "exactly one TRUNCATED marker was written");
+    }
+}
+
+/* ======================================================================
+ * Test 7 — the prune keeps the 20 newest and refuses everything else
+ * ======================================================================
+ *
+ * The whole risk of #44's prune is that it deletes something it should
+ * not. The two names it must never match are the very files the feature
+ * exists to preserve, so both are planted in the directory alongside 30
+ * genuine session logs and a bystander file. */
+#define OBS_PRUNE_TOTAL 30
+#define OBS_PRUNE_KEEP  20 /* mirrors NETPLAY_LOG_KEEP_FILES */
+
+static bool obs_write_stub(const char* dir, const char* name, const char* body) {
+    char path[1024];
+    SDL_snprintf(path, sizeof(path), "%s/%s", dir, name);
+    FILE* f = fopen(path, "w");
+    if (f == NULL) {
+        return false;
+    }
+    fputs(body, f);
+    fclose(f);
+    return true;
+}
+
+static void test7_prune(void) {
+    const char* tag = "test7-prune";
+
+    char dir[512];
+    obs_tmp_dir("prune", dir, sizeof(dir));
+    obs_rmtree_flat(dir); /* a previous aborted run must not skew the count */
+    if (!SDL_CreateDirectory(dir)) {
+        fail(tag, "could not create the scratch directory");
+        return;
+    }
+
+    /* Known, strictly increasing stamps so "the 20 newest" is a fact and
+     * not a race against the filesystem clock. Deliberately NOT mtime
+     * order — every file is created within the same millisecond, which is
+     * exactly the case a stat()-based prune would get wrong. */
+    const unsigned long long base_ts = 1700000000000ULL;
+    for (int i = 0; i < OBS_PRUNE_TOTAL; i++) {
+        char name[64];
+        SDL_snprintf(name, sizeof(name), "netplay-%llu.log",
+                     (unsigned long long)(base_ts + (unsigned long long)i * 1000ULL));
+        if (!obs_write_stub(dir, name, "session\n")) {
+            fail(tag, "could not create a stub session log");
+            obs_rmtree_flat(dir);
+            return;
+        }
+    }
+    /* The three that must survive no matter what. */
+    const bool planted =
+        obs_write_stub(dir, "netplay-report.txt", "the one file a tester sends\n") &&
+        obs_write_stub(dir, "netplay-report.1.txt", "the previous generation\n") &&
+        obs_write_stub(dir, "keepme.txt", "an unrelated bystander\n");
+    if (!planted) {
+        fail(tag, "could not plant the must-not-delete files");
+        obs_rmtree_flat(dir);
+        return;
+    }
+
+    Netplay_TestHook_LogPrune(dir);
+
+    /* Survivors, by construction: stamps base+10*1000 .. base+29*1000. */
+    int wrong_deleted = 0;
+    int wrong_kept = 0;
+    unsigned long long first_wrong_deleted = 0;
+    unsigned long long first_wrong_kept = 0;
+    for (int i = 0; i < OBS_PRUNE_TOTAL; i++) {
+        const unsigned long long ts = base_ts + (unsigned long long)i * 1000ULL;
+        char path[1024];
+        SDL_snprintf(path, sizeof(path), "%s/netplay-%llu.log", dir, ts);
+        const bool present = obs_file_exists(path);
+        const bool should_keep = (i >= OBS_PRUNE_TOTAL - OBS_PRUNE_KEEP);
+        if (should_keep && !present) {
+            if (wrong_deleted == 0) {
+                first_wrong_deleted = ts;
+            }
+            wrong_deleted++;
+        } else if (!should_keep && present) {
+            if (wrong_kept == 0) {
+                first_wrong_kept = ts;
+            }
+            wrong_kept++;
+        }
+    }
+    if (wrong_deleted != 0) {
+        fprintf(stderr,
+                "[test_connect_observability] FAIL: %s: %d of the %d newest session logs "
+                "were deleted (first: netplay-%llu.log)\n",
+                tag, wrong_deleted, OBS_PRUNE_KEEP, first_wrong_deleted);
+        fail_count++;
+    }
+    if (wrong_kept != 0) {
+        fprintf(stderr,
+                "[test_connect_observability] FAIL: %s: %d stale session logs survived the "
+                "prune (first: netplay-%llu.log)\n",
+                tag, wrong_kept, first_wrong_kept);
+        fail_count++;
+    }
+    if (wrong_deleted == 0 && wrong_kept == 0) {
+        fprintf(stderr,
+                "[test_connect_observability] PASS: %s: exactly the %d newest of %d "
+                "session logs survived\n",
+                tag, OBS_PRUNE_KEEP, OBS_PRUNE_TOTAL);
+    }
+
+    /* THE assertion this test exists for. */
+    static const char* k_must_survive[] = {
+        "netplay-report.txt", "netplay-report.1.txt", "keepme.txt"
+    };
+    int lost = 0;
+    for (int i = 0; i < 3; i++) {
+        char path[1024];
+        SDL_snprintf(path, sizeof(path), "%s/%s", dir, k_must_survive[i]);
+        if (!obs_file_exists(path)) {
+            fprintf(stderr,
+                    "[test_connect_observability] FAIL: %s: the prune deleted %s — the "
+                    "filename filter is broken and it is eating the evidence\n",
+                    tag, k_must_survive[i]);
+            fail_count++;
+            lost++;
+        }
+    }
+    if (lost == 0) {
+        pass(tag, "netplay-report.txt, netplay-report.1.txt and keepme.txt were untouched");
+    }
+
+    obs_rmtree_flat(dir);
+}
+
+/* ======================================================================
+ * Test 8 — the report file rotates and stays pasteable
+ * ======================================================================
+ *
+ * Two properties, and the second matters as much as the first: the file
+ * is bounded (two generations, never unbounded growth on an SD card), and
+ * it contains ONLY the attributed one-liners. A report that also carried
+ * heartbeats would be neither small nor readable, and "send me this one
+ * file" would stop being true. */
+#define OBS_REPORT_MAX_BYTES (64u * 1024u) /* mirrors NETPLAY_REPORT_MAX_BYTES */
+
+static void test8_report_rotation(const char* report_dir) {
+    const char* tag = "test8-report-rotation";
+
+    char live[768];
+    char prev[768];
+    SDL_snprintf(live, sizeof(live), "%s/netplay-report.txt", report_dir);
+    SDL_snprintf(prev, sizeof(prev), "%s/netplay-report.1.txt", report_dir);
+
+    /* Through the PRODUCTION entry point, not a test-only shim: this is
+     * the same call direct_p2p.c's worker threads make, so the wiring
+     * from a connect event to the report file is what is under test. */
+    static const char k_pad[] =
+        "----------------------------------------------------------------"
+        "----------------------------------------------------------------";
+    const int k_lines = 1500;
+    for (int i = 0; i < k_lines; i++) {
+        char line[512];
+        SDL_snprintf(line, sizeof(line),
+                     "[netplay-connect] FAIL code=P2P_FAIL_TEST n=%05d %s",
+                     i, k_pad);
+        Netplay_LogConnectEventMT(line);
+    }
+    /* The negative case, pushed through the identical door. */
+    const char* k_excluded =
+        "[netplay-heartbeat] rtt=12.3 frames_behind=0.4 — belongs in the session log";
+    Netplay_LogConnectEventMT(k_excluded);
+
+    const size_t live_n = obs_file_size(live);
+    const size_t prev_n = obs_file_size(prev);
+
+    if (prev_n == 0) {
+        fprintf(stderr,
+                "[test_connect_observability] FAIL: %s: %d lines produced no "
+                "netplay-report.1.txt — the report never rotated and is unbounded\n",
+                tag, k_lines);
+        fail_count++;
+    } else if (live_n == 0) {
+        fail(tag, "netplay-report.txt is missing or empty after rotation");
+    } else if (live_n >= (size_t)OBS_REPORT_MAX_BYTES) {
+        fprintf(stderr,
+                "[test_connect_observability] FAIL: %s: the live report is %lu bytes, at "
+                "or past the %lu-byte cap — it did not restart\n",
+                tag, (unsigned long)live_n, (unsigned long)OBS_REPORT_MAX_BYTES);
+        fail_count++;
+    } else {
+        fprintf(stderr,
+                "[test_connect_observability] PASS: %s: report rotated — live=%lu bytes, "
+                "previous generation=%lu bytes\n",
+                tag, (unsigned long)live_n, (unsigned long)prev_n);
+    }
+
+    /* Hard bound: two generations, each capped, plus at most the one line
+     * that crossed the cap. */
+    const size_t total = live_n + prev_n;
+    const size_t bound = (size_t)OBS_REPORT_MAX_BYTES * 2u + 1024u;
+    if (total >= bound) {
+        fprintf(stderr,
+                "[test_connect_observability] FAIL: %s: the two generations total %lu "
+                "bytes, past the %lu-byte hard bound\n",
+                tag, (unsigned long)total, (unsigned long)bound);
+        fail_count++;
+    } else {
+        fprintf(stderr,
+                "[test_connect_observability] PASS: %s: both generations total %lu bytes, "
+                "inside the %lu-byte bound\n",
+                tag, (unsigned long)total, (unsigned long)bound);
+    }
+
+    size_t len = 0;
+    char* body = obs_read_file(live, &len);
+    if (body == NULL) {
+        fail(tag, "could not read back netplay-report.txt");
+        return;
+    }
+    size_t prev_len = 0;
+    char* prev_body = obs_read_file(prev, &prev_len);
+
+    /* A fresh generation must carry its own header, otherwise a tester
+     * who sends only the live file has no build or wire version. */
+    EXPECT_TRUE(tag, strncmp(body, "=== 3S-ARM netplay report build=", 32) == 0);
+    EXPECT_TRUE(tag, strstr(body, " rend_ver=") != NULL);
+    EXPECT_TRUE(tag, strstr(body, " utc_ms=") != NULL);
+
+    /* And the filter, from both sides. */
+    const bool leaked =
+        (strstr(body, "[netplay-heartbeat]") != NULL) ||
+        (prev_body != NULL && strstr(prev_body, "[netplay-heartbeat]") != NULL);
+    if (leaked) {
+        fprintf(stderr,
+                "[test_connect_observability] FAIL: %s: a non-[netplay-connect] line "
+                "reached the report — the tester's one file is collecting noise\n",
+                tag);
+        fail_count++;
+    } else {
+        pass(tag, "a non-[netplay-connect] line was kept out of both generations");
+    }
+    /* Every body line is stamped. Without an absolute time this file
+     * cannot be lined up against the session log or against what the
+     * tester says they were doing, which is most of its value. */
+    const char* hit = strstr(body, " [netplay-connect] FAIL code=P2P_FAIL_TEST");
+    if (hit == NULL) {
+        fail(tag, "the live report holds no [netplay-connect] line at all");
+    } else if (hit == body || hit[-1] < '0' || hit[-1] > '9') {
+        fail(tag, "a report line is not prefixed with a UTC-ms stamp");
+    } else {
+        pass(tag, "the live report holds stamped, attributed [netplay-connect] lines");
+    }
+
+    free(body);
+    free(prev_body);
+}
+
 /* ====================================================================== */
 
 int Netplay_Test_ConnectObservability(void) {
@@ -1066,6 +1521,17 @@ int Netplay_Test_ConnectObservability(void) {
     }
     NET_Init();
 
+    /* #44: redirect the tester-facing report at a scratch directory for
+     * the WHOLE run, before any test can emit a connect event. Otherwise
+     * this harness would append to — and test8 would rotate and then
+     * delete — the real <PrefPath>logs/netplay-report.txt, i.e. the one
+     * artifact the feature exists to hand a tester. */
+    char report_dir[512];
+    obs_tmp_dir("report", report_dir, sizeof(report_dir));
+    obs_rmtree_flat(report_dir); /* no state from an aborted earlier run */
+    SDL_CreateDirectory(report_dir);
+    Netplay_TestHook_ReportDir(report_dir);
+
     /* Snapshot BEFORE anything can open a log, so the file this run
      * creates is identifiable and nothing pre-existing is ever touched. */
     const unsigned long long before_ts = obs_newest_log_ts();
@@ -1075,6 +1541,11 @@ int Netplay_Test_ConnectObservability(void) {
     test3_confirm_not_nat();
     test4_mt_sink(before_ts);
     test5_attempt_evidence_reset();
+    /* test6 freezes the shared session log; 1-4 read it back, so it runs
+     * after them by construction. See the note above test6. */
+    test6_byte_budget(before_ts);
+    test7_prune();
+    test8_report_rotation(report_dir);
 
     /* Clean up ONLY the file this run created. */
     char path[768];
@@ -1085,6 +1556,12 @@ int Netplay_Test_ConnectObservability(void) {
                     "[test_connect_observability] note: could not remove %s\n", path);
         }
     }
+
+    /* #44: drop the redirect and take the scratch report with it. The
+     * order matters — the FILE* must be closed (which the redirect reset
+     * does) before the directory goes away. */
+    Netplay_TestHook_ReportDir(NULL);
+    obs_rmtree_flat(report_dir);
 
     if (fail_count > 0) {
         fprintf(stderr, "[test_connect_observability] %d failure(s)\n", fail_count);
