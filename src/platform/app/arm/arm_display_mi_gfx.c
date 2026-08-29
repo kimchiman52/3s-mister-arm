@@ -1,4 +1,4 @@
-#if CRS_APP_DRIVER_ARM && CRS_ARM_HAVE_MI_GFX
+#if defined(CRS_APP_DRIVER_ARM) && defined(CRS_ARM_HAVE_MI_GFX)
 
 // SigmaStar MI_GFX hardware-blitter presenter for the Miyoo Mini Plus
 // (PORT_MIYOO_MINI_PLUS=ON). Drives the SSD202D MI_GFX block to scale

@@ -1,6 +1,25 @@
 #ifndef GD3RD_H
 #define GD3RD_H
 
+/* ENABLE_PERF_TELEMETRY is generated into port/build_config.h by
+ * configure_file() as a #cmakedefine01, i.e. it is ALWAYS defined, as 0 or
+ * as 1. The `#if ENABLE_PERF_TELEMETRY` below therefore only reads the
+ * option's real value in a translation unit that has already included that
+ * header; anywhere else the identifier is simply absent and the test folds
+ * to 0 with no diagnostic. That is what was happening: of the 17 TUs that
+ * include this header, 11 (gd3rd.c itself, demo00.c, pulpul.c, opening.c,
+ * color3rd.c, next_cpu.c, ranking.c, sel_pl.c, win.c, bg.c, reset.c) had no
+ * prior build_config.h and silently lost the Ldreq_LogSessionProbe
+ * declaration even though the option is ON by default -- including gd3rd.c,
+ * which defines the function and so was compiling it with no prototype in
+ * scope. Task #67 (-Wundef) surfaced it; port/io/afs.h:4 already includes
+ * this header for exactly the same reason, so this is the established
+ * convention here rather than a new one. Do NOT "fix" the test below by
+ * switching it to #ifdef: #cmakedefine01 defines the macro in both states,
+ * so #ifdef would be unconditionally true and would enable the probe in
+ * ENABLE_PERF_TELEMETRY=OFF builds. */
+#include "port/build_config.h"
+
 #include "structs.h"
 #include "types.h"
 

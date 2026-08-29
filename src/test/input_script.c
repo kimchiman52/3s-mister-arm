@@ -1,4 +1,4 @@
-#if DEBUG
+#if defined(DEBUG)
 
 #include "test/input_script.h"
 

@@ -1777,7 +1777,7 @@ static void process_events(bool drawing_allowed) {
 
         switch (event->type) {
         case GekkoLoadEvent:
-#if DEBUG
+#if defined(DEBUG)
             /* Black-BG investigation 2026-04-24 — Experiment 5a.
              * Count GekkoLoadEvents (rollback restores). Emit every 10th. */
             {

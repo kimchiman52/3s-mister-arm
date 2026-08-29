@@ -13,7 +13,7 @@
 // guard with the same #if to avoid an unresolved-symbol link error
 // on every other build profile.
 
-#if CRS_APP_DRIVER_ARM && CRS_ARM_HAVE_MI_GFX
+#if defined(CRS_APP_DRIVER_ARM) && defined(CRS_ARM_HAVE_MI_GFX)
 
 #include <stdbool.h>
 #include <stddef.h>

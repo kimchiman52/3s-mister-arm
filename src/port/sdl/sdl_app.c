@@ -2956,7 +2956,7 @@ int SDLApp_FullInit() {
     backend_logf("ARM clock: %s", arm_clock_mode_label(arm_clock_mode));
     ScanlineRenderer_Init(renderer);
 
-#if DEBUG
+#if defined(DEBUG)
     SDLDebugText_Initialize(renderer);
 #endif
 
@@ -2978,7 +2978,7 @@ int SDLApp_FullInit() {
     }
 #endif
 
-#if DEBUG
+#if defined(DEBUG)
     ImGuiW_Init(window, renderer);
 #endif
 
@@ -3007,7 +3007,7 @@ void SDLApp_Quit() {
     SDL_DestroyTexture(screen_texture);
     ScanlineRenderer_Destroy();
 
-#if DEBUG
+#if defined(DEBUG)
     ImGuiW_Finish();
 #endif
 
@@ -3019,7 +3019,7 @@ void SDLApp_Quit() {
     SDL_Quit();
 }
 
-#if DEBUG
+#if defined(DEBUG)
 static void toggle_debug_window_visibility(SDL_KeyboardEvent* event) {
     if ((event->key == SDLK_GRAVE) && event->down && !event->repeat) {
         ImGuiW_ToggleVisivility();
@@ -3121,7 +3121,7 @@ bool SDLApp_PollEvents() {
         }
 #endif
 
-#if DEBUG
+#if defined(DEBUG)
         ImGuiW_ProcessEvent(&event);
 #endif
 
@@ -3135,7 +3135,7 @@ bool SDLApp_PollEvents() {
         case SDL_EVENT_KEY_UP:
             // set_screenshot_flag_if_needed(&event.key);
 
-#if DEBUG
+#if defined(DEBUG)
             toggle_debug_window_visibility(&event.key);
 #endif
 
@@ -3172,7 +3172,7 @@ void SDLApp_BeginFrame() {
      * in one shot. */
     (void)perf_capture_collect_extended_stats;
 
-#if DEBUG
+#if defined(DEBUG)
     ImGuiW_BeginFrame();
 #endif
 }
@@ -3512,7 +3512,7 @@ void SDLApp_EndFrame() {
         ScanlineRenderer_Render(&game_rect);
     }
 
-#if DEBUG
+#if defined(DEBUG)
     // Render debug text
     SDLDebugText_Render();
     ImGuiW_EndFrame(renderer);

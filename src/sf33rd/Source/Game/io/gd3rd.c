@@ -881,7 +881,19 @@ void Check_LDREQ_Queue() {
 
     const Uint64 start_ns = SDL_GetTicksNS();
     const Uint64 budget_ns = (Uint64)LDREQ_BARRIER_BUDGET_MS * SDL_NS_PER_MS;
+#if ENABLE_PERF_TELEMETRY
+    /* Sampled HERE, before the drain loop, because the telemetry block at
+     * the bottom reports the DELTA across the stall; taking it at the point
+     * of use would measure nothing. Guarded rather than hoisted for the same
+     * reason: with ENABLE_PERF_TELEMETRY=OFF -- the Miyoo profile, see
+     * sdl_app.c's note on the same option -- nothing consumes it and an
+     * unconditional declaration is an unused variable, which -Werror turns
+     * into a hard build failure. That failure was real and pre-existing on
+     * this branch; task #67's -Wundef work surfaced it by building the OFF
+     * configuration, and it is fixed here rather than deferred. start_ns
+     * above stays unguarded: the budget check uses it in both configs. */
     const unsigned long long start_bytes = AFS_GetTotalBytesRequested();
+#endif
     int steps = 0;
 
     while (q_ldreq->be != 0) {

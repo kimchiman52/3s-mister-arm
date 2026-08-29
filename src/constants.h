@@ -6,7 +6,7 @@
 #define UNIT_OF_TIMER_MAX 50
 #define HUD_SHIFT 64
 
-#if CPS3
+#if defined(CPS3)
 #define NUM_CHARS 21
 
 typedef enum Character {

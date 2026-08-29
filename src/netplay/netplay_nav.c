@@ -441,7 +441,20 @@ void NetplayNav_Tick(void) {
              * a bare "the nav deadline" line is unreadable in the field —
              * you cannot tell a wedge from a legitimately long maximal
              * config without the number that was actually enforced. */
-            char line[192];
+            /* 320, not 192: clang-20 (the ARM cross toolchain) rejects the
+             * 192-byte form outright -- "specified size is 192, but format
+             * string expands to at least 227" [-Wformat-truncation]. The
+             * literal text alone overruns the buffer, so this line was being
+             * silently truncated mid-message in every build that emitted it;
+             * Apple clang 21 on the host does not raise the diagnostic, which
+             * is why it survived. 227 is clang's minimum-width figure (one
+             * char per %d); the three %d fields are a millisecond count and
+             * two config bounds, so allow the full 11-char INT_MIN width for
+             * each: 227 + 3*10 = 257, +1 for the NUL. 320 leaves headroom for
+             * the wording to change without reintroducing the truncation.
+             * Pre-existing bug, unrelated to -Wundef itself, found by the
+             * task #67 gate build and fixed rather than deferred. */
+            char line[320];
             snprintf(line, sizeof(line),
                      "[netplay-connect] FAIL code=P2P_FAIL_TIMEOUT_ORCHESTRATOR "
                      "stage=NAV_WAIT_ORCHESTRATOR — orchestrator produced neither a "

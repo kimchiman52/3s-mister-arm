@@ -5,7 +5,7 @@
 
 #include "sf33rd/Source/Game/system/sys_sub.h"
 #include "common.h"
-#if DEBUG
+#if defined(DEBUG)
 #include <stdio.h>
 #endif
 #include "main.h"
@@ -920,7 +920,7 @@ static bool bg_layer_disabled(int i) {
 }
 
 void BG_Draw_System() {
-#if DEBUG
+#if defined(DEBUG)
     /* Black-BG investigation 2026-04-24 — Experiment 2.
      * Reset log budget on each Play_Game transition so we capture per-match. */
     {

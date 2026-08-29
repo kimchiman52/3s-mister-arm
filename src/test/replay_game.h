@@ -1,4 +1,4 @@
-#if DEBUG
+#if defined(DEBUG)
 
 #ifndef REPLAY_GAME_H
 #define REPLAY_GAME_H

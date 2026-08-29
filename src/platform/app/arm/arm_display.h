@@ -1,4 +1,4 @@
-#if CRS_APP_DRIVER_ARM
+#if defined(CRS_APP_DRIVER_ARM)
 
 #ifndef ARM_DISPLAY_H
 #define ARM_DISPLAY_H

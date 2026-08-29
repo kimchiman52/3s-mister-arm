@@ -330,6 +330,24 @@ target_compile_options(3s-arm PRIVATE
     -Wall
     -Werror
 
+    # An undefined identifier in an #if is not an error in C -- it folds to 0
+    # silently, so a feature gate that is misspelled, renamed, or simply never
+    # reached its compile definition goes permanently dead with no diagnostic
+    # at all. Two shipped bugs in this tree had exactly that shape: task #62
+    # (ENABLE_PERF_TELEMETRY blocks dead in mtrans.c/pls03.c) and task #58
+    # (Screen_Mode left UI-unreachable). -Wundef is the warning that catches
+    # the class, and under -Werror above it is a build failure rather than a
+    # line of scrollback. Task #67.
+    #
+    # Consequence for new code: test an OPTIONAL macro with #ifdef/defined(),
+    # and test a macro that is always defined to 0 or 1 -- everything coming
+    # out of cmake/port_build_config.h.in via #cmakedefine01 -- with a bare
+    # #if, making sure the translation unit actually includes the header that
+    # defines it. The two forms are not interchangeable; see the comment at
+    # the top of src/sf33rd/Source/Game/io/gd3rd.h for the case where getting
+    # that wrong silently dropped a declaration.
+    -Wundef
+
     -fno-strict-aliasing
 
     ${DISABLED_WARNINGS}

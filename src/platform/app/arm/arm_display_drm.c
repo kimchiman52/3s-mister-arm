@@ -1,4 +1,4 @@
-#if CRS_APP_DRIVER_ARM && CRS_ARM_HAVE_DRM
+#if defined(CRS_APP_DRIVER_ARM) && defined(CRS_ARM_HAVE_DRM)
 
 #include "platform/app/arm/arm_display.h"
 #include "platform/video/software/sw_blit.h"

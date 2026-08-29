@@ -1,4 +1,4 @@
-#if DEBUG
+#if defined(DEBUG)
 
 #ifndef INPUT_SCRIPT_H
 #define INPUT_SCRIPT_H

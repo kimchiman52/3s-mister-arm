@@ -1,6 +1,6 @@
 #include "port/utils.h"
 
-#if _WIN32
+#if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <dbghelp.h>
@@ -28,7 +28,7 @@ void fatal_error(const char* fmt, ...) {
     va_end(args);
     void* buffer[BACKTRACE_MAX];
 
-#if !_WIN32
+#if !defined(_WIN32)
     int nptrs = backtrace(buffer, BACKTRACE_MAX);
     fprintf(stderr, "Stack trace:\n");
     backtrace_symbols_fd(buffer, nptrs, fileno(stderr));
@@ -61,7 +61,7 @@ void not_implemented(const char* func) {
 }
 
 void debug_print(const char* fmt, ...) {
-#if DEBUG
+#if defined(DEBUG)
     va_list args;
     va_start(args, fmt);
     vfprintf(stdout, fmt, args);
@@ -71,12 +71,12 @@ void debug_print(const char* fmt, ...) {
 }
 
 void stop_if(bool condition) {
-#if DEBUG
+#if defined(DEBUG)
     if (!condition) {
         return;
     }
 
-#if _WIN32
+#if defined(_WIN32)
     __debugbreak();
 #else
     raise(SIGSTOP);

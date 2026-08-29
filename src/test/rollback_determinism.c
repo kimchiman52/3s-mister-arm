@@ -1,4 +1,4 @@
-#if DEBUG && defined(ENABLE_NETPLAY)
+#if defined(DEBUG) && defined(ENABLE_NETPLAY)
 
 /* Rollback-determinism harness — in-game capture + rollback injection.
  * See rollback_determinism.h for the overview and

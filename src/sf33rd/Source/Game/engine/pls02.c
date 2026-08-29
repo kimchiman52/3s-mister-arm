@@ -1078,7 +1078,7 @@ void add_sp_arts_gauge_nagenuke(PLW* wk) { // 🟢 Difficulty handling differs
     add_super_arts_gauge(wk->sa, wk->wu.id, asag, wk->metamorphose);
 }
 
-#if !CPS3
+#if !defined(CPS3)
 void add_sp_arts_gauge_maxbit(PLW* wk) { // 🔴
     if (pcon_rno[0] != 1) {
         return;

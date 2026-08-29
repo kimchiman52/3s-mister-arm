@@ -1,4 +1,4 @@
-#if DEBUG
+#if defined(DEBUG)
 
 /* Loader-timing invariance instrument — in-game capture side.
  * See ldreq_timing_trace.h for what it measures and why the

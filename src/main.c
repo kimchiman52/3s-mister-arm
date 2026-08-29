@@ -44,7 +44,7 @@
 #include "test/rollback_determinism.h"
 #include "test/test_runner.h"
 
-#if DEBUG
+#if defined(DEBUG)
 #include "sf33rd/Source/Game/debug/debug_config.h"
 #endif
 
@@ -54,7 +54,7 @@
 
 #include <SDL3/SDL.h>
 
-#if _WIN32 && DEBUG
+#if defined(_WIN32) && defined(DEBUG)
 // Including windows.h causes conflicts with the Polygon struct, so I just included the header where
 // AllocConsole is and the Windows-specific typedefs that it requires.
 #include <windef.h>
@@ -427,7 +427,7 @@ static void distributeScratchPadAddress() {
 }
 
 static void sf3_init() {
-#if DEBUG
+#if defined(DEBUG)
     DebugConfig_Init();
 #endif
 
@@ -443,7 +443,7 @@ static void sf3_init() {
     appSetupBasePriority();
 }
 
-#if _WIN32 && DEBUG
+#if defined(_WIN32) && defined(DEBUG)
 static void init_windows_console() {
     // attaches to an existing console for printouts. Works with windows CMD but not MSYS2
     if (AttachConsole(ATTACH_PARENT_PROCESS) == 0) {
@@ -459,7 +459,7 @@ static void init_windows_console() {
 static void initialize_game() {
     SDLApp_FullInit();
 
-#if _WIN32 && DEBUG
+#if defined(_WIN32) && defined(DEBUG)
     init_windows_console();
 #endif
 
@@ -500,7 +500,7 @@ static void cleanup() {
 // Iteration
 
 static void cpLoopTask() {
-#if DEBUG
+#if defined(DEBUG)
     disp_ramcnt_free_area();
 
     if (sysSLOW) {
@@ -575,7 +575,7 @@ void njUserMain() {
     }
 }
 
-#if DEBUG
+#if defined(DEBUG)
 static void configure_slow_timer() {
     if (test_flag) {
         return;
@@ -654,7 +654,7 @@ static void game_step_0() {
 
     flSetRenderState(FLRENDER_BACKCOLOR, 0xFF000000);
 
-#if DEBUG
+#if defined(DEBUG)
     if (Debug_w[0x43]) {
         flSetRenderState(FLRENDER_BACKCOLOR, 0xFF0000FF);
     }
@@ -664,7 +664,7 @@ static void game_step_0() {
     flPADGetALL();
     keyConvert();
 
-#if DEBUG
+#if defined(DEBUG)
     if (configuration.test.enabled) {
         TestRunner_Prologue();
     }
@@ -763,7 +763,7 @@ static void game_step_1() {
     Irl_Scrn();
     BGM_Server();
 
-#if DEBUG
+#if defined(DEBUG)
     if (configuration.test.enabled) {
         TestRunner_Epilogue();
     }
