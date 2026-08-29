@@ -48,6 +48,34 @@ Verdicts:
 INCONCLUSIVE is a first-class verdict on purpose. The alternative -- guessing --
 is how the citations being triaged got wrong in the first place.
 
+THE VERDICTS ARE NOT EQUALLY TRUSTWORTHY. READ THIS BEFORE ACTING ON ONE.
+
+This tool consumes the linter's (cited line, token) pairing. It cannot check
+that pairing, and the linter gets it wrong often -- it picks up a token from a
+neighbouring citation, an adjacent bullet, or another column of the same table.
+That asymmetry decides which verdicts you may act on:
+
+  DRIFTED is self-validating. If the token really was on the cited line at the
+  authoring commit, then the pairing was right, because a borrowed token would
+  not have landed there. Hand-audited 8/8 correct; 46 of 50 also content-matched
+  to a unique line at HEAD.
+
+  NEVER-CORRECT is NOT. "The token is not on that line and never was" is
+  exactly what a borrowed token looks like, so this bucket mixes genuine
+  wrong-when-written citations with the linter's own attribution errors and
+  CANNOT tell them apart. Measured on this tree: 15 of 21 in gd3rd.c and 6 of
+  20 in the rendering files were false. The worst kind looks like this --
+
+    texgroup.c:269 cites `mtrans.c:179` while the prose subject is
+    `texture_table`, so this tool reported NEVER-CORRECT. But the sentence
+    says "ten are gated on ok != 0 with an early return (mtrans.c:179, ...)",
+    and mtrans.c:179 at the authoring commit is `if (texgrplds[i].ok == 0) {`.
+    The citation is about the GATE, is exactly right, and "fixing" it would
+    have broken a correct reference.
+
+  So: repoint DRIFTED mechanically. Read every NEVER-CORRECT by hand, and
+  expect a large fraction of them to need no change at all.
+
 WHY UNPROVABLE-PRE-IMPORT EXISTS
 This branch was assembled by omnibus squashes. `a752e2ca` ("new stuff and
 performance improvements", 134 files, +30142 lines) is the commit that ADDED
