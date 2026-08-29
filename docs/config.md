@@ -198,10 +198,24 @@ out-of-band (text message, voice) and paste it into the wrapper OSD.
   is whatever the NAT maps it to, not what you requested.
 
 `netplay-direct-p2p-disable-upnp` (bool, default `false`)
-- Skip the UPnP IGD first-try path and go straight to STUN hole
-  punch. Set `true` if your router misbehaves on UPnP and fails
-  slowly (some routers reply to `UPNP_Discover` but then hang on
-  `AddPortMapping`). STUN fallback always runs regardless.
+- Skip the UPnP IGD first-try path. Set `true` if your router
+  misbehaves on UPnP and fails slowly (some routers reply to
+  `UPNP_Discover` but then hang on `AddPortMapping`). Since S7 this
+  does **not** disable the NAT-PMP/PCP backend — that has its own key
+  below — and the STUN fallback always runs regardless.
+
+`netplay-direct-p2p-disable-natpmp` (bool, default `false`)
+- Skip the NAT-PMP (RFC 6886) / PCP (RFC 6887) port-mapping backend
+  that runs when UPnP IGD discovery fails
+  (docs/plan-netplay-connection.md §9). It is a hand-rolled UDP client
+  against port 5351 of the default gateway — no new library — and it
+  tries PCP first, downgrading to NAT-PMP when the gateway answers
+  `UNSUPP_VERSION` with version 0 (RFC 6887 §9). Set `true` if your
+  router's NAT-PMP implementation misbehaves, or to keep the host from
+  spending its truncated 4 s probe budget on a gateway you know is
+  silent. Gateway lookup is Linux-only (`/proc/net/route`); on other
+  platforms this backend reports no gateway and never sends anything,
+  so the key has no effect there. STUN fallback always runs regardless.
 
 `netplay-direct-p2p-last-peer-code` (string, no default)
 - Populated at runtime on a successful Join to enable quick-rejoin
@@ -252,6 +266,22 @@ out-of-band (text message, voice) and paste it into the wrapper OSD.
   (docs/plan-netplay-connection.md §4): the two sides' punch windows
   start skewed by DELIVER-arrival timing, and both loops tolerate
   stray datagrams, so extra overlap only costs failure-case wait.
+
+`netplay-direct-p2p-race-budget-ms` (int, default `8000`)
+- S6 candidate racing (docs/plan-netplay-connection.md §8): the WHOLE
+  post-STUN establishment wall clock, on both roles. Since S6 the punch
+  candidates, the rendezvous signaling leg and the relay leg run
+  CONCURRENTLY on the one worker thread instead of one after another, so
+  this replaces the old serial sum (direct punch + signal budget +
+  bilateral punch + relay budget = 19500 ms) as the bound on a failing
+  attempt. The per-leg keys above still bound their own legs INSIDE it:
+  `signal-budget-ms` the rendezvous leg, `bilateral-punch-ms` each punch
+  leg's lifetime, `relay-budget-ms` the relay leg. Clamped to
+  [2000, 30000]: below 2000 ms no leg completes a round trip to a distant
+  server, and above 30000 ms the S3 orchestrator deadline is the more
+  meaningful bound. Note that a terminal failure is still retried once
+  with a fresh local port (S2), so the user-visible worst case is about
+  twice this.
 
 `netplay-direct-p2p-register-interval-ms` (int, default `5000`)
 - Host liveness (S1): cadence of the host's persistent rendezvous

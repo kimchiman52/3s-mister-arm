@@ -57,8 +57,8 @@ All from `src/netplay/direct_p2p.c` (current lines); labels from
 
 | Terminal state | Status text | Raised at |
 |---|---|---|
-| `FAILED_STUN` | "Connection failed. Try again." | host: direct_p2p.c:971, 1025; thread-spawn failure paths in Begin* :1872/:1932; joiner: :1097 |
-| `FAILED_PUNCH` | "Invalid room code." | BeginJoin decode failures, direct_p2p.c:1891, 1900 |
+| `FAILED_STUN` | "Connection failed. Try again." | host: direct_p2p.c:279, 1025; thread-spawn failure paths in Begin* :1872/:1932; joiner: :1097 |
+| `FAILED_PUNCH` | "Invalid room code." | BeginJoin decode failures, direct_p2p.c:4389, 4402 |
 | `FAILED_SYMMETRIC` | "Could not connect. Try a different network." | joiner bypasses :1152/:1158/:1165 (host side no longer has a terminal gate — same-IP DELIVERs are ignored as stale self-registrations, review H1) |
 | `FAILED_BILATERAL` | "Could not connect. Try a different network." | joiner signaling/punch failures :1189-:1336; host: punch-thread spawn failure :1719, retry-budget exhaustion :2130 (review M1: a single host-side punch failure returns to HOST_WAITING) |
 | `FAILED_HANDSHAKE` | MIST reject reason | R-1 path, :1435 |
@@ -95,7 +95,7 @@ Demonstrated end-to-end against the real server (see §3.4).
 
 Mechanics verified in code; classifications are standard NAT taxonomy.
 "UPnP" means the host's router granted the mapping
-(`try_upnp`, direct_p2p.c:509-566) and its external IP is not
+(`try_portmap`, direct_p2p.c:2158-2367) and its external IP is not
 provably non-public (CGNAT gate, §3.6; review M3).
 
 | Host \ Joiner | Full-cone / restricted | Port-restricted | Symmetric |
@@ -144,7 +144,7 @@ bilateral fallback could never pair those hosts.
 Every `netplay-direct-p2p-stun-keepalive-ms` (default 20 000 ms, ≤ 0
 disables) while HOST_WAITING, the main thread re-issues a STUN Binding
 Request on the same socket toward the server that answered discovery
-(`host_stun_keepalive_tick`, direct_p2p.c:1488-1504;
+(`host_stun_keepalive_tick`, direct_p2p.c:3917-3933;
 `Stun_SendKeepalive`, stun.c). The probe refreshes the advertised NAT
 mapping; the response is routed through a new STUN gate in
 `host_tick_receive` (direct_p2p.c:1752-1762) — which also fixes a
@@ -193,7 +193,7 @@ unsolicited DELIVER push (pair-able). Output is in the S1 task report.
 
 ### 3.5 UPnP lease renewal
 The 1-hour lease (upnp.c:27) is renewed at half-life (30 min,
-`upnp_renew_tick`, direct_p2p.c:646-705), retry at 5 min on failure,
+`upnp_renew_tick`, direct_p2p.c:2425-2572), retry at 5 min on failure,
 **including mid-session**: `main.c` now ticks the orchestrator from
 the active-session branch (main.c, `DirectP2P_Tick` beside
 `Netplay_Run`), because the mapping is what carries the peer's
@@ -206,7 +206,7 @@ so miniupnpc's cached-IGD statics (upnp.c:34-37) are never used
 concurrently.
 
 ### 3.6 CGNAT blind spot
-`UpnpMapping.external_ip` was captured (upnp.c:120) and never read.
+`UpnpMapping.external_ip` was captured (upnp.c:177) and never read.
 Behind CGNAT/double-NAT the inner router reports a private/CGN
 external IP while STUN reports the true public IP; the room code
 paired the STUN IP with the UPnP port (@1b217758:739-740) — a wrong
@@ -314,13 +314,13 @@ post-S2 tree.
   and logged when servers disagree on the mapped port. S3 consumes
   this for failure attribution; no UX in S2 by design.
 - **Auto-retry policy**: (a) joiner — join_thread_fn
-  (direct_p2p.c:1401) wraps the extracted `join_attempt()`
+  (direct_p2p.c:1101) wraps the extracted `join_attempt()`
   (direct_p2p.c:1110) and interposes exactly ONE automatic full retry
   on any terminal failure before surfacing it; each attempt re-runs
   discovery on local_port 0 with the previous socket closed, so the
   retry binds a FRESH local port (dodges stuck conntrack/NAT state;
   also covers host-still-in-UPnP-probe start-skew). (b) host —
-  Tick's FAILED_STUN case (direct_p2p.c:2113) re-spawns
+  Tick's FAILED_STUN case (direct_p2p.c:3180) re-spawns
   host_thread_fn after a 5 s backoff, ≤3 retries per hosting session,
   instead of parking terminal; composes with (and does not touch) the
   S1 bilateral-failure return-to-HOST_WAITING path.
@@ -466,12 +466,12 @@ Three sub-stages, all landed. As-built below.
 - Punch payload is `"3SX_PUNCH"` + an 8-byte token derived from the
   room-code payload, domain-separated from the session key
   (`Rendezvous_DerivePunchToken`, rendezvous.c). 17 bytes total.
-- `classify_host_datagram` (direct_p2p.c:547) is the single routing
+- `classify_host_datagram` (direct_p2p.c:787) is the single routing
   decision for every inbound datagram on the waiting host's socket:
   '3SXR' frame / STUN Binding Response / **authenticated** punch /
   IGNORE. **Fail closed** — no valid token, no acceptance. The IGNORE
   arm drops the datagram, does not echo, and **keeps waiting**
-  (host_tick_receive, direct_p2p.c:2351-2373): the peer slot is never
+  (host_tick_receive, direct_p2p.c:2358-2380): the peer slot is never
   consumed. Pre-S4a that arm was "anything else IS the peer".
 - The host's echo (which authenticates the host back to the joiner)
   only ever carries an already-validated payload.
@@ -485,7 +485,7 @@ Three sub-stages, all landed. As-built below.
   is that it is an LCG whose state is recoverable from observed output,
   making txids predictable and Binding-Response forgery possible for an
   off-path attacker. RFC 5389 §6 requires cryptographic randomness.
-- New cause `CONNECT_FAIL_PUNCH_AUTH` (connect_fail.h:97). It outranks
+- New cause `CONNECT_FAIL_PUNCH_AUTH` (connect_fail.h:115). It outranks
   the NAT diagnoses in the classifier: the peer was *reached*, so
   blaming NAT would send users to their router settings for nothing.
 
@@ -589,10 +589,10 @@ bucket cannot see. A legitimate pair peaks around 2.5 pkt/s.
 loop (one RTT to bind, instead of waiting out the 500 ms resend
 cadence). The host receives CHALLENGEs on the **main** thread while
 REGISTER resends are built on the rendezvous **worker** thread, so the
-8-byte cookie crosses via a seqlock (`signal_cookie_publish` /
-`signal_cookie_snapshot`, direct_p2p.c:355/370) and the main thread also
-echoes immediately (`host_handle_challenge`, direct_p2p.c:2272).
-`Rendezvous_ParseChallenge` (rendezvous.c:184) validates magic, version,
+8-byte cookie crosses via a seqlock (`signal_cookie_publish`, direct_p2p.c:544;
+`signal_cookie_snapshot`, direct_p2p.c:559) and the main thread also
+echoes immediately (`host_handle_challenge`, direct_p2p.c:4300).
+`Rendezvous_ParseChallenge` (rendezvous.c:195) validates magic, version,
 type **and** that the frame carries *our* session key (cross-talk +
 forgery gate — the key embeds the S4b nonce), and **zeroes its output on
 every reject**, so a caller that ignores the return value cannot echo
@@ -605,7 +605,7 @@ evict-oldest-unpaired-singleton policy remain load-bearing against a
 real **botnet** whose nodes do receive at their own addresses and
 therefore pass the cookie gate.
 
-**New cause** `CONNECT_FAIL_COOKIE_REJECTED` (connect_fail.h:90,
+**New cause** `CONNECT_FAIL_COOKIE_REJECTED` (connect_fail.h:100,
 `"P2P_FAIL_COOKIE_REJECTED"`, "Matchmaking auth failed. Update the
 game."). A CHALLENGE is proof the server is alive, so
 challenges-with-zero-DELIVERs is an auth/version problem — not the dead
@@ -1198,8 +1198,21 @@ The only difference is which endpoint was written.
 diagnosis (a symmetric NAT that happens to hand two STUN servers the
 same port never raises it), and a relay works for any pair that can
 reach the server. Gating on it would strand exactly the users the rung
-exists for. A pair that *can* punch never reaches this code, so an
-enabled relay costs a connectable pair nothing.
+exists for.
+
+> **Superseded by S6 (review finding L-1).** This section used to end
+> "A pair that *can* punch never reaches this code, so an enabled relay
+> costs a connectable pair nothing." That was true of the S5 **serial**
+> cascade, where the rung only ran after the punch had spent its whole
+> window. It is **not** true after S6: the relay leg now RACES the punch
+> legs, so a pair that punches slowly does reach this code and does spend
+> a pool port. §8.4 rules 2 and 2b bound how much: the relay may not arm
+> until every live punch candidate has had a window of its own, and even
+> once it is ready to hand off it waits `RACE_RELAY_GRACE_MS` for a punch
+> to land. What survives of the original promise is the measurable part —
+> a pair that punches inside those windows still costs the pool nothing
+> (test 20A asserts zero `RELAY_REQ`s) — and the honest residual is in
+> §8.10.
 
 **Relay address provenance.** Taken from the `PIN_ACK`'s **own source
 address**, not from `signal_addr`. `signal_addr` may have come from a
@@ -1372,19 +1385,1386 @@ is not reclaimed as idle".
   few hundred ms early, a state GekkoNet's retransmit and the S3
   CONNECTING deadline already cover.
 
-## 8. S6 — Joiner candidate racing
+## 8. S6 — Joiner candidate racing (IMPLEMENTED)
 
-Joiner currently tries exactly one (ip, port) tuple. Race candidates
-concurrently on the one socket: room-code endpoint, rendezvous
-DELIVER endpoint, LAN-local addresses (hairpin), first responder
-wins. Removes the serial 2.5 s + 8 s + 3 s worst case (§1.1).
+Landed as its own commit series on top of S5. Citations refer to the
+post-S6 tree.
 
-## 9. S7 — NAT-PMP / PCP
+### 8.1 The defect: everything was serial
 
-miniupnpc only speaks UPnP IGD. Many routers (esp. Apple/BSD-based)
-speak NAT-PMP/PCP instead — add libnatpmp (or a ~200-line PCP client)
-as a second mapping backend behind the same `UpnpMapping` interface
-(upnp.h:11-16), tried when IGD discovery fails.
+The joiner ran its establishment phases strictly one after another, so a
+join that ended in failure cost the **sum** of every budget:
+
+| phase | budget | source (pre-S6 tree, `9eadde33`) |
+|---|---|---|
+| direct punch | 2 500 ms | `join_attempt`, literal `2500` |
+| rendezvous REGISTER/DELIVER | 8 000 ms | `CFG_KEY_NETPLAY_DIRECT_P2P_SIGNAL_BUDGET_MS`, config.c default |
+| bilateral punch | 5 000 ms | `CFG_KEY_NETPLAY_DIRECT_P2P_BILATERAL_PUNCH_MS`, config.c default |
+| relay rung | 4 000 ms | `CFG_KEY_NETPLAY_DIRECT_P2P_RELAY_BUDGET_MS`, config.c default |
+
+19 500 ms per attempt, and the S2 auto-retry runs the whole thing twice:
+**39 000 ms** before the user is told anything. The host was serial too —
+bilateral punch 5 000 then relay 4 000 = 9 000 ms.
+
+Worse than the arithmetic: the bilateral punch could not **start** until
+the direct punch had burned its entire window, even though the DELIVER
+carrying its endpoint had typically arrived hundreds of milliseconds in.
+
+### 8.2 Why not ICE
+
+Decision on file, unchanged: **do not build ICE.** The MiSTer has one
+interface; the kernel is built without `CONFIG_IPV6`, so there is no v6
+escape from NAT; there are at most three candidate routes; and a
+rendezvous signalling channel already exists. Full ICE — candidate
+gathering, priorities, connectivity-check pacing, nomination — would buy
+nothing those four facts do not already decide, and would add a state
+machine larger than the whole of `direct_p2p.c`.
+
+What was actually needed is the *one* thing ICE has that we lacked:
+candidates tried **concurrently** rather than in sequence.
+
+### 8.3 As built: one interleaved loop, no new threads
+
+`p2p_race()` (direct_p2p.c) drives up to four legs from a single loop on
+**the same worker thread that already owned the socket exclusively** —
+the join worker, or the host's bilateral-punch worker during
+`FALLBACK_BILATERAL_PUNCH` (§Decision 3, unchanged and still
+load-bearing). **No new threads, no new locks, no new races**: every leg
+is a state machine pumped from that loop, and the socket keeps exactly
+one reader/writer, exactly as before.
+
+| leg | role | what it is |
+|---|---|---|
+| `punch[0]` | both | the endpoint we already hold — the joiner's room-code endpoint, or the host's DELIVER-supplied joiner endpoint |
+| `punch[1]` | joiner | the endpoint a DELIVER teaches us mid-race. This is the old "bilateral" punch, except it now starts **the instant the DELIVER parses** |
+| `signal` | joiner | the REGISTER / CHALLENGE / DELIVER conversation. The host is already paired by the time it punches and its rendezvous worker has exited, so it has no signal leg |
+| `relay` | both | the S5 `RELAY_REQ → GRANT → PIN → ACK` rung |
+
+The blocking `Stun_HolePunch` was split into a non-blocking stepper —
+`Stun_PunchBegin` / `Pump` / `Offer` / `Settled` / `End` (stun.h,
+stun.c) — and `Stun_HolePunch` **re-implemented as a thin blocking driver
+over it**, so its wire behaviour, its accept criteria (source IP + the
+exact 17-byte authenticated payload, port deliberately unmatched for the
+S2 symmetric retarget), its adaptive cadence and its ~600 ms confirmation
+tail are unchanged, and its existing regression tests
+(`run_punch_retarget_test`, `run_punch_token_reject_test`) now cover the
+stepper too.
+
+### 8.4 The four ordering rules, and why each is load-bearing
+
+1. **A confirmed punch always beats the relay.** Checked first in every
+   iteration; the first confirm tears the relay leg down. A relayed
+   session detours through a European VPS (§7.5), so silently preferring
+   it over a working direct link would be a latency regression disguised
+   as a connectivity win.
+
+   **1b — and the relay's own handoff waits `RACE_RELAY_GRACE_MS`
+   (600 ms) PAST THE END OF THE PUNCH (S6 review H-3; re-anchored and
+   re-sized by the second review's H-A and H-B).** Rule 1 as originally
+   shipped was a purely LOCAL decision: the relay leg pinned, the race
+   ended on the spot, and nothing asked what the *other* peer had
+   decided. Two peers confirm their punches about one one-way delay
+   apart, so a start skew of a few tens of milliseconds was enough for
+   one side to relay while the other punched. GekkoNet resolves inbound
+   packets by source address and `netplay.c` registers the remote
+   **once** at configure time with no relearn path, so that pair then
+   sits in `CONNECTING` for the whole 15 s
+   `CONNECT_TIMEOUT_CONNECTING_MS` and fails with no recovery.
+
+   **The first fix moved the band; it did not close it.** Held from the
+   instant the relay became *ready*, the grace is still a LOCAL timer,
+   and a local timer cannot resolve a disagreement about timing — a peer
+   starting late enough always confirms after we have committed. The
+   second review reproduced that on shipped defaults, and the residual
+   sat ~200 ms above the top of the range the suite ever looked at
+   (sweep upper bound 2 750, pinned point 2 450). Measured on the
+   two-peer rig, three configurations:
+
+   | `RACE_RELAY_GRACE_MS` | one-way delay | band CENTRE (= arm + grace) | measured divergence band | span |
+   |---|---|---|---|---|
+   | 0 | 150 ms | 2 500 ms | 2 350 – 2 600 / 2 625 / 2 625 ms (3 runs) | 250–275 ms |
+   | 600 (as shipped) | 150 ms | 3 100 ms | 2 950 – 3 250 ms | 300 ms |
+   | 600 | 300 ms | 3 100 ms | 2 800 – 3 300 ms (10 points) | 500 ms |
+   | 600 | 400 ms | 3 100 ms | 2 700 – 3 350 ms (14 points) | 650 ms |
+   | 1 200 | 300 ms | 3 700 ms | 3 450 – 3 800 ms | 350 ms |
+
+   Two things are visible and neither was in the record before. The band
+   **CENTRE tracks `RACE_RELAY_ARM_MS + RACE_RELAY_GRACE_MS` exactly** —
+   the grace translates the defect, it does not shrink it. And the band
+   **WIDTH grows with the one-way delay**, roughly 2× it: it is one round
+   trip, not "a 150 ms window equal to the injected one-way delay", which
+   is what this section claimed and what the 600 ms was sized against.
+   The claimed 4× headroom was therefore about 2×. That is the second
+   review's H-B; the corrected derivation is below.
+
+   **The suite reported success throughout.** The owd 300 and owd 400
+   runs above both exit **0** and both print
+   *"test 24 OK — two real peers converged on the same rung"* while the
+   sweep beside them lists 10 and 14 split-brain skews. A pinned point of
+   2 450 ms and a sweep ceiling of 2 750 ms cannot see a band that moves.
+
+   **What closes it.** The grace is now held from the LATER of "the
+   relay became ready" and "the last punch candidate stopped sending",
+   and a candidate that has stopped sending is kept on the RECEIVE path
+   until the relay commits instead of being torn down. The decision
+   stops being "how long since MY relay was ready" and becomes "is the
+   punch provably over on BOTH sides" — a quantity the two peers
+   genuinely share, because each punches for `punch_leg_ms` from its own
+   start and each listens until it commits. A confirmation on either
+   side resets `sent_any` in `Stun_PunchOffer` and resumes that side's
+   confirmation tail, which is what confirms the other side in turn.
+   Both halves are load-bearing and each has its own probe point in
+   test 24: without the re-anchor the band stays at the relay-commit
+   instant, and without the listen-past-send rule it simply moves to the
+   punch-send-end instant.
+
+   **Sizing, corrected (H-B), and the exact condition it buys.** With
+   start skew *s* and one-way delay *d*, the late peer's punch reaches us
+   at *s + d* and our answering tail reaches it at *s + 2d*; convergence
+   therefore needs the grace to cover **one round trip (2*d*), not one
+   one-way delay**. Stated as a condition:
+
+   > the two peers converge at **every** start skew exactly when
+   > `RACE_RELAY_GRACE_MS >= 2 * one-way delay`, i.e. when the grace
+   > covers the pair's round-trip time. Where it does not, the residual
+   > band is `2d - grace` wide and sits just past the punch send end.
+
+   That is a *prediction*, so it was tested in both directions on the
+   post-fix tree rather than only where it passes:
+
+   | one-way delay | RTT | grace | predicted | measured |
+   |---|---|---|---|---|
+   | 150 ms | 300 ms | 600 | closed | **0 splits** / 97 races, skew 1 800–6 600 |
+   | 250 ms | 500 ms | 600 | closed | **0 splits** / 34 races, skew 2 600–5 900 |
+   | 400 ms | 800 ms | 600 | **reopens**, 200 ms wide, just past the punch send end | **splits at skew 5 200 and 5 300** — 200 ms, exactly there |
+   | 400 ms | 800 ms | 1 200 | closed again (grace now covers the RTT) | **0 splits** — skew 5 200 and 5 300, which split at grace 600, both converge PUNCHED |
+
+   **This is what separates the new anchor from the old one, and it is
+   the same experiment run against both.** Take the grace as the lever
+   and watch what it does:
+
+   | | shipped H-3 anchor (relay-ready) | this anchor (punch send end) |
+   |---|---|---|
+   | grace 0 → 600 → 1 200 | band **MOVES**: centres 2 500 → 3 100 → 3 700 ms, never absent | — |
+   | grace 600, owd 50 / 150 / 250 | band present at every delay | **absent** |
+   | grace 600, owd 400 | present | present, 200 ms, at the predicted skew |
+   | grace 600 → 1 200 at owd 400 | band moves, still present | band **CLOSES** |
+
+   Under the shipped fix no value of the grace removed the band — that is
+   the second review's H-A, and it is why "a locally-timed decision
+   cannot resolve a disagreement about timing" was the right diagnosis.
+   Under the new anchor the band is a **bounded function of the grace**:
+   absent whenever the grace covers the round trip, and the very same
+   lever that only relocated the defect before now removes it. What
+   remains is a stated coverage limit with a formula and a knob, not an
+   unbounded defect.
+
+   600 ms therefore covers every pair up to a **600 ms RTT**. A real
+   transatlantic RTT is 70–180 ms; a pair above 600 ms RTT is not
+   playable at three-frame rollback regardless. The number is sized
+   against a network quantity, with the derivation written next to it in
+   `direct_p2p.c`, and **not** against `SB6_OWD_MS` or any other harness
+   constant — sizing a production margin against a test literal is what
+   produced H-B in the first place.
+
+   Bounded three ways: by the grace, by the punch send window that now
+   anchors it, and by the race budget, which commits the relay rather
+   than losing it. The cost is stated in §8.10.
+2. **The relay leg does not arm until `RACE_RELAY_ARM_MS` (2 500 ms)...**
+   Naive racing would have every pair request a pool port from the
+   100-port range. 2 500 ms is *exactly* the window the pre-S6 direct
+   punch had entirely to itself, so nothing that the pre-S6 code would
+   have connected at that stage is diverted to a relay.
+
+   **2b — ...and not until every LIVE CANDIDATE has had
+   `RACE_PUNCH_MIN_WINDOW_MS` (2 500 ms) of its own (S6 review, H-4).**
+   The original rule measured its delay from RACE START, which makes the
+   justification above true of `punch[0]` — armed at `t0` — and false of
+   the DELIVER candidate, which is armed at DELIVER time *D* and pre-S6
+   got its own full `BILATERAL_PUNCH_MS`. With *D* = 1 200 ms it got
+   ~1.3 s instead of 2.5 s, so a US-US pair needing ~2 s from DELIVER was
+   diverted onto a European relay it did not need — a direct link
+   replaced by a transatlantic one for people who connect fine today. The
+   deferral is **capped** at `race_budget − relay_budget` (4 000 ms on
+   the defaults) so the relay always keeps its own budget: a relay that
+   arms too late to finish is worse than one that arms slightly early.
+3. **The relay leg also needs a real DELIVER (joiner).** Without one we
+   are provably not paired server-side and `handleRelayReq` refuses an
+   unpaired session, so arming would spend the budget to be told
+   something we already know. The host is paired by construction.
+4. **A `NOT_PAIRED` refusal is transient, not terminal.** Serially the
+   rung ran after the signalling phase had definitely completed, so a
+   refusal could only mean a durable condition. Racing can now ask while
+   the peer's own REGISTER is still in flight, and treating that first
+   answer as final would **invent** a failure for exactly the symmetric
+   pairs the relay exists to carry. Only `POOL_EXHAUSTED` ends the leg
+   early.
+
+### 8.5 Measured, not estimated
+
+Both numbers come from the **same probe** — the REAL `BeginJoin` driven
+to terminal failure with a mocked STUN discovery and offline punch legs
+— run against the pre-S6 tree in a separate worktree at `9eadde33` and
+against the post-S6 tree. Two scenarios, because they stress different
+parts of the cascade:
+
+| scenario | pre-S6 (`9eadde33`) | post-S6 | change |
+|---|---|---|---|
+| **A** rendezvous black hole (no DELIVER ever arrives) | 21 326 ms total, **10 663 ms/attempt** | 16 222 ms total, **8 111 ms/attempt** | −24% |
+| **B** full cascade (DELIVER arrives, relay silent — every leg runs) | 19 354 ms total, **9 677 ms/attempt** | 10 228 ms total, **5 114 ms/attempt** | **−47%** |
+
+Scenario A is bounded by the 8 000 ms signalling budget on both trees —
+racing cannot shorten a leg that is the longest thing running. Scenario B
+is where seriality actually cost: pre-S6 the bilateral punch and the
+relay rung could only begin after the direct punch had expired.
+
+The **arithmetic** worst case — a DELIVER arriving just before the
+signalling budget expires, so all four phases run at full length — is
+19 500 ms/attempt pre-S6 against a `RACE_BUDGET_MS`-bounded 8 000 ms
+post-S6. That case is stated from the code, **not** measured: neither
+probe scenario reproduces a late DELIVER.
+
+Sanity check on the mid-race overlap, measured directly: with a DELIVER
+arriving at once and only the DELIVER endpoint answering, the handoff
+completes in **~230 ms** (test 19). Pre-S6 the earliest possible handoff
+on that path was > 2 500 ms, because the direct punch had to expire
+first.
+
+**What the race is now hard-bounded by (S6 review, H-1).** The overall
+deadline is `race_budget_ms`, **plus at most one `STUN_PUNCH_CONFIRM_MS`
+(600 ms) confirmation tail** when a leg has already confirmed and is
+still owing its peer that tail — see §8.9. Worst case per attempt is
+therefore 8 600 ms on the defaults, 17 200 ms for the joiner's two
+attempts. Verified headroom against the callers:
+
+- `CONNECT_TIMEOUT_CONNECTING_MS` (15 000 ms, `connect_fail.h:267`) does
+  **not** bound the race: it is armed on entry to
+  `NETPLAY_SESSION_CONNECTING` (`netplay.c:1776-1791`), i.e. *after* the
+  handoff, and bounds GekkoNet's sync, not establishment.
+- The bound that does apply is nav's `NAV_WAIT_ORCH_TIMEOUT_FRAMES`
+  (`netplay_nav.c:120` = `150 * 60` frames = 150 000 ms, enforced at
+  `netplay_nav.c:391`). 17 200 ms of race against 150 000 ms is **8.7x
+  headroom**, and the +1 200 ms the tail exemption adds across two
+  attempts is 0.8% of it.
+- The suite's own bound, `S6_WORST_CASE_BOUND_MS` = 22 000 ms, is met:
+  the black-hole probe measured **16 228 ms** total post-fix.
+
+### 8.6 Config
+
+| key | default | purpose |
+|---|---|---|
+| `netplay-direct-p2p-race-budget-ms` | `8000` | the WHOLE post-STUN establishment wall clock on both roles, clamped [2000, 30000]. It replaces the old serial sum as the thing that bounds a failing attempt |
+
+The per-leg keys keep their meaning and now bound their own legs *inside*
+the race: `signal-budget-ms` the rendezvous leg, `bilateral-punch-ms`
+each punch leg's lifetime, `relay-budget-ms` the relay leg. None became a
+dead key.
+
+### 8.7 Behaviour changes worth calling out
+
+- **The three fallback bypasses moved up front.** Kill switch, LAN peer
+  and hairpin used to be evaluated *after* the direct punch failed,
+  because that was the only point at which the code decided whether to
+  enter the fallback. In a race there is no such point — the signalling
+  leg starts at t=0 — so the question they answer ("is the rendezvous
+  fallback worth running at all for this peer?") is answered before the
+  race is configured. **No verdict changes**: none of the three depends
+  on the punch outcome, and each still yields `FAILED_SYMMETRIC` with its
+  pre-S6 status text. The fourth bypass, `diag_punch_bad_token`, genuinely
+  does depend on the punch and stays after the race.
+- **A dead rendezvous URL no longer kills the direct punch.** Pre-S6 a
+  missing/malformed signal URL or a failed resolve returned
+  `FAILED_BILATERAL` from inside the fallback, after the direct punch had
+  run. Now the setup happens before the race, and a failure only drops
+  the fallback *legs* — the punch leg still runs and can still win. The
+  failure is reported only if nothing connects.
+- **The report line's stage timings now OVERLAP.** `punch=`, `signal=`,
+  `bilateral=` and `relay=` are leg **lifetimes**, so they no longer sum
+  to the elapsed time. A new `race=` field carries the wall clock of the
+  whole post-STUN cascade and is the number to compare across builds. Both
+  the OK and FAIL lines carry it. The OK line also gained `relay_fail=`,
+  which §7.5 always specified but the code never emitted there (§8.9).
+- **The `DirectP2P_TestHook_SetStunHolePunch` seam is gone**, replaced by
+  `DirectP2P_TestHook_SetPunchOracle` (direct_p2p.h). With no blocking
+  punch left to substitute, the seam moved to the decision the tests were
+  really making — "does THIS candidate ever confirm?" — consulted once per
+  candidate at arm time. The **rename is deliberate**: a stale caller must
+  fail to compile rather than silently behave differently, the same
+  discipline §6.3 applied to the room-code bool API. A leg under an oracle
+  override puts nothing on the wire, which is what keeps the offline
+  harnesses offline while still consuming the leg's real wall time.
+
+### 8.8 Tests
+
+Cases 18, 19, 20 (three acts), 20C and 21 in `test_bilateral_punch.c`
+came with the stage, plus one in `test_stun_mock.c`. **23-31 came out of
+the S6 adversarial review and the second review's H-A/H-C follow-up**,
+which between them found that the stage's own tests could not see three
+of its four alpha blockers — and then that the fix for one of those
+blockers had moved the defect rather than closed it. Every case below
+was proven red by neutralising the code under test and observing a
+**non-zero harness exit** — not by assertion.
+
+(Two exceptions, both corrected here rather than left standing. **Row 27's
+N5** deletes the duplicate-endpoint guard, which *is* genuinely uncovered
+code — but that guard is byte-identical to the pre-fix tree
+(`git show 26deb2fc:src/netplay/direct_p2p.c | sed -n '1210,1215p'` and
+`sed -n '1313,1318p' src/netplay/direct_p2p.c` both md5
+`d1f6c2bdeb1ee0d52b98b3fffc9fc17c`), so it was never the M-2 defect;
+restoring the pre-fix memset-then-validate order *and* deleting the
+`race_finish_punch` call left the whole pre-H-C suite green. Tests 30 and
+31 are what observe M-2. **Row 24's N2** was red, but against a pinned
+skew of 2 450 ms and a sweep that stopped at 2 750 ms, neither of which
+could reach the 2 950–3 250 ms band the fix left behind; see §8.4 rule 1b
+and the N13/N14 rows.)
+
+**The structural finding first (H-2).** Across a full pristine run the
+line `S6 race: punching candidate` appeared **27 times** and
+`Hole punch SUCCESS` **zero** times. Every candidate in 18-21 is
+oracle-driven, and `race_punch_settled()` returns `true` unconditionally
+for a non-`DP2P_PUNCH_REAL` oracle — so the `Stun_PunchSettled` branch
+the shipping path *always* takes was executed by no test at all. That is
+why H-1, H-4 and M-2 all survived a green suite. Tests 23-29 use **no
+oracle** — none of them installs a punch oracle, so any leg they arm is
+`DP2P_PUNCH_REAL` and goes through the real stepper. But "no oracle" is
+not the same as "confirms on the wire", and only **four of the seven**
+actually complete a punch. A pristine run **of the post-23-29 tree**
+emits `Hole punch SUCCESS` **7 times** (the "zero" above is the
+pre-23-29 state this paragraph opened with), and interleaving those
+lines with the per-test banners attributes every one of them:
+
+| test | `Hole punch SUCCESS` | what it puts on the wire |
+|---|---|---|
+| **23** | **1** | one real leg against the echo peer; confirms |
+| **24** | **many** | two concurrent real races per probe point, each with a real leg. The second review replaced the single pinned skew with seven DERIVED points plus the 1 000 ms control, so the count scales with the probe list rather than being a fixed 4 |
+| **25** | **1** | one real DELIVER-armed leg against the echo peer; confirms |
+| **26** | **1** | one real leg against the echo peer; confirms |
+| 27 | **0** | arms exactly one real leg and punches it, but the target is a **bound, silent sink** — `sink_sock` at `test_bilateral_punch.c:8560` — with `seed_port = 0` at `test_bilateral_punch.c:8567` — nothing ever answers, the race ends EXHAUSTED, and `27-no-punch-from-a-silent-sink` asserts precisely that |
+| 28 | **0** | **runs no race at all**: it calls `DirectP2P_TestHook_RaceBudgetExpired` as a pure function and compares `STUN_PUNCH_CONFIRM_MS` against the literal 600 (`test_bilateral_punch.c:8695`). No socket, no thread, no stepper |
+| 29 | **0** | **relay-only**: `seed_port = 0` (`test_bilateral_punch.c:8805`, "no punch leg at all") and `signal_leg = false` (`test_bilateral_punch.c:8805`), so no candidate is ever armed and the only leg is the relay |
+
+So the sentence that matters is narrower than "23-29": **tests 23, 24,
+25 and 26** are what drive a real 17-byte punch to a real loopback peer
+and back, and they are therefore the only tests in which the S4a token
+check, the source-IP gate and the 600 ms confirmation tail are actually
+executed on the accept path. **27** exercises the *send* half and
+`race_arm_punch`'s duplicate guard but never the accept half; **28** and
+**29** touch neither. The rig for 23-26 is a **punch
+echo peer** that returns the exact 17 bytes it received — verbatim, so
+it passes `Stun_PunchOffer`'s prefix and constant-time token compare by
+construction rather than by bypassing them — with a configurable delay
+measured from the first punch it sees, which is what lets a test place
+the confirmation instant relative to the race's own `t0`.
+
+Four `NETPLAY_TEST_HOOKS`-only seams make that possible:
+
+- **`DirectP2P_TestHook_RunRace`** runs ONE `p2p_race` against
+  caller-supplied endpoints. Every other seam drives the race through
+  `BeginJoin` or the host worker, which own process-wide state, so only
+  one can be live at a time — and the split brain is by construction a
+  TWO-peer property. `p2p_race` takes everything by argument, so test 24
+  runs two of them concurrently on two threads, punching each other
+  through a UDP delay line that injects a fixed one-way delay.
+- **`DirectP2P_TestHook_RaceBudgetExpired`** exposes the deadline
+  predicate as a pure function, because the wrap defect needs a 49.7-day
+  clock and this build has no clock-injection seam.
+- **`DirectP2P_TestHook_SetArmFailEndpoint`** nominates one endpoint whose
+  `Stun_PunchBegin` must fail, by handing it an unresolvable 144-character
+  DNS label instead of the peer IP. `race_arm_punch` has exactly one
+  failure mode past its up-front `ip`/`port` guard — `Stun_PunchBegin`
+  (`stun.c:781-798`) — and the only slot the race ever RE-arms takes its IP
+  from `Rendezvous_ParseDeliverEx`, which emits `inet_ntop` output and
+  therefore always a resolvable dotted quad (`rendezvous.c:251-254`). The
+  wire cannot produce the case M-2 half (i) is about; the seam can, and the
+  failure it produces is the real `NET_ResolveHostname` one.
+- **`DirectP2P_TestHook_RaceRelayArmMs` / `..._RaceRelayGraceMs`** expose the
+  two production constants that place the relay-vs-punch decision in time,
+  so test 24's probe points and its sweep range are DERIVED from them
+  instead of hard-coded. The direction is deliberate and one-way: a test may
+  derive its search space from a production constant; a production margin may
+  never be sized against a test constant. Sizing the grace against
+  `SB6_OWD_MS` is precisely what the second review's H-B found.
+
+| test | neutralisation | observed red (harness exit 1) |
+|---|---|---|
+| 19 `test_race_deliver_overlaps_seed` | the DELIVER endpoint is never armed as a punch candidate | *"test19: no handoff (state=11 seed_arms=2 deliver_arms=0)"* |
+| 19 + 18 | **N10**: the legs run serially again — see the exact diff in §8.8.1 | *"test19: no handoff (state=11 seed_arms=2 deliver_arms=0)"* and *"test18: full-cascade join took 14225 ms (~7112 ms/attempt), expected < 12000 ms — the punch, signalling and relay legs must OVERLAP (measured pre-S6 serial: 19354 ms)"*. Exit **1**. N10 also reds `15A-echo-cookie`, *"test20C: no handoff (state=11 relay_reqs=2 grants=2 pins_ok=14)"* and two `test26` lines — serialising the legs stops the relay ever being IN FLIGHT when a punch lands, which is what 20C and 26 exist to observe |
+| 20B `test_race_punch_beats_relay` | **N9**: `RACE_RELAY_ARM_MS` → 0 | *"test20B: 1 RELAY_REQ(s) inside a 1500 ms race; the relay leg must not arm before RACE_RELAY_ARM_MS (2500 ms)"* |
+| 21 `test_race_not_paired_is_transient` | `NOT_PAIRED` terminal again | *"test21: no handoff after two NOT_PAIRED refusals ... relay_reqs=2 grants=2 notpaired=2"* |
+| 20C `test_race_punch_beats_inflight_relay` | the `RACE_PUNCHED` exclusion removed from the end-of-race relay-fail fallback | *"test20C: OK report line does not carry relay_fail=P2P_OK ... relay_fail=P2P_FAIL_RELAY_UNAVAILABLE"* |
+| **23** `test_race_confirm_at_budget_edge` (H-1, H-2) | **N1**: the confirmation-tail exemption deleted from `race_budget_expired` | *"test23: outcome=3 after 4003 ms, expected PUNCHED(0) — a punch that confirms inside the last 600 ms of the 4000 ms budget must NOT be discarded (H-1)"* |
+| **24** `test_race_split_brain` (H-3) | **N2**: `RACE_RELAY_GRACE_MS` → 0 | *"test24: SPLIT BRAIN at skew=2450 ms — peer A ended PUNCHED and peer B ended RELAYED"* |
+| **25** `test_race_relay_defers_per_candidate` (H-4) | **N3**: `RACE_PUNCH_MIN_WINDOW_MS` → 0 | *"test25: outcome=RELAYED peer=127.0.0.1:&lt;port&gt; after **3119 / 3126 / 3123** ms — the DELIVER candidate armed at t+1200 ms confirms at ~t+3200 ms and must win; the relay (which would grant instantly) must not steal it. relay_reqs=1"* (three consecutive runs; exit **1** each), plus a second red, `25-real-punch-confirmed: expected true: s_sb6_punch_success >= 1` — with the per-candidate window gone the punch never confirms at all. The time is ~3120 ms, **not** the relay-*ready* instant of ~2520 ms: the relay becomes ready one `RACE_RELAY_GRACE_MS` (600 ms) earlier and only commits after the grace |
+| **26** `test_race_punch_drops_relay_leg` (H-7) | **N4**: `relay_state = RELAY_LEG_DONE;` deleted from ordering rule 1 | *"test26: the relay port was still being pinned 508 ms after the punch confirmed (tear-down logged at t=73488, last pin at t=73996, 7 pins total). Ordering rule 1 must set relay_state = RELAY_LEG_DONE, not merely log that it did"* |
+| **27** `test_race_duplicate_candidate_guard` (the duplicate-endpoint guard — **not** M-2; see 30/31) | **N5**: the duplicate-endpoint guard deleted | *"test27: 5 candidates were armed against 5 identical DELIVERs, expected exactly 1 — race_arm_punch's duplicate-endpoint guard must reject an endpoint already being punched"* |
+| **28** `test_race_budget_wrap_safety` (M-1) | **N6**: `race_budget_expired` restored to `now >= t0 + budget` | *"28-wrap-first-iteration: expected false: DirectP2P_TestHook_RaceBudgetExpired(t0, t0, budget, false)"* |
+| **28** (M-3) | **N7**: `STUN_PUNCH_CONFIRM_MS` 600 → 0 | *"test28: STUN_PUNCH_CONFIRM_MS is 0, expected the shipped literal 600"* |
+| **29** `test_relay_not_paired_named_separately` (L-1) | **N8**: `NOT_PAIRED` collapsed back into `CONNECT_FAIL_RELAY_REFUSED` | *"test29: relay_fail=P2P_FAIL_RELAY_REFUSED after 4 NOT_PAIRED refusal(s), expected P2P_FAIL_RELAY_NOT_PAIRED"* |
+| **29** (arm delay) | **N9**: `RACE_RELAY_ARM_MS` → 0 | *"test29: the relay leg armed at t+2 ms with no punch candidate in the race; it must not arm before RACE_RELAY_ARM_MS (2500 ms)"* |
+| `run_punch_leg_offer_test` — **`--test-stun-mock`, not this harness** | the stepper's source-IP gate removed — the `NET_GetAddressString` compare at `stun.c:859` and its `return false` at `stun.c:860` | `--test-bilateral-punch` stays at exit **0** with zero harness FAILs: every leg it punches is loopback-to-loopback, so the source IP always matches and the gate is never the thing that rejects. The 4 reds are all in **`--test-stun-mock`** (exit **1**), from `test_stun_mock.c:739`, driven at `:1377`, in this order: *"a valid payload from the WRONG source IP was consumed"*, *"a valid payload from the WRONG source IP confirmed the leg"*, *"a wrong-token punch CONFIRMED the leg (S4a fail-closed broken)"*, *"leg settled BEFORE the confirmation tail elapsed"* — the last two are knock-ons: the leg is already confirmed (and its `confirm_ms` already stamped) by the stranger's datagram |
+| **30** `test_race_failed_rearm_keeps_live_candidate` (M-2 half i) | **N11**: `race_arm_punch` restored to memset-then-validate, the `race_finish_punch` call kept | *"test30: endpoint B stopped being punched 482 ms after it started (10 datagrams), expected at least 2000 ms — a re-arm that FAILS must leave the live candidate armed. race_arm_punch memset the slot BEFORE letting Stun_PunchBegin fail"*. Exit **1**, 1 failure; test 27 and test 31 stay green |
+| **31** `test_race_rearm_releases_address_ref` (M-2 half ii) | **N12**: the `race_finish_punch(c, now);` call deleted from `race_arm_punch`, ordering kept | *"test31: +93 live allocations survived a race that re-armed slot 1 31 time(s), bound is 12. Each un-released NET_Address is 3 live allocations, so this is ~31 leaked address(es)"*. Exit **1**, 1 failure; test 27 and test 30 stay green |
+| **24** (second review, H-A: the re-anchor) | **N13**: the commit grace anchored back at `relay_ready_ms` alone (`grace_anchor` and `punch_still_sending` discarded) | *"test24: SPLIT BRAIN at skew=2950 ms (one owd BEFORE the relay-commit instant) — peer A ended PUNCHED and peer B ended RELAYED"*, then RELAYED-instead-of-PUNCHED at 3100 and 3250. Exit **1**, **6** failures. The punch-send-end probe points stay GREEN — this half and N14 are independently load-bearing |
+| **24** (second review, H-A: listen past send) | **N14**: the deferral deleted — `race_finish_punch` called at `punch_leg_ms` whether or not a relay leg is in play | *"test24: SPLIT BRAIN at skew=4850 ms (one owd BEFORE the punch send window ends)"* and the same at 5000 ms. Exit **1**, **3** failures. The relay-commit probe points stay GREEN: without this half the band does not close, it moves to `punch_leg_ms` |
+| **25** (second review, H-A follow-on) | **N3** re-run on the POST-H-A tree | the outcome assertion no longer fires — the re-anchor lets the punch win anyway — so this row would have gone vacuous. The surviving promise is rule 2b's *"a pair that can punch never requests a pool port"*: *"test25: the relay leg sent 1 RELAY_REQ(s) for a pair that punched successfully"*. Exit **1**, **exactly 1** failure, and it is that assertion |
+
+Notes on what each test is *for*:
+
+- **18** is the timing regression net. Its scenario-B bound was
+  **14 000 ms**, and the review measured the neutralised (serialised) run
+  at **14 216 ms** — 216 ms, **1.5%**, of margin. A slightly faster
+  machine would have left the assertion unable to fail, which is the
+  same defect the bound was introduced to avoid. Re-measured on this
+  tree with the same probe: passing **10 235 ms**, neutralised
+  **14 216 ms**. The bound is now **12 000 ms**, sitting between the two
+  measured numbers with **17.3%** of headroom over the passing run and
+  **18.5%** of margin under the neutralised one. Its scenario-A bound
+  stays deliberately loose; A is a *measurement*, B is the assertion that
+  bites.
+- **19**'s assertion is on `do_handoff`'s **own arguments**
+  (`DirectP2P_TestHook_LastHandoff`), not on internal state — a race that
+  populated `s_work` correctly but never reached the handoff would pass
+  an `s_work` assertion and cannot pass this one.
+- **20** has two acts because 20A alone does not isolate the arm delay:
+  its punch confirms on the first pump, so the "a confirmed punch drops
+  the relay leg" rule would keep `relay_reqs` at 0 even with the delay
+  removed. 20B uses a punch that never confirms and a race bounded to
+  1 500 ms, so the delay is the only thing that can keep the count at
+  zero.
+- **20C, honestly re-scoped (review H-7).** What it covers: a relay leg
+  that really armed (1 `RELAY_REQ` in flight), the punch still winning,
+  and the reporting rule that an abandoned relay leg is not a failed one
+  (`relay_fail=P2P_OK` on the OK line). What it does **not** cover: on a
+  passing run its relay leg lives ~6 ms, never leaves `RELAY_LEG_REQ`,
+  never receives a GRANT, and its mock is `MOCK_RELAY_NO_ACK`, whose own
+  comment says it "cannot win" — so deleting the tear-down leaves it
+  green. Test 26 covers the tear-down. It also carried an empty
+  *"NEUTRALISATION CHECK for the arm-delay"* comment with **no code under
+  it**; that is resolved by **deleting** it rather than by writing the
+  check, because the check it described cannot fail there — 20C's
+  DELIVER is delayed to 3 000 ms by construction and the relay's
+  `paired` gate *is* that DELIVER, so the leg cannot arm before 2 500 ms
+  whatever the arm rule says. 20B and test 29 cover the arm delay where
+  it *can* fail. 20C now also sets `relay-budget-ms` explicitly instead
+  of inheriting 800 ms from an earlier case, because rule 2b's cap is
+  computed from `(race_budget − relay_budget)`.
+- **23** asserts that the race ran **longer** than its budget, not merely
+  that it succeeded. That is what proves the confirmation landed inside
+  the exempted window rather than comfortably before it — without it the
+  test could pass for a reason unrelated to H-1. Observed on a passing
+  run: 4 348 ms against a 4 000 ms budget, hard cap 4 600 ms.
+- **24** is the only two-peer case in the suite, and the second review
+  rewrote how it chooses what to probe. Its control point (skew
+  1 000 ms) must punch on both sides *even on the pre-fix code*; if the
+  control ever reds, the rig is broken, not the fix.
+
+  **What was wrong with it.** Both the pinned point (`SB6_SPLIT_SKEW_MS`
+  = 2 450) and the sweep range (2 150–2 750, step 25) were compile-time
+  literals chosen where the fix worked. The residual band sat at
+  2 950–3 250 — ~200 ms **above the top of the range the project ever
+  looked at** — so the suite was structurally unable to see the defect
+  it existed to catch. That is the defect underneath the defect, and it
+  is why the second review's H-A asked for the sweep to be widened and
+  the delay parameterised before anything was fixed.
+
+  **What it does now.** A race can only diverge at an instant where one
+  peer's decision changes, and there are exactly two: the **relay
+  commit** (`RACE_RELAY_ARM_MS + RACE_RELAY_GRACE_MS`) and the **punch
+  send end** (`punch_leg_ms`). The pinned points are derived from those
+  two constants — each probed at −owd, +0 and +owd, plus one point past
+  everything where both peers must agree to RELAY — via
+  `DirectP2P_TestHook_RaceRelayArmMs` / `...RaceRelayGraceMs`, so
+  widening the grace or the arm delay moves the probe with it. Each
+  point carries its own expected outcome, so a point that flips from
+  PUNCHED to RELAYED is a red rather than a silent pass. The one-way
+  delay, the punch window, the race budget and the sweep bounds are all
+  runtime knobs now (`S6_SPLIT_OWD_MS`, `S6_SPLIT_PUNCH_LEG_MS`,
+  `S6_SPLIT_BUDGET_MS`, `S6_SPLIT_LO/HI/STEP`), which is what let the
+  bands in §8.4 rule 1b be measured at three grace values and three
+  delays instead of one. The sweep (`S6_SPLIT_SWEEP=1`) is still off by
+  default because it costs ~100 races; its default range is now derived
+  from the same two constants rather than hard-coded.
+- **26** is the tear-down test, and the mechanism is only observable as
+  an **absence**: the relay grants immediately, the leg reaches
+  `RELAY_LEG_PIN` and resends `RELAY_PIN` every 150 ms, and the mock
+  records the arrival time of the last pin. With the tear-down the pins
+  stop at the confirm (observed: last pin **130 ms before** the tear-down
+  line); without it they keep coming for the whole 600 ms tail (observed:
+  **508 ms after**). The threshold is 200 ms, so the margins are 330 ms
+  on the passing side and 308 ms on the red side — both over twice the
+  150 ms pin period.
+- **`run_punch_leg_offer_test`** covers the one decision the blocking
+  driver never makes and the race depends on completely: the race offers
+  each non-'3SXR' datagram to every live leg in turn and stops at the
+  first that consumes it, so a leg that consumed datagrams which are not
+  its own would let one candidate's noise confirm another candidate's leg.
+  It lives in **`test_stun_mock.c`** (`:739`, driven at `:1377`) and reds
+  `--test-stun-mock`, not `--test-bilateral-punch` — see the last row of
+  the table above.
+
+#### 8.8.1 N10, exactly
+
+"The legs run serially again" is ambiguous on its own, so the patch that
+produced the N10 numbers above is recorded verbatim. It is **additive**:
+it keeps the existing arm delay and AND-s the serialisation on top,
+because replacing the delay outright also removes the
+`RACE_RELAY_ARM_MS` floor that test 29 pins, which reds tests that have
+no seed leg at all for an unrelated reason.
+
+```diff
+--- a/src/netplay/direct_p2p.c
++++ b/src/netplay/direct_p2p.c
+@@ p2p_race — 3) arm the relay leg
++            bool all_punch_legs_finished = true; /* N10 */
++            for (int i = 0; i < RACE_PUNCH_LEGS; i++) {
++                if (cands[i].armed && !cands[i].finished) all_punch_legs_finished = false;
++            }
+             const bool delay_done =
+-                cfg->no_punch ||
+-                (int)(now - t0) >= relay_defer_cap_ms ||
+-                ((int)(now - t0) >= (int)RACE_RELAY_ARM_MS && candidate_windows_done);
++                all_punch_legs_finished && /* N10 */
++                (cfg->no_punch ||
++                 (int)(now - t0) >= relay_defer_cap_ms ||
++                 ((int)(now - t0) >= (int)RACE_RELAY_ARM_MS && candidate_windows_done));
+@@ p2p_race — DELIVER handling
+-                        if (!cfg->no_punch) {
++                        if (!cfg->no_punch &&
++                            (!cands[0].armed || cands[0].finished)) { /* N10 */
+                             (void)race_arm_punch(cands, RACE_PUNCH_LEGS, 1, cfg,
+                                                  parsed_ip, parsed_port, now);
+                         }
+```
+
+The `!cands[0].armed ||` term is what keeps the neutralisation honest: a
+race configured with `seed_port = 0` (tests 23, 25, 27) has no seed leg
+to wait for, and gating on `cands[0].finished` alone would stop its
+DELIVER candidate arming at all — reddening those tests for a reason
+that has nothing to do with serialisation.
+
+### 8.9 Defects found by the gates, and by the review of the gates
+
+Recorded because each was found by a check that could easily have been
+skipped, and two of them by a build configuration rather than by a test.
+The last entry is the adversarial review of this stage, which found
+four alpha blockers the stage's own tests could not see; §8.8 carries
+the neutralisation record.
+
+- **The punch-mode enum was inside the `NETPLAY_TEST_HOOKS` block.**
+  `p2p_race` stores a `DirectP2PPunchOracleResult` on every candidate in
+  every build, so a plain Release or Debug build did not compile — 10
+  errors. The test-hooks build was green throughout. Caught only by
+  running the Release and plain-Debug gates, which is exactly why they are
+  gates. The enum now lives in the production part of direct_p2p.h; only
+  the function-pointer typedef and the setter stay test-only.
+- **The overall race deadline was wrap-unsafe.** The loop tested both
+  `(int)(now - t0) >= budget` (wrap-safe) and `now >= t0 + budget` (not).
+  It was redundant with the first, so it is deleted rather than repaired;
+  subtract-then-cast is the form the rest of the file already uses (S3
+  deadline wrap-safety).
+
+  **The recorded reasoning for that fix was BACKWARDS, and the wrong
+  reasoning is what justified shipping it untested (S6 review, M-1).**
+  This entry used to say that across the wrap "the race would have run
+  until every leg finished with no overall bound". It could not have: the
+  condition was an OR of a wrap-safe term and a wrap-unsafe one, so the
+  wrap-safe term bounded the loop on its own. The real symptom is the
+  exact opposite. `t0 + budget` evaluated in `uint32_t` **overflows to a
+  small number** whenever `t0` is within `budget` of the wrap, and `now`
+  — still just below the wrap — is already past it, so the deadline fires
+  on the **first iteration**: every join attempted in the ~8 s before a
+  49.7-day wrap failed instantly. "Unbounded" and "instantly bounded" are
+  opposite defects, and the harmless-sounding one is why no test was
+  written. `SDL_GetTicks` cannot be moved to the wrap and this build has
+  no clock-injection seam, so the deadline is now a pure function
+  (`race_budget_expired`) exposed as
+  `DirectP2P_TestHook_RaceBudgetExpired`, and **test 28 drives it at
+  `t0 = 0xFFFFFF00`**. The arithmetic *is* the whole defect.
+- **An abandoned relay leg was reported as a failed one.** When a punch
+  confirms we tear the relay leg down (§8.4 rule 1). The end-of-race
+  fallback that fills in `relay_fail` for a leg that armed but never
+  concluded did not exclude that case, so a SUCCESSFUL direct connection
+  carried `relay_fail=P2P_FAIL_RELAY_UNAVAILABLE`. §7.5 defines
+  `relay_fail=` as "it ran and failed like this"; an abandonment is not a
+  failure, and the field would otherwise mean two different things
+  depending on the verdict on the same line. Fixed, and covered by test
+  20C.
+
+  Writing that test surfaced a second, **pre-existing** defect: §7.5 says
+  "both report lines gained ... `relay_fail=<code>`", but the OK line
+  never carried it — only the FAIL line did. The OK line now carries it,
+  which is what makes the abandonment case observable at all.
+
+- **The S6 adversarial review (H-1 … L-1).** In order of what they cost
+  a real pair:
+
+  | finding | what it cost | where it is fixed |
+  |---|---|---|
+  | **H-1** | a punch confirming in the last 600 ms of the budget was discarded and reported as a NAT block — 7.5% of every race, on both attempts | `race_budget_expired`, §8.5 |
+  | **H-2** | the suite never put a punch on the wire, which is why H-1/H-4/M-2 survived it | tests 23-31, §8.8 |
+  | **H-3** | split brain: one peer relays, the other punches, 15 s hard failure. Measured band 150 ms wide | §8.4 rule 1b |
+  | **H-4** | the relay stole candidates that had not had a window of their own | §8.4 rule 2b |
+  | **H-7** | ordering rule 1's tear-down was untested and 20C overstated its coverage | test 26, §8.8 |
+  | **M-1** | the wrap-safety reasoning was backwards, which justified writing no test | this section, test 28 |
+  | **M-2** | `race_arm_punch` memset the slot before `Stun_PunchBegin` could fail: a failed re-arm destroyed a live, still-punching candidate, AND the memset leaked the outgoing leg's `NET_Address` ref | `race_arm_punch`, tests **30 and 31** — *not* test 27, which neutralises a guard that is byte-identical to the pre-fix tree (second review, H-C) |
+  | **M-3** | `STUN_PUNCH_CONFIRM_MS` was unpinned | test 28 |
+  | **M-4** | test 18's serialisation red had 1.5% of margin | §8.8 |
+  | **L-1** | a persistent `NOT_PAIRED` was reported as "the relay port pool is exhausted" | `CONNECT_FAIL_RELAY_NOT_PAIRED`, test 29 |
+
+  What the review explicitly **cleared**, and what therefore was not
+  touched: S4a's fail-closed punch authentication (the token check, the
+  source-IP gate, the punch prefix, the bad-token evidence), the
+  deliberately-unmatched port that recognises the S2 symmetric retarget,
+  the adaptive cadence, and the 600 ms tail itself.
+
+- **The SECOND adversarial review (H-A, H-B, H-C), which falsified the
+  first round's headline claim.** The first round said H-3 was fixed.
+  It was not; it had been moved.
+
+  | finding | what it was | where it is fixed |
+  |---|---|---|
+  | **H-A** | the split brain was **relocated by one grace window, not closed**. Reproduced on shipped defaults at skew 2 950–3 250 ms — and the suite could not see it, because its sweep stopped at 2 750 and its pinned point was 2 450 | §8.4 rule 1b (grace re-anchored at the punch send end + candidates kept on the receive path), test 24 rewritten |
+  | **H-B** | the measurement that sized the grace did not reproduce. §8.4 claimed a "150 ms window, equal to the injected one-way delay"; the band is ~2× the one-way delay — one **round trip** — so the claimed 4× headroom was ~2× | §8.4 rule 1b sizing paragraph, and the `RACE_RELAY_GRACE_MS` comment |
+  | **H-C** | one row of the table above was vacuous: the duplicate-endpoint guard test 27 neutralises is **byte-identical to the pre-fix tree**, so it was never the M-2 defect. The real fix is the validate-then-memset reorder plus the `race_finish_punch` ref release, and restoring the pre-fix form left the suite green | M-2's row re-attributed; a test that observes the ref release |
+  | **M-1 (2nd)** | `natpmp.c` refuses the real default gateway in a harness build; `upnp.c` had no equivalent, and `-DHAVE_UPNP` is in the harness's own `flags.make`. Only a config flag stood between the suite and the developer's router | `upnp_ensure_cached`, test 23e |
+
+  **The structural lesson, recorded because it is the one that
+  generalises.** Both H-A and H-B trace to the same mistake: a
+  production margin sized against a harness constant, and a harness
+  range chosen where the fix worked. `SB6_SPLIT_SKEW_MS` and the sweep
+  bounds were literals picked from a passing run, so the suite's search
+  space was defined by the answer rather than by the mechanism. The
+  probe points and the sweep range are now DERIVED from the production
+  constants that place the decision (`DirectP2P_TestHook_RaceRelayArmMs`,
+  `...RaceRelayGraceMs`, `punch_leg_ms`), and the grace is sized from a
+  network quantity — one peer-to-peer round trip — with the derivation
+  written beside it. The direction of the dependency matters and is now
+  one-way: tests may derive from production constants; production
+  margins may never derive from test constants.
+
+### 8.10 Residuals, stated rather than hidden
+
+- **Scenario A is still 8 s/attempt**, because the 8 000 ms signalling
+  budget is the longest single leg and racing cannot shorten it. Cutting
+  that number means cutting `SIGNAL_BUDGET_MS`, which is a separate
+  judgement about how long to wait for a host that may simply be slow to
+  register — not a racing problem.
+- **The S2 auto-retry still doubles everything.** One attempt is ~5-8 s;
+  the user-visible worst case is ~10-16 s because a terminal failure is
+  retried once with a fresh local port. Removing the retry is a different
+  trade (it demonstrably rescues joins — test 6 part B) and was not made
+  here.
+- **How often a real pair lands in the band was NOT measured — only
+  bounded from the code on both sides.** The band is a function of start
+  skew, so its field rate is a function of the skew distribution. What
+  the two implementations say:
+
+  - The host enters the race **only** from `try_handle_deliver`, and
+    only while still in `HOST_WAITING`
+    (`src/netplay/direct_p2p.c:4062-4067`, spawn at `:4162`).
+  - The server sets `pairedPeer` only on the REGISTER that fills the
+    joiner slot and then pushes **one** unsolicited DELIVER to the host
+    (`tools/rendezvous-server/rendezvous-server.js:1256-1258` and
+    `:1283-1286`). It is a bare `socket.send` — **no retransmit**.
+  - So when that push arrives, the host starts roughly one server
+    one-way delay plus one frame behind the joiner: far below every band
+    measured in §8.4 rule 1b.
+  - When it is **lost**, the host learns only from the reply DELIVER to
+    its own next REGISTER (`rendezvous-server.js:1279-1280`), and that
+    interval is **5 000 ms** (`src/port/config/config.c:111`, loop at
+    `src/netplay/direct_p2p.c:2686-2733`). One lost datagram therefore
+    places the host's race start at a roughly uniform point in the next
+    5 s — a range that spans every band measured.
+
+  Both the loss rate and the resulting distribution are unmeasured;
+  there is no real-network capture of the pairing path. The rate is
+  small and it is not zero. The fix does not depend on the answer — it
+  converged at all 97 sweep points from 1 800 to 6 600 ms — which is the
+  reason to prefer it over sizing a timer against a guess about how
+  skewed a real pair can get.
+- **Above a 600 ms RTT the split brain is still reachable, and the band
+  is `2*owd - RACE_RELAY_GRACE_MS` wide.** Measured on the post-fix tree
+  at a 400 ms one-way delay: splits at skew 5 200 and 5 300 ms, 200 ms
+  wide, immediately past the punch send end — the width and the location
+  the condition in §8.4 rule 1b predicts. It is stated here rather than
+  hidden because the fix's guarantee is conditional and the condition is
+  checkable: raise `RACE_RELAY_GRACE_MS` above the pair's RTT and it
+  closes. That is the difference from the shipped H-3 grace, which no
+  value closed. Not fixed by raising the default because 600 ms already
+  covers roughly 3x the worst transatlantic RTT and every extra
+  millisecond is paid by *every* relayed pair, on the connection path.
+- **The grace has to fit inside the race budget or it is not a grace.**
+  If `race_budget_ms - (punch send end) < RACE_RELAY_GRACE_MS` the budget
+  fires part-way through the grace, the early peer commits inside a
+  window it promised to spend listening, and the band returns —
+  reproduced at `S6_SPLIT_BUDGET_MS=5200` with a split at skew 5 050 ms.
+  The punch SEND window is therefore capped so a full grace always fits
+  (`direct_p2p.c`, section 2 of `p2p_race`); re-running the same probe
+  after the cap gives **0 splits across 41 races**. On the shipped
+  defaults the cap never binds for `punch[0]` (5 000 + 600 against an
+  8 000 ms budget); it binds only for a DELIVER candidate armed later
+  than `race_budget - grace - punch_leg` = 2 400 ms, and it trades some
+  of that candidate's punch window for a decision both peers can agree
+  on.
+- **A relayed pair now waits ~2.5 s longer for its handoff.** This is
+  the price of the H-A re-anchor and it is paid by exactly the pairs
+  that end up on the relay. The relay used to commit one grace window
+  after it became *ready* (~3.1 s into the race on the defaults); it now
+  commits one grace window after the last punch candidate stops sending
+  (`punch_leg_ms` + `RACE_RELAY_GRACE_MS` = 5 000 + 600 = **5 600 ms**
+  for `punch[0]`). Nothing else about the relay leg moved: it still
+  ARMS at 2 500 ms and still does its REQ/GRANT/PIN work concurrently
+  with the punch, which is where S6's measured win came from — pre-S6
+  the same pair paid 5 000 ms of punch **plus** up to 4 000 ms of relay
+  serially. The pure-failure path is unchanged: with no relay leg in
+  play there is nothing to diverge about, so candidates are torn down at
+  `punch_leg_ms` exactly as before and §8.5's scenario-A/B timings and
+  test 18's cascade bound are untouched.
+- **A pair that needs longer than `punch_leg_ms` to punch is still
+  relayed** where the pre-S6 code would have punched for the full
+  bilateral window on both sides first. That bound is now the *punch's
+  own* window rather than `RACE_RELAY_ARM_MS`, so it is strictly more
+  generous than what shipped, but it is still a bound. Closing the gap
+  entirely means letting the relay leg finish and then *upgrading* to a
+  direct link mid-session, which needs a GekkoNet remote-address relearn
+  path that does not exist (`backend.h`; the remote is registered once
+  at configure time in `netplay.c`). Named here rather than hidden.
+- **A genuinely ASYMMETRIC punch path still splits the two peers.** If
+  one side's datagrams traverse and the other's do not, one peer confirms
+  and the other never can, so one punches and one relays no matter how
+  long the grace window is. This is **not** new in S6 — the pre-S6 serial
+  cascade diverged the same way, because each side decided locally there
+  too — and the S6 fix deliberately targets the *timing* case, which S6
+  did create. The mid-session relearn above is the only real answer to
+  the asymmetric case.
+- **The overlapping stage timings are a diagnostic regression** for anyone
+  grepping old report lines: `punch + signal + bilateral + relay` no
+  longer approximates the elapsed time. `race=` is the replacement, and
+  §8.7 says so, but a reader of an old log and a new log side by side will
+  see the shapes differ.
+- **No on-device measurement.** Every number in §8.5 is from the macOS
+  host build. The MiSTer is a 800 MHz ARM with a single GbE interface; the
+  race loop's cost is one non-blocking recv and a handful of 17-byte sends
+  per 5 ms, so it is not expected to behave differently, but that is
+  reasoning, not a measurement.
+- **(L-4) The H-3 relay grace is suppressed in exactly the case it was
+  written for — a slow relay.** The commit condition is
+  `if (!grace_done && !budget_done) goto relay_grace_pending;`, with
+  `budget_done` computed at `direct_p2p.c:2024` and the deferral to
+  `relay_grace_pending` at `direct_p2p.c:2096` — the two bounds are
+  OR'd, so `budget_done` short-circuits the grace.
+  A relay that becomes ready with less than `RACE_RELAY_GRACE_MS`
+  (600 ms) left in the race budget therefore commits on the spot with no
+  hold at all, which is the pre-H-3 behaviour and can still split the two
+  peers. This is a deliberate priority — never lose a relay we already
+  hold to a punch that has not confirmed — and it is **not** a
+  regression; H-3's guarantee is simply bounded by it, and that bound is
+  not stated anywhere else. The code comment at that site now says so
+  too. Not measured: no test places the relay-ready instant inside the
+  last 600 ms of the budget.
+
+## 9. S7 — NAT-PMP / PCP (IMPLEMENTED)
+
+miniupnpc only speaks UPnP IGD. Routers whose firmware is Apple- or
+BSD-derived speak NAT-PMP (RFC 6886) or its successor PCP (RFC 6887)
+instead, and on those a host got **no port mapping at all** — it fell
+straight through to STUN and lived or died on the punch. Landed as
+`src/netplay/natpmp.{c,h}`, a third mapping backend behind the same
+`UpnpMapping` interface (upnp.h:26-39), tried when UPnP fails.
+Citations refer to the post-S7 tree.
+
+**Merge note (S6 + S7).** S6 and S7 were implemented in parallel on
+separate branches and merged. Two collisions, both resolved in favour of
+keeping everything:
+
+- Both stages added a "test 18" to `test_bilateral_punch.c`. S6 owns
+  18-21; **the S7 test is test 22** (`test_natpmp_pcp`), and its assertion
+  tags were renumbered `18-*` -> `22-*` to match. The neutralisation
+  evidence in §9.6 was recorded against the pre-merge `18-*` tags.
+- Every test site that sets `netplay-direct-p2p-disable-upnp` now also
+  sets `netplay-direct-p2p-disable-natpmp`, including the S6 sites, which
+  predate S7. Without that pairing a Linux test run would install a real
+  1-hour NAT-PMP mapping on the developer's router — the S7 backend is a
+  second, independent path to the LAN and `disable-upnp` does not cover
+  it.
+
+### 9.1 Hand-rolled, and no new dependency
+
+The original sketch said "add libnatpmp (or a ~200-line PCP client)".
+It is the client, not the library, and that was the authorized call:
+the entire protocol surface we need is a 60-byte packet, a 12-byte
+packet, a 2-byte packet and a `select()` loop. A library would mean a
+new `build-deps.sh` entry, a new cross-compiled `.so` on the MiSTer
+deploy, and a new thing to keep in the `--delete` rsync shield — for
+code smaller than the CMake needed to find it. `natpmp.c` uses only
+the POSIX socket API the tree already links (Winsock behind `_WIN32`,
+same shape as `stun.c`). CMakeLists gained a comment saying so and
+nothing else; the file is picked up by the existing
+`GLOB_RECURSE CONFIGURE_DEPENDS src/*.c`.
+
+### 9.2 Protocol, and the ordering that matters
+
+PCP first, NAT-PMP on downgrade — RFC 6887 Appendix A: "A client
+supporting both NAT-PMP and PCP SHOULD send its request using the PCP
+packet format." Both live on UDP 5351 (RFC 6886 §3.1, RFC 6887 §19.1),
+so one socket serves both and the first octet selects the dialect.
+
+| field | source |
+|---|---|
+| PCP common request header, 24 B: Version=2, R\|Opcode, Reserved(16), Requested Lifetime(32), Client IP(128) | RFC 6887 §7.1 |
+| PCP common response header, 24 B: Version, R\|Opcode, Reserved(8), Result Code(8), Lifetime(32), Epoch(32), Reserved(96) | §7.2 |
+| PCP MAP block, 36 B: Nonce(96), Protocol(8), Reserved(**24**), Internal Port, Suggested/Assigned External Port, Suggested/Assigned External IP(128) | §11.1, §11.2 |
+| MAP Opcode = 1 | §19.2 opcode registry |
+| Protocol 17 = UDP | §11.1 ("This field contains 17 (UDP) if the Opcode is intended to create a UDP mapping") |
+| IPv4 carried as IPv4-mapped IPv6; **all 96 leading bits** must be checked on receive | §5 |
+| the all-zeros IPv4 address is `::ffff:0:0`, **not** `::` | §5 — see below |
+| PCP result codes 0..13 | §7.4 |
+| NAT-PMP public address req/resp (2 B / 12 B) | RFC 6886 §3.2 |
+| NAT-PMP mapping req/resp (12 B / 16 B), OP 1 = UDP, 2 = TCP, all multi-byte fields network order | §3.3 |
+| deletion = lifetime 0, and Suggested External Port **MUST** be 0 | §3.4 |
+| NAT-PMP result codes 0..5 | §3.5 |
+
+Two details are load-bearing and were each nearly got wrong:
+
+**The downgrade signal has the R bit clear.** A NAT-PMP-only gateway
+answers a PCP request with RFC 6886 §3.5's "Unsupported Version" frame:
+`Vers=0 | OP=0 | Result Code=1 | Epoch` — eight bytes. Overlaid on the
+PCP response header that reads as version 0, Reserved 0, Result Code 1,
+i.e. exactly the version-zero `UNSUPP_VERSION` that RFC 6887 §9 step 4
+defines as "this is a NAT-PMP server". But its OP byte is 0, so the PCP
+**R bit is CLEAR**. A parser that tests R before version discards the
+one frame that tells it to downgrade, and the gateway looks silent. The
+version test therefore runs first, before the length check and before
+the R check (natpmp.c:152-176), with the reasoning in the comment so
+nobody "tidies" it into the obvious order.
+
+**`::ffff:0:0`, not `::`.** RFC 6887 §11.1 says a client with no
+external-address preference "MUST use the address-family-specific
+all-zeros address (see Section 5)". §5 is explicit that the all-zeros
+*IPv4* address is "80 bits of zeros, 16 bits of ones, and 32 bits of
+zeros (`::ffff:0:0`)" — only the all-zeros *IPv6* address is 16 zero
+bytes. The test's hand-built expectation had this wrong and the code
+right; §5 settled it, and the test now carries the citation.
+
+The PCP Client's IP Address field is the socket's **actual** source
+address, read back with `getsockname()` after `connect()`
+(natpmp.c:678-706), because §7.1 defines it as "the source IPv4 or IPv6
+address in the IP header used by the PCP client when sending this PCP
+request" and §7.4's `ADDRESS_MISMATCH` (12) exists precisely to catch a
+client that guessed. The `connect()` also buys RFC 6886 §3.2/§3.3's
+"client MUST check the source IP address, and silently discard the
+packet if the address is not the address of the gateway" for free, at
+the kernel.
+
+Within the NAT-PMP phase the public-address request goes **first and
+serially** (§3.1: "clients SHOULD NOT issue multiple concurrent
+requests … it SHOULD queue them and issue them serially"). It is the
+cheapest possible liveness probe, and it is the only source of the
+external IP on this protocol — a NAT-PMP mapping response carries none,
+unlike PCP's (§11.2). That address is what §3.6's CGNAT gate compares
+against STUN, so a mapping without it would be a mapping the gate
+cannot judge.
+
+### 9.3 The retransmit ladder is deliberately truncated
+
+RFC 6886 §3.1 specifies: send, wait 250 ms, retransmit, wait 500 ms,
+"with the interval between attempts doubling each time", up to a ninth
+attempt and a final 64-second wait before concluding the gateway does
+not speak NAT-PMP. That is ~127 seconds. PCP's own default (RFC 6887
+§8.1.1: IRT 3 s, MRC 0, MRT 1024 s) is unbounded by design.
+
+Neither is shippable behind a "Host Game" click that is already capped
+at 6 s for UPnP. The ladder is cut to its **first three rungs** —
+250/500/1000 ms, doubling shape preserved — and every wait is
+additionally clamped by an absolute wall-clock deadline the caller sets.
+
+#### 9.3.1 The PCP ladder deviates from RFC 6887 §8.1.1 too — four SHOULDs
+
+The NAT-PMP truncation above was disclosed from the start. The PCP one
+was not, and it is larger. §8.1.1 specifies:
+
+| §8.1.1 | Spec | Shipped | Effect |
+|---|---|---|---|
+| `IRT: Initial retransmission time, SHOULD be 3 seconds` | 3000 ms | 250 ms | first retransmit 12× sooner |
+| `MRC: Maximum retransmission count, SHOULD be 0 (0 indicates no maximum)` | unlimited | 3 | gives up after three sends |
+| `MRD: Maximum retransmission duration, SHOULD be 0 (0 indicates no maximum)` | unlimited | 1750 ms/phase | gives up inside two seconds |
+| `Each of the computations of a new RT include a new randomization factor (RAND), which is a random number chosen with a uniform distribution between -0.1 and +0.1.` | required | **absent** | no de-synchronisation between clients |
+
+The first three are the same shippability argument as §3.1: PCP's
+defaults describe a daemon maintaining a mapping indefinitely, not a
+one-shot probe behind a button press. The **missing RAND is a genuine
+gap, not a trade**: §8.1.1 states its purpose is "to minimize
+synchronization of messages transmitted by PCP clients", and a LAN full
+of 3S instances rebooting together would retransmit in lockstep. The
+mitigating facts are that a household runs one or two of these, and
+that the one place where synchronised retransmission is actually
+plausible — every device on a LAN reacting to a gateway reboot — IS
+randomised, because RFC 6886 §3.7's mandatory 0-5 s pre-renewal jitter
+is implemented (§9.4). Adding RAND to the probe ladder is cheap and
+remains open.
+
+One §8.1.1 MUST **is** honoured: "The retransmissions MUST use the same
+Mapping Nonce value (see Sections 11.1 and 12.1)" — see §9.4's nonce
+persistence, which extends that to renewals and deletes as well.
+
+#### 9.3.2 Each phase gets its own budget (review H-6)
+
+A probe runs up to **three** ladders in sequence: the PCP MAP, then —
+after a §9 downgrade — the NAT-PMP public-address request, then the
+NAT-PMP mapping request. These originally shared ONE absolute deadline
+computed once at the top of `Natpmp_AddMapping`. Measured consequence
+on a mock gateway that answers at a fixed latency:
+
+| Gateway latency | Mapping | Elapsed | Map requests seen by the gateway |
+|---|---|---|---|
+| 300 ms | yes | ~1.2 s | 1 |
+| 700 ms | **no** | 3896 ms | **0** |
+
+RFC 6886 §3.1 names "a slow NAT gateway that takes perhaps half a
+second to respond to a NAT-PMP request" as normal. The cliff sat below
+that. Each phase now takes a fresh `NATPMP_PHASE_BUDGET_MS` at phase
+start, still clamped by the caller's overall ceiling.
+
+That alone was not enough, because the failure was a **queue**, not a
+clock: three rungs per phase put three datagrams into a single-threaded
+router's backlog and then timed out waiting for the reply to the first.
+So the ladder now also **stops retransmitting once the gateway has
+answered anything at all** — including a datagram this phase rejects as
+NOT_OURS, since the socket is `connect()`ed and only the gateway's
+datagrams are delivered. That is §3.1's own instruction: "the client
+SHOULD respect this and allow the NAT gateway to operate at the pace it
+can manage, and not overload it by issuing requests faster than the
+rate it's answering them." With both fixes a 700 ms gateway maps in
+~2.8 s and the gateway sees 2 PCP + 1 address + 1 mapping request.
+
+Residual: an attacker who can spoof the gateway's source address can
+latch that flag early and cost us the retransmits. The worst outcome is
+one missed mapping and a fall through to STUN — identical to a silent
+router — because a forged frame still has to pass §11.4's nonce /
+protocol / internal-port matcher to become a mapping.
+
+#### 9.3.3 Budgets, as shipped
+
+- `NATPMP_PHASE_BUDGET_MS` = 1750 ms, **derived in natpmp.c from the
+  ladder table** rather than written twice, so lengthening the ladder
+  cannot silently leave the budget behind.
+- `NATPMP_PROBE_BUDGET_MS` = 3 × phase = **5250 ms**. Reached only when
+  a gateway answers the PCP downgrade and the address request and then
+  goes silent on the mapping request; a *wholly* silent gateway costs
+  two phases (3500 ms), because the address request timing out ends the
+  attempt.
+- `NATPMP_RENEW_BUDGET_MS` = 2 × phase = **3500 ms** (a renewal knows
+  its backend: PCP runs one phase, NAT-PMP runs address-then-mapping).
+  This deliberately **exceeds** `upnp_renew_join_and_discard`'s 2 s join
+  budget, reversing the earlier choice. A renewal caught in flight by
+  teardown is *detached*, which is an already-handled, already-bounded
+  path; a renewal budget too short for a slow gateway loses the mapping
+  **mid-session**, which is not.
+
+The cost of being wrong is one missed mapping on a very slow gateway,
+which degrades to exactly today's behaviour: fall through to STUN. The
+worst case for the whole probe is `UPNP_PROBE_BUDGET_MS` (6 s) +
+`NATPMP_PROBE_BUDGET_MS` (5.25 s) = **11.25 s**, and it is reached only
+when **both** protocols are dead silent. The case S7 exists for — a
+NAT-PMP router with no IGD — costs miniupnpc's own 2 s SSDP timeout
+plus one LAN round-trip, because a router that speaks NAT-PMP answers
+at once.
+
+### 9.4 One mapping struct, three backends
+
+`UpnpMapping` gained two fields (upnp.h:14-39): `backend`
+(`PortMapBackend` NONE/UPNP/NATPMP/PCP) and `lifetime_s`.
+
+- **Teardown dispatches** through `portmap_remove` (direct_p2p.c:2353),
+  and every removal site goes through it. `Upnp_RemoveMapping` and
+  `Natpmp_RemoveMapping` each additionally **refuse** a mapping they do
+  not own. This is not defensive decoration: on a router that speaks
+  both, deleting a NAT-PMP mapping through the IGD would remove
+  whatever unrelated IGD entry happens to sit on that external port.
+- **Renewal renews the backend that holds the mapping.** The S1
+  half-life timer is unchanged in shape; `upnp_worker_fn` now takes a
+  backend hint, so a renewal runs exactly one ladder instead of
+  re-running UPnP discovery against a NAT-PMP-only router every
+  half-lease. Both specs also want the renewal to carry the
+  **assigned** external port so a rebooted gateway can recreate the
+  same mapping (RFC 6886 §3.3, RFC 6887 §11.2.1); that is what the
+  existing `preferred_external = s_upnp_mapping.external_port` line
+  already did.
+- **The renewal interval now follows the granted lease**
+  (`portmap_renew_interval_ms`, direct_p2p.c:2566). RFC 6886 §3.3: "The
+  NAT gateway MAY reduce the lifetime from what the client requested."
+  A router granting 120 s against our 3600 s request would have
+  silently lost the mapping 28 minutes before a fixed half-hour timer
+  fired. Half-life satisfies §3.3 ("halfway to expiry time, like DHCP")
+  and sits inside RFC 6887 §11.2.1's recommended 1/2-to-5/8 window,
+  floored at 4 s because §11.2.1 forbids renewals less than four
+  seconds apart. UPnP is untouched: miniupnpc reports no granted lease,
+  so `lifetime_s` stays 0 and the old constant applies.
+- **The §3.6 CGNAT gate is NOT duplicated.** It keys off
+  `external_ip`, which all three backends fill, so a NAT-PMP mapping
+  whose external IP is `100.64/10` is dropped exactly as a UPnP one is.
+  The only S7 change inside the gate is that the release dispatches on
+  the backend.
+- **The gate fails CLOSED on an absent external address** (review
+  M-5.4). `direct_p2p_ip_is_nonpublic("")` used to return false —
+  "cannot prove anything, keep the mapping" — but an *empty* string is
+  not an unclassifiable address, it is the absence of one, and the
+  gate's entire job is to compare that address against STUN's. It now
+  returns true for NULL/empty while still returning false for
+  present-but-unparseable text (which really does prove nothing) and
+  for a public-but-different address (1:1 NAT / DMZ). Upstream of it,
+  `Natpmp_AddMapping` now refuses outright to build a mapping from a
+  gateway that reports `0.0.0.0`, on either dialect.
+
+#### 9.4.1 The PCP Mapping Nonce is persisted (review H-5, ALPHA BLOCKER)
+
+RFC 6887 §11.3: *"If operating in the Simple Threat Model (Section
+18.1), and the internal port, protocol, and internal address match an
+existing explicit dynamic mapping, but the mapping nonce does not
+match, the request MUST be rejected with a NOT_AUTHORIZED error with
+the lifetime of the error indicating duration of that existing
+mapping."* §18.1 is the model consumer NAT boxes run in, and §8.1.1
+says the same for retransmits: *"The retransmissions MUST use the same
+Mapping Nonce value."*
+
+As originally shipped, every PCP call minted a **fresh** nonce —
+creation, half-lease renewal, and teardown delete alike. On a
+conforming gateway that means the renewal is refused, the delete is
+refused, and neither refusal is checked. The mapping could be neither
+kept alive nor removed; it simply expired, while `active` stayed true
+and the room code kept advertising its port. **This was a regression
+against pre-S7 on PCP routers**, where the host advertised the STUN
+endpoint it was actively maintaining. It presents to the user as "it
+worked, and then it went dead."
+
+The nonce now lives in `natpmp.c`, keyed by internal port: minted on
+first use, reused by every renewal and by the delete, and forgotten
+after the delete so the next creation draws a new one. It is *not* a
+field on `UpnpMapping`, because `Natpmp_AddMapping` memsets its
+out-parameter on entry and the renewal path hands it a zeroed struct —
+a struct field would have to be threaded through `UpnpJob` to have any
+effect. The program holds exactly one mapping (`s_upnp_mapping`), so
+the port key is sufficient; the single-writer invariant that makes the
+module-global safe is spelled out at its definition, together with what
+would have to change if a second concurrent mapping ever appeared.
+
+#### 9.4.2 A mapping that cannot be renewed is DROPPED (review H-5, M-5.5)
+
+The downstream half of the same chain. Three fixes, all in
+`upnp_renew_tick`:
+
+- **The lease is tracked.** `s_portmap_lease_expiry_ms` is armed from
+  the granted `lifetime_s` and re-armed on every successful renewal
+  (0 = "no deadline known", the UPnP case). Arming it from the first
+  main-thread sighting rather than from the grant instant errs a frame
+  or two LATE, which can only ever keep a mapping marginally longer
+  than the router does — never drop a live one.
+- **A renewal that fails past expiry drops the mapping** and
+  re-publishes the STUN endpoint through `host_commit_endpoint` (a
+  small extraction from the drift handler, which needed exactly the
+  same re-encode / re-derive / restart-rendezvous sequence). The user
+  gets "Share the NEW code." instead of a code that silently stopped
+  working.
+- **The drift re-encode tests `portmap_mapping_usable()`**, not
+  `.active`, so a mapping past its lease can no longer pin the
+  advertised port.
+- **The retry scales to the lease** (review M-5.2). It was a flat five
+  minutes; against a router that grants 120 s — permitted by §3.3, "The
+  NAT gateway MAY reduce the lifetime from what the client requested" —
+  the one retry that mattered landed four and a half minutes after the
+  mapping was already gone. It is now a quarter of the lease, floored
+  by §11.2.1's four seconds and capped at the old five minutes so UPnP
+  behaves exactly as before.
+
+#### 9.4.3 Gateway reboot detection, RFC 6886 §3.6 (review M-5.1)
+
+§3.6's MUST is on the **client**: *"Whenever a client receives any
+packet from the NAT gateway ... the client computes its own
+conservative estimate of the expected SSSoE value by taking the SSSoE
+value in the last packet it received from the gateway and adding 7/8
+(87.5%) of the time elapsed according to the client's local clock since
+that packet was received. If the SSSoE in the newly received packet is
+less than the client's conservative estimate by more than 2 seconds,
+then the client concludes that the NAT gateway has undergone a reboot
+or other loss of port mapping state, and the client MUST immediately
+renew all its active port mapping leases."*
+
+The epoch was parsed into all three response structs and read by
+nobody, so a router reboot emptied the mapping table and this client
+went on advertising a port that forwarded nothing until the lease ran
+out. The estimator is now implemented exactly as written, fed by every
+response the matcher proved is ours (an unattributable datagram's clock
+is not evidence, and letting one drive the estimator would hand an
+off-path attacker a free "your mappings are gone" signal). On a
+detected reboot the renewal deadline is pulled in to now + a random
+0-5 s delay, which is §3.7's own mandatory jitter: *"the client MUST
+first delay by a random amount of time selected with uniform random
+distribution in the range 0 to 5 seconds, and then send its first port
+mapping request."*
+
+#### 9.4.4 Short PCP error responses are processed (review M-5.3)
+
+RFC 6887 §8.3: *"Responses shorter than 24 octets, longer than 1100
+octets, or not a multiple of 4 octets are invalid and ignored."* The
+parser demanded the 60-octet MAP response, so a gateway refusing with
+only the §7.2 common header was indistinguishable from a dead one and
+cost the caller the whole ladder. The floor is now §8.3's 24, and the
+two length rules it states alongside are enforced as well. A short
+**success** is still dropped — §11.4 matches a MAP response on "the
+protocol, the internal port, and the mapping nonce", none of which a
+header-only frame carries, and an unmatched success would install a
+mapping whose external port is not even present in it. A short
+**error** is reported, so a refusing gateway fails fast. Residual: an
+attacker who can spoof the gateway's source address can abort one probe
+that way; the fallback is STUN, exactly as if the router were silent.
+
+### 9.5 Config
+
+New kill switch `netplay-direct-p2p-disable-natpmp` (bool, default
+false), **deliberately separate** from `disable-upnp`. The latter
+exists for one specific defect — libminiupnpc 2.2.1's `upnpDiscover()`
+segfaulting on MiSTer when a Realtek 8821cu USB WiFi adapter sits
+alongside eth0 — and a user who sets it to dodge that crash should
+still get a mapping from a router that speaks NAT-PMP. The two backends
+share no code, so folding the switches together would take a working
+mapping away for no reason. `docs/config.md` updated.
+
+### 9.6 Tests
+
+Test **22** in `test_bilateral_punch.c` (`test_natpmp_pcp`), in three
+parts. (It is registered as test 22; earlier drafts of this section
+called it 18 and cited stale line numbers — the function name is the
+stable handle.)
+
+- **Codec vs literal RFC bytes**, in the spirit of test 17. The
+  expectations are hand-built from the §7.1/§11.1 and §3.2/§3.3
+  diagrams, **not** produced by `natpmp.c` — an encoder and a test that
+  agreed on a wrong offset would both be wrong together. Reject tables
+  cover wrong version, R bit clear, wrong opcode, wrong 96-bit nonce
+  (first and last byte), wrong Protocol, wrong Internal Port, a
+  non-IPv4-mapped external address, and every truncation from 0 bytes
+  up. Deletion shape is pinned on both protocols, including that the
+  NAT-PMP builder **forces** Suggested External Port to 0 rather than
+  trusting the caller.
+- **The client against a localhost mock gateway**: PCP success, the §9
+  downgrade to NAT-PMP, a refusal, silence, and a single-backend
+  renewal. Silence asserts the elapsed wall clock is inside budget and
+  that a retransmit actually happened. That was originally described as
+  "the assertion that fails if the §3.1 ladder ever stops being
+  truncated"; **it is not**, and the review proved it — the phase budget
+  clamps a nine-rung ladder to the same elapsed time. Test 23b pins the
+  shape instead.
+- **The CGNAT gate end to end** on the real host state machine, run
+  **twice**: with a `100.64.5.9` external IP the advertised port must
+  be STUN's, with a `198.51.100.30` one it must be the mapped port. The
+  public-IP run is the control — a drop-only assertion would also pass
+  if the NAT-PMP mapping had never been created at all.
+
+#### 9.6.1 Tests 23a-23d, and why they exist
+
+The original S7 claim was that every assertion had been proven able to
+go red. An adversarial re-derivation found **five of those
+neutralisations vacuous** — the reviewer reverted the guarded behaviour
+and the suite stayed green. Tests 23a-23d exist to close exactly those
+holes, and the patch-to-red table below is inlined here rather than
+cited to a document that does not exist.
+
+- **23a — the DISABLE_UPNP / DISABLE_NATPMP pairing.** No test may
+  install a mapping on a real router. Thirteen sites in
+  `test_bilateral_punch.c` disable UPnP before driving the host state
+  machine, and each is hand-paired with a `disable-natpmp`. That
+  discipline is now *asserted*, by scanning `__FILE__` for every
+  DISABLE_UPNP-true site and requiring a DISABLE_NATPMP-true within the
+  next two non-blank lines. Failing to open the file is a FAILURE, and
+  the scan must find at least 11 sites, so a scanner that silently
+  matched nothing cannot pass.
+- **23b — the review fixes**, each keyed to the reversion it catches:
+  the ladder shape (via a test hook *and* a behavioural rung-timing
+  observation), the 700 ms gateway measurement, the Mapping Nonce
+  observed on the wire across create/renew/delete, §8.3 short errors,
+  §3.6 epoch rollback, the no-external-address refusal, the renewal
+  interval and retry as functions of the granted lease, and the
+  backend-ownership refusal *with a control* proving that a mapping
+  this backend does own really does emit a delete down the same path.
+- **23c — the `disable-natpmp` kill switch, end to end**, in both
+  polarities. `try_portmap` used to hold a *second* copy of the check
+  that short-circuited before the worker ran, which is precisely why
+  deleting the worker's copy left the suite green; enforcement is now
+  in one observable place. The enabled case is the control.
+- **23d — a lost mapping stops being advertised.** An 8 s lease, then
+  the gateway goes silent; the advertised port must revert from the
+  mapped one to the STUN-observed one. Measured: 41200 → 40000 after
+  11.5 s. The pre-drop assertion that the code carried the *mapped*
+  port is the control that stops this passing when no mapping existed.
+
+#### 9.6.2 Patch-to-red table
+
+Every row was applied to the tree, rebuilt, and run against the full
+`--test-bilateral-punch` harness; the recorded exit code is the true
+process exit. The first five are the reviewer's own vacuous
+neutralisations, now RED.
+
+| # | Patch applied | Exit | First failing assertion |
+|---|---|---|---|
+| R1 | PCP builder: swap the Internal-Port and Suggested-External-Port writes | **1** | `22-pcp-req-internal-port`: octets 40-41 carry 40001, expected 54321 |
+| R2 | Restore RFC 6886 §3.1's full nine-rung ladder | **1** | `23b-ladder-steps`: 9 rungs, expected 3 (+ `23b-ladder-count`: 5 requests, expected 3) |
+| R3 | Pin `portmap_renew_interval_for` to a flat 30 minutes | **1** | `23b-renew-interval-120`: 1800000 ms, expected 60000 ms |
+| R4 | Delete the `disable-natpmp` check in `upnp_worker_fn` | **1** | **two** failing assertions, in this order: `23c-disabled` first — *"advertised port 41100, expected 40000 (netplay-direct-p2p-disable-natpmp=1)"* — then `23c-disabled-silent`: *"switch was SET and the gateway still received 3 datagram(s) (1 PCP, 1 addr, 1 map)"*. The port assertion fires first because it is checked first: the un-gated worker completes the mapping, so the room code carries the mapped port **before** the datagram count is looked at |
+| R5 | Delete the backend-ownership refusal in `Natpmp_RemoveMapping` | **1** | `23b-own-backend1`: sent 1 NAT-PMP datagram for a UPnP-owned mapping |
+| R6 | H-6: give all three phases the one shared deadline again | **1** | `23b-noise-starved`: 0 address + 0 mapping requests in 5260 ms |
+| R7 | H-6: retransmit even after the gateway has answered | **1** | `23b-slow-gw-700`: no mapping, 3880 ms, 3 address requests |
+| R8 | H-5: mint a fresh PCP nonce on every call | **1** | `23b-nonce-renew-differs` (and `23b-nonce-del-differs`) |
+| R9 | M-5.3: discard PCP responses shorter than 60 octets | **1** | `23b-short-error`: parsed NOT_OURS, expected REFUSED (+ 3510 ms to give up) |
+| R10 | M-5.1: make the §3.6 epoch estimator a no-op | **1** | `23b-epoch-reset`: SSSoE fell 100003 → 3 and the client did not notice |
+| R11 | M-5.4: return false for an empty external IP in the CGNAT gate | **1** | `23b-gate-empty-closed` |
+| R12 | M-5.2: flat five-minute retry regardless of lease | **1** | `23b-renew-retry-120`: 300000 ms, expected 30000 ms |
+| R13 | M-5.5: drop the lease-expiry check from the renewal tick | **1** | `23d-still-advertised`: still port 41200 after 25 s on an 8 s lease |
+| R14 | M-5.4: accept a mapping with a `0.0.0.0` external address | **1** | `23b-noextip-pcp` |
+| R15 | Harness guard: consult the real default route with no mock set | **0** | **none — see below** |
+| R16 | 23a scanner: add an unpaired DISABLE_UPNP site | **1** | `23a-unpaired`, naming the offending file and line |
+| R17 | H-6 "BEFORE": all three reverted together — shared deadline, no suppression, and the original 4000 ms probe budget | **1** | `23b-slow-gw-700`: no mapping, **3886 ms**, 3 address requests |
+
+R17 is the pre-fix state reconstructed exactly, and it reproduces the
+independently reported measurement: 700 ms → no mapping in 3886 ms with
+three public-address requests (the review reported 3896 ms and three
+address requests). The 300 ms control still mapped, in 1534 ms. After
+the fix the same gateway maps in ~2.8 s having been sent 2 PCP + 1
+address + 1 mapping request.
+
+**R15 is GREEN, and that is reported rather than hidden.** On the
+development host (macOS) `discover_gateway_platform` is the deliberate
+no-op stub (natpmp.c), so removing the harness guard changes nothing
+observable: the platform already reports no gateway. The guard is
+defense-in-depth whose value appears only on Linux, where discovery is
+real — and no macOS-observable neutralisation for it exists, because
+constructing one would mean faking a gateway, which is the exact thing
+the guard prevents. The assertion it sits behind
+(`22-addmapping-without-gateway`) is NOT vacuous in general: it goes red
+if `Natpmp_AddMapping` ever stops failing closed without a gateway. What
+cannot be demonstrated here is that the *new* guard is the thing
+producing that outcome on this platform.
+
+**R6 and R7 are separately load-bearing, and neither subsumes the
+other.** R7 (retransmit suppression removed, per-phase budgets kept)
+fails the 700 ms measurement. R6 (per-phase budgets removed, suppression
+kept) passes it — 700 ms still maps — and is caught instead by the noise
+case, where an unmatchable-PCP phase with suppression in force waits out
+a *shared* deadline and starves the NAT-PMP fallback of every datagram.
+Had only the 700 ms test been written, the per-phase budget would have
+been another vacuous guard.
+
+Nothing here can reach a real router. Three independent guards now:
+every client call goes through `Natpmp_TestHook_SetGateway` at a
+127.0.0.1 mock; gateway discovery is Linux-only so a macOS run cannot
+find a real gateway even with the hook forgotten; and — new — a build
+with both `NETPLAY_TEST_HOOKS` and `ENABLE_NETPLAY_TESTS` (the harness
+binary, and nothing else) **refuses** to consult the default route when
+no mock is configured, which is what makes the claim hold when the suite
+runs on Linux.
+
+### 9.7 Residuals, stated rather than hidden
+
+- **Gateway discovery is Linux-only.** `/proc/net/route` covers the
+  shipping target (MiSTer, kernel 5.15, single STMMAC GbE, IPv4 only),
+  and the column layout and byte order were taken from the kernel's own
+  printer (`net/ipv4/fib_trie.c:2984-2994`, v5.15) rather than guessed —
+  Destination/Gateway/Mask are `__be32` printed with `%08X`, so parsing
+  the hex straight back into `in_addr.s_addr` reproduces the original
+  bytes on either endianness and no `htonl` belongs anywhere near it.
+  Non-Linux hosts report **no gateway**, on purpose: a BSD
+  `sysctl(NET_RT_DUMP)` walk would be untested code on the failure path
+  of a feature that mutates the LAN, and reporting nothing is what
+  makes the macOS test box physically unable to install a mapping on
+  the developer's router. Consequence: on macOS this backend is only
+  ever exercised through the test hook.
+- **Never exercised against real NAT-PMP or PCP hardware.** Every
+  gateway this code has met is the mock in test 18. The mock is a
+  second implementation written from the same RFC text by the same
+  hand, which is exactly the blind spot §7.6 calls out for the relay
+  codec — the codec half is pinned to literal RFC bytes for that
+  reason, but the *client* half (does a real Airport/pfSense/OpenWrt
+  box actually answer this?) is unproven until someone hosts behind one.
+- **The worst case is 11.25 s**, if unlikely: a router that answers
+  neither SSDP nor 5351 costs `UPNP_PROBE_BUDGET_MS` (6 s) +
+  `NATPMP_PROBE_BUDGET_MS` (5.25 s) before the STUN fallback, instead of
+  the pre-S7 6 s. (It was 10 s before review H-6 widened the NAT-PMP
+  half from one shared 4 s deadline to three 1.75 s phases.) A *wholly*
+  silent gateway actually costs 3.5 s of that, not 5.25, because the
+  address request timing out ends the attempt before the mapping phase.
+  S6's candidate racing does not help here — this is the host's probe,
+  not the joiner's connect.
+- **The PCP retransmit ladder deviates from four RFC 6887 §8.1.1
+  SHOULDs**, one of which (the missing randomisation factor) is a gap
+  rather than a trade. Disclosed in full in §9.3.1.
+- **A gateway slower than ~1 s per request still gets no mapping.** The
+  three-phase budget totals 5.25 s and each phase's ladder is 1.75 s, so
+  a *serialising* router taking 1.5 s per datagram runs out of phase
+  before its reply arrives. 700 ms — RFC 6886 §3.1's own "perhaps half a
+  second" neighbourhood — is covered and measured (§9.3.2); beyond that,
+  the degradation is still the same fall-through to STUN.
+- **The lease clock is armed from the main thread's first sighting of
+  the mapping, not from the instant the gateway granted it.** That is a
+  frame or two of optimism in the safe direction (we may keep a mapping
+  marginally longer than the router does, never drop a live one), but it
+  is an approximation and it is not measured against the router.
+- **Nothing verifies that a gateway ACCEPTED a delete or a renewal.**
+  Both are sent and the reply is parsed only far enough to feed the
+  §3.6 epoch estimator; a NOT_AUTHORIZED on a delete is not surfaced.
+  The lease-expiry drop (§9.4.2) is what limits the damage: a mapping
+  that could not be renewed stops being advertised whether or not we
+  understood why.
+- **PCP options are not implemented.** No `PREFER_FAILURE`, no
+  `FILTER`, no `THIRD_PARTY` (RFC 6887 §13). Consequence: per §11.2 a
+  normal MAP request "will return an available external port" rather
+  than failing when our suggested one is taken, so the gateway may hand
+  back a port we did not ask for — which is fine, the room code carries
+  whatever we got.
+- **Version negotiation stops at 2 and 0.** RFC 6887 §9 step 5 says a
+  client receiving `UNSUPP_VERSION` with a version it does not support
+  SHOULD try the next-lower one and, having exhausted them, retry in 30
+  minutes. We implement version 2 and NAT-PMP's 0 and nothing between,
+  and we do not arm the 30-minute retry — the probe is one-shot per
+  hosting attempt.
+- **The ICMP-unreachable shortcut is inferred from errno, not from the
+  ICMP packet.** RFC 6886 §3.1 says an ICMP Port Unreachable for 5351
+  lets a client "skip any remaining retransmissions". On a connected
+  UDP socket that surfaces as an error on a later `send`/`recv`, which
+  is what `np_transact` treats as terminal — but any other socket error
+  is treated the same way, and the mapping from ICMP to errno was not
+  verified on the MiSTer kernel.
+- **(L-3) The PCP nonce globals are single-writer by convention, and a
+  detached straggler followed by a SECOND PROBE breaks the convention.**
+  The THREADING invariant at `natpmp.c:392-459` argues that a probe
+  worker is either joined or detached-and-abandoned, and that a detached
+  straggler can never be followed by a renewal. That covers a *renewal*.
+  It does not cover a second *probe*, and the second probe is reachable:
+  `SDL_DetachThread` (`direct_p2p.c:2476`) abandons the timed-out
+  worker, and `try_portmap` returns false **without** adopting the
+  result — the `s_upnp_mapping` assignment is on the joined path only
+  (`direct_p2p.c:2426`) — so `s_upnp_mapping.active` stays false; the
+  FAILED_STUN auto-retry re-spawns `host_thread_fn`
+  (`direct_p2p.c:4834`); the "reuse the live mapping" shortcut is gated
+  on that same `s_upnp_mapping` flag (`direct_p2p.c:3196`) and is
+  therefore skipped; and `try_portmap` runs again (`direct_p2p.c:3203`),
+  spawning a second worker into `Natpmp_AddMapping` while the straggler
+  may still be inside it. `s_pcp_nonce` / `s_pcp_nonce_valid` /
+  `s_pcp_nonce_port` (`s_pcp_nonce` is at `natpmp.c:496`) and
+  `s_epoch_reset_pending` (`natpmp.c:563`) then have two unsynchronised
+  writers, and `pcp_nonce_acquire`'s check-then-mint is not atomic.
+  **Worst case:**
+  the persisted nonce and the nonce the router has on file disagree —
+  either torn (one thread copying out while the other writes in) or lost
+  (both mint, only the last is kept). RFC 6887 §11.3 answers a MAP whose
+  internal port/protocol/address match an existing dynamic mapping under
+  a *different* nonce with NOT_AUTHORIZED, and a delete is a MAP with
+  lifetime 0, so the mapping fails to be created or lingers until its
+  lease expires. That is the pre-H-5 behaviour: a lost mapping and a
+  fall-through to STUN. It is **not** memory unsafety — every access is a
+  fixed-size `memcpy` over a static 12-byte array — and reply matching is
+  unaffected, because `Natpmp_ParsePcpMapResponse` compares against the
+  request's local copy. **Not bounded in code.** Bounding it means either
+  joining the straggler before the second probe or putting a mutex round
+  the block; neither was done. Documented at the site.
 
 ## 10. S8 — netns verification harness
 
@@ -1407,4 +2787,6 @@ expected outcome. This is the regression net for S2–S7.
 | S3 no-hangs + failure taxonomy | **implemented** (see §5) |
 | S4 security | **implemented + adversarially reviewed** (see §6; S4a punch auth, S4b room code — now v3, S4c rendezvous return-routability — the last two are breaking wire/format changes, authorized. Review fixes as-built in §6.8) |
 | S5 relay for symmetric-NAT pairs | **implemented + adversarially reviewed** (see §7; custom '3SXR' relay on the existing port, NOT coturn. Closes the one §2 matrix cell that could not connect at all. Pure wire EXTENSION — protocol version stays 2. Review fixes as-built in §7.2/§7.3: CRITICAL-1 session-TTL teardown, HIGH-1 pin source binding, HIGH-2 over-budget liveness, MEDIUM-1..5, LOW-1..2) |
-| S6–S8 | planned above |
+| S6 joiner candidate racing | **implemented + adversarially reviewed** (see §8; one interleaved race on the existing worker thread — no new threads, no new locks. Full-cascade worst case measured 9 677 -> 5 114 ms per attempt. Review fixes as-built in §8.4 rules 1b/2b, §8.5, §8.8 and §8.9: H-1 the confirmation-tail budget exemption, H-2 real-wire punch legs in the suite, H-3 the split brain — measured 150 ms band — H-4 per-candidate punch windows, H-7 ordering-rule-1 tear-down coverage, M-1..M-4, L-1) |
+| S7 NAT-PMP / PCP | **implemented + adversarially reviewed** (see §9; hand-rolled RFC 6887 PCP client with RFC 6886 NAT-PMP downgrade, NO new library, as a third backend behind `UpnpMapping`. RFC 6886 §3.1's ~127 s retransmit ladder is deliberately truncated to 250/500/1000 ms per PHASE under an absolute ceiling — §9.3, and the PCP ladder's four §8.1.1 deviations are disclosed in §9.3.1. Review fixes as-built: H-5 the PCP Mapping Nonce is persisted so renewals and deletes are not NOT_AUTHORIZED'd (§9.4.1) and a mapping that cannot be renewed is dropped instead of advertised forever (§9.4.2); H-6 per-phase retransmit budgets plus §3.1's "do not overload it" rule, measured 700 ms gateway no-mapping → mapping (§9.3.2); H-7 five vacuous neutralisations replaced by tests 23a-23d with an inline patch-to-red table (§9.6); M-5.1 §3.6 epoch reboot detection implemented, M-5.2 lease-scaled renewal retry, M-5.3 §8.3 short error responses, M-5.4 the CGNAT gate fails closed on an absent external address, M-5.5 lost mappings stop being advertised. Residuals in §9.7, chiefly: gateway discovery is Linux-only, the client has never met real NAT-PMP/PCP hardware, and a gateway slower than ~1 s per request is still out of budget) |
+| S8 netns verification harness | planned above |

@@ -124,9 +124,85 @@ bool Stun_HasPunchPrefix(const uint8_t* buf, int len);
 /// authenticates the exchange in BOTH directions: we send it with every
 /// punch and only accept a datagram carrying it back.
 // Updates `peer_ip` and `peer_port` with the true translated endpoint if successful.
+///
+/// S6: this is now a thin BLOCKING DRIVER over the non-blocking punch-leg
+/// stepper below — same wire behaviour, same accept criteria, same
+/// confirmation burst. It remains the API for callers that own the socket
+/// exclusively for the whole window and have nothing to interleave.
 bool Stun_HolePunch(StunResult* local, char* peer_ip, uint16_t* peer_port,
                     const uint8_t punch_token[STUN_PUNCH_TOKEN_LEN],
                     int punch_duration_ms, SDL_AtomicInt* cancel_flag);
+
+/* --- S6 non-blocking punch leg (docs/plan-netplay-connection.md §8) ----
+ *
+ * The joiner used to run its three establishment loops SERIALLY, so a
+ * failing join cost the SUM of their budgets. Racing them on the one
+ * worker thread and the one socket needs a punch that does not own the
+ * socket for its whole window: a leg emits its due datagrams when pumped
+ * and is OFFERED whatever the shared receive loop reads. No new threads,
+ * no new locks.
+ *
+ * Lifecycle: Begin -> (Pump + Offer)* -> End. `confirmed` latches on the
+ * first authenticated datagram from the peer IP; after that the leg keeps
+ * burst-sending to the CONFIRMED endpoint until ConfirmDone(), which is
+ * the same ~600 ms tail Stun_HolePunch has always sent (a peer whose own
+ * loop started late or lost packets must still see one of ours).
+ */
+typedef struct {
+    struct NET_Address* target;      /* ref'd send target; NULL when inactive */
+    uint16_t target_port;            /* host order; retargeted on accept */
+    uint32_t start_ms;               /* Begin() timestamp — drives the cadence */
+    uint32_t last_send_ms;
+    bool     sent_any;
+    bool     confirmed;
+    uint32_t confirm_ms;             /* when `confirmed` latched */
+    char     peer_ip[64];            /* observed peer IP once confirmed */
+    uint8_t  msg[STUN_PUNCH_PAYLOAD_LEN];
+    uint8_t  token[STUN_PUNCH_TOKEN_LEN];
+} StunPunchLeg;
+
+/// Arm a leg at `peer_ip:peer_port`. Resolves the address (numeric
+/// dotted-quads resolve without blocking; a hostname is polled for up to
+/// ~3 s exactly as Stun_HolePunch has always done). Returns false and
+/// leaves the leg inactive on resolve failure.
+bool Stun_PunchBegin(StunPunchLeg* leg, const char* peer_ip, uint16_t peer_port,
+                     const uint8_t punch_token[STUN_PUNCH_TOKEN_LEN],
+                     uint32_t now_ms);
+
+/// Emit this leg's due datagram, if any. Non-blocking, never receives.
+/// Cadence: 50 ms for the first 500 ms, then 200 ms (S2 adaptive cadence);
+/// once confirmed, 50 ms for the confirmation tail.
+void Stun_PunchPump(StunPunchLeg* leg, struct NET_DatagramSocket* sock, uint32_t now_ms);
+
+/// Offer a datagram the shared receive loop just read. Returns true iff
+/// this leg CONSUMED it (it was an authenticated punch from our peer IP).
+/// A punch-shaped datagram from the peer IP with a bad token sets
+/// `local->diag_punch_bad_token` and is consumed as well — it is ours, it
+/// is just not acceptable. `local` may be NULL.
+bool Stun_PunchOffer(StunPunchLeg* leg, StunResult* local,
+                     const uint8_t* buf, int len,
+                     const char* src_ip, uint16_t src_port, uint32_t now_ms);
+
+/// True once the leg has confirmed AND finished its confirmation tail —
+/// i.e. the caller may hand the endpoint off.
+bool Stun_PunchSettled(const StunPunchLeg* leg, uint32_t now_ms);
+
+/// Read back the confirmed endpoint. Only meaningful once `confirmed`.
+void Stun_PunchEndpoint(const StunPunchLeg* leg, char* out_ip, int ip_buf_size,
+                        uint16_t* out_port);
+
+/// True iff the leg is armed.
+bool Stun_PunchActive(const StunPunchLeg* leg);
+
+/// True iff the leg has latched an authenticated punch from the peer.
+bool Stun_PunchConfirmed(const StunPunchLeg* leg);
+
+/// Release the leg's address ref and mark it inactive. Idempotent.
+void Stun_PunchEnd(StunPunchLeg* leg);
+
+/// The length of the post-confirmation burst, in ms (exposed so callers
+/// and tests reason about the same number the implementation uses).
+#define STUN_PUNCH_CONFIRM_MS 600
 
 /* --- S1 host liveness (docs/plan-netplay-connection.md) --------------- */
 

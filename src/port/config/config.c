@@ -129,6 +129,14 @@ static const ConfigEntry default_entries[] = {
     { .key = CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_RELAY, .type = CFG_BOOL, .value.b = false },
     { .key = CFG_KEY_NETPLAY_DIRECT_P2P_FORCE_RELAY, .type = CFG_BOOL, .value.b = false },
     { .key = CFG_KEY_NETPLAY_DIRECT_P2P_RELAY_BUDGET_MS, .type = CFG_INT, .value.i = 4000 },
+    /* S6 candidate racing (docs/plan-netplay-connection.md §8). 8000 ms
+     * bounds the whole post-STUN cascade now that its legs overlap:
+     * a room-code punch leg and a DELIVER punch leg (each
+     * BILATERAL_PUNCH_MS long), the rendezvous leg (SIGNAL_BUDGET_MS)
+     * and, from RACE_RELAY_ARM_MS onward, the relay leg
+     * (RELAY_BUDGET_MS) all fit inside it. Before S6 the same work cost
+     * the SUM: 2500 + 8000 + 5000 + 4000 = 19500 ms. */
+    { .key = CFG_KEY_NETPLAY_DIRECT_P2P_RACE_BUDGET_MS, .type = CFG_INT, .value.i = 8000 },
     { .key = CFG_KEY_NETPLAY_INPUT_PREDICTION_WINDOW, .type = CFG_INT, .value.i = 8 },
     { .key = CFG_KEY_NETPLAY_DIAG_ENABLE, .type = CFG_BOOL, .value.b = true },
     { .key = CFG_KEY_NETPLAY_SPARSE_EFFECT_SAVE_ENABLED, .type = CFG_BOOL, .value.b = true },

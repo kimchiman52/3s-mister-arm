@@ -719,6 +719,133 @@ static int run_punch_retarget_test(void) {
  * "3SX_PUNCH" (what every pre-S4a build sends) MUST be rejected: on the
  * pre-fix tree that exact payload was accepted as the peer.
  */
+
+/*
+ * S6 (docs/plan-netplay-connection.md §8) — the punch LEG stepper.
+ *
+ * Stun_HolePunch is now a blocking driver over Stun_PunchBegin/Pump/
+ * Offer/Settled, so run_punch_retarget_test and run_punch_token_reject_test
+ * already exercise the stepper's happy and reject paths through real
+ * sockets. What they do NOT reach is the decision the RACE depends on and
+ * the driver never makes: p2p_race offers every non-'3SXR' datagram to
+ * EACH live leg in turn and stops at the first leg that CONSUMES it. If
+ * Stun_PunchOffer consumed datagrams that are not ours — or confirmed on
+ * a source IP that is not the candidate's — one candidate's noise would
+ * confirm another candidate's leg, and the race would hand off to an
+ * endpoint that never answered.
+ *
+ * Pure function-level test: no sockets, no threads, no timing.
+ */
+static int run_punch_leg_offer_test(void) {
+    fprintf(stderr, "[test_stun_mock] punch-leg: Stun_PunchOffer accept/reject table\n");
+    const int fails_before = fail_count;
+
+    if (!NET_Init()) {
+        fail("punch-leg", "NET_Init failed");
+        return 1;
+    }
+
+    uint8_t token[STUN_PUNCH_TOKEN_LEN] = { 9, 8, 7, 6, 5, 4, 3, 2 };
+    uint8_t other[STUN_PUNCH_TOKEN_LEN] = { 9, 8, 7, 6, 5, 4, 3, 1 };
+    uint8_t good[STUN_PUNCH_PAYLOAD_LEN];
+    uint8_t bad[STUN_PUNCH_PAYLOAD_LEN];
+    Stun_BuildPunchPayload(token, good);
+    Stun_BuildPunchPayload(other, bad);
+
+    StunResult diag;
+    memset(&diag, 0, sizeof(diag));
+
+    StunPunchLeg leg;
+    if (!Stun_PunchBegin(&leg, "127.0.0.1", 40000, token, 1000u)) {
+        fail("punch-leg", "Stun_PunchBegin failed for a numeric address");
+        return 1;
+    }
+    if (!Stun_PunchActive(&leg)) {
+        fail("punch-leg", "leg is not active after Begin");
+    }
+    if (Stun_PunchConfirmed(&leg)) {
+        fail("punch-leg", "leg reports confirmed before any datagram");
+    }
+
+    /* A valid payload from a DIFFERENT source IP is not ours: it must be
+     * neither consumed nor allowed to confirm the leg. This is the case
+     * the race depends on — it is how one candidate's traffic is kept out
+     * of another candidate's leg. */
+    if (Stun_PunchOffer(&leg, &diag, good, sizeof(good), "127.0.0.2", 40000, 1010u)) {
+        fail("punch-leg", "a valid payload from the WRONG source IP was consumed");
+    }
+    if (Stun_PunchConfirmed(&leg)) {
+        fail("punch-leg", "a valid payload from the WRONG source IP confirmed the leg");
+    }
+
+    /* Unrelated traffic from the RIGHT IP is not consumed either — the
+     * race must still get a chance to route it elsewhere. */
+    if (Stun_PunchOffer(&leg, &diag, (const uint8_t*)"hello", 5, "127.0.0.1", 40000, 1020u)) {
+        fail("punch-leg", "unrelated traffic from the peer IP was consumed as a punch");
+    }
+    if (diag.diag_punch_bad_token) {
+        fail("punch-leg", "unrelated traffic raised the bad-token evidence bit");
+    }
+
+    /* Punch-shaped with a WRONG token from the right IP: consumed (it IS
+     * ours) but never accepted, and it raises the S4a evidence bit. */
+    if (!Stun_PunchOffer(&leg, &diag, bad, sizeof(bad), "127.0.0.1", 40000, 1030u)) {
+        fail("punch-leg", "a wrong-token punch from the peer IP was not consumed");
+    }
+    if (Stun_PunchConfirmed(&leg)) {
+        fail("punch-leg", "a wrong-token punch CONFIRMED the leg (S4a fail-closed broken)");
+    }
+    if (!diag.diag_punch_bad_token) {
+        fail("punch-leg", "a wrong-token punch did not raise diag_punch_bad_token");
+    }
+
+    /* The real thing, from a TRANSLATED port (S2 symmetric retarget): the
+     * port is deliberately unmatched, and the leg must retarget onto the
+     * observed source. */
+    if (!Stun_PunchOffer(&leg, &diag, good, sizeof(good), "127.0.0.1", 51515, 1040u)) {
+        fail("punch-leg", "a valid punch from a translated port was not consumed");
+    }
+    if (!Stun_PunchConfirmed(&leg)) {
+        fail("punch-leg", "a valid punch did not confirm the leg");
+    }
+    {
+        char ip[64] = { 0 };
+        uint16_t port = 0;
+        Stun_PunchEndpoint(&leg, ip, (int)sizeof(ip), &port);
+        if (port != 51515) {
+            fprintf(stderr,
+                    "[test_stun_mock] FAIL: punch-leg: endpoint port is %u, expected the "
+                    "OBSERVED translated port 51515 (S2 retarget)\n", (unsigned)port);
+            fail_count++;
+        }
+        if (strcmp(ip, "127.0.0.1") != 0) {
+            fail("punch-leg", "endpoint IP is not the observed source");
+        }
+    }
+
+    /* The confirmation tail must be honoured before the caller may hand
+     * off: settling early would cut the burst that tells a late-starting
+     * peer we are here. */
+    if (Stun_PunchSettled(&leg, 1040u + STUN_PUNCH_CONFIRM_MS - 1u)) {
+        fail("punch-leg", "leg settled BEFORE the confirmation tail elapsed");
+    }
+    if (!Stun_PunchSettled(&leg, 1040u + STUN_PUNCH_CONFIRM_MS)) {
+        fail("punch-leg", "leg did not settle after the confirmation tail elapsed");
+    }
+
+    Stun_PunchEnd(&leg);
+    if (Stun_PunchActive(&leg)) {
+        fail("punch-leg", "leg still active after End");
+    }
+    Stun_PunchEnd(&leg); /* idempotent */
+
+    if (fail_count == fails_before) {
+        fprintf(stderr, "[test_stun_mock] punch-leg OK\n");
+        return 0;
+    }
+    return 1;
+}
+
 static int run_punch_payload_test(void) {
     fprintf(stderr, "[test_stun_mock] punch-payload: token truth table\n");
     int fails_before = fail_count;
@@ -1247,6 +1374,7 @@ int Netplay_Test_StunMock(void) {
     const int retarget_rc = run_punch_retarget_test();
     const int payload_rc = run_punch_payload_test();   /* S4a */
     const int reject_rc = run_punch_token_reject_test(); /* S4a */
+    const int leg_rc = run_punch_leg_offer_test();       /* S6 */
     int discover_rc = 0;
 #ifdef NETPLAY_TEST_HOOKS
     discover_rc |= run_discover_parallel_test();
@@ -1276,11 +1404,12 @@ int Netplay_Test_StunMock(void) {
 #endif
 
     if (fail_count > 0 || wire_rc != 0 || codec_rc != 0 || retarget_rc != 0 ||
-        payload_rc != 0 || reject_rc != 0 || discover_rc != 0) {
+        payload_rc != 0 || reject_rc != 0 || leg_rc != 0 || discover_rc != 0) {
         fprintf(stderr, "[test_stun_mock] %d failure(s)\n", fail_count);
         return 1;
     }
-    fprintf(stderr, "[test_stun_mock] OK — wire + codec + retarget + punch-auth + discover passed\n");
+    fprintf(stderr, "[test_stun_mock] OK — wire + codec + retarget + punch-auth + punch-leg + "
+            "discover passed\n");
     return 0;
 }
 

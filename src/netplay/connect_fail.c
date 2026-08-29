@@ -32,6 +32,7 @@ const char* ConnectFail_Code(ConnectFailCode code) {
     case CONNECT_FAIL_RELAY_UNAVAILABLE:    return "P2P_FAIL_RELAY_UNAVAILABLE";
     case CONNECT_FAIL_RELAY_REFUSED:        return "P2P_FAIL_RELAY_REFUSED";
     case CONNECT_FAIL_RELAY_PIN_TIMEOUT:    return "P2P_FAIL_RELAY_PIN_TIMEOUT";
+    case CONNECT_FAIL_RELAY_NOT_PAIRED:     return "P2P_FAIL_RELAY_NOT_PAIRED";
     }
     return "P2P_FAIL_UNKNOWN";
 }
@@ -98,6 +99,12 @@ const char* ConnectFail_UserText(ConnectFailCode code) {
         return "Relay is full. Try again shortly.";
     case CONNECT_FAIL_RELAY_PIN_TIMEOUT:
         return "Relay unreachable (firewall?).";
+    /* S6-review L-1: NOT_PAIRED is not "the relay is full" — the server
+     * never saw the OTHER side of this room. Naming the opponent is what
+     * makes this actionable; naming the pool would send the user to wait
+     * for capacity that was never the problem. */
+    case CONNECT_FAIL_RELAY_NOT_PAIRED:
+        return "Opponent not in this room yet.";
     }
     return "Connection failed.";
 }

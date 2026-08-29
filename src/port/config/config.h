@@ -50,6 +50,19 @@
 #define CFG_KEY_NETPLAY_DIRECT_P2P_HANDOFF_PATH "netplay-direct-p2p-handoff-path"
 #define CFG_KEY_NETPLAY_DIRECT_P2P_STUN_TIMEOUT_MS "netplay-direct-p2p-stun-timeout-ms"
 
+/* S7 (docs/plan-netplay-connection.md §9): the NAT-PMP/PCP backend gets
+ * its OWN kill switch rather than riding DISABLE_UPNP.
+ *
+ * DISABLE_UPNP exists for one specific defect — libminiupnpc 2.2.1's
+ * upnpDiscover() segfaulting on MiSTer when a Realtek 8821cu USB WiFi
+ * adapter sits alongside eth0 (direct_p2p.c try_portmap). A user who
+ * sets it to dodge that crash still wants a port mapping, and NAT-PMP/
+ * PCP is a completely separate ~60-byte UDP client with no shared code
+ * — folding the two switches together would take that mapping away for
+ * no reason. Conversely a router whose NAT-PMP implementation misbehaves
+ * needs to be turned off WITHOUT losing UPnP. Bool, default false. */
+#define CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_NATPMP "netplay-direct-p2p-disable-natpmp"
+
 /* Bilateral hole-punch fallback (docs/plan-bilateral-hole-punch.md §Decision 6).
  * DISABLE_BILATERAL is a kill switch back to today's FAILED_SYMMETRIC behavior;
  * SIGNAL_URL points at the rendezvous server (udp://host:port form, placeholder
@@ -106,6 +119,19 @@
 #define CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_RELAY "netplay-direct-p2p-disable-relay"
 #define CFG_KEY_NETPLAY_DIRECT_P2P_FORCE_RELAY "netplay-direct-p2p-force-relay"
 #define CFG_KEY_NETPLAY_DIRECT_P2P_RELAY_BUDGET_MS "netplay-direct-p2p-relay-budget-ms"
+
+/* S6 candidate racing (docs/plan-netplay-connection.md §8).
+ *
+ * RACE_BUDGET_MS is the WHOLE post-STUN establishment wall clock on both
+ * roles — the punch legs, the rendezvous signaling leg and the relay leg
+ * now run CONCURRENTLY inside it instead of one after another, so it
+ * replaces the old serial sum (direct punch + signal budget + bilateral
+ * punch + relay budget) as the thing that bounds a failing attempt. The
+ * per-leg keys above still bound their own legs INSIDE this budget.
+ * Clamped [2000, 30000]: below ~2 s no leg can complete a round trip to
+ * a distant server, and above 30 s the S3 orchestrator deadline is the
+ * more meaningful bound. */
+#define CFG_KEY_NETPLAY_DIRECT_P2P_RACE_BUDGET_MS "netplay-direct-p2p-race-budget-ms"
 
 /* Rollback prediction window — max frames Gekko will predict ahead of
  * confirmed inputs and, on mispredict, the max rollback depth. Lower

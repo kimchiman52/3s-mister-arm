@@ -45,6 +45,9 @@
  * Config keys (from Step 5):
  *   CFG_KEY_NETPLAY_DIRECT_P2P_HOST_PORT        — passed to BeginHost.
  *   CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_UPNP     — skip UPnP first-try.
+ *   CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_NATPMP   — skip the S7 NAT-PMP/PCP
+ *                                                 backend (separate switch
+ *                                                 by design; see config.h).
  *   CFG_KEY_NETPLAY_DIRECT_P2P_STUN_TIMEOUT_MS  — STUN discovery clamp.
  *   CFG_KEY_NETPLAY_DIRECT_P2P_LAST_PEER_CODE   — written on Join success.
  */
@@ -201,11 +204,25 @@ void DirectP2P_RefuseSession(const char* reason);
  * loop via NetplayScreen_Render; see src/port/sdl/netplay_screen.c. */
 void DirectP2P_DrawOverlay(void);
 
+/* S6 (docs/plan-netplay-connection.md §8) — how a race punch leg behaves.
+ * PRODUCTION code only ever uses DP2P_PUNCH_REAL; the other two exist so
+ * a test build can arm a leg that is a pure clock with no wire traffic
+ * (see DirectP2P_TestHook_SetPunchOracle below). The type lives OUT here,
+ * not in the test-hooks block, because p2p_race stores it on every
+ * candidate in every build. */
+typedef enum {
+    DP2P_PUNCH_REAL = 0, /* no override: arm a real leg and punch the wire */
+    DP2P_PUNCH_NEVER,    /* this candidate never confirms                  */
+    DP2P_PUNCH_CONFIRM   /* this candidate confirms on its first pump      */
+} DirectP2PPunchOracleResult;
+
+
 #ifdef NETPLAY_TEST_HOOKS
 /* Step 6 of docs/plan-bilateral-hole-punch.md — test-only seam. The
  * production translation unit defines these only when NETPLAY_TEST_HOOKS
  * is on; tests in src/netplay/test_bilateral_punch.c override the two
- * setters to install mocks for Stun_HolePunch / Rendezvous_Send without
+ * setters to install mocks for the punch outcome (S6: the oracle, which
+ * replaced the pre-S6 Stun_HolePunch seam) / Rendezvous_Send without
  * touching the network. The IsLanPeer accessor exposes the file-static
  * direct_p2p_is_lan_peer for the LAN-bypass truth-table test.
  *
@@ -219,13 +236,26 @@ void DirectP2P_DrawOverlay(void);
 #include <stddef.h>
 #include <stdint.h>
 
-/* S4a: signature includes the 8-byte punch-auth token. */
-typedef bool (*DirectP2P_StunHolePunch_fn)(StunResult* local,
-                                           char* peer_ip,
-                                           uint16_t* peer_port,
-                                           const uint8_t punch_token[STUN_PUNCH_TOKEN_LEN],
-                                           int punch_duration_ms,
-                                           SDL_AtomicInt* cancel_flag);
+/* S6 (docs/plan-netplay-connection.md §8) — punch outcome oracle.
+ *
+ * This REPLACES the pre-S6 DirectP2P_StunHolePunch_fn seam. That seam
+ * substituted a BLOCKING Stun_HolePunch call; after S6 the joiner and the
+ * host both punch through non-blocking legs inside p2p_race(), so there
+ * is no blocking call left to substitute. The seam therefore moved to the
+ * decision the tests were really making — "does THIS candidate endpoint
+ * ever confirm?" — which the race consults once per candidate, when the
+ * leg is armed.
+ *
+ * The rename is deliberate rather than a silent signature change: a stale
+ * caller must fail to COMPILE, not silently behave differently (the same
+ * discipline §6.3 applied to the room-code bool API).
+ *
+ * A leg armed with DP2P_PUNCH_NEVER / DP2P_PUNCH_CONFIRM sends NOTHING on
+ * the wire — it is a pure clock — which is what keeps the offline
+ * harnesses offline while still consuming the leg's real wall time. */
+typedef DirectP2PPunchOracleResult (*DirectP2P_PunchOracle_fn)(const char* peer_ip,
+                                                               uint16_t peer_port);
+
 typedef bool (*DirectP2P_RendezvousSend_fn)(NET_DatagramSocket* sock,
                                             NET_Address* target,
                                             uint16_t target_port,
@@ -237,7 +267,14 @@ typedef bool (*DirectP2P_StunDiscover_fn)(StunResult* result,
                                           uint16_t local_port,
                                           int timeout_ms);
 
-void DirectP2P_TestHook_SetStunHolePunch(DirectP2P_StunHolePunch_fn fn);
+void DirectP2P_TestHook_SetPunchOracle(DirectP2P_PunchOracle_fn fn);
+/* H-C: nominate ONE endpoint whose Stun_PunchBegin must fail, by handing
+ * Stun_PunchBegin an unresolvable hostname instead of `peer_ip`. The
+ * failure is produced by the real NET_ResolveHostname path, not faked.
+ * Needed because the only re-armable candidate takes its IP from a
+ * DELIVER, and Rendezvous_ParseDeliverEx can only ever emit a resolvable
+ * dotted quad. Pass NULL/0 to clear. */
+void DirectP2P_TestHook_SetArmFailEndpoint(const char* peer_ip, uint16_t peer_port);
 void DirectP2P_TestHook_SetRendezvousSend(DirectP2P_RendezvousSend_fn fn);
 void DirectP2P_TestHook_SetStunDiscover(DirectP2P_StunDiscover_fn fn);
 bool DirectP2P_TestHook_IsLanPeer(const char* ip);
@@ -256,10 +293,42 @@ DirectP2PHostDgramClass DirectP2P_TestHook_ClassifyHostDatagram(
  * test must wait the FULL budget out — its fix removes the loop's
  * early exit — so it shrinks the budget rather than sleeping 2 x 8 s. */
 void DirectP2P_TestHook_SetSignalBudgetMs(int ms);
+/* S6: override the OVERALL race budget (ms; <= 0 restores the config
+ * value). Distinct from SetSignalBudgetMs, which now bounds only the
+ * rendezvous LEG inside the race. */
+void DirectP2P_TestHook_SetRaceBudgetMs(int ms);
+/* S6: the wall clock of the last completed race, in ms — the measured
+ * "worst case before terminal failure" the stage exists to shrink. */
+uint32_t DirectP2P_TestHook_LastRaceMs(void);
 /* S3-review HIGH-2: invoke the registered session-teardown callback
  * (the same one netplay.c's EXITING pass fires) so a harness can drive
  * notify-failure -> teardown -> FAILED_HANDSHAKE -> one FAIL report. */
 void DirectP2P_TestHook_RunTeardown(void);
+
+/* S7 review H-7.3 / M-5.2: the port-mapping renewal cadence, as a pure
+ * function of the lease the gateway GRANTED, so a test can pin it
+ * without waiting out half an hour. Both are the very functions
+ * upnp_renew_tick calls — not a re-derivation of them.
+ *
+ *   interval: RFC 6886 §3.3 "The client SHOULD begin trying to renew the
+ *             mapping halfway to expiry time, like DHCP", inside RFC 6887
+ *             §11.2.1's 1/2-to-5/8 window, floored at §11.2.1's four
+ *             seconds and capped at the UPnP half-hour.
+ *   retry:    what to wait after a FAILED renewal. Must scale with the
+ *             lease; a flat five minutes puts the retry after a 120 s
+ *             mapping has already died.
+ *
+ * lifetime 0 means "the backend reported no granted lease" (UPnP). */
+uint64_t DirectP2P_TestHook_PortmapRenewIntervalMs(uint32_t granted_lifetime_s);
+uint64_t DirectP2P_TestHook_PortmapRenewRetryMs(uint32_t granted_lifetime_s);
+
+/* S7 review M-5.4: the CGNAT gate's "this mapping is provably useless"
+ * predicate. True for RFC1918 / RFC 6598 CGN / loopback / link-local
+ * AND for an absent (empty or NULL) external address — the gate must
+ * fail CLOSED when it has nothing to judge. False for a public-but-
+ * different address (1:1 NAT / DMZ) and for unparseable-but-present
+ * text, neither of which proves the mapping is broken. */
+bool DirectP2P_TestHook_IpIsNonPublic(const char* ip);
 
 /* S4-review HIGH-1b: the host punch-gate throttle. The gate accounting
  * is deliberately free of s_work and of thread lifecycle so it can be
@@ -300,6 +369,79 @@ void DirectP2P_TestHook_PunchGateCounters(int* bad_total, int* rerolls);
 void DirectP2P_TestHook_PunchGateLimits(int* src_max_bad, uint32_t* mute_ms,
                                         int* total_reroll, int* reroll_max,
                                         int* src_table);
+
+/* --- S6-review H-3: drive ONE p2p_race directly ------------------------
+ *
+ * Every other seam here drives the race through BeginJoin / the host
+ * worker, and those own process-wide state (s_work, the state machine,
+ * the worker threads), so at most ONE of them can be live in a process.
+ * The S6 split-brain defect is by construction a TWO-peer property — one
+ * side commits to the relay while the other commits to a punch — so it
+ * cannot be reproduced through that door at all.
+ *
+ * p2p_race itself takes everything it needs by argument (its own socket,
+ * its own endpoints, its own budgets) and touches no per-session global,
+ * so two of them can run concurrently on two threads in one process.
+ * This hook is that door: it builds a RaceCfg from `cfg`, runs the REAL
+ * race, and reports the outcome. Production code never calls it. */
+typedef struct DirectP2PRaceProbeCfg {
+    bool                host_role;      /* false = joiner                     */
+    NET_DatagramSocket* sock;           /* caller owns it for the whole call  */
+    const uint8_t*      punch_token;    /* STUN_PUNCH_TOKEN_LEN bytes         */
+    const char*         seed_ip;        /* numeric dotted quad                */
+    uint16_t            seed_port;
+    const char*         signal_ip;      /* numeric dotted quad; NULL = no legs */
+    uint16_t            signal_port;
+    const uint8_t*      session_key;    /* 16 bytes                           */
+    uint16_t            my_public_port;
+    bool                signal_leg;
+    int                 signal_budget_ms;
+    bool                relay_leg;
+    int                 relay_budget_ms;
+    int                 punch_leg_ms;
+    int                 race_budget_ms;
+} DirectP2PRaceProbeCfg;
+
+/* Mirrors the internal RaceOutcome enum; kept as explicit values so the
+ * harness never has to see the private type. */
+typedef enum DirectP2PRaceProbeOutcome {
+    DP2P_RACE_PROBE_PUNCHED = 0,
+    DP2P_RACE_PROBE_RELAYED = 1,
+    DP2P_RACE_PROBE_CANCELLED = 2,
+    DP2P_RACE_PROBE_EXHAUSTED = 3,
+} DirectP2PRaceProbeOutcome;
+
+typedef struct DirectP2PRaceProbeOut {
+    DirectP2PRaceProbeOutcome outcome;
+    char     peer_ip[64];
+    uint16_t peer_port;
+    uint32_t t_race_ms;
+    bool     relay_ran;
+    /* ConnectFailCode as an int so the harness can assert on the relay
+     * leg's OWN disposition (S6-review L-1 split NOT_PAIRED out of
+     * RELAY_REFUSED, and only the leg's verdict shows which fired). */
+    int      relay_fail;
+} DirectP2PRaceProbeOut;
+
+void DirectP2P_TestHook_RunRace(const DirectP2PRaceProbeCfg* cfg,
+                                DirectP2PRaceProbeOut* out);
+
+/* S6-review M-1: the overall race deadline predicate, as a pure function
+ * of the clock. Exposed because the defect the wrap-safe form fixes needs
+ * a 49.7-day uptime to reach through SDL_GetTicks, and a test that cannot
+ * be run is not a test. `tail_outstanding` is the H-1 exemption: a leg
+ * that has confirmed and still owes its peer the confirmation tail. */
+bool DirectP2P_TestHook_RaceBudgetExpired(uint32_t now, uint32_t t0,
+                                          int budget_ms, bool tail_outstanding);
+
+/* Second-review H-A: the two constants that place the relay-vs-punch
+ * decision in time, exposed so the split-brain sweep can DERIVE its search
+ * range from them instead of hard-coding a range chosen where the fix
+ * happened to work. The direction matters: a test range computed from a
+ * production constant follows the production code; a production margin
+ * sized against a test constant is the H-B defect and is forbidden. */
+uint32_t DirectP2P_TestHook_RaceRelayArmMs(void);
+uint32_t DirectP2P_TestHook_RaceRelayGraceMs(void);
 #endif /* NETPLAY_TEST_HOOKS */
 
 #else /* !ENABLE_NETPLAY */
